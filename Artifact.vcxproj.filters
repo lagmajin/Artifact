@@ -13,5 +13,24 @@
       <UniqueIdentifier>{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
       <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav;mfcribbon-ms</Extensions>
     </Filter>
+    <Filter Include="ヘッダー ファイル\Project">
+      <UniqueIdentifier>{2d0351b3-b0ce-44e6-b074-ba91fa45e5fc}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ソース ファイル\Widgets">
+      <UniqueIdentifier>{0aecb838-4407-47a7-b576-00f8edf6e7ab}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ヘッダー ファイル\Widgets">
+      <UniqueIdentifier>{cb3b50cf-6869-41be-a65c-0d6228a5d9c2}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="include\Widgets\ArtifactCompositionWidget.hpp">
+      <Filter>ヘッダー ファイル\Widgets</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="src\AppMain.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
   </ItemGroup>
 </Project>
