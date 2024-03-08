@@ -13,6 +13,10 @@ namespace Artifact {
  public:
   explicit ArtifactInspectorWidget(QWidget* parent = nullptr);
   ~ArtifactInspectorWidget();
+ signals:
+
+ public slots:
+
  };
 
 

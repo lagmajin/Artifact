@@ -164,6 +164,8 @@
     <ClInclude Include="include\Widgets\ArtifactCompositionWidget.hpp" />
     <ClInclude Include="include\Widgets\ArtifactFileMenu.hpp" />
     <ClInclude Include="include\Widgets\ArtifactInspectorWidget.hpp" />
+    <ClInclude Include="include\Widgets\Menu\ArtifactCompositionMenu.hpp" />
+    <ClInclude Include="include\Widgets\Menu\ArtifactOptionMenu.hpp" />
     <QtMoc Include="include\Widgets\ArtifactMainWindow.hpp" />
     <ClInclude Include="include\Widgets\ArtifactNullLayer.hpp" />
     <QtMoc Include="include\Widgets\ArtifactProjectManagerWidget.hpp" />

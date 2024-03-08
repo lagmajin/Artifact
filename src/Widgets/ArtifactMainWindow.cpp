@@ -1,4 +1,4 @@
-#include "../../include/Widgets/ArtifactMenuBar.hpp"
+#include "../../include/Widgets/menu/ArtifactMenuBar.hpp"
 #include "../../include/Widgets/ArtifactMainWindow.hpp"
 
 

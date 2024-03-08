@@ -72,11 +72,17 @@
     <ClInclude Include="include\Effetcs\ArtifactAbstractEffect.hpp">
       <Filter>ヘッダー ファイル\Effects</Filter>
     </ClInclude>
-    <ClInclude Include="include\Widgets\ArtifactFileMenu.hpp">
-      <Filter>ヘッダー ファイル\Widgets</Filter>
-    </ClInclude>
     <ClInclude Include="include\Widgets\ArtifactAssetBrowser.hpp">
       <Filter>ヘッダー ファイル\Widgets</Filter>
+    </ClInclude>
+    <ClInclude Include="include\Widgets\ArtifactFileMenu.hpp">
+      <Filter>ヘッダー ファイル\Widgets\Menu</Filter>
+    </ClInclude>
+    <ClInclude Include="include\Widgets\Menu\ArtifactOptionMenu.hpp">
+      <Filter>ヘッダー ファイル\Widgets\Menu</Filter>
+    </ClInclude>
+    <ClInclude Include="include\Widgets\Menu\ArtifactCompositionMenu.hpp">
+      <Filter>ヘッダー ファイル\Widgets\Menu</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
