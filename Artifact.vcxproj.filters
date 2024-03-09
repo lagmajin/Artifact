@@ -40,6 +40,12 @@
     <Filter Include="ヘッダー ファイル\Widgets\Menu">
       <UniqueIdentifier>{53114172-4d21-4b88-a05f-dcc2b5a16011}</UniqueIdentifier>
     </Filter>
+    <Filter Include="ヘッダー ファイル\Debug">
+      <UniqueIdentifier>{ac3198af-eab9-4cd8-ace7-3df2df969502}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ヘッダー ファイル\Render">
+      <UniqueIdentifier>{b1676bb9-1704-4eca-861c-e2415e1df552}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="include\Widgets\ArtifactCompositionWidget.hpp">
@@ -83,6 +89,12 @@
     </ClInclude>
     <ClInclude Include="include\Widgets\Menu\ArtifactCompositionMenu.hpp">
       <Filter>ヘッダー ファイル\Widgets\Menu</Filter>
+    </ClInclude>
+    <ClInclude Include="include\Composition\ArtifactComposition2D.hpp">
+      <Filter>ヘッダー ファイル\Composition</Filter>
+    </ClInclude>
+    <ClInclude Include="include\Render\ArtifactRenderer.hpp">
+      <Filter>ヘッダー ファイル\Render</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>

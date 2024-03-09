@@ -155,11 +155,13 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClInclude Include="include\Composition\ArtifactComposition.hpp" />
+    <ClInclude Include="include\Composition\ArtifactComposition2D.hpp" />
     <ClInclude Include="include\Composition\ArtifactCompositionManager.hpp" />
     <ClInclude Include="include\Effetcs\ArtifactAbstractEffect.hpp" />
     <ClInclude Include="include\Layer\ArtifactAbstractLayer.hpp" />
     <ClInclude Include="include\Layer\ArtifactCompositionLayer.hpp" />
     <ClInclude Include="include\Layer\ArtifactImageLayer.hpp" />
+    <ClInclude Include="include\Render\ArtifactRenderer.hpp" />
     <ClInclude Include="include\Widgets\ArtifactAssetBrowser.hpp" />
     <ClInclude Include="include\Widgets\ArtifactCompositionWidget.hpp" />
     <ClInclude Include="include\Widgets\ArtifactFileMenu.hpp" />
