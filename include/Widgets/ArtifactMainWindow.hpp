@@ -5,6 +5,8 @@
 
 namespace Artifact {
  
+ struct ArtifactMainWindowPrivate;
+
  class ArtifactMainWindow :public QMainWindow {
   Q_OBJECT
  private:

@@ -88,7 +88,7 @@
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <OutDir>$(SolutionDir)/App</OutDir>
-    <IncludePath>C:\Qt\6.5.0\msvc2019_64\include;$(IncludePath)</IncludePath>
+    <IncludePath>C:\Qt\6.5.0\msvc2019_64\include\QtWidgets;Z:\MyLib\Qt-Advanced-Docking-System\src;C:\Qt\6.5.0\msvc2019_64\include;$(IncludePath)</IncludePath>
     <LibraryPath>$(SolutionDir)\lib;$(LibraryPath)</LibraryPath>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
@@ -168,6 +168,7 @@
     <ClInclude Include="include\Widgets\ArtifactInspectorWidget.hpp" />
     <ClInclude Include="include\Widgets\Menu\ArtifactCompositionMenu.hpp" />
     <ClInclude Include="include\Widgets\Menu\ArtifactOptionMenu.hpp" />
+    <ClInclude Include="src\Widgets\Menu\ArtifactLayerMenu.hpp" />
     <QtMoc Include="include\Widgets\ArtifactMainWindow.hpp" />
     <ClInclude Include="include\Widgets\ArtifactNullLayer.hpp" />
     <QtMoc Include="include\Widgets\ArtifactProjectManagerWidget.hpp" />
@@ -182,6 +183,8 @@
     <ClCompile Include="src\Widgets\ArtifactMainWindow.cpp" />
     <ClCompile Include="src\Widgets\ArtifactMenuBar.cpp" />
     <ClCompile Include="src\Widgets\ArtifactProjectManagerWidget.cpp" />
+    <ClCompile Include="src\Widgets\Menu\ArtifactFileMenu.cpp" />
+    <ClCompile Include="src\Widgets\Menu\ArtifactLayerMenu.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <Import Project="$(QtMsBuild)\qt.targets" Condition="Exists('$(QtMsBuild)\qt.targets')" />

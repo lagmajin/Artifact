@@ -46,6 +46,12 @@
     <Filter Include="ヘッダー ファイル\Render">
       <UniqueIdentifier>{b1676bb9-1704-4eca-861c-e2415e1df552}</UniqueIdentifier>
     </Filter>
+    <Filter Include="ソース ファイル\Project">
+      <UniqueIdentifier>{c9d13665-fca9-4afd-a2b4-22ff2f400d39}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ソース ファイル\Widgets\Menu">
+      <UniqueIdentifier>{4a38a1d5-699c-49cd-aaf2-20822bdbd0cd}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="include\Widgets\ArtifactCompositionWidget.hpp">
@@ -96,6 +102,9 @@
     <ClInclude Include="include\Render\ArtifactRenderer.hpp">
       <Filter>ヘッダー ファイル\Render</Filter>
     </ClInclude>
+    <ClInclude Include="src\Widgets\Menu\ArtifactLayerMenu.hpp">
+      <Filter>ヘッダー ファイル\Widgets\Menu</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\AppMain.cpp">
@@ -121,6 +130,12 @@
     </ClCompile>
     <ClCompile Include="src\Widgets\ArtifactInspectorWidget.cpp">
       <Filter>ソース ファイル\Widgets</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Widgets\Menu\ArtifactFileMenu.cpp">
+      <Filter>ソース ファイル\Widgets\Menu</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Widgets\Menu\ArtifactLayerMenu.cpp">
+      <Filter>ソース ファイル\Widgets\Menu</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>

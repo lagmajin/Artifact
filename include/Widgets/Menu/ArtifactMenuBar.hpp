@@ -21,14 +21,6 @@ namespace Artifact {
   Option,
   Help
  };
- class ArtifactFileMenu {
- private:
-
- public:
-  explicit ArtifactFileMenu(QWidget* parent = nullptr);
-  ~ArtifactFileMenu();
- };
-
 
  class ArtifactHelpMenu {
  private:
