@@ -52,6 +52,27 @@
     <Filter Include="ソース ファイル\Widgets\Menu">
       <UniqueIdentifier>{4a38a1d5-699c-49cd-aaf2-20822bdbd0cd}</UniqueIdentifier>
     </Filter>
+    <Filter Include="ヘッダー ファイル\Widgets\Asset">
+      <UniqueIdentifier>{2fd898b8-9f24-485c-8e27-3936bedd09d9}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ヘッダー ファイル\Application">
+      <UniqueIdentifier>{71636a9a-e8c6-459b-9295-f2628e137457}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ソース ファイル\Application">
+      <UniqueIdentifier>{1e9f9d96-a620-4f64-b9c5-817279a600e2}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ヘッダー ファイル\Script">
+      <UniqueIdentifier>{03ee1f38-cda5-4a1a-bd50-b62d62cf489f}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ソース ファイル\Script">
+      <UniqueIdentifier>{d1fdb671-afd6-411f-98e1-affcc7029ab7}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ヘッダー ファイル\Widgets\Render">
+      <UniqueIdentifier>{e7ccf74e-6e5b-4d76-a27a-4acd5094fdd7}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ソース ファイル\Widgets\Render">
+      <UniqueIdentifier>{92ed620e-d7bc-4379-9b9f-a85d26cfdfdd}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="include\Widgets\ArtifactCompositionWidget.hpp">
@@ -84,16 +105,10 @@
     <ClInclude Include="include\Effetcs\ArtifactAbstractEffect.hpp">
       <Filter>ヘッダー ファイル\Effects</Filter>
     </ClInclude>
-    <ClInclude Include="include\Widgets\ArtifactAssetBrowser.hpp">
-      <Filter>ヘッダー ファイル\Widgets</Filter>
-    </ClInclude>
     <ClInclude Include="include\Widgets\ArtifactFileMenu.hpp">
       <Filter>ヘッダー ファイル\Widgets\Menu</Filter>
     </ClInclude>
     <ClInclude Include="include\Widgets\Menu\ArtifactOptionMenu.hpp">
-      <Filter>ヘッダー ファイル\Widgets\Menu</Filter>
-    </ClInclude>
-    <ClInclude Include="include\Widgets\Menu\ArtifactCompositionMenu.hpp">
       <Filter>ヘッダー ファイル\Widgets\Menu</Filter>
     </ClInclude>
     <ClInclude Include="include\Composition\ArtifactComposition2D.hpp">
@@ -102,8 +117,20 @@
     <ClInclude Include="include\Render\ArtifactRenderer.hpp">
       <Filter>ヘッダー ファイル\Render</Filter>
     </ClInclude>
-    <ClInclude Include="src\Widgets\Menu\ArtifactLayerMenu.hpp">
+    <ClInclude Include="include\Application\ArtifactApplicationManager.hpp">
+      <Filter>ヘッダー ファイル\Application</Filter>
+    </ClInclude>
+    <ClInclude Include="include\Widgets\Menu\ArtifactLayerMenu.hpp">
       <Filter>ヘッダー ファイル\Widgets\Menu</Filter>
+    </ClInclude>
+    <ClInclude Include="include\Widgets\Render\ArtifactRenderManagerWidget.hpp">
+      <Filter>ヘッダー ファイル\Widgets\Render</Filter>
+    </ClInclude>
+    <ClInclude Include="include\Widgets\Menu\ArtifactTimeMenu.hpp">
+      <Filter>ヘッダー ファイル\Widgets\Menu</Filter>
+    </ClInclude>
+    <ClInclude Include="include\Layer\Artifact3DModelLayer.hpp">
+      <Filter>ヘッダー ファイル\Layer</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
@@ -117,9 +144,6 @@
       <Filter>ソース ファイル\Widgets</Filter>
     </ClCompile>
     <ClCompile Include="src\Widgets\ArtifactProjectManagerWidget.cpp">
-      <Filter>ソース ファイル\Widgets</Filter>
-    </ClCompile>
-    <ClCompile Include="src\Widgets\ArtifactMenuBar.cpp">
       <Filter>ソース ファイル\Widgets</Filter>
     </ClCompile>
     <ClCompile Include="src\Composition\ArtifactCompositionManager.cpp">
@@ -137,6 +161,27 @@
     <ClCompile Include="src\Widgets\Menu\ArtifactLayerMenu.cpp">
       <Filter>ソース ファイル\Widgets\Menu</Filter>
     </ClCompile>
+    <ClCompile Include="src\Widgets\Menu\ArtifactCompositionMenu.cpp">
+      <Filter>ソース ファイル\Widgets\Menu</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Widgets\ArtifactMenuBar.cpp">
+      <Filter>ソース ファイル\Widgets\Menu</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Widgets\Asset\ArtifactAssetBrowser.cpp">
+      <Filter>ソース ファイル\Widgets</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Widgets\ArtifactTimelineWidget.cpp">
+      <Filter>ソース ファイル\Widgets</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Widgets\Menu\ArtifactHelpMenu.cpp">
+      <Filter>ソース ファイル\Widgets\Menu</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Widgets\Render\ArtifactRenderManagerWidget.cpp">
+      <Filter>ソース ファイル\Widgets\Render</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Widgets\Menu\ArtifactTimeMenu.cpp">
+      <Filter>ソース ファイル\Widgets\Menu</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <QtMoc Include="include\Widgets\ArtifactProjectManagerWidget.hpp">
@@ -144,6 +189,12 @@
     </QtMoc>
     <QtMoc Include="include\Widgets\ArtifactMainWindow.hpp">
       <Filter>ヘッダー ファイル\Widgets</Filter>
+    </QtMoc>
+    <QtMoc Include="include\Widgets\ArtifactAssetBrowser.hpp">
+      <Filter>ヘッダー ファイル\Widgets\Asset</Filter>
+    </QtMoc>
+    <QtMoc Include="include\Widgets\Menu\ArtifactCompositionMenu.hpp">
+      <Filter>ヘッダー ファイル\Widgets\Menu</Filter>
     </QtMoc>
   </ItemGroup>
 </Project>

@@ -88,7 +88,7 @@
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <OutDir>$(SolutionDir)/App</OutDir>
-    <IncludePath>C:\Qt\6.5.0\msvc2019_64\include\QtWidgets;Z:\MyLib\Qt-Advanced-Docking-System\src;C:\Qt\6.5.0\msvc2019_64\include;$(IncludePath)</IncludePath>
+    <IncludePath>C:\Users\lagma\Desktop\Artifact\ArtifactWidgets\include;Z:\MyLib\Qt-Advanced-Docking-System\src;C:\Qt\6.5.0\msvc2019_64\include;C:\Qt\6.5.0\msvc2019_64\include\QtWidgets;$(IncludePath)</IncludePath>
     <LibraryPath>$(SolutionDir)\lib;$(LibraryPath)</LibraryPath>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
@@ -133,7 +133,8 @@
     <Link>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalDependencies>Qt6Cored.lib;Qt6Guid.lib;Qt6Widgetsd.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>Qt6Cored.lib;Qt6Guid.lib;Qt6Widgetsd.lib;ArtifactWidgetsd.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <OutputFile>$(OutDir)$(TargetName)$(TargetExt)</OutputFile>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -154,21 +155,25 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClInclude Include="include\Application\ArtifactApplicationManager.hpp" />
     <ClInclude Include="include\Composition\ArtifactComposition.hpp" />
     <ClInclude Include="include\Composition\ArtifactComposition2D.hpp" />
     <ClInclude Include="include\Composition\ArtifactCompositionManager.hpp" />
     <ClInclude Include="include\Effetcs\ArtifactAbstractEffect.hpp" />
+    <ClInclude Include="include\Layer\Artifact3DModelLayer.hpp" />
     <ClInclude Include="include\Layer\ArtifactAbstractLayer.hpp" />
     <ClInclude Include="include\Layer\ArtifactCompositionLayer.hpp" />
     <ClInclude Include="include\Layer\ArtifactImageLayer.hpp" />
     <ClInclude Include="include\Render\ArtifactRenderer.hpp" />
-    <ClInclude Include="include\Widgets\ArtifactAssetBrowser.hpp" />
+    <ClInclude Include="include\Widgets\Menu\ArtifactTimeMenu.hpp" />
+    <ClInclude Include="include\Widgets\Render\ArtifactRenderManagerWidget.hpp" />
+    <QtMoc Include="include\Widgets\ArtifactAssetBrowser.hpp" />
     <ClInclude Include="include\Widgets\ArtifactCompositionWidget.hpp" />
     <ClInclude Include="include\Widgets\ArtifactFileMenu.hpp" />
     <ClInclude Include="include\Widgets\ArtifactInspectorWidget.hpp" />
-    <ClInclude Include="include\Widgets\Menu\ArtifactCompositionMenu.hpp" />
+    <QtMoc Include="include\Widgets\Menu\ArtifactCompositionMenu.hpp" />
+    <ClInclude Include="include\Widgets\Menu\ArtifactLayerMenu.hpp" />
     <ClInclude Include="include\Widgets\Menu\ArtifactOptionMenu.hpp" />
-    <ClInclude Include="src\Widgets\Menu\ArtifactLayerMenu.hpp" />
     <QtMoc Include="include\Widgets\ArtifactMainWindow.hpp" />
     <ClInclude Include="include\Widgets\ArtifactNullLayer.hpp" />
     <QtMoc Include="include\Widgets\ArtifactProjectManagerWidget.hpp" />
@@ -183,8 +188,14 @@
     <ClCompile Include="src\Widgets\ArtifactMainWindow.cpp" />
     <ClCompile Include="src\Widgets\ArtifactMenuBar.cpp" />
     <ClCompile Include="src\Widgets\ArtifactProjectManagerWidget.cpp" />
+    <ClCompile Include="src\Widgets\ArtifactTimelineWidget.cpp" />
+    <ClCompile Include="src\Widgets\Asset\ArtifactAssetBrowser.cpp" />
     <ClCompile Include="src\Widgets\Menu\ArtifactFileMenu.cpp" />
+    <ClCompile Include="src\Widgets\Menu\ArtifactHelpMenu.cpp" />
     <ClCompile Include="src\Widgets\Menu\ArtifactLayerMenu.cpp" />
+    <ClCompile Include="src\Widgets\Menu\ArtifactCompositionMenu.cpp" />
+    <ClCompile Include="src\Widgets\Menu\ArtifactTimeMenu.cpp" />
+    <ClCompile Include="src\Widgets\Render\ArtifactRenderManagerWidget.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <Import Project="$(QtMsBuild)\qt.targets" Condition="Exists('$(QtMsBuild)\qt.targets')" />

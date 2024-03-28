@@ -3,11 +3,12 @@
 
 
 
-
 namespace Artifact {
 
 
 
 
 
-}
+
+
+};

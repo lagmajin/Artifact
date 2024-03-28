@@ -6,7 +6,7 @@
 
 namespace Artifact {
 
-
+ using namespace ArtifactWidgets;
 
 
 
@@ -15,6 +15,8 @@ namespace Artifact {
 
  ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget* parent /*= nullptr*/):QScrollArea(parent)
  {
+  auto p=new VolumeSlider();
+
 
  }
 

@@ -3,6 +3,7 @@
 
 #include <QtWidgets/QScrollArea>
 
+#include <Audio/AudioDllImport.hpp>
 
 
 namespace Artifact {

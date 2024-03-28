@@ -18,16 +18,19 @@ namespace Artifact {
 
  };
 
-
-
-
-
-
  ArtifactMainWindow::ArtifactMainWindow(QWidget* parent /*= nullptr*/):QMainWindow(parent)
  {
+  QPalette p = palette();
+  p.setColor(QPalette::Window, QColor(30, 30, 30));
+
+  setPalette(p);
+
+  setAutoFillBackground(true);
+
   CDockManager::setConfigFlags(CDockManager::DefaultOpaqueConfig);
   CDockManager::setConfigFlag(CDockManager::RetainTabSizeWhenCloseButtonHidden, true);
 
+  setStyleSheet("dark-style.css");
 
   auto menuBar = new ArtifactMenuBar(this);
 
@@ -38,10 +41,18 @@ namespace Artifact {
   resize(600, 640);
 
   auto DockManager = new CDockManager(this);
-  //CDockWidget* TableDockWidget = new CDockWidget("Table 1");
-  //DockManager->addAutoHideDockWidget(SideBarLeft, TableDockWidget);
 
-  //setCentralWidget(DockManager);
+  QLabel* l = new QLabel();
+  l->setWordWrap(true);
+  l->setAlignment(Qt::AlignTop | Qt::AlignLeft);
+  l->setText("Lorem ipsum dolor sit amet, consectetuer adipiscing elit. ");
+
+  // Create a dock widget with the title Label 1 and set the created label
+  // as the dock widget content
+  auto  DockWidget = new ads::CDockWidget("Label 1");
+  DockWidget->setWidget(l);
+  DockManager->addDockWidget(ads::TopDockWidgetArea, DockWidget);
+
  }
 
  ArtifactMainWindow::~ArtifactMainWindow()

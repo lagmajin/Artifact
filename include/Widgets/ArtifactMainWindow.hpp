@@ -16,6 +16,7 @@ namespace Artifact {
   ~ArtifactMainWindow();
  public slots:
 
+ signals:
  };
 
 

@@ -1,4 +1,4 @@
-#pragma once
+
 
 
 
@@ -10,4 +10,11 @@ namespace Artifact {
 
 
 
-}
+
+
+
+
+
+
+
+};

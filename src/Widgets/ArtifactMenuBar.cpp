@@ -1,5 +1,9 @@
-#include "../../include/Widgets/menu/ArtifactMenuBar.hpp"
 #include "../../include/Widgets/Menu/ArtifactFileMenu.hpp"
+#include "../../include/Widgets/Menu/ArtifactCompositionMenu.hpp"
+
+#include "../../include/Widgets/menu/ArtifactMenuBar.hpp"
+
+
 
 
 
@@ -9,8 +13,12 @@ namespace Artifact {
  {
   auto fileMenu = new ArtifactFileMenu(this);
 
-  addMenu(fileMenu);
+  auto compositionMenu = new ArtifactCompositionMenu(this);
 
+  //auto compositionMenu=new artifact
+
+  addMenu(fileMenu);
+  addMenu(compositionMenu);
 
  }
 
