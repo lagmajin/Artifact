@@ -133,7 +133,7 @@
     <Link>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalDependencies>Qt6Cored.lib;Qt6Guid.lib;Qt6Widgetsd.lib;ArtifactWidgetsd.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>Qt6Cored.lib;Qt6Guid.lib;Qt6Widgetsd.lib;ArtifactWidgetsdd.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <OutputFile>$(OutDir)$(TargetName)$(TargetExt)</OutputFile>
     </Link>
   </ItemDefinitionGroup>
@@ -164,18 +164,22 @@
     <ClInclude Include="include\Layer\ArtifactAbstractLayer.hpp" />
     <ClInclude Include="include\Layer\ArtifactCompositionLayer.hpp" />
     <ClInclude Include="include\Layer\ArtifactImageLayer.hpp" />
+    <ClInclude Include="include\Layer\ArtifactNullLayer.hpp" />
+    <ClInclude Include="include\Project\ArtifactProject.hpp" />
+    <ClInclude Include="include\Project\ArtifactProjectManager.hpp" />
+    <ClInclude Include="include\Project\ArtifactProjectSetting.hpp" />
     <ClInclude Include="include\Render\ArtifactRenderer.hpp" />
+    <ClInclude Include="include\Widgets\Menu\ArtifactFileMenu.hpp" />
     <ClInclude Include="include\Widgets\Menu\ArtifactTimeMenu.hpp" />
+    <ClInclude Include="include\Widgets\Menu\ArtifactViewMenu.hpp" />
     <ClInclude Include="include\Widgets\Render\ArtifactRenderManagerWidget.hpp" />
     <QtMoc Include="include\Widgets\ArtifactAssetBrowser.hpp" />
     <ClInclude Include="include\Widgets\ArtifactCompositionWidget.hpp" />
-    <ClInclude Include="include\Widgets\ArtifactFileMenu.hpp" />
     <ClInclude Include="include\Widgets\ArtifactInspectorWidget.hpp" />
     <QtMoc Include="include\Widgets\Menu\ArtifactCompositionMenu.hpp" />
     <ClInclude Include="include\Widgets\Menu\ArtifactLayerMenu.hpp" />
     <ClInclude Include="include\Widgets\Menu\ArtifactOptionMenu.hpp" />
     <QtMoc Include="include\Widgets\ArtifactMainWindow.hpp" />
-    <ClInclude Include="include\Widgets\ArtifactNullLayer.hpp" />
     <QtMoc Include="include\Widgets\ArtifactProjectManagerWidget.hpp" />
     <ClInclude Include="include\Widgets\ArtifactTimelineWidget.hpp" />
   </ItemGroup>
@@ -184,6 +188,7 @@
     <ClCompile Include="src\Composition\ArtifactComposition.cpp" />
     <ClCompile Include="src\Composition\ArtifactCompositionManager.cpp" />
     <ClCompile Include="src\Layer\ArtifactCompositionLayer.cpp" />
+    <ClCompile Include="src\Project\ArtifactProjectManager.cpp" />
     <ClCompile Include="src\Widgets\ArtifactInspectorWidget.cpp" />
     <ClCompile Include="src\Widgets\ArtifactMainWindow.cpp" />
     <ClCompile Include="src\Widgets\ArtifactMenuBar.cpp" />
@@ -195,6 +200,7 @@
     <ClCompile Include="src\Widgets\Menu\ArtifactLayerMenu.cpp" />
     <ClCompile Include="src\Widgets\Menu\ArtifactCompositionMenu.cpp" />
     <ClCompile Include="src\Widgets\Menu\ArtifactTimeMenu.cpp" />
+    <ClCompile Include="src\Widgets\Menu\ArtifactViewMenu.cpp" />
     <ClCompile Include="src\Widgets\Render\ArtifactRenderManagerWidget.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

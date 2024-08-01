@@ -15,7 +15,7 @@ namespace Artifact {
   explicit ArtifactMainWindow(QWidget* parent = nullptr);
   ~ArtifactMainWindow();
  public slots:
-
+  void addWidget();
  signals:
  };
 

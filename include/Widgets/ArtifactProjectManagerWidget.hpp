@@ -5,6 +5,8 @@
 
 namespace Artifact {
   
+ class ArtifactProjectManagerWidgetPrivate;
+
  class ArtifactProjectManagerWidget:public QWidget {
   Q_OBJECT
  private:

@@ -1,1 +1,14 @@
 #pragma once
+
+
+
+
+namespace Artifact {
+
+
+
+
+
+
+
+};

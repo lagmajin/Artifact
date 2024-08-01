@@ -5,13 +5,6 @@
 namespace Artifact {
 
 
-
-
-
-
-
-
-
  ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent /*= nullptr*/)
  {
 

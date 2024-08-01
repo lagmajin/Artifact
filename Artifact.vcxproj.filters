@@ -73,6 +73,9 @@
     <Filter Include="ソース ファイル\Widgets\Render">
       <UniqueIdentifier>{92ed620e-d7bc-4379-9b9f-a85d26cfdfdd}</UniqueIdentifier>
     </Filter>
+    <Filter Include="ヘッダー ファイル\Asset">
+      <UniqueIdentifier>{59e60427-b82b-451b-9ebf-c35152b73914}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="include\Widgets\ArtifactCompositionWidget.hpp">
@@ -93,9 +96,6 @@
     <ClInclude Include="include\Widgets\ArtifactInspectorWidget.hpp">
       <Filter>ヘッダー ファイル\Widgets</Filter>
     </ClInclude>
-    <ClInclude Include="include\Widgets\ArtifactNullLayer.hpp">
-      <Filter>ヘッダー ファイル\Layer</Filter>
-    </ClInclude>
     <ClInclude Include="include\Composition\ArtifactComposition.hpp">
       <Filter>ヘッダー ファイル\Composition</Filter>
     </ClInclude>
@@ -104,9 +104,6 @@
     </ClInclude>
     <ClInclude Include="include\Effetcs\ArtifactAbstractEffect.hpp">
       <Filter>ヘッダー ファイル\Effects</Filter>
-    </ClInclude>
-    <ClInclude Include="include\Widgets\ArtifactFileMenu.hpp">
-      <Filter>ヘッダー ファイル\Widgets\Menu</Filter>
     </ClInclude>
     <ClInclude Include="include\Widgets\Menu\ArtifactOptionMenu.hpp">
       <Filter>ヘッダー ファイル\Widgets\Menu</Filter>
@@ -130,6 +127,24 @@
       <Filter>ヘッダー ファイル\Widgets\Menu</Filter>
     </ClInclude>
     <ClInclude Include="include\Layer\Artifact3DModelLayer.hpp">
+      <Filter>ヘッダー ファイル\Layer</Filter>
+    </ClInclude>
+    <ClInclude Include="include\Widgets\Menu\ArtifactViewMenu.hpp">
+      <Filter>ヘッダー ファイル\Widgets\Menu</Filter>
+    </ClInclude>
+    <ClInclude Include="include\Widgets\Menu\ArtifactFileMenu.hpp">
+      <Filter>ヘッダー ファイル\Widgets\Menu</Filter>
+    </ClInclude>
+    <ClInclude Include="include\Project\ArtifactProjectManager.hpp">
+      <Filter>ヘッダー ファイル\Project</Filter>
+    </ClInclude>
+    <ClInclude Include="include\Project\ArtifactProjectSetting.hpp">
+      <Filter>ヘッダー ファイル\Project</Filter>
+    </ClInclude>
+    <ClInclude Include="include\Project\ArtifactProject.hpp">
+      <Filter>ヘッダー ファイル\Project</Filter>
+    </ClInclude>
+    <ClInclude Include="include\Layer\ArtifactNullLayer.hpp">
       <Filter>ヘッダー ファイル\Layer</Filter>
     </ClInclude>
   </ItemGroup>
@@ -181,6 +196,12 @@
     </ClCompile>
     <ClCompile Include="src\Widgets\Menu\ArtifactTimeMenu.cpp">
       <Filter>ソース ファイル\Widgets\Menu</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Widgets\Menu\ArtifactViewMenu.cpp">
+      <Filter>ソース ファイル\Widgets\Menu</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Project\ArtifactProjectManager.cpp">
+      <Filter>ソース ファイル\Project</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
