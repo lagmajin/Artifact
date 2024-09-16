@@ -89,7 +89,7 @@
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <OutDir>$(SolutionDir)/App</OutDir>
     <IncludePath>C:\Users\lagma\Desktop\Artifact\ArtifactWidgets\include;Z:\MyLib\Qt-Advanced-Docking-System\src;C:\Qt\6.5.0\msvc2019_64\include;C:\Qt\6.5.0\msvc2019_64\include\QtWidgets;$(IncludePath)</IncludePath>
-    <LibraryPath>$(SolutionDir)\lib;$(LibraryPath)</LibraryPath>
+    <LibraryPath>D:\WickedEngine-master\BUILD\x64\Debug;$(SolutionDir)\lib;$(LibraryPath)</LibraryPath>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <ClCompile>
@@ -133,7 +133,7 @@
     <Link>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalDependencies>Qt6Cored.lib;Qt6Guid.lib;Qt6Widgetsd.lib;ArtifactWidgetsdd.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>Qt6Cored.lib;Qt6Guid.lib;Qt6Widgetsd.lib;ArtifactWidgetsdd.lib;WickedEngine_Windows.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <OutputFile>$(OutDir)$(TargetName)$(TargetExt)</OutputFile>
     </Link>
   </ItemDefinitionGroup>
@@ -187,7 +187,10 @@
     <ClCompile Include="src\AppMain.cpp" />
     <ClCompile Include="src\Composition\ArtifactComposition.cpp" />
     <ClCompile Include="src\Composition\ArtifactCompositionManager.cpp" />
+    <ClCompile Include="src\Layer\ArtifactAbstractLayer.cpp" />
     <ClCompile Include="src\Layer\ArtifactCompositionLayer.cpp" />
+    <ClCompile Include="src\Layer\ArtifactImageLayer.cpp" />
+    <ClCompile Include="src\Layer\ArtifactNullLayer.cpp" />
     <ClCompile Include="src\Project\ArtifactProjectManager.cpp" />
     <ClCompile Include="src\Widgets\ArtifactInspectorWidget.cpp" />
     <ClCompile Include="src\Widgets\ArtifactMainWindow.cpp" />

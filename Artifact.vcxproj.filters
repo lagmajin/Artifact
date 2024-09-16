@@ -76,6 +76,12 @@
     <Filter Include="ヘッダー ファイル\Asset">
       <UniqueIdentifier>{59e60427-b82b-451b-9ebf-c35152b73914}</UniqueIdentifier>
     </Filter>
+    <Filter Include="ソース ファイル\Asset">
+      <UniqueIdentifier>{f145fa3f-ac31-44bf-b1b5-8f21fb5957d0}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ソース ファイル\NewFilter1">
+      <UniqueIdentifier>{e94e220d-8d8f-46b7-9a6f-43b025d97136}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="include\Widgets\ArtifactCompositionWidget.hpp">
@@ -202,6 +208,15 @@
     </ClCompile>
     <ClCompile Include="src\Project\ArtifactProjectManager.cpp">
       <Filter>ソース ファイル\Project</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Layer\ArtifactImageLayer.cpp">
+      <Filter>ソース ファイル\Layer</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Layer\ArtifactAbstractLayer.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Layer\ArtifactNullLayer.cpp">
+      <Filter>ソース ファイル</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>

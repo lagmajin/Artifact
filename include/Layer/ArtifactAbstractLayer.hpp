@@ -9,27 +9,17 @@ namespace Artifact {
 
  class ArtifactAbstractLayerPrivate;
 
- class ArtifactAbstractLayer {
+ class ArtifactAbstractLayer:public QObject {
  private:
-
+  ArtifactAbstractLayerPrivate* pLayer_;
  public:
   ArtifactAbstractLayer();
   virtual ~ArtifactAbstractLayer();
  signals:
 
  public slots:
-
+  void Show();
+  void Hide();
  };
-
- ArtifactAbstractLayer::ArtifactAbstractLayer()
- {
-
- }
-
-
- ArtifactAbstractLayer::~ArtifactAbstractLayer()
- {
-
- }
 
 }

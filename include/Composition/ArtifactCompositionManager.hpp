@@ -14,10 +14,14 @@ namespace Artifact {
  public:
   ArtifactCompositionManager();
   ~ArtifactCompositionManager();
+
+  void Search();
+
  signals:
 
  public slots:
-
+  void CreateNewComposition();
+  void RemoveAllComposition();
  };
 
 

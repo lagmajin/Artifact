@@ -2,6 +2,30 @@
 
 namespace Artifact {
 
+ class ArtifactCompositionManagerPrivate {
+ private:
+
+ public:
+  ArtifactCompositionManagerPrivate();
+  ~ArtifactCompositionManagerPrivate();
+  void CreateNewComposition();
+  void RemoveAllComposition();
+ };
+
+ ArtifactCompositionManagerPrivate::ArtifactCompositionManagerPrivate()
+ {
+
+ }
+
+ ArtifactCompositionManagerPrivate::~ArtifactCompositionManagerPrivate()
+ {
+
+ }
+
+ void ArtifactCompositionManagerPrivate::RemoveAllComposition()
+ {
+
+ }
 
  ArtifactCompositionManager::ArtifactCompositionManager()
  {
@@ -9,6 +33,11 @@ namespace Artifact {
  }
 
  ArtifactCompositionManager::~ArtifactCompositionManager()
+ {
+
+ }
+
+ void ArtifactCompositionManager::RemoveAllComposition()
  {
 
  }
