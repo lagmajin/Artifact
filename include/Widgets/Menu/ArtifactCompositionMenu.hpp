@@ -1,6 +1,6 @@
 #pragma once
-#include <QWidget>
-#include <QMenu>
+#include <QtWidgets/QtWidgets>
+#include <Qtwidgets/QMenu>
 
 
 

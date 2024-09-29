@@ -13,7 +13,7 @@ namespace Artifact {
 
  ArtifactLayerMenu::ArtifactLayerMenu(QWidget* parent/*=nullptr*/):QMenu(parent)
  {
-  setTitle(tr("Layer"));
+  //setTitle(tr("Layer"));
 
   //setTitle(tr("V‹K..."));
  }

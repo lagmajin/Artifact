@@ -13,7 +13,12 @@ namespace Artifact {
 
 
 
- ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget* parent /*= nullptr*/):QScrollArea(parent)
+ void ArtifactInspectorWidget::update()
+ {
+
+ }
+
+ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget* parent /*= nullptr*/) :QScrollArea(parent)
  {
   auto p=new VolumeSlider();
 
@@ -23,6 +28,11 @@ namespace Artifact {
  ArtifactInspectorWidget::~ArtifactInspectorWidget()
  {
 
+ }
+
+ void ArtifactInspectorWidget::triggerUpdate()
+ {
+  update();
  }
 
 }

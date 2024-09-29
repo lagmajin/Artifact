@@ -11,10 +11,12 @@ namespace Artifact {
   Q_OBJECT
  private:
 
+ protected:
  public:
   explicit ArtifactProjectManagerWidget(QWidget* parent = nullptr);
   ~ArtifactProjectManagerWidget();
-
+ public slots:
+  void triggerUpdate();
  };
 
 

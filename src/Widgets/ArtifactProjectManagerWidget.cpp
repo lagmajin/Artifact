@@ -15,4 +15,9 @@ namespace Artifact {
 
  }
 
+ void ArtifactProjectManagerWidget::triggerUpdate()
+ {
+
+ }
+
 }

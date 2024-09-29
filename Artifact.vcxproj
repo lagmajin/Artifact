@@ -59,7 +59,7 @@
   <PropertyGroup Label="QtSettings" Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" />
   <PropertyGroup Label="QtSettings" Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" />
   <PropertyGroup Label="QtSettings" Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-    <QtInstall>6.5.0_msvc2019_64</QtInstall>
+    <QtInstall>6.7.2_msvc2019_64</QtInstall>
   </PropertyGroup>
   <PropertyGroup Label="QtSettings" Condition="'$(Configuration)|$(Platform)'=='Release|x64'" />
   <Target Name="QtMsBuildNotFound" BeforeTargets="CustomBuild;ClCompile" Condition="!Exists('$(QtMsBuild)\qt.targets') OR !Exists('$(QtMsBuild)\Qt.props')">
@@ -88,8 +88,8 @@
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <OutDir>$(SolutionDir)/App</OutDir>
-    <IncludePath>C:\Users\lagma\Desktop\Artifact\ArtifactWidgets\include;Z:\MyLib\Qt-Advanced-Docking-System\src;C:\Qt\6.5.0\msvc2019_64\include;C:\Qt\6.5.0\msvc2019_64\include\QtWidgets;$(IncludePath)</IncludePath>
-    <LibraryPath>D:\WickedEngine-master\BUILD\x64\Debug;$(SolutionDir)\lib;$(LibraryPath)</LibraryPath>
+    <IncludePath>X:\WickedEngine-master\WickedEngine;X:\Qt\6.7.2\msvc2019_64\include\QtCore;X:\Qt\6.7.2\msvc2019_64\include\QtWidgets;C:\Users\lagma\Desktop\Artifact\ArtifactWidgets\include;Z:\MyLib\Qt-Advanced-Docking-System\src;X:\Qt\6.7.2\msvc2019_64\include;$(IncludePath)</IncludePath>
+    <LibraryPath>X:\WickedEngine-master\BUILD\x64\Debug;X:\Qt\6.7.2\msvc2019_64\lib;D:\WickedEngine-master\BUILD\x64\Debug;$(SolutionDir)\lib;Z:\MyLib\Qt-Advanced-Docking-System\build\Desktop_Qt_6_7_2_MSVC2019_64bit-Debug\lib;$(LibraryPath)</LibraryPath>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <ClCompile>
@@ -135,6 +135,7 @@
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <AdditionalDependencies>Qt6Cored.lib;Qt6Guid.lib;Qt6Widgetsd.lib;ArtifactWidgetsdd.lib;WickedEngine_Windows.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <OutputFile>$(OutDir)$(TargetName)$(TargetExt)</OutputFile>
+      <ForceFileOutput>Enabled</ForceFileOutput>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -160,24 +161,26 @@
     <ClInclude Include="include\Composition\ArtifactComposition2D.hpp" />
     <ClInclude Include="include\Composition\ArtifactCompositionManager.hpp" />
     <ClInclude Include="include\Effetcs\ArtifactAbstractEffect.hpp" />
+    <ClInclude Include="include\GUI\ArtifactGuiManager.hpp" />
     <ClInclude Include="include\Layer\Artifact3DModelLayer.hpp" />
-    <ClInclude Include="include\Layer\ArtifactAbstractLayer.hpp" />
+    <QtMoc Include="include\Layer\ArtifactAbstractLayer.hpp" />
     <ClInclude Include="include\Layer\ArtifactCompositionLayer.hpp" />
     <ClInclude Include="include\Layer\ArtifactImageLayer.hpp" />
     <ClInclude Include="include\Layer\ArtifactNullLayer.hpp" />
-    <ClInclude Include="include\Project\ArtifactProject.hpp" />
+    <QtMoc Include="include\Project\ArtifactProject.hpp" />
     <ClInclude Include="include\Project\ArtifactProjectManager.hpp" />
     <ClInclude Include="include\Project\ArtifactProjectSetting.hpp" />
     <ClInclude Include="include\Render\ArtifactRenderer.hpp" />
     <ClInclude Include="include\Widgets\Menu\ArtifactFileMenu.hpp" />
+    <ClInclude Include="include\Widgets\Menu\ArtifactHelpMenu.hpp" />
     <ClInclude Include="include\Widgets\Menu\ArtifactTimeMenu.hpp" />
-    <ClInclude Include="include\Widgets\Menu\ArtifactViewMenu.hpp" />
-    <ClInclude Include="include\Widgets\Render\ArtifactRenderManagerWidget.hpp" />
+    <QtMoc Include="include\Widgets\Menu\ArtifactViewMenu.hpp" />
+    <QtMoc Include="include\Widgets\Render\ArtifactRenderManagerWidget.hpp" />
     <QtMoc Include="include\Widgets\ArtifactAssetBrowser.hpp" />
     <ClInclude Include="include\Widgets\ArtifactCompositionWidget.hpp" />
-    <ClInclude Include="include\Widgets\ArtifactInspectorWidget.hpp" />
+    <QtMoc Include="include\Widgets\ArtifactInspectorWidget.hpp" />
     <QtMoc Include="include\Widgets\Menu\ArtifactCompositionMenu.hpp" />
-    <ClInclude Include="include\Widgets\Menu\ArtifactLayerMenu.hpp" />
+    <QtMoc Include="include\Widgets\Menu\ArtifactLayerMenu.hpp" />
     <ClInclude Include="include\Widgets\Menu\ArtifactOptionMenu.hpp" />
     <QtMoc Include="include\Widgets\ArtifactMainWindow.hpp" />
     <QtMoc Include="include\Widgets\ArtifactProjectManagerWidget.hpp" />

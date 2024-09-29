@@ -5,6 +5,7 @@
 
 #include "../../include/Widgets/menu/ArtifactMenuBar.hpp"
 #include "../../include/Widgets/ArtifactMainWindow.hpp"
+#include "../../include/Widgets/Render/ArtifactRenderManagerWidget.hpp"
 
 
 
@@ -53,6 +54,10 @@ namespace Artifact {
   DockWidget->setWidget(l);
   DockManager->addDockWidget(ads::TopDockWidgetArea, DockWidget);
 
+
+  //auto render = new ArtifactRenderManagerWidget();
+ 
+  //render->show();
  }
 
  ArtifactMainWindow::~ArtifactMainWindow()
