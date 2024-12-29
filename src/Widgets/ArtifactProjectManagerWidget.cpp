@@ -15,6 +15,11 @@ namespace Artifact {
 
  }
 
+ void ArtifactProjectManagerWidget::dropEvent(QDropEvent* event)
+ {
+
+ }
+
  void ArtifactProjectManagerWidget::triggerUpdate()
  {
 

@@ -12,6 +12,7 @@ namespace Artifact {
  private:
 
  protected:
+  void dropEvent(QDropEvent* event);
  public:
   explicit ArtifactProjectManagerWidget(QWidget* parent = nullptr);
   ~ArtifactProjectManagerWidget();

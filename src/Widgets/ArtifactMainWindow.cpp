@@ -6,6 +6,7 @@
 #include "../../include/Widgets/menu/ArtifactMenuBar.hpp"
 #include "../../include/Widgets/ArtifactMainWindow.hpp"
 #include "../../include/Widgets/Render/ArtifactRenderManagerWidget.hpp"
+#include "../../include/Widgets/Render/ArtifactOgreRenderWindow.hpp"
 
 
 
@@ -58,6 +59,10 @@ namespace Artifact {
   //auto render = new ArtifactRenderManagerWidget();
  
   //render->show();
+
+  auto qto=new QTOgreWindow();
+  qto->show();
+
  }
 
  ArtifactMainWindow::~ArtifactMainWindow()
