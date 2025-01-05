@@ -16,6 +16,8 @@ namespace Artifact {
  public:
   explicit ArtifactProjectManagerWidget(QWidget* parent = nullptr);
   ~ArtifactProjectManagerWidget();
+ signals:
+
  public slots:
   void triggerUpdate();
  };

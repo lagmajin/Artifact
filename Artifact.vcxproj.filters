@@ -85,6 +85,9 @@
     <Filter Include="ソース ファイル\Test">
       <UniqueIdentifier>{f36bdb73-2699-4baa-9266-07620a4fb3c7}</UniqueIdentifier>
     </Filter>
+    <Filter Include="ヘッダー ファイル\Widgets\Render\shader">
+      <UniqueIdentifier>{1895f779-69dd-4ed9-9664-0cc7f3348f5e}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="include\Widgets\ArtifactCompositionWidget.hpp">
@@ -143,6 +146,15 @@
     </ClInclude>
     <ClInclude Include="include\GUI\ArtifactGuiManager.hpp">
       <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="include\Widgets\Menu\ArtifactTestMenu.hpp">
+      <Filter>ヘッダー ファイル\Widgets\Menu</Filter>
+    </ClInclude>
+    <ClInclude Include="include\Widgets\Menu\ArtifactMenuBar.hpp">
+      <Filter>ヘッダー ファイル\Widgets\Menu</Filter>
+    </ClInclude>
+    <ClInclude Include="include\Widgets\Render\Shader\CommonShader.hpp">
+      <Filter>ヘッダー ファイル\Widgets\Render\shader</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
@@ -215,6 +227,12 @@
     <ClCompile Include="src\Widgets\Menu\ArtifactTestMenu.cpp">
       <Filter>ソース ファイル\Widgets\Menu</Filter>
     </ClCompile>
+    <ClCompile Include="src\Widgets\Render\ArtifactDiligentEngineRenderWindow.cpp">
+      <Filter>ソース ファイル\Widgets\Render</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Project\ArtifactProject.cpp">
+      <Filter>ソース ファイル\Project</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <QtMoc Include="include\Widgets\ArtifactProjectManagerWidget.hpp">
@@ -248,6 +266,9 @@
       <Filter>ヘッダー ファイル\Layer</Filter>
     </QtMoc>
     <QtMoc Include="include\Widgets\Render\ArtifactOgreRenderWindow.hpp">
+      <Filter>ヘッダー ファイル\Widgets\Render</Filter>
+    </QtMoc>
+    <QtMoc Include="include\Widgets\Render\ArtifactDiligentEngineRenderWindow.hpp">
       <Filter>ヘッダー ファイル\Widgets\Render</Filter>
     </QtMoc>
   </ItemGroup>

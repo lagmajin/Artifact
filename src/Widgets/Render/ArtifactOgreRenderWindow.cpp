@@ -44,16 +44,18 @@ namespace Artifact {
  void QTOgreWindow::initialize()
  {
   auto root = new Ogre::Root("", "");
+  
 
   Ogre::NameValuePairList options;
   options["externalWindowHandle"] = Ogre::StringConverter::toString((uintptr_t)this->winId());
   mRenderWindow = mRoot->initialise(true, "Vulkan + Qt");
 
-  // OpenGL / Vulkan コンテキストを作成し、QWindow と統合
+ 
   auto context = new QOpenGLContext;
   context->setFormat(QSurfaceFormat::defaultFormat());
   context->create();
 
+  //mRoot->createRenderWindow("options",this->width(), this->height(),false,options);
  }
 
  void QTOgreWindow::createScene()

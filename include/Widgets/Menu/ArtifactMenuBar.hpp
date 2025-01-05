@@ -19,7 +19,8 @@ namespace Artifact {
   Test,
   Window,
   Option,
-  Help
+  Help,
+
  };
 
  class ArtifactHelpMenu {

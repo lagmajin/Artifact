@@ -1,5 +1,7 @@
 #pragma once
 
+#include <memory>
+
 #include <QtCore/QObject>
 
 
@@ -11,8 +13,11 @@ namespace Artifact {
  class ArtifactProject :public QObject {
   Q_OBJECT
  private:
+  std::unique_ptr<ArtifactProjectPrivate> pImpl_;
 
  public:
+  ArtifactProject();
+  ~ArtifactProject();
   QString projectName() const;
   void setProjectName(const QString&name);
  signals:
@@ -21,11 +26,6 @@ namespace Artifact {
 
  public slots:
  };
-
- void ArtifactProject::setProjectName(const QString& name)
- {
-
- }
 
 
 }

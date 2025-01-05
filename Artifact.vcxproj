@@ -89,8 +89,8 @@
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <OutDir>$(SolutionDir)/App</OutDir>
-    <IncludePath>X:\ogre-sdk-v14.3.2-msvc142-x64\include;X:\WickedEngine-master\WickedEngine;X:\Qt\6.7.2\msvc2019_64\include\QtCore;X:\Qt\6.7.2\msvc2019_64\include\QtWidgets;C:\Users\lagma\Desktop\Artifact\ArtifactWidgets\include;Z:\MyLib\Qt-Advanced-Docking-System\src;X:\Qt\6.7.2\msvc2019_64\include;$(IncludePath)</IncludePath>
-    <LibraryPath>X:\ogre-sdk-v14.3.2-msvc142-x64\lib;X:\WickedEngine-master\BUILD\x64\Debug;X:\Qt\6.7.2\msvc2019_64\lib;D:\WickedEngine-master\BUILD\x64\Debug;$(SolutionDir)\lib;Z:\MyLib\Qt-Advanced-Docking-System\build\Desktop_Qt_6_7_2_MSVC2019_64bit-Debug\lib;$(LibraryPath)</LibraryPath>
+    <IncludePath>X:\DEngine\DiligentCore\Graphics\GraphicsEngineD3D12\interface;X:\DEngine\DiligentCore\Common\interface;X:\DEngine\DiligentCore\Graphics\GraphicsEngine\interface;X:\DEngine\DiligentCore\Graphics\GraphicsEngineVulkan\interface;X:\DEngine\DiligentCore\Graphics\GraphicsEngineVulkan\include;X:\ogre-sdk-v14.3.2-msvc142-x64\include;X:\WickedEngine-master\WickedEngine;X:\Qt\6.7.2\msvc2019_64\include\QtCore;X:\Qt\6.7.2\msvc2019_64\include\QtWidgets;C:\Users\lagma\Desktop\Artifact\ArtifactWidgets\include;Z:\MyLib\Qt-Advanced-Docking-System\src;X:\Qt\6.7.2\msvc2019_64\include;$(IncludePath)</IncludePath>
+    <LibraryPath>X:\Build\Graphics\GraphicsEngineD3D12\Debug;X:\Build\Graphics\GraphicsEngineVulkan\Debug;E:\libs;X:\ogre-sdk-v14.3.2-msvc142-x64\lib;X:\WickedEngine-master\BUILD\x64\Debug;X:\Qt\6.7.2\msvc2019_64\lib;D:\WickedEngine-master\BUILD\x64\Debug;$(SolutionDir)\lib;Z:\MyLib\Qt-Advanced-Docking-System\build\Desktop_Qt_6_7_2_MSVC2019_64bit-Debug\lib;$(LibraryPath)</LibraryPath>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <ClCompile>
@@ -126,7 +126,7 @@
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>
       <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_DEBUG;_CONSOLE;PLATFORM_WIN32;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpplatest</LanguageStandard>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
@@ -165,6 +165,8 @@
     <ClInclude Include="include\Effetcs\ArtifactAbstractEffect.hpp" />
     <ClInclude Include="include\GUI\ArtifactGuiManager.hpp" />
     <ClInclude Include="include\Layer\Artifact3DModelLayer.hpp" />
+    <ClInclude Include="include\Widgets\Render\Shader\CommonShader.hpp" />
+    <QtMoc Include="include\Widgets\Render\ArtifactDiligentEngineRenderWindow.hpp" />
     <QtMoc Include="include\Widgets\Render\ArtifactOgreRenderWindow.hpp" />
     <QtMoc Include="include\Layer\ArtifactAbstractLayer.hpp" />
     <ClInclude Include="include\Layer\ArtifactCompositionLayer.hpp" />
@@ -176,6 +178,8 @@
     <ClInclude Include="include\Render\ArtifactRenderer.hpp" />
     <ClInclude Include="include\Widgets\Menu\ArtifactFileMenu.hpp" />
     <ClInclude Include="include\Widgets\Menu\ArtifactHelpMenu.hpp" />
+    <ClInclude Include="include\Widgets\Menu\ArtifactMenuBar.hpp" />
+    <ClInclude Include="include\Widgets\Menu\ArtifactTestMenu.hpp" />
     <ClInclude Include="include\Widgets\Menu\ArtifactTimeMenu.hpp" />
     <QtMoc Include="include\Widgets\Menu\ArtifactViewMenu.hpp" />
     <QtMoc Include="include\Widgets\Render\ArtifactRenderManagerWidget.hpp" />
@@ -197,6 +201,7 @@
     <ClCompile Include="src\Layer\ArtifactCompositionLayer.cpp" />
     <ClCompile Include="src\Layer\ArtifactImageLayer.cpp" />
     <ClCompile Include="src\Layer\ArtifactNullLayer.cpp" />
+    <ClCompile Include="src\Project\ArtifactProject.cpp" />
     <ClCompile Include="src\Project\ArtifactProjectManager.cpp" />
     <ClCompile Include="src\Widgets\ArtifactInspectorWidget.cpp" />
     <ClCompile Include="src\Widgets\ArtifactMainWindow.cpp" />
@@ -211,6 +216,7 @@
     <ClCompile Include="src\Widgets\Menu\ArtifactTestMenu.cpp" />
     <ClCompile Include="src\Widgets\Menu\ArtifactTimeMenu.cpp" />
     <ClCompile Include="src\Widgets\Menu\ArtifactViewMenu.cpp" />
+    <ClCompile Include="src\Widgets\Render\ArtifactDiligentEngineRenderWindow.cpp" />
     <ClCompile Include="src\Widgets\Render\ArtifactOgreRenderWindow.cpp" />
     <ClCompile Include="src\Widgets\Render\ArtifactRenderManagerWidget.cpp" />
   </ItemGroup>

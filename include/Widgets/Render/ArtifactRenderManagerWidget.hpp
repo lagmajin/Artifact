@@ -9,7 +9,7 @@
 
 namespace Artifact {
 
- struct ArtifactRenderManagerWidgetPrivate;
+ class ArtifactRenderManagerWidgetPrivate;
 
  //class wi::Application;
 

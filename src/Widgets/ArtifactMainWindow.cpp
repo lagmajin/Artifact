@@ -7,6 +7,7 @@
 #include "../../include/Widgets/ArtifactMainWindow.hpp"
 #include "../../include/Widgets/Render/ArtifactRenderManagerWidget.hpp"
 #include "../../include/Widgets/Render/ArtifactOgreRenderWindow.hpp"
+#include "../../include/Widgets/Render/ArtifactDiligentEngineRenderWindow.hpp"
 
 
 
@@ -60,8 +61,13 @@ namespace Artifact {
  
   //render->show();
 
-  auto qto=new QTOgreWindow();
-  qto->show();
+  //auto qto=new QTOgreWindow();
+  //qto->show();
+
+  auto dWindow = new ArtifactDiligentEngineRenderWindow();
+  dWindow->initialize();
+
+  dWindow->show();
 
  }
 
