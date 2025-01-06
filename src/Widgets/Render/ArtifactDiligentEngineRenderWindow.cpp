@@ -105,6 +105,12 @@ ArtifactDiligentEngineRenderWindowPrivate::ArtifactDiligentEngineRenderWindowPri
 
   return true;
  }
+
+ void ArtifactDiligentEngineRenderWindow::pickingRay(int posx, int posy)
+ {
+
+ }
+
  void ArtifactDiligentEngineRenderWindow::render()
  {
   if (!m_initialized)

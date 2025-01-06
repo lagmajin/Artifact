@@ -11,6 +11,8 @@ namespace Artifact
 {
  using namespace Diligent;
 
+
+
  class ArtifactDiligentEngineRenderWindowPrivate;
 
  class ArtifactDiligentEngineRenderWindow : public QWindow
