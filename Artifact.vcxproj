@@ -165,6 +165,7 @@
     <ClInclude Include="include\Effetcs\ArtifactAbstractEffect.hpp" />
     <ClInclude Include="include\GUI\ArtifactGuiManager.hpp" />
     <ClInclude Include="include\Layer\Artifact3DModelLayer.hpp" />
+    <QtMoc Include="include\Widgets\Dialog\CreatePlaneLayerDialog.hpp" />
     <ClInclude Include="include\Widgets\Render\Shader\CommonShader.hpp" />
     <QtMoc Include="include\Widgets\Render\ArtifactDiligentEngineRenderWindow.hpp" />
     <QtMoc Include="include\Widgets\Render\ArtifactOgreRenderWindow.hpp" />
@@ -209,6 +210,7 @@
     <ClCompile Include="src\Widgets\ArtifactProjectManagerWidget.cpp" />
     <ClCompile Include="src\Widgets\ArtifactTimelineWidget.cpp" />
     <ClCompile Include="src\Widgets\Asset\ArtifactAssetBrowser.cpp" />
+    <ClCompile Include="src\Widgets\Dialog\CreatePlaneLayerDialog.cpp" />
     <ClCompile Include="src\Widgets\Menu\ArtifactFileMenu.cpp" />
     <ClCompile Include="src\Widgets\Menu\ArtifactHelpMenu.cpp" />
     <ClCompile Include="src\Widgets\Menu\ArtifactLayerMenu.cpp" />

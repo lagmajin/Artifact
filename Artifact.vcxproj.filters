@@ -88,6 +88,12 @@
     <Filter Include="ヘッダー ファイル\Widgets\Render\shader">
       <UniqueIdentifier>{1895f779-69dd-4ed9-9664-0cc7f3348f5e}</UniqueIdentifier>
     </Filter>
+    <Filter Include="ヘッダー ファイル\Widgets\Dialog">
+      <UniqueIdentifier>{acac6c74-4865-4ddf-946c-c1c7c3f5a6cc}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ソース ファイル\Widgets\Dialog">
+      <UniqueIdentifier>{653fc5aa-842d-4411-9b58-bd5e7c69117f}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="include\Widgets\ArtifactCompositionWidget.hpp">
@@ -233,6 +239,9 @@
     <ClCompile Include="src\Project\ArtifactProject.cpp">
       <Filter>ソース ファイル\Project</Filter>
     </ClCompile>
+    <ClCompile Include="src\Widgets\Dialog\CreatePlaneLayerDialog.cpp">
+      <Filter>ソース ファイル\Widgets\Dialog</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <QtMoc Include="include\Widgets\ArtifactProjectManagerWidget.hpp">
@@ -270,6 +279,9 @@
     </QtMoc>
     <QtMoc Include="include\Widgets\Render\ArtifactDiligentEngineRenderWindow.hpp">
       <Filter>ヘッダー ファイル\Widgets\Render</Filter>
+    </QtMoc>
+    <QtMoc Include="include\Widgets\Dialog\CreatePlaneLayerDialog.hpp">
+      <Filter>ヘッダー ファイル\Widgets\Dialog</Filter>
     </QtMoc>
   </ItemGroup>
 </Project>
