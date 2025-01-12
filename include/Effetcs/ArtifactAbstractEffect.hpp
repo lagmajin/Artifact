@@ -1,7 +1,7 @@
 #pragma once
 
 
-
+#include <QtCore/QObject>
 
 
 namespace Artifact {
@@ -12,14 +12,24 @@ namespace Artifact {
  private:
 
  public:
-
+  ArtifactAbstractEffect();
+  ~ArtifactAbstractEffect();
 
  };
 
+ ArtifactAbstractEffect::ArtifactAbstractEffect()
+ {
+
+ }
 
 
 
 
 
+
+ ArtifactAbstractEffect::~ArtifactAbstractEffect()
+ {
+
+ }
 
 };

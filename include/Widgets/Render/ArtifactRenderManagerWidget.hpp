@@ -18,7 +18,7 @@ namespace Artifact {
  class ArtifactRenderManagerWidget :public QWidget{
   Q_OBJECT
  private:
-  std::unique_ptr<ArtifactDiligentEngineRenderWindowPrivate> pImpl_;
+  //std::unique_ptr<ArtifactRenderManagerWidgetPrivate> pImpl_;
   bool initialized = false;
   wi::Application* app=nullptr;
  protected:

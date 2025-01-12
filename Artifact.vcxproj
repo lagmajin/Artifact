@@ -198,6 +198,7 @@
     <ClCompile Include="src\AppMain.cpp" />
     <ClCompile Include="src\Composition\ArtifactComposition.cpp" />
     <ClCompile Include="src\Composition\ArtifactCompositionManager.cpp" />
+    <ClCompile Include="src\Effect\ArtifactAbstractEffect.cpp" />
     <ClCompile Include="src\Layer\ArtifactAbstractLayer.cpp" />
     <ClCompile Include="src\Layer\ArtifactCompositionLayer.cpp" />
     <ClCompile Include="src\Layer\ArtifactImageLayer.cpp" />

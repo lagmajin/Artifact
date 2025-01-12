@@ -94,6 +94,9 @@
     <Filter Include="ソース ファイル\Widgets\Dialog">
       <UniqueIdentifier>{653fc5aa-842d-4411-9b58-bd5e7c69117f}</UniqueIdentifier>
     </Filter>
+    <Filter Include="ソース ファイル\Effects">
+      <UniqueIdentifier>{e8cffa95-ec83-4b3b-9cb2-ea30fbc2a312}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="include\Widgets\ArtifactCompositionWidget.hpp">
@@ -241,6 +244,9 @@
     </ClCompile>
     <ClCompile Include="src\Widgets\Dialog\CreatePlaneLayerDialog.cpp">
       <Filter>ソース ファイル\Widgets\Dialog</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Effect\ArtifactAbstractEffect.cpp">
+      <Filter>ソース ファイル\Effects</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
