@@ -1,5 +1,6 @@
 #pragma once
 
+#include <memory>
 
 #include <QtCore/QObject>
 
@@ -16,20 +17,5 @@ namespace Artifact {
   ~ArtifactAbstractEffect();
 
  };
-
- ArtifactAbstractEffect::ArtifactAbstractEffect()
- {
-
- }
-
-
-
-
-
-
- ArtifactAbstractEffect::~ArtifactAbstractEffect()
- {
-
- }
 
 };
