@@ -9,6 +9,7 @@
 namespace Artifact {
 
 
+
  struct ArtifactLayerMenuPrivate;
 
  class ArtifactLayerMenu:public QMenu {

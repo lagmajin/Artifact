@@ -5,6 +5,8 @@
 
 namespace Artifact {
 
+ class ArtifactRenderTestMenuPrivate;
+
  class ArtifactRenderTestMenu :public QMenu {
  private:
 
@@ -13,6 +15,13 @@ namespace Artifact {
   ~ArtifactRenderTestMenu();
  signals:
   void serialImageRenderTestRequested();
+ public slots:
+ };
+
+ class ArtifactEffectTestMenuPrivate;
+
+ class ArtifactEffectTestMenu {
+
  };
 
  class ArtifactWidgetTestMenu :public QMenu {

@@ -1,3 +1,5 @@
+#include <mutex>
+
 #include "../../../include/Widgets/menu/ArtifactFileMenu.hpp"
 
 
@@ -7,8 +9,27 @@
 
 namespace Artifact {
 
+ class  ArtifactFileMenuPrivate {
+ private:
 
- ArtifactFileMenu::ArtifactFileMenu(QWidget* parent /*= nullptr*/)
+  bool projectCreated_ = false;
+ public:
+
+  void projectCreated();
+  void projectClosed();
+ };
+
+ void ArtifactFileMenuPrivate::projectCreated()
+ {
+  projectCreated_ = true;
+ }
+
+ void ArtifactFileMenuPrivate::projectClosed()
+ {
+  projectCreated_ = false;
+ }
+
+ ArtifactFileMenu::ArtifactFileMenu(QWidget* parent /*= nullptr*/):pImpl_(new ArtifactFileMenuPrivate)
  {
   setObjectName("FileMenu");
 
@@ -27,15 +48,14 @@ namespace Artifact {
 
  }
 
+ void ArtifactFileMenu::projectCreated()
+ {
 
+ }
 
+ void ArtifactFileMenu::projectClosed()
+ {
 
-
-
-
-
-
-
-
+ }
 
 };
