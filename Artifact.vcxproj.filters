@@ -97,6 +97,9 @@
     <Filter Include="ソース ファイル\Effects">
       <UniqueIdentifier>{e8cffa95-ec83-4b3b-9cb2-ea30fbc2a312}</UniqueIdentifier>
     </Filter>
+    <Filter Include="ソース ファイル\GUI">
+      <UniqueIdentifier>{7d3fce4b-21ce-4df3-96a2-203dc9975abb}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="include\Widgets\ArtifactCompositionWidget.hpp">
@@ -247,6 +250,9 @@
     </ClCompile>
     <ClCompile Include="src\Effect\ArtifactAbstractEffect.cpp">
       <Filter>ソース ファイル\Effects</Filter>
+    </ClCompile>
+    <ClCompile Include="src\GUI\ArtifactGuiManager.cpp">
+      <Filter>ソース ファイル\GUI</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>

@@ -7,7 +7,7 @@
 
 namespace Artifact {
 
- typedef struct ArtifactLayerMenuPrivate {
+class ArtifactLayerMenuPrivate {
 
  };
 

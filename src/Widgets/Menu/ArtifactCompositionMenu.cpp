@@ -7,7 +7,12 @@
 
 namespace Artifact {
 
+ class ArtifactCompositionMenuPrivate {
+ private:
 
+ public:
+
+ };
 
  ArtifactCompositionMenu::ArtifactCompositionMenu(QWidget* parent/*=nullptr*/):QMenu(parent)
  {
