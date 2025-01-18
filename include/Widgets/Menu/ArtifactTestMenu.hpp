@@ -21,7 +21,20 @@ namespace Artifact {
  class ArtifactEffectTestMenuPrivate;
 
  class ArtifactEffectTestMenu {
+  private:
 
+ public:
+
+ };
+
+ class ArtifactMediaTestMenuPrivate;
+
+ class ArtifactMediaTestMenu :public QMenu {
+ private:
+
+ public:
+  explicit ArtifactMediaTestMenu(QWidget* parent = nullptr);
+  ~ArtifactMediaTestMenu();
  };
 
  class ArtifactWidgetTestMenu :public QMenu {

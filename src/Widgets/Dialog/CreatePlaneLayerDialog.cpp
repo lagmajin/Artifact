@@ -25,4 +25,9 @@ namespace Artifact {
 
  }
 
+ void PlaneLayerSettingPage::setDefaultFocus()
+ {
+
+ }
+
 };
