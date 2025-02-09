@@ -1,0 +1,17 @@
+{
+    "Version": "1.1",
+    "Data": {
+        "Source": "c:\\program files\\microsoft visual studio\\2022\\community\\vc\\tools\\msvc\\14.42.34433\\include\\thread",
+        "ProvidedModule": "",
+        "ImportedModules": [],
+        "ImportedHeaderUnits": [
+            "c:\\program files\\microsoft visual studio\\2022\\community\\vc\\tools\\msvc\\14.42.34433\\include\\__msvc_chrono.hpp",
+            "c:\\program files\\microsoft visual studio\\2022\\community\\vc\\tools\\msvc\\14.42.34433\\include\\memory",
+            "c:\\program files\\microsoft visual studio\\2022\\community\\vc\\tools\\msvc\\14.42.34433\\include\\tuple",
+            "c:\\program files\\microsoft visual studio\\2022\\community\\vc\\tools\\msvc\\14.42.34433\\include\\xthreads.h",
+            "c:\\program files\\microsoft visual studio\\2022\\community\\vc\\tools\\msvc\\14.42.34433\\include\\compare",
+            "c:\\program files\\microsoft visual studio\\2022\\community\\vc\\tools\\msvc\\14.42.34433\\include\\stop_token",
+            "c:\\program files\\microsoft visual studio\\2022\\community\\vc\\tools\\msvc\\14.42.34433\\include\\format"
+        ]
+    }
+}

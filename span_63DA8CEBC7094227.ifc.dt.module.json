@@ -1,0 +1,14 @@
+{
+    "Version": "1.1",
+    "Data": {
+        "Source": "c:\\program files\\microsoft visual studio\\2022\\community\\vc\\tools\\msvc\\14.42.34433\\include\\span",
+        "ProvidedModule": "",
+        "ImportedModules": [],
+        "ImportedHeaderUnits": [
+            "c:\\program files\\microsoft visual studio\\2022\\community\\vc\\tools\\msvc\\14.42.34433\\include\\compare",
+            "c:\\program files\\microsoft visual studio\\2022\\community\\vc\\tools\\msvc\\14.42.34433\\include\\cstddef",
+            "c:\\program files\\microsoft visual studio\\2022\\community\\vc\\tools\\msvc\\14.42.34433\\include\\type_traits",
+            "c:\\program files\\microsoft visual studio\\2022\\community\\vc\\tools\\msvc\\14.42.34433\\include\\xutility"
+        ]
+    }
+}

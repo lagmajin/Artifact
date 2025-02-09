@@ -1,0 +1,11 @@
+{
+    "Version": "1.1",
+    "Data": {
+        "Source": "c:\\users\\lagma\\desktop\\artifact\\artifactcore\\include\\frame\\frameposition.ixx",
+        "ProvidedModule": "FramePosition",
+        "ImportedModules": [
+            "std.core"
+        ],
+        "ImportedHeaderUnits": []
+    }
+}

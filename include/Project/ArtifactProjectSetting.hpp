@@ -1,12 +1,15 @@
-#pragma once
+module;
+
+
+export module ArtifactProjectSetting;
 
 
 
+export namespace Artifact {
 
+ class ArtifactProjectSetting {
 
-namespace Artifact {
-
-
+ };
 
 
 

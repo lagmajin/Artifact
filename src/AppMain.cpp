@@ -3,7 +3,7 @@
 #include <QtWidgets/QApplication>
 #include "../include/Widgets/ArtifactMainWindow.hpp"
 
-
+import Scale2D;
 
 using namespace Artifact;
 

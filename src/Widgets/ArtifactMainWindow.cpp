@@ -76,4 +76,9 @@ namespace Artifact {
 
  }
 
+ void ArtifactMainWindow::addWidget()
+ {
+
+ }
+
 }

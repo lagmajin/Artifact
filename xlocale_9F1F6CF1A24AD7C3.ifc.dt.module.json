@@ -1,0 +1,16 @@
+{
+    "Version": "1.1",
+    "Data": {
+        "Source": "c:\\program files\\microsoft visual studio\\2022\\community\\vc\\tools\\msvc\\14.42.34433\\include\\xlocale",
+        "ProvidedModule": "",
+        "ImportedModules": [],
+        "ImportedHeaderUnits": [
+            "c:\\program files\\microsoft visual studio\\2022\\community\\vc\\tools\\msvc\\14.42.34433\\include\\climits",
+            "c:\\program files\\microsoft visual studio\\2022\\community\\vc\\tools\\msvc\\14.42.34433\\include\\cstring",
+            "c:\\program files\\microsoft visual studio\\2022\\community\\vc\\tools\\msvc\\14.42.34433\\include\\memory",
+            "c:\\program files\\microsoft visual studio\\2022\\community\\vc\\tools\\msvc\\14.42.34433\\include\\typeinfo",
+            "c:\\program files\\microsoft visual studio\\2022\\community\\vc\\tools\\msvc\\14.42.34433\\include\\xfacet",
+            "c:\\program files\\microsoft visual studio\\2022\\community\\vc\\tools\\msvc\\14.42.34433\\include\\xlocinfo"
+        ]
+    }
+}

@@ -1,0 +1,24 @@
+{
+    "Version": "1.2",
+    "Data": {
+        "Source": "c:\\program files\\microsoft visual studio\\2022\\community\\vc\\tools\\msvc\\14.42.34433\\include\\thread",
+        "ProvidedModule": "",
+        "Includes": [
+            "c:\\program files\\microsoft visual studio\\2022\\community\\vc\\tools\\msvc\\14.42.34433\\include\\yvals_core.h",
+            "c:\\program files\\microsoft visual studio\\2022\\community\\vc\\tools\\msvc\\14.42.34433\\include\\vcruntime.h",
+            "c:\\program files\\microsoft visual studio\\2022\\community\\vc\\tools\\msvc\\14.42.34433\\include\\sal.h",
+            "c:\\program files\\microsoft visual studio\\2022\\community\\vc\\tools\\msvc\\14.42.34433\\include\\concurrencysal.h",
+            "c:\\program files\\microsoft visual studio\\2022\\community\\vc\\tools\\msvc\\14.42.34433\\include\\vadefs.h",
+            "c:\\program files\\microsoft visual studio\\2022\\community\\vc\\tools\\msvc\\14.42.34433\\include\\xkeycheck.h",
+            "c:\\program files (x86)\\windows kits\\10\\include\\10.0.22621.0\\ucrt\\process.h",
+            "c:\\program files (x86)\\windows kits\\10\\include\\10.0.22621.0\\ucrt\\corecrt.h",
+            "c:\\program files (x86)\\windows kits\\10\\include\\10.0.22621.0\\ucrt\\corecrt_startup.h",
+            "c:\\program files (x86)\\windows kits\\10\\include\\10.0.22621.0\\ucrt\\math.h",
+            "c:\\program files (x86)\\windows kits\\10\\include\\10.0.22621.0\\ucrt\\corecrt_math.h",
+            "c:\\program files\\microsoft visual studio\\2022\\community\\vc\\tools\\msvc\\14.42.34433\\include\\vcruntime_startup.h",
+            "c:\\program files (x86)\\windows kits\\10\\include\\10.0.22621.0\\ucrt\\corecrt_wprocess.h"
+        ],
+        "ImportedModules": [],
+        "ImportedHeaderUnits": []
+    }
+}

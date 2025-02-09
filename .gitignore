@@ -361,3 +361,13 @@ MigrationBackup/
 
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
+
+*.ifc
+*.lib
+/App/libvlccore.dll
+/App/libvlc.dll
+/App/Halide.dll
+/AbstractDecoder.ixx.ifc.dt.d.json
+/AbstractCompositionBuffer2D.hpp_C7B68ADB99E08A11.ifc.dt.module.json.command
+/App/Artifact.exp
+/App/Artifact.exe

@@ -12,10 +12,21 @@ namespace Artifact {
  private:
 
  public:
-
+  PlaneLayerSettingPagePrivate();
+  ~PlaneLayerSettingPagePrivate();
  };
 
- PlaneLayerSettingPage::PlaneLayerSettingPage(QWidget* parent /*= nullptr*/):QWidget(parent)
+ PlaneLayerSettingPagePrivate::PlaneLayerSettingPagePrivate()
+ {
+
+ }
+
+ PlaneLayerSettingPagePrivate::~PlaneLayerSettingPagePrivate()
+ {
+
+ }
+
+ PlaneLayerSettingPage::PlaneLayerSettingPage(QWidget* parent /*= nullptr*/) :QWidget(parent)
  {
 
  }
@@ -26,6 +37,16 @@ namespace Artifact {
  }
 
  void PlaneLayerSettingPage::setDefaultFocus()
+ {
+
+ }
+
+ void PlaneLayerSettingPage::spouitMode()
+ {
+
+ }
+
+ void PlaneLayerSettingPage::resizeCompositionSize()
  {
 
  }

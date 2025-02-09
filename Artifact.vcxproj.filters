@@ -100,6 +100,12 @@
     <Filter Include="ソース ファイル\GUI">
       <UniqueIdentifier>{7d3fce4b-21ce-4df3-96a2-203dc9975abb}</UniqueIdentifier>
     </Filter>
+    <Filter Include="ヘッダー ファイル\Widgets\Menu\Test">
+      <UniqueIdentifier>{69a2fe8f-c424-44b3-adcf-23bd0b6b51e0}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ソース ファイル\Widgets\Menu\Test">
+      <UniqueIdentifier>{3b3d00ac-b8f7-448e-bb49-f4cac315ab44}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="include\Widgets\ArtifactCompositionWidget.hpp">
@@ -111,7 +117,7 @@
     <ClInclude Include="include\Layer\ArtifactImageLayer.hpp">
       <Filter>ヘッダー ファイル\Layer</Filter>
     </ClInclude>
-    <ClInclude Include="include\Widgets\ArtifactTimelineWidget.hpp">
+    <ClInclude Include="include\Widgets\ArtifactTimelineWidget.ixx">
       <Filter>ヘッダー ファイル\Widgets</Filter>
     </ClInclude>
     <ClInclude Include="include\Composition\ArtifactComposition.hpp">
@@ -254,6 +260,12 @@
     <ClCompile Include="src\GUI\ArtifactGuiManager.cpp">
       <Filter>ソース ファイル\GUI</Filter>
     </ClCompile>
+    <ClCompile Include="src\Widgets\Menu\Test\ArtifactImageProcessingTestMenu.cpp">
+      <Filter>ソース ファイル\Widgets\Menu\Test</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Project\ArtifactProject.ixx">
+      <Filter>ヘッダー ファイル\Project</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <QtMoc Include="include\Widgets\ArtifactProjectManagerWidget.hpp">
@@ -274,9 +286,6 @@
     <QtMoc Include="include\Widgets\Render\ArtifactRenderManagerWidget.hpp">
       <Filter>ヘッダー ファイル\Widgets\Render</Filter>
     </QtMoc>
-    <QtMoc Include="include\Project\ArtifactProject.hpp">
-      <Filter>ヘッダー ファイル\Project</Filter>
-    </QtMoc>
     <QtMoc Include="include\Widgets\ArtifactInspectorWidget.hpp">
       <Filter>ヘッダー ファイル\Widgets</Filter>
     </QtMoc>
@@ -294,6 +303,9 @@
     </QtMoc>
     <QtMoc Include="include\Widgets\Dialog\CreatePlaneLayerDialog.hpp">
       <Filter>ヘッダー ファイル\Widgets\Dialog</Filter>
+    </QtMoc>
+    <QtMoc Include="include\Widgets\Menu\Test\ArtifactImageProcessingTestMenu.hpp">
+      <Filter>ヘッダー ファイル\Widgets\Menu\Test</Filter>
     </QtMoc>
   </ItemGroup>
 </Project>

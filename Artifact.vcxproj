@@ -89,8 +89,11 @@
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <OutDir>$(SolutionDir)/App</OutDir>
-    <IncludePath>X:\DEngine\DiligentCore\Graphics\GraphicsEngineD3D12\interface;X:\DEngine\DiligentCore\Common\interface;X:\DEngine\DiligentCore\Graphics\GraphicsEngine\interface;X:\DEngine\DiligentCore\Graphics\GraphicsEngineVulkan\interface;X:\DEngine\DiligentCore\Graphics\GraphicsEngineVulkan\include;X:\ogre-sdk-v14.3.2-msvc142-x64\include;X:\WickedEngine-master\WickedEngine;X:\Qt\6.7.2\msvc2019_64\include\QtCore;X:\Qt\6.7.2\msvc2019_64\include\QtWidgets;C:\Users\lagma\Desktop\Artifact\ArtifactWidgets\include;Z:\MyLib\Qt-Advanced-Docking-System\src;X:\Qt\6.7.2\msvc2019_64\include;$(IncludePath)</IncludePath>
-    <LibraryPath>X:\Build\Graphics\GraphicsEngineD3D12\Debug;X:\Build\Graphics\GraphicsEngineVulkan\Debug;E:\libs;X:\ogre-sdk-v14.3.2-msvc142-x64\lib;X:\WickedEngine-master\BUILD\x64\Debug;X:\Qt\6.7.2\msvc2019_64\lib;D:\WickedEngine-master\BUILD\x64\Debug;$(SolutionDir)\lib;Z:\MyLib\Qt-Advanced-Docking-System\build\Desktop_Qt_6_7_2_MSVC2019_64bit-Debug\lib;$(LibraryPath)</LibraryPath>
+    <IncludePath>C:\Users\lagma\Desktop\Artifact\third_party;X:\Halide-19.0.0-x86-64-windows\include;X:\opencv\build\include;X:\DEngine\DiligentCore\Graphics\GraphicsEngineD3D12\interface;X:\DEngine\DiligentCore\Common\interface;X:\DEngine\DiligentCore\Graphics\GraphicsEngine\interface;X:\DEngine\DiligentCore\Graphics\GraphicsEngineVulkan\interface;X:\DEngine\DiligentCore\Graphics\GraphicsEngineVulkan\include;X:\ogre-sdk-v14.3.2-msvc142-x64\include;X:\WickedEngine-master\WickedEngine;X:\Qt\6.7.2\msvc2019_64\include\QtCore;X:\Qt\6.7.2\msvc2019_64\include\QtWidgets;C:\Users\lagma\Desktop\Artifact\ArtifactWidgets\include;Z:\MyLib\Qt-Advanced-Docking-System\src;X:\Qt\6.7.2\msvc2019_64\include;$(IncludePath)</IncludePath>
+    <LibraryPath>C:\Users\lagma\Desktop\Artifact\Artifact\lib;X:\Build\Graphics\GraphicsEngineD3D12\Debug;X:\Build\Graphics\GraphicsEngineVulkan\Debug;E:\libs;X:\ogre-sdk-v14.3.2-msvc142-x64\lib;X:\WickedEngine-master\BUILD\x64\Debug;X:\Qt\6.7.2\msvc2019_64\lib;D:\WickedEngine-master\BUILD\x64\Debug;$(SolutionDir)\lib;Z:\MyLib\Qt-Advanced-Docking-System\build\Desktop_Qt_6_7_2_MSVC2019_64bit-Debug\lib;$(LibraryPath)</LibraryPath>
+    <AllProjectBMIsArePublic>true</AllProjectBMIsArePublic>
+    <PublicModuleDirectories>$(PublicModuleDirectories)</PublicModuleDirectories>
+    <AllProjectIncludesArePublic>true</AllProjectIncludesArePublic>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <ClCompile>
@@ -130,13 +133,21 @@
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpplatest</LanguageStandard>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
-      <BuildStlModules>true</BuildStlModules>
-      <LanguageStandard_C>stdc17</LanguageStandard_C>
+      <BuildStlModules>false</BuildStlModules>
+      <LanguageStandard_C>stdclatest</LanguageStandard_C>
+      <DisableSpecificWarnings>4828</DisableSpecificWarnings>
+      <TranslateIncludes>false</TranslateIncludes>
+      <OpenMPSupport>true</OpenMPSupport>
+      <EnableModules>true</EnableModules>
+      <ScanSourceForModuleDependencies>false</ScanSourceForModuleDependencies>
+      <AdditionalBMIDirectories>C:\Users\lagma\Desktop\Artifact\ArtifactCore;%(AdditionalBMIDirectories)</AdditionalBMIDirectories>
+      <DebugInformationFormat>OldStyle</DebugInformationFormat>
+      <AdditionalOptions>/Zc:__cplusplus %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
-      <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalDependencies>Qt6Cored.lib;Qt6Guid.lib;Qt6Widgetsd.lib;ArtifactWidgetsdd.lib;WickedEngine_Windows.lib;OgreMain.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <GenerateDebugInformation>DebugFull</GenerateDebugInformation>
+      <AdditionalDependencies>Qt6Cored.lib;Qt6Guid.lib;Qt6Widgetsd.lib;WickedEngine_Windows.lib;OgreMain.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <OutputFile>$(OutDir)$(TargetName)$(TargetExt)</OutputFile>
       <ForceFileOutput>Enabled</ForceFileOutput>
     </Link>
@@ -167,6 +178,7 @@
     <ClInclude Include="include\GUI\ArtifactGuiManager.hpp" />
     <ClInclude Include="include\Layer\Artifact3DModelLayer.hpp" />
     <QtMoc Include="include\Widgets\Dialog\CreatePlaneLayerDialog.hpp" />
+    <QtMoc Include="include\Widgets\Menu\Test\ArtifactImageProcessingTestMenu.hpp" />
     <ClInclude Include="include\Widgets\Render\Shader\CommonShader.hpp" />
     <QtMoc Include="include\Widgets\Render\ArtifactDiligentEngineRenderWindow.hpp" />
     <QtMoc Include="include\Widgets\Render\ArtifactOgreRenderWindow.hpp" />
@@ -174,7 +186,9 @@
     <ClInclude Include="include\Layer\ArtifactCompositionLayer.hpp" />
     <ClInclude Include="include\Layer\ArtifactImageLayer.hpp" />
     <ClInclude Include="include\Layer\ArtifactNullLayer.hpp" />
-    <QtMoc Include="include\Project\ArtifactProject.hpp" />
+    <ClCompile Include="include\Project\ArtifactProject.ixx">
+      <FileType>CppHeader</FileType>
+    </ClCompile>
     <ClInclude Include="include\Project\ArtifactProjectManager.hpp" />
     <ClInclude Include="include\Project\ArtifactProjectSetting.hpp" />
     <ClInclude Include="include\Render\ArtifactRenderer.hpp" />
@@ -193,7 +207,7 @@
     <ClInclude Include="include\Widgets\Menu\ArtifactOptionMenu.hpp" />
     <QtMoc Include="include\Widgets\ArtifactMainWindow.hpp" />
     <QtMoc Include="include\Widgets\ArtifactProjectManagerWidget.hpp" />
-    <ClInclude Include="include\Widgets\ArtifactTimelineWidget.hpp" />
+    <ClInclude Include="include\Widgets\ArtifactTimelineWidget.ixx" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\AppMain.cpp" />
@@ -221,9 +235,18 @@
     <ClCompile Include="src\Widgets\Menu\ArtifactTestMenu.cpp" />
     <ClCompile Include="src\Widgets\Menu\ArtifactTimeMenu.cpp" />
     <ClCompile Include="src\Widgets\Menu\ArtifactViewMenu.cpp" />
+    <ClCompile Include="src\Widgets\Menu\Test\ArtifactImageProcessingTestMenu.cpp" />
     <ClCompile Include="src\Widgets\Render\ArtifactDiligentEngineRenderWindow.cpp" />
     <ClCompile Include="src\Widgets\Render\ArtifactOgreRenderWindow.cpp" />
     <ClCompile Include="src\Widgets\Render\ArtifactRenderManagerWidget.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\ArtifactCore\ArtifactCore.vcxproj">
+      <Project>{c9c6f040-1511-4b6d-8f5d-fe6c6237a268}</Project>
+    </ProjectReference>
+    <ProjectReference Include="..\ArtifactWidgets\ArtifactWidgets.vcxproj">
+      <Project>{46c6ec7c-9c65-407a-a5e6-921265c1ff0d}</Project>
+    </ProjectReference>
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <Import Project="$(QtMsBuild)\qt.targets" Condition="Exists('$(QtMsBuild)\qt.targets')" />

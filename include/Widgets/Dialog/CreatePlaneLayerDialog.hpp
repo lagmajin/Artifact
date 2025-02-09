@@ -3,12 +3,14 @@
 #include <QtCore/QScopedPointer>
 #include <QtWidgets/QWidget>
 
+
+
 namespace Artifact {
 
 class PlaneLayerSettingPagePrivate;
 
  class PlaneLayerSettingPage :public QWidget {
-  Q_OBJECT
+  //Q_OBJECT
  private:
   
  protected:
@@ -17,12 +19,12 @@ class PlaneLayerSettingPagePrivate;
   explicit PlaneLayerSettingPage(QWidget* parent = nullptr);
   ~PlaneLayerSettingPage();
   void setDefaultFocus();
- signals:
+ //signals:
   void editComplete();
- private slots:
+ //private slots:
   void spouitMode();
   void resizeCompositionSize();
- public slots:
+ //public slots:
 
  };
 

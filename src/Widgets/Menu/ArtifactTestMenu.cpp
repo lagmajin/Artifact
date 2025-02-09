@@ -1,4 +1,7 @@
+#include "../../../include/Widgets/Menu/Test/ArtifactImageProcessingTestMenu.hpp"
+
 #include "../../../include/Widgets/Menu/ArtifactTestMenu.hpp"
+
 
 
 
@@ -19,6 +22,10 @@ namespace Artifact {
  {
   setTitle("Test");
 
+  auto imageProcessingTestMenu = new ArtifactImageProcessingTestMenu(this);
+
+  addMenu(imageProcessingTestMenu);
+
  }
 
  ArtifactTestMenu::~ArtifactTestMenu()
@@ -33,7 +40,10 @@ namespace Artifact {
 
  };
 
- ArtifactMediaTestMenu::ArtifactMediaTestMenu(QWidget* parent /*= nullptr*/):QMenu(parent)
+
+
+
+ ArtifactMediaTestMenu::ArtifactMediaTestMenu(QWidget* parent /*= nullptr*/) :QMenu(parent)
  {
 
  }
@@ -42,5 +52,7 @@ namespace Artifact {
  {
 
  }
+
+
 
 };

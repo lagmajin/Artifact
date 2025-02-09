@@ -1,18 +1,19 @@
-#include "../../include/Project/ArtifactProject.hpp"
+module;
+//#include <QtCore/QString>
 
-
+module ArtifactProject;
 
 
 namespace Artifact {
 
  class ArtifactProjectPrivate {
  private:
-  QString projectName_;
+  //QString projectName_;
  public:
   ArtifactProjectPrivate();
   ~ArtifactProjectPrivate();
-  QString projectName() const;
-  void setProjectName(const QString& name);
+  //QString projectName() const;
+  //void setProjectName(const QString& name);
  };
 
  ArtifactProjectPrivate::ArtifactProjectPrivate()
@@ -24,7 +25,7 @@ namespace Artifact {
  {
 
  }
-
+ /*
  QString ArtifactProjectPrivate::projectName() const
  {
   return projectName_;
@@ -35,6 +36,7 @@ namespace Artifact {
 
  }
 
+ */
  ArtifactProject::ArtifactProject()
  {
 
@@ -44,6 +46,7 @@ namespace Artifact {
  {
 
  }
+ /*
 
  QString ArtifactProject::projectName() const
  {
@@ -54,5 +57,7 @@ namespace Artifact {
  {
 
  }
+
+ */
 
 }

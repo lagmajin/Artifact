@@ -37,10 +37,14 @@ namespace Artifact {
   ~ArtifactMediaTestMenu();
  };
 
+
+ 
+
  class ArtifactWidgetTestMenu :public QMenu {
 
  };
 
+ 
 
  class ArtifactTestMenu :public QMenu {
  private:

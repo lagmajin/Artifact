@@ -3,6 +3,8 @@
 #include <QtWidgets/QWidget>
 
 
+import ArtifactProject;
+
 namespace Artifact {
   
  class ArtifactProjectManagerWidgetPrivate;
