@@ -1,9 +1,0 @@
-{
-    "Version": "1.1",
-    "Data": {
-        "Source": "c:\\users\\lagma\\desktop\\artifact\\artifactcore\\include\\layer\\layer2d.ixx",
-        "ProvidedModule": "Layer2D",
-        "ImportedModules": [],
-        "ImportedHeaderUnits": []
-    }
-}
