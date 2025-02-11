@@ -1,9 +1,8 @@
-#pragma once
+
+export module ArtifactImageLayer;
 
 
-
-
-namespace Artifact {
+export namespace Artifact {
 
  class ArtifactImageLayerPrivate;
 

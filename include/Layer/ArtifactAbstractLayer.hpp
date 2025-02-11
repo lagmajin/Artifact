@@ -1,6 +1,6 @@
 #pragma once
 
-
+#include <wobjectdefs.h>
 #include <QtCore/QObject>
 
 
@@ -10,18 +10,18 @@ namespace Artifact {
  class ArtifactAbstractLayerPrivate;
 
  class ArtifactAbstractLayer:public QObject {
-  Q_OBJECT
+  //Q_OBJECT
  private:
   ArtifactAbstractLayerPrivate* pLayer_;
  public:
   ArtifactAbstractLayer();
   virtual ~ArtifactAbstractLayer();
-  void setRotation();
-  void setScale();
- signals:
-  void layerUpdated();
+  //void setRotation();
+  //void setScale();
+ //signals:
+  //void layerUpdated();
   
- public slots:
+ //public slots:
   void Show();
   void Hide();
  };

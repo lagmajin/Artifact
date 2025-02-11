@@ -1,5 +1,4 @@
-#include "../../include/Layer/ArtifactImageLayer.hpp"
-
+import ArtifactImageLayer;
 
 
 
