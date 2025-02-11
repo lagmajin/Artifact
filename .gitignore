@@ -371,3 +371,5 @@ FodyWeavers.xsd
 /AbstractCompositionBuffer2D.hpp_C7B68ADB99E08A11.ifc.dt.module.json.command
 /App/Artifact.exp
 /App/Artifact.exe
+*.dll
+*.exp
