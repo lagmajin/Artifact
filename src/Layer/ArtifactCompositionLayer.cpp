@@ -1,32 +1,14 @@
-#include "../../include/Layer/ArtifactCompositionLayer.hpp"
 
+module;
 
+module ArtifactCompositionLayer;
 
 
 namespace Artifact {
 
- class ArtifactCompositionLayerPrivate {
 
-  ArtifactCompositionLayerPrivate();
-  ~ArtifactCompositionLayerPrivate();
- };
-
- ArtifactCompositionLayerPrivate::ArtifactCompositionLayerPrivate()
- {
-
- }
-
- ArtifactCompositionLayerPrivate::~ArtifactCompositionLayerPrivate()
- {
-
- }
 
  ArtifactCompositionLayer::ArtifactCompositionLayer()
- {
-
- }
-
- ArtifactCompositionLayer::~ArtifactCompositionLayer()
  {
 
  }

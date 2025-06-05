@@ -1,8 +1,9 @@
-#include "../../../../include/Project/ArtifactProjectManager.hpp"
+module;
+//#include "../../../../include/Project/ArtifactProjectManager.hpp"
 
 
 
-
+module ArtifactProjectManager;
 
 
 namespace Artifact {

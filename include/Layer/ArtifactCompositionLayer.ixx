@@ -1,12 +1,11 @@
-#pragma once
+module;
+
+export module ArtifactCompositionLayer;
 
 
+export namespace Artifact {
 
-
-
-namespace Artifact {
-
- class ArtifactCompositionLayerPrivate;
+ //class ArtifactCompositionLayerPrivate;
 
  class ArtifactCompositionLayer {
  private:

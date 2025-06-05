@@ -111,9 +111,6 @@
     <ClInclude Include="include\Widgets\ArtifactCompositionWidget.hpp">
       <Filter>ヘッダー ファイル\Widgets</Filter>
     </ClInclude>
-    <ClInclude Include="include\Layer\ArtifactCompositionLayer.hpp">
-      <Filter>ヘッダー ファイル\Layer</Filter>
-    </ClInclude>
     <ClInclude Include="include\Widgets\ArtifactTimelineWidget.ixx">
       <Filter>ヘッダー ファイル\Widgets</Filter>
     </ClInclude>
@@ -141,17 +138,8 @@
     <ClInclude Include="include\Widgets\Menu\ArtifactTimeMenu.hpp">
       <Filter>ヘッダー ファイル\Widgets\Menu</Filter>
     </ClInclude>
-    <ClInclude Include="include\Layer\Artifact3DModelLayer.hpp">
-      <Filter>ヘッダー ファイル\Layer</Filter>
-    </ClInclude>
     <ClInclude Include="include\Widgets\Menu\ArtifactFileMenu.hpp">
       <Filter>ヘッダー ファイル\Widgets\Menu</Filter>
-    </ClInclude>
-    <ClInclude Include="include\Project\ArtifactProjectManager.hpp">
-      <Filter>ヘッダー ファイル\Project</Filter>
-    </ClInclude>
-    <ClInclude Include="include\Project\ArtifactProjectSetting.hpp">
-      <Filter>ヘッダー ファイル\Project</Filter>
     </ClInclude>
     <ClInclude Include="include\Widgets\Menu\ArtifactHelpMenu.hpp">
       <Filter>ヘッダー ファイル\Widgets\Menu</Filter>
@@ -224,7 +212,7 @@
     <ClCompile Include="src\Project\ArtifactProjectManager.cpp">
       <Filter>ソース ファイル\Project</Filter>
     </ClCompile>
-    <ClCompile Include="src\Layer\ArtifactImageLayer.cpp">
+    <ClCompile Include="src\Layer\ArtifactImageLayer.cppm">
       <Filter>ソース ファイル\Layer</Filter>
     </ClCompile>
     <ClCompile Include="src\Layer\ArtifactNullLayer.cpp">
@@ -265,6 +253,18 @@
     </ClCompile>
     <ClCompile Include="include\Layer\ArtifactImageLayer.ixx">
       <Filter>ヘッダー ファイル\Layer</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Project\ArtifactProjectSetting.ixx">
+      <Filter>ヘッダー ファイル\Project</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Layer\ArtifactCompositionLayer.ixx">
+      <Filter>ヘッダー ファイル\Layer</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Layer\Artifact3DModelLayer.ixx">
+      <Filter>ヘッダー ファイル\Layer</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Project\ArtifactProjectManager.ixx">
+      <Filter>ヘッダー ファイル\Project</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
