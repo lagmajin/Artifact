@@ -266,6 +266,9 @@
     <ClCompile Include="include\Project\ArtifactProjectManager.ixx">
       <Filter>ヘッダー ファイル\Project</Filter>
     </ClCompile>
+    <ClCompile Include="include\Layer\ArtifactAbstractLayer.hpp">
+      <Filter>ヘッダー ファイル\Layer</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <QtMoc Include="include\Widgets\ArtifactProjectManagerWidget.hpp">
@@ -291,9 +294,6 @@
     </QtMoc>
     <QtMoc Include="include\Widgets\Menu\ArtifactLayerMenu.hpp">
       <Filter>ヘッダー ファイル\Widgets\Menu</Filter>
-    </QtMoc>
-    <QtMoc Include="include\Layer\ArtifactAbstractLayer.hpp">
-      <Filter>ヘッダー ファイル\Layer</Filter>
     </QtMoc>
     <QtMoc Include="include\Widgets\Render\ArtifactOgreRenderWindow.hpp">
       <Filter>ヘッダー ファイル\Widgets\Render</Filter>

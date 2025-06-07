@@ -1,10 +1,13 @@
-#pragma once
+module;
 
 #include <wobjectdefs.h>
 #include <QtCore/QObject>
 
+export module ArtifactAbstractLayer;
 
-namespace Artifact {
+
+
+export namespace Artifact {
 
 
  class ArtifactAbstractLayerPrivate;
