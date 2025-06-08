@@ -1,6 +1,6 @@
 module;
 
-#include "../../include/Layer/ArtifactAbstractLayer.hpp"
+
 
 module ArtifactAbstractLayer;
 

@@ -182,7 +182,9 @@
     <ClInclude Include="include\Widgets\Render\Shader\CommonShader.hpp" />
     <QtMoc Include="include\Widgets\Render\ArtifactDiligentEngineRenderWindow.hpp" />
     <QtMoc Include="include\Widgets\Render\ArtifactOgreRenderWindow.hpp" />
-    <ClCompile Include="include\Layer\ArtifactAbstractLayer.hpp" />
+    <ClCompile Include="include\Layer\ArtifactAbstractLayer.ixx">
+      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
+    </ClCompile>
     <ClCompile Include="include\Layer\ArtifactCompositionLayer.ixx" />
     <ClCompile Include="include\Layer\ArtifactImageLayer.ixx">
       <FileType>CppHeader</FileType>

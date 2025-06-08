@@ -6,9 +6,11 @@
 #include "../include/Widgets/ArtifactMainWindow.hpp"
 
 
-import Scale2D;
+import Transform;
 import Draw;
 import Glow;
+
+import ImageProcessing;
 
 using namespace Artifact;
 using namespace ArtifactCore;
@@ -26,7 +28,8 @@ void test()
  
  applySimpleGlow(mat, cv::Mat(), dst, cv::Scalar(200, 200, 255), 1.6, 4, 5.0f, 1.8f, 0.3f, 0.6f, true, true);
 
-
+ cv::Mat mono;
+ toLuminanceGrayRGBA(mat, mono);
 
 }
 

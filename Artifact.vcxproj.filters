@@ -266,7 +266,7 @@
     <ClCompile Include="include\Project\ArtifactProjectManager.ixx">
       <Filter>ヘッダー ファイル\Project</Filter>
     </ClCompile>
-    <ClCompile Include="include\Layer\ArtifactAbstractLayer.hpp">
+    <ClCompile Include="include\Layer\ArtifactAbstractLayer.ixx">
       <Filter>ヘッダー ファイル\Layer</Filter>
     </ClCompile>
   </ItemGroup>
