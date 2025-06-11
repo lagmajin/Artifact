@@ -1,11 +1,9 @@
-#pragma once
 
-#include <memory>
+module;
 
-#include <QtCore/QObject>
+export module Effects;
 
-
-namespace Artifact {
+export namespace Artifact {
 
  class ArtifactAbstractEffectPrivate;
 

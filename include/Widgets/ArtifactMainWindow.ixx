@@ -1,14 +1,17 @@
-#pragma once
+module ;
+
+#include <wobjectcpp.h>
 
 #include <QtWidgets/QMainWindow>
 
+export module ArtifactMainWindow;
 
-namespace Artifact {
+export namespace Artifact {
  
  struct ArtifactMainWindowPrivate;
 
  class ArtifactMainWindow :public QMainWindow {
-  Q_OBJECT
+  W_OBJECT(ArtifactMainWindow)
  private:
 
  public:

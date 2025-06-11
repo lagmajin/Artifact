@@ -1,8 +1,10 @@
+module;
+
 #include <mutex>
 
-#include "../../../include/Widgets/menu/ArtifactFileMenu.hpp"
 
 
+module Menu:File;
 
 
 
@@ -52,6 +54,8 @@ namespace Artifact {
  {
 
  }
+
+ 
 
  void ArtifactFileMenu::projectClosed()
  {

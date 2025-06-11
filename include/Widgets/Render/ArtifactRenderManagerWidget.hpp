@@ -1,6 +1,6 @@
 #pragma once
 
-#include "WickedEngine.h"
+//#include "WickedEngine.h"
 
 #include <memory>
 #include <QtWidgets/QWidget>
@@ -20,7 +20,7 @@ namespace Artifact {
  private:
   //std::unique_ptr<ArtifactRenderManagerWidgetPrivate> pImpl_;
   bool initialized = false;
-  wi::Application* app=nullptr;
+  //wi::Application* app=nullptr;
  protected:
   bool event(QEvent* e) override;
  public:

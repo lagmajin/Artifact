@@ -1,21 +1,26 @@
+module;
+
+
+#include<wobjectimpl.h>
+
+
 #include <DockWidget.h>
 #include <DockManager.h>
 
 #pragma comment(lib,"qtadvanceddockingd.lib")
 
 #include "../../include/Widgets/menu/ArtifactMenuBar.hpp"
-#include "../../include/Widgets/ArtifactMainWindow.hpp"
 #include "../../include/Widgets/Render/ArtifactRenderManagerWidget.hpp"
-#include "../../include/Widgets/Render/ArtifactOgreRenderWindow.hpp"
+//#include "../../include/Widgets/Render/ArtifactOgreRenderWindow.hpp"
 #include "../../include/Widgets/Render/ArtifactDiligentEngineRenderWindow.hpp"
 
-
+module ArtifactMainWindow;
 
 
 namespace Artifact {
 
  using namespace ads;
-
+ W_OBJECT_IMPL(ArtifactMainWindow)
  struct ArtifactMainWindowPrivate {
 
 

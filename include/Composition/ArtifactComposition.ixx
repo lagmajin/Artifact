@@ -1,9 +1,10 @@
-#pragma once
+module;
 
-#include <memory>
+export module Composition;
 
+import std;
 
-namespace Artifact {
+export namespace Artifact {
 
  enum eCompositionType {
   OriginalComposition,

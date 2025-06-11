@@ -1,12 +1,12 @@
-#include "../../include/Widgets/Menu/ArtifactFileMenu.hpp"
-#include "../../include/Widgets/Menu/ArtifactViewMenu.hpp"
+//#include "../../include/Widgets/Menu/ArtifactFileMenu.hpp"
+//#include "../../include/Widgets/Menu/ArtifactViewMenu.hpp"
 #include "../../include/Widgets/Menu/ArtifactCompositionMenu.hpp"
 #include "../../include/Widgets/Menu/ArtifactTestMenu.hpp"
 
 #include "../../include/Widgets/menu/ArtifactMenuBar.hpp"
 
 
-
+import Menu;
 
 
 

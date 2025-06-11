@@ -1,4 +1,7 @@
-#include "../../include/Composition/ArtifactComposition.hpp"
+module;
+
+
+module Composition;
 
 
 

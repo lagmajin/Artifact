@@ -1,6 +1,11 @@
+//export module Menu:MenuBar;
+
+
 #pragma once
 #include <QtCore/QtCore>
 #include <QtWidgets/QtWidgets>
+
+
 
 namespace Artifact {
 

@@ -1,4 +1,10 @@
-#include "../../../include/Widgets/Menu/ArtifactViewMenu.hpp"
+module;
+#include <QWidget>
+#include <QMenu>
+
+module Menu:View;
+
+//#include "../../../include/Widgets/Menu/ArtifactViewMenu.hpp"
 
 
 

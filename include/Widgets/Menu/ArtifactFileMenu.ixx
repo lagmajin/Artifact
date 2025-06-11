@@ -1,13 +1,19 @@
-#pragma once
+module;
+#include <QMenu>
+#include <QWidget>
+export module Menu:File;
 
-#include <QtCore/QScopedPointer>
-#include <QtWidgets/QMenu>
+//#pragma once
+
+
+//#include <QtCore/QScopedPointer>
+//#include <QtWidgets/QMenu>
 
 
 
 
 
-namespace Artifact {
+export namespace Artifact {
 
  class  ArtifactFileMenuPrivate;
 

@@ -111,23 +111,11 @@
     <ClInclude Include="include\Widgets\ArtifactCompositionWidget.hpp">
       <Filter>ヘッダー ファイル\Widgets</Filter>
     </ClInclude>
-    <ClInclude Include="include\Widgets\ArtifactTimelineWidget.ixx">
-      <Filter>ヘッダー ファイル\Widgets</Filter>
-    </ClInclude>
-    <ClInclude Include="include\Composition\ArtifactComposition.hpp">
-      <Filter>ヘッダー ファイル\Composition</Filter>
-    </ClInclude>
     <ClInclude Include="include\Composition\ArtifactCompositionManager.hpp">
       <Filter>ヘッダー ファイル\Composition</Filter>
     </ClInclude>
-    <ClInclude Include="include\Effetcs\ArtifactAbstractEffect.hpp">
-      <Filter>ヘッダー ファイル\Effects</Filter>
-    </ClInclude>
     <ClInclude Include="include\Widgets\Menu\ArtifactOptionMenu.hpp">
       <Filter>ヘッダー ファイル\Widgets\Menu</Filter>
-    </ClInclude>
-    <ClInclude Include="include\Composition\ArtifactComposition2D.hpp">
-      <Filter>ヘッダー ファイル\Composition</Filter>
     </ClInclude>
     <ClInclude Include="include\Render\ArtifactRenderer.hpp">
       <Filter>ヘッダー ファイル\Render</Filter>
@@ -136,9 +124,6 @@
       <Filter>ヘッダー ファイル\Application</Filter>
     </ClInclude>
     <ClInclude Include="include\Widgets\Menu\ArtifactTimeMenu.hpp">
-      <Filter>ヘッダー ファイル\Widgets\Menu</Filter>
-    </ClInclude>
-    <ClInclude Include="include\Widgets\Menu\ArtifactFileMenu.hpp">
       <Filter>ヘッダー ファイル\Widgets\Menu</Filter>
     </ClInclude>
     <ClInclude Include="include\Widgets\Menu\ArtifactHelpMenu.hpp">
@@ -161,7 +146,7 @@
     <ClCompile Include="src\AppMain.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
-    <ClCompile Include="src\Layer\ArtifactCompositionLayer.cpp">
+    <ClCompile Include="src\Layer\ArtifactCompositionLayer.cppm">
       <Filter>ソース ファイル\Layer</Filter>
     </ClCompile>
     <ClCompile Include="src\Widgets\ArtifactMainWindow.cpp">
@@ -269,21 +254,42 @@
     <ClCompile Include="include\Layer\ArtifactAbstractLayer.ixx">
       <Filter>ヘッダー ファイル\Layer</Filter>
     </ClCompile>
+    <ClCompile Include="include\Effetcs\ArtifactAbstractEffect.ixx">
+      <Filter>ヘッダー ファイル\Effects</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Composition\ArtifactComposition.ixx">
+      <Filter>ヘッダー ファイル\Composition</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Composition\ArtifactComposition2D.ixx">
+      <Filter>ヘッダー ファイル\Composition</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Widgets\ArtifactTimelineWidget.ixx">
+      <Filter>ヘッダー ファイル\Widgets</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Widgets\ArtifactMainWindow.ixx">
+      <Filter>ヘッダー ファイル\Widgets</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Widgets\Menu\ArtifactMenu.ixx">
+      <Filter>ヘッダー ファイル\Widgets\Menu</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Widgets\Menu\ArtifactFileMenu.ixx">
+      <Filter>ヘッダー ファイル\Widgets\Menu</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Widgets\ArtifactAssetBrowser.hpp">
+      <Filter>ヘッダー ファイル\Widgets\Asset</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Widgets\Menu\ArtifactLayerMenu.ixx">
+      <Filter>ヘッダー ファイル\Widgets\Menu</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Widgets\Menu\ArtifactViewMenu.ixx">
+      <Filter>ヘッダー ファイル\Widgets\Menu</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <QtMoc Include="include\Widgets\ArtifactProjectManagerWidget.hpp">
       <Filter>ヘッダー ファイル\Widgets</Filter>
     </QtMoc>
-    <QtMoc Include="include\Widgets\ArtifactMainWindow.hpp">
-      <Filter>ヘッダー ファイル\Widgets</Filter>
-    </QtMoc>
-    <QtMoc Include="include\Widgets\ArtifactAssetBrowser.hpp">
-      <Filter>ヘッダー ファイル\Widgets\Asset</Filter>
-    </QtMoc>
     <QtMoc Include="include\Widgets\Menu\ArtifactCompositionMenu.hpp">
-      <Filter>ヘッダー ファイル\Widgets\Menu</Filter>
-    </QtMoc>
-    <QtMoc Include="include\Widgets\Menu\ArtifactViewMenu.hpp">
       <Filter>ヘッダー ファイル\Widgets\Menu</Filter>
     </QtMoc>
     <QtMoc Include="include\Widgets\Render\ArtifactRenderManagerWidget.hpp">
@@ -291,9 +297,6 @@
     </QtMoc>
     <QtMoc Include="include\Widgets\ArtifactInspectorWidget.hpp">
       <Filter>ヘッダー ファイル\Widgets</Filter>
-    </QtMoc>
-    <QtMoc Include="include\Widgets\Menu\ArtifactLayerMenu.hpp">
-      <Filter>ヘッダー ファイル\Widgets\Menu</Filter>
     </QtMoc>
     <QtMoc Include="include\Widgets\Render\ArtifactOgreRenderWindow.hpp">
       <Filter>ヘッダー ファイル\Widgets\Render</Filter>

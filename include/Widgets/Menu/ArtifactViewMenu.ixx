@@ -1,16 +1,20 @@
-#pragma once
+module;
+#include <QMenu>
 
-#include <QtWidgets/QMenu>
+export module Menu:View;
+//#pragma once
+
+//#include <QtWidgets/QMenu>
 
 
 
 
-namespace Artifact {
+export namespace Artifact {
 
  class ArtifactViewMenuPrivate;
 
  class ArtifactViewMenu :public QMenu{
-  Q_OBJECT
+  //Q_OBJECT
  private:
 
  public:

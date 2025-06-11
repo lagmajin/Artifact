@@ -1,4 +1,7 @@
+module;
 
+
+module ArtifactTimelineWidget;
 
 
 

@@ -1,15 +1,8 @@
-//#include "../../include/Widgets/Asset/ArtifactAssetBrowser.hpp"
-#include "../../../include/Widgets/ArtifactAssetBrowser.hpp"
+module;
+
+module Widgets:AssetBrowser;
 
 namespace Artifact {
-
-
-
-
-
-
-
-
 
 
 

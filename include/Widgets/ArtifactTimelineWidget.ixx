@@ -1,8 +1,10 @@
-#pragma once
+module;
+
+#include <wobjectcpp.h>
 
 #include <QtWidgets/QtWidgets>
 
-export ArtifactTimelineWidget;
+export module ArtifactTimelineWidget;
 
 
 export namespace Artifact {

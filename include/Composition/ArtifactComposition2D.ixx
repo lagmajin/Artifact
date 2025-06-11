@@ -1,8 +1,11 @@
-#pragma once
+//#pragma once
 
 
-#include <QtCore/QString>
+//#include <QtCore/QString>
 
+module;
+
+export module Composition2D;
 
 
 namespace Artifact {

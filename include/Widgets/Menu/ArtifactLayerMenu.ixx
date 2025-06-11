@@ -1,7 +1,7 @@
-#pragma once
-#include <QtWidgets/QMenu>
+module;
+#include <QMenu>
 
-
+export module Menu:Layer;
 
 
 
@@ -13,7 +13,7 @@ namespace Artifact {
  class ArtifactLayerMenuPrivate;
 
  class ArtifactLayerMenu:public QMenu {
-  Q_OBJECT
+  //Q_OBJECT
  private:
 
  public:

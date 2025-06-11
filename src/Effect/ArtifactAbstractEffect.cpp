@@ -1,5 +1,7 @@
-#include "../../../../include/Effetcs/ArtifactAbstractEffect.hpp"
+module;
 
+
+module Effects;
 
 
 

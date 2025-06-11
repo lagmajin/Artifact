@@ -1,4 +1,10 @@
-#include "../../../include/Widgets/Menu/ArtifactLayerMenu.hpp"
+module;
+#include <QWidget>
+module Menu:Layer;
+
+
+
+//#include "../../../include/Widgets/Menu/ArtifactLayerMenu.hpp"
 
 
 
