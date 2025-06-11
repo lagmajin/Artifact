@@ -43,6 +43,10 @@ namespace Artifact {
   setPalette(p);
 
   setAutoFillBackground(true);
+
+
+  setAttribute(Qt::WA_TranslucentBackground);
+  setWindowFlags(windowFlags() | Qt::FramelessWindowHint);
  }
 
  ArtifactFileMenu::~ArtifactFileMenu()

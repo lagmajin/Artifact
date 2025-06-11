@@ -126,9 +126,6 @@
     <ClInclude Include="include\Widgets\Menu\ArtifactTimeMenu.hpp">
       <Filter>ヘッダー ファイル\Widgets\Menu</Filter>
     </ClInclude>
-    <ClInclude Include="include\Widgets\Menu\ArtifactHelpMenu.hpp">
-      <Filter>ヘッダー ファイル\Widgets\Menu</Filter>
-    </ClInclude>
     <ClInclude Include="include\GUI\ArtifactGuiManager.hpp">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
@@ -194,7 +191,7 @@
     <ClCompile Include="src\Widgets\Menu\ArtifactViewMenu.cpp">
       <Filter>ソース ファイル\Widgets\Menu</Filter>
     </ClCompile>
-    <ClCompile Include="src\Project\ArtifactProjectManager.cpp">
+    <ClCompile Include="src\Project\ArtifactProjectManager.cppm">
       <Filter>ソース ファイル\Project</Filter>
     </ClCompile>
     <ClCompile Include="src\Layer\ArtifactImageLayer.cppm">
@@ -282,6 +279,9 @@
       <Filter>ヘッダー ファイル\Widgets\Menu</Filter>
     </ClCompile>
     <ClCompile Include="include\Widgets\Menu\ArtifactViewMenu.ixx">
+      <Filter>ヘッダー ファイル\Widgets\Menu</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Widgets\Menu\ArtifactHelpMenu.ixx">
       <Filter>ヘッダー ファイル\Widgets\Menu</Filter>
     </ClCompile>
   </ItemGroup>

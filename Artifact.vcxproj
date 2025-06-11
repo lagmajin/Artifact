@@ -207,7 +207,9 @@
     <ClCompile Include="include\Widgets\Menu\ArtifactFileMenu.ixx">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
     </ClCompile>
-    <ClInclude Include="include\Widgets\Menu\ArtifactHelpMenu.hpp" />
+    <ClCompile Include="include\Widgets\Menu\ArtifactHelpMenu.ixx">
+      <FileType>Document</FileType>
+    </ClCompile>
     <ClInclude Include="include\Widgets\Menu\ArtifactMenuBar.hpp" />
     <ClInclude Include="include\Widgets\Menu\ArtifactTestMenu.hpp" />
     <ClInclude Include="include\Widgets\Menu\ArtifactTimeMenu.hpp" />
@@ -244,11 +246,15 @@
     <ClCompile Include="src\Effect\ArtifactAbstractEffect.cpp" />
     <ClCompile Include="src\GUI\ArtifactGuiManager.cpp" />
     <ClCompile Include="src\Layer\ArtifactAbstractLayer.cpp" />
-    <ClCompile Include="src\Layer\ArtifactCompositionLayer.cppm" />
+    <ClCompile Include="src\Layer\ArtifactCompositionLayer.cppm">
+      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+    </ClCompile>
     <ClCompile Include="src\Layer\ArtifactImageLayer.cppm" />
     <ClCompile Include="src\Layer\ArtifactNullLayer.cpp" />
     <ClCompile Include="src\Project\ArtifactProject.cpp" />
-    <ClCompile Include="src\Project\ArtifactProjectManager.cpp" />
+    <ClCompile Include="src\Project\ArtifactProjectManager.cppm">
+      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+    </ClCompile>
     <ClCompile Include="src\Widgets\ArtifactInspectorWidget.cpp" />
     <ClCompile Include="src\Widgets\ArtifactMainWindow.cpp">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
