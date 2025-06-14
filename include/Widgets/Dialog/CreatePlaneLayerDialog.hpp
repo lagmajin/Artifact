@@ -5,6 +5,7 @@
 
 
 
+
 namespace Artifact {
 
 class PlaneLayerSettingPagePrivate;

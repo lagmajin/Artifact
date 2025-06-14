@@ -1,21 +1,24 @@
-#pragma once
+module;
+
 
 #include <QtCore/QScopedPointer>
 #include <QtWidgets/QtWidgets>
 #include <Qtwidgets/QMenu>
+#include <wobjectdefs.h>
+
+
+export module Menu:ArtifactCompositionMenu;
 
 
 
 
 
-
-
-namespace Artifact {
+export namespace Artifact {
 
  class ArtifactCompositionMenuPrivate;
 
  class ArtifactCompositionMenu:public QMenu {
-  Q_OBJECT
+  W_OBJECT(ArtifactCompositionMenu)
  private:
   QScopedPointer<ArtifactCompositionMenuPrivate> pImpl_;
   

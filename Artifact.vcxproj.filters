@@ -108,14 +108,8 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="include\Widgets\ArtifactCompositionWidget.hpp">
-      <Filter>ヘッダー ファイル\Widgets</Filter>
-    </ClInclude>
     <ClInclude Include="include\Composition\ArtifactCompositionManager.hpp">
       <Filter>ヘッダー ファイル\Composition</Filter>
-    </ClInclude>
-    <ClInclude Include="include\Widgets\Menu\ArtifactOptionMenu.hpp">
-      <Filter>ヘッダー ファイル\Widgets\Menu</Filter>
     </ClInclude>
     <ClInclude Include="include\Render\ArtifactRenderer.hpp">
       <Filter>ヘッダー ファイル\Render</Filter>
@@ -123,17 +117,8 @@
     <ClInclude Include="include\Application\ArtifactApplicationManager.hpp">
       <Filter>ヘッダー ファイル\Application</Filter>
     </ClInclude>
-    <ClInclude Include="include\Widgets\Menu\ArtifactTimeMenu.hpp">
-      <Filter>ヘッダー ファイル\Widgets\Menu</Filter>
-    </ClInclude>
     <ClInclude Include="include\GUI\ArtifactGuiManager.hpp">
       <Filter>ヘッダー ファイル</Filter>
-    </ClInclude>
-    <ClInclude Include="include\Widgets\Menu\ArtifactTestMenu.hpp">
-      <Filter>ヘッダー ファイル\Widgets\Menu</Filter>
-    </ClInclude>
-    <ClInclude Include="include\Widgets\Menu\ArtifactMenuBar.hpp">
-      <Filter>ヘッダー ファイル\Widgets\Menu</Filter>
     </ClInclude>
     <ClInclude Include="include\Widgets\Render\Shader\CommonShader.hpp">
       <Filter>ヘッダー ファイル\Widgets\Render\shader</Filter>
@@ -284,18 +269,36 @@
     <ClCompile Include="include\Widgets\Menu\ArtifactHelpMenu.ixx">
       <Filter>ヘッダー ファイル\Widgets\Menu</Filter>
     </ClCompile>
+    <ClCompile Include="include\Widgets\Menu\ArtifactTestMenu.ixx">
+      <Filter>ヘッダー ファイル\Widgets\Menu</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Widgets\Menu\ArtifactMenuBar.ixx">
+      <Filter>ヘッダー ファイル\Widgets\Menu</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Widgets\ArtifactInspectorWidget.hpp">
+      <Filter>ヘッダー ファイル\Widgets</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Widgets\ArtifactCompositionWidget.ixx">
+      <Filter>ヘッダー ファイル\Widgets</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Widgets\Render\ArtifactRenderManagerWidget.ixx">
+      <Filter>ヘッダー ファイル\Widgets\Render</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Widgets\Menu\ArtifactOptionMenu.hpp">
+      <Filter>ヘッダー ファイル\Widgets\Menu</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Widgets\Dialog\ArtifactCreateCompositionDialog.ixx">
+      <Filter>ヘッダー ファイル\Widgets\Dialog</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Widgets\Menu\ArtifactCompositionMenu.ixx">
+      <Filter>ヘッダー ファイル\Widgets\Menu</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Widgets\Menu\ArtifactTimeMenu.ixx">
+      <Filter>ヘッダー ファイル\Widgets\Menu</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <QtMoc Include="include\Widgets\ArtifactProjectManagerWidget.hpp">
-      <Filter>ヘッダー ファイル\Widgets</Filter>
-    </QtMoc>
-    <QtMoc Include="include\Widgets\Menu\ArtifactCompositionMenu.hpp">
-      <Filter>ヘッダー ファイル\Widgets\Menu</Filter>
-    </QtMoc>
-    <QtMoc Include="include\Widgets\Render\ArtifactRenderManagerWidget.hpp">
-      <Filter>ヘッダー ファイル\Widgets\Render</Filter>
-    </QtMoc>
-    <QtMoc Include="include\Widgets\ArtifactInspectorWidget.hpp">
       <Filter>ヘッダー ファイル\Widgets</Filter>
     </QtMoc>
     <QtMoc Include="include\Widgets\Render\ArtifactOgreRenderWindow.hpp">

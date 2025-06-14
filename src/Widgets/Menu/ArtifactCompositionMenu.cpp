@@ -1,4 +1,9 @@
-#include "../../../include/Widgets/menu/ArtifactCompositionMenu.hpp"
+module;
+#include <QWidget>
+#include <wobjectimpl.h>
+module Menu:ArtifactCompositionMenu;
+
+//#include "../../../include/Widgets/menu/ArtifactCompositionMenu.hpp"
 
 
 
@@ -6,6 +11,8 @@
 
 
 namespace Artifact {
+
+ W_OBJECT_IMPL(ArtifactCompositionMenu)
 
  class ArtifactCompositionMenuPrivate {
  private:

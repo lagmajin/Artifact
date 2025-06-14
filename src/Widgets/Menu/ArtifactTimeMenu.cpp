@@ -1,6 +1,8 @@
+module;
+#include <QMenu>
+module Menu:Time;
 
-
-#include "../../../include/Widgets/Menu/ArtifactTimeMenu.hpp"
+//#include "../../../include/Widgets/Menu/ArtifactTimeMenu.hpp"
 
 
 

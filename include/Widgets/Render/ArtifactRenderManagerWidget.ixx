@@ -1,11 +1,12 @@
-#pragma once
+module;
 
 //#include "WickedEngine.h"
+#include <wobjectdefs.h>
 
 #include <memory>
 #include <QtWidgets/QWidget>
 
-
+export module ArtifactRenderManagerWidget;
 
 
 
@@ -16,7 +17,7 @@ namespace Artifact {
  //class wi::Application;
 
  class ArtifactRenderManagerWidget :public QWidget{
-  Q_OBJECT
+  //Q_OBJECT
  private:
   //std::unique_ptr<ArtifactRenderManagerWidgetPrivate> pImpl_;
   bool initialized = false;

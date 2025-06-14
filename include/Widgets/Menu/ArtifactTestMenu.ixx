@@ -1,5 +1,10 @@
-#pragma once
+module;
 #include <QtWidgets/QMenu>
+export module Menu:Test;
+
+
+
+
 
 
 
@@ -7,7 +12,7 @@ namespace Artifact {
 
  class ArtifactRenderTestMenuPrivate;
 
- class ArtifactRenderTestMenu :public QMenu {
+ export class ArtifactRenderTestMenu :public QMenu {
  private:
 
  public:
@@ -20,7 +25,7 @@ namespace Artifact {
 
  class ArtifactEffectTestMenuPrivate;
 
- class ArtifactEffectTestMenu {
+ export class ArtifactEffectTestMenu {
   private:
 
  public:
@@ -29,7 +34,7 @@ namespace Artifact {
 
  class ArtifactMediaTestMenuPrivate;
 
- class ArtifactMediaTestMenu :public QMenu {
+ export class ArtifactMediaTestMenu :public QMenu {
  private:
 
  public:

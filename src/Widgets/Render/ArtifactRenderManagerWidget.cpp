@@ -1,5 +1,9 @@
+module;
 
-#include "../../../include/Widgets/Render/ArtifactRenderManagerWidget.hpp"
+#include <wobjectimpl.h>
+
+module ArtifactRenderManagerWidget;
+//#include "../../../include/Widgets/Render/ArtifactRenderManagerWidget.hpp"
 
 
 
@@ -8,7 +12,7 @@
 
 namespace Artifact {
 
-
+// W_OBJECT_IMPL(ArtifactRenderManagerWidget)
 
  ArtifactRenderManagerWidget::ArtifactRenderManagerWidget(QWidget* parent /*= nullptr*/):QWidget(parent)
  {

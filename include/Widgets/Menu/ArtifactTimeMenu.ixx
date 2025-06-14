@@ -1,12 +1,9 @@
-#pragma once
-
-#include <QtWidgets/QMenu>
-
-
+module;
+#include <QMenu>
+export module Menu:Time;
 
 
-
-namespace Artifact {
+export namespace Artifact {
 
  class ArtifactTimeMenu :public QMenu{
  private:

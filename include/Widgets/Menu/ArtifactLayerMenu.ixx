@@ -6,7 +6,7 @@ export module Menu:Layer;
 
 
 
-namespace Artifact {
+export namespace Artifact {
 
 
 

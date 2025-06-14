@@ -7,15 +7,18 @@ module;
 #include <DockWidget.h>
 #include <DockManager.h>
 
+#include <QLabel>
+
 #pragma comment(lib,"qtadvanceddockingd.lib")
 
-#include "../../include/Widgets/menu/ArtifactMenuBar.hpp"
-#include "../../include/Widgets/Render/ArtifactRenderManagerWidget.hpp"
+//#include "../../include/Widgets/menu/ArtifactMenuBar.hpp"
+//#include "../../include/Widgets/Render/ArtifactRenderManagerWidget.hpp"
 //#include "../../include/Widgets/Render/ArtifactOgreRenderWindow.hpp"
-#include "../../include/Widgets/Render/ArtifactDiligentEngineRenderWindow.hpp"
+//#include "../../include/Widgets/Render/ArtifactDiligentEngineRenderWindow.hpp"
 
 module ArtifactMainWindow;
 
+import Menu;
 
 namespace Artifact {
 
@@ -69,10 +72,10 @@ namespace Artifact {
   //auto qto=new QTOgreWindow();
   //qto->show();
 
-  auto dWindow = new ArtifactDiligentEngineRenderWindow();
-  dWindow->initialize();
+  //auto dWindow = new ArtifactDiligentEngineRenderWindow();
+  //dWindow->initialize();
 
-  dWindow->show();
+  //dWindow->show();
 
  }
 

@@ -1,6 +1,9 @@
-#include "../../../include/Widgets/Menu/Test/ArtifactImageProcessingTestMenu.hpp"
 
-#include "../../../include/Widgets/Menu/ArtifactTestMenu.hpp"
+module;
+#include <QWidget>
+module Menu:Test;
+
+
 
 
 
@@ -22,9 +25,9 @@ namespace Artifact {
  {
   setTitle("Test");
 
-  auto imageProcessingTestMenu = new ArtifactImageProcessingTestMenu(this);
+  //auto imageProcessingTestMenu = new ArtifactImageProcessingTestMenu(this);
 
-  addMenu(imageProcessingTestMenu);
+  //addMenu(imageProcessingTestMenu);
 
  }
 

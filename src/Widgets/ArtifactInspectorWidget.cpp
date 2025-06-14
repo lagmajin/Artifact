@@ -1,4 +1,9 @@
-#include "../../include/Widgets/ArtifactInspectorWidget.hpp"
+module;
+#include <wobjectimpl.h>
+
+#include <QWidget>
+module ArtifactInspectorWidget;
+//#include "../../include/Widgets/ArtifactInspectorWidget.hpp"
 
 
 
@@ -6,9 +11,9 @@
 
 namespace Artifact {
 
- using namespace ArtifactWidgets;
+ //using namespace ArtifactWidgets;
 
-
+ W_OBJECT_IMPL(ArtifactInspectorWidget)
 
 
 
@@ -20,7 +25,7 @@ namespace Artifact {
 
  ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget* parent /*= nullptr*/) :QScrollArea(parent)
  {
-  auto p=new VolumeSlider();
+  //auto p=new VolumeSlider();
 
 
  }

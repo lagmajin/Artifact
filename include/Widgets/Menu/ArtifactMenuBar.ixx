@@ -1,13 +1,16 @@
-//export module Menu:MenuBar;
-
-
-#pragma once
+module;
 #include <QtCore/QtCore>
 #include <QtWidgets/QtWidgets>
 
 
+export module Menu:MenuBar;
 
-namespace Artifact {
+
+
+
+
+
+export namespace Artifact {
 
  enum class eMenuType {
   File,
@@ -28,13 +31,7 @@ namespace Artifact {
 
  };
 
- class ArtifactHelpMenu {
- private:
 
- public:
-  explicit ArtifactHelpMenu(QWidget* parent = nullptr);
-  ~ArtifactHelpMenu();
- };
 
  class ArtifactMenuBarPrivate;
 
