@@ -1,6 +1,9 @@
+module;
+
+module Dialog;
 
 
-#include "../../../include/Widgets/Dialog/CreatePlaneLayerDialog.hpp"
+//#include "../../../include/Widgets/Dialog/CreatePlaneLayerDialog.hpp"
 
 
 

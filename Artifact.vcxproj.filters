@@ -111,7 +111,7 @@
     <ClInclude Include="include\Composition\ArtifactCompositionManager.hpp">
       <Filter>ヘッダー ファイル\Composition</Filter>
     </ClInclude>
-    <ClInclude Include="include\Render\ArtifactRenderer.hpp">
+    <ClInclude Include="include\Render\ArtifactRenderer.ixx">
       <Filter>ヘッダー ファイル\Render</Filter>
     </ClInclude>
     <ClInclude Include="include\Application\ArtifactApplicationManager.hpp">
@@ -296,6 +296,9 @@
     <ClCompile Include="include\Widgets\Menu\ArtifactTimeMenu.ixx">
       <Filter>ヘッダー ファイル\Widgets\Menu</Filter>
     </ClCompile>
+    <ClCompile Include="include\Widgets\Dialog\CreatePlaneLayerDialog.ixx">
+      <Filter>ヘッダー ファイル\Widgets\Dialog</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <QtMoc Include="include\Widgets\ArtifactProjectManagerWidget.hpp">
@@ -306,9 +309,6 @@
     </QtMoc>
     <QtMoc Include="include\Widgets\Render\ArtifactDiligentEngineRenderWindow.hpp">
       <Filter>ヘッダー ファイル\Widgets\Render</Filter>
-    </QtMoc>
-    <QtMoc Include="include\Widgets\Dialog\CreatePlaneLayerDialog.hpp">
-      <Filter>ヘッダー ファイル\Widgets\Dialog</Filter>
     </QtMoc>
     <QtMoc Include="include\Widgets\Menu\Test\ArtifactImageProcessingTestMenu.hpp">
       <Filter>ヘッダー ファイル\Widgets\Menu\Test</Filter>

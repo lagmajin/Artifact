@@ -1,5 +1,7 @@
 module;
+#include <wobjectdefs.h>
 #include <memory>
+#include <QObject>
 export module ArtifactProject;
 
 
@@ -13,8 +15,8 @@ export namespace Artifact {
 
  class ArtifactProjectPrivate;
 
- class ArtifactProject {
-  //Q_OBJECT
+ class ArtifactProject :QObject{
+  W_OBJECT(ArtifactProject)
  private:
   std::unique_ptr<ArtifactProjectPrivate> pImpl_;
 

@@ -183,7 +183,9 @@
     </ClCompile>
     <ClInclude Include="include\GUI\ArtifactGuiManager.hpp" />
     <ClCompile Include="include\Layer\Artifact3DModelLayer.ixx" />
-    <QtMoc Include="include\Widgets\Dialog\CreatePlaneLayerDialog.hpp" />
+    <ClCompile Include="include\Widgets\Dialog\CreatePlaneLayerDialog.ixx">
+      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+    </ClCompile>
     <QtMoc Include="include\Widgets\Menu\Test\ArtifactImageProcessingTestMenu.hpp" />
     <ClInclude Include="include\Widgets\Render\Shader\CommonShader.hpp" />
     <QtMoc Include="include\Widgets\Render\ArtifactDiligentEngineRenderWindow.hpp" />
@@ -203,7 +205,7 @@
       <FileType>Document</FileType>
     </ClCompile>
     <ClCompile Include="include\Project\ArtifactProjectSetting.ixx" />
-    <ClInclude Include="include\Render\ArtifactRenderer.hpp" />
+    <ClInclude Include="include\Render\ArtifactRenderer.ixx" />
     <ClCompile Include="include\Widgets\Dialog\ArtifactCreateCompositionDialog.ixx" />
     <ClCompile Include="include\Widgets\Menu\ArtifactFileMenu.ixx">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>

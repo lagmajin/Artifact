@@ -1,7 +1,10 @@
-#pragma once
-
-#include <QtCore/QScopedPointer>
+module;
 #include <QtWidgets/QWidget>
+export module Dialog;
+//#pragma once
+
+//#include <QtCore/QScopedPointer>
+//
 
 
 
