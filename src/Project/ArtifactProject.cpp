@@ -1,10 +1,13 @@
 module;
+#include <wobjectimpl.h>
 //#include <QtCore/QString>
+
 
 module ArtifactProject;
 
 
 namespace Artifact {
+ W_OBJECT_IMPL(ArtifactProject)
 
  class ArtifactProjectPrivate {
  private:
