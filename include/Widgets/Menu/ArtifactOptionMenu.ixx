@@ -1,4 +1,6 @@
-#pragma once
+module;
+#include <wobjectdefs.h>
+export module Menu:Option;
 
 
 
@@ -13,6 +15,7 @@ namespace Artifact {
  public:
   explicit ArtifactOptionMenu();
   ~ArtifactOptionMenu();
+  signals:
 
  };
 

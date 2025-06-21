@@ -4,6 +4,8 @@
 
 #include <QtWidgets/QApplication>
 
+#include <windows.h>
+
 
 
 
@@ -17,6 +19,8 @@ import Glow;
 import ImageProcessing;
 
 import ArtifactMainWindow;
+
+import hostfxr;
 
 using namespace Artifact;
 using namespace ArtifactCore;
@@ -53,6 +57,36 @@ void test()
  float intensity = 1.1f;   // グローの強度
 
  cv::Mat glowed_image = applyVerticalGlow(mat, threshold, vertical_blur_radius, intensity);
+ SetEnvironmentVariableW(L"COREHOST_TRACE", L"1");
+ SetEnvironmentVariableW(L"COREHOST_TRACEFILE", L"C:\\temp\\hostfxr_trace.log");
+
+ DotnetRuntimeHost host;
+
+ // ① .NET SDKのルート or dotnet.exeのルートを指定（例: "C:/Program Files/dotnet"）
+ if (!host.initialize("C:/Program Files/dotnet")) {
+  qWarning() << "hostfxr 初期化失敗";
+  return;
+ }
+
+ // ② アセンブリパスを指定（.dll）→ ここでは MyApp.dll を仮定
+ QString dllPath = "C:/Users/lagma/Desktop/Artifact/Artifact/App/Debug/net9.0/ArtifactScriptRunner.dll";
+
+ // 呼び出し先の型名とメソッド名（C#側と一致させる）
+ if (!host.loadAssembly(dllPath))
+ {
+  qWarning() << "アセンブリのロード失敗";
+  return;
+ }
+
+ void* method = nullptr;
+ if (!(method = host.getFunctionPointer("ArtifactScriptRunner.ArtifactScriptRunner,ArtifactScriptRunner", "Add"))) {
+  //std::cerr << hostfxr.getError() << std::endl;
+  //return 1;
+ }
+
+  //メソッドを呼び出す。
+ int result = reinterpret_cast<int(*)(int, int)>(method)(1, 2);
+ std::cout << result << std::endl;
 
 
 }

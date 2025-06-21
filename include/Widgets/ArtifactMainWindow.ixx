@@ -1,5 +1,6 @@
 module ;
 
+#include <ads_globals.h>
 #include <wobjectcpp.h>
 
 #include <QtWidgets/QMainWindow>
@@ -19,6 +20,7 @@ export namespace Artifact {
   ~ArtifactMainWindow();
  public slots:
   void addWidget();
+  void addDockedWidget(QWidget* widget, const QString& title, ads::DockWidgetArea area);
  signals:
  };
 

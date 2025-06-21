@@ -25,7 +25,7 @@ export namespace Artifact {
  private slots:
 
  public slots:
-
+  void registerView(const QString& name, QWidget* view);
  };
 
 

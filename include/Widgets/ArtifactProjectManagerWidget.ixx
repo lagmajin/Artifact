@@ -1,18 +1,24 @@
-#pragma once
+module;
 
 #include <QtWidgets/QWidget>
+#include <wobjectdefs.h>
+
+export module ArtifactProjectManagerWidget;
+
+import std;
 
 
 import ArtifactProject;
 
-namespace Artifact {
+export namespace Artifact {
   
  class ArtifactProjectManagerWidgetPrivate;
 
  class ArtifactProjectManagerWidget:public QWidget {
-  Q_OBJECT
+  W_OBJECT(ArtifactProjectManagerWidget)
  private:
-
+  class Impl;
+  std::unique_ptr<Impl> impl;
  protected:
   void dropEvent(QDropEvent* event);
  public:

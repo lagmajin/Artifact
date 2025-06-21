@@ -19,8 +19,12 @@ module;
 module ArtifactMainWindow;
 
 import Menu;
+import ArtifactProjectManagerWidget;
+import DockWidget;
 
 namespace Artifact {
+
+ using namespace ArtifactWidgets;
 
  using namespace ads;
  W_OBJECT_IMPL(ArtifactMainWindow)
@@ -60,8 +64,8 @@ namespace Artifact {
 
   // Create a dock widget with the title Label 1 and set the created label
   // as the dock widget content
-  auto  DockWidget = new ads::CDockWidget("Label 1");
-  DockWidget->setWidget(l);
+  auto  DockWidget = new Pane("Label 1",l);
+  //DockWidget->setWidget(l);
   DockManager->addDockWidget(ads::TopDockWidgetArea, DockWidget);
 
 
@@ -77,6 +81,14 @@ namespace Artifact {
 
   //dWindow->show();
 
+  auto projectManagerWidget = new ArtifactProjectManagerWidget();
+
+  projectManagerWidget->show();
+  auto  DockWidget2 = new Pane("Project",nullptr);
+
+  DockWidget2->setWidget(projectManagerWidget);
+
+  DockManager->addDockWidget(ads::LeftDockWidgetArea, DockWidget2);
  }
 
  ArtifactMainWindow::~ArtifactMainWindow()
@@ -87,6 +99,13 @@ namespace Artifact {
  void ArtifactMainWindow::addWidget()
  {
 
+ }
+
+ void ArtifactMainWindow::addDockedWidget(QWidget* widget, const QString& title, ads::DockWidgetArea area)
+ {
+  //auto dock = new ads::CDockWidget(title);
+  //dock->setWidget(widget);
+  //m_dockManager->addDockWidget(area, dock);
  }
 
 }

@@ -8,7 +8,7 @@ export module Menu:Test;
 
 
 
-namespace Artifact {
+export namespace Artifact {
 
  class ArtifactRenderTestMenuPrivate;
 

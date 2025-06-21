@@ -1,12 +1,12 @@
-#pragma once
+module;
 
 
 #include <QtWidgets/QMenu>
+export module Menu:Test2;
 
 
 
-
-namespace Artifact {
+export namespace Artifact {
 
  class ArtifactImageProcessingTestMenuPrivate;
 

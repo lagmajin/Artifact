@@ -89,8 +89,8 @@
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <OutDir>$(SolutionDir)/App</OutDir>
-    <IncludePath>C:\Users\lagma\Desktop\Artifact\third_party;X:\Halide-19.0.0-x86-64-windows\include;X:\opencv\build\include;X:\DEngine\DiligentCore\Graphics\GraphicsEngineD3D12\interface;X:\DEngine\DiligentCore\Common\interface;X:\DEngine\DiligentCore\Graphics\GraphicsEngine\interface;X:\DEngine\DiligentCore\Graphics\GraphicsEngineVulkan\interface;X:\DEngine\DiligentCore\Graphics\GraphicsEngineVulkan\include;X:\ogre-sdk-v14.3.2-msvc142-x64\include;X:\WickedEngine-master\WickedEngine;X:\Qt\6.7.2\msvc2019_64\include\QtCore;X:\Qt\6.7.2\msvc2019_64\include\QtWidgets;C:\Users\lagma\Desktop\Artifact\ArtifactWidgets\include;Z:\MyLib\Qt-Advanced-Docking-System\src;X:\Qt\6.7.2\msvc2019_64\include;C:\Program Files\Assimp\include;$(IncludePath)</IncludePath>
-    <LibraryPath>X:\Halide-19.0.0-x86-64-windows\lib\Release;X:\opencv\build\x64\vc16\lib;C:\Users\lagma\Desktop\Artifact\Artifact\lib;X:\Build\Graphics\GraphicsEngineD3D12\Debug;X:\Build\Graphics\GraphicsEngineVulkan\Debug;E:\libs;X:\ogre-sdk-v14.3.2-msvc142-x64\lib;X:\WickedEngine-master\BUILD\x64\Debug;X:\Qt\6.7.2\msvc2019_64\lib;D:\WickedEngine-master\BUILD\x64\Debug;$(SolutionDir)\lib;Z:\MyLib\Qt-Advanced-Docking-System\build\Desktop_Qt_6_7_2_MSVC2019_64bit-Debug\lib;$(LibraryPath)</LibraryPath>
+    <IncludePath>C:\Program Files\dotnet\packs\Microsoft.NETCore.App.Host.win-x64\9.0.5\runtimes\win-x64\native;C:\Users\lagma\Desktop\Artifact\third_party;X:\Halide-19.0.0-x86-64-windows\include;X:\opencv\build\include;X:\DEngine\DiligentCore\Graphics\GraphicsEngineD3D12\interface;X:\DEngine\DiligentCore\Common\interface;X:\DEngine\DiligentCore\Graphics\GraphicsEngine\interface;X:\DEngine\DiligentCore\Graphics\GraphicsEngineVulkan\interface;X:\DEngine\DiligentCore\Graphics\GraphicsEngineVulkan\include;X:\ogre-sdk-v14.3.2-msvc142-x64\include;X:\WickedEngine-master\WickedEngine;X:\Qt\6.7.2\msvc2019_64\include\QtCore;X:\Qt\6.7.2\msvc2019_64\include\QtWidgets;C:\Users\lagma\Desktop\Artifact\ArtifactWidgets\include;Z:\MyLib\Qt-Advanced-Docking-System\src;X:\Qt\6.7.2\msvc2019_64\include;C:\Program Files\Assimp\include;X:\Qt\6.7.2\msvc2019_64\include\QtGui;$(IncludePath)</IncludePath>
+    <LibraryPath>C:\Program Files\dotnet\packs\Microsoft.NETCore.App.Host.win-x64\9.0.5\runtimes\win-x64\native;X:\Halide-19.0.0-x86-64-windows\lib\Release;X:\opencv\build\x64\vc16\lib;C:\Users\lagma\Desktop\Artifact\Artifact\lib;X:\Build\Graphics\GraphicsEngineD3D12\Debug;X:\Build\Graphics\GraphicsEngineVulkan\Debug;E:\libs;X:\ogre-sdk-v14.3.2-msvc142-x64\lib;X:\WickedEngine-master\BUILD\x64\Debug;X:\Qt\6.7.2\msvc2019_64\lib;D:\WickedEngine-master\BUILD\x64\Debug;$(SolutionDir)\lib;Z:\MyLib\Qt-Advanced-Docking-System\build\Desktop_Qt_6_7_2_MSVC2019_64bit-Debug\lib;$(LibraryPath)</LibraryPath>
     <AllProjectBMIsArePublic>true</AllProjectBMIsArePublic>
     <PublicModuleDirectories>$(PublicModuleDirectories)</PublicModuleDirectories>
     <AllProjectIncludesArePublic>true</AllProjectIncludesArePublic>
@@ -141,7 +141,7 @@
       <EnableModules>true</EnableModules>
       <ScanSourceForModuleDependencies>false</ScanSourceForModuleDependencies>
       <AdditionalBMIDirectories>C:\Users\lagma\Desktop\Artifact\ArtifactCore;%(AdditionalBMIDirectories)</AdditionalBMIDirectories>
-      <DebugInformationFormat>OldStyle</DebugInformationFormat>
+      <DebugInformationFormat>EditAndContinue</DebugInformationFormat>
       <AdditionalOptions>/Zc:__cplusplus %(AdditionalOptions)</AdditionalOptions>
       <TreatWChar_tAsBuiltInType>true</TreatWChar_tAsBuiltInType>
     </ClCompile>
@@ -184,9 +184,11 @@
     <ClInclude Include="include\GUI\ArtifactGuiManager.hpp" />
     <ClCompile Include="include\Layer\Artifact3DModelLayer.ixx" />
     <ClCompile Include="include\Widgets\Dialog\CreatePlaneLayerDialog.ixx">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
     </ClCompile>
-    <QtMoc Include="include\Widgets\Menu\Test\ArtifactImageProcessingTestMenu.hpp" />
+    <ClCompile Include="include\Widgets\Menu\Test\ArtifactImageProcessingTestMenu.ixx">
+      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
+    </ClCompile>
     <ClInclude Include="include\Widgets\Render\Shader\CommonShader.hpp" />
     <QtMoc Include="include\Widgets\Render\ArtifactDiligentEngineRenderWindow.hpp" />
     <QtMoc Include="include\Widgets\Render\ArtifactOgreRenderWindow.hpp" />
@@ -222,7 +224,7 @@
     </ClCompile>
     <ClCompile Include="include\Widgets\Menu\ArtifactTimeMenu.ixx">
       <FileType>Document</FileType>
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
     </ClCompile>
     <ClCompile Include="include\Widgets\Menu\ArtifactViewMenu.ixx">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
@@ -246,13 +248,13 @@
     <ClCompile Include="include\Widgets\Menu\ArtifactLayerMenu.ixx">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
     </ClCompile>
-    <ClCompile Include="include\Widgets\Menu\ArtifactOptionMenu.hpp">
+    <ClCompile Include="include\Widgets\Menu\ArtifactOptionMenu.ixx">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
     </ClCompile>
     <ClCompile Include="include\Widgets\ArtifactMainWindow.ixx">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
     </ClCompile>
-    <QtMoc Include="include\Widgets\ArtifactProjectManagerWidget.hpp" />
+    <ClCompile Include="include\Widgets\ArtifactProjectManagerWidget.ixx" />
     <ClCompile Include="include\Widgets\ArtifactTimelineWidget.ixx">
       <FileType>Document</FileType>
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
@@ -284,7 +286,9 @@
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Widgets\ArtifactMenuBar.cpp" />
-    <ClCompile Include="src\Widgets\ArtifactProjectManagerWidget.cpp" />
+    <ClCompile Include="src\Widgets\ArtifactProjectManagerWidget.cpp">
+      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+    </ClCompile>
     <ClCompile Include="src\Widgets\ArtifactTimelineWidget.cpp" />
     <ClCompile Include="src\Widgets\Asset\ArtifactAssetBrowser.cpp" />
     <ClCompile Include="src\Widgets\Dialog\CreatePlaneLayerDialog.cpp" />
@@ -303,7 +307,9 @@
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Widgets\Menu\ArtifactViewMenu.cpp" />
-    <ClCompile Include="src\Widgets\Menu\Test\ArtifactImageProcessingTestMenu.cpp" />
+    <ClCompile Include="src\Widgets\Menu\Test\ArtifactImageProcessingTestMenu.cpp">
+      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+    </ClCompile>
     <ClCompile Include="src\Widgets\Render\ArtifactDiligentEngineRenderWindow.cpp" />
     <ClCompile Include="src\Widgets\Render\ArtifactOgreRenderWindow.cpp" />
     <ClCompile Include="src\Widgets\Render\ArtifactRenderManagerWidget.cpp" />

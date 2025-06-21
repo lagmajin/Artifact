@@ -1,5 +1,6 @@
 module;
 #include <QMenu>
+#include <wobjectdefs.h>
 export module Menu:Time;
 
 

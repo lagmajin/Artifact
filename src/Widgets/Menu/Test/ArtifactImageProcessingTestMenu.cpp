@@ -1,7 +1,7 @@
+module;
 #include <QCoreApplication>
 #include <QDir>
-#include "../../../../include/Widgets/Menu/Test/ArtifactImageProcessingTestMenu.hpp"
-#include "../../../../../ArtifactCore/include/Composition/CompositionBuffer2D.hpp"
+module Menu:Test2;
 
 
 
@@ -9,7 +9,7 @@
 
 namespace Artifact {
 
- using namespace ArtifactCore;
+ //using namespace ArtifactCore;
 
  class ArtifactImageProcessingTestMenuPrivate {
  private:

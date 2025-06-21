@@ -284,7 +284,7 @@
     <ClCompile Include="include\Widgets\Render\ArtifactRenderManagerWidget.ixx">
       <Filter>ヘッダー ファイル\Widgets\Render</Filter>
     </ClCompile>
-    <ClCompile Include="include\Widgets\Menu\ArtifactOptionMenu.hpp">
+    <ClCompile Include="include\Widgets\Menu\ArtifactOptionMenu.ixx">
       <Filter>ヘッダー ファイル\Widgets\Menu</Filter>
     </ClCompile>
     <ClCompile Include="include\Widgets\Dialog\ArtifactCreateCompositionDialog.ixx">
@@ -299,19 +299,19 @@
     <ClCompile Include="include\Widgets\Dialog\CreatePlaneLayerDialog.ixx">
       <Filter>ヘッダー ファイル\Widgets\Dialog</Filter>
     </ClCompile>
+    <ClCompile Include="include\Widgets\Menu\Test\ArtifactImageProcessingTestMenu.ixx">
+      <Filter>ヘッダー ファイル\Widgets\Menu\Test</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Widgets\ArtifactProjectManagerWidget.ixx">
+      <Filter>ヘッダー ファイル\Widgets</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <QtMoc Include="include\Widgets\ArtifactProjectManagerWidget.hpp">
-      <Filter>ヘッダー ファイル\Widgets</Filter>
-    </QtMoc>
     <QtMoc Include="include\Widgets\Render\ArtifactOgreRenderWindow.hpp">
       <Filter>ヘッダー ファイル\Widgets\Render</Filter>
     </QtMoc>
     <QtMoc Include="include\Widgets\Render\ArtifactDiligentEngineRenderWindow.hpp">
       <Filter>ヘッダー ファイル\Widgets\Render</Filter>
-    </QtMoc>
-    <QtMoc Include="include\Widgets\Menu\Test\ArtifactImageProcessingTestMenu.hpp">
-      <Filter>ヘッダー ファイル\Widgets\Menu\Test</Filter>
     </QtMoc>
   </ItemGroup>
 </Project>

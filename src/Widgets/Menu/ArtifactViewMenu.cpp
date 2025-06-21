@@ -25,4 +25,9 @@ namespace Artifact {
 
  }
 
+ void ArtifactViewMenu::registerView(const QString& name, QWidget* view)
+ {
+
+ }
+
 };
