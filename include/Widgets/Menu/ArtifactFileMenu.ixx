@@ -1,6 +1,8 @@
 module;
 #include <QMenu>
 #include <QWidget>
+
+#include <wobjectdefs.h>
 export module Menu:File;
 
 //#pragma once
@@ -18,7 +20,8 @@ export namespace Artifact {
  class  ArtifactFileMenuPrivate;
 
  class ArtifactFileMenu :public QMenu {
- private:
+  W_OBJECT(ArtifactFileMenu)
+ 	private:
   QScopedPointer<ArtifactFileMenuPrivate> pImpl_;
  public:
   explicit ArtifactFileMenu(QWidget* parent = nullptr);

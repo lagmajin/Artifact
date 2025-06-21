@@ -2,14 +2,17 @@ module;
 
 #include <mutex>
 
+#include <QMenu>
 
-
+#include <wobjectimpl.h>
 module Menu:File;
 
 
 
 
 namespace Artifact {
+
+ W_OBJECT_IMPL(ArtifactFileMenu)
 
  class  ArtifactFileMenuPrivate {
  private:
@@ -31,7 +34,7 @@ namespace Artifact {
   projectCreated_ = false;
  }
 
- ArtifactFileMenu::ArtifactFileMenu(QWidget* parent /*= nullptr*/):pImpl_(new ArtifactFileMenuPrivate)
+ ArtifactFileMenu::ArtifactFileMenu(QWidget* parent /*= nullptr*/):QMenu(parent),pImpl_(new ArtifactFileMenuPrivate)
  {
   setObjectName("FileMenu");
 

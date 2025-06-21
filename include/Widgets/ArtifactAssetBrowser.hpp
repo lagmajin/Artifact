@@ -1,6 +1,8 @@
 module;
+
 #include <wobjectdefs.h>
 #include <QWidget>
+
 export module Widgets:AssetBrowser;
 
 //#pragma once
@@ -8,8 +10,9 @@ export module Widgets:AssetBrowser;
 //#include <wobjectcpp.h>
 //#include <QtWidgets/QtWidgets>
 
+import std;
 
-namespace Artifact {
+export namespace Artifact {
 
  struct ArtifactAssetBrowserPrivate;
 
