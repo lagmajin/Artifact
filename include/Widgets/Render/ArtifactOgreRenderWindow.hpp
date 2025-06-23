@@ -1,16 +1,20 @@
-#pragma once
-
+module;
 #include <QtWidgets/QApplication>
 #include <QtGui/QKeyEvent>
 #include <QtGui/QWindow>
 #include <ogre/Ogre.h>
+#include <wobjectdefs.h>
+export module Render:Ogre;
 
 
-namespace Artifact {
+
+
+
+export namespace Artifact {
 
  class QTOgreWindow : public QWindow, public Ogre::FrameListener
  {
-  Q_OBJECT
+  W_OBJECT(QTOgreWindow)
 
  public:
   explicit QTOgreWindow(QWindow* parent = nullptr);

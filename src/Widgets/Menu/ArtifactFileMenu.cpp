@@ -50,6 +50,9 @@ namespace Artifact {
 
   setAttribute(Qt::WA_TranslucentBackground);
   setWindowFlags(windowFlags() | Qt::FramelessWindowHint);
+
+  auto project = new QAction("CreateProject");
+  addAction(project);
  }
 
  ArtifactFileMenu::~ArtifactFileMenu()

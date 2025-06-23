@@ -305,11 +305,14 @@
     <ClCompile Include="include\Widgets\ArtifactProjectManagerWidget.ixx">
       <Filter>ヘッダー ファイル\Widgets</Filter>
     </ClCompile>
+    <ClCompile Include="include\Layer\ArtifactCameraLayer.ixx">
+      <Filter>ヘッダー ファイル\Layer</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Widgets\Render\ArtifactOgreRenderWindow.hpp">
+      <Filter>ヘッダー ファイル\Widgets\Render</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <QtMoc Include="include\Widgets\Render\ArtifactOgreRenderWindow.hpp">
-      <Filter>ヘッダー ファイル\Widgets\Render</Filter>
-    </QtMoc>
     <QtMoc Include="include\Widgets\Render\ArtifactDiligentEngineRenderWindow.hpp">
       <Filter>ヘッダー ファイル\Widgets\Render</Filter>
     </QtMoc>

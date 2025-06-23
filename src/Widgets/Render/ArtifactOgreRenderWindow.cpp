@@ -1,10 +1,20 @@
-#include "../../../include/Widgets/Render/ArtifactOgreRenderWindow.hpp"
+module;
+#include <wobjectimpl.h>
+
 #include "QOpenGLContext"
+#include <QWindow>
+#include <ogre/OgreCommon.h>
+#include <ogre/OgreStringConverter.h>
+module Render:Ogre;
+
 
 
 
 
 namespace Artifact {
+
+ W_OBJECT_IMPL(QTOgreWindow)
+
 
  QTOgreWindow::QTOgreWindow(QWindow* parent)
   : QWindow(parent)
