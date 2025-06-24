@@ -13,6 +13,13 @@ namespace Artifact {
 
  };
 
+
+
+	struct ArtifactProjectManager::Impl {
+
+
+	};
+
  ArtifactProjectManager::ArtifactProjectManager()
  {
 
@@ -21,6 +28,18 @@ namespace Artifact {
  ArtifactProjectManager::~ArtifactProjectManager()
  {
 
+ }
+
+ bool ArtifactProjectManager::closeCurrentProject()
+ {
+
+  return true;
+ }
+
+ bool projectManagerCurrentClose()
+ {
+
+  return true;
  }
 
 }

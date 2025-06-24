@@ -1,7 +1,11 @@
+module;
 #include <EngineFactoryVk.h>
 #include <EngineFactoryD3D12.h>
+#include <wobjectimpl.h>
+#include <windows.h>
 
-#include "../../../include/Widgets/Render/ArtifactDiligentEngineRenderWindow.hpp"
+module ArtifactDiligentEngineRenderWindow;
+//#include "../../../include/Widgets/Render/ArtifactDiligentEngineRenderWindow.hpp"
 
 #pragma comment(lib,"d3d12.lib")
 #pragma comment(lib,"dxgi.lib")
@@ -22,6 +26,8 @@
 
 
 namespace Artifact {
+
+ W_OBJECT_IMPL(ArtifactDiligentEngineRenderWindow)
 
  class ArtifactDiligentEngineRenderWindowPrivate
  {
@@ -77,6 +83,21 @@ ArtifactDiligentEngineRenderWindowPrivate::ArtifactDiligentEngineRenderWindowPri
  ArtifactDiligentEngineRenderWindow::~ArtifactDiligentEngineRenderWindow()
  {
 
+ }
+
+ void ArtifactDiligentEngineRenderWindow::renderWireframeObject()
+ {
+  PipelineStateCreateInfo PSOCreateInfo;
+  auto desc=PSOCreateInfo.PSODesc;
+
+
+  
+
+	// GraphicsPipelineCreateInfo& GraphicsPipeline = PSOCreateInfo.
+
+  //RasterizerStateDesc& RasterizerDesc = GraphicsPipeline.RasterizerDesc;
+  //RasterizerDesc.FillMode = FILL_MODE_WIREFRAME; // ワイヤーフレームモードを指定
+  //RasterizerDesc.CullMode = CULL_MODE_NONE;
  }
 
  bool ArtifactDiligentEngineRenderWindow::initialize()

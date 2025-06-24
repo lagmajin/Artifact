@@ -1,4 +1,4 @@
-#pragma once
+module;
 #include <QWindow>
 
 
@@ -6,6 +6,11 @@
 #include <RenderDevice.h>
 #include <RefCntAutoPtr.hpp>
 
+#include <wobjectimpl.h>
+
+export module ArtifactDiligentEngineRenderWindow;
+
+namespace Diligent {};
 
 namespace Artifact
 {
@@ -17,8 +22,11 @@ namespace Artifact
 
  class ArtifactDiligentEngineRenderWindow : public QWindow
  {
-  Q_OBJECT
+  W_OBJECT(ArtifactDiligentEngineRenderWindow)
  private:
+  class Impl;
+	
+
   RefCntAutoPtr<IRenderDevice> pDevice;
   RefCntAutoPtr<IDeviceContext> pImmediateContext;
   RefCntAutoPtr<ISwapChain> pSwapChain;
@@ -30,6 +38,7 @@ namespace Artifact
  public:
   explicit ArtifactDiligentEngineRenderWindow(QWindow* parent = nullptr);
   ~ArtifactDiligentEngineRenderWindow();
+  void renderWireframeObject();
   bool initialize();
   bool m_initialized = false;
   void pickingRay(int posx,int posy);

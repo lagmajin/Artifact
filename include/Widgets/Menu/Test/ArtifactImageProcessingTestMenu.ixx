@@ -1,6 +1,7 @@
 module;
 
 
+#include <wobjectdefs.h>
 #include <QtWidgets/QMenu>
 export module Menu:Test2;
 
@@ -11,7 +12,7 @@ export namespace Artifact {
  class ArtifactImageProcessingTestMenuPrivate;
 
  class ArtifactImageProcessingTestMenu :public QMenu {
-  Q_OBJECT
+  W_OBJECT(ArtifactImageProcessingTestMenu)
  private:
   QScopedPointer<ArtifactImageProcessingTestMenuPrivate> pImpl_;
  public:

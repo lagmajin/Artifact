@@ -30,4 +30,9 @@ namespace Artifact {
 
  }
 
+ ArtifactNullLayer::ArtifactNullLayer()
+ {
+
+ }
+
 };

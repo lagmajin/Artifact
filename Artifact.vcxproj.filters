@@ -311,10 +311,17 @@
     <ClCompile Include="include\Widgets\Render\ArtifactOgreRenderWindow.hpp">
       <Filter>ヘッダー ファイル\Widgets\Render</Filter>
     </ClCompile>
-  </ItemGroup>
-  <ItemGroup>
-    <QtMoc Include="include\Widgets\Render\ArtifactDiligentEngineRenderWindow.hpp">
+    <ClCompile Include="include\Project\ArtifactProjectManagerService.ixx">
+      <Filter>ヘッダー ファイル\Project</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Project\ArtifactProjectManagerService.cpp">
+      <Filter>ソース ファイル\Project</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Layer\ArtifactLayer.ixx">
+      <Filter>ヘッダー ファイル\Layer</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Widgets\Render\ArtifactDiligentEngineRenderWindow.hpp">
       <Filter>ヘッダー ファイル\Widgets\Render</Filter>
-    </QtMoc>
+    </ClCompile>
   </ItemGroup>
 </Project>

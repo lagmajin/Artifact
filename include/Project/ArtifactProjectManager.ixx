@@ -3,6 +3,7 @@ module;
 #include <memory>
 
 
+
 #include <QtCore/QObject>
 #include <wobjectdefs.h>
 
@@ -12,7 +13,11 @@ import std;
 
 export namespace Artifact {
 
- class ArtifactProjectManagerPrivate;
+ class IArtifactProjectManager {
+ public:
+  virtual ~IArtifactProjectManager() = default;
+  virtual bool closeCurrentProject() = 0;
+ };
 
  class ArtifactProjectManager {
  private:
@@ -21,13 +26,16 @@ export namespace Artifact {
  public:
   ArtifactProjectManager();
   ~ArtifactProjectManager();
+  bool closeCurrentProject();
+
  //signals:
  // void projectSettingChanged();
  //public slots:
 
  };
 
-
-
+ extern "C" {
+  bool projectManagerCurrentClose();
+ };
 
 };

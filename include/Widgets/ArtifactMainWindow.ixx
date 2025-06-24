@@ -5,6 +5,7 @@ module ;
 
 #include <QtWidgets/QMainWindow>
 
+
 export module ArtifactMainWindow;
 
 export namespace Artifact {

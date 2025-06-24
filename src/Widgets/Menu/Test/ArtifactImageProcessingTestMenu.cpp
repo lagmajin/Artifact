@@ -1,6 +1,7 @@
 module;
 #include <QCoreApplication>
 #include <QDir>
+#include <wobjectimpl.h>
 module Menu:Test2;
 
 
@@ -9,6 +10,7 @@ module Menu:Test2;
 
 namespace Artifact {
 
+ W_OBJECT_IMPL(ArtifactImageProcessingTestMenu)
  //using namespace ArtifactCore;
 
  class ArtifactImageProcessingTestMenuPrivate {
