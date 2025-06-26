@@ -320,7 +320,7 @@
     <ClCompile Include="include\Layer\ArtifactLayer.ixx">
       <Filter>ヘッダー ファイル\Layer</Filter>
     </ClCompile>
-    <ClCompile Include="include\Widgets\Render\ArtifactDiligentEngineRenderWindow.hpp">
+    <ClCompile Include="include\Widgets\Render\ArtifactDiligentEngineRenderWindow.ixx">
       <Filter>ヘッダー ファイル\Widgets\Render</Filter>
     </ClCompile>
   </ItemGroup>

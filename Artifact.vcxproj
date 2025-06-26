@@ -195,7 +195,7 @@
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
     </ClCompile>
     <ClInclude Include="include\Widgets\Render\Shader\CommonShader.hpp" />
-    <ClCompile Include="include\Widgets\Render\ArtifactDiligentEngineRenderWindow.hpp">
+    <ClCompile Include="include\Widgets\Render\ArtifactDiligentEngineRenderWindow.ixx">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
     </ClCompile>
     <ClCompile Include="include\Widgets\Render\ArtifactOgreRenderWindow.hpp">

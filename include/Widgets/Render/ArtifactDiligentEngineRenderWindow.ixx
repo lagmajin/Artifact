@@ -35,6 +35,7 @@ namespace Artifact
  protected:
   void resizeEvent(QResizeEvent* event);
   void exposeEvent(QExposeEvent* event);
+
  public:
   explicit ArtifactDiligentEngineRenderWindow(QWindow* parent = nullptr);
   ~ArtifactDiligentEngineRenderWindow();
