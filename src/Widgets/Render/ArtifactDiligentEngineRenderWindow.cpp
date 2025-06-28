@@ -1,8 +1,12 @@
 module;
-#include <EngineFactoryVk.h>
-#include <EngineFactoryD3D12.h>
+//#include <EngineFactoryVk.h>
+
+#include <DiligentCore/Graphics/GraphicsEngine/interface/EngineFactory.h>
+#include <DiligentCore/Graphics/GraphicsEngineD3D12/interface/EngineFactoryD3D12.h>
+//#include <EngineFactoryD3D12.h>
 #include <wobjectimpl.h>
 #include <windows.h>
+
 
 module ArtifactDiligentEngineRenderWindow;
 //#include "../../../include/Widgets/Render/ArtifactDiligentEngineRenderWindow.hpp"

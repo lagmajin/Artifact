@@ -2,7 +2,7 @@
 
 #include <QtCore/QtGlobal>
 
-#include <QtWidgets/QApplication>
+#include <QApplication>
 
 #include <windows.h>
 
@@ -21,6 +21,8 @@ import ImageProcessing;
 import ArtifactMainWindow;
 
 import hostfxr;
+import HalideTest;
+import Graphics;
 
 using namespace Artifact;
 using namespace ArtifactCore;
@@ -36,19 +38,6 @@ void test()
   cv::Scalar(-1, -1, -1),   // fillColor（無視される）
   0.8f);
  
-
- //cv::Mat mat2(400, 640, CV_32FC4, cv::Scalar(0, 0, 0));
-
- //auto test = halideTestMinimal2(mat2);
-
- //cv::Mat canvas = cv::Mat::zeros(400, 600, CV_8UC3); // 幅600、高さ400の黒い画像
-
- //unsigned int random_seed_line1 = 123;
- //unsigned int random_seed_line2 = 456;
- //long total_points_attempt = 1000; // 試行回数を増やして密度を上げる
-
- // 左側にランダムな点群の縦ライン
- //drawRandomDottedVerticalLine(canvas, 150, 40, total_points_attempt, random_seed_line1, cv::Scalar(0, 0, 255), 1);
 
 
 
@@ -87,6 +76,36 @@ void test()
   //メソッドを呼び出す。
  int result = reinterpret_cast<int(*)(int, int)>(method)(1, 2);
  std::cout << result << std::endl;
+
+ /*
+ int test_width = 100;
+ int test_height = 50;
+ cv::Mat input_test_mat(test_height, test_width, CV_32FC4);
+
+ // サンプルデータでMatを埋める (BGRA順)
+ // 例えば、左上は青、右上は赤、左下は緑、右下は白
+ for (int y = 0; y < test_height; ++y) {
+  for (int x = 0; x < test_width; ++x) {
+   // OpenCV Vec4f: [Blue, Green, Red, Alpha]
+   float B = (float)x / test_width;         // xが進むにつれて青が強くなる
+   float G = (float)y / test_height;        // yが進むにつれて緑が強くなる
+   float R = 1.0f - (float)x / test_width;  // xが進むにつれて赤が弱くなる
+   float A = 1.0f;                          // アルファは常に1.0 (不透明)
+
+   input_test_mat.at<cv::Vec4f>(y, x) = cv::Vec4f(B, G, R, A);
+  }
+ }
+
+ cv::Mat output_result_mat = process_bgra_mat_with_halide_gpu(input_test_mat);
+ */
+
+ auto context=new GpuContext();
+
+ context->Initialize();
+
+ auto negateCS = new NegateCS(context->D3D12RenderDevice());
+
+
 
 
 }
