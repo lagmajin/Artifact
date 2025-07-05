@@ -3,7 +3,7 @@ module;
 #include <QObject>
 
 
-export module ArtifactProjectSetting;
+export module Project.Settings;
 
 
 
@@ -14,12 +14,11 @@ export namespace Artifact {
 
  public:
   explicit ArtifactProjectSetting();
+  ArtifactProjectSetting(const ArtifactProjectSetting& setting);
   ~ArtifactProjectSetting();
   QString projectName() const;
 
  };
-
-
 
 
 

@@ -1,6 +1,6 @@
 
 
-module Menu:MenuBar;
+module Menu.MenuBar;
 
 import Menu;
 

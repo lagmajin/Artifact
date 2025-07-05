@@ -3,7 +3,7 @@ module;
 #include <QtWidgets/QtWidgets>
 
 
-export module Menu:MenuBar;
+export module Menu.MenuBar;
 
 
 

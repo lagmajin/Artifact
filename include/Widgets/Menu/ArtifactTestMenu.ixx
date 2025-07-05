@@ -1,6 +1,6 @@
 module;
 #include <QtWidgets/QMenu>
-export module Menu:Test;
+export module Menu.Test;
 
 
 

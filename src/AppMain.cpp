@@ -2,6 +2,7 @@
 
 #include <QtCore/QtGlobal>
 
+
 #include <QApplication>
 
 #include <windows.h>
@@ -23,6 +24,9 @@ import ArtifactMainWindow;
 import hostfxr;
 import HalideTest;
 import Graphics;
+import SearchImage;
+
+import ImageProcessing.SpectralGlow;
 
 using namespace Artifact;
 using namespace ArtifactCore;
@@ -97,16 +101,52 @@ void test()
  }
 
  cv::Mat output_result_mat = process_bgra_mat_with_halide_gpu(input_test_mat);
- */
+ */cv::Size img_size(800, 600);
+ // 背景色: 0.0-1.0の範囲でグレー (RGBA)
+ cv::Scalar bg_color(0.2, 0.2, 0.2, 1.0);
+
+ cv::Point center(400, 300);
+ int size = 200;
+ int radius = 40; // 角の丸め半径
+
+  cv::Mat pentagon_no_fill = drawFilledRoundedPentagon(img_size, bg_color, center, size, radius,
+  cv::Scalar(0.0, 0.0, 0.0, 0.0), // 完全に透明
+  cv::Scalar(0.0, 1.0, 0.0, 1.0), // 不透明な緑
+  2);
+
+ int test_width = 100;
+ int test_height = 50;
+ cv::Mat input_test_mat(test_height, test_width, CV_32FC4);
+
+ // サンプルデータでMatを埋める (BGRA順)
+ // 例えば、左上は青、右上は赤、左下は緑、右下は白
+ for (int y = 0; y < test_height; ++y) {
+  for (int x = 0; x < test_width; ++x) {
+   // OpenCV Vec4f: [Blue, Green, Red, Alpha]
+   float B = (float)x / test_width;         // xが進むにつれて青が強くなる
+   float G = (float)y / test_height;        // yが進むにつれて緑が強くなる
+   float R = 1.0f - (float)x / test_width;  // xが進むにつれて赤が弱くなる
+   float A = 1.0f;                          // アルファは常に1.0 (不透明)
+
+   input_test_mat.at<cv::Vec4f>(y, x) = cv::Vec4f(B, G, R, A);
+  }
+ }
+
+ auto testImage = findAndLoadImageInAppDir("test.jpg", CV_32FC4);
 
  auto context=new GpuContext();
 
  context->Initialize();
 
- auto negateCS = new NegateCS(context->D3D12RenderDevice());
+ //auto negateCS = new NegateCS(context->D3D12RenderDevice(),context->D3D12DeviceContext());
 
+ //negateCS->loadShaderBinaryFromDirectory(QCoreApplication::applicationDirPath(), "Negate.cso");
 
+ //negateCS->Process(testImage);
 
+ SpectralGlow glow;
+
+ glow.ElegantGlow(testImage);
 
 }
 
@@ -114,10 +154,10 @@ int main(int argc, char* argv[])
 {
  //qsetenv("QT_QPA_PLATFORM", "windows:darkmode=[1]");
 
- test();
+ //QTextCodec::setCodecForLocale(QTextCodec::codecForName("Shift-JIS"));
 
  QApplication a(argc, argv);
-
+ test();
  ArtifactMainWindow mw;
  mw.show();
  return a.exec();

@@ -275,7 +275,7 @@
     <ClCompile Include="include\Widgets\Menu\ArtifactMenuBar.ixx">
       <Filter>ヘッダー ファイル\Widgets\Menu</Filter>
     </ClCompile>
-    <ClCompile Include="include\Widgets\ArtifactInspectorWidget.hpp">
+    <ClCompile Include="include\Widgets\ArtifactInspectorWidget.ixx">
       <Filter>ヘッダー ファイル\Widgets</Filter>
     </ClCompile>
     <ClCompile Include="include\Widgets\ArtifactCompositionWidget.ixx">
@@ -322,6 +322,15 @@
     </ClCompile>
     <ClCompile Include="include\Widgets\Render\ArtifactDiligentEngineRenderWindow.ixx">
       <Filter>ヘッダー ファイル\Widgets\Render</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Widgets\ArtifactCurveEditorWidget.ixx">
+      <Filter>ヘッダー ファイル\Widgets</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Widgets\ArtifactCurveEditorWidget.cpp">
+      <Filter>ソース ファイル\Widgets</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Project\ArtifactProjectSetting.cppm">
+      <Filter>ソース ファイル\Project</Filter>
     </ClCompile>
   </ItemGroup>
 </Project>

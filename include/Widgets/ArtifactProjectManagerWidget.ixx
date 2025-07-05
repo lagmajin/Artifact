@@ -8,7 +8,7 @@ export module ArtifactProjectManagerWidget;
 import std;
 
 
-import ArtifactProject;
+import Project;
 
 export namespace Artifact {
   

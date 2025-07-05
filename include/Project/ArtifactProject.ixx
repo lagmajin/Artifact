@@ -2,8 +2,9 @@ module;
 #include <wobjectdefs.h>
 #include <memory>
 #include <QObject>
-export module ArtifactProject;
+export module Project;
 
+export import Project.Settings;
 
 //#include <QtCore/QObject>
 

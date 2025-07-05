@@ -6,6 +6,7 @@ module;
 //#include <EngineFactoryD3D12.h>
 #include <wobjectimpl.h>
 #include <windows.h>
+#include <DiligentCore/Graphics/GraphicsEngine/interface/PipelineState.h>
 
 
 module ArtifactDiligentEngineRenderWindow;
@@ -39,6 +40,9 @@ namespace Artifact {
   RefCntAutoPtr<IRenderDevice> pDevice;
   RefCntAutoPtr<IDeviceContext> pImmediateContext;
   RefCntAutoPtr<ISwapChain> pSwapChain;
+
+  //RefCntAutoPtr<PipelineStateCreateInfo> gridPSO_;
+
  public:
   ArtifactDiligentEngineRenderWindowPrivate();
   ~ArtifactDiligentEngineRenderWindowPrivate();

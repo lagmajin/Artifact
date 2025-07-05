@@ -2,7 +2,7 @@
 module;
 #include <QMenu>
 #include <QWidget>
-module Menu:Test;
+module Menu.Test;
 
 
 

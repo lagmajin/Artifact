@@ -19,7 +19,7 @@ export namespace Artifact {
   void mouseMoveEvent(QMouseEvent* event) override;
   void wheelEvent(QWheelEvent* event) override;
  public:
-  ArtifactTimelineWidget();
+  explicit ArtifactTimelineWidget();
   ~ArtifactTimelineWidget();
  signals:
  public slots:

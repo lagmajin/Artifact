@@ -3,7 +3,7 @@ module;
 //#include <QtCore/QString>
 
 
-module ArtifactProject;
+module Project;
 
 
 namespace Artifact {
