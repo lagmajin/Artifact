@@ -2,6 +2,7 @@ module;
 #include <wobjectdefs.h>
 #include <memory>
 #include <QObject>
+#include <QPointer>
 export module Project;
 
 export import Project.Settings;
@@ -14,9 +15,18 @@ export import Project.Settings;
 
 export namespace Artifact {
 
+ class ArtifactProjectSignalHelper {
+ private:
+
+ public:
+  ArtifactProjectSignalHelper();
+  ~ArtifactProjectSignalHelper();
+ };
+
+
  class ArtifactProjectPrivate;
 
- class ArtifactProject :QObject{
+ class ArtifactProject :public QObject{
   W_OBJECT(ArtifactProject)
  private:
   std::unique_ptr<ArtifactProjectPrivate> pImpl_;
@@ -24,11 +34,7 @@ export namespace Artifact {
  public:
   ArtifactProject();
   ~ArtifactProject();
-  //QString projectName() const;
-  //void setProjectName(const QString&name);
- //signals:
-  void updated();
-  //void projectNameChanged(const QString& name);
+  void addAssetFile();
 
  //public slots:
  };

@@ -10,25 +10,50 @@ import Menu;
 
 namespace Artifact {
 
- ArtifactMenuBar::ArtifactMenuBar(QWidget* parent) :QMenuBar(parent)
+ class ArtifactMenuBar::Impl {
+ private:
+
+ public:
+  QMenuBar* menuBar = nullptr;
+  QMenu* fileMenu=nullptr;
+  QMenu* compositionMenu=nullptr;
+  QMenu* layerMenu = nullptr;
+  QMenu* viewMenu = nullptr;
+  Impl(QMenuBar*menu);
+  ~Impl();
+  //void setUpUI(QMenu* menu);
+ };
+
+ ArtifactMenuBar::Impl::Impl(QMenuBar* menu)
  {
-  auto fileMenu = new ArtifactFileMenu(this);
-  auto viewMenu = new ArtifactViewMenu(this);
-  //auto compositionMenu = new ArtifactCompositionMenu(this);
 
-  //auto testMenu = new ArtifactTestMenu(this);
+ }
 
-  //auto compositionMenu=new artifact
+ ArtifactMenuBar::Impl::~Impl()
+ {
 
-  addMenu(fileMenu);
-  addMenu(viewMenu);
-  //addMenu(compositionMenu);
-  //addMenu(testMenu);
+ }
+
+ ArtifactMenuBar::ArtifactMenuBar(QWidget* parent) :QMenuBar(parent),impl(new Impl(this))
+ {
+  impl->fileMenu = new ArtifactFileMenu(this);
+
+
+  impl->compositionMenu = new ArtifactCompositionMenu(this);
+  impl->layerMenu = new ArtifactLayerMenu(this);
+  impl->viewMenu = new ArtifactViewMenu(this);
+
+
+  addMenu(impl->fileMenu);
+  addMenu(impl->compositionMenu);
+  addMenu(impl->viewMenu);
+
+
  }
 
  ArtifactMenuBar::~ArtifactMenuBar()
  {
-
+  delete impl;
  }
 
 

@@ -3,14 +3,15 @@ module;
 #include <memory>
 
 
-
-#include <QtCore/QObject>
-#include <folly/Singleton.h>
+#include <QString>
+#include <QObject>
+//#include <folly/Singleton.h>
 #include <wobjectdefs.h>
+//#include <folly/Singleton.h>
 
 //#include <pybind11/pybind11.h>
 
-export module ArtifactProjectManager;
+export module Project.Manager;
 
 import std;
 
@@ -30,13 +31,22 @@ export namespace Artifact {
  };
 
  class ArtifactProjectManager :public QObject{
+  W_OBJECT(ArtifactProjectManager)
  private:
   class Impl;
   //std::unique_ptr<Impl> impl_;
- public:
-  ArtifactProjectManager();
+  //ArtifactProjectManager();
+  explicit ArtifactProjectManager(QObject* parent = nullptr);
   ~ArtifactProjectManager();
+  ArtifactProjectManager(const ArtifactProjectManager&) = delete;
+  ArtifactProjectManager& operator=(const ArtifactProjectManager&) = delete;
+  //static std::shared_ptr<ArtifactProjectManager> getInstance();
+ public:
+  static ArtifactProjectManager& getInstance();
   void createProject();
+  void createProject(const QString& projectName);
+  void loadfromFile(const QString& fullpath);
+  
   bool closeCurrentProject();
 
  //signals:

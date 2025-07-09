@@ -1,7 +1,7 @@
 module;
 #include <QMenu>
 
-export module Menu:Layer;
+export module Menu.Layer;
 
 
 

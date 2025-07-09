@@ -1,6 +1,6 @@
 module;
 #include <QWidget>
-module Menu:Layer;
+module Menu.Layer;
 
 
 

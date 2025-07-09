@@ -37,7 +37,8 @@ export namespace Artifact {
 
  class ArtifactMenuBar :public QMenuBar{
  private:
-  
+  class Impl;
+  Impl* impl;
  public:
   explicit ArtifactMenuBar(QWidget*parent=nullptr);
   ~ArtifactMenuBar();

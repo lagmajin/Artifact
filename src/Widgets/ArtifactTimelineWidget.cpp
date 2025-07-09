@@ -1,6 +1,7 @@
 module;
 
 #include <QWidget>
+#include <wobjectimpl.h>
 module ArtifactTimelineWidget;
 
 
@@ -11,7 +12,7 @@ module ArtifactTimelineWidget;
 
 namespace Artifact {
 
-
+ W_OBJECT_IMPL(ArtifactTimelineWidget)
 
  void ArtifactTimelineWidget::paintEvent(QPaintEvent* event)
  {
@@ -33,7 +34,26 @@ namespace Artifact {
 
  }
 
+
+
+ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget* parent/*=nullptr*/)
+ {
+
+ }
  ArtifactTimelineWidget::~ArtifactTimelineWidget()
+ {
+
+ }
+
+ void ArtifactTimelineWidget::keyPressEvent(QKeyEvent* event)
+ {
+
+
+
+  //throw std::logic_error("The method or operation is not implemented.");
+ }
+
+ void ArtifactTimelineWidget::keyReleaseEvent(QKeyEvent* event)
  {
 
  }

@@ -1,26 +1,30 @@
 module;
-//#include "../../../../include/Project/ArtifactProjectManager.hpp"
+#include <QDir>
+#include <QFile>
+#include <QJsonObject>
+#include <QStandardPaths>
 
+#include <QTextStream>
 #include <wobjectimpl.h>
+//#include <folly\Singleton.h>
 
-module ArtifactProjectManager;
+module Project.Manager;
 
 
 namespace Artifact {
+ 
+ W_OBJECT_IMPL(ArtifactProjectManager)
 
 
-	class ArtifactProjectManagerPrivate {
+	class ArtifactProjectManager::Impl {
+	private:
 
- };
-
-
-
-	struct ArtifactProjectManager::Impl {
+	public:
 
 
 	};
 
- ArtifactProjectManager::ArtifactProjectManager()
+ ArtifactProjectManager::ArtifactProjectManager(QObject* parent /*= nullptr*/):QObject(parent)
  {
 
  }
@@ -34,6 +38,27 @@ namespace Artifact {
  {
 
   return true;
+ }
+
+ void ArtifactProjectManager::createProject()
+ {
+
+ }
+
+ void ArtifactProjectManager::createProject(const QString& projectName)
+ {
+
+ }
+
+ ArtifactProjectManager& ArtifactProjectManager::getInstance()
+ {
+  static ArtifactProjectManager instance; // ç≈èâÇÃåƒÇ—èoÇµéûÇ…ÇÃÇ›èâä˙âª
+  return instance;
+ }
+
+ void ArtifactProjectManager::loadfromFile(const QString& fullpath)
+ {
+
  }
 
  bool projectManagerCurrentClose()

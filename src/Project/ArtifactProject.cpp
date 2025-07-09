@@ -7,7 +7,20 @@ module Project;
 
 
 namespace Artifact {
+
  W_OBJECT_IMPL(ArtifactProject)
+
+  ArtifactProjectSignalHelper::ArtifactProjectSignalHelper()
+ {
+
+ }
+
+ ArtifactProjectSignalHelper::~ArtifactProjectSignalHelper()
+ {
+
+ }
+
+
 
  class ArtifactProjectPrivate {
  private:

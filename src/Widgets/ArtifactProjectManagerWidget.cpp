@@ -99,4 +99,9 @@ namespace Artifact {
 
  }
 
+ void ArtifactProjectManagerWidget::dragEnterEvent(QDragEnterEvent* event)
+ {
+
+ }
+
 }

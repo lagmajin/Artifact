@@ -21,6 +21,7 @@ export namespace Artifact {
   std::unique_ptr<Impl> impl;
  protected:
   void dropEvent(QDropEvent* event);
+  void dragEnterEvent(QDragEnterEvent* event);
  public:
   explicit ArtifactProjectManagerWidget(QWidget* parent = nullptr);
   ~ArtifactProjectManagerWidget();

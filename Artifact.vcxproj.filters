@@ -106,6 +106,9 @@
     <Filter Include="ソース ファイル\Widgets\Menu\Test">
       <UniqueIdentifier>{3b3d00ac-b8f7-448e-bb49-f4cac315ab44}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Thrift">
+      <UniqueIdentifier>{80b6e5e7-24aa-4121-96e1-db36790686c2}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="include\Composition\ArtifactCompositionManager.hpp">
@@ -332,5 +335,19 @@
     <ClCompile Include="src\Project\ArtifactProjectSetting.cppm">
       <Filter>ソース ファイル\Project</Filter>
     </ClCompile>
+    <ClCompile Include="src\Widgets\Menu\ArtifactOptionMenu.cpp">
+      <Filter>ソース ファイル\Widgets\Menu</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Widgets\Dialog\Dialog.ixx">
+      <Filter>ヘッダー ファイル\Widgets\Dialog</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Widgets\Dialog\EditCompositionSettingDialog.ixx">
+      <Filter>ヘッダー ファイル\Widgets\Dialog</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="src\Widgets\Menu\Test.thrift">
+      <Filter>Thrift</Filter>
+    </None>
   </ItemGroup>
 </Project>

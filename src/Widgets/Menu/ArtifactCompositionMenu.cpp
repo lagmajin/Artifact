@@ -1,9 +1,10 @@
 module;
 #include <QWidget>
 #include <wobjectimpl.h>
-module Menu:ArtifactCompositionMenu;
+#include <QAction>
+module Menu.Composition;
 
-//#include "../../../include/Widgets/menu/ArtifactCompositionMenu.hpp"
+
 
 
 
@@ -14,22 +15,37 @@ namespace Artifact {
 
  W_OBJECT_IMPL(ArtifactCompositionMenu)
 
- class ArtifactCompositionMenuPrivate {
+ class ArtifactCompositionMenu::Impl {
  private:
 
  public:
+  Impl(QMenu* menu);
+  QAction* createCompositionAction;
 
  };
 
- ArtifactCompositionMenu::ArtifactCompositionMenu(QWidget* parent/*=nullptr*/):QMenu(parent)
+ ArtifactCompositionMenu::Impl::Impl(QMenu* menu)
+ {
+
+ }
+
+ ArtifactCompositionMenu::ArtifactCompositionMenu(QWidget* parent/*=nullptr*/):QMenu(parent),impl_(new Impl(this))
  {
   setObjectName("CompositionMenu(&C)");
 
   setTitle("Composition");
+  
+  
+  
 
  }
 
  ArtifactCompositionMenu::~ArtifactCompositionMenu()
+ {
+
+ }
+
+ void ArtifactCompositionMenu::handleCreateCompositionRequested()
  {
 
  }

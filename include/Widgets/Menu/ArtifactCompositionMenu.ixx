@@ -7,7 +7,7 @@ module;
 #include <wobjectdefs.h>
 
 
-export module Menu:ArtifactCompositionMenu;
+export module Menu.Composition;
 
 
 
@@ -20,11 +20,15 @@ export namespace Artifact {
  class ArtifactCompositionMenu:public QMenu {
   W_OBJECT(ArtifactCompositionMenu)
  private:
-  QScopedPointer<ArtifactCompositionMenuPrivate> pImpl_;
+  class Impl;
+  Impl* impl_;
+  //QScopedPointer<ArtifactCompositionMenuPrivate> pImpl_;
   
  public:
   explicit ArtifactCompositionMenu(QWidget*parent=nullptr);
   ~ArtifactCompositionMenu();
+  void handleCreateCompositionRequested();
+  W_SLOT(handleCreateCompositionRequested,() );
  };
 
 
