@@ -22,7 +22,7 @@ import ImageProcessing;
 import ArtifactMainWindow;
 
 import hostfxr;
-import HalideTest;
+//import HalideTest;
 import Graphics;
 import SearchImage;
 
@@ -132,11 +132,11 @@ void test()
   }
  }
 
- auto testImage = findAndLoadImageInAppDir("test.jpg", CV_32FC4);
+ //auto testImage = findAndLoadImageInAppDir("test.jpg", CV_32FC4);
 
- auto context=new GpuContext();
+ //auto context=new GpuContext();
 
- context->Initialize();
+ //context->Initialize();
 
  //auto negateCS = new NegateCS(context->D3D12RenderDevice(),context->D3D12DeviceContext());
 
@@ -144,9 +144,9 @@ void test()
 
  //negateCS->Process(testImage);
 
- SpectralGlow glow;
+ //SpectralGlow glow;
 
- glow.ElegantGlow(testImage);
+ //glow.ElegantGlow(testImage);
 
 }
 

@@ -191,6 +191,9 @@
     <ClCompile Include="include\Widgets\ArtifactCurveEditorWidget.ixx">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
     </ClCompile>
+    <ClCompile Include="include\Widgets\Dialog\ApplicationSettingDialog.ixx">
+      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
+    </ClCompile>
     <ClCompile Include="include\Widgets\Dialog\CreatePlaneLayerDialog.ixx">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
     </ClCompile>
@@ -316,6 +319,9 @@
     </ClCompile>
     <ClCompile Include="src\Widgets\ArtifactTimelineWidget.cpp" />
     <ClCompile Include="src\Widgets\Asset\ArtifactAssetBrowser.cpp" />
+    <ClCompile Include="src\Widgets\Dialog\ApplicationSettingDialog.cpp">
+      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+    </ClCompile>
     <ClCompile Include="src\Widgets\Dialog\CreatePlaneLayerDialog.cpp" />
     <ClCompile Include="src\Widgets\Menu\ArtifactFileMenu.cpp" />
     <ClCompile Include="src\Widgets\Menu\ArtifactHelpMenu.cpp" />

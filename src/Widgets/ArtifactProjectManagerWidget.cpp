@@ -7,14 +7,14 @@ module ArtifactProjectManagerWidget;
 import HeadPanel;
 
 namespace Artifact {
-
+ W_OBJECT_IMPL(ArtifactProjectManagerWidget)
  class ArtifactProjectManagerWidget::Impl {
  public:
 
   
  };
 
-	W_OBJECT_IMPL(ArtifactProjectManagerWidget)
+
 
  ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent /*= nullptr*/)
  {

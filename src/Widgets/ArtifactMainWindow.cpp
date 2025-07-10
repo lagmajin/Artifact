@@ -21,6 +21,9 @@ module ArtifactMainWindow;
 import Menu;
 import ArtifactProjectManagerWidget;
 import DockWidget;
+import BasicImageViewWidget;
+
+namespace ArtifactWidgets {}//
 
 namespace Artifact {
 
@@ -89,6 +92,10 @@ namespace Artifact {
   DockWidget2->setWidget(projectManagerWidget);
 
   DockManager->addDockWidget(ads::LeftDockWidgetArea, DockWidget2);
+
+  auto imageView = new BasicImageViewWidget();
+  imageView->show();
+
  }
 
  ArtifactMainWindow::~ArtifactMainWindow()

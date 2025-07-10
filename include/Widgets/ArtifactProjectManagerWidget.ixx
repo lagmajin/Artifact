@@ -18,7 +18,8 @@ export namespace Artifact {
   W_OBJECT(ArtifactProjectManagerWidget)
  private:
   class Impl;
-  std::unique_ptr<Impl> impl;
+  Impl* impl_;
+  //std::unique_ptr<Impl> impl;
  protected:
   void dropEvent(QDropEvent* event);
   void dragEnterEvent(QDragEnterEvent* event);
