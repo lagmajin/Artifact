@@ -1,11 +1,14 @@
 module;
 #include <QWidget>
 #include <wobjectimpl.h>
+#include <QDebug>
+#include <QMenu>
 #include <QAction>
+
 module Menu.Composition;
 
 
-
+import  Project.Manager;
 
 
 
@@ -20,11 +23,22 @@ namespace Artifact {
 
  public:
   Impl(QMenu* menu);
-  QAction* createCompositionAction;
-
+  ~Impl();
+  QAction* createCompositionAction=nullptr;
+  QAction* changeCompositionSettingsAction = nullptr;
  };
 
  ArtifactCompositionMenu::Impl::Impl(QMenu* menu)
+ {
+  createCompositionAction = new QAction("Create composition");
+  //createCompositionAction->setText()
+  createCompositionAction->setDisabled(true);
+
+
+
+ }
+
+ ArtifactCompositionMenu::Impl::~Impl()
  {
 
  }
@@ -35,7 +49,9 @@ namespace Artifact {
 
   setTitle("Composition");
   
-  
+
+  addAction(impl_->createCompositionAction);
+
   
 
  }
@@ -47,7 +63,9 @@ namespace Artifact {
 
  void ArtifactCompositionMenu::handleCreateCompositionRequested()
  {
+  auto& instance=ArtifactProjectManager::getInstance();
 
+  
  }
 
 };

@@ -13,13 +13,16 @@ module Menu.Layer;
 
 namespace Artifact {
 
-class ArtifactLayerMenuPrivate {
+ class ArtifactLayerMenu::Impl {
+ private:
+
+ public:
 
  };
 
  ArtifactLayerMenu::ArtifactLayerMenu(QWidget* parent/*=nullptr*/):QMenu(parent)
  {
-  //setTitle(tr("Layer"));
+  setTitle(tr("Layer"));
 
   //setTitle(tr("V‹K..."));
  }

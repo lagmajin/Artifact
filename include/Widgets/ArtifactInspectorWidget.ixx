@@ -6,16 +6,17 @@ module;
 
 #include <Audio/AudioDllImport.hpp>
 
-export module ArtifactInspectorWidget;
+export module Widgets.Inspector;
 
-namespace Artifact {
+export namespace Artifact {
 
- class ArtifactInspectorWidgetPrivate;
+ //class ArtifactInspectorWidgetPrivate;
 
  class ArtifactInspectorWidget :public QScrollArea{
  W_OBJECT(ArtifactInspectorWidget)
  private:
-
+  class Impl;
+  Impl* impl_;
  protected:
   void update();
  public:

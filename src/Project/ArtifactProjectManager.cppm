@@ -10,6 +10,8 @@ module;
 
 module Project.Manager;
 
+import Project;
+
 
 namespace Artifact {
  
@@ -18,20 +20,22 @@ namespace Artifact {
 
 	class ArtifactProjectManager::Impl {
 	private:
+	 ArtifactProject project_;
 
 	public:
-
+	 Impl();
+	 ~Impl();
 
 	};
 
- ArtifactProjectManager::ArtifactProjectManager(QObject* parent /*= nullptr*/):QObject(parent)
+ ArtifactProjectManager::ArtifactProjectManager(QObject* parent /*= nullptr*/):QObject(parent),Impl_(new Impl())
  {
 
  }
 
  ArtifactProjectManager::~ArtifactProjectManager()
  {
-
+  delete Impl_;
  }
 
  bool ArtifactProjectManager::closeCurrentProject()
@@ -58,6 +62,12 @@ namespace Artifact {
 
  void ArtifactProjectManager::loadfromFile(const QString& fullpath)
  {
+  QFile file(fullpath);
+
+  if (file.exists())
+  {
+
+  }
 
  }
 

@@ -15,6 +15,8 @@ export module Project.Manager;
 
 import std;
 
+import Project;
+
 namespace pybind11 {}//dummy
 namespace folly{}//dummy
 
@@ -34,8 +36,7 @@ export namespace Artifact {
   W_OBJECT(ArtifactProjectManager)
  private:
   class Impl;
-  //std::unique_ptr<Impl> impl_;
-  //ArtifactProjectManager();
+  Impl* Impl_;
   explicit ArtifactProjectManager(QObject* parent = nullptr);
   ~ArtifactProjectManager();
   ArtifactProjectManager(const ArtifactProjectManager&) = delete;

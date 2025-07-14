@@ -1,4 +1,4 @@
-module;
+ï»¿module;
 
 #include <mutex>
 
@@ -6,7 +6,7 @@ module;
 
 #include <wobjectimpl.h>
 #include <QApplication>
-module Menu:File;
+module Menu.File;
 
 import  Project.Manager;
 
@@ -37,16 +37,16 @@ namespace Artifact {
   closeProjectAction->setShortcut(QKeySequence::Close);
   closeProjectAction->setDisabled(true);
 
-  saveProjectAction = new QAction("•Û‘¶(&S)");
+  saveProjectAction = new QAction(u8"ä¿å­˜(&S)");
   saveProjectAction->setShortcut(QKeySequence::Save);
-  saveProjectAction->setDisabled(true); // Å‰‚Í–³Œø (‚Ü‚¾ƒvƒƒWƒFƒNƒg‚ª‚È‚¢‚½‚ß)
+  saveProjectAction->setDisabled(true); // æœ€åˆã¯ç„¡åŠ¹ (ã¾ã ãƒ—ãƒ­ã‚¸ã‚§ã‚¯ãƒˆãŒãªã„ãŸã‚)
 
-  // --- –¼‘O‚ð•t‚¯‚Ä•Û‘¶ƒAƒNƒVƒ‡ƒ“ ---
-  saveProjectAsAction = new QAction("–¼‘O‚ð•t‚¯‚Ä•Û‘¶(&A)...");
+  // --- åå‰ã‚’ä»˜ã‘ã¦ä¿å­˜ã‚¢ã‚¯ã‚·ãƒ§ãƒ³ ---
+  saveProjectAsAction = new QAction("åå‰ã‚’ä»˜ã‘ã¦ä¿å­˜(&A)...");
   saveProjectAsAction->setShortcut(QKeySequence::SaveAs);
-  saveProjectAsAction->setDisabled(true); // Å‰‚Í–³Œø (‚Ü‚¾ƒvƒƒWƒFƒNƒg‚ª‚È‚¢‚½‚ß)
+  saveProjectAsAction->setDisabled(true); // æœ€åˆã¯ç„¡åŠ¹ (ã¾ã ãƒ—ãƒ­ã‚¸ã‚§ã‚¯ãƒˆãŒãªã„ãŸã‚)
 
-  quitApplicationAction= new QAction("I—¹()...");
+  quitApplicationAction= new QAction("çµ‚äº†()...");
   quitApplicationAction->setShortcut(QKeySequence::Quit);
 
  }
@@ -97,7 +97,7 @@ namespace Artifact {
 
  void ArtifactFileMenu::projectCreateRequested()
  {
-  qDebug() << "ReceiverClass::onDataReady() ‚ªŒÄ‚Ño‚³‚ê‚Ü‚µ‚½I";
+  qDebug() << "ReceiverClass::onDataReady() ãŒå‘¼ã³å‡ºã•ã‚Œã¾ã—ãŸï¼";
 
   ArtifactProjectManager::getInstance().createProject();
 
@@ -107,7 +107,7 @@ namespace Artifact {
 
  void ArtifactFileMenu::projectClosed()
  {
-  qDebug() << "ReceiverClass::projectClosed() ‚ªŒÄ‚Ño‚³‚ê‚Ü‚µ‚½I";
+  qDebug() << "ReceiverClass::projectClosed() ãŒå‘¼ã³å‡ºã•ã‚Œã¾ã—ãŸï¼";
  }
 
  void ArtifactFileMenu::quitApplication()

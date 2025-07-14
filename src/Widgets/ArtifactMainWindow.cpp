@@ -9,6 +9,7 @@ module;
 
 #include <QLabel>
 
+
 #pragma comment(lib,"qtadvanceddockingd.lib")
 
 //#include "../../include/Widgets/menu/ArtifactMenuBar.hpp"
@@ -22,6 +23,7 @@ import Menu;
 import ArtifactProjectManagerWidget;
 import DockWidget;
 import BasicImageViewWidget;
+import Widgets.Inspector;
 
 namespace ArtifactWidgets {}//
 
@@ -63,10 +65,7 @@ namespace Artifact {
   QLabel* l = new QLabel();
   l->setWordWrap(true);
   l->setAlignment(Qt::AlignTop | Qt::AlignLeft);
-  l->setText("Lorem ipsum dolor sit amet, consectetuer adipiscing elit. ");
 
-  // Create a dock widget with the title Label 1 and set the created label
-  // as the dock widget content
   auto  DockWidget = new Pane("Label 1",l);
   //DockWidget->setWidget(l);
   DockManager->addDockWidget(ads::TopDockWidgetArea, DockWidget);
@@ -95,7 +94,13 @@ namespace Artifact {
 
   auto imageView = new BasicImageViewWidget();
   imageView->show();
+  auto  DockWidget3 = new Pane("Inspector", nullptr);
+  
+  auto inspectorWidget2 = new ArtifactInspectorWidget();
 
+  DockWidget3->setWidget(inspectorWidget2);
+
+  DockManager->addDockWidget(ads::RightDockWidgetArea, DockWidget3);
  }
 
  ArtifactMainWindow::~ArtifactMainWindow()

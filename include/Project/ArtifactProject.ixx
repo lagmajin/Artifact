@@ -29,11 +29,15 @@ export namespace Artifact {
  class ArtifactProject :public QObject{
   W_OBJECT(ArtifactProject)
  private:
-  std::unique_ptr<ArtifactProjectPrivate> pImpl_;
+  class Impl;
+  Impl* impl_;
 
  public:
   ArtifactProject();
+  ArtifactProject(const QString& name);
+  ArtifactProject(const ArtifactProjectSetting& setting);
   ~ArtifactProject();
+  void createComposition(const QString&name);
   void addAssetFile();
 
  //public slots:

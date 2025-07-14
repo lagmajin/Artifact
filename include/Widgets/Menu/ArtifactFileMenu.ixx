@@ -3,7 +3,7 @@ module;
 #include <QWidget>
 
 #include <wobjectdefs.h>
-export module Menu:File;
+export module Menu.File;
 
 
 export namespace Artifact {

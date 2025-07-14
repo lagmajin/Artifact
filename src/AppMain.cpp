@@ -1,14 +1,12 @@
-#include <opencv2/opencv.hpp>
+ï»¿#include <opencv2/opencv.hpp>
 
 #include <QtCore/QtGlobal>
-
-
 #include <QApplication>
 
 #include <windows.h>
-
-
-
+#include <QDateTime>
+#include <QDir>
+#include <QImage>
 
 
 
@@ -26,7 +24,11 @@ import hostfxr;
 import Graphics;
 import SearchImage;
 
+import Test;
+
 import ImageProcessing.SpectralGlow;
+
+import Codec.Thubnail.FFmpeg;
 
 using namespace Artifact;
 using namespace ArtifactCore;
@@ -37,17 +39,17 @@ void test()
  cv::Mat mask(400, 640, CV_8UC3, cv::Scalar(0, 0, 0));
  cv::Mat dst(400, 640, CV_8UC3, cv::Scalar(0, 0, 0));
  drawStar5(mat,
-  cv::Scalar(0, 255, 255),  // edgeColori‰©j
+  cv::Scalar(0, 255, 255),  // edgeColorï¼ˆé»„ï¼‰
   2,                        // edgeThickness
-  cv::Scalar(-1, -1, -1),   // fillColori–³‹‚³‚ê‚éj
+  cv::Scalar(-1, -1, -1),   // fillColorï¼ˆç„¡è¦–ã•ã‚Œã‚‹ï¼‰
   0.8f);
  
 
 
 
- float threshold = 0.5f;   // ‚±‚Ìè‡’l‚æ‚è–¾‚é‚¢ƒsƒNƒZƒ‹‚ªƒOƒ[‚ÌŒ³‚É‚È‚é
- int vertical_blur_radius = 80; // c•ûŒü‚Ú‚©‚µ‚Ì”¼Œa (‘å‚«‚¢‚Ù‚Çc‚ÉL‚Ñ‚é)
- float intensity = 1.1f;   // ƒOƒ[‚Ì‹­“x
+ float threshold = 0.5f;   // ã“ã®é–¾å€¤ã‚ˆã‚Šæ˜ã‚‹ã„ãƒ”ã‚¯ã‚»ãƒ«ãŒã‚°ãƒ­ãƒ¼ã®å…ƒã«ãªã‚‹
+ int vertical_blur_radius = 80; // ç¸¦æ–¹å‘ã¼ã‹ã—ã®åŠå¾„ (å¤§ãã„ã»ã©ç¸¦ã«ä¼¸ã³ã‚‹)
+ float intensity = 1.1f;   // ã‚°ãƒ­ãƒ¼ã®å¼·åº¦
 
  cv::Mat glowed_image = applyVerticalGlow(mat, threshold, vertical_blur_radius, intensity);
  SetEnvironmentVariableW(L"COREHOST_TRACE", L"1");
@@ -55,19 +57,19 @@ void test()
 
  DotnetRuntimeHost host;
 
- // ‡@ .NET SDK‚Ìƒ‹[ƒg or dotnet.exe‚Ìƒ‹[ƒg‚ğw’èi—á: "C:/Program Files/dotnet"j
+ // â‘  .NET SDKã®ãƒ«ãƒ¼ãƒˆ or dotnet.exeã®ãƒ«ãƒ¼ãƒˆã‚’æŒ‡å®šï¼ˆä¾‹: "C:/Program Files/dotnet"ï¼‰
  if (!host.initialize("C:/Program Files/dotnet")) {
-  qWarning() << "hostfxr ‰Šú‰»¸”s";
+  qWarning() << "hostfxr åˆæœŸåŒ–å¤±æ•—";
   return;
  }
 
- // ‡A ƒAƒZƒ“ƒuƒŠƒpƒX‚ğw’èi.dllj¨ ‚±‚±‚Å‚Í MyApp.dll ‚ğ‰¼’è
+ // â‘¡ ã‚¢ã‚»ãƒ³ãƒ–ãƒªãƒ‘ã‚¹ã‚’æŒ‡å®šï¼ˆ.dllï¼‰â†’ ã“ã“ã§ã¯ MyApp.dll ã‚’ä»®å®š
  QString dllPath = "C:/Users/lagma/Desktop/Artifact/Artifact/App/Debug/net9.0/ArtifactScriptRunner.dll";
 
- // ŒÄ‚Ño‚µæ‚ÌŒ^–¼‚Æƒƒ\ƒbƒh–¼iC#‘¤‚Æˆê’v‚³‚¹‚éj
+ // å‘¼ã³å‡ºã—å…ˆã®å‹åã¨ãƒ¡ã‚½ãƒƒãƒ‰åï¼ˆC#å´ã¨ä¸€è‡´ã•ã›ã‚‹ï¼‰
  if (!host.loadAssembly(dllPath))
  {
-  qWarning() << "ƒAƒZƒ“ƒuƒŠ‚Ìƒ[ƒh¸”s";
+  qWarning() << "ã‚¢ã‚»ãƒ³ãƒ–ãƒªã®ãƒ­ãƒ¼ãƒ‰å¤±æ•—";
   return;
  }
 
@@ -77,7 +79,7 @@ void test()
   //return 1;
  }
 
-  //ƒƒ\ƒbƒh‚ğŒÄ‚Ño‚·B
+  //ãƒ¡ã‚½ãƒƒãƒ‰ã‚’å‘¼ã³å‡ºã™ã€‚
  int result = reinterpret_cast<int(*)(int, int)>(method)(1, 2);
  std::cout << result << std::endl;
 
@@ -86,15 +88,15 @@ void test()
  int test_height = 50;
  cv::Mat input_test_mat(test_height, test_width, CV_32FC4);
 
- // ƒTƒ“ƒvƒ‹ƒf[ƒ^‚ÅMat‚ğ–„‚ß‚é (BGRA‡)
- // —á‚¦‚ÎA¶ã‚ÍÂA‰Eã‚ÍÔA¶‰º‚Í—ÎA‰E‰º‚Í”’
+ // ã‚µãƒ³ãƒ—ãƒ«ãƒ‡ãƒ¼ã‚¿ã§Matã‚’åŸ‹ã‚ã‚‹ (BGRAé †)
+ // ä¾‹ãˆã°ã€å·¦ä¸Šã¯é’ã€å³ä¸Šã¯èµ¤ã€å·¦ä¸‹ã¯ç·‘ã€å³ä¸‹ã¯ç™½
  for (int y = 0; y < test_height; ++y) {
   for (int x = 0; x < test_width; ++x) {
    // OpenCV Vec4f: [Blue, Green, Red, Alpha]
-   float B = (float)x / test_width;         // x‚ªi‚Ş‚É‚Â‚ê‚ÄÂ‚ª‹­‚­‚È‚é
-   float G = (float)y / test_height;        // y‚ªi‚Ş‚É‚Â‚ê‚Ä—Î‚ª‹­‚­‚È‚é
-   float R = 1.0f - (float)x / test_width;  // x‚ªi‚Ş‚É‚Â‚ê‚ÄÔ‚ªã‚­‚È‚é
-   float A = 1.0f;                          // ƒAƒ‹ƒtƒ@‚Íí‚É1.0 (•s“§–¾)
+   float B = (float)x / test_width;         // xãŒé€²ã‚€ã«ã¤ã‚Œã¦é’ãŒå¼·ããªã‚‹
+   float G = (float)y / test_height;        // yãŒé€²ã‚€ã«ã¤ã‚Œã¦ç·‘ãŒå¼·ããªã‚‹
+   float R = 1.0f - (float)x / test_width;  // xãŒé€²ã‚€ã«ã¤ã‚Œã¦èµ¤ãŒå¼±ããªã‚‹
+   float A = 1.0f;                          // ã‚¢ãƒ«ãƒ•ã‚¡ã¯å¸¸ã«1.0 (ä¸é€æ˜)
 
    input_test_mat.at<cv::Vec4f>(y, x) = cv::Vec4f(B, G, R, A);
   }
@@ -102,31 +104,31 @@ void test()
 
  cv::Mat output_result_mat = process_bgra_mat_with_halide_gpu(input_test_mat);
  */cv::Size img_size(800, 600);
- // ”wŒiF: 0.0-1.0‚Ì”ÍˆÍ‚ÅƒOƒŒ[ (RGBA)
+ // èƒŒæ™¯è‰²: 0.0-1.0ã®ç¯„å›²ã§ã‚°ãƒ¬ãƒ¼ (RGBA)
  cv::Scalar bg_color(0.2, 0.2, 0.2, 1.0);
 
  cv::Point center(400, 300);
  int size = 200;
- int radius = 40; // Šp‚ÌŠÛ‚ß”¼Œa
+ int radius = 40; // è§’ã®ä¸¸ã‚åŠå¾„
 
   cv::Mat pentagon_no_fill = drawFilledRoundedPentagon(img_size, bg_color, center, size, radius,
-  cv::Scalar(0.0, 0.0, 0.0, 0.0), // Š®‘S‚É“§–¾
-  cv::Scalar(0.0, 1.0, 0.0, 1.0), // •s“§–¾‚È—Î
+  cv::Scalar(0.0, 0.0, 0.0, 0.0), // å®Œå…¨ã«é€æ˜
+  cv::Scalar(0.0, 1.0, 0.0, 1.0), // ä¸é€æ˜ãªç·‘
   2);
 
  int test_width = 100;
  int test_height = 50;
  cv::Mat input_test_mat(test_height, test_width, CV_32FC4);
 
- // ƒTƒ“ƒvƒ‹ƒf[ƒ^‚ÅMat‚ğ–„‚ß‚é (BGRA‡)
- // —á‚¦‚ÎA¶ã‚ÍÂA‰Eã‚ÍÔA¶‰º‚Í—ÎA‰E‰º‚Í”’
+ // ã‚µãƒ³ãƒ—ãƒ«ãƒ‡ãƒ¼ã‚¿ã§Matã‚’åŸ‹ã‚ã‚‹ (BGRAé †)
+ // ä¾‹ãˆã°ã€å·¦ä¸Šã¯é’ã€å³ä¸Šã¯èµ¤ã€å·¦ä¸‹ã¯ç·‘ã€å³ä¸‹ã¯ç™½
  for (int y = 0; y < test_height; ++y) {
   for (int x = 0; x < test_width; ++x) {
    // OpenCV Vec4f: [Blue, Green, Red, Alpha]
-   float B = (float)x / test_width;         // x‚ªi‚Ş‚É‚Â‚ê‚ÄÂ‚ª‹­‚­‚È‚é
-   float G = (float)y / test_height;        // y‚ªi‚Ş‚É‚Â‚ê‚Ä—Î‚ª‹­‚­‚È‚é
-   float R = 1.0f - (float)x / test_width;  // x‚ªi‚Ş‚É‚Â‚ê‚ÄÔ‚ªã‚­‚È‚é
-   float A = 1.0f;                          // ƒAƒ‹ƒtƒ@‚Íí‚É1.0 (•s“§–¾)
+   float B = (float)x / test_width;         // xãŒé€²ã‚€ã«ã¤ã‚Œã¦é’ãŒå¼·ããªã‚‹
+   float G = (float)y / test_height;        // yãŒé€²ã‚€ã«ã¤ã‚Œã¦ç·‘ãŒå¼·ããªã‚‹
+   float R = 1.0f - (float)x / test_width;  // xãŒé€²ã‚€ã«ã¤ã‚Œã¦èµ¤ãŒå¼±ããªã‚‹
+   float A = 1.0f;                          // ã‚¢ãƒ«ãƒ•ã‚¡ã¯å¸¸ã«1.0 (ä¸é€æ˜)
 
    input_test_mat.at<cv::Vec4f>(y, x) = cv::Vec4f(B, G, R, A);
   }
@@ -144,14 +146,59 @@ void test()
 
  //negateCS->Process(testImage);
 
- //SpectralGlow glow;
+ SpectralGlow glow;
 
- //glow.ElegantGlow(testImage);
+ glow.ElegantGlow(testImage);
+
+
+ int width = 600;
+ int height = 400;
+
+
+
+
+ // ä½œæˆã™ã‚‹å˜è‰²ã®è‰² (ä¾‹: é’)
+ // QColor::blue() ã®ä»£ã‚ã‚Šã« QColor(255, 0, 0) (èµ¤), QColor(0, 255, 0) (ç·‘) ãªã©ã‚‚æŒ‡å®šã§ãã¾ã™ã€‚
+ //QColor singleColor = QColor(0, 0, 255); // RGB (èµ¤, ç·‘, é’) ã®å€¤ã§é’è‰²ã‚’è¨­å®š
+
+ // QImageã‚ªãƒ–ã‚¸ã‚§ã‚¯ãƒˆã‚’ä½œæˆ
+ // Format_RGB32 ã¯ã€å„ãƒ”ã‚¯ã‚»ãƒ«ãŒ32ãƒ“ãƒƒãƒˆï¼ˆRGBAï¼‰ã§è¡¨ç¾ã•ã‚Œã‚‹å½¢å¼ã§ã™ã€‚
+ // ã“ã®å½¢å¼ã¯ã€å¤šãã®ã‚·ã‚¹ãƒ†ãƒ ã§åŠ¹ç‡çš„ã«æ‰±ã‚ã‚Œã¾ã™ã€‚
+ //QImage image(width, height, QImage::Format_RGB32);
+
+ // ç”»åƒã‚’å˜è‰²ã§å¡—ã‚Šã¤ã¶ã™
+ // fill() ãƒ¡ã‚½ãƒƒãƒ‰ã¯ã€æŒ‡å®šã•ã‚ŒãŸè‰²ã§ç”»åƒå…¨ä½“ã‚’å¡—ã‚Šã¤ã¶ã—ã¾ã™ã€‚
+ //image.fill(singleColor);
+
+ auto file= findFirstFileByLooseExtensionFromAppDir("mov");
+
+ FFmpegThumbnailExtractor extractor;
+
+ auto image=extractor.extractThumbnail(file);
+
+ QString exePath = QCoreApplication::applicationDirPath();
+
+ // é©å½“ãªãƒ•ã‚¡ã‚¤ãƒ«åï¼ˆä¾‹ï¼šthumb_1234.pngï¼‰
+ QString fileName = "thumb_" + QString::number(QDateTime::currentMSecsSinceEpoch()) + ".png";
+
+ // ãƒ•ãƒ«ãƒ‘ã‚¹ã‚’ä½œæˆ
+ QString fullPath = QDir(exePath).filePath(fileName);
+
+ // ä¿å­˜
+ bool success = image.save(fullPath);
+ if (!success) {
+  qDebug() << "Failed to save image to" << fullPath;
+ }
+ else {
+  qDebug() << "Saved image to" << fullPath;
+ }
 
 }
 
 int main(int argc, char* argv[])
 {
+ AddDllDirectory(L"C:\\Users\\lagma\\Desktop\\Artifact\\Artifact\\App");
+ SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_DEFAULT_DIRS | LOAD_LIBRARY_SEARCH_USER_DIRS);
  //qsetenv("QT_QPA_PLATFORM", "windows:darkmode=[1]");
 
  //QTextCodec::setCodecForLocale(QTextCodec::codecForName("Shift-JIS"));

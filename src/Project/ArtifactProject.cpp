@@ -21,59 +21,47 @@ namespace Artifact {
  }
 
 
-
- class ArtifactProjectPrivate {
+ class ArtifactProject::Impl {
  private:
-  //QString projectName_;
+
  public:
-  ArtifactProjectPrivate();
-  ~ArtifactProjectPrivate();
-  //QString projectName() const;
-  //void setProjectName(const QString& name);
+  Impl();
+  ~Impl();
  };
 
- ArtifactProjectPrivate::ArtifactProjectPrivate()
+ ArtifactProject::Impl::Impl()
  {
 
  }
 
- ArtifactProjectPrivate::~ArtifactProjectPrivate()
- {
-
- }
- /*
- QString ArtifactProjectPrivate::projectName() const
- {
-  return projectName_;
- }
-
- void ArtifactProjectPrivate::setProjectName(const QString& name)
+ ArtifactProject::Impl::~Impl()
  {
 
  }
 
- */
- ArtifactProject::ArtifactProject()
+ ArtifactProject::ArtifactProject() :impl_(new Impl())
+ {
+
+ }
+
+ ArtifactProject::ArtifactProject(const QString& name):impl_(new Impl())
+ {
+
+ }
+
+ ArtifactProject::ArtifactProject(const ArtifactProjectSetting& setting):impl_(new Impl())
  {
 
  }
 
  ArtifactProject::~ArtifactProject()
  {
-
- }
- /*
-
- QString ArtifactProject::projectName() const
- {
-  return QString();
+  delete impl_;
  }
 
- void ArtifactProject::setProjectName(const QString& name)
+ void ArtifactProject::createComposition(const QString& name)
  {
 
  }
-
- */
 
 }

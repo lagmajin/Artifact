@@ -350,6 +350,9 @@
     <ClCompile Include="src\Widgets\Dialog\ApplicationSettingDialog.cpp">
       <Filter>ソース ファイル\Widgets\Dialog</Filter>
     </ClCompile>
+    <ClCompile Include="src\Widgets\Menu\ArtifactEditMenu.cpp">
+      <Filter>ソース ファイル\Widgets\Menu</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <None Include="src\Widgets\Menu\Test.thrift">

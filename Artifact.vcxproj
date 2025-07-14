@@ -142,7 +142,7 @@
       <ScanSourceForModuleDependencies>false</ScanSourceForModuleDependencies>
       <AdditionalBMIDirectories>C:\Users\lagma\Desktop\Artifact\ArtifactCore;%(AdditionalBMIDirectories)</AdditionalBMIDirectories>
       <DebugInformationFormat>EditAndContinue</DebugInformationFormat>
-      <AdditionalOptions>/Zc:__cplusplus %(AdditionalOptions)</AdditionalOptions>
+      <AdditionalOptions>/Zc:__cplusplus /utf-8 %(AdditionalOptions)</AdditionalOptions>
       <TreatWChar_tAsBuiltInType>true</TreatWChar_tAsBuiltInType>
     </ClCompile>
     <Link>
@@ -293,12 +293,18 @@
     <ClCompile Include="src\Composition\ArtifactCompositionManager.cpp" />
     <ClCompile Include="src\Effect\ArtifactAbstractEffect.cpp" />
     <ClCompile Include="src\GUI\ArtifactGuiManager.cpp" />
-    <ClCompile Include="src\Layer\ArtifactAbstractLayer.cpp" />
+    <ClCompile Include="src\Layer\ArtifactAbstractLayer.cpp">
+      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+    </ClCompile>
     <ClCompile Include="src\Layer\ArtifactCompositionLayer.cppm">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
     </ClCompile>
-    <ClCompile Include="src\Layer\ArtifactImageLayer.cppm" />
-    <ClCompile Include="src\Layer\ArtifactNullLayer.cpp" />
+    <ClCompile Include="src\Layer\ArtifactImageLayer.cppm">
+      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+    </ClCompile>
+    <ClCompile Include="src\Layer\ArtifactNullLayer.cpp">
+      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+    </ClCompile>
     <ClCompile Include="src\Project\ArtifactProject.cpp" />
     <ClCompile Include="src\Project\ArtifactProjectManager.cppm">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
@@ -323,6 +329,7 @@
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Widgets\Dialog\CreatePlaneLayerDialog.cpp" />
+    <ClCompile Include="src\Widgets\Menu\ArtifactEditMenu.cpp" />
     <ClCompile Include="src\Widgets\Menu\ArtifactFileMenu.cpp" />
     <ClCompile Include="src\Widgets\Menu\ArtifactHelpMenu.cpp" />
     <ClCompile Include="src\Widgets\Menu\ArtifactLayerMenu.cpp">

@@ -19,6 +19,8 @@ namespace Artifact {
 
  ArtifactOptionMenu::ArtifactOptionMenu(QWidget* parent/*=nullptr*/):QMenu(parent)
  {
+  setTitle("Options");
+
 
  }
 
