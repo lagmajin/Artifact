@@ -30,6 +30,8 @@ import ImageProcessing.SpectralGlow;
 
 import Codec.Thubnail.FFmpeg;
 
+import Widgets.Render.Queue;
+
 using namespace Artifact;
 using namespace ArtifactCore;
 
@@ -146,9 +148,9 @@ void test()
 
  //negateCS->Process(testImage);
 
- SpectralGlow glow;
+ //SpectralGlow glow;
 
- glow.ElegantGlow(testImage);
+ //glow.ElegantGlow(testImage);
 
 
  int width = 600;

@@ -1,4 +1,4 @@
-module;
+﻿module;
 
 
 #include<wobjectimpl.h>
@@ -24,6 +24,7 @@ import ArtifactProjectManagerWidget;
 import DockWidget;
 import BasicImageViewWidget;
 import Widgets.Inspector;
+import Widgets.Render.Queue;
 
 namespace ArtifactWidgets {}//
 
@@ -101,6 +102,15 @@ namespace Artifact {
   DockWidget3->setWidget(inspectorWidget2);
 
   DockManager->addDockWidget(ads::RightDockWidgetArea, DockWidget3);
+
+
+  auto renderManagerWidget = new RenderQueueManagerWidget();
+
+  auto  DockWidget4 = new Pane("RenderQueManager", nullptr);
+
+  DockWidget4->setWidget(renderManagerWidget);
+
+  DockManager->addDockWidget(ads::RightDockWidgetArea, DockWidget4);
  }
 
  ArtifactMainWindow::~ArtifactMainWindow()

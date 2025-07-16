@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <QWidget>
 #include <QMenu>
 
@@ -12,6 +12,23 @@ module Menu:View;
 
 namespace Artifact {
 
+ class ArtifactViewMenu::Impl {
+ private:
+
+ public:
+  Impl();
+  ~Impl();
+ };
+
+ ArtifactViewMenu::Impl::Impl()
+ {
+
+ }
+
+ ArtifactViewMenu::Impl::~Impl()
+ {
+
+ }
 
  ArtifactViewMenu::ArtifactViewMenu(QWidget* parent/*=nullptr*/):QMenu(parent)
  {
