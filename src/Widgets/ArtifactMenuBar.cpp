@@ -1,4 +1,4 @@
-module;
+ï»¿module;
 #include <QString>
 module Menu.MenuBar;
 
@@ -42,51 +42,54 @@ namespace Artifact {
   impl->compositionMenu = new ArtifactCompositionMenu(this);
   impl->layerMenu = new ArtifactLayerMenu(this);
   impl->viewMenu = new ArtifactViewMenu(this);
+  
 
 
   addMenu(impl->fileMenu);
   addMenu(impl->compositionMenu);
+  addMenu(impl->layerMenu);
   addMenu(impl->viewMenu);
+
   QString styleSheet = R"(
         QMenuBar {
-            background-color: #333333; /* ƒ_[ƒN‚È”wŒiF */
-            color: #FFFFFF; /* –¾‚é‚¢ƒeƒLƒXƒgF */
-            border: 1px solid #555555; /* ‚í‚¸‚©‚Èƒ{[ƒ_[ */
+            background-color: #333333; /* ãƒ€ãƒ¼ã‚¯ãªèƒŒæ™¯è‰² */
+            color: #FFFFFF; /* æ˜ã‚‹ã„ãƒ†ã‚­ã‚¹ãƒˆè‰² */
+            border: 1px solid #555555; /* ã‚ãšã‹ãªãƒœãƒ¼ãƒ€ãƒ¼ */
         }
 
         QMenuBar::item {
-            spacing: 3px; /* ƒƒjƒ…[ƒAƒCƒeƒ€ŠÔ‚ÌƒXƒy[ƒX */
-            padding: 5px 10px; /* ƒpƒfƒBƒ“ƒO */
-            background-color: transparent; /* ƒfƒtƒHƒ‹ƒg‚Å“§–¾‚È”wŒi */
-            color: #FFFFFF; /* –¾‚é‚¢ƒeƒLƒXƒgF */
+            spacing: 3px; /* ãƒ¡ãƒ‹ãƒ¥ãƒ¼ã‚¢ã‚¤ãƒ†ãƒ é–“ã®ã‚¹ãƒšãƒ¼ã‚¹ */
+            padding: 5px 10px; /* ãƒ‘ãƒ‡ã‚£ãƒ³ã‚° */
+            background-color: transparent; /* ãƒ‡ãƒ•ã‚©ãƒ«ãƒˆã§é€æ˜ãªèƒŒæ™¯ */
+            color: #FFFFFF; /* æ˜ã‚‹ã„ãƒ†ã‚­ã‚¹ãƒˆè‰² */
         }
 
         QMenuBar::item:selected {
-            background-color: #555555; /* ƒzƒo[‚Ì”wŒiF */
+            background-color: #555555; /* ãƒ›ãƒãƒ¼æ™‚ã®èƒŒæ™¯è‰² */
         }
 
         QMenuBar::item:pressed {
-            background-color: #222222; /* ƒNƒŠƒbƒN‚Ì”wŒiF */
+            background-color: #222222; /* ã‚¯ãƒªãƒƒã‚¯æ™‚ã®èƒŒæ™¯è‰² */
         }
 
         QMenu {
-            background-color: #444444; /* ƒhƒƒbƒvƒ_ƒEƒ“ƒƒjƒ…[‚Ì”wŒiF */
-            color: #FFFFFF; /* ƒhƒƒbƒvƒ_ƒEƒ“ƒƒjƒ…[‚ÌƒeƒLƒXƒgF */
-            border: 1px solid #666666; /* ƒhƒƒbƒvƒ_ƒEƒ“ƒƒjƒ…[‚Ìƒ{[ƒ_[ */
+            background-color: #444444; /* ãƒ‰ãƒ­ãƒƒãƒ—ãƒ€ã‚¦ãƒ³ãƒ¡ãƒ‹ãƒ¥ãƒ¼ã®èƒŒæ™¯è‰² */
+            color: #FFFFFF; /* ãƒ‰ãƒ­ãƒƒãƒ—ãƒ€ã‚¦ãƒ³ãƒ¡ãƒ‹ãƒ¥ãƒ¼ã®ãƒ†ã‚­ã‚¹ãƒˆè‰² */
+            border: 1px solid #666666; /* ãƒ‰ãƒ­ãƒƒãƒ—ãƒ€ã‚¦ãƒ³ãƒ¡ãƒ‹ãƒ¥ãƒ¼ã®ãƒœãƒ¼ãƒ€ãƒ¼ */
         }
 
         QMenu::item {
-            padding: 5px 20px 5px 20px; /* ƒhƒƒbƒvƒ_ƒEƒ“ƒƒjƒ…[ƒAƒCƒeƒ€‚ÌƒpƒfƒBƒ“ƒO */
-            color: #FFFFFF; /* ƒhƒƒbƒvƒ_ƒEƒ“ƒƒjƒ…[ƒAƒCƒeƒ€‚ÌƒeƒLƒXƒgF */
+            padding: 5px 20px 5px 20px; /* ãƒ‰ãƒ­ãƒƒãƒ—ãƒ€ã‚¦ãƒ³ãƒ¡ãƒ‹ãƒ¥ãƒ¼ã‚¢ã‚¤ãƒ†ãƒ ã®ãƒ‘ãƒ‡ã‚£ãƒ³ã‚° */
+            color: #FFFFFF; /* ãƒ‰ãƒ­ãƒƒãƒ—ãƒ€ã‚¦ãƒ³ãƒ¡ãƒ‹ãƒ¥ãƒ¼ã‚¢ã‚¤ãƒ†ãƒ ã®ãƒ†ã‚­ã‚¹ãƒˆè‰² */
         }
 
         QMenu::item:selected {
-            background-color: #666666; /* ƒhƒƒbƒvƒ_ƒEƒ“ƒƒjƒ…[ƒAƒCƒeƒ€‚Ìƒzƒo[‚Ì”wŒiF */
+            background-color: #666666; /* ãƒ‰ãƒ­ãƒƒãƒ—ãƒ€ã‚¦ãƒ³ãƒ¡ãƒ‹ãƒ¥ãƒ¼ã‚¢ã‚¤ãƒ†ãƒ ã®ãƒ›ãƒãƒ¼æ™‚ã®èƒŒæ™¯è‰² */
         }
 
         QMenu::separator {
             height: 1px;
-            background-color: #666666; /* ƒZƒpƒŒ[ƒ^‚ÌF */
+            background-color: #666666; /* ã‚»ãƒ‘ãƒ¬ãƒ¼ã‚¿ã®è‰² */
             margin-left: 10px;
             margin-right: 10px;
         }

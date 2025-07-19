@@ -48,6 +48,7 @@ export namespace Artifact {
   void createProject(const QString& projectName);
   void loadfromFile(const QString& fullpath);
   
+  bool projectCreated() const;
   bool closeCurrentProject();
 
   //void projectCreated()

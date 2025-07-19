@@ -28,6 +28,11 @@ namespace Artifact {
 
 	};
 
+ ArtifactProjectManager::Impl::Impl()
+ {
+
+ }
+
  ArtifactProjectManager::ArtifactProjectManager(QObject* parent /*= nullptr*/):QObject(parent),Impl_(new Impl())
  {
 
@@ -69,6 +74,11 @@ namespace Artifact {
 
   }
 
+ }
+
+ bool ArtifactProjectManager::projectCreated() const
+ {
+  return true;
  }
 
  bool projectManagerCurrentClose()

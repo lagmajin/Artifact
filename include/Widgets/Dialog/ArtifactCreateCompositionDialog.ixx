@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <QDialog>
 export module Dialog.Composition;
 
@@ -7,12 +7,54 @@ export module Dialog.Composition;
 
 export namespace Artifact {
 
- class CreateCompositionDialog :public QDialog{
+ enum class eCompositionSettingType {
+  CreateNewComposition,
+  ChangeCompositionSetting,
+ };
+
+ class CompositionSettingPage :public QWidget {
  private:
 
  public:
+  explicit CompositionSettingPage(QWidget* parent = nullptr);
+  ~CompositionSettingPage();
+ };
+
+ class CompositionExtendSettingPage :public QWidget {
+
+ private:
+
+ protected:
+
+ public:
+  explicit CompositionExtendSettingPage(QWidget* parent = nullptr);
+  ~CompositionExtendSettingPage();
+
 
  };
+
+ class CompositionAudioSettingPage :public QWidget {
+
+ };
+
+
+
+
+ class CreateCompositionDialog :public QDialog{
+ private:
+  class Impl;
+  Impl* impl_;
+ protected:
+  void keyPressEvent(QKeyEvent* event) override;
+ public:
+  explicit CreateCompositionDialog(QWidget* parent = nullptr);
+  ~CreateCompositionDialog();
+  void setDefaultFocus();
+  void setCompositionName(const QString& compositionName);
+  //CompositionSetting compositionSetting() const;
+ };
+
+
 
 
 }

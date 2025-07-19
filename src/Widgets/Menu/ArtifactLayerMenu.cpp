@@ -1,4 +1,5 @@
-module;
+Ôªømodule;
+#include <QMenu>
 #include <QWidget>
 module Menu.Layer;
 
@@ -17,14 +18,29 @@ namespace Artifact {
  private:
 
  public:
-
+  Impl(QMenu* menu);
+  QAction* createLayerMenu = nullptr;
+  QAction* createNullLayerMenu=nullptr;
  };
 
- ArtifactLayerMenu::ArtifactLayerMenu(QWidget* parent/*=nullptr*/):QMenu(parent)
+ ArtifactLayerMenu::Impl::Impl(QMenu* menu)
+ {
+  createLayerMenu = new QAction("Create layer");
+  //createCompositionAction->setText()
+  createLayerMenu->setDisabled(true);
+
+  menu->addAction(createLayerMenu);
+
+  createNullLayerMenu = new QAction("Create composition from footage");
+  //createCompositionAction->setText()
+  createNullLayerMenu->setDisabled(true);
+ }
+
+ ArtifactLayerMenu::ArtifactLayerMenu(QWidget* parent/*=nullptr*/):QMenu(parent),impl_(new Impl(this))
  {
   setTitle(tr("Layer"));
 
-  //setTitle(tr("êVãK..."));
+  //setTitle(tr("Êñ∞Ë¶è..."));
  }
 
  ArtifactLayerMenu::~ArtifactLayerMenu()

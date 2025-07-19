@@ -1,4 +1,4 @@
-module;
+﻿module;
 
 
 #include <QtCore/QScopedPointer>
@@ -23,7 +23,11 @@ export namespace Artifact {
   class Impl;
   Impl* impl_;
   //QScopedPointer<ArtifactCompositionMenuPrivate> pImpl_;
-  
+ protected:
+  void rebuildMenu();
+  W_SLOT(rebuildMenu, ());
+
+
  public:
   explicit ArtifactCompositionMenu(QWidget*parent=nullptr);
   ~ArtifactCompositionMenu();

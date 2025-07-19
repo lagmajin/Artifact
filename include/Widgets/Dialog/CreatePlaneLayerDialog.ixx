@@ -1,5 +1,5 @@
-module;
-#include <QtWidgets/QWidget>
+﻿module;
+#include <QWidget>
 export module Dialog;
 //#pragma once
 
