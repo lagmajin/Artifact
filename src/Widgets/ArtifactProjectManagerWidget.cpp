@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <QWidget>
 #include <wobjectimpl.h>
 module ArtifactProjectManagerWidget;
@@ -82,6 +82,8 @@ namespace Artifact {
     }
 )");
 
+     setEnabled(false);
+
  }
 
  ArtifactProjectManagerWidget::~ArtifactProjectManagerWidget()
@@ -102,6 +104,11 @@ namespace Artifact {
  void ArtifactProjectManagerWidget::dragEnterEvent(QDragEnterEvent* event)
  {
 
+ }
+
+ QSize ArtifactProjectManagerWidget::sizeHint() const
+ {
+  return QSize(QWidget::sizeHint().width(),600);
  }
 
 }

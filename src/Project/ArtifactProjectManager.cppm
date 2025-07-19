@@ -1,4 +1,4 @@
-module;
+ï»¿module;
 #include <QDir>
 #include <QFile>
 #include <QJsonObject>
@@ -56,7 +56,7 @@ namespace Artifact {
 
  ArtifactProjectManager& ArtifactProjectManager::getInstance()
  {
-  static ArtifactProjectManager instance; // Å‰‚ÌŒÄ‚Ño‚µ‚É‚Ì‚İ‰Šú‰»
+  static ArtifactProjectManager instance; // æœ€åˆã®å‘¼ã³å‡ºã—æ™‚ã«ã®ã¿åˆæœŸåŒ–
   return instance;
  }
 

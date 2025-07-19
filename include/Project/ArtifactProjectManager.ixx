@@ -1,4 +1,4 @@
-module;
+ï»¿module;
 
 #include <memory>
 
@@ -50,6 +50,9 @@ export namespace Artifact {
   
   bool closeCurrentProject();
 
+  //void projectCreated()
+  //W_SIGNAL(projectCreated())
+
  //signals:
  // void projectSettingChanged();
  //public slots:
@@ -67,7 +70,7 @@ export namespace Artifact {
  /*
  PYBIND11_MODULE(my_module, m) {
   py::class_<ArtifactProjectManager>(m, "ArtifactProjectManager")
-   .def(py::init<>())  // ƒRƒ“ƒXƒgƒ‰ƒNƒ^ŒöŠJ
+   .def(py::init<>())  // ã‚³ãƒ³ã‚¹ãƒˆãƒ©ã‚¯ã‚¿å…¬é–‹
    .def("closeCurrentProject", &ArtifactProjectManager::closeCurrentProject)
    ;
 

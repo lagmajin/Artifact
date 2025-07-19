@@ -1,4 +1,4 @@
-module;
+﻿module;
 
 #include <QtWidgets/QWidget>
 #include <wobjectdefs.h>
@@ -23,6 +23,7 @@ export namespace Artifact {
  protected:
   void dropEvent(QDropEvent* event);
   void dragEnterEvent(QDragEnterEvent* event);
+  QSize sizeHint() const;
  public:
   explicit ArtifactProjectManagerWidget(QWidget* parent = nullptr);
   ~ArtifactProjectManagerWidget();

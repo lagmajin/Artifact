@@ -8,7 +8,7 @@
 #include <QDir>
 #include <QImage>
 
-
+#include <QCommandLineOption>
 
 
 import Transform;

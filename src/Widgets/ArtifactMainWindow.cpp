@@ -63,13 +63,13 @@ namespace Artifact {
 
   auto DockManager = new CDockManager(this);
 
-  QLabel* l = new QLabel();
-  l->setWordWrap(true);
-  l->setAlignment(Qt::AlignTop | Qt::AlignLeft);
+  //QLabel* l = new QLabel();
+  //l->setWordWrap(true);
+  //l->setAlignment(Qt::AlignTop | Qt::AlignLeft);
 
-  auto  DockWidget = new Pane("Label 1",l);
+  //auto  DockWidget = new Pane("Label 1",l);
   //DockWidget->setWidget(l);
-  DockManager->addDockWidget(ads::TopDockWidgetArea, DockWidget);
+  //DockManager->addDockWidget(ads::TopDockWidgetArea, DockWidget);
 
 
   //auto render = new ArtifactRenderManagerWidget();
@@ -110,7 +110,7 @@ namespace Artifact {
 
   DockWidget4->setWidget(renderManagerWidget);
 
-  DockManager->addDockWidget(ads::RightDockWidgetArea, DockWidget4);
+  DockManager->addDockWidget(ads::BottomDockWidgetArea, DockWidget4);
  }
 
  ArtifactMainWindow::~ArtifactMainWindow()
