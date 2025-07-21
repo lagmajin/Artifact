@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <QtCore/QtCore>
 #include <QtWidgets/QtWidgets>
 
@@ -31,17 +31,18 @@ export namespace Artifact {
 
  };
 
-
+ class ArtifactMainWindow;
 
  class ArtifactMenuBarPrivate;
 
  class ArtifactMenuBar :public QMenuBar{
  private:
   class Impl;
-  Impl* impl;
+  Impl* impl_;
  public:
-  explicit ArtifactMenuBar(QWidget*parent=nullptr);
+  explicit ArtifactMenuBar(ArtifactMainWindow* mainWindow,QWidget*parent=nullptr);
   ~ArtifactMenuBar();
+  void setMainWindow(ArtifactMainWindow* window);
  };
 
 

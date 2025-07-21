@@ -1,12 +1,15 @@
-module;
+ï»¿module;
 //#include <EngineFactoryVk.h>
 
 #include <DiligentCore/Graphics/GraphicsEngine/interface/EngineFactory.h>
 #include <DiligentCore/Graphics/GraphicsEngineD3D12/interface/EngineFactoryD3D12.h>
+#include <DiligentCore/Graphics/GraphicsEngine/interface/PipelineState.h>
 //#include <EngineFactoryD3D12.h>
 #include <wobjectimpl.h>
 #include <windows.h>
-#include <DiligentCore/Graphics/GraphicsEngine/interface/PipelineState.h>
+
+#include <QSize>
+#include <QEvent>
 
 
 module ArtifactDiligentEngineRenderWindow;
@@ -34,7 +37,7 @@ namespace Artifact {
 
  W_OBJECT_IMPL(ArtifactDiligentEngineRenderWindow)
 
- class ArtifactDiligentEngineRenderWindowPrivate
+ class ArtifactDiligentEngineRenderWindow::Impl
  {
  private:
   RefCntAutoPtr<IRenderDevice> pDevice;
@@ -44,44 +47,29 @@ namespace Artifact {
   //RefCntAutoPtr<PipelineStateCreateInfo> gridPSO_;
 
  public:
-  ArtifactDiligentEngineRenderWindowPrivate();
-  ~ArtifactDiligentEngineRenderWindowPrivate();
+  Impl();
+  ~Impl();
   bool initialize();
   void clear();
   void drawGrid();
   void postProcessing();
  };
 
-ArtifactDiligentEngineRenderWindowPrivate::ArtifactDiligentEngineRenderWindowPrivate()
+ ArtifactDiligentEngineRenderWindow::Impl::~Impl()
  {
 
  }
 
- ArtifactDiligentEngineRenderWindowPrivate::~ArtifactDiligentEngineRenderWindowPrivate()
+ bool ArtifactDiligentEngineRenderWindow::Impl::initialize()
  {
-
- }
-
- bool ArtifactDiligentEngineRenderWindowPrivate::initialize()
- {
-
   return false;
  }
 
- void ArtifactDiligentEngineRenderWindowPrivate::clear()
+ void ArtifactDiligentEngineRenderWindow::Impl::drawGrid()
  {
 
  }
 
- void ArtifactDiligentEngineRenderWindowPrivate::drawGrid()
- {
-
- }
-
- void ArtifactDiligentEngineRenderWindowPrivate::postProcessing()
- {
-
- }
 
  ArtifactDiligentEngineRenderWindow::ArtifactDiligentEngineRenderWindow(QWindow* parent /*= nullptr*/) :QWindow(parent)
  {
@@ -104,7 +92,7 @@ ArtifactDiligentEngineRenderWindowPrivate::ArtifactDiligentEngineRenderWindowPri
 	// GraphicsPipelineCreateInfo& GraphicsPipeline = PSOCreateInfo.
 
   //RasterizerStateDesc& RasterizerDesc = GraphicsPipeline.RasterizerDesc;
-  //RasterizerDesc.FillMode = FILL_MODE_WIREFRAME; // ƒƒCƒ„[ƒtƒŒ[ƒ€ƒ‚[ƒh‚ğw’è
+  //RasterizerDesc.FillMode = FILL_MODE_WIREFRAME; // ãƒ¯ã‚¤ãƒ¤ãƒ¼ãƒ•ãƒ¬ãƒ¼ãƒ ãƒ¢ãƒ¼ãƒ‰ã‚’æŒ‡å®š
   //RasterizerDesc.CullMode = CULL_MODE_NONE;
  }
 
@@ -115,12 +103,12 @@ ArtifactDiligentEngineRenderWindowPrivate::ArtifactDiligentEngineRenderWindowPri
   EngineD3D12CreateInfo CreationAttribs = {};
   CreationAttribs.EnableValidation = true;
 
-  // ƒEƒBƒ“ƒhƒEƒnƒ“ƒhƒ‹‚ğİ’è
+  // ã‚¦ã‚£ãƒ³ãƒ‰ã‚¦ãƒãƒ³ãƒ‰ãƒ«ã‚’è¨­å®š
   Win32NativeWindow VkWindow;
   VkWindow.hWnd = reinterpret_cast<HWND>(winId());
   pFactory->CreateDeviceAndContextsD3D12(CreationAttribs, &pDevice, &pImmediateContext);
 
-  // ƒXƒƒbƒvƒ`ƒFƒCƒ“‚ğì¬
+  // ã‚¹ãƒ¯ãƒƒãƒ—ãƒã‚§ã‚¤ãƒ³ã‚’ä½œæˆ
   SwapChainDesc SCDesc;
   
   FullScreenModeDesc desc;
@@ -184,6 +172,65 @@ ArtifactDiligentEngineRenderWindowPrivate::ArtifactDiligentEngineRenderWindowPri
    render();
    present();
   }
+ }
+
+ void ArtifactDiligentEngineRenderWindow::keyPressEvent(QKeyEvent* event)
+ {
+  
+ }
+
+ void ArtifactDiligentEngineRenderWindow::mousePressEvent(QMouseEvent* event)
+ {
+  
+ }
+
+ class DiligentViewportWidget::Impl {
+ private:
+
+ public:
+  Impl();
+  ~Impl();
+ };
+
+ DiligentViewportWidget::Impl::Impl()
+ {
+
+ }
+
+ DiligentViewportWidget::Impl::~Impl()
+ {
+
+ }
+
+ void DiligentViewportWidget::keyPressEvent(QKeyEvent* event)
+ {
+  //throw std::logic_error("The method or operation is not implemented.");
+ }
+
+ void DiligentViewportWidget::resizeEvent(QResizeEvent* event)
+ {
+  //throw std::logic_error("The method or operation is not implemented.");
+ }
+
+ DiligentViewportWidget::DiligentViewportWidget(QWidget* parent /*= nullptr*/):QWidget(parent)
+ {
+
+ }
+
+ DiligentViewportWidget::~DiligentViewportWidget()
+ {
+
+ }
+
+ void DiligentViewportWidget::initializeDiligentEngineSafely()
+ {
+
+ }
+
+ QSize DiligentViewportWidget::sizeHint() const
+ {
+  
+  return QSize(600,400);
  }
 
 };

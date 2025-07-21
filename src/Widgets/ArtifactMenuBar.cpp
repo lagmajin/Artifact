@@ -4,7 +4,7 @@ module Menu.MenuBar;
 
 import Menu;
 
-
+import ArtifactMainWindow;
 
 
 
@@ -14,17 +14,18 @@ namespace Artifact {
  private:
 
  public:
-  QMenuBar* menuBar = nullptr;
+  ArtifactMainWindow* mainWindow_ = nullptr;
+  ArtifactMenuBar* menuBar = nullptr;
   QMenu* fileMenu=nullptr;
   QMenu* compositionMenu=nullptr;
   QMenu* layerMenu = nullptr;
   QMenu* viewMenu = nullptr;
-  Impl(QMenuBar*menu);
+  Impl(ArtifactMainWindow* mainWindow, ArtifactMenuBar* menu);
   ~Impl();
   //void setUpUI(QMenu* menu);
  };
 
- ArtifactMenuBar::Impl::Impl(QMenuBar* menu)
+ ArtifactMenuBar::Impl::Impl(ArtifactMainWindow* mainWindow, ArtifactMenuBar* menu):mainWindow_(mainWindow)
  {
 
  }
@@ -34,21 +35,22 @@ namespace Artifact {
 
  }
 
- ArtifactMenuBar::ArtifactMenuBar(QWidget* parent) :QMenuBar(parent),impl(new Impl(this))
+
+ ArtifactMenuBar::ArtifactMenuBar(ArtifactMainWindow* mainWindow, QWidget* parent/*=nullptr*/):QMenuBar(parent),impl_(new Impl(mainWindow,this))
  {
-  impl->fileMenu = new ArtifactFileMenu(this);
+  impl_->fileMenu = new ArtifactFileMenu(this);
 
 
-  impl->compositionMenu = new ArtifactCompositionMenu(this);
-  impl->layerMenu = new ArtifactLayerMenu(this);
-  impl->viewMenu = new ArtifactViewMenu(this);
-  
+  impl_->compositionMenu = new ArtifactCompositionMenu(mainWindow,this);
+  impl_->layerMenu = new ArtifactLayerMenu(this);
+  impl_->viewMenu = new ArtifactViewMenu(this);
 
 
-  addMenu(impl->fileMenu);
-  addMenu(impl->compositionMenu);
-  addMenu(impl->layerMenu);
-  addMenu(impl->viewMenu);
+
+  addMenu(impl_->fileMenu);
+  addMenu(impl_->compositionMenu);
+  addMenu(impl_->layerMenu);
+  addMenu(impl_->viewMenu);
 
   QString styleSheet = R"(
         QMenuBar {
@@ -96,12 +98,16 @@ namespace Artifact {
     )";
 
   setStyleSheet(styleSheet);
-
  }
 
  ArtifactMenuBar::~ArtifactMenuBar()
  {
-  delete impl;
+  delete impl_;
+ }
+
+ void ArtifactMenuBar::setMainWindow(ArtifactMainWindow* window)
+ {
+
  }
 
 

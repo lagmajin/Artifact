@@ -359,6 +359,24 @@
     <ClCompile Include="src\Widgets\Dialog\ArtifactCreateCompositionDialog.cpp">
       <Filter>ソース ファイル\Widgets\Dialog</Filter>
     </ClCompile>
+    <ClCompile Include="include\Widgets\TimelineScene.ixx">
+      <Filter>ヘッダー ファイル\Widgets</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Widgets\Menu\ArtifactEditMenu.ixx">
+      <Filter>ヘッダー ファイル\Widgets\Menu</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Widgets\Render\GridRenderer.ixx">
+      <Filter>ヘッダー ファイル\Widgets\Render</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Widgets\Render\GridRenderer.cpp">
+      <Filter>ソース ファイル\Widgets\Render</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Widgets\Render\ArtifactDiligentEngineRenderWidget.ixx">
+      <Filter>ヘッダー ファイル\Widgets\Render</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Widgets\Render\ArtifactDiligentEngineRenderWidget.cpp">
+      <Filter>ソース ファイル\Widgets\Render</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <None Include="src\Widgets\Menu\Test.thrift">

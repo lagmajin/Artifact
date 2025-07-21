@@ -1,4 +1,4 @@
-module;
+﻿module;
 
 module ArtifactProject:ProjectManagerService;
 
@@ -9,7 +9,7 @@ module ArtifactProject:ProjectManagerService;
 
 namespace ArtifactCore
 {
- struct ArtifactProjectManagerService::Impl {
+ class ArtifactProjectManagerService::Impl {
 
 
  };

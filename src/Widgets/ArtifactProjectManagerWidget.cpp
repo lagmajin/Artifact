@@ -1,6 +1,8 @@
 ﻿module;
 #include <QWidget>
 #include <wobjectimpl.h>
+#include <QBoxLayout>
+#include <QLabel>
 module ArtifactProjectManagerWidget;
 
 
@@ -83,6 +85,14 @@ namespace Artifact {
 )");
 
      setEnabled(false);
+
+     auto label = new QLabel();
+     label->setText("Project name:");
+
+     auto layout = new QVBoxLayout();
+     layout->addWidget(label);
+
+     setLayout(layout);
 
  }
 

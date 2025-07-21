@@ -20,15 +20,33 @@ namespace Artifact {
 
 	class ArtifactProjectManager::Impl {
 	private:
-	 ArtifactProject project_;
+	 //ArtifactProject project_;
 
+	 
 	public:
 	 Impl();
 	 ~Impl();
-
+	 std::shared_ptr<ArtifactProject> spProject_;
+	 void createProject();
 	};
 
  ArtifactProjectManager::Impl::Impl()
+ {
+
+ }
+
+ void ArtifactProjectManager::Impl::createProject()
+ {
+  if (!spProject_)
+  {
+   spProject_ = std::make_shared<ArtifactProject>();
+  }
+
+  
+
+ }
+
+ ArtifactProjectManager::Impl::~Impl()
  {
 
  }
@@ -51,12 +69,16 @@ namespace Artifact {
 
  void ArtifactProjectManager::createProject()
  {
+  Impl_->createProject();
 
+  emit newProjectCreated();
  }
 
  void ArtifactProjectManager::createProject(const QString& projectName)
  {
+  Impl_->createProject();
 
+  emit newProjectCreated();
  }
 
  ArtifactProjectManager& ArtifactProjectManager::getInstance()
@@ -65,7 +87,7 @@ namespace Artifact {
   return instance;
  }
 
- void ArtifactProjectManager::loadfromFile(const QString& fullpath)
+ void ArtifactProjectManager::loadFromFile(const QString& fullpath)
  {
   QFile file(fullpath);
 
@@ -80,6 +102,13 @@ namespace Artifact {
  {
   return true;
  }
+
+ std::shared_ptr<ArtifactProject> ArtifactProjectManager::getCurrentProjectSharedPtr()
+ {
+
+  return Impl_->spProject_;
+ }
+
 
  bool projectManagerCurrentClose()
  {

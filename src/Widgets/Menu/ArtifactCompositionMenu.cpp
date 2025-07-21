@@ -14,7 +14,7 @@ import  Project.Manager;
 
 import Dialog.Composition;
 
-
+import ArtifactMainWindow;
 
 namespace Artifact {
 
@@ -25,8 +25,9 @@ namespace Artifact {
  private:
 
  public:
-  Impl(QMenu* menu);
+  Impl(ArtifactCompositionMenu* menu, ArtifactMainWindow* mainWindow);
   ~Impl();
+  ArtifactMainWindow* mainWindow_ = nullptr;
   QAction* createCompositionAction=nullptr;
   QAction* createCompositionFromFootage = nullptr;
   QAction* changeCompositionSettingsAction = nullptr;
@@ -40,8 +41,8 @@ namespace Artifact {
 
  //W_OBJECT_IMPL(ArtifactCompositionMenu::Impl)
 
- ArtifactCompositionMenu::Impl::Impl(QMenu* menu)
- {
+ ArtifactCompositionMenu::Impl::Impl(ArtifactCompositionMenu* menu,ArtifactMainWindow* mainWindow)
+{
   createCompositionAction = new QAction("Create composition");
   //createCompositionAction->setText()
   //createCompositionAction->setDisabled(true);
@@ -51,6 +52,8 @@ namespace Artifact {
   createCompositionFromFootage = new QAction("Create composition from footage");
   //createCompositionAction->setText()
   createCompositionFromFootage->setDisabled(true);
+
+  menu->addAction(createCompositionFromFootage);
 
   changeCompositionSettingsAction = new QAction("Change composition settings");
 
@@ -86,16 +89,17 @@ namespace Artifact {
 
  }
 
- ArtifactCompositionMenu::ArtifactCompositionMenu(QWidget* parent/*=nullptr*/):QMenu(parent),impl_(new Impl(this))
+
+ ArtifactCompositionMenu::ArtifactCompositionMenu(ArtifactMainWindow* mainWindow, QWidget* parent/*=nullptr*/) :QMenu(parent), impl_(new Impl(this,mainWindow))
  {
   setObjectName("CompositionMenu(&C)");
 
   setTitle("Composition");
-  
+
 
   //addAction(impl_->createCompositionAction);
 
-  addAction(impl_->createCompositionFromFootage);
+
 
   addAction(impl_->saveAsFrameAction);
 

@@ -186,14 +186,7 @@ void test()
  // フルパスを作成
  QString fullPath = QDir(exePath).filePath(fileName);
 
- // 保存
- bool success = image.save(fullPath);
- if (!success) {
-  qDebug() << "Failed to save image to" << fullPath;
- }
- else {
-  qDebug() << "Saved image to" << fullPath;
- }
+
 
 }
 

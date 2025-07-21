@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <wobjectdefs.h>
 #include <memory>
 #include <QObject>
@@ -24,7 +24,7 @@ export namespace Artifact {
  };
 
 
- class ArtifactProjectPrivate;
+ //class ArtifactProjectPrivate;
 
  class ArtifactProject :public QObject{
   W_OBJECT(ArtifactProject)
@@ -39,7 +39,8 @@ export namespace Artifact {
   ~ArtifactProject();
   void createComposition(const QString&name);
   void addAssetFile();
-
+  void addAssetFromPath(const QString& filepath);
+  bool isNull() const;
  //public slots:
  };
 

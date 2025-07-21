@@ -26,6 +26,8 @@ import BasicImageViewWidget;
 import Widgets.Inspector;
 import Widgets.Render.Queue;
 
+import Project.Manager;
+
 namespace ArtifactWidgets {}//
 
 namespace Artifact {
@@ -34,12 +36,39 @@ namespace Artifact {
 
  using namespace ads;
  W_OBJECT_IMPL(ArtifactMainWindow)
- struct ArtifactMainWindowPrivate {
 
+  class ArtifactMainWindow::Impl {
+  private:
 
+  public:
+   Impl(ArtifactMainWindow* mainWindow);
+   ~Impl();
+   void projectCreated();
+   void compositionCreated();
+   ArtifactMainWindow* mainWindow_=nullptr;
  };
 
- ArtifactMainWindow::ArtifactMainWindow(QWidget* parent /*= nullptr*/):QMainWindow(parent)
+ void ArtifactMainWindow::Impl::projectCreated()
+ {
+  qDebug() << "project created";
+ }
+
+ void ArtifactMainWindow::Impl::compositionCreated()
+ {
+
+ }
+
+ ArtifactMainWindow::Impl::Impl(ArtifactMainWindow* mainWindow):mainWindow_(mainWindow)
+ {
+
+ }
+
+ ArtifactMainWindow::Impl::~Impl()
+ {
+
+ }
+
+ ArtifactMainWindow::ArtifactMainWindow(QWidget* parent /*= nullptr*/):QMainWindow(parent),impl_(new Impl(this))
  {
   QPalette p = palette();
   p.setColor(QPalette::Window, QColor(30, 30, 30));
@@ -54,6 +83,7 @@ namespace Artifact {
   setStyleSheet("dark-style.css");
 
   auto menuBar = new ArtifactMenuBar(this);
+  menuBar->setMainWindow(this);
 
   setDockNestingEnabled(true);
 
@@ -94,8 +124,16 @@ namespace Artifact {
   DockManager->addDockWidget(ads::LeftDockWidgetArea, DockWidget2);
 
   auto imageView = new BasicImageViewWidget();
-  imageView->show();
+ // imageView->show();
+
+  auto dockwidget5 = new Pane("Image Viewer", nullptr);
+  dockwidget5->setWidget(imageView);
+  DockManager->addDockWidget(ads::CenterDockWidgetArea, dockwidget5);
+
+
   auto  DockWidget3 = new Pane("Inspector", nullptr);
+
+  
   
   auto inspectorWidget2 = new ArtifactInspectorWidget();
 
@@ -103,19 +141,35 @@ namespace Artifact {
 
   DockManager->addDockWidget(ads::RightDockWidgetArea, DockWidget3);
 
-
+  
   auto renderManagerWidget = new RenderQueueManagerWidget();
 
-  auto  DockWidget4 = new Pane("RenderQueManager", nullptr);
+  auto  DockWidget4 = new Pane("RenderQueueManager", nullptr);
+  DockWidget4->setWindowIcon(QIcon::fromTheme("folder"));
 
   DockWidget4->setWidget(renderManagerWidget);
 
   DockManager->addDockWidget(ads::BottomDockWidgetArea, DockWidget4);
+ 
+
+  auto& projectManager = ArtifactProjectManager::getInstance();
+
+ 
+  QObject::connect(&projectManager, &ArtifactProjectManager::newProjectCreated, [this]() {
+   impl_->projectCreated();
+   });
+
+  QObject::connect(&projectManager, &ArtifactProjectManager::newCompositionCreated, [this]() {
+   //impl_->compositionCreated();
+
+   //impl_->compositionCreated(this);
+   });
+
  }
 
  ArtifactMainWindow::~ArtifactMainWindow()
  {
-
+  delete impl_;
  }
 
  void ArtifactMainWindow::addWidget()
@@ -123,11 +177,10 @@ namespace Artifact {
 
  }
 
- void ArtifactMainWindow::addDockedWidget(QWidget* widget, const QString& title, ads::DockWidgetArea area)
+ void ArtifactMainWindow::addDockedWidget(const QString& title, ads::DockWidgetArea area, QWidget* widget)
  {
-  //auto dock = new ads::CDockWidget(title);
-  //dock->setWidget(widget);
-  //m_dockManager->addDockWidget(area, dock);
+
  }
+
 
 }

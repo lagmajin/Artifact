@@ -17,6 +17,8 @@ export namespace Artifact {
 
  class ArtifactCompositionMenuPrivate;
 
+ class ArtifactMainWindow;
+
  class ArtifactCompositionMenu:public QMenu {
   W_OBJECT(ArtifactCompositionMenu)
  private:
@@ -29,7 +31,7 @@ export namespace Artifact {
 
 
  public:
-  explicit ArtifactCompositionMenu(QWidget*parent=nullptr);
+  explicit ArtifactCompositionMenu(ArtifactMainWindow* mainWindow,QWidget*parent=nullptr);
   ~ArtifactCompositionMenu();
   void handleCreateCompositionRequested();
   W_SLOT(handleCreateCompositionRequested,() );

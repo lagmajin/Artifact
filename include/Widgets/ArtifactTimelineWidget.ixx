@@ -1,8 +1,10 @@
-module;
+﻿module;
 
 #include <wobjectcpp.h>
 
 #include <QtWidgets/QtWidgets>
+
+#include <QGraphicsView>
 
 #include <wobjectdefs.h>
 
@@ -11,11 +13,38 @@ export module ArtifactTimelineWidget;
 
 export namespace Artifact {
  
- struct ArtifactTimelineWidgetPrivate;
+ class ArtifactTimeCodeWidget :public QWidget {
+ W_OBJECT(ArtifactTimeCodeWidget)
+ private:
+  class Impl;
+  Impl* impl_;
+ public:
+  explicit ArtifactTimeCodeWidget(QWidget* parent = nullptr);
+  ~ArtifactTimeCodeWidget();
+  
+  void updateTimeCode(int frame);
+ };
+
+
+ class TimelineTrackView :public QGraphicsView {
+  W_OBJECT(TimelineTrackView)
+ private:
+
+ public:
+  explicit TimelineTrackView(QWidget* parent = nullptr);
+  ~TimelineTrackView();
+  double zoomLevel() const;
+  void setZoomLevel(double pixelsPerFrame);
+
+ };
+
+
  
  class ArtifactTimelineWidget :public QWidget{
   W_OBJECT(ArtifactTimelineWidget)
  private:
+  class Impl;
+  Impl* impl_;
  protected:
   void paintEvent(QPaintEvent* event) override;
   void mousePressEvent(QMouseEvent* event) override;

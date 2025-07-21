@@ -38,25 +38,36 @@ export namespace Artifact {
   class Impl;
   Impl* Impl_;
   explicit ArtifactProjectManager(QObject* parent = nullptr);
-  ~ArtifactProjectManager();
-  ArtifactProjectManager(const ArtifactProjectManager&) = delete;
-  ArtifactProjectManager& operator=(const ArtifactProjectManager&) = delete;
+  
+  //ArtifactProjectManager(const ArtifactProjectManager&) = delete;
+  //ArtifactProjectManager& operator=(const ArtifactProjectManager&) = delete;
   //static std::shared_ptr<ArtifactProjectManager> getInstance();
+ protected:
+  virtual ~ArtifactProjectManager();
  public:
   static ArtifactProjectManager& getInstance();
   void createProject();
   void createProject(const QString& projectName);
-  void loadfromFile(const QString& fullpath);
+  void loadFromFile(const QString& fullpath);
   
   bool projectCreated() const;
+
+  void createNewComposition();
+  void createNewComposition(const QString& str);
   bool closeCurrentProject();
+  std::shared_ptr<ArtifactProject> getCurrentProjectSharedPtr();
 
-  //void projectCreated()
-  //W_SIGNAL(projectCreated())
+  std::weak_ptr<ArtifactProject> getCurrentProjectWeakPtr();
 
- //signals:
- // void projectSettingChanged();
- //public slots:
+
+ public:
+  void newProjectCreated()
+   W_SIGNAL(newProjectCreated)
+
+   void newCompositionCreated()
+   W_SIGNAL(newCompositionCreated)
+
+  
 
  };
  

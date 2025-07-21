@@ -1,7 +1,8 @@
 ﻿module;
-
-#include <QtWidgets/QWidget>
 #include <wobjectdefs.h>
+#include <QWidget>
+
+#include <QTreeView>
 
 export module ArtifactProjectManagerWidget;
 
@@ -12,14 +13,21 @@ import Project;
 
 export namespace Artifact {
   
- class ArtifactProjectManagerWidgetPrivate;
+ class ArtifactProjectView :public QTreeView {
+ private:
+
+ public:
+  explicit ArtifactProjectView(QWidget* parent = nullptr);
+  ~ArtifactProjectView();
+ };
+
+
 
  class ArtifactProjectManagerWidget:public QWidget {
   W_OBJECT(ArtifactProjectManagerWidget)
  private:
   class Impl;
   Impl* impl_;
-  //std::unique_ptr<Impl> impl;
  protected:
   void dropEvent(QDropEvent* event);
   void dragEnterEvent(QDragEnterEvent* event);
@@ -27,10 +35,15 @@ export namespace Artifact {
  public:
   explicit ArtifactProjectManagerWidget(QWidget* parent = nullptr);
   ~ArtifactProjectManagerWidget();
- signals:
+  void setFilter();
 
- public slots:
+
+
   void triggerUpdate();
+
+ public:
+
+
  };
 
 

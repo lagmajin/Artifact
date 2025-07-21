@@ -46,6 +46,16 @@ export namespace Artifact {
   Impl* impl_;
  protected:
   void keyPressEvent(QKeyEvent* event) override;
+
+
+  void mousePressEvent(QMouseEvent* event) override;
+
+
+  void mouseReleaseEvent(QMouseEvent* event) override;
+
+
+  void mouseMoveEvent(QMouseEvent* event) override;
+
  public:
   explicit CreateCompositionDialog(QWidget* parent = nullptr);
   ~CreateCompositionDialog();

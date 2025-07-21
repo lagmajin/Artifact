@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <wobjectimpl.h>
 //#include <QtCore/QString>
 
@@ -60,6 +60,16 @@ namespace Artifact {
  }
 
  void ArtifactProject::createComposition(const QString& name)
+ {
+
+ }
+
+ bool ArtifactProject::isNull() const
+ {
+  return false;
+ }
+
+ void ArtifactProject::addAssetFromPath(const QString& filepath)
  {
 
  }
