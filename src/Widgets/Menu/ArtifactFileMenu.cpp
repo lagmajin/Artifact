@@ -1,10 +1,11 @@
 ﻿module;
-
+#include <wobjectimpl.h>
 #include <mutex>
 
 #include <QMenu>
+#include <QPropertyAnimation>
+#include <QGraphicsOpacityEffect>
 
-#include <wobjectimpl.h>
 #include <QApplication>
 module Menu.File;
 
@@ -117,7 +118,26 @@ namespace Artifact {
 
  void ArtifactFileMenu::rebuildMenu()
  {
-  qDebug() << "Rebuild Menu";
+  QGraphicsOpacityEffect* opacityEffect = new QGraphicsOpacityEffect(this);
+  opacityEffect->setOpacity(0.0); // 最初は透明
+  setGraphicsEffect(opacityEffect);
+
+  // 2. QPropertyAnimation を作成
+  QPropertyAnimation* animation = new QPropertyAnimation(opacityEffect, "opacity", this);
+  animation->setDuration(500); // アニメーション時間 (ミリ秒)
+  animation->setStartValue(0.0);
+  animation->setEndValue(1.0); // 不透明にする
+  animation->setEasingCurve(QEasingCurve::OutQuad); // イージングカーブ (アニメーションの滑らかさ)
+
+  // アニメーションが完了したらエフェクトを削除 (残しておくとパフォーマンスに影響)
+  QObject::connect(animation, &QPropertyAnimation::finished, this, [opacityEffect,this]() {
+   //setGraphicsEffect(nullptr); // エフェクトを解除
+   opacityEffect->deleteLater(); // エフェクトオブジェクトを削除
+   });
+
+  // 3. メニューを表示してアニメーションを開始
+  //menu->popup(pos); // メニューを表示
+  animation->start(QAbstractAnimation::DeleteWhenStopped);
 
 
  }

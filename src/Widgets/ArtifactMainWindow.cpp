@@ -25,7 +25,7 @@ import DockWidget;
 import BasicImageViewWidget;
 import Widgets.Inspector;
 import Widgets.Render.Queue;
-
+import Widgets.Render.Composition;
 import Project.Manager;
 
 namespace ArtifactWidgets {}//
@@ -117,40 +117,47 @@ namespace Artifact {
   auto projectManagerWidget = new ArtifactProjectManagerWidget();
 
   projectManagerWidget->show();
-  auto  DockWidget2 = new Pane("Project",nullptr);
+  auto  DockWidget2 = new Pane("Project", projectManagerWidget);
 
-  DockWidget2->setWidget(projectManagerWidget);
+  //DockWidget2->setWidget(projectManagerWidget);
 
   DockManager->addDockWidget(ads::LeftDockWidgetArea, DockWidget2);
 
   auto imageView = new BasicImageViewWidget();
  // imageView->show();
 
-  auto dockwidget5 = new Pane("Image Viewer", nullptr);
-  dockwidget5->setWidget(imageView);
+  auto dockwidget5 = new Pane("Image Viewer", imageView);
+  //dockwidget5->setWidget(imageView);
   DockManager->addDockWidget(ads::CenterDockWidgetArea, dockwidget5);
 
 
-  auto  DockWidget3 = new Pane("Inspector", nullptr);
+  
 
   
   
   auto inspectorWidget2 = new ArtifactInspectorWidget();
-
-  DockWidget3->setWidget(inspectorWidget2);
+  auto  DockWidget3 = new Pane("Inspector", inspectorWidget2);
+  //DockWidget3->setWidget(inspectorWidget2);
 
   DockManager->addDockWidget(ads::RightDockWidgetArea, DockWidget3);
 
   
   auto renderManagerWidget = new RenderQueueManagerWidget();
 
-  auto  DockWidget4 = new Pane("RenderQueueManager", nullptr);
+  auto  DockWidget4 = new Pane("RenderQueueManager", renderManagerWidget);
   DockWidget4->setWindowIcon(QIcon::fromTheme("folder"));
 
-  DockWidget4->setWidget(renderManagerWidget);
+  //DockWidget4->setWidget(renderManagerWidget);
 
   DockManager->addDockWidget(ads::BottomDockWidgetArea, DockWidget4);
  
+  
+  auto compositionWidget = new ArtifactDiligentEngineComposition2DWindow();
+
+  auto  DockWidget5 = new Pane("CompositionWidget", compositionWidget);
+  //DockWidget5->setWidget(compositionWidget);
+
+  DockManager->addDockWidget(ads::CenterDockWidgetArea, DockWidget5);
 
   auto& projectManager = ArtifactProjectManager::getInstance();
 
@@ -165,6 +172,13 @@ namespace Artifact {
    //impl_->compositionCreated(this);
    });
 
+  //auto compositionWidget2 = new ArtifactDiligentEngineComposition2DWidget();
+
+  //compositionWidget2->show();
+
+  //auto compositionWidget3 = new ArtifactDiligentEngineComposition2DWindow();
+
+  //compositionWidget3->show();
  }
 
  ArtifactMainWindow::~ArtifactMainWindow()

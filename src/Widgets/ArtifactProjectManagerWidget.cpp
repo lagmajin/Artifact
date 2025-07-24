@@ -10,15 +10,42 @@ import HeadPanel;
 
 namespace Artifact {
  W_OBJECT_IMPL(ArtifactProjectManagerWidget)
+
+  ArtifactProjectView::ArtifactProjectView(QWidget* parent /*= nullptr*/):QTreeView(parent)
+ {
+  setFrameShape(QFrame::NoFrame);
+  // setSelectionMode(QAbstractItemView::SingleSelection);
+  setDragEnabled(true);
+  setAcceptDrops(true);
+  setDropIndicatorShown(true);
+
+ }
+
+ ArtifactProjectView::~ArtifactProjectView()
+ {
+
+ }
+
+
  class ArtifactProjectManagerWidget::Impl {
  public:
 
-  
+  ArtifactProjectView* projectView_ = nullptr;
+  Impl();
+  ~Impl();
  };
 
+ ArtifactProjectManagerWidget::Impl::Impl()
+ {
 
+ }
 
- ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent /*= nullptr*/)
+ ArtifactProjectManagerWidget::Impl::~Impl()
+ {
+
+ }
+
+ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent /*= nullptr*/):QWidget(parent),impl_(new Impl())
  {
 	 setWindowTitle("Project");
      setAttribute(Qt::WA_StyledBackground);
@@ -89,16 +116,18 @@ namespace Artifact {
      auto label = new QLabel();
      label->setText("Project name:");
 
+     impl_->projectView_ = new ArtifactProjectView();
+
      auto layout = new QVBoxLayout();
      layout->addWidget(label);
-
+     layout->addWidget(impl_->projectView_);
      setLayout(layout);
 
  }
 
  ArtifactProjectManagerWidget::~ArtifactProjectManagerWidget()
  {
-
+  delete impl_;
  }
 
  void ArtifactProjectManagerWidget::dropEvent(QDropEvent* event)
@@ -120,5 +149,7 @@ namespace Artifact {
  {
   return QSize(QWidget::sizeHint().width(),600);
  }
+
+ 
 
 }

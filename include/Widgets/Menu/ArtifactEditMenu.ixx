@@ -10,9 +10,10 @@ export namespace Artifact {
  class ArtifactEditMenu :public QMenu {
   W_OBJECT(ArtifactEditMenu)
  private:
-
+  class Impl;
+  Impl* impl_;
  public:
-  explicit ArtifactEditMenu();
+  explicit ArtifactEditMenu(QWidget* parent=nullptr);
   ~ArtifactEditMenu();
 
  };

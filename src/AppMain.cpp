@@ -172,19 +172,19 @@ void test()
  // fill() メソッドは、指定された色で画像全体を塗りつぶします。
  //image.fill(singleColor);
 
- auto file= findFirstFileByLooseExtensionFromAppDir("mov");
+ //auto file= findFirstFileByLooseExtensionFromAppDir("mov");
 
- FFmpegThumbnailExtractor extractor;
+ //FFmpegThumbnailExtractor extractor;
 
- auto image=extractor.extractThumbnail(file);
+ //auto image=extractor.extractThumbnail(file);
 
- QString exePath = QCoreApplication::applicationDirPath();
+ //QString exePath = QCoreApplication::applicationDirPath();
 
  // 適当なファイル名（例：thumb_1234.png）
- QString fileName = "thumb_" + QString::number(QDateTime::currentMSecsSinceEpoch()) + ".png";
+ //QString fileName = "thumb_" + QString::number(QDateTime::currentMSecsSinceEpoch()) + ".png";
 
  // フルパスを作成
- QString fullPath = QDir(exePath).filePath(fileName);
+ //QString fullPath = QDir(exePath).filePath(fileName);
 
 
 

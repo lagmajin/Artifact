@@ -2,7 +2,7 @@
 module;
 #include <QMenu>
 #include <QWidget>
-export module Menu:Help;
+export module Menu.Help;
 
 
 

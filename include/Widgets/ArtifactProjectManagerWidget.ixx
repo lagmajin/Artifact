@@ -1,7 +1,7 @@
 ﻿module;
 #include <wobjectdefs.h>
 #include <QWidget>
-
+#include <QToolBar>
 #include <QTreeView>
 
 export module ArtifactProjectManagerWidget;
@@ -13,9 +13,18 @@ import Project;
 
 export namespace Artifact {
   
- class ArtifactProjectView :public QTreeView {
+ class ArtifactToolBar :public QToolBar {
  private:
 
+ public:
+
+ };
+
+
+ class ArtifactProjectView :public QTreeView {
+ private:
+  class Impl;
+  Impl* impl_;
  public:
   explicit ArtifactProjectView(QWidget* parent = nullptr);
   ~ArtifactProjectView();

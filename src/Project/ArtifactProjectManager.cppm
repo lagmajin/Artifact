@@ -109,6 +109,10 @@ namespace Artifact {
   return Impl_->spProject_;
  }
 
+ void ArtifactProjectManager::createNewComposition(const QString& str)
+ {
+
+ }
 
  bool projectManagerCurrentClose()
  {

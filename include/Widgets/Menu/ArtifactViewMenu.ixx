@@ -11,7 +11,7 @@ export module Menu:View;
 
 export namespace Artifact {
 
- class ArtifactViewMenuPrivate;
+
 
  class ArtifactViewMenu :public QMenu{
   //Q_OBJECT

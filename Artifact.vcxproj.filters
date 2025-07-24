@@ -377,10 +377,24 @@
     <ClCompile Include="include\Widgets\Render\ArtifactDiligentEngineRenderWidget.cpp">
       <Filter>ソース ファイル\Widgets\Render</Filter>
     </ClCompile>
+    <ClCompile Include="src\Composition\ArtifactComposition2D.cpp">
+      <Filter>ソース ファイル\Composition</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Widgets\Menu\ArtifactAnimationMenu.ixx">
+      <Filter>ヘッダー ファイル\Widgets\Menu</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Widgets\Menu\ArtifactAnimationMenu.cpp">
+      <Filter>ソース ファイル\Widgets\Menu</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <None Include="src\Widgets\Menu\Test.thrift">
       <Filter>Thrift</Filter>
     </None>
+  </ItemGroup>
+  <ItemGroup>
+    <FxCompile Include="include\Widgets\Render\Shader\Common2DPS.hlsl">
+      <Filter>ヘッダー ファイル\Widgets\Render\shader</Filter>
+    </FxCompile>
   </ItemGroup>
 </Project>

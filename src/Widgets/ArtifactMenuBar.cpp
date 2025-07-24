@@ -17,9 +17,12 @@ namespace Artifact {
   ArtifactMainWindow* mainWindow_ = nullptr;
   ArtifactMenuBar* menuBar = nullptr;
   QMenu* fileMenu=nullptr;
+  ArtifactEditMenu* editMenu = nullptr;
   QMenu* compositionMenu=nullptr;
   QMenu* layerMenu = nullptr;
   QMenu* viewMenu = nullptr;
+  ArtifactAnimationMenu* animationMenu = nullptr;
+  //ArtifactHelpMenu* helpMenu = nullptr;
   Impl(ArtifactMainWindow* mainWindow, ArtifactMenuBar* menu);
   ~Impl();
   //void setUpUI(QMenu* menu);
@@ -27,7 +30,14 @@ namespace Artifact {
 
  ArtifactMenuBar::Impl::Impl(ArtifactMainWindow* mainWindow, ArtifactMenuBar* menu):mainWindow_(mainWindow)
  {
+  fileMenu = new ArtifactFileMenu(menu);
+  
+  editMenu = new ArtifactEditMenu(menu);
+  animationMenu = new ArtifactAnimationMenu(menu);
 
+  menu->addMenu(fileMenu);
+  menu->addMenu(editMenu);
+  menu->addMenu(animationMenu);
  }
 
  ArtifactMenuBar::Impl::~Impl()
@@ -38,19 +48,20 @@ namespace Artifact {
 
  ArtifactMenuBar::ArtifactMenuBar(ArtifactMainWindow* mainWindow, QWidget* parent/*=nullptr*/):QMenuBar(parent),impl_(new Impl(mainWindow,this))
  {
-  impl_->fileMenu = new ArtifactFileMenu(this);
-
+  
+  impl_->editMenu = new ArtifactEditMenu(this);
 
   impl_->compositionMenu = new ArtifactCompositionMenu(mainWindow,this);
   impl_->layerMenu = new ArtifactLayerMenu(this);
   impl_->viewMenu = new ArtifactViewMenu(this);
+  //impl_->helpMenu = new ArtifactHelpMenu();
 
 
-
-  addMenu(impl_->fileMenu);
+  
   addMenu(impl_->compositionMenu);
   addMenu(impl_->layerMenu);
   addMenu(impl_->viewMenu);
+  //addMenu(impl_->helpMenu);
 
   QString styleSheet = R"(
         QMenuBar {

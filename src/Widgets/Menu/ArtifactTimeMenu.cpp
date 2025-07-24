@@ -1,4 +1,4 @@
-module;
+Ôªømodule;
 #include <QMenu>
 module Menu:Time;
 
@@ -17,12 +17,16 @@ namespace Artifact {
   //Q_OBJECT
  public:
   explicit KeyframeAssistantMenu(QWidget* parent = nullptr)
-   : QMenu("ÉLÅ[ÉtÉåÅ[ÉÄï‚èï", parent)
+   : QMenu("„Ç≠„Éº„Éï„É¨„Éº„É†Ë£úÂä©", parent)
   {
-   addAction("ÉCÅ[ÉWÅ[ÉCÅ[ÉY");
-   addAction("ÉCÅ[ÉWÅ[ÉCÅ[ÉYÉCÉì");
-   addAction("ÉCÅ[ÉWÅ[ÉCÅ[ÉYÉAÉEÉg");
+   addAction("„Ç§„Éº„Ç∏„Éº„Ç§„Éº„Ç∫");
+   addAction("„Ç§„Éº„Ç∏„Éº„Ç§„Éº„Ç∫„Ç§„É≥");
+   addAction("„Ç§„Éº„Ç∏„Éº„Ç§„Éº„Ç∫„Ç¢„Ç¶„Éà");
   }
+ };
+
+ class ArtifactTimeMenu::Impl {
+
  };
 
  ArtifactTimeMenu::ArtifactTimeMenu(QWidget* parent /*= nullptr*/):QMenu(parent)
@@ -35,5 +39,6 @@ namespace Artifact {
  {
 
  }
+
 
 };

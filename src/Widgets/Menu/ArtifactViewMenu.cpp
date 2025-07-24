@@ -30,7 +30,7 @@ namespace Artifact {
 
  }
 
- ArtifactViewMenu::ArtifactViewMenu(QWidget* parent/*=nullptr*/):QMenu(parent)
+ ArtifactViewMenu::ArtifactViewMenu(QWidget* parent/*=nullptr*/):QMenu(parent),impl_(new Impl())
  {
   setObjectName("ViewMenu");
 
@@ -39,7 +39,7 @@ namespace Artifact {
 
  ArtifactViewMenu::~ArtifactViewMenu()
  {
-
+  delete impl_;
  }
 
  void ArtifactViewMenu::registerView(const QString& name, QWidget* view)
