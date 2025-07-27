@@ -61,7 +61,7 @@ export namespace Artifact {
   void showAnimated();
 
   
-  //CompositionSetting compositionSetting() const;
+  //void compositionSettingChanged()
  };
 
 

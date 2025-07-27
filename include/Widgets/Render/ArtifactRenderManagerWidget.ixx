@@ -1,16 +1,22 @@
-module;
+﻿module;
 
 //#include "WickedEngine.h"
 #include <wobjectdefs.h>
 
 #include <memory>
-#include <QtWidgets/QWidget>
+#include <QWidget>
 
 export module ArtifactRenderManagerWidget;
 
-
+import std;
 
 namespace Artifact {
+
+class RendererQueueModel
+{
+	
+};
+
 
  class ArtifactRenderManagerWidgetPrivate;
 

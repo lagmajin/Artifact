@@ -54,6 +54,9 @@ namespace Artifact {
   void cancel(QDialog* dialog);
   QPropertyAnimation* m_showAnimation = nullptr;
   QPropertyAnimation* m_hideAnimation = nullptr;
+
+  QLabel* compositionLabel = nullptr;
+  QLineEdit* compositionName = nullptr;
  };
 
  CreateCompositionDialog::Impl::Impl(CreateCompositionDialog* pDialog)

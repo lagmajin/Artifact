@@ -13,7 +13,7 @@ module ArtifactTimelineWidget;
 
 
 namespace Artifact {
-
+ W_OBJECT_IMPL(ArtifactTimeCodeWidget)
  class ArtifactTimeCodeWidget::Impl{
  private:
   QLabel* timecodeLabel=nullptr;
@@ -38,6 +38,8 @@ namespace Artifact {
 
   setLayout(layout);
  }
+
+
 
  ArtifactTimeCodeWidget::~ArtifactTimeCodeWidget()
  {
@@ -95,7 +97,7 @@ namespace Artifact {
 
  }
 
-
+ W_OBJECT_IMPL(TimelineTrackView)
 
  TimelineTrackView::TimelineTrackView(QWidget* parent /*= nullptr*/)
  {

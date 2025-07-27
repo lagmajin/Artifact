@@ -21,7 +21,13 @@ export namespace Artifact {
   Impl* impl_;
  protected:
   void resizeEvent(QResizeEvent*) override;
+  QSize sizeHint() const;
 
+
+  void showEvent(QShowEvent* event) override;
+
+
+  void paintEvent(QPaintEvent* event) override;
 
   //void exposeEvent(QExposeEvent*) override;
 

@@ -19,11 +19,40 @@
 
 module Widgets.Render.Composition;
 
+import Graphics;
 
 namespace Artifact {
 
  using namespace Diligent;
+ using namespace ArtifactCore;
 
+ struct Constants
+ {
+  Diligent::float4x4 ModelMatrix;
+  Diligent::float4x4 ProjectionMatrix;
+ };
+
+ struct Vertex
+ {
+  Diligent::float2 position; // 頂点の2D位置 (x, y)
+  Diligent::float2 texCoord; // テクスチャ座標 (u, v)
+ };
+
+ Diligent::float4x4 GLMMat4ToDiligentFloat4x4(const glm::mat4& glm_mat)
+ {
+  Diligent::float4x4 diligent_mat;
+  for (int i = 0; i < 4; ++i)
+  {
+   for (int j = 0; j < 4; ++j)
+   {
+	// GLMはColumn-Majorなので、[列][行]の順でアクセス
+	// Diligent::float4x4 も内部的には列優先の場合が多いですが、
+	// 安全のため要素ごとにコピー
+	diligent_mat.m[i][j] = glm_mat[i][j];
+   }
+  }
+  return diligent_mat;
+ }
  W_OBJECT_IMPL(ArtifactDiligentEngineComposition2DWindow)
 
  class ArtifactDiligentEngineComposition2DWindow::Impl {
@@ -31,16 +60,33 @@ namespace Artifact {
   RefCntAutoPtr<IRenderDevice> pDevice;
   RefCntAutoPtr<IDeviceContext> pImmediateContext;
   RefCntAutoPtr<ISwapChain> pSwapChain;
+  RefCntAutoPtr<IPipelineState> p2D_PSO_;
+  RefCntAutoPtr<IShader> p2D_vertex_;
+  RefCntAutoPtr<IShader> p2D_pixel_;
+
+  RefCntAutoPtr<IBuffer>        pConstantsBuffer;
+  RefCntAutoPtr<IBuffer>        p2D_VBuffer_;
+  RefCntAutoPtr<IShaderResourceBinding> p2D_SRB_;
+  float4x4 projectionMatrix_;
+  std::vector<Diligent::ShaderResourceVariableDesc> m_ResourceVars;
+  std::vector<Diligent::ImmutableSamplerDesc> m_sampler_;
+
   bool m_initialized = false;
   int m_CurrentPhysicalWidth;
   int m_CurrentPhysicalHeight;
+
+  glm::mat4 glm_projection_;
   qreal m_CurrentDevicePixelRatio;
+  RefCntAutoPtr<ITextureView> p2D_TextureView;
+  RefCntAutoPtr<ITexture> p2D_Texture;
   glm::mat4 calculateModelMatrixGLM(const glm::vec2& position,      // 画面上の最終的なピクセル位置
    const glm::vec2& size,          // レイヤーの元のピクセルサイズ
    const glm::vec2& anchorPoint,   // ローカル正規化座標 (0.0-1.0) でのアンカーポイント
    float rotationDegrees,          // 回転角度 (度数法)
    const glm::vec2& scale);
+  void initializeResources();
   void createShader();
+  void createPSO();
  public:
   Impl();
   void initialize(QWidget*window);
@@ -59,6 +105,8 @@ namespace Artifact {
 
 
   EngineD3D12CreateInfo CreationAttribs = {};
+  CreationAttribs.EnableValidation = true;
+  CreationAttribs.SetValidationLevel(Diligent::VALIDATION_LEVEL_2);
   CreationAttribs.EnableValidation = true;
 
   // ウィンドウハンドルを設定
@@ -81,6 +129,7 @@ namespace Artifact {
   SCDesc.Height = m_CurrentPhysicalHeight; // QWindowの現在の高さ
   SCDesc.ColorBufferFormat = TEX_FORMAT_RGBA8_UNORM;
   SCDesc.DepthBufferFormat = TEX_FORMAT_UNKNOWN;
+
   SCDesc.BufferCount = 2;
   SCDesc.Usage = SWAP_CHAIN_USAGE_RENDER_TARGET;
 
@@ -101,19 +150,31 @@ namespace Artifact {
   pImmediateContext->SetViewports(1, &VP, m_CurrentPhysicalWidth, m_CurrentPhysicalHeight);
 
 
+  glm_projection_ = glm::ortho(
+   0.0f,          // left (X軸の開始)
+   (float)m_CurrentPhysicalWidth,   // right (X軸の終了)
+   (float)m_CurrentPhysicalHeight,  // bottom (Y軸の開始 - DirectXはY軸下向きが正なので、大きい値が下)
+   0.0f,          // top (Y軸の終了 - DirectXはY軸下向きが正なので、小さい値が上)
+   0.1f,          // zNear (ニアクリップ面 - カメラからの近距離)
+   100.0f         // zFar (ファークリップ面 - カメラからの遠距離)
+  );
 
-  GraphicsPipelineStateCreateInfo PSOCreateInfo;
+  // GLMの行列をDiligent Engineのfloat4x4に変換
+  projectionMatrix_ = GLMMat4ToDiligentFloat4x4(glm_projection_);
 
-  // Pipeline state name is used by the engine to report issues.
-  // It is always a good idea to give objects descriptive names.
-  PSOCreateInfo.PSODesc.Name = "Simple triangle PSO";
+  //m_ResourceVars.push_back({ Diligent::SHADER_TYPE_PIXEL, "g_texture", Diligent::SHADER_RESOURCE_VARIABLE_TYPE_MUTABLE });
+  m_ResourceVars.push_back({ Diligent::SHADER_TYPE_VERTEX, "Constants", Diligent::SHADER_RESOURCE_VARIABLE_TYPE_MUTABLE });
+  // g_sampler は静的変数、またはイミュータブルサンプラーとして扱う。
+  // ここではイミュータブルサンプラーとして定義するのが一般的かつ効率的です。
+  // イミュータブルサンプラーはResourceLayout.ImmutableSamplersに設定します。
+  // そのため、ResourceVarsには含めません。
+  // もしイミュータブルサンプラーを使わない場合は、以下のようにSTATICでResourceVarsに含めます:
+  // m_ResourceVars.push_back({Diligent::SHADER_TYPE_PIXEL, "g_sampler", Diligent::SHADER_RESOURCE_VARIABLE_TYPE_STATIC});
 
-  auto& blendDesc=PSOCreateInfo.GraphicsPipeline.BlendDesc;
-
-  blendDesc.RenderTargets[0].BlendEnable= Diligent::True;
   
- 
-
+  createShader();
+  createPSO();
+  initializeResources();
 
   m_initialized = true;
 
@@ -132,13 +193,40 @@ namespace Artifact {
   pImmediateContext->SetRenderTargets(1, &pRTV, pDSV, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
   const float ClearColor[] = {clearColor.r, clearColor.g,clearColor.b,clearColor.a};
   pImmediateContext->ClearRenderTarget(pRTV, ClearColor, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
-  //pImmediateContext->ClearDepthStencil(pDSV, CLEAR_DEPTH_FLAG, 1.f, 0, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
-  pImmediateContext->Flush();
+  if (pDSV) // pDSVがnullptrでないことを確認
+  {
+   pImmediateContext->ClearDepthStencil(pDSV, Diligent::CLEAR_DEPTH_FLAG, 1.f, 0, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+  }
+
+
  }
 
  ArtifactDiligentEngineComposition2DWindow::Impl::Impl()
  {
-  //initialize();
+  Diligent::SamplerDesc SamplerStateDesc;
+  // サンプラーのプロパティを具体的に設定
+  SamplerStateDesc.MinFilter = Diligent::FILTER_TYPE_LINEAR;
+  SamplerStateDesc.MagFilter = Diligent::FILTER_TYPE_LINEAR;
+  SamplerStateDesc.MipFilter = Diligent::FILTER_TYPE_LINEAR;
+  SamplerStateDesc.AddressU = Diligent::TEXTURE_ADDRESS_WRAP;
+  SamplerStateDesc.AddressV = Diligent::TEXTURE_ADDRESS_WRAP;
+  SamplerStateDesc.AddressW = Diligent::TEXTURE_ADDRESS_WRAP;
+  SamplerStateDesc.ComparisonFunc = Diligent::COMPARISON_FUNC_ALWAYS;
+  SamplerStateDesc.MaxAnisotropy = 1;
+  SamplerStateDesc.MipLODBias = 0.0f;
+  SamplerStateDesc.MinLOD = 0.0f;
+  SamplerStateDesc.MaxLOD = FLT_MAX;
+
+  // ImmutableSamplerDesc を作成し、ベクターに追加
+  // 第一引数がシェーダータイプ、第二引数が変数名、第三引数が SamplerDesc
+  m_sampler_.push_back(
+   Diligent::ImmutableSamplerDesc{
+	   Diligent::SHADER_TYPE_PIXEL,
+	   "g_sampler",
+	   SamplerStateDesc
+   }
+  );
+
  }
 
  void ArtifactDiligentEngineComposition2DWindow::Impl::recreateSwapChain(QWidget* window)
@@ -174,14 +262,77 @@ namespace Artifact {
 
   qDebug() << "After SetViewports - Viewport WxH: " << VP.Width << "x" << VP.Height;
   qDebug() << "After SetViewports - Viewport TopLeftXY: " << VP.TopLeftX << ", " << VP.TopLeftY;
+  glm_projection_ = glm::ortho(
+   0.0f,          // left (X軸の開始)
+   (float)newWidth,   // right (X軸の終了)
+   (float)newHeight,  // bottom (Y軸の開始 - DirectXはY軸下向きが正なので、大きい値が下)
+   0.0f,          // top (Y軸の終了 - DirectXはY軸下向きが正なので、小さい値が上)
+   -10.0f,          // zNear (ニアクリップ面 - カメラからの近距離)
+   100.0f         // zFar (ファークリップ面 - カメラからの遠距離)
+  );
 
+  // GLMの行列をDiligent Engineのfloat4x4に変換
+  projectionMatrix_ = GLMMat4ToDiligentFloat4x4(glm_projection_);
  }
 
  void ArtifactDiligentEngineComposition2DWindow::Impl::createShader()
  {
-  Diligent::ShaderCreateInfo ShaderCI;
+  ShaderCreateInfo ShaderCI;
   ShaderCI.SourceLanguage = Diligent::SHADER_SOURCE_LANGUAGE_HLSL; // または GLSL
   ShaderCI.Desc.ShaderType = Diligent::SHADER_TYPE_PIXEL;
+  ShaderCI.EntryPoint = "main";
+  ShaderCI.Desc.Name = "MyPixelShader";
+  //ShaderCI.Source = g_qsBasic2DImagePS.constData();
+  //ShaderCI.SourceLength = g_qsBasic2DImagePS.length();
+  ShaderCI.Source = g_qsSolidColorPS.constData();
+   ShaderCI.SourceLength = g_qsSolidColorPS.length();
+
+
+  pDevice->CreateShader(ShaderCI,&p2D_pixel_);
+
+  ShaderCreateInfo ShaderCI2;
+  ShaderCI2.SourceLanguage = Diligent::SHADER_SOURCE_LANGUAGE_HLSL; // または GLSL
+  ShaderCI2.Desc.ShaderType = Diligent::SHADER_TYPE_VERTEX;
+  ShaderCI2.EntryPoint = "main";
+  ShaderCI2.Desc.Name = "MyVertexShader";
+  ShaderCI2.Source = g_qsBasic2DVS.constData();
+  ShaderCI2.SourceLength = g_qsBasic2DVS.length();
+
+  pDevice->CreateShader(ShaderCI2,&p2D_vertex_);
+
+
+  Diligent::BufferDesc CBDesc;
+  CBDesc.Name = "Constants CB";              // バッファの名前（デバッグ用）
+  CBDesc.Usage = Diligent::USAGE_DYNAMIC;     // CPUから頻繁に更新されるためDYNAMIC
+  CBDesc.BindFlags = Diligent::BIND_UNIFORM_BUFFER; // HLSLの cbuffer に対応 (DirectX系ではUNIFORM_BUFFER)
+  CBDesc.Size = sizeof(Constants);          // Constants 構造体のサイズ
+ 
+
+  CBDesc.CPUAccessFlags = Diligent::CPU_ACCESS_WRITE;  // 
+  pDevice->CreateBuffer(CBDesc, nullptr, &pConstantsBuffer);
+  if (!pConstantsBuffer)
+  {
+   // エラー処理: 定数バッファの作成に失敗しました
+   // 例: qCritical() << "Failed to create constants buffer!";
+  }
+
+  if (!p2D_SRB_) { /* エラー処理 */ return; }
+
+  // p2D_SRB_ が有効であることを確認した上で、GetVariableByName を呼び出す
+  IShaderResourceVariable* pVSConstantsVar = p2D_SRB_->GetVariableByName(Diligent::SHADER_TYPE_VERTEX, "Constants");
+  if (pVSConstantsVar) // ここで nullptr チェック
+  {
+   pVSConstantsVar->Set(pConstantsBuffer);
+   pImmediateContext->CommitShaderResources(p2D_SRB_, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+  }
+  else
+  {
+   // ここに到達する場合、"Constants" 変数が見つかっていない
+   // デバッグ出力やブレークポイントで確認
+    std::cerr << "Error: Vertex Shader variable 'Constants' not found in SRB!" << std::endl;
+  }
+
+
  }
 
  glm::mat4 ArtifactDiligentEngineComposition2DWindow::Impl::calculateModelMatrixGLM(const glm::vec2& position, /* 画面上の最終的なピクセル位置 */ const glm::vec2& size, /* レイヤーの元のピクセルサイズ */ const glm::vec2& anchorPoint, /* ローカル正規化座標 (0.0-1.0) でのアンカーポイント */ float rotationDegrees, /* 回転角度 (度数法) */ const glm::vec2& scale)
@@ -231,11 +382,216 @@ namespace Artifact {
 
  void ArtifactDiligentEngineComposition2DWindow::Impl::renderOneFrame()
  {
-  const Diligent::float4& clearColor = { 0.2f,0.5f,0.5f,1.0f };
+  const Diligent::float4& clearColor = { 0.0f,0.0f,0.0f,1.0f };
   clear(clearColor);
+
+  drawSolidQuad(0, 0, 800,800);
 
 
   present();
+ }
+
+ void ArtifactDiligentEngineComposition2DWindow::Impl::createPSO()
+ {
+  std::vector<Uint8> TexData(4); // RGBA で4バイト
+  TexData[0] = 255; // R
+  TexData[1] = 0;   // G
+  TexData[2] = 0;   // B
+  TexData[3] = 255; // A (不透明)
+
+  // --- 2. Diligent Engine の TextureDesc を定義 ---
+  Diligent::TextureDesc TexDesc;
+  TexDesc.Name = "Red 1x1 Texture"; // デバッグ用の名前
+  TexDesc.Type = Diligent::RESOURCE_DIM_TEX_2D; // 2Dテクスチャ
+  TexDesc.Width = 1; // 幅
+  TexDesc.Height = 1; // 高さ
+  TexDesc.Format = Diligent::TEX_FORMAT_RGBA8_UNORM; // RGBA 8ビット符号なし正規化形式
+  TexDesc.Usage = Diligent::USAGE_IMMUTABLE; // 作成後にデータは変更しない
+  TexDesc.BindFlags = Diligent::BIND_SHADER_RESOURCE; // シェーダーから読み取り可能にする
+
+  // --- 3. 初期テクスチャデータ (TextureData) を準備 ---
+  TextureData InitialTexData;
+  TextureSubResData subResData;
+  subResData.pData = TexData.data(); // ピクセルデータへのポインタ
+  subResData.Stride = TexDesc.Width * 4; // 1行あたりのバイト数 (1ピクセル4バイト)
+  InitialTexData.pSubResources = &subResData;
+  InitialTexData.NumSubresources = 1; // ミップレベルは1つ（ミップマップなし）
+
+  // --- 4. IDevice::CreateTexture() でテクスチャを作成 ---
+  // この p2D_Texture は Impl クラスのメンバ変数として宣言してください
+  // Diligent::RefCntAutoPtr<Diligent::ITexture> p2D_Texture;
+  pDevice->CreateTexture(TexDesc, &InitialTexData, &p2D_Texture);
+  if (!p2D_Texture)
+  {
+   std::cerr << "Error: Failed to create texture!" << std::endl;
+   return;
+  }
+
+  // --- 5. テクスチャビュー (ITextureView) の作成 ---
+  // この p2D_TextureView も Impl クラスのメンバ変数として宣言してください
+  // Diligent::RefCntAutoPtr<Diligent::ITextureView> p2D_TextureView;
+  p2D_TextureView = p2D_Texture->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE);
+  if (!p2D_TextureView)
+  {
+   std::cerr << "Error: Failed to get default texture view!" << std::endl;
+   return;
+  }
+
+
+
+  auto psoInfo = create2DPSOHelper();
+
+  // Define vertex shader input layout
+  LayoutElement LayoutElems[] =
+  {
+  Diligent::LayoutElement{0, 0, 2, VT_FLOAT32, False, 0},
+   Diligent::LayoutElement{1, 0, 2, VT_FLOAT32, False, sizeof(float2)}
+  };
+  psoInfo.GraphicsPipeline.InputLayout.NumElements = _countof(LayoutElems);
+  psoInfo.GraphicsPipeline.InputLayout.LayoutElements = LayoutElems;
+
+  psoInfo.pVS = p2D_vertex_;
+  psoInfo.pPS = p2D_pixel_;
+  psoInfo.PSODesc.ResourceLayout.Variables = m_ResourceVars.data();
+  psoInfo.PSODesc.ResourceLayout.NumVariables = static_cast<Uint32>(m_ResourceVars.size());
+
+  psoInfo.PSODesc.ResourceLayout.ImmutableSamplers = m_sampler_.data();
+  psoInfo.PSODesc.ResourceLayout.NumImmutableSamplers = static_cast<Uint32>(m_sampler_.size());
+  pDevice->CreateGraphicsPipelineState(psoInfo, &p2D_PSO_);
+
+  p2D_PSO_->CreateShaderResourceBinding(&p2D_SRB_, false);
+  if (!p2D_SRB_)
+  {
+   // エラー処理（例: qCritical() << "Failed to create 2D Shader Resource Binding!";）
+   return;
+  }
+
+ 
+ }
+
+ void ArtifactDiligentEngineComposition2DWindow::Impl::drawSolidQuad(float x, float y, float w, float h)
+ {
+ 
+
+  glm::mat4 translate_glm = glm::translate(glm::mat4(1.0f), glm::vec3(x + w * 0.2f, y + h * 0.2f, 0.0f));
+  glm::mat4 scale_glm = glm::scale(glm::mat4(1.0f), glm::vec3(w, h, 1.0f));
+  glm::mat4 modelMatrix_glm = translate_glm * scale_glm;
+
+
+
+  Constants constantsData;
+
+  for (int col = 0; col < 4; ++col) {
+   for (int row = 0; row < 4; ++row) {
+	// GLMは [列][行] でアクセスし、メモリ上も列優先
+	// Diligentの float4x4.m[行][列] に、GLMの [列][行] をコピーすることで
+	// Diligentが列優先で格納している場合に、かつHLSLが mul(v, M) を行ベクトルと行列Mの乗算と解釈する場合に、
+	// 正しい行優先の見た目の行列をシェーダーに渡せるはず。
+	constantsData.ModelMatrix.m[col][row] = modelMatrix_glm[col][row];
+   }
+  }
+  //constantsData.ModelMatrix=constantsData.ModelMatrix.Transpose();
+ 
+
+  for (int col = 0; col < 4; ++col) {
+   for (int row = 0; row < 4; ++row) {
+	constantsData.ProjectionMatrix.m[col][row] =glm_projection_[col][row];
+   }
+  }
+  //constantsData.ProjectionMatrix = constantsData.ProjectionMatrix.Transpose();
+
+
+
+  void* pMappedData = nullptr;
+  pImmediateContext->MapBuffer(pConstantsBuffer, MAP_WRITE, MAP_FLAG_DISCARD, pMappedData);
+  if (!pMappedData)
+  {
+   // マップに失敗した場合の処理
+   // qCritical() << "Failed to map constants buffer!";
+   return;
+  }
+
+  memcpy(pMappedData, &constantsData, sizeof(Constants));
+  pImmediateContext->UnmapBuffer(pConstantsBuffer, Diligent::MAP_WRITE);
+  
+  pImmediateContext->SetPipelineState(p2D_PSO_);
+ 
+  if (p2D_SRB_)
+  {
+   auto p=p2D_SRB_->GetVariableByName(Diligent::SHADER_TYPE_VERTEX, "Constants");
+
+   p->Set(pConstantsBuffer);
+
+   //pImmediateContext->CommitShaderResources(p2D_SRB_, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+  }
+
+  /*
+  if (p2D_SRB_)
+  {
+   IShaderResourceVariable* pPSTextureVar = p2D_SRB_->GetVariableByName(Diligent::SHADER_TYPE_PIXEL, "g_texture");
+   if (pPSTextureVar)
+   {
+	// ここで作成したテクスチャビューをSetします
+	// 例えば、m_pTextureView が有効なテクスチャビューだと仮定
+	//pPSTextureVar->Set(this->p2D_TextureView); // ★ここにテクスチャビューをバインド！
+   }
+   else
+   {
+	std::cerr << "ERROR: Pixel Shader variable 'g_texture' not found in SRB!" << std::endl;
+   }
+
+  }
+  */
+  Diligent::Uint64 offset = 0;
+  Diligent::IBuffer* pBuffers[] = { p2D_VBuffer_.RawPtr() };
+
+  pImmediateContext->SetVertexBuffers(0,    // 開始スロット (PSOのInputLayoutと一致させる)
+   1,    // バインドするバッファの数
+   pBuffers, // バッファの配列
+   &offset, // オフセットの配列 (各バッファの開始オフセット)
+   Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION // リソースの状態遷移
+  );
+  pImmediateContext->CommitShaderResources(p2D_SRB_, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+
+  Diligent::DrawAttribs DrawAttrs;
+  DrawAttrs.NumVertices = 4;
+  DrawAttrs.Flags = Diligent::DRAW_FLAG_VERIFY_ALL;
+  
+  pImmediateContext->Draw(DrawAttrs);
+ }
+
+ void ArtifactDiligentEngineComposition2DWindow::Impl::initializeResources()
+ {
+  Vertex Vertices[] =
+  {
+   // Position           TexCoord
+   { {-0.2f, -0.2f}, {0.0f, 1.0f} }, // 左下
+   { {-0.2f,  0.2f}, {0.0f, 0.0f} }, // 左上
+   { { 0.2f, -0.2f}, {1.0f, 1.0f} }, // 右下
+   { { 0.2f,  0.2f}, {1.0f, 0.0f} }  // 右上
+  };
+  Diligent::BufferDesc VertBuffDesc;
+  VertBuffDesc.Name = "2D Quad Vertex Buffer";
+  VertBuffDesc.Usage = Diligent::USAGE::USAGE_IMMUTABLE;       // 頻繁に更新するならDYNAMIC
+  // または USAGE_DEFAULT (一度設定したらあまり変更しないが、UpdateBuffer()で後から変更する可能性)
+  VertBuffDesc.BindFlags = Diligent::BIND_VERTEX_BUFFER;
+  VertBuffDesc.Size = sizeof(Vertex) * 4;            // 4頂点分のメモリを確保 (Vertex構造体は事前に定義)
+  //VertBuffDesc.CPUAccessFlags = Diligent::CPU_ACCESS_WRITE;
+  Diligent::BufferData InitialData;
+  InitialData.pData = Vertices;
+  InitialData.DataSize = sizeof(Vertices);
+  pDevice->CreateBuffer(VertBuffDesc,&InitialData, &p2D_VBuffer_);
+
+  if (!p2D_VBuffer_)
+  {
+   // エラー処理
+   std::cerr << "Error: Failed to create vertex buffer!" << std::endl;
+   return;
+  }
+  
+
+
+
  }
 
  ArtifactDiligentEngineComposition2DWindow::ArtifactDiligentEngineComposition2DWindow(QWidget* parent /*= nullptr*/):QWidget(parent),impl_(new Impl())
@@ -248,9 +604,9 @@ namespace Artifact {
 
         });
   renderTimer->start(16);
-
+  setFocusPolicy(Qt::StrongFocus);
   setAttribute(Qt::WA_NativeWindow);
-
+  setAttribute(Qt::WA_NativeWindow);
   // Setting these attributes to our widget and returning null on paintEngine event
   // tells Qt that we'll handle all drawing and updating the widget ourselves.
   setAttribute(Qt::WA_PaintOnScreen);
@@ -266,16 +622,35 @@ namespace Artifact {
   QWidget::resizeEvent(event);
   impl_->recreateSwapChain(this);
 
-  //const Diligent::float4& clearColor = { 0.2f,0.5f,0.5f,1.0f };
-  //impl_->clear(clearColor);
-
-  //impl_->present();
+  update();
  }
 
  bool ArtifactDiligentEngineComposition2DWindow::clear(const Diligent::float4& clearColor)
  {
 
   return true;
+ }
+
+ QSize ArtifactDiligentEngineComposition2DWindow::sizeHint() const
+ {
+  // デフォルトのヒントサイズを返す。これがフローティングウィンドウの初期サイズになります。
+  return QSize(800, 600); // 例: 適切なデフォルトサイズ
+ }
+
+ void ArtifactDiligentEngineComposition2DWindow::showEvent(QShowEvent* event)
+ {
+  //impl_->renderOneFrame();
+
+  update();
+
+
+  
+ }
+
+ void ArtifactDiligentEngineComposition2DWindow::paintEvent(QPaintEvent* event)
+ {
+  impl_->renderOneFrame();
+
  }
 
  class  ArtifactDiligentEngineComposition2DWidget::Impl {

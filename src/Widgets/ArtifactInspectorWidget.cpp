@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <wobjectimpl.h>
 
 #include <QWidget>
@@ -16,6 +16,7 @@ namespace Artifact {
   public:
    Impl();
    ~Impl();
+
  };
 
  ArtifactInspectorWidget::Impl::Impl()
