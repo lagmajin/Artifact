@@ -386,6 +386,9 @@
     <ClCompile Include="src\Widgets\Menu\ArtifactAnimationMenu.cpp">
       <Filter>ソース ファイル\Widgets\Menu</Filter>
     </ClCompile>
+    <ClCompile Include="src\Widgets\ArtifactToolBar.cpp">
+      <Filter>ソース ファイル\Widgets</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <None Include="src\Widgets\Menu\Test.thrift">

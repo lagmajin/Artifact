@@ -1,5 +1,8 @@
 ﻿module;
+#define GLM_FORCE_DEPTH_ZERO_TO_ONE
+#define GLM_FORCE_RIGHT_HANDED
 #include <glm/glm.hpp>
+#include <glm/gtc/type_ptr.hpp>
 #include <glm/gtc/matrix_transform.hpp> 
 #include <QWidget>
 #include <DiligentCore/Common/interface/RefCntAutoPtr.hpp>
@@ -28,8 +31,9 @@ namespace Artifact {
 
  struct Constants
  {
-  Diligent::float4x4 ModelMatrix;
-  Diligent::float4x4 ProjectionMatrix;
+  float4x4 ModelMatrix;
+  float4x4 ViewMatrix;
+  float4x4 ProjectionMatrix;
  };
 
  struct Vertex
@@ -54,7 +58,23 @@ namespace Artifact {
   return diligent_mat;
  }
  W_OBJECT_IMPL(ArtifactDiligentEngineComposition2DWindow)
+  glm::mat4 CreateInitialViewMatrix()
+ {
+  // 1. カメラの位置 (Eye/Camera Position)
+  // 例えば、Z軸方向に少し離れた位置から原点を見る
+  glm::vec3 cameraPos = glm::vec3(0.0f, 0.0f, 2.0f);
 
+  // 2. 注視点 (Target/LookAt Position)
+  // シーンの中心（原点）を見る
+  glm::vec3 cameraTarget = glm::vec3(0.0f, 0.0f, 0.0f);
+
+  // 3. 上方向 (Up Vector)
+  // 通常はワールドのY軸プラス方向
+  glm::vec3 cameraUp = glm::vec3(0.0f, 1.0f, 0.0f);
+
+  // glm::lookAt() を使ってビュー行列を計算
+  return glm::lookAt(cameraPos, cameraTarget, cameraUp);
+ }
  class ArtifactDiligentEngineComposition2DWindow::Impl {
  private:
   RefCntAutoPtr<IRenderDevice> pDevice;
@@ -67,15 +87,16 @@ namespace Artifact {
   RefCntAutoPtr<IBuffer>        pConstantsBuffer;
   RefCntAutoPtr<IBuffer>        p2D_VBuffer_;
   RefCntAutoPtr<IShaderResourceBinding> p2D_SRB_;
-  float4x4 projectionMatrix_;
-  std::vector<Diligent::ShaderResourceVariableDesc> m_ResourceVars;
-  std::vector<Diligent::ImmutableSamplerDesc> m_sampler_;
+  //float4x4 projectionMatrix_;
+  std::vector<ShaderResourceVariableDesc> m_ResourceVars;
+  std::vector<ImmutableSamplerDesc> m_sampler_;
 
   bool m_initialized = false;
   int m_CurrentPhysicalWidth;
   int m_CurrentPhysicalHeight;
 
   glm::mat4 glm_projection_;
+  glm::mat4 view_;
   qreal m_CurrentDevicePixelRatio;
   RefCntAutoPtr<ITextureView> p2D_TextureView;
   RefCntAutoPtr<ITexture> p2D_Texture;
@@ -87,6 +108,7 @@ namespace Artifact {
   void initializeResources();
   void createShader();
   void createPSO();
+  void calcProjection(int width,int height);
  public:
   Impl();
   void initialize(QWidget*window);
@@ -97,10 +119,15 @@ namespace Artifact {
   void renderOneFrame();
   void drawTexturedQuad();
   void drawSolidQuad(float x,float y,float w,float h);
+  void drawViewFrastum();
+  void zoomIn();
+  void zoomOut();
  };
 
  void ArtifactDiligentEngineComposition2DWindow::Impl::initialize(QWidget*window)
 {
+  view_ = CreateInitialViewMatrix();
+
   auto* pFactory = GetEngineFactoryD3D12();
 
 
@@ -150,17 +177,10 @@ namespace Artifact {
   pImmediateContext->SetViewports(1, &VP, m_CurrentPhysicalWidth, m_CurrentPhysicalHeight);
 
 
-  glm_projection_ = glm::ortho(
-   0.0f,          // left (X軸の開始)
-   (float)m_CurrentPhysicalWidth,   // right (X軸の終了)
-   (float)m_CurrentPhysicalHeight,  // bottom (Y軸の開始 - DirectXはY軸下向きが正なので、大きい値が下)
-   0.0f,          // top (Y軸の終了 - DirectXはY軸下向きが正なので、小さい値が上)
-   0.1f,          // zNear (ニアクリップ面 - カメラからの近距離)
-   100.0f         // zFar (ファークリップ面 - カメラからの遠距離)
-  );
+
 
   // GLMの行列をDiligent Engineのfloat4x4に変換
-  projectionMatrix_ = GLMMat4ToDiligentFloat4x4(glm_projection_);
+  //projectionMatrix_ = GLMMat4ToDiligentFloat4x4(glm_projection_);
 
   //m_ResourceVars.push_back({ Diligent::SHADER_TYPE_PIXEL, "g_texture", Diligent::SHADER_RESOURCE_VARIABLE_TYPE_MUTABLE });
   m_ResourceVars.push_back({ Diligent::SHADER_TYPE_VERTEX, "Constants", Diligent::SHADER_RESOURCE_VARIABLE_TYPE_MUTABLE });
@@ -262,17 +282,8 @@ namespace Artifact {
 
   qDebug() << "After SetViewports - Viewport WxH: " << VP.Width << "x" << VP.Height;
   qDebug() << "After SetViewports - Viewport TopLeftXY: " << VP.TopLeftX << ", " << VP.TopLeftY;
-  glm_projection_ = glm::ortho(
-   0.0f,          // left (X軸の開始)
-   (float)newWidth,   // right (X軸の終了)
-   (float)newHeight,  // bottom (Y軸の開始 - DirectXはY軸下向きが正なので、大きい値が下)
-   0.0f,          // top (Y軸の終了 - DirectXはY軸下向きが正なので、小さい値が上)
-   -10.0f,          // zNear (ニアクリップ面 - カメラからの近距離)
-   100.0f         // zFar (ファークリップ面 - カメラからの遠距離)
-  );
 
-  // GLMの行列をDiligent Engineのfloat4x4に変換
-  projectionMatrix_ = GLMMat4ToDiligentFloat4x4(glm_projection_);
+  calcProjection(m_CurrentPhysicalWidth, m_CurrentPhysicalHeight);
  }
 
  void ArtifactDiligentEngineComposition2DWindow::Impl::createShader()
@@ -332,6 +343,7 @@ namespace Artifact {
     std::cerr << "Error: Vertex Shader variable 'Constants' not found in SRB!" << std::endl;
   }
 
+  calcProjection(m_CurrentPhysicalWidth, m_CurrentPhysicalHeight);
 
  }
 
@@ -385,7 +397,7 @@ namespace Artifact {
   const Diligent::float4& clearColor = { 0.0f,0.0f,0.0f,1.0f };
   clear(clearColor);
 
-  drawSolidQuad(0, 0, 800,800);
+  drawSolidQuad(100, 150,400,400);
 
 
   present();
@@ -468,37 +480,33 @@ namespace Artifact {
 
  
  }
-
+ QString glmMat4ToStringOneLine(const glm::mat4& mat) {
+  QStringList elements;
+  for (int row = 0; row < 4; ++row)
+  {
+   for (int col = 0; col < 4; ++col)
+   {
+	elements << QString::number(mat[col][row], 'f', 6); // 小数点以下6桁固定
+   }
+  }
+  return elements.join(", ");
+ }
  void ArtifactDiligentEngineComposition2DWindow::Impl::drawSolidQuad(float x, float y, float w, float h)
  {
  
+  glm::mat4 scale = glm::scale(glm::mat4(1.0f), glm::vec3(w, h, 1.0f));
+  glm::mat4 translate = glm::translate(glm::mat4(1.0f), glm::vec3(x, y, 0.0f));
+  glm::mat4 model = translate * scale;
 
-  glm::mat4 translate_glm = glm::translate(glm::mat4(1.0f), glm::vec3(x + w * 0.2f, y + h * 0.2f, 0.0f));
-  glm::mat4 scale_glm = glm::scale(glm::mat4(1.0f), glm::vec3(w, h, 1.0f));
-  glm::mat4 modelMatrix_glm = translate_glm * scale_glm;
-
-
+  // View行列は単位行列（使わない）
+  view_ = glm::mat4(1.0f);
 
   Constants constantsData;
 
-  for (int col = 0; col < 4; ++col) {
-   for (int row = 0; row < 4; ++row) {
-	// GLMは [列][行] でアクセスし、メモリ上も列優先
-	// Diligentの float4x4.m[行][列] に、GLMの [列][行] をコピーすることで
-	// Diligentが列優先で格納している場合に、かつHLSLが mul(v, M) を行ベクトルと行列Mの乗算と解釈する場合に、
-	// 正しい行優先の見た目の行列をシェーダーに渡せるはず。
-	constantsData.ModelMatrix.m[col][row] = modelMatrix_glm[col][row];
-   }
-  }
-  //constantsData.ModelMatrix=constantsData.ModelMatrix.Transpose();
- 
+  memcpy(&constantsData.ModelMatrix, glm::value_ptr(model), sizeof(glm::mat4));
+  memcpy(&constantsData.ViewMatrix, glm::value_ptr(view_), sizeof(glm::mat4));
+  memcpy(&constantsData.ProjectionMatrix, glm::value_ptr(glm_projection_), sizeof(glm::mat4));
 
-  for (int col = 0; col < 4; ++col) {
-   for (int row = 0; row < 4; ++row) {
-	constantsData.ProjectionMatrix.m[col][row] =glm_projection_[col][row];
-   }
-  }
-  //constantsData.ProjectionMatrix = constantsData.ProjectionMatrix.Transpose();
 
 
 
@@ -507,7 +515,7 @@ namespace Artifact {
   if (!pMappedData)
   {
    // マップに失敗した場合の処理
-   // qCritical() << "Failed to map constants buffer!";
+   qCritical() << "Failed to map constants buffer!";
    return;
   }
 
@@ -562,13 +570,13 @@ namespace Artifact {
 
  void ArtifactDiligentEngineComposition2DWindow::Impl::initializeResources()
  {
-  Vertex Vertices[] =
+  Vertex vertices[] =
   {
-   // Position           TexCoord
-   { {-0.2f, -0.2f}, {0.0f, 1.0f} }, // 左下
-   { {-0.2f,  0.2f}, {0.0f, 0.0f} }, // 左上
-   { { 0.2f, -0.2f}, {1.0f, 1.0f} }, // 右下
-   { { 0.2f,  0.2f}, {1.0f, 0.0f} }  // 右上
+   // 左上 → 左下 → 右上 → 右下（TRIANGLE_STRIP）
+   {{0.0f, 0.0f}, {0.0f, 0.0f}},  // 左上
+   {{0.0f, 1.0f}, {0.0f, 1.0f}},  // 左下
+   {{1.0f, 0.0f}, {1.0f, 0.0f}},  // 右上
+   {{1.0f, 1.0f}, {1.0f, 1.0f}},  // 右下
   };
   Diligent::BufferDesc VertBuffDesc;
   VertBuffDesc.Name = "2D Quad Vertex Buffer";
@@ -578,8 +586,8 @@ namespace Artifact {
   VertBuffDesc.Size = sizeof(Vertex) * 4;            // 4頂点分のメモリを確保 (Vertex構造体は事前に定義)
   //VertBuffDesc.CPUAccessFlags = Diligent::CPU_ACCESS_WRITE;
   Diligent::BufferData InitialData;
-  InitialData.pData = Vertices;
-  InitialData.DataSize = sizeof(Vertices);
+  InitialData.pData = vertices;
+  InitialData.DataSize = sizeof(vertices);
   pDevice->CreateBuffer(VertBuffDesc,&InitialData, &p2D_VBuffer_);
 
   if (!p2D_VBuffer_)
@@ -592,6 +600,28 @@ namespace Artifact {
 
 
 
+ }
+
+ void ArtifactDiligentEngineComposition2DWindow::Impl::zoomIn()
+ {
+
+ }
+
+ void ArtifactDiligentEngineComposition2DWindow::Impl::zoomOut()
+ {
+
+ }
+
+ void ArtifactDiligentEngineComposition2DWindow::Impl::calcProjection(int width,int height)
+ {
+  glm_projection_ = glm::orthoRH_ZO(
+   0.0f,          // left (X軸の開始)
+   (float)width,   // right (X軸の終了)
+   (float)height,  // bottom (Y軸の開始 - DirectXはY軸下向きが正なので、大きい値が下)
+   0.0f,          // top (Y軸の終了 - DirectXはY軸下向きが正なので、小さい値が上)
+   0.0f,          // zNear (ニアクリップ面 - カメラからの近距離)
+   100.0f         // zFar (ファークリップ面 - カメラからの遠距離)
+  );
  }
 
  ArtifactDiligentEngineComposition2DWindow::ArtifactDiligentEngineComposition2DWindow(QWidget* parent /*= nullptr*/):QWidget(parent),impl_(new Impl())
@@ -651,6 +681,24 @@ namespace Artifact {
  {
   impl_->renderOneFrame();
 
+ }
+
+ void ArtifactDiligentEngineComposition2DWindow::wheelEvent(QWheelEvent* event)
+ {
+  QPoint numDegrees = event->angleDelta() / 8;
+
+  if (!numDegrees.isNull()) {
+   if (numDegrees.y() > 0) {
+	impl_->zoomIn();
+   }
+   else {
+	// Wheel scrolled down (backward) - Zoom Out
+	//zoomOut();
+   }
+  }
+
+  // Accept the event to prevent it from being propagated to parent widgets.
+  event->accept();
  }
 
  class  ArtifactDiligentEngineComposition2DWidget::Impl {

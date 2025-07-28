@@ -29,6 +29,9 @@ export namespace Artifact {
 
   void paintEvent(QPaintEvent* event) override;
 
+
+  void wheelEvent(QWheelEvent* event) override;
+
   //void exposeEvent(QExposeEvent*) override;
 
  public:

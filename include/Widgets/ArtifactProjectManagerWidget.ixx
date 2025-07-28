@@ -12,14 +12,15 @@ import std;
 import Project;
 
 export namespace Artifact {
-  
+
+	/*
  class ArtifactToolBar :public QToolBar {
  private:
 
  public:
 
  };
-
+*/
 
  class ArtifactProjectView :public QTreeView {
  private:

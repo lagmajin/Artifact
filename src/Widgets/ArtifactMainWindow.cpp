@@ -23,6 +23,7 @@ import Menu;
 import ArtifactProjectManagerWidget;
 import DockWidget;
 import BasicImageViewWidget;
+import Widgets.ToolBar;
 import Widgets.Inspector;
 import Widgets.Render.Queue;
 import Widgets.Render.Composition;
@@ -70,6 +71,8 @@ namespace Artifact {
 
  ArtifactMainWindow::ArtifactMainWindow(QWidget* parent /*= nullptr*/):QMainWindow(parent),impl_(new Impl(this))
  {
+
+
   QPalette p = palette();
   p.setColor(QPalette::Window, QColor(30, 30, 30));
 
@@ -90,6 +93,10 @@ namespace Artifact {
   setMenuBar(menuBar);
 
   resize(600, 640);
+
+  auto toolBar = new ArtifactToolBar(this);
+  addToolBar(toolBar);
+
 
   auto DockManager = new CDockManager(this);
 
