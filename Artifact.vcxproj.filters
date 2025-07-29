@@ -389,6 +389,18 @@
     <ClCompile Include="src\Widgets\ArtifactToolBar.cpp">
       <Filter>ソース ファイル\Widgets</Filter>
     </ClCompile>
+    <ClCompile Include="src\Library\Link.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Layer\ArtifactLayerFactory.ixx">
+      <Filter>ヘッダー ファイル\Layer</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Effetcs\GlobalEffectManager.ixx">
+      <Filter>ヘッダー ファイル\Effects</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Effetcs\GlobalEffectManager.cpp">
+      <Filter>ソース ファイル\Effects</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <None Include="src\Widgets\Menu\Test.thrift">

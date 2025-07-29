@@ -14,15 +14,20 @@
 #include <DiligentTools/Imgui/interface/ImGuiDiligentRenderer.hpp>
 
 #include <DiligentCore/Common/interface/BasicMath.hpp>
-#include <QBoxLayout>
 #include <QTimer>
+#include <QBoxLayout>
+
 #include <wobjectimpl.h>
+#include <QClipboard>
+#include <vulkan/vulkan_core.h>
+
 #include "qevent.h"
 //#include <algorithm>
 
 module Widgets.Render.Composition;
 
 import Graphics;
+import Color.Float;
 
 namespace Artifact {
 
@@ -77,10 +82,13 @@ namespace Artifact {
  }
  class ArtifactDiligentEngineComposition2DWindow::Impl {
  private:
+  FloatColor canvasColor_;
+
   RefCntAutoPtr<IRenderDevice> pDevice;
   RefCntAutoPtr<IDeviceContext> pImmediateContext;
   RefCntAutoPtr<ISwapChain> pSwapChain;
   RefCntAutoPtr<IPipelineState> p2D_PSO_;
+  RefCntAutoPtr<IPipelineState> pLine_PSO_;
   RefCntAutoPtr<IShader> p2D_vertex_;
   RefCntAutoPtr<IShader> p2D_pixel_;
 
@@ -105,6 +113,8 @@ namespace Artifact {
    const glm::vec2& anchorPoint,   // ローカル正規化座標 (0.0-1.0) でのアンカーポイント
    float rotationDegrees,          // 回転角度 (度数法)
    const glm::vec2& scale);
+  std::mutex g_eventMutex;
+  std::queue<std::function<void()>> g_renderEvents;
   void initializeResources();
   void createShader();
   void createPSO();
@@ -119,9 +129,12 @@ namespace Artifact {
   void renderOneFrame();
   void drawTexturedQuad();
   void drawSolidQuad(float x,float y,float w,float h);
+  void drawQuadLine();
   void drawViewFrastum();
   void zoomIn();
   void zoomOut();
+  void setCanvasColor(const FloatColor& color);
+  void saveScreenShotToClipboard();
  };
 
  void ArtifactDiligentEngineComposition2DWindow::Impl::initialize(QWidget*window)
@@ -392,6 +405,7 @@ namespace Artifact {
 
  }
 
+
  void ArtifactDiligentEngineComposition2DWindow::Impl::renderOneFrame()
  {
   const Diligent::float4& clearColor = { 0.0f,0.0f,0.0f,1.0f };
@@ -399,6 +413,7 @@ namespace Artifact {
 
   drawSolidQuad(100, 150,400,400);
 
+	
 
   present();
  }
@@ -478,19 +493,12 @@ namespace Artifact {
    return;
   }
 
+  auto linePSO = createLinePSOHelper();
+
+
  
  }
- QString glmMat4ToStringOneLine(const glm::mat4& mat) {
-  QStringList elements;
-  for (int row = 0; row < 4; ++row)
-  {
-   for (int col = 0; col < 4; ++col)
-   {
-	elements << QString::number(mat[col][row], 'f', 6); // 小数点以下6桁固定
-   }
-  }
-  return elements.join(", ");
- }
+//#DrawQuad
  void ArtifactDiligentEngineComposition2DWindow::Impl::drawSolidQuad(float x, float y, float w, float h)
  {
  
@@ -624,6 +632,115 @@ namespace Artifact {
   );
  }
 
+ void ArtifactDiligentEngineComposition2DWindow::Impl::setCanvasColor(const FloatColor& color)
+ {
+
+ }
+
+ void ArtifactDiligentEngineComposition2DWindow::Impl::drawViewFrastum()
+ {
+
+   // 1. クリップ空間の8頂点（NDCの立方体のコーナー）を定義
+   float3 ndcCorners[8] = {
+	   {-1, -1, 0}, {1, -1, 0}, {1, 1, 0}, {-1, 1, 0},    // near plane (z=0)
+	   {-1, -1, 1}, {1, -1, 1}, {1, 1, 1}, {-1, 1, 1}     // far plane  (z=1)
+   };
+
+
+
+  
+ }
+
+ void ArtifactDiligentEngineComposition2DWindow::Impl::saveScreenShotToClipboard()
+ {
+  RefCntAutoPtr<ITextureView> pRTV;
+  pRTV=pSwapChain->GetCurrentBackBufferRTV();
+
+  RefCntAutoPtr<ITexture> pBackBuffer;
+  pBackBuffer=pRTV->GetTexture();
+
+ 	const auto& desc = pBackBuffer->GetDesc();
+	qDebug() << "Texture format:" << desc.Format;
+  TextureDesc ReadableDesc = desc;
+  ReadableDesc.BindFlags = BIND_NONE;
+  ReadableDesc.Usage = USAGE_STAGING;
+  ReadableDesc.CPUAccessFlags = CPU_ACCESS_READ;
+
+  RefCntAutoPtr<ITexture> pReadableTex;
+  pDevice->CreateTexture(ReadableDesc, nullptr, &pReadableTex);
+
+  CopyTextureAttribs copyAttrs = {};
+  copyAttrs.pSrcTexture = pBackBuffer;
+  copyAttrs.pDstTexture = pReadableTex;
+  copyAttrs.SrcTextureTransitionMode = RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
+  copyAttrs.DstTextureTransitionMode = RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
+
+
+
+  pImmediateContext->CopyTexture(copyAttrs);
+  
+
+
+  RefCntAutoPtr<IFence> pFence;
+
+  int fenceValue = 1;
+  FenceDesc fenceDesc;
+  fenceDesc.Name = "ReadbackSyncFence";
+  fenceDesc.Type = FENCE_TYPE_GENERAL;
+  pDevice->CreateFence(fenceDesc, &pFence);
+  pImmediateContext->Flush();
+  pImmediateContext->EnqueueSignal(pFence,fenceValue);
+  pImmediateContext->Flush();
+  pImmediateContext->DeviceWaitForFence(pFence,fenceValue-1);
+
+
+  MappedTextureSubresource MappedData{};
+  pImmediateContext->MapTextureSubresource(
+   pReadableTex,
+   0,              // mip level
+   0,              // array slice
+   MAP_READ,
+   MAP_FLAG_DO_NOT_WAIT,
+   nullptr,        // 全面をマップ
+   MappedData      // 参照で渡す
+  );
+  if (MappedData.pData == nullptr)
+  {
+   qWarning() << "MapTextureSubresource returned null data pointer";
+   return;
+  }
+
+  // 画像サイズなど
+  const auto& desc2 = pReadableTex->GetDesc();
+  int width = desc2.Width;
+  int height = desc2.Height;
+  int bytesPerPixel = 4; // RGBA8_UNORM想定
+  int rowStride = MappedData.Stride;
+
+  // QtのQImageを用意（RGBA8888）
+  QImage image(width, height, QImage::Format_RGBA8888);
+
+  // DirectX系テクスチャは上下反転していることが多いので上下反転コピー
+  for (int y = 0; y < height; ++y)
+  {
+   const uint8_t* srcRow = reinterpret_cast<const uint8_t*>(MappedData.pData) + rowStride * y;
+   uint8_t* dstRow = image.scanLine(height - 1 - y);
+   memcpy(dstRow, srcRow, width * bytesPerPixel);
+  }
+
+  pImmediateContext->UnmapTextureSubresource(pReadableTex,0, 0);
+
+  // クリップボードに転送
+  QClipboard* clipboard = QGuiApplication::clipboard();
+  QPixmap pixmap = QPixmap::fromImage(image);
+  clipboard->setPixmap(pixmap, QClipboard::Clipboard);
+
+  qDebug() << "Screenshot copied to clipboard";
+
+
+
+ }
+
  ArtifactDiligentEngineComposition2DWindow::ArtifactDiligentEngineComposition2DWindow(QWidget* parent /*= nullptr*/):QWidget(parent),impl_(new Impl())
  {
   impl_->initialize(this);
@@ -701,6 +818,32 @@ namespace Artifact {
   event->accept();
  }
 
+ void ArtifactDiligentEngineComposition2DWindow::setCanvasColor(const FloatColor& color)
+ {
+  impl_->setCanvasColor(color);
+ }
+
+ void ArtifactDiligentEngineComposition2DWindow::saveScreenShotToClipboard()
+ {
+  //impl_->saveScreenShotToClipboard();
+ }
+
+ void ArtifactDiligentEngineComposition2DWindow::keyPressEvent(QKeyEvent* event)
+ {
+  if (event->key() == Qt::Key_S) {
+   // ここでスクショ保存関数呼ぶ
+   impl_->saveScreenShotToClipboard();
+   event->accept();
+   return;
+  }
+  QWidget::keyPressEvent(event);
+ }
+
+ void ArtifactDiligentEngineComposition2DWindow::saveScreenShotToFile()
+ {
+
+ }
+
  class  ArtifactDiligentEngineComposition2DWidget::Impl {
  private:
 
@@ -751,5 +894,9 @@ namespace Artifact {
   Q_UNUSED(event);
  }
 
+ void ArtifactDiligentEngineComposition2DWidget::setCanvasColor(const FloatColor& color)
+ {
+
+ }
 
 };

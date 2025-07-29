@@ -1,8 +1,14 @@
 ﻿module;
+#include <QVector>
 #include <QWidget>
 #include <wobjectimpl.h>
 #include <QBoxLayout>
 #include <QLabel>
+#include <QClipboard>
+#include <QEvent>
+#include <QMimeData>
+#include <QDragEnterEvent>
+#include <QDropEvent>
 module ArtifactProjectManagerWidget;
 
 
@@ -33,6 +39,7 @@ namespace Artifact {
   ArtifactProjectView* projectView_ = nullptr;
   Impl();
   ~Impl();
+  void fileDropped(const QString& str);
  };
 
  ArtifactProjectManagerWidget::Impl::Impl()
@@ -41,6 +48,11 @@ namespace Artifact {
  }
 
  ArtifactProjectManagerWidget::Impl::~Impl()
+ {
+
+ }
+
+ void ArtifactProjectManagerWidget::Impl::fileDropped(const QString& str)
  {
 
  }
@@ -130,10 +142,7 @@ namespace Artifact {
   delete impl_;
  }
 
- void ArtifactProjectManagerWidget::dropEvent(QDropEvent* event)
- {
 
- }
 
  void ArtifactProjectManagerWidget::triggerUpdate()
  {
@@ -142,7 +151,63 @@ namespace Artifact {
 
  void ArtifactProjectManagerWidget::dragEnterEvent(QDragEnterEvent* event)
  {
+  const QMimeData* mimeData = event->mimeData();
 
+  if (mimeData->hasUrls()) {
+   for (const QUrl& url : mimeData->urls()) {
+	QString filePath = url.toLocalFile().toLower();
+
+	if (filePath.endsWith(".png") ||
+	 filePath.endsWith(".jpg") ||
+	 filePath.endsWith(".jpeg") ||
+	 filePath.endsWith(".bmp") ||
+	 filePath.endsWith(".gif") ||
+	 filePath.endsWith(".mp4") ||
+	 filePath.endsWith(".avi") ||
+	 filePath.endsWith(".mov") ||
+	 filePath.endsWith(".mkv")) {
+	 event->acceptProposedAction(); // OK!
+	 return;
+	}
+   }
+  }
+
+  event->ignore(); // 拒否
+ }
+ void ArtifactProjectManagerWidget::dropEvent(QDropEvent* event)
+ {
+  const QMimeData* mimeData = event->mimeData();
+
+  if (mimeData->hasUrls()) {
+   QList<QUrl> urlList = mimeData->urls();
+
+   for (const QUrl& url : urlList) {
+	QString filePath = url.toLocalFile().toLower();
+
+	// 対象拡張子チェック
+	if (filePath.endsWith(".png") ||
+	 filePath.endsWith(".jpg") ||
+	 filePath.endsWith(".jpeg") ||
+	 filePath.endsWith(".bmp") ||
+	 filePath.endsWith(".gif") ||
+	 filePath.endsWith(".mp4") ||
+	 filePath.endsWith(".avi") ||
+	 filePath.endsWith(".mov") ||
+	 filePath.endsWith(".mkv")) {
+
+	 // ✔️ 実際の処理：ここで何かする（読み込み/表示/保存など）
+	 qDebug() << "Accepted file dropped:" << filePath;
+
+	 // 例：自前関数に渡す
+	 //handleDroppedFile(filePath);
+	}
+   }
+
+   event->acceptProposedAction();  // ドロップ操作を受理
+  }
+  else {
+   event->ignore();  // 無効なドロップ
+  }
  }
 
  QSize ArtifactProjectManagerWidget::sizeHint() const

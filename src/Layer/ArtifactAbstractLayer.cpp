@@ -1,4 +1,4 @@
-module;
+﻿module;
 
 
 
@@ -6,23 +6,12 @@ module ArtifactAbstractLayer;
 
 namespace Artifact {
 
- class ArtifactAbstractLayerPrivate {
+ class ArtifactAbstractLayer::Impl {
  private:
 
  public:
-  ArtifactAbstractLayerPrivate();
-  ~ArtifactAbstractLayerPrivate();
+
  };
-
- ArtifactAbstractLayerPrivate::ArtifactAbstractLayerPrivate()
- {
-
- }
-
- ArtifactAbstractLayerPrivate::~ArtifactAbstractLayerPrivate()
- {
-
- }
 
  ArtifactAbstractLayer::ArtifactAbstractLayer()
  {

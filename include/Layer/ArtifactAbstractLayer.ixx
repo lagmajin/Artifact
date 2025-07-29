@@ -1,4 +1,4 @@
-module;
+﻿module;
 
 #include <wobjectdefs.h>
 #include <QtCore/QObject>
@@ -10,12 +10,11 @@ export module ArtifactAbstractLayer;
 export namespace Artifact {
 
 
- class ArtifactAbstractLayerPrivate;
-
  class ArtifactAbstractLayer:public QObject {
   //Q_OBJECT
  private:
-  ArtifactAbstractLayerPrivate* pLayer_;
+  class Impl;
+  Impl* impl_;
  public:
   ArtifactAbstractLayer();
   virtual ~ArtifactAbstractLayer();

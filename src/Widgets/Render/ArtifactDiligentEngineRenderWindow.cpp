@@ -15,9 +15,8 @@
 module ArtifactDiligentEngineRenderWindow;
 //#include "../../../include/Widgets/Render/ArtifactDiligentEngineRenderWindow.hpp"
 
-#pragma comment(lib,"d3d12.lib")
-#pragma comment(lib,"dxgi.lib")
-#pragma comment(lib,"d3dcompiler.lib")
+
+
 #pragma comment(lib,"DiligentCore.lib")
 #pragma comment(lib,"Diligent-Common.lib")
 #pragma comment(lib,"Diligent-BasicPlatform.lib")
@@ -29,8 +28,7 @@ module ArtifactDiligentEngineRenderWindow;
 #pragma comment(lib,"Diligent-GraphicsAccessories.lib")
 #pragma comment(lib,"Diligent-Archiver-static.lib")
 
-#pragma comment(lib,"Archiver_64d.lib")
-#pragma comment(lib,"Diligent-HLSL2GLSLConverterLib.lib")
+
 
 
 namespace Artifact {

@@ -8,11 +8,14 @@
 #include <DiligentCore\Graphics\GraphicsEngine\interface\DeviceContext.h>
 export module Widgets.Render.Composition;
 
+import Color.Float;
+
 namespace Diligent{}//dummy
 
 export namespace Artifact {
 
  using namespace Diligent;
+ using namespace ArtifactCore;
 
  class ArtifactDiligentEngineComposition2DWindow:public QWidget {
   W_OBJECT(ArtifactDiligentEngineComposition2DWindow)
@@ -32,13 +35,19 @@ export namespace Artifact {
 
   void wheelEvent(QWheelEvent* event) override;
 
+
+  void keyPressEvent(QKeyEvent* event) override;
+
   //void exposeEvent(QExposeEvent*) override;
 
  public:
   explicit ArtifactDiligentEngineComposition2DWindow(QWidget* parent = nullptr);
   ~ArtifactDiligentEngineComposition2DWindow();
+  void setCanvasColor(const FloatColor& color);
   void drawGizmo();
   bool clear(const Diligent::float4& clearColor);
+  void saveScreenShotToFile();
+  void saveScreenShotToClipboard();
   IRenderDevice* GetRenderDevice() const;
   IDeviceContext* GetDeviceContext() const;
  };
@@ -56,6 +65,7 @@ export namespace Artifact {
  public:
   explicit ArtifactDiligentEngineComposition2DWidget(QWidget* parent = nullptr);
   ~ArtifactDiligentEngineComposition2DWidget();
+  void setCanvasColor(const FloatColor& color);
  };
 
 
