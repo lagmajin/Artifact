@@ -1,12 +1,13 @@
 ﻿module;
 
-export module GlobalEffectManager;
+export module Effect.Manager;
 
-export namespace ArtifactCore
+export namespace Artifact
 {
  class GlobalEffectManager{
  private:
-
+  class Impl;
+  Impl* impl_;
  public:
   GlobalEffectManager();
   ~GlobalEffectManager();

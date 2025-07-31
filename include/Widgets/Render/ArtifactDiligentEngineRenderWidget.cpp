@@ -10,6 +10,9 @@
 #include <DiligentCore/Graphics/GraphicsEngineD3D12/interface/EngineFactoryD3D12.h>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/DeviceContext.h>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/SwapChain.h>
+#include <DiligentTools/RenderStateNotation/interface/RenderStateNotationParser.h>
+
+#include <DiligentTools/TextureLoader/interface/Image.h>
 
 #include <DiligentTools/Imgui/interface/ImGuiDiligentRenderer.hpp>
 
@@ -28,6 +31,8 @@ module Widgets.Render.Composition;
 
 import Graphics;
 import Color.Float;
+
+import std;
 
 namespace Artifact {
 
@@ -83,6 +88,7 @@ namespace Artifact {
  class ArtifactDiligentEngineComposition2DWindow::Impl {
  private:
   FloatColor canvasColor_;
+  float scale_ = 1.0f;
 
   RefCntAutoPtr<IRenderDevice> pDevice;
   RefCntAutoPtr<IDeviceContext> pImmediateContext;
@@ -94,6 +100,7 @@ namespace Artifact {
 
   RefCntAutoPtr<IBuffer>        pConstantsBuffer;
   RefCntAutoPtr<IBuffer>        p2D_VBuffer_;
+  RefCntAutoPtr<IBuffer>        p2D_VFrastumBuffer_;
   RefCntAutoPtr<IShaderResourceBinding> p2D_SRB_;
   //float4x4 projectionMatrix_;
   std::vector<ShaderResourceVariableDesc> m_ResourceVars;
@@ -134,6 +141,7 @@ namespace Artifact {
   void zoomIn();
   void zoomOut();
   void setCanvasColor(const FloatColor& color);
+  void postScreenShotEvent();
   void saveScreenShotToClipboard();
  };
 
@@ -405,17 +413,32 @@ namespace Artifact {
 
  }
 
-
+ //#RenderLoop
  void ArtifactDiligentEngineComposition2DWindow::Impl::renderOneFrame()
  {
-  const Diligent::float4& clearColor = { 0.0f,0.0f,0.0f,1.0f };
+  const Diligent::float4& clearColor = { 0.5f,0.5f,0.5f,1.0f };
   clear(clearColor);
 
-  drawSolidQuad(100, 150,400,400);
+  drawSolidQuad(0,0,400,400);
+  
+  drawSolidQuad(500, 0, 400, 400);
 
-	
+  saveScreenShotToClipboard();
+
+  {
+   std::lock_guard<std::mutex> lock(g_eventMutex);
+   while (!g_renderEvents.empty()) {
+	auto ev = std::move(g_renderEvents.front());
+	g_renderEvents.pop();
+	ev();  // イベント実行（例：スクリーンショット保存）
+   }
+  }
+
+  //pImmediateContext->SetRenderTargets(1, &pRTV, nullptr);
 
   present();
+
+
  }
 
  void ArtifactDiligentEngineComposition2DWindow::Impl::createPSO()
@@ -558,6 +581,17 @@ namespace Artifact {
 
   }
   */
+  RefCntAutoPtr<IFence> pFence;
+
+  static Uint64 fenceValue = 0;
+  ++fenceValue;
+
+  FenceDesc fenceDesc;
+  fenceDesc.Name = "ReadbackSyncFence";
+  fenceDesc.Type = FENCE_TYPE_GENERAL;
+  pDevice->CreateFence(fenceDesc, &pFence);
+
+
   Diligent::Uint64 offset = 0;
   Diligent::IBuffer* pBuffers[] = { p2D_VBuffer_.RawPtr() };
 
@@ -574,6 +608,12 @@ namespace Artifact {
   DrawAttrs.Flags = Diligent::DRAW_FLAG_VERIFY_ALL;
   
   pImmediateContext->Draw(DrawAttrs);
+  pImmediateContext->EnqueueSignal(pFence, fenceValue);
+
+  pImmediateContext->Flush();
+  pImmediateContext->DeviceWaitForFence(pFence, fenceValue);
+  ++fenceValue;
+  //pImmediateContext->Flush();
  }
 
  void ArtifactDiligentEngineComposition2DWindow::Impl::initializeResources()
@@ -634,7 +674,7 @@ namespace Artifact {
 
  void ArtifactDiligentEngineComposition2DWindow::Impl::setCanvasColor(const FloatColor& color)
  {
-
+  //impl_->setCanvasColor(color);
  }
 
  void ArtifactDiligentEngineComposition2DWindow::Impl::drawViewFrastum()
@@ -650,7 +690,7 @@ namespace Artifact {
 
   
  }
-
+ //#screenshot
  void ArtifactDiligentEngineComposition2DWindow::Impl::saveScreenShotToClipboard()
  {
   RefCntAutoPtr<ITextureView> pRTV;
@@ -658,29 +698,22 @@ namespace Artifact {
 
   RefCntAutoPtr<ITexture> pBackBuffer;
   pBackBuffer=pRTV->GetTexture();
-
+  
  	const auto& desc = pBackBuffer->GetDesc();
 	qDebug() << "Texture format:" << desc.Format;
+	qDebug() << "Current State:" << pBackBuffer->GetState();
   TextureDesc ReadableDesc = desc;
+  ReadableDesc.Name = "ScreenCapture staging";
+  ReadableDesc.Type = RESOURCE_DIM_TEX_2D;
   ReadableDesc.BindFlags = BIND_NONE;
   ReadableDesc.Usage = USAGE_STAGING;
   ReadableDesc.CPUAccessFlags = CPU_ACCESS_READ;
+  ReadableDesc.Format = TEX_FORMAT_RGBA8_UNORM;
 
   RefCntAutoPtr<ITexture> pReadableTex;
   pDevice->CreateTexture(ReadableDesc, nullptr, &pReadableTex);
 
-  CopyTextureAttribs copyAttrs = {};
-  copyAttrs.pSrcTexture = pBackBuffer;
-  copyAttrs.pDstTexture = pReadableTex;
-  copyAttrs.SrcTextureTransitionMode = RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
-  copyAttrs.DstTextureTransitionMode = RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
-
-
-
-  pImmediateContext->CopyTexture(copyAttrs);
-  
-
-
+  pImmediateContext->SetRenderTargets(0, nullptr, nullptr, RESOURCE_STATE_TRANSITION_MODE_NONE);
   RefCntAutoPtr<IFence> pFence;
 
   int fenceValue = 1;
@@ -688,10 +721,61 @@ namespace Artifact {
   fenceDesc.Name = "ReadbackSyncFence";
   fenceDesc.Type = FENCE_TYPE_GENERAL;
   pDevice->CreateFence(fenceDesc, &pFence);
+
+
+  StateTransitionDesc toCopySrc{
+	  pBackBuffer,
+	  RESOURCE_STATE_UNKNOWN, // ← これが重要
+	  RESOURCE_STATE_COPY_SOURCE,
+	  STATE_TRANSITION_FLAG_UPDATE_STATE
+  };
+  pImmediateContext->TransitionResourceStates(1, &toCopySrc);
+
+  // 2. 読み出し用テクスチャも COPY_DEST に遷移
+  StateTransitionDesc toCopyDst{
+	  pReadableTex,
+	  RESOURCE_STATE_UNKNOWN, // ← 安全策
+	  RESOURCE_STATE_COPY_DEST,
+	  STATE_TRANSITION_FLAG_UPDATE_STATE
+  };
+  pImmediateContext->TransitionResourceStates(1, &toCopyDst);
+
+  // 3. フェンスで確実に同期（FlushだけではGPU完了を保証できない）
+  pImmediateContext->EnqueueSignal(pFence, fenceValue++);
   pImmediateContext->Flush();
-  pImmediateContext->EnqueueSignal(pFence,fenceValue);
+  pImmediateContext->DeviceWaitForFence(pFence, fenceValue - 1);
+
+  // 4. コピー（遷移はすでに済ませてあるので VERIFY でOK）
+  CopyTextureAttribs copyAttrs = {};
+  copyAttrs.pSrcTexture = pBackBuffer;
+  copyAttrs.pDstTexture = pReadableTex;
+  copyAttrs.SrcTextureTransitionMode = RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
+  copyAttrs.DstTextureTransitionMode = RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
+  pImmediateContext->CopyTexture(copyAttrs);
+
+
+  qDebug() << "Current State:" << pBackBuffer->GetState();
+ 
+ 
+
+  qDebug()<<"Current State:" << pBackBuffer->GetState();
+
+  qDebug() << "Current State:" << pBackBuffer->GetState();
+
+
+  pImmediateContext->CopyTexture(copyAttrs);
+  qDebug() << "Current State:" << pBackBuffer->GetState();
+
   pImmediateContext->Flush();
-  pImmediateContext->DeviceWaitForFence(pFence,fenceValue-1);
+  pImmediateContext->EnqueueSignal(pFence, fenceValue++);
+  qDebug() << "Current State:" << pBackBuffer->GetState();
+  pImmediateContext->Flush();
+  qDebug() << "Current State:" << pBackBuffer->GetState();
+  pImmediateContext->DeviceWaitForFence(pFence, fenceValue-1);
+
+
+
+
 
 
   MappedTextureSubresource MappedData{};
@@ -710,6 +794,10 @@ namespace Artifact {
    return;
   }
 
+  pImmediateContext->EnqueueSignal(pFence, fenceValue++);
+  pImmediateContext->Flush();
+  pImmediateContext->DeviceWaitForFence(pFence, fenceValue - 1);
+  pImmediateContext->Flush();
   // 画像サイズなど
   const auto& desc2 = pReadableTex->GetDesc();
   int width = desc2.Width;
@@ -739,6 +827,14 @@ namespace Artifact {
 
 
 
+ }
+
+ void ArtifactDiligentEngineComposition2DWindow::Impl::postScreenShotEvent()
+ {
+  std::lock_guard<std::mutex> lock(g_eventMutex);
+  g_renderEvents.push([this]() {
+   saveScreenShotToClipboard();
+   });
  }
 
  ArtifactDiligentEngineComposition2DWindow::ArtifactDiligentEngineComposition2DWindow(QWidget* parent /*= nullptr*/):QWidget(parent),impl_(new Impl())
@@ -832,7 +928,7 @@ namespace Artifact {
  {
   if (event->key() == Qt::Key_S) {
    // ここでスクショ保存関数呼ぶ
-   impl_->saveScreenShotToClipboard();
+   impl_->postScreenShotEvent();
    event->accept();
    return;
   }
