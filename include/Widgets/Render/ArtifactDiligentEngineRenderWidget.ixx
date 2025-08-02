@@ -48,6 +48,7 @@ export namespace Artifact {
   bool clear(const Diligent::float4& clearColor);
   void saveScreenShotToFile();
   void saveScreenShotToClipboard();
+  void saveScreenShotToClipboardByQt();
   IRenderDevice* GetRenderDevice() const;
   IDeviceContext* GetDeviceContext() const;
  };

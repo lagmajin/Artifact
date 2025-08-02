@@ -23,8 +23,18 @@
 #include <wobjectimpl.h>
 #include <QClipboard>
 #include <vulkan/vulkan_core.h>
-
+#include <roapi.h>
 #include "qevent.h"
+#ifdef Q_OS_WIN
+#include <d3d11.h>
+#include <d3d11on12.h>
+#include <d3d12.h>
+#include <winrt/Windows.Foundation.h>
+#include <winrt/Windows.Graphics.Capture.h>
+#include <winrt/Windows.Graphics.DirectX.Direct3D11.h>
+#include <winrt/base.h>
+#endif
+
 //#include <algorithm>
 
 module Widgets.Render.Composition;
@@ -38,20 +48,11 @@ namespace Artifact {
 
  using namespace Diligent;
  using namespace ArtifactCore;
-
- struct Constants
- {
-  float4x4 ModelMatrix;
-  float4x4 ViewMatrix;
-  float4x4 ProjectionMatrix;
- };
-
- struct Vertex
- {
-  Diligent::float2 position; // 頂点の2D位置 (x, y)
-  Diligent::float2 texCoord; // テクスチャ座標 (u, v)
- };
-
+ using namespace winrt;
+#ifdef Q_OS_WIN
+ using namespace Windows::Graphics::Capture;
+ using namespace Windows::Foundation;
+#endif
  Diligent::float4x4 GLMMat4ToDiligentFloat4x4(const glm::mat4& glm_mat)
  {
   Diligent::float4x4 diligent_mat;
@@ -97,6 +98,9 @@ namespace Artifact {
   RefCntAutoPtr<IPipelineState> pLine_PSO_;
   RefCntAutoPtr<IShader> p2D_vertex_;
   RefCntAutoPtr<IShader> p2D_pixel_;
+  RefCntAutoPtr<IShader>p2d_line_vertex_shader_;
+  RefCntAutoPtr<IShader>p2d_line_pixel_shader_;
+
 
   RefCntAutoPtr<IBuffer>        pConstantsBuffer;
   RefCntAutoPtr<IBuffer>        p2D_VBuffer_;
@@ -105,7 +109,7 @@ namespace Artifact {
   //float4x4 projectionMatrix_;
   std::vector<ShaderResourceVariableDesc> m_ResourceVars;
   std::vector<ImmutableSamplerDesc> m_sampler_;
-
+  QWidget* widget_ = nullptr;
   bool m_initialized = false;
   int m_CurrentPhysicalWidth;
   int m_CurrentPhysicalHeight;
@@ -125,28 +129,41 @@ namespace Artifact {
   void initializeResources();
   void createShader();
   void createPSO();
-  void calcProjection(int width,int height);
+  void calcProjection(int width, int height);
+
  public:
   Impl();
-  void initialize(QWidget*window);
-  void initializeImGui(QWindow* window);
+  ~Impl();
+  void initialize(QWidget* window);
+  void initializeImGui(QWidget* window);
   void recreateSwapChain(QWidget* window);
   void clear(const Diligent::float4& clearColor);
   void present();
   void renderOneFrame();
   void drawTexturedQuad();
-  void drawSolidQuad(float x,float y,float w,float h);
+  void drawSolidQuad(float x, float y, float w, float h);
   void drawQuadLine();
-  void drawViewFrastum();
+  void drawLine(float x_1, float y_1, float x_2, float y_2, const FloatColor& color);
+  void drawViewCameraFrastum();
   void zoomIn();
   void zoomOut();
   void setCanvasColor(const FloatColor& color);
   void postScreenShotEvent();
   void saveScreenShotToClipboard();
+  void saveScreenShotToClipboardByQt();
+  void saveScreenShotToClipboardByWinRT();
  };
 
- void ArtifactDiligentEngineComposition2DWindow::Impl::initialize(QWidget*window)
-{
+ void ArtifactDiligentEngineComposition2DWindow::saveScreenShotToClipboardByQt()
+ {
+  QPixmap pixmap = this->grab(); // widget全体をキャプチャ
+  QClipboard* clipboard = QGuiApplication::clipboard();
+  clipboard->setImage(pixmap.toImage());
+ }
+
+ void ArtifactDiligentEngineComposition2DWindow::Impl::initialize(QWidget* window)
+ {
+  widget_ = window;
   view_ = CreateInitialViewMatrix();
 
   auto* pFactory = GetEngineFactoryD3D12();
@@ -186,7 +203,7 @@ namespace Artifact {
   desc.Fullscreen = false;
 
   pFactory->CreateSwapChainD3D12(pDevice, pImmediateContext, SCDesc, desc, hWindow, &pSwapChain);
-  
+
   Diligent::Viewport VP;
   VP.Width = static_cast<float>(m_CurrentPhysicalWidth);
   VP.Height = static_cast<float>(m_CurrentPhysicalHeight);
@@ -212,7 +229,7 @@ namespace Artifact {
   // もしイミュータブルサンプラーを使わない場合は、以下のようにSTATICでResourceVarsに含めます:
   // m_ResourceVars.push_back({Diligent::SHADER_TYPE_PIXEL, "g_sampler", Diligent::SHADER_RESOURCE_VARIABLE_TYPE_STATIC});
 
-  
+
   createShader();
   createPSO();
   initializeResources();
@@ -230,9 +247,9 @@ namespace Artifact {
 
   auto pRTV = pSwapChain->GetCurrentBackBufferRTV();
   auto pDSV = pSwapChain->GetDepthBufferDSV(); // 2Dならnullptrの場合が多い
- 
+
   pImmediateContext->SetRenderTargets(1, &pRTV, pDSV, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
-  const float ClearColor[] = {clearColor.r, clearColor.g,clearColor.b,clearColor.a};
+  const float ClearColor[] = { clearColor.r, clearColor.g,clearColor.b,clearColor.a };
   pImmediateContext->ClearRenderTarget(pRTV, ClearColor, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
   if (pDSV) // pDSVがnullptrでないことを確認
   {
@@ -268,11 +285,13 @@ namespace Artifact {
    }
   );
 
+  RoInitialize(RO_INIT_MULTITHREADED);
+
  }
 
  void ArtifactDiligentEngineComposition2DWindow::Impl::recreateSwapChain(QWidget* window)
  {
-  if (!window ||!pDevice)
+  if (!window || !pDevice)
   {
 
    return;
@@ -317,10 +336,10 @@ namespace Artifact {
   //ShaderCI.Source = g_qsBasic2DImagePS.constData();
   //ShaderCI.SourceLength = g_qsBasic2DImagePS.length();
   ShaderCI.Source = g_qsSolidColorPS.constData();
-   ShaderCI.SourceLength = g_qsSolidColorPS.length();
+  ShaderCI.SourceLength = g_qsSolidColorPS.length();
 
 
-  pDevice->CreateShader(ShaderCI,&p2D_pixel_);
+  pDevice->CreateShader(ShaderCI, &p2D_pixel_);
 
   ShaderCreateInfo ShaderCI2;
   ShaderCI2.SourceLanguage = Diligent::SHADER_SOURCE_LANGUAGE_HLSL; // または GLSL
@@ -330,7 +349,7 @@ namespace Artifact {
   ShaderCI2.Source = g_qsBasic2DVS.constData();
   ShaderCI2.SourceLength = g_qsBasic2DVS.length();
 
-  pDevice->CreateShader(ShaderCI2,&p2D_vertex_);
+  pDevice->CreateShader(ShaderCI2, &p2D_vertex_);
 
 
   Diligent::BufferDesc CBDesc;
@@ -338,7 +357,7 @@ namespace Artifact {
   CBDesc.Usage = Diligent::USAGE_DYNAMIC;     // CPUから頻繁に更新されるためDYNAMIC
   CBDesc.BindFlags = Diligent::BIND_UNIFORM_BUFFER; // HLSLの cbuffer に対応 (DirectX系ではUNIFORM_BUFFER)
   CBDesc.Size = sizeof(Constants);          // Constants 構造体のサイズ
- 
+
 
   CBDesc.CPUAccessFlags = Diligent::CPU_ACCESS_WRITE;  // 
   pDevice->CreateBuffer(CBDesc, nullptr, &pConstantsBuffer);
@@ -361,7 +380,7 @@ namespace Artifact {
   {
    // ここに到達する場合、"Constants" 変数が見つかっていない
    // デバッグ出力やブレークポイントで確認
-    std::cerr << "Error: Vertex Shader variable 'Constants' not found in SRB!" << std::endl;
+   std::cerr << "Error: Vertex Shader variable 'Constants' not found in SRB!" << std::endl;
   }
 
   calcProjection(m_CurrentPhysicalWidth, m_CurrentPhysicalHeight);
@@ -397,12 +416,12 @@ namespace Artifact {
  {
   if (pSwapChain)
   {
-  
-  pSwapChain->Present(1);
+
+   pSwapChain->Present(1);
   }
  }
 
- void ArtifactDiligentEngineComposition2DWindow::Impl::initializeImGui(QWindow* window)
+ void ArtifactDiligentEngineComposition2DWindow::Impl::initializeImGui(QWidget* window)
  {
   IMGUI_CHECKVERSION();
   ImGui::CreateContext();
@@ -419,26 +438,30 @@ namespace Artifact {
   const Diligent::float4& clearColor = { 0.5f,0.5f,0.5f,1.0f };
   clear(clearColor);
 
-  drawSolidQuad(0,0,400,400);
-  
+  drawSolidQuad(0, 0, 400, 400);
+
   drawSolidQuad(500, 0, 400, 400);
 
-  saveScreenShotToClipboard();
+  //saveScreenShotToClipboard();
+
+ 
+
+  //pImmediateContext->SetRenderTargets(1, &pRTV, nullptr);
+
+  present();
 
   {
    std::lock_guard<std::mutex> lock(g_eventMutex);
    while (!g_renderEvents.empty()) {
 	auto ev = std::move(g_renderEvents.front());
 	g_renderEvents.pop();
-	ev();  // イベント実行（例：スクリーンショット保存）
+
+	lock.~lock_guard();  // 明示的にロックを外す
+	ev();                // イベント実行（スクショ保存）
+
+	new (&lock) std::lock_guard<std::mutex>(g_eventMutex);  // 再ロック
    }
   }
-
-  //pImmediateContext->SetRenderTargets(1, &pRTV, nullptr);
-
-  present();
-
-
  }
 
  void ArtifactDiligentEngineComposition2DWindow::Impl::createPSO()
@@ -516,15 +539,19 @@ namespace Artifact {
    return;
   }
 
-  auto linePSO = createLinePSOHelper();
+  auto linePSOInfo = createLinePSOHelper();
+
+  //linePSOInfo.pVS = ;
+
+  //pDevice->CreateGraphicsPipelineState(linePSOInfo, &p);
 
 
- 
+
  }
-//#DrawQuad
+ //#DrawQuad
  void ArtifactDiligentEngineComposition2DWindow::Impl::drawSolidQuad(float x, float y, float w, float h)
  {
- 
+
   glm::mat4 scale = glm::scale(glm::mat4(1.0f), glm::vec3(w, h, 1.0f));
   glm::mat4 translate = glm::translate(glm::mat4(1.0f), glm::vec3(x, y, 0.0f));
   glm::mat4 model = translate * scale;
@@ -552,12 +579,12 @@ namespace Artifact {
 
   memcpy(pMappedData, &constantsData, sizeof(Constants));
   pImmediateContext->UnmapBuffer(pConstantsBuffer, Diligent::MAP_WRITE);
-  
+
   pImmediateContext->SetPipelineState(p2D_PSO_);
- 
+
   if (p2D_SRB_)
   {
-   auto p=p2D_SRB_->GetVariableByName(Diligent::SHADER_TYPE_VERTEX, "Constants");
+   auto p = p2D_SRB_->GetVariableByName(Diligent::SHADER_TYPE_VERTEX, "Constants");
 
    p->Set(pConstantsBuffer);
 
@@ -606,7 +633,7 @@ namespace Artifact {
   Diligent::DrawAttribs DrawAttrs;
   DrawAttrs.NumVertices = 4;
   DrawAttrs.Flags = Diligent::DRAW_FLAG_VERIFY_ALL;
-  
+
   pImmediateContext->Draw(DrawAttrs);
   pImmediateContext->EnqueueSignal(pFence, fenceValue);
 
@@ -636,7 +663,7 @@ namespace Artifact {
   Diligent::BufferData InitialData;
   InitialData.pData = vertices;
   InitialData.DataSize = sizeof(vertices);
-  pDevice->CreateBuffer(VertBuffDesc,&InitialData, &p2D_VBuffer_);
+  pDevice->CreateBuffer(VertBuffDesc, &InitialData, &p2D_VBuffer_);
 
   if (!p2D_VBuffer_)
   {
@@ -644,9 +671,9 @@ namespace Artifact {
    std::cerr << "Error: Failed to create vertex buffer!" << std::endl;
    return;
   }
-  
 
-
+  Diligent::BufferDesc lineVertBuffDesc;
+  lineVertBuffDesc.Name = "2D Quad Vertex Buffer";
 
  }
 
@@ -660,7 +687,7 @@ namespace Artifact {
 
  }
 
- void ArtifactDiligentEngineComposition2DWindow::Impl::calcProjection(int width,int height)
+ void ArtifactDiligentEngineComposition2DWindow::Impl::calcProjection(int width, int height)
  {
   glm_projection_ = glm::orthoRH_ZO(
    0.0f,          // left (X軸の開始)
@@ -677,32 +704,35 @@ namespace Artifact {
   //impl_->setCanvasColor(color);
  }
 
- void ArtifactDiligentEngineComposition2DWindow::Impl::drawViewFrastum()
+ void ArtifactDiligentEngineComposition2DWindow::Impl::drawViewCameraFrastum()
  {
 
-   // 1. クリップ空間の8頂点（NDCの立方体のコーナー）を定義
-   float3 ndcCorners[8] = {
-	   {-1, -1, 0}, {1, -1, 0}, {1, 1, 0}, {-1, 1, 0},    // near plane (z=0)
-	   {-1, -1, 1}, {1, -1, 1}, {1, 1, 1}, {-1, 1, 1}     // far plane  (z=1)
-   };
+  // 1. クリップ空間の8頂点（NDCの立方体のコーナー）を定義
+  float3 ndcCorners[8] = {
+	  {-1, -1, 0}, {1, -1, 0}, {1, 1, 0}, {-1, 1, 0},    // near plane (z=0)
+	  {-1, -1, 1}, {1, -1, 1}, {1, 1, 1}, {-1, 1, 1}     // far plane  (z=1)
+  };
 
 
 
-  
+
  }
  //#screenshot
  void ArtifactDiligentEngineComposition2DWindow::Impl::saveScreenShotToClipboard()
  {
+  
+
   RefCntAutoPtr<ITextureView> pRTV;
-  pRTV=pSwapChain->GetCurrentBackBufferRTV();
+  pRTV = pSwapChain->GetCurrentBackBufferRTV();
 
   RefCntAutoPtr<ITexture> pBackBuffer;
-  pBackBuffer=pRTV->GetTexture();
+  pBackBuffer = pRTV->GetTexture();
   
- 	const auto& desc = pBackBuffer->GetDesc();
-	qDebug() << "Texture format:" << desc.Format;
-	qDebug() << "Current State:" << pBackBuffer->GetState();
-  TextureDesc ReadableDesc = desc;
+  const auto& desc = this->pSwapChain->GetDesc();
+  //qDebug() << "Texture format:" << desc.Format;
+  qDebug() << "Current State:" << pBackBuffer->GetState();
+  TextureDesc ReadableDesc;
+  ReadableDesc.Width = desc.Width;
   ReadableDesc.Name = "ScreenCapture staging";
   ReadableDesc.Type = RESOURCE_DIM_TEX_2D;
   ReadableDesc.BindFlags = BIND_NONE;
@@ -717,6 +747,7 @@ namespace Artifact {
   RefCntAutoPtr<IFence> pFence;
 
   int fenceValue = 1;
+  int currentFenceValue = fenceValue++;
   FenceDesc fenceDesc;
   fenceDesc.Name = "ReadbackSyncFence";
   fenceDesc.Type = FENCE_TYPE_GENERAL;
@@ -741,9 +772,9 @@ namespace Artifact {
   pImmediateContext->TransitionResourceStates(1, &toCopyDst);
 
   // 3. フェンスで確実に同期（FlushだけではGPU完了を保証できない）
-  pImmediateContext->EnqueueSignal(pFence, fenceValue++);
+  pImmediateContext->EnqueueSignal(pFence, currentFenceValue);
   pImmediateContext->Flush();
-  pImmediateContext->DeviceWaitForFence(pFence, fenceValue - 1);
+  pImmediateContext->DeviceWaitForFence(pFence, currentFenceValue);
 
   // 4. コピー（遷移はすでに済ませてあるので VERIFY でOK）
   CopyTextureAttribs copyAttrs = {};
@@ -755,10 +786,10 @@ namespace Artifact {
 
 
   qDebug() << "Current State:" << pBackBuffer->GetState();
- 
- 
 
-  qDebug()<<"Current State:" << pBackBuffer->GetState();
+
+
+  qDebug() << "Current State:" << pBackBuffer->GetState();
 
   qDebug() << "Current State:" << pBackBuffer->GetState();
 
@@ -767,11 +798,11 @@ namespace Artifact {
   qDebug() << "Current State:" << pBackBuffer->GetState();
 
   pImmediateContext->Flush();
-  pImmediateContext->EnqueueSignal(pFence, fenceValue++);
+  pImmediateContext->EnqueueSignal(pFence, currentFenceValue);
   qDebug() << "Current State:" << pBackBuffer->GetState();
   pImmediateContext->Flush();
   qDebug() << "Current State:" << pBackBuffer->GetState();
-  pImmediateContext->DeviceWaitForFence(pFence, fenceValue-1);
+  pImmediateContext->DeviceWaitForFence(pFence, currentFenceValue);
 
 
 
@@ -794,9 +825,12 @@ namespace Artifact {
    return;
   }
 
-  pImmediateContext->EnqueueSignal(pFence, fenceValue++);
+  RefCntAutoPtr<Diligent::Image> pImage;
+
+
+  pImmediateContext->EnqueueSignal(pFence, currentFenceValue);
   pImmediateContext->Flush();
-  pImmediateContext->DeviceWaitForFence(pFence, fenceValue - 1);
+  pImmediateContext->DeviceWaitForFence(pFence, currentFenceValue);
   pImmediateContext->Flush();
   // 画像サイズなど
   const auto& desc2 = pReadableTex->GetDesc();
@@ -816,7 +850,7 @@ namespace Artifact {
    memcpy(dstRow, srcRow, width * bytesPerPixel);
   }
 
-  pImmediateContext->UnmapTextureSubresource(pReadableTex,0, 0);
+  pImmediateContext->UnmapTextureSubresource(pReadableTex, 0, 0);
 
   // クリップボードに転送
   QClipboard* clipboard = QGuiApplication::clipboard();
@@ -833,11 +867,73 @@ namespace Artifact {
  {
   std::lock_guard<std::mutex> lock(g_eventMutex);
   g_renderEvents.push([this]() {
-   saveScreenShotToClipboard();
+   saveScreenShotToClipboardByQt();
+
    });
  }
 
- ArtifactDiligentEngineComposition2DWindow::ArtifactDiligentEngineComposition2DWindow(QWidget* parent /*= nullptr*/):QWidget(parent),impl_(new Impl())
+ void ArtifactDiligentEngineComposition2DWindow::Impl::drawLine(float x_1, float y_1, float x_2, float y_2, const FloatColor& color)
+ {
+  //LineVertex vertices[2] = {
+	//{ {x_1, y_1}, color },
+	//{ {x_2, y_2}, color }
+ };
+
+ void ArtifactDiligentEngineComposition2DWindow::Impl::saveScreenShotToClipboardByQt()
+ {
+  QPixmap pixmap(widget_->size());
+  widget_->render(&pixmap);
+  QClipboard* clipboard = QGuiApplication::clipboard();
+  clipboard->setImage(pixmap.toImage());
+
+
+  //Uint32 offset = 0;
+
+  //pImmediateContext->SetPipelineState(pLine_PSO_);
+
+ }
+
+ ArtifactDiligentEngineComposition2DWindow::Impl::~Impl()
+ {
+  RoUninitialize();
+ }
+
+ void ArtifactDiligentEngineComposition2DWindow::Impl::saveScreenShotToClipboardByWinRT()
+ {
+  auto hwnd = reinterpret_cast<HWND>(widget_->winId());
+
+  winrt::init_apartment(winrt::apartment_type::multi_threaded);
+
+  ComPtr<ID3D11Device> d3d11Device;
+  ComPtr<ID3D11DeviceContext> d3d11Context;
+  ComPtr<ID3D11DeviceContext> d3d11Context;
+
+  UINT d3d11DeviceFlags = D3D11_CREATE_DEVICE_BGRA_SUPPORT;
+
+  D3D_FEATURE_LEVEL featureLevels[] = {
+	  D3D_FEATURE_LEVEL_11_1,
+	  D3D_FEATURE_LEVEL_11_0,
+  };
+
+  D3D11On12_CREATE_DEVICE_FLAGS createFlags = D3D11On12_CREATE_DEVICE_BGRA_SUPPORT;
+
+  HRESULT hr = D3D11On12CreateDevice(
+   d3d12Device.Get(),                  // 元のD3D12デバイス
+   d3d11DeviceFlags,                   // フラグ
+   featureLevels,                      // 対応レベル
+   _countof(featureLevels),
+   nullptr,                           // コマンドキュー配列（後述）
+   0,
+   0,
+   &d3d11Device,
+   &d3d11Context,
+   nullptr);
+  if (FAILED(hr)) {
+   // エラーハンドリング
+  }
+ }
+
+ ArtifactDiligentEngineComposition2DWindow::ArtifactDiligentEngineComposition2DWindow(QWidget* parent /*= nullptr*/) :QWidget(parent), impl_(new Impl())
  {
   impl_->initialize(this);
 
@@ -845,7 +941,7 @@ namespace Artifact {
   connect(renderTimer, &QTimer::timeout, this, [this]() {
    impl_->renderOneFrame();
 
-        });
+   });
   renderTimer->start(16);
   setFocusPolicy(Qt::StrongFocus);
   setAttribute(Qt::WA_NativeWindow);
@@ -887,7 +983,7 @@ namespace Artifact {
   update();
 
 
-  
+
  }
 
  void ArtifactDiligentEngineComposition2DWindow::paintEvent(QPaintEvent* event)
@@ -940,6 +1036,7 @@ namespace Artifact {
 
  }
 
+
  class  ArtifactDiligentEngineComposition2DWidget::Impl {
  private:
 
@@ -947,14 +1044,14 @@ namespace Artifact {
   ArtifactDiligentEngineComposition2DWindow* window_ = nullptr;
   Impl(QWidget* widget);
 
-};
+ };
 
  W_OBJECT_IMPL(ArtifactDiligentEngineComposition2DWidget)
 
- ArtifactDiligentEngineComposition2DWidget::Impl::Impl(QWidget* widget)
+  ArtifactDiligentEngineComposition2DWidget::Impl::Impl(QWidget* widget)
  {
   //window_ = new ArtifactDiligentEngineComposition2DWindow();
-  
+
 
   //QWidget* container = QWidget::createWindowContainer(window_,widget);
  // container->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
@@ -970,7 +1067,7 @@ namespace Artifact {
   //container->setAttribute(Qt::WA_NoSystemBackground);
  }
 
- ArtifactDiligentEngineComposition2DWidget::ArtifactDiligentEngineComposition2DWidget(QWidget* parent /*= nullptr*/) :QWidget(parent),impl_(new Impl(this))
+ ArtifactDiligentEngineComposition2DWidget::ArtifactDiligentEngineComposition2DWidget(QWidget* parent /*= nullptr*/) :QWidget(parent), impl_(new Impl(this))
  {
   setAttribute(Qt::WA_NoSystemBackground); // システム背景の描画を無効化
   setAttribute(Qt::WA_TranslucentBackground);
