@@ -1,9 +1,12 @@
 ﻿module;
 
 #include <wobjectdefs.h>
-#include <QtCore/QObject>
+#include<QString>
+#include <QObject>
 
-export module ArtifactAbstractLayer;
+
+
+export module Artifact.Layers.Abstract;
 
 
 
@@ -18,14 +21,9 @@ export namespace Artifact {
  public:
   ArtifactAbstractLayer();
   virtual ~ArtifactAbstractLayer();
-  //void setRotation();
-  //void setScale();
- //signals:
-  //void layerUpdated();
-  
- //public slots:
   void Show();
   void Hide();
+  virtual void draw() = 0;
  };
 
 }

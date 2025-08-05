@@ -19,7 +19,11 @@
 #include "qevent.h"
 module Dialog.Composition;
 
+import Widgets.Utils.CSS;
+
 namespace Artifact {
+
+	using namespace ArtifactCore;
 
  CompositionSettingPage::CompositionSettingPage(QWidget* parent /*= nullptr*/) :QWidget(parent)
  {
@@ -33,6 +37,11 @@ namespace Artifact {
   //vboxLayout->addWidget(compositionNameEdit);
 
   setLayout(vboxLayout);
+
+  auto style = getDCCStyleSheetPreset(DccStylePreset::ModoStyle);
+
+  setStyleSheet(style);
+
  }
 
  CompositionSettingPage::~CompositionSettingPage()
@@ -115,6 +124,11 @@ namespace Artifact {
   QObject::connect(pDialogButtonBox, &QDialogButtonBox::rejected, this, [this]() {
    impl_->cancel(this);
    });
+
+
+  auto style = getDCCStyleSheetPreset(DccStylePreset::ModoStyle);
+
+  setStyleSheet(style);
  }
 
  CreateCompositionDialog::~CreateCompositionDialog()

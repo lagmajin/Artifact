@@ -14,13 +14,17 @@ namespace Artifact
  public:
   Impl(QToolBar* toolbar);
   ~Impl();
-  //QAction* homeAction_ = nullptr;
-	//QAction*
+
+  QAction* selectTool_ = nullptr;
+  QAction* maskTool_ = nullptr;
+  QAction* handTool_ = nullptr;
  };
 
  ArtifactToolBar::Impl::Impl(QToolBar* toolbar)
  {
   auto homeAction_ = new QAction();
+
+  
 
   toolbar->addAction(homeAction_);
 

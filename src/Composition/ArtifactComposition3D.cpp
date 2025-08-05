@@ -1,7 +1,7 @@
-module;
+﻿module;
+#include <QString>
 
-
-module Composition;
+module Composition3D;
 
 
 
@@ -27,17 +27,17 @@ namespace Artifact {
 
  }
 
- ArtifactComposition::ArtifactComposition(const ArtifactComposition& composition)
+ ArtifactComposition3D::ArtifactComposition3D(const ArtifactComposition3D& composition)
  {
 
  }
 
- ArtifactComposition::ArtifactComposition(ArtifactComposition&& composition)
+ ArtifactComposition3D::ArtifactComposition3D(ArtifactComposition3D&& composition)
  {
 
  }
 
- ArtifactComposition::~ArtifactComposition()
+ ArtifactComposition3D::~ArtifactComposition3D()
  {
 
  }

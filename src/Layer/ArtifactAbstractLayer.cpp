@@ -2,7 +2,7 @@
 
 
 
-module ArtifactAbstractLayer;
+module Artifact.Layers.Abstract;
 
 namespace Artifact {
 

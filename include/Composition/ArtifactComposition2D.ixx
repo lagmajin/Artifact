@@ -1,9 +1,5 @@
-﻿//#pragma once
-
-
-//#include <QtCore/QString>
-
-module;
+﻿module;
+#include <QString>
 
 export module Composition2D;
 
@@ -15,11 +11,12 @@ namespace Artifact {
 
  class ArtifactComposition2D {
  private:
-
+  class Impl;
+  Impl* impl_;
  public:
   ArtifactComposition2D();
   ~ArtifactComposition2D();
-
+  
  };
 
 

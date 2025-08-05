@@ -1,13 +1,8 @@
-module;
+﻿module;
 
 
-module ArtifactNullLayer;
+module Artifact.Layers.Null;
 //import ArtifactNullLayer;
-
-
-
-
-
 
 
 namespace Artifact {

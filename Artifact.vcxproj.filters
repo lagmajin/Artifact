@@ -117,7 +117,7 @@
     <ClInclude Include="include\Render\ArtifactRenderer.ixx">
       <Filter>ヘッダー ファイル\Render</Filter>
     </ClInclude>
-    <ClInclude Include="include\Application\ArtifactApplicationManager.hpp">
+    <ClInclude Include="include\Application\ArtifactApplicationManager.ixx">
       <Filter>ヘッダー ファイル\Application</Filter>
     </ClInclude>
     <ClInclude Include="include\GUI\ArtifactGuiManager.hpp">
@@ -143,7 +143,7 @@
     <ClCompile Include="src\Composition\ArtifactCompositionManager.cpp">
       <Filter>ソース ファイル\Composition</Filter>
     </ClCompile>
-    <ClCompile Include="src\Composition\ArtifactComposition.cpp">
+    <ClCompile Include="src\Composition\ArtifactComposition3D.cpp">
       <Filter>ソース ファイル\Composition</Filter>
     </ClCompile>
     <ClCompile Include="src\Widgets\ArtifactInspectorWidget.cpp">
@@ -242,7 +242,7 @@
     <ClCompile Include="include\Effetcs\ArtifactAbstractEffect.ixx">
       <Filter>ヘッダー ファイル\Effects</Filter>
     </ClCompile>
-    <ClCompile Include="include\Composition\ArtifactComposition.ixx">
+    <ClCompile Include="include\Composition\ArtifactComposition3D.ixx">
       <Filter>ヘッダー ファイル\Composition</Filter>
     </ClCompile>
     <ClCompile Include="include\Composition\ArtifactComposition2D.ixx">
@@ -400,6 +400,24 @@
     </ClCompile>
     <ClCompile Include="src\Effetcs\GlobalEffectManager.cpp">
       <Filter>ソース ファイル\Effects</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Layer\ArtifactSolidImageLayer.ixx">
+      <Filter>ヘッダー ファイル\Layer</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Layer\ArtifactSolidImageLayer.cpp">
+      <Filter>ソース ファイル\Layer</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Composition\ArtifactComposition.ixx">
+      <Filter>ヘッダー ファイル\Composition</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Application\ArtifactApplicationManager.cpp">
+      <Filter>ソース ファイル\Application</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Widgets\Menu\ArtifactEffectMenu.ixx">
+      <Filter>ヘッダー ファイル\Widgets\Menu</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Widgets\Menu\ArtifactEffectMenu.cpp">
+      <Filter>ソース ファイル\Widgets\Menu</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>

@@ -1,4 +1,5 @@
-import ArtifactImageLayer;
+﻿module;
+module Layers.Image;
 
 
 
@@ -7,6 +8,24 @@ import ArtifactImageLayer;
 namespace Artifact {
 
 
+ class ArtifactImageLayer::Impl
+ {
+ private:
+
+ public:
+  Impl();
+  ~Impl();
+ };
+
+ ArtifactImageLayer::Impl::Impl()
+ {
+
+ }
+
+ ArtifactImageLayer::Impl::~Impl()
+ {
+
+ }
 
  ArtifactImageLayer::ArtifactImageLayer()
  {

@@ -1,5 +1,5 @@
 ﻿module;
-export module ArtifactCameraLayer;
+export module Artifact.Layers.Camera;
 
 export namespace ArtifactCore
 {

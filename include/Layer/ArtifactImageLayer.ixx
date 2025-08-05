@@ -1,14 +1,19 @@
-module;
-export module ArtifactImageLayer;
+﻿module;
 
+
+
+export module Layers.Image;
+
+import Artifact.Layers;
 
 export namespace Artifact {
 
- class ArtifactImageLayerPrivate;
 
- class ArtifactImageLayer {
+
+ class ArtifactImageLayer:public ArtifactAbstractLayer {
  private:
-
+  class Impl;
+  Impl* impl_;
  public:
   ArtifactImageLayer();
   ~ArtifactImageLayer();

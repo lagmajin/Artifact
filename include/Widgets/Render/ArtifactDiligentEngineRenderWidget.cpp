@@ -6,10 +6,11 @@
 #include <glm/gtc/matrix_transform.hpp> 
 #include <QWidget>
 #include <DiligentCore/Common/interface/RefCntAutoPtr.hpp>
+#include <DiligentCore/Graphics/GraphicsEngine/interface/SwapChain.h>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/RenderDevice.h>
 #include <DiligentCore/Graphics/GraphicsEngineD3D12/interface/EngineFactoryD3D12.h>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/DeviceContext.h>
-#include <DiligentCore/Graphics/GraphicsEngine/interface/SwapChain.h>
+
 #include <DiligentTools/RenderStateNotation/interface/RenderStateNotationParser.h>
 
 #include <DiligentTools/TextureLoader/interface/Image.h>
@@ -33,8 +34,11 @@
 #include <winrt/Windows.Graphics.Capture.h>
 #include <winrt/Windows.Graphics.DirectX.Direct3D11.h>
 #include <winrt/base.h>
-#endif
 
+#include <DiligentCore/Graphics/GraphicsEngineD3D12/interface/TextureD3D12.h>
+#endif
+#include <wrl/client.h>
+#include <DiligentCore/Graphics/GraphicsEngineD3D12/interface/RenderDeviceD3D12.h>
 //#include <algorithm>
 
 module Widgets.Render.Composition;
@@ -50,8 +54,10 @@ namespace Artifact {
  using namespace ArtifactCore;
  using namespace winrt;
 #ifdef Q_OS_WIN
- using namespace Windows::Graphics::Capture;
- using namespace Windows::Foundation;
+ //using namespace Windows::Graphics::Capture;
+ //using namespace Windows::Foundation;
+ using namespace winrt;
+ using Microsoft::WRL::ComPtr;
 #endif
  Diligent::float4x4 GLMMat4ToDiligentFloat4x4(const glm::mat4& glm_mat)
  {
@@ -93,19 +99,27 @@ namespace Artifact {
 
   RefCntAutoPtr<IRenderDevice> pDevice;
   RefCntAutoPtr<IDeviceContext> pImmediateContext;
-  RefCntAutoPtr<ISwapChain> pSwapChain;
+  RefCntAutoPtr<ISwapChain> pSwapChain_;
   RefCntAutoPtr<IPipelineState> p2D_PSO_;
   RefCntAutoPtr<IPipelineState> pLine_PSO_;
-  RefCntAutoPtr<IShader> p2D_vertex_;
+  RefCntAutoPtr<IShader> p2D_vertex_shader;
   RefCntAutoPtr<IShader> p2D_pixel_;
   RefCntAutoPtr<IShader>p2d_line_vertex_shader_;
   RefCntAutoPtr<IShader>p2d_line_pixel_shader_;
-
+	//RefCntAutoPtr<IShader> p
+  ComPtr<ID3D11Device> d3d11Device_;
+  ComPtr<ID3D11DeviceContext> d3d11Context_;
+  ComPtr<ID3D11On12Device> d3d11On12Device_;
 
   RefCntAutoPtr<IBuffer>        pConstantsBuffer;
+  RefCntAutoPtr<IBuffer>		pBuffer;
+
+
   RefCntAutoPtr<IBuffer>        p2D_VBuffer_;
   RefCntAutoPtr<IBuffer>        p2D_VFrastumBuffer_;
+  RefCntAutoPtr<IBuffer>		p2D_VLineBuffer_;
   RefCntAutoPtr<IShaderResourceBinding> p2D_SRB_;
+  RefCntAutoPtr<IShaderResourceBinding> p2D_LINE_SRB_;
   //float4x4 projectionMatrix_;
   std::vector<ShaderResourceVariableDesc> m_ResourceVars;
   std::vector<ImmutableSamplerDesc> m_sampler_;
@@ -127,7 +141,8 @@ namespace Artifact {
   std::mutex g_eventMutex;
   std::queue<std::function<void()>> g_renderEvents;
   void initializeResources();
-  void createShader();
+  void createShaders();
+  void createBuffers();
   void createPSO();
   void calcProjection(int width, int height);
 
@@ -142,9 +157,10 @@ namespace Artifact {
   void renderOneFrame();
   void drawTexturedQuad();
   void drawSolidQuad(float x, float y, float w, float h);
-  void drawQuadLine();
+  void drawQuadLine(float x,float y,float w,float h,const FloatColor& lineColor, float thikness=1.0f);
   void drawLine(float x_1, float y_1, float x_2, float y_2, const FloatColor& color);
-  void drawViewCameraFrastum();
+  void drawViewCameraFrustum();
+	
   void zoomIn();
   void zoomOut();
   void setCanvasColor(const FloatColor& color);
@@ -161,83 +177,6 @@ namespace Artifact {
   clipboard->setImage(pixmap.toImage());
  }
 
- void ArtifactDiligentEngineComposition2DWindow::Impl::initialize(QWidget* window)
- {
-  widget_ = window;
-  view_ = CreateInitialViewMatrix();
-
-  auto* pFactory = GetEngineFactoryD3D12();
-
-
-  EngineD3D12CreateInfo CreationAttribs = {};
-  CreationAttribs.EnableValidation = true;
-  CreationAttribs.SetValidationLevel(Diligent::VALIDATION_LEVEL_2);
-  CreationAttribs.EnableValidation = true;
-
-  // ウィンドウハンドルを設定
-  Win32NativeWindow hWindow;
-  hWindow.hWnd = reinterpret_cast<HWND>(window->winId());
-  pFactory->CreateDeviceAndContextsD3D12(CreationAttribs, &pDevice, &pImmediateContext);
-
-  if (!pDevice)
-  {
-   // エラーログ出力、アプリケーション終了などの処理
-   qWarning() << "Failed to create Diligent Engine device and contexts.";
-   return;
-  }
-  m_CurrentPhysicalWidth = static_cast<int>(window->width() * window->devicePixelRatio());
-  m_CurrentPhysicalHeight = static_cast<int>(window->height() * window->devicePixelRatio());
-  m_CurrentDevicePixelRatio = window->devicePixelRatio();
-  // スワップチェインを作成
-  SwapChainDesc SCDesc;
-  SCDesc.Width = m_CurrentPhysicalWidth;  // QWindowの現在の幅
-  SCDesc.Height = m_CurrentPhysicalHeight; // QWindowの現在の高さ
-  SCDesc.ColorBufferFormat = TEX_FORMAT_RGBA8_UNORM;
-  SCDesc.DepthBufferFormat = TEX_FORMAT_UNKNOWN;
-
-  SCDesc.BufferCount = 2;
-  SCDesc.Usage = SWAP_CHAIN_USAGE_RENDER_TARGET;
-
-  FullScreenModeDesc desc;
-
-  desc.Fullscreen = false;
-
-  pFactory->CreateSwapChainD3D12(pDevice, pImmediateContext, SCDesc, desc, hWindow, &pSwapChain);
-
-  Diligent::Viewport VP;
-  VP.Width = static_cast<float>(m_CurrentPhysicalWidth);
-  VP.Height = static_cast<float>(m_CurrentPhysicalHeight);
-  VP.MinDepth = 0.0f;
-  VP.MaxDepth = 1.0f;
-  VP.TopLeftX = 0.0f;
-  VP.TopLeftY = 0.0f;
-  // SetViewportsの最後の2引数は、レンダーターゲットの物理ピクセルサイズを渡すのが安全
-  pImmediateContext->SetViewports(1, &VP, m_CurrentPhysicalWidth, m_CurrentPhysicalHeight);
-
-
-
-
-  // GLMの行列をDiligent Engineのfloat4x4に変換
-  //projectionMatrix_ = GLMMat4ToDiligentFloat4x4(glm_projection_);
-
-  //m_ResourceVars.push_back({ Diligent::SHADER_TYPE_PIXEL, "g_texture", Diligent::SHADER_RESOURCE_VARIABLE_TYPE_MUTABLE });
-  m_ResourceVars.push_back({ Diligent::SHADER_TYPE_VERTEX, "Constants", Diligent::SHADER_RESOURCE_VARIABLE_TYPE_MUTABLE });
-  // g_sampler は静的変数、またはイミュータブルサンプラーとして扱う。
-  // ここではイミュータブルサンプラーとして定義するのが一般的かつ効率的です。
-  // イミュータブルサンプラーはResourceLayout.ImmutableSamplersに設定します。
-  // そのため、ResourceVarsには含めません。
-  // もしイミュータブルサンプラーを使わない場合は、以下のようにSTATICでResourceVarsに含めます:
-  // m_ResourceVars.push_back({Diligent::SHADER_TYPE_PIXEL, "g_sampler", Diligent::SHADER_RESOURCE_VARIABLE_TYPE_STATIC});
-
-
-  createShader();
-  createPSO();
-  initializeResources();
-
-  m_initialized = true;
-
- }
-
  void ArtifactDiligentEngineComposition2DWindow::Impl::clear(const Diligent::float4& clearColor)
  {
   if (!m_initialized)
@@ -245,8 +184,8 @@ namespace Artifact {
    return;
   }
 
-  auto pRTV = pSwapChain->GetCurrentBackBufferRTV();
-  auto pDSV = pSwapChain->GetDepthBufferDSV(); // 2Dならnullptrの場合が多い
+  auto pRTV = pSwapChain_->GetCurrentBackBufferRTV();
+  auto pDSV = pSwapChain_->GetDepthBufferDSV(); // 2Dならnullptrの場合が多い
 
   pImmediateContext->SetRenderTargets(1, &pRTV, pDSV, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
   const float ClearColor[] = { clearColor.r, clearColor.g,clearColor.b,clearColor.a };
@@ -305,11 +244,11 @@ namespace Artifact {
   qDebug() << "Impl::recreateSwapChain - Logical:" << window->width() << "x" << window->height()
    << ", DPI:" << newDevicePixelRatio
    << ", Physical:" << newWidth << "x" << newHeight;
-  qDebug() << "Before Resize - SwapChain Desc:" << pSwapChain->GetDesc().Width << "x" << pSwapChain->GetDesc().Height;
-  pSwapChain->Resize(newWidth, newHeight);
+  qDebug() << "Before Resize - SwapChain Desc:" << pSwapChain_->GetDesc().Width << "x" << pSwapChain_->GetDesc().Height;
+  pSwapChain_->Resize(newWidth, newHeight);
 
 
-  qDebug() << "After Resize - SwapChain Desc:" << pSwapChain->GetDesc().Width << "x" << pSwapChain->GetDesc().Height;
+  qDebug() << "After Resize - SwapChain Desc:" << pSwapChain_->GetDesc().Width << "x" << pSwapChain_->GetDesc().Height;
 
   Diligent::Viewport VP;
   VP.Width = static_cast<float>(newWidth);  // newWidth, newHeightは物理ピクセル
@@ -326,30 +265,47 @@ namespace Artifact {
   calcProjection(m_CurrentPhysicalWidth, m_CurrentPhysicalHeight);
  }
 
- void ArtifactDiligentEngineComposition2DWindow::Impl::createShader()
+ void ArtifactDiligentEngineComposition2DWindow::Impl::createShaders()
  {
-  ShaderCreateInfo ShaderCI;
-  ShaderCI.SourceLanguage = Diligent::SHADER_SOURCE_LANGUAGE_HLSL; // または GLSL
-  ShaderCI.Desc.ShaderType = Diligent::SHADER_TYPE_PIXEL;
-  ShaderCI.EntryPoint = "main";
-  ShaderCI.Desc.Name = "MyPixelShader";
+  ShaderCreateInfo testShaderCI;
+  testShaderCI.SourceLanguage = Diligent::SHADER_SOURCE_LANGUAGE_HLSL; // または GLSL
+  testShaderCI.Desc.ShaderType = Diligent::SHADER_TYPE_PIXEL;
+  testShaderCI.EntryPoint = "main";
+  testShaderCI.Desc.Name = "TestPixelShader";
   //ShaderCI.Source = g_qsBasic2DImagePS.constData();
   //ShaderCI.SourceLength = g_qsBasic2DImagePS.length();
-  ShaderCI.Source = g_qsSolidColorPS.constData();
-  ShaderCI.SourceLength = g_qsSolidColorPS.length();
+  testShaderCI.Source = g_qsSolidColorPS2.constData();
+  testShaderCI.SourceLength = g_qsSolidColorPS2.length();
 
 
-  pDevice->CreateShader(ShaderCI, &p2D_pixel_);
+  pDevice->CreateShader(testShaderCI, &p2D_pixel_);
 
-  ShaderCreateInfo ShaderCI2;
-  ShaderCI2.SourceLanguage = Diligent::SHADER_SOURCE_LANGUAGE_HLSL; // または GLSL
-  ShaderCI2.Desc.ShaderType = Diligent::SHADER_TYPE_VERTEX;
-  ShaderCI2.EntryPoint = "main";
-  ShaderCI2.Desc.Name = "MyVertexShader";
-  ShaderCI2.Source = g_qsBasic2DVS.constData();
-  ShaderCI2.SourceLength = g_qsBasic2DVS.length();
+  ShaderCreateInfo basicShaderCI;
+  basicShaderCI.SourceLanguage = Diligent::SHADER_SOURCE_LANGUAGE_HLSL; // または GLSL
+  basicShaderCI.Desc.ShaderType = Diligent::SHADER_TYPE_PIXEL;
+  basicShaderCI.EntryPoint = "main";
+  basicShaderCI.Desc.Name = "BasicPixelShader";
+  basicShaderCI.Source = g_qsSolidColorPS2.constData();
+  //ShaderCI.SourceLength = g_qsBasic2DImagePS.length();
+	
 
-  pDevice->CreateShader(ShaderCI2, &p2D_vertex_);
+
+
+  ShaderCreateInfo BasicVertexShaderCI;
+  BasicVertexShaderCI.SourceLanguage = Diligent::SHADER_SOURCE_LANGUAGE_HLSL; // または GLSL
+  BasicVertexShaderCI.Desc.ShaderType = Diligent::SHADER_TYPE_VERTEX;
+  BasicVertexShaderCI.EntryPoint = "main";
+  BasicVertexShaderCI.Desc.Name = "MyVertexShader";
+  BasicVertexShaderCI.Source = g_qsBasic2DVS.constData();
+  BasicVertexShaderCI.SourceLength = g_qsBasic2DVS.length();
+
+  pDevice->CreateShader(BasicVertexShaderCI, &p2D_vertex_shader);
+
+  ShaderCreateInfo lineVsInfo;
+
+  lineVsInfo.SourceLanguage = Diligent::SHADER_SOURCE_LANGUAGE_HLSL; // または GLSL
+  lineVsInfo.Desc.ShaderType = Diligent::SHADER_TYPE_VERTEX;
+
 
 
   Diligent::BufferDesc CBDesc;
@@ -414,10 +370,10 @@ namespace Artifact {
 
  void ArtifactDiligentEngineComposition2DWindow::Impl::present()
  {
-  if (pSwapChain)
+  if (pSwapChain_)
   {
 
-   pSwapChain->Present(1);
+   pSwapChain_->Present(1);
   }
  }
 
@@ -523,7 +479,7 @@ namespace Artifact {
   psoInfo.GraphicsPipeline.InputLayout.NumElements = _countof(LayoutElems);
   psoInfo.GraphicsPipeline.InputLayout.LayoutElements = LayoutElems;
 
-  psoInfo.pVS = p2D_vertex_;
+  psoInfo.pVS = p2D_vertex_shader;
   psoInfo.pPS = p2D_pixel_;
   psoInfo.PSODesc.ResourceLayout.Variables = m_ResourceVars.data();
   psoInfo.PSODesc.ResourceLayout.NumVariables = static_cast<Uint32>(m_ResourceVars.size());
@@ -704,7 +660,7 @@ namespace Artifact {
   //impl_->setCanvasColor(color);
  }
 
- void ArtifactDiligentEngineComposition2DWindow::Impl::drawViewCameraFrastum()
+ void ArtifactDiligentEngineComposition2DWindow::Impl::drawViewCameraFrustum()
  {
 
   // 1. クリップ空間の8頂点（NDCの立方体のコーナー）を定義
@@ -723,12 +679,12 @@ namespace Artifact {
   
 
   RefCntAutoPtr<ITextureView> pRTV;
-  pRTV = pSwapChain->GetCurrentBackBufferRTV();
+  pRTV = pSwapChain_->GetCurrentBackBufferRTV();
 
   RefCntAutoPtr<ITexture> pBackBuffer;
   pBackBuffer = pRTV->GetTexture();
   
-  const auto& desc = this->pSwapChain->GetDesc();
+  const auto& desc = this->pSwapChain_->GetDesc();
   //qDebug() << "Texture format:" << desc.Format;
   qDebug() << "Current State:" << pBackBuffer->GetState();
   TextureDesc ReadableDesc;
@@ -803,10 +759,6 @@ namespace Artifact {
   pImmediateContext->Flush();
   qDebug() << "Current State:" << pBackBuffer->GetState();
   pImmediateContext->DeviceWaitForFence(pFence, currentFenceValue);
-
-
-
-
 
 
   MappedTextureSubresource MappedData{};
@@ -895,42 +847,163 @@ namespace Artifact {
 
  ArtifactDiligentEngineComposition2DWindow::Impl::~Impl()
  {
+ // d3d11Context_->Release();
+  //d3d11Device_->Release();
+
   RoUninitialize();
  }
 
  void ArtifactDiligentEngineComposition2DWindow::Impl::saveScreenShotToClipboardByWinRT()
  {
+  auto pRTV = pSwapChain_->GetCurrentBackBufferRTV();
+
+  auto pBackBuffer = pRTV->GetTexture();
+
+  Diligent::ITextureD3D12* pD3D12Texture;
+
+  pBackBuffer->QueryInterface(IID_TextureD3D12, reinterpret_cast<IObject**>(&pD3D12Texture));
+
+
+	
+
+
+ }
+
+ void ArtifactDiligentEngineComposition2DWindow::Impl::initialize(QWidget* window)
+ {
+  widget_ = window;
+  view_ = CreateInitialViewMatrix();
+
+  auto* pFactory = GetEngineFactoryD3D12();
+
+
+  EngineD3D12CreateInfo CreationAttribs = {};
+  CreationAttribs.EnableValidation = true;
+  CreationAttribs.SetValidationLevel(Diligent::VALIDATION_LEVEL_2);
+  CreationAttribs.EnableValidation = true;
+
+  // ウィンドウハンドルを設定
+  Win32NativeWindow hWindow;
+  hWindow.hWnd = reinterpret_cast<HWND>(window->winId());
+  pFactory->CreateDeviceAndContextsD3D12(CreationAttribs, &pDevice, &pImmediateContext);
+
+  if (!pDevice)
+  {
+   // エラーログ出力、アプリケーション終了などの処理
+   qWarning() << "Failed to create Diligent Engine device and contexts.";
+   return;
+  }
+  m_CurrentPhysicalWidth = static_cast<int>(window->width() * window->devicePixelRatio());
+  m_CurrentPhysicalHeight = static_cast<int>(window->height() * window->devicePixelRatio());
+  m_CurrentDevicePixelRatio = window->devicePixelRatio();
+  // スワップチェインを作成
+  SwapChainDesc SCDesc;
+  SCDesc.Width = m_CurrentPhysicalWidth;  // QWindowの現在の幅
+  SCDesc.Height = m_CurrentPhysicalHeight; // QWindowの現在の高さ
+  SCDesc.ColorBufferFormat = TEX_FORMAT_RGBA8_UNORM;
+  SCDesc.DepthBufferFormat = TEX_FORMAT_UNKNOWN;
+
+  SCDesc.BufferCount = 2;
+  SCDesc.Usage = SWAP_CHAIN_USAGE_RENDER_TARGET;
+
+  FullScreenModeDesc desc;
+
+  desc.Fullscreen = false;
+
+  pFactory->CreateSwapChainD3D12(pDevice, pImmediateContext, SCDesc, desc, hWindow, &pSwapChain_);
+
+  Diligent::Viewport VP;
+  VP.Width = static_cast<float>(m_CurrentPhysicalWidth);
+  VP.Height = static_cast<float>(m_CurrentPhysicalHeight);
+  VP.MinDepth = 0.0f;
+  VP.MaxDepth = 1.0f;
+  VP.TopLeftX = 0.0f;
+  VP.TopLeftY = 0.0f;
+  // SetViewportsの最後の2引数は、レンダーターゲットの物理ピクセルサイズを渡すのが安全
+  pImmediateContext->SetViewports(1, &VP, m_CurrentPhysicalWidth, m_CurrentPhysicalHeight);
+
+
+
+
+  // GLMの行列をDiligent Engineのfloat4x4に変換
+  //projectionMatrix_ = GLMMat4ToDiligentFloat4x4(glm_projection_);
+
+  //m_ResourceVars.push_back({ Diligent::SHADER_TYPE_PIXEL, "g_texture", Diligent::SHADER_RESOURCE_VARIABLE_TYPE_MUTABLE });
+  m_ResourceVars.push_back({ Diligent::SHADER_TYPE_VERTEX, "Constants", Diligent::SHADER_RESOURCE_VARIABLE_TYPE_MUTABLE });
+  // g_sampler は静的変数、またはイミュータブルサンプラーとして扱う。
+  // ここではイミュータブルサンプラーとして定義するのが一般的かつ効率的です。
+  // イミュータブルサンプラーはResourceLayout.ImmutableSamplersに設定します。
+  // そのため、ResourceVarsには含めません。
+  // もしイミュータブルサンプラーを使わない場合は、以下のようにSTATICでResourceVarsに含めます:
+  // m_ResourceVars.push_back({Diligent::SHADER_TYPE_PIXEL, "g_sampler", Diligent::SHADER_RESOURCE_VARIABLE_TYPE_STATIC});
   auto hwnd = reinterpret_cast<HWND>(widget_->winId());
 
-  winrt::init_apartment(winrt::apartment_type::multi_threaded);
 
-  ComPtr<ID3D11Device> d3d11Device;
-  ComPtr<ID3D11DeviceContext> d3d11Context;
-  ComPtr<ID3D11DeviceContext> d3d11Context;
+
+  ID3D12Device* d3d12Device;
 
   UINT d3d11DeviceFlags = D3D11_CREATE_DEVICE_BGRA_SUPPORT;
 
   D3D_FEATURE_LEVEL featureLevels[] = {
-	  D3D_FEATURE_LEVEL_11_1,
-	  D3D_FEATURE_LEVEL_11_0,
+D3D_FEATURE_LEVEL_11_1,
+D3D_FEATURE_LEVEL_11_0,
   };
 
-  D3D11On12_CREATE_DEVICE_FLAGS createFlags = D3D11On12_CREATE_DEVICE_BGRA_SUPPORT;
+  auto renderDevice12 = static_cast<IRenderDeviceD3D12*>(pDevice.RawPtr());
+
+
+  d3d12Device = renderDevice12->GetD3D12Device();
 
   HRESULT hr = D3D11On12CreateDevice(
-   d3d12Device.Get(),                  // 元のD3D12デバイス
-   d3d11DeviceFlags,                   // フラグ
-   featureLevels,                      // 対応レベル
+   d3d12Device,
+   d3d11DeviceFlags,
+   featureLevels,
    _countof(featureLevels),
-   nullptr,                           // コマンドキュー配列（後述）
-   0,
-   0,
-   &d3d11Device,
-   &d3d11Context,
-   nullptr);
+   nullptr,              // 共有する D3D12 コマンドキュー配列
+   0,    // キュー数
+   0,                     // ノードマスク（通常は0）
+   &d3d11Device_,
+   &d3d11Context_,
+   nullptr                // 実際に使われた feature level を受け取るならここにポインタ
+  );
+
+  d3d11Device_.As(&d3d11On12Device_);
+
+
   if (FAILED(hr)) {
-   // エラーハンドリング
+   qDebug() << "D3D11 Error";
   }
+
+
+
+
+  createShaders();
+  createPSO();
+  initializeResources();
+
+  m_initialized = true;
+ }
+
+ void ArtifactDiligentEngineComposition2DWindow::Impl::drawQuadLine(float x, float y, float w, float h, const FloatColor& lineColor, float thikness/*=1.0f*/)
+ {
+
+ }
+//#createbuffer
+ void ArtifactDiligentEngineComposition2DWindow::Impl::createBuffers()
+ {
+  BufferDesc CBDesc;
+  CBDesc.Name = "My Constant Buffer";
+  //CBDesc.Size = sizeof(MyConstantBufferData);
+  CBDesc.Usage = USAGE_DYNAMIC;
+  CBDesc.BindFlags = BIND_UNIFORM_BUFFER;  // ← これが重要
+  CBDesc.CPUAccessFlags = CPU_ACCESS_WRITE;
+
+  BufferData CBData;
+  CBData.pData = nullptr;
+  CBData.DataSize = 0;
+
+  //RefCntAutoPtr<IBuffer> pConstantBuffer;
+  //pDevice->CreateBuffer(CBDesc, &CBData, &);
  }
 
  ArtifactDiligentEngineComposition2DWindow::ArtifactDiligentEngineComposition2DWindow(QWidget* parent /*= nullptr*/) :QWidget(parent), impl_(new Impl())
@@ -945,9 +1018,6 @@ namespace Artifact {
   renderTimer->start(16);
   setFocusPolicy(Qt::StrongFocus);
   setAttribute(Qt::WA_NativeWindow);
-  setAttribute(Qt::WA_NativeWindow);
-  // Setting these attributes to our widget and returning null on paintEngine event
-  // tells Qt that we'll handle all drawing and updating the widget ourselves.
   setAttribute(Qt::WA_PaintOnScreen);
   setAttribute(Qt::WA_NoSystemBackground);
  }
@@ -988,7 +1058,7 @@ namespace Artifact {
 
  void ArtifactDiligentEngineComposition2DWindow::paintEvent(QPaintEvent* event)
  {
-  impl_->renderOneFrame();
+  //impl_->renderOneFrame();
 
  }
 

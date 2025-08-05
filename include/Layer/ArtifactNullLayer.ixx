@@ -1,11 +1,12 @@
 ﻿module;
 
-export module ArtifactNullLayer;
+export module Artifact.Layers.Null;
 
+import Artifact.Layers;
 
 namespace Artifact {
 
- class ArtifactNullLayer
+ class ArtifactNullLayer:public ArtifactAbstractLayer
  {
  private:
   class Impl;

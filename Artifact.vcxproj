@@ -171,22 +171,29 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="include\Composition\ArtifactComposition.ixx" />
     <ClCompile Include="include\Effetcs\GlobalEffectManager.ixx" />
-    <ClCompile Include="include\Layer\ArtifactLayerFactory.ixx" />
+    <ClCompile Include="include\Layer\ArtifactSolidImageLayer.ixx" />
+    <ClCompile Include="include\Layer\ArtifactLayerFactory.ixx">
+      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
+    </ClCompile>
     <ClCompile Include="include\Widgets\Menu\ArtifactAnimationMenu.ixx">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
     </ClCompile>
+    <ClCompile Include="include\Widgets\Menu\ArtifactEffectMenu.ixx" />
     <ClCompile Include="include\Widgets\Render\ArtifactDiligentEngineRenderWidget.cpp" />
     <ClCompile Include="include\Widgets\Render\ArtifactDiligentEngineRenderWidget.ixx" />
+    <ClCompile Include="src\Application\ArtifactApplicationManager.cpp" />
     <ClCompile Include="src\Effetcs\GlobalEffectManager.cpp" />
+    <ClCompile Include="src\Layer\ArtifactSolidImageLayer.cpp" />
     <ClCompile Include="src\Library\Link.cpp" />
     <ClCompile Include="src\Widgets\ArtifactToolBar.cpp" />
     <ClCompile Include="src\Widgets\Menu\ArtifactAnimationMenu.cpp" />
     <ClCompile Include="src\Widgets\Render\GridRenderer.cpp">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
     </ClCompile>
-    <ClInclude Include="include\Application\ArtifactApplicationManager.hpp" />
-    <ClCompile Include="include\Composition\ArtifactComposition.ixx" />
+    <ClInclude Include="include\Application\ArtifactApplicationManager.ixx" />
+    <ClCompile Include="include\Composition\ArtifactComposition3D.ixx" />
     <ClCompile Include="include\Composition\ArtifactComposition2D.ixx">
       <FileType>Document</FileType>
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
@@ -197,7 +204,9 @@
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
     </ClCompile>
     <ClInclude Include="include\GUI\ArtifactGuiManager.hpp" />
-    <ClCompile Include="include\Layer\Artifact3DModelLayer.ixx" />
+    <ClCompile Include="include\Layer\Artifact3DModelLayer.ixx">
+      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
+    </ClCompile>
     <ClCompile Include="include\Layer\ArtifactCameraLayer.ixx">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
     </ClCompile>
@@ -233,12 +242,16 @@
     <ClCompile Include="include\Layer\ArtifactAbstractLayer.ixx">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
     </ClCompile>
-    <ClCompile Include="include\Layer\ArtifactCompositionLayer.ixx" />
+    <ClCompile Include="include\Layer\ArtifactCompositionLayer.ixx">
+      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
+    </ClCompile>
     <ClCompile Include="include\Layer\ArtifactImageLayer.ixx">
       <FileType>CppHeader</FileType>
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
     </ClCompile>
-    <ClCompile Include="include\Layer\ArtifactNullLayer.ixx" />
+    <ClCompile Include="include\Layer\ArtifactNullLayer.ixx">
+      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
+    </ClCompile>
     <ClCompile Include="include\Project\ArtifactProject.ixx">
       <FileType>CppHeader</FileType>
     </ClCompile>
@@ -312,7 +325,7 @@
     <ClCompile Include="src\AppMain.cpp">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
     </ClCompile>
-    <ClCompile Include="src\Composition\ArtifactComposition.cpp" />
+    <ClCompile Include="src\Composition\ArtifactComposition3D.cpp" />
     <ClCompile Include="src\Composition\ArtifactCompositionManager.cpp" />
     <ClCompile Include="src\Effect\ArtifactAbstractEffect.cpp" />
     <ClCompile Include="src\GUI\ArtifactGuiManager.cpp" />
@@ -398,6 +411,7 @@
     <ClCompile Include="src\Composition\ArtifactComposition2D.cpp">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
     </ClCompile>
+    <ClCompile Include="src\Widgets\Menu\ArtifactEffectMenu.cpp" />
     <None Include="src\Widgets\Menu\Test.thrift" />
   </ItemGroup>
   <ItemGroup>

@@ -21,6 +21,7 @@ namespace Artifact {
   QMenu* compositionMenu=nullptr;
   QMenu* layerMenu = nullptr;
   QMenu* viewMenu = nullptr;
+    
   ArtifactAnimationMenu* animationMenu = nullptr;
   //ArtifactHelpMenu* helpMenu = nullptr;
   Impl(ArtifactMainWindow* mainWindow, ArtifactMenuBar* menu);

@@ -1,8 +1,11 @@
 ﻿module;
 
-export module Layer.Factory;
+export module Artifact.Layers.Factory;
 
 import std;
+//import Artifact.Layers;
+
+
 
 export namespace ArtifactCore {
  
@@ -10,4 +13,7 @@ export namespace ArtifactCore {
  class LayerFactory {
 
  };
+
+
+
 };
