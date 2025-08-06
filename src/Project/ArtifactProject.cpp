@@ -49,7 +49,7 @@ namespace Artifact {
 
  }
 
- ArtifactProject::ArtifactProject(const ArtifactProjectSetting& setting):impl_(new Impl())
+ ArtifactProject::ArtifactProject(const ArtifactProjectSettings& setting):impl_(new Impl())
  {
 
  }

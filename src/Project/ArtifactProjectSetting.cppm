@@ -1,4 +1,4 @@
-module;
+﻿module;
 
 module Project.Settings;
 
@@ -6,19 +6,23 @@ module Project.Settings;
 
 namespace Artifact {
 
+ class ArtifactProjectSettings::Impl
+ {
+	 
+ };
 
 
- ArtifactProjectSetting::~ArtifactProjectSetting()
+ ArtifactProjectSettings::~ArtifactProjectSettings()
  {
 
  }
 
- ArtifactProjectSetting::ArtifactProjectSetting()
+ ArtifactProjectSettings::ArtifactProjectSettings()
  {
 
  }
 
- ArtifactProjectSetting::ArtifactProjectSetting(const ArtifactProjectSetting& setting)
+ ArtifactProjectSettings::ArtifactProjectSettings(const ArtifactProjectSettings& setting)
  {
 
  }

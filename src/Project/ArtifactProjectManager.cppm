@@ -13,22 +13,30 @@ module Project.Manager;
 import Project;
 
 
+
+import Utils;
+
 namespace Artifact {
+
+ using namespace ArtifactCore;
  
  W_OBJECT_IMPL(ArtifactProjectManager)
 
 
-	class ArtifactProjectManager::Impl {
-	private:
-	 //ArtifactProject project_;
+  class ArtifactProjectManager::Impl {
+  private:
 
-	 
-	public:
-	 Impl();
-	 ~Impl();
-	 std::shared_ptr<ArtifactProject> spProject_;
-	 void createProject();
-	};
+
+
+
+  public:
+   Impl();
+   ~Impl();
+   std::shared_ptr<ArtifactProject> spProject_;
+   void createProject();
+   Id createNewComposition();
+
+ };
 
  ArtifactProjectManager::Impl::Impl()
  {

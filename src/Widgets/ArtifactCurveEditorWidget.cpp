@@ -1,5 +1,5 @@
 ﻿module;
-
+#include <QWidget>
 module Widget.CurveEditor;
 
 
@@ -9,8 +9,7 @@ namespace ArtifactCore {
 
 
 
-
- ArtifactCurveEditorWidget::ArtifactCurveEditorWidget()
+ ArtifactCurveEditorWidget::ArtifactCurveEditorWidget(QWidget* parent/*=nullptr*/):QWidget(parent)
  {
 
  }
@@ -19,8 +18,6 @@ namespace ArtifactCore {
  {
 
  }
-
-
 
  void ArtifactCurveEditorWidget::setViewRange(float xMin, float xMax, float yMin, float yMax)
  {

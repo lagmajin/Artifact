@@ -8,20 +8,13 @@ export namespace Artifact {
 
  class ArtifactEffectMenu :public QMenu{
  private:
-
+  class Impl;
+  Impl* impl_;
  public:
   ArtifactEffectMenu(QWidget* parent = nullptr);
   ~ArtifactEffectMenu();
  };
 
- ArtifactEffectMenu::~ArtifactEffectMenu()
- {
 
- }
-
- ArtifactEffectMenu::ArtifactEffectMenu(QWidget* parent /*= nullptr*/)
- {
-
- }
 
 }

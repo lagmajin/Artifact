@@ -8,7 +8,9 @@
 #include <DiligentCore/Common/interface/RefCntAutoPtr.hpp>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/SwapChain.h>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/RenderDevice.h>
-#include <DiligentCore/Graphics/GraphicsEngineD3D12/interface/EngineFactoryD3D12.h>
+
+#include <opencv2/opencv.hpp>
+
 #include <DiligentCore/Graphics/GraphicsEngine/interface/DeviceContext.h>
 
 #include <DiligentTools/RenderStateNotation/interface/RenderStateNotationParser.h>
@@ -34,17 +36,22 @@
 #include <winrt/Windows.Graphics.Capture.h>
 #include <winrt/Windows.Graphics.DirectX.Direct3D11.h>
 #include <winrt/base.h>
-
+#include <DiligentCore/Graphics/GraphicsEngineD3D12/interface/EngineFactoryD3D12.h>
 #include <DiligentCore/Graphics/GraphicsEngineD3D12/interface/TextureD3D12.h>
 #endif
 #include <wrl/client.h>
 #include <DiligentCore/Graphics/GraphicsEngineD3D12/interface/RenderDeviceD3D12.h>
+
+
+
 //#include <algorithm>
 
 module Widgets.Render.Composition;
 
 import Graphics;
 import Color.Float;
+import Graphics.Func;
+
 
 import std;
 
@@ -59,39 +66,9 @@ namespace Artifact {
  using namespace winrt;
  using Microsoft::WRL::ComPtr;
 #endif
- Diligent::float4x4 GLMMat4ToDiligentFloat4x4(const glm::mat4& glm_mat)
- {
-  Diligent::float4x4 diligent_mat;
-  for (int i = 0; i < 4; ++i)
-  {
-   for (int j = 0; j < 4; ++j)
-   {
-	// GLMはColumn-Majorなので、[列][行]の順でアクセス
-	// Diligent::float4x4 も内部的には列優先の場合が多いですが、
-	// 安全のため要素ごとにコピー
-	diligent_mat.m[i][j] = glm_mat[i][j];
-   }
-  }
-  return diligent_mat;
- }
+
  W_OBJECT_IMPL(ArtifactDiligentEngineComposition2DWindow)
-  glm::mat4 CreateInitialViewMatrix()
- {
-  // 1. カメラの位置 (Eye/Camera Position)
-  // 例えば、Z軸方向に少し離れた位置から原点を見る
-  glm::vec3 cameraPos = glm::vec3(0.0f, 0.0f, 2.0f);
 
-  // 2. 注視点 (Target/LookAt Position)
-  // シーンの中心（原点）を見る
-  glm::vec3 cameraTarget = glm::vec3(0.0f, 0.0f, 0.0f);
-
-  // 3. 上方向 (Up Vector)
-  // 通常はワールドのY軸プラス方向
-  glm::vec3 cameraUp = glm::vec3(0.0f, 1.0f, 0.0f);
-
-  // glm::lookAt() を使ってビュー行列を計算
-  return glm::lookAt(cameraPos, cameraTarget, cameraUp);
- }
  class ArtifactDiligentEngineComposition2DWindow::Impl {
  private:
   FloatColor canvasColor_;
@@ -140,6 +117,8 @@ namespace Artifact {
    const glm::vec2& scale);
   std::mutex g_eventMutex;
   std::queue<std::function<void()>> g_renderEvents;
+  bool takeScreenshot = false;
+
   void initializeResources();
   void createShaders();
   void createBuffers();
@@ -155,7 +134,7 @@ namespace Artifact {
   void clear(const Diligent::float4& clearColor);
   void present();
   void renderOneFrame();
-  void drawTexturedQuad();
+  void drawSprite(float x,float y,float w,float h);
   void drawSolidQuad(float x, float y, float w, float h);
   void drawQuadLine(float x,float y,float w,float h,const FloatColor& lineColor, float thikness=1.0f);
   void drawLine(float x_1, float y_1, float x_2, float y_2, const FloatColor& color);
@@ -398,14 +377,7 @@ namespace Artifact {
 
   drawSolidQuad(500, 0, 400, 400);
 
-  //saveScreenShotToClipboard();
-
- 
-
-  //pImmediateContext->SetRenderTargets(1, &pRTV, nullptr);
-
-  present();
-
+	
   {
    std::lock_guard<std::mutex> lock(g_eventMutex);
    while (!g_renderEvents.empty()) {
@@ -418,6 +390,10 @@ namespace Artifact {
 	new (&lock) std::lock_guard<std::mutex>(g_eventMutex);  // 再ロック
    }
   }
+  
+  present();
+
+
  }
 
  void ArtifactDiligentEngineComposition2DWindow::Impl::createPSO()
@@ -566,13 +542,13 @@ namespace Artifact {
   */
   RefCntAutoPtr<IFence> pFence;
 
-  static Uint64 fenceValue = 0;
+  Uint64 fenceValue = 0;
   ++fenceValue;
 
   FenceDesc fenceDesc;
   fenceDesc.Name = "ReadbackSyncFence";
   fenceDesc.Type = FENCE_TYPE_GENERAL;
-  pDevice->CreateFence(fenceDesc, &pFence);
+  //pDevice->CreateFence(fenceDesc, &pFence);
 
 
   Diligent::Uint64 offset = 0;
@@ -591,10 +567,10 @@ namespace Artifact {
   DrawAttrs.Flags = Diligent::DRAW_FLAG_VERIFY_ALL;
 
   pImmediateContext->Draw(DrawAttrs);
-  pImmediateContext->EnqueueSignal(pFence, fenceValue);
+  //pImmediateContext->EnqueueSignal(pFence, fenceValue);
 
-  pImmediateContext->Flush();
-  pImmediateContext->DeviceWaitForFence(pFence, fenceValue);
+  //pImmediateContext->Flush();
+  //pImmediateContext->DeviceWaitForFence(pFence, fenceValue);
   ++fenceValue;
   //pImmediateContext->Flush();
  }
@@ -689,6 +665,7 @@ namespace Artifact {
   qDebug() << "Current State:" << pBackBuffer->GetState();
   TextureDesc ReadableDesc;
   ReadableDesc.Width = desc.Width;
+  ReadableDesc.Height = desc.Height;
   ReadableDesc.Name = "ScreenCapture staging";
   ReadableDesc.Type = RESOURCE_DIM_TEX_2D;
   ReadableDesc.BindFlags = BIND_NONE;
@@ -699,8 +676,9 @@ namespace Artifact {
   RefCntAutoPtr<ITexture> pReadableTex;
   pDevice->CreateTexture(ReadableDesc, nullptr, &pReadableTex);
 
-  pImmediateContext->SetRenderTargets(0, nullptr, nullptr, RESOURCE_STATE_TRANSITION_MODE_NONE);
-  RefCntAutoPtr<IFence> pFence;
+  //pImmediateContext->SetRenderTargets(0, nullptr, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+
+ 	RefCntAutoPtr<IFence> pFence;
 
   int fenceValue = 1;
   int currentFenceValue = fenceValue++;
@@ -709,30 +687,17 @@ namespace Artifact {
   fenceDesc.Type = FENCE_TYPE_GENERAL;
   pDevice->CreateFence(fenceDesc, &pFence);
 
-
   StateTransitionDesc toCopySrc{
-	  pBackBuffer,
-	  RESOURCE_STATE_UNKNOWN, // ← これが重要
-	  RESOURCE_STATE_COPY_SOURCE,
-	  STATE_TRANSITION_FLAG_UPDATE_STATE
+	 pBackBuffer,
+	 RESOURCE_STATE_RENDER_TARGET,
+	 RESOURCE_STATE_COPY_SOURCE,
+	 STATE_TRANSITION_FLAG_UPDATE_STATE
   };
   pImmediateContext->TransitionResourceStates(1, &toCopySrc);
 
-  // 2. 読み出し用テクスチャも COPY_DEST に遷移
-  StateTransitionDesc toCopyDst{
-	  pReadableTex,
-	  RESOURCE_STATE_UNKNOWN, // ← 安全策
-	  RESOURCE_STATE_COPY_DEST,
-	  STATE_TRANSITION_FLAG_UPDATE_STATE
-  };
-  pImmediateContext->TransitionResourceStates(1, &toCopyDst);
+  pImmediateContext->SetRenderTargets(0, nullptr, nullptr, RESOURCE_STATE_TRANSITION_MODE_NONE);
 
-  // 3. フェンスで確実に同期（FlushだけではGPU完了を保証できない）
-  pImmediateContext->EnqueueSignal(pFence, currentFenceValue);
-  pImmediateContext->Flush();
-  pImmediateContext->DeviceWaitForFence(pFence, currentFenceValue);
 
-  // 4. コピー（遷移はすでに済ませてあるので VERIFY でOK）
   CopyTextureAttribs copyAttrs = {};
   copyAttrs.pSrcTexture = pBackBuffer;
   copyAttrs.pDstTexture = pReadableTex;
@@ -740,24 +705,9 @@ namespace Artifact {
   copyAttrs.DstTextureTransitionMode = RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
   pImmediateContext->CopyTexture(copyAttrs);
 
-
-  qDebug() << "Current State:" << pBackBuffer->GetState();
-
-
-
-  qDebug() << "Current State:" << pBackBuffer->GetState();
-
-  qDebug() << "Current State:" << pBackBuffer->GetState();
-
-
-  pImmediateContext->CopyTexture(copyAttrs);
-  qDebug() << "Current State:" << pBackBuffer->GetState();
-
-  pImmediateContext->Flush();
+  currentFenceValue++;
   pImmediateContext->EnqueueSignal(pFence, currentFenceValue);
-  qDebug() << "Current State:" << pBackBuffer->GetState();
   pImmediateContext->Flush();
-  qDebug() << "Current State:" << pBackBuffer->GetState();
   pImmediateContext->DeviceWaitForFence(pFence, currentFenceValue);
 
 
@@ -767,7 +717,7 @@ namespace Artifact {
    0,              // mip level
    0,              // array slice
    MAP_READ,
-   MAP_FLAG_DO_NOT_WAIT,
+   MAP_FLAG_NONE,
    nullptr,        // 全面をマップ
    MappedData      // 参照で渡す
   );
@@ -780,10 +730,6 @@ namespace Artifact {
   RefCntAutoPtr<Diligent::Image> pImage;
 
 
-  pImmediateContext->EnqueueSignal(pFence, currentFenceValue);
-  pImmediateContext->Flush();
-  pImmediateContext->DeviceWaitForFence(pFence, currentFenceValue);
-  pImmediateContext->Flush();
   // 画像サイズなど
   const auto& desc2 = pReadableTex->GetDesc();
   int width = desc2.Width;
@@ -802,6 +748,17 @@ namespace Artifact {
    memcpy(dstRow, srcRow, width * bytesPerPixel);
   }
 
+  cv::Mat image2(height, width, CV_8UC4); // RGBA8相当 (4バイト/ピクセル)
+
+  for (int y = 0; y < height; ++y)
+  {
+   const uint8_t* srcRow = reinterpret_cast<const uint8_t*>(MappedData.pData) + rowStride * y;
+   uint8_t* dstRow = image2.ptr<uint8_t>(height - 1 - y); // ← 上下反転コピー
+   memcpy(dstRow, srcRow, width * bytesPerPixel);
+  }
+
+
+
   pImmediateContext->UnmapTextureSubresource(pReadableTex, 0, 0);
 
   // クリップボードに転送
@@ -819,7 +776,7 @@ namespace Artifact {
  {
   std::lock_guard<std::mutex> lock(g_eventMutex);
   g_renderEvents.push([this]() {
-   saveScreenShotToClipboardByQt();
+   saveScreenShotToClipboard();
 
    });
  }
@@ -954,6 +911,8 @@ D3D_FEATURE_LEVEL_11_0,
 
   d3d12Device = renderDevice12->GetD3D12Device();
 
+
+	/*
   HRESULT hr = D3D11On12CreateDevice(
    d3d12Device,
    d3d11DeviceFlags,
@@ -967,6 +926,7 @@ D3D_FEATURE_LEVEL_11_0,
    nullptr                // 実際に使われた feature level を受け取るならここにポインタ
   );
 
+
   d3d11Device_.As(&d3d11On12Device_);
 
 
@@ -974,6 +934,7 @@ D3D_FEATURE_LEVEL_11_0,
    qDebug() << "D3D11 Error";
   }
 
+*/
 
 
 
@@ -1058,7 +1019,7 @@ D3D_FEATURE_LEVEL_11_0,
 
  void ArtifactDiligentEngineComposition2DWindow::paintEvent(QPaintEvent* event)
  {
-  //impl_->renderOneFrame();
+  impl_->renderOneFrame();
 
  }
 

@@ -2,7 +2,7 @@
 #include <wobjectdefs.h>
 #include <QMenu>
 
-export module Menu.Edit;
+export module Artifact.Menu.Edit;
 
 
 export namespace Artifact {

@@ -1,7 +1,7 @@
 ﻿module;
 #include <QMenu>
 
-export module Menu:View;
+export module Artifact.Menu.View;
 //#pragma once
 
 //#include <QtWidgets/QMenu>

@@ -2,7 +2,7 @@
 #include <QWidget>
 #include <QMenu>
 
-module Menu:View;
+module Artifact.Menu.View;
 
 //#include "../../../include/Widgets/Menu/ArtifactViewMenu.hpp"
 

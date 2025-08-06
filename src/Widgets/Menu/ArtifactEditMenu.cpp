@@ -3,7 +3,7 @@
 module;
 #include <QMenu>
 #include <wobjectimpl.h>
-module Menu.Edit;
+module Artifact.Menu.Edit;
 
 
 namespace Artifact {

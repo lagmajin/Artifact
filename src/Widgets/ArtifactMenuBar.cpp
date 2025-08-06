@@ -18,10 +18,11 @@ namespace Artifact {
   ArtifactMenuBar* menuBar = nullptr;
   QMenu* fileMenu=nullptr;
   ArtifactEditMenu* editMenu = nullptr;
+    
   QMenu* compositionMenu=nullptr;
   QMenu* layerMenu = nullptr;
   QMenu* viewMenu = nullptr;
-    
+  ArtifactEffectMenu* effectMenu = nullptr;
   ArtifactAnimationMenu* animationMenu = nullptr;
   //ArtifactHelpMenu* helpMenu = nullptr;
   Impl(ArtifactMainWindow* mainWindow, ArtifactMenuBar* menu);
@@ -35,10 +36,12 @@ namespace Artifact {
   
   editMenu = new ArtifactEditMenu(menu);
   animationMenu = new ArtifactAnimationMenu(menu);
+  effectMenu = new ArtifactEffectMenu(menu);
 
   menu->addMenu(fileMenu);
   menu->addMenu(editMenu);
   menu->addMenu(animationMenu);
+  menu->addMenu(effectMenu);
  }
 
  ArtifactMenuBar::Impl::~Impl()

@@ -1,7 +1,7 @@
-module;
+﻿module;
 #include <QMenu>
 
-export module Menu.Layer;
+export module Artifact.Menu.Layer;
 
 
 

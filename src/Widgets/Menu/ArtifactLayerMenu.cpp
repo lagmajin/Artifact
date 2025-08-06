@@ -1,8 +1,7 @@
 ﻿module;
 #include <QMenu>
 #include <QWidget>
-module Menu.Layer;
-
+module Artifact.Menu.Layer;
 
 
 //#include "../../../include/Widgets/Menu/ArtifactLayerMenu.hpp"

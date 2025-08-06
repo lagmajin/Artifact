@@ -1,21 +1,24 @@
-module;
+﻿module;
 #include <QString>
 #include <QObject>
 
 
 export module Project.Settings;
 
+import std;
 
 
 export namespace Artifact {
 
- class ArtifactProjectSetting:QObject {
- private:
 
+ class ArtifactProjectSettings:public QObject {
+ private:
+  class Impl;
+  Impl* impl_;
  public:
-  explicit ArtifactProjectSetting();
-  ArtifactProjectSetting(const ArtifactProjectSetting& setting);
-  ~ArtifactProjectSetting();
+  explicit ArtifactProjectSettings();
+  ArtifactProjectSettings(const ArtifactProjectSettings& setting);
+  ~ArtifactProjectSettings();
   QString projectName() const;
 
  };

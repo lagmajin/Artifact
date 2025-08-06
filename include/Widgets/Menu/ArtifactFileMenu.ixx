@@ -1,9 +1,9 @@
-module;
+﻿module;
 #include <QMenu>
 #include <QWidget>
 
 #include <wobjectdefs.h>
-export module Menu.File;
+export module Artifact.Menu.File;
 
 
 export namespace Artifact {

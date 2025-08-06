@@ -1,7 +1,5 @@
 ﻿module;
-#include <QtCore/QtCore>
-#include <QtWidgets/QtWidgets>
-
+#include <QtWidgets>
 
 export module Menu.MenuBar;
 

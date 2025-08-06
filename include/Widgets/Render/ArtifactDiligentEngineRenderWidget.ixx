@@ -25,21 +25,10 @@ export namespace Artifact {
  protected:
   void resizeEvent(QResizeEvent*) override;
   QSize sizeHint() const;
-
-
   void showEvent(QShowEvent* event) override;
-
-
   void paintEvent(QPaintEvent* event) override;
-
-
   void wheelEvent(QWheelEvent* event) override;
-
-
   void keyPressEvent(QKeyEvent* event) override;
-
-  //void exposeEvent(QExposeEvent*) override;
-
  public:
   explicit ArtifactDiligentEngineComposition2DWindow(QWidget* parent = nullptr);
   ~ArtifactDiligentEngineComposition2DWindow();
@@ -51,6 +40,11 @@ export namespace Artifact {
   void saveScreenShotToClipboardByQt();
   IRenderDevice* GetRenderDevice() const;
   IDeviceContext* GetDeviceContext() const;
+
+//signals
+  void screenClicked(const QPoint& point) W_SIGNAL(screenClicked,point)
+
+
  };
 
  class ArtifactDiligentEngineComposition2DWidget :public QWidget{

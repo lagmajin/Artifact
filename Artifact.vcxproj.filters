@@ -117,9 +117,6 @@
     <ClInclude Include="include\Render\ArtifactRenderer.ixx">
       <Filter>ヘッダー ファイル\Render</Filter>
     </ClInclude>
-    <ClInclude Include="include\Application\ArtifactApplicationManager.ixx">
-      <Filter>ヘッダー ファイル\Application</Filter>
-    </ClInclude>
     <ClInclude Include="include\GUI\ArtifactGuiManager.hpp">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
@@ -418,6 +415,9 @@
     </ClCompile>
     <ClCompile Include="src\Widgets\Menu\ArtifactEffectMenu.cpp">
       <Filter>ソース ファイル\Widgets\Menu</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Application\ArtifactApplicationManager.ixx">
+      <Filter>ヘッダー ファイル\Application</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>

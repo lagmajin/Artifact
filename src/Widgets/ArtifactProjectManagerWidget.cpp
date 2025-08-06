@@ -9,6 +9,7 @@
 #include <QMimeData>
 #include <QDragEnterEvent>
 #include <QDropEvent>
+#include <QLineEdit>
 module ArtifactProjectManagerWidget;
 
 
@@ -130,8 +131,11 @@ namespace Artifact {
 
      impl_->projectView_ = new ArtifactProjectView();
 
+     auto searchWidget = new QLineEdit();
+
      auto layout = new QVBoxLayout();
      layout->addWidget(label);
+     layout->addWidget(searchWidget);
      layout->addWidget(impl_->projectView_);
      setLayout(layout);
 

@@ -1,17 +1,17 @@
 ﻿module;
 #include <wobjectdefs.h>
-#include <memory>
+//#include <memory>
 #include <QObject>
 #include <QPointer>
+
+
+
+
 export module Project;
 
 export import Project.Settings;
 
-//#include <QtCore/QObject>
-
-
-
-
+import std;
 
 export namespace Artifact {
 
@@ -23,8 +23,8 @@ export namespace Artifact {
   ~ArtifactProjectSignalHelper();
  };
 
+ 
 
- //class ArtifactProjectPrivate;
 
  class ArtifactProject :public QObject{
   W_OBJECT(ArtifactProject)
@@ -35,8 +35,9 @@ export namespace Artifact {
  public:
   ArtifactProject();
   ArtifactProject(const QString& name);
-  ArtifactProject(const ArtifactProjectSetting& setting);
+  ArtifactProject(const ArtifactProjectSettings& setting);
   ~ArtifactProject();
+  ArtifactProjectSettings settings() const;
   void createComposition(const QString&name);
   void addAssetFile();
   void addAssetFromPath(const QString& filepath);
@@ -44,6 +45,7 @@ export namespace Artifact {
  //public slots:
  };
 
+ typedef std::shared_ptr<ArtifactProject> sptrArtifactProject;
 
 
 }

@@ -5,7 +5,9 @@ export module TimelineScene;
 export namespace ArtifactCore {
 
  class TimelineScene : public QGraphicsScene{
-   
+ private:
+
+ public:
 
  };
 

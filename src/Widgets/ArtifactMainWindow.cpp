@@ -154,7 +154,6 @@ namespace Artifact {
   auto  DockWidget4 = new Pane("RenderQueueManager", renderManagerWidget);
   DockWidget4->setWindowIcon(QIcon::fromTheme("folder"));
 
-  //DockWidget4->setWidget(renderManagerWidget);
 
   DockManager->addDockWidget(ads::BottomDockWidgetArea, DockWidget4);
  
