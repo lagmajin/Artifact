@@ -1,6 +1,6 @@
 ﻿module;
 
-module Effect.Manager;
+module Effects.Manager;
 
 namespace Artifact
 {

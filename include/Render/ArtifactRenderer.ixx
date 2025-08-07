@@ -1,10 +1,7 @@
-module;
+﻿module;
 #include <wobjectdefs.h>
 #include <QObject>
 export module Render;
-
-
-//#include <QtCore/QObject>
 
 
 

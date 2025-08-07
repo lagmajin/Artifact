@@ -1,6 +1,6 @@
 ﻿module;
 
-export module Effect.Manager;
+export module Effects.Manager;
 
 export namespace Artifact
 {

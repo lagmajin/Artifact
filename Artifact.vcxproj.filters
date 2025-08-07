@@ -109,6 +109,9 @@
     <Filter Include="Thrift">
       <UniqueIdentifier>{80b6e5e7-24aa-4121-96e1-db36790686c2}</UniqueIdentifier>
     </Filter>
+    <Filter Include="ソース ファイル\Render">
+      <UniqueIdentifier>{90e91036-6837-4057-b35e-5cda353dc00b}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="include\Composition\ArtifactCompositionManager.hpp">
@@ -418,6 +421,15 @@
     </ClCompile>
     <ClCompile Include="include\Application\ArtifactApplicationManager.ixx">
       <Filter>ヘッダー ファイル\Application</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Render\ArtifactOffscreenRenderer2D.ixx">
+      <Filter>ヘッダー ファイル\Render</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Render\ArtifactOffscreenRenderer2D.cpp">
+      <Filter>ソース ファイル\Render</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Layer\ArtifactAdjustableLayer.ixx">
+      <Filter>ヘッダー ファイル\Layer</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>

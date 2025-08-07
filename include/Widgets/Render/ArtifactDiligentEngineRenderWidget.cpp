@@ -670,8 +670,9 @@ namespace Artifact {
   ReadableDesc.Type = RESOURCE_DIM_TEX_2D;
   ReadableDesc.BindFlags = BIND_NONE;
   ReadableDesc.Usage = USAGE_STAGING;
+	//ReadableDesc.
   ReadableDesc.CPUAccessFlags = CPU_ACCESS_READ;
-  ReadableDesc.Format = TEX_FORMAT_RGBA8_UNORM;
+  ReadableDesc.Format = desc.ColorBufferFormat;
 
   RefCntAutoPtr<ITexture> pReadableTex;
   pDevice->CreateTexture(ReadableDesc, nullptr, &pReadableTex);
@@ -687,29 +688,20 @@ namespace Artifact {
   fenceDesc.Type = FENCE_TYPE_GENERAL;
   pDevice->CreateFence(fenceDesc, &pFence);
 
-  StateTransitionDesc toCopySrc{
-	 pBackBuffer,
-	 RESOURCE_STATE_RENDER_TARGET,
-	 RESOURCE_STATE_COPY_SOURCE,
-	 STATE_TRANSITION_FLAG_UPDATE_STATE
-  };
-  pImmediateContext->TransitionResourceStates(1, &toCopySrc);
-
-  pImmediateContext->SetRenderTargets(0, nullptr, nullptr, RESOURCE_STATE_TRANSITION_MODE_NONE);
 
 
-  CopyTextureAttribs copyAttrs = {};
-  copyAttrs.pSrcTexture = pBackBuffer;
-  copyAttrs.pDstTexture = pReadableTex;
-  copyAttrs.SrcTextureTransitionMode = RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
-  copyAttrs.DstTextureTransitionMode = RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
-  pImmediateContext->CopyTexture(copyAttrs);
+
+
+  CopyTextureAttribs CopyAttribs(pBackBuffer, RESOURCE_STATE_TRANSITION_MODE_TRANSITION, pReadableTex, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+  pImmediateContext->CopyTexture(CopyAttribs);
+  std::this_thread::sleep_for(std::chrono::milliseconds(50));
+ 
 
   currentFenceValue++;
   pImmediateContext->EnqueueSignal(pFence, currentFenceValue);
-  pImmediateContext->Flush();
-  pImmediateContext->DeviceWaitForFence(pFence, currentFenceValue);
-
+ 	pImmediateContext->Flush();
+   pImmediateContext->DeviceWaitForFence(pFence, currentFenceValue);
+  std::this_thread::sleep_for(std::chrono::milliseconds(50));
 
   MappedTextureSubresource MappedData{};
   pImmediateContext->MapTextureSubresource(
@@ -723,11 +715,11 @@ namespace Artifact {
   );
   if (MappedData.pData == nullptr)
   {
-   qWarning() << "MapTextureSubresource returned null data pointer";
+   qWarning() << "MapTexture Subresource returned null data pointer";
    return;
   }
 
-  RefCntAutoPtr<Diligent::Image> pImage;
+  //RefCntAutoPtr<Diligent::Image> pImage;
 
 
   // 画像サイズなど
@@ -744,7 +736,7 @@ namespace Artifact {
   for (int y = 0; y < height; ++y)
   {
    const uint8_t* srcRow = reinterpret_cast<const uint8_t*>(MappedData.pData) + rowStride * y;
-   uint8_t* dstRow = image.scanLine(height - 1 - y);
+   uint8_t* dstRow = image.scanLine(y);
    memcpy(dstRow, srcRow, width * bytesPerPixel);
   }
 
@@ -753,7 +745,7 @@ namespace Artifact {
   for (int y = 0; y < height; ++y)
   {
    const uint8_t* srcRow = reinterpret_cast<const uint8_t*>(MappedData.pData) + rowStride * y;
-   uint8_t* dstRow = image2.ptr<uint8_t>(height - 1 - y); // ← 上下反転コピー
+   uint8_t* dstRow = image.scanLine(y); // ← 上下反転コピー
    memcpy(dstRow, srcRow, width * bytesPerPixel);
   }
 

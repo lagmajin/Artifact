@@ -3,6 +3,14 @@ export module Artifact.Layers.Camera;
 
 export namespace ArtifactCore
 {
+ class ArtifactCameraLayerSettings
+ {
+ private:
+
+ public:
+
+ };
+
 
  class ArtifactCameraLayer
  {
@@ -14,7 +22,15 @@ export namespace ArtifactCore
   ~ArtifactCameraLayer();
  };
 
+ ArtifactCameraLayer::ArtifactCameraLayer()
+ {
 
+ }
+
+ ArtifactCameraLayer::~ArtifactCameraLayer()
+ {
+
+ }
 
 
 

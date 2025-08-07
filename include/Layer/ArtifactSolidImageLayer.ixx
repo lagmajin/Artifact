@@ -3,16 +3,31 @@
 
 export module Artifact.Layers.SolidImage;
 
+import Color.Float;
 
 export namespace Artifact
 {
- class ArtifatSolidImageLayer
- {private:
+ using namespace ArtifactCore;
+
+ class ArtifactSolidImageLayerSettings
+ {
+ private:
 
  public:
-  ArtifatSolidImageLayer();
-  ~ArtifatSolidImageLayer();
-	 
+  ArtifactSolidImageLayerSettings();
+  ~ArtifactSolidImageLayerSettings();
+ };
+
+
+ class ArtifactSolidImageLayer
+ {private:
+  class Impl;
+  Impl* impl_;
+ public:
+  ArtifactSolidImageLayer();
+  ~ArtifactSolidImageLayer();
+  FloatColor layerColor() const;
+  void setLayerColor(const FloatColor& color);
  };
 
 
