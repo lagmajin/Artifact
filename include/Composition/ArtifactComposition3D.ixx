@@ -1,5 +1,5 @@
 ﻿module;
-
+#include <QJsonObject>
 export module Composition3D;
 
 import std;

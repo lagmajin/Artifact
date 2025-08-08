@@ -1,6 +1,6 @@
 ﻿module;
 #include <QString>
-
+#include <QJsonObject>
 export module Composition2D;
 
 import std;
@@ -33,10 +33,10 @@ namespace Artifact {
   ~ArtifactComposition2D();
   void setCompositionBackgroundColor(const FloatColor& color);
   void addLayer();
-
+  QJsonDocument toJson() const;
  };
 
-
+typedef std::shared_ptr<ArtifactComposition2D> ArtifactComposition2DPtr;
 
 
 

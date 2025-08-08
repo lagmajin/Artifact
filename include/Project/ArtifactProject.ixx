@@ -5,7 +5,9 @@
 #include <QPointer>
 
 
+#include <QJsonObject>
 
+#include <boost/signals2.hpp>
 
 export module Project;
 
@@ -42,10 +44,11 @@ export namespace Artifact {
   void addAssetFile();
   void addAssetFromPath(const QString& filepath);
   bool isNull() const;
+
  //public slots:
  };
 
- typedef std::shared_ptr<ArtifactProject> sptrArtifactProject;
+ typedef std::shared_ptr<ArtifactProject> ArtifactProject2DPtr;
 
 
 }

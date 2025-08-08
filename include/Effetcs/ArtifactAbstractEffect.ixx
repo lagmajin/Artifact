@@ -1,18 +1,21 @@
-
+﻿
 module;
+#include <QString>
+export module Artifact.Effects;
 
-export module Effects;
+import std;
 
 export namespace Artifact {
 
- class ArtifactAbstractEffectPrivate;
+
 
  class ArtifactAbstractEffect {
  private:
-
+  class Impl;
+  Impl* impl_;
  public:
   ArtifactAbstractEffect();
-  ~ArtifactAbstractEffect();
+  virtual ~ArtifactAbstractEffect();
 
  };
 

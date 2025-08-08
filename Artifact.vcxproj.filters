@@ -431,6 +431,12 @@
     <ClCompile Include="include\Layer\ArtifactAdjustableLayer.ixx">
       <Filter>ヘッダー ファイル\Layer</Filter>
     </ClCompile>
+    <ClCompile Include="src\Render\ArtifactEffects.ixx">
+      <Filter>ヘッダー ファイル\Effects</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Render\ArtifactRenderController.ixx">
+      <Filter>ヘッダー ファイル\Render</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <None Include="src\Widgets\Menu\Test.thrift">

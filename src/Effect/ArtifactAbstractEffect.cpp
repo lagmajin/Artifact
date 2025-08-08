@@ -1,14 +1,34 @@
-module;
+﻿module;
 
 
-module Effects;
+module Artifact.Effects;
 
 
 
 
 
 namespace Artifact {
- ArtifactAbstractEffect::~ArtifactAbstractEffect()
+
+ class ArtifactAbstractEffect::Impl
+ {
+ private:
+
+ public:
+  Impl();
+  ~Impl();
+ };
+
+ ArtifactAbstractEffect::Impl::Impl()
+ {
+
+ }
+
+ ArtifactAbstractEffect::Impl::~Impl()
+ {
+
+ }
+
+	ArtifactAbstractEffect::~ArtifactAbstractEffect()
  {
 
  }

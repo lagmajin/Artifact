@@ -5,7 +5,7 @@
 export  module Artifact.Application.Manager;
 
 
-
+import EnvironmentVariable;
 
 
 
@@ -20,6 +20,7 @@ namespace Artifact {
   ArtifactApplicationManager();
   ~ArtifactApplicationManager();
   static ArtifactApplicationManager* instance();
+
  };
 
 

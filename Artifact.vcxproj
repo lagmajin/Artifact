@@ -179,6 +179,7 @@
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
     </ClCompile>
     <ClCompile Include="include\Render\ArtifactOffscreenRenderer2D.ixx" />
+    <ClCompile Include="include\Render\ArtifactRenderController.ixx" />
     <ClCompile Include="include\Widgets\Menu\ArtifactAnimationMenu.ixx">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
     </ClCompile>
@@ -189,6 +190,7 @@
     <ClCompile Include="src\Effetcs\GlobalEffectManager.cpp" />
     <ClCompile Include="src\Layer\ArtifactSolidImageLayer.cpp" />
     <ClCompile Include="src\Library\Link.cpp" />
+    <ClCompile Include="src\Render\ArtifactEffects.ixx" />
     <ClCompile Include="src\Render\ArtifactOffscreenRenderer2D.cpp" />
     <ClCompile Include="src\Widgets\ArtifactToolBar.cpp" />
     <ClCompile Include="src\Widgets\Menu\ArtifactAnimationMenu.cpp" />

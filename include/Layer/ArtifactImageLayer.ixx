@@ -1,10 +1,13 @@
 ﻿module;
+#include <QImage>
 
-
+#include <opencv2/opencv.hpp>
 
 export module Layers.Image;
 
 import Artifact.Layers;
+
+import Image;
 
 export namespace Artifact {
 
@@ -17,6 +20,8 @@ export namespace Artifact {
  public:
   ArtifactImageLayer();
   ~ArtifactImageLayer();
+  void setFromQImage(const QImage& image);
+  void setFromCvMat();
  };
 
 

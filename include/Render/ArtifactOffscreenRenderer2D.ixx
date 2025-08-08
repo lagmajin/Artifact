@@ -15,6 +15,8 @@ import Composition;
 
 import Color.Float;
 
+import Artifact.Layers;
+
 export namespace ArtifactCore
 {
 
@@ -25,7 +27,12 @@ export namespace ArtifactCore
   Impl* impl_;
  public:
   OffscreenRenderer2D();
+  //OffscreenRenderer2D();
   ~OffscreenRenderer2D();
+  void setImageWriterPool();
+
+  void addLayer();
+
  };
 
 

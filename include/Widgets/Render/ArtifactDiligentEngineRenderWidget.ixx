@@ -41,6 +41,10 @@ export namespace Artifact {
   IRenderDevice* GetRenderDevice() const;
   IDeviceContext* GetDeviceContext() const;
 
+  void previewStart();
+  void previewPause();
+  void previewStop();
+
 //signals
   void screenClicked(const QPoint& point) W_SIGNAL(screenClicked,point)
 

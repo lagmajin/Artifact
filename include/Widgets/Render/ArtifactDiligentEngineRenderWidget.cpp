@@ -69,84 +69,85 @@ namespace Artifact {
 
  W_OBJECT_IMPL(ArtifactDiligentEngineComposition2DWindow)
 
- class ArtifactDiligentEngineComposition2DWindow::Impl {
- private:
-  FloatColor canvasColor_;
-  float scale_ = 1.0f;
+  class ArtifactDiligentEngineComposition2DWindow::Impl {
+  private:
+   FloatColor canvasColor_;
+   float scale_ = 1.0f;
 
-  RefCntAutoPtr<IRenderDevice> pDevice;
-  RefCntAutoPtr<IDeviceContext> pImmediateContext;
-  RefCntAutoPtr<ISwapChain> pSwapChain_;
-  RefCntAutoPtr<IPipelineState> p2D_PSO_;
-  RefCntAutoPtr<IPipelineState> pLine_PSO_;
-  RefCntAutoPtr<IShader> p2D_vertex_shader;
-  RefCntAutoPtr<IShader> p2D_pixel_;
-  RefCntAutoPtr<IShader>p2d_line_vertex_shader_;
-  RefCntAutoPtr<IShader>p2d_line_pixel_shader_;
-	//RefCntAutoPtr<IShader> p
-  ComPtr<ID3D11Device> d3d11Device_;
-  ComPtr<ID3D11DeviceContext> d3d11Context_;
-  ComPtr<ID3D11On12Device> d3d11On12Device_;
+   RefCntAutoPtr<IRenderDevice> pDevice;
+   RefCntAutoPtr<IDeviceContext> pImmediateContext;
 
-  RefCntAutoPtr<IBuffer>        pConstantsBuffer;
-  RefCntAutoPtr<IBuffer>		pBuffer;
+   RefCntAutoPtr<ISwapChain> pSwapChain_;
+   RefCntAutoPtr<IPipelineState> p2D_PSO_;
+   RefCntAutoPtr<IPipelineState> pLine_PSO_;
+   RefCntAutoPtr<IShader> p2D_vertex_shader;
+   RefCntAutoPtr<IShader> p2D_pixel_;
+   RefCntAutoPtr<IShader>p2d_line_vertex_shader_;
+   RefCntAutoPtr<IShader>p2d_line_pixel_shader_;
+   //RefCntAutoPtr<IShader> p
+   ComPtr<ID3D11Device> d3d11Device_;
+   ComPtr<ID3D11DeviceContext> d3d11Context_;
+   ComPtr<ID3D11On12Device> d3d11On12Device_;
+
+   RefCntAutoPtr<IBuffer>        pConstantsBuffer;
+   RefCntAutoPtr<IBuffer>		pBuffer;
 
 
-  RefCntAutoPtr<IBuffer>        p2D_VBuffer_;
-  RefCntAutoPtr<IBuffer>        p2D_VFrastumBuffer_;
-  RefCntAutoPtr<IBuffer>		p2D_VLineBuffer_;
-  RefCntAutoPtr<IShaderResourceBinding> p2D_SRB_;
-  RefCntAutoPtr<IShaderResourceBinding> p2D_LINE_SRB_;
-  //float4x4 projectionMatrix_;
-  std::vector<ShaderResourceVariableDesc> m_ResourceVars;
-  std::vector<ImmutableSamplerDesc> m_sampler_;
-  QWidget* widget_ = nullptr;
-  bool m_initialized = false;
-  int m_CurrentPhysicalWidth;
-  int m_CurrentPhysicalHeight;
+   RefCntAutoPtr<IBuffer>        p2D_VBuffer_;
+   RefCntAutoPtr<IBuffer>        p2D_VFrastumBuffer_;
+   RefCntAutoPtr<IBuffer>		p2D_VLineBuffer_;
+   RefCntAutoPtr<IShaderResourceBinding> p2D_SRB_;
+   RefCntAutoPtr<IShaderResourceBinding> p2D_LINE_SRB_;
+   //float4x4 projectionMatrix_;
+   std::vector<ShaderResourceVariableDesc> m_ResourceVars;
+   std::vector<ImmutableSamplerDesc> m_sampler_;
+   QWidget* widget_ = nullptr;
+   bool m_initialized = false;
+   int m_CurrentPhysicalWidth;
+   int m_CurrentPhysicalHeight;
 
-  glm::mat4 glm_projection_;
-  glm::mat4 view_;
-  qreal m_CurrentDevicePixelRatio;
-  RefCntAutoPtr<ITextureView> p2D_TextureView;
-  RefCntAutoPtr<ITexture> p2D_Texture;
-  glm::mat4 calculateModelMatrixGLM(const glm::vec2& position,      // 画面上の最終的なピクセル位置
-   const glm::vec2& size,          // レイヤーの元のピクセルサイズ
-   const glm::vec2& anchorPoint,   // ローカル正規化座標 (0.0-1.0) でのアンカーポイント
-   float rotationDegrees,          // 回転角度 (度数法)
-   const glm::vec2& scale);
-  std::mutex g_eventMutex;
-  std::queue<std::function<void()>> g_renderEvents;
-  bool takeScreenshot = false;
+   glm::mat4 glm_projection_;
+   glm::mat4 view_;
+   qreal m_CurrentDevicePixelRatio;
+   RefCntAutoPtr<ITextureView> p2D_TextureView;
+   RefCntAutoPtr<ITexture> p2D_Texture;
+   glm::mat4 calculateModelMatrixGLM(const glm::vec2& position,      // 画面上の最終的なピクセル位置
+	const glm::vec2& size,          // レイヤーの元のピクセルサイズ
+	const glm::vec2& anchorPoint,   // ローカル正規化座標 (0.0-1.0) でのアンカーポイント
+	float rotationDegrees,          // 回転角度 (度数法)
+	const glm::vec2& scale);
+   std::mutex g_eventMutex;
+   std::queue<std::function<void()>> g_renderEvents;
+   bool takeScreenshot = false;
 
-  void initializeResources();
-  void createShaders();
-  void createBuffers();
-  void createPSO();
-  void calcProjection(int width, int height);
+   void initializeResources();
+   void createShaders();
+   void createBuffers();
+   void createPSO();
+   void calcProjection(int width, int height);
 
- public:
-  Impl();
-  ~Impl();
-  void initialize(QWidget* window);
-  void initializeImGui(QWidget* window);
-  void recreateSwapChain(QWidget* window);
-  void clear(const Diligent::float4& clearColor);
-  void present();
-  void renderOneFrame();
-  void drawSprite(float x,float y,float w,float h);
-  void drawSolidQuad(float x, float y, float w, float h);
-  void drawQuadLine(float x,float y,float w,float h,const FloatColor& lineColor, float thikness=1.0f);
-  void drawLine(float x_1, float y_1, float x_2, float y_2, const FloatColor& color);
-  void drawViewCameraFrustum();
-	
-  void zoomIn();
-  void zoomOut();
-  void setCanvasColor(const FloatColor& color);
-  void postScreenShotEvent();
-  void saveScreenShotToClipboard();
-  void saveScreenShotToClipboardByQt();
-  void saveScreenShotToClipboardByWinRT();
+  public:
+   Impl();
+   ~Impl();
+   void initialize(QWidget* window);
+   void initializeImGui(QWidget* window);
+   void recreateSwapChain(QWidget* window);
+   void clear(const Diligent::float4& clearColor);
+   void present();
+   void renderOneFrame();
+   void drawSprite(float x, float y, float w, float h);
+   void drawSolidQuad(float x, float y, float w, float h);
+   void drawQuadLine(float x, float y, float w, float h, const FloatColor& lineColor, float thikness = 1.0f);
+   void drawLine(float x_1, float y_1, float x_2, float y_2, const FloatColor& color);
+   void drawViewCameraFrustum();
+
+   void zoomIn();
+   void zoomOut();
+   void setCanvasColor(const FloatColor& color);
+   void postScreenShotEvent();
+   void saveScreenShotToClipboard();
+   void saveScreenShotToClipboardByQt();
+   void saveScreenShotToClipboardByWinRT();
  };
 
  void ArtifactDiligentEngineComposition2DWindow::saveScreenShotToClipboardByQt()
@@ -266,7 +267,7 @@ namespace Artifact {
   basicShaderCI.Desc.Name = "BasicPixelShader";
   basicShaderCI.Source = g_qsSolidColorPS2.constData();
   //ShaderCI.SourceLength = g_qsBasic2DImagePS.length();
-	
+
 
 
 
@@ -377,7 +378,7 @@ namespace Artifact {
 
   drawSolidQuad(500, 0, 400, 400);
 
-	
+
   {
    std::lock_guard<std::mutex> lock(g_eventMutex);
    while (!g_renderEvents.empty()) {
@@ -390,7 +391,7 @@ namespace Artifact {
 	new (&lock) std::lock_guard<std::mutex>(g_eventMutex);  // 再ロック
    }
   }
-  
+
   present();
 
 
@@ -652,14 +653,14 @@ namespace Artifact {
  //#screenshot
  void ArtifactDiligentEngineComposition2DWindow::Impl::saveScreenShotToClipboard()
  {
-  
+
 
   RefCntAutoPtr<ITextureView> pRTV;
   pRTV = pSwapChain_->GetCurrentBackBufferRTV();
 
   RefCntAutoPtr<ITexture> pBackBuffer;
   pBackBuffer = pRTV->GetTexture();
-  
+
   const auto& desc = this->pSwapChain_->GetDesc();
   //qDebug() << "Texture format:" << desc.Format;
   qDebug() << "Current State:" << pBackBuffer->GetState();
@@ -670,7 +671,7 @@ namespace Artifact {
   ReadableDesc.Type = RESOURCE_DIM_TEX_2D;
   ReadableDesc.BindFlags = BIND_NONE;
   ReadableDesc.Usage = USAGE_STAGING;
-	//ReadableDesc.
+  //ReadableDesc.
   ReadableDesc.CPUAccessFlags = CPU_ACCESS_READ;
   ReadableDesc.Format = desc.ColorBufferFormat;
 
@@ -679,29 +680,34 @@ namespace Artifact {
 
   //pImmediateContext->SetRenderTargets(0, nullptr, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
 
- 	RefCntAutoPtr<IFence> pFence;
+  RefCntAutoPtr<IFence> pFence;
 
-  int fenceValue = 1;
+  int fenceValue = 0;
   int currentFenceValue = fenceValue++;
   FenceDesc fenceDesc;
   fenceDesc.Name = "ReadbackSyncFence";
   fenceDesc.Type = FENCE_TYPE_GENERAL;
   pDevice->CreateFence(fenceDesc, &pFence);
-
+  
 
 
 
 
   CopyTextureAttribs CopyAttribs(pBackBuffer, RESOURCE_STATE_TRANSITION_MODE_TRANSITION, pReadableTex, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
   pImmediateContext->CopyTexture(CopyAttribs);
-  std::this_thread::sleep_for(std::chrono::milliseconds(50));
- 
+  //std::this_thread::sleep_for(std::chrono::milliseconds(50));
 
-  currentFenceValue++;
+  //pImmediateContext->WaitForIdle();
+
+  
+  ++currentFenceValue;
   pImmediateContext->EnqueueSignal(pFence, currentFenceValue);
- 	pImmediateContext->Flush();
-   pImmediateContext->DeviceWaitForFence(pFence, currentFenceValue);
-  std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  pImmediateContext->Flush();                // ここ大事
+  pImmediateContext->DeviceWaitForFence(pFence, currentFenceValue);
+
+  pFence->Wait(currentFenceValue);
+
+  qDebug()<<"Test:"<<pFence->GetCompletedValue();
 
   MappedTextureSubresource MappedData{};
   pImmediateContext->MapTextureSubresource(
@@ -719,7 +725,7 @@ namespace Artifact {
    return;
   }
 
-  //RefCntAutoPtr<Diligent::Image> pImage;
+
 
 
   // 画像サイズなど
@@ -796,8 +802,8 @@ namespace Artifact {
 
  ArtifactDiligentEngineComposition2DWindow::Impl::~Impl()
  {
- // d3d11Context_->Release();
-  //d3d11Device_->Release();
+  // d3d11Context_->Release();
+   //d3d11Device_->Release();
 
   RoUninitialize();
  }
@@ -813,7 +819,7 @@ namespace Artifact {
   pBackBuffer->QueryInterface(IID_TextureD3D12, reinterpret_cast<IObject**>(&pD3D12Texture));
 
 
-	
+
 
 
  }
@@ -835,6 +841,11 @@ namespace Artifact {
   Win32NativeWindow hWindow;
   hWindow.hWnd = reinterpret_cast<HWND>(window->winId());
   pFactory->CreateDeviceAndContextsD3D12(CreationAttribs, &pDevice, &pImmediateContext);
+
+
+
+
+
 
   if (!pDevice)
   {
@@ -904,27 +915,27 @@ D3D_FEATURE_LEVEL_11_0,
   d3d12Device = renderDevice12->GetD3D12Device();
 
 
-	/*
-  HRESULT hr = D3D11On12CreateDevice(
-   d3d12Device,
-   d3d11DeviceFlags,
-   featureLevels,
-   _countof(featureLevels),
-   nullptr,              // 共有する D3D12 コマンドキュー配列
-   0,    // キュー数
-   0,                     // ノードマスク（通常は0）
-   &d3d11Device_,
-   &d3d11Context_,
-   nullptr                // 実際に使われた feature level を受け取るならここにポインタ
-  );
+  /*
+HRESULT hr = D3D11On12CreateDevice(
+ d3d12Device,
+ d3d11DeviceFlags,
+ featureLevels,
+ _countof(featureLevels),
+ nullptr,              // 共有する D3D12 コマンドキュー配列
+ 0,    // キュー数
+ 0,                     // ノードマスク（通常は0）
+ &d3d11Device_,
+ &d3d11Context_,
+ nullptr                // 実際に使われた feature level を受け取るならここにポインタ
+);
 
 
-  d3d11Device_.As(&d3d11On12Device_);
+d3d11Device_.As(&d3d11On12Device_);
 
 
-  if (FAILED(hr)) {
-   qDebug() << "D3D11 Error";
-  }
+if (FAILED(hr)) {
+ qDebug() << "D3D11 Error";
+}
 
 */
 
@@ -941,7 +952,7 @@ D3D_FEATURE_LEVEL_11_0,
  {
 
  }
-//#createbuffer
+ //#createbuffer
  void ArtifactDiligentEngineComposition2DWindow::Impl::createBuffers()
  {
   BufferDesc CBDesc;

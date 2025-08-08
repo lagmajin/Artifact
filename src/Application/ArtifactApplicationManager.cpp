@@ -3,9 +3,28 @@
 
 module Artifact.Application.Manager;
 
+import EnvironmentVariable;
 
 namespace Artifact
 {
+
+class ArtifactApplicationManager::Impl
+{
+public:
+
+ Impl();
+ ~Impl();
+};
+
+ArtifactApplicationManager::Impl::Impl()
+{
+
+}
+
+ArtifactApplicationManager::Impl::~Impl()
+{
+
+}
 
  ArtifactApplicationManager::ArtifactApplicationManager()
  {

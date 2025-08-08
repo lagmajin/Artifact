@@ -26,4 +26,7 @@ export namespace Artifact {
   virtual void draw() = 0;
  };
 
+
+
+
 }

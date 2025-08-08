@@ -2,6 +2,7 @@
 #include <QString>
 #include <QObject>
 
+#include <QJsonObject>
 
 export module Project.Settings;
 
