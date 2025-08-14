@@ -23,12 +23,23 @@ export namespace Artifact {
   class Impl;
   Impl* impl_;
  protected:
-  void resizeEvent(QResizeEvent*) override;
   QSize sizeHint() const;
+  void resizeEvent(QResizeEvent*) override;
+
   void showEvent(QShowEvent* event) override;
   void paintEvent(QPaintEvent* event) override;
   void wheelEvent(QWheelEvent* event) override;
   void keyPressEvent(QKeyEvent* event) override;
+
+
+  void mousePressEvent(QMouseEvent* event) override;
+
+
+  void mouseReleaseEvent(QMouseEvent* event) override;
+
+
+  void mouseMoveEvent(QMouseEvent* event) override;
+
  public:
   explicit ArtifactDiligentEngineComposition2DWindow(QWidget* parent = nullptr);
   ~ArtifactDiligentEngineComposition2DWindow();

@@ -1,7 +1,7 @@
 ﻿module;
 #include <QString>
 #include <QJsonObject>
-export module Composition2D;
+export module Composition._2D;
 
 import std;
 

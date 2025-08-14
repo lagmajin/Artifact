@@ -180,6 +180,8 @@
     </ClCompile>
     <ClCompile Include="include\Render\ArtifactOffscreenRenderer2D.ixx" />
     <ClCompile Include="include\Render\ArtifactRenderController.ixx" />
+    <ClCompile Include="include\Render\IRenderer.ixx" />
+    <ClCompile Include="include\Render\RenderPipeline.ixx" />
     <ClCompile Include="include\Widgets\Menu\ArtifactAnimationMenu.ixx">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
     </ClCompile>
@@ -194,6 +196,7 @@
     <ClCompile Include="src\Render\ArtifactOffscreenRenderer2D.cpp" />
     <ClCompile Include="src\Widgets\ArtifactToolBar.cpp" />
     <ClCompile Include="src\Widgets\Menu\ArtifactAnimationMenu.cpp" />
+    <ClCompile Include="src\Widgets\Render\ArtifactDiligentEngineComposition2DRenderImpl.cpp" />
     <ClCompile Include="src\Widgets\Render\GridRenderer.cpp">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
     </ClCompile>
@@ -335,7 +338,9 @@
     </ClCompile>
     <ClCompile Include="src\Composition\ArtifactComposition3D.cpp" />
     <ClCompile Include="src\Composition\ArtifactCompositionManager.cpp" />
-    <ClCompile Include="src\Effect\ArtifactAbstractEffect.cpp" />
+    <ClCompile Include="src\Effect\ArtifactAbstractEffect.cpp">
+      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+    </ClCompile>
     <ClCompile Include="src\GUI\ArtifactGuiManager.cpp" />
     <ClCompile Include="src\Layer\ArtifactAbstractLayer.cpp">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
@@ -420,6 +425,7 @@
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Widgets\Menu\ArtifactEffectMenu.cpp" />
+    <None Include="src\Layer\ArtifactAdjustableLayer.cpp" />
     <None Include="src\Widgets\Menu\Test.thrift" />
   </ItemGroup>
   <ItemGroup>

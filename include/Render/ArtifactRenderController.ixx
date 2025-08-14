@@ -1,3 +1,30 @@
-﻿export module Artifact.Render.Controller;
+﻿module;
+export module Artifact.Render.Controller;
 
-export void MyFunc();
+export namespace ArtifactCore
+{
+
+
+
+ class ArtifactRenderController
+ {
+ private:
+
+ public:
+  ArtifactRenderController();
+  ~ArtifactRenderController();
+ };
+
+
+
+
+
+
+
+
+
+
+
+
+
+};

@@ -437,10 +437,22 @@
     <ClCompile Include="include\Render\ArtifactRenderController.ixx">
       <Filter>ヘッダー ファイル\Render</Filter>
     </ClCompile>
+    <ClCompile Include="include\Render\RenderPipeline.ixx">
+      <Filter>ヘッダー ファイル\Render</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Render\IRenderer.ixx">
+      <Filter>ヘッダー ファイル\Render</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Widgets\Render\ArtifactDiligentEngineComposition2DRenderImpl.cpp">
+      <Filter>ソース ファイル\Widgets\Render</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <None Include="src\Widgets\Menu\Test.thrift">
       <Filter>Thrift</Filter>
+    </None>
+    <None Include="src\Layer\ArtifactAdjustableLayer.cpp">
+      <Filter>ソース ファイル\Layer</Filter>
     </None>
   </ItemGroup>
   <ItemGroup>

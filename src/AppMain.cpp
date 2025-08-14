@@ -9,6 +9,7 @@
 #include <QImage>
 
 #include <QCommandLineOption>
+#include <qthreadpool.h>
 
 
 import Transform;
@@ -57,6 +58,8 @@ void test()
  SetEnvironmentVariableW(L"COREHOST_TRACE", L"1");
  SetEnvironmentVariableW(L"COREHOST_TRACEFILE", L"C:\\temp\\hostfxr_trace.log");
 
+
+ /*
  DotnetRuntimeHost host;
 
  // ① .NET SDKのルート or dotnet.exeのルートを指定（例: "C:/Program Files/dotnet"）
@@ -81,9 +84,11 @@ void test()
   //return 1;
  }
 
+
+	*/
   //メソッドを呼び出す。
- int result = reinterpret_cast<int(*)(int, int)>(method)(1, 2);
- std::cout << result << std::endl;
+ //int result = reinterpret_cast<int(*)(int, int)>(method)(1, 2);
+ //std::cout << result << std::endl;
 
  /*
  int test_width = 100;
@@ -199,6 +204,10 @@ int main(int argc, char* argv[])
  //QTextCodec::setCodecForLocale(QTextCodec::codecForName("Shift-JIS"));
 
  QApplication a(argc, argv);
+ auto pool = QThreadPool::globalInstance();
+
+ pool->setMaxThreadCount(10);
+
  test();
  ArtifactMainWindow mw;
  mw.show();

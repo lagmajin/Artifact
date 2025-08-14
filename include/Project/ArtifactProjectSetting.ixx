@@ -21,7 +21,7 @@ export namespace Artifact {
   ArtifactProjectSettings(const ArtifactProjectSettings& setting);
   ~ArtifactProjectSettings();
   QString projectName() const;
-
+  void setProjectName();
  };
 
 
