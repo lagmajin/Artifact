@@ -7,6 +7,22 @@ import Artifact.Layers.Hierarchy.Model;
 
 namespace Artifact
 {
+ class ArtifactLayerHierarchyHeaderContextMenu::Impl
+ {
+	 
+ };
+
+ ArtifactLayerHierarchyHeaderContextMenu::ArtifactLayerHierarchyHeaderContextMenu(QWidget* parent /*= nullptr*/)
+ {
+
+ }
+
+ ArtifactLayerHierarchyHeaderContextMenu::~ArtifactLayerHierarchyHeaderContextMenu()
+ {
+
+ }
+
+
  class ArtifactLayerHierarchyHeaderView::Impl
  {
  private:
@@ -75,6 +91,8 @@ namespace Artifact
  {
 
  }
+
+
 
 
 
