@@ -4,15 +4,19 @@
 #include <QLabel>
 #include <wobjectimpl.h>
 #include <QBoxLayout>
-module ArtifactTimelineWidget;
+module Artifact.Widgets.Timeline;
 
+import Widgets.Utils.CSS;
 
-
-
+import Artifact.Layers.Hierarchy.Model;
 
 
 
 namespace Artifact {
+
+ using namespace ArtifactCore;
+
+
  W_OBJECT_IMPL(ArtifactTimeCodeWidget)
  class ArtifactTimeCodeWidget::Impl{
  private:
@@ -51,8 +55,48 @@ namespace Artifact {
 
  }
 
+
  W_OBJECT_IMPL(ArtifactTimelineWidget)
 
+
+	class ArtifactTimelineWidget::Impl
+ {
+ private:
+
+ public:
+  Impl();
+  ~Impl();
+ };
+
+ ArtifactTimelineWidget::Impl::Impl()
+ {
+
+ }
+
+ ArtifactTimelineWidget::Impl::~Impl()
+ {
+
+ }
+
+ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget* parent/*=nullptr*/):QWidget(parent)
+ {
+  auto style = getDCCStyleSheetPreset(DccStylePreset::ModoStyle);
+
+  setStyleSheet(style);
+
+  auto layerTreeView = new ArtifactLayerHierarchyView();
+
+  QHBoxLayout* layout = new QHBoxLayout();
+  layout->addWidget(layerTreeView);
+  
+
+  setLayout(layout);
+
+ }
+ ArtifactTimelineWidget::~ArtifactTimelineWidget()
+ {
+
+ }
  void ArtifactTimelineWidget::paintEvent(QPaintEvent* event)
  {
 
@@ -75,14 +119,7 @@ namespace Artifact {
 
 
 
- ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget* parent/*=nullptr*/)
- {
 
- }
- ArtifactTimelineWidget::~ArtifactTimelineWidget()
- {
-
- }
 
  void ArtifactTimelineWidget::keyPressEvent(QKeyEvent* event)
  {
@@ -113,5 +150,8 @@ namespace Artifact {
  {
 
  }
+
+
+
 
 };

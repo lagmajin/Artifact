@@ -29,6 +29,8 @@ import Widgets.Render.Queue;
 import Widgets.Render.Composition;
 import Project.Manager;
 
+import Artifact.Widgets.Timeline;
+
 namespace ArtifactWidgets {}//
 
 namespace Artifact {
@@ -36,6 +38,8 @@ namespace Artifact {
  using namespace ArtifactWidgets;
 
  using namespace ads;
+
+
  W_OBJECT_IMPL(ArtifactMainWindow)
 
   class ArtifactMainWindow::Impl {
@@ -46,6 +50,7 @@ namespace Artifact {
    ~Impl();
    void projectCreated();
    void compositionCreated();
+   void compositionCreated(ArtifactMainWindow* window);
    ArtifactMainWindow* mainWindow_=nullptr;
  };
 
@@ -57,6 +62,15 @@ namespace Artifact {
  void ArtifactMainWindow::Impl::compositionCreated()
  {
 
+ }
+
+ void ArtifactMainWindow::Impl::compositionCreated(ArtifactMainWindow* window)
+ {
+  qDebug() <<"composition created";
+
+  auto timelineWidget = new ArtifactTimelineWidget();
+
+  timelineWidget->show();
  }
 
  ArtifactMainWindow::Impl::Impl(ArtifactMainWindow* mainWindow):mainWindow_(mainWindow)
@@ -173,9 +187,7 @@ namespace Artifact {
    });
 
   QObject::connect(&projectManager, &ArtifactProjectManager::newCompositionCreated, [this]() {
-   //impl_->compositionCreated();
-
-   //impl_->compositionCreated(this);
+   impl_->compositionCreated(this);
    });
 
   //auto compositionWidget2 = new ArtifactDiligentEngineComposition2DWidget();

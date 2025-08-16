@@ -119,7 +119,13 @@ namespace Artifact {
 
  void ArtifactProjectManager::createNewComposition(const QString& str)
  {
+  newCompositionCreated();
 
+ }
+
+ void ArtifactProjectManager::createNewComposition()
+ {
+  newCompositionCreated();
  }
 
  bool projectManagerCurrentClose()

@@ -23,8 +23,8 @@ export namespace Artifact {
  public slots:
   void addWidget();
   void addDockedWidget(const QString& title, ads::DockWidgetArea area,QWidget* widget);
-  //void addDockedWidget()
- signals:
+
+	
  
  
  };

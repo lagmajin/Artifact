@@ -8,8 +8,9 @@
 
 #include <wobjectdefs.h>
 
-export module ArtifactTimelineWidget;
+export module Artifact.Widgets.Timeline;
 
+import Artifact.Widgets.Hierarchy;
 
 export namespace Artifact {
  
@@ -25,7 +26,7 @@ export namespace Artifact {
   void updateTimeCode(int frame);
  };
 
-
+ //#right
  class TimelineTrackView :public QGraphicsView {
   W_OBJECT(TimelineTrackView)
  private:
@@ -39,7 +40,6 @@ export namespace Artifact {
  };
 
 
- 
  class ArtifactTimelineWidget :public QWidget{
   W_OBJECT(ArtifactTimelineWidget)
  private:

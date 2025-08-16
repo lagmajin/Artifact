@@ -173,6 +173,9 @@
   <ItemGroup>
     <ClCompile Include="include\Composition\ArtifactComposition.ixx" />
     <ClCompile Include="include\Effetcs\GlobalEffectManager.ixx" />
+    <ClCompile Include="include\Layer\ArtifactAbstract2DLayer.ixx" />
+    <ClCompile Include="include\Layer\ArtifactHierarchyModel.ixx" />
+    <ClCompile Include="include\Layer\ArtifactSolid2DLayer.ixx" />
     <ClCompile Include="include\Layer\ArtifactAdjustableLayer.ixx" />
     <ClCompile Include="include\Layer\ArtifactSolidImageLayer.ixx" />
     <ClCompile Include="include\Layer\ArtifactLayerFactory.ixx">
@@ -182,6 +185,7 @@
     <ClCompile Include="include\Render\ArtifactRenderController.ixx" />
     <ClCompile Include="include\Render\IRenderer.ixx" />
     <ClCompile Include="include\Render\RenderPipeline.ixx" />
+    <ClCompile Include="include\Widgets\ArtifactLayerHierarchyWidget.ixx" />
     <ClCompile Include="include\Widgets\Menu\ArtifactAnimationMenu.ixx">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
     </ClCompile>
@@ -190,10 +194,12 @@
     <ClCompile Include="include\Widgets\Render\ArtifactDiligentEngineRenderWidget.ixx" />
     <ClCompile Include="src\Application\ArtifactApplicationManager.cpp" />
     <ClCompile Include="src\Effetcs\GlobalEffectManager.cpp" />
+    <ClCompile Include="src\Layer\ArtifactSolid2DLayer.cpp" />
     <ClCompile Include="src\Layer\ArtifactSolidImageLayer.cpp" />
     <ClCompile Include="src\Library\Link.cpp" />
     <ClCompile Include="src\Render\ArtifactEffects.ixx" />
     <ClCompile Include="src\Render\ArtifactOffscreenRenderer2D.cpp" />
+    <ClCompile Include="src\Widgets\ArtifactLayerHierarchyWidget.cpp" />
     <ClCompile Include="src\Widgets\ArtifactToolBar.cpp" />
     <ClCompile Include="src\Widgets\Menu\ArtifactAnimationMenu.cpp" />
     <ClCompile Include="src\Widgets\Render\ArtifactDiligentEngineComposition2DRenderImpl.cpp" />
@@ -426,6 +432,8 @@
     </ClCompile>
     <ClCompile Include="src\Widgets\Menu\ArtifactEffectMenu.cpp" />
     <None Include="src\Layer\ArtifactAdjustableLayer.cpp" />
+    <ClCompile Include="src\Render\ArtifactRenderController.cpp" />
+    <ClCompile Include="src\Layer\ArtifactHierarchyModel.cpp" />
     <None Include="src\Widgets\Menu\Test.thrift" />
   </ItemGroup>
   <ItemGroup>

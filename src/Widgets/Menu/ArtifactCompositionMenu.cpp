@@ -84,7 +84,9 @@ namespace Artifact {
 
   if (createCompositionSettingDialog->exec())
   {
+   auto& projectManager = ArtifactProjectManager::getInstance();
 
+   projectManager.createNewComposition();
   }
 
  }

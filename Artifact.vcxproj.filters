@@ -446,6 +446,30 @@
     <ClCompile Include="src\Widgets\Render\ArtifactDiligentEngineComposition2DRenderImpl.cpp">
       <Filter>ソース ファイル\Widgets\Render</Filter>
     </ClCompile>
+    <ClCompile Include="include\Layer\ArtifactSolid2DLayer.ixx">
+      <Filter>ヘッダー ファイル\Layer</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Layer\ArtifactSolid2DLayer.cpp">
+      <Filter>ソース ファイル\Layer</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Render\ArtifactRenderController.cpp">
+      <Filter>ソース ファイル\Render</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Layer\ArtifactAbstract2DLayer.ixx">
+      <Filter>ヘッダー ファイル\Layer</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Layer\ArtifactHierarchyModel.ixx">
+      <Filter>ヘッダー ファイル\Layer</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Layer\ArtifactHierarchyModel.cpp">
+      <Filter>ソース ファイル\Layer</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Widgets\ArtifactLayerHierarchyWidget.ixx">
+      <Filter>ヘッダー ファイル\Widgets</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Widgets\ArtifactLayerHierarchyWidget.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <None Include="src\Widgets\Menu\Test.thrift">
