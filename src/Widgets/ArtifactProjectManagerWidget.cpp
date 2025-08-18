@@ -146,8 +146,6 @@ namespace Artifact {
   delete impl_;
  }
 
-
-
  void ArtifactProjectManagerWidget::triggerUpdate()
  {
 

@@ -1,7 +1,7 @@
 ﻿module;
 #include <wobjectimpl.h>
 #include <mutex>
-
+#include <QFile>
 #include <QMenu>
 #include <QPropertyAnimation>
 #include <QGraphicsOpacityEffect>
@@ -11,6 +11,7 @@ module Artifact.Menu.File;
 
 import  Project.Manager;
 
+import Utils;
 
 namespace Artifact {
 
@@ -34,6 +35,10 @@ namespace Artifact {
  {
   createProjectAction = new QAction("CreateProject");
   createProjectAction -> setShortcut(QKeySequence::New);
+  createProjectAction->setIcon(QIcon(ArtifactCore::getIconPath() + "/new.png"));
+
+
+
   closeProjectAction = new QAction("CloseProject");
   closeProjectAction->setShortcut(QKeySequence::Close);
   closeProjectAction->setDisabled(true);
@@ -61,7 +66,7 @@ namespace Artifact {
  {
   setObjectName("FileMenu");
 
-  setTitle("File");
+  setTitle("File(&F)");
 
   QPalette p = palette();
   p.setColor(QPalette::Window, QColor(30, 30, 30));

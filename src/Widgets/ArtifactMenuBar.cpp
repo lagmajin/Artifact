@@ -16,12 +16,14 @@ namespace Artifact {
  public:
   ArtifactMainWindow* mainWindow_ = nullptr;
   ArtifactMenuBar* menuBar = nullptr;
-  QMenu* fileMenu=nullptr;
+  QMenu* fileMenu = nullptr;
   ArtifactEditMenu* editMenu = nullptr;
-    
-  QMenu* compositionMenu=nullptr;
+
+  //QMenu* compositionMenu=nullptr;
   QMenu* layerMenu = nullptr;
   QMenu* viewMenu = nullptr;
+  ArtifactCompositionMenu* compositionMenu_ = nullptr;
+  ArtifactLayerMenu* layerMenu_ = nullptr;
   ArtifactEffectMenu* effectMenu = nullptr;
   ArtifactAnimationMenu* animationMenu = nullptr;
   //ArtifactHelpMenu* helpMenu = nullptr;
@@ -30,18 +32,24 @@ namespace Artifact {
   //void setUpUI(QMenu* menu);
  };
 
- ArtifactMenuBar::Impl::Impl(ArtifactMainWindow* mainWindow, ArtifactMenuBar* menu):mainWindow_(mainWindow)
+ ArtifactMenuBar::Impl::Impl(ArtifactMainWindow* mainWindow, ArtifactMenuBar* menu) :mainWindow_(mainWindow)
  {
   fileMenu = new ArtifactFileMenu(menu);
-  
+
   editMenu = new ArtifactEditMenu(menu);
+  compositionMenu_ = new ArtifactCompositionMenu(mainWindow, menu);
   animationMenu = new ArtifactAnimationMenu(menu);
   effectMenu = new ArtifactEffectMenu(menu);
 
+  layerMenu_ = new ArtifactLayerMenu(menu);
+
   menu->addMenu(fileMenu);
   menu->addMenu(editMenu);
-  menu->addMenu(animationMenu);
+  menu->addMenu(compositionMenu_);
+  menu->addMenu(layerMenu_);
   menu->addMenu(effectMenu);
+  menu->addMenu(animationMenu);
+
  }
 
  ArtifactMenuBar::Impl::~Impl()
@@ -50,20 +58,20 @@ namespace Artifact {
  }
 
 
- ArtifactMenuBar::ArtifactMenuBar(ArtifactMainWindow* mainWindow, QWidget* parent/*=nullptr*/):QMenuBar(parent),impl_(new Impl(mainWindow,this))
+ ArtifactMenuBar::ArtifactMenuBar(ArtifactMainWindow* mainWindow, QWidget* parent/*=nullptr*/) :QMenuBar(parent), impl_(new Impl(mainWindow, this))
  {
-  
+
   impl_->editMenu = new ArtifactEditMenu(this);
 
-  impl_->compositionMenu = new ArtifactCompositionMenu(mainWindow,this);
-  impl_->layerMenu = new ArtifactLayerMenu(this);
+
+
   impl_->viewMenu = new ArtifactViewMenu(this);
   //impl_->helpMenu = new ArtifactHelpMenu();
 
 
-  
-  addMenu(impl_->compositionMenu);
-  addMenu(impl_->layerMenu);
+
+  //addMenu(impl_->compositionMenu);
+  //addMenu(impl_->layerMenu);
   addMenu(impl_->viewMenu);
   //addMenu(impl_->helpMenu);
 

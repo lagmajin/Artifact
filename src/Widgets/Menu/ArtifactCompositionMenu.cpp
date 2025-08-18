@@ -16,6 +16,8 @@ import Dialog.Composition;
 
 import ArtifactMainWindow;
 
+import Utils.Path;
+
 namespace Artifact {
 
  W_OBJECT_IMPL(ArtifactCompositionMenu)
@@ -44,8 +46,8 @@ namespace Artifact {
  ArtifactCompositionMenu::Impl::Impl(ArtifactCompositionMenu* menu,ArtifactMainWindow* mainWindow)
 {
   createCompositionAction = new QAction("Create composition");
-  //createCompositionAction->setText()
-  //createCompositionAction->setDisabled(true);
+  //createCompositionAction->setShortcut(QKeySequence::New);
+  createCompositionAction->setIcon(QIcon(ArtifactCore::getIconPath() + "/composition.png"));
 
   menu->addAction(createCompositionAction);
 
@@ -109,6 +111,11 @@ namespace Artifact {
 
 
   connect(this, &QMenu::aboutToShow, this, &ArtifactCompositionMenu::rebuildMenu);
+ }
+
+ ArtifactCompositionMenu::ArtifactCompositionMenu(QWidget* parent /*= nullptr*/):QMenu(parent)
+ {
+
  }
 
  ArtifactCompositionMenu::~ArtifactCompositionMenu()

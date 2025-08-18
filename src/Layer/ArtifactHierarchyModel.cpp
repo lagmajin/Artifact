@@ -1,12 +1,15 @@
 ﻿module;
 
 #include <QAbstractItemModel>
+#include <qicon.h>
 module Artifact.Layers.Hierarchy.Model;
+
+import Utils;
 
 
 namespace Artifact
 {
-
+ using namespace ArtifactCore;
 
  ArtifactHierarchyModel::ArtifactHierarchyModel(QObject* parent /*= nullptr*/):QAbstractItemModel(parent)
  {
@@ -19,25 +22,25 @@ namespace Artifact
  }
  QVariant ArtifactHierarchyModel::headerData(int section, Qt::Orientation orientation, int role) const
  {
-  if (role != Qt::DisplayRole)
-   return QVariant();
-
   if (orientation == Qt::Horizontal) {
-   switch (section) {
-   case 0: return QString("目玉");
-   case 1: return QString("スピーカー");
-   case 2: return QString("ソロ");
-   case 3: return QString("ロック");
-   case 4: return QString("レイヤー名");
-   default: break;
+   if (role == Qt::DecorationRole) {  // アイコン用
+    switch (section) {
+    case 0: return QIcon(resolveIconPath("visibility.png"));
+    }
+   }
+   if (role == Qt::DisplayRole) { // テキスト用（必要なら）
+    if (section == 4) return QStringLiteral("レイヤー名");
    }
   }
+
 
   return QVariant();
  }
  int ArtifactHierarchyModel::rowCount(const QModelIndex& parent /*= QModelIndex()*/) const
  {
-  return 0;
+  if (parent.isValid())
+   return 0; // 子はまだ作らない
+  return 1; // ルートに1行だけ
  }
 
  int ArtifactHierarchyModel::columnCount(const QModelIndex& parent /*= QModelIndex()*/) const
@@ -45,11 +48,13 @@ namespace Artifact
   return 3;
  }
 
- QModelIndex ArtifactHierarchyModel::index(int row, int column, const QModelIndex& parent /*= QModelIndex()*/) const
+ QModelIndex ArtifactHierarchyModel::index(int row, int column, const QModelIndex& parent) const
  {
   if (!hasIndex(row, column, parent))
    return QModelIndex();
-  return QModelIndex();
+
+  // ツリー構造をまだ作ってないので row,column を直接保持
+  return createIndex(row, column, nullptr);
  }
 
  QVariant ArtifactHierarchyModel::data(const QModelIndex& index, int role /*= Qt::DisplayRole*/) const

@@ -32,7 +32,7 @@ namespace Artifact {
 
  ArtifactViewMenu::ArtifactViewMenu(QWidget* parent/*=nullptr*/):QMenu(parent),impl_(new Impl())
  {
-  setObjectName("ViewMenu");
+  setObjectName("ViewMenu(&V)");
 
   setTitle("View");
  }

@@ -27,7 +27,7 @@ namespace Artifact {
 
  ArtifactEditMenu::ArtifactEditMenu(QWidget* parent/*=nullptr*/):QMenu(parent)
  {
-  setTitle(tr("Edit"));
+  setTitle(tr("Edit(&E)"));
  }
  ArtifactEditMenu::~ArtifactEditMenu()
  {

@@ -1,4 +1,5 @@
 ﻿module;
+#include <QDialog>
 #include <QWidget>
 export module Dialog;
 //#pragma once
@@ -16,7 +17,8 @@ class PlaneLayerSettingPagePrivate;
  class PlaneLayerSettingPage :public QWidget {
   //Q_OBJECT
  private:
-  
+  class Impl;
+  Impl* impl_;
  protected:
 
  public:
@@ -32,7 +34,17 @@ class PlaneLayerSettingPagePrivate;
 
  };
 
+ class PlaneLayerSettingDialog:public QDialog
+ {
+ private:
+  class Impl;
+  Impl* impl_;
+ protected:
 
+ public:
+  explicit PlaneLayerSettingDialog(QWidget* parent = nullptr);
+  ~PlaneLayerSettingDialog();
+ };
 
 
 

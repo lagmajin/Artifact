@@ -3,7 +3,7 @@
 #include <QToolBar>
 #include <wobjectimpl.h>
 module Widgets.ToolBar;
-
+import Utils;
 namespace Artifact
 {
  W_OBJECT_IMPL(ArtifactToolBar)
@@ -23,7 +23,7 @@ namespace Artifact
  ArtifactToolBar::Impl::Impl(QToolBar* toolbar)
  {
   auto homeAction_ = new QAction();
-
+  homeAction_->setIcon(QIcon(ArtifactCore::getIconPath() + "/home.png"));
   
 
   toolbar->addAction(homeAction_);

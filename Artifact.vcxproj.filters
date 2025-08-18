@@ -112,6 +112,9 @@
     <Filter Include="ソース ファイル\Render">
       <UniqueIdentifier>{90e91036-6837-4057-b35e-5cda353dc00b}</UniqueIdentifier>
     </Filter>
+    <Filter Include="ヘッダー ファイル\Timeline">
+      <UniqueIdentifier>{9ab2fd6b-7c82-4524-af42-79c3f362034b}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="include\Composition\ArtifactCompositionManager.hpp">
@@ -468,7 +471,7 @@
       <Filter>ヘッダー ファイル\Widgets</Filter>
     </ClCompile>
     <ClCompile Include="src\Widgets\ArtifactLayerHierarchyWidget.cpp">
-      <Filter>ソース ファイル</Filter>
+      <Filter>ソース ファイル\Widgets</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>

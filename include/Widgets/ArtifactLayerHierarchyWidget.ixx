@@ -6,6 +6,8 @@
 export module Artifact.Widgets.Hierarchy;
 import Artifact.Layers.Hierarchy.Model;
 
+import Utils;
+
 export namespace Artifact
 {
  enum class LayerDisplayMode {
@@ -42,6 +44,7 @@ export namespace Artifact
  public:
   explicit ArtifactLayerHierarchyView(QWidget* parent = nullptr);
   ~ArtifactLayerHierarchyView();
+	
 
  };
 

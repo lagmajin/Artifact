@@ -13,13 +13,13 @@ import Project;
 
 export namespace Artifact {
 
-	/*
- class ArtifactToolBar :public QToolBar {
- private:
+ /*
+class ArtifactToolBar :public QToolBar {
+private:
 
- public:
+public:
 
- };
+};
 */
 
  class ArtifactProjectView :public QTreeView {
@@ -31,9 +31,17 @@ export namespace Artifact {
   ~ArtifactProjectView();
  };
 
+ class ArtifactProjectManagerToolBox :public QWidget
+ {
+ private:
+  class Impl;
+  Impl* impl_;
+ public:
+  explicit ArtifactProjectManagerToolBox(QWidget* widget);
+  ~ArtifactProjectManagerToolBox();
+ };
 
-
- class ArtifactProjectManagerWidget:public QWidget {
+ class ArtifactProjectManagerWidget :public QWidget {
   W_OBJECT(ArtifactProjectManagerWidget)
  private:
   class Impl;
