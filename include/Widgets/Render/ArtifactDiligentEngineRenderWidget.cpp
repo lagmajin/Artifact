@@ -57,6 +57,8 @@ import Size;
 
 import std;
 
+import Core.Scale2D;
+
 namespace Artifact {
 
  using namespace Diligent;
@@ -75,7 +77,7 @@ namespace Artifact {
   private:
    FloatColor canvasColor_;
    float scale_ = 1.0f;
-   ZoomScale 
+   ZoomScale zoomScale_;
 
 
    RefCntAutoPtr<IRenderDevice> pDevice;
