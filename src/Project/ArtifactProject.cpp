@@ -1,13 +1,21 @@
 ﻿module;
 #include <wobjectimpl.h>
+#include <wobjectdefs.h>
+
+#include <QtTest/QtTest>
 //#include <QtCore/QString>
 
 
 module Project;
 
+import Utils;
+
+import Composition.Settings;
 
 namespace Artifact {
+ using namespace ArtifactCore;
 
+ //W_REGISTER_ARGTYPE(Id)
  W_OBJECT_IMPL(ArtifactProject)
 
   ArtifactProjectSignalHelper::ArtifactProjectSignalHelper()
@@ -27,6 +35,9 @@ namespace Artifact {
  public:
   Impl();
   ~Impl();
+  void addAssetFromPath(const QString& string);
+  void createComposition(const QString& str);
+  void createComposition(const CompositionSettings& settings);
  };
 
  ArtifactProject::Impl::Impl()
@@ -35,6 +46,11 @@ namespace Artifact {
  }
 
  ArtifactProject::Impl::~Impl()
+ {
+
+ }
+
+ void ArtifactProject::Impl::addAssetFromPath(const QString& string)
  {
 
  }
@@ -61,7 +77,19 @@ namespace Artifact {
 
  void ArtifactProject::createComposition(const QString& name)
  {
+  Id id;
 
+  QSignalSpy spy(this, &ArtifactProject::compositionCreated);
+
+  compositionCreated("Test");
+
+  QCOMPARE(spy.count(), 1);
+
+  // 引数の中身を確認（QString）
+  QList<QVariant> arguments = spy.takeFirst();
+  QString idStr = arguments.at(0).toString();
+
+  qDebug() << "シグナルで通知された ID:" << idStr;
  }
 
  bool ArtifactProject::isNull() const

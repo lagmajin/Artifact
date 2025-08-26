@@ -61,6 +61,12 @@ export namespace Artifact {
 
   std::weak_ptr<ArtifactProject> getCurrentProjectWeakPtr();
 
+	//Assets
+  void addAssetFromFilePath(const QString& filePath);
+  void addAssetsFromFilePaths(const QStringList& filePaths);
+
+  //Directory
+  void createPhysicalDirectory(const QString& directoryName);
 
  public:
   void newProjectCreated()

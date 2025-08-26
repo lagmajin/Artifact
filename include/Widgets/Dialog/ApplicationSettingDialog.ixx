@@ -1,5 +1,6 @@
-module;
+﻿module;
 #include <QWidget>
+#include <QDialog>
 export module ApplicationSettingDialog;
 
 export namespace ArtifactCore {
@@ -16,7 +17,8 @@ export namespace ArtifactCore {
  class MemoryAndCpuSettingPage :public QWidget {
   //Q_OBJECT
  private:
-
+  class Impl;
+  Impl* impl_;
  protected:
  public:
   explicit MemoryAndCpuSettingPage(QWidget* parent = nullptr);
@@ -27,6 +29,40 @@ export namespace ArtifactCore {
  };
 
 
+ class ShortcutSettingPage : public QWidget {
+  //Q_OBJECT
+  class Impl;
+  Impl* impl_;
+ public:
+  explicit ShortcutSettingPage(QWidget* parent = nullptr);
+  ~ShortcutSettingPage();
+
+  QVector<QWidget*> settingWidgets() const;
+
+ };
+
+ class PluginSettingPage : public QWidget {
+  Q_OBJECT
+ public:
+  explicit PluginSettingPage(QWidget* parent = nullptr);
+  ~PluginSettingPage();
+
+  QVector<QWidget*> settingWidgets() const;
+
+ private:
+  class Impl;
+  Impl* impl_;
+ };
+
+class ApplicationSettingDialog:public QDialog
+{
+private:
+ class Impl;
+ Impl* impl_;
+public:
+ explicit ApplicationSettingDialog(QWidget* parent = nullptr);
+ ~ApplicationSettingDialog();
+};
 
 
 

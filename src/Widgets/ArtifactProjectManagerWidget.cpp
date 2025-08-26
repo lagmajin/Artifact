@@ -15,6 +15,8 @@ module ArtifactProjectManagerWidget;
 
 import HeadPanel;
 
+import Project.Manager;
+
 namespace Artifact {
  W_OBJECT_IMPL(ArtifactProjectManagerWidget)
 
@@ -40,7 +42,11 @@ namespace Artifact {
   ArtifactProjectView* projectView_ = nullptr;
   Impl();
   ~Impl();
+ 
+  QLineEdit* searchWidget_ = nullptr;
+  void handleSearchTextChanged();
   void fileDropped(const QString& str);
+  void rebuildMenu();
  };
 
  ArtifactProjectManagerWidget::Impl::Impl()
@@ -55,6 +61,10 @@ namespace Artifact {
 
  void ArtifactProjectManagerWidget::Impl::fileDropped(const QString& str)
  {
+  auto& manager = ArtifactProjectManager::getInstance();
+
+
+    
 
  }
 
@@ -131,7 +141,10 @@ namespace Artifact {
 
      impl_->projectView_ = new ArtifactProjectView();
 
-     auto searchWidget = new QLineEdit();
+     auto searchWidget =impl_->searchWidget_= new QLineEdit();
+     searchWidget->setPlaceholderText("...");
+     searchWidget->setAlignment(Qt::AlignLeft);
+     searchWidget->setEchoMode(QLineEdit::Normal);
 
      auto layout = new QVBoxLayout();
      layout->addWidget(label);

@@ -10,6 +10,8 @@
 #include <QLabel>
 
 
+
+
 #pragma comment(lib,"qtadvanceddockingd.lib")
 
 //#include "../../include/Widgets/menu/ArtifactMenuBar.hpp"
@@ -27,6 +29,7 @@ import Widgets.ToolBar;
 import Widgets.Inspector;
 import Widgets.Render.Queue;
 import Widgets.Render.Composition;
+import Widgets.AssetBrowser;
 import Project.Manager;
 
 import Artifact.Widgets.Timeline;
@@ -180,6 +183,11 @@ namespace Artifact {
   DockManager->addDockWidget(ads::CenterDockWidgetArea, DockWidget5);
 
   auto& projectManager = ArtifactProjectManager::getInstance();
+
+
+  auto browser = new ArtifactAssetBrowser();
+
+  browser->show();
 
  
   QObject::connect(&projectManager, &ArtifactProjectManager::newProjectCreated, [this]() {

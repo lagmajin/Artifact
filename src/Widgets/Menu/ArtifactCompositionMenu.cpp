@@ -71,6 +71,8 @@ namespace Artifact {
    );
 
 
+  menu->addSeparator();
+
  }
 
  ArtifactCompositionMenu::Impl::~Impl()

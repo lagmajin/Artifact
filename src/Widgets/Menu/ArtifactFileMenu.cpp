@@ -85,6 +85,7 @@ namespace Artifact {
   addAction(Impl_->saveProjectAsAction);
   addAction(Impl_->closeProjectAction);
   addAction(Impl_->quitApplicationAction);
+  addSeparator();
 
 
   connect(Impl_->createProjectAction, &QAction::triggered,

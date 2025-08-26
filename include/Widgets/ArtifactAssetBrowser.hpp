@@ -16,9 +16,9 @@ import std;
 
 export namespace Artifact {
 
- class SearchBarWidget:public QWidget
+ class SearchBarWidget :public QWidget
  {
-	W_OBJECT(SearchBarWidget)
+  W_OBJECT(SearchBarWidget)
  private:
 
  public:
@@ -32,9 +32,19 @@ export namespace Artifact {
 
  };
 
+ class ArtifactAssetBrowserToolBar :public QWidget
+ {
+  W_OBJECT(ArtifactAssetBrowserToolBar)
+ private:
+  class Impl;
+  Impl* impl_;
+ public:
+  explicit ArtifactAssetBrowserToolBar(QWidget* parent = nullptr);
+  ~ArtifactAssetBrowserToolBar();
+ };
 
 
- class ArtifactAssetBrowser :public QWidget{
+ class ArtifactAssetBrowser :public QWidget {
   W_OBJECT(ArtifactAssetBrowser)
  private:
   class Impl;

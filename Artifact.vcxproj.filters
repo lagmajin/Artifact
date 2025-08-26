@@ -115,6 +115,9 @@
     <Filter Include="ヘッダー ファイル\Timeline">
       <UniqueIdentifier>{9ab2fd6b-7c82-4524-af42-79c3f362034b}</UniqueIdentifier>
     </Filter>
+    <Filter Include="ソース ファイル\Timeline">
+      <UniqueIdentifier>{6fe79643-754f-4d1f-9277-902b7a87d041}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="include\Composition\ArtifactCompositionManager.hpp">
@@ -473,6 +476,24 @@
     <ClCompile Include="src\Widgets\ArtifactLayerHierarchyWidget.cpp">
       <Filter>ソース ファイル\Widgets</Filter>
     </ClCompile>
+    <ClCompile Include="include\Timeline\ArtifactTimelineIconModel.ixx">
+      <Filter>ヘッダー ファイル\Timeline</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Timeline\ArtifactTimelineIconModel.cpp">
+      <Filter>ソース ファイル\Timeline</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Project\TreeFilterProxyModel.ixx">
+      <Filter>ヘッダー ファイル\Project</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Project\TreeFilterProxyModel.cpp">
+      <Filter>ソース ファイル\Project</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Project\ArtifactProjectModel.ixx">
+      <Filter>ヘッダー ファイル\Project</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Project\ArtifactProjectModel.cpp">
+      <Filter>ソース ファイル\Project</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <None Include="src\Widgets\Menu\Test.thrift">
@@ -480,6 +501,9 @@
     </None>
     <None Include="src\Layer\ArtifactAdjustableLayer.cpp">
       <Filter>ソース ファイル\Layer</Filter>
+    </None>
+    <None Include="src\Widgets\Dialog\EditCompositionSettingDialog.cpp">
+      <Filter>ソース ファイル\Widgets\Dialog</Filter>
     </None>
   </ItemGroup>
   <ItemGroup>

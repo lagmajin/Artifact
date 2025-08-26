@@ -5,41 +5,50 @@
 #include <wobjectimpl.h>
 #include <QBoxLayout>
 #include <QSplitter>
+#include <QStandardItem>
 module Artifact.Widgets.Timeline;
 
 import Widgets.Utils.CSS;
 
 import Artifact.Layers.Hierarchy.Model;
 
-
+import Panel.DraggableSplitter;
 
 namespace Artifact {
 
  using namespace ArtifactCore;
-
+ using namespace ArtifactWidgets;
 
  W_OBJECT_IMPL(ArtifactTimeCodeWidget)
   class ArtifactTimeCodeWidget::Impl {
   private:
-   QLabel* timecodeLabel = nullptr;
-   QLabel* frameNumberLabel = nullptr;
+
   public:
    Impl();
+   QLabel* timecodeLabel_ = nullptr;
+   QLabel* frameNumberLabel_ = nullptr;
  };
 
  ArtifactTimeCodeWidget::Impl::Impl()
  {
-  timecodeLabel = new QLabel();
-  frameNumberLabel = new QLabel();
+  //timecodeLabel_ = new QLabel();
+  //timecodeLabel_->setText("Time:");
+  frameNumberLabel_ = new QLabel();
 
  }
 
  ArtifactTimeCodeWidget::ArtifactTimeCodeWidget(QWidget* parent /*= nullptr*/) :QWidget(parent), impl_(new Impl())
  {
+  auto vLayout = new QVBoxLayout();
+  auto timecodeLabel = impl_->timecodeLabel_ = new QLabel();
+  timecodeLabel->setText("Time");
+  auto frameNumberLabel = impl_->frameNumberLabel_ = new QLabel();
+  frameNumberLabel->setText("fps");
 
-  QVBoxLayout* layout = new QVBoxLayout();
-
-
+  vLayout->addWidget(timecodeLabel);
+  vLayout->addWidget(frameNumberLabel);
+  auto layout = new QHBoxLayout();
+  layout->addLayout(vLayout);
 
   setLayout(layout);
  }
@@ -67,6 +76,8 @@ namespace Artifact {
  public:
   Impl();
   ~Impl();
+  TimelineLabel* timelineLabel_ = nullptr;
+
  };
 
  ArtifactTimelineWidget::Impl::Impl()
@@ -91,24 +102,36 @@ namespace Artifact {
 
   auto layerTreeView = new ArtifactLayerHierarchyView();
   layerTreeView->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-  auto layerTrackView = new TimelineTrackView();
-  layerTrackView->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
 
-
-  QSplitter* leftSplitter = new QSplitter(Qt::Horizontal);
+  auto leftSplitter = new DraggableSplitter(Qt::Horizontal);
   leftSplitter->addWidget(iconView);
   leftSplitter->addWidget(layerTreeView);
   leftSplitter->setStretchFactor(0, 0); // アイコン列は固定
   leftSplitter->setStretchFactor(1, 1); // 名前列は伸縮可能
 
+  auto leftHeader = new ArtifactTimeCodeWidget(); // タイムコード+検索バー
+  auto leftLayout = new QVBoxLayout();
+  leftLayout->setSpacing(0);
+  leftLayout->setContentsMargins(0, 0, 0, 0);
+  leftLayout->addWidget(leftHeader);
+  leftLayout->addWidget(leftSplitter);
+
+  auto leftPanel = new QWidget();
+  leftPanel->setLayout(leftLayout);
+
+
+
+
+
   // 全体のタイムラインスプリッター
-  QSplitter* mainSplitter = new QSplitter(Qt::Horizontal);
-  mainSplitter->addWidget(leftSplitter);
-  mainSplitter->addWidget(layerTrackView);
+  auto mainSplitter = new QSplitter(Qt::Horizontal);
+  mainSplitter->addWidget(leftPanel);
+ 	//mainSplitter->addWidget(leftSplitter);
+  
   mainSplitter->setStretchFactor(0, 1);
   mainSplitter->setStretchFactor(1, 3);
 
-  TimelineLabel* label = new TimelineLabel();
+  auto label = new TimelineLabel();
 
 
   auto layout = new QVBoxLayout();
@@ -120,6 +143,7 @@ namespace Artifact {
   setLayout(layout);
 
  }
+
  ArtifactTimelineWidget::~ArtifactTimelineWidget()
  {
 
@@ -230,6 +254,10 @@ namespace Artifact {
   setColumnWidth(2, 20);
   setColumnWidth(3, 20);
   setSelectionBehavior(QAbstractItemView::SelectRows);
+
+
+
+
  }
 
  ArtifactTimelineIconView::~ArtifactTimelineIconView()
@@ -254,7 +282,7 @@ namespace Artifact {
 
   setLayout(layout);
 
-  setFixedHeight(32);
+  setFixedHeight(28);
  }
 
  TimelineLabel::~TimelineLabel()

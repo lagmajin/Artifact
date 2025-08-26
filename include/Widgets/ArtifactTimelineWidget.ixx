@@ -36,6 +36,15 @@ export namespace Artifact {
 
  };
 
+ class ArtifactTimelineRulerWidget:public QWidget
+ {
+ private:
+
+ public:
+
+ };
+
+
  //#right
  class TimelineTrackView :public QGraphicsView {
   W_OBJECT(TimelineTrackView)

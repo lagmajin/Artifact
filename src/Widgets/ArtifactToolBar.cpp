@@ -18,6 +18,8 @@ namespace Artifact
   QAction* selectTool_ = nullptr;
   QAction* maskTool_ = nullptr;
   QAction* handTool_ = nullptr;
+  QAction* shapeTool_ = nullptr;
+  QAction* papetTool_ = nullptr;
  };
 
  ArtifactToolBar::Impl::Impl(QToolBar* toolbar)

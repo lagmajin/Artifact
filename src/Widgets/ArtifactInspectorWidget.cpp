@@ -23,6 +23,8 @@ namespace Artifact {
    ~Impl();
    QWidget* containerWidget = nullptr;
    QLabel* layerNameLabel = nullptr;
+   QMenu* inspectorMenu_ = nullptr;
+   void rebuildMenu();
  };
 
  ArtifactInspectorWidget::Impl::Impl()
@@ -31,6 +33,11 @@ namespace Artifact {
  }
 
  ArtifactInspectorWidget::Impl::~Impl()
+ {
+
+ }
+
+ void ArtifactInspectorWidget::Impl::rebuildMenu()
  {
 
  }
@@ -74,6 +81,11 @@ namespace Artifact {
  void ArtifactInspectorWidget::triggerUpdate()
  {
   update();
+ }
+
+ void ArtifactInspectorWidget::contextMenuEvent(QContextMenuEvent*)
+ {
+  //throw std::logic_error("The method or operation is not implemented.");
  }
 
 }

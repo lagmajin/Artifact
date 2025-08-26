@@ -35,7 +35,8 @@ namespace Artifact {
    std::shared_ptr<ArtifactProject> spProject_;
    void createProject();
    Id createNewComposition();
-
+   void addAssetFromFilePath(const QString& filePath);
+   void addAssetsFromFilePaths(const QStringList& filePaths);
  };
 
  ArtifactProjectManager::Impl::Impl()
@@ -55,6 +56,25 @@ namespace Artifact {
  }
 
  ArtifactProjectManager::Impl::~Impl()
+ {
+
+ }
+
+ Id ArtifactProjectManager::Impl::createNewComposition()
+ {
+  Id id;
+
+
+
+  return id;
+ }
+
+ void ArtifactProjectManager::Impl::addAssetFromFilePath(const QString& filePath)
+ {
+
+ }
+
+ void ArtifactProjectManager::Impl::addAssetsFromFilePaths(const QStringList& filePaths)
  {
 
  }
@@ -125,7 +145,20 @@ namespace Artifact {
 
  void ArtifactProjectManager::createNewComposition()
  {
+  Impl_->createNewComposition();
+
+
   newCompositionCreated();
+ }
+
+ void ArtifactProjectManager::addAssetFromFilePath(const QString& filePath)
+ {
+
+ }
+
+ void ArtifactProjectManager::addAssetsFromFilePaths(const QStringList& filePaths)
+ {
+
  }
 
  bool projectManagerCurrentClose()

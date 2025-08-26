@@ -1,4 +1,4 @@
-module;
+﻿module;
 
 #include <wobjectdefs.h>
 
@@ -19,6 +19,9 @@ export namespace Artifact {
   Impl* impl_;
  protected:
   void update();
+
+  void contextMenuEvent(QContextMenuEvent*) override;
+
  public:
   explicit ArtifactInspectorWidget(QWidget* parent = nullptr);
   ~ArtifactInspectorWidget();

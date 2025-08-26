@@ -181,10 +181,13 @@
     <ClCompile Include="include\Layer\ArtifactLayerFactory.ixx">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
     </ClCompile>
+    <ClCompile Include="include\Project\ArtifactProjectModel.ixx" />
+    <ClCompile Include="include\Project\TreeFilterProxyModel.ixx" />
     <ClCompile Include="include\Render\ArtifactOffscreenRenderer2D.ixx" />
     <ClCompile Include="include\Render\ArtifactRenderController.ixx" />
     <ClCompile Include="include\Render\IRenderer.ixx" />
     <ClCompile Include="include\Render\RenderPipeline.ixx" />
+    <ClCompile Include="include\Timeline\ArtifactTimelineIconModel.ixx" />
     <ClCompile Include="include\Widgets\ArtifactLayerHierarchyWidget.ixx" />
     <ClCompile Include="include\Widgets\Menu\ArtifactAnimationMenu.ixx">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
@@ -197,8 +200,10 @@
     <ClCompile Include="src\Layer\ArtifactSolid2DLayer.cpp" />
     <ClCompile Include="src\Layer\ArtifactSolidImageLayer.cpp" />
     <ClCompile Include="src\Library\Link.cpp" />
+    <ClCompile Include="src\Project\TreeFilterProxyModel.cpp" />
     <ClCompile Include="src\Render\ArtifactEffects.ixx" />
     <ClCompile Include="src\Render\ArtifactOffscreenRenderer2D.cpp" />
+    <ClCompile Include="src\Timeline\ArtifactTimelineIconModel.cpp" />
     <ClCompile Include="src\Widgets\ArtifactLayerHierarchyWidget.cpp" />
     <ClCompile Include="src\Widgets\ArtifactToolBar.cpp" />
     <ClCompile Include="src\Widgets\Menu\ArtifactAnimationMenu.cpp" />
@@ -434,6 +439,8 @@
     <None Include="src\Layer\ArtifactAdjustableLayer.cpp" />
     <ClCompile Include="src\Render\ArtifactRenderController.cpp" />
     <ClCompile Include="src\Layer\ArtifactHierarchyModel.cpp" />
+    <ClCompile Include="src\Project\ArtifactProjectModel.cpp" />
+    <None Include="src\Widgets\Dialog\EditCompositionSettingDialog.cpp" />
     <None Include="src\Widgets\Menu\Test.thrift" />
   </ItemGroup>
   <ItemGroup>

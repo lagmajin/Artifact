@@ -75,12 +75,14 @@ namespace Artifact {
   private:
    FloatColor canvasColor_;
    float scale_ = 1.0f;
+   ZoomScale 
+
 
    RefCntAutoPtr<IRenderDevice> pDevice;
    RefCntAutoPtr<IDeviceContext> pImmediateContext;
 
    RefCntAutoPtr<ISwapChain> pSwapChain_;
-   RefCntAutoPtr<IPipelineState> p2D_PSO_;
+   RefCntAutoPtr<IPipelineState> pTEST_2D_PSO_;
    RefCntAutoPtr<IPipelineState> pLine_PSO_;
 	
 
@@ -164,6 +166,7 @@ namespace Artifact {
    void drawQuadLine(float x, float y, float w, float h, const FloatColor& lineColor, float thikness = 1.0f);
    void drawLineCanvas(float x_1, float y_1, float x_2, float y_2, const FloatColor& color, float tick=1.0f);
    void drawViewCameraFrustum();
+   void drawTextInCanvas(const QString& string);
 
    void zoomIn();
    void zoomOut();
@@ -630,7 +633,7 @@ if (FAILED(hr)) {
 
 
 
-  auto psoInfo = create2DPSOHelper();
+  auto testPsoInfo = create2DPSOHelper();
 
   // Define vertex shader input layout
   LayoutElement LayoutElems[] =
@@ -638,19 +641,19 @@ if (FAILED(hr)) {
   Diligent::LayoutElement{0, 0, 2, VT_FLOAT32, False, 0},
    Diligent::LayoutElement{1, 0, 2, VT_FLOAT32, False, sizeof(float2)}
   };
-  psoInfo.GraphicsPipeline.InputLayout.NumElements = _countof(LayoutElems);
-  psoInfo.GraphicsPipeline.InputLayout.LayoutElements = LayoutElems;
+  testPsoInfo.GraphicsPipeline.InputLayout.NumElements = _countof(LayoutElems);
+  testPsoInfo.GraphicsPipeline.InputLayout.LayoutElements = LayoutElems;
 
-  psoInfo.pVS = p2D_vertex_shader;
-  psoInfo.pPS = p2D_pixel_test;
-  psoInfo.PSODesc.ResourceLayout.Variables = m_ResourceVars.data();
-  psoInfo.PSODesc.ResourceLayout.NumVariables = static_cast<Uint32>(m_ResourceVars.size());
+  testPsoInfo.pVS = p2D_vertex_shader;
+  testPsoInfo.pPS = p2D_pixel_test;
+  testPsoInfo.PSODesc.ResourceLayout.Variables = m_ResourceVars.data();
+  testPsoInfo.PSODesc.ResourceLayout.NumVariables = static_cast<Uint32>(m_ResourceVars.size());
 
-  psoInfo.PSODesc.ResourceLayout.ImmutableSamplers = m_sampler_.data();
-  psoInfo.PSODesc.ResourceLayout.NumImmutableSamplers = static_cast<Uint32>(m_sampler_.size());
-  pDevice->CreateGraphicsPipelineState(psoInfo, &p2D_PSO_);
+  testPsoInfo.PSODesc.ResourceLayout.ImmutableSamplers = m_sampler_.data();
+  testPsoInfo.PSODesc.ResourceLayout.NumImmutableSamplers = static_cast<Uint32>(m_sampler_.size());
+  pDevice->CreateGraphicsPipelineState(testPsoInfo, &pTEST_2D_PSO_);
 
-  p2D_PSO_->CreateShaderResourceBinding(&p2D_SRB_, false);
+  pTEST_2D_PSO_->CreateShaderResourceBinding(&p2D_SRB_, false);
   if (!p2D_SRB_)
   {
    // エラー処理（例: qCritical() << "Failed to create 2D Shader Resource Binding!";）
@@ -658,6 +661,10 @@ if (FAILED(hr)) {
   }
 
   auto linePSOInfo = createDrawLinePSOHelper();
+
+  auto solidPSOInfo = nullptr;
+
+  auto drawSplitePSOInfo = nullptr;
 
   //linePSOInfo.pVS = ;
 
@@ -698,7 +705,7 @@ if (FAILED(hr)) {
   memcpy(pMappedData, &constantsData, sizeof(Constants));
   pImmediateContext->UnmapBuffer(pConstantsBuffer, Diligent::MAP_WRITE);
 
-  pImmediateContext->SetPipelineState(p2D_PSO_);
+  pImmediateContext->SetPipelineState(pTEST_2D_PSO_);
 
   if (p2D_SRB_)
   {
@@ -1076,6 +1083,11 @@ if (FAILED(hr)) {
  }
 
  void ArtifactDiligentEngineComposition2DWindow::Impl::drawSolidQuadToComposition(float x, float y, float w, float h)
+ {
+
+ }
+
+ void ArtifactDiligentEngineComposition2DWindow::Impl::drawTextInCanvas(const QString& string)
  {
 
  }
