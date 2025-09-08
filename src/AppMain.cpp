@@ -20,7 +20,7 @@ import ImageProcessing;
 
 import ArtifactMainWindow;
 
-import hostfxr;
+//import hostfxr;
 //import HalideTest;
 import Graphics;
 import SearchImage;

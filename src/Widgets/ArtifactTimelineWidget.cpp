@@ -14,6 +14,8 @@ import Artifact.Layers.Hierarchy.Model;
 
 import Panel.DraggableSplitter;
 
+import ArtifactTimelineIconModel;
+
 namespace Artifact {
 
  using namespace ArtifactCore;
@@ -248,16 +250,23 @@ namespace Artifact {
 
  ArtifactTimelineIconView::ArtifactTimelineIconView(QWidget* parent /*= nullptr*/) :QTreeView(parent)
  {
-  setHeaderHidden(true); // ヘッダー非表示も可
-  setColumnWidth(0, 20); // アイコン列幅
-  setColumnWidth(1, 20);
-  setColumnWidth(2, 20);
-  setColumnWidth(3, 20);
+  //setHeaderHidden(true); // ヘッダー非表示も可
+  setColumnWidth(0, 16); // アイコン列幅
+  setColumnWidth(1, 16);
+  setColumnWidth(2, 16);
+  setColumnWidth(3, 16);
   setSelectionBehavior(QAbstractItemView::SelectRows);
+  int iconW = 24;
+  header()->setIconSize(QSize(iconW, iconW));
+
+  auto model = new ArtifactTimelineIconModel();
+
+  setModel(model);
+  header()->setDefaultAlignment(Qt::AlignLeft | Qt::AlignVCenter);
 
 
-
-
+  header()->resizeSection(0, 20);
+  header()->setStretchLastSection(false);
  }
 
  ArtifactTimelineIconView::~ArtifactTimelineIconView()

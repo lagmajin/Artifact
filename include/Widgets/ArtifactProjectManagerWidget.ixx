@@ -50,6 +50,9 @@ public:
   void dropEvent(QDropEvent* event);
   void dragEnterEvent(QDragEnterEvent* event);
   QSize sizeHint() const;
+
+  void contextMenuEvent(QContextMenuEvent* event) override;
+
  public:
   explicit ArtifactProjectManagerWidget(QWidget* parent = nullptr);
   ~ArtifactProjectManagerWidget();

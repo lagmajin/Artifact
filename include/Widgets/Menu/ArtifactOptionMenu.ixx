@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <wobjectdefs.h>
 #include <QMenu>
 export module Menu.Option;
@@ -14,7 +14,7 @@ namespace Artifact {
   W_OBJECT(ArtifactOptionMenu)
  private:
   class Impl;
-  Impl* impl_;
+  Impl* impl_=nullptr;
  public:
   explicit ArtifactOptionMenu(QWidget *parent=nullptr);
   ~ArtifactOptionMenu();

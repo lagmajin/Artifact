@@ -15,7 +15,9 @@ namespace Artifact {
 
  using namespace ArtifactCore;
 
- W_OBJECT_IMPL(ArtifactAssetBrowser)
+	W_OBJECT_IMPL(ArtifactAssetBrowserToolBar)
+
+
 
 	class ArtifactAssetBrowserToolBar::Impl
  {
@@ -35,6 +37,8 @@ namespace Artifact {
 
  }
 
+ W_OBJECT_IMPL(ArtifactAssetBrowser)
+
   class ArtifactAssetBrowser::Impl
  {
  private:
@@ -43,6 +47,8 @@ namespace Artifact {
  public:
   QTreeView* directoryView_ = nullptr;
   void handleDirectryChanged();
+  void handleDoubleClicked();
+
  };
 
  ArtifactAssetBrowser::ArtifactAssetBrowser(QWidget* parent /*= nullptr*/) :QWidget(parent),impl_(new Impl())

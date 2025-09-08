@@ -10,6 +10,8 @@
 #include <QDragEnterEvent>
 #include <QDropEvent>
 #include <QLineEdit>
+
+#include <QMenu>
 module ArtifactProjectManagerWidget;
 
 
@@ -19,6 +21,13 @@ import Project.Manager;
 
 namespace Artifact {
  W_OBJECT_IMPL(ArtifactProjectManagerWidget)
+
+  class ArtifactProjectView::Impl
+ {
+ public:
+    
+	 
+ };
 
   ArtifactProjectView::ArtifactProjectView(QWidget* parent /*= nullptr*/):QTreeView(parent)
  {
@@ -45,12 +54,24 @@ namespace Artifact {
  
   QLineEdit* searchWidget_ = nullptr;
   void handleSearchTextChanged();
-  void fileDropped(const QString& str);
+  void handleFileDrop(const QString& str);
   void rebuildMenu();
+
+  QMenu* contextMenu = nullptr;
+  QAction* createDirectoryAction = nullptr;
+  QAction* addFileAction = nullptr;
+
+  void showContextMenu(ArtifactProjectManagerWidget* widget, const QPoint& globalPos);
  };
 
  ArtifactProjectManagerWidget::Impl::Impl()
  {
+  contextMenu = new QMenu();
+
+  createDirectoryAction = new QAction();
+  createDirectoryAction->setText("test");
+
+  contextMenu->addAction(createDirectoryAction);
 
  }
 
@@ -59,12 +80,24 @@ namespace Artifact {
 
  }
 
- void ArtifactProjectManagerWidget::Impl::fileDropped(const QString& str)
+ void ArtifactProjectManagerWidget::Impl::showContextMenu(ArtifactProjectManagerWidget* widget, const QPoint& globalPos)
+ {
+  contextMenu->show();
+
+
+ }
+
+ void ArtifactProjectManagerWidget::Impl::rebuildMenu()
+ {
+
+ }
+
+ void ArtifactProjectManagerWidget::Impl::handleFileDrop(const QString& str)
  {
   auto& manager = ArtifactProjectManager::getInstance();
 
-
-    
+  qDebug() << "File:"<<str;
+  manager.addAssetFromFilePath(str);
 
  }
 
@@ -152,6 +185,7 @@ namespace Artifact {
      layout->addWidget(impl_->projectView_);
      setLayout(layout);
 
+     setContextMenuPolicy(Qt::CustomContextMenu);
  }
 
  ArtifactProjectManagerWidget::~ArtifactProjectManagerWidget()
@@ -213,8 +247,7 @@ namespace Artifact {
 	 // ✔️ 実際の処理：ここで何かする（読み込み/表示/保存など）
 	 qDebug() << "Accepted file dropped:" << filePath;
 
-	 // 例：自前関数に渡す
-	 //handleDroppedFile(filePath);
+     impl_->handleFileDrop(filePath);
 	}
    }
 
@@ -230,6 +263,12 @@ namespace Artifact {
   return QSize(QWidget::sizeHint().width(),600);
  }
 
+ void ArtifactProjectManagerWidget::contextMenuEvent(QContextMenuEvent* event)
+ {
+  impl_->showContextMenu(this, event->globalPos());
+
+
+ }
  
 
 }

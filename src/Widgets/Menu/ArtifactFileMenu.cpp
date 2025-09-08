@@ -17,24 +17,28 @@ namespace Artifact {
 
  W_OBJECT_IMPL(ArtifactFileMenu)
 
- class  ArtifactFileMenu::Impl {
- private:
- 
-  bool projectCreated_ = false;
- public:
-  Impl();
-  void rebuildMenu(QMenu* menu);
-  QAction* createProjectAction;
-  QAction* closeProjectAction;
-  QAction* saveProjectAction;
-  QAction* saveProjectAsAction;
-  QAction* quitApplicationAction;
+  class  ArtifactFileMenu::Impl {
+  private:
+
+   bool projectCreated_ = false;
+  public:
+   Impl();
+   void rebuildMenu(QMenu* menu);
+   QAction* createProjectAction;
+   QAction* closeProjectAction;
+   QAction* saveProjectAction;
+   QAction* saveProjectAsAction;
+   QAction* quitApplicationAction;
+   void handleOpenProject();
+   void handleSaveProject();
+   void handleCloseProject();
+
  };
 
  ArtifactFileMenu::Impl::Impl()
  {
   createProjectAction = new QAction("CreateProject");
-  createProjectAction -> setShortcut(QKeySequence::New);
+  createProjectAction->setShortcut(QKeySequence::New);
   createProjectAction->setIcon(QIcon(ArtifactCore::getIconPath() + "/new.png"));
 
 
@@ -52,7 +56,7 @@ namespace Artifact {
   saveProjectAsAction->setShortcut(QKeySequence::SaveAs);
   saveProjectAsAction->setDisabled(true); // 最初は無効 (まだプロジェクトがないため)
 
-  quitApplicationAction= new QAction("終了()...");
+  quitApplicationAction = new QAction("終了()...");
   quitApplicationAction->setShortcut(QKeySequence::Quit);
 
  }
@@ -62,12 +66,12 @@ namespace Artifact {
 
  }
 
- ArtifactFileMenu::ArtifactFileMenu(QWidget* parent /*= nullptr*/):QMenu(parent),Impl_(new Impl())
+ ArtifactFileMenu::ArtifactFileMenu(QWidget* parent /*= nullptr*/) :QMenu(parent), Impl_(new Impl())
  {
   setObjectName("FileMenu");
 
   setTitle("File(&F)");
-
+  setTearOffEnabled(true);
   QPalette p = palette();
   p.setColor(QPalette::Window, QColor(30, 30, 30));
 
@@ -84,12 +88,13 @@ namespace Artifact {
   addAction(Impl_->saveProjectAction);
   addAction(Impl_->saveProjectAsAction);
   addAction(Impl_->closeProjectAction);
+  addSeparator();
   addAction(Impl_->quitApplicationAction);
   addSeparator();
 
 
   connect(Impl_->createProjectAction, &QAction::triggered,
-   this,&ArtifactFileMenu::projectCreateRequested);
+   this, &ArtifactFileMenu::projectCreateRequested);
 
   connect(Impl_->quitApplicationAction, &QAction::triggered,
    this, &ArtifactFileMenu::quitApplication);
@@ -110,7 +115,7 @@ namespace Artifact {
 
  }
 
- 
+
 
  void ArtifactFileMenu::projectClosed()
  {
@@ -136,7 +141,7 @@ namespace Artifact {
   animation->setEasingCurve(QEasingCurve::OutQuad); // イージングカーブ (アニメーションの滑らかさ)
 
   // アニメーションが完了したらエフェクトを削除 (残しておくとパフォーマンスに影響)
-  QObject::connect(animation, &QPropertyAnimation::finished, this, [opacityEffect,this]() {
+  QObject::connect(animation, &QPropertyAnimation::finished, this, [opacityEffect, this]() {
    //setGraphicsEffect(nullptr); // エフェクトを解除
    opacityEffect->deleteLater(); // エフェクトオブジェクトを削除
    });

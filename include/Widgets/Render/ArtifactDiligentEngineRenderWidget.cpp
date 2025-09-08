@@ -57,7 +57,9 @@ import Size;
 
 import std;
 
-import Core.Scale2D;
+import Core.Scale.Zoom;
+
+import Graphics.Shader.Basics.Vertex;
 
 namespace Artifact {
 
@@ -77,7 +79,7 @@ namespace Artifact {
   private:
    FloatColor canvasColor_;
    float scale_ = 1.0f;
-   ZoomScale zoomScale_;
+   ZoomScale2D zoomScale_;
 
 
    RefCntAutoPtr<IRenderDevice> pDevice;
@@ -236,10 +238,6 @@ namespace Artifact {
   Win32NativeWindow hWindow;
   hWindow.hWnd = reinterpret_cast<HWND>(window->winId());
   pFactory->CreateDeviceAndContextsD3D12(CreationAttribs, &pDevice, &pImmediateContext);
-
-
-
-
 
 
   if (!pDevice)
@@ -496,8 +494,20 @@ if (FAILED(hr)) {
 
   lineVsInfo.SourceLanguage = Diligent::SHADER_SOURCE_LANGUAGE_HLSL; // または GLSL
   lineVsInfo.Desc.ShaderType = Diligent::SHADER_TYPE_VERTEX;
+  lineVsInfo.EntryPoint = "main";
+  lineVsInfo.Desc.Name = "MyVertexShader";
+  lineVsInfo.Source=lineShaderVSText.constData();
+  lineVsInfo.SourceLength = lineShaderVSText.length();
+
+  pDevice->CreateShader(lineVsInfo, &p2d_line_vertex_shader_);
+
+  ShaderCreateInfo linePsInfo;
+
+  linePsInfo.SourceLanguage = Diligent::SHADER_SOURCE_LANGUAGE_HLSL; // または GLSL
+  linePsInfo.Desc.ShaderType = Diligent::SHADER_TYPE_VERTEX;
 
 
+  //pDevice->CreateShader(linePsInfo, &p2d_line_pixel_shader_);
 
   Diligent::BufferDesc CBDesc;
   CBDesc.Name = "Constants CB";              // バッファの名前（デバッグ用）
@@ -561,12 +571,6 @@ if (FAILED(hr)) {
  {
   const Diligent::float4& clearColor = { 0.5f,0.5f,0.5f,1.0f };
   clearCanvas(clearColor);
-
-
-
-  //drawSolidQuad(0, 0, 400, 400);
-
-  //drawSolidQuad(500, 0, 400, 400);
 
 
   {
@@ -663,6 +667,10 @@ if (FAILED(hr)) {
   }
 
   auto linePSOInfo = createDrawLinePSOHelper();
+  linePSOInfo.pVS = nullptr;
+  linePSOInfo.pPS = nullptr;
+
+  pDevice->CreateGraphicsPipelineState(linePSOInfo,&pLine_PSO_);
 
   auto solidPSOInfo = nullptr;
 

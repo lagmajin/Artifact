@@ -1,7 +1,7 @@
 ﻿module;
-#include <Qstring>
+#include <QString>
 #include <QApplication>
-
+#include <entt/entt.hpp>
 export  module Artifact.Application.Manager;
 
 
@@ -16,11 +16,12 @@ namespace Artifact {
  private:
   class Impl;
   Impl* impl_;
+  ArtifactApplicationManager(const ArtifactApplicationManager&) = delete;
  public:
   ArtifactApplicationManager();
   ~ArtifactApplicationManager();
   static ArtifactApplicationManager* instance();
-
+  entt::registry& registry();
  };
 
 

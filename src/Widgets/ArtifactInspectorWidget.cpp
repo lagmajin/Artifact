@@ -85,7 +85,9 @@ namespace Artifact {
 
  void ArtifactInspectorWidget::contextMenuEvent(QContextMenuEvent*)
  {
-  //throw std::logic_error("The method or operation is not implemented.");
+
+
+
  }
 
 }

@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <QMenu>
 #include <wobjectimpl.h>
 
@@ -14,19 +14,30 @@ namespace Artifact {
   private:
 
   public:
-
+   Impl();
+   ~Impl();
  };
 
- ArtifactOptionMenu::ArtifactOptionMenu(QWidget* parent/*=nullptr*/):QMenu(parent)
+ ArtifactOptionMenu::Impl::Impl()
+ {
+
+ }
+
+ ArtifactOptionMenu::Impl::~Impl()
+ {
+
+ }
+
+ ArtifactOptionMenu::ArtifactOptionMenu(QWidget* parent/*=nullptr*/):QMenu(parent),impl_(new Impl())
  {
   setTitle("Options");
-
+  setTearOffEnabled(true);
 
  }
 
  ArtifactOptionMenu::~ArtifactOptionMenu()
  {
-
+  delete impl_;
  }
 
 };

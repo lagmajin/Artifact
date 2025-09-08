@@ -36,9 +36,11 @@ namespace Artifact {
 
   QAction* saveAsFrameAction = nullptr;
 
-  QAction* addToRenderQueue = nullptr;
+  QAction* addToRenderQueueAction = nullptr;
 
   void showCreateCompositionSettingDialog();
+  void handleAddRenderQueueRequest();
+  void handleSaveAsImageRequest();
  };
 
  //W_OBJECT_IMPL(ArtifactCompositionMenu::Impl)
@@ -49,13 +51,13 @@ namespace Artifact {
   //createCompositionAction->setShortcut(QKeySequence::New);
   createCompositionAction->setIcon(QIcon(ArtifactCore::getIconPath() + "/composition.png"));
 
-  menu->addAction(createCompositionAction);
+  
 
   createCompositionFromFootage = new QAction("Create composition from footage");
   //createCompositionAction->setText()
   createCompositionFromFootage->setDisabled(true);
 
-  menu->addAction(createCompositionFromFootage);
+ 
 
   changeCompositionSettingsAction = new QAction("Change composition settings");
 
@@ -65,13 +67,18 @@ namespace Artifact {
   //createCompositionAction->setText()
   saveAsFrameAction->setDisabled(true);
 
+  addToRenderQueueAction = new QAction();
+  addToRenderQueueAction->setText("AddRenderQueue");
+
   connect(createCompositionAction, &QAction::triggered, menu, [this]() {
    this->showCreateCompositionSettingDialog();
    }
    );
-
-
+  menu->addAction(createCompositionAction);
+  menu->addAction(createCompositionFromFootage);
   menu->addSeparator();
+  menu->addAction(addToRenderQueueAction);
+
 
  }
 
@@ -95,13 +102,22 @@ namespace Artifact {
 
  }
 
+ void ArtifactCompositionMenu::Impl::handleAddRenderQueueRequest()
+ {
+
+ }
+
+ void ArtifactCompositionMenu::Impl::handleSaveAsImageRequest()
+ {
+
+ }
 
  ArtifactCompositionMenu::ArtifactCompositionMenu(ArtifactMainWindow* mainWindow, QWidget* parent/*=nullptr*/) :QMenu(parent), impl_(new Impl(this,mainWindow))
  {
   setObjectName("CompositionMenu(&C)");
 
   setTitle("Composition");
-
+  setTearOffEnabled(true);
 
   //addAction(impl_->createCompositionAction);
 

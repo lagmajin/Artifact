@@ -14,6 +14,14 @@ import Artifact.Widgets.Hierarchy;
 
 export namespace Artifact {
 
+ class ArtifactSeekBar
+ {
+ private:
+
+ public:
+
+ };
+
  class ArtifactTimeCodeWidget :public QWidget {
   W_OBJECT(ArtifactTimeCodeWidget)
  private:
@@ -36,7 +44,7 @@ export namespace Artifact {
 
  };
 
- class ArtifactTimelineRulerWidget:public QWidget
+ class ArtifactTimelineRulerWidget :public QWidget
  {
  private:
 
@@ -87,7 +95,7 @@ export namespace Artifact {
  public slots:
  };
 
- class ArtifactTimelineIconView:public QTreeView
+ class ArtifactTimelineIconView :public QTreeView
  {
  private:
   class Impl;
@@ -97,7 +105,7 @@ export namespace Artifact {
   ~ArtifactTimelineIconView();
  };
 
- class TimelineLabel:public QWidget
+ class TimelineLabel :public QWidget
  {
  private:
   class Impl;
