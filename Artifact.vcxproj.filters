@@ -494,6 +494,9 @@
     <ClCompile Include="src\Project\ArtifactProjectModel.cpp">
       <Filter>ソース ファイル\Project</Filter>
     </ClCompile>
+    <ClCompile Include="include\Widgets\Render\ArtifactLayerRenderWidget.ixx">
+      <Filter>ヘッダー ファイル\Widgets\Render</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <None Include="src\Widgets\Menu\Test.thrift">

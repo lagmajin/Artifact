@@ -195,6 +195,7 @@
     <ClCompile Include="include\Widgets\Menu\ArtifactEffectMenu.ixx" />
     <ClCompile Include="include\Widgets\Render\ArtifactDiligentEngineRenderWidget.cpp" />
     <ClCompile Include="include\Widgets\Render\ArtifactDiligentEngineRenderWidget.ixx" />
+    <ClCompile Include="include\Widgets\Render\ArtifactLayerRenderWidget.ixx" />
     <ClCompile Include="src\Application\ArtifactApplicationManager.cpp" />
     <ClCompile Include="src\Effetcs\GlobalEffectManager.cpp" />
     <ClCompile Include="src\Layer\ArtifactSolid2DLayer.cpp" />

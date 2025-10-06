@@ -17,6 +17,7 @@
 
 module Artifact.Render.Offscreen;
 
+import Core.Point2D;
 import Image.Raw;
 import Color.Float;
 import Layer.Blend;
@@ -84,7 +85,9 @@ namespace Artifact
 
   void renderStart();
 
-  void drawSolidLayer();
+  void drawSolidLayer(const FloatColor& color);
+  void drawImage(const Point2DF&,const QImage& image);
+  //void drawImageLayer(const FloatImage& image);
  };
 
  OffscreenRenderer2D::Impl::Impl()
@@ -230,6 +233,11 @@ namespace Artifact
  }
 
  void OffscreenRenderer2D::Impl::renderFrame(double time)
+ {
+
+ }
+
+ void OffscreenRenderer2D::Impl::drawSolidLayer(const FloatColor& color)
  {
 
  }
