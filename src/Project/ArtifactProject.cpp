@@ -31,7 +31,7 @@ namespace Artifact {
 
  class ArtifactProject::Impl {
  private:
-
+  ArtifactProjectSettings projectSettings_;
  public:
   Impl();
   ~Impl();

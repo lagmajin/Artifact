@@ -132,6 +132,12 @@
     <ClInclude Include="include\Widgets\Render\Shader\CommonShader.hpp">
       <Filter>ヘッダー ファイル\Widgets\Render\shader</Filter>
     </ClInclude>
+    <ClInclude Include="Generated\Test_types.h">
+      <Filter>Thrift</Filter>
+    </ClInclude>
+    <ClInclude Include="Generated\TestService.h">
+      <Filter>Thrift</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\AppMain.cpp">
@@ -497,11 +503,17 @@
     <ClCompile Include="include\Widgets\Render\ArtifactLayerRenderWidget.ixx">
       <Filter>ヘッダー ファイル\Widgets\Render</Filter>
     </ClCompile>
+    <ClCompile Include="Generated\Test_types.cpp">
+      <Filter>Thrift</Filter>
+    </ClCompile>
+    <ClCompile Include="Generated\TestService.cpp">
+      <Filter>Thrift</Filter>
+    </ClCompile>
+    <ClCompile Include="Generated\TestService_server.skeleton.cpp">
+      <Filter>Thrift</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <None Include="src\Widgets\Menu\Test.thrift">
-      <Filter>Thrift</Filter>
-    </None>
     <None Include="src\Layer\ArtifactAdjustableLayer.cpp">
       <Filter>ソース ファイル\Layer</Filter>
     </None>
@@ -513,5 +525,10 @@
     <FxCompile Include="include\Widgets\Render\Shader\Common2DPS.hlsl">
       <Filter>ヘッダー ファイル\Widgets\Render\shader</Filter>
     </FxCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <CustomBuild Include="Test.thrift">
+      <Filter>Thrift</Filter>
+    </CustomBuild>
   </ItemGroup>
 </Project>

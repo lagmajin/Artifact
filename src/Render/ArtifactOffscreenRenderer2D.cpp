@@ -13,8 +13,6 @@
 #include <DiligentCore/Graphics/GraphicsEngineD3D12/interface/EngineFactoryD3D12.h>
 
 
-
-
 module Artifact.Render.Offscreen;
 
 import Core.Point2D;
@@ -43,7 +41,7 @@ namespace Artifact
 
  struct RendererWorker
  {
-  RefCntAutoPtr<IDeviceContext> pContext;
+  RefCntAutoPtr<IDeviceContext> pDefferedContext;
   RefCntAutoPtr<IFence>		   blendFence_;
  };
 
@@ -51,9 +49,9 @@ namespace Artifact
  class OffscreenRenderer2D::Impl
  {
  private:
-  RefCntAutoPtr<IRenderDevice> device_;
-  RefCntAutoPtr<IDeviceContext> imContext_;
-  RefCntAutoPtr<IDeviceContext> dfContext_;
+  RefCntAutoPtr<IRenderDevice> renderDevice_;
+  RefCntAutoPtr<IDeviceContext> mainDeviceContext_;
+  //RefCntAutoPtr<IDeviceContext> dfContext_;
 
   RefCntAutoPtr<IShader>	   pixelShader_;
   RefCntAutoPtr<ITexture>      compositionBuffer_;
@@ -66,6 +64,10 @@ namespace Artifact
 
 
   QMap<LAYER_BLEND_TYPE, RefCntAutoPtr<IPipelineState>> layer_blend_pso_map;
+
+  bool shader_compiled_ = false;
+  bool pso_created = false;
+
   void createLayerBlendPSO();
   void createShaders();
   void createConstantBuffers();
@@ -86,7 +88,9 @@ namespace Artifact
   void renderStart();
 
   void drawSolidLayer(const FloatColor& color);
+  void drawImage(float x, float y, const QImage& image);
   void drawImage(const Point2DF&,const QImage& image);
+  void drawPoint(const Point2DF& point);
   //void drawImageLayer(const FloatImage& image);
  };
 
@@ -116,7 +120,7 @@ namespace Artifact
   CreationAttribs.EnableValidation = true;
 
 
-  pFactory->CreateDeviceAndContextsD3D12(CreationAttribs, &device_, &imContext_);
+  pFactory->CreateDeviceAndContextsD3D12(CreationAttribs, &renderDevice_, &mainDeviceContext_);
 
   TextureDesc TexDesc;
   TexDesc.Type = RESOURCE_DIM_TEX_2D;
@@ -128,7 +132,7 @@ namespace Artifact
   FenceDesc fenceDesc;
   fenceDesc.Name = "BlendFence";
   fenceDesc.Type = FENCE_TYPE_GENERAL;
-  device_->CreateFence(fenceDesc, &blendFence_);
+  renderDevice_->CreateFence(fenceDesc, &blendFence_);
 
   //blendFence_=device_->CreateFence()
 
@@ -144,9 +148,20 @@ namespace Artifact
   {
    ComputePipelineStateCreateInfo info;
    info.PSODesc.Name = "";
+   auto shaderIt = blendShaders_.find(blendType);
+   if (shaderIt == blendShaders_.end())
+   {
+    //qDebug() << "Blend shader not found for type" << blendType;
+    continue;
+   }
 
+   info.pCS = shaderIt.value();
 
-   //info.Flags
+   //RefCntAutoPtr<IPipelineState> pso_;
+   //renderDevice_->CreateComputePipelineState(info, &pso);
+
+   // マップに保存
+   //layer_blend_pso_map[blendType] = pso_;
 
 
   }
@@ -196,7 +211,7 @@ namespace Artifact
 
   pCompositionView = compositionBuffer_->GetDefaultView(TEXTURE_VIEW_RENDER_TARGET);
 
-  imContext_->ClearRenderTarget(pCompositionView, clearColor, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+  mainDeviceContext_->ClearRenderTarget(pCompositionView, clearColor, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
 
  }
 
@@ -209,7 +224,7 @@ namespace Artifact
  {
   auto rtv = layerRenderTarget_->GetDefaultView(TEXTURE_VIEW_RENDER_TARGET);
 
-  imContext_->SetRenderTargets(1, nullptr, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+  mainDeviceContext_->SetRenderTargets(1, nullptr, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
 
 
 
@@ -217,7 +232,7 @@ namespace Artifact
 
  void OffscreenRenderer2D::Impl::blendLayer(LAYER_BLEND_TYPE type)
  {
-  imContext_->SetRenderTargets(0, nullptr, nullptr, RESOURCE_STATE_TRANSITION_MODE_NONE);
+  mainDeviceContext_->SetRenderTargets(0, nullptr, nullptr, RESOURCE_STATE_TRANSITION_MODE_NONE);
 
 
   //imContext_->SetPipelineState(PostFX_PSO);
@@ -238,6 +253,16 @@ namespace Artifact
  }
 
  void OffscreenRenderer2D::Impl::drawSolidLayer(const FloatColor& color)
+ {
+
+ }
+
+ void OffscreenRenderer2D::Impl::drawImage(float x, float y, const QImage& image)
+ {
+
+ }
+
+ void OffscreenRenderer2D::Impl::drawImage(const Point2DF&, const QImage& image)
  {
 
  }

@@ -1,7 +1,5 @@
 ﻿namespace cpp Artifact
 
-namespace cpp Artifact
-
 struct Example {
   1: i32 id,
   2: string name

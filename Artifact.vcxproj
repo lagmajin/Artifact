@@ -94,6 +94,7 @@
     <AllProjectBMIsArePublic>true</AllProjectBMIsArePublic>
     <PublicModuleDirectories>$(PublicModuleDirectories)</PublicModuleDirectories>
     <AllProjectIncludesArePublic>true</AllProjectIncludesArePublic>
+    <ExecutablePath>C:\Bin;$(ExecutablePath)</ExecutablePath>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <ClCompile>
@@ -171,6 +172,15 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="Generated\TestService.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="Generated\TestService_server.skeleton.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="Generated\Test_types.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
+    </ClCompile>
     <ClCompile Include="include\Composition\ArtifactComposition.ixx" />
     <ClCompile Include="include\Effetcs\GlobalEffectManager.ixx" />
     <ClCompile Include="include\Layer\ArtifactAbstract2DLayer.ixx" />
@@ -221,6 +231,12 @@
       <FileType>Document</FileType>
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
     </ClCompile>
+    <ClInclude Include="Generated\TestService.h">
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
+    </ClInclude>
+    <ClInclude Include="Generated\Test_types.h">
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
+    </ClInclude>
     <ClInclude Include="include\Composition\ArtifactCompositionManager.hpp" />
     <ClCompile Include="include\Effetcs\ArtifactAbstractEffect.ixx">
       <FileType>Document</FileType>
@@ -442,7 +458,12 @@
     <ClCompile Include="src\Layer\ArtifactHierarchyModel.cpp" />
     <ClCompile Include="src\Project\ArtifactProjectModel.cpp" />
     <None Include="src\Widgets\Dialog\EditCompositionSettingDialog.cpp" />
-    <None Include="src\Widgets\Menu\Test.thrift" />
+    <CustomBuild Include="Test.thrift">
+      <FileType>Document</FileType>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(ProjectDir)Generated\$(Filename).stamp</Outputs>
+      <Command Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">thrift --gen cpp --out "$(ProjectDir)Generated"  "%(Filename).thrift"</Command>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
+    </CustomBuild>
   </ItemGroup>
   <ItemGroup>
     <FxCompile Include="include\Widgets\Render\Shader\Common2DPS.hlsl">

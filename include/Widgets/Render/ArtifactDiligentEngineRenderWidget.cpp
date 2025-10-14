@@ -507,7 +507,7 @@ if (FAILED(hr)) {
   linePsInfo.Desc.ShaderType = Diligent::SHADER_TYPE_VERTEX;
 
 
-  //pDevice->CreateShader(linePsInfo, &p2d_line_pixel_shader_);
+  pDevice->CreateShader(linePsInfo, &p2d_line_pixel_shader_);
 
   Diligent::BufferDesc CBDesc;
   CBDesc.Name = "Constants CB";              // バッファの名前（デバッグ用）
@@ -667,18 +667,22 @@ if (FAILED(hr)) {
   }
 
   auto linePSOInfo = createDrawLinePSOHelper();
-  linePSOInfo.pVS = nullptr;
-  linePSOInfo.pPS = nullptr;
+  linePSOInfo.pVS = p2d_line_vertex_shader_;
+  linePSOInfo.pPS = p2d_line_pixel_shader_;
+
 
   pDevice->CreateGraphicsPipelineState(linePSOInfo,&pLine_PSO_);
 
-  auto solidPSOInfo = nullptr;
+	if (pLine_PSO_)
+	{
+}
 
-  auto drawSplitePSOInfo = nullptr;
+  auto solidPSOInfo = create2DPSOHelper();
 
-  //linePSOInfo.pVS = ;
+  auto drawSpritePSOInfo = create2DPSOHelper();
 
-  //pDevice->CreateGraphicsPipelineState(linePSOInfo, &p);
+
+
 
 
 
