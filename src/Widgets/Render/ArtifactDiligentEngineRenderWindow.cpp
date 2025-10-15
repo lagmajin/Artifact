@@ -1,10 +1,7 @@
 ﻿module;
-//#include <EngineFactoryVk.h>
-
 #include <DiligentCore/Graphics/GraphicsEngine/interface/EngineFactory.h>
 #include <DiligentCore/Graphics/GraphicsEngineD3D12/interface/EngineFactoryD3D12.h>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/PipelineState.h>
-//#include <EngineFactoryD3D12.h>
 #include <wobjectimpl.h>
 #include <windows.h>
 
@@ -13,7 +10,7 @@
 
 
 module ArtifactDiligentEngineRenderWindow;
-//#include "../../../include/Widgets/Render/ArtifactDiligentEngineRenderWindow.hpp"
+
 
 
 
@@ -28,7 +25,7 @@ module ArtifactDiligentEngineRenderWindow;
 #pragma comment(lib,"Diligent-GraphicsAccessories.lib")
 #pragma comment(lib,"Diligent-Archiver-static.lib")
 
-
+import Graphics.CBuffer.Constants;
 
 
 namespace Artifact {

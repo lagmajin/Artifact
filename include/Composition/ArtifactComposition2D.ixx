@@ -1,12 +1,16 @@
 ﻿module;
 #include <QString>
 #include <QJsonObject>
+
+
+
 export module Composition._2D;
 
 import std;
 
 import Utils.Id;
 import Color.Float;
+import Artifact.Layers;
 
 namespace Artifact {
 
@@ -34,6 +38,12 @@ namespace Artifact {
   void setCompositionBackgroundColor(const FloatColor& color);
   void addLayer();
   QJsonDocument toJson() const;
+
+  ArtifactAbstractLayer* frontMostLayer() const;
+  ArtifactAbstractLayer* backMostLayer() const;
+
+  void bringToFront(ArtifactAbstractLayer* layer);
+  void sendToBack(ArtifactAbstractLayer* layer);
  };
 
 typedef std::shared_ptr<ArtifactComposition2D> ArtifactComposition2DPtr;

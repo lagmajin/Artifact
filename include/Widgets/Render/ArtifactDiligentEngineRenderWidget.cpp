@@ -86,18 +86,25 @@ namespace Artifact {
    RefCntAutoPtr<IDeviceContext> pImmediateContext;
 
    RefCntAutoPtr<ISwapChain> pSwapChain_;
-   RefCntAutoPtr<IPipelineState> pTEST_2D_PSO_;
+
+ 	RefCntAutoPtr<IPipelineState> pTEST_2D_PSO_;
    RefCntAutoPtr<IPipelineState> pLine_PSO_;
 	
 
-   RefCntAutoPtr<IShader> p2D_vertex_shader;
+   
    RefCntAutoPtr<IShader> p2D_pixel_test;
    RefCntAutoPtr<IShader> p2D_pixel;
-   RefCntAutoPtr<IShader>p2d_textured_ps;
 
 
-   RefCntAutoPtr<IShader>p2d_line_vertex_shader_;
-   RefCntAutoPtr<IShader>p2d_line_pixel_shader_;
+   RefCntAutoPtr<IShader>m_spriteVS;
+   RefCntAutoPtr<IShader>m_spritePS;
+
+   RefCntAutoPtr<IShader>m_line_vertex_shader_;
+   RefCntAutoPtr<IShader>m_line_pixel_shader_;
+
+   RefCntAutoPtr<IShader> p2D_vertex_shader;
+  
+   
 
 
 
@@ -115,6 +122,8 @@ namespace Artifact {
    RefCntAutoPtr<IBuffer>        p2D_VFrastumBuffer_;
    RefCntAutoPtr<IBuffer>		 p2D_VLineBuffer_;
    RefCntAutoPtr<IBuffer>		 p2D_draw_solid_color_constants;
+
+   RefCntAutoPtr<IBuffer>		 m_pDrawSpriteCBuffer;
 
    RefCntAutoPtr<IShaderResourceBinding> p2D_SRB_;
    RefCntAutoPtr<IShaderResourceBinding> p2D_LINE_SRB_;
@@ -180,7 +189,7 @@ namespace Artifact {
    void saveScreenShotToClipboardByQt();
    void saveScreenShotToClipboardByWinRT();
 
-
+   void hit();
  };
 
 
@@ -379,8 +388,22 @@ if (FAILED(hr)) {
 
   p2D_draw_solid_color_constants = CreateConstantBuffer(pDevice, sizeof(CBSolidColor),nullptr, "ClearColorBuffer");
 
+  BufferDesc CBDesc2;
+  CBDesc2.Name = "SpriteCB";
+  CBDesc2.Size = sizeof(Vertex);
+  CBDesc2.Usage = USAGE_DYNAMIC;
+  CBDesc2.BindFlags = BIND_UNIFORM_BUFFER;
+  CBDesc2.CPUAccessFlags = CPU_ACCESS_WRITE;
 
-  qDebug() << "Buffer cleared";
+  BufferData CBData2;
+  CBData2.pData = nullptr;
+  CBData2.DataSize = 0;
+
+  pDevice->CreateBuffer(CBDesc2, &CBData2, &m_pDrawSpriteCBuffer);
+
+
+
+  qDebug() << "Buffer created";
  }
 
  void ArtifactDiligentEngineComposition2DWindow::Impl::initializeResources()
@@ -469,15 +492,15 @@ if (FAILED(hr)) {
 
   pDevice->CreateShader(testShaderCI, &p2D_pixel_test);
 
-  ShaderCreateInfo basicShaderCI;
-  basicShaderCI.SourceLanguage = Diligent::SHADER_SOURCE_LANGUAGE_HLSL; // または GLSL
-  basicShaderCI.Desc.ShaderType = Diligent::SHADER_TYPE_PIXEL;
-  basicShaderCI.EntryPoint = "main";
-  basicShaderCI.Desc.Name = "BasicPixelShader";
-  basicShaderCI.Source = g_qsSolidColorPS.constData();
-  basicShaderCI.SourceLength = g_qsSolidColorPS.length();
+  ShaderCreateInfo drawSolidShaderCI;
+  drawSolidShaderCI.SourceLanguage = Diligent::SHADER_SOURCE_LANGUAGE_HLSL; // または GLSL
+  drawSolidShaderCI.Desc.ShaderType = Diligent::SHADER_TYPE_PIXEL;
+  drawSolidShaderCI.EntryPoint = "main";
+  drawSolidShaderCI.Desc.Name = "BasicPixelShader";
+  drawSolidShaderCI.Source = g_qsSolidColorPS.constData();
+  drawSolidShaderCI.SourceLength = g_qsSolidColorPS.length();
 
-  pDevice->CreateShader(basicShaderCI, &p2D_pixel);
+  pDevice->CreateShader(drawSolidShaderCI, &p2D_pixel);
 
 
   ShaderCreateInfo BasicVertexShaderCI;
@@ -499,15 +522,38 @@ if (FAILED(hr)) {
   lineVsInfo.Source=lineShaderVSText.constData();
   lineVsInfo.SourceLength = lineShaderVSText.length();
 
-  pDevice->CreateShader(lineVsInfo, &p2d_line_vertex_shader_);
+  pDevice->CreateShader(lineVsInfo, &m_line_vertex_shader_);
 
   ShaderCreateInfo linePsInfo;
 
   linePsInfo.SourceLanguage = Diligent::SHADER_SOURCE_LANGUAGE_HLSL; // または GLSL
-  linePsInfo.Desc.ShaderType = Diligent::SHADER_TYPE_VERTEX;
+  linePsInfo.Desc.ShaderType = Diligent::SHADER_TYPE_PIXEL;
+  linePsInfo.Desc.Name = "MyPixelShader";
+  linePsInfo.Source = g_qsSolidColorPS2.constData();
+  lineVsInfo.SourceLength = g_qsSolidColorPS2.length();
+
+  pDevice->CreateShader(linePsInfo, &m_line_pixel_shader_);//#fix
+
+  ShaderCreateInfo sprite2DVsInfo;
+  sprite2DVsInfo.SourceLanguage = Diligent::SHADER_SOURCE_LANGUAGE_HLSL; // または GLSL
+  sprite2DVsInfo.Desc.ShaderType = Diligent::SHADER_TYPE_VERTEX;
+  sprite2DVsInfo.Desc.Name = "SpriteShader";
+
+  sprite2DVsInfo.Source = g_qsBasic2DVS.constData();
+  sprite2DVsInfo.SourceLength = g_qsBasic2DVS.length();
+
+  pDevice->CreateShader(sprite2DVsInfo, &m_spriteVS);
 
 
-  pDevice->CreateShader(linePsInfo, &p2d_line_pixel_shader_);
+  ShaderCreateInfo sprite2DPsInfo;
+  sprite2DPsInfo.SourceLanguage = Diligent::SHADER_SOURCE_LANGUAGE_HLSL; // または GLSL
+  sprite2DPsInfo.Desc.ShaderType = Diligent::SHADER_TYPE_PIXEL;
+  sprite2DPsInfo.Desc.Name = "SpriteShader";
+
+  sprite2DPsInfo.Source = g_qsBasicSprite2DImagePS.constData();
+  sprite2DPsInfo.SourceLength = g_qsBasicSprite2DImagePS.length();
+
+  pDevice->CreateShader(sprite2DPsInfo, &m_spritePS);//#fix
 
   Diligent::BufferDesc CBDesc;
   CBDesc.Name = "Constants CB";              // バッファの名前（デバッグ用）
@@ -539,6 +585,10 @@ if (FAILED(hr)) {
    // デバッグ出力やブレークポイントで確認
    std::cerr << "Error: Vertex Shader variable 'Constants' not found in SRB!" << std::endl;
   }
+
+  //Shader
+
+
 
   calcProjection(m_CurrentPhysicalWidth, m_CurrentPhysicalHeight);
 
@@ -667,11 +717,11 @@ if (FAILED(hr)) {
   }
 
   auto linePSOInfo = createDrawLinePSOHelper();
-  linePSOInfo.pVS = p2d_line_vertex_shader_;
-  linePSOInfo.pPS = p2d_line_pixel_shader_;
+  linePSOInfo.pVS = m_line_vertex_shader_;
+  linePSOInfo.pPS = m_line_pixel_shader_;
 
 
-  pDevice->CreateGraphicsPipelineState(linePSOInfo,&pLine_PSO_);
+  //pDevice->CreateGraphicsPipelineState(linePSOInfo,&pLine_PSO_);
 
 	if (pLine_PSO_)
 	{
@@ -680,9 +730,23 @@ if (FAILED(hr)) {
   auto solidPSOInfo = create2DPSOHelper();
 
   auto drawSpritePSOInfo = create2DPSOHelper();
+  drawSpritePSOInfo.PSODesc.Name = "DrawSpritePSO";
 
+  drawSpritePSOInfo.pPS = m_spritePS;
+  drawSpritePSOInfo.pVS = m_spriteVS;
+  drawSpritePSOInfo.GraphicsPipeline.RasterizerDesc.CullMode = CULL_MODE_NONE;
+  drawSpritePSOInfo.GraphicsPipeline.RasterizerDesc.FillMode = FILL_MODE_SOLID;
+  LayoutElement VertexLayout[] =
+  {
+	  {0, 0, 2, VT_FLOAT32, False}, // position
+	  {1, 0, 2, VT_FLOAT32, False}  // texCoord
+  };
 
+  drawSpritePSOInfo.GraphicsPipeline.InputLayout.LayoutElements = VertexLayout;
+  drawSpritePSOInfo.GraphicsPipeline.InputLayout.NumElements = _countof(VertexLayout);
 
+  drawSpritePSOInfo.GraphicsPipeline.DepthStencilDesc.DepthEnable = False;
+  //drawSpritePSOInfo.GraphicsPipeline.RTVFormats[0] = m_RenderTargetFormat;
 
 
 
@@ -1103,6 +1167,28 @@ if (FAILED(hr)) {
 
  void ArtifactDiligentEngineComposition2DWindow::Impl::drawTextInCanvas(const QString& string)
  {
+
+ }
+
+ void ArtifactDiligentEngineComposition2DWindow::Impl::hit()
+ {
+
+ }
+
+ void ArtifactDiligentEngineComposition2DWindow::Impl::drawSprite(float x, float y, float w, float h)
+ {
+
+  Vertex vertices[] = {
+  { { x,     y },     { 0.0f, 0.0f } },
+  { { x + w, y },     { 1.0f, 0.0f } },
+  { { x,     y + h }, { 0.0f, 1.0f } },
+  { { x + w, y + h }, { 1.0f, 1.0f } },
+  };
+
+  //pImmediateContext->UpdateBuffer(,0, sizeof(vertices), vertices,
+  // Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+
+
 
  }
 

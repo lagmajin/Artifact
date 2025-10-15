@@ -1,6 +1,8 @@
 ﻿module;
 #include <QFileSystemModel>
 #include <QDir>
+#include <QLabel>
+#include <QLineEdit>
 #include <QStandardPaths>
 #include <QVBoxLayout>
 #include <QWidget>
@@ -15,26 +17,44 @@ namespace Artifact {
 
  using namespace ArtifactCore;
 
-	W_OBJECT_IMPL(ArtifactAssetBrowserToolBar)
+ W_OBJECT_IMPL(ArtifactAssetBrowserToolBar)
 
 
 
-	class ArtifactAssetBrowserToolBar::Impl
+  class ArtifactAssetBrowserToolBar::Impl
  {
+ private:
+ 	
  public:
-
+  Impl();
+  ~Impl();
+  QLineEdit* searchWidget = nullptr;
  };
 
-  ArtifactAssetBrowserToolBar::ArtifactAssetBrowserToolBar(QWidget* parent /*= nullptr*/):QWidget(parent)
+ ArtifactAssetBrowserToolBar::Impl::Impl()
  {
-   auto layout = new QHBoxLayout();
+  searchWidget = new QLineEdit();
+ }
 
-   setLayout(layout);
+ ArtifactAssetBrowserToolBar::Impl::~Impl()
+ {
+
+ }
+
+ ArtifactAssetBrowserToolBar::ArtifactAssetBrowserToolBar(QWidget* parent /*= nullptr*/) :QWidget(parent),impl_(new Impl())
+ {
+
+ 	
+  auto layout = new QHBoxLayout();
+  layout->addWidget(impl_->searchWidget);
+ 	
+
+  setLayout(layout);
  }
 
  ArtifactAssetBrowserToolBar::~ArtifactAssetBrowserToolBar()
  {
-
+  delete impl_;
  }
 
  W_OBJECT_IMPL(ArtifactAssetBrowser)
@@ -51,17 +71,20 @@ namespace Artifact {
 
  };
 
- ArtifactAssetBrowser::ArtifactAssetBrowser(QWidget* parent /*= nullptr*/) :QWidget(parent),impl_(new Impl())
+ ArtifactAssetBrowser::ArtifactAssetBrowser(QWidget* parent /*= nullptr*/) :QWidget(parent), impl_(new Impl())
  {
   setWindowTitle("AssetBrowser");
-	
+
 
   auto style = getDCCStyleSheetPreset(DccStylePreset::ModoStyle);
 
   setStyleSheet(style);
 
-  auto vLayout = new QVBoxLayout();
 
+  auto assetToolBar = new ArtifactAssetBrowserToolBar();
+
+
+  auto vLayout = new QVBoxLayout();
 
 
   auto layout = new QHBoxLayout();
@@ -84,6 +107,10 @@ namespace Artifact {
   directoryView->setExpandsOnDoubleClick(true);
   directoryView->setAnimated(true);
 
+  auto assetPathLabel = new QLabel("Assets > 2D Texture");
+  assetPathLabel->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+  assetPathLabel->setStyleSheet("font-weight: bold;");
+
   auto fileView = new QListWidget();
   fileView->setViewMode(QListView::IconMode);
   fileView->setIconSize(QSize(64, 64));
@@ -94,8 +121,17 @@ namespace Artifact {
   fileView->setTextElideMode(Qt::ElideRight);
   // デスクトップを表示
 
+
+  auto filePathLabel = new QLabel();
+
+  auto VBoxLayout = new  QVBoxLayout();
+  VBoxLayout->addWidget(assetPathLabel);
+  VBoxLayout->addWidget(fileView);
+  VBoxLayout->addWidget(filePathLabel);
+
+  vLayout->addWidget(assetToolBar);
   layout->addWidget(directoryView);
-  layout->addWidget(fileView);
+  layout->addLayout(VBoxLayout);
   setLayout(layout);
 
  }
@@ -105,5 +141,5 @@ namespace Artifact {
   delete impl_;
  }
 
- 
+
 };
