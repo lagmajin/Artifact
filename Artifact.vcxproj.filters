@@ -500,7 +500,7 @@
     <ClCompile Include="src\Project\ArtifactProjectModel.cpp">
       <Filter>ソース ファイル\Project</Filter>
     </ClCompile>
-    <ClCompile Include="include\Widgets\Render\ArtifactLayerRenderWidget.ixx">
+    <ClCompile Include="include\Widgets\Render\ArtifactRenderLayerWidget.ixx">
       <Filter>ヘッダー ファイル\Widgets\Render</Filter>
     </ClCompile>
     <ClCompile Include="Generated\Test_types.cpp">
@@ -511,6 +511,12 @@
     </ClCompile>
     <ClCompile Include="Generated\TestService_server.skeleton.cpp">
       <Filter>Thrift</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Widgets\Render\ArtifactRenderLayerWidget.cpp">
+      <Filter>ソース ファイル\Widgets\Render</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Composition\IComposition2D.ixx">
+      <Filter>ヘッダー ファイル\Composition</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>

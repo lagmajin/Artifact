@@ -8,10 +8,16 @@ namespace Artifact {
  class ArtifactComposition2D::Impl
  {
  private:
-
+  QVector<ArtifactAbstractLayerPtr> layers_;
  public:
   Impl();
   ~Impl();
+  void resize(int width, int height);
+  void setCompositionBackgroundColor(const FloatColor& color);
+
+  void addLayer();
+  void removeLayer();
+  void removeAllLayer();
  };
 
  ArtifactComposition2D::Impl::Impl()
@@ -24,14 +30,55 @@ namespace Artifact {
 
  }
 
-ArtifactComposition2D::ArtifactComposition2D()
+ void ArtifactComposition2D::Impl::resize(int width, int height)
+ {
+
+ }
+
+ void ArtifactComposition2D::Impl::setCompositionBackgroundColor(const FloatColor& color)
+ {
+
+ }
+
+ void ArtifactComposition2D::Impl::removeAllLayer()
+ {
+
+ }
+
+ArtifactComposition2D::ArtifactComposition2D():impl_(new Impl)
 {
 
 }
 
 ArtifactComposition2D::~ArtifactComposition2D()
 {
+ delete impl_;
+}
 
+void ArtifactComposition2D::setCompositionBackgroundColor(const FloatColor& color)
+{
+
+}
+
+void ArtifactComposition2D::addLayer()
+{
+ //auto layer = std::make_shared<ArtifactAbstractLayer>();
+ //layer->id = QUuid::createUuid();
+}
+
+void ArtifactComposition2D::resize(int width, int height)
+{
+ impl_->resize(width, height);
+}
+
+void ArtifactComposition2D::removeLayer(ArtifactAbstractLayer* layer)
+{
+
+}
+
+void ArtifactComposition2D::removeAllLayer()
+{
+ impl_->removeAllLayer();
 }
 
 ArtifactAbstractLayer* ArtifactComposition2D::frontMostLayer() const

@@ -8,15 +8,10 @@
 #include <DiligentCore/Common/interface/RefCntAutoPtr.hpp>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/SwapChain.h>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/RenderDevice.h>
-
 #include <opencv2/opencv.hpp>
-
 #include <DiligentCore/Graphics/GraphicsEngine/interface/DeviceContext.h>
-
 #include <DiligentTools/RenderStateNotation/interface/RenderStateNotationParser.h>
-
 #include <DiligentTools/TextureLoader/interface/Image.h>
-
 #include <DiligentTools/Imgui/interface/ImGuiDiligentRenderer.hpp>
 
 #include <DiligentCore/Common/interface/BasicMath.hpp>
@@ -52,14 +47,16 @@ import Graphics;
 import Color.Float;
 import Graphics.Func;
 import Graphics.CBuffer.Constants.Helper;
-
+import Graphics.Shader.Compute.HLSL.Blend;
 import Size;
 
 import std;
 
 import Core.Scale.Zoom;
 
-import Graphics.Shader.Basics.Vertex;
+import Layer.Blend;
+
+import Graphics.Shader.HLSL.Basics.Vertex;
 
 namespace Artifact {
 
@@ -72,6 +69,11 @@ namespace Artifact {
  using namespace winrt;
  using Microsoft::WRL::ComPtr;
 #endif
+ struct BlendResources
+ {
+  RefCntAutoPtr<IPipelineState> pPSO;
+  RefCntAutoPtr<IShaderResourceBinding> pSRB;
+ };
 
  W_OBJECT_IMPL(ArtifactDiligentEngineComposition2DWindow)
 
@@ -84,27 +86,19 @@ namespace Artifact {
 
    RefCntAutoPtr<IRenderDevice> pDevice;
    RefCntAutoPtr<IDeviceContext> pImmediateContext;
-
    RefCntAutoPtr<ISwapChain> pSwapChain_;
 
- 	RefCntAutoPtr<IPipelineState> pTEST_2D_PSO_;
+   RefCntAutoPtr<IPipelineState> pTEST_2D_PSO_;
    RefCntAutoPtr<IPipelineState> pLine_PSO_;
-	
+   RefCntAutoPtr<IPipelineState> pSprite_PSO_;
 
-   
-   RefCntAutoPtr<IShader> p2D_pixel_test;
    RefCntAutoPtr<IShader> p2D_pixel;
-
-
-   RefCntAutoPtr<IShader>m_spriteVS;
-   RefCntAutoPtr<IShader>m_spritePS;
-
-   RefCntAutoPtr<IShader>m_line_vertex_shader_;
-   RefCntAutoPtr<IShader>m_line_pixel_shader_;
-
    RefCntAutoPtr<IShader> p2D_vertex_shader;
-  
-   
+
+   RenderShaderPair m_draw_test_shaders;
+   RenderShaderPair m_draw_line_shaders;
+   RenderShaderPair m_draw_solid_shaders;
+   RenderShaderPair m_draw_sprite_shaders;
 
 
 
@@ -123,10 +117,13 @@ namespace Artifact {
    RefCntAutoPtr<IBuffer>		 p2D_VLineBuffer_;
    RefCntAutoPtr<IBuffer>		 p2D_draw_solid_color_constants;
 
-   RefCntAutoPtr<IBuffer>		 m_pDrawSpriteCBuffer;
+   RefCntAutoPtr<IBuffer>		 m_pDrawSpriteVertexBuffer;
 
    RefCntAutoPtr<IShaderResourceBinding> p2D_SRB_;
    RefCntAutoPtr<IShaderResourceBinding> p2D_LINE_SRB_;
+   RefCntAutoPtr<IShaderResourceBinding> p2D_draw_sprite_srb;
+
+
    RefCntAutoPtr<ITextureView> p2D_TextureView;
    RefCntAutoPtr<ITexture> p2D_Texture;
 
@@ -134,6 +131,12 @@ namespace Artifact {
    //float4x4 projectionMatrix_;
    std::vector<ShaderResourceVariableDesc> m_ResourceVars;
    std::vector<ImmutableSamplerDesc> m_sampler_;
+
+   std::map<LAYER_BLEND_TYPE, RefCntAutoPtr<IShader>> m_blendShaderMap;
+   //std::map<LAYER_BLEND_TYPE, RefCntAutoPtr<IPipelineState>> m_blendPSOMap;
+
+   std::map<LAYER_BLEND_TYPE, BlendResources> m_BlendMap;
+
    QWidget* widget_ = nullptr;
    bool m_initialized = false;
    int m_CurrentPhysicalWidth;
@@ -142,7 +145,7 @@ namespace Artifact {
    glm::mat4 glm_projection_;
    glm::mat4 view_;
    qreal m_CurrentDevicePixelRatio;
- 
+
 
 
    glm::mat4 calculateModelMatrixGLM(const glm::vec2& position,      // 画面上の最終的なピクセル位置
@@ -155,11 +158,13 @@ namespace Artifact {
    bool takeScreenshot = false;
 
    bool panning_ = false;
-
+   const TEXTURE_FORMAT MAIN_RTV_FORMAT = TEX_FORMAT_RGBA8_UNORM_SRGB;
    void initializeResources();
    void createShaders();
+   void createBlendShaders();
    void createConstantBuffers();
    void createPSO();
+   void createBlendShaderAndPSOs();
    void calcProjection(int width, int height);
 
   public:
@@ -173,11 +178,11 @@ namespace Artifact {
    void clearComposition(const FloatColor& color);
    void present();
    void renderOneFrame();
-   void drawSprite(float x, float y, float w, float h);
+   void drawSprite(float x, float y, float w, float h, const QImage& sprite);
    void drawSolidQuadToCompositionOld(float x, float y, float w, float h);
    void drawSolidQuadToComposition(float x, float y, float w, float h);
    void drawQuadLine(float x, float y, float w, float h, const FloatColor& lineColor, float thikness = 1.0f);
-   void drawLineCanvas(float x_1, float y_1, float x_2, float y_2, const FloatColor& color, float tick=1.0f);
+   void drawLineCanvas(float x_1, float y_1, float x_2, float y_2, const FloatColor& color, float tick = 1.0f);
    void drawViewCameraFrustum();
    void drawTextInCanvas(const QString& string);
 
@@ -262,7 +267,7 @@ namespace Artifact {
   SwapChainDesc SCDesc;
   SCDesc.Width = m_CurrentPhysicalWidth;  // QWindowの現在の幅
   SCDesc.Height = m_CurrentPhysicalHeight; // QWindowの現在の高さ
-  SCDesc.ColorBufferFormat = TEX_FORMAT_RGBA8_UNORM;
+  SCDesc.ColorBufferFormat = MAIN_RTV_FORMAT;
   SCDesc.DepthBufferFormat = TEX_FORMAT_UNKNOWN;
 
   SCDesc.BufferCount = 2;
@@ -351,7 +356,9 @@ if (FAILED(hr)) {
 	//pDevice->CreateTexture(compositionDesc,nullptr,)
 
   createShaders();
+  //createBlendShaders();
   createPSO();
+  createBlendShaderAndPSOs();
   initializeResources();
   createConstantBuffers();
 
@@ -386,20 +393,20 @@ if (FAILED(hr)) {
 
 
 
-  p2D_draw_solid_color_constants = CreateConstantBuffer(pDevice, sizeof(CBSolidColor),nullptr, "ClearColorBuffer");
+  p2D_draw_solid_color_constants = CreateConstantBuffer(pDevice, sizeof(CBSolidColor), nullptr, "ClearColorBuffer");
 
   BufferDesc CBDesc2;
   CBDesc2.Name = "SpriteCB";
   CBDesc2.Size = sizeof(Vertex);
   CBDesc2.Usage = USAGE_DYNAMIC;
-  CBDesc2.BindFlags = BIND_UNIFORM_BUFFER;
+  CBDesc2.BindFlags = BIND_VERTEX_BUFFER;
   CBDesc2.CPUAccessFlags = CPU_ACCESS_WRITE;
 
   BufferData CBData2;
   CBData2.pData = nullptr;
   CBData2.DataSize = 0;
 
-  pDevice->CreateBuffer(CBDesc2, &CBData2, &m_pDrawSpriteCBuffer);
+  pDevice->CreateBuffer(CBDesc2, &CBData2, &m_pDrawSpriteVertexBuffer);
 
 
 
@@ -442,6 +449,18 @@ if (FAILED(hr)) {
 
 
  }
+
+ void ArtifactDiligentEngineComposition2DWindow::Impl::initializeImGui(QWidget* window)
+ {
+  IMGUI_CHECKVERSION();
+  ImGui::CreateContext();
+  ImGuiIO& io = ImGui::GetIO();
+
+  (void)io;
+
+
+ }
+
  void ArtifactDiligentEngineComposition2DWindow::Impl::recreateSwapChain(QWidget* window)
  {
   if (!window || !pDevice)
@@ -490,7 +509,7 @@ if (FAILED(hr)) {
   testShaderCI.SourceLength = g_qsSolidColorPS2.length();
 
 
-  pDevice->CreateShader(testShaderCI, &p2D_pixel_test);
+  pDevice->CreateShader(testShaderCI, &m_draw_test_shaders.PS);
 
   ShaderCreateInfo drawSolidShaderCI;
   drawSolidShaderCI.SourceLanguage = Diligent::SHADER_SOURCE_LANGUAGE_HLSL; // または GLSL
@@ -519,10 +538,10 @@ if (FAILED(hr)) {
   lineVsInfo.Desc.ShaderType = Diligent::SHADER_TYPE_VERTEX;
   lineVsInfo.EntryPoint = "main";
   lineVsInfo.Desc.Name = "MyVertexShader";
-  lineVsInfo.Source=lineShaderVSText.constData();
+  lineVsInfo.Source = lineShaderVSText.constData();
   lineVsInfo.SourceLength = lineShaderVSText.length();
 
-  pDevice->CreateShader(lineVsInfo, &m_line_vertex_shader_);
+  pDevice->CreateShader(lineVsInfo, &m_draw_line_shaders.VS);
 
   ShaderCreateInfo linePsInfo;
 
@@ -532,7 +551,14 @@ if (FAILED(hr)) {
   linePsInfo.Source = g_qsSolidColorPS2.constData();
   lineVsInfo.SourceLength = g_qsSolidColorPS2.length();
 
-  pDevice->CreateShader(linePsInfo, &m_line_pixel_shader_);//#fix
+  pDevice->CreateShader(linePsInfo, &m_draw_line_shaders.PS);//#fix
+
+  ShaderCreateInfo psSolidInfo;
+
+  ShaderCreateInfo vsSoildShaderInfo;
+
+
+
 
   ShaderCreateInfo sprite2DVsInfo;
   sprite2DVsInfo.SourceLanguage = Diligent::SHADER_SOURCE_LANGUAGE_HLSL; // または GLSL
@@ -542,7 +568,7 @@ if (FAILED(hr)) {
   sprite2DVsInfo.Source = g_qsBasic2DVS.constData();
   sprite2DVsInfo.SourceLength = g_qsBasic2DVS.length();
 
-  pDevice->CreateShader(sprite2DVsInfo, &m_spriteVS);
+  pDevice->CreateShader(sprite2DVsInfo, &m_draw_sprite_shaders.VS);
 
 
   ShaderCreateInfo sprite2DPsInfo;
@@ -553,7 +579,7 @@ if (FAILED(hr)) {
   sprite2DPsInfo.Source = g_qsBasicSprite2DImagePS.constData();
   sprite2DPsInfo.SourceLength = g_qsBasicSprite2DImagePS.length();
 
-  pDevice->CreateShader(sprite2DPsInfo, &m_spritePS);//#fix
+  pDevice->CreateShader(sprite2DPsInfo, &m_draw_sprite_shaders.PS);
 
   Diligent::BufferDesc CBDesc;
   CBDesc.Name = "Constants CB";              // バッファの名前（デバッグ用）
@@ -591,53 +617,6 @@ if (FAILED(hr)) {
 
 
   calcProjection(m_CurrentPhysicalWidth, m_CurrentPhysicalHeight);
-
- }
-
- 
- void ArtifactDiligentEngineComposition2DWindow::Impl::present()
- {
-  if (pSwapChain_)
-  {
-
-   pSwapChain_->Present(1);
-  }
- }
-
-
- void ArtifactDiligentEngineComposition2DWindow::Impl::initializeImGui(QWidget* window)
- {
-  IMGUI_CHECKVERSION();
-  ImGui::CreateContext();
-  ImGuiIO& io = ImGui::GetIO();
-
-  (void)io;
-
-
- }
-
- //#RenderLoop
- void ArtifactDiligentEngineComposition2DWindow::Impl::renderOneFrame()
- {
-  const Diligent::float4& clearColor = { 0.5f,0.5f,0.5f,1.0f };
-  clearCanvas(clearColor);
-
-
-  {
-   std::lock_guard<std::mutex> lock(g_eventMutex);
-   while (!g_renderEvents.empty()) {
-	auto ev = std::move(g_renderEvents.front());
-	g_renderEvents.pop();
-
-	lock.~lock_guard();  // 明示的にロックを外す
-	ev();                // イベント実行（スクショ保存）
-
-	new (&lock) std::lock_guard<std::mutex>(g_eventMutex);  // 再ロック
-   }
-  }
-
-  present();
-
 
  }
 
@@ -690,50 +669,56 @@ if (FAILED(hr)) {
 
 
   auto testPsoInfo = create2DPSOHelper();
-
-  // Define vertex shader input layout
-  LayoutElement LayoutElems[] =
   {
-  Diligent::LayoutElement{0, 0, 2, VT_FLOAT32, False, 0},
-   Diligent::LayoutElement{1, 0, 2, VT_FLOAT32, False, sizeof(float2)}
-  };
-  testPsoInfo.GraphicsPipeline.InputLayout.NumElements = _countof(LayoutElems);
-  testPsoInfo.GraphicsPipeline.InputLayout.LayoutElements = LayoutElems;
+   // Define vertex shader input layout
+   LayoutElement LayoutElems[] =
+   {
+   Diligent::LayoutElement{0, 0, 2, VT_FLOAT32, False, 0},
+	Diligent::LayoutElement{1, 0, 2, VT_FLOAT32, False, sizeof(float2)}
+   };
+   testPsoInfo.GraphicsPipeline.InputLayout.NumElements = _countof(LayoutElems);
+   testPsoInfo.GraphicsPipeline.InputLayout.LayoutElements = LayoutElems;
 
-  testPsoInfo.pVS = p2D_vertex_shader;
-  testPsoInfo.pPS = p2D_pixel_test;
-  testPsoInfo.PSODesc.ResourceLayout.Variables = m_ResourceVars.data();
-  testPsoInfo.PSODesc.ResourceLayout.NumVariables = static_cast<Uint32>(m_ResourceVars.size());
+   testPsoInfo.pVS = p2D_vertex_shader;
+   testPsoInfo.pPS = m_draw_test_shaders.PS;
+   testPsoInfo.PSODesc.ResourceLayout.Variables = m_ResourceVars.data();
+   testPsoInfo.PSODesc.ResourceLayout.NumVariables = static_cast<Uint32>(m_ResourceVars.size());
 
-  testPsoInfo.PSODesc.ResourceLayout.ImmutableSamplers = m_sampler_.data();
-  testPsoInfo.PSODesc.ResourceLayout.NumImmutableSamplers = static_cast<Uint32>(m_sampler_.size());
-  pDevice->CreateGraphicsPipelineState(testPsoInfo, &pTEST_2D_PSO_);
+   testPsoInfo.PSODesc.ResourceLayout.ImmutableSamplers = m_sampler_.data();
+   testPsoInfo.PSODesc.ResourceLayout.NumImmutableSamplers = static_cast<Uint32>(m_sampler_.size());
+   pDevice->CreateGraphicsPipelineState(testPsoInfo, &pTEST_2D_PSO_);
 
-  pTEST_2D_PSO_->CreateShaderResourceBinding(&p2D_SRB_, false);
-  if (!p2D_SRB_)
-  {
-   // エラー処理（例: qCritical() << "Failed to create 2D Shader Resource Binding!";）
-   return;
+   pTEST_2D_PSO_->CreateShaderResourceBinding(&p2D_SRB_, false);
+   if (!p2D_SRB_)
+   {
+	// エラー処理（例: qCritical() << "Failed to create 2D Shader Resource Binding!";）
+	return;
+   }
   }
 
   auto linePSOInfo = createDrawLinePSOHelper();
-  linePSOInfo.pVS = m_line_vertex_shader_;
-  linePSOInfo.pPS = m_line_pixel_shader_;
+  linePSOInfo.pVS = m_draw_line_shaders.VS;
+  linePSOInfo.pPS = m_draw_line_shaders.PS;
 
 
-  //pDevice->CreateGraphicsPipelineState(linePSOInfo,&pLine_PSO_);
 
-	if (pLine_PSO_)
-	{
-}
+
+
+
+  if (pLine_PSO_)
+  {
+
+  }
+
+  //IPipelineStateCache
 
   auto solidPSOInfo = create2DPSOHelper();
 
   auto drawSpritePSOInfo = create2DPSOHelper();
   drawSpritePSOInfo.PSODesc.Name = "DrawSpritePSO";
 
-  drawSpritePSOInfo.pPS = m_spritePS;
-  drawSpritePSOInfo.pVS = m_spriteVS;
+  drawSpritePSOInfo.pPS = m_draw_sprite_shaders.PS;
+  drawSpritePSOInfo.pVS = m_draw_sprite_shaders.VS;
   drawSpritePSOInfo.GraphicsPipeline.RasterizerDesc.CullMode = CULL_MODE_NONE;
   drawSpritePSOInfo.GraphicsPipeline.RasterizerDesc.FillMode = FILL_MODE_SOLID;
   LayoutElement VertexLayout[] =
@@ -746,11 +731,117 @@ if (FAILED(hr)) {
   drawSpritePSOInfo.GraphicsPipeline.InputLayout.NumElements = _countof(VertexLayout);
 
   drawSpritePSOInfo.GraphicsPipeline.DepthStencilDesc.DepthEnable = False;
-  //drawSpritePSOInfo.GraphicsPipeline.RTVFormats[0] = m_RenderTargetFormat;
+
+  drawSpritePSOInfo.GraphicsPipeline.NumRenderTargets = 1;
+  drawSpritePSOInfo.GraphicsPipeline.RTVFormats[0] = MAIN_RTV_FORMAT;
+  drawSpritePSOInfo.GraphicsPipeline.DSVFormat = TEX_FORMAT_D32_FLOAT;
+
+  pDevice->CreatePipelineState(drawSpritePSOInfo, &pSprite_PSO_);
+  if (!pSprite_PSO_)
+  {
+   // ここでログ出力
+   std::cerr << "PSO creation failed! HRESULT=" << std::hex << std::endl;
+  }
+
+  pSprite_PSO_->CreateShaderResourceBinding(&p2D_draw_sprite_srb, false);
+
+ }
+
+ void ArtifactDiligentEngineComposition2DWindow::Impl::createBlendShaders()
+ {
+  //std::map<LAYER_BLEND_TYPE, RefCntAutoPtr<IShader>> BlendShaderObjects;
 
 
 
  }
+
+ void ArtifactDiligentEngineComposition2DWindow::Impl::createBlendShaderAndPSOs()
+ {
+
+  for (const auto& [type, shaderText] : ArtifactCore::BlendShaders)
+  {
+   BlendResources res;
+
+   // 1. Compute Shader作成
+   ShaderCreateInfo ShaderCI;
+   ShaderCI.SourceLanguage = SHADER_SOURCE_LANGUAGE_HLSL;
+   ShaderCI.EntryPoint = "main";
+   ShaderCI.Desc.ShaderType = SHADER_TYPE_COMPUTE;
+   ShaderCI.Desc.Name = "BlendShader";
+   ShaderCI.Source = shaderText.constData();
+
+   RefCntAutoPtr<IShader> pShader;
+   pDevice->CreateShader(ShaderCI, &pShader);
+   if (!pShader)
+   {
+	std::cerr << "Failed to create shader for blend type: " << static_cast<int>(type) << std::endl;
+	continue;
+   }
+
+   // 2. Compute PSO作成
+   ComputePipelineStateCreateInfo PSOCreateInfo;
+   PSOCreateInfo.pCS = pShader;
+   RefCntAutoPtr<IPipelineState> pComputePSO;
+   pDevice->CreateComputePipelineState(PSOCreateInfo, &pComputePSO);
+   if (!pComputePSO)
+   {
+	std::cerr << "Failed to create Compute PSO for blend type: " << static_cast<int>(type) << std::endl;
+	continue;
+   }
+
+   res.pPSO = pComputePSO;
+
+   // 3. SRB作成
+   pComputePSO->CreateShaderResourceBinding(&res.pSRB, false);
+   if (!res.pSRB)
+   {
+	std::cerr << "Failed to create SRB for blend type: " << static_cast<int>(type) << std::endl;
+	continue;
+   }
+
+   // 4. Mapに格納
+   m_BlendMap[type] = res;
+  }
+
+
+ }
+
+ void ArtifactDiligentEngineComposition2DWindow::Impl::present()
+ {
+  if (pSwapChain_)
+  {
+
+   pSwapChain_->Present(1);
+  }
+ }
+ //#RenderLoop
+ void ArtifactDiligentEngineComposition2DWindow::Impl::renderOneFrame()
+ {
+  const Diligent::float4& clearColor = { 0.5f,0.5f,0.5f,1.0f };
+  clearCanvas(clearColor);
+
+  //QImage img(600,400,QImage::)
+
+  //drawSprite(0, 0, 0, 0,);
+
+  {
+   std::lock_guard<std::mutex> lock(g_eventMutex);
+   while (!g_renderEvents.empty()) {
+	auto ev = std::move(g_renderEvents.front());
+	g_renderEvents.pop();
+
+	lock.~lock_guard();  // 明示的にロックを外す
+	ev();                // イベント実行（スクショ保存）
+
+	new (&lock) std::lock_guard<std::mutex>(g_eventMutex);  // 再ロック
+   }
+  }
+
+  present();
+
+
+ }
+
  //#DrawQuad
  void ArtifactDiligentEngineComposition2DWindow::Impl::drawSolidQuadToCompositionOld(float x, float y, float w, float h)
  {
@@ -1007,6 +1098,37 @@ if (FAILED(hr)) {
 
 
  }
+ void ArtifactDiligentEngineComposition2DWindow::Impl::saveScreenShotToClipboardByQt()
+ {
+  QPixmap pixmap(widget_->size());
+  widget_->render(&pixmap);
+  QClipboard* clipboard = QGuiApplication::clipboard();
+  clipboard->setImage(pixmap.toImage());
+
+
+  //Uint32 offset = 0;
+
+  //pImmediateContext->SetPipelineState(pLine_PSO_);
+
+ }
+
+
+
+ void ArtifactDiligentEngineComposition2DWindow::Impl::saveScreenShotToClipboardByWinRT()
+ {
+  auto pRTV = pSwapChain_->GetCurrentBackBufferRTV();
+
+  auto pBackBuffer = pRTV->GetTexture();
+
+  Diligent::ITextureD3D12* pD3D12Texture;
+
+  pBackBuffer->QueryInterface(IID_TextureD3D12, reinterpret_cast<IObject**>(&pD3D12Texture));
+
+
+
+
+
+ }
 
  void ArtifactDiligentEngineComposition2DWindow::Impl::postScreenShotEvent()
  {
@@ -1028,37 +1150,6 @@ if (FAILED(hr)) {
   Uint32 offset = 0;
  };
 
- void ArtifactDiligentEngineComposition2DWindow::Impl::saveScreenShotToClipboardByQt()
- {
-  QPixmap pixmap(widget_->size());
-  widget_->render(&pixmap);
-  QClipboard* clipboard = QGuiApplication::clipboard();
-  clipboard->setImage(pixmap.toImage());
-
-
-  //Uint32 offset = 0;
-
-  //pImmediateContext->SetPipelineState(pLine_PSO_);
-
- }
-
- 
-
- void ArtifactDiligentEngineComposition2DWindow::Impl::saveScreenShotToClipboardByWinRT()
- {
-  auto pRTV = pSwapChain_->GetCurrentBackBufferRTV();
-
-  auto pBackBuffer = pRTV->GetTexture();
-
-  Diligent::ITextureD3D12* pD3D12Texture;
-
-  pBackBuffer->QueryInterface(IID_TextureD3D12, reinterpret_cast<IObject**>(&pD3D12Texture));
-
-
-
-
-
- }
 
 
  void ArtifactDiligentEngineComposition2DWindow::Impl::drawQuadLine(float x, float y, float w, float h, const FloatColor& lineColor, float thikness/*=1.0f*/)
@@ -1175,8 +1266,32 @@ if (FAILED(hr)) {
 
  }
 
- void ArtifactDiligentEngineComposition2DWindow::Impl::drawSprite(float x, float y, float w, float h)
+ void ArtifactDiligentEngineComposition2DWindow::Impl::drawSprite(float x, float y, float w, float h, const QImage& sprite)
  {
+
+
+
+
+  RefCntAutoPtr<ITexture> pTempRT;
+  {
+   TextureDesc TexDesc;
+   TexDesc.Name = "TemporaryRenderTarget";
+   TexDesc.Type = RESOURCE_DIM_TEX_2D;
+   TexDesc.Width = 512;   // 小さめでもOK、100x100でも動く
+   TexDesc.Height = 512;
+   TexDesc.Format = TEX_FORMAT_RGBA8_UNORM;
+   TexDesc.BindFlags = BIND_RENDER_TARGET | BIND_SHADER_RESOURCE;
+
+   pDevice->CreateTexture(TexDesc, nullptr, &pTempRT);
+  }
+
+  auto pTempRTV = pTempRT->GetDefaultView(TEXTURE_VIEW_RENDER_TARGET);
+
+  auto* pBackBufferRTV = pSwapChain_->GetCurrentBackBufferRTV();
+
+  pImmediateContext->SetRenderTargets(1, &pTempRTV, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+  const float ClearColor[] = { 0, 0, 0, 0 };
+  pImmediateContext->ClearRenderTarget(pTempRTV, ClearColor, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
 
   Vertex vertices[] = {
   { { x,     y },     { 0.0f, 0.0f } },
@@ -1185,12 +1300,34 @@ if (FAILED(hr)) {
   { { x + w, y + h }, { 1.0f, 1.0f } },
   };
 
-  //pImmediateContext->UpdateBuffer(,0, sizeof(vertices), vertices,
-  // Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+  void* pVBData = nullptr;
+  pImmediateContext->MapBuffer(m_pDrawSpriteVertexBuffer, MAP_WRITE, MAP_FLAG_DISCARD, pVBData);
+  memcpy(pVBData, vertices, sizeof(vertices));
+  pImmediateContext->UnmapBuffer(m_pDrawSpriteVertexBuffer, MAP_WRITE);
+
+  Uint64 offset = 0;
+  IBuffer* pVBs[] = { m_pDrawSpriteVertexBuffer };
+  pImmediateContext->SetVertexBuffers(0, 1, pVBs, &offset,
+   RESOURCE_STATE_TRANSITION_MODE_TRANSITION, SET_VERTEX_BUFFERS_FLAG_NONE);
+
+
+  pImmediateContext->SetPipelineState(pSprite_PSO_);
+
+
+  Diligent::DrawAttribs DrawAttrs;
+  DrawAttrs.NumVertices = 4;
+  DrawAttrs.Flags = Diligent::DRAW_FLAG_VERIFY_ALL;
+
+  pImmediateContext->Draw(DrawAttrs);
+
+  pImmediateContext->SetRenderTargets(1, &pBackBufferRTV, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+
 
 
 
  }
+
+
 
  QSize ArtifactDiligentEngineComposition2DWindow::sizeHint() const
  {
@@ -1333,13 +1470,13 @@ if (FAILED(hr)) {
 
  W_OBJECT_IMPL(ArtifactDiligentEngineComposition2DWidget)
 
- void ArtifactDiligentEngineComposition2DWindow::saveScreenShotToClipboardByQt()
+  void ArtifactDiligentEngineComposition2DWindow::saveScreenShotToClipboardByQt()
  {
   QPixmap pixmap = this->grab(); // widget全体をキャプチャ
   QClipboard* clipboard = QGuiApplication::clipboard();
   clipboard->setImage(pixmap.toImage());
  }
-  ArtifactDiligentEngineComposition2DWidget::Impl::Impl(QWidget* widget)
+ ArtifactDiligentEngineComposition2DWidget::Impl::Impl(QWidget* widget)
  {
   //window_ = new ArtifactDiligentEngineComposition2DWindow();
 

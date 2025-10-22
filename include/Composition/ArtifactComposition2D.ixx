@@ -17,13 +17,7 @@ namespace Artifact {
  using namespace ArtifactCore;
 
  //class ArtifactComposition2DPrivate;
- class IComposition2D
- {
- private:
 
- public:
-
- };
 
 
  class ArtifactComposition2D {
@@ -37,8 +31,14 @@ namespace Artifact {
   ~ArtifactComposition2D();
   void setCompositionBackgroundColor(const FloatColor& color);
   void addLayer();
-  QJsonDocument toJson() const;
+  void resize(int width, int height);
+  void removeLayer(ArtifactAbstractLayer* layer);
+  void removeAllLayer();
 
+ 	int layerCount() const;
+  QJsonDocument toJson() const;
+  
+ 	
   ArtifactAbstractLayer* frontMostLayer() const;
   ArtifactAbstractLayer* backMostLayer() const;
 

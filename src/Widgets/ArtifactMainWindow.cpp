@@ -31,7 +31,7 @@ import Widgets.Render.Queue;
 import Widgets.Render.Composition;
 import Widgets.AssetBrowser;
 import Project.Manager;
-
+import Artifact.Widgets.Render.Layer;
 import Artifact.Widgets.Timeline;
 
 namespace ArtifactWidgets {}//
@@ -185,10 +185,14 @@ namespace Artifact {
   auto& projectManager = ArtifactProjectManager::getInstance();
 
 
+ 	auto layerEditor=new ArtifactRenderLayerWidget();
+    layerEditor->show();
+
   auto browser = new ArtifactAssetBrowser();
 
   browser->show();
 
+ 	
  
   QObject::connect(&projectManager, &ArtifactProjectManager::newProjectCreated, [this]() {
    impl_->projectCreated();

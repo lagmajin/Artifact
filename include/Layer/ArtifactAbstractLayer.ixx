@@ -8,6 +8,7 @@
 
 export module Artifact.Layers.Abstract;
 
+import std;
 
 import Utils.String.Like;
 
@@ -48,7 +49,8 @@ export namespace Artifact {
 	 
  };
 
-
+ using ArtifactAbstractLayerPtr = std::shared_ptr<ArtifactAbstractLayer>;
+ using ArtifactAbstractLayerWeak = std::weak_ptr<ArtifactAbstractLayer>;
 
 
 }
