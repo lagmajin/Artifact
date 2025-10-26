@@ -516,8 +516,8 @@ if (FAILED(hr)) {
   drawSolidShaderCI.Desc.ShaderType = Diligent::SHADER_TYPE_PIXEL;
   drawSolidShaderCI.EntryPoint = "main";
   drawSolidShaderCI.Desc.Name = "BasicPixelShader";
-  drawSolidShaderCI.Source = g_qsSolidColorPS.constData();
-  drawSolidShaderCI.SourceLength = g_qsSolidColorPS.length();
+  drawSolidShaderCI.Source = g_qsSolidColorPSSource.constData();
+  drawSolidShaderCI.SourceLength = g_qsSolidColorPSSource.length();
 
   pDevice->CreateShader(drawSolidShaderCI, &p2D_pixel);
 

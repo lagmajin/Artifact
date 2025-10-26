@@ -7,6 +7,7 @@ export module Artifact.Widgets.Render.Layer;
 
 import Core.Scale.Zoom;
 import Color.Float;
+import Utils.Id;
 
 export namespace Artifact
 {
@@ -41,6 +42,18 @@ export namespace Artifact
   void mouseDoubleClickEvent(QMouseEvent* event) override;
   void mouseMoveEvent(QMouseEvent* event) override;
   void wheelEvent(QWheelEvent* event) override;
+
+  void resizeEvent(QResizeEvent* event) override;
+
+
+  void paintEvent(QPaintEvent* event) override;
+
+
+  void keyPressEvent(QKeyEvent* event) override;
+
+
+  void keyReleaseEvent(QKeyEvent* event) override;
+
  public:
   explicit ArtifactRenderLayerWidget(QWidget* parent = nullptr);
   ~ArtifactRenderLayerWidget();
@@ -48,7 +61,7 @@ export namespace Artifact
   void setEditMode(EditMode mode);
   void setDisplayMode(DisplayMode mode);
   void setTargetLayerId(int id);
-
+  void setTargetLayer(const LayerID& id);
   void resetView();
   float zoom() const;
   void setZoom(const ZoomScale2D& scale);
