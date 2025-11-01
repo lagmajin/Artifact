@@ -37,4 +37,9 @@ namespace Artifact {
 
  }
 
+ void ArtifactImageLayer::setFromQImage(const QImage& image)
+ {
+
+ }
+
 };

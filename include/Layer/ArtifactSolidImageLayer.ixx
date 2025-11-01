@@ -5,6 +5,7 @@ export module Artifact.Layers.SolidImage;
 
 import Color.Float;
 
+
 export namespace Artifact
 {
  using namespace ArtifactCore;

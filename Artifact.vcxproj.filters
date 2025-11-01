@@ -332,7 +332,7 @@
     <ClCompile Include="src\Project\ArtifactProjectManagerService.cpp">
       <Filter>ソース ファイル\Project</Filter>
     </ClCompile>
-    <ClCompile Include="include\Layer\ArtifactLayer.ixx">
+    <ClCompile Include="include\Layer\ArtifactLayerModule.ixx">
       <Filter>ヘッダー ファイル\Layer</Filter>
     </ClCompile>
     <ClCompile Include="include\Widgets\Render\ArtifactDiligentEngineRenderWindow.ixx">
@@ -517,6 +517,12 @@
     </ClCompile>
     <ClCompile Include="include\Composition\IComposition2D.ixx">
       <Filter>ヘッダー ファイル\Composition</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Layer\ArtifactAudioLayer.ixx">
+      <Filter>ヘッダー ファイル\Layer</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Layer\ArtifactAudioLayer.cpp">
+      <Filter>ソース ファイル\Layer</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>

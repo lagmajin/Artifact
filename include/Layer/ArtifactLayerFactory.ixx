@@ -11,7 +11,11 @@ export namespace ArtifactCore {
  
  
  class LayerFactory {
+ private:
 
+ public:
+  LayerFactory();
+  ~LayerFactory();
  };
 
 

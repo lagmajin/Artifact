@@ -17,4 +17,9 @@ namespace  Artifact
 
  }
 
+ void ArtifactSolid2DLayer::setColor(const FloatColor& color)
+ {
+
+ }
+
 }

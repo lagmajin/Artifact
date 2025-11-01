@@ -1,17 +1,22 @@
 ﻿module;
 #include <windows.h>
+#include <d3d12.h>
+//#include <d3>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/RenderDevice.h>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/DeviceContext.h>
 //#include <DiligentCore/Common/interface/map>
 
 #include <DiligentCore/Graphics/GraphicsEngineD3D12/interface/EngineFactoryD3D12.h>
+#include <DiligentCore/Graphics/GraphicsEngineD3D12/interface/DeviceContextD3D12.h>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/SwapChain.h>
 #include <DiligentCore/Common/interface/RefCntAutoPtr.hpp>
 #include <DiligentTools/Imgui/interface/ImGuiDiligentRenderer.hpp>
 #include <QTimer>
 #include <QDebug>
 #include <wobjectimpl.h>
+#include <DiligentCore/Graphics/GraphicsEngineD3D12/interface/RenderDeviceD3D12.h>
 
+#include <QKeyEvent>
 
 module Artifact.Widgets.Render.Layer;
 
@@ -60,12 +65,15 @@ namespace Artifact {
   std::map<LAYER_BLEND_TYPE, PSOAndSRB> m_BlendMap;
 
   RefCntAutoPtr<ITexture> m_layerRT;
+  RefCntAutoPtr<IFence> m_layer_fence;
   ZoomScale2D zoom_;
-
+  QPointF point_;
+  bool hasDirectDraw = false;
  public:
   Impl();
   ~Impl();
   void initialize(QWidget* window);
+  void initializeDirectDraw();
   void initializeImGui(QWidget* window);
   void recreateSwapChain(QWidget* window);
   void clearCanvas(const Diligent::float4& clearColor);
@@ -75,8 +83,9 @@ namespace Artifact {
   void drawRect(float x, float y, float w, float h, const FloatColor& color);
   void drawRectOutline(float x, float y, float w, float h, float thick, const FloatColor& color);
   void drawSprite(float x, float y, float w, float h);
+  void drawSprite(float x, float y, float w, float h, const QImage& image);
   void drawRectLocal(float x, float y, float w, float h,const FloatColor&color);
-  void drawSpriteLocal();
+  void drawSpriteLocal(const QImage& image);
 
   void setClearColor(const FloatColor& color);
   RefCntAutoPtr<IRenderDevice> pDevice;
@@ -90,6 +99,8 @@ namespace Artifact {
 
  ArtifactRenderLayerWidget::Impl::Impl()
  {
+  point_.setX(0.5);
+  point_.setY(0.5f);
 
  }
 
@@ -162,6 +173,7 @@ namespace Artifact {
   pDevice->CreateTexture(TexDesc, nullptr, &m_layerRT);
 
 
+  initializeDirectDraw();
 
   createShaders();
   createPSOs();
@@ -531,6 +543,21 @@ namespace Artifact {
   attrs.Flags = DRAW_FLAG_VERIFY_ALL;
   //pImmediateContext->DrawIndexed(sizeof(indices) / sizeof(indices[0]), 0, 0);
  }
+
+ void ArtifactRenderLayerWidget::Impl::drawSprite(float x, float y, float w, float h, const QImage& image)
+ {
+  RectVertex vertices[4] = {
+	{{0.0f, 0.0f}, {1, 0, 0, 1}}, // 左上
+	{{1.0f, 0.0f}, {1, 0, 0, 1}}, // 右上
+	{{0.0f, 1.0f}, {1, 0, 0, 1}}, // 左下
+	{{1.0f, 1.0f}, {1, 0, 0, 1}}, // 右下
+  };
+
+  auto swapChainRTV = pSwapChain_->GetCurrentBackBufferRTV();
+  ITextureView* RTVs[] = { m_layerRT->GetDefaultView(TEXTURE_VIEW_RENDER_TARGET) };
+  pImmediateContext->SetRenderTargets(1, &swapChainRTV, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+ }
+
  void ArtifactRenderLayerWidget::Impl::drawRect(float x, float y, float w, float h, const FloatColor& color)
  {
   RectVertex vertices[4] = {
@@ -619,9 +646,13 @@ namespace Artifact {
 
  void ArtifactRenderLayerWidget::Impl::drawLine(int x1, int y1, int x2, int y2, const FloatColor& color)
  {
-  LineVertex[2] vertex;
+  LineVertex vertex[2];  // これで長さ2の配列を作る
+
   vertex[0].position = float2((float)x1, (float)y1);
+  vertex[0].color = float4(1, 1, 1, 1);  // 色も設定
+
   vertex[1].position = float2((float)x2, (float)y2);
+  vertex[1].color = float4(1, 1, 1, 1);
   //vertex[0].color = color.toFloat4();
   //vertex[1].color = color.toFloat4();
   auto swapChainRTV = pSwapChain_->GetCurrentBackBufferRTV();
@@ -639,13 +670,14 @@ namespace Artifact {
 
  QImage ArtifactRenderLayerWidget::Impl::takeBackBuffer() const
  {
-  ITexture* backBuffer = pSwapChain->GetCurrentBackBufferTexture();
-
+  auto backBuffer = pSwapChain_->GetCurrentBackBufferRTV();
+  
+ 	
   TextureDesc desc;
   desc.Type = RESOURCE_DIM_TEX_2D;
-  desc.Width = width;
-  desc.Height = height;
-  desc.Format = backBuffer->GetDesc().Format;
+  //desc.Width = width;
+  //desc.Height = height;
+  //desc.Format = backBuffer->GetDesc().Format;
   desc.Usage = USAGE_STAGING;              // CPU読み取り用
   desc.BindFlags = BIND_NONE;
   desc.CPUAccessFlags = CPU_ACCESS_READ;
@@ -653,13 +685,45 @@ namespace Artifact {
   RefCntAutoPtr<ITexture> staging;
   pDevice->CreateTexture(desc, nullptr, &staging);
 
+  RefCntAutoPtr<ITexture> pReadableTex;
+  //pDevice->CreateTexture(ReadableDesc, nullptr, &pReadableTex);
 
-
+ 	
 
   return QImage();
  }
 
+ void ArtifactRenderLayerWidget::Impl::drawSpriteLocal(const QImage& image)
+ {
 
+ 	
+ }
+
+ void ArtifactRenderLayerWidget::Impl::initializeDirectDraw()
+ {
+  if (pDevice)
+  {
+   RefCntAutoPtr<IRenderDeviceD3D12> pDeviceD3D12;
+
+   pDevice->QueryInterface(
+	Diligent::IID_RenderDeviceD3D12,
+	reinterpret_cast<Diligent::IObject**>(pDeviceD3D12.RawDblPtr())
+   );
+
+
+  	if (pDeviceD3D12)
+  	{
+
+  		
+  	}
+
+
+
+  }
+
+
+
+ }
 
 
  ArtifactRenderLayerWidget::ArtifactRenderLayerWidget(QWidget* parent/*=nullptr*/) :QWidget(parent), impl_(new Impl())

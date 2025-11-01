@@ -10,9 +10,14 @@ export module Artifact.Layers.Abstract;
 
 import std;
 
+import Utils.Id;
 import Utils.String.Like;
+import Layer.Blend;
+
 
 export namespace Artifact {
+
+ using namespace ArtifactCore;
 
  enum class LayerType
  {
@@ -28,11 +33,14 @@ export namespace Artifact {
  };
 
 
+
  class ArtifactAbstractLayer :public QObject {
-  //Q_OBJECT
+  W_OBJECT(ArtifactAbstractLayer)
  private:
   class Impl;
-  Impl* impl_;
+  Impl* impl_
+ protected:
+ 	
  public:
   ArtifactAbstractLayer();
   virtual ~ArtifactAbstractLayer();
@@ -41,12 +49,17 @@ export namespace Artifact {
   bool isVisible() const;
   virtual void draw() = 0;
 
-	
+  LAYER_BLEND_TYPE layerBlendType() const;
+  void setBlendMode(LAYER_BLEND_TYPE type);
+
+  Id layerId() const;
+ 	
+  std::type_index type_index() const;
  };
 
- class Artifact2DLayer:public ArtifactAbstractLayer
+ class Artifact2DLayer :public ArtifactAbstractLayer
  {
-	 
+
  };
 
  using ArtifactAbstractLayerPtr = std::shared_ptr<ArtifactAbstractLayer>;

@@ -8,6 +8,7 @@ export module Artifact.Widgets.Render.Layer;
 import Core.Scale.Zoom;
 import Color.Float;
 import Utils.Id;
+import Core;
 
 export namespace Artifact
 {

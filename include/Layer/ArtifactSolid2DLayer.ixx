@@ -7,6 +7,8 @@ import Color.Float;
 
 export namespace Artifact
 {
+ using namespace ArtifactCore;
+	
  class ArtifactSolid2DLayer
  {
  private:
@@ -15,6 +17,8 @@ export namespace Artifact
  public:
   ArtifactSolid2DLayer();
   ~ArtifactSolid2DLayer();
+
+  void setColor(const FloatColor& color);
  };
 
 
