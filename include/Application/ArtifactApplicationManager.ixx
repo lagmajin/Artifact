@@ -6,8 +6,9 @@ export  module Artifact.Application.Manager;
 
 
 import EnvironmentVariable;
-
-
+import Effects.Manager;
+import Artifact.Render.Manager;
+import Project.Manager;
 
 namespace Artifact {
 
@@ -21,7 +22,10 @@ namespace Artifact {
   ArtifactApplicationManager();
   ~ArtifactApplicationManager();
   static ArtifactApplicationManager* instance();
+  GlobalEffectManager*const effectManager();
+  //ArtifactProjectManager* const projectManager();
   entt::registry& registry();
+ 
  };
 
 

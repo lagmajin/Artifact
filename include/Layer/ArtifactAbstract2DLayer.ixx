@@ -11,16 +11,24 @@ import Artifact.Layers.Abstract;
 export namespace Artifact
 {
 
- class  LIBRARY_DLL_API Artifact2DLayer : public ArtifactAbstractLayer {
+ class   Artifact2DLayer : public ArtifactAbstractLayer {
  private:
-
-
+  class Impl;
+  Impl* impl_;
  public:
   Artifact2DLayer();
   ~Artifact2DLayer();
  };
 
+ Artifact2DLayer::Artifact2DLayer()
+ {
 
+ }
+
+ Artifact2DLayer::~Artifact2DLayer()
+ {
+
+ }
 
 
 

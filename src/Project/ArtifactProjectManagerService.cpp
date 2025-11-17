@@ -1,6 +1,6 @@
 ﻿module;
 
-module ArtifactProject:ProjectManagerService;
+module ArtifactProject.ProjectManagerService;
 
 
 

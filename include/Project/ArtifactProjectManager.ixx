@@ -56,6 +56,7 @@ export namespace Artifact {
 
   void createNewComposition();
   void createNewComposition(const QString& str);
+  void createNewComposition(const QString, const QSize& size);
   bool closeCurrentProject();
   std::shared_ptr<ArtifactProject> getCurrentProjectSharedPtr();
 

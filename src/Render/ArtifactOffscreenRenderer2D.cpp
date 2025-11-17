@@ -21,6 +21,7 @@ import Color.Float;
 import Layer.Blend;
 
 import Graphics.Shader.Compute.HLSL.Blend;
+import Graphics.Resource.PSOAndSRB;
 
 import std;
 
@@ -53,16 +54,16 @@ namespace Artifact
   RefCntAutoPtr<IDeviceContext> mainDeviceContext_;
   //RefCntAutoPtr<IDeviceContext> dfContext_;
 
-  RefCntAutoPtr<IShader>	   pixelShader_;
+  
   RefCntAutoPtr<ITexture>      compositionBuffer_;
   RefCntAutoPtr<ITexture>	   layerRenderTarget_;
 
   RefCntAutoPtr<IFence>		   blendFence_;
+  RefCntAutoPtr<IShader>	   pixelShader_;
+  RefCntAutoPtr<IShader>       m_shader_;
 
+  //PSOAndSRB                    psor
   QMap<LAYER_BLEND_TYPE, RefCntAutoPtr<IShader>> blendShaders_;
-
-
-
   QMap<LAYER_BLEND_TYPE, RefCntAutoPtr<IPipelineState>> layer_blend_pso_map;
 
   bool shader_compiled_ = false;
@@ -87,7 +88,7 @@ namespace Artifact
 
   void renderStart();
 
-  void drawSolidLayer(const FloatColor& color);
+  void drawSolidRect(const FloatColor& color);
   void drawImage(float x, float y, const QImage& image);
   void drawImage(const Point2DF&,const QImage& image);
   void drawPoint(const Point2DF& point);
@@ -252,7 +253,7 @@ namespace Artifact
 
  }
 
- void OffscreenRenderer2D::Impl::drawSolidLayer(const FloatColor& color)
+ void OffscreenRenderer2D::Impl::drawSolidRect(const FloatColor& color)
  {
 
  }

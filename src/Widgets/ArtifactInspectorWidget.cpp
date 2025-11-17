@@ -25,6 +25,9 @@ namespace Artifact {
    QLabel* layerNameLabel = nullptr;
    QMenu* inspectorMenu_ = nullptr;
    void rebuildMenu();
+   void defaultHandleKeyPressEvent(QKeyEvent* event);
+   void defaultHandleMousePressEvent(QMouseEvent* event);
+   
  };
 
  ArtifactInspectorWidget::Impl::Impl()
@@ -40,6 +43,10 @@ namespace Artifact {
  void ArtifactInspectorWidget::Impl::rebuildMenu()
  {
 
+ }
+
+ void ArtifactInspectorWidget::Impl::defaultHandleKeyPressEvent(QKeyEvent* event)
+ {
  }
 
  void ArtifactInspectorWidget::update()

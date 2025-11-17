@@ -16,6 +16,7 @@ namespace Artifact
   ~Impl();
   void buildMenu();
   QMenu* visibleMenu = nullptr;
+  void defaultHandleMousePressEvent(QMouseEvent* event);
  };
 
  void ArtifactLayerHierarchyHeaderContextMenu::Impl::buildMenu()
@@ -23,11 +24,20 @@ namespace Artifact
 
  }
 
+ void ArtifactLayerHierarchyHeaderContextMenu::Impl::defaultHandleMousePressEvent(QMouseEvent* event)
+ {
+ }
+
  ArtifactLayerHierarchyHeaderContextMenu::Impl::Impl(ArtifactLayerHierarchyHeaderContextMenu* menu)
  {
   visibleMenu = new QMenu();
   visibleMenu->setTitle("visible");
   menu->addMenu(visibleMenu);
+
+ }
+
+ ArtifactLayerHierarchyHeaderContextMenu::Impl::~Impl()
+ {
 
  }
 

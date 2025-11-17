@@ -24,11 +24,11 @@ namespace Artifact {
   public:
    Impl();
    void rebuildMenu(QMenu* menu);
-   QAction* createProjectAction;
-   QAction* closeProjectAction;
-   QAction* saveProjectAction;
-   QAction* saveProjectAsAction;
-   QAction* quitApplicationAction;
+   QAction* createProjectAction=nullptr;
+   QAction* closeProjectAction=nullptr;
+   QAction* saveProjectAction=nullptr;
+   QAction* saveProjectAsAction=nullptr;
+   QAction* quitApplicationAction=nullptr;
    void handleOpenProject();
    void handleSaveProject();
    void handleCloseProject();
@@ -59,9 +59,22 @@ namespace Artifact {
   quitApplicationAction = new QAction("終了()...");
   quitApplicationAction->setShortcut(QKeySequence::Quit);
 
+
+
+
  }
 
  void ArtifactFileMenu::Impl::rebuildMenu(QMenu* menu)
+ {
+
+ }
+
+ void ArtifactFileMenu::Impl::handleOpenProject()
+ {
+
+ }
+
+ void ArtifactFileMenu::Impl::handleCloseProject()
  {
 
  }
@@ -100,6 +113,8 @@ namespace Artifact {
    this, &ArtifactFileMenu::quitApplication);
 
   connect(this, &QMenu::aboutToShow, this, &ArtifactFileMenu::rebuildMenu);
+
+
  }
 
  ArtifactFileMenu::~ArtifactFileMenu()

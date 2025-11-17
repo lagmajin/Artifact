@@ -32,9 +32,9 @@ namespace Artifact {
  using namespace Diligent;
  using namespace ArtifactCore;
 
- W_OBJECT_IMPL(ArtifactRenderLayerWidget)
+ W_OBJECT_IMPL(ArtifactLayerEditor2DWidget)
 
-  class ArtifactRenderLayerWidget::Impl
+  class ArtifactLayerEditor2DWidget::Impl
  {
  private:
   QWidget* widget_ = nullptr;
@@ -73,6 +73,7 @@ namespace Artifact {
   Impl();
   ~Impl();
   void initialize(QWidget* window);
+  void destroy();
   void initializeDirectDraw();
   void initializeImGui(QWidget* window);
   void recreateSwapChain(QWidget* window);
@@ -95,21 +96,24 @@ namespace Artifact {
   int m_CurrentPhysicalHeight = 0;
   float m_CurrentDevicePixelRatio;
   QImage takeBackBuffer() const;
+
+  void defaultHandleKeyPressEvent(QKeyEvent* event);
+  void defaultHandleKeyReleaseEvent(QKeyEvent* event);
  };
 
- ArtifactRenderLayerWidget::Impl::Impl()
+ ArtifactLayerEditor2DWidget::Impl::Impl()
  {
   point_.setX(0.5);
   point_.setY(0.5f);
 
  }
 
- ArtifactRenderLayerWidget::Impl::~Impl()
+ ArtifactLayerEditor2DWidget::Impl::~Impl()
  {
 
  }
 
- void ArtifactRenderLayerWidget::Impl::initialize(QWidget* window)
+ void ArtifactLayerEditor2DWidget::Impl::initialize(QWidget* window)
  {
   widget_ = window;
   //view_ = CreateInitialViewMatrix();
@@ -182,7 +186,7 @@ namespace Artifact {
   m_initialized = true;
  }
 
- void ArtifactRenderLayerWidget::Impl::initializeImGui(QWidget* window)
+ void ArtifactLayerEditor2DWidget::Impl::initializeImGui(QWidget* window)
  {
   IMGUI_CHECKVERSION();
   ImGui::CreateContext();
@@ -191,7 +195,7 @@ namespace Artifact {
   (void)io;
  }
 
- void ArtifactRenderLayerWidget::Impl::recreateSwapChain(QWidget* window)
+ void ArtifactLayerEditor2DWidget::Impl::recreateSwapChain(QWidget* window)
  {
   if (!window || !pDevice)
   {
@@ -241,7 +245,7 @@ namespace Artifact {
   pDevice->CreateTexture(TexDesc, nullptr, &m_layerRT);
 
  }
- void ArtifactRenderLayerWidget::Impl::present()
+ void ArtifactLayerEditor2DWidget::Impl::present()
  {
   if (pSwapChain_)
   {
@@ -250,8 +254,10 @@ namespace Artifact {
   }
  }
 
- void ArtifactRenderLayerWidget::Impl::renderOneFrame()
+ void ArtifactLayerEditor2DWidget::Impl::renderOneFrame()
  {
+  if (!pSwapChain_) return;
+
   const Diligent::float4& clearColor = { 0.5f,0.5f,0.5f,1.0f };
   clearCanvas(clearColor);
 
@@ -264,18 +270,18 @@ namespace Artifact {
   present();
  }
 
- void ArtifactRenderLayerWidget::Impl::loadPSOCacheFromFile()
+ void ArtifactLayerEditor2DWidget::Impl::loadPSOCacheFromFile()
  {
 
  }
 
- void ArtifactRenderLayerWidget::Impl::savePSOCache()
+ void ArtifactLayerEditor2DWidget::Impl::savePSOCache()
  {
 
  }
 
 
- void ArtifactRenderLayerWidget::Impl::createShaders()
+ void ArtifactLayerEditor2DWidget::Impl::createShaders()
  {
   ShaderCreateInfo lineVsInfo;
 
@@ -341,7 +347,7 @@ namespace Artifact {
 
  }
 
- void ArtifactRenderLayerWidget::Impl::createPSOs()
+ void ArtifactLayerEditor2DWidget::Impl::createPSOs()
  {
   GraphicsPipelineStateCreateInfo drawLinePSOCreateInfo;
 
@@ -437,12 +443,12 @@ namespace Artifact {
 
  }
 
- void ArtifactRenderLayerWidget::Impl::createBlendPSOs()
+ void ArtifactLayerEditor2DWidget::Impl::createBlendPSOs()
  {
 
  }
 
- void ArtifactRenderLayerWidget::Impl::createConstBuffer()
+ void ArtifactLayerEditor2DWidget::Impl::createConstBuffer()
  {
   BufferDesc vbDesc;
   vbDesc.Name = "Sprite VB";
@@ -491,17 +497,19 @@ namespace Artifact {
   }
  }
 
- void ArtifactRenderLayerWidget::Impl::setClearColor(const FloatColor& color)
+ void ArtifactLayerEditor2DWidget::Impl::setClearColor(const FloatColor& color)
  {
 
  }
 
- void ArtifactRenderLayerWidget::Impl::clearCanvas(const Diligent::float4& clearColor)
+ void ArtifactLayerEditor2DWidget::Impl::clearCanvas(const Diligent::float4& clearColor)
  {
   if (!m_initialized)
   {
    return;
   }
+
+  if (!pSwapChain_) return;
 
   auto pRTV = pSwapChain_->GetCurrentBackBufferRTV();
   auto pDSV = pSwapChain_->GetDepthBufferDSV(); // 2Dならnullptrの場合が多い
@@ -521,7 +529,7 @@ namespace Artifact {
   }
 
  }
- void ArtifactRenderLayerWidget::Impl::drawSprite(float x, float y, float w, float h)
+ void ArtifactLayerEditor2DWidget::Impl::drawSprite(float x, float y, float w, float h)
  {
   Vertex vertices[] =
   {
@@ -544,7 +552,7 @@ namespace Artifact {
   //pImmediateContext->DrawIndexed(sizeof(indices) / sizeof(indices[0]), 0, 0);
  }
 
- void ArtifactRenderLayerWidget::Impl::drawSprite(float x, float y, float w, float h, const QImage& image)
+ void ArtifactLayerEditor2DWidget::Impl::drawSprite(float x, float y, float w, float h, const QImage& image)
  {
   RectVertex vertices[4] = {
 	{{0.0f, 0.0f}, {1, 0, 0, 1}}, // 左上
@@ -558,7 +566,7 @@ namespace Artifact {
   pImmediateContext->SetRenderTargets(1, &swapChainRTV, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
  }
 
- void ArtifactRenderLayerWidget::Impl::drawRect(float x, float y, float w, float h, const FloatColor& color)
+ void ArtifactLayerEditor2DWidget::Impl::drawRect(float x, float y, float w, float h, const FloatColor& color)
  {
   RectVertex vertices[4] = {
 	  {{0.0f, 0.0f}, {1, 0, 0, 1}}, // 左上
@@ -627,7 +635,7 @@ namespace Artifact {
 
  }
 
- void ArtifactRenderLayerWidget::Impl::drawRectOutline(float x, float y, float w, float h, float thick, const FloatColor& color)
+ void ArtifactLayerEditor2DWidget::Impl::drawRectOutline(float x, float y, float w, float h, float thick, const FloatColor& color)
  {
   RectVertex vertices[4] = {
 	{{0.0f, 0.0f}, {1, 0, 0, 1}}, // 左上
@@ -644,7 +652,7 @@ namespace Artifact {
  	
  }
 
- void ArtifactRenderLayerWidget::Impl::drawLine(int x1, int y1, int x2, int y2, const FloatColor& color)
+ void ArtifactLayerEditor2DWidget::Impl::drawLine(int x1, int y1, int x2, int y2, const FloatColor& color)
  {
   LineVertex vertex[2];  // これで長さ2の配列を作る
 
@@ -668,7 +676,7 @@ namespace Artifact {
   //drawAttrs.Topology = PRIMITIVE_TOPOLOGY_LINE_LIST;
  }
 
- QImage ArtifactRenderLayerWidget::Impl::takeBackBuffer() const
+ QImage ArtifactLayerEditor2DWidget::Impl::takeBackBuffer() const
  {
   auto backBuffer = pSwapChain_->GetCurrentBackBufferRTV();
   
@@ -693,13 +701,13 @@ namespace Artifact {
   return QImage();
  }
 
- void ArtifactRenderLayerWidget::Impl::drawSpriteLocal(const QImage& image)
+ void ArtifactLayerEditor2DWidget::Impl::drawSpriteLocal(const QImage& image)
  {
 
  	
  }
 
- void ArtifactRenderLayerWidget::Impl::initializeDirectDraw()
+ void ArtifactLayerEditor2DWidget::Impl::initializeDirectDraw()
  {
   if (pDevice)
   {
@@ -725,8 +733,33 @@ namespace Artifact {
 
  }
 
+ void ArtifactLayerEditor2DWidget::Impl::defaultHandleKeyPressEvent(QKeyEvent* event)
+ {
 
- ArtifactRenderLayerWidget::ArtifactRenderLayerWidget(QWidget* parent/*=nullptr*/) :QWidget(parent), impl_(new Impl())
+ }
+
+ void ArtifactLayerEditor2DWidget::Impl::defaultHandleKeyReleaseEvent(QKeyEvent* event)
+ {
+
+ }
+
+ void ArtifactLayerEditor2DWidget::Impl::destroy()
+ {
+  if (pSwapChain_)
+  {
+   // GPUリソースを安全に破棄
+   pSwapChain_.Release();
+   //pSwapChain_ = nullptr;
+  }
+
+  // もし DeviceContext や RenderDevice も持っているなら
+  
+  
+  //pDeviceContext_.Release();
+  //pRenderDevice_.Release();
+ }
+
+ ArtifactLayerEditor2DWidget::ArtifactLayerEditor2DWidget(QWidget* parent/*=nullptr*/) :QWidget(parent), impl_(new Impl())
  {
   impl_->initialize(this);
   QTimer* renderTimer = new QTimer(this);
@@ -735,92 +768,97 @@ namespace Artifact {
 
    });
   renderTimer->start(16);
+
+  connect(this, &QWidget::destroyed, renderTimer, &QTimer::stop);
+
   setFocusPolicy(Qt::StrongFocus);
   setAttribute(Qt::WA_NativeWindow);
   setAttribute(Qt::WA_PaintOnScreen);
   setAttribute(Qt::WA_NoSystemBackground);
  }
 
- ArtifactRenderLayerWidget::~ArtifactRenderLayerWidget()
+ ArtifactLayerEditor2DWidget::~ArtifactLayerEditor2DWidget()
  {
+  impl_->destroy();
+
   delete impl_;
  }
 
- void ArtifactRenderLayerWidget::mousePressEvent(QMouseEvent* event)
+ void ArtifactLayerEditor2DWidget::mousePressEvent(QMouseEvent* event)
  {
 
-
+  //impl_->defaultHandleKeyPressEvent(event);
 
  }
 
- void ArtifactRenderLayerWidget::mouseReleaseEvent(QMouseEvent* event)
- {
-  //throw std::logic_error("The method or operation is not implemented.");
- }
-
- void ArtifactRenderLayerWidget::mouseDoubleClickEvent(QMouseEvent* event)
+ void ArtifactLayerEditor2DWidget::mouseReleaseEvent(QMouseEvent* event)
  {
   //throw std::logic_error("The method or operation is not implemented.");
  }
 
- void ArtifactRenderLayerWidget::mouseMoveEvent(QMouseEvent* event)
+ void ArtifactLayerEditor2DWidget::mouseDoubleClickEvent(QMouseEvent* event)
  {
   //throw std::logic_error("The method or operation is not implemented.");
  }
 
- void ArtifactRenderLayerWidget::wheelEvent(QWheelEvent* event)
+ void ArtifactLayerEditor2DWidget::mouseMoveEvent(QMouseEvent* event)
  {
   //throw std::logic_error("The method or operation is not implemented.");
  }
 
- void ArtifactRenderLayerWidget::setEditMode(EditMode mode)
+ void ArtifactLayerEditor2DWidget::wheelEvent(QWheelEvent* event)
+ {
+  //throw std::logic_error("The method or operation is not implemented.");
+ }
+
+ void ArtifactLayerEditor2DWidget::setEditMode(EditMode mode)
  {
 
  }
 
- void ArtifactRenderLayerWidget::setDisplayMode(DisplayMode mode)
+ void ArtifactLayerEditor2DWidget::setDisplayMode(DisplayMode mode)
  {
 
  }
 
- void ArtifactRenderLayerWidget::setTargetLayerId(int id)
+ void ArtifactLayerEditor2DWidget::setTargetLayerId(int id)
  {
 
  }
 
- void ArtifactRenderLayerWidget::resetView()
+ void ArtifactLayerEditor2DWidget::resetView()
  {
 
  }
 
- void ArtifactRenderLayerWidget::ChangeRenderAPI()
+ void ArtifactLayerEditor2DWidget::ChangeRenderAPI()
  {
 
  }
 
- void ArtifactRenderLayerWidget::setClearColor(const FloatColor& color)
+ void ArtifactLayerEditor2DWidget::setClearColor(const FloatColor& color)
  {
 
  }
 
- void ArtifactRenderLayerWidget::setZoom(const ZoomScale2D& scale)
+ void ArtifactLayerEditor2DWidget::setZoom(const ZoomScale2D& scale)
  {
 
  }
 
- void ArtifactRenderLayerWidget::resizeEvent(QResizeEvent* event)
+ void ArtifactLayerEditor2DWidget::resizeEvent(QResizeEvent* event)
  {
   QWidget::resizeEvent(event);
   impl_->recreateSwapChain(this);
  }
 
- void ArtifactRenderLayerWidget::paintEvent(QPaintEvent* event)
+ void ArtifactLayerEditor2DWidget::paintEvent(QPaintEvent* event)
  {
   impl_->renderOneFrame();
 
  }
 
- void ArtifactRenderLayerWidget::keyPressEvent(QKeyEvent* event)
+ void ArtifactLayerEditor2DWidget::keyPressEvent(QKeyEvent* event)
  {
   switch (event->key())
   {
@@ -843,11 +881,18 @@ namespace Artifact {
   }
  }
 
- void ArtifactRenderLayerWidget::keyReleaseEvent(QKeyEvent* event)
+ void ArtifactLayerEditor2DWidget::keyReleaseEvent(QKeyEvent* event)
  {
 
 
 
+ }
+
+ void ArtifactLayerEditor2DWidget::closeEvent(QCloseEvent* event)
+ {
+  impl_->destroy();
+
+  QWidget::closeEvent(event);
  }
 
 };

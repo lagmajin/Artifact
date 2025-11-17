@@ -3,7 +3,7 @@ module;
 
 #include <wobjectdefs.h>
 #include <QtWidgets/QMenu>
-export module Menu:Test2;
+export module Menu.Test2;
 
 
 

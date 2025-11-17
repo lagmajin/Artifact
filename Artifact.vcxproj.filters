@@ -185,10 +185,10 @@
     <ClCompile Include="src\Widgets\Render\ArtifactRenderManagerWidget.cpp">
       <Filter>ソース ファイル\Widgets\Render</Filter>
     </ClCompile>
-    <ClCompile Include="src\Widgets\Menu\ArtifactTimeMenu.cpp">
+    <ClCompile Include="src\Widgets\Menu\ArtifactTimeMenu.cppm">
       <Filter>ソース ファイル\Widgets\Menu</Filter>
     </ClCompile>
-    <ClCompile Include="src\Widgets\Menu\ArtifactViewMenu.cpp">
+    <ClCompile Include="src\Widgets\Menu\ArtifactViewMenu.cppm">
       <Filter>ソース ファイル\Widgets\Menu</Filter>
     </ClCompile>
     <ClCompile Include="src\Project\ArtifactProjectManager.cppm">
@@ -197,19 +197,19 @@
     <ClCompile Include="src\Layer\ArtifactImageLayer.cppm">
       <Filter>ソース ファイル\Layer</Filter>
     </ClCompile>
-    <ClCompile Include="src\Layer\ArtifactNullLayer.cpp">
+    <ClCompile Include="src\Layer\ArtifactNullLayer.cppm">
       <Filter>ソース ファイル\Layer</Filter>
     </ClCompile>
     <ClCompile Include="src\Widgets\Render\ArtifactOgreRenderWindow.cpp">
       <Filter>ソース ファイル\Widgets\Render</Filter>
     </ClCompile>
-    <ClCompile Include="src\Widgets\Menu\ArtifactTestMenu.cpp">
+    <ClCompile Include="src\Widgets\Menu\ArtifactTestMenu.cppm">
       <Filter>ソース ファイル\Widgets\Menu</Filter>
     </ClCompile>
     <ClCompile Include="src\Widgets\Render\ArtifactDiligentEngineRenderWindow.cpp">
       <Filter>ソース ファイル\Widgets\Render</Filter>
     </ClCompile>
-    <ClCompile Include="src\Project\ArtifactProject.cpp">
+    <ClCompile Include="src\Project\ArtifactProject.cppm">
       <Filter>ソース ファイル\Project</Filter>
     </ClCompile>
     <ClCompile Include="src\Widgets\Dialog\CreatePlaneLayerDialog.cpp">
@@ -227,7 +227,7 @@
     <ClCompile Include="include\Project\ArtifactProject.ixx">
       <Filter>ヘッダー ファイル\Project</Filter>
     </ClCompile>
-    <ClCompile Include="src\Layer\ArtifactAbstractLayer.cpp">
+    <ClCompile Include="src\Layer\ArtifactAbstractLayer.cppm">
       <Filter>ソース ファイル\Layer</Filter>
     </ClCompile>
     <ClCompile Include="include\Layer\ArtifactNullLayer.ixx">
@@ -341,7 +341,7 @@
     <ClCompile Include="include\Widgets\ArtifactCurveEditorWidget.ixx">
       <Filter>ヘッダー ファイル\Widgets</Filter>
     </ClCompile>
-    <ClCompile Include="src\Widgets\ArtifactCurveEditorWidget.cpp">
+    <ClCompile Include="src\Widgets\ArtifactCurveEditorWidget.cppm">
       <Filter>ソース ファイル\Widgets</Filter>
     </ClCompile>
     <ClCompile Include="src\Project\ArtifactProjectSetting.cppm">
@@ -398,7 +398,7 @@
     <ClCompile Include="src\Widgets\Menu\ArtifactAnimationMenu.cpp">
       <Filter>ソース ファイル\Widgets\Menu</Filter>
     </ClCompile>
-    <ClCompile Include="src\Widgets\ArtifactToolBar.cpp">
+    <ClCompile Include="src\Widgets\ArtifactToolBar.cppm">
       <Filter>ソース ファイル\Widgets</Filter>
     </ClCompile>
     <ClCompile Include="src\Library\Link.cpp">
@@ -443,9 +443,6 @@
     <ClCompile Include="include\Layer\ArtifactAdjustableLayer.ixx">
       <Filter>ヘッダー ファイル\Layer</Filter>
     </ClCompile>
-    <ClCompile Include="src\Render\ArtifactEffects.ixx">
-      <Filter>ヘッダー ファイル\Effects</Filter>
-    </ClCompile>
     <ClCompile Include="include\Render\ArtifactRenderController.ixx">
       <Filter>ヘッダー ファイル\Render</Filter>
     </ClCompile>
@@ -461,7 +458,7 @@
     <ClCompile Include="include\Layer\ArtifactSolid2DLayer.ixx">
       <Filter>ヘッダー ファイル\Layer</Filter>
     </ClCompile>
-    <ClCompile Include="src\Layer\ArtifactSolid2DLayer.cpp">
+    <ClCompile Include="src\Layer\ArtifactSolid2DLayer.cppm">
       <Filter>ソース ファイル\Layer</Filter>
     </ClCompile>
     <ClCompile Include="src\Render\ArtifactRenderController.cpp">
@@ -473,7 +470,7 @@
     <ClCompile Include="include\Layer\ArtifactHierarchyModel.ixx">
       <Filter>ヘッダー ファイル\Layer</Filter>
     </ClCompile>
-    <ClCompile Include="src\Layer\ArtifactHierarchyModel.cpp">
+    <ClCompile Include="src\Layer\ArtifactHierarchyModel.cppm">
       <Filter>ソース ファイル\Layer</Filter>
     </ClCompile>
     <ClCompile Include="include\Widgets\ArtifactLayerHierarchyWidget.ixx">
@@ -497,7 +494,7 @@
     <ClCompile Include="include\Project\ArtifactProjectModel.ixx">
       <Filter>ヘッダー ファイル\Project</Filter>
     </ClCompile>
-    <ClCompile Include="src\Project\ArtifactProjectModel.cpp">
+    <ClCompile Include="src\Project\ArtifactProjectModel.cppm">
       <Filter>ソース ファイル\Project</Filter>
     </ClCompile>
     <ClCompile Include="include\Widgets\Render\ArtifactRenderLayerWidget.ixx">
@@ -521,8 +518,41 @@
     <ClCompile Include="include\Layer\ArtifactAudioLayer.ixx">
       <Filter>ヘッダー ファイル\Layer</Filter>
     </ClCompile>
-    <ClCompile Include="src\Layer\ArtifactAudioLayer.cpp">
+    <ClCompile Include="src\Layer\ArtifactAudioLayer.cppm">
       <Filter>ソース ファイル\Layer</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Tool\Tool.ixx">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Layer\ArtifactShapeLayer.ixx">
+      <Filter>ヘッダー ファイル\Layer</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Layer\ArtifactShapeLayer.cppm">
+      <Filter>ソース ファイル\Layer</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Layer\ArtifactLayerSetting.ixx">
+      <Filter>ヘッダー ファイル\Layer</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Composition\ArtifactAbstractComposition.ixx">
+      <Filter>ヘッダー ファイル\Composition</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Composition\ArtifactCompositionResult.ixx">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Render\ArtifactRenderManager.ixx">
+      <Filter>ヘッダー ファイル\Render</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Render\RenderModule.ixx">
+      <Filter>ヘッダー ファイル\Render</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Render\ArtifactRenderManager.cppm">
+      <Filter>ソース ファイル\Render</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Composition\ArtifactAbstractComposition.cppm">
+      <Filter>ソース ファイル\Composition</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Layer\ArtifactLayerSearchQuery.ixx">
+      <Filter>ヘッダー ファイル\Layer</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>

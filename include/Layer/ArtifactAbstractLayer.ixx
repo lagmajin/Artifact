@@ -13,7 +13,7 @@ import std;
 import Utils.Id;
 import Utils.String.Like;
 import Layer.Blend;
-
+import Layer.State;
 
 export namespace Artifact {
 
@@ -38,7 +38,7 @@ export namespace Artifact {
   W_OBJECT(ArtifactAbstractLayer)
  private:
   class Impl;
-  Impl* impl_
+  Impl* impl_;
  protected:
  	
  public:
@@ -47,18 +47,30 @@ export namespace Artifact {
   void Show();
   void Hide();
   bool isVisible() const;
+  QString layerName() const;
+  void setLayerName(const QString& name);
+
   virtual void draw() = 0;
 
   LAYER_BLEND_TYPE layerBlendType() const;
   void setBlendMode(LAYER_BLEND_TYPE type);
 
-  Id layerId() const;
+  LayerID id() const;
  	
   std::type_index type_index() const;
+  void* QueryInterface(const std::type_index& ti);
+  QString className() const;
+
+  void goToStartFrame();
+  void goToEndFrame();
+
  };
 
  class Artifact2DLayer :public ArtifactAbstractLayer
  {
+ private:
+
+ public:
 
  };
 

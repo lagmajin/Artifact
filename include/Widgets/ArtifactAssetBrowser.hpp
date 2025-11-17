@@ -29,7 +29,10 @@ export namespace Artifact {
 
  class AssetFolderTreeView :public QTreeView
  {
+ private:
 
+ public:
+ 	
  };
 
  class ArtifactAssetBrowserToolBar :public QWidget
@@ -57,6 +60,11 @@ export namespace Artifact {
   void folderChanged(const QString& folderPath) W_SIGNAL(folderChanged, folderPath)
    void selectionChanged(const QStringList& selectedFiles) W_SIGNAL(selectionChanged, selectedFiles)
    void itemDoubleClicked(const QString& itemPath) W_SIGNAL(itemDoubleClicked, itemPath)
+
+protected:
+  void mousePressEvent(QMouseEvent* event) override;
+  void keyPressEvent(QKeyEvent* event) override;
+  void keyReleaseEvent(QKeyEvent* event) override;
  };
 
 

@@ -10,6 +10,8 @@ export namespace Artifact {
  private:
   class Impl;
   Impl* impl_;
+ protected:
+
  public:
   ArtifactEffectMenu(QWidget* parent = nullptr);
   ~ArtifactEffectMenu();

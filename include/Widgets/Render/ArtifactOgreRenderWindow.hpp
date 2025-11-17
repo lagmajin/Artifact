@@ -4,7 +4,7 @@ module;
 #include <QtGui/QWindow>
 #include <ogre/Ogre.h>
 #include <wobjectdefs.h>
-export module Render:Ogre;
+export module Render.Ogre;
 
 
 

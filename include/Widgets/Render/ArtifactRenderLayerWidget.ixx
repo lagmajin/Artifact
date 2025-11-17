@@ -9,55 +9,37 @@ import Core.Scale.Zoom;
 import Color.Float;
 import Utils.Id;
 import Core;
+import Tool;
 
 export namespace Artifact
 {
  using namespace ArtifactCore;
 	
- enum class EditMode
- {
-  View,           // 表示専用（ズーム・パン）
-  Transform,      // トランスフォーム編集
-  Mask,           // マスク編集
-  Paint           // ペイント（任意）
- };
-
- enum class DisplayMode
- {
-  Color,          // 通常カラー
-  Alpha,          // アルファ表示
-  Mask,           // マスクオーバーレイ表示
-  Wireframe       // ガイド・境界線
- };
 
 
- class ArtifactRenderLayerWidget :public QWidget
+ class ArtifactLayerEditor2DWidget :public QWidget
  {
-  W_OBJECT(ArtifactRenderLayerWidget)
+  W_OBJECT(ArtifactLayerEditor2DWidget)
  private:
   class Impl;
   Impl* impl_;
  protected:
+  void keyPressEvent(QKeyEvent* event) override;
+  void keyReleaseEvent(QKeyEvent* event) override;
   void mousePressEvent(QMouseEvent* event) override;
   void mouseReleaseEvent(QMouseEvent* event) override;
   void mouseDoubleClickEvent(QMouseEvent* event) override;
   void mouseMoveEvent(QMouseEvent* event) override;
   void wheelEvent(QWheelEvent* event) override;
-
   void resizeEvent(QResizeEvent* event) override;
-
-
   void paintEvent(QPaintEvent* event) override;
 
 
-  void keyPressEvent(QKeyEvent* event) override;
-
-
-  void keyReleaseEvent(QKeyEvent* event) override;
+  void closeEvent(QCloseEvent* event) override;
 
  public:
-  explicit ArtifactRenderLayerWidget(QWidget* parent = nullptr);
-  ~ArtifactRenderLayerWidget();
+  explicit ArtifactLayerEditor2DWidget(QWidget* parent = nullptr);
+  ~ArtifactLayerEditor2DWidget();
   void setClearColor(const FloatColor& color);
   void setEditMode(EditMode mode);
   void setDisplayMode(DisplayMode mode);

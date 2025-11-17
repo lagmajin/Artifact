@@ -35,11 +35,6 @@ namespace Artifact {
 
  }
 
- void ArtifactComposition2D::Impl::setCompositionBackgroundColor(const FloatColor& color)
- {
-
- }
-
  void ArtifactComposition2D::Impl::removeAllLayer()
  {
 
@@ -55,10 +50,7 @@ ArtifactComposition2D::~ArtifactComposition2D()
  delete impl_;
 }
 
-void ArtifactComposition2D::setCompositionBackgroundColor(const FloatColor& color)
-{
 
-}
 
 void ArtifactComposition2D::addLayer()
 {

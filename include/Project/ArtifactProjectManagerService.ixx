@@ -1,6 +1,6 @@
 module;
 
-export module ArtifactProject:ProjectManagerService;
+export module ArtifactProject.ProjectManagerService;
 
 import std;
 

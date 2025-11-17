@@ -3,7 +3,9 @@
 
 module Artifact.Application.Manager;
 
+
 import EnvironmentVariable;
+import Render.Queue.Manager;
 
 namespace Artifact
 {
@@ -11,7 +13,8 @@ namespace Artifact
  class ArtifactApplicationManager::Impl
  {
  private:
-
+  GlobalEffectManager effectManager_;
+  
   entt::registry registry_;
   entt::dispatcher dispather_;
  public:
@@ -19,6 +22,8 @@ namespace Artifact
   Impl();
   ~Impl();
   entt::registry& registry();
+  GlobalEffectManager* const effectManager();
+  //GlobalEffectManager
  };
 
  ArtifactApplicationManager::Impl::Impl()
@@ -36,6 +41,11 @@ namespace Artifact
   return registry_;
  }
 
+GlobalEffectManager* const ArtifactApplicationManager::Impl::effectManager()
+ {
+ return &effectManager_;
+ }
+
  ArtifactApplicationManager::ArtifactApplicationManager():impl_(new Impl())
  {
 
@@ -46,10 +56,15 @@ namespace Artifact
   delete impl_;
  }
 
- Artifact::ArtifactApplicationManager* ArtifactApplicationManager::instance()
+ ArtifactApplicationManager* ArtifactApplicationManager::instance()
  {
   static ArtifactApplicationManager* s_instance = new ArtifactApplicationManager();
   return s_instance;
+ }
+
+ GlobalEffectManager* const ArtifactApplicationManager::effectManager()
+ {
+  return impl_->effectManager();
  }
 
  entt::registry& ArtifactApplicationManager::registry()

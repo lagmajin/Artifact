@@ -2,7 +2,7 @@ module;
 #include <QCoreApplication>
 #include <QDir>
 #include <wobjectimpl.h>
-module Menu:Test2;
+module Menu.Test2;
 
 
 

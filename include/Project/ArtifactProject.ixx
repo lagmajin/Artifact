@@ -49,11 +49,15 @@ export namespace Artifact {
   ~ArtifactProject();
   ArtifactProjectSettings settings() const;
   void createComposition(const QString&name);
+  template <typename NameT, typename SizeT>
+   requires StringLike<NameT>&& SizeLike<SizeT>
+  void createComposition(NameT name, SizeT size);
   std::optional<Id> createComposition(const CompositionSettings& settings);
   void addAssetFile();
   void addAssetFromPath(const QString& filepath);
   bool isNull() const;
-
+  bool removeCompositionById(const CompositionID& id);
+  void removeAllCompositions();
  public:
 	//signals
   void projectChanged()
@@ -61,9 +65,14 @@ export namespace Artifact {
    void compositionCreated(const QString& id)
    W_SIGNAL(compositionCreated, id)
 
-	
+   void preRemoveAllCompositions()
+   W_SIGNAL(preRemoveAllCompositions)
+
+   void layerCreated()
+   W_SIGNAL(layerCreated)
 
  };
+
 
  typedef std::shared_ptr<ArtifactProject> ArtifactProjectPtr;
  typedef std::weak_ptr<ArtifactProject>	 ArtifactProjectWeakPtr;

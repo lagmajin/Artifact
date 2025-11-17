@@ -4,6 +4,8 @@ export module Composition3D;
 
 import std;
 
+import Artifact.Composition.Abstract;
+
 export namespace Artifact {
 
  enum eCompositionType {
@@ -13,7 +15,7 @@ export namespace Artifact {
 
  class ArtifactCompositionPrivate;
 
- class ArtifactComposition3D {
+ class ArtifactComposition3D :public ArtifactAbstractComposition{
  private: 
   std::unique_ptr<ArtifactCompositionPrivate> pImpl_;
  public:

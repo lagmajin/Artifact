@@ -6,6 +6,12 @@ module Artifact.Layers.Solid2D;
 
 namespace  Artifact
 {
+
+ class ArtifactSolid2DLayer::Impl
+ {
+ 
+
+ };
 	
  ArtifactSolid2DLayer::ArtifactSolid2DLayer()
  {

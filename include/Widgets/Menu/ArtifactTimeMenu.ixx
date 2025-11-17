@@ -1,7 +1,7 @@
 ﻿module;
 #include <QMenu>
 #include <wobjectdefs.h>
-export module Menu:Time;
+export module Menu.Time;
 
 
 export namespace Artifact {

@@ -151,6 +151,11 @@ namespace Artifact {
   newCompositionCreated();
  }
 
+ void ArtifactProjectManager::createNewComposition(const QString, const QSize& size)
+ {
+
+ }
+
  void ArtifactProjectManager::addAssetFromFilePath(const QString& filePath)
  {
 

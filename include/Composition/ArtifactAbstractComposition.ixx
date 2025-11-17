@@ -1,0 +1,48 @@
+﻿module;
+#include <wobjectdefs.h>
+
+#include <QObject>
+export module Artifact.Composition.Abstract;
+
+import std;
+import Utils;
+import Artifact.Layers;
+import Color;
+
+
+import Frame.Position;
+import Container.MultiIndex;
+
+
+export namespace Artifact {
+
+ using namespace ArtifactCore;
+
+ class ArtifactAbstractComposition:public QObject {
+  W_OBJECT(ArtifactAbstractComposition)
+ private:
+  class Impl;
+  Impl* impl_;
+ public:
+  ArtifactAbstractComposition();
+  ~ArtifactAbstractComposition();
+  void addLayer(ArtifactAbstractLayerPtr layer);
+
+  ArtifactAbstractLayerPtr layerById(const LayerID& id);
+  bool containsLayerById(const LayerID& id);
+
+  void setBackGroundColor(const FloatColor& color);
+
+  void setFramePosition(const FramePosition& position);
+  void setTimeCode();
+
+  void goToStartFrame();
+  void goToEndFrame();
+ };
+
+ typedef std::shared_ptr<ArtifactAbstractComposition> ArtifactCompositionPtr;
+ typedef std::weak_ptr<ArtifactAbstractComposition>	  ArtifactCompositionWeakPtr;
+
+ typedef MultiIndexContainer<ArtifactCompositionPtr, CompositionID> ArtifactCompositionMultiIndexContainer;
+
+};

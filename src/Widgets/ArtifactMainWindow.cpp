@@ -185,7 +185,7 @@ namespace Artifact {
   auto& projectManager = ArtifactProjectManager::getInstance();
 
 
- 	auto layerEditor=new ArtifactRenderLayerWidget();
+ 	auto layerEditor=new ArtifactLayerEditor2DWidget();
     layerEditor->show();
 
   auto browser = new ArtifactAssetBrowser();

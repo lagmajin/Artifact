@@ -1,9 +1,10 @@
 ﻿module;
-
+#include <QIcon>
 #include <QAbstractItemModel>
-#include <qicon.h>
+
 module Artifact.Layers.Hierarchy.Model;
 
+import std;
 import Utils;
 
 

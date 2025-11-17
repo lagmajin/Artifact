@@ -50,6 +50,10 @@ namespace Artifact {
   menu->addMenu(effectMenu);
   menu->addMenu(animationMenu);
 
+  QFont font("Segoe UI", 10);
+  font.setWeight(QFont::DemiBold);  // or QFont::Bold
+  
+  menu->setFont(font);
  }
 
  ArtifactMenuBar::Impl::~Impl()

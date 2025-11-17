@@ -65,13 +65,34 @@ namespace Artifact {
 
 
  public:
-  QTreeView* directoryView_ = nullptr;
+  Impl();
+  ~Impl();
+ 	QTreeView* directoryView_ = nullptr;
   void handleDirectryChanged();
   void handleDoubleClicked();
-
+  void defaultHandleMousePressEvent(QMouseEvent* event);
+ 	
  };
 
- ArtifactAssetBrowser::ArtifactAssetBrowser(QWidget* parent /*= nullptr*/) :QWidget(parent), impl_(new Impl())
+  ArtifactAssetBrowser::Impl::Impl()
+  {
+  }
+
+  ArtifactAssetBrowser::Impl::~Impl()
+  {
+  }
+
+  void ArtifactAssetBrowser::Impl::handleDoubleClicked()
+  {
+
+  }
+
+  void ArtifactAssetBrowser::Impl::defaultHandleMousePressEvent(QMouseEvent* event)
+  {
+
+  }
+
+  ArtifactAssetBrowser::ArtifactAssetBrowser(QWidget* parent /*= nullptr*/) :QWidget(parent), impl_(new Impl())
  {
   setWindowTitle("AssetBrowser");
 
@@ -141,5 +162,19 @@ namespace Artifact {
   delete impl_;
  }
 
+ void ArtifactAssetBrowser::mousePressEvent(QMouseEvent* event)
+ {
+  impl_->defaultHandleMousePressEvent(event);
+ }
+
+ void ArtifactAssetBrowser::keyPressEvent(QKeyEvent* event)
+ {
+
+ }
+
+ void ArtifactAssetBrowser::keyReleaseEvent(QKeyEvent* event)
+ {
+
+ }
 
 };

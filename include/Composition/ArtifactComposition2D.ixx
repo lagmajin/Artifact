@@ -2,7 +2,7 @@
 #include <QString>
 #include <QJsonObject>
 
-
+#include <wobjectdefs.h>
 
 export module Composition._2D;
 
@@ -11,6 +11,7 @@ import std;
 import Utils.Id;
 import Color.Float;
 import Artifact.Layers;
+import Artifact.Composition.Abstract;
 
 namespace Artifact {
 
@@ -18,9 +19,7 @@ namespace Artifact {
 
  //class ArtifactComposition2DPrivate;
 
-
-
- class ArtifactComposition2D {
+ class ArtifactComposition2D :public ArtifactAbstractComposition{
  private:
   class Impl;
   Impl* impl_;
@@ -29,16 +28,15 @@ namespace Artifact {
  public:
   ArtifactComposition2D();
   ~ArtifactComposition2D();
-  void setCompositionBackgroundColor(const FloatColor& color);
   void addLayer();
   void resize(int width, int height);
   void removeLayer(ArtifactAbstractLayer* layer);
   void removeAllLayer();
 
- 	int layerCount() const;
+  int layerCount() const;
   QJsonDocument toJson() const;
-  
- 	
+
+
   ArtifactAbstractLayer* frontMostLayer() const;
   ArtifactAbstractLayer* backMostLayer() const;
 
@@ -46,7 +44,7 @@ namespace Artifact {
   void sendToBack(ArtifactAbstractLayer* layer);
  };
 
-typedef std::shared_ptr<ArtifactComposition2D> ArtifactComposition2DPtr;
+ typedef std::shared_ptr<ArtifactComposition2D> ArtifactComposition2DPtr;
 
 
 

@@ -1,5 +1,5 @@
-﻿
-module;
+﻿module ;
+#include <QSize>
 #include <QString>
 #include "..\ArtifactWidgets\include\Define\DllExportMacro.hpp"
 export module Composition.Settings;
@@ -19,7 +19,11 @@ export namespace ArtifactCore {
   CompositionSettings();
   CompositionSettings(const CompositionSettings& settings);
   ~CompositionSettings();
+  QString compositionName() const;
   void setCompositionName(const QString& string);
+  QSize compositionSize() const;
+
+
  };
 
 

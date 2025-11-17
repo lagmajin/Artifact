@@ -2,6 +2,8 @@
 #include <wobjectimpl.h>
 #include <wobjectdefs.h>
 
+#include <QHash>
+#include <QVector>
 #include <QtTest/QtTest>
 //#include <QtCore/QString>
 
@@ -11,6 +13,10 @@ module Project;
 import Utils;
 
 import Composition.Settings;
+
+import Artifact.Composition.Abstract;
+
+import Container;
 
 namespace Artifact {
  using namespace ArtifactCore;
@@ -27,18 +33,28 @@ namespace Artifact {
  {
 
  }
+ 
 
 
  class ArtifactProject::Impl {
  private:
   ArtifactProjectSettings projectSettings_;
+  QVector<ArtifactCompositionPtr> compositions_;
+  QHash<CompositionID, ArtifactCompositionPtr> index_;
+
+  ArtifactCompositionMultiIndexContainer container_;
+
  public:
   Impl();
   ~Impl();
   void addAssetFromPath(const QString& string);
   void createComposition(const QString& str);
   void createComposition(const CompositionSettings& settings);
+  void createCompositions(const QStringList& names);
+  bool removeById(const CompositionID& id);
+  void removeAllCompositions();
  };
+
 
  ArtifactProject::Impl::Impl()
  {
@@ -53,6 +69,21 @@ namespace Artifact {
  void ArtifactProject::Impl::addAssetFromPath(const QString& string)
  {
 
+ }
+
+ void ArtifactProject::Impl::createComposition(const CompositionSettings& settings)
+ {
+  
+ }
+
+ void ArtifactProject::Impl::removeAllCompositions()
+ {
+
+ }
+
+ bool ArtifactProject::Impl::removeById(const CompositionID& id)
+ {
+  return false;
  }
 
  ArtifactProject::ArtifactProject() :impl_(new Impl())
@@ -98,6 +129,21 @@ namespace Artifact {
  }
 
  void ArtifactProject::addAssetFromPath(const QString& filepath)
+ {
+
+ }
+
+ bool ArtifactProject::removeCompositionById(const CompositionID& id)
+ {
+  return impl_->removeById(id);
+ }
+
+ void ArtifactProject::removeAllCompositions()
+ {
+
+ }
+
+ void ArtifactProject::addAssetFile()
  {
 
  }

@@ -5,7 +5,7 @@ module;
 #include <QWindow>
 #include <ogre/OgreCommon.h>
 #include <ogre/OgreStringConverter.h>
-module Render:Ogre;
+module Render.Ogre;
 
 
 
