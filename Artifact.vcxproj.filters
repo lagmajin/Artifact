@@ -173,7 +173,7 @@
     <ClCompile Include="src\Widgets\ArtifactMenuBar.cpp">
       <Filter>ソース ファイル\Widgets\Menu</Filter>
     </ClCompile>
-    <ClCompile Include="src\Widgets\Asset\ArtifactAssetBrowser.cpp">
+    <ClCompile Include="src\Widgets\Asset\ArtifactAssetBrowser.cppm">
       <Filter>ソース ファイル\Widgets</Filter>
     </ClCompile>
     <ClCompile Include="src\Widgets\ArtifactTimelineWidget.cpp">
@@ -231,9 +231,6 @@
       <Filter>ソース ファイル\Layer</Filter>
     </ClCompile>
     <ClCompile Include="include\Layer\ArtifactNullLayer.ixx">
-      <Filter>ヘッダー ファイル\Layer</Filter>
-    </ClCompile>
-    <ClCompile Include="include\Layer\ArtifactImageLayer.ixx">
       <Filter>ヘッダー ファイル\Layer</Filter>
     </ClCompile>
     <ClCompile Include="include\Project\ArtifactProjectSetting.ixx">
@@ -416,7 +413,7 @@
     <ClCompile Include="include\Layer\ArtifactSolidImageLayer.ixx">
       <Filter>ヘッダー ファイル\Layer</Filter>
     </ClCompile>
-    <ClCompile Include="src\Layer\ArtifactSolidImageLayer.cpp">
+    <ClCompile Include="src\Layer\ArtifactSolidImageLayer.cppm">
       <Filter>ソース ファイル\Layer</Filter>
     </ClCompile>
     <ClCompile Include="include\Composition\ArtifactComposition.ixx">
@@ -488,7 +485,7 @@
     <ClCompile Include="include\Project\TreeFilterProxyModel.ixx">
       <Filter>ヘッダー ファイル\Project</Filter>
     </ClCompile>
-    <ClCompile Include="src\Project\TreeFilterProxyModel.cpp">
+    <ClCompile Include="src\Project\TreeFilterProxyModel.cppm">
       <Filter>ソース ファイル\Project</Filter>
     </ClCompile>
     <ClCompile Include="include\Project\ArtifactProjectModel.ixx">
@@ -554,9 +551,24 @@
     <ClCompile Include="include\Layer\ArtifactLayerSearchQuery.ixx">
       <Filter>ヘッダー ファイル\Layer</Filter>
     </ClCompile>
+    <ClCompile Include="src\Layer\ArtifactAbstract2DLayer.cppm">
+      <Filter>ソース ファイル\Layer</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Layer\ArtifactImageLayer.ixx">
+      <Filter>ヘッダー ファイル\Layer</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Layer\ArtifactLayerFactory.cpp">
+      <Filter>ソース ファイル\Layer</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Layer\ArtifactLayerInitParams.ixx">
+      <Filter>ヘッダー ファイル\Layer</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Layer\ArtifactLayerInitParams.cppm">
+      <Filter>ソース ファイル\Layer</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <None Include="src\Layer\ArtifactAdjustableLayer.cpp">
+    <None Include="src\Layer\ArtifactAdjustableLayer.cppm">
       <Filter>ソース ファイル\Layer</Filter>
     </None>
     <None Include="src\Widgets\Dialog\EditCompositionSettingDialog.cpp">

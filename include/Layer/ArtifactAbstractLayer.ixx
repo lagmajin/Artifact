@@ -1,11 +1,7 @@
-﻿module;
-
+﻿module ;
 #include <wobjectdefs.h>
 #include<QString>
 #include <QObject>
-
-
-
 export module Artifact.Layers.Abstract;
 
 import std;
@@ -14,6 +10,11 @@ import Utils.Id;
 import Utils.String.Like;
 import Layer.Blend;
 import Layer.State;
+import Animation.Transform2D;
+import Animation.Transform3D;
+
+import <cstdint> ;
+
 
 export namespace Artifact {
 
@@ -32,7 +33,10 @@ export namespace Artifact {
   Video
  };
 
+ class ArtifactAbstractLayer;
 
+ using ArtifactAbstractLayerPtr = std::shared_ptr<ArtifactAbstractLayer>;
+ using ArtifactAbstractLayerWeak = std::weak_ptr<ArtifactAbstractLayer>;
 
  class ArtifactAbstractLayer :public QObject {
   W_OBJECT(ArtifactAbstractLayer)
@@ -47,6 +51,7 @@ export namespace Artifact {
   void Show();
   void Hide();
   bool isVisible() const;
+  void setVisible(bool visible=true);
   QString layerName() const;
   void setLayerName(const QString& name);
 
@@ -61,21 +66,29 @@ export namespace Artifact {
   void* QueryInterface(const std::type_index& ti);
   QString className() const;
 
+  
+  AnimatableTransform2D& transform2D();
+  AnimatableTransform3D& transform3D();
+  void setTransform();
+
   void goToStartFrame();
   void goToEndFrame();
+  void goToNextFrame();
+  void goToPrevFrame();
+  void goToFrame(int64_t frameNumber = 0);
 
- };
+  //
+  void setParentById();
 
- class Artifact2DLayer :public ArtifactAbstractLayer
- {
- private:
-
+  bool isAdjustmentLayer() const;
+  void setAdjustmentLayer(bool isAdjustment);
  public:
 
+
  };
 
- using ArtifactAbstractLayerPtr = std::shared_ptr<ArtifactAbstractLayer>;
- using ArtifactAbstractLayerWeak = std::weak_ptr<ArtifactAbstractLayer>;
+
+
 
 
 }

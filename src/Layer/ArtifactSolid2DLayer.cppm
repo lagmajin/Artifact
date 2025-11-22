@@ -9,10 +9,24 @@ namespace  Artifact
 
  class ArtifactSolid2DLayer::Impl
  {
- 
+ private:
+
+ public:
+  Impl();
+  ~Impl();
 
  };
-	
+
+ ArtifactSolid2DLayer::Impl::Impl()
+ {
+
+ }
+
+ ArtifactSolid2DLayer::Impl::~Impl()
+ {
+
+ }
+
  ArtifactSolid2DLayer::ArtifactSolid2DLayer()
  {
 

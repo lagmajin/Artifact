@@ -6,6 +6,8 @@ module Artifact.Layers.Abstract;
 
 import Utils;
 import Layer.State;
+import Animation.Transform2D;
+import Frame.Position;
 
 namespace Artifact {
 
@@ -19,10 +21,15 @@ namespace Artifact {
    
    Id id;
    LayerState state_;
+   //FramePosition framePosition_
   public:
    Impl();
    ~Impl();
    std::type_index type_index_ = typeid(void);
+   void goToStartFrame();
+   void goToEndFrame();
+   void goToNextFrame();
+   void goToPrevFrame();
  };
 
   ArtifactAbstractLayer::Impl::Impl()
@@ -33,6 +40,26 @@ namespace Artifact {
   {
   }
 
+  void ArtifactAbstractLayer::Impl::goToStartFrame()
+  {
+
+  }
+
+  void ArtifactAbstractLayer::Impl::goToEndFrame()
+  {
+
+  }
+
+  void ArtifactAbstractLayer::Impl::goToNextFrame()
+  {
+
+  }
+
+  void ArtifactAbstractLayer::Impl::goToPrevFrame()
+  {
+
+  }
+
   ArtifactAbstractLayer::ArtifactAbstractLayer():impl_(new Impl())
  {
 
@@ -41,6 +68,11 @@ namespace Artifact {
  ArtifactAbstractLayer::~ArtifactAbstractLayer()
  {
   delete impl_;
+ }
+ 
+ void ArtifactAbstractLayer::setVisible(bool visible/*=true*/)
+ {
+  //impl_->state_.setVisible(visible);
  }
 
  void ArtifactAbstractLayer::Show()
@@ -91,5 +123,44 @@ namespace Artifact {
  {
   return impl_->type_index_;
  }
+
+ void ArtifactAbstractLayer::goToStartFrame()
+ {
+
+ }
+
+ void ArtifactAbstractLayer::goToEndFrame()
+ {
+
+ }
+
+ void ArtifactAbstractLayer::goToNextFrame()
+ {
+
+ }
+
+ void ArtifactAbstractLayer::goToPrevFrame()
+ {
+
+ }
+
+ void ArtifactAbstractLayer::goToFrame(int64_t frameNumber /*= 0*/)
+ {
+
+ }
+ bool ArtifactAbstractLayer::isAdjustmentLayer() const
+ {
+  return true;
+ }
+ void ArtifactAbstractLayer::setAdjustmentLayer(bool isAdjustment)
+ {
+  //adjustmentLayer = isAdjustment;
+ }
+
+ bool ArtifactAbstractLayer::isVisible() const
+ {
+  return false;
+ }
+
 
 };
