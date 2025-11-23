@@ -1,14 +1,12 @@
 ﻿module;
 #include <QDialog>
 #include <QWidget>
+
+#include <wobjectdefs.h>
 export module Dialog;
-//#pragma once
 
-//#include <QtCore/QScopedPointer>
-//
-
-
-
+import Widgets.Dialog.Abstract;
+import Artifact.Layer.InitParams;
 
 namespace Artifact {
 

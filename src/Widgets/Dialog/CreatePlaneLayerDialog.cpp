@@ -4,43 +4,27 @@
 #include <QWidget>
 module Dialog;
 
-
-//#include "../../../include/Widgets/Dialog/CreatePlaneLayerDialog.hpp"
-
-
-
-
-
-
+import Widgets.Dialog.Abstract;
+import Artifact.Layers.Abstract;
 
 namespace Artifact {
 
- class PlaneLayerSettingPagePrivate {
+ class PlaneLayerSettingPage::Impl {
  private:
 
  public:
-  PlaneLayerSettingPagePrivate();
-  ~PlaneLayerSettingPagePrivate();
+  
  };
 
- PlaneLayerSettingPagePrivate::PlaneLayerSettingPagePrivate()
+
+ PlaneLayerSettingPage::PlaneLayerSettingPage(QWidget* parent /*= nullptr*/) :QWidget(parent), impl_(new Impl())
  {
 
  }
 
- PlaneLayerSettingPagePrivate::~PlaneLayerSettingPagePrivate()
+PlaneLayerSettingPage::~PlaneLayerSettingPage()
  {
-
- }
-
- PlaneLayerSettingPage::PlaneLayerSettingPage(QWidget* parent /*= nullptr*/) :QWidget(parent)
- {
-
- }
-
- PlaneLayerSettingPage::~PlaneLayerSettingPage()
- {
-
+  delete impl_;
  }
 
  void PlaneLayerSettingPage::setDefaultFocus()
@@ -58,10 +42,15 @@ namespace Artifact {
 
  }
 
-	class PlaneLayerSettingDialog::Impl
+ class PlaneLayerSettingDialog::Impl
  {
+
+ private:
+
  public:
   QDialogButtonBox* dialogButtonBox = nullptr;
+  Impl();
+  ~Impl();
  };
 
  PlaneLayerSettingDialog::PlaneLayerSettingDialog(QWidget* parent /*= nullptr*/):QDialog(parent)

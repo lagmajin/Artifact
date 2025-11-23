@@ -22,7 +22,11 @@ namespace Artifact {
   QAction* copyAction_ = nullptr;
   QAction* cutAction_ = nullptr;
   QAction* pasteAction_ = nullptr;
+  QAction* deleteAction_ = nullptr;
 
+  void handleCopyAction();
+
+  void handleCutAction();
  };
 
  ArtifactEditMenu::Impl::Impl(QMenu* menu)
@@ -39,6 +43,20 @@ namespace Artifact {
   menu->addAction(copyAction_);
   menu->addAction(cutAction_);
   menu->addAction(pasteAction_);
+
+  connect(copyAction_, &QAction::triggered, [this]() { handleCopyAction(); });
+  connect(cutAction_, &QAction::triggered, [this]() { handleCutAction(); });
+
+ }
+
+ void ArtifactEditMenu::Impl::handleCopyAction()
+ {
+  // Implementation for copy action
+ }
+
+ void ArtifactEditMenu::Impl::handleCutAction()
+ {
+  // Implementation for cut action
  }
 
  ArtifactEditMenu::ArtifactEditMenu(QWidget* parent/*=nullptr*/):QMenu(parent),impl_(new Impl(this))

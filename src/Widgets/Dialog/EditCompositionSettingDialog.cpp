@@ -6,29 +6,27 @@ module Dialog.EditComposition;
 
 namespace Artifact
 {
+ class  ArtifactEditCompositionDialog::Impl
+ {
+ public:
+  Impl();
+  ~Impl();
+ };
 
+ ArtifactEditCompositionDialog::Impl::Impl()
+ {
 
+ }
 
+ ArtifactEditCompositionDialog::ArtifactEditCompositionDialog(QWidget* parent /*= nullptr*/)
+ {
 
+ }
 
+ ArtifactEditCompositionDialog::~ArtifactEditCompositionDialog()
+ {
 
-
-
-
-
-
-
-
-
-	ArtifactEditCompositionDialog::ArtifactEditCompositionDialog(QWidget* parent /*= nullptr*/)
-	{
-
-	}
-
-	ArtifactEditCompositionDialog::~ArtifactEditCompositionDialog()
-	{
-
-	}
+ }
 
 };
 

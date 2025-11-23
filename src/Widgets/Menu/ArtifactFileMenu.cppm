@@ -29,6 +29,7 @@ namespace Artifact {
    QAction* saveProjectAction=nullptr;
    QAction* saveProjectAsAction=nullptr;
    QAction* quitApplicationAction=nullptr;
+   void handleCreateProject();
    void handleOpenProject();
    void handleSaveProject();
    void handleCloseProject();
@@ -69,12 +70,22 @@ namespace Artifact {
 
  }
 
+ void ArtifactFileMenu::Impl::handleCreateProject()
+ {
+
+ }
+
  void ArtifactFileMenu::Impl::handleOpenProject()
  {
 
  }
 
  void ArtifactFileMenu::Impl::handleCloseProject()
+ {
+
+ }
+
+ void ArtifactFileMenu::Impl::handleSaveProject()
  {
 
  }
@@ -165,6 +176,11 @@ namespace Artifact {
   //menu->popup(pos); // メニューを表示
   animation->start(QAbstractAnimation::DeleteWhenStopped);
 
+
+ }
+
+ void ArtifactFileMenu::resetRecentFilesMenu()
+ {
 
  }
 

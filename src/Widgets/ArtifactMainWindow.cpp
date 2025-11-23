@@ -30,6 +30,8 @@ import Widgets.Inspector;
 import Widgets.Render.Queue;
 import Widgets.Render.Composition;
 import Widgets.AssetBrowser;
+import Widgets.KeyboardOverlayDialog;
+
 import Project.Manager;
 import Artifact.Widgets.Render.Layer;
 import Artifact.Widgets.Timeline;
@@ -55,6 +57,9 @@ namespace Artifact {
    void compositionCreated();
    void compositionCreated(ArtifactMainWindow* window);
    ArtifactMainWindow* mainWindow_=nullptr;
+
+   void handleDefaultKeyPressEvent(QKeyEvent* event);
+   void handleDefaultKeyReleaseEvent(QKeyEvent* event);
  };
 
  void ArtifactMainWindow::Impl::projectCreated()
@@ -82,6 +87,16 @@ namespace Artifact {
  }
 
  ArtifactMainWindow::Impl::~Impl()
+ {
+
+ }
+
+ void ArtifactMainWindow::Impl::handleDefaultKeyPressEvent(QKeyEvent* event)
+ {
+
+ }
+
+ void ArtifactMainWindow::Impl::handleDefaultKeyReleaseEvent(QKeyEvent* event)
  {
 
  }
@@ -226,5 +241,25 @@ namespace Artifact {
 
  }
 
+ void ArtifactMainWindow::showStatusMessage(const QString& message, int timeoutMs /*= 2000*/)
+ {
+
+ }
+
+ void ArtifactMainWindow::closeAllDocks()
+ {
+
+ }
+
+ void ArtifactMainWindow::keyPressEvent(QKeyEvent* event)
+ {
+  QMainWindow::keyPressEvent(event);
+
+ }
+
+ void ArtifactMainWindow::keyReleaseEvent(QKeyEvent* event)
+ {
+  QMainWindow::keyReleaseEvent(event);
+ }
 
 }

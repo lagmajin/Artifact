@@ -17,6 +17,11 @@ export namespace Artifact {
  private:
   class Impl;
   Impl* impl_;
+ protected:
+  void keyPressEvent(QKeyEvent* event) override;
+
+  void keyReleaseEvent(QKeyEvent* event) override;
+
  public:
   explicit ArtifactMainWindow(QWidget* parent = nullptr);
   ~ArtifactMainWindow();
@@ -24,9 +29,9 @@ export namespace Artifact {
   void addWidget();
   void addDockedWidget(const QString& title, ads::DockWidgetArea area,QWidget* widget);
 
-	
- 
- 
+  void closeAllDocks();
+  void showStatusMessage(const QString& message, int timeoutMs = 2000);
+  void togglePanelsVisible(bool visible);
  };
 
 

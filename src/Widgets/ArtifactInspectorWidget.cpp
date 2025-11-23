@@ -3,6 +3,7 @@
 #include <QLabel>
 #include <QWidget>
 #include <QVBoxLayout>
+import std;
 module Widgets.Inspector;
 
 import Widgets.Utils.CSS;
@@ -28,6 +29,7 @@ namespace Artifact {
    void defaultHandleKeyPressEvent(QKeyEvent* event);
    void defaultHandleMousePressEvent(QMouseEvent* event);
    
+   void showContextMenu();
  };
 
  ArtifactInspectorWidget::Impl::Impl()

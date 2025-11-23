@@ -13,6 +13,11 @@ export namespace Artifact {
  public:
   explicit ArtifactToolBar(QWidget*parent =nullptr);
   ~ArtifactToolBar();
+  void setActionEnabledAnimated(QAction* action, bool enabled);
+  void setCompactMode(bool enabled);      // アイコンだけ
+  void setTextUnderIcon(bool enabled);
+  void lockHeight(bool locked = true);
+ public:
 
 	void homeRequested() W_SIGNAL(homeRequested)
  };

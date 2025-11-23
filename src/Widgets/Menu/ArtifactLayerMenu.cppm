@@ -1,9 +1,11 @@
 ﻿module;
+
+#include <wobjectimpl.h>
 #include <QMenu>
 #include <QWidget>
 module Artifact.Menu.Layer;
 
-
+import std; 
 import Project.Manager;
 
 
@@ -11,11 +13,13 @@ import Project.Manager;
 
 namespace Artifact {
 
+ W_OBJECT_IMPL(ArtifactLayerMenu)
+
  class ArtifactLayerMenu::Impl {
  private:
-
+  ArtifactLayerMenu*	parentPtr_ = nullptr;
  public:
-  Impl(QMenu* menu);
+  Impl(ArtifactLayerMenu* menu);
   QMenu* createLayerMenu = nullptr;
   QAction* createNullLayerAction_ = nullptr;
   QAction* createSolidLayerAction_ = nullptr;
@@ -27,10 +31,14 @@ namespace Artifact {
   void handleCreateSolidLayer();
   void handleAdjustableLayer();
   void handleCameraLayer();
+
+  void handleOpenLayer();
  };
 
- ArtifactLayerMenu::Impl::Impl(QMenu* menu)
+ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu)
  {
+  parentPtr_ = static_cast<ArtifactLayerMenu*>(menu);
+
   createSolidLayerAction_ = new QAction("Create solid");
   createSolidLayerAction_->setText("CreateSolid");
 
@@ -64,8 +72,11 @@ namespace Artifact {
 
 
 
-	//connect(createSolidLayerAction_,&QAction::trigger,)
 
+
+  QObject::connect(createNullLayerAction_, &QAction::triggered, [this]() {
+   handleCreateNullLayer();
+   });
 
 	
  }
@@ -74,10 +85,15 @@ namespace Artifact {
  {
   auto& manager = ArtifactProjectManager::getInstance();
 
+
+  
  }
 
  void ArtifactLayerMenu::Impl::handleCreateNullLayer()
  {
+  auto& manager = ArtifactProjectManager::getInstance();
+
+  
 
  }
 
@@ -91,6 +107,11 @@ namespace Artifact {
 
  }
 
+ void ArtifactLayerMenu::Impl::handleOpenLayer()
+ {
+
+ }
+
  ArtifactLayerMenu::ArtifactLayerMenu(QWidget* parent/*=nullptr*/):QMenu(parent),impl_(new Impl(this))
  {
   setTitle(tr("Layer(&L)"));
@@ -98,6 +119,8 @@ namespace Artifact {
   setTearOffEnabled(true);
 
   //setTitle(tr("新規..."));
+
+
  }
 
  ArtifactLayerMenu::~ArtifactLayerMenu()
@@ -110,5 +133,7 @@ QMenu* ArtifactLayerMenu::newLayerMenu() const
 
    return nullptr;
  }
+
+
 
 }

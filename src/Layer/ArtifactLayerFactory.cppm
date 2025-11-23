@@ -11,6 +11,7 @@ namespace Artifact {
  public:
   Impl();
   ~Impl();
+  ArtifactAbstractLayerPtr createNewLayer(LayerType type) noexcept;
  };
 
  LayerFactory::Impl::Impl()
@@ -21,6 +22,12 @@ namespace Artifact {
  LayerFactory::Impl::~Impl()
  {
 
+ }
+
+ ArtifactAbstractLayerPtr LayerFactory::Impl::createNewLayer(LayerType type) noexcept
+ {
+
+  return nullptr;
  }
 
  LayerFactory::LayerFactory() :impl_(new Impl())

@@ -1,4 +1,6 @@
 ﻿module;
+
+#include <wobjectdefs.h>
 #include <QMenu>
 
 export module Artifact.Menu.Layer;
@@ -11,7 +13,7 @@ export namespace Artifact {
 
 
  class ArtifactLayerMenu:public QMenu {
-  //Q_OBJECT
+  W_OBJECT(ArtifactLayerMenu)
  private:
   class Impl;
   Impl* impl_;
@@ -19,8 +21,10 @@ export namespace Artifact {
   explicit ArtifactLayerMenu(QWidget* parent=nullptr);
   ~ArtifactLayerMenu();
   QMenu* newLayerMenu() const;
- signals:
-
+ //signals
+ public :
+  void nullLayerCreated()
+   W_SIGNAL(nullLayerCreated)
  public slots:
 
  };

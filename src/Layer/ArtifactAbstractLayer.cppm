@@ -162,5 +162,9 @@ namespace Artifact {
   return false;
  }
 
+ void ArtifactAbstractLayer::setParentById(LayerID& id)
+ {
+
+ }
 
 };

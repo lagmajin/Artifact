@@ -12,7 +12,13 @@ namespace Artifact {
   Impl();
   ~Impl();
   QAction* keyframeSupportAction = nullptr;
+  QAction* removeKeyframeAction = nullptr;
 
+  QAction* easyEaseAction = nullptr;
+  QAction* linearAction = nullptr;
+  QAction* holdAction = nullptr;
+  QAction* toggleVelocityGraphAction = nullptr;
+  QAction* selectAllKeyframesAction = nullptr;
  };
 
  ArtifactAnimationMenu::Impl::Impl()

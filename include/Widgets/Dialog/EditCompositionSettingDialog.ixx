@@ -2,6 +2,8 @@
 #include <QDialog>
 export module Dialog.EditComposition;
 
+import Widgets.Dialog.Abstract;
+
 export namespace Artifact {
 
  class ArtifactEditCompositionDialog:public QDialog

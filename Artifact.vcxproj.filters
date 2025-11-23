@@ -118,6 +118,15 @@
     <Filter Include="ソース ファイル\Timeline">
       <UniqueIdentifier>{6fe79643-754f-4d1f-9277-902b7a87d041}</UniqueIdentifier>
     </Filter>
+    <Filter Include="ヘッダー ファイル\Effects\Blur">
+      <UniqueIdentifier>{87b3044e-8d0e-4087-a83d-7eb3161d45c7}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ヘッダー ファイル\Effects\ColorCorrection">
+      <UniqueIdentifier>{42663ba2-eabc-40c0-a606-22b071b997b1}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ヘッダー ファイル\Audio">
+      <UniqueIdentifier>{0c2e0737-460c-4d3c-8aac-84e403a981bf}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="include\Composition\ArtifactCompositionManager.hpp">
@@ -161,16 +170,16 @@
     <ClCompile Include="src\Widgets\ArtifactInspectorWidget.cpp">
       <Filter>ソース ファイル\Widgets</Filter>
     </ClCompile>
-    <ClCompile Include="src\Widgets\Menu\ArtifactFileMenu.cpp">
+    <ClCompile Include="src\Widgets\Menu\ArtifactFileMenu.cppm">
       <Filter>ソース ファイル\Widgets\Menu</Filter>
     </ClCompile>
-    <ClCompile Include="src\Widgets\Menu\ArtifactLayerMenu.cpp">
+    <ClCompile Include="src\Widgets\Menu\ArtifactLayerMenu.cppm">
       <Filter>ソース ファイル\Widgets\Menu</Filter>
     </ClCompile>
     <ClCompile Include="src\Widgets\Menu\ArtifactCompositionMenu.cpp">
       <Filter>ソース ファイル\Widgets\Menu</Filter>
     </ClCompile>
-    <ClCompile Include="src\Widgets\ArtifactMenuBar.cpp">
+    <ClCompile Include="src\Widgets\ArtifactMenuBar.cppm">
       <Filter>ソース ファイル\Widgets\Menu</Filter>
     </ClCompile>
     <ClCompile Include="src\Widgets\Asset\ArtifactAssetBrowser.cppm">
@@ -215,7 +224,7 @@
     <ClCompile Include="src\Widgets\Dialog\CreatePlaneLayerDialog.cpp">
       <Filter>ソース ファイル\Widgets\Dialog</Filter>
     </ClCompile>
-    <ClCompile Include="src\Effect\ArtifactAbstractEffect.cpp">
+    <ClCompile Include="src\Effect\ArtifactAbstractEffect.cppm">
       <Filter>ソース ファイル\Effects</Filter>
     </ClCompile>
     <ClCompile Include="src\GUI\ArtifactGuiManager.cpp">
@@ -326,7 +335,7 @@
     <ClCompile Include="include\Project\ArtifactProjectManagerService.ixx">
       <Filter>ヘッダー ファイル\Project</Filter>
     </ClCompile>
-    <ClCompile Include="src\Project\ArtifactProjectManagerService.cpp">
+    <ClCompile Include="src\Project\ArtifactProjectManagerService.cppm">
       <Filter>ソース ファイル\Project</Filter>
     </ClCompile>
     <ClCompile Include="include\Layer\ArtifactLayerModule.ixx">
@@ -356,7 +365,7 @@
     <ClCompile Include="include\Widgets\Dialog\ApplicationSettingDialog.ixx">
       <Filter>ヘッダー ファイル\Widgets\Dialog</Filter>
     </ClCompile>
-    <ClCompile Include="src\Widgets\Dialog\ApplicationSettingDialog.cpp">
+    <ClCompile Include="src\Widgets\Dialog\ApplicationSettingDialog.cppm">
       <Filter>ソース ファイル\Widgets\Dialog</Filter>
     </ClCompile>
     <ClCompile Include="src\Widgets\Menu\ArtifactEditMenu.cpp">
@@ -392,7 +401,7 @@
     <ClCompile Include="include\Widgets\Menu\ArtifactAnimationMenu.ixx">
       <Filter>ヘッダー ファイル\Widgets\Menu</Filter>
     </ClCompile>
-    <ClCompile Include="src\Widgets\Menu\ArtifactAnimationMenu.cpp">
+    <ClCompile Include="src\Widgets\Menu\ArtifactAnimationMenu.cppm">
       <Filter>ソース ファイル\Widgets\Menu</Filter>
     </ClCompile>
     <ClCompile Include="src\Widgets\ArtifactToolBar.cppm">
@@ -557,7 +566,7 @@
     <ClCompile Include="include\Layer\ArtifactImageLayer.ixx">
       <Filter>ヘッダー ファイル\Layer</Filter>
     </ClCompile>
-    <ClCompile Include="src\Layer\ArtifactLayerFactory.cpp">
+    <ClCompile Include="src\Layer\ArtifactLayerFactory.cppm">
       <Filter>ソース ファイル\Layer</Filter>
     </ClCompile>
     <ClCompile Include="include\Layer\ArtifactLayerInitParams.ixx">
@@ -565,6 +574,33 @@
     </ClCompile>
     <ClCompile Include="src\Layer\ArtifactLayerInitParams.cppm">
       <Filter>ソース ファイル\Layer</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Layer\ArtifactLayerSelectionManager.ixx">
+      <Filter>ヘッダー ファイル\Layer</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Layer\ArtifactLayerSelectionManager.cpp">
+      <Filter>ソース ファイル\Layer</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Layer\ArtifactLayerCopyBuffer.ixx">
+      <Filter>ヘッダー ファイル\Layer</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Layer\ArtifactLayerResult.ixx">
+      <Filter>ヘッダー ファイル\Layer</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Effetcs\Blur\BlurEffect.ixx">
+      <Filter>ヘッダー ファイル\Effects\Blur</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Effetcs\Blur\DirectionBlur.ixx">
+      <Filter>ヘッダー ファイル\Effects\Blur</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Effetcs\ColorCorrection\ExposureEffect.ixx">
+      <Filter>ヘッダー ファイル\Effects\ColorCorrection</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Effetcs\ColorCorrection\BrightnessEffect.ixx">
+      <Filter>ヘッダー ファイル\Effects\ColorCorrection</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Audio\Effects\ArtifactAbstractAudioEffects.ixx">
+      <Filter>ヘッダー ファイル\Audio</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>

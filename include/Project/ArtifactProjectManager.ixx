@@ -14,10 +14,9 @@
 export module Project.Manager;
 
 import std;
-
 import Project;
-
 import Utils;
+import Artifact.Composition.Abstract;
 
 namespace pybind11 {}//dummy
 namespace folly{}//dummy
@@ -49,7 +48,7 @@ export namespace Artifact {
  public:
   static ArtifactProjectManager& getInstance();
   void createProject();
-  void createProject(const QString& projectName);
+  void createProject(const QString& projectName,bool force=false);
   void loadFromFile(const QString& fullpath);
   
   bool projectCreated() const;
@@ -62,12 +61,16 @@ export namespace Artifact {
 
   std::weak_ptr<ArtifactProject> getCurrentProjectWeakPtr();
 
+  ArtifactCompositionPtr currentComposition();
+
+
 	//Assets
   void addAssetFromFilePath(const QString& filePath);
   void addAssetsFromFilePaths(const QStringList& filePaths);
 
   //Directory
   void createPhysicalDirectory(const QString& directoryName);
+
 
  public:
   void newProjectCreated()
@@ -76,7 +79,8 @@ export namespace Artifact {
    void newCompositionCreated()
    W_SIGNAL(newCompositionCreated)
 
-  
+  void newLayerCreated()
+   W_SIGNAL(newLayerCreated)
 
  };
  

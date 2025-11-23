@@ -24,7 +24,11 @@ export namespace Artifact {
   QString projectName() const;
   template <StringLike T>
   void setProjectName(const T& name);
- 
+  QString author() const;
+  template <StringLike T>
+  void setAuthor(const T& name);
+
+
   ArtifactProjectSettings& operator=(const ArtifactProjectSettings& settings);
 
   bool operator==(const ArtifactProjectSettings& other) const;
@@ -32,6 +36,11 @@ export namespace Artifact {
 
  };
 
+ template <StringLike T>
+ void Artifact::ArtifactProjectSettings::setAuthor(const T& name)
+ {
+
+ }
 
 
 

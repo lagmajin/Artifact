@@ -66,6 +66,11 @@ namespace Artifact {
   impl_->setProjectName(name);
  }
 
+ QString ArtifactProjectSettings::author() const
+ {
+  return QString();
+ }
+
 ArtifactProjectSettings& ArtifactProjectSettings::operator=(const ArtifactProjectSettings& settings)
  {
 
@@ -85,6 +90,7 @@ ArtifactProjectSettings& ArtifactProjectSettings::operator=(const ArtifactProjec
   return !(*this == other);
  }
 
+ 
 
 
 };

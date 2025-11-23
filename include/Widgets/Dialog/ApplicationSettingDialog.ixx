@@ -1,6 +1,9 @@
 ﻿module;
 #include <QWidget>
 #include <QDialog>
+
+#include <wobjectdefs.h>
+
 export module ApplicationSettingDialog;
 
 export namespace ArtifactCore {

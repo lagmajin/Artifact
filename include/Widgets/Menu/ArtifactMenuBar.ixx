@@ -4,9 +4,7 @@
 export module Menu.MenuBar;
 
 
-
-
-
+import std;
 
 export namespace Artifact {
 
@@ -31,7 +29,6 @@ export namespace Artifact {
 
  class ArtifactMainWindow;
 
- class ArtifactMenuBarPrivate;
 
  class ArtifactMenuBar :public QMenuBar{
  private:

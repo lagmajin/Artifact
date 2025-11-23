@@ -8,8 +8,6 @@ export module Artifact.Menu.File;
 
 export namespace Artifact {
 
- class  ArtifactFileMenuPrivate;
-
  class ArtifactFileMenu :public QMenu {
   W_OBJECT(ArtifactFileMenu)
  	private:
@@ -20,6 +18,7 @@ export namespace Artifact {
   explicit ArtifactFileMenu(QWidget* parent = nullptr);
   ~ArtifactFileMenu();
 
+  void resetRecentFilesMenu();
  signals:
  protected:
   void rebuildMenu();

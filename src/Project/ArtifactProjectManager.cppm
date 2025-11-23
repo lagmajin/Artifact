@@ -10,9 +10,8 @@
 
 module Project.Manager;
 
+import std;
 import Project;
-
-
 
 import Utils;
 
@@ -25,13 +24,11 @@ namespace Artifact {
 
   class ArtifactProjectManager::Impl {
   private:
-
-
-
-
+   ArtifactProjectPtr currentProjectPtr_;
   public:
    Impl();
    ~Impl();
+   bool isCreated_ = false;
    std::shared_ptr<ArtifactProject> spProject_;
    void createProject();
    Id createNewComposition();
@@ -49,6 +46,10 @@ namespace Artifact {
   if (!spProject_)
   {
    spProject_ = std::make_shared<ArtifactProject>();
+  }
+  else {
+
+
   }
 
   
@@ -102,8 +103,10 @@ namespace Artifact {
   emit newProjectCreated();
  }
 
- void ArtifactProjectManager::createProject(const QString& projectName)
+ void ArtifactProjectManager::createProject(const QString& projectName, bool force/*=false*/)
  {
+  qDebug() << "ArtifactProjectManager::createProject with name:" << projectName;
+
   Impl_->createProject();
 
   emit newProjectCreated();
@@ -164,6 +167,12 @@ namespace Artifact {
  void ArtifactProjectManager::addAssetsFromFilePaths(const QStringList& filePaths)
  {
 
+ }
+
+ ArtifactCompositionPtr ArtifactProjectManager::currentComposition()
+ {
+
+  return nullptr;
  }
 
  bool projectManagerCurrentClose()

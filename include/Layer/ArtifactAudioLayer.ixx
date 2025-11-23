@@ -3,7 +3,10 @@
 
 export module Artifact.Layer.Audio;
 
+
 import std;
+import Audio.Volume;
+import Artifact.Layers.Abstract;
 
 export namespace Artifact
 {
@@ -16,6 +19,7 @@ export namespace Artifact
   ArtifactAudioLayer();
   ~ArtifactAudioLayer();
   void setVolume();
+  //bool isMuted() const;
   void mute();
  };
 

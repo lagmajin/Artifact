@@ -3,7 +3,6 @@
 export module Artifact.Layers.Factory;
 
 import std;
-//import Artifact.Layers;
 
 import Artifact.Layers.Abstract;
 
@@ -18,7 +17,7 @@ export namespace Artifact {
  public:
   LayerFactory();
   ~LayerFactory();
-  ArtifactAbstractLayer createNewLayer(LayerType type) noexcept;
+  ArtifactAbstractLayerPtr createNewLayer(LayerType type) noexcept;
  };
 
 

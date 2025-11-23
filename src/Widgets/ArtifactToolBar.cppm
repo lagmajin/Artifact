@@ -46,7 +46,15 @@ namespace Artifact
   delete impl_;
  }
 
+ void ArtifactToolBar::setCompactMode(bool enabled)
+ {
 
+ }
+
+ void ArtifactToolBar::setTextUnderIcon(bool enabled)
+ {
+
+ }
 
 
 

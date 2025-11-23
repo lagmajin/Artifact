@@ -1,7 +1,9 @@
 ﻿module ;
 #include <wobjectdefs.h>
-#include<QString>
+#include <QHash>
+#include <QString>
 #include <QObject>
+#include <qtypes.h>
 export module Artifact.Layers.Abstract;
 
 import std;
@@ -22,6 +24,7 @@ export namespace Artifact {
 
  enum class LayerType
  {
+  Unknown,
   None,
   Solid,       // 単色レイヤー
   Image,       // 静止画像（PNG/JPGなど）
@@ -37,6 +40,8 @@ export namespace Artifact {
 
  using ArtifactAbstractLayerPtr = std::shared_ptr<ArtifactAbstractLayer>;
  using ArtifactAbstractLayerWeak = std::weak_ptr<ArtifactAbstractLayer>;
+ 
+ 
 
  class ArtifactAbstractLayer :public QObject {
   W_OBJECT(ArtifactAbstractLayer)
@@ -78,16 +83,21 @@ export namespace Artifact {
   void goToFrame(int64_t frameNumber = 0);
 
   //
-  void setParentById();
+  void setParentById(LayerID& id);
 
   bool isAdjustmentLayer() const;
   void setAdjustmentLayer(bool isAdjustment);
+
+  //Audio
+
  public:
 
 
  };
 
-
+ inline uint qHash(const Artifact::ArtifactAbstractLayerPtr& key, uint seed = 0) noexcept {
+  return static_cast<uint>(::qHash(reinterpret_cast<quintptr>(key.get()), seed));
+ }
 
 
 
