@@ -50,7 +50,8 @@ export namespace Artifact
   void setZoom(const ZoomScale2D& scale);
   QPointF pan() const;
   void setPan(const QPointF& offset);
-  void setTargetLayer();
+  void setTargetLayer(LayerID& id);
+  void clearTargetLayer();
   QImage grabScreenShot();
   void ChangeRenderAPI();
  };

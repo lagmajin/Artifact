@@ -39,6 +39,7 @@ namespace Artifact {
  private:
   QWidget* widget_ = nullptr;
   bool m_initialized = false;
+  LayerID id_;
   void loadPSOCacheFromFile();
   void savePSOCache();
   void createShaders();
@@ -893,6 +894,16 @@ namespace Artifact {
   impl_->destroy();
 
   QWidget::closeEvent(event);
+ }
+
+ void ArtifactLayerEditor2DWidget::setTargetLayer(LayerID& id)
+ {
+
+ }
+
+ void ArtifactLayerEditor2DWidget::clearTargetLayer()
+ {
+
  }
 
 };

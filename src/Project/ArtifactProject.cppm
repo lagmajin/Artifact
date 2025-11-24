@@ -11,6 +11,7 @@
 module Project;
 
 import Utils;
+import Utils.String.Like;
 
 import Composition.Settings;
 
@@ -39,11 +40,7 @@ namespace Artifact {
  class ArtifactProject::Impl {
  private:
   ArtifactProjectSettings projectSettings_;
-  QVector<ArtifactCompositionPtr> compositions_;
-  QHash<CompositionID, ArtifactCompositionPtr> index_;
-
   ArtifactCompositionMultiIndexContainer container_;
-
  public:
   Impl();
   ~Impl();
@@ -74,6 +71,9 @@ namespace Artifact {
  void ArtifactProject::Impl::createComposition(const CompositionSettings& settings)
  {
   
+
+  //container_.add(settings);
+
  }
 
  void ArtifactProject::Impl::removeAllCompositions()
@@ -83,6 +83,8 @@ namespace Artifact {
 
  bool ArtifactProject::Impl::removeById(const CompositionID& id)
  {
+
+
   return false;
  }
 
