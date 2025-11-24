@@ -25,7 +25,7 @@ export namespace Artifact {
  public:
   explicit ArtifactMainWindow(QWidget* parent = nullptr);
   ~ArtifactMainWindow();
- public slots:
+ public /*slots*/:
   void addWidget();
   void addDockedWidget(const QString& title, ads::DockWidgetArea area,QWidget* widget);
 

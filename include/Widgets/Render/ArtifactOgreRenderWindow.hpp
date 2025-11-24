@@ -27,7 +27,8 @@ export namespace Artifact {
   virtual void render();
   virtual void initialize();
   virtual void createScene();
- public slots:
+ //Slots
+ public:
 
   virtual void renderLater();
   virtual void renderNow();
@@ -37,8 +38,9 @@ export namespace Artifact {
   */
   virtual bool eventFilter(QObject* target, QEvent* event);
 
- signals:
-  /*
+ //signals:
+  
+ /*
   Event for clicking on an entity.
   */
   void entitySelected(Ogre::Entity* entity);

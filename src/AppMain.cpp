@@ -1,4 +1,12 @@
-﻿#include <opencv2/opencv.hpp>
+﻿
+#pragma push_macro("emit")
+#pragma push_macro("event")
+#undef emit
+#include <tbb/tbb.h>
+#pragma pop_macro("event")
+#pragma pop_macro("emit")
+
+#include <opencv2/opencv.hpp>
 
 #include <QtCore/QtGlobal>
 #include <QApplication>
@@ -10,6 +18,8 @@
 
 #include <QCommandLineOption>
 #include <qthreadpool.h>
+
+
 
 
 import Transform;
@@ -112,6 +122,7 @@ void test()
  cv::Mat output_result_mat = process_bgra_mat_with_halide_gpu(input_test_mat);
  */cv::Size img_size(800, 600);
  // 背景色: 0.0-1.0の範囲でグレー (RGBA)
+ /*
  cv::Scalar bg_color(0.2, 0.2, 0.2, 1.0);
 
  cv::Point center(400, 300);
@@ -140,7 +151,7 @@ void test()
    input_test_mat.at<cv::Vec4f>(y, x) = cv::Vec4f(B, G, R, A);
   }
  }
-
+ */
  //auto testImage = findAndLoadImageInAppDir("test.jpg", CV_32FC4);
 
  //auto context=new GpuContext();
@@ -197,6 +208,8 @@ void test()
 
 int main(int argc, char* argv[])
 {
+ tbb::global_control c(tbb::global_control::max_allowed_parallelism, std::thread::hardware_concurrency());
+
  AddDllDirectory(L"C:\\Users\\lagma\\Desktop\\Artifact\\Artifact\\App");
  SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_DEFAULT_DIRS | LOAD_LIBRARY_SEARCH_USER_DIRS);
  //qsetenv("QT_QPA_PLATFORM", "windows:darkmode=[1]");

@@ -21,11 +21,11 @@ export namespace Artifact {
  public:
   explicit ArtifactViewMenu(QWidget*parent=nullptr);
   ~ArtifactViewMenu();
- signals:
+ /*signals:*/
   
- private slots:
+ private /*slots*/:
 
- public slots:
+ public /*slots*/:
   void registerView(const QString& name, QWidget* view);
  };
 

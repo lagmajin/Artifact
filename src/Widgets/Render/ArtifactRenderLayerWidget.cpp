@@ -11,18 +11,22 @@
 #include <DiligentCore/Graphics/GraphicsEngine/interface/SwapChain.h>
 #include <DiligentCore/Common/interface/RefCntAutoPtr.hpp>
 #include <DiligentTools/Imgui/interface/ImGuiDiligentRenderer.hpp>
-#include <QTimer>
-#include <QDebug>
+
 #include <wobjectimpl.h>
 #include <DiligentCore/Graphics/GraphicsEngineD3D12/interface/RenderDeviceD3D12.h>
-
+#include <QTimer>
+#include <QDebug>
 #include <QKeyEvent>
+
+
+#include <tbb/tbb.h>
 
 module Artifact.Widgets.Render.Layer;
 
 import Graphics;
 import Graphics.Shader.Set;
 import Graphics.CBuffer.Constants;
+import Graphics.Shader.Compile.Task;
 import Graphics.Shader.Compute.HLSL.Blend;
 import Layer.Blend;
 
@@ -49,14 +53,23 @@ namespace Artifact {
 
   RenderShaderPair m_draw_line_shaders;
   RenderShaderPair m_draw_solid_shaders;
+  RenderShaderPair m_draw_outline_rect_shaders;
   RenderShaderPair m_draw_sprit_shaders;
   RefCntAutoPtr<IBuffer> m_draw_solid_rect_trnsform_cb;
   RefCntAutoPtr<IBuffer> m_draw_solid_rect_cb;
 
   PSOAndSRB m_draw_solid_pso_and_srb;
   PSOAndSRB m_draw_sprite_pso_and_srb;
+  PSOAndSRB m_draw_line_pso_and_srb;
+
   RefCntAutoPtr<IBuffer> m_draw_solid_rect_vertex_buffer;
+  RefCntAutoPtr<IBuffer> m_draw_outline_rect_vertex_buffer;
   RefCntAutoPtr<IBuffer> m_draw_sprite_vertex_buffer;
+
+
+  RefCntAutoPtr<IBuffer> m_draw_solid_rect_index_buffer;
+  //RefCntAutoPtr<IBuffer> m_draw_outline_rect_index_buffer;
+  
 
   const TEXTURE_FORMAT MAIN_RTV_FORMAT = TEX_FORMAT_RGBA8_UNORM_SRGB;
 
@@ -68,7 +81,7 @@ namespace Artifact {
   RefCntAutoPtr<ITexture> m_layerRT;
   RefCntAutoPtr<IFence> m_layer_fence;
   ZoomScale2D zoom_;
-  QPointF point_;
+  //QPointF pan_;
   bool hasDirectDraw = false;
  public:
   Impl();
@@ -96,6 +109,10 @@ namespace Artifact {
   int m_CurrentPhysicalWidth = 0;
   int m_CurrentPhysicalHeight = 0;
   float m_CurrentDevicePixelRatio;
+
+  bool isPanning_ = false;
+  QPointF pan_;
+  QPointF lastMousePos_;
   QImage takeBackBuffer() const;
 
   void defaultHandleKeyPressEvent(QKeyEvent* event);
@@ -104,8 +121,8 @@ namespace Artifact {
 
  ArtifactLayerEditor2DWidget::Impl::Impl()
  {
-  point_.setX(0.5);
-  point_.setY(0.5f);
+  //point_.setX(0.5);
+  //point_.setY(0.5f);
 
  }
 
@@ -180,9 +197,14 @@ namespace Artifact {
 
   initializeDirectDraw();
 
-  createShaders();
-  createPSOs();
-  createConstBuffer();
+
+  tbb::parallel_invoke(
+   [this] { createConstBuffer(); },  // 独立して並列可能
+   [this] {
+	createShaders();              // Shader 作成後に
+	createPSOs();                 // PSO 作成
+   }
+  );
 
   m_initialized = true;
  }
@@ -264,9 +286,9 @@ namespace Artifact {
 
   FloatColor color = FloatColor();
 
+  
 
-
-  drawRect(0, 0, 600, 600, color);
+  drawRectLocal(0, 0, 400, 400, color);
 
   present();
  }
@@ -281,7 +303,6 @@ namespace Artifact {
 
  }
 
-
  void ArtifactLayerEditor2DWidget::Impl::createShaders()
  {
   ShaderCreateInfo lineVsInfo;
@@ -289,41 +310,49 @@ namespace Artifact {
   lineVsInfo.SourceLanguage = Diligent::SHADER_SOURCE_LANGUAGE_HLSL; // または GLSL
   lineVsInfo.Desc.ShaderType = Diligent::SHADER_TYPE_VERTEX;
   lineVsInfo.EntryPoint = "main";
-  lineVsInfo.Desc.Name = "MyVertexShader";
+  lineVsInfo.Desc.Name = "LayerEditorVertexShader";
   lineVsInfo.Source = lineShaderVSText.constData();
   lineVsInfo.SourceLength = lineShaderVSText.length();
-
-  pDevice->CreateShader(lineVsInfo, &m_draw_line_shaders.VS);
 
   ShaderCreateInfo linePsInfo;
 
   linePsInfo.SourceLanguage = Diligent::SHADER_SOURCE_LANGUAGE_HLSL; // または GLSL
   linePsInfo.Desc.ShaderType = Diligent::SHADER_TYPE_PIXEL;
-  linePsInfo.Desc.Name = "MyPixelShader";
+  linePsInfo.Desc.Name = "LayerEditorVertexMyPixelShader";
   linePsInfo.Source = g_qsSolidColorPS2.constData();
-  lineVsInfo.SourceLength = g_qsSolidColorPS2.length();
+  linePsInfo.SourceLength = g_qsSolidColorPS2.length();
+ 
+  ShaderCreateInfo drawOutlineRectVsInfo;
+  drawOutlineRectVsInfo.SourceLanguage = Diligent::SHADER_SOURCE_LANGUAGE_HLSL; // または GLSL
+  drawOutlineRectVsInfo.Desc.ShaderType = Diligent::SHADER_TYPE_VERTEX;
+  drawOutlineRectVsInfo.Desc.Name = "LayerEditorOutlineVertexShader";
+  drawOutlineRectVsInfo.Source = drawOutlineRectVSSource.constData();
+  drawOutlineRectVsInfo.SourceLength = drawOutlineRectVSSource.length();
 
-  pDevice->CreateShader(linePsInfo, &m_draw_line_shaders.PS);
-
+  ShaderCreateInfo drawOutlineRectPsInfo;
+  drawOutlineRectPsInfo.SourceLanguage = Diligent::SHADER_SOURCE_LANGUAGE_HLSL; // または GLSL
+  drawOutlineRectPsInfo.Desc.ShaderType = Diligent::SHADER_TYPE_PIXEL;
+  drawOutlineRectPsInfo.Desc.Name = "LayerEditorOutlinePixelShader";
+  drawOutlineRectPsInfo.Source = drawOutlineRectPSSource.constData();
+  drawOutlineRectPsInfo.SourceLength = drawOutlineRectPSSource.length();
+  
   ShaderCreateInfo solidVsInfo;
 
   solidVsInfo.SourceLanguage = Diligent::SHADER_SOURCE_LANGUAGE_HLSL; // または GLSL
   solidVsInfo.Desc.ShaderType = Diligent::SHADER_TYPE_VERTEX;
-  solidVsInfo.Desc.Name = "SolidVertexShader";
+  solidVsInfo.Desc.Name = "LayerEditorSolidRectVertexShader";
   solidVsInfo.Source = drawSolidRectVSSource.constData();
   solidVsInfo.SourceLength = drawSolidRectVSSource.length();
-
-  pDevice->CreateShader(solidVsInfo, &m_draw_solid_shaders.VS);
 
   ShaderCreateInfo solidPsInfo;
 
   solidPsInfo.SourceLanguage = Diligent::SHADER_SOURCE_LANGUAGE_HLSL; // または GLSL
   solidPsInfo.Desc.ShaderType = Diligent::SHADER_TYPE_PIXEL;
-  solidPsInfo.Desc.Name = "MyPixelShader";
+  solidPsInfo.Desc.Name = "LayerEditorSolidRectPixelShader";
   solidPsInfo.Source = g_qsSolidColorPSSource.constData();
   solidPsInfo.SourceLength = g_qsSolidColorPSSource.length();
 
-  pDevice->CreateShader(solidPsInfo, &m_draw_solid_shaders.PS);
+  
 
   ShaderCreateInfo sprite2DVsInfo;
   sprite2DVsInfo.SourceLanguage = Diligent::SHADER_SOURCE_LANGUAGE_HLSL; // または GLSL
@@ -333,7 +362,6 @@ namespace Artifact {
   sprite2DVsInfo.Source = g_qsBasic2DVS.constData();
   sprite2DVsInfo.SourceLength = g_qsBasic2DVS.length();
 
-  pDevice->CreateShader(sprite2DVsInfo, &m_draw_sprit_shaders.VS);
 
   ShaderCreateInfo sprite2DPsInfo;
   sprite2DPsInfo.SourceLanguage = Diligent::SHADER_SOURCE_LANGUAGE_HLSL; // または GLSL
@@ -343,9 +371,38 @@ namespace Artifact {
   sprite2DPsInfo.Source = g_qsBasicSprite2DImagePS.constData();
   sprite2DPsInfo.SourceLength = g_qsBasicSprite2DImagePS.length();
 
+  /*
+  
+  pDevice->CreateShader(lineVsInfo, &m_draw_line_shaders.VS);
+  
+  
+  pDevice->CreateShader(linePsInfo, &m_draw_line_shaders.PS);
+  pDevice->CreateShader(solidVsInfo, &m_draw_solid_shaders.VS);
+  pDevice->CreateShader(solidPsInfo, &m_draw_solid_shaders.PS);
+  pDevice->CreateShader(sprite2DVsInfo, &m_draw_sprit_shaders.VS);
   pDevice->CreateShader(sprite2DPsInfo, &m_draw_sprit_shaders.PS);
+  */
+  
 
+  tbb::parallel_invoke(
+   [this, lineVsInfo = lineVsInfo, linePsInfo = linePsInfo] {
+	pDevice->CreateShader(lineVsInfo, &m_draw_line_shaders.VS);
+	pDevice->CreateShader(linePsInfo, &m_draw_line_shaders.PS);
+   },
+   [this, solidVsInfo = solidVsInfo, solidPsInfo = solidPsInfo] {
+	pDevice->CreateShader(solidVsInfo, &m_draw_solid_shaders.VS);
+	pDevice->CreateShader(solidPsInfo, &m_draw_solid_shaders.PS);
+   },
+   [this, sprite2DVsInfo = sprite2DVsInfo, sprite2DPsInfo = sprite2DPsInfo] {
+	pDevice->CreateShader(sprite2DVsInfo, &m_draw_sprit_shaders.VS);
+	pDevice->CreateShader(sprite2DPsInfo, &m_draw_sprit_shaders.PS);
+   }, [this, drawOutlineRectVsInfo = drawOutlineRectVsInfo, drawOutlineRectPsInfo = drawOutlineRectPsInfo] {
+	pDevice->CreateShader(drawOutlineRectVsInfo, &m_draw_outline_rect_shaders.VS);
+	pDevice->CreateShader(drawOutlineRectPsInfo, &m_draw_outline_rect_shaders.PS);
+	}
+  );
 
+  
  }
 
  void ArtifactLayerEditor2DWidget::Impl::createPSOs()
@@ -353,12 +410,10 @@ namespace Artifact {
   GraphicsPipelineStateCreateInfo drawLinePSOCreateInfo;
 
   // PSO名
-  drawLinePSOCreateInfo.PSODesc.Name = "DrawSprite2D_PSO";
+  drawLinePSOCreateInfo.PSODesc.Name = "DrawLinePSOCreateInfo";
 
   drawLinePSOCreateInfo.pVS = m_draw_sprit_shaders.VS;
   drawLinePSOCreateInfo.pPS = m_draw_sprit_shaders.PS;
-  //drawLinePSOCreateInfo.GraphicsPipeline.InputLayout.LayoutElements = LayoutElems;
-  //drawLinePSOCreateInfo.GraphicsPipeline.InputLayout.NumElements = _countof(LayoutElems);
 
   GraphicsPipelineStateCreateInfo drawSolidRectPSOCreateInfo;
   drawSolidRectPSOCreateInfo.pVS = m_draw_solid_shaders.VS;
@@ -375,7 +430,8 @@ namespace Artifact {
   GP.DepthStencilDesc.DepthEnable = False;
   LayoutElement LayoutElems2[] =
   {
-	  LayoutElement{0, 0, 2, VT_FLOAT32, false} // pos: float2
+	  LayoutElement{0, 0, 2, VT_FLOAT32, false}, // pos: float2
+	  LayoutElement{1, 0, 4, VT_FLOAT32, false}  // color: float4
   };
   GP.InputLayout.LayoutElements = LayoutElems2;
   GP.InputLayout.NumElements = _countof(LayoutElems2);
@@ -387,9 +443,7 @@ namespace Artifact {
   drawSolidRectPSOCreateInfo.PSODesc.ResourceLayout.Variables = Vars2;
   drawSolidRectPSOCreateInfo.PSODesc.ResourceLayout.NumVariables = _countof(Vars2);
 
-  pDevice->CreateGraphicsPipelineState(drawSolidRectPSOCreateInfo, &m_draw_solid_pso_and_srb.pPSO);
-
-  m_draw_solid_pso_and_srb.pPSO->CreateShaderResourceBinding(&m_draw_solid_pso_and_srb.pSRB, false);
+ 
 
   //
 
@@ -442,6 +496,17 @@ namespace Artifact {
  // pDevice->CreateGraphicsPipelineState(drawSpritePSOCreateInfo, &m_draw_sprite_pso_and_srb.pPSO);
 
 
+
+  tbb::parallel_invoke(
+   [this,&drawSolidRectPSOCreateInfo] {
+	pDevice->CreateGraphicsPipelineState(drawSolidRectPSOCreateInfo, &m_draw_solid_pso_and_srb.pPSO);
+
+	m_draw_solid_pso_and_srb.pPSO->CreateShaderResourceBinding(&m_draw_solid_pso_and_srb.pSRB, false);
+   },[] 
+	{ 
+	}
+	);
+
  }
 
  void ArtifactLayerEditor2DWidget::Impl::createBlendPSOs()
@@ -478,7 +543,7 @@ namespace Artifact {
    CBDesc.Usage = Diligent::USAGE_DYNAMIC;        // 動的に更新する場合
    CBDesc.BindFlags = Diligent::BIND_UNIFORM_BUFFER; // 定数バッファ
    CBDesc.CPUAccessFlags = Diligent::CPU_ACCESS_WRITE;   // CPU側から書き込み可能
-   CBDesc.Size = sizeof(CBSolidTransform);
+   CBDesc.Size = sizeof(CBSolidTransform2D);
 
 
    pDevice->CreateBuffer(CBDesc, nullptr, &m_draw_solid_rect_trnsform_cb);
@@ -496,6 +561,28 @@ namespace Artifact {
    // 初期データをセットする場合はここで指定（今は空なのでnullptrでOK）
    pDevice->CreateBuffer(vbDesc, nullptr, &m_draw_solid_rect_vertex_buffer);
   }
+
+  {
+   uint32_t indices[6] = { 0, 1, 2, 2, 1, 3 };
+
+   BufferDesc IndexBufferDesc;
+   IndexBufferDesc.Name = "SolidRectIndexBuffer";
+   IndexBufferDesc.Usage = USAGE_DEFAULT;               // 動的に更新したい場合
+   IndexBufferDesc.BindFlags = BIND_INDEX_BUFFER;
+   IndexBufferDesc.Size = sizeof(indices);
+   IndexBufferDesc.CPUAccessFlags = CPU_ACCESS_NONE;
+
+
+   BufferData InitData;
+   InitData.pData = indices;
+   InitData.DataSize = sizeof(indices);
+
+   // バッファ作成
+   pDevice->CreateBuffer(IndexBufferDesc, &InitData, &m_draw_solid_rect_index_buffer);
+
+  }
+
+
  }
 
  void ArtifactLayerEditor2DWidget::Impl::setClearColor(const FloatColor& color)
@@ -597,10 +684,10 @@ namespace Artifact {
   }
 
   {
-   CBSolidTransform cbTransform;
+   CBSolidTransform2D cbTransform;
    cbTransform.offset = { x, y };
    cbTransform.scale = { w, h };
-
+   
 
    void* pData = nullptr;
    pImmediateContext->MapBuffer(m_draw_solid_rect_trnsform_cb, MAP_WRITE, MAP_FLAG_DISCARD, pData);
@@ -676,7 +763,86 @@ namespace Artifact {
   drawAttrs.Flags = DRAW_FLAG_VERIFY_ALL;
   //drawAttrs.Topology = PRIMITIVE_TOPOLOGY_LINE_LIST;
  }
+ void ArtifactLayerEditor2DWidget::Impl::drawRectLocal(float x, float y, float w, float h, const FloatColor& color)
+ {
+  RectVertex vertices[4] = {
+	  {{0,0}, {color.r(), color.g(), color.b(), 1}}, // 左上
+	  {{w, 0.0f},	 {color.r(), color.g(), color.b(), 1}}, // 右上
+	  {{0.0f, h},	 {color.r(), color.g(), color.b(), 1}}, // 左下
+	  {{w, h},		 {color.r(), color.g(), color.b(), 1}}, // 右下
+  };
 
+  auto swapChainRTV = pSwapChain_->GetCurrentBackBufferRTV();
+  ITextureView* RTVs[] = { m_layerRT->GetDefaultView(TEXTURE_VIEW_RENDER_TARGET) };
+  pImmediateContext->SetRenderTargets(1, &swapChainRTV, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+  //uint32_t indices[6] = { 0, 1, 2, 2, 1, 3 };
+  {
+   void* pData = nullptr;
+   pImmediateContext->MapBuffer(m_draw_solid_rect_vertex_buffer, MAP_WRITE, MAP_FLAG_DISCARD, pData);
+   std::memcpy(pData, vertices, sizeof(vertices));
+   pImmediateContext->UnmapBuffer(m_draw_solid_rect_vertex_buffer, MAP_WRITE);
+  }
+  {
+   CBSolidColor cb = { {1.0f, 0.0f, 0.0f, 1.0f} };
+
+
+   void* pData = nullptr;
+   pImmediateContext->MapBuffer(m_draw_solid_rect_cb, MAP_WRITE, MAP_FLAG_DISCARD, pData);
+   std::memcpy(pData, &cb, sizeof(cb));
+   pImmediateContext->UnmapBuffer(m_draw_solid_rect_cb, MAP_WRITE);
+  }
+
+  {
+   auto desc = pSwapChain_->GetDesc();
+   float nx = (x + pan_.x()) / float(desc.Width) * 2.0f - 1.0f;
+   float ny = 1.0f - (y + pan_.y()) / float(desc.Height) * 2.0f;
+   //float aspect = float(desc.Height) / float(desc.Width);
+
+
+
+   CBSolidTransform2D cbTransform;
+   cbTransform.offset = { x + (float)pan_.x(), y + (float)pan_.y() };
+   cbTransform.scale = { 1,1 };
+   cbTransform.screenSize = { float(desc.Width), float(desc.Height) };
+
+   void* pData = nullptr;
+   pImmediateContext->MapBuffer(m_draw_solid_rect_trnsform_cb, MAP_WRITE, MAP_FLAG_DISCARD, pData);
+   std::memcpy(pData, &cbTransform, sizeof(cbTransform));
+   pImmediateContext->UnmapBuffer(m_draw_solid_rect_trnsform_cb, MAP_WRITE);
+  }
+  pImmediateContext->SetPipelineState(m_draw_solid_pso_and_srb.pPSO);
+
+  IBuffer* pBuffers[] = { m_draw_solid_rect_vertex_buffer };
+  Uint64 offsets[] = { 0 }; // Uint64 にする
+  pImmediateContext->SetVertexBuffers(
+   0,                  // 開始スロット
+   1,                  // バッファ数
+   pBuffers,           // バッファ配列
+   offsets,            // オフセット配列（Uint64）
+   RESOURCE_STATE_TRANSITION_MODE_TRANSITION,
+   SET_VERTEX_BUFFERS_FLAG_RESET
+  );
+
+  pImmediateContext->SetIndexBuffer(
+   m_draw_solid_rect_index_buffer,  // 先ほど作ったIBuffer
+   0,                               // オフセット0
+   RESOURCE_STATE_TRANSITION_MODE_TRANSITION
+  );
+
+
+  m_draw_solid_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_VERTEX, "TransformCB")->Set(m_draw_solid_rect_trnsform_cb);
+  m_draw_solid_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_PIXEL, "ColorBuffer")->Set(m_draw_solid_rect_cb);
+  pImmediateContext->CommitShaderResources(m_draw_solid_pso_and_srb.pSRB, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+
+  DrawIndexedAttribs drawAttrs(
+   6,                // NumIndices = 6
+   VT_UINT32,        // IndexType
+   DRAW_FLAG_VERIFY_ALL
+  );
+
+  pImmediateContext->DrawIndexed(drawAttrs);
+
+ }
  QImage ArtifactLayerEditor2DWidget::Impl::takeBackBuffer() const
  {
   auto backBuffer = pSwapChain_->GetCurrentBackBufferRTV();
@@ -760,6 +926,7 @@ namespace Artifact {
   //pRenderDevice_.Release();
  }
 
+
  ArtifactLayerEditor2DWidget::ArtifactLayerEditor2DWidget(QWidget* parent/*=nullptr*/) :QWidget(parent), impl_(new Impl())
  {
   impl_->initialize(this);
@@ -787,14 +954,31 @@ namespace Artifact {
 
  void ArtifactLayerEditor2DWidget::mousePressEvent(QMouseEvent* event)
  {
+  if (event->button() == Qt::MiddleButton ||
+   (event->button() == Qt::RightButton && event->modifiers() & Qt::AltModifier))
+  {
+   impl_->isPanning_ = true;
+   impl_->lastMousePos_ = event->position(); // 前回位置を保存
+   event->accept();
+   return;
+  }
 
-  //impl_->defaultHandleKeyPressEvent(event);
-
+  QWidget::mousePressEvent(event);
  }
 
  void ArtifactLayerEditor2DWidget::mouseReleaseEvent(QMouseEvent* event)
  {
-  //throw std::logic_error("The method or operation is not implemented.");
+  if (event->button() == Qt::MiddleButton ||
+   (event->button() == Qt::RightButton && event->modifiers() & Qt::AltModifier))
+  {
+   impl_->isPanning_ = false;
+   event->accept();
+   return;
+  }
+
+  qDebug()<<impl_->lastMousePos_;
+
+  QWidget::mouseReleaseEvent(event);
  }
 
  void ArtifactLayerEditor2DWidget::mouseDoubleClickEvent(QMouseEvent* event)
@@ -804,7 +988,23 @@ namespace Artifact {
 
  void ArtifactLayerEditor2DWidget::mouseMoveEvent(QMouseEvent* event)
  {
-  //throw std::logic_error("The method or operation is not implemented.");
+  if (impl_->isPanning_)
+  {
+   QPointF delta = event->position() - impl_->lastMousePos_;
+   impl_->lastMousePos_ = event->position();
+
+   // pan_ にドラッグ差分を加算
+   impl_->pan_.setX(impl_->pan_.x() + delta.x());
+   impl_->pan_.setY(impl_->pan_.y() + delta.y());
+
+   update(); // 再描画
+   event->accept();
+   return;
+  }
+
+  QWidget::mouseMoveEvent(event);
+
+
  }
 
  void ArtifactLayerEditor2DWidget::wheelEvent(QWheelEvent* event)

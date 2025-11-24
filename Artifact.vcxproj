@@ -130,7 +130,7 @@
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>
       <SDLCheck>false</SDLCheck>
-      <PreprocessorDefinitions>_DEBUG;_CONSOLE;PLATFORM_WIN32;_GUARDOVERFLOW_CRT_ALLOCATORS=1;_SILENCE_CXX23_ALIGNED_STORAGE_DEPRECATION_WARNING;GLOG_USE_GLOG_EXPORT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_DEBUG;_CONSOLE;PLATFORM_WIN32;_GUARDOVERFLOW_CRT_ALLOCATORS=1;_SILENCE_CXX23_ALIGNED_STORAGE_DEPRECATION_WARNING;GLOG_USE_GLOG_EXPORT;QT_NO_KEYWORDS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpplatest</LanguageStandard>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>

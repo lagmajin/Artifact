@@ -19,7 +19,8 @@ export namespace Artifact {
   explicit ArtifactImageProcessingTestMenu(QWidget* parent = nullptr);
   ~ArtifactImageProcessingTestMenu();
 
- public slots:
+  //Slots
+ public:
   void imageProcessingTest();
  };
 

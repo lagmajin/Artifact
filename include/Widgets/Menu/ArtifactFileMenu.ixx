@@ -19,7 +19,7 @@ export namespace Artifact {
   ~ArtifactFileMenu();
 
   void resetRecentFilesMenu();
- signals:
+  /*signals:*/
  protected:
   void rebuildMenu();
   W_SLOT(rebuildMenu, ());

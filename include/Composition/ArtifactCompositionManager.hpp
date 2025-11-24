@@ -17,9 +17,10 @@ namespace Artifact {
 
   void Search();
 
- signals:
+ //signals:
 
- public slots:
+  //slots:
+ public:
   void CreateNewComposition();
   void RemoveAllComposition();
  };

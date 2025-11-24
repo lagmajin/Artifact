@@ -18,9 +18,9 @@ export namespace Artifact {
  public:
   explicit ArtifactRenderTestMenu(QWidget* parent = nullptr);
   ~ArtifactRenderTestMenu();
- signals:
+ //signals:
   void serialImageRenderTestRequested();
- public slots:
+ public:
  };
 
  class ArtifactEffectTestMenuPrivate;
@@ -57,7 +57,7 @@ export namespace Artifact {
  public:
   explicit ArtifactTestMenu(QWidget* parent = nullptr);
   ~ArtifactTestMenu();
- signals:
+ //signals:
   
   
  };

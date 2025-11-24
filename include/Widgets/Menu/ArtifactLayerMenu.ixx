@@ -25,7 +25,8 @@ export namespace Artifact {
  public :
   void nullLayerCreated()
    W_SIGNAL(nullLayerCreated)
- public slots:
+ //slots
+ public:
 
  };
 

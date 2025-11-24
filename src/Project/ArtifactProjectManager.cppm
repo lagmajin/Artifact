@@ -100,7 +100,7 @@ namespace Artifact {
  {
   Impl_->createProject();
 
-  emit newProjectCreated();
+  /*emit*/ newProjectCreated();
  }
 
  void ArtifactProjectManager::createProject(const QString& projectName, bool force/*=false*/)
@@ -109,7 +109,7 @@ namespace Artifact {
 
   Impl_->createProject();
 
-  emit newProjectCreated();
+  /*emit*/ newProjectCreated();
  }
 
  ArtifactProjectManager& ArtifactProjectManager::getInstance()

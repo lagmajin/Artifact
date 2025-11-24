@@ -91,8 +91,8 @@ export namespace Artifact {
   explicit ArtifactTimelineWidget(QWidget* parent = nullptr);
   ~ArtifactTimelineWidget();
   void update();
- signals:
- public slots:
+  /*signals:*/
+ public /*slots*/:
  };
 
  class ArtifactTimelineIconView :public QTreeView

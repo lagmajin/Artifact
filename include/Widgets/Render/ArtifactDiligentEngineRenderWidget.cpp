@@ -172,6 +172,7 @@ namespace Artifact {
    ~Impl();
    void initialize(QWidget* window);
    void initializeImGui(QWidget* window);
+   void destroy();
    void recreateSwapChain(QWidget* window);
    void resizeComposition(const Size_2D& size);
    void clearCanvas(const Diligent::float4& clearColor);
@@ -306,7 +307,7 @@ namespace Artifact {
   auto hwnd = reinterpret_cast<HWND>(widget_->winId());
 
 
-
+  /*
   ID3D12Device* d3d12Device;
 
   UINT d3d11DeviceFlags = D3D11_CREATE_DEVICE_BGRA_SUPPORT;
@@ -320,7 +321,7 @@ D3D_FEATURE_LEVEL_11_0,
 
 
   d3d12Device = renderDevice12->GetD3D12Device();
-
+  */
 
   /*
 HRESULT hr = D3D11On12CreateDevice(
@@ -526,7 +527,7 @@ if (FAILED(hr)) {
   BasicVertexShaderCI.SourceLanguage = Diligent::SHADER_SOURCE_LANGUAGE_HLSL; // または GLSL
   BasicVertexShaderCI.Desc.ShaderType = Diligent::SHADER_TYPE_VERTEX;
   BasicVertexShaderCI.EntryPoint = "main";
-  BasicVertexShaderCI.Desc.Name = "MyVertexShader";
+  BasicVertexShaderCI.Desc.Name = "CompositionVertexShader";
   BasicVertexShaderCI.Source = g_qsBasic2DVS.constData();
   BasicVertexShaderCI.SourceLength = g_qsBasic2DVS.length();
 
@@ -537,7 +538,7 @@ if (FAILED(hr)) {
   lineVsInfo.SourceLanguage = Diligent::SHADER_SOURCE_LANGUAGE_HLSL; // または GLSL
   lineVsInfo.Desc.ShaderType = Diligent::SHADER_TYPE_VERTEX;
   lineVsInfo.EntryPoint = "main";
-  lineVsInfo.Desc.Name = "MyVertexShader";
+  lineVsInfo.Desc.Name = "CompositionVertexShader";
   lineVsInfo.Source = lineShaderVSText.constData();
   lineVsInfo.SourceLength = lineShaderVSText.length();
 
@@ -817,6 +818,8 @@ if (FAILED(hr)) {
  //#RenderLoop
  void ArtifactDiligentEngineComposition2DWindow::Impl::renderOneFrame()
  {
+  if (!pSwapChain_) return;
+
   const Diligent::float4& clearColor = { 0.5f,0.5f,0.5f,1.0f };
   clearCanvas(clearColor);
 
@@ -1327,7 +1330,16 @@ if (FAILED(hr)) {
 
  }
 
+ void ArtifactDiligentEngineComposition2DWindow::Impl::destroy()
+ {
+  if (pSwapChain_)
+  {
+   // GPUリソースを安全に破棄
+   pSwapChain_.Release();
+   //pSwapChain_ = nullptr;
+  }
 
+ }
 
  QSize ArtifactDiligentEngineComposition2DWindow::sizeHint() const
  {
@@ -1381,6 +1393,8 @@ if (FAILED(hr)) {
 
    });
   renderTimer->start(16);
+  connect(this, &QWidget::destroyed, renderTimer, &QTimer::stop);
+
   setFocusPolicy(Qt::StrongFocus);
   setAttribute(Qt::WA_NativeWindow);
   setAttribute(Qt::WA_PaintOnScreen);
@@ -1389,6 +1403,7 @@ if (FAILED(hr)) {
 
  ArtifactDiligentEngineComposition2DWindow::~ArtifactDiligentEngineComposition2DWindow()
  {
+  impl_->destroy();
   delete impl_;
  }
  bool ArtifactDiligentEngineComposition2DWindow::clear(const Diligent::float4& clearColor)
@@ -1476,6 +1491,14 @@ if (FAILED(hr)) {
   QClipboard* clipboard = QGuiApplication::clipboard();
   clipboard->setImage(pixmap.toImage());
  }
+
+ void ArtifactDiligentEngineComposition2DWindow::closeEvent(QCloseEvent* event)
+ {
+  impl_->destroy();
+
+  QWidget::closeEvent(event);
+ }
+
  ArtifactDiligentEngineComposition2DWidget::Impl::Impl(QWidget* widget)
  {
   //window_ = new ArtifactDiligentEngineComposition2DWindow();

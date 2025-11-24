@@ -30,16 +30,12 @@ export namespace Artifact {
   void paintEvent(QPaintEvent* event) override;
   void wheelEvent(QWheelEvent* event) override;
   void keyPressEvent(QKeyEvent* event) override;
-
-
   void mousePressEvent(QMouseEvent* event) override;
-
-
   void mouseReleaseEvent(QMouseEvent* event) override;
 
 
   void mouseMoveEvent(QMouseEvent* event) override;
-
+  void closeEvent(QCloseEvent* event) override;
  public:
   explicit ArtifactDiligentEngineComposition2DWindow(QWidget* parent = nullptr);
   ~ArtifactDiligentEngineComposition2DWindow();

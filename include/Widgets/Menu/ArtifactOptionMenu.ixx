@@ -18,7 +18,7 @@ namespace Artifact {
  public:
   explicit ArtifactOptionMenu(QWidget *parent=nullptr);
   ~ArtifactOptionMenu();
-  signals:
+  /*signals:*/
 
  };
 

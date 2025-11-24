@@ -26,9 +26,9 @@ export namespace Artifact {
   explicit ArtifactInspectorWidget(QWidget* parent = nullptr);
   ~ArtifactInspectorWidget();
   void clear();
- signals:
+ //signals:
  
- public slots:
+ public /*slots*/:
   void triggerUpdate();
  };
 
