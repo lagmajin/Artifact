@@ -602,6 +602,18 @@
     <ClCompile Include="include\Audio\Effects\ArtifactAbstractAudioEffects.ixx">
       <Filter>ヘッダー ファイル\Audio</Filter>
     </ClCompile>
+    <ClCompile Include="include\Widgets\Render\ArtifactCompositionViewerFooter.ixx">
+      <Filter>ヘッダー ファイル\Widgets\Render</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Widgets\Render\ArtifactCompositionViewerFooter.cpp">
+      <Filter>ソース ファイル\Widgets\Render</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Widgets\Render\ArtifactLayerEditorPanel.ixx">
+      <Filter>ヘッダー ファイル\Widgets\Render</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Widgets\Render\ArtifactLayerEditorPanel.cpp">
+      <Filter>ソース ファイル\Widgets\Render</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <None Include="src\Layer\ArtifactAdjustableLayer.cppm">

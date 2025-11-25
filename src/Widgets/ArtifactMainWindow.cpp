@@ -35,6 +35,7 @@ import Widgets.KeyboardOverlayDialog;
 import Project.Manager;
 import Artifact.Widgets.Render.Layer;
 import Artifact.Widgets.Timeline;
+import Artifact.Widgets.LayerEditorPanel;
 
 namespace ArtifactWidgets {}//
 
@@ -200,12 +201,12 @@ namespace Artifact {
   auto& projectManager = ArtifactProjectManager::getInstance();
 
 
- 	auto layerEditor=new ArtifactLayerEditor2DWidget();
+ 	auto layerEditor=new ArtifactLayerEditorPanel();
     layerEditor->show();
 
-  auto browser = new ArtifactAssetBrowser();
+  //auto browser = new ArtifactAssetBrowser();
 
-  browser->show();
+  //browser->show();
 
  	
  

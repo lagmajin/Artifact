@@ -1,7 +1,9 @@
 ﻿module ;
 #include <QSize>
 #include <QString>
-#include "..\ArtifactWidgets\include\Define\DllExportMacro.hpp"
+#include "../ArtifactCore/include/Define/DllExportMacro.hpp"
+
+
 export module Composition.Settings;
 
 import std;

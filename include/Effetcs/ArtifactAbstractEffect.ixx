@@ -7,7 +7,11 @@ import std;
 
 export namespace Artifact {
 
-
+ enum class ComputeMode {
+  CPU,
+  GPU,
+  AUTO // おまかせモード
+ };
 
  class ArtifactAbstractEffect {
  private:

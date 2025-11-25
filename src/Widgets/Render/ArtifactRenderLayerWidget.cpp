@@ -80,7 +80,7 @@ namespace Artifact {
 
   RefCntAutoPtr<ITexture> m_layerRT;
   RefCntAutoPtr<IFence> m_layer_fence;
-  ZoomScale2D zoom_;
+  
   //QPointF pan_;
   bool hasDirectDraw = false;
  public:
@@ -112,6 +112,7 @@ namespace Artifact {
 
   bool isPanning_ = false;
   QPointF pan_;
+  ZoomScale2D zoom_;
   QPointF lastMousePos_;
   QImage takeBackBuffer() const;
 
@@ -765,6 +766,9 @@ namespace Artifact {
  }
  void ArtifactLayerEditor2DWidget::Impl::drawRectLocal(float x, float y, float w, float h, const FloatColor& color)
  {
+  if (!pSwapChain_) return;
+
+
   RectVertex vertices[4] = {
 	  {{0,0}, {color.r(), color.g(), color.b(), 1}}, // 左上
 	  {{w, 0.0f},	 {color.r(), color.g(), color.b(), 1}}, // 右上
@@ -902,6 +906,20 @@ namespace Artifact {
 
  void ArtifactLayerEditor2DWidget::Impl::defaultHandleKeyPressEvent(QKeyEvent* event)
  {
+  bool ctrl = event->modifiers() & Qt::ControlModifier;
+
+  if (ctrl && event->key() == Qt::Key_C)
+  {
+   // パン位置を初期化（例: 0,0）
+   pan_ = QPointF(0, 0);
+
+   // 再描画
+   //widget->update(); // もしくは repaint()
+
+   // イベントを処理済みにする
+   event->accept();
+   return;
+  }
 
  }
 
@@ -919,16 +937,11 @@ namespace Artifact {
    //pSwapChain_ = nullptr;
   }
 
-  // もし DeviceContext や RenderDevice も持っているなら
-  
-  
-  //pDeviceContext_.Release();
-  //pRenderDevice_.Release();
  }
-
 
  ArtifactLayerEditor2DWidget::ArtifactLayerEditor2DWidget(QWidget* parent/*=nullptr*/) :QWidget(parent), impl_(new Impl())
  {
+  setMinimumSize(1, 1);
   impl_->initialize(this);
   QTimer* renderTimer = new QTimer(this);
   connect(renderTimer, &QTimer::timeout, this, [this]() {
@@ -1009,7 +1022,13 @@ namespace Artifact {
 
  void ArtifactLayerEditor2DWidget::wheelEvent(QWheelEvent* event)
  {
-  //throw std::logic_error("The method or operation is not implemented.");
+  const float zoomStep = 0.1f;
+  float delta = event->angleDelta().y() / 120.0f;
+
+  impl_->zoom_ += delta * zoomStep;
+
+
+
  }
 
  void ArtifactLayerEditor2DWidget::setEditMode(EditMode mode)
@@ -1061,6 +1080,9 @@ namespace Artifact {
 
  void ArtifactLayerEditor2DWidget::keyPressEvent(QKeyEvent* event)
  {
+  impl_->defaultHandleKeyPressEvent(event);
+
+  /*
   switch (event->key())
   {
 
@@ -1080,6 +1102,8 @@ namespace Artifact {
    QWidget::keyPressEvent(event);
    return;
   }
+
+  */
  }
 
  void ArtifactLayerEditor2DWidget::keyReleaseEvent(QKeyEvent* event)

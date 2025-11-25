@@ -33,10 +33,7 @@ export namespace Artifact
   void wheelEvent(QWheelEvent* event) override;
   void resizeEvent(QResizeEvent* event) override;
   void paintEvent(QPaintEvent* event) override;
-
-
   void closeEvent(QCloseEvent* event) override;
-
  public:
   explicit ArtifactLayerEditor2DWidget(QWidget* parent = nullptr);
   ~ArtifactLayerEditor2DWidget();
