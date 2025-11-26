@@ -20,6 +20,7 @@ import std;
 import Utils;
 
 import Composition.Settings;
+import Artifact.Composition.Result;
 
 export namespace Artifact {
 
@@ -52,7 +53,7 @@ export namespace Artifact {
   template <typename NameT, typename SizeT>
    requires StringLike<NameT>&& SizeLike<SizeT>
   void createComposition(NameT name, SizeT size);
-  std::optional<Id> createComposition(const CompositionSettings& settings);
+  std::optional<CompositionID> createComposition(const CompositionSettings& settings);
   void addAssetFile();
   void addAssetFromPath(const QString& filepath);
   bool isNull() const;

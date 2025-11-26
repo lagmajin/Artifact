@@ -45,9 +45,10 @@ namespace Artifact {
   Impl();
   ~Impl();
   void addAssetFromPath(const QString& string);
-  void createComposition(const QString& str);
+  CompositionResult createComposition(const QString& str);
   void createComposition(const CompositionSettings& settings);
-  void createCompositions(const QStringList& names);
+ 	
+ 	void createCompositions(const QStringList& names);
   bool removeById(const CompositionID& id);
   void removeAllCompositions();
  };

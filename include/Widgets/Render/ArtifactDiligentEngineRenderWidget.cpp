@@ -364,6 +364,7 @@ if (FAILED(hr)) {
   createConstantBuffers();
 
   m_initialized = true;
+ 
  }
  void ArtifactDiligentEngineComposition2DWindow::Impl::createConstantBuffers()
  {
@@ -1418,7 +1419,7 @@ if (FAILED(hr)) {
  }
  void ArtifactDiligentEngineComposition2DWindow::paintEvent(QPaintEvent* event)
  {
-  impl_->renderOneFrame();
+  //impl_->renderOneFrame();
 
  }
 

@@ -57,17 +57,23 @@ namespace Artifact {
   RenderShaderPair m_draw_sprit_shaders;
   RefCntAutoPtr<IBuffer> m_draw_solid_rect_trnsform_cb;
   RefCntAutoPtr<IBuffer> m_draw_solid_rect_cb;
-
-  PSOAndSRB m_draw_solid_pso_and_srb;
-  PSOAndSRB m_draw_sprite_pso_and_srb;
+ 	
+ 	
   PSOAndSRB m_draw_line_pso_and_srb;
+  PSOAndSRB m_draw_dot_line_pso_and_srb;
+  PSOAndSRB m_draw_solid_rect_pso_and_srb;
+  PSOAndSRB m_draw_sprite_pso_and_srb;
+
 
   RefCntAutoPtr<IBuffer> m_draw_solid_rect_vertex_buffer;
   RefCntAutoPtr<IBuffer> m_draw_outline_rect_vertex_buffer;
+ 	
   RefCntAutoPtr<IBuffer> m_draw_sprite_vertex_buffer;
 
 
   RefCntAutoPtr<IBuffer> m_draw_solid_rect_index_buffer;
+  RefCntAutoPtr<IBuffer> m_draw_sprite_index_buffer;
+ 	
   //RefCntAutoPtr<IBuffer> m_draw_outline_rect_index_buffer;
   
 
@@ -83,10 +89,14 @@ namespace Artifact {
   
   //QPointF pan_;
   bool hasDirectDraw = false;
+  
  public:
   Impl();
   ~Impl();
   void initialize(QWidget* window);
+  void initializeSwapChain(QWidget* window);
+  void startRenderLoop();
+  void stopRenderLoop();
   void destroy();
   void initializeDirectDraw();
   void initializeImGui(QWidget* window);
@@ -109,15 +119,26 @@ namespace Artifact {
   int m_CurrentPhysicalWidth = 0;
   int m_CurrentPhysicalHeight = 0;
   float m_CurrentDevicePixelRatio;
+  bool released =true;
 
   bool isPanning_ = false;
+  std::atomic_bool running_{ false };
+  tbb::task_group renderTask_;
+  std::mutex resizeMutex_;
+
   QPointF pan_;
   ZoomScale2D zoom_;
   QPointF lastMousePos_;
+  QPointF mousePos_;
   QImage takeBackBuffer() const;
+  QTimer* renderTimer_=nullptr;
 
   void defaultHandleKeyPressEvent(QKeyEvent* event);
   void defaultHandleKeyReleaseEvent(QKeyEvent* event);
+
+  void recreateSwapChainInternal(QWidget* window);
+
+
  };
 
  ArtifactLayerEditor2DWidget::Impl::Impl()
@@ -129,7 +150,10 @@ namespace Artifact {
 
  ArtifactLayerEditor2DWidget::Impl::~Impl()
  {
-
+  if(released)
+  {
+   destroy();
+  }
  }
 
  void ArtifactLayerEditor2DWidget::Impl::initialize(QWidget* window)
@@ -154,6 +178,42 @@ namespace Artifact {
    qWarning() << "Failed to create Diligent Engine device and contexts.";
    return;
   }
+
+
+
+  initializeDirectDraw();
+
+
+  tbb::parallel_invoke(
+   [this] { createConstBuffer(); },  // 独立して並列可能
+   [this] {
+	createShaders();              // Shader 作成後に
+	createPSOs();                 // PSO 作成
+   }
+  );
+
+  m_initialized = true;
+  released = false;
+ }
+
+ void ArtifactLayerEditor2DWidget::Impl::initializeImGui(QWidget* window)
+ {
+  IMGUI_CHECKVERSION();
+  ImGui::CreateContext();
+  ImGuiIO& io = ImGui::GetIO();
+
+  (void)io;
+ }
+ void ArtifactLayerEditor2DWidget::Impl::initializeSwapChain(QWidget* window)
+ {
+  auto* pFactory = GetEngineFactoryD3D12();
+  Win32NativeWindow hWindow;
+  hWindow.hWnd = reinterpret_cast<HWND>(window->winId());
+  if (!pFactory)
+  {
+   qDebug() << "Failed to get D3D12 Factory";
+   return;
+  }
   m_CurrentPhysicalWidth = static_cast<int>(window->width() * window->devicePixelRatio());
   m_CurrentPhysicalHeight = static_cast<int>(window->height() * window->devicePixelRatio());
   m_CurrentDevicePixelRatio = window->devicePixelRatio();
@@ -172,6 +232,8 @@ namespace Artifact {
   desc.Fullscreen = false;
 
   pFactory->CreateSwapChainD3D12(pDevice, pImmediateContext, SCDesc, desc, hWindow, &pSwapChain_);
+
+
 
   Diligent::Viewport VP;
   VP.Width = static_cast<float>(m_CurrentPhysicalWidth);
@@ -194,31 +256,50 @@ namespace Artifact {
   TexDesc.BindFlags = BIND_RENDER_TARGET | BIND_SHADER_RESOURCE;
 
   pDevice->CreateTexture(TexDesc, nullptr, &m_layerRT);
-
-
-  initializeDirectDraw();
-
-
-  tbb::parallel_invoke(
-   [this] { createConstBuffer(); },  // 独立して並列可能
-   [this] {
-	createShaders();              // Shader 作成後に
-	createPSOs();                 // PSO 作成
-   }
-  );
-
-  m_initialized = true;
  }
-
- void ArtifactLayerEditor2DWidget::Impl::initializeImGui(QWidget* window)
+ void ArtifactLayerEditor2DWidget::Impl::startRenderLoop()
  {
-  IMGUI_CHECKVERSION();
-  ImGui::CreateContext();
-  ImGuiIO& io = ImGui::GetIO();
+  if (running_)
+   return;
+  running_ = true;
 
-  (void)io;
+  renderTask_.run([this]()
+   {
+	while (running_.load(std::memory_order_acquire))
+	{
+	 renderOneFrame();
+
+	 // GPU コマンドを確実に送る
+	 //pImmediateContext->Flush();
+
+	 std::this_thread::sleep_for(std::chrono::milliseconds(16));
+	}
+
+	// ループ終了時に GPU 完全停止
+	//pDevice->WaitForIdle();
+   });
+
  }
+ void ArtifactLayerEditor2DWidget::Impl::stopRenderLoop()
+ {
+  running_ = false;        // ループを抜ける
+ 
+  renderTask_.wait();
+  RefCntAutoPtr<IFence> fence;
+  FenceDesc desc;
+  desc.Name = "StopRenderLoopFence";
+  desc.Type = FENCE_TYPE_GENERAL;
 
+  pDevice->CreateFence(desc, &fence);
+ 	
+  pImmediateContext->Flush();
+  pImmediateContext->EnqueueSignal(fence, 1);
+  pImmediateContext->Flush();
+ 	
+  fence->Wait(1);
+  
+ 	
+ }
  void ArtifactLayerEditor2DWidget::Impl::recreateSwapChain(QWidget* window)
  {
   if (!window || !pDevice)
@@ -227,48 +308,49 @@ namespace Artifact {
    return;
   }
 
+  stopRenderLoop();
+  
 
-  //pSwapChain->Release();
-  const int newWidth = static_cast<int>(window->width() * window->devicePixelRatio());
-  const int newHeight = static_cast<int>(window->height() * window->devicePixelRatio());
-  const float newDevicePixelRatio = window->devicePixelRatio();
-  qDebug() << "Impl::recreateSwapChain - Logical:" << window->width() << "x" << window->height()
-   << ", DPI:" << newDevicePixelRatio
-   << ", Physical:" << newWidth << "x" << newHeight;
-  qDebug() << "Before Resize - SwapChain Desc:" << pSwapChain_->GetDesc().Width << "x" << pSwapChain_->GetDesc().Height;
-  pSwapChain_->Resize(newWidth, newHeight);
+  // 2. GPU 完全停止フェンス
+  RefCntAutoPtr<IFence> fence;
+  FenceDesc desc;
+  desc.Name = "SwapChainResizeFence";
+  desc.Type = FENCE_TYPE_GENERAL;
+  pDevice->CreateFence(desc, &fence);
 
+  pImmediateContext->Flush();
+  pImmediateContext->EnqueueSignal(fence, 1);
+  pImmediateContext->Flush();
+  fence->Wait(1);
 
-  qDebug() << "After Resize - SwapChain Desc:" << pSwapChain_->GetDesc().Width << "x" << pSwapChain_->GetDesc().Height;
+  // 3. SwapChain 再生成はメインスレッドで直接呼ぶ
+  recreateSwapChainInternal(window);
 
-  Diligent::Viewport VP;
-  VP.Width = static_cast<float>(newWidth);  // newWidth, newHeightは物理ピクセル
-  VP.Height = static_cast<float>(newHeight);
-  VP.MinDepth = 0.0f;
-  VP.MaxDepth = 1.0f;
-  VP.TopLeftX = 0.0f;
-  VP.TopLeftY = 0.0f;
-  pImmediateContext->SetViewports(1, &VP, newWidth, newHeight);
-
-  qDebug() << "After SetViewports - Viewport WxH: " << VP.Width << "x" << VP.Height;
-  qDebug() << "After SetViewports - Viewport TopLeftXY: " << VP.TopLeftX << ", " << VP.TopLeftY;
+  // 4. ループ再開
+  startRenderLoop();
 
 
-  if (m_layerRT)
-   m_layerRT.Release(); // 古いテクスチャを破棄
-
-  TextureDesc TexDesc;
-  TexDesc.Name = "LayerRenderTarget";
-  TexDesc.Type = RESOURCE_DIM_TEX_2D;
-  TexDesc.Width = newWidth;
-  TexDesc.Height = newHeight;
-  TexDesc.MipLevels = 1;
-  TexDesc.Format = TEX_FORMAT_RGBA8_UNORM_SRGB;
-  TexDesc.BindFlags = BIND_RENDER_TARGET | BIND_SHADER_RESOURCE;
-
-  pDevice->CreateTexture(TexDesc, nullptr, &m_layerRT);
 
  }
+	
+	
+ void ArtifactLayerEditor2DWidget::Impl::destroy()
+ {
+  if (pSwapChain_)
+  {
+   // GPUリソースを安全に破棄
+   //pSwapChain_.Release();
+   //pSwapChain_ = nullptr;
+  }
+
+  released = true;
+ }
+
+
+
+
+
+
  void ArtifactLayerEditor2DWidget::Impl::present()
  {
   if (pSwapChain_)
@@ -416,6 +498,8 @@ namespace Artifact {
   drawLinePSOCreateInfo.pVS = m_draw_sprit_shaders.VS;
   drawLinePSOCreateInfo.pPS = m_draw_sprit_shaders.PS;
 
+ 	
+ 	//
   GraphicsPipelineStateCreateInfo drawSolidRectPSOCreateInfo;
   drawSolidRectPSOCreateInfo.pVS = m_draw_solid_shaders.VS;
   drawSolidRectPSOCreateInfo.pPS = m_draw_solid_shaders.PS;
@@ -444,6 +528,7 @@ namespace Artifact {
   drawSolidRectPSOCreateInfo.PSODesc.ResourceLayout.Variables = Vars2;
   drawSolidRectPSOCreateInfo.PSODesc.ResourceLayout.NumVariables = _countof(Vars2);
 
+ 	
  
 
   //
@@ -500,9 +585,9 @@ namespace Artifact {
 
   tbb::parallel_invoke(
    [this,&drawSolidRectPSOCreateInfo] {
-	pDevice->CreateGraphicsPipelineState(drawSolidRectPSOCreateInfo, &m_draw_solid_pso_and_srb.pPSO);
+	pDevice->CreateGraphicsPipelineState(drawSolidRectPSOCreateInfo, &m_draw_solid_rect_pso_and_srb.pPSO);
 
-	m_draw_solid_pso_and_srb.pPSO->CreateShaderResourceBinding(&m_draw_solid_pso_and_srb.pSRB, false);
+	m_draw_solid_rect_pso_and_srb.pPSO->CreateShaderResourceBinding(&m_draw_solid_rect_pso_and_srb.pSRB, false);
    },[] 
 	{ 
 	}
@@ -653,6 +738,14 @@ namespace Artifact {
   auto swapChainRTV = pSwapChain_->GetCurrentBackBufferRTV();
   ITextureView* RTVs[] = { m_layerRT->GetDefaultView(TEXTURE_VIEW_RENDER_TARGET) };
   pImmediateContext->SetRenderTargets(1, &swapChainRTV, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+ 
+  //pImmediateContext->SetPipelineState(m_draw_solid_pso_and_srb.pPSO);
+ 
+  DrawAttribs drawAttrs;
+  drawAttrs.NumVertices = 4;
+  drawAttrs.Flags = DRAW_FLAG_VERIFY_ALL;
+  pImmediateContext->Draw(drawAttrs);
+ 
  }
 
  void ArtifactLayerEditor2DWidget::Impl::drawRect(float x, float y, float w, float h, const FloatColor& color)
@@ -698,7 +791,7 @@ namespace Artifact {
 
 
 
-  pImmediateContext->SetPipelineState(m_draw_solid_pso_and_srb.pPSO);
+  pImmediateContext->SetPipelineState(m_draw_solid_rect_pso_and_srb.pPSO);
 
   IBuffer* pBuffers[] = { m_draw_solid_rect_vertex_buffer };
   Uint64 offsets[] = { 0 }; // Uint64 にする
@@ -713,9 +806,9 @@ namespace Artifact {
 
 
 
-  m_draw_solid_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_VERTEX, "TransformCB")->Set(m_draw_solid_rect_trnsform_cb);
-  m_draw_solid_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_PIXEL, "ColorBuffer")->Set(m_draw_solid_rect_cb);
-  pImmediateContext->CommitShaderResources(m_draw_solid_pso_and_srb.pSRB, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+  m_draw_solid_rect_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_VERTEX, "TransformCB")->Set(m_draw_solid_rect_trnsform_cb);
+  m_draw_solid_rect_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_PIXEL, "ColorBuffer")->Set(m_draw_solid_rect_cb);
+  pImmediateContext->CommitShaderResources(m_draw_solid_rect_pso_and_srb.pSRB, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
   DrawAttribs drawAttrs;
   drawAttrs.NumVertices = 4;
   drawAttrs.Flags = DRAW_FLAG_VERIFY_ALL;
@@ -726,6 +819,8 @@ namespace Artifact {
 
  void ArtifactLayerEditor2DWidget::Impl::drawRectOutline(float x, float y, float w, float h, float thick, const FloatColor& color)
  {
+  if (!pSwapChain_) return;
+
   RectVertex vertices[4] = {
 	{{0.0f, 0.0f}, {1, 0, 0, 1}}, // 左上
 	{{1.0f, 0.0f}, {1, 0, 0, 1}}, // 右上
@@ -814,7 +909,7 @@ namespace Artifact {
    std::memcpy(pData, &cbTransform, sizeof(cbTransform));
    pImmediateContext->UnmapBuffer(m_draw_solid_rect_trnsform_cb, MAP_WRITE);
   }
-  pImmediateContext->SetPipelineState(m_draw_solid_pso_and_srb.pPSO);
+  pImmediateContext->SetPipelineState(m_draw_solid_rect_pso_and_srb.pPSO);
 
   IBuffer* pBuffers[] = { m_draw_solid_rect_vertex_buffer };
   Uint64 offsets[] = { 0 }; // Uint64 にする
@@ -834,9 +929,9 @@ namespace Artifact {
   );
 
 
-  m_draw_solid_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_VERTEX, "TransformCB")->Set(m_draw_solid_rect_trnsform_cb);
-  m_draw_solid_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_PIXEL, "ColorBuffer")->Set(m_draw_solid_rect_cb);
-  pImmediateContext->CommitShaderResources(m_draw_solid_pso_and_srb.pSRB, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+  m_draw_solid_rect_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_VERTEX, "TransformCB")->Set(m_draw_solid_rect_trnsform_cb);
+  m_draw_solid_rect_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_PIXEL, "ColorBuffer")->Set(m_draw_solid_rect_cb);
+  pImmediateContext->CommitShaderResources(m_draw_solid_rect_pso_and_srb.pSRB, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
 
   DrawIndexedAttribs drawAttrs(
    6,                // NumIndices = 6
@@ -928,30 +1023,61 @@ namespace Artifact {
 
  }
 
- void ArtifactLayerEditor2DWidget::Impl::destroy()
+ void ArtifactLayerEditor2DWidget::Impl::recreateSwapChainInternal(QWidget* window)
  {
-  if (pSwapChain_)
-  {
-   // GPUリソースを安全に破棄
-   pSwapChain_.Release();
-   //pSwapChain_ = nullptr;
-  }
+ 	
+ 	
+  const int newWidth = static_cast<int>(window->width() * window->devicePixelRatio());
+  const int newHeight = static_cast<int>(window->height() * window->devicePixelRatio());
+  const float newDevicePixelRatio = window->devicePixelRatio();
+  qDebug() << "Impl::recreateSwapChain - Logical:" << window->width() << "x" << window->height()
+   << ", DPI:" << newDevicePixelRatio
+   << ", Physical:" << newWidth << "x" << newHeight;
+  qDebug() << "Before Resize - SwapChain Desc:" << pSwapChain_->GetDesc().Width << "x" << pSwapChain_->GetDesc().Height;
+  pSwapChain_->Resize(newWidth, newHeight);
 
+
+  qDebug() << "After Resize - SwapChain Desc:" << pSwapChain_->GetDesc().Width << "x" << pSwapChain_->GetDesc().Height;
+
+  Diligent::Viewport VP;
+  VP.Width = static_cast<float>(newWidth);  // newWidth, newHeightは物理ピクセル
+  VP.Height = static_cast<float>(newHeight);
+  VP.MinDepth = 0.0f;
+  VP.MaxDepth = 1.0f;
+  VP.TopLeftX = 0.0f;
+  VP.TopLeftY = 0.0f;
+  pImmediateContext->SetViewports(1, &VP, newWidth, newHeight);
+
+  qDebug() << "After SetViewports - Viewport WxH: " << VP.Width << "x" << VP.Height;
+  qDebug() << "After SetViewports - Viewport TopLeftXY: " << VP.TopLeftX << ", " << VP.TopLeftY;
+
+
+  if (m_layerRT)
+   m_layerRT.Release(); // 古いテクスチャを破棄
+
+  TextureDesc TexDesc;
+  TexDesc.Name = "LayerRenderTarget";
+  TexDesc.Type = RESOURCE_DIM_TEX_2D;
+  TexDesc.Width = newWidth;
+  TexDesc.Height = newHeight;
+  TexDesc.MipLevels = 1;
+  TexDesc.Format = TEX_FORMAT_RGBA8_UNORM_SRGB;
+  TexDesc.BindFlags = BIND_RENDER_TARGET | BIND_SHADER_RESOURCE;
+
+  pDevice->CreateTexture(TexDesc, nullptr, &m_layerRT);
+ 
+  //startRenderLoop();
  }
+
 
  ArtifactLayerEditor2DWidget::ArtifactLayerEditor2DWidget(QWidget* parent/*=nullptr*/) :QWidget(parent), impl_(new Impl())
  {
   setMinimumSize(1, 1);
   impl_->initialize(this);
-  QTimer* renderTimer = new QTimer(this);
-  connect(renderTimer, &QTimer::timeout, this, [this]() {
-   impl_->renderOneFrame();
-
-   });
-  renderTimer->start(16);
-
-  connect(this, &QWidget::destroyed, renderTimer, &QTimer::stop);
-
+  impl_->initializeSwapChain(this);
+  impl_->startRenderLoop();
+ 	
+ 	
   setFocusPolicy(Qt::StrongFocus);
   setAttribute(Qt::WA_NativeWindow);
   setAttribute(Qt::WA_PaintOnScreen);
@@ -960,7 +1086,18 @@ namespace Artifact {
 
  ArtifactLayerEditor2DWidget::~ArtifactLayerEditor2DWidget()
  {
-  impl_->destroy();
+  //if (impl_->renderTimer_)
+  {
+   //QObject::disconnect(impl_->renderTimer_, nullptr, this, nullptr);
+   //impl_->renderTimer_->stop();   // まず描画停止
+   //impl_->renderTimer_->deleteLater();
+   //impl_->renderTimer_ = nullptr;
+  }
+
+
+  //impl_->destroy();
+
+  impl_->stopRenderLoop();
 
   delete impl_;
  }
@@ -1014,6 +1151,8 @@ namespace Artifact {
    event->accept();
    return;
   }
+ 	
+  impl_->mousePos_ = event->globalPosition();
 
   QWidget::mouseMoveEvent(event);
 
@@ -1030,7 +1169,17 @@ namespace Artifact {
 
 
  }
+ void ArtifactLayerEditor2DWidget::resizeEvent(QResizeEvent* event)
+ {
+  QWidget::resizeEvent(event);
+  impl_->recreateSwapChain(this);
+ }
 
+ void ArtifactLayerEditor2DWidget::paintEvent(QPaintEvent* event)
+ {
+  //impl_->renderOneFrame();
+
+ }
  void ArtifactLayerEditor2DWidget::setEditMode(EditMode mode)
  {
 
@@ -1066,17 +1215,7 @@ namespace Artifact {
 
  }
 
- void ArtifactLayerEditor2DWidget::resizeEvent(QResizeEvent* event)
- {
-  QWidget::resizeEvent(event);
-  impl_->recreateSwapChain(this);
- }
 
- void ArtifactLayerEditor2DWidget::paintEvent(QPaintEvent* event)
- {
-  impl_->renderOneFrame();
-
- }
 
  void ArtifactLayerEditor2DWidget::keyPressEvent(QKeyEvent* event)
  {
@@ -1111,6 +1250,13 @@ namespace Artifact {
 
 
 
+ }
+
+ void ArtifactLayerEditor2DWidget::showEvent(QShowEvent* event)
+ {
+  //QWidget::showEvent(event);
+ 	
+  //impl_->initializeSwapChain(this);
  }
 
  void ArtifactLayerEditor2DWidget::closeEvent(QCloseEvent* event)

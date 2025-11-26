@@ -63,9 +63,12 @@ namespace Artifact {
 
  Id ArtifactProjectManager::Impl::createNewComposition()
  {
+ 
+  currentProjectPtr_->createComposition("");
+ 	
   Id id;
 
-
+  
 
   return id;
  }

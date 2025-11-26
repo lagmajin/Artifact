@@ -9,10 +9,13 @@ export namespace Artifact {
   class Impl;
   Impl* impl_;
  protected:
-
+  void closeEvent(QCloseEvent* event) override;
  public:
    explicit ArtifactLayerEditorPanel(QWidget* parent = nullptr);
    ~ArtifactLayerEditorPanel();
+
+   
+
  };
 
 

@@ -142,6 +142,8 @@ namespace Artifact {
 
  void ArtifactDiligentEngineRenderWindow::present()
  {
+
+
   pSwapChain->Present();
  }
 

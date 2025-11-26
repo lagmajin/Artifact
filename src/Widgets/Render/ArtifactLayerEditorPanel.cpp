@@ -19,6 +19,7 @@ namespace Artifact {
   ArtifactCompositionViewerFooter* footer_ = nullptr;
 
   Impl();
+  ~Impl();
  };
 
  ArtifactLayerEditorPanel::Impl::Impl()
@@ -28,10 +29,18 @@ namespace Artifact {
   footer_ = new ArtifactCompositionViewerFooter();
  }
 
+ ArtifactLayerEditorPanel::Impl::~Impl()
+ {
+
+ }
+
  ArtifactLayerEditorPanel::ArtifactLayerEditorPanel(QWidget* parent /*= nullptr*/) :QWidget(parent),impl_(new Impl())
  {
+  
+
   auto vBoxLayout = new QVBoxLayout(this);
-  vBoxLayout->setSpacing(0);
+  vBoxLayout->setContentsMargins(0, 0, 0, 0);
+  vBoxLayout->setSpacing(1);
   vBoxLayout->addWidget(impl_->editor_);
   vBoxLayout->addWidget(impl_->footer_);
 
@@ -41,6 +50,11 @@ namespace Artifact {
  ArtifactLayerEditorPanel::~ArtifactLayerEditorPanel()
  {
   delete impl_;
+ }
+
+ void ArtifactLayerEditorPanel::closeEvent(QCloseEvent* event)
+ {
+  this->deleteLater();
  }
 
 };
