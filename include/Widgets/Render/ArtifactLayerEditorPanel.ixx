@@ -14,7 +14,7 @@ export namespace Artifact {
    explicit ArtifactLayerEditorPanel(QWidget* parent = nullptr);
    ~ArtifactLayerEditorPanel();
 
-   
+   QSize sizeHint() const override;
 
  };
 

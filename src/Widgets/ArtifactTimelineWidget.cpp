@@ -11,6 +11,8 @@ module Artifact.Widgets.Timeline;
 import Widgets.Utils.CSS;
 
 import Artifact.Layers.Hierarchy.Model;
+import Artifact.Widget.WorkAreaControlWidget;
+import Artifact.Timeline.RulerWidget;
 
 import Panel.DraggableSplitter;
 
@@ -42,13 +44,21 @@ namespace Artifact {
  ArtifactTimeCodeWidget::ArtifactTimeCodeWidget(QWidget* parent /*= nullptr*/) :QWidget(parent), impl_(new Impl())
  {
   auto vLayout = new QVBoxLayout();
+  vLayout->setSpacing(0);
   auto timecodeLabel = impl_->timecodeLabel_ = new QLabel();
-  timecodeLabel->setText("Time");
+  timecodeLabel->setText("00:00:00:00");
   auto frameNumberLabel = impl_->frameNumberLabel_ = new QLabel();
   frameNumberLabel->setText("fps");
+ 	
+  QFont monoFont("Consolas");
+  monoFont.setPixelSize(24);
+  timecodeLabel->setFont(monoFont);
+  frameNumberLabel->setFont(monoFont);
 
   vLayout->addWidget(timecodeLabel);
   vLayout->addWidget(frameNumberLabel);
+ 	
+ 	
   auto layout = new QHBoxLayout();
   layout->addLayout(vLayout);
 
@@ -94,6 +104,11 @@ namespace Artifact {
 
  ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget* parent/*=nullptr*/) :QWidget(parent)
  {
+ 	
+  setWindowFlags(Qt::FramelessWindowHint);
+ 	
+  setWindowTitle("TimelineWidget");
+ 	
   auto style = getDCCStyleSheetPreset(DccStylePreset::ModoStyle);
 
   setStyleSheet(style);
@@ -121,13 +136,34 @@ namespace Artifact {
   auto leftPanel = new QWidget();
   leftPanel->setLayout(leftLayout);
 
+  
+ 	
 
-
+  auto* rightPanelLayout = new QVBoxLayout();
+  auto timeRulerWidget = new ArtifactTimelineRulerWidget();
+  auto workAreaWidget = new WorkAreaControl();
+  auto timelineTrackView = new TimelineTrackView();
+ 	
+  
+  auto rightPanel = new QWidget();
+  
+  rightPanelLayout->addWidget(timeRulerWidget);
+  rightPanelLayout->addWidget(workAreaWidget);
+  rightPanelLayout->addWidget(timelineTrackView);
+  rightPanel->setLayout(rightPanelLayout);
+ 	
 
 
   // 全体のタイムラインスプリッター
   auto mainSplitter = new QSplitter(Qt::Horizontal);
+  mainSplitter-> setStyleSheet(R"(
+    QSplitter::handle {
+        background: #555555;
+    }
+)");
+  mainSplitter->setHandleWidth(10);
   mainSplitter->addWidget(leftPanel);
+  mainSplitter->addWidget(rightPanel);
  	//mainSplitter->addWidget(leftSplitter);
   
   mainSplitter->setStretchFactor(0, 1);
@@ -191,14 +227,29 @@ namespace Artifact {
 
   class TimelineTrackView::Impl
  {
+ private:
+ 	
  public:
-
+  Impl();
+  ~Impl();
  };
+
+ TimelineTrackView::Impl::Impl()
+ {
+
+ }
+
+ TimelineTrackView::Impl::~Impl()
+ {
+
+ }
 
  TimelineTrackView::TimelineTrackView(QWidget* parent /*= nullptr*/) :QGraphicsView(parent)
  {
   setScene(new TimelineScene());
-
+  setRenderHint(QPainter::Antialiasing);
+ 	
+  setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
  }
 
  TimelineTrackView::~TimelineTrackView()
@@ -213,9 +264,26 @@ namespace Artifact {
 
  void TimelineTrackView::drawBackground(QPainter* painter, const QRectF& rect)
  {
-  //painter->fillRect(rect, Qt::white);
+  painter->save();
 
-  QGraphicsView::drawBackground(painter, rect);
+  // 背景
+  painter->fillRect(viewport()->rect(), QColor(30, 30, 30));
+
+  // 線の色と幅
+  QPen pen(QColor(80, 80, 80));
+  pen.setWidth(1);
+  painter->setPen(pen);
+
+  int spacing = 20; // px単位
+  int h = viewport()->height();
+  int w = viewport()->width();
+
+  // 横線
+  for (int y = 0; y <= h; y += spacing) {
+   painter->drawLine(0, y, w, y);
+  }
+
+  painter->restore();
  }
 
  void TimelineTrackView::drawForeground(QPainter* painter, const QRectF& rect)
@@ -226,7 +294,12 @@ namespace Artifact {
 
  void TimelineScene::drawBackground(QPainter* painter, const QRectF& rect)
  {
-  painter->fillRect(rect, Qt::white);
+  //painter->fillRect(rect, Qt::darkGray);
+ }
+
+ TimelineScene::TimelineScene(QWidget* parent/*=nullptr*/):QGraphicsScene(parent)
+ {
+  setSceneRect(0, 0, 1000, 800);
  }
 
  class ArtifactTimelineIconView::Impl

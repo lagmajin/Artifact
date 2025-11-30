@@ -92,6 +92,7 @@ namespace Artifact
  {
   setSectionsMovable(true);
   setDragEnabled(true);
+  setAlternatingRowColors(true);
   setDragDropMode(QAbstractItemView::InternalMove);
   setContextMenuPolicy(Qt::CustomContextMenu);
 
@@ -130,7 +131,7 @@ namespace Artifact
 
  }
 
- ArtifactLayerHierarchyView::ArtifactLayerHierarchyView(QWidget* parent /*= nullptr*/) :QTreeView(parent)
+ ArtifactLayerHierarchyView::ArtifactLayerHierarchyView(QWidget* parent /*= nullptr*/) :QTreeView(parent),impl_(new Impl())
  {
   auto model = new ArtifactHierarchyModel();
 
@@ -148,7 +149,7 @@ namespace Artifact
 
  ArtifactLayerHierarchyView::~ArtifactLayerHierarchyView()
  {
-
+  delete impl_;
  }
 
 

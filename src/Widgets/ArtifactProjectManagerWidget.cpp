@@ -60,6 +60,7 @@ namespace Artifact {
   QMenu* contextMenu = nullptr;
   QAction* createDirectoryAction = nullptr;
   QAction* addFileAction = nullptr;
+  QAction* duplicateAction = nullptr;
 
   void showContextMenu(ArtifactProjectManagerWidget* widget, const QPoint& globalPos);
  };
@@ -73,6 +74,11 @@ namespace Artifact {
 
   contextMenu->addAction(createDirectoryAction);
 
+  addFileAction = new QAction();
+  addFileAction->setText("Add file");
+ 	
+  contextMenu->addAction(addFileAction);
+ 	
  }
 
  ArtifactProjectManagerWidget::Impl::~Impl()

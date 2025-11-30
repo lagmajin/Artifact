@@ -3,7 +3,6 @@ module;
 #include <wobjectimpl.h>
 
 module ArtifactRenderManagerWidget;
-//#include "../../../include/Widgets/Render/ArtifactRenderManagerWidget.hpp"
 
 
 

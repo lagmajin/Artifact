@@ -27,7 +27,7 @@ import DockWidget;
 import BasicImageViewWidget;
 import Widgets.ToolBar;
 import Widgets.Inspector;
-import Widgets.Render.Queue;
+//import Widgets.Render.Queue;
 import Widgets.Render.Composition;
 import Widgets.AssetBrowser;
 import Widgets.KeyboardOverlayDialog;
@@ -36,6 +36,8 @@ import Project.Manager;
 import Artifact.Widgets.Render.Layer;
 import Artifact.Widgets.Timeline;
 import Artifact.Widgets.LayerEditorPanel;
+import Artifact.Widgets.Render.QueueManager;
+import Artifact.Widgets.RenderQueueJobPanel;
 
 namespace ArtifactWidgets {}//
 
@@ -55,9 +57,10 @@ namespace Artifact {
    Impl(ArtifactMainWindow* mainWindow);
    ~Impl();
    void projectCreated();
-   void compositionCreated();
-   void compositionCreated(ArtifactMainWindow* window);
-   ArtifactMainWindow* mainWindow_=nullptr;
+   void handleCompositionCreated();
+   void handleCompositionCreated(ArtifactMainWindow* window);
+   void handleLayerCreated(ArtifactMainWindow* window);
+ 	ArtifactMainWindow* mainWindow_=nullptr;
 
    void handleDefaultKeyPressEvent(QKeyEvent* event);
    void handleDefaultKeyReleaseEvent(QKeyEvent* event);
@@ -67,13 +70,8 @@ namespace Artifact {
  {
   qDebug() << "project created";
  }
-
- void ArtifactMainWindow::Impl::compositionCreated()
- {
-
- }
-
- void ArtifactMainWindow::Impl::compositionCreated(ArtifactMainWindow* window)
+	
+ void ArtifactMainWindow::Impl::handleCompositionCreated(ArtifactMainWindow* window)
  {
   qDebug() <<"composition created";
 
@@ -132,27 +130,20 @@ namespace Artifact {
 
 
   auto DockManager = new CDockManager(this);
+  DockManager->setStyleSheet(R"(
+    QDockWidget::title {
+        background: rgb(50,50,50);
+        padding-left: 4px;
+    }
+)");
+  auto imageView = new BasicImageViewWidget();
+  auto imageViewer = new Pane("Image Viewer", imageView);
 
-  //QLabel* l = new QLabel();
-  //l->setWordWrap(true);
-  //l->setAlignment(Qt::AlignTop | Qt::AlignLeft);
+  auto centralDockWidget = new CDockWidget("centralWidget");
+  DockManager->setCentralWidget(centralDockWidget);
 
-  //auto  DockWidget = new Pane("Label 1",l);
-  //DockWidget->setWidget(l);
-  //DockManager->addDockWidget(ads::TopDockWidgetArea, DockWidget);
+  DockManager->addDockWidget(ads::CenterDockWidgetArea, imageViewer, nullptr);
 
-
-  //auto render = new ArtifactRenderManagerWidget();
- 
-  //render->show();
-
-  //auto qto=new QTOgreWindow();
-  //qto->show();
-
-  //auto dWindow = new ArtifactDiligentEngineRenderWindow();
-  //dWindow->initialize();
-
-  //dWindow->show();
 
   auto projectManagerWidget = new ArtifactProjectManagerWidget();
 
@@ -162,60 +153,64 @@ namespace Artifact {
   //DockWidget2->setWidget(projectManagerWidget);
 
   DockManager->addDockWidget(ads::LeftDockWidgetArea, DockWidget2);
-
-  auto imageView = new BasicImageViewWidget();
- // imageView->show();
-
-  auto dockwidget5 = new Pane("Image Viewer", imageView);
-  //dockwidget5->setWidget(imageView);
-  DockManager->addDockWidget(ads::CenterDockWidgetArea, dockwidget5);
-
-
-  
-
-  
+ 	
   
   auto inspectorWidget2 = new ArtifactInspectorWidget();
-  auto  DockWidget3 = new Pane("Inspector", inspectorWidget2);
+  auto  inspectorWidgetWrapper = new Pane("Inspector", inspectorWidget2);
   //DockWidget3->setWidget(inspectorWidget2);
 
-  DockManager->addDockWidget(ads::RightDockWidgetArea, DockWidget3);
+ 	
+ 	
+  DockManager->addDockWidget(ads::RightDockWidgetArea, inspectorWidgetWrapper);
 
   
-  auto renderManagerWidget = new RenderQueueManagerWidget();
+  // imageView->show();
+ 	
+  //auto renderManagerWidget = new RenderQueueManagerWidget();
 
-  auto  DockWidget4 = new Pane("RenderQueueManager", renderManagerWidget);
-  DockWidget4->setWindowIcon(QIcon::fromTheme("folder"));
+  //auto  renderManagerWidgetWrapper = new Pane("RenderQueueManager", renderManagerWidget);
+  //renderManagerWidgetWrapper->setWindowIcon(QIcon::fromTheme("folder"));
 
 
-  DockManager->addDockWidget(ads::BottomDockWidgetArea, DockWidget4);
+  //DockManager->addDockWidget(ads::BottomDockWidgetArea, renderManagerWidgetWrapper);
+  
+
+  
+  
  
   
-  auto compositionWidget = new ArtifactDiligentEngineComposition2DWindow();
+  //auto compositionWidget = new ArtifactDiligentEngineComposition2DWindow();
 
-  auto  DockWidget5 = new Pane("CompositionWidget", compositionWidget);
+  //auto  DockWidget5 = new Pane("CompositionWidget", compositionWidget);
   //DockWidget5->setWidget(compositionWidget);
 
-  DockManager->addDockWidget(ads::CenterDockWidgetArea, DockWidget5);
+  //DockManager->addDockWidget(ads::CenterDockWidgetArea, DockWidget5);
 
   auto& projectManager = ArtifactProjectManager::getInstance();
 
 
- 	auto layerEditor=new ArtifactLayerEditorPanel();
-    layerEditor->show();
+ 	//auto layerEditor=new ArtifactLayerEditorPanel();
+    //layerEditor->show();
 
   //auto browser = new ArtifactAssetBrowser();
 
   //browser->show();
-
  	
+    auto renderManagerWidget = new RenderQueueJobWidget();
+    renderManagerWidget->show();
+
+	//auto timelineWidget = new ArtifactTimelineWidget();
+	//timelineWidget->show();
  
+    //auto renderPanelTest = new RenderQueueManagerJobPanel();
+    //renderPanelTest->show();
+ 	
   QObject::connect(&projectManager, &ArtifactProjectManager::newProjectCreated, [this]() {
    impl_->projectCreated();
    });
 
   QObject::connect(&projectManager, &ArtifactProjectManager::newCompositionCreated, [this]() {
-   impl_->compositionCreated(this);
+   impl_->handleCompositionCreated(this);
    });
 
   //auto compositionWidget2 = new ArtifactDiligentEngineComposition2DWidget();

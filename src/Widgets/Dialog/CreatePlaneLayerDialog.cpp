@@ -2,6 +2,7 @@
 #include <QDialogButtonBox>
 #include <QVBoxLayout>
 #include <QWidget>
+#include <wobjectimpl.h>
 module Dialog;
 
 import Widgets.Dialog.Abstract;
@@ -41,6 +42,8 @@ PlaneLayerSettingPage::~PlaneLayerSettingPage()
  {
 
  }
+	
+	W_OBJECT_IMPL(PlaneLayerSettingDialog)
 
  class PlaneLayerSettingDialog::Impl
  {

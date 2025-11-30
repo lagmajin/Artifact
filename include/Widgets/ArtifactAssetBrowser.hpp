@@ -52,6 +52,10 @@ export namespace Artifact {
  private:
   class Impl;
   Impl* impl_;
+ protected:
+  void mousePressEvent(QMouseEvent* event) override;
+  void keyPressEvent(QKeyEvent* event) override;
+  void keyReleaseEvent(QKeyEvent* event) override;
  public:
   explicit ArtifactAssetBrowser(QWidget* parent = nullptr);
   ~ArtifactAssetBrowser();
@@ -61,10 +65,7 @@ export namespace Artifact {
    void selectionChanged(const QStringList& selectedFiles) W_SIGNAL(selectionChanged, selectedFiles)
    void itemDoubleClicked(const QString& itemPath) W_SIGNAL(itemDoubleClicked, itemPath)
 
-protected:
-  void mousePressEvent(QMouseEvent* event) override;
-  void keyPressEvent(QKeyEvent* event) override;
-  void keyReleaseEvent(QKeyEvent* event) override;
+
  };
 
 

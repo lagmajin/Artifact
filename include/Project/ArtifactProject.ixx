@@ -37,7 +37,7 @@ export namespace Artifact {
  
 	
 
- class ArtifactProject :public QObject{
+ class ArtifactProject final :public QObject{
   W_OBJECT(ArtifactProject)
  private:
   class Impl;
@@ -53,7 +53,7 @@ export namespace Artifact {
   template <typename NameT, typename SizeT>
    requires StringLike<NameT>&& SizeLike<SizeT>
   void createComposition(NameT name, SizeT size);
-  std::optional<CompositionID> createComposition(const CompositionSettings& settings);
+  CompositionResult createComposition(const CompositionSettings& settings);
   void addAssetFile();
   void addAssetFromPath(const QString& filepath);
   bool isNull() const;

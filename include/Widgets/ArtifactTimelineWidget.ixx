@@ -14,19 +14,15 @@ import Artifact.Widgets.Hierarchy;
 
 export namespace Artifact {
 
- class ArtifactSeekBar
- {
- private:
-
- public:
-
- };
+ 
 
  class ArtifactTimeCodeWidget :public QWidget {
   W_OBJECT(ArtifactTimeCodeWidget)
  private:
   class Impl;
   Impl* impl_;
+ protected:
+ 	
  public:
   explicit ArtifactTimeCodeWidget(QWidget* parent = nullptr);
   ~ArtifactTimeCodeWidget();
@@ -39,18 +35,12 @@ export namespace Artifact {
  private:
 
  public:
+  TimelineScene(QWidget*parent=nullptr);
   void drawBackground(QPainter* painter, const QRectF& rect) override;
 
 
  };
 
- class ArtifactTimelineRulerWidget :public QWidget
- {
- private:
-
- public:
-
- };
 
 
  //#right
@@ -64,6 +54,12 @@ export namespace Artifact {
   ~TimelineTrackView();
   double zoomLevel() const;
   void setZoomLevel(double pixelsPerFrame);
+
+
+  QSize minimumSizeHint() const override
+  {
+   return QSize(600, 600);
+  }
 
  protected:
   void drawBackground(QPainter* painter, const QRectF& rect) override;

@@ -126,6 +126,12 @@ namespace Artifact {
   qDebug() << "シグナルで通知された ID:" << idStr;
  }
 
+ CompositionResult ArtifactProject::createComposition(const CompositionSettings& settings)
+ {
+
+  return CompositionResult();
+ }
+
  bool ArtifactProject::isNull() const
  {
   return false;

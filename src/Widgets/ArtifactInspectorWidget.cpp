@@ -3,9 +3,9 @@
 #include <QLabel>
 #include <QWidget>
 #include <QVBoxLayout>
-import std;
-module Widgets.Inspector;
 
+module Widgets.Inspector;
+import std;
 import Widgets.Utils.CSS;
 
 namespace Artifact {

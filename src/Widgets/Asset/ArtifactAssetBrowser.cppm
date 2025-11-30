@@ -71,7 +71,6 @@ namespace Artifact {
   void handleDirectryChanged();
   void handleDoubleClicked();
   void defaultHandleMousePressEvent(QMouseEvent* event);
- 	
  };
 
   ArtifactAssetBrowser::Impl::Impl()

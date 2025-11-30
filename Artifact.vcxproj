@@ -191,6 +191,7 @@
     <ClCompile Include="include\Effetcs\ColorCorrection\BrightnessEffect.ixx" />
     <ClCompile Include="include\Effetcs\ColorCorrection\ExposureEffect.ixx" />
     <ClCompile Include="include\Effetcs\GlobalEffectManager.ixx" />
+    <ClCompile Include="include\GUI\WindowPluginManager.ixx" />
     <ClCompile Include="include\Layer\ArtifactAbstract2DLayer.ixx" />
     <ClCompile Include="include\Layer\ArtifactAudioLayer.ixx" />
     <ClCompile Include="include\Layer\ArtifactHierarchyModel.ixx" />
@@ -219,6 +220,7 @@
     <ClCompile Include="include\Timeline\ArtifactTimelineIconModel.ixx" />
     <ClCompile Include="include\Tool\Tool.ixx" />
     <ClCompile Include="include\Widgets\ArtifactLayerHierarchyWidget.ixx" />
+    <ClCompile Include="include\Widgets\Dialog\ArtifactRenderOutputSettingDialog.ixx" />
     <ClCompile Include="include\Widgets\Menu\ArtifactAnimationMenu.ixx">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
     </ClCompile>
@@ -228,8 +230,17 @@
     <ClCompile Include="include\Widgets\Render\ArtifactDiligentEngineRenderWidget.ixx" />
     <ClCompile Include="include\Widgets\Render\ArtifactLayerEditorPanel.ixx" />
     <ClCompile Include="include\Widgets\Render\ArtifactRenderLayerWidget.ixx" />
+    <ClCompile Include="include\Widgets\Render\ArtifactRenderQueueJobPanel.ixx">
+      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Widgets\Render\ArtifactRenderQueueManagerWidget.ixx" />
+    <ClCompile Include="include\Widgets\Timeline\ArtifactSeekBar.ixx" />
+    <ClCompile Include="include\Widgets\Timeline\ArtifactTimelineObjects.ixx" />
+    <ClCompile Include="include\Widgets\Timeline\ArtifactTimelineRulerWidget.ixx" />
+    <ClCompile Include="include\Widgets\Timeline\ArtifactWorkAreaControlWidget.ixx" />
     <ClCompile Include="src\Application\ArtifactApplicationManager.cpp" />
     <ClCompile Include="src\Effetcs\GlobalEffectManager.cpp" />
+    <ClCompile Include="src\GUI\WindowPluginManager.cpp" />
     <ClCompile Include="src\Layer\ArtifactAbstract2DLayer.cppm">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
     </ClCompile>
@@ -261,17 +272,19 @@
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Timeline\ArtifactTimelineIconModel.cpp" />
-    <ClCompile Include="src\Widgets\ArtifactLayerHierarchyWidget.cpp" />
     <ClCompile Include="src\Widgets\ArtifactToolBar.cppm">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
     </ClCompile>
+    <ClCompile Include="src\Widgets\Dialog\ArtifactRenderOutputSettingDialog.cpp" />
     <ClCompile Include="src\Widgets\Menu\ArtifactAnimationMenu.cppm">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Widgets\Render\ArtifactCompositionViewerFooter.cpp" />
     <ClCompile Include="src\Widgets\Render\ArtifactDiligentEngineComposition2DRenderImpl.cpp" />
     <ClCompile Include="src\Widgets\Render\ArtifactLayerEditorPanel.cpp" />
+    <ClCompile Include="src\Widgets\Render\ArtifactRenderQueueJobPanel.cpp" />
     <ClCompile Include="src\Widgets\Render\ArtifactRenderLayerWidget.cpp" />
+    <ClCompile Include="src\Widgets\Render\ArtifactRenderQueueManagerWidget.cpp" />
     <ClCompile Include="src\Widgets\Render\GridRenderer.cpp">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
     </ClCompile>
@@ -284,6 +297,12 @@
       <FileType>Document</FileType>
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
     </ClCompile>
+    <ClCompile Include="src\Widgets\Timeline\ArtifactLayerHierarchyWidget.cpp" />
+    <ClCompile Include="src\Widgets\Timeline\ArtifactSeekBar.cpp" />
+    <ClCompile Include="src\Widgets\Timeline\ArtifactTimeCodeWidget.cpp" />
+    <ClCompile Include="src\Widgets\Timeline\ArtifactTimelineObjects.cpp" />
+    <ClCompile Include="src\Widgets\Timeline\ArtifactTimelineRulerWidget.cpp" />
+    <ClCompile Include="src\Widgets\Timeline\ArtifactWorkAreaControlWidget.cpp" />
     <ClInclude Include="Generated\TestService.h">
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
     </ClInclude>
@@ -463,7 +482,7 @@
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Widgets\Dialog\CreatePlaneLayerDialog.cpp" />
-    <ClCompile Include="src\Widgets\Menu\ArtifactEditMenu.cpp">
+    <ClCompile Include="src\Widgets\Menu\ArtifactEditMenu.cppm">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Widgets\Menu\ArtifactFileMenu.cppm">
@@ -515,7 +534,9 @@
     <ClCompile Include="src\Composition\ArtifactComposition2D.cpp">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
     </ClCompile>
-    <ClCompile Include="src\Widgets\Menu\ArtifactEffectMenu.cpp" />
+    <ClCompile Include="src\Widgets\Menu\ArtifactEffectMenu.cppm">
+      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+    </ClCompile>
     <ClCompile Include="src\Composition\ArtifactAbstractComposition.cppm">
       <FileType>Document</FileType>
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>

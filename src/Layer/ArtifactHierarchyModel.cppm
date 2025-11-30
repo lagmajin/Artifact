@@ -6,7 +6,8 @@ module Artifact.Layers.Hierarchy.Model;
 
 import std;
 import Utils;
-
+import Artifact.Composition.Abstract;
+import Project.Manager;
 
 namespace Artifact
 {
@@ -60,8 +61,21 @@ namespace Artifact
 
  QVariant ArtifactHierarchyModel::data(const QModelIndex& index, int role /*= Qt::DisplayRole*/) const
  {
-  Q_UNUSED(index);
-  Q_UNUSED(role);
+ 	
+ 	
+  if (role == Qt::BackgroundRole) {
+   if (index.row() % 2 == 0)
+	return QColor(30, 30, 30);  // 偶数行
+   else
+	return QColor(45, 45, 45);  // 奇数行
+  	
+  	
+  	
+   if (role == Qt::DisplayRole) {
+	return "Test";
+   }
+  }
+ 	
   return QVariant(); // 空実装
  }
 

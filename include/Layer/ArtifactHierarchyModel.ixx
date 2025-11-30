@@ -3,6 +3,8 @@
 #include <QAbstractItemModel>
 export module Artifact.Layers.Hierarchy.Model;
 
+import std;
+import Utils.Id;
 
 
 export namespace Artifact
@@ -13,7 +15,8 @@ export namespace Artifact
  private:
   class Impl;
   Impl* impl_;
-
+ protected:
+ 	
  public:
   ArtifactHierarchyModel(QObject* parent = nullptr);
   ~ArtifactHierarchyModel();

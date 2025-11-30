@@ -32,8 +32,9 @@ class PlaneLayerSettingPagePrivate;
 
  };
 
- class PlaneLayerSettingDialog:public QDialog
+ class PlaneLayerSettingDialog final:public QDialog
  {
+ 	W_OBJECT(PlaneLayerSettingDialog)
  private:
   class Impl;
   Impl* impl_;
