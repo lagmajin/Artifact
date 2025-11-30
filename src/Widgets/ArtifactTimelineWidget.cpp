@@ -8,75 +8,29 @@
 #include <QStandardItem>
 module Artifact.Widgets.Timeline;
 
+
+import std;
 import Widgets.Utils.CSS;
 
 import Artifact.Layers.Hierarchy.Model;
 import Artifact.Widget.WorkAreaControlWidget;
-import Artifact.Timeline.RulerWidget;
 
-import Panel.DraggableSplitter;
 
 import ArtifactTimelineIconModel;
+import Artifact.Timeline.Label;
+import Artifact.Timeline.RulerWidget;
+import Artifact.Timeline.ScaleWidget;
+import Artifact.Timeline.TimeCodeWidget;
+import Panel.DraggableSplitter;
+
+
 
 namespace Artifact {
 
  using namespace ArtifactCore;
  using namespace ArtifactWidgets;
 
- W_OBJECT_IMPL(ArtifactTimeCodeWidget)
-  class ArtifactTimeCodeWidget::Impl {
-  private:
-
-  public:
-   Impl();
-   QLabel* timecodeLabel_ = nullptr;
-   QLabel* frameNumberLabel_ = nullptr;
- };
-
- ArtifactTimeCodeWidget::Impl::Impl()
- {
-  //timecodeLabel_ = new QLabel();
-  //timecodeLabel_->setText("Time:");
-  frameNumberLabel_ = new QLabel();
-
- }
-
- ArtifactTimeCodeWidget::ArtifactTimeCodeWidget(QWidget* parent /*= nullptr*/) :QWidget(parent), impl_(new Impl())
- {
-  auto vLayout = new QVBoxLayout();
-  vLayout->setSpacing(0);
-  auto timecodeLabel = impl_->timecodeLabel_ = new QLabel();
-  timecodeLabel->setText("00:00:00:00");
-  auto frameNumberLabel = impl_->frameNumberLabel_ = new QLabel();
-  frameNumberLabel->setText("fps");
- 	
-  QFont monoFont("Consolas");
-  monoFont.setPixelSize(24);
-  timecodeLabel->setFont(monoFont);
-  frameNumberLabel->setFont(monoFont);
-
-  vLayout->addWidget(timecodeLabel);
-  vLayout->addWidget(frameNumberLabel);
- 	
- 	
-  auto layout = new QHBoxLayout();
-  layout->addLayout(vLayout);
-
-  setLayout(layout);
- }
-
-
-
- ArtifactTimeCodeWidget::~ArtifactTimeCodeWidget()
- {
-
- }
-
- void ArtifactTimeCodeWidget::updateTimeCode(int frame)
- {
-
- }
-
+ 
 
  W_OBJECT_IMPL(ArtifactTimelineWidget)
 
@@ -141,13 +95,15 @@ namespace Artifact {
 
   auto* rightPanelLayout = new QVBoxLayout();
   auto timeRulerWidget = new ArtifactTimelineRulerWidget();
-  auto workAreaWidget = new WorkAreaControl();
+  auto timeScaleWidget = new TimelineScaleWidget();
+ 	auto workAreaWidget = new WorkAreaControl();
   auto timelineTrackView = new TimelineTrackView();
  	
   
   auto rightPanel = new QWidget();
   
   rightPanelLayout->addWidget(timeRulerWidget);
+  rightPanelLayout->addWidget(timeScaleWidget);
   rightPanelLayout->addWidget(workAreaWidget);
   rightPanelLayout->addWidget(timelineTrackView);
   rightPanel->setLayout(rightPanelLayout);
@@ -347,29 +303,6 @@ namespace Artifact {
 
  }
 
- class TimelineLabel::Impl
- {
- private:
 
- public:
-  QLabel* frameRenderingLabel = nullptr;
- };
-
- TimelineLabel::TimelineLabel(QWidget* parent /*= nullptr*/) :QWidget(parent)
- {
-
-
- 	auto layout = new QHBoxLayout();
-
-
-  setLayout(layout);
-
-  setFixedHeight(28);
- }
-
- TimelineLabel::~TimelineLabel()
- {
-
- }
 
 };

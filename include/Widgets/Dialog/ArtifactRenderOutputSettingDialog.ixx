@@ -6,7 +6,7 @@ export module Artifact.Widget.Dialog.RenderOutputSetting;
 export namespace Artifact
 {
 
- class ArtifactRenderOutputSettingDialog :public QWidget
+ class ArtifactRenderOutputSettingDialog :public QDialog
  {
   W_OBJECT(ArtifactRenderOutputSettingDialog)
  private:

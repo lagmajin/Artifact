@@ -199,8 +199,8 @@ namespace Artifact {
     auto renderManagerWidget = new RenderQueueJobWidget();
     renderManagerWidget->show();
 
-	//auto timelineWidget = new ArtifactTimelineWidget();
-	//timelineWidget->show();
+	auto timelineWidget = new ArtifactTimelineWidget();
+	timelineWidget->show();
  
     //auto renderPanelTest = new RenderQueueManagerJobPanel();
     //renderPanelTest->show();

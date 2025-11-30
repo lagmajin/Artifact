@@ -11,24 +11,14 @@
 export module Artifact.Widgets.Timeline;
 
 import Artifact.Widgets.Hierarchy;
+import std;
+
 
 export namespace Artifact {
 
  
 
- class ArtifactTimeCodeWidget :public QWidget {
-  W_OBJECT(ArtifactTimeCodeWidget)
- private:
-  class Impl;
-  Impl* impl_;
- protected:
- 	
- public:
-  explicit ArtifactTimeCodeWidget(QWidget* parent = nullptr);
-  ~ArtifactTimeCodeWidget();
-
-  void updateTimeCode(int frame);
- };
+ 
 
  class TimelineScene :public QGraphicsScene
  {
@@ -101,15 +91,6 @@ export namespace Artifact {
   ~ArtifactTimelineIconView();
  };
 
- class TimelineLabel :public QWidget
- {
- private:
-  class Impl;
-  Impl* impl_;
- public:
-  explicit TimelineLabel(QWidget* parent = nullptr);
-  ~TimelineLabel();
- };
 
 
 

@@ -136,6 +136,12 @@
     <Filter Include="ヘッダー ファイル\GUI">
       <UniqueIdentifier>{2eb133b3-a045-4174-9b54-d9806b9ad29d}</UniqueIdentifier>
     </Filter>
+    <Filter Include="ヘッダー ファイル\Translation">
+      <UniqueIdentifier>{bb6112f7-3287-4434-8e0d-ddd5d5a0602a}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ソース ファイル\Translation">
+      <UniqueIdentifier>{a8e2c063-99f3-44e5-8ca7-d63dba260321}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="include\Composition\ArtifactCompositionManager.hpp">
@@ -673,6 +679,33 @@
     </ClCompile>
     <ClCompile Include="src\GUI\WindowPluginManager.cpp">
       <Filter>ソース ファイル\GUI</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Translation\TranslationManager.ixx">
+      <Filter>ヘッダー ファイル\Translation</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Translation\TranslationManager.cpp">
+      <Filter>ソース ファイル\Translation</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Widgets\Timeline\TimelineScaleWidget.cpp">
+      <Filter>ソース ファイル\Widgets\Timeline</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Widgets\Timeline\TimelineScaleWidget.ixx">
+      <Filter>ヘッダー ファイル\Widgets\Timeline</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Widgets\Timeline\ArtifactTimelineLabel.ixx">
+      <Filter>ヘッダー ファイル\Widgets\Timeline</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Widgets\Timeline\ArtifactTimelineLabel.cpp">
+      <Filter>ソース ファイル\Widgets\Timeline</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Widgets\Timeline\ArtifactTimelineTimeCodeWidget.ixx">
+      <Filter>ヘッダー ファイル\Widgets</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Widgets\Timeline\ArtifactLayerPanelWidget.ixx">
+      <Filter>ヘッダー ファイル\Widgets\Timeline</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Widgets\Timeline\ArtifactLayerPanelWidget.cpp">
+      <Filter>ソース ファイル\Widgets\Timeline</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
