@@ -24,12 +24,14 @@ namespace Artifact {
 
   class ArtifactProjectView::Impl
  {
+ private:
+ 	
  public:
-    
-	 
+
+
  };
 
-  ArtifactProjectView::ArtifactProjectView(QWidget* parent /*= nullptr*/):QTreeView(parent)
+ ArtifactProjectView::ArtifactProjectView(QWidget* parent /*= nullptr*/) :QTreeView(parent)
  {
   setFrameShape(QFrame::NoFrame);
   // setSelectionMode(QAbstractItemView::SingleSelection);
@@ -51,7 +53,7 @@ namespace Artifact {
   ArtifactProjectView* projectView_ = nullptr;
   Impl();
   ~Impl();
- 
+
   QLineEdit* searchWidget_ = nullptr;
   void handleSearchTextChanged();
   void handleFileDrop(const QString& str);
@@ -76,9 +78,9 @@ namespace Artifact {
 
   addFileAction = new QAction();
   addFileAction->setText("Add file");
- 	
+
   contextMenu->addAction(addFileAction);
- 	
+
  }
 
  ArtifactProjectManagerWidget::Impl::~Impl()
@@ -102,16 +104,16 @@ namespace Artifact {
  {
   auto& manager = ArtifactProjectManager::getInstance();
 
-  qDebug() << "File:"<<str;
+  qDebug() << "File:" << str;
   manager.addAssetFromFilePath(str);
 
  }
 
- ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent /*= nullptr*/):QWidget(parent),impl_(new Impl())
+ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent /*= nullptr*/) :QWidget(parent), impl_(new Impl())
  {
-	 setWindowTitle("Project");
-     setAttribute(Qt::WA_StyledBackground);
-	 setStyleSheet(R"(
+  setWindowTitle("Project");
+  setAttribute(Qt::WA_StyledBackground);
+  setStyleSheet(R"(
     QWidget {
         background-color: #2e2e2e;
         color: #e0e0e0;
@@ -173,25 +175,25 @@ namespace Artifact {
     }
 )");
 
-     setEnabled(false);
+  setEnabled(false);
 
-     auto label = new QLabel();
-     label->setText("Project name:");
+  auto label = new QLabel();
+  label->setText("Project name:");
 
-     impl_->projectView_ = new ArtifactProjectView();
+  impl_->projectView_ = new ArtifactProjectView();
 
-     auto searchWidget =impl_->searchWidget_= new QLineEdit();
-     searchWidget->setPlaceholderText("...");
-     searchWidget->setAlignment(Qt::AlignLeft);
-     searchWidget->setEchoMode(QLineEdit::Normal);
+  auto searchWidget = impl_->searchWidget_ = new QLineEdit();
+  searchWidget->setPlaceholderText("...");
+  searchWidget->setAlignment(Qt::AlignLeft);
+  searchWidget->setEchoMode(QLineEdit::Normal);
 
-     auto layout = new QVBoxLayout();
-     layout->addWidget(label);
-     layout->addWidget(searchWidget);
-     layout->addWidget(impl_->projectView_);
-     setLayout(layout);
+  auto layout = new QVBoxLayout();
+  layout->addWidget(label);
+  layout->addWidget(searchWidget);
+  layout->addWidget(impl_->projectView_);
+  setLayout(layout);
 
-     setContextMenuPolicy(Qt::CustomContextMenu);
+  setContextMenuPolicy(Qt::CustomContextMenu);
  }
 
  ArtifactProjectManagerWidget::~ArtifactProjectManagerWidget()
@@ -253,7 +255,7 @@ namespace Artifact {
 	 // ✔️ 実際の処理：ここで何かする（読み込み/表示/保存など）
 	 qDebug() << "Accepted file dropped:" << filePath;
 
-     impl_->handleFileDrop(filePath);
+	 impl_->handleFileDrop(filePath);
 	}
    }
 
@@ -266,7 +268,7 @@ namespace Artifact {
 
  QSize ArtifactProjectManagerWidget::sizeHint() const
  {
-  return QSize(QWidget::sizeHint().width(),600);
+  return QSize(QWidget::sizeHint().width(), 600);
  }
 
  void ArtifactProjectManagerWidget::contextMenuEvent(QContextMenuEvent* event)
@@ -275,6 +277,6 @@ namespace Artifact {
 
 
  }
- 
+
 
 }

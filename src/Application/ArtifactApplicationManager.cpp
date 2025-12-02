@@ -3,9 +3,12 @@
 
 module Artifact.Application.Manager;
 
+import std;
 
 import EnvironmentVariable;
 import Render.Queue.Manager;
+
+import Artifact.Test.ProjectManager;
 
 namespace Artifact
 {

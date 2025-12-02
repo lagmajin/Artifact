@@ -217,6 +217,8 @@
     <ClCompile Include="include\Render\IRenderer.ixx" />
     <ClCompile Include="include\Render\RenderModule.ixx" />
     <ClCompile Include="include\Render\RenderPipeline.ixx" />
+    <ClCompile Include="include\Service\ArtifactProjectService.ixx" />
+    <ClCompile Include="include\Test\ArtifactTestProjectManager.ixx" />
     <ClCompile Include="include\Timeline\ArtifactTimelineIconModel.ixx" />
     <ClCompile Include="include\Tool\Tool.ixx" />
     <ClCompile Include="include\Translation\TranslationManager.ixx" />
@@ -276,6 +278,10 @@
     <ClCompile Include="src\Render\ArtifactRenderManager.cppm">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
     </ClCompile>
+    <ClCompile Include="src\Service\ArtifactProjectService.cppm">
+      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+    </ClCompile>
+    <ClCompile Include="src\Test\ArtifactTestProjectManager.cpp" />
     <ClCompile Include="src\Timeline\ArtifactTimelineIconModel.cpp" />
     <ClCompile Include="src\Translation\TranslationManager.cpp" />
     <ClCompile Include="src\Widgets\ArtifactToolBar.cppm">
@@ -474,7 +480,7 @@
     <ClCompile Include="src\Widgets\ArtifactInspectorWidget.cpp">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
     </ClCompile>
-    <ClCompile Include="src\Widgets\ArtifactMainWindow.cpp">
+    <ClCompile Include="src\Widgets\ArtifactMainWindow.cppm">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Widgets\ArtifactMenuBar.cppm">

@@ -38,6 +38,7 @@ import Artifact.Widgets.Timeline;
 import Artifact.Widgets.LayerEditorPanel;
 import Artifact.Widgets.Render.QueueManager;
 import Artifact.Widgets.RenderQueueJobPanel;
+import Artifact.Widgets.LayerPanelWidget;
 
 namespace ArtifactWidgets {}//
 
@@ -202,8 +203,8 @@ namespace Artifact {
 	auto timelineWidget = new ArtifactTimelineWidget();
 	timelineWidget->show();
  
-    //auto renderPanelTest = new RenderQueueManagerJobPanel();
-    //renderPanelTest->show();
+    auto timeTest = new ArtifactLayerPanelWrapper();
+    timeTest->show();
  	
   QObject::connect(&projectManager, &ArtifactProjectManager::newProjectCreated, [this]() {
    impl_->projectCreated();

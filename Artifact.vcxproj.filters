@@ -142,6 +142,12 @@
     <Filter Include="ソース ファイル\Translation">
       <UniqueIdentifier>{a8e2c063-99f3-44e5-8ca7-d63dba260321}</UniqueIdentifier>
     </Filter>
+    <Filter Include="ヘッダー ファイル\Service">
+      <UniqueIdentifier>{e6810d19-9141-4db0-b2ae-67038c964144}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ソース ファイル\Service">
+      <UniqueIdentifier>{17dde077-a0d0-43dd-a26a-617a45d24c19}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="include\Composition\ArtifactCompositionManager.hpp">
@@ -170,7 +176,7 @@
     <ClCompile Include="src\Layer\ArtifactCompositionLayer.cppm">
       <Filter>ソース ファイル\Layer</Filter>
     </ClCompile>
-    <ClCompile Include="src\Widgets\ArtifactMainWindow.cpp">
+    <ClCompile Include="src\Widgets\ArtifactMainWindow.cppm">
       <Filter>ソース ファイル\Widgets</Filter>
     </ClCompile>
     <ClCompile Include="src\Widgets\ArtifactProjectManagerWidget.cpp">
@@ -706,6 +712,18 @@
     </ClCompile>
     <ClCompile Include="src\Widgets\Timeline\ArtifactLayerPanelWidget.cpp">
       <Filter>ソース ファイル\Widgets\Timeline</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Test\ArtifactTestProjectManager.ixx">
+      <Filter>ヘッダー ファイル\Test</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Test\ArtifactTestProjectManager.cpp">
+      <Filter>ソース ファイル\Test</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Service\ArtifactProjectService.ixx">
+      <Filter>ヘッダー ファイル\Service</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Service\ArtifactProjectService.cppm">
+      <Filter>ソース ファイル\Service</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
