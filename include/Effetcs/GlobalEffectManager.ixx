@@ -1,7 +1,9 @@
 ﻿module;
 #include <QString>
 
-export module Effects.Manager;
+export module Artifact.Effects.Manager;
+
+import std;
 
 export namespace Artifact
 {
@@ -15,6 +17,8 @@ export namespace Artifact
   ~GlobalEffectManager();
   void loadPlugin() noexcept;
   void unloadAllPlugins() noexcept;
+ 	
+  static GlobalEffectManager* effectManager();
  };
 
 

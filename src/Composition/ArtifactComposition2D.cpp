@@ -1,6 +1,6 @@
 ﻿module;
 #include <QJsonObject>
-module Composition._2D;
+module Artifact.Composition._2D;
 
 namespace Artifact {
 

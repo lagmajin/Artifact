@@ -7,7 +7,6 @@ import std;
 
 import EnvironmentVariable;
 import Render.Queue.Manager;
-
 import Artifact.Test.ProjectManager;
 
 namespace Artifact
@@ -17,7 +16,8 @@ namespace Artifact
  {
  private:
   GlobalEffectManager effectManager_;
-  
+  ArtifactTestProjectManager testProjectManager_;
+ 	
   entt::registry registry_;
   entt::dispatcher dispather_;
  public:
@@ -25,7 +25,9 @@ namespace Artifact
   Impl();
   ~Impl();
   entt::registry& registry();
-  GlobalEffectManager* const effectManager();
+  ArtifactProjectManager* projectManager() const;
+ 	GlobalEffectManager* const effectManager();
+ 	
   //GlobalEffectManager
  };
 
@@ -49,6 +51,12 @@ GlobalEffectManager* const ArtifactApplicationManager::Impl::effectManager()
  return &effectManager_;
  }
 
+ArtifactProjectManager* ArtifactApplicationManager::Impl::projectManager() const
+{
+ static ArtifactProjectManager manager;
+ return &manager;
+}
+
  ArtifactApplicationManager::ArtifactApplicationManager():impl_(new Impl())
  {
 
@@ -61,9 +69,11 @@ GlobalEffectManager* const ArtifactApplicationManager::Impl::effectManager()
 
  ArtifactApplicationManager* ArtifactApplicationManager::instance()
  {
-  static ArtifactApplicationManager* s_instance = new ArtifactApplicationManager();
-  return s_instance;
+  static ArtifactApplicationManager s_instance =ArtifactApplicationManager();
+  return &s_instance;
  }
+
+
 
  GlobalEffectManager* const ArtifactApplicationManager::effectManager()
  {

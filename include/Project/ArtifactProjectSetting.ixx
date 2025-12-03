@@ -3,11 +3,17 @@
 #include <QObject>
 
 #include <QJsonObject>
+#include <wobjectdefs.h>
+#include <vulkan/vulkan_core.h>
+
 
 export module Project.Settings;
 
 import std;
 import Utils;
+
+
+
 
 export namespace Artifact {
 
@@ -34,6 +40,9 @@ export namespace Artifact {
   bool operator==(const ArtifactProjectSettings& other) const;
   bool operator!=(const ArtifactProjectSettings& other) const;
 
+ public /*signals*/:
+  //void projectSettingChanged();
+  //W_SLOT(projectChanged);
  };
 
  template <StringLike T>
@@ -42,10 +51,11 @@ export namespace Artifact {
 
  }
 
-
+ 
 
 
 
 
 
 };
+W_REGISTER_ARGTYPE(Artifact::ArtifactProjectSettings)

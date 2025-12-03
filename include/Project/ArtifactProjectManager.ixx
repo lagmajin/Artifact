@@ -38,14 +38,16 @@ export namespace Artifact {
  private:
   class Impl;
   Impl* Impl_;
-  explicit ArtifactProjectManager(QObject* parent = nullptr);
+  
   
   //ArtifactProjectManager(const ArtifactProjectManager&) = delete;
   //ArtifactProjectManager& operator=(const ArtifactProjectManager&) = delete;
   //static std::shared_ptr<ArtifactProjectManager> getInstance();
  protected:
-  virtual ~ArtifactProjectManager();
+  
  public:
+  explicit ArtifactProjectManager(QObject* parent = nullptr);
+  ~ArtifactProjectManager();
   static ArtifactProjectManager& getInstance();
   void createProject();
   void createProject(const QString& projectName,bool force=false);

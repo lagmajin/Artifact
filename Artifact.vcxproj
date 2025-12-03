@@ -219,6 +219,7 @@
     <ClCompile Include="include\Render\RenderPipeline.ixx" />
     <ClCompile Include="include\Service\ArtifactProjectService.ixx" />
     <ClCompile Include="include\Test\ArtifactTestProjectManager.ixx" />
+    <ClCompile Include="include\Test\ArtifactTestProjectService.ixx" />
     <ClCompile Include="include\Timeline\ArtifactTimelineIconModel.ixx" />
     <ClCompile Include="include\Tool\Tool.ixx" />
     <ClCompile Include="include\Translation\TranslationManager.ixx" />
@@ -260,7 +261,9 @@
     <ClCompile Include="src\Layer\ArtifactLayerInitParams.cppm">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
     </ClCompile>
-    <ClCompile Include="src\Layer\ArtifactLayerSelectionManager.cpp" />
+    <ClCompile Include="src\Layer\ArtifactLayerSelectionManager.cppm">
+      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+    </ClCompile>
     <ClCompile Include="src\Layer\ArtifactShapeLayer.cppm">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
     </ClCompile>
@@ -503,7 +506,9 @@
     <ClCompile Include="src\Widgets\Menu\ArtifactFileMenu.cppm">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
     </ClCompile>
-    <ClCompile Include="src\Widgets\Menu\ArtifactHelpMenu.cpp" />
+    <ClCompile Include="src\Widgets\Menu\ArtifactHelpMenu.cppm">
+      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+    </ClCompile>
     <ClCompile Include="src\Widgets\Menu\ArtifactLayerMenu.cppm">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
     </ClCompile>

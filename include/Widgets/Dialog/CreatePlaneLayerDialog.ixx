@@ -5,6 +5,7 @@
 #include <wobjectdefs.h>
 export module Dialog;
 
+import std;
 import Widgets.Dialog.Abstract;
 import Artifact.Layer.InitParams;
 
@@ -43,8 +44,20 @@ class PlaneLayerSettingPagePrivate;
  public:
   explicit PlaneLayerSettingDialog(QWidget* parent = nullptr);
   ~PlaneLayerSettingDialog();
+  public/*signals*/:
+ 	void submit(const ArtifactSolidLayerInitParams& params) W_SIGNAL(submit,params)
  };
 
+ class EditPlaneLayerSettingDialog final :public QDialog {
+  W_OBJECT(PlaneLayerSettingDialog)
+ private:
+  class Impl;
+  Impl* impl_;
 
+ public:
+  explicit EditPlaneLayerSettingDialog(QWidget* parent = nullptr);
+  ~EditPlaneLayerSettingDialog();
+ public/*signals*/:
+ };
 
 };

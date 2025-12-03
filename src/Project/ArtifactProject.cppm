@@ -16,7 +16,7 @@ import Utils.String.Like;
 import Composition.Settings;
 
 import Artifact.Composition.Abstract;
-
+import Artifact.Composition._2D;
 import Container;
 
 namespace Artifact {
@@ -71,7 +71,8 @@ namespace Artifact {
 
  void ArtifactProject::Impl::createComposition(const CompositionSettings& settings)
  {
-  
+  auto newComposition = new ArtifactComposition2D();
+ 	
 
   //container_.add(settings);
 

@@ -22,7 +22,7 @@
 module ArtifactMainWindow;
 
 import Menu;
-import ArtifactProjectManagerWidget;
+
 import DockWidget;
 import BasicImageViewWidget;
 import Widgets.ToolBar;
@@ -33,9 +33,12 @@ import Widgets.AssetBrowser;
 import Widgets.KeyboardOverlayDialog;
 
 import Project.Manager;
-import Artifact.Widgets.Render.Layer;
+
 import Artifact.Widgets.Timeline;
+import Artifact.Widgets.ProjectManagerWidget;
+import Artifact.Widgets.Render.Layer;
 import Artifact.Widgets.LayerEditorPanel;
+
 import Artifact.Widgets.Render.QueueManager;
 import Artifact.Widgets.RenderQueueJobPanel;
 import Artifact.Widgets.LayerPanelWidget;

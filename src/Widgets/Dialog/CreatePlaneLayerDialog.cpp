@@ -2,6 +2,7 @@
 #include <QDialogButtonBox>
 #include <QVBoxLayout>
 #include <QWidget>
+#include <QDialog>
 #include <wobjectimpl.h>
 module Dialog;
 
@@ -68,6 +69,16 @@ PlaneLayerSettingPage::~PlaneLayerSettingPage()
  }
 
  PlaneLayerSettingDialog::~PlaneLayerSettingDialog()
+ {
+
+ }
+
+ EditPlaneLayerSettingDialog::EditPlaneLayerSettingDialog(QWidget* parent /*= nullptr*/) :QDialog(parent)
+ {
+
+ }
+
+ EditPlaneLayerSettingDialog::~EditPlaneLayerSettingDialog()
  {
 
  }

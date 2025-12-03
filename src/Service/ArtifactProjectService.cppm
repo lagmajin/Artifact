@@ -1,11 +1,13 @@
 module;
-
+#include <wobjectimpl.h>
 module Artifact.Service.Project;
 
 import std;
 
+
 namespace Artifact
 {
+	
  class ArtifactProjectService::Impl
  {
  private:
@@ -25,8 +27,9 @@ namespace Artifact
  {
 
  }
-
- ArtifactProjectService::ArtifactProjectService():impl_(new Impl())
+ W_OBJECT_IMPL(ArtifactProjectService)
+	
+ ArtifactProjectService::ArtifactProjectService(QObject*parent):QObject(parent),impl_(new Impl())
  {
 
  }
@@ -35,6 +38,13 @@ namespace Artifact
  {
   delete impl_;
  }
-	
+
+ ArtifactProjectService* ArtifactProjectService::instance()
+ {
+  static ArtifactProjectService service;
+  return&service;
+
+ }
+
 	
 };

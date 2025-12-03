@@ -1,6 +1,8 @@
 ﻿module;
 
-module Effects.Manager;
+module Artifact.Effects.Manager;
+
+import std;
 
 namespace Artifact
 {
@@ -13,6 +15,22 @@ namespace Artifact
  GlobalEffectManager::~GlobalEffectManager()
  {
 
+ }
+
+ void GlobalEffectManager::loadPlugin() noexcept
+ {
+
+ }
+
+ void GlobalEffectManager::unloadAllPlugins() noexcept
+ {
+
+ }
+
+GlobalEffectManager* GlobalEffectManager::effectManager()
+ {
+ static GlobalEffectManager instance = GlobalEffectManager();
+ return &instance;
  }
 
 };

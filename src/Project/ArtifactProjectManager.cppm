@@ -65,6 +65,7 @@ namespace Artifact {
  {
  
   currentProjectPtr_->createComposition("");
+ 
  	
   Id id;
 
@@ -164,12 +165,12 @@ namespace Artifact {
 
  void ArtifactProjectManager::addAssetFromFilePath(const QString& filePath)
  {
-
+  Impl_->addAssetFromFilePath(filePath);
  }
 
  void ArtifactProjectManager::addAssetsFromFilePaths(const QStringList& filePaths)
  {
-
+  Impl_->addAssetsFromFilePaths(filePaths);
  }
 
  ArtifactCompositionPtr ArtifactProjectManager::currentComposition()

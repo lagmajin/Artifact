@@ -209,7 +209,7 @@
     <ClCompile Include="src\Widgets\ArtifactTimelineWidget.cpp">
       <Filter>ソース ファイル\Widgets</Filter>
     </ClCompile>
-    <ClCompile Include="src\Widgets\Menu\ArtifactHelpMenu.cpp">
+    <ClCompile Include="src\Widgets\Menu\ArtifactHelpMenu.cppm">
       <Filter>ソース ファイル\Widgets\Menu</Filter>
     </ClCompile>
     <ClCompile Include="src\Widgets\Render\ArtifactRenderManagerWidget.cpp">
@@ -593,7 +593,7 @@
     <ClCompile Include="include\Layer\ArtifactLayerSelectionManager.ixx">
       <Filter>ヘッダー ファイル\Layer</Filter>
     </ClCompile>
-    <ClCompile Include="src\Layer\ArtifactLayerSelectionManager.cpp">
+    <ClCompile Include="src\Layer\ArtifactLayerSelectionManager.cppm">
       <Filter>ソース ファイル\Layer</Filter>
     </ClCompile>
     <ClCompile Include="include\Layer\ArtifactLayerCopyBuffer.ixx">
@@ -724,6 +724,9 @@
     </ClCompile>
     <ClCompile Include="src\Service\ArtifactProjectService.cppm">
       <Filter>ソース ファイル\Service</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Test\ArtifactTestProjectService.ixx">
+      <Filter>ヘッダー ファイル\Service</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>

@@ -27,7 +27,7 @@ namespace Artifact {
 
  }
 
- Artifact::LayerType ArtifactLayerInitParams::Impl::layerType() const
+ LayerType ArtifactLayerInitParams::Impl::layerType() const
  {
   return layerType_;
  }
@@ -40,6 +40,11 @@ namespace Artifact {
  ArtifactLayerInitParams::~ArtifactLayerInitParams()
  {
   delete impl_;
+ }
+
+ ArtifactSolidLayerInitParams::ArtifactSolidLayerInitParams(const QString& name) :ArtifactLayerInitParams(name,LayerType::Solid)
+ {
+
  }
 
  ArtifactSolidLayerInitParams::~ArtifactSolidLayerInitParams()

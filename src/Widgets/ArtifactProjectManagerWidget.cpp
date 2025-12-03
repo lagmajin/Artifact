@@ -12,12 +12,15 @@
 #include <QLineEdit>
 
 #include <QMenu>
-module ArtifactProjectManagerWidget;
+module Artifact.Widgets.ProjectManagerWidget;
 
 
 //import HeadPanel;
 
 import Project.Manager;
+
+import Artifact.Service.Project;
+
 
 namespace Artifact {
  W_OBJECT_IMPL(ArtifactProjectManagerWidget)
@@ -27,9 +30,20 @@ namespace Artifact {
  private:
  	
  public:
-
+  void handleDefaultKeyPressEvent(QKeyEvent* ev);
+  void handleDefaultKeyReleaseEvent(QKeyEvent* ev);
 
  };
+
+ void ArtifactProjectView::Impl::handleDefaultKeyPressEvent(QKeyEvent* ev)
+ {
+
+ }
+
+ void ArtifactProjectView::Impl::handleDefaultKeyReleaseEvent(QKeyEvent* ev)
+ {
+
+ }
 
  ArtifactProjectView::ArtifactProjectView(QWidget* parent /*= nullptr*/) :QTreeView(parent)
  {
@@ -53,7 +67,7 @@ namespace Artifact {
   ArtifactProjectView* projectView_ = nullptr;
   Impl();
   ~Impl();
-
+  QLabel* projectNameLabel = nullptr;
   QLineEdit* searchWidget_ = nullptr;
   void handleSearchTextChanged();
   void handleFileDrop(const QString& str);
@@ -177,8 +191,8 @@ namespace Artifact {
 
   setEnabled(false);
 
-  auto label = new QLabel();
-  label->setText("Project name:");
+  auto projectNameLabel=impl_->projectNameLabel = new QLabel();
+  projectNameLabel->setText("Project name:");
 
   impl_->projectView_ = new ArtifactProjectView();
 
@@ -188,7 +202,7 @@ namespace Artifact {
   searchWidget->setEchoMode(QLineEdit::Normal);
 
   auto layout = new QVBoxLayout();
-  layout->addWidget(label);
+  layout->addWidget(projectNameLabel);
   layout->addWidget(searchWidget);
   layout->addWidget(impl_->projectView_);
   setLayout(layout);
@@ -278,5 +292,12 @@ namespace Artifact {
 
  }
 
+ void ArtifactProjectManagerWidget::updateRequested()
+ {
+  auto& projectManager=ArtifactProjectManager::getInstance();
+ 	
+ 	
+ 	
+ }
 
 }

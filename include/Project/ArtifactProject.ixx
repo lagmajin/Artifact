@@ -19,8 +19,11 @@ import std;
 
 import Utils;
 
+
 import Composition.Settings;
 import Artifact.Composition.Result;
+
+W_REGISTER_ARGTYPE(ArtifactCore::CompositionID)
 
 export namespace Artifact {
 
@@ -72,6 +75,7 @@ export namespace Artifact {
    void layerCreated()
    W_SIGNAL(layerCreated)
 
+ 	
  };
 
 

@@ -1,9 +1,11 @@
 module ;
 #include <QString>
+#include <wobjectdefs.h>
 export module Artifact.Layer.InitParams;
 
 import std;
 
+import Utils.String.Like;
 import Artifact.Layers.Abstract;
 
 export namespace Artifact {
@@ -25,9 +27,11 @@ export namespace Artifact {
  private:
 
  public:
-  ArtifactSolidLayerInitParams();
+  ArtifactSolidLayerInitParams(const QString& name);
   ~ArtifactSolidLayerInitParams();
 
  };
 
-}
+};
+
+W_REGISTER_ARGTYPE(Artifact::ArtifactSolidLayerInitParams)

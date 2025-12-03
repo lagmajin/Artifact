@@ -3,13 +3,17 @@
 #include <QWidget>
 #include <QToolBar>
 #include <QTreeView>
+#include <QFileInfo>
+#include <QStringList>
 
-export module ArtifactProjectManagerWidget;
+export module Artifact.Widgets.ProjectManagerWidget;
 
 import std;
 
-
 import Project;
+
+W_REGISTER_ARGTYPE(QStringList)
+W_REGISTER_ARGTYPE(QFileInfo)
 
 export namespace Artifact {
 
@@ -57,14 +61,13 @@ public:
   explicit ArtifactProjectManagerWidget(QWidget* parent = nullptr);
   ~ArtifactProjectManagerWidget();
   void setFilter();
-
-
-
   void triggerUpdate();
-
+  public /*signals*/:
+   void onFileDropped(const QStringList& list) W_SIGNAL(onFileDropped, list)
+ 	
  public:
-
-
+  void updateRequested();
+  W_SLOT(updateRequested);
  };
 
 

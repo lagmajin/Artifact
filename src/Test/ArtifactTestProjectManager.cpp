@@ -1,5 +1,5 @@
 module;
-
+#include <wobjectimpl.h>
 module Artifact.Test.ProjectManager;
 
 import std;

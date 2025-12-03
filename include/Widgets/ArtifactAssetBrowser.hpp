@@ -32,7 +32,7 @@ export namespace Artifact {
  private:
 
  public:
- 	
+
  };
 
  class ArtifactAssetBrowserToolBar :public QWidget
@@ -44,6 +44,8 @@ export namespace Artifact {
  public:
   explicit ArtifactAssetBrowserToolBar(QWidget* parent = nullptr);
   ~ArtifactAssetBrowserToolBar();
+  public/**/:
+ 	
  };
 
 
@@ -62,8 +64,8 @@ export namespace Artifact {
 
 
   void folderChanged(const QString& folderPath) W_SIGNAL(folderChanged, folderPath)
-   void selectionChanged(const QStringList& selectedFiles) W_SIGNAL(selectionChanged, selectedFiles)
-   void itemDoubleClicked(const QString& itemPath) W_SIGNAL(itemDoubleClicked, itemPath)
+  void selectionChanged(const QStringList& selectedFiles) W_SIGNAL(selectionChanged, selectedFiles)
+  void itemDoubleClicked(const QString& itemPath) W_SIGNAL(itemDoubleClicked, itemPath)
 
 
  };

@@ -4,7 +4,7 @@
 
 #include <wobjectdefs.h>
 
-export module Composition._2D;
+export module Artifact.Composition._2D;
 
 import std;
 
@@ -13,7 +13,7 @@ import Color.Float;
 import Artifact.Layers;
 import Artifact.Composition.Abstract;
 
-namespace Artifact {
+export namespace Artifact {
 
  using namespace ArtifactCore;
 

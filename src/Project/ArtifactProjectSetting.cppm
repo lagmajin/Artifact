@@ -1,12 +1,14 @@
 ﻿module;
-
+#include <wobjectdefs.h>
+//
 module Project.Settings;
 
-
+import std;
 
 namespace Artifact {
-
- class ArtifactProjectSettings::Impl
+ 
+ 
+	class ArtifactProjectSettings::Impl
  {
  private:
   QString name_;
