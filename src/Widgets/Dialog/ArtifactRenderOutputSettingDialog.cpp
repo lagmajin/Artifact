@@ -1,4 +1,5 @@
 module;
+#include <wobjectimpl.h>
 #include <QDialog>
 module Artifact.Widget.Dialog.RenderOutputSetting;
 
@@ -23,6 +24,8 @@ namespace Artifact
  {
 
  }
+	
+	W_OBJECT_IMPL(ArtifactRenderOutputSettingDialog)
 	
  ArtifactRenderOutputSettingDialog::ArtifactRenderOutputSettingDialog(QWidget* parent /*= nullptr*/):QDialog(parent)
  {

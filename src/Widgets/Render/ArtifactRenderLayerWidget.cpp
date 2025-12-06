@@ -122,6 +122,7 @@ namespace Artifact {
   bool released =true;
 
   bool isPanning_ = false;
+  bool isPlay_ = false;
   std::atomic_bool running_{ false };
   tbb::task_group renderTask_;
   std::mutex resizeMutex_;

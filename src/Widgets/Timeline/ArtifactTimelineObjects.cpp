@@ -7,29 +7,22 @@ module Artifact.Timeline.Objects;
 namespace Artifact
 {
 
- ResizeHandle::ResizeHandle(Side s, QGraphicsItem* parent) : QGraphicsRectItem(parent), side(s)
+ ResizeHandle::ResizeHandle(Side s, QGraphicsItem* parent) : QGraphicsObject(parent), side(s)
  {
-  setRect(0, 0, 6, parent->boundingRect().height());
+  //setRect(0, 0, 6, parent->boundingRect().height());
   //setBrush(Qt::gray);
   //setCursor(s == Left ? Qt::SizeHorCursor : Qt::SizeHorCursor);
   setFlag(ItemIsMovable);
   setFlag(ItemSendsGeometryChanges);
  }
 
- QVariant ResizeHandle::itemChange(GraphicsItemChange change, const QVariant& value)
- {
-  if (change == ItemPositionChange) {
-   // 親のサイズ変更ロジックへ通知
-  }
-  return QGraphicsRectItem::itemChange(change, value);
- }
 
 
 
 
 
 
- ClipItem::ClipItem(double start, double duration, double height) : QGraphicsRectItem(start, 0, duration, height)
+ ClipItem::ClipItem(double start, double duration, double height) : QGraphicsObject()
  {
   //setBrush(QColor(70, 120, 180));
   setFlags(
@@ -42,6 +35,21 @@ namespace Artifact
  ClipItem::~ClipItem()
  {
 
+ }
+
+ QRectF ClipItem::boundingRect() const
+ {
+  throw std::logic_error("The method or operation is not implemented.");
+ }
+
+ void ClipItem::paint(QPainter* painter, const QStyleOptionGraphicsItem* option, QWidget* widget /*= nullptr*/)
+ {
+  throw std::logic_error("The method or operation is not implemented.");
+ }
+
+ QVariant ClipItem::itemChange(GraphicsItemChange change, const QVariant& value)
+ {
+  throw std::logic_error("The method or operation is not implemented.");
  }
 
 };

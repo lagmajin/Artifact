@@ -12,10 +12,13 @@ export namespace Artifact
   class Impl;
   Impl* impl_;
  protected:
- 	
+
  public:
-  explicit ArtifactLayerPanelHeaderWidget(const QWidget* parent = nullptr);
+  explicit ArtifactLayerPanelHeaderWidget(QWidget* parent = nullptr);
   ~ArtifactLayerPanelHeaderWidget();
+ public /*signals*/:
+  void lockClicked() W_SIGNAL(lockClicked)
+void soloClicked() W_SIGNAL(soloClicked) 	
  };
 
 
@@ -26,6 +29,7 @@ export namespace Artifact
   class Impl;
   Impl* impl_;
  protected:
+  void mousePressEvent(QMouseEvent* event) override;
   void paintEvent(QPaintEvent* event) override;
  public:
   explicit ArtifactLayerPanelWidget(QWidget* parent = nullptr);

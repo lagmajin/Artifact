@@ -8,6 +8,7 @@ import std;
 import EnvironmentVariable;
 import Render.Queue.Manager;
 import Artifact.Test.ProjectManager;
+import Artifact.Service.ActiveContext;
 
 namespace Artifact
 {
@@ -17,7 +18,7 @@ namespace Artifact
  private:
   GlobalEffectManager effectManager_;
   ArtifactTestProjectManager testProjectManager_;
- 	
+
   entt::registry registry_;
   entt::dispatcher dispather_;
  public:
@@ -26,8 +27,8 @@ namespace Artifact
   ~Impl();
   entt::registry& registry();
   ArtifactProjectManager* projectManager() const;
- 	GlobalEffectManager* const effectManager();
- 	
+  GlobalEffectManager* const effectManager();
+  ArtifactActiveContextService* activeContext_=new ArtifactActiveContextService();
   //GlobalEffectManager
  };
 
@@ -46,18 +47,18 @@ namespace Artifact
   return registry_;
  }
 
-GlobalEffectManager* const ArtifactApplicationManager::Impl::effectManager()
+ GlobalEffectManager* const ArtifactApplicationManager::Impl::effectManager()
  {
- return &effectManager_;
+  return &effectManager_;
  }
 
-ArtifactProjectManager* ArtifactApplicationManager::Impl::projectManager() const
-{
- static ArtifactProjectManager manager;
- return &manager;
-}
+ ArtifactProjectManager* ArtifactApplicationManager::Impl::projectManager() const
+ {
+  static ArtifactProjectManager manager;
+  return &manager;
+ }
 
- ArtifactApplicationManager::ArtifactApplicationManager():impl_(new Impl())
+ ArtifactApplicationManager::ArtifactApplicationManager() :impl_(new Impl())
  {
 
  }
@@ -69,7 +70,7 @@ ArtifactProjectManager* ArtifactApplicationManager::Impl::projectManager() const
 
  ArtifactApplicationManager* ArtifactApplicationManager::instance()
  {
-  static ArtifactApplicationManager s_instance =ArtifactApplicationManager();
+  static ArtifactApplicationManager s_instance = ArtifactApplicationManager();
   return &s_instance;
  }
 
@@ -78,6 +79,11 @@ ArtifactProjectManager* ArtifactApplicationManager::Impl::projectManager() const
  GlobalEffectManager* const ArtifactApplicationManager::effectManager()
  {
   return impl_->effectManager();
+ }
+
+ ArtifactActiveContextService* ArtifactApplicationManager::activeContextService()
+ {
+  return impl_->activeContext_;
  }
 
  entt::registry& ArtifactApplicationManager::registry()

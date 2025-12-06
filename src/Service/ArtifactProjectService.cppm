@@ -3,7 +3,7 @@ module;
 module Artifact.Service.Project;
 
 import std;
-
+import Artifact.Project.Manager;
 
 namespace Artifact
 {
@@ -46,5 +46,9 @@ namespace Artifact
 
  }
 
+ void ArtifactProjectService::projectSettingChanged(const ArtifactProjectSettings& setting)
+ {
+
+ }
 	
 };

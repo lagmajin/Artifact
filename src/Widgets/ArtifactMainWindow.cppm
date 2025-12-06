@@ -32,7 +32,7 @@ import Widgets.Render.Composition;
 import Widgets.AssetBrowser;
 import Widgets.KeyboardOverlayDialog;
 
-import Project.Manager;
+import Artifact.Project.Manager;
 
 import Artifact.Widgets.Timeline;
 import Artifact.Widgets.ProjectManagerWidget;
@@ -42,7 +42,7 @@ import Artifact.Widgets.LayerEditorPanel;
 import Artifact.Widgets.Render.QueueManager;
 import Artifact.Widgets.RenderQueueJobPanel;
 import Artifact.Widgets.LayerPanelWidget;
-
+import Artifact.Widgets.PlaybackControlWidget;
 namespace ArtifactWidgets {}//
 
 namespace Artifact {
@@ -167,6 +167,9 @@ namespace Artifact {
  	
   DockManager->addDockWidget(ads::RightDockWidgetArea, inspectorWidgetWrapper);
 
+  auto mediaControlWidget = new ArtifactPlaybackControlWidget();
+ 	
+  mediaControlWidget->show();
   
   // imageView->show();
  	

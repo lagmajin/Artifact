@@ -9,7 +9,7 @@
 #include <QApplication>
 module Artifact.Menu.File;
 
-import  Project.Manager;
+import  Artifact.Project.Manager;
 
 import Utils;
 

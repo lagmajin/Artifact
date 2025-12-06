@@ -6,10 +6,10 @@
 module Artifact.Menu.Layer;
 
 import std; 
-import Project.Manager;
+import Artifact.Project.Manager;
+import Artifact.Service.Project;
 
-
-
+import Artifact.Widgets.CreateLayerDialog;
 
 namespace Artifact {
 
@@ -78,15 +78,18 @@ namespace Artifact {
    handleCreateNullLayer();
    });
 
-	
+  QObject::connect(createSolidLayerAction_, &QAction::triggered, [this]() {
+   handleCreateSolidLayer();
+   });
  }
 
  void ArtifactLayerMenu::Impl::handleCreateSolidLayer()
  {
   auto& manager = ArtifactProjectManager::getInstance();
-
-
-  
+ 	
+  auto createSolidLayer = new CreateSolidLayerSettingDialog();
+ 	
+  createSolidLayer->show();
  }
 
  void ArtifactLayerMenu::Impl::handleCreateNullLayer()
@@ -117,7 +120,8 @@ namespace Artifact {
   setTitle(tr("Layer(&L)"));
 
   setTearOffEnabled(true);
-
+  setSeparatorsCollapsible(true);
+  setMinimumWidth(160);
   //setTitle(tr("新規..."));
 
 

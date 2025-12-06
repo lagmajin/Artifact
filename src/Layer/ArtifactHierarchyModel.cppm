@@ -7,7 +7,7 @@ module Artifact.Layers.Hierarchy.Model;
 import std;
 import Utils;
 import Artifact.Composition.Abstract;
-import Project.Manager;
+import Artifact.Project.Manager;
 
 namespace Artifact
 {

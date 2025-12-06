@@ -1,7 +1,8 @@
 ﻿module;
+#include <wobjectdefs.h>
 #include <QDialog>
-export module Dialog.EditComposition;
-
+export module Artifact.Dialog.EditComposition;
+import std;
 import Widgets.Dialog.Abstract;
 
 export namespace Artifact {
@@ -16,6 +17,7 @@ export namespace Artifact {
  public:
   explicit ArtifactEditCompositionDialog(QWidget* parent = nullptr);
   ~ArtifactEditCompositionDialog();
+ public /*signals*/: 
  };
 
 

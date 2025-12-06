@@ -23,7 +23,7 @@ import Widgets.Utils.CSS;
 
 namespace Artifact {
 
-	using namespace ArtifactCore;
+ using namespace ArtifactCore;
 
  CompositionSettingPage::CompositionSettingPage(QWidget* parent /*= nullptr*/) :QWidget(parent)
  {
@@ -33,7 +33,7 @@ namespace Artifact {
 
 
   auto vboxLayout = new QFormLayout();
-  vboxLayout->addRow(compositionNameLabel,compositionNameEdit);
+  vboxLayout->addRow(compositionNameLabel, compositionNameEdit);
   //vboxLayout->addWidget(compositionNameEdit);
 
   setLayout(vboxLayout);
@@ -48,7 +48,15 @@ namespace Artifact {
  {
 
  }
+ CompositionExtendSettingPage::CompositionExtendSettingPage(QWidget* parent /*= nullptr*/) :QWidget(parent)
+ {
 
+ }
+
+ CompositionExtendSettingPage::~CompositionExtendSettingPage()
+ {
+
+ }
  class CreateCompositionDialog::Impl {
  private:
 
@@ -76,7 +84,7 @@ namespace Artifact {
  }
 
  void CreateCompositionDialog::Impl::ok(QDialog* dialog)
-{
+ {
   dialog->accept();
  }
 
@@ -87,7 +95,7 @@ namespace Artifact {
 
  W_OBJECT_IMPL(CreateCompositionDialog)
 
- CreateCompositionDialog::CreateCompositionDialog(QWidget* parent /*= nullptr*/) :QDialog(parent),impl_(new Impl(this))
+  CreateCompositionDialog::CreateCompositionDialog(QWidget* parent /*= nullptr*/) :QDialog(parent), impl_(new Impl(this))
  {
   setWindowTitle(u8"コンポジション設定");
   setWindowFlags(Qt::FramelessWindowHint);
@@ -106,12 +114,12 @@ namespace Artifact {
 
   impl_->compositionSettingPage_ = new CompositionSettingPage();
 
-  impl_->pTabWidget->addTab(impl_->compositionSettingPage_,"Settings");
+  impl_->pTabWidget->addTab(impl_->compositionSettingPage_, "Settings");
 
 
 
   QDialogButtonBox* const pDialogButtonBox = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
-  
+
   QVBoxLayout* const pVBoxLayout = new QVBoxLayout();
 
   pVBoxLayout->addWidget(impl_->pTabWidget);
@@ -243,7 +251,7 @@ namespace Artifact {
  {
   QDialog::showEvent(event);
 
-  if (impl_->m_showAnimation &&impl_->m_showAnimation->state() == QAbstractAnimation::Running) {
+  if (impl_->m_showAnimation && impl_->m_showAnimation->state() == QAbstractAnimation::Running) {
    return; // すでにアニメーション中なら何もしない
   }
 
@@ -261,7 +269,7 @@ namespace Artifact {
   }
 
   // 2. アニメーションの開始位置を計算 (画面下端から出現)
-  QPoint startPos=endPos;
+  QPoint startPos = endPos;
   const float offsetFactor = 0.1f; // 動きの量 (ダイアログの高さに対する割合)
   startPos.setY(startPos.y() + static_cast<int>(height() * offsetFactor));
   // 3. ダイアログの初期位置をアニメーション開始位置に設定
@@ -285,18 +293,10 @@ namespace Artifact {
 
  }
 
- CompositionExtendSettingPage::CompositionExtendSettingPage(QWidget* parent /*= nullptr*/) :QWidget(parent)
- {
-
- }
-
- CompositionExtendSettingPage::~CompositionExtendSettingPage()
- {
-
- }
 
 
 
-}
+
+};
 
 

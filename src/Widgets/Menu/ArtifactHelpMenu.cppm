@@ -14,6 +14,7 @@ namespace Artifact {
  public:
   Impl();
   ~Impl();
+  QAction* versionInfoAction_ = nullptr;
  };
 
  ArtifactHelpMenu::Impl::Impl()

@@ -19,7 +19,7 @@ namespace Artifact
 
  ArtifactTestProjectManager::Impl::Impl()
  {
-
+  
  }
 
  ArtifactTestProjectManager::Impl::~Impl()

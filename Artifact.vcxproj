@@ -181,6 +181,8 @@
     <ClCompile Include="Generated\Test_types.cpp">
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
     </ClCompile>
+    <ClCompile Include="include\Application\ActiveContextService.ixx" />
+    <ClCompile Include="include\Application\CommandDispatcher.ixx" />
     <ClCompile Include="include\Audio\Effects\ArtifactAbstractAudioEffects.ixx" />
     <ClCompile Include="include\Composition\ArtifactAbstractComposition.ixx" />
     <ClCompile Include="include\Composition\ArtifactComposition.ixx" />
@@ -191,6 +193,9 @@
     <ClCompile Include="include\Effetcs\ColorCorrection\BrightnessEffect.ixx" />
     <ClCompile Include="include\Effetcs\ColorCorrection\ExposureEffect.ixx" />
     <ClCompile Include="include\Effetcs\GlobalEffectManager.ixx" />
+    <ClCompile Include="include\Generator\CloneGenerator.ixx" />
+    <ClCompile Include="include\Generator\Generator.ixx" />
+    <ClCompile Include="include\Generator\GeneratorEffector.ixx" />
     <ClCompile Include="include\GUI\WindowPluginManager.ixx" />
     <ClCompile Include="include\Layer\ArtifactAbstract2DLayer.ixx" />
     <ClCompile Include="include\Layer\ArtifactAudioLayer.ixx" />
@@ -222,8 +227,10 @@
     <ClCompile Include="include\Test\ArtifactTestProjectService.ixx" />
     <ClCompile Include="include\Timeline\ArtifactTimelineIconModel.ixx" />
     <ClCompile Include="include\Tool\Tool.ixx" />
+    <ClCompile Include="include\Tool\ToolManager.ixx" />
     <ClCompile Include="include\Translation\TranslationManager.ixx" />
     <ClCompile Include="include\Widgets\ArtifactLayerHierarchyWidget.ixx" />
+    <ClCompile Include="include\Widgets\Control\ArtifactPlaybackControlWidget.ixx" />
     <ClCompile Include="include\Widgets\Dialog\ArtifactRenderOutputSettingDialog.ixx" />
     <ClCompile Include="include\Widgets\Menu\ArtifactAnimationMenu.ixx">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
@@ -246,8 +253,13 @@
     <ClCompile Include="include\Widgets\Timeline\ArtifactTimelineTimeCodeWidget.ixx" />
     <ClCompile Include="include\Widgets\Timeline\ArtifactWorkAreaControlWidget.ixx" />
     <ClCompile Include="include\Widgets\Timeline\TimelineScaleWidget.ixx" />
-    <ClCompile Include="src\Application\ArtifactApplicationManager.cpp" />
+    <ClCompile Include="src\Application\ActiveContextService.cpp" />
+    <ClCompile Include="src\Application\ArtifactApplicationManager.cpp">
+      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+    </ClCompile>
     <ClCompile Include="src\Effetcs\GlobalEffectManager.cpp" />
+    <ClCompile Include="src\Generator\Generator.cppm" />
+    <ClCompile Include="src\Generator\GeneratorEffector.cpp" />
     <ClCompile Include="src\GUI\WindowPluginManager.cpp" />
     <ClCompile Include="src\Layer\ArtifactAbstract2DLayer.cppm">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
@@ -284,12 +296,16 @@
     <ClCompile Include="src\Service\ArtifactProjectService.cppm">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
     </ClCompile>
-    <ClCompile Include="src\Test\ArtifactTestProjectManager.cpp" />
+    <ClCompile Include="src\Test\ArtifactTestProjectManager.cpp">
+      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+    </ClCompile>
     <ClCompile Include="src\Timeline\ArtifactTimelineIconModel.cpp" />
+    <ClCompile Include="src\Tool\ToolManager.cpp" />
     <ClCompile Include="src\Translation\TranslationManager.cpp" />
     <ClCompile Include="src\Widgets\ArtifactToolBar.cppm">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
     </ClCompile>
+    <ClCompile Include="src\Widgets\Control\ArtifactPlaybackControlWidget.cpp" />
     <ClCompile Include="src\Widgets\Dialog\ArtifactRenderOutputSettingDialog.cpp" />
     <ClCompile Include="src\Widgets\Menu\ArtifactAnimationMenu.cppm">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
@@ -314,7 +330,9 @@
     </ClCompile>
     <ClCompile Include="src\Widgets\Timeline\ArtifactLayerHierarchyWidget.cpp" />
     <ClCompile Include="src\Widgets\Timeline\ArtifactLayerPanelWidget.cpp" />
-    <ClCompile Include="src\Widgets\Timeline\ArtifactSeekBar.cpp" />
+    <ClCompile Include="src\Widgets\Timeline\ArtifactSeekBar.cppm">
+      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+    </ClCompile>
     <ClCompile Include="src\Widgets\Timeline\ArtifactTimeCodeWidget.cpp" />
     <ClCompile Include="src\Widgets\Timeline\ArtifactTimelineLabel.cpp" />
     <ClCompile Include="src\Widgets\Timeline\ArtifactTimelineObjects.cpp" />
@@ -499,7 +517,9 @@
     <ClCompile Include="src\Widgets\Dialog\ApplicationSettingDialog.cppm">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
     </ClCompile>
-    <ClCompile Include="src\Widgets\Dialog\CreatePlaneLayerDialog.cpp" />
+    <ClCompile Include="src\Widgets\Dialog\CreatePlaneLayerDialog.cppm">
+      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+    </ClCompile>
     <ClCompile Include="src\Widgets\Menu\ArtifactEditMenu.cppm">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
     </ClCompile>
@@ -512,10 +532,10 @@
     <ClCompile Include="src\Widgets\Menu\ArtifactLayerMenu.cppm">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
     </ClCompile>
-    <ClCompile Include="src\Widgets\Menu\ArtifactCompositionMenu.cpp">
+    <ClCompile Include="src\Widgets\Menu\ArtifactCompositionMenu.cppm">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
     </ClCompile>
-    <ClCompile Include="src\Widgets\Menu\ArtifactOptionMenu.cpp">
+    <ClCompile Include="src\Widgets\Menu\ArtifactOptionMenu.cppm">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Widgets\Menu\ArtifactTestMenu.cppm">

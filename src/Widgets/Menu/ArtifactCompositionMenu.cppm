@@ -10,7 +10,7 @@
 module Menu.Composition;
 
 
-import  Project.Manager;
+import  Artifact.Project.Manager;
 
 import Dialog.Composition;
 
@@ -118,7 +118,8 @@ namespace Artifact {
 
   setTitle("Composition");
   setTearOffEnabled(true);
-
+  setSeparatorsCollapsible(true);
+  setMinimumWidth(160);
   //addAction(impl_->createCompositionAction);
 
 

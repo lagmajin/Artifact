@@ -11,7 +11,7 @@
 
 //#include <pybind11/pybind11.h>
 
-export module Project.Manager;
+export module Artifact.Project.Manager;
 
 import std;
 import Project;

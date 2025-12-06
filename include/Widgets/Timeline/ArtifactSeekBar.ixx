@@ -14,6 +14,8 @@ export namespace Artifact
  private:
   class Impl;
   Impl* impl_;
+ protected:
+ 	void paintEvent(QPaintEvent* event) override;
  public:
   explicit ArtifactSeekBar(QWidget*parent=nullptr);
   ~ArtifactSeekBar();

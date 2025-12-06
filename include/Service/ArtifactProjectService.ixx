@@ -33,7 +33,10 @@ export namespace Artifact
   explicit ArtifactProjectService(QObject*parent=nullptr);
   ~ArtifactProjectService();
   static ArtifactProjectService* instance();
-  ArtifactCompositionWeakPtr findComposition(const CompositionID& id);
+  QString projectName() const;
+ 	
+ 	ArtifactCompositionWeakPtr findComposition(const CompositionID& id);
+  //ArtifactAbstractLayerPtr
  public:	
   void projectSettingChanged(const ArtifactProjectSettings& setting);
   W_SLOT(projectSettingChanged)

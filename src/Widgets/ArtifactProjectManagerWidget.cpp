@@ -17,7 +17,7 @@ module Artifact.Widgets.ProjectManagerWidget;
 
 //import HeadPanel;
 
-import Project.Manager;
+import Artifact.Project.Manager;
 
 import Artifact.Service.Project;
 

@@ -3,13 +3,13 @@
 #include <QWidget>
 
 #include <wobjectdefs.h>
-export module Dialog;
+export module Artifact.Widgets.CreateLayerDialog;
 
 import std;
 import Widgets.Dialog.Abstract;
 import Artifact.Layer.InitParams;
 
-namespace Artifact {
+export namespace Artifact {
 
 class PlaneLayerSettingPagePrivate;
 
@@ -33,30 +33,39 @@ class PlaneLayerSettingPagePrivate;
 
  };
 
- class PlaneLayerSettingDialog final:public QDialog
+ class CreateSolidLayerSettingDialog final:public QDialog
  {
- 	W_OBJECT(PlaneLayerSettingDialog)
+ 	W_OBJECT(CreateSolidLayerSettingDialog)
  private:
   class Impl;
   Impl* impl_;
  protected:
-
+  void keyPressEvent(QKeyEvent* event) override;
+  void mousePressEvent(QMouseEvent* event) override;
+  void mouseReleaseEvent(QMouseEvent* event) override;
+  void mouseMoveEvent(QMouseEvent* event) override;
  public:
-  explicit PlaneLayerSettingDialog(QWidget* parent = nullptr);
-  ~PlaneLayerSettingDialog();
+  explicit CreateSolidLayerSettingDialog(QWidget* parent = nullptr);
+  ~CreateSolidLayerSettingDialog();
+  void showAnimated();
   public/*signals*/:
  	void submit(const ArtifactSolidLayerInitParams& params) W_SIGNAL(submit,params)
  };
 
  class EditPlaneLayerSettingDialog final :public QDialog {
-  W_OBJECT(PlaneLayerSettingDialog)
+  W_OBJECT(EditPlaneLayerSettingDialog)
  private:
   class Impl;
   Impl* impl_;
-
+ protected:
+  void keyPressEvent(QKeyEvent* event) override;
+  void mousePressEvent(QMouseEvent* event) override;
+  void mouseReleaseEvent(QMouseEvent* event) override;
+  void mouseMoveEvent(QMouseEvent* event) override;
  public:
   explicit EditPlaneLayerSettingDialog(QWidget* parent = nullptr);
   ~EditPlaneLayerSettingDialog();
+  void showAnimated();
  public/*signals*/:
  };
 

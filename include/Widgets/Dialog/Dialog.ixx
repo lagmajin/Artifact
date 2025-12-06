@@ -1,8 +1,8 @@
 module;
-export module Dialog;
+export module Artifact.Widgets.CreateLayerDialog;
 
 export import Dialog.Composition;
-export import Dialog.EditComposition;
+export import Artifact.Dialog.EditComposition;
 
 export namespace ArtifactCore{
 

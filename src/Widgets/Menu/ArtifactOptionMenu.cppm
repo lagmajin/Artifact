@@ -32,7 +32,8 @@ namespace Artifact {
  {
   setTitle("Options");
   setTearOffEnabled(true);
-
+  setSeparatorsCollapsible(true);
+  setMinimumWidth(160);
  }
 
  ArtifactOptionMenu::~ArtifactOptionMenu()

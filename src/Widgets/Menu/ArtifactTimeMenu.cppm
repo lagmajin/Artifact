@@ -33,6 +33,8 @@ namespace Artifact {
  {
   setAttribute(Qt::WA_TranslucentBackground);
   setWindowFlags(windowFlags() | Qt::FramelessWindowHint);
+  setSeparatorsCollapsible(true);
+  setMinimumWidth(160);
  }
 
  ArtifactTimeMenu::~ArtifactTimeMenu()

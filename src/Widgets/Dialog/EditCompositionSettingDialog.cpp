@@ -1,8 +1,10 @@
 ﻿
 module;
 #include <QDialog>
-module Dialog.EditComposition;
+#include <wobjectimpl.h>
+module Artifact.Dialog.EditComposition;
 
+import std;
 
 namespace Artifact
 {
@@ -18,6 +20,8 @@ namespace Artifact
 
  }
 
+	W_OBJECT_IMPL(ArtifactEditCompositionDialog)
+	
  ArtifactEditCompositionDialog::ArtifactEditCompositionDialog(QWidget* parent /*= nullptr*/)
  {
 

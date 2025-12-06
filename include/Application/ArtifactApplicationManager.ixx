@@ -10,8 +10,8 @@ import Artifact.Effects.Manager;
 import Artifact.Render.Manager;
 import Artifact.Service.Project;
 import Artifact.Test.ProjectManager;
-import Project.Manager;
-
+import Artifact.Project.Manager;
+import Artifact.Service.ActiveContext;
 
 
 namespace Artifact {
@@ -30,7 +30,7 @@ namespace Artifact {
   ArtifactProjectService* projectService() const;
   ArtifactTestProjectManager* testProjectManager() const;
   GlobalEffectManager*const effectManager();
- 	
+  ArtifactActiveContextService* activeContextService();
 
  	
   //ArtifactProjectManager* const projectManager();

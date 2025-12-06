@@ -8,7 +8,7 @@
 #include <wobjectimpl.h>
 //#include <folly\Singleton.h>
 
-module Project.Manager;
+module Artifact.Project.Manager;
 
 import std;
 import Project;

@@ -1,7 +1,7 @@
 ﻿module;
 module Layers.Image;
 
-
+import std;
 
 
 
@@ -38,6 +38,11 @@ namespace Artifact {
  }
 
  void ArtifactImageLayer::setFromQImage(const QImage& image)
+ {
+
+ }
+
+ void ArtifactImageLayer::setFromCvMat(const cv::Mat& mat)
  {
 
  }

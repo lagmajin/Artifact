@@ -148,6 +148,24 @@
     <Filter Include="ソース ファイル\Service">
       <UniqueIdentifier>{17dde077-a0d0-43dd-a26a-617a45d24c19}</UniqueIdentifier>
     </Filter>
+    <Filter Include="ヘッダー ファイル\Widgets\Control">
+      <UniqueIdentifier>{6d88315f-1b24-48c0-9907-b682e880ca78}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ソース ファイル\Widgets\Control">
+      <UniqueIdentifier>{64884021-5e0a-4ef6-9546-64a84c70c63d}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ヘッダー ファイル\Generator">
+      <UniqueIdentifier>{fea4bcf7-7745-4cdb-9e9b-4a9c417a301a}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ソース ファイル\Generator">
+      <UniqueIdentifier>{3f7b3d6e-f760-422c-9682-c7cfd3025c17}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ヘッダー ファイル\Tool">
+      <UniqueIdentifier>{a31a2b15-5715-4f8a-ad6d-2c3c9745ba2d}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ソース ファイル\Tool">
+      <UniqueIdentifier>{6f00f781-a59e-4eb2-b4bd-5f022278578a}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="include\Composition\ArtifactCompositionManager.hpp">
@@ -197,7 +215,7 @@
     <ClCompile Include="src\Widgets\Menu\ArtifactLayerMenu.cppm">
       <Filter>ソース ファイル\Widgets\Menu</Filter>
     </ClCompile>
-    <ClCompile Include="src\Widgets\Menu\ArtifactCompositionMenu.cpp">
+    <ClCompile Include="src\Widgets\Menu\ArtifactCompositionMenu.cppm">
       <Filter>ソース ファイル\Widgets\Menu</Filter>
     </ClCompile>
     <ClCompile Include="src\Widgets\ArtifactMenuBar.cppm">
@@ -242,7 +260,7 @@
     <ClCompile Include="src\Project\ArtifactProject.cppm">
       <Filter>ソース ファイル\Project</Filter>
     </ClCompile>
-    <ClCompile Include="src\Widgets\Dialog\CreatePlaneLayerDialog.cpp">
+    <ClCompile Include="src\Widgets\Dialog\CreatePlaneLayerDialog.cppm">
       <Filter>ソース ファイル\Widgets\Dialog</Filter>
     </ClCompile>
     <ClCompile Include="src\Effect\ArtifactAbstractEffect.cppm">
@@ -374,7 +392,7 @@
     <ClCompile Include="src\Project\ArtifactProjectSetting.cppm">
       <Filter>ソース ファイル\Project</Filter>
     </ClCompile>
-    <ClCompile Include="src\Widgets\Menu\ArtifactOptionMenu.cpp">
+    <ClCompile Include="src\Widgets\Menu\ArtifactOptionMenu.cppm">
       <Filter>ソース ファイル\Widgets\Menu</Filter>
     </ClCompile>
     <ClCompile Include="include\Widgets\Dialog\Dialog.ixx">
@@ -668,7 +686,7 @@
     <ClCompile Include="include\Widgets\Timeline\ArtifactSeekBar.ixx">
       <Filter>ヘッダー ファイル\Widgets\Timeline</Filter>
     </ClCompile>
-    <ClCompile Include="src\Widgets\Timeline\ArtifactSeekBar.cpp">
+    <ClCompile Include="src\Widgets\Timeline\ArtifactSeekBar.cppm">
       <Filter>ソース ファイル\Widgets\Render</Filter>
     </ClCompile>
     <ClCompile Include="src\Widgets\Dialog\ArtifactRenderOutputSettingDialog.cpp">
@@ -727,6 +745,42 @@
     </ClCompile>
     <ClCompile Include="include\Test\ArtifactTestProjectService.ixx">
       <Filter>ヘッダー ファイル\Service</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Application\ActiveContextService.ixx">
+      <Filter>ヘッダー ファイル\Application</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Application\CommandDispatcher.ixx">
+      <Filter>ヘッダー ファイル\Application</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Widgets\Control\ArtifactPlaybackControlWidget.ixx">
+      <Filter>ヘッダー ファイル\Widgets\Control</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Widgets\Control\ArtifactPlaybackControlWidget.cpp">
+      <Filter>ソース ファイル\Widgets\Control</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Application\ActiveContextService.cpp">
+      <Filter>ソース ファイル\Application</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Generator\Generator.ixx">
+      <Filter>ヘッダー ファイル\Generator</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Generator\Generator.cppm">
+      <Filter>ソース ファイル\Generator</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Generator\CloneGenerator.ixx">
+      <Filter>ヘッダー ファイル\Generator</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Generator\GeneratorEffector.ixx">
+      <Filter>ヘッダー ファイル\Generator</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Generator\GeneratorEffector.cpp">
+      <Filter>ソース ファイル\Generator</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Tool\ToolManager.ixx">
+      <Filter>ヘッダー ファイル\Tool</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Tool\ToolManager.cpp">
+      <Filter>ソース ファイル\Tool</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
