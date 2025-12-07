@@ -14,7 +14,7 @@ import  Artifact.Project.Manager;
 
 import Dialog.Composition;
 
-import ArtifactMainWindow;
+import Artifact.ArtifactMainWindow;
 
 import Utils.Path;
 
@@ -97,7 +97,7 @@ namespace Artifact {
   {
    auto& projectManager = ArtifactProjectManager::getInstance();
 
-   projectManager.createNewComposition();
+   projectManager.createComposition();
   }
 
  }

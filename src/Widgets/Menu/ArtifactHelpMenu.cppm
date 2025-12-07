@@ -2,9 +2,7 @@
 
 module Menu.Help;
 
-
-
-
+import std;
 
 namespace Artifact {
 

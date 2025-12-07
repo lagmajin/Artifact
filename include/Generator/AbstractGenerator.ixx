@@ -1,5 +1,5 @@
 module;
-export module Generator;
+export module Artifact.Generator.Abstract;
 
 export namespace Artifact
 {

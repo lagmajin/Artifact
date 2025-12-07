@@ -6,13 +6,14 @@ export module Artifact.Composition.Abstract;
 
 import std;
 import Utils;
-import Artifact.Layers;
+
 import Color;
 
 
 import Frame.Position;
 import Container.MultiIndex;
-
+import Artifact.Layers;
+import Artifact.Preview.Controller;
 
 export namespace Artifact {
 

@@ -1,11 +1,10 @@
 module;
 
 
-module Generator.Effector;
+module Generator.Clone;
 
 
 namespace Artifact
 {
-
 
 };

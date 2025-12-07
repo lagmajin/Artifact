@@ -7,7 +7,7 @@
 #include <vulkan/vulkan_core.h>
 
 
-export module Project.Settings;
+export module Artifact.Project.Settings;
 
 import std;
 import Utils;

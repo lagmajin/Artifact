@@ -166,6 +166,12 @@
     <Filter Include="ソース ファイル\Tool">
       <UniqueIdentifier>{6f00f781-a59e-4eb2-b4bd-5f022278578a}</UniqueIdentifier>
     </Filter>
+    <Filter Include="ヘッダー ファイル\Preview">
+      <UniqueIdentifier>{1992c11f-b374-4b02-9498-26b518ee5756}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ソース ファイル\Preview">
+      <UniqueIdentifier>{6215d216-e178-4e6d-9c72-07de0547807b}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="include\Composition\ArtifactCompositionManager.hpp">
@@ -761,26 +767,50 @@
     <ClCompile Include="src\Application\ActiveContextService.cpp">
       <Filter>ソース ファイル\Application</Filter>
     </ClCompile>
-    <ClCompile Include="include\Generator\Generator.ixx">
+    <ClCompile Include="include\Generator\AbstractGenerator.ixx">
       <Filter>ヘッダー ファイル\Generator</Filter>
     </ClCompile>
-    <ClCompile Include="src\Generator\Generator.cppm">
+    <ClCompile Include="src\Generator\AbstractGenerator.cppm">
       <Filter>ソース ファイル\Generator</Filter>
     </ClCompile>
     <ClCompile Include="include\Generator\CloneGenerator.ixx">
       <Filter>ヘッダー ファイル\Generator</Filter>
     </ClCompile>
-    <ClCompile Include="include\Generator\GeneratorEffector.ixx">
+    <ClCompile Include="include\Generator\AbstractGeneratorEffector.ixx">
       <Filter>ヘッダー ファイル\Generator</Filter>
     </ClCompile>
-    <ClCompile Include="src\Generator\GeneratorEffector.cpp">
+    <ClCompile Include="src\Generator\AbstractGeneratorEffector.cppm">
       <Filter>ソース ファイル\Generator</Filter>
     </ClCompile>
-    <ClCompile Include="include\Tool\ToolManager.ixx">
+    <ClCompile Include="include\Tool\ArtifactToolManager.ixx">
       <Filter>ヘッダー ファイル\Tool</Filter>
     </ClCompile>
-    <ClCompile Include="src\Tool\ToolManager.cpp">
+    <ClCompile Include="src\Tool\ArtifactToolManager.cpp">
       <Filter>ソース ファイル\Tool</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Generator\GeneratorManager.cppm">
+      <Filter>ソース ファイル\Generator</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Generator\GeneratorManager.ixx">
+      <Filter>ヘッダー ファイル\Generator</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Generator\CloneGenerator.cppm">
+      <Filter>ソース ファイル\Generator</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Layer\ArtifactLayerUIInfo.ixx">
+      <Filter>ソース ファイル\Layer</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Preview\ArtifactPreviewController.ixx">
+      <Filter>ヘッダー ファイル\Preview</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Preview\ArtifactPreviewController.cpp">
+      <Filter>ソース ファイル\Preview</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Preview\ArtifactPreviewWorker.ixx">
+      <Filter>ヘッダー ファイル\Preview</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Preview\ArtifactPreviewWorker.cpp">
+      <Filter>ソース ファイル\Preview</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>

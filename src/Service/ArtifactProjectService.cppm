@@ -50,5 +50,12 @@ namespace Artifact
  {
 
  }
-	
+
+ void ArtifactProjectService::addLayer(const CompositionID& id, const ArtifactLayerInitParams& param)
+ {
+ 	//ArtifactProjectManager::getInstance()->find
+
+ }
+
+
 };

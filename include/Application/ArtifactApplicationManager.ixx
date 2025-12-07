@@ -14,7 +14,7 @@ import Artifact.Project.Manager;
 import Artifact.Service.ActiveContext;
 
 
-namespace Artifact {
+export namespace Artifact {
 
  class ArtifactApplicationManager
  {

@@ -11,7 +11,7 @@
 
 export module Project;
 
-export import Project.Settings;
+export import Artifact.Project.Settings;
 
 
 

@@ -32,6 +32,7 @@ namespace Artifact {
    void handleCreateProject();
    void handleOpenProject();
    void handleSaveProject();
+   void handleSaveAsProject();
    void handleCloseProject();
 
  };
@@ -59,7 +60,7 @@ namespace Artifact {
 
   quitApplicationAction = new QAction("終了()...");
   quitApplicationAction->setShortcut(QKeySequence::Quit);
-
+  quitApplicationAction->setIcon(QIcon(ArtifactCore::getIconPath() + "/Png/close_red.png"));
 
 
 
@@ -86,6 +87,11 @@ namespace Artifact {
  }
 
  void ArtifactFileMenu::Impl::handleSaveProject()
+ {
+
+ }
+
+ void ArtifactFileMenu::Impl::handleSaveAsProject()
  {
 
  }

@@ -1,8 +1,8 @@
 module;
-
-export module Tool.Manager;
+export module Generator.Manager;
 
 export namespace Artifact
 {
+
 
 };

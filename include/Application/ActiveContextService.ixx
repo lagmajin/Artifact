@@ -16,6 +16,10 @@ export namespace Artifact
   explicit ArtifactActiveContextService(QObject* parent = nullptr);
   ~ArtifactActiveContextService();
   void setHandler(QObject* obj);
+ public/**/:
+  void sendPlayToActiveContext(); W_SLOT(sendPlayToActiveContext)
+ 	void sendPauseToActiveContext(); W_SLOT(sendPauseToActiveContext)
+ 	
  };
 
 

@@ -16,7 +16,10 @@ export module Artifact.Project.Manager;
 import std;
 import Project;
 import Utils;
+import Composition.Settings;
+import Artifact.Composition.Result;
 import Artifact.Composition.Abstract;
+
 
 namespace pybind11 {}//dummy
 namespace folly{}//dummy
@@ -55,17 +58,19 @@ export namespace Artifact {
   
   bool projectCreated() const;
 
-  void createNewComposition();
-  void createNewComposition(const QString& str);
-  void createNewComposition(const QString, const QSize& size);
+  void createComposition();
+  CompositionResult createComposition(const CompositionSettings& setting);
+  void createComposition(const QString& str);
+  void createComposition(const QString, const QSize& size);
+ 	
   bool closeCurrentProject();
   std::shared_ptr<ArtifactProject> getCurrentProjectSharedPtr();
 
   std::weak_ptr<ArtifactProject> getCurrentProjectWeakPtr();
-
+  //
   ArtifactCompositionPtr currentComposition();
-
-
+  ArtifactCompositionPtr findComposition(const CompositionID& id);
+  
 	//Assets
   void addAssetFromFilePath(const QString& filePath);
   void addAssetsFromFilePaths(const QStringList& filePaths);

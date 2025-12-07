@@ -14,7 +14,7 @@ import Tool;
 export namespace Artifact
 {
  using namespace ArtifactCore;
-	
+
 
 
  class ArtifactLayerEditor2DWidget :public QWidget
@@ -33,8 +33,11 @@ export namespace Artifact
   void wheelEvent(QWheelEvent* event) override;
   void resizeEvent(QResizeEvent* event) override;
   void paintEvent(QPaintEvent* event) override;
- 	void showEvent(QShowEvent* event) override;
+  void showEvent(QShowEvent* event) override;
   void closeEvent(QCloseEvent* event) override;
+
+  void focusInEvent(QFocusEvent* event) override;
+
  public:
   explicit ArtifactLayerEditor2DWidget(QWidget* parent = nullptr);
   ~ArtifactLayerEditor2DWidget();
@@ -52,6 +55,10 @@ export namespace Artifact
   void clearTargetLayer();
   QImage grabScreenShot();
   void ChangeRenderAPI();
+
+ public/*slots*/:
+  void play(); W_SLOT(play);
+  void stop(); W_SLOT(stop);
  };
 
 

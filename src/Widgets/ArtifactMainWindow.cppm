@@ -1,25 +1,12 @@
 ﻿module;
-
-
 #include<wobjectimpl.h>
-
-
 #include <DockWidget.h>
 #include <DockManager.h>
-
 #include <QLabel>
-
-
-
-
+#include <QMessageBox>
 #pragma comment(lib,"qtadvanceddockingd.lib")
 
-//#include "../../include/Widgets/menu/ArtifactMenuBar.hpp"
-//#include "../../include/Widgets/Render/ArtifactRenderManagerWidget.hpp"
-//#include "../../include/Widgets/Render/ArtifactOgreRenderWindow.hpp"
-//#include "../../include/Widgets/Render/ArtifactDiligentEngineRenderWindow.hpp"
-
-module ArtifactMainWindow;
+module Artifact.ArtifactMainWindow;
 
 import Menu;
 
@@ -51,9 +38,10 @@ namespace Artifact {
 
  using namespace ads;
 
-
+ // ReSharper disable CppInspection
  W_OBJECT_IMPL(ArtifactMainWindow)
-
+  // ReSharper restore CppInspection
+	
   class ArtifactMainWindow::Impl {
   private:
 
@@ -124,7 +112,7 @@ namespace Artifact {
   menuBar->setMainWindow(this);
 
   setDockNestingEnabled(true);
-
+  statusBar();
   setMenuBar(menuBar);
 
   resize(600, 640);
@@ -170,41 +158,13 @@ namespace Artifact {
   auto mediaControlWidget = new ArtifactPlaybackControlWidget();
  	
   mediaControlWidget->show();
-  
-  // imageView->show();
  	
-  //auto renderManagerWidget = new RenderQueueManagerWidget();
-
-  //auto  renderManagerWidgetWrapper = new Pane("RenderQueueManager", renderManagerWidget);
-  //renderManagerWidgetWrapper->setWindowIcon(QIcon::fromTheme("folder"));
-
-
-  //DockManager->addDockWidget(ads::BottomDockWidgetArea, renderManagerWidgetWrapper);
-  
-
-  
-  
- 
-  
-  //auto compositionWidget = new ArtifactDiligentEngineComposition2DWindow();
-
-  //auto  DockWidget5 = new Pane("CompositionWidget", compositionWidget);
-  //DockWidget5->setWidget(compositionWidget);
-
-  //DockManager->addDockWidget(ads::CenterDockWidgetArea, DockWidget5);
 
   auto& projectManager = ArtifactProjectManager::getInstance();
 
 
- 	//auto layerEditor=new ArtifactLayerEditorPanel();
-    //layerEditor->show();
-
-  //auto browser = new ArtifactAssetBrowser();
-
-  //browser->show();
- 	
-    auto renderManagerWidget = new RenderQueueJobWidget();
-    renderManagerWidget->show();
+  auto layerPreveiw =new ArtifactLayerEditor2DWidget();
+  layerPreveiw->show();
 
 	auto timelineWidget = new ArtifactTimelineWidget();
 	timelineWidget->show();
@@ -263,6 +223,23 @@ namespace Artifact {
  void ArtifactMainWindow::keyReleaseEvent(QKeyEvent* event)
  {
   QMainWindow::keyReleaseEvent(event);
+ }
+
+ void ArtifactMainWindow::closeEvent(QCloseEvent* event)
+ {
+  auto ret = QMessageBox::question(
+   this,
+   tr("確認"),
+   tr("終了しますか？"),
+   QMessageBox::Yes | QMessageBox::No
+  );
+
+  if (ret == QMessageBox::Yes) {
+   event->accept();   // 閉じる
+  }
+  else {
+   event->ignore();   // 閉じない
+  }
  }
 
 }

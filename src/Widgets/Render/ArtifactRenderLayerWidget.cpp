@@ -29,7 +29,7 @@ import Graphics.CBuffer.Constants;
 import Graphics.Shader.Compile.Task;
 import Graphics.Shader.Compute.HLSL.Blend;
 import Layer.Blend;
-
+import Artifact.Application.Manager;
 
 
 namespace Artifact {
@@ -139,7 +139,9 @@ namespace Artifact {
 
   void recreateSwapChainInternal(QWidget* window);
 
-
+  void play();
+  void stop();
+ 	
  };
 
  ArtifactLayerEditor2DWidget::Impl::Impl()
@@ -1070,6 +1072,15 @@ namespace Artifact {
   //startRenderLoop();
  }
 
+ void ArtifactLayerEditor2DWidget::Impl::play()
+ {
+
+ }
+
+ void ArtifactLayerEditor2DWidget::Impl::stop()
+ {
+
+ }
 
  ArtifactLayerEditor2DWidget::ArtifactLayerEditor2DWidget(QWidget* parent/*=nullptr*/) :QWidget(parent), impl_(new Impl())
  {
@@ -1273,6 +1284,22 @@ namespace Artifact {
  }
 
  void ArtifactLayerEditor2DWidget::clearTargetLayer()
+ {
+
+ }
+
+ void ArtifactLayerEditor2DWidget::focusInEvent(QFocusEvent* event)
+ {
+  ArtifactApplicationManager::instance()->activeContextService()->setHandler(this);
+ 	
+ }
+
+ void ArtifactLayerEditor2DWidget::play()
+ {
+
+ }
+
+ void ArtifactLayerEditor2DWidget::stop()
  {
 
  }

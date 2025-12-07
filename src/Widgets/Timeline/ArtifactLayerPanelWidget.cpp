@@ -33,6 +33,8 @@ namespace Artifact
   QPushButton* layerBlendModeButton = nullptr;
   QPushButton* fxButton = nullptr;
   QPushButton* parentButton = nullptr;
+ 	
+  QPushButton* shyButton = nullptr;
  };
 
  ArtifactLayerPanelHeaderWidget::Impl::Impl()
@@ -135,7 +137,7 @@ namespace Artifact
   QPainter p(this);
   p.fillRect(rect(), QColor(40, 40, 40));
   const int rowH = 28;
-  const int colW = 28;  // 行間隔
+   // 行間隔
   const int numVLines = 4;
 
   p.setPen(QColor(70, 70, 70));   // ライン色
@@ -144,11 +146,11 @@ namespace Artifact
    p.drawLine(0, y, width(), y);
   }
 
-
+  const int colW = 28;
 
   for (int i = 0; i < numVLines; ++i) {
    int x = colW * (i + 1);  // 1本目は28, 2本目は56…
-   p.drawLine(x, 0, x, height());
+   p.drawLine(0, 0, x, height());
   }
   const int textOffsetX = 24 * 5;
   const int textOffsetY = 0;

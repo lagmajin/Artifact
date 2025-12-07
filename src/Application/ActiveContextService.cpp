@@ -37,6 +37,26 @@ namespace Artifact
  void ArtifactActiveContextService::setHandler(QObject* obj)
  {
   impl_->pointer_ = obj;
+ 	
+ 	
+ }
+
+ void ArtifactActiveContextService::sendPlayToActiveContext()
+ {
+  if (!impl_->pointer_)
+   return;
+
+  QMetaObject::invokeMethod(impl_->pointer_, "play",
+   Qt::QueuedConnection);
+ }
+
+ void ArtifactActiveContextService::sendPauseToActiveContext()
+ {
+  if (!impl_->pointer_)
+   return;
+
+  QMetaObject::invokeMethod(impl_->pointer_, "pause",
+   Qt::QueuedConnection);
  }
 
 };

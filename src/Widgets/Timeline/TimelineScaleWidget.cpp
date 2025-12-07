@@ -5,6 +5,7 @@ module;
 
 module Artifact.Timeline.ScaleWidget;
 
+import Artifact.Project.Manager;
 
 
 namespace Artifact

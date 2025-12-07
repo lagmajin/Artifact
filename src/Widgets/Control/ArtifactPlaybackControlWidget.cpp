@@ -7,6 +7,8 @@ module;
 module Artifact.Widgets.PlaybackControlWidget;
 import Utils;
 import Widgets.Utils.CSS;
+import Artifact.Application.Manager;
+
 
 namespace Artifact
 {
@@ -65,6 +67,8 @@ namespace Artifact
  void ArtifactPlaybackControlWidget::play()
  {
   qDebug() << "Played";
+ 	
+  ArtifactApplicationManager::instance()->activeContextService()->sendPlayToActiveContext();
  }
 
  void ArtifactPlaybackControlWidget::stop()

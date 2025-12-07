@@ -1,14 +1,14 @@
 ﻿module;
 #include <wobjectdefs.h>
 //
-module Project.Settings;
+module Artifact.Project.Settings;
 
 import std;
 
 namespace Artifact {
- 
- 
-	class ArtifactProjectSettings::Impl
+
+
+ class ArtifactProjectSettings::Impl
  {
  private:
   QString name_;
@@ -19,13 +19,7 @@ namespace Artifact {
   template <StringLike T>
   void setProjectName(const T& name);
  };
-
- template <StringLike T>
- void Artifact::ArtifactProjectSettings::Impl::setProjectName(const T& name)
- {
-
- }
-
+	
  ArtifactProjectSettings::Impl::Impl()
  {
 
@@ -40,21 +34,26 @@ namespace Artifact {
  {
   return name_;
  }
-
-
- ArtifactProjectSettings::ArtifactProjectSettings()
+	
+ template <StringLike T>
+ void ArtifactProjectSettings::Impl::setProjectName(const T& name)
  {
 
  }
 
- ArtifactProjectSettings::ArtifactProjectSettings(const ArtifactProjectSettings& setting)
+ ArtifactProjectSettings::ArtifactProjectSettings():impl_(new Impl())
+ {
+
+ }
+
+ ArtifactProjectSettings::ArtifactProjectSettings(const ArtifactProjectSettings& setting) :impl_(new Impl())
  {
 
  }
 
  ArtifactProjectSettings::~ArtifactProjectSettings()
  {
-
+  delete impl_;
  }
 
  QString ArtifactProjectSettings::projectName() const
@@ -73,10 +72,10 @@ namespace Artifact {
   return QString();
  }
 
-ArtifactProjectSettings& ArtifactProjectSettings::operator=(const ArtifactProjectSettings& settings)
+ ArtifactProjectSettings& ArtifactProjectSettings::operator=(const ArtifactProjectSettings& settings)
  {
 
- return *this;
+  return *this;
  }
 
  bool ArtifactProjectSettings::operator==(const ArtifactProjectSettings& other) const
@@ -92,7 +91,7 @@ ArtifactProjectSettings& ArtifactProjectSettings::operator=(const ArtifactProjec
   return !(*this == other);
  }
 
- 
+
 
 
 };

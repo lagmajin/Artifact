@@ -9,6 +9,7 @@ import EnvironmentVariable;
 import Render.Queue.Manager;
 import Artifact.Test.ProjectManager;
 import Artifact.Service.ActiveContext;
+import Artifact.Tool.Manager;
 
 namespace Artifact
 {
@@ -19,6 +20,7 @@ namespace Artifact
   GlobalEffectManager effectManager_;
   ArtifactTestProjectManager testProjectManager_;
 
+ 	
   entt::registry registry_;
   entt::dispatcher dispather_;
  public:

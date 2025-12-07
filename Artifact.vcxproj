@@ -194,8 +194,9 @@
     <ClCompile Include="include\Effetcs\ColorCorrection\ExposureEffect.ixx" />
     <ClCompile Include="include\Effetcs\GlobalEffectManager.ixx" />
     <ClCompile Include="include\Generator\CloneGenerator.ixx" />
-    <ClCompile Include="include\Generator\Generator.ixx" />
-    <ClCompile Include="include\Generator\GeneratorEffector.ixx" />
+    <ClCompile Include="include\Generator\AbstractGenerator.ixx" />
+    <ClCompile Include="include\Generator\AbstractGeneratorEffector.ixx" />
+    <ClCompile Include="include\Generator\GeneratorManager.ixx" />
     <ClCompile Include="include\GUI\WindowPluginManager.ixx" />
     <ClCompile Include="include\Layer\ArtifactAbstract2DLayer.ixx" />
     <ClCompile Include="include\Layer\ArtifactAudioLayer.ixx" />
@@ -206,6 +207,7 @@
     <ClCompile Include="include\Layer\ArtifactLayerResult.ixx" />
     <ClCompile Include="include\Layer\ArtifactLayerSearchQuery.ixx" />
     <ClCompile Include="include\Layer\ArtifactLayerSetting.ixx" />
+    <ClCompile Include="include\Layer\ArtifactLayerUIInfo.ixx" />
     <ClCompile Include="include\Layer\ArtifactSolid2DLayer.ixx" />
     <ClCompile Include="include\Layer\ArtifactAdjustableLayer.ixx" />
     <ClCompile Include="include\Layer\ArtifactSolidImageLayer.ixx" />
@@ -214,6 +216,8 @@
     </ClCompile>
     <ClCompile Include="include\Layer\ArtifactShapeLayer.ixx" />
     <ClCompile Include="include\Layer\ArtifactLayerSelectionManager.ixx" />
+    <ClCompile Include="include\Preview\ArtifactPreviewController.ixx" />
+    <ClCompile Include="include\Preview\ArtifactPreviewWorker.ixx" />
     <ClCompile Include="include\Project\ArtifactProjectModel.ixx" />
     <ClCompile Include="include\Project\TreeFilterProxyModel.ixx" />
     <ClCompile Include="include\Render\ArtifactOffscreenRenderer2D.ixx" />
@@ -227,7 +231,7 @@
     <ClCompile Include="include\Test\ArtifactTestProjectService.ixx" />
     <ClCompile Include="include\Timeline\ArtifactTimelineIconModel.ixx" />
     <ClCompile Include="include\Tool\Tool.ixx" />
-    <ClCompile Include="include\Tool\ToolManager.ixx" />
+    <ClCompile Include="include\Tool\ArtifactToolManager.ixx" />
     <ClCompile Include="include\Translation\TranslationManager.ixx" />
     <ClCompile Include="include\Widgets\ArtifactLayerHierarchyWidget.ixx" />
     <ClCompile Include="include\Widgets\Control\ArtifactPlaybackControlWidget.ixx" />
@@ -258,8 +262,18 @@
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Effetcs\GlobalEffectManager.cpp" />
-    <ClCompile Include="src\Generator\Generator.cppm" />
-    <ClCompile Include="src\Generator\GeneratorEffector.cpp" />
+    <ClCompile Include="src\Generator\AbstractGenerator.cppm">
+      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+    </ClCompile>
+    <ClCompile Include="src\Generator\AbstractGeneratorEffector.cppm">
+      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+    </ClCompile>
+    <ClCompile Include="src\Generator\CloneGenerator.cppm">
+      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+    </ClCompile>
+    <ClCompile Include="src\Generator\GeneratorManager.cppm">
+      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+    </ClCompile>
     <ClCompile Include="src\GUI\WindowPluginManager.cpp" />
     <ClCompile Include="src\Layer\ArtifactAbstract2DLayer.cppm">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
@@ -286,6 +300,8 @@
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Library\Link.cpp" />
+    <ClCompile Include="src\Preview\ArtifactPreviewController.cpp" />
+    <ClCompile Include="src\Preview\ArtifactPreviewWorker.cpp" />
     <ClCompile Include="src\Project\TreeFilterProxyModel.cppm">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
     </ClCompile>
@@ -300,7 +316,7 @@
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Timeline\ArtifactTimelineIconModel.cpp" />
-    <ClCompile Include="src\Tool\ToolManager.cpp" />
+    <ClCompile Include="src\Tool\ArtifactToolManager.cpp" />
     <ClCompile Include="src\Translation\TranslationManager.cpp" />
     <ClCompile Include="src\Widgets\ArtifactToolBar.cppm">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>

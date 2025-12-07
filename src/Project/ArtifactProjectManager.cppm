@@ -11,27 +11,32 @@
 module Artifact.Project.Manager;
 
 import std;
-import Project;
-
 import Utils;
+import Project;
+import Artifact.Composition.Result;
+import Artifact.Composition.Abstract;
+import Composition.Settings;
+
+
 
 namespace Artifact {
 
  using namespace ArtifactCore;
- 
+
  W_OBJECT_IMPL(ArtifactProjectManager)
 
 
   class ArtifactProjectManager::Impl {
   private:
-   ArtifactProjectPtr currentProjectPtr_;
+   //ArtifactProjectPtr currentProjectPtr_;
   public:
    Impl();
    ~Impl();
    bool isCreated_ = false;
-   std::shared_ptr<ArtifactProject> spProject_;
+   std::shared_ptr<ArtifactProject> currentProjectPtr_;
    void createProject();
    Id createNewComposition();
+   CompositionResult createComposition(const CompositionSettings& setting);
    void addAssetFromFilePath(const QString& filePath);
    void addAssetsFromFilePaths(const QStringList& filePaths);
  };
@@ -43,16 +48,16 @@ namespace Artifact {
 
  void ArtifactProjectManager::Impl::createProject()
  {
-  if (!spProject_)
+  if (!currentProjectPtr_)
   {
-   spProject_ = std::make_shared<ArtifactProject>();
+   currentProjectPtr_ = std::make_shared<ArtifactProject>();
   }
   else {
 
 
   }
 
-  
+
 
  }
 
@@ -63,13 +68,17 @@ namespace Artifact {
 
  Id ArtifactProjectManager::Impl::createNewComposition()
  {
- 
-  currentProjectPtr_->createComposition("");
- 
- 	
+  if (currentProjectPtr_)
+  {
+   currentProjectPtr_->createComposition("");
+  }
+
+
+
+
   Id id;
 
-  
+
 
   return id;
  }
@@ -84,7 +93,14 @@ namespace Artifact {
 
  }
 
- ArtifactProjectManager::ArtifactProjectManager(QObject* parent /*= nullptr*/):QObject(parent),Impl_(new Impl())
+ CompositionResult ArtifactProjectManager::Impl::createComposition(const CompositionSettings& setting)
+ {
+  auto result = CompositionResult();
+
+  return result;
+ }
+
+ ArtifactProjectManager::ArtifactProjectManager(QObject* parent /*= nullptr*/) :QObject(parent), Impl_(new Impl())
  {
 
  }
@@ -141,16 +157,16 @@ namespace Artifact {
  std::shared_ptr<ArtifactProject> ArtifactProjectManager::getCurrentProjectSharedPtr()
  {
 
-  return Impl_->spProject_;
+  return Impl_->currentProjectPtr_;
  }
 
- void ArtifactProjectManager::createNewComposition(const QString& str)
+ void ArtifactProjectManager::createComposition(const QString& str)
  {
   newCompositionCreated();
 
  }
 
- void ArtifactProjectManager::createNewComposition()
+ void ArtifactProjectManager::createComposition()
  {
   Impl_->createNewComposition();
 
@@ -158,9 +174,19 @@ namespace Artifact {
   newCompositionCreated();
  }
 
- void ArtifactProjectManager::createNewComposition(const QString, const QSize& size)
+ void ArtifactProjectManager::createComposition(const QString, const QSize& size)
  {
 
+ }
+
+ CompositionResult ArtifactProjectManager::createComposition(const CompositionSettings& setting)
+ {
+
+  auto result=Impl_->createComposition(setting);
+ 	
+  newCompositionCreated();
+ 	
+  return result;
  }
 
  void ArtifactProjectManager::addAssetFromFilePath(const QString& filePath)
@@ -174,6 +200,12 @@ namespace Artifact {
  }
 
  ArtifactCompositionPtr ArtifactProjectManager::currentComposition()
+ {
+
+  return nullptr;
+ }
+
+ ArtifactCompositionPtr ArtifactProjectManager::findComposition(const CompositionID& id)
  {
 
   return nullptr;
