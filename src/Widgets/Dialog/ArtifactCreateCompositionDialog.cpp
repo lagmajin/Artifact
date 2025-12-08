@@ -20,21 +20,39 @@
 module Dialog.Composition;
 
 import Widgets.Utils.CSS;
+import Widgets.EditableLabel;
+import DragSpinBox;
 
 namespace Artifact {
 
  using namespace ArtifactCore;
+ using namespace ArtifactWidgets;
+	
+ class CompositionSettingPage::Impl
+ {
+ private:
+
+ public:
+  Impl();
+  
+ 	QComboBox* resolutionComobox_ = nullptr;
+    EditableLabel* compositionNameEdit_nullptr;
+ };
 
  CompositionSettingPage::CompositionSettingPage(QWidget* parent /*= nullptr*/) :QWidget(parent)
  {
 
   auto compositionNameLabel = new QLabel("コンポジション名:");
-  auto compositionNameEdit = new QLineEdit();
+  auto compositionNameEdit = new EditableLabel();
+  auto line = new QFrame();
+  line->setFrameShape(QFrame::HLine);
+  line->setFrameShadow(QFrame::Sunken);
 
 
   auto vboxLayout = new QFormLayout();
   vboxLayout->addRow(compositionNameLabel, compositionNameEdit);
-  //vboxLayout->addWidget(compositionNameEdit);
+  vboxLayout->addRow(line);
+ 	//vboxLayout->addWidget(compositionNameEdit);
 
   setLayout(vboxLayout);
 

@@ -11,7 +11,7 @@ export namespace Artifact
   class Impl;
   Impl* impl_;
  public:
-  explicit ArtifactPreviewWorker(const QObject* parent = nullptr);
+  explicit ArtifactPreviewWorker(QObject* parent = nullptr);
   ~ArtifactPreviewWorker();
  };
 

@@ -22,7 +22,7 @@ namespace Artifact
 
  }
 
- ArtifactPreviewWorker::ArtifactPreviewWorker(const QObject* parent /*= nullptr*/):QObject(parent)
+ ArtifactPreviewWorker::ArtifactPreviewWorker(QObject* parent /*= nullptr*/):QObject(parent)
  {
 
  }

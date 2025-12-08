@@ -15,7 +15,8 @@ export namespace Artifact {
 
  class CompositionSettingPage :public QWidget {
  private:
-
+  class Impl;
+  Impl* impl_;
  public:
   explicit CompositionSettingPage(QWidget* parent = nullptr);
   ~CompositionSettingPage();
