@@ -37,6 +37,8 @@ namespace Artifact {
   
  	QComboBox* resolutionComobox_ = nullptr;
     EditableLabel* compositionNameEdit_nullptr;
+    DragSpinBox* widthSpinBox = nullptr;
+    DragSpinBox* heightSpinBox = nullptr;
  };
 
  CompositionSettingPage::CompositionSettingPage(QWidget* parent /*= nullptr*/) :QWidget(parent)

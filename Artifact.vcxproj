@@ -301,7 +301,7 @@
     </ClCompile>
     <ClCompile Include="src\Library\Link.cpp" />
     <ClCompile Include="src\Preview\ArtifactPreviewController.cpp" />
-    <ClCompile Include="src\Preview\ArtifactPreviewWorker.cpp" />
+    <ClCompile Include="src\Preview\ArtifactPreviewWorker.cppm" />
     <ClCompile Include="src\Project\TreeFilterProxyModel.cppm">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
     </ClCompile>

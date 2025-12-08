@@ -22,14 +22,14 @@ namespace Artifact
 
  }
 
- ArtifactPreviewWorker::ArtifactPreviewWorker(QObject* parent /*= nullptr*/):QObject(parent)
+ ArtifactPreviewWorker::ArtifactPreviewWorker(QObject* parent /*= nullptr*/):QObject(parent),impl_(new Impl())
  {
 
  }
 
  ArtifactPreviewWorker::~ArtifactPreviewWorker()
  {
-
+  delete impl_;
  }
 
 };

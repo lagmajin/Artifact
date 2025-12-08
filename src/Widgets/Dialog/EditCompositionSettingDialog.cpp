@@ -1,7 +1,7 @@
-﻿
-module;
+﻿module;
 #include <QDialog>
 #include <wobjectimpl.h>
+
 module Artifact.Dialog.EditComposition;
 
 import std;
@@ -22,7 +22,7 @@ namespace Artifact
 
 	W_OBJECT_IMPL(ArtifactEditCompositionDialog)
 	
- ArtifactEditCompositionDialog::ArtifactEditCompositionDialog(QWidget* parent /*= nullptr*/)
+ ArtifactEditCompositionDialog::ArtifactEditCompositionDialog(QWidget* parent /*= nullptr*/):QDialog(parent)
  {
 
  }

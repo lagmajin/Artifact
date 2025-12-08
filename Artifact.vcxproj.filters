@@ -172,6 +172,9 @@
     <Filter Include="ソース ファイル\Preview">
       <UniqueIdentifier>{6215d216-e178-4e6d-9c72-07de0547807b}</UniqueIdentifier>
     </Filter>
+    <Filter Include="ヘッダー ファイル\Effects\Glow">
+      <UniqueIdentifier>{b219cfdf-57b8-4986-970f-6ac83be25ffd}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="include\Composition\ArtifactCompositionManager.hpp">
@@ -809,7 +812,7 @@
     <ClCompile Include="include\Preview\ArtifactPreviewWorker.ixx">
       <Filter>ヘッダー ファイル\Preview</Filter>
     </ClCompile>
-    <ClCompile Include="src\Preview\ArtifactPreviewWorker.cpp">
+    <ClCompile Include="src\Preview\ArtifactPreviewWorker.cppm">
       <Filter>ソース ファイル\Preview</Filter>
     </ClCompile>
   </ItemGroup>
