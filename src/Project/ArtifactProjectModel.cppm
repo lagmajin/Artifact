@@ -3,7 +3,8 @@
 #include <QStandardItemModel>
 module Artifact.Project.Model;
 
-import Project;
+import std;
+import Artifact.Project;
 
 
 namespace Artifact
@@ -18,8 +19,14 @@ namespace Artifact
   Impl();
   ~Impl();
   ArtifactProjectWeakPtr projectPtr_;
+  void refreshTree();
  };
 
+ void ArtifactProjectModel::Impl::refreshTree()
+ {
+
+ 	
+ }
 
  ArtifactProjectModel::ArtifactProjectModel(QObject* parent/*=nullptr*/) :QStandardItemModel(parent)
  {

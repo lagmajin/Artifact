@@ -16,6 +16,8 @@ import Composition.Settings;
 
 
 namespace Artifact {
+ using namespace ArtifactCore;
+	
  using LayerContainer = MultiIndexContainer<ArtifactAbstractLayerPtr, LayerID>;
 
  W_OBJECT_IMPL(ArtifactAbstractComposition)

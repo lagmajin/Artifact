@@ -7,8 +7,19 @@ import Widgets.Dialog.Abstract;
 
 export namespace Artifact {
 
+ class ArtifactEditCompositionSettingPage:public QWidget
+ {
+ private:
+  class Impl;
+  Impl* impl_;
+ public:
+  explicit ArtifactEditCompositionSettingPage(QWidget* parent = nullptr);
+  ~ArtifactEditCompositionSettingPage();
+ };
+	
  class ArtifactEditCompositionDialog:public QDialog
  {
+ 	W_OBJECT(ArtifactEditCompositionDialog)
  private:
   class Impl;
   Impl* impl_;

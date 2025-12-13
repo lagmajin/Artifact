@@ -19,7 +19,7 @@ namespace Artifact
  private:
   GlobalEffectManager effectManager_;
   ArtifactTestProjectManager testProjectManager_;
-
+  ArtifactToolManager toolManager_;
  	
   entt::registry registry_;
   entt::dispatcher dispather_;

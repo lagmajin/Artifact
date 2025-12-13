@@ -18,6 +18,7 @@ namespace Artifact {
   QString projectName() const;
   template <StringLike T>
   void setProjectName(const T& name);
+  QJsonObject toJson() const;
  };
 	
  ArtifactProjectSettings::Impl::Impl()
@@ -39,6 +40,13 @@ namespace Artifact {
  void ArtifactProjectSettings::Impl::setProjectName(const T& name)
  {
 
+ }
+
+ QJsonObject ArtifactProjectSettings::Impl::toJson() const
+ {
+  QJsonObject result;
+ 	
+  return result;
  }
 
  ArtifactProjectSettings::ArtifactProjectSettings():impl_(new Impl())
@@ -91,6 +99,10 @@ namespace Artifact {
   return !(*this == other);
  }
 
+ QJsonObject ArtifactProjectSettings::toJson() const
+ {
+  return impl_->toJson();
+ }
 
 
 

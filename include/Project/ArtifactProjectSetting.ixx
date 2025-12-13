@@ -33,7 +33,7 @@ export namespace Artifact {
   QString author() const;
   template <StringLike T>
   void setAuthor(const T& name);
-
+  QJsonObject toJson() const;
 
   ArtifactProjectSettings& operator=(const ArtifactProjectSettings& settings);
 

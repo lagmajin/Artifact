@@ -10,7 +10,7 @@ export module Artifact.Widgets.ProjectManagerWidget;
 
 import std;
 
-import Project;
+import Artifact.Project;
 
 W_REGISTER_ARGTYPE(QStringList)
 W_REGISTER_ARGTYPE(QFileInfo)

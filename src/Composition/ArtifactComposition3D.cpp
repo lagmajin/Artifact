@@ -9,23 +9,13 @@ module Composition3D;
 
 namespace Artifact {
 
- class ArtifactCompositionPrivate {
+ class ArtifactComposition3D::Impl {
  private:
 
  public:
-  ArtifactCompositionPrivate();
-  ~ArtifactCompositionPrivate();
+
  };
-
- ArtifactCompositionPrivate::ArtifactCompositionPrivate()
- {
-
- }
-
- ArtifactCompositionPrivate::~ArtifactCompositionPrivate()
- {
-
- }
+	
 
  ArtifactComposition3D::ArtifactComposition3D(const ArtifactComposition3D& composition)
  {

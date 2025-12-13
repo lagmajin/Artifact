@@ -6,6 +6,7 @@
 
  module ApplicationSettingDialog;
 
+import Artifact.Application.Service;
 
 namespace ArtifactCore {
 
@@ -21,7 +22,16 @@ namespace ArtifactCore {
  {
 
  }
+	
+ MemoryAndCpuSettingPage::MemoryAndCpuSettingPage(QWidget* parent /*= nullptr*/)
+ {
 
+ }
+
+ MemoryAndCpuSettingPage::~MemoryAndCpuSettingPage()
+ {
+
+ }
  class ApplicationSettingDialog::Impl
  {
  private:
@@ -45,12 +55,14 @@ namespace ArtifactCore {
 
  ApplicationSettingDialog::ApplicationSettingDialog(QWidget* parent /*= nullptr*/):QDialog(parent),impl_(new Impl)
  {
-
+  setWindowTitle("Title");
  }
 
  ApplicationSettingDialog::~ApplicationSettingDialog()
  {
   delete impl_;
  }
+
+
 
 };

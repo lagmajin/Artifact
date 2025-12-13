@@ -3,7 +3,7 @@
 
 #include <opencv2/opencv.hpp>
 
-export module Layers.Image;
+export module Artifact.Layer.Image;
 
 import Artifact.Layers;
 
@@ -23,6 +23,9 @@ export namespace Artifact {
   void setFromQImage(const QImage& image);
   void setFromCvMat(const cv::Mat& mat);
   void setFromCvMat();
+
+  void draw() override;
+
  };
 
 

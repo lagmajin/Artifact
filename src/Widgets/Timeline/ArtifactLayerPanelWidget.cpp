@@ -31,10 +31,12 @@ namespace Artifact
   QPushButton* soundButton = nullptr;
   QPushButton* layerNameButton = nullptr;
   QPushButton* layerBlendModeButton = nullptr;
-  QPushButton* fxButton = nullptr;
+  
   QPushButton* parentButton = nullptr;
- 	
+  QPushButton* fxButton = nullptr;
   QPushButton* shyButton = nullptr;
+  QPushButton* adjButton = nullptr;
+  QPushButton* blurButton = nullptr;
  };
 
  ArtifactLayerPanelHeaderWidget::Impl::Impl()
@@ -49,6 +51,7 @@ namespace Artifact
   visiblityButton->setFixedSize(QSize(28, 28));
   visiblityButton->setIcon(impl_->visibilityIcon);
   visiblityButton->setStyleSheet("background-color: gray; color: black;");
+  visiblityButton->setFlat(true);
   auto lockButton = impl_->lockButton = new QPushButton();
   lockButton->setStyleSheet("background-color: gray; color: black;");
   lockButton->setFixedSize(QSize(28, 28));
@@ -61,14 +64,23 @@ namespace Artifact
   soundButton->setStyleSheet("background-color: gray; color: black;");
  	
   auto layerNameButton = impl_->layerNameButton = new QPushButton();
-  layerNameButton->setText("Blend Mode");
+  layerNameButton->setText("Layer Name");
   layerNameButton->setCheckable(false);
  	
   auto parentButton = impl_->parentButton = new QPushButton();
   parentButton->setText("Parent");
  	
   auto layerBlendModeButton = impl_->layerBlendModeButton = new QPushButton();
-  layerBlendModeButton->setText("Layer Name");
+  layerBlendModeButton->setText("Blend Mode");
+  auto shyButton=impl_->shyButton = new QPushButton;
+  shyButton->setFixedSize(QSize(28, 28));
+  auto blurButton = impl_->blurButton = new QPushButton();
+  blurButton->setFixedSize(QSize(28, 28));
+ 	
+  auto adjButton = impl_->adjButton = new QPushButton();
+  adjButton->setFixedSize(QSize(28, 28));
+ 	
+  //blurButton->setText("Layer Name");
   auto qHBoxLayout = new QHBoxLayout();
   qHBoxLayout->setContentsMargins(0, 0, 0, 0);
   qHBoxLayout->setSpacing(0);
@@ -79,6 +91,8 @@ namespace Artifact
   qHBoxLayout->addWidget(layerNameButton);
   qHBoxLayout->addWidget(layerBlendModeButton);
   qHBoxLayout->addWidget(parentButton);
+  qHBoxLayout->addWidget(blurButton);
+  qHBoxLayout->addWidget(adjButton);
   //qHBoxLayout->addWidget(soloButton);
   setLayout(qHBoxLayout);
  }
@@ -107,8 +121,9 @@ namespace Artifact
 
  ArtifactLayerPanelWidget::Impl::Impl()
  {
-  visibilityIcon = QPixmap(getIconPath() + "/visibility.png");
+  visibilityIcon = QPixmap(getIconPath() + "/Png/visibility.png");
   visibilityIcon = visibilityIcon.scaled(28,28, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+ 
  }
 
  ArtifactLayerPanelWidget::Impl::~Impl()
@@ -150,7 +165,7 @@ namespace Artifact
 
   for (int i = 0; i < numVLines; ++i) {
    int x = colW * (i + 1);  // 1–{–Ú‚Í28, 2–{–Ú‚Í56c
-   p.drawLine(0, 0, x, height());
+   //p.drawLine(0, 0, x, height());
   }
   const int textOffsetX = 24 * 5;
   const int textOffsetY = 0;

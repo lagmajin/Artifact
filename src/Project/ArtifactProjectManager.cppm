@@ -12,7 +12,7 @@ module Artifact.Project.Manager;
 
 import std;
 import Utils;
-import Project;
+import Artifact.Project;
 import Artifact.Composition.Result;
 import Artifact.Composition.Abstract;
 import Composition.Settings;

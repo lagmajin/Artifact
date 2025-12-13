@@ -4,6 +4,7 @@
 #include <wobjectimpl.h>
 module Artifact.Layers.Abstract;
 
+import std;
 import Utils;
 import Layer.State;
 import Animation.Transform2D;
@@ -18,7 +19,7 @@ namespace Artifact {
   class ArtifactAbstractLayer::Impl {
   private:
    
-   
+   bool is3D_ = true;
    Id id;
    LayerState state_;
    //FramePosition framePosition_
@@ -30,6 +31,8 @@ namespace Artifact {
    void goToEndFrame();
    void goToNextFrame();
    void goToPrevFrame();
+ 	
+   bool is3D() const;
  };
 
   ArtifactAbstractLayer::Impl::Impl()
@@ -58,6 +61,11 @@ namespace Artifact {
   void ArtifactAbstractLayer::Impl::goToPrevFrame()
   {
 
+  }
+
+  bool ArtifactAbstractLayer::Impl::is3D() const
+  {
+   return is3D_;
   }
 
   ArtifactAbstractLayer::ArtifactAbstractLayer():impl_(new Impl())
@@ -165,6 +173,11 @@ namespace Artifact {
  void ArtifactAbstractLayer::setParentById(LayerID& id)
  {
 
+ }
+
+ bool ArtifactAbstractLayer::is3D() const
+ {
+  return false;
  }
 
 };

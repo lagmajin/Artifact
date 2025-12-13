@@ -1,23 +1,25 @@
 ﻿module;
 
-export module Artifact.Layers.Factory;
+export module Artifact.Layer.Factory;
 
 import std;
 
 import Artifact.Layers.Abstract;
-
+import Artifact.Layer.InitParams;
+import Artifact.Layer.Result;
 
 export namespace Artifact {
  
  
- class LayerFactory {
+ class ArtifactLayerFactory {
  private:
   class Impl;
   Impl* impl_;
  public:
-  LayerFactory();
-  ~LayerFactory();
-  ArtifactAbstractLayerPtr createNewLayer(LayerType type) noexcept;
+  ArtifactLayerFactory();
+  ~ArtifactLayerFactory();
+  ArtifactAbstractLayerPtr createNewLayer(ArtifactLayerInitParams params) noexcept;
+  ArtifactLayerResult createLayer(ArtifactLayerInitParams& params) noexcept;
  };
 
 

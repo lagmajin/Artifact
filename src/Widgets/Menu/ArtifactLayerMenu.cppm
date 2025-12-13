@@ -8,6 +8,8 @@ module Artifact.Menu.Layer;
 import std; 
 import Artifact.Project.Manager;
 import Artifact.Service.Project;
+import Artifact.Layer.InitParams;
+import Artifact.Layer.Factory;
 
 import Artifact.Widgets.CreateLayerDialog;
 
@@ -87,27 +89,37 @@ namespace Artifact {
  {
   auto& manager = ArtifactProjectManager::getInstance();
  	
+  //ArtifactProjectService::instance()->
+ 	
+ 	
+ 	
   auto createSolidLayer = new CreateSolidLayerSettingDialog();
  	
   createSolidLayer->show();
+ 
+  ArtifactSolidLayerInitParams params("");
+ 	
+ 	//ArtifactProjectService::instance()->addLayer()
+ 	
  }
 
  void ArtifactLayerMenu::Impl::handleCreateNullLayer()
  {
   auto& manager = ArtifactProjectManager::getInstance();
 
+  //ArtifactLayerInitParams param;
   
 
  }
 
  void ArtifactLayerMenu::Impl::handleAdjustableLayer()
  {
-
+  //ArtifactLayerInitParams param;
  }
 
  void ArtifactLayerMenu::Impl::handleCameraLayer()
  {
-
+  //ArtifactLayerInitParams param;
  }
 
  void ArtifactLayerMenu::Impl::handleOpenLayer()

@@ -41,7 +41,8 @@ export namespace Artifact
  	
  	ArtifactCompositionWeakPtr findComposition(const CompositionID& id);
   //ArtifactAbstractLayerPtr
-    void addLayer(const CompositionID& id,const ArtifactLayerInitParams& param);
+    void addLayer(const CompositionID& id,const ArtifactLayerInitParams& params);
+    void addLayerToCurrentComposition(const ArtifactLayerInitParams& params);
  public:	
   void projectSettingChanged(const ArtifactProjectSettings& setting);
   W_SLOT(projectSettingChanged)

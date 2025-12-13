@@ -2,7 +2,10 @@
 
 export module Layers.Composition;
 
+import Utils;
 import Artifact.Layers;
+
+
 
 export namespace Artifact {
 
@@ -15,6 +18,7 @@ export namespace Artifact {
  public:
   ArtifactCompositionLayer();
   ~ArtifactCompositionLayer();
+  CompositionID sourceCompositionId() const;
  };
 
 

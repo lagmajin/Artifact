@@ -125,7 +125,7 @@ namespace Artifact {
 
  ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent /*= nullptr*/) :QWidget(parent), impl_(new Impl())
  {
-  setWindowTitle("Project");
+  setWindowTitle("Artifact.Project");
   setAttribute(Qt::WA_StyledBackground);
   setStyleSheet(R"(
     QWidget {
@@ -192,7 +192,7 @@ namespace Artifact {
   setEnabled(false);
 
   auto projectNameLabel=impl_->projectNameLabel = new QLabel();
-  projectNameLabel->setText("Project name:");
+  projectNameLabel->setText("Artifact.Project name:");
 
   impl_->projectView_ = new ArtifactProjectView();
 

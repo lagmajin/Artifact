@@ -1,9 +1,19 @@
 module;
-export module Artifact.Layers.Result;
+#include <QString>
 
-export namespace ArtifactCore {
+export module Artifact.Layer.Result;
 
+import Artifact.Layers.Abstract;
 
+export namespace Artifact {
+
+ struct ArtifactLayerResult
+ {
+  LayerType type;
+  bool success = false;
+  ArtifactAbstractLayerPtr layer;
+ 	
+ };
 
 
 };

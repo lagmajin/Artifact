@@ -1,9 +1,11 @@
 module;
 #include <wobjectimpl.h>
+#include <glm/ext/matrix_projection.hpp>
 module Artifact.Service.Project;
 
 import std;
 import Artifact.Project.Manager;
+import Artifact.Layer.Factory;
 
 namespace Artifact
 {
@@ -16,6 +18,8 @@ namespace Artifact
  public:
   Impl();
   ~Impl();
+  static ArtifactProjectManager& projectManager();
+  void addLayerToCurrentComposition(const ArtifactLayerInitParams& params);
  };
 
  ArtifactProjectService::Impl::Impl()
@@ -27,6 +31,24 @@ namespace Artifact
  {
 
  }
+
+ ArtifactProjectManager& ArtifactProjectService::Impl::projectManager()
+ {
+  return ArtifactProjectManager::getInstance();
+ }
+
+ void ArtifactProjectService::Impl::addLayerToCurrentComposition(const ArtifactLayerInitParams& params)
+ {
+ 	
+  auto factory = ArtifactLayerFactory();
+
+  auto layer = factory.createNewLayer(params);
+  
+  projectManager().currentComposition()->addLayer(layer);
+ 	
+ 	
+ }
+
  W_OBJECT_IMPL(ArtifactProjectService)
 	
  ArtifactProjectService::ArtifactProjectService(QObject*parent):QObject(parent),impl_(new Impl())
@@ -57,5 +79,12 @@ namespace Artifact
 
  }
 
+ void ArtifactProjectService::addLayerToCurrentComposition(const ArtifactLayerInitParams& params)
+ {
+
+ 	
+ 	
+ 	
+ }
 
 };

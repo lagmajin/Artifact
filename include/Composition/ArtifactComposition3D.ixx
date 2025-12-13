@@ -13,11 +13,13 @@ export namespace Artifact {
   PreCompose,
  };
 
- class ArtifactCompositionPrivate;
+ //class ArtifactCompositionPrivate;
 
  class ArtifactComposition3D :public ArtifactAbstractComposition{
  private: 
-  std::unique_ptr<ArtifactCompositionPrivate> pImpl_;
+  class Impl;
+ 	
+  //std::unique_ptr<ArtifactCompositionPrivate> pImpl_;
  public:
   ArtifactComposition3D(const ArtifactComposition3D& composition);
   ArtifactComposition3D(ArtifactComposition3D&& composition);

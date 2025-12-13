@@ -8,6 +8,22 @@ import std;
 
 namespace Artifact
 {
+ class ArtifactEditCompositionSettingPage::Impl
+ {
+ public:
+ 	
+ };
+	
+ ArtifactEditCompositionSettingPage::ArtifactEditCompositionSettingPage(QWidget* parent /*= nullptr*/):QWidget(parent),impl_(new Impl)
+ {
+
+ }
+
+ ArtifactEditCompositionSettingPage::~ArtifactEditCompositionSettingPage()
+ {
+  delete impl_;
+ }
+	
  class  ArtifactEditCompositionDialog::Impl
  {
  public:
@@ -31,6 +47,8 @@ namespace Artifact
  {
 
  }
+
+ 
 
 };
 

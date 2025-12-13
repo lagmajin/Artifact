@@ -1,7 +1,7 @@
 ﻿module;
 
 
-module Artifact.Layers.Solid2D;
+module Artifact.Layer.Solid2D;
 
 
 namespace  Artifact
@@ -40,6 +40,11 @@ namespace  Artifact
  void ArtifactSolid2DLayer::setColor(const FloatColor& color)
  {
 
+ }
+
+ void ArtifactSolid2DLayer::draw()
+ {
+  throw std::logic_error("The method or operation is not implemented.");
  }
 
 }

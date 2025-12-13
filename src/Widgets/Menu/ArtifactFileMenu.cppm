@@ -7,6 +7,7 @@
 #include <QGraphicsOpacityEffect>
 
 #include <QApplication>
+
 module Artifact.Menu.File;
 
 import  Artifact.Project.Manager;

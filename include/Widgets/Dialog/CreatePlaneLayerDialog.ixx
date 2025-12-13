@@ -10,8 +10,7 @@ import Widgets.Dialog.Abstract;
 import Artifact.Layer.InitParams;
 
 export namespace Artifact {
-
-class PlaneLayerSettingPagePrivate;
+	
 
  class PlaneLayerSettingPage :public QWidget {
   //Q_OBJECT

@@ -1,17 +1,18 @@
 ﻿module;
-module Layers.Image;
+module Artifact.Layer.Image;
 
 import std;
-
+import Image.ImageF32x4RGBAWithCache;
 
 
 namespace Artifact {
 
+ using namespace ArtifactCore;
 
  class ArtifactImageLayer::Impl
  {
  private:
-
+  
  public:
   Impl();
   ~Impl();
@@ -45,6 +46,11 @@ namespace Artifact {
  void ArtifactImageLayer::setFromCvMat(const cv::Mat& mat)
  {
 
+ }
+
+ void ArtifactImageLayer::draw()
+ {
+  throw std::logic_error("The method or operation is not implemented.");
  }
 
 };

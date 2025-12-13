@@ -35,25 +35,40 @@ namespace Artifact {
  public:
   Impl();
   
- 	QComboBox* resolutionComobox_ = nullptr;
-    EditableLabel* compositionNameEdit_nullptr;
+ 	QComboBox* resolutionCombobox_ = nullptr;
+    EditableLabel* compositionNameEdit_=nullptr;
     DragSpinBox* widthSpinBox = nullptr;
     DragSpinBox* heightSpinBox = nullptr;
  };
 
- CompositionSettingPage::CompositionSettingPage(QWidget* parent /*= nullptr*/) :QWidget(parent)
+ CompositionSettingPage::Impl::Impl()
  {
 
-  auto compositionNameLabel = new QLabel("コンポジション名:");
-  auto compositionNameEdit = new EditableLabel();
+ }
+
+ CompositionSettingPage::CompositionSettingPage(QWidget* parent /*= nullptr*/) :QWidget(parent),impl_(new Impl)
+ {
+
+  //auto compositionNameLabel = new QLabel("コンポジション名:");
+  //auto compositionNameEdit=impl_->compositionNameEdit_ = new EditableLabel();
+  //compositionNameEdit->setMaximumWidth(100);
+ 	
+  impl_->widthSpinBox = new DragSpinBox();
+  impl_->heightSpinBox = new DragSpinBox();
+ 	
   auto line = new QFrame();
   line->setFrameShape(QFrame::HLine);
   line->setFrameShadow(QFrame::Sunken);
 
 
   auto vboxLayout = new QFormLayout();
-  vboxLayout->addRow(compositionNameLabel, compositionNameEdit);
-  vboxLayout->addRow(line);
+  //vboxLayout->addRow(compositionNameLabel, impl_->compositionNameEdit_);
+  vboxLayout->addRow("Width:",impl_->widthSpinBox);
+  vboxLayout->addRow("Height:", impl_->heightSpinBox);
+  vboxLayout->setAlignment(impl_->widthSpinBox, Qt::AlignRight);
+  vboxLayout->setAlignment(impl_->heightSpinBox, Qt::AlignRight);
+ 	
+ 	vboxLayout->addRow(line);
  	//vboxLayout->addWidget(compositionNameEdit);
 
   setLayout(vboxLayout);
@@ -94,6 +109,7 @@ namespace Artifact {
 
   QLabel* compositionLabel = nullptr;
   QLineEdit* compositionName = nullptr;
+  EditableLabel* compositionNameEdit_;
  };
 
  CreateCompositionDialog::Impl::Impl(CreateCompositionDialog* pDialog)
@@ -117,6 +133,7 @@ namespace Artifact {
 
   CreateCompositionDialog::CreateCompositionDialog(QWidget* parent /*= nullptr*/) :QDialog(parent), impl_(new Impl(this))
  {
+  
   setWindowTitle(u8"コンポジション設定");
   setWindowFlags(Qt::FramelessWindowHint);
   setAttribute(Qt::WA_NoChildEventsForParent);
@@ -129,19 +146,22 @@ namespace Artifact {
   static QTime	beforeSelectDurationTime(0, 0, 30);
 
   static float	beforeSelectFrameRate = 30.0f;
-
+  auto compositionNameEdit = impl_->compositionNameEdit_ = new EditableLabel();
+  compositionNameEdit->setText("Comp1");
   impl_->pTabWidget = new QTabWidget(this);
 
   impl_->compositionSettingPage_ = new CompositionSettingPage();
 
   impl_->pTabWidget->addTab(impl_->compositionSettingPage_, "Settings");
 
+  QHBoxLayout* nameHLayout = new QHBoxLayout();
+  nameHLayout->addWidget(compositionNameEdit);
 
 
   QDialogButtonBox* const pDialogButtonBox = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
 
   QVBoxLayout* const pVBoxLayout = new QVBoxLayout();
-
+  pVBoxLayout->addWidget(compositionNameEdit);
   pVBoxLayout->addWidget(impl_->pTabWidget);
   pVBoxLayout->addWidget(pDialogButtonBox);
   setLayout(pVBoxLayout);

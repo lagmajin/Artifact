@@ -4,6 +4,7 @@
 #include <QString>
 #include <QObject>
 #include <qtypes.h>
+
 export module Artifact.Layers.Abstract;
 
 import std;
@@ -26,6 +27,7 @@ export namespace Artifact {
  {
   Unknown,
   None,
+  Null,
   Solid,       // 単色レイヤー
   Image,       // 静止画像（PNG/JPGなど）
   Adjustment,  // 調整レイヤー
@@ -88,6 +90,7 @@ export namespace Artifact {
   bool isAdjustmentLayer() const;
   void setAdjustmentLayer(bool isAdjustment);
 
+  bool is3D() const;
   //Audio
 
  public:

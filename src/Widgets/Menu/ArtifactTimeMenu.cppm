@@ -36,11 +36,11 @@ namespace Artifact {
   setSeparatorsCollapsible(true);
   setMinimumWidth(160);
  }
-
  ArtifactTimeMenu::~ArtifactTimeMenu()
  {
 
  }
+
 
 
 };

@@ -13,17 +13,18 @@ import Artifact.Application.Manager;
 namespace Artifact
 {
  using namespace ArtifactCore;
-	
+
  class ArtifactPlaybackControlWidget::Impl {
  private:
 
  public:
   Impl();
-  ~Impl()=default;
+  ~Impl() = default;
   QToolButton* playButton_ = nullptr;
+  QToolButton* pauseButton_ = nullptr;
   QToolButton* stopButton_ = nullptr;
   QToolButton* backForward_ = nullptr;
- 	
+
  };
 
  ArtifactPlaybackControlWidget::Impl::Impl()
@@ -31,13 +32,18 @@ namespace Artifact
   playButton_ = new QToolButton();
   playButton_->setIcon(QIcon(getIconPath() + "/PlayArrow.png"));
   stopButton_ = new QToolButton();
+  stopButton_->setIcon(QIcon(getIconPath() + "/Png/stop.png"));
+
   backForward_ = new QToolButton();
 
+  pauseButton_ = new QToolButton();
+  pauseButton_->setIcon(QIcon(getIconPath() + "/Png/pause.png"));
+
  }
-	
+
  W_OBJECT_IMPL(ArtifactPlaybackControlWidget)
 
- ArtifactPlaybackControlWidget::ArtifactPlaybackControlWidget(QWidget* parent /*= nullptr*/):QWidget(parent),impl_(new Impl())
+  ArtifactPlaybackControlWidget::ArtifactPlaybackControlWidget(QWidget* parent /*= nullptr*/) :QWidget(parent), impl_(new Impl())
  {
   auto layout = new QHBoxLayout();
   layout->setContentsMargins(0, 0, 0, 0);
@@ -45,16 +51,17 @@ namespace Artifact
 
   layout->addWidget(impl_->backForward_);
   layout->addWidget(impl_->playButton_);
+  layout->addWidget(impl_->pauseButton_);
   layout->addWidget(impl_->stopButton_);
 
   setLayout(layout);
- 	
+
   auto style = getDCCStyleSheetPreset(DccStylePreset::ModoStyle);
 
   setStyleSheet(style);
   connect(impl_->playButton_, &QToolButton::clicked,
    this, &ArtifactPlaybackControlWidget::play);
- 	
+
   connect(impl_->stopButton_, &QToolButton::clicked,
    this, &ArtifactPlaybackControlWidget::stop);
  }
@@ -67,7 +74,7 @@ namespace Artifact
  void ArtifactPlaybackControlWidget::play()
  {
   qDebug() << "Played";
- 	
+
   ArtifactApplicationManager::instance()->activeContextService()->sendPlayToActiveContext();
  }
 

@@ -24,6 +24,7 @@ namespace Artifact {
  public:
   Impl();
   ~Impl() = default;
+  EditableLabel* layerName = nullptr;
  };
 
  PlaneLayerSettingPage::Impl::Impl()

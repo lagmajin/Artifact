@@ -8,7 +8,7 @@
 //#include <QtCore/QString>
 
 
-module Project;
+module Artifact.Project;
 
 import Utils;
 import Utils.String.Like;
@@ -51,6 +51,8 @@ namespace Artifact {
  	void createCompositions(const QStringList& names);
   bool removeById(const CompositionID& id);
   void removeAllCompositions();
+ 	
+  QJsonObject toJson() const;
  };
 
 
@@ -88,6 +90,19 @@ namespace Artifact {
 
 
   return false;
+ }
+
+ QJsonObject ArtifactProject::Impl::toJson() const
+ {
+  QJsonObject result;
+  result["name"] = projectSettings_.projectName();
+  result["author"];
+  result["version"] = "";
+  auto allComposition=container_.all();
+ 	
+ 	
+ 	
+  return result;
  }
 
  ArtifactProject::ArtifactProject() :impl_(new Impl())
@@ -156,6 +171,12 @@ namespace Artifact {
  void ArtifactProject::addAssetFile()
  {
 
+ }
+
+ QJsonObject ArtifactProject::toJson() const
+ {
+
+  return  impl_->toJson();
  }
 
 }

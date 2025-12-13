@@ -140,7 +140,7 @@ namespace Artifact {
   auto projectManagerWidget = new ArtifactProjectManagerWidget();
 
   projectManagerWidget->show();
-  auto  DockWidget2 = new Pane("Project", projectManagerWidget);
+  auto  DockWidget2 = new Pane("Artifact.Project", projectManagerWidget);
 
   //DockWidget2->setWidget(projectManagerWidget);
 

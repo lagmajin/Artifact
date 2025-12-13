@@ -1,7 +1,7 @@
 ﻿module;
 
 
-module Artifact.Layers.Null;
+module Artifact.Layer.Null;
 //import ArtifactNullLayer;
 
 
@@ -33,6 +33,11 @@ namespace Artifact {
  ArtifactNullLayer::~ArtifactNullLayer()
  {
   delete impl_;
+ }
+
+ void ArtifactNullLayer::draw()
+ {
+  throw std::logic_error("The method or operation is not implemented.");
  }
 
 };

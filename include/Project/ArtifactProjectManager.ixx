@@ -14,7 +14,7 @@
 export module Artifact.Project.Manager;
 
 import std;
-import Project;
+import Artifact.Project;
 import Utils;
 import Composition.Settings;
 import Artifact.Composition.Result;

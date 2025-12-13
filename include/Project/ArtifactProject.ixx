@@ -9,7 +9,7 @@
 
 #include <boost/signals2.hpp>
 
-export module Project;
+export module Artifact.Project;
 
 export import Artifact.Project.Settings;
 
@@ -62,6 +62,8 @@ export namespace Artifact {
   bool isNull() const;
   bool removeCompositionById(const CompositionID& id);
   void removeAllCompositions();
+ 	
+  QJsonObject toJson() const;
  public:
 	//signals
   void projectChanged()

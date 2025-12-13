@@ -30,7 +30,7 @@ namespace Artifact {
  using namespace ArtifactCore;
  using namespace ArtifactWidgets;
 
- 
+
 
  W_OBJECT_IMPL(ArtifactTimelineWidget)
 
@@ -58,11 +58,11 @@ namespace Artifact {
 
  ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget* parent/*=nullptr*/) :QWidget(parent)
  {
- 	
+
   setWindowFlags(Qt::FramelessWindowHint);
- 	
+
   setWindowTitle("TimelineWidget");
- 	
+
   auto style = getDCCStyleSheetPreset(DccStylePreset::ModoStyle);
 
   setStyleSheet(style);
@@ -90,29 +90,31 @@ namespace Artifact {
   auto leftPanel = new QWidget();
   leftPanel->setLayout(leftLayout);
 
-  
- 	
+
+
 
   auto* rightPanelLayout = new QVBoxLayout();
+  rightPanelLayout->setSpacing(0);
+  rightPanelLayout->setContentsMargins(0, 0, 0, 0);
   auto timeRulerWidget = new ArtifactTimelineRulerWidget();
   auto timeScaleWidget = new TimelineScaleWidget();
- 	auto workAreaWidget = new WorkAreaControl();
+  auto workAreaWidget = new WorkAreaControl();
   auto timelineTrackView = new TimelineTrackView();
- 	
-  
+
+
   auto rightPanel = new QWidget();
-  
+
   rightPanelLayout->addWidget(timeRulerWidget);
   rightPanelLayout->addWidget(timeScaleWidget);
   rightPanelLayout->addWidget(workAreaWidget);
   rightPanelLayout->addWidget(timelineTrackView);
   rightPanel->setLayout(rightPanelLayout);
- 	
+
 
 
   // 全体のタイムラインスプリッター
   auto mainSplitter = new QSplitter(Qt::Horizontal);
-  mainSplitter-> setStyleSheet(R"(
+  mainSplitter->setStyleSheet(R"(
     QSplitter::handle {
         background: #555555;
     }
@@ -120,8 +122,8 @@ namespace Artifact {
   mainSplitter->setHandleWidth(10);
   mainSplitter->addWidget(leftPanel);
   mainSplitter->addWidget(rightPanel);
- 	//mainSplitter->addWidget(leftSplitter);
-  
+  //mainSplitter->addWidget(leftSplitter);
+
   mainSplitter->setStretchFactor(0, 1);
   mainSplitter->setStretchFactor(1, 3);
 
@@ -184,7 +186,7 @@ namespace Artifact {
   class TimelineTrackView::Impl
  {
  private:
- 	
+
  public:
   Impl();
   ~Impl();
@@ -204,7 +206,7 @@ namespace Artifact {
  {
   setScene(new TimelineScene());
   setRenderHint(QPainter::Antialiasing);
- 	
+
   setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
  }
 
@@ -253,7 +255,7 @@ namespace Artifact {
   //painter->fillRect(rect, Qt::darkGray);
  }
 
- TimelineScene::TimelineScene(QWidget* parent/*=nullptr*/):QGraphicsScene(parent)
+ TimelineScene::TimelineScene(QWidget* parent/*=nullptr*/) :QGraphicsScene(parent)
  {
   setSceneRect(0, 0, 1000, 800);
  }

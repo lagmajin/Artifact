@@ -175,6 +175,9 @@
     <Filter Include="ヘッダー ファイル\Effects\Glow">
       <UniqueIdentifier>{b219cfdf-57b8-4986-970f-6ac83be25ffd}</UniqueIdentifier>
     </Filter>
+    <Filter Include="ヘッダー ファイル\Render\Element">
+      <UniqueIdentifier>{7303dc36-7478-4459-9d10-5c6df11893a3}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="include\Composition\ArtifactCompositionManager.hpp">
@@ -231,9 +234,6 @@
       <Filter>ソース ファイル\Widgets\Menu</Filter>
     </ClCompile>
     <ClCompile Include="src\Widgets\Asset\ArtifactAssetBrowser.cppm">
-      <Filter>ソース ファイル\Widgets</Filter>
-    </ClCompile>
-    <ClCompile Include="src\Widgets\ArtifactTimelineWidget.cpp">
       <Filter>ソース ファイル\Widgets</Filter>
     </ClCompile>
     <ClCompile Include="src\Widgets\Menu\ArtifactHelpMenu.cppm">
@@ -380,10 +380,10 @@
     <ClCompile Include="include\Widgets\Render\ArtifactOgreRenderWindow.hpp">
       <Filter>ヘッダー ファイル\Widgets\Render</Filter>
     </ClCompile>
-    <ClCompile Include="include\Project\ArtifactProjectManagerService.ixx">
+    <ClCompile Include="include\Project\ArtifactProjectExporter.ixx">
       <Filter>ヘッダー ファイル\Project</Filter>
     </ClCompile>
-    <ClCompile Include="src\Project\ArtifactProjectManagerService.cppm">
+    <ClCompile Include="src\Project\ArtifactProjectExporter.cppm">
       <Filter>ソース ファイル\Project</Filter>
     </ClCompile>
     <ClCompile Include="include\Layer\ArtifactLayerModule.ixx">
@@ -422,7 +422,7 @@
     <ClCompile Include="include\Widgets\ArtifactToolBar.ixx">
       <Filter>ヘッダー ファイル\Widgets</Filter>
     </ClCompile>
-    <ClCompile Include="src\Widgets\Dialog\ArtifactCreateCompositionDialog.cpp">
+    <ClCompile Include="src\Widgets\Dialog\ArtifactCreateCompositionDialog.cppm">
       <Filter>ソース ファイル\Widgets\Dialog</Filter>
     </ClCompile>
     <ClCompile Include="include\Widgets\TimelineScene.ixx">
@@ -677,7 +677,7 @@
     <ClCompile Include="src\Widgets\Timeline\ArtifactTimelineRulerWidget.cpp">
       <Filter>ソース ファイル\Widgets\Timeline</Filter>
     </ClCompile>
-    <ClCompile Include="src\Widgets\Timeline\ArtifactTimeCodeWidget.cpp">
+    <ClCompile Include="src\Widgets\Timeline\ArtifactTimeCodeWidget.cppm">
       <Filter>ソース ファイル\Widgets\Timeline</Filter>
     </ClCompile>
     <ClCompile Include="include\Widgets\Render\ArtifactRenderQueueManagerWidget.ixx">
@@ -695,10 +695,7 @@
     <ClCompile Include="include\Widgets\Timeline\ArtifactSeekBar.ixx">
       <Filter>ヘッダー ファイル\Widgets\Timeline</Filter>
     </ClCompile>
-    <ClCompile Include="src\Widgets\Timeline\ArtifactSeekBar.cppm">
-      <Filter>ソース ファイル\Widgets\Render</Filter>
-    </ClCompile>
-    <ClCompile Include="src\Widgets\Dialog\ArtifactRenderOutputSettingDialog.cpp">
+    <ClCompile Include="src\Widgets\Dialog\ArtifactRenderOutputSettingDialog.cppm">
       <Filter>ソース ファイル\Widgets\Dialog</Filter>
     </ClCompile>
     <ClCompile Include="include\Widgets\Dialog\ArtifactRenderOutputSettingDialog.ixx">
@@ -706,9 +703,6 @@
     </ClCompile>
     <ClCompile Include="include\GUI\WindowPluginManager.ixx">
       <Filter>ヘッダー ファイル\GUI</Filter>
-    </ClCompile>
-    <ClCompile Include="include\Composition\ArtifactCompositionResult.ixx">
-      <Filter>ソース ファイル\Composition</Filter>
     </ClCompile>
     <ClCompile Include="src\GUI\WindowPluginManager.cpp">
       <Filter>ソース ファイル\GUI</Filter>
@@ -764,7 +758,7 @@
     <ClCompile Include="include\Widgets\Control\ArtifactPlaybackControlWidget.ixx">
       <Filter>ヘッダー ファイル\Widgets\Control</Filter>
     </ClCompile>
-    <ClCompile Include="src\Widgets\Control\ArtifactPlaybackControlWidget.cpp">
+    <ClCompile Include="src\Widgets\Control\ArtifactPlaybackControlWidget.cppm">
       <Filter>ソース ファイル\Widgets\Control</Filter>
     </ClCompile>
     <ClCompile Include="src\Application\ActiveContextService.cpp">
@@ -815,13 +809,37 @@
     <ClCompile Include="src\Preview\ArtifactPreviewWorker.cppm">
       <Filter>ソース ファイル\Preview</Filter>
     </ClCompile>
+    <ClCompile Include="src\Render\ArtifactRenderQueueService.cpp">
+      <Filter>ソース ファイル\Render</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Render\ArtifactRenderQueueService.ixx">
+      <Filter>ヘッダー ファイル\Render</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Widgets\Dialog\EditCompositionSettingDialog.cpp">
+      <Filter>ソース ファイル\Widgets\Dialog</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Composition\ArtifactCompositionResult.ixx">
+      <Filter>ヘッダー ファイル\Composition</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Widgets\Timeline\ArtifactSeekBar.cppm">
+      <Filter>ソース ファイル\Widgets\Timeline</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Widgets\ArtifactTimelineWidget.cpp">
+      <Filter>ソース ファイル\Widgets\Timeline</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Service\ApplicationService.cppm">
+      <Filter>ソース ファイル\Service</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Service\ApplicationService.ixx">
+      <Filter>ヘッダー ファイル\Service</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Render\Element\ArtifactRenderElement.ixx">
+      <Filter>ヘッダー ファイル\Render\Element</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <None Include="src\Layer\ArtifactAdjustableLayer.cppm">
       <Filter>ソース ファイル\Layer</Filter>
-    </None>
-    <None Include="src\Widgets\Dialog\EditCompositionSettingDialog.cpp">
-      <Filter>ソース ファイル\Widgets\Dialog</Filter>
     </None>
   </ItemGroup>
   <ItemGroup>

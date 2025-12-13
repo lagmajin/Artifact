@@ -1,10 +1,10 @@
 ﻿module;
 
-export module Artifact.Layers.Null;
+export module Artifact.Layer.Null;
 
 import Artifact.Layers;
 
-namespace Artifact {
+export namespace Artifact {
 
 
 
@@ -23,6 +23,9 @@ namespace Artifact {
  public:
   ArtifactNullLayer();
   ~ArtifactNullLayer();
+
+  void draw() override;
+
  };
 
 
