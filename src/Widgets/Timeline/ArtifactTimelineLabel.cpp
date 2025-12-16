@@ -1,12 +1,16 @@
 module;
 #include <QLabel>
 #include <QHBoxLayout>
+#include <wobjectimpl.h>
 module Artifact.Timeline.Label;
 
+import std;
 
 namespace Artifact
 {
- class TimelineLabel::Impl
+	W_OBJECT_IMPL(ArtifactTimelineBottomLabel)
+	
+ class ArtifactTimelineBottomLabel::Impl
  {
  private:
 
@@ -14,7 +18,7 @@ namespace Artifact
   QLabel* frameRenderingLabel = nullptr;
  };
 
- TimelineLabel::TimelineLabel(QWidget* parent /*= nullptr*/) :QWidget(parent)
+ ArtifactTimelineBottomLabel::ArtifactTimelineBottomLabel(QWidget* parent /*= nullptr*/) :QWidget(parent)
  {
 
 
@@ -26,7 +30,7 @@ namespace Artifact
   setFixedHeight(28);
  }
 
- TimelineLabel::~TimelineLabel()
+ ArtifactTimelineBottomLabel::~ArtifactTimelineBottomLabel()
  {
 
  }

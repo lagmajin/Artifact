@@ -55,7 +55,8 @@ export namespace Artifact
   void clearTargetLayer();
   QImage grabScreenShot();
   void ChangeRenderAPI();
-
+  public/**/:
+   void mousePosUpdated();
  public/*slots*/:
   void play(); W_SLOT(play);
   void stop(); W_SLOT(stop);

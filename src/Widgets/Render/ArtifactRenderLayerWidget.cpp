@@ -30,7 +30,9 @@ import Graphics.Shader.Compile.Task;
 import Graphics.Shader.Compute.HLSL.Blend;
 import Layer.Blend;
 import Artifact.Application.Manager;
-
+import Artifact.Service.Application;
+import Artifact.Service.Project;
+import Artifact.Service.ActiveContext;
 
 namespace Artifact {
  using namespace Diligent;
@@ -500,7 +502,10 @@ namespace Artifact {
 
   drawLinePSOCreateInfo.pVS = m_draw_sprit_shaders.VS;
   drawLinePSOCreateInfo.pPS = m_draw_sprit_shaders.PS;
-
+  auto& dgp = drawLinePSOCreateInfo.GraphicsPipeline;
+  dgp.NumRenderTargets = 1;
+  dgp.PrimitiveTopology = PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP;
+  dgp.RTVFormats[0] = MAIN_RTV_FORMAT;
  	
  	//
   GraphicsPipelineStateCreateInfo drawSolidRectPSOCreateInfo;
@@ -587,14 +592,23 @@ namespace Artifact {
 
 
   tbb::parallel_invoke(
-   [this,&drawSolidRectPSOCreateInfo] {
-	pDevice->CreateGraphicsPipelineState(drawSolidRectPSOCreateInfo, &m_draw_solid_rect_pso_and_srb.pPSO);
-
-	m_draw_solid_rect_pso_and_srb.pPSO->CreateShaderResourceBinding(&m_draw_solid_rect_pso_and_srb.pSRB, false);
-   },[] 
-	{ 
-	}
+   [this, &drawLinePSOCreateInfo]{
+	pDevice->CreateGraphicsPipelineState(drawLinePSOCreateInfo,&m_draw_line_pso_and_srb.pPSO
 	);
+   	
+   },
+   [this, &drawSolidRectPSOCreateInfo]
+   {
+	pDevice->CreateGraphicsPipelineState(drawSolidRectPSOCreateInfo,&m_draw_solid_rect_pso_and_srb.pPSO
+	);
+
+	m_draw_solid_rect_pso_and_srb.pPSO
+	 ->CreateShaderResourceBinding(
+	  &m_draw_solid_rect_pso_and_srb.pSRB,
+	  false
+	 );
+   }
+  );
 
  }
 
@@ -841,15 +855,17 @@ namespace Artifact {
 
  void ArtifactLayerEditor2DWidget::Impl::drawLine(int x1, int y1, int x2, int y2, const FloatColor& color)
  {
-  LineVertex vertex[2];  // これで長さ2の配列を作る
+  LineVertex v[4];
 
-  vertex[0].position = float2((float)x1, (float)y1);
-  vertex[0].color = float4(1, 1, 1, 1);  // 色も設定
+  float2 p0(x1, y1);
+  float2 p1(x2, y2);
 
-  vertex[1].position = float2((float)x2, (float)y2);
-  vertex[1].color = float4(1, 1, 1, 1);
-  //vertex[0].color = color.toFloat4();
-  //vertex[1].color = color.toFloat4();
+  float2 d = normalize(p1 - p0);
+  float2 n = float2(-d.y, d.x) * 0.5f; // 太さ
+
+
+ 	
+ 	
   auto swapChainRTV = pSwapChain_->GetCurrentBackBufferRTV();
   ITextureView* RTVs[] = { m_layerRT->GetDefaultView(TEXTURE_VIEW_RENDER_TARGET) };
   pImmediateContext->SetRenderTargets(1, &swapChainRTV, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
@@ -858,7 +874,7 @@ namespace Artifact {
   //pImmediateContext->SetPipelineState(mdraw);
   //pImmediateContext->CommitShaderResources(m_draw_solid_pso_and_srb.pSRB, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
  	DrawAttribs drawAttrs;
-  drawAttrs.NumVertices = 2;
+  drawAttrs.NumVertices = 4;
   drawAttrs.Flags = DRAW_FLAG_VERIFY_ALL;
   //drawAttrs.Topology = PRIMITIVE_TOPOLOGY_LINE_LIST;
  }

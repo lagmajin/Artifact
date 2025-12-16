@@ -1,24 +1,30 @@
 module;
-#include <wobjectimpl.h>
 #include <QObject>
-export module Artifact.Preview.Controller;
+#include <QString>
+export module Artifact.PreviewController;
+
+import std;
 
 export namespace Artifact
 {
- class ArtifactPreviewController:public QObject
+
+ class ArtifactPreviewController :public QObject
  {
- 	W_OBJECT(ArtifactPreviewController)
  private:
   class Impl;
   Impl* impl_;
+
  public:
- 	ArtifactPreviewController(QObject*parent=nullptr);
-    ~ArtifactPreviewController();
- public/*signals*/:
- 	
- public /*slots*/:
- 	
+  explicit ArtifactPreviewController();
+  ~ArtifactPreviewController();
+
+  void play();
+  void stop();
  };
+
+
+
+
 
 
 };

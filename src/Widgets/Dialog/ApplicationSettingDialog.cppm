@@ -6,7 +6,7 @@
 
  module ApplicationSettingDialog;
 
-import Artifact.Application.Service;
+import Artifact.Service.Application;
 
 namespace ArtifactCore {
 

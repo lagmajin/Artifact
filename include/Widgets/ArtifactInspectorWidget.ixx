@@ -40,3 +40,4 @@ export namespace Artifact {
 
 
 };
+

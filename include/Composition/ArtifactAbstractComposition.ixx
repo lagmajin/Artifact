@@ -9,7 +9,8 @@ import Utils;
 
 import Color;
 
-
+import Frame.FrameRate;
+import Frame.Range;
 import Frame.Position;
 import Container.MultiIndex;
 import Artifact.Layers;
@@ -39,6 +40,10 @@ export namespace Artifact {
 
   void goToStartFrame();
   void goToEndFrame();
+  void goToFrame(int64_t frameNumber = 0);
+ 	
+  bool hasVideo() const;
+  bool hasAudio() const;
  };
 
  typedef std::shared_ptr<ArtifactAbstractComposition> ArtifactCompositionPtr;

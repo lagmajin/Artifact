@@ -24,7 +24,8 @@ namespace Artifact
 
  void ArtifactProjectModel::Impl::refreshTree()
  {
-
+  
+ 	 
  	
  }
 

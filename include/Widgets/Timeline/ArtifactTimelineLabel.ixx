@@ -1,17 +1,19 @@
 module;
+#include <wobjectdefs.h>
 #include <QLabel>
 export module Artifact.Timeline.Label;
 
 export namespace Artifact
 {
- class TimelineLabel :public QWidget
+ class ArtifactTimelineBottomLabel :public QWidget
  {
+ 	W_OBJECT(ArtifactTimelineBottomLabel)
  private:
   class Impl;
   Impl* impl_;
  public:
-  explicit TimelineLabel(QWidget* parent = nullptr);
-  ~TimelineLabel();
+  explicit ArtifactTimelineBottomLabel(QWidget* parent = nullptr);
+  ~ArtifactTimelineBottomLabel();
  };
 
 	

@@ -8,6 +8,7 @@
 #include <QEvent>
 #include <QMimeData>
 #include <QDragEnterEvent>
+#include <QDrag>
 #include <QDropEvent>
 #include <QLineEdit>
 
@@ -32,7 +33,7 @@ namespace Artifact {
  public:
   void handleDefaultKeyPressEvent(QKeyEvent* ev);
   void handleDefaultKeyReleaseEvent(QKeyEvent* ev);
-
+  QPoint pos_;
  };
 
  void ArtifactProjectView::Impl::handleDefaultKeyPressEvent(QKeyEvent* ev)
@@ -59,25 +60,43 @@ namespace Artifact {
  {
 
  }
-
-
+ void ArtifactProjectView::mousePressEvent(QMouseEvent* event)
+ {
+  if (event->button() == Qt::LeftButton)
+  {
+	  
+  }
+  QTreeView::mousePressEvent(event);
+ }
+ void ArtifactProjectView::mouseMoveEvent(QMouseEvent* event)
+ {
+  
+  auto* drag = new QDrag(this);
+  auto* mime = new QMimeData();
+  //mime->setText(index.data(Qt::DisplayRole).toString());
+  drag->setMimeData(mime);
+ 	
+  drag->exec(Qt::CopyAction | Qt::MoveAction);
+ }
+	
  class ArtifactProjectManagerWidget::Impl {
  public:
 
   ArtifactProjectView* projectView_ = nullptr;
   Impl();
   ~Impl();
-  QLabel* projectNameLabel = nullptr;
-  QLineEdit* searchWidget_ = nullptr;
+ 
   void handleSearchTextChanged();
   void handleFileDrop(const QString& str);
   void rebuildMenu();
-
+  QLabel* projectNameLabel = nullptr;
+  QLineEdit* searchWidget_ = nullptr;
   QMenu* contextMenu = nullptr;
   QAction* createDirectoryAction = nullptr;
   QAction* addFileAction = nullptr;
   QAction* duplicateAction = nullptr;
 
+  ArtifactProjectManagerToolBox* toolBox_ = nullptr;
   void showContextMenu(ArtifactProjectManagerWidget* widget, const QPoint& globalPos);
  };
 
@@ -200,11 +219,14 @@ namespace Artifact {
   searchWidget->setPlaceholderText("...");
   searchWidget->setAlignment(Qt::AlignLeft);
   searchWidget->setEchoMode(QLineEdit::Normal);
+ 	
+  auto toolBox =impl_->toolBox_= new ArtifactProjectManagerToolBox();
 
   auto layout = new QVBoxLayout();
   layout->addWidget(projectNameLabel);
   layout->addWidget(searchWidget);
   layout->addWidget(impl_->projectView_);
+  layout->addWidget(toolBox);
   setLayout(layout);
 
   setContextMenuPolicy(Qt::CustomContextMenu);
@@ -298,6 +320,29 @@ namespace Artifact {
  	
  	
  	
+ }
+
+ class ArtifactProjectManagerToolBox::Impl
+ {
+ public:
+  QToolButton* createCompositionButton = nullptr;
+ };
+	
+ ArtifactProjectManagerToolBox::ArtifactProjectManagerToolBox(QWidget* widget/*=nullptr*/)
+ {
+  setMinimumHeight(20);
+ 	
+ 	
+ }
+
+ ArtifactProjectManagerToolBox::~ArtifactProjectManagerToolBox()
+ {
+
+ }
+
+ void ArtifactProjectManagerToolBox::resizeEvent(QResizeEvent* event)
+ {
+  throw std::logic_error("The method or operation is not implemented.");
  }
 
 }

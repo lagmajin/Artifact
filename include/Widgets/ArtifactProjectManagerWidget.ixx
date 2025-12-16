@@ -30,6 +30,9 @@ public:
  private:
   class Impl;
   Impl* impl_;
+ protected:
+  void mouseMoveEvent(QMouseEvent* event) override;
+   void mousePressEvent(QMouseEvent* event) override;
  public:
   explicit ArtifactProjectView(QWidget* parent = nullptr);
   ~ArtifactProjectView();
@@ -40,8 +43,12 @@ public:
  private:
   class Impl;
   Impl* impl_;
+ protected:
+
+  void resizeEvent(QResizeEvent* event) override;
+
  public:
-  explicit ArtifactProjectManagerToolBox(QWidget* widget);
+  explicit ArtifactProjectManagerToolBox(QWidget* widget=nullptr);
   ~ArtifactProjectManagerToolBox();
  };
 

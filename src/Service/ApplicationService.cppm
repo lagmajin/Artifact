@@ -1,7 +1,9 @@
 module;
 
-module Artifact.Application.Service;
+module Artifact.Service.Application;
 
+import std;
+import Artifact.Application.Manager;
 
 namespace Artifact
 {

@@ -42,7 +42,7 @@ namespace Artifact {
  public:
   Impl();
   ~Impl();
-  TimelineLabel* timelineLabel_ = nullptr;
+  ArtifactTimelineBottomLabel* timelineLabel_ = nullptr;
 
  };
 
@@ -127,7 +127,7 @@ namespace Artifact {
   mainSplitter->setStretchFactor(0, 1);
   mainSplitter->setStretchFactor(1, 3);
 
-  auto label = new TimelineLabel();
+  auto label = new ArtifactTimelineBottomLabel();
 
 
   auto layout = new QVBoxLayout();

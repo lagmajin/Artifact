@@ -1,4 +1,5 @@
 ﻿module ;
+#include <qforeach.h>
 #include <wobjectimpl.h>
 #include <QHash>
 #include <QVector>
@@ -29,7 +30,7 @@ namespace Artifact {
   //QMultiHash<std::type_index, ArtifactAbstractLayerPtr> layersByType_;
   LayerContainer layerMultiIndex_;
   CompositionSettings settings_;
-
+  FramePosition position_;
  public:
   Impl();
   ~Impl();
@@ -41,7 +42,7 @@ namespace Artifact {
   void setFramePosition(const FramePosition& position);
   void goToStartFrame();
   void goToEndFrame();
-  
+  void goToFrame(int64_t frame=0);
  };
 
  ArtifactAbstractComposition::Impl::Impl()
@@ -75,7 +76,7 @@ namespace Artifact {
 
  void ArtifactAbstractComposition::Impl::goToStartFrame()
  {
-
+  //goToFrame(0);
  }
 
  void ArtifactAbstractComposition::Impl::goToEndFrame()
@@ -86,11 +87,17 @@ namespace Artifact {
  void ArtifactAbstractComposition::Impl::setFramePosition(const FramePosition& position)
  {
 
+ 	
  }
 
  const FramePosition ArtifactAbstractComposition::Impl::framePosition() const
  {
-  return FramePosition(0);
+  return position_;
+ }
+
+ void ArtifactAbstractComposition::Impl::goToFrame(int64_t frame/*=0*/)
+ {
+  
  }
 
  ArtifactAbstractComposition::ArtifactAbstractComposition():impl_(new Impl())
@@ -138,6 +145,20 @@ namespace Artifact {
   impl_->goToEndFrame();
  }
 
+ void ArtifactAbstractComposition::goToFrame(int64_t frameNumber /*= 0*/)
+ {
+
+ }
+
+ bool ArtifactAbstractComposition::hasVideo() const
+ {
+  return true;
+ }
+
+ bool ArtifactAbstractComposition::hasAudio() const
+ {
+  return true;
+ }
 
 
 };

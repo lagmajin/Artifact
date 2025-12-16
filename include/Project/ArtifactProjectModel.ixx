@@ -1,9 +1,10 @@
 ﻿module;
-
+#include <wobjectdefs.h>
 #include <QStandardItemModel>
 export module Artifact.Project.Model;
 
-
+import std;
+import Artifact.Project;
 
 export namespace Artifact
 {
@@ -16,6 +17,7 @@ export namespace Artifact
  public:
   ArtifactProjectModel(QObject*parent=nullptr);
   ~ArtifactProjectModel();
+  void setProject();
  };
 
 

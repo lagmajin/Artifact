@@ -515,7 +515,7 @@
     <ClCompile Include="src\Layer\ArtifactSolid2DLayer.cppm">
       <Filter>ソース ファイル\Layer</Filter>
     </ClCompile>
-    <ClCompile Include="src\Render\ArtifactRenderController.cpp">
+    <ClCompile Include="src\Render\ArtifactRenderController.cppm">
       <Filter>ソース ファイル\Render</Filter>
     </ClCompile>
     <ClCompile Include="include\Layer\ArtifactAbstract2DLayer.ixx">
@@ -797,10 +797,10 @@
     <ClCompile Include="include\Layer\ArtifactLayerUIInfo.ixx">
       <Filter>ソース ファイル\Layer</Filter>
     </ClCompile>
-    <ClCompile Include="include\Preview\ArtifactPreviewController.ixx">
+    <ClCompile Include="include\Preview\ArtifactTimelineClock.ixx">
       <Filter>ヘッダー ファイル\Preview</Filter>
     </ClCompile>
-    <ClCompile Include="src\Preview\ArtifactPreviewController.cpp">
+    <ClCompile Include="src\Preview\ArtifactTimelineClock.cpp">
       <Filter>ソース ファイル\Preview</Filter>
     </ClCompile>
     <ClCompile Include="include\Preview\ArtifactPreviewWorker.ixx">
@@ -835,6 +835,27 @@
     </ClCompile>
     <ClCompile Include="include\Render\Element\ArtifactRenderElement.ixx">
       <Filter>ヘッダー ファイル\Render\Element</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Service\ArtifactToolService.ixx">
+      <Filter>ヘッダー ファイル\Service</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Service\ArtifactToolService.cppm">
+      <Filter>ソース ファイル\Service</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Widgets\Timeline\ArtifactTimelineTimeRangeSlider.ixx">
+      <Filter>ヘッダー ファイル\Widgets\Timeline</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Widgets\Timeline\ArtifactTimelineTimeRangeSlider.cpp">
+      <Filter>ソース ファイル\Widgets\Timeline</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Preview\ArtifactPreviewController.ixx">
+      <Filter>ヘッダー ファイル\Preview</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Preview\ArtifactPreviewController.cpp">
+      <Filter>ソース ファイル\Preview</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Preview\ArtifactPreviewPipeline.ixx">
+      <Filter>ヘッダー ファイル\Preview</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>

@@ -19,7 +19,9 @@ export namespace Artifact {
   void lockHeight(bool locked = true);
  public:
 
-	void homeRequested() W_SIGNAL(homeRequested)
+  void homeRequested() W_SIGNAL(homeRequested);
+  void handToolRequested() W_SIGNAL(handToolRequested);
+ 	
  };
 
 

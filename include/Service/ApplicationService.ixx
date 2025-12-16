@@ -1,6 +1,6 @@
 module;
 
-export module Artifact.Application.Service;
+export module Artifact.Service.Application;
 
 export namespace Artifact
 {

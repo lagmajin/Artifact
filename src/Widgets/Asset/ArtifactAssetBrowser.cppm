@@ -13,6 +13,10 @@
 #include <boost/asio/basic_signal_set.hpp>
 module Widgets.AssetBrowser;
 import Widgets.Utils.CSS;
+
+import Artifact.Service.Project;
+
+
 namespace Artifact {
 
  using namespace ArtifactCore;

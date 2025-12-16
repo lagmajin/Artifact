@@ -1,11 +1,13 @@
 module;
+#include <wobjectimpl.h>
 #include <QWidget>
 export module Artifact.Widgets.LayerEditorPanel;
 
 export namespace Artifact {
 
  class ArtifactLayerEditorPanel final :public QWidget{
- private:
+ 
+ 	private:
   class Impl;
   Impl* impl_;
  protected:
@@ -22,3 +24,4 @@ export namespace Artifact {
 
 
 };
+W_REGISTER_ARGTYPE(QPoint)

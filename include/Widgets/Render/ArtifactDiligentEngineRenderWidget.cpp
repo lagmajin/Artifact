@@ -36,27 +36,24 @@
 #endif
 #include <wrl/client.h>
 #include <DiligentCore/Graphics/GraphicsEngineD3D12/interface/RenderDeviceD3D12.h>
-
-
+#include <oneapi/tbb/parallel_reduce.h>
 
 //#include <algorithm>
 
 module Widgets.Render.Composition;
-
+import std;
 import Graphics;
 import Color.Float;
 import Graphics.Func;
 import Graphics.CBuffer.Constants.Helper;
 import Graphics.Shader.Compute.HLSL.Blend;
 import Size;
-
-import std;
-
 import Core.Scale.Zoom;
-
 import Layer.Blend;
-
 import Graphics.Shader.HLSL.Basics.Vertex;
+
+import Artifact.Render.Element;
+import Artifact.Service.Project;
 
 namespace Artifact {
 
@@ -173,6 +170,8 @@ namespace Artifact {
    void initialize(QWidget* window);
    void initializeImGui(QWidget* window);
    void destroy();
+   void startRenderLoop();
+   void stopRenderLoop();
    void recreateSwapChain(QWidget* window);
    void resizeComposition(const Size_2D& size);
    void clearCanvas(const Diligent::float4& clearColor);
@@ -196,6 +195,9 @@ namespace Artifact {
    void saveScreenShotToClipboardByWinRT();
 
    void hit();
+ 	
+   std::atomic_bool running_{ false };
+   tbb::task_group renderTask_;
  };
 
 
@@ -364,7 +366,7 @@ if (FAILED(hr)) {
   createConstantBuffers();
 
   m_initialized = true;
- 
+
  }
  void ArtifactDiligentEngineComposition2DWindow::Impl::createConstantBuffers()
  {
@@ -1153,9 +1155,7 @@ if (FAILED(hr)) {
 
   Uint32 offset = 0;
  };
-
-
-
+	
  void ArtifactDiligentEngineComposition2DWindow::Impl::drawQuadLine(float x, float y, float w, float h, const FloatColor& lineColor, float thikness/*=1.0f*/)
  {
 
@@ -1339,6 +1339,16 @@ if (FAILED(hr)) {
    pSwapChain_.Release();
    //pSwapChain_ = nullptr;
   }
+
+ }
+
+ void ArtifactDiligentEngineComposition2DWindow::Impl::startRenderLoop()
+ {
+
+ }
+
+ void ArtifactDiligentEngineComposition2DWindow::Impl::stopRenderLoop()
+ {
 
  }
 

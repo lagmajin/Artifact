@@ -23,6 +23,7 @@ namespace Artifact {
    Id id;
    LayerState state_;
    //FramePosition framePosition_
+   
   public:
    Impl();
    ~Impl();
@@ -33,6 +34,7 @@ namespace Artifact {
    void goToPrevFrame();
  	
    bool is3D() const;
+   AnimatableTransform3D transform_;
  };
 
   ArtifactAbstractLayer::Impl::Impl()
@@ -178,6 +180,11 @@ namespace Artifact {
  bool ArtifactAbstractLayer::is3D() const
  {
   return false;
+ }
+
+ AnimatableTransform3D& ArtifactAbstractLayer::transform3D()
+ {
+  return impl_->transform_;
  }
 
 };
