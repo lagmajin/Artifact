@@ -342,7 +342,7 @@ namespace Artifact {
 
  void ArtifactProjectManagerToolBox::resizeEvent(QResizeEvent* event)
  {
-  throw std::logic_error("The method or operation is not implemented.");
+  //throw std::logic_error("The method or operation is not implemented.");
  }
 
 }

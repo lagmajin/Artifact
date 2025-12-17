@@ -9,12 +9,12 @@ import Utils;
 
 import Color;
 
-import Frame.FrameRate;
+import Frame.Rate;
 import Frame.Range;
 import Frame.Position;
 import Container.MultiIndex;
 import Artifact.Layers;
-import Artifact.Preview.Controller;
+//import Artifact.Preview.Controller;
 
 export namespace Artifact {
 

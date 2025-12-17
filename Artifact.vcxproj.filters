@@ -178,6 +178,12 @@
     <Filter Include="ヘッダー ファイル\Render\Element">
       <UniqueIdentifier>{7303dc36-7478-4459-9d10-5c6df11893a3}</UniqueIdentifier>
     </Filter>
+    <Filter Include="ヘッダー ファイル\Widgets\Viewer">
+      <UniqueIdentifier>{3c56c38f-0e17-48f6-97e9-053277b513bb}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ソース ファイル\Widgets\Viewer">
+      <UniqueIdentifier>{58006d6e-41f2-4d3d-9a43-790c3d18495c}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="include\Composition\ArtifactCompositionManager.hpp">
@@ -800,7 +806,7 @@
     <ClCompile Include="include\Preview\ArtifactTimelineClock.ixx">
       <Filter>ヘッダー ファイル\Preview</Filter>
     </ClCompile>
-    <ClCompile Include="src\Preview\ArtifactTimelineClock.cpp">
+    <ClCompile Include="src\Preview\ArtifactTimelineClock.cppm">
       <Filter>ソース ファイル\Preview</Filter>
     </ClCompile>
     <ClCompile Include="include\Preview\ArtifactPreviewWorker.ixx">
@@ -851,11 +857,20 @@
     <ClCompile Include="include\Preview\ArtifactPreviewController.ixx">
       <Filter>ヘッダー ファイル\Preview</Filter>
     </ClCompile>
-    <ClCompile Include="src\Preview\ArtifactPreviewController.cpp">
+    <ClCompile Include="src\Preview\ArtifactPreviewController.cppm">
       <Filter>ソース ファイル\Preview</Filter>
     </ClCompile>
     <ClCompile Include="include\Preview\ArtifactPreviewPipeline.ixx">
       <Filter>ヘッダー ファイル\Preview</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Preview\ArtifactPreviewPipeline.cppm">
+      <Filter>ソース ファイル\Preview</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Widgets\Viewer\ArtifactContentsViewer.ixx">
+      <Filter>ヘッダー ファイル\Widgets\Viewer</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Widgets\Viewer\ArtifactContentsViewer.cpp">
+      <Filter>ソース ファイル\Widgets\Viewer</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>

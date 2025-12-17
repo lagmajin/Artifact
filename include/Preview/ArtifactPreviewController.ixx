@@ -4,6 +4,7 @@ module;
 export module Artifact.PreviewController;
 
 import std;
+import Frame.Position;
 
 export namespace Artifact
 {
@@ -20,6 +21,7 @@ export namespace Artifact
 
   void play();
   void stop();
+ 	
  };
 
 
