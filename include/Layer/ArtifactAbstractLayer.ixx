@@ -77,7 +77,13 @@ export namespace Artifact {
   AnimatableTransform2D& transform2D();
   AnimatableTransform3D& transform3D();
   void setTransform();
-
+ 	
+ 	//
+  bool isTimeRemapEnabled() const;
+  void setTimeRemapEnabled(bool);
+  void setTimeRemapKey(int64_t compFrame, double sourceFrame);
+ 	
+ 	
   void goToStartFrame();
   void goToEndFrame();
   void goToNextFrame();

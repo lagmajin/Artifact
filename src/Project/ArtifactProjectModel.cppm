@@ -5,7 +5,7 @@ module Artifact.Project.Model;
 
 import std;
 import Artifact.Project;
-
+import Artifact.Service.Project;
 
 namespace Artifact
 {
@@ -29,7 +29,7 @@ namespace Artifact
  	
  }
 
- ArtifactProjectModel::ArtifactProjectModel(QObject* parent/*=nullptr*/) :QStandardItemModel(parent)
+ ArtifactProjectModel::ArtifactProjectModel(QObject* parent/*=nullptr*/) :QAbstractItemModel(parent)
  {
 
  }
@@ -38,5 +38,17 @@ namespace Artifact
  {
 
  }
+
+ QVariant ArtifactProjectModel::data(const QModelIndex& index, int role) const
+ {
+
+  return QVariant();
+ }
+
+ int ArtifactProjectModel::rowCount(const QModelIndex& parent) const
+ {
+  return 0;
+ }
+	
 
 };

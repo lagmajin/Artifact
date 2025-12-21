@@ -9,8 +9,13 @@ import Artifact.Project;
 export namespace Artifact
 {
 
- class ArtifactProjectModel:public QStandardItemModel
+ class ArtifactProjectModel:public QAbstractItemModel
  {
+ public:
+	 QModelIndex index(int row, int column, const QModelIndex& parent) const override;
+	 int rowCount(const QModelIndex& parent) const override;
+	 QVariant data(const QModelIndex& index, int role) const override;
+
  private:
   class Impl;
   Impl* impl_;

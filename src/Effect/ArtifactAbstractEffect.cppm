@@ -1,7 +1,7 @@
 ﻿module;
 
 
-module Artifact.Effects;
+module Artifact.Effect.Abstract;
 
 
 namespace Artifact {
@@ -34,5 +34,20 @@ namespace Artifact {
   delete impl_;
  }
 
+ bool ArtifactAbstractEffect::supportsGPU() const
+ {
+  return false;
+ }
+
+ ComputeMode ArtifactAbstractEffect::computeMode() const
+ {
+
+  return ComputeMode::AUTO;
+ }
+
+ void ArtifactAbstractEffect::setComputeMode(ComputeMode mode)
+ {
+
+ }
 
 };

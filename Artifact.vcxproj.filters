@@ -16,9 +16,6 @@
     <Filter Include="ヘッダー ファイル\Project">
       <UniqueIdentifier>{2d0351b3-b0ce-44e6-b074-ba91fa45e5fc}</UniqueIdentifier>
     </Filter>
-    <Filter Include="ソース ファイル\Widgets">
-      <UniqueIdentifier>{0aecb838-4407-47a7-b576-00f8edf6e7ab}</UniqueIdentifier>
-    </Filter>
     <Filter Include="ヘッダー ファイル\Widgets">
       <UniqueIdentifier>{cb3b50cf-6869-41be-a65c-0d6228a5d9c2}</UniqueIdentifier>
     </Filter>
@@ -49,9 +46,6 @@
     <Filter Include="ソース ファイル\Project">
       <UniqueIdentifier>{c9d13665-fca9-4afd-a2b4-22ff2f400d39}</UniqueIdentifier>
     </Filter>
-    <Filter Include="ソース ファイル\Widgets\Menu">
-      <UniqueIdentifier>{4a38a1d5-699c-49cd-aaf2-20822bdbd0cd}</UniqueIdentifier>
-    </Filter>
     <Filter Include="ヘッダー ファイル\Widgets\Asset">
       <UniqueIdentifier>{2fd898b8-9f24-485c-8e27-3936bedd09d9}</UniqueIdentifier>
     </Filter>
@@ -69,9 +63,6 @@
     </Filter>
     <Filter Include="ヘッダー ファイル\Widgets\Render">
       <UniqueIdentifier>{e7ccf74e-6e5b-4d76-a27a-4acd5094fdd7}</UniqueIdentifier>
-    </Filter>
-    <Filter Include="ソース ファイル\Widgets\Render">
-      <UniqueIdentifier>{92ed620e-d7bc-4379-9b9f-a85d26cfdfdd}</UniqueIdentifier>
     </Filter>
     <Filter Include="ヘッダー ファイル\Asset">
       <UniqueIdentifier>{59e60427-b82b-451b-9ebf-c35152b73914}</UniqueIdentifier>
@@ -91,9 +82,6 @@
     <Filter Include="ヘッダー ファイル\Widgets\Dialog">
       <UniqueIdentifier>{acac6c74-4865-4ddf-946c-c1c7c3f5a6cc}</UniqueIdentifier>
     </Filter>
-    <Filter Include="ソース ファイル\Widgets\Dialog">
-      <UniqueIdentifier>{653fc5aa-842d-4411-9b58-bd5e7c69117f}</UniqueIdentifier>
-    </Filter>
     <Filter Include="ソース ファイル\Effects">
       <UniqueIdentifier>{e8cffa95-ec83-4b3b-9cb2-ea30fbc2a312}</UniqueIdentifier>
     </Filter>
@@ -102,9 +90,6 @@
     </Filter>
     <Filter Include="ヘッダー ファイル\Widgets\Menu\Test">
       <UniqueIdentifier>{69a2fe8f-c424-44b3-adcf-23bd0b6b51e0}</UniqueIdentifier>
-    </Filter>
-    <Filter Include="ソース ファイル\Widgets\Menu\Test">
-      <UniqueIdentifier>{3b3d00ac-b8f7-448e-bb49-f4cac315ab44}</UniqueIdentifier>
     </Filter>
     <Filter Include="Thrift">
       <UniqueIdentifier>{80b6e5e7-24aa-4121-96e1-db36790686c2}</UniqueIdentifier>
@@ -130,9 +115,6 @@
     <Filter Include="ヘッダー ファイル\Widgets\Timeline">
       <UniqueIdentifier>{8ad5d632-a9a7-4fbe-a6a3-0cf10f3f96c8}</UniqueIdentifier>
     </Filter>
-    <Filter Include="ソース ファイル\Widgets\Timeline">
-      <UniqueIdentifier>{0e5eb092-d861-49c2-aeae-5c228ad4b2e3}</UniqueIdentifier>
-    </Filter>
     <Filter Include="ヘッダー ファイル\GUI">
       <UniqueIdentifier>{2eb133b3-a045-4174-9b54-d9806b9ad29d}</UniqueIdentifier>
     </Filter>
@@ -150,9 +132,6 @@
     </Filter>
     <Filter Include="ヘッダー ファイル\Widgets\Control">
       <UniqueIdentifier>{6d88315f-1b24-48c0-9907-b682e880ca78}</UniqueIdentifier>
-    </Filter>
-    <Filter Include="ソース ファイル\Widgets\Control">
-      <UniqueIdentifier>{64884021-5e0a-4ef6-9546-64a84c70c63d}</UniqueIdentifier>
     </Filter>
     <Filter Include="ヘッダー ファイル\Generator">
       <UniqueIdentifier>{fea4bcf7-7745-4cdb-9e9b-4a9c417a301a}</UniqueIdentifier>
@@ -181,8 +160,41 @@
     <Filter Include="ヘッダー ファイル\Widgets\Viewer">
       <UniqueIdentifier>{3c56c38f-0e17-48f6-97e9-053277b513bb}</UniqueIdentifier>
     </Filter>
+    <Filter Include="ヘッダー ファイル\Effects\Noise">
+      <UniqueIdentifier>{e3656def-ddfb-4ec5-aa76-e6747d603c7c}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ソース ファイル\Effects\Glow">
+      <UniqueIdentifier>{d91f3f5b-e187-4e62-be54-25910550a0b4}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ソース ファイル\Widgets">
+      <UniqueIdentifier>{0aecb838-4407-47a7-b576-00f8edf6e7ab}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ソース ファイル\Widgets\Menu">
+      <UniqueIdentifier>{4a38a1d5-699c-49cd-aaf2-20822bdbd0cd}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ソース ファイル\Widgets\Menu\Test">
+      <UniqueIdentifier>{3b3d00ac-b8f7-448e-bb49-f4cac315ab44}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ソース ファイル\Widgets\Render">
+      <UniqueIdentifier>{92ed620e-d7bc-4379-9b9f-a85d26cfdfdd}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ソース ファイル\Widgets\Dialog">
+      <UniqueIdentifier>{653fc5aa-842d-4411-9b58-bd5e7c69117f}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ソース ファイル\Widgets\Timeline">
+      <UniqueIdentifier>{0e5eb092-d861-49c2-aeae-5c228ad4b2e3}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ソース ファイル\Widgets\Control">
+      <UniqueIdentifier>{64884021-5e0a-4ef6-9546-64a84c70c63d}</UniqueIdentifier>
+    </Filter>
     <Filter Include="ソース ファイル\Widgets\Viewer">
       <UniqueIdentifier>{58006d6e-41f2-4d3d-9a43-790c3d18495c}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ソース ファイル\Effects\Blur">
+      <UniqueIdentifier>{0db36421-e587-4dc3-bdac-5ebf631b7230}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ソース ファイル\Effects\Noise">
+      <UniqueIdentifier>{957a38fb-ec9b-40bb-8f1b-95dd67a7813b}</UniqueIdentifier>
     </Filter>
   </ItemGroup>
   <ItemGroup>
@@ -871,6 +883,21 @@
     </ClCompile>
     <ClCompile Include="src\Widgets\Viewer\ArtifactContentsViewer.cpp">
       <Filter>ソース ファイル\Widgets\Viewer</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Render\ArtifactRenderElement.cpp">
+      <Filter>ソース ファイル\Render</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Effetcs\Noise\NoiseEffect.ixx">
+      <Filter>ヘッダー ファイル\Effects\Noise</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Effetcs\Glow\GlowEffect.ixx">
+      <Filter>ヘッダー ファイル\Effects\Glow</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Effetcs\Glow\GlowEffect.cpp">
+      <Filter>ソース ファイル\Effects\Glow</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Effetcs\Glow\NoiseEffect.cppm">
+      <Filter>ソース ファイル\Effects\Noise</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>

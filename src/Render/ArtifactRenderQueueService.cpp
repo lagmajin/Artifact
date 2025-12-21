@@ -1,5 +1,6 @@
 module;
 #include <QObject>
+#include <wobjectimpl.h>
 module Artifact.Render.Queue.Service;
 
 
@@ -17,7 +18,7 @@ namespace Artifact
  {
 
  }
-
+ W_OBJECT_IMPL(ArtifactRenderQueueService)
 
  ArtifactRenderQueueService::ArtifactRenderQueueService(QObject* parent/*=nullptr*/):QObject(parent),impl_(new Impl)
  {

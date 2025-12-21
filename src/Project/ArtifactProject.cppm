@@ -35,7 +35,10 @@ namespace Artifact {
 
  }
  
-
+ struct ArtifactProjectNode
+ {
+	 
+ };
 
  class ArtifactProject::Impl {
  private:

@@ -27,6 +27,8 @@ namespace Artifact
 
 
  };
+	
+	W_OBJECT_IMPL(ColumnWidthManager)
 
  ColumnWidthManager::ColumnWidthManager(QObject* parent /*= nullptr*/) :QObject(parent), impl_(new Impl())
  {

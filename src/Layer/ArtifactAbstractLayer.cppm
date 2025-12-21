@@ -187,4 +187,19 @@ namespace Artifact {
   return impl_->transform_;
  }
 
+ void ArtifactAbstractLayer::setTimeRemapEnabled(bool)
+ {
+
+ }
+
+ void ArtifactAbstractLayer::setTimeRemapKey(int64_t compFrame, double sourceFrame)
+ {
+
+ }
+
+ bool ArtifactAbstractLayer::isTimeRemapEnabled() const
+ {
+  return false;
+ }
+
 };

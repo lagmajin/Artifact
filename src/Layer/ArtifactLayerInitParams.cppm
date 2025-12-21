@@ -55,6 +55,12 @@ UniString ArtifactLayerInitParams::name() const
  return impl_->layerName();
  }
 
+LayerType ArtifactLayerInitParams::layerType() const
+{
+
+ return LayerType::Unknown;
+}
+
  ArtifactSolidLayerInitParams::ArtifactSolidLayerInitParams(const QString& name) :ArtifactLayerInitParams(name,LayerType::Solid)
  {
 

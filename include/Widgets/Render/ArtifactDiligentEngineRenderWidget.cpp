@@ -54,6 +54,7 @@ import Graphics.Shader.HLSL.Basics.Vertex;
 
 import Artifact.Render.Element;
 import Artifact.Service.Project;
+import Artifact.Preview.Pipeline;
 
 namespace Artifact {
 

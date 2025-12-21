@@ -193,6 +193,8 @@
     <ClCompile Include="include\Effetcs\ColorCorrection\BrightnessEffect.ixx" />
     <ClCompile Include="include\Effetcs\ColorCorrection\ExposureEffect.ixx" />
     <ClCompile Include="include\Effetcs\GlobalEffectManager.ixx" />
+    <ClCompile Include="include\Effetcs\Glow\GlowEffect.ixx" />
+    <ClCompile Include="include\Effetcs\Noise\NoiseEffect.ixx" />
     <ClCompile Include="include\Generator\CloneGenerator.ixx" />
     <ClCompile Include="include\Generator\AbstractGenerator.ixx" />
     <ClCompile Include="include\Generator\AbstractGeneratorEffector.ixx" />
@@ -272,6 +274,10 @@
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Effetcs\GlobalEffectManager.cpp" />
+    <ClCompile Include="src\Effetcs\Glow\GlowEffect.cpp" />
+    <ClCompile Include="src\Effetcs\Glow\NoiseEffect.cppm">
+      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+    </ClCompile>
     <ClCompile Include="src\Generator\AbstractGenerator.cppm">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
     </ClCompile>
@@ -326,6 +332,7 @@
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Render\ArtifactOffscreenRenderer2D.cpp" />
+    <ClCompile Include="src\Render\ArtifactRenderElement.cpp" />
     <ClCompile Include="src\Render\ArtifactRenderManager.cppm">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
     </ClCompile>

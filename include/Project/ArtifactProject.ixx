@@ -67,15 +67,16 @@ export namespace Artifact {
  public:
 	//signals
   void projectChanged()
-   W_SIGNAL(projectChanged)
+   W_SIGNAL(projectChanged);
    void compositionCreated(const QString& id)
-   W_SIGNAL(compositionCreated, id)
+   W_SIGNAL(compositionCreated, id);
+   void preRemoveComposition(const QString& id)
+   W_SIGNAL(preRemoveComposition, id);
+  void preRemoveAllCompositions()
+   W_SIGNAL(preRemoveAllCompositions);
 
-   void preRemoveAllCompositions()
-   W_SIGNAL(preRemoveAllCompositions)
-
-   void layerCreated()
-   W_SIGNAL(layerCreated)
+  void layerCreated()
+   W_SIGNAL(layerCreated);
 
  	
  };

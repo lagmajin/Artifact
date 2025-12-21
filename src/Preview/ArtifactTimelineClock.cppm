@@ -40,7 +40,13 @@ namespace Artifact
  {
 
  }
-	
+
+ ArtifactTimelineClock::Impl::~Impl()
+ {
+
+ }
+
+
  W_OBJECT_IMPL(ArtifactTimelineClock)
 	
  ArtifactTimelineClock::ArtifactTimelineClock(QObject* parent/*=nullptr*/) :QObject(parent), impl_(new Impl(this))
