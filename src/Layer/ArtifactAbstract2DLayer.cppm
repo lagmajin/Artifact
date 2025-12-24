@@ -2,7 +2,7 @@ module;
 module Artifact.Layers.Abstract._2D;
 
 import std;
-import Artifact.Layers.Abstract;
+import Artifact.Layer.Abstract;
 import Animation.Transform2D;
 
 

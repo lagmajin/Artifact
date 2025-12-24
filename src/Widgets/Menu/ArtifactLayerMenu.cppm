@@ -96,18 +96,21 @@ namespace Artifact {
   auto createSolidLayer = new CreateSolidLayerSettingDialog();
  	
   createSolidLayer->show();
- 
-  ArtifactSolidLayerInitParams params("");
+  auto service = ArtifactProjectService::instance();
  	
- 	//ArtifactProjectService::instance()->addLayer()
- 	
+  ArtifactSolidLayerInitParams params("Solid");
+
+  service->addLayerToCurrentComposition(params);
  }
 
  void ArtifactLayerMenu::Impl::handleCreateNullLayer()
  {
-  auto& manager = ArtifactProjectManager::getInstance();
-
-  //ArtifactLayerInitParams param;
+  //auto& manager = ArtifactProjectManager::getInstance();
+  ArtifactNullLayerInitParams params("Null");
+  auto service = ArtifactProjectService::instance();
+ 	
+  service->addLayerToCurrentComposition(params);
+  
   
 
  }

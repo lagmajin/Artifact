@@ -20,6 +20,7 @@ namespace Artifact
   ~Impl();
   static ArtifactProjectManager& projectManager();
   void addLayerToCurrentComposition(const ArtifactLayerInitParams& params);
+ 
  };
 
  ArtifactProjectService::Impl::Impl()
@@ -85,6 +86,21 @@ namespace Artifact
  	
  	
  	
+ }
+
+ UniString ArtifactProjectService::projectName() const
+ {
+  return UniString();
+ }
+
+ void ArtifactProjectService::changeProjectName(const UniString& string)
+ {
+
+ }
+
+ void ArtifactProjectService::addAssetFromPath(const UniString& path)
+ {
+
  }
 
 };

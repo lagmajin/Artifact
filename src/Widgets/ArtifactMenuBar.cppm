@@ -4,7 +4,7 @@ module Menu.MenuBar;
 
 import Menu;
 
-import Artifact.ArtifactMainWindow;
+import Artifact.MainWindow;
 
 
 

@@ -15,11 +15,8 @@
 #include <QMenu>
 module Artifact.Widgets.ProjectManagerWidget;
 
-
-//import HeadPanel;
-
+import std;
 import Artifact.Project.Manager;
-
 import Artifact.Service.Project;
 
 
@@ -140,6 +137,7 @@ namespace Artifact {
   qDebug() << "File:" << str;
   manager.addAssetFromFilePath(str);
 
+ 	
  }
 
  ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent /*= nullptr*/) :QWidget(parent), impl_(new Impl())

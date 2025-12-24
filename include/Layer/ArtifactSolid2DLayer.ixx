@@ -4,7 +4,7 @@ export module Artifact.Layer.Solid2D;
 
 import std;
 import Color.Float;
-import Artifact.Layers.Abstract;
+import Artifact.Layer.Abstract;
 
 export namespace Artifact
 {

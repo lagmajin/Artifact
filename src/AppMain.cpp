@@ -28,7 +28,7 @@ import Glow;
 
 import ImageProcessing;
 
-import Artifact.ArtifactMainWindow;
+import Artifact.MainWindow;
 
 //import hostfxr;
 //import HalideTest;

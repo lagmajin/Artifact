@@ -3,7 +3,7 @@ module;
 
 export module Artifact.Layer.Result;
 
-import Artifact.Layers.Abstract;
+import Artifact.Layer.Abstract;
 
 export namespace Artifact {
 

@@ -4,7 +4,7 @@ export module Artifact.Layer.Factory;
 
 import std;
 
-import Artifact.Layers.Abstract;
+import Artifact.Layer.Abstract;
 import Artifact.Layer.InitParams;
 import Artifact.Layer.Result;
 

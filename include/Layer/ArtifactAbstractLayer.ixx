@@ -5,7 +5,7 @@
 #include <QObject>
 #include <qtypes.h>
 
-export module Artifact.Layers.Abstract;
+export module Artifact.Layer.Abstract;
 
 import std;
 
@@ -92,8 +92,9 @@ export namespace Artifact {
 
   //
   void setParentById(LayerID& id);
-
-  bool isAdjustmentLayer() const;
+  virtual bool isNullLayer() const;
+ 	
+  virtual bool isAdjustmentLayer() const;
   void setAdjustmentLayer(bool isAdjustment);
 
   bool is3D() const;

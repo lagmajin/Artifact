@@ -31,8 +31,9 @@
 #include <winrt/Windows.Graphics.Capture.h>
 #include <winrt/Windows.Graphics.DirectX.Direct3D11.h>
 #include <winrt/base.h>
-#include <DiligentCore/Graphics/GraphicsEngineD3D12/interface/EngineFactoryD3D12.h>
 #include <DiligentCore/Graphics/GraphicsEngineD3D12/interface/TextureD3D12.h>
+#include <DiligentCore/Graphics/GraphicsEngineD3D12/interface/EngineFactoryD3D12.h>
+
 #endif
 #include <wrl/client.h>
 #include <DiligentCore/Graphics/GraphicsEngineD3D12/interface/RenderDeviceD3D12.h>
@@ -67,6 +68,7 @@ namespace Artifact {
  using namespace winrt;
  using Microsoft::WRL::ComPtr;
 #endif
+	
  struct BlendResources
  {
   RefCntAutoPtr<IPipelineState> pPSO;
@@ -80,7 +82,6 @@ namespace Artifact {
    FloatColor canvasColor_;
    float scale_ = 1.0f;
    ZoomScale2D zoomScale_;
-
 
    RefCntAutoPtr<IRenderDevice> pDevice;
    RefCntAutoPtr<IDeviceContext> pImmediateContext;
@@ -97,11 +98,6 @@ namespace Artifact {
    RenderShaderPair m_draw_line_shaders;
    RenderShaderPair m_draw_solid_shaders;
    RenderShaderPair m_draw_sprite_shaders;
-
-
-
-
-   //RefCntAutoPtr<IShader> p
    ComPtr<ID3D11Device> d3d11Device_;
    ComPtr<ID3D11DeviceContext> d3d11Context_;
    ComPtr<ID3D11On12Device> d3d11On12Device_;
@@ -136,6 +132,8 @@ namespace Artifact {
    std::map<LAYER_BLEND_TYPE, BlendResources> m_BlendMap;
 
    QWidget* widget_ = nullptr;
+   
+ 	
    bool m_initialized = false;
    int m_CurrentPhysicalWidth;
    int m_CurrentPhysicalHeight;
@@ -143,9 +141,7 @@ namespace Artifact {
    glm::mat4 glm_projection_;
    glm::mat4 view_;
    qreal m_CurrentDevicePixelRatio;
-
-
-
+ 	
    glm::mat4 calculateModelMatrixGLM(const glm::vec2& position,      // 画面上の最終的なピクセル位置
 	const glm::vec2& size,          // レイヤーの元のピクセルサイズ
 	const glm::vec2& anchorPoint,   // ローカル正規化座標 (0.0-1.0) でのアンカーポイント
@@ -153,8 +149,8 @@ namespace Artifact {
 	const glm::vec2& scale);
    std::mutex g_eventMutex;
    std::queue<std::function<void()>> g_renderEvents;
+   ArtifactPreviewPipeline  previewPipeline_;
    bool takeScreenshot = false;
-
    bool panning_ = false;
    const TEXTURE_FORMAT MAIN_RTV_FORMAT = TEX_FORMAT_RGBA8_UNORM_SRGB;
    void initializeResources();
@@ -164,7 +160,7 @@ namespace Artifact {
    void createPSO();
    void createBlendShaderAndPSOs();
    void calcProjection(int width, int height);
-
+   
   public:
    Impl();
    ~Impl();
@@ -1509,6 +1505,21 @@ if (FAILED(hr)) {
   impl_->destroy();
 
   QWidget::closeEvent(event);
+ }
+
+ void ArtifactDiligentEngineComposition2DWindow::previewStart()
+ {
+
+ }
+
+ void ArtifactDiligentEngineComposition2DWindow::previewPause()
+ {
+
+ }
+
+ void ArtifactDiligentEngineComposition2DWindow::previewStop()
+ {
+
  }
 
  ArtifactDiligentEngineComposition2DWidget::Impl::Impl(QWidget* widget)

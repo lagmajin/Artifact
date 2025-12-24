@@ -14,7 +14,7 @@ import  Artifact.Project.Manager;
 
 import Dialog.Composition;
 
-import Artifact.ArtifactMainWindow;
+import Artifact.MainWindow;
 
 import Utils.Path;
 

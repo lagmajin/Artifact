@@ -6,7 +6,7 @@ export module Artifact.Layer.Audio;
 
 import std;
 import Audio.Volume;
-import Artifact.Layers.Abstract;
+import Artifact.Layer.Abstract;
 
 export namespace Artifact
 {

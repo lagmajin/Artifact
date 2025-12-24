@@ -4,7 +4,7 @@ module;
 export module Generator.Effector;
 
 import std;
-import Artifact.Layers.Abstract;
+import Artifact.Layer.Abstract;
 
 export namespace Artifact
 {

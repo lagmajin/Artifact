@@ -1,13 +1,14 @@
 ﻿module;
 
 
-export module Artifact.Layers.AdjustableLayer;
+export module Artifact.Layer.AdjustableLayer;
 
+import Artifact.Layer.Abstract;
 
 export namespace Artifact
 {
 
- class ArtifactAdjustableLayer
+ class ArtifactAdjustableLayer:public ArtifactAbstractLayer
  {
  private:
   class Impl;

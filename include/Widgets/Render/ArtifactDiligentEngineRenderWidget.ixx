@@ -9,6 +9,7 @@
 export module Widgets.Render.Composition;
 
 import Color.Float;
+import Artifact.Render.IRenderer;
 
 namespace Diligent{}//dummy
 
@@ -17,7 +18,7 @@ export namespace Artifact {
  using namespace Diligent;
  using namespace ArtifactCore;
 
- class ArtifactDiligentEngineComposition2DWindow:public QWidget {
+ class ArtifactDiligentEngineComposition2DWindow:public QWidget{
   W_OBJECT(ArtifactDiligentEngineComposition2DWindow)
  private:
   class Impl;
@@ -48,6 +49,8 @@ export namespace Artifact {
   IRenderDevice* GetRenderDevice() const;
   IDeviceContext* GetDeviceContext() const;
 
+ 	
+ 	
   void previewStart();
   void previewPause();
   void previewStop();

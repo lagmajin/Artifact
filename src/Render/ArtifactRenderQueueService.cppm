@@ -3,6 +3,8 @@ module;
 #include <wobjectimpl.h>
 module Artifact.Render.Queue.Service;
 
+import std;
+//import Container.MultiIndex;
 
 namespace Artifact
 {

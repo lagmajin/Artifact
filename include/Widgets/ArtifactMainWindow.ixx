@@ -6,7 +6,7 @@
 #include <QtWidgets/QMainWindow>
 
 
-export module Artifact.ArtifactMainWindow;
+export module Artifact.MainWindow;
 
 import std;
 

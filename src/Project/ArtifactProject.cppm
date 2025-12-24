@@ -14,10 +14,12 @@ import Utils;
 import Utils.String.Like;
 
 import Composition.Settings;
+import Container;
+import Asset.File;
 
 import Artifact.Composition.Abstract;
 import Artifact.Composition._2D;
-import Container;
+
 
 namespace Artifact {
  using namespace ArtifactCore;
@@ -44,6 +46,7 @@ namespace Artifact {
  private:
   ArtifactProjectSettings projectSettings_;
   ArtifactCompositionMultiIndexContainer container_;
+  AssetMultiIndexContainer assetContainer_;
  public:
   Impl();
   ~Impl();
@@ -71,7 +74,9 @@ namespace Artifact {
 
  void ArtifactProject::Impl::addAssetFromPath(const QString& string)
  {
-
+  auto asset = new AbstractAssetFile();
+ 	
+ 	
  }
 
  void ArtifactProject::Impl::createComposition(const CompositionSettings& settings)
@@ -158,6 +163,7 @@ namespace Artifact {
 
  void ArtifactProject::addAssetFromPath(const QString& filepath)
  {
+  impl_->addAssetFromPath(filepath);
 
  }
 
@@ -180,6 +186,11 @@ namespace Artifact {
  {
 
   return  impl_->toJson();
+ }
+
+ bool ArtifactProject::isDirty() const
+ {
+  return false;
  }
 
 }

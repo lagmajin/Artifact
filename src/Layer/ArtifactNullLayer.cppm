@@ -37,7 +37,18 @@ namespace Artifact {
 
  void ArtifactNullLayer::draw()
  {
-  throw std::logic_error("The method or operation is not implemented.");
+  //throw std::logic_error("The method or operation is not implemented.");
+ }
+
+ bool ArtifactNullLayer::isAdjustmentLayer() const
+ {
+  return false;
+ }
+
+ bool ArtifactNullLayer::isNullLayer() const
+ {
+ 
+  return true;
  }
 
 };

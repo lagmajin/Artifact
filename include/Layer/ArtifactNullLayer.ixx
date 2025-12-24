@@ -26,6 +26,12 @@ export namespace Artifact {
 
   void draw() override;
 
+
+  bool isAdjustmentLayer() const override;
+
+
+  bool isNullLayer() const override;
+
  };
 
 

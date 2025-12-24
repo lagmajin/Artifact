@@ -224,7 +224,7 @@
     <ClCompile Include="src\Layer\ArtifactCompositionLayer.cppm">
       <Filter>ソース ファイル\Layer</Filter>
     </ClCompile>
-    <ClCompile Include="src\Widgets\ArtifactMainWindow.cppm">
+    <ClCompile Include="src\Widgets\ArtifactMainWindow.cpp">
       <Filter>ソース ファイル\Widgets</Filter>
     </ClCompile>
     <ClCompile Include="src\Widgets\ArtifactProjectManagerWidget.cpp">
@@ -509,7 +509,7 @@
     <ClCompile Include="include\Render\ArtifactOffscreenRenderer2D.ixx">
       <Filter>ヘッダー ファイル\Render</Filter>
     </ClCompile>
-    <ClCompile Include="src\Render\ArtifactOffscreenRenderer2D.cpp">
+    <ClCompile Include="src\Render\ArtifactOffscreenRenderer2D.cppm">
       <Filter>ソース ファイル\Render</Filter>
     </ClCompile>
     <ClCompile Include="include\Layer\ArtifactAdjustableLayer.ixx">
@@ -686,7 +686,7 @@
     <ClCompile Include="src\Widgets\Timeline\ArtifactWorkAreaControlWidget.cpp">
       <Filter>ソース ファイル\Widgets\Timeline</Filter>
     </ClCompile>
-    <ClCompile Include="src\Widgets\Timeline\ArtifactLayerHierarchyWidget.cpp">
+    <ClCompile Include="src\Widgets\Timeline\ArtifactLayerHierarchyWidget.cppm">
       <Filter>ソース ファイル\Widgets\Timeline</Filter>
     </ClCompile>
     <ClCompile Include="include\Widgets\Timeline\ArtifactTimelineRulerWidget.ixx">
@@ -827,7 +827,7 @@
     <ClCompile Include="src\Preview\ArtifactPreviewWorker.cppm">
       <Filter>ソース ファイル\Preview</Filter>
     </ClCompile>
-    <ClCompile Include="src\Render\ArtifactRenderQueueService.cpp">
+    <ClCompile Include="src\Render\ArtifactRenderQueueService.cppm">
       <Filter>ソース ファイル\Render</Filter>
     </ClCompile>
     <ClCompile Include="include\Render\ArtifactRenderQueueService.ixx">
@@ -898,6 +898,9 @@
     </ClCompile>
     <ClCompile Include="src\Effetcs\Glow\NoiseEffect.cppm">
       <Filter>ソース ファイル\Effects\Noise</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Render\IRenderer.cppm">
+      <Filter>ソース ファイル\Render</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>

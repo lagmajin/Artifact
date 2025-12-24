@@ -6,7 +6,7 @@
 #include <QMessageBox>
 #pragma comment(lib,"qtadvanceddockingd.lib")
 
-module Artifact.ArtifactMainWindow;
+module Artifact.MainWindow;
 
 import Menu;
 
@@ -20,6 +20,7 @@ import Widgets.AssetBrowser;
 import Widgets.KeyboardOverlayDialog;
 
 import Artifact.Project.Manager;
+import Artifact.Service.Project;
 
 import Artifact.Widgets.Timeline;
 import Artifact.Widgets.ProjectManagerWidget;
@@ -30,6 +31,8 @@ import Artifact.Widgets.Render.QueueManager;
 import Artifact.Widgets.RenderQueueJobPanel;
 import Artifact.Widgets.LayerPanelWidget;
 import Artifact.Widgets.PlaybackControlWidget;
+
+
 namespace ArtifactWidgets {}//
 
 namespace Artifact {
@@ -48,7 +51,7 @@ namespace Artifact {
   public:
    Impl(ArtifactMainWindow* mainWindow);
    ~Impl();
-   void projectCreated();
+   void handleProjectCreated();
    void handleCompositionCreated();
    void handleCompositionCreated(ArtifactMainWindow* window);
    void handleLayerCreated(ArtifactMainWindow* window);
@@ -58,9 +61,12 @@ namespace Artifact {
    void handleDefaultKeyReleaseEvent(QKeyEvent* event);
  };
 
- void ArtifactMainWindow::Impl::projectCreated()
+ void ArtifactMainWindow::Impl::handleProjectCreated()
  {
   qDebug() << "project created";
+ 	
+  mainWindow_->setWindowTitle("Artifact - New Project");
+ 	
  }
 	
  void ArtifactMainWindow::Impl::handleCompositionCreated(ArtifactMainWindow* window)
@@ -173,7 +179,7 @@ namespace Artifact {
     timeTest->show();
  	
   QObject::connect(&projectManager, &ArtifactProjectManager::newProjectCreated, [this]() {
-   impl_->projectCreated();
+   impl_->handleProjectCreated();
    });
 
   QObject::connect(&projectManager, &ArtifactProjectManager::newCompositionCreated, [this]() {

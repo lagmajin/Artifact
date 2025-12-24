@@ -44,6 +44,8 @@ export namespace Artifact {
  	
   bool hasVideo() const;
   bool hasAudio() const;
+ 	
+  QVector<ArtifactAbstractLayerPtr> allLayer();
  };
 
  typedef std::shared_ptr<ArtifactAbstractComposition> ArtifactCompositionPtr;

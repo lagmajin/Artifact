@@ -36,4 +36,12 @@ namespace Artifact
   delete impl_;
  }
 
+ bool ArtifactShapeLayer::isShapeLayer() const
+ {
+
+  return true;
+ }
+
+	
+
 };

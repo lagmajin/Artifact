@@ -10,6 +10,7 @@ export module Artifact.Service.Project;
 import std;
 import Utils;
 import Utils.String.Like;
+import Utils.String.UniString;
 import Artifact.Project.Settings;
 import Artifact.Layer.InitParams;
 import Artifact.Composition.Abstract;
@@ -27,26 +28,27 @@ export namespace Artifact
  typedef std::shared_ptr<ArtifactProjectService> ArtifactProjectServicePtr;
 
 
- class ArtifactProjectService:public QObject
+ class ArtifactProjectService :public QObject
  {
- 	W_OBJECT(ArtifactProjectService)
+  W_OBJECT(ArtifactProjectService)
  private:
   class Impl;
   Impl* impl_;
  public:
-  explicit ArtifactProjectService(QObject*parent=nullptr);
+  explicit ArtifactProjectService(QObject* parent = nullptr);
   ~ArtifactProjectService();
   static ArtifactProjectService* instance();
-  QString projectName() const;
- 	
- 	ArtifactCompositionWeakPtr findComposition(const CompositionID& id);
-  //ArtifactAbstractLayerPtr
-    void addLayer(const CompositionID& id,const ArtifactLayerInitParams& params);
-    void addLayerToCurrentComposition(const ArtifactLayerInitParams& params);
- public:	
+  UniString projectName() const;
+  void changeProjectName(const UniString& string);
+  void addAssetFromPath(const UniString& path);
+  ArtifactCompositionWeakPtr findComposition(const CompositionID& id);
+  
+  void addLayer(const CompositionID& id, const ArtifactLayerInitParams& params);
+  void addLayerToCurrentComposition(const ArtifactLayerInitParams& params);
+ public:
   void projectSettingChanged(const ArtifactProjectSettings& setting);
   W_SLOT(projectSettingChanged)
- 	
+
  };
 
 

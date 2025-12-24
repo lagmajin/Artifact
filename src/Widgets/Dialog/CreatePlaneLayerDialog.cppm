@@ -10,7 +10,7 @@
 module Artifact.Widgets.CreateLayerDialog;
 
 import Widgets.Dialog.Abstract;
-import Artifact.Layers.Abstract;
+import Artifact.Layer.Abstract;
 import Widgets.Utils.CSS;
 import Widgets.EditableLabel;
 

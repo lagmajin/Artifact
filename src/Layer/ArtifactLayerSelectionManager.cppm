@@ -3,7 +3,7 @@ module;
 module Artifact.Layers.Selection.Manager;
 
 import std;
-import Artifact.Layers.Abstract;
+import Artifact.Layer.Abstract;
 
 
 namespace Artifact {

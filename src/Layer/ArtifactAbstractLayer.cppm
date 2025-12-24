@@ -2,7 +2,7 @@
 
 #include <wobjectcpp.h>
 #include <wobjectimpl.h>
-module Artifact.Layers.Abstract;
+module Artifact.Layer.Abstract;
 
 import std;
 import Utils;
@@ -198,6 +198,11 @@ namespace Artifact {
  }
 
  bool ArtifactAbstractLayer::isTimeRemapEnabled() const
+ {
+  return false;
+ }
+
+ bool ArtifactAbstractLayer::isNullLayer() const
  {
   return false;
  }

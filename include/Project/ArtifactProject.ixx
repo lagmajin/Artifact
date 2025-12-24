@@ -62,7 +62,7 @@ export namespace Artifact {
   bool isNull() const;
   bool removeCompositionById(const CompositionID& id);
   void removeAllCompositions();
- 	
+  bool isDirty() const;
   QJsonObject toJson() const;
  public:
 	//signals

@@ -3,16 +3,16 @@ module;
 
 module Artifact.Layer.Factory;
 
+import std;
+import Utils.String.UniString;
 import Artifact.Layer.Result;
 import Artifact.Layer.Null;
+import Artifact.Layer.Image;
 import Artifact.Layer.Audio;
 import Artifact.Layer.Shape;
-
 import Artifact.Layer.Solid2D;
-import Artifact.Layer.Image;
-
-//import Artifact.Layers.Adjustable;
-
+import Artifact.Layer.AdjustableLayer;
+//import Artifact.lay
 
 namespace Artifact {
 
@@ -71,12 +71,16 @@ namespace Artifact {
    ptr = std::make_shared<ArtifactImageLayer>();
    break;
   case LayerType::Adjustment:
+   ptr = std::make_shared<ArtifactAdjustableLayer>();
+  	
    break;
   case LayerType::Text:
    break;
   case LayerType::Shape:
    break;
   case LayerType::Precomp:
+  	ptr = std::make_shared<ArtifactCompositionLayer>();
+  	
    break;
   case LayerType::Audio:
    break;

@@ -1,7 +1,7 @@
 ﻿
 module;
 
-module Layers.Composition;
+module Artifact.Layer.Composition;
 
 
 namespace Artifact {
@@ -9,7 +9,7 @@ namespace Artifact {
  class ArtifactCompositionLayer::Impl
  {
  private:
-
+  CompositionID id_;
  public:
   Impl();
   ~Impl();
@@ -21,6 +21,11 @@ namespace Artifact {
  }
 
  ArtifactCompositionLayer::~ArtifactCompositionLayer()
+ {
+
+ }
+
+ void ArtifactCompositionLayer::setCompositionId(const CompositionID& id)
  {
 
  }

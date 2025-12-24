@@ -43,6 +43,8 @@ namespace Artifact {
   void goToStartFrame();
   void goToEndFrame();
   void goToFrame(int64_t frame=0);
+  QVector<ArtifactAbstractLayerPtr> allLayer() const;
+  QVector<ArtifactAbstractLayerPtr> allLayerBackToFront() const;
  };
 
  ArtifactAbstractComposition::Impl::Impl()
@@ -98,6 +100,11 @@ namespace Artifact {
  void ArtifactAbstractComposition::Impl::goToFrame(int64_t frame/*=0*/)
  {
   
+ }
+
+ QVector<ArtifactAbstractLayerPtr> ArtifactAbstractComposition::Impl::allLayer() const
+ {
+  return QVector<ArtifactAbstractLayerPtr>();
  }
 
  ArtifactAbstractComposition::ArtifactAbstractComposition():impl_(new Impl())
@@ -160,5 +167,10 @@ namespace Artifact {
   return true;
  }
 
+ QVector<Artifact::ArtifactAbstractLayerPtr> ArtifactAbstractComposition::allLayer()
+ {
+
+  return QVector<ArtifactAbstractLayerPtr>();
+ }
 
 };

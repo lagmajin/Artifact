@@ -1,9 +1,10 @@
 ﻿module;
 
-export module Layers.Composition;
+export module Artifact.Layer.Composition;
 
+import std;
 import Utils;
-import Artifact.Layers;
+import Artifact.Layer.Abstract;
 
 
 
@@ -19,6 +20,7 @@ export namespace Artifact {
   ArtifactCompositionLayer();
   ~ArtifactCompositionLayer();
   CompositionID sourceCompositionId() const;
+  void setCompositionId(const CompositionID& id);
  };
 
 

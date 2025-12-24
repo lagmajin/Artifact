@@ -3,7 +3,7 @@ module;
 
 module Artifact.Layer.InitParams;
 import Utils.String.UniString;
-import Artifact.Layers.Abstract;
+import Artifact.Layer.Abstract;
 
 
 namespace Artifact {
@@ -44,6 +44,11 @@ UniString ArtifactLayerInitParams::Impl::layerName() const
 
  }
 
+ ArtifactLayerInitParams::ArtifactLayerInitParams(const UniString& name, LayerType type)
+ {
+
+ }
+
  ArtifactLayerInitParams::~ArtifactLayerInitParams()
  {
   delete impl_;
@@ -68,7 +73,7 @@ LayerType ArtifactLayerInitParams::layerType() const
 
  ArtifactSolidLayerInitParams::~ArtifactSolidLayerInitParams()
  {
-
+  
  }
 
  ArtifactNullLayerInitParams::ArtifactNullLayerInitParams(const QString& name) :ArtifactLayerInitParams(name, LayerType::Null)
@@ -81,7 +86,7 @@ LayerType ArtifactLayerInitParams::layerType() const
 
  }
 
- ArtifactImageInitParams::ArtifactImageInitParams(const QString& name) :ArtifactLayerInitParams(name, LayerType::Null)
+ ArtifactImageInitParams::ArtifactImageInitParams(const QString& name) :ArtifactLayerInitParams(name, LayerType::Image)
  {
 
  }

@@ -10,7 +10,7 @@ namespace Artifact
  class ArtifactPreviewPipeline::Impl
  {
   ArtifactCompositionPtr composition_;
- 	
+  
  public:
   Impl();
   ~Impl();
@@ -31,7 +31,30 @@ namespace Artifact
 
  void ArtifactPreviewPipeline::Impl::renderFrame()
  {
+  if (!composition_)
+   return;
 
+  // レイヤー取得（描画順なら allLayer、逆順なら allLayerReversed）
+  auto layers = composition_->allLayer(); // or allLayerReversed()
+
+  for (auto& layer : layers)
+  {
+   if (!layer)
+	continue;
+
+   if (layer->isVisible())
+   {
+	return;
+   }
+
+   if (layer->isAdjustmentLayer())
+   {
+
+   }
+   else {
+   }
+
+  }
  }
 
  void ArtifactPreviewPipeline::Impl::setComposition(ArtifactCompositionPtr& ptr)
@@ -39,7 +62,7 @@ namespace Artifact
 
  }
 
- ArtifactPreviewPipeline::ArtifactPreviewPipeline()
+ ArtifactPreviewPipeline::ArtifactPreviewPipeline() :impl_(new Impl())
  {
 
  }
@@ -51,6 +74,7 @@ namespace Artifact
 
  void ArtifactPreviewPipeline::renderFrame()
  {
+  impl_->renderFrame();
 
  }
 

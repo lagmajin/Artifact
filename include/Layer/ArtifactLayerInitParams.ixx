@@ -7,7 +7,7 @@ import std;
 
 import Utils.String.Like;
 import Utils.String.UniString;
-import Artifact.Layers.Abstract;
+import Artifact.Layer.Abstract;
 
 export namespace Artifact {
 
@@ -19,7 +19,7 @@ export namespace Artifact {
   Impl* impl_;
  public:
   ArtifactLayerInitParams(const QString& name, LayerType type);
-
+  ArtifactLayerInitParams(const UniString& name, LayerType type);
   virtual ~ArtifactLayerInitParams();
   LayerType layerType() const;
   UniString name() const;
@@ -30,9 +30,10 @@ export namespace Artifact {
  class ArtifactSolidLayerInitParams : public ArtifactLayerInitParams
  {
  private:
-
+  class Impl;
+  Impl* impl_;
  public:
-  ArtifactSolidLayerInitParams(const QString& name);
+  explicit ArtifactSolidLayerInitParams(const QString& name);
   ~ArtifactSolidLayerInitParams();
 
  };

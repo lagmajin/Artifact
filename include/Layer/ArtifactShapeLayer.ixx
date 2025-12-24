@@ -14,6 +14,7 @@ export namespace Artifact
   ArtifactShapeLayer();
   ~ArtifactShapeLayer();
   void addShape();
+  bool isShapeLayer() const;
  };
 
 
