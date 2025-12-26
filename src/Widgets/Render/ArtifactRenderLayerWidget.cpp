@@ -144,6 +144,8 @@ namespace Artifact {
   void play();
   void stop();
  	
+  
+  void takeScreenShot();
  };
 
  ArtifactLayerEditor2DWidget::Impl::Impl()
@@ -1098,6 +1100,11 @@ namespace Artifact {
 
  }
 
+ void ArtifactLayerEditor2DWidget::Impl::takeScreenShot()
+ {
+
+ }
+
  ArtifactLayerEditor2DWidget::ArtifactLayerEditor2DWidget(QWidget* parent/*=nullptr*/) :QWidget(parent), impl_(new Impl())
  {
   setMinimumSize(1, 1);
@@ -1318,6 +1325,11 @@ namespace Artifact {
  void ArtifactLayerEditor2DWidget::stop()
  {
 
+ }
+
+ void ArtifactLayerEditor2DWidget::takeScreenShot()
+ {
+  impl_->takeScreenShot();
  }
 
 };

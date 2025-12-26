@@ -37,7 +37,7 @@ void soloClicked() W_SIGNAL(soloClicked)
 
  };
 
- class ArtifactLayerPanelWrapper :public QWidget
+ class ArtifactLayerTimelinePanelWrapper :public QWidget
  {
  private:
   class Impl;
@@ -45,8 +45,8 @@ void soloClicked() W_SIGNAL(soloClicked)
  protected:
 
  public:
-  explicit ArtifactLayerPanelWrapper(QWidget* parent = nullptr);
-  ~ArtifactLayerPanelWrapper();
+  explicit ArtifactLayerTimelinePanelWrapper(QWidget* parent = nullptr);
+  ~ArtifactLayerTimelinePanelWrapper();
  };
 
 

@@ -85,7 +85,8 @@ namespace Artifact {
 
  void ArtifactProjectManager::Impl::addAssetFromFilePath(const QString& filePath)
  {
-
+  currentProjectPtr_->addAssetFromPath(filePath);
+ 	
  }
 
  void ArtifactProjectManager::Impl::addAssetsFromFilePaths(const QStringList& filePaths)

@@ -75,8 +75,8 @@ namespace Artifact {
  void ArtifactProject::Impl::addAssetFromPath(const QString& string)
  {
   auto asset = new AbstractAssetFile();
- 	
- 	
+
+  //assetContainer_.addSafe(asset->assetID(),asset);
  }
 
  void ArtifactProject::Impl::createComposition(const CompositionSettings& settings)

@@ -169,13 +169,13 @@ namespace Artifact {
   auto& projectManager = ArtifactProjectManager::getInstance();
 
 
-  auto layerPreveiw =new ArtifactLayerEditor2DWidget();
+  auto layerPreveiw =new ArtifactLayerEditorPanel();
   layerPreveiw->show();
 
 	auto timelineWidget = new ArtifactTimelineWidget();
 	timelineWidget->show();
  
-    auto timeTest = new ArtifactLayerPanelWrapper();
+    auto timeTest = new ArtifactLayerTimelinePanelWrapper();
     timeTest->show();
  	
   QObject::connect(&projectManager, &ArtifactProjectManager::newProjectCreated, [this]() {

@@ -31,11 +31,18 @@ public:
   class Impl;
   Impl* impl_;
  protected:
+  void dropEvent(QDropEvent* event) override;
+  void dragMoveEvent(QDragMoveEvent* event) override;
+  void dragEnterEvent(QDragEnterEvent* event) override;
   void mouseMoveEvent(QMouseEvent* event) override;
-   void mousePressEvent(QMouseEvent* event) override;
+  void mousePressEvent(QMouseEvent* event) override;
  public:
   explicit ArtifactProjectView(QWidget* parent = nullptr);
   ~ArtifactProjectView();
+
+
+  QSize sizeHint() const override;
+
  };
 
  class ArtifactProjectManagerToolBox :public QWidget
@@ -48,7 +55,7 @@ public:
   void resizeEvent(QResizeEvent* event) override;
 
  public:
-  explicit ArtifactProjectManagerToolBox(QWidget* widget=nullptr);
+  explicit ArtifactProjectManagerToolBox(QWidget* widget = nullptr);
   ~ArtifactProjectManagerToolBox();
  };
 
@@ -69,9 +76,9 @@ public:
   ~ArtifactProjectManagerWidget();
   void setFilter();
   void triggerUpdate();
-  public /*signals*/:
-   void onFileDropped(const QStringList& list) W_SIGNAL(onFileDropped, list)
- 	
+ public /*signals*/:
+  void onFileDropped(const QStringList& list) W_SIGNAL(onFileDropped, list)
+
  public:
   void updateRequested();
   W_SLOT(updateRequested);

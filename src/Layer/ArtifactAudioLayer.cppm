@@ -31,8 +31,6 @@ namespace Artifact
 
  }
 
-
-
  ArtifactAudioLayer::~ArtifactAudioLayer()
  {
   delete impl_;

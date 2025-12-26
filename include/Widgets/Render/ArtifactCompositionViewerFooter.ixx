@@ -16,7 +16,8 @@ export namespace Artifact {
  public:
   explicit ArtifactCompositionViewerFooter(QWidget* parent = nullptr);
   ~ArtifactCompositionViewerFooter();
-
+ public/*signal*/:
+  void takeSnapShotRequested() W_SIGNAL(takeSnapShotRequested);
  };
 
 

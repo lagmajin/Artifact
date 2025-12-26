@@ -21,6 +21,7 @@ export namespace Artifact
   void pause(); W_SLOT(pause);
   void stop(); W_SLOT(stop);
   void playRange(int64_t start, int64_t end); W_SLOT(playRange);
+
  };
 
 };

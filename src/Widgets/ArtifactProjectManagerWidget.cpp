@@ -28,6 +28,7 @@ namespace Artifact {
  private:
  	
  public:
+  void handleFileDrop(const QString& str);
   void handleDefaultKeyPressEvent(QKeyEvent* ev);
   void handleDefaultKeyReleaseEvent(QKeyEvent* ev);
   QPoint pos_;
@@ -39,6 +40,11 @@ namespace Artifact {
  }
 
  void ArtifactProjectView::Impl::handleDefaultKeyReleaseEvent(QKeyEvent* ev)
+ {
+
+ }
+
+ void ArtifactProjectView::Impl::handleFileDrop(const QString& str)
  {
 
  }
@@ -75,7 +81,90 @@ namespace Artifact {
  	
   drag->exec(Qt::CopyAction | Qt::MoveAction);
  }
-	
+
+ void ArtifactProjectView::dropEvent(QDropEvent* event)
+ {
+  event->setDropAction(Qt::CopyAction);
+ 	
+  const QMimeData* mimeData = event->mimeData();
+
+  if (mimeData->hasUrls()) {
+   QList<QUrl> urlList = mimeData->urls();
+
+   for (const QUrl& url : urlList) {
+	QString filePath = url.toLocalFile().toLower();
+
+	// 対象拡張子チェック
+	if (filePath.endsWith(".png") ||
+	 filePath.endsWith(".jpg") ||
+	 filePath.endsWith(".jpeg") ||
+	 filePath.endsWith(".bmp") ||
+	 filePath.endsWith(".gif") ||
+	 filePath.endsWith(".mp4") ||
+	 filePath.endsWith(".avi") ||
+	 filePath.endsWith(".mov") ||
+	 filePath.endsWith(".mkv")) {
+
+	 // ✔️ 実際の処理：ここで何かする（読み込み/表示/保存など）
+	 qDebug() << "Accepted file dropped:" << filePath;
+
+	 impl_->handleFileDrop(filePath);
+	}
+   }
+
+   event->acceptProposedAction();  // ドロップ操作を受理
+  }
+  else {
+   event->ignore();  // 無効なドロップ
+  }
+ }
+
+ void ArtifactProjectView::dragEnterEvent(QDragEnterEvent* event)
+ {
+  const QMimeData* mimeData = event->mimeData();
+
+  if (mimeData->hasUrls()) {
+   for (const QUrl& url : mimeData->urls()) {
+	QString filePath = url.toLocalFile().toLower();
+
+	if (filePath.endsWith(".png") ||
+	 filePath.endsWith(".jpg") ||
+	 filePath.endsWith(".jpeg") ||
+	 filePath.endsWith(".bmp") ||
+	 filePath.endsWith(".gif") ||
+	 filePath.endsWith(".mp4") ||
+	 filePath.endsWith(".avi") ||
+	 filePath.endsWith(".mov") ||
+	 filePath.endsWith(".mkv")) {
+	 event->acceptProposedAction(); // OK!
+	 return;
+	}
+   }
+  }
+
+  event->ignore(); // 拒否
+ }
+
+ QSize ArtifactProjectView::sizeHint() const
+ {
+  return QSize(400, 400);
+ }
+
+ void ArtifactProjectView::dragMoveEvent(QDragMoveEvent* event)
+ {
+  const QMimeData* mimeData = event->mimeData();
+  if (mimeData->hasUrls()) {
+   for (const QUrl& url : mimeData->urls()) {
+	QString filePath = url.toLocalFile().toLower();
+	if (filePath.endsWith(".png") || filePath.endsWith(".jpg")) {
+	 event->acceptProposedAction(); // OK!
+	 return;
+	}
+   }
+  }
+  event->ignore();
+ }
+
  class ArtifactProjectManagerWidget::Impl {
  public:
 
@@ -228,6 +317,14 @@ namespace Artifact {
   setLayout(layout);
 
   setContextMenuPolicy(Qt::CustomContextMenu);
+ 	
+  auto projectService = ArtifactProjectService::instance();
+ 	
+  connect(projectService,
+   &ArtifactProjectService::projectCreated,
+   this,
+   &ArtifactProjectManagerWidget::updateRequested);
+ 	
  }
 
  ArtifactProjectManagerWidget::~ArtifactProjectManagerWidget()
@@ -314,10 +411,10 @@ namespace Artifact {
 
  void ArtifactProjectManagerWidget::updateRequested()
  {
-  auto& projectManager=ArtifactProjectManager::getInstance();
+  auto projectService = ArtifactProjectService::instance();
  	
  	
- 	
+  this->setEnabled(true);
  }
 
  class ArtifactProjectManagerToolBox::Impl

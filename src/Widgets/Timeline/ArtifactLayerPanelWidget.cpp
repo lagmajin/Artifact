@@ -180,7 +180,7 @@ namespace Artifact
 
  }
 
- class ArtifactLayerPanelWrapper::Impl
+ class ArtifactLayerTimelinePanelWrapper::Impl
  {
  public:
   QScrollArea* scroll = nullptr;
@@ -188,7 +188,7 @@ namespace Artifact
   ArtifactLayerPanelWidget* panel = nullptr;
  };
 
- ArtifactLayerPanelWrapper::ArtifactLayerPanelWrapper(QWidget* parent)
+ ArtifactLayerTimelinePanelWrapper::ArtifactLayerTimelinePanelWrapper(QWidget* parent)
   : QWidget(parent),
   impl_(new Impl)
  {
@@ -208,7 +208,7 @@ namespace Artifact
   setLayout(layout);
  }
 
- ArtifactLayerPanelWrapper::~ArtifactLayerPanelWrapper()
+ ArtifactLayerTimelinePanelWrapper::~ArtifactLayerTimelinePanelWrapper()
  {
   delete impl_;
  }

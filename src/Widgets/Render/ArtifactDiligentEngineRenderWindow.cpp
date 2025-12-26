@@ -11,9 +11,6 @@
 
 module ArtifactDiligentEngineRenderWindow;
 
-
-
-
 #pragma comment(lib,"DiligentCore.lib")
 #pragma comment(lib,"Diligent-Common.lib")
 #pragma comment(lib,"Diligent-BasicPlatform.lib")
@@ -24,7 +21,7 @@ module ArtifactDiligentEngineRenderWindow;
 #pragma comment(lib,"Diligent-GraphicsTools.lib")
 #pragma comment(lib,"Diligent-GraphicsAccessories.lib")
 #pragma comment(lib,"Diligent-Archiver-static.lib")
-
+import std;
 import Graphics.CBuffer.Constants;
 
 

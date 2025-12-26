@@ -79,7 +79,7 @@ namespace Artifact {
   case LayerType::Shape:
    break;
   case LayerType::Precomp:
-  	ptr = std::make_shared<ArtifactCompositionLayer>();
+  	//ptr = std::make_shared<ArtifactCompositionLayer>();
   	
    break;
   case LayerType::Audio:

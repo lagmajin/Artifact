@@ -60,6 +60,8 @@ export namespace Artifact
  public/*slots*/:
   void play(); W_SLOT(play);
   void stop(); W_SLOT(stop);
+ 	
+  void takeScreenShot(); W_SLOT(takeScreenShot);
  };
 
 

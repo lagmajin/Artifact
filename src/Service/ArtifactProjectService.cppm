@@ -20,7 +20,9 @@ namespace Artifact
   ~Impl();
   static ArtifactProjectManager& projectManager();
   void addLayerToCurrentComposition(const ArtifactLayerInitParams& params);
- 
+  void addAssetFromPath(const UniString& path);
+  UniString projectName() const;
+  void changeProjectName(const UniString& name);
  };
 
  ArtifactProjectService::Impl::Impl()
@@ -50,10 +52,31 @@ namespace Artifact
  	
  }
 
+ void ArtifactProjectService::Impl::addAssetFromPath(const UniString& path)
+ {
+    auto& manager = projectManager();
+ 	
+    manager.addAssetFromFilePath(path);
+ 	
+ }
+
+ UniString ArtifactProjectService::Impl::projectName() const
+ {
+
+  return UniString();
+ }
+
+ void ArtifactProjectService::Impl::changeProjectName(const UniString& name)
+ {
+  //projectManager().set
+ 	
+ }
+
  W_OBJECT_IMPL(ArtifactProjectService)
 	
  ArtifactProjectService::ArtifactProjectService(QObject*parent):QObject(parent),impl_(new Impl())
  {
+  connect(&impl_->projectManager(),&ArtifactProjectManager::newProjectCreated,this,&ArtifactProjectService::projectCreated);
 
  }
 
@@ -90,17 +113,19 @@ namespace Artifact
 
  UniString ArtifactProjectService::projectName() const
  {
-  return UniString();
+ 	
+  return impl_->projectName();
  }
 
  void ArtifactProjectService::changeProjectName(const UniString& string)
  {
-
+  impl_->changeProjectName(string);
  }
 
  void ArtifactProjectService::addAssetFromPath(const UniString& path)
  {
-
+  impl_->addAssetFromPath(path);
  }
-
+	
+	
 };

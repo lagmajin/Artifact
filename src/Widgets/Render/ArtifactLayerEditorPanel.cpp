@@ -27,6 +27,8 @@ namespace Artifact {
   editor_ = new ArtifactLayerEditor2DWidget();
   
   footer_ = new ArtifactCompositionViewerFooter();
+
+  connect(footer_, &ArtifactCompositionViewerFooter::takeSnapShotRequested, editor_, &ArtifactLayerEditor2DWidget::takeScreenShot);
  }
 
  ArtifactLayerEditorPanel::Impl::~Impl()

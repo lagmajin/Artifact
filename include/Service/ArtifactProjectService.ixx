@@ -46,8 +46,10 @@ export namespace Artifact
   void addLayer(const CompositionID& id, const ArtifactLayerInitParams& params);
   void addLayerToCurrentComposition(const ArtifactLayerInitParams& params);
  public:
+  void projectCreated()
+  W_SIGNAL(projectCreated);
   void projectSettingChanged(const ArtifactProjectSettings& setting);
-  W_SLOT(projectSettingChanged)
+  W_SLOT(projectSettingChanged);
 
  };
 

@@ -524,7 +524,7 @@
     <ClCompile Include="include\Render\IRenderer.ixx">
       <Filter>ヘッダー ファイル\Render</Filter>
     </ClCompile>
-    <ClCompile Include="src\Widgets\Render\ArtifactDiligentEngineComposition2DRenderImpl.cpp">
+    <ClCompile Include="src\Widgets\Render\ArtifactRenderWrapperWidget.cpp">
       <Filter>ソース ファイル\Widgets\Render</Filter>
     </ClCompile>
     <ClCompile Include="include\Layer\ArtifactSolid2DLayer.ixx">
@@ -901,6 +901,9 @@
     </ClCompile>
     <ClCompile Include="src\Render\IRenderer.cppm">
       <Filter>ソース ファイル\Render</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Widgets\Render\ArtifactRenderWrapperWidget.ixx">
+      <Filter>ヘッダー ファイル\Widgets\Render</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
