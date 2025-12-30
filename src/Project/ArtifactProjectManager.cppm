@@ -35,6 +35,7 @@ namespace Artifact {
    bool isCreated_ = false;
    std::shared_ptr<ArtifactProject> currentProjectPtr_;
    void createProject();
+   bool isProjectCreated() const;
    Id createNewComposition();
    CompositionResult createComposition(const CompositionSettings& setting);
    void addAssetFromFilePath(const QString& filePath);
@@ -101,8 +102,18 @@ namespace Artifact {
   return result;
  }
 
+ bool ArtifactProjectManager::Impl::isProjectCreated() const
+ {
+  if(currentProjectPtr_)
+  {
+   return true;
+  }
+  return false;
+ }
+
  ArtifactProjectManager::ArtifactProjectManager(QObject* parent /*= nullptr*/) :QObject(parent), Impl_(new Impl())
  {
+
 
  }
 
@@ -121,7 +132,7 @@ namespace Artifact {
  {
   Impl_->createProject();
 
-  /*emit*/ newProjectCreated();
+  /*emit*/ projectCreated();
  }
 
  void ArtifactProjectManager::createProject(const QString& projectName, bool force/*=false*/)
@@ -130,7 +141,7 @@ namespace Artifact {
 
   Impl_->createProject();
 
-  /*emit*/ newProjectCreated();
+  /*emit*/ projectCreated();
  }
 
  ArtifactProjectManager& ArtifactProjectManager::getInstance()
@@ -150,7 +161,7 @@ namespace Artifact {
 
  }
 
- bool ArtifactProjectManager::projectCreated() const
+ bool ArtifactProjectManager::isProjectCreated() const
  {
   return true;
  }
@@ -163,7 +174,9 @@ namespace Artifact {
 
  void ArtifactProjectManager::createComposition(const QString& str)
  {
-  newCompositionCreated();
+  CompositionID id;
+
+  /*emit*/ compositionCreated(id);
 
  }
 
@@ -171,8 +184,9 @@ namespace Artifact {
  {
   Impl_->createNewComposition();
 
+  CompositionID id;
 
-  newCompositionCreated();
+  /*emit*/compositionCreated(id);
  }
 
  void ArtifactProjectManager::createComposition(const QString, const QSize& size)
@@ -185,7 +199,7 @@ namespace Artifact {
 
   auto result=Impl_->createComposition(setting);
  	
-  newCompositionCreated();
+  //compositionCreated(CompositionID());
  	
   return result;
  }
@@ -210,6 +224,11 @@ namespace Artifact {
  {
 
   return nullptr;
+ }
+
+ bool ArtifactProjectManager::isProjectClosed() const
+ {
+  return true;
  }
 
  bool projectManagerCurrentClose()

@@ -149,7 +149,7 @@ namespace Artifact {
 	const glm::vec2& scale);
    std::mutex g_eventMutex;
    std::queue<std::function<void()>> g_renderEvents;
-   ArtifactPreviewPipeline  previewPipeline_;
+   ArtifactPreviewCompositionPipeline  previewPipeline_;
    bool takeScreenshot = false;
    bool panning_ = false;
    const TEXTURE_FORMAT MAIN_RTV_FORMAT = TEX_FORMAT_RGBA8_UNORM_SRGB;

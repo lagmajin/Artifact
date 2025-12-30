@@ -5,26 +5,18 @@ export module Artifact.Render.Pipeline;
 
 
 
-export namespace ArtifactCore
+export namespace Artifact
 {
  class RenderPipeline
  {
  private:
+  class Impl;
+  Impl* impl_;
 
  public:
   RenderPipeline();
   ~RenderPipeline();
  };
-
- RenderPipeline::RenderPipeline()
- {
-
- }
-
- RenderPipeline::~RenderPipeline()
- {
-
- }
 
 
 

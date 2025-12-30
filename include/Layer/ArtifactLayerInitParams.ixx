@@ -60,10 +60,19 @@ export namespace Artifact {
 
  class ArtifactCameraLayerInitParams :public ArtifactLayerInitParams
  {
- 	private:
- 	
+ private:
+
  public:
+  ArtifactCameraLayerInitParams();
   ~ArtifactCameraLayerInitParams();
+ };
+
+ class ArtifactCompositionLayerInitParams :public ArtifactLayerInitParams {
+ private:
+
+ public:
+  ArtifactCompositionLayerInitParams();
+  ~ArtifactCompositionLayerInitParams();
  };
 
 };

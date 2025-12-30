@@ -1,9 +1,10 @@
 ﻿module ;
 
-#include <ads_globals.h>
+
 #include <wobjectcpp.h>
 
 #include <QtWidgets/QMainWindow>
+#include <ads_globals.h>
 
 
 export module Artifact.MainWindow;

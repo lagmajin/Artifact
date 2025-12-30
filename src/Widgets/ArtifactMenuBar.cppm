@@ -1,5 +1,6 @@
 ﻿module;
 #include <QString>
+#include <QMenuBar>
 module Menu.MenuBar;
 
 import Menu;

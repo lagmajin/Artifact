@@ -4,6 +4,8 @@ module;
 
 export module Artifact.Render.Queue.Service;
 
+import std;
+
 export namespace Artifact
 {
  class ArtifactRenderQueueService:public QObject
@@ -15,6 +17,13 @@ export namespace Artifact
  public:
   explicit ArtifactRenderQueueService(QObject*parent=nullptr);
   ~ArtifactRenderQueueService();
+  void addRenderQueue();
+  void removeRenderQueue();
+  void removeAllRenderQueues();
+
+  void startRenderQueue();
+  void startAllRenderQueues();
+
  };
 
 

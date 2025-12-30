@@ -1,5 +1,6 @@
 ﻿module;
-
+#include <QMenu>
+#include <QAction>
 module Menu.Help;
 
 import std;

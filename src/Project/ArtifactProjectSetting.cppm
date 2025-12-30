@@ -1,6 +1,7 @@
 ﻿module;
 #include <wobjectdefs.h>
-//
+#include <QList>
+#include <QString>
 module Artifact.Project.Settings;
 
 import std;

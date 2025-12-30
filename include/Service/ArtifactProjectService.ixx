@@ -3,6 +3,7 @@ module;
 #include <QSize>
 #include <QString>
 #include <QObject>
+
 //#include <winrt/impl/Windows.UI.Composition.1.h>
 
 export module Artifact.Service.Project;
@@ -18,6 +19,7 @@ import Artifact.Composition.Abstract;
 
 W_REGISTER_ARGTYPE(QSize)
 W_REGISTER_ARGTYPE(QString)
+
 
 export namespace Artifact
 {
@@ -45,11 +47,18 @@ export namespace Artifact
   
   void addLayer(const CompositionID& id, const ArtifactLayerInitParams& params);
   void addLayerToCurrentComposition(const ArtifactLayerInitParams& params);
- public:
+ public/*signals*/:
   void projectCreated()
   W_SIGNAL(projectCreated);
-  void projectSettingChanged(const ArtifactProjectSettings& setting);
-  W_SLOT(projectSettingChanged);
+  void compositionCreated(const CompositionID& id)
+   W_SIGNAL(compositionCreated, id);
+  void layerCreated(const LayerID& id)
+   W_SIGNAL(layerCreated, id);
+  public:
+   void projectSettingChanged(const ArtifactProjectSettings& setting);
+   W_SLOT(projectSettingChanged);
+
+ 
 
  };
 

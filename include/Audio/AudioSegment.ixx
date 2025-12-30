@@ -22,10 +22,32 @@ export namespace ArtifactCore {
  };
 
  struct AudioSegment {
-  std::vector<float> samples; // マルチチャネルならインターリーブ（LRLR...）
+  // 各チャンネルのサンプルデータを格納する二次元構造
+  // channels[0] = Left, channels[1] = Right ...
+  // QVectorの暗黙的共有により、この構造体自体のコピーコストは非常に低い
+  QVector<QVector<float>> channelData;
+
   int sampleRate = 44100;
-  int channels = 2;
-  qint64 startFrame = 0;      // タイムライン上の開始位置
+  AudioChannelLayout layout = AudioChannelLayout::Stereo;
+  qint64 startFrame = 0;
+
+  // 便利関数：全チャンネルのサンプル数を取得
+  int frameCount() const {
+   return channelData.isEmpty() ? 0 : channelData[0].size();
+  }
+
+  // チャンネル数を取得
+  int channelCount() const {
+   return channelData.size();
+  }
+
+  // 特定のサンプルのポインタを安全に取得
+  const float* constData(int channelIdx) const {
+   if (channelIdx >= 0 && channelIdx < channelData.size()) {
+	return channelData[channelIdx].constData();
+   }
+   return nullptr;
+  }
  };
 
 

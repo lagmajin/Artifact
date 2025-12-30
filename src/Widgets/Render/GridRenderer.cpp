@@ -5,6 +5,7 @@ module GridRenderer;
 
 namespace Artifact {
 
+ /*
  GridRenderer::GridRenderer()
  {
 
@@ -20,4 +21,5 @@ namespace Artifact {
 
  }
 
+ */
 };

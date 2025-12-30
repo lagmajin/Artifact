@@ -5,6 +5,9 @@ module Artifact.Render.Queue.Service;
 
 import std;
 //import Container.MultiIndex;
+//import Artifact.Render.Queue;
+import Render.Queue.Manager;
+
 
 namespace Artifact
 {
@@ -31,5 +34,22 @@ namespace Artifact
  {
   delete impl_;
  }
+
+ void ArtifactRenderQueueService::addRenderQueue()
+ {
+
+ }
+
+ void ArtifactRenderQueueService::removeRenderQueue()
+ {
+
+ }
+
+ void ArtifactRenderQueueService::removeAllRenderQueues()
+ {
+
+ }
+
+
 
 };

@@ -135,11 +135,13 @@ namespace Artifact {
 
  void ArtifactProject::createComposition(const QString& name)
  {
-  Id id;
+  CompositionID id;
 
   QSignalSpy spy(this, &ArtifactProject::compositionCreated);
 
-  compositionCreated("Test");
+  
+
+  /*emit*/compositionCreated(id);
 
   QCOMPARE(spy.count(), 1);
 
@@ -192,5 +194,7 @@ namespace Artifact {
  {
   return false;
  }
+
+
 
 }

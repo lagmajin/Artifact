@@ -96,6 +96,27 @@ LayerType ArtifactLayerInitParams::layerType() const
 
  }
 
+ ArtifactCameraLayerInitParams::ArtifactCameraLayerInitParams() :ArtifactLayerInitParams("name", LayerType::Camera)
+ {
+
+ }
+
+ ArtifactCameraLayerInitParams::~ArtifactCameraLayerInitParams()
+ {
+
+ }
+
+ ArtifactCompositionLayerInitParams::ArtifactCompositionLayerInitParams() :ArtifactLayerInitParams("name", LayerType::Null)
+ {
+
+ }
+
+ ArtifactCompositionLayerInitParams::~ArtifactCompositionLayerInitParams()
+ {
+
+ }
+
+
 };
 
 

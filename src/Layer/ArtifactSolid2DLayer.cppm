@@ -1,5 +1,5 @@
 ﻿module;
-
+#include <QList>
 
 module Artifact.Layer.Solid2D;
 

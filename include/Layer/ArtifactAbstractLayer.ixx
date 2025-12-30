@@ -25,7 +25,7 @@ export namespace Artifact {
 
  enum class LayerType
  {
-  Unknown,
+  Unknown=0,
   None,
   Null,
   Solid,       // 単色レイヤー
@@ -35,7 +35,8 @@ export namespace Artifact {
   Shape,       // シェイプレイヤー
   Precomp,     // プリコンポジション
   Audio,       // 音声のみレイヤー
-  Video
+  Video,
+  Camera,
  };
 
  class ArtifactAbstractLayer;

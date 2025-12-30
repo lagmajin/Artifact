@@ -196,6 +196,9 @@
     <Filter Include="ソース ファイル\Effects\Noise">
       <UniqueIdentifier>{957a38fb-ec9b-40bb-8f1b-95dd67a7813b}</UniqueIdentifier>
     </Filter>
+    <Filter Include="ヘッダー ファイル\InterProcess">
+      <UniqueIdentifier>{7831a5c7-3da1-4718-be80-75b418c3552b}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="include\Composition\ArtifactCompositionManager.hpp">
@@ -872,10 +875,10 @@
     <ClCompile Include="src\Preview\ArtifactPreviewController.cppm">
       <Filter>ソース ファイル\Preview</Filter>
     </ClCompile>
-    <ClCompile Include="include\Preview\ArtifactPreviewPipeline.ixx">
+    <ClCompile Include="include\Preview\ArtifactPreviewCompositionPipeline.ixx">
       <Filter>ヘッダー ファイル\Preview</Filter>
     </ClCompile>
-    <ClCompile Include="src\Preview\ArtifactPreviewPipeline.cppm">
+    <ClCompile Include="src\Preview\ArtifactPreviewCompositionPipeline.cppm">
       <Filter>ソース ファイル\Preview</Filter>
     </ClCompile>
     <ClCompile Include="include\Widgets\Viewer\ArtifactContentsViewer.ixx">
@@ -904,6 +907,33 @@
     </ClCompile>
     <ClCompile Include="include\Widgets\Render\ArtifactRenderWrapperWidget.ixx">
       <Filter>ヘッダー ファイル\Widgets\Render</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Audio\Effects\ArtifactAudioOutput.ixx">
+      <Filter>ヘッダー ファイル\Audio</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Service\ArtifactAudioService.ixx">
+      <Filter>ヘッダー ファイル\Service</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Service\ArtifactAudioService.cpp">
+      <Filter>ソース ファイル\Service</Filter>
+    </ClCompile>
+    <ClCompile Include="include\InterProcess\ArtifactClipboardManager.ixx">
+      <Filter>ヘッダー ファイル\InterProcess</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Service\ArtifactClipboardService.ixx">
+      <Filter>ヘッダー ファイル\Service</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Service\ArtifactClipboardService.cpp">
+      <Filter>ソース ファイル\Service</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Render\RenderPipeline.cpp">
+      <Filter>ソース ファイル\Render</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Preview\ArtifactLayerPreviewPipeline.ixx">
+      <Filter>ヘッダー ファイル\Preview</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Preview\ArtifactLayerPreviewPipeline.cpp">
+      <Filter>ソース ファイル\Preview</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>

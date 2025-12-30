@@ -20,6 +20,7 @@ namespace Artifact
   ~Impl();
   ArtifactProjectWeakPtr projectPtr_;
   void refreshTree();
+  static ArtifactProjectService* projectService();
  };
 
  void ArtifactProjectModel::Impl::refreshTree()
@@ -30,8 +31,19 @@ namespace Artifact
  	
  }
 
+ ArtifactProjectService* ArtifactProjectModel::Impl::projectService()
+ {
+
+  return ArtifactProjectService::instance();
+ }
+
  ArtifactProjectModel::ArtifactProjectModel(QObject* parent/*=nullptr*/) :QAbstractItemModel(parent)
  {
+
+  connect(impl_->projectService(),&ArtifactProjectService::layerCreated, this, [this]() {
+   impl_->refreshTree();
+   });
+
 
  }
 

@@ -76,7 +76,9 @@ namespace Artifact
 	
  ArtifactProjectService::ArtifactProjectService(QObject*parent):QObject(parent),impl_(new Impl())
  {
-  connect(&impl_->projectManager(),&ArtifactProjectManager::newProjectCreated,this,&ArtifactProjectService::projectCreated);
+  connect(&impl_->projectManager(),&ArtifactProjectManager::projectCreated,this,&ArtifactProjectService::projectCreated);
+  connect(&impl_->projectManager(), &ArtifactProjectManager::compositionCreated, this, &ArtifactProjectService::compositionCreated);
+  connect(&impl_->projectManager(), &ArtifactProjectManager::layerCreated, this, &ArtifactProjectService::layerCreated);
 
  }
 
@@ -129,3 +131,5 @@ namespace Artifact
 	
 	
 };
+
+//W_REGISTER_ARGTYPE(ArtifactCore::CompositionID)

@@ -1,4 +1,5 @@
 ﻿module;
+#include <QImage>
 module Artifact.Layer.Image;
 
 import std;

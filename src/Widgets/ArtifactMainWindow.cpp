@@ -4,10 +4,17 @@
 #include <DockManager.h>
 #include <QLabel>
 #include <QMessageBox>
-#pragma comment(lib,"qtadvanceddockingd.lib")
+
+
+#include <qcoro6/qcoro/qcorotask.h>
+#include <qcoro6/qcoro/coroutine.h>
+#include <qcoro6/qcoro/qcorotimer.h>
+
+//#pragma comment(lib,"qtadvanceddockingd.lib")
 
 module Artifact.MainWindow;
 
+import std;
 import Menu;
 
 import DockWidget;
@@ -38,7 +45,7 @@ namespace ArtifactWidgets {}//
 namespace Artifact {
 
  using namespace ArtifactWidgets;
-
+ using namespace std::chrono_literals;
  using namespace ads;
 
  // ReSharper disable CppInspection
@@ -51,6 +58,8 @@ namespace Artifact {
   public:
    Impl(ArtifactMainWindow* mainWindow);
    ~Impl();
+   void setupUi();
+
    void handleProjectCreated();
    void handleCompositionCreated();
    void handleCompositionCreated(ArtifactMainWindow* window);
@@ -59,6 +68,7 @@ namespace Artifact {
 
    void handleDefaultKeyPressEvent(QKeyEvent* event);
    void handleDefaultKeyReleaseEvent(QKeyEvent* event);
+    QCoro::Task<> setupUiAsync();
  };
 
  void ArtifactMainWindow::Impl::handleProjectCreated()
@@ -98,16 +108,27 @@ namespace Artifact {
 
  }
 
+ void ArtifactMainWindow::Impl::setupUi()
+ {
+  auto pal = mainWindow_->palette();
+  pal.setColor(QPalette::Window, QColor(30, 30, 30));
+
+  mainWindow_->setPalette(pal);
+
+
+  mainWindow_->setAutoFillBackground(true);
+ }
+
+ QCoro::Task<> ArtifactMainWindow::Impl::setupUiAsync()
+ {
+  co_await QCoro::sleepFor(0ms);
+ }
+
  ArtifactMainWindow::ArtifactMainWindow(QWidget* parent /*= nullptr*/):QMainWindow(parent),impl_(new Impl(this))
  {
+  impl_->setupUi();
 
-
-  QPalette p = palette();
-  p.setColor(QPalette::Window, QColor(30, 30, 30));
-
-  setPalette(p);
-
-  setAutoFillBackground(true);
+ 
 
   CDockManager::setConfigFlags(CDockManager::DefaultOpaqueConfig);
   CDockManager::setConfigFlag(CDockManager::RetainTabSizeWhenCloseButtonHidden, true);
@@ -178,11 +199,11 @@ namespace Artifact {
     auto timeTest = new ArtifactLayerTimelinePanelWrapper();
     timeTest->show();
  	
-  QObject::connect(&projectManager, &ArtifactProjectManager::newProjectCreated, [this]() {
+  QObject::connect(&projectManager, &ArtifactProjectManager::projectCreated, [this]() {
    impl_->handleProjectCreated();
    });
 
-  QObject::connect(&projectManager, &ArtifactProjectManager::newCompositionCreated, [this]() {
+  QObject::connect(&projectManager, &ArtifactProjectManager::compositionCreated, [this]() {
    impl_->handleCompositionCreated(this);
    });
 

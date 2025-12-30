@@ -2,6 +2,8 @@ module;
 
 export module Artifact.Service.Application;
 
+import Artifact.Service.ClipboardManager;
+
 export namespace Artifact
 {
  class ApplicationService
@@ -12,6 +14,7 @@ export namespace Artifact
  public:
   ApplicationService();
   ~ApplicationService();
+
  };
 
 

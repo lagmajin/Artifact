@@ -39,7 +39,7 @@ import Test;
 
 import ImageProcessing.SpectralGlow;
 
-import Codec.Thubnail.FFmpeg;
+import Codec.Thumbnail.FFmpeg;
 
 import Widgets.Render.Queue;
 

@@ -61,7 +61,7 @@ namespace Artifact {
 
  QSize ArtifactLayerEditorPanel::sizeHint() const
  {
-  return QSize(400, 600); // •200pxA‚‚³100px‚ª–]‚Ü‚µ‚¢
+  return QSize(400, 600);
  }
 
 };

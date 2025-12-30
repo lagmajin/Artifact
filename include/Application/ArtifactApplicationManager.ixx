@@ -31,7 +31,8 @@ export namespace Artifact {
   ArtifactTestProjectManager* testProjectManager() const;
   GlobalEffectManager*const effectManager();
   ArtifactActiveContextService* activeContextService();
-
+  
+  //void copyImageToClipboard(const QImage& image);
  	
   //ArtifactProjectManager* const projectManager();
   entt::registry& registry();

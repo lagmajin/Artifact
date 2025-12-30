@@ -14,18 +14,21 @@
 export module Artifact.Project.Manager;
 
 import std;
-import Artifact.Project;
 import Utils;
+
+import Artifact.Project;
 import Composition.Settings;
 import Artifact.Composition.Result;
 import Artifact.Composition.Abstract;
 
 
 namespace pybind11 {}//dummy
-namespace folly{}//dummy
+namespace folly {}//dummy
+W_REGISTER_ARGTYPE(ArtifactCore::LayerID)
+W_REGISTER_ARGTYPE(ArtifactCore::CompositionID)
 
 export namespace Artifact {
- 
+
  using namespace folly;
 
  namespace py = pybind11;
@@ -36,33 +39,34 @@ export namespace Artifact {
   virtual bool closeCurrentProject() = 0;
  };
 
- class ArtifactProjectManager :public QObject{
+ class ArtifactProjectManager :public QObject {
   W_OBJECT(ArtifactProjectManager)
  private:
   class Impl;
   Impl* Impl_;
-  
-  
+
+
   //ArtifactProjectManager(const ArtifactProjectManager&) = delete;
   //ArtifactProjectManager& operator=(const ArtifactProjectManager&) = delete;
   //static std::shared_ptr<ArtifactProjectManager> getInstance();
  protected:
-  
+
  public:
   explicit ArtifactProjectManager(QObject* parent = nullptr);
   ~ArtifactProjectManager();
   static ArtifactProjectManager& getInstance();
   void createProject();
-  void createProject(const QString& projectName,bool force=false);
+  void createProject(const QString& projectName, bool force = false);
   void loadFromFile(const QString& fullpath);
-  
-  bool projectCreated() const;
+
+  bool isProjectCreated() const;
+  bool isProjectClosed() const;
 
   void createComposition();
   CompositionResult createComposition(const CompositionSettings& setting);
   void createComposition(const QString& str);
   void createComposition(const QString, const QSize& size);
- 	
+
   bool closeCurrentProject();
   std::shared_ptr<ArtifactProject> getCurrentProjectSharedPtr();
 
@@ -70,8 +74,8 @@ export namespace Artifact {
   //
   ArtifactCompositionPtr currentComposition();
   ArtifactCompositionPtr findComposition(const CompositionID& id);
-  
-	//Assets
+
+  //Assets
   void addAssetFromFilePath(const QString& filePath);
   void addAssetsFromFilePaths(const QStringList& filePaths);
 
@@ -80,20 +84,21 @@ export namespace Artifact {
 
 
  public:
-  void newProjectCreated()
-   W_SIGNAL(newProjectCreated)
+  void projectCreated()
+   W_SIGNAL(projectCreated);
+  void projectClosed()
+   W_SIGNAL(projectClosed);
+  void compositionCreated(const CompositionID& id)
+   W_SIGNAL(compositionCreated, id);
 
-   void newCompositionCreated()
-   W_SIGNAL(newCompositionCreated)
-
-  void newLayerCreated()
-   W_SIGNAL(newLayerCreated)
+   void layerCreated(const LayerID& id)
+   W_SIGNAL(layerCreated, id);
 
  };
- 
 
 
- 
+
+
 
  extern "C" {
   bool projectManagerCurrentClose();

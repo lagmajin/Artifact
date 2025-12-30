@@ -25,7 +25,7 @@
     <RootNamespace>Artifact</RootNamespace>
     <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
     <Keyword>QtVS_v304</Keyword>
-    <QtMsBuild Condition="'$(QtMsBuild)'=='' OR !Exists('$(QtMsBuild)\qt.targets')">$(MSBuildProjectDirectory)\QtMsBuild</QtMsBuild>
+    <!--<QtMsBuild Condition="'$(QtMsBuild)'=='' OR !Exists('$(QtMsBuild)\qt.targets')">$(MSBuildProjectDirectory)\QtMsBuild</QtMsBuild>-->
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
@@ -56,45 +56,52 @@
     <CharacterSet>Unicode</CharacterSet>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
-  <Import Project="$(QtMsBuild)\qt_defaults.props" Condition="Exists('$(QtMsBuild)\qt_defaults.props')" />
+  <!--<Import Project="$(QtMsBuild)\qt_defaults.props" Condition="Exists('$(QtMsBuild)\qt_defaults.props')" />-->
   <PropertyGroup Label="QtSettings" Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" />
   <PropertyGroup Label="QtSettings" Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" />
   <PropertyGroup Label="QtSettings" Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-    <QtInstall>6.7.2_msvc2019_64</QtInstall>
+    <QtInstall>tools_Qt6</QtInstall>
   </PropertyGroup>
-  <PropertyGroup Label="QtSettings" Condition="'$(Configuration)|$(Platform)'=='Release|x64'" />
-  <Target Name="QtMsBuildNotFound" BeforeTargets="CustomBuild;ClCompile" Condition="!Exists('$(QtMsBuild)\qt.targets') OR !Exists('$(QtMsBuild)\Qt.props')">
+  <PropertyGroup Label="QtSettings" Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <QtInstall>tools_Qt6</QtInstall>
+  </PropertyGroup>
+  <!--<Target Name="QtMsBuildNotFound" BeforeTargets="CustomBuild;ClCompile" Condition="!Exists('$(QtMsBuild)\qt.targets') OR !Exists('$(QtMsBuild)\Qt.props')">
     <Message Importance="High" Text="QtMsBuild: could not locate qt.targets, qt.props; project may not build correctly." />
-  </Target>
+  </Target>-->
   <ImportGroup Label="ExtensionSettings">
   </ImportGroup>
   <ImportGroup Label="Shared">
   </ImportGroup>
   <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
-    <Import Project="$(QtMsBuild)\Qt.props" />
+    <!--<Import Project="$(QtMsBuild)\Qt.props" />-->
   </ImportGroup>
   <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
-    <Import Project="$(QtMsBuild)\Qt.props" />
+    <!--<Import Project="$(QtMsBuild)\Qt.props" />-->
   </ImportGroup>
   <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
-    <Import Project="$(QtMsBuild)\Qt.props" />
+    <!--<Import Project="$(QtMsBuild)\Qt.props" />-->
   </ImportGroup>
   <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
-    <Import Project="$(QtMsBuild)\Qt.props" />
+    <!--<Import Project="$(QtMsBuild)\Qt.props" />-->
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <OutDir>$(SolutionDir)/App</OutDir>
-    <IncludePath>X:\Build\install\include;C:\Program Files\dotnet\packs\Microsoft.NETCore.App.Host.win-x64\9.0.5\runtimes\win-x64\native;C:\Users\lagma\Desktop\Artifact\third_party;X:\opencv\build\include;X:\ogre-sdk-v14.3.2-msvc142-x64\include;X:\WickedEngine-master\WickedEngine;X:\Qt\6.7.2\msvc2019_64\include\QtCore;X:\Qt\6.7.2\msvc2019_64\include\QtWidgets;C:\Users\lagma\Desktop\Artifact\ArtifactWidgets\include;Z:\MyLib\Qt-Advanced-Docking-System\src;X:\Qt\6.7.2\msvc2019_64\include;C:\Program Files\Assimp\include;X:\Qt\6.7.2\msvc2019_64\include\QtGui;$(IncludePath)</IncludePath>
-    <LibraryPath>X:\Build\install\lib\DiligentCore\Debug;C:\Program Files\dotnet\packs\Microsoft.NETCore.App.Host.win-x64\9.0.5\runtimes\win-x64\native;X:\opencv\build\x64\vc16\lib;C:\Users\lagma\Desktop\Artifact\Artifact\lib;X:\Build\Graphics\GraphicsEngineD3D12\Debug;E:\libs;X:\ogre-sdk-v14.3.2-msvc142-x64\lib;X:\WickedEngine-master\BUILD\x64\Debug;X:\Qt\6.7.2\msvc2019_64\lib;D:\WickedEngine-master\BUILD\x64\Debug;$(SolutionDir)\lib;Z:\MyLib\Qt-Advanced-Docking-System\build\Desktop_Qt_6_7_2_MSVC2019_64bit-Debug\lib;$(LibraryPath)</LibraryPath>
+    <IncludePath>X:\vcpkg\installed\x64-windows\include\qtadvanceddocking-qt6;X:\vcpkg\installed\x64-windows\include\Qt6;X:\vcpkg\installed\x64-windows\include\Qt6\QtCore;X:\vcpkg\installed\x64-windows\include\Qt6\QtWidgets;X:\vcpkg\installed\x64-windows\include\Qt6\QtMultimedia;X:\vcpkg\installed\x64-windows\include\Qt6\QtGui;X:\Build\install\include;C:\Program Files\dotnet\packs\Microsoft.NETCore.App.Host.win-x64\9.0.5\runtimes\win-x64\native;C:\Users\lagma\Desktop\Artifact\third_party;X:\opencv\build\include;X:\ogre-sdk-v14.3.2-msvc142-x64\include;X:\WickedEngine-master\WickedEngine;C:\Users\lagma\Desktop\Artifact\ArtifactWidgets\include;C:\Program Files\Assimp\include;$(IncludePath)</IncludePath>
+    <LibraryPath>X:\Build\install\lib\DiligentCore\Debug;C:\Program Files\dotnet\packs\Microsoft.NETCore.App.Host.win-x64\9.0.5\runtimes\win-x64\native;X:\opencv\build\x64\vc16\lib;C:\Users\lagma\Desktop\Artifact\Artifact\lib;X:\Build\Graphics\GraphicsEngineD3D12\Debug;E:\libs;X:\ogre-sdk-v14.3.2-msvc142-x64\lib;X:\WickedEngine-master\BUILD\x64\Debug;D:\WickedEngine-master\BUILD\x64\Debug;$(SolutionDir)\lib;$(LibraryPath)</LibraryPath>
     <AllProjectBMIsArePublic>true</AllProjectBMIsArePublic>
     <PublicModuleDirectories>$(PublicModuleDirectories)</PublicModuleDirectories>
     <AllProjectIncludesArePublic>true</AllProjectIncludesArePublic>
     <ExecutablePath>C:\Bin;$(ExecutablePath)</ExecutablePath>
+  </PropertyGroup>
+  <PropertyGroup Label="Vcpkg">
+    <VcpkgApplocalDeps>true</VcpkgApplocalDeps>
+    <VcpkgXUseBuiltInApplocalDeps>true</VcpkgXUseBuiltInApplocalDeps>
+    <VcpkgEnableManifest>false</VcpkgEnableManifest>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <ClCompile>
@@ -130,7 +137,7 @@
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>
       <SDLCheck>false</SDLCheck>
-      <PreprocessorDefinitions>_DEBUG;_CONSOLE;PLATFORM_WIN32;_GUARDOVERFLOW_CRT_ALLOCATORS=1;_SILENCE_CXX23_ALIGNED_STORAGE_DEPRECATION_WARNING;GLOG_USE_GLOG_EXPORT;QT_NO_KEYWORDS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_DEBUG;_CONSOLE;PLATFORM_WIN32;_GUARDOVERFLOW_CRT_ALLOCATORS=1;_SILENCE_CXX23_ALIGNED_STORAGE_DEPRECATION_WARNING;GLOG_USE_GLOG_EXPORT;QT_NO_KEYWORDS;_WIN32_WINNT=0x0601;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpplatest</LanguageStandard>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
@@ -145,6 +152,7 @@
       <DebugInformationFormat>EditAndContinue</DebugInformationFormat>
       <AdditionalOptions>/Zc:__cplusplus /utf-8 %(AdditionalOptions)</AdditionalOptions>
       <TreatWChar_tAsBuiltInType>true</TreatWChar_tAsBuiltInType>
+      <AdditionalIncludeDirectories />
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -184,6 +192,7 @@
     <ClCompile Include="include\Application\ActiveContextService.ixx" />
     <ClCompile Include="include\Application\CommandDispatcher.ixx" />
     <ClCompile Include="include\Audio\Effects\ArtifactAbstractAudioEffects.ixx" />
+    <ClCompile Include="include\Audio\Effects\ArtifactAudioOutput.ixx" />
     <ClCompile Include="include\Composition\ArtifactAbstractComposition.ixx" />
     <ClCompile Include="include\Composition\ArtifactComposition.ixx" />
     <ClCompile Include="include\Composition\ArtifactCompositionResult.ixx" />
@@ -200,6 +209,7 @@
     <ClCompile Include="include\Generator\AbstractGeneratorEffector.ixx" />
     <ClCompile Include="include\Generator\GeneratorManager.ixx" />
     <ClCompile Include="include\GUI\WindowPluginManager.ixx" />
+    <ClCompile Include="include\InterProcess\ArtifactClipboardManager.ixx" />
     <ClCompile Include="include\Layer\ArtifactAbstract2DLayer.ixx" />
     <ClCompile Include="include\Layer\ArtifactAudioLayer.ixx" />
     <ClCompile Include="include\Layer\ArtifactHierarchyModel.ixx" />
@@ -218,8 +228,9 @@
     </ClCompile>
     <ClCompile Include="include\Layer\ArtifactShapeLayer.ixx" />
     <ClCompile Include="include\Layer\ArtifactLayerSelectionManager.ixx" />
+    <ClCompile Include="include\Preview\ArtifactLayerPreviewPipeline.ixx" />
     <ClCompile Include="include\Preview\ArtifactPreviewController.ixx" />
-    <ClCompile Include="include\Preview\ArtifactPreviewPipeline.ixx" />
+    <ClCompile Include="include\Preview\ArtifactPreviewCompositionPipeline.ixx" />
     <ClCompile Include="include\Preview\ArtifactTimelineClock.ixx" />
     <ClCompile Include="include\Preview\ArtifactPreviewWorker.ixx" />
     <ClCompile Include="include\Project\ArtifactProjectModel.ixx" />
@@ -233,6 +244,8 @@
     <ClCompile Include="include\Render\RenderModule.ixx" />
     <ClCompile Include="include\Render\RenderPipeline.ixx" />
     <ClCompile Include="include\Service\ApplicationService.ixx" />
+    <ClCompile Include="include\Service\ArtifactAudioService.ixx" />
+    <ClCompile Include="include\Service\ArtifactClipboardService.ixx" />
     <ClCompile Include="include\Service\ArtifactProjectService.ixx" />
     <ClCompile Include="include\Service\ArtifactToolService.ixx">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
@@ -317,10 +330,11 @@
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Library\Link.cpp" />
+    <ClCompile Include="src\Preview\ArtifactLayerPreviewPipeline.cpp" />
     <ClCompile Include="src\Preview\ArtifactPreviewController.cppm">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
     </ClCompile>
-    <ClCompile Include="src\Preview\ArtifactPreviewPipeline.cppm">
+    <ClCompile Include="src\Preview\ArtifactPreviewCompositionPipeline.cppm">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Preview\ArtifactTimelineClock.cppm">
@@ -345,9 +359,12 @@
     <ClCompile Include="src\Render\IRenderer.cppm">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
     </ClCompile>
+    <ClCompile Include="src\Render\RenderPipeline.cpp" />
     <ClCompile Include="src\Service\ApplicationService.cppm">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
     </ClCompile>
+    <ClCompile Include="src\Service\ArtifactAudioService.cpp" />
+    <ClCompile Include="src\Service\ArtifactClipboardService.cpp" />
     <ClCompile Include="src\Service\ArtifactProjectService.cppm">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
     </ClCompile>
