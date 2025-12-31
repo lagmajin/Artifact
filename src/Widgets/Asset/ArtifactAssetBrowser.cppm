@@ -11,6 +11,8 @@
 #include <QToolButton>
 #include <wobjectimpl.h>
 #include <boost/asio/basic_signal_set.hpp>
+
+#include <qcoro6/qcoro/qcorotask.h>
 module Widgets.AssetBrowser;
 import Widgets.Utils.CSS;
 

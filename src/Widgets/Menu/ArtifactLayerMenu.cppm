@@ -29,6 +29,7 @@ namespace Artifact {
   QAction* openLayerAction_ = nullptr;
   QMenu* layerTimeMenu_ = nullptr;
 
+  void handleOpenProject();
   void handleCreateNullLayer();
   void handleCreateSolidLayer();
   void handleAdjustableLayer();
@@ -49,7 +50,7 @@ namespace Artifact {
 
   createNullLayerAction_ = new QAction("Create null layer");
 
-  createNullLayerAction_->setDisabled(true);
+  //createNullLayerAction_->setDisabled(true);
 
   openLayerAction_ = new QAction("Open Layer");
 
@@ -126,6 +127,11 @@ namespace Artifact {
  }
 
  void ArtifactLayerMenu::Impl::handleOpenLayer()
+ {
+
+ }
+
+ void ArtifactLayerMenu::Impl::handleOpenProject()
  {
 
  }

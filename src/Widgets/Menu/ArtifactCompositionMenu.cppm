@@ -6,7 +6,7 @@
 #include <QMenu>
 #include <QAction>
 #include <QDialog>
-
+#include <qcoro6/qcoro/qcorotask.h>
 module Menu.Composition;
 
 
@@ -39,6 +39,7 @@ namespace Artifact {
   QAction* addToRenderQueueAction = nullptr;
 
   void showCreateCompositionSettingDialog();
+  QCoro::Task<> showChangeCompositionSettingsDialogAsync();
   void handleAddRenderQueueRequest();
   void handleSaveAsImageRequest();
  };
@@ -99,6 +100,8 @@ namespace Artifact {
 
    projectManager.createComposition();
   }
+
+  createCompositionSettingDialog->deleteLater();
 
  }
 

@@ -39,12 +39,12 @@ UniString ArtifactLayerInitParams::Impl::layerName() const
  return name_;
  }
 
- ArtifactLayerInitParams::ArtifactLayerInitParams(const QString& name, LayerType type)
+ ArtifactLayerInitParams::ArtifactLayerInitParams(const QString& name, LayerType type) :impl_(new Impl())
  {
 
  }
 
- ArtifactLayerInitParams::ArtifactLayerInitParams(const UniString& name, LayerType type)
+ ArtifactLayerInitParams::ArtifactLayerInitParams(const UniString& name, LayerType type):impl_(new Impl())
  {
 
  }

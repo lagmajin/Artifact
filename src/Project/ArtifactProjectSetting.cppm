@@ -5,21 +5,26 @@
 module Artifact.Project.Settings;
 
 import std;
+import Utils.String.UniString;
+
 
 namespace Artifact {
 
+ using namespace ArtifactCore;
 
  class ArtifactProjectSettings::Impl
  {
  private:
   QString name_;
+  UniString author_;
  public:
   Impl();
   ~Impl();
-  QString projectName() const;
+  UniString projectName() const;
   template <StringLike T>
   void setProjectName(const T& name);
   QJsonObject toJson() const;
+  void setFromJson(const QJsonObject& json);
  };
 	
  ArtifactProjectSettings::Impl::Impl()
@@ -32,7 +37,7 @@ namespace Artifact {
 
  }
 
- QString ArtifactProjectSettings::Impl::projectName() const
+ UniString ArtifactProjectSettings::Impl::projectName() const
  {
   return name_;
  }
@@ -48,6 +53,11 @@ namespace Artifact {
   QJsonObject result;
  	
   return result;
+ }
+
+ void ArtifactProjectSettings::Impl::setFromJson(const QJsonObject& json)
+ {
+
  }
 
  ArtifactProjectSettings::ArtifactProjectSettings():impl_(new Impl())
@@ -76,9 +86,9 @@ namespace Artifact {
   impl_->setProjectName(name);
  }
 
- QString ArtifactProjectSettings::author() const
+ UniString ArtifactProjectSettings::author() const
  {
-  return QString();
+  return UniString();
  }
 
  ArtifactProjectSettings& ArtifactProjectSettings::operator=(const ArtifactProjectSettings& settings)

@@ -36,10 +36,10 @@ namespace Artifact {
  {
 
  }
- 
+
  struct ArtifactProjectNode
  {
-	 
+
  };
 
  class ArtifactProject::Impl {
@@ -53,11 +53,11 @@ namespace Artifact {
   void addAssetFromPath(const QString& string);
   CompositionResult createComposition(const QString& str);
   void createComposition(const CompositionSettings& settings);
- 	
- 	void createCompositions(const QStringList& names);
+
+  void createCompositions(const QStringList& names);
   bool removeById(const CompositionID& id);
   void removeAllCompositions();
- 	
+
   QJsonObject toJson() const;
  };
 
@@ -82,7 +82,7 @@ namespace Artifact {
  void ArtifactProject::Impl::createComposition(const CompositionSettings& settings)
  {
   auto newComposition = new ArtifactComposition2D();
- 	
+
 
   //container_.add(settings);
 
@@ -106,10 +106,10 @@ namespace Artifact {
   result["name"] = projectSettings_.projectName();
   result["author"];
   result["version"] = "";
-  auto allComposition=container_.all();
- 	
- 	
- 	
+  auto allComposition = container_.all();
+
+
+
   return result;
  }
 
@@ -118,12 +118,12 @@ namespace Artifact {
 
  }
 
- ArtifactProject::ArtifactProject(const QString& name):impl_(new Impl())
+ ArtifactProject::ArtifactProject(const QString& name) :impl_(new Impl())
  {
 
  }
 
- ArtifactProject::ArtifactProject(const ArtifactProjectSettings& setting):impl_(new Impl())
+ ArtifactProject::ArtifactProject(const ArtifactProjectSettings& setting) :impl_(new Impl())
  {
 
  }
@@ -139,7 +139,7 @@ namespace Artifact {
 
   QSignalSpy spy(this, &ArtifactProject::compositionCreated);
 
-  
+
 
   /*emit*/compositionCreated(id);
 

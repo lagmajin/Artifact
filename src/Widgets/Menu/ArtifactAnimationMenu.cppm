@@ -1,6 +1,6 @@
 ﻿module;
 #include <QMenu>
-
+#include <qcoro6/qcoro/qcorotask.h>
 module Menu.Animation;
 
 namespace Artifact {

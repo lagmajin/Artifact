@@ -5,6 +5,7 @@ module;
 #include <wobjectimpl.h>
 module Artifact.Menu.Edit;
 
+import std;
 
 namespace Artifact {
 

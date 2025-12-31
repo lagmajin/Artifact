@@ -5,9 +5,13 @@ module;
 #include <QPushButton>
 #include <QToolButton>
 module Artifact.Widgets.PlaybackControlWidget;
+
+import std;
 import Utils;
 import Widgets.Utils.CSS;
 import Artifact.Application.Manager;
+
+import Artifact.Service.ActiveContext;
 
 
 namespace Artifact
@@ -24,20 +28,41 @@ namespace Artifact
   QToolButton* pauseButton_ = nullptr;
   QToolButton* stopButton_ = nullptr;
   QToolButton* backForward_ = nullptr;
+  //QToolButton* backForward_ = nullptr;
+  void setIconSize(const QSize& size);
 
+  void handlePlayButtonClicked();
+  void handleStopButtonClicked();
+  //void handleSeekStartButtonClicked();
  };
 
  ArtifactPlaybackControlWidget::Impl::Impl()
  {
   playButton_ = new QToolButton();
   playButton_->setIcon(QIcon(getIconPath() + "/PlayArrow.png"));
+  playButton_->setIconSize(QSize(32, 32));
   stopButton_ = new QToolButton();
   stopButton_->setIcon(QIcon(getIconPath() + "/Png/stop.png"));
-
+  stopButton_->setIconSize(QSize(32, 32));
   backForward_ = new QToolButton();
 
   pauseButton_ = new QToolButton();
   pauseButton_->setIcon(QIcon(getIconPath() + "/Png/pause.png"));
+  pauseButton_->setIconSize(QSize(32, 32));
+ }
+
+ void ArtifactPlaybackControlWidget::Impl::setIconSize(const QSize& size)
+ {
+
+ }
+
+ void ArtifactPlaybackControlWidget::Impl::handlePlayButtonClicked()
+ {
+
+ }
+
+ void ArtifactPlaybackControlWidget::Impl::handleStopButtonClicked()
+ {
 
  }
 
@@ -45,6 +70,9 @@ namespace Artifact
 
   ArtifactPlaybackControlWidget::ArtifactPlaybackControlWidget(QWidget* parent /*= nullptr*/) :QWidget(parent), impl_(new Impl())
  {
+  setObjectName("PlaybackControlWidget");
+  setWindowTitle("PlaybackControlWidget");
+
   auto layout = new QHBoxLayout();
   layout->setContentsMargins(0, 0, 0, 0);
   layout->setSpacing(4);
@@ -64,6 +92,8 @@ namespace Artifact
 
   connect(impl_->stopButton_, &QToolButton::clicked,
    this, &ArtifactPlaybackControlWidget::stop);
+
+  setMinimumSize(0, 32);
  }
 
  ArtifactPlaybackControlWidget::~ArtifactPlaybackControlWidget()
