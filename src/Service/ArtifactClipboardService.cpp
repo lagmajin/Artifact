@@ -1,5 +1,7 @@
 module;
 #include <QImage>
+#include <QClipboard>
+#include <QGuiApplication>
 module Artifact.Service.ClipboardManager;
 
 
@@ -11,6 +13,9 @@ namespace Artifact {
   public:
   Impl();
   ~Impl();
+  void setImage();
+  void setText();
+  void setPlainText(const UniString& text);
  };
 
  ArtifactClipboardService::Impl::Impl()
@@ -19,6 +24,11 @@ namespace Artifact {
  }
 
  ArtifactClipboardService::Impl::~Impl()
+ {
+
+ }
+
+ void ArtifactClipboardService::Impl::setPlainText(const UniString& text)
  {
 
  }
@@ -35,7 +45,16 @@ namespace Artifact {
 
  void ArtifactClipboardService::copyImageToClipboard(const QImage& image)
  {
+  QClipboard* clipboard = QGuiApplication::clipboard();
 
+ }
+
+ void ArtifactClipboardService::copyPlainText(const UniString& text)
+ {
+  QClipboard* clipboard = QGuiApplication::clipboard();
+  if (clipboard) {
+   clipboard->setText(text);
+  }
  }
 
 };

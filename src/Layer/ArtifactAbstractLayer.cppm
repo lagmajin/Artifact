@@ -207,4 +207,14 @@ namespace Artifact {
   return false;
  }
 
+ bool ArtifactAbstractLayer::hasAudio() const
+ {
+  return true;
+ }
+
+ bool ArtifactAbstractLayer::hasVideo() const
+ {
+  return true;
+ }
+
 };

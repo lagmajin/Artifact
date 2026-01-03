@@ -63,7 +63,7 @@ export namespace Artifact {
   bool isProjectClosed() const;
 
   void createComposition();
-  CompositionResult createComposition(const CompositionSettings& setting);
+  CreateCompositionResult createComposition(const CompositionSettings& setting);
   void createComposition(const QString& str);
   void createComposition(const QString, const QSize& size);
 

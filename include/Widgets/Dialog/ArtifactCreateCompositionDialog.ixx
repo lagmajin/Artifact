@@ -3,7 +3,7 @@
 #include <wobjectdefs.h>
 export module Dialog.Composition;
 
-
+import Artifact.Composition.InitParams;
 
 
 export namespace Artifact {

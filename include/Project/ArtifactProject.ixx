@@ -21,8 +21,9 @@ import Utils;
 
 
 import Composition.Settings;
-import Artifact.Composition.Result;
 
+import Artifact.Composition.Result;
+import Artifact.Composition.Abstract;
 W_REGISTER_ARGTYPE(ArtifactCore::CompositionID)
 
 export namespace Artifact {
@@ -56,10 +57,14 @@ export namespace Artifact {
   template <typename NameT, typename SizeT>
    requires StringLike<NameT>&& SizeLike<SizeT>
   void createComposition(NameT name, SizeT size);
-  CompositionResult createComposition(const CompositionSettings& settings);
+  CreateCompositionResult createComposition(const CompositionSettings& settings);
+
+  ArtifactCompositionPtr findComposition();
+
   void addAssetFile();
   void addAssetFromPath(const QString& filepath);
   bool isNull() const;
+  bool hasComposition(const CompositionID& id) const;
   bool removeCompositionById(const CompositionID& id);
   void removeAllCompositions();
   bool isDirty() const;

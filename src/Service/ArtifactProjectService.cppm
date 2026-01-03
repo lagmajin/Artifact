@@ -6,6 +6,7 @@ module Artifact.Service.Project;
 import std;
 import Artifact.Project.Manager;
 import Artifact.Layer.Factory;
+import Artifact.Composition.Abstract;
 
 namespace Artifact
 {
@@ -23,6 +24,11 @@ namespace Artifact
   void addAssetFromPath(const UniString& path);
   UniString projectName() const;
   void changeProjectName(const UniString& name);
+
+  ArtifactCompositionWeakPtr currentComposition();
+  ChangeCompositionResult changeCurrentComposition(const CompositionID& id);
+
+  void removeAllAssets();
  };
 
  ArtifactProjectService::Impl::Impl()
@@ -47,7 +53,7 @@ namespace Artifact
 
   auto layer = factory.createNewLayer(params);
   
-  projectManager().currentComposition()->addLayer(layer);
+  projectManager().currentComposition()->appendLayerTop(layer);
  	
  	
  }
@@ -72,6 +78,17 @@ namespace Artifact
  	
  }
 
+ ChangeCompositionResult ArtifactProjectService::Impl::changeCurrentComposition(const CompositionID& id)
+ {
+
+  return ChangeCompositionResult();
+ }
+
+ void ArtifactProjectService::Impl::removeAllAssets()
+ {
+
+ }
+
  W_OBJECT_IMPL(ArtifactProjectService)
 	
  ArtifactProjectService::ArtifactProjectService(QObject*parent):QObject(parent),impl_(new Impl())
@@ -80,6 +97,8 @@ namespace Artifact
   connect(&impl_->projectManager(), &ArtifactProjectManager::compositionCreated, this, &ArtifactProjectService::compositionCreated);
   connect(&impl_->projectManager(), &ArtifactProjectManager::layerCreated, this, &ArtifactProjectService::layerCreated);
 
+  
+  
  }
 
  ArtifactProjectService::~ArtifactProjectService()
@@ -92,6 +111,7 @@ namespace Artifact
   static ArtifactProjectService service;
   return&service;
 
+
  }
 
  void ArtifactProjectService::projectSettingChanged(const ArtifactProjectSettings& setting)
@@ -101,7 +121,7 @@ namespace Artifact
 
  void ArtifactProjectService::addLayer(const CompositionID& id, const ArtifactLayerInitParams& param)
  {
- 	//ArtifactProjectManager::getInstance()->find
+ 	
 
  }
 
@@ -128,8 +148,40 @@ namespace Artifact
  {
   impl_->addAssetFromPath(path);
  }
-	
-	
+
+ ArtifactCompositionWeakPtr ArtifactProjectService::currentComposition()
+ {
+
+  return impl_->currentComposition();
+ }
+
+ ChangeCompositionResult ArtifactProjectService::changeCurrentComposition(const CompositionID& id)
+ {
+
+  return impl_->changeCurrentComposition(id);
+ }
+
+ArtifactCompositionWeakPtr ArtifactProjectService::findComposition(const CompositionID& id)
+ {
+ impl_->projectManager()->
+
+ return ArtifactCompositionWeakPtr();
+ }
+
+void ArtifactProjectService::createComposition(const ArtifactCompositionInitParams& params)
+{
+
+}
+
+void ArtifactProjectService::removeAllAssets()
+{
+ //removeall assets via projectmanager instance
+
+ 
+ 
+ 
+}
+
 };
 
 //W_REGISTER_ARGTYPE(ArtifactCore::CompositionID)

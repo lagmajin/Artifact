@@ -14,27 +14,25 @@ import Container;
 import Frame.Position;
 
 import Composition.Settings;
-
+import Artifact.Composition.Result;
 
 namespace Artifact {
  using namespace ArtifactCore;
 	
- using LayerContainer = MultiIndexContainer<ArtifactAbstractLayerPtr, LayerID>;
+
 
  W_OBJECT_IMPL(ArtifactAbstractComposition)
 
  class ArtifactAbstractComposition::Impl {
  private:
-  QVector<ArtifactAbstractLayerPtr> layers_;
-  //QHash<LayerID, ArtifactAbstractLayerPtr> layersById_;
-  //QMultiHash<std::type_index, ArtifactAbstractLayerPtr> layersByType_;
-  LayerContainer layerMultiIndex_;
+  MultiIndexLayerContainer layerMultiIndex_;
   CompositionSettings settings_;
   FramePosition position_;
  public:
   Impl();
   ~Impl();
-  void addLayer(ArtifactAbstractLayerPtr layer);
+  AppendLayerToCompositionResult appendLayerTop(ArtifactAbstractLayerPtr layer);
+  AppendLayerToCompositionResult appendLayerBottom(ArtifactAbstractLayerPtr layer);
   bool containsLayerById(const LayerID& id) const;
 
   void removeAllLayers();
@@ -45,6 +43,11 @@ namespace Artifact {
   void goToFrame(int64_t frame=0);
   QVector<ArtifactAbstractLayerPtr> allLayer() const;
   QVector<ArtifactAbstractLayerPtr> allLayerBackToFront() const;
+
+  ArtifactAbstractLayerPtr frontMostLayer() const;
+  ArtifactAbstractLayerPtr backMostLayer() const;
+  bool hasVideo() const;
+  bool hasAudio() const;
  };
 
  ArtifactAbstractComposition::Impl::Impl()
@@ -57,23 +60,35 @@ namespace Artifact {
 
  }
 
- void ArtifactAbstractComposition::Impl::addLayer(ArtifactAbstractLayerPtr layer)
+ AppendLayerToCompositionResult ArtifactAbstractComposition::Impl::appendLayerTop(ArtifactAbstractLayerPtr layer)
  {
-  if (!layer) return;
+  AppendLayerToCompositionResult result;
+
+  if (!layer) return {
+	.success = false,
+	.error = AppendLayerToCompositionError::LayerNotFound,
+	.message = "Layer not found"
+  };
+
   auto id = layer->id();
 
   layerMultiIndex_.add(layer,id,layer->type_index());
 
- }
-
- bool ArtifactAbstractComposition::Impl::containsLayerById(const LayerID& id) const
- {
-  return true;
+  return {
+	.success = true,
+	.error = AppendLayerToCompositionError::None,
+	.message = "Layer added successfully"
+  };
  }
 
  void ArtifactAbstractComposition::Impl::removeAllLayers()
  {
+  layerMultiIndex_.clear();
+ }
 
+ bool ArtifactAbstractComposition::Impl::containsLayerById(const LayerID& id) const
+ {
+  return layerMultiIndex_.containsId(id);
  }
 
  void ArtifactAbstractComposition::Impl::goToStartFrame()
@@ -107,6 +122,27 @@ namespace Artifact {
   return QVector<ArtifactAbstractLayerPtr>();
  }
 
+ AppendLayerToCompositionResult ArtifactAbstractComposition::Impl::appendLayerBottom(ArtifactAbstractLayerPtr layer)
+ {
+     AppendLayerToCompositionResult result;
+
+
+	 return result;
+ }
+
+ bool ArtifactAbstractComposition::Impl::hasVideo() const
+ {
+
+
+  return false;
+ }
+
+ bool ArtifactAbstractComposition::Impl::hasAudio() const
+ {
+
+  return false;
+ }
+
  ArtifactAbstractComposition::ArtifactAbstractComposition():impl_(new Impl())
  {
 
@@ -127,10 +163,6 @@ namespace Artifact {
   return nullptr;
  }
 
- void ArtifactAbstractComposition::addLayer(ArtifactAbstractLayerPtr layer)
- {
-  return impl_->addLayer(layer);
- }
 
  void ArtifactAbstractComposition::setBackGroundColor(const FloatColor& color)
  {
@@ -171,6 +203,36 @@ namespace Artifact {
  {
 
   return QVector<ArtifactAbstractLayerPtr>();
+ }
+
+ AppendLayerToCompositionResult ArtifactAbstractComposition::appendLayerTop(ArtifactAbstractLayerPtr layer)
+ {
+  return impl_->appendLayerTop(layer);
+ }
+
+ AppendLayerToCompositionResult ArtifactAbstractComposition::appendLayerBottom(ArtifactAbstractLayerPtr layer)
+ {
+   return impl_->appendLayerBottom(layer);
+ }
+
+ void ArtifactAbstractComposition::insertLayerAt(ArtifactAbstractLayerPtr layer, int index/*=0*/)
+ {
+
+ }
+
+ void ArtifactAbstractComposition::removeLayer(const LayerID& id)
+ {
+
+ }
+
+ void ArtifactAbstractComposition::removeAllLayers()
+ {
+
+ }
+
+ ArtifactAbstractLayerPtr ArtifactAbstractComposition::frontMostLayer() const
+ {
+    return impl_->frontMostLayer();
  }
 
 };

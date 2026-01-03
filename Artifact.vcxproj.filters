@@ -199,6 +199,12 @@
     <Filter Include="ヘッダー ファイル\InterProcess">
       <UniqueIdentifier>{7831a5c7-3da1-4718-be80-75b418c3552b}</UniqueIdentifier>
     </Filter>
+    <Filter Include="ヘッダー ファイル\Result">
+      <UniqueIdentifier>{6d0b0ee5-3606-4809-905b-e8c30c1567e8}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ヘッダー ファイル\Effects\Channel">
+      <UniqueIdentifier>{84832ead-fb9f-4a83-8e58-ca5ea40afd9a}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="include\Composition\ArtifactCompositionManager.hpp">
@@ -934,6 +940,33 @@
     </ClCompile>
     <ClCompile Include="src\Preview\ArtifactLayerPreviewPipeline.cpp">
       <Filter>ソース ファイル\Preview</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Result\ArtifactResult.ixx">
+      <Filter>ヘッダー ファイル\Result</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Project\ArtifactProjectInitParams.ixx">
+      <Filter>ヘッダー ファイル\Project</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Composition\ArtifactCompositionInitParams.ixx">
+      <Filter>ヘッダー ファイル\Composition</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Effetcs\Channel\InvertChannelEffect.ixx">
+      <Filter>ヘッダー ファイル\Effects\Channel</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Composition\ArtifactCompositionSetting.ixx">
+      <Filter>ヘッダー ファイル\Composition</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Composition\ArtifactCompositionSetting.cpp">
+      <Filter>ソース ファイル\Composition</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Composition\ArtifactCompositionInitParams.cppm">
+      <Filter>ソース ファイル\Composition</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Composition\ArtifactFindCompositionQuery.ixx">
+      <Filter>ヘッダー ファイル\Composition</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Composition\ArtifactFindCompositionQuery.cpp">
+      <Filter>ソース ファイル\Composition</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>

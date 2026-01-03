@@ -5,9 +5,28 @@ export module Artifact.Project.Model;
 
 import std;
 import Artifact.Project;
+import Utils.Id;
+import Utils.String.UniString;
+
 
 export namespace Artifact
 {
+ using namespace ArtifactCore;
+
+ enum eProjectItemType {
+  eProjectItemType_Unknown = 0,
+  eProjectItemType_Folder,
+  eProjectItemType_Composition,
+  
+ };
+
+ struct ProjectItem {
+  UniString name;
+  Id id;
+  UniString description;
+  //std::vector<ProjectItem> children;
+
+ };
 
  class ArtifactProjectModel:public QAbstractItemModel
  {

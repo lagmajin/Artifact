@@ -1,10 +1,12 @@
 ﻿module ;
-
+#include <QString>
 
 module Composition.Settings;
 
 import std;
 import Utils;
+import Utils.String.UniString;
+
 
 namespace ArtifactCore{
 
@@ -12,7 +14,8 @@ namespace ArtifactCore{
 
  class CompositionSettings::Impl{
  private:
-  QString compositionName_;
+
+  UniString compositionName_;
 
 
  public:

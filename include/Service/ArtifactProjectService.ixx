@@ -12,9 +12,12 @@ import std;
 import Utils;
 import Utils.String.Like;
 import Utils.String.UniString;
-import Artifact.Project.Settings;
 import Artifact.Layer.InitParams;
+import Artifact.Project.Settings;
+
+import Artifact.Composition.Result;
 import Artifact.Composition.Abstract;
+import Artifact.Composition.InitParams;
 
 
 W_REGISTER_ARGTYPE(QSize)
@@ -30,6 +33,10 @@ export namespace Artifact
  typedef std::shared_ptr<ArtifactProjectService> ArtifactProjectServicePtr;
 
 
+
+
+
+
  class ArtifactProjectService :public QObject
  {
   W_OBJECT(ArtifactProjectService)
@@ -42,7 +49,17 @@ export namespace Artifact
   static ArtifactProjectService* instance();
   UniString projectName() const;
   void changeProjectName(const UniString& string);
+  void createProject(const ArtifactProjectSettings& setting);
+
   void addAssetFromPath(const UniString& path);
+  void removeAllAssets();
+
+  void createComposition(const UniString& name);
+  void createComposition(const ArtifactCompositionInitParams& params);
+
+  ArtifactCompositionWeakPtr currentComposition();
+  ChangeCompositionResult changeCurrentComposition(const CompositionID& id);
+
   ArtifactCompositionWeakPtr findComposition(const CompositionID& id);
   
   void addLayer(const CompositionID& id, const ArtifactLayerInitParams& params);

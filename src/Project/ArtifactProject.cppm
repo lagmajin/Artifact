@@ -51,10 +51,11 @@ namespace Artifact {
   Impl();
   ~Impl();
   void addAssetFromPath(const QString& string);
-  CompositionResult createComposition(const QString& str);
+  CreateCompositionResult createComposition(const QString& str);
   void createComposition(const CompositionSettings& settings);
 
   void createCompositions(const QStringList& names);
+  void findComposition(const CompositionID& id);
   bool removeById(const CompositionID& id);
   void removeAllCompositions();
 
@@ -81,7 +82,7 @@ namespace Artifact {
 
  void ArtifactProject::Impl::createComposition(const CompositionSettings& settings)
  {
-  auto newComposition = new ArtifactComposition2D();
+  auto newComposition = new ArtifactComposition();
 
 
   //container_.add(settings);
@@ -111,6 +112,12 @@ namespace Artifact {
 
 
   return result;
+ }
+
+ArtifactCompositionPtr ArtifactProject::findComposition()
+ {
+
+ return nullptr;
  }
 
  ArtifactProject::ArtifactProject() :impl_(new Impl())
@@ -152,10 +159,10 @@ namespace Artifact {
   qDebug() << "シグナルで通知された ID:" << idStr;
  }
 
- CompositionResult ArtifactProject::createComposition(const CompositionSettings& settings)
+ CreateCompositionResult ArtifactProject::createComposition(const CompositionSettings& settings)
  {
 
-  return CompositionResult();
+  return CreateCompositionResult();
  }
 
  bool ArtifactProject::isNull() const
@@ -169,6 +176,7 @@ namespace Artifact {
 
  }
 
+
  bool ArtifactProject::removeCompositionById(const CompositionID& id)
  {
   return impl_->removeById(id);
@@ -176,7 +184,12 @@ namespace Artifact {
 
  void ArtifactProject::removeAllCompositions()
  {
+  impl_->removeAllCompositions();
+ }
 
+ bool ArtifactProject::hasComposition(const CompositionID& id) const
+ {
+  return true;
  }
 
  void ArtifactProject::addAssetFile()

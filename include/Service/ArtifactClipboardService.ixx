@@ -3,8 +3,11 @@ module;
 export module Artifact.Service.ClipboardManager;
 
 import std;
+import Utils.String.UniString;
 
 export namespace Artifact {
+
+ using namespace ArtifactCore;
 
  class ArtifactClipboardService {
  private:
@@ -13,6 +16,7 @@ export namespace Artifact {
  public:
   ArtifactClipboardService();
   ~ArtifactClipboardService();
+  void copyPlainText(const UniString& text);
   void copyImageToClipboard(const QImage& image);
  };
 

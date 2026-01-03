@@ -37,7 +37,8 @@ namespace Artifact {
    void createProject();
    bool isProjectCreated() const;
    Id createNewComposition();
-   CompositionResult createComposition(const CompositionSettings& setting);
+   //CompositionResult createComposition(const CompositionSettings& settings);
+   CreateCompositionResult createComposition(const CompositionSettings& setting);
    void addAssetFromFilePath(const QString& filePath);
    void addAssetsFromFilePaths(const QStringList& filePaths);
  };
@@ -95,9 +96,12 @@ namespace Artifact {
 
  }
 
- CompositionResult ArtifactProjectManager::Impl::createComposition(const CompositionSettings& setting)
+ CreateCompositionResult ArtifactProjectManager::Impl::createComposition(const CompositionSettings& setting)
  {
-  auto result = CompositionResult();
+  auto result = CreateCompositionResult();
+
+  //auto newCompositionPtr = currentProjectPtr_->createComposition(setting.compositionName);
+
 
   return result;
  }
@@ -194,7 +198,7 @@ namespace Artifact {
 
  }
 
- CompositionResult ArtifactProjectManager::createComposition(const CompositionSettings& setting)
+ CreateCompositionResult ArtifactProjectManager::createComposition(const CompositionSettings& setting)
  {
 
   auto result=Impl_->createComposition(setting);
@@ -222,6 +226,10 @@ namespace Artifact {
 
  ArtifactCompositionPtr ArtifactProjectManager::findComposition(const CompositionID& id)
  {
+  if (Impl_->currentProjectPtr_)
+  {
+   
+  }
 
   return nullptr;
  }

@@ -8,7 +8,11 @@ export module Composition.Settings;
 
 import std;
 
+
 import Color.Float;
+import Core.AspectRatio;
+import Utils.String.UniString;
+
 
 export namespace ArtifactCore {
 
@@ -21,9 +25,10 @@ export namespace ArtifactCore {
   CompositionSettings();
   CompositionSettings(const CompositionSettings& settings);
   ~CompositionSettings();
-  QString compositionName() const;
-  void setCompositionName(const QString& string);
+  UniString compositionName() const;
+  void setCompositionName(const UniString& string);
   QSize compositionSize() const;
+  void setCompositionSize(const QSize& size);
 
 
  };

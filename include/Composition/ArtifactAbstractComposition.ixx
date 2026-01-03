@@ -14,6 +14,8 @@ import Frame.Range;
 import Frame.Position;
 import Container.MultiIndex;
 import Artifact.Layers;
+import Artifact.Layer.Abstract;
+import Artifact.Composition.Result;
 //import Artifact.Preview.Controller;
 
 export namespace Artifact {
@@ -28,10 +30,21 @@ export namespace Artifact {
  public:
   ArtifactAbstractComposition();
   ~ArtifactAbstractComposition();
-  void addLayer(ArtifactAbstractLayerPtr layer);
+  AppendLayerToCompositionResult appendLayerTop(ArtifactAbstractLayerPtr layer);
+  AppendLayerToCompositionResult appendLayerBottom(ArtifactAbstractLayerPtr layer);
+  void insertLayerAt(ArtifactAbstractLayerPtr layer, int index=0);
+  void removeLayer(const LayerID& id);
+  void removeAllLayers();
+  int layerCount() const;
 
   ArtifactAbstractLayerPtr layerById(const LayerID& id);
   bool containsLayerById(const LayerID& id);
+
+  ArtifactAbstractLayerPtr frontMostLayer() const;
+  ArtifactAbstractLayerPtr backMostLayer() const;
+
+  void bringToFront(ArtifactAbstractLayer* layer);
+  void sendToBack(ArtifactAbstractLayer* layer);
 
   void setBackGroundColor(const FloatColor& color);
 
@@ -45,6 +58,9 @@ export namespace Artifact {
   bool hasVideo() const;
   bool hasAudio() const;
  	
+
+  QJsonDocument toJson() const;
+
   QVector<ArtifactAbstractLayerPtr> allLayer();
  };
 
@@ -52,5 +68,5 @@ export namespace Artifact {
  typedef std::weak_ptr<ArtifactAbstractComposition>	  ArtifactCompositionWeakPtr;
 
  typedef MultiIndexContainer<ArtifactCompositionPtr, CompositionID> ArtifactCompositionMultiIndexContainer;
-
+ using MultiIndexLayerContainer = MultiIndexContainer<ArtifactAbstractLayerPtr, LayerID>;
 };

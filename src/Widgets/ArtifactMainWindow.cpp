@@ -17,6 +17,8 @@ module Artifact.MainWindow;
 import std;
 import Menu;
 
+import Utils.Id;
+
 import DockWidget;
 import BasicImageViewWidget;
 import Widgets.ToolBar;
@@ -48,6 +50,7 @@ namespace Artifact {
  using namespace std::chrono_literals;
  using namespace ads;
 
+
  // ReSharper disable CppInspection
  W_OBJECT_IMPL(ArtifactMainWindow)
   // ReSharper restore CppInspection
@@ -62,7 +65,7 @@ namespace Artifact {
 
    void handleProjectCreated();
    void handleCompositionCreated();
-   void handleCompositionCreated(ArtifactMainWindow* window);
+   void handleCompositionCreated(const CompositionID id, ArtifactMainWindow* window);
    void handleLayerCreated(ArtifactMainWindow* window);
  	ArtifactMainWindow* mainWindow_=nullptr;
 
@@ -78,14 +81,17 @@ namespace Artifact {
   mainWindow_->setWindowTitle("Artifact - New Project");
  	
  }
-	
- void ArtifactMainWindow::Impl::handleCompositionCreated(ArtifactMainWindow* window)
+
+ void ArtifactMainWindow::Impl::handleCompositionCreated(const CompositionID id, ArtifactMainWindow* window)
  {
-  qDebug() <<"composition created";
+  qDebug() << "composition created" <<id.toString();
 
-  auto timelineWidget = new ArtifactTimelineWidget();
+  auto timeTest = new ArtifactLayerTimelinePanelWrapper();
+  timeTest->show();
 
-  timelineWidget->show();
+  //auto timelineWidget = new ArtifactTimelineWidget();
+
+  //timelineWidget->show();
  }
 
  ArtifactMainWindow::Impl::Impl(ArtifactMainWindow* mainWindow):mainWindow_(mainWindow)
@@ -196,15 +202,16 @@ namespace Artifact {
 	auto timelineWidget = new ArtifactTimelineWidget();
 	timelineWidget->show();
  
-    auto timeTest = new ArtifactLayerTimelinePanelWrapper();
-    timeTest->show();
+
  	
   QObject::connect(&projectManager, &ArtifactProjectManager::projectCreated, [this]() {
    impl_->handleProjectCreated();
    });
 
-  QObject::connect(&projectManager, &ArtifactProjectManager::compositionCreated, [this]() {
-   impl_->handleCompositionCreated(this);
+  QObject::connect(&projectManager, &ArtifactProjectManager::compositionCreated, [this](const CompositionID& id) {
+   impl_->handleCompositionCreated(id,this);
+   
+   
    });
 
   //auto compositionWidget2 = new ArtifactDiligentEngineComposition2DWidget();

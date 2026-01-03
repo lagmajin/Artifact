@@ -148,36 +148,42 @@ namespace Artifact
 
  void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
  {
-
   QPainter p(this);
-  p.fillRect(rect(), QColor(40, 40, 40));
-  const int rowH = 28;
-   // 行間隔
-  const int numVLines = 4;
+  const int rowH = 28; // 行の高さ
 
-  p.setPen(QColor(70, 70, 70));   // ライン色
+  // 1. まず全体をベースの色で塗る（もしくはループ内で塗り分ける）
+  // p.fillRect(rect(), QColor(40, 40, 40)); 
 
-  for (int y = rowH; y < height(); y += rowH) {
-   p.drawLine(0, y, width(), y);
+  // 2. 行ごとに色を変えて塗りつぶす
+  for (int i = 0; i * rowH < height(); ++i) {
+   int y = i * rowH;
+
+   // 偶数行と奇数行で色を分ける
+   if (i % 2 == 0) {
+	p.fillRect(0, y, width(), rowH, QColor(42, 42, 42)); // 暗いグレー
+   }
+   else {
+	p.fillRect(0, y, width(), rowH, QColor(45, 45, 45)); // わずかに明るいグレー
+   }
+
+   // ついでに横線も引く（塗りつぶし境界に線を引く場合）
+   p.setPen(QColor(60, 60, 60));
+   p.drawLine(0, y + rowH, width(), y + rowH);
   }
 
-  const int colW = 28;
-
-  for (int i = 0; i < numVLines; ++i) {
-   int x = colW * (i + 1);  // 1本目は28, 2本目は56…
-   //p.drawLine(0, 0, x, height());
-  }
+  // --- 以下、アイコンやテキストの描画 ---
+  // テキストを中央寄せにするためのテクニック
   const int textOffsetX = 24 * 5;
-  const int textOffsetY = 0;
-
   p.setPen(Qt::white);
-
   QString layerName = "Layer 1";
-  p.drawText(textOffsetX, textOffsetY + p.fontMetrics().ascent(), layerName);
 
-  p.drawPixmap(0, 0, impl_->visibilityIcon);
+  // drawTextにQRectを指定すると、垂直中央揃え（Qt::AlignVCenter）が使えて便利です
+  p.drawText(QRect(textOffsetX, 0, width(), rowH), Qt::AlignVCenter, layerName);
 
-
+  // アイコンも同様に描画
+  if (!impl_->visibilityIcon.isNull()) {
+   p.drawPixmap(4, (rowH - 16) / 2, 16, 16, impl_->visibilityIcon); // 16pxアイコンを中央に
+  }
  }
 
  class ArtifactLayerTimelinePanelWrapper::Impl

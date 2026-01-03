@@ -19,32 +19,23 @@ export namespace Artifact {
 
  //class ArtifactComposition2DPrivate;
 
- class ArtifactComposition2D :public ArtifactAbstractComposition{
+ class ArtifactComposition :public ArtifactAbstractComposition{
  private:
   class Impl;
   Impl* impl_;
-  ArtifactComposition2D(const ArtifactComposition2D&) = delete;
-  ArtifactComposition2D& operator=(const ArtifactComposition2D&) = delete;
+  ArtifactComposition(const ArtifactComposition&) = delete;
+  ArtifactComposition& operator=(const ArtifactComposition&) = delete;
  public:
-  ArtifactComposition2D();
-  ~ArtifactComposition2D();
-  void addLayer();
-  void resize(int width, int height);
-  void removeLayer(ArtifactAbstractLayer* layer);
-  void removeAllLayer();
-
-  int layerCount() const;
-  QJsonDocument toJson() const;
+  ArtifactComposition();
+  ~ArtifactComposition();
 
 
-  ArtifactAbstractLayer* frontMostLayer() const;
-  ArtifactAbstractLayer* backMostLayer() const;
 
-  void bringToFront(ArtifactAbstractLayer* layer);
-  void sendToBack(ArtifactAbstractLayer* layer);
+
+
  };
 
- typedef std::shared_ptr<ArtifactComposition2D> ArtifactComposition2DPtr;
+ typedef std::shared_ptr<ArtifactComposition> ArtifactComposition2DPtr;
 
 
 

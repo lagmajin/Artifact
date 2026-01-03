@@ -101,6 +101,9 @@ export namespace Artifact {
   bool is3D() const;
   //Audio
 
+  bool hasAudio() const;
+  bool hasVideo() const;
+
  public:
 
 

@@ -33,6 +33,7 @@ void soloClicked() W_SIGNAL(soloClicked)
   void paintEvent(QPaintEvent* event) override;
  public:
   explicit ArtifactLayerPanelWidget(QWidget* parent = nullptr);
+
   ~ArtifactLayerPanelWidget();
 
  };
