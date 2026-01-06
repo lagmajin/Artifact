@@ -8,6 +8,8 @@ module Widgets.Inspector;
 import std;
 import Widgets.Utils.CSS;
 
+import Artifact.Service.Project;
+
 namespace Artifact {
 
  using namespace ArtifactCore;
@@ -30,6 +32,8 @@ namespace Artifact {
    void defaultHandleMousePressEvent(QMouseEvent* event);
    
    void showContextMenu();
+ 	
+   void handleProjectClosed();
  };
 
  ArtifactInspectorWidget::Impl::Impl()
@@ -49,6 +53,11 @@ namespace Artifact {
 
  void ArtifactInspectorWidget::Impl::defaultHandleKeyPressEvent(QKeyEvent* event)
  {
+ }
+
+ void ArtifactInspectorWidget::Impl::handleProjectClosed()
+ {
+
  }
 
  void ArtifactInspectorWidget::update()
@@ -79,7 +88,10 @@ namespace Artifact {
 
   setWidget(impl_->containerWidget);
   setWidgetResizable(true);
+ 	
+  auto projectService=ArtifactProjectService::instance();
 
+ //connect(projectService,)	
  }
 
  ArtifactInspectorWidget::~ArtifactInspectorWidget()

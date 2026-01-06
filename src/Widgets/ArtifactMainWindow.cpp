@@ -19,6 +19,8 @@ import Menu;
 
 import Utils.Id;
 
+
+import Widgets.NativeHelper;
 import DockWidget;
 import BasicImageViewWidget;
 import Widgets.ToolBar;
@@ -221,6 +223,8 @@ namespace Artifact {
   //auto compositionWidget3 = new ArtifactDiligentEngineComposition2DWindow();
 
   //compositionWidget3->show();
+ 	
+  //NativeGUIHelper::applyMicaEffect(this);
  }
 
  ArtifactMainWindow::~ArtifactMainWindow()
@@ -274,6 +278,15 @@ namespace Artifact {
   else {
    event->ignore();   // 閉じない
   }
+ }
+
+ void ArtifactMainWindow::showEvent(QShowEvent* event)
+ {
+  QMainWindow::showEvent(event); // 親の処理を呼ぶ
+  QTimer::singleShot(0, this, [this]() {
+   NativeGUIHelper::applyMicaEffect(this);
+   NativeGUIHelper::applyWindowRound(this);
+  });
  }
 
 }

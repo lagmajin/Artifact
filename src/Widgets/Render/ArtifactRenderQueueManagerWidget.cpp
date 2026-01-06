@@ -27,6 +27,8 @@ namespace Artifact
  public:
   Impl();
   ~Impl();
+		
+  void handleProjectClosed();
  };
 
  RenderQueueManagerWidget::Impl::Impl()
@@ -35,6 +37,11 @@ namespace Artifact
  }
 
  RenderQueueManagerWidget::Impl::~Impl()
+ {
+
+ }
+
+ void RenderQueueManagerWidget::Impl::handleProjectClosed()
  {
 
  }

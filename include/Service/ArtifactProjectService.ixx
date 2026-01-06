@@ -32,11 +32,7 @@ export namespace Artifact
 
  typedef std::shared_ptr<ArtifactProjectService> ArtifactProjectServicePtr;
 
-
-
-
-
-
+	
  class ArtifactProjectService :public QObject
  {
   W_OBJECT(ArtifactProjectService)
@@ -60,7 +56,7 @@ export namespace Artifact
   ArtifactCompositionWeakPtr currentComposition();
   ChangeCompositionResult changeCurrentComposition(const CompositionID& id);
 
-  ArtifactCompositionWeakPtr findComposition(const CompositionID& id);
+  FindCompositionResult findComposition(const CompositionID& id);
   
   void addLayer(const CompositionID& id, const ArtifactLayerInitParams& params);
   void addLayerToCurrentComposition(const ArtifactLayerInitParams& params);

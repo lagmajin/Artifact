@@ -26,6 +26,7 @@ export namespace Artifact {
   void keyPressEvent(QKeyEvent* event) override;
   void keyReleaseEvent(QKeyEvent* event) override;
   void closeEvent(QCloseEvent* event) override;
+  void showEvent(QShowEvent* event) override;
  public:
   explicit ArtifactMainWindow(QWidget* parent = nullptr);
   ~ArtifactMainWindow();

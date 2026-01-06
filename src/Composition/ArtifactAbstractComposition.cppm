@@ -1,4 +1,5 @@
-﻿module ;
+﻿// ReSharper disable All
+module ;
 #include <qforeach.h>
 #include <wobjectimpl.h>
 #include <QHash>
@@ -15,6 +16,8 @@ import Frame.Position;
 
 import Composition.Settings;
 import Artifact.Composition.Result;
+
+//struct AppendLayerToCompositionResult;
 
 namespace Artifact {
  using namespace ArtifactCore;

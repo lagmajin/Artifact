@@ -1,11 +1,12 @@
 ﻿module;
 #include <QString>
-
+#include <QVector>
 export module Artifact.Composition.Result;
 
 import Utils;
 import Utils.String.UniString;
 
+import Artifact.Composition.Abstract;
 
 export namespace Artifact {
 
@@ -24,6 +25,12 @@ export namespace Artifact {
 
  };
 
+ struct FindCompositionResult
+ {
+  bool success = false;
+  ArtifactCompositionWeakPtr ptr;
+ };
+
  enum class AppendLayerToCompositionError {
   None = 0,
   CompositionNotFound,
@@ -39,6 +46,11 @@ export namespace Artifact {
  
  };
 
+ struct AllCompositionResult
+ {
+  bool success = false;
+ 	
+ };
 
 
 };

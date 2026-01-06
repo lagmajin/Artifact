@@ -1,5 +1,5 @@
-module;
-
+﻿module;
+#include <QObject>
 export module Artifact.Service.Application;
 
 import Artifact.Service.ClipboardManager;

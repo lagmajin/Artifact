@@ -1,3 +1,4 @@
+// ReSharper disable IdentifierTypo
 module;
 #include <memory>
 
@@ -12,6 +13,8 @@ namespace Artifact {
   Impl() = default;
   ~Impl() = default;
   FloatColor backgroundColor_;
+  FrameRate framerate_;
+ 	
  };
 
  ArtifactCompositionInitParams::ArtifactCompositionInitParams() :impl_(new Impl())
@@ -21,7 +24,7 @@ namespace Artifact {
 
  ArtifactCompositionInitParams::~ArtifactCompositionInitParams()
  {
-
+  delete impl_;
  }
 
  FloatColor ArtifactCompositionInitParams::backgroundColor() const
@@ -29,13 +32,21 @@ namespace Artifact {
   return impl_->backgroundColor_;
  }
 
+ 
  void ArtifactCompositionInitParams::setBackgroundColor(const FloatColor& color)
  {
   impl_->backgroundColor_ = color;
  }
 
+ FrameRate ArtifactCompositionInitParams::framerate() const
+ {
+  return impl_->framerate_;
+ }
 
-
+ void ArtifactCompositionInitParams::setFrameRate(const FrameRate& framerate)
+ {
+  impl_->framerate_ = framerate;
+ }
  // Destructor is defaulted in the header; no manual delete needed.
 
 };

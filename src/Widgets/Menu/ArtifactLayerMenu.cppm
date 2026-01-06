@@ -12,6 +12,7 @@ import Artifact.Layer.InitParams;
 import Artifact.Layer.Factory;
 
 import Artifact.Widgets.CreateLayerDialog;
+import Artifact.Service.Project;
 
 namespace Artifact {
 
@@ -29,7 +30,8 @@ namespace Artifact {
   QAction* openLayerAction_ = nullptr;
   QMenu* layerTimeMenu_ = nullptr;
 
-  void handleOpenProject();
+  void handleProjectOpend();
+  void handleProjectClosed();
   void handleCreateNullLayer();
   void handleCreateSolidLayer();
   void handleAdjustableLayer();
@@ -130,8 +132,9 @@ namespace Artifact {
  {
 
  }
+	
 
- void ArtifactLayerMenu::Impl::handleOpenProject()
+ void ArtifactLayerMenu::Impl::handleProjectClosed()
  {
 
  }
@@ -145,7 +148,9 @@ namespace Artifact {
   setMinimumWidth(160);
   //setTitle(tr("新規..."));
 
-
+  auto projectService = ArtifactProjectService::instance();
+ 	
+ 	//connect(projectService,)
  }
 
  ArtifactLayerMenu::~ArtifactLayerMenu()

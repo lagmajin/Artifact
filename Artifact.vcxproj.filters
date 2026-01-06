@@ -43,9 +43,6 @@
     <Filter Include="ヘッダー ファイル\Render">
       <UniqueIdentifier>{b1676bb9-1704-4eca-861c-e2415e1df552}</UniqueIdentifier>
     </Filter>
-    <Filter Include="ソース ファイル\Project">
-      <UniqueIdentifier>{c9d13665-fca9-4afd-a2b4-22ff2f400d39}</UniqueIdentifier>
-    </Filter>
     <Filter Include="ヘッダー ファイル\Widgets\Asset">
       <UniqueIdentifier>{2fd898b8-9f24-485c-8e27-3936bedd09d9}</UniqueIdentifier>
     </Filter>
@@ -204,6 +201,15 @@
     </Filter>
     <Filter Include="ヘッダー ファイル\Effects\Channel">
       <UniqueIdentifier>{84832ead-fb9f-4a83-8e58-ca5ea40afd9a}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ヘッダー ファイル\Widgets\Native">
+      <UniqueIdentifier>{9ec27214-1d16-4826-a510-43f7fd2aea54}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ソース ファイル\Widgets\Native">
+      <UniqueIdentifier>{52f3f45b-bf13-4d5b-91c1-64e6dbbfe53d}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ソース ファイル\Project">
+      <UniqueIdentifier>{c9d13665-fca9-4afd-a2b4-22ff2f400d39}</UniqueIdentifier>
     </Filter>
   </ItemGroup>
   <ItemGroup>
@@ -770,7 +776,7 @@
     <ClCompile Include="include\Service\ArtifactProjectService.ixx">
       <Filter>ヘッダー ファイル\Service</Filter>
     </ClCompile>
-    <ClCompile Include="src\Service\ArtifactProjectService.cppm">
+    <ClCompile Include="src\Service\ArtifactProjectService.cpp">
       <Filter>ソース ファイル\Service</Filter>
     </ClCompile>
     <ClCompile Include="include\Test\ArtifactTestProjectService.ixx">
@@ -967,6 +973,21 @@
     </ClCompile>
     <ClCompile Include="src\Composition\ArtifactFindCompositionQuery.cpp">
       <Filter>ソース ファイル\Composition</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Project\ArtifactProjectResult.ixx">
+      <Filter>ヘッダー ファイル\Project</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Asset\ArtifactAssetResult.ixx">
+      <Filter>ヘッダー ファイル\Asset</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Asset\ArtifactAssetResult.cpp">
+      <Filter>ソース ファイル\Asset</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Widgets\Native\NativeHelper.ixx">
+      <Filter>ヘッダー ファイル\Widgets\Native</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Widgets\Native\NativeHelper.cpp">
+      <Filter>ソース ファイル\Widgets\Native</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>

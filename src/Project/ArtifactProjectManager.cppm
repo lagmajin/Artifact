@@ -139,6 +139,13 @@ namespace Artifact {
   /*emit*/ projectCreated();
  }
 
+ CreateProjectResult ArtifactProjectManager::createProject(const UniString& name, bool force)
+ {
+  CreateProjectResult result;
+
+  return result;
+ }
+
  void ArtifactProjectManager::createProject(const QString& projectName, bool force/*=false*/)
  {
   qDebug() << "ArtifactProjectManager::createProject with name:" << projectName;
@@ -237,6 +244,16 @@ namespace Artifact {
  bool ArtifactProjectManager::isProjectClosed() const
  {
   return true;
+ }
+
+ int ArtifactProjectManager::compositionCount() const
+ {
+  return 0;
+ }
+
+ void ArtifactProjectManager::removeAllAssets()
+ {
+
  }
 
  bool projectManagerCurrentClose()

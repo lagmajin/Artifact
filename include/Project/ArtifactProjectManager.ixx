@@ -1,26 +1,22 @@
 ﻿module;
 
 #include <memory>
-
-
 #include <QString>
 #include <QObject>
-//#include <folly/Singleton.h>
 #include <wobjectdefs.h>
-//#include <folly/Singleton.h>
-
-//#include <pybind11/pybind11.h>
 
 export module Artifact.Project.Manager;
 
 import std;
 import Utils;
+import Utils.String.UniString;
 
 import Artifact.Project;
 import Composition.Settings;
+import Artifact.Project.Result;
 import Artifact.Composition.Result;
 import Artifact.Composition.Abstract;
-
+import Artifact.Composition.InitParams;
 
 namespace pybind11 {}//dummy
 namespace folly {}//dummy
@@ -44,41 +40,43 @@ export namespace Artifact {
  private:
   class Impl;
   Impl* Impl_;
-
-
-  //ArtifactProjectManager(const ArtifactProjectManager&) = delete;
-  //ArtifactProjectManager& operator=(const ArtifactProjectManager&) = delete;
-  //static std::shared_ptr<ArtifactProjectManager> getInstance();
- protected:
-
  public:
   explicit ArtifactProjectManager(QObject* parent = nullptr);
   ~ArtifactProjectManager();
   static ArtifactProjectManager& getInstance();
+ 	/*Project Func*/
   void createProject();
+  CreateProjectResult createProject(const UniString& name,bool force=false);
   void createProject(const QString& projectName, bool force = false);
   void loadFromFile(const QString& fullpath);
 
   bool isProjectCreated() const;
   bool isProjectClosed() const;
-
-  void createComposition();
-  CreateCompositionResult createComposition(const CompositionSettings& setting);
-  void createComposition(const QString& str);
-  void createComposition(const QString, const QSize& size);
-
   bool closeCurrentProject();
+ 	/*ProjectFunc*/
   std::shared_ptr<ArtifactProject> getCurrentProjectSharedPtr();
 
   std::weak_ptr<ArtifactProject> getCurrentProjectWeakPtr();
-  //
+ 	/*Compostion*/
+  void createComposition();
+  CreateCompositionResult createComposition(const CompositionSettings& setting);
+  // CreateCompositionResult createComposition()
+  void createComposition(const QString& str);
+  void createComposition(const QString, const QSize& size);
+ 	
+  int compositionCount() const;
+  
+ 	
+
+  
   ArtifactCompositionPtr currentComposition();
   ArtifactCompositionPtr findComposition(const CompositionID& id);
 
   //Assets
   void addAssetFromFilePath(const QString& filePath);
   void addAssetsFromFilePaths(const QStringList& filePaths);
-
+  void removeAllAssets();
+ 	
   //Directory
   void createPhysicalDirectory(const QString& directoryName);
 

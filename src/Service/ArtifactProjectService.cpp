@@ -1,9 +1,10 @@
-module;
+﻿module;
 #include <wobjectimpl.h>
 #include <glm/ext/matrix_projection.hpp>
 module Artifact.Service.Project;
 
 import std;
+import Utils.String.UniString;
 import Artifact.Project.Manager;
 import Artifact.Layer.Factory;
 import Artifact.Composition.Abstract;
@@ -25,7 +26,10 @@ namespace Artifact
   UniString projectName() const;
   void changeProjectName(const UniString& name);
 
+
+
   ArtifactCompositionWeakPtr currentComposition();
+  FindCompositionResult findComposition(const CompositionID& id);
   ChangeCompositionResult changeCurrentComposition(const CompositionID& id);
 
   void removeAllAssets();
@@ -62,20 +66,24 @@ namespace Artifact
  {
     auto& manager = projectManager();
  	
+    //manager->
+
     manager.addAssetFromFilePath(path);
  	
  }
 
  UniString ArtifactProjectService::Impl::projectName() const
  {
-
+  
+ 	
   return UniString();
  }
 
  void ArtifactProjectService::Impl::changeProjectName(const UniString& name)
  {
-  //projectManager().set
- 	
+ 
+  
+
  }
 
  ChangeCompositionResult ArtifactProjectService::Impl::changeCurrentComposition(const CompositionID& id)
@@ -87,6 +95,13 @@ namespace Artifact
  void ArtifactProjectService::Impl::removeAllAssets()
  {
 
+ }
+
+ FindCompositionResult ArtifactProjectService::Impl::findComposition(const CompositionID& id)
+ {
+  FindCompositionResult result;
+ 	
+  return result;
  }
 
  W_OBJECT_IMPL(ArtifactProjectService)
@@ -161,11 +176,9 @@ namespace Artifact
   return impl_->changeCurrentComposition(id);
  }
 
-ArtifactCompositionWeakPtr ArtifactProjectService::findComposition(const CompositionID& id)
+FindCompositionResult ArtifactProjectService::findComposition(const CompositionID& id)
  {
- impl_->projectManager()->
-
- return ArtifactCompositionWeakPtr();
+ return impl_->findComposition(id);
  }
 
 void ArtifactProjectService::createComposition(const ArtifactCompositionInitParams& params)
@@ -177,7 +190,7 @@ void ArtifactProjectService::removeAllAssets()
 {
  //removeall assets via projectmanager instance
 
- 
+ impl_->projectManager().removeAllAssets();
  
  
 }

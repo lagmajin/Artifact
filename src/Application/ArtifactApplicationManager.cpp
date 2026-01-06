@@ -8,6 +8,7 @@ import std;
 import EnvironmentVariable;
 import Render.Queue.Manager;
 import Artifact.Test.ProjectManager;
+import Artifact.Project.Manager;
 import Artifact.Service.ActiveContext;
 import Artifact.Tool.Manager;
 
@@ -20,6 +21,7 @@ namespace Artifact
   GlobalEffectManager effectManager_;
   ArtifactTestProjectManager testProjectManager_;
   ArtifactToolManager toolManager_;
+  EnvironmentVariableManager manager_;
  	
   entt::registry registry_;
   entt::dispatcher dispather_;

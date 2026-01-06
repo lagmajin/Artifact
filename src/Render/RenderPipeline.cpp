@@ -11,10 +11,6 @@ public:
   ~Impl();
 };
 
-
-
-
-
  RenderPipeline::RenderPipeline()
  {
 

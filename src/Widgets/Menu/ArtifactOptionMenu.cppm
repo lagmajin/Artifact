@@ -16,6 +16,8 @@ namespace Artifact {
   public:
    Impl();
    ~Impl();
+   void handleCompositionOpened();
+   void handleCompositionClosed();
  };
 
  ArtifactOptionMenu::Impl::Impl()
@@ -24,6 +26,16 @@ namespace Artifact {
  }
 
  ArtifactOptionMenu::Impl::~Impl()
+ {
+
+ }
+
+ void ArtifactOptionMenu::Impl::handleCompositionOpened()
+ {
+
+ }
+
+ void ArtifactOptionMenu::Impl::handleCompositionClosed()
  {
 
  }

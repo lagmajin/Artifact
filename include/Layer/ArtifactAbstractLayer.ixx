@@ -9,8 +9,10 @@ export module Artifact.Layer.Abstract;
 
 import std;
 
+import Size;
 import Utils.Id;
 import Utils.String.Like;
+import Utils.String.UniString;
 import Layer.Blend;
 import Layer.State;
 import Animation.Transform2D;
@@ -72,26 +74,28 @@ export namespace Artifact {
  	
   std::type_index type_index() const;
   void* QueryInterface(const std::type_index& ti);
-  QString className() const;
+  UniString className() const;
 
-  
+  /*Transform*/
+  Size_2D sourceSize() const;
+  Size_2D aabb() const;
+ 	
   AnimatableTransform2D& transform2D();
   AnimatableTransform3D& transform3D();
   void setTransform();
- 	
- 	//
   bool isTimeRemapEnabled() const;
   void setTimeRemapEnabled(bool);
   void setTimeRemapKey(int64_t compFrame, double sourceFrame);
+ 	/*Transform*/
  	
- 	
+ 	/*Timeline*/
   void goToStartFrame();
   void goToEndFrame();
   void goToNextFrame();
   void goToPrevFrame();
   void goToFrame(int64_t frameNumber = 0);
-
-  //
+ 	/*Timeline*/
+ 	
   void setParentById(LayerID& id);
   virtual bool isNullLayer() const;
  	
@@ -104,6 +108,8 @@ export namespace Artifact {
   bool hasAudio() const;
   bool hasVideo() const;
 
+  bool isClicked() const;
+  bool preciseHit() const;
  public:
 
 

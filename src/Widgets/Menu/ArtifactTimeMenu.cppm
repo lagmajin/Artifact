@@ -28,7 +28,22 @@ namespace Artifact {
 
  class ArtifactTimeMenu::Impl {
 
+ public:
+  void handleProjectOpened();
+  void handleCompositionOpened();
+  void handleCompositionClosed();
+  void handleProjectClosed();
  };
+
+ void ArtifactTimeMenu::Impl::handleProjectOpened()
+ {
+
+ }
+
+ void ArtifactTimeMenu::Impl::handleProjectClosed()
+ {
+
+ }
 
  ArtifactTimeMenu::ArtifactTimeMenu(QWidget* parent /*= nullptr*/):QMenu(parent)
  {

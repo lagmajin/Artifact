@@ -119,8 +119,8 @@ namespace Artifact {
   return QString();
  }
 
- QString ArtifactAbstractLayer::className() const
- {
+ UniString ArtifactAbstractLayer::className() const
+{
   return QString("");
  }
 
@@ -215,6 +215,16 @@ namespace Artifact {
  bool ArtifactAbstractLayer::hasVideo() const
  {
   return true;
+ }
+
+ Size_2D ArtifactAbstractLayer::sourceSize() const
+ {
+  return Size_2D();
+ }
+
+ Size_2D ArtifactAbstractLayer::aabb() const
+ {
+  return Size_2D();
  }
 
 };
