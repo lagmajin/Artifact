@@ -43,13 +43,19 @@ export namespace Artifact {
   bool success = false;
   AppendLayerToCompositionError error = AppendLayerToCompositionError::None;
   UniString message;
- 
+
  };
 
  struct AllCompositionResult
  {
   bool success = false;
- 	
+
+ };
+
+ struct RemoveAllCompositionResult
+ {
+  bool success = false;
+
  };
 
 

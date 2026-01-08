@@ -15,11 +15,12 @@ import Widgets.Utils.CSS;
 import Artifact.Layers.Hierarchy.Model;
 import Artifact.Widget.WorkAreaControlWidget;
 
-
 import ArtifactTimelineIconModel;
-import Artifact.Timeline.Label;
+import Artifact.Widgets.SeekBar;
+import Artifact.Widgets.Timeline.Label;
 import Artifact.Timeline.RulerWidget;
 import Artifact.Timeline.ScaleWidget;
+
 import Artifact.Timeline.TimeCodeWidget;
 import Panel.DraggableSplitter;
 
@@ -190,6 +191,8 @@ namespace Artifact {
  public:
   Impl();
   ~Impl();
+  double position_ = 0.0;
+  double duration_ = 1.0;
  };
 
  TimelineTrackView::Impl::Impl()
@@ -202,17 +205,21 @@ namespace Artifact {
 
  }
 
- TimelineTrackView::TimelineTrackView(QWidget* parent /*= nullptr*/) :QGraphicsView(parent)
+ TimelineTrackView::TimelineTrackView(QWidget* parent /*= nullptr*/) :QGraphicsView(parent),impl_(new Impl())
  {
   setScene(new TimelineScene());
   setRenderHint(QPainter::Antialiasing);
 
   setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+ 	
+  //auto seekbar = new ArtifactSeekBar(this);
+
+  //seekbar->show();
  }
 
  TimelineTrackView::~TimelineTrackView()
  {
-
+  delete impl_;
  }
 
  void TimelineTrackView::setZoomLevel(double pixelsPerFrame)
@@ -243,12 +250,34 @@ namespace Artifact {
 
   painter->restore();
  }
-
+	
  void TimelineTrackView::drawForeground(QPainter* painter, const QRectF& rect)
  {
-  //painter->fillRect()
+  // 表示範囲の左上・右下を取得
+  QRectF viewRect = this->viewport()->rect();
+
+  // シークバーの背景（画面下部に固定する例）
+  QRectF barRect(0, viewRect.height() - 30, viewRect.width(), 30);
+
+  painter->setWorldTransform(QTransform()); // 座標系をView（スクリーン）に固定
+  painter->fillRect(barRect, QColor(250, 50, 50, 200)); // 半透明のグレー
+
+  // 進捗（どんどん動く部分）
+  //double ratio = impl_->position_ / impl_->duration_;
+  //painter->fillRect(0, viewRect.height() - 30, viewRect.width() * ratio, 30, QColor(100, 180, 255));
  }
 
+ QSize TimelineTrackView::minimumSizeHint() const
+ {
+  return QSize(600, 600);
+ }
+
+ void TimelineTrackView::mousePressEvent(QMouseEvent* event)
+ {
+  //throw std::logic_error("The method or operation is not implemented.");
+ 
+  QGraphicsView::mousePressEvent(event);
+ }
 
  void TimelineScene::drawBackground(QPainter* painter, const QRectF& rect)
  {
@@ -298,6 +327,8 @@ namespace Artifact {
 
   header()->resizeSection(0, 20);
   header()->setStretchLastSection(false);
+ 	
+
  }
 
  ArtifactTimelineIconView::~ArtifactTimelineIconView()

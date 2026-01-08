@@ -21,9 +21,7 @@ export namespace Artifact {
  	
   //std::unique_ptr<ArtifactCompositionPrivate> pImpl_;
  public:
-  ArtifactComposition3D(const ArtifactComposition3D& composition);
-  ArtifactComposition3D(ArtifactComposition3D&& composition);
-  virtual ~ArtifactComposition3D();
+ 
 
  };
 

@@ -1,7 +1,7 @@
 module;
 #include <wobjectdefs.h>
 #include <QLabel>
-export module Artifact.Timeline.Label;
+export module Artifact.Widgets.Timeline.Label;
 
 export namespace Artifact
 {

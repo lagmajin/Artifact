@@ -16,7 +16,7 @@ import Artifact.Project;
 import Artifact.Composition.Result;
 import Artifact.Composition.Abstract;
 import Composition.Settings;
-
+import Artifact.Composition.InitParams;
 
 
 namespace Artifact {
@@ -39,6 +39,7 @@ namespace Artifact {
    Id createNewComposition();
    //CompositionResult createComposition(const CompositionSettings& settings);
    CreateCompositionResult createComposition(const CompositionSettings& setting);
+   CreateCompositionResult createComposition(const ArtifactCompositionInitParams& params);
    void addAssetFromFilePath(const QString& filePath);
    void addAssetsFromFilePaths(const QStringList& filePaths);
  };
@@ -104,6 +105,12 @@ namespace Artifact {
 
 
   return result;
+ }
+
+ CreateCompositionResult ArtifactProjectManager::Impl::createComposition(const ArtifactCompositionInitParams& params)
+ {
+  currentProjectPtr_->createComposition(params);
+ 	
  }
 
  bool ArtifactProjectManager::Impl::isProjectCreated() const
@@ -231,14 +238,10 @@ namespace Artifact {
   return nullptr;
  }
 
- ArtifactCompositionPtr ArtifactProjectManager::findComposition(const CompositionID& id)
+ FindCompositionResult ArtifactProjectManager::findComposition(const CompositionID& id)
  {
-  if (Impl_->currentProjectPtr_)
-  {
-   
-  }
-
-  return nullptr;
+  return Impl_->currentProjectPtr_->findComposition(id);
+ 	
  }
 
  bool ArtifactProjectManager::isProjectClosed() const

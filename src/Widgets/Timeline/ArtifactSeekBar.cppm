@@ -36,7 +36,11 @@ namespace Artifact
 
  ArtifactSeekBar::ArtifactSeekBar(QWidget*parent):QWidget(parent),impl_(new Impl)
  {
-
+  resize(6, 800);
+ 	
+  setAttribute(Qt::WA_NoSystemBackground);
+  setAttribute(Qt::WA_OpaquePaintEvent, true);
+  setAttribute(Qt::WA_TranslucentBackground);
  }
 
  ArtifactSeekBar::~ArtifactSeekBar()
@@ -49,7 +53,7 @@ namespace Artifact
   QPainter p(this);
   p.setRenderHint(QPainter::Antialiasing, true);
  	
-  p.fillRect(rect(), QColor(50, 50, 50));
+  p.fillRect(rect(), QColor(250, 20, 30));
  	
   //double ratio = impl_->position_ / impl_->duration_;
   //int progressWidth = static_cast<int>(ratio * width());

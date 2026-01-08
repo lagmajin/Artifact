@@ -12,6 +12,7 @@ module Artifact.Project;
 
 import Utils;
 import Utils.String.Like;
+import Utils.String.UniString;
 
 import Composition.Settings;
 import Container;
@@ -19,6 +20,7 @@ import Asset.File;
 
 import Artifact.Composition.Abstract;
 import Artifact.Composition._2D;
+import Artifact.Composition.InitParams;
 
 
 namespace Artifact {
@@ -45,21 +47,23 @@ namespace Artifact {
  class ArtifactProject::Impl {
  private:
   ArtifactProjectSettings projectSettings_;
-  ArtifactCompositionMultiIndexContainer container_;
+  
   AssetMultiIndexContainer assetContainer_;
  public:
   Impl();
   ~Impl();
   void addAssetFromPath(const QString& string);
-  CreateCompositionResult createComposition(const QString& str);
-  void createComposition(const CompositionSettings& settings);
-
+  CreateCompositionResult createComposition(const UniString& str);
+  CreateCompositionResult createComposition(const ArtifactCompositionInitParams& settings);
+  //CreateCompositionResult createComposition(const Composition)
+ 	
   void createCompositions(const QStringList& names);
-  void findComposition(const CompositionID& id);
+  FindCompositionResult findComposition(const CompositionID& id);
   bool removeById(const CompositionID& id);
   void removeAllCompositions();
 
   QJsonObject toJson() const;
+  ArtifactCompositionMultiIndexContainer container_;
  };
 
 
@@ -80,14 +84,53 @@ namespace Artifact {
   //assetContainer_.addSafe(asset->assetID(),asset);
  }
 
- void ArtifactProject::Impl::createComposition(const CompositionSettings& settings)
+ CreateCompositionResult ArtifactProject::Impl::createComposition(const UniString& str)
  {
-  auto newComposition = new ArtifactComposition();
+  auto id = CompositionID();
+ 	
+  ArtifactCompositionInitParams params;
+ 	
+ 	
+  auto newComposition = new ArtifactComposition(id,params);
+
+  CreateCompositionResult result;
 
 
-  //container_.add(settings);
-
+  return result;
  }
+
+CreateCompositionResult ArtifactProject::Impl::createComposition(const ArtifactCompositionInitParams& settings)
+{
+ auto id = CompositionID();
+
+ ArtifactCompositionInitParams params;
+ auto newComposition = new ArtifactComposition(id, params);
+
+  CreateCompositionResult result;
+  result.id = newComposition->id();
+  result.success = true;
+
+
+  return result;
+ }
+
+FindCompositionResult ArtifactProject::Impl::findComposition(const CompositionID& id)
+{
+ auto ptr=container_.findById(id);
+ 	
+ FindCompositionResult result;
+ result.success = true;
+ result.ptr = ptr;
+
+ return result;
+}
+
+FindCompositionResult ArtifactProject::findComposition(const CompositionID& id)
+{
+ 	
+ 	
+ return impl_->findComposition(id);
+}
 
  void ArtifactProject::Impl::removeAllCompositions()
  {
@@ -113,13 +156,7 @@ namespace Artifact {
 
   return result;
  }
-
-ArtifactCompositionPtr ArtifactProject::findComposition()
- {
-
- return nullptr;
- }
-
+	
  ArtifactProject::ArtifactProject() :impl_(new Impl())
  {
 
@@ -159,10 +196,10 @@ ArtifactCompositionPtr ArtifactProject::findComposition()
   qDebug() << "シグナルで通知された ID:" << idStr;
  }
 
- CreateCompositionResult ArtifactProject::createComposition(const CompositionSettings& settings)
+ CreateCompositionResult ArtifactProject::createComposition(const ArtifactCompositionInitParams& param)
  {
 
-  return CreateCompositionResult();
+  return impl_->createComposition(param);
  }
 
  bool ArtifactProject::isNull() const
@@ -196,6 +233,10 @@ ArtifactCompositionPtr ArtifactProject::findComposition()
  {
 
  }
+ bool ArtifactProject::isDirty() const
+ {
+  return false;
+ }
 
  QJsonObject ArtifactProject::toJson() const
  {
@@ -203,11 +244,7 @@ ArtifactCompositionPtr ArtifactProject::findComposition()
   return  impl_->toJson();
  }
 
- bool ArtifactProject::isDirty() const
- {
-  return false;
- }
 
 
 
-}
+};

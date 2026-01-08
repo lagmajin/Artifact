@@ -12,6 +12,8 @@ import Utils.Id;
 import Color.Float;
 import Artifact.Layers;
 import Artifact.Composition.Abstract;
+import Artifact.Composition.InitParams;
+
 
 export namespace Artifact {
 
@@ -26,7 +28,7 @@ export namespace Artifact {
   ArtifactComposition(const ArtifactComposition&) = delete;
   ArtifactComposition& operator=(const ArtifactComposition&) = delete;
  public:
-  ArtifactComposition();
+  explicit ArtifactComposition(const CompositionID& id, const ArtifactCompositionInitParams& params);
   ~ArtifactComposition();
 
 

@@ -12,6 +12,7 @@ namespace Artifact {
  public:
   Impl() = default;
   ~Impl() = default;
+  PreviewQuality quality_;
   FloatColor backgroundColor_;
   FrameRate framerate_;
  	
@@ -47,6 +48,17 @@ namespace Artifact {
  {
   impl_->framerate_ = framerate;
  }
+
+ PreviewQuality ArtifactCompositionInitParams::quality() const
+ {
+  return impl_->quality_;
+ }
+
+ void ArtifactCompositionInitParams::setQuality(const PreviewQuality& quality)
+ {
+  impl_->quality_=quality;
+ }
+
  // Destructor is defaulted in the header; no manual delete needed.
 
 };

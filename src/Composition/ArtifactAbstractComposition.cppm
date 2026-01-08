@@ -28,9 +28,8 @@ namespace Artifact {
 
  class ArtifactAbstractComposition::Impl {
  private:
-  MultiIndexLayerContainer layerMultiIndex_;
-  CompositionSettings settings_;
-  FramePosition position_;
+  
+
  public:
   Impl();
   ~Impl();
@@ -51,6 +50,10 @@ namespace Artifact {
   ArtifactAbstractLayerPtr backMostLayer() const;
   bool hasVideo() const;
   bool hasAudio() const;
+  MultiIndexLayerContainer layerMultiIndex_;
+  CompositionSettings settings_;
+  FramePosition position_;
+  CompositionID id_;
  };
 
  ArtifactAbstractComposition::Impl::Impl()
@@ -135,21 +138,34 @@ namespace Artifact {
 
  bool ArtifactAbstractComposition::Impl::hasVideo() const
  {
-
-
+  for (const auto& layer : layerMultiIndex_) {
+   if (layer->hasVideo())
+   {
+	return true;
+   }
+  }
+ 	
   return false;
  }
 
  bool ArtifactAbstractComposition::Impl::hasAudio() const
  {
-
+  for (const auto& layer : layerMultiIndex_) {
+   if (layer->hasAudio())
+   {
+	return true;
+   }
+  }
   return false;
  }
-
- ArtifactAbstractComposition::ArtifactAbstractComposition():impl_(new Impl())
+	
+ ArtifactAbstractComposition::ArtifactAbstractComposition(const CompositionID& id, const ArtifactCompositionInitParams& params) :impl_(new Impl())
  {
-
+  impl_->id_ = id;
+ 	
+ 	
  }
+
  ArtifactAbstractComposition::~ArtifactAbstractComposition()
  {
   delete impl_;
@@ -236,6 +252,11 @@ namespace Artifact {
  ArtifactAbstractLayerPtr ArtifactAbstractComposition::frontMostLayer() const
  {
     return impl_->frontMostLayer();
+ }
+
+CompositionID ArtifactAbstractComposition::id() const
+ {
+ return CompositionID();
  }
 
 };

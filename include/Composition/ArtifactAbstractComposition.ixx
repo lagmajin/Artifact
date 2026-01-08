@@ -14,6 +14,7 @@ import Frame.Range;
 import Frame.Position;
 import Container.MultiIndex;
 import Artifact.Layers;
+import Artifact.Composition.InitParams;
 //import Artifact.Layer.Abstract;
 //import Artifact.Composition.Result;
 //import Artifact.Preview.Controller;
@@ -31,13 +32,14 @@ export namespace Artifact {
   class Impl;
   Impl* impl_;
  public:
-  ArtifactAbstractComposition();
+  explicit ArtifactAbstractComposition(const CompositionID& id,const ArtifactCompositionInitParams& params);
   ~ArtifactAbstractComposition();
   AppendLayerToCompositionResult appendLayerTop(ArtifactAbstractLayerPtr layer);
   AppendLayerToCompositionResult appendLayerBottom(ArtifactAbstractLayerPtr layer);
   void insertLayerAt(ArtifactAbstractLayerPtr layer, int index=0);
   void removeLayer(const LayerID& id);
   void removeAllLayers();
+  CompositionID id() const;
   int layerCount() const;
 
   ArtifactAbstractLayerPtr layerById(const LayerID& id);
@@ -60,7 +62,8 @@ export namespace Artifact {
  	
   bool hasVideo() const;
   bool hasAudio() const;
- 	
+  bool isAudioOnly() const;
+  bool isVisual() const;
 
   QJsonDocument toJson() const;
 

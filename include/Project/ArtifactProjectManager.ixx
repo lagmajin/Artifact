@@ -70,7 +70,7 @@ export namespace Artifact {
 
   
   ArtifactCompositionPtr currentComposition();
-  ArtifactCompositionPtr findComposition(const CompositionID& id);
+  FindCompositionResult findComposition(const CompositionID& id);
 
   //Assets
   void addAssetFromFilePath(const QString& filePath);

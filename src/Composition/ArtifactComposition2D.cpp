@@ -33,10 +33,8 @@ namespace Artifact {
  {
 
  }
-
-
-
-ArtifactComposition::ArtifactComposition():impl_(new Impl)
+	
+ArtifactComposition::ArtifactComposition(const CompositionID& id, const ArtifactCompositionInitParams& params):ArtifactAbstractComposition(id,params)
 {
 
 }

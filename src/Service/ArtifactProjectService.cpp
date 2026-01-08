@@ -99,9 +99,7 @@ namespace Artifact
 
  FindCompositionResult ArtifactProjectService::Impl::findComposition(const CompositionID& id)
  {
-  FindCompositionResult result;
- 	
-  return result;
+  return ArtifactProjectManager::getInstance().findComposition(id);
  }
 
  W_OBJECT_IMPL(ArtifactProjectService)

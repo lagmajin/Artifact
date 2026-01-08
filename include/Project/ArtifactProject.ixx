@@ -13,7 +13,7 @@ export module Artifact.Project;
 
 export import Artifact.Project.Settings;
 
-
+import Artifact.Composition.InitParams;
 
 import std;
 
@@ -57,9 +57,9 @@ export namespace Artifact {
   template <typename NameT, typename SizeT>
    requires StringLike<NameT>&& SizeLike<SizeT>
   void createComposition(NameT name, SizeT size);
-  CreateCompositionResult createComposition(const CompositionSettings& settings);
-
-  ArtifactCompositionPtr findComposition();
+  CreateCompositionResult createComposition(const ArtifactCompositionInitParams& settings);
+ 	
+  FindCompositionResult findComposition(const CompositionID& id);
 
   void addAssetFile();
   void addAssetFromPath(const QString& filepath);

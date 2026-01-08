@@ -15,21 +15,8 @@ namespace Artifact {
  public:
 
  };
-	
 
- ArtifactComposition3D::ArtifactComposition3D(const ArtifactComposition3D& composition)
- {
 
- }
 
- ArtifactComposition3D::ArtifactComposition3D(ArtifactComposition3D&& composition)
- {
 
- }
-
- ArtifactComposition3D::~ArtifactComposition3D()
- {
-
- }
-
-}
+};

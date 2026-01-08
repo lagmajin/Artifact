@@ -39,6 +39,12 @@ export namespace Artifact {
  private:
   class Impl;
   Impl* impl_;
+ protected:
+  void drawForeground(QPainter* painter, const QRectF& rect) override;
+  void drawBackground(QPainter* painter, const QRectF& rect) override;
+
+  void mousePressEvent(QMouseEvent* event) override;
+
  public:
   explicit TimelineTrackView(QWidget* parent = nullptr);
   ~TimelineTrackView();
@@ -46,17 +52,10 @@ export namespace Artifact {
   void setZoomLevel(double pixelsPerFrame);
 
 
-  QSize minimumSizeHint() const override
-  {
-   return QSize(600, 600);
-  }
+  QSize minimumSizeHint() const override;
 
- protected:
-  void drawBackground(QPainter* painter, const QRectF& rect) override;
-
-
-  void drawForeground(QPainter* painter, const QRectF& rect) override;
-
+ public /*signals*/:
+  void seekPositionChanged(double ratio) W_SIGNAL(seekPositionChanged,ratio);
  };
 
 

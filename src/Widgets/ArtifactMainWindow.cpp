@@ -88,7 +88,7 @@ namespace Artifact {
  {
   qDebug() << "composition created" <<id.toString();
 
-  auto timeTest = new ArtifactLayerTimelinePanelWrapper();
+  auto timeTest = new ArtifactLayerTimelinePanelWrapper(id);
   timeTest->show();
 
   //auto timelineWidget = new ArtifactTimelineWidget();

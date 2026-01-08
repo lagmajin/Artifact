@@ -29,6 +29,9 @@ export namespace Artifact
   virtual void drawSolidRect(float2 pos, float2 size,const FloatColor& color);
   virtual void drawRectOutline();
   virtual void drawParticles();
+  
+  virtual void setUpscaleConfig(bool enable, float sharpness = 0.5f);
+ 	//virtual void upscaling();
  };
 
 

@@ -2,7 +2,7 @@ module;
 #include <QLabel>
 #include <QHBoxLayout>
 #include <wobjectimpl.h>
-module Artifact.Timeline.Label;
+module Artifact.Widgets.Timeline.Label;
 
 import std;
 

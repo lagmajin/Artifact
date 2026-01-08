@@ -3,8 +3,12 @@ module;
 #include <QWidget>
 export module Artifact.Widgets.LayerPanelWidget;
 
+import Utils.Id;
+
 export namespace Artifact
 {
+ using namespace ArtifactCore;
+	
  class ArtifactLayerPanelHeaderWidget :public QWidget
  {
   W_OBJECT(ArtifactLayerPanelHeaderWidget)
@@ -47,7 +51,9 @@ void soloClicked() W_SIGNAL(soloClicked)
 
  public:
   explicit ArtifactLayerTimelinePanelWrapper(QWidget* parent = nullptr);
+  ArtifactLayerTimelinePanelWrapper(const CompositionID& id, QWidget* parent = nullptr);
   ~ArtifactLayerTimelinePanelWrapper();
+ 	
  };
 
 

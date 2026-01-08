@@ -11,6 +11,7 @@ module Artifact.Widgets.LayerPanelWidget;
 
 import std;
 import Utils.Path;
+import Artifact.Service.Project;
 
 
 namespace Artifact
@@ -192,6 +193,7 @@ namespace Artifact
   QScrollArea* scroll = nullptr;
   ArtifactLayerPanelHeaderWidget* header = nullptr;
   ArtifactLayerPanelWidget* panel = nullptr;
+  CompositionID id;
  };
 
  ArtifactLayerTimelinePanelWrapper::ArtifactLayerTimelinePanelWrapper(QWidget* parent)
@@ -212,6 +214,11 @@ namespace Artifact
   layout->addWidget(impl_->header);
   layout->addWidget(impl_->scroll);
   setLayout(layout);
+ }
+
+ ArtifactLayerTimelinePanelWrapper::ArtifactLayerTimelinePanelWrapper(const CompositionID& id, QWidget* parent /*= nullptr*/):QWidget(parent)
+ {
+
  }
 
  ArtifactLayerTimelinePanelWrapper::~ArtifactLayerTimelinePanelWrapper()
