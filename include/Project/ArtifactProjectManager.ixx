@@ -59,16 +59,10 @@ export namespace Artifact {
   std::weak_ptr<ArtifactProject> getCurrentProjectWeakPtr();
  	/*Compostion*/
   void createComposition();
-  CreateCompositionResult createComposition(const CompositionSettings& setting);
-  // CreateCompositionResult createComposition()
-  void createComposition(const QString& str);
+  CreateCompositionResult createComposition(const ArtifactCompositionInitParams& setting);
+  CreateCompositionResult createComposition(const UniString& str);
   void createComposition(const QString, const QSize& size);
- 	
   int compositionCount() const;
-  
- 	
-
-  
   ArtifactCompositionPtr currentComposition();
   FindCompositionResult findComposition(const CompositionID& id);
 

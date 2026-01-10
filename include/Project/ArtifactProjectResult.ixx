@@ -21,7 +21,10 @@ export namespace Artifact
 	};
 
 
-
+	struct ProjectToJsonResult
+	{
+	 bool isSuccess = false;
+	};
 
 
 

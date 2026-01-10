@@ -18,9 +18,7 @@
 
 #include <QCommandLineOption>
 #include <qthreadpool.h>
-
-
-
+//#include <pybind11/pybind11.h>
 
 import Transform;
 import Draw;
@@ -42,6 +40,7 @@ import ImageProcessing.SpectralGlow;
 import Codec.Thumbnail.FFmpeg;
 
 import Widgets.Render.Queue;
+import IO.ImageExporter;
 
 using namespace Artifact;
 using namespace ArtifactCore;
@@ -215,14 +214,28 @@ int main(int argc, char* argv[])
  //qsetenv("QT_QPA_PLATFORM", "windows:darkmode=[1]");
 
  //QTextCodec::setCodecForLocale(QTextCodec::codecForName("Shift-JIS"));
+ bool renderMode = false;
+	
 
- QApplication a(argc, argv);
- auto pool = QThreadPool::globalInstance();
+	if (renderMode)
+	 {
+		
+		
+	 }else
+	 {
+		 
+	 }
+	
+	 QApplication a(argc, argv);
+	 auto pool = QThreadPool::globalInstance();
 
- pool->setMaxThreadCount(10);
+	 pool->setMaxThreadCount(10);
 
+	
  test();
- ArtifactMainWindow mw;
+ ImageExporter exp;
+ exp.testWrite();
+	ArtifactMainWindow mw;
  mw.show();
  return a.exec();
 

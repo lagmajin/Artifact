@@ -7,6 +7,8 @@ export module Artifact.Render.IRenderer;
 
 import std;
 import Color.Float;
+import Utils.Size.Like;
+import Utils.Point.Like;
 
 
 export namespace Artifact
@@ -22,7 +24,7 @@ export namespace Artifact
  public:
   IRenderer();
   explicit IRenderer(RefCntAutoPtr<IRenderDevice> pDevice, RefCntAutoPtr<IDeviceContext> pImmediateContext, RefCntAutoPtr<ISwapChain> pSwapChain);
-  ~IRenderer();
+  virtual ~IRenderer();
   virtual void drawSprite(float x,float y,float w,float h);
   virtual void drawSprite(float2 pos, float2 size);
   virtual void drawSolidRect(float x, float y,float w,float h);

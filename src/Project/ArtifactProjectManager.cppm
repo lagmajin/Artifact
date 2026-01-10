@@ -109,7 +109,7 @@ namespace Artifact {
 
  CreateCompositionResult ArtifactProjectManager::Impl::createComposition(const ArtifactCompositionInitParams& params)
  {
-  currentProjectPtr_->createComposition(params);
+  return currentProjectPtr_->createComposition(params);
  	
  }
 
@@ -189,15 +189,7 @@ namespace Artifact {
 
   return Impl_->currentProjectPtr_;
  }
-
- void ArtifactProjectManager::createComposition(const QString& str)
- {
-  CompositionID id;
-
-  /*emit*/ compositionCreated(id);
-
- }
-
+	
  void ArtifactProjectManager::createComposition()
  {
   Impl_->createNewComposition();
@@ -212,13 +204,20 @@ namespace Artifact {
 
  }
 
- CreateCompositionResult ArtifactProjectManager::createComposition(const CompositionSettings& setting)
+ CreateCompositionResult ArtifactProjectManager::createComposition(const ArtifactCompositionInitParams& params)
  {
+  auto result = Impl_->createComposition(params);
 
-  auto result=Impl_->createComposition(setting);
+  return result;
+ }
+
+ CreateCompositionResult ArtifactProjectManager::createComposition(const UniString& str)
+ {
+  ArtifactCompositionInitParams params;
  	
-  //compositionCreated(CompositionID());
+  auto result = Impl_->createComposition(params);
  	
+  /*emit*/ compositionCreated(result.id);
   return result;
  }
 

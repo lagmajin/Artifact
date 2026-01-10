@@ -211,6 +211,12 @@
     <Filter Include="ソース ファイル\Project">
       <UniqueIdentifier>{c9d13665-fca9-4afd-a2b4-22ff2f400d39}</UniqueIdentifier>
     </Filter>
+    <Filter Include="ヘッダー ファイル\Export">
+      <UniqueIdentifier>{ca62e7e2-ad7a-4d35-a5f5-a50f70748230}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ヘッダー ファイル\Export\Python">
+      <UniqueIdentifier>{20ac87be-1350-4b79-a97d-6d3c81a7a4f3}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="include\Composition\ArtifactCompositionManager.hpp">
@@ -988,6 +994,12 @@
     </ClCompile>
     <ClCompile Include="src\Widgets\Native\NativeHelper.cpp">
       <Filter>ソース ファイル\Widgets\Native</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Export\ProjectExport.ixx">
+      <Filter>ヘッダー ファイル\Export</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Export\Python\Python.ixx">
+      <Filter>ヘッダー ファイル\Export\Python</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>

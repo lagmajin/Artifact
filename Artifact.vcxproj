@@ -143,7 +143,7 @@
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
       <BuildStlModules>true</BuildStlModules>
       <LanguageStandard_C>stdclatest</LanguageStandard_C>
-      <DisableSpecificWarnings>4828;5050;4251</DisableSpecificWarnings>
+      <DisableSpecificWarnings>4828;5050;4251;5244</DisableSpecificWarnings>
       <TranslateIncludes>false</TranslateIncludes>
       <OpenMPSupport>true</OpenMPSupport>
       <EnableModules>true</EnableModules>
@@ -160,6 +160,7 @@
       <AdditionalDependencies>Qt6Cored.lib;Qt6Guid.lib;Qt6Widgetsd.lib;Qt6Testd.lib;WickedEngine_Windows.lib;OgreMain.lib;opencv_world4110d.lib;halide.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <OutputFile>$(OutDir)$(TargetName)$(TargetExt)</OutputFile>
       <ForceFileOutput>Enabled</ForceFileOutput>
+      <ImportLibrary>artifactimport</ImportLibrary>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -213,6 +214,8 @@
     <ClCompile Include="include\Effetcs\GlobalEffectManager.ixx" />
     <ClCompile Include="include\Effetcs\Glow\GlowEffect.ixx" />
     <ClCompile Include="include\Effetcs\Noise\NoiseEffect.ixx" />
+    <ClCompile Include="include\Export\ProjectExport.ixx" />
+    <ClCompile Include="include\Export\Python\Python.ixx" />
     <ClCompile Include="include\Generator\CloneGenerator.ixx" />
     <ClCompile Include="include\Generator\AbstractGenerator.ixx" />
     <ClCompile Include="include\Generator\AbstractGeneratorEffector.ixx" />
