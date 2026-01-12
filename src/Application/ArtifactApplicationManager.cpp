@@ -18,7 +18,7 @@ namespace Artifact
  class ArtifactApplicationManager::Impl
  {
  private:
-  GlobalEffectManager effectManager_;
+  ArtifactGlobalEffectManager effectManager_;
   ArtifactTestProjectManager testProjectManager_;
   ArtifactToolManager toolManager_;
   EnvironmentVariableManager manager_;
@@ -31,7 +31,7 @@ namespace Artifact
   ~Impl();
   entt::registry& registry();
   ArtifactProjectManager* projectManager() const;
-  GlobalEffectManager* const effectManager();
+  ArtifactGlobalEffectManager* const effectManager();
   ArtifactActiveContextService* activeContext_=new ArtifactActiveContextService();
   //GlobalEffectManager
  };
@@ -51,7 +51,7 @@ namespace Artifact
   return registry_;
  }
 
- GlobalEffectManager* const ArtifactApplicationManager::Impl::effectManager()
+ ArtifactGlobalEffectManager* const ArtifactApplicationManager::Impl::effectManager()
  {
   return &effectManager_;
  }
@@ -80,7 +80,7 @@ namespace Artifact
 
 
 
- GlobalEffectManager* const ArtifactApplicationManager::effectManager()
+ ArtifactGlobalEffectManager* const ArtifactApplicationManager::effectManager()
  {
   return impl_->effectManager();
  }

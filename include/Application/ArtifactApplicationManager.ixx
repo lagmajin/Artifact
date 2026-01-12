@@ -29,7 +29,7 @@ export namespace Artifact {
   ArtifactProjectManager* projectManager() const;
   ArtifactProjectService* projectService() const;
   ArtifactTestProjectManager* testProjectManager() const;
-  GlobalEffectManager*const effectManager();
+  ArtifactGlobalEffectManager*const effectManager();
   ArtifactActiveContextService* activeContextService();
   
   //void copyImageToClipboard(const QImage& image);

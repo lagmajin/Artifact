@@ -3,6 +3,8 @@
 #include <QWidget>
 module Artifact.Menu.Effect;
 
+import std;
+import Artifact.Service.Effect;
 
 namespace Artifact
 {

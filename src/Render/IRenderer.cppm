@@ -31,13 +31,17 @@ namespace Artifact
   PSOAndSRB m_draw_sprite_pso_and_srb;
   RefCntAutoPtr<IBuffer> m_draw_sprite_vertex_buffer;
   RefCntAutoPtr<IBuffer> m_draw_sprite_index_buffer;
- 	RenderShaderPair m_draw_sprit_shaders;
+  RenderShaderPair m_draw_sprit_shaders;
+  void initContext();
   void createShaders();
   void createPSOs();
  public:
-  explicit Impl();
+   Impl();
+   explicit Impl(RefCntAutoPtr<IRenderDevice> device, RefCntAutoPtr<IDeviceContext>& context);
+  ~Impl();
   RefCntAutoPtr<IRenderDevice> pDevice;
   RefCntAutoPtr<IDeviceContext> pImmediateContext;
+  RefCntAutoPtr<IDeviceContext> pDifferedContext;
   RefCntAutoPtr<ISwapChain> pSwapChain_;
 
   void drawSprite(float x, float y, float w, float h);
@@ -48,6 +52,10 @@ namespace Artifact
   void drawRectOutline(float2 pos);
   void drawParticles();
  };
+ void IRenderer::Impl::initContext()
+ {
+
+ }
 
  void IRenderer::Impl::createShaders()
  {
@@ -59,12 +67,28 @@ namespace Artifact
 
  }
 
+ IRenderer::Impl::Impl()
+ {
+
+ }
+
+ IRenderer::Impl::Impl(RefCntAutoPtr<IRenderDevice> device, RefCntAutoPtr<IDeviceContext>& context)
+ {
+
+ }
+
+ IRenderer::Impl::~Impl()
+ {
+
+ }
+
+
  IRenderer::IRenderer() :impl_(new Impl())
  {
 
  }
 
- IRenderer::IRenderer(RefCntAutoPtr<IRenderDevice> pDevice, RefCntAutoPtr<IDeviceContext> pImmediateContext, RefCntAutoPtr<ISwapChain> pSwapChain) :impl_(new Impl())
+ IRenderer::IRenderer(RefCntAutoPtr<IRenderDevice> pDevice, RefCntAutoPtr<IDeviceContext> pImmediateContext, RefCntAutoPtr<ISwapChain> pSwapChain) :impl_(new Impl(pDevice, pImmediateContext))
  {
 
  }

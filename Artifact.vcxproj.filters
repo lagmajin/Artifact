@@ -217,6 +217,12 @@
     <Filter Include="ヘッダー ファイル\Export\Python">
       <UniqueIdentifier>{20ac87be-1350-4b79-a97d-6d3c81a7a4f3}</UniqueIdentifier>
     </Filter>
+    <Filter Include="ソース ファイル\Effects\ColorCorrection">
+      <UniqueIdentifier>{589d3411-5eb1-4f27-aa31-3822afdae16a}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ソース ファイル\Effects\Color">
+      <UniqueIdentifier>{5c4c3822-086e-45a6-afa2-403dc7474e89}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="include\Composition\ArtifactCompositionManager.hpp">
@@ -310,9 +316,6 @@
     </ClCompile>
     <ClCompile Include="src\Widgets\Dialog\CreatePlaneLayerDialog.cppm">
       <Filter>ソース ファイル\Widgets\Dialog</Filter>
-    </ClCompile>
-    <ClCompile Include="src\Effect\ArtifactAbstractEffect.cppm">
-      <Filter>ソース ファイル\Effects</Filter>
     </ClCompile>
     <ClCompile Include="src\GUI\ArtifactGuiManager.cpp">
       <Filter>ソース ファイル\GUI</Filter>
@@ -500,10 +503,10 @@
     <ClCompile Include="include\Layer\ArtifactLayerFactory.ixx">
       <Filter>ヘッダー ファイル\Layer</Filter>
     </ClCompile>
-    <ClCompile Include="include\Effetcs\GlobalEffectManager.ixx">
+    <ClCompile Include="include\Effetcs\ArtifactGlobalEffectManager.ixx">
       <Filter>ヘッダー ファイル\Effects</Filter>
     </ClCompile>
-    <ClCompile Include="src\Effetcs\GlobalEffectManager.cpp">
+    <ClCompile Include="src\Effetcs\ArtifactGlobalEffectManager.cpp">
       <Filter>ソース ファイル\Effects</Filter>
     </ClCompile>
     <ClCompile Include="include\Layer\ArtifactSolidImageLayer.ixx">
@@ -1000,6 +1003,36 @@
     </ClCompile>
     <ClCompile Include="include\Export\Python\Python.ixx">
       <Filter>ヘッダー ファイル\Export\Python</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Effetcs\EffectContext.ixx">
+      <Filter>ヘッダー ファイル\Effects</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Effetcs\ArtifactEffectImplBase.ixx">
+      <Filter>ヘッダー ファイル\Effects</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Effetcs\RadialBlur.ixx">
+      <Filter>ヘッダー ファイル\Effects\Blur</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Effetcs\GauusianBlur.ixx">
+      <Filter>ヘッダー ファイル\Effects\Blur</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Effetcs\Blur\GauusianBlur.cpp">
+      <Filter>ソース ファイル\Effects\Blur</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Effetcs\ArtifactAbstractEffect.cppm">
+      <Filter>ソース ファイル\Effects</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Effetcs\ColorCorrection\HueAndSaturation.ixx">
+      <Filter>ヘッダー ファイル\Effects\ColorCorrection</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Effetcs\ColorCorrection\HueAndSaturation.cpp">
+      <Filter>ソース ファイル\Effects\ColorCorrection</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Service\ArtifactEffectService.ixx">
+      <Filter>ヘッダー ファイル\Effects</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Service\ArtifactEffectService.cpp">
+      <Filter>ソース ファイル\Service</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
