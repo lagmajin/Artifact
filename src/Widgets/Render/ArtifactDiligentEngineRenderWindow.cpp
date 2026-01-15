@@ -22,7 +22,7 @@ module ArtifactDiligentEngineRenderWindow;
 #pragma comment(lib,"Diligent-GraphicsAccessories.lib")
 #pragma comment(lib,"Diligent-Archiver-static.lib")
 import std;
-import Graphics.CBuffer.Constants;
+import Graphics;
 
 
 namespace Artifact {

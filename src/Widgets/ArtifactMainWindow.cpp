@@ -42,6 +42,7 @@ import Artifact.Widgets.Render.QueueManager;
 import Artifact.Widgets.RenderQueueJobPanel;
 import Artifact.Widgets.LayerPanelWidget;
 import Artifact.Widgets.PlaybackControlWidget;
+import Artifact.Widgets.RenderLayerWidgetv2;
 
 
 namespace ArtifactWidgets {}//
@@ -204,7 +205,8 @@ namespace Artifact {
 	auto timelineWidget = new ArtifactTimelineWidget();
 	timelineWidget->show();
  
-
+    auto layerPreview2=new ArtifactLayerEditorWidgetV2();
+   layerPreview2->show();
  	
   QObject::connect(&projectManager, &ArtifactProjectManager::projectCreated, [this]() {
    impl_->handleProjectCreated();
@@ -215,6 +217,9 @@ namespace Artifact {
    
    
    });
+   
+   
+   //ArtifactLayerEditor2DWidgetV2
 
   //auto compositionWidget2 = new ArtifactDiligentEngineComposition2DWidget();
 

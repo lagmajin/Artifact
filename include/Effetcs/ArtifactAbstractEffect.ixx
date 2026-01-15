@@ -13,6 +13,11 @@ export namespace Artifact {
 
  using namespace ArtifactCore;
 
+ class EffectID : public Id {
+ public:
+  using Id::Id; // Idのコンストラクタを継承
+ };
+
  enum class ComputeMode {
   CPU,
   GPU,
@@ -38,5 +43,8 @@ export namespace Artifact {
   UniString displayName() const;
    
  };
+
+ typedef std::shared_ptr<ArtifactAbstractEffect> ArtifactAbstractEffectPtr;
+ typedef std::weak_ptr<ArtifactAbstractEffect>	 ArtifactAbstractEffectWeakPtr;
 
 };

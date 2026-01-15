@@ -1,7 +1,6 @@
 ﻿module;
 #include <DiligentCore/Common/interface/BasicMath.hpp>
-
-
+#include <QWidget>
 
 export module Artifact.Render.IRenderer;
 
@@ -22,9 +21,9 @@ export namespace Artifact
   class Impl;
   Impl* impl_;
  public:
-  IRenderer();
-  explicit IRenderer(RefCntAutoPtr<IRenderDevice> pDevice, RefCntAutoPtr<IDeviceContext> pImmediateContext, RefCntAutoPtr<ISwapChain> pSwapChain);
+  explicit IRenderer(RefCntAutoPtr<IRenderDevice> pDevice, RefCntAutoPtr<IDeviceContext> pImmediateContext,QWidget*widget);
   virtual ~IRenderer();
+  void recreateSwapChain(QWidget* widget);
   virtual void drawSprite(float x,float y,float w,float h);
   virtual void drawSprite(float2 pos, float2 size);
   virtual void drawSolidRect(float x, float y,float w,float h);
@@ -33,7 +32,14 @@ export namespace Artifact
   virtual void drawParticles();
   
   virtual void setUpscaleConfig(bool enable, float sharpness = 0.5f);
- 	//virtual void upscaling();
+ 
+   
+  void clear();
+  void flush();
+  void flushAndWait();
+   
+  public/*signals*/:
+   
  };
 
 

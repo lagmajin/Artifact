@@ -1,6 +1,6 @@
 module;
 
-
+#include <QString>
 module Translation.Manager;
 
 

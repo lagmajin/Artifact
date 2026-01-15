@@ -1,6 +1,7 @@
 module;
 #include <QList>
 #include <QString>
+#include <wobjectimpl.h>
 module Artifact.Service.Effect;
 
 import Utils.String.UniString;
@@ -11,10 +12,8 @@ namespace Artifact
 {
  using namespace ArtifactCore;
 
-struct EffectFactory {
- UniString id;
- UniString name;
-};
+
+W_OBJECT_IMPL(ArtifactEffectService)
 
 
  class ArtifactEffectService::Impl
@@ -36,14 +35,15 @@ struct EffectFactory {
 
  }
 
- ArtifactEffectService::ArtifactEffectService()
+
+ ArtifactEffectService::ArtifactEffectService(QObject* parent/*=nullptr*/):QObject(parent),impl_(new Impl)
  {
 
  }
 
  ArtifactEffectService::~ArtifactEffectService()
  {
-
+  delete impl_;
  }
 
 };

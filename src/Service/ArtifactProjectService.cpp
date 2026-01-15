@@ -1,4 +1,5 @@
 ﻿module;
+#include <QList>
 #include <wobjectimpl.h>
 #include <glm/ext/matrix_projection.hpp>
 module Artifact.Service.Project;

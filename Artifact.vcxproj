@@ -251,6 +251,7 @@
     <ClCompile Include="include\Preview\ArtifactTimelineClock.ixx" />
     <ClCompile Include="include\Preview\ArtifactPreviewWorker.ixx" />
     <ClCompile Include="include\Project\ArtifactProjectInitParams.ixx" />
+    <ClCompile Include="include\Project\ArtifactProjectItems.ixx" />
     <ClCompile Include="include\Project\ArtifactProjectModel.ixx" />
     <ClCompile Include="include\Project\ArtifactProjectResult.ixx" />
     <ClCompile Include="include\Project\TreeFilterProxyModel.ixx" />
@@ -290,6 +291,7 @@
     <ClCompile Include="include\Widgets\Render\ArtifactDiligentEngineRenderWidget.ixx" />
     <ClCompile Include="include\Widgets\Render\ArtifactLayerEditorPanel.ixx" />
     <ClCompile Include="include\Widgets\Render\ArtifactRenderLayerWidget.ixx" />
+    <ClCompile Include="include\Widgets\Render\ArtifactRenderLayerWidgetv2.ixx" />
     <ClCompile Include="include\Widgets\Render\ArtifactRenderQueueJobPanel.ixx">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
     </ClCompile>
@@ -376,6 +378,7 @@
     <ClCompile Include="src\Preview\ArtifactPreviewWorker.cppm">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
     </ClCompile>
+    <ClCompile Include="src\Project\ArtifactProjectItems.cpp" />
     <ClCompile Include="src\Project\TreeFilterProxyModel.cppm">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
     </ClCompile>
@@ -425,6 +428,7 @@
     </ClCompile>
     <ClCompile Include="src\Widgets\Native\NativeHelper.cpp" />
     <ClCompile Include="src\Widgets\Render\ArtifactCompositionViewerFooter.cpp" />
+    <ClCompile Include="src\Widgets\Render\ArtifactRenderLayerWidgetv2.cpp" />
     <ClCompile Include="src\Widgets\Render\ArtifactRenderWrapperWidget.cpp" />
     <ClCompile Include="src\Widgets\Render\ArtifactLayerEditorPanel.cpp" />
     <ClCompile Include="src\Widgets\Render\ArtifactRenderQueueJobPanel.cpp" />
@@ -505,6 +509,7 @@
     </ClCompile>
     <ClCompile Include="include\Widgets\Render\ArtifactOgreRenderWindow.hpp">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
     </ClCompile>
     <ClCompile Include="include\Layer\ArtifactAbstractLayer.ixx">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
@@ -670,6 +675,7 @@
     <ClCompile Include="src\Widgets\Render\ArtifactDiligentEngineRenderWindow.cpp" />
     <ClCompile Include="src\Widgets\Render\ArtifactOgreRenderWindow.cpp">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
     </ClCompile>
     <ClCompile Include="src\Widgets\Render\ArtifactRenderManagerWidget.cpp" />
   </ItemGroup>

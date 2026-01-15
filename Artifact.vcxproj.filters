@@ -1034,6 +1034,18 @@
     <ClCompile Include="src\Service\ArtifactEffectService.cpp">
       <Filter>ソース ファイル\Service</Filter>
     </ClCompile>
+    <ClCompile Include="src\Widgets\Render\ArtifactRenderLayerWidgetv2.cpp">
+      <Filter>ソース ファイル\Widgets\Render</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Widgets\Render\ArtifactRenderLayerWidgetv2.ixx">
+      <Filter>ヘッダー ファイル\Widgets\Render</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Project\ArtifactProjectItems.ixx">
+      <Filter>ヘッダー ファイル\Project</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Project\ArtifactProjectItems.cpp">
+      <Filter>ソース ファイル\Project</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <None Include="src\Layer\ArtifactAdjustableLayer.cppm">

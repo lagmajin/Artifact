@@ -13,20 +13,6 @@ export namespace Artifact
 {
  using namespace ArtifactCore;
 
- enum eProjectItemType {
-  eProjectItemType_Unknown = 0,
-  eProjectItemType_Folder,
-  eProjectItemType_Composition,
-  
- };
-
- struct ProjectItem {
-  UniString name;
-  Id id;
-  UniString description;
-  //std::vector<ProjectItem> children;
-
- };
 
  class ArtifactProjectModel:public QAbstractItemModel
  {

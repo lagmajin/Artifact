@@ -16,14 +16,14 @@ export import Artifact.Project.Settings;
 import Artifact.Composition.InitParams;
 
 import std;
-
 import Utils;
-
-
 import Composition.Settings;
 
 import Artifact.Composition.Result;
 import Artifact.Composition.Abstract;
+
+import Artifact.Project.Items;
+
 W_REGISTER_ARGTYPE(ArtifactCore::CompositionID)
 
 export namespace Artifact {
@@ -69,6 +69,7 @@ export namespace Artifact {
   void removeAllCompositions();
   bool isDirty() const;
   QJsonObject toJson() const;
+   
  public:
 	//signals
   void projectChanged()

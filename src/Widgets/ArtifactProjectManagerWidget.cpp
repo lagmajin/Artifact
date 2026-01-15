@@ -23,6 +23,25 @@ import Artifact.Service.Project;
 namespace Artifact {
  W_OBJECT_IMPL(ArtifactProjectManagerWidget)
 
+class HoverThumbnailPopupWidget::Impl {
+ public:
+  Impl();
+  ~Impl();
+ };
+
+HoverThumbnailPopupWidget::HoverThumbnailPopupWidget(QWidget* parent /*= nullptr*/):QWidget(parent)
+ {
+   setWindowFlags(Qt::ToolTip | Qt::FramelessWindowHint);
+    
+   setAttribute(Qt::WA_TranslucentBackground);
+   setAttribute(Qt::WA_ShowWithoutActivating);
+ }
+
+ HoverThumbnailPopupWidget::~HoverThumbnailPopupWidget()
+ {
+
+ }
+
   class ArtifactProjectView::Impl
  {
  private:
@@ -439,5 +458,7 @@ namespace Artifact {
  {
   //throw std::logic_error("The method or operation is not implemented.");
  }
+
+
 
 }

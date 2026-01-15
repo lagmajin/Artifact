@@ -22,6 +22,7 @@ import Artifact.Composition.Abstract;
 import Artifact.Composition._2D;
 import Artifact.Composition.InitParams;
 
+import Artifact.Project.Items;
 
 namespace Artifact {
  using namespace ArtifactCore;

@@ -52,13 +52,15 @@ export namespace Artifact {
   void sendToBack(ArtifactAbstractLayer* layer);
 
   void setBackGroundColor(const FloatColor& color);
-
+  FramePosition framePosition() const;
   void setFramePosition(const FramePosition& position);
   void setTimeCode();
 
   void goToStartFrame();
   void goToEndFrame();
   void goToFrame(int64_t frameNumber = 0);
+   
+  bool isPlaying() const;
  	
   bool hasVideo() const;
   bool hasAudio() const;

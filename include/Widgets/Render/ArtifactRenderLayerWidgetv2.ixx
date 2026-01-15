@@ -1,9 +1,10 @@
-﻿module;
+module;
+
 
 #include <QWidget>
 
 #include <wobjectdefs.h>
-export module Artifact.Widgets.Render.Layer;
+export module Artifact.Widgets.RenderLayerWidgetv2;
 
 import Core.Scale.Zoom;
 import Color.Float;
@@ -11,15 +12,12 @@ import Utils.Id;
 import Core;
 import Tool;
 
-export namespace Artifact
-{
+export namespace Artifact {
  using namespace ArtifactCore;
 
-
-
- class ArtifactLayerEditor2DWidget :public QWidget
+ class ArtifactLayerEditorWidgetV2 :public QWidget
  {
-  W_OBJECT(ArtifactLayerEditor2DWidget)
+  W_OBJECT(ArtifactLayerEditorWidgetV2)
  private:
   class Impl;
   Impl* impl_;
@@ -39,12 +37,12 @@ export namespace Artifact
   void focusInEvent(QFocusEvent* event) override;
 
  public:
-  explicit ArtifactLayerEditor2DWidget(QWidget* parent = nullptr);
-  ~ArtifactLayerEditor2DWidget();
+  explicit ArtifactLayerEditorWidgetV2(QWidget* parent = nullptr);
+  ~ArtifactLayerEditorWidgetV2();
   void setClearColor(const FloatColor& color);
   void setEditMode(EditMode mode);
   void setDisplayMode(DisplayMode mode);
-  void setTargetLayerId(int id);
+  //void setTargetLayerId(int id);
   void setTargetLayer(const LayerID& id);
   void resetView();
   float zoom() const;

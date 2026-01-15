@@ -1,5 +1,6 @@
 ﻿// ReSharper disable All
 module ;
+#include <QList>
 #include <qforeach.h>
 #include <wobjectimpl.h>
 #include <QHash>
@@ -33,6 +34,10 @@ namespace Artifact {
  public:
   Impl();
   ~Impl();
+  MultiIndexLayerContainer layerMultiIndex_;
+  CompositionSettings settings_;
+  FramePosition position_;
+  CompositionID id_;
   AppendLayerToCompositionResult appendLayerTop(ArtifactAbstractLayerPtr layer);
   AppendLayerToCompositionResult appendLayerBottom(ArtifactAbstractLayerPtr layer);
   bool containsLayerById(const LayerID& id) const;
@@ -50,10 +55,8 @@ namespace Artifact {
   ArtifactAbstractLayerPtr backMostLayer() const;
   bool hasVideo() const;
   bool hasAudio() const;
-  MultiIndexLayerContainer layerMultiIndex_;
-  CompositionSettings settings_;
-  FramePosition position_;
-  CompositionID id_;
+
+  bool isPlaying_ = false;
  };
 
  ArtifactAbstractComposition::Impl::Impl()
@@ -190,7 +193,7 @@ namespace Artifact {
  
  void ArtifactAbstractComposition::setFramePosition(const FramePosition& position)
  {
-
+  impl_->setFramePosition(position);
  }
 
  void ArtifactAbstractComposition::goToStartFrame()
@@ -258,5 +261,20 @@ CompositionID ArtifactAbstractComposition::id() const
  {
  return CompositionID();
  }
+
+bool ArtifactAbstractComposition::isAudioOnly() const
+{
+ return false;
+}
+
+bool ArtifactAbstractComposition::isVisual() const
+{
+ return true;
+}
+
+bool ArtifactAbstractComposition::isPlaying() const
+{
+ return impl_->isPlaying_;
+}
 
 };

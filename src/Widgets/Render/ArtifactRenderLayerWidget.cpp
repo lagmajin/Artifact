@@ -1,5 +1,9 @@
 ﻿module;
+#define NOMINMAX
 #include <windows.h>
+#include <tbb/tbb.h>
+#include <QList>
+
 #include <d3d12.h>
 //#include <d3>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/RenderDevice.h>
@@ -19,13 +23,10 @@
 #include <QKeyEvent>
 
 
-#include <tbb/tbb.h>
-
 module Artifact.Widgets.Render.Layer;
 
 import Graphics;
 import Graphics.Shader.Set;
-import Graphics.CBuffer.Constants;
 import Graphics.Shader.Compile.Task;
 import Graphics.Shader.Compute.HLSL.Blend;
 import Layer.Blend;
@@ -33,6 +34,8 @@ import Artifact.Application.Manager;
 import Artifact.Service.Application;
 import Artifact.Service.Project;
 import Artifact.Service.ActiveContext;
+
+
 
 namespace Artifact {
  using namespace Diligent;
@@ -92,6 +95,7 @@ namespace Artifact {
   //QPointF pan_;
   bool hasDirectDraw = false;
   
+  //RefCntAutoPtr<IRenderer> renderer_;
  public:
   Impl();
   ~Impl();
@@ -264,6 +268,7 @@ namespace Artifact {
 
   pDevice->CreateTexture(TexDesc, nullptr, &m_layerRT);
  }
+
  void ArtifactLayerEditor2DWidget::Impl::startRenderLoop()
  {
   if (running_)
@@ -1249,8 +1254,6 @@ namespace Artifact {
  {
 
  }
-
-
 
  void ArtifactLayerEditor2DWidget::keyPressEvent(QKeyEvent* event)
  {

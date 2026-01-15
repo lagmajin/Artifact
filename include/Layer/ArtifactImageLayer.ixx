@@ -20,6 +20,7 @@ export namespace Artifact {
  public:
   ArtifactImageLayer();
   ~ArtifactImageLayer();
+  void toQImage() const;
   void setFromQImage(const QImage& image);
   void setFromCvMat(const cv::Mat& mat);
   void setFromCvMat();

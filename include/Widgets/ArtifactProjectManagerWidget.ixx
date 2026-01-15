@@ -1,4 +1,5 @@
 ﻿module;
+#include <QList>
 #include <wobjectdefs.h>
 #include <QWidget>
 #include <QToolBar>
@@ -25,6 +26,15 @@ public:
 
 };
 */
+
+class HoverThumbnailPopupWidget:public QWidget {
+private:
+ class Impl;
+ Impl* impl_;
+public:
+ explicit HoverThumbnailPopupWidget(QWidget* parent = nullptr);
+ ~HoverThumbnailPopupWidget();
+};
 
  class ArtifactProjectView :public QTreeView {
  private:
@@ -76,10 +86,11 @@ public:
   ~ArtifactProjectManagerWidget();
   void setFilter();
   void triggerUpdate();
+  void setThumbnailEnabled(bool b = true);
  public /*signals*/:
   void onFileDropped(const QStringList& list) W_SIGNAL(onFileDropped, list)
-
- public:
+   
+ public/*Slots*/:
   void updateRequested();
   W_SLOT(updateRequested);
  };

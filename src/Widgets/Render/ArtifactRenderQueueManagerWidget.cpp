@@ -1,4 +1,5 @@
 module;
+#include <QList>
 #include <QVector>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
