@@ -1,5 +1,6 @@
 ﻿module;
 #include <QImage>
+#include <opencv2/opencv.hpp>
 module Artifact.Layer.Image;
 
 import std;
@@ -52,6 +53,11 @@ namespace Artifact {
  void ArtifactImageLayer::draw()
  {
   throw std::logic_error("The method or operation is not implemented.");
+ }
+
+ QImage ArtifactImageLayer::toQImage() const
+ {
+  return QImage();
  }
 
 };

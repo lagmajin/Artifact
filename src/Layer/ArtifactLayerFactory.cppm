@@ -1,6 +1,5 @@
 module;
 
-
 module Artifact.Layer.Factory;
 
 import std;
@@ -8,10 +7,10 @@ import Utils.String.UniString;
 import Artifact.Layer.Result;
 import Artifact.Layer.Null;
 import Artifact.Layer.Image;
-import Artifact.Layer.Audio;
 import Artifact.Layer.Shape;
 import Artifact.Layer.Solid2D;
 import Artifact.Layer.AdjustableLayer;
+import Artifact.Layer.Media;
 //import Artifact.lay
 
 namespace Artifact {
@@ -37,60 +36,55 @@ namespace Artifact {
 
  ArtifactAbstractLayerPtr ArtifactLayerFactory::Impl::createNewLayer(ArtifactLayerInitParams params) noexcept
  {
-	 
- 	
-
-  return nullptr;
+	auto result = createLayer(params);
+	return result.layer;
  }
 
  ArtifactLayerResult ArtifactLayerFactory::Impl::createLayer(ArtifactLayerInitParams& params) noexcept
  {
   ArtifactLayerResult result;
+  result.type = params.layerType();
   result.success = false;
   result.layer = nullptr;
- //	result.
   ArtifactAbstractLayerPtr ptr;
- 	
+
   switch (params.layerType()) {
-  case LayerType::Unknown:
-   result.success = false;
-   break;
-  case LayerType::None:
-   break;
   case LayerType::Null:
    ptr = std::make_shared<ArtifactNullLayer>();
-  	
-  	
-   result.success = true;
    break;
   case LayerType::Solid:
    ptr = std::make_shared<ArtifactSolid2DLayer>();
-  	
    break;
   case LayerType::Image:
    ptr = std::make_shared<ArtifactImageLayer>();
    break;
   case LayerType::Adjustment:
    ptr = std::make_shared<ArtifactAdjustableLayer>();
-  	
    break;
-  case LayerType::Text:
+  case LayerType::Media:
+   ptr = std::make_shared<ArtifactMediaLayer>();
    break;
-  case LayerType::Shape:
+  case LayerType::Audio: {
+   auto mediaLayer = std::make_shared<ArtifactMediaLayer>();
+   mediaLayer->setHasVideo(false);
+   ptr = mediaLayer;
    break;
+  }
+  case LayerType::Video: {
+   auto mediaLayer = std::make_shared<ArtifactMediaLayer>();
+   mediaLayer->setHasAudio(false);
+   ptr = mediaLayer;
+   break;
+  }
   case LayerType::Precomp:
-  	//ptr = std::make_shared<ArtifactCompositionLayer>();
-  	
-   break;
-  case LayerType::Audio:
-   break;
-  case LayerType::Video:
+   //ptr = std::make_shared<ArtifactCompositionLayer>();
    break;
   default:
    break;
   }
- 	
- 	
+
+  result.layer = ptr;
+  result.success = static_cast<bool>(ptr);
   return result;
  }
 

@@ -62,8 +62,6 @@ namespace Artifact {
   RenderShaderPair m_draw_sprit_shaders;
   RefCntAutoPtr<IBuffer> m_draw_solid_rect_trnsform_cb;
   RefCntAutoPtr<IBuffer> m_draw_solid_rect_cb;
- 	
- 	
   PSOAndSRB m_draw_line_pso_and_srb;
   PSOAndSRB m_draw_dot_line_pso_and_srb;
   PSOAndSRB m_draw_solid_rect_pso_and_srb;
@@ -195,14 +193,20 @@ namespace Artifact {
   initializeDirectDraw();
 
 
-  tbb::parallel_invoke(
-   [this] { createConstBuffer(); },  // 独立して並列可能
-   [this] {
-	createShaders();              // Shader 作成後に
-	createPSOs();                 // PSO 作成
-   }
-  );
+  tbb::task_group tg;
 
+  // タスク1: Constant Buffer (空にしてもOK)
+  tg.run([this] {
+   createConstBuffer();
+   });
+
+  // タスク2: Shader -> PSO (依存関係を維持)
+  tg.run([this] {
+   createShaders();
+   createPSOs();
+   });
+
+  tg.wait(); // 全完了を同期
   m_initialized = true;
   released = false;
  }

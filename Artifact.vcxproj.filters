@@ -223,6 +223,12 @@
     <Filter Include="ソース ファイル\Effects\Color">
       <UniqueIdentifier>{5c4c3822-086e-45a6-afa2-403dc7474e89}</UniqueIdentifier>
     </Filter>
+    <Filter Include="ヘッダー ファイル\Controller">
+      <UniqueIdentifier>{787f869a-3705-463a-aa84-111b7a328f91}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ソース ファイル\Controller">
+      <UniqueIdentifier>{5ad98e92-47a9-4e7f-af7f-c2318984e0e4}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="include\Composition\ArtifactCompositionManager.hpp">
@@ -542,10 +548,7 @@
     <ClCompile Include="include\Render\ArtifactRenderController.ixx">
       <Filter>ヘッダー ファイル\Render</Filter>
     </ClCompile>
-    <ClCompile Include="include\Render\RenderPipeline.ixx">
-      <Filter>ヘッダー ファイル\Render</Filter>
-    </ClCompile>
-    <ClCompile Include="include\Render\IRenderer.ixx">
+    <ClCompile Include="include\Render\AritfactIRenderer.ixx">
       <Filter>ヘッダー ファイル\Render</Filter>
     </ClCompile>
     <ClCompile Include="src\Widgets\Render\ArtifactRenderWrapperWidget.cpp">
@@ -607,12 +610,6 @@
     </ClCompile>
     <ClCompile Include="include\Composition\IComposition2D.ixx">
       <Filter>ヘッダー ファイル\Composition</Filter>
-    </ClCompile>
-    <ClCompile Include="include\Layer\ArtifactAudioLayer.ixx">
-      <Filter>ヘッダー ファイル\Layer</Filter>
-    </ClCompile>
-    <ClCompile Include="src\Layer\ArtifactAudioLayer.cppm">
-      <Filter>ソース ファイル\Layer</Filter>
     </ClCompile>
     <ClCompile Include="include\Tool\Tool.ixx">
       <Filter>ソース ファイル</Filter>
@@ -767,9 +764,6 @@
     <ClCompile Include="src\Widgets\Timeline\ArtifactTimelineLabel.cpp">
       <Filter>ソース ファイル\Widgets\Timeline</Filter>
     </ClCompile>
-    <ClCompile Include="include\Widgets\Timeline\ArtifactTimelineTimeCodeWidget.ixx">
-      <Filter>ヘッダー ファイル\Widgets</Filter>
-    </ClCompile>
     <ClCompile Include="include\Widgets\Timeline\ArtifactLayerPanelWidget.ixx">
       <Filter>ヘッダー ファイル\Widgets\Timeline</Filter>
     </ClCompile>
@@ -923,7 +917,7 @@
     <ClCompile Include="src\Effetcs\Glow\NoiseEffect.cppm">
       <Filter>ソース ファイル\Effects\Noise</Filter>
     </ClCompile>
-    <ClCompile Include="src\Render\IRenderer.cppm">
+    <ClCompile Include="src\Render\AritfactIRenderer.cppm">
       <Filter>ソース ファイル\Render</Filter>
     </ClCompile>
     <ClCompile Include="include\Widgets\Render\ArtifactRenderWrapperWidget.ixx">
@@ -946,9 +940,6 @@
     </ClCompile>
     <ClCompile Include="src\Service\ArtifactClipboardService.cpp">
       <Filter>ソース ファイル\Service</Filter>
-    </ClCompile>
-    <ClCompile Include="src\Render\RenderPipeline.cpp">
-      <Filter>ソース ファイル\Render</Filter>
     </ClCompile>
     <ClCompile Include="include\Preview\ArtifactLayerPreviewPipeline.ixx">
       <Filter>ヘッダー ファイル\Preview</Filter>
@@ -1046,11 +1037,27 @@
     <ClCompile Include="src\Project\ArtifactProjectItems.cpp">
       <Filter>ソース ファイル\Project</Filter>
     </ClCompile>
+    <ClCompile Include="src\Layer\ArtifactLayerSetting.cpp">
+      <Filter>ソース ファイル\Layer</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Widgets\Timeline\ArtifactTimelineTimeCodeWidget.ixx">
+      <Filter>ヘッダー ファイル\Widgets\Timeline</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Controller\TimelineViewProvider.ixx">
+      <Filter>ヘッダー ファイル\Controller</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Controller\TimelineViewProvider.cpp">
+      <Filter>ソース ファイル\Controller</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Layer\ArtifactMediaLayer.ixx">
+      <Filter>ソース ファイル\Layer</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <None Include="src\Layer\ArtifactAdjustableLayer.cppm">
       <Filter>ソース ファイル\Layer</Filter>
     </None>
+    <None Include=".github\copilot-instructions.md" />
   </ItemGroup>
   <ItemGroup>
     <FxCompile Include="include\Widgets\Render\Shader\Common2DPS.hlsl">

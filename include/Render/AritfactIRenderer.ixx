@@ -15,14 +15,17 @@ export namespace Artifact
  using namespace Diligent;
  using namespace ArtifactCore;
 	
- class IRenderer
+ class AritfactIRenderer
  {
  private:
   class Impl;
   Impl* impl_;
  public:
-  explicit IRenderer(RefCntAutoPtr<IRenderDevice> pDevice, RefCntAutoPtr<IDeviceContext> pImmediateContext,QWidget*widget);
-  virtual ~IRenderer();
+  explicit AritfactIRenderer(RefCntAutoPtr<IRenderDevice> pDevice, RefCntAutoPtr<IDeviceContext> pImmediateContext,QWidget*widget);
+  AritfactIRenderer();
+  virtual ~AritfactIRenderer();
+  void initialize(QWidget* widget);
+  void createSwapChain(QWidget* widget);
   void recreateSwapChain(QWidget* widget);
   virtual void drawSprite(float x,float y,float w,float h);
   virtual void drawSprite(float2 pos, float2 size);

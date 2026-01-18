@@ -50,7 +50,7 @@ W_OBJECT_IMPL(ArtifactLayerEditorWidgetV2)
   void initialize(QWidget* window);
   void initializeSwapChain(QWidget* window);
   void destroy();
-  std::unique_ptr<IRenderer> renderer_;
+  std::unique_ptr<AritfactIRenderer> renderer_;
   bool isPanning_=false;
   QPointF lastMousePos_;
   QWidget* widget_;
@@ -110,9 +110,9 @@ W_OBJECT_IMPL(ArtifactLayerEditorWidgetV2)
    return;
   }
    
-  renderer_ = std::make_unique<IRenderer>(pDevice, pImmediateContext,widget_);
+  renderer_ = std::make_unique<AritfactIRenderer>();
    
-   
+  renderer_->createSwapChain(window);
   m_initialized = true;
   released = false;
    
@@ -155,11 +155,7 @@ W_OBJECT_IMPL(ArtifactLayerEditorWidgetV2)
    {
 	while (running_.load(std::memory_order_acquire))
 	{
-	 //renderOneFrame();
-
-	 // GPU コマンドを確実に送る
-	 //pImmediateContext->Flush();
-
+	 renderOneFrame();
 	 std::this_thread::sleep_for(std::chrono::milliseconds(16));
 	}
 
@@ -274,7 +270,8 @@ W_OBJECT_IMPL(ArtifactLayerEditorWidgetV2)
 
  void ArtifactLayerEditorWidgetV2::showEvent(QShowEvent* event)
  {
-
+  QWidget::showEvent(event);
+  //impl_->initialize(this);
  }
  void ArtifactLayerEditorWidgetV2::closeEvent(QCloseEvent* event)
  {

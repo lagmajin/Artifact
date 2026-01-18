@@ -1,4 +1,4 @@
-﻿module;
+module;
 
 module Artifact.Layer.Audio;
 

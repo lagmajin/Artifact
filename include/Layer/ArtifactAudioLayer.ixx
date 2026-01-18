@@ -1,4 +1,4 @@
-﻿module;
+module;
 
 
 export module Artifact.Layer.Audio;
@@ -10,7 +10,9 @@ import Artifact.Layer.Abstract;
 
 export namespace Artifact
 {
- class ArtifactAudioLayer
+ using namespace ArtifactCore;
+
+ class ArtifactAudioLayer :public ArtifactAbstractLayer
  {
  private:
   class Impl;

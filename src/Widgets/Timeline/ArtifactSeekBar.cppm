@@ -14,7 +14,8 @@ namespace Artifact
 	W_OBJECT_IMPL(ArtifactSeekBar)
 
  class ArtifactSeekBar::Impl
- {private:
+ {
+ private:
 		
  public:
   Impl();

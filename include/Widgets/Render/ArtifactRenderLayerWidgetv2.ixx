@@ -9,7 +9,7 @@ export module Artifact.Widgets.RenderLayerWidgetv2;
 import Core.Scale.Zoom;
 import Color.Float;
 import Utils.Id;
-import Core;
+//import Core;
 import Tool;
 
 export namespace Artifact {

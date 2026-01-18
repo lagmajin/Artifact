@@ -4,6 +4,7 @@
 #include <QString>
 #include <QObject>
 #include <qtypes.h>
+#include <QJsonObject>
 
 export module Artifact.Layer.Abstract;
 
@@ -36,8 +37,9 @@ export namespace Artifact {
   Text,        // テキストレイヤー
   Shape,       // シェイプレイヤー
   Precomp,     // プリコンポジション
-  Audio,       // 音声のみレイヤー
-  Video,
+  Audio,       // 音声レイヤー
+  Video,       // 映像レイヤー
+  Media,       // 映像・音声メディア
   Camera,
  };
 
@@ -58,6 +60,13 @@ export namespace Artifact {
  public:
   ArtifactAbstractLayer();
   virtual ~ArtifactAbstractLayer();
+  // Serialization (stub implementations returning empty/default values)
+  // Return a JSON representation of this layer. Default implementation
+  // returns an empty object; override in derived classes to provide data.
+  QJsonObject toJson() const;
+
+  // Construct a layer from JSON. Default returns empty shared_ptr.
+  static ArtifactAbstractLayerPtr fromJson(const QJsonObject &obj);
   void Show();
   void Hide();
   bool isVisible() const;
@@ -105,8 +114,8 @@ export namespace Artifact {
   bool is3D() const;
   //Audio
 
-  bool hasAudio() const;
-  bool hasVideo() const;
+  virtual bool hasAudio() const;
+  virtual bool hasVideo() const;
 
   bool isClicked() const;
   bool preciseHit() const;

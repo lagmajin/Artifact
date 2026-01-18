@@ -21,20 +21,22 @@ import Graphics.Shader.Set;
 import Graphics.Shader.Compile.Task;
 import Graphics.Shader.Compute.HLSL.Blend;
 import Layer.Blend;
+import Core.Scale.Zoom;
 
 namespace Artifact
 {
  using namespace Diligent;
  using namespace ArtifactCore;
 
- class IRenderer::Impl
+ class AritfactIRenderer::Impl
  {
  private:
-  PSOAndSRB m_draw_sprite_pso_and_srb;
   RefCntAutoPtr<IBuffer> m_draw_sprite_vertex_buffer;
   RefCntAutoPtr<IBuffer> m_draw_sprite_index_buffer;
   RenderShaderPair m_draw_sprit_shaders;
   QWidget* widget_;
+   
+  
    
   void captureScreenShot();
    
@@ -45,13 +47,25 @@ namespace Artifact
   void createPSOs();
  public:
    explicit Impl(RefCntAutoPtr<IRenderDevice> device, RefCntAutoPtr<IDeviceContext>& context,QWidget* widget);
+   Impl();
   ~Impl();
+  void initialize(QWidget* parent);
   RefCntAutoPtr<IRenderDevice> pDevice_;
   RefCntAutoPtr<IDeviceContext> pImmediateContext_;
   RefCntAutoPtr<IDeviceContext> pDeferredContext_;
   RefCntAutoPtr<ISwapChain> pSwapChain_;
+  ZoomScale2D zoom_;
+  const TEXTURE_FORMAT MAIN_RTV_FORMAT = TEX_FORMAT_RGBA8_UNORM_SRGB;
+  PSOAndSRB m_draw_line_pso_and_srb;
+  PSOAndSRB m_draw_dot_line_pso_and_srb;
+  PSOAndSRB m_draw_solid_rect_pso_and_srb;
+  PSOAndSRB m_draw_sprite_pso_and_srb;
+  int m_CurrentPhysicalWidth;
+  int m_CurrentPhysicalHeight;
+  int m_CurrentDevicePixelRatio;
   void clear();
   void flushAndWait();
+  void createSwapChain(QWidget* widget);
   void recreateSwapChain(QWidget* widget);
   void drawSprite(float x, float y, float w, float h);
   void drawSprite(float2 pos, float2 size);
@@ -61,14 +75,42 @@ namespace Artifact
   void drawRectOutline(float2 pos,const FloatColor& color);
   void drawParticles();
  };
- void IRenderer::Impl::initContext(RefCntAutoPtr<IRenderDevice> device)
+
+ AritfactIRenderer::Impl::Impl(RefCntAutoPtr<IRenderDevice> device, RefCntAutoPtr<IDeviceContext>& context, QWidget* widget) :pDevice_(device), pImmediateContext_(context)
+ {
+  createConstantBuffers();
+  createShaders();
+  createPSOs();
+
+  
+
+ }
+
+ AritfactIRenderer::Impl::Impl()
+ {
+
+ }
+
+ AritfactIRenderer::Impl::~Impl()
+ {
+
+ }
+
+ void AritfactIRenderer::Impl::initialize(QWidget* parent)
+ {
+  //diligent engine directx12で初期化
+
+
+ }
+
+ void AritfactIRenderer::Impl::initContext(RefCntAutoPtr<IRenderDevice> device)
  {
   
   device->CreateDeferredContext(&pDeferredContext_);
  
  }
 
- void IRenderer::Impl::createShaders()
+ void AritfactIRenderer::Impl::createShaders()
  {
   ShaderCreateInfo sprite2DVsInfo;
   sprite2DVsInfo.SourceLanguage = Diligent::SHADER_SOURCE_LANGUAGE_HLSL; // または GLSL
@@ -93,7 +135,7 @@ namespace Artifact
    
  }
 
- void IRenderer::Impl::createPSOs()
+ void AritfactIRenderer::Impl::createPSOs()
  {
   GraphicsPipelineStateCreateInfo drawSpritePSOCreateInfo;
   drawSpritePSOCreateInfo.PSODesc.Name = "DrawSprite PSO";
@@ -115,7 +157,7 @@ namespace Artifact
    
  }
 
-void IRenderer::Impl::createConstantBuffers()
+void AritfactIRenderer::Impl::createConstantBuffers()
 {
  BufferDesc VertDesc;
  VertDesc.Name = "Sprite vertex buffer";
@@ -127,21 +169,35 @@ void IRenderer::Impl::createConstantBuffers()
 
  }
 
- IRenderer::Impl::Impl(RefCntAutoPtr<IRenderDevice> device, RefCntAutoPtr<IDeviceContext>& context,QWidget*widget):pDevice_(device), pImmediateContext_(context)
+ 
+void AritfactIRenderer::Impl::createSwapChain(QWidget* window)
  {
-  createConstantBuffers();
-  createShaders();
-  createPSOs();
-  
+ if (!window || !pDevice_)
+ {
+
+  return;
+ }
    
+ m_CurrentPhysicalWidth = static_cast<int>(window->width() * window->devicePixelRatio());
+ m_CurrentPhysicalHeight = static_cast<int>(window->height() * window->devicePixelRatio());
+ m_CurrentDevicePixelRatio = window->devicePixelRatio();
+ // スワップチェインを作成
+ SwapChainDesc SCDesc;
+ SCDesc.Width = m_CurrentPhysicalWidth;  // QWindowの現在の幅
+ SCDesc.Height = m_CurrentPhysicalHeight; // QWindowの現在の高さ
+ SCDesc.ColorBufferFormat = MAIN_RTV_FORMAT;
+ SCDesc.DepthBufferFormat = TEX_FORMAT_UNKNOWN;
+
+ SCDesc.BufferCount = 2;
+ SCDesc.Usage = SWAP_CHAIN_USAGE_RENDER_TARGET;
+
+ FullScreenModeDesc desc;
+
+ desc.Fullscreen = false;
    
  }
 
- IRenderer::Impl::~Impl()
- {
-
- }
- void IRenderer::Impl::recreateSwapChain(QWidget* widget)
+ void AritfactIRenderer::Impl::recreateSwapChain(QWidget* widget)
  {
   if (!widget || !pDevice_)
   {
@@ -177,7 +233,7 @@ void IRenderer::Impl::createConstantBuffers()
 
   //calcProjection(m_CurrentPhysicalWidth, m_CurrentPhysicalHeight);
  }
- void IRenderer::Impl::drawSprite(const QImage& image)
+ void AritfactIRenderer::Impl::drawSprite(const QImage& image)
  {
   QImage rgba = image.convertToFormat(QImage::Format_RGBA8888);
   RectVertex vertices[4] = {
@@ -190,12 +246,12 @@ void IRenderer::Impl::createConstantBuffers()
    
  }
 
- void IRenderer::Impl::clear()
+ void AritfactIRenderer::Impl::clear()
  {
 
  }
 
- void IRenderer::Impl::drawSolidRect(float2 pos, float2 size, const FloatColor& color)
+ void AritfactIRenderer::Impl::drawSolidRect(float2 pos, float2 size, const FloatColor& color)
  {
   RectVertex vertices[4] = {
 	 {{0.0f, 0.0f}, {1, 0, 0, 1}}, // 左上
@@ -208,7 +264,7 @@ void IRenderer::Impl::createConstantBuffers()
    
  }
 
- void IRenderer::Impl::flushAndWait()
+ void AritfactIRenderer::Impl::flushAndWait()
  {
   RefCntAutoPtr<IFence> fence;
   FenceDesc desc;
@@ -224,42 +280,58 @@ void IRenderer::Impl::createConstantBuffers()
   fence->Wait(1);
  }
 
- void IRenderer::Impl::captureScreenShot()
+ void AritfactIRenderer::Impl::captureScreenShot()
  {
 
  }
 
 
 
- IRenderer::IRenderer(RefCntAutoPtr<IRenderDevice> pDevice, RefCntAutoPtr<IDeviceContext> pImmediateContext, QWidget* widget) :impl_(new Impl(pDevice, pImmediateContext,widget))
+ AritfactIRenderer::AritfactIRenderer(RefCntAutoPtr<IRenderDevice> pDevice, RefCntAutoPtr<IDeviceContext> pImmediateContext, QWidget* widget) :impl_(new Impl(pDevice, pImmediateContext,widget))
  {
 
  }
 
- IRenderer::~IRenderer()
+ AritfactIRenderer::AritfactIRenderer():impl_(new Impl())
+ {
+
+ }
+
+ AritfactIRenderer::~AritfactIRenderer()
  {
   delete impl_;
  }
 
- void IRenderer::recreateSwapChain(QWidget* widget)
+ void AritfactIRenderer::initialize(QWidget* widget)
+ {
+  impl_->initialize(widget);
+ }
+
+ void AritfactIRenderer::createSwapChain(QWidget* widget)
+ {
+  impl_->createSwapChain(widget);
+ }
+ void AritfactIRenderer::recreateSwapChain(QWidget* widget)
  {
   impl_->recreateSwapChain(widget);
  }
 
- void IRenderer::clear()
+ void AritfactIRenderer::clear()
  {
 
  }
 
- void IRenderer::flush()
+ void AritfactIRenderer::flush()
  {
 
  }
 
- void IRenderer::flushAndWait()
+ void AritfactIRenderer::flushAndWait()
  {
   impl_->flushAndWait();
  }
+
+
 
 };
 

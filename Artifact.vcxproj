@@ -90,7 +90,7 @@
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-    <OutDir>$(SolutionDir)/App</OutDir>
+    <OutDir>$(SolutionDir)\App\</OutDir>
     <IncludePath>X:\vcpkg\installed\x64-windows\include\python3.12;X:\vcpkg\installed\x64-windows\include\qtadvanceddocking-qt6;X:\vcpkg\installed\x64-windows\include\Qt6;X:\vcpkg\installed\x64-windows\include\Qt6\QtCore;X:\vcpkg\installed\x64-windows\include\Qt6\QtWidgets;X:\vcpkg\installed\x64-windows\include\Qt6\QtMultimedia;X:\vcpkg\installed\x64-windows\include\Qt6\QtGui;X:\Build\install\include;C:\Program Files\dotnet\packs\Microsoft.NETCore.App.Host.win-x64\9.0.5\runtimes\win-x64\native;C:\Users\lagma\Desktop\Artifact\third_party;X:\opencv\build\include;X:\ogre-sdk-v14.3.2-msvc142-x64\include;X:\WickedEngine-master\WickedEngine;C:\Users\lagma\Desktop\Artifact\ArtifactWidgets\include;C:\Program Files\Assimp\include;$(IncludePath)</IncludePath>
     <LibraryPath>X:\Build\install\lib\DiligentCore\Debug;C:\Program Files\dotnet\packs\Microsoft.NETCore.App.Host.win-x64\9.0.5\runtimes\win-x64\native;X:\opencv\build\x64\vc16\lib;C:\Users\lagma\Desktop\Artifact\Artifact\lib;X:\Build\Graphics\GraphicsEngineD3D12\Debug;E:\libs;X:\ogre-sdk-v14.3.2-msvc142-x64\lib;X:\WickedEngine-master\BUILD\x64\Debug;D:\WickedEngine-master\BUILD\x64\Debug;$(SolutionDir)\lib;$(LibraryPath)</LibraryPath>
     <AllProjectBMIsArePublic>true</AllProjectBMIsArePublic>
@@ -143,7 +143,7 @@
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
       <BuildStlModules>true</BuildStlModules>
       <LanguageStandard_C>stdclatest</LanguageStandard_C>
-      <DisableSpecificWarnings>4828;5050;4251;5244</DisableSpecificWarnings>
+      <DisableSpecificWarnings>4828;5050;4251;5244;5304;</DisableSpecificWarnings>
       <TranslateIncludes>false</TranslateIncludes>
       <OpenMPSupport>true</OpenMPSupport>
       <EnableModules>true</EnableModules>
@@ -206,6 +206,7 @@
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
     </ClCompile>
     <ClCompile Include="include\Composition\IComposition2D.ixx" />
+    <ClCompile Include="include\Controller\TimelineViewProvider.ixx" />
     <ClCompile Include="include\Effetcs\ArtifactEffectImplBase.ixx" />
     <ClCompile Include="include\Effetcs\Blur\BlurEffect.ixx" />
     <ClCompile Include="include\Effetcs\Blur\DirectionBlur.ixx" />
@@ -228,7 +229,6 @@
     <ClCompile Include="include\GUI\WindowPluginManager.ixx" />
     <ClCompile Include="include\InterProcess\ArtifactClipboardManager.ixx" />
     <ClCompile Include="include\Layer\ArtifactAbstract2DLayer.ixx" />
-    <ClCompile Include="include\Layer\ArtifactAudioLayer.ixx" />
     <ClCompile Include="include\Layer\ArtifactHierarchyModel.ixx" />
     <ClCompile Include="include\Layer\ArtifactImageLayer.ixx" />
     <ClCompile Include="include\Layer\ArtifactLayerCopyBuffer.ixx" />
@@ -237,6 +237,7 @@
     <ClCompile Include="include\Layer\ArtifactLayerSearchQuery.ixx" />
     <ClCompile Include="include\Layer\ArtifactLayerSetting.ixx" />
     <ClCompile Include="include\Layer\ArtifactLayerUIInfo.ixx" />
+    <ClCompile Include="include\Layer\ArtifactMediaLayer.ixx" />
     <ClCompile Include="include\Layer\ArtifactSolid2DLayer.ixx" />
     <ClCompile Include="include\Layer\ArtifactAdjustableLayer.ixx" />
     <ClCompile Include="include\Layer\ArtifactSolidImageLayer.ixx" />
@@ -260,9 +261,8 @@
     <ClCompile Include="include\Render\ArtifactRenderManager.ixx" />
     <ClCompile Include="include\Render\ArtifactRenderQueueService.ixx" />
     <ClCompile Include="include\Render\Element\ArtifactRenderElement.ixx" />
-    <ClCompile Include="include\Render\IRenderer.ixx" />
+    <ClCompile Include="include\Render\AritfactIRenderer.ixx" />
     <ClCompile Include="include\Render\RenderModule.ixx" />
-    <ClCompile Include="include\Render\RenderPipeline.ixx" />
     <ClCompile Include="include\Result\ArtifactResult.ixx" />
     <ClCompile Include="include\Service\ApplicationService.ixx" />
     <ClCompile Include="include\Service\ArtifactAudioService.ixx" />
@@ -317,6 +317,7 @@
     </ClCompile>
     <ClCompile Include="src\Composition\ArtifactCompositionSetting.cpp" />
     <ClCompile Include="src\Composition\ArtifactFindCompositionQuery.cpp" />
+    <ClCompile Include="src\Controller\TimelineViewProvider.cpp" />
     <ClCompile Include="src\Effetcs\ArtifactAbstractEffect.cppm">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
     </ClCompile>
@@ -343,9 +344,6 @@
     <ClCompile Include="src\Layer\ArtifactAbstract2DLayer.cppm">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
     </ClCompile>
-    <ClCompile Include="src\Layer\ArtifactAudioLayer.cppm">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
-    </ClCompile>
     <ClCompile Include="src\Layer\ArtifactLayerFactory.cppm">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
     </ClCompile>
@@ -355,6 +353,7 @@
     <ClCompile Include="src\Layer\ArtifactLayerSelectionManager.cppm">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
     </ClCompile>
+    <ClCompile Include="src\Layer\ArtifactLayerSetting.cpp" />
     <ClCompile Include="src\Layer\ArtifactShapeLayer.cppm">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
     </ClCompile>
@@ -392,10 +391,9 @@
     <ClCompile Include="src\Render\ArtifactRenderQueueService.cppm">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
     </ClCompile>
-    <ClCompile Include="src\Render\IRenderer.cppm">
+    <ClCompile Include="src\Render\AritfactIRenderer.cppm">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
     </ClCompile>
-    <ClCompile Include="src\Render\RenderPipeline.cpp" />
     <ClCompile Include="src\Service\ApplicationService.cppm">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
     </ClCompile>
@@ -706,6 +704,7 @@
       <FileType>Document</FileType>
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
     </ClCompile>
+    <None Include=".github\copilot-instructions.md" />
     <None Include="src\Layer\ArtifactAdjustableLayer.cppm" />
     <ClCompile Include="src\Render\ArtifactRenderController.cppm" />
     <ClCompile Include="src\Layer\ArtifactHierarchyModel.cppm">

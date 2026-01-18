@@ -3,6 +3,8 @@ module;
 
 module Artifact.Layer.Composition;
 
+import Artifact.Composition.Abstract;
+
 
 namespace Artifact {
 

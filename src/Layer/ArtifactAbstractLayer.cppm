@@ -9,6 +9,8 @@ import Utils;
 import Layer.State;
 import Animation.Transform2D;
 import Frame.Position;
+import Artifact.Layer.Settings;
+
 
 namespace Artifact {
 
@@ -225,6 +227,19 @@ namespace Artifact {
  Size_2D ArtifactAbstractLayer::aabb() const
  {
   return Size_2D();
+ }
+
+ QJsonObject ArtifactAbstractLayer::toJson() const
+ {
+
+
+
+  return QJsonObject();
+ }
+
+ ArtifactAbstractLayerPtr ArtifactAbstractLayer::fromJson(const QJsonObject& obj)
+ {
+   return ArtifactAbstractLayerPtr();
  }
 
 };
