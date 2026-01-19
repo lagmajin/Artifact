@@ -285,8 +285,6 @@ void AritfactIRenderer::Impl::createSwapChain(QWidget* window)
 
  }
 
-
-
  AritfactIRenderer::AritfactIRenderer(RefCntAutoPtr<IRenderDevice> pDevice, RefCntAutoPtr<IDeviceContext> pImmediateContext, QWidget* widget) :impl_(new Impl(pDevice, pImmediateContext,widget))
  {
 
@@ -318,12 +316,12 @@ void AritfactIRenderer::Impl::createSwapChain(QWidget* window)
 
  void AritfactIRenderer::clear()
  {
-
+  impl_->clear();
  }
 
  void AritfactIRenderer::flush()
  {
-
+  
  }
 
  void AritfactIRenderer::flushAndWait()
