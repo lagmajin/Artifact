@@ -1,5 +1,6 @@
 ﻿// ReSharper disable All
-module ;
+module;
+
 #include <QList>
 #include <qforeach.h>
 #include <wobjectimpl.h>
@@ -7,18 +8,17 @@ module ;
 #include <QVector>
 #include <QMultiMap>
 #include <typeindex>
+#include <QString>
+
 module Artifact.Composition.Abstract;
 
-
 import std;
-
 import Container;
 import Frame.Position;
-
 import Composition.Settings;
 import Artifact.Composition.Result;
-
-//struct AppendLayerToCompositionResult;
+import Artifact.Layers;
+import Playback.Clock;
 
 namespace Artifact {
  using namespace ArtifactCore;
@@ -38,6 +38,8 @@ namespace Artifact {
   CompositionSettings settings_;
   FramePosition position_;
   CompositionID id_;
+  PlaybackClock playbackClock_;  // 高精度再生クロック
+  
   AppendLayerToCompositionResult appendLayerTop(ArtifactAbstractLayerPtr layer);
   AppendLayerToCompositionResult appendLayerBottom(ArtifactAbstractLayerPtr layer);
   bool containsLayerById(const LayerID& id) const;
@@ -73,21 +75,21 @@ namespace Artifact {
  {
   AppendLayerToCompositionResult result;
 
-  if (!layer) return {
-	.success = false,
-	.error = AppendLayerToCompositionError::LayerNotFound,
-	.message = "Layer not found"
-  };
+  if (!layer) {
+   result.success = false;
+   result.error = AppendLayerToCompositionError::LayerNotFound;
+   result.message = QString("Layer not found");
+   return result;
+  }
 
   auto id = layer->id();
 
   layerMultiIndex_.add(layer,id,layer->type_index());
 
-  return {
-	.success = true,
-	.error = AppendLayerToCompositionError::None,
-	.message = "Layer added successfully"
-  };
+  result.success = true;
+  result.error = AppendLayerToCompositionError::None;
+  result.message = QString("Layer added successfully");
+  return result;
  }
 
  void ArtifactAbstractComposition::Impl::removeAllLayers()
