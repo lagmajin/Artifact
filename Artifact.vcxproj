@@ -97,6 +97,7 @@
     <PublicModuleDirectories>$(PublicModuleDirectories)</PublicModuleDirectories>
     <AllProjectIncludesArePublic>true</AllProjectIncludesArePublic>
     <ExecutablePath>C:\Bin;$(ExecutablePath)</ExecutablePath>
+    <CopyCppRuntimeToOutputDir>true</CopyCppRuntimeToOutputDir>
   </PropertyGroup>
   <PropertyGroup Label="Vcpkg">
     <VcpkgApplocalDeps>true</VcpkgApplocalDeps>
@@ -143,9 +144,9 @@
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
       <BuildStlModules>true</BuildStlModules>
       <LanguageStandard_C>stdclatest</LanguageStandard_C>
-      <DisableSpecificWarnings>4828;5050;4251;5244;5304;</DisableSpecificWarnings>
+      <DisableSpecificWarnings>4828;5050;5304;</DisableSpecificWarnings>
       <TranslateIncludes>false</TranslateIncludes>
-      <OpenMPSupport>true</OpenMPSupport>
+      <OpenMPSupport>false</OpenMPSupport>
       <EnableModules>true</EnableModules>
       <ScanSourceForModuleDependencies>true</ScanSourceForModuleDependencies>
       <AdditionalBMIDirectories>C:\Users\lagma\Desktop\Artifact\ArtifactCore;%(AdditionalBMIDirectories)</AdditionalBMIDirectories>
@@ -157,7 +158,7 @@
     <Link>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>DebugFull</GenerateDebugInformation>
-      <AdditionalDependencies>Qt6Cored.lib;Qt6Guid.lib;Qt6Widgetsd.lib;Qt6Testd.lib;WickedEngine_Windows.lib;OgreMain.lib;opencv_world4110d.lib;halide.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>WickedEngine_Windows.lib;OgreMain.lib;opencv_world4110d.lib;halide.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <OutputFile>$(OutDir)$(TargetName)$(TargetExt)</OutputFile>
       <ForceFileOutput>Enabled</ForceFileOutput>
       <ImportLibrary>artifactimport</ImportLibrary>
@@ -343,6 +344,9 @@
     <ClCompile Include="src\Layer\ArtifactAbstract2DLayer.cppm">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
     </ClCompile>
+    <ClCompile Include="src\Layer\ArtifactCameraLayer.cppm">
+      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+    </ClCompile>
     <ClCompile Include="src\Layer\ArtifactLayerFactory.cppm">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
     </ClCompile>
@@ -497,6 +501,9 @@
     <ClCompile Include="include\Widgets\Menu\Test\ArtifactImageProcessingTestMenu.ixx">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
     </ClCompile>
+    <ClCompile Include="include\Widgets\ArtifactAssetBrowser.ixx">
+      <FileType>Document</FileType>
+    </ClCompile>
     <ClInclude Include="include\Widgets\Render\Shader\CommonShader.hpp" />
     <ClCompile Include="include\Widgets\Render\ArtifactDiligentEngineRenderWindow.ixx">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
@@ -548,9 +555,6 @@
     <ClCompile Include="include\Widgets\Render\ArtifactRenderManagerWidget.ixx">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
     </ClCompile>
-    <ClCompile Include="include\Widgets\ArtifactAssetBrowser.hpp">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
-    </ClCompile>
     <ClCompile Include="include\Widgets\ArtifactCompositionWidget.ixx">
       <FileType>Document</FileType>
     </ClCompile>
@@ -584,7 +588,7 @@
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
     </ClCompile>
     <ClCompile Include="include\Widgets\TimelineScene.ixx" />
-    <ClCompile Include="src\AppMain.cpp">
+    <ClCompile Include="src\AppMain.cppm">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Composition\ArtifactComposition3D.cpp" />

@@ -37,6 +37,16 @@ namespace Artifact
   return ArtifactProjectService::instance();
  }
 
+ ArtifactProjectModel::Impl::Impl()
+ {
+
+ }
+
+ ArtifactProjectModel::Impl::~Impl()
+ {
+
+ }
+
  ArtifactProjectModel::ArtifactProjectModel(QObject* parent/*=nullptr*/) :QAbstractItemModel(parent), impl_(new Impl())
  {
 
@@ -83,6 +93,11 @@ namespace Artifact
  {
   return 0;
  }
-	
+
+ QModelIndex ArtifactProjectModel::index(int row, int column, const QModelIndex& parent) const
+ {
+  return QModelIndex();
+ }
+
 
 };

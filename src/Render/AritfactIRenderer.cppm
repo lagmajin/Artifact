@@ -246,6 +246,11 @@ void AritfactIRenderer::Impl::createSwapChain(QWidget* window)
    
  }
 
+ void AritfactIRenderer::Impl::drawSprite(float2 pos, float2 size)
+ {
+
+ }
+
  void AritfactIRenderer::Impl::clear()
  {
 
@@ -262,6 +267,11 @@ void AritfactIRenderer::Impl::createSwapChain(QWidget* window)
 
    
    
+ }
+
+ void AritfactIRenderer::Impl::drawSolidRect(float x, float y, float w, float h)
+ {
+
  }
 
  void AritfactIRenderer::Impl::flushAndWait()
@@ -329,7 +339,15 @@ void AritfactIRenderer::Impl::createSwapChain(QWidget* window)
   impl_->flushAndWait();
  }
 
+ void AritfactIRenderer::drawSolidRect(float2 pos, float2 size, const FloatColor& color)
+ {
 
+ }
+
+ void AritfactIRenderer::drawSolidRect(float x, float y, float w, float h)
+ {
+
+ }
 
 };
 

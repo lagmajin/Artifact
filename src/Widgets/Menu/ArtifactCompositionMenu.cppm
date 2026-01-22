@@ -6,6 +6,8 @@
 #include <QMenu>
 #include <QAction>
 #include <QDialog>
+#include <QKeySequence>
+#include <QColorDialog>
 #include <qcoro6/qcoro/qcorotask.h>
 module Menu.Composition;
 
@@ -33,12 +35,18 @@ namespace Artifact {
   QAction* createCompositionAction=nullptr;
   QAction* createCompositionFromFootage = nullptr;
   QAction* changeCompositionSettingsAction = nullptr;
+  QAction* backgroundColorAction = nullptr;
 
   QAction* saveAsFrameAction = nullptr;
+  QMenu* saveFrameAsMenu = nullptr;
 
   QAction* addToRenderQueueAction = nullptr;
 
+  QAction* trimCompToWorkAreaAction = nullptr;
+  QAction* cropCompToROIAction = nullptr;
+
   void showCreateCompositionSettingDialog();
+  void showBackgroundColorDialog();
   QCoro::Task<> showChangeCompositionSettingsDialogAsync();
   void handleAddRenderQueueRequest();
   void handleSaveAsImageRequest();
@@ -48,39 +56,57 @@ namespace Artifact {
 
  ArtifactCompositionMenu::Impl::Impl(ArtifactCompositionMenu* menu,ArtifactMainWindow* mainWindow)
 {
-  createCompositionAction = new QAction("Create composition");
-  //createCompositionAction->setShortcut(QKeySequence::New);
+  createCompositionAction = new QAction("New Composition...");
+  createCompositionAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_N));
   createCompositionAction->setIcon(QIcon(ArtifactCore::getIconPath() + "/composition.png"));
 
-  
-
-  createCompositionFromFootage = new QAction("Create composition from footage");
-  //createCompositionAction->setText()
+  createCompositionFromFootage = new QAction("New Composition from Footage...");
   createCompositionFromFootage->setDisabled(true);
 
- 
-
-  changeCompositionSettingsAction = new QAction("Change composition settings");
-
+  changeCompositionSettingsAction = new QAction("Composition Settings...");
+  changeCompositionSettingsAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_K));
   changeCompositionSettingsAction->setDisabled(true);
-  
-  saveAsFrameAction = new QAction("Save as image file");
-  //createCompositionAction->setText()
-  saveAsFrameAction->setDisabled(true);
 
-  addToRenderQueueAction = new QAction();
-  addToRenderQueueAction->setText("AddRenderQueue");
+  backgroundColorAction = new QAction("Background Color...");
+  backgroundColorAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_B));
+  backgroundColorAction->setDisabled(true);
+  
+  saveFrameAsMenu = new QMenu("Save Frame As");
+  saveAsFrameAction = new QAction("File...");
+  saveAsFrameAction->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_S));
+  saveAsFrameAction->setDisabled(true);
+  saveFrameAsMenu->addAction(saveAsFrameAction);
+
+  addToRenderQueueAction = new QAction("Add to Render Queue");
+  addToRenderQueueAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_M));
+
+  trimCompToWorkAreaAction = new QAction("Trim Comp to Work Area");
+  trimCompToWorkAreaAction->setDisabled(true);
+
+  cropCompToROIAction = new QAction("Crop Comp to Region of Interest");
+  cropCompToROIAction->setDisabled(true);
 
   connect(createCompositionAction, &QAction::triggered, menu, [this]() {
    this->showCreateCompositionSettingDialog();
    }
    );
+  
+  connect(backgroundColorAction, &QAction::triggered, menu, [this]() {
+   this->showBackgroundColorDialog();
+   }
+   );
+
   menu->addAction(createCompositionAction);
   menu->addAction(createCompositionFromFootage);
   menu->addSeparator();
+  menu->addAction(changeCompositionSettingsAction);
+  menu->addAction(backgroundColorAction);
+  menu->addSeparator();
+  menu->addMenu(saveFrameAsMenu);
   menu->addAction(addToRenderQueueAction);
-
-
+  menu->addSeparator();
+  menu->addAction(trimCompToWorkAreaAction);
+  menu->addAction(cropCompToROIAction);
  }
 
  ArtifactCompositionMenu::Impl::~Impl()
@@ -105,6 +131,20 @@ namespace Artifact {
 
  }
 
+ void ArtifactCompositionMenu::Impl::showBackgroundColorDialog()
+ {
+  auto& projectManager = ArtifactProjectManager::getInstance();
+  auto comp = projectManager.currentComposition();
+  if (!comp) return;
+
+  QColor color = QColorDialog::getColor(Qt::black, mainWindow_, "Composition Background Color");
+  if (color.isValid()) {
+   // Convert QColor to FloatColor
+   FloatColor floatColor(color.redF(), color.greenF(), color.blueF(), color.alphaF());
+   comp->setBackGroundColor(floatColor);
+  }
+ }
+
  void ArtifactCompositionMenu::Impl::handleAddRenderQueueRequest()
  {
 
@@ -123,14 +163,6 @@ namespace Artifact {
   setTearOffEnabled(true);
   setSeparatorsCollapsible(true);
   setMinimumWidth(160);
-  //addAction(impl_->createCompositionAction);
-
-
-
-  addAction(impl_->saveAsFrameAction);
-
-
-
 
   connect(this, &QMenu::aboutToShow, this, &ArtifactCompositionMenu::rebuildMenu);
  }
@@ -154,7 +186,14 @@ namespace Artifact {
 
  void ArtifactCompositionMenu::rebuildMenu()
  {
-  qDebug() << "Rebuild Menu";
+  auto& projectManager = ArtifactProjectManager::getInstance();
+  bool hasActiveComposition = projectManager.currentComposition() != nullptr;
+
+  impl_->changeCompositionSettingsAction->setEnabled(hasActiveComposition);
+  impl_->backgroundColorAction->setEnabled(hasActiveComposition);
+  impl_->saveAsFrameAction->setEnabled(hasActiveComposition);
+  impl_->trimCompToWorkAreaAction->setEnabled(hasActiveComposition);
+  impl_->cropCompToROIAction->setEnabled(hasActiveComposition);
  }
 
 };

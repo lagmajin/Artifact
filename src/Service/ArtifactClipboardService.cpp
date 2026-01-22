@@ -46,7 +46,9 @@ namespace Artifact {
  void ArtifactClipboardService::copyImageToClipboard(const QImage& image)
  {
   QClipboard* clipboard = QGuiApplication::clipboard();
-
+  if (clipboard && !image.isNull()) {
+   clipboard->setImage(image);
+  }
  }
 
  void ArtifactClipboardService::copyPlainText(const UniString& text)

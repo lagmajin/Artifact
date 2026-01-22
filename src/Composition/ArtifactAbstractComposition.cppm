@@ -18,7 +18,7 @@ import Frame.Position;
 import Composition.Settings;
 import Artifact.Composition.Result;
 import Artifact.Layers;
-import Playback.Clock;
+//import Playback.Clock;
 
 namespace Artifact {
  using namespace ArtifactCore;
@@ -38,7 +38,7 @@ namespace Artifact {
   CompositionSettings settings_;
   FramePosition position_;
   CompositionID id_;
-  PlaybackClock playbackClock_;  // 高精度再生クロック
+  //PlaybackClock playbackClock_;  // 高精度再生クロック
   
   AppendLayerToCompositionResult appendLayerTop(ArtifactAbstractLayerPtr layer);
   AppendLayerToCompositionResult appendLayerBottom(ArtifactAbstractLayerPtr layer);
@@ -163,7 +163,18 @@ namespace Artifact {
   }
   return false;
  }
-	
+
+ ArtifactAbstractLayerPtr ArtifactAbstractComposition::Impl::frontMostLayer() const
+ {
+  return ArtifactAbstractLayerPtr();
+ }
+
+ QVector<ArtifactAbstractLayerPtr> ArtifactAbstractComposition::Impl::allLayerBackToFront() const
+ {
+
+  return QVector<ArtifactAbstractLayerPtr>();
+ }
+
  ArtifactAbstractComposition::ArtifactAbstractComposition(const CompositionID& id, const ArtifactCompositionInitParams& params) :impl_(new Impl())
  {
   impl_->id_ = id;

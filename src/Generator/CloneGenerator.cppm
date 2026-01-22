@@ -17,6 +17,16 @@ namespace Artifact
 
  };
 
+ CloneGenerator::Impl::Impl()
+ {
+
+ }
+
+ CloneGenerator::Impl::~Impl()
+ {
+
+ }
+
  CloneGenerator::CloneGenerator() :impl_(new Impl())
  {
 

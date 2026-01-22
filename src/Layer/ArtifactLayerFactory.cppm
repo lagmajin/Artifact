@@ -11,6 +11,7 @@ import Artifact.Layer.Shape;
 import Artifact.Layer.Solid2D;
 import Artifact.Layer.AdjustableLayer;
 import Artifact.Layer.Media;
+import Artifact.Layer.Camera;
 //import Artifact.lay
 
 namespace Artifact {
@@ -78,6 +79,9 @@ namespace Artifact {
   }
   case LayerType::Precomp:
    //ptr = std::make_shared<ArtifactCompositionLayer>();
+  case LayerType::Camera:
+   //ptr = std::make_shared<ArtifactCameraLayer>();
+   break;
    break;
   default:
    break;

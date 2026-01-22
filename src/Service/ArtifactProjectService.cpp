@@ -103,6 +103,11 @@ namespace Artifact
   return ArtifactProjectManager::getInstance().findComposition(id);
  }
 
+ ArtifactCompositionWeakPtr ArtifactProjectService::Impl::currentComposition()
+ {
+  return projectManager().currentComposition();
+ }
+
  W_OBJECT_IMPL(ArtifactProjectService)
 	
  ArtifactProjectService::ArtifactProjectService(QObject*parent):QObject(parent),impl_(new Impl())
