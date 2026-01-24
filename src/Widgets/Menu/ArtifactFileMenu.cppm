@@ -5,6 +5,7 @@
 #include <QMenu>
 #include <QPropertyAnimation>
 #include <QGraphicsOpacityEffect>
+#include <QFileDialog>
 
 #include <QApplication>
 
@@ -13,6 +14,8 @@ module Artifact.Menu.File;
 import  Artifact.Project.Manager;
 
 import Utils;
+
+using namespace Artifact;
 
 namespace Artifact {
 
@@ -24,7 +27,7 @@ namespace Artifact {
    bool projectCreated_ = false;
   public:
    Impl();
-   void rebuildMenu(QMenu* menu);
+   void rebuildMenu();
    QAction* createProjectAction=nullptr;
    QAction* closeProjectAction=nullptr;
    QAction* saveProjectAction=nullptr;
@@ -67,34 +70,50 @@ namespace Artifact {
 
  }
 
- void ArtifactFileMenu::Impl::rebuildMenu(QMenu* menu)
+ void ArtifactFileMenu::Impl::rebuildMenu()
  {
-
+  // Update action states based on project status
+  bool hasProject = ArtifactProjectManager::getInstance().isProjectCreated();
+  saveProjectAction->setEnabled(hasProject);
+  saveProjectAsAction->setEnabled(hasProject);
+  closeProjectAction->setEnabled(hasProject);
+  createProjectAction->setEnabled(!hasProject); // Disable if project already exists
  }
 
  void ArtifactFileMenu::Impl::handleCreateProject()
  {
-
+  ArtifactProjectManager::getInstance().createProject();
  }
 
  void ArtifactFileMenu::Impl::handleOpenProject()
  {
-
+  // TODO: Implement open project dialog
+  QString fileName = QFileDialog::getOpenFileName(nullptr, "Open Project", "", "Artifact Project (*.art)");
+  if (!fileName.isEmpty()) {
+    ArtifactProjectManager::getInstance().loadFromFile(fileName);
+  }
  }
 
  void ArtifactFileMenu::Impl::handleCloseProject()
  {
-
+  ArtifactProjectManager::getInstance().closeCurrentProject();
  }
 
  void ArtifactFileMenu::Impl::handleSaveProject()
  {
-
+  // TODO: Implement save current project
+  if (ArtifactProjectManager::getInstance().isProjectCreated()) {
+    // Assume save logic here
+  }
  }
 
  void ArtifactFileMenu::Impl::handleSaveAsProject()
  {
-
+  // TODO: Implement save as dialog
+  QString fileName = QFileDialog::getSaveFileName(nullptr, "Save Project As", "", "Artifact Project (*.art)");
+  if (!fileName.isEmpty()) {
+    // Save logic
+  }
  }
 
  ArtifactFileMenu::ArtifactFileMenu(QWidget* parent /*= nullptr*/) :QMenu(parent), Impl_(new Impl())
@@ -125,19 +144,26 @@ namespace Artifact {
 
 
   connect(Impl_->createProjectAction, &QAction::triggered,
-   this, &ArtifactFileMenu::projectCreateRequested);
+   [this]() { Impl_->handleCreateProject(); });
+
+  connect(Impl_->closeProjectAction, &QAction::triggered,
+   [this]() { Impl_->handleCloseProject(); });
+
+  connect(Impl_->saveProjectAction, &QAction::triggered,
+   [this]() { Impl_->handleSaveProject(); });
+
+  connect(Impl_->saveProjectAsAction, &QAction::triggered,
+   [this]() { Impl_->handleSaveAsProject(); });
 
   connect(Impl_->quitApplicationAction, &QAction::triggered,
    this, &ArtifactFileMenu::quitApplication);
 
   connect(this, &QMenu::aboutToShow, this, &ArtifactFileMenu::rebuildMenu);
-
-
  }
 
  ArtifactFileMenu::~ArtifactFileMenu()
  {
-
+  delete Impl_;
  }
 
  void ArtifactFileMenu::projectCreateRequested()
@@ -162,28 +188,7 @@ namespace Artifact {
 
  void ArtifactFileMenu::rebuildMenu()
  {
-  QGraphicsOpacityEffect* opacityEffect = new QGraphicsOpacityEffect(this);
-  opacityEffect->setOpacity(0.0); // 最初は透明
-  setGraphicsEffect(opacityEffect);
-
-  // 2. QPropertyAnimation を作成
-  QPropertyAnimation* animation = new QPropertyAnimation(opacityEffect, "opacity", this);
-  animation->setDuration(500); // アニメーション時間 (ミリ秒)
-  animation->setStartValue(0.0);
-  animation->setEndValue(1.0); // 不透明にする
-  animation->setEasingCurve(QEasingCurve::OutQuad); // イージングカーブ (アニメーションの滑らかさ)
-
-  // アニメーションが完了したらエフェクトを削除 (残しておくとパフォーマンスに影響)
-  QObject::connect(animation, &QPropertyAnimation::finished, this, [opacityEffect, this]() {
-   //setGraphicsEffect(nullptr); // エフェクトを解除
-   opacityEffect->deleteLater(); // エフェクトオブジェクトを削除
-   });
-
-  // 3. メニューを表示してアニメーションを開始
-  //menu->popup(pos); // メニューを表示
-  animation->start(QAbstractAnimation::DeleteWhenStopped);
-
-
+  Impl_->rebuildMenu();
  }
 
  void ArtifactFileMenu::resetRecentFilesMenu()

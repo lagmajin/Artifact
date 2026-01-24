@@ -1,16 +1,9 @@
-﻿module;
-
-module Artifact.Layers.Adjustable;
+﻿module Artifact.Layer.AdjustableLayer;
 
 import std;
 
 namespace Artifact
 {
-
-
-
-
-
 
  ArtifactAdjustableLayer::ArtifactAdjustableLayer()
  {

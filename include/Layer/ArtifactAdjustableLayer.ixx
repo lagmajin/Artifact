@@ -16,13 +16,8 @@ export namespace Artifact
  public:
   ArtifactAdjustableLayer();
   ~ArtifactAdjustableLayer();
-
   void draw() override;
-
-
   bool isAdjustmentLayer() const override;
-
-
   bool isNullLayer() const override;
 
  };
