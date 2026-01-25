@@ -27,7 +27,6 @@
     <ClCompile Include="include\Generator\GeneratorManager.ixx" />
     <ClCompile Include="include\GUI\WindowPluginManager.ixx" />
     <ClCompile Include="include\Layer\ArtifactImageLayer.ixx" />
-    <ClCompile Include="include\Layer\ArtifactLayerCopyBuffer.ixx" />
     <ClCompile Include="include\Layer\ArtifactLayerInitParams.ixx" />
     <ClCompile Include="include\Layer\ArtifactLayerResult.ixx" />
     <ClCompile Include="include\Layer\ArtifactLayerSearchQuery.ixx" />
@@ -63,7 +62,6 @@
     <ClCompile Include="include\Tool\Tool.ixx" />
     <ClCompile Include="include\Tool\ArtifactToolManager.ixx" />
     <ClCompile Include="include\Translation\TranslationManager.ixx" />
-    <ClCompile Include="include\Widgets\ArtifactLayerHierarchyWidget.ixx" />
     <ClCompile Include="include\Widgets\Control\ArtifactPlaybackControlWidget.ixx" />
     <ClCompile Include="include\Widgets\Dialog\ArtifactRenderOutputSettingDialog.ixx" />
     <ClCompile Include="include\Widgets\Native\NativeHelper.ixx" />
@@ -144,7 +142,6 @@
     <ClCompile Include="include\Widgets\Dialog\Dialog.ixx" />
     <ClCompile Include="include\Widgets\Dialog\EditCompositionSettingDialog.ixx" />
     <ClCompile Include="include\Widgets\Menu\Test\ArtifactImageProcessingTestMenu.ixx" />
-    <ClCompile Include="include\Widgets\Render\ArtifactDiligentEngineRenderWindow.ixx" />
     <ClCompile Include="include\Widgets\Render\ArtifactOgreRenderWindow.hpp" />
     <ClCompile Include="include\Layer\ArtifactNullLayer.ixx" />
     <ClCompile Include="include\Project\ArtifactProject.ixx" />
@@ -156,7 +153,6 @@
     <ClCompile Include="include\Widgets\Menu\ArtifactTimeMenu.ixx" />
     <ClCompile Include="include\Widgets\Menu\ArtifactViewMenu.ixx" />
     <ClCompile Include="include\Widgets\Render\ArtifactRenderManagerWidget.ixx" />
-    <ClCompile Include="include\Widgets\ArtifactInspectorWidget.ixx" />
     <ClCompile Include="include\Widgets\Menu\ArtifactLayerMenu.ixx" />
     <ClCompile Include="include\Widgets\Menu\ArtifactOptionMenu.ixx" />
     <ClCompile Include="include\Widgets\ArtifactMainWindow.ixx" />
@@ -172,7 +168,6 @@
     <ClCompile Include="src\Project\ArtifactProjectManager.cppm" />
     <ClCompile Include="src\Project\ArtifactProjectExporter.cppm" />
     <ClCompile Include="src\Project\ArtifactProjectSetting.cppm" />
-    <ClCompile Include="src\Widgets\ArtifactInspectorWidget.cpp" />
     <ClCompile Include="src\Widgets\ArtifactMainWindow.cpp" />
     <ClCompile Include="src\Widgets\ArtifactMenuBar.cppm" />
     <ClCompile Include="src\Widgets\ArtifactProjectManagerWidget.cpp" />
@@ -199,9 +194,6 @@
     <ClCompile Include="include\Layer\ArtifactAbstract2DLayer.ixx">
       <Filter>ヘッダー</Filter>
     </ClCompile>
-    <ClCompile Include="include\Layer\Artifact3DModelLayer.ixx">
-      <Filter>ヘッダー</Filter>
-    </ClCompile>
     <ClCompile Include="include\Generator\AbstractGenerator.ixx">
       <Filter>ヘッダー</Filter>
     </ClCompile>
@@ -215,9 +207,6 @@
       <Filter>ヘッダー</Filter>
     </ClCompile>
     <ClCompile Include="include\Widgets\Menu\ArtifactAnimationMenu.ixx">
-      <Filter>ヘッダー</Filter>
-    </ClCompile>
-    <ClCompile Include="include\Layer\ArtifactAbstractLayer.ixx">
       <Filter>ヘッダー</Filter>
     </ClCompile>
     <ClCompile Include="include\Effetcs\ArtifactAbstractEffect.ixx">
@@ -270,9 +259,6 @@
     </ClCompile>
     <ClCompile Include="src\Asset\ArtifactAssetResult.cpp">
       <Filter>ソース</Filter>
-    </ClCompile>
-    <ClCompile Include="src\Layer\ArtifactAbstractLayer.cppm">
-      <Filter>ヘッダー</Filter>
     </ClCompile>
     <ClCompile Include="src\Effetcs\ArtifactAbstractEffect.cppm">
       <Filter>ソース</Filter>
@@ -336,9 +322,6 @@
     </ClCompile>
     <ClCompile Include="src\Layer\ArtifactCompositionLayer.cppm">
       <Filter>ソース</Filter>
-    </ClCompile>
-    <ClCompile Include="src\Composition\ArtifactCompositionSetting.cpp">
-      <Filter>ヘッダー</Filter>
     </ClCompile>
     <ClCompile Include="include\Widgets\Menu\ArtifactCompositionMenu.ixx">
       <Filter>ヘッダー</Filter>
@@ -427,14 +410,43 @@
     <ClCompile Include="src\Widgets\Viewer\ArtifactContentsViewer.cpp">
       <Filter>ソース</Filter>
     </ClCompile>
+    <ClCompile Include="src\Widgets\ArtifactInspectorWidget.cpp">
+      <Filter>ソース\Widgets</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Layer\ArtifactAbstractLayer.ixx">
+      <Filter>ヘッダー\Widgets</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Layer\Artifact3DModelLayer.ixx">
+      <Filter>ソース</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Composition\ArtifactCompositionSetting.cpp">
+      <Filter>ソース</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Layer\ArtifactAbstractLayer.cppm">
+      <Filter>ソース</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Layer\ArtifactLayerCopyBuffer.ixx">
+      <Filter>ヘッダー</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Widgets\ArtifactInspectorWidget.ixx">
+      <Filter>ヘッダー</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Widgets\Render\ArtifactDiligentEngineRenderWindow.ixx">
+      <Filter>ヘッダー</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Widgets\ArtifactLayerHierarchyWidget.ixx">
+      <Filter>ヘッダー</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Generated\TestService.h" />
     <ClInclude Include="Generated\Test_types.h" />
-    <ClInclude Include="include\GUI\ArtifactGuiManager.hpp" />
     <ClInclude Include="include\Widgets\Render\Shader\CommonShader.hpp" />
     <ClInclude Include="include\Render\ArtifactRenderer.ixx" />
     <ClInclude Include="include\Composition\ArtifactCompositionManager.hpp">
+      <Filter>ヘッダー</Filter>
+    </ClInclude>
+    <ClInclude Include="include\GUI\ArtifactGuiManager.hpp">
       <Filter>ヘッダー</Filter>
     </ClInclude>
   </ItemGroup>
@@ -456,6 +468,21 @@
     </Filter>
     <Filter Include="ソース\Service">
       <UniqueIdentifier>{db606938-4b98-4cc4-a713-7281b00b1eb3}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ヘッダー\Effect">
+      <UniqueIdentifier>{fb65c2fa-9372-41c4-85ba-758de7389267}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ヘッダー\Application">
+      <UniqueIdentifier>{ae54f0de-eff5-49b9-8450-9adf02ca2bbb}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ヘッダー\Layer">
+      <UniqueIdentifier>{db0978f3-2fbf-4838-a531-efa9e7021864}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ヘッダー\Widgets">
+      <UniqueIdentifier>{4f4bcde8-08bf-4c78-b02d-e8b8ea67f8e7}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ヘッダー\Audio">
+      <UniqueIdentifier>{c78c13c8-0f79-43e9-b4f2-a2cb9c68b7b3}</UniqueIdentifier>
     </Filter>
   </ItemGroup>
 </Project>

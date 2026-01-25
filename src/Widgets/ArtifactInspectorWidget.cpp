@@ -3,7 +3,7 @@
 #include <QLabel>
 #include <QWidget>
 #include <QVBoxLayout>
-
+#include <QTabWidget>
 module Widgets.Inspector;
 import std;
 import Widgets.Utils.CSS;
