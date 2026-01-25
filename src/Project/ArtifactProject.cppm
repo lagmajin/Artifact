@@ -1,4 +1,7 @@
 ﻿module;
+#include <QDebug>
+#include <memory>
+#include <vector>
 #include <wobjectimpl.h>
 #include <wobjectdefs.h>
 
@@ -65,6 +68,8 @@ namespace Artifact {
 
   QJsonObject toJson() const;
   ArtifactCompositionMultiIndexContainer container_;
+  QVector<ProjectItem*> itemsRoot_;
+  std::vector<std::unique_ptr<ProjectItem>> ownedItems_; // owns all allocated items
  };
 
 
@@ -72,6 +77,12 @@ namespace Artifact {
  {
 
  }
+
+QVector<ProjectItem*> ArtifactProject::projectItems() const
+{
+ // return shallow pointers to root items
+ return impl_->itemsRoot_;
+}
 
  ArtifactProject::Impl::~Impl()
  {
@@ -114,6 +125,11 @@ CreateCompositionResult ArtifactProject::Impl::createComposition(const ArtifactC
 
   return result;
  }
+
+void notifyProjectCompositionCreated(ArtifactProject* proj, const CompositionID& id) {
+    // helper - emit signal
+    proj->compositionCreated(id);
+}
 
 FindCompositionResult ArtifactProject::Impl::findComposition(const CompositionID& id)
 {
@@ -160,7 +176,12 @@ FindCompositionResult ArtifactProject::findComposition(const CompositionID& id)
 	
  ArtifactProject::ArtifactProject() :impl_(new Impl())
  {
-
+  // create a root folder for project items and own it
+  auto rootUp = std::make_unique<FolderItem>();
+  rootUp->name.setQString("Project Root");
+  ProjectItem* root = rootUp.get();
+  impl_->ownedItems_.push_back(std::move(rootUp));
+  impl_->itemsRoot_.push_back(root);
  }
 
  ArtifactProject::ArtifactProject(const QString& name) :impl_(new Impl())
@@ -180,27 +201,55 @@ FindCompositionResult ArtifactProject::findComposition(const CompositionID& id)
 
  void ArtifactProject::createComposition(const QString& name)
  {
-  CompositionID id;
+ // Create composition using the standard params API, then update the created item's name
+ ArtifactCompositionInitParams params;
+ CreateCompositionResult res = createComposition(params);
+ if (!res.success) {
+  qDebug() << "Failed to create composition with name:" << name;
+  return;
+ }
 
-  QSignalSpy spy(this, &ArtifactProject::compositionCreated);
-
-
-
-  /*emit*/compositionCreated(id);
-
-  QCOMPARE(spy.count(), 1);
-
-  // 引数の中身を確認（QString）
-  QList<QVariant> arguments = spy.takeFirst();
-  QString idStr = arguments.at(0).toString();
-
-  qDebug() << "シグナルで通知された ID:" << idStr;
+ // find created composition item and set its name
+ for (auto root : impl_->itemsRoot_) {
+  if (!root) continue;
+  for (auto child : root->children) {
+    if (!child) continue;
+    if (child->type() == eProjectItemType::Composition) {
+      CompositionItem* ci = static_cast<CompositionItem*>(child);
+      if (ci->compositionId == res.id) {
+        ci->name.setQString(name);
+        qDebug() << "Composition created:" << name << "(ID:" << res.id.toString() << ")";
+        return;
+      }
+    }
+  }
+ }
+ // fallback log if item not found
+ qDebug() << "Composition created (but item not found):" << name << "(ID:" << res.id.toString() << ")";
  }
 
  CreateCompositionResult ArtifactProject::createComposition(const ArtifactCompositionInitParams& param)
  {
 
-  return impl_->createComposition(param);
+ auto res = impl_->createComposition(param);
+ if (res.success) {
+  // add composition item to project tree
+  auto compItemUp = std::make_unique<CompositionItem>();
+  compItemUp->compositionId = res.id;
+  // set default name for composition (params don't provide name in current API)
+  compItemUp->name.setQString(QStringLiteral("Composition"));
+  // capture name before moving the unique_ptr
+  QString createdName = compItemUp->name.toQString();
+  ProjectItem* raw = compItemUp.get();
+  impl_->ownedItems_.push_back(std::move(compItemUp));
+  impl_->itemsRoot_.push_back(raw);
+  // emit signal
+  compositionCreated(res.id);
+  // log using captured name (compItemUp is null after move)
+  QString idStr = res.id.toString();
+  qDebug() << "Composition created:" << createdName << "(ID:" << idStr << ")";
+ }
+ return res;
  }
 
  bool ArtifactProject::isNull() const

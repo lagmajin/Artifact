@@ -181,7 +181,7 @@ namespace Artifact {
 
  bool ArtifactProjectManager::isProjectCreated() const
  {
-  return true;
+  return Impl_->isCreated_ || (Impl_->currentProjectPtr_ != nullptr);
  }
 
  std::shared_ptr<ArtifactProject> ArtifactProjectManager::getCurrentProjectSharedPtr()
@@ -192,11 +192,14 @@ namespace Artifact {
 	
  void ArtifactProjectManager::createComposition()
  {
-  Impl_->createNewComposition();
-
-  CompositionID id;
-
-  /*emit*/compositionCreated(id);
+ // Create a composition using default init params and emit the created ID
+ ArtifactCompositionInitParams params;
+ CreateCompositionResult res = Impl_->createComposition(params);
+ if (res.success) {
+  /*emit*/ compositionCreated(res.id);
+ } else {
+  qDebug() << "ArtifactProjectManager::createComposition failed to create composition";
+ }
  }
 
  void ArtifactProjectManager::createComposition(const QString, const QSize& size)
@@ -213,12 +216,22 @@ namespace Artifact {
 
  CreateCompositionResult ArtifactProjectManager::createComposition(const UniString& str)
  {
-  ArtifactCompositionInitParams params;
- 	
-  auto result = Impl_->createComposition(params);
- 	
+ ArtifactCompositionInitParams params;
+ // try to set a name if provided
+ try {
+  params.setCompositionName(str);
+ } catch (...) {
+ }
+
+ qDebug() << "ArtifactProjectManager::createComposition requested name:" << str.toQString();
+ auto result = Impl_->createComposition(params);
+ if (result.success) {
+  qDebug() << "ArtifactProjectManager::createComposition succeeded id:" << result.id.toString();
   /*emit*/ compositionCreated(result.id);
-  return result;
+ } else {
+  qDebug() << "ArtifactProjectManager::createComposition failed";
+ }
+ return result;
  }
 
  void ArtifactProjectManager::addAssetFromFilePath(const QString& filePath)

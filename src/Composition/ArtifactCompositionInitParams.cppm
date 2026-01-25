@@ -12,6 +12,7 @@ namespace Artifact {
  public:
   Impl() = default;
   ~Impl() = default;
+  UniString compositionName_;
   PreviewQuality quality_;
   FloatColor backgroundColor_;
   FrameRate framerate_;
@@ -57,6 +58,16 @@ namespace Artifact {
  void ArtifactCompositionInitParams::setQuality(const PreviewQuality& quality)
  {
   impl_->quality_=quality;
+ }
+
+ UniString ArtifactCompositionInitParams::compositionName() const
+ {
+  return impl_->compositionName_;
+ }
+
+ void ArtifactCompositionInitParams::setCompositionName(const UniString& name)
+ {
+    impl_->compositionName_ = name;
  }
 
  // Destructor is defaulted in the header; no manual delete needed.

@@ -63,6 +63,7 @@ export namespace Artifact {
 
   void addAssetFile();
   void addAssetFromPath(const QString& filepath);
+  QVector<ProjectItem*> projectItems() const;
   bool isNull() const;
   bool hasComposition(const CompositionID& id) const;
   bool removeCompositionById(const CompositionID& id);

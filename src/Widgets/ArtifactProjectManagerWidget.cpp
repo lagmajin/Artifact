@@ -18,6 +18,7 @@ module Artifact.Widgets.ProjectManagerWidget;
 import std;
 import Artifact.Project.Manager;
 import Artifact.Service.Project;
+import Artifact.Project.Model;
 
 
 namespace Artifact {
@@ -76,6 +77,7 @@ HoverThumbnailPopupWidget::HoverThumbnailPopupWidget(QWidget* parent /*= nullptr
   setAcceptDrops(true);
   setDropIndicatorShown(true);
 
+  
  }
 
  ArtifactProjectView::~ArtifactProjectView()
@@ -186,8 +188,8 @@ HoverThumbnailPopupWidget::HoverThumbnailPopupWidget(QWidget* parent /*= nullptr
 
  class ArtifactProjectManagerWidget::Impl {
  public:
-
   ArtifactProjectView* projectView_ = nullptr;
+  ArtifactProjectModel* projectModel_ = nullptr;
   Impl();
   ~Impl();
  
@@ -320,6 +322,10 @@ HoverThumbnailPopupWidget::HoverThumbnailPopupWidget(QWidget* parent /*= nullptr
   projectNameLabel->setText("Artifact.Project name:");
 
   impl_->projectView_ = new ArtifactProjectView();
+  // attach model to view
+  if (impl_->projectModel_) {
+    impl_->projectView_->setModel(impl_->projectModel_);
+  }
 
   auto searchWidget = impl_->searchWidget_ = new QLineEdit();
   searchWidget->setPlaceholderText("...");

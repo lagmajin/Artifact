@@ -29,7 +29,7 @@ export namespace Artifact {
   Id id;
   UniString name;
   ProjectItem* parent = nullptr;
-  QVector<std::unique_ptr<ProjectItem>> children; // 所有権の明確化
+  QVector<ProjectItem*> children; // non-owning pointers; ownership managed by project
  };
 
  // 2. 具象クラス（必要なデータのみ保持）
@@ -39,10 +39,21 @@ export namespace Artifact {
   
  };
 
+class FolderItem : public ProjectItem {
+ public:
+  eProjectItemType type() const override { return eProjectItemType::Folder; }
+};
+
  class SolidItem : public ProjectItem {
   eProjectItemType type() const override { return eProjectItemType::Solid; }
   QColor color;
 
  };
+
+class CompositionItem : public ProjectItem {
+ public:
+  eProjectItemType type() const override { return eProjectItemType::Composition; }
+  ArtifactCore::CompositionID compositionId;
+};
 
 };

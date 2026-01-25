@@ -5,7 +5,7 @@ module;
 #include <DiligentCore/Graphics/GraphicsEngine/interface/DeviceContext.h>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/SwapChain.h>
 //#include <DiligentCore/Graphics/GraphicsEngineD3D12/interface/TextureD3D12.h>
-//#include <DiligentCore/Graphics/GraphicsEngineD3D12/interface/EngineFactoryD3D12.h>
+#include <DiligentCore/Graphics/GraphicsEngineD3D12/interface/EngineFactoryD3D12.h>
 #include <DiligentCore/Common/interface/RefCntAutoPtr.hpp>
 #include <DiligentCore/Common/interface/BasicMath.hpp>
 #include <oneapi/tbb/tick_count.h>
@@ -96,10 +96,58 @@ namespace Artifact
 
  }
 
- void AritfactIRenderer::Impl::initialize(QWidget* parent)
+ void AritfactIRenderer::Impl::initialize(QWidget* widget)
  {
   //diligent engine directx12で初期化
+  auto* pFactory = GetEngineFactoryD3D12();
 
+  widget_ = widget;
+
+  EngineD3D12CreateInfo CreationAttribs = {};
+  CreationAttribs.EnableValidation = true;
+  CreationAttribs.SetValidationLevel(Diligent::VALIDATION_LEVEL_2);
+  CreationAttribs.EnableValidation = true;
+
+
+  // ウィンドウハンドルを設定
+  Win32NativeWindow hWindow;
+  hWindow.hWnd = reinterpret_cast<HWND>(widget_->winId());
+  pFactory->CreateDeviceAndContextsD3D12(CreationAttribs, &pDevice_, &pImmediateContext_);
+ 
+  if (!pDevice_)
+  {
+   // エラーログ出力、アプリケーション終了などの処理
+   qWarning() << "Failed to create Diligent Engine device and contexts.";
+   return;
+  }
+  m_CurrentPhysicalWidth = static_cast<int>(widget_->width() * widget_->devicePixelRatio());
+  m_CurrentPhysicalHeight = static_cast<int>(widget_->height() * widget_->devicePixelRatio());
+  m_CurrentDevicePixelRatio = widget_->devicePixelRatio();
+  // スワップチェインを作成
+  SwapChainDesc SCDesc;
+  SCDesc.Width = m_CurrentPhysicalWidth;  // QWindowの現在の幅
+  SCDesc.Height = m_CurrentPhysicalHeight; // QWindowの現在の高さ
+  SCDesc.ColorBufferFormat = MAIN_RTV_FORMAT;
+  SCDesc.DepthBufferFormat = TEX_FORMAT_UNKNOWN;
+
+  SCDesc.BufferCount = 2;
+  SCDesc.Usage = SWAP_CHAIN_USAGE_RENDER_TARGET;
+
+  FullScreenModeDesc desc;
+
+  desc.Fullscreen = false;
+
+  pFactory->CreateSwapChainD3D12(pDevice, pImmediateContext, SCDesc, desc, hWindow, &pSwapChain_);
+
+  Diligent::Viewport VP;
+  VP.Width = static_cast<float>(m_CurrentPhysicalWidth);
+  VP.Height = static_cast<float>(m_CurrentPhysicalHeight);
+  VP.MinDepth = 0.0f;
+  VP.MaxDepth = 1.0f;
+  VP.TopLeftX = 0.0f;
+  VP.TopLeftY = 0.0f;
+  // SetViewportsの最後の2引数は、レンダーターゲットの物理ピクセルサイズを渡すのが安全
+  pImmediateContext->SetViewports(1, &VP, m_CurrentPhysicalWidth, m_CurrentPhysicalHeight);
 
  }
 

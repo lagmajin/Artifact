@@ -8,7 +8,8 @@ import std;
 namespace Artifact {
 
  class ArtifactPreviewController::Impl
- {private:
+ {
+ private:
  	
  public:
   Impl();

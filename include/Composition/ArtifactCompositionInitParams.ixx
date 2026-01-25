@@ -34,6 +34,8 @@ export namespace Artifact {
   void setStopTimeCode();
   PreviewQuality quality() const;
   void setQuality(const PreviewQuality& quality);
+  UniString compositionName() const;
+  void setCompositionName(const UniString& name);
   //set duration
 
  };

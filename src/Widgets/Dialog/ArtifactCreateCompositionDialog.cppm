@@ -189,6 +189,14 @@ namespace Artifact {
 
  }
 
+QString CreateCompositionDialog::compositionName() const
+{
+ if (impl_ && impl_->compositionNameEdit_) {
+  return impl_->compositionNameEdit_->text();
+ }
+ return QString();
+}
+
  void CreateCompositionDialog::keyPressEvent(QKeyEvent* event)
  {
   if (event->key() == Qt::Key_Escape)
