@@ -76,6 +76,9 @@ HoverThumbnailPopupWidget::HoverThumbnailPopupWidget(QWidget* parent /*= nullptr
   setDragEnabled(true);
   setAcceptDrops(true);
   setDropIndicatorShown(true);
+ 
+  // Visual aid for debugging: set a distinct background color so we can verify the view is visible
+  setStyleSheet("QTreeView { background-color: #1e2230; color: #ffffff; }");
 
   
  }
@@ -220,6 +223,8 @@ HoverThumbnailPopupWidget::HoverThumbnailPopupWidget(QWidget* parent /*= nullptr
   addFileAction->setText("Add file");
 
   contextMenu->addAction(addFileAction);
+  // create the model for the project view
+  projectModel_ = new ArtifactProjectModel();
 
  }
 
@@ -323,9 +328,11 @@ HoverThumbnailPopupWidget::HoverThumbnailPopupWidget(QWidget* parent /*= nullptr
 
   impl_->projectView_ = new ArtifactProjectView();
   // attach model to view
-  if (impl_->projectModel_) {
-    impl_->projectView_->setModel(impl_->projectModel_);
+  // attach model to view (ensure model exists)
+  if (!impl_->projectModel_) {
+    impl_->projectModel_ = new ArtifactProjectModel();
   }
+  impl_->projectView_->setModel(impl_->projectModel_);
 
   auto searchWidget = impl_->searchWidget_ = new QLineEdit();
   searchWidget->setPlaceholderText("...");

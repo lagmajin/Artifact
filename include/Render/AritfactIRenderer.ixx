@@ -39,6 +39,7 @@ export namespace Artifact
    
   void clear();
   void flush();
+  void present();
   void flushAndWait();
    
   public/*signals*/:

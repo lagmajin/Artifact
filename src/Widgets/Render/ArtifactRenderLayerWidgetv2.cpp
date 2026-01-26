@@ -87,7 +87,7 @@ W_OBJECT_IMPL(ArtifactLayerEditorWidgetV2)
  }
 
  void ArtifactLayerEditorWidgetV2::Impl::initialize(QWidget* window)
- {
+ {/*
   widget_ = window;
   //view_ = CreateInitialViewMatrix();
 
@@ -110,13 +110,12 @@ W_OBJECT_IMPL(ArtifactLayerEditorWidgetV2)
    return;
   }
    
+   */
   renderer_ = std::make_unique<AritfactIRenderer>();
+  renderer_->initialize(window);
    
-  renderer_->createSwapChain(window);
-  m_initialized = true;
-  released = false;
-   
-   
+
+
 
  }
 
@@ -176,7 +175,7 @@ W_OBJECT_IMPL(ArtifactLayerEditorWidgetV2)
  void ArtifactLayerEditorWidgetV2::Impl::renderOneFrame()
  {
   renderer_->clear();
-   
+  renderer_->present();
  }
 
  void ArtifactLayerEditorWidgetV2::Impl::recreateSwapChain(QWidget* window)

@@ -36,7 +36,7 @@ namespace Artifact
   RenderShaderPair m_draw_sprit_shaders;
   QWidget* widget_;
    
-  
+  bool m_initialized = false;
    
   void captureScreenShot();
    
@@ -78,9 +78,9 @@ namespace Artifact
 
  AritfactIRenderer::Impl::Impl(RefCntAutoPtr<IRenderDevice> device, RefCntAutoPtr<IDeviceContext>& context, QWidget* widget) :pDevice_(device), pImmediateContext_(context)
  {
-  createConstantBuffers();
-  createShaders();
-  createPSOs();
+  //createConstantBuffers();
+  //createShaders();
+  //createPSOs();
 
   
 
@@ -137,7 +137,7 @@ namespace Artifact
 
   desc.Fullscreen = false;
 
-  pFactory->CreateSwapChainD3D12(pDevice, pImmediateContext, SCDesc, desc, hWindow, &pSwapChain_);
+  pFactory->CreateSwapChainD3D12(pDevice_, pImmediateContext_, SCDesc, desc, hWindow, &pSwapChain_);
 
   Diligent::Viewport VP;
   VP.Width = static_cast<float>(m_CurrentPhysicalWidth);
@@ -147,8 +147,12 @@ namespace Artifact
   VP.TopLeftX = 0.0f;
   VP.TopLeftY = 0.0f;
   // SetViewportsの最後の2引数は、レンダーターゲットの物理ピクセルサイズを渡すのが安全
-  pImmediateContext->SetViewports(1, &VP, m_CurrentPhysicalWidth, m_CurrentPhysicalHeight);
+  pImmediateContext_->SetViewports(1, &VP, m_CurrentPhysicalWidth, m_CurrentPhysicalHeight);
 
+  m_initialized = true;
+  createConstantBuffers();
+  createShaders();
+  //createPSOs();
  }
 
  void AritfactIRenderer::Impl::initContext(RefCntAutoPtr<IRenderDevice> device)
@@ -301,6 +305,16 @@ void AritfactIRenderer::Impl::createSwapChain(QWidget* window)
 
  void AritfactIRenderer::Impl::clear()
  {
+  // クリアカラーの定義 (RGBA)
+  float ClearColor[] = { 1.0f, 0.0f, 0.0f, 1.0f }; // 赤
+
+  // レンダリングターゲットのビューを取得
+  auto* pRTV = pSwapChain_->GetCurrentBackBufferRTV();
+  //auto* pDSV = pSwapChain_->GetDepthStencilView();
+  pImmediateContext_->SetRenderTargets(1, &pRTV,nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+  // クリアの実行
+  pImmediateContext_->ClearRenderTarget(pRTV, ClearColor, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+
 
  }
 
@@ -395,6 +409,11 @@ void AritfactIRenderer::Impl::createSwapChain(QWidget* window)
  void AritfactIRenderer::drawSolidRect(float x, float y, float w, float h)
  {
 
+ }
+
+ void AritfactIRenderer::present()
+ {
+  impl_->pSwapChain_->Present();
  }
 
 };
