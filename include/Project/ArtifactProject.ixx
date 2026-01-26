@@ -73,6 +73,8 @@ export namespace Artifact {
    
  public:
 	//signals
+  void projectCreated()
+   W_SIGNAL(projectCreated);
   void projectChanged()
    W_SIGNAL(projectChanged);
    void compositionCreated(const CompositionID& id)

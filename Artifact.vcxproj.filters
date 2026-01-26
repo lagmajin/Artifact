@@ -29,15 +29,11 @@
     <ClCompile Include="include\Layer\ArtifactLayerSearchQuery.ixx" />
     <ClCompile Include="include\Layer\ArtifactSolid2DLayer.ixx" />
     <ClCompile Include="include\Layer\ArtifactSolidImageLayer.ixx" />
-    <ClCompile Include="include\Layer\ArtifactShapeLayer.ixx" />
-    <ClCompile Include="include\Preview\ArtifactLayerPreviewPipeline.ixx" />
     <ClCompile Include="include\Preview\ArtifactPreviewController.ixx" />
     <ClCompile Include="include\Project\ArtifactProjectInitParams.ixx" />
     <ClCompile Include="include\Project\ArtifactProjectItems.ixx" />
     <ClCompile Include="include\Project\ArtifactProjectModel.ixx" />
-    <ClCompile Include="include\Project\ArtifactProjectResult.ixx" />
     <ClCompile Include="include\Project\TreeFilterProxyModel.ixx" />
-    <ClCompile Include="include\Render\ArtifactOffscreenRenderer2D.ixx" />
     <ClCompile Include="include\Render\ArtifactRenderController.ixx" />
     <ClCompile Include="include\Render\ArtifactRenderManager.ixx" />
     <ClCompile Include="include\Render\ArtifactRenderQueueService.ixx" />
@@ -55,7 +51,6 @@
     <ClCompile Include="include\Widgets\Dialog\ArtifactRenderOutputSettingDialog.ixx" />
     <ClCompile Include="include\Widgets\Native\NativeHelper.ixx" />
     <ClCompile Include="include\Widgets\Render\ArtifactRenderLayerWidget.ixx" />
-    <ClCompile Include="include\Widgets\Render\ArtifactRenderLayerWidgetv2.ixx" />
     <ClCompile Include="include\Widgets\Render\ArtifactRenderQueueJobPanel.ixx" />
     <ClCompile Include="include\Widgets\Render\ArtifactRenderQueueManagerWidget.ixx" />
     <ClCompile Include="include\Widgets\Render\ArtifactRenderWrapperWidget.ixx" />
@@ -76,8 +71,6 @@
     <ClCompile Include="src\Generator\CloneGenerator.cppm" />
     <ClCompile Include="src\Generator\GeneratorManager.cppm" />
     <ClCompile Include="src\GUI\WindowPluginManager.cpp" />
-    <ClCompile Include="src\Layer\ArtifactLayerFactory.cppm" />
-    <ClCompile Include="src\Layer\ArtifactLayerInitParams.cppm" />
     <ClCompile Include="src\Layer\ArtifactLayerSelectionManager.cppm" />
     <ClCompile Include="src\Layer\ArtifactLayerSetting.cpp" />
     <ClCompile Include="src\Layer\ArtifactShapeLayer.cppm" />
@@ -87,9 +80,7 @@
     <ClCompile Include="src\Preview\ArtifactLayerPreviewPipeline.cpp" />
     <ClCompile Include="src\Preview\ArtifactPreviewCompositionPipeline.cppm" />
     <ClCompile Include="src\Preview\ArtifactPreviewWorker.cppm" />
-    <ClCompile Include="src\Project\ArtifactProjectItems.cpp" />
     <ClCompile Include="src\Project\TreeFilterProxyModel.cppm" />
-    <ClCompile Include="src\Render\ArtifactOffscreenRenderer2D.cppm" />
     <ClCompile Include="src\Render\ArtifactRenderElement.cpp" />
     <ClCompile Include="src\Render\ArtifactRenderManager.cppm" />
     <ClCompile Include="src\Render\ArtifactRenderQueueService.cppm" />
@@ -105,7 +96,6 @@
     <ClCompile Include="src\Widgets\Native\NativeHelper.cpp" />
     <ClCompile Include="src\Widgets\Render\ArtifactRenderLayerWidgetv2.cpp" />
     <ClCompile Include="src\Widgets\Render\ArtifactRenderWrapperWidget.cpp" />
-    <ClCompile Include="src\Widgets\Render\ArtifactLayerEditorPanel.cpp" />
     <ClCompile Include="src\Widgets\Render\ArtifactRenderQueueJobPanel.cpp" />
     <ClCompile Include="src\Widgets\Render\ArtifactRenderLayerWidget.cpp" />
     <ClCompile Include="src\Widgets\Render\ArtifactRenderQueueManagerWidget.cpp" />
@@ -119,15 +109,11 @@
     <ClCompile Include="src\Widgets\Timeline\ArtifactTimelineTimeRangeSlider.cpp" />
     <ClCompile Include="src\Widgets\Timeline\ArtifactWorkAreaControlWidget.cpp" />
     <ClCompile Include="src\Widgets\Timeline\TimelineScaleWidget.cpp" />
-    <ClCompile Include="include\Project\ArtifactProjectExporter.ixx" />
     <ClCompile Include="include\Widgets\ArtifactToolBar.ixx" />
     <ClCompile Include="include\Widgets\Dialog\CreatePlaneLayerDialog.ixx" />
     <ClCompile Include="include\Widgets\Dialog\Dialog.ixx" />
     <ClCompile Include="include\Widgets\Dialog\EditCompositionSettingDialog.ixx" />
     <ClCompile Include="include\Widgets\Render\ArtifactOgreRenderWindow.hpp" />
-    <ClCompile Include="include\Project\ArtifactProject.ixx" />
-    <ClCompile Include="include\Project\ArtifactProjectManager.ixx" />
-    <ClCompile Include="include\Project\ArtifactProjectSetting.ixx" />
     <ClCompile Include="include\Widgets\Menu\ArtifactTestMenu.ixx" />
     <ClCompile Include="include\Widgets\Menu\ArtifactTimeMenu.ixx" />
     <ClCompile Include="include\Widgets\Menu\ArtifactViewMenu.ixx" />
@@ -138,12 +124,8 @@
     <ClCompile Include="include\Widgets\TimelineScene.ixx" />
     <ClCompile Include="src\GUI\ArtifactGuiManager.cpp" />
     <ClCompile Include="src\Layer\ArtifactImageLayer.cppm" />
-    <ClCompile Include="src\Project\ArtifactProject.cppm" />
-    <ClCompile Include="src\Project\ArtifactProjectManager.cppm" />
-    <ClCompile Include="src\Project\ArtifactProjectSetting.cppm" />
     <ClCompile Include="src\Widgets\ArtifactMainWindow.cpp" />
     <ClCompile Include="src\Widgets\ArtifactMenuBar.cppm" />
-    <ClCompile Include="src\Widgets\ArtifactProjectManagerWidget.cpp" />
     <ClCompile Include="src\Widgets\ArtifactTimelineWidget.cpp" />
     <ClCompile Include="src\Widgets\Dialog\CreatePlaneLayerDialog.cppm" />
     <ClCompile Include="src\Widgets\Menu\ArtifactFileMenu.cppm" />
@@ -155,21 +137,11 @@
     <ClCompile Include="src\Widgets\Render\ArtifactRenderManagerWidget.cpp" />
     <ClCompile Include="src\Render\ArtifactRenderController.cppm" />
     <ClCompile Include="src\Layer\ArtifactHierarchyModel.cppm" />
-    <ClCompile Include="src\Project\ArtifactProjectModel.cppm" />
     <ClCompile Include="src\Widgets\Dialog\EditCompositionSettingDialog.cpp" />
-    <ClCompile Include="include\Layer\ArtifactAbstract2DLayer.ixx">
-      <Filter>ヘッダー</Filter>
-    </ClCompile>
     <ClCompile Include="include\Application\ActiveContextService.ixx">
       <Filter>ヘッダー</Filter>
     </ClCompile>
-    <ClCompile Include="include\Application\ArtifactApplicationManager.ixx">
-      <Filter>ヘッダー</Filter>
-    </ClCompile>
     <ClCompile Include="include\Widgets\Menu\ArtifactAnimationMenu.ixx">
-      <Filter>ヘッダー</Filter>
-    </ClCompile>
-    <ClCompile Include="include\Effetcs\ArtifactAbstractEffect.ixx">
       <Filter>ヘッダー</Filter>
     </ClCompile>
     <ClCompile Include="include\Render\AritfactIRenderer.ixx">
@@ -181,16 +153,10 @@
     <ClCompile Include="src\Application\ArtifactApplicationManager.cpp">
       <Filter>ソース</Filter>
     </ClCompile>
-    <ClCompile Include="src\Application\ActiveContextService.cpp">
-      <Filter>ソース</Filter>
-    </ClCompile>
     <ClCompile Include="src\AppMain.cppm">
       <Filter>ソース</Filter>
     </ClCompile>
     <ClCompile Include="src\Widgets\Asset\ArtifactAssetBrowser.cppm">
-      <Filter>ソース</Filter>
-    </ClCompile>
-    <ClCompile Include="src\Widgets\Menu\ArtifactAnimationMenu.cppm">
       <Filter>ソース</Filter>
     </ClCompile>
     <ClCompile Include="src\Render\AritfactIRenderer.cppm">
@@ -202,37 +168,19 @@
     <ClCompile Include="src\Service\ApplicationService.cppm">
       <Filter>ソース</Filter>
     </ClCompile>
-    <ClCompile Include="src\Generator\AbstractGeneratorEffector.cppm">
-      <Filter>ソース</Filter>
-    </ClCompile>
-    <ClCompile Include="src\Widgets\Dialog\ApplicationSettingDialog.cppm">
-      <Filter>ソース</Filter>
-    </ClCompile>
     <ClCompile Include="include\Composition\ArtifactAbstractComposition.ixx">
       <Filter>ヘッダー</Filter>
     </ClCompile>
     <ClCompile Include="src\Composition\ArtifactAbstractComposition.cppm">
       <Filter>ソース</Filter>
     </ClCompile>
-    <ClCompile Include="src\Layer\ArtifactAbstract2DLayer.cppm">
-      <Filter>ソース</Filter>
-    </ClCompile>
     <ClCompile Include="src\Asset\ArtifactAssetResult.cpp">
       <Filter>ソース</Filter>
-    </ClCompile>
-    <ClCompile Include="src\Effetcs\ArtifactAbstractEffect.cppm">
-      <Filter>ソース</Filter>
-    </ClCompile>
-    <ClCompile Include="include\Layer\ArtifactAdjustableLayer.ixx">
-      <Filter>ヘッダー</Filter>
     </ClCompile>
     <ClCompile Include="include\Asset\ArtifactAssetResult.ixx">
       <Filter>ヘッダー</Filter>
     </ClCompile>
     <ClCompile Include="src\Service\ArtifactAudioService.cpp">
-      <Filter>ソース</Filter>
-    </ClCompile>
-    <ClCompile Include="src\Service\ArtifactClipboardService.cpp">
       <Filter>ソース</Filter>
     </ClCompile>
     <ClCompile Include="include\Service\ArtifactClipboardService.ixx">
@@ -244,16 +192,10 @@
     <ClCompile Include="include\Service\ArtifactAudioService.ixx">
       <Filter>ヘッダー</Filter>
     </ClCompile>
-    <ClCompile Include="include\Layer\ArtifactCameraLayer.ixx">
-      <Filter>ヘッダー</Filter>
-    </ClCompile>
     <ClCompile Include="include\Composition\ArtifactComposition.ixx">
       <Filter>ヘッダー</Filter>
     </ClCompile>
     <ClCompile Include="src\Composition\ArtifactComposition2D.cpp">
-      <Filter>ヘッダー</Filter>
-    </ClCompile>
-    <ClCompile Include="include\Layer\ArtifactCompositionLayer.ixx">
       <Filter>ヘッダー</Filter>
     </ClCompile>
     <ClCompile Include="include\Composition\ArtifactComposition2D.ixx">
@@ -273,9 +215,6 @@
     </ClCompile>
     <ClCompile Include="include\Composition\ArtifactCompositionInitParams.ixx">
       <Filter>ヘッダー</Filter>
-    </ClCompile>
-    <ClCompile Include="src\Layer\ArtifactCompositionLayer.cppm">
-      <Filter>ソース</Filter>
     </ClCompile>
     <ClCompile Include="include\Widgets\Menu\ArtifactCompositionMenu.ixx">
       <Filter>ヘッダー</Filter>
@@ -361,17 +300,11 @@
     <ClCompile Include="src\Widgets\Viewer\ArtifactContentsViewer.cpp">
       <Filter>ソース</Filter>
     </ClCompile>
-    <ClCompile Include="src\Widgets\ArtifactInspectorWidget.cpp">
+    <ClCompile Include="src\Widgets\ArtifactInspectorWidget.cppm">
       <Filter>ソース\Widgets</Filter>
     </ClCompile>
     <ClCompile Include="src\Composition\ArtifactCompositionSetting.cpp">
       <Filter>ソース</Filter>
-    </ClCompile>
-    <ClCompile Include="src\Layer\ArtifactAbstractLayer.cppm">
-      <Filter>ソース</Filter>
-    </ClCompile>
-    <ClCompile Include="include\Layer\ArtifactLayerCopyBuffer.ixx">
-      <Filter>ヘッダー</Filter>
     </ClCompile>
     <ClCompile Include="include\Widgets\Render\ArtifactDiligentEngineRenderWindow.ixx">
       <Filter>ヘッダー</Filter>
@@ -445,9 +378,6 @@
     <ClCompile Include="src\Widgets\Timeline\ArtifactLayerHierarchyWidget.cppm">
       <Filter>ソース</Filter>
     </ClCompile>
-    <ClCompile Include="include\Widgets\Render\ArtifactLayerEditorPanel.ixx">
-      <Filter>ヘッダー</Filter>
-    </ClCompile>
     <ClCompile Include="include\Widgets\Menu\ArtifactMenuBar.ixx">
       <Filter>ヘッダー</Filter>
     </ClCompile>
@@ -457,10 +387,7 @@
     <ClCompile Include="include\Layer\ArtifactLayerResult.ixx">
       <Filter>ヘッダー</Filter>
     </ClCompile>
-    <ClCompile Include="include\Layer\ArtifactLayerFactory.ixx">
-      <Filter>ヘッダー</Filter>
-    </ClCompile>
-    <ClCompile Include="src\Widgets\Menu\Test\ArtifactImageProcessingTestMenu.cpp">
+    <ClCompile Include="src\Widgets\Menu\Test\ArtifactImageProcessingTestMenu.cppm">
       <Filter>ソース</Filter>
     </ClCompile>
     <ClCompile Include="src\Service\ArtifactEffectService.cpp">
@@ -478,17 +405,11 @@
     <ClCompile Include="include\Preview\ArtifactPreviewWorker.ixx">
       <Filter>ヘッダー</Filter>
     </ClCompile>
-    <ClCompile Include="src\Project\ArtifactProjectExporter.cppm">
-      <Filter>ソース</Filter>
-    </ClCompile>
     <ClCompile Include="include\Layer\Artifact3DModelLayer.ixx">
       <Filter>ヘッダー\Layer</Filter>
     </ClCompile>
     <ClCompile Include="include\Composition\ArtifactComposition3D.ixx">
       <Filter>ヘッダー\Widgets</Filter>
-    </ClCompile>
-    <ClCompile Include="include\Layer\ArtifactAbstractLayer.ixx">
-      <Filter>ヘッダー</Filter>
     </ClCompile>
     <ClCompile Include="include\Widgets\Render\ArtifactCompositionViewerFooter.ixx">
       <Filter>ヘッダー\Widgets</Filter>
@@ -498,6 +419,117 @@
     </ClCompile>
     <ClCompile Include="src\Widgets\Menu\ArtifactLayerMenu.cppm">
       <Filter>ソース</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Project\ArtifactProjectExporter.ixx" />
+    <ClCompile Include="include\Project\ArtifactProjectSetting.ixx" />
+    <ClCompile Include="include\Project\ArtifactProject.ixx" />
+    <ClCompile Include="src\Project\ArtifactProject.cppm">
+      <Filter>ソース\Project</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Project\ArtifactProjectExporter.cppm">
+      <Filter>ソース\Project</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Project\ArtifactProjectItems.cpp">
+      <Filter>ソース\Project</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Project\ArtifactProjectSetting.cppm">
+      <Filter>ソース\Project</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Project\ArtifactProjectManager.cppm">
+      <Filter>ソース\Project</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Project\ArtifactProjectResult.ixx">
+      <Filter>ソース\Project</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Layer\ArtifactShapeLayer.ixx">
+      <Filter>ヘッダー\Layer</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Layer\ArtifactAdjustableLayer.ixx">
+      <Filter>ヘッダー\Layer</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Layer\ArtifactAbstract2DLayer.ixx">
+      <Filter>ヘッダー\Layer</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Layer\ArtifactAbstractLayer.ixx">
+      <Filter>ヘッダー\Layer</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Layer\ArtifactCameraLayer.ixx">
+      <Filter>ヘッダー\Layer</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Layer\ArtifactCompositionLayer.ixx">
+      <Filter>ヘッダー\Layer</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Layer\ArtifactLayerCopyBuffer.ixx">
+      <Filter>ヘッダー\Layer</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Widgets\Render\ArtifactLayerEditorPanel.ixx">
+      <Filter>ヘッダー\Layer</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Layer\ArtifactLayerFactory.ixx">
+      <Filter>ヘッダー\Layer</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Application\ArtifactApplicationManager.ixx">
+      <Filter>ヘッダー\Application</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Effetcs\ArtifactAbstractEffect.ixx">
+      <Filter>ヘッダー\Effect</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Render\ArtifactOffscreenRenderer2D.cppm">
+      <Filter>ヘッダー</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Project\ArtifactProjectManager.ixx">
+      <Filter>ヘッダー</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Project\ArtifactProjectModel.cppm">
+      <Filter>ソース</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Service\ArtifactClipboardService.cpp">
+      <Filter>ソース\Service</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Effetcs\ArtifactAbstractEffect.cppm">
+      <Filter>ソース\Effect</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Widgets\Dialog\ApplicationSettingDialog.cppm">
+      <Filter>ソース\Widgets</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Application\ActiveContextService.cpp">
+      <Filter>ソース\Application</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Generator\AbstractGeneratorEffector.cppm">
+      <Filter>ソース\Effect</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Layer\ArtifactAbstractLayer.cppm">
+      <Filter>ソース\Layer</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Widgets\Menu\ArtifactAnimationMenu.cppm">
+      <Filter>ソース\Widgets</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Layer\ArtifactAbstract2DLayer.cppm">
+      <Filter>ソース\Widgets</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Layer\ArtifactCompositionLayer.cppm">
+      <Filter>ソース\Layer</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Widgets\Render\ArtifactRenderLayerWidgetv2.ixx">
+      <Filter>ヘッダー</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Preview\ArtifactLayerPreviewPipeline.ixx">
+      <Filter>ヘッダー</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Layer\ArtifactLayerFactory.cppm">
+      <Filter>ソース</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Widgets\Render\ArtifactLayerEditorPanel.cpp">
+      <Filter>ソース</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Render\ArtifactOffscreenRenderer2D.ixx">
+      <Filter>ヘッダー</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Layer\ArtifactLayerInitParams.cppm">
+      <Filter>ソース</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Widgets\ArtifactProjectManagerWidget.cppm">
+      <Filter>ソース\Project</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
@@ -545,6 +577,30 @@
     </Filter>
     <Filter Include="ヘッダー\Layer">
       <UniqueIdentifier>{db0978f3-2fbf-4838-a531-efa9e7021864}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ソース\Project">
+      <UniqueIdentifier>{01e0c617-51ce-4256-a232-a3d929c768e6}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ヘッダー\Widgets\Menu">
+      <UniqueIdentifier>{9b8686fb-5d05-40cd-a64c-34fc9644605e}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ソース\Audio">
+      <UniqueIdentifier>{8b0eb7d1-6049-47a6-b853-61aefda341aa}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ソース\Effect">
+      <UniqueIdentifier>{658ea1fe-3b5a-419b-9531-7a098df6f5c8}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ソース\Layer">
+      <UniqueIdentifier>{7e278aee-128b-4123-96f4-0b9a7f584d92}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ソース\Application">
+      <UniqueIdentifier>{f0c89f65-74da-4fc9-9079-4fdab97721fb}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ヘッダー\Composition">
+      <UniqueIdentifier>{b34c2d77-809a-4c4b-9b87-1fe8027b4e8a}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ヘッダー\Project">
+      <UniqueIdentifier>{bb3c9c89-d552-47f4-8a64-35f2ed5df3dc}</UniqueIdentifier>
     </Filter>
   </ItemGroup>
 </Project>

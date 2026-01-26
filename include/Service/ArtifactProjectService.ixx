@@ -57,6 +57,7 @@ export namespace Artifact
   ChangeCompositionResult changeCurrentComposition(const CompositionID& id);
 
   FindCompositionResult findComposition(const CompositionID& id);
+  QVector<ProjectItem*> projectItems() const;
   
   void addLayer(const CompositionID& id, const ArtifactLayerInitParams& params);
   void addLayerToCurrentComposition(const ArtifactLayerInitParams& params);
@@ -67,6 +68,9 @@ export namespace Artifact
    W_SIGNAL(compositionCreated, id);
   void layerCreated(const LayerID& id)
    W_SIGNAL(layerCreated, id);
+
+  void projectChanged()
+   W_SIGNAL(projectChanged);
   public:
    void projectSettingChanged(const ArtifactProjectSettings& setting);
    W_SLOT(projectSettingChanged);

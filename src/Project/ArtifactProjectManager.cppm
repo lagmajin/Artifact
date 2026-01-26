@@ -122,7 +122,7 @@ namespace Artifact {
   return false;
  }
 
- ArtifactProjectManager::ArtifactProjectManager(QObject* parent /*= nullptr*/) :QObject(parent), Impl_(new Impl())
+ ArtifactProjectManager::ArtifactProjectManager(QObject* parent /*= nullptr*/) :QObject(parent), impl_(new Impl())
  {
 
 
@@ -130,7 +130,7 @@ namespace Artifact {
 
  ArtifactProjectManager::~ArtifactProjectManager()
  {
-  delete Impl_;
+  delete impl_;
  }
 
  bool ArtifactProjectManager::closeCurrentProject()
@@ -141,7 +141,9 @@ namespace Artifact {
 
  void ArtifactProjectManager::createProject()
  {
-  Impl_->createProject();
+  impl_->createProject();
+
+  connect(impl_->currentProjectPtr_.get(), &ArtifactProject::projectChanged, this, &ArtifactProjectManager::projectChanged);
 
   /*emit*/ projectCreated();
  }
@@ -157,7 +159,7 @@ namespace Artifact {
  {
   qDebug() << "ArtifactProjectManager::createProject with name:" << projectName;
 
-  Impl_->createProject();
+  impl_->createProject();
 
   /*emit*/ projectCreated();
  }
@@ -181,20 +183,29 @@ namespace Artifact {
 
  bool ArtifactProjectManager::isProjectCreated() const
  {
-  return Impl_->isCreated_ || (Impl_->currentProjectPtr_ != nullptr);
+  return impl_->isCreated_ || (impl_->currentProjectPtr_ != nullptr);
  }
 
  std::shared_ptr<ArtifactProject> ArtifactProjectManager::getCurrentProjectSharedPtr()
  {
 
-  return Impl_->currentProjectPtr_;
+  return impl_->currentProjectPtr_;
  }
+
+QVector<ProjectItem*> ArtifactProjectManager::projectItems() const
+{
+ if (impl_->currentProjectPtr_)
+ {
+  return impl_->currentProjectPtr_->projectItems();
+ }
+ return QVector<ProjectItem*>();
+}
 	
  void ArtifactProjectManager::createComposition()
  {
  // Create a composition using default init params and emit the created ID
  ArtifactCompositionInitParams params;
- CreateCompositionResult res = Impl_->createComposition(params);
+ CreateCompositionResult res = impl_->createComposition(params);
  if (res.success) {
   /*emit*/ compositionCreated(res.id);
  } else {
@@ -209,7 +220,7 @@ namespace Artifact {
 
  CreateCompositionResult ArtifactProjectManager::createComposition(const ArtifactCompositionInitParams& params)
  {
-  auto result = Impl_->createComposition(params);
+  auto result = impl_->createComposition(params);
 
   return result;
  }
@@ -224,7 +235,7 @@ namespace Artifact {
  }
 
  qDebug() << "ArtifactProjectManager::createComposition requested name:" << str.toQString();
- auto result = Impl_->createComposition(params);
+ auto result = impl_->createComposition(params);
  if (result.success) {
   qDebug() << "ArtifactProjectManager::createComposition succeeded id:" << result.id.toString();
   /*emit*/ compositionCreated(result.id);
@@ -236,12 +247,12 @@ namespace Artifact {
 
  void ArtifactProjectManager::addAssetFromFilePath(const QString& filePath)
  {
-  Impl_->addAssetFromFilePath(filePath);
+  impl_->addAssetFromFilePath(filePath);
  }
 
  void ArtifactProjectManager::addAssetsFromFilePaths(const QStringList& filePaths)
  {
-  Impl_->addAssetsFromFilePaths(filePaths);
+  impl_->addAssetsFromFilePaths(filePaths);
  }
 
  ArtifactCompositionPtr ArtifactProjectManager::currentComposition()
@@ -252,7 +263,7 @@ namespace Artifact {
 
  FindCompositionResult ArtifactProjectManager::findComposition(const CompositionID& id)
  {
-  return Impl_->currentProjectPtr_->findComposition(id);
+  return impl_->currentProjectPtr_->findComposition(id);
  	
  }
 

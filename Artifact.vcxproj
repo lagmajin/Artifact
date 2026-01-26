@@ -620,7 +620,7 @@
     <ClCompile Include="src\Project\ArtifactProjectSetting.cppm">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
     </ClCompile>
-    <ClCompile Include="src\Widgets\ArtifactInspectorWidget.cpp">
+    <ClCompile Include="src\Widgets\ArtifactInspectorWidget.cppm">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Widgets\ArtifactMainWindow.cpp">
@@ -629,7 +629,7 @@
     <ClCompile Include="src\Widgets\ArtifactMenuBar.cppm">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
     </ClCompile>
-    <ClCompile Include="src\Widgets\ArtifactProjectManagerWidget.cpp">
+    <ClCompile Include="src\Widgets\ArtifactProjectManagerWidget.cppm">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Widgets\ArtifactTimelineWidget.cpp" />
@@ -669,7 +669,7 @@
     <ClCompile Include="src\Widgets\Menu\ArtifactViewMenu.cppm">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
     </ClCompile>
-    <ClCompile Include="src\Widgets\Menu\Test\ArtifactImageProcessingTestMenu.cpp">
+    <ClCompile Include="src\Widgets\Menu\Test\ArtifactImageProcessingTestMenu.cppm">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Widgets\Render\ArtifactDiligentEngineRenderWindow.cpp" />

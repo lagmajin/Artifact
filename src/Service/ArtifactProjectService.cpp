@@ -115,7 +115,7 @@ namespace Artifact
   connect(&impl_->projectManager(),&ArtifactProjectManager::projectCreated,this,&ArtifactProjectService::projectCreated);
   connect(&impl_->projectManager(), &ArtifactProjectManager::compositionCreated, this, &ArtifactProjectService::compositionCreated);
   connect(&impl_->projectManager(), &ArtifactProjectManager::layerCreated, this, &ArtifactProjectService::layerCreated);
-
+  connect(&impl_->projectManager(), &ArtifactProjectManager::projectChanged, this, &ArtifactProjectService::projectChanged);
   
   
  }
@@ -184,6 +184,11 @@ FindCompositionResult ArtifactProjectService::findComposition(const CompositionI
  {
  return impl_->findComposition(id);
  }
+
+QVector<ProjectItem*> ArtifactProjectService::projectItems() const
+{
+ return impl_->projectManager().getCurrentProjectSharedPtr() ? impl_->projectManager().getCurrentProjectSharedPtr()->projectItems() : QVector<ProjectItem*>();
+}
 
 void ArtifactProjectService::createComposition(const ArtifactCompositionInitParams& params)
 {

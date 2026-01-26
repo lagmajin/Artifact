@@ -199,6 +199,7 @@ HoverThumbnailPopupWidget::HoverThumbnailPopupWidget(QWidget* parent /*= nullptr
   void handleSearchTextChanged();
   void handleFileDrop(const QString& str);
   void rebuildMenu();
+  void update();
   QLabel* projectNameLabel = nullptr;
   QLineEdit* searchWidget_ = nullptr;
   QMenu* contextMenu = nullptr;
@@ -224,7 +225,9 @@ HoverThumbnailPopupWidget::HoverThumbnailPopupWidget(QWidget* parent /*= nullptr
 
   contextMenu->addAction(addFileAction);
   // create the model for the project view
-  projectModel_ = new ArtifactProjectModel();
+  projectModel_ = nullptr;
+
+
 
  }
 
@@ -253,6 +256,14 @@ HoverThumbnailPopupWidget::HoverThumbnailPopupWidget(QWidget* parent /*= nullptr
   manager.addAssetFromFilePath(str);
 
  	
+ }
+
+ void ArtifactProjectManagerWidget::Impl::update()
+ {
+  
+  //auto p=ArtifactProjectService::instance()->projectItems();
+
+  
  }
 
  ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent /*= nullptr*/) :QWidget(parent), impl_(new Impl())
@@ -330,8 +341,10 @@ HoverThumbnailPopupWidget::HoverThumbnailPopupWidget(QWidget* parent /*= nullptr
   // attach model to view
   // attach model to view (ensure model exists)
   if (!impl_->projectModel_) {
-    impl_->projectModel_ = new ArtifactProjectModel();
+    impl_->projectModel_ = new ArtifactProjectModel(this);
   }
+  // bind current project to model and assign to view
+  impl_->projectModel_->setProject(ArtifactProjectManager::getInstance().getCurrentProjectSharedPtr());
   impl_->projectView_->setModel(impl_->projectModel_);
 
   auto searchWidget = impl_->searchWidget_ = new QLineEdit();
@@ -357,6 +370,10 @@ HoverThumbnailPopupWidget::HoverThumbnailPopupWidget(QWidget* parent /*= nullptr
    this,
    &ArtifactProjectManagerWidget::updateRequested);
  	
+  connect(projectService,&ArtifactProjectService::projectChanged,
+   this,
+   &ArtifactProjectManagerWidget::updateRequested);
+  
  }
 
  ArtifactProjectManagerWidget::~ArtifactProjectManagerWidget()
@@ -366,7 +383,7 @@ HoverThumbnailPopupWidget::HoverThumbnailPopupWidget(QWidget* parent /*= nullptr
 
  void ArtifactProjectManagerWidget::triggerUpdate()
  {
-
+  impl_->update();
  }
 
  void ArtifactProjectManagerWidget::dragEnterEvent(QDragEnterEvent* event)

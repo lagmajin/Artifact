@@ -16,6 +16,9 @@ export namespace Artifact
 
  class ArtifactProjectModel:public QAbstractItemModel
  {
+ private:
+  class Impl;
+  Impl* impl_;
  public:
 	 QModelIndex index(int row, int column, const QModelIndex& parent) const override;
 	 int rowCount(const QModelIndex& parent) const override;
@@ -24,13 +27,11 @@ export namespace Artifact
  	 QModelIndex parent(const QModelIndex& index) const override;
  	 Qt::ItemFlags flags(const QModelIndex &index) const override;
 
- private:
-  class Impl;
-  Impl* impl_;
+ 
  public:
   ArtifactProjectModel(QObject*parent=nullptr);
   ~ArtifactProjectModel();
-  void setProject();
+  void setProject(const std::shared_ptr<ArtifactProject>& project);
   void onCompositionCreated(const ArtifactCore::CompositionID& id);
  };
 

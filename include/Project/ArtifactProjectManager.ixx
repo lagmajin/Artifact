@@ -39,7 +39,7 @@ export namespace Artifact {
   W_OBJECT(ArtifactProjectManager)
  private:
   class Impl;
-  Impl* Impl_;
+  Impl* impl_;
  public:
   explicit ArtifactProjectManager(QObject* parent = nullptr);
   ~ArtifactProjectManager();
@@ -66,6 +66,8 @@ export namespace Artifact {
   ArtifactCompositionPtr currentComposition();
   FindCompositionResult findComposition(const CompositionID& id);
 
+  QVector<ProjectItem*> projectItems() const;
+
   //Assets
   void addAssetFromFilePath(const QString& filePath);
   void addAssetsFromFilePaths(const QStringList& filePaths);
@@ -80,6 +82,9 @@ export namespace Artifact {
    W_SIGNAL(projectCreated);
   void projectClosed()
    W_SIGNAL(projectClosed);
+  void projectChanged()
+   W_SIGNAL(projectChanged);
+
   void compositionCreated(const CompositionID& id)
    W_SIGNAL(compositionCreated, id);
 

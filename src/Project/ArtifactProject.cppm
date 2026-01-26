@@ -96,6 +96,7 @@ QVector<ProjectItem*> ArtifactProject::projectItems() const
   //assetContainer_.addSafe(asset->assetID(),asset);
  }
 
+
  CreateCompositionResult ArtifactProject::Impl::createComposition(const UniString& str)
  {
   auto id = CompositionID();
@@ -182,15 +183,20 @@ FindCompositionResult ArtifactProject::findComposition(const CompositionID& id)
   ProjectItem* root = rootUp.get();
   impl_->ownedItems_.push_back(std::move(rootUp));
   impl_->itemsRoot_.push_back(root);
+
+  Q_EMIT projectCreated();
+
  }
 
  ArtifactProject::ArtifactProject(const QString& name) :impl_(new Impl())
  {
 
+  Q_EMIT projectCreated();
  }
 
  ArtifactProject::ArtifactProject(const ArtifactProjectSettings& setting) :impl_(new Impl())
  {
+  Q_EMIT projectCreated();
 
  }
 
@@ -249,6 +255,8 @@ FindCompositionResult ArtifactProject::findComposition(const CompositionID& id)
   QString idStr = res.id.toString();
   qDebug() << "Composition created:" << createdName << "(ID:" << idStr << ")";
  }
+  // notify listeners that project data changed
+  projectChanged();
  return res;
  }
 

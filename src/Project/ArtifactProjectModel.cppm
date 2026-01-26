@@ -24,29 +24,30 @@ namespace Artifact
   QMetaObject::Connection compositionConnection_;
   void refreshTree();
   static ArtifactProjectService* projectService();
+  Impl();
+  ~Impl();
  };
 
- void ArtifactProjectModel::Impl::refreshTree()
+ArtifactProjectModel::Impl::Impl()
+{
+ model_ = new QStandardItemModel();
+}
+
+ArtifactProjectModel::Impl::~Impl()
+{
+ if (compositionConnection_)
+  QObject::disconnect(compositionConnection_);
+ delete model_;
+}
+
+void ArtifactProjectModel::Impl::refreshTree()
  {
- auto projectService = ArtifactProjectService::instance();
  if (!model_) return;
  // reset model so view updates cleanly
  this->model_->clear();
- // notify QAbstractItemModel users
- // Note: ArtifactProjectModel (this QAbstractItemModel) will signal reset via beginResetModel/endResetModel
 
- // try get current project from manager
- auto& manager = ArtifactProjectManager::getInstance();
- auto shared = manager.getCurrentProjectSharedPtr();
+ auto shared = projectPtr_.lock();
  if (!shared) return;
- // reconnect to project's compositionCreated signal so model updates when compositions are added
- if (compositionConnection_) {
-  QObject::disconnect(compositionConnection_);
- }
- compositionConnection_ = connect(shared.get(), &ArtifactProject::compositionCreated, [this](const ArtifactCore::CompositionID&) {
-  this->refreshTree();
- });
-
  auto roots = shared->projectItems();
 
  qDebug() << "ArtifactProjectModel::refreshTree - roots count:" << roots.size();
@@ -82,8 +83,7 @@ namespace Artifact
 void ArtifactProjectModel::onCompositionCreated(const ArtifactCore::CompositionID& id)
 {
  if (!impl_ || !impl_->model_) return;
- auto& manager = ArtifactProjectManager::getInstance();
- auto shared = manager.getCurrentProjectSharedPtr();
+ auto shared = impl_->projectPtr_.lock();
  if (!shared) return;
 
  // Find the CompositionItem with the given id and append it to model
@@ -139,34 +139,34 @@ void ArtifactProjectModel::onCompositionCreated(const ArtifactCore::CompositionI
   return ArtifactProjectService::instance();
  }
 
- ArtifactProjectModel::Impl::Impl()
- {
+// (Impl ctor/dtor implemented above)
 
- }
-
- ArtifactProjectModel::Impl::~Impl()
- {
-
- }
-
- ArtifactProjectModel::ArtifactProjectModel(QObject* parent/*=nullptr*/) :QAbstractItemModel(parent), impl_(new Impl())
- {
-
-  connect(impl_->projectService(),&ArtifactProjectService::layerCreated, this, [this]() {
-   impl_->refreshTree();
-   });
-  // also refresh when a composition is created
-  connect(&ArtifactProjectManager::getInstance(), &ArtifactProjectManager::compositionCreated, this, [this](const ArtifactCore::CompositionID& id){
-    // incremental update: try to insert only the new composition
-    this->onCompositionCreated(id);
+ArtifactProjectModel::ArtifactProjectModel(QObject* parent/*=nullptr*/) :QAbstractItemModel(parent), impl_(new Impl())
+{
+  connect(impl_->projectService(), &ArtifactProjectService::layerCreated, this, [this]() {
+    if (impl_->projectPtr_.lock()) {
+      beginResetModel();
+      impl_->refreshTree();
+      endResetModel();
+    }
   });
+}
 
-  // initialize model
+void ArtifactProjectModel::setProject(const std::shared_ptr<ArtifactProject>& project)
+{
+  if (!impl_) return;
+  // disconnect previous connection
+  if (impl_->compositionConnection_) QObject::disconnect(impl_->compositionConnection_);
+  impl_->projectPtr_ = project;
+
+  beginResetModel();
   impl_->refreshTree();
+  endResetModel();
 
-  
-
- }
+  if (auto shared = impl_->projectPtr_.lock()) {
+    impl_->compositionConnection_ = connect(shared.get(), &ArtifactProject::compositionCreated, this, &ArtifactProjectModel::onCompositionCreated);
+  }
+}
 
  ArtifactProjectModel::~ArtifactProjectModel()
  {
