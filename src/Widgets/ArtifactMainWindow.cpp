@@ -199,11 +199,11 @@ namespace Artifact {
   auto& projectManager = ArtifactProjectManager::getInstance();
 
 
-  auto layerPreveiw =new ArtifactLayerEditorPanel();
-  layerPreveiw->show();
+  //auto layerPreveiw =new ArtifactLayerEditorPanel();
+  //layerPreveiw->show();
 
-	auto timelineWidget = new ArtifactTimelineWidget();
-	timelineWidget->show();
+	//auto timelineWidget = new ArtifactTimelineWidget();
+	//timelineWidget->show();
  
     auto layerPreview2=new ArtifactLayerEditorWidgetV2();
    layerPreview2->show();

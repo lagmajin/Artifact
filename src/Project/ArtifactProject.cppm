@@ -2,6 +2,7 @@
 #include <QDebug>
 #include <memory>
 #include <vector>
+#include <typeindex>
 #include <wobjectimpl.h>
 #include <wobjectdefs.h>
 
@@ -52,7 +53,7 @@ namespace Artifact {
  private:
   ArtifactProjectSettings projectSettings_;
   
-  AssetMultiIndexContainer assetContainer_;
+  
  public:
   Impl();
   ~Impl();
@@ -67,8 +68,8 @@ namespace Artifact {
   void removeAllCompositions();
 
   QJsonObject toJson() const;
+  AssetMultiIndexContainer assetContainer_;
   ArtifactCompositionMultiIndexContainer container_;
-  QVector<ProjectItem*> itemsRoot_;
   std::vector<std::unique_ptr<ProjectItem>> ownedItems_; // owns all allocated items
  };
 
@@ -80,8 +81,14 @@ namespace Artifact {
 
 QVector<ProjectItem*> ArtifactProject::projectItems() const
 {
- // return shallow pointers to root items
- return impl_->itemsRoot_;
+ // Build list of top-level project items from owned items.
+ QVector<ProjectItem*> roots;
+ for (const auto& up : impl_->ownedItems_) {
+   if (!up) continue;
+   ProjectItem* p = up.get();
+   if (p->parent == nullptr) roots.push_back(p);
+ }
+ return roots;
 }
 
  ArtifactProject::Impl::~Impl()
@@ -115,16 +122,27 @@ QVector<ProjectItem*> ArtifactProject::projectItems() const
 CreateCompositionResult ArtifactProject::Impl::createComposition(const ArtifactCompositionInitParams& settings)
 {
  auto id = CompositionID();
+ // If this is a default/unnamed creation and we already have at least one
+ // composition, avoid creating another implicit default composition. This
+ // prevents duplicate creations when project creation triggers a default
+ // creation and the caller also requests a named composition immediately.
+ if (settings.compositionName().toQString().isEmpty() && !container_.all().isEmpty()) {
+   CreateCompositionResult skipped;
+   skipped.success = false;
+   skipped.message.setQString("Default composition creation suppressed: composition(s) already exist");
+   qDebug() << "Impl::createComposition: suppressed default creation (existing count):" << container_.all().size();
+   return skipped;
+ }
 
- ArtifactCompositionInitParams params;
- auto newComposition = new ArtifactComposition(id, params);
+ // create a shared_ptr for the new composition and insert into the multi-index
+ auto newCompPtr = std::make_shared<ArtifactAbstractComposition>(id, settings);
+ container_.add(newCompPtr, id, std::type_index(typeid(ArtifactAbstractComposition)));
 
-  CreateCompositionResult result;
-  result.id = newComposition->id();
-  result.success = true;
-
-
-  return result;
+ CreateCompositionResult result;
+ result.id = id;
+ result.success = true;
+ qDebug() << "Impl::createComposition: created composition id=" << id.toString();
+ return result;
  }
 
 void notifyProjectCompositionCreated(ArtifactProject* proj, const CompositionID& id) {
@@ -182,7 +200,6 @@ FindCompositionResult ArtifactProject::findComposition(const CompositionID& id)
   rootUp->name.setQString("Project Root");
   ProjectItem* root = rootUp.get();
   impl_->ownedItems_.push_back(std::move(rootUp));
-  impl_->itemsRoot_.push_back(root);
 
   Q_EMIT projectCreated();
 
@@ -214,21 +231,21 @@ FindCompositionResult ArtifactProject::findComposition(const CompositionID& id)
   qDebug() << "Failed to create composition with name:" << name;
   return;
  }
-
- // find created composition item and set its name
- for (auto root : impl_->itemsRoot_) {
-  if (!root) continue;
-  for (auto child : root->children) {
-    if (!child) continue;
-    if (child->type() == eProjectItemType::Composition) {
-      CompositionItem* ci = static_cast<CompositionItem*>(child);
-      if (ci->compositionId == res.id) {
-        ci->name.setQString(name);
-        qDebug() << "Composition created:" << name << "(ID:" << res.id.toString() << ")";
-        return;
-      }
-    }
-  }
+ // find created composition item under project root and set its name
+ ProjectItem* projectRoot = nullptr;
+ if (!impl_->ownedItems_.empty()) projectRoot = impl_->ownedItems_.front().get();
+ if (projectRoot) {
+   for (auto child : projectRoot->children) {
+     if (!child) continue;
+     if (child->type() == eProjectItemType::Composition) {
+       CompositionItem* ci = static_cast<CompositionItem*>(child);
+       if (ci->compositionId == res.id) {
+         ci->name.setQString(name);
+         qDebug() << "Composition created:" << name << "(ID:" << res.id.toString() << ")";
+         return;
+       }
+     }
+   }
  }
  // fallback log if item not found
  qDebug() << "Composition created (but item not found):" << name << "(ID:" << res.id.toString() << ")";
@@ -236,24 +253,77 @@ FindCompositionResult ArtifactProject::findComposition(const CompositionID& id)
 
  CreateCompositionResult ArtifactProject::createComposition(const ArtifactCompositionInitParams& param)
  {
+ // If a name was provided and a default/unamed composition already exists,
+ // prefer renaming that existing composition instead of creating a new one.
+ QString requestedName = param.compositionName().toQString();
+ if (!requestedName.isEmpty()) {
+   ProjectItem* projectRoot = nullptr;
+   if (!impl_->ownedItems_.empty()) projectRoot = impl_->ownedItems_.front().get();
+   if (projectRoot) {
+     for (auto child : projectRoot->children) {
+       if (!child) continue;
+       if (child->type() == eProjectItemType::Composition) {
+         CompositionItem* ci = static_cast<CompositionItem*>(child);
+         QString existingName = ci->name.toQString();
+         if (existingName.isEmpty() || existingName == QStringLiteral("Composition")) {
+           ci->name.setQString(requestedName);
+           qDebug() << "Renamed existing composition to:" << requestedName << "(ID:" << ci->compositionId.toString() << ")";
+           CreateCompositionResult result;
+           result.success = true;
+           result.id = ci->compositionId;
+           // notify listeners that project data changed
+           projectChanged();
+           return result;
+         }
+       }
+     }
+   }
+ }
 
  auto res = impl_->createComposition(param);
  if (res.success) {
+  // avoid adding duplicate project items for the same composition id
+  for (const auto& up : impl_->ownedItems_) {
+    if (!up) continue;
+    if (up->type() == eProjectItemType::Composition) {
+      CompositionItem* existing = static_cast<CompositionItem*>(up.get());
+      if (existing->compositionId == res.id) {
+        // already have an item for this composition
+        qDebug() << "Composition item for ID already exists, skipping add:" << res.id.toString();
+        // notify listeners that project data changed
+        projectChanged();
+        return res;
+      }
+    }
+  }
+
   // add composition item to project tree
   auto compItemUp = std::make_unique<CompositionItem>();
   compItemUp->compositionId = res.id;
-  // set default name for composition (params don't provide name in current API)
-  compItemUp->name.setQString(QStringLiteral("Composition"));
+  // set name for composition: prefer param-provided name, otherwise default
+  QString createdName;
+  try {
+    createdName = param.compositionName().toQString();
+  } catch (...) {
+    createdName = QStringLiteral("Composition");
+  }
+  if (createdName.isEmpty()) createdName = QStringLiteral("Composition");
+  compItemUp->name.setQString(createdName);
   // capture name before moving the unique_ptr
-  QString createdName = compItemUp->name.toQString();
-  ProjectItem* raw = compItemUp.get();
-  impl_->ownedItems_.push_back(std::move(compItemUp));
-  impl_->itemsRoot_.push_back(raw);
+  QString capturedName = compItemUp->name.toQString();
+   ProjectItem* raw = compItemUp.get();
+   // set parent to project root and append to its children
+   if (!impl_->ownedItems_.empty()) {
+     ProjectItem* projectRoot = impl_->ownedItems_.front().get();
+     compItemUp->parent = projectRoot;
+     projectRoot->children.append(raw);
+   }
+   impl_->ownedItems_.push_back(std::move(compItemUp));
   // emit signal
   compositionCreated(res.id);
   // log using captured name (compItemUp is null after move)
   QString idStr = res.id.toString();
-  qDebug() << "Composition created:" << createdName << "(ID:" << idStr << ")";
+  qDebug() << "Composition created:" << capturedName << "(ID:" << idStr << ")";
  }
   // notify listeners that project data changed
   projectChanged();

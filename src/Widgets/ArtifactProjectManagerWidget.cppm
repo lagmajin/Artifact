@@ -76,7 +76,8 @@ HoverThumbnailPopupWidget::HoverThumbnailPopupWidget(QWidget* parent /*= nullptr
   setDragEnabled(true);
   setAcceptDrops(true);
   setDropIndicatorShown(true);
- 
+  setRootIsDecorated(false);
+
   // Visual aid for debugging: set a distinct background color so we can verify the view is visible
   setStyleSheet("QTreeView { background-color: #1e2230; color: #ffffff; }");
 
@@ -260,10 +261,16 @@ HoverThumbnailPopupWidget::HoverThumbnailPopupWidget(QWidget* parent /*= nullptr
 
  void ArtifactProjectManagerWidget::Impl::update()
  {
-  
-  //auto p=ArtifactProjectService::instance()->projectItems();
-
-  
+  // bind current project to model and assign to view
+  auto& manager = ArtifactProjectManager::getInstance();
+  auto shared = manager.getCurrentProjectSharedPtr();
+  if (!projectModel_) {
+    projectModel_ = new ArtifactProjectModel();
+  }
+  projectModel_->setProject(shared);
+  if (projectView_) {
+    projectView_->setModel(projectModel_);
+  }
  }
 
  ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent /*= nullptr*/) :QWidget(parent), impl_(new Impl())
@@ -365,14 +372,9 @@ HoverThumbnailPopupWidget::HoverThumbnailPopupWidget(QWidget* parent /*= nullptr
  	
   auto projectService = ArtifactProjectService::instance();
  	
-  connect(projectService,
-   &ArtifactProjectService::projectCreated,
-   this,
-   &ArtifactProjectManagerWidget::updateRequested);
- 	
-  connect(projectService,&ArtifactProjectService::projectChanged,
-   this,
-   &ArtifactProjectManagerWidget::updateRequested);
+  // connect to project service signals to update UI; use single-shot update to avoid duplicate
+  connect(projectService, &ArtifactProjectService::projectCreated, this, [this]() { QMetaObject::invokeMethod(this, "updateRequested", Qt::QueuedConnection); });
+  connect(projectService, &ArtifactProjectService::projectChanged, this, [this]() { QMetaObject::invokeMethod(this, "updateRequested", Qt::QueuedConnection); });
   
  }
 
@@ -462,7 +464,8 @@ HoverThumbnailPopupWidget::HoverThumbnailPopupWidget(QWidget* parent /*= nullptr
  {
   auto projectService = ArtifactProjectService::instance();
  	
- 	
+  // refresh model/view when project is created/changed
+  impl_->update();
   this->setEnabled(true);
  }
 

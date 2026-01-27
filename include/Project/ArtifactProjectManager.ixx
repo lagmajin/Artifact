@@ -17,6 +17,7 @@ import Artifact.Project.Result;
 import Artifact.Composition.Result;
 import Artifact.Composition.Abstract;
 import Artifact.Composition.InitParams;
+import Artifact.Project.Items;
 
 namespace pybind11 {}//dummy
 namespace folly {}//dummy
@@ -62,6 +63,7 @@ export namespace Artifact {
   CreateCompositionResult createComposition(const ArtifactCompositionInitParams& setting);
   CreateCompositionResult createComposition(const UniString& str);
   void createComposition(const QString, const QSize& size);
+  void suppressDefaultCreate(bool v);
   int compositionCount() const;
   ArtifactCompositionPtr currentComposition();
   FindCompositionResult findComposition(const CompositionID& id);

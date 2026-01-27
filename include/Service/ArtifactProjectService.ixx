@@ -18,7 +18,7 @@ import Artifact.Project.Settings;
 import Artifact.Composition.Result;
 import Artifact.Composition.Abstract;
 import Artifact.Composition.InitParams;
-
+import Artifact.Project.Items;
 
 W_REGISTER_ARGTYPE(QSize)
 W_REGISTER_ARGTYPE(QString)

@@ -11,10 +11,11 @@ namespace Artifact {
  class ArtifactCompositionLayer::Impl
  {
  private:
-  CompositionID id_;
+  
  public:
   Impl();
   ~Impl();
+  CompositionID id_;
  };
 
  ArtifactCompositionLayer::ArtifactCompositionLayer()
@@ -37,6 +38,6 @@ namespace Artifact {
   impl_->id_ = id;
  }
 
- }
+
 
 };

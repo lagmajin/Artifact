@@ -22,6 +22,8 @@ module Dialog.Composition;
 import Widgets.Utils.CSS;
 import Widgets.EditableLabel;
 import DragSpinBox;
+import Artifact.Project.Manager;
+import Utils.String.UniString;
 
 namespace Artifact {
 
@@ -121,7 +123,25 @@ namespace Artifact {
 
  void CreateCompositionDialog::Impl::ok(QDialog* dialog)
  {
-  dialog->accept();
+ // Try to create the composition with the provided name before accepting the dialog.
+ CreateCompositionDialog* dlg = static_cast<CreateCompositionDialog*>(dialog);
+ if (dlg) {
+  // ensure any in-progress edit is committed to the EditableLabel
+  if (compositionNameEdit_) compositionNameEdit_->finishEdit();
+  QString name = dlg->compositionName();
+  // suppress default creation triggered by projectCreated
+  ArtifactProjectManager::getInstance().suppressDefaultCreate(true);
+  if (!name.isEmpty()) {
+    UniString u;
+    u.setQString(name);
+    ArtifactProjectManager::getInstance().createComposition(u);
+  } else {
+    // create with default params if no name provided
+    ArtifactProjectManager::getInstance().createComposition();
+  }
+  ArtifactProjectManager::getInstance().suppressDefaultCreate(false);
+ }
+ dialog->accept();
  }
 
  void CreateCompositionDialog::Impl::cancel(QDialog* dialog)
@@ -186,7 +206,9 @@ namespace Artifact {
 
  void CreateCompositionDialog::setCompositionName(const QString& compositionName)
  {
-
+ if (impl_ && impl_->compositionNameEdit_) {
+  impl_->compositionNameEdit_->setText(compositionName);
+ }
  }
 
 QString CreateCompositionDialog::compositionName() const

@@ -17,8 +17,7 @@ namespace Artifact
   
 
  public:
-  Impl();
-  ~Impl();
+
   ArtifactProjectWeakPtr projectPtr_;
   QStandardItemModel* model_ = nullptr;
   QMetaObject::Connection compositionConnection_;
@@ -30,14 +29,16 @@ namespace Artifact
 
 ArtifactProjectModel::Impl::Impl()
 {
+ // create the internal model with no parent for now; ownership will be transferred
  model_ = new QStandardItemModel();
+ // ensure at least one column so header logic has a stable column count
+ model_->setColumnCount(1);
 }
 
 ArtifactProjectModel::Impl::~Impl()
 {
  if (compositionConnection_)
   QObject::disconnect(compositionConnection_);
- delete model_;
 }
 
 void ArtifactProjectModel::Impl::refreshTree()
@@ -73,8 +74,24 @@ void ArtifactProjectModel::Impl::refreshTree()
   return item;
  };
 
+ // Treat the first element in the project's root list as the project-root placeholder
+ // and do not display it as a top-level item. Append its children as top-level rows
+ // instead. This avoids relying on the root's name for identification.
+ ProjectItem* projectPlaceholder = nullptr;
+ if (!roots.isEmpty())
+     projectPlaceholder = roots.at(0);
+
  for (auto root : roots) {
   if (!root) continue;
+  if (root == projectPlaceholder) {
+    // append children (if any) as top-level rows and skip this placeholder
+    for (auto childPtr : root->children) {
+      if (!childPtr) continue;
+      QStandardItem* childItem = buildItem(childPtr);
+      model_->appendRow(childItem);
+    }
+    continue;
+  }
   QStandardItem* rootItem = buildItem(root);
   model_->appendRow(rootItem);
  }
@@ -86,51 +103,12 @@ void ArtifactProjectModel::onCompositionCreated(const ArtifactCore::CompositionI
  auto shared = impl_->projectPtr_.lock();
  if (!shared) return;
 
- // Find the CompositionItem with the given id and append it to model
- for (auto root : shared->projectItems()) {
-  if (!root) continue;
-  // if the root itself is the composition added
-  if (root->type() == eProjectItemType::Composition) {
-    CompositionItem* rci = static_cast<CompositionItem*>(root);
-    if (rci->compositionId == id) {
-      QString name = rci->name.toQString();
-      QString idStr = id.toString();
-      qDebug().noquote() << "Model: Detected new composition (root):" << name << "(ID:" << idStr << ")";
-      QStandardItem* item = new QStandardItem(name);
-      item->setData(QVariant::fromValue(reinterpret_cast<quintptr>(rci)), Qt::UserRole+1);
-      impl_->model_->appendRow(item);
-      return;
-    }
-  }
-
-  // otherwise check children
-  for (auto child : root->children) {
-    if (!child) continue;
-    if (child->type() == eProjectItemType::Composition) {
-      CompositionItem* ci = static_cast<CompositionItem*>(child);
-      if (ci->compositionId == id) {
-        QString name = ci->name.toQString();
-        QString idStr = id.toString();
-        qDebug().noquote() << "Model: Detected new composition (child):" << name << "(ID:" << idStr << ")";
-        QStandardItem* item = new QStandardItem(name);
-        item->setData(QVariant::fromValue(reinterpret_cast<quintptr>(ci)), Qt::UserRole+1);
-        // insert into the first root (simple behavior); better: find exact parent
-        if (impl_->model_->rowCount() == 0) {
-          impl_->model_->appendRow(item);
-        } else {
-          QStandardItem* firstRoot = impl_->model_->item(0);
-          if (firstRoot) firstRoot->appendRow(item);
-          else impl_->model_->appendRow(item);
-        }
-        return;
-      }
-    }
-  }
- }
-
- // If we didn't find the item by ID, fall back to full refresh to ensure view consistency
- qDebug() << "Model: composition ID not found in project items, falling back to full refresh";
+ // For robustness, rebuild the model when compositions are created. Although more
+ // costly than incremental insert, this avoids subtle index-mapping bugs between
+ // the internal QStandardItemModel and this proxy QAbstractItemModel.
+ beginResetModel();
  impl_->refreshTree();
+ endResetModel();
 }
 
  ArtifactProjectService* ArtifactProjectModel::Impl::projectService()
@@ -150,6 +128,14 @@ ArtifactProjectModel::ArtifactProjectModel(QObject* parent/*=nullptr*/) :QAbstra
       endResetModel();
     }
   });
+  // Transfer ownership of the internal model to this QObject so Qt manages its lifetime
+  if (impl_ && impl_->model_)
+    impl_->model_->setParent(this);
+
+  // Ensure the internal model provides a horizontal header label for the first column
+  if (impl_->model_) {
+    impl_->model_->setHorizontalHeaderLabels(QStringList() << tr("Name"));
+  }
 }
 
 void ArtifactProjectModel::setProject(const std::shared_ptr<ArtifactProject>& project)
@@ -215,6 +201,57 @@ void ArtifactProjectModel::setProject(const std::shared_ptr<ArtifactProject>& pr
  QModelIndex srcParent = impl_->model_->index(parent.row(), parent.column(), QModelIndex());
  return impl_->model_->rowCount(srcParent);
  }
+
+int ArtifactProjectModel::columnCount(const QModelIndex& parent) const
+{
+  if (!impl_->model_) return 0;
+  if (!parent.isValid()) {
+    int c = impl_->model_->columnCount();
+    return c > 0 ? c : 1; // ensure at least one column for the view
+  }
+  QModelIndex srcParent = impl_->model_->index(parent.row(), parent.column(), QModelIndex());
+  int c = impl_->model_->columnCount(srcParent);
+  return c > 0 ? c : 1;
+}
+
+QVariant ArtifactProjectModel::headerData(int section, Qt::Orientation orientation, int role) const
+{
+  if (!impl_->model_) return QVariant();
+  // Prefer explicit label for first horizontal header
+  if (role == Qt::DisplayRole && orientation == Qt::Horizontal && section == 0) {
+    QVariant v = impl_->model_->headerData(section, orientation, role);
+    if (!v.isValid() || v.toString().isEmpty() || v.toString() == "1")
+      return tr("Name");
+    return v;
+  }
+  return impl_->model_->headerData(section, orientation, role);
+}
+
+QModelIndex ArtifactProjectModel::parent(const QModelIndex& index) const
+{
+  if (!index.isValid() || !impl_->model_) return QModelIndex();
+
+  QStandardItem* item = nullptr;
+  if (index.internalPointer()) item = static_cast<QStandardItem*>(index.internalPointer());
+  if (!item) {
+    // Fallback: try to get item from internal model using the index
+    QModelIndex src = impl_->model_->index(index.row(), index.column(), QModelIndex());
+    item = impl_->model_->itemFromIndex(src);
+    if (!item) return QModelIndex();
+  }
+
+  QStandardItem* parentItem = item->parent();
+  if (!parentItem) return QModelIndex();
+
+  return createIndex(parentItem->row(), parentItem->column(), parentItem);
+}
+
+Qt::ItemFlags ArtifactProjectModel::flags(const QModelIndex &index) const
+{
+  if (!index.isValid()) return Qt::NoItemFlags;
+  // Basic selectable/enabled flags; expand as needed
+  return Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsDragEnabled;
+}
 
  QModelIndex ArtifactProjectModel::index(int row, int column, const QModelIndex& parent) const
  {
