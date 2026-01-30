@@ -1,5 +1,6 @@
 ﻿module;
 #include <QWidget>
+#include <wobjectimpl.h>
 module Widget.CurveEditor;
 
 
@@ -23,6 +24,8 @@ namespace ArtifactCore {
  {
 
  }
+
+ W_OBJECT_IMPL(ArtifactCurveEditorWidget)
 
  ArtifactCurveEditorWidget::ArtifactCurveEditorWidget(QWidget* parent/*=nullptr*/):QWidget(parent)
  {

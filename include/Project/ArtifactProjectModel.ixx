@@ -19,6 +19,7 @@ export namespace Artifact
  private:
   class Impl;
   Impl* impl_;
+  QModelIndex mapToSource(const QModelIndex& proxyIndex) const;
  public:
 	 QModelIndex index(int row, int column, const QModelIndex& parent) const override;
 	 int rowCount(const QModelIndex& parent) const override;

@@ -11,46 +11,131 @@
 #include <QDrag>
 #include <QDropEvent>
 #include <QLineEdit>
+#include <QMouseEvent>
+#include <QVariant>
+#include <QStandardItem>
+#include <QModelIndex>
 
 #include <QMenu>
+#include <QPixmap>
+#include <QStringList>
+#include <QTimer>
 module Artifact.Widgets.ProjectManagerWidget;
 
 import std;
+import Utils.String.UniString;
+import Utils.Id;
 import Artifact.Project.Manager;
 import Artifact.Service.Project;
 import Artifact.Project.Model;
+import Artifact.Project.Items;
+import Artifact.Widgets.LayerPanelWidget;
+
 
 
 namespace Artifact {
+
+ using namespace ArtifactCore;
+
  W_OBJECT_IMPL(ArtifactProjectManagerWidget)
 
 class HoverThumbnailPopupWidget::Impl {
  public:
-  Impl();
-  ~Impl();
- };
+  Impl() : thumbnailLabel(nullptr), layout(nullptr) {}
+  QLabel* thumbnailLabel;
+  QVector<QLabel*> infoLabels;
+  QVBoxLayout* layout;
+};
 
-HoverThumbnailPopupWidget::HoverThumbnailPopupWidget(QWidget* parent /*= nullptr*/):QWidget(parent)
- {
-   setWindowFlags(Qt::ToolTip | Qt::FramelessWindowHint);
-    
-   setAttribute(Qt::WA_TranslucentBackground);
-   setAttribute(Qt::WA_ShowWithoutActivating);
- }
+HoverThumbnailPopupWidget::HoverThumbnailPopupWidget(QWidget* parent /*= nullptr*/) : QWidget(parent), impl_(new Impl()) {
+  setWindowFlags(Qt::ToolTip | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint);
+  setAttribute(Qt::WA_TranslucentBackground);
+  setAttribute(Qt::WA_ShowWithoutActivating);
+  // ensure the popup has a visible background and rounded corners
+  setStyleSheet("background-color: rgba(24,24,24,230); border-radius:8px;");
 
- HoverThumbnailPopupWidget::~HoverThumbnailPopupWidget()
- {
+  impl_->layout = new QVBoxLayout(this);
+  impl_->layout->setContentsMargins(8,8,8,8);
+  impl_->layout->setSpacing(4);
 
- }
+  impl_->thumbnailLabel = new QLabel(this);
+  impl_->thumbnailLabel->setFixedSize(200, 112); // 16:9 preview
+  impl_->thumbnailLabel->setScaledContents(true);
+  impl_->thumbnailLabel->setStyleSheet("background-color: #222; border-radius: 4px;");
+  impl_->layout->addWidget(impl_->thumbnailLabel, 0, Qt::AlignCenter);
+
+  // default a couple of info labels
+  for (int i = 0; i < 3; ++i) {
+    QLabel* l = new QLabel(this);
+    l->setText("");
+    l->setStyleSheet("color: white; background: transparent;");
+    impl_->infoLabels.append(l);
+    impl_->layout->addWidget(l);
+  }
+
+  setLayout(impl_->layout);
+}
+
+HoverThumbnailPopupWidget::~HoverThumbnailPopupWidget() {
+  delete impl_;
+}
+
+void ArtifactProjectView::handleItemDoubleClicked(const QModelIndex& index)
+{
+  if (!index.isValid()) return;
+
+  // DisplayRole の取得（デバッグ用）
+  QVariant v = index.data(Qt::DisplayRole);
+  if (v.isValid() && v.canConvert<QString>()) {
+    qDebug() << "ArtifactProjectView: item double-clicked:" << v.toString();
+  }
+
+  // UserRole+1 に格納された CompositionID 文字列を取得
+  // 注意: internalPointer() は QStandardItem* であり、ProjectItem* ではない
+  QVariant idVar = index.data(Qt::UserRole + 1);
+  if (!idVar.isValid() || !idVar.canConvert<QString>()) {
+    qDebug() << "  No composition ID found for this item.";
+    return;
+  }
+
+  QString idStr = idVar.toString();
+  if (idStr.isEmpty()) {
+    qDebug() << "  Composition ID is empty; not a composition item.";
+    return;
+  }
+
+  qDebug() << "  Opening composition id=" << idStr;
+  CompositionID cid(idStr);
+  ArtifactLayerTimelinePanelWrapper* panel = new ArtifactLayerTimelinePanelWrapper(cid);
+  panel->setAttribute(Qt::WA_DeleteOnClose);
+  panel->show();
+}
+
+void ArtifactProjectView::mouseDoubleClickEvent(QMouseEvent* event)
+{
+  QModelIndex idx = indexAt(event->position().toPoint());
+  if (idx.isValid()) {
+    // dispatch to public handler
+    handleItemDoubleClicked(idx);
+  }
+  QTreeView::mouseDoubleClickEvent(event);
+}
+
+
 
   class ArtifactProjectView::Impl
  {
  private:
  	
  public:
-  void handleFileDrop(const QString& str);
-  void handleDefaultKeyPressEvent(QKeyEvent* ev);
-  void handleDefaultKeyReleaseEvent(QKeyEvent* ev);
+ 	void handleFileDrop(const QString& str);
+ 	void handleDefaultKeyPressEvent(QKeyEvent* ev);
+ 	void handleDefaultKeyReleaseEvent(QKeyEvent* ev);
+ 	void handleDoubleClicked(const QModelIndex& index);
+ 	QTimer* hoverTimer = nullptr;
+ 	QModelIndex hoverIndex;
+ 	HoverThumbnailPopupWidget* hoverPopup = nullptr;
+ 	QPoint lastMousePos;
   QPoint pos_;
  };
 
@@ -59,18 +144,67 @@ HoverThumbnailPopupWidget::HoverThumbnailPopupWidget(QWidget* parent /*= nullptr
 
  }
 
+void HoverThumbnailPopupWidget::setThumbnail(const QPixmap& pixmap)
+{
+  if (!impl_ || !impl_->thumbnailLabel) return;
+  impl_->thumbnailLabel->setPixmap(pixmap);
+}
+
+void HoverThumbnailPopupWidget::setLabels(const QStringList& labels)
+{
+  if (!impl_) return;
+  for (int i = 0; i < impl_->infoLabels.size() && i < labels.size(); ++i) {
+    impl_->infoLabels[i]->setText(labels.at(i));
+  }
+}
+
+void HoverThumbnailPopupWidget::setLabel(int idx, const QString& text)
+{
+  if (!impl_) return;
+  if (idx >= 0 && idx < impl_->infoLabels.size()) impl_->infoLabels[idx]->setText(text);
+}
+
+void HoverThumbnailPopupWidget::showAt(const QPoint& globalPos)
+{
+  // place the popup at the given global position and show above other windows
+  move(globalPos);
+  show();
+  raise();
+  // do not steal focus
+  setAttribute(Qt::WA_ShowWithoutActivating);
+  // auto-hide after a short delay for convenience
+  QTimer::singleShot(5000, this, [this]() { this->hide(); });
+}
+
  void ArtifactProjectView::Impl::handleDefaultKeyReleaseEvent(QKeyEvent* ev)
  {
 
  }
+
+void ArtifactProjectView::Impl::handleDoubleClicked(const QModelIndex& index)
+{
+  // Default behavior: print info about the clicked item. Consumers can
+  // subclass ArtifactProjectView or access the model to implement real
+  // functionality (open composition, expand, etc.).
+  if (!index.isValid()) return;
+  QStandardItem* item = nullptr;
+  qDebug() << "Impl::handleDoubleClicked: index valid=" << index.isValid()
+           << " row=" << index.row() << " col=" << index.column();
+  QVariant v = index.data(Qt::DisplayRole);
+  qDebug() << "  DisplayRole: valid=" << v.isValid() << " typeName=" << v.typeName();
+  if (v.isValid() && v.canConvert<QString>()) qDebug() << "    toString=" << v.toString();
+}
 
  void ArtifactProjectView::Impl::handleFileDrop(const QString& str)
  {
 
  }
 
- ArtifactProjectView::ArtifactProjectView(QWidget* parent /*= nullptr*/) :QTreeView(parent)
+ArtifactProjectView::ArtifactProjectView(QWidget* parent /*= nullptr*/) :QTreeView(parent), impl_(new Impl())
  {
+  // enable mouse move events even when no button is pressed
+  setMouseTracking(true);
+  if (viewport()) viewport()->setMouseTracking(true);
   setFrameShape(QFrame::NoFrame);
   // setSelectionMode(QAbstractItemView::SingleSelection);
   setDragEnabled(true);
@@ -86,7 +220,8 @@ HoverThumbnailPopupWidget::HoverThumbnailPopupWidget(QWidget* parent /*= nullptr
 
  ArtifactProjectView::~ArtifactProjectView()
  {
-
+  delete impl_;
+  impl_ = nullptr;
  }
  void ArtifactProjectView::mousePressEvent(QMouseEvent* event)
  {
@@ -98,13 +233,40 @@ HoverThumbnailPopupWidget::HoverThumbnailPopupWidget(QWidget* parent /*= nullptr
  }
  void ArtifactProjectView::mouseMoveEvent(QMouseEvent* event)
  {
-  
-  auto* drag = new QDrag(this);
-  auto* mime = new QMimeData();
-  //mime->setText(index.data(Qt::DisplayRole).toString());
-  drag->setMimeData(mime);
- 	
-  drag->exec(Qt::CopyAction | Qt::MoveAction);
+  // start/stop hover timer depending on whether the mouse moved over a new index
+  QPoint p = event->position().toPoint();
+  QModelIndex idx = indexAt(p);
+  if (impl_) {
+    if (!impl_->hoverTimer) {
+      impl_->hoverTimer = new QTimer(this);
+      impl_->hoverTimer->setSingleShot(true);
+      connect(impl_->hoverTimer, &QTimer::timeout, this, [this]() {
+        if (!impl_) return;
+        if (impl_->hoverIndex.isValid()) {
+          // populate and show popup
+          if (!impl_->hoverPopup) impl_->hoverPopup = new HoverThumbnailPopupWidget();
+          QString text = impl_->hoverIndex.data(Qt::DisplayRole).toString();
+          impl_->hoverPopup->setLabels(QStringList() << text << "" << "");
+          impl_->hoverPopup->setThumbnail(QPixmap());
+          QPoint globalPos = this->viewport()->mapToGlobal(this->visualRect(impl_->hoverIndex).topRight());
+          impl_->hoverPopup->showAt(globalPos + QPoint(8,8));
+        }
+      });
+    }
+    if (idx != impl_->hoverIndex) {
+      // hide existing popup when moving to a different index
+      if (impl_->hoverPopup && impl_->hoverPopup->isVisible()) impl_->hoverPopup->hide();
+      impl_->hoverIndex = idx;
+      impl_->hoverTimer->stop();
+      if (idx.isValid()) {
+        impl_->hoverTimer->start(500); // 0.5s
+      } else {
+        if (impl_->hoverPopup) impl_->hoverPopup->hide();
+      }
+    }
+  }
+
+  QTreeView::mouseMoveEvent(event);
  }
 
  void ArtifactProjectView::dropEvent(QDropEvent* event)
@@ -143,6 +305,13 @@ HoverThumbnailPopupWidget::HoverThumbnailPopupWidget(QWidget* parent /*= nullptr
    event->ignore();  // 無効なドロップ
   }
  }
+
+void ArtifactProjectView::mouseReleaseEvent(QMouseEvent* event)
+{
+  // stop hover timer when mouse released
+  if (impl_ && impl_->hoverTimer) impl_->hoverTimer->stop();
+  QTreeView::mouseReleaseEvent(event);
+}
 
  void ArtifactProjectView::dragEnterEvent(QDragEnterEvent* event)
  {

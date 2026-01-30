@@ -1,6 +1,6 @@
 ﻿module;
 #include <QWidget>
-
+#include <wobjectdefs.h>
 export module Widget.CurveEditor;
 
 
@@ -8,6 +8,7 @@ export module Widget.CurveEditor;
 export namespace ArtifactCore {
 
  class ArtifactCurveEditorWidget:public QWidget{
+  W_OBJECT(ArtifactCurveEditorWidget)
  private:
   class Impl;
   Impl* impl_;

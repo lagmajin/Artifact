@@ -1,6 +1,9 @@
 ﻿module;
 #include <QDebug>
 #include <QStandardItemModel>
+#include <QIcon>
+#include <QPixmap>
+#include <QColor>
 module Artifact.Project.Model;
 
 import std;
@@ -29,10 +32,10 @@ namespace Artifact
 
 ArtifactProjectModel::Impl::Impl()
 {
- // create the internal model with no parent for now; ownership will be transferred
- model_ = new QStandardItemModel();
- // ensure at least one column so header logic has a stable column count
- model_->setColumnCount(1);
+  // create the internal model with no parent for now; ownership will be transferred
+  model_ = new QStandardItemModel();
+  // ensure two columns: Name and Size
+  model_->setColumnCount(2);
 }
 
 ArtifactProjectModel::Impl::~Impl()
@@ -61,17 +64,39 @@ void ArtifactProjectModel::Impl::refreshTree()
   }
  }
 
- std::function<QStandardItem*(ProjectItem*)> buildItem = [&](ProjectItem* it)->QStandardItem* {
+ std::function<QList<QStandardItem*>(ProjectItem*)> buildItem = [&](ProjectItem* it)->QList<QStandardItem*> {
   QString text = it->name.toQString();
   QStandardItem* item = new QStandardItem(text);
-  // store pointer for later (optional)
-  item->setData(QVariant::fromValue(reinterpret_cast<quintptr>(it)), Qt::UserRole+1);
+  QStandardItem* sizeItem = new QStandardItem();
+  // If this is a composition item, set a simple solid-color square icon
+  if (it->type() == eProjectItemType::Composition) {
+    // create a small pixmap filled with a single color
+    QPixmap px(16, 16);
+    QColor col(120, 160, 200); // simple default tint; could be derived from id
+    px.fill(col);
+    item->setIcon(QIcon(px));
+  }
+  // store composition ID as string in UserRole+1 instead of raw pointer
+  if (it->type() == eProjectItemType::Composition) {
+    CompositionItem* comp = static_cast<CompositionItem*>(it);
+    item->setData(comp->compositionId.toString(), Qt::UserRole+1);
+  } else {
+    // clear/empty for non-composition items
+    item->setData(QString(), Qt::UserRole+1);
+  }
+  // set default size text for compositions; leave empty for folders
+  if (it->type() == eProjectItemType::Composition) {
+    // dummy fixed size for now
+    sizeItem->setText("800x600");
+  }
+
   // children (non-owning raw pointers)
   for (auto childPtr : it->children) {
-    QStandardItem* childItem = buildItem(childPtr);
-    item->appendRow(childItem);
+    QList<QStandardItem*> childRow = buildItem(childPtr);
+    item->appendRow(childRow);
   }
-  return item;
+
+  return QList<QStandardItem*>() << item << sizeItem;
  };
 
  // Treat the first element in the project's root list as the project-root placeholder
@@ -87,13 +112,13 @@ void ArtifactProjectModel::Impl::refreshTree()
     // append children (if any) as top-level rows and skip this placeholder
     for (auto childPtr : root->children) {
       if (!childPtr) continue;
-      QStandardItem* childItem = buildItem(childPtr);
-      model_->appendRow(childItem);
+      QList<QStandardItem*> childRow = buildItem(childPtr);
+      model_->appendRow(childRow);
     }
     continue;
   }
-  QStandardItem* rootItem = buildItem(root);
-  model_->appendRow(rootItem);
+  QList<QStandardItem*> rootRow = buildItem(root);
+  model_->appendRow(rootRow);
  }
  }
 // incremental handler: called when a composition is created globally
@@ -132,9 +157,9 @@ ArtifactProjectModel::ArtifactProjectModel(QObject* parent/*=nullptr*/) :QAbstra
   if (impl_ && impl_->model_)
     impl_->model_->setParent(this);
 
-  // Ensure the internal model provides a horizontal header label for the first column
+  // Ensure the internal model provides horizontal header labels for columns
   if (impl_->model_) {
-    impl_->model_->setHorizontalHeaderLabels(QStringList() << tr("Name"));
+    impl_->model_->setHorizontalHeaderLabels(QStringList() << tr("Name") << tr("Size"));
   }
 }
 
@@ -161,34 +186,62 @@ void ArtifactProjectModel::setProject(const std::shared_ptr<ArtifactProject>& pr
 
  QVariant ArtifactProjectModel::data(const QModelIndex& index, int role) const
  {
-  if (!index.isValid())
+  if (!index.isValid() || !impl_ || !impl_->model_)
    return QVariant();
   
-  QStandardItem* item = nullptr;
-  if (index.internalPointer()) item = static_cast<QStandardItem*>(index.internalPointer());
-  if (!item) item = impl_->model_->itemFromIndex(impl_->model_->index(index.row(), index.column(), QModelIndex()));
-  if (!item) return QVariant();
+  // 常に内部モデルから直接アイテムを取得（internalPointerはダングリングの可能性あり）
+  QModelIndex srcIndex = mapToSource(index);
+  QStandardItem* item = impl_->model_->itemFromIndex(srcIndex);
   if (!item) return QVariant();
 
   switch (role) {
   case Qt::DisplayRole: // 「画面に表示する文字は何？」
-   return item->text();
+   return item->data(Qt::DisplayRole);
+
+  case Qt::UserRole + 1: // CompositionID文字列
+   return item->data(Qt::UserRole + 1);
 
   case Qt::ToolTipRole: // 「マウスホバーした時の説明は？」
    return QVariant();
 
   case Qt::DecorationRole: // 「アイコンは何にする？」
-   return QVariant(); // QIconを返せる
+   return item->data(Qt::DecorationRole);
 
   case Qt::ForegroundRole: // 「文字の色は何色？」
    return QVariant();
-   break;
 
   case Qt::TextAlignmentRole: // 「文字の配置は？」
-   return Qt::AlignCenter;
+   // Left align text and vertically center
+   return QVariant(static_cast<int>(Qt::AlignVCenter | Qt::AlignLeft));
+
+  default:
+   return item->data(role);
   }
 
   return QVariant();
+ }
+
+ QModelIndex ArtifactProjectModel::mapToSource(const QModelIndex& proxyIndex) const
+ {
+  if (!proxyIndex.isValid() || !impl_ || !impl_->model_)
+   return QModelIndex();
+
+  // 親インデックスを再帰的にマップ
+  QModelIndex parentProxy = proxyIndex.parent();
+  if (!parentProxy.isValid()) {
+   // トップレベルアイテム
+   return impl_->model_->index(proxyIndex.row(), proxyIndex.column());
+  }
+
+  // 親のソースインデックスを取得
+  QModelIndex parentSource = mapToSource(parentProxy);
+  QStandardItem* parentItem = impl_->model_->itemFromIndex(parentSource);
+  if (!parentItem) return QModelIndex();
+
+  QStandardItem* childItem = parentItem->child(proxyIndex.row(), proxyIndex.column());
+  if (!childItem) return QModelIndex();
+
+  return impl_->model_->indexFromItem(childItem);
  }
 
  int ArtifactProjectModel::rowCount(const QModelIndex& parent) const
@@ -198,8 +251,8 @@ void ArtifactProjectModel::setProject(const std::shared_ptr<ArtifactProject>& pr
   return impl_->model_->rowCount();
  }
  // map from proxy index to source
- QModelIndex srcParent = impl_->model_->index(parent.row(), parent.column(), QModelIndex());
- return impl_->model_->rowCount(srcParent);
+QModelIndex srcParent = impl_->model_->index(parent.row(), 0, QModelIndex());
+return impl_->model_->rowCount(srcParent);
  }
 
 int ArtifactProjectModel::columnCount(const QModelIndex& parent) const
@@ -207,22 +260,28 @@ int ArtifactProjectModel::columnCount(const QModelIndex& parent) const
   if (!impl_->model_) return 0;
   if (!parent.isValid()) {
     int c = impl_->model_->columnCount();
-    return c > 0 ? c : 1; // ensure at least one column for the view
+    return c > 0 ? c : 2; // ensure at least two columns for the view
   }
-  QModelIndex srcParent = impl_->model_->index(parent.row(), parent.column(), QModelIndex());
+  QModelIndex srcParent = impl_->model_->index(parent.row(), 0, QModelIndex());
   int c = impl_->model_->columnCount(srcParent);
-  return c > 0 ? c : 1;
+  return c > 0 ? c : 2;
 }
 
 QVariant ArtifactProjectModel::headerData(int section, Qt::Orientation orientation, int role) const
 {
   if (!impl_->model_) return QVariant();
   // Prefer explicit label for first horizontal header
-  if (role == Qt::DisplayRole && orientation == Qt::Horizontal && section == 0) {
+  if (role == Qt::DisplayRole && orientation == Qt::Horizontal) {
     QVariant v = impl_->model_->headerData(section, orientation, role);
-    if (!v.isValid() || v.toString().isEmpty() || v.toString() == "1")
-      return tr("Name");
-    return v;
+    // if model supplied a usable string, return it
+    if (v.isValid() && v.canConvert<QString>()) {
+      QString s = v.toString();
+      if (!s.isEmpty() && s != "1" && s != "2") return v;
+    }
+    // fallback to explicit known labels per column
+    if (section == 0) return tr("Name");
+    if (section == 1) return tr("Size");
+    return QVariant();
   }
   return impl_->model_->headerData(section, orientation, role);
 }

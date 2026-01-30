@@ -34,6 +34,10 @@ private:
 public:
  explicit HoverThumbnailPopupWidget(QWidget* parent = nullptr);
  ~HoverThumbnailPopupWidget();
+ void setThumbnail(const QPixmap& pixmap);
+ void setLabels(const QStringList& labels);
+ void setLabel(int idx, const QString& text);
+ void showAt(const QPoint& globalPos);
 };
 
  class ArtifactProjectView :public QTreeView {
@@ -46,9 +50,12 @@ public:
   void dragEnterEvent(QDragEnterEvent* event) override;
   void mouseMoveEvent(QMouseEvent* event) override;
   void mousePressEvent(QMouseEvent* event) override;
+  void mouseDoubleClickEvent(QMouseEvent* event) override;
+  void mouseReleaseEvent(QMouseEvent* event) override;
  public:
   explicit ArtifactProjectView(QWidget* parent = nullptr);
   ~ArtifactProjectView();
+  void handleItemDoubleClicked(const QModelIndex& index);
 
 
   QSize sizeHint() const override;
