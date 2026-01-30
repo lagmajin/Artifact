@@ -541,9 +541,6 @@
     <ClCompile Include="src\Widgets\Menu\ArtifactAnimationMenu.cppm">
       <Filter>ソース\Widgets\Menu</Filter>
     </ClCompile>
-    <ClCompile Include="src\Composition\ArtifactCompositionInitParams.cpp">
-      <Filter>ソース\Composition</Filter>
-    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Generated\TestService.h" />
