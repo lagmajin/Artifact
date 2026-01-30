@@ -245,6 +245,18 @@ struct MyData {
 - Verify module dependencies are correctly set up in the build system.
 - モジュール＆ソースを生成するときはコンパイルオプションに気をつけてほしい。プロジェクトファイルへの追加と適切な CompileAs 設定を忘れずに。
 
+## Project File Modification Rules
+**?? CRITICAL/FORBIDDEN: DO NOT modify visual studio project files directly (.vcxproj, .vcxproj.filters)**
+- ? **NEVER modify `.vcxproj` or `.vcxproj.filters` files directly, especially the filter definitions.**
+- ? **Modifying these files manually breaks the Visual Studio project structure and filters.**
+- ? **If a new file is created, instruct the user to add it to the project using Visual Studio, or use a safe method if one exists (which usually doesn't for filters).**
+- ? **Under NO circumstances should you attempt to parse and rewrite the `.vcxproj` or `.filters` XML to "fix" include paths or filters.**
+
+**?? 禁止事項：Visual Studioのプロジェクトファイルを直接変更しないでください**
+- ? **`.vcxproj` や `.vcxproj.filters` ファイルを直接編集することは絶対に禁止です。特にフィルタ定義は触らないでください。**
+- ? **これらのファイルを手動で変更すると、Visual Studioのプロジェクト構造やフィルタが壊れます。**
+- ? **新しいファイルを作成した場合は、ユーザーにVisual Studioを使って追加するように指示してください。**
+
 ## Code Style
 - Follow specific formatting rules.
 - Adhere to naming conventions.
