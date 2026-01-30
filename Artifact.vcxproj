@@ -314,6 +314,7 @@
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Asset\ArtifactAssetResult.cpp" />
+    <ClCompile Include="src\Composition\ArtifactCompositionInitParams.cpp" />
     <ClCompile Include="src\Composition\ArtifactCompositionSetting.cpp" />
     <ClCompile Include="src\Controller\TimelineViewProvider.cpp" />
     <ClCompile Include="src\Effetcs\ArtifactAbstractEffect.cppm">
