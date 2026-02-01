@@ -74,15 +74,7 @@ namespace Artifact {
     else fmat = converted;
 
     ArtifactCore::ImageF32x4_RGBA img;
-    img.resize(fmat.cols, fmat.rows);
-    for (int y = 0; y < fmat.rows; ++y) {
-        for (int x = 0; x < fmat.cols; ++x) {
-            cv::Vec4f v = fmat.at<cv::Vec4f>(y, x);
-            ArtifactCore::FloatRGBA c(v[0], v[1], v[2], v[3]);
-            img.setPixel(x, y, c);
-        }
-    }
-
+    img.setFromCVMat(fmat);
     impl_->cache_ = std::make_shared<ArtifactCore::ImageF32x4RGBAWithCache>(img);
     impl_->width_ = img.width();
     impl_->height_ = img.height();

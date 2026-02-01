@@ -12,6 +12,8 @@ module Artifact.Widgets.LayerPanelWidget;
 import std;
 import Utils.Path;
 import Artifact.Service.Project;
+import Artifact.Composition.Abstract;
+import Artifact.Layer.Abstract;
 
 
 namespace Artifact
@@ -186,19 +188,23 @@ void ArtifactLayerPanelWidget::setComposition(const CompositionID& id)
   p.setPen(Qt::white);
   // If a composition is set, draw its layers; otherwise draw placeholder
   if (!impl_->compositionId.isNil()) {
-    // Try to get composition from project service (only supports current composition)
-    auto compWeak = ArtifactProjectService::instance()->currentComposition();
-    auto comp = compWeak.lock();
-    if (comp && comp->id() == impl_->compositionId) {
-      QVector<ArtifactAbstractLayerPtr> layers = comp->allLayer();
-      for (int i = 0; i < layers.size(); ++i) {
-        int y = i * rowH;
-        auto layer = layers[i];
-        QString name = layer ? layer->layerName() : QString("(empty)");
-        p.drawText(QRect(textOffsetX, y, width(), rowH), Qt::AlignVCenter, name);
-        if (!impl_->visibilityIcon.isNull()) {
-          p.drawPixmap(4, y + (rowH - 16) / 2, 16, 16, impl_->visibilityIcon);
+    // Try to find composition by id via service
+    auto compResult = ArtifactProjectService::instance()->findComposition(impl_->compositionId);
+    if (compResult.success) {
+      auto compShared = compResult.ptr.lock();
+      if (compShared) {
+        QVector<ArtifactAbstractLayerPtr> layers = compShared->allLayer();
+        for (int idx = 0; idx < layers.size(); ++idx) {
+          int y = idx * rowH;
+          auto layer = layers[idx];
+          QString name = layer ? layer->layerName() : QString("(empty)");
+          p.drawText(QRect(textOffsetX, y, width(), rowH), Qt::AlignVCenter, name);
+          if (!impl_->visibilityIcon.isNull()) {
+            p.drawPixmap(4, y + (rowH - 16) / 2, 16, 16, impl_->visibilityIcon);
+          }
         }
+      } else {
+        p.drawText(QRect(textOffsetX, 0, width(), rowH), Qt::AlignVCenter, QString("No composition"));
       }
     } else {
       p.drawText(QRect(textOffsetX, 0, width(), rowH), Qt::AlignVCenter, QString("No composition"));
@@ -243,7 +249,24 @@ void ArtifactLayerPanelWidget::setComposition(const CompositionID& id)
 
  ArtifactLayerTimelinePanelWrapper::ArtifactLayerTimelinePanelWrapper(const CompositionID& id, QWidget* parent /*= nullptr*/):QWidget(parent),impl_(new Impl())
  {
+    // Initialize children and set the composition id
+    impl_->header = new ArtifactLayerPanelHeaderWidget();
+    impl_->panel = new ArtifactLayerPanelWidget;
+    impl_->panel->setComposition(id);
+    impl_->scroll = new QScrollArea(this);
 
+    impl_->scroll->setWidget(impl_->panel);
+    impl_->scroll->setWidgetResizable(true);
+    impl_->scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+
+    auto* layout = new QVBoxLayout(this);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(0);
+    layout->addWidget(impl_->header);
+    layout->addWidget(impl_->scroll);
+    setLayout(layout);
+
+    impl_->id = id;
  }
 
  ArtifactLayerTimelinePanelWrapper::~ArtifactLayerTimelinePanelWrapper()

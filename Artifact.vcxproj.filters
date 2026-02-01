@@ -79,7 +79,6 @@
     <ClCompile Include="src\Tool\ArtifactToolManager.cpp" />
     <ClCompile Include="src\Translation\TranslationManager.cpp" />
     <ClCompile Include="src\Widgets\ArtifactToolBar.cppm" />
-    <ClCompile Include="src\Widgets\Control\ArtifactPlaybackControlWidget.cppm" />
     <ClCompile Include="src\Widgets\Native\NativeHelper.cpp" />
     <ClCompile Include="src\Widgets\Render\ArtifactRenderWrapperWidget.cpp" />
     <ClCompile Include="src\Widgets\Render\ArtifactRenderQueueJobPanel.cpp" />
@@ -585,6 +584,9 @@
     </ClCompile>
     <ClCompile Include="include\Widgets\Menu\ArtifactOptionMenu.ixx">
       <Filter>ヘッダー\Widgets\Menu</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Widgets\Control\ArtifactPlaybackControlWidget.cppm">
+      <Filter>ソース</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>

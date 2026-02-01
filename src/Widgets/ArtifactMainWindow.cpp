@@ -183,17 +183,17 @@ namespace Artifact {
   DockManager->addDockWidget(ads::LeftDockWidgetArea, DockWidget2);
  	
   
-  auto inspectorWidget2 = new ArtifactInspectorWidget();
-  auto  inspectorWidgetWrapper = new Pane("Inspector", inspectorWidget2);
+  //auto inspectorWidget2 = new ArtifactInspectorWidget();
+  //auto  inspectorWidgetWrapper = new Pane("Inspector", inspectorWidget2);
   //DockWidget3->setWidget(inspectorWidget2);
+  
+ 	
+ 	
+  //DockManager->addDockWidget(ads::RightDockWidgetArea, inspectorWidgetWrapper);
 
+  //auto mediaControlWidget = new ArtifactPlaybackControlWidget();
  	
- 	
-  DockManager->addDockWidget(ads::RightDockWidgetArea, inspectorWidgetWrapper);
-
-  auto mediaControlWidget = new ArtifactPlaybackControlWidget();
- 	
-  mediaControlWidget->show();
+  //mediaControlWidget->show();
  	
 
   auto& projectManager = ArtifactProjectManager::getInstance();
@@ -205,8 +205,8 @@ namespace Artifact {
 	//auto timelineWidget = new ArtifactTimelineWidget();
 	//timelineWidget->show();
  
-    auto layerPreview2=new ArtifactLayerEditorWidgetV2();
-   layerPreview2->show();
+    //auto layerPreview2=new ArtifactLayerEditorWidgetV2();
+   //layerPreview2->show();
  	
   QObject::connect(&projectManager, &ArtifactProjectManager::projectCreated, [this]() {
    impl_->handleProjectCreated();
