@@ -480,9 +480,6 @@
     <ClCompile Include="include\Widgets\Menu\ArtifactLayerMenu.ixx">
       <Filter>ヘッダー\Layer</Filter>
     </ClCompile>
-    <ClCompile Include="include\Widgets\Menu\ArtifactOptionMenu.ixx">
-      <Filter>ヘッダー\Layer\Render</Filter>
-    </ClCompile>
     <ClCompile Include="include\Project\ArtifactProject.ixx">
       <Filter>ヘッダー\Project</Filter>
     </ClCompile>
@@ -585,6 +582,9 @@
     </ClCompile>
     <ClCompile Include="include\Timeline\ArtifactTimelineIconModel.ixx">
       <Filter>ヘッダー</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Widgets\Menu\ArtifactOptionMenu.ixx">
+      <Filter>ヘッダー\Widgets\Menu</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
