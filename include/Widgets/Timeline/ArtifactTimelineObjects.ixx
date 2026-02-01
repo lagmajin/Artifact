@@ -14,6 +14,9 @@ export namespace Artifact
  protected:
   QVariant itemChange(GraphicsItemChange change,
    const QVariant& value) override;
+  public:
+   QRectF boundingRect() const override;
+   void paint(QPainter* painter, const QStyleOptionGraphicsItem* option, QWidget* widget = nullptr) override;
  public:
   enum Side { Left, Right };
   Side side;
@@ -34,6 +37,13 @@ export namespace Artifact
   void paint(QPainter* painter, const QStyleOptionGraphicsItem* option, QWidget* widget = nullptr) override;
  protected:
   QVariant itemChange(GraphicsItemChange change, const QVariant& value) override;
+
+ public:
+  // Called by child resize handles when moved
+  void handleMoved(ResizeHandle::Side side, qreal sceneX);
+  
+  // Set size/position (start = x in scene coords, duration = width in pixels)
+  void setStartDuration(double start, double duration);
 
  };
 

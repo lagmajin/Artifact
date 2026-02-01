@@ -305,7 +305,7 @@
     <ClCompile Include="include\Widgets\Timeline\ArtifactTimelineLabel.ixx" />
     <ClCompile Include="include\Widgets\Timeline\ArtifactTimelineObjects.ixx" />
     <ClCompile Include="include\Widgets\Timeline\ArtifactTimelineRulerWidget.ixx" />
-    <ClCompile Include="include\Widgets\Timeline\ArtifactTimelineTimeCodeWidget.ixx" />
+    <ClCompile Include="include\Widgets\Timeline\ArtifactTimeCodeWidget.ixx" />
     <ClCompile Include="include\Widgets\Timeline\ArtifactTimelineTimeRangeSlider.ixx" />
     <ClCompile Include="include\Widgets\Timeline\ArtifactWorkAreaControlWidget.ixx" />
     <ClCompile Include="include\Widgets\Timeline\TimelineScaleWidget.ixx" />

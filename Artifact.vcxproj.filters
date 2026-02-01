@@ -30,23 +30,17 @@
     <ClCompile Include="include\Project\ArtifactProjectItems.ixx" />
     <ClCompile Include="include\Project\ArtifactProjectModel.ixx" />
     <ClCompile Include="include\Project\TreeFilterProxyModel.ixx" />
-    <ClCompile Include="include\Render\ArtifactRenderController.ixx" />
-    <ClCompile Include="include\Render\ArtifactRenderManager.ixx" />
     <ClCompile Include="include\Render\ArtifactRenderQueueService.ixx" />
-    <ClCompile Include="include\Render\Element\ArtifactRenderElement.ixx" />
     <ClCompile Include="include\Render\RenderModule.ixx" />
     <ClCompile Include="include\Result\ArtifactResult.ixx" />
-    <ClCompile Include="include\Service\ArtifactProjectService.ixx" />
     <ClCompile Include="include\Service\ArtifactToolService.ixx" />
     <ClCompile Include="include\Test\ArtifactTestProjectManager.ixx" />
     <ClCompile Include="include\Test\ArtifactTestProjectService.ixx" />
-    <ClCompile Include="include\Timeline\ArtifactTimelineIconModel.ixx" />
     <ClCompile Include="include\Tool\Tool.ixx" />
     <ClCompile Include="include\Tool\ArtifactToolManager.ixx" />
     <ClCompile Include="include\Translation\TranslationManager.ixx" />
     <ClCompile Include="include\Widgets\Dialog\ArtifactRenderOutputSettingDialog.ixx" />
     <ClCompile Include="include\Widgets\Native\NativeHelper.ixx" />
-    <ClCompile Include="include\Widgets\Render\ArtifactRenderLayerWidget.ixx" />
     <ClCompile Include="include\Widgets\Render\ArtifactRenderQueueJobPanel.ixx" />
     <ClCompile Include="include\Widgets\Render\ArtifactRenderQueueManagerWidget.ixx" />
     <ClCompile Include="include\Widgets\Render\ArtifactRenderWrapperWidget.ixx" />
@@ -54,7 +48,7 @@
     <ClCompile Include="include\Widgets\Timeline\ArtifactTimelineLabel.ixx" />
     <ClCompile Include="include\Widgets\Timeline\ArtifactTimelineObjects.ixx" />
     <ClCompile Include="include\Widgets\Timeline\ArtifactTimelineRulerWidget.ixx" />
-    <ClCompile Include="include\Widgets\Timeline\ArtifactTimelineTimeCodeWidget.ixx" />
+    <ClCompile Include="include\Widgets\Timeline\ArtifactTimeCodeWidget.ixx" />
     <ClCompile Include="include\Widgets\Timeline\ArtifactTimelineTimeRangeSlider.ixx" />
     <ClCompile Include="include\Widgets\Timeline\ArtifactWorkAreaControlWidget.ixx" />
     <ClCompile Include="include\Widgets\Timeline\TimelineScaleWidget.ixx" />
@@ -77,7 +71,6 @@
     <ClCompile Include="src\Preview\ArtifactPreviewWorker.cppm" />
     <ClCompile Include="src\Project\TreeFilterProxyModel.cppm" />
     <ClCompile Include="src\Render\ArtifactRenderElement.cpp" />
-    <ClCompile Include="src\Render\ArtifactRenderManager.cppm" />
     <ClCompile Include="src\Render\ArtifactRenderQueueService.cppm" />
     <ClCompile Include="src\Service\ArtifactProjectService.cpp" />
     <ClCompile Include="src\Service\ArtifactToolService.cppm" />
@@ -87,9 +80,7 @@
     <ClCompile Include="src\Translation\TranslationManager.cpp" />
     <ClCompile Include="src\Widgets\ArtifactToolBar.cppm" />
     <ClCompile Include="src\Widgets\Control\ArtifactPlaybackControlWidget.cppm" />
-    <ClCompile Include="src\Widgets\Dialog\ArtifactRenderOutputSettingDialog.cppm" />
     <ClCompile Include="src\Widgets\Native\NativeHelper.cpp" />
-    <ClCompile Include="src\Widgets\Render\ArtifactRenderLayerWidgetv2.cppm" />
     <ClCompile Include="src\Widgets\Render\ArtifactRenderWrapperWidget.cpp" />
     <ClCompile Include="src\Widgets\Render\ArtifactRenderQueueJobPanel.cpp" />
     <ClCompile Include="src\Widgets\Render\ArtifactRenderLayerWidget.cpp" />
@@ -121,7 +112,6 @@
     <ClCompile Include="src\Widgets\Render\ArtifactOgreRenderWindow.cpp" />
     <ClCompile Include="src\Widgets\Render\ArtifactRenderManagerWidget.cpp" />
     <ClCompile Include="src\Render\ArtifactRenderController.cppm" />
-    <ClCompile Include="src\Layer\ArtifactHierarchyModel.cppm" />
     <ClCompile Include="src\Widgets\Dialog\EditCompositionSettingDialog.cpp" />
     <ClCompile Include="src\Application\ArtifactApplicationManager.cpp">
       <Filter>ソース</Filter>
@@ -216,9 +206,6 @@
     <ClCompile Include="include\Layer\ArtifactLayerResult.ixx">
       <Filter>ヘッダー</Filter>
     </ClCompile>
-    <ClCompile Include="src\Widgets\Menu\Test\ArtifactImageProcessingTestMenu.cppm">
-      <Filter>ソース</Filter>
-    </ClCompile>
     <ClCompile Include="src\Service\ArtifactEffectService.cpp">
       <Filter>ソース</Filter>
     </ClCompile>
@@ -241,7 +228,6 @@
       <Filter>ヘッダー</Filter>
     </ClCompile>
     <ClCompile Include="include\Project\ArtifactProjectExporter.ixx" />
-    <ClCompile Include="include\Project\ArtifactProjectSetting.ixx" />
     <ClCompile Include="src\Project\ArtifactProject.cppm">
       <Filter>ソース\Project</Filter>
     </ClCompile>
@@ -561,18 +547,58 @@
     <ClCompile Include="src\Widgets\Menu\ArtifactLayerMenu.cppm">
       <Filter>ソース\Widgets\Menu</Filter>
     </ClCompile>
-    <ClCompile Include="include\Project\ArtifactProjectRoles.ixx" />
+    <ClCompile Include="src\Widgets\Menu\Test\ArtifactImageProcessingTestMenu.cppm">
+      <Filter>ソース\Widgets\Menu</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Layer\ArtifactHierarchyModel.cppm">
+      <Filter>ソース</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Widgets\Dialog\ArtifactRenderOutputSettingDialog.cppm">
+      <Filter>ソース</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Render\ArtifactRenderManager.cppm">
+      <Filter>ソース</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Widgets\Render\ArtifactRenderLayerWidgetv2.cppm">
+      <Filter>ソース</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Render\ArtifactRenderManager.ixx">
+      <Filter>ヘッダー</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Widgets\Render\ArtifactRenderLayerWidget.ixx">
+      <Filter>ヘッダー</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Render\Element\ArtifactRenderElement.ixx">
+      <Filter>ヘッダー</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Render\ArtifactRenderController.ixx">
+      <Filter>ヘッダー</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Project\ArtifactProjectSetting.ixx">
+      <Filter>ヘッダー</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Service\ArtifactProjectService.ixx">
+      <Filter>ヘッダー</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Project\ArtifactProjectRoles.ixx">
+      <Filter>ヘッダー</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Timeline\ArtifactTimelineIconModel.ixx">
+      <Filter>ヘッダー</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Generated\TestService.h" />
     <ClInclude Include="Generated\Test_types.h" />
     <ClInclude Include="include\Widgets\Render\Shader\CommonShader.hpp" />
-    <ClInclude Include="include\Render\ArtifactRenderer.ixx" />
     <ClInclude Include="include\GUI\ArtifactGuiManager.hpp">
       <Filter>ヘッダー</Filter>
     </ClInclude>
     <ClInclude Include="include\Composition\ArtifactCompositionManager.hpp">
       <Filter>ヘッダー\Widgets</Filter>
+    </ClInclude>
+    <ClInclude Include="include\Render\ArtifactRenderer.ixx">
+      <Filter>ヘッダー</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>

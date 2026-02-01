@@ -39,6 +39,9 @@ void soloClicked() W_SIGNAL(soloClicked)
   explicit ArtifactLayerPanelWidget(QWidget* parent = nullptr);
 
   ~ArtifactLayerPanelWidget();
+ 
+  // Set the composition to display layers for
+  void setComposition(const CompositionID& id);
 
  };
 
