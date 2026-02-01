@@ -146,10 +146,7 @@ namespace Artifact
 
  void ArtifactProjectService::addLayerToCurrentComposition(const ArtifactLayerInitParams& params)
  {
-
- 	
- 	
- 	
+  impl_->addLayerToCurrentComposition(params);
  }
 
  UniString ArtifactProjectService::projectName() const
