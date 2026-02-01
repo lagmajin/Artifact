@@ -61,6 +61,8 @@ export namespace Artifact
   
   void addLayer(const CompositionID& id, const ArtifactLayerInitParams& params);
   void addLayerToCurrentComposition(const ArtifactLayerInitParams& params);
+  bool removeComposition(const CompositionID& id);
+  bool renameComposition(const CompositionID& id, const UniString& name);
  public/*signals*/:
   void projectCreated()
   W_SIGNAL(projectCreated);

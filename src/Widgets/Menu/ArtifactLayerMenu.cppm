@@ -11,8 +11,8 @@ import Artifact.Service.Project;
 import Artifact.Layer.InitParams;
 import Artifact.Layer.Factory;
 
+
 import Artifact.Widgets.CreateLayerDialog;
-import Artifact.Service.Project;
 
 namespace Artifact {
 

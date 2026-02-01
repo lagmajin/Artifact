@@ -101,7 +101,7 @@ export namespace Artifact {
   double durationSeconds() const;
 
   // 開始タイムコード
-  TimeCode startTimeCode() const;
+  const TimeCode& startTimeCode() const;
   void setStartTimeCode(const TimeCode& tc);
 
   // ワークエリア

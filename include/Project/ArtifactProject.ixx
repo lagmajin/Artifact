@@ -14,6 +14,8 @@ export module Artifact.Project;
 export import Artifact.Project.Settings;
 
 import Artifact.Composition.InitParams;
+import Artifact.Layer.InitParams;
+import Artifact.Layer.Abstract;
 
 import std;
 import Utils;
@@ -21,6 +23,7 @@ import Composition.Settings;
 
 import Artifact.Composition.Result;
 import Artifact.Composition.Abstract;
+import Artifact.Layer.Result;
 
 import Artifact.Project.Items;
 
@@ -60,6 +63,10 @@ export namespace Artifact {
   CreateCompositionResult createComposition(const ArtifactCompositionInitParams& settings);
  	
   FindCompositionResult findComposition(const CompositionID& id);
+
+  // Layer management
+  ArtifactLayerResult createLayerAndAddToComposition(const CompositionID& compositionId, ArtifactLayerInitParams& params);
+  AppendLayerToCompositionResult addLayerToComposition(const CompositionID& compositionId, ArtifactAbstractLayerPtr layer);
 
   void addAssetFile();
   void addAssetFromPath(const QString& filepath);

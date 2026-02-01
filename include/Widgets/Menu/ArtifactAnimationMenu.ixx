@@ -93,3 +93,6 @@ export namespace Artifact {
  };
 
 } // namespace Artifact
+
+W_REGISTER_ARGTYPE(Artifact::EasingType)
+W_REGISTER_ARGTYPE(Artifact::KeyframeInterpolation)

@@ -47,9 +47,19 @@ namespace Artifact
   throw std::logic_error("The method or operation is not implemented.");
  }
 
- QVariant ClipItem::itemChange(GraphicsItemChange change, const QVariant& value)
- {
-  throw std::logic_error("The method or operation is not implemented.");
- }
+QVariant ClipItem::itemChange(GraphicsItemChange change, const QVariant& value)
+{
+  // Provide a minimal implementation for itemChange used by the timeline.
+  // Return base class behavior where appropriate.
+  switch (change) {
+  case QGraphicsItem::ItemPositionChange:
+  case QGraphicsItem::ItemPositionHasChanged:
+  case QGraphicsItem::ItemSelectedChange:
+  case QGraphicsItem::ItemSelectedHasChanged:
+    return QGraphicsObject::itemChange(change, value);
+  default:
+    return QGraphicsObject::itemChange(change, value);
+  }
+}
 
 };

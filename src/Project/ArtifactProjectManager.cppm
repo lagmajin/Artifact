@@ -17,6 +17,9 @@ import Artifact.Composition.Result;
 import Artifact.Composition.Abstract;
 import Composition.Settings;
 import Artifact.Composition.InitParams;
+import Artifact.Layer.InitParams;
+import Artifact.Layer.Result;
+import Artifact.Layer.Factory;
 
 
 namespace Artifact {
@@ -26,26 +29,30 @@ namespace Artifact {
  W_OBJECT_IMPL(ArtifactProjectManager)
 
 
-  class ArtifactProjectManager::Impl {
-  private:
-   //ArtifactProjectPtr currentProjectPtr_;
-  public:
-   Impl();
-   ~Impl();
-   bool isCreated_ = false;
-   std::shared_ptr<ArtifactProject> currentProjectPtr_;
-   bool signalsConnected_ = false;
-   bool suppressDefaultCreate_ = false;
-   bool creatingComposition_ = false;
-   void createProject();
-   bool isProjectCreated() const;
-   Id createNewComposition();
-   //CompositionResult createComposition(const CompositionSettings& settings);
-   CreateCompositionResult createComposition(const CompositionSettings& setting);
-   CreateCompositionResult createComposition(const ArtifactCompositionInitParams& params);
-   void addAssetFromFilePath(const QString& filePath);
-   void addAssetsFromFilePaths(const QStringList& filePaths);
- };
+   class ArtifactProjectManager::Impl {
+   private:
+    //ArtifactProjectPtr currentProjectPtr_;
+   public:
+    Impl();
+    ~Impl();
+    bool isCreated_ = false;
+    std::shared_ptr<ArtifactProject> currentProjectPtr_;
+    bool signalsConnected_ = false;
+    bool suppressDefaultCreate_ = false;
+    bool creatingComposition_ = false;
+    void createProject();
+    bool isProjectCreated() const;
+    Id createNewComposition();
+    //CompositionResult createComposition(const CompositionSettings& settings);
+    CreateCompositionResult createComposition(const CompositionSettings& setting);
+    CreateCompositionResult createComposition(const ArtifactCompositionInitParams& params);
+    void addAssetFromFilePath(const QString& filePath);
+    void addAssetsFromFilePaths(const QStringList& filePaths);
+    
+    // Layer management
+    ArtifactLayerResult addLayerToCurrentComposition(ArtifactLayerInitParams& params);
+    ArtifactLayerResult addLayerToComposition(const CompositionID& compositionId, ArtifactLayerInitParams& params);
+   };
 
  ArtifactProjectManager::Impl::Impl()
  {
@@ -348,15 +355,83 @@ QVector<ProjectItem*> ArtifactProjectManager::projectItems() const
   return 0;
  }
 
- void ArtifactProjectManager::removeAllAssets()
- {
+  void ArtifactProjectManager::removeAllAssets()
+  {
 
- }
+  }
 
- bool projectManagerCurrentClose()
- {
+  ArtifactLayerResult ArtifactProjectManager::Impl::addLayerToCurrentComposition(ArtifactLayerInitParams& params)
+  {
+   ArtifactLayerResult result;
+   
+   if (!currentProjectPtr_) {
+    result.success = false;
+    return result;
+   }
 
-  return true;
- }
+   // Get current composition - assuming first composition for now
+   // You may need to implement getCurrentCompositionId() method
+   auto projectItems = currentProjectPtr_->projectItems();
+   CompositionID currentCompId;
+   
+   // Find the first composition item
+   for (auto item : projectItems) {
+    if (!item) continue;
+    for (auto child : item->children) {
+     if (child && child->type() == eProjectItemType::Composition) {
+      CompositionItem* compItem = static_cast<CompositionItem*>(child);
+      currentCompId = compItem->compositionId;
+      break;
+     }
+    }
+    if (!currentCompId.isNil()) break;
+   }
+   if (currentCompId.isNil()) {
+    result.success = false;
+    return result;
+   }
+
+   result = currentProjectPtr_->createLayerAndAddToComposition(currentCompId, params);
+   
+   return result;
+  }
+
+  ArtifactLayerResult ArtifactProjectManager::Impl::addLayerToComposition(const CompositionID& compositionId, ArtifactLayerInitParams& params)
+  {
+   ArtifactLayerResult result;
+   
+   if (!currentProjectPtr_) {
+    result.success = false;
+    return result;
+   }
+
+   result = currentProjectPtr_->createLayerAndAddToComposition(compositionId, params);
+   
+   return result;
+  }
+
+  ArtifactLayerResult ArtifactProjectManager::addLayerToCurrentComposition(ArtifactLayerInitParams& params)
+  {
+   auto result = impl_->addLayerToCurrentComposition(params);
+   if (result.success && result.layer) {
+    layerCreated(result.layer->id());
+   }
+   return result;
+  }
+
+  ArtifactLayerResult ArtifactProjectManager::addLayerToComposition(const CompositionID& compositionId, ArtifactLayerInitParams& params)
+  {
+   auto result = impl_->addLayerToComposition(compositionId, params);
+   if (result.success && result.layer) {
+    layerCreated(result.layer->id());
+   }
+   return result;
+  }
+
+  bool projectManagerCurrentClose()
+  {
+
+   return true;
+  }
 
 }

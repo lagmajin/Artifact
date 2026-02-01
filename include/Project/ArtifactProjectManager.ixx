@@ -18,6 +18,8 @@ import Artifact.Composition.Result;
 import Artifact.Composition.Abstract;
 import Artifact.Composition.InitParams;
 import Artifact.Project.Items;
+import Artifact.Layer.InitParams;
+import Artifact.Layer.Result;
 
 namespace pybind11 {}//dummy
 namespace folly {}//dummy
@@ -69,6 +71,10 @@ export namespace Artifact {
   FindCompositionResult findComposition(const CompositionID& id);
 
   QVector<ProjectItem*> projectItems() const;
+
+  // Layer management
+  ArtifactLayerResult addLayerToCurrentComposition(ArtifactLayerInitParams& params);
+  ArtifactLayerResult addLayerToComposition(const CompositionID& compositionId, ArtifactLayerInitParams& params);
 
   //Assets
   void addAssetFromFilePath(const QString& filePath);

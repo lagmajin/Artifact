@@ -52,6 +52,7 @@ public:
   void mousePressEvent(QMouseEvent* event) override;
   void mouseDoubleClickEvent(QMouseEvent* event) override;
   void mouseReleaseEvent(QMouseEvent* event) override;
+  void contextMenuEvent(QContextMenuEvent* event) override;
  public:
   explicit ArtifactProjectView(QWidget* parent = nullptr);
   ~ArtifactProjectView();
