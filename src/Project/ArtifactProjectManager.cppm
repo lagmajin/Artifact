@@ -174,6 +174,11 @@ namespace Artifact {
           compositionCreated(id);
         }
       });
+      connect(shared.get(), &ArtifactProject::layerCreated, this, [weakProj, this](const LayerID& id) {
+        if (weakProj.lock()) {
+          layerCreated(id);
+        }
+      });
       impl_->signalsConnected_ = true;
     }
   } else {

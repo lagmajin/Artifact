@@ -58,8 +58,11 @@ namespace Artifact
 
   auto layer = factory.createNewLayer(params);
   
-  projectManager().currentComposition()->appendLayerTop(layer);
- 	
+  auto result = projectManager().currentComposition()->appendLayerTop(layer);
+  
+  if (result.success && layer) {
+   projectManager().getCurrentProjectSharedPtr()->layerCreated(layer->id());
+  }
  	
  }
 
@@ -146,10 +149,7 @@ namespace Artifact
 
  void ArtifactProjectService::addLayerToCurrentComposition(const ArtifactLayerInitParams& params)
  {
-
- 	
- 	
- 	
+  impl_->addLayerToCurrentComposition(params);
  }
 
  UniString ArtifactProjectService::projectName() const
