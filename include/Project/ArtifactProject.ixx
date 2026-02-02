@@ -28,6 +28,7 @@ import Artifact.Layer.Result;
 import Artifact.Project.Items;
 
 W_REGISTER_ARGTYPE(ArtifactCore::CompositionID)
+W_REGISTER_ARGTYPE(ArtifactCore::LayerID)
 
 export namespace Artifact {
 
@@ -95,6 +96,8 @@ export namespace Artifact {
 
   void layerCreated()
    W_SIGNAL(layerCreated);
+  void layerRemoved(const LayerID& id)
+   W_SIGNAL(layerRemoved, id);
 
  	
  };

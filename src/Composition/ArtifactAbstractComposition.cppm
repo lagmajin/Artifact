@@ -135,7 +135,7 @@ void ArtifactAbstractComposition::Impl::removeLayer(const LayerID& id)
 
  QVector<ArtifactAbstractLayerPtr> ArtifactAbstractComposition::Impl::allLayer() const
  {
-  return QVector<ArtifactAbstractLayerPtr>();
+  return layerMultiIndex_.all();
  }
 
  AppendLayerToCompositionResult ArtifactAbstractComposition::Impl::appendLayerBottom(ArtifactAbstractLayerPtr layer)
@@ -176,8 +176,9 @@ void ArtifactAbstractComposition::Impl::removeLayer(const LayerID& id)
 
  QVector<ArtifactAbstractLayerPtr> ArtifactAbstractComposition::Impl::allLayerBackToFront() const
  {
-
-  return QVector<ArtifactAbstractLayerPtr>();
+  auto v = layerMultiIndex_.all();
+  std::reverse(v.begin(), v.end());
+  return v;
  }
 
  ArtifactAbstractComposition::ArtifactAbstractComposition(const CompositionID& id, const ArtifactCompositionInitParams& params) :impl_(new Impl())

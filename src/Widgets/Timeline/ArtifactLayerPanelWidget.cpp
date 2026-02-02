@@ -7,6 +7,9 @@ module;
 #include <QScrollArea>
 #include <QBoxLayout>
 #include <QPushButton>
+#include <QMenu>
+#include <QContextMenuEvent>
+#include <QMouseEvent>
 module Artifact.Widgets.LayerPanelWidget;
 
 import std;
@@ -138,6 +141,11 @@ namespace Artifact
  ArtifactLayerPanelWidget::ArtifactLayerPanelWidget(QWidget* parent /*= nullptr*/) :QWidget(parent), impl_(new Impl)
  {
   setWindowTitle("ArtifactLayerPanel");
+
+    // Refresh when layers are removed elsewhere
+    QObject::connect(ArtifactProjectService::instance(), &ArtifactProjectService::layerRemoved, this, [this](const LayerID&) {
+        update();
+    });
  }
 
 void ArtifactLayerPanelWidget::setComposition(const CompositionID& id)
@@ -154,7 +162,34 @@ void ArtifactLayerPanelWidget::setComposition(const CompositionID& id)
 
  void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
  {
-
+    // Right-click -> context menu for layer actions
+    if (event->button() == Qt::RightButton) {
+        const int rowH = 28;
+        int idx = event->pos().y() / rowH;
+        if (!impl_->compositionId.isNil()) {
+            auto compResult = ArtifactProjectService::instance()->findComposition(impl_->compositionId);
+            if (compResult.success) {
+                auto comp = compResult.ptr.lock();
+                if (comp) {
+                    auto layers = comp->allLayer();
+                    if (idx >= 0 && idx < layers.size()) {
+                        auto layer = layers[idx];
+                        if (layer) {
+                            QMenu menu(this);
+                            QAction* del = menu.addAction("Delete Layer");
+                            QAction* act = menu.exec(event->globalPos());
+                            if (act == del) {
+                                ArtifactProjectService::instance()->removeLayerFromComposition(impl_->compositionId, layer->id());
+                            }
+                            event->accept();
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    QWidget::mousePressEvent(event);
  }
 
  void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)

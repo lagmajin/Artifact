@@ -75,6 +75,7 @@ namespace Artifact {
    // Layer management
    ArtifactLayerResult createLayerAndAddToComposition(const CompositionID& compositionId, ArtifactLayerInitParams& params);
    AppendLayerToCompositionResult addLayerToComposition(const CompositionID& compositionId, ArtifactAbstractLayerPtr layer);
+  bool removeLayerFromComposition(const CompositionID& compositionId, const LayerID& layerId);
 
    QJsonObject toJson() const;
   AssetMultiIndexContainer assetContainer_;
@@ -457,7 +458,9 @@ FindCompositionResult ArtifactProject::findComposition(const CompositionID& id)
 
   bool ArtifactProject::removeLayerFromComposition(const CompositionID& compositionId, const LayerID& layerId)
   {
-    return impl_->removeLayerFromComposition(compositionId, layerId);
+    bool ok = impl_->removeLayerFromComposition(compositionId, layerId);
+    if (ok) layerRemoved(layerId);
+    return ok;
   }
 
 

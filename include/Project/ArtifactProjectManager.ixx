@@ -75,6 +75,7 @@ export namespace Artifact {
   // Layer management
   ArtifactLayerResult addLayerToCurrentComposition(ArtifactLayerInitParams& params);
   ArtifactLayerResult addLayerToComposition(const CompositionID& compositionId, ArtifactLayerInitParams& params);
+  bool removeLayerFromComposition(const CompositionID& compositionId, const LayerID& layerId);
 
   //Assets
   void addAssetFromFilePath(const QString& filePath);
@@ -98,6 +99,8 @@ export namespace Artifact {
 
    void layerCreated(const LayerID& id)
    W_SIGNAL(layerCreated, id);
+  void layerRemoved(const LayerID& id)
+   W_SIGNAL(layerRemoved, id);
 
  };
 

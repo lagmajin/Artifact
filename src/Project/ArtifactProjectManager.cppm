@@ -52,6 +52,7 @@ namespace Artifact {
     // Layer management
     ArtifactLayerResult addLayerToCurrentComposition(ArtifactLayerInitParams& params);
     ArtifactLayerResult addLayerToComposition(const CompositionID& compositionId, ArtifactLayerInitParams& params);
+    bool removeLayerFromComposition(const CompositionID& compositionId, const LayerID& layerId);
    };
 
  ArtifactProjectManager::Impl::Impl()
@@ -368,13 +369,6 @@ QVector<ProjectItem*> ArtifactProjectManager::projectItems() const
     result.success = false;
     return result;
    }
-
-  bool ArtifactProjectManager::Impl::removeLayerFromComposition(const CompositionID& compositionId, const LayerID& layerId)
-  {
-    if (!currentProjectPtr_) return false;
-    return currentProjectPtr_->removeLayerFromComposition(compositionId, layerId);
-  }
-
    // Get current composition - assuming first composition for now
    // You may need to implement getCurrentCompositionId() method
    auto projectItems = currentProjectPtr_->projectItems();
@@ -402,6 +396,12 @@ QVector<ProjectItem*> ArtifactProjectManager::projectItems() const
    return result;
   }
 
+  bool ArtifactProjectManager::Impl::removeLayerFromComposition(const CompositionID& compositionId, const LayerID& layerId)
+  {
+    if (!currentProjectPtr_) return false;
+    return currentProjectPtr_->removeLayerFromComposition(compositionId, layerId);
+  }
+
   ArtifactLayerResult ArtifactProjectManager::Impl::addLayerToComposition(const CompositionID& compositionId, ArtifactLayerInitParams& params)
   {
    ArtifactLayerResult result;
@@ -427,11 +427,9 @@ QVector<ProjectItem*> ArtifactProjectManager::projectItems() const
 
   bool ArtifactProjectManager::removeLayerFromComposition(const CompositionID& compositionId, const LayerID& layerId)
   {
-    auto ok = impl_->removeLayerFromComposition(compositionId, layerId);
-    if (ok) {
-      // emit signal if needed
-      layerCreated(); // placeholder: consider creating a proper layerRemoved signal
-    }
+    if (!impl_->currentProjectPtr_) return false;
+    bool ok = impl_->currentProjectPtr_->removeLayerFromComposition(compositionId, layerId);
+    if (ok) layerRemoved(layerId);
     return ok;
   }
 
