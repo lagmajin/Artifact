@@ -26,10 +26,7 @@
     <ClCompile Include="include\Generator\GeneratorManager.ixx" />
     <ClCompile Include="include\GUI\WindowPluginManager.ixx" />
     <ClCompile Include="include\Layer\ArtifactSolid2DLayer.ixx" />
-    <ClCompile Include="include\Layer\ArtifactSolidImageLayer.ixx" />
-    <ClCompile Include="include\Project\ArtifactProjectModel.ixx" />
     <ClCompile Include="include\Project\TreeFilterProxyModel.ixx" />
-    <ClCompile Include="include\Render\ArtifactRenderController.ixx" />
     <ClCompile Include="include\Render\ArtifactRenderQueueService.ixx" />
     <ClCompile Include="include\Render\Element\ArtifactRenderElement.ixx" />
     <ClCompile Include="include\Render\RenderModule.ixx" />
@@ -65,7 +62,6 @@
     <ClCompile Include="src\Library\Link.cpp" />
     <ClCompile Include="src\Preview\ArtifactLayerPreviewPipeline.cpp" />
     <ClCompile Include="src\Preview\ArtifactPreviewCompositionPipeline.cppm" />
-    <ClCompile Include="src\Preview\ArtifactPreviewWorker.cppm" />
     <ClCompile Include="src\Project\TreeFilterProxyModel.cppm" />
     <ClCompile Include="src\Render\ArtifactRenderElement.cpp" />
     <ClCompile Include="src\Render\ArtifactRenderManager.cppm" />
@@ -114,7 +110,6 @@
     <ClCompile Include="src\Widgets\Menu\ArtifactTimeMenu.cppm" />
     <ClCompile Include="src\Widgets\Menu\ArtifactViewMenu.cppm" />
     <ClCompile Include="src\Widgets\Render\ArtifactOgreRenderWindow.cpp" />
-    <ClCompile Include="src\Widgets\Render\ArtifactRenderManagerWidget.cpp" />
     <ClCompile Include="src\Render\ArtifactRenderController.cppm" />
     <ClCompile Include="src\Layer\ArtifactHierarchyModel.cppm" />
     <ClCompile Include="src\Widgets\Dialog\EditCompositionSettingDialog.cpp" />
@@ -244,7 +239,6 @@
     <ClCompile Include="src\Widgets\Menu\ArtifactLayerMenu.cppm">
       <Filter>ソース</Filter>
     </ClCompile>
-    <ClCompile Include="include\Project\ArtifactProjectSetting.ixx" />
     <ClCompile Include="src\Project\ArtifactProject.cppm">
       <Filter>ソース\Project</Filter>
     </ClCompile>
@@ -569,17 +563,37 @@
     <ClCompile Include="src\Widgets\Timeline\ArtifactSeekBar.cppm">
       <Filter>ソース</Filter>
     </ClCompile>
+    <ClCompile Include="include\Project\ArtifactProjectSetting.ixx">
+      <Filter>ヘッダー</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Project\ArtifactProjectModel.ixx">
+      <Filter>ヘッダー</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Render\ArtifactRenderController.ixx">
+      <Filter>ヘッダー</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Layer\ArtifactSolidImageLayer.ixx">
+      <Filter>ソース</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Widgets\Render\ArtifactRenderManagerWidget.cppm">
+      <Filter>ソース</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Preview\ArtifactPreviewWorker.cppm">
+      <Filter>ソース</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Generated\TestService.h" />
     <ClInclude Include="Generated\Test_types.h" />
     <ClInclude Include="include\Widgets\Render\Shader\CommonShader.hpp" />
-    <ClInclude Include="include\Render\ArtifactRenderer.ixx" />
     <ClInclude Include="include\GUI\ArtifactGuiManager.hpp">
       <Filter>ヘッダー</Filter>
     </ClInclude>
     <ClInclude Include="include\Composition\ArtifactCompositionManager.hpp">
       <Filter>ヘッダー\Widgets</Filter>
+    </ClInclude>
+    <ClInclude Include="include\Render\ArtifactRenderer.ixx">
+      <Filter>ヘッダー</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>

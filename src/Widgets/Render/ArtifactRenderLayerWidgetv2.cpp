@@ -274,7 +274,7 @@ W_OBJECT_IMPL(ArtifactLayerEditorWidgetV2)
  }
  void ArtifactLayerEditorWidgetV2::closeEvent(QCloseEvent* event)
  {
-
+	 
  }
 
  void ArtifactLayerEditorWidgetV2::focusInEvent(QFocusEvent* event)

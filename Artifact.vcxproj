@@ -673,7 +673,7 @@
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
     </ClCompile>
-    <ClCompile Include="src\Widgets\Render\ArtifactRenderManagerWidget.cpp" />
+    <ClCompile Include="src\Widgets\Render\ArtifactRenderManagerWidget.cppm" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\ArtifactCore\ArtifactCore.vcxproj">
