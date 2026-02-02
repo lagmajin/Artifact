@@ -293,6 +293,7 @@
     <ClCompile Include="include\Widgets\Render\ArtifactDiligentEngineRenderWidget.cpp" />
     <ClCompile Include="include\Widgets\Render\ArtifactDiligentEngineRenderWidget.ixx" />
     <ClCompile Include="include\Widgets\Render\ArtifactLayerEditorPanel.ixx" />
+    <ClCompile Include="include\Widgets\Render\ArtifactRenderLayerEditor.ixx" />
     <ClCompile Include="include\Widgets\Render\ArtifactRenderLayerWidget.ixx" />
     <ClCompile Include="include\Widgets\Render\ArtifactRenderLayerWidgetv2.ixx" />
     <ClCompile Include="include\Widgets\Render\ArtifactRenderQueueJobPanel.ixx">
@@ -434,6 +435,7 @@
     </ClCompile>
     <ClCompile Include="src\Widgets\Native\NativeHelper.cpp" />
     <ClCompile Include="src\Widgets\Render\ArtifactCompositionViewerFooter.cpp" />
+    <ClCompile Include="src\Widgets\Render\ArtifactRenderLayerEditor.cppm" />
     <ClCompile Include="src\Widgets\Render\ArtifactRenderLayerWidgetv2.cppm">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
     </ClCompile>
