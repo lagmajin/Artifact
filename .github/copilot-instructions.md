@@ -14,6 +14,12 @@
 - When asked to create implementation files, source files, or .cpp files, you MUST create `.cppm` files instead
 - This is a hard requirement - violations will cause build failures
 
+Absolute rule about `.cpp` files (MANDATORY):
+- As a general principle, do not create new `.cpp` files in this repository. New implementation source files MUST be `.cppm` placed under `src/`.
+- Exception (allowed only when strictly necessary): if a corresponding `.cpp` implementation file already exists in the workspace for the same module/class, you may edit that existing `.cpp` file instead of creating a `.cppm`. Treat this as a last resort and prefer migrating to module-style `.cppm` when feasible.
+- If there is no existing `.cpp` file for the target module/class, you MUST create a `.cppm` implementation file in `src/`. Do NOT create new `.cpp` files.
+- Violating this rule will break the build and is not permitted.
+
 **?? 重要：このプロジェクトはC++20モジュールを使用します。必ず以下のファイル拡張子ルールに従ってください：**
 - **モジュールインターフェースファイル**：必ず `.ixx` 拡張子を使用（`.h` や `.hpp` は絶対に使用しない）
 - **モジュール実装ファイル**：必ず `.cppm` 拡張子を使用（`.cpp` は絶対に使用しない）
