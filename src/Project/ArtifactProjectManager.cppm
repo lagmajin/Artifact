@@ -369,6 +369,12 @@ QVector<ProjectItem*> ArtifactProjectManager::projectItems() const
     return result;
    }
 
+  bool ArtifactProjectManager::Impl::removeLayerFromComposition(const CompositionID& compositionId, const LayerID& layerId)
+  {
+    if (!currentProjectPtr_) return false;
+    return currentProjectPtr_->removeLayerFromComposition(compositionId, layerId);
+  }
+
    // Get current composition - assuming first composition for now
    // You may need to implement getCurrentCompositionId() method
    auto projectItems = currentProjectPtr_->projectItems();
@@ -417,6 +423,16 @@ QVector<ProjectItem*> ArtifactProjectManager::projectItems() const
     layerCreated(result.layer->id());
    }
    return result;
+  }
+
+  bool ArtifactProjectManager::removeLayerFromComposition(const CompositionID& compositionId, const LayerID& layerId)
+  {
+    auto ok = impl_->removeLayerFromComposition(compositionId, layerId);
+    if (ok) {
+      // emit signal if needed
+      layerCreated(); // placeholder: consider creating a proper layerRemoved signal
+    }
+    return ok;
   }
 
   ArtifactLayerResult ArtifactProjectManager::addLayerToComposition(const CompositionID& compositionId, ArtifactLayerInitParams& params)

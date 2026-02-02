@@ -42,6 +42,11 @@ namespace Artifact
 
  }
 
+bool ArtifactProjectService::Impl::removeLayerFromComposition(const CompositionID& compositionId, const LayerID& layerId)
+{
+    return projectManager().addLayerToComposition(compositionId, ArtifactLayerInitParams());
+}
+
  ArtifactProjectService::Impl::~Impl()
  {
 
@@ -147,6 +152,11 @@ namespace Artifact
 
 void ArtifactProjectService::addLayerToCurrentComposition(const ArtifactLayerInitParams& params)
 {
+}
+
+bool ArtifactProjectService::removeLayerFromComposition(const CompositionID& compositionId, const LayerID& layerId)
+{
+    return impl_->projectManager().removeLayerFromComposition(compositionId, layerId);
 }
 
  bool ArtifactProjectService::removeComposition(const CompositionID& id)

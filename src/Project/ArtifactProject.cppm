@@ -434,6 +434,17 @@ FindCompositionResult ArtifactProject::findComposition(const CompositionID& id)
    return result;
   }
 
+  bool ArtifactProject::Impl::removeLayerFromComposition(const CompositionID& compositionId, const LayerID& layerId)
+  {
+    // find composition
+    auto findResult = findComposition(compositionId);
+    auto compPtr = findResult.ptr.lock();
+    if (!findResult.success || !compPtr) return false;
+    if (!compPtr->containsLayerById(layerId)) return false;
+    compPtr->removeLayer(layerId);
+    return true;
+  }
+
   ArtifactLayerResult ArtifactProject::createLayerAndAddToComposition(const CompositionID& compositionId, ArtifactLayerInitParams& params)
   {
    return impl_->createLayerAndAddToComposition(compositionId, params);
@@ -442,6 +453,11 @@ FindCompositionResult ArtifactProject::findComposition(const CompositionID& id)
   AppendLayerToCompositionResult ArtifactProject::addLayerToComposition(const CompositionID& compositionId, ArtifactAbstractLayerPtr layer)
   {
    return impl_->addLayerToComposition(compositionId, layer);
+  }
+
+  bool ArtifactProject::removeLayerFromComposition(const CompositionID& compositionId, const LayerID& layerId)
+  {
+    return impl_->removeLayerFromComposition(compositionId, layerId);
   }
 
 

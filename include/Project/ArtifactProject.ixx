@@ -68,6 +68,8 @@ export namespace Artifact {
   ArtifactLayerResult createLayerAndAddToComposition(const CompositionID& compositionId, ArtifactLayerInitParams& params);
   AppendLayerToCompositionResult addLayerToComposition(const CompositionID& compositionId, ArtifactAbstractLayerPtr layer);
 
+  bool removeLayerFromComposition(const CompositionID& compositionId, const LayerID& layerId);
+
   void addAssetFile();
   void addAssetFromPath(const QString& filepath);
   QVector<ProjectItem*> projectItems() const;
