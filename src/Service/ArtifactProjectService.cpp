@@ -9,6 +9,7 @@ import Utils.String.UniString;
 import Artifact.Project.Manager;
 import Artifact.Layer.Factory;
 import Artifact.Composition.Abstract;
+import Artifact.Project.Items;
 
 namespace Artifact
 {
@@ -40,6 +41,8 @@ namespace Artifact
  {
 
  }
+
+// Impl::removeLayerFromComposition was removed; use manager call in service wrapper
 
  ArtifactProjectService::Impl::~Impl()
  {
@@ -144,12 +147,48 @@ namespace Artifact
 
  }
 
- void ArtifactProjectService::addLayerToCurrentComposition(const ArtifactLayerInitParams& params)
- {
+void ArtifactProjectService::addLayerToCurrentComposition(const ArtifactLayerInitParams& params)
+{
+}
 
- 	
- 	
- 	
+bool ArtifactProjectService::removeLayerFromComposition(const CompositionID& compositionId, const LayerID& layerId)
+{
+    bool ok = impl_->projectManager().removeLayerFromComposition(compositionId, layerId);
+    if (ok) layerRemoved(layerId);
+    return ok;
+}
+
+ bool ArtifactProjectService::removeComposition(const CompositionID& id)
+ {
+   auto& pm = impl_->projectManager();
+   auto projectShared = pm.getCurrentProjectSharedPtr();
+   if (!projectShared) return false;
+   bool ok = projectShared->removeCompositionById(id);
+   if (ok) projectShared->projectChanged();
+   return ok;
+ }
+
+ bool ArtifactProjectService::renameComposition(const CompositionID& id, const UniString& name)
+ {
+   auto& pm = impl_->projectManager();
+   auto projectShared = pm.getCurrentProjectSharedPtr();
+   if (!projectShared) return false;
+   auto items = projectShared->projectItems();
+   for (auto root : items) {
+     if (!root) continue;
+     for (auto c : root->children) {
+       if (!c) continue;
+       if (c->type() == eProjectItemType::Composition) {
+         CompositionItem* ci = static_cast<CompositionItem*>(c);
+         if (ci->compositionId == id) {
+           ci->name = name;
+           projectShared->projectChanged();
+           return true;
+         }
+       }
+     }
+   }
+   return false;
  }
 
  UniString ArtifactProjectService::projectName() const

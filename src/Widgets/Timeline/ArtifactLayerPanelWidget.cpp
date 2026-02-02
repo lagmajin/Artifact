@@ -7,11 +7,16 @@ module;
 #include <QScrollArea>
 #include <QBoxLayout>
 #include <QPushButton>
+#include <QMenu>
+#include <QContextMenuEvent>
+#include <QMouseEvent>
 module Artifact.Widgets.LayerPanelWidget;
 
 import std;
 import Utils.Path;
 import Artifact.Service.Project;
+import Artifact.Composition.Abstract;
+import Artifact.Layer.Abstract;
 
 
 namespace Artifact
@@ -112,6 +117,7 @@ namespace Artifact
  public:
   Impl();
   ~Impl();
+  CompositionID compositionId;
   QPixmap visibilityIcon;
   QPixmap lockIcon;
   QPixmap soloIcon;
@@ -135,7 +141,19 @@ namespace Artifact
  ArtifactLayerPanelWidget::ArtifactLayerPanelWidget(QWidget* parent /*= nullptr*/) :QWidget(parent), impl_(new Impl)
  {
   setWindowTitle("ArtifactLayerPanel");
+
+    // Refresh when layers are removed elsewhere
+    QObject::connect(ArtifactProjectService::instance(), &ArtifactProjectService::layerRemoved, this, [this](const LayerID&) {
+        update();
+    });
  }
+
+void ArtifactLayerPanelWidget::setComposition(const CompositionID& id)
+{
+    impl_->compositionId = id;
+    // trigger repaint
+    update();
+}
 
  ArtifactLayerPanelWidget::~ArtifactLayerPanelWidget()
  {
@@ -144,7 +162,34 @@ namespace Artifact
 
  void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
  {
-
+    // Right-click -> context menu for layer actions
+    if (event->button() == Qt::RightButton) {
+        const int rowH = 28;
+        int idx = event->pos().y() / rowH;
+        if (!impl_->compositionId.isNil()) {
+            auto compResult = ArtifactProjectService::instance()->findComposition(impl_->compositionId);
+            if (compResult.success) {
+                auto comp = compResult.ptr.lock();
+                if (comp) {
+                    auto layers = comp->allLayer();
+                    if (idx >= 0 && idx < layers.size()) {
+                        auto layer = layers[idx];
+                        if (layer) {
+                            QMenu menu(this);
+                            QAction* del = menu.addAction("Delete Layer");
+                            QAction* act = menu.exec(event->globalPos());
+                            if (act == del) {
+                                ArtifactProjectService::instance()->removeLayerFromComposition(impl_->compositionId, layer->id());
+                            }
+                            event->accept();
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    QWidget::mousePressEvent(event);
  }
 
  void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
@@ -176,14 +221,35 @@ namespace Artifact
   // テキストを中央寄せにするためのテクニック
   const int textOffsetX = 24 * 5;
   p.setPen(Qt::white);
-  QString layerName = "Layer 1";
-
-  // drawTextにQRectを指定すると、垂直中央揃え（Qt::AlignVCenter）が使えて便利です
-  p.drawText(QRect(textOffsetX, 0, width(), rowH), Qt::AlignVCenter, layerName);
-
-  // アイコンも同様に描画
-  if (!impl_->visibilityIcon.isNull()) {
-   p.drawPixmap(4, (rowH - 16) / 2, 16, 16, impl_->visibilityIcon); // 16pxアイコンを中央に
+  // If a composition is set, draw its layers; otherwise draw placeholder
+  if (!impl_->compositionId.isNil()) {
+    // Try to find composition by id via service
+    auto compResult = ArtifactProjectService::instance()->findComposition(impl_->compositionId);
+    if (compResult.success) {
+      auto compShared = compResult.ptr.lock();
+      if (compShared) {
+        QVector<ArtifactAbstractLayerPtr> layers = compShared->allLayer();
+        for (int idx = 0; idx < layers.size(); ++idx) {
+          int y = idx * rowH;
+          auto layer = layers[idx];
+          QString name = layer ? layer->layerName() : QString("(empty)");
+          p.drawText(QRect(textOffsetX, y, width(), rowH), Qt::AlignVCenter, name);
+          if (!impl_->visibilityIcon.isNull()) {
+            p.drawPixmap(4, y + (rowH - 16) / 2, 16, 16, impl_->visibilityIcon);
+          }
+        }
+      } else {
+        p.drawText(QRect(textOffsetX, 0, width(), rowH), Qt::AlignVCenter, QString("No composition"));
+      }
+    } else {
+      p.drawText(QRect(textOffsetX, 0, width(), rowH), Qt::AlignVCenter, QString("No composition"));
+    }
+  } else {
+    QString layerName = "Layer 1";
+    p.drawText(QRect(textOffsetX, 0, width(), rowH), Qt::AlignVCenter, layerName);
+    if (!impl_->visibilityIcon.isNull()) {
+      p.drawPixmap(4, (rowH - 16) / 2, 16, 16, impl_->visibilityIcon);
+    }
   }
  }
 
@@ -218,7 +284,24 @@ namespace Artifact
 
  ArtifactLayerTimelinePanelWrapper::ArtifactLayerTimelinePanelWrapper(const CompositionID& id, QWidget* parent /*= nullptr*/):QWidget(parent),impl_(new Impl())
  {
+    // Initialize children and set the composition id
+    impl_->header = new ArtifactLayerPanelHeaderWidget();
+    impl_->panel = new ArtifactLayerPanelWidget;
+    impl_->panel->setComposition(id);
+    impl_->scroll = new QScrollArea(this);
 
+    impl_->scroll->setWidget(impl_->panel);
+    impl_->scroll->setWidgetResizable(true);
+    impl_->scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+
+    auto* layout = new QVBoxLayout(this);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(0);
+    layout->addWidget(impl_->header);
+    layout->addWidget(impl_->scroll);
+    setLayout(layout);
+
+    impl_->id = id;
  }
 
  ArtifactLayerTimelinePanelWrapper::~ArtifactLayerTimelinePanelWrapper()

@@ -14,6 +14,8 @@ export module Artifact.Project;
 export import Artifact.Project.Settings;
 
 import Artifact.Composition.InitParams;
+import Artifact.Layer.InitParams;
+import Artifact.Layer.Abstract;
 
 import std;
 import Utils;
@@ -21,10 +23,12 @@ import Composition.Settings;
 
 import Artifact.Composition.Result;
 import Artifact.Composition.Abstract;
+import Artifact.Layer.Result;
 
 import Artifact.Project.Items;
 
 W_REGISTER_ARGTYPE(ArtifactCore::CompositionID)
+W_REGISTER_ARGTYPE(ArtifactCore::LayerID)
 
 export namespace Artifact {
 
@@ -61,6 +65,12 @@ export namespace Artifact {
  	
   FindCompositionResult findComposition(const CompositionID& id);
 
+  // Layer management
+  ArtifactLayerResult createLayerAndAddToComposition(const CompositionID& compositionId, ArtifactLayerInitParams& params);
+  AppendLayerToCompositionResult addLayerToComposition(const CompositionID& compositionId, ArtifactAbstractLayerPtr layer);
+
+  bool removeLayerFromComposition(const CompositionID& compositionId, const LayerID& layerId);
+
   void addAssetFile();
   void addAssetFromPath(const QString& filepath);
   QVector<ProjectItem*> projectItems() const;
@@ -86,6 +96,8 @@ export namespace Artifact {
 
   void layerCreated()
    W_SIGNAL(layerCreated);
+  void layerRemoved(const LayerID& id)
+   W_SIGNAL(layerRemoved, id);
 
  	
  };

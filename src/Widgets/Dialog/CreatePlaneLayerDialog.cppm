@@ -97,6 +97,10 @@ namespace Artifact {
   auto style = getDCCStyleSheetPreset(DccStylePreset::ModoStyle);
 
   setStyleSheet(style);
+  
+  // Connect button box signals to close dialog
+  QObject::connect(dialogButtonBox, &QDialogButtonBox::accepted, this, &QDialog::accept);
+  QObject::connect(dialogButtonBox, &QDialogButtonBox::rejected, this, &QDialog::reject);
  }
 
  CreateSolidLayerSettingDialog::~CreateSolidLayerSettingDialog()

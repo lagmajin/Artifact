@@ -10,6 +10,7 @@ import std;
 import Artifact.Project;
 import Artifact.Service.Project;
 import Artifact.Project.Manager;
+import Artifact.Project.Roles;
 
 namespace Artifact
 {
@@ -68,6 +69,8 @@ void ArtifactProjectModel::Impl::refreshTree()
   QString text = it->name.toQString();
   QStandardItem* item = new QStandardItem(text);
   QStandardItem* sizeItem = new QStandardItem();
+  // store item type using ProjectItemDataRole.ProjectItemType
+  item->setData(static_cast<int>(it->type()), Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::ProjectItemType));
   // If this is a composition item, set a simple solid-color square icon
   if (it->type() == eProjectItemType::Composition) {
     // create a small pixmap filled with a single color
@@ -77,12 +80,13 @@ void ArtifactProjectModel::Impl::refreshTree()
     item->setIcon(QIcon(px));
   }
   // store composition ID as string in UserRole+1 instead of raw pointer
+  // store composition ID using ProjectItemDataRole enum to avoid magic numbers
   if (it->type() == eProjectItemType::Composition) {
     CompositionItem* comp = static_cast<CompositionItem*>(it);
-    item->setData(comp->compositionId.toString(), Qt::UserRole+1);
+    item->setData(comp->compositionId.toString(), Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::CompositionId));
   } else {
     // clear/empty for non-composition items
-    item->setData(QString(), Qt::UserRole+1);
+    item->setData(QString(), Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::CompositionId));
   }
   // set default size text for compositions; leave empty for folders
   if (it->type() == eProjectItemType::Composition) {

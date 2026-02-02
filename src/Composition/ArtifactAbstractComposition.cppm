@@ -43,8 +43,8 @@ namespace Artifact {
   AppendLayerToCompositionResult appendLayerTop(ArtifactAbstractLayerPtr layer);
   AppendLayerToCompositionResult appendLayerBottom(ArtifactAbstractLayerPtr layer);
   bool containsLayerById(const LayerID& id) const;
-
   void removeAllLayers();
+  void removeLayer(const LayerID& id);
   const FramePosition framePosition() const;
   void setFramePosition(const FramePosition& position);
   void goToStartFrame();
@@ -97,6 +97,11 @@ namespace Artifact {
   layerMultiIndex_.clear();
  }
 
+void ArtifactAbstractComposition::Impl::removeLayer(const LayerID& id)
+{
+  layerMultiIndex_.removeById(id);
+}
+
  bool ArtifactAbstractComposition::Impl::containsLayerById(const LayerID& id) const
  {
   return layerMultiIndex_.containsId(id);
@@ -130,7 +135,7 @@ namespace Artifact {
 
  QVector<ArtifactAbstractLayerPtr> ArtifactAbstractComposition::Impl::allLayer() const
  {
-  return QVector<ArtifactAbstractLayerPtr>();
+  return layerMultiIndex_.all();
  }
 
  AppendLayerToCompositionResult ArtifactAbstractComposition::Impl::appendLayerBottom(ArtifactAbstractLayerPtr layer)
@@ -171,8 +176,9 @@ namespace Artifact {
 
  QVector<ArtifactAbstractLayerPtr> ArtifactAbstractComposition::Impl::allLayerBackToFront() const
  {
-
-  return QVector<ArtifactAbstractLayerPtr>();
+  auto v = layerMultiIndex_.all();
+  std::reverse(v.begin(), v.end());
+  return v;
  }
 
  ArtifactAbstractComposition::ArtifactAbstractComposition(const CompositionID& id, const ArtifactCompositionInitParams& params) :impl_(new Impl())
@@ -192,11 +198,10 @@ namespace Artifact {
   return impl_->containsLayerById(id);
  }
 
- ArtifactAbstractLayerPtr ArtifactAbstractComposition::layerById(const LayerID& id)
- {
-
-  return nullptr;
- }
+ArtifactAbstractLayerPtr ArtifactAbstractComposition::layerById(const LayerID& id)
+{
+  return impl_->layerMultiIndex_.findById(id);
+}
 
 
  void ArtifactAbstractComposition::setBackGroundColor(const FloatColor& color)
@@ -236,8 +241,7 @@ namespace Artifact {
 
  QVector<Artifact::ArtifactAbstractLayerPtr> ArtifactAbstractComposition::allLayer()
  {
-
-  return QVector<ArtifactAbstractLayerPtr>();
+  return impl_->layerMultiIndex_.all();
  }
 
  AppendLayerToCompositionResult ArtifactAbstractComposition::appendLayerTop(ArtifactAbstractLayerPtr layer)
@@ -257,7 +261,7 @@ namespace Artifact {
 
  void ArtifactAbstractComposition::removeLayer(const LayerID& id)
  {
-
+  impl_->removeLayer(id);
  }
 
  void ArtifactAbstractComposition::removeAllLayers()

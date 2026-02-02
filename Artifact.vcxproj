@@ -257,6 +257,7 @@
     <ClCompile Include="include\Project\ArtifactProjectItems.ixx" />
     <ClCompile Include="include\Project\ArtifactProjectModel.ixx" />
     <ClCompile Include="include\Project\ArtifactProjectResult.ixx" />
+    <ClCompile Include="include\Project\ArtifactProjectRoles.ixx" />
     <ClCompile Include="include\Project\TreeFilterProxyModel.ixx" />
     <ClCompile Include="include\Render\ArtifactOffscreenRenderer2D.ixx" />
     <ClCompile Include="include\Render\ArtifactRenderController.ixx" />
@@ -304,7 +305,7 @@
     <ClCompile Include="include\Widgets\Timeline\ArtifactTimelineLabel.ixx" />
     <ClCompile Include="include\Widgets\Timeline\ArtifactTimelineObjects.ixx" />
     <ClCompile Include="include\Widgets\Timeline\ArtifactTimelineRulerWidget.ixx" />
-    <ClCompile Include="include\Widgets\Timeline\ArtifactTimelineTimeCodeWidget.ixx" />
+    <ClCompile Include="include\Widgets\Timeline\ArtifactTimeCodeWidget.ixx" />
     <ClCompile Include="include\Widgets\Timeline\ArtifactTimelineTimeRangeSlider.ixx" />
     <ClCompile Include="include\Widgets\Timeline\ArtifactWorkAreaControlWidget.ixx" />
     <ClCompile Include="include\Widgets\Timeline\TimelineScaleWidget.ixx" />
@@ -314,6 +315,9 @@
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Asset\ArtifactAssetResult.cpp" />
+    <ClCompile Include="src\Composition\ArtifactCompositionInitParams.cppm">
+      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+    </ClCompile>
     <ClCompile Include="src\Composition\ArtifactCompositionSetting.cpp" />
     <ClCompile Include="src\Controller\TimelineViewProvider.cpp" />
     <ClCompile Include="src\Effetcs\ArtifactAbstractEffect.cppm">
@@ -375,6 +379,9 @@
     <ClCompile Include="src\Preview\ArtifactPreviewWorker.cppm">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
     </ClCompile>
+    <ClCompile Include="src\Project\ArtifactProjectInitParams.cppm">
+      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+    </ClCompile>
     <ClCompile Include="src\Project\ArtifactProjectItems.cpp" />
     <ClCompile Include="src\Project\TreeFilterProxyModel.cppm">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
@@ -422,9 +429,14 @@
     <ClCompile Include="src\Widgets\Menu\ArtifactAnimationMenu.cppm">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
     </ClCompile>
+    <ClCompile Include="src\Widgets\Menu\ArtifactLayerMenu.cppm">
+      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+    </ClCompile>
     <ClCompile Include="src\Widgets\Native\NativeHelper.cpp" />
     <ClCompile Include="src\Widgets\Render\ArtifactCompositionViewerFooter.cpp" />
-    <ClCompile Include="src\Widgets\Render\ArtifactRenderLayerWidgetv2.cpp" />
+    <ClCompile Include="src\Widgets\Render\ArtifactRenderLayerWidgetv2.cppm">
+      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+    </ClCompile>
     <ClCompile Include="src\Widgets\Render\ArtifactRenderWrapperWidget.cpp" />
     <ClCompile Include="src\Widgets\Render\ArtifactLayerEditorPanel.cpp" />
     <ClCompile Include="src\Widgets\Render\ArtifactRenderQueueJobPanel.cpp" />
@@ -645,9 +657,6 @@
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Widgets\Menu\ArtifactHelpMenu.cppm">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
-    </ClCompile>
-    <ClCompile Include="src\Widgets\Menu\ArtifactLayerMenu.cppm">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Widgets\Menu\ArtifactCompositionMenu.cppm">

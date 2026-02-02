@@ -26,6 +26,10 @@ import Artifact.Composition.Abstract;
 import Artifact.Composition._2D;
 import Artifact.Composition.InitParams;
 
+import Artifact.Layer.Factory;
+import Artifact.Layer.InitParams;
+import Artifact.Layer.Result;
+
 import Artifact.Project.Items;
 
 namespace Artifact {
@@ -50,8 +54,9 @@ namespace Artifact {
  };
 
  class ArtifactProject::Impl {
- private:
-  ArtifactProjectSettings projectSettings_;
+  private:
+   ArtifactProjectSettings projectSettings_;
+   ArtifactLayerFactory layerFactory_;
   
   
  public:
@@ -65,9 +70,14 @@ namespace Artifact {
   void createCompositions(const QStringList& names);
   FindCompositionResult findComposition(const CompositionID& id);
   bool removeById(const CompositionID& id);
-  void removeAllCompositions();
+   void removeAllCompositions();
 
-  QJsonObject toJson() const;
+   // Layer management
+   ArtifactLayerResult createLayerAndAddToComposition(const CompositionID& compositionId, ArtifactLayerInitParams& params);
+   AppendLayerToCompositionResult addLayerToComposition(const CompositionID& compositionId, ArtifactAbstractLayerPtr layer);
+  bool removeLayerFromComposition(const CompositionID& compositionId, const LayerID& layerId);
+
+   QJsonObject toJson() const;
   AssetMultiIndexContainer assetContainer_;
   ArtifactCompositionMultiIndexContainer container_;
   std::vector<std::unique_ptr<ProjectItem>> ownedItems_; // owns all allocated items
@@ -366,11 +376,92 @@ FindCompositionResult ArtifactProject::findComposition(const CompositionID& id)
   return false;
  }
 
- QJsonObject ArtifactProject::toJson() const
- {
+  QJsonObject ArtifactProject::toJson() const
+  {
 
-  return  impl_->toJson();
- }
+   return  impl_->toJson();
+  }
+
+  ArtifactLayerResult ArtifactProject::Impl::createLayerAndAddToComposition(const CompositionID& compositionId, ArtifactLayerInitParams& params)
+  {
+   ArtifactLayerResult result;
+   
+   // Create layer using factory
+   result = layerFactory_.createLayer(params);
+   
+   if (!result.success || !result.layer) {
+    return result;
+   }
+
+   // Find the composition
+   auto findResult = findComposition(compositionId);
+   auto compositionPtr = findResult.ptr.lock();
+   if (!findResult.success || !compositionPtr) {
+    result.success = false;
+    return result;
+   }
+
+   // Add layer to composition
+   auto appendResult = compositionPtr->appendLayerTop(result.layer);
+   result.success = appendResult.success;
+
+   return result;
+  }
+
+  AppendLayerToCompositionResult ArtifactProject::Impl::addLayerToComposition(const CompositionID& compositionId, ArtifactAbstractLayerPtr layer)
+  {
+   AppendLayerToCompositionResult result;
+
+   if (!layer) {
+    result.success = false;
+    result.error = AppendLayerToCompositionError::LayerNotFound;
+    result.message = QString("Layer is null");
+    return result;
+   }
+
+   // Find the composition
+   auto findResult = findComposition(compositionId);
+   auto compositionPtr = findResult.ptr.lock();
+   if (!findResult.success || !compositionPtr) {
+    result.success = false;
+    result.error = AppendLayerToCompositionError::CompositionNotFound;
+    result.message = QString("Composition not found");
+    return result;
+   }
+
+   // Add layer to composition
+   result = compositionPtr->appendLayerTop(layer);
+
+   return result;
+  }
+
+  bool ArtifactProject::Impl::removeLayerFromComposition(const CompositionID& compositionId, const LayerID& layerId)
+  {
+    // find composition
+    auto findResult = findComposition(compositionId);
+    auto compPtr = findResult.ptr.lock();
+    if (!findResult.success || !compPtr) return false;
+    if (!compPtr->containsLayerById(layerId)) return false;
+    compPtr->removeLayer(layerId);
+    return true;
+  }
+
+  ArtifactLayerResult ArtifactProject::createLayerAndAddToComposition(const CompositionID& compositionId, ArtifactLayerInitParams& params)
+  {
+   return impl_->createLayerAndAddToComposition(compositionId, params);
+  }
+
+  AppendLayerToCompositionResult ArtifactProject::addLayerToComposition(const CompositionID& compositionId, ArtifactAbstractLayerPtr layer)
+  {
+   return impl_->addLayerToComposition(compositionId, layer);
+  }
+
+  bool ArtifactProject::removeLayerFromComposition(const CompositionID& compositionId, const LayerID& layerId)
+  {
+    bool ok = impl_->removeLayerFromComposition(compositionId, layerId);
+    if (ok) layerRemoved(layerId);
+    return ok;
+  }
 
 
 

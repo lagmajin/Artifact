@@ -8,6 +8,36 @@ export module ApplicationSettingDialog;
 
 export namespace ArtifactCore {
 
+ // General Settings Page
+ class GeneralSettingPage : public QWidget {
+ private:
+  class Impl;
+  Impl* impl_;
+ public:
+  explicit GeneralSettingPage(QWidget* parent = nullptr);
+  ~GeneralSettingPage();
+ };
+
+ // Import Settings Page
+ class ImportSettingPage : public QWidget {
+ private:
+  class Impl;
+  Impl* impl_;
+ public:
+  explicit ImportSettingPage(QWidget* parent = nullptr);
+  ~ImportSettingPage();
+ };
+
+ // Preview Settings Page
+ class PreviewSettingPage : public QWidget {
+ private:
+  class Impl;
+  Impl* impl_;
+ public:
+  explicit PreviewSettingPage(QWidget* parent = nullptr);
+  ~PreviewSettingPage();
+ };
+
  class LabelColorSettingWidget :public QWidget {
  private:
   //LabelColorSettingWidgetPrivate* const	pWidget_;

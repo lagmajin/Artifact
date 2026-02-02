@@ -20,6 +20,9 @@
 #include <QPixmap>
 #include <QStringList>
 #include <QTimer>
+#include <QInputDialog>
+#include <QContextMenuEvent>
+#include <QLineEdit>
 module Artifact.Widgets.ProjectManagerWidget;
 
 import std;
@@ -29,6 +32,7 @@ import Artifact.Project.Manager;
 import Artifact.Service.Project;
 import Artifact.Project.Model;
 import Artifact.Project.Items;
+import Artifact.Project.Roles;
 import Artifact.Widgets.LayerPanelWidget;
 
 
@@ -90,9 +94,19 @@ void ArtifactProjectView::handleItemDoubleClicked(const QModelIndex& index)
     qDebug() << "ArtifactProjectView: item double-clicked:" << v.toString();
   }
 
-  // UserRole+1 に格納された CompositionID 文字列を取得
+  // Composition ID を ProjectItemDataRole enum を使って取得
   // 注意: internalPointer() は QStandardItem* であり、ProjectItem* ではない
-  QVariant idVar = index.data(Qt::UserRole + 1);
+  // First try to check the stored item type to determine if this is a composition
+  QVariant typeVar = index.data(Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::ProjectItemType));
+  if (typeVar.isValid() && typeVar.canConvert<int>()) {
+    int t = typeVar.toInt();
+    // compare with enum value for Composition (eProjectItemType)
+    if (t != static_cast<int>(eProjectItemType::Composition)) {
+      qDebug() << "Item is not a composition type, ignoring double-click/context actions.";
+      return;
+    }
+  }
+  QVariant idVar = index.data(Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::CompositionId));
   if (!idVar.isValid() || !idVar.canConvert<QString>()) {
     qDebug() << "  No composition ID found for this item.";
     return;
@@ -269,6 +283,8 @@ ArtifactProjectView::ArtifactProjectView(QWidget* parent /*= nullptr*/) :QTreeVi
   QTreeView::mouseMoveEvent(event);
  }
 
+// contextMenuEvent implementation moved later in file (kept a single implementation)
+
  void ArtifactProjectView::dropEvent(QDropEvent* event)
  {
   event->setDropAction(Qt::CopyAction);
@@ -299,12 +315,12 @@ ArtifactProjectView::ArtifactProjectView(QWidget* parent /*= nullptr*/) :QTreeVi
 	}
    }
 
-   event->acceptProposedAction();  // ドロップ操作を受理
+    event->acceptProposedAction();  // ドロップ操作を受理
+   }
+   else {
+    event->ignore();  // 無効なドロップ
+   }
   }
-  else {
-   event->ignore();  // 無効なドロップ
-  }
- }
 
 void ArtifactProjectView::mouseReleaseEvent(QMouseEvent* event)
 {
@@ -357,6 +373,51 @@ void ArtifactProjectView::mouseReleaseEvent(QMouseEvent* event)
    }
   }
   event->ignore();
+ }
+
+ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event)
+ {
+  QModelIndex idx = indexAt(event->pos());
+  if (!idx.isValid()) return;
+  // Use the typed roles
+  QVariant typeVar = idx.data(Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::ProjectItemType));
+  QVariant compIdVar = idx.data(Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::CompositionId));
+  QMenu menu(this);
+  if (compIdVar.isValid() && !compIdVar.toString().isEmpty()) {
+    QAction* openAction = menu.addAction(tr("Open"));
+    QAction* renameAction = menu.addAction(tr("Rename"));
+    QAction* deleteAction = menu.addAction(tr("Delete"));
+    QAction* selected = menu.exec(event->globalPos());
+    if (!selected) return;
+    if (selected == openAction) {
+      handleItemDoubleClicked(idx);
+    } else if (selected == renameAction) {
+      QString currentName = idx.data(Qt::DisplayRole).toString();
+      bool ok = false;
+      QString newName = QInputDialog::getText(this, tr("Rename"), tr("New name:"), QLineEdit::Normal, currentName, &ok);
+      if (ok && !newName.isEmpty()) {
+      // Update model display value
+      if (this->model()) {
+        this->model()->setData(idx, newName, Qt::DisplayRole);
+      }
+      // Update underlying project via service using composition id
+      QVariant idVar = idx.data(Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::CompositionId));
+      if (idVar.isValid() && idVar.canConvert<QString>()) {
+        QString idStr = idVar.toString();
+        if (!idStr.isEmpty()) {
+          // construct UniString from QString for public API
+          UniString u;
+          u.setQString(newName);
+          ArtifactProjectService::instance()->renameComposition(CompositionID(idStr), u);
+        }
+      }
+    }
+    } else if (selected == deleteAction) {
+      // TODO: implement deletion via ProjectService/Manager with confirmation
+    }
+  }
+
+
  }
 
  class ArtifactProjectManagerWidget::Impl {

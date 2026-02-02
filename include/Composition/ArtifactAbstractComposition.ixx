@@ -38,6 +38,7 @@ export namespace Artifact {
   AppendLayerToCompositionResult appendLayerBottom(ArtifactAbstractLayerPtr layer);
   void insertLayerAt(ArtifactAbstractLayerPtr layer, int index=0);
   void removeLayer(const LayerID& id);
+  void removeLayerById(const LayerID& id);
   void removeAllLayers();
   CompositionID id() const;
   int layerCount() const;
