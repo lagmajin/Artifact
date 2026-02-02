@@ -263,6 +263,162 @@ struct MyData {
 - ? **これらのファイルを手動で変更すると、Visual Studioのプロジェクト構造やフィルタが壊れます。**
 - ? **新しいファイルを作成した場合は、ユーザーにVisual Studioを使って追加するように指示してください。**
 
+## ArtifactCore Library Usage (Preferred Classes)
+**?? MANDATORY: Always prefer using ArtifactCore library classes instead of creating new implementations:**
+
+### Image Processing
+- **Use `ImageF32x4_RGBA`** (from `import Image.ImageF32x4_RGBA;`) for all float RGBA image data
+  - Provides efficient cv::Mat-backed storage with conversion methods
+  - Use `setFromCVMat(const cv::Mat&)` to convert various cv::Mat types
+  - Use `toCVMat()` to get underlying cv::Mat for OpenCV operations
+  - Supports pixel access, blending, cropping, flipping
+- **Use `ImageF32x4RGBAWithCache`** (from `import Image.ImageF32x4RGBAWithCache;`) for GPU-accelerated images
+  - Provides CPU-GPU synchronization for rendering pipelines
+  - Use `UpdateGpuTextureFromCpuData()` and `UpdateCpuDataFromGpuTexture()` for sync
+  - Wraps `ImageF32x4_RGBA` with GPU texture caching
+
+### String Handling
+- **Use `UniString`** (from `import Utils.String.UniString;`) for ALL public APIs and internal storage
+  - Never use `QString` in public APIs - only convert to `QString` internally when calling Qt APIs
+  - Use `toQString()` to convert to `QString` when needed
+  - Use `setQString(const QString&)` to set from `QString`
+
+### Identifiers
+- **Use `CompositionID`** and `LayerID`** (from `import Utils.Id;`) for all ID types
+  - Both inherit from `Id` class
+  - Use `isNil()` to check validity
+  - Use `toString()` for debugging/logging
+  - Supports comparison operators and hashing
+
+### Media & Video
+- **Use `MediaAudioDecoder`** (from `import Media.MediaAudioDecoder;`) for audio decoding
+- **Use `MediaPlaybackController`** (from `import Media.MediaPlaybackController;`) for playback control
+- **Use `MediaSource`** (from `import Media.MediaSource;`) for media file handling
+- **Use `FFMpegEncoder`** (from `import Video.FFMpegEncoder;`) for video encoding
+- **Use `MediaMetaData`** (from `import Media.MediaMetaData;`) for media file metadata
+
+### Frame & Time
+- **Use `FramePosition`** (from `import Frame.Position;`) for frame positions
+- **Use `FrameRate`** (from `import Frame.Rate;`) for frame rate handling
+- **Use `FrameRange`** (from `import Frame.Range;`) for frame ranges
+- **Use `RationalTime`** (from `import Time.RationalTime;`) for precise time calculations
+
+### Color
+- **Use `FloatRGBA`** (from `import FloatRGBA;`) for RGBA color in float [0-1] range
+  - Constructor: `FloatRGBA(float r, float g, float b, float a = 1.0f)`
+  - Accessors: `r()`, `g()`, `b()`, `a()`
+- **Use `FloatColor`** (from `import Color.Float;`) for RGB color operations
+- **Use `LUT`** (from `import Color.LUT;`) for color lookup tables
+
+### Containers
+- **Use `MultiIndexContainer<Ptr, Id, TypeKey>`** (from `import Container.MultiIndex;`) for indexed collections
+  - Provides fast access by ID, type, and linear iteration
+  - Use `add(ptr, id, typeKey)` to insert
+  - Use `findById(id)` to retrieve by ID
+  - Use `removeById(id)` to remove
+  - Use `all()` to get all items as QVector
+
+### Script & Expression Engine
+- **Use `ExpressionParser`** and `ExpressionEvaluator`** (from `import Script.Expression.Parser;` and `import Script.Expression.Evaluator;`) for expression evaluation
+- **Use `ScriptContext`** (from `import Script.Engine.Context;`) for script execution context
+
+### Transforms & Animation
+- **Use `AnimatableTransform2D`** and `AnimatableTransform3D`** (from `import Animation.Transform2D;` and `import Animation.Transform3D;`) for animated transformations
+- **Use `StaticTransform2D/3D`** for non-animated transforms
+
+### Utilities
+- **Use `getIconPath()`** (from `import Utils.Path;`) to get the application icon directory path
+- **Use `ScopedTimer`** (from `import Utils.ScopedTimer;`) for performance measurement
+
+### Rules for ArtifactCore Usage
+- ? **ALWAYS check if ArtifactCore provides the functionality before implementing from scratch**
+- ? **Import the appropriate ArtifactCore module at the top of your implementation file**
+- ? **Use ArtifactCore types in Pimpl Impl classes to keep implementation details hidden**
+- ? **When converting between types (e.g., cv::Mat ? ImageF32x4_RGBA), use provided conversion methods**
+
+## Expanded ArtifactCore Reference (quick lookup)
+Use these preferred types and helpers when implementing features. Import modules shown in parentheses.
+
+- Image & GPU
+  - `ImageF32x4_RGBA` (`import Image.ImageF32x4_RGBA;`) ? float RGBA backed by `cv::Mat`.
+  - `ImageF32x4RGBAWithCache` (`import Image.ImageF32x4RGBAWithCache;`) ? CPU/GPU cache, call `UpdateGpuTextureFromCpuData()`.
+  - `GPUTexture`, `GPUTextureCacheManager` (`import Graphics.GPUTexture;`) ? low-level texture helpers used by renderer.
+
+- Rendering pipeline
+  - `RenderSettings`, `RendererQueueManager`, `RenderWorker` (`import Render.Renderer;`) ? use for scheduled render jobs.
+  - `RenderJobModel` (`import Render.RenderJobModel;`) ? job description object for queueing.
+
+- Video / Media
+  - `FFMpegEncoder` (`import Video.FFMpegEncoder;`) ? exposures for encoding settings.
+  - `MediaPlaybackController`, `MediaSource`, `MediaMetaData` (`import Media.MediaPlaybackController;`) ? playback and metadata.
+
+- Composition / Project
+  - `ArtifactProject`, `ArtifactProjectManager` (`import Artifact.Project.Manager;`) ? central project APIs.
+  - `ArtifactAbstractComposition`, `CompositionID` (`import Artifact.Composition.Abstract;`, `import Utils.Id;`) ? composition containers and ids.
+  - `MultiIndexLayerContainer` (`import Container.MultiIndex;`) ? store layers; use `add`, `findById`, `removeById`, `all()`.
+
+- Layers
+  - `ArtifactAbstractLayer` and concrete types (`import Layer.*;`) ? use factory `ArtifactLayerFactory` to create layers.
+  - Layer metadata: `LayerID`, `LayerState`, `LayerBlendType` (`import Layer.LayerState;`).
+
+- Time & Frames
+  - `FramePosition`, `FrameRate`, `FrameRange`, `RationalTime` (`import Frame.Position;`, `import Time.RationalTime;`) ? canonical time types.
+
+- Scripting
+  - `ScriptContext`, `ExpressionParser`, `ExpressionEvaluator` (`import Script.Engine.Context;`) ? prefer these for expression evaluation and script bindings.
+
+## Recommended Patterns and Examples
+
+- Module import example (in `.cppm`):
+  - Use global includes then module declaration, e.g.:
+    ```cpp
+    module;
+    #include <QString>
+    #include <QWidget>
+    module Artifact.Widgets.MyWidget;
+
+    import std;
+    import Utils.String.UniString;
+    import Image.ImageF32x4_RGBA;
+    ```
+
+- Pimpl usage (reminder): store ArtifactCore types inside `Impl` and convert in public methods.
+
+- Signal & threading rules:
+  - Emit UI signals on the main thread. Use `QMetaObject::invokeMethod` or `QTimer::singleShot(0, ...)` for cross-thread delivery.
+  - Heavy CPU tasks (encoding, image processing) should run on worker threads; marshal results back to the UI via signals.
+
+## Error handling and diagnostics
+
+- Use `Q_ASSERT` for invariants during development, and return sensible `Result` objects for API errors (`CreateCompositionResult`, etc.).
+- Log important events through ArtifactCore logging helpers (`import Log.Log;`) rather than printf.
+
+## Tests and CI
+
+- Add unit tests for conversions (QImage ? cv::Mat ? ImageF32x4_RGBA) and for project/composition add/remove flows.
+- Ensure new modules compile under CI for all supported configurations (Debug/Release x64).
+
+## Adding new UI dialogs or widgets
+
+- Follow the existing pattern: create `.ixx` interface in `include/...` and `.cppm` implementation in `src/...`.
+- Add resources (icons) under the project's icon path (`getIconPath()` helper) and load in UI code.
+
+## Final checklist for contributors
+
+1. Did you search ArtifactCore for existing functionality before implementing? (mandatory)
+2. Did you add only `.ixx`/`.cppm` files per rules? (mandatory)
+3. Are public APIs using `UniString` and IDs using `CompositionID`/`LayerID`? (mandatory)
+4. Are UI signals marshalled to main thread? (recommended)
+5. Are conversions and heavy processing delegated to ArtifactCore utilities? (recommended)
+
+-- End of additional guidance
+
+**?? 必須：ArtifactCoreライブラリの優先使用**
+- ? **新しい実装を作る前に、必ずArtifactCoreに該当機能があるか確認してください**
+- ? **画像処理には `ImageF32x4_RGBA` と `ImageF32x4RGBAWithCache` を使用**
+- ? **文字列には `UniString`、IDには `CompositionID`/`LayerID` を使用**
+- ? **メディア処理には `MediaAudioDecoder`, `MediaPlaybackController` などを使用**
+
 ## Code Style
 - Follow specific formatting rules.
 - Adhere to naming conventions.
