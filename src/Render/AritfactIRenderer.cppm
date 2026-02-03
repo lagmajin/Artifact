@@ -294,6 +294,8 @@ void AritfactIRenderer::Impl::createSwapChain(QWidget* window)
   {{0.0f, 1.0f}, {1, 0, 0, 1}}, // 左下
   {{1.0f, 1.0f}, {1, 0, 0, 1}}, // 右下
   };
+
+
    
    
  }
@@ -327,12 +329,19 @@ void AritfactIRenderer::Impl::createSwapChain(QWidget* window)
 	 {{1.0f, 1.0f}, {1, 0, 0, 1}}, // 右下
   };
 
-   
+  auto* pRTV = pSwapChain_->GetCurrentBackBufferRTV();
    
  }
 
  void AritfactIRenderer::Impl::drawSolidRect(float x, float y, float w, float h)
  {
+	 RectVertex vertices[4] = {
+   {{0.0f, 0.0f}, {1, 0, 0, 1}}, // 左上
+   {{1.0f, 0.0f}, {1, 0, 0, 1}}, // 右上
+   {{0.0f, 1.0f}, {1, 0, 0, 1}}, // 左下
+   {{1.0f, 1.0f}, {1, 0, 0, 1}}, // 右下
+	 };
+
 
  }
 
