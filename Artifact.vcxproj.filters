@@ -288,5 +288,6 @@
   </ItemGroup>
   <ItemGroup>
     <None Include=".github\copilot-instructions.md" />
+    <None Include="PROJECT_GOALS.md" />
   </ItemGroup>
 </Project>

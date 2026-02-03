@@ -9,6 +9,9 @@ module;
 #include <QMultiMap>
 #include <typeindex>
 #include <QString>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonArray>
 
 module Artifact.Composition.Abstract;
 
@@ -169,10 +172,19 @@ void ArtifactAbstractComposition::Impl::removeLayer(const LayerID& id)
   return false;
  }
 
- ArtifactAbstractLayerPtr ArtifactAbstractComposition::Impl::frontMostLayer() const
- {
-  return ArtifactAbstractLayerPtr();
- }
+ArtifactAbstractLayerPtr ArtifactAbstractComposition::Impl::frontMostLayer() const
+{
+    auto all = layerMultiIndex_.all();
+    if (!all.isEmpty()) return all.last();
+    return ArtifactAbstractLayerPtr();
+}
+
+ArtifactAbstractLayerPtr ArtifactAbstractComposition::Impl::backMostLayer() const
+{
+    auto all = layerMultiIndex_.all();
+    if (!all.isEmpty()) return all.first();
+    return ArtifactAbstractLayerPtr();
+}
 
  QVector<ArtifactAbstractLayerPtr> ArtifactAbstractComposition::Impl::allLayerBackToFront() const
  {
@@ -254,30 +266,37 @@ ArtifactAbstractLayerPtr ArtifactAbstractComposition::layerById(const LayerID& i
    return impl_->appendLayerBottom(layer);
  }
 
- void ArtifactAbstractComposition::insertLayerAt(ArtifactAbstractLayerPtr layer, int index/*=0*/)
- {
-
- }
+void ArtifactAbstractComposition::insertLayerAt(ArtifactAbstractLayerPtr layer, int index/*=0*/)
+{
+    if (!layer) return;
+    auto id = layer->id();
+    impl_->layerMultiIndex_.insertAt(index, layer, id, layer->type_index());
+}
 
  void ArtifactAbstractComposition::removeLayer(const LayerID& id)
  {
   impl_->removeLayer(id);
  }
 
- void ArtifactAbstractComposition::removeAllLayers()
- {
+void ArtifactAbstractComposition::removeAllLayers()
+{
+    impl_->removeAllLayers();
+}
 
- }
-
- ArtifactAbstractLayerPtr ArtifactAbstractComposition::frontMostLayer() const
- {
+ArtifactAbstractLayerPtr ArtifactAbstractComposition::frontMostLayer() const
+{
     return impl_->frontMostLayer();
- }
+}
+
+ArtifactAbstractLayerPtr ArtifactAbstractComposition::backMostLayer() const
+{
+    return impl_->backMostLayer();
+}
 
 CompositionID ArtifactAbstractComposition::id() const
- {
- return CompositionID();
- }
+{
+    return impl_->id_;
+}
 
 bool ArtifactAbstractComposition::isAudioOnly() const
 {
@@ -293,5 +312,22 @@ bool ArtifactAbstractComposition::isPlaying() const
 {
  return impl_->isPlaying_;
 }
+
+QJsonDocument ArtifactAbstractComposition::toJson() const
+{
+    QJsonObject obj;
+    obj["id"] = id().toString();
+    QJsonArray layersArray;
+    for (const auto& layer : impl_->layerMultiIndex_.all()) {
+        if (layer) {
+            layersArray.append(layer->toJson());
+        }
+    }
+    obj["layers"] = layersArray;
+    // 必要に応じて他のプロパティも追加可能
+    return QJsonDocument(obj);
+}
+
+
 
 };

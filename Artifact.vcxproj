@@ -744,6 +744,7 @@
       <Command Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">thrift --gen cpp --out "$(ProjectDir)Generated"  "%(Filename).thrift"</Command>
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
     </CustomBuild>
+    <None Include="PROJECT_GOALS.md" />
   </ItemGroup>
   <ItemGroup>
     <FxCompile Include="include\Widgets\Render\Shader\Common2DPS.hlsl">
