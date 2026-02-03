@@ -211,7 +211,10 @@ void ArtifactProjectView::Impl::handleDoubleClicked(const QModelIndex& index)
 
  void ArtifactProjectView::Impl::handleFileDrop(const QString& str)
  {
-
+    // Convert to UniString and delegate to project service to register asset
+    UniString u;
+    u.setQString(str);
+    ArtifactProjectService::instance()->addAssetFromPath(u);
  }
 
 ArtifactProjectView::ArtifactProjectView(QWidget* parent /*= nullptr*/) :QTreeView(parent), impl_(new Impl())
