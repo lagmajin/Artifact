@@ -157,6 +157,14 @@ ArtifactProjectModel::ArtifactProjectModel(QObject* parent/*=nullptr*/) :QAbstra
       endResetModel();
     }
   });
+  // Also refresh when the project/service notifies of general changes
+  connect(impl_->projectService(), &ArtifactProjectService::projectChanged, this, [this]() {
+    if (impl_->projectPtr_.lock()) {
+      beginResetModel();
+      impl_->refreshTree();
+      endResetModel();
+    }
+  });
   // Transfer ownership of the internal model to this QObject so Qt manages its lifetime
   if (impl_ && impl_->model_)
     impl_->model_->setParent(this);

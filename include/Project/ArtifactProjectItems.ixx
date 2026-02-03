@@ -34,6 +34,7 @@ export namespace Artifact {
 
  // 2. 具象クラス（必要なデータのみ保持）
  class FootageItem : public ProjectItem {
+ public:
   eProjectItemType type() const override { return eProjectItemType::Footage; }
   QString filePath;
   

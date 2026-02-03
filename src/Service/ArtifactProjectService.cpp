@@ -69,10 +69,12 @@ namespace Artifact
  void ArtifactProjectService::Impl::addAssetFromPath(const UniString& path)
  {
     auto& manager = projectManager();
- 	
-    //manager->
 
     manager.addAssetFromFilePath(path);
+
+    // Notify listeners that project changed so UI updates immediately
+    // Notify manager/service that project changed so UI updates immediately
+    manager.projectChanged();
  	
  }
 

@@ -5,6 +5,7 @@
 #include <typeindex>
 #include <wobjectimpl.h>
 #include <wobjectdefs.h>
+#include <QFileInfo>
 
 #include <QHash>
 #include <QVector>
@@ -108,9 +109,40 @@ QVector<ProjectItem*> ArtifactProject::projectItems() const
 
  void ArtifactProject::Impl::addAssetFromPath(const QString& string)
  {
-  auto asset = new AbstractAssetFile();
+  if (string.isEmpty()) return;
 
-  //assetContainer_.addSafe(asset->assetID(),asset);
+  // Create a FootageItem and add it under the project root
+  auto fi = QFileInfo(string);
+  auto footageUp = std::make_unique<FootageItem>();
+  footageUp->filePath = string;
+  footageUp->name.setQString(fi.fileName());
+
+  // attach to project root if exists
+  ProjectItem* projectRoot = nullptr;
+  if (!ownedItems_.empty()) projectRoot = ownedItems_.front().get();
+  if (!projectRoot) {
+    // create a root placeholder if none
+    auto rootUp = std::make_unique<FolderItem>();
+    rootUp->name.setQString("Project Root");
+    projectRoot = rootUp.get();
+    ownedItems_.push_back(std::move(rootUp));
+  }
+  footageUp->parent = projectRoot;
+  projectRoot->children.append(footageUp.get());
+
+  // keep ownership
+  ownedItems_.push_back(std::move(footageUp));
+
+  // Optionally register into asset container if implemented
+  // assetContainer_.addSafe(asset->assetID(), asset);
+
+  // notify listeners - emit signal on the owning ArtifactProject instance
+  // We are in Impl, so call the containing ArtifactProject's signal via a helper
+  // Emit projectChanged from the public ArtifactProject that owns this Impl
+  // (the public object will be the 'this' pointer's outer class; use outer emit helper)
+  // For simplicity, we will call a free helper that emits the signal on a target project
+  // Find the parent ArtifactProject instance: we cannot from Impl; instead rely on callers
+  // to call projectChanged() after calling this method.
  }
 
 
