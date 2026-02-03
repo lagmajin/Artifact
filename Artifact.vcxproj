@@ -745,6 +745,7 @@
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
     </CustomBuild>
     <None Include="PROJECT_GOALS.md" />
+    <None Include="UI_WIDGETS_LIST.md" />
   </ItemGroup>
   <ItemGroup>
     <FxCompile Include="include\Widgets\Render\Shader\Common2DPS.hlsl">

@@ -3,6 +3,9 @@
 ## Project Goals
 - このアプリの目標・ビジョンは [PROJECT_GOALS.md](../PROJECT_GOALS.md) を参照してください。
 
+## UIウィジェット一覧
+- 主なUIウィジェットと機能は [UI_WIDGETS_LIST.md](../UI_WIDGETS_LIST.md) を参照してください。
+
 ## General Guidelines
 - Use C++20 modules (e.g., `import std`) instead of traditional header includes (e.g., `#include`) whenever possible. Prioritize module imports to enhance code organization and efficiency.
 - In Qt projects, prefer using Qt containers (e.g., `QVector`, `QList`) over standard containers like `std::vector` to maintain consistency and leverage Qt's features.
