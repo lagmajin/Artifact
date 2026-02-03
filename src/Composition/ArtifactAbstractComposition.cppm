@@ -1,6 +1,7 @@
 ﻿// ReSharper disable All
 module;
 
+#include <QJsonDocument>
 #include <QList>
 #include <qforeach.h>
 #include <wobjectimpl.h>
@@ -328,6 +329,31 @@ QJsonDocument ArtifactAbstractComposition::toJson() const
     return QJsonDocument(obj);
 }
 
+std::shared_ptr<ArtifactAbstractComposition> ArtifactAbstractComposition::fromJson(const QJsonDocument& doc)
+{
+    if (!doc.isObject()) return nullptr;
+    QJsonObject obj = doc.object();
+    // ID取得
+    CompositionID compId;
+    if (obj.contains("id")) {
+        compId = CompositionID(obj["id"].toString());
+    }
+    // 仮: デフォルトパラメータで生成
+    ArtifactCompositionInitParams params;
+    auto comp = std::make_shared<ArtifactAbstractComposition>(compId, params);
+    // レイヤー復元
+    if (obj.contains("layers") && obj["layers"].isArray()) {
+        QJsonArray arr = obj["layers"].toArray();
+        for (const auto& v : arr) {
+            if (v.isObject()) {
+                auto layer = ArtifactAbstractLayer::fromJson(v.toObject());
+                if (layer) comp->appendLayerTop(layer);
+            }
+        }
+    }
+    // 必要に応じて他のプロパティも復元
+    return comp;
+}
 
 
 };
