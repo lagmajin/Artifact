@@ -315,7 +315,9 @@
     <ClCompile Include="include\Widgets\Timeline\ArtifactWorkAreaControlWidget.ixx" />
     <ClCompile Include="include\Widgets\Timeline\TimelineScaleWidget.ixx" />
     <ClCompile Include="include\Widgets\Viewer\ArtifactContentsViewer.ixx" />
-    <ClCompile Include="src\Application\ActiveContextService.cpp" />
+    <ClCompile Include="src\Application\ActiveContextService.cppm">
+      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+    </ClCompile>
     <ClCompile Include="src\Application\ArtifactApplicationManager.cpp">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
     </ClCompile>

@@ -269,9 +269,10 @@ ArtifactAbstractLayerPtr ArtifactAbstractComposition::layerById(const LayerID& i
 
 void ArtifactAbstractComposition::insertLayerAt(ArtifactAbstractLayerPtr layer, int index/*=0*/)
 {
+    // TODO: insertAt not yet implemented in MultiIndexContainer
+    // For now, just append to top
     if (!layer) return;
-    auto id = layer->id();
-    impl_->layerMultiIndex_.insertAt(index, layer, id, layer->type_index());
+    appendLayerTop(layer);
 }
 
  void ArtifactAbstractComposition::removeLayer(const LayerID& id)
@@ -329,6 +330,8 @@ QJsonDocument ArtifactAbstractComposition::toJson() const
     return QJsonDocument(obj);
 }
 
+// TODO: fromJson is not declared in the interface - commenting out for now
+/*
 std::shared_ptr<ArtifactAbstractComposition> ArtifactAbstractComposition::fromJson(const QJsonDocument& doc)
 {
     if (!doc.isObject()) return nullptr;
@@ -354,6 +357,6 @@ std::shared_ptr<ArtifactAbstractComposition> ArtifactAbstractComposition::fromJs
     // 必要に応じて他のプロパティも復元
     return comp;
 }
-
+*/
 
 };

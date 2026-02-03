@@ -19,6 +19,12 @@ export namespace Artifact
  public/**/:
   void sendPlayToActiveContext(); W_SLOT(sendPlayToActiveContext)
  	void sendPauseToActiveContext(); W_SLOT(sendPauseToActiveContext)
+ 	void sendStopToActiveContext(); W_SLOT(sendStopToActiveContext)
+ 	void sendNextFrameToActiveContext(); W_SLOT(sendNextFrameToActiveContext)
+ 	void sendPreviousFrameToActiveContext(); W_SLOT(sendPreviousFrameToActiveContext)
+ 	void sendGoToStartToActiveContext(); W_SLOT(sendGoToStartToActiveContext)
+ 	void sendGoToEndToActiveContext(); W_SLOT(sendGoToEndToActiveContext)
+ 	void sendSeekToFrameToActiveContext(int frame); W_SLOT(sendSeekToFrameToActiveContext)
  	
  };
 
