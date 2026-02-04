@@ -26,16 +26,22 @@ void soloClicked() W_SIGNAL(soloClicked)
  };
 
 
- class ArtifactLayerPanelWidget :public QWidget
- {
-  W_OBJECT(ArtifactLayerPanelWidget)
- private:
-  class Impl;
-  Impl* impl_;
- protected:
-  void mousePressEvent(QMouseEvent* event) override;
-  void paintEvent(QPaintEvent* event) override;
- public:
+  class ArtifactLayerPanelWidget :public QWidget
+  {
+   W_OBJECT(ArtifactLayerPanelWidget)
+  private:
+   class Impl;
+   Impl* impl_;
+  protected:
+   void mousePressEvent(QMouseEvent* event) override;
+   void mouseMoveEvent(QMouseEvent* event) override;
+   void leaveEvent(QEvent* event) override;
+   void paintEvent(QPaintEvent* event) override;
+   void dragEnterEvent(class QDragEnterEvent* event) override;
+   void dragMoveEvent(class QDragMoveEvent* event) override;
+   void dropEvent(class QDropEvent* event) override;
+   void dragLeaveEvent(class QDragLeaveEvent* event) override;
+  public:
   explicit ArtifactLayerPanelWidget(QWidget* parent = nullptr);
 
   ~ArtifactLayerPanelWidget();

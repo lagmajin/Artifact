@@ -385,6 +385,7 @@ void ArtifactProjectView::mouseReleaseEvent(QMouseEvent* event)
   if (!idx.isValid()) return;
   // Use the typed roles
   QVariant typeVar = idx.data(Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::ProjectItemType));
+  qDebug() << "[contextMenuEvent] typeVar valid=" << typeVar.isValid() << ", value=" << typeVar << ", int=" << typeVar.toInt();
   QVariant compIdVar = idx.data(Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::CompositionId));
   QMenu menu(this);
   QAction* explorerAction = nullptr;

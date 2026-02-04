@@ -2,6 +2,7 @@
 #include <QList>
 #include <wobjectimpl.h>
 #include <glm/ext/matrix_projection.hpp>
+#include <QDebug>
 module Artifact.Service.Project;
 
 import std;
@@ -57,11 +58,11 @@ namespace Artifact
  void ArtifactProjectService::Impl::addLayerToCurrentComposition(const ArtifactLayerInitParams& params)
  {
  	
-  auto factory = ArtifactLayerFactory();
-
-  auto layer = factory.createNewLayer(params);
-  
-  projectManager().currentComposition()->appendLayerTop(layer);
+  	
+    // Delegate to ArtifactProjectManager - this is the proper flow
+    auto& manager = projectManager();
+    auto result = manager.addLayerToCurrentComposition(const_cast<ArtifactLayerInitParams&>(params));
+    qDebug() << "[ArtifactProjectService::Impl::addLayerToCurrentComposition] delegated to manager, result=" << result.success;
  	
  	
  }

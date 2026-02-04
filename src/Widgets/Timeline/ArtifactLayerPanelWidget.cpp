@@ -10,6 +10,13 @@ module;
 #include <QMenu>
 #include <QContextMenuEvent>
 #include <QMouseEvent>
+#include <QDragEnterEvent>
+#include <QDragMoveEvent>
+#include <QDropEvent>
+#include <QDragLeaveEvent>
+#include <QMimeData>
+#include <QUrl>
+#include <QDebug>
 module Artifact.Widgets.LayerPanelWidget;
 
 import std;
@@ -124,6 +131,7 @@ namespace Artifact
   QPixmap normalLayerIcon;
   QPixmap adjLayerIcon;
   QPixmap nullLayerIcon;
+  int hoveredLayerIndex = -1;  // マウスホバー中のレイヤーインデックス
  };
 
  ArtifactLayerPanelWidget::Impl::Impl()
@@ -141,6 +149,7 @@ namespace Artifact
  ArtifactLayerPanelWidget::ArtifactLayerPanelWidget(QWidget* parent /*= nullptr*/) :QWidget(parent), impl_(new Impl)
  {
   setWindowTitle("ArtifactLayerPanel");
+  setAcceptDrops(true);
 
     // Refresh when layers are removed elsewhere
     QObject::connect(ArtifactProjectService::instance(), &ArtifactProjectService::layerRemoved, this, [this](const LayerID&) {
@@ -189,67 +198,201 @@ void ArtifactLayerPanelWidget::setComposition(const CompositionID& id)
             }
         }
     }
+    // Left-click -> select layer
+    else if (event->button() == Qt::LeftButton) {
+        const int rowH = 28;
+        int idx = event->pos().y() / rowH;
+        impl_->hoveredLayerIndex = idx;
+        update();  // Repaint to show selection
+    }
     QWidget::mousePressEvent(event);
  }
 
- void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
+ void ArtifactLayerPanelWidget::mouseMoveEvent(QMouseEvent* event)
+ {
+    const int rowH = 28;
+    int idx = event->pos().y() / rowH;
+    
+    if (idx != impl_->hoveredLayerIndex) {
+        impl_->hoveredLayerIndex = idx;
+        update();  // Repaint to update hover highlight
+    }
+ }
+
+ void ArtifactLayerPanelWidget::leaveEvent(QEvent* event)
+ {
+    if (impl_->hoveredLayerIndex >= 0) {
+        impl_->hoveredLayerIndex = -1;
+        update();
+    }
+    QWidget::leaveEvent(event);
+ }
+
+  void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
  {
   QPainter p(this);
   const int rowH = 28; // 行の高さ
-
-  // 1. まず全体をベースの色で塗る（もしくはループ内で塗り分ける）
-  // p.fillRect(rect(), QColor(40, 40, 40)); 
-
-  // 2. 行ごとに色を変えて塗りつぶす
+  const int iconSize = 16;
+  const int iconSpacing = 4;
+  const int leftPadding = 4;
+  
+  // 背景を塗りつぶし
   for (int i = 0; i * rowH < height(); ++i) {
    int y = i * rowH;
-
+   
+   // ホバーハイライト
+   if (i == impl_->hoveredLayerIndex) {
+	p.fillRect(0, y, width(), rowH, QColor(55, 55, 80));  // 青系のハイライト
+   }
    // 偶数行と奇数行で色を分ける
-   if (i % 2 == 0) {
-	p.fillRect(0, y, width(), rowH, QColor(42, 42, 42)); // 暗いグレー
+   else if (i % 2 == 0) {
+	p.fillRect(0, y, width(), rowH, QColor(42, 42, 42));
+   } else {
+	p.fillRect(0, y, width(), rowH, QColor(45, 45, 45));
    }
-   else {
-	p.fillRect(0, y, width(), rowH, QColor(45, 45, 45)); // わずかに明るいグレー
-   }
-
-   // ついでに横線も引く（塗りつぶし境界に線を引く場合）
+   
+   // 区切り線
    p.setPen(QColor(60, 60, 60));
    p.drawLine(0, y + rowH, width(), y + rowH);
   }
 
-  // --- 以下、アイコンやテキストの描画 ---
-  // テキストを中央寄せにするためのテクニック
-  const int textOffsetX = 24 * 5;
-  p.setPen(Qt::white);
-  // If a composition is set, draw its layers; otherwise draw placeholder
+  // デバッグ出力
+  qDebug() << "[paintEvent] compositionId.isNil()=" << impl_->compositionId.isNil();
+  
   if (!impl_->compositionId.isNil()) {
-    // Try to find composition by id via service
     auto compResult = ArtifactProjectService::instance()->findComposition(impl_->compositionId);
+    qDebug() << "[paintEvent] findComposition.success=" << compResult.success;
+    
     if (compResult.success) {
       auto compShared = compResult.ptr.lock();
+      qDebug() << "[paintEvent] compShared valid=" << (compShared != nullptr);
+      
       if (compShared) {
         QVector<ArtifactAbstractLayerPtr> layers = compShared->allLayer();
+        qDebug() << "[paintEvent] Rendering" << layers.size() << "layers";
+        
+        // After Effects風にレイヤーを逆順で描画（最後のレイヤーが最も上に表示）
         for (int idx = 0; idx < layers.size(); ++idx) {
           int y = idx * rowH;
           auto layer = layers[idx];
-          QString name = layer ? layer->layerName() : QString("(empty)");
-          p.drawText(QRect(textOffsetX, y, width(), rowH), Qt::AlignVCenter, name);
-          if (!impl_->visibilityIcon.isNull()) {
-            p.drawPixmap(4, y + (rowH - 16) / 2, 16, 16, impl_->visibilityIcon);
+          
+          if (layer) {
+            QString layerName = layer->layerName();
+            qDebug() << "[paintEvent] Drawing layer" << idx << ":" << layerName;
+            
+            int currentX = leftPadding;
+            
+            // 1. 可視性アイコン（目のアイコン）
+            if (!impl_->visibilityIcon.isNull()) {
+              p.drawPixmap(currentX, y + (rowH - iconSize) / 2, iconSize, iconSize, impl_->visibilityIcon);
+            } else {
+              // プレースホルダーボックス
+              p.setPen(QPen(QColor(100, 100, 100), 1));
+              p.drawRect(currentX, y + (rowH - iconSize) / 2, iconSize, iconSize);
+            }
+            currentX += iconSize + iconSpacing;
+            
+            // 2. ロック状態アイコン（鍵のアイコン）
+            // TODO: レイヤーのロック状態を取得して描画
+            if (!impl_->lockIcon.isNull()) {
+              p.drawPixmap(currentX, y + (rowH - iconSize) / 2, iconSize, iconSize, impl_->lockIcon);
+            }
+            currentX += iconSize + iconSpacing;
+            
+            // 3. レイヤータイプアイコン（画像/動画/テキスト等）
+            // TODO: レイヤータイプに応じたアイコンを描画
+            
+            // 4. レイヤー名テキスト
+            p.setPen(Qt::white);
+            QFont font = p.font();
+            font.setPointSize(9);
+            p.setFont(font);
+            p.drawText(QRect(currentX, y, width() - currentX - leftPadding, rowH), 
+                      Qt::AlignVCenter | Qt::AlignLeft, layerName);
+            
+            // 区切り線
+            p.setPen(QColor(60, 60, 60));
+            p.drawLine(0, y + rowH, width(), y + rowH);
           }
         }
       } else {
-        p.drawText(QRect(textOffsetX, 0, width(), rowH), Qt::AlignVCenter, QString("No composition"));
+        p.setPen(Qt::gray);
+        p.drawText(rect(), Qt::AlignCenter, "No composition loaded");
       }
     } else {
-      p.drawText(QRect(textOffsetX, 0, width(), rowH), Qt::AlignVCenter, QString("No composition"));
+      p.setPen(Qt::gray);
+      p.drawText(rect(), Qt::AlignCenter, "Composition not found");
     }
   } else {
-    QString layerName = "Layer 1";
-    p.drawText(QRect(textOffsetX, 0, width(), rowH), Qt::AlignVCenter, layerName);
-    if (!impl_->visibilityIcon.isNull()) {
-      p.drawPixmap(4, (rowH - 16) / 2, 16, 16, impl_->visibilityIcon);
+    p.setPen(Qt::gray);
+    p.drawText(rect(), Qt::AlignCenter, "No composition");
+  }
+ }
+
+ void ArtifactLayerPanelWidget::dragEnterEvent(QDragEnterEvent* event)
+ {
+  // Accept layer ID, asset ID, and file URLs
+  if (event->mimeData()->hasFormat("application/x-artifact-layerid") ||
+      event->mimeData()->hasFormat("application/x-artifact-assetid") ||
+      event->mimeData()->hasUrls()) {
+    event->acceptProposedAction();
+  }
+ }
+
+ void ArtifactLayerPanelWidget::dragMoveEvent(QDragMoveEvent* event)
+ {
+  // Keep accepting while dragging
+  if (event->mimeData()->hasFormat("application/x-artifact-layerid") ||
+      event->mimeData()->hasFormat("application/x-artifact-assetid") ||
+      event->mimeData()->hasUrls()) {
+    event->acceptProposedAction();
+  }
+ }
+
+ void ArtifactLayerPanelWidget::dragLeaveEvent(QDragLeaveEvent* event)
+ {
+  // Optional: Could reset visual feedback here
+  event->accept();
+ }
+
+ void ArtifactLayerPanelWidget::dropEvent(QDropEvent* event)
+ {
+  const QMimeData* mimeData = event->mimeData();
+
+  // Handle LayerID drop
+  if (mimeData->hasFormat("application/x-artifact-layerid")) {
+   QByteArray data = mimeData->data("application/x-artifact-layerid");
+   QString layerIdStr = QString::fromUtf8(data);
+   LayerID layerId(layerIdStr);
+   
+   qDebug() << "[ArtifactLayerPanelWidget::dropEvent] Received LayerID:" << layerIdStr;
+   
+   // TODO: Handle layer drop - could be layer relocation, layer copy, etc.
+   event->acceptProposedAction();
+  }
+  // Handle AssetID drop
+  else if (mimeData->hasFormat("application/x-artifact-assetid")) {
+   QByteArray data = mimeData->data("application/x-artifact-assetid");
+   QString assetIdStr = QString::fromUtf8(data);
+   
+   qDebug() << "[ArtifactLayerPanelWidget::dropEvent] Received AssetID:" << assetIdStr;
+   
+   // TODO: Handle asset drop - could create new layer from asset
+   event->acceptProposedAction();
+  }
+  // Handle file URL drop
+  else if (mimeData->hasUrls()) {
+   const QList<QUrl> urls = mimeData->urls();
+   for (const QUrl& url : urls) {
+    if (url.isLocalFile()) {
+     QString filePath = url.toLocalFile();
+     qDebug() << "[ArtifactLayerPanelWidget::dropEvent] Received file:" << filePath;
+     
+     // TODO: Convert to UniString and handle file import
+     // Could create a new layer from the dropped file
     }
+   }
+   event->acceptProposedAction();
   }
  }
 

@@ -3,6 +3,7 @@
 #include <wobjectimpl.h>
 #include <QMenu>
 #include <QWidget>
+#include <QDebug>
 module Artifact.Menu.Layer;
 
 import std; 
@@ -35,8 +36,12 @@ namespace Artifact {
   void handleCreateNullLayer();
   void handleCreateSolidLayer();
   void handleAdjustableLayer();
+  void handleTextLayer();
+  void handleShapeLayer();
+  void handleImageLayer();
   void handleCameraLayer();
-
+  void handleLightLayer();
+  void handleModel3DLayer();
   void handleOpenLayer();
  };
 
@@ -65,9 +70,15 @@ namespace Artifact {
   createLayerMenu = new QMenu("Create layer(&N)");
   //createCompositionAction->setText()
   //createLayerMenu->setDisabled(true);
-  createLayerMenu->addAction(createSolidLayerAction_);
-  createLayerMenu->addAction(createNullLayerAction_);
   createLayerMenu->addAction(createAdjustableLayerAction_);
+  createLayerMenu->addAction(createNullLayerAction_);
+  createLayerMenu->addAction(createSolidLayerAction_);
+  createLayerMenu->addAction(createTextLayerAction_);
+  createLayerMenu->addAction(createShapeLayerAction_);
+  createLayerMenu->addAction(createImageLayerAction_);
+  createLayerMenu->addAction(createCameraLayerAction_);
+  createLayerMenu->addAction(createLightLayerAction_);
+  createLayerMenu->addAction(createModel3DLayerAction_);
   createLayerMenu->addSeparator();
   //createLayerMenu->addAction(openLayerAction_);
 
@@ -88,9 +99,10 @@ namespace Artifact {
    });
  }
 
- void ArtifactLayerMenu::Impl::handleCreateSolidLayer()
- {
-  auto& manager = ArtifactProjectManager::getInstance();
+  void ArtifactLayerMenu::Impl::handleCreateSolidLayer()
+  {
+   qDebug() << "[handleCreateSolidLayer] Called";
+   auto& manager = ArtifactProjectManager::getInstance();
  	
   //ArtifactProjectService::instance()->
  	
@@ -101,14 +113,16 @@ namespace Artifact {
   createSolidLayer->show();
   auto service = ArtifactProjectService::instance();
  	
-  ArtifactSolidLayerInitParams params("Solid");
+   ArtifactSolidLayerInitParams params("Solid");
+   qDebug() << "[handleCreateSolidLayer] Creating solid layer with name: Solid";
 
-  service->addLayerToCurrentComposition(params);
+   service->addLayerToCurrentComposition(params);
+   qDebug() << "[handleCreateSolidLayer] addLayerToCurrentComposition called";
  }
 
  void ArtifactLayerMenu::Impl::handleCreateNullLayer()
  {
-  //auto& manager = ArtifactProjectManager::getInstance();
+   qDebug() << "[handleCreateNullLayer] Called";
   ArtifactNullLayerInitParams params("Null");
   auto service = ArtifactProjectService::instance();
  	
@@ -118,10 +132,41 @@ namespace Artifact {
 
  }
 
- void ArtifactLayerMenu::Impl::handleAdjustableLayer()
- {
-  //ArtifactLayerInitParams param;
- }
+  void ArtifactLayerMenu::Impl::handleAdjustableLayer()
+  {
+   qDebug() << "[handleAdjustableLayer] Called";
+   // TODO: 実装
+  }
+
+  void ArtifactLayerMenu::Impl::handleTextLayer()
+  {
+   qDebug() << "[handleTextLayer] Called";
+   // TODO: 実装
+  }
+
+  void ArtifactLayerMenu::Impl::handleShapeLayer()
+  {
+   qDebug() << "[handleShapeLayer] Called";
+   // TODO: 実装
+  }
+
+  void ArtifactLayerMenu::Impl::handleImageLayer()
+  {
+   qDebug() << "[handleImageLayer] Called";
+   // TODO: 実装
+  }
+
+  void ArtifactLayerMenu::Impl::handleLightLayer()
+  {
+   qDebug() << "[handleLightLayer] Called";
+   // TODO: 実装
+  }
+
+  void ArtifactLayerMenu::Impl::handleModel3DLayer()
+  {
+   qDebug() << "[handleModel3DLayer] Called";
+   // TODO: 実装
+  }
 
  void ArtifactLayerMenu::Impl::handleCameraLayer()
  {

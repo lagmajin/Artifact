@@ -116,7 +116,6 @@
     <ClCompile Include="src\Translation\TranslationManager.cpp" />
     <ClCompile Include="src\Widgets\ArtifactToolBar.cppm" />
     <ClCompile Include="src\Widgets\Control\ArtifactPlaybackControlWidget.cppm" />
-    <ClCompile Include="src\Widgets\Menu\ArtifactLayerMenu.cppm" />
     <ClCompile Include="src\Widgets\Native\NativeHelper.cpp" />
     <ClCompile Include="src\Widgets\Render\ArtifactRenderWrapperWidget.cpp" />
     <ClCompile Include="src\Widgets\Render\ArtifactLayerEditorPanel.cpp" />
@@ -146,8 +145,6 @@
     <ClCompile Include="include\Project\ArtifactProjectManager.ixx" />
     <ClCompile Include="include\Project\ArtifactProjectSetting.ixx" />
     <ClCompile Include="include\Widgets\Dialog\ArtifactCreateCompositionDialog.ixx" />
-    <ClCompile Include="include\Widgets\Menu\ArtifactFileMenu.ixx" />
-    <ClCompile Include="include\Widgets\Menu\ArtifactHelpMenu.ixx" />
     <ClCompile Include="include\Widgets\Menu\ArtifactMenuBar.ixx" />
     <ClCompile Include="include\Widgets\Menu\ArtifactTestMenu.ixx" />
     <ClCompile Include="include\Widgets\Menu\ArtifactTimeMenu.ixx" />
@@ -175,7 +172,6 @@
     <ClCompile Include="src\Widgets\ArtifactProjectManagerWidget.cppm" />
     <ClCompile Include="src\Widgets\ArtifactTimelineWidget.cpp" />
     <ClCompile Include="src\Widgets\Dialog\CreatePlaneLayerDialog.cppm" />
-    <ClCompile Include="src\Widgets\Menu\ArtifactOptionMenu.cppm" />
     <ClCompile Include="src\Widgets\Menu\ArtifactTestMenu.cppm" />
     <ClCompile Include="src\Widgets\Menu\ArtifactTimeMenu.cppm" />
     <ClCompile Include="src\Widgets\Menu\ArtifactViewMenu.cppm" />
@@ -454,6 +450,18 @@
     </ClCompile>
     <ClCompile Include="include\Widgets\Render\ArtifactRenderQueueJobPanel.ixx">
       <Filter>include</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Widgets\Menu\ArtifactFileMenu.ixx">
+      <Filter>include</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Widgets\Menu\ArtifactHelpMenu.ixx">
+      <Filter>include</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Widgets\Menu\ArtifactLayerMenu.cppm">
+      <Filter>src\Widgets</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Widgets\Menu\ArtifactOptionMenu.cppm">
+      <Filter>src\Widgets</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
