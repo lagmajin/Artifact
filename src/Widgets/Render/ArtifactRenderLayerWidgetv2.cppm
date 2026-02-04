@@ -126,7 +126,9 @@ W_OBJECT_IMPL(ArtifactLayerEditorWidgetV2)
 
  void ArtifactLayerEditorWidgetV2::Impl::destroy()
  {
-
+  renderer_->destroy();
+  //pImmediateContext.Release();
+  //pDevice.Release();
  }
 
  void ArtifactLayerEditorWidgetV2::Impl::defaultHandleKeyPressEvent(QKeyEvent* event)
@@ -274,7 +276,7 @@ W_OBJECT_IMPL(ArtifactLayerEditorWidgetV2)
  }
  void ArtifactLayerEditorWidgetV2::closeEvent(QCloseEvent* event)
  {
-	 
+	 impl_->destroy();
  }
 
  void ArtifactLayerEditorWidgetV2::focusInEvent(QFocusEvent* event)

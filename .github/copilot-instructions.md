@@ -270,7 +270,7 @@ struct MyData {
 - ? **新しいファイルを作成した場合は、ユーザーにVisual Studioを使って追加するように指示してください。**
 
 ## ArtifactCore Library Usage (Preferred Classes)
-**?? MANDATORY: Always prefer using ArtifactCore library classes instead of creating new implementations:**
+**詳細は [ArtifactCore_Library_Reference.md](../ArtifactCore_Library_Reference.md) を参照してください。**
 
 ### Image Processing
 - **Use `ImageF32x4_RGBA`** (from `import Image.ImageF32x4_RGBA;`) for all float RGBA image data

@@ -33,7 +33,8 @@ namespace Artifact
  private:
   RefCntAutoPtr<IBuffer> m_draw_sprite_vertex_buffer;
   RefCntAutoPtr<IBuffer> m_draw_sprite_index_buffer;
-  RenderShaderPair m_draw_sprit_shaders;
+  RenderShaderPair m_draw_sprite_shaders;
+  RenderShaderPair m_draw_outline_shaders;
   QWidget* widget_;
    
   bool m_initialized = false;
@@ -59,6 +60,7 @@ namespace Artifact
   PSOAndSRB m_draw_line_pso_and_srb;
   PSOAndSRB m_draw_dot_line_pso_and_srb;
   PSOAndSRB m_draw_solid_rect_pso_and_srb;
+  PSOAndSRB m_draw_rect_outline_pso_and_srb;
   PSOAndSRB m_draw_sprite_pso_and_srb;
   int m_CurrentPhysicalWidth;
   int m_CurrentPhysicalHeight;
@@ -74,6 +76,8 @@ namespace Artifact
   void drawSolidRect(float2 pos, float2 size, const FloatColor& color);
   void drawRectOutline(float2 pos,const FloatColor& color);
   void drawParticles();
+
+  void destroy();
  };
 
  AritfactIRenderer::Impl::Impl(RefCntAutoPtr<IRenderDevice> device, RefCntAutoPtr<IDeviceContext>& context, QWidget* widget) :pDevice_(device), pImmediateContext_(context)
@@ -164,6 +168,54 @@ namespace Artifact
 
  void AritfactIRenderer::Impl::createShaders()
  {
+  ShaderCreateInfo lineVsInfo;
+
+  lineVsInfo.SourceLanguage = Diligent::SHADER_SOURCE_LANGUAGE_HLSL; // または GLSL
+  lineVsInfo.Desc.ShaderType = Diligent::SHADER_TYPE_VERTEX;
+  lineVsInfo.EntryPoint = "main";
+  lineVsInfo.Desc.Name = "LayerEditorVertexShader";
+  lineVsInfo.Source = lineShaderVSText.constData();
+  lineVsInfo.SourceLength = lineShaderVSText.length();
+
+  ShaderCreateInfo linePsInfo;
+
+  linePsInfo.SourceLanguage = Diligent::SHADER_SOURCE_LANGUAGE_HLSL; // または GLSL
+  linePsInfo.Desc.ShaderType = Diligent::SHADER_TYPE_PIXEL;
+  linePsInfo.Desc.Name = "LayerEditorVertexMyPixelShader";
+  linePsInfo.Source = g_qsSolidColorPS2.constData();
+  linePsInfo.SourceLength = g_qsSolidColorPS2.length();
+
+  ShaderCreateInfo drawOutlineRectVsInfo;
+  drawOutlineRectVsInfo.SourceLanguage = Diligent::SHADER_SOURCE_LANGUAGE_HLSL; // または GLSL
+  drawOutlineRectVsInfo.Desc.ShaderType = Diligent::SHADER_TYPE_VERTEX;
+  drawOutlineRectVsInfo.Desc.Name = "LayerEditorOutlineVertexShader";
+  drawOutlineRectVsInfo.Source = drawOutlineRectVSSource.constData();
+  drawOutlineRectVsInfo.SourceLength = drawOutlineRectVSSource.length();
+
+  ShaderCreateInfo drawOutlineRectPsInfo;
+  drawOutlineRectPsInfo.SourceLanguage = Diligent::SHADER_SOURCE_LANGUAGE_HLSL; // または GLSL
+  drawOutlineRectPsInfo.Desc.ShaderType = Diligent::SHADER_TYPE_PIXEL;
+  drawOutlineRectPsInfo.Desc.Name = "LayerEditorOutlinePixelShader";
+  drawOutlineRectPsInfo.Source = drawOutlineRectPSSource.constData();
+  drawOutlineRectPsInfo.SourceLength = drawOutlineRectPSSource.length();
+
+  ShaderCreateInfo solidVsInfo;
+
+  solidVsInfo.SourceLanguage = Diligent::SHADER_SOURCE_LANGUAGE_HLSL; // または GLSL
+  solidVsInfo.Desc.ShaderType = Diligent::SHADER_TYPE_VERTEX;
+  solidVsInfo.Desc.Name = "IRenderSolidRectVertexShader";
+  solidVsInfo.Source = drawSolidRectVSSource.constData();
+  solidVsInfo.SourceLength = drawSolidRectVSSource.length();
+
+  ShaderCreateInfo solidPsInfo;
+
+  solidPsInfo.SourceLanguage = Diligent::SHADER_SOURCE_LANGUAGE_HLSL; // または GLSL
+  solidPsInfo.Desc.ShaderType = Diligent::SHADER_TYPE_PIXEL;
+  solidPsInfo.Desc.Name = "IRenderSolidRectPixelShader";
+  solidPsInfo.Source = g_qsSolidColorPSSource.constData();
+  solidPsInfo.SourceLength = g_qsSolidColorPSSource.length();
+
+
   ShaderCreateInfo sprite2DVsInfo;
   sprite2DVsInfo.SourceLanguage = Diligent::SHADER_SOURCE_LANGUAGE_HLSL; // または GLSL
   sprite2DVsInfo.Desc.ShaderType = Diligent::SHADER_TYPE_VERTEX;
@@ -182,8 +234,8 @@ namespace Artifact
   sprite2DPsInfo.SourceLength = g_qsBasicSprite2DImagePS.length();
    
 
-   pDevice_->CreateShader(sprite2DVsInfo, &m_draw_sprit_shaders.VS);
-   pDevice_->CreateShader(sprite2DPsInfo, &m_draw_sprit_shaders.PS);
+   pDevice_->CreateShader(sprite2DVsInfo, &m_draw_sprite_shaders.VS);
+   pDevice_->CreateShader(sprite2DPsInfo, &m_draw_sprite_shaders.PS);
    
  }
 
@@ -201,8 +253,8 @@ namespace Artifact
   drawSpritePSOCreateInfo.GraphicsPipeline.InputLayout.LayoutElements = LayoutElems;
   drawSpritePSOCreateInfo.GraphicsPipeline.InputLayout.NumElements = _countof(LayoutElems);
 
-  drawSpritePSOCreateInfo.pVS = m_draw_sprit_shaders.VS;
-  drawSpritePSOCreateInfo.pPS = m_draw_sprit_shaders.PS;
+  drawSpritePSOCreateInfo.pVS = m_draw_sprite_shaders.VS;
+  drawSpritePSOCreateInfo.pPS = m_draw_sprite_shaders.PS;
    
    
   pDevice_->CreateGraphicsPipelineState(drawSpritePSOCreateInfo, &m_draw_sprite_pso_and_srb.pPSO);
@@ -366,6 +418,33 @@ void AritfactIRenderer::Impl::createSwapChain(QWidget* window)
 
  }
 
+ void AritfactIRenderer::Impl::destroy()
+ {
+  // Diligent Engineリソースの解放（RefCntAutoPtrはnullptr代入で参照カウント減）
+  m_draw_sprite_vertex_buffer = nullptr;
+  m_draw_sprite_index_buffer = nullptr;
+  m_draw_sprite_shaders.VS = nullptr;
+  m_draw_sprite_shaders.PS = nullptr;
+  m_draw_outline_shaders.VS = nullptr;
+  m_draw_outline_shaders.PS = nullptr;
+  m_draw_line_pso_and_srb.pPSO = nullptr;
+  m_draw_line_pso_and_srb.pSRB = nullptr;
+  m_draw_dot_line_pso_and_srb.pPSO = nullptr;
+  m_draw_dot_line_pso_and_srb.pSRB = nullptr;
+  m_draw_solid_rect_pso_and_srb.pPSO = nullptr;
+  m_draw_solid_rect_pso_and_srb.pSRB = nullptr;
+  m_draw_rect_outline_pso_and_srb.pPSO = nullptr;
+  m_draw_rect_outline_pso_and_srb.pSRB = nullptr;
+  m_draw_sprite_pso_and_srb.pPSO = nullptr;
+  m_draw_sprite_pso_and_srb.pSRB = nullptr;
+  pDevice_ = nullptr;
+  pImmediateContext_ = nullptr;
+  pDeferredContext_ = nullptr;
+  pSwapChain_ = nullptr;
+  widget_ = nullptr;
+  m_initialized = false;
+ }
+
  AritfactIRenderer::AritfactIRenderer(RefCntAutoPtr<IRenderDevice> pDevice, RefCntAutoPtr<IDeviceContext> pImmediateContext, QWidget* widget) :impl_(new Impl(pDevice, pImmediateContext,widget))
  {
 
@@ -423,6 +502,11 @@ void AritfactIRenderer::Impl::createSwapChain(QWidget* window)
  void AritfactIRenderer::present()
  {
   impl_->pSwapChain_->Present();
+ }
+
+ void AritfactIRenderer::destroy()
+ {
+
  }
 
 };

@@ -9,7 +9,8 @@ export namespace Artifact {
  class Artifact3DLayer
  {
  private:
-
+  class Impl;
+  Impl* impl_;
  public:
   Artifact3DLayer();
   ~Artifact3DLayer();

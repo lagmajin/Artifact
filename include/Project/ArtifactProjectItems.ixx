@@ -43,6 +43,7 @@ export namespace Artifact {
 class FolderItem : public ProjectItem {
  public:
   eProjectItemType type() const override { return eProjectItemType::Folder; }
+  FolderItem* addChildFolder(const UniString& name);
 };
 
  class SolidItem : public ProjectItem {

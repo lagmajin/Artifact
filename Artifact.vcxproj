@@ -158,7 +158,7 @@
     <Link>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>DebugFull</GenerateDebugInformation>
-      <AdditionalDependencies>WickedEngine_Windows.lib;OgreMain.lib;opencv_world4110d.lib;halide.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>WickedEngine_Windows.lib;OgreMain.lib;opencv_world4110d.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <OutputFile>$(OutDir)$(TargetName)$(TargetExt)</OutputFile>
       <ForceFileOutput>Enabled</ForceFileOutput>
       <ImportLibrary>artifactimport</ImportLibrary>
@@ -350,6 +350,9 @@
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\GUI\WindowPluginManager.cpp" />
+    <ClCompile Include="src\Layer\Artifact3DModelLayer.cppm">
+      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+    </ClCompile>
     <ClCompile Include="src\Layer\ArtifactAbstract2DLayer.cppm">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
     </ClCompile>
@@ -389,7 +392,9 @@
     <ClCompile Include="src\Project\ArtifactProjectInitParams.cppm">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
     </ClCompile>
-    <ClCompile Include="src\Project\ArtifactProjectItems.cpp" />
+    <ClCompile Include="src\Project\ArtifactProjectItems.cppm">
+      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+    </ClCompile>
     <ClCompile Include="src\Project\TreeFilterProxyModel.cppm">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
     </ClCompile>
@@ -746,6 +751,7 @@
       <Command Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">thrift --gen cpp --out "$(ProjectDir)Generated"  "%(Filename).thrift"</Command>
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
     </CustomBuild>
+    <None Include="ArtifactCore_Library_Reference.md" />
     <None Include="PROJECT_GOALS.md" />
     <None Include="UI_WIDGETS_LIST.md" />
   </ItemGroup>

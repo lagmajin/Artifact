@@ -41,7 +41,8 @@ export namespace Artifact
   void flush();
   void present();
   void flushAndWait();
-   
+  void destroy();
+
   public/*signals*/:
    
  };

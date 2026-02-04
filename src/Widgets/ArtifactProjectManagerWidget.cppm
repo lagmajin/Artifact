@@ -23,6 +23,7 @@
 #include <QInputDialog>
 #include <QContextMenuEvent>
 #include <QLineEdit>
+#include <QDesktopServices>
 module Artifact.Widgets.ProjectManagerWidget;
 
 import std;
@@ -386,12 +387,39 @@ void ArtifactProjectView::mouseReleaseEvent(QMouseEvent* event)
   QVariant typeVar = idx.data(Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::ProjectItemType));
   QVariant compIdVar = idx.data(Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::CompositionId));
   QMenu menu(this);
+  QAction* explorerAction = nullptr;
+  if (typeVar.isValid() && typeVar.toInt() == static_cast<int>(eProjectItemType::Footage)) {
+    explorerAction = menu.addAction(tr("エクスプローラーで開く"));
+  }
   if (compIdVar.isValid() && !compIdVar.toString().isEmpty()) {
     QAction* openAction = menu.addAction(tr("Open"));
     QAction* renameAction = menu.addAction(tr("Rename"));
     QAction* deleteAction = menu.addAction(tr("Delete"));
     QAction* selected = menu.exec(event->globalPos());
     if (!selected) return;
+    if (selected == explorerAction) {
+      // FootageItemのfilePath取得
+  // FilePath用のUserRoleはenum未定義のため直接値指定（例: Qt::UserRole+10）
+  constexpr int filePathRole = Qt::UserRole + 10;
+  QVariant filePathVar = idx.data(filePathRole);
+      QString filePath;
+      if (filePathVar.isValid() && filePathVar.canConvert<QString>()) {
+        filePath = filePathVar.toString();
+      } else {
+        // モデルからProjectItemを取得してfilePathを参照
+        auto model = this->model();
+        if (model) {
+          ProjectItem* item = static_cast<ProjectItem*>(model->data(idx, Qt::UserRole).value<void*>());
+          if (item && item->type() == eProjectItemType::Footage) {
+            filePath = static_cast<FootageItem*>(item)->filePath;
+          }
+        }
+      }
+      if (!filePath.isEmpty()) {
+        QDesktopServices::openUrl(QUrl::fromLocalFile(filePath));
+      }
+      return;
+    }
     if (selected == openAction) {
       handleItemDoubleClicked(idx);
     } else if (selected == renameAction) {
@@ -472,7 +500,7 @@ void ArtifactProjectView::mouseReleaseEvent(QMouseEvent* event)
 
  void ArtifactProjectManagerWidget::Impl::showContextMenu(ArtifactProjectManagerWidget* widget, const QPoint& globalPos)
  {
-  contextMenu->show();
+  if (contextMenu) contextMenu->exec(globalPos);
 
 
  }

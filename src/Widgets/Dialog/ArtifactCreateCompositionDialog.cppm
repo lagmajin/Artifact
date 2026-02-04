@@ -16,6 +16,7 @@
 #include <wobjectimpl.h>
 #include <QFormLayout>
 #include <QLabel>
+#include <QComboBox>
 #include "qevent.h"
 module Dialog.Composition;
 
@@ -57,26 +58,48 @@ namespace Artifact {
  	
   impl_->widthSpinBox = new DragSpinBox();
   impl_->heightSpinBox = new DragSpinBox();
- 	
+  impl_->resolutionCombobox_ = new QComboBox();
+  impl_->resolutionCombobox_->addItem("1920x1080", QVariant::fromValue(QSize(1920,1080)));
+  impl_->resolutionCombobox_->addItem("1280x720", QVariant::fromValue(QSize(1280,720)));
+  impl_->resolutionCombobox_->addItem("カスタム", QVariant::fromValue(QSize(-1,-1)));
+
+  QComboBox* fpsCombo = new QComboBox();
+  fpsCombo->addItem("23.976");
+  fpsCombo->addItem("24");
+  fpsCombo->addItem("25");
+  fpsCombo->addItem("29.97");
+  fpsCombo->addItem("30");
+  fpsCombo->addItem("60");
+
   auto line = new QFrame();
   line->setFrameShape(QFrame::HLine);
   line->setFrameShadow(QFrame::Sunken);
 
-
   auto vboxLayout = new QFormLayout();
-  //vboxLayout->addRow(compositionNameLabel, impl_->compositionNameEdit_);
+  vboxLayout->addRow("解像度プリセット:", impl_->resolutionCombobox_);
   vboxLayout->addRow("Width:",impl_->widthSpinBox);
   vboxLayout->addRow("Height:", impl_->heightSpinBox);
+  vboxLayout->addRow("フレームレート:", fpsCombo);
   vboxLayout->setAlignment(impl_->widthSpinBox, Qt::AlignRight);
   vboxLayout->setAlignment(impl_->heightSpinBox, Qt::AlignRight);
- 	
- 	vboxLayout->addRow(line);
- 	//vboxLayout->addWidget(compositionNameEdit);
-
+  vboxLayout->addRow(line);
   setLayout(vboxLayout);
 
-  auto style = getDCCStyleSheetPreset(DccStylePreset::ModoStyle);
+  QObject::connect(impl_->resolutionCombobox_, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int idx){
+    QSize sz = impl_->resolutionCombobox_->currentData().toSize();
+    if (sz.width() > 0 && sz.height() > 0) {
+      impl_->widthSpinBox->setValue(sz.width());
+      impl_->heightSpinBox->setValue(sz.height());
+      impl_->widthSpinBox->setEnabled(false);
+      impl_->heightSpinBox->setEnabled(false);
+    } else {
+      impl_->widthSpinBox->setEnabled(true);
+      impl_->heightSpinBox->setEnabled(true);
+    }
+  });
+  impl_->resolutionCombobox_->setCurrentIndex(0);
 
+  auto style = getDCCStyleSheetPreset(DccStylePreset::ModoStyle);
   setStyleSheet(style);
 
  }
@@ -168,11 +191,11 @@ namespace Artifact {
   static float	beforeSelectFrameRate = 30.0f;
   auto compositionNameEdit = impl_->compositionNameEdit_ = new EditableLabel();
   compositionNameEdit->setText("Comp1");
+
   impl_->pTabWidget = new QTabWidget(this);
-
   impl_->compositionSettingPage_ = new CompositionSettingPage();
-
-  impl_->pTabWidget->addTab(impl_->compositionSettingPage_, "Settings");
+  impl_->pTabWidget->addTab(impl_->compositionSettingPage_, "基本設定");
+  // 拡張設定・オーディオ設定タブは必要に応じて追加
 
   QHBoxLayout* nameHLayout = new QHBoxLayout();
   nameHLayout->addWidget(compositionNameEdit);
@@ -183,7 +206,7 @@ namespace Artifact {
   QVBoxLayout* const pVBoxLayout = new QVBoxLayout();
   pVBoxLayout->addWidget(compositionNameEdit);
   pVBoxLayout->addWidget(impl_->pTabWidget);
-  pVBoxLayout->addWidget(pDialogButtonBox);
+  pVBoxLayout->addWidget(pDialogButtonBox, 0, Qt::AlignRight);
   setLayout(pVBoxLayout);
 
   QObject::connect(pDialogButtonBox, &QDialogButtonBox::accepted, this, [this]() {
