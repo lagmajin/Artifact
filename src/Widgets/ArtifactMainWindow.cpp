@@ -205,8 +205,8 @@ namespace Artifact {
 	//auto timelineWidget = new ArtifactTimelineWidget();
 	//timelineWidget->show();
  
-    //auto layerPreview2=new ArtifactLayerEditorWidgetV2();
-   //layerPreview2->show();
+    auto layerPreview2=new ArtifactLayerEditorWidgetV2();
+   layerPreview2->show();
  	
   QObject::connect(&projectManager, &ArtifactProjectManager::projectCreated, [this]() {
    impl_->handleProjectCreated();

@@ -33,9 +33,17 @@ namespace Artifact
  private:
   RefCntAutoPtr<IBuffer> m_draw_sprite_vertex_buffer;
   RefCntAutoPtr<IBuffer> m_draw_sprite_index_buffer;
+  RefCntAutoPtr<IBuffer> m_draw_solid_rect_vertex_buffer;
+  RefCntAutoPtr<IBuffer> m_draw_solid_rect_cb;
+  RefCntAutoPtr<IBuffer> m_draw_solid_rect_trnsform_cb;
+  RefCntAutoPtr<IBuffer> m_draw_solid_rect_index_buffer;
+  RefCntAutoPtr<ITexture> m_layerRT;
   RenderShaderPair m_draw_sprite_shaders;
+  RenderShaderPair m_draw_line_shaders;
   RenderShaderPair m_draw_outline_shaders;
+  RenderShaderPair m_draw_solid_shaders;
   QWidget* widget_;
+  QPointF pan_;
    
   bool m_initialized = false;
    
@@ -51,10 +59,10 @@ namespace Artifact
    Impl();
   ~Impl();
   void initialize(QWidget* parent);
-  RefCntAutoPtr<IRenderDevice> pDevice_;
+  RefCntAutoPtr<IRenderDevice>	pDevice_;
   RefCntAutoPtr<IDeviceContext> pImmediateContext_;
   RefCntAutoPtr<IDeviceContext> pDeferredContext_;
-  RefCntAutoPtr<ISwapChain> pSwapChain_;
+  RefCntAutoPtr<ISwapChain>		pSwapChain_;
   ZoomScale2D zoom_;
   const TEXTURE_FORMAT MAIN_RTV_FORMAT = TEX_FORMAT_RGBA8_UNORM_SRGB;
   PSOAndSRB m_draw_line_pso_and_srb;
@@ -69,13 +77,15 @@ namespace Artifact
   void flushAndWait();
   void createSwapChain(QWidget* widget);
   void recreateSwapChain(QWidget* widget);
-  void drawSprite(float x, float y, float w, float h);
-  void drawSprite(float2 pos, float2 size);
-  void drawSprite(const QImage& image);
-  void drawSolidRect(float x, float y, float w, float h);
-  void drawSolidRect(float2 pos, float2 size, const FloatColor& color);
-  void drawRectOutline(float2 pos,const FloatColor& color);
-  void drawParticles();
+   void drawParticles();
+   void drawRectOutline(float2 pos,const FloatColor& color);
+   void drawSolidLine(float2 start, float2 end, const FloatColor& color, float thickness);
+   void drawSolidRect(float x, float y, float w, float h);
+   void drawSolidRect(float2 pos, float2 size, const FloatColor& color);
+   void drawSprite(float x, float y, float w, float h);
+   void drawSprite(float2 pos, float2 size);
+   void drawSprite(const QImage& image);
+   void drawRectLocal(float x, float y, float w, float h, const FloatColor& color);
 
   void destroy();
  };
@@ -156,7 +166,7 @@ namespace Artifact
   m_initialized = true;
   createConstantBuffers();
   createShaders();
-  //createPSOs();
+  createPSOs();
  }
 
  void AritfactIRenderer::Impl::initContext(RefCntAutoPtr<IRenderDevice> device)
@@ -199,13 +209,13 @@ namespace Artifact
   drawOutlineRectPsInfo.Source = drawOutlineRectPSSource.constData();
   drawOutlineRectPsInfo.SourceLength = drawOutlineRectPSSource.length();
 
-  ShaderCreateInfo solidVsInfo;
+  ShaderCreateInfo solidRectVsInfo;
 
-  solidVsInfo.SourceLanguage = Diligent::SHADER_SOURCE_LANGUAGE_HLSL; // または GLSL
-  solidVsInfo.Desc.ShaderType = Diligent::SHADER_TYPE_VERTEX;
-  solidVsInfo.Desc.Name = "IRenderSolidRectVertexShader";
-  solidVsInfo.Source = drawSolidRectVSSource.constData();
-  solidVsInfo.SourceLength = drawSolidRectVSSource.length();
+  solidRectVsInfo.SourceLanguage = Diligent::SHADER_SOURCE_LANGUAGE_HLSL; // または GLSL
+  solidRectVsInfo.Desc.ShaderType = Diligent::SHADER_TYPE_VERTEX;
+  solidRectVsInfo.Desc.Name = "IRenderSolidRectVertexShader";
+  solidRectVsInfo.Source = drawSolidRectVSSource.constData();
+  solidRectVsInfo.SourceLength = drawSolidRectVSSource.length();
 
   ShaderCreateInfo solidPsInfo;
 
@@ -232,34 +242,86 @@ namespace Artifact
 
   sprite2DPsInfo.Source = g_qsBasicSprite2DImagePS.constData();
   sprite2DPsInfo.SourceLength = g_qsBasicSprite2DImagePS.length();
-   
 
-   pDevice_->CreateShader(sprite2DVsInfo, &m_draw_sprite_shaders.VS);
-   pDevice_->CreateShader(sprite2DPsInfo, &m_draw_sprite_shaders.PS);
+  ShaderCreateInfo solidRectVsInfo2;
+  solidRectVsInfo2.SourceLanguage = Diligent::SHADER_SOURCE_LANGUAGE_HLSL;
+  solidRectVsInfo2.Desc.ShaderType = Diligent::SHADER_TYPE_VERTEX;
+  solidRectVsInfo2.Desc.Name = "SolidRectVertexShader";
+  solidRectVsInfo2.Source = drawSolidRectVSSource.constData();
+  solidRectVsInfo2.SourceLength = drawSolidRectVSSource.length();
+
+  ShaderCreateInfo solidRectPsInfo2;
+  solidRectPsInfo2.SourceLanguage = Diligent::SHADER_SOURCE_LANGUAGE_HLSL;
+  solidRectPsInfo2.Desc.ShaderType = Diligent::SHADER_TYPE_PIXEL;
+  solidRectPsInfo2.Desc.Name = "SolidRectPixelShader";
+  solidRectPsInfo2.Source = g_qsSolidColorPSSource.constData();
+  solidRectPsInfo2.SourceLength = g_qsSolidColorPSSource.length();
+   
+     tbb::parallel_invoke(
+         [&] { pDevice_->CreateShader(lineVsInfo, &m_draw_line_shaders.VS); },
+         [&] { pDevice_->CreateShader(linePsInfo, &m_draw_line_shaders.PS); },
+         [&] { pDevice_->CreateShader(sprite2DVsInfo, &m_draw_sprite_shaders.VS); },
+         [&] { pDevice_->CreateShader(sprite2DPsInfo, &m_draw_sprite_shaders.PS); }
+     );
+     
+     pDevice_->CreateShader(solidRectVsInfo2, &m_draw_solid_shaders.VS);
+     pDevice_->CreateShader(solidRectPsInfo2, &m_draw_solid_shaders.PS);
    
  }
 
- void AritfactIRenderer::Impl::createPSOs()
- {
-  GraphicsPipelineStateCreateInfo drawSpritePSOCreateInfo;
-  drawSpritePSOCreateInfo.PSODesc.Name = "DrawSprite PSO";
-  drawSpritePSOCreateInfo.PSODesc.PipelineType = PIPELINE_TYPE_GRAPHICS;
-  LayoutElement LayoutElems[] = {
-   // InputIndex, BufferSlot, NumComponents, ComponentType, IsNormalized
-   LayoutElement{0, 0, 2, VT_FLOAT32, false}, // Attribute 0: pos (float2)
-   LayoutElement{1, 0, 2, VT_FLOAT32, false}  // Attribute 1: uv (float2)
-  };
-   
-  drawSpritePSOCreateInfo.GraphicsPipeline.InputLayout.LayoutElements = LayoutElems;
-  drawSpritePSOCreateInfo.GraphicsPipeline.InputLayout.NumElements = _countof(LayoutElems);
+  void AritfactIRenderer::Impl::createPSOs()
+  {
+   GraphicsPipelineStateCreateInfo drawLinePSOCreateInfo;
+   drawLinePSOCreateInfo.PSODesc.Name = "DrawLine PSO";
+   drawLinePSOCreateInfo.PSODesc.PipelineType = PIPELINE_TYPE_GRAPHICS;
+   LayoutElement lineLayoutElems[] = {
+    LayoutElement{0, 0, 2, VT_FLOAT32, false},
+    LayoutElement{1, 0, 4, VT_FLOAT32, false}
+   };
 
-  drawSpritePSOCreateInfo.pVS = m_draw_sprite_shaders.VS;
-  drawSpritePSOCreateInfo.pPS = m_draw_sprite_shaders.PS;
+   drawLinePSOCreateInfo.pVS = m_draw_line_shaders.VS;
+   drawLinePSOCreateInfo.pPS = m_draw_line_shaders.PS;
+
+   //pDevice_->CreateGraphicsPipelineState(drawLinePSOCreateInfo, &m_draw_line_pso_and_srb.pPSO);
+   //m_draw_line_pso_and_srb.pPSO->CreateShaderResourceBinding(&m_draw_line_pso_and_srb.pSRB, true);
+
+   GraphicsPipelineStateCreateInfo drawSolidRectPSOCreateInfo;
+   drawSolidRectPSOCreateInfo.PSODesc.Name = "DrawSolidRect PSO";
+   drawSolidRectPSOCreateInfo.PSODesc.PipelineType = PIPELINE_TYPE_GRAPHICS;
+   LayoutElement solidRectLayoutElems[] = {
+    LayoutElement{0, 0, 2, VT_FLOAT32, false},
+    LayoutElement{1, 0, 4, VT_FLOAT32, false}
+   };
    
-   
-  pDevice_->CreateGraphicsPipelineState(drawSpritePSOCreateInfo, &m_draw_sprite_pso_and_srb.pPSO);
-   
- }
+   auto& GP = drawSolidRectPSOCreateInfo.GraphicsPipeline;
+   GP.NumRenderTargets = 1;
+   GP.RTVFormats[0] = MAIN_RTV_FORMAT; // 出力先RTVのフォーマットに合わせる
+   GP.PrimitiveTopology = PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP; // 矩形描画用
+   GP.RasterizerDesc.CullMode = CULL_MODE_NONE;
+   GP.DepthStencilDesc.DepthEnable = False;
+   LayoutElement LayoutElems2[] =
+   {
+	   LayoutElement{0, 0, 2, VT_FLOAT32, false}, // pos: float2
+	   LayoutElement{1, 0, 4, VT_FLOAT32, false}  // color: float4
+   };
+   GP.InputLayout.LayoutElements = LayoutElems2;
+   GP.InputLayout.NumElements = _countof(LayoutElems2);
+   ShaderResourceVariableDesc Vars2[] =
+   {
+	   { SHADER_TYPE_VERTEX, "TransformCB", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC },
+	   { SHADER_TYPE_PIXEL,  "ColorBuffer", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC },
+   };
+
+
+   drawSolidRectPSOCreateInfo.GraphicsPipeline.InputLayout.LayoutElements = solidRectLayoutElems;
+   drawSolidRectPSOCreateInfo.GraphicsPipeline.InputLayout.NumElements = _countof(solidRectLayoutElems);
+
+   drawSolidRectPSOCreateInfo.pVS = m_draw_solid_shaders.VS;
+   drawSolidRectPSOCreateInfo.pPS = m_draw_solid_shaders.PS;
+
+   pDevice_->CreateGraphicsPipelineState(drawSolidRectPSOCreateInfo, &m_draw_solid_rect_pso_and_srb.pPSO);
+   m_draw_solid_rect_pso_and_srb.pPSO->CreateShaderResourceBinding(&m_draw_solid_rect_pso_and_srb.pSRB, true);
+  }
 
 void AritfactIRenderer::Impl::createConstantBuffers()
 {
@@ -270,6 +332,64 @@ void AritfactIRenderer::Impl::createConstantBuffers()
  VertDesc.Size = sizeof(SpriteVertex);
  BufferData VBData(&m_draw_sprite_vertex_buffer, sizeof(SpriteVertex));
  pDevice_->CreateBuffer(VertDesc, &VBData, &m_draw_sprite_vertex_buffer);
+
+
+ {
+  Diligent::BufferDesc CBDesc;
+  CBDesc.Name = "DrawSolidColorCB";
+  CBDesc.Usage = Diligent::USAGE_DYNAMIC;        // 動的に更新する場合
+  CBDesc.BindFlags = Diligent::BIND_UNIFORM_BUFFER; // 定数バッファ
+  CBDesc.CPUAccessFlags = Diligent::CPU_ACCESS_WRITE;   // CPU側から書き込み可能
+  CBDesc.Size = sizeof(CBSolidColor);
+
+
+  pDevice_->CreateBuffer(CBDesc, nullptr, &m_draw_solid_rect_cb);
+
+ }
+ {
+  Diligent::BufferDesc CBDesc;
+  CBDesc.Name = "DrawSolidTransformCB";
+  CBDesc.Usage = Diligent::USAGE_DYNAMIC;        // 動的に更新する場合
+  CBDesc.BindFlags = Diligent::BIND_UNIFORM_BUFFER; // 定数バッファ
+  CBDesc.CPUAccessFlags = Diligent::CPU_ACCESS_WRITE;   // CPU側から書き込み可能
+  CBDesc.Size = sizeof(CBSolidTransform2D);
+
+
+  pDevice_->CreateBuffer(CBDesc, nullptr, &m_draw_solid_rect_trnsform_cb);
+
+ }
+
+ {
+  BufferDesc vbDesc;
+  vbDesc.Name = "SolidRect Vertex Buffer";
+  vbDesc.BindFlags = BIND_VERTEX_BUFFER;
+  vbDesc.Usage = USAGE_DYNAMIC;         // 頂点を毎フレーム更新する
+  vbDesc.CPUAccessFlags = CPU_ACCESS_WRITE;
+  vbDesc.Size = sizeof(RectVertex) * 4; // 矩形4頂点ぶん
+
+  // 初期データをセットする場合はここで指定（今は空なのでnullptrでOK）
+  pDevice_->CreateBuffer(vbDesc, nullptr, &m_draw_solid_rect_vertex_buffer);
+ }
+
+ {
+  uint32_t indices[6] = { 0, 1, 2, 2, 1, 3 };
+
+  BufferDesc IndexBufferDesc;
+  IndexBufferDesc.Name = "SolidRectIndexBuffer";
+  IndexBufferDesc.Usage = USAGE_DEFAULT;               // 動的に更新したい場合
+  IndexBufferDesc.BindFlags = BIND_INDEX_BUFFER;
+  IndexBufferDesc.Size = sizeof(indices);
+  IndexBufferDesc.CPUAccessFlags = CPU_ACCESS_NONE;
+
+
+  BufferData InitData;
+  InitData.pData = indices;
+  InitData.DataSize = sizeof(indices);
+
+  // バッファ作成
+  pDevice_->CreateBuffer(IndexBufferDesc, &InitData, &m_draw_solid_rect_index_buffer);
+
+ }
 
  }
 
@@ -298,6 +418,17 @@ void AritfactIRenderer::Impl::createSwapChain(QWidget* window)
  FullScreenModeDesc desc;
 
  desc.Fullscreen = false;
+
+ TextureDesc TexDesc;
+ TexDesc.Name = "LayerRenderTarget";
+ TexDesc.Type = RESOURCE_DIM_TEX_2D;
+ TexDesc.Width = m_CurrentPhysicalWidth;
+ TexDesc.Height = m_CurrentPhysicalHeight;
+ TexDesc.MipLevels = 1;
+ TexDesc.Format = TEX_FORMAT_RGBA8_UNORM_SRGB;
+ TexDesc.BindFlags = BIND_RENDER_TARGET | BIND_SHADER_RESOURCE;
+
+ pDevice_->CreateTexture(TexDesc, nullptr, &m_layerRT);
    
  }
 
@@ -335,6 +466,19 @@ void AritfactIRenderer::Impl::createSwapChain(QWidget* window)
   qDebug() << "After SetViewports - Viewport WxH: " << VP.Width << "x" << VP.Height;
   qDebug() << "After SetViewports - Viewport TopLeftXY: " << VP.TopLeftX << ", " << VP.TopLeftY;
 
+  if (m_layerRT)
+   m_layerRT.Release(); // 古いテクスチャを破棄
+
+  TextureDesc TexDesc;
+  TexDesc.Name = "LayerRenderTarget";
+  TexDesc.Type = RESOURCE_DIM_TEX_2D;
+  TexDesc.Width = newWidth;
+  TexDesc.Height = newHeight;
+  TexDesc.MipLevels = 1;
+  TexDesc.Format = TEX_FORMAT_RGBA8_UNORM_SRGB;
+  TexDesc.BindFlags = BIND_RENDER_TARGET | BIND_SHADER_RESOURCE;
+
+  pDevice_->CreateTexture(TexDesc, nullptr, &m_layerRT);
   //calcProjection(m_CurrentPhysicalWidth, m_CurrentPhysicalHeight);
  }
  void AritfactIRenderer::Impl::drawSprite(const QImage& image)
@@ -351,7 +495,30 @@ void AritfactIRenderer::Impl::createSwapChain(QWidget* window)
    
    
  }
+ void AritfactIRenderer::Impl::drawSolidRect(float2 pos, float2 size, const FloatColor& color)
+ {
+  RectVertex vertices[4] = {
+	 {{0.0f, 0.0f}, {1, 0, 0, 1}}, // 左上
+	 {{1.0f, 0.0f}, {1, 0, 0, 1}}, // 右上
+	 {{0.0f, 1.0f}, {1, 0, 0, 1}}, // 左下
+	 {{1.0f, 1.0f}, {1, 0, 0, 1}}, // 右下
+  };
 
+  auto* pRTV = pSwapChain_->GetCurrentBackBufferRTV();
+
+ }
+
+ void AritfactIRenderer::Impl::drawSolidRect(float x, float y, float w, float h)
+ {
+  RectVertex vertices[4] = {
+{{0.0f, 0.0f}, {1, 0, 0, 1}}, // 左上
+{{1.0f, 0.0f}, {1, 0, 0, 1}}, // 右上
+{{0.0f, 1.0f}, {1, 0, 0, 1}}, // 左下
+{{1.0f, 1.0f}, {1, 0, 0, 1}}, // 右下
+  };
+
+
+ }
  void AritfactIRenderer::Impl::drawSprite(float2 pos, float2 size)
  {
 
@@ -372,30 +539,7 @@ void AritfactIRenderer::Impl::createSwapChain(QWidget* window)
 
  }
 
- void AritfactIRenderer::Impl::drawSolidRect(float2 pos, float2 size, const FloatColor& color)
- {
-  RectVertex vertices[4] = {
-	 {{0.0f, 0.0f}, {1, 0, 0, 1}}, // 左上
-	 {{1.0f, 0.0f}, {1, 0, 0, 1}}, // 右上
-	 {{0.0f, 1.0f}, {1, 0, 0, 1}}, // 左下
-	 {{1.0f, 1.0f}, {1, 0, 0, 1}}, // 右下
-  };
-
-  auto* pRTV = pSwapChain_->GetCurrentBackBufferRTV();
-   
- }
-
- void AritfactIRenderer::Impl::drawSolidRect(float x, float y, float w, float h)
- {
-	 RectVertex vertices[4] = {
-   {{0.0f, 0.0f}, {1, 0, 0, 1}}, // 左上
-   {{1.0f, 0.0f}, {1, 0, 0, 1}}, // 右上
-   {{0.0f, 1.0f}, {1, 0, 0, 1}}, // 左下
-   {{1.0f, 1.0f}, {1, 0, 0, 1}}, // 右下
-	 };
-
-
- }
+ 
 
  void AritfactIRenderer::Impl::flushAndWait()
  {
@@ -443,6 +587,93 @@ void AritfactIRenderer::Impl::createSwapChain(QWidget* window)
   pSwapChain_ = nullptr;
   widget_ = nullptr;
   m_initialized = false;
+ }
+
+ void AritfactIRenderer::Impl::drawSolidLine(float2 start, float2 end, const FloatColor& color, float thickness)
+ {
+  // TODO: Implementation needed
+  // LineVertex v[4];
+  // float2 d = normalize(end - start);
+  // float2 n = float2(-d.y, d.x) * 0.5f;
+ }
+
+ void AritfactIRenderer::Impl::drawRectLocal(float x, float y, float w, float h, const FloatColor& color)
+ {
+  if (!pSwapChain_) return;
+
+  RectVertex vertices[4] = {
+   {{0,0}, {color.r(), color.g(), color.b(), 1}}, // 左上
+   {{w, 0.0f}, {color.r(), color.g(), color.b(), 1}}, // 右上
+   {{0.0f, h}, {color.r(), color.g(), color.b(), 1}}, // 左下
+   {{w, h}, {color.r(), color.g(), color.b(), 1}}, // 右下
+  };
+
+  auto swapChainRTV = pSwapChain_->GetCurrentBackBufferRTV();
+  ITextureView* pLayerRTV = m_layerRT->GetDefaultView(TEXTURE_VIEW_RENDER_TARGET);
+  pImmediateContext_->SetRenderTargets(1, &swapChainRTV, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+
+  {
+   void* pData = nullptr;
+   pImmediateContext_->MapBuffer(m_draw_solid_rect_vertex_buffer, MAP_WRITE, MAP_FLAG_DISCARD, pData);
+   std::memcpy(pData, vertices, sizeof(vertices));
+   pImmediateContext_->UnmapBuffer(m_draw_solid_rect_vertex_buffer, MAP_WRITE);
+  }
+
+  {
+   CBSolidColor cb = { {1.0f, 0.0f, 0.0f, 1.0f} };
+
+   void* pData = nullptr;
+   pImmediateContext_->MapBuffer(m_draw_solid_rect_cb, MAP_WRITE, MAP_FLAG_DISCARD, pData);
+   std::memcpy(pData, &cb, sizeof(cb));
+   pImmediateContext_->UnmapBuffer(m_draw_solid_rect_cb, MAP_WRITE);
+  }
+
+  {
+   auto desc = pSwapChain_->GetDesc();
+   float nx = (x + pan_.x()) / float(desc.Width) * 2.0f - 1.0f;
+   float ny = 1.0f - (y + pan_.y()) / float(desc.Height) * 2.0f;
+
+   CBSolidTransform2D cbTransform;
+   cbTransform.offset = { x + (float)pan_.x(), y + (float)pan_.y() };
+   cbTransform.scale = { 1,1 };
+   cbTransform.screenSize = { float(desc.Width), float(desc.Height) };
+
+   void* pData = nullptr;
+   pImmediateContext_->MapBuffer(m_draw_solid_rect_trnsform_cb, MAP_WRITE, MAP_FLAG_DISCARD, pData);
+   std::memcpy(pData, &cbTransform, sizeof(cbTransform));
+   pImmediateContext_->UnmapBuffer(m_draw_solid_rect_trnsform_cb, MAP_WRITE);
+  }
+
+  pImmediateContext_->SetPipelineState(m_draw_solid_rect_pso_and_srb.pPSO);
+
+  IBuffer* pBuffers[] = { m_draw_solid_rect_vertex_buffer };
+  Uint64 offsets[] = { 0 };
+  pImmediateContext_->SetVertexBuffers(
+   0,
+   1,
+   pBuffers,
+   offsets,
+   RESOURCE_STATE_TRANSITION_MODE_TRANSITION,
+   SET_VERTEX_BUFFERS_FLAG_RESET
+  );
+
+  pImmediateContext_->SetIndexBuffer(
+   m_draw_solid_rect_index_buffer,
+   0,
+   RESOURCE_STATE_TRANSITION_MODE_TRANSITION
+  );
+
+  m_draw_solid_rect_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_VERTEX, "TransformCB")->Set(m_draw_solid_rect_trnsform_cb);
+  m_draw_solid_rect_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_PIXEL, "ColorBuffer")->Set(m_draw_solid_rect_cb);
+  pImmediateContext_->CommitShaderResources(m_draw_solid_rect_pso_and_srb.pSRB, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+
+  DrawIndexedAttribs drawAttrs(
+   6,
+   VT_UINT32,
+   DRAW_FLAG_VERIFY_ALL
+  );
+
+  pImmediateContext_->DrawIndexed(drawAttrs);
  }
 
  AritfactIRenderer::AritfactIRenderer(RefCntAutoPtr<IRenderDevice> pDevice, RefCntAutoPtr<IDeviceContext> pImmediateContext, QWidget* widget) :impl_(new Impl(pDevice, pImmediateContext,widget))
@@ -497,6 +728,11 @@ void AritfactIRenderer::Impl::createSwapChain(QWidget* window)
  void AritfactIRenderer::drawSolidRect(float x, float y, float w, float h)
  {
 
+ }
+
+ void AritfactIRenderer::drawRectLocal(float x, float y, float w, float h, const FloatColor& color)
+ {
+  impl_->drawRectLocal(x, y, w, h, color);
  }
 
  void AritfactIRenderer::present()

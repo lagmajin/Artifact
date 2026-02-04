@@ -28,6 +28,12 @@ namespace Artifact {
   QAction* createNullLayerAction_ = nullptr;
   QAction* createSolidLayerAction_ = nullptr;
   QAction* createAdjustableLayerAction_ = nullptr;
+  QAction* createTextLayerAction_ = nullptr;
+  QAction* createShapeLayerAction_ = nullptr;
+  QAction* createImageLayerAction_ = nullptr;
+  QAction* createCameraLayerAction_ = nullptr;
+  QAction* createLightLayerAction_ = nullptr;
+  QAction* createModel3DLayerAction_ = nullptr;
   QAction* openLayerAction_ = nullptr;
   QMenu* layerTimeMenu_ = nullptr;
 

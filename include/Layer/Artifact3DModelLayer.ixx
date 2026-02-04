@@ -14,6 +14,8 @@ export namespace Artifact {
  public:
   Artifact3DLayer();
   ~Artifact3DLayer();
+  void loadFromFile();
+
  };
 
 

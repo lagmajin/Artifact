@@ -468,11 +468,13 @@
     <ClInclude Include="Generated\TestService.h" />
     <ClInclude Include="Generated\Test_types.h" />
     <ClInclude Include="include\Widgets\Render\Shader\CommonShader.hpp" />
-    <ClInclude Include="include\Render\ArtifactRenderer.ixx" />
     <ClInclude Include="include\Composition\ArtifactCompositionManager.hpp">
       <Filter>include</Filter>
     </ClInclude>
     <ClInclude Include="include\GUI\ArtifactGuiManager.hpp">
+      <Filter>include</Filter>
+    </ClInclude>
+    <ClInclude Include="include\Render\ArtifactRenderer.ixx">
       <Filter>include</Filter>
     </ClInclude>
   </ItemGroup>

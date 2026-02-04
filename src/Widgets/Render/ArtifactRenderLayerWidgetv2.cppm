@@ -39,6 +39,9 @@ import Artifact.Preview.Pipeline;
 namespace Artifact {
 
 W_OBJECT_IMPL(ArtifactLayerEditorWidgetV2)
+ void ArtifactLayerEditorWidgetV2::play() {}
+ void ArtifactLayerEditorWidgetV2::stop() {}
+ void ArtifactLayerEditorWidgetV2::takeScreenShot() {}
 
  class ArtifactLayerEditorWidgetV2::Impl {
  private:
@@ -126,6 +129,7 @@ W_OBJECT_IMPL(ArtifactLayerEditorWidgetV2)
 
  void ArtifactLayerEditorWidgetV2::Impl::destroy()
  {
+  stopRenderLoop();
   renderer_->destroy();
   //pImmediateContext.Release();
   //pDevice.Release();
@@ -177,6 +181,7 @@ W_OBJECT_IMPL(ArtifactLayerEditorWidgetV2)
  void ArtifactLayerEditorWidgetV2::Impl::renderOneFrame()
  {
   renderer_->clear();
+  renderer_->drawRectLocal(100, 100, 200, 150, FloatColor(1.0f, 0.0f, 0.0f, 1.0f));
   renderer_->present();
  }
 
@@ -206,6 +211,7 @@ W_OBJECT_IMPL(ArtifactLayerEditorWidgetV2)
  {
   impl_->stopRenderLoop();
   delete impl_;
+  impl_ = nullptr;
  }
 
  void ArtifactLayerEditorWidgetV2::keyPressEvent(QKeyEvent* event)
@@ -277,6 +283,8 @@ W_OBJECT_IMPL(ArtifactLayerEditorWidgetV2)
  void ArtifactLayerEditorWidgetV2::closeEvent(QCloseEvent* event)
  {
 	 impl_->destroy();
+	 delete impl_;
+	 impl_ = nullptr;
  }
 
  void ArtifactLayerEditorWidgetV2::focusInEvent(QFocusEvent* event)
