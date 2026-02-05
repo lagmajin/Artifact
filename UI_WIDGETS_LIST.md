@@ -25,6 +25,7 @@
 
 ## ダイアログ・その他
 - ArtifactCreateCompositionDialog: 新規コンポジション作成ダイアログ。初期設定入力。
+- Artifact3DModelViewer: 3Dモデルを表示・操作するためのウィジェット。モデルのロード、カメラ操作、背景設定など。
 
 ---
 

@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <wobjectimpl.h>
 #include <mutex>
 #include <QFile>
@@ -101,18 +101,34 @@ namespace Artifact {
 
  void ArtifactFileMenu::Impl::handleSaveProject()
  {
-  // TODO: Implement save current project
-  if (ArtifactProjectManager::getInstance().isProjectCreated()) {
-    // Assume save logic here
+  if (!ArtifactProjectManager::getInstance().isProjectCreated()) {
+   return;
+  }
+  QString path = ArtifactProjectManager::getInstance().currentProjectPath();
+  if (path.isEmpty()) {
+   handleSaveAsProject();
+   return;
+  }
+  auto result = ArtifactProjectManager::getInstance().saveToFile(path);
+  if (!result.success) {
+   // TODO: Show error message to user
   }
  }
 
  void ArtifactFileMenu::Impl::handleSaveAsProject()
  {
-  // TODO: Implement save as dialog
-  QString fileName = QFileDialog::getSaveFileName(nullptr, "Save Project As", "", "Artifact Project (*.art)");
+  if (!ArtifactProjectManager::getInstance().isProjectCreated()) {
+   return;
+  }
+  QString fileName = QFileDialog::getSaveFileName(nullptr, "名前を付けて保存", "", "Artifact Project (*.art)");
   if (!fileName.isEmpty()) {
-    // Save logic
+   if (!fileName.endsWith(".art", Qt::CaseInsensitive)) {
+    fileName += ".art";
+   }
+   auto result = ArtifactProjectManager::getInstance().saveToFile(fileName);
+   if (!result.success) {
+    // TODO: Show error message to user
+   }
   }
  }
 

@@ -1,4 +1,4 @@
-﻿module;
+module;
 
 #include <memory>
 #include <QString>
@@ -12,6 +12,7 @@ import Utils;
 import Utils.String.UniString;
 
 import Artifact.Project;
+export import Artifact.Project.Exporter;
 import Composition.Settings;
 import Artifact.Project.Result;
 import Artifact.Composition.Result;
@@ -52,6 +53,8 @@ export namespace Artifact {
   CreateProjectResult createProject(const UniString& name,bool force=false);
   void createProject(const QString& projectName, bool force = false);
   void loadFromFile(const QString& fullpath);
+  ArtifactProjectExporterResult saveToFile(const QString& fullpath);
+  QString currentProjectPath() const;
 
   bool isProjectCreated() const;
   bool isProjectClosed() const;

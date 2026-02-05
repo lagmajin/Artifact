@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <QDir>
 #include <QFile>
 #include <QJsonObject>
@@ -13,6 +13,7 @@ module Artifact.Project.Manager;
 import std;
 import Utils;
 import Artifact.Project;
+import Artifact.Project.Exporter;
 import Artifact.Composition.Result;
 import Artifact.Composition.Abstract;
 import Composition.Settings;
@@ -31,7 +32,7 @@ namespace Artifact {
 
    class ArtifactProjectManager::Impl {
    private:
-    //ArtifactProjectPtr currentProjectPtr_;
+    QString currentProjectPath_;
    public:
     Impl();
     ~Impl();
@@ -65,6 +66,7 @@ namespace Artifact {
   if (!currentProjectPtr_)
   {
    currentProjectPtr_ = std::make_shared<ArtifactProject>();
+   currentProjectPath_.clear();
   }
   else {
 
@@ -157,7 +159,9 @@ namespace Artifact {
 
  bool ArtifactProjectManager::closeCurrentProject()
  {
-
+  impl_->currentProjectPtr_.reset();
+  impl_->currentProjectPath_.clear();
+  impl_->signalsConnected_ = false;
   return true;
  }
 
@@ -227,9 +231,36 @@ void ArtifactProjectManager::suppressDefaultCreate(bool v)
 
   if (file.exists())
   {
-
+   impl_->currentProjectPath_ = fullpath;
+   // TODO: Implement project loading (ProjectImporter)
   }
 
+ }
+
+ ArtifactProjectExporterResult ArtifactProjectManager::saveToFile(const QString& fullpath)
+ {
+  ArtifactProjectExporterResult result;
+  result.success = false;
+
+  auto projectPtr = impl_->currentProjectPtr_;
+  if (!projectPtr || projectPtr->isNull()) {
+   return result;
+  }
+
+  ArtifactProjectExporter exporter;
+  exporter.setProject(projectPtr);
+  exporter.setOutputPath(fullpath);
+  result = exporter.exportProject();
+
+  if (result.success) {
+   impl_->currentProjectPath_ = fullpath;
+  }
+  return result;
+ }
+
+ QString ArtifactProjectManager::currentProjectPath() const
+ {
+  return impl_->currentProjectPath_;
  }
 
  bool ArtifactProjectManager::isProjectCreated() const

@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <QDebug>
 #include <memory>
 #include <vector>
@@ -8,6 +8,7 @@
 #include <QFileInfo>
 
 #include <QHash>
+#include <QJsonArray>
 #include <QVector>
 #include <QtTest/QtTest>
 //#include <QtCore/QString>
@@ -226,12 +227,15 @@ FindCompositionResult ArtifactProject::findComposition(const CompositionID& id)
  {
   QJsonObject result;
   result["name"] = projectSettings_.projectName();
-  result["author"];
-  result["version"] = "";
-  auto allComposition = container_.all();
-
-
-
+  result["author"] = projectSettings_.author().toQString();
+  result["version"] = "1.0";
+  QJsonArray compsArray;
+  for (const auto& comp : container_.all()) {
+   if (comp) {
+    compsArray.append(comp->toJson().object());
+   }
+  }
+  result["compositions"] = compsArray;
   return result;
  }
 	
