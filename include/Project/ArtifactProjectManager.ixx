@@ -13,6 +13,7 @@ import Utils.String.UniString;
 
 import Artifact.Project;
 export import Artifact.Project.Exporter;
+import Artifact.Project.Importer;
 import Composition.Settings;
 import Artifact.Project.Result;
 import Artifact.Composition.Result;

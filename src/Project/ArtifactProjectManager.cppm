@@ -14,6 +14,7 @@ import std;
 import Utils;
 import Artifact.Project;
 import Artifact.Project.Exporter;
+import Artifact.Project.Importer;
 import Artifact.Composition.Result;
 import Artifact.Composition.Abstract;
 import Composition.Settings;
@@ -53,7 +54,8 @@ namespace Artifact {
     // Layer management
     ArtifactLayerResult addLayerToCurrentComposition(ArtifactLayerInitParams& params);
     ArtifactLayerResult addLayerToComposition(const CompositionID& compositionId, ArtifactLayerInitParams& params);
-    bool removeLayerFromComposition(const CompositionID& compositionId, const LayerID& layerId);
+  bool removeLayerFromComposition(const CompositionID& compositionId, const LayerID& layerId);
+  ArtifactLayerResult duplicateLayerInComposition(const CompositionID& compositionId, const LayerID& layerId);
    };
 
  ArtifactProjectManager::Impl::Impl()
@@ -111,7 +113,24 @@ namespace Artifact {
 
  void ArtifactProjectManager::Impl::addAssetsFromFilePaths(const QStringList& filePaths)
  {
-
+  if (!currentProjectPtr_) {
+    qDebug() << "addAssetsFromFilePaths failed: no current project";
+    return;
+  }
+  if (filePaths.isEmpty()) {
+    qDebug() << "addAssetsFromFilePaths: file list is empty";
+    return;
+  }
+  
+  qDebug() << "addAssetsFromFilePaths: adding" << filePaths.size() << "files";
+  for (const QString& filePath : filePaths) {
+    if (filePath.isEmpty()) {
+      qDebug() << "addAssetsFromFilePaths: skipping empty file path";
+      continue;
+    }
+    currentProjectPtr_->addAssetFromPath(filePath);
+  }
+  qDebug() << "addAssetsFromFilePaths: completed";
  }
 
  CreateCompositionResult ArtifactProjectManager::Impl::createComposition(const CompositionSettings& setting)
@@ -206,7 +225,35 @@ void ArtifactProjectManager::suppressDefaultCreate(bool v)
  CreateProjectResult ArtifactProjectManager::createProject(const UniString& name, bool force)
  {
   CreateProjectResult result;
-
+  
+  // Check if project already exists and force flag is not set
+  if (impl_->currentProjectPtr_ && !force) {
+    result.success = false;
+    result.message.setQString("Project already exists. Use force=true to overwrite.");
+    qDebug() << "createProject failed: project already exists";
+    return result;
+  }
+  
+  // Create the project
+  impl_->createProject();
+  
+  if (!impl_->currentProjectPtr_) {
+    result.success = false;
+    result.message.setQString("Failed to create project");
+    qDebug() << "createProject failed: currentProjectPtr_ is null after creation";
+    return result;
+  }
+  
+  // Set project name if provided
+  if (!name.isEmpty()) {
+    impl_->currentProjectPtr_->setProjectName(name.toQString());
+  }
+  
+  result.success = true;
+  result.message.setQString("Project created successfully");
+  // Note: projectId could be set here if CreateProjectResult has such field
+  
+  qDebug() << "createProject succeeded with name:" << (name.isEmpty() ? "<default>" : name.toQString());
   return result;
  }
 
@@ -227,14 +274,33 @@ void ArtifactProjectManager::suppressDefaultCreate(bool v)
 
  void ArtifactProjectManager::loadFromFile(const QString& fullpath)
  {
-  QFile file(fullpath);
+  ArtifactProjectImporter importer;
+  importer.setInputPath(fullpath);
+  auto importResult = importer.importProject();
 
-  if (file.exists())
-  {
-   impl_->currentProjectPath_ = fullpath;
-   // TODO: Implement project loading (ProjectImporter)
+  if (!importResult.success || !importResult.project) {
+   return;
   }
 
+  impl_->currentProjectPtr_.reset();
+  impl_->signalsConnected_ = false;
+  impl_->currentProjectPtr_ = importResult.project;
+  impl_->currentProjectPath_ = fullpath;
+
+  if (impl_->currentProjectPtr_) {
+   if (!impl_->signalsConnected_) {
+    auto shared = impl_->currentProjectPtr_;
+    std::weak_ptr<ArtifactProject> weakProj = shared;
+    connect(shared.get(), &ArtifactProject::projectChanged, this, [weakProj, this]() {
+     if (weakProj.lock()) projectChanged();
+    });
+    connect(shared.get(), &ArtifactProject::compositionCreated, this, [weakProj, this](const CompositionID& id) {
+     if (weakProj.lock()) compositionCreated(id);
+    });
+    impl_->signalsConnected_ = true;
+   }
+   projectCreated();
+  }
  }
 
  ArtifactProjectExporterResult ArtifactProjectManager::saveToFile(const QString& fullpath)
@@ -367,7 +433,31 @@ QVector<ProjectItem*> ArtifactProjectManager::projectItems() const
 
  ArtifactCompositionPtr ArtifactProjectManager::currentComposition()
  {
-
+  if (!impl_->currentProjectPtr_) return nullptr;
+  
+  auto projectItems = impl_->currentProjectPtr_->projectItems();
+  CompositionID firstCompId;
+  
+  // Find the first composition item
+  for (auto item : projectItems) {
+    if (!item) continue;
+    for (auto child : item->children) {
+      if (child && child->type() == eProjectItemType::Composition) {
+        CompositionItem* compItem = static_cast<CompositionItem*>(child);
+        firstCompId = compItem->compositionId;
+        break;
+      }
+    }
+    if (!firstCompId.isNil()) break;
+  }
+  
+  if (firstCompId.isNil()) return nullptr;
+  
+  auto findResult = impl_->currentProjectPtr_->findComposition(firstCompId);
+  if (findResult.success && !findResult.ptr.expired()) {
+    return findResult.ptr.lock();
+  }
+  
   return nullptr;
  }
 
@@ -384,12 +474,41 @@ QVector<ProjectItem*> ArtifactProjectManager::projectItems() const
 
  int ArtifactProjectManager::compositionCount() const
  {
-  return 0;
+  if (!impl_->currentProjectPtr_) return 0;
+  auto projectItems = impl_->currentProjectPtr_->projectItems();
+  int count = 0;
+  for (auto item : projectItems) {
+    if (!item) continue;
+    // Count composition items in the tree
+    std::function<void(ProjectItem*)> countCompositions = [&](ProjectItem* node) {
+      if (!node) return;
+      if (node->type() == eProjectItemType::Composition) {
+        count++;
+      }
+      for (auto child : node->children) {
+        countCompositions(child);
+      }
+    };
+    countCompositions(item);
+  }
+  return count;
  }
 
   void ArtifactProjectManager::removeAllAssets()
   {
-
+    if (!impl_->currentProjectPtr_) {
+      qDebug() << "removeAllAssets: no current project";
+      return;
+    }
+    
+    // Access the project's implementation to remove assets
+    // This is a placeholder - actual implementation would need to:
+    // 1. Clear asset container
+    // 2. Remove all asset items (FootageItem, etc.) from project tree
+    // 3. Update UI/model
+    
+    qDebug() << "removeAllAssets: called (placeholder implementation)";
+    // TODO: Implement proper asset removal logic
   }
 
   ArtifactLayerResult ArtifactProjectManager::Impl::addLayerToCurrentComposition(ArtifactLayerInitParams& params)
@@ -446,6 +565,20 @@ QVector<ProjectItem*> ArtifactProjectManager::projectItems() const
     return currentProjectPtr_->removeLayerFromComposition(compositionId, layerId);
   }
 
+  ArtifactLayerResult ArtifactProjectManager::Impl::duplicateLayerInComposition(const CompositionID& compositionId, const LayerID& layerId)
+  {
+    ArtifactLayerResult result;
+    
+    if (!currentProjectPtr_) {
+      result.success = false;
+      return result;
+    }
+    
+    result = currentProjectPtr_->duplicateLayerInComposition(compositionId, layerId);
+    
+    return result;
+  }
+
   ArtifactLayerResult ArtifactProjectManager::Impl::addLayerToComposition(const CompositionID& compositionId, ArtifactLayerInitParams& params)
   {
    ArtifactLayerResult result;
@@ -475,6 +608,15 @@ QVector<ProjectItem*> ArtifactProjectManager::projectItems() const
     bool ok = impl_->currentProjectPtr_->removeLayerFromComposition(compositionId, layerId);
     if (ok) layerRemoved(layerId);
     return ok;
+  }
+
+  ArtifactLayerResult ArtifactProjectManager::duplicateLayerInComposition(const CompositionID& compositionId, const LayerID& layerId)
+  {
+    auto result = impl_->duplicateLayerInComposition(compositionId, layerId);
+    if (result.success && result.layer) {
+      layerCreated(result.layer->id());
+    }
+    return result;
   }
 
   ArtifactLayerResult ArtifactProjectManager::addLayerToComposition(const CompositionID& compositionId, ArtifactLayerInitParams& params)

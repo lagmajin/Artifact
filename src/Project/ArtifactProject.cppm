@@ -70,14 +70,18 @@ namespace Artifact {
   //CreateCompositionResult createComposition(const Composition)
  	
   void createCompositions(const QStringList& names);
-  FindCompositionResult findComposition(const CompositionID& id);
+   FindCompositionResult findComposition(const CompositionID& id);
   bool removeById(const CompositionID& id);
    void removeAllCompositions();
+  bool addImportedComposition(ArtifactCompositionPtr comp, const QString& name);
+  void setProjectName(const QString& name);
+  void setAuthor(const QString& author);
 
    // Layer management
    ArtifactLayerResult createLayerAndAddToComposition(const CompositionID& compositionId, ArtifactLayerInitParams& params);
    AppendLayerToCompositionResult addLayerToComposition(const CompositionID& compositionId, ArtifactAbstractLayerPtr layer);
-  bool removeLayerFromComposition(const CompositionID& compositionId, const LayerID& layerId);
+   bool removeLayerFromComposition(const CompositionID& compositionId, const LayerID& layerId);
+   ArtifactLayerResult duplicateLayerInComposition(const CompositionID& compositionId, const LayerID& layerId);
 
    QJsonObject toJson() const;
   AssetMultiIndexContainer assetContainer_;
@@ -213,14 +217,95 @@ FindCompositionResult ArtifactProject::findComposition(const CompositionID& id)
 
  void ArtifactProject::Impl::removeAllCompositions()
  {
+  // Clear all compositions from container
+  container_.clear();
 
+  // Remove all composition items from project tree (while preserving root folder)
+  auto it = ownedItems_.begin();
+  while (it != ownedItems_.end()) {
+    if (*it && (*it)->type() == eProjectItemType::Composition) {
+      // Also remove from parent's children list
+      CompositionItem* compItem = static_cast<CompositionItem*>(it->get());
+      if (compItem->parent) {
+        compItem->parent->children.removeOne(compItem);
+      }
+      it = ownedItems_.erase(it);
+    } else {
+      ++it;
+    }
+  }
+
+  qDebug() << "removeAllCompositions succeeded";
+ }
+
+ bool ArtifactProject::Impl::addImportedComposition(ArtifactCompositionPtr comp, const QString& name)
+ {
+  if (!comp) return false;
+  CompositionID id = comp->id();
+  container_.add(comp, id, std::type_index(typeid(ArtifactAbstractComposition)));
+
+  auto compItemUp = std::make_unique<CompositionItem>();
+  compItemUp->compositionId = id;
+  compItemUp->name.setQString(name.isEmpty() ? QStringLiteral("Composition") : name);
+  ProjectItem* raw = compItemUp.get();
+  if (!ownedItems_.empty()) {
+   ProjectItem* projectRoot = ownedItems_.front().get();
+   compItemUp->parent = projectRoot;
+   projectRoot->children.append(raw);
+  }
+  ownedItems_.push_back(std::move(compItemUp));
+  return true;
+ }
+
+ void ArtifactProject::Impl::setProjectName(const QString& name)
+ {
+  projectSettings_.setProjectName(name);
+ }
+
+ void ArtifactProject::Impl::setAuthor(const QString& author)
+ {
+  projectSettings_.setAuthor(author);
  }
 
  bool ArtifactProject::Impl::removeById(const CompositionID& id)
  {
+  // Remove composition from container
+  if (!container_.remove(id)) {
+    qDebug() << "removeById failed: composition not in container";
+    return false;
+  }
 
+  // Remove composition item from project tree
+  auto it = std::remove_if(ownedItems_.begin(), ownedItems_.end(),
+    [id](const std::unique_ptr<ProjectItem>& item) {
+      if (!item || item->type() != eProjectItemType::Composition) {
+        return false;
+      }
+      CompositionItem* compItem = static_cast<CompositionItem*>(item.get());
+      return compItem->compositionId == id;
+    });
 
-  return false;
+  if (it != ownedItems_.end()) {
+    // Also remove from parent's children list
+    CompositionItem* removedItem = static_cast<CompositionItem*>(it->get());
+    if (removedItem->parent) {
+      removedItem->parent->children.removeOne(removedItem);
+    }
+    ownedItems_.erase(it);
+  }
+
+  qDebug() << "removeById succeeded: id=" << id.toString();
+  return true;
+ }
+
+ static QString compositionNameFromItems(const std::vector<std::unique_ptr<ProjectItem>>& ownedItems, const CompositionID& id)
+ {
+  for (const auto& up : ownedItems) {
+   if (!up || up->type() != eProjectItemType::Composition) continue;
+   auto* ci = static_cast<CompositionItem*>(up.get());
+   if (ci->compositionId == id) return ci->name.toQString();
+  }
+  return QStringLiteral("Composition");
  }
 
  QJsonObject ArtifactProject::Impl::toJson() const
@@ -232,7 +317,9 @@ FindCompositionResult ArtifactProject::findComposition(const CompositionID& id)
   QJsonArray compsArray;
   for (const auto& comp : container_.all()) {
    if (comp) {
-    compsArray.append(comp->toJson().object());
+    QJsonObject compObj = comp->toJson().object();
+    compObj["name"] = compositionNameFromItems(ownedItems_, comp->id());
+    compsArray.append(compObj);
    }
   }
   result["compositions"] = compsArray;
@@ -393,6 +480,24 @@ FindCompositionResult ArtifactProject::findComposition(const CompositionID& id)
   return impl_->removeById(id);
  }
 
+ bool ArtifactProject::addImportedComposition(ArtifactCompositionPtr comp, const QString& name)
+ {
+  if (!impl_->addImportedComposition(comp, name)) return false;
+  compositionCreated(comp->id());
+  projectChanged();
+  return true;
+ }
+
+ void ArtifactProject::setProjectName(const QString& name)
+ {
+  impl_->setProjectName(name);
+ }
+
+ void ArtifactProject::setAuthor(const QString& author)
+ {
+  impl_->setAuthor(author);
+ }
+
  void ArtifactProject::removeAllCompositions()
  {
   impl_->removeAllCompositions();
@@ -400,12 +505,21 @@ FindCompositionResult ArtifactProject::findComposition(const CompositionID& id)
 
  bool ArtifactProject::hasComposition(const CompositionID& id) const
  {
-  return true;
+  if (!impl_) return false;
+  auto findResult = impl_->findComposition(id);
+  return findResult.success && !findResult.ptr.expired();
  }
 
  void ArtifactProject::addAssetFile()
  {
-
+  // Open file dialog would be handled by UI layer
+  // For now, just log that this method was called
+  qDebug() << "ArtifactProject::addAssetFile called - UI should handle file selection";
+  
+  // In a real implementation, this would:
+  // 1. Open file dialog (handled by UI)
+  // 2. Get selected file path
+  // 3. Call addAssetFromPath(filePath)
  }
  bool ArtifactProject::isDirty() const
  {
@@ -482,9 +596,53 @@ FindCompositionResult ArtifactProject::findComposition(const CompositionID& id)
     return true;
   }
 
+  ArtifactLayerResult ArtifactProject::Impl::duplicateLayerInComposition(const CompositionID& compositionId, const LayerID& layerId)
+  {
+    ArtifactLayerResult result;
+    
+    // Find the composition
+    auto findResult = findComposition(compositionId);
+    auto compositionPtr = findResult.ptr.lock();
+    if (!findResult.success || !compositionPtr) {
+      result.success = false;
+      return result;
+    }
+    
+    // Find the layer to duplicate
+    if (!compositionPtr->containsLayerById(layerId)) {
+      result.success = false;
+      return result;
+    }
+    
+    // Get the layer to duplicate
+    auto layerToDuplicate = compositionPtr->layerById(layerId);
+    if (!layerToDuplicate) {
+      result.success = false;
+      return result;
+    }
+    
+    // Create a copy of the layer
+    // TODO: レイヤーの複製方法を実装する
+    // 現在のレイヤーの種類に応じたコピーを作成する必要がある
+    
+    // ここでは簡単な例として、レイヤーのInitParamsを取得して新しいレイヤーを作成する方法を示す
+    ArtifactLayerInitParams params;
+    // TODO: レイヤーのプロパティをparamsにコピーする
+    
+    // 新しいレイヤーを作成して追加する
+    result = createLayerAndAddToComposition(compositionId, params);
+    
+    return result;
+  }
+
   ArtifactLayerResult ArtifactProject::createLayerAndAddToComposition(const CompositionID& compositionId, ArtifactLayerInitParams& params)
   {
    return impl_->createLayerAndAddToComposition(compositionId, params);
+  }
+
+  ArtifactLayerResult ArtifactProject::duplicateLayerInComposition(const CompositionID& compositionId, const LayerID& layerId)
+  {
+    return impl_->duplicateLayerInComposition(compositionId, layerId);
   }
 
   AppendLayerToCompositionResult ArtifactProject::addLayerToComposition(const CompositionID& compositionId, ArtifactAbstractLayerPtr layer)

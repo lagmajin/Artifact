@@ -1,4 +1,4 @@
-﻿module;
+module;
 
 //#include <memory>
 #include <QObject>
@@ -62,7 +62,10 @@ export namespace Artifact {
    requires StringLike<NameT>&& SizeLike<SizeT>
   void createComposition(NameT name, SizeT size);
   CreateCompositionResult createComposition(const ArtifactCompositionInitParams& settings);
- 	
+  bool addImportedComposition(ArtifactCompositionPtr comp, const QString& name);
+  void setProjectName(const QString& name);
+  void setAuthor(const QString& author);
+
   FindCompositionResult findComposition(const CompositionID& id);
 
   // Layer management
