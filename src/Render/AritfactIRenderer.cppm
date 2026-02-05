@@ -311,6 +311,8 @@ namespace Artifact
 	   { SHADER_TYPE_VERTEX, "TransformCB", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC },
 	   { SHADER_TYPE_PIXEL,  "ColorBuffer", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC },
    };
+   drawSolidRectPSOCreateInfo.PSODesc.ResourceLayout.Variables = Vars2;
+   drawSolidRectPSOCreateInfo.PSODesc.ResourceLayout.NumVariables = _countof(Vars2);
 
 
    drawSolidRectPSOCreateInfo.GraphicsPipeline.InputLayout.LayoutElements = solidRectLayoutElems;
@@ -333,64 +335,56 @@ void AritfactIRenderer::Impl::createConstantBuffers()
  BufferData VBData(&m_draw_sprite_vertex_buffer, sizeof(SpriteVertex));
  pDevice_->CreateBuffer(VertDesc, &VBData, &m_draw_sprite_vertex_buffer);
 
-
+ // DrawSolidRect用の定数バッファ (ColorBuffer)
  {
-  Diligent::BufferDesc CBDesc;
+  BufferDesc CBDesc;
   CBDesc.Name = "DrawSolidColorCB";
-  CBDesc.Usage = Diligent::USAGE_DYNAMIC;        // 動的に更新する場合
-  CBDesc.BindFlags = Diligent::BIND_UNIFORM_BUFFER; // 定数バッファ
-  CBDesc.CPUAccessFlags = Diligent::CPU_ACCESS_WRITE;   // CPU側から書き込み可能
+  CBDesc.Usage = USAGE_DYNAMIC;
+  CBDesc.BindFlags = BIND_UNIFORM_BUFFER;
+  CBDesc.CPUAccessFlags = CPU_ACCESS_WRITE;
   CBDesc.Size = sizeof(CBSolidColor);
-
-
   pDevice_->CreateBuffer(CBDesc, nullptr, &m_draw_solid_rect_cb);
-
  }
+
+ // DrawSolidRect用の変換定数バッファ (TransformCB)
  {
-  Diligent::BufferDesc CBDesc;
+  BufferDesc CBDesc;
   CBDesc.Name = "DrawSolidTransformCB";
-  CBDesc.Usage = Diligent::USAGE_DYNAMIC;        // 動的に更新する場合
-  CBDesc.BindFlags = Diligent::BIND_UNIFORM_BUFFER; // 定数バッファ
-  CBDesc.CPUAccessFlags = Diligent::CPU_ACCESS_WRITE;   // CPU側から書き込み可能
+  CBDesc.Usage = USAGE_DYNAMIC;
+  CBDesc.BindFlags = BIND_UNIFORM_BUFFER;
+  CBDesc.CPUAccessFlags = CPU_ACCESS_WRITE;
   CBDesc.Size = sizeof(CBSolidTransform2D);
-
-
   pDevice_->CreateBuffer(CBDesc, nullptr, &m_draw_solid_rect_trnsform_cb);
-
  }
 
+ // DrawSolidRect用の頂点バッファ
  {
   BufferDesc vbDesc;
   vbDesc.Name = "SolidRect Vertex Buffer";
   vbDesc.BindFlags = BIND_VERTEX_BUFFER;
-  vbDesc.Usage = USAGE_DYNAMIC;         // 頂点を毎フレーム更新する
+  vbDesc.Usage = USAGE_DYNAMIC;
   vbDesc.CPUAccessFlags = CPU_ACCESS_WRITE;
-  vbDesc.Size = sizeof(RectVertex) * 4; // 矩形4頂点ぶん
-
-  // 初期データをセットする場合はここで指定（今は空なのでnullptrでOK）
+  vbDesc.Size = sizeof(RectVertex) * 4;
   pDevice_->CreateBuffer(vbDesc, nullptr, &m_draw_solid_rect_vertex_buffer);
  }
 
+ // DrawSolidRect用のインデックスバッファ
  {
   uint32_t indices[6] = { 0, 1, 2, 2, 1, 3 };
 
   BufferDesc IndexBufferDesc;
   IndexBufferDesc.Name = "SolidRectIndexBuffer";
-  IndexBufferDesc.Usage = USAGE_DEFAULT;               // 動的に更新したい場合
+  IndexBufferDesc.Usage = USAGE_DEFAULT;
   IndexBufferDesc.BindFlags = BIND_INDEX_BUFFER;
   IndexBufferDesc.Size = sizeof(indices);
   IndexBufferDesc.CPUAccessFlags = CPU_ACCESS_NONE;
-
 
   BufferData InitData;
   InitData.pData = indices;
   InitData.DataSize = sizeof(indices);
 
-  // バッファ作成
   pDevice_->CreateBuffer(IndexBufferDesc, &InitData, &m_draw_solid_rect_index_buffer);
-
  }
-
  }
 
  
@@ -712,7 +706,7 @@ void AritfactIRenderer::Impl::createSwapChain(QWidget* window)
 
  void AritfactIRenderer::flush()
  {
-  
+  impl_->pImmediateContext_->Flush();
  }
 
  void AritfactIRenderer::flushAndWait()
