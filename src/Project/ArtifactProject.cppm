@@ -59,7 +59,7 @@ namespace Artifact {
   private:
    ArtifactProjectSettings projectSettings_;
    ArtifactLayerFactory layerFactory_;
-  
+   bool isDirty_; // ダーティ状態フラグ
   
  public:
   Impl();
@@ -84,6 +84,10 @@ namespace Artifact {
    ArtifactLayerResult duplicateLayerInComposition(const CompositionID& compositionId, const LayerID& layerId);
    CreateCompositionResult duplicateComposition(const CompositionID& compositionId);
 
+   // ダーティ状態管理
+   bool isDirty() const;
+   void setDirty(bool dirty);
+
    QJsonObject toJson() const;
   AssetMultiIndexContainer assetContainer_;
   ArtifactCompositionMultiIndexContainer container_;
@@ -91,7 +95,7 @@ namespace Artifact {
  };
 
 
- ArtifactProject::Impl::Impl()
+ ArtifactProject::Impl::Impl() : isDirty_(false)
  {
 
  }
@@ -149,6 +153,9 @@ QVector<ProjectItem*> ArtifactProject::projectItems() const
   // For simplicity, we will call a free helper that emits the signal on a target project
   // Find the parent ArtifactProject instance: we cannot from Impl; instead rely on callers
   // to call projectChanged() after calling this method.
+
+  // ダーティ状態に設定
+  setDirty(true);
  }
 
 
@@ -185,6 +192,9 @@ CreateCompositionResult ArtifactProject::Impl::createComposition(const ArtifactC
  // create a shared_ptr for the new composition and insert into the multi-index
  auto newCompPtr = std::make_shared<ArtifactAbstractComposition>(id, settings);
  container_.add(newCompPtr, id, std::type_index(typeid(ArtifactAbstractComposition)));
+
+ // ダーティ状態に設定
+ setDirty(true);
 
  CreateCompositionResult result;
  result.id = id;
@@ -297,6 +307,17 @@ FindCompositionResult ArtifactProject::findComposition(const CompositionID& id)
 
   qDebug() << "removeById succeeded: id=" << id.toString();
   return true;
+ }
+
+ bool ArtifactProject::Impl::isDirty() const
+ {
+  return isDirty_;
+ }
+
+ void ArtifactProject::Impl::setDirty(bool dirty)
+ {
+  isDirty_ = dirty;
+  // TODO: ダーティ状態が変更されたときの通知を実装する
  }
 
  static QString compositionNameFromItems(const std::vector<std::unique_ptr<ProjectItem>>& ownedItems, const CompositionID& id)
@@ -524,7 +545,12 @@ FindCompositionResult ArtifactProject::findComposition(const CompositionID& id)
  }
  bool ArtifactProject::isDirty() const
  {
-  return false;
+  return impl_->isDirty();
+ }
+
+ void ArtifactProject::setDirty(bool dirty)
+ {
+  impl_->setDirty(dirty);
  }
 
   QJsonObject ArtifactProject::toJson() const
@@ -555,6 +581,9 @@ FindCompositionResult ArtifactProject::findComposition(const CompositionID& id)
    // Add layer to composition
    auto appendResult = compositionPtr->appendLayerTop(result.layer);
    result.success = appendResult.success;
+
+   // ダーティ状態に設定
+   setDirty(true);
 
    return result;
   }
@@ -594,6 +623,10 @@ FindCompositionResult ArtifactProject::findComposition(const CompositionID& id)
     if (!findResult.success || !compPtr) return false;
     if (!compPtr->containsLayerById(layerId)) return false;
     compPtr->removeLayer(layerId);
+    
+    // ダーティ状態に設定
+    setDirty(true);
+    
     return true;
   }
 
