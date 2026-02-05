@@ -48,7 +48,7 @@ export namespace Artifact {
  template <StringLike T>
  void Artifact::ArtifactProjectSettings::setAuthor(const T& name)
  {
-  impl_->setAuthor(UniString(name));
+  //impl_->setAuthor(UniString(name));
  }
 
  

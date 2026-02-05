@@ -1,5 +1,9 @@
 module;
 #include <QWidget>
+#include <QVector3D>
+#include <QMouseEvent>
+#include <QWheelEvent>
+#include <QPaintEvent>
 #include <wobjectdefs.h>
 
 export module Artifact.Widgets.ModelViewer;
@@ -61,10 +65,16 @@ export namespace Artifact {
   void setCameraPosition(const QVector3D& position);
 
   // --- レンダリング制御 ---
-  /**
-   * @brief フレームの更新を要求します
-   */
-  void requestUpdate();
- };
+   /**
+    * @brief フレームの更新を要求します
+    */
+   void requestUpdate();
+
+  protected:
+   void mousePressEvent(QMouseEvent* event) override;
+   void mouseMoveEvent(QMouseEvent* event) override;
+   void wheelEvent(QWheelEvent* event) override;
+   void paintEvent(QPaintEvent* event) override;
+  };
 
 }
