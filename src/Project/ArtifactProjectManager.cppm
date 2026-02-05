@@ -56,6 +56,7 @@ namespace Artifact {
     ArtifactLayerResult addLayerToComposition(const CompositionID& compositionId, ArtifactLayerInitParams& params);
   bool removeLayerFromComposition(const CompositionID& compositionId, const LayerID& layerId);
   ArtifactLayerResult duplicateLayerInComposition(const CompositionID& compositionId, const LayerID& layerId);
+  CreateCompositionResult duplicateComposition(const CompositionID& compositionId);
    };
 
  ArtifactProjectManager::Impl::Impl()
@@ -579,6 +580,22 @@ QVector<ProjectItem*> ArtifactProjectManager::projectItems() const
     return result;
   }
 
+  CreateCompositionResult ArtifactProjectManager::Impl::duplicateComposition(const CompositionID& compositionId)
+  {
+    CreateCompositionResult result;
+    
+    if (!currentProjectPtr_) {
+      result.success = false;
+      result.message.setQString("No project: cannot duplicate composition");
+      qDebug() << "Impl::duplicateComposition failed: currentProjectPtr_ is null";
+      return result;
+    }
+    
+    result = currentProjectPtr_->duplicateComposition(compositionId);
+    
+    return result;
+  }
+
   ArtifactLayerResult ArtifactProjectManager::Impl::addLayerToComposition(const CompositionID& compositionId, ArtifactLayerInitParams& params)
   {
    ArtifactLayerResult result;
@@ -615,6 +632,17 @@ QVector<ProjectItem*> ArtifactProjectManager::projectItems() const
     auto result = impl_->duplicateLayerInComposition(compositionId, layerId);
     if (result.success && result.layer) {
       layerCreated(result.layer->id());
+    }
+    return result;
+  }
+
+  CreateCompositionResult ArtifactProjectManager::duplicateComposition(const CompositionID& compositionId)
+  {
+    auto result = impl_->duplicateComposition(compositionId);
+    if (result.success) {
+      qDebug() << "ArtifactProjectManager::duplicateComposition succeeded id:" << result.id.toString();
+    } else {
+      qDebug() << "ArtifactProjectManager::duplicateComposition failed";
     }
     return result;
   }

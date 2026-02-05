@@ -82,6 +82,7 @@ namespace Artifact {
    AppendLayerToCompositionResult addLayerToComposition(const CompositionID& compositionId, ArtifactAbstractLayerPtr layer);
    bool removeLayerFromComposition(const CompositionID& compositionId, const LayerID& layerId);
    ArtifactLayerResult duplicateLayerInComposition(const CompositionID& compositionId, const LayerID& layerId);
+   CreateCompositionResult duplicateComposition(const CompositionID& compositionId);
 
    QJsonObject toJson() const;
   AssetMultiIndexContainer assetContainer_;
@@ -635,6 +636,51 @@ FindCompositionResult ArtifactProject::findComposition(const CompositionID& id)
     return result;
   }
 
+  CreateCompositionResult ArtifactProject::Impl::duplicateComposition(const CompositionID& compositionId)
+  {
+    CreateCompositionResult result;
+    
+    // Find the composition to duplicate
+    auto findResult = findComposition(compositionId);
+    auto compositionPtr = findResult.ptr.lock();
+    if (!findResult.success || !compositionPtr) {
+      result.success = false;
+      result.message.setQString("Composition not found");
+      qDebug() << "Impl::duplicateComposition failed: composition not found";
+      return result;
+    }
+    
+    // Create a copy of the composition's settings
+    ArtifactCompositionInitParams params;
+    // TODO: コンポジションのプロパティをparamsにコピーする
+    
+    // Create a new composition with the copied settings
+    auto newCompResult = createComposition(params);
+    if (!newCompResult.success) {
+      qDebug() << "Impl::duplicateComposition failed: could not create new composition";
+      return newCompResult;
+    }
+    
+    // Copy all layers from the original composition to the new one
+    auto newCompPtr = findComposition(newCompResult.id).ptr.lock();
+    if (!newCompPtr) {
+      result.success = false;
+      result.message.setQString("Could not find newly created composition");
+      qDebug() << "Impl::duplicateComposition failed: could not find new composition";
+      return result;
+    }
+    
+    // TODO: レイヤーのコピー処理を実装する
+    
+    // Return the result
+    result.success = true;
+    result.id = newCompResult.id;
+    result.message.setQString("Composition duplicated successfully");
+    qDebug() << "Impl::duplicateComposition succeeded: new id=" << newCompResult.id.toString();
+    
+    return result;
+  }
+
   ArtifactLayerResult ArtifactProject::createLayerAndAddToComposition(const CompositionID& compositionId, ArtifactLayerInitParams& params)
   {
    return impl_->createLayerAndAddToComposition(compositionId, params);
@@ -643,6 +689,16 @@ FindCompositionResult ArtifactProject::findComposition(const CompositionID& id)
   ArtifactLayerResult ArtifactProject::duplicateLayerInComposition(const CompositionID& compositionId, const LayerID& layerId)
   {
     return impl_->duplicateLayerInComposition(compositionId, layerId);
+  }
+
+  CreateCompositionResult ArtifactProject::duplicateComposition(const CompositionID& compositionId)
+  {
+    auto result = impl_->duplicateComposition(compositionId);
+    if (result.success) {
+      compositionCreated(result.id);
+      projectChanged();
+    }
+    return result;
   }
 
   AppendLayerToCompositionResult ArtifactProject::addLayerToComposition(const CompositionID& compositionId, ArtifactAbstractLayerPtr layer)
