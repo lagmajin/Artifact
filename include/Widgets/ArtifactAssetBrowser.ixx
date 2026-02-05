@@ -58,14 +58,20 @@ export namespace Artifact {
   void mousePressEvent(QMouseEvent* event) override;
   void keyPressEvent(QKeyEvent* event) override;
   void keyReleaseEvent(QKeyEvent* event) override;
+  void dragEnterEvent(QDragEnterEvent* event) override;
+  void dropEvent(QDropEvent* event) override;
  public:
   explicit ArtifactAssetBrowser(QWidget* parent = nullptr);
   ~ArtifactAssetBrowser();
 
+  // Public methods for filtering
+  void setSearchFilter(const QString& filter);
+  void setFileTypeFilter(const QString& type); // "all", "images", "videos", "audio"
 
   void folderChanged(const QString& folderPath) W_SIGNAL(folderChanged, folderPath)
   void selectionChanged(const QStringList& selectedFiles) W_SIGNAL(selectionChanged, selectedFiles)
   void itemDoubleClicked(const QString& itemPath) W_SIGNAL(itemDoubleClicked, itemPath)
+  void filesDropped(const QStringList& filePaths) W_SIGNAL(filesDropped, filePaths)
 
 
  };
