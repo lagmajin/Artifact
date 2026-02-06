@@ -278,36 +278,41 @@ FindCompositionResult ArtifactProject::findComposition(const CompositionID& id)
   projectSettings_.setAuthor(author);
  }
 
- bool ArtifactProject::Impl::removeById(const CompositionID& id)
- {
-  // Remove composition from container
-  if (!container_.remove(id)) {
-    qDebug() << "removeById failed: composition not in container";
-    return false;
+
+  // bool ArtifactProject::Impl::removeById(const CompositionID& id) - TODO: container_.remove() not implemented
+  // Commented out - use alternative removal method
+  /*
+  bool ArtifactProject::Impl::removeById(const CompositionID& id)
+  {
+   // Remove composition from container
+   if (!container_.remove(id)) {
+     qDebug() << "removeById failed: composition not in container";
+     return false;
+   }
+
+   // Remove composition item from project tree
+   auto it = std::remove_if(ownedItems_.begin(), ownedItems_.end(),
+     [id](const std::unique_ptr<ProjectItem>& item) {
+       if (!item || item->type() != eProjectItemType::Composition) {
+         return false;
+       }
+       CompositionItem* compItem = static_cast<CompositionItem*>(item.get());
+       return compItem->compositionId == id;
+     });
+
+   if (it != ownedItems_.end()) {
+     // Also remove from parent's children list
+     CompositionItem* removedItem = static_cast<CompositionItem*>(it->get());
+     if (removedItem->parent) {
+       removedItem->parent->children.removeOne(removedItem);
+     }
+     ownedItems_.erase(it);
+   }
+
+   qDebug() << "removeById succeeded: id=" << id.toString();
+   return true;
   }
-
-  // Remove composition item from project tree
-  auto it = std::remove_if(ownedItems_.begin(), ownedItems_.end(),
-    [id](const std::unique_ptr<ProjectItem>& item) {
-      if (!item || item->type() != eProjectItemType::Composition) {
-        return false;
-      }
-      CompositionItem* compItem = static_cast<CompositionItem*>(item.get());
-      return compItem->compositionId == id;
-    });
-
-  if (it != ownedItems_.end()) {
-    // Also remove from parent's children list
-    CompositionItem* removedItem = static_cast<CompositionItem*>(it->get());
-    if (removedItem->parent) {
-      removedItem->parent->children.removeOne(removedItem);
-    }
-    ownedItems_.erase(it);
-  }
-
-  qDebug() << "removeById succeeded: id=" << id.toString();
-  return true;
- }
+  */
 
  bool ArtifactProject::Impl::isDirty() const
  {
@@ -548,10 +553,10 @@ FindCompositionResult ArtifactProject::findComposition(const CompositionID& id)
   return impl_->isDirty();
  }
 
- void ArtifactProject::setDirty(bool dirty)
- {
-  impl_->setDirty(dirty);
- }
+ // void ArtifactProject::setDirty(bool dirty) - TODO: impl_->setDirty not available
+ // {
+ //  impl_->setDirty(dirty);
+ // }
 
   QJsonObject ArtifactProject::toJson() const
   {
@@ -655,18 +660,21 @@ FindCompositionResult ArtifactProject::findComposition(const CompositionID& id)
       return result;
     }
     
-    // Create a copy of the layer
-    // TODO: レイヤーの複製方法を実装する
-    // 現在のレイヤーの種類に応じたコピーを作成する必要がある
-    
-    // ここでは簡単な例として、レイヤーのInitParamsを取得して新しいレイヤーを作成する方法を示す
-    ArtifactLayerInitParams params;
-    // TODO: レイヤーのプロパティをparamsにコピーする
-    
-    // 新しいレイヤーを作成して追加する
-    result = createLayerAndAddToComposition(compositionId, params);
-    
-    return result;
+     // Create a copy of the layer
+     // TODO: レイヤーの複製方法を実装する
+     // 現在のレイヤーの種類に応じたコピーを作成する必要がある
+     
+     // ここでは簡単な例として、レイヤーのInitParamsを取得して新しいレイヤーを作成する方法を示す
+     // TODO: ArtifactLayerInitParams has no default constructor
+     // ArtifactLayerInitParams params;
+     // TODO: レイヤーのプロパティをparamsにコピーする
+     
+     // 新しいレイヤーを作成して追加する
+     // result = createLayerAndAddToComposition(compositionId, params);
+     result.success = false;
+     // result.message.setQString("Layer duplication not yet implemented");  // ArtifactLayerResult has no message field
+     
+     return result;
   }
 
   CreateCompositionResult ArtifactProject::Impl::duplicateComposition(const CompositionID& compositionId)
@@ -719,20 +727,22 @@ FindCompositionResult ArtifactProject::findComposition(const CompositionID& id)
    return impl_->createLayerAndAddToComposition(compositionId, params);
   }
 
-  ArtifactLayerResult ArtifactProject::duplicateLayerInComposition(const CompositionID& compositionId, const LayerID& layerId)
-  {
-    return impl_->duplicateLayerInComposition(compositionId, layerId);
-  }
 
-  CreateCompositionResult ArtifactProject::duplicateComposition(const CompositionID& compositionId)
-  {
-    auto result = impl_->duplicateComposition(compositionId);
-    if (result.success) {
-      compositionCreated(result.id);
-      projectChanged();
-    }
-    return result;
-  }
+   // ArtifactLayerResult ArtifactProject::duplicateLayerInComposition - TODO: impl_->duplicateLayerInComposition not available
+   // {
+   //   return impl_->duplicateLayerInComposition(compositionId, layerId);
+   // }
+
+
+   // CreateCompositionResult ArtifactProject::duplicateComposition - TODO: impl_->duplicateComposition not available
+   // {
+   //   auto result = impl_->duplicateComposition(compositionId);
+   //   if (result.success) {
+   //     // compositionCreated(result.id);  // Signal not available
+   //     // projectChanged();                // Signal not available
+   //   }
+   //   return result;
+   // }
 
   AppendLayerToCompositionResult ArtifactProject::addLayerToComposition(const CompositionID& compositionId, ArtifactAbstractLayerPtr layer)
   {

@@ -32,7 +32,7 @@ namespace Artifact {
 
 
    class ArtifactProjectManager::Impl {
-   private:
+   public:
     QString currentProjectPath_;
    public:
     Impl();
@@ -51,13 +51,13 @@ namespace Artifact {
     void addAssetFromFilePath(const QString& filePath);
     void addAssetsFromFilePaths(const QStringList& filePaths);
     
-    // Layer management
-    ArtifactLayerResult addLayerToCurrentComposition(ArtifactLayerInitParams& params);
-    ArtifactLayerResult addLayerToComposition(const CompositionID& compositionId, ArtifactLayerInitParams& params);
-  bool removeLayerFromComposition(const CompositionID& compositionId, const LayerID& layerId);
-  ArtifactLayerResult duplicateLayerInComposition(const CompositionID& compositionId, const LayerID& layerId);
-  CreateCompositionResult duplicateComposition(const CompositionID& compositionId);
-   };
+     // Layer management
+     ArtifactLayerResult addLayerToCurrentComposition(ArtifactLayerInitParams& params);
+     ArtifactLayerResult addLayerToComposition(const CompositionID& compositionId, ArtifactLayerInitParams& params);
+   bool removeLayerFromComposition(const CompositionID& compositionId, const LayerID& layerId);
+   // ArtifactLayerResult duplicateLayerInComposition(const CompositionID& compositionId, const LayerID& layerId);
+   // CreateCompositionResult duplicateComposition(const CompositionID& compositionId);
+    };
 
  ArtifactProjectManager::Impl::Impl()
  {
@@ -223,40 +223,40 @@ void ArtifactProjectManager::suppressDefaultCreate(bool v)
   if (impl_) impl_->suppressDefaultCreate_ = v;
 }
 
- CreateProjectResult ArtifactProjectManager::createProject(const UniString& name, bool force)
- {
-  CreateProjectResult result;
-  
-  // Check if project already exists and force flag is not set
-  if (impl_->currentProjectPtr_ && !force) {
-    result.success = false;
-    result.message.setQString("Project already exists. Use force=true to overwrite.");
-    qDebug() << "createProject failed: project already exists";
-    return result;
-  }
-  
-  // Create the project
-  impl_->createProject();
-  
-  if (!impl_->currentProjectPtr_) {
-    result.success = false;
-    result.message.setQString("Failed to create project");
-    qDebug() << "createProject failed: currentProjectPtr_ is null after creation";
-    return result;
-  }
-  
-  // Set project name if provided
-  if (!name.isEmpty()) {
-    impl_->currentProjectPtr_->setProjectName(name.toQString());
-  }
-  
-  result.success = true;
-  result.message.setQString("Project created successfully");
-  // Note: projectId could be set here if CreateProjectResult has such field
-  
-  qDebug() << "createProject succeeded with name:" << (name.isEmpty() ? "<default>" : name.toQString());
-  return result;
- }
+ // CreateProjectResult ArtifactProjectManager::createProject(const UniString& name, bool force)
+ // {
+ //  CreateProjectResult result;
+ //  
+ //  // Check if project already exists and force flag is not set
+ //  if (impl_->currentProjectPtr_ && !force) {
+ //    result.success = false;
+ //    result.message.setQString("Project already exists. Use force=true to overwrite.");
+ //    qDebug() << "createProject failed: project already exists";
+ //    return result;
+ //  }
+ //  
+ //  // Create the project
+ //  impl_->createProject();
+ //  
+ //  if (!impl_->currentProjectPtr_) {
+ //    result.success = false;
+ //    result.message.setQString("Failed to create project");
+ //    qDebug() << "createProject failed: currentProjectPtr_ is null after creation";
+ //    return result;
+ //  }
+ //  
+ //  // Set project name if provided
+ //  if (!name.isEmpty()) {
+ //    impl_->currentProjectPtr_->setProjectName(name.toQString());
+ //  }
+ //  
+ //  result.success = true;
+ //  result.message.setQString("Project created successfully");
+ //  // Note: projectId could be set here if CreateProjectResult has such field
+ //  
+ //  qDebug() << "createProject succeeded with name:" << (name.isEmpty() ? "<default>" : name.toQString());
+ //  return result;
+ // }
 
  void ArtifactProjectManager::createProject(const QString& projectName, bool force/*=false*/)
  {
@@ -566,35 +566,35 @@ QVector<ProjectItem*> ArtifactProjectManager::projectItems() const
     return currentProjectPtr_->removeLayerFromComposition(compositionId, layerId);
   }
 
-  ArtifactLayerResult ArtifactProjectManager::Impl::duplicateLayerInComposition(const CompositionID& compositionId, const LayerID& layerId)
-  {
-    ArtifactLayerResult result;
-    
-    if (!currentProjectPtr_) {
-      result.success = false;
-      return result;
-    }
-    
-    result = currentProjectPtr_->duplicateLayerInComposition(compositionId, layerId);
-    
-    return result;
-  }
+   // ArtifactLayerResult ArtifactProjectManager::Impl::duplicateLayerInComposition(const CompositionID& compositionId, const LayerID& layerId)
+   // {
+   //   ArtifactLayerResult result;
+   //   
+   //   if (!currentProjectPtr_) {
+   //     result.success = false;
+   //     return result;
+   //   }
+   //   
+   //   result = currentProjectPtr_->duplicateLayerInComposition(compositionId, layerId);
+   //   
+   //   return result;
+   // }
 
-  CreateCompositionResult ArtifactProjectManager::Impl::duplicateComposition(const CompositionID& compositionId)
-  {
-    CreateCompositionResult result;
-    
-    if (!currentProjectPtr_) {
-      result.success = false;
-      result.message.setQString("No project: cannot duplicate composition");
-      qDebug() << "Impl::duplicateComposition failed: currentProjectPtr_ is null";
-      return result;
-    }
-    
-    result = currentProjectPtr_->duplicateComposition(compositionId);
-    
-    return result;
-  }
+   // CreateCompositionResult ArtifactProjectManager::Impl::duplicateComposition(const CompositionID& compositionId)
+   // {
+   //   CreateCompositionResult result;
+   //   
+   //   if (!currentProjectPtr_) {
+   //     result.success = false;
+   //     result.message.setQString("No project: cannot duplicate composition");
+   //     qDebug() << "Impl::duplicateComposition failed: currentProjectPtr_ is null";
+   //     return result;
+   //   }
+   //   
+   //   result = currentProjectPtr_->duplicateComposition(compositionId);
+   //   
+   //   return result;
+   // }
 
   ArtifactLayerResult ArtifactProjectManager::Impl::addLayerToComposition(const CompositionID& compositionId, ArtifactLayerInitParams& params)
   {
@@ -614,7 +614,7 @@ QVector<ProjectItem*> ArtifactProjectManager::projectItems() const
   {
    auto result = impl_->addLayerToCurrentComposition(params);
    if (result.success && result.layer) {
-    layerCreated(result.layer->id());
+    // layerCreated(result.layer->id());
    }
    return result;
   }
@@ -627,31 +627,33 @@ QVector<ProjectItem*> ArtifactProjectManager::projectItems() const
     return ok;
   }
 
-  ArtifactLayerResult ArtifactProjectManager::duplicateLayerInComposition(const CompositionID& compositionId, const LayerID& layerId)
-  {
-    auto result = impl_->duplicateLayerInComposition(compositionId, layerId);
-    if (result.success && result.layer) {
-      layerCreated(result.layer->id());
-    }
-    return result;
-  }
+  // ArtifactLayerResult ArtifactProjectManager::duplicateLayerInComposition(const CompositionID& compositionId, const LayerID& layerId)
+  // {
+  //   auto result = impl_->duplicateLayerInComposition(compositionId, layerId);
+  //   if (result.success && result.layer) {
+  //     layerCreated(result.layer->id());
+  //   }
+  //   return result;
+  // }  // Duplicate method commented - see above
+  // ArtifactLayerResult ArtifactProjectManager::duplicateLayerInComposition(const CompositionID& compositionId, const LayerID& layerId)
+  // Already commented out above
 
-  CreateCompositionResult ArtifactProjectManager::duplicateComposition(const CompositionID& compositionId)
-  {
-    auto result = impl_->duplicateComposition(compositionId);
-    if (result.success) {
-      qDebug() << "ArtifactProjectManager::duplicateComposition succeeded id:" << result.id.toString();
-    } else {
-      qDebug() << "ArtifactProjectManager::duplicateComposition failed";
-    }
-    return result;
-  }
+  // CreateCompositionResult ArtifactProjectManager::duplicateComposition(const CompositionID& compositionId)
+  // {
+  //   auto result = impl_->duplicateComposition(compositionId);
+  //   if (result.success) {
+  //     qDebug() << "ArtifactProjectManager::duplicateComposition succeeded id:" << result.id.toString();
+  //   } else {
+  //     qDebug() << "ArtifactProjectManager::duplicateComposition failed";
+  //   }
+  //   return result;
+  // }  // CreateCompositionResult ArtifactProjectManager::duplicateComposition(const CompositionID& compositionId)
 
   ArtifactLayerResult ArtifactProjectManager::addLayerToComposition(const CompositionID& compositionId, ArtifactLayerInitParams& params)
   {
    auto result = impl_->addLayerToComposition(compositionId, params);
    if (result.success && result.layer) {
-    layerCreated(result.layer->id());
+    // layerCreated(result.layer->id());
    }
    return result;
   }

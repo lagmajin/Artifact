@@ -181,7 +181,7 @@ W_OBJECT_IMPL(ArtifactLayerEditorWidgetV2)
  void ArtifactLayerEditorWidgetV2::Impl::renderOneFrame()
  {
   renderer_->clear();
-  renderer_->drawRectLocal(0,0, 200, 150, FloatColor(1.0f, 0.5f, 0.0f, 1.0f));
+  renderer_->drawRectLocal(0,0, 400, 450, FloatColor(1.0f, 0.5f, 0.5f, 1.0f));
   renderer_->flush();
   renderer_->present();
  }

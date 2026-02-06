@@ -2,6 +2,13 @@ module;
 #include <QWidget>
 #include <QVBoxLayout>
 #include <QTimer>
+#include <QVector3D>
+#include <QVector2D>
+#include <QMatrix4x4>
+#include <QMouseEvent>
+#include <QWheelEvent>
+#include <QPaintEvent>
+#include <QPainter>
 #include <wobjectimpl.h>
 
 module Artifact.Widgets.ModelViewer;
@@ -10,9 +17,11 @@ import std;
 import Utils.String.UniString;
 import Color.Float;
 import Image.ImageF32x4RGBAWithCache;
-import Graphics.GPUTexture;
+//import Graphics.GPUTexture;
 
 namespace Artifact {
+
+ using namespace ArtifactCore;
 
  W_OBJECT_IMPL(Artifact3DModelViewer)
 
@@ -30,7 +39,7 @@ namespace Artifact {
 
   // GPU関連
   ImageF32x4RGBAWithCache* renderTarget = nullptr;
-  GPUTexture* modelTexture = nullptr;
+  // GPUTexture* modelTexture = nullptr; // TODO: 後で実装
 
   // モデルデータ（仮）
   std::vector<QVector3D> vertices;
@@ -39,14 +48,15 @@ namespace Artifact {
 
   bool modelLoaded = false;
   bool needsRedraw = true;
+  QPoint lastMousePos;
 
   Impl() {
     renderTarget = new ImageF32x4RGBAWithCache();
-    modelTexture = new GPUTexture();
+    // modelTexture = new GPUTexture(); // TODO: 後で実装
   }
   ~Impl() {
     delete renderTarget;
-    delete modelTexture;
+    // delete modelTexture; // TODO: 後で実装
   }
 
   void loadModelAsync(const ArtifactCore::UniString& path) {
@@ -174,6 +184,7 @@ namespace Artifact {
  {
   if (event->button() == Qt::LeftButton) {
     // カメラ回転開始
+    impl_->lastMousePos = event->pos();
   }
  }
 
@@ -181,11 +192,12 @@ namespace Artifact {
  {
   if (event->buttons() & Qt::LeftButton) {
     // カメラ回転
-    QPoint delta = event->pos() - event->oldPos();
+    QPoint delta = event->pos() - impl_->lastMousePos;
     impl_->cameraYaw += delta.x() * 0.5f;
     impl_->cameraPitch += delta.y() * 0.5f;
     impl_->updateCamera();
     impl_->needsRedraw = true;
+    impl_->lastMousePos = event->pos();
   }
  }
 
@@ -198,18 +210,19 @@ namespace Artifact {
  void Artifact3DModelViewer::paintEvent(QPaintEvent* event)
  {
   QPainter painter(this);
-  if (impl_->renderTarget && impl_->renderTarget->isValid()) {
-    // GPUテクスチャからQImageに変換して描画
-    QImage img = impl_->renderTarget->toQImage();
-    painter.drawImage(rect(), img);
-  } else {
-    // プレースホルダー描画
-    painter.fillRect(rect(), QColor(impl_->backgroundColor.r * 255,
-                                   impl_->backgroundColor.g * 255,
-                                   impl_->backgroundColor.b * 255));
-    painter.setPen(Qt::white);
-    painter.drawText(rect(), Qt::AlignCenter, "3D Model Viewer\nDrop model file here");
-  }
+  // TODO: ImageF32x4RGBAWithCacheからQImageへの変換を実装
+  // if (impl_->renderTarget && impl_->renderTarget->width() > 0) {
+  //   QImage img = impl_->renderTarget->toCVMat(); // 変換メソッドを実装
+  //   painter.drawImage(rect(), img);
+  // } else {
+  
+  // 現在はプレースホルダーのみ描画
+  painter.fillRect(rect(), QColor(impl_->backgroundColor.r() * 255,
+                                 impl_->backgroundColor.g() * 255,
+                                 impl_->backgroundColor.b() * 255));
+  painter.setPen(Qt::white);
+  painter.drawText(rect(), Qt::AlignCenter, "3D Model Viewer\nDrop model file here");
+  // }
  }
 
 }

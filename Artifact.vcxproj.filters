@@ -146,7 +146,6 @@
     <ClCompile Include="include\Widgets\Menu\ArtifactMenu.ixx" />
     <ClCompile Include="include\Widgets\Render\GridRenderer.ixx" />
     <ClCompile Include="include\Widgets\TimelineScene.ixx" />
-    <ClCompile Include="src\GUI\ArtifactGuiManager.cpp" />
     <ClCompile Include="src\Project\ArtifactProject.cppm" />
     <ClCompile Include="src\Project\ArtifactProjectManager.cppm" />
     <ClCompile Include="src\Project\ArtifactProjectExporter.cppm" />
@@ -507,6 +506,9 @@
       <Filter>include\Widgets</Filter>
     </ClCompile>
     <ClCompile Include="src\Widgets\Render\Artifact3DModelViewer.cppm">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="src\GUI\ArtifactGuiManager.cpp">
       <Filter>src</Filter>
     </ClCompile>
   </ItemGroup>

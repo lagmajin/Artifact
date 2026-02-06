@@ -77,15 +77,17 @@ namespace Artifact
   void flushAndWait();
   void createSwapChain(QWidget* widget);
   void recreateSwapChain(QWidget* widget);
-   void drawParticles();
-   void drawRectOutline(float2 pos,const FloatColor& color);
-   void drawSolidLine(float2 start, float2 end, const FloatColor& color, float thickness);
-   void drawSolidRect(float x, float y, float w, float h);
-   void drawSolidRect(float2 pos, float2 size, const FloatColor& color);
-   void drawSprite(float x, float y, float w, float h);
-   void drawSprite(float2 pos, float2 size);
-   void drawSprite(const QImage& image);
-   void drawRectLocal(float x, float y, float w, float h, const FloatColor& color);
+  void drawParticles();
+  void drawRectOutline(float2 pos,const FloatColor& color);
+  void drawSolidLine(float2 start, float2 end, const FloatColor& color, float thickness);
+  void drawSolidRect(float x, float y, float w, float h);
+  void drawSolidRect(float2 pos, float2 size, const FloatColor& color);
+  void drawSprite(float x, float y, float w, float h);
+  void drawSprite(float2 pos, float2 size);
+  void drawSprite(const QImage& image);
+  void drawRectLocal(float x, float y, float w, float h, const FloatColor& color);
+  void drawSpriteLocal(float x,float y,float w,float h,const QImage& image);
+  void drawLineLocal(float2 p1, float2 p2, const FloatColor& color1,const FloatColor& color2);
 
   void destroy();
  };
@@ -534,7 +536,6 @@ void AritfactIRenderer::Impl::createSwapChain(QWidget* window)
  }
 
  
-
  void AritfactIRenderer::Impl::flushAndWait()
  {
   RefCntAutoPtr<IFence> fence;
@@ -614,7 +615,7 @@ void AritfactIRenderer::Impl::createSwapChain(QWidget* window)
   }
 
   {
-   CBSolidColor cb = { {1.0f, 0.0f, 0.0f, 1.0f} };
+   CBSolidColor cb = { {color.r(), color.g(), color.b(), 1.0f} };
 
    void* pData = nullptr;
    pImmediateContext_->MapBuffer(m_draw_solid_rect_cb, MAP_WRITE, MAP_FLAG_DISCARD, pData);
@@ -668,6 +669,21 @@ void AritfactIRenderer::Impl::createSwapChain(QWidget* window)
   );
 
   pImmediateContext_->DrawIndexed(drawAttrs);
+ }
+
+ void AritfactIRenderer::Impl::drawLineLocal(float2 p1, float2 p2, const FloatColor& color1, const FloatColor& color2)
+ {
+     if (!pSwapChain_) return;
+
+     LineVertex vertices[2] = {
+         {{p1.x, p1.y}, {color1.r(), color1.g(), color1.b(), 1}}, // 始点
+         {{p2.x, p2.y}, {color2.r(), color2.g(), color2.b(), 1}}  // 終点
+	 };
+
+	 auto swapChainRTV = pSwapChain_->GetCurrentBackBufferRTV();
+	 ITextureView* pLayerRTV = m_layerRT->GetDefaultView(TEXTURE_VIEW_RENDER_TARGET);
+	 pImmediateContext_->SetRenderTargets(1, &swapChainRTV, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+
  }
 
  AritfactIRenderer::AritfactIRenderer(RefCntAutoPtr<IRenderDevice> pDevice, RefCntAutoPtr<IDeviceContext> pImmediateContext, QWidget* widget) :impl_(new Impl(pDevice, pImmediateContext,widget))
