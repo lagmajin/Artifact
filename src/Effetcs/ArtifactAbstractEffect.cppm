@@ -14,6 +14,8 @@ import Artifact.Effect.ImplBase;
 
 namespace Artifact {
 
+using namespace ArtifactCore;
+
 class ArtifactAbstractEffect::Impl {
 public:
     bool enabled = true;
@@ -89,10 +91,11 @@ void ArtifactAbstractEffect::setContext(const EffectContext& context) {
 }
 
 void ArtifactAbstractEffect::apply(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) {
-    if (!impl_->enabled) {
-        dst = src;
-        return;
-    }
+if (!impl_->enabled) {
+    // Deep copy when effect is disabled
+    dst = src.DeepCopy();
+    return;
+}
 
     ComputeMode mode = impl_->mode;
     
@@ -108,8 +111,8 @@ void ArtifactAbstractEffect::apply(const ImageF32x4RGBAWithCache& src, ImageF32x
         // CPUバックエンドで処理
         impl_->cpuImpl_->applyCPU(src, dst);
     } else {
-        // どちらの実装も利用できない場合はコピー
-        dst = src;
+        // どちらの実装も利用できない場合はディープコピー
+        dst = src.DeepCopy();
     }
 }
 

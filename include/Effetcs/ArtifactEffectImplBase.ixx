@@ -9,6 +9,8 @@ import Image.ImageF32x4_RGBA;
 
 export namespace Artifact {
 
+ using namespace ArtifactCore;
+
 class ArtifactEffectImplBase {
 protected:
     EffectContext context_;
@@ -25,13 +27,13 @@ public:
     // CPUバックエンドの処理（OpenCVを使用）
     virtual void applyCPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) {
         // デフォルト実装: 単純なコピー
-        dst = src;
+        //dst = src;
     }
 
     // GPUバックエンドの処理（HLSLシェーダを使用）
     virtual void applyGPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) {
         // デフォルト実装: CPUバックエンドにフォールバック
-        applyCPU(src, dst);
+        //applyCPU(src, dst);
     }
 
     // 初期化と解放

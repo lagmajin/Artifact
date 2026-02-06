@@ -11,6 +11,7 @@
 - In Qt projects, prefer using Qt containers (e.g., `QVector`, `QList`) over standard containers like `std::vector` to maintain consistency and leverage Qt's features.
 - When using Qt types in C++ module (.cpp, .cppm) files, always add the necessary Qt includes in the global module fragment before the `module;` declaration. For example, explicitly include `#include <QString>`, `#include <QVector>`, `#include <QColor>`, etc. This ensures that independent includes are present in the implementation file rather than relying on the module's external interface (.ixx).
 - C++20 モジュールコードを書くときはちゃんとグローバルモジュールフラグメントも書いてほしい。
+- **[ArtifactCoreルール] ArtifactCoreライブラリを使う時は必ず`using namespace ArtifactCore;`の有無を慎重に確認し、不足していれば必ず追加すること。**
 
 ## File Extension Rules
 **?? CRITICAL: This project uses C++20 modules. Always follow these file extension rules:**

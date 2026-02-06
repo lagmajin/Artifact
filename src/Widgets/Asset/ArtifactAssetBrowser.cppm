@@ -18,6 +18,8 @@
 #include <QIcon>
 #include <QHash>
 #include <QFileInfo>
+#include <QStyle>
+#include <QApplication>
 #include <wobjectimpl.h>
 #include <boost/asio/basic_signal_set.hpp>
 
@@ -88,11 +90,13 @@ namespace Artifact {
  public:
   Impl();
   ~Impl();
- 	QTreeView* directoryView_ = nullptr;
+  QTreeView* directoryView_ = nullptr;
   QListWidget* fileView_ = nullptr;
   QLineEdit* searchEdit_ = nullptr;
   QFileSystemModel* fileModel_ = nullptr;
   QButtonGroup* filterButtonGroup_ = nullptr;
+  QLabel* currentPathLabel_ = nullptr;
+  QString currentDirectoryPath_;
   QString currentFileTypeFilter_ = "all";
   QString currentSearchFilter_;
   
@@ -112,12 +116,12 @@ namespace Artifact {
 
   ArtifactAssetBrowser::Impl::Impl()
   {
-    // Initialize default icons (using Qt standard icons as fallback)
-    // You can replace these with custom icons later
-    defaultFileIcon_ = QIcon(":/icons/file.png");  // Fallback to empty icon
-    defaultImageIcon_ = QIcon(":/icons/image.png");
-    defaultVideoIcon_ = QIcon(":/icons/video.png");
-    defaultAudioIcon_ = QIcon(":/icons/audio.png");
+    // Initialize default icons using Qt standard icons
+    QStyle* style = QApplication::style();
+    defaultFileIcon_ = style->standardIcon(QStyle::SP_FileIcon);
+    defaultImageIcon_ = style->standardIcon(QStyle::SP_FileIcon);
+    defaultVideoIcon_ = style->standardIcon(QStyle::SP_MediaPlay);
+    defaultAudioIcon_ = style->standardIcon(QStyle::SP_MediaVolume);
   }
 
   ArtifactAssetBrowser::Impl::~Impl()
@@ -241,16 +245,18 @@ namespace Artifact {
 
   void ArtifactAssetBrowser::Impl::applyFilters()
   {
-    if (!fileView_ || !fileModel_) return;
+    if (!fileView_ || currentDirectoryPath_.isEmpty()) return;
     
     // Clear and rebuild file list
     fileView_->clear();
     
-    QModelIndex rootIndex = fileView_->rootIndex();
-    if (!rootIndex.isValid()) return;
+    QDir dir(currentDirectoryPath_);
+    if (!dir.exists()) return;
     
-    QString rootPath = fileModel_->filePath(rootIndex);
-    QDir dir(rootPath);
+    // Update path label
+    if (currentPathLabel_) {
+      currentPathLabel_->setText(currentDirectoryPath_);
+    }
     
     QStringList files = dir.entryList(QDir::Files);
     
@@ -337,21 +343,28 @@ namespace Artifact {
   directoryView->setExpandsOnDoubleClick(true);
   directoryView->setAnimated(true);
 
-  auto assetPathLabel = new QLabel("Assets > 2D Texture");
+  auto assetPathLabel = new QLabel("Assets");
   assetPathLabel->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
   assetPathLabel->setStyleSheet("font-weight: bold;");
 
+  auto filePathLabel = impl_->currentPathLabel_ = new QLabel(desktopPath);
+  filePathLabel->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+  filePathLabel->setStyleSheet("color: gray; font-size: 10pt;");
+  filePathLabel->setWordWrap(true);
+
   auto fileView = impl_->fileView_ = new QListWidget();
   impl_->fileModel_ = model;
+  impl_->currentDirectoryPath_ = desktopPath;  // Set initial directory
   fileView->setViewMode(QListView::IconMode);
   fileView->setIconSize(QSize(64, 64));
+  fileView->setGridSize(QSize(100, 100));  // Fixed grid size for uniform spacing
   fileView->setResizeMode(QListView::Adjust);
   fileView->setFlow(QListView::LeftToRight);
-  //fileView->setModel(model);  // QFileSystemModel をセット
-  fileView->setRootIndex(model->index(desktopPath));
-  fileView->setTextElideMode(Qt::ElideRight);
+  fileView->setTextElideMode(Qt::ElideMiddle);  // Show "longfile...name.png"
+  fileView->setWordWrap(true);
+  fileView->setSpacing(5);  // Uniform spacing between items
+  fileView->setUniformItemSizes(true);  // Optimize rendering with uniform sizes
   fileView->setDragEnabled(true);
-  // デスクトップを表示
   
   // Connect search filter
   if (impl_->searchEdit_) {
@@ -372,27 +385,36 @@ namespace Artifact {
     impl_->applyFilters();
   });
   
-  // Connect directory change to update file list
+  // Connect directory change to update file list (LEFT -> RIGHT widget coordination)
   connect(directoryView, &QTreeView::clicked, this, [this, model](const QModelIndex& index) {
-    if (impl_->fileView_) {
-      QString path = model->filePath(index);
-      impl_->fileView_->setRootIndex(model->index(path));
+    QString path = model->filePath(index);
+    QFileInfo fileInfo(path);
+    
+    // Only update if it's a directory
+    if (fileInfo.isDir()) {
+      impl_->currentDirectoryPath_ = path;  // Update current directory
       impl_->clearThumbnailCache();  // Clear cache when changing directory
-      impl_->applyFilters();
-      folderChanged(path);
+      impl_->applyFilters();  // Reload file list for right widget
+      folderChanged(path);  // Emit signal
+    }
+  });
+  
+  // Connect file double-click to add to project
+  connect(fileView, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem* item) {
+    QString filePath = item->data(Qt::UserRole).toString();
+    if (!filePath.isEmpty()) {
+      auto& projectManager = ArtifactProjectManager::getInstance();
+      projectManager.addAssetsFromFilePaths(QStringList() << filePath);
     }
   });
   
   // Initial load
   impl_->applyFilters();
 
-
-  auto filePathLabel = new QLabel();
-
   auto VBoxLayout = new  QVBoxLayout();
   VBoxLayout->addWidget(assetPathLabel);
-  VBoxLayout->addWidget(fileView);
   VBoxLayout->addWidget(filePathLabel);
+  VBoxLayout->addWidget(fileView);
 
   vLayout->addWidget(assetToolBar);
   vLayout->addLayout(filterButtonsLayout);

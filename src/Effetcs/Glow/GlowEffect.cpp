@@ -33,7 +33,7 @@ void GlowEffectCPUImpl::applyCPU(const ImageF32x4RGBAWithCache& src, ImageF32x4R
     // 結果をdstに設定
     ImageF32x4_RGBA dstImage;
     dstImage.setFromCVMat(dstMat);
-    dst = ImageF32x4RGBAWithCache(dstImage);
+    //dst = ImageF32x4RGBAWithCache(dstImage);
 }
 
 void GlowEffectGPUImpl::applyGPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) {
