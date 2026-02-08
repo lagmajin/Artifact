@@ -16,6 +16,7 @@ import Artifact.Layers.Hierarchy.Model;
 import Artifact.Widget.WorkAreaControlWidget;
 
 import ArtifactTimelineIconModel;
+import Artifact.Widgets.LayerPanelWidget;
 import Artifact.Widgets.SeekBar;
 import Artifact.Widgets.Timeline.Label;
 import Artifact.Timeline.RulerWidget;
@@ -44,6 +45,7 @@ namespace Artifact {
   Impl();
   ~Impl();
   ArtifactTimelineBottomLabel* timelineLabel_ = nullptr;
+ ArtifactLayerTimelinePanelWrapper* layerTimelinePanel_ = nullptr;
 
  };
 
@@ -57,7 +59,7 @@ namespace Artifact {
 
  }
 
- ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget* parent/*=nullptr*/) :QWidget(parent)
+ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget* parent/*=nullptr*/) :QWidget(parent), impl_(new Impl())
  {
 
   setWindowFlags(Qt::FramelessWindowHint);
@@ -101,6 +103,16 @@ namespace Artifact {
   auto timeScaleWidget = new TimelineScaleWidget();
   auto workAreaWidget = new WorkAreaControl();
   auto timelineTrackView = new TimelineTrackView();
+  auto layerTimelinePanel = new ArtifactLayerTimelinePanelWrapper();
+  layerTimelinePanel->setMinimumWidth(220);
+  layerTimelinePanel->setMaximumWidth(320);
+
+  auto* trackSplitter = new DraggableSplitter(Qt::Horizontal);
+  trackSplitter->addWidget(layerTimelinePanel);
+  trackSplitter->addWidget(timelineTrackView);
+  trackSplitter->setStretchFactor(0, 0);
+  trackSplitter->setStretchFactor(1, 1);
+  trackSplitter->setHandleWidth(6);
 
 
   auto rightPanel = new QWidget();
@@ -108,7 +120,7 @@ namespace Artifact {
   rightPanelLayout->addWidget(timeRulerWidget);
   rightPanelLayout->addWidget(timeScaleWidget);
   rightPanelLayout->addWidget(workAreaWidget);
-  rightPanelLayout->addWidget(timelineTrackView);
+  rightPanelLayout->addWidget(trackSplitter);
   rightPanel->setLayout(rightPanelLayout);
 
 

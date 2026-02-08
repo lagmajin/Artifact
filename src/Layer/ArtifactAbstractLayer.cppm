@@ -1,5 +1,11 @@
 ﻿module;
 
+#include <array>
+#include <algorithm>
+#include <cmath>
+#include <limits>
+#include <QPointF>
+#include <QRectF>
 #include <wobjectcpp.h>
 #include <wobjectimpl.h>
 module Artifact.Layer.Abstract;
@@ -37,6 +43,8 @@ namespace Artifact {
  	
    bool is3D() const;
    AnimatableTransform3D transform_;
+   AnimatableTransform2D transform2d_;
+   Size_2D sourceSize_;
  };
 
   ArtifactAbstractLayer::Impl::Impl()
@@ -184,11 +192,6 @@ namespace Artifact {
   return false;
  }
 
- AnimatableTransform3D& ArtifactAbstractLayer::transform3D()
- {
-  return impl_->transform_;
- }
-
  void ArtifactAbstractLayer::setTimeRemapEnabled(bool)
  {
 
@@ -219,23 +222,115 @@ namespace Artifact {
   return true;
  }
 
- Size_2D ArtifactAbstractLayer::sourceSize() const
- {
+Size_2D ArtifactAbstractLayer::sourceSize() const
+{
+ return impl_->sourceSize_;
+}
+
+void ArtifactAbstractLayer::setSourceSize(const Size_2D& size)
+{
+ impl_->sourceSize_ = size;
+}
+
+Size_2D ArtifactAbstractLayer::aabb() const
+{
+ const auto bounds = transformedBoundingBox();
+ if (bounds.width() <= 0 || bounds.height() <= 0) {
   return Size_2D();
  }
+ Size_2D result;
+ result.width = static_cast<int>(std::ceil(bounds.width()));
+ result.height = static_cast<int>(std::ceil(bounds.height()));
+ return result;
+}
 
- Size_2D ArtifactAbstractLayer::aabb() const
- {
-  return Size_2D();
+QRectF ArtifactAbstractLayer::transformedBoundingBox() const
+{
+ const auto size = sourceSize();
+ if (size.isEmpty()) {
+  return QRectF();
  }
 
- QJsonObject ArtifactAbstractLayer::toJson() const
- {
+ const float width = static_cast<float>(size.width);
+ const float height = static_cast<float>(size.height);
+ const float centerX = width * 0.5f;
+ const float centerY = height * 0.5f;
 
+ const float scaleX = transform3D().scaleX();
+ const float scaleY = transform3D().scaleY();
+ const float rotationDeg = transform3D().rotation();
+ const float translateX = transform3D().positionX();
+ const float translateY = transform3D().positionY();
 
+ const float radians = rotationDeg * (3.14159265358979323846f / 180.0f);
+ const float cosA = std::cos(radians);
+ const float sinA = std::sin(radians);
 
-  return QJsonObject();
+ const std::array<QPointF, 4> corners = {
+  QPointF(0.0f, 0.0f),
+  QPointF(width, 0.0f),
+  QPointF(width, height),
+  QPointF(0.0f, height)
+ };
+
+ float minX = std::numeric_limits<float>::max();
+ float minY = std::numeric_limits<float>::max();
+ float maxX = std::numeric_limits<float>::lowest();
+ float maxY = std::numeric_limits<float>::lowest();
+
+ for (const auto& corner : corners) {
+  QPointF pt = corner;
+  pt -= QPointF(centerX, centerY);
+  pt.setX(pt.x() * scaleX);
+  pt.setY(pt.y() * scaleY);
+  const float rotatedX = pt.x() * cosA - pt.y() * sinA;
+  const float rotatedY = pt.x() * sinA + pt.y() * cosA;
+  pt.setX(rotatedX + centerX + translateX);
+  pt.setY(rotatedY + centerY + translateY);
+  if (pt.x() < minX) {
+   minX = pt.x();
+  }
+  if (pt.x() > maxX) {
+   maxX = pt.x();
+  }
+  if (pt.y() < minY) {
+   minY = pt.y();
+  }
+  if (pt.y() > maxY) {
+   maxY = pt.y();
+  }
  }
+
+ return QRectF(minX, minY, maxX - minX, maxY - minY);
+}
+
+AnimatableTransform2D& ArtifactAbstractLayer::transform2D()
+{
+ return impl_->transform2d_;
+}
+
+const AnimatableTransform2D& ArtifactAbstractLayer::transform2D() const
+{
+ return impl_->transform2d_;
+}
+
+AnimatableTransform3D& ArtifactAbstractLayer::transform3D()
+{
+ return impl_->transform_;
+}
+
+const AnimatableTransform3D& ArtifactAbstractLayer::transform3D() const
+{
+ return impl_->transform_;
+}
+
+QJsonObject ArtifactAbstractLayer::toJson() const
+{
+
+
+
+ return QJsonObject();
+}
 
  ArtifactAbstractLayerPtr ArtifactAbstractLayer::fromJson(const QJsonObject& obj)
  {

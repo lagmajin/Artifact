@@ -2,7 +2,9 @@ module;
 #include <QDir>
 #include <QFile>
 #include <QJsonObject>
+#include <QRegularExpression>
 #include <QStandardPaths>
+#include <QStringList>
 
 #include <QTextStream>
 #include <wobjectimpl.h>
@@ -28,57 +30,208 @@ namespace Artifact {
 
  using namespace ArtifactCore;
 
+ namespace {
+  static const QStringList kProjectSubfolders = {
+    QStringLiteral("Assets"),
+    QStringLiteral("Scenes"),
+    QStringLiteral("Settings")
+  };
+
+  QString defaultProjectDisplayName()
+  {
+    return QStringLiteral("UntitledProject");
+  }
+
+  QString sanitizeProjectDirectoryName(const QString& rawName)
+  {
+    QString sanitized = rawName.trimmed();
+    if (sanitized.isEmpty()) {
+      return defaultProjectDisplayName();
+    }
+
+    sanitized.replace(' ', '_');
+    static const QRegularExpression invalidChars(R"([^a-zA-Z0-9_\-])");
+    sanitized.replace(invalidChars, QStringLiteral("_"));
+
+    if (sanitized.isEmpty()) {
+      return defaultProjectDisplayName();
+    }
+
+    return sanitized;
+  }
+
+  QString projectsDirectoryRoot()
+  {
+    QString base = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
+    if (base.isEmpty()) {
+      base = QDir::homePath();
+    }
+    QDir root(base);
+    root.mkpath(QStringLiteral("ArtifactProjects"));
+    return root.filePath(QStringLiteral("ArtifactProjects"));
+  }
+
+  QString buildProjectRootPath(const QString& directoryName)
+  {
+    QDir base(projectsDirectoryRoot());
+    base.mkpath(QStringLiteral("."));
+    return base.filePath(directoryName);
+  }
+
+  void ensureProjectFolders(const QString& rootPath)
+  {
+    if (rootPath.isEmpty()) {
+      return;
+    }
+    QDir root(rootPath);
+    if (!root.exists()) {
+      root.mkpath(QStringLiteral("."));
+    }
+    for (const QString& subfolder : kProjectSubfolders) {
+      root.mkpath(subfolder);
+    }
+  }
+ }
+
  W_OBJECT_IMPL(ArtifactProjectManager)
 
 
-   class ArtifactProjectManager::Impl {
-   public:
-    QString currentProjectPath_;
-   public:
-    Impl();
-    ~Impl();
-    bool isCreated_ = false;
-    std::shared_ptr<ArtifactProject> currentProjectPtr_;
-    bool signalsConnected_ = false;
-    bool suppressDefaultCreate_ = false;
-    bool creatingComposition_ = false;
-    void createProject();
-    bool isProjectCreated() const;
-    Id createNewComposition();
-    //CompositionResult createComposition(const CompositionSettings& settings);
-    CreateCompositionResult createComposition(const CompositionSettings& setting);
-    CreateCompositionResult createComposition(const ArtifactCompositionInitParams& params);
-    void addAssetFromFilePath(const QString& filePath);
-    void addAssetsFromFilePaths(const QStringList& filePaths);
-    
-     // Layer management
-     ArtifactLayerResult addLayerToCurrentComposition(ArtifactLayerInitParams& params);
-     ArtifactLayerResult addLayerToComposition(const CompositionID& compositionId, ArtifactLayerInitParams& params);
-   bool removeLayerFromComposition(const CompositionID& compositionId, const LayerID& layerId);
-   // ArtifactLayerResult duplicateLayerInComposition(const CompositionID& compositionId, const LayerID& layerId);
-   // CreateCompositionResult duplicateComposition(const CompositionID& compositionId);
-    };
+class ArtifactProjectManager::Impl {
+public:
+  QString currentProjectPath_;
+public:
+  Impl();
+  ~Impl();
+  bool isCreated_ = false;
+  std::shared_ptr<ArtifactProject> currentProjectPtr_;
+  bool signalsConnected_ = false;
+  bool suppressDefaultCreate_ = false;
+  bool creatingComposition_ = false;
+  QString projectDisplayName_;
+  QString projectDirectoryName_;
+  QString projectRootPath_;
+  void createProject(const QString& name, bool force);
+  QString assetsFolderPath() const;
+  bool copyAssetIntoProject(const QString& source, QString* outDestination);
+  QString makeUniqueAssetPath(const QString& directory, const QString& fileName) const;
+  QString relativeAssetPath(const QString& absoluteAssetPath) const;
+  bool isProjectCreated() const;
+  Id createNewComposition();
+  //CompositionResult createComposition(const CompositionSettings& settings);
+  CreateCompositionResult createComposition(const CompositionSettings& setting);
+  CreateCompositionResult createComposition(const ArtifactCompositionInitParams& params);
+  void addAssetFromFilePath(const QString& filePath);
+  void addAssetsFromFilePaths(const QStringList& filePaths);
+
+  // Layer management
+  ArtifactLayerResult addLayerToCurrentComposition(ArtifactLayerInitParams& params);
+  ArtifactLayerResult addLayerToComposition(const CompositionID& compositionId, ArtifactLayerInitParams& params);
+  bool removeLayerFromComposition(const CompositionID& compositionId, const LayerID& layerId);
+  // ArtifactLayerResult duplicateLayerInComposition(const CompositionID& compositionId, const LayerID& layerId);
+  // CreateCompositionResult duplicateComposition(const CompositionID& compositionId);
+};
 
  ArtifactProjectManager::Impl::Impl()
  {
 
  }
 
- void ArtifactProjectManager::Impl::createProject()
- {
-  if (!currentProjectPtr_)
-  {
-   currentProjectPtr_ = std::make_shared<ArtifactProject>();
-   currentProjectPath_.clear();
-  }
-  else {
-
-
-  }
-
-
-
+void ArtifactProjectManager::Impl::createProject(const QString& name, bool /*force*/)
+{
+ QString displayName = name.trimmed();
+ if (displayName.isEmpty()) {
+  displayName = defaultProjectDisplayName();
  }
+
+ projectDisplayName_ = displayName;
+ projectDirectoryName_ = sanitizeProjectDirectoryName(displayName);
+ projectRootPath_ = buildProjectRootPath(projectDirectoryName_);
+ currentProjectPath_ = projectRootPath_;
+
+ ensureProjectFolders(projectRootPath_);
+
+ if (!currentProjectPtr_) {
+  currentProjectPtr_ = std::make_shared<ArtifactProject>(displayName);
+ } else {
+  currentProjectPtr_->setProjectName(displayName);
+ }
+ isCreated_ = true;
+}
+
+QString ArtifactProjectManager::Impl::assetsFolderPath() const
+{
+ if (projectRootPath_.isEmpty()) {
+  return QString();
+ }
+ ensureProjectFolders(projectRootPath_);
+ QDir assetsDir(projectRootPath_);
+ assetsDir.mkpath(QStringLiteral("Assets"));
+ return assetsDir.filePath(QStringLiteral("Assets"));
+}
+
+bool ArtifactProjectManager::Impl::copyAssetIntoProject(const QString& source, QString* outDestination)
+{
+ if (source.isEmpty()) {
+  return false;
+ }
+
+ QString assetsPath = assetsFolderPath();
+ if (assetsPath.isEmpty()) {
+  return false;
+ }
+
+ QString finalFile = makeUniqueAssetPath(assetsPath, QFileInfo(source).fileName());
+ if (finalFile.isEmpty()) {
+  return false;
+ }
+
+ if (!QFile::copy(source, finalFile)) {
+  return false;
+ }
+
+ if (outDestination) {
+  *outDestination = finalFile;
+ }
+ return true;
+}
+
+QString ArtifactProjectManager::Impl::relativeAssetPath(const QString& absoluteAssetPath) const
+{
+ if (absoluteAssetPath.isEmpty()) {
+  return QString();
+ }
+ QString assetsPath = assetsFolderPath();
+ if (assetsPath.isEmpty()) {
+  return absoluteAssetPath;
+ }
+ QDir assetsDir(assetsPath);
+ return assetsDir.relativeFilePath(absoluteAssetPath);
+}
+
+QString ArtifactProjectManager::Impl::makeUniqueAssetPath(const QString& directory, const QString& fileName) const
+{
+ if (directory.isEmpty() || fileName.isEmpty()) {
+  return QString();
+ }
+
+ QDir dir(directory);
+ QFileInfo info(fileName);
+ QString baseName = info.completeBaseName();
+ QString extension = info.completeSuffix();
+ QString candidate = dir.filePath(info.fileName());
+ int counter = 1;
+
+ while (QFile::exists(candidate)) {
+  QString numbered = baseName;
+  if (counter > 1) {
+   numbered = QString("%1_%2").arg(baseName).arg(counter);
+  }
+  candidate = dir.filePath(extension.isEmpty() ? numbered : QString("%1.%2").arg(numbered).arg(extension));
+  ++counter;
+ }
+
+ return candidate;
+}
 
  ArtifactProjectManager::Impl::~Impl()
  {
@@ -185,35 +338,42 @@ namespace Artifact {
   return true;
  }
 
- void ArtifactProjectManager::createProject()
- {
-  impl_->createProject();
+void ArtifactProjectManager::createProject()
+{
+ createProject(defaultProjectDisplayName());
+}
 
-  // ensure current project pointer is valid before connecting signals
-  if (impl_->currentProjectPtr_) {
-    // Use lambda forwarding with weak_ptr capture to avoid using raw pointers
-    if (!impl_->signalsConnected_) {
-      auto shared = impl_->currentProjectPtr_;
-      std::weak_ptr<ArtifactProject> weakProj = shared;
-      connect(shared.get(), &ArtifactProject::projectChanged, this, [weakProj, this]() {
-        if (weakProj.lock()) {
-          // forward signal from project to manager
-          projectChanged();
-        }
-      });
-      connect(shared.get(), &ArtifactProject::compositionCreated, this, [weakProj, this](const CompositionID& id) {
-        if (weakProj.lock()) {
-          compositionCreated(id);
-        }
-      });
-      impl_->signalsConnected_ = true;
-    }
-  } else {
-    qDebug() << "createProject: failed to create currentProjectPtr_";
-  }
+void ArtifactProjectManager::createProject(const QString& projectName, bool force/*=false*/)
+{
+ qDebug() << "ArtifactProjectManager::createProject with name:" << projectName;
 
-  /*emit*/ projectCreated();
+ impl_->createProject(projectName, force);
+
+ // ensure current project pointer is valid before connecting signals
+ if (impl_->currentProjectPtr_) {
+   // Use lambda forwarding with weak_ptr capture to avoid using raw pointers
+   if (!impl_->signalsConnected_) {
+     auto shared = impl_->currentProjectPtr_;
+     std::weak_ptr<ArtifactProject> weakProj = shared;
+     connect(shared.get(), &ArtifactProject::projectChanged, this, [weakProj, this]() {
+       if (weakProj.lock()) {
+         // forward signal from project to manager
+         projectChanged();
+       }
+     });
+     connect(shared.get(), &ArtifactProject::compositionCreated, this, [weakProj, this](const CompositionID& id) {
+       if (weakProj.lock()) {
+         compositionCreated(id);
+       }
+     });
+     impl_->signalsConnected_ = true;
+   }
+ } else {
+   qDebug() << "createProject: failed to create currentProjectPtr_";
  }
+
+ /*emit*/ projectCreated();
+}
 
 // Call this to prevent project-created default composition creation in the
 // current operation context (e.g., when UI immediately requests a named
@@ -258,17 +418,31 @@ void ArtifactProjectManager::suppressDefaultCreate(bool v)
  //  return result;
  // }
 
- void ArtifactProjectManager::createProject(const QString& projectName, bool force/*=false*/)
- {
-  qDebug() << "ArtifactProjectManager::createProject with name:" << projectName;
+QString ArtifactProjectManager::currentProjectAssetsPath() const
+{
+ return impl_ ? impl_->assetsFolderPath() : QString();
+}
 
-  impl_->createProject();
-
-  /*emit*/ projectCreated();
+QStringList ArtifactProjectManager::copyFilesToProjectAssets(const QStringList& sourcePaths)
+{
+ QStringList copied;
+ if (!impl_) return copied;
+ for (const QString& source : sourcePaths) {
+  QString dest;
+  if (impl_->copyAssetIntoProject(source, &dest)) {
+   copied.append(dest);
+  }
  }
+ return copied;
+}
 
- ArtifactProjectManager& ArtifactProjectManager::getInstance()
- {
+QString ArtifactProjectManager::relativeAssetPath(const QString& absoluteAssetPath) const
+{
+ return impl_ ? impl_->relativeAssetPath(absoluteAssetPath) : QString();
+}
+
+ArtifactProjectManager& ArtifactProjectManager::getInstance()
+{
   static ArtifactProjectManager instance; // 最初の呼び出し時にのみ初期化
   return instance;
  }

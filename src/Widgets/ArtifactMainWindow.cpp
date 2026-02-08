@@ -4,6 +4,8 @@
 #include <DockManager.h>
 #include <QLabel>
 #include <QMessageBox>
+#include <QStatusBar>
+#include <QTimer>
 
 
 #include <qcoro6/qcoro/qcorotask.h>
@@ -71,6 +73,13 @@ namespace Artifact {
    void handleCompositionCreated(const CompositionID id, ArtifactMainWindow* window);
    void handleLayerCreated(ArtifactMainWindow* window);
  	ArtifactMainWindow* mainWindow_=nullptr;
+
+   // Status bar widgets
+   QLabel* statusLabel_ = nullptr;
+   QLabel* coordinatesLabel_ = nullptr;
+   QLabel* zoomLabel_ = nullptr;
+   QLabel* memoryLabel_ = nullptr;
+   QLabel* fpsLabel_ = nullptr;
 
    void handleDefaultKeyPressEvent(QKeyEvent* event);
    void handleDefaultKeyReleaseEvent(QKeyEvent* event);
@@ -148,7 +157,48 @@ namespace Artifact {
   menuBar->setMainWindow(this);
 
   setDockNestingEnabled(true);
-  statusBar();
+  
+  // Setup status bar with multiple widgets
+  auto statusbar = statusBar();
+  
+  // Create status bar labels
+  auto statusLabel = new QLabel("Ready");
+  statusLabel->setMinimumWidth(200);
+  statusLabel->setObjectName("statusLabel");
+  
+  auto coordinatesLabel = new QLabel("X: 0 | Y: 0");
+  coordinatesLabel->setMinimumWidth(120);
+  coordinatesLabel->setAlignment(Qt::AlignCenter);
+  coordinatesLabel->setObjectName("coordinatesLabel");
+  
+  auto zoomLabel = new QLabel("Zoom: 100%");
+  zoomLabel->setMinimumWidth(100);
+  zoomLabel->setAlignment(Qt::AlignCenter);
+  zoomLabel->setObjectName("zoomLabel");
+  
+  auto memoryLabel = new QLabel("Memory: 0 MB");
+  memoryLabel->setMinimumWidth(120);
+  memoryLabel->setAlignment(Qt::AlignCenter);
+  memoryLabel->setObjectName("memoryLabel");
+  
+  auto fpsLabel = new QLabel("FPS: 0");
+  fpsLabel->setMinimumWidth(80);
+  fpsLabel->setAlignment(Qt::AlignCenter);
+  fpsLabel->setObjectName("fpsLabel");
+  
+  // Add widgets to status bar
+  statusbar->addWidget(statusLabel, 1);  // Stretch factor 1
+  statusbar->addPermanentWidget(fpsLabel);
+  statusbar->addPermanentWidget(memoryLabel);
+  statusbar->addPermanentWidget(zoomLabel);
+  statusbar->addPermanentWidget(coordinatesLabel);
+  
+  // Store references in impl
+  impl_->statusLabel_ = statusLabel;
+  impl_->coordinatesLabel_ = coordinatesLabel;
+  impl_->zoomLabel_ = zoomLabel;
+  impl_->memoryLabel_ = memoryLabel;
+  impl_->fpsLabel_ = fpsLabel;
   setMenuBar(menuBar);
 
   resize(600, 640);
@@ -252,12 +302,50 @@ namespace Artifact {
 
  void ArtifactMainWindow::showStatusMessage(const QString& message, int timeoutMs /*= 2000*/)
  {
-
+  statusBar()->showMessage(message, timeoutMs);
+  if (impl_->statusLabel_) {
+   impl_->statusLabel_->setText(message);
+  }
  }
 
  void ArtifactMainWindow::closeAllDocks()
  {
 
+ }
+
+ void ArtifactMainWindow::setStatusZoomLevel(float zoomPercent)
+ {
+  if (impl_->zoomLabel_) {
+   impl_->zoomLabel_->setText(QString("Zoom: %1%").arg(static_cast<int>(zoomPercent)));
+  }
+ }
+
+ void ArtifactMainWindow::setStatusCoordinates(int x, int y)
+ {
+  if (impl_->coordinatesLabel_) {
+   impl_->coordinatesLabel_->setText(QString("X: %1 | Y: %2").arg(x).arg(y));
+  }
+ }
+
+ void ArtifactMainWindow::setStatusMemoryUsage(uint64_t memoryMB)
+ {
+  if (impl_->memoryLabel_) {
+   impl_->memoryLabel_->setText(QString("Memory: %1 MB").arg(memoryMB));
+  }
+ }
+
+ void ArtifactMainWindow::setStatusFPS(double fps)
+ {
+  if (impl_->fpsLabel_) {
+   impl_->fpsLabel_->setText(QString("FPS: %1").arg(static_cast<int>(fps)));
+  }
+ }
+
+ void ArtifactMainWindow::setStatusReady()
+ {
+  if (impl_->statusLabel_) {
+   impl_->statusLabel_->setText("Ready");
+  }
  }
 
  void ArtifactMainWindow::keyPressEvent(QKeyEvent* event)

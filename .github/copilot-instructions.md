@@ -12,6 +12,7 @@
 - When using Qt types in C++ module (.cpp, .cppm) files, always add the necessary Qt includes in the global module fragment before the `module;` declaration. For example, explicitly include `#include <QString>`, `#include <QVector>`, `#include <QColor>`, etc. This ensures that independent includes are present in the implementation file rather than relying on the module's external interface (.ixx).
 - C++20 モジュールコードを書くときはちゃんとグローバルモジュールフラグメントも書いてほしい。
 - **[ArtifactCoreルール] ArtifactCoreライブラリを使う時は必ず`using namespace ArtifactCore;`の有無を慎重に確認し、不足していれば必ず追加すること。**
+- **IMPORTANT RULE: Never recreate existing .cppm or .ixx files by using remove_file + create_file. Only use replace_string_in_file to modify existing code structure. Keep the original file structure intact and only modify the necessary parts.**
 
 ## File Extension Rules
 **?? CRITICAL: This project uses C++20 modules. Always follow these file extension rules:**

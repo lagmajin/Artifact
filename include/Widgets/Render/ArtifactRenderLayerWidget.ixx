@@ -48,6 +48,13 @@ export namespace Artifact
   void setTargetLayer(const LayerID& id);
   void resetView();
   float zoom() const;
+  
+  // Zoom toolbar methods
+  void zoomIn();
+  void zoomOut();
+  void zoomFitWindow();
+  void zoomTo100();
+  void setZoomLevel(float zoomLevel);
   void setZoom(const ZoomScale2D& scale);
   QPointF pan() const;
   void setPan(const QPointF& offset);

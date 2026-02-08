@@ -146,7 +146,7 @@
       <LanguageStandard_C>stdclatest</LanguageStandard_C>
       <DisableSpecificWarnings>4828;5050;5304;</DisableSpecificWarnings>
       <TranslateIncludes>false</TranslateIncludes>
-      <OpenMPSupport>false</OpenMPSupport>
+      <OpenMPSupport>true</OpenMPSupport>
       <EnableModules>true</EnableModules>
       <ScanSourceForModuleDependencies>true</ScanSourceForModuleDependencies>
       <AdditionalBMIDirectories>C:\Users\lagma\Desktop\Artifact\ArtifactCore;%(AdditionalBMIDirectories)</AdditionalBMIDirectories>
@@ -253,6 +253,7 @@
     <ClCompile Include="include\Preview\ArtifactPreviewController.ixx" />
     <ClCompile Include="include\Preview\ArtifactPreviewCompositionPipeline.ixx" />
     <ClCompile Include="include\Preview\ArtifactPreviewWorker.ixx" />
+    <ClCompile Include="include\Project\ArtifactAutoSaveManager.ixx" />
     <ClCompile Include="include\Project\ArtifactProjectInitParams.ixx" />
     <ClCompile Include="include\Project\ArtifactProjectItems.ixx" />
     <ClCompile Include="include\Project\ArtifactProjectModel.ixx" />
@@ -260,6 +261,7 @@
     <ClCompile Include="include\Project\ArtifactProjectRoles.ixx" />
     <ClCompile Include="include\Project\TreeFilterProxyModel.ixx" />
     <ClCompile Include="include\Render\ArtifactOffscreenRenderer2D.ixx" />
+    <ClCompile Include="include\Render\ArtifactPerformanceMonitor.ixx" />
     <ClCompile Include="include\Render\ArtifactRenderController.ixx" />
     <ClCompile Include="include\Render\ArtifactRenderManager.ixx" />
     <ClCompile Include="include\Render\ArtifactRenderQueueService.ixx" />
@@ -282,6 +284,7 @@
     <ClCompile Include="include\Tool\ArtifactToolManager.ixx" />
     <ClCompile Include="include\Translation\TranslationManager.ixx" />
     <ClCompile Include="include\Widgets\ArtifactLayerHierarchyWidget.ixx" />
+    <ClCompile Include="include\Widgets\ArtifactStatusBar.ixx" />
     <ClCompile Include="include\Widgets\Control\ArtifactPlaybackControlWidget.ixx" />
     <ClCompile Include="include\Widgets\Dialog\ArtifactRenderOutputSettingDialog.ixx" />
     <ClCompile Include="include\Widgets\Menu\ArtifactAnimationMenu.ixx">
@@ -432,6 +435,7 @@
     <ClCompile Include="src\Timeline\ArtifactTimelineIconModel.cpp" />
     <ClCompile Include="src\Tool\ArtifactToolManager.cpp" />
     <ClCompile Include="src\Translation\TranslationManager.cpp" />
+    <ClCompile Include="src\Widgets\ArtifactStatusBar.cpp" />
     <ClCompile Include="src\Widgets\ArtifactToolBar.cppm">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
     </ClCompile>
@@ -520,7 +524,9 @@
     <ClCompile Include="include\Widgets\ArtifactCurveEditorWidget.ixx">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
     </ClCompile>
-    <ClCompile Include="include\Widgets\ArtifactToolBar.ixx" />
+    <ClCompile Include="include\Widgets\ArtifactToolBar.ixx">
+      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
+    </ClCompile>
     <ClCompile Include="include\Widgets\Dialog\ApplicationSettingDialog.ixx">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
     </ClCompile>

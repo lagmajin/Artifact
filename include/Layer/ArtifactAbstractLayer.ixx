@@ -1,4 +1,5 @@
 ﻿module ;
+#include <QRectF>
 #include <wobjectdefs.h>
 #include <QHash>
 #include <QString>
@@ -56,7 +57,7 @@ export namespace Artifact {
   class Impl;
   Impl* impl_;
  protected:
- 	
+ 	void setSourceSize(const Size_2D& size);
  public:
   ArtifactAbstractLayer();
   virtual ~ArtifactAbstractLayer();
@@ -88,9 +89,12 @@ export namespace Artifact {
   /*Transform*/
   Size_2D sourceSize() const;
   Size_2D aabb() const;
+ QRectF transformedBoundingBox() const;
  	
   AnimatableTransform2D& transform2D();
+  const AnimatableTransform2D& transform2D() const;
   AnimatableTransform3D& transform3D();
+  const AnimatableTransform3D& transform3D() const;
   void setTransform();
   bool isTimeRemapEnabled() const;
   void setTimeRemapEnabled(bool);

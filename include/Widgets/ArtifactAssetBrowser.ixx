@@ -4,6 +4,7 @@
 #include <QWidget>
 #include <QTreeView>
 #include <QStringList>
+#include <QListWidget>
 
 export module Widgets.AssetBrowser;
 
@@ -62,11 +63,16 @@ export namespace Artifact {
   void dropEvent(QDropEvent* event) override;
  public:
   explicit ArtifactAssetBrowser(QWidget* parent = nullptr);
-  ~ArtifactAssetBrowser();
+   ~ArtifactAssetBrowser();
 
-  // Public methods for filtering
-  void setSearchFilter(const QString& filter);
-  void setFileTypeFilter(const QString& type); // "all", "images", "videos", "audio"
+   // Public methods for filtering
+   void setSearchFilter(const QString& filter);
+   void setFileTypeFilter(const QString& type); // "all", "images", "videos", "audio"
+  
+  protected:
+   void showContextMenu(const QPoint& pos);
+   void onFileItemSelected(QListWidgetItem* item);
+   void updateFileInfo(const QString& filePath);
 
   void folderChanged(const QString& folderPath) W_SIGNAL(folderChanged, folderPath)
   void selectionChanged(const QStringList& selectedFiles) W_SIGNAL(selectionChanged, selectedFiles)

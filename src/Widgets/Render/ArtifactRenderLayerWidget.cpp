@@ -1259,6 +1259,38 @@ namespace Artifact {
 
  }
 
+ void ArtifactLayerEditor2DWidget::zoomIn()
+ {
+   // Increase zoom level by 20%
+   float currentZoom = zoom();
+   setZoomLevel(currentZoom * 1.2f);
+ }
+
+ void ArtifactLayerEditor2DWidget::zoomOut()
+ {
+   // Decrease zoom level by 20%
+   float currentZoom = zoom();
+   setZoomLevel(currentZoom / 1.2f);
+ }
+
+ void ArtifactLayerEditor2DWidget::zoomFitWindow()
+ {
+   // Reset view to fit entire composition in window
+   resetView();
+ }
+
+ void ArtifactLayerEditor2DWidget::zoomTo100()
+ {
+   // Set zoom to 100%
+   setZoomLevel(1.0f);
+ }
+
+ void ArtifactLayerEditor2DWidget::setZoomLevel(float zoomLevel)
+ {
+   // TODO: Implement actual zoom level setting
+   // This should update the view matrix and trigger a repaint
+ }
+
  void ArtifactLayerEditor2DWidget::keyPressEvent(QKeyEvent* event)
  {
   impl_->defaultHandleKeyPressEvent(event);

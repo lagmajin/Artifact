@@ -11,6 +11,7 @@
 export module Artifact.Widgets.Timeline;
 
 import Artifact.Widgets.Hierarchy;
+import Artifact.Widgets.LayerPanelWidget;
 import std;
 
 

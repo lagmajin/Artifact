@@ -2,6 +2,7 @@ module;
 
 #include <memory>
 #include <QString>
+#include <QStringList>
 #include <QObject>
 #include <wobjectdefs.h>
 
@@ -31,7 +32,6 @@ W_REGISTER_ARGTYPE(ArtifactCore::CompositionID)
 export namespace Artifact {
 
  using namespace folly;
-
  namespace py = pybind11;
 
  class IArtifactProjectManager {
@@ -40,7 +40,7 @@ export namespace Artifact {
   virtual bool closeCurrentProject() = 0;
  };
 
- class ArtifactProjectManager :public QObject {
+ class ArtifactProjectManager : public QObject {
   W_OBJECT(ArtifactProjectManager)
  private:
   class Impl;
@@ -49,22 +49,25 @@ export namespace Artifact {
   explicit ArtifactProjectManager(QObject* parent = nullptr);
   ~ArtifactProjectManager();
   static ArtifactProjectManager& getInstance();
- 	/*Project Func*/
+
+  /* Project management */
   void createProject();
-  CreateProjectResult createProject(const UniString& name,bool force=false);
+  CreateProjectResult createProject(const UniString& name, bool force = false);
   void createProject(const QString& projectName, bool force = false);
   void loadFromFile(const QString& fullpath);
   ArtifactProjectExporterResult saveToFile(const QString& fullpath);
   QString currentProjectPath() const;
-
+  QString currentProjectAssetsPath() const;
+  QStringList copyFilesToProjectAssets(const QStringList& sourcePaths);
+  QString relativeAssetPath(const QString& absoluteAssetPath) const;
+  void createPhysicalDirectory(const QString& directoryName);
   bool isProjectCreated() const;
   bool isProjectClosed() const;
   bool closeCurrentProject();
- 	/*ProjectFunc*/
   std::shared_ptr<ArtifactProject> getCurrentProjectSharedPtr();
-
   std::weak_ptr<ArtifactProject> getCurrentProjectWeakPtr();
- 	/*Compostion*/
+
+  /* Composition management */
   void createComposition();
   CreateCompositionResult createComposition(const ArtifactCompositionInitParams& setting);
   CreateCompositionResult createComposition(const UniString& str);
@@ -76,19 +79,15 @@ export namespace Artifact {
 
   QVector<ProjectItem*> projectItems() const;
 
-  // Layer management
+  /* Layer management */
   ArtifactLayerResult addLayerToCurrentComposition(ArtifactLayerInitParams& params);
   ArtifactLayerResult addLayerToComposition(const CompositionID& compositionId, ArtifactLayerInitParams& params);
   bool removeLayerFromComposition(const CompositionID& compositionId, const LayerID& layerId);
 
-  //Assets
+  /* Assets */
   void addAssetFromFilePath(const QString& filePath);
   void addAssetsFromFilePaths(const QStringList& filePaths);
   void removeAllAssets();
- 	
-  //Directory
-  void createPhysicalDirectory(const QString& directoryName);
-
 
  public:
   void projectCreated()
@@ -101,27 +100,13 @@ export namespace Artifact {
   void compositionCreated(const CompositionID& id)
    W_SIGNAL(compositionCreated, id);
 
-   void layerCreated(const LayerID& id)
+  void layerCreated(const LayerID& id)
    W_SIGNAL(layerCreated, id);
   void layerRemoved(const LayerID& id)
    W_SIGNAL(layerRemoved, id);
-
  };
 
-
-
-
-
- extern "C" {
-  bool projectManagerCurrentClose();
- };
-
- /*
- PYBIND11_MODULE(my_module, m) {
-  py::class_<ArtifactProjectManager>(m, "ArtifactProjectManager")
-   .def(py::init<>())  // コンストラクタ公開
-   .def("closeCurrentProject", &ArtifactProjectManager::closeCurrentProject)
-   ;
-
-   */
+extern "C" {
+ bool projectManagerCurrentClose();
 };
+}

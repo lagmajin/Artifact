@@ -1,12 +1,10 @@
 ﻿module;
 #include <QToolBar>
-#include <wobjectdefs.h>
 export module Widgets.ToolBar;
 
 export namespace Artifact {
 
  class ArtifactToolBar:public QToolBar{
-  W_OBJECT(ArtifactToolBar)
  private:
   class Impl;
   Impl* impl_;
@@ -17,10 +15,31 @@ export namespace Artifact {
   void setCompactMode(bool enabled);      // アイコンだけ
   void setTextUnderIcon(bool enabled);
   void lockHeight(bool locked = true);
+  
+  // Zoom controls
+  void setZoomLevel(float zoomPercent);
+  
+  // Grid/Guide toggle
+  void setGridVisible(bool visible);
+  void setGuideVisible(bool visible);
+  
  public:
 
-  void homeRequested() W_SIGNAL(homeRequested);
-  void handToolRequested() W_SIGNAL(handToolRequested);
+  void homeRequested();
+  void handToolRequested();
+  
+  // Zoom signals
+  void zoomInRequested();
+  void zoomOutRequested();
+  void zoomFitRequested();
+  void zoom100Requested();
+  
+  // Grid/Guide signals
+  void gridToggled(bool visible);
+  void guideToggled(bool visible);
+  
+  // View mode signals
+  void viewModeChanged(const QString& mode);
  	
  };
 

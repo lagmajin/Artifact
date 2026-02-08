@@ -37,6 +37,13 @@ export namespace Artifact {
   void closeAllDocks();
   void showStatusMessage(const QString& message, int timeoutMs = 2000);
   void togglePanelsVisible(bool visible);
+  
+  // Status bar update methods
+  void setStatusZoomLevel(float zoomPercent);
+  void setStatusCoordinates(int x, int y);
+  void setStatusMemoryUsage(uint64_t memoryMB);
+  void setStatusFPS(double fps);
+  void setStatusReady();
  };
 
 

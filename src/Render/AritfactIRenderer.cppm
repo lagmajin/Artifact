@@ -22,6 +22,7 @@ import Graphics.Shader.Compile.Task;
 import Graphics.Shader.Compute.HLSL.Blend;
 import Layer.Blend;
 import Core.Scale.Zoom;
+import VertexBuffer;
 
 namespace Artifact
 {
@@ -33,6 +34,8 @@ namespace Artifact
  private:
   RefCntAutoPtr<IBuffer> m_draw_sprite_vertex_buffer;
   RefCntAutoPtr<IBuffer> m_draw_sprite_index_buffer;
+  RefCntAutoPtr<IBuffer> m_draw_sprite_cb;
+
   RefCntAutoPtr<IBuffer> m_draw_solid_rect_vertex_buffer;
   RefCntAutoPtr<IBuffer> m_draw_solid_rect_cb;
   RefCntAutoPtr<IBuffer> m_draw_solid_rect_trnsform_cb;
@@ -325,17 +328,57 @@ namespace Artifact
 
    pDevice_->CreateGraphicsPipelineState(drawSolidRectPSOCreateInfo, &m_draw_solid_rect_pso_and_srb.pPSO);
    m_draw_solid_rect_pso_and_srb.pPSO->CreateShaderResourceBinding(&m_draw_solid_rect_pso_and_srb.pSRB, true);
+
+
+   GraphicsPipelineStateCreateInfo spritePSOCreateInfo;
+      spritePSOCreateInfo.PSODesc.Name = "DrawSprite PSO";
+	  spritePSOCreateInfo.PSODesc.PipelineType = PIPELINE_TYPE_GRAPHICS;
+      LayoutElement spriteLayoutElems[] = {
+       LayoutElement{0, 0, 2, VT_FLOAT32, false},
+       LayoutElement{1, 0, 2, VT_FLOAT32, false},
+       LayoutElement{2, 0, 4, VT_FLOAT32, false}
+      };
+      auto& GP2 = spritePSOCreateInfo.GraphicsPipeline;
+      GP2.NumRenderTargets = 1;
+      GP2.RTVFormats[0] = MAIN_RTV_FORMAT; // 出力先RTVのフォーマットに合わせる
+      GP2.PrimitiveTopology = PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP; // 矩形描画用
+      GP2.RasterizerDesc.CullMode = CULL_MODE_NONE;
+      GP2.DepthStencilDesc.DepthEnable = False;
+      GP2.InputLayout.LayoutElements = spriteLayoutElems;
+      GP2.InputLayout.NumElements = _countof(spriteLayoutElems);
+      spritePSOCreateInfo.pVS = m_draw_sprite_shaders.VS;
+      spritePSOCreateInfo.pPS = m_draw_sprite_shaders.PS;
+      pDevice_->CreateGraphicsPipelineState(spritePSOCreateInfo, &m_draw_sprite_pso_and_srb.pPSO);
+	  m_draw_sprite_pso_and_srb.pPSO->CreateShaderResourceBinding(&m_draw_sprite_pso_and_srb.pSRB, true);
+
+
   }
 
 void AritfactIRenderer::Impl::createConstantBuffers()
 {
- BufferDesc VertDesc;
- VertDesc.Name = "Sprite vertex buffer";
- VertDesc.Usage = USAGE_IMMUTABLE; // 2Dスプライトなら基本書き換えない
- VertDesc.BindFlags = BIND_VERTEX_BUFFER;
- VertDesc.Size = sizeof(SpriteVertex);
- BufferData VBData(&m_draw_sprite_vertex_buffer, sizeof(SpriteVertex));
- pDevice_->CreateBuffer(VertDesc, &VBData, &m_draw_sprite_vertex_buffer);
+ {
+  BufferDesc VertDesc;
+  VertDesc.Name = "Sprite vertex buffer";
+  VertDesc.Usage = USAGE_IMMUTABLE; // 2Dスプライトなら基本書き換えない
+  VertDesc.BindFlags = BIND_VERTEX_BUFFER;
+  VertDesc.Size = sizeof(SpriteVertex);
+  BufferData VBData(&m_draw_sprite_vertex_buffer, sizeof(SpriteVertex));
+  pDevice_->CreateBuffer(VertDesc, &VBData, &m_draw_sprite_vertex_buffer);
+
+ }
+
+
+ {
+  BufferDesc CBDesc;
+  CBDesc.Name = "VS Constants CB";
+  CBDesc.Size = sizeof(Constants);
+  CBDesc.Usage = USAGE_DYNAMIC;
+  CBDesc.BindFlags = BIND_UNIFORM_BUFFER;
+  CBDesc.CPUAccessFlags = CPU_ACCESS_WRITE;
+
+  pDevice_->CreateBuffer(CBDesc, nullptr, &m_draw_sprite_cb);
+ 
+ }
 
  // DrawSolidRect用の定数バッファ (ColorBuffer)
  {
@@ -344,7 +387,7 @@ void AritfactIRenderer::Impl::createConstantBuffers()
   CBDesc.Usage = USAGE_DYNAMIC;
   CBDesc.BindFlags = BIND_UNIFORM_BUFFER;
   CBDesc.CPUAccessFlags = CPU_ACCESS_WRITE;
-  CBDesc.Size = sizeof(CBSolidColor);
+  CBDesc.Size = sizeof(DrawSpriteConstants);
   pDevice_->CreateBuffer(CBDesc, nullptr, &m_draw_solid_rect_cb);
  }
 
@@ -683,6 +726,11 @@ void AritfactIRenderer::Impl::createSwapChain(QWidget* window)
 	 auto swapChainRTV = pSwapChain_->GetCurrentBackBufferRTV();
 	 ITextureView* pLayerRTV = m_layerRT->GetDefaultView(TEXTURE_VIEW_RENDER_TARGET);
 	 pImmediateContext_->SetRenderTargets(1, &swapChainRTV, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+
+ }
+
+ void AritfactIRenderer::Impl::drawSpriteLocal(float x, float y, float w, float h, const QImage& image)
+ {
 
  }
 
