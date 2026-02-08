@@ -284,9 +284,6 @@
     <ClCompile Include="include\Composition\ArtifactComposition.ixx">
       <Filter>include</Filter>
     </ClCompile>
-    <ClCompile Include="include\Widgets\Menu\ArtifactCompositionMenu.ixx">
-      <Filter>include</Filter>
-    </ClCompile>
     <ClCompile Include="include\Widgets\ArtifactCompositionWidget.ixx">
       <Filter>include</Filter>
     </ClCompile>
@@ -302,16 +299,10 @@
     <ClCompile Include="include\Widgets\Menu\ArtifactEffectMenu.ixx">
       <Filter>include</Filter>
     </ClCompile>
-    <ClCompile Include="include\Widgets\Render\ArtifactDiligentEngineRenderWindow.ixx">
-      <Filter>include</Filter>
-    </ClCompile>
     <ClCompile Include="include\Widgets\Render\ArtifactDiligentEngineRenderWidget.ixx">
       <Filter>include</Filter>
     </ClCompile>
     <ClCompile Include="include\Widgets\Render\ArtifactCompositionViewerFooter.ixx">
-      <Filter>include</Filter>
-    </ClCompile>
-    <ClCompile Include="include\Widgets\Viewer\ArtifactContentsViewer.ixx">
       <Filter>include</Filter>
     </ClCompile>
     <ClCompile Include="src\Widgets\Menu\ArtifactEditMenu.cppm">
@@ -408,9 +399,6 @@
       <Filter>src\Widgets</Filter>
     </ClCompile>
     <ClCompile Include="include\Service\ArtifactEffectService.ixx">
-      <Filter>include</Filter>
-    </ClCompile>
-    <ClCompile Include="include\Widgets\Dialog\ArtifactCreateCompositionDialog.ixx">
       <Filter>include</Filter>
     </ClCompile>
     <ClCompile Include="include\Widgets\ArtifactLayerHierarchyWidget.ixx">
@@ -558,6 +546,18 @@
     </ClCompile>
     <ClCompile Include="src\Layer\ArtifactShapeLayer.cppm">
       <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Widgets\Menu\ArtifactCompositionMenu.ixx">
+      <Filter>include\Widgets</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Widgets\Viewer\ArtifactContentsViewer.ixx">
+      <Filter>include\Widgets</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Widgets\Dialog\ArtifactCreateCompositionDialog.ixx">
+      <Filter>include\Widgets</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Widgets\Render\ArtifactDiligentEngineRenderWindow.ixx">
+      <Filter>include\Widgets</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>

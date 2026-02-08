@@ -210,20 +210,15 @@ void notifyProjectCompositionCreated(ArtifactProject* proj, const CompositionID&
 
 FindCompositionResult ArtifactProject::Impl::findComposition(const CompositionID& id)
 {
- auto ptr=container_.findById(id);
- 	
- FindCompositionResult result;
- result.success = true;
- result.ptr = ptr;
-
- return result;
-}
-
-FindCompositionResult ArtifactProject::findComposition(const CompositionID& id)
-{
- 	
- 	
- return impl_->findComposition(id);
+  auto ptr = container_.findById(id);
+  FindCompositionResult result;
+  if (ptr) {
+    result.success = true;
+    result.ptr = ptr;
+  } else {
+    result.success = false;
+  }
+  return result;
 }
 
  void ArtifactProject::Impl::removeAllCompositions()

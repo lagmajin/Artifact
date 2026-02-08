@@ -638,6 +638,11 @@ QVector<ProjectItem*> ArtifactProjectManager::projectItems() const
 
  FindCompositionResult ArtifactProjectManager::findComposition(const CompositionID& id)
  {
+  if (!impl_->currentProjectPtr_) {
+   FindCompositionResult result;
+   return result;
+  }
+
   return impl_->currentProjectPtr_->findComposition(id);
  	
  }

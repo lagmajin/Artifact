@@ -70,15 +70,15 @@ namespace Artifact {
 
   setStyleSheet(style);
 
-  auto iconView = new ArtifactTimelineIconView();
-  iconView->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
-  iconView->setFixedWidth(80);
+  //auto iconView = new ArtifactTimelineIconView();
+  //iconView->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
+  //iconView->setFixedWidth(80);
 
-  auto layerTreeView = new ArtifactLayerHierarchyView();
+  auto layerTreeView = new ArtifactLayerTimelinePanelWrapper();
   layerTreeView->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
 
   auto leftSplitter = new DraggableSplitter(Qt::Horizontal);
-  leftSplitter->addWidget(iconView);
+  //leftSplitter->addWidget(iconView);
   leftSplitter->addWidget(layerTreeView);
   leftSplitter->setStretchFactor(0, 0); // アイコン列は固定
   leftSplitter->setStretchFactor(1, 1); // 名前列は伸縮可能
@@ -87,7 +87,7 @@ namespace Artifact {
   auto leftLayout = new QVBoxLayout();
   leftLayout->setSpacing(0);
   leftLayout->setContentsMargins(0, 0, 0, 0);
-  leftLayout->addWidget(leftHeader);
+  //leftLayout->addWidget(leftHeader);
   leftLayout->addWidget(leftSplitter);
 
   auto leftPanel = new QWidget();
@@ -103,12 +103,12 @@ namespace Artifact {
   auto timeScaleWidget = new TimelineScaleWidget();
   auto workAreaWidget = new WorkAreaControl();
   auto timelineTrackView = new TimelineTrackView();
-  auto layerTimelinePanel = new ArtifactLayerTimelinePanelWrapper();
-  layerTimelinePanel->setMinimumWidth(220);
-  layerTimelinePanel->setMaximumWidth(320);
+  //auto layerTimelinePanel = new ArtifactLayerTimelinePanelWrapper();
+  //layerTimelinePanel->setMinimumWidth(220);
+  //layerTimelinePanel->setMaximumWidth(320);
 
   auto* trackSplitter = new DraggableSplitter(Qt::Horizontal);
-  trackSplitter->addWidget(layerTimelinePanel);
+  //trackSplitter->addWidget(layerTimelinePanel);
   trackSplitter->addWidget(timelineTrackView);
   trackSplitter->setStretchFactor(0, 0);
   trackSplitter->setStretchFactor(1, 1);

@@ -30,6 +30,18 @@ namespace Artifact
 {
  using namespace ArtifactCore;
 
+ namespace {
+  std::shared_ptr<ArtifactAbstractComposition> safeCompositionLookup(const CompositionID& id)
+  {
+    if (id.isNil()) return nullptr;
+    auto* service = ArtifactProjectService::instance();
+    if (!service) return nullptr;
+    auto result = service->findComposition(id);
+    if (!result.success) return nullptr;
+    return result.ptr.lock();
+  }
+ }
+
  class ArtifactLayerPanelHeaderWidget::Impl
  {
  public:
@@ -146,16 +158,17 @@ namespace Artifact
 
  }
 
- ArtifactLayerPanelWidget::ArtifactLayerPanelWidget(QWidget* parent /*= nullptr*/) :QWidget(parent), impl_(new Impl)
- {
-  setWindowTitle("ArtifactLayerPanel");
-  setAcceptDrops(true);
+ArtifactLayerPanelWidget::ArtifactLayerPanelWidget(QWidget* parent /*= nullptr*/) :QWidget(parent), impl_(new Impl)
+{
+ setWindowTitle("ArtifactLayerPanel");
+ setAcceptDrops(true);
 
-    // Refresh when layers are removed elsewhere
-    QObject::connect(ArtifactProjectService::instance(), &ArtifactProjectService::layerRemoved, this, [this](const LayerID&) {
-        update();
-    });
+ if (auto* service = ArtifactProjectService::instance()) {
+   QObject::connect(service, &ArtifactProjectService::layerRemoved, this, [this](const LayerID&) {
+     update();
+   });
  }
+}
 
 void ArtifactLayerPanelWidget::setComposition(const CompositionID& id)
 {
@@ -175,25 +188,22 @@ void ArtifactLayerPanelWidget::setComposition(const CompositionID& id)
     if (event->button() == Qt::RightButton) {
         const int rowH = 28;
         int idx = event->pos().y() / rowH;
-        if (!impl_->compositionId.isNil()) {
-            auto compResult = ArtifactProjectService::instance()->findComposition(impl_->compositionId);
-            if (compResult.success) {
-                auto comp = compResult.ptr.lock();
-                if (comp) {
-                    auto layers = comp->allLayer();
-                    if (idx >= 0 && idx < layers.size()) {
-                        auto layer = layers[idx];
-                        if (layer) {
-                            QMenu menu(this);
-                            QAction* del = menu.addAction("Delete Layer");
-                            QAction* act = menu.exec(event->globalPos());
-                            if (act == del) {
-                                ArtifactProjectService::instance()->removeLayerFromComposition(impl_->compositionId, layer->id());
-                            }
-                            event->accept();
-                            return;
+        auto comp = safeCompositionLookup(impl_->compositionId);
+        if (comp) {
+            const auto layers = comp->allLayer();
+            if (idx >= 0 && idx < layers.size()) {
+                auto layer = layers[idx];
+                if (layer) {
+                    QMenu menu(this);
+                    QAction* del = menu.addAction("Delete Layer");
+                    QAction* act = menu.exec(event->globalPos());
+                    if (act == del) {
+                        if (auto* service = ArtifactProjectService::instance()) {
+                            service->removeLayerFromComposition(impl_->compositionId, layer->id());
                         }
                     }
+                    event->accept();
+                    return;
                 }
             }
         }
@@ -256,72 +266,40 @@ void ArtifactLayerPanelWidget::setComposition(const CompositionID& id)
    p.drawLine(0, y + rowH, width(), y + rowH);
   }
 
-  // デバッグ出力
-  qDebug() << "[paintEvent] compositionId.isNil()=" << impl_->compositionId.isNil();
-  
-  if (!impl_->compositionId.isNil()) {
-    auto compResult = ArtifactProjectService::instance()->findComposition(impl_->compositionId);
-    qDebug() << "[paintEvent] findComposition.success=" << compResult.success;
-    
-    if (compResult.success) {
-      auto compShared = compResult.ptr.lock();
-      qDebug() << "[paintEvent] compShared valid=" << (compShared != nullptr);
-      
-      if (compShared) {
-        QVector<ArtifactAbstractLayerPtr> layers = compShared->allLayer();
-        qDebug() << "[paintEvent] Rendering" << layers.size() << "layers";
-        
-        // After Effects風にレイヤーを逆順で描画（最後のレイヤーが最も上に表示）
-        for (int idx = 0; idx < layers.size(); ++idx) {
-          int y = idx * rowH;
-          auto layer = layers[idx];
-          
-          if (layer) {
-            QString layerName = layer->layerName();
-            qDebug() << "[paintEvent] Drawing layer" << idx << ":" << layerName;
-            
-            int currentX = leftPadding;
-            
-            // 1. 可視性アイコン（目のアイコン）
-            if (!impl_->visibilityIcon.isNull()) {
-              p.drawPixmap(currentX, y + (rowH - iconSize) / 2, iconSize, iconSize, impl_->visibilityIcon);
-            } else {
-              // プレースホルダーボックス
-              p.setPen(QPen(QColor(100, 100, 100), 1));
-              p.drawRect(currentX, y + (rowH - iconSize) / 2, iconSize, iconSize);
-            }
-            currentX += iconSize + iconSpacing;
-            
-            // 2. ロック状態アイコン（鍵のアイコン）
-            // TODO: レイヤーのロック状態を取得して描画
-            if (!impl_->lockIcon.isNull()) {
-              p.drawPixmap(currentX, y + (rowH - iconSize) / 2, iconSize, iconSize, impl_->lockIcon);
-            }
-            currentX += iconSize + iconSpacing;
-            
-            // 3. レイヤータイプアイコン（画像/動画/テキスト等）
-            // TODO: レイヤータイプに応じたアイコンを描画
-            
-            // 4. レイヤー名テキスト
-            p.setPen(Qt::white);
-            QFont font = p.font();
-            font.setPointSize(9);
-            p.setFont(font);
-            p.drawText(QRect(currentX, y, width() - currentX - leftPadding, rowH), 
-                      Qt::AlignVCenter | Qt::AlignLeft, layerName);
-            
-            // 区切り線
-            p.setPen(QColor(60, 60, 60));
-            p.drawLine(0, y + rowH, width(), y + rowH);
-          }
-        }
+  auto compShared = safeCompositionLookup(impl_->compositionId);
+  if (compShared) {
+    QVector<ArtifactAbstractLayerPtr> layers = compShared->allLayer();
+    qDebug() << "[paintEvent] Rendering" << layers.size() << "layers";
+    for (int idx = 0; idx < layers.size(); ++idx) {
+      int y = idx * rowH;
+      auto layer = layers[idx];
+      if (!layer) continue;
+      QString layerName = layer->layerName();
+      qDebug() << "[paintEvent] Drawing layer" << idx << ":" << layerName;
+      int currentX = leftPadding;
+
+      if (!impl_->visibilityIcon.isNull()) {
+        p.drawPixmap(currentX, y + (rowH - iconSize) / 2, iconSize, iconSize, impl_->visibilityIcon);
       } else {
-        p.setPen(Qt::gray);
-        p.drawText(rect(), Qt::AlignCenter, "No composition loaded");
+        p.setPen(QPen(QColor(100, 100, 100), 1));
+        p.drawRect(currentX, y + (rowH - iconSize) / 2, iconSize, iconSize);
       }
-    } else {
-      p.setPen(Qt::gray);
-      p.drawText(rect(), Qt::AlignCenter, "Composition not found");
+      currentX += iconSize + iconSpacing;
+
+      if (!impl_->lockIcon.isNull()) {
+        p.drawPixmap(currentX, y + (rowH - iconSize) / 2, iconSize, iconSize, impl_->lockIcon);
+      }
+      currentX += iconSize + iconSpacing;
+
+      p.setPen(Qt::white);
+      QFont font = p.font();
+      font.setPointSize(9);
+      p.setFont(font);
+      p.drawText(QRect(currentX, y, width() - currentX - leftPadding, rowH),
+                Qt::AlignVCenter | Qt::AlignLeft, layerName);
+
+      p.setPen(QColor(60, 60, 60));
+      p.drawLine(0, y + rowH, width(), y + rowH);
     }
   } else {
     p.setPen(Qt::gray);
@@ -430,7 +408,6 @@ void ArtifactLayerPanelWidget::setComposition(const CompositionID& id)
     // Initialize children and set the composition id
     impl_->header = new ArtifactLayerPanelHeaderWidget();
     impl_->panel = new ArtifactLayerPanelWidget;
-    impl_->panel->setComposition(id);
     impl_->scroll = new QScrollArea(this);
 
     impl_->scroll->setWidget(impl_->panel);
@@ -444,7 +421,10 @@ void ArtifactLayerPanelWidget::setComposition(const CompositionID& id)
     layout->addWidget(impl_->scroll);
     setLayout(layout);
 
-    impl_->id = id;
+    if (!id.isNil() && ArtifactProjectService::instance()) {
+        impl_->panel->setComposition(id);
+        impl_->id = id;
+    }
  }
 
  ArtifactLayerTimelinePanelWrapper::~ArtifactLayerTimelinePanelWrapper()

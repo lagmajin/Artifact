@@ -73,6 +73,7 @@ namespace Artifact
   PSOAndSRB m_draw_solid_rect_pso_and_srb;
   PSOAndSRB m_draw_rect_outline_pso_and_srb;
   PSOAndSRB m_draw_sprite_pso_and_srb;
+  RefCntAutoPtr<ISampler> m_draw_sprite_sampler;
   int m_CurrentPhysicalWidth;
   int m_CurrentPhysicalHeight;
   int m_CurrentDevicePixelRatio;
@@ -350,6 +351,20 @@ namespace Artifact
       spritePSOCreateInfo.pPS = m_draw_sprite_shaders.PS;
       pDevice_->CreateGraphicsPipelineState(spritePSOCreateInfo, &m_draw_sprite_pso_and_srb.pPSO);
 	  m_draw_sprite_pso_and_srb.pPSO->CreateShaderResourceBinding(&m_draw_sprite_pso_and_srb.pSRB, true);
+
+      SamplerDesc spriteSamplerDesc;
+      spriteSamplerDesc.MinFilter = FILTER_TYPE_LINEAR;
+      spriteSamplerDesc.MagFilter = FILTER_TYPE_LINEAR;
+      spriteSamplerDesc.MipFilter = FILTER_TYPE_LINEAR;
+      spriteSamplerDesc.AddressU = TEXTURE_ADDRESS_CLAMP;
+      spriteSamplerDesc.AddressV = TEXTURE_ADDRESS_CLAMP;
+      spriteSamplerDesc.AddressW = TEXTURE_ADDRESS_CLAMP;
+      spriteSamplerDesc.ComparisonFunc = COMPARISON_FUNC_ALWAYS;
+      spriteSamplerDesc.MaxAnisotropy = 1;
+      spriteSamplerDesc.MipLODBias = 0.0f;
+      spriteSamplerDesc.MinLOD = 0.0f;
+      spriteSamplerDesc.MaxLOD = FLT_MAX;
+      pDevice_->CreateSampler(spriteSamplerDesc, &m_draw_sprite_sampler);
 
 
   }
@@ -731,7 +746,112 @@ void AritfactIRenderer::Impl::createSwapChain(QWidget* window)
 
  void AritfactIRenderer::Impl::drawSpriteLocal(float x, float y, float w, float h, const QImage& image)
  {
+  if (!pSwapChain_) return;
+  if (image.isNull()) return;
+  if (w <= 0.0f || h <= 0.0f) return;
 
+  QImage rgba = image.convertToFormat(QImage::Format_RGBA8888);
+  if (rgba.isNull()) return;
+
+  TextureDesc TexDesc;
+  TexDesc.Name = "SpriteTexture";
+  TexDesc.Type = RESOURCE_DIM_TEX_2D;
+  TexDesc.Width = static_cast<Uint32>(rgba.width());
+  TexDesc.Height = static_cast<Uint32>(rgba.height());
+  TexDesc.MipLevels = 1;
+  TexDesc.Format = TEX_FORMAT_RGBA8_UNORM_SRGB;
+  TexDesc.Usage = USAGE_IMMUTABLE;
+  TexDesc.BindFlags = BIND_SHADER_RESOURCE;
+
+  TextureData InitData;
+  TextureSubResData SubRes;
+  SubRes.pData = rgba.constBits();
+  SubRes.Stride = static_cast<Uint32>(rgba.bytesPerLine());
+  InitData.pSubResources = &SubRes;
+  InitData.NumSubresources = 1;
+
+  RefCntAutoPtr<ITexture> spriteTexture;
+  pDevice_->CreateTexture(TexDesc, &InitData, &spriteTexture);
+  if (!spriteTexture)
+  {
+   qWarning() << "Failed to create sprite texture.";
+   return;
+  }
+
+  ITextureView* spriteSRV = spriteTexture->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE);
+  if (!spriteSRV)
+  {
+   qWarning() << "Failed to get sprite texture SRV.";
+   return;
+  }
+
+  auto swapChainRTV = pSwapChain_->GetCurrentBackBufferRTV();
+  pImmediateContext_->SetRenderTargets(1, &swapChainRTV, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+
+  const auto& desc = pSwapChain_->GetDesc();
+  if (desc.Width == 0 || desc.Height == 0)
+   return;
+
+  float screenW = static_cast<float>(desc.Width);
+  float screenH = static_cast<float>(desc.Height);
+  float left = (x + pan_.x()) / screenW * 2.0f - 1.0f;
+  float right = (x + w + pan_.x()) / screenW * 2.0f - 1.0f;
+  float top = 1.0f - (y + pan_.y()) / screenH * 2.0f;
+  float bottom = 1.0f - ((y + h) + pan_.y()) / screenH * 2.0f;
+
+  struct SpriteVertexVL
+  {
+   float2 position;
+   float2 uv;
+   float4 color;
+  };
+
+  SpriteVertexVL vertices[4] = {
+   {{left, top}, {0.0f, 0.0f}, {1, 1, 1, 1}},
+   {{right, top}, {1.0f, 0.0f}, {1, 1, 1, 1}},
+   {{left, bottom}, {0.0f, 1.0f}, {1, 1, 1, 1}},
+   {{right, bottom}, {1.0f, 1.0f}, {1, 1, 1, 1}},
+  };
+
+  if (!m_draw_sprite_vertex_buffer)
+  {
+   qWarning() << "Sprite vertex buffer is not initialized.";
+   return;
+  }
+
+  void* pData = nullptr;
+  pImmediateContext_->MapBuffer(m_draw_sprite_vertex_buffer, MAP_WRITE, MAP_FLAG_DISCARD, pData);
+  std::memcpy(pData, vertices, sizeof(vertices));
+  pImmediateContext_->UnmapBuffer(m_draw_sprite_vertex_buffer, MAP_WRITE);
+
+  IBuffer* buffers[] = { m_draw_sprite_vertex_buffer };
+  Uint64 offsets[] = { 0 };
+  pImmediateContext_->SetVertexBuffers(
+   0,
+   1,
+   buffers,
+   offsets,
+   RESOURCE_STATE_TRANSITION_MODE_TRANSITION,
+   SET_VERTEX_BUFFERS_FLAG_RESET
+  );
+
+  pImmediateContext_->SetPipelineState(m_draw_sprite_pso_and_srb.pPSO);
+
+  if (m_draw_sprite_pso_and_srb.pSRB)
+  {
+   auto textureVar = m_draw_sprite_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_PIXEL, "g_texture");
+   if (textureVar)
+    textureVar->Set(spriteSRV);
+   auto samplerVar = m_draw_sprite_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_PIXEL, "g_sampler");
+   if (samplerVar && m_draw_sprite_sampler)
+    samplerVar->Set(m_draw_sprite_sampler);
+   pImmediateContext_->CommitShaderResources(m_draw_sprite_pso_and_srb.pSRB, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+  }
+
+  DrawAttribs drawAttrs;
+  drawAttrs.NumVertices = 4;
+  drawAttrs.Flags = DRAW_FLAG_VERIFY_ALL;
+  pImmediateContext_->Draw(drawAttrs);
  }
 
  AritfactIRenderer::AritfactIRenderer(RefCntAutoPtr<IRenderDevice> pDevice, RefCntAutoPtr<IDeviceContext> pImmediateContext, QWidget* widget) :impl_(new Impl(pDevice, pImmediateContext,widget))
