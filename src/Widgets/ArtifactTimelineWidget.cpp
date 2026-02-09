@@ -6,6 +6,11 @@
 #include <QBoxLayout>
 #include <QSplitter>
 #include <QStandardItem>
+#include <QMouseEvent>
+#include <QWheelEvent>
+#include <QScrollBar>
+#include <cmath>
+#include <algorithm>
 module Artifact.Widgets.Timeline;
 
 
@@ -205,6 +210,11 @@ namespace Artifact {
   ~Impl();
   double position_ = 0.0;
   double duration_ = 1.0;
+  double zoomLevel_ = 1.0;
+  double minZoomLevel_ = 0.1;
+  double maxZoomLevel_ = 10.0;
+  bool isPanning_ = false;
+  QPoint lastPanPoint_;
  };
 
  TimelineTrackView::Impl::Impl()
@@ -217,66 +227,152 @@ namespace Artifact {
 
  }
 
- TimelineTrackView::TimelineTrackView(QWidget* parent /*= nullptr*/) :QGraphicsView(parent),impl_(new Impl())
- {
-  setScene(new TimelineScene());
-  setRenderHint(QPainter::Antialiasing);
+TimelineTrackView::TimelineTrackView(QWidget* parent /*= nullptr*/) :QGraphicsView(parent),impl_(new Impl())
+{
+ setScene(new TimelineScene());
+ setRenderHint(QPainter::Antialiasing);
 
-  setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
- 	
-  //auto seekbar = new ArtifactSeekBar(this);
+ setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+ setTransformationAnchor(QGraphicsView::AnchorUnderMouse);
+ setResizeAnchor(QGraphicsView::AnchorViewCenter);
+ setDragMode(QGraphicsView::NoDrag);
 
-  //seekbar->show();
- }
+ setZoomLevel(impl_->zoomLevel_);
+}
 
  TimelineTrackView::~TimelineTrackView()
  {
   delete impl_;
  }
 
+ double TimelineTrackView::position() const
+ {
+  return impl_->position_;
+ }
+
+ void TimelineTrackView::setPosition(double position)
+ {
+  impl_->position_ = qBound(0.0, position, impl_->duration_);
+  viewport()->update();
+ }
+
+ double TimelineTrackView::duration() const
+ {
+  return impl_->duration_;
+ }
+
+ void TimelineTrackView::setDuration(double duration)
+ {
+  impl_->duration_ = std::max(0.0, duration);
+  if (auto scene = this->scene()) {
+   QRectF rect = scene->sceneRect();
+   rect.setWidth(std::max(rect.width(), impl_->duration_));
+   scene->setSceneRect(rect);
+  }
+  viewport()->update();
+ }
+
+ double TimelineTrackView::zoomLevel() const
+ {
+  return impl_->zoomLevel_;
+ }
+
+ namespace {
+ double gridSpacingForZoom(double zoomLevel)
+ {
+  if (zoomLevel < 0.15) {
+   return 400.0;
+  }
+  if (zoomLevel < 0.3) {
+   return 200.0;
+  }
+  if (zoomLevel < 0.6) {
+   return 100.0;
+  }
+  if (zoomLevel < 1.0) {
+   return 50.0;
+  }
+  if (zoomLevel < 2.0) {
+   return 25.0;
+  }
+  if (zoomLevel < 4.0) {
+   return 10.0;
+  }
+  return 5.0;
+ }
+ }
+
  void TimelineTrackView::setZoomLevel(double pixelsPerFrame)
  {
+  double clamped = std::clamp(pixelsPerFrame, impl_->minZoomLevel_, impl_->maxZoomLevel_);
+  if (std::abs(clamped - impl_->zoomLevel_) < 1e-5) {
+   return;
+  }
 
+  const QPointF center = mapToScene(viewport()->rect().center());
+  impl_->zoomLevel_ = clamped;
+  QTransform transform;
+  transform.scale(impl_->zoomLevel_, 1.0);
+  setTransform(transform);
+  centerOn(center);
+  viewport()->update();
  }
 
  void TimelineTrackView::drawBackground(QPainter* painter, const QRectF& rect)
  {
   painter->save();
-
-  // 背景
+  painter->setWorldTransform(QTransform());
   painter->fillRect(viewport()->rect(), QColor(30, 30, 30));
+  painter->restore();
 
-  // 線の色と幅
-  QPen pen(QColor(80, 80, 80));
-  pen.setWidth(1);
-  painter->setPen(pen);
+  painter->save();
+  QPen verticalPen(QColor(70, 70, 70));
+  verticalPen.setWidth(1);
+  painter->setPen(verticalPen);
 
-  int spacing = 20; // px単位
-  int h = viewport()->height();
-  int w = viewport()->width();
+  double spacing = gridSpacingForZoom(impl_->zoomLevel_);
+  double left = std::max(0.0, rect.left());
+  double right = std::max(left, rect.right());
+  double rangeEnd = impl_->duration_ > 0.0 ? std::min(impl_->duration_, right) : right;
+  double startLine = std::floor(left / spacing) * spacing;
+  double endLine = std::ceil(rangeEnd / spacing) * spacing;
 
-  // 横線
-  for (int y = 0; y <= h; y += spacing) {
-   painter->drawLine(0, y, w, y);
+  for (double x = startLine; x <= endLine; x += spacing) {
+   if (x < 0.0) {
+    continue;
+   }
+   painter->drawLine(QLineF(x, rect.top(), x, rect.bottom()));
   }
+  painter->restore();
 
+  painter->save();
+  QPen horizontalPen(QColor(60, 60, 60));
+  horizontalPen.setWidth(1);
+  painter->setPen(horizontalPen);
+
+  const double rowSpacing = 20.0;
+  double rowStart = std::floor(rect.top() / rowSpacing) * rowSpacing;
+  for (double y = rowStart; y <= rect.bottom(); y += rowSpacing) {
+   painter->drawLine(QLineF(rect.left(), y, rect.right(), y));
+  }
   painter->restore();
  }
-	
+
  void TimelineTrackView::drawForeground(QPainter* painter, const QRectF& rect)
  {
-  // 表示範囲の左上・右下を取得
-  QRectF viewRect = this->viewport()->rect();
+  painter->save();
+  QPen headPen(QColor(255, 80, 60));
+  headPen.setWidth(2);
+  painter->setPen(headPen);
+  painter->drawLine(QLineF(impl_->position_, rect.top(), impl_->position_, rect.bottom()));
+  painter->restore();
 
-  // シークバーの背景（画面下部に固定する例）
+  painter->save();
+  painter->setWorldTransform(QTransform());
+  QRectF viewRect = viewport()->rect();
   QRectF barRect(0, viewRect.height() - 30, viewRect.width(), 30);
-
-  painter->setWorldTransform(QTransform()); // 座標系をView（スクリーン）に固定
-  painter->fillRect(barRect, QColor(250, 50, 50, 200)); // 半透明のグレー
-
-  // 進捗（どんどん動く部分）
-  //double ratio = impl_->position_ / impl_->duration_;
-  //painter->fillRect(0, viewRect.height() - 30, viewRect.width() * ratio, 30, QColor(100, 180, 255));
+  painter->fillRect(barRect, QColor(28, 28, 28, 220));
+  painter->restore();
  }
 
  QSize TimelineTrackView::minimumSizeHint() const
@@ -286,9 +382,67 @@ namespace Artifact {
 
  void TimelineTrackView::mousePressEvent(QMouseEvent* event)
  {
-  //throw std::logic_error("The method or operation is not implemented.");
- 
+  if (event->button() == Qt::MiddleButton) {
+   impl_->isPanning_ = true;
+   impl_->lastPanPoint_ = event->pos();
+   setCursor(Qt::ClosedHandCursor);
+   event->accept();
+   return;
+  }
+
+  if (event->button() == Qt::LeftButton) {
+   const QPointF scenePos = mapToScene(event->pos());
+   setPosition(scenePos.x());
+   double ratio = impl_->duration_ > 0.0 ? impl_->position_ / impl_->duration_ : 0.0;
+   emit seekPositionChanged(ratio);
+  }
+
   QGraphicsView::mousePressEvent(event);
+ }
+
+ void TimelineTrackView::mouseMoveEvent(QMouseEvent* event)
+ {
+  if (impl_->isPanning_) {
+   QPoint delta = event->pos() - impl_->lastPanPoint_;
+   impl_->lastPanPoint_ = event->pos();
+   horizontalScrollBar()->setValue(horizontalScrollBar()->value() - delta.x());
+   verticalScrollBar()->setValue(verticalScrollBar()->value() - delta.y());
+   event->accept();
+   return;
+  }
+
+  QGraphicsView::mouseMoveEvent(event);
+ }
+
+ void TimelineTrackView::mouseReleaseEvent(QMouseEvent* event)
+ {
+  if (event->button() == Qt::MiddleButton && impl_->isPanning_) {
+   impl_->isPanning_ = false;
+   setCursor(Qt::ArrowCursor);
+   event->accept();
+   return;
+  }
+
+  QGraphicsView::mouseReleaseEvent(event);
+ }
+
+ void TimelineTrackView::wheelEvent(QWheelEvent* event)
+ {
+  if (event->modifiers() & Qt::ControlModifier) {
+   double delta = event->angleDelta().y() / 120.0;
+   double factor = std::pow(1.15, delta);
+   setZoomLevel(impl_->zoomLevel_ * factor);
+   event->accept();
+   return;
+  }
+
+  auto* hBar = horizontalScrollBar();
+  if (hBar) {
+   hBar->setValue(hBar->value() - event->angleDelta().y());
+  } else {
+   QGraphicsView::wheelEvent(event);
+  }
+  event->accept();
  }
 
  void TimelineScene::drawBackground(QPainter* painter, const QRectF& rect)

@@ -3,8 +3,9 @@
 #include <wobjectcpp.h>
 
 #include <QtWidgets/QtWidgets>
-
 #include <QGraphicsView>
+#include <QMouseEvent>
+#include <QWheelEvent>
 
 #include <wobjectdefs.h>
 
@@ -24,9 +25,10 @@ export namespace Artifact {
  class TimelineScene :public QGraphicsScene
  {
  private:
-
+	 class Impl;
+	 Impl* impl_;
  public:
-  TimelineScene(QWidget*parent=nullptr);
+  explicit TimelineScene(QWidget*parent=nullptr);
   void drawBackground(QPainter* painter, const QRectF& rect) override;
 
 
@@ -35,8 +37,8 @@ export namespace Artifact {
 
 
  //#right
- class TimelineTrackView :public QGraphicsView {
-  W_OBJECT(TimelineTrackView)
+class TimelineTrackView :public QGraphicsView {
+ W_OBJECT(TimelineTrackView)
  private:
   class Impl;
   Impl* impl_;
@@ -45,10 +47,17 @@ export namespace Artifact {
   void drawBackground(QPainter* painter, const QRectF& rect) override;
 
   void mousePressEvent(QMouseEvent* event) override;
+  void mouseMoveEvent(QMouseEvent* event) override;
+  void mouseReleaseEvent(QMouseEvent* event) override;
+  void wheelEvent(QWheelEvent* event) override;
 
  public:
   explicit TimelineTrackView(QWidget* parent = nullptr);
   ~TimelineTrackView();
+  double position() const;
+  void setPosition(double position);
+  double duration() const;
+  void setDuration(double duration);
   double zoomLevel() const;
   void setZoomLevel(double pixelsPerFrame);
 
