@@ -22,34 +22,25 @@ export namespace Artifact {
 
  
 
- class TimelineScene :public QGraphicsScene
- {
- private:
-	 class Impl;
-	 Impl* impl_;
- public:
-  explicit TimelineScene(QWidget*parent=nullptr);
-  void drawBackground(QPainter* painter, const QRectF& rect) override;
 
-
- };
 
 
 
  //#right
 class TimelineTrackView :public QGraphicsView {
- W_OBJECT(TimelineTrackView)
- private:
-  class Impl;
-  Impl* impl_;
- protected:
-  void drawForeground(QPainter* painter, const QRectF& rect) override;
-  void drawBackground(QPainter* painter, const QRectF& rect) override;
+W_OBJECT(TimelineTrackView)
+private:
+ class Impl;
+ Impl* impl_;
+protected:
+ void drawForeground(QPainter* painter, const QRectF& rect) override;
+ void drawBackground(QPainter* painter, const QRectF& rect) override;
 
-  void mousePressEvent(QMouseEvent* event) override;
-  void mouseMoveEvent(QMouseEvent* event) override;
-  void mouseReleaseEvent(QMouseEvent* event) override;
-  void wheelEvent(QWheelEvent* event) override;
+ void mousePressEvent(QMouseEvent* event) override;
+ void mouseMoveEvent(QMouseEvent* event) override;
+ void mouseReleaseEvent(QMouseEvent* event) override;
+ void wheelEvent(QWheelEvent* event) override;
+ void resizeEvent(QResizeEvent* event) override;
 
  public:
   explicit TimelineTrackView(QWidget* parent = nullptr);

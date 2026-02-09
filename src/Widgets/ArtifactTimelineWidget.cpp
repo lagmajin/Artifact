@@ -3,6 +3,7 @@
 #include <QWidget>
 #include <QLabel>
 #include <wobjectimpl.h>
+#include <wobjectdefs.h>
 #include <QBoxLayout>
 #include <QSplitter>
 #include <QStandardItem>
@@ -19,6 +20,7 @@ import Widgets.Utils.CSS;
 
 import Artifact.Layers.Hierarchy.Model;
 import Artifact.Widget.WorkAreaControlWidget;
+import Artifact.TimelineScene;
 
 import ArtifactTimelineIconModel;
 import Artifact.Widgets.LayerPanelWidget;
@@ -229,7 +231,7 @@ namespace Artifact {
 
 TimelineTrackView::TimelineTrackView(QWidget* parent /*= nullptr*/) :QGraphicsView(parent),impl_(new Impl())
 {
- setScene(new TimelineScene());
+ setScene(new ArtifactTimelineScene());
  setRenderHint(QPainter::Antialiasing);
 
  setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
@@ -394,7 +396,7 @@ TimelineTrackView::TimelineTrackView(QWidget* parent /*= nullptr*/) :QGraphicsVi
    const QPointF scenePos = mapToScene(event->pos());
    setPosition(scenePos.x());
    double ratio = impl_->duration_ > 0.0 ? impl_->position_ / impl_->duration_ : 0.0;
-   emit seekPositionChanged(ratio);
+    seekPositionChanged(ratio);
   }
 
   QGraphicsView::mousePressEvent(event);
@@ -426,34 +428,36 @@ TimelineTrackView::TimelineTrackView(QWidget* parent /*= nullptr*/) :QGraphicsVi
   QGraphicsView::mouseReleaseEvent(event);
  }
 
- void TimelineTrackView::wheelEvent(QWheelEvent* event)
- {
-  if (event->modifiers() & Qt::ControlModifier) {
-   double delta = event->angleDelta().y() / 120.0;
-   double factor = std::pow(1.15, delta);
-   setZoomLevel(impl_->zoomLevel_ * factor);
+  void TimelineTrackView::wheelEvent(QWheelEvent* event)
+  {
+   if (event->modifiers() & Qt::ControlModifier) {
+    double delta = event->angleDelta().y() / 120.0;
+    double factor = std::pow(1.15, delta);
+    setZoomLevel(impl_->zoomLevel_ * factor);
+    event->accept();
+    return;
+   }
+
+   auto* hBar = horizontalScrollBar();
+   if (hBar) {
+    hBar->setValue(hBar->value() - event->angleDelta().y());
+   } else {
+    QGraphicsView::wheelEvent(event);
+   }
    event->accept();
-   return;
   }
 
-  auto* hBar = horizontalScrollBar();
-  if (hBar) {
-   hBar->setValue(hBar->value() - event->angleDelta().y());
-  } else {
-   QGraphicsView::wheelEvent(event);
+  void TimelineTrackView::resizeEvent(QResizeEvent* event)
+  {
+   QGraphicsView::resizeEvent(event);
+   if (auto scene = this->scene()) {
+    QRectF rect = scene->sceneRect();
+    rect.setHeight(viewport()->height());
+    rect.setWidth(std::max(impl_->duration_, static_cast<double>(viewport()->width())));
+    scene->setSceneRect(rect);
+   }
   }
-  event->accept();
- }
 
- void TimelineScene::drawBackground(QPainter* painter, const QRectF& rect)
- {
-  //painter->fillRect(rect, Qt::darkGray);
- }
-
- TimelineScene::TimelineScene(QWidget* parent/*=nullptr*/) :QGraphicsScene(parent)
- {
-  setSceneRect(0, 0, 1000, 800);
- }
 
  class ArtifactTimelineIconView::Impl
  {
