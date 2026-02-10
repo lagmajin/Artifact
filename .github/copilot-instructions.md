@@ -13,6 +13,7 @@
 - C++20 モジュールコードを書くときはちゃんとグローバルモジュールフラグメントも書いてほしい。
 - **[ArtifactCoreルール] ArtifactCoreライブラリを使う時は必ず`using namespace ArtifactCore;`の有無を慎重に確認し、不足していれば必ず追加すること。**
 - **IMPORTANT RULE: Never recreate existing .cppm or .ixx files by using remove_file + create_file. Only use replace_string_in_file to modify existing code structure. Keep the original file structure intact and only modify the necessary parts.**
+- Qtのシグナル発行にはemitマクロを使わず、必ずQ_EMITマクロを使うこと。
 
 ## File Extension Rules
 **?? CRITICAL: This project uses C++20 modules. Always follow these file extension rules:**

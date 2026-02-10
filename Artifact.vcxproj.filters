@@ -401,9 +401,6 @@
     <ClCompile Include="include\Service\ArtifactEffectService.ixx">
       <Filter>include</Filter>
     </ClCompile>
-    <ClCompile Include="include\Widgets\ArtifactLayerHierarchyWidget.ixx">
-      <Filter>include</Filter>
-    </ClCompile>
     <ClCompile Include="include\Widgets\ArtifactInspectorWidget.ixx">
       <Filter>include</Filter>
     </ClCompile>
@@ -560,6 +557,9 @@
       <Filter>include\Widgets</Filter>
     </ClCompile>
     <ClCompile Include="src\Widgets\ArtifactTimelineScene.cppm" />
+    <ClCompile Include="include\Widgets\ArtifactLayerHierarchyWidget.ixx">
+      <Filter>include\Widgets</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Generated\TestService.h" />
@@ -605,6 +605,9 @@
     </Filter>
     <Filter Include="src\Render">
       <UniqueIdentifier>{8e560c69-84e2-4427-b34a-a99888ec1480}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="include\Composition">
+      <UniqueIdentifier>{0985974d-0d7e-4325-9a9a-da5ca37f2479}</UniqueIdentifier>
     </Filter>
   </ItemGroup>
 </Project>
