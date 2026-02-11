@@ -31,6 +31,7 @@ namespace Artifact
   QMenu* utilityMenu_ = nullptr;
   QMenu* matteMenu_ = nullptr;
   QMenu* perspectiveMenu_ = nullptr;
+  QMenu* keyingMenu_ = nullptr;
   QMenu* obsoleteMenu_ = nullptr;
  };
 
@@ -164,6 +165,12 @@ namespace Artifact
   perspectiveMenu_->addAction("Bevel Edges");
   perspectiveMenu_->addAction("Drop Shadow");
 
+  // Keying submenu
+  keyingMenu_ = new QMenu("Keying");
+  keyingMenu_->addAction("Chroma Key");
+  keyingMenu_->addAction("Color Key");
+  keyingMenu_->addAction("Luma Key");
+
   // Obsolete submenu
   obsoleteMenu_ = new QMenu("Obsolete");
   obsoleteMenu_->addAction("3D Glasses");
@@ -226,6 +233,7 @@ namespace Artifact
   menu->addMenu(transitionMenu_);
   menu->addMenu(utilityMenu_);
   menu->addMenu(matteMenu_);
+  menu->addMenu(keyingMenu_);
   menu->addMenu(perspectiveMenu_);
   menu->addMenu(obsoleteMenu_);
  }

@@ -38,6 +38,13 @@ export namespace Artifact {
 
  };
 
+ class ArtifactTextLayerInitParams : public ArtifactLayerInitParams
+ {
+ public:
+  explicit ArtifactTextLayerInitParams(const QString& name);
+  ~ArtifactTextLayerInitParams() = default;
+ };
+
  class ArtifactNullLayerInitParams : public ArtifactLayerInitParams
  {
  private:

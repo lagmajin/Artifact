@@ -62,6 +62,7 @@ void soloClicked() W_SIGNAL(soloClicked)
   explicit ArtifactLayerTimelinePanelWrapper(QWidget* parent = nullptr);
   ArtifactLayerTimelinePanelWrapper(const CompositionID& id, QWidget* parent = nullptr);
   ~ArtifactLayerTimelinePanelWrapper();
+  void setComposition(const CompositionID& id);
  	
  };
 

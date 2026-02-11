@@ -3,6 +3,7 @@ module;
 #include <QImage>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/RenderDevice.h>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/DeviceContext.h>
+#include <DiligentCore/Graphics/GraphicsEngine/interface/Query.h>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/SwapChain.h>
 //#include <DiligentCore/Graphics/GraphicsEngineD3D12/interface/TextureD3D12.h>
 #include <DiligentCore/Graphics/GraphicsEngineD3D12/interface/EngineFactoryD3D12.h>
@@ -49,6 +50,11 @@ namespace Artifact
   QPointF pan_;
    
   bool m_initialized = false;
+ bool m_frameQueryInitialized = false;
+ double m_lastGpuFrameTimeMs = 0.0;
+ Uint32 m_frameQueryIndex = 0;
+ static constexpr Uint32 FrameQueryCount = 2;
+ std::array<RefCntAutoPtr<IQuery>, FrameQueryCount> m_frameQueries;
    
   void captureScreenShot();
    
@@ -57,6 +63,7 @@ namespace Artifact
   void createConstantBuffers();
   void createShaders();
   void createPSOs();
+  void initFrameQueries();
  public:
    explicit Impl(RefCntAutoPtr<IRenderDevice> device, RefCntAutoPtr<IDeviceContext>& context,QWidget* widget);
    Impl();
@@ -81,6 +88,9 @@ namespace Artifact
   void flushAndWait();
   void createSwapChain(QWidget* widget);
   void recreateSwapChain(QWidget* widget);
+  void beginFrameGpuProfiling();
+  void endFrameGpuProfiling();
+  double lastFrameGpuTimeMs() const;
   void drawParticles();
   void drawRectOutline(float2 pos,const FloatColor& color);
   void drawSolidLine(float2 start, float2 end, const FloatColor& color, float thickness);
@@ -133,16 +143,18 @@ namespace Artifact
   Win32NativeWindow hWindow;
   hWindow.hWnd = reinterpret_cast<HWND>(widget_->winId());
   pFactory->CreateDeviceAndContextsD3D12(CreationAttribs, &pDevice_, &pImmediateContext_);
- 
+
   if (!pDevice_)
   {
    // エラーログ出力、アプリケーション終了などの処理
    qWarning() << "Failed to create Diligent Engine device and contexts.";
    return;
   }
+
   m_CurrentPhysicalWidth = static_cast<int>(widget_->width() * widget_->devicePixelRatio());
   m_CurrentPhysicalHeight = static_cast<int>(widget_->height() * widget_->devicePixelRatio());
   m_CurrentDevicePixelRatio = widget_->devicePixelRatio();
+
   // スワップチェインを作成
   SwapChainDesc SCDesc;
   SCDesc.Width = m_CurrentPhysicalWidth;  // QWindowの現在の幅
@@ -153,11 +165,10 @@ namespace Artifact
   SCDesc.BufferCount = 2;
   SCDesc.Usage = SWAP_CHAIN_USAGE_RENDER_TARGET;
 
-  FullScreenModeDesc desc;
+  FullScreenModeDesc fullScreenDesc;
+  fullScreenDesc.Fullscreen = false;
 
-  desc.Fullscreen = false;
-
-  pFactory->CreateSwapChainD3D12(pDevice_, pImmediateContext_, SCDesc, desc, hWindow, &pSwapChain_);
+  pFactory->CreateSwapChainD3D12(pDevice_, pImmediateContext_, SCDesc, fullScreenDesc, hWindow, &pSwapChain_);
 
   Diligent::Viewport VP;
   VP.Width = static_cast<float>(m_CurrentPhysicalWidth);
@@ -173,6 +184,23 @@ namespace Artifact
   createConstantBuffers();
   createShaders();
   createPSOs();
+ }
+
+ void AritfactIRenderer::Impl::initFrameQueries()
+ {
+  if (m_frameQueryInitialized || !pDevice_)
+   return;
+
+  QueryDesc desc;
+  desc.Name = "FrameDurationQuery";
+  desc.Type = QUERY_TYPE_DURATION;
+
+  for (auto& query : m_frameQueries)
+  {
+   pDevice_->CreateQuery(desc, &query);
+  }
+
+  m_frameQueryInitialized = true;
  }
 
  void AritfactIRenderer::Impl::initContext(RefCntAutoPtr<IRenderDevice> device)
@@ -368,6 +396,43 @@ namespace Artifact
 
 
   }
+
+ void AritfactIRenderer::Impl::beginFrameGpuProfiling()
+ {
+  initFrameQueries();
+  auto& query = m_frameQueries[m_frameQueryIndex];
+  if (!query || !pImmediateContext_)
+   return;
+
+  pImmediateContext_->BeginQuery(query);
+ }
+
+ void AritfactIRenderer::Impl::endFrameGpuProfiling()
+ {
+  auto& query = m_frameQueries[m_frameQueryIndex];
+  if (!query || !pImmediateContext_)
+   return;
+
+  pImmediateContext_->EndQuery(query);
+
+  const Uint32 readIndex = (m_frameQueryIndex + FrameQueryCount - 1) % FrameQueryCount;
+  auto& readQuery = m_frameQueries[readIndex];
+  if (readQuery)
+  {
+   QueryDataDuration data;
+   if (readQuery->GetData(&data, sizeof(data), True) && data.Frequency != 0)
+   {
+    m_lastGpuFrameTimeMs = static_cast<double>(data.Duration) * 1000.0 / static_cast<double>(data.Frequency);
+   }
+  }
+
+  m_frameQueryIndex = (m_frameQueryIndex + 1) % FrameQueryCount;
+ }
+
+ double AritfactIRenderer::Impl::lastFrameGpuTimeMs() const
+ {
+  return m_lastGpuFrameTimeMs;
+ }
 
 void AritfactIRenderer::Impl::createConstantBuffers()
 {
@@ -896,6 +961,21 @@ void AritfactIRenderer::Impl::createSwapChain(QWidget* window)
  void AritfactIRenderer::flushAndWait()
  {
   impl_->flushAndWait();
+ }
+
+ void AritfactIRenderer::beginFrameGpuProfiling()
+ {
+  impl_->beginFrameGpuProfiling();
+ }
+
+ void AritfactIRenderer::endFrameGpuProfiling()
+ {
+  impl_->endFrameGpuProfiling();
+ }
+
+ double AritfactIRenderer::lastFrameGpuTimeMs() const
+ {
+  return impl_->lastFrameGpuTimeMs();
  }
 
  void AritfactIRenderer::drawSolidRect(float2 pos, float2 size, const FloatColor& color)

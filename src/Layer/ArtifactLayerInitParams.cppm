@@ -14,12 +14,18 @@ namespace Artifact {
   UniString name_;
  public:
   Impl();
+  Impl(LayerType type, const UniString& name);
   ~Impl();
   LayerType layerType() const;
   UniString layerName() const;
  };
 
  ArtifactLayerInitParams::Impl::Impl()
+ {
+
+ }
+
+ ArtifactLayerInitParams::Impl::Impl(LayerType type, const UniString& name) : layerType_(type), name_(name)
  {
 
  }
@@ -39,12 +45,12 @@ UniString ArtifactLayerInitParams::Impl::layerName() const
  return name_;
  }
 
- ArtifactLayerInitParams::ArtifactLayerInitParams(const QString& name, LayerType type) :impl_(new Impl())
+ ArtifactLayerInitParams::ArtifactLayerInitParams(const QString& name, LayerType type) :impl_(new Impl(type, UniString(name)))
  {
 
  }
 
- ArtifactLayerInitParams::ArtifactLayerInitParams(const UniString& name, LayerType type):impl_(new Impl())
+ ArtifactLayerInitParams::ArtifactLayerInitParams(const UniString& name, LayerType type):impl_(new Impl(type, name))
  {
 
  }
@@ -76,6 +82,10 @@ LayerType ArtifactLayerInitParams::layerType() const
   
  }
 
+ ArtifactTextLayerInitParams::ArtifactTextLayerInitParams(const QString& name) :ArtifactLayerInitParams(name, LayerType::Text)
+ {
+ }
+
  ArtifactNullLayerInitParams::ArtifactNullLayerInitParams(const QString& name) :ArtifactLayerInitParams(name, LayerType::Null)
  {
 
@@ -96,7 +106,7 @@ LayerType ArtifactLayerInitParams::layerType() const
 
  }
 
- ArtifactCameraLayerInitParams::ArtifactCameraLayerInitParams() :ArtifactLayerInitParams("name", LayerType::Camera)
+ ArtifactCameraLayerInitParams::ArtifactCameraLayerInitParams() :ArtifactLayerInitParams(UniString("name"), LayerType::Camera)
  {
 
  }
@@ -106,7 +116,7 @@ LayerType ArtifactLayerInitParams::layerType() const
 
  }
 
- ArtifactCompositionLayerInitParams::ArtifactCompositionLayerInitParams() :ArtifactLayerInitParams("name", LayerType::Null)
+ ArtifactCompositionLayerInitParams::ArtifactCompositionLayerInitParams() :ArtifactLayerInitParams(UniString("name"), LayerType::Null)
  {
 
  }
@@ -118,5 +128,32 @@ LayerType ArtifactLayerInitParams::layerType() const
 
 
 };
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 

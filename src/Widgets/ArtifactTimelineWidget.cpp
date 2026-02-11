@@ -52,7 +52,8 @@ namespace Artifact {
   Impl();
   ~Impl();
   ArtifactTimelineBottomLabel* timelineLabel_ = nullptr;
- ArtifactLayerTimelinePanelWrapper* layerTimelinePanel_ = nullptr;
+  ArtifactLayerTimelinePanelWrapper* layerTimelinePanel_ = nullptr;
+  CompositionID compositionId_;
 
  };
 
@@ -83,6 +84,7 @@ namespace Artifact {
 
   auto layerTreeView = new ArtifactLayerTimelinePanelWrapper();
   layerTreeView->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+  impl_->layerTimelinePanel_ = layerTreeView;
 
   auto leftSplitter = new DraggableSplitter(Qt::Horizontal);
   //leftSplitter->addWidget(iconView);
@@ -163,6 +165,14 @@ namespace Artifact {
  ArtifactTimelineWidget::~ArtifactTimelineWidget()
  {
 
+ }
+
+ void ArtifactTimelineWidget::setComposition(const CompositionID& id)
+ {
+  impl_->compositionId_ = id;
+  if (impl_->layerTimelinePanel_) {
+   impl_->layerTimelinePanel_->setComposition(id);
+  }
  }
  void ArtifactTimelineWidget::paintEvent(QPaintEvent* event)
  {

@@ -36,8 +36,12 @@ namespace Artifact{
  ArtifactTimelineWidget* TimelineViewProvider::Impl::getOrCreate(const CompositionID &id, QWidget *parent)
  {
    auto it = widgets_.find(id);
-   if (it != widgets_.end() && !it->second.isNull()) return it->second.data();
+   if (it != widgets_.end() && !it->second.isNull()) {
+     it->second->setComposition(id);
+     return it->second.data();
+   }
    auto *w = new ArtifactTimelineWidget(parent);
+   w->setComposition(id);
    // Ensure we remove entry when widget is destroyed
    QObject::connect(w, &QObject::destroyed, [this, id](QObject *) {
      widgets_.erase(id);

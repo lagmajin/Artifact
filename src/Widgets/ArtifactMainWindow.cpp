@@ -73,6 +73,7 @@ namespace Artifact {
    void handleCompositionCreated(const CompositionID id, ArtifactMainWindow* window);
    void handleLayerCreated(ArtifactMainWindow* window);
  	ArtifactMainWindow* mainWindow_=nullptr;
+   ArtifactTimelineWidget* timelineWidget_ = nullptr;
 
    // Status bar widgets
    QLabel* statusLabel_ = nullptr;
@@ -98,12 +99,11 @@ namespace Artifact {
  {
   qDebug() << "composition created" <<id.toString();
 
-  auto timeTest = new ArtifactLayerTimelinePanelWrapper(id);
-  timeTest->show();
-
-  //auto timelineWidget = new ArtifactTimelineWidget();
-
-  //timelineWidget->show();
+  if (!timelineWidget_) {
+   timelineWidget_ = new ArtifactTimelineWidget(window);
+  }
+  timelineWidget_->setComposition(id);
+  timelineWidget_->show();
  }
 
  ArtifactMainWindow::Impl::Impl(ArtifactMainWindow* mainWindow):mainWindow_(mainWindow)
@@ -252,8 +252,7 @@ namespace Artifact {
   //auto layerPreveiw =new ArtifactLayerEditorPanel();
   //layerPreveiw->show();
 
-	auto timelineWidget = new ArtifactTimelineWidget();
-	timelineWidget->show();
+ 	
  
     auto layerPreview2=new ArtifactLayerEditorWidgetV2();
    layerPreview2->show();

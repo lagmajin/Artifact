@@ -147,7 +147,10 @@ namespace Artifact {
   void ArtifactLayerMenu::Impl::handleTextLayer()
   {
    qDebug() << "[handleTextLayer] Called";
-   // TODO: 実装
+   ArtifactTextLayerInitParams params("Text Layer");
+   auto service = ArtifactProjectService::instance();
+
+   service->addLayerToCurrentComposition(params);
   }
 
   void ArtifactLayerMenu::Impl::handleShapeLayer()

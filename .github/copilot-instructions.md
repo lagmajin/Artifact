@@ -15,6 +15,29 @@
 - **IMPORTANT RULE: Never recreate existing .cppm or .ixx files by using remove_file + create_file. Only use replace_string_in_file to modify existing code structure. Keep the original file structure intact and only modify the necessary parts.**
 - Qtのシグナル発行にはemitマクロを使わず、必ずQ_EMITマクロを使うこと。
 
+## File Encoding Rules (ABSOLUTE REQUIREMENT)
+**?? CRITICAL: All C++ source files MUST use UTF-8 with BOM (Byte Order Mark)**
+
+### Mandatory Encoding Rules:
+- ? **ALL C++ files (.cpp, .cppm, .h, .hpp, .ixx) MUST be saved as UTF-8 with BOM (Signature)**
+- ? **NEVER remove the BOM (Byte Order Mark) from any file**
+- ?? **This is especially critical for files containing non-ASCII characters (e.g., Japanese comments)**
+- ?? **Violating this rule will cause compilation errors in Visual Studio**
+
+### Why UTF-8 with BOM is Required:
+- Visual Studio C++ compiler requires BOM to correctly identify UTF-8 encoding
+- Without BOM, the compiler may misinterpret non-ASCII characters
+- This causes garbled text and compilation errors
+- BOM ensures consistent encoding across all development environments
+
+### Rules for AI Assistants:
+- When creating new C++ files, ensure they are saved with UTF-8 BOM encoding
+- When modifying existing C++ files, preserve the BOM
+- Never convert files to UTF-8 without BOM
+- If using text editors or tools, always verify BOM is present
+
+**すべてのC++ソースファイル（.cpp, .cppm, .h, .hpp, .ixx）は、UTF-8 with BOM (Signature) で保存してください。BOMを削除しないでください。特に非ASCII文字（日本語コメント等）が含まれる場合は厳守すること。**
+
 ## File Extension Rules
 **?? CRITICAL: This project uses C++20 modules. Always follow these file extension rules:**
 - **Module interface files**: MUST use `.ixx` extension (NOT `.h` or `.hpp`)

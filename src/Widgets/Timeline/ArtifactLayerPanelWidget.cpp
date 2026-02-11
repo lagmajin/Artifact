@@ -432,6 +432,14 @@ void ArtifactLayerPanelWidget::setComposition(const CompositionID& id)
   delete impl_;
  }
 
+ void ArtifactLayerTimelinePanelWrapper::setComposition(const CompositionID& id)
+ {
+  impl_->id = id;
+  if (impl_->panel) {
+   impl_->panel->setComposition(id);
+  }
+ }
+
 
 
 }

@@ -148,9 +148,6 @@
     <ClCompile Include="include\Generator\AbstractGeneratorEffector.ixx">
       <Filter>include</Filter>
     </ClCompile>
-    <ClCompile Include="include\Layer\ArtifactAbstractLayer.ixx">
-      <Filter>include</Filter>
-    </ClCompile>
     <ClCompile Include="include\Widgets\Menu\ArtifactAnimationMenu.ixx">
       <Filter>include</Filter>
     </ClCompile>
@@ -159,9 +156,6 @@
     </ClCompile>
     <ClCompile Include="src\Widgets\Asset\ArtifactAssetBrowser.cppm">
       <Filter>src</Filter>
-    </ClCompile>
-    <ClCompile Include="include\Layer\ArtifactAbstract2DLayer.ixx">
-      <Filter>include</Filter>
     </ClCompile>
     <ClCompile Include="include\Widgets\ArtifactAssetBrowser.ixx">
       <Filter>include</Filter>
@@ -182,9 +176,6 @@
       <Filter>include</Filter>
     </ClCompile>
     <ClCompile Include="include\Application\ActiveContextService.ixx">
-      <Filter>include</Filter>
-    </ClCompile>
-    <ClCompile Include="include\Layer\Artifact3DModelLayer.ixx">
       <Filter>include</Filter>
     </ClCompile>
     <ClCompile Include="src\AppMain.cppm">
@@ -222,9 +213,6 @@
       <Filter>include</Filter>
     </ClCompile>
     <ClCompile Include="include\Service\ArtifactAudioService.ixx">
-      <Filter>include</Filter>
-    </ClCompile>
-    <ClCompile Include="include\Layer\ArtifactAdjustableLayer.ixx">
       <Filter>include</Filter>
     </ClCompile>
     <ClCompile Include="include\Service\ApplicationService.ixx">
@@ -560,6 +548,28 @@
     <ClCompile Include="include\Widgets\ArtifactLayerHierarchyWidget.ixx">
       <Filter>include\Widgets</Filter>
     </ClCompile>
+    <ClCompile Include="include\Effetcs\Keying\ChromaKeyEffect.ixx" />
+    <ClCompile Include="src\Effetcs\Keying\ChromaKeyEffect.cppm" />
+    <ClCompile Include="include\Layer\ArtifactTextLayer.ixx" />
+    <ClCompile Include="src\Layer\ArtifactTextLayer.cppm" />
+    <ClCompile Include="include\Layer\Artifact3DModelLayer.ixx">
+      <Filter>include\Layer</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Layer\ArtifactAbstract2DLayer.ixx">
+      <Filter>include\Layer</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Layer\ArtifactAdjustableLayer.ixx">
+      <Filter>include\Layer</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Layer\ArtifactAbstractLayer.ixx">
+      <Filter>include\Layer</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Asset\AssetMenuModel.ixx">
+      <Filter>include\Asset</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Asset\AssetMenuModel.cppm">
+      <Filter>src\Asset</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Generated\TestService.h" />
@@ -608,6 +618,18 @@
     </Filter>
     <Filter Include="include\Composition">
       <UniqueIdentifier>{0985974d-0d7e-4325-9a9a-da5ca37f2479}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="include\Layer">
+      <UniqueIdentifier>{b90a12cf-8527-4ed6-9f78-d947da1bd1f8}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="include\Audio">
+      <UniqueIdentifier>{1cb5b81d-e17c-4a28-9074-3652b3c60ea9}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="include\Asset">
+      <UniqueIdentifier>{ef55e462-ca41-46be-a49f-35924e4c4277}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="src\Asset">
+      <UniqueIdentifier>{31fe4b58-5fc2-49ca-9a05-289f437b4414}</UniqueIdentifier>
     </Filter>
   </ItemGroup>
 </Project>

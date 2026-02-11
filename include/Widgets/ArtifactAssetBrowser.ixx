@@ -4,7 +4,7 @@
 #include <QWidget>
 #include <QTreeView>
 #include <QStringList>
-#include <QListWidget>
+#include <QListView>
 
 export module Widgets.AssetBrowser;
 
@@ -71,7 +71,6 @@ export namespace Artifact {
   
   protected:
    void showContextMenu(const QPoint& pos);
-   void onFileItemSelected(QListWidgetItem* item);
    void updateFileInfo(const QString& filePath);
 
   void folderChanged(const QString& folderPath) W_SIGNAL(folderChanged, folderPath)

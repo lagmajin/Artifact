@@ -42,6 +42,9 @@ export namespace Artifact
   void flush();
   void present();
   void flushAndWait();
+  void beginFrameGpuProfiling();
+  void endFrameGpuProfiling();
+  double lastFrameGpuTimeMs() const;
   void destroy();
 
   public/*signals*/:

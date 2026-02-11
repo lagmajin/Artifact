@@ -12,6 +12,7 @@ import Artifact.Layer.Solid2D;
 import Artifact.Layer.AdjustableLayer;
 import Artifact.Layer.Media;
 import Artifact.Layer.Camera;
+import Artifact.Layer.Text;
 //import Artifact.lay
 
 namespace Artifact {
@@ -61,6 +62,9 @@ namespace Artifact {
    break;
   case LayerType::Adjustment:
    ptr = std::make_shared<ArtifactAdjustableLayer>();
+   break;
+  case LayerType::Text:
+   ptr = std::make_shared<ArtifactTextLayer>();
    break;
   case LayerType::Media:
    ptr = std::make_shared<ArtifactMediaLayer>();

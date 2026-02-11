@@ -14,6 +14,7 @@ export module Artifact.Widgets.Timeline;
 import Artifact.Widgets.Hierarchy;
 import Artifact.Widgets.LayerPanelWidget;
 import std;
+import Utils.Id;
 
 
 export namespace Artifact {
@@ -77,6 +78,7 @@ protected:
   explicit ArtifactTimelineWidget(QWidget* parent = nullptr);
   ~ArtifactTimelineWidget();
   void update();
+  void setComposition(const CompositionID& id);
   /*signals:*/
  public /*slots*/:
  };
