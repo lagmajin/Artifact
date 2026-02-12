@@ -38,6 +38,8 @@ import Artifact.Preview.Pipeline;
 
 namespace Artifact {
 
+ using namespace ArtifactCore;
+
 W_OBJECT_IMPL(ArtifactLayerEditorWidgetV2)
  void ArtifactLayerEditorWidgetV2::play() {}
  void ArtifactLayerEditorWidgetV2::stop() {}
@@ -54,6 +56,7 @@ W_OBJECT_IMPL(ArtifactLayerEditorWidgetV2)
   void initializeSwapChain(QWidget* window);
   void destroy();
   std::unique_ptr<AritfactIRenderer> renderer_;
+  bool initialized_ = false;
   bool isPanning_=false;
   QPointF lastMousePos_;
   QWidget* widget_;
@@ -116,6 +119,7 @@ W_OBJECT_IMPL(ArtifactLayerEditorWidgetV2)
    */
   renderer_ = std::make_unique<AritfactIRenderer>();
   renderer_->initialize(window);
+  initialized_ = true;
    
 
 
@@ -124,13 +128,19 @@ W_OBJECT_IMPL(ArtifactLayerEditorWidgetV2)
 
  void ArtifactLayerEditorWidgetV2::Impl::initializeSwapChain(QWidget* window)
  {
+  if (!renderer_) {
+   return;
+  }
   renderer_->recreateSwapChain(window);
  }
 
  void ArtifactLayerEditorWidgetV2::Impl::destroy()
  {
   stopRenderLoop();
-  renderer_->destroy();
+  if (renderer_) {
+   renderer_->destroy();
+  }
+  initialized_ = false;
   //pImmediateContext.Release();
   //pDevice.Release();
  }
@@ -188,17 +198,16 @@ W_OBJECT_IMPL(ArtifactLayerEditorWidgetV2)
 
  void ArtifactLayerEditorWidgetV2::Impl::recreateSwapChain(QWidget* window)
  {
-
+  if (!initialized_ || !renderer_) {
+   return;
+  }
+  renderer_->recreateSwapChain(window);
  }
 
  ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nullptr*/) :QWidget(parent), impl_(new Impl())
  {
   setMinimumSize(1, 1);
 
-  impl_->initialize(this);
-  impl_->initializeSwapChain(this);
-  impl_->startRenderLoop();
-   
   setFocusPolicy(Qt::StrongFocus);
   setAttribute(Qt::WA_NativeWindow);
   setAttribute(Qt::WA_PaintOnScreen);
@@ -210,7 +219,7 @@ W_OBJECT_IMPL(ArtifactLayerEditorWidgetV2)
 
  ArtifactLayerEditorWidgetV2::~ArtifactLayerEditorWidgetV2()
  {
-  impl_->stopRenderLoop();
+  impl_->destroy();
   delete impl_;
   impl_ = nullptr;
  }
@@ -279,13 +288,16 @@ W_OBJECT_IMPL(ArtifactLayerEditorWidgetV2)
  void ArtifactLayerEditorWidgetV2::showEvent(QShowEvent* event)
  {
   QWidget::showEvent(event);
-  //impl_->initialize(this);
+  if (!impl_->initialized_) {
+   impl_->initialize(this);
+   impl_->initializeSwapChain(this);
+   impl_->startRenderLoop();
+  }
  }
  void ArtifactLayerEditorWidgetV2::closeEvent(QCloseEvent* event)
  {
-	 impl_->destroy();
-	 delete impl_;
-	 impl_ = nullptr;
+  impl_->destroy();
+  QWidget::closeEvent(event);
  }
 
  void ArtifactLayerEditorWidgetV2::focusInEvent(QFocusEvent* event)

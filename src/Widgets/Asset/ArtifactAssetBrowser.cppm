@@ -1,1 +1,663 @@
-#include <QFileSystemModel> #include <QDir> #include <QLabel> #include <QLineEdit> #include <QStandardPaths> #include <QVBoxLayout> #include <QWidget> #include <QListView> #include <QListWidget> #include <QToolButton> #include <QDragEnterEvent> #include <QDropEvent> #include <QMimeData> #include <QSortFilterProxyModel> #include <QButtonGroup> #include <QPixmap> #include <QIcon> #include <QHash> #include <QFileInfo> #include <QStyle> #include <QApplication> #include <QMenu> #include <QDesktopServices> #include <QUrl> #include <QClipboard> #include <QImage> #include <QSlider> #include <QGroupBox> #include <QGridLayout> #include <wobjectimpl.h> #include <boost/asio/basic_signal_set.hpp>   #include <QLabel> module; #include <QFileSystemModel> #include <QDir> #include <QLabel> #include <QLineEdit> #include <QStandardPaths> #include <QVBoxLayout> #include <QWidget> #include <QListView> #include <QListWidget> #include <QToolButton> #include <QDragEnterEvent> #include <QDropEvent> #include <QMimeData> #include <QSortFilterProxyModel> #include <QButtonGroup> #include <QPixmap> #include <QIcon> #include <QHash> #include <QFileInfo> #include <QStyle> #include <QApplication> #include <QMenu> #include <QDesktopServices> #include <QUrl> #include <QClipboard> #include <QImage> #include <QSlider> #include <QGroupBox> #include <QGridLayout> #include <wobjectimpl.h> #include <boost/asio/basic_signal_set.hpp>  #include <qcoro6/qcoro/qcorotask.h> module Widgets.AssetBrowser; import Widgets.Utils.CSS;  import Artifact.Service.Project; import Artifact.Project.Manager; import AssetMenuModel; #include <QLineEdit> #include <QStandardPaths> #include <QVBoxLayout> #include <QWidget> #include <QListView> #include <QListWidget> #include <QToolButton> #include <QDragEnterEvent> #include <QDropEvent> #include <QMimeData> #include <QSortFilterProxyModel> #include <QButtonGroup> #include <QPixmap> #include <QIcon> #include <QHash> #include <QFileInfo> #include <QStyle> #include <QApplication> #include <QMenu> #include <QDesktopServices> #include <QUrl> #include <QClipboard> #include <QImage> #include <QSlider> #include <QGroupBox> #include <QGridLayout> #include <wobjectimpl.h> #include <boost/asio/basic_signal_set.hpp>  #include <qcoro6/qcoro/qcorotask.h> module Widgets.AssetBrowser; import Widgets.Utils.CSS;  import Artifact.Service.Project; import Artifact.Project.Manager; import AssetMenuModel;   namespace Artifact {   using namespace ArtifactCore;   W_OBJECT_IMPL(ArtifactAssetBrowserToolBar)      class ArtifactAssetBrowserToolBar::Impl  {  private:  	  public:   Impl();   ~Impl();   QLineEdit* searchWidget = nullptr;  };   ArtifactAssetBrowserToolBar::Impl::Impl()  {   searchWidget = new QLineEdit();  }   ArtifactAssetBrowserToolBar::Impl::~Impl()  {   }   ArtifactAssetBrowserToolBar::ArtifactAssetBrowserToolBar(QWidget* parent /*= nullptr*/) :QWidget(parent),impl_(new Impl())  {   	   auto layout = new QHBoxLayout();   layout->addWidget(impl_->searchWidget);  	    setLayout(layout);  }   ArtifactAssetBrowserToolBar::~ArtifactAssetBrowserToolBar()  {   delete impl_;  }   W_OBJECT_IMPL(ArtifactAssetBrowser)    class ArtifactAssetBrowser::Impl  {  private:   QHash<QString, QIcon> thumbnailCache_;  // Cache thumbnails by file path   QSize thumbnailSize_{64, 64};   QIcon defaultFileIcon_;   QIcon defaultImageIcon_;   QIcon defaultVideoIcon_;   QIcon defaultAudioIcon_;   public:   Impl();   ~Impl();   QTreeView* directoryView_ = nullptr;   QListView* fileView_ = nullptr;  AssetMenuModel* assetModel_ = nullptr;   QLineEdit* searchEdit_ = nullptr;   QFileSystemModel* fileModel_ = nullptr;   QButtonGroup* filterButtonGroup_ = nullptr;   QLabel* currentPathLabel_ = nullptr;   QLabel* fileInfoLabel_ = nullptr;  // File details display   QSlider* thumbnailSizeSlider_ = nullptr;  // Thumbnail size adjustment   QString currentDirectoryPath_;   QString currentFileTypeFilter_ = "all";   QString currentSearchFilter_;      void handleDirectryChanged();   void handleDoubleClicked();   void defaultHandleMousePressEvent(QMouseEvent* event);   void applyFilters();   bool matchesFileTypeFilter(const QString& fileName) const;   bool matchesSearchFilter(const QString& fileName) const;   QIcon generateThumbnail(const QString& filePath);   QIcon getFileIcon(const QString& fileName, const QString& filePath);   void clearThumbnailCache();   bool isImageFile(const QString& fileName) const;   bool isVideoFile(const QString& fileName) const;   bool isAudioFile(const QString& fileName) const;  };    ArtifactAssetBrowser::Impl::Impl()   {     // Initialize default icons using Qt standard icons     QStyle* style = QApplication::style();     defaultFileIcon_ = style->standardIcon(QStyle::SP_FileIcon);     defaultImageIcon_ = style->standardIcon(QStyle::SP_FileIcon);     defaultVideoIcon_ = style->standardIcon(QStyle::SP_MediaPlay);     defaultAudioIcon_ = style->standardIcon(QStyle::SP_MediaVolume);   }    ArtifactAssetBrowser::Impl::~Impl()   {   }    void ArtifactAssetBrowser::Impl::handleDoubleClicked()   {    }    void ArtifactAssetBrowser::Impl::defaultHandleMousePressEvent(QMouseEvent* event)   {    }    bool ArtifactAssetBrowser::Impl::matchesFileTypeFilter(const QString& fileName) const   {     if (currentFileTypeFilter_ == "all") return true;          QString lower = fileName.toLower();          if (currentFileTypeFilter_ == "images") {       return lower.endsWith(".png") || lower.endsWith(".jpg") ||               lower.endsWith(".jpeg") || lower.endsWith(".bmp") ||              lower.endsWith(".gif") || lower.endsWith(".tga") ||              lower.endsWith(".tiff") || lower.endsWith(".exr");     }     else if (currentFileTypeFilter_ == "videos") {       return lower.endsWith(".mp4") || lower.endsWith(".mov") ||              lower.endsWith(".avi") || lower.endsWith(".mkv") ||              lower.endsWith(".webm") || lower.endsWith(".flv");     }     else if (currentFileTypeFilter_ == "audio") {       return lower.endsWith(".mp3") || lower.endsWith(".wav") ||              lower.endsWith(".ogg") || lower.endsWith(".flac") ||              lower.endsWith(".aac") || lower.endsWith(".m4a");     }          return true;   }    bool ArtifactAssetBrowser::Impl::matchesSearchFilter(const QString& fileName) const   {     if (currentSearchFilter_.isEmpty()) return true;     return fileName.contains(currentSearchFilter_, Qt::CaseInsensitive);   }    bool ArtifactAssetBrowser::Impl::isImageFile(const QString& fileName) const   {     QString lower = fileName.toLower();     return lower.endsWith(".png") || lower.endsWith(".jpg") ||             lower.endsWith(".jpeg") || lower.endsWith(".bmp") ||            lower.endsWith(".gif") || lower.endsWith(".tga") ||            lower.endsWith(".tiff") || lower.endsWith(".exr");   }    bool ArtifactAssetBrowser::Impl::isVideoFile(const QString& fileName) const   {     QString lower = fileName.toLower();     return lower.endsWith(".mp4") || lower.endsWith(".mov") ||            lower.endsWith(".avi") || lower.endsWith(".mkv") ||            lower.endsWith(".webm") || lower.endsWith(".flv");   }    bool ArtifactAssetBrowser::Impl::isAudioFile(const QString& fileName) const   {     QString lower = fileName.toLower();     return lower.endsWith(".mp3") || lower.endsWith(".wav") ||            lower.endsWith(".ogg") || lower.endsWith(".flac") ||            lower.endsWith(".aac") || lower.endsWith(".m4a");   }    QIcon ArtifactAssetBrowser::Impl::generateThumbnail(const QString& filePath)   {     // Check cache first     if (thumbnailCache_.contains(filePath)) {       return thumbnailCache_[filePath];     }          QFileInfo fileInfo(filePath);          // Generate thumbnail for image files     if (isImageFile(fileInfo.fileName())) {       QPixmap pixmap(filePath);       if (!pixmap.isNull()) {         QPixmap scaled = pixmap.scaled(thumbnailSize_, Qt::KeepAspectRatio, Qt::SmoothTransformation);         QIcon icon(scaled);         thumbnailCache_[filePath] = icon;         return icon;       }     }          // For video files, use a default video icon     // TODO: In the future, extract first frame as thumbnail     if (isVideoFile(fileInfo.fileName())) {       thumbnailCache_[filePath] = defaultVideoIcon_;       return defaultVideoIcon_;     }          // For audio files, use a default audio icon     if (isAudioFile(fileInfo.fileName())) {       thumbnailCache_[filePath] = defaultAudioIcon_;       return defaultAudioIcon_;     }          // Default file icon     thumbnailCache_[filePath] = defaultFileIcon_;     return defaultFileIcon_;   }    QIcon ArtifactAssetBrowser::Impl::getFileIcon(const QString& fileName, const QString& filePath)   {     return generateThumbnail(filePath);   }    void ArtifactAssetBrowser::Impl::clearThumbnailCache()   {     thumbnailCache_.clear();   }    void ArtifactAssetBrowser::Impl::applyFilters()   {     if (!fileView_ || !assetModel_ || currentDirectoryPath_.isEmpty()) return;      QDir dir(currentDirectoryPath_);     if (!dir.exists()) return;      // Update path label     if (currentPathLabel_) {       currentPathLabel_->setText(currentDirectoryPath_);     }      QStringList files = dir.entryList(QDir::Files);     QList<AssetMenuItem> items;      for (const QString& file : files) {       if (matchesFileTypeFilter(file) && matchesSearchFilter(file)) {         QString fullPath = dir.absoluteFilePath(file);         QFileInfo fileInfo(fullPath);          AssetMenuItem item;         item.name = UniString::fromQString(file);         item.path = UniString::fromQString(fullPath);         item.type = UniString::fromQString(fileInfo.suffix().toUpper());         item.isFolder = false;          items.append(item);       }     }      assetModel_->setItems(items);   }    ArtifactAssetBrowser::ArtifactAssetBrowser(QWidget* parent /*= nullptr*/) :QWidget(parent), impl_(new Impl())  {   setWindowTitle("AssetBrowser");     auto style = getDCCStyleSheetPreset(DccStylePreset::ModoStyle);    setStyleSheet(style);     // Enable drag and drop   setAcceptDrops(true);    auto assetToolBar = new ArtifactAssetBrowserToolBar();   impl_->searchEdit_ = assetToolBar->findChild<QLineEdit*>();    // File type filter buttons   auto filterButtonsLayout = new QHBoxLayout();   impl_->filterButtonGroup_ = new QButtonGroup(this);      auto allButton = new QToolButton();   allButton->setText("All");   allButton->setCheckable(true);   allButton->setChecked(true);      auto imagesButton = new QToolButton();   imagesButton->setText("Images");   imagesButton->setCheckable(true);      auto videosButton = new QToolButton();   videosButton->setText("Videos");   videosButton->setCheckable(true);      auto audioButton = new QToolButton();   audioButton->setText("Audio");   audioButton->setCheckable(true);      impl_->filterButtonGroup_->addButton(allButton, 0);   impl_->filterButtonGroup_->addButton(imagesButton, 1);   impl_->filterButtonGroup_->addButton(videosButton, 2);   impl_->filterButtonGroup_->addButton(audioButton, 3);      filterButtonsLayout->addWidget(allButton);   filterButtonsLayout->addWidget(imagesButton);   filterButtonsLayout->addWidget(videosButton);   filterButtonsLayout->addWidget(audioButton);   filterButtonsLayout->addStretch();    auto vLayout = new QVBoxLayout();     auto layout = new QHBoxLayout();    auto directoryView = impl_->directoryView_ = new QTreeView();   auto model = new QFileSystemModel(this);   model->setRootPath(""); // 空にしておくと全体が見える   model->setFilter(QDir::NoDotAndDotDot | QDir::AllDirs);    directoryView->setModel(model);   directoryView->setColumnHidden(1, true); // Size   directoryView->setColumnHidden(2, true); // Type   directoryView->setColumnHidden(3, true);   directoryView->setHeaderHidden(true);    QString desktopPath = QStandardPaths::writableLocation(QStandardPaths::DesktopLocation);   directoryView->setRootIndex(model->index(desktopPath));    directoryView->setIndentation(15);          // 階層のインデント   directoryView->setExpandsOnDoubleClick(true);   directoryView->setAnimated(true);    auto assetPathLabel = new QLabel("Assets");   assetPathLabel->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);   assetPathLabel->setStyleSheet("font-weight: bold;");    auto filePathLabel = impl_->currentPathLabel_ = new QLabel(desktopPath);   filePathLabel->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);   filePathLabel->setStyleSheet("color: gray; font-size: 10pt;");   filePathLabel->setWordWrap(true);    auto assetModel = impl_->assetModel_ = new AssetMenuModel(this);   auto fileView = impl_->fileView_ = new QListView();   fileView->setModel(assetModel);   impl_->fileModel_ = model;   impl_->currentDirectoryPath_ = desktopPath;  // Set initial directory   fileView->setViewMode(QListView::IconMode);   fileView->setIconSize(QSize(64, 64));   fileView->setGridSize(QSize(100, 100));  // Fixed grid size for uniform spacing   fileView->setResizeMode(QListView::Adjust);   fileView->setFlow(QListView::LeftToRight);   fileView->setTextElideMode(Qt::ElideMiddle);  // Show "longfile...name.png"   fileView->setWordWrap(true);   fileView->setSpacing(5);  // Uniform spacing between items   fileView->setUniformItemSizes(true);  // Optimize rendering with uniform sizes   fileView->setDragEnabled(true);   fileView->setContextMenuPolicy(Qt::CustomContextMenu);  // Enable custom context menu      // Connect search filter   if (impl_->searchEdit_) {     connect(impl_->searchEdit_, &QLineEdit::textChanged, this, [this](const QString& text) {       impl_->currentSearchFilter_ = text;       impl_->applyFilters();     });   }      // Connect file type filter buttons   connect(impl_->filterButtonGroup_, &QButtonGroup::idClicked, this, [this](int id) {     switch(id) {       case 0: impl_->currentFileTypeFilter_ = "all"; break;       case 1: impl_->currentFileTypeFilter_ = "images"; break;       case 2: impl_->currentFileTypeFilter_ = "videos"; break;       case 3: impl_->currentFileTypeFilter_ = "audio"; break;     }     impl_->applyFilters();   });      // Connect directory change to update file list (LEFT -> RIGHT widget coordination)   connect(directoryView, &QTreeView::clicked, this, [this, model](const QModelIndex& index) {     QString path = model->filePath(index);     QFileInfo fileInfo(path);          // Only update if it's a directory     if (fileInfo.isDir()) {       impl_->currentDirectoryPath_ = path;  // Update current directory       impl_->clearThumbnailCache();  // Clear cache when changing directory       impl_->applyFilters();  // Reload file list for right widget       folderChanged(path);  // Emit signal     }   });      // Connect file double-click to add to project   connect(fileView, &QListView::doubleClicked, this, [this](const QModelIndex& index) {     if (!index.isValid()) return;     AssetMenuItem item = impl_->assetModel_->itemAt(index.row());     QString filePath = item.path.toQString();     if (filePath.isEmpty()) return;     auto& projectManager = ArtifactProjectManager::getInstance();     QStringList copied = projectManager.copyFilesToProjectAssets(QStringList() << filePath);     if (copied.isEmpty()) return;     projectManager.addAssetsFromFilePaths(copied);   });      // Connect right-click context menu   connect(fileView, &QListView::customContextMenuRequested, this, &ArtifactAssetBrowser::showContextMenu);      // Connect file item selection to update details   connect(fileView->selectionModel(), &QItemSelectionModel::selectionChanged, this, [this]() {     QModelIndexList selectedIndexes = impl_->fileView_->selectionModel()->selectedIndexes();     if (!selectedIndexes.isEmpty()) {       AssetMenuItem item = impl_->assetModel_->itemAt(selectedIndexes.first().row());       QString filePath = item.path.toQString();       updateFileInfo(filePath);     }   });      // Create thumbnail size adjustment   auto thumbnailControlGroup = new QGroupBox("Thumbnail Size");   auto thumbnailLayout = new QHBoxLayout();      auto sizeLabel = new QLabel("64px");   auto sizeSlider = impl_->thumbnailSizeSlider_ = new QSlider(Qt::Horizontal);   sizeSlider->setMinimum(32);  // Min 32px   sizeSlider->setMaximum(256);  // Max 256px   sizeSlider->setValue(64);  // Default 64px   sizeSlider->setTickPosition(QSlider::TicksBelow);   sizeSlider->setTickInterval(32);      connect(sizeSlider, &QSlider::valueChanged, this, [this, sizeLabel, fileView](int value) {     sizeLabel->setText(QString("%1px").arg(value));          // Update icon size and grid size     fileView->setIconSize(QSize(value, value));     int gridSize = value + 36;  // Add padding for text and spacing     fileView->setGridSize(QSize(gridSize, gridSize));   });      thumbnailLayout->addWidget(new QLabel("Size:"));   thumbnailLayout->addWidget(sizeSlider);   thumbnailLayout->addWidget(sizeLabel);   thumbnailControlGroup->setLayout(thumbnailLayout);      // Create file info panel   auto fileInfoGroup = new QGroupBox("File Details");   auto fileInfoLayout = new QVBoxLayout();      auto fileInfoLabel = impl_->fileInfoLabel_ = new QLabel("No file selected");   fileInfoLabel->setWordWrap(true);   fileInfoLabel->setAlignment(Qt::AlignTop | Qt::AlignLeft);   fileInfoLabel->setStyleSheet("color: gray; font-size: 9pt;");      fileInfoLayout->addWidget(fileInfoLabel);   fileInfoGroup->setLayout(fileInfoLayout);   fileInfoGroup->setMaximumHeight(150);      // Initial load   impl_->applyFilters();    auto VBoxLayout = new  QVBoxLayout();   VBoxLayout->addWidget(assetPathLabel);   VBoxLayout->addWidget(filePathLabel);   VBoxLayout->addWidget(thumbnailControlGroup);   VBoxLayout->addWidget(fileView);   VBoxLayout->addWidget(fileInfoGroup);    vLayout->addWidget(assetToolBar);   vLayout->addLayout(filterButtonsLayout);   layout->addWidget(directoryView);   layout->addLayout(VBoxLayout);   setLayout(layout);   }   ArtifactAssetBrowser::~ArtifactAssetBrowser()  {   delete impl_;  }   void ArtifactAssetBrowser::mousePressEvent(QMouseEvent* event)  {   impl_->defaultHandleMousePressEvent(event);  }   void ArtifactAssetBrowser::keyPressEvent(QKeyEvent* event)  {   }   void ArtifactAssetBrowser::keyReleaseEvent(QKeyEvent* event)  {   }   void ArtifactAssetBrowser::dragEnterEvent(QDragEnterEvent* event)  {   // Accept file drops from external sources   if (event->mimeData()->hasUrls()) {     event->acceptProposedAction();   }  }   void ArtifactAssetBrowser::dropEvent(QDropEvent* event)  {   const QMimeData* mimeData = event->mimeData();      if (mimeData->hasUrls()) {     QStringList filePaths;     QList<QUrl> urls = mimeData->urls();          for (const QUrl& url : urls) {       if (url.isLocalFile()) {         QString filePath = url.toLocalFile();         filePaths.append(filePath);       }     }          if (!filePaths.isEmpty()) {       auto& projectManager = ArtifactProjectManager::getInstance();       QStringList copied = projectManager.copyFilesToProjectAssets(filePaths);       if (!copied.isEmpty()) {         projectManager.addAssetsFromFilePaths(copied);         // Emit signal with actual imported paths         filesDropped(copied);       }       // Refresh file view       impl_->applyFilters();     }          event->acceptProposedAction();   }  }   void ArtifactAssetBrowser::setSearchFilter(const QString& filter)  {   impl_->currentSearchFilter_ = filter;   if (impl_->searchEdit_) {     impl_->searchEdit_->setText(filter);   }   impl_->applyFilters();  }   void ArtifactAssetBrowser::setFileTypeFilter(const QString& type)  {   impl_->currentFileTypeFilter_ = type;      // Update button state   if (impl_->filterButtonGroup_) {     if (type == "all") impl_->filterButtonGroup_->button(0)->setChecked(true);     else if (type == "images") impl_->filterButtonGroup_->button(1)->setChecked(true);     else if (type == "videos") impl_->filterButtonGroup_->button(2)->setChecked(true);     else if (type == "audio") impl_->filterButtonGroup_->button(3)->setChecked(true);   }      impl_->applyFilters();  }   void ArtifactAssetBrowser::updateFileInfo(const QString& filePath)  {    if (filePath.isEmpty() || !impl_->fileInfoLabel_) return;        QFileInfo fileInfo(filePath);        if (!fileInfo.exists()) {      impl_->fileInfoLabel_->setText("File not found");      return;    }        // Build information string    QString info;    info += QString("<b>%1</b><br>").arg(fileInfo.fileName());    info += QString("Size: %1 KB<br>").arg(fileInfo.size() / 1024);    info += QString("Type: %1<br>").arg(fileInfo.suffix().toUpper());    info += QString("Modified: %1<br>").arg(fileInfo.lastModified().toString("yyyy-MM-dd hh:mm"));        // Get image resolution for image files    QString fileName = fileInfo.fileName();    QString lowerName = fileName.toLower();        if (lowerName.endsWith(".png") || lowerName.endsWith(".jpg") ||         lowerName.endsWith(".jpeg") || lowerName.endsWith(".bmp") ||        lowerName.endsWith(".gif") || lowerName.endsWith(".tga") ||        lowerName.endsWith(".tiff") || lowerName.endsWith(".exr")) {      QImage image(filePath);      if (!image.isNull()) {        info += QString("Resolution: %1 x %2 px<br>").arg(image.width()).arg(image.height());        // Color depth info        info += QString("Format: %1-bit").arg(image.depth());      }    }        impl_->fileInfoLabel_->setText(info);  }   void ArtifactAssetBrowser::showContextMenu(const QPoint& pos)  {    QModelIndex index = impl_->fileView_->indexAt(pos);    if (!index.isValid()) return;  // No item under cursor     AssetMenuItem item = impl_->assetModel_->itemAt(index.row());    QString filePath = item.path.toQString();    if (filePath.isEmpty()) return;     // Create context menu    QMenu contextMenu;     // Add to Project action   QAction* addToProjectAction = contextMenu.addAction("Add to Project");   connect(addToProjectAction, &QAction::triggered, this, [filePath]() {     if (filePath.isEmpty()) return;     auto& projectManager = ArtifactProjectManager::getInstance();     QStringList copied = projectManager.copyFilesToProjectAssets(QStringList() << filePath);     if (!copied.isEmpty()) {       projectManager.addAssetsFromFilePaths(copied);     }   });        contextMenu.addSeparator();        // Open in File Explorer action    QAction* openInExplorerAction = contextMenu.addAction("Open in File Explorer");    connect(openInExplorerAction, &QAction::triggered, this, [filePath]() {      QFileInfo fileInfo(filePath);      QString folderPath = fileInfo.dir().absolutePath();      QDesktopServices::openUrl(QUrl::fromLocalFile(folderPath));    });        // Copy file path action    QAction* copyPathAction = contextMenu.addAction("Copy File Path");    connect(copyPathAction, &QAction::triggered, this, [filePath]() {      QApplication::clipboard()->setText(filePath);    });        contextMenu.addSeparator();        // Show file properties action    QAction* showPropertiesAction = contextMenu.addAction("Properties");    connect(showPropertiesAction, &QAction::triggered, this, [filePath]() {      QFileInfo fileInfo(filePath);      QString info = QString("Name: %1\nSize: %2 bytes\nType: %3\nPath: %4")        .arg(fileInfo.fileName())        .arg(fileInfo.size())        .arg(fileInfo.suffix())        .arg(filePath);      // TODO: Show in a dialog or status bar    });        // Show menu at cursor position    contextMenu.exec(impl_->fileView_->mapToGlobal(pos));  }  };  
+module;
+#include <QFileSystemModel>
+#include <QDir>
+#include <QLabel>
+#include <QLineEdit>
+#include <QStandardPaths>
+#include <QVBoxLayout>
+#include <QWidget>
+#include <QListView>
+#include <QListWidget>
+#include <QToolButton>
+#include <QDragEnterEvent>
+#include <QDropEvent>
+#include <QMimeData>
+#include <QSortFilterProxyModel>
+#include <QButtonGroup>
+#include <QPixmap>
+#include <QIcon>
+#include <QHash>
+#include <QFileInfo>
+#include <QStyle>
+#include <QApplication>
+#include <QMenu>
+#include <QDesktopServices>
+#include <QUrl>
+#include <QClipboard>
+#include <QImage>
+#include <QSlider>
+#include <QGroupBox>
+#include <QGridLayout>
+#include <QHBoxLayout>
+#include <wobjectimpl.h>
+
+module Widgets.AssetBrowser;
+
+import Widgets.Utils.CSS;
+import Artifact.Service.Project;
+import Artifact.Project.Manager;
+import AssetMenuModel;
+import Utils.String.UniString;
+
+namespace Artifact {
+
+ using namespace ArtifactCore;
+
+ class ArtifactAssetBrowserToolBar::Impl
+ {
+ private:
+ public:
+  Impl();
+  ~Impl();
+  QLineEdit* searchWidget = nullptr;
+ };
+
+ ArtifactAssetBrowserToolBar::Impl::Impl()
+ {
+  searchWidget = new QLineEdit();
+ }
+
+ ArtifactAssetBrowserToolBar::Impl::~Impl()
+ {
+ }
+
+ W_OBJECT_IMPL(ArtifactAssetBrowserToolBar)
+
+ ArtifactAssetBrowserToolBar::ArtifactAssetBrowserToolBar(QWidget* parent /*= nullptr*/) :QWidget(parent),impl_(new Impl())
+ {
+  auto layout = new QHBoxLayout();
+  layout->addWidget(impl_->searchWidget);
+  setLayout(layout);
+ }
+
+ ArtifactAssetBrowserToolBar::~ArtifactAssetBrowserToolBar()
+ {
+  delete impl_;
+ }
+
+ class ArtifactAssetBrowser::Impl
+ {
+ private:
+  QHash<QString, QIcon> thumbnailCache_;  // Cache thumbnails by file path
+  QSize thumbnailSize_{64, 64};
+  QIcon defaultFileIcon_;
+  QIcon defaultImageIcon_;
+  QIcon defaultVideoIcon_;
+  QIcon defaultAudioIcon_;
+ public:
+  Impl();
+  ~Impl();
+  QTreeView* directoryView_ = nullptr;
+  QListView* fileView_ = nullptr;
+  AssetMenuModel* assetModel_ = nullptr;
+  QLineEdit* searchEdit_ = nullptr;
+  QFileSystemModel* fileModel_ = nullptr;
+  QButtonGroup* filterButtonGroup_ = nullptr;
+  QLabel* currentPathLabel_ = nullptr;
+  QLabel* fileInfoLabel_ = nullptr;  // File details display
+  QSlider* thumbnailSizeSlider_ = nullptr;  // Thumbnail size adjustment
+  QString currentDirectoryPath_;
+  QString currentFileTypeFilter_ = "all";
+  QString currentSearchFilter_;
+
+  void handleDirectryChanged();
+  void handleDoubleClicked();
+  void defaultHandleMousePressEvent(QMouseEvent* event);
+  void applyFilters();
+  bool matchesFileTypeFilter(const QString& fileName) const;
+  bool matchesSearchFilter(const QString& fileName) const;
+  QIcon generateThumbnail(const QString& filePath);
+  QIcon getFileIcon(const QString& fileName, const QString& filePath);
+  void clearThumbnailCache();
+  bool isImageFile(const QString& fileName) const;
+  bool isVideoFile(const QString& fileName) const;
+  bool isAudioFile(const QString& fileName) const;
+ };
+
+ ArtifactAssetBrowser::Impl::Impl()
+ {
+  // Initialize default icons using Qt standard icons
+  QStyle* style = QApplication::style();
+  if (style) {
+   defaultFileIcon_ = style->standardIcon(QStyle::SP_FileIcon);
+   defaultImageIcon_ = style->standardIcon(QStyle::SP_FileIcon);
+   defaultVideoIcon_ = style->standardIcon(QStyle::SP_MediaPlay);
+   defaultAudioIcon_ = style->standardIcon(QStyle::SP_MediaVolume);
+  }
+ }
+
+ ArtifactAssetBrowser::Impl::~Impl()
+ {
+ }
+
+ void ArtifactAssetBrowser::Impl::handleDoubleClicked()
+ {
+ }
+
+ void ArtifactAssetBrowser::Impl::defaultHandleMousePressEvent(QMouseEvent* event)
+ {
+ }
+
+ bool ArtifactAssetBrowser::Impl::matchesFileTypeFilter(const QString& fileName) const
+ {
+  if (currentFileTypeFilter_ == "all") return true;
+
+  QString lower = fileName.toLower();
+
+  if (currentFileTypeFilter_ == "images") {
+   return lower.endsWith(".png") || lower.endsWith(".jpg") ||
+          lower.endsWith(".jpeg") || lower.endsWith(".bmp") ||
+          lower.endsWith(".gif") || lower.endsWith(".tga") ||
+          lower.endsWith(".tiff") || lower.endsWith(".exr");
+  }
+  else if (currentFileTypeFilter_ == "videos") {
+   return lower.endsWith(".mp4") || lower.endsWith(".mov") ||
+          lower.endsWith(".avi") || lower.endsWith(".mkv") ||
+          lower.endsWith(".webm") || lower.endsWith(".flv");
+  }
+  else if (currentFileTypeFilter_ == "audio") {
+   return lower.endsWith(".mp3") || lower.endsWith(".wav") ||
+          lower.endsWith(".ogg") || lower.endsWith(".flac") ||
+          lower.endsWith(".aac") || lower.endsWith(".m4a");
+  }
+
+  return true;
+ }
+
+ bool ArtifactAssetBrowser::Impl::matchesSearchFilter(const QString& fileName) const
+ {
+  if (currentSearchFilter_.isEmpty()) return true;
+  return fileName.contains(currentSearchFilter_, Qt::CaseInsensitive);
+ }
+
+ bool ArtifactAssetBrowser::Impl::isImageFile(const QString& fileName) const
+ {
+  QString lower = fileName.toLower();
+  return lower.endsWith(".png") || lower.endsWith(".jpg") ||
+         lower.endsWith(".jpeg") || lower.endsWith(".bmp") ||
+         lower.endsWith(".gif") || lower.endsWith(".tga") ||
+         lower.endsWith(".tiff") || lower.endsWith(".exr");
+ }
+
+ bool ArtifactAssetBrowser::Impl::isVideoFile(const QString& fileName) const
+ {
+  QString lower = fileName.toLower();
+  return lower.endsWith(".mp4") || lower.endsWith(".mov") ||
+         lower.endsWith(".avi") || lower.endsWith(".mkv") ||
+         lower.endsWith(".webm") || lower.endsWith(".flv");
+ }
+
+ bool ArtifactAssetBrowser::Impl::isAudioFile(const QString& fileName) const
+ {
+  QString lower = fileName.toLower();
+  return lower.endsWith(".mp3") || lower.endsWith(".wav") ||
+         lower.endsWith(".ogg") || lower.endsWith(".flac") ||
+         lower.endsWith(".aac") || lower.endsWith(".m4a");
+ }
+
+ QIcon ArtifactAssetBrowser::Impl::generateThumbnail(const QString& filePath)
+ {
+  // Check cache first
+  if (thumbnailCache_.contains(filePath)) {
+   return thumbnailCache_[filePath];
+  }
+
+  QFileInfo fileInfo(filePath);
+
+  // Generate thumbnail for image files
+  if (isImageFile(fileInfo.fileName())) {
+   QPixmap pixmap(filePath);
+   if (!pixmap.isNull()) {
+    QPixmap scaled = pixmap.scaled(thumbnailSize_, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    QIcon icon(scaled);
+    thumbnailCache_[filePath] = icon;
+    return icon;
+   }
+  }
+
+  // For video files, use a default video icon
+  // TODO: In the future, extract first frame as thumbnail
+  if (isVideoFile(fileInfo.fileName())) {
+   thumbnailCache_[filePath] = defaultVideoIcon_;
+   return defaultVideoIcon_;
+  }
+
+  // For audio files, use a default audio icon
+  if (isAudioFile(fileInfo.fileName())) {
+   thumbnailCache_[filePath] = defaultAudioIcon_;
+   return defaultAudioIcon_;
+  }
+
+  // Default file icon
+  thumbnailCache_[filePath] = defaultFileIcon_;
+  return defaultFileIcon_;
+ }
+
+ QIcon ArtifactAssetBrowser::Impl::getFileIcon(const QString& fileName, const QString& filePath)
+ {
+  return generateThumbnail(filePath);
+ }
+
+ void ArtifactAssetBrowser::Impl::clearThumbnailCache()
+ {
+  thumbnailCache_.clear();
+ }
+
+ void ArtifactAssetBrowser::Impl::applyFilters()
+ {
+  if (!fileView_ || !assetModel_ || currentDirectoryPath_.isEmpty()) return;
+
+  QDir dir(currentDirectoryPath_);
+  if (!dir.exists()) return;
+
+  // Update path label
+  if (currentPathLabel_) {
+   currentPathLabel_->setText(currentDirectoryPath_);
+  }
+
+  QStringList files = dir.entryList(QDir::Files);
+  QList<AssetMenuItem> items;
+
+  for (const QString& file : files) {
+   if (matchesFileTypeFilter(file) && matchesSearchFilter(file)) {
+    QString fullPath = dir.absoluteFilePath(file);
+    QFileInfo fileInfo(fullPath);
+
+    AssetMenuItem item;
+    item.name = UniString::fromQString(file);
+    item.path = UniString::fromQString(fullPath);
+    item.type = UniString::fromQString(fileInfo.suffix().toUpper());
+    item.isFolder = false;
+
+    items.append(item);
+   }
+  }
+
+  assetModel_->setItems(items);
+ }
+
+ ArtifactAssetBrowser::ArtifactAssetBrowser(QWidget* parent /*= nullptr*/) :QWidget(parent), impl_(new Impl())
+ {
+  setWindowTitle("AssetBrowser");
+
+  auto style = getDCCStyleSheetPreset(DccStylePreset::ModoStyle);
+  setStyleSheet(style);
+
+  // Enable drag and drop
+  setAcceptDrops(true);
+
+  auto assetToolBar = new ArtifactAssetBrowserToolBar();
+  impl_->searchEdit_ = assetToolBar->findChild<QLineEdit*>();
+
+  // File type filter buttons
+  auto filterButtonsLayout = new QHBoxLayout();
+  impl_->filterButtonGroup_ = new QButtonGroup(this);
+
+  auto allButton = new QToolButton();
+  allButton->setText("All");
+  allButton->setCheckable(true);
+  allButton->setChecked(true);
+
+  auto imagesButton = new QToolButton();
+  imagesButton->setText("Images");
+  imagesButton->setCheckable(true);
+
+  auto videosButton = new QToolButton();
+  videosButton->setText("Videos");
+  videosButton->setCheckable(true);
+
+  auto audioButton = new QToolButton();
+  audioButton->setText("Audio");
+  audioButton->setCheckable(true);
+
+  impl_->filterButtonGroup_->addButton(allButton, 0);
+  impl_->filterButtonGroup_->addButton(imagesButton, 1);
+  impl_->filterButtonGroup_->addButton(videosButton, 2);
+  impl_->filterButtonGroup_->addButton(audioButton, 3);
+
+  filterButtonsLayout->addWidget(allButton);
+  filterButtonsLayout->addWidget(imagesButton);
+  filterButtonsLayout->addWidget(videosButton);
+  filterButtonsLayout->addWidget(audioButton);
+  filterButtonsLayout->addStretch();
+
+  auto vLayout = new QVBoxLayout();
+
+  auto layout = new QHBoxLayout();
+
+  auto directoryView = impl_->directoryView_ = new QTreeView();
+  auto model = new QFileSystemModel(this);
+  model->setRootPath(""); // 空にしておくと全体が見える
+  model->setFilter(QDir::NoDotAndDotDot | QDir::AllDirs);
+
+  directoryView->setModel(model);
+  directoryView->setColumnHidden(1, true); // Size
+  directoryView->setColumnHidden(2, true); // Type
+  directoryView->setColumnHidden(3, true);
+  directoryView->setHeaderHidden(true);
+
+  QString desktopPath = QStandardPaths::writableLocation(QStandardPaths::DesktopLocation);
+  directoryView->setRootIndex(model->index(desktopPath));
+
+  directoryView->setIndentation(15);          // 階層のインデント
+  directoryView->setExpandsOnDoubleClick(true);
+  directoryView->setAnimated(true);
+
+  auto assetPathLabel = new QLabel("Assets");
+  assetPathLabel->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+  assetPathLabel->setStyleSheet("font-weight: bold;");
+
+  auto filePathLabel = impl_->currentPathLabel_ = new QLabel(desktopPath);
+  filePathLabel->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+  filePathLabel->setStyleSheet("color: gray; font-size: 10pt;");
+  filePathLabel->setWordWrap(true);
+
+  auto assetModel = impl_->assetModel_ = new AssetMenuModel(this);
+  auto fileView = impl_->fileView_ = new QListView();
+  fileView->setModel(assetModel);
+  impl_->fileModel_ = model;
+  impl_->currentDirectoryPath_ = desktopPath;  // Set initial directory
+  fileView->setViewMode(QListView::IconMode);
+  fileView->setIconSize(QSize(64, 64));
+  fileView->setGridSize(QSize(100, 100));  // Fixed grid size for uniform spacing
+  fileView->setResizeMode(QListView::Adjust);
+  fileView->setFlow(QListView::LeftToRight);
+  fileView->setTextElideMode(Qt::ElideMiddle);  // Show "longfile...name.png"
+  fileView->setWordWrap(true);
+  fileView->setSpacing(5);  // Uniform spacing between items
+  fileView->setUniformItemSizes(true);  // Optimize rendering with uniform sizes
+  fileView->setDragEnabled(true);
+  fileView->setContextMenuPolicy(Qt::CustomContextMenu);  // Enable custom context menu
+
+  // Connect search filter
+  if (impl_->searchEdit_) {
+   connect(impl_->searchEdit_, &QLineEdit::textChanged, this, [this](const QString& text) {
+    impl_->currentSearchFilter_ = text;
+    impl_->applyFilters();
+   });
+  }
+
+  // Connect file type filter buttons
+  connect(impl_->filterButtonGroup_, &QButtonGroup::idClicked, this, [this](int id) {
+   switch(id) {
+    case 0: impl_->currentFileTypeFilter_ = "all"; break;
+    case 1: impl_->currentFileTypeFilter_ = "images"; break;
+    case 2: impl_->currentFileTypeFilter_ = "videos"; break;
+    case 3: impl_->currentFileTypeFilter_ = "audio"; break;
+   }
+   impl_->applyFilters();
+  });
+
+  // Connect directory change to update file list (LEFT -> RIGHT widget coordination)
+  connect(directoryView, &QTreeView::clicked, this, [this, model](const QModelIndex& index) {
+   QString path = model->filePath(index);
+   QFileInfo fileInfo(path);
+
+   // Only update if it's a directory
+   if (fileInfo.isDir()) {
+    impl_->currentDirectoryPath_ = path;  // Update current directory
+    impl_->clearThumbnailCache();  // Clear cache when changing directory
+    impl_->applyFilters();  // Reload file list for right widget
+    folderChanged(path);  // Emit signal
+   }
+  });
+
+  // Connect file double-click to add to project
+  connect(fileView, &QListView::doubleClicked, this, [this](const QModelIndex& index) {
+   if (!index.isValid()) return;
+   AssetMenuItem item = impl_->assetModel_->itemAt(index.row());
+   QString filePath = item.path.toQString();
+   if (filePath.isEmpty()) return;
+   auto& projectManager = ArtifactProjectManager::getInstance();
+   QStringList copied = projectManager.copyFilesToProjectAssets(QStringList() << filePath);
+   if (copied.isEmpty()) return;
+   projectManager.addAssetsFromFilePaths(copied);
+  });
+
+  // Connect right-click context menu
+  connect(fileView, &QListView::customContextMenuRequested, this, &ArtifactAssetBrowser::showContextMenu);
+
+  // Connect file item selection to update details
+  connect(fileView->selectionModel(), &QItemSelectionModel::selectionChanged, this, [this]() {
+   QModelIndexList selectedIndexes = impl_->fileView_->selectionModel()->selectedIndexes();
+   if (!selectedIndexes.isEmpty()) {
+    AssetMenuItem item = impl_->assetModel_->itemAt(selectedIndexes.first().row());
+    QString filePath = item.path.toQString();
+    updateFileInfo(filePath);
+   }
+  });
+
+  // Create thumbnail size adjustment
+  auto thumbnailControlGroup = new QGroupBox("Thumbnail Size");
+  auto thumbnailLayout = new QHBoxLayout();
+
+  auto sizeLabel = new QLabel("64px");
+  auto sizeSlider = impl_->thumbnailSizeSlider_ = new QSlider(Qt::Horizontal);
+  sizeSlider->setMinimum(32);  // Min 32px
+  sizeSlider->setMaximum(256);  // Max 256px
+  sizeSlider->setValue(64);  // Default 64px
+  sizeSlider->setTickPosition(QSlider::TicksBelow);
+  sizeSlider->setTickInterval(32);
+
+  connect(sizeSlider, &QSlider::valueChanged, this, [this, sizeLabel, fileView](int value) {
+   sizeLabel->setText(QString("%1px").arg(value));
+
+   // Update icon size and grid size
+   fileView->setIconSize(QSize(value, value));
+   int gridSize = value + 36;  // Add padding for text and spacing
+   fileView->setGridSize(QSize(gridSize, gridSize));
+  });
+
+  thumbnailLayout->addWidget(new QLabel("Size:"));
+  thumbnailLayout->addWidget(sizeSlider);
+  thumbnailLayout->addWidget(sizeLabel);
+  thumbnailControlGroup->setLayout(thumbnailLayout);
+
+  // Create file info panel
+  auto fileInfoGroup = new QGroupBox("File Details");
+  auto fileInfoLayout = new QVBoxLayout();
+
+  auto fileInfoLabel = impl_->fileInfoLabel_ = new QLabel("No file selected");
+  fileInfoLabel->setWordWrap(true);
+  fileInfoLabel->setAlignment(Qt::AlignTop | Qt::AlignLeft);
+  fileInfoLabel->setStyleSheet("color: gray; font-size: 9pt;");
+
+  fileInfoLayout->addWidget(fileInfoLabel);
+  fileInfoGroup->setLayout(fileInfoLayout);
+  fileInfoGroup->setMaximumHeight(150);
+
+  // Initial load
+  impl_->applyFilters();
+
+  auto VBoxLayout = new  QVBoxLayout();
+  VBoxLayout->addWidget(assetPathLabel);
+  VBoxLayout->addWidget(filePathLabel);
+  VBoxLayout->addWidget(thumbnailControlGroup);
+  VBoxLayout->addWidget(fileView);
+  VBoxLayout->addWidget(fileInfoGroup);
+
+  vLayout->addWidget(assetToolBar);
+  vLayout->addLayout(filterButtonsLayout);
+  layout->addWidget(directoryView);
+  layout->addLayout(VBoxLayout);
+  setLayout(layout);
+ }
+
+ ArtifactAssetBrowser::~ArtifactAssetBrowser()
+ {
+  delete impl_;
+ }
+
+ W_OBJECT_IMPL(ArtifactAssetBrowser)
+
+ void ArtifactAssetBrowser::mousePressEvent(QMouseEvent* event)
+ {
+  impl_->defaultHandleMousePressEvent(event);
+ }
+
+ void ArtifactAssetBrowser::keyPressEvent(QKeyEvent* event)
+ {
+ }
+
+ void ArtifactAssetBrowser::keyReleaseEvent(QKeyEvent* event)
+ {
+ }
+
+ void ArtifactAssetBrowser::dragEnterEvent(QDragEnterEvent* event)
+ {
+  // Accept file drops from external sources
+  if (event->mimeData()->hasUrls()) {
+   event->acceptProposedAction();
+  }
+ }
+
+ void ArtifactAssetBrowser::dropEvent(QDropEvent* event)
+ {
+  const QMimeData* mimeData = event->mimeData();
+
+  if (mimeData->hasUrls()) {
+   QStringList filePaths;
+   QList<QUrl> urls = mimeData->urls();
+
+   for (const QUrl& url : urls) {
+    if (url.isLocalFile()) {
+     QString filePath = url.toLocalFile();
+     filePaths.append(filePath);
+    }
+   }
+
+   if (!filePaths.isEmpty()) {
+    auto& projectManager = ArtifactProjectManager::getInstance();
+    QStringList copied = projectManager.copyFilesToProjectAssets(filePaths);
+    if (!copied.isEmpty()) {
+     projectManager.addAssetsFromFilePaths(copied);
+     // Emit signal with actual imported paths
+     filesDropped(copied);
+    }
+    // Refresh file view
+    impl_->applyFilters();
+   }
+
+   event->acceptProposedAction();
+  }
+ }
+
+ void ArtifactAssetBrowser::setSearchFilter(const QString& filter)
+ {
+  impl_->currentSearchFilter_ = filter;
+  if (impl_->searchEdit_) {
+   impl_->searchEdit_->setText(filter);
+  }
+  impl_->applyFilters();
+ }
+
+ void ArtifactAssetBrowser::setFileTypeFilter(const QString& type)
+ {
+  impl_->currentFileTypeFilter_ = type;
+
+  // Update button state
+  if (impl_->filterButtonGroup_) {
+   if (type == "all") impl_->filterButtonGroup_->button(0)->setChecked(true);
+   else if (type == "images") impl_->filterButtonGroup_->button(1)->setChecked(true);
+   else if (type == "videos") impl_->filterButtonGroup_->button(2)->setChecked(true);
+   else if (type == "audio") impl_->filterButtonGroup_->button(3)->setChecked(true);
+  }
+
+  impl_->applyFilters();
+ }
+
+ void ArtifactAssetBrowser::updateFileInfo(const QString& filePath)
+ {
+  if (filePath.isEmpty() || !impl_->fileInfoLabel_) return;
+
+  QFileInfo fileInfo(filePath);
+
+  if (!fileInfo.exists()) {
+   impl_->fileInfoLabel_->setText("File not found");
+   return;
+  }
+
+  // Build information string
+  QString info;
+  info += QString("<b>%1</b><br>").arg(fileInfo.fileName());
+  info += QString("Size: %1 KB<br>").arg(fileInfo.size() / 1024);
+  info += QString("Type: %1<br>").arg(fileInfo.suffix().toUpper());
+  info += QString("Modified: %1<br>").arg(fileInfo.lastModified().toString("yyyy-MM-dd hh:mm"));
+
+  // Get image resolution for image files
+  QString fileName = fileInfo.fileName();
+  QString lowerName = fileName.toLower();
+
+  if (lowerName.endsWith(".png") || lowerName.endsWith(".jpg") ||
+      lowerName.endsWith(".jpeg") || lowerName.endsWith(".bmp") ||
+      lowerName.endsWith(".gif") || lowerName.endsWith(".tga") ||
+      lowerName.endsWith(".tiff") || lowerName.endsWith(".exr")) {
+   QImage image(filePath);
+   if (!image.isNull()) {
+    info += QString("Resolution: %1 x %2 px<br>").arg(image.width()).arg(image.height());
+    // Color depth info
+    info += QString("Format: %1-bit").arg(image.depth());
+   }
+  }
+
+  impl_->fileInfoLabel_->setText(info);
+ }
+
+ void ArtifactAssetBrowser::showContextMenu(const QPoint& pos)
+ {
+  QModelIndex index = impl_->fileView_->indexAt(pos);
+  if (!index.isValid()) return;  // No item under cursor
+
+  AssetMenuItem item = impl_->assetModel_->itemAt(index.row());
+  QString filePath = item.path.toQString();
+  if (filePath.isEmpty()) return;
+
+  // Create context menu
+  QMenu contextMenu;
+
+  // Add to Project action
+  QAction* addToProjectAction = contextMenu.addAction("Add to Project");
+  connect(addToProjectAction, &QAction::triggered, this, [filePath]() {
+   if (filePath.isEmpty()) return;
+   auto& projectManager = ArtifactProjectManager::getInstance();
+   QStringList copied = projectManager.copyFilesToProjectAssets(QStringList() << filePath);
+   if (!copied.isEmpty()) {
+    projectManager.addAssetsFromFilePaths(copied);
+   }
+  });
+
+  contextMenu.addSeparator();
+
+  // Open in File Explorer action
+  QAction* openInExplorerAction = contextMenu.addAction("Open in File Explorer");
+  connect(openInExplorerAction, &QAction::triggered, this, [filePath]() {
+   QFileInfo fileInfo(filePath);
+   QString folderPath = fileInfo.dir().absolutePath();
+   QDesktopServices::openUrl(QUrl::fromLocalFile(folderPath));
+  });
+
+  // Copy file path action
+  QAction* copyPathAction = contextMenu.addAction("Copy File Path");
+  connect(copyPathAction, &QAction::triggered, this, [filePath]() {
+   QApplication::clipboard()->setText(filePath);
+  });
+
+  contextMenu.addSeparator();
+
+  // Show file properties action
+  QAction* showPropertiesAction = contextMenu.addAction("Properties");
+  connect(showPropertiesAction, &QAction::triggered, this, [filePath]() {
+   QFileInfo fileInfo(filePath);
+   QString info = QString("Name: %1\nSize: %2 bytes\nType: %3\nPath: %4")
+     .arg(fileInfo.fileName())
+     .arg(fileInfo.size())
+     .arg(fileInfo.suffix())
+     .arg(filePath);
+   // TODO: Show in a dialog or status bar
+  });
+
+  // Show menu at cursor position
+  contextMenu.exec(impl_->fileView_->mapToGlobal(pos));
+ }
+
+}

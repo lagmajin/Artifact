@@ -71,37 +71,16 @@
     <ClCompile Include="src\Effetcs\ColorCorrection\HueAndSaturation.cpp" />
     <ClCompile Include="src\Effetcs\Glow\GlowEffect.cpp" />
     <ClCompile Include="src\Effetcs\Glow\NoiseEffect.cppm" />
-    <ClCompile Include="src\Generator\CloneGenerator.cppm" />
     <ClCompile Include="src\Generator\GeneratorManager.cppm" />
     <ClCompile Include="src\GUI\WindowPluginManager.cpp" />
-    <ClCompile Include="src\Layer\ArtifactSolid2DLayer.cppm" />
-    <ClCompile Include="src\Layer\ArtifactSolidImageLayer.cppm" />
     <ClCompile Include="src\Library\Link.cpp" />
-    <ClCompile Include="src\Preview\ArtifactPreviewCompositionPipeline.cppm" />
-    <ClCompile Include="src\Preview\ArtifactPreviewWorker.cppm" />
-    <ClCompile Include="src\Project\ArtifactProjectInitParams.cppm" />
     <ClCompile Include="src\Project\TreeFilterProxyModel.cppm" />
-    <ClCompile Include="src\Render\ArtifactOffscreenRenderer2D.cppm" />
-    <ClCompile Include="src\Render\ArtifactRenderManager.cppm" />
     <ClCompile Include="src\Render\ArtifactRenderQueueService.cppm" />
     <ClCompile Include="src\Service\ArtifactProjectService.cpp" />
     <ClCompile Include="src\Service\ArtifactToolService.cppm" />
-    <ClCompile Include="src\Test\ArtifactTestProjectManager.cpp" />
-    <ClCompile Include="src\Timeline\ArtifactTimelineIconModel.cpp" />
-    <ClCompile Include="src\Tool\ArtifactToolManager.cpp" />
     <ClCompile Include="src\Translation\TranslationManager.cpp" />
-    <ClCompile Include="src\Widgets\Control\ArtifactPlaybackControlWidget.cppm" />
     <ClCompile Include="src\Widgets\Native\NativeHelper.cpp" />
-    <ClCompile Include="src\Widgets\Render\ArtifactRenderWrapperWidget.cpp" />
-    <ClCompile Include="src\Widgets\Render\ArtifactRenderLayerWidget.cpp" />
-    <ClCompile Include="src\Widgets\Render\ArtifactRenderQueueManagerWidget.cpp" />
-    <ClCompile Include="src\Widgets\Render\GridRenderer.cpp" />
     <ClCompile Include="src\Widgets\Timeline\ArtifactSeekBar.cppm" />
-    <ClCompile Include="src\Widgets\Timeline\ArtifactTimeCodeWidget.cppm" />
-    <ClCompile Include="src\Widgets\Timeline\ArtifactTimelineLabel.cpp" />
-    <ClCompile Include="src\Widgets\Timeline\ArtifactTimelineObjects.cpp" />
-    <ClCompile Include="src\Widgets\Timeline\ArtifactTimelineRulerWidget.cpp" />
-    <ClCompile Include="src\Widgets\Timeline\ArtifactTimelineTimeRangeSlider.cpp" />
     <ClCompile Include="src\Widgets\Timeline\ArtifactWorkAreaControlWidget.cpp" />
     <ClCompile Include="src\Widgets\Timeline\TimelineScaleWidget.cpp" />
     <ClCompile Include="include\Project\ArtifactProjectExporter.ixx" />
@@ -115,7 +94,6 @@
     <ClCompile Include="include\Project\ArtifactProject.ixx" />
     <ClCompile Include="include\Project\ArtifactProjectManager.ixx" />
     <ClCompile Include="include\Project\ArtifactProjectSetting.ixx" />
-    <ClCompile Include="include\Widgets\Menu\ArtifactMenuBar.ixx" />
     <ClCompile Include="include\Widgets\Menu\ArtifactTestMenu.ixx" />
     <ClCompile Include="include\Widgets\Menu\ArtifactTimeMenu.ixx" />
     <ClCompile Include="include\Widgets\Menu\ArtifactViewMenu.ixx" />
@@ -127,18 +105,6 @@
     <ClCompile Include="include\Widgets\Menu\ArtifactMenu.ixx" />
     <ClCompile Include="include\Widgets\Render\GridRenderer.ixx" />
     <ClCompile Include="include\Widgets\ArtifactTimelineScene.ixx" />
-    <ClCompile Include="src\Project\ArtifactProject.cppm" />
-    <ClCompile Include="src\Project\ArtifactProjectManager.cppm" />
-    <ClCompile Include="src\Project\ArtifactProjectImporter.cppm" />
-    <ClCompile Include="src\Project\ArtifactProjectSetting.cppm" />
-    <ClCompile Include="src\Widgets\ArtifactTimelineWidget.cpp" />
-    <ClCompile Include="src\Widgets\Dialog\CreatePlaneLayerDialog.cppm" />
-    <ClCompile Include="src\Widgets\Menu\ArtifactTestMenu.cppm" />
-    <ClCompile Include="src\Widgets\Menu\ArtifactTimeMenu.cppm" />
-    <ClCompile Include="src\Widgets\Menu\ArtifactViewMenu.cppm" />
-    <ClCompile Include="src\Widgets\Render\ArtifactOgreRenderWindow.cpp" />
-    <ClCompile Include="src\Widgets\Render\ArtifactRenderManagerWidget.cppm" />
-    <ClCompile Include="src\Project\ArtifactProjectModel.cppm" />
     <ClCompile Include="include\Effetcs\ArtifactAbstractEffect.ixx">
       <Filter>include</Filter>
     </ClCompile>
@@ -153,9 +119,6 @@
     </ClCompile>
     <ClCompile Include="include\Audio\Effects\ArtifactAbstractAudioEffects.ixx">
       <Filter>include</Filter>
-    </ClCompile>
-    <ClCompile Include="src\Widgets\Asset\ArtifactAssetBrowser.cppm">
-      <Filter>src</Filter>
     </ClCompile>
     <ClCompile Include="include\Widgets\ArtifactAssetBrowser.ixx">
       <Filter>include</Filter>
@@ -187,7 +150,6 @@
     <ClCompile Include="src\Asset\ArtifactAssetResult.cpp">
       <Filter>src</Filter>
     </ClCompile>
-    <ClCompile Include="src\Project\ArtifactProjectItems.cppm" />
     <ClCompile Include="src\Service\ApplicationService.cppm">
       <Filter>src</Filter>
     </ClCompile>
@@ -326,9 +288,6 @@
     <ClCompile Include="src\Widgets\Menu\ArtifactHelpMenu.cppm">
       <Filter>src\Widgets</Filter>
     </ClCompile>
-    <ClCompile Include="src\Layer\ArtifactLayerFactory.cppm">
-      <Filter>src</Filter>
-    </ClCompile>
     <ClCompile Include="src\Layer\ArtifactLayerInitParams.cppm">
       <Filter>src</Filter>
     </ClCompile>
@@ -425,9 +384,6 @@
     <ClCompile Include="src\Widgets\Dialog\EditCompositionSettingDialog.cpp">
       <Filter>src</Filter>
     </ClCompile>
-    <ClCompile Include="src\Layer\ArtifactImageLayer.cppm">
-      <Filter>src</Filter>
-    </ClCompile>
     <ClCompile Include="src\Widgets\ArtifactInspectorWidget.cppm">
       <Filter>src</Filter>
     </ClCompile>
@@ -445,7 +401,6 @@
     </ClCompile>
     <ClCompile Include="include\Render\ArtifactPerformanceMonitor.ixx" />
     <ClCompile Include="include\Project\ArtifactAutoSaveManager.ixx" />
-    <ClCompile Include="src\Widgets\ArtifactToolBar.cppm" />
     <ClCompile Include="include\Widgets\ArtifactStatusBar.ixx">
       <Filter>include\Widgets</Filter>
     </ClCompile>
@@ -544,14 +499,12 @@
     <ClCompile Include="include\Widgets\Render\ArtifactDiligentEngineRenderWindow.ixx">
       <Filter>include\Widgets</Filter>
     </ClCompile>
-    <ClCompile Include="src\Widgets\ArtifactTimelineScene.cppm" />
     <ClCompile Include="include\Widgets\ArtifactLayerHierarchyWidget.ixx">
       <Filter>include\Widgets</Filter>
     </ClCompile>
     <ClCompile Include="include\Effetcs\Keying\ChromaKeyEffect.ixx" />
     <ClCompile Include="src\Effetcs\Keying\ChromaKeyEffect.cppm" />
     <ClCompile Include="include\Layer\ArtifactTextLayer.ixx" />
-    <ClCompile Include="src\Layer\ArtifactTextLayer.cppm" />
     <ClCompile Include="include\Layer\Artifact3DModelLayer.ixx">
       <Filter>include\Layer</Filter>
     </ClCompile>
@@ -570,6 +523,127 @@
     <ClCompile Include="src\Asset\AssetMenuModel.cppm">
       <Filter>src\Asset</Filter>
     </ClCompile>
+    <ClCompile Include="src\Render\ArtifactOffscreenRenderer2D.cppm">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Widgets\Render\ArtifactOgreRenderWindow.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Widgets\Menu\ArtifactMenuBar.ixx">
+      <Filter>src\Widgets</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Preview\ArtifactPreviewCompositionPipeline.cppm">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Widgets\Control\ArtifactPlaybackControlWidget.cppm">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Project\ArtifactProjectItems.cppm">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Project\ArtifactProjectImporter.cppm">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Widgets\Render\ArtifactRenderWrapperWidget.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Project\ArtifactProjectModel.cppm">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Project\ArtifactProject.cppm">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Project\ArtifactProjectInitParams.cppm">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Project\ArtifactProjectManager.cppm">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Widgets\Render\ArtifactRenderLayerWidget.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Project\ArtifactProjectSetting.cppm">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Render\ArtifactRenderManager.cppm">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Preview\ArtifactPreviewWorker.cppm">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Widgets\Timeline\ArtifactTimeCodeWidget.cppm">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Timeline\ArtifactTimelineIconModel.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Widgets\Timeline\ArtifactTimelineLabel.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Widgets\Timeline\ArtifactTimelineObjects.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Widgets\Timeline\ArtifactTimelineRulerWidget.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Widgets\ArtifactTimelineScene.cppm">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Widgets\Timeline\ArtifactTimelineTimeRangeSlider.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Widgets\ArtifactTimelineWidget.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Widgets\Menu\ArtifactTimeMenu.cppm">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Widgets\ArtifactToolBar.cppm">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Tool\ArtifactToolManager.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Widgets\Render\GridRenderer.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Layer\ArtifactSolidImageLayer.cppm">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Widgets\Render\ArtifactRenderManagerWidget.cppm">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Widgets\Render\ArtifactRenderQueueManagerWidget.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Test\ArtifactTestProjectManager.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Widgets\Menu\ArtifactTestMenu.cppm">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Layer\ArtifactSolid2DLayer.cppm">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Widgets\Menu\ArtifactViewMenu.cppm">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Generator\CloneGenerator.cppm">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Layer\ArtifactTextLayer.cppm">
+      <Filter>src\Layer</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Layer\ArtifactLayerFactory.cppm">
+      <Filter>src\Layer</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Layer\ArtifactImageLayer.cppm">
+      <Filter>src\Layer</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Widgets\Dialog\CreatePlaneLayerDialog.cppm">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Widgets\Asset\ArtifactAssetBrowser.cppm" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Generated\TestService.h" />
@@ -593,6 +667,7 @@
     <None Include="PROJECT_GOALS.md" />
     <None Include="UI_WIDGETS_LIST.md" />
     <None Include="ArtifactCore_Library_Reference.md" />
+    <None Include=".editorconfig" />
   </ItemGroup>
   <ItemGroup>
     <Filter Include="src">
@@ -630,6 +705,9 @@
     </Filter>
     <Filter Include="src\Asset">
       <UniqueIdentifier>{31fe4b58-5fc2-49ca-9a05-289f437b4414}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="src\Widgets\Menu">
+      <UniqueIdentifier>{bf61337a-916a-4be5-b960-a41b157ecad9}</UniqueIdentifier>
     </Filter>
   </ItemGroup>
 </Project>

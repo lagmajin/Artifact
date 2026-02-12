@@ -257,8 +257,8 @@ namespace Artifact {
     auto layerPreview2=new ArtifactLayerEditorWidgetV2();
    layerPreview2->show();
 
-   //auto assetBrowser = new ArtifactAssetBrowser();
-   //assetBrowser->show();
+   auto assetBrowser = new ArtifactAssetBrowser();
+   assetBrowser->show();
  	
   QObject::connect(&projectManager, &ArtifactProjectManager::projectCreated, [this]() {
    impl_->handleProjectCreated();
