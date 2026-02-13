@@ -8,6 +8,7 @@
 #include <QRectF>
 #include <wobjectcpp.h>
 #include <wobjectimpl.h>
+#include <QDebug>
 module Artifact.Layer.Abstract;
 
 import std;
@@ -16,6 +17,7 @@ import Layer.State;
 import Animation.Transform2D;
 import Frame.Position;
 import Artifact.Layer.Settings;
+import Artifact.Effect.Abstract;
 
 
 namespace Artifact {
@@ -26,12 +28,15 @@ namespace Artifact {
 
   class ArtifactAbstractLayer::Impl {
   private:
-   
-   bool is3D_ = true;
-   Id id;
-   LayerState state_;
-   //FramePosition framePosition_
-   
+
+    bool is3D_ = true;
+    Id id;
+    LayerState state_;
+    //FramePosition framePosition_
+
+    // エフェクトコンテナ
+    std::vector<std::shared_ptr<ArtifactAbstractEffect>> effects_;
+
   public:
    Impl();
    ~Impl();
@@ -40,12 +45,20 @@ namespace Artifact {
    void goToEndFrame();
    void goToNextFrame();
    void goToPrevFrame();
- 	
+
    bool is3D() const;
    AnimatableTransform3D transform_;
    AnimatableTransform2D transform2d_;
    Size_2D sourceSize_;
- };
+
+   // エフェクト管理メソッド
+   void addEffect(std::shared_ptr<ArtifactAbstractEffect> effect);
+   void removeEffect(const UniString& effectID);
+   void clearEffects();
+   std::vector<std::shared_ptr<ArtifactAbstractEffect>> getEffects() const;
+   std::shared_ptr<ArtifactAbstractEffect> getEffect(const UniString& effectID) const;
+   int effectCount() const;
+  };
 
   ArtifactAbstractLayer::Impl::Impl()
   {
@@ -335,6 +348,81 @@ QJsonObject ArtifactAbstractLayer::toJson() const
  ArtifactAbstractLayerPtr ArtifactAbstractLayer::fromJson(const QJsonObject& obj)
  {
    return ArtifactAbstractLayerPtr();
+ }
+
+ void ArtifactAbstractLayer::Impl::addEffect(std::shared_ptr<ArtifactAbstractEffect> effect)
+ {
+  if (!effect) return;
+  effects_.push_back(effect);
+  qDebug() << "[ArtifactAbstractLayer] Effect added:" << effect->displayName().toQString();
+ }
+
+ void ArtifactAbstractLayer::Impl::removeEffect(const UniString& effectID)
+ {
+  auto it = std::remove_if(effects_.begin(), effects_.end(),
+   [&effectID](const std::shared_ptr<ArtifactAbstractEffect>& e) {
+    return e && e->effectID() == effectID;
+   });
+  if (it != effects_.end()) {
+   effects_.erase(it, effects_.end());
+   qDebug() << "[ArtifactAbstractLayer] Effect removed:" << effectID.toQString();
+  }
+ }
+
+ void ArtifactAbstractLayer::Impl::clearEffects()
+ {
+  effects_.clear();
+  qDebug() << "[ArtifactAbstractLayer] All effects cleared";
+ }
+
+ std::vector<std::shared_ptr<ArtifactAbstractEffect>> ArtifactAbstractLayer::Impl::getEffects() const
+ {
+  return effects_;
+ }
+
+ std::shared_ptr<ArtifactAbstractEffect> ArtifactAbstractLayer::Impl::getEffect(const UniString& effectID) const
+ {
+  for (const auto& effect : effects_) {
+   if (effect && effect->effectID() == effectID) {
+    return effect;
+   }
+  }
+  return nullptr;
+ }
+
+ int ArtifactAbstractLayer::Impl::effectCount() const
+ {
+  return static_cast<int>(effects_.size());
+ }
+
+ void ArtifactAbstractLayer::addEffect(std::shared_ptr<ArtifactAbstractEffect> effect)
+ {
+  impl_->addEffect(effect);
+ }
+
+ void ArtifactAbstractLayer::removeEffect(const UniString& effectID)
+ {
+  impl_->removeEffect(effectID);
+ }
+
+ void ArtifactAbstractLayer::clearEffects()
+ {
+  impl_->clearEffects();
+ }
+
+ std::vector<std::shared_ptr<ArtifactAbstractEffect>> ArtifactAbstractLayer::getEffects() const
+ {
+  return impl_->getEffects();
+ }
+
+ std::shared_ptr<ArtifactAbstractEffect> ArtifactAbstractLayer::getEffect(const UniString& effectID) const
+ {
+  return impl_->getEffect(effectID);
+ }
+
+ int ArtifactAbstractLayer::effectCount() const
+ {
+  return impl_->effectCount();
  }
 
 };

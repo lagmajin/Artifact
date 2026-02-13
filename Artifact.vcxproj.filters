@@ -120,9 +120,6 @@
     <ClCompile Include="include\Audio\Effects\ArtifactAbstractAudioEffects.ixx">
       <Filter>include</Filter>
     </ClCompile>
-    <ClCompile Include="include\Widgets\ArtifactAssetBrowser.ixx">
-      <Filter>include</Filter>
-    </ClCompile>
     <ClCompile Include="include\Audio\Effects\ArtifactAudioOutput.ixx">
       <Filter>include</Filter>
     </ClCompile>
@@ -203,9 +200,6 @@
     </ClCompile>
     <ClCompile Include="src\Generator\AbstractGenerator.cppm">
       <Filter>src</Filter>
-    </ClCompile>
-    <ClCompile Include="include\Asset\ArtifactAssetResult.ixx">
-      <Filter>include</Filter>
     </ClCompile>
     <ClCompile Include="include\Composition\ArtifactComposition3D.ixx">
       <Filter>include</Filter>
@@ -643,7 +637,27 @@
     <ClCompile Include="src\Widgets\Dialog\CreatePlaneLayerDialog.cppm">
       <Filter>src</Filter>
     </ClCompile>
-    <ClCompile Include="src\Widgets\Asset\ArtifactAssetBrowser.cppm" />
+    <ClCompile Include="src\Widgets\Asset\ArtifactAssetBrowser.cppm">
+      <Filter>src\Asset</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Asset\AssetDirectoryModel.cppm">
+      <Filter>src\Asset</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Asset\AssetDirectoryModel.ixx">
+      <Filter>include\Asset</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Widgets\ArtifactAssetBrowser.ixx">
+      <Filter>include\Asset</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Asset\ArtifactAssetResult.ixx">
+      <Filter>include\Asset</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Composition\MetadataVectorizer.cppm">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Composition\MetadataVectorizer.ixx">
+      <Filter>include</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Generated\TestService.h" />
@@ -668,6 +682,8 @@
     <None Include="UI_WIDGETS_LIST.md" />
     <None Include="ArtifactCore_Library_Reference.md" />
     <None Include=".editorconfig" />
+    <None Include="docs\AssetIcons.md" />
+    <None Include="copilot-instructions.md" />
   </ItemGroup>
   <ItemGroup>
     <Filter Include="src">

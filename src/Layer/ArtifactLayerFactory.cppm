@@ -1,4 +1,4 @@
-module;
+﻿module;
 
 module Artifact.Layer.Factory;
 
@@ -93,6 +93,9 @@ namespace Artifact {
 
   result.layer = ptr;
   result.success = static_cast<bool>(ptr);
+  if (ptr) {
+   ptr->setLayerName(params.name().toQString());
+  }
   return result;
  }
 

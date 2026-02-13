@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <QAbstractListModel>
 #include <QApplication>
 #include <QByteArray>
@@ -68,6 +68,10 @@ namespace Artifact
   case static_cast<int>(AssetMenuRole::Name):
    return item.name.toQString();
   case Qt::DecorationRole:
+   // Use custom icon if available, otherwise use default
+   if (!item.icon.isNull()) {
+    return item.icon;
+   }
    return item.isFolder ? impl_->folderIcon_ : impl_->fileIcon_;
   case Qt::ToolTipRole: {
    QStringList lines;

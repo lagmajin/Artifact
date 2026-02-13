@@ -19,6 +19,7 @@ import Layer.Blend;
 import Layer.State;
 import Animation.Transform2D;
 import Animation.Transform3D;
+import Artifact.Effect.Abstract;
 
 import <cstdint> ;
 
@@ -123,6 +124,16 @@ export namespace Artifact {
 
   bool isClicked() const;
   bool preciseHit() const;
+
+  /*Effects*/
+  void addEffect(std::shared_ptr<class ArtifactAbstractEffect> effect);
+  void removeEffect(const UniString& effectID);
+  void clearEffects();
+  std::vector<std::shared_ptr<class ArtifactAbstractEffect>> getEffects() const;
+  std::shared_ptr<class ArtifactAbstractEffect> getEffect(const UniString& effectID) const;
+  int effectCount() const;
+  /*Effects*/
+
  public:
 
 

@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <QDebug>
 #include <memory>
 #include <vector>
@@ -60,7 +60,12 @@ namespace Artifact {
    ArtifactProjectSettings projectSettings_;
    ArtifactLayerFactory layerFactory_;
    bool isDirty_; // ダーティ状態フラグ
-  
+
+   // AI向けメタデータ
+   QString aiDescription_;
+   QStringList aiTags_;
+   QString aiNotes_;
+
  public:
   Impl();
   ~Impl();
@@ -68,7 +73,7 @@ namespace Artifact {
   CreateCompositionResult createComposition(const UniString& str);
   CreateCompositionResult createComposition(const ArtifactCompositionInitParams& settings);
   //CreateCompositionResult createComposition(const Composition)
- 	
+
   void createCompositions(const QStringList& names);
    FindCompositionResult findComposition(const CompositionID& id);
   bool removeById(const CompositionID& id);
@@ -76,6 +81,14 @@ namespace Artifact {
   bool addImportedComposition(ArtifactCompositionPtr comp, const QString& name);
   void setProjectName(const QString& name);
   void setAuthor(const QString& author);
+
+  // AI向けメタデータ
+  void setAIDescription(const QString& description);
+  QString aiDescription() const;
+  void setAITags(const QStringList& tags);
+  QStringList aiTags() const;
+  void setAINotes(const QString& notes);
+  QString aiNotes() const;
 
    // Layer management
    ArtifactLayerResult createLayerAndAddToComposition(const CompositionID& compositionId, ArtifactLayerInitParams& params);
@@ -320,6 +333,39 @@ FindCompositionResult ArtifactProject::Impl::findComposition(const CompositionID
   // TODO: ダーティ状態が変更されたときの通知を実装する
  }
 
+ void ArtifactProject::Impl::setAIDescription(const QString& description)
+ {
+  aiDescription_ = description;
+  setDirty(true);
+ }
+
+ QString ArtifactProject::Impl::aiDescription() const
+ {
+  return aiDescription_;
+ }
+
+ void ArtifactProject::Impl::setAITags(const QStringList& tags)
+ {
+  aiTags_ = tags;
+  setDirty(true);
+ }
+
+ QStringList ArtifactProject::Impl::aiTags() const
+ {
+  return aiTags_;
+ }
+
+ void ArtifactProject::Impl::setAINotes(const QString& notes)
+ {
+  aiNotes_ = notes;
+  setDirty(true);
+ }
+
+ QString ArtifactProject::Impl::aiNotes() const
+ {
+  return aiNotes_;
+ }
+
  static QString compositionNameFromItems(const std::vector<std::unique_ptr<ProjectItem>>& ownedItems, const CompositionID& id)
  {
   for (const auto& up : ownedItems) {
@@ -336,6 +382,22 @@ FindCompositionResult ArtifactProject::Impl::findComposition(const CompositionID
   result["name"] = projectSettings_.projectName();
   result["author"] = projectSettings_.author().toQString();
   result["version"] = "1.0";
+
+  // AI向けメタデータを追加
+  if (!aiDescription_.isEmpty()) {
+   result["ai_description"] = aiDescription_;
+  }
+  if (!aiTags_.isEmpty()) {
+   QJsonArray tagsArray;
+   for (const auto& tag : aiTags_) {
+    tagsArray.append(tag);
+   }
+   result["ai_tags"] = tagsArray;
+  }
+  if (!aiNotes_.isEmpty()) {
+   result["ai_notes"] = aiNotes_;
+  }
+
   QJsonArray compsArray;
   for (const auto& comp : container_.all()) {
    if (comp) {
@@ -518,6 +580,36 @@ FindCompositionResult ArtifactProject::Impl::findComposition(const CompositionID
  void ArtifactProject::setAuthor(const QString& author)
  {
   impl_->setAuthor(author);
+ }
+
+ void ArtifactProject::setAIDescription(const QString& description)
+ {
+  impl_->setAIDescription(description);
+ }
+
+ QString ArtifactProject::aiDescription() const
+ {
+  return impl_->aiDescription();
+ }
+
+ void ArtifactProject::setAITags(const QStringList& tags)
+ {
+  impl_->setAITags(tags);
+ }
+
+ QStringList ArtifactProject::aiTags() const
+ {
+  return impl_->aiTags();
+ }
+
+ void ArtifactProject::setAINotes(const QString& notes)
+ {
+  impl_->setAINotes(notes);
+ }
+
+ QString ArtifactProject::aiNotes() const
+ {
+  return impl_->aiNotes();
  }
 
  void ArtifactProject::removeAllCompositions()
@@ -739,7 +831,12 @@ FindCompositionResult ArtifactProject::Impl::findComposition(const CompositionID
    //   return result;
    // }
 
-  AppendLayerToCompositionResult ArtifactProject::addLayerToComposition(const CompositionID& compositionId, ArtifactAbstractLayerPtr layer)
+  FindCompositionResult ArtifactProject::findComposition(const CompositionID& id)
+  {
+   return impl_->findComposition(id);
+  }
+
+   AppendLayerToCompositionResult ArtifactProject::addLayerToComposition(const CompositionID& compositionId, ArtifactAbstractLayerPtr layer)
   {
    return impl_->addLayerToComposition(compositionId, layer);
   }

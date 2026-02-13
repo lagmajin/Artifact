@@ -1,4 +1,4 @@
-module;
+ï»¿module;
 #include <wobjectimpl.h>
 #include <QPainter>
 #include <QWidget>
@@ -143,7 +143,7 @@ namespace Artifact
   QPixmap normalLayerIcon;
   QPixmap adjLayerIcon;
   QPixmap nullLayerIcon;
-  int hoveredLayerIndex = -1;  // ƒ}ƒEƒXƒzƒo[’†‚ÌƒŒƒCƒ„[ƒCƒ“ƒfƒbƒNƒX
+  int hoveredLayerIndex = -1;  // ãƒã‚¦ã‚¹ãƒ›ãƒãƒ¼ä¸­ã®ãƒ¬ã‚¤ãƒ¤ãƒ¼ã‚¤ãƒ³ãƒ‡ãƒƒã‚¯ã‚¹
  };
 
  ArtifactLayerPanelWidget::Impl::Impl()
@@ -164,6 +164,9 @@ ArtifactLayerPanelWidget::ArtifactLayerPanelWidget(QWidget* parent /*= nullptr*/
  setAcceptDrops(true);
 
  if (auto* service = ArtifactProjectService::instance()) {
+   QObject::connect(service, &ArtifactProjectService::layerCreated, this, [this](const LayerID&) {
+     update();
+   });
    QObject::connect(service, &ArtifactProjectService::layerRemoved, this, [this](const LayerID&) {
      update();
    });
@@ -241,27 +244,27 @@ void ArtifactLayerPanelWidget::setComposition(const CompositionID& id)
   void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
  {
   QPainter p(this);
-  const int rowH = 28; // s‚Ì‚‚³
+  const int rowH = 28; // è¡Œã®é«˜ã•
   const int iconSize = 16;
   const int iconSpacing = 4;
   const int leftPadding = 4;
   
-  // ”wŒi‚ğ“h‚è‚Â‚Ô‚µ
+  // èƒŒæ™¯ã‚’å¡—ã‚Šã¤ã¶ã—
   for (int i = 0; i * rowH < height(); ++i) {
    int y = i * rowH;
    
-   // ƒzƒo[ƒnƒCƒ‰ƒCƒg
+   // ãƒ›ãƒãƒ¼ãƒã‚¤ãƒ©ã‚¤ãƒˆ
    if (i == impl_->hoveredLayerIndex) {
-	p.fillRect(0, y, width(), rowH, QColor(55, 55, 80));  // ÂŒn‚ÌƒnƒCƒ‰ƒCƒg
+	p.fillRect(0, y, width(), rowH, QColor(55, 55, 80));  // é’ç³»ã®ãƒã‚¤ãƒ©ã‚¤ãƒˆ
    }
-   // ‹ô”s‚ÆŠï”s‚ÅF‚ğ•ª‚¯‚é
+   // å¶æ•°è¡Œã¨å¥‡æ•°è¡Œã§è‰²ã‚’åˆ†ã‘ã‚‹
    else if (i % 2 == 0) {
 	p.fillRect(0, y, width(), rowH, QColor(42, 42, 42));
    } else {
 	p.fillRect(0, y, width(), rowH, QColor(45, 45, 45));
    }
    
-   // ‹æØ‚èü
+   // åŒºåˆ‡ã‚Šç·š
    p.setPen(QColor(60, 60, 60));
    p.drawLine(0, y + rowH, width(), y + rowH);
   }

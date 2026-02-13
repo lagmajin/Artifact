@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <QFileSystemModel>
 #include <QDir>
 #include <QLabel>
@@ -37,6 +37,7 @@ import Widgets.Utils.CSS;
 import Artifact.Service.Project;
 import Artifact.Project.Manager;
 import AssetMenuModel;
+import AssetDirectoryModel;
 import Utils.String.UniString;
 
 namespace Artifact {
@@ -204,6 +205,17 @@ namespace Artifact {
 
   QFileInfo fileInfo(filePath);
 
+  // For folders, use folder icon
+  if (fileInfo.isDir()) {
+   QStyle* style = QApplication::style();
+   if (style) {
+    QIcon folderIcon = style->standardIcon(QStyle::SP_DirIcon);
+    thumbnailCache_[filePath] = folderIcon;
+    return folderIcon;
+   }
+   return defaultFileIcon_;
+  }
+
   // Generate thumbnail for image files
   if (isImageFile(fileInfo.fileName())) {
    QPixmap pixmap(filePath);
@@ -255,22 +267,40 @@ namespace Artifact {
    currentPathLabel_->setText(currentDirectoryPath_);
   }
 
-  QStringList files = dir.entryList(QDir::Files);
+  // Get both files and directories, excluding . and ..
+  QStringList entries = dir.entryList(QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot);
   QList<AssetMenuItem> items;
 
-  for (const QString& file : files) {
-   if (matchesFileTypeFilter(file) && matchesSearchFilter(file)) {
-    QString fullPath = dir.absoluteFilePath(file);
-    QFileInfo fileInfo(fullPath);
+  for (const QString& entry : entries) {
+   QString fullPath = dir.absoluteFilePath(entry);
+   QFileInfo fileInfo(fullPath);
 
-    AssetMenuItem item;
-    item.name = UniString::fromQString(file);
-    item.path = UniString::fromQString(fullPath);
-    item.type = UniString::fromQString(fileInfo.suffix().toUpper());
-    item.isFolder = false;
-
-    items.append(item);
+   // Skip directories if filtering for specific file types (except "all")
+   bool isDir = fileInfo.isDir();
+   if (isDir && currentFileTypeFilter_ != "all") {
+    continue;
    }
+
+   // Check search filter
+   if (!matchesSearchFilter(entry)) {
+    continue;
+   }
+
+   // For files, check type filter
+   if (!isDir && !matchesFileTypeFilter(entry)) {
+    continue;
+   }
+
+   AssetMenuItem item;
+   item.name = UniString::fromQString(entry);
+   item.path = UniString::fromQString(fullPath);
+   item.type = UniString::fromQString(isDir ? "Folder" : fileInfo.suffix().toUpper());
+   item.isFolder = isDir;
+
+   // Generate thumbnail/icon for display
+   item.icon = generateThumbnail(fullPath);
+
+   items.append(item);
   }
 
   assetModel_->setItems(items);
@@ -326,22 +356,21 @@ namespace Artifact {
   auto layout = new QHBoxLayout();
 
   auto directoryView = impl_->directoryView_ = new QTreeView();
-  auto model = new QFileSystemModel(this);
-  model->setRootPath(""); // 空にしておくと全体が見える
-  model->setFilter(QDir::NoDotAndDotDot | QDir::AllDirs);
+  auto directoryModel = new AssetDirectoryModel(this);
 
-  directoryView->setModel(model);
-  directoryView->setColumnHidden(1, true); // Size
-  directoryView->setColumnHidden(2, true); // Type
-  directoryView->setColumnHidden(3, true);
+  QString assetsPath = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation) + "/Assets";
+  QString packagesPath = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation) + "/Packages";
+
+  directoryModel->setAssetRootPath(assetsPath);
+  directoryModel->setPackageRootPath(packagesPath);
+
+  directoryView->setModel(directoryModel);
   directoryView->setHeaderHidden(true);
-
-  QString desktopPath = QStandardPaths::writableLocation(QStandardPaths::DesktopLocation);
-  directoryView->setRootIndex(model->index(desktopPath));
-
-  directoryView->setIndentation(15);          // 階層のインデント
+  directoryView->setIndentation(15);
   directoryView->setExpandsOnDoubleClick(true);
   directoryView->setAnimated(true);
+
+  QString desktopPath = QStandardPaths::writableLocation(QStandardPaths::DesktopLocation);
 
   auto assetPathLabel = new QLabel("Assets");
   assetPathLabel->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
@@ -355,7 +384,6 @@ namespace Artifact {
   auto assetModel = impl_->assetModel_ = new AssetMenuModel(this);
   auto fileView = impl_->fileView_ = new QListView();
   fileView->setModel(assetModel);
-  impl_->fileModel_ = model;
   impl_->currentDirectoryPath_ = desktopPath;  // Set initial directory
   fileView->setViewMode(QListView::IconMode);
   fileView->setIconSize(QSize(64, 64));
@@ -389,25 +417,34 @@ namespace Artifact {
   });
 
   // Connect directory change to update file list (LEFT -> RIGHT widget coordination)
-  connect(directoryView, &QTreeView::clicked, this, [this, model](const QModelIndex& index) {
-   QString path = model->filePath(index);
-   QFileInfo fileInfo(path);
+  connect(directoryView, &QTreeView::clicked, this, [this, directoryModel](const QModelIndex& index) {
+   QString path = directoryModel->pathFromIndex(index);
 
-   // Only update if it's a directory
-   if (fileInfo.isDir()) {
-    impl_->currentDirectoryPath_ = path;  // Update current directory
-    impl_->clearThumbnailCache();  // Clear cache when changing directory
-    impl_->applyFilters();  // Reload file list for right widget
-    folderChanged(path);  // Emit signal
+   if (!path.isEmpty()) {
+    impl_->currentDirectoryPath_ = path;
+    impl_->clearThumbnailCache();
+    impl_->applyFilters();
+    folderChanged(path);
    }
   });
 
-  // Connect file double-click to add to project
+  // Connect file double-click to add to project or navigate into folder
   connect(fileView, &QListView::doubleClicked, this, [this](const QModelIndex& index) {
    if (!index.isValid()) return;
    AssetMenuItem item = impl_->assetModel_->itemAt(index.row());
    QString filePath = item.path.toQString();
    if (filePath.isEmpty()) return;
+
+   // If it's a folder, navigate into it
+   if (item.isFolder) {
+    impl_->currentDirectoryPath_ = filePath;
+    impl_->clearThumbnailCache();
+    impl_->applyFilters();
+    folderChanged(filePath);
+    return;
+   }
+
+   // Otherwise, add file to project
    auto& projectManager = ArtifactProjectManager::getInstance();
    QStringList copied = projectManager.copyFilesToProjectAssets(QStringList() << filePath);
    if (copied.isEmpty()) return;
@@ -580,6 +617,14 @@ namespace Artifact {
   // Build information string
   QString info;
   info += QString("<b>%1</b><br>").arg(fileInfo.fileName());
+
+  // Check if it's a folder
+  if (fileInfo.isDir()) {
+   info += "Type: Folder<br>";
+   impl_->fileInfoLabel_->setText(info);
+   return;
+  }
+
   info += QString("Size: %1 KB<br>").arg(fileInfo.size() / 1024);
   info += QString("Type: %1<br>").arg(fileInfo.suffix().toUpper());
   info += QString("Modified: %1<br>").arg(fileInfo.lastModified().toString("yyyy-MM-dd hh:mm"));
