@@ -113,12 +113,14 @@ void ArtifactAbstractComposition::Impl::removeLayer(const LayerID& id)
 
  void ArtifactAbstractComposition::Impl::goToStartFrame()
  {
-  //goToFrame(0);
+  goToFrame(0);
  }
 
  void ArtifactAbstractComposition::Impl::goToEndFrame()
  {
-
+  if (!settings_.frameRange.isNil()) {
+   goToFrame(settings_.frameRange.end());
+  }
  }
 
  void ArtifactAbstractComposition::Impl::setFramePosition(const FramePosition& position)
@@ -134,7 +136,7 @@ void ArtifactAbstractComposition::Impl::removeLayer(const LayerID& id)
 
  void ArtifactAbstractComposition::Impl::goToFrame(int64_t frame/*=0*/)
  {
-  
+  position_ = FramePosition(frame);
  }
 
  QVector<ArtifactAbstractLayerPtr> ArtifactAbstractComposition::Impl::allLayer() const
@@ -219,7 +221,9 @@ ArtifactAbstractLayerPtr ArtifactAbstractComposition::layerById(const LayerID& i
 
  void ArtifactAbstractComposition::setBackGroundColor(const FloatColor& color)
  {
-
+  if (impl_) {
+   impl_->settings_.backgroundColor = color;
+  }
  }
  
  void ArtifactAbstractComposition::setFramePosition(const FramePosition& position)
@@ -229,7 +233,7 @@ ArtifactAbstractLayerPtr ArtifactAbstractComposition::layerById(const LayerID& i
 
  void ArtifactAbstractComposition::goToStartFrame()
  {
-  impl_->goToEndFrame();
+  impl_->goToStartFrame();
  }
 
  void ArtifactAbstractComposition::goToEndFrame()
@@ -239,7 +243,7 @@ ArtifactAbstractLayerPtr ArtifactAbstractComposition::layerById(const LayerID& i
 
  void ArtifactAbstractComposition::goToFrame(int64_t frameNumber /*= 0*/)
  {
-
+  impl_->goToFrame(frameNumber);
  }
 
  bool ArtifactAbstractComposition::hasVideo() const

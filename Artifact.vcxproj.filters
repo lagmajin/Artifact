@@ -425,9 +425,6 @@
     <ClCompile Include="src\Widgets\Dialog\ArtifactRenderOutputSettingDialog.cppm">
       <Filter>src\Widgets</Filter>
     </ClCompile>
-    <ClCompile Include="src\Project\ArtifactProjectExporter.cppm">
-      <Filter>src</Filter>
-    </ClCompile>
     <ClCompile Include="src\Widgets\Render\ArtifactLayerEditorPanel.cpp">
       <Filter>src</Filter>
     </ClCompile>
@@ -644,6 +641,7 @@
       <Filter>src</Filter>
     </ClCompile>
     <ClCompile Include="src\Widgets\Asset\ArtifactAssetBrowser.cppm" />
+    <ClCompile Include="src\Project\ArtifactProjectExporter.cppm" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Generated\TestService.h" />

@@ -1,4 +1,4 @@
-module ;
+﻿module ;
 #include <QColor>
 #include <QGraphicsItem>
 #include <wobjectdefs.h>
@@ -44,6 +44,17 @@ export namespace Artifact
   
   // Set size/position (start = x in scene coords, duration = width in pixels)
   void setStartDuration(double start, double duration);
+  
+  // Getter for internal data
+  double getStart() const;
+  double getDuration() const;
+  void setStart(double start);
+  void setDuration(double duration);
+  
+  // Mouse events for dragging
+  void onMousePressEvent(QGraphicsSceneMouseEvent* event);
+  void onMouseMoveEvent(QGraphicsSceneMouseEvent* event);
+  void onMouseReleaseEvent(QGraphicsSceneMouseEvent* event);
 
  };
 
