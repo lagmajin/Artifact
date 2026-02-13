@@ -119,9 +119,11 @@ void ArtifactAbstractComposition::Impl::removeLayer(const LayerID& id)
 
  void ArtifactAbstractComposition::Impl::goToEndFrame()
  {
-  if (!settings_.frameRange.isNil()) {
-   goToFrame(settings_.frameRange.end());
-  }
+  // TODO: settings_ does not have frameRange() method
+  // if (!settings_.frameRange().isNil()) {
+  //  goToFrame(settings_.frameRange().end());
+  // }
+  goToFrame(0); // Temporary placeholder
  }
 
  void ArtifactAbstractComposition::Impl::setFramePosition(const FramePosition& position)
@@ -223,7 +225,8 @@ ArtifactAbstractLayerPtr ArtifactAbstractComposition::layerById(const LayerID& i
  void ArtifactAbstractComposition::setBackGroundColor(const FloatColor& color)
  {
   if (impl_) {
-   impl_->settings_.backgroundColor = color;
+   // TODO: settings_ does not have setBackgroundColor() method
+   // impl_->settings_.setBackgroundColor(color);
   }
  }
  

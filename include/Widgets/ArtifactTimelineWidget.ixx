@@ -18,7 +18,9 @@ import Artifact.Widgets.Hierarchy;
 import Artifact.Widgets.LayerPanelWidget;
 import Artifact.Timeline.Objects;
 
+//W_REGISTER_TYPE(Artifact::ClipItem)
 
+W_REGISTER_ARGTYPE(Artifact::ClipItem*)
 
 export namespace Artifact {
 
@@ -134,3 +136,4 @@ class TimelineTrackView :public QGraphicsView {
 
 
 };
+

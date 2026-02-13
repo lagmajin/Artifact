@@ -1,6 +1,5 @@
 ﻿module;
 #include <QFile>
-#include <QJsonObject>
 export module Artifact.Project.Exporter;
 
 import std;
@@ -13,16 +12,9 @@ export namespace Artifact
 {
  using namespace ArtifactCore;
 
- enum eProjectFormat
- {
-  ProjectFormat_JSON = 0,
-  ProjectFormat_Binary = 1
- };
-
  struct ArtifactProjectExporterResult
  {
   bool success = false;
-  UniString errorMessage;
  };
 
  class ArtifactProjectExporter {
@@ -34,18 +26,18 @@ export namespace Artifact
   ~ArtifactProjectExporter();
   void setProject(ArtifactProjectPtr& ptr);
   ArtifactProjectExporterResult exportProject();
-  ArtifactProjectExporterResult exportTimelineData();
-  ArtifactProjectExporterResult exportMetadata();
-  void setFormat(eProjectFormat format);
+  void exportProject2();
   template <StringLike T>
   void setOutputPath(const T& name);
   void setOutputPath(const QString& path);
-  void setOutputPath(const UniString& path);
+  void setFormat();
+  // ...
  };
 
  template <StringLike T>
  void ArtifactProjectExporter::setOutputPath(const T& name)
  {
-  setOutputPath(UniString(name));
+  //setOutputPath(name);
  }
 };
+

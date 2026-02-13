@@ -14,6 +14,7 @@
 #include <cmath>
 #include <algorithm>
 #include <vector>
+#include <qtmetamacros.h>
 module Artifact.Widgets.Timeline;
 
 
@@ -40,6 +41,8 @@ namespace Artifact {
 
 using namespace ArtifactCore;
 using namespace ArtifactWidgets;
+
+W_OBJECT_IMPL(TimelineScene)
 
 // ===== TimelineScene Implementation =====
 class TimelineScene::Impl {
@@ -660,15 +663,15 @@ TimelineTrackView::TimelineTrackView(QWidget* parent /*= nullptr*/) :QGraphicsVi
      
      if (clickedClip->isSelected()) {
       impl_->lastSelectedClip_ = clickedClip;
-      emit clipSelected(clickedClip);
+      Q_EMIT clipSelected(clickedClip);
      } else {
-      emit clipDeselected(clickedClip);
+      Q_EMIT clipDeselected(clickedClip);
      }
     } else {
      // Click on timeline for seeking
      setPosition(scenePos.x());
      double ratio = impl_->duration_ > 0.0 ? impl_->position_ / impl_->duration_ : 0.0;
-     emit seekPositionChanged(ratio);
+     Q_EMIT seekPositionChanged(ratio);
      
      if (!(event->modifiers() & Qt::ShiftModifier)) {
       clearSelection();

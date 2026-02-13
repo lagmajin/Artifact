@@ -424,7 +424,9 @@
     <ClCompile Include="src\Preview\ArtifactPreviewWorker.cppm">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
     </ClCompile>
-    <ClCompile Include="src\Project\ArtifactProjectExporter.cppm" />
+    <ClCompile Include="src\Project\ArtifactProjectExporter.cppm">
+      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+    </ClCompile>
     <ClCompile Include="src\Project\ArtifactProjectInitParams.cppm">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
     </ClCompile>
@@ -553,7 +555,9 @@
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
     </ClCompile>
     <ClCompile Include="include\Layer\ArtifactLayerModule.ixx" />
-    <ClCompile Include="include\Project\ArtifactProjectExporter.ixx" />
+    <ClCompile Include="include\Project\ArtifactProjectExporter.ixx">
+      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
+    </ClCompile>
     <ClCompile Include="include\Project\ArtifactProjectImporter.ixx">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
     </ClCompile>

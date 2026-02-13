@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <wobjectimpl.h>
 #include <mutex>
 #include <QFile>
@@ -12,6 +12,7 @@ module;
 module Artifact.Menu.File;
 
 import  Artifact.Project.Manager;
+import  Artifact.Service.Project;
 
 import Utils;
 
@@ -175,6 +176,18 @@ namespace Artifact {
    this, &ArtifactFileMenu::quitApplication);
 
   connect(this, &QMenu::aboutToShow, this, &ArtifactFileMenu::rebuildMenu);
+
+  // プロジェクト作成/変更時にメニュー状態を更新
+  auto* projectService = ArtifactProjectService::instance();
+  if (projectService) {
+    QObject::connect(projectService, &ArtifactProjectService::projectCreated, this, [this]() {
+      this->rebuildMenu();
+    });
+    QObject::connect(projectService, &ArtifactProjectService::projectChanged, this, [this]() {
+      this->rebuildMenu();
+    });
+    // projectClosed シグナルがあれば同様に接続
+  }
  }
 
  ArtifactFileMenu::~ArtifactFileMenu()

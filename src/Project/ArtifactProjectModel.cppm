@@ -35,8 +35,8 @@ ArtifactProjectModel::Impl::Impl()
 {
   // create the internal model with no parent for now; ownership will be transferred
   model_ = new QStandardItemModel();
-  // ensure two columns: Name and Size
-  model_->setColumnCount(2);
+  // ensure five columns: Name, Size, Duration, Frame Rate, ID
+  model_->setColumnCount(5);
 }
 
 ArtifactProjectModel::Impl::~Impl()
@@ -69,8 +69,13 @@ void ArtifactProjectModel::Impl::refreshTree()
   QString text = it->name.toQString();
   QStandardItem* item = new QStandardItem(text);
   QStandardItem* sizeItem = new QStandardItem();
+  QStandardItem* durationItem = new QStandardItem();
+  QStandardItem* frameRateItem = new QStandardItem();
+  QStandardItem* idItem = new QStandardItem();
+
   // store item type using ProjectItemDataRole.ProjectItemType
   item->setData(static_cast<int>(it->type()), Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::ProjectItemType));
+
   // If this is a composition item, set a simple solid-color square icon
   if (it->type() == eProjectItemType::Composition) {
     // create a small pixmap filled with a single color
@@ -79,19 +84,44 @@ void ArtifactProjectModel::Impl::refreshTree()
     px.fill(col);
     item->setIcon(QIcon(px));
   }
+
   // store composition ID as string in UserRole+1 instead of raw pointer
   // store composition ID using ProjectItemDataRole enum to avoid magic numbers
   if (it->type() == eProjectItemType::Composition) {
     CompositionItem* comp = static_cast<CompositionItem*>(it);
     item->setData(comp->compositionId.toString(), Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::CompositionId));
+
+    // Display ID in the ID column
+    idItem->setText(comp->compositionId.toString());
+
+    // Composition情報を取得
+    auto service = projectService();
+    if (service) {
+      auto findResult = service->findComposition(comp->compositionId);
+      if (findResult.success && findResult.ptr.lock()) {
+        auto composition = findResult.ptr.lock();
+
+        // Set size/resolution
+        // TODO: Get actual width/height from composition
+        sizeItem->setText("1920x1080");
+
+        // Set duration
+        // TODO: Calculate duration from frame range and frame rate
+        int totalFrames = 100; // Placeholder
+        durationItem->setText(QString::number(totalFrames) + " frames");
+
+        // Set frame rate
+        // TODO: Get actual frame rate from composition
+        frameRateItem->setText("30 fps");
+
+        qDebug() << "[ProjectModel] Added composition metadata - ID:" << idItem->text()
+                 << "Size:" << sizeItem->text() 
+                 << "Duration:" << durationItem->text() << "FPS:" << frameRateItem->text();
+      }
+    }
   } else {
     // clear/empty for non-composition items
     item->setData(QString(), Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::CompositionId));
-  }
-  // set default size text for compositions; leave empty for folders
-  if (it->type() == eProjectItemType::Composition) {
-    // dummy fixed size for now
-    sizeItem->setText("800x600");
   }
 
   // children (non-owning raw pointers)
@@ -100,7 +130,7 @@ void ArtifactProjectModel::Impl::refreshTree()
     item->appendRow(childRow);
   }
 
-  return QList<QStandardItem*>() << item << sizeItem;
+  return QList<QStandardItem*>() << item << sizeItem << durationItem << frameRateItem << idItem;
  };
 
  // Treat the first element in the project's root list as the project-root placeholder
@@ -171,7 +201,7 @@ ArtifactProjectModel::ArtifactProjectModel(QObject* parent/*=nullptr*/) :QAbstra
 
   // Ensure the internal model provides horizontal header labels for columns
   if (impl_->model_) {
-    impl_->model_->setHorizontalHeaderLabels(QStringList() << tr("Name") << tr("Size"));
+    impl_->model_->setHorizontalHeaderLabels(QStringList() << tr("Name") << tr("Size") << tr("Duration") << tr("Frame Rate") << tr("ID"));
   }
 }
 
@@ -269,14 +299,14 @@ return impl_->model_->rowCount(srcParent);
 
 int ArtifactProjectModel::columnCount(const QModelIndex& parent) const
 {
-  if (!impl_->model_) return 0;
+  if (!impl_->model_) return 5;  // Default to 5 columns
   if (!parent.isValid()) {
     int c = impl_->model_->columnCount();
-    return c > 0 ? c : 2; // ensure at least two columns for the view
+    return c > 0 ? c : 5; // ensure at least five columns for the view
   }
   QModelIndex srcParent = impl_->model_->index(parent.row(), 0, QModelIndex());
   int c = impl_->model_->columnCount(srcParent);
-  return c > 0 ? c : 2;
+  return c > 0 ? c : 5;
 }
 
 QVariant ArtifactProjectModel::headerData(int section, Qt::Orientation orientation, int role) const
@@ -293,6 +323,9 @@ QVariant ArtifactProjectModel::headerData(int section, Qt::Orientation orientati
     // fallback to explicit known labels per column
     if (section == 0) return tr("Name");
     if (section == 1) return tr("Size");
+    if (section == 2) return tr("Duration");
+    if (section == 3) return tr("Frame Rate");
+    if (section == 4) return tr("ID");
     return QVariant();
   }
   return impl_->model_->headerData(section, orientation, role);
