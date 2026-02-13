@@ -6,6 +6,7 @@
 #include <QObject>
 #include <qtypes.h>
 #include <QJsonObject>
+#include <QImage>
 
 export module Artifact.Layer.Abstract;
 
@@ -124,6 +125,10 @@ export namespace Artifact {
 
   bool isClicked() const;
   bool preciseHit() const;
+
+  /*Thumbnail*/
+  QImage getThumbnail(int width = 128, int height = 128) const;
+  /*Thumbnail*/
 
   /*Effects*/
   void addEffect(std::shared_ptr<class ArtifactAbstractEffect> effect);

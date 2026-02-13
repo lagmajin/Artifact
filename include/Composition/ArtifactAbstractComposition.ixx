@@ -2,6 +2,7 @@
 #include <wobjectdefs.h>
 
 #include <QObject>
+#include <QImage>
 export module Artifact.Composition.Abstract;
 
 import std;
@@ -71,6 +72,10 @@ export namespace Artifact {
   QJsonDocument toJson() const;
 
   QVector<ArtifactAbstractLayerPtr> allLayer();
+
+  /*Thumbnail*/
+  QImage getThumbnail(int width = 128, int height = 128) const;
+  /*Thumbnail*/
  };
 
  typedef std::shared_ptr<ArtifactAbstractComposition> ArtifactCompositionPtr;

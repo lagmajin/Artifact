@@ -13,6 +13,7 @@ module;
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
+#include <QImage>
 
 module Artifact.Composition.Abstract;
 
@@ -356,7 +357,21 @@ std::shared_ptr<ArtifactAbstractComposition> ArtifactAbstractComposition::fromJs
     }
     // 必要に応じて他のプロパティも復元
     return comp;
-}
-*/
+ }
+ */
+
+ QImage ArtifactAbstractComposition::getThumbnail(int width, int height) const
+ {
+  // サムネイル用に黒いイメージを作成（プレースホルダー実装）
+  QImage thumbnail(width, height, QImage::Format_ARGB32);
+  thumbnail.fill(QColor(0, 0, 0, 255));  // 黒で塗りつぶし
+
+  // TODO: 実際のコンポジションコンテンツをサムネイルにレンダリング
+  // 例：レイヤーをすべてレンダリングしてサムネイルに合成
+  qDebug() << "[Composition Thumbnail] Generated placeholder thumbnail:" 
+           << width << "x" << height << "layers:" << impl_->layerMultiIndex_.all().size();
+
+  return thumbnail;
+ }
 
 };

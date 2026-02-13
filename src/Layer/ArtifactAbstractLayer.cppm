@@ -425,4 +425,16 @@ QJsonObject ArtifactAbstractLayer::toJson() const
   return impl_->effectCount();
  }
 
+ QImage ArtifactAbstractLayer::getThumbnail(int width, int height) const
+ {
+  // サムネイル用に黒いイメージを作成（プレースホルダー実装）
+  QImage thumbnail(width, height, QImage::Format_ARGB32);
+  thumbnail.fill(QColor(0, 0, 0, 255));  // 黒で塗りつぶし
+
+  // TODO: 実際のレイヤーコンテンツをサムネイルにレンダリング
+  qDebug() << "[Thumbnail] Generated placeholder thumbnail:" << width << "x" << height;
+
+  return thumbnail;
+ }
+
 };
