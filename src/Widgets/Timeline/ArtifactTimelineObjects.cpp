@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <QColor>
 #include <QGraphicsItem>
 #include <QPainter>
@@ -111,25 +111,131 @@ QVariant ResizeHandle::itemChange(GraphicsItemChange change, const QVariant& val
  void ClipItem::paint(QPainter* painter, const QStyleOptionGraphicsItem* option, QWidget* widget /*= nullptr*/)
  {
  painter->save();
+ 
+ // Draw main clip rectangle
+ QRectF rect = boundingRect();
+ QColor fillColor = QColor(70, 120, 180);
+ 
+ // Highlight selected clips
+ if (isSelected()) {
+  fillColor = QColor(100, 150, 220);
+ }
+ 
  painter->setPen(Qt::NoPen);
- painter->setBrush(QColor(70, 120, 180));
- painter->drawRect(boundingRect());
+ painter->setBrush(fillColor);
+ painter->drawRect(rect);
+ 
+ // Draw border
+ QPen borderPen(isSelected() ? QColor(255, 200, 0) : QColor(50, 90, 150));
+ borderPen.setWidth(isSelected() ? 2 : 1);
+ painter->setPen(borderPen);
+ painter->setBrush(Qt::NoBrush);
+ painter->drawRect(rect);
+ 
  painter->restore();
  }
 
 void ClipItem::handleMoved(ResizeHandle::Side side, qreal sceneX)
 {
-    // Simple handling: adjust clip width or start based on left/right handle
-    // For now just log/placeholder
-    Q_UNUSED(side);
-    Q_UNUSED(sceneX);
+    if (!impl_) {
+        return;
+    }
+    
+    double newStart = impl_->start;
+    double newDuration = impl_->duration;
+    
+    if (side == ResizeHandle::Left) {
+        // Left handle: adjust start and duration
+        double delta = sceneX - (impl_->start + mapToScene(pos()).x());
+        newStart = std::max(0.0, impl_->start + delta);
+        newDuration = impl_->duration - (newStart - impl_->start);
+        
+        // Maintain minimum duration
+        if (newDuration < impl_->minDuration) {
+            newStart = impl_->start + (impl_->duration - impl_->minDuration);
+            newDuration = impl_->minDuration;
+        }
+    } else if (side == ResizeHandle::Right) {
+        // Right handle: adjust duration only
+        double newEnd = sceneX;
+        newDuration = std::max(impl_->minDuration, newEnd - impl_->start);
+    }
+    
+    setStartDuration(newStart, newDuration);
+    update();
 }
 
 void ClipItem::setStartDuration(double start, double duration)
 {
-    setPos(start, 0);
-    // We would set a width internally and update boundingRect; for now rely on transform
-    Q_UNUSED(duration);
+    if (!impl_) {
+        return;
+    }
+    
+    impl_->start = std::max(0.0, start);
+    impl_->duration = std::max(impl_->minDuration, duration);
+    
+    // Update position
+    setPos(impl_->start, pos().y());
+    
+    // Update right handle position
+    if (impl_->rightHandle) {
+        impl_->rightHandle->setPos(impl_->duration, 0);
+    }
+    
+    // Update bounding rect
+    prepareGeometryChange();
+}
+
+double ClipItem::getStart() const
+{
+    return impl_ ? impl_->start : 0.0;
+}
+
+double ClipItem::getDuration() const
+{
+    return impl_ ? impl_->duration : 0.0;
+}
+
+void ClipItem::setStart(double start)
+{
+    if (impl_) {
+        impl_->start = std::max(0.0, start);
+        setPos(impl_->start, pos().y());
+        update();
+    }
+}
+
+void ClipItem::setDuration(double duration)
+{
+    if (impl_) {
+        impl_->duration = std::max(impl_->minDuration, duration);
+        if (impl_->rightHandle) {
+            impl_->rightHandle->setPos(impl_->duration, 0);
+        }
+        prepareGeometryChange();
+        update();
+    }
+}
+
+void ClipItem::onMousePressEvent(QGraphicsSceneMouseEvent* event)
+{
+    // Store initial mouse position for dragging
+    Q_UNUSED(event);
+    setSelected(!isSelected());
+    update();
+}
+
+void ClipItem::onMouseMoveEvent(QGraphicsSceneMouseEvent* event)
+{
+    Q_UNUSED(event);
+    // Dragging is handled by QGraphicsItem's ItemIsMovable flag
+    update();
+}
+
+void ClipItem::onMouseReleaseEvent(QGraphicsSceneMouseEvent* event)
+{
+    Q_UNUSED(event);
+    update();
 }
 
 QVariant ClipItem::itemChange(GraphicsItemChange change, const QVariant& value)

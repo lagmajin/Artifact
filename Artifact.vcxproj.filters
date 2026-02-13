@@ -419,9 +419,6 @@
     <ClCompile Include="src\Widgets\Dialog\ArtifactRenderOutputSettingDialog.cppm">
       <Filter>src\Widgets</Filter>
     </ClCompile>
-    <ClCompile Include="src\Project\ArtifactProjectExporter.cppm">
-      <Filter>src</Filter>
-    </ClCompile>
     <ClCompile Include="src\Widgets\Render\ArtifactLayerEditorPanel.cpp">
       <Filter>src</Filter>
     </ClCompile>
@@ -655,9 +652,7 @@
     <ClCompile Include="src\Composition\MetadataVectorizer.cppm">
       <Filter>src</Filter>
     </ClCompile>
-    <ClCompile Include="include\Composition\MetadataVectorizer.ixx">
-      <Filter>include</Filter>
-    </ClCompile>
+    <ClCompile Include="src\Widgets\Asset\ArtifactAssetBrowser.cppm" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Generated\TestService.h" />

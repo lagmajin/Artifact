@@ -10,8 +10,10 @@
 #include <QMouseEvent>
 #include <QWheelEvent>
 #include <QScrollBar>
+#include <QResizeEvent>
 #include <cmath>
 #include <algorithm>
+#include <vector>
 module Artifact.Widgets.Timeline;
 
 
@@ -20,7 +22,6 @@ import Widgets.Utils.CSS;
 
 import Artifact.Layers.Hierarchy.Model;
 import Artifact.Widget.WorkAreaControlWidget;
-import Artifact.TimelineScene;
 
 import ArtifactTimelineIconModel;
 import Artifact.Widgets.LayerPanelWidget;
@@ -31,17 +32,198 @@ import Artifact.Timeline.ScaleWidget;
 
 import Artifact.Timeline.TimeCodeWidget;
 import Panel.DraggableSplitter;
+import Artifact.Timeline.Objects;
 
 
 
 namespace Artifact {
 
- using namespace ArtifactCore;
- using namespace ArtifactWidgets;
+using namespace ArtifactCore;
+using namespace ArtifactWidgets;
 
+// ===== TimelineScene Implementation =====
+class TimelineScene::Impl {
+public:
+ std::vector<double> trackHeights_;
+ std::vector<ClipItem*> clips_;
+ std::vector<ClipItem*> selectedClips_;
+ TimelineScene* parent_;
+  
+ Impl(TimelineScene* parent) : parent_(parent) {}
+ ~Impl() {
+  for (auto clip : clips_) {
+   parent_->removeItem(clip);
+   delete clip;
+  }
+  clips_.clear();
+ }
+  
+ double getTotalTrackHeight() const {
+  double total = 0.0;
+  for (double height : trackHeights_) {
+   total += height;
+  }
+  return total;
+ }
+};
 
+TimelineScene::TimelineScene(QWidget* parent) : QGraphicsScene(parent), impl_(new Impl(this))
+{
+ setSceneRect(0, 0, 2000, 800);
+ impl_->trackHeights_.push_back(20.0);
+}
 
- W_OBJECT_IMPL(ArtifactTimelineWidget)
+TimelineScene::~TimelineScene()
+{
+ delete impl_;
+}
+
+void TimelineScene::drawBackground(QPainter* painter, const QRectF& rect)
+{
+ painter->fillRect(rect, QColor(30, 30, 30));
+}
+
+int TimelineScene::addTrack(double height)
+{
+ int trackIndex = static_cast<int>(impl_->trackHeights_.size());
+ impl_->trackHeights_.push_back(height);
+ double newHeight = impl_->getTotalTrackHeight();
+ QRectF sr = sceneRect();
+ sr.setHeight(newHeight);
+ setSceneRect(sr);
+ return trackIndex;
+}
+
+void TimelineScene::removeTrack(int trackIndex)
+{
+ if (trackIndex < 0 || trackIndex >= static_cast<int>(impl_->trackHeights_.size())) {
+  return;
+ }
+  
+ auto it = impl_->clips_.begin();
+ while (it != impl_->clips_.end()) {
+  bool isInTrack = false;
+  double yPos = (*it)->pos().y();
+  double trackY = 0.0;
+  for (int i = 0; i < trackIndex && i < static_cast<int>(impl_->trackHeights_.size()); ++i) {
+   trackY += impl_->trackHeights_[i];
+  }
+  if (yPos >= trackY && yPos < trackY + impl_->trackHeights_[trackIndex]) {
+   isInTrack = true;
+  }
+   
+  if (isInTrack) {
+   removeItem(*it);
+   delete *it;
+   it = impl_->clips_.erase(it);
+  } else {
+   ++it;
+  }
+ }
+  
+ impl_->trackHeights_.erase(impl_->trackHeights_.begin() + trackIndex);
+ double newHeight = impl_->getTotalTrackHeight();
+ QRectF sr = sceneRect();
+ sr.setHeight(newHeight);
+ setSceneRect(sr);
+}
+
+int TimelineScene::trackCount() const
+{
+ return static_cast<int>(impl_->trackHeights_.size());
+}
+
+double TimelineScene::trackHeight(int trackIndex) const
+{
+ if (trackIndex < 0 || trackIndex >= static_cast<int>(impl_->trackHeights_.size())) {
+  return 0.0;
+ }
+ return impl_->trackHeights_[trackIndex];
+}
+
+void TimelineScene::setTrackHeight(int trackIndex, double height)
+{
+ if (trackIndex < 0 || trackIndex >= static_cast<int>(impl_->trackHeights_.size())) {
+  return;
+ }
+ impl_->trackHeights_[trackIndex] = std::max(10.0, height);
+ double newHeight = impl_->getTotalTrackHeight();
+ QRectF sr = sceneRect();
+ sr.setHeight(newHeight);
+ setSceneRect(sr);
+ update();
+}
+
+double TimelineScene::getTrackYPosition(int trackIndex) const
+{
+ if (trackIndex < 0 || trackIndex >= static_cast<int>(impl_->trackHeights_.size())) {
+  return 0.0;
+ }
+ double yPos = 0.0;
+ for (int i = 0; i < trackIndex; ++i) {
+  yPos += impl_->trackHeights_[i];
+ }
+ return yPos;
+}
+
+ClipItem* TimelineScene::addClip(int trackIndex, double start, double duration)
+{
+ if (trackIndex < 0 || trackIndex >= static_cast<int>(impl_->trackHeights_.size())) {
+  return nullptr;
+ }
+  
+ double yPos = getTrackYPosition(trackIndex);
+ double height = impl_->trackHeights_[trackIndex];
+  
+ auto clip = new ClipItem(start, duration, height);
+ clip->setPos(start, yPos);
+ addItem(clip);
+ impl_->clips_.push_back(clip);
+ return clip;
+}
+
+void TimelineScene::removeClip(ClipItem* clip)
+{
+ auto it = std::find(impl_->clips_.begin(), impl_->clips_.end(), clip);
+ if (it != impl_->clips_.end()) {
+  impl_->selectedClips_.erase(std::remove(impl_->selectedClips_.begin(), impl_->selectedClips_.end(), clip),
+                               impl_->selectedClips_.end());
+  removeItem(clip);
+  delete clip;
+  impl_->clips_.erase(it);
+ }
+}
+
+const std::vector<ClipItem*>& TimelineScene::getClips() const
+{
+ return impl_->clips_;
+}
+
+int TimelineScene::getTrackAtPosition(double yPos) const
+{
+ double currentY = 0.0;
+ for (int i = 0; i < static_cast<int>(impl_->trackHeights_.size()); ++i) {
+  if (yPos >= currentY && yPos < currentY + impl_->trackHeights_[i]) {
+   return i;
+  }
+  currentY += impl_->trackHeights_[i];
+ }
+ return -1;
+}
+
+void TimelineScene::clearSelection()
+{
+ impl_->selectedClips_.clear();
+}
+
+const std::vector<ClipItem*>& TimelineScene::getSelectedClips() const
+{
+ return impl_->selectedClips_;
+}
+
+// ===== ArtifactTimelineWidget Implementation =====
+
+W_OBJECT_IMPL(ArtifactTimelineWidget)
 
 
   class ArtifactTimelineWidget::Impl
@@ -211,9 +393,11 @@ namespace Artifact {
 
  }
 
+ // ===== TimelineTrackView Implementation =====
+
  W_OBJECT_IMPL(TimelineTrackView)
 
-  class TimelineTrackView::Impl
+ class TimelineTrackView::Impl
  {
  private:
 
@@ -227,6 +411,9 @@ namespace Artifact {
   double maxZoomLevel_ = 10.0;
   bool isPanning_ = false;
   QPoint lastPanPoint_;
+  TimelineScene* scene_ = nullptr;
+  ClipItem* draggedClip_ = nullptr;
+  ClipItem* lastSelectedClip_ = nullptr;
  };
 
  TimelineTrackView::Impl::Impl()
@@ -241,7 +428,9 @@ namespace Artifact {
 
 TimelineTrackView::TimelineTrackView(QWidget* parent /*= nullptr*/) :QGraphicsView(parent),impl_(new Impl())
 {
- setScene(new ArtifactTimelineScene());
+ auto scene = new TimelineScene();
+ impl_->scene_ = scene;
+ setScene(scene);
  setRenderHint(QPainter::Antialiasing);
 
  setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
@@ -276,10 +465,10 @@ TimelineTrackView::TimelineTrackView(QWidget* parent /*= nullptr*/) :QGraphicsVi
  void TimelineTrackView::setDuration(double duration)
  {
   impl_->duration_ = std::max(0.0, duration);
-  if (auto scene = this->scene()) {
-   QRectF rect = scene->sceneRect();
+  if (impl_->scene_) {
+   QRectF rect = impl_->scene_->sceneRect();
    rect.setWidth(std::max(rect.width(), impl_->duration_));
-   scene->setSceneRect(rect);
+   impl_->scene_->setSceneRect(rect);
   }
   viewport()->update();
  }
@@ -287,6 +476,52 @@ TimelineTrackView::TimelineTrackView(QWidget* parent /*= nullptr*/) :QGraphicsVi
  double TimelineTrackView::zoomLevel() const
  {
   return impl_->zoomLevel_;
+ }
+
+ TimelineScene* TimelineTrackView::timelineScene() const
+ {
+  return impl_->scene_;
+ }
+
+ int TimelineTrackView::addTrack(double height)
+ {
+  if (impl_->scene_) {
+   return impl_->scene_->addTrack(height);
+  }
+  return -1;
+ }
+
+ void TimelineTrackView::removeTrack(int trackIndex)
+ {
+  if (impl_->scene_) {
+   impl_->scene_->removeTrack(trackIndex);
+   viewport()->update();
+  }
+ }
+
+ ClipItem* TimelineTrackView::addClip(int trackIndex, double start, double duration)
+ {
+  if (impl_->scene_) {
+   return impl_->scene_->addClip(trackIndex, start, duration);
+  }
+  return nullptr;
+ }
+
+ void TimelineTrackView::removeClip(ClipItem* clip)
+ {
+  if (impl_->scene_ && clip) {
+   impl_->scene_->removeClip(clip);
+   viewport()->update();
+  }
+ }
+
+ void TimelineTrackView::clearSelection()
+ {
+  if (impl_->scene_) {
+   impl_->scene_->clearSelection();
+   impl_->lastSelectedClip_ = nullptr;
+   viewport()->update();
+  }
  }
 
  namespace {
@@ -392,51 +627,83 @@ TimelineTrackView::TimelineTrackView(QWidget* parent /*= nullptr*/) :QGraphicsVi
   return QSize(600, 600);
  }
 
- void TimelineTrackView::mousePressEvent(QMouseEvent* event)
- {
-  if (event->button() == Qt::MiddleButton) {
-   impl_->isPanning_ = true;
-   impl_->lastPanPoint_ = event->pos();
-   setCursor(Qt::ClosedHandCursor);
-   event->accept();
-   return;
+  void TimelineTrackView::mousePressEvent(QMouseEvent* event)
+  {
+   if (event->button() == Qt::MiddleButton) {
+    impl_->isPanning_ = true;
+    impl_->lastPanPoint_ = event->pos();
+    setCursor(Qt::ClosedHandCursor);
+    event->accept();
+    return;
+   }
+
+   if (event->button() == Qt::LeftButton) {
+    const QPointF scenePos = mapToScene(event->pos());
+    
+    // Check if clicking on a clip
+    auto items = scene()->items(scenePos, Qt::IntersectsItemShape);
+    ClipItem* clickedClip = nullptr;
+    for (auto item : items) {
+     if (auto clip = dynamic_cast<ClipItem*>(item)) {
+      clickedClip = clip;
+      break;
+     }
+    }
+    
+    if (clickedClip) {
+     // Clip selected/deselected
+     bool isSelected = clickedClip->isSelected();
+     if (!isSelected && !(event->modifiers() & Qt::ShiftModifier)) {
+      clearSelection();
+     }
+     clickedClip->setSelected(!isSelected);
+     
+     if (clickedClip->isSelected()) {
+      impl_->lastSelectedClip_ = clickedClip;
+      emit clipSelected(clickedClip);
+     } else {
+      emit clipDeselected(clickedClip);
+     }
+    } else {
+     // Click on timeline for seeking
+     setPosition(scenePos.x());
+     double ratio = impl_->duration_ > 0.0 ? impl_->position_ / impl_->duration_ : 0.0;
+     emit seekPositionChanged(ratio);
+     
+     if (!(event->modifiers() & Qt::ShiftModifier)) {
+      clearSelection();
+     }
+    }
+   }
+
+   QGraphicsView::mousePressEvent(event);
   }
 
-  if (event->button() == Qt::LeftButton) {
-   const QPointF scenePos = mapToScene(event->pos());
-   setPosition(scenePos.x());
-   double ratio = impl_->duration_ > 0.0 ? impl_->position_ / impl_->duration_ : 0.0;
-    seekPositionChanged(ratio);
+  void TimelineTrackView::mouseMoveEvent(QMouseEvent* event)
+  {
+   if (impl_->isPanning_) {
+    QPoint delta = event->pos() - impl_->lastPanPoint_;
+    impl_->lastPanPoint_ = event->pos();
+    horizontalScrollBar()->setValue(horizontalScrollBar()->value() - delta.x());
+    verticalScrollBar()->setValue(verticalScrollBar()->value() - delta.y());
+    event->accept();
+    return;
+   }
+
+   QGraphicsView::mouseMoveEvent(event);
   }
 
-  QGraphicsView::mousePressEvent(event);
- }
+  void TimelineTrackView::mouseReleaseEvent(QMouseEvent* event)
+  {
+   if (event->button() == Qt::MiddleButton && impl_->isPanning_) {
+    impl_->isPanning_ = false;
+    setCursor(Qt::ArrowCursor);
+    event->accept();
+    return;
+   }
 
- void TimelineTrackView::mouseMoveEvent(QMouseEvent* event)
- {
-  if (impl_->isPanning_) {
-   QPoint delta = event->pos() - impl_->lastPanPoint_;
-   impl_->lastPanPoint_ = event->pos();
-   horizontalScrollBar()->setValue(horizontalScrollBar()->value() - delta.x());
-   verticalScrollBar()->setValue(verticalScrollBar()->value() - delta.y());
-   event->accept();
-   return;
+   QGraphicsView::mouseReleaseEvent(event);
   }
-
-  QGraphicsView::mouseMoveEvent(event);
- }
-
- void TimelineTrackView::mouseReleaseEvent(QMouseEvent* event)
- {
-  if (event->button() == Qt::MiddleButton && impl_->isPanning_) {
-   impl_->isPanning_ = false;
-   setCursor(Qt::ArrowCursor);
-   event->accept();
-   return;
-  }
-
-  QGraphicsView::mouseReleaseEvent(event);
- }
 
   void TimelineTrackView::wheelEvent(QWheelEvent* event)
   {
@@ -460,11 +727,11 @@ TimelineTrackView::TimelineTrackView(QWidget* parent /*= nullptr*/) :QGraphicsVi
   void TimelineTrackView::resizeEvent(QResizeEvent* event)
   {
    QGraphicsView::resizeEvent(event);
-   if (auto scene = this->scene()) {
-    QRectF rect = scene->sceneRect();
-    rect.setHeight(viewport()->height());
-    rect.setWidth(std::max(impl_->duration_, static_cast<double>(viewport()->width())));
-    scene->setSceneRect(rect);
+   if (impl_->scene_) {
+    QRectF rect = impl_->scene_->sceneRect();
+    rect.setHeight(std::max(rect.height(), static_cast<double>(event->size().height())));
+    rect.setWidth(std::max(impl_->duration_, static_cast<double>(event->size().width())));
+    impl_->scene_->setSceneRect(rect);
    }
   }
 
