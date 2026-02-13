@@ -1,28 +1,31 @@
-# Copilot Instructions
+ï»¿# Copilot Instructions
 
 ## Project Goals
-- ‚±‚ÌƒAƒvƒŠ‚Ì–Ú•WEƒrƒWƒ‡ƒ“‚Í [PROJECT_GOALS.md](../PROJECT_GOALS.md) ‚ğQÆ‚µ‚Ä‚­‚¾‚³‚¢B
+- ã“ã®ã‚¢ãƒ—ãƒªã®ç›®æ¨™ãƒ»ãƒ“ã‚¸ãƒ§ãƒ³ã¯ [PROJECT_GOALS.md](../PROJECT_GOALS.md) ã‚’å‚ç…§ã—ã¦ãã ã•ã„ã€‚
 
-## UIƒEƒBƒWƒFƒbƒgˆê——
-- å‚ÈUIƒEƒBƒWƒFƒbƒg‚Æ‹@”\‚Í [UI_WIDGETS_LIST.md](../UI_WIDGETS_LIST.md) ‚ğQÆ‚µ‚Ä‚­‚¾‚³‚¢B
+## UIã‚¦ã‚£ã‚¸ã‚§ãƒƒãƒˆä¸€è¦§
+- ä¸»ãªUIã‚¦ã‚£ã‚¸ã‚§ãƒƒãƒˆã¨æ©Ÿèƒ½ã¯ [UI_WIDGETS_LIST.md](../UI_WIDGETS_LIST.md) ã‚’å‚ç…§ã—ã¦ãã ã•ã„ã€‚
+
+## Asset Icons
+- ã‚¢ã‚»ãƒƒãƒˆãƒ–ãƒ©ã‚¦ã‚¶ã§ä½¿ç”¨ã™ã‚‹ã‚¢ã‚¤ã‚³ãƒ³ç¨®é¡ã¯ [docs/AssetIcons.md](../docs/AssetIcons.md) ã‚’å‚ç…§ã—ã¦ãã ã•ã„ã€‚
 
 ## General Guidelines
 - Use C++20 modules (e.g., `import std`) instead of traditional header includes (e.g., `#include`) whenever possible. Prioritize module imports to enhance code organization and efficiency.
 - In Qt projects, prefer using Qt containers (e.g., `QVector`, `QList`) over standard containers like `std::vector` to maintain consistency and leverage Qt's features.
 - When using Qt types in C++ module (.cpp, .cppm) files, always add the necessary Qt includes in the global module fragment before the `module;` declaration. For example, explicitly include `#include <QString>`, `#include <QVector>`, `#include <QColor>`, etc. This ensures that independent includes are present in the implementation file rather than relying on the module's external interface (.ixx).
-- C++20 ƒ‚ƒWƒ…[ƒ‹ƒR[ƒh‚ğ‘‚­‚Æ‚«‚Í‚¿‚á‚ñ‚ÆƒOƒ[ƒoƒ‹ƒ‚ƒWƒ…[ƒ‹ƒtƒ‰ƒOƒƒ“ƒg‚à‘‚¢‚Ä‚Ù‚µ‚¢B
-- **[ArtifactCoreƒ‹[ƒ‹] ArtifactCoreƒ‰ƒCƒuƒ‰ƒŠ‚ğg‚¤‚Í•K‚¸`using namespace ArtifactCore;`‚Ì—L–³‚ğTd‚ÉŠm”F‚µA•s‘«‚µ‚Ä‚¢‚ê‚Î•K‚¸’Ç‰Á‚·‚é‚±‚ÆB**
+- C++20 ãƒ¢ã‚¸ãƒ¥ãƒ¼ãƒ«ã‚³ãƒ¼ãƒ‰ã‚’æ›¸ãã¨ãã¯ã¡ã‚ƒã‚“ã¨ã‚°ãƒ­ãƒ¼ãƒãƒ«ãƒ¢ã‚¸ãƒ¥ãƒ¼ãƒ«ãƒ•ãƒ©ã‚°ãƒ¡ãƒ³ãƒˆã‚‚æ›¸ã„ã¦ã»ã—ã„ã€‚
+- **[ArtifactCoreãƒ«ãƒ¼ãƒ«] ArtifactCoreãƒ©ã‚¤ãƒ–ãƒ©ãƒªã‚’ä½¿ã†æ™‚ã¯å¿…ãš`using namespace ArtifactCore;`ã®æœ‰ç„¡ã‚’æ…é‡ã«ç¢ºèªã—ã€ä¸è¶³ã—ã¦ã„ã‚Œã°å¿…ãšè¿½åŠ ã™ã‚‹ã“ã¨ã€‚**
 - **IMPORTANT RULE: Never recreate existing .cppm or .ixx files by using remove_file + create_file. Only use replace_string_in_file to modify existing code structure. Keep the original file structure intact and only modify the necessary parts.**
-- Qt‚ÌƒVƒOƒiƒ‹”­s‚É‚Íemitƒ}ƒNƒ‚ğg‚í‚¸A•K‚¸Q_EMITƒ}ƒNƒ‚ğg‚¤‚±‚ÆB
+- Qtã®ã‚·ã‚°ãƒŠãƒ«ç™ºè¡Œã«ã¯emitãƒã‚¯ãƒ­ã‚’ä½¿ã‚ãšã€å¿…ãšQ_EMITãƒã‚¯ãƒ­ã‚’ä½¿ã†ã“ã¨ã€‚
 
 ## File Encoding Rules (ABSOLUTE REQUIREMENT)
-**?? CRITICAL: All C++ source files MUST use UTF-8 with BOM (Byte Order Mark)**
+**âš ï¸ CRITICAL: All C++ source files MUST use UTF-8 with BOM (Byte Order Mark)**
 
 ### Mandatory Encoding Rules:
-- ? **ALL C++ files (.cpp, .cppm, .h, .hpp, .ixx) MUST be saved as UTF-8 with BOM (Signature)**
-- ? **NEVER remove the BOM (Byte Order Mark) from any file**
-- ?? **This is especially critical for files containing non-ASCII characters (e.g., Japanese comments)**
-- ?? **Violating this rule will cause compilation errors in Visual Studio**
+- âœ… **ALL C++ files (.cpp, .cppm, .h, .hpp, .ixx) MUST be saved as UTF-8 with BOM (Signature)**
+- â›” **NEVER remove the BOM (Byte Order Mark) from any file**
+- âš ï¸ **This is especially critical for files containing non-ASCII characters (e.g., Japanese comments)**
+- ğŸ”´ **Violating this rule will cause compilation errors in Visual Studio**
 
 ### Why UTF-8 with BOM is Required:
 - Visual Studio C++ compiler requires BOM to correctly identify UTF-8 encoding
@@ -36,7 +39,7 @@
 - Never convert files to UTF-8 without BOM
 - If using text editors or tools, always verify BOM is present
 
-**‚·‚×‚Ä‚ÌC++ƒ\[ƒXƒtƒ@ƒCƒ‹i.cpp, .cppm, .h, .hpp, .ixxj‚ÍAUTF-8 with BOM (Signature) ‚Å•Û‘¶‚µ‚Ä‚­‚¾‚³‚¢BBOM‚ğíœ‚µ‚È‚¢‚Å‚­‚¾‚³‚¢B“Á‚É”ñASCII•¶ši“ú–{ŒêƒRƒƒ“ƒg“™j‚ªŠÜ‚Ü‚ê‚éê‡‚ÍŒµç‚·‚é‚±‚ÆB**
+**ã™ã¹ã¦ã®C++ã‚½ãƒ¼ã‚¹ãƒ•ã‚¡ã‚¤ãƒ«ï¼ˆ.cpp, .cppm, .h, .hpp, .ixxï¼‰ã¯ã€UTF-8 with BOM (Signature) ã§ä¿å­˜ã—ã¦ãã ã•ã„ã€‚BOMã‚’å‰Šé™¤ã—ãªã„ã§ãã ã•ã„ã€‚ç‰¹ã«éASCIIæ–‡å­—ï¼ˆæ—¥æœ¬èªã‚³ãƒ¡ãƒ³ãƒˆç­‰ï¼‰ãŒå«ã¾ã‚Œã‚‹å ´åˆã¯å³å®ˆã™ã‚‹ã“ã¨ã€‚**
 
 ## File Extension Rules
 **?? CRITICAL: This project uses C++20 modules. Always follow these file extension rules:**
@@ -52,12 +55,12 @@ Absolute rule about `.cpp` files (MANDATORY):
 - If there is no existing `.cpp` file for the target module/class, you MUST create a `.cppm` implementation file in `src/`. Do NOT create new `.cpp` files.
 - Violating this rule will break the build and is not permitted.
 
-**?? d—vF‚±‚ÌƒvƒƒWƒFƒNƒg‚ÍC++20ƒ‚ƒWƒ…[ƒ‹‚ğg—p‚µ‚Ü‚·B•K‚¸ˆÈ‰º‚Ìƒtƒ@ƒCƒ‹Šg’£qƒ‹[ƒ‹‚É]‚Á‚Ä‚­‚¾‚³‚¢F**
-- **ƒ‚ƒWƒ…[ƒ‹ƒCƒ“ƒ^[ƒtƒF[ƒXƒtƒ@ƒCƒ‹**F•K‚¸ `.ixx` Šg’£q‚ğg—pi`.h` ‚â `.hpp` ‚Íâ‘Î‚Ég—p‚µ‚È‚¢j
-- **ƒ‚ƒWƒ…[ƒ‹À‘•ƒtƒ@ƒCƒ‹**F•K‚¸ `.cppm` Šg’£q‚ğg—pi`.cpp` ‚Íâ‘Î‚Ég—p‚µ‚È‚¢j
-- **? ‚±‚ÌƒvƒƒWƒFƒNƒg‚Å‚Íâ‘Î‚É `.cpp` ƒtƒ@ƒCƒ‹‚ğì¬‚µ‚È‚¢‚Å‚­‚¾‚³‚¢ - À‘•ƒtƒ@ƒCƒ‹‚É‚Í•K‚¸ `.cppm` ‚ğg—p**
-- À‘•ƒtƒ@ƒCƒ‹Aƒ\[ƒXƒtƒ@ƒCƒ‹A‚Ü‚½‚Í .cpp ƒtƒ@ƒCƒ‹‚Ìì¬‚ğ‹‚ß‚ç‚ê‚½ê‡A•K‚¸ `.cppm` ƒtƒ@ƒCƒ‹‚ğì¬‚µ‚Ä‚­‚¾‚³‚¢
-- ‚±‚ê‚ÍŒµŠi‚È—vŒ‚Å‚· - ˆá”½‚·‚é‚Æƒrƒ‹ƒh‚ª¸”s‚µ‚Ü‚·
+**?? é‡è¦ï¼šã“ã®ãƒ—ãƒ­ã‚¸ã‚§ã‚¯ãƒˆã¯C++20ãƒ¢ã‚¸ãƒ¥ãƒ¼ãƒ«ã‚’ä½¿ç”¨ã—ã¾ã™ã€‚å¿…ãšä»¥ä¸‹ã®ãƒ•ã‚¡ã‚¤ãƒ«æ‹¡å¼µå­ãƒ«ãƒ¼ãƒ«ã«å¾“ã£ã¦ãã ã•ã„ï¼š**
+- **ãƒ¢ã‚¸ãƒ¥ãƒ¼ãƒ«ã‚¤ãƒ³ã‚¿ãƒ¼ãƒ•ã‚§ãƒ¼ã‚¹ãƒ•ã‚¡ã‚¤ãƒ«**ï¼šå¿…ãš `.ixx` æ‹¡å¼µå­ã‚’ä½¿ç”¨ï¼ˆ`.h` ã‚„ `.hpp` ã¯çµ¶å¯¾ã«ä½¿ç”¨ã—ãªã„ï¼‰
+- **ãƒ¢ã‚¸ãƒ¥ãƒ¼ãƒ«å®Ÿè£…ãƒ•ã‚¡ã‚¤ãƒ«**ï¼šå¿…ãš `.cppm` æ‹¡å¼µå­ã‚’ä½¿ç”¨ï¼ˆ`.cpp` ã¯çµ¶å¯¾ã«ä½¿ç”¨ã—ãªã„ï¼‰
+- **? ã“ã®ãƒ—ãƒ­ã‚¸ã‚§ã‚¯ãƒˆã§ã¯çµ¶å¯¾ã« `.cpp` ãƒ•ã‚¡ã‚¤ãƒ«ã‚’ä½œæˆã—ãªã„ã§ãã ã•ã„ - å®Ÿè£…ãƒ•ã‚¡ã‚¤ãƒ«ã«ã¯å¿…ãš `.cppm` ã‚’ä½¿ç”¨**
+- å®Ÿè£…ãƒ•ã‚¡ã‚¤ãƒ«ã€ã‚½ãƒ¼ã‚¹ãƒ•ã‚¡ã‚¤ãƒ«ã€ã¾ãŸã¯ .cpp ãƒ•ã‚¡ã‚¤ãƒ«ã®ä½œæˆã‚’æ±‚ã‚ã‚‰ã‚ŒãŸå ´åˆã€å¿…ãš `.cppm` ãƒ•ã‚¡ã‚¤ãƒ«ã‚’ä½œæˆã—ã¦ãã ã•ã„
+- ã“ã‚Œã¯å³æ ¼ãªè¦ä»¶ã§ã™ - é•åã™ã‚‹ã¨ãƒ“ãƒ«ãƒ‰ãŒå¤±æ•—ã—ã¾ã™
 
 ## File Location Rules
 **?? MANDATORY: Always follow these folder structure rules when creating new files:**
@@ -92,32 +95,32 @@ include/Media/MediaAudioDecoder.cppm     ? Wrong! .cppm must be in src/
 ```
 
 ### Rules Summary:
-- ? `.ixx` ¨ `include/` folder
-- ? `.cppm` ¨ `src/` folder
+- ? `.ixx` â†’ `include/` folder
+- ? `.cppm` â†’ `src/` folder
 - ? Maintain consistent subfolder structure between interface and implementation
 - ? Never mix interface and implementation files in the same folder
 
-**?? •K{FV‹Kƒtƒ@ƒCƒ‹ì¬‚Í•K‚¸ˆÈ‰º‚ÌƒtƒHƒ‹ƒ_\‘¢ƒ‹[ƒ‹‚É]‚Á‚Ä‚­‚¾‚³‚¢F**
+**?? å¿…é ˆï¼šæ–°è¦ãƒ•ã‚¡ã‚¤ãƒ«ä½œæˆæ™‚ã¯å¿…ãšä»¥ä¸‹ã®ãƒ•ã‚©ãƒ«ãƒ€æ§‹é€ ãƒ«ãƒ¼ãƒ«ã«å¾“ã£ã¦ãã ã•ã„ï¼š**
 
-### ƒ‚ƒWƒ…[ƒ‹ƒCƒ“ƒ^[ƒtƒF[ƒXƒtƒ@ƒCƒ‹ (.ixx)
-- ? **•K‚¸ `include/` ƒtƒHƒ‹ƒ_‚Ü‚½‚Í‚»‚ÌƒTƒuƒtƒHƒ‹ƒ_‚É”z’u**
-- ? **ƒ‚ƒWƒ…[ƒ‹‚Ì–¼‘O‹óŠÔ‚Æ“¯‚¶ƒTƒuƒtƒHƒ‹ƒ_\‘¢‚É]‚¤**
-- ? **â‘Î‚É `.ixx` ƒtƒ@ƒCƒ‹‚ğ `src/` ƒtƒHƒ‹ƒ_‚É”z’u‚µ‚È‚¢**
+### ãƒ¢ã‚¸ãƒ¥ãƒ¼ãƒ«ã‚¤ãƒ³ã‚¿ãƒ¼ãƒ•ã‚§ãƒ¼ã‚¹ãƒ•ã‚¡ã‚¤ãƒ« (.ixx)
+- ? **å¿…ãš `include/` ãƒ•ã‚©ãƒ«ãƒ€ã¾ãŸã¯ãã®ã‚µãƒ–ãƒ•ã‚©ãƒ«ãƒ€ã«é…ç½®**
+- ? **ãƒ¢ã‚¸ãƒ¥ãƒ¼ãƒ«ã®åå‰ç©ºé–“ã¨åŒã˜ã‚µãƒ–ãƒ•ã‚©ãƒ«ãƒ€æ§‹é€ ã«å¾“ã†**
+- ? **çµ¶å¯¾ã« `.ixx` ãƒ•ã‚¡ã‚¤ãƒ«ã‚’ `src/` ãƒ•ã‚©ãƒ«ãƒ€ã«é…ç½®ã—ãªã„**
 
-### ƒ‚ƒWƒ…[ƒ‹À‘•ƒtƒ@ƒCƒ‹ (.cppm)
-- ? **•K‚¸ `src/` ƒtƒHƒ‹ƒ_‚Ü‚½‚Í‚»‚ÌƒTƒuƒtƒHƒ‹ƒ_‚É”z’u**
-- ? **‘Î‰‚·‚é `.ixx` ƒtƒ@ƒCƒ‹‚Æ“¯‚¶ƒTƒuƒtƒHƒ‹ƒ_\‘¢‚É]‚¤**
-- ? **â‘Î‚É `.cppm` ƒtƒ@ƒCƒ‹‚ğ `include/` ƒtƒHƒ‹ƒ_‚É”z’u‚µ‚È‚¢**
+### ãƒ¢ã‚¸ãƒ¥ãƒ¼ãƒ«å®Ÿè£…ãƒ•ã‚¡ã‚¤ãƒ« (.cppm)
+- ? **å¿…ãš `src/` ãƒ•ã‚©ãƒ«ãƒ€ã¾ãŸã¯ãã®ã‚µãƒ–ãƒ•ã‚©ãƒ«ãƒ€ã«é…ç½®**
+- ? **å¯¾å¿œã™ã‚‹ `.ixx` ãƒ•ã‚¡ã‚¤ãƒ«ã¨åŒã˜ã‚µãƒ–ãƒ•ã‚©ãƒ«ãƒ€æ§‹é€ ã«å¾“ã†**
+- ? **çµ¶å¯¾ã« `.cppm` ãƒ•ã‚¡ã‚¤ãƒ«ã‚’ `include/` ãƒ•ã‚©ãƒ«ãƒ€ã«é…ç½®ã—ãªã„**
 
-### —áF
+### ä¾‹ï¼š
 ```
-// ³‚µ‚¢”z’u
+// æ­£ã—ã„é…ç½®
 include/Media/MediaAudioDecoder.ixx      ?
 src/Media/MediaAudioDecoder.cppm         ?
 
-// ŠÔˆá‚Á‚½”z’u
-src/Media/MediaAudioDecoder.ixx          ? .ixx ‚Í include/ ‚ÉI
-include/Media/MediaAudioDecoder.cppm     ? .cppm ‚Í src/ ‚ÉI
+// é–“é•ã£ãŸé…ç½®
+src/Media/MediaAudioDecoder.ixx          ? .ixx ã¯ include/ ã«ï¼
+include/Media/MediaAudioDecoder.cppm     ? .cppm ã¯ src/ ã«ï¼
 ```
 
 ## Pimpl Idiom (Implementation Pattern)
@@ -187,11 +190,11 @@ class Impl {
 Impl* impl_;
 ```
 
-**?? •K{F‚·‚×‚Ä‚ÌƒNƒ‰ƒX‚Í¶ƒ|ƒCƒ“ƒ^‚ÌPimplƒCƒfƒBƒIƒ€‚ğg—p‚·‚é•K—v‚ª‚ ‚è‚Ü‚·F**
-- ? **í‚É `Impl* impl_;` i¶ƒ|ƒCƒ“ƒ^j‚ğg—p**
-- ? **â‘Î‚É `std::unique_ptr<Impl>` ‚â `std::shared_ptr<Impl>` ‚ğg—p‚µ‚È‚¢**
-- ? **`new` ‚Æ `delete` ‚Åè“®ƒƒ‚ƒŠŠÇ—**
-- ? **ImplƒNƒ‰ƒX‚Í `.cppm` ƒtƒ@ƒCƒ‹‚Å’è‹`**
+**?? å¿…é ˆï¼šã™ã¹ã¦ã®ã‚¯ãƒ©ã‚¹ã¯ç”Ÿãƒã‚¤ãƒ³ã‚¿ã®Pimplã‚¤ãƒ‡ã‚£ã‚ªãƒ ã‚’ä½¿ç”¨ã™ã‚‹å¿…è¦ãŒã‚ã‚Šã¾ã™ï¼š**
+- ? **å¸¸ã« `Impl* impl_;` ï¼ˆç”Ÿãƒã‚¤ãƒ³ã‚¿ï¼‰ã‚’ä½¿ç”¨**
+- ? **çµ¶å¯¾ã« `std::unique_ptr<Impl>` ã‚„ `std::shared_ptr<Impl>` ã‚’ä½¿ç”¨ã—ãªã„**
+- ? **`new` ã¨ `delete` ã§æ‰‹å‹•ãƒ¡ãƒ¢ãƒªç®¡ç†**
+- ? **Implã‚¯ãƒ©ã‚¹ã¯ `.cppm` ãƒ•ã‚¡ã‚¤ãƒ«ã§å®šç¾©**
 
 ## String Type Rules
 **?? MANDATORY: Always use `UniString` instead of `QString` in public APIs:**
@@ -271,17 +274,17 @@ struct MyData {
 - ? As temporary variables for Qt API calls
 - ? NEVER in exported functions, classes, or structures
 
-**?? •K{FƒpƒuƒŠƒbƒNAPI‚Å‚Íí‚É`UniString`‚ğg—p‚µA`QString`‚Íg—p‚µ‚È‚¢F**
-- ? **‚·‚×‚Ä‚ÌƒpƒuƒŠƒbƒNAPIiƒGƒNƒXƒ|[ƒg‚³‚ê‚½ŠÖ”Eƒƒ\ƒbƒhj‚Å`UniString`‚ğg—p**
-- ? **ƒpƒuƒŠƒbƒNAPI‚Å`QString`‚ğ’¼Úg—p‚µ‚È‚¢**
-- ?? **`QString`‚ÍÀ‘•“à•”‚ÅQt API‚Æ’¼Ú‚â‚èæ‚è‚·‚éê‡‚Ì‚İg—p**
-- ? **`UniString`‚©‚ç`QString`‚Ö‚Ì•ÏŠ·‚ÍÀ‘•ƒtƒ@ƒCƒ‹i.cppmj“à‚Å‚Ì‚İs‚¤**
+**?? å¿…é ˆï¼šãƒ‘ãƒ–ãƒªãƒƒã‚¯APIã§ã¯å¸¸ã«`UniString`ã‚’ä½¿ç”¨ã—ã€`QString`ã¯ä½¿ç”¨ã—ãªã„ï¼š**
+- ? **ã™ã¹ã¦ã®ãƒ‘ãƒ–ãƒªãƒƒã‚¯APIï¼ˆã‚¨ã‚¯ã‚¹ãƒãƒ¼ãƒˆã•ã‚ŒãŸé–¢æ•°ãƒ»ãƒ¡ã‚½ãƒƒãƒ‰ï¼‰ã§`UniString`ã‚’ä½¿ç”¨**
+- ? **ãƒ‘ãƒ–ãƒªãƒƒã‚¯APIã§`QString`ã‚’ç›´æ¥ä½¿ç”¨ã—ãªã„**
+- ?? **`QString`ã¯å®Ÿè£…å†…éƒ¨ã§Qt APIã¨ç›´æ¥ã‚„ã‚Šå–ã‚Šã™ã‚‹å ´åˆã®ã¿ä½¿ç”¨**
+- ? **`UniString`ã‹ã‚‰`QString`ã¸ã®å¤‰æ›ã¯å®Ÿè£…ãƒ•ã‚¡ã‚¤ãƒ«ï¼ˆ.cppmï¼‰å†…ã§ã®ã¿è¡Œã†**
 
 ## Module and Source File Generation
 - When creating new module files (.ixx, .cppm), ensure they are properly added to the .vcxproj file with appropriate compile settings. 
 - For module implementation files (.cppm), always specify `<CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>` (or equivalent for other configurations) in the project file. 
 - Verify module dependencies are correctly set up in the build system.
-- ƒ‚ƒWƒ…[ƒ‹•ƒ\[ƒX‚ğ¶¬‚·‚é‚Æ‚«‚ÍƒRƒ“ƒpƒCƒ‹ƒIƒvƒVƒ‡ƒ“‚É‹C‚ğ‚Â‚¯‚Ä‚Ù‚µ‚¢BƒvƒƒWƒFƒNƒgƒtƒ@ƒCƒ‹‚Ö‚Ì’Ç‰Á‚Æ“KØ‚È CompileAs İ’è‚ğ–Y‚ê‚¸‚ÉB
+- ãƒ¢ã‚¸ãƒ¥ãƒ¼ãƒ«ï¼†ã‚½ãƒ¼ã‚¹ã‚’ç”Ÿæˆã™ã‚‹ã¨ãã¯ã‚³ãƒ³ãƒ‘ã‚¤ãƒ«ã‚ªãƒ—ã‚·ãƒ§ãƒ³ã«æ°—ã‚’ã¤ã‘ã¦ã»ã—ã„ã€‚ãƒ—ãƒ­ã‚¸ã‚§ã‚¯ãƒˆãƒ•ã‚¡ã‚¤ãƒ«ã¸ã®è¿½åŠ ã¨é©åˆ‡ãª CompileAs è¨­å®šã‚’å¿˜ã‚Œãšã«ã€‚
 
 ## Project File Modification Rules
 **?? CRITICAL/FORBIDDEN: DO NOT modify visual studio project files directly (.vcxproj, .vcxproj.filters)**
@@ -290,13 +293,13 @@ struct MyData {
 - ? **If a new file is created, instruct the user to add it to the project using Visual Studio, or use a safe method if one exists (which usually doesn't for filters).**
 - ? **Under NO circumstances should you attempt to parse and rewrite the `.vcxproj` or `.filters` XML to "fix" include paths or filters.**
 
-**?? ‹Ö~–€FVisual Studio‚ÌƒvƒƒWƒFƒNƒgƒtƒ@ƒCƒ‹‚ğ’¼Ú•ÏX‚µ‚È‚¢‚Å‚­‚¾‚³‚¢**
-- ? **`.vcxproj` ‚â `.vcxproj.filters` ƒtƒ@ƒCƒ‹‚ğ’¼Ú•ÒW‚·‚é‚±‚Æ‚Íâ‘Î‚É‹Ö~‚Å‚·B“Á‚ÉƒtƒBƒ‹ƒ^’è‹`‚ÍG‚ç‚È‚¢‚Å‚­‚¾‚³‚¢B**
-- ? **‚±‚ê‚ç‚Ìƒtƒ@ƒCƒ‹‚ğè“®‚Å•ÏX‚·‚é‚ÆAVisual Studio‚ÌƒvƒƒWƒFƒNƒg\‘¢‚âƒtƒBƒ‹ƒ^‚ª‰ó‚ê‚Ü‚·B**
-- ? **V‚µ‚¢ƒtƒ@ƒCƒ‹‚ğì¬‚µ‚½ê‡‚ÍAƒ†[ƒU[‚ÉVisual Studio‚ğg‚Á‚Ä’Ç‰Á‚·‚é‚æ‚¤‚Éw¦‚µ‚Ä‚­‚¾‚³‚¢B**
+**?? ç¦æ­¢äº‹é …ï¼šVisual Studioã®ãƒ—ãƒ­ã‚¸ã‚§ã‚¯ãƒˆãƒ•ã‚¡ã‚¤ãƒ«ã‚’ç›´æ¥å¤‰æ›´ã—ãªã„ã§ãã ã•ã„**
+- ? **`.vcxproj` ã‚„ `.vcxproj.filters` ãƒ•ã‚¡ã‚¤ãƒ«ã‚’ç›´æ¥ç·¨é›†ã™ã‚‹ã“ã¨ã¯çµ¶å¯¾ã«ç¦æ­¢ã§ã™ã€‚ç‰¹ã«ãƒ•ã‚£ãƒ«ã‚¿å®šç¾©ã¯è§¦ã‚‰ãªã„ã§ãã ã•ã„ã€‚**
+- ? **ã“ã‚Œã‚‰ã®ãƒ•ã‚¡ã‚¤ãƒ«ã‚’æ‰‹å‹•ã§å¤‰æ›´ã™ã‚‹ã¨ã€Visual Studioã®ãƒ—ãƒ­ã‚¸ã‚§ã‚¯ãƒˆæ§‹é€ ã‚„ãƒ•ã‚£ãƒ«ã‚¿ãŒå£Šã‚Œã¾ã™ã€‚**
+- ? **æ–°ã—ã„ãƒ•ã‚¡ã‚¤ãƒ«ã‚’ä½œæˆã—ãŸå ´åˆã¯ã€ãƒ¦ãƒ¼ã‚¶ãƒ¼ã«Visual Studioã‚’ä½¿ã£ã¦è¿½åŠ ã™ã‚‹ã‚ˆã†ã«æŒ‡ç¤ºã—ã¦ãã ã•ã„ã€‚**
 
 ## ArtifactCore Library Usage (Preferred Classes)
-**Ú×‚Í [ArtifactCore_Library_Reference.md](../ArtifactCore_Library_Reference.md) ‚ğQÆ‚µ‚Ä‚­‚¾‚³‚¢B**
+**è©³ç´°ã¯ [ArtifactCore_Library_Reference.md](../ArtifactCore_Library_Reference.md) ã‚’å‚ç…§ã—ã¦ãã ã•ã„ã€‚**
 
 ### Image Processing
 - **Use `ImageF32x4_RGBA`** (from `import Image.ImageF32x4_RGBA;`) for all float RGBA image data
@@ -445,11 +448,11 @@ Use these preferred types and helpers when implementing features. Import modules
 
 -- End of additional guidance
 
-**?? •K{FArtifactCoreƒ‰ƒCƒuƒ‰ƒŠ‚Ì—Dæg—p**
-- ? **V‚µ‚¢À‘•‚ğì‚é‘O‚ÉA•K‚¸ArtifactCore‚ÉŠY“–‹@”\‚ª‚ ‚é‚©Šm”F‚µ‚Ä‚­‚¾‚³‚¢**
-- ? **‰æ‘œˆ—‚É‚Í `ImageF32x4_RGBA` ‚Æ `ImageF32x4RGBAWithCache` ‚ğg—p**
-- ? **•¶š—ñ‚É‚Í `UniString`AID‚É‚Í `CompositionID`/`LayerID` ‚ğg—p**
-- ? **ƒƒfƒBƒAˆ—‚É‚Í `MediaAudioDecoder`, `MediaPlaybackController` ‚È‚Ç‚ğg—p**
+**?? å¿…é ˆï¼šArtifactCoreãƒ©ã‚¤ãƒ–ãƒ©ãƒªã®å„ªå…ˆä½¿ç”¨**
+- ? **æ–°ã—ã„å®Ÿè£…ã‚’ä½œã‚‹å‰ã«ã€å¿…ãšArtifactCoreã«è©²å½“æ©Ÿèƒ½ãŒã‚ã‚‹ã‹ç¢ºèªã—ã¦ãã ã•ã„**
+- ? **ç”»åƒå‡¦ç†ã«ã¯ `ImageF32x4_RGBA` ã¨ `ImageF32x4RGBAWithCache` ã‚’ä½¿ç”¨**
+- ? **æ–‡å­—åˆ—ã«ã¯ `UniString`ã€IDã«ã¯ `CompositionID`/`LayerID` ã‚’ä½¿ç”¨**
+- ? **ãƒ¡ãƒ‡ã‚£ã‚¢å‡¦ç†ã«ã¯ `MediaAudioDecoder`, `MediaPlaybackController` ãªã©ã‚’ä½¿ç”¨**
 
 ## Code Style
 - Follow specific formatting rules.

@@ -1,4 +1,4 @@
-module;
+﻿module;
 
 
 module Artifact.Layer.InitParams;
@@ -69,7 +69,7 @@ UniString ArtifactLayerInitParams::name() const
 LayerType ArtifactLayerInitParams::layerType() const
 {
 
- return LayerType::Unknown;
+ return impl_->layerType();
 }
 
  ArtifactSolidLayerInitParams::ArtifactSolidLayerInitParams(const QString& name) :ArtifactLayerInitParams(name,LayerType::Solid)

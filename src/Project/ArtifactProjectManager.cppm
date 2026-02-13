@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <QDir>
 #include <QFile>
 #include <QJsonObject>
@@ -638,13 +638,17 @@ QVector<ProjectItem*> ArtifactProjectManager::projectItems() const
 
  FindCompositionResult ArtifactProjectManager::findComposition(const CompositionID& id)
  {
-  if (!impl_->currentProjectPtr_) {
+  // shared_ptr の局所コピーを作成してスレッドセーフにアクセス
+  // これにより、この関数実行中にポインタが無効化されることを防止
+  auto projectPtr = impl_->currentProjectPtr_;
+
+  if (!projectPtr) {
    FindCompositionResult result;
    return result;
   }
 
-  return impl_->currentProjectPtr_->findComposition(id);
- 	
+  return projectPtr->findComposition(id);
+
  }
 
  bool ArtifactProjectManager::isProjectClosed() const
@@ -654,8 +658,12 @@ QVector<ProjectItem*> ArtifactProjectManager::projectItems() const
 
  int ArtifactProjectManager::compositionCount() const
  {
-  if (!impl_->currentProjectPtr_) return 0;
-  auto projectItems = impl_->currentProjectPtr_->projectItems();
+  // shared_ptr の局所コピーを作成してスレッドセーフにアクセス
+  auto projectPtr = impl_->currentProjectPtr_;
+
+  if (!projectPtr) return 0;
+
+  auto projectItems = projectPtr->projectItems();
   int count = 0;
   for (auto item : projectItems) {
     if (!item) continue;
@@ -793,7 +801,7 @@ QVector<ProjectItem*> ArtifactProjectManager::projectItems() const
   {
    auto result = impl_->addLayerToCurrentComposition(params);
    if (result.success && result.layer) {
-    // layerCreated(result.layer->id());
+    layerCreated(result.layer->id());
    }
    return result;
   }
@@ -832,7 +840,7 @@ QVector<ProjectItem*> ArtifactProjectManager::projectItems() const
   {
    auto result = impl_->addLayerToComposition(compositionId, params);
    if (result.success && result.layer) {
-    // layerCreated(result.layer->id());
+    layerCreated(result.layer->id());
    }
    return result;
   }

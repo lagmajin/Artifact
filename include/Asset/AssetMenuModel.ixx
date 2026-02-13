@@ -1,8 +1,9 @@
-module;
+﻿module;
 #include <QAbstractListModel>
 #include <QHash>
 #include <QByteArray>
 #include <QList>
+#include <QIcon>
 
 export module AssetMenuModel;
 
@@ -19,6 +20,7 @@ export namespace Artifact
   UniString type;
   UniString path;
   bool isFolder = false;
+  QIcon icon;  // Optional: custom icon/thumbnail
  };
 
  enum class AssetMenuRole

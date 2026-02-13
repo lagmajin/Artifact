@@ -100,7 +100,13 @@ namespace Artifact {
   qDebug() << "composition created" <<id.toString();
 
   if (!timelineWidget_) {
-   timelineWidget_ = new ArtifactTimelineWidget(window);
+   // nullptr を親として渡して独立ウィンドウとして作成
+   // window への参照が必要な場合は別途メソッドで設定
+   timelineWidget_ = new ArtifactTimelineWidget(nullptr);
+
+   // ウィンドウの属性を設定：独立ウィンドウとして表示
+   timelineWidget_->setWindowFlags(Qt::Window | Qt::FramelessWindowHint);
+   timelineWidget_->setAttribute(Qt::WA_DeleteOnClose, false);
   }
   timelineWidget_->setComposition(id);
   timelineWidget_->show();
@@ -233,7 +239,8 @@ namespace Artifact {
   DockManager->addDockWidget(ads::LeftDockWidgetArea, DockWidget2);
  	
   
-  //auto inspectorWidget2 = new ArtifactInspectorWidget();
+  auto inspectorWidget2 = new ArtifactInspectorWidget();
+  inspectorWidget2->show();
   //auto  inspectorWidgetWrapper = new Pane("Inspector", inspectorWidget2);
   //DockWidget3->setWidget(inspectorWidget2);
   

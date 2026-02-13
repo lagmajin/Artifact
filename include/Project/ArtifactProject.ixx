@@ -1,4 +1,4 @@
-module;
+﻿module;
 
 //#include <memory>
 #include <QObject>
@@ -65,6 +65,14 @@ export namespace Artifact {
   bool addImportedComposition(ArtifactCompositionPtr comp, const QString& name);
   void setProjectName(const QString& name);
   void setAuthor(const QString& author);
+
+  // AI向けメタデータ
+  void setAIDescription(const QString& description);
+  QString aiDescription() const;
+  void setAITags(const QStringList& tags);
+  QStringList aiTags() const;
+  void setAINotes(const QString& notes);
+  QString aiNotes() const;
 
   FindCompositionResult findComposition(const CompositionID& id);
 

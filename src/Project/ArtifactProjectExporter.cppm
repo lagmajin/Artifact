@@ -3,6 +3,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
+#include <QDateTime>
 #include <QSaveFile>
 #include <QDateTime>
 module Artifact.Project.Exporter;
@@ -207,15 +208,9 @@ namespace Artifact
    return result;
   }
 
-  try {
-   QJsonObject root = serializeProject();
-   
-   // Include original project JSON
-   QJsonObject projectObj = projectPtr_->toJson();
-   root["projectData"] = projectObj;
-   
-   QJsonDocument doc(root);
-   QByteArray jsonData = doc.toJson(QJsonDocument::Indented);
+  QJsonObject obj = projectPtr_->toJson();
+  QJsonDocument doc(obj);
+  QByteArray jsonData = doc.toJson(QJsonDocument::Indented);
 
    QSaveFile file(outputPath_);
    if (!file.open(QIODevice::WriteOnly)) {
