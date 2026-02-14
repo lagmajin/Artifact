@@ -526,27 +526,27 @@ QVector<ProjectItem*> ArtifactProjectManager::projectItems() const
 	
  void ArtifactProjectManager::createComposition()
  {
- // Create a composition using default init params and emit the created ID
- ArtifactCompositionInitParams params;
- // Ensure a project exists so UI/model get updated and signals are wired
- if (!impl_->currentProjectPtr_) {
-   createProject();
- }
- // If suppression flag is set, do not create a default composition.
- if (impl_->suppressDefaultCreate_) {
+  // If suppression flag is set, do not create a default composition.
+  if (impl_->suppressDefaultCreate_) {
    qDebug() << "Default composition creation suppressed";
-   CreateCompositionResult res;
-   res.success = false;
    return;
- }
- CreateCompositionResult res = impl_->createComposition(params);
- if (res.success) {
-  // The underlying ArtifactProject emits `compositionCreated` and the manager
-  // forwards that signal when a project exists. Avoid re-emitting here to
-  // prevent duplicate notifications.
- } else {
-  qDebug() << "ArtifactProjectManager::createComposition failed to create composition";
- }
+  }
+
+  // Create a composition using default init params and emit the created ID
+  ArtifactCompositionInitParams params;
+  // Ensure a project exists so UI/model get updated and signals are wired
+  if (!impl_->currentProjectPtr_) {
+   createProject();
+  }
+
+  CreateCompositionResult res = impl_->createComposition(params);
+  if (res.success) {
+   // The underlying ArtifactProject emits `compositionCreated` and the manager
+   // forwards that signal when a project exists. Avoid re-emitting here to
+   // prevent duplicate notifications.
+  } else {
+   qDebug() << "ArtifactProjectManager::createComposition failed to create composition";
+  }
  }
 
  void ArtifactProjectManager::createComposition(const QString, const QSize& size)
@@ -556,11 +556,15 @@ QVector<ProjectItem*> ArtifactProjectManager::projectItems() const
 
  CreateCompositionResult ArtifactProjectManager::createComposition(const ArtifactCompositionInitParams& params)
  {
- // Ensure a project exists so UI/model get updated and signals are wired
- if (!impl_->currentProjectPtr_) {
+  // Ensure a project exists so UI/model get updated and signals are wired
+  if (!impl_->currentProjectPtr_) {
+   // Temporarily suppress default composition creation during project creation
+   bool prevSuppress = impl_->suppressDefaultCreate_;
+   impl_->suppressDefaultCreate_ = true;
    createProject();
- }
- // guard reentrancy: if we're already creating a composition, skip duplicate
+   impl_->suppressDefaultCreate_ = prevSuppress;
+  }
+  // guard reentrancy: if we're already creating a composition, skip duplicate
  if (impl_->creatingComposition_) {
    CreateCompositionResult r;
    r.success = false;
@@ -575,25 +579,41 @@ QVector<ProjectItem*> ArtifactProjectManager::projectItems() const
 
  CreateCompositionResult ArtifactProjectManager::createComposition(const UniString& str)
  {
- ArtifactCompositionInitParams params;
- // try to set a name if provided
- try {
-  params.setCompositionName(str);
- } catch (...) {
- }
+  // reentrancy guard
+  if (impl_->creatingComposition_) {
+    qDebug() << "ArtifactProjectManager::createComposition(UniString): reentrancy guard triggered, skipping";
+    CreateCompositionResult r;
+    r.success = false;
+    return r;
+  }
+  impl_->creatingComposition_ = true;
 
- qDebug() << "ArtifactProjectManager::createComposition requested name:" << str.toQString();
- // Ensure a project exists before creating composition so UI updates
- if (!impl_->currentProjectPtr_) {
-   createProject();
- }
- auto result = impl_->createComposition(params);
- if (result.success) {
-  qDebug() << "ArtifactProjectManager::createComposition succeeded id:" << result.id.toString();
- } else {
-  qDebug() << "ArtifactProjectManager::createComposition failed";
- }
- return result;
+  ArtifactCompositionInitParams params;
+  // try to set a name if provided
+  try {
+   params.setCompositionName(str);
+  } catch (...) {
+  }
+
+  qDebug() << "ArtifactProjectManager::createComposition requested name:" << str.toQString();
+  // Ensure a project exists before creating composition so UI updates
+  if (!impl_->currentProjectPtr_) {
+    // Temporarily suppress default composition creation during project creation
+    bool prevSuppress = impl_->suppressDefaultCreate_;
+    impl_->suppressDefaultCreate_ = true;
+    createProject();
+    impl_->suppressDefaultCreate_ = prevSuppress;
+  }
+
+  auto result = impl_->createComposition(params);
+  impl_->creatingComposition_ = false;
+
+  if (result.success) {
+   qDebug() << "ArtifactProjectManager::createComposition succeeded id:" << result.id.toString();
+  } else {
+   qDebug() << "ArtifactProjectManager::createComposition failed";
+  }
+  return result;
  }
 
  void ArtifactProjectManager::addAssetFromFilePath(const QString& filePath)

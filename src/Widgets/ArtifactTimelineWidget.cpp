@@ -230,17 +230,18 @@ W_OBJECT_IMPL(ArtifactTimelineWidget)
 
 
   class ArtifactTimelineWidget::Impl
- {
- private:
+  {
+  private:
 
- public:
-  Impl();
-  ~Impl();
-  ArtifactTimelineBottomLabel* timelineLabel_ = nullptr;
-  ArtifactLayerTimelinePanelWrapper* layerTimelinePanel_ = nullptr;
-  CompositionID compositionId_;
+  public:
+   Impl();
+   ~Impl();
+   ArtifactTimelineBottomLabel* timelineLabel_ = nullptr;
+   ArtifactLayerTimelinePanelWrapper* layerTimelinePanel_ = nullptr;
+   TimelineTrackView* trackView_ = nullptr;  // Right-side timeline view
+   CompositionID compositionId_;
 
- };
+  };
 
  ArtifactTimelineWidget::Impl::Impl()
  {
@@ -297,6 +298,7 @@ W_OBJECT_IMPL(ArtifactTimelineWidget)
   auto timeScaleWidget = new TimelineScaleWidget();
   auto workAreaWidget = new WorkAreaControl();
   auto timelineTrackView = new TimelineTrackView();
+  impl_->trackView_ = timelineTrackView;  // Store reference for layer creation
   //auto layerTimelinePanel = new ArtifactLayerTimelinePanelWrapper();
   //layerTimelinePanel->setMinimumWidth(220);
   //layerTimelinePanel->setMaximumWidth(320);
@@ -358,6 +360,35 @@ W_OBJECT_IMPL(ArtifactTimelineWidget)
   if (impl_->layerTimelinePanel_) {
    impl_->layerTimelinePanel_->setComposition(id);
   }
+ }
+
+ void ArtifactTimelineWidget::onLayerCreated(const LayerID& id)
+ {
+  // Add a ClipItem to the timeline when a layer is created
+  if (!impl_->trackView_) return;
+
+  qDebug() << "[ArtifactTimelineWidget::onLayerCreated] Layer created:" << id.toString();
+
+  // Add a new track for this layer if needed
+  int trackIndex = impl_->trackView_->addTrack(28.0);  // Standard track height of 28px
+
+  // Add a clip item spanning from frame 0 with default duration of 100 frames
+  double startFrame = 0.0;
+  double duration = 100.0;
+  ClipItem* clip = impl_->trackView_->addClip(trackIndex, startFrame, duration);
+
+  if (clip) {
+   qDebug() << "[ArtifactTimelineWidget::onLayerCreated] Added ClipItem at track" << trackIndex;
+  }
+ }
+
+ void ArtifactTimelineWidget::onLayerRemoved(const LayerID& id)
+ {
+  // Remove corresponding ClipItems when a layer is removed
+  qDebug() << "[ArtifactTimelineWidget::onLayerRemoved] Layer removed:" << id.toString();
+
+  // TODO: Implement layer removal - need to track which clip belongs to which layer
+  // For now, this is a placeholder
  }
  void ArtifactTimelineWidget::paintEvent(QPaintEvent* event)
  {

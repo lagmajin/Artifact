@@ -127,6 +127,7 @@ namespace Artifact {
   QTabWidget* pTabWidget = nullptr;
   QPoint m_dragPosition;
   bool m_isDragging = false;
+  bool okCalled_ = false;  // 二重呼び出し防止フラグ
   void ok(QDialog* dialog);
   void cancel(QDialog* dialog);
   QPropertyAnimation* m_showAnimation = nullptr;
@@ -146,25 +147,32 @@ namespace Artifact {
 
  void CreateCompositionDialog::Impl::ok(QDialog* dialog)
  {
- // Try to create the composition with the provided name before accepting the dialog.
- CreateCompositionDialog* dlg = static_cast<CreateCompositionDialog*>(dialog);
- if (dlg) {
-  // ensure any in-progress edit is committed to the EditableLabel
-  if (compositionNameEdit_) compositionNameEdit_->finishEdit();
-  QString name = dlg->compositionName();
-  // suppress default creation triggered by projectCreated
-  ArtifactProjectManager::getInstance().suppressDefaultCreate(true);
-  if (!name.isEmpty()) {
-    UniString u;
-    u.setQString(name);
-    ArtifactProjectManager::getInstance().createComposition(u);
-  } else {
-    // create with default params if no name provided
-    ArtifactProjectManager::getInstance().createComposition();
+  // 二重呼び出し防止
+  if (okCalled_) {
+   qDebug() << "[CreateCompositionDialog] ok() already called, skipping duplicate";
+   return;
   }
-  ArtifactProjectManager::getInstance().suppressDefaultCreate(false);
- }
- dialog->accept();
+  okCalled_ = true;
+
+  // Try to create the composition with the provided name before accepting the dialog.
+  CreateCompositionDialog* dlg = static_cast<CreateCompositionDialog*>(dialog);
+  if (dlg) {
+   // ensure any in-progress edit is committed to the EditableLabel
+   if (compositionNameEdit_) compositionNameEdit_->finishEdit();
+   QString name = dlg->compositionName();
+   // suppress default creation triggered by projectCreated
+   ArtifactProjectManager::getInstance().suppressDefaultCreate(true);
+   if (!name.isEmpty()) {
+     UniString u;
+     u.setQString(name);
+     ArtifactProjectManager::getInstance().createComposition(u);
+   } else {
+     // create with default params if no name provided
+     ArtifactProjectManager::getInstance().createComposition();
+   }
+   ArtifactProjectManager::getInstance().suppressDefaultCreate(false);
+  }
+  dialog->accept();
  }
 
  void CreateCompositionDialog::Impl::cancel(QDialog* dialog)
@@ -247,12 +255,12 @@ QString CreateCompositionDialog::compositionName() const
   if (event->key() == Qt::Key_Escape)
   {
    close();
+   event->accept();
+   return;
   }
 
-  if (event->key() == Qt::Key_Enter)
-  {
-   accept();
-  }
+  // Use default dialog handling for Enter/Return to avoid double OK invocation
+  QDialog::keyPressEvent(event);
  }
 
  void CreateCompositionDialog::mousePressEvent(QMouseEvent* event)
@@ -363,7 +371,7 @@ QString CreateCompositionDialog::compositionName() const
 
   // 2. アニメーションの開始位置を計算 (画面下端から出現)
   QPoint startPos = endPos;
-  const float offsetFactor = 0.1f; // 動きの量 (ダイアログの高さに対する割合)
+  const float offsetFactor = 0.08f; // 動きの量 (ダイアログの高さに対する割合)
   startPos.setY(startPos.y() + static_cast<int>(height() * offsetFactor));
   // 3. ダイアログの初期位置をアニメーション開始位置に設定
   // これをしないと、show() でダイアログが一瞬本来の位置に表示されてしまう可能性がある
@@ -391,5 +399,6 @@ QString CreateCompositionDialog::compositionName() const
 
 
 };
+
 
 

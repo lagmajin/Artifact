@@ -116,6 +116,11 @@ class TimelineTrackView :public QGraphicsView {
   ~ArtifactTimelineWidget();
   void update();
   void setComposition(const CompositionID& id);
+
+  // Layer management
+  void onLayerCreated(const LayerID& id);
+  void onLayerRemoved(const LayerID& id);
+
   /*signals:*/
  public /*slots*/:
  };

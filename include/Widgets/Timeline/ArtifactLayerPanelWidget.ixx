@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <wobjectdefs.h>
 #include <QWidget>
 export module Artifact.Widgets.LayerPanelWidget;
@@ -9,21 +9,27 @@ export namespace Artifact
 {
  using namespace ArtifactCore;
 	
- class ArtifactLayerPanelHeaderWidget :public QWidget
- {
-  W_OBJECT(ArtifactLayerPanelHeaderWidget)
- private:
-  class Impl;
-  Impl* impl_;
- protected:
+   class ArtifactLayerPanelHeaderWidget :public QWidget
+   {
+    W_OBJECT(ArtifactLayerPanelHeaderWidget)
+   private:
+    class Impl;
+    Impl* impl_;
+   protected:
 
- public:
-  explicit ArtifactLayerPanelHeaderWidget(QWidget* parent = nullptr);
-  ~ArtifactLayerPanelHeaderWidget();
- public /*signals*/:
-  void lockClicked() W_SIGNAL(lockClicked)
-void soloClicked() W_SIGNAL(soloClicked) 	
- };
+   public:
+    explicit ArtifactLayerPanelHeaderWidget(QWidget* parent = nullptr);
+    ~ArtifactLayerPanelHeaderWidget();
+
+    // Get button dimensions for layout synchronization
+    int buttonSize() const;  // Returns fixed button size (e.g., 28)
+    int iconSize() const;    // Returns icon size used in buttons (e.g., 16)
+    int totalHeaderHeight() const;  // Returns total header height
+
+   public /*signals*/:
+    void lockClicked() W_SIGNAL(lockClicked)
+ void soloClicked() W_SIGNAL(soloClicked) 	
+   };
 
 
   class ArtifactLayerPanelWidget :public QWidget

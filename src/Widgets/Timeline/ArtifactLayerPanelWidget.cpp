@@ -126,6 +126,21 @@ namespace Artifact
  {
 
  }
+
+ int ArtifactLayerPanelHeaderWidget::buttonSize() const
+ {
+  return 28;  // Fixed button size defined in constructor
+ }
+
+ int ArtifactLayerPanelHeaderWidget::iconSize() const
+ {
+  return 16;  // Icon size used within buttons
+ }
+
+ int ArtifactLayerPanelHeaderWidget::totalHeaderHeight() const
+ {
+  return height();  // Returns the actual widget height
+ }
  W_OBJECT_IMPL(ArtifactLayerPanelWidget)
 
   class ArtifactLayerPanelWidget::Impl
@@ -515,6 +530,8 @@ void ArtifactLayerPanelWidget::setComposition(const CompositionID& id)
   impl_->panel = new ArtifactLayerPanelWidget;
   impl_->scroll = new QScrollArea(this);
 
+  // Set panel minimum width/height
+  impl_->panel->setMinimumHeight(100);
   impl_->scroll->setWidget(impl_->panel);
   impl_->scroll->setWidgetResizable(true);
   impl_->scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
@@ -523,8 +540,13 @@ void ArtifactLayerPanelWidget::setComposition(const CompositionID& id)
   layout->setContentsMargins(0, 0, 0, 0);
   layout->setSpacing(0);
   layout->addWidget(impl_->header);
-  layout->addWidget(impl_->scroll);
+  layout->addWidget(impl_->scroll, 1);  // Add stretch factor to fill remaining space
   setLayout(layout);
+
+  // Set header height based on button size
+  int headerHeight = impl_->header->buttonSize();
+  impl_->header->setFixedHeight(headerHeight);
+  qDebug() << "[ArtifactLayerTimelinePanelWrapper] Header height set to:" << headerHeight;
  }
 
  ArtifactLayerTimelinePanelWrapper::ArtifactLayerTimelinePanelWrapper(const CompositionID& id, QWidget* parent /*= nullptr*/):QWidget(parent),impl_(new Impl())
@@ -534,6 +556,8 @@ void ArtifactLayerPanelWidget::setComposition(const CompositionID& id)
     impl_->panel = new ArtifactLayerPanelWidget;
     impl_->scroll = new QScrollArea(this);
 
+    // Set panel minimum width/height
+    impl_->panel->setMinimumHeight(100);
     impl_->scroll->setWidget(impl_->panel);
     impl_->scroll->setWidgetResizable(true);
     impl_->scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
@@ -542,8 +566,13 @@ void ArtifactLayerPanelWidget::setComposition(const CompositionID& id)
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(0);
     layout->addWidget(impl_->header);
-    layout->addWidget(impl_->scroll);
+    layout->addWidget(impl_->scroll, 1);  // Add stretch factor to fill remaining space
     setLayout(layout);
+
+    // Set header height based on button size
+    int headerHeight = impl_->header->buttonSize();
+    impl_->header->setFixedHeight(headerHeight);
+    qDebug() << "[ArtifactLayerTimelinePanelWrapper] Header height set to:" << headerHeight;
 
     if (!id.isNil() && ArtifactProjectService::instance()) {
         impl_->panel->setComposition(id);
