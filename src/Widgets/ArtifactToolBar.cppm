@@ -1,10 +1,11 @@
-module;
+﻿module;
 #include <QAction>
 #include <QToolBar>
 #include <QActionGroup>
 #include <QString>
 #include <QSize>
 #include <QIcon>
+#include <wobjectimpl.h>
 
 module Widgets.ToolBar;
 import Utils;
@@ -13,6 +14,8 @@ import Artifact.Service.Application;
 
 namespace Artifact
 {
+
+ W_OBJECT_IMPL(ArtifactToolBar)
 
  class ArtifactToolBar::Impl {
  public:
@@ -255,6 +258,33 @@ QToolButton:checked {
   impl_->guideVisible_ = visible;
   if (impl_->guideToggleAction_) {
    impl_->guideToggleAction_->setChecked(visible);
+  }
+ }
+
+ void ArtifactToolBar::setActionEnabledAnimated(QAction* action, bool enabled)
+ {
+  if (!action) return;
+  
+  // アニメーション付きで有効/無効を切り替え
+  // シンプルに即時切り替え（アニメーションはオプション）
+  action->setEnabled(enabled);
+  
+  // アニメーションが必要ならQPropertyAnimationを使用
+  // QPropertyAnimation* anim = new QPropertyAnimation(action, "enabled");
+  // anim->setDuration(200);
+  // anim->setStartValue(action->isEnabled());
+  // anim->setEndValue(enabled);
+  // anim->start(QAbstractAnimation::DeleteWhenStopped);
+ }
+
+ void ArtifactToolBar::lockHeight(bool locked /*= true*/)
+ {
+  if (locked) {
+   // 高さを固定（現在の高さで固定）
+   setFixedHeight(height());
+  } else {
+   // 高さを可変に戻す
+   setFixedHeight(QWIDGETSIZE_MAX);
   }
  }
 

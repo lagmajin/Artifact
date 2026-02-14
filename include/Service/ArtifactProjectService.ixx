@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <wobjectdefs.h>
 #include <QSize>
 #include <QString>
@@ -19,6 +19,8 @@ import Artifact.Composition.Result;
 import Artifact.Composition.Abstract;
 import Artifact.Composition.InitParams;
 import Artifact.Project.Items;
+
+import Artifact.Project;
 
 W_REGISTER_ARGTYPE(QSize)
 W_REGISTER_ARGTYPE(QString)
@@ -64,6 +66,7 @@ export namespace Artifact
   bool removeLayerFromComposition(const CompositionID& compositionId, const LayerID& layerId);
   bool removeComposition(const CompositionID& id);
   bool renameComposition(const CompositionID& id, const UniString& name);
+  std::shared_ptr<ArtifactProject> getCurrentProjectSharedPtr() const;
  public /*signals*/:
   void layerRemoved(const LayerID& id)
    W_SIGNAL(layerRemoved, id);

@@ -7,6 +7,7 @@
 #include <QVector>
 #include <QDir>
 #include <QFileInfo>
+#include <wobjectdefs.h>
 
 export module AssetDirectoryModel;
 
@@ -32,7 +33,7 @@ export namespace Artifact {
  };
 
  class AssetDirectoryModel : public QAbstractItemModel {
-  Q_OBJECT
+  W_OBJECT(AssetDirectoryModel)
  private:
   class Impl;
   Impl* impl_;
@@ -64,10 +65,14 @@ export namespace Artifact {
   void addFavorite(const QString& path, const QString& displayName = "");
   void removeFavorite(const QString& guid);
 
- Q_SIGNALS:
-  void assetSelected(const QString& guid, const QString& path, bool isFolder);
-  void assetDoubleClicked(const QString& guid, const QString& path);
-  void folderExpanded(const QString& guid);
+ public:
+  //signals
+  void assetSelected(const QString& guid, const QString& path, bool isFolder)
+   W_SIGNAL(assetSelected, guid, path, isFolder);
+  void assetDoubleClicked(const QString& guid, const QString& path)
+   W_SIGNAL(assetDoubleClicked, guid, path);
+  void folderExpanded(const QString& guid)
+   W_SIGNAL(folderExpanded, guid);
  };
 
 }

@@ -44,6 +44,8 @@ namespace Artifact {
 
  using namespace ArtifactCore;
 
+
+
  class ArtifactAssetBrowserToolBar::Impl
  {
  private:

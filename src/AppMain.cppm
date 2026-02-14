@@ -1,4 +1,6 @@
 ﻿
+#define _CRT_SECURE_NO_WARNINGS
+#pragma warning(disable:4996)
 #pragma push_macro("emit")
 #pragma push_macro("event")
 #undef emit

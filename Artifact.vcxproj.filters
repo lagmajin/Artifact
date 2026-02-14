@@ -687,6 +687,16 @@
     <ClCompile Include="include\Project\ArtifactProjectExporter.ixx">
       <Filter>include\Project</Filter>
     </ClCompile>
+    <ClCompile Include="include\Widgets\Dock\DockGlowStyle.ixx" />
+    <ClCompile Include="src\Widgets\Dock\DockGlowStyle.cppm" />
+    <ClCompile Include="include\Widgets\Dock\DockStyleManager.ixx" />
+    <ClCompile Include="src\Widgets\Dock\DockStyleManager.cppm" />
+    <ClCompile Include="include\Composition\ArtifactCompositionPlaybackController.ixx" />
+    <ClCompile Include="include\Service\ArtifactPlaybackService.ixx" />
+    <ClCompile Include="src\Service\ArtifactPlaybackService.cppm" />
+    <ClCompile Include="src\Composition\ArtifactCompositionPlaybackController.cppm">
+      <Filter>src</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Generated\TestService.h" />

@@ -289,38 +289,38 @@ FindCompositionResult ArtifactProject::Impl::findComposition(const CompositionID
 
   // bool ArtifactProject::Impl::removeById(const CompositionID& id) - TODO: container_.remove() not implemented
   // Commented out - use alternative removal method
-  /*
   bool ArtifactProject::Impl::removeById(const CompositionID& id)
   {
-   // Remove composition from container
-   if (!container_.remove(id)) {
+   // Check existence
+   if (!container_.containsId(id)) {
      qDebug() << "removeById failed: composition not in container";
      return false;
    }
 
-   // Remove composition item from project tree
-   auto it = std::remove_if(ownedItems_.begin(), ownedItems_.end(),
-     [id](const std::unique_ptr<ProjectItem>& item) {
-       if (!item || item->type() != eProjectItemType::Composition) {
-         return false;
-       }
-       CompositionItem* compItem = static_cast<CompositionItem*>(item.get());
-       return compItem->compositionId == id;
-     });
+   // Remove from container
+   container_.removeById(id);
 
-   if (it != ownedItems_.end()) {
-     // Also remove from parent's children list
-     CompositionItem* removedItem = static_cast<CompositionItem*>(it->get());
-     if (removedItem->parent) {
-       removedItem->parent->children.removeOne(removedItem);
+   // Remove composition item from project tree
+   for (auto it = ownedItems_.begin(); it != ownedItems_.end(); ) {
+     if (!(*it) || (*it)->type() != eProjectItemType::Composition) { ++it; continue; }
+     CompositionItem* compItem = static_cast<CompositionItem*>((*it).get());
+     if (compItem->compositionId == id) {
+       if (compItem->parent) {
+         compItem->parent->children.removeOne(compItem);
+       }
+       it = ownedItems_.erase(it);
+       qDebug() << "removeById succeeded: id=" << id.toString();
+       setDirty(true);
+       return true;
+     } else {
+       ++it;
      }
-     ownedItems_.erase(it);
    }
 
-   qDebug() << "removeById succeeded: id=" << id.toString();
+   qDebug() << "removeById: composition removed from container but item not found in ownedItems: id=" << id.toString();
+   setDirty(true);
    return true;
   }
-  */
 
  bool ArtifactProject::Impl::isDirty() const
  {

@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <wobjectdefs.h>
 #include <QList>
 #include <QString>
@@ -86,13 +86,13 @@ namespace Artifact {
 
  QString ArtifactProjectSettings::projectName() const
  {
-  return impl_->projectName();
+ return impl_->projectName().toQString();
  }
 
  template <StringLike T>
  void Artifact::ArtifactProjectSettings::setProjectName(const T& name)
  {
-  impl_->setProjectName(name);
+ // impl_->setProjectName(name);
  }
 
  UniString ArtifactProjectSettings::author() const

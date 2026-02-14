@@ -217,6 +217,11 @@ bool ArtifactProjectService::removeLayerFromComposition(const CompositionID& com
   return impl_->currentComposition();
  }
 
+std::shared_ptr<ArtifactProject> ArtifactProjectService::getCurrentProjectSharedPtr() const
+{
+    return impl_->projectManager().getCurrentProjectSharedPtr();
+}
+
  ChangeCompositionResult ArtifactProjectService::changeCurrentComposition(const CompositionID& id)
  {
 

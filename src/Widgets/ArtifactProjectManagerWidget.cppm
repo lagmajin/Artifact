@@ -513,19 +513,18 @@ void ArtifactProjectView::mouseReleaseEvent(QMouseEvent* event)
 
  void ArtifactProjectManagerWidget::Impl::handleFileDrop(const QString& str)
  {
-  auto& manager = ArtifactProjectManager::getInstance();
-
+  // Use ProjectService instead of direct ProjectManager access
   qDebug() << "File:" << str;
-  manager.addAssetFromFilePath(str);
+  UniString u;
+  u.setQString(str);
+  ArtifactProjectService::instance()->addAssetFromPath(u);
 
- 	
  }
 
  void ArtifactProjectManagerWidget::Impl::update()
  {
-  // bind current project to model and assign to view
-  auto& manager = ArtifactProjectManager::getInstance();
-  auto shared = manager.getCurrentProjectSharedPtr();
+   // bind current project to model and assign to view via ProjectService
+   auto shared = ArtifactProjectService::instance()->getCurrentProjectSharedPtr();
   if (!projectModel_) {
     projectModel_ = new ArtifactProjectModel();
   }

@@ -75,6 +75,9 @@ namespace Artifact {
  	ArtifactMainWindow* mainWindow_=nullptr;
    ArtifactTimelineWidget* timelineWidget_ = nullptr;
 
+   // Playback service
+   ArtifactPlaybackService* playbackService_ = nullptr;
+
    // Status bar widgets
    QLabel* statusLabel_ = nullptr;
    QLabel* coordinatesLabel_ = nullptr;
@@ -208,6 +211,7 @@ namespace Artifact {
   setMenuBar(menuBar);
 
   resize(600, 640);
+  resize(1280, 900);
 
   auto toolBar = new ArtifactToolBar(this);
   addToolBar(toolBar);

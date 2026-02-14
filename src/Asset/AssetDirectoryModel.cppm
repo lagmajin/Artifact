@@ -10,12 +10,15 @@
 #include <QStyle>
 #include <QApplication>
 #include <QUuid>
+#include <wobjectimpl.h>
 
 module AssetDirectoryModel;
 
 import std;
 
 namespace Artifact {
+
+ W_OBJECT_IMPL(AssetDirectoryModel)
 
  class AssetDirectoryModel::Impl {
  public:

@@ -63,6 +63,18 @@ export namespace Artifact {
   void goToFrame(int64_t frameNumber = 0);
    
   bool isPlaying() const;
+  void play();
+  void pause();
+  void stop();
+  void togglePlayPause();
+  float playbackSpeed() const;
+  void setPlaybackSpeed(float speed);
+  bool isLooping() const;
+  void setLooping(bool loop);
+  FrameRange frameRange() const;
+  void setFrameRange(const FrameRange& range);
+  FrameRate frameRate() const;
+  void setFrameRate(const FrameRate& rate);
  	
   bool hasVideo() const;
   bool hasAudio() const;

@@ -1,4 +1,4 @@
-module;
+ï»¿module;
 #include <wobjectdefs.h>
 #include <QWidget>
 export module Artifact.Widgets.PlaybackControlWidget;
@@ -16,15 +16,31 @@ export namespace Artifact
   virtual ~ArtifactPlaybackControlWidget();
   void play();
   void stop();
-  void seekStart();     // Å‰‚ÌƒtƒŒ[ƒ€‚Ö
-  void seekEnd();       // ÅŒã‚ÌƒtƒŒ[ƒ€‚Öi”CˆÓj
-  void stepForward();   // 1ƒtƒŒ[ƒ€i‚Ş
-  void stepBackward();
+  void seekStart();     // æœ€åˆã®ãƒ•ãƒ¬ãƒ¼ãƒ ã¸
+  void seekEnd();       // æœ€å¾Œã®ãƒ•ãƒ¬ãƒ¼ãƒ ã¸ï¼ˆä»»æ„ï¼‰
+  void stepForward();   // 1ãƒ•ãƒ¬ãƒ¼ãƒ é€²ã‚€
+  void stepBackward();  // 1ãƒ•ãƒ¬ãƒ¼ãƒ æˆ»ã‚‹
   void setLoopEnabled(bool);
   void setPreviewRange(int start, int end);
+  
+  // å†ç”Ÿé€Ÿåº¦è¨­å®š
+  void setPlaybackSpeed(float speed);
+  float playbackSpeed() const;
+  
+  // çŠ¶æ…‹å–å¾—
+  bool isPlaying() const;
+  bool isLooping() const;
+  
  public/*signals*/:
   void playButtonClicked() W_SIGNAL(playButtonClicked)
-   void stopButtonClicked() W_SIGNAL(stopButtonClicked)
+  void stopButtonClicked() W_SIGNAL(stopButtonClicked)
+  void pauseButtonClicked() W_SIGNAL(pauseButtonClicked)
+  void stepForwardClicked() W_SIGNAL(stepForwardClicked)
+  void stepBackwardClicked() W_SIGNAL(stepBackwardClicked)
+  void seekStartClicked() W_SIGNAL(seekStartClicked)
+  void seekEndClicked() W_SIGNAL(seekEndClicked)
+  void playbackSpeedChanged(float speed) W_SIGNAL(playbackSpeedChanged, speed)
+  void loopToggled(bool enabled) W_SIGNAL(loopToggled, enabled)
  public/*slots*/:
 
   W_SLOT(play)

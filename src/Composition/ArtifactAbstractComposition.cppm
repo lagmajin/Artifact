@@ -45,6 +45,13 @@ namespace Artifact {
   CompositionID id_;
   //PlaybackClock playbackClock_;  // 高精度再生クロック
   
+  // Playback related
+  bool isPlaying_ = false;
+  float playbackSpeed_ = 1.0f;
+  bool looping_ = false;
+  FrameRange frameRange_;
+  FrameRate frameRate_ = FrameRate(30.0f);
+  
   AppendLayerToCompositionResult appendLayerTop(ArtifactAbstractLayerPtr layer);
   AppendLayerToCompositionResult appendLayerBottom(ArtifactAbstractLayerPtr layer);
   bool containsLayerById(const LayerID& id) const;
@@ -62,8 +69,6 @@ namespace Artifact {
   ArtifactAbstractLayerPtr backMostLayer() const;
   bool hasVideo() const;
   bool hasAudio() const;
-
-  bool isPlaying_ = false;
  };
 
  ArtifactAbstractComposition::Impl::Impl()
@@ -321,6 +326,80 @@ bool ArtifactAbstractComposition::isVisual() const
 bool ArtifactAbstractComposition::isPlaying() const
 {
  return impl_->isPlaying_;
+}
+
+void ArtifactAbstractComposition::play()
+{
+ if (impl_->isPlaying_) return;
+ impl_->isPlaying_ = true;
+ // TODO: 再生コントローラーに通知
+}
+
+void ArtifactAbstractComposition::pause()
+{
+ if (!impl_->isPlaying_) return;
+ impl_->isPlaying_ = false;
+ // TODO: 再生コントローラーに通知
+}
+
+void ArtifactAbstractComposition::stop()
+{
+ impl_->isPlaying_ = false;
+ impl_->position_ = FramePosition(0); // 開始位置に戻す
+ // TODO: 再生コントローラーに通知
+}
+
+void ArtifactAbstractComposition::togglePlayPause()
+{
+ if (impl_->isPlaying_) {
+  pause();
+ } else {
+  play();
+ }
+}
+
+float ArtifactAbstractComposition::playbackSpeed() const
+{
+ return impl_->playbackSpeed_;
+}
+
+void ArtifactAbstractComposition::setPlaybackSpeed(float speed)
+{
+ impl_->playbackSpeed_ = qBound(0.1f, speed, 10.0f);
+ // TODO: 再生コントローラーに通知
+}
+
+bool ArtifactAbstractComposition::isLooping() const
+{
+ return impl_->looping_;
+}
+
+void ArtifactAbstractComposition::setLooping(bool loop)
+{
+ impl_->looping_ = loop;
+ // TODO: 再生コントローラーに通知
+}
+
+FrameRange ArtifactAbstractComposition::frameRange() const
+{
+ return impl_->frameRange_;
+}
+
+void ArtifactAbstractComposition::setFrameRange(const FrameRange& range)
+{
+ impl_->frameRange_ = range;
+ // TODO: 再生コントローラーに通知
+}
+
+FrameRate ArtifactAbstractComposition::frameRate() const
+{
+ return impl_->frameRate_;
+}
+
+void ArtifactAbstractComposition::setFrameRate(const FrameRate& rate)
+{
+ impl_->frameRate_ = rate;
+ // TODO: 再生コントローラーに通知
 }
 
 QJsonDocument ArtifactAbstractComposition::toJson() const

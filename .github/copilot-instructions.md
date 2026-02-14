@@ -16,7 +16,12 @@
 - C++20 モジュールコードを書くときはちゃんとグローバルモジュールフラグメントも書いてほしい。
 - **[ArtifactCoreルール] ArtifactCoreライブラリを使う時は必ず`using namespace ArtifactCore;`の有無を慎重に確認し、不足していれば必ず追加すること。**
 - **IMPORTANT RULE: Never recreate existing .cppm or .ixx files by using remove_file + create_file. Only use replace_string_in_file to modify existing code structure. Keep the original file structure intact and only modify the necessary parts.**
-- Qtのシグナル発行にはemitマクロを使わず、必ずQ_EMITマクロを使うこと。
+  - Qt のシグナル & スロット宣言と発行について: このプロジェクトでは Verdigris マクロを必ず使用してください。
+    - シグナル・スロットの宣言は Verdigris の `W_SIGNAL` / `W_SLOT` マクロを使うこと（例: `void frameChanged(...) W_SIGNAL(frameChanged, ...)`）。
+    - クラス定義には必ず `W_OBJECT` を使い、実装ファイルでは `W_OBJECT_IMPL` を使ってください。
+    - Qt 標準の `signals:` セクションや `Q_SIGNAL` マクロは使用しないこと。
+    - シグナルの発行は `Q_EMIT` を使って構いませんが、宣言側は Verdigris を優先してください。
+    - これにより、verdigris ベースのメタオブジェクト生成（W_OBJECT 系）が正しく機能します。
 
 ## File Encoding Rules (ABSOLUTE REQUIREMENT)
 **⚠️ CRITICAL: All C++ source files MUST use UTF-8 with BOM (Byte Order Mark)**
