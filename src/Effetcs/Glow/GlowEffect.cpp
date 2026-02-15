@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <opencv2/opencv.hpp>
 
 module Artifact.Effect.Glow;
@@ -8,6 +8,8 @@ import Artifact.Effect.ImplBase;
 import Image.ImageF32x4RGBAWithCache;
 import Image.ImageF32x4_RGBA;
 import Glow; // ArtifactCoreのOpenCVグロー実装
+import Property.Abstract;
+import QtCore;
 
 namespace Artifact {
 
@@ -157,6 +159,36 @@ float GlowEffect::alphaFalloff() const {
         return impl_->cpuImpl_->alphaFalloff();
     }
     return 0.0f;
+}
+
+std::vector<ArtifactCore::AbstractProperty> GlowEffect::getProperties() const {
+    std::vector<ArtifactCore::AbstractProperty> props;
+
+    ArtifactCore::AbstractProperty gainProp;
+    gainProp.setName("glowGain");
+    gainProp.setType(ArtifactCore::PropertyType::Float);
+    gainProp.setDefaultValue(QVariant(static_cast<double>(glowGain())));
+    gainProp.setValue(QVariant(static_cast<double>(glowGain())));
+    props.push_back(gainProp);
+
+    ArtifactCore::AbstractProperty layerCountProp;
+    layerCountProp.setName("layerCount");
+    layerCountProp.setType(ArtifactCore::PropertyType::Integer);
+    layerCountProp.setDefaultValue(QVariant(layerCount()));
+    layerCountProp.setValue(QVariant(layerCount()));
+    props.push_back(layerCountProp);
+
+    // Additional properties can be added similarly
+    return props;
+}
+
+void GlowEffect::setPropertyValue(const ArtifactCore::UniString& name, const QVariant& value) {
+    QString n = name.toQString();
+    if (n == "glowGain") {
+        setGlowGain(static_cast<float>(value.toDouble()));
+    } else if (n == "layerCount") {
+        setLayerCount(value.toInt());
+    }
 }
 
 }

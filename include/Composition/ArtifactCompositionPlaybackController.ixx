@@ -1,6 +1,7 @@
 ﻿module;
 #include <QObject>
 #include <QTimer>
+#include <functional>
 #include <wobjectdefs.h>
 
 export module Artifact.Composition.PlaybackController;
@@ -9,6 +10,11 @@ import std;
 import Frame.Position;
 import Frame.Rate;
 import Frame.Range;
+
+W_REGISTER_ARGTYPE(ArtifactCore::FramePosition)
+W_REGISTER_ARGTYPE(ArtifactCore::FrameRange)
+W_REGISTER_ARGTYPE(ArtifactCore::FrameRate)
+
 
 export namespace Artifact {
 
@@ -72,6 +78,7 @@ public:
     // Real-time mode (sync to actual time)
     bool isRealTime() const;
     void setRealTime(bool realTime);
+    void setAudioClockProvider(const std::function<double()>& provider);
     
 public: // signals
     void playbackStateChanged(PlaybackState state)
@@ -85,9 +92,9 @@ public: // signals
     void frameRangeChanged(const FrameRange& range)
         W_SIGNAL(frameRangeChanged, range);
         
-private slots:
-    void onTimerTick()
-        W_SLOT(onTimerTick);
+private :
+ void onTimerTick();
+     W_SLOT(onTimerTick);
 };
 
 }

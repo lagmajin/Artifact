@@ -8,6 +8,7 @@ import Utils.String.UniString;
 import Artifact.Effect.Context;
 import Image.ImageF32x4RGBAWithCache;
 import Artifact.Effect.ImplBase;
+import Property.Abstract;
 
 export namespace Artifact {
 
@@ -63,6 +64,10 @@ public:
     void setGPUImpl(std::shared_ptr<ArtifactEffectImplBase> impl);
     std::shared_ptr<ArtifactEffectImplBase> cpuImpl() const;
     std::shared_ptr<ArtifactEffectImplBase> gpuImpl() const;
+
+    // Property interface (use ArtifactCore::AbstractProperty)
+    virtual std::vector<ArtifactCore::AbstractProperty> getProperties() const;
+    virtual void setPropertyValue(const ArtifactCore::UniString& name, const QVariant& value);
 };
 
 typedef std::shared_ptr<ArtifactAbstractEffect> ArtifactAbstractEffectPtr;

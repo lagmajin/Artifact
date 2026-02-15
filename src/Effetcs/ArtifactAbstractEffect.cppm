@@ -11,6 +11,7 @@ import Artifact.Effect.Context;
 import Image.ImageF32x4RGBAWithCache;
 import Image.ImageF32x4_RGBA;
 import Artifact.Effect.ImplBase;
+import Property.Abstract;
 
 namespace Artifact {
 
@@ -144,6 +145,17 @@ std::shared_ptr<ArtifactEffectImplBase> ArtifactAbstractEffect::cpuImpl() const 
 
 std::shared_ptr<ArtifactEffectImplBase> ArtifactAbstractEffect::gpuImpl() const {
     return impl_->gpuImpl_;
+}
+
+std::vector<ArtifactCore::AbstractProperty> ArtifactAbstractEffect::getProperties() const {
+    // Default: return empty list. Subclasses should override to expose properties.
+    return {};
+}
+
+void ArtifactAbstractEffect::setPropertyValue(const ArtifactCore::UniString& name, const QVariant& value) {
+    Q_UNUSED(name);
+    Q_UNUSED(value);
+    // Default: no-op. Subclasses override.
 }
 
 }

@@ -1,5 +1,6 @@
 ﻿module;
 #include <QObject>
+#include <functional>
 #include <wobjectdefs.h>
 
 export module Artifact.Service.Playback;
@@ -9,6 +10,10 @@ import Frame.Position;
 import Frame.Rate;
 import Frame.Range;
 import Artifact.Composition.PlaybackController;
+import Artifact.Composition.Abstract;
+
+W_REGISTER_ARGTYPE(Artifact::ArtifactCompositionPtr)
+
 
 export namespace Artifact {
 
@@ -68,6 +73,9 @@ public:
     // Real-time mode
     bool isRealTime() const;
     void setRealTime(bool realTime);
+    
+    // Audio clock provider (allow external modules to supply a clock)
+    void setAudioClockProvider(const std::function<double()>& provider);
     
     // Composition management
     void setCurrentComposition(ArtifactCompositionPtr composition);

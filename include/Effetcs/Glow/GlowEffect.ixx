@@ -1,4 +1,4 @@
-module;
+﻿module;
 export module Artifact.Effect.Glow;
 
 import std;
@@ -81,6 +81,10 @@ private:
 public:
     GlowEffect();
     ~GlowEffect();
+
+    // Expose properties via AbstractProperty API
+    std::vector<ArtifactCore::AbstractProperty> getProperties() const override;
+    void setPropertyValue(const ArtifactCore::UniString& name, const QVariant& value) override;
 
     void setGlowGain(float gain);
     float glowGain() const;

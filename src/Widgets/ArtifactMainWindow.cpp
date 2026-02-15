@@ -34,6 +34,7 @@ import Widgets.KeyboardOverlayDialog;
 
 import Artifact.Project.Manager;
 import Artifact.Service.Project;
+import Artifact.Service.Playback;
 
 import Artifact.Widgets.Timeline;
 import Artifact.Widgets.ProjectManagerWidget;

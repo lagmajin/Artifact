@@ -199,7 +199,9 @@ bool DockGlowStyle::isDockWidgetActive(const QWidget* widget) const {
     auto dockWidget = qobject_cast<const ads::CDockWidget*>(widget);
     if (!dockWidget) return false;
     
-    return dockWidget->isCurrent();
+    // Use ADS API to determine whether the dock widget is the current tab
+    // in its dock area.
+    return dockWidget->isCurrentTab();
 }
 
 bool DockGlowStyle::isDockTabActive(const QWidget* widget) const {

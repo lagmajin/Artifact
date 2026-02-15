@@ -1,6 +1,7 @@
 ﻿module;
 #include <QTimer>
 #include <QElapsedTimer>
+#include <QDebug>
 #include <wobjectimpl.h>
 
 module Artifact.Composition.PlaybackController;
@@ -29,6 +30,7 @@ public:
     QTimer* timer_ = nullptr;
     QElapsedTimer elapsedTimer_;
     qint64 lastFrameTime_ = 0;
+    std::function<double()> audioClockProvider_ = nullptr;
     
     Impl() {
         timer_ = new QTimer();
@@ -60,18 +62,28 @@ public:
     }
     
     FramePosition nextFrame() const {
-        FramePosition next = currentFrame_;
-        next.setFrame(next.frame() + 1);
-        
-        if (next.frame() >= frameRange_.end().frame()) {
-            if (looping_) {
-                next = frameRange_.start();
-            } else {
-                // 範囲外なので停止
+        // Compute next frame depending on realTime mode or simple increment
+        if (realTime_ && audioClockProvider_) {
+            // Use audio clock to derive next frame
+            double seconds = audioClockProvider_();
+            double fps = frameRate_.framerate() * playbackSpeed_;
+            int64_t frameIndex = static_cast<int64_t>(seconds * fps);
+            FramePosition next(frameIndex);
+
+            if (next >= frameRange_.endPosition()) {
+                if (looping_) {
+                    return frameRange_.startPosition();
+                }
                 return FramePosition(-1);
             }
+            return next;
         }
-        
+
+        FramePosition next = currentFrame_ + 1;
+        if (next >= frameRange_.endPosition()) {
+            if (looping_) return frameRange_.startPosition();
+            return FramePosition(-1);
+        }
         return next;
     }
 };
@@ -94,6 +106,7 @@ void ArtifactCompositionPlaybackController::play() {
     impl_->timer_->setInterval(impl_->calculateInterval());
     impl_->startTimer();
     
+    qDebug() << "PlaybackController::play - interval" << impl_->calculateInterval();
     Q_EMIT playbackStateChanged(impl_->state_);
 }
 
@@ -113,6 +126,7 @@ void ArtifactCompositionPlaybackController::stop() {
     impl_->stopTimer();
     impl_->currentFrame_ = impl_->frameRange_.start();
     
+    qDebug() << "PlaybackController::stop";
     Q_EMIT playbackStateChanged(impl_->state_);
     Q_EMIT frameChanged(impl_->currentFrame_);
 }
@@ -127,38 +141,39 @@ void ArtifactCompositionPlaybackController::togglePlayPause() {
 
 void ArtifactCompositionPlaybackController::goToFrame(const FramePosition& position) {
     impl_->currentFrame_ = position;
+    qDebug() << "PlaybackController::goToFrame" << impl_->currentFrame_.framePosition();
     Q_EMIT frameChanged(impl_->currentFrame_);
 }
 
 void ArtifactCompositionPlaybackController::goToNextFrame() {
     FramePosition next = impl_->nextFrame();
-    if (next.frame() >= 0) {
+    // FramePosition supports isValid() to check
+    if (next.isValid()) {
         goToFrame(next);
     }
 }
 
 void ArtifactCompositionPlaybackController::goToPreviousFrame() {
     FramePosition prev = impl_->currentFrame_;
-    prev.setFrame(prev.frame() - 1);
-    
-    if (prev.frame() < impl_->frameRange_.start().frame()) {
+    prev = prev - 1;
+
+    if (prev < impl_->frameRange_.startPosition()) {
         if (impl_->looping_) {
-            prev = impl_->frameRange_.end();
-            prev.setFrame(prev.frame() - 1);
+            prev = impl_->frameRange_.endPosition() - 1;
         } else {
-            prev = impl_->frameRange_.start();
+            prev = impl_->frameRange_.startPosition();
         }
     }
-    
+
     goToFrame(prev);
 }
 
 void ArtifactCompositionPlaybackController::goToStartFrame() {
-    goToFrame(impl_->frameRange_.start());
+    goToFrame(impl_->frameRange_.startPosition());
 }
 
 void ArtifactCompositionPlaybackController::goToEndFrame() {
-    goToFrame(impl_->frameRange_.end());
+    goToFrame(impl_->frameRange_.endPosition());
 }
 
 bool ArtifactCompositionPlaybackController::isPlaying() const {
@@ -236,17 +251,23 @@ void ArtifactCompositionPlaybackController::setRealTime(bool realTime) {
     impl_->realTime_ = realTime;
 }
 
+void ArtifactCompositionPlaybackController::setAudioClockProvider(const std::function<double()>& provider) {
+    impl_->audioClockProvider_ = provider;
+}
+
 void ArtifactCompositionPlaybackController::onTimerTick() {
     if (impl_->state_ != PlaybackState::Playing) return;
     
     FramePosition next = impl_->nextFrame();
-    if (next.frame() < 0) {
+    if (!next.isValid()) {
         // ループなしで終了
+        qDebug() << "PlaybackController::onTimerTick - end of range, stopping";
         stop();
         return;
     }
     
     impl_->currentFrame_ = next;
+    qDebug() << "PlaybackController::onTimerTick - frame" << impl_->currentFrame_.framePosition();
     Q_EMIT frameChanged(impl_->currentFrame_);
 }
 

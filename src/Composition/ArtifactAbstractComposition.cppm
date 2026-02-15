@@ -133,8 +133,18 @@ void ArtifactAbstractComposition::Impl::removeLayer(const LayerID& id)
 
  void ArtifactAbstractComposition::Impl::setFramePosition(const FramePosition& position)
  {
+    // Set internal position
+    position_ = position;
 
- 	
+    // Synchronously evaluate each layer for the new frame position.
+    // This is a minimal, blocking evaluation: heavy work should be moved to
+    // a worker thread if needed.
+    auto all = layerMultiIndex_.all();
+    for (auto& layer : all) {
+        if (layer) {
+            layer->goToFrame(position.framePosition());
+        }
+    }
  }
 
  const FramePosition ArtifactAbstractComposition::Impl::framePosition() const
@@ -144,7 +154,8 @@ void ArtifactAbstractComposition::Impl::removeLayer(const LayerID& id)
 
  void ArtifactAbstractComposition::Impl::goToFrame(int64_t frame/*=0*/)
  {
-  position_ = FramePosition(frame);
+ // Use setFramePosition to perform synchronous evaluation when jumping to a frame
+ setFramePosition(FramePosition(frame));
  }
 
  QVector<ArtifactAbstractLayerPtr> ArtifactAbstractComposition::Impl::allLayer() const

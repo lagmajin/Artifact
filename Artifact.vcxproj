@@ -290,7 +290,9 @@
     <ClCompile Include="include\Service\ArtifactAudioService.ixx" />
     <ClCompile Include="include\Service\ArtifactClipboardService.ixx" />
     <ClCompile Include="include\Service\ArtifactEffectService.ixx" />
-    <ClCompile Include="include\Service\ArtifactPlaybackService.ixx" />
+    <ClCompile Include="include\Service\ArtifactPlaybackService.ixx">
+      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
+    </ClCompile>
     <ClCompile Include="include\Service\ArtifactProjectService.ixx" />
     <ClCompile Include="include\Service\ArtifactToolService.ixx">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
@@ -305,8 +307,12 @@
     <ClCompile Include="include\Widgets\ArtifactStatusBar.ixx" />
     <ClCompile Include="include\Widgets\Control\ArtifactPlaybackControlWidget.ixx" />
     <ClCompile Include="include\Widgets\Dialog\ArtifactRenderOutputSettingDialog.ixx" />
-    <ClCompile Include="include\Widgets\Dock\DockGlowStyle.ixx" />
-    <ClCompile Include="include\Widgets\Dock\DockStyleManager.ixx" />
+    <ClCompile Include="include\Widgets\Dock\DockGlowStyle.ixx">
+      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Widgets\Dock\DockStyleManager.ixx">
+      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
+    </ClCompile>
     <ClCompile Include="include\Widgets\Menu\ArtifactAnimationMenu.ixx">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
     </ClCompile>
@@ -464,7 +470,9 @@
     <ClCompile Include="src\Service\ArtifactAudioService.cpp" />
     <ClCompile Include="src\Service\ArtifactClipboardService.cpp" />
     <ClCompile Include="src\Service\ArtifactEffectService.cpp" />
-    <ClCompile Include="src\Service\ArtifactPlaybackService.cppm" />
+    <ClCompile Include="src\Service\ArtifactPlaybackService.cppm">
+      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+    </ClCompile>
     <ClCompile Include="src\Service\ArtifactProjectService.cpp">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
     </ClCompile>
@@ -490,8 +498,12 @@
     <ClCompile Include="src\Widgets\Dialog\ArtifactRenderOutputSettingDialog.cppm">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
     </ClCompile>
-    <ClCompile Include="src\Widgets\Dock\DockGlowStyle.cppm" />
-    <ClCompile Include="src\Widgets\Dock\DockStyleManager.cppm" />
+    <ClCompile Include="src\Widgets\Dock\DockGlowStyle.cppm">
+      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+    </ClCompile>
+    <ClCompile Include="src\Widgets\Dock\DockStyleManager.cppm">
+      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+    </ClCompile>
     <ClCompile Include="src\Widgets\Menu\ArtifactAnimationMenu.cppm">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
     </ClCompile>

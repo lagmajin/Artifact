@@ -1,5 +1,6 @@
 ﻿module;
 #include <QTimer>
+#include <QElapsedTimer>
 #include <wobjectimpl.h>
 
 module Artifact.Service.Playback;
@@ -15,54 +16,91 @@ namespace Artifact {
 
 using namespace ArtifactCore;
 
+class ArtifactPlaybackService; // forward declaration to use pointer in Impl
+
 W_OBJECT_IMPL(ArtifactPlaybackService)
 
 class ArtifactPlaybackService::Impl {
 public:
+    ArtifactPlaybackService* owner_ = nullptr;
     ArtifactCompositionPlaybackController* controller_ = nullptr;
     ArtifactCompositionPtr currentComposition_;
-    
-    Impl() {
+    QElapsedTimer audioTimer_;
+    double audioOffsetSeconds_ = 0.0;
+    bool audioRunning_ = false;
+    std::function<double()> externalAudioClockProvider_;
+
+    explicit Impl(ArtifactPlaybackService* owner)
+        : owner_(owner) {
         controller_ = new ArtifactCompositionPlaybackController();
-        
-        // コントローラーのシグナルをサービスに転送
+
+        // コントローラーのシグナルをサービスに転送（owner に直接接続）
         QObject::connect(controller_, &ArtifactCompositionPlaybackController::playbackStateChanged,
-                        [this](PlaybackState state) {
-            Q_EMIT static_cast<ArtifactPlaybackService*>(this)->playbackStateChanged(state);
-        });
-        
+                         owner_, &ArtifactPlaybackService::playbackStateChanged,
+                         Qt::DirectConnection);
+
         QObject::connect(controller_, &ArtifactCompositionPlaybackController::frameChanged,
-                        [this](const FramePosition& position) {
-            // コンポジションのフレーム位置も更新
+                         owner_, [this](const FramePosition& position) {
+            // コンポジションのフレーム位置も更新（同期で即時評価）
             if (currentComposition_) {
                 currentComposition_->setFramePosition(position);
             }
-            Q_EMIT static_cast<ArtifactPlaybackService*>(this)->frameChanged(position);
-        });
-        
+            Q_EMIT owner_->frameChanged(position);
+        }, Qt::DirectConnection);
+
         QObject::connect(controller_, &ArtifactCompositionPlaybackController::playbackSpeedChanged,
-                        [this](float speed) {
-            Q_EMIT static_cast<ArtifactPlaybackService*>(this)->playbackSpeedChanged(speed);
-        });
-        
+                         owner_, &ArtifactPlaybackService::playbackSpeedChanged,
+                         Qt::DirectConnection);
+
         QObject::connect(controller_, &ArtifactCompositionPlaybackController::loopingChanged,
-                        [this](bool loop) {
-            Q_EMIT static_cast<ArtifactPlaybackService*>(this)->loopingChanged(loop);
-        });
-        
+                         owner_, &ArtifactPlaybackService::loopingChanged,
+                         Qt::DirectConnection);
+
         QObject::connect(controller_, &ArtifactCompositionPlaybackController::frameRangeChanged,
-                        [this](const FrameRange& range) {
-            Q_EMIT static_cast<ArtifactPlaybackService*>(this)->frameRangeChanged(range);
+                         owner_, &ArtifactPlaybackService::frameRangeChanged,
+                         Qt::DirectConnection);
+
+        // Provide an audio clock provider backed by a local elapsed timer.
+        controller_->setAudioClockProvider([this]() -> double {
+            // If an external provider is set by other modules, prefer it.
+            if (externalAudioClockProvider_) {
+                return externalAudioClockProvider_();
+            }
+
+            double seconds = audioOffsetSeconds_;
+            if (audioRunning_) {
+                seconds += static_cast<double>(audioTimer_.elapsed()) / 1000.0;
+            }
+            return seconds;
         });
     }
-    
+
     ~Impl() {
         delete controller_;
+    }
+    void startAudioClock() {
+        if (!audioRunning_) {
+            audioTimer_.start();
+            audioRunning_ = true;
+        }
+    }
+    void pauseAudioClock() {
+        if (audioRunning_) {
+            audioOffsetSeconds_ += static_cast<double>(audioTimer_.elapsed()) / 1000.0;
+            audioRunning_ = false;
+        }
+    }
+    void stopAudioClock() {
+        audioOffsetSeconds_ = 0.0;
+        audioRunning_ = false;
+    }
+    void setExternalAudioClockProvider(const std::function<double()>& provider) {
+        externalAudioClockProvider_ = provider;
     }
 };
 
 ArtifactPlaybackService::ArtifactPlaybackService(QObject* parent)
-    : QObject(parent), impl_(new Impl()) {
+    : QObject(parent), impl_(new Impl(this)) {
 }
 
 ArtifactPlaybackService::~ArtifactPlaybackService() {
@@ -129,7 +167,7 @@ void ArtifactPlaybackService::goToEndFrame() {
 }
 
 bool ArtifactPlaybackService::isPlaying() const {
-    return impl_->controller_ ? impl_->controller_->isPlaying() : false;
+    return impl_ && impl_->controller_ ? impl_->controller_->isPlaying() : false;
 }
 
 bool ArtifactPlaybackService::isPaused() const {
@@ -201,6 +239,14 @@ bool ArtifactPlaybackService::isRealTime() const {
 void ArtifactPlaybackService::setRealTime(bool realTime) {
     if (impl_->controller_) {
         impl_->controller_->setRealTime(realTime);
+    }
+}
+
+void ArtifactPlaybackService::setAudioClockProvider(const std::function<double()>& provider) {
+    if (!impl_) return;
+    impl_->setExternalAudioClockProvider(provider);
+    if (impl_->controller_) {
+        impl_->controller_->setAudioClockProvider(provider);
     }
 }
 
