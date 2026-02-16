@@ -114,9 +114,6 @@
     <ClCompile Include="include\Application\ActiveContextService.ixx">
       <Filter>include</Filter>
     </ClCompile>
-    <ClCompile Include="src\AppMain.cppm">
-      <Filter>src</Filter>
-    </ClCompile>
     <ClCompile Include="include\Render\AritfactIRenderer.ixx">
       <Filter>include</Filter>
     </ClCompile>
@@ -697,6 +694,17 @@
     <ClCompile Include="src\Composition\ArtifactCompositionPlaybackController.cppm">
       <Filter>src</Filter>
     </ClCompile>
+    <ClCompile Include="src\AppMain.cppm">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Image\ImageF32xN.ixx" />
+    <ClCompile Include="include\Image\ImageF32x4_RGBA_Compat.ixx" />
+    <ClCompile Include="include\Image\ImageF32x4_RGBA.ixx" />
+    <ClCompile Include="include\Audio\IAudioDevice.ixx" />
+    <ClCompile Include="src\Audio\PortAudioDevice.cppm" />
+    <ClCompile Include="include\Audio\AudioClockProvider.ixx" />
+    <ClCompile Include="src\Audio\AudioClockProvider.cppm" />
+    <ClCompile Include="src\Audio\WASAPIDevice.cppm" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Generated\TestService.h" />

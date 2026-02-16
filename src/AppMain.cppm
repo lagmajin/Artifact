@@ -1,4 +1,10 @@
 ﻿
+module;
+#include <QtCore/QtGlobal>
+#include <QApplication>
+
+module Artifact.AppMain;
+
 #define _CRT_SECURE_NO_WARNINGS
 #pragma warning(disable:4996)
 #pragma push_macro("emit")
@@ -9,9 +15,6 @@
 #pragma pop_macro("emit")
 
 #include <opencv2/opencv.hpp>
-
-#include <QtCore/QtGlobal>
-#include <QApplication>
 
 #include <windows.h>
 #include <QDateTime>

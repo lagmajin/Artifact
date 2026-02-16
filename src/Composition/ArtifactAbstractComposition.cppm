@@ -8,7 +8,6 @@ module;
 #include <QHash>
 #include <QVector>
 #include <QMultiMap>
-#include <typeindex>
 #include <QString>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -18,6 +17,8 @@ module;
 module Artifact.Composition.Abstract;
 
 import std;
+
+#include <typeindex>
 import Container;
 import Frame.Position;
 import Composition.Settings;

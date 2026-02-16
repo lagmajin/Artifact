@@ -29,6 +29,8 @@ public:
     double audioOffsetSeconds_ = 0.0;
     bool audioRunning_ = false;
     std::function<double()> externalAudioClockProvider_;
+    // Use std::function-based provider to avoid depending on Audio module in this file
+    std::function<double()> playbackClockProvider_; // added provider
 
     explicit Impl(ArtifactPlaybackService* owner)
         : owner_(owner) {
@@ -96,6 +98,9 @@ public:
     }
     void setExternalAudioClockProvider(const std::function<double()>& provider) {
         externalAudioClockProvider_ = provider;
+    }
+    void setPlaybackClockProvider(const std::function<double()>& provider) {
+        setExternalAudioClockProvider(provider);
     }
 };
 
@@ -244,6 +249,7 @@ void ArtifactPlaybackService::setRealTime(bool realTime) {
 
 void ArtifactPlaybackService::setAudioClockProvider(const std::function<double()>& provider) {
     if (!impl_) return;
+    // Store provider in impl and forward to controller
     impl_->setExternalAudioClockProvider(provider);
     if (impl_->controller_) {
         impl_->controller_->setAudioClockProvider(provider);

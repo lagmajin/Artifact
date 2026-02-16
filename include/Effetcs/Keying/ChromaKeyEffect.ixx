@@ -1,4 +1,4 @@
-module;
+﻿module;
 export module Artifact.Effect.Keying.ChromaKey;
 
 import std;
@@ -44,6 +44,10 @@ private:
 public:
     ChromaKeyEffect();
     ~ChromaKeyEffect() = default;
+
+    // Expose properties via AbstractProperty API
+    std::vector<ArtifactCore::AbstractProperty> getProperties() const override;
+    void setPropertyValue(const ArtifactCore::UniString& name, const QVariant& value) override;
 
     void setKeyColor(const FloatRGBA& color);
     const FloatRGBA& keyColor() const;

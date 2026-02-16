@@ -76,6 +76,8 @@ public:
     
     // Audio clock provider (allow external modules to supply a clock)
     void setAudioClockProvider(const std::function<double()>& provider);
+    // Use forward declaration to avoid importing AudioClockProvider header here
+    void setPlaybackClockProvider(const std::function<double()>& provider);
     
     // Composition management
     void setCurrentComposition(ArtifactCompositionPtr composition);

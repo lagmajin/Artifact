@@ -1,5 +1,7 @@
 ﻿module;
-#include <opencv2/opencv.hpp>
+#include <QList>
+#include <QVariant>
+#include <opencv2/core/mat.hpp>
 
 module Artifact.Effect.Glow;
 
@@ -9,7 +11,6 @@ import Image.ImageF32x4RGBAWithCache;
 import Image.ImageF32x4_RGBA;
 import Glow; // ArtifactCoreのOpenCVグロー実装
 import Property.Abstract;
-import QtCore;
 
 namespace Artifact {
 

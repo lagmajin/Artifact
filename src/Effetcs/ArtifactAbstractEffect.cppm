@@ -1,6 +1,5 @@
 ﻿module;
 #include <QString>
-#include <opencv2/opencv.hpp>
 
 module Artifact.Effect.Abstract;
 

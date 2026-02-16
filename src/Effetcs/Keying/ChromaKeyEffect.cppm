@@ -1,6 +1,10 @@
-module;
-#include <opencv2/opencv.hpp>
+﻿module;
 #include <cmath>
+#include <QVariant>
+#include <QColor>
+
+// OpenCV is used in CPU implementation; include in implementation scope
+#include <opencv2/opencv.hpp>
 
 module Artifact.Effect.Keying.ChromaKey;
 
@@ -12,6 +16,9 @@ import Image.ImageF32x4RGBAWithCache;
 import Artifact.Effect.Abstract;
 import FloatRGBA;
 import Utils.String.UniString;
+import Property.Abstract;
+
+// Global includes for Qt types used in this implementation
 
 namespace Artifact {
  using namespace ArtifactCore;
@@ -80,6 +87,57 @@ void ChromaKeyEffectCPUImpl::applyCPU(const ArtifactCore::ImageF32x4RGBAWithCach
     ImageF32x4_RGBA dstImage;
     dstImage.setFromCVMat(dstMat);
     dst = ImageF32x4RGBAWithCache(dstImage);
+}
+// Properties - single definitions placed after implementation
+// Properties - single definitions placed after implementation
+std::vector<ArtifactCore::AbstractProperty> ChromaKeyEffect::getProperties() const {
+    std::vector<ArtifactCore::AbstractProperty> props;
+
+    ArtifactCore::AbstractProperty keyColorProp;
+    keyColorProp.setName("keyColor");
+    keyColorProp.setType(ArtifactCore::PropertyType::Color);
+    keyColorProp.setDefaultValue(QVariant());
+    props.push_back(keyColorProp);
+
+    ArtifactCore::AbstractProperty similarityProp;
+    similarityProp.setName("similarity");
+    similarityProp.setType(ArtifactCore::PropertyType::Float);
+    similarityProp.setDefaultValue(QVariant(static_cast<double>(similarity())));
+    similarityProp.setValue(QVariant(static_cast<double>(similarity())));
+    props.push_back(similarityProp);
+
+    ArtifactCore::AbstractProperty smoothProp;
+    smoothProp.setName("smoothness");
+    smoothProp.setType(ArtifactCore::PropertyType::Float);
+    smoothProp.setDefaultValue(QVariant(static_cast<double>(smoothness())));
+    smoothProp.setValue(QVariant(static_cast<double>(smoothness())));
+    props.push_back(smoothProp);
+
+    ArtifactCore::AbstractProperty spillProp;
+    spillProp.setName("spillReduction");
+    spillProp.setType(ArtifactCore::PropertyType::Float);
+    spillProp.setDefaultValue(QVariant(static_cast<double>(spillReduction())));
+    spillProp.setValue(QVariant(static_cast<double>(spillReduction())));
+    props.push_back(spillProp);
+
+    return props;
+}
+
+void ChromaKeyEffect::setPropertyValue(const ArtifactCore::UniString& name, const QVariant& value) {
+    QString n = name.toQString();
+    if (n == "similarity") {
+        setSimilarity(static_cast<float>(value.toDouble()));
+    } else if (n == "smoothness") {
+        setSmoothness(static_cast<float>(value.toDouble()));
+    } else if (n == "spillReduction") {
+        setSpillReduction(static_cast<float>(value.toDouble()));
+    } else if (n == "keyColor") {
+        // Expect QColor or other representation; best-effort
+        if (value.canConvert<QColor>()) {
+            QColor c = value.value<QColor>();
+            setKeyColor(FloatRGBA(c.redF(), c.greenF(), c.blueF(), c.alphaF()));
+        }
+    }
 }
 
 ChromaKeyEffect::ChromaKeyEffect() : ArtifactAbstractEffect() {

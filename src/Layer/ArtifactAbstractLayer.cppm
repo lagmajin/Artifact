@@ -1,17 +1,19 @@
 ﻿module;
 
-#include <array>
-#include <algorithm>
-#include <cmath>
-#include <limits>
 #include <QPointF>
 #include <QRectF>
 #include <wobjectcpp.h>
 #include <wobjectimpl.h>
 #include <QDebug>
+
 module Artifact.Layer.Abstract;
 
 import std;
+
+#include <array>
+#include <algorithm>
+#include <cmath>
+#include <limits>
 import Utils;
 import Layer.State;
 import Animation.Transform2D;
@@ -179,7 +181,20 @@ namespace Artifact {
 
  void ArtifactAbstractLayer::goToFrame(int64_t frameNumber /*= 0*/)
  {
+    // Minimal synchronous evaluation implementation.
+    // 1) Update internal state (could store current frame if needed)
+    // 2) Evaluate transforms/animation for this frame (AnimatableTransform2D/3D)
+    // 3) Evaluate each effect synchronously using CPU backend and update a local cache image
 
+    // For now we keep a very small local evaluation: create a temporary ImageF32x4RGBAWithCache
+    // and pass it through effects sequentially. Concrete layers (image/video) should override
+    // to supply actual source image for the frame. This generic path does nothing but serve as
+    // a fallback.
+
+    Q_UNUSED(frameNumber);
+
+    // Placeholder: subclasses override and perform real evaluation.
+    return;
  }
  bool ArtifactAbstractLayer::isAdjustmentLayer() const
  {

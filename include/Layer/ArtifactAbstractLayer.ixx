@@ -109,6 +109,9 @@ export namespace Artifact {
   void goToNextFrame();
   void goToPrevFrame();
   void goToFrame(int64_t frameNumber = 0);
+  // Optional cache API: subclasses may implement.
+  // bool getCachedFrame(const FramePosition& pos, ArtifactCore::ImageF32x4RGBAWithCache& out) const;
+  // void clearFrameCache();
  	/*Timeline*/
  	
   void setParentById(LayerID& id);

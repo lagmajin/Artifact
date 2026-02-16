@@ -6,10 +6,13 @@
 #include <QHBoxLayout>
 #include <QTabWidget>
 #include <QListWidget>
+#include <QFormLayout>
+#include <QLabel>
 #include <QPushButton>
 #include <QMenu>
 #include <QCursor>
 #include <cstdlib>
+
 module Widgets.Inspector;
 import std;
 import Utils.Id;
@@ -47,6 +50,8 @@ namespace Artifact {
    QListWidget* effectsListWidget = nullptr;
    QPushButton* addEffectButton = nullptr;
    QPushButton* removeEffectButton = nullptr;
+   QWidget* propertiesTabWidget = nullptr;
+   QFormLayout* propertiesFormLayout = nullptr;
 
    QMenu* inspectorMenu_ = nullptr;
 
@@ -64,6 +69,7 @@ namespace Artifact {
    void handleLayerSelected(const LayerID& id);
    void updateLayerInfo();
    void updateEffectsList();
+   void updatePropertiesForEffect(const QString& effectId);
    void handleAddEffectClicked();
    void handleAddGeneratorEffect();
    void handleRemoveEffectClicked();
@@ -75,6 +81,45 @@ namespace Artifact {
  {
 
  }
+
+void ArtifactInspectorWidget::Impl::updatePropertiesForEffect(const QString& effectId)
+{
+    if (!propertiesFormLayout) return;
+    // Clear existing widgets
+    QLayoutItem* item;
+    while ((item = propertiesFormLayout->takeAt(0)) != nullptr) {
+        if (item->widget()) {
+            delete item->widget();
+        }
+        delete item;
+    }
+
+    if (effectId.isEmpty()) return;
+
+    auto projectService = ArtifactProjectService::instance();
+    if (!projectService) return;
+    if (currentCompositionId_.isNil()) return;
+
+    auto findResult = projectService->findComposition(currentCompositionId_);
+    if (!findResult.success) return;
+    auto comp = findResult.ptr.lock();
+    if (!comp) return;
+    auto layer = comp->layerById(currentLayerId_);
+    if (!layer) return;
+
+    // Find effect by id
+    auto effect = layer->getEffect(ArtifactCore::UniString(effectId.toStdString()));
+    if (!effect) return;
+
+    // Query properties
+    auto props = effect->getProperties();
+    for (const auto& p : props) {
+        QLabel* label = new QLabel(p.getName());
+        QString valStr = p.getValue().toString();
+        QLabel* valueLabel = new QLabel(valStr);
+        propertiesFormLayout->addRow(label, valueLabel);
+    }
+}
 
  ArtifactInspectorWidget::Impl::~Impl()
  {
@@ -456,6 +501,12 @@ namespace Artifact {
   impl_->effectsTabWidget->setLayout(effectsLayout);
   impl_->tabWidget->addTab(impl_->effectsTabWidget, "Rasterizer Effects");
 
+  // ================== Properties Tab ==================
+  impl_->propertiesTabWidget = new QWidget();
+  impl_->propertiesFormLayout = new QFormLayout();
+  impl_->propertiesTabWidget->setLayout(impl_->propertiesFormLayout);
+  impl_->tabWidget->addTab(impl_->propertiesTabWidget, "Properties");
+
   // ボタンシグナルを接続
   QObject::connect(impl_->addEffectButton, &QPushButton::clicked, this, [this]() {
    impl_->handleAddEffectClicked();
@@ -493,6 +544,13 @@ namespace Artifact {
    // コンポジション作成シグナルに接続
    QObject::connect(projectService, &ArtifactProjectService::compositionCreated, this, [this](const CompositionID& id) {
     impl_->handleCompositionCreated(id);
+   });
+
+   // When effect list selection changes, update properties
+   QObject::connect(impl_->effectsListWidget, &QListWidget::currentItemChanged, this, [this](QListWidgetItem* cur, QListWidgetItem*) {
+       if (!cur) return;
+       QString effectId = cur->data(Qt::UserRole).toString();
+       impl_->updatePropertiesForEffect(effectId);
    });
 
    // レイヤー作成シグナルに接続（作成されたレイヤーを自動選択）
