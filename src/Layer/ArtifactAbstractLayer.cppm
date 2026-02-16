@@ -20,6 +20,10 @@ import Animation.Transform2D;
 import Frame.Position;
 import Artifact.Layer.Settings;
 import Artifact.Effect.Abstract;
+import Artifact.Effect.ImplBase;
+import Artifact.Mask.LayerMask;
+import Image.ImageF32x4_RGBA;
+import Image.ImageF32x4RGBAWithCache;
 
 
 namespace Artifact {
@@ -39,7 +43,10 @@ namespace Artifact {
     // エフェクトコンテナ
     std::vector<std::shared_ptr<ArtifactAbstractEffect>> effects_;
 
-  public:
+    // マスクコンテナ
+    std::vector<LayerMask> masks_;
+
+   public:
    Impl();
    ~Impl();
    std::type_index type_index_ = typeid(void);
@@ -59,8 +66,16 @@ namespace Artifact {
    void clearEffects();
    std::vector<std::shared_ptr<ArtifactAbstractEffect>> getEffects() const;
    std::shared_ptr<ArtifactAbstractEffect> getEffect(const UniString& effectID) const;
-   int effectCount() const;
-  };
+    int effectCount() const;
+
+    // マスク管理
+    void addMask(const LayerMask& mask);
+    void removeMask(int index);
+    void setMask(int index, const LayerMask& mask);
+    LayerMask getMask(int index) const;
+    int maskCount() const;
+    void clearMasks();
+   };
 
   ArtifactAbstractLayer::Impl::Impl()
   {
@@ -193,7 +208,42 @@ namespace Artifact {
 
     Q_UNUSED(frameNumber);
 
-    // Placeholder: subclasses override and perform real evaluation.
+    // Basic evaluation: evaluate transforms and apply effects sequentially if any.
+    // This is a conservative default; concrete layers should override to provide
+    // actual source content for the frame.
+
+    // Evaluate transforms (sync)
+    (void)transform2D();
+    (void)transform3D();
+
+    // If there are effects, run them using CPU impl sequentially on a temporary image.
+    auto effects = getEffects();
+    if (effects.empty()) return;
+
+    // Create a small dummy image matching sourceSize as placeholder
+    Size_2D sz = sourceSize();
+    if (sz.width <= 0 || sz.height <= 0) return;
+
+    ArtifactCore::ImageF32x4_RGBA baseColor;
+    baseColor.resize(sz.width, sz.height);
+    ArtifactCore::ImageF32x4RGBAWithCache temp(baseColor);
+
+    ArtifactCore::ImageF32x4RGBAWithCache cur = temp;
+    ArtifactCore::ImageF32x4RGBAWithCache out;
+    for (const auto& eff : effects) {
+        if (!eff) continue;
+        // prefer CPU path for deterministic synchronous evaluation
+        eff->setComputeMode(Artifact::ComputeMode::CPU);
+        auto cpuBackend = eff->cpuImpl();
+        if (cpuBackend) {
+            cpuBackend->applyCPU(cur, out);
+        } else {
+            out = cur.DeepCopy();
+        }
+        cur = out.DeepCopy();
+    }
+
+    // TODO: store cur into layer cache if present
     return;
  }
  bool ArtifactAbstractLayer::isAdjustmentLayer() const
@@ -362,8 +412,37 @@ QJsonObject ArtifactAbstractLayer::toJson() const
 
  ArtifactAbstractLayerPtr ArtifactAbstractLayer::fromJson(const QJsonObject& obj)
  {
-   return ArtifactAbstractLayerPtr();
+  // Default: create base layer and apply properties where possible
+  auto layer = std::make_shared<ArtifactAbstractLayer>();
+  layer->applyPropertiesFromJson(obj);
+  return layer;
  }
+
+void ArtifactAbstractLayer::applyPropertiesFromJson(const QJsonObject& obj)
+{
+    Q_UNUSED(obj);
+    // Default implementation: apply effect properties if matching effects exist
+    // Subclasses should override to handle layer-specific fields
+    if (!obj.contains("effects") || !obj["effects"].isArray()) return;
+    auto arr = obj["effects"].toArray();
+    for (const auto& ev : arr) {
+        if (!ev.isObject()) continue;
+        auto eobj = ev.toObject();
+        if (!eobj.contains("id")) continue;
+        UniString eid(eobj["id"].toString().toStdString());
+        auto eff = getEffect(eid);
+        if (!eff) continue;
+        if (!eobj.contains("properties") || !eobj["properties"].isArray()) continue;
+        auto props = eobj["properties"].toArray();
+        for (const auto& pv : props) {
+            if (!pv.isObject()) continue;
+            auto pobj = pv.toObject();
+            QString name = pobj.value("name").toString();
+            QVariant val = pobj.value("value").toVariant();
+            eff->setPropertyValue(UniString(name.toStdString()), val);
+        }
+    }
+}
 
  void ArtifactAbstractLayer::Impl::addEffect(std::shared_ptr<ArtifactAbstractEffect> effect)
  {
@@ -449,7 +528,83 @@ QJsonObject ArtifactAbstractLayer::toJson() const
   // TODO: 実際のレイヤーコンテンツをサムネイルにレンダリング
   qDebug() << "[Thumbnail] Generated placeholder thumbnail:" << width << "x" << height;
 
-  return thumbnail;
- }
+     return thumbnail;
+    }
 
-};
+   // -- Mask Impl methods --
+
+   void ArtifactAbstractLayer::Impl::addMask(const LayerMask& mask)
+   {
+    masks_.push_back(mask);
+    qDebug() << "[ArtifactAbstractLayer] Mask added, count:" << masks_.size();
+   }
+
+   void ArtifactAbstractLayer::Impl::removeMask(int index)
+   {
+    if (index >= 0 && index < static_cast<int>(masks_.size())) {
+     masks_.erase(masks_.begin() + index);
+     qDebug() << "[ArtifactAbstractLayer] Mask removed at index:" << index;
+    }
+   }
+
+   void ArtifactAbstractLayer::Impl::setMask(int index, const LayerMask& mask)
+   {
+    if (index >= 0 && index < static_cast<int>(masks_.size()))
+     masks_[index] = mask;
+   }
+
+   LayerMask ArtifactAbstractLayer::Impl::getMask(int index) const
+   {
+    if (index >= 0 && index < static_cast<int>(masks_.size()))
+     return masks_[index];
+    return {};
+   }
+
+   int ArtifactAbstractLayer::Impl::maskCount() const
+   {
+    return static_cast<int>(masks_.size());
+   }
+
+   void ArtifactAbstractLayer::Impl::clearMasks()
+   {
+    masks_.clear();
+   }
+
+   // -- Mask public methods --
+
+   void ArtifactAbstractLayer::addMask(const LayerMask& mask)
+   {
+    impl_->addMask(mask);
+   }
+
+   void ArtifactAbstractLayer::removeMask(int index)
+   {
+    impl_->removeMask(index);
+   }
+
+   void ArtifactAbstractLayer::setMask(int index, const LayerMask& mask)
+   {
+    impl_->setMask(index, mask);
+   }
+
+   LayerMask ArtifactAbstractLayer::mask(int index) const
+   {
+    return impl_->getMask(index);
+   }
+
+   int ArtifactAbstractLayer::maskCount() const
+   {
+    return impl_->maskCount();
+   }
+
+   void ArtifactAbstractLayer::clearMasks()
+   {
+    impl_->clearMasks();
+   }
+
+   bool ArtifactAbstractLayer::hasMasks() const
+   {
+    return impl_->maskCount() > 0;
+   }
+
+  };

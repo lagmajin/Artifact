@@ -705,6 +705,18 @@
     <ClCompile Include="include\Audio\AudioClockProvider.ixx" />
     <ClCompile Include="src\Audio\AudioClockProvider.cppm" />
     <ClCompile Include="src\Audio\WASAPIDevice.cppm" />
+    <ClCompile Include="include\Undo\UndoManager.ixx" />
+    <ClCompile Include="src\Undo\UndoManager.cppm" />
+    <ClCompile Include="include\Mask\MaskPath.ixx" />
+    <ClCompile Include="src\Mask\MaskPath.cppm" />
+    <ClCompile Include="include\Mask\LayerMask.ixx" />
+    <ClCompile Include="src\Mask\LayerMask.cppm" />
+    <ClCompile Include="include\Localization\Localization.ixx" />
+    <ClCompile Include="src\Localization\Localization.cppm" />
+    <ClCompile Include="include\AI\AIClient.ixx" />
+    <ClCompile Include="src\AI\AIClient.cppm" />
+    <ClCompile Include="include\Widgets\AIChatWidget.ixx" />
+    <ClCompile Include="src\Widgets\AIChatWidget.cppm" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Generated\TestService.h" />
@@ -731,6 +743,8 @@
     <None Include=".editorconfig" />
     <None Include="docs\AssetIcons.md" />
     <None Include="copilot-instructions.md" />
+    <None Include="docs\Notes\feature-discussion-summary.md" />
+    <None Include="README.md" />
   </ItemGroup>
   <ItemGroup>
     <Filter Include="src">

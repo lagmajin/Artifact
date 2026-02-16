@@ -11,16 +11,24 @@
 #include <QPushButton>
 #include <QMenu>
 #include <QCursor>
+#include <QDoubleSpinBox>
+#include <QSpinBox>
+#include <QCheckBox>
+#include <QLineEdit>
+#include <QColorDialog>
+#include <QVariant>
 #include <cstdlib>
 
 module Widgets.Inspector;
 import std;
 import Utils.Id;
+import Utils.String.UniString;
 import Widgets.Utils.CSS;
 
 import Artifact.Service.Project;
 import Artifact.Composition.Abstract;
 import Artifact.Effect.Abstract;
+import Undo.UndoManager;
 import Generator.Effector;
 
 namespace Artifact {
@@ -111,13 +119,100 @@ void ArtifactInspectorWidget::Impl::updatePropertiesForEffect(const QString& eff
     auto effect = layer->getEffect(ArtifactCore::UniString(effectId.toStdString()));
     if (!effect) return;
 
-    // Query properties
+    // Query properties and create editable widgets
     auto props = effect->getProperties();
     for (const auto& p : props) {
         QLabel* label = new QLabel(p.getName());
-        QString valStr = p.getValue().toString();
-        QLabel* valueLabel = new QLabel(valStr);
-        propertiesFormLayout->addRow(label, valueLabel);
+
+        QWidget* editor = nullptr;
+        auto type = p.getType();
+        QVariant curVal = p.getValue();
+
+        switch (type) {
+            case ArtifactCore::PropertyType::Float: {
+                auto* spin = new QDoubleSpinBox();
+                spin->setRange(-1e6, 1e6);
+                spin->setSingleStep(0.01);
+                spin->setValue(curVal.toDouble());
+                editor = spin;
+                {
+                    QVariant oldVal = curVal;
+                    QObject::connect(spin, qOverload<double>(&QDoubleSpinBox::valueChanged), [this, effect, name = p.getName(), oldVal](double v){
+                        // push undo command instead of directly setting
+                        UndoManager::instance()->push(std::make_unique<SetPropertyCommand>(effect, UniString(name.toStdString()), oldVal, QVariant(v)));
+                        // refresh to show updated derived props
+                        updatePropertiesForEffect(effect->effectID().toQString());
+                    });
+                }
+                break;
+            }
+            case ArtifactCore::PropertyType::Integer: {
+                auto* spin = new QSpinBox();
+                spin->setRange(std::numeric_limits<int>::min(), std::numeric_limits<int>::max());
+                spin->setValue(curVal.toInt());
+                editor = spin;
+                {
+                    QVariant oldVal = curVal;
+                    QObject::connect(spin, qOverload<int>(&QSpinBox::valueChanged), [this, effect, name = p.getName(), oldVal](int v){
+                        UndoManager::instance()->push(std::make_unique<SetPropertyCommand>(effect, UniString(name.toStdString()), oldVal, QVariant(v)));
+                        updatePropertiesForEffect(effect->effectID().toQString());
+                    });
+                }
+                break;
+            }
+            case ArtifactCore::PropertyType::Boolean: {
+                auto* cb = new QCheckBox();
+                cb->setChecked(curVal.toBool());
+                editor = cb;
+                {
+                    QVariant oldVal = curVal;
+                    QObject::connect(cb, &QCheckBox::toggled, [this, effect, name = p.getName(), oldVal](bool v){
+                        UndoManager::instance()->push(std::make_unique<SetPropertyCommand>(effect, UniString(name.toStdString()), oldVal, QVariant(v)));
+                        updatePropertiesForEffect(effect->effectID().toQString());
+                    });
+                }
+                break;
+            }
+            case ArtifactCore::PropertyType::Color: {
+                auto* btn = new QPushButton("Choose...");
+                QColor initial = p.getColorValue();
+                {
+                    QVariant oldVal = curVal;
+                    QObject::connect(btn, &QPushButton::clicked, [this, effect, name = p.getName(), initial, btn, oldVal]() mutable {
+                        QColor col = QColorDialog::getColor(initial);
+                        if (col.isValid()) {
+                            UndoManager::instance()->push(std::make_unique<SetPropertyCommand>(effect, UniString(name.toStdString()), oldVal, QVariant(col)));
+                            // update button background
+                            QString ss = QString("background-color: %1").arg(col.name());
+                            btn->setStyleSheet(ss);
+                        }
+                    });
+                }
+                editor = btn;
+                break;
+            }
+            case ArtifactCore::PropertyType::String: {
+                auto* le = new QLineEdit(curVal.toString());
+                editor = le;
+                {
+                    QVariant oldVal = curVal;
+                    QObject::connect(le, &QLineEdit::editingFinished, [this, effect, name = p.getName(), le, oldVal]() {
+                        UndoManager::instance()->push(std::make_unique<SetPropertyCommand>(effect, UniString(name.toStdString()), oldVal, QVariant(le->text())));
+                        updatePropertiesForEffect(effect->effectID().toQString());
+                    });
+                }
+                break;
+            }
+            default: {
+                QLabel* valueLabel = new QLabel(curVal.toString());
+                editor = valueLabel;
+                break;
+            }
+        }
+
+        if (editor) {
+            propertiesFormLayout->addRow(label, editor);
+        }
     }
 }
 

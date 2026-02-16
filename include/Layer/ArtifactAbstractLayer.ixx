@@ -21,6 +21,7 @@ import Layer.State;
 import Animation.Transform2D;
 import Animation.Transform3D;
 import Artifact.Effect.Abstract;
+import Artifact.Mask.LayerMask;
 
 import <cstdint> ;
 
@@ -109,6 +110,8 @@ export namespace Artifact {
   void goToNextFrame();
   void goToPrevFrame();
   void goToFrame(int64_t frameNumber = 0);
+  // Apply properties from JSON object (used when loading project)
+  void applyPropertiesFromJson(const QJsonObject& obj);
   // Optional cache API: subclasses may implement.
   // bool getCachedFrame(const FramePosition& pos, ArtifactCore::ImageF32x4RGBAWithCache& out) const;
   // void clearFrameCache();
@@ -140,9 +143,19 @@ export namespace Artifact {
   std::vector<std::shared_ptr<class ArtifactAbstractEffect>> getEffects() const;
   std::shared_ptr<class ArtifactAbstractEffect> getEffect(const UniString& effectID) const;
   int effectCount() const;
-  /*Effects*/
+   /*Effects*/
 
- public:
+   /*Masks*/
+   void addMask(const LayerMask& mask);
+   void removeMask(int index);
+   void setMask(int index, const LayerMask& mask);
+   LayerMask mask(int index) const;
+   int maskCount() const;
+   void clearMasks();
+   bool hasMasks() const;
+   /*Masks*/
+
+  public:
 
 
  };
