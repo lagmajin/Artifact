@@ -82,6 +82,7 @@ export namespace Artifact {
   bool isVisual() const;
 
   QJsonDocument toJson() const;
+  static std::shared_ptr<ArtifactAbstractComposition> fromJson(const QJsonDocument& doc);
 
   QVector<ArtifactAbstractLayerPtr> allLayer();
 

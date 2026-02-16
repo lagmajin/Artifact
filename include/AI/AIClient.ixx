@@ -6,6 +6,8 @@ import Utils.String.UniString;
 
 export namespace Artifact {
 
+using namespace ArtifactCore;
+
 class AIClient {
 private:
     class Impl;

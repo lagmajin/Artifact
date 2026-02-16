@@ -1,4 +1,6 @@
 ﻿module;
+#include <wobjectdefs.h>
+#include <QString>
 #include <QVariant>
 #include <QObject>
 export module Undo.UndoManager;
@@ -8,6 +10,7 @@ import Utils.String.UniString;
 import Artifact.Effect.Abstract;
 
 export namespace Artifact {
+ using namespace ArtifactCore;
 
 class UndoCommand {
 public:

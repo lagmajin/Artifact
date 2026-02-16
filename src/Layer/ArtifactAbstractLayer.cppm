@@ -5,6 +5,11 @@
 #include <wobjectcpp.h>
 #include <wobjectimpl.h>
 #include <QDebug>
+// JSON and QVariant used in serialization
+#include <QJsonObject>
+#include <QJsonArray>
+#include <QVariant>
+#include <QColor>
 
 module Artifact.Layer.Abstract;
 
@@ -405,22 +410,69 @@ const AnimatableTransform3D& ArtifactAbstractLayer::transform3D() const
 QJsonObject ArtifactAbstractLayer::toJson() const
 {
 
+    QJsonObject obj;
+    // Basic metadata
+    obj["id"] = id().toString();
+    obj["name"] = layerName();
+    obj["type"] = static_cast<int>(LayerType::Unknown);
 
+    // Effects and their properties
+    QJsonArray effectsArr;
+    for (const auto& eff : getEffects()) {
+        if (!eff) continue;
+        QJsonObject eobj;
+        eobj["id"] = eff->effectID().toQString();
+        eobj["displayName"] = eff->displayName().toQString();
 
- return QJsonObject();
+        QJsonArray propsArr;
+        auto props = eff->getProperties();
+        for (const auto& p : props) {
+            QJsonObject pobj;
+            pobj["name"] = p.getName();
+            pobj["type"] = static_cast<int>(p.getType());
+            // Serialize value depending on type
+            switch (p.getType()) {
+                case ArtifactCore::PropertyType::Float:
+                case ArtifactCore::PropertyType::Integer:
+                case ArtifactCore::PropertyType::Boolean:
+                case ArtifactCore::PropertyType::String:
+                    pobj["value"] = QJsonValue::fromVariant(p.getValue());
+                    break;
+                case ArtifactCore::PropertyType::Color: {
+                    QColor c = p.getColorValue();
+                    QJsonObject col;
+                    col["r"] = c.redF();
+                    col["g"] = c.greenF();
+                    col["b"] = c.blueF();
+                    col["a"] = c.alphaF();
+                    pobj["value"] = col;
+                    break;
+                }
+                default:
+                    pobj["value"] = QJsonValue();
+                    break;
+            }
+            propsArr.append(pobj);
+        }
+        eobj["properties"] = propsArr;
+        effectsArr.append(eobj);
+    }
+    obj["effects"] = effectsArr;
+
+    return obj;
 }
 
  ArtifactAbstractLayerPtr ArtifactAbstractLayer::fromJson(const QJsonObject& obj)
  {
-  // Default: create base layer and apply properties where possible
-  auto layer = std::make_shared<ArtifactAbstractLayer>();
-  layer->applyPropertiesFromJson(obj);
-  return layer;
+  // Default: base class is abstract and cannot be instantiated here.
+  // Subclasses should implement their own fromJson factory. Return nullptr
+  // to indicate this layer cannot be constructed generically.
+  Q_UNUSED(obj);
+  return ArtifactAbstractLayerPtr();
  }
 
 void ArtifactAbstractLayer::applyPropertiesFromJson(const QJsonObject& obj)
 {
-    Q_UNUSED(obj);
     // Default implementation: apply effect properties if matching effects exist
     // Subclasses should override to handle layer-specific fields
     if (!obj.contains("effects") || !obj["effects"].isArray()) return;
@@ -438,7 +490,26 @@ void ArtifactAbstractLayer::applyPropertiesFromJson(const QJsonObject& obj)
             if (!pv.isObject()) continue;
             auto pobj = pv.toObject();
             QString name = pobj.value("name").toString();
-            QVariant val = pobj.value("value").toVariant();
+            int t = pobj.value("type").toInt(static_cast<int>(ArtifactCore::PropertyType::String));
+            ArtifactCore::PropertyType ptype = static_cast<ArtifactCore::PropertyType>(t);
+            QVariant val;
+            if (pobj.contains("value")) {
+                if (ptype == ArtifactCore::PropertyType::Color && pobj.value("value").isObject()) {
+                    auto col = pobj.value("value").toObject();
+                    double r = col.value("r").toDouble(0.0);
+                    double g = col.value("g").toDouble(0.0);
+                    double b = col.value("b").toDouble(0.0);
+                    double a = col.value("a").toDouble(1.0);
+                    QColor qc;
+                    qc.setRedF(static_cast<float>(r));
+                    qc.setGreenF(static_cast<float>(g));
+                    qc.setBlueF(static_cast<float>(b));
+                    qc.setAlphaF(static_cast<float>(a));
+                    val = QVariant(qc);
+                } else {
+                    val = pobj.value("value").toVariant();
+                }
+            }
             eff->setPropertyValue(UniString(name.toStdString()), val);
         }
     }
