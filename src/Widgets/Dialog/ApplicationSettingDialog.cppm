@@ -13,6 +13,14 @@
 #include <QComboBox>
 #include <QLineEdit>
 #include <QSlider>
+#include <QProgressBar>
+#include <QTimer>
+#include <QMessageBox>
+#include <QThread>
+#ifdef Q_OS_WIN
+#include <windows.h>
+#include <psapi.h>
+#endif
 
 
  module ApplicationSettingDialog;
@@ -353,27 +361,197 @@ namespace ArtifactCore {
  }
 
 
- LabelColorSettingWidget::LabelColorSettingWidget(const QString& labelname, const QColor& color, QWidget* parent /*= NULL*/)
- {
 
- }
+LabelColorSettingWidget::LabelColorSettingWidget(const QString& labelname, const QColor& color, QWidget* parent /*= NULL*/)
+{
+}
 
-
-
- LabelColorSettingWidget::~LabelColorSettingWidget()
- {
-
- }
+LabelColorSettingWidget::~LabelColorSettingWidget()
+{
+}
 	
- MemoryAndCpuSettingPage::MemoryAndCpuSettingPage(QWidget* parent /*= nullptr*/)
- {
+// MemoryAndCpuSettingPage Implementation
+class MemoryAndCpuSettingPage::Impl {
+public:
+    Impl() : memoryUsageBar_(nullptr), memoryLabel_(nullptr), cpuUsageBar_(nullptr), cpuLabel_(nullptr), workerThreadsSpinBox_(nullptr), autoTuneButton_(nullptr), clearCacheButton_(nullptr), updateTimer_(nullptr), prevProcessTimeMs_(0), prevTickMs_(0), processorCount_(1) {}
+    ~Impl() {}
 
- }
+    QProgressBar* memoryUsageBar_;
+    QLabel* memoryLabel_;
+    QProgressBar* cpuUsageBar_;
+    QLabel* cpuLabel_;
+    QSpinBox* workerThreadsSpinBox_;
+    QPushButton* autoTuneButton_;
+    QPushButton* clearCacheButton_;
+    QTimer* updateTimer_;
 
- MemoryAndCpuSettingPage::~MemoryAndCpuSettingPage()
- {
+    // for CPU calculation (Windows)
+    unsigned long long prevProcessTimeMs_;
+    unsigned long long prevTickMs_;
+    int processorCount_;
 
- }
+    void initializeProcessorCount()
+    {
+#ifdef Q_OS_WIN
+        SYSTEM_INFO sysInfo;
+        GetSystemInfo(&sysInfo);
+        processorCount_ = (int)sysInfo.dwNumberOfProcessors;
+        if (processorCount_ < 1) processorCount_ = 1;
+#else
+        processorCount_ = QThread::idealThreadCount();
+        if (processorCount_ < 1) processorCount_ = 1;
+#endif
+    }
+
+    unsigned long long fileTimeToMs(const FILETIME& ft)
+    {
+        unsigned long long high = (unsigned long long)ft.dwHighDateTime;
+        unsigned long long low = (unsigned long long)ft.dwLowDateTime;
+        unsigned long long val100ns = (high << 32) | low; // 100-ns intervals
+        return val100ns / 10000ULL; // to ms
+    }
+
+    void updateStats(QWidget* parent)
+    {
+#ifdef Q_OS_WIN
+        // Memory (system)
+        MEMORYSTATUSEX memx;
+        memx.dwLength = sizeof(memx);
+        GlobalMemoryStatusEx(&memx);
+        unsigned long long totalPhys = memx.ullTotalPhys;
+        unsigned long long availPhys = memx.ullAvailPhys;
+        unsigned long long usedPhys = totalPhys - availPhys;
+        int memPercent = 0;
+        if (totalPhys > 0) memPercent = int((usedPhys * 100ULL) / totalPhys);
+
+        if (memoryUsageBar_) memoryUsageBar_->setValue(memPercent);
+        if (memoryLabel_) memoryLabel_->setText(QString("%1 / %2 (%3%)").arg(QString::number(usedPhys / (1024*1024))).arg(QString::number(totalPhys / (1024*1024))).arg(memPercent));
+
+        // CPU (process percentage)
+        FILETIME ftCreation, ftExit, ftKernel, ftUser;
+        if (GetProcessTimes(GetCurrentProcess(), &ftCreation, &ftExit, &ftKernel, &ftUser)) {
+            unsigned long long procMs = fileTimeToMs(ftKernel) + fileTimeToMs(ftUser);
+            unsigned long long curTick = GetTickCount64();
+
+            if (prevTickMs_ == 0) {
+                prevTickMs_ = curTick;
+                prevProcessTimeMs_ = procMs;
+            }
+
+            unsigned long long deltaProc = procMs - prevProcessTimeMs_;
+            unsigned long long deltaTime = curTick - prevTickMs_;
+
+            double cpuPercent = 0.0;
+            if (deltaTime > 0) {
+                cpuPercent = (double)deltaProc / (double)deltaTime / (double)processorCount_ * 100.0;
+                if (cpuPercent < 0.0) cpuPercent = 0.0;
+                if (cpuPercent > 100.0) cpuPercent = 100.0 * processorCount_; // clamp high but allow multi-core >100 theoretical
+            }
+
+            int cpuInt = int(cpuPercent);
+            if (cpuUsageBar_) cpuUsageBar_->setValue(qBound(0, cpuInt, 100));
+            if (cpuLabel_) cpuLabel_->setText(QString("%1% (process)").arg(QString::number(cpuPercent, 'f', 1)));
+
+            prevProcessTimeMs_ = procMs;
+            prevTickMs_ = curTick;
+        }
+#else
+        Q_UNUSED(parent);
+        // Non-Windows platforms: show placeholders
+        if (memoryUsageBar_) memoryUsageBar_->setValue(0);
+        if (memoryLabel_) memoryLabel_->setText("N/A");
+        if (cpuUsageBar_) cpuUsageBar_->setValue(0);
+        if (cpuLabel_) cpuLabel_->setText("N/A");
+#endif
+    }
+};
+
+MemoryAndCpuSettingPage::MemoryAndCpuSettingPage(QWidget* parent /*= nullptr*/)
+ : QWidget(parent), impl_(new Impl())
+{
+    impl_->initializeProcessorCount();
+
+    auto* mainLayout = new QVBoxLayout(this);
+
+    auto* statsGroup = new QGroupBox("Memory & CPU", this);
+    auto* statsLayout = new QVBoxLayout(statsGroup);
+
+    // Memory
+    auto* memLayout = new QHBoxLayout();
+    memLayout->addWidget(new QLabel("System Memory Usage:", this));
+    impl_->memoryUsageBar_ = new QProgressBar(this);
+    impl_->memoryUsageBar_->setRange(0, 100);
+    impl_->memoryUsageBar_->setValue(0);
+    impl_->memoryUsageBar_->setTextVisible(false);
+    memLayout->addWidget(impl_->memoryUsageBar_);
+    impl_->memoryLabel_ = new QLabel("", this);
+    memLayout->addWidget(impl_->memoryLabel_);
+    statsLayout->addLayout(memLayout);
+
+    // CPU
+    auto* cpuLayout = new QHBoxLayout();
+    cpuLayout->addWidget(new QLabel("CPU Usage:", this));
+    impl_->cpuUsageBar_ = new QProgressBar(this);
+    impl_->cpuUsageBar_->setRange(0, 100);
+    impl_->cpuUsageBar_->setValue(0);
+    impl_->cpuUsageBar_->setTextVisible(false);
+    cpuLayout->addWidget(impl_->cpuUsageBar_);
+    impl_->cpuLabel_ = new QLabel("", this);
+    cpuLayout->addWidget(impl_->cpuLabel_);
+    statsLayout->addLayout(cpuLayout);
+
+    mainLayout->addWidget(statsGroup);
+
+    // Performance tuning
+    auto* perfGroup = new QGroupBox("Performance Tuning", this);
+    auto* perfLayout = new QVBoxLayout(perfGroup);
+
+    auto* threadLayout = new QHBoxLayout();
+    threadLayout->addWidget(new QLabel("Worker Threads:", this));
+    impl_->workerThreadsSpinBox_ = new QSpinBox(this);
+    impl_->workerThreadsSpinBox_->setRange(1, qMax(1, impl_->processorCount_));
+    impl_->workerThreadsSpinBox_->setValue(qMax(1, impl_->processorCount_ - 1));
+    threadLayout->addWidget(impl_->workerThreadsSpinBox_);
+    impl_->autoTuneButton_ = new QPushButton("Auto-tune", this);
+    threadLayout->addWidget(impl_->autoTuneButton_);
+    threadLayout->addStretch();
+    perfLayout->addLayout(threadLayout);
+
+    impl_->clearCacheButton_ = new QPushButton("Clear Cache", this);
+    perfLayout->addWidget(impl_->clearCacheButton_);
+
+    mainLayout->addWidget(perfGroup);
+
+    mainLayout->addStretch();
+
+    // Timer for live updates
+    impl_->updateTimer_ = new QTimer(this);
+    connect(impl_->updateTimer_, &QTimer::timeout, this, [this]() {
+        impl_->updateStats(this);
+    });
+    impl_->updateTimer_->start(1000);
+
+    // Auto-tune handler
+    connect(impl_->autoTuneButton_, &QPushButton::clicked, this, [this]() {
+        int recommended = qMax(1, impl_->processorCount_ - 1);
+        impl_->workerThreadsSpinBox_->setValue(recommended);
+    });
+
+    // Clear cache handler (placeholder)
+    connect(impl_->clearCacheButton_, &QPushButton::clicked, this, [this]() {
+        // TODO: wire into actual cache clearing; placeholder visual feedback
+        QMessageBox::information(this, "Clear Cache", "Cache cleared (placeholder).");
+    });
+}
+
+MemoryAndCpuSettingPage::~MemoryAndCpuSettingPage()
+{
+    if (impl_) {
+        if (impl_->updateTimer_) impl_->updateTimer_->stop();
+        delete impl_;
+        impl_ = nullptr;
+    }
+}
  class ApplicationSettingDialog::Impl
  {
  private:
