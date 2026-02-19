@@ -8,8 +8,6 @@ import Utils.String.UniString;
 
 export namespace Artifact {
 
- using namespace ArtifactCore;
-
 class PowerShellWidget : public QWidget {
  W_OBJECT(PowerShellWidget)
 private:
@@ -19,15 +17,12 @@ public:
     PowerShellWidget(QWidget* parent = nullptr);
     ~PowerShellWidget();
 
-    // Run a PowerShell command and return output (synchronous helper)
-    UniString runCommand(const UniString& command);
+    ArtifactCore::UniString runCommand(const ArtifactCore::UniString& command);
+    void runCommandAsync(const ArtifactCore::UniString& command);
+    void appendLog(const ArtifactCore::UniString& text);
 
-    // Run asynchronously and emit signal when done
-    void runCommandAsync(const UniString& command);
-
-    void appendLog(const UniString& text);
-
-    // Signals
-    void commandFinished(const UniString& output) W_SIGNAL(commandFinished, output);
+    void commandFinished(const ArtifactCore::UniString& output) W_SIGNAL(commandFinished, output);
 };
+
+} // namespace Artifact
 

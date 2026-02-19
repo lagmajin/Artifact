@@ -10,7 +10,7 @@ import std;
 import Frame.Position;
 import Frame.Rate;
 import Frame.Range;
-import Artifact.Composition.InOutPoints;
+// import Artifact.Composition.InOutPoints; // forward declare below instead
 
 W_REGISTER_ARGTYPE(ArtifactCore::FramePosition)
 W_REGISTER_ARGTYPE(ArtifactCore::FrameRange)
@@ -20,6 +20,8 @@ W_REGISTER_ARGTYPE(ArtifactCore::FrameRate)
 export namespace Artifact {
 
 using namespace ArtifactCore;
+
+class ArtifactInOutPoints; // forward declaration
 
 enum class PlaybackState {
     Stopped,

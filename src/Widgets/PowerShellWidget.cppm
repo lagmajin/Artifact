@@ -4,6 +4,7 @@
 #include <QLineEdit>
 #include <QPushButton>
 #include <QProcess>
+#include <wobjectimpl.h>
 
 module Widgets.PowerShellWidget;
 
@@ -11,6 +12,10 @@ import std;
 import Utils.String.UniString;
 
 namespace Artifact {
+
+using ArtifactCore::UniString;
+
+W_OBJECT_IMPL(PowerShellWidget)
 
 class PowerShellWidget::Impl {
 public:
