@@ -8,17 +8,15 @@ module;
 #include <QHash>
 #include <QVector>
 #include <QMultiMap>
+#include <typeindex>
 #include <QString>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
-#include <QImage>
 
 module Artifact.Composition.Abstract;
 
 import std;
-
-#include <typeindex>
 import Container;
 import Frame.Position;
 import Composition.Settings;
@@ -46,13 +44,6 @@ namespace Artifact {
   CompositionID id_;
   //PlaybackClock playbackClock_;  // 高精度再生クロック
   
-  // Playback related
-  bool isPlaying_ = false;
-  float playbackSpeed_ = 1.0f;
-  bool looping_ = false;
-  FrameRange frameRange_;
-  FrameRate frameRate_ = FrameRate(30.0f);
-  
   AppendLayerToCompositionResult appendLayerTop(ArtifactAbstractLayerPtr layer);
   AppendLayerToCompositionResult appendLayerBottom(ArtifactAbstractLayerPtr layer);
   bool containsLayerById(const LayerID& id) const;
@@ -70,38 +61,14 @@ namespace Artifact {
   ArtifactAbstractLayerPtr backMostLayer() const;
   bool hasVideo() const;
   bool hasAudio() const;
+
+  bool isPlaying_ = false;
  };
 
  ArtifactAbstractComposition::Impl::Impl()
  {
 
  }
-
-std::shared_ptr<ArtifactAbstractComposition> ArtifactAbstractComposition::fromJson(const QJsonDocument& doc)
-{
-    if (!doc.isObject()) return nullptr;
-    QJsonObject obj = doc.object();
-    // ID取得
-    CompositionID compId;
-    if (obj.contains("id")) {
-        compId = CompositionID(obj["id"].toString());
-    }
-    // 仮: デフォルトパラメータで生成
-    ArtifactCompositionInitParams params;
-    auto comp = std::make_shared<ArtifactAbstractComposition>(compId, params);
-    // レイヤー復元
-    if (obj.contains("layers") && obj["layers"].isArray()) {
-        QJsonArray arr = obj["layers"].toArray();
-        for (const auto& v : arr) {
-            if (v.isObject()) {
-                auto layer = ArtifactAbstractLayer::fromJson(v.toObject());
-                if (layer) comp->appendLayerTop(layer);
-            }
-        }
-    }
-    // 必要に応じて他のプロパティも復元
-    return comp;
-}
 
  ArtifactAbstractComposition::Impl::~Impl()
  {
@@ -146,32 +113,18 @@ void ArtifactAbstractComposition::Impl::removeLayer(const LayerID& id)
 
  void ArtifactAbstractComposition::Impl::goToStartFrame()
  {
-  goToFrame(0);
+  //goToFrame(0);
  }
 
  void ArtifactAbstractComposition::Impl::goToEndFrame()
  {
-  // TODO: settings_ does not have frameRange() method
-  // if (!settings_.frameRange().isNil()) {
-  //  goToFrame(settings_.frameRange().end());
-  // }
-  goToFrame(0); // Temporary placeholder
+
  }
 
  void ArtifactAbstractComposition::Impl::setFramePosition(const FramePosition& position)
  {
-    // Set internal position
-    position_ = position;
 
-    // Synchronously evaluate each layer for the new frame position.
-    // This is a minimal, blocking evaluation: heavy work should be moved to
-    // a worker thread if needed.
-    auto all = layerMultiIndex_.all();
-    for (auto& layer : all) {
-        if (layer) {
-            layer->goToFrame(position.framePosition());
-        }
-    }
+ 	
  }
 
  const FramePosition ArtifactAbstractComposition::Impl::framePosition() const
@@ -181,8 +134,7 @@ void ArtifactAbstractComposition::Impl::removeLayer(const LayerID& id)
 
  void ArtifactAbstractComposition::Impl::goToFrame(int64_t frame/*=0*/)
  {
- // Use setFramePosition to perform synchronous evaluation when jumping to a frame
- setFramePosition(FramePosition(frame));
+  
  }
 
  QVector<ArtifactAbstractLayerPtr> ArtifactAbstractComposition::Impl::allLayer() const
@@ -267,10 +219,7 @@ ArtifactAbstractLayerPtr ArtifactAbstractComposition::layerById(const LayerID& i
 
  void ArtifactAbstractComposition::setBackGroundColor(const FloatColor& color)
  {
-  if (impl_) {
-   // TODO: settings_ does not have setBackgroundColor() method
-   // impl_->settings_.setBackgroundColor(color);
-  }
+
  }
  
  void ArtifactAbstractComposition::setFramePosition(const FramePosition& position)
@@ -280,7 +229,7 @@ ArtifactAbstractLayerPtr ArtifactAbstractComposition::layerById(const LayerID& i
 
  void ArtifactAbstractComposition::goToStartFrame()
  {
-  impl_->goToStartFrame();
+  impl_->goToEndFrame();
  }
 
  void ArtifactAbstractComposition::goToEndFrame()
@@ -290,7 +239,7 @@ ArtifactAbstractLayerPtr ArtifactAbstractComposition::layerById(const LayerID& i
 
  void ArtifactAbstractComposition::goToFrame(int64_t frameNumber /*= 0*/)
  {
-  impl_->goToFrame(frameNumber);
+
  }
 
  bool ArtifactAbstractComposition::hasVideo() const
@@ -366,80 +315,6 @@ bool ArtifactAbstractComposition::isPlaying() const
  return impl_->isPlaying_;
 }
 
-void ArtifactAbstractComposition::play()
-{
- if (impl_->isPlaying_) return;
- impl_->isPlaying_ = true;
- // TODO: 再生コントローラーに通知
-}
-
-void ArtifactAbstractComposition::pause()
-{
- if (!impl_->isPlaying_) return;
- impl_->isPlaying_ = false;
- // TODO: 再生コントローラーに通知
-}
-
-void ArtifactAbstractComposition::stop()
-{
- impl_->isPlaying_ = false;
- impl_->position_ = FramePosition(0); // 開始位置に戻す
- // TODO: 再生コントローラーに通知
-}
-
-void ArtifactAbstractComposition::togglePlayPause()
-{
- if (impl_->isPlaying_) {
-  pause();
- } else {
-  play();
- }
-}
-
-float ArtifactAbstractComposition::playbackSpeed() const
-{
- return impl_->playbackSpeed_;
-}
-
-void ArtifactAbstractComposition::setPlaybackSpeed(float speed)
-{
- impl_->playbackSpeed_ = qBound(0.1f, speed, 10.0f);
- // TODO: 再生コントローラーに通知
-}
-
-bool ArtifactAbstractComposition::isLooping() const
-{
- return impl_->looping_;
-}
-
-void ArtifactAbstractComposition::setLooping(bool loop)
-{
- impl_->looping_ = loop;
- // TODO: 再生コントローラーに通知
-}
-
-FrameRange ArtifactAbstractComposition::frameRange() const
-{
- return impl_->frameRange_;
-}
-
-void ArtifactAbstractComposition::setFrameRange(const FrameRange& range)
-{
- impl_->frameRange_ = range;
- // TODO: 再生コントローラーに通知
-}
-
-FrameRate ArtifactAbstractComposition::frameRate() const
-{
- return impl_->frameRate_;
-}
-
-void ArtifactAbstractComposition::setFrameRate(const FrameRate& rate)
-{
- impl_->frameRate_ = rate;
- // TODO: 再生コントローラーに通知
-}
-
 QJsonDocument ArtifactAbstractComposition::toJson() const
 {
     QJsonObject obj;
@@ -481,21 +356,7 @@ std::shared_ptr<ArtifactAbstractComposition> ArtifactAbstractComposition::fromJs
     }
     // 必要に応じて他のプロパティも復元
     return comp;
- }
- */
-
- QImage ArtifactAbstractComposition::getThumbnail(int width, int height) const
- {
-  // サムネイル用に黒いイメージを作成（プレースホルダー実装）
-  QImage thumbnail(width, height, QImage::Format_ARGB32);
-  thumbnail.fill(QColor(0, 0, 0, 255));  // 黒で塗りつぶし
-
-  // TODO: 実際のコンポジションコンテンツをサムネイルにレンダリング
-  // 例：レイヤーをすべてレンダリングしてサムネイルに合成
-  qDebug() << "[Composition Thumbnail] Generated placeholder thumbnail:" 
-           << width << "x" << height << "layers:" << impl_->layerMultiIndex_.all().size();
-
-  return thumbnail;
- }
+}
+*/
 
 };
