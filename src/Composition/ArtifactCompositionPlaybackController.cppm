@@ -10,6 +10,8 @@ import std;
 import Frame.Position;
 import Frame.Rate;
 import Frame.Range;
+import Artifact.Composition.InOutPoints;
+import Artifact.Composition.PlaybackController;
 
 namespace Artifact {
 
@@ -31,6 +33,9 @@ public:
     QElapsedTimer elapsedTimer_;
     qint64 lastFrameTime_ = 0;
     std::function<double()> audioClockProvider_ = nullptr;
+    
+    // In/Out Points
+    ArtifactInOutPoints* inOutPoints_ = nullptr;
     
     Impl() {
         timer_ = new QTimer();
@@ -69,10 +74,23 @@ public:
             double fps = frameRate_.framerate() * playbackSpeed_;
             int64_t frameIndex = static_cast<int64_t>(seconds * fps);
             FramePosition next(frameIndex);
+            
+            // Apply in/out points
+            FramePosition start = frameRange_.startPosition();
+            FramePosition end = frameRange_.endPosition();
+            
+            if (inOutPoints_) {
+                if (inOutPoints_->hasInPoint()) {
+                    start = *inOutPoints_->inPoint();
+                }
+                if (inOutPoints_->hasOutPoint()) {
+                    end = *inOutPoints_->outPoint();
+                }
+            }
 
-            if (next >= frameRange_.endPosition()) {
+            if (next >= end) {
                 if (looping_) {
-                    return frameRange_.startPosition();
+                    return start;
                 }
                 return FramePosition(-1);
             }
@@ -80,8 +98,22 @@ public:
         }
 
         FramePosition next = currentFrame_ + 1;
-        if (next >= frameRange_.endPosition()) {
-            if (looping_) return frameRange_.startPosition();
+        
+        // Apply in/out points
+        FramePosition start = frameRange_.startPosition();
+        FramePosition end = frameRange_.endPosition();
+        
+        if (inOutPoints_) {
+            if (inOutPoints_->hasInPoint()) {
+                start = *inOutPoints_->inPoint();
+            }
+            if (inOutPoints_->hasOutPoint()) {
+                end = *inOutPoints_->outPoint();
+            }
+        }
+        
+        if (next >= end) {
+            if (looping_) return start;
             return FramePosition(-1);
         }
         return next;
@@ -253,6 +285,78 @@ void ArtifactCompositionPlaybackController::setRealTime(bool realTime) {
 
 void ArtifactCompositionPlaybackController::setAudioClockProvider(const std::function<double()>& provider) {
     impl_->audioClockProvider_ = provider;
+}
+
+void ArtifactCompositionPlaybackController::setInOutPoints(ArtifactInOutPoints* inOutPoints) {
+    impl_->inOutPoints_ = inOutPoints;
+    
+    // Connect to in/out point changes
+    if (inOutPoints) {
+        QObject::connect(inOutPoints, &ArtifactInOutPoints::inPointChanged,
+                         this, [this]() { updateRangeFromInOutPoints(); });
+        QObject::connect(inOutPoints, &ArtifactInOutPoints::outPointChanged,
+                         this, [this]() { updateRangeFromInOutPoints(); });
+    }
+}
+
+ArtifactInOutPoints* ArtifactCompositionPlaybackController::inOutPoints() const {
+    return impl_->inOutPoints_;
+}
+
+void ArtifactCompositionPlaybackController::updateRangeFromInOutPoints() {
+    if (!impl_->inOutPoints_) return;
+    
+    // Update the effective playback range
+    FrameRange compRange = impl_->frameRange_;
+    FrameRange effectiveRange = impl_->inOutPoints_->effectiveRange(
+        compRange.startPosition(), 
+        compRange.endPosition()
+    );
+    
+    // Update current frame if needed
+    if (impl_->inOutPoints_->hasInPoint()) {
+        auto inPoint = impl_->inOutPoints_->inPoint();
+        if (impl_->currentFrame_ < *inPoint) {
+            impl_->currentFrame_ = *inPoint;
+            Q_EMIT frameChanged(impl_->currentFrame_);
+        }
+    }
+}
+
+void ArtifactCompositionPlaybackController::goToNextMarker() {
+    if (!impl_->inOutPoints_) return;
+    
+    auto next = impl_->inOutPoints_->nextMarker(impl_->currentFrame_);
+    if (next) {
+        goToFrame(*next);
+    }
+}
+
+void ArtifactCompositionPlaybackController::goToPreviousMarker() {
+    if (!impl_->inOutPoints_) return;
+    
+    auto prev = impl_->inOutPoints_->previousMarker(impl_->currentFrame_);
+    if (prev) {
+        goToFrame(*prev);
+    }
+}
+
+void ArtifactCompositionPlaybackController::goToNextChapter() {
+    if (!impl_->inOutPoints_) return;
+    
+    auto next = impl_->inOutPoints_->nextChapter(impl_->currentFrame_);
+    if (next) {
+        goToFrame(*next);
+    }
+}
+
+void ArtifactCompositionPlaybackController::goToPreviousChapter() {
+    if (!impl_->inOutPoints_) return;
+    
+    auto prev = impl_->inOutPoints_->previousChapter(impl_->currentFrame_);
+    if (prev) {
+        goToFrame(*prev);
+    }
 }
 
 void ArtifactCompositionPlaybackController::onTimerTick() {
