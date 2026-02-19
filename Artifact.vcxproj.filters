@@ -216,9 +216,6 @@
     <ClCompile Include="include\Widgets\Render\ArtifactCompositionViewerFooter.ixx">
       <Filter>include</Filter>
     </ClCompile>
-    <ClCompile Include="src\Widgets\Menu\ArtifactEditMenu.cppm">
-      <Filter>src\Widgets</Filter>
-    </ClCompile>
     <ClCompile Include="src\Service\ArtifactEffectService.cpp">
       <Filter>src</Filter>
     </ClCompile>
@@ -227,9 +224,6 @@
     </ClCompile>
     <ClCompile Include="include\Effetcs\ArtifactGlobalEffectManager.ixx">
       <Filter>include</Filter>
-    </ClCompile>
-    <ClCompile Include="src\Widgets\Menu\ArtifactFileMenu.cppm">
-      <Filter>src\Widgets</Filter>
     </ClCompile>
     <ClCompile Include="src\Widgets\Viewer\ArtifactContentsViewer.cpp">
       <Filter>src</Filter>
@@ -242,9 +236,6 @@
     </ClCompile>
     <ClCompile Include="src\Widgets\Menu\Test\ArtifactImageProcessingTestMenu.cppm">
       <Filter>src</Filter>
-    </ClCompile>
-    <ClCompile Include="src\Widgets\Menu\ArtifactHelpMenu.cppm">
-      <Filter>src\Widgets</Filter>
     </ClCompile>
     <ClCompile Include="src\Layer\ArtifactLayerInitParams.cppm">
       <Filter>src</Filter>
@@ -477,9 +468,6 @@
     </ClCompile>
     <ClCompile Include="src\Widgets\Render\ArtifactOgreRenderWindow.cpp">
       <Filter>src</Filter>
-    </ClCompile>
-    <ClCompile Include="include\Widgets\Menu\ArtifactMenuBar.ixx">
-      <Filter>src\Widgets</Filter>
     </ClCompile>
     <ClCompile Include="src\Preview\ArtifactPreviewCompositionPipeline.cppm">
       <Filter>src</Filter>
@@ -717,6 +705,22 @@
     <ClCompile Include="src\AI\AIClient.cppm" />
     <ClCompile Include="include\Widgets\AIChatWidget.ixx" />
     <ClCompile Include="src\Widgets\AIChatWidget.cppm" />
+    <ClCompile Include="src\Widgets\Menu\ArtifactHelpMenu.cppm">
+      <Filter>src\Widgets\Menu</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Widgets\Menu\ArtifactEditMenu.cppm">
+      <Filter>src\Widgets\Menu</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Widgets\Menu\ArtifactFileMenu.cppm">
+      <Filter>src\Widgets\Menu</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Widgets\Menu\ArtifactMenuBar.ixx">
+      <Filter>include</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Core\SystemStats.ixx" />
+    <ClCompile Include="src\Core\SystemStats.cppm" />
+    <ClCompile Include="include\Widgets\PowerShellWidget.ixx" />
+    <ClCompile Include="src\Widgets\PowerShellWidget.cppm" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Generated\TestService.h" />

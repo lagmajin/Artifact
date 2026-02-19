@@ -7,7 +7,7 @@
 #include <algorithm>
 #include <string>
 
-import Artifact.Mask.Path;
+module Artifact.Mask.Path;
 
 import std;
 import Utils.String.UniString;
