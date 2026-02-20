@@ -10,6 +10,7 @@ import std;
 import Frame.Position;
 import Frame.Rate;
 import Frame.Range;
+// import Artifact.Composition.InOutPoints; // module not yet in project build
 
 namespace Artifact {
 
@@ -31,6 +32,9 @@ public:
     QElapsedTimer elapsedTimer_;
     qint64 lastFrameTime_ = 0;
     std::function<double()> audioClockProvider_ = nullptr;
+    
+    // In/Out Points (stub until module is added to build)
+    void* inOutPoints_ = nullptr;
     
     Impl() {
         timer_ = new QTimer();
@@ -70,9 +74,15 @@ public:
             int64_t frameIndex = static_cast<int64_t>(seconds * fps);
             FramePosition next(frameIndex);
 
-            if (next >= frameRange_.endPosition()) {
+            // Apply in/out points
+            FramePosition start = frameRange_.startPosition();
+            FramePosition end = frameRange_.endPosition();
+
+            // TODO: restore InOutPoints integration when module is added to build
+
+            if (next >= end) {
                 if (looping_) {
-                    return frameRange_.startPosition();
+                    return start;
                 }
                 return FramePosition(-1);
             }
@@ -80,8 +90,15 @@ public:
         }
 
         FramePosition next = currentFrame_ + 1;
-        if (next >= frameRange_.endPosition()) {
-            if (looping_) return frameRange_.startPosition();
+        
+        // Apply in/out points
+        FramePosition start = frameRange_.startPosition();
+        FramePosition end = frameRange_.endPosition();
+
+        // TODO: restore InOutPoints integration when module is added to build
+        
+        if (next >= end) {
+            if (looping_) return start;
             return FramePosition(-1);
         }
         return next;
@@ -253,6 +270,30 @@ void ArtifactCompositionPlaybackController::setRealTime(bool realTime) {
 
 void ArtifactCompositionPlaybackController::setAudioClockProvider(const std::function<double()>& provider) {
     impl_->audioClockProvider_ = provider;
+}
+
+void ArtifactCompositionPlaybackController::setInOutPoints(ArtifactInOutPoints* /*inOutPoints*/) {
+    // TODO: restore when Artifact.Composition.InOutPoints module is added to build
+}
+
+ArtifactInOutPoints* ArtifactCompositionPlaybackController::inOutPoints() const {
+    return nullptr;
+}
+
+void ArtifactCompositionPlaybackController::goToNextMarker() {
+    // TODO: restore when Artifact.Composition.InOutPoints module is added to build
+}
+
+void ArtifactCompositionPlaybackController::goToPreviousMarker() {
+    // TODO: restore when Artifact.Composition.InOutPoints module is added to build
+}
+
+void ArtifactCompositionPlaybackController::goToNextChapter() {
+    // TODO: restore when Artifact.Composition.InOutPoints module is added to build
+}
+
+void ArtifactCompositionPlaybackController::goToPreviousChapter() {
+    // TODO: restore when Artifact.Composition.InOutPoints module is added to build
 }
 
 void ArtifactCompositionPlaybackController::onTimerTick() {

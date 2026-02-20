@@ -10,6 +10,7 @@ import std;
 import Frame.Position;
 import Frame.Rate;
 import Frame.Range;
+// import Artifact.Composition.InOutPoints; // forward declare below instead
 
 W_REGISTER_ARGTYPE(ArtifactCore::FramePosition)
 W_REGISTER_ARGTYPE(ArtifactCore::FrameRange)
@@ -19,6 +20,8 @@ W_REGISTER_ARGTYPE(ArtifactCore::FrameRate)
 export namespace Artifact {
 
 using namespace ArtifactCore;
+
+class ArtifactInOutPoints; // forward declaration
 
 enum class PlaybackState {
     Stopped,
@@ -79,6 +82,16 @@ public:
     bool isRealTime() const;
     void setRealTime(bool realTime);
     void setAudioClockProvider(const std::function<double()>& provider);
+    
+    // In/Out Points integration
+    void setInOutPoints(ArtifactInOutPoints* inOutPoints);
+    ArtifactInOutPoints* inOutPoints() const;
+    
+    // Navigation to markers
+    void goToNextMarker();
+    void goToPreviousMarker();
+    void goToNextChapter();
+    void goToPreviousChapter();
     
 public: // signals
     void playbackStateChanged(PlaybackState state)
