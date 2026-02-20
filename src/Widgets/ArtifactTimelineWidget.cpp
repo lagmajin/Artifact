@@ -10,6 +10,8 @@
 #include <QMouseEvent>
 #include <QWheelEvent>
 #include <QScrollBar>
+#include <QGraphicsRectItem>
+#include <QBrush>
 #include <QResizeEvent>
 #include <cmath>
 #include <algorithm>
@@ -51,6 +53,7 @@ public:
  std::vector<ClipItem*> clips_;
  std::vector<ClipItem*> selectedClips_;
  TimelineScene* parent_;
+  QGraphicsRectItem* highlightRect = nullptr;
   
  Impl(TimelineScene* parent) : parent_(parent) {}
  ~Impl() {
@@ -59,6 +62,11 @@ public:
    delete clip;
   }
   clips_.clear();
+  if (highlightRect) {
+    parent_->removeItem(highlightRect);
+    delete highlightRect;
+    highlightRect = nullptr;
+  }
  }
   
  double getTotalTrackHeight() const {
@@ -134,6 +142,34 @@ void TimelineScene::removeTrack(int trackIndex)
 int TimelineScene::trackCount() const
 {
  return static_cast<int>(impl_->trackHeights_.size());
+}
+
+void TimelineScene::highlightTrack(int trackIndex)
+{
+  if (!impl_) return;
+  if (trackIndex < 0 || trackIndex >= static_cast<int>(impl_->trackHeights_.size())) return;
+  double y = getTrackYPosition(trackIndex);
+  double h = impl_->trackHeights_[trackIndex];
+  QRectF rect(sceneRect().left(), y, sceneRect().width(), h);
+  if (!impl_->highlightRect) {
+    impl_->highlightRect = new QGraphicsRectItem(rect);
+    impl_->highlightRect->setBrush(QBrush(QColor(255, 255, 0, 40)));
+    impl_->highlightRect->setPen(Qt::NoPen);
+    impl_->highlightRect->setZValue(500);
+    addItem(impl_->highlightRect);
+  } else {
+    impl_->highlightRect->setRect(rect);
+  }
+}
+
+void TimelineScene::clearTrackHighlight()
+{
+  if (!impl_) return;
+  if (impl_->highlightRect) {
+    removeItem(impl_->highlightRect);
+    delete impl_->highlightRect;
+    impl_->highlightRect = nullptr;
+  }
 }
 
 double TimelineScene::trackHeight(int trackIndex) const

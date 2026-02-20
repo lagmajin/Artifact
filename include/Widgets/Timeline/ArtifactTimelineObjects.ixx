@@ -1,6 +1,7 @@
 ﻿module ;
 #include <QColor>
 #include <QGraphicsItem>
+#include <QGraphicsSceneMouseEvent>
 #include <wobjectdefs.h>
 
 #include "qnamespace.h"
@@ -31,12 +32,17 @@ export namespace Artifact
   class Impl;
   Impl* impl_;
  public:
+  W_OBJECT(ClipItem)
   ClipItem(double start, double duration, double height);
   ~ClipItem();
   QRectF boundingRect() const override;
   void paint(QPainter* painter, const QStyleOptionGraphicsItem* option, QWidget* widget = nullptr) override;
  protected:
   QVariant itemChange(GraphicsItemChange change, const QVariant& value) override;
+  // Mouse event overrides for drag handling
+  void mousePressEvent(QGraphicsSceneMouseEvent* event) override;
+  void mouseMoveEvent(QGraphicsSceneMouseEvent* event) override;
+  void mouseReleaseEvent(QGraphicsSceneMouseEvent* event) override;
 
  public:
   // Called by child resize handles when moved
@@ -50,12 +56,11 @@ export namespace Artifact
   double getDuration() const;
   void setStart(double start);
   void setDuration(double duration);
-  
-  // Mouse events for dragging
-  void onMousePressEvent(QGraphicsSceneMouseEvent* event);
-  void onMouseMoveEvent(QGraphicsSceneMouseEvent* event);
-  void onMouseReleaseEvent(QGraphicsSceneMouseEvent* event);
 
+  // Drag lifecycle signals (foundation): emit during drag so external code can react
+  void dragStarted(ClipItem* clip) W_SIGNAL(dragStarted,clip);
+  void dragMoved(ClipItem* clip, double sceneX, double sceneY) W_SIGNAL(dragMoved,clip,sceneX,sceneY);
+  void dragEnded(ClipItem* clip, double sceneX, double sceneY) W_SIGNAL(dragEnded,clip,sceneX,sceneY);
  };
 
 

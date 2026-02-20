@@ -1,12 +1,16 @@
 ﻿module;
 #include <QColor>
+#include <wobjectimpl.h>
 #include <QGraphicsItem>
+#include <QGraphicsRectItem>
+#include <QGraphicsSceneMouseEvent>
 #include <QPainter>
 #include <QStyleOptionGraphicsItem>
 #include <QWidget>
 #include <QVariant>
 #include <QPointF>
 #include <QRectF>
+#include <QBrush>
 #include <algorithm>
 
 module Artifact.Timeline.Objects;
@@ -23,6 +27,11 @@ public:
     double minDuration = 10.0;
     ResizeHandle* leftHandle = nullptr;
     ResizeHandle* rightHandle = nullptr;
+    // Drag/ghost support
+    bool isDragging = false;
+    QGraphicsRectItem* ghostRect = nullptr;
+    QPointF dragStartScenePos;
+    QPointF dragStartItemPos;
     Impl() {}
     ~Impl() {}
 };
@@ -36,6 +45,8 @@ public:
   setFlag(ItemSendsGeometryChanges);
   setCursor(Qt::SizeHorCursor);
  }
+
+W_OBJECT_IMPL(ClipItem)
 
 QRectF ResizeHandle::boundingRect() const {
     return QRectF(0, 0, 6, parentItem() ? parentItem()->boundingRect().height() : 20);
@@ -217,25 +228,59 @@ void ClipItem::setDuration(double duration)
     }
 }
 
-void ClipItem::onMousePressEvent(QGraphicsSceneMouseEvent* event)
+void ClipItem::mousePressEvent(QGraphicsSceneMouseEvent* event)
 {
-    // Store initial mouse position for dragging
-    Q_UNUSED(event);
+    if (!impl_) return;
+    impl_->dragStartScenePos = event->scenePos();
+    impl_->dragStartItemPos = pos();
+    impl_->isDragging = false;
+    // toggle selection on click
     setSelected(!isSelected());
-    update();
+    QGraphicsObject::mousePressEvent(event);
 }
 
-void ClipItem::onMouseMoveEvent(QGraphicsSceneMouseEvent* event)
+void ClipItem::mouseMoveEvent(QGraphicsSceneMouseEvent* event)
 {
-    Q_UNUSED(event);
-    // Dragging is handled by QGraphicsItem's ItemIsMovable flag
-    update();
+    if (!impl_) return;
+    QPointF delta = event->scenePos() - impl_->dragStartScenePos;
+    // start drag if moved beyond threshold
+    if (!impl_->isDragging && (std::abs(delta.x()) > 4 || std::abs(delta.y()) > 4)) {
+        impl_->isDragging = true;
+        // create ghost rect
+        if (!impl_->ghostRect && scene()) {
+            impl_->ghostRect = new QGraphicsRectItem(boundingRect());
+            impl_->ghostRect->setBrush(QBrush(QColor(70, 120, 180, 100)));
+            impl_->ghostRect->setPen(Qt::NoPen);
+            impl_->ghostRect->setZValue(1000);
+            scene()->addItem(impl_->ghostRect);
+        }
+        Q_EMIT dragStarted(this);
+    }
+
+    if (impl_->isDragging && impl_->ghostRect) {
+        QPointF newPos = impl_->dragStartItemPos + QPointF(delta.x(), delta.y());
+        impl_->ghostRect->setPos(newPos);
+        Q_EMIT dragMoved(this, impl_->ghostRect->scenePos().x(), impl_->ghostRect->scenePos().y());
+    } else {
+        QGraphicsObject::mouseMoveEvent(event);
+    }
 }
 
-void ClipItem::onMouseReleaseEvent(QGraphicsSceneMouseEvent* event)
+void ClipItem::mouseReleaseEvent(QGraphicsSceneMouseEvent* event)
 {
-    Q_UNUSED(event);
-    update();
+    if (!impl_) return;
+    if (impl_->isDragging) {
+        // finalize drag
+        if (impl_->ghostRect) {
+            QPointF endPos = impl_->ghostRect->scenePos();
+            Q_EMIT dragEnded(this, endPos.x(), endPos.y());
+            scene()->removeItem(impl_->ghostRect);
+            delete impl_->ghostRect;
+            impl_->ghostRect = nullptr;
+        }
+        impl_->isDragging = false;
+    }
+    QGraphicsObject::mouseReleaseEvent(event);
 }
 
 QVariant ClipItem::itemChange(GraphicsItemChange change, const QVariant& value)

@@ -53,6 +53,10 @@ export namespace Artifact {
   // Selection
   void clearSelection();
   const std::vector<ClipItem*>& getSelectedClips() const;
+  
+  // Visual helpers
+  void highlightTrack(int trackIndex);
+  void clearTrackHighlight();
  };
 
  //#right
