@@ -136,13 +136,25 @@ void ArtifactInspectorWidget::Impl::updatePropertiesForEffect(const QString& eff
                 spin->setValue(curVal.toDouble());
                 editor = spin;
                 {
-                    QVariant oldVal = curVal;
-                    QObject::connect(spin, qOverload<double>(&QDoubleSpinBox::valueChanged), [this, effect, name = p.getName(), oldVal](double v){
+                    // Store current value as the "before" state when focus is gained
+                    QObject::connect(spin, &QDoubleSpinBox::editingFinished, [spin, effect, name = p.getName()]() {
+                        // Store the value before editing for undo
+                        spin->setProperty("oldValue", spin->value());
+                    });
+                    QObject::connect(spin, qOverload<double>(&QDoubleSpinBox::valueChanged), [this, effect, name = p.getName(), spin](double v){
+                        QVariant oldVal = spin->property("oldValue");
+                        if (!oldVal.isValid()) {
+                            oldVal = v; // First change, no old value stored
+                        }
                         // push undo command instead of directly setting
                         UndoManager::instance()->push(std::make_unique<SetPropertyCommand>(effect, UniString(name.toStdString()), oldVal, QVariant(v)));
+                        // Update stored old value for next change
+                        spin->setProperty("oldValue", v);
                         // refresh to show updated derived props
                         updatePropertiesForEffect(effect->effectID().toQString());
                     });
+                    // Initialize old value
+                    spin->setProperty("oldValue", curVal.toDouble());
                 }
                 break;
             }
@@ -152,11 +164,17 @@ void ArtifactInspectorWidget::Impl::updatePropertiesForEffect(const QString& eff
                 spin->setValue(curVal.toInt());
                 editor = spin;
                 {
-                    QVariant oldVal = curVal;
-                    QObject::connect(spin, qOverload<int>(&QSpinBox::valueChanged), [this, effect, name = p.getName(), oldVal](int v){
+                    QObject::connect(spin, &QSpinBox::editingFinished, [spin, effect, name = p.getName()]() {
+                        spin->setProperty("oldValue", spin->value());
+                    });
+                    QObject::connect(spin, qOverload<int>(&QSpinBox::valueChanged), [this, effect, name = p.getName(), spin](int v){
+                        QVariant oldVal = spin->property("oldValue");
+                        if (!oldVal.isValid()) oldVal = v;
                         UndoManager::instance()->push(std::make_unique<SetPropertyCommand>(effect, UniString(name.toStdString()), oldVal, QVariant(v)));
+                        spin->setProperty("oldValue", v);
                         updatePropertiesForEffect(effect->effectID().toQString());
                     });
+                    spin->setProperty("oldValue", curVal.toInt());
                 }
                 break;
             }
@@ -165,9 +183,11 @@ void ArtifactInspectorWidget::Impl::updatePropertiesForEffect(const QString& eff
                 cb->setChecked(curVal.toBool());
                 editor = cb;
                 {
-                    QVariant oldVal = curVal;
-                    QObject::connect(cb, &QCheckBox::toggled, [this, effect, name = p.getName(), oldVal](bool v){
+                    cb->setProperty("oldValue", curVal.toBool());
+                    QObject::connect(cb, &QCheckBox::toggled, [this, effect, name = p.getName(), cb](bool v){
+                        QVariant oldVal = cb->property("oldValue");
                         UndoManager::instance()->push(std::make_unique<SetPropertyCommand>(effect, UniString(name.toStdString()), oldVal, QVariant(v)));
+                        cb->setProperty("oldValue", v);
                         updatePropertiesForEffect(effect->effectID().toQString());
                     });
                 }
@@ -177,16 +197,22 @@ void ArtifactInspectorWidget::Impl::updatePropertiesForEffect(const QString& eff
                 auto* btn = new QPushButton("Choose...");
                 QColor initial = p.getColorValue();
                 {
-                    QVariant oldVal = curVal;
-                    QObject::connect(btn, &QPushButton::clicked, [this, effect, name = p.getName(), initial, btn, oldVal]() mutable {
+                    btn->setProperty("oldColor", initial);
+                    QObject::connect(btn, &QPushButton::clicked, [this, effect, name = p.getName(), initial, btn]() mutable {
                         QColor col = QColorDialog::getColor(initial);
                         if (col.isValid()) {
+                            QVariant oldVal = btn->property("oldColor");
                             UndoManager::instance()->push(std::make_unique<SetPropertyCommand>(effect, UniString(name.toStdString()), oldVal, QVariant(col)));
                             // update button background
                             QString ss = QString("background-color: %1").arg(col.name());
                             btn->setStyleSheet(ss);
+                            btn->setProperty("oldColor", col);
+                            initial = col;
                         }
                     });
+                    // Set initial button style
+                    QString ss = QString("background-color: %1").arg(initial.name());
+                    btn->setStyleSheet(ss);
                 }
                 editor = btn;
                 break;
@@ -195,9 +221,14 @@ void ArtifactInspectorWidget::Impl::updatePropertiesForEffect(const QString& eff
                 auto* le = new QLineEdit(curVal.toString());
                 editor = le;
                 {
-                    QVariant oldVal = curVal;
-                    QObject::connect(le, &QLineEdit::editingFinished, [this, effect, name = p.getName(), le, oldVal]() {
-                        UndoManager::instance()->push(std::make_unique<SetPropertyCommand>(effect, UniString(name.toStdString()), oldVal, QVariant(le->text())));
+                    le->setProperty("oldText", curVal.toString());
+                    QObject::connect(le, &QLineEdit::editingFinished, [this, effect, name = p.getName(), le]() {
+                        QString newText = le->text();
+                        QVariant oldVal = le->property("oldText");
+                        if (oldVal.toString() != newText) {
+                            UndoManager::instance()->push(std::make_unique<SetPropertyCommand>(effect, UniString(name.toStdString()), oldVal, QVariant(newText)));
+                            le->setProperty("oldText", newText);
+                        }
                         updatePropertiesForEffect(effect->effectID().toQString());
                     });
                 }

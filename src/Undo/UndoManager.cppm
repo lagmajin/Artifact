@@ -21,6 +21,9 @@ class UndoManager::Impl {
 public:
     std::vector<std::unique_ptr<UndoCommand>> undoStack;
     std::vector<std::unique_ptr<UndoCommand>> redoStack;
+    size_t maxHistorySize_ = 100;  // Maximum undo history
+    int64_t version_ = 0;          // Incremented on each push
+    int64_t savedVersion_ = 0;     // Version when last saved
 };
 
 SetPropertyCommand::SetPropertyCommand(std::shared_ptr<ArtifactAbstractEffect> target, const UniString& propName, const QVariant& oldValue, const QVariant& newValue)
@@ -64,8 +67,15 @@ void UndoManager::push(std::unique_ptr<UndoCommand> cmd) {
     if (!cmd) return;
     // Execute immediately and record for undo
     cmd->redo();
+    
+    // Enforce max history size
+    while (impl_->undoStack.size() >= impl_->maxHistorySize_) {
+        impl_->undoStack.erase(impl_->undoStack.begin());
+    }
+    
     impl_->undoStack.push_back(std::move(cmd));
     impl_->redoStack.clear();
+    impl_->version_++;
 }
 
 void UndoManager::undo() {
@@ -86,5 +96,57 @@ void UndoManager::redo() {
 
 bool UndoManager::canUndo() const { return !impl_->undoStack.empty(); }
 bool UndoManager::canRedo() const { return !impl_->redoStack.empty(); }
+
+// === History Management ===
+void UndoManager::clearHistory() {
+    impl_->undoStack.clear();
+    impl_->redoStack.clear();
+    impl_->version_ = 0;
+    impl_->savedVersion_ = 0;
+}
+
+size_t UndoManager::undoCount() const {
+    return impl_->undoStack.size();
+}
+
+size_t UndoManager::redoCount() const {
+    return impl_->redoStack.size();
+}
+
+QString UndoManager::undoDescription() const {
+    // Could be extended to return command description
+    if (impl_->undoStack.empty()) return QString();
+    return QString("Undo (%1 actions)").arg(impl_->undoStack.size());
+}
+
+QString UndoManager::redoDescription() const {
+    if (impl_->redoStack.empty()) return QString();
+    return QString("Redo (%1 actions)").arg(impl_->redoStack.size());
+}
+
+void UndoManager::setMaxHistorySize(size_t maxSize) {
+    impl_->maxHistorySize_ = maxSize;
+    // Trim if needed
+    while (impl_->undoStack.size() > impl_->maxHistorySize_) {
+        impl_->undoStack.erase(impl_->undoStack.begin());
+    }
+}
+
+size_t UndoManager::maxHistorySize() const {
+    return impl_->maxHistorySize_;
+}
+
+// === Serialization for Project Save ===
+bool UndoManager::hasUnsavedChanges() const {
+    return impl_->version_ != impl_->savedVersion_;
+}
+
+void UndoManager::markAsSaved() {
+    impl_->savedVersion_ = impl_->version_;
+}
+
+int64_t UndoManager::currentVersion() const {
+    return impl_->version_;
+}
 
 }
