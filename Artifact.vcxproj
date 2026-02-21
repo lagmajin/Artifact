@@ -207,6 +207,10 @@
     <ClCompile Include="include\Audio\Effects\ArtifactAbstractAudioEffects.ixx" />
     <ClCompile Include="include\Audio\Effects\ArtifactAudioOutput.ixx" />
     <ClCompile Include="include\Audio\IAudioDevice.ixx" />
+    <ClCompile Include="include\Audio\PortAudioDevice.ixx" />
+    <ClCompile Include="include\Audio\WASAPIDevice.ixx">
+      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
+    </ClCompile>
     <ClCompile Include="include\Composition\ArtifactAbstractComposition.ixx" />
     <ClCompile Include="include\Composition\ArtifactComposition.ixx" />
     <ClCompile Include="include\Composition\ArtifactCompositionInitParams.ixx">

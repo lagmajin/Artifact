@@ -2,6 +2,7 @@
 #include <QColor>
 #include <wobjectimpl.h>
 #include <QGraphicsItem>
+#include <QGraphicsScene>
 #include <QGraphicsRectItem>
 #include <QGraphicsSceneMouseEvent>
 #include <QPainter>
@@ -62,6 +63,8 @@ void ResizeHandle::paint(QPainter* painter, const QStyleOptionGraphicsItem* opti
     painter->drawRect(boundingRect());
     painter->restore();
 }
+
+// (factory helpers are provided as free functions: createClipItem / destroyClipItem)
 
 QVariant ResizeHandle::itemChange(GraphicsItemChange change, const QVariant& value)
 {
@@ -132,6 +135,8 @@ QVariant ResizeHandle::itemChange(GraphicsItemChange change, const QVariant& val
   fillColor = QColor(100, 150, 220);
  }
  
+ 
+
  painter->setPen(Qt::NoPen);
  painter->setBrush(fillColor);
  painter->drawRect(rect);
@@ -145,6 +150,15 @@ QVariant ResizeHandle::itemChange(GraphicsItemChange change, const QVariant& val
  
  painter->restore();
  }
+
+// Free-function factory/destructor helpers
+ClipItem* createClipItem(double start, double duration, double height) {
+    return new ClipItem(start, duration, height);
+}
+
+void destroyClipItem(ClipItem* clip) {
+    delete clip;
+}
 
 void ClipItem::handleMoved(ResizeHandle::Side side, qreal sceneX)
 {

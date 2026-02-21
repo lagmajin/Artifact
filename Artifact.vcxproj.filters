@@ -721,6 +721,8 @@
     <ClCompile Include="src\Core\SystemStats.cppm" />
     <ClCompile Include="include\Widgets\PowerShellWidget.ixx" />
     <ClCompile Include="src\Widgets\PowerShellWidget.cppm" />
+    <ClCompile Include="include\Audio\PortAudioDevice.ixx" />
+    <ClCompile Include="include\Audio\WASAPIDevice.ixx" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Generated\TestService.h" />

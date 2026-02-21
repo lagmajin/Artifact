@@ -9,21 +9,9 @@ import Audio.IAudioDevice;
 
 namespace Artifact {
 
-class WASAPIDevice : public IAudioDevice {
+// Impl holds Windows COM members and state
+class WASAPIDevice::Impl {
 public:
-    WASAPIDevice();
-    ~WASAPIDevice();
-
-    bool open(int sampleRate, int channels, int framesPerBuffer) override;
-    void close() override;
-    bool start() override;
-    void stop() override;
-    void write(const float* interleaved, size_t frames) override;
-    std::uint64_t position() const override;
-    AudioDeviceState state() const override;
-
-private:
-    // Minimal members for a simple blocking render client
     IAudioClient* audioClient_ = nullptr;
     IAudioRenderClient* renderClient_ = nullptr;
     IMMDevice* device_ = nullptr;
@@ -33,13 +21,16 @@ private:
     int channels_ = 2;
     int framesPerBuffer_ = 512;
     AudioDeviceState state_ = AudioDeviceState::Closed;
+
+    Impl() {}
+    ~Impl() {}
 };
 
-WASAPIDevice::WASAPIDevice() {}
-WASAPIDevice::~WASAPIDevice() { close(); }
+WASAPIDevice::WASAPIDevice() : impl_(new Impl()) {}
+WASAPIDevice::~WASAPIDevice() { close(); delete impl_; impl_ = nullptr; }
 
 bool WASAPIDevice::open(int sampleRate, int channels, int framesPerBuffer) {
-    sampleRate_ = sampleRate; channels_ = channels; framesPerBuffer_ = framesPerBuffer;
+    impl_->sampleRate_ = sampleRate; impl_->channels_ = channels; impl_->framesPerBuffer_ = framesPerBuffer;
     HRESULT hr;
 
     hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
@@ -49,68 +40,67 @@ bool WASAPIDevice::open(int sampleRate, int channels, int framesPerBuffer) {
     hr = CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL, IID_PPV_ARGS(&enumerator));
     if (FAILED(hr) || !enumerator) return false;
 
-    hr = enumerator->GetDefaultAudioEndpoint(eRender, eConsole, &device_);
+    hr = enumerator->GetDefaultAudioEndpoint(eRender, eConsole, &impl_->device_);
     enumerator->Release();
-    if (FAILED(hr) || !device_) return false;
+    if (FAILED(hr) || !impl_->device_) return false;
 
-    hr = device_->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr, (void**)&audioClient_);
-    if (FAILED(hr) || !audioClient_) return false;
+    hr = impl_->device_->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr, (void**)&impl_->audioClient_);
+    if (FAILED(hr) || !impl_->audioClient_) return false;
 
-    hr = audioClient_->GetMixFormat(&mixFormat_);
-    if (FAILED(hr) || !mixFormat_) return false;
+    hr = impl_->audioClient_->GetMixFormat(&impl_->mixFormat_);
+    if (FAILED(hr) || !impl_->mixFormat_) return false;
 
     // Initialize audio client for shared mode
-    REFERENCE_TIME bufferDuration = (REFERENCE_TIME)((framesPerBuffer_ * 10000000LL) / sampleRate_);
-    hr = audioClient_->Initialize(AUDCLNT_SHAREMODE_SHARED, 0, bufferDuration, 0, mixFormat_, nullptr);
+    REFERENCE_TIME bufferDuration = (REFERENCE_TIME)((impl_->framesPerBuffer_ * 10000000LL) / impl_->sampleRate_);
+    hr = impl_->audioClient_->Initialize(AUDCLNT_SHAREMODE_SHARED, 0, bufferDuration, 0, impl_->mixFormat_, nullptr);
     if (FAILED(hr)) return false;
 
-    hr = audioClient_->GetService(__uuidof(IAudioRenderClient), (void**)&renderClient_);
-    if (FAILED(hr) || !renderClient_) return false;
+    hr = impl_->audioClient_->GetService(__uuidof(IAudioRenderClient), (void**)&impl_->renderClient_);
+    if (FAILED(hr) || !impl_->renderClient_) return false;
 
-    state_ = AudioDeviceState::Opened;
+    impl_->state_ = AudioDeviceState::Opened;
     return true;
 }
 
 void WASAPIDevice::close() {
-    if (renderClient_) { renderClient_->Release(); renderClient_ = nullptr; }
-    if (audioClient_) { audioClient_->Release(); audioClient_ = nullptr; }
-    if (device_) { device_->Release(); device_ = nullptr; }
-    if (mixFormat_) { CoTaskMemFree(mixFormat_); mixFormat_ = nullptr; }
+    if (!impl_) return;
+    if (impl_->renderClient_) { impl_->renderClient_->Release(); impl_->renderClient_ = nullptr; }
+    if (impl_->audioClient_) { impl_->audioClient_->Release(); impl_->audioClient_ = nullptr; }
+    if (impl_->device_) { impl_->device_->Release(); impl_->device_ = nullptr; }
+    if (impl_->mixFormat_) { CoTaskMemFree(impl_->mixFormat_); impl_->mixFormat_ = nullptr; }
     CoUninitialize();
-    state_ = AudioDeviceState::Closed;
+    impl_->state_ = AudioDeviceState::Closed;
 }
 
 bool WASAPIDevice::start() {
-    if (!audioClient_) return false;
-    HRESULT hr = audioClient_->Start();
+    if (!impl_ || !impl_->audioClient_) return false;
+    HRESULT hr = impl_->audioClient_->Start();
     if (FAILED(hr)) return false;
-    state_ = AudioDeviceState::Started;
+    impl_->state_ = AudioDeviceState::Started;
     return true;
 }
 
 void WASAPIDevice::stop() {
-    if (!audioClient_) return;
-    audioClient_->Stop();
-    state_ = AudioDeviceState::Stopped;
+    if (!impl_ || !impl_->audioClient_) return;
+    impl_->audioClient_->Stop();
+    impl_->state_ = AudioDeviceState::Stopped;
 }
 
 void WASAPIDevice::write(const float* interleaved, size_t frames) {
-    if (!renderClient_ || !audioClient_) return;
-    // Simple blocking write: get buffer and copy
+    if (!impl_ || !impl_->renderClient_ || !impl_->audioClient_) return;
     UINT32 numFramesAvailable = 0;
-    HRESULT hr = audioClient_->GetBufferSize(&numFramesAvailable);
+    HRESULT hr = impl_->audioClient_->GetBufferSize(&numFramesAvailable);
     if (FAILED(hr)) return;
     BYTE* data = nullptr;
-    hr = renderClient_->GetBuffer(frames, &data);
+    hr = impl_->renderClient_->GetBuffer(static_cast<UINT32>(frames), &data);
     if (FAILED(hr)) return;
-    // Assuming float32 planar interleaved matches mixFormat_ (platform dependent)
-    memcpy(data, interleaved, frames * channels_ * sizeof(float));
-    renderClient_->ReleaseBuffer(frames, 0);
-    framesWritten_ += frames;
+    memcpy(data, interleaved, frames * impl_->channels_ * sizeof(float));
+    impl_->renderClient_->ReleaseBuffer(static_cast<UINT32>(frames), 0);
+    impl_->framesWritten_ += frames;
 }
 
-std::uint64_t WASAPIDevice::position() const { return framesWritten_; }
+std::uint64_t WASAPIDevice::position() const { return impl_ ? impl_->framesWritten_ : 0; }
 
-AudioDeviceState WASAPIDevice::state() const { return state_; }
+AudioDeviceState WASAPIDevice::state() const { return impl_ ? impl_->state_ : AudioDeviceState::Closed; }
 
 }

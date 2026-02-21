@@ -59,7 +59,7 @@ public:
  ~Impl() {
   for (auto clip : clips_) {
    parent_->removeItem(clip);
-   delete clip;
+   destroyClipItem(clip);
   }
   clips_.clear();
   if (highlightRect) {
@@ -123,9 +123,9 @@ void TimelineScene::removeTrack(int trackIndex)
    isInTrack = true;
   }
    
-  if (isInTrack) {
+   if (isInTrack) {
    removeItem(*it);
-   delete *it;
+   destroyClipItem(*it);
    it = impl_->clips_.erase(it);
   } else {
    ++it;
@@ -214,7 +214,7 @@ ClipItem* TimelineScene::addClip(int trackIndex, double start, double duration)
  double yPos = getTrackYPosition(trackIndex);
  double height = impl_->trackHeights_[trackIndex];
   
- auto clip = new ClipItem(start, duration, height);
+    auto clip = createClipItem(start, duration, height);
  clip->setPos(start, yPos);
  addItem(clip);
  impl_->clips_.push_back(clip);
@@ -227,8 +227,8 @@ void TimelineScene::removeClip(ClipItem* clip)
  if (it != impl_->clips_.end()) {
   impl_->selectedClips_.erase(std::remove(impl_->selectedClips_.begin(), impl_->selectedClips_.end(), clip),
                                impl_->selectedClips_.end());
-  removeItem(clip);
-  delete clip;
+   removeItem(clip);
+   destroyClipItem(clip);
   impl_->clips_.erase(it);
  }
 }

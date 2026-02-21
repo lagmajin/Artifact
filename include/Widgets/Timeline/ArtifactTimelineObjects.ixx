@@ -32,9 +32,14 @@ export namespace Artifact
   class Impl;
   Impl* impl_;
  public:
-  W_OBJECT(ClipItem)
   ClipItem(double start, double duration, double height);
   ~ClipItem();
+  // Friend factory functions (declare before Verdigris macro to avoid access
+  // specifier issues the macro may inject). These free functions are defined
+  // in the implementation file and are visible to other translation units.
+  friend ClipItem* createClipItem(double start, double duration, double height);
+  friend void destroyClipItem(ClipItem* clip);
+  W_OBJECT(ClipItem)
   QRectF boundingRect() const override;
   void paint(QPainter* painter, const QStyleOptionGraphicsItem* option, QWidget* widget = nullptr) override;
  protected:
@@ -62,6 +67,10 @@ export namespace Artifact
   void dragMoved(ClipItem* clip, double sceneX, double sceneY) W_SIGNAL(dragMoved,clip,sceneX,sceneY);
   void dragEnded(ClipItem* clip, double sceneX, double sceneY) W_SIGNAL(dragEnded,clip,sceneX,sceneY);
  };
+
+// Forward declarations of factory functions
+ClipItem* createClipItem(double start, double duration, double height);
+void destroyClipItem(ClipItem* clip);
 
 
 

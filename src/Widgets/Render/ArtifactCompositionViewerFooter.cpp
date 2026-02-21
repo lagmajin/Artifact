@@ -5,6 +5,7 @@
 #include <QComboBox>
 #include <QToolButton>
 #include <wobjectimpl.h>
+#include <QTimer>
 
 module Artifact.Widgets.CompositionFooter;
 

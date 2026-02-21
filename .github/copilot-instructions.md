@@ -19,6 +19,7 @@
   - Qt のシグナル & スロット宣言と発行について: このプロジェクトでは Verdigris マクロを必ず使用してください。
     - シグナル・スロットの宣言は Verdigris の `W_SIGNAL` / `W_SLOT` マクロを使うこと（例: `void frameChanged(...) W_SIGNAL(frameChanged, ...)`）。
     - クラス定義には必ず `W_OBJECT` を使い、実装ファイルでは `W_OBJECT_IMPL` を使ってください。
+    - 注意: `W_OBJECT_IMPL` は同じクラスにつき実装側で1回だけ定義してください。複数の翻訳単位で同一クラスに対して `W_OBJECT_IMPL` を重複して置くとコンパイル/リンクエラーや再定義問題が発生します。実装ファイルを分ける場合でも `W_OBJECT_IMPL` は単一の実装翻訳単位に置くようにしてください。
     - Qt 標準の `signals:` セクションや `Q_SIGNAL` マクロは使用しないこと。
     - シグナルの発行は `Q_EMIT` を使って構いませんが、宣言側は Verdigris を優先してください。
     - これにより、verdigris ベースのメタオブジェクト生成（W_OBJECT 系）が正しく機能します。

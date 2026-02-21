@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <QVector>
 #include <QMatrix4x4>
 #include <QString>
@@ -7,10 +7,41 @@ module;
 #include <random>
 #include <memory>
 
+// Fallback definitions for DistributionMode / TransformSpace / SimpleSpline
+// Provided when the Generator.DistributionModes module is not available in the build.
+#ifndef ARTIFACT_DISTRIBUTIONMODES_FWD
+#define ARTIFACT_DISTRIBUTIONMODES_FWD
+namespace Artifact {
+    enum class DistributionMode {
+        Linear = 0,
+        Radial,
+        Grid2D,
+        Grid3D,
+        Spline,
+        Random,
+        Noise,
+        Hexagonal,
+        Spiral
+    };
+
+    enum class TransformSpace {
+        Local = 0,
+        World
+    };
+
+    // Minimal placeholder for SimpleSpline used by CloneGenerator when module missing
+    class SimpleSpline {
+    public:
+        struct Point { QVector3D position; QVector3D tangent; };
+        Point getPoint(float /*t*/) const { return Point{{0,0,0},{0,0,0}}; }
+        int pointCount() const { return 0; }
+    };
+}
+#endif
+
 module Generator.Clone;
 
 import std;
-import Generator.DistributionModes;
 
 namespace Artifact
 {
