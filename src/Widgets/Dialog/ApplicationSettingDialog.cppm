@@ -17,6 +17,12 @@
 #include <QTimer>
 #include <QMessageBox>
 #include <QThread>
+#include <QTableWidget>
+#include <QHeaderView>
+#include <QFileDialog>
+#include <QDir>
+#include <QFileInfoList>
+#include <QPluginLoader>
 #ifdef Q_OS_WIN
 #include <windows.h>
 #include <psapi.h>
@@ -567,6 +573,7 @@ MemoryAndCpuSettingPage::~MemoryAndCpuSettingPage()
   ImportSettingPage* importPage_;
   PreviewSettingPage* previewPage_;
   MemoryAndCpuSettingPage* memoryPage_;
+  PluginSettingPage* pluginPage_;
   
   void setupUI(ApplicationSettingDialog* dialog);
   void onCategoryChanged(int index);
@@ -580,6 +587,7 @@ MemoryAndCpuSettingPage::~MemoryAndCpuSettingPage()
   , importPage_(nullptr)
   , previewPage_(nullptr)
   , memoryPage_(nullptr)
+  , pluginPage_(nullptr)
  {
 
  }
@@ -623,7 +631,7 @@ MemoryAndCpuSettingPage::~MemoryAndCpuSettingPage()
   settingPages_->addWidget(previewPage_);
   settingPages_->addWidget(memoryPage_);
   settingPages_->addWidget(new QWidget(dialog)); // Shortcuts placeholder
-  settingPages_->addWidget(new QWidget(dialog)); // Plugins placeholder
+  settingPages_->addWidget(pluginPage_ = new PluginSettingPage(dialog));
   
   contentLayout->addWidget(settingPages_, 1);
   
@@ -662,4 +670,124 @@ MemoryAndCpuSettingPage::~MemoryAndCpuSettingPage()
 
 
 
-};
+}; 
+  
+// PluginSettingPage Implementation 
+
+ class PluginSettingPage::Impl {
+ public:
+  Impl();
+  ~Impl();
+  QTableWidget* pluginTable_;
+  QPushButton* refreshButton_;
+  QPushButton* openFolderButton_;
+  QString pluginDirectory_;
+  void loadPlugins(PluginSettingPage* page);
+  QStringList getPluginPaths();
+ };
+
+ PluginSettingPage::Impl::Impl() {
+  pluginDirectory_ = QCoreApplication::applicationDirPath() + "/plugins";
+ }
+ PluginSettingPage::Impl::~Impl() {}
+
+ QStringList PluginSettingPage::Impl::getPluginPaths() {
+  QStringList paths;
+  QDir dir(pluginDirectory_);
+  if (dir.exists()) {
+   QFileInfoList entries = dir.entryInfoList(QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot);
+   for (const QFileInfo& entry : entries) {
+    if (entry.isDir()) {
+     QDir subDir(entry.absoluteFilePath());
+     QFileInfoList plugins = subDir.entryInfoList(QStringList() << "*.dll" << "*.so" << "*.dylib", QDir::Files);
+     for (const QFileInfo& plugin : plugins) paths.append(plugin.absoluteFilePath());
+    } else if (entry.suffix() == "dll" || entry.suffix() == "so" || entry.suffix() == "dylib") {
+     paths.append(entry.absoluteFilePath());
+    }
+   }
+  }
+  return paths;
+ }
+
+ void PluginSettingPage::Impl::loadPlugins(PluginSettingPage* page) {
+  if (!pluginTable_) return;
+  pluginTable_->setRowCount(0);
+  QStringList pluginPaths = getPluginPaths();
+  for (const QString& path : pluginPaths) {
+   QPluginLoader loader(path);
+   QJsonObject metaData = loader.metaData();
+   int row = pluginTable_->rowCount();
+   pluginTable_->insertRow(row);
+   QString name = metaData.value("Name").toString();
+   if (name.isEmpty()) { QFileInfo info(path); name = info.baseName(); }
+   pluginTable_->setItem(row, 0, new QTableWidgetItem(name));
+   pluginTable_->setItem(row, 1, new QTableWidgetItem(metaData.value("Version").toString()));
+   QString vendor = metaData.value("Vendor").toString();
+   if (vendor.isEmpty()) vendor = metaData.value("Author").toString();
+   pluginTable_->setItem(row, 2, new QTableWidgetItem(vendor));
+   pluginTable_->setItem(row, 3, new QTableWidgetItem(metaData.value("Description").toString()));
+   QString status = loader.isLoaded() ? "Loaded" : (loader.load() ? "Loaded" : "Failed");
+   pluginTable_->setItem(row, 4, new QTableWidgetItem(status));
+   pluginTable_->item(row, 0)->setData(Qt::UserRole, path);
+  }
+  pluginTable_->resizeColumnsToContents();
+ }
+
+ PluginSettingPage::PluginSettingPage(QWidget* parent) : QWidget(parent), impl_(new Impl()) {
+  auto* mainLayout = new QVBoxLayout(this);
+  auto* infoGroup = new QGroupBox("Plugin Directory", this);
+  auto* infoLayout = new QHBoxLayout(infoGroup);
+  auto* dirLabel = new QLabel(impl_->pluginDirectory_, this);
+  dirLabel->setStyleSheet("color: gray;");
+  infoLayout->addWidget(dirLabel);
+  impl_->openFolderButton_ = new QPushButton("Open Folder", this);
+  infoLayout->addWidget(impl_->openFolderButton_);
+  mainLayout->addWidget(infoGroup);
+  auto* tableGroup = new QGroupBox("Installed Plugins", this);
+  auto* tableLayout = new QVBoxLayout(tableGroup);
+  impl_->pluginTable_ = new QTableWidget(this);
+  impl_->pluginTable_->setColumnCount(5);
+  impl_->pluginTable_->setHorizontalHeaderLabels({"Name", "Version", "Vendor", "Description", "Status"});
+  impl_->pluginTable_->setSelectionBehavior(QAbstractItemView::SelectRows);
+  impl_->pluginTable_->setEditTriggers(QAbstractItemView::NoEditTriggers);
+  impl_->pluginTable_->horizontalHeader()->setStretchLastSection(true);
+  tableLayout->addWidget(impl_->pluginTable_);
+  mainLayout->addWidget(tableGroup);
+  auto* buttonLayout = new QHBoxLayout();
+  impl_->refreshButton_ = new QPushButton("Refresh", this);
+  buttonLayout->addWidget(impl_->refreshButton_);
+  buttonLayout->addStretch();
+  auto* unloadButton = new QPushButton("Unload Selected", this);
+  buttonLayout->addWidget(unloadButton);
+  auto* loadButton = new QPushButton("Load Selected", this);
+  buttonLayout->addWidget(loadButton);
+  mainLayout->addLayout(buttonLayout);
+  impl_->loadPlugins(this);
+  connect(impl_->refreshButton_, &QPushButton::clicked, this, [this]() { impl_->loadPlugins(this); });
+  connect(impl_->openFolderButton_, &QPushButton::clicked, this, [this]() { QDesktopServices::openUrl(QUrl::fromLocalFile(impl_->pluginDirectory_)); });
+  connect(unloadButton, &QPushButton::clicked, this, [this]() {
+   QModelIndexList selected = impl_->pluginTable_->selectionModel()->selectedRows();
+   if (selected.isEmpty()) { QMessageBox::information(this, "Unload Plugin", "Please select a plugin to unload."); return; }
+   for (const QModelIndex& index : selected) {
+    QString path = impl_->pluginTable_->item(index.row(), 0)->data(Qt::UserRole).toString();
+    QPluginLoader loader(path);
+    if (loader.isLoaded()) loader.unload();
+   }
+   impl_->loadPlugins(this);
+  });
+  connect(loadButton, &QPushButton::clicked, this, [this]() {
+   QModelIndexList selected = impl_->pluginTable_->selectionModel()->selectedRows();
+   if (selected.isEmpty()) { QMessageBox::information(this, "Load Plugin", "Please select a plugin to load."); return; }
+   for (const QModelIndex& index : selected) {
+    QString path = impl_->pluginTable_->item(index.row(), 0)->data(Qt::UserRole).toString();
+    QPluginLoader loader(path);
+    if (!loader.isLoaded()) loader.load();
+   }
+   impl_->loadPlugins(this);
+  });
+ }
+
+ PluginSettingPage::~PluginSettingPage() { delete impl_; }
+ QVector<QWidget*> PluginSettingPage::settingWidgets() const { return QVector<QWidget*>(); }
+  
+}; 

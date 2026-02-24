@@ -163,7 +163,7 @@
       <ForceFileOutput>Enabled</ForceFileOutput>
       <ImportLibrary>artifactimport</ImportLibrary>
       <LinkStatus>true</LinkStatus>
-      <AdditionalOptions>/VERBOSE %(AdditionalOptions)</AdditionalOptions>
+      <AdditionalOptions> %(AdditionalOptions)</AdditionalOptions>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
