@@ -121,7 +121,7 @@
       <Filter>src</Filter>
     </ClCompile>
     <ClCompile Include="src\Service\ApplicationService.cppm">
-      <Filter>src</Filter>
+      <Filter>src\Service</Filter>
     </ClCompile>
     <ClCompile Include="src\Layer\ArtifactAbstract2DLayer.cppm">
       <Filter>src</Filter>
@@ -145,16 +145,16 @@
       <Filter>include</Filter>
     </ClCompile>
     <ClCompile Include="include\Service\ArtifactAudioService.ixx">
-      <Filter>include</Filter>
+      <Filter>include\Service</Filter>
     </ClCompile>
     <ClCompile Include="include\Service\ApplicationService.ixx">
-      <Filter>include</Filter>
+      <Filter>include\Service</Filter>
     </ClCompile>
     <ClCompile Include="include\Generator\AbstractGenerator.ixx">
       <Filter>include</Filter>
     </ClCompile>
     <ClCompile Include="include\Service\ArtifactClipboardService.ixx">
-      <Filter>include</Filter>
+      <Filter>include\Service</Filter>
     </ClCompile>
     <ClCompile Include="src\Composition\ArtifactComposition3D.cpp">
       <Filter>src</Filter>
@@ -181,7 +181,7 @@
       <Filter>src</Filter>
     </ClCompile>
     <ClCompile Include="src\Service\ArtifactClipboardService.cpp">
-      <Filter>src</Filter>
+      <Filter>src\Service</Filter>
     </ClCompile>
     <ClCompile Include="src\Composition\ArtifactComposition2D.cpp">
       <Filter>src</Filter>
@@ -217,7 +217,7 @@
       <Filter>include</Filter>
     </ClCompile>
     <ClCompile Include="src\Service\ArtifactEffectService.cpp">
-      <Filter>src</Filter>
+      <Filter>src\Service</Filter>
     </ClCompile>
     <ClCompile Include="src\Widgets\Menu\ArtifactEffectMenu.cppm">
       <Filter>src</Filter>
@@ -289,7 +289,7 @@
       <Filter>src\Widgets</Filter>
     </ClCompile>
     <ClCompile Include="include\Service\ArtifactEffectService.ixx">
-      <Filter>include</Filter>
+      <Filter>include\Service</Filter>
     </ClCompile>
     <ClCompile Include="include\Widgets\ArtifactInspectorWidget.ixx">
       <Filter>include</Filter>
@@ -476,31 +476,31 @@
       <Filter>src</Filter>
     </ClCompile>
     <ClCompile Include="src\Project\ArtifactProjectItems.cppm">
-      <Filter>src</Filter>
+      <Filter>src\Project</Filter>
     </ClCompile>
     <ClCompile Include="src\Project\ArtifactProjectImporter.cppm">
-      <Filter>src</Filter>
+      <Filter>src\Project</Filter>
     </ClCompile>
     <ClCompile Include="src\Widgets\Render\ArtifactRenderWrapperWidget.cpp">
       <Filter>src</Filter>
     </ClCompile>
     <ClCompile Include="src\Project\ArtifactProjectModel.cppm">
-      <Filter>src</Filter>
+      <Filter>src\Project</Filter>
     </ClCompile>
     <ClCompile Include="src\Project\ArtifactProject.cppm">
-      <Filter>src</Filter>
+      <Filter>src\Project</Filter>
     </ClCompile>
     <ClCompile Include="src\Project\ArtifactProjectInitParams.cppm">
-      <Filter>src</Filter>
+      <Filter>src\Project</Filter>
     </ClCompile>
     <ClCompile Include="src\Project\ArtifactProjectManager.cppm">
-      <Filter>src</Filter>
+      <Filter>src\Project</Filter>
     </ClCompile>
     <ClCompile Include="src\Widgets\Render\ArtifactRenderLayerWidget.cpp">
       <Filter>src</Filter>
     </ClCompile>
     <ClCompile Include="src\Project\ArtifactProjectSetting.cppm">
-      <Filter>src</Filter>
+      <Filter>src\Project</Filter>
     </ClCompile>
     <ClCompile Include="src\Render\ArtifactRenderManager.cppm">
       <Filter>src</Filter>
@@ -604,7 +604,7 @@
       <Filter>include\Widgets</Filter>
     </ClCompile>
     <ClCompile Include="src\Service\ArtifactAudioService.cpp">
-      <Filter>src\Audio</Filter>
+      <Filter>src\Service</Filter>
     </ClCompile>
     <ClCompile Include="include\Audio\Effects\ArtifactAudioOutput.ixx">
       <Filter>include\Audio</Filter>
@@ -613,10 +613,10 @@
       <Filter>include</Filter>
     </ClCompile>
     <ClCompile Include="src\Project\ArtifactProjectExporter.cppm">
-      <Filter>src</Filter>
+      <Filter>src\Project</Filter>
     </ClCompile>
     <ClCompile Include="include\Project\ArtifactProjectInitParams.ixx">
-      <Filter>src</Filter>
+      <Filter>include\Project</Filter>
     </ClCompile>
     <ClCompile Include="include\Project\ArtifactProjectRoles.ixx">
       <Filter>include\Project</Filter>
@@ -634,16 +634,16 @@
       <Filter>include\Project</Filter>
     </ClCompile>
     <ClCompile Include="include\Service\ArtifactProjectService.ixx">
-      <Filter>include\Project</Filter>
+      <Filter>include\Service</Filter>
     </ClCompile>
     <ClCompile Include="include\Project\ArtifactProjectModel.ixx">
       <Filter>include\Project</Filter>
     </ClCompile>
     <ClCompile Include="include\Test\ArtifactTestProjectService.ixx">
-      <Filter>include\Project</Filter>
+      <Filter>include\Test</Filter>
     </ClCompile>
     <ClCompile Include="include\Test\ArtifactTestProjectManager.ixx">
-      <Filter>include\Project</Filter>
+      <Filter>include\Test</Filter>
     </ClCompile>
     <ClCompile Include="include\Widgets\ArtifactProjectManagerWidget.ixx">
       <Filter>include\Project</Filter>
@@ -672,15 +672,29 @@
     <ClCompile Include="include\Project\ArtifactProjectExporter.ixx">
       <Filter>include\Project</Filter>
     </ClCompile>
-    <ClCompile Include="include\Widgets\Dock\DockGlowStyle.ixx" />
-    <ClCompile Include="src\Widgets\Dock\DockGlowStyle.cppm" />
-    <ClCompile Include="include\Widgets\Dock\DockStyleManager.ixx" />
-    <ClCompile Include="src\Widgets\Dock\DockStyleManager.cppm" />
-    <ClCompile Include="include\Composition\ArtifactCompositionPlaybackController.ixx" />
-    <ClCompile Include="include\Service\ArtifactPlaybackService.ixx" />
-    <ClCompile Include="src\Service\ArtifactPlaybackService.cppm" />
+    <ClCompile Include="include\Widgets\Dock\DockGlowStyle.ixx">
+      <Filter>include\Widgets\Dock</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Widgets\Dock\DockGlowStyle.cppm">
+      <Filter>src\Widgets\Dock</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Widgets\Dock\DockStyleManager.ixx">
+      <Filter>include\Widgets\Dock</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Widgets\Dock\DockStyleManager.cppm">
+      <Filter>src\Widgets\Dock</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Composition\ArtifactCompositionPlaybackController.ixx">
+      <Filter>include\Composition</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Service\ArtifactPlaybackService.ixx">
+      <Filter>include\Service</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Service\ArtifactPlaybackService.cppm">
+      <Filter>src\Service</Filter>
+    </ClCompile>
     <ClCompile Include="src\Composition\ArtifactCompositionPlaybackController.cppm">
-      <Filter>src</Filter>
+      <Filter>src\Composition</Filter>
     </ClCompile>
     <ClCompile Include="src\AppMain.cppm">
       <Filter>src</Filter>
@@ -688,11 +702,21 @@
     <ClCompile Include="include\Image\ImageF32xN.ixx" />
     <ClCompile Include="include\Image\ImageF32x4_RGBA_Compat.ixx" />
     <ClCompile Include="include\Image\ImageF32x4_RGBA.ixx" />
-    <ClCompile Include="include\Audio\IAudioDevice.ixx" />
-    <ClCompile Include="src\Audio\PortAudioDevice.cppm" />
-    <ClCompile Include="include\Audio\AudioClockProvider.ixx" />
-    <ClCompile Include="src\Audio\AudioClockProvider.cppm" />
-    <ClCompile Include="src\Audio\WASAPIDevice.cppm" />
+    <ClCompile Include="include\Audio\IAudioDevice.ixx">
+      <Filter>include\Audio</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Audio\PortAudioDevice.cppm">
+      <Filter>src\Audio</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Audio\AudioClockProvider.ixx">
+      <Filter>include\Audio</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Audio\AudioClockProvider.cppm">
+      <Filter>src\Audio</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Audio\WASAPIDevice.cppm">
+      <Filter>src\Audio</Filter>
+    </ClCompile>
     <ClCompile Include="include\Undo\UndoManager.ixx" />
     <ClCompile Include="src\Undo\UndoManager.cppm" />
     <ClCompile Include="include\Mask\MaskPath.ixx" />
@@ -721,8 +745,12 @@
     <ClCompile Include="src\Core\SystemStats.cppm" />
     <ClCompile Include="include\Widgets\PowerShellWidget.ixx" />
     <ClCompile Include="src\Widgets\PowerShellWidget.cppm" />
-    <ClCompile Include="include\Audio\PortAudioDevice.ixx" />
-    <ClCompile Include="include\Audio\WASAPIDevice.ixx" />
+    <ClCompile Include="include\Audio\PortAudioDevice.ixx">
+      <Filter>include\Audio</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Audio\WASAPIDevice.ixx">
+      <Filter>include\Audio</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Generated\TestService.h" />
@@ -800,6 +828,63 @@
     </Filter>
     <Filter Include="include\Widgets\Menu">
       <UniqueIdentifier>{243efbba-f85d-47a1-ad6b-a2a50fc5faba}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="include\Widgets\Control">
+      <UniqueIdentifier>{11111111-1111-1111-1111-111111111111}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="include\Widgets\Render">
+      <UniqueIdentifier>{22222222-2222-2222-2222-222222222222}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="include\Widgets\Timeline">
+      <UniqueIdentifier>{33333333-3333-3333-3333-333333333333}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="include\Widgets\Viewer">
+      <UniqueIdentifier>{44444444-4444-4444-4444-444444444444}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="include\Widgets\Native">
+      <UniqueIdentifier>{55555555-5555-5555-5555-555555555555}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="include\Widgets\Dock">
+      <UniqueIdentifier>{66666666-6666-6666-6666-666666666666}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="include\Widgets\Asset">
+      <UniqueIdentifier>{77777777-7777-7777-7777-777777777777}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="include\Widgets\Menu\Test">
+      <UniqueIdentifier>{eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="include\Test">
+      <UniqueIdentifier>{ffffffff-ffff-ffff-ffff-ffffffffffff}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="include\Service">
+      <UniqueIdentifier>{aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="src\Service">
+      <UniqueIdentifier>{aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaab}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="src\Project">
+      <UniqueIdentifier>{aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaab}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="src\Composition">
+      <UniqueIdentifier>{aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaac}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="src\Widgets\Control">
+      <UniqueIdentifier>{88888888-8888-8888-8888-888888888888}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="src\Widgets\Timeline">
+      <UniqueIdentifier>{99999999-9999-9999-9999-999999999999}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="src\Widgets\Viewer">
+      <UniqueIdentifier>{aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaad}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="src\Widgets\Native">
+      <UniqueIdentifier>{bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="src\Widgets\Dock">
+      <UniqueIdentifier>{cccccccc-cccc-cccc-cccc-cccccccccccc}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="src\Widgets\Asset">
+      <UniqueIdentifier>{dddddddd-dddd-dddd-dddd-dddddddddddd}</UniqueIdentifier>
     </Filter>
   </ItemGroup>
 </Project>
