@@ -126,9 +126,6 @@
     <ClCompile Include="src\Layer\ArtifactAbstract2DLayer.cppm">
       <Filter>src</Filter>
     </ClCompile>
-    <ClCompile Include="src\Application\ActiveContextService.cppm">
-      <Filter>src</Filter>
-    </ClCompile>
     <ClCompile Include="src\Application\ArtifactApplicationManager.cpp">
       <Filter>src</Filter>
     </ClCompile>
@@ -176,9 +173,6 @@
     </ClCompile>
     <ClCompile Include="include\InterProcess\ArtifactClipboardManager.ixx">
       <Filter>include</Filter>
-    </ClCompile>
-    <ClCompile Include="src\Layer\ArtifactCameraLayer.cppm">
-      <Filter>src</Filter>
     </ClCompile>
     <ClCompile Include="src\Service\ArtifactClipboardService.cpp">
       <Filter>src\Service</Filter>
@@ -752,6 +746,12 @@
       <Filter>include\Audio</Filter>
     </ClCompile>
     <ClCompile Include="src\ActiveQt\qax_instantiate.cppm" />
+    <ClCompile Include="src\Application\ActiveContextService.cppm">
+      <Filter>src\Service</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Layer\ArtifactCameraLayer.cppm">
+      <Filter>src\Layer</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Generated\TestService.h" />
@@ -886,6 +886,9 @@
     </Filter>
     <Filter Include="src\Widgets\Asset">
       <UniqueIdentifier>{dddddddd-dddd-dddd-dddd-dddddddddddd}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="src\Widgets\Render">
+      <UniqueIdentifier>{9991357d-b159-4a04-be69-9c6313a0432e}</UniqueIdentifier>
     </Filter>
   </ItemGroup>
 </Project>
