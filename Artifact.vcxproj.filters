@@ -751,6 +751,7 @@
     <ClCompile Include="include\Audio\WASAPIDevice.ixx">
       <Filter>include\Audio</Filter>
     </ClCompile>
+    <ClCompile Include="src\ActiveQt\qax_instantiate.cppm" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Generated\TestService.h" />

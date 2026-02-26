@@ -3,6 +3,7 @@
 #include <QTextEdit>
 #include <QPushButton>
 #include <QLineEdit>
+#include <wobjectimpl.h>
 
 module Widgets.AIChatWidget;
 
@@ -11,6 +12,8 @@ import Utils.String.UniString;
 import AI.Client;
 
 namespace Artifact {
+
+ W_OBJECT_IMPL(AIChatWidget)
 
 class AIChatWidget::Impl {
 public:

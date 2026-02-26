@@ -19,6 +19,8 @@ module Artifact.Composition.Abstract;
 import std;
 import Container;
 import Frame.Position;
+import Frame.Range;
+import Frame.Rate;
 import Composition.Settings;
 import Artifact.Composition.Result;
 import Artifact.Layers;
@@ -227,6 +229,11 @@ ArtifactAbstractLayerPtr ArtifactAbstractComposition::layerById(const LayerID& i
   impl_->setFramePosition(position);
  }
 
+  FramePosition ArtifactAbstractComposition::framePosition() const
+  {
+   return impl_->framePosition();
+  }
+
  void ArtifactAbstractComposition::goToStartFrame()
  {
   impl_->goToEndFrame();
@@ -241,6 +248,18 @@ ArtifactAbstractLayerPtr ArtifactAbstractComposition::layerById(const LayerID& i
  {
 
  }
+
+  FrameRange ArtifactAbstractComposition::frameRange() const
+  {
+   // TODO: return actual frame range from settings or init params
+   return FrameRange();
+  }
+
+  FrameRate ArtifactAbstractComposition::frameRate() const
+  {
+   // TODO: return actual frame rate from settings or init params
+   return FrameRate();
+  }
 
  bool ArtifactAbstractComposition::hasVideo() const
  {

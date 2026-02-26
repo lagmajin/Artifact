@@ -22,8 +22,8 @@ private:
     class Impl;
     Impl* impl_;
 public:
-    IAudioDevice();
-    virtual ~IAudioDevice();
+    IAudioDevice() {}
+    virtual ~IAudioDevice() {}
 
     // Open device with sample rate, channel count and frames per callback buffer
     virtual bool open(int sampleRate, int channels, int framesPerBuffer) = 0;

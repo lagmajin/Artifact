@@ -75,7 +75,7 @@ export namespace ArtifactCore {
  };
 
  class PluginSettingPage : public QWidget {
-  Q_OBJECT
+  W_OBJECT(PluginSettingPage)
  public:
   explicit PluginSettingPage(QWidget* parent = nullptr);
   ~PluginSettingPage();

@@ -2,8 +2,11 @@
 module;
 #include <QtCore/QtGlobal>
 #include <QApplication>
-
-module Artifact.AppMain;
+#include <QDateTime>
+#include <QDir>
+#include <QImage>
+#include <QCommandLineOption>
+#include <qthreadpool.h>
 
 #define _CRT_SECURE_NO_WARNINGS
 #pragma warning(disable:4996)
@@ -17,13 +20,10 @@ module Artifact.AppMain;
 #include <opencv2/opencv.hpp>
 
 #include <windows.h>
-#include <QDateTime>
-#include <QDir>
-#include <QImage>
 
-#include <QCommandLineOption>
-#include <qthreadpool.h>
 //#include <pybind11/pybind11.h>
+
+module Artifact.AppMain;
 
 
 

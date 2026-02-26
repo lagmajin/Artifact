@@ -1,7 +1,8 @@
-module;
+﻿module;
 #include <QToolBar>
 #include <QVBoxLayout>
 #include <QAction>
+#include <wobjectimpl.h>
 
 module Artifact.Widgets.RenderLayerEditor;
 
@@ -11,6 +12,8 @@ import Utils.Id;
 import std;
 
 namespace Artifact {
+
+ W_OBJECT_IMPL(ArtifactRenderLayerEditor)
 
  class ArtifactRenderLayerEditor::Impl {
  public:

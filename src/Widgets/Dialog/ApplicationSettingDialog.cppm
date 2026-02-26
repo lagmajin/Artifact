@@ -1,5 +1,6 @@
 ﻿module;
 #include <QString>
+#include <QCoreApplication>
 #include <QListWidget>
 #include <QStackedWidget>
 #include <QVBoxLayout>
@@ -23,10 +24,13 @@
 #include <QDir>
 #include <QFileInfoList>
 #include <QPluginLoader>
+#include <QDesktopServices>
+#include <QUrl>
 #ifdef Q_OS_WIN
 #include <windows.h>
 #include <psapi.h>
 #endif
+#include <wobjectimpl.h>
 
 
  module ApplicationSettingDialog;
@@ -668,11 +672,9 @@ MemoryAndCpuSettingPage::~MemoryAndCpuSettingPage()
   delete impl_;
  }
 
-
-
-}; 
-  
 // PluginSettingPage Implementation 
+
+ W_OBJECT_IMPL(PluginSettingPage)
 
  class PluginSettingPage::Impl {
  public:

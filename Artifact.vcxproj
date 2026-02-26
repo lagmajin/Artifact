@@ -158,7 +158,7 @@
     <Link>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>DebugFull</GenerateDebugInformation>
-      <AdditionalDependencies>opencv_world4110d.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>Qt6Cored.lib;opencv_world4110d.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <OutputFile>$(OutDir)$(TargetName)$(TargetExt)</OutputFile>
       <ForceFileOutput>Enabled</ForceFileOutput>
       <ImportLibrary>artifactimport</ImportLibrary>
@@ -381,6 +381,7 @@
     <ClCompile Include="include\Widgets\Timeline\ArtifactWorkAreaControlWidget.ixx" />
     <ClCompile Include="include\Widgets\Timeline\TimelineScaleWidget.ixx" />
     <ClCompile Include="include\Widgets\Viewer\ArtifactContentsViewer.ixx" />
+    <ClCompile Include="src\ActiveQt\qax_instantiate.cppm" />
     <ClCompile Include="src\AI\AIClient.cppm">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
     </ClCompile>
