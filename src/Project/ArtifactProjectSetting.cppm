@@ -92,8 +92,11 @@ namespace Artifact {
  template <StringLike T>
  void Artifact::ArtifactProjectSettings::setProjectName(const T& name)
  {
- // impl_->setProjectName(name);
+ impl_->setProjectName(name);
  }
+
+// Explicit instantiation for QString to ensure the symbol is emitted for linkers
+template void Artifact::ArtifactProjectSettings::setProjectName<QString>(const QString&);
 
  UniString ArtifactProjectSettings::author() const
  {
