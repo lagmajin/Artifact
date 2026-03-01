@@ -288,6 +288,9 @@
     <ClCompile Include="include\Widgets\ArtifactInspectorWidget.ixx">
       <Filter>include</Filter>
     </ClCompile>
+    <ClCompile Include="include\Widgets\ArtifactPropertyWidget.ixx">
+      <Filter>include</Filter>
+    </ClCompile>
     <ClCompile Include="include\Layer\ArtifactLayerCopyBuffer.ixx">
       <Filter>include</Filter>
     </ClCompile>
@@ -322,6 +325,9 @@
       <Filter>src</Filter>
     </ClCompile>
     <ClCompile Include="src\Widgets\ArtifactInspectorWidget.cppm">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Widgets\ArtifactPropertyWidget.cppm">
       <Filter>src</Filter>
     </ClCompile>
     <ClCompile Include="include\Layer\ArtifactHierarchyModel.ixx">
@@ -480,6 +486,21 @@
     </ClCompile>
     <ClCompile Include="src\Project\ArtifactProjectModel.cppm">
       <Filter>src\Project</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Project\ArtifactPresetManager.cppm">
+      <Filter>src\Project</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Project\ArtifactProjectStatistics.cppm">
+      <Filter>src\Project</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Project\ArtifactProjectStatistics.cppm">
+      <Filter>src\Project</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Project\ArtifactProjectCleanupTool.cppm">
+      <Filter>src\Project</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Color\ColorPaletteManager.cppm">
+      <Filter>src\Color</Filter>
     </ClCompile>
     <ClCompile Include="src\Project\ArtifactProject.cppm">
       <Filter>src\Project</Filter>
@@ -641,6 +662,21 @@
     </ClCompile>
     <ClCompile Include="include\Widgets\ArtifactProjectManagerWidget.ixx">
       <Filter>include\Project</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Project\ArtifactPresetManager.ixx">
+      <Filter>include\Project</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Project\ArtifactProjectStatistics.ixx">
+      <Filter>include\Project</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Project\ArtifactProjectStatistics.ixx">
+      <Filter>include\Project</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Project\ArtifactProjectCleanupTool.ixx">
+      <Filter>include\Project</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Color\ColorPaletteManager.ixx">
+      <Filter>include\Color</Filter>
     </ClCompile>
     <ClCompile Include="include\Project\ArtifactProject.ixx">
       <Filter>include\Project</Filter>
@@ -897,5 +933,11 @@
       <UniqueIdentifier>{9991357d-b159-4a04-be69-9c6313a0432e}</UniqueIdentifier>
     </Filter>
     <Filter Include="src\Effetcs\Ofx" />
+    <Filter Include="include\Color">
+      <UniqueIdentifier>{6b7c8d9e-0a1b-2c3d-4e5f-6a7b8c9d0e1f}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="src\Color">
+      <UniqueIdentifier>{1f0e9d8c-7b6a-5f4e-3d2c-1b0a9e8d7c6b}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
 </Project>

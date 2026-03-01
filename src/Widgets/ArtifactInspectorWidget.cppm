@@ -28,6 +28,7 @@ import Widgets.Utils.CSS;
 import Artifact.Service.Project;
 import Artifact.Composition.Abstract;
 import Artifact.Effect.Abstract;
+import Artifact.Widgets.ArtifactPropertyWidget;
 import Undo.UndoManager;
 import Generator.Effector;
 
@@ -58,8 +59,8 @@ namespace Artifact {
    QListWidget* effectsListWidget = nullptr;
    QPushButton* addEffectButton = nullptr;
    QPushButton* removeEffectButton = nullptr;
-   QWidget* propertiesTabWidget = nullptr;
-   QFormLayout* propertiesFormLayout = nullptr;
+   QPushButton* removeEffectButton = nullptr;
+   ArtifactPropertyWidget* propertyWidget = nullptr;
 
    QMenu* inspectorMenu_ = nullptr;
 
@@ -92,159 +93,8 @@ namespace Artifact {
 
 void ArtifactInspectorWidget::Impl::updatePropertiesForEffect(const QString& effectId)
 {
-    if (!propertiesFormLayout) return;
-    // Clear existing widgets
-    QLayoutItem* item;
-    while ((item = propertiesFormLayout->takeAt(0)) != nullptr) {
-        if (item->widget()) {
-            delete item->widget();
-        }
-        delete item;
-    }
-
-    if (effectId.isEmpty()) return;
-
-    auto projectService = ArtifactProjectService::instance();
-    if (!projectService) return;
-    if (currentCompositionId_.isNil()) return;
-
-    auto findResult = projectService->findComposition(currentCompositionId_);
-    if (!findResult.success) return;
-    auto comp = findResult.ptr.lock();
-    if (!comp) return;
-    auto layer = comp->layerById(currentLayerId_);
-    if (!layer) return;
-
-    // Find effect by id
-    auto effect = layer->getEffect(ArtifactCore::UniString(effectId.toStdString()));
-    if (!effect) return;
-
-    // Query properties and create editable widgets
-    auto props = effect->getProperties();
-    for (const auto& p : props) {
-        QLabel* label = new QLabel(p.getName());
-
-        QWidget* editor = nullptr;
-        auto type = p.getType();
-        QVariant curVal = p.getValue();
-
-        switch (type) {
-            case ArtifactCore::PropertyType::Float: {
-                auto* spin = new QDoubleSpinBox();
-                spin->setRange(-1e6, 1e6);
-                spin->setSingleStep(0.01);
-                spin->setValue(curVal.toDouble());
-                editor = spin;
-                {
-                    // Store current value as the "before" state when focus is gained
-                    QObject::connect(spin, &QDoubleSpinBox::editingFinished, [spin, effect, name = p.getName()]() {
-                        // Store the value before editing for undo
-                        spin->setProperty("oldValue", spin->value());
-                    });
-                    QObject::connect(spin, qOverload<double>(&QDoubleSpinBox::valueChanged), [this, effect, name = p.getName(), spin](double v){
-                        QVariant oldVal = spin->property("oldValue");
-                        if (!oldVal.isValid()) {
-                            oldVal = v; // First change, no old value stored
-                        }
-                        // push undo command instead of directly setting
-                        UndoManager::instance()->push(std::make_unique<SetPropertyCommand>(effect, UniString(name.toStdString()), oldVal, QVariant(v)));
-                        // Update stored old value for next change
-                        spin->setProperty("oldValue", v);
-                        // refresh to show updated derived props
-                        updatePropertiesForEffect(effect->effectID().toQString());
-                    });
-                    // Initialize old value
-                    spin->setProperty("oldValue", curVal.toDouble());
-                }
-                break;
-            }
-            case ArtifactCore::PropertyType::Integer: {
-                auto* spin = new QSpinBox();
-                spin->setRange(std::numeric_limits<int>::min(), std::numeric_limits<int>::max());
-                spin->setValue(curVal.toInt());
-                editor = spin;
-                {
-                    QObject::connect(spin, &QSpinBox::editingFinished, [spin, effect, name = p.getName()]() {
-                        spin->setProperty("oldValue", spin->value());
-                    });
-                    QObject::connect(spin, qOverload<int>(&QSpinBox::valueChanged), [this, effect, name = p.getName(), spin](int v){
-                        QVariant oldVal = spin->property("oldValue");
-                        if (!oldVal.isValid()) oldVal = v;
-                        UndoManager::instance()->push(std::make_unique<SetPropertyCommand>(effect, UniString(name.toStdString()), oldVal, QVariant(v)));
-                        spin->setProperty("oldValue", v);
-                        updatePropertiesForEffect(effect->effectID().toQString());
-                    });
-                    spin->setProperty("oldValue", curVal.toInt());
-                }
-                break;
-            }
-            case ArtifactCore::PropertyType::Boolean: {
-                auto* cb = new QCheckBox();
-                cb->setChecked(curVal.toBool());
-                editor = cb;
-                {
-                    cb->setProperty("oldValue", curVal.toBool());
-                    QObject::connect(cb, &QCheckBox::toggled, [this, effect, name = p.getName(), cb](bool v){
-                        QVariant oldVal = cb->property("oldValue");
-                        UndoManager::instance()->push(std::make_unique<SetPropertyCommand>(effect, UniString(name.toStdString()), oldVal, QVariant(v)));
-                        cb->setProperty("oldValue", v);
-                        updatePropertiesForEffect(effect->effectID().toQString());
-                    });
-                }
-                break;
-            }
-            case ArtifactCore::PropertyType::Color: {
-                auto* btn = new QPushButton("Choose...");
-                QColor initial = p.getColorValue();
-                {
-                    btn->setProperty("oldColor", initial);
-                    QObject::connect(btn, &QPushButton::clicked, [this, effect, name = p.getName(), initial, btn]() mutable {
-                        QColor col = QColorDialog::getColor(initial);
-                        if (col.isValid()) {
-                            QVariant oldVal = btn->property("oldColor");
-                            UndoManager::instance()->push(std::make_unique<SetPropertyCommand>(effect, UniString(name.toStdString()), oldVal, QVariant(col)));
-                            // update button background
-                            QString ss = QString("background-color: %1").arg(col.name());
-                            btn->setStyleSheet(ss);
-                            btn->setProperty("oldColor", col);
-                            initial = col;
-                        }
-                    });
-                    // Set initial button style
-                    QString ss = QString("background-color: %1").arg(initial.name());
-                    btn->setStyleSheet(ss);
-                }
-                editor = btn;
-                break;
-            }
-            case ArtifactCore::PropertyType::String: {
-                auto* le = new QLineEdit(curVal.toString());
-                editor = le;
-                {
-                    le->setProperty("oldText", curVal.toString());
-                    QObject::connect(le, &QLineEdit::editingFinished, [this, effect, name = p.getName(), le]() {
-                        QString newText = le->text();
-                        QVariant oldVal = le->property("oldText");
-                        if (oldVal.toString() != newText) {
-                            UndoManager::instance()->push(std::make_unique<SetPropertyCommand>(effect, UniString(name.toStdString()), oldVal, QVariant(newText)));
-                            le->setProperty("oldText", newText);
-                        }
-                        updatePropertiesForEffect(effect->effectID().toQString());
-                    });
-                }
-                break;
-            }
-            default: {
-                QLabel* valueLabel = new QLabel(curVal.toString());
-                editor = valueLabel;
-                break;
-            }
-        }
-
-        if (editor) {
-            propertiesFormLayout->addRow(label, editor);
-        }
-    }
+    // Now handled entirely by ArtifactPropertyWidget when a layer is set.
+    // Kept here for compatibility until we completely remove old effect list coupling.
 }
 
  ArtifactInspectorWidget::Impl::~Impl()
@@ -357,6 +207,11 @@ void ArtifactInspectorWidget::Impl::updatePropertiesForEffect(const QString& eff
 
   statusLabel->setText(QString("Status: Layer selected - ID: %1").arg(currentLayerId_.toString()));
 
+  // プロパティウィジェットにも選択レイヤーを反映
+  if (propertyWidget) {
+      propertyWidget->setLayer(layer);
+  }
+
   qDebug() << "[Inspector] Updated layer info:" << layerName << "Type:" << layerType;
  }
 
@@ -380,6 +235,9 @@ void ArtifactInspectorWidget::Impl::updatePropertiesForEffect(const QString& eff
   // エフェクトリストもクリア
   if (effectsListWidget) {
    effectsListWidget->clear();
+  }
+  if (propertyWidget) {
+      propertyWidget->clear();
   }
  }
 
@@ -628,10 +486,8 @@ void ArtifactInspectorWidget::Impl::updatePropertiesForEffect(const QString& eff
   impl_->tabWidget->addTab(impl_->effectsTabWidget, "Rasterizer Effects");
 
   // ================== Properties Tab ==================
-  impl_->propertiesTabWidget = new QWidget();
-  impl_->propertiesFormLayout = new QFormLayout();
-  impl_->propertiesTabWidget->setLayout(impl_->propertiesFormLayout);
-  impl_->tabWidget->addTab(impl_->propertiesTabWidget, "Properties");
+  impl_->propertyWidget = new ArtifactPropertyWidget();
+  impl_->tabWidget->addTab(impl_->propertyWidget, "Properties");
 
   // ボタンシグナルを接続
   QObject::connect(impl_->addEffectButton, &QPushButton::clicked, this, [this]() {
@@ -672,11 +528,9 @@ void ArtifactInspectorWidget::Impl::updatePropertiesForEffect(const QString& eff
     impl_->handleCompositionCreated(id);
    });
 
-   // When effect list selection changes, update properties
+   // When effect list selection changes, update properties (now we show layer props in propertyWidget)
    QObject::connect(impl_->effectsListWidget, &QListWidget::currentItemChanged, this, [this](QListWidgetItem* cur, QListWidgetItem*) {
-       if (!cur) return;
-       QString effectId = cur->data(Qt::UserRole).toString();
-       impl_->updatePropertiesForEffect(effectId);
+       // if we want to filter properties per effect, we could...
    });
 
    // レイヤー作成シグナルに接続（作成されたレイヤーを自動選択）
