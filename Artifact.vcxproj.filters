@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup>
     <FxCompile Include="include\Widgets\Render\Shader\Common2DPS.hlsl" />
@@ -752,6 +752,12 @@
     <ClCompile Include="src\Layer\ArtifactCameraLayer.cppm">
       <Filter>src\Layer</Filter>
     </ClCompile>
+    <ClCompile Include="src\Effetcs\Ofx\ArtifactOfxHost.cppm">
+      <Filter>src\Effetcs\Ofx</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Effetcs\Ofx\ArtifactOfxEffectImpl.cppm">
+      <Filter>src\Effetcs\Ofx</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Generated\TestService.h" />
@@ -890,5 +896,6 @@
     <Filter Include="src\Widgets\Render">
       <UniqueIdentifier>{9991357d-b159-4a04-be69-9c6313a0432e}</UniqueIdentifier>
     </Filter>
+    <Filter Include="src\Effetcs\Ofx" />
   </ItemGroup>
 </Project>

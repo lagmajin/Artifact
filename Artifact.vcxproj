@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup Label="ProjectConfigurations">
     <ProjectConfiguration Include="Debug|Win32">
@@ -751,6 +751,8 @@
       <FileType>Document</FileType>
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
     </ClCompile>
+    <ClCompile Include="src\Effetcs\Ofx\ArtifactOfxHost.cppm" />
+    <ClCompile Include="src\Effetcs\Ofx\ArtifactOfxEffectImpl.cppm" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="include\Widgets\Menu\ArtifactMenu.ixx">
