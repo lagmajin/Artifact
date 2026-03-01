@@ -499,6 +499,12 @@
     <ClCompile Include="src\Project\ArtifactProjectCleanupTool.cppm">
       <Filter>src\Project</Filter>
     </ClCompile>
+    <ClCompile Include="src\Project\ArtifactProjectHealthChecker.cppm">
+      <Filter>src\Project</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Project\ArtifactProjectPackager.cppm">
+      <Filter>src\Project</Filter>
+    </ClCompile>
     <ClCompile Include="src\Color\ColorPaletteManager.cppm">
       <Filter>src\Color</Filter>
     </ClCompile>
@@ -673,6 +679,12 @@
       <Filter>include\Project</Filter>
     </ClCompile>
     <ClCompile Include="include\Project\ArtifactProjectCleanupTool.ixx">
+      <Filter>include\Project</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Project\ArtifactProjectHealthChecker.ixx">
+      <Filter>include\Project</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Project\ArtifactProjectPackager.ixx">
       <Filter>include\Project</Filter>
     </ClCompile>
     <ClCompile Include="include\Color\ColorPaletteManager.ixx">
