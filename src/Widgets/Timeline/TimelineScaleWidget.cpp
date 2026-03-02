@@ -20,7 +20,7 @@ namespace Artifact
   Impl();
   ~Impl();
   int frameCount = 1000;
-  float zoom = 1.0f; // ƒsƒNƒZƒ‹/ƒtƒŒ[ƒ€
+  float zoom = 1.0f; // sNZ/t[
   void draw(QPainter& painter, const QRect& rect)
   {
    painter.save();
@@ -34,15 +34,15 @@ namespace Artifact
    int left = rect.left();
    int right = rect.right();
 
-   // --- •¶š‚ğ•`‚¯‚éÅ¬ƒsƒNƒZƒ‹•‚ğ’è‹` ---
-   const int minLabelPx = 30;       // 30px ˆÈ‰º‚È‚ç•¶š‚ğ•`‚©‚È‚¢
+   // --- `ÅsNZ` ---
+   const int minLabelPx = 30;       // 30px È‰È‚ç•¶`È‚
    int majorStep = baseMajorStep;
 
-   // majorStep ‚ğŠg‘å‚µ‚Ä‚¢‚Á‚Äu•¶š‚ª•`‚¯‚é•v‚ğŠm•Û
+   // majorStep gå‚µÄ‚Äu`é•vm
    while (majorStep * zoom < minLabelPx)
 	majorStep *= 2;
 
-   // •`‰æƒ‹[ƒv
+   // `æƒ‹[v
    for (int f = 0; f <= frameCount; ++f)
    {
 	int x = left + static_cast<int>(f * zoom);
@@ -51,7 +51,7 @@ namespace Artifact
 	if (f % majorStep == 0)
 	{
 	 painter.drawLine(x, rect.top(), x, rect.top() + 15);
-	 // •¶š‚ª“ü‚é”ÍˆÍ‚ğŠm•Û
+	 // ÍˆÍ‚m
 	 QRect textRect(x + 2, rect.top() + 2, majorStep * zoom, 14);
 	 painter.drawText(textRect,
 	  Qt::AlignLeft | Qt::AlignVCenter,

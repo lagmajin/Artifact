@@ -75,11 +75,9 @@ namespace Artifact {
    ptr = mediaLayer;
    break;
   }
-  case LayerType::Video: {
-   //auto videoLayer = std::make_shared<ArtifactVideoLayer>();
-   //ptr = videoLayer;
+  case LayerType::Video:
+   ptr = std::make_shared<ArtifactMediaLayer>();
    break;
-  }
   case LayerType::Precomp:
    //ptr = std::make_shared<ArtifactCompositionLayer>();
   case LayerType::Camera:

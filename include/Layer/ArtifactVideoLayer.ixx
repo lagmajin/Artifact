@@ -62,6 +62,11 @@ public:
     ~ArtifactVideoLayer() override;
 
     // === Source Management ===
+    // Compatibility API shared with ArtifactMediaLayer.
+    void setSourceFile(const QString& path);
+    QString sourceFile() const;
+    void setHasAudio(bool hasAudio);
+    void setHasVideo(bool hasVideo);
     
     /// Load video from file path
     /// @param path Absolute or relative path to video file

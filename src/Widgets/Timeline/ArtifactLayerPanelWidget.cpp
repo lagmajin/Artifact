@@ -212,9 +212,7 @@ void ArtifactLayerPanelWidget::setComposition(const CompositionID& id)
  void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
  {
     const int rowH = 28;
-    const int iconSize = 16;
-    const int iconSpacing = 4;
-    const int leftPadding = 4;
+    const int colW = 28;
 
     int idx = event->pos().y() / rowH;
     int clickX = event->pos().x();
@@ -237,38 +235,37 @@ void ArtifactLayerPanelWidget::setComposition(const CompositionID& id)
         return;
     }
 
-    // Visibility icon click area (leftmost icon)
-    int visibilityIconX = leftPadding;
-    int visibilityIconEndX = visibilityIconX + iconSize;
-
-    if (event->button() == Qt::LeftButton && 
-        clickX >= visibilityIconX && clickX <= visibilityIconEndX) {
-        // Toggle visibility
+    // Column 0: Visibility
+    if (event->button() == Qt::LeftButton && clickX >= 0 && clickX < colW) {
         bool currentVisibility = layer->isVisible();
         layer->setVisible(!currentVisibility);
-
-        qDebug() << "[LayerPanel] Toggled visibility for layer" << idx 
-                 << ":" << layer->layerName() 
-                 << "New state:" << (!currentVisibility);
-
-        update();  // Repaint to show new state
+        update();
         event->accept();
         return;
     }
 
-    // Lock icon click area (second icon)
-    int lockIconX = visibilityIconEndX + iconSpacing;
-    int lockIconEndX = lockIconX + iconSize;
-
-    if (event->button() == Qt::LeftButton && 
-        clickX >= lockIconX && clickX <= lockIconEndX) {
+    // Column 1: Lock
+    if (event->button() == Qt::LeftButton && clickX >= colW && clickX < colW * 2) {
         // TODO: Toggle lock state
-        qDebug() << "[LayerPanel] Lock icon clicked for layer" << idx;
         event->accept();
         return;
     }
 
-    // Right-click -> context menu for layer actions
+    // Column 2: Solo
+    if (event->button() == Qt::LeftButton && clickX >= colW * 2 && clickX < colW * 3) {
+        // TODO: Toggle solo state
+        event->accept();
+        return;
+    }
+
+    // Column 3: Sound
+    if (event->button() == Qt::LeftButton && clickX >= colW * 3 && clickX < colW * 4) {
+        // TODO: Toggle sound state
+        event->accept();
+        return;
+    }
+
+    // Right-click -> context menu
     if (event->button() == Qt::RightButton) {
         QMenu menu(this);
         QAction* del = menu.addAction("Delete Layer");
@@ -282,20 +279,17 @@ void ArtifactLayerPanelWidget::setComposition(const CompositionID& id)
             }
         } else if (act == rename) {
             // TODO: Implement rename
-            qDebug() << "[LayerPanel] Rename layer" << idx;
         } else if (act == duplicate) {
             // TODO: Implement duplicate
-            qDebug() << "[LayerPanel] Duplicate layer" << idx;
         }
         event->accept();
         return;
     }
 
-    // Left-click on layer name -> select layer
+    // Left-click on layer name or other columns -> select layer
     if (event->button() == Qt::LeftButton) {
         impl_->hoveredLayerIndex = idx;
-        qDebug() << "[LayerPanel] Selected layer" << idx << ":" << layer->layerName();
-        update();  // Repaint to show selection
+        update();
     }
 
     QWidget::mousePressEvent(event);
@@ -304,27 +298,18 @@ void ArtifactLayerPanelWidget::setComposition(const CompositionID& id)
  void ArtifactLayerPanelWidget::mouseMoveEvent(QMouseEvent* event)
  {
     const int rowH = 28;
-    const int iconSize = 16;
-    const int iconSpacing = 4;
-    const int leftPadding = 4;
+    const int colW = 28;
 
     int idx = event->pos().y() / rowH;
     int mouseX = event->pos().x();
 
-    // ホバーハイライトの更新
     if (idx != impl_->hoveredLayerIndex) {
         impl_->hoveredLayerIndex = idx;
-        update();  // Repaint to update hover highlight
+        update();
     }
 
-    // アイコン領域でカーソルをポインターに変更
-    int visibilityIconX = leftPadding;
-    int visibilityIconEndX = visibilityIconX + iconSize;
-    int lockIconX = visibilityIconEndX + iconSpacing;
-    int lockIconEndX = lockIconX + iconSize;
-
-    if ((mouseX >= visibilityIconX && mouseX <= visibilityIconEndX) ||
-        (mouseX >= lockIconX && mouseX <= lockIconEndX)) {
+    // Pointer cursor on icon columns
+    if (mouseX >= 0 && mouseX < colW * 4) {
         setCursor(Qt::PointingHandCursor);
     } else {
         setCursor(Qt::ArrowCursor);
@@ -343,27 +328,20 @@ void ArtifactLayerPanelWidget::setComposition(const CompositionID& id)
   void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
  {
   QPainter p(this);
-  const int rowH = 28; // 行の高さ
+  const int rowH = 28; 
+  const int colW = 28;
   const int iconSize = 16;
-  const int iconSpacing = 4;
-  const int leftPadding = 4;
   
-  // 背景を塗りつぶし
+  // 背景描画
   for (int i = 0; i * rowH < height(); ++i) {
    int y = i * rowH;
-   
-   // ホバーハイライト
    if (i == impl_->hoveredLayerIndex) {
-	p.fillRect(0, y, width(), rowH, QColor(55, 55, 80));  // 青系のハイライト
-   }
-   // 偶数行と奇数行で色を分ける
-   else if (i % 2 == 0) {
+	p.fillRect(0, y, width(), rowH, QColor(55, 55, 80));
+   } else if (i % 2 == 0) {
 	p.fillRect(0, y, width(), rowH, QColor(42, 42, 42));
    } else {
 	p.fillRect(0, y, width(), rowH, QColor(45, 45, 45));
    }
-   
-   // 区切り線
    p.setPen(QColor(60, 60, 60));
    p.drawLine(0, y + rowH, width(), y + rowH);
   }
@@ -371,76 +349,66 @@ void ArtifactLayerPanelWidget::setComposition(const CompositionID& id)
   auto compShared = safeCompositionLookup(impl_->compositionId);
   if (compShared) {
     QVector<ArtifactAbstractLayerPtr> layers = compShared->allLayer();
-    qDebug() << "[LayerPanel] Rendering" << layers.size() << "layers";
 
     for (int idx = 0; idx < layers.size(); ++idx) {
       int y = idx * rowH;
       auto layer = layers[idx];
-      if (!layer) {
-        qDebug() << "[LayerPanel] Layer" << idx << "is null!";
-        continue;
-      }
+      if (!layer) continue;
 
       QString layerName = layer->layerName();
-      if (layerName.isEmpty()) {
-        layerName = QString("Layer %1").arg(idx + 1);  // フォールバック名
-      }
-      qDebug() << "[LayerPanel] Drawing layer" << idx << ":" << layerName;
+      if (layerName.isEmpty()) layerName = QString("Layer %1").arg(idx + 1);
 
-      int currentX = leftPadding;
+      int currentX = 0;
+      int iconOffset = (colW - iconSize) / 2;
 
-      // Visibility icon - 表示状態に応じて色を変える
+      // Visibility Icon (Col 0)
       bool isVisible = layer->isVisible();
       if (!impl_->visibilityIcon.isNull()) {
-        // アイコンを描画し、非表示の場合は半透明にする
         p.setOpacity(isVisible ? 1.0 : 0.3);
-        p.drawPixmap(currentX, y + (rowH - iconSize) / 2, iconSize, iconSize, impl_->visibilityIcon);
-        p.setOpacity(1.0);  // 透明度をリセット
+        p.drawPixmap(currentX + iconOffset, y + (rowH - iconSize) / 2, iconSize, iconSize, impl_->visibilityIcon);
+        p.setOpacity(1.0);
       } else {
-        // アイコンがない場合は色付き四角形で表現
         QColor visColor = isVisible ? QColor(100, 200, 100) : QColor(80, 80, 80);
-        p.fillRect(currentX, y + (rowH - iconSize) / 2, iconSize, iconSize, visColor);
-        p.setPen(QPen(QColor(120, 120, 120), 1));
-        p.drawRect(currentX, y + (rowH - iconSize) / 2, iconSize, iconSize);
+        p.fillRect(currentX + iconOffset, y + (rowH - iconSize) / 2, iconSize, iconSize, visColor);
       }
-      currentX += iconSize + iconSpacing;
+      
+      // Draw vertical separator
+      p.setPen(QPen(QColor(60, 60, 60), 1));
+      p.drawLine(currentX + colW - 1, y, currentX + colW - 1, y + rowH);
+      currentX += colW;
 
-      // Lock icon
+      // Lock Icon (Col 1)
       if (!impl_->lockIcon.isNull()) {
-        p.drawPixmap(currentX, y + (rowH - iconSize) / 2, iconSize, iconSize, impl_->lockIcon);
-      } else {
-        // 代替としてプレースホルダーを描画
-        p.setPen(QPen(QColor(80, 80, 80), 1));
-        p.drawRect(currentX, y + (rowH - iconSize) / 2, iconSize, iconSize);
+        p.drawPixmap(currentX + iconOffset, y + (rowH - iconSize) / 2, iconSize, iconSize, impl_->lockIcon);
       }
-      currentX += iconSize + iconSpacing;
+      p.drawLine(currentX + colW - 1, y, currentX + colW - 1, y + rowH);
+      currentX += colW;
 
-      // Solo icon (optional, add spacing)
+      // Solo Icon (Col 2)
       if (!impl_->soloIcon.isNull()) {
-        p.drawPixmap(currentX, y + (rowH - iconSize) / 2, iconSize, iconSize, impl_->soloIcon);
-        currentX += iconSize + iconSpacing;
+        p.drawPixmap(currentX + iconOffset, y + (rowH - iconSize) / 2, iconSize, iconSize, impl_->soloIcon);
       }
+      p.drawLine(currentX + colW - 1, y, currentX + colW - 1, y + rowH);
+      currentX += colW;
 
-      // レイヤー名を描画
+      // Sound Icon (Col 3) - Empty placeholder for now
+      p.drawLine(currentX + colW - 1, y, currentX + colW - 1, y + rowH);
+      currentX += colW;
+
+      // Layer Name (Col 4 onwards)
       p.setPen(Qt::white);
       QFont font = p.font();
-      font.setPointSize(10);  // 10ptに拡大
+      font.setPointSize(10);
       font.setBold(false);
       p.setFont(font);
 
-      int textX = currentX;
-      int textWidth = width() - textX - leftPadding;
+      int textX = currentX + 8; // Small padding
+      int textWidth = width() - textX;
       QRect textRect(textX, y, textWidth, rowH);
 
-      qDebug() << "[LayerPanel] Text rect:" << textRect << "Text:" << layerName;
       p.drawText(textRect, Qt::AlignVCenter | Qt::AlignLeft, layerName);
-
-      // 区切り線
-      p.setPen(QColor(60, 60, 60));
-      p.drawLine(0, y + rowH, width(), y + rowH);
     }
   } else {
-    qDebug() << "[LayerPanel] No composition found for ID:" << impl_->compositionId.toString();
     p.setPen(Qt::gray);
     p.drawText(rect(), Qt::AlignCenter, "No composition");
   }

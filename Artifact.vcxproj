@@ -271,6 +271,7 @@
     <ClCompile Include="include\Layer\ArtifactLayerSetting.ixx" />
     <ClCompile Include="include\Layer\ArtifactLayerUIInfo.ixx" />
     <ClCompile Include="include\Layer\ArtifactMediaLayer.ixx" />
+    <ClCompile Include="include\Layer\ArtifactVideoLayer.ixx" />
     <ClCompile Include="include\Layer\ArtifactSolid2DLayer.ixx" />
     <ClCompile Include="include\Layer\ArtifactAdjustableLayer.ixx">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
@@ -465,6 +466,9 @@
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Layer\ArtifactLayerSetting.cpp" />
+    <ClCompile Include="src\Layer\ArtifactMediaLayer.cppm">
+      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+    </ClCompile>
     <ClCompile Include="src\Layer\ArtifactShapeLayer.cppm">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
     </ClCompile>
@@ -475,6 +479,9 @@
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Layer\ArtifactTextLayer.cppm">
+      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+    </ClCompile>
+    <ClCompile Include="src\Layer\ArtifactVideoLayer.cppm">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Library\Link.cpp" />

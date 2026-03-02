@@ -1,15 +1,53 @@
 module;
+
+#include <QString>
+#include <QVariant>
+
 export module BrightnessEffect;
+
+import std;
+import Artifact.Effect.Abstract;
+import Image.ImageF32x4RGBAWithCache;
+import Property.Abstract;
+import Utils.String.UniString;
 
 export namespace Artifact {
 
- class BrightnessEffect {
- private:
+using namespace ArtifactCore;
 
- public:
-  BrightnessEffect();
-  ~BrightnessEffect();
- };
+// 明度 (Brightness) エフェクト
+// 画像全体の明るさを調整する基本的なカラーコレクション
+class BrightnessEffect : public ArtifactAbstractEffect {
+private:
+    class Impl;
+    Impl* impl_;
 
+protected:
+    void apply(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) override;
 
+public:
+    BrightnessEffect();
+    ~BrightnessEffect() override;
+
+    // 明度 (-1.0 ~ 1.0, default: 0.0)
+    void setBrightness(float brightness);
+    float brightness() const;
+
+    // コントラスト (-1.0 ~ 1.0, default: 0.0)
+    void setContrast(float contrast);
+    float contrast() const;
+
+    // ハイライト調整 (-1.0 ~ 1.0, default: 0.0)
+    void setHighlights(float highlights);
+    float highlights() const;
+
+    // シャドウ調整 (-1.0 ~ 1.0, default: 0.0)
+    void setShadows(float shadows);
+    float shadows() const;
+
+    // プロパティ取得
+    std::vector<AbstractProperty> getProperties() const override;
+    void setPropertyValue(const UniString& name, const QVariant& value) override;
 };
+
+} // namespace Artifact

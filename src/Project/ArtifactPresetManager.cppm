@@ -11,6 +11,7 @@ import std;
 import Artifact.Effect.Abstract;
 import Property.Abstract;
 import Utils.String.UniString;
+import Artifact.Color.Palette;
 
 namespace Artifact {
 
@@ -73,6 +74,14 @@ bool ArtifactPresetManager::loadEffectPreset(ArtifactAbstractEffectPtr& effect, 
     if (doc.isNull() || !doc.isObject()) return false;
 
     return applyPresetJsonToEffect(effect, doc.object());
+}
+
+bool ArtifactPresetManager::saveColorPaletteMapping(const ColorPaletteManager& manager, const QString& filePath) {
+    return manager.saveToFile(filePath);
+}
+
+bool ArtifactPresetManager::loadColorPaletteMapping(ColorPaletteManager& manager, const QString& filePath) {
+    return manager.loadFromFile(filePath);
 }
 
 } // namespace Artifact

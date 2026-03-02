@@ -11,6 +11,7 @@ export module Artifact.Project.PresetManager;
 import std;
 import Artifact.Effect.Abstract;
 import Property.Abstract;
+import Artifact.Color.Palette;
 
 export namespace Artifact {
 
@@ -23,6 +24,10 @@ public:
 
     static QJsonObject effectToPresetJson(const ArtifactAbstractEffectPtr& effect);
     static bool applyPresetJsonToEffect(ArtifactAbstractEffectPtr& effect, const QJsonObject& json);
+
+    // Color Palette
+    static bool saveColorPaletteMapping(const ColorPaletteManager& manager, const QString& filePath);
+    static bool loadColorPaletteMapping(ColorPaletteManager& manager, const QString& filePath);
 };
 
 } // namespace Artifact

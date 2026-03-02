@@ -219,6 +219,8 @@ public:
     
     double audioVolume_ = 1.0;
     bool audioMuted_ = false;
+    bool audioEnabled_ = true;
+    bool videoEnabled_ = true;
     
     cv::Mat currentFrameData_;
     QImage currentQImage_;
@@ -246,6 +248,27 @@ ArtifactVideoLayer::~ArtifactVideoLayer()
 }
 
 // === Source Management ===
+void ArtifactVideoLayer::setSourceFile(const QString& path)
+{
+    if (path.isEmpty()) return;
+    (void)loadFromPath(path);
+}
+
+QString ArtifactVideoLayer::sourceFile() const
+{
+    return sourcePath();
+}
+
+void ArtifactVideoLayer::setHasAudio(bool hasAudio)
+{
+    impl_->audioEnabled_ = hasAudio;
+}
+
+void ArtifactVideoLayer::setHasVideo(bool hasVideo)
+{
+    impl_->videoEnabled_ = hasVideo;
+}
+
 bool ArtifactVideoLayer::loadFromPath(const QString& path)
 {
     if (!impl_->decoder_->open(path)) {
@@ -535,7 +558,7 @@ bool ArtifactVideoLayer::isLoopEnabled() const
 // === Audio ===
 bool ArtifactVideoLayer::hasAudio() const
 {
-    return impl_->streamInfo_.hasAudio;
+    return impl_->audioEnabled_ && impl_->streamInfo_.hasAudio;
 }
 
 double ArtifactVideoLayer::audioVolume() const
@@ -570,6 +593,8 @@ QJsonObject ArtifactVideoLayer::toJson() const
     obj["loopEnabled"] = impl_->loopEnabled_;
     obj["audioVolume"] = impl_->audioVolume_;
     obj["audioMuted"] = impl_->audioMuted_;
+    obj["audioEnabled"] = impl_->audioEnabled_;
+    obj["videoEnabled"] = impl_->videoEnabled_;
     obj["proxyQuality"] = static_cast<int>(impl_->proxyQuality_);
     obj["proxyPath"] = impl_->proxyPath_;
     
@@ -605,6 +630,12 @@ std::shared_ptr<ArtifactVideoLayer> ArtifactVideoLayer::fromJson(const QJsonObje
     if (obj.contains("audioMuted")) {
         layer->setAudioMuted(obj["audioMuted"].toBool());
     }
+    if (obj.contains("audioEnabled")) {
+        layer->setHasAudio(obj["audioEnabled"].toBool());
+    }
+    if (obj.contains("videoEnabled")) {
+        layer->setHasVideo(obj["videoEnabled"].toBool());
+    }
     if (obj.contains("proxyQuality")) {
         layer->setProxyQuality(static_cast<ProxyQuality>(obj["proxyQuality"].toInt()));
     }
@@ -618,7 +649,7 @@ std::shared_ptr<ArtifactVideoLayer> ArtifactVideoLayer::fromJson(const QJsonObje
 // === Overrides ===
 void ArtifactVideoLayer::draw()
 {
-    if (!impl_->isLoaded_) return;
+    if (!impl_->videoEnabled_ || !impl_->isLoaded_) return;
     
     // Decode current frame if needed
     if (impl_->currentFrameData_.empty() || 
@@ -632,7 +663,7 @@ void ArtifactVideoLayer::draw()
 
 bool ArtifactVideoLayer::hasVideo() const
 {
-    return impl_->isLoaded_;
+    return impl_->videoEnabled_ && impl_->isLoaded_;
 }
 
 } // namespace Artifact
