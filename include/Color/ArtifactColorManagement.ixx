@@ -165,7 +165,7 @@ public:
     static ColorManager& instance();
 
     ColorManager();
-    ~ColorSettings();
+    ~ColorManager();
 
     // グローバル設定
     ColorSettings* settings();
