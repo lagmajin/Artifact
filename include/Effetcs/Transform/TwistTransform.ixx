@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <QString>
 
 export module Artifact.Effect.Transform.Twist;
@@ -27,12 +27,13 @@ export namespace Artifact {
 
         std::vector<AbstractProperty> getProperties() const override {
             std::vector<AbstractProperty> props;
-            
-            AbstractProperty angleProp("Angle");
+            props.reserve(1);
+
+            auto& angleProp = props.emplace_back();
+            angleProp.setName("Angle");
             angleProp.setType(PropertyType::Float);
             angleProp.setValue(angle_);
-            props.push_back(angleProp);
-            
+
             return props;
         }
 

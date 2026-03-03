@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <QString>
 #include <QColor>
 
@@ -36,22 +36,23 @@ export namespace Artifact {
 
         std::vector<AbstractProperty> getProperties() const override {
             std::vector<AbstractProperty> props;
-            
-            AbstractProperty albedoProp("Albedo Color");
+            props.reserve(3);
+
+            auto& albedoProp = props.emplace_back();
+            albedoProp.setName("Albedo Color");
             albedoProp.setType(PropertyType::Color);
             albedoProp.setValue(albedoColor_);
-            props.push_back(albedoProp);
 
-            AbstractProperty metalProp("Metallic");
+            auto& metalProp = props.emplace_back();
+            metalProp.setName("Metallic");
             metalProp.setType(PropertyType::Float);
             metalProp.setValue(metallic_);
-            props.push_back(metalProp);
 
-            AbstractProperty roughProp("Roughness");
+            auto& roughProp = props.emplace_back();
+            roughProp.setName("Roughness");
             roughProp.setType(PropertyType::Float);
             roughProp.setValue(roughness_);
-            props.push_back(roughProp);
-            
+
             return props;
         }
 

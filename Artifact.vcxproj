@@ -1,5 +1,5 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
-<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+<?xml version="1.0" encoding="utf-8"?>
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003" DefaultTargets="Build">
   <ItemGroup Label="ProjectConfigurations">
     <ProjectConfiguration Include="Debug|Win32">
       <Configuration>Debug</Configuration>
@@ -25,7 +25,6 @@
     <RootNamespace>Artifact</RootNamespace>
     <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
     <Keyword>QtVS_v304</Keyword>
-    <!--<QtMsBuild Condition="'$(QtMsBuild)'=='' OR !Exists('$(QtMsBuild)\qt.targets')">$(MSBuildProjectDirectory)\QtMsBuild</QtMsBuild>-->
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
@@ -56,7 +55,6 @@
     <CharacterSet>Unicode</CharacterSet>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
-  <!--<Import Project="$(QtMsBuild)\qt_defaults.props" Condition="Exists('$(QtMsBuild)\qt_defaults.props')" />-->
   <PropertyGroup Label="QtSettings" Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" />
   <PropertyGroup Label="QtSettings" Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" />
   <PropertyGroup Label="QtSettings" Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
@@ -65,28 +63,21 @@
   <PropertyGroup Label="QtSettings" Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <QtInstall>tools_Qt6</QtInstall>
   </PropertyGroup>
-  <!--<Target Name="QtMsBuildNotFound" BeforeTargets="CustomBuild;ClCompile" Condition="!Exists('$(QtMsBuild)\qt.targets') OR !Exists('$(QtMsBuild)\Qt.props')">
-    <Message Importance="High" Text="QtMsBuild: could not locate qt.targets, qt.props; project may not build correctly." />
-  </Target>-->
   <ImportGroup Label="ExtensionSettings">
   </ImportGroup>
   <ImportGroup Label="Shared">
   </ImportGroup>
   <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
-    <!--<Import Project="$(QtMsBuild)\Qt.props" />-->
   </ImportGroup>
   <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
-    <!--<Import Project="$(QtMsBuild)\Qt.props" />-->
   </ImportGroup>
   <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
-    <!--<Import Project="$(QtMsBuild)\Qt.props" />-->
   </ImportGroup>
   <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
-    <!--<Import Project="$(QtMsBuild)\Qt.props" />-->
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
@@ -194,436 +185,658 @@
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
     </ClCompile>
     <ClCompile Include="include\AI\AIClient.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Application\ActiveContextService.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Application\CommandDispatcher.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Artifact\AppMain.ixx">
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
     </ClCompile>
-    <ClCompile Include="include\Application\ActiveContextService.ixx" />
-    <ClCompile Include="include\Application\CommandDispatcher.ixx" />
-    <ClCompile Include="include\Asset\ArtifactAssetResult.ixx" />
+    <ClCompile Include="include\Asset\ArtifactAssetResult.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
     <ClCompile Include="include\Asset\AssetDirectoryModel.ixx">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
+      <CompileAs>CompileAsCppModule</CompileAs>
     </ClCompile>
-    <ClCompile Include="include\Asset\AssetMenuModel.ixx" />
-    <ClCompile Include="include\Audio\AudioClockProvider.ixx" />
-    <ClCompile Include="include\Audio\Effects\ArtifactAbstractAudioEffects.ixx" />
-    <ClCompile Include="include\Audio\Effects\ArtifactAudioOutput.ixx" />
-    <ClCompile Include="include\Audio\IAudioDevice.ixx" />
-    <ClCompile Include="include\Audio\PortAudioDevice.ixx" />
+    <ClCompile Include="include\Asset\AssetMenuModel.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Audio\AudioClockProvider.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Audio\Effects\ArtifactAbstractAudioEffects.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Audio\Effects\ArtifactAudioOutput.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Audio\IAudioDevice.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Audio\PortAudioDevice.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
     <ClCompile Include="include\Audio\WASAPIDevice.ixx">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
+      <CompileAs>CompileAsCppModule</CompileAs>
     </ClCompile>
-    <ClCompile Include="include\Composition\ArtifactAbstractComposition.ixx" />
-    <ClCompile Include="include\Composition\ArtifactComposition.ixx" />
+    <ClCompile Include="include\Composition\ArtifactAbstractComposition.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Composition\ArtifactComposition.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
     <ClCompile Include="include\Composition\ArtifactCompositionInitParams.ixx">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
+      <CompileAs>CompileAsCppModule</CompileAs>
     </ClCompile>
     <ClCompile Include="include\Composition\ArtifactCompositionPlaybackController.ixx">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
+      <CompileAs>CompileAsCppModule</CompileAs>
     </ClCompile>
-    <ClCompile Include="include\Composition\ArtifactCompositionResult.ixx" />
-    <ClCompile Include="include\Composition\ArtifactCompositionSetting.ixx" />
+    <ClCompile Include="include\Composition\ArtifactCompositionResult.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Composition\ArtifactCompositionSetting.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
     <ClCompile Include="include\Composition\ArtifactFindCompositionQuery.ixx">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
+      <CompileAs>CompileAsCppModule</CompileAs>
     </ClCompile>
-    <ClCompile Include="include\Composition\IComposition2D.ixx" />
+    <ClCompile Include="include\Composition\IComposition2D.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
     <ClCompile Include="include\Composition\MetadataVectorizer.ixx">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
+      <CompileAs>CompileAsCppModule</CompileAs>
     </ClCompile>
-    <ClCompile Include="include\Controller\TimelineViewProvider.ixx" />
+    <ClCompile Include="include\Controller\TimelineViewProvider.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
     <ClCompile Include="include\Core\SystemStats.ixx">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
+      <CompileAs>CompileAsCppModule</CompileAs>
     </ClCompile>
-    <ClCompile Include="include\Effetcs\ArtifactEffectImplBase.ixx" />
-    <ClCompile Include="include\Effetcs\Blur\BlurEffect.ixx" />
-    <ClCompile Include="include\Effetcs\Blur\DirectionBlur.ixx" />
-    <ClCompile Include="include\Effetcs\Channel\InvertChannelEffect.ixx" />
-    <ClCompile Include="include\Effetcs\ColorCorrection\BrightnessEffect.ixx" />
-    <ClCompile Include="include\Effetcs\ColorCorrection\ExposureEffect.ixx" />
-    <ClCompile Include="include\Effetcs\ColorCorrection\HueAndSaturation.ixx" />
-    <ClCompile Include="include\Effetcs\EffectContext.ixx" />
-    <ClCompile Include="include\Effetcs\GauusianBlur.ixx" />
-    <ClCompile Include="include\Effetcs\ArtifactGlobalEffectManager.ixx" />
-    <ClCompile Include="include\Effetcs\Glow\GlowEffect.ixx" />
+    <ClCompile Include="include\Effetcs\ArtifactEffectImplBase.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Effetcs\Blur\BlurEffect.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Effetcs\Blur\DirectionBlur.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Effetcs\Channel\InvertChannelEffect.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Effetcs\ColorCorrection\BrightnessEffect.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Effetcs\ColorCorrection\ExposureEffect.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Effetcs\ColorCorrection\HueAndSaturation.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Effetcs\EffectContext.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Effetcs\GauusianBlur.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Effetcs\ArtifactGlobalEffectManager.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Effetcs\Glow\GlowEffect.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
     <ClCompile Include="include\Effetcs\Keying\ChromaKeyEffect.ixx">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
+      <CompileAs>CompileAsCppModule</CompileAs>
     </ClCompile>
-    <ClCompile Include="include\Effetcs\Noise\NoiseEffect.ixx" />
-    <ClCompile Include="include\Effetcs\RadialBlur.ixx" />
-    <ClCompile Include="include\Export\ProjectExport.ixx" />
-    <ClCompile Include="include\Export\Python\Python.ixx" />
+    <ClCompile Include="include\Effetcs\Noise\NoiseEffect.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Effetcs\RadialBlur.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Export\ProjectExport.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Export\Python\Python.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
     <ClCompile Include="include\Generator\CloneGenerator.ixx">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
+      <CompileAs>CompileAsCppModule</CompileAs>
     </ClCompile>
-    <ClCompile Include="include\Generator\AbstractGenerator.ixx" />
-    <ClCompile Include="include\Generator\AbstractGeneratorEffector.ixx" />
-    <ClCompile Include="include\Generator\GeneratorManager.ixx" />
-    <ClCompile Include="include\GUI\WindowPluginManager.ixx" />
-    <ClCompile Include="include\Image\ImageF32x4_RGBA.ixx" />
-    <ClCompile Include="include\Image\ImageF32x4_RGBA_Compat.ixx" />
-    <ClCompile Include="include\Image\ImageF32xN.ixx" />
-    <ClCompile Include="include\InterProcess\ArtifactClipboardManager.ixx" />
-    <ClCompile Include="include\Layer\ArtifactAbstract2DLayer.ixx" />
-    <ClCompile Include="include\Layer\ArtifactHierarchyModel.ixx" />
-    <ClCompile Include="include\Layer\ArtifactImageLayer.ixx" />
-    <ClCompile Include="include\Layer\ArtifactLayerCopyBuffer.ixx" />
-    <ClCompile Include="include\Layer\ArtifactLayerInitParams.ixx" />
-    <ClCompile Include="include\Layer\ArtifactLayerResult.ixx" />
-    <ClCompile Include="include\Layer\ArtifactLayerSearchQuery.ixx" />
-    <ClCompile Include="include\Layer\ArtifactLayerSetting.ixx" />
-    <ClCompile Include="include\Layer\ArtifactLayerUIInfo.ixx" />
-    <ClCompile Include="include\Layer\ArtifactMediaLayer.ixx" />
-    <ClCompile Include="include\Layer\ArtifactVideoLayer.ixx" />
-    <ClCompile Include="include\Layer\ArtifactSolid2DLayer.ixx" />
+    <ClCompile Include="include\Generator\AbstractGenerator.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Generator\AbstractGeneratorEffector.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Generator\GeneratorManager.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\GUI\WindowPluginManager.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Image\ImageF32x4_RGBA.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Image\ImageF32x4_RGBA_Compat.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Image\ImageF32xN.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\InterProcess\ArtifactClipboardManager.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Layer\ArtifactAbstract2DLayer.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Layer\ArtifactHierarchyModel.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Layer\ArtifactImageLayer.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Layer\ArtifactLayerCopyBuffer.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Layer\ArtifactLayerInitParams.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Layer\ArtifactLayerResult.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Layer\ArtifactLayerSearchQuery.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Layer\ArtifactLayerSetting.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Layer\ArtifactLayerUIInfo.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Layer\ArtifactMediaLayer.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Layer\ArtifactVideoLayer.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Layer\ArtifactSolid2DLayer.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
     <ClCompile Include="include\Layer\ArtifactAdjustableLayer.ixx">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
+      <CompileAs>CompileAsCppModule</CompileAs>
     </ClCompile>
-    <ClCompile Include="include\Layer\ArtifactSolidImageLayer.ixx" />
+    <ClCompile Include="include\Layer\ArtifactSolidImageLayer.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
     <ClCompile Include="include\Layer\ArtifactLayerFactory.ixx">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
+      <CompileAs>CompileAsCppModule</CompileAs>
     </ClCompile>
-    <ClCompile Include="include\Layer\ArtifactShapeLayer.ixx" />
-    <ClCompile Include="include\Layer\ArtifactLayerSelectionManager.ixx" />
+    <ClCompile Include="include\Layer\ArtifactShapeLayer.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Layer\ArtifactLayerSelectionManager.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
     <ClCompile Include="include\Layer\ArtifactTextLayer.ixx">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
+      <CompileAs>CompileAsCppModule</CompileAs>
     </ClCompile>
     <ClCompile Include="include\Localization\Localization.ixx">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
+      <CompileAs>CompileAsCppModule</CompileAs>
     </ClCompile>
     <ClCompile Include="include\Mask\LayerMask.ixx">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
+      <CompileAs>CompileAsCppModule</CompileAs>
     </ClCompile>
     <ClCompile Include="include\Mask\MaskPath.ixx">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
+      <CompileAs>CompileAsCppModule</CompileAs>
     </ClCompile>
-    <ClCompile Include="include\Preview\ArtifactLayerPreviewPipeline.ixx" />
-    <ClCompile Include="include\Preview\ArtifactPreviewController.ixx" />
-    <ClCompile Include="include\Preview\ArtifactPreviewCompositionPipeline.ixx" />
-    <ClCompile Include="include\Preview\ArtifactPreviewWorker.ixx" />
-    <ClCompile Include="include\Project\ArtifactAutoSaveManager.ixx" />
-    <ClCompile Include="include\Project\ArtifactProjectInitParams.ixx" />
-    <ClCompile Include="include\Project\ArtifactProjectItems.ixx" />
-    <ClCompile Include="include\Project\ArtifactProjectModel.ixx" />
-    <ClCompile Include="include\Project\ArtifactProjectResult.ixx" />
-    <ClCompile Include="include\Project\ArtifactProjectRoles.ixx" />
-    <ClCompile Include="include\Project\TreeFilterProxyModel.ixx" />
-    <ClCompile Include="include\Render\ArtifactOffscreenRenderer2D.ixx" />
-    <ClCompile Include="include\Render\ArtifactPerformanceMonitor.ixx" />
-    <ClCompile Include="include\Render\ArtifactRenderController.ixx" />
-    <ClCompile Include="include\Render\ArtifactRenderManager.ixx" />
-    <ClCompile Include="include\Render\ArtifactRenderQueueService.ixx" />
-    <ClCompile Include="include\Render\Element\ArtifactRenderElement.ixx" />
-    <ClCompile Include="include\Render\AritfactIRenderer.ixx" />
-    <ClCompile Include="include\Render\RenderModule.ixx" />
-    <ClCompile Include="include\Result\ArtifactResult.ixx" />
-    <ClCompile Include="include\Service\ApplicationService.ixx" />
-    <ClCompile Include="include\Service\ArtifactAudioService.ixx" />
-    <ClCompile Include="include\Service\ArtifactClipboardService.ixx" />
-    <ClCompile Include="include\Service\ArtifactEffectService.ixx" />
+    <ClCompile Include="include\Preview\ArtifactLayerPreviewPipeline.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Preview\ArtifactPreviewController.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Preview\ArtifactPreviewCompositionPipeline.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Preview\ArtifactPreviewWorker.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Project\ArtifactAutoSaveManager.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Project\ArtifactProjectInitParams.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Project\ArtifactProjectItems.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Project\ArtifactProjectModel.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Project\ArtifactProjectResult.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Project\ArtifactProjectRoles.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Project\TreeFilterProxyModel.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Render\ArtifactOffscreenRenderer2D.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Render\ArtifactPerformanceMonitor.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Render\ArtifactRenderController.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Render\ArtifactRenderManager.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Render\ArtifactRenderQueueService.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Render\Element\ArtifactRenderElement.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Render\AritfactIRenderer.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Render\RenderModule.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Result\ArtifactResult.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Service\ApplicationService.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Service\ArtifactAudioService.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Service\ArtifactClipboardService.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Service\ArtifactEffectService.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
     <ClCompile Include="include\Service\ArtifactPlaybackService.ixx">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
+      <CompileAs>CompileAsCppModule</CompileAs>
     </ClCompile>
-    <ClCompile Include="include\Service\ArtifactProjectService.ixx" />
+    <ClCompile Include="include\Service\ArtifactProjectService.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
     <ClCompile Include="include\Service\ArtifactToolService.ixx">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
+      <CompileAs>CompileAsCppModule</CompileAs>
     </ClCompile>
-    <ClCompile Include="include\Test\ArtifactTestProjectManager.ixx" />
-    <ClCompile Include="include\Test\ArtifactTestProjectService.ixx" />
-    <ClCompile Include="include\Timeline\ArtifactTimelineIconModel.ixx" />
-    <ClCompile Include="include\Tool\Tool.ixx" />
-    <ClCompile Include="include\Tool\ArtifactToolManager.ixx" />
-    <ClCompile Include="include\Translation\TranslationManager.ixx" />
-    <ClCompile Include="include\Undo\UndoManager.ixx" />
+    <ClCompile Include="include\Test\ArtifactTestProjectManager.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Test\ArtifactTestProjectService.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Timeline\ArtifactTimelineIconModel.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Tool\Tool.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Tool\ArtifactToolManager.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Translation\TranslationManager.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Undo\UndoManager.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
     <ClCompile Include="include\Widgets\AIChatWidget.ixx">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
+      <CompileAs>CompileAsCppModule</CompileAs>
     </ClCompile>
-    <ClCompile Include="include\Widgets\ArtifactLayerHierarchyWidget.ixx" />
-    <ClCompile Include="include\Widgets\ArtifactStatusBar.ixx" />
-    <ClCompile Include="include\Widgets\Control\ArtifactPlaybackControlWidget.ixx" />
-    <ClCompile Include="include\Widgets\Dialog\ArtifactRenderOutputSettingDialog.ixx" />
+    <ClCompile Include="include\Widgets\ArtifactLayerHierarchyWidget.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Widgets\ArtifactStatusBar.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Widgets\Control\ArtifactPlaybackControlWidget.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Widgets\Dialog\ArtifactRenderOutputSettingDialog.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
     <ClCompile Include="include\Widgets\Dock\DockGlowStyle.ixx">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
+      <CompileAs>CompileAsCppModule</CompileAs>
     </ClCompile>
     <ClCompile Include="include\Widgets\Dock\DockStyleManager.ixx">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
+      <CompileAs>CompileAsCppModule</CompileAs>
     </ClCompile>
     <ClCompile Include="include\Widgets\Menu\ArtifactAnimationMenu.ixx">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
+      <CompileAs>CompileAsCppModule</CompileAs>
     </ClCompile>
-    <ClCompile Include="include\Widgets\Menu\ArtifactEffectMenu.ixx" />
-    <ClCompile Include="include\Widgets\Native\NativeHelper.ixx" />
+    <ClCompile Include="include\Widgets\Menu\ArtifactEffectMenu.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Widgets\Native\NativeHelper.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
     <ClCompile Include="include\Widgets\PowerShellWidget.ixx">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
+      <CompileAs>CompileAsCppModule</CompileAs>
     </ClCompile>
     <ClCompile Include="include\Widgets\Render\Artifact3DModelViewer.ixx">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
+      <CompileAs>CompileAsCppModule</CompileAs>
     </ClCompile>
-    <ClCompile Include="include\Widgets\Render\ArtifactCompositionViewerFooter.ixx" />
+    <ClCompile Include="include\Widgets\Render\ArtifactCompositionViewerFooter.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
     <ClCompile Include="include\Widgets\Render\ArtifactDiligentEngineRenderWidget.cpp" />
-    <ClCompile Include="include\Widgets\Render\ArtifactDiligentEngineRenderWidget.ixx" />
-    <ClCompile Include="include\Widgets\Render\ArtifactLayerEditorPanel.ixx" />
+    <ClCompile Include="include\Widgets\Render\ArtifactDiligentEngineRenderWidget.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Widgets\Render\ArtifactLayerEditorPanel.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
     <ClCompile Include="include\Widgets\Render\ArtifactRenderLayerEditor.ixx">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
+      <CompileAs>CompileAsCppModule</CompileAs>
     </ClCompile>
     <ClCompile Include="include\Widgets\Render\ArtifactRenderLayerWidget.ixx">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
+      <CompileAs>CompileAsCppModule</CompileAs>
     </ClCompile>
-    <ClCompile Include="include\Widgets\Render\ArtifactRenderLayerWidgetv2.ixx" />
+    <ClCompile Include="include\Widgets\Render\ArtifactRenderLayerWidgetv2.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
     <ClCompile Include="include\Widgets\Render\ArtifactRenderQueueJobPanel.ixx">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
+      <CompileAs>CompileAsCppModule</CompileAs>
     </ClCompile>
-    <ClCompile Include="include\Widgets\Render\ArtifactRenderQueueManagerWidget.ixx" />
-    <ClCompile Include="include\Widgets\Render\ArtifactRenderWrapperWidget.ixx" />
-    <ClCompile Include="include\Widgets\Timeline\ArtifactLayerPanelWidget.ixx" />
-    <ClCompile Include="include\Widgets\Timeline\ArtifactSeekBar.ixx" />
-    <ClCompile Include="include\Widgets\Timeline\ArtifactTimelineLabel.ixx" />
-    <ClCompile Include="include\Widgets\Timeline\ArtifactTimelineObjects.ixx" />
-    <ClCompile Include="include\Widgets\Timeline\ArtifactTimelineRulerWidget.ixx" />
-    <ClCompile Include="include\Widgets\Timeline\ArtifactTimeCodeWidget.ixx" />
-    <ClCompile Include="include\Widgets\Timeline\ArtifactTimelineTimeRangeSlider.ixx" />
-    <ClCompile Include="include\Widgets\Timeline\ArtifactWorkAreaControlWidget.ixx" />
-    <ClCompile Include="include\Widgets\Timeline\TimelineScaleWidget.ixx" />
-    <ClCompile Include="include\Widgets\Viewer\ArtifactContentsViewer.ixx" />
-    <ClCompile Include="src\ActiveQt\qax_instantiate.cppm" />
+    <ClCompile Include="include\Widgets\Render\ArtifactRenderQueueManagerWidget.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Widgets\Render\ArtifactRenderWrapperWidget.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Widgets\Timeline\ArtifactLayerPanelWidget.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Widgets\Timeline\ArtifactSeekBar.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Widgets\Timeline\ArtifactTimelineLabel.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Widgets\Timeline\ArtifactTimelineObjects.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Widgets\Timeline\ArtifactTimelineRulerWidget.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Widgets\Timeline\ArtifactTimeCodeWidget.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Widgets\Timeline\ArtifactTimelineTimeRangeSlider.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Widgets\Timeline\ArtifactWorkAreaControlWidget.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Widgets\Timeline\TimelineScaleWidget.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Widgets\Viewer\ArtifactContentsViewer.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="src\ActiveQt\qax_instantiate.cppm">
+      <CompileAs>CompileAsCpp</CompileAs>
+    </ClCompile>
     <ClCompile Include="src\AI\AIClient.cppm">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Application\ActiveContextService.cppm">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Application\ArtifactApplicationManager.cpp">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
     </ClCompile>
-    <ClCompile Include="src\AppMain.cppm" />
+    <ClCompile Include="src\AppMain.cppm">
+      <CompileAs>CompileAsCpp</CompileAs>
+    </ClCompile>
     <ClCompile Include="src\Asset\ArtifactAssetResult.cpp" />
     <ClCompile Include="src\Asset\AssetDirectoryModel.cppm">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Asset\AssetMenuModel.cppm">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
-    <ClCompile Include="src\Audio\AudioClockProvider.cppm" />
+    <ClCompile Include="src\Audio\AudioClockProvider.cppm">
+      <CompileAs>CompileAsCpp</CompileAs>
+    </ClCompile>
     <ClCompile Include="src\Audio\PortAudioDevice.cppm">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Audio\WASAPIDevice.cppm">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Composition\ArtifactCompositionInitParams.cppm">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Composition\ArtifactCompositionPlaybackController.cppm">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Composition\ArtifactCompositionSetting.cpp" />
     <ClCompile Include="src\Composition\MetadataVectorizer.cppm">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Controller\TimelineViewProvider.cpp" />
     <ClCompile Include="src\Core\SystemStats.cppm">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Effetcs\ArtifactAbstractEffect.cppm">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Effetcs\Blur\GauusianBlur.cpp" />
     <ClCompile Include="src\Effetcs\ColorCorrection\HueAndSaturation.cpp" />
     <ClCompile Include="src\Effetcs\ArtifactGlobalEffectManager.cpp" />
     <ClCompile Include="src\Effetcs\Glow\GlowEffect.cpp" />
     <ClCompile Include="src\Effetcs\Glow\NoiseEffect.cppm">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Effetcs\Keying\ChromaKeyEffect.cppm">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Generator\AbstractGenerator.cppm">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Generator\AbstractGeneratorEffector.cppm">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Generator\CloneGenerator.cppm">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Generator\GeneratorManager.cppm">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\GUI\WindowPluginManager.cpp" />
     <ClCompile Include="src\Layer\Artifact3DModelLayer.cppm">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Layer\ArtifactAbstract2DLayer.cppm">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Layer\ArtifactCameraLayer.cppm">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Layer\ArtifactLayerFactory.cppm">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Layer\ArtifactLayerInitParams.cppm">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Layer\ArtifactLayerSelectionManager.cppm">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Layer\ArtifactLayerSetting.cpp" />
     <ClCompile Include="src\Layer\ArtifactMediaLayer.cppm">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Layer\ArtifactShapeLayer.cppm">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Layer\ArtifactSolid2DLayer.cppm">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Layer\ArtifactSolidImageLayer.cppm">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Layer\ArtifactTextLayer.cppm">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Layer\ArtifactVideoLayer.cppm">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Library\Link.cpp" />
     <ClCompile Include="src\Localization\Localization.cppm">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Mask\LayerMask.cppm">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Mask\MaskPath.cppm">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Preview\ArtifactLayerPreviewPipeline.cpp" />
     <ClCompile Include="src\Preview\ArtifactPreviewController.cppm">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Preview\ArtifactPreviewCompositionPipeline.cppm">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Preview\ArtifactPreviewWorker.cppm">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Project\ArtifactProjectExporter.cppm">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Project\ArtifactProjectInitParams.cppm">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Project\ArtifactProjectItems.cppm">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Project\TreeFilterProxyModel.cppm">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Render\ArtifactOffscreenRenderer2D.cppm">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Render\ArtifactRenderElement.cpp" />
     <ClCompile Include="src\Render\ArtifactRenderManager.cppm">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Render\ArtifactRenderQueueService.cppm">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Render\AritfactIRenderer.cppm">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Service\ApplicationService.cppm">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Service\ArtifactAudioService.cpp" />
     <ClCompile Include="src\Service\ArtifactClipboardService.cpp" />
     <ClCompile Include="src\Service\ArtifactEffectService.cpp" />
     <ClCompile Include="src\Service\ArtifactPlaybackService.cppm">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Service\ArtifactProjectService.cpp">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Service\ArtifactToolService.cppm">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Test\ArtifactTestProjectManager.cpp">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Timeline\ArtifactTimelineIconModel.cpp" />
     <ClCompile Include="src\Tool\ArtifactToolManager.cpp" />
     <ClCompile Include="src\Translation\TranslationManager.cpp" />
-    <ClCompile Include="src\Undo\UndoManager.cppm" />
+    <ClCompile Include="src\Undo\UndoManager.cppm">
+      <CompileAs>CompileAsCpp</CompileAs>
+    </ClCompile>
     <ClCompile Include="src\Widgets\AIChatWidget.cppm">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Widgets\ArtifactStatusBar.cpp" />
     <ClCompile Include="src\Widgets\ArtifactToolBar.cppm">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Widgets\Asset\ArtifactAssetBrowser.cppm">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Widgets\Control\ArtifactPlaybackControlWidget.cppm">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Widgets\Dialog\ArtifactRenderOutputSettingDialog.cppm">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Widgets\Dock\DockGlowStyle.cppm">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Widgets\Dock\DockStyleManager.cppm">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Widgets\Menu\ArtifactAnimationMenu.cppm">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Widgets\Menu\ArtifactLayerMenu.cppm">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Widgets\Native\NativeHelper.cpp" />
     <ClCompile Include="src\Widgets\PowerShellWidget.cppm">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Widgets\Render\Artifact3DModelViewer.cppm">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Widgets\Render\ArtifactCompositionViewerFooter.cpp" />
     <ClCompile Include="src\Widgets\Render\ArtifactRenderLayerEditor.cppm">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Widgets\Render\ArtifactRenderLayerWidgetv2.cppm">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Widgets\Render\ArtifactRenderWrapperWidget.cpp" />
     <ClCompile Include="src\Widgets\Render\ArtifactLayerEditorPanel.cpp" />
     <ClCompile Include="src\Widgets\Render\ArtifactRenderQueueJobPanel.cpp" />
     <ClCompile Include="src\Widgets\Render\ArtifactRenderLayerWidget.cpp">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Widgets\Render\ArtifactRenderQueueManagerWidget.cpp" />
     <ClCompile Include="src\Widgets\Render\GridRenderer.cpp">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="include\Application\ArtifactApplicationManager.ixx">
       <FileType>Document</FileType>
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
+      <CompileAs>CompileAsCppModule</CompileAs>
     </ClCompile>
-    <ClCompile Include="include\Composition\ArtifactComposition3D.ixx" />
+    <ClCompile Include="include\Composition\ArtifactComposition3D.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
     <ClCompile Include="include\Composition\ArtifactComposition2D.ixx">
       <FileType>Document</FileType>
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
+      <CompileAs>CompileAsCppModule</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Widgets\ArtifactTimelineScene.cppm">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Widgets\Timeline\ArtifactLayerHierarchyWidget.cppm">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Widgets\Timeline\ArtifactLayerPanelWidget.cpp" />
     <ClCompile Include="src\Widgets\Timeline\ArtifactSeekBar.cppm">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Widgets\Timeline\ArtifactTimeCodeWidget.cppm">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Widgets\Timeline\ArtifactTimelineLabel.cpp" />
     <ClCompile Include="src\Widgets\Timeline\ArtifactTimelineObjects.cpp" />
@@ -641,256 +854,330 @@
     <ClInclude Include="include\Composition\ArtifactCompositionManager.hpp" />
     <ClCompile Include="include\Effetcs\ArtifactAbstractEffect.ixx">
       <FileType>Document</FileType>
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
+      <CompileAs>CompileAsCppModule</CompileAs>
     </ClCompile>
     <ClInclude Include="include\GUI\ArtifactGuiManager.hpp" />
     <ClCompile Include="include\Layer\Artifact3DModelLayer.ixx">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
+      <CompileAs>CompileAsCppModule</CompileAs>
     </ClCompile>
     <ClCompile Include="include\Layer\ArtifactCameraLayer.ixx">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
+      <CompileAs>CompileAsCppModule</CompileAs>
     </ClCompile>
-    <ClCompile Include="include\Layer\ArtifactLayerModule.ixx" />
+    <ClCompile Include="include\Layer\ArtifactLayerModule.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
     <ClCompile Include="include\Project\ArtifactProjectExporter.ixx">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
+      <CompileAs>CompileAsCppModule</CompileAs>
     </ClCompile>
     <ClCompile Include="include\Project\ArtifactProjectImporter.ixx">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
+      <CompileAs>CompileAsCppModule</CompileAs>
     </ClCompile>
     <ClCompile Include="include\Widgets\ArtifactCurveEditorWidget.ixx">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
+      <CompileAs>CompileAsCppModule</CompileAs>
     </ClCompile>
     <ClCompile Include="include\Widgets\ArtifactToolBar.ixx">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
+      <CompileAs>CompileAsCppModule</CompileAs>
     </ClCompile>
     <ClCompile Include="include\Widgets\Dialog\ApplicationSettingDialog.ixx">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
+      <CompileAs>CompileAsCppModule</CompileAs>
     </ClCompile>
     <ClCompile Include="include\Widgets\Dialog\CreatePlaneLayerDialog.ixx">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
+      <CompileAs>CompileAsCppModule</CompileAs>
     </ClCompile>
     <ClCompile Include="include\Widgets\Dialog\Dialog.ixx">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
+      <CompileAs>CompileAsCppModule</CompileAs>
     </ClCompile>
-    <ClCompile Include="include\Widgets\Dialog\EditCompositionSettingDialog.ixx" />
+    <ClCompile Include="include\Widgets\Dialog\EditCompositionSettingDialog.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
     <ClCompile Include="include\Widgets\Menu\ArtifactEditMenu.ixx">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
+      <CompileAs>CompileAsCppModule</CompileAs>
     </ClCompile>
     <ClCompile Include="include\Widgets\Menu\Test\ArtifactImageProcessingTestMenu.ixx">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
+      <CompileAs>CompileAsCppModule</CompileAs>
     </ClCompile>
     <ClCompile Include="include\Widgets\ArtifactAssetBrowser.ixx">
       <FileType>Document</FileType>
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
+      <CompileAs>CompileAsCppModule</CompileAs>
     </ClCompile>
     <ClInclude Include="include\Widgets\Render\Shader\CommonShader.hpp" />
     <ClCompile Include="include\Widgets\Render\ArtifactDiligentEngineRenderWindow.ixx">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
+      <CompileAs>CompileAsCppModule</CompileAs>
     </ClCompile>
     <ClCompile Include="include\Widgets\Render\ArtifactOgreRenderWindow.hpp">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
     </ClCompile>
     <ClCompile Include="include\Layer\ArtifactAbstractLayer.ixx">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
+      <CompileAs>CompileAsCppModule</CompileAs>
     </ClCompile>
     <ClCompile Include="include\Layer\ArtifactCompositionLayer.ixx">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
+      <CompileAs>CompileAsCppModule</CompileAs>
     </ClCompile>
     <ClCompile Include="include\Layer\ArtifactNullLayer.ixx">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
+      <CompileAs>CompileAsCppModule</CompileAs>
     </ClCompile>
     <ClCompile Include="include\Project\ArtifactProject.ixx">
       <FileType>CppHeader</FileType>
+      <CompileAs>CompileAsCppModule</CompileAs>
     </ClCompile>
     <ClCompile Include="include\Project\ArtifactProjectManager.ixx">
       <FileType>Document</FileType>
+      <CompileAs>CompileAsCppModule</CompileAs>
     </ClCompile>
     <ClCompile Include="include\Project\ArtifactPresetManager.ixx">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
+      <CompileAs>CompileAsCppModule</CompileAs>
     </ClCompile>
     <ClCompile Include="include\Project\ArtifactProjectStatistics.ixx">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
+      <CompileAs>CompileAsCppModule</CompileAs>
     </ClCompile>
     <ClCompile Include="include\Project\ArtifactProjectCleanupTool.ixx">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
+      <CompileAs>CompileAsCppModule</CompileAs>
     </ClCompile>
     <ClCompile Include="include\Project\ArtifactProjectHealthChecker.ixx">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
+      <CompileAs>CompileAsCppModule</CompileAs>
     </ClCompile>
     <ClCompile Include="include\Project\ArtifactProjectPackager.ixx">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
+      <CompileAs>CompileAsCppModule</CompileAs>
     </ClCompile>
     <ClCompile Include="include\Color\ColorPaletteManager.ixx">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
+      <CompileAs>CompileAsCppModule</CompileAs>
     </ClCompile>
     <ClCompile Include="include\Project\ArtifactProjectSetting.ixx">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
+      <CompileAs>CompileAsCppModule</CompileAs>
     </ClCompile>
     <ClInclude Include="include\Render\ArtifactRenderer.ixx" />
-    <ClCompile Include="include\Widgets\Dialog\ArtifactCreateCompositionDialog.ixx" />
+    <ClCompile Include="include\Widgets\Dialog\ArtifactCreateCompositionDialog.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
     <ClCompile Include="include\Widgets\Menu\ArtifactFileMenu.ixx">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
+      <CompileAs>CompileAsCppModule</CompileAs>
     </ClCompile>
     <ClCompile Include="include\Widgets\Menu\ArtifactHelpMenu.ixx">
       <FileType>Document</FileType>
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
+      <CompileAs>CompileAsCppModule</CompileAs>
     </ClCompile>
     <ClCompile Include="include\Widgets\Menu\ArtifactMenuBar.ixx">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
+      <CompileAs>CompileAsCppModule</CompileAs>
     </ClCompile>
     <ClCompile Include="include\Widgets\Menu\ArtifactTestMenu.ixx">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
+      <CompileAs>CompileAsCppModule</CompileAs>
     </ClCompile>
     <ClCompile Include="include\Widgets\Menu\ArtifactTimeMenu.ixx">
       <FileType>Document</FileType>
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
+      <CompileAs>CompileAsCppModule</CompileAs>
     </ClCompile>
     <ClCompile Include="include\Widgets\Menu\ArtifactViewMenu.ixx">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
+      <CompileAs>CompileAsCppModule</CompileAs>
     </ClCompile>
     <ClCompile Include="include\Widgets\Render\ArtifactRenderManagerWidget.ixx">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
+      <CompileAs>CompileAsCppModule</CompileAs>
     </ClCompile>
     <ClCompile Include="include\Widgets\ArtifactCompositionWidget.ixx">
       <FileType>Document</FileType>
+      <CompileAs>CompileAsCppModule</CompileAs>
     </ClCompile>
     <ClCompile Include="include\Widgets\ArtifactInspectorWidget.ixx">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
+      <CompileAs>CompileAsCppModule</CompileAs>
     </ClCompile>
     <ClCompile Include="include\Widgets\ArtifactPropertyWidget.ixx">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
+      <CompileAs>CompileAsCppModule</CompileAs>
     </ClCompile>
     <ClCompile Include="include\Widgets\Menu\ArtifactCompositionMenu.ixx">
       <FileType>Document</FileType>
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
+      <CompileAs>CompileAsCppModule</CompileAs>
     </ClCompile>
     <ClCompile Include="include\Widgets\Menu\ArtifactLayerMenu.ixx">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
+      <CompileAs>CompileAsCppModule</CompileAs>
     </ClCompile>
     <ClCompile Include="include\Widgets\Menu\ArtifactOptionMenu.ixx">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
+      <CompileAs>CompileAsCppModule</CompileAs>
     </ClCompile>
     <ClCompile Include="include\Widgets\ArtifactMainWindow.ixx">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
+      <CompileAs>CompileAsCppModule</CompileAs>
     </ClCompile>
-    <ClCompile Include="include\Widgets\ArtifactProjectManagerWidget.ixx" />
+    <ClCompile Include="include\Widgets\ArtifactProjectManagerWidget.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
     <ClCompile Include="include\Widgets\ArtifactTimelineWidget.ixx">
       <FileType>Document</FileType>
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
+      <CompileAs>CompileAsCppModule</CompileAs>
     </ClCompile>
-    <ClCompile Include="src\Effetcs\Ofx\ArtifactOfxHost.cppm" />
-    <ClCompile Include="src\Effetcs\Ofx\ArtifactOfxEffectImpl.cppm" />
+    <ClCompile Include="src\Effetcs\Ofx\ArtifactOfxHost.cppm">
+      <CompileAs>CompileAsCpp</CompileAs>
+    </ClCompile>
+    <ClCompile Include="src\Effetcs\Ofx\ArtifactOfxEffectImpl.cppm">
+      <CompileAs>CompileAsCpp</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Effetcs\Field\SphericalField.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Effetcs\Field\BoxField.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Effetcs\Field\LinearField.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Effetcs\Field\RadialField.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Effetcs\Rasterizer\DropShadowEffect.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Engine\DAG\Port.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Engine\DAG\Node.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Engine\DAG\Connection.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Engine\DAG\Graph.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Engine\DAG\LayerGraphBuilder.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Engine\DAG\Executor.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Engine\DAG\CompositionGraph.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Effetcs\ArtifactAbstractField.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="src\Effetcs\ArtifactAbstractField.cppm">
+      <CompileAs>CompileAsCpp</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Effetcs\Generator\ClonerGenerator.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Effetcs\Generator\FractalNoiseGenerator.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Effetcs\Transform\TwistTransform.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Effetcs\Transform\BendTransform.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Effetcs\Render\PBRMaterialEffect.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Effetcs\LayerTransform\LayerTransform2D.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="include\Widgets\Menu\ArtifactMenu.ixx">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
+      <CompileAs>CompileAsCppModule</CompileAs>
     </ClCompile>
     <ClCompile Include="include\Widgets\Render\GridRenderer.ixx">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
+      <CompileAs>CompileAsCppModule</CompileAs>
     </ClCompile>
-    <ClCompile Include="include\Widgets\ArtifactTimelineScene.ixx" />
+    <ClCompile Include="include\Widgets\ArtifactTimelineScene.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
     <ClCompile Include="src\Composition\ArtifactComposition3D.cpp" />
     <ClCompile Include="src\Composition\ArtifactCompositionManager.cpp" />
     <ClCompile Include="src\GUI\ArtifactGuiManager.cpp" />
     <ClCompile Include="src\Layer\ArtifactAbstractLayer.cppm">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Layer\ArtifactCompositionLayer.cppm">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Layer\ArtifactImageLayer.cppm">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Layer\ArtifactNullLayer.cppm">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Project\ArtifactProject.cppm">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Project\ArtifactProjectManager.cppm">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Project\ArtifactProjectImporter.cppm">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Project\ArtifactPresetManager.cppm">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Project\ArtifactProjectStatistics.cppm">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Project\ArtifactProjectCleanupTool.cppm">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Project\ArtifactProjectHealthChecker.cppm">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Project\ArtifactProjectPackager.cppm">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Color\ColorPaletteManager.cppm">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Project\ArtifactProjectSetting.cppm">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Widgets\ArtifactInspectorWidget.cppm">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Widgets\ArtifactPropertyWidget.cppm">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Widgets\ArtifactMainWindow.cpp">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Widgets\ArtifactMenuBar.cppm">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Widgets\ArtifactProjectManagerWidget.cppm">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Widgets\ArtifactTimelineWidget.cpp" />
     <ClCompile Include="src\Widgets\Dialog\ApplicationSettingDialog.cppm">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Widgets\Dialog\CreatePlaneLayerDialog.cppm">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Widgets\Menu\ArtifactEditMenu.cppm">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Widgets\Menu\ArtifactFileMenu.cppm">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Widgets\Menu\ArtifactHelpMenu.cppm">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Widgets\Menu\ArtifactCompositionMenu.cppm">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Widgets\Menu\ArtifactOptionMenu.cppm">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Widgets\Menu\ArtifactTestMenu.cppm">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Widgets\Menu\ArtifactTimeMenu.cppm">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Widgets\Menu\ArtifactViewMenu.cppm">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Widgets\Menu\Test\ArtifactImageProcessingTestMenu.cppm">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Widgets\Render\ArtifactDiligentEngineRenderWindow.cpp" />
     <ClCompile Include="src\Widgets\Render\ArtifactOgreRenderWindow.cpp">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
     </ClCompile>
     <ClCompile Include="src\Widgets\Render\ArtifactRenderManagerWidget.cppm">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
@@ -903,38 +1190,38 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\Widgets\ArtifactCurveEditorWidget.cppm">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\Widgets\Dialog\ArtifactCreateCompositionDialog.cppm">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Composition\ArtifactComposition2D.cpp">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Widgets\Menu\ArtifactEffectMenu.cppm">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Composition\ArtifactAbstractComposition.cppm">
       <FileType>Document</FileType>
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <None Include=".editorconfig" />
     <None Include=".github\copilot-instructions.md" />
     <ClCompile Include="src\Layer\ArtifactAdjustableLayer.cppm">
       <FileType>Document</FileType>
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
-    <ClCompile Include="src\Render\ArtifactRenderController.cppm" />
+    <ClCompile Include="src\Render\ArtifactRenderController.cppm">
+      <CompileAs>CompileAsCpp</CompileAs>
+    </ClCompile>
     <ClCompile Include="src\Layer\ArtifactHierarchyModel.cppm">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Project\ArtifactProjectModel.cppm">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+      <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Widgets\Dialog\EditCompositionSettingDialog.cpp">
-      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
     </ClCompile>
     <CustomBuild Include="Test.thrift">
       <FileType>Document</FileType>

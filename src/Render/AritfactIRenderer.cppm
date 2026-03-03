@@ -316,8 +316,23 @@ namespace Artifact
    drawLinePSOCreateInfo.pVS = m_draw_line_shaders.VS;
    drawLinePSOCreateInfo.pPS = m_draw_line_shaders.PS;
 
-   //pDevice_->CreateGraphicsPipelineState(drawLinePSOCreateInfo, &m_draw_line_pso_and_srb.pPSO);
-   //m_draw_line_pso_and_srb.pPSO->CreateShaderResourceBinding(&m_draw_line_pso_and_srb.pSRB, true);
+   auto& LGP = drawLinePSOCreateInfo.GraphicsPipeline;
+   LGP.NumRenderTargets = 1;
+   LGP.RTVFormats[0] = MAIN_RTV_FORMAT;
+   LGP.PrimitiveTopology = PRIMITIVE_TOPOLOGY_LINE_LIST;
+   LGP.RasterizerDesc.CullMode = CULL_MODE_NONE;
+   LGP.DepthStencilDesc.DepthEnable = False;
+   LGP.InputLayout.LayoutElements = lineLayoutElems;
+   LGP.InputLayout.NumElements = _countof(lineLayoutElems);
+   
+   ShaderResourceVariableDesc Vars_Line[] = {
+       { SHADER_TYPE_VERTEX, "TransformCB", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC }
+   };
+   drawLinePSOCreateInfo.PSODesc.ResourceLayout.Variables = Vars_Line;
+   drawLinePSOCreateInfo.PSODesc.ResourceLayout.NumVariables = _countof(Vars_Line);
+
+   pDevice_->CreateGraphicsPipelineState(drawLinePSOCreateInfo, &m_draw_line_pso_and_srb.pPSO);
+   m_draw_line_pso_and_srb.pPSO->CreateShaderResourceBinding(&m_draw_line_pso_and_srb.pSRB, true);
 
    GraphicsPipelineStateCreateInfo drawSolidRectPSOCreateInfo;
    drawSolidRectPSOCreateInfo.PSODesc.Name = "DrawSolidRect PSO";
@@ -807,6 +822,39 @@ void AritfactIRenderer::Impl::createSwapChain(QWidget* window)
 	 ITextureView* pLayerRTV = m_layerRT->GetDefaultView(TEXTURE_VIEW_RENDER_TARGET);
 	 pImmediateContext_->SetRenderTargets(1, &swapChainRTV, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
 
+	 {
+	  void* pData = nullptr;
+	  pImmediateContext_->MapBuffer(m_draw_solid_rect_vertex_buffer, MAP_WRITE, MAP_FLAG_DISCARD, pData);
+	  std::memcpy(pData, vertices, sizeof(vertices));
+	  pImmediateContext_->UnmapBuffer(m_draw_solid_rect_vertex_buffer, MAP_WRITE);
+	 }
+
+	 {
+	  auto desc = pSwapChain_->GetDesc();
+	  CBSolidTransform2D cbTransform;
+	  cbTransform.offset = { (float)pan_.x(), (float)pan_.y() };
+	  cbTransform.scale = { 1, 1 };
+	  cbTransform.screenSize = { float(desc.Width), float(desc.Height) };
+
+	  void* pData = nullptr;
+	  pImmediateContext_->MapBuffer(m_draw_solid_rect_trnsform_cb, MAP_WRITE, MAP_FLAG_DISCARD, pData);
+	  std::memcpy(pData, &cbTransform, sizeof(cbTransform));
+	  pImmediateContext_->UnmapBuffer(m_draw_solid_rect_trnsform_cb, MAP_WRITE);
+	 }
+
+	 pImmediateContext_->SetPipelineState(m_draw_line_pso_and_srb.pPSO);
+
+	 IBuffer* pBuffers[] = { m_draw_solid_rect_vertex_buffer };
+	 Uint64 offsets[] = { 0 };
+	 pImmediateContext_->SetVertexBuffers(0, 1, pBuffers, offsets, RESOURCE_STATE_TRANSITION_MODE_TRANSITION, SET_VERTEX_BUFFERS_FLAG_RESET);
+
+	 m_draw_line_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_VERTEX, "TransformCB")->Set(m_draw_solid_rect_trnsform_cb);
+	 pImmediateContext_->CommitShaderResources(m_draw_line_pso_and_srb.pSRB, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+
+	 DrawAttribs drawAttrs;
+	 drawAttrs.NumVertices = 2;
+	 drawAttrs.Flags = DRAW_FLAG_VERIFY_ALL;
+	 pImmediateContext_->Draw(drawAttrs);
  }
 
  void AritfactIRenderer::Impl::drawSpriteLocal(float x, float y, float w, float h, const QImage& image)

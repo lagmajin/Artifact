@@ -38,7 +38,7 @@ namespace Artifact {
  W_OBJECT_IMPL(ArtifactAbstractLayer)
 
   class ArtifactAbstractLayer::Impl {
-  private:
+  public:
 
     bool is3D_ = true;
     Id id;

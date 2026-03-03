@@ -40,6 +40,9 @@ import Artifact.Effect.Transform.Twist;
 import Artifact.Effect.Transform.Bend;
 import Artifact.Effect.Render.PBRMaterial;
 import Artifact.Effect.LayerTransform.Transform2D;
+import Artifact.Effect.Rasterizer.Blur;
+import Artifact.Effect.Rasterizer.DropShadow;
+import Artifact.Effect.Glow;
 
 namespace Artifact {
 
@@ -246,8 +249,10 @@ void ArtifactInspectorWidget::Impl::updatePropertiesForEffect(const QString& eff
   currentLayerId_ = LayerID();
 
   // エフェクトリストもクリア
-  if (effectsListWidget) {
-   effectsListWidget->clear();
+  for (auto& rack : racks) {
+   if (rack.listWidget) {
+    rack.listWidget->clear();
+   }
   }
   if (propertyWidget) {
       propertyWidget->clear();
@@ -341,10 +346,10 @@ void ArtifactInspectorWidget::Impl::updatePropertiesForEffect(const QString& eff
           effectMenu.addAction("PBR Material", [addAndRefresh]() { addAndRefresh(std::make_shared<PBRMaterialEffect>()); });
           break;
       case EffectPipelineStage::Rasterizer:
-          effectMenu.addAction("Blur", []() {});
-          effectMenu.addAction("Glow", []() {});
-          effectMenu.addAction("Shadow", []() {});
-          break;
+           effectMenu.addAction("Blur", [addAndRefresh]() { addAndRefresh(std::make_shared<BlurEffect>()); });
+           effectMenu.addAction("Glow", [addAndRefresh]() { addAndRefresh(std::make_shared<GlowEffect>()); });
+           effectMenu.addAction("Drop Shadow", [addAndRefresh]() { addAndRefresh(std::make_shared<DropShadowEffect>()); });
+           break;
       case EffectPipelineStage::LayerTransform:
           effectMenu.addAction("Transform 2D", [addAndRefresh]() { addAndRefresh(std::make_shared<LayerTransform2D>()); });
           break;
@@ -381,7 +386,7 @@ void ArtifactInspectorWidget::Impl::updatePropertiesForEffect(const QString& eff
 
   for (auto item : selectedItems) {
    UniString effectID(item->data(Qt::UserRole).toString().toStdString());
-   if(!effectID.isEmpty()) {
+   if(effectID.length() > 0) {
        layer->removeEffect(effectID);
        qDebug() << "[Inspector] Effect removed:" << effectID.toQString();
    }

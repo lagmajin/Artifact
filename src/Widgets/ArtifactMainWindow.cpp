@@ -228,7 +228,8 @@ namespace Artifact {
   auto imageView = new BasicImageViewWidget();
   auto imageViewer = new Pane("Image Viewer", imageView);
 
-  auto centralDockWidget = new CDockWidget("centralWidget");
+   // Use newer CDockWidget(title, widget) constructor to avoid deprecated overload
+   auto centralDockWidget = new CDockWidget("centralWidget", nullptr);
   DockManager->setCentralWidget(centralDockWidget);
 
   DockManager->addDockWidget(ads::CenterDockWidgetArea, imageViewer, nullptr);

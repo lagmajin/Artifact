@@ -1,4 +1,4 @@
-module;
+﻿module;
 
 #include <QJsonObject>
 #include <QJsonArray>
@@ -28,7 +28,7 @@ QJsonObject ArtifactPresetManager::effectToPresetJson(const ArtifactAbstractEffe
         QJsonObject propObj;
         propObj["name"] = p.getName();
         propObj["type"] = static_cast<int>(p.getType());
-        propObj["value"] = p.getValue(); // QVariant is handled by QJsonValue::fromVariant or similar manually
+        propObj["value"] = QJsonValue::fromVariant(p.getValue());
         propsArray.append(propObj);
     }
     root["properties"] = propsArray;

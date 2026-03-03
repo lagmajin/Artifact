@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <QImage>
 #include <QString>
 #include <QJsonObject>
@@ -161,12 +161,15 @@ public:
 
     bool get(int64_t frame, cv::Mat& outFrame) {
         std::lock_guard<std::mutex> lock(mutex_);
-        
+
         auto it = cache_.find(frame);
         if (it != cache_.end()) {
             outFrame = it->second.clone();
             // Move to front (most recently used)
-            cacheOrder_.remove(frame);
+            auto orderIt = std::find(cacheOrder_.begin(), cacheOrder_.end(), frame);
+            if (orderIt != cacheOrder_.end()) {
+                cacheOrder_.erase(orderIt);
+            }
             cacheOrder_.push_front(frame);
             return true;
         }

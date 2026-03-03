@@ -92,33 +92,30 @@ void ChromaKeyEffectCPUImpl::applyCPU(const ArtifactCore::ImageF32x4RGBAWithCach
 // Properties - single definitions placed after implementation
 std::vector<ArtifactCore::AbstractProperty> ChromaKeyEffect::getProperties() const {
     std::vector<ArtifactCore::AbstractProperty> props;
+    props.reserve(4);
 
-    ArtifactCore::AbstractProperty keyColorProp;
+    auto& keyColorProp = props.emplace_back();
     keyColorProp.setName("keyColor");
     keyColorProp.setType(ArtifactCore::PropertyType::Color);
     keyColorProp.setDefaultValue(QVariant());
-    props.push_back(keyColorProp);
 
-    ArtifactCore::AbstractProperty similarityProp;
+    auto& similarityProp = props.emplace_back();
     similarityProp.setName("similarity");
     similarityProp.setType(ArtifactCore::PropertyType::Float);
     similarityProp.setDefaultValue(QVariant(static_cast<double>(similarity())));
     similarityProp.setValue(QVariant(static_cast<double>(similarity())));
-    props.push_back(similarityProp);
 
-    ArtifactCore::AbstractProperty smoothProp;
+    auto& smoothProp = props.emplace_back();
     smoothProp.setName("smoothness");
     smoothProp.setType(ArtifactCore::PropertyType::Float);
     smoothProp.setDefaultValue(QVariant(static_cast<double>(smoothness())));
     smoothProp.setValue(QVariant(static_cast<double>(smoothness())));
-    props.push_back(smoothProp);
 
-    ArtifactCore::AbstractProperty spillProp;
+    auto& spillProp = props.emplace_back();
     spillProp.setName("spillReduction");
     spillProp.setType(ArtifactCore::PropertyType::Float);
     spillProp.setDefaultValue(QVariant(static_cast<double>(spillReduction())));
     spillProp.setValue(QVariant(static_cast<double>(spillReduction())));
-    props.push_back(spillProp);
 
     return props;
 }

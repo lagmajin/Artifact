@@ -1,4 +1,4 @@
-module;
+﻿module;
 
 #include <QString>
 #include <QVector>
@@ -35,7 +35,7 @@ CompositionStats ArtifactProjectStatistics::collectForComposition(ArtifactAbstra
     
     // Duration
     auto range = comp->frameRange();
-    stats.totalDurationFrames = range.duration().count();
+    stats.totalDurationFrames = range.duration();
     
     return stats;
 }

@@ -58,6 +58,8 @@ public:
 };
 
 GlowEffect::GlowEffect() : impl_(new Impl()) {
+    setDisplayName(ArtifactCore::UniString("Glow (Rasterizer)"));
+    setPipelineStage(EffectPipelineStage::Rasterizer);
     setCPUImpl(impl_->cpuImpl_);
     setGPUImpl(impl_->gpuImpl_);
 }
@@ -164,20 +166,19 @@ float GlowEffect::alphaFalloff() const {
 
 std::vector<ArtifactCore::AbstractProperty> GlowEffect::getProperties() const {
     std::vector<ArtifactCore::AbstractProperty> props;
+    props.reserve(2);
 
-    ArtifactCore::AbstractProperty gainProp;
+    auto& gainProp = props.emplace_back();
     gainProp.setName("glowGain");
     gainProp.setType(ArtifactCore::PropertyType::Float);
     gainProp.setDefaultValue(QVariant(static_cast<double>(glowGain())));
     gainProp.setValue(QVariant(static_cast<double>(glowGain())));
-    props.push_back(gainProp);
 
-    ArtifactCore::AbstractProperty layerCountProp;
+    auto& layerCountProp = props.emplace_back();
     layerCountProp.setName("layerCount");
     layerCountProp.setType(ArtifactCore::PropertyType::Integer);
     layerCountProp.setDefaultValue(QVariant(layerCount()));
     layerCountProp.setValue(QVariant(layerCount()));
-    props.push_back(layerCountProp);
 
     // Additional properties can be added similarly
     return props;

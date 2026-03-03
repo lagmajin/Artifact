@@ -1,4 +1,4 @@
-module;
+﻿module;
 
 #include <QString>
 #include <QVector>
@@ -96,7 +96,7 @@ void ArtifactProjectHealthChecker::checkFrameRanges(ArtifactProject* project, Pr
                 auto comp = res.ptr.lock();
                 if (comp) {
                     auto range = comp->frameRange();
-                    if (range.duration().count() <= 0) {
+                    if (range.duration() <= 0) {
                         report.issues.push_back({
                             HealthIssueSeverity::Warning,
                             "Composition duration is zero or negative",

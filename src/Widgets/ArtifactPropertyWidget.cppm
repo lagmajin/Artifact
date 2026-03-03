@@ -1,4 +1,4 @@
-module;
+﻿module;
 
 #include <QWidget>
 #include <QVBoxLayout>
@@ -119,15 +119,15 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
 
         for (const auto& ptr : sortedProps) {
             const auto& p = *ptr;
-            QLabel* label = new QLabel(p.getName().toQString());
+            QLabel* label = new QLabel(p.getName());
             QWidget* editor = nullptr;
-            
+
             auto type = p.getType();
             QVariant curVal = p.getValue();
 
             // Store copies for capturing in lambdas
             auto effectRef = effect;
-            ArtifactCore::UniString propName = p.getName();
+            QString propName = p.getName();
 
             switch (type) {
                 case ArtifactCore::PropertyType::Float: {

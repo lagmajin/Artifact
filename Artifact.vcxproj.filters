@@ -1,5 +1,5 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
-<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+<?xml version="1.0" encoding="utf-8"?>
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003" ToolsVersion="4.0">
   <ItemGroup>
     <FxCompile Include="include\Widgets\Render\Shader\Common2DPS.hlsl" />
   </ItemGroup>
@@ -493,9 +493,6 @@
     <ClCompile Include="src\Project\ArtifactProjectStatistics.cppm">
       <Filter>src\Project</Filter>
     </ClCompile>
-    <ClCompile Include="src\Project\ArtifactProjectStatistics.cppm">
-      <Filter>src\Project</Filter>
-    </ClCompile>
     <ClCompile Include="src\Project\ArtifactProjectCleanupTool.cppm">
       <Filter>src\Project</Filter>
     </ClCompile>
@@ -619,7 +616,6 @@
     <ClCompile Include="src\Composition\MetadataVectorizer.cppm">
       <Filter>src</Filter>
     </ClCompile>
-    <ClCompile Include="src\Widgets\Asset\ArtifactAssetBrowser.cppm" />
     <ClCompile Include="include\Composition\MetadataVectorizer.ixx" />
     <ClCompile Include="include\Widgets\Dialog\ApplicationSettingDialog.ixx">
       <Filter>include\Widgets</Filter>
@@ -670,9 +666,6 @@
       <Filter>include\Project</Filter>
     </ClCompile>
     <ClCompile Include="include\Project\ArtifactPresetManager.ixx">
-      <Filter>include\Project</Filter>
-    </ClCompile>
-    <ClCompile Include="include\Project\ArtifactProjectStatistics.ixx">
       <Filter>include\Project</Filter>
     </ClCompile>
     <ClCompile Include="include\Project\ArtifactProjectStatistics.ixx">
@@ -800,12 +793,58 @@
     <ClCompile Include="src\Layer\ArtifactCameraLayer.cppm">
       <Filter>src\Layer</Filter>
     </ClCompile>
-    <ClCompile Include="src\Effetcs\Ofx\ArtifactOfxHost.cppm">
-      <Filter>src\Effetcs\Ofx</Filter>
+    <ClCompile Include="include\Layer\ArtifactVideoLayer.ixx" />
+    <ClCompile Include="src\Layer\ArtifactMediaLayer.cppm" />
+    <ClCompile Include="src\Layer\ArtifactVideoLayer.cppm" />
+    <ClCompile Include="src\Effetcs\Ofx\ArtifactOfxHost.cppm" />
+    <ClCompile Include="src\Effetcs\Ofx\ArtifactOfxEffectImpl.cppm" />
+    <ClCompile Include="include\Effetcs\Field\SphericalField.ixx">
+      <Filter>include\Effetcs\Field</Filter>
     </ClCompile>
-    <ClCompile Include="src\Effetcs\Ofx\ArtifactOfxEffectImpl.cppm">
-      <Filter>src\Effetcs\Ofx</Filter>
+    <ClCompile Include="include\Effetcs\Field\BoxField.ixx">
+      <Filter>include\Effetcs\Field</Filter>
     </ClCompile>
+    <ClCompile Include="include\Effetcs\Field\LinearField.ixx">
+      <Filter>include\Effetcs\Field</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Effetcs\Field\RadialField.ixx">
+      <Filter>include\Effetcs\Field</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Effetcs\Rasterizer\DropShadowEffect.ixx">
+      <Filter>include\Effetcs\Rasterizer</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Effetcs\ArtifactAbstractField.ixx">
+      <Filter>include\Effetcs</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Effetcs\ArtifactAbstractField.cppm">
+      <Filter>src\Effetcs</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Effetcs\Generator\ClonerGenerator.ixx">
+      <Filter>include\Effetcs\Generator</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Effetcs\Generator\FractalNoiseGenerator.ixx">
+      <Filter>include\Effetcs\Generator</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Effetcs\Transform\TwistTransform.ixx">
+      <Filter>include\Effetcs\Transform</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Effetcs\Transform\BendTransform.ixx">
+      <Filter>include\Effetcs\Transform</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Effetcs\Render\PBRMaterialEffect.ixx">
+      <Filter>include\Effetcs\Render</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Effetcs\LayerTransform\LayerTransform2D.ixx">
+      <Filter>include\Effetcs\LayerTransform</Filter>
+    </ClCompile>
+    <ClCompile Include="include\Engine\DAG\Port.ixx" />
+    <ClCompile Include="include\Engine\DAG\Node.ixx" />
+    <ClCompile Include="include\Engine\DAG\Connection.ixx" />
+    <ClCompile Include="include\Engine\DAG\Graph.ixx" />
+    <ClCompile Include="include\Engine\DAG\LayerGraphBuilder.ixx" />
+    <ClCompile Include="include\Engine\DAG\Executor.ixx" />
+    <ClCompile Include="include\Engine\DAG\CompositionGraph.ixx" />
+    <ClCompile Include="include\Artifact\AppMain.ixx" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Generated\TestService.h" />
@@ -944,12 +983,35 @@
     <Filter Include="src\Widgets\Render">
       <UniqueIdentifier>{9991357d-b159-4a04-be69-9c6313a0432e}</UniqueIdentifier>
     </Filter>
-    <Filter Include="src\Effetcs\Ofx" />
     <Filter Include="include\Color">
       <UniqueIdentifier>{6b7c8d9e-0a1b-2c3d-4e5f-6a7b8c9d0e1f}</UniqueIdentifier>
     </Filter>
     <Filter Include="src\Color">
       <UniqueIdentifier>{1f0e9d8c-7b6a-5f4e-3d2c-1b0a9e8d7c6b}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="include\Effetcs\Rasterizer">
+      <UniqueIdentifier>{36A18866-8F62-4FDD-9B63-05AE8A272540}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="include\Effetcs\Field">
+      <UniqueIdentifier>{1EB961F2-EDD9-494C-8A03-521AD8F3DB8F}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="include\Effetcs\Render">
+      <UniqueIdentifier>{9E3FD400-0F21-4310-B681-F348CF771792}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="include\Effetcs\Generator">
+      <UniqueIdentifier>{D82B7F05-4DCD-436A-9E94-667B5610EC5F}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="include\Effetcs\LayerTransform">
+      <UniqueIdentifier>{011C0F7E-27C3-4B41-89AC-B7B389B86AE1}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="include\Effetcs">
+      <UniqueIdentifier>{84281172-8F54-477F-BA44-8DA9F274E403}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="include\Effetcs\Transform">
+      <UniqueIdentifier>{1524FB08-629C-452E-98B8-139FBF676658}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="src\Effetcs">
+      <UniqueIdentifier>{35CD9C2F-99C8-42E6-8F1F-AE80D9E34D03}</UniqueIdentifier>
     </Filter>
   </ItemGroup>
 </Project>

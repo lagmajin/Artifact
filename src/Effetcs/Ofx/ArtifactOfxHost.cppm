@@ -1,11 +1,11 @@
-module;
+﻿module;
 #include <vector>
 #include <string>
 #include <map>
 #include <memory>
 #include <windows.h> // For LoadLibrary / GetProcAddress
-#include "ofxCore.h"
-#include "ofxImageEffect.h"
+// #include <ofx/ofxCore.h>
+// #include <ofx/ofxImageEffect.h>
 #include <iostream>
 
 export module Artifact.Effect.Ofx.Host;
@@ -27,7 +27,7 @@ struct OfxPropertySet {
 // Represents an OpenFX Plugin binary descriptor
 export struct OfxPluginDescriptor {
     UniString pluginPath;
-    OfxPlugin* pluginAPI;
+    // OfxPlugin* pluginAPI;  // Commented out: OFX headers not available
     UniString identifier;
     UniString version;
     HMODULE libraryHandle;
@@ -43,28 +43,31 @@ public:
 
     // Initialize host and load standard OFX suite functions
     void initialize() {
-        // Here we provide the host struct required by plugins
-        hostStruct_.host = hostStructPtr();
-        hostStruct_.fetchSuite = fetchSuiteCallback;
+        // TODO: Implement after OFX headers are available
+        // // Here we provide the host struct required by plugins
+        // hostStruct_.host = hostStructPtr();
+        // hostStruct_.fetchSuite = fetchSuiteCallback;
     }
 
     // Scan a directory for .ofx bundles and load them
     void scanDirectory(const UniString& path) {
+        // TODO: Implement after OFX headers are available
         // Implementation:
         // 1. Iterate over matching files (e.g. *.ofx)
         // 2. LoadLibrary
         // 3. GetProcAddress("OfxGetNumberOfPlugins")
         // 4. GetProcAddress("OfxGetPlugin")
         // 5. Store in plugins_ array
-        std::wcout << L"Scanning OFX Directory: " << path.toStdWString() << std::endl;
+        // std::wcout << L"Scanning OFX Directory: " << path << std::endl;
     }
 
     const std::vector<OfxPluginDescriptor>& getLoadedPlugins() const {
         return plugins_;
     }
 
-    OfxHost* getOfxHostStruct() {
-        return &hostStruct_;
+    void* getOfxHostStruct() {
+        // return &hostStruct_;  // Commented out: OFX headers not available
+        return nullptr;
     }
 
 private:
@@ -72,19 +75,19 @@ private:
     ~ArtifactOfxHost() = default;
 
     std::vector<OfxPluginDescriptor> plugins_;
-    OfxHost hostStruct_;
+    // OfxHost hostStruct_;  // Commented out: OFX headers not available
 
-    static void* fetchSuiteCallback(OfxPropertySetHandle host, const char* suiteName, int suiteVersion) {
-        // Route requested OFX suites to our implementations
-        // e.g. "OfxPropertySuite", "OfxImageEffectSuite", "OfxMemorySuite"
-        // Return nullptr for unsupported suites for now
-        std::cout << "Plugin requested suite: " << suiteName << " v" << suiteVersion << std::endl;
-        return nullptr;
-    }
+    // static void* fetchSuiteCallback(OfxPropertySetHandle host, const char* suiteName, int suiteVersion) {
+    //     // Route requested OFX suites to our implementations
+    //     // e.g. "OfxPropertySuite", "OfxImageEffectSuite", "OfxMemorySuite"
+    //     // Return nullptr for unsupported suites for now
+    //     std::cout << "Plugin requested suite: " << suiteName << " v" << suiteVersion << std::endl;
+    //     return nullptr;
+    // }
 
-    static OfxPropertySetHandle hostStructPtr() {
-        return nullptr; // Later: allocate and return a global host property set
-    }
+    // static OfxPropertySetHandle hostStructPtr() {
+    //     return nullptr; // Later: allocate and return a global host property set
+    // }
 };
 
 } // namespace Ofx
