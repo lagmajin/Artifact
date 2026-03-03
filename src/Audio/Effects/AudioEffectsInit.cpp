@@ -6,6 +6,11 @@ import Artifact.Audio.Effects.Base;
 import Artifact.Audio.Effects.Manager;
 import Artifact.Audio.Effects.Equalizer;
 import Artifact.Audio.Effects.Reverb;
+import Artifact.Audio.Effects.Compressor;
+import Artifact.Audio.Effects.Delay;
+import Artifact.Audio.Effects.Chorus;
+import Artifact.Audio.Effects.Limiter;
+import Artifact.Audio.Effects.Distortion;
 
 namespace Artifact {
 
@@ -14,13 +19,18 @@ struct AudioEffectsInitializer {
     AudioEffectsInitializer() {
         auto& manager = ArtifactAudioEffectManager::instance();
         
-        // イコライザーエフェクトの登録
-        manager.registerEffectFactory("equalizer", &createEqualizerEffect);
+        // ダイナミクス系
+        manager.registerEffectFactory("compressor", &createCompressorEffect);
+        manager.registerEffectFactory("limiter",    &createLimiterEffect);
         
-        // リバーブエフェクトの登録
-        manager.registerEffectFactory("reverb", &createReverbEffect);
+        // 空間系
+        manager.registerEffectFactory("reverb",  &createReverbEffect);
+        manager.registerEffectFactory("delay",   &createDelayEffect);
+        manager.registerEffectFactory("chorus",  &createChorusEffect);
         
-        // ここに追加のエフェクトを登録
+        // EQ / Tone
+        manager.registerEffectFactory("equalizer",  &createEqualizerEffect);
+        manager.registerEffectFactory("distortion", &createDistortionEffect);
     }
 };
 

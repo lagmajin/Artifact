@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+<?xml version='1.0' encoding='utf-8'?>
 <Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003" DefaultTargets="Build">
   <ItemGroup Label="ProjectConfigurations">
     <ProjectConfiguration Include="Debug|Win32">
@@ -1068,6 +1068,26 @@
     <ClCompile Include="include\Effetcs\LayerTransform\LayerTransform2D.ixx">
       <CompileAs>CompileAsCppModule</CompileAs>
     </ClCompile>
+    <ClCompile Include="include\Audio\Effects\CompressorEffect.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Audio\Effects\DelayEffect.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Audio\Effects\ChorusEffect.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="src\Audio\Effects\CompressorEffect.cpp" />
+    <ClCompile Include="src\Audio\Effects\DelayEffect.cpp" />
+    <ClCompile Include="src\Audio\Effects\ChorusEffect.cpp" />
+    <ClCompile Include="include\Audio\Effects\LimiterEffect.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Audio\Effects\DistortionEffect.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="src\Audio\Effects\LimiterEffect.cpp" />
+    <ClCompile Include="src\Audio\Effects\DistortionEffect.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="include\Widgets\Menu\ArtifactMenu.ixx">
