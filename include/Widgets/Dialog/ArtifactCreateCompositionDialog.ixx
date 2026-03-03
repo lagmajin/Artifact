@@ -20,6 +20,7 @@ export namespace Artifact {
  public:
   explicit CompositionSettingPage(QWidget* parent = nullptr);
   ~CompositionSettingPage();
+  ArtifactCompositionInitParams getInitParams(const QString& name) const;
  };
 
  class CompositionExtendSettingPage :public QWidget {

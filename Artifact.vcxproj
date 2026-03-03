@@ -945,7 +945,6 @@
     <ClCompile Include="include\Project\ArtifactProjectSetting.ixx">
       <CompileAs>CompileAsCppModule</CompileAs>
     </ClCompile>
-    <ClInclude Include="include\Render\ArtifactRenderer.ixx" />
     <ClCompile Include="include\Widgets\Dialog\ArtifactCreateCompositionDialog.ixx">
       <CompileAs>CompileAsCppModule</CompileAs>
     </ClCompile>
@@ -1088,6 +1087,13 @@
     </ClCompile>
     <ClCompile Include="src\Audio\Effects\LimiterEffect.cpp" />
     <ClCompile Include="src\Audio\Effects\DistortionEffect.cpp" />
+    <ClCompile Include="include\Export\Python\ArtifactPythonAPI.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="src\Export\Python\ArtifactPythonAPI.cpp" />
+    <ClCompile Include="include\Render\ArtifactRenderer.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="include\Widgets\Menu\ArtifactMenu.ixx">

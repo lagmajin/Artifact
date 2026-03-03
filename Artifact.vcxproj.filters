@@ -875,6 +875,13 @@
     <ClCompile Include="src\Audio\Effects\DistortionEffect.cpp">
       <Filter>src\Audio\Effects</Filter>
     </ClCompile>
+    <ClCompile Include="include\Export\Python\ArtifactPythonAPI.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+      <Filter>include\Export\Python</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Export\Python\ArtifactPythonAPI.cpp">
+      <Filter>src\Export\Python</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Generated\TestService.h" />
@@ -886,9 +893,9 @@
     <ClInclude Include="include\GUI\ArtifactGuiManager.hpp">
       <Filter>include</Filter>
     </ClInclude>
-    <ClInclude Include="include\Render\ArtifactRenderer.ixx">
+    <ClCompile Include="include\Render\ArtifactRenderer.ixx">
       <Filter>include</Filter>
-    </ClInclude>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <CustomBuild Include="Test.thrift" />
@@ -1048,6 +1055,18 @@
     </Filter>
     <Filter Include="src\Audio\Effects">
       <UniqueIdentifier>{97FE3C18-85FD-4C46-8B58-67C1703E28D8}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="src\Export\Python">
+      <UniqueIdentifier>{1AD99C73-6F78-48EA-A7B0-D1CB270DF0A4}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="src\Export">
+      <UniqueIdentifier>{5CD9B6DF-AD67-4190-BF2B-E7B54E3A2DD9}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="include\Export">
+      <UniqueIdentifier>{1E9930C9-5FBD-4BA9-A43B-E4F05CEB630E}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="include\Export\Python">
+      <UniqueIdentifier>{B0F02E36-D91D-44EA-BF89-543F2F74677F}</UniqueIdentifier>
     </Filter>
   </ItemGroup>
 </Project>

@@ -17,6 +17,8 @@
 #include <QFormLayout>
 #include <QLabel>
 #include <QComboBox>
+#include <QColorDialog>
+#include <QPushButton>
 #include "qevent.h"
 module Dialog.Composition;
 
@@ -33,80 +35,144 @@ namespace Artifact {
 	
  class CompositionSettingPage::Impl
  {
- private:
-
  public:
   Impl();
   
- 	QComboBox* resolutionCombobox_ = nullptr;
-    EditableLabel* compositionNameEdit_=nullptr;
-    DragSpinBox* widthSpinBox = nullptr;
-    DragSpinBox* heightSpinBox = nullptr;
+  QComboBox* resolutionCombobox_ = nullptr;
+  QComboBox* fpsCombo_ = nullptr;
+  QComboBox* pixelAspectCombo_ = nullptr;
+  DragSpinBox* widthSpinBox = nullptr;
+  DragSpinBox* heightSpinBox = nullptr;
+  DoubleDragSpinBox* durationSpinBox = nullptr;
+  QLineEdit* startTimecodeEdit = nullptr;
+  // Use a simple QPushButton for color picking to avoid dependency on an incomplete widget
+  QPushButton* bgColorButton = nullptr;
+  QColor bgColor = QColor(0, 0, 0, 255);
  };
 
  CompositionSettingPage::Impl::Impl()
  {
-
  }
 
  CompositionSettingPage::CompositionSettingPage(QWidget* parent /*= nullptr*/) :QWidget(parent),impl_(new Impl)
  {
-
-  //auto compositionNameLabel = new QLabel("コンポジション名:");
-  //auto compositionNameEdit=impl_->compositionNameEdit_ = new EditableLabel();
-  //compositionNameEdit->setMaximumWidth(100);
- 	
   impl_->widthSpinBox = new DragSpinBox();
+  impl_->widthSpinBox->setRange(1, 16384);
   impl_->heightSpinBox = new DragSpinBox();
+  impl_->heightSpinBox->setRange(1, 16384);
+  
   impl_->resolutionCombobox_ = new QComboBox();
-  impl_->resolutionCombobox_->addItem("1920x1080", QVariant::fromValue(QSize(1920,1080)));
-  impl_->resolutionCombobox_->addItem("1280x720", QVariant::fromValue(QSize(1280,720)));
-  impl_->resolutionCombobox_->addItem("カスタム", QVariant::fromValue(QSize(-1,-1)));
+  impl_->resolutionCombobox_->addItem("1920x1080 (FHD)", QVariant::fromValue(QSize(1920, 1080)));
+  impl_->resolutionCombobox_->addItem("1280x720 (HD)", QVariant::fromValue(QSize(1280, 720)));
+  impl_->resolutionCombobox_->addItem("3840x2160 (4K)", QVariant::fromValue(QSize(3840, 2160)));
+  impl_->resolutionCombobox_->addItem("カスタム", QVariant::fromValue(QSize(-1, -1)));
 
-  QComboBox* fpsCombo = new QComboBox();
-  fpsCombo->addItem("23.976");
-  fpsCombo->addItem("24");
-  fpsCombo->addItem("25");
-  fpsCombo->addItem("29.97");
-  fpsCombo->addItem("30");
-  fpsCombo->addItem("60");
+  impl_->pixelAspectCombo_ = new QComboBox();
+  impl_->pixelAspectCombo_->addItem("正方形ピクセル (1.0)", QVariant::fromValue(1.0));
+  impl_->pixelAspectCombo_->addItem("D1/DV NTSC (0.91)", QVariant::fromValue(0.9091));
+  impl_->pixelAspectCombo_->addItem("D1/DV PAL (1.09)", QVariant::fromValue(1.0940));
 
-  auto line = new QFrame();
-  line->setFrameShape(QFrame::HLine);
-  line->setFrameShadow(QFrame::Sunken);
+  impl_->fpsCombo_ = new QComboBox();
+  impl_->fpsCombo_->addItem("23.976", QVariant::fromValue(23.976));
+  impl_->fpsCombo_->addItem("24", QVariant::fromValue(24.0));
+  impl_->fpsCombo_->addItem("25", QVariant::fromValue(25.0));
+  impl_->fpsCombo_->addItem("29.97", QVariant::fromValue(29.97));
+  impl_->fpsCombo_->addItem("30", QVariant::fromValue(30.0));
+  impl_->fpsCombo_->addItem("60", QVariant::fromValue(60.0));
+  impl_->fpsCombo_->setCurrentIndex(4); // default 30 fps
+
+  impl_->startTimecodeEdit = new QLineEdit("00:00:00:00");
+  
+  impl_->durationSpinBox = new DoubleDragSpinBox();
+  impl_->durationSpinBox->setRange(0.1, 3600.0);
+  impl_->durationSpinBox->setValue(10.0); // 10 seconds default
+
+  impl_->bgColorButton = new QPushButton();
+  impl_->bgColorButton->setFixedSize(60, 24);
+  impl_->bgColorButton->setStyleSheet("background-color: rgb(0, 0, 0); border: 1px solid #555;");
+  
+  auto line1 = new QFrame();
+  line1->setFrameShape(QFrame::HLine);
+  line1->setFrameShadow(QFrame::Sunken);
+
+  auto line2 = new QFrame();
+  line2->setFrameShape(QFrame::HLine);
+  line2->setFrameShadow(QFrame::Sunken);
 
   auto vboxLayout = new QFormLayout();
-  vboxLayout->addRow("解像度プリセット:", impl_->resolutionCombobox_);
-  vboxLayout->addRow("Width:",impl_->widthSpinBox);
-  vboxLayout->addRow("Height:", impl_->heightSpinBox);
-  vboxLayout->addRow("フレームレート:", fpsCombo);
-  vboxLayout->setAlignment(impl_->widthSpinBox, Qt::AlignRight);
-  vboxLayout->setAlignment(impl_->heightSpinBox, Qt::AlignRight);
-  vboxLayout->addRow(line);
+  vboxLayout->addRow("プリセット:", impl_->resolutionCombobox_);
+  vboxLayout->addRow("幅 (px):", impl_->widthSpinBox);
+  vboxLayout->addRow("高さ (px):", impl_->heightSpinBox);
+  vboxLayout->addRow("ピクセル縦横比:", impl_->pixelAspectCombo_);
+  vboxLayout->addRow("フレームレート:", impl_->fpsCombo_);
+  vboxLayout->addRow(line1);
+  vboxLayout->addRow("開始タイムコード:", impl_->startTimecodeEdit);
+  vboxLayout->addRow("デュレーション (秒):", impl_->durationSpinBox);
+  vboxLayout->addRow(line2);
+  vboxLayout->addRow("背景色:", impl_->bgColorButton);
+  
   setLayout(vboxLayout);
 
-  QObject::connect(impl_->resolutionCombobox_, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int idx){
+  // Sync combo boxes with spin boxes
+  QObject::connect(impl_->resolutionCombobox_, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int) {
     QSize sz = impl_->resolutionCombobox_->currentData().toSize();
     if (sz.width() > 0 && sz.height() > 0) {
       impl_->widthSpinBox->setValue(sz.width());
       impl_->heightSpinBox->setValue(sz.height());
-      impl_->widthSpinBox->setEnabled(false);
-      impl_->heightSpinBox->setEnabled(false);
-    } else {
-      impl_->widthSpinBox->setEnabled(true);
-      impl_->heightSpinBox->setEnabled(true);
     }
   });
-  impl_->resolutionCombobox_->setCurrentIndex(0);
+  
+  // Custom size logic
+  auto forceCustom = [this]() {
+      impl_->resolutionCombobox_->blockSignals(true);
+      impl_->resolutionCombobox_->setCurrentIndex(impl_->resolutionCombobox_->count() - 1); // Custom
+      impl_->resolutionCombobox_->blockSignals(false);
+  };
+  QObject::connect(impl_->widthSpinBox, QOverload<int>::of(&QSpinBox::valueChanged), this, forceCustom);
+  QObject::connect(impl_->heightSpinBox, QOverload<int>::of(&QSpinBox::valueChanged), this, forceCustom);
+
+  // Background color picker
+  QObject::connect(impl_->bgColorButton, &QPushButton::clicked, this, [this]() {
+      QColor c = QColorDialog::getColor(impl_->bgColor, this, "背景色を選択");
+      if (c.isValid()) {
+          impl_->bgColor = c;
+          QString style = QString("background-color: %1; border: 1px solid #555;").arg(c.name());
+          impl_->bgColorButton->setStyleSheet(style);
+      }
+  });
+
+  impl_->resolutionCombobox_->setCurrentIndex(0); // This triggers the connected lambda to set 1920x1080
 
   auto style = getDCCStyleSheetPreset(DccStylePreset::ModoStyle);
   setStyleSheet(style);
-
  }
 
  CompositionSettingPage::~CompositionSettingPage()
  {
+ }
 
+ ArtifactCompositionInitParams CompositionSettingPage::getInitParams(const QString& name) const
+ {
+     ArtifactCompositionInitParams params;
+     UniString u;
+     u.setQString(name);
+     params.setCompositionName(u);
+     params.setResolution(impl_->widthSpinBox->value(), impl_->heightSpinBox->value());
+     
+     double fps = impl_->fpsCombo_->currentData().toDouble();
+     params.setFrameRate(fps);
+
+     // Currently AspectRatio accepts rational (width, height), approximate float for now
+     double aspect = impl_->pixelAspectCombo_->currentData().toDouble();
+     params.setPixelAspectRatio(AspectRatio(static_cast<int>(aspect * 10000), 10000));
+     
+     params.setDurationSeconds(impl_->durationSpinBox->value());
+     
+     // Background color
+     QColor c = impl_->bgColor;
+     params.setBackgroundColor(FloatColor(c.redF(), c.greenF(), c.blueF(), c.alphaF()));
+     
+     return params;
  }
  CompositionExtendSettingPage::CompositionExtendSettingPage(QWidget* parent /*= nullptr*/) :QWidget(parent)
  {
@@ -162,13 +228,19 @@ namespace Artifact {
    QString name = dlg->compositionName();
    // suppress default creation triggered by projectCreated
    ArtifactProjectManager::getInstance().suppressDefaultCreate(true);
-   if (!name.isEmpty()) {
-     UniString u;
-     u.setQString(name);
-     ArtifactProjectManager::getInstance().createComposition(u);
+   
+   if (compositionSettingPage_) {
+     ArtifactCompositionInitParams params = compositionSettingPage_->getInitParams(name);
+     ArtifactProjectManager::getInstance().createComposition(params);
    } else {
-     // create with default params if no name provided
-     ArtifactProjectManager::getInstance().createComposition();
+     if (!name.isEmpty()) {
+       UniString u;
+       u.setQString(name);
+       ArtifactProjectManager::getInstance().createComposition(u);
+     } else {
+       // create with default params if no name provided
+       ArtifactProjectManager::getInstance().createComposition();
+     }
    }
    ArtifactProjectManager::getInstance().suppressDefaultCreate(false);
   }
