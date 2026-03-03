@@ -80,7 +80,10 @@ export namespace Artifact
 
   void projectChanged()
    W_SIGNAL(projectChanged);
+  void layerSelected(const LayerID& id)
+   W_SIGNAL(layerSelected, id);
   public:
+   void selectLayer(const LayerID& id);
    void projectSettingChanged(const ArtifactProjectSettings& setting);
    W_SLOT(projectSettingChanged);
 

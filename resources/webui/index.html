@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Artifact Web Inspector</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', 'Inter', sans-serif;
+            background: #1e1e2e;
+            color: #cdd6f4;
+            font-size: 13px;
+        }
+        .header {
+            background: linear-gradient(135deg, #313244, #45475a);
+            padding: 12px 16px;
+            border-bottom: 1px solid #585b70;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        .header h1 {
+            font-size: 14px;
+            font-weight: 600;
+            color: #cba6f7;
+        }
+        .header .status {
+            font-size: 11px;
+            padding: 2px 8px;
+            border-radius: 10px;
+            background: #a6e3a1;
+            color: #1e1e2e;
+        }
+        .container { padding: 12px; }
+        .rack {
+            margin-bottom: 12px;
+            border: 1px solid #45475a;
+            border-radius: 6px;
+            overflow: hidden;
+        }
+        .rack-header {
+            background: #313244;
+            padding: 8px 12px;
+            font-weight: 600;
+            font-size: 12px;
+            color: #89b4fa;
+            cursor: pointer;
+            user-select: none;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .rack-header:hover { background: #45475a; }
+        .rack-body {
+            padding: 8px 12px;
+            background: #181825;
+        }
+        .rack-body.collapsed { display: none; }
+        .effect-item {
+            padding: 6px 8px;
+            margin: 2px 0;
+            background: #313244;
+            border-radius: 4px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .effect-item:hover { background: #45475a; }
+        .effect-status { color: #a6e3a1; }
+        .prop-row {
+            display: flex;
+            align-items: center;
+            padding: 4px 0;
+            gap: 8px;
+        }
+        .prop-label {
+            min-width: 100px;
+            color: #a6adc8;
+            font-size: 11px;
+        }
+        .prop-input {
+            flex: 1;
+            background: #313244;
+            border: 1px solid #585b70;
+            border-radius: 4px;
+            color: #cdd6f4;
+            padding: 4px 8px;
+            font-size: 12px;
+            outline: none;
+        }
+        .prop-input:focus { border-color: #89b4fa; }
+        .btn {
+            padding: 4px 12px;
+            border: none;
+            border-radius: 4px;
+            background: #89b4fa;
+            color: #1e1e2e;
+            font-size: 11px;
+            cursor: pointer;
+            font-weight: 600;
+        }
+        .btn:hover { background: #b4befe; }
+        .log {
+            margin-top: 16px;
+            padding: 8px;
+            background: #11111b;
+            border-radius: 4px;
+            font-family: monospace;
+            font-size: 11px;
+            max-height: 120px;
+            overflow-y: auto;
+            color: #6c7086;
+        }
+    </style>
+</head>
+<body>
+
+<div class="header">
+    <h1>✦ Artifact Inspector (WebUI)</h1>
+    <span class="status" id="connectionStatus">Connecting...</span>
+</div>
+
+<div class="container">
+    <div id="racksContainer"></div>
+
+    <div class="log" id="logPanel">
+        [System] Waiting for C++ bridge connection...
+    </div>
+</div>
+
+<!-- QWebChannel JS client library (provided by Qt at runtime) -->
+<script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+<script>
+    const RACK_NAMES = [
+        "1. Generator",
+        "2. Geometry Transform",
+        "3. Material & Render",
+        "4. Rasterizer",
+        "5. Layer Transform"
+    ];
+
+    let bridge = null;
+
+    function log(msg) {
+        const panel = document.getElementById('logPanel');
+        const line = document.createElement('div');
+        line.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+        panel.appendChild(line);
+        panel.scrollTop = panel.scrollHeight;
+    }
+
+    function buildRacks() {
+        const container = document.getElementById('racksContainer');
+        container.innerHTML = '';
+        RACK_NAMES.forEach((name, idx) => {
+            const rack = document.createElement('div');
+            rack.className = 'rack';
+            rack.innerHTML = `
+                <div class="rack-header" onclick="toggleRack(${idx})">
+                    <span>${name}</span>
+                    <button class="btn" onclick="event.stopPropagation(); addEffect(${idx})">+ Add</button>
+                </div>
+                <div class="rack-body" id="rack-body-${idx}">
+                    <div class="effect-item" style="color: #6c7086;">(No effects)</div>
+                </div>
+            `;
+            container.appendChild(rack);
+        });
+    }
+
+    function toggleRack(idx) {
+        const body = document.getElementById(`rack-body-${idx}`);
+        body.classList.toggle('collapsed');
+    }
+
+    function addEffect(rackIdx) {
+        log(`Add effect requested for rack ${rackIdx}`);
+        // In the future, this will call bridge.addEffect(rackIdx) via QWebChannel
+    }
+
+    // Initialize QWebChannel connection
+    function initBridge() {
+        if (typeof QWebChannel === 'undefined') {
+            log('QWebChannel not available - running standalone mode');
+            document.getElementById('connectionStatus').textContent = 'Standalone';
+            document.getElementById('connectionStatus').style.background = '#fab387';
+            return;
+        }
+
+        new QWebChannel(qt.webChannelTransport, function(channel) {
+            bridge = channel.objects.bridge;
+            log('Connected to C++ bridge!');
+            document.getElementById('connectionStatus').textContent = 'Connected';
+
+            // Listen for signals from C++
+            bridge.layerSelectionChanged.connect(function(layerId) {
+                log(`Layer selected: ${layerId}`);
+            });
+
+            bridge.propertyUpdated.connect(function(effectId, propName, jsonVal) {
+                log(`Property updated: ${effectId}.${propName} = ${jsonVal}`);
+            });
+
+            // Get project info
+            const info = bridge.getProjectInfo();
+            log(`Project info: ${info}`);
+        });
+    }
+
+    // Boot
+    buildRacks();
+    initBridge();
+</script>
+
+</body>
+</html>

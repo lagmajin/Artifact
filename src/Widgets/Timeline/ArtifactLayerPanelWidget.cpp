@@ -159,6 +159,7 @@ namespace Artifact
   QPixmap adjLayerIcon;
   QPixmap nullLayerIcon;
   int hoveredLayerIndex = -1;  // マウスホバー中のレイヤーインデックス
+  LayerID selectedLayerId;     // 選択されたレイヤーID
  };
 
  ArtifactLayerPanelWidget::Impl::Impl()
@@ -194,12 +195,19 @@ ArtifactLayerPanelWidget::ArtifactLayerPanelWidget(QWidget* parent /*= nullptr*/
    QObject::connect(service, &ArtifactProjectService::layerRemoved, this, [this](const LayerID&) {
      update();
    });
+   QObject::connect(service, &ArtifactProjectService::layerSelected, this, [this](const LayerID& layerId) {
+     if (impl_->selectedLayerId != layerId) {
+         impl_->selectedLayerId = layerId;
+         update();
+     }
+   });
  }
 }
 
 void ArtifactLayerPanelWidget::setComposition(const CompositionID& id)
 {
     impl_->compositionId = id;
+    impl_->selectedLayerId = LayerID();  // Reset selection on comp change
     // trigger repaint
     update();
 }
@@ -288,7 +296,10 @@ void ArtifactLayerPanelWidget::setComposition(const CompositionID& id)
 
     // Left-click on layer name or other columns -> select layer
     if (event->button() == Qt::LeftButton) {
-        impl_->hoveredLayerIndex = idx;
+        impl_->hoveredLayerIndex = idx; // Used temporarily as hover highlight for now, keep it visible
+        if (auto* service = ArtifactProjectService::instance()) {
+            service->selectLayer(layer->id());
+        }
         update();
     }
 
@@ -332,24 +343,36 @@ void ArtifactLayerPanelWidget::setComposition(const CompositionID& id)
   const int colW = 28;
   const int iconSize = 16;
   
+  auto compShared = safeCompositionLookup(impl_->compositionId);
+  QVector<ArtifactAbstractLayerPtr> layers;
+  if (compShared) {
+      layers = compShared->allLayer();
+  }
+
   // 背景描画
   for (int i = 0; i * rowH < height(); ++i) {
    int y = i * rowH;
-   if (i == impl_->hoveredLayerIndex) {
-	p.fillRect(0, y, width(), rowH, QColor(55, 55, 80));
-   } else if (i % 2 == 0) {
-	p.fillRect(0, y, width(), rowH, QColor(42, 42, 42));
-   } else {
-	p.fillRect(0, y, width(), rowH, QColor(45, 45, 45));
+   
+   bool isSelected = false;
+   if (i < layers.size() && layers[i]) {
+       isSelected = (layers[i]->id() == impl_->selectedLayerId);
    }
+
+   if (isSelected) {
+       p.fillRect(0, y, width(), rowH, QColor(70, 100, 150)); // Selected color
+   } else if (i == impl_->hoveredLayerIndex) {
+       p.fillRect(0, y, width(), rowH, QColor(55, 55, 80));  // Hover color
+   } else if (i % 2 == 0) {
+       p.fillRect(0, y, width(), rowH, QColor(42, 42, 42));  // Even row
+   } else {
+       p.fillRect(0, y, width(), rowH, QColor(45, 45, 45));  // Odd row
+   }
+   
    p.setPen(QColor(60, 60, 60));
    p.drawLine(0, y + rowH, width(), y + rowH);
   }
 
-  auto compShared = safeCompositionLookup(impl_->compositionId);
   if (compShared) {
-    QVector<ArtifactAbstractLayerPtr> layers = compShared->allLayer();
-
     for (int idx = 0; idx < layers.size(); ++idx) {
       int y = idx * rowH;
       auto layer = layers[idx];

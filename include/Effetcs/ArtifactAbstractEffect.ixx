@@ -25,6 +25,14 @@ enum class ComputeMode {
     AUTO // おまかせモード
 };
 
+enum class EffectPipelineStage {
+    Generator,
+    GeometryTransform,
+    MaterialRender,
+    Rasterizer,
+    LayerTransform
+};
+
 class ArtifactAbstractEffect {
 private:
     class Impl;
@@ -55,6 +63,10 @@ public:
     void setEffectID(const UniString& id);
     UniString displayName() const;
     void setDisplayName(const UniString& name);
+
+    // pipeline stage
+    EffectPipelineStage pipelineStage() const;
+    void setPipelineStage(EffectPipelineStage stage);
 
     // context
     void setContext(const EffectContext& context);

@@ -3,6 +3,9 @@
 #include <QLabel>
 #include <QWidget>
 #include <QVBoxLayout>
+#include <QGroupBox>
+#include <QScrollArea>
+#include <QMenu>
 #include <QHBoxLayout>
 #include <QTabWidget>
 #include <QListWidget>
@@ -31,6 +34,12 @@ import Artifact.Effect.Abstract;
 import Artifact.Widgets.ArtifactPropertyWidget;
 import Undo.UndoManager;
 import Generator.Effector;
+import Artifact.Effect.Generator.Cloner;
+import Artifact.Effect.Generator.FractalNoise;
+import Artifact.Effect.Transform.Twist;
+import Artifact.Effect.Transform.Bend;
+import Artifact.Effect.Render.PBRMaterial;
+import Artifact.Effect.LayerTransform.Transform2D;
 
 namespace Artifact {
 
@@ -54,12 +63,16 @@ namespace Artifact {
    QLabel* layerTypeLabel = nullptr;
    QLabel* statusLabel = nullptr;
 
-   // Rasterizer Effects Tab
+   // Effects Pipeline Tab
+   QScrollArea* effectsScrollArea = nullptr;
    QWidget* effectsTabWidget = nullptr;
-   QListWidget* effectsListWidget = nullptr;
-   QPushButton* addEffectButton = nullptr;
-   QPushButton* removeEffectButton = nullptr;
-   QPushButton* removeEffectButton = nullptr;
+
+   struct EffectRack {
+       QListWidget* listWidget = nullptr;
+       QPushButton* addButton = nullptr;
+       QPushButton* removeButton = nullptr;
+   };
+   EffectRack racks[5];
    ArtifactPropertyWidget* propertyWidget = nullptr;
 
    QMenu* inspectorMenu_ = nullptr;
@@ -79,9 +92,9 @@ namespace Artifact {
    void updateLayerInfo();
    void updateEffectsList();
    void updatePropertiesForEffect(const QString& effectId);
-   void handleAddEffectClicked();
-   void handleAddGeneratorEffect();
-   void handleRemoveEffectClicked();
+   void handleAddEffectClicked(int rackIndex);
+   void handleAddGeneratorEffect(int rackIndex);
+   void handleRemoveEffectClicked(int rackIndex);
    void setNoProjectState();
    void setNoLayerState();
   };
@@ -241,53 +254,28 @@ void ArtifactInspectorWidget::Impl::updatePropertiesForEffect(const QString& eff
   }
  }
 
- void ArtifactInspectorWidget::Impl::updateEffectsList()
+  void ArtifactInspectorWidget::Impl::updateEffectsList()
  {
-  if (!effectsListWidget || currentLayerId_.isNil()) {
-   if (effectsListWidget) effectsListWidget->clear();
-   return;
+  for (int i=0; i<5; ++i) {
+      if (racks[i].listWidget) racks[i].listWidget->clear();
   }
+  if (currentLayerId_.isNil()) return;
 
   auto projectService = ArtifactProjectService::instance();
-  if (!projectService) {
-   if (effectsListWidget) effectsListWidget->clear();
-   return;
-  }
+  if (!projectService) return;
 
-  if (currentCompositionId_.isNil()) {
-   if (effectsListWidget) effectsListWidget->clear();
-   return;
-  }
+  if (currentCompositionId_.isNil()) return;
 
   auto findResult = projectService->findComposition(currentCompositionId_);
-  if (!findResult.success) {
-   if (effectsListWidget) effectsListWidget->clear();
-   return;
-  }
+  if (!findResult.success) return;
 
   auto comp = findResult.ptr.lock();
-  if (!comp) {
-   if (effectsListWidget) effectsListWidget->clear();
-   return;
-  }
+  if (!comp) return;
 
   auto layer = comp->layerById(currentLayerId_);
-  if (!layer) {
-   if (effectsListWidget) effectsListWidget->clear();
-   return;
-  }
+  if (!layer) return;
 
-  // レイヤーのエフェクトリストを取得して表示
-  effectsListWidget->clear();
   auto effects = layer->getEffects();
-
-  if (effects.empty()) {
-   auto item = new QListWidgetItem("(No effects)");
-   item->setFlags(item->flags() & ~Qt::ItemIsSelectable);
-   effectsListWidget->addItem(item);
-   qDebug() << "[Inspector] No effects for layer:" << currentLayerId_.toString();
-   return;
-  }
 
   for (const auto& effect : effects) {
    if (effect) {
@@ -297,124 +285,110 @@ void ArtifactInspectorWidget::Impl::updatePropertiesForEffect(const QString& eff
 
     auto item = new QListWidgetItem(itemText);
     item->setData(Qt::UserRole, effect->effectID().toQString());
-    effectsListWidget->addItem(item);
 
-       qDebug() << "[Inspector] Effect listed:" << effectName;
+    int stageIdx = static_cast<int>(effect->pipelineStage());
+    if (stageIdx >= 0 && stageIdx < 5) {
+        if (racks[stageIdx].listWidget) racks[stageIdx].listWidget->addItem(item);
+    }
+   }
+  }
+  for (int i=0; i<5; ++i) {
+      if (racks[i].listWidget && racks[i].listWidget->count() == 0) {
+          auto item = new QListWidgetItem("(No effects)");
+          item->setFlags(item->flags() & ~Qt::ItemIsSelectable);
+          racks[i].listWidget->addItem(item);
       }
-     }
-    }
+  }
+ }
 
-    void ArtifactInspectorWidget::Impl::handleAddEffectClicked()
-    {
-     if (currentLayerId_.isNil()) {
-      qDebug() << "[Inspector] No layer selected";
-      return;
-     }
+ void ArtifactInspectorWidget::Impl::handleAddEffectClicked(int rackIndex)
+ {
+  if (currentLayerId_.isNil() || currentCompositionId_.isNil()) return;
 
-     // エフェクトメニューを作成
-     QMenu effectMenu;
-     effectMenu.addAction("Generator Effect", [this]() {
-      handleAddGeneratorEffect();
-     });
-     effectMenu.addSeparator();
-     effectMenu.addAction("Blur", [this]() {
-      qDebug() << "[Inspector] Blur effect added (placeholder)";
-      // TODO: Blur エフェクト実装
-     });
-     effectMenu.addAction("Glow", [this]() {
-      qDebug() << "[Inspector] Glow effect added (placeholder)";
-      // TODO: Glow エフェクト実装
-     });
-     effectMenu.addAction("Shadow", [this]() {
-      qDebug() << "[Inspector] Shadow effect added (placeholder)";
-      // TODO: Shadow エフェクト実装
-     });
+  auto projectService = ArtifactProjectService::instance();
+  if (!projectService) return;
 
-     // メニューを表示
-     effectMenu.exec(QCursor::pos());
-    }
+  auto findResult = projectService->findComposition(currentCompositionId_);
+  if (!findResult.success) return;
 
-    void ArtifactInspectorWidget::Impl::handleAddGeneratorEffect()
-    {
-     if (currentLayerId_.isNil() || currentCompositionId_.isNil()) {
-      qDebug() << "[Inspector] Cannot add effect: no layer or composition";
-      return;
-     }
+  auto comp = findResult.ptr.lock();
+  if (!comp) return;
 
-     auto projectService = ArtifactProjectService::instance();
-     if (!projectService) {
-      qDebug() << "[Inspector] Project service not available";
-      return;
-     }
+  auto layer = comp->layerById(currentLayerId_);
+  if (!layer) return;
 
-     auto findResult = projectService->findComposition(currentCompositionId_);
-     if (!findResult.success) {
-      qDebug() << "[Inspector] Composition not found";
-      return;
-     }
+  QMenu effectMenu;
+  
+  auto addAndRefresh = [this, layer](std::shared_ptr<ArtifactAbstractEffect> newEffect) {
+      if (newEffect) {
+          // Generate a simple unique ID for the effect for now
+          newEffect->setEffectID(ArtifactCore::UniString(std::to_string(std::rand()).c_str()));
+          layer->addEffect(newEffect);
+          updateEffectsList();
+      }
+  };
 
-     auto comp = findResult.ptr.lock();
-     if (!comp) {
-      qDebug() << "[Inspector] Composition is null";
-      return;
-     }
+  switch (static_cast<EffectPipelineStage>(rackIndex)) {
+      case EffectPipelineStage::Generator:
+          effectMenu.addAction("Cloner", [addAndRefresh]() { addAndRefresh(std::make_shared<ClonerGenerator>()); });
+          effectMenu.addAction("Fractal Noise", [addAndRefresh]() { addAndRefresh(std::make_shared<FractalNoiseGenerator>()); });
+          break;
+      case EffectPipelineStage::GeometryTransform:
+          effectMenu.addAction("Twist", [addAndRefresh]() { addAndRefresh(std::make_shared<TwistTransform>()); });
+          effectMenu.addAction("Bend", [addAndRefresh]() { addAndRefresh(std::make_shared<BendTransform>()); });
+          break;
+      case EffectPipelineStage::MaterialRender:
+          effectMenu.addAction("PBR Material", [addAndRefresh]() { addAndRefresh(std::make_shared<PBRMaterialEffect>()); });
+          break;
+      case EffectPipelineStage::Rasterizer:
+          effectMenu.addAction("Blur", []() {});
+          effectMenu.addAction("Glow", []() {});
+          effectMenu.addAction("Shadow", []() {});
+          break;
+      case EffectPipelineStage::LayerTransform:
+          effectMenu.addAction("Transform 2D", [addAndRefresh]() { addAndRefresh(std::make_shared<LayerTransform2D>()); });
+          break;
+  }
+  
+  effectMenu.exec(QCursor::pos());
+ }
 
-     auto layer = comp->layerById(currentLayerId_);
-     if (!layer) {
-      qDebug() << "[Inspector] Layer not found";
-      return;
-     }
+ void ArtifactInspectorWidget::Impl::handleAddGeneratorEffect(int rackIndex)
+ {
+  // Obsolete function. Kept temporarily to appease class signature.
+ }
 
-     // SolidGeneratorEffector を作成してレイヤーに追加
-     auto solidGenerator = std::make_shared<SolidGeneratorEffector>();
-     solidGenerator->setName(UniString("Solid Color"));
-     solidGenerator->setSolidColor(QColor(255, 255, 255, 255));
+ void ArtifactInspectorWidget::Impl::handleRemoveEffectClicked(int rackIndex)
+ {
+  if (!racks[rackIndex].listWidget) return;
 
-     // Generator を ArtifactAbstractEffect にラップ
-     // TODO: Generator と Effect の統合インターフェース
+  auto selectedItems = racks[rackIndex].listWidget->selectedItems();
+  if (selectedItems.isEmpty()) return;
 
-     qDebug() << "[Inspector] SolidGenerator created - Name:" << solidGenerator->name().toQString();
+  if (currentLayerId_.isNil() || currentCompositionId_.isNil()) return;
 
-     // エフェクトリストを更新
-     updateEffectsList();
-    }
+  auto projectService = ArtifactProjectService::instance();
+  if (!projectService) return;
 
-    void ArtifactInspectorWidget::Impl::handleRemoveEffectClicked()
-    {
-     if (!effectsListWidget) return;
+  auto findResult = projectService->findComposition(currentCompositionId_);
+  if (!findResult.success) return;
 
-     auto selectedItems = effectsListWidget->selectedItems();
-     if (selectedItems.isEmpty()) {
-      qDebug() << "[Inspector] No effect selected";
-      return;
-     }
+  auto comp = findResult.ptr.lock();
+  if (!comp) return;
 
-     if (currentLayerId_.isNil() || currentCompositionId_.isNil()) {
-      qDebug() << "[Inspector] Cannot remove effect: no layer or composition";
-      return;
-     }
+  auto layer = comp->layerById(currentLayerId_);
+  if (!layer) return;
 
-     auto projectService = ArtifactProjectService::instance();
-     if (!projectService) return;
+  for (auto item : selectedItems) {
+   UniString effectID(item->data(Qt::UserRole).toString().toStdString());
+   if(!effectID.isEmpty()) {
+       layer->removeEffect(effectID);
+       qDebug() << "[Inspector] Effect removed:" << effectID.toQString();
+   }
+  }
 
-     auto findResult = projectService->findComposition(currentCompositionId_);
-     if (!findResult.success) return;
-
-     auto comp = findResult.ptr.lock();
-     if (!comp) return;
-
-     auto layer = comp->layerById(currentLayerId_);
-     if (!layer) return;
-
-     for (auto item : selectedItems) {
-      UniString effectID(item->data(Qt::UserRole).toString().toStdString());
-      layer->removeEffect(effectID);
-      qDebug() << "[Inspector] Effect removed:" << effectID.toQString();
-     }
-
-     // エフェクトリストを更新
-     updateEffectsList();
-    }
+  updateEffectsList();
+ }
 
  void ArtifactInspectorWidget::update()
  {
@@ -460,43 +434,62 @@ void ArtifactInspectorWidget::Impl::updatePropertiesForEffect(const QString& eff
   layerInfoWidget->setLayout(layerInfoLayout);
   impl_->tabWidget->addTab(layerInfoWidget, "Layer Info");
 
-  // ================== Rasterizer Effects Tab ==================
+  // ================== Effects Pipeline Tab ==================
+  impl_->effectsScrollArea = new QScrollArea();
+  impl_->effectsScrollArea->setWidgetResizable(true);
   impl_->effectsTabWidget = new QWidget();
   auto effectsLayout = new QVBoxLayout();
 
-  // エフェクトリストウィジェット
-  impl_->effectsListWidget = new QListWidget();
-  impl_->effectsListWidget->setMaximumHeight(200);
-  effectsLayout->addWidget(new QLabel("Effects:"));
-  effectsLayout->addWidget(impl_->effectsListWidget);
+  QString rackNames[5] = {
+      "1. Generator",
+      "2. Geometry Transform",
+      "3. Material & Render",
+      "4. Rasterizer",
+      "5. Layer Transform"
+  };
 
-  // ボタンレイアウト
-  auto buttonLayout = new QHBoxLayout();
-  impl_->addEffectButton = new QPushButton("+ Add Effect");
-  impl_->removeEffectButton = new QPushButton("- Remove");
-  buttonLayout->addWidget(impl_->addEffectButton);
-  buttonLayout->addWidget(impl_->removeEffectButton);
-  effectsLayout->addLayout(buttonLayout);
+  for (int i = 0; i < 5; ++i) {
+      auto rackGroup = new QGroupBox(rackNames[i]);
+      //! rackGroup->setStyleSheet("QGroupBox { font-weight: bold; border: 1px solid #555; margin-top: 10px; } QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 3px 0 3px; }");
+      auto rackLayout = new QVBoxLayout();
+      
+      impl_->racks[i].listWidget = new QListWidget();
+      impl_->racks[i].listWidget->setMaximumHeight(100);
+      
+      auto btnLayout = new QHBoxLayout();
+      impl_->racks[i].addButton = new QPushButton("+ Add");
+      impl_->racks[i].removeButton = new QPushButton("- Remove");
+      btnLayout->addWidget(impl_->racks[i].addButton);
+      btnLayout->addWidget(impl_->racks[i].removeButton);
+      
+      rackLayout->addWidget(impl_->racks[i].listWidget);
+      rackLayout->addLayout(btnLayout);
+      rackLayout->setContentsMargins(4, 12, 4, 4);
+      rackGroup->setLayout(rackLayout);
+      
+      effectsLayout->addWidget(rackGroup);
+
+      // Button signals
+      QObject::connect(impl_->racks[i].addButton, &QPushButton::clicked, this, [this, i]() {
+          impl_->handleAddEffectClicked(i);
+      });
+      QObject::connect(impl_->racks[i].removeButton, &QPushButton::clicked, this, [this, i]() {
+          impl_->handleRemoveEffectClicked(i);
+      });
+  }
 
   effectsLayout->addStretch();
   effectsLayout->setContentsMargins(8, 8, 8, 8);
-  effectsLayout->setSpacing(4);
+  effectsLayout->setSpacing(8);
 
   impl_->effectsTabWidget->setLayout(effectsLayout);
-  impl_->tabWidget->addTab(impl_->effectsTabWidget, "Rasterizer Effects");
+  impl_->effectsScrollArea->setWidget(impl_->effectsTabWidget);
+  impl_->tabWidget->addTab(impl_->effectsScrollArea, "Effects Pipeline");
 
   // ================== Properties Tab ==================
   impl_->propertyWidget = new ArtifactPropertyWidget();
   impl_->tabWidget->addTab(impl_->propertyWidget, "Properties");
 
-  // ボタンシグナルを接続
-  QObject::connect(impl_->addEffectButton, &QPushButton::clicked, this, [this]() {
-   impl_->handleAddEffectClicked();
-  });
-
-  QObject::connect(impl_->removeEffectButton, &QPushButton::clicked, this, [this]() {
-   impl_->handleRemoveEffectClicked();
-  });
 
   // タブをメインレイアウトに追加
   mainLayout->addWidget(impl_->tabWidget);
@@ -529,19 +522,17 @@ void ArtifactInspectorWidget::Impl::updatePropertiesForEffect(const QString& eff
    });
 
    // When effect list selection changes, update properties (now we show layer props in propertyWidget)
-   QObject::connect(impl_->effectsListWidget, &QListWidget::currentItemChanged, this, [this](QListWidgetItem* cur, QListWidgetItem*) {
-       // if we want to filter properties per effect, we could...
-   });
+   
 
    // レイヤー作成シグナルに接続（作成されたレイヤーを自動選択）
    QObject::connect(projectService, &ArtifactProjectService::layerCreated, this, [this](const LayerID& id) {
     impl_->handleLayerSelected(id);
    });
 
-   // TODO: レイヤー選択シグナルがあれば接続
-   // QObject::connect(projectService, &ArtifactProjectService::layerSelected, this, [this](const LayerID& id) {
-   //  impl_->handleLayerSelected(id);
-   // });
+   // レイヤー選択シグナルに接続
+   QObject::connect(projectService, &ArtifactProjectService::layerSelected, this, [this](const LayerID& id) {
+    impl_->handleLayerSelected(id);
+   });
   }
  }
 

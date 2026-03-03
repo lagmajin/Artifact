@@ -144,6 +144,11 @@ namespace Artifact
 
  }
 
+ void ArtifactProjectService::selectLayer(const LayerID& id)
+ {
+  layerSelected(id);
+ }
+
  void ArtifactProjectService::addLayer(const CompositionID& id, const ArtifactLayerInitParams& param)
  {
  	

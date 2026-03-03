@@ -22,6 +22,7 @@ public:
     ComputeMode mode = ComputeMode::AUTO;
     UniString id;
     UniString name;
+    EffectPipelineStage pipelineStage = EffectPipelineStage::Rasterizer; // Default to Rasterizer for retrocompatibility
     std::shared_ptr<ArtifactEffectImplBase> cpuImpl_;
     std::shared_ptr<ArtifactEffectImplBase> gpuImpl_;
     EffectContext context_;
@@ -79,6 +80,10 @@ void ArtifactAbstractEffect::setEffectID(const UniString& id) { impl_->id = id; 
 UniString ArtifactAbstractEffect::displayName() const { return impl_->name; }
 
 void ArtifactAbstractEffect::setDisplayName(const UniString& name) { impl_->name = name; }
+
+EffectPipelineStage ArtifactAbstractEffect::pipelineStage() const { return impl_->pipelineStage; }
+
+void ArtifactAbstractEffect::setPipelineStage(EffectPipelineStage stage) { impl_->pipelineStage = stage; }
 
 void ArtifactAbstractEffect::setContext(const EffectContext& context) {
     impl_->context_ = context;

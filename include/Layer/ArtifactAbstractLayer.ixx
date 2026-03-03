@@ -117,7 +117,10 @@ export namespace Artifact {
   // void clearFrameCache();
  	/*Timeline*/
  	
-  void setParentById(LayerID& id);
+  void setParentById(const LayerID& id);
+   LayerID parentLayerId() const;
+   void clearParent();
+   bool hasParent() const;
   virtual bool isNullLayer() const;
  	
   virtual bool isAdjustmentLayer() const;

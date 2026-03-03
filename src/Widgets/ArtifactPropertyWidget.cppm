@@ -90,18 +90,27 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
     for (const auto& effect : effects) {
         if (!effect) continue;
 
-        QGroupBox* group = new QGroupBox(effect->displayName().toQString());
+        QString stageName = "Unknown";
+        switch (effect->pipelineStage()) {
+            case EffectPipelineStage::Generator: stageName = "[Generator]"; break;
+            case EffectPipelineStage::GeometryTransform: stageName = "[Geo Transform]"; break;
+            case EffectPipelineStage::MaterialRender: stageName = "[Material]"; break;
+            case EffectPipelineStage::Rasterizer: stageName = "[Rasterizer]"; break;
+            case EffectPipelineStage::LayerTransform: stageName = "[Layer Transform]"; break;
+        }
+
+        QGroupBox* group = new QGroupBox(QString("%1 %2").arg(stageName).arg(effect->displayName().toQString()));
         QFormLayout* form = new QFormLayout(group);
+        form->setLabelAlignment(Qt::AlignLeft);
+        form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
 
         auto props = effect->getProperties();
 
         // PropertyGroupを使って表示優先度（displayPriority）のテストも兼ねる
         ArtifactCore::PropertyGroup propGroup(effect->displayName().toQString());
         
-        int autoPriority = 0;
         for (const auto& p : props) {
             auto ptr = std::make_shared<ArtifactCore::AbstractProperty>(p);
-            // 本来はエフェクト内部でセットしてあるべきだが、今回はテストとして仮の優先度で追加することも可能
             propGroup.addProperty(ptr);
         }
 
@@ -110,11 +119,15 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
 
         for (const auto& ptr : sortedProps) {
             const auto& p = *ptr;
-            QLabel* label = new QLabel(p.getName());
+            QLabel* label = new QLabel(p.getName().toQString());
             QWidget* editor = nullptr;
             
             auto type = p.getType();
             QVariant curVal = p.getValue();
+
+            // Store copies for capturing in lambdas
+            auto effectRef = effect;
+            ArtifactCore::UniString propName = p.getName();
 
             switch (type) {
                 case ArtifactCore::PropertyType::Float: {
@@ -122,7 +135,10 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
                     spin->setRange(-1e6, 1e6);
                     spin->setValue(curVal.toDouble());
                     editor = spin;
-                    // ※ シグナルは本来 effect->setPropertyValue() を呼ぶ等すべきですが、今回はUI構築のみ
+                    
+                    QObject::connect(spin, &QDoubleSpinBox::editingFinished, [effectRef, propName, spin]() {
+                        effectRef->setPropertyValue(propName, spin->value());
+                    });
                     break;
                 }
                 case ArtifactCore::PropertyType::Integer: {
@@ -130,19 +146,34 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
                     spin->setRange(-1e6, 1e6);
                     spin->setValue(curVal.toInt());
                     editor = spin;
+                    
+                    QObject::connect(spin, &QSpinBox::editingFinished, [effectRef, propName, spin]() {
+                        effectRef->setPropertyValue(propName, spin->value());
+                    });
                     break;
                 }
                 case ArtifactCore::PropertyType::Boolean: {
                     auto* cb = new QCheckBox();
                     cb->setChecked(curVal.toBool());
                     editor = cb;
+                    
+                    QObject::connect(cb, &QCheckBox::clicked, [effectRef, propName, cb](bool checked) {
+                        effectRef->setPropertyValue(propName, checked);
+                    });
                     break;
                 }
                 case ArtifactCore::PropertyType::Color: {
-                    auto* btn = new QPushButton("Color");
+                    auto* btn = new QPushButton("");
                     QColor c = p.getColorValue();
                     btn->setStyleSheet(QString("background-color: %1").arg(c.name()));
                     editor = btn;
+                    
+                    QObject::connect(btn, &QPushButton::clicked, [effectRef, propName, btn]() {
+                        // In a real Qt setup we usually exec QColorDialog
+                        // Placeholder just to show the binding structure
+                        // QColor newColor = QColorDialog::getColor(...);
+                        // effectRef->setPropertyValue(propName, newColor);
+                    });
                     break;
                 }
                 default:

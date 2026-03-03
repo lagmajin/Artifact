@@ -42,6 +42,7 @@ namespace Artifact {
 
     bool is3D_ = true;
     Id id;
+    LayerID parentLayerId_;
     LayerState state_;
     //FramePosition framePosition_
 
@@ -265,9 +266,25 @@ namespace Artifact {
   return false;
  }
 
- void ArtifactAbstractLayer::setParentById(LayerID& id)
+ void ArtifactAbstractLayer::setParentById(const LayerID& id)
  {
+  impl_->parentLayerId_ = id;
+  qDebug() << "[Layer] Parent set to:" << id.toString();
+ }
 
+ LayerID ArtifactAbstractLayer::parentLayerId() const
+ {
+  return impl_->parentLayerId_;
+ }
+
+ void ArtifactAbstractLayer::clearParent()
+ {
+  impl_->parentLayerId_ = LayerID();
+ }
+
+ bool ArtifactAbstractLayer::hasParent() const
+ {
+  return !impl_->parentLayerId_.isNil();
  }
 
  bool ArtifactAbstractLayer::is3D() const
