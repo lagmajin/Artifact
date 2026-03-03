@@ -68,7 +68,7 @@ enum class TransitionType {
     RadialMask,         // 放射状マスク
     LinearMask,         // 線形マスク
     ShapeMask,          // シェイプマスク
-    Luma Matte,         // 輝度マスク
+    LumaMatte,         // 輝度マスク
     
     // Custom
     Custom              // カスタムマスク使用
