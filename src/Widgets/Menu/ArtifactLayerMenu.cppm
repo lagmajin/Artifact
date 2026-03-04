@@ -34,7 +34,26 @@ namespace Artifact {
   QAction* createCameraLayerAction_ = nullptr;
   QAction* createLightLayerAction_ = nullptr;
   QAction* createModel3DLayerAction_ = nullptr;
+  
+  QAction* layerSettingsAction_ = nullptr;
   QAction* openLayerAction_ = nullptr;
+  QAction* openLayerSourceAction_ = nullptr;
+
+  QMenu* maskMenu_ = nullptr;
+  QMenu* transformMenu_ = nullptr;
+  QAction* resetTransformAction_ = nullptr;
+  QAction* centerAnchorPointAction_ = nullptr;
+  QAction* autoOrientAction_ = nullptr;
+
+  QMenu* arrangeMenu_ = nullptr;
+  QAction* bringToFrontAction_ = nullptr;
+  QAction* bringForwardAction_ = nullptr;
+  QAction* sendBackwardAction_ = nullptr;
+  QAction* sendToBackAction_ = nullptr;
+  
+  QAction* guideLayerAction_ = nullptr;
+  QAction* addMarkerAction_ = nullptr;
+
   QMenu* layerTimeMenu_ = nullptr;
 
   void handleProjectOpend();
@@ -55,43 +74,96 @@ namespace Artifact {
  {
   parentPtr_ = static_cast<ArtifactLayerMenu*>(menu);
 
-  createSolidLayerAction_ = new QAction("Create solid");
-  createSolidLayerAction_->setText("CreateSolid");
+  createSolidLayerAction_ = new QAction("平面(&Y)...");
+  createSolidLayerAction_->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_Y));
 
-  createAdjustableLayerAction_ = new QAction();
+  createAdjustableLayerAction_ = new QAction("調整レイヤー(&A)");
+  createAdjustableLayerAction_->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_Y));
 
+  createNullLayerAction_ = new QAction("ヌルオブジェクト(&N)");
+  createNullLayerAction_->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::SHIFT | Qt::Key_Y));
 
-  createNullLayerAction_ = new QAction("Create null layer");
+  createTextLayerAction_ = new QAction("テキスト(&T)");
+  createTextLayerAction_->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::SHIFT | Qt::Key_T));
 
-  //createNullLayerAction_->setDisabled(true);
+  createShapeLayerAction_ = new QAction("シェイプレイヤー(&S)");
 
-  openLayerAction_ = new QAction("Open Layer");
+  createImageLayerAction_ = new QAction("画像レイヤー(&I)");
 
+  createCameraLayerAction_ = new QAction("カメラ(&C)...");
+  createCameraLayerAction_->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::SHIFT | Qt::Key_C));
+
+  createLightLayerAction_ = new QAction("ライト(&L)...");
+  createLightLayerAction_->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::SHIFT | Qt::Key_L));
+
+  createModel3DLayerAction_ = new QAction("3Dモデル(&M)...");
+
+  layerSettingsAction_ = new QAction("平面設定(&Y)...");
+  layerSettingsAction_->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_Y));
+
+  openLayerAction_ = new QAction("レイヤーを開く(&O)");
   openLayerAction_->setDisabled(true);
 
-  layerTimeMenu_ = new QMenu();
-  layerTimeMenu_->setTitle("Time(&T)");
+  openLayerSourceAction_ = new QAction("レイヤーソースを開く");
   
+  maskMenu_ = new QMenu("マスク(&M)");
+  maskMenu_->addAction("新規マスク")->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_N));
+  maskMenu_->addAction("すべてのマスクのロック解除");
+  maskMenu_->addAction("すべてのマスクを削除");
+  
+  transformMenu_ = new QMenu("トランスフォーム(&T)");
+  resetTransformAction_ = transformMenu_->addAction("リセット");
+  centerAnchorPointAction_ = transformMenu_->addAction("アンカーポイントをレイヤーコンテンツの中央に配置");
+  centerAnchorPointAction_->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_Home));
+  autoOrientAction_ = transformMenu_->addAction("自動方向...");
+  autoOrientAction_->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_O));
 
-  createLayerMenu = new QMenu("Create layer(&N)");
-  //createCompositionAction->setText()
-  //createLayerMenu->setDisabled(true);
-  createLayerMenu->addAction(createAdjustableLayerAction_);
-  createLayerMenu->addAction(createNullLayerAction_);
-  createLayerMenu->addAction(createSolidLayerAction_);
+  arrangeMenu_ = new QMenu("配置(&A)");
+  bringToFrontAction_ = arrangeMenu_->addAction("最前面へ移動");
+  bringToFrontAction_->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_BracketRight));
+  bringForwardAction_ = arrangeMenu_->addAction("前面へ移動");
+  bringForwardAction_->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_BracketRight));
+  sendBackwardAction_ = arrangeMenu_->addAction("背面へ移動");
+  sendBackwardAction_->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_BracketLeft));
+  sendToBackAction_ = arrangeMenu_->addAction("最背面へ移動");
+  sendToBackAction_->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_BracketLeft));
+
+  guideLayerAction_ = new QAction("ガイドレイヤー(&G)");
+  guideLayerAction_->setCheckable(true);
+
+  addMarkerAction_ = new QAction("マーカーを追加(&M)");
+  addMarkerAction_->setShortcut(QKeySequence(Qt::Key_Asterisk));
+
+  layerTimeMenu_ = new QMenu("時間(&T)");
+  layerTimeMenu_->addAction("タイムリマップレイヤー可能にする")->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_T));
+  layerTimeMenu_->addAction("時間反転レイヤー")->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_R));
+  layerTimeMenu_->addAction("フレームをフリーズ");
+  
+  createLayerMenu = new QMenu("新規(&N)");
   createLayerMenu->addAction(createTextLayerAction_);
-  createLayerMenu->addAction(createShapeLayerAction_);
-  createLayerMenu->addAction(createImageLayerAction_);
-  createLayerMenu->addAction(createCameraLayerAction_);
+  createLayerMenu->addAction(createSolidLayerAction_);
   createLayerMenu->addAction(createLightLayerAction_);
+  createLayerMenu->addAction(createCameraLayerAction_);
+  createLayerMenu->addAction(createNullLayerAction_);
+  createLayerMenu->addAction(createShapeLayerAction_);
+  createLayerMenu->addAction(createAdjustableLayerAction_);
+  createLayerMenu->addAction(createImageLayerAction_);
   createLayerMenu->addAction(createModel3DLayerAction_);
-  createLayerMenu->addSeparator();
-  //createLayerMenu->addAction(openLayerAction_);
 
   menu->addMenu(createLayerMenu);
-  menu->addMenu(layerTimeMenu_);
+  menu->addAction(layerSettingsAction_);
+  menu->addSeparator();
   menu->addAction(openLayerAction_);
-
+  menu->addAction(openLayerSourceAction_);
+  menu->addSeparator();
+  menu->addMenu(maskMenu_);
+  menu->addMenu(transformMenu_);
+  menu->addMenu(arrangeMenu_);
+  menu->addSeparator();
+  menu->addMenu(layerTimeMenu_);
+  menu->addSeparator();
+  menu->addAction(guideLayerAction_);
+  menu->addAction(addMarkerAction_);
 
 
 
@@ -215,12 +287,10 @@ namespace Artifact {
 
  ArtifactLayerMenu::ArtifactLayerMenu(QWidget* parent/*=nullptr*/):QMenu(parent),impl_(new Impl(this))
  {
-  setTitle(tr("Layer(&L)"));
-
-  setTearOffEnabled(true);
+  setTitle("レイヤー(&L)");
+  setTearOffEnabled(false);
   setSeparatorsCollapsible(true);
   setMinimumWidth(160);
-  //setTitle(tr("新規..."));
 
   auto projectService = ArtifactProjectService::instance();
  	

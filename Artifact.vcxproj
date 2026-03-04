@@ -141,7 +141,7 @@
       <EnableModules>true</EnableModules>
       <ScanSourceForModuleDependencies>true</ScanSourceForModuleDependencies>
       <AdditionalBMIDirectories>C:\Users\lagma\Desktop\Artifact\ArtifactCore;%(AdditionalBMIDirectories)</AdditionalBMIDirectories>
-      <DebugInformationFormat>EditAndContinue</DebugInformationFormat>
+      <DebugInformationFormat>OldStyle</DebugInformationFormat>
       <AdditionalOptions>/Zc:__cplusplus /utf-8 %(AdditionalOptions)</AdditionalOptions>
       <TreatWChar_tAsBuiltInType>true</TreatWChar_tAsBuiltInType>
       <AdditionalIncludeDirectories />
@@ -155,6 +155,8 @@
       <ImportLibrary>artifactimport</ImportLibrary>
       <LinkStatus>true</LinkStatus>
       <AdditionalOptions> %(AdditionalOptions)</AdditionalOptions>
+      <OptimizeReferences>false</OptimizeReferences>
+      <EnableCOMDATFolding>false</EnableCOMDATFolding>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -1228,9 +1230,11 @@
   <ItemGroup>
     <ProjectReference Include="..\ArtifactCore\ArtifactCore.vcxproj">
       <Project>{c9c6f040-1511-4b6d-8f5d-fe6c6237a268}</Project>
+      <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
     </ProjectReference>
     <ProjectReference Include="..\ArtifactWidgets\ArtifactWidgets.vcxproj">
       <Project>{46c6ec7c-9c65-407a-a5e6-921265c1ff0d}</Project>
+      <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
     </ProjectReference>
   </ItemGroup>
   <ItemGroup>

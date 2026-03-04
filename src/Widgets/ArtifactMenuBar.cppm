@@ -82,46 +82,66 @@ namespace Artifact {
 
   QString styleSheet = R"(
         QMenuBar {
-            background-color: #333333; /* ダークな背景色 */
-            color: #FFFFFF; /* 明るいテキスト色 */
-            border: 1px solid #555555; /* わずかなボーダー */
+            background-color: #1E1E1E;
+            color: #CCCCCC;
+            border-bottom: 1px solid #111111;
+            padding: 2px 0px;
         }
 
         QMenuBar::item {
-            spacing: 3px; /* メニューアイテム間のスペース */
-            padding: 5px 10px; /* パディング */
-            background-color: transparent; /* デフォルトで透明な背景 */
-            color: #FFFFFF; /* 明るいテキスト色 */
+            spacing: 5px;
+            padding: 6px 12px;
+            background-color: transparent;
+            color: #CCCCCC;
+            border-radius: 4px;
+            font-size: 13px;
         }
 
         QMenuBar::item:selected {
-            background-color: #555555; /* ホバー時の背景色 */
+            background-color: #333333;
+            color: #FFFFFF;
         }
 
         QMenuBar::item:pressed {
-            background-color: #222222; /* クリック時の背景色 */
+            background-color: #094771;
+            color: #FFFFFF;
         }
 
         QMenu {
-            background-color: #444444; /* ドロップダウンメニューの背景色 */
-            color: #FFFFFF; /* ドロップダウンメニューのテキスト色 */
-            border: 1px solid #666666; /* ドロップダウンメニューのボーダー */
+            background-color: #2D2D30;
+            color: #CCCCCC;
+            border: 1px solid #1A1A1A;
+            padding: 4px 0px;
+            /* In Qt, drop-shadow can be natively enabled on menus via window flags, 
+               but setting a slightly darker border simulates it nicely. */
         }
 
         QMenu::item {
-            padding: 5px 20px 5px 20px; /* ドロップダウンメニューアイテムのパディング */
-            color: #FFFFFF; /* ドロップダウンメニューアイテムのテキスト色 */
+            padding: 6px 30px 6px 24px; /* top, right, bottom, left */
+            color: #CCCCCC;
+            font-size: 13px;
+            background-color: transparent;
         }
 
         QMenu::item:selected {
-            background-color: #666666; /* ドロップダウンメニューアイテムのホバー時の背景色 */
+            background-color: #094771; /* Deep blue highlight */
+            color: #FFFFFF;
+        }
+        
+        QMenu::item:disabled {
+            color: #666666;
+            background-color: transparent;
         }
 
         QMenu::separator {
             height: 1px;
-            background-color: #666666; /* セパレータの色 */
-            margin-left: 10px;
-            margin-right: 10px;
+            background-color: #3E3E42;
+            margin: 4px 10px;
+        }
+        
+        QMenu::indicator {
+            width: 13px;
+            height: 13px;
         }
     )";
 

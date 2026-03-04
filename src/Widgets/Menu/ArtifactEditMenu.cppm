@@ -54,38 +54,39 @@ namespace Artifact {
  ArtifactEditMenu::Impl::Impl(QMenu* menu)
  {
   // Basic edit actions
-  undoAction = new QAction(tr("Undo"));
+  undoAction = new QAction("元に戻す(&U)");
   undoAction->setShortcut(QKeySequence::Undo);
 
-  redoAction = new QAction(tr("Redo"));
+  redoAction = new QAction("やり直し(&R)");
   redoAction->setShortcut(QKeySequence::Redo);
 
-  duplicateAction = new QAction(tr("Duplicate"));
+  duplicateAction = new QAction("複製(&D)");
   duplicateAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_D));
 
-  splitAction = new QAction(tr("Split Layer"));
-  splitAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_K));
+  splitAction = new QAction("レイヤーを分割(&S)");
+  splitAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_D));
 
-  trimInAction = new QAction(tr("Trim In"));
-  trimOutAction = new QAction(tr("Trim Out"));
+  trimInAction = new QAction("インポイントを現在の時間にトリム");
+  trimOutAction = new QAction("アウトポイントを現在の時間にトリム");
 
-  selectAllAction = new QAction(tr("Select All"));
+  selectAllAction = new QAction("すべて選択(&A)");
   selectAllAction->setShortcut(QKeySequence::SelectAll);
 
-  findAction = new QAction(tr("Find..."));
+  findAction = new QAction("検索(&F)...");
+  findAction->setShortcut(QKeySequence::Find);
 
-  preferencesAction = new QAction(tr("Preferences..."));
+  preferencesAction = new QAction("環境設定(&P)...");
 
-  copyAction_ = new QAction(tr("Copy"));
+  copyAction_ = new QAction("コピー(&C)");
   copyAction_->setShortcut(QKeySequence::Copy);
 
-  cutAction_ = new QAction(tr("Cut"));
+  cutAction_ = new QAction("切り取り(&T)");
   cutAction_->setShortcut(QKeySequence::Cut);
 
-  pasteAction_ = new QAction(tr("Paste"));
+  pasteAction_ = new QAction("貼り付け(&P)");
   pasteAction_->setShortcut(QKeySequence::Paste);
 
-  deleteAction_ = new QAction(tr("Delete"));
+  deleteAction_ = new QAction("削除(&D)");
   deleteAction_->setShortcut(QKeySequence::Delete);
 
   // Build menu
@@ -202,8 +203,8 @@ namespace Artifact {
 
  ArtifactEditMenu::ArtifactEditMenu(QWidget* parent/*=nullptr*/):QMenu(parent),impl_(new Impl(this))
  {
-  setTitle(tr("Edit(&E)"));
-  setTearOffEnabled(true);
+  setTitle("編集(&E)");
+  setTearOffEnabled(false);
   connect(this, &QMenu::aboutToShow, this, [this]() { impl_->rebuildMenu(); });
  }
  ArtifactEditMenu::~ArtifactEditMenu()

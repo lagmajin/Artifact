@@ -37,79 +37,79 @@ namespace Artifact
 
  ArtifactEffectMenu::Impl::Impl(QMenu*menu)
 {
-  inspectorAction_ = new QAction("Effect Controls");
+  inspectorAction_ = new QAction("エフェクトコントロール");
   inspectorAction_->setShortcut(QKeySequence(Qt::Key_F3));
 
-  removeAllAction_ = new QAction("Remove All");
+  removeAllAction_ = new QAction("すべてを削除");
   removeAllAction_->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_X));
 
   // Keyframe Assistant submenu
-  keyframeAssistantMenu_ = new QMenu("Keyframe Assistant");
-  keyframeAssistantMenu_->addAction("Easy Ease");
-  keyframeAssistantMenu_->addAction("Easy Ease In");
-  keyframeAssistantMenu_->addAction("Easy Ease Out");
-  keyframeAssistantMenu_->addAction("Exponential Scale");
-  keyframeAssistantMenu_->addAction("Sequence Layers");
-  keyframeAssistantMenu_->addAction("Time-Reverse Keyframes");
-  keyframeAssistantMenu_->addAction("Convert Audio to Keyframes");
-  keyframeAssistantMenu_->addAction("Convert Expression to Keyframes");
+  keyframeAssistantMenu_ = new QMenu("キーフレーム補助(&K)");
+  keyframeAssistantMenu_->addAction("イージーイーズ");
+  keyframeAssistantMenu_->addAction("イージーイーズイン");
+  keyframeAssistantMenu_->addAction("イージーイーズアウト");
+  keyframeAssistantMenu_->addAction("指数スケール");
+  keyframeAssistantMenu_->addAction("レイヤーを順番に配置");
+  keyframeAssistantMenu_->addAction("時間反転キーフレーム");
+  keyframeAssistantMenu_->addAction("オーディオをキーフレームに変換");
+  keyframeAssistantMenu_->addAction("エクスプレッションをキーフレームに変換");
 
   // Expression Controls submenu
-  expressionControlsMenu_ = new QMenu("Expression Controls");
-  expressionControlsMenu_->addAction("Angle Control");
-  expressionControlsMenu_->addAction("Checkbox Control");
-  expressionControlsMenu_->addAction("Color Control");
-  expressionControlsMenu_->addAction("Layer Control");
-  expressionControlsMenu_->addAction("Point Control");
-  expressionControlsMenu_->addAction("Slider Control");
+  expressionControlsMenu_ = new QMenu("エクスプレッション制御(&E)");
+  expressionControlsMenu_->addAction("角度制御");
+  expressionControlsMenu_->addAction("チェックボックス制御");
+  expressionControlsMenu_->addAction("カラー制御");
+  expressionControlsMenu_->addAction("レイヤー制御");
+  expressionControlsMenu_->addAction("ポイント制御");
+  expressionControlsMenu_->addAction("スライダー制御");
 
   // Channel submenu
-  channelMenu_ = new QMenu("Channel");
-  channelMenu_->addAction("Set Matte");
-  channelMenu_->addAction("Arithmetic");
-  channelMenu_->addAction("Blend");
-  channelMenu_->addAction("Invert");
-  channelMenu_->addAction("Minimax");
-  channelMenu_->addAction("Shift Channels");
+  channelMenu_ = new QMenu("チャンネル(&C)");
+  channelMenu_->addAction("マット設定");
+  channelMenu_->addAction("算術");
+  channelMenu_->addAction("ブレンド");
+  channelMenu_->addAction("反転");
+  channelMenu_->addAction("ミニマックス");
+  channelMenu_->addAction("チャンネルコンバイナー");
 
   // Stylize submenu
-  stylizeMenu_ = new QMenu("Stylize");
-  stylizeMenu_->addAction("Drop Shadow");
-  stylizeMenu_->addAction("Glow");
-  stylizeMenu_->addAction("Bevel Alpha");
-  stylizeMenu_->addAction("Bevel Edges");
+  stylizeMenu_ = new QMenu("スタイライズ(&S)");
+  stylizeMenu_->addAction("ドロップシャドウ");
+  stylizeMenu_->addAction("グロー");
+  stylizeMenu_->addAction("ベベルアルファ");
+  stylizeMenu_->addAction("ベベルエッジ");
 
   // Color Correction submenu
-  colorCorrectionMenu_ = new QMenu("Color Correction");
-  colorCorrectionMenu_->addAction("Brightness & Contrast");
-  colorCorrectionMenu_->addAction("Curves");
-  colorCorrectionMenu_->addAction("Hue/Saturation");
-  colorCorrectionMenu_->addAction("Levels");
-  colorCorrectionMenu_->addAction("Color Balance");
-  colorCorrectionMenu_->addAction("Photo Filter");
+  colorCorrectionMenu_ = new QMenu("カラー補正(&C)");
+  colorCorrectionMenu_->addAction("輝度＆コントラスト");
+  colorCorrectionMenu_->addAction("トーンカーブ");
+  colorCorrectionMenu_->addAction("色相/彩度");
+  colorCorrectionMenu_->addAction("レベル補正");
+  colorCorrectionMenu_->addAction("カラーバランス");
+  colorCorrectionMenu_->addAction("写真フィルター");
 
   // Distort submenu
-  distortMenu_ = new QMenu("Distort");
-  distortMenu_->addAction("Bulge");
-  distortMenu_->addAction("Corner Pin");
-  distortMenu_->addAction("Lens Distortion");
-  distortMenu_->addAction("Magnify");
-  distortMenu_->addAction("Mesh Warp");
-  distortMenu_->addAction("Optics Compensation");
-  distortMenu_->addAction("Transform");
-  distortMenu_->addAction("Turbulent Displace");
-  distortMenu_->addAction("Twirl");
-  distortMenu_->addAction("Warp");
-  distortMenu_->addAction("Wave Warp");
+  distortMenu_ = new QMenu("ディストーション(&D)");
+  distortMenu_->addAction("バルジ");
+  distortMenu_->addAction("コーナーピン");
+  distortMenu_->addAction("レンズ補正");
+  distortMenu_->addAction("マグニファイ");
+  distortMenu_->addAction("メッシュワープ");
+  distortMenu_->addAction("オプティクス補償");
+  distortMenu_->addAction("トランスフォーム");
+  distortMenu_->addAction("タービュレントディスプレイス");
+  distortMenu_->addAction("トワール");
+  distortMenu_->addAction("ワープ");
+  distortMenu_->addAction("波形ワープ");
 
   // Blur & Sharpen submenu
-  blurSharpenMenu_ = new QMenu("Blur & Sharpen");
-  blurSharpenMenu_->addAction("Gaussian Blur");
-  blurSharpenMenu_->addAction("Fast Blur");
-  blurSharpenMenu_->addAction("Directional Blur");
-  blurSharpenMenu_->addAction("Radial Blur");
-  blurSharpenMenu_->addAction("Sharpen");
-  blurSharpenMenu_->addAction("Unsharp Mask");
+  blurSharpenMenu_ = new QMenu("ブラー＆シャープ(&B)");
+  blurSharpenMenu_->addAction("ブラー (ガウス)");
+  blurSharpenMenu_->addAction("ブラー (滑らか)");
+  blurSharpenMenu_->addAction("ブラー (方向)");
+  blurSharpenMenu_->addAction("ブラー (放射状)");
+  blurSharpenMenu_->addAction("シャープ");
+  blurSharpenMenu_->addAction("アンシャープマスク");
 
   // Noise & Grain submenu
   noiseGrainMenu_ = new QMenu("Noise & Grain");
@@ -245,7 +245,8 @@ namespace Artifact
 
  ArtifactEffectMenu::ArtifactEffectMenu(QWidget* parent /*= nullptr*/):QMenu(parent),impl_(new Impl(this))
  {
-  setTitle(tr("Effect"));
+  setTitle("エフェクト(&T)");
+  setTearOffEnabled(false);
 
   // Menu is built in Impl constructor
  }

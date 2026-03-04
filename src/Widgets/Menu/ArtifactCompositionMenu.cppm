@@ -56,34 +56,34 @@ namespace Artifact {
 
  ArtifactCompositionMenu::Impl::Impl(ArtifactCompositionMenu* menu,ArtifactMainWindow* mainWindow)
 {
-  createCompositionAction = new QAction("New Composition...");
+  createCompositionAction = new QAction("新規コンポジション(&N)...");
   createCompositionAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_N));
   createCompositionAction->setIcon(QIcon(ArtifactCore::getIconPath() + "/composition.png"));
 
-  createCompositionFromFootage = new QAction("New Composition from Footage...");
+  createCompositionFromFootage = new QAction("フッテージから新規コンポジション...");
   createCompositionFromFootage->setDisabled(true);
 
-  changeCompositionSettingsAction = new QAction("Composition Settings...");
+  changeCompositionSettingsAction = new QAction("コンポジション設定(&S)...");
   changeCompositionSettingsAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_K));
   changeCompositionSettingsAction->setDisabled(true);
 
-  backgroundColorAction = new QAction("Background Color...");
+  backgroundColorAction = new QAction("背景色(&B)...");
   backgroundColorAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_B));
   backgroundColorAction->setDisabled(true);
   
-  saveFrameAsMenu = new QMenu("Save Frame As");
-  saveAsFrameAction = new QAction("File...");
+  saveFrameAsMenu = new QMenu("フレームを保存(&F)");
+  saveAsFrameAction = new QAction("ファイル(&I)...");
   saveAsFrameAction->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_S));
   saveAsFrameAction->setDisabled(true);
   saveFrameAsMenu->addAction(saveAsFrameAction);
 
-  addToRenderQueueAction = new QAction("Add to Render Queue");
+  addToRenderQueueAction = new QAction("レンダーキューに追加(&M)");
   addToRenderQueueAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_M));
 
-  trimCompToWorkAreaAction = new QAction("Trim Comp to Work Area");
+  trimCompToWorkAreaAction = new QAction("コンポジションをワークエリアにトリム");
   trimCompToWorkAreaAction->setDisabled(true);
 
-  cropCompToROIAction = new QAction("Crop Comp to Region of Interest");
+  cropCompToROIAction = new QAction("コンポジションを目標領域にクロップ");
   cropCompToROIAction->setDisabled(true);
 
   connect(createCompositionAction, &QAction::triggered, menu, [this]() {
@@ -162,12 +162,9 @@ namespace Artifact {
 
  ArtifactCompositionMenu::ArtifactCompositionMenu(ArtifactMainWindow* mainWindow, QWidget* parent/*=nullptr*/) :QMenu(parent), impl_(new Impl(this,mainWindow))
  {
-  setObjectName("CompositionMenu(&C)");
-
-  setTitle("Composition");
-  setTearOffEnabled(true);
+  setTitle("コンポジション(&C)");
+  setTearOffEnabled(false);
   setSeparatorsCollapsible(true);
-  setMinimumWidth(160);
 
   connect(this, &QMenu::aboutToShow, this, &ArtifactCompositionMenu::rebuildMenu);
  }

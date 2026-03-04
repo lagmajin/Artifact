@@ -23,12 +23,21 @@ namespace Artifact
   ~Impl();
   
   // Tool actions
+  QActionGroup* toolsGroup_ = nullptr;
   QAction* homeAction_ = nullptr;
   QAction* selectTool_ = nullptr;
-  QAction* maskTool_ = nullptr;
   QAction* handTool_ = nullptr;
+  QAction* zoomTool_ = nullptr;
+  QAction* rotationTool_ = nullptr;
+  QAction* cameraTool_ = nullptr;
+  QAction* panBehindTool_ = nullptr;
   QAction* shapeTool_ = nullptr;
-  QAction* papetTool_ = nullptr;
+  QAction* penTool_ = nullptr;
+  QAction* textTool_ = nullptr;
+  QAction* brushTool_ = nullptr;
+  QAction* cloneStampTool_ = nullptr;
+  QAction* eraserTool_ = nullptr;
+  QAction* puppetTool_ = nullptr;
   
   // Zoom actions
   QAction* zoomInAction_ = nullptr;
@@ -65,28 +74,47 @@ namespace Artifact
   setMovable(false);
   setFloatable(false);
   
+  impl_->toolsGroup_ = new QActionGroup(this);
+  impl_->toolsGroup_->setExclusive(true);
+
+  auto createTool = [this](QAction*& action, const QString& iconName, const QString& text, const QString& tooltip, const QKeySequence& shortcut) {
+    action = new QAction(this);
+    action->setIcon(QIcon(ArtifactCore::getIconPath() + "/Png/" + iconName + ".png"));
+    action->setText(text);
+    action->setToolTip(tooltip);
+    action->setShortcut(shortcut);
+    action->setCheckable(true);
+    impl_->toolsGroup_->addAction(action);
+    addAction(action);
+  };
+
   // Main tool actions
-  impl_->homeAction_ = new QAction();
+  impl_->homeAction_ = new QAction(this);
   impl_->homeAction_->setIcon(QIcon(ArtifactCore::getIconPath() + "/Png/home.png"));
-  impl_->homeAction_->setToolTip("Home");
-  
-  impl_->handTool_ = new QAction();
-  impl_->handTool_->setIcon(QIcon(ArtifactCore::getIconPath() + "/Png/hand.png"));
-  impl_->handTool_->setToolTip("Hand Tool (Pan)");
-
-  impl_->maskTool_ = new QAction();
-  impl_->maskTool_->setIcon(QIcon(ArtifactCore::getIconPath() + "/Png/pen.png"));
-  impl_->maskTool_->setToolTip("Mask Tool");
-
-  impl_->shapeTool_ = new QAction();
-  impl_->shapeTool_->setIcon(QIcon(ArtifactCore::getIconPath() + "/Png/path.png"));
-  impl_->shapeTool_->setToolTip("Shape Tool");
-
-  // Add main tools
+  impl_->homeAction_->setToolTip("ホーム");
   addAction(impl_->homeAction_);
-  addAction(impl_->handTool_);
-  addAction(impl_->maskTool_);
-  addAction(impl_->shapeTool_);
+  
+  addSeparator();
+
+  createTool(impl_->selectTool_, "select", "選択", "選択ツール (V)", QKeySequence(Qt::Key_V));
+  createTool(impl_->handTool_, "hand", "手のひら", "手のひらツール (H)", QKeySequence(Qt::Key_H));
+  createTool(impl_->zoomTool_, "zoom", "ズーム", "ズームツール (Z)", QKeySequence(Qt::Key_Z));
+  createTool(impl_->rotationTool_, "rotation", "回転", "回転ツール (W)", QKeySequence(Qt::Key_W));
+  createTool(impl_->cameraTool_, "camera", "カメラ", "統合カメラーツール (C)", QKeySequence(Qt::Key_C));
+  createTool(impl_->panBehindTool_, "anchor", "アンカー", "アンカーポイントツール (Y)", QKeySequence(Qt::Key_Y));
+  
+  addSeparator();
+  
+  createTool(impl_->shapeTool_, "path", "シェイプ", "シェイプツール (Q)", QKeySequence(Qt::Key_Q));
+  createTool(impl_->penTool_, "pen", "ペン", "ペンツール (G)", QKeySequence(Qt::Key_G));
+  createTool(impl_->textTool_, "text", "テキスト", "横書き文字ツール (Ctrl+T)", QKeySequence(Qt::CTRL | Qt::Key_T));
+  createTool(impl_->brushTool_, "brush", "ブラシ", "ブラシツール (Ctrl+B)", QKeySequence(Qt::CTRL | Qt::Key_B));
+  createTool(impl_->cloneStampTool_, "clone", "コピースタンプ", "コピースタンプツール (Ctrl+B)", QKeySequence());
+  createTool(impl_->eraserTool_, "eraser", "消しゴム", "消しゴムツール (Ctrl+B)", QKeySequence());
+  createTool(impl_->puppetTool_, "puppet", "パペット", "パペットピンツール (Ctrl+P)", QKeySequence(Qt::CTRL | Qt::Key_P));
+  
+  // Set default tool
+  impl_->selectTool_->setChecked(true);
   
   // Separator
   addSeparator();
@@ -163,13 +191,20 @@ namespace Artifact
   addAction(impl_->detailViewAction_);
 
   // Connect signals
-  QObject::connect(impl_->homeAction_, &QAction::triggered, this, [this]() {
-   homeRequested();
-  });
-   
-  QObject::connect(impl_->handTool_, &QAction::triggered, this, [this]() {
-   handToolRequested();
-  });
+  QObject::connect(impl_->homeAction_, &QAction::triggered, this, [this]() { homeRequested(); });
+  QObject::connect(impl_->selectTool_, &QAction::triggered, this, [this]() { selectToolRequested(); });
+  QObject::connect(impl_->handTool_, &QAction::triggered, this, [this]() { handToolRequested(); });
+  QObject::connect(impl_->zoomTool_, &QAction::triggered, this, [this]() { zoomToolRequested(); });
+  QObject::connect(impl_->rotationTool_, &QAction::triggered, this, [this]() { rotationToolRequested(); });
+  QObject::connect(impl_->cameraTool_, &QAction::triggered, this, [this]() { cameraToolRequested(); });
+  QObject::connect(impl_->panBehindTool_, &QAction::triggered, this, [this]() { panBehindToolRequested(); });
+  QObject::connect(impl_->shapeTool_, &QAction::triggered, this, [this]() { shapeToolRequested(); });
+  QObject::connect(impl_->penTool_, &QAction::triggered, this, [this]() { penToolRequested(); });
+  QObject::connect(impl_->textTool_, &QAction::triggered, this, [this]() { textToolRequested(); });
+  QObject::connect(impl_->brushTool_, &QAction::triggered, this, [this]() { brushToolRequested(); });
+  QObject::connect(impl_->cloneStampTool_, &QAction::triggered, this, [this]() { cloneStampToolRequested(); });
+  QObject::connect(impl_->eraserTool_, &QAction::triggered, this, [this]() { eraserToolRequested(); });
+  QObject::connect(impl_->puppetTool_, &QAction::triggered, this, [this]() { puppetToolRequested(); });
    
   QObject::connect(impl_->zoomInAction_, &QAction::triggered, this, [this]() {
    zoomInRequested();
@@ -199,21 +234,35 @@ namespace Artifact
 QToolButton {
     background: transparent;
     border: none;
-    padding: 4px;
-    min-width: 32px;
-    min-height: 32px;
+    padding: 6px;
+    margin: 2px;
+    min-width: 24px;
+    min-height: 24px;
+    max-width: 24px;
+    max-height: 24px;
 }
 QToolButton:hover {
-    background: rgba(255,255,255,30);
+    background: #3a3a3a;
     border-radius: 4px;
 }
 QToolButton:pressed {
-    background: rgba(255,255,255,60);
+    background: #094771;
     border-radius: 4px;
 }
 QToolButton:checked {
-    background: rgba(100,150,255,80);
+    background: #094771;
     border-radius: 4px;
+}
+QToolBar {
+    background: #1E1E1E;
+    border-bottom: 2px solid #0E0E0E;
+    spacing: 2px;
+}
+QToolBar::separator {
+    background: #3a3a3a;
+    width: 1px;
+    margin-top: 4px;
+    margin-bottom: 4px;
 }
 )");
  }

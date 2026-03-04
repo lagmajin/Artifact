@@ -34,6 +34,17 @@ namespace Artifact {
    QAction* saveProjectAction=nullptr;
    QAction* saveProjectAsAction=nullptr;
    QAction* quitApplicationAction=nullptr;
+
+   QAction* openProjectAction=nullptr;
+   QAction* projectSettingsAction=nullptr;
+   
+   QMenu* importMenu=nullptr;
+   QAction* importFileAction=nullptr;
+   QAction* importFolderAction=nullptr;
+   
+   QMenu* exportMenu=nullptr;
+   QAction* addToRenderQueueAction=nullptr;
+
    void handleCreateProject();
    void handleOpenProject();
    void handleSaveProject();
@@ -63,12 +74,32 @@ namespace Artifact {
   saveProjectAsAction->setShortcut(QKeySequence::SaveAs);
   saveProjectAsAction->setDisabled(true); // 最初は無効 (まだプロジェクトがないため)
 
-  quitApplicationAction = new QAction("終了()...");
+  quitApplicationAction = new QAction("終了(&Q)");
   quitApplicationAction->setShortcut(QKeySequence::Quit);
   quitApplicationAction->setIcon(QIcon(ArtifactCore::getIconPath() + "/Png/close_red.png"));
 
+  openProjectAction = new QAction("開く(&O)...");
+  openProjectAction->setShortcut(QKeySequence::Open);
 
+  projectSettingsAction = new QAction("プロジェクト設定(&P)...");
+  projectSettingsAction->setShortcut(QKeySequence("Alt+Shift+Ctrl+P"));
+  projectSettingsAction->setDisabled(true);
 
+  // Import Submenu
+  importMenu = new QMenu("読み込み(&I)");
+  importFileAction = new QAction("ファイル(&F)...");
+  importFileAction->setShortcut(QKeySequence("Ctrl+I"));
+  importFolderAction = new QAction("フォルダ(&D)...");
+  importMenu->addAction(importFileAction);
+  importMenu->addAction(importFolderAction);
+  importMenu->setDisabled(true);
+
+  // Export Submenu
+  exportMenu = new QMenu("書き出し(&E)");
+  addToRenderQueueAction = new QAction("レンダーキューに追加");
+  addToRenderQueueAction->setShortcut(QKeySequence("Ctrl+M"));
+  exportMenu->addAction(addToRenderQueueAction);
+  exportMenu->setDisabled(true);
  }
 
  void ArtifactFileMenu::Impl::rebuildMenu()
@@ -78,7 +109,11 @@ namespace Artifact {
   saveProjectAction->setEnabled(hasProject);
   saveProjectAsAction->setEnabled(hasProject);
   closeProjectAction->setEnabled(hasProject);
+  projectSettingsAction->setEnabled(hasProject);
+  importMenu->setEnabled(hasProject);
+  exportMenu->setEnabled(hasProject);
   createProjectAction->setEnabled(!hasProject); // Disable if project already exists
+  openProjectAction->setEnabled(!hasProject);
  }
 
  void ArtifactFileMenu::Impl::handleCreateProject()
@@ -138,23 +173,20 @@ namespace Artifact {
   setObjectName("FileMenu");
 
   setTitle("File(&F)");
-  setTearOffEnabled(true);
-  QPalette p = palette();
-  p.setColor(QPalette::Window, QColor(30, 30, 30));
-
-  setPalette(p);
-
-  setAutoFillBackground(true);
-
-
-  setAttribute(Qt::WA_TranslucentBackground);
-  setWindowFlags(windowFlags() | Qt::FramelessWindowHint);
+  setTearOffEnabled(false);
 
   //auto projectAction = new QAction("CreateProject");
   addAction(Impl_->createProjectAction);
+  addAction(Impl_->openProjectAction);
+  addSeparator();
   addAction(Impl_->saveProjectAction);
   addAction(Impl_->saveProjectAsAction);
   addAction(Impl_->closeProjectAction);
+  addSeparator();
+  addMenu(Impl_->importMenu);
+  addMenu(Impl_->exportMenu);
+  addSeparator();
+  addAction(Impl_->projectSettingsAction);
   addSeparator();
   addAction(Impl_->quitApplicationAction);
   addSeparator();
@@ -162,6 +194,9 @@ namespace Artifact {
 
   connect(Impl_->createProjectAction, &QAction::triggered,
    [this]() { Impl_->handleCreateProject(); });
+
+  connect(Impl_->openProjectAction, &QAction::triggered,
+   [this]() { Impl_->handleOpenProject(); });
 
   connect(Impl_->closeProjectAction, &QAction::triggered,
    [this]() { Impl_->handleCloseProject(); });

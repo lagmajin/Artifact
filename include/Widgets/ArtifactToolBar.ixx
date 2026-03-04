@@ -28,7 +28,19 @@ export namespace Artifact {
  public:
 
   void homeRequested() W_SIGNAL(homeRequested);
+  void selectToolRequested() W_SIGNAL(selectToolRequested);
   void handToolRequested() W_SIGNAL(handToolRequested);
+  void zoomToolRequested() W_SIGNAL(zoomToolRequested);
+  void rotationToolRequested() W_SIGNAL(rotationToolRequested);
+  void cameraToolRequested() W_SIGNAL(cameraToolRequested);
+  void panBehindToolRequested() W_SIGNAL(panBehindToolRequested);
+  void shapeToolRequested() W_SIGNAL(shapeToolRequested);
+  void penToolRequested() W_SIGNAL(penToolRequested);
+  void textToolRequested() W_SIGNAL(textToolRequested);
+  void brushToolRequested() W_SIGNAL(brushToolRequested);
+  void cloneStampToolRequested() W_SIGNAL(cloneStampToolRequested);
+  void eraserToolRequested() W_SIGNAL(eraserToolRequested);
+  void puppetToolRequested() W_SIGNAL(puppetToolRequested);
   
   // Zoom signals
   void zoomInRequested() W_SIGNAL(zoomInRequested);

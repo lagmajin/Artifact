@@ -47,8 +47,6 @@ namespace Artifact {
 
  ArtifactTimeMenu::ArtifactTimeMenu(QWidget* parent /*= nullptr*/):QMenu(parent)
  {
-  setAttribute(Qt::WA_TranslucentBackground);
-  setWindowFlags(windowFlags() | Qt::FramelessWindowHint);
   setSeparatorsCollapsible(true);
   setMinimumWidth(160);
  }
