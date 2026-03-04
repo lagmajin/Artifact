@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <QObject>
 #include <QSize>
 #include <QMutex>
@@ -30,11 +30,19 @@ struct FrameCacheEntry {
     uint64_t timestamp = 0;
     size_t memorySize = 0;
     bool isDirty = false;
-    
+
     FrameCacheEntry() = default;
-    
+
     FrameCacheEntry(int w, int h, const FramePosition& pos)
         : width(w), height(h), frame(pos) {
+        // Validate dimensions to prevent integer overflow
+        if (w <= 0 || h <= 0 || w > 65536 || h > 65536) {
+            throw std::invalid_argument("Invalid frame dimensions");
+        }
+        // Check for overflow: w * h * 4 (RGBA)
+        if (w > SIZE_MAX / 4 || h > SIZE_MAX / (w * 4)) {
+            throw std::invalid_argument("Frame size would overflow");
+        }
         pixels.resize(w * h * 4);
         memorySize = pixels.size() * sizeof(float);
     }

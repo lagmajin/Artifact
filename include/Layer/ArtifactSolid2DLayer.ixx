@@ -20,6 +20,7 @@ export namespace Artifact
   ~ArtifactSolid2DLayer();
   FloatColor color() const;
   void setColor(const FloatColor& color);
+  void setSize(int width, int height);
 
   void draw() override;
 

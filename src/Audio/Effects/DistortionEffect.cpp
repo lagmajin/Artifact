@@ -1,11 +1,11 @@
-module;
+﻿module;
 #include <cmath>
 #include <vector>
 #include <algorithm>
+#include <QList>
 module Artifact.Audio.Effects.Distortion;
 
 import Audio.Segment;
-import Artifact.Audio.Effects.Base;
 
 namespace Artifact {
 
@@ -71,8 +71,8 @@ ArtifactCore::AudioSegment DistortionEffect::process(const ArtifactCore::AudioSe
 
     ArtifactCore::AudioSegment output = input;
 
-    int numChannels = output.channelData.size();
-    int numSamples  = (numChannels > 0) ? output.channelData[0].size() : 0;
+    int numChannels = static_cast<int>(output.channelData.size());
+    int numSamples  = (numChannels > 0) ? static_cast<int>(output.channelData[0].size()) : 0;
     if (numSamples == 0) return output;
 
     float outputGainLinear = std::pow(10.0f, outputGain_ / 20.0f);

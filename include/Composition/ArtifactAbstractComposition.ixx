@@ -16,11 +16,10 @@ import Frame.Position;
 import Container.MultiIndex;
 import Artifact.Layers;
 import Artifact.Composition.InitParams;
+import Composition.Settings;
 //import Artifact.Layer.Abstract;
 //import Artifact.Composition.Result;
 //import Artifact.Preview.Controller;
-
-
 
 export namespace Artifact {
 
@@ -43,6 +42,8 @@ export namespace Artifact {
   void removeAllLayers();
   CompositionID id() const;
   int layerCount() const;
+  
+  CompositionSettings settings() const;
 
   ArtifactAbstractLayerPtr layerById(const LayerID& id);
   bool containsLayerById(const LayerID& id);

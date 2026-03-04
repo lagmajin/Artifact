@@ -1,4 +1,10 @@
-﻿module;
+﻿#ifndef _CRT_SECURE_NO_WARNINGS
+#define _CRT_SECURE_NO_WARNINGS
+#endif
+#ifndef _SCL_SECURE_NO_WARNINGS
+#define _SCL_SECURE_NO_WARNINGS
+#endif
+module;
 #include<wobjectimpl.h>
 #include <DockWidget.h>
 #include <DockManager.h>
@@ -11,6 +17,7 @@
 #include <qcoro6/qcoro/qcorotask.h>
 #include <qcoro6/qcoro/coroutine.h>
 #include <qcoro6/qcoro/qcorotimer.h>
+#include <objbase.h>
 
 //#pragma comment(lib,"qtadvanceddockingd.lib")
 
@@ -46,12 +53,16 @@ import Artifact.Widgets.RenderQueueJobPanel;
 import Artifact.Widgets.LayerPanelWidget;
 import Artifact.Widgets.PlaybackControlWidget;
 import Artifact.Widgets.RenderLayerWidgetv2;
+import WinJumpList;
+import AppProgress;
+//import Platform.Mac.TouchBar;
 
 
 namespace ArtifactWidgets {}//
 
 namespace Artifact {
 
+ using namespace ArtifactCore;
  using namespace ArtifactWidgets;
  using namespace std::chrono_literals;
  using namespace ads;
@@ -114,6 +125,9 @@ namespace Artifact {
   }
   timelineWidget_->setComposition(id);
   timelineWidget_->show();
+
+  // Unified Progress API (Taskbar on Win, Dock on Mac)
+  //AppProgress::setProgress(window, 50, 100);
  }
 
  ArtifactMainWindow::Impl::Impl(ArtifactMainWindow* mainWindow):mainWindow_(mainWindow)
@@ -295,6 +309,13 @@ namespace Artifact {
   //compositionWidget3->show();
  	
   //NativeGUIHelper::applyMicaEffect(this);
+  
+  // Mica背景のためにウィンドウ表示前に設定（showEvent後の設定はネイティブウィンドウ再生成→qregionクラッシュの原因になる）
+  setAttribute(Qt::WA_TranslucentBackground);
+  setStyleSheet("QMainWindow { background: transparent; }");
+
+  // macOS Touch Bar setup
+  //MacTouchBar::install(this);
  }
 
  ArtifactMainWindow::~ArtifactMainWindow()
@@ -394,6 +415,17 @@ namespace Artifact {
   QTimer::singleShot(0, this, [this]() {
    NativeGUIHelper::applyMicaEffect(this);
    NativeGUIHelper::applyWindowRound(this);
+   // tr() はメインスレッドで取得してからスレッドへ渡す
+   const QString title = tr("New Window");
+   const QString desc  = tr("Open a new Artifact window");
+   // WinJumpList の COM 操作を独立スレッドで実行 (Qt メッセージループと完全分離)
+   std::thread([title, desc]() {
+    ::CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    WinJumpList jumpList;
+    jumpList.addNewWindowTask(title, desc);
+    jumpList.apply();
+    ::CoUninitialize();
+   }).detach();
   });
  }
 

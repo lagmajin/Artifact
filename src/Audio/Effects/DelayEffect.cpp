@@ -1,11 +1,11 @@
-module;
+﻿module;
 #include <cmath>
 #include <vector>
 #include <algorithm>
+#include <QList>
 module Artifact.Audio.Effects.Delay;
 
 import Audio.Segment;
-import Artifact.Audio.Effects.Base;
 import Audio.DSP.DelayLine;
 
 namespace Artifact {
@@ -31,8 +31,8 @@ ArtifactCore::AudioSegment DelayEffect::process(const ArtifactCore::AudioSegment
     ArtifactCore::AudioSegment output = input;
     float sr = static_cast<float>(sampleRate_);
 
-    int numChannels = output.channelData.size();
-    int numSamples  = (numChannels > 0) ? output.channelData[0].size() : 0;
+    int numChannels = static_cast<int>(output.channelData.size());
+    int numSamples  = (numChannels > 0) ? static_cast<int>(output.channelData[0].size()) : 0;
     if (numSamples == 0) return output;
 
     float delaySamplesL = delayTimeL_ * 0.001f * sr;

@@ -11,6 +11,7 @@
 #include <QFormLayout>
 #include <QColorDialog>
 #include <QGroupBox>
+#include <wobjectimpl.h>
 
 module Artifact.Widgets.ArtifactPropertyWidget;
 
@@ -23,6 +24,8 @@ import Artifact.Effect.Abstract;
 import Utils.String.UniString;
 
 namespace Artifact {
+
+ W_OBJECT_IMPL(ArtifactPropertyWidget)
 
 class ArtifactPropertyWidget::Impl {
 public:

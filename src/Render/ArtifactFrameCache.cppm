@@ -1,4 +1,4 @@
-module;
+﻿module;
 
 #include <algorithm>
 #include <chrono>
@@ -192,34 +192,40 @@ std::shared_ptr<FrameCacheEntry> FrameCache::get(const FramePosition& frame) {
 
 void FrameCache::put(std::shared_ptr<FrameCacheEntry> entry) {
     if (!entry) return;
-    
+
+    // Validate entry memory size
+    if (entry->memorySize == 0 || entry->memorySize > impl_->maxMemory_) {
+        throw std::invalid_argument("Frame entry memory size exceeds cache capacity");
+    }
+
     QMutexLocker locker(&impl_->mutex_);
-    
+
     // Remove old entry if exists
     auto it = impl_->entries_.find(entry->frame);
     if (it != impl_->entries_.end()) {
         impl_->entries_.erase(it);
     }
-    
-    // Evict if needed
-    impl_->evictToFit(impl_->maxMemory_ - entry->memorySize, 
-                     impl_->maxFrameCount_ - 1);
-    
+
+    // Evict if needed - prevent integer underflow
+    size_t targetMem = impl_->maxMemory_ - entry->memorySize;
+    size_t targetCount = impl_->maxFrameCount_ > 0 ? impl_->maxFrameCount_ - 1 : 0;
+    impl_->evictToFit(targetMem, targetCount);
+
     // Add new entry
     impl_->entries_[entry->frame] = entry;
     impl_->accessTimes_[entry->frame] = std::chrono::steady_clock::now().time_since_epoch().count();
     impl_->accessCounts_[entry->frame] = 1;
     impl_->insertionOrder_.push_back(entry->frame);
-    
+
     // Emit signals
     emit frameAdded(entry->frame);
-    
+
     // Check memory pressure
     size_t currentMem = impl_->currentMemoryUsage();
     if (currentMem > impl_->maxMemory_ * 0.9) {
         emit memoryPressure(currentMem, impl_->maxMemory_);
     }
-    
+
     // Update hit rate
     size_t total = impl_->hitCount_ + impl_->missCount_;
     if (total > 0) {

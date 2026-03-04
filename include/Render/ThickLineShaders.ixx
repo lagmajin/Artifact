@@ -1,0 +1,79 @@
+﻿module;
+#include <QByteArray>
+
+export module Render.Shader.ThickLine;
+
+export namespace Artifact
+{
+ // Vertex shader: pixel-space positions with pan offset via TransformCB
+ inline const QByteArray g_thickLineVS = R"HLSL(
+cbuffer TransformCB : register(b0)
+{
+    float2 offset;
+    float2 scale;
+    float2 screenSize;
+};
+
+struct VSInput
+{
+    float2 pos   : ATTRIB0;
+    float4 color : ATTRIB1;
+};
+
+struct PSInput
+{
+    float4 pos   : SV_POSITION;
+    float4 color : COLOR0;
+};
+
+PSInput main(VSInput input)
+{
+    PSInput output;
+    float2 pos = input.pos + offset;
+    float2 ndc = pos / screenSize * 2.0f - float2(1.0f, 1.0f);
+    ndc.y = -ndc.y;
+    output.pos   = float4(ndc, 0.0f, 1.0f);
+    output.color = input.color;
+    return output;
+}
+)HLSL";
+
+ // Pixel shader: pass-through color
+ inline const QByteArray g_thickLinePS = R"HLSL(
+struct PSInput
+{
+    float4 pos   : SV_POSITION;
+    float4 color : COLOR0;
+};
+
+float4 main(PSInput input) : SV_TARGET
+{
+    return input.color;
+}
+)HLSL";
+
+ // Sprite vertex shader: NDC positions passthrough, UV forwarded to PS
+ inline const QByteArray g_2DSpriteVS = R"HLSL(
+struct VSInput
+{
+    float2 pos   : ATTRIB0;
+    float2 uv    : ATTRIB1;
+    float4 color : ATTRIB2;
+};
+
+struct PSInput
+{
+    float4 pos : SV_POSITION;
+    float2 uv  : TEXCOORD0;
+};
+
+PSInput main(VSInput input)
+{
+    PSInput output;
+    output.pos = float4(input.pos, 0.0f, 1.0f);
+    output.uv  = input.uv;
+    return output;
+}
+)HLSL";
+
+}

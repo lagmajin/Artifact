@@ -451,6 +451,7 @@
     <ClCompile Include="include\Render\RenderModule.ixx">
       <CompileAs>CompileAsCppModule</CompileAs>
     </ClCompile>
+    <ClCompile Include="include\Render\ThickLineShaders.ixx" />
     <ClCompile Include="include\Result\ArtifactResult.ixx">
       <CompileAs>CompileAsCppModule</CompileAs>
     </ClCompile>
@@ -1256,6 +1257,7 @@
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
     </CustomBuild>
     <None Include="ArtifactCore_Library_Reference.md" />
+    <None Include="assets\shaders\app\README.md" />
     <None Include="copilot-instructions.md" />
     <None Include="docs\AssetIcons.md" />
     <None Include="docs\Notes\feature-discussion-summary.md" />
@@ -1264,6 +1266,10 @@
     <None Include="UI_WIDGETS_LIST.md" />
   </ItemGroup>
   <ItemGroup>
+    <FxCompile Include="assets\shaders\app\line_vs.hlsl" />
+    <FxCompile Include="assets\shaders\app\solidcolor_ps.hlsl" />
+    <FxCompile Include="assets\shaders\app\thick_line_ps.hlsl" />
+    <FxCompile Include="assets\shaders\app\thick_line_vs.hlsl" />
     <FxCompile Include="include\Widgets\Render\Shader\Common2DPS.hlsl">
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Pixel</ShaderType>
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Pixel</ShaderType>

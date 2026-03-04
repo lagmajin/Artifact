@@ -8,6 +8,7 @@ import std;
 import Utils.String.Like;
 import Utils.String.UniString;
 import Artifact.Layer.Abstract;
+import Color.Float;
 
 export namespace Artifact {
 
@@ -20,6 +21,10 @@ export namespace Artifact {
  public:
   ArtifactLayerInitParams(const QString& name, LayerType type);
   ArtifactLayerInitParams(const UniString& name, LayerType type);
+  ArtifactLayerInitParams(const ArtifactLayerInitParams& other);
+  ArtifactLayerInitParams(ArtifactLayerInitParams&& other) noexcept;
+  ArtifactLayerInitParams& operator=(const ArtifactLayerInitParams& other);
+  ArtifactLayerInitParams& operator=(ArtifactLayerInitParams&& other) noexcept;
   virtual ~ArtifactLayerInitParams();
   LayerType layerType() const;
   UniString name() const;
@@ -34,8 +39,18 @@ export namespace Artifact {
   Impl* impl_;
  public:
   explicit ArtifactSolidLayerInitParams(const QString& name);
+  ArtifactSolidLayerInitParams(const ArtifactSolidLayerInitParams& other);
+  ArtifactSolidLayerInitParams(ArtifactSolidLayerInitParams&& other) noexcept;
+  ArtifactSolidLayerInitParams& operator=(const ArtifactSolidLayerInitParams& other);
+  ArtifactSolidLayerInitParams& operator=(ArtifactSolidLayerInitParams&& other) noexcept;
   ~ArtifactSolidLayerInitParams();
-
+  
+  int width() const;
+  void setWidth(int width);
+  int height() const;
+  void setHeight(int height);
+  FloatColor color() const;
+  void setColor(const FloatColor& color);
  };
 
  class ArtifactTextLayerInitParams : public ArtifactLayerInitParams
@@ -48,10 +63,19 @@ export namespace Artifact {
  class ArtifactNullLayerInitParams : public ArtifactLayerInitParams
  {
  private:
+  class Impl;
+  Impl* impl_;
  public:
-  ArtifactNullLayerInitParams(const QString& name);
+  explicit ArtifactNullLayerInitParams(const QString& name);
+  ArtifactNullLayerInitParams(const ArtifactNullLayerInitParams& other);
+  ArtifactNullLayerInitParams(ArtifactNullLayerInitParams&& other) noexcept;
+  ArtifactNullLayerInitParams& operator=(const ArtifactNullLayerInitParams& other);
+  ArtifactNullLayerInitParams& operator=(ArtifactNullLayerInitParams&& other) noexcept;
   ~ArtifactNullLayerInitParams();
-
+  int width() const;
+  void setWidth(int width);
+  int height() const;
+  void setHeight(int height);
  };
 
  class ArtifactImageInitParams :public ArtifactLayerInitParams

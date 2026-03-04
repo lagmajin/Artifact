@@ -33,3 +33,15 @@
 
 This requirement is mandatory for correct meta-object generation and must be followed by all contributors and automated tools.
 
+## PIMPL Idiom and Memory Management Guidelines
+
+- IMPORTANT: When implementing the PIMPL (Pointer to Implementation) idiom, **DO NOT** use modern smart pointers (`std::shared_ptr` or `std::unique_ptr`) to manage the `impl_` pointer if the class is part of a public API or could potentially cross DLL boundaries.
+- Usage of standard library templates in DLL interfaces can cause ABI incompatibility issues, memory corruption across different heaps, and crashes.
+- Always use **raw pointers** (`Impl* impl_;`) for the PIMPL idiom in these contexts.
+- To prevent memory leaks, double-free crashes, and shallow-copy bugs, you **MUST** explicitly implement the "Rule of 5" (or Rule of 3) for any class using a raw `impl_` pointer:
+  1. Destructor (to `delete impl_`)
+  2. Copy Constructor (to perform a deep copy: `impl_(new Impl(*other.impl_))`)
+  3. Copy Assignment Operator (deep copy)
+  4. Move Constructor (take ownership, nullify the other)
+  5. Move Assignment Operator
+- Be extremely careful when passing PIMPL objects by value through Qt Signals/Slots, as a missing deep copy will result in a double-free crash when the event loop cleans up the parameter copies.

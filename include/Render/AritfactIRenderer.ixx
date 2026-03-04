@@ -34,7 +34,8 @@ export namespace Artifact
    virtual void drawRectOutline();
    virtual void drawParticles();
    virtual void drawRectLocal(float x, float y, float w, float h, const FloatColor& color);
-  
+   virtual void drawThickLineLocal(float2 p1, float2 p2, float thickness, const FloatColor& color);
+
   virtual void setUpscaleConfig(bool enable, float sharpness = 0.5f);
  
    

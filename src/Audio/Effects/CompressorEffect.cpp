@@ -1,26 +1,32 @@
-module;
+﻿module;
 #include <cmath>
 #include <vector>
 #include <algorithm>
+#include <QList>
 module Artifact.Audio.Effects.Compressor;
 
 import Audio.Segment;
-import Artifact.Audio.Effects.Base;
 
 namespace Artifact {
 
-// Convert linear amplitude to dB
+// ============================================================================
+// Utility Functions
+// ============================================================================
+
 static inline float linearToDb(float linear) {
     if (linear <= 0.0f) return -96.0f;
     return 20.0f * std::log10(linear);
 }
 
-// Convert dB to linear amplitude
 static inline float dbToLinear(float db) {
     return std::pow(10.0f, db / 20.0f);
 }
 
-ArtifactCore::AudioSegment CompressorEffect::process(const ArtifactCore::AudioSegment& input) {
+// ============================================================================
+// CompressorEffect Implementation
+// ============================================================================
+
+::ArtifactCore::AudioSegment CompressorEffect::process(const ::ArtifactCore::AudioSegment& input) {
     if (!enabled_ || input.channelData.isEmpty()) {
         return input;
     }
@@ -28,8 +34,8 @@ ArtifactCore::AudioSegment CompressorEffect::process(const ArtifactCore::AudioSe
     ArtifactCore::AudioSegment output = input;
     float sr = static_cast<float>(sampleRate_);
 
-    int numChannels = output.channelData.size();
-    int numSamples  = (numChannels > 0) ? output.channelData[0].size() : 0;
+    int numChannels = static_cast<int>(output.channelData.size());
+    int numSamples  = (numChannels > 0) ? static_cast<int>(output.channelData[0].size()) : 0;
     if (numSamples == 0) return output;
 
     // Calculate attack and release coefficients (one-pole smoother)
@@ -92,14 +98,14 @@ ArtifactCore::AudioSegment CompressorEffect::process(const ArtifactCore::AudioSe
     return output;
 }
 
-std::vector<AudioEffectParameter> CompressorEffect::getParameters() const {
+std::vector<Parameter> CompressorEffect::getParameters() const {
     return {
-        {"threshold",  "Threshold",    AudioEffectParameterType::Float, -60.0f, 0.0f,  -20.0f},
-        {"ratio",      "Ratio",        AudioEffectParameterType::Float, 1.0f,   20.0f, 4.0f},
-        {"attack",     "Attack (ms)",  AudioEffectParameterType::Float, 0.1f,   100.0f, 10.0f},
-        {"release",    "Release (ms)", AudioEffectParameterType::Float, 10.0f,  1000.0f, 100.0f},
-        {"knee",       "Knee (dB)",    AudioEffectParameterType::Float, 0.0f,   24.0f, 6.0f},
-        {"makeup",     "Makeup Gain",  AudioEffectParameterType::Float, 0.0f,   24.0f, 0.0f},
+        {"threshold",  "Threshold",    ParameterType::Float, -60.0f, 0.0f,  -20.0f},
+        {"ratio",      "Ratio",        ParameterType::Float, 1.0f,   20.0f, 4.0f},
+        {"attack",     "Attack (ms)",  ParameterType::Float, 0.1f,   100.0f, 10.0f},
+        {"release",    "Release (ms)", ParameterType::Float, 10.0f,  1000.0f, 100.0f},
+        {"knee",       "Knee (dB)",    ParameterType::Float, 0.0f,   24.0f, 6.0f},
+        {"makeup",     "Makeup Gain",  ParameterType::Float, 0.0f,   24.0f, 0.0f},
     };
 }
 
@@ -122,7 +128,7 @@ float CompressorEffect::getParameter(const std::string& name) const {
     return 0.0f;
 }
 
-std::unique_ptr<ArtifactAbstractAudioEffect> createCompressorEffect() {
+std::unique_ptr<IAudioEffect> createCompressorEffect() {
     return std::make_unique<CompressorEffect>();
 }
 

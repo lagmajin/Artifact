@@ -28,6 +28,7 @@ public:
 
 public Q_SLOTS:
     void onGenerateHarmonicPalette();
+    void onSmartExtractPalette();
     void onLoadPalettes();
     void onSavePalettes();
 

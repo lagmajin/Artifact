@@ -1,15 +1,19 @@
-module;
+﻿module;
+#include <QList>
 #include <cmath>
 #include <vector>
 #include <algorithm>
 module Artifact.Audio.Effects.Chorus;
 
 import Audio.Segment;
-import Artifact.Audio.Effects.Base;
 import Audio.DSP.DelayLine;
 import Audio.DSP.LFO;
 
 namespace Artifact {
+
+// ============================================================================
+// ChorusEffect Implementation
+// ============================================================================
 
 ChorusEffect::ChorusEffect() {
     initializeEngine();
@@ -34,7 +38,7 @@ void ChorusEffect::initializeEngine() {
     }
 }
 
-ArtifactCore::AudioSegment ChorusEffect::process(const ArtifactCore::AudioSegment& input) {
+::ArtifactCore::AudioSegment ChorusEffect::process(const ::ArtifactCore::AudioSegment& input) {
     if (!enabled_ || input.channelData.isEmpty()) {
         return input;
     }
@@ -42,8 +46,8 @@ ArtifactCore::AudioSegment ChorusEffect::process(const ArtifactCore::AudioSegmen
     ArtifactCore::AudioSegment output = input;
     float sr = static_cast<float>(sampleRate_);
 
-    int numChannels = output.channelData.size();
-    int numSamples  = (numChannels > 0) ? output.channelData[0].size() : 0;
+    int numChannels = static_cast<int>(output.channelData.size());
+    int numSamples  = (numChannels > 0) ? static_cast<int>(output.channelData[0].size()) : 0;
     if (numSamples == 0) return output;
 
     float centerDelaySamples = delayMs_ * 0.001f * sr;
@@ -97,14 +101,14 @@ ArtifactCore::AudioSegment ChorusEffect::process(const ArtifactCore::AudioSegmen
     return output;
 }
 
-std::vector<AudioEffectParameter> ChorusEffect::getParameters() const {
+std::vector<Parameter> ChorusEffect::getParameters() const {
     return {
-        {"rate",      "Rate (Hz)",    AudioEffectParameterType::Float, 0.1f,  5.0f,  0.8f},
-        {"depth",     "Depth",        AudioEffectParameterType::Float, 0.0f,  1.0f,  0.5f},
-        {"delay",     "Delay (ms)",   AudioEffectParameterType::Float, 1.0f,  30.0f, 7.0f},
-        {"feedback",  "Feedback",     AudioEffectParameterType::Float, 0.0f,  0.7f,  0.1f},
-        {"wet_level", "Wet Level",    AudioEffectParameterType::Float, 0.0f,  1.0f,  0.5f},
-        {"dry_level", "Dry Level",    AudioEffectParameterType::Float, 0.0f,  1.0f,  0.5f},
+        {"rate",      "Rate (Hz)",    ParameterType::Float, 0.1f,  5.0f,  0.8f},
+        {"depth",     "Depth",        ParameterType::Float, 0.0f,  1.0f,  0.5f},
+        {"delay",     "Delay (ms)",   ParameterType::Float, 1.0f,  30.0f, 7.0f},
+        {"feedback",  "Feedback",     ParameterType::Float, 0.0f,  0.7f,  0.1f},
+        {"wet_level", "Wet Level",    ParameterType::Float, 0.0f,  1.0f,  0.5f},
+        {"dry_level", "Dry Level",    ParameterType::Float, 0.0f,  1.0f,  0.5f},
     };
 }
 
@@ -134,7 +138,7 @@ void ChorusEffect::setSampleRate(int sampleRate) {
     initializeEngine();
 }
 
-std::unique_ptr<ArtifactAbstractAudioEffect> createChorusEffect() {
+std::unique_ptr<IAudioEffect> createChorusEffect() {
     return std::make_unique<ChorusEffect>();
 }
 

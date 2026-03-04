@@ -1,8 +1,9 @@
-module;
+﻿module;
 
 #include <QWidget>
 #include <QVBoxLayout>
 #include <QScrollArea>
+#include <wobjectdefs.h>
 
 export module Artifact.Widgets.ArtifactPropertyWidget;
 
@@ -14,7 +15,7 @@ export namespace Artifact {
 using namespace ArtifactCore;
 
 class ArtifactPropertyWidget : public QScrollArea {
-    Q_OBJECT
+ W_OBJECT(ArtifactPropertyWidget)
 private:
     class Impl;
     Impl* impl_;

@@ -1,11 +1,11 @@
-module;
+﻿module;
+#include <QList>
 #include <cmath>
 #include <vector>
 #include <algorithm>
 module Artifact.Audio.Effects.Limiter;
 
 import Audio.Segment;
-import Artifact.Audio.Effects.Base;
 
 namespace Artifact {
 
@@ -41,8 +41,8 @@ ArtifactCore::AudioSegment LimiterEffect::process(const ArtifactCore::AudioSegme
     ArtifactCore::AudioSegment output = input;
     float sr = static_cast<float>(sampleRate_);
 
-    int numChannels = output.channelData.size();
-    int numSamples  = (numChannels > 0) ? output.channelData[0].size() : 0;
+    int numChannels = static_cast<int>(output.channelData.size());
+    int numSamples  = (numChannels > 0) ? static_cast<int>(output.channelData[0].size()) : 0;
     if (numSamples == 0) return output;
 
     float ceilingLinear = dbToLinear(ceiling_);

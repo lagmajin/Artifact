@@ -8,9 +8,12 @@ export module Artifact.Widgets.CreateLayerDialog;
 import std;
 import Widgets.Dialog.Abstract;
 import Artifact.Layer.InitParams;
+import Color.Float;
+
 
 export namespace Artifact {
 	
+ using namespace ArtifactCore;
 
  class PlaneLayerSettingPage :public QWidget {
   //Q_OBJECT
@@ -23,6 +26,8 @@ export namespace Artifact {
   explicit PlaneLayerSettingPage(QWidget* parent = nullptr);
   ~PlaneLayerSettingPage();
   void setDefaultFocus();
+  void setInitialParams(int p_width, int p_height, const FloatColor& color);
+  ArtifactSolidLayerInitParams getInitParams(const QString& name) const;
  //signals:
   void editComplete();
  //private slots:
@@ -48,7 +53,7 @@ export namespace Artifact {
   ~CreateSolidLayerSettingDialog();
   void showAnimated();
   public/*signals*/:
- 	void submit(const ArtifactSolidLayerInitParams& params) W_SIGNAL(submit,params)
+ 	void submit(const ArtifactSolidLayerInitParams& params) W_SIGNAL(submit,params);
  };
 
  class EditPlaneLayerSettingDialog final :public QDialog {
@@ -65,6 +70,7 @@ export namespace Artifact {
   explicit EditPlaneLayerSettingDialog(QWidget* parent = nullptr);
   ~EditPlaneLayerSettingDialog();
   void showAnimated();
+  void setupEdit(std::shared_ptr<class ArtifactSolid2DLayer> layer);
  public/*signals*/:
  };
 

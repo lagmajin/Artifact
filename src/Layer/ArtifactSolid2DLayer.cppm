@@ -42,6 +42,11 @@ namespace  Artifact
 
  }
 
+ void ArtifactSolid2DLayer::setSize(int width, int height)
+ {
+  setSourceSize(Size_2D(width, height));
+ }
+
  void ArtifactSolid2DLayer::draw()
  {
   throw std::logic_error("The method or operation is not implemented.");

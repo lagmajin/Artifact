@@ -1,0 +1,1 @@
+float4 main(float2 p:TEXCOORD0,float4 c:TEXCOORD1):POSITION{return float4(p,0,1);}

@@ -21,6 +21,7 @@ import Artifact.Color.Palette;
 import Color.Harmonizer;
 import Artifact.Project.PresetManager;
 import Color.Float;
+import Analyze.SmartPalette;
 #endif
 
 namespace Artifact {
@@ -72,6 +73,7 @@ public:
     
     QListWidget* listWidget = nullptr;
     QPushButton* btnGenerate = nullptr;
+    QPushButton* btnExtract = nullptr;
     QPushButton* btnDelete = nullptr;
     QPushButton* btnLoad = nullptr;
     QPushButton* btnSave = nullptr;
@@ -98,11 +100,14 @@ ArtifactColorPaletteWidget::ArtifactColorPaletteWidget(QWidget* parent)
         "Complementary", "Analogous", "Triadic", "Split-Complementary", "Tetradic", "Monochromatic"
     });
     impl_->btnGenerate = new QPushButton("Generate Harmony...", this);
+    impl_->btnExtract = new QPushButton("Smart Extract...", this);
     
     connect(impl_->btnGenerate, &QPushButton::clicked, this, &ArtifactColorPaletteWidget::onGenerateHarmonicPalette);
+    connect(impl_->btnExtract, &QPushButton::clicked, this, &ArtifactColorPaletteWidget::onSmartExtractPalette);
 
     genLayout->addWidget(impl_->comboHarmony);
     genLayout->addWidget(impl_->btnGenerate);
+    genLayout->addWidget(impl_->btnExtract);
     mainLayout->addLayout(genLayout);
 
     // Actions
@@ -204,6 +209,40 @@ void ArtifactColorPaletteWidget::onGenerateHarmonicPalette() {
             NamedColor nc;
             nc.name = QString("Color %1").arg(i + 1);
             nc.color = QColor::fromRgbF(harmonyColors[i].r(), harmonyColors[i].g(), harmonyColors[i].b(), harmonyColors[i].a());
+            palette.colors.append(nc);
+        }
+
+        impl_->manager->addPalette(palette);
+        updatePaletteList();
+    }
+}
+
+void ArtifactColorPaletteWidget::onSmartExtractPalette() {
+    QString path = QFileDialog::getOpenFileName(this, "Extract Palette from Image", "", "Images (*.png *.jpg *.bmp *.jpeg)");
+    if (path.isEmpty()) return;
+
+    QImage img(path);
+    if (img.isNull()) return;
+
+    // Use the core analyzer (OpenCV based)
+    auto floatPalette = SmartPaletteAnalyzer::extractPalette(img, 5);
+    
+    if (floatPalette.empty()) {
+        QMessageBox::warning(this, "Error", "Failed to extract colors from image.");
+        return;
+    }
+
+    bool ok;
+    QString presetName = QInputDialog::getText(this, "Palette Name", "Enter a name for the extracted palette:", QLineEdit::Normal, "Smart Palette", &ok);
+    
+    if (ok && !presetName.isEmpty()) {
+        ColorPalette palette;
+        palette.name = presetName;
+
+        for (size_t i = 0; i < floatPalette.size(); ++i) {
+            NamedColor nc;
+            nc.name = QString("Dominant %1").arg(i + 1);
+            nc.color = QColor::fromRgbF(floatPalette[i].r(), floatPalette[i].g(), floatPalette[i].b(), floatPalette[i].a());
             palette.colors.append(nc);
         }
 

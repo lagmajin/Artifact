@@ -319,9 +319,19 @@ CompositionID ArtifactAbstractComposition::id() const
     return impl_->id_;
 }
 
+int ArtifactAbstractComposition::layerCount() const
+{
+    return impl_->layerMultiIndex_.all().size();
+}
+
 bool ArtifactAbstractComposition::isAudioOnly() const
 {
  return false;
+}
+
+CompositionSettings ArtifactAbstractComposition::settings() const
+{
+  return impl_->settings_;
 }
 
 bool ArtifactAbstractComposition::isVisual() const

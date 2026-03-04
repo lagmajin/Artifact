@@ -108,40 +108,60 @@ namespace Artifact {
   void ArtifactLayerMenu::Impl::handleCreateSolidLayer()
   {
    qDebug() << "[handleCreateSolidLayer] Called";
-   auto& manager = ArtifactProjectManager::getInstance();
- 	
-  //ArtifactProjectService::instance()->
- 	
- 	
- 	
-  auto createSolidLayer = new CreateSolidLayerSettingDialog();
- 	
-  createSolidLayer->show();
-  auto service = ArtifactProjectService::instance();
- 	
-   ArtifactSolidLayerInitParams params("Solid");
-   qDebug() << "[handleCreateSolidLayer] Creating solid layer with name: Solid";
-
-   service->addLayerToCurrentComposition(params);
-   qDebug() << "[handleCreateSolidLayer] addLayerToCurrentComposition called";
- }
+   auto createSolidLayer = new CreateSolidLayerSettingDialog(parentPtr_);
+   
+   auto service = ArtifactProjectService::instance();
+   QObject::connect(createSolidLayer, &CreateSolidLayerSettingDialog::submit, parentPtr_, [service](const ArtifactSolidLayerInitParams& params) {
+       qDebug() << "[handleCreateSolidLayer] Creating solid layer with name:" << params.name().toQString();
+       service->addLayerToCurrentComposition(params);
+   });
+   
+   createSolidLayer->setAttribute(Qt::WA_DeleteOnClose);
+   createSolidLayer->exec();
+  }
 
  void ArtifactLayerMenu::Impl::handleCreateNullLayer()
  {
    qDebug() << "[handleCreateNullLayer] Called";
-  ArtifactNullLayerInitParams params("Null");
-  auto service = ArtifactProjectService::instance();
- 	
-  service->addLayerToCurrentComposition(params);
-  
-  
+   auto service = ArtifactProjectService::instance();
+   if (!service) return;
 
+   ArtifactNullLayerInitParams params(u8"Null 1");
+   
+   auto compWeak = service->currentComposition();
+   if (auto comp = compWeak.lock()) {
+       auto size = comp->settings().compositionSize();
+       if (size.width() > 0 && size.height() > 0) {
+           params.setWidth(size.width());
+           params.setHeight(size.height());
+       }
+   }
+
+   service->addLayerToCurrentComposition(params);
  }
 
   void ArtifactLayerMenu::Impl::handleAdjustableLayer()
   {
    qDebug() << "[handleAdjustableLayer] Called";
-   // TODO: 実装
+   auto service = ArtifactProjectService::instance();
+   if (!service) return;
+
+   ArtifactSolidLayerInitParams params(u8"Adjustment Layer");
+   auto compWeak = service->currentComposition();
+   if (auto comp = compWeak.lock()) {
+       auto size = comp->settings().compositionSize();
+       if (size.width() > 0 && size.height() > 0) {
+           params.setWidth(size.width());
+           params.setHeight(size.height());
+       }
+   }
+   // Black color for adjustment layer (typically hidden or used just for effects)
+   params.setColor(FloatColor(0.0f, 0.0f, 0.0f, 1.0f));
+
+   service->addLayerToCurrentComposition(params);
+   // Note: Since we don't have direct access to the layer ptr here directly,
+   // normally we'd listen to layerAdded signal or the service handles adjustment layers natively.
+   // Assuming adjustment layers might be a specific subtype in the future, or we set a flag after.
   }
 
   void ArtifactLayerMenu::Impl::handleTextLayer()

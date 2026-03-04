@@ -2,6 +2,10 @@
 <Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003" ToolsVersion="4.0">
   <ItemGroup>
     <FxCompile Include="include\Widgets\Render\Shader\Common2DPS.hlsl" />
+    <FxCompile Include="assets\shaders\app\line_vs.hlsl" />
+    <FxCompile Include="assets\shaders\app\solidcolor_ps.hlsl" />
+    <FxCompile Include="assets\shaders\app\thick_line_vs.hlsl" />
+    <FxCompile Include="assets\shaders\app\thick_line_ps.hlsl" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="Generated\TestService.cpp" />
@@ -882,6 +886,7 @@
     <ClCompile Include="src\Export\Python\ArtifactPythonAPI.cpp">
       <Filter>src\Export\Python</Filter>
     </ClCompile>
+    <ClCompile Include="include\Render\ThickLineShaders.ixx" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Generated\TestService.h" />
@@ -910,6 +915,7 @@
     <None Include="copilot-instructions.md" />
     <None Include="docs\Notes\feature-discussion-summary.md" />
     <None Include="README.md" />
+    <None Include="assets\shaders\app\README.md" />
   </ItemGroup>
   <ItemGroup>
     <Filter Include="src">
