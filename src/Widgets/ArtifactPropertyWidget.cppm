@@ -22,6 +22,7 @@ import Property.Group;
 import Undo.UndoManager;
 import Artifact.Effect.Abstract;
 import Utils.String.UniString;
+import Artifact.Widgets.ExpressionCopilotWidget;
 
 namespace Artifact {
 
@@ -184,7 +185,35 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
                     break;
             }
             if (editor) {
-                form->addRow(label, editor);
+                QWidget* rowWidget = new QWidget();
+                QHBoxLayout* rowLayout = new QHBoxLayout(rowWidget);
+                rowLayout->setContentsMargins(0, 0, 0, 0);
+                rowLayout->setSpacing(4);
+                
+                editor->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+                rowLayout->addWidget(editor);
+                
+                QPushButton* copilotBtn = new QPushButton(QString::fromUtf8("✨"));
+                copilotBtn->setToolTip("Expression Copilot");
+                copilotBtn->setFixedSize(24, 24);
+                
+                // Clicking the magic button opens the AI Copilot popup
+                QObject::connect(copilotBtn, &QPushButton::clicked, [propName, copilotBtn]() {
+                    auto copilot = new ArtifactExpressionCopilotWidget();
+                    copilot->setWindowFlags(Qt::Window | Qt::WindowStaysOnTopHint | Qt::Tool);
+                    copilot->setWindowTitle("Expression Copilot: " + propName);
+                    copilot->setAttribute(Qt::WA_DeleteOnClose);
+                    
+                    // Center it relative to the button or mouse
+                    copilot->move(QCursor::pos() - QPoint(150, 200));
+                    copilot->show();
+                    
+                    qDebug() << "[AI Copilot] Opened for:" << propName;
+                });
+                
+                rowLayout->addWidget(copilotBtn);
+                
+                form->addRow(label, rowWidget);
             }
         }
         mainLayout->addWidget(group);

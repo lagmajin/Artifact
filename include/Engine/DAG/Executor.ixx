@@ -9,6 +9,7 @@ export module Artifact.Engine.DAG.Executor;
 import std;
 import Artifact.Engine.DAG.Graph;
 import Artifact.Engine.DAG.Node;
+import Core.ThreadPool;
 
 export namespace Artifact {
 
@@ -105,25 +106,13 @@ export namespace Artifact {
 
     public:
         void enqueueTask(TaskFunc task) override {
-            std::lock_guard<std::mutex> lock(mutex_);
-            futures_.push_back(std::async(std::launch::async, task));
+            // ThreadPoolにタスクを投げるだけ（std::asyncのコストを削減）
+            ThreadPool::globalInstance().enqueueTask(task);
         }
 
         void waitAll() override {
-            // 現在の future が全て完了するまで待機
-            // ※実行中のタスクがさらにタスクを enqueue するためループが必要
-            while (true) {
-                std::vector<std::future<void>> current_futures;
-                {
-                    std::lock_guard<std::mutex> lock(mutex_);
-                    if (futures_.empty()) break;
-                    current_futures = std::move(futures_);
-                    futures_.clear();
-                }
-                for (auto& f : current_futures) {
-                    f.wait(); 
-                }
-            }
+            // スレッドプール内のすべてのタスクが終わるのを待つ
+            ThreadPool::globalInstance().waitAll();
         }
     };
 

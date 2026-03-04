@@ -1,4 +1,4 @@
-<?xml version='1.0' encoding='utf-8'?>
+<?xml version="1.0" encoding="utf-8"?>
 <Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003" DefaultTargets="Build">
   <ItemGroup Label="ProjectConfigurations">
     <ProjectConfiguration Include="Debug|Win32">
@@ -506,6 +506,18 @@
     <ClCompile Include="include\Widgets\ArtifactStatusBar.ixx">
       <CompileAs>CompileAsCppModule</CompileAs>
     </ClCompile>
+    <ClCompile Include="include\Widgets\ArtifactExpressionCopilotWidget.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Widgets\ArtifactTimelineGlobalSwitches.ixx">
+      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="src\Widgets\ArtifactTimelineGlobalSwitches.cppm">
+      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCpp</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Widgets\ArtifactCompositionGraphWidget.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
     <ClCompile Include="include\Widgets\Control\ArtifactPlaybackControlWidget.ixx">
       <CompileAs>CompileAsCppModule</CompileAs>
     </ClCompile>
@@ -770,6 +782,12 @@
     </ClCompile>
     <ClCompile Include="src\Widgets\ArtifactStatusBar.cpp" />
     <ClCompile Include="src\Widgets\ArtifactToolBar.cppm">
+      <CompileAs>CompileAsCpp</CompileAs>
+    </ClCompile>
+    <ClCompile Include="src\Widgets\ArtifactExpressionCopilotWidget.cppm">
+      <CompileAs>CompileAsCpp</CompileAs>
+    </ClCompile>
+    <ClCompile Include="src\Widgets\ArtifactCompositionGraphWidget.cppm">
       <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Widgets\Asset\ArtifactAssetBrowser.cppm">

@@ -651,7 +651,7 @@ void AritfactIRenderer::Impl::createSwapChain(QWidget* window)
 
  void AritfactIRenderer::Impl::recreateSwapChain(QWidget* widget)
  {
-  if (!widget || !pDevice_)
+  if (!widget || !pDevice_ || !pSwapChain_)
   {
 
    return;
@@ -743,6 +743,7 @@ void AritfactIRenderer::Impl::createSwapChain(QWidget* window)
 
  void AritfactIRenderer::Impl::clear()
  {
+  if (!pSwapChain_ || !pImmediateContext_) return;
   // クリアカラーの定義 (RGBA)
   float ClearColor[] = { 1.0f, 0.0f, 0.0f, 1.0f }; // 赤
 
@@ -759,6 +760,7 @@ void AritfactIRenderer::Impl::createSwapChain(QWidget* window)
  
  void AritfactIRenderer::Impl::flushAndWait()
  {
+  if (!pDevice_ || !pImmediateContext_) return;
   RefCntAutoPtr<IFence> fence;
   FenceDesc desc;
   desc.Name = "StopRenderLoopFence";
@@ -1150,6 +1152,7 @@ void AritfactIRenderer::Impl::createSwapChain(QWidget* window)
 
  void AritfactIRenderer::flush()
  {
+  if (!impl_->pImmediateContext_) return;
   impl_->pImmediateContext_->Flush();
  }
 
@@ -1195,6 +1198,7 @@ void AritfactIRenderer::Impl::createSwapChain(QWidget* window)
 
  void AritfactIRenderer::present()
  {
+  if (!impl_->pSwapChain_) return;
   impl_->pSwapChain_->Present();
  }
 

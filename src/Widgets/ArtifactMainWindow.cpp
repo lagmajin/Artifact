@@ -175,7 +175,7 @@ namespace Artifact {
   CDockManager::setConfigFlags(CDockManager::DefaultOpaqueConfig);
   CDockManager::setConfigFlag(CDockManager::RetainTabSizeWhenCloseButtonHidden, true);
 
-  setStyleSheet("dark-style.css");
+  setStyleSheet("");
 
   auto menuBar = new ArtifactMenuBar(this);
   menuBar->setMainWindow(this);
@@ -287,11 +287,11 @@ namespace Artifact {
    auto assetBrowser = new ArtifactAssetBrowser();
    assetBrowser->show();
  	
-  QObject::connect(&projectManager, &ArtifactProjectManager::projectCreated, [this]() {
+  QObject::connect(&projectManager, &ArtifactProjectManager::projectCreated, this, [this]() {
    impl_->handleProjectCreated();
    });
 
-  QObject::connect(&projectManager, &ArtifactProjectManager::compositionCreated, [this](const CompositionID& id) {
+  QObject::connect(&projectManager, &ArtifactProjectManager::compositionCreated, this, [this](const CompositionID& id) {
    impl_->handleCompositionCreated(id,this);
    
    

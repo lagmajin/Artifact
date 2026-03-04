@@ -44,34 +44,49 @@ namespace Artifact
    delete impl_;
  }
 
- void ArtifactTimelineRulerWidget::paintEvent(QPaintEvent*)
- {
-  QPainter p(this);
-  p.setRenderHint(QPainter::Antialiasing);
+  void ArtifactTimelineRulerWidget::paintEvent(QPaintEvent*)
+  {
+   QPainter p(this);
+   p.setRenderHint(QPainter::Antialiasing);
 
-  // Background
-  p.fillRect(rect(), QColor(50, 50, 50));
+   // Background
+   p.fillRect(rect(), QColor(35, 35, 35));
 
-  const int handleHalfW = 6;
-  const int handleW = handleHalfW * 2;
-  int usableWidth = width() - handleW;
+   // Draw Ticks (Temporal markers)
+   p.setPen(QColor(80, 80, 80));
+   for (int x = 0; x < width(); x += 20) {
+       int h = (x % 100 == 0) ? height() : (x % 50 == 0) ? height() / 2 : height() / 4;
+       p.drawLine(x, height() - h, x, height());
+   }
 
-  int x1 = handleHalfW + static_cast<int>(impl_->start * usableWidth);
-  int x2 = handleHalfW + static_cast<int>(impl_->end * usableWidth);
+   const int handleHalfW = 6;
+   const int handleW = handleHalfW * 2;
+   int usableWidth = width() - handleW;
 
-  // Range strip
-  QRect rangeRect(x1, 0, x2 - x1, height());
-  QLinearGradient grad(rangeRect.topLeft(), rangeRect.bottomLeft());
-  grad.setColorAt(0, QColor(100, 150, 255, 180));
-  grad.setColorAt(1, QColor(50, 100, 200, 180));
-  p.fillRect(rangeRect, grad);
+   int x1 = handleHalfW + static_cast<int>(impl_->start * usableWidth);
+   int x2 = handleHalfW + static_cast<int>(impl_->end * usableWidth);
 
-  // Handles
-  p.setBrush(QColor(200, 200, 200));
-  p.setPen(Qt::NoPen);
-  p.drawRoundedRect(QRectF(x1 - handleHalfW, 0, handleW, height()), 3, 3);
-  p.drawRoundedRect(QRectF(x2 - handleHalfW, 0, handleW, height()), 3, 3);
- }
+   // Darken outside range
+   p.fillRect(0, 0, x1, height(), QColor(0, 0, 0, 100));
+   p.fillRect(x2, 0, width() - x2, height(), QColor(0, 0, 0, 100));
+
+   // Range strip (Work Area)
+   QRect rangeRect(x1, 0, x2 - x1, height());
+   QLinearGradient grad(rangeRect.topLeft(), rangeRect.bottomLeft());
+   grad.setColorAt(0, QColor(0, 120, 215, 120));
+   grad.setColorAt(1, QColor(0, 80, 180, 120));
+   p.fillRect(rangeRect, grad);
+   
+   // Bottom border for work area
+   p.setPen(QPen(QColor(0, 150, 255), 2));
+   p.drawLine(x1, height() - 1, x2, height() - 1);
+
+   // Handles (Blue AE style)
+   p.setBrush(QColor(0, 120, 215));
+   p.setPen(QPen(Qt::white, 1));
+   p.drawRoundedRect(QRectF(x1 - handleHalfW, 2, handleW, height() - 4), 2, 2);
+   p.drawRoundedRect(QRectF(x2 - handleHalfW, 2, handleW, height() - 4), 2, 2);
+  }
 
  void ArtifactTimelineRulerWidget::mousePressEvent(QMouseEvent* ev)
  {

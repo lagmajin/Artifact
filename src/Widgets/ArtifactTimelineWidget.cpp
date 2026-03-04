@@ -36,6 +36,7 @@ import Artifact.Timeline.ScaleWidget;
 import Artifact.Timeline.TimeCodeWidget;
 import Panel.DraggableSplitter;
 import Artifact.Timeline.Objects;
+import Artifact.Widgets.Timeline.GlobalSwitches;
 
 
 
@@ -314,11 +315,14 @@ W_OBJECT_IMPL(ArtifactTimelineWidget)
   leftSplitter->setStretchFactor(0, 0); // アイコン列は固定
   leftSplitter->setStretchFactor(1, 1); // 名前列は伸縮可能
 
-  auto leftHeader = new ArtifactTimeCodeWidget(); // タイムコード+検索バー
+  auto leftHeader = new ArtifactTimeCodeWidget(); // タイムコード
+  auto globalSwitches = new ArtifactTimelineGlobalSwitches(); // AE風ボタン群
+
   auto leftLayout = new QVBoxLayout();
   leftLayout->setSpacing(0);
   leftLayout->setContentsMargins(0, 0, 0, 0);
-  //leftLayout->addWidget(leftHeader);
+  leftLayout->addWidget(leftHeader);
+  leftLayout->addWidget(globalSwitches);
   leftLayout->addWidget(leftSplitter);
 
   auto leftPanel = new QWidget();

@@ -1371,4 +1371,28 @@ namespace Artifact {
   impl_->takeScreenShot();
  }
 
+  float ArtifactLayerEditor2DWidget::zoom() const
+  {
+   return impl_->zoom_.scale();
+  }
+
+  QPointF ArtifactLayerEditor2DWidget::pan() const
+  {
+   return impl_->pan_;
+  }
+
+  void ArtifactLayerEditor2DWidget::setPan(const QPointF& offset)
+  {
+   impl_->pan_ = offset;
+  }
+
+  QImage ArtifactLayerEditor2DWidget::grabScreenShot()
+  {
+   return QImage();
+  }
+
+  void ArtifactLayerEditor2DWidget::setTargetLayer(const LayerID& id)
+  {
+  }
+
 };

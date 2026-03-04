@@ -124,31 +124,49 @@ QVariant ResizeHandle::itemChange(GraphicsItemChange change, const QVariant& val
 
  void ClipItem::paint(QPainter* painter, const QStyleOptionGraphicsItem* option, QWidget* widget /*= nullptr*/)
  {
- painter->save();
- 
- // Draw main clip rectangle
- QRectF rect = boundingRect();
- QColor fillColor = QColor(70, 120, 180);
- 
- // Highlight selected clips
- if (isSelected()) {
-  fillColor = QColor(100, 150, 220);
- }
- 
- 
+  painter->save();
+  painter->setRenderHint(QPainter::Antialiasing);
+  
+  QRectF rect = boundingRect();
+  double cornerRadius = 4.0;
+  
+  // Base colors with Glassmorphism feel
+  QColor baseColor = QColor(70, 120, 180, 200);
+  if (isSelected()) {
+   baseColor = QColor(100, 150, 220, 230);
+  }
+  
+  // Gradient for depth
+  QLinearGradient grad(rect.topLeft(), rect.bottomLeft());
+  grad.setColorAt(0, baseColor.lighter(120));
+  grad.setColorAt(0.5, baseColor);
+  grad.setColorAt(1, baseColor.darker(110));
+  
+  // Shadow/Glow effect on selection
+  if (isSelected()) {
+      painter->setPen(QPen(QColor(255, 255, 255, 100), 1));
+      painter->setBrush(Qt::NoBrush);
+      painter->drawRoundedRect(rect.adjusted(-1, -1, 1, 1), cornerRadius + 1, cornerRadius + 1);
+  }
 
- painter->setPen(Qt::NoPen);
- painter->setBrush(fillColor);
- painter->drawRect(rect);
- 
- // Draw border
- QPen borderPen(isSelected() ? QColor(255, 200, 0) : QColor(50, 90, 150));
- borderPen.setWidth(isSelected() ? 2 : 1);
- painter->setPen(borderPen);
- painter->setBrush(Qt::NoBrush);
- painter->drawRect(rect);
- 
- painter->restore();
+  // Draw main body
+  painter->setPen(Qt::NoPen);
+  painter->setBrush(grad);
+  painter->drawRoundedRect(rect, cornerRadius, cornerRadius);
+  
+  // Inner Top Highlight (Glass effect)
+  QPainterPath path;
+  path.addRoundedRect(rect.adjusted(1, 1, -1, -rect.height()/2), cornerRadius-1, cornerRadius-1);
+  painter->fillPath(path, QColor(255, 255, 255, 40));
+  
+  // Border
+  QPen borderPen(isSelected() ? QColor(255, 215, 0) : QColor(255, 255, 255, 60));
+  borderPen.setWidthF(isSelected() ? 1.5 : 0.8);
+  painter->setPen(borderPen);
+  painter->setBrush(Qt::NoBrush);
+  painter->drawRoundedRect(rect, cornerRadius, cornerRadius);
+  
+  painter->restore();
  }
 
 // Free-function factory/destructor helpers

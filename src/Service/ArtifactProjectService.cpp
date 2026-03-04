@@ -245,7 +245,13 @@ QVector<ProjectItem*> ArtifactProjectService::projectItems() const
 
 void ArtifactProjectService::createComposition(const ArtifactCompositionInitParams& params)
 {
-
+ auto& manager = impl_->projectManager();
+ auto result = manager.createComposition(params);
+ if (result.success) {
+  qDebug() << "[ArtifactProjectService::createComposition] succeeded, id:" << result.id.toString();
+ } else {
+  qDebug() << "[ArtifactProjectService::createComposition] failed";
+ }
 }
 
 void ArtifactProjectService::removeAllAssets()

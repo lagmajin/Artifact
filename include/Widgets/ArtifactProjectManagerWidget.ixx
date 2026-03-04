@@ -5,6 +5,7 @@
 #include <QToolBar>
 #include <QTreeView>
 #include <QFileInfo>
+#include <QModelIndex>
 #include <QStringList>
 
 export module Artifact.Widgets.ProjectManagerWidget;
@@ -41,6 +42,7 @@ public:
 };
 
  class ArtifactProjectView :public QTreeView {
+  W_OBJECT(ArtifactProjectView)
  private:
   class Impl;
   Impl* impl_;
@@ -61,6 +63,8 @@ public:
 
   QSize sizeHint() const override;
 
+ public /*signals*/:
+  void itemSelected(const QModelIndex& index) W_SIGNAL(itemSelected, index);
  };
 
  class ArtifactProjectManagerToolBox :public QWidget
@@ -96,7 +100,7 @@ public:
   void triggerUpdate();
   void setThumbnailEnabled(bool b = true);
  public /*signals*/:
-  void onFileDropped(const QStringList& list) W_SIGNAL(onFileDropped, list)
+  void onFileDropped(const QStringList& list) W_SIGNAL(onFileDropped, list);
    
  public/*Slots*/:
   void updateRequested();
