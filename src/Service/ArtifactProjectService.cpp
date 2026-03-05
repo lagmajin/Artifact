@@ -15,7 +15,7 @@ import Artifact.Layer.Factory;
 import Artifact.Composition.Abstract;
 import Artifact.Project.Items;
 import File.TypeDetector;
-import Artifact.Render.FrameCache;
+//import Artifact.Render.FrameCache;
 
 namespace Artifact
 {
@@ -45,7 +45,7 @@ namespace Artifact
 
   void removeAllAssets();
   PreviewQualityPreset qualityPreset_ = PreviewQualityPreset::Preview;
-  ProgressiveRenderer progressiveRenderer_;
+  //ProgressiveRenderer progressiveRenderer_;
 
   void checkImportedAssetCompatibility(const QStringList& importedPaths);
  };
@@ -164,19 +164,19 @@ namespace Artifact
   qualityPreset_ = preset;
   switch (preset) {
   case PreviewQualityPreset::Draft:
-   progressiveRenderer_.setQuality(RenderQuality::Draft);
-   progressiveRenderer_.setDraftQuality(4);
-   progressiveRenderer_.setPreviewQuality(2);
+   //progressiveRenderer_.setQuality(RenderQuality::Draft);
+   //progressiveRenderer_.setDraftQuality(4);
+   //progressiveRenderer_.setPreviewQuality(2);
    break;
   case PreviewQualityPreset::Preview:
-   progressiveRenderer_.setQuality(RenderQuality::Preview);
-   progressiveRenderer_.setDraftQuality(4);
-   progressiveRenderer_.setPreviewQuality(2);
+   //progressiveRenderer_.setQuality(RenderQuality::Preview);
+   //progressiveRenderer_.setDraftQuality(4);
+   //progressiveRenderer_.setPreviewQuality(2);
    break;
   case PreviewQualityPreset::Final:
-   progressiveRenderer_.setQuality(RenderQuality::Final);
-   progressiveRenderer_.setDraftQuality(2);
-   progressiveRenderer_.setPreviewQuality(1);
+   //progressiveRenderer_.setQuality(RenderQuality::Final);
+   //progressiveRenderer_.setDraftQuality(2);
+   //progressiveRenderer_.setPreviewQuality(1);
    break;
   }
  }

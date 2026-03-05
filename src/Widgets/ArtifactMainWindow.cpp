@@ -354,21 +354,21 @@ namespace Artifact {
       QPointF dropPos = params["dropPos"].toPointF();
       
       auto& projectManager = ArtifactProjectManager::getInstance();
-      Id compId = SelectionManager::instance().activeComposition();
-      
+      CompositionID compId(SelectionManager::instance().activeComposition());
+
       // If no active composition in SelectionManager, try the one from ProjectManager
-      if (compId.isNull()) {
+      if (compId.isNil()) {
           auto currentComp = projectManager.currentComposition();
-          if (currentComp) compId = currentComp->id();
+          if (currentComp) compId = CompositionID(currentComp->id());
       }
-      
-      if (!compId.isNull()) {
+
+      if (!compId.isNil()) {
           qDebug() << "Handling Drag & Drop: Creating layer from asset" << assetIdStr << "at" << dropPos;
-          
+
           // Create a named Image/Footage layer init params
           // Note: In a real app, we would look up the asset name from the ID
-          ArtifactLayerInitParams layerParams("New Asset Layer", LayerType::Image);
-          
+          ArtifactLayerInitParams layerParams(QString("New Asset Layer"), LayerType::Image);
+
           auto result = projectManager.addLayerToComposition(compId, layerParams);
           if (result.success) {
               statusBar()->showMessage(tr("Created layer from asset"), 2000);
@@ -377,8 +377,8 @@ namespace Artifact {
   });
 
   am->getAction("artifact.comp.add_to_render_queue")->setExecuteCallback([this](const QVariantMap& params) {
-      Id compId = SelectionManager::instance().activeComposition();
-      if (!compId.isNull()) {
+      CompositionID compId(SelectionManager::instance().activeComposition());
+      if (!compId.isNil()) {
           // In real app, we'd get the comp name from projectManager
           RendererQueueManager::instance().addJob(compId, "Rendered Composition");
           statusBar()->showMessage(tr("Added to Render Queue (Ctrl+M)"), 2000);

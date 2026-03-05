@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <QList>
 #include <QImage>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/RenderDevice.h>
@@ -128,6 +128,10 @@ namespace Artifact
   void setCanvasSize(float w, float h) { viewport_.SetCanvasSize(w, h); }
   void setPan(float x, float y) { viewport_.SetPan(x, y); }
   void setZoom(float zoom) { viewport_.SetZoom(zoom); }
+  void panBy(float dx, float dy) { viewport_.PanBy(dx, dy); }
+  void resetView() { viewport_.ResetView(); }
+  void fitToViewport(float margin) { viewport_.FitCanvasToViewport(margin); }
+  void zoomAroundViewportPoint(float2 viewportPos, float newZoom) { viewport_.ZoomAroundViewportPoint(viewportPos, newZoom); }
   float2 canvasToViewport(float2 pos) const { return viewport_.CanvasToViewport(pos); }
   float2 viewportToCanvas(float2 pos) const { return viewport_.ViewportToCanvas(pos); }
  
@@ -974,11 +978,11 @@ void ArtifactIRenderer::Impl::createSwapChain(QWidget* window)
 
   {
    auto desc = pSwapChain_->GetDesc();
-   float nx = (x + pan_.x()) / float(desc.Width) * 2.0f - 1.0f;
-   float ny = 1.0f - (y + pan_.y()) / float(desc.Height) * 2.0f;
+   float nx = (x + viewport_.GetPan().x) / float(desc.Width) * 2.0f - 1.0f;
+   float ny = 1.0f - (y + viewport_.GetPan().y) / float(desc.Height) * 2.0f;
 
    CBSolidTransform2D cbTransform;
-   cbTransform.offset = { x + (float)pan_.x(), y + (float)pan_.y() };
+   cbTransform.offset = { x + viewport_.GetPan().x, y + viewport_.GetPan().y };
    cbTransform.scale = { 1,1 };
    cbTransform.screenSize = { float(desc.Width), float(desc.Height) };
 
@@ -1522,12 +1526,12 @@ void ArtifactIRenderer::Impl::createSwapChain(QWidget* window)
   void ArtifactIRenderer::setCanvasSize(float w, float h) { impl_->setCanvasSize(w, h); }
   void ArtifactIRenderer::setPan(float x, float y) { impl_->setPan(x, y); }
   void ArtifactIRenderer::setZoom(float zoom) { impl_->setZoom(zoom); }
-  void ArtifactIRenderer::panBy(float dx, float dy) { impl_->viewport_.PanBy(dx, dy); }
-  void ArtifactIRenderer::resetView() { impl_->viewport_.ResetView(); }
-  void ArtifactIRenderer::fitToViewport(float margin) { impl_->viewport_.FitCanvasToViewport(margin); }
-  void ArtifactIRenderer::zoomAroundViewportPoint(float2 viewportPos, float newZoom) { impl_->viewport_.ZoomAroundViewportPoint(viewportPos, newZoom); }
+  void ArtifactIRenderer::panBy(float dx, float dy) { impl_->panBy(dx, dy); }
+  void ArtifactIRenderer::resetView() { impl_->resetView(); }
+  void ArtifactIRenderer::fitToViewport(float margin) { impl_->fitToViewport(margin); }
+  void ArtifactIRenderer::zoomAroundViewportPoint(float2 viewportPos, float newZoom) { impl_->zoomAroundViewportPoint(viewportPos, newZoom); }
 
-  float2 ArtifactIRenderer::canvasToViewport(float2 pos) const { return impl_->viewport_.CanvasToViewport(pos); }
+  float2 ArtifactIRenderer::canvasToViewport(float2 pos) const { return impl_->canvasToViewport(pos); }
   float2 ArtifactIRenderer::viewportToCanvas(float2 pos) const { return impl_->viewportToCanvas(pos); }
  
   void ArtifactIRenderer::destroy()

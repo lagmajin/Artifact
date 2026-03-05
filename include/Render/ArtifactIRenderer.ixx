@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <DiligentCore/Common/interface/BasicMath.hpp>
 #include <QWidget>
 
@@ -35,6 +35,7 @@ export namespace Artifact
    virtual void drawRectOutline(float2 pos, float2 size, const FloatColor& color);
    virtual void drawParticles();
    virtual void drawRectLocal(float x, float y, float w, float h, const FloatColor& color);
+   virtual void drawRectOutlineLocal(float x, float y, float w, float h, const FloatColor& color);
    virtual void drawThickLineLocal(float2 p1, float2 p2, float thickness, const FloatColor& color);
    virtual void drawDotLineLocal(float2 p1, float2 p2, float thickness, float spacing, const FloatColor& color);
    virtual void drawBezierLocal(float2 p0, float2 p1, float2 p2, float thickness, const FloatColor& color); // Quadratic
