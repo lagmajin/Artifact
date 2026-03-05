@@ -317,24 +317,25 @@ W_OBJECT_IMPL(ArtifactTimelineWidget)
 
   auto leftHeader = new ArtifactTimeCodeWidget(); // タイムコード
   auto searchBar = new ArtifactTimelineSearchBarWidget(); // 検索バー
+  auto globalSwitches = new ArtifactTimelineGlobalSwitches(); // AE風ボタン群
+
   auto searchBarLayout = new QHBoxLayout();
-  searchBarLayout->setSpacing(0);
-  searchBarLayout->setContentsMargins(0, 0, 0, 0);
+  searchBarLayout->setSpacing(8);
+  searchBarLayout->setContentsMargins(0, 0, 8, 0);
   searchBarLayout->addWidget(leftHeader);
   searchBarLayout->addWidget(searchBar);
-  searchBarLayout->setStretch(0, 1);
+  searchBarLayout->addWidget(globalSwitches);
+  searchBarLayout->setStretch(0, 0);
   searchBarLayout->setStretch(1, 1);
+  searchBarLayout->setStretch(2, 0);
   
   auto headerWidget = new QWidget();
   headerWidget->setLayout(searchBarLayout);
-
-  auto globalSwitches = new ArtifactTimelineGlobalSwitches(); // AE風ボタン群
 
   auto leftLayout = new QVBoxLayout();
   leftLayout->setSpacing(0);
   leftLayout->setContentsMargins(0, 0, 0, 0);
   leftLayout->addWidget(headerWidget);
-  leftLayout->addWidget(globalSwitches);
   leftLayout->addWidget(leftSplitter);
 
   auto leftPanel = new QWidget();

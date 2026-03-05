@@ -30,9 +30,9 @@ namespace Artifact
 
  ArtifactTimeCodeWidget::ArtifactTimeCodeWidget(QWidget* parent /*= nullptr*/) : QWidget(parent), impl_(new Impl())
  {
-  auto layout = new QHBoxLayout();
-  layout->setSpacing(8);
-  layout->setContentsMargins(10, 0, 10, 0);
+  auto layout = new QVBoxLayout();
+  layout->setSpacing(0);
+  layout->setContentsMargins(10, 4, 10, 4);
   layout->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
   
   impl_->timecodeLabel_->setObjectName("timeLabel");
