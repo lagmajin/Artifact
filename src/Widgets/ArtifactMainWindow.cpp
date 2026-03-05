@@ -28,6 +28,10 @@ import std;
 import Menu;
 
 import Utils.Id;
+import UI.SelectionManager;
+import Input.Operator;
+import Render.Queue.Manager;
+import Artifact.Composition.Abstract;
 
 
 import Widgets.NativeHelper;
@@ -342,6 +346,44 @@ namespace Artifact {
   // Mica背景のためにウィンドウ表示前に設定（showEvent後の設定はネイティブウィンドウ再生成→qregionクラッシュの原因になる）
   setAttribute(Qt::WA_TranslucentBackground);
   setStyleSheet("QMainWindow { background: transparent; }");
+ 
+  // Register action handlers for UI/System integration
+  auto* am = ActionManager::instance();
+  am->getAction("artifact.layer.create_from_asset")->setExecuteCallback([this](const QVariantMap& params) {
+      QString assetIdStr = params["assetId"].toString();
+      QPointF dropPos = params["dropPos"].toPointF();
+      
+      auto& projectManager = ArtifactProjectManager::getInstance();
+      Id compId = SelectionManager::instance().activeComposition();
+      
+      // If no active composition in SelectionManager, try the one from ProjectManager
+      if (compId.isNull()) {
+          auto currentComp = projectManager.currentComposition();
+          if (currentComp) compId = currentComp->id();
+      }
+      
+      if (!compId.isNull()) {
+          qDebug() << "Handling Drag & Drop: Creating layer from asset" << assetIdStr << "at" << dropPos;
+          
+          // Create a named Image/Footage layer init params
+          // Note: In a real app, we would look up the asset name from the ID
+          ArtifactLayerInitParams layerParams("New Asset Layer", LayerType::Image);
+          
+          auto result = projectManager.addLayerToComposition(compId, layerParams);
+          if (result.success) {
+              statusBar()->showMessage(tr("Created layer from asset"), 2000);
+          }
+      }
+  });
+
+  am->getAction("artifact.comp.add_to_render_queue")->setExecuteCallback([this](const QVariantMap& params) {
+      Id compId = SelectionManager::instance().activeComposition();
+      if (!compId.isNull()) {
+          // In real app, we'd get the comp name from projectManager
+          RendererQueueManager::instance().addJob(compId, "Rendered Composition");
+          statusBar()->showMessage(tr("Added to Render Queue (Ctrl+M)"), 2000);
+      }
+  });
 
   // macOS Touch Bar setup
   //MacTouchBar::install(this);

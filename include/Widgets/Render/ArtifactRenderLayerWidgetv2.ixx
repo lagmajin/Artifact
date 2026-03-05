@@ -45,10 +45,11 @@ export namespace Artifact {
   //void setTargetLayerId(int id);
   void setTargetLayer(const LayerID& id);
   void resetView();
+  void fitToViewport();
+  void panBy(const QPointF& delta);
+  void zoomAroundPoint(const QPointF& viewportPos, float newZoom);
+ 
   float zoom() const;
-  void setZoom(const ZoomScale2D& scale);
-  QPointF pan() const;
-  void setPan(const QPointF& offset);
   void setTargetLayer(LayerID& id);
   void clearTargetLayer();
   QImage grabScreenShot();

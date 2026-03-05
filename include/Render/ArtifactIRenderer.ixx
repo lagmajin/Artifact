@@ -37,7 +37,23 @@ export namespace Artifact
    virtual void drawRectLocal(float x, float y, float w, float h, const FloatColor& color);
    virtual void drawThickLineLocal(float2 p1, float2 p2, float thickness, const FloatColor& color);
    virtual void drawDotLineLocal(float2 p1, float2 p2, float thickness, float spacing, const FloatColor& color);
-
+   virtual void drawBezierLocal(float2 p0, float2 p1, float2 p2, float thickness, const FloatColor& color); // Quadratic
+   virtual void drawBezierLocal(float2 p0, float2 p1, float2 p2, float2 p3, float thickness, const FloatColor& color); // Cubic
+   virtual void drawSolidTriangleLocal(float2 p0, float2 p1, float2 p2, const FloatColor& color);
+ 
+   // Viewport Transform (Proposal 4)
+   virtual void setViewportSize(float w, float h);
+   virtual void setCanvasSize(float w, float h);
+    virtual void setPan(float x, float y);
+    virtual void setZoom(float zoom);
+    virtual void panBy(float dx, float dy);
+    virtual void resetView();
+    virtual void fitToViewport(float margin = 50.0f);
+    virtual void zoomAroundViewportPoint(float2 viewportPos, float newZoom);
+ 
+    virtual float2 canvasToViewport(float2 canvasPos) const;
+   virtual float2 viewportToCanvas(float2 pos) const;
+ 
   virtual void setUpscaleConfig(bool enable, float sharpness = 0.5f);
  
    

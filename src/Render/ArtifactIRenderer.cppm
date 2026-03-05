@@ -24,6 +24,8 @@ import Graphics.Shader.Compile.Task;
 import Graphics.Shader.Compute.HLSL.Blend;
 import Layer.Blend;
 import Core.Scale.Zoom;
+import Core.Transform.Viewport;
+import Math.Bezier;
 import VertexBuffer;
 import Render.Shader.ThickLine;
 
@@ -50,12 +52,15 @@ namespace Artifact
   RenderShaderPair m_draw_solid_shaders;
   RenderShaderPair m_draw_thick_line_shaders;
   RenderShaderPair m_draw_dot_line_shaders;
+  RenderShaderPair m_draw_solid_triangle_shaders;
+ 
   RefCntAutoPtr<IBuffer> m_draw_thick_line_vertex_buffer;
   RefCntAutoPtr<IBuffer> m_draw_dot_line_vertex_buffer;
+  RefCntAutoPtr<IBuffer> m_draw_solid_triangle_vertex_buffer;
   RefCntAutoPtr<IBuffer> m_draw_dot_line_cb;
   QWidget* widget_;
   HWND renderHwnd_ = nullptr;
-  QPointF pan_;
+  ViewportTransformer viewport_;
 
   bool m_initialized = false;
  bool m_frameQueryInitialized = false;
@@ -81,7 +86,6 @@ namespace Artifact
   RefCntAutoPtr<IDeviceContext> pImmediateContext_;
   RefCntAutoPtr<IDeviceContext> pDeferredContext_;
   RefCntAutoPtr<ISwapChain>		pSwapChain_;
-  ZoomScale2D zoom_;
   const TEXTURE_FORMAT MAIN_RTV_FORMAT = TEX_FORMAT_RGBA8_UNORM_SRGB;
   PSOAndSRB m_draw_line_pso_and_srb;
   PSOAndSRB m_draw_dot_line_pso_and_srb;
@@ -89,6 +93,7 @@ namespace Artifact
   PSOAndSRB m_draw_rect_outline_pso_and_srb;
   PSOAndSRB m_draw_sprite_pso_and_srb;
   PSOAndSRB m_draw_thick_line_pso_and_srb;
+  PSOAndSRB m_draw_solid_triangle_pso_and_srb;
   RefCntAutoPtr<ISampler> m_draw_sprite_sampler;
   int m_CurrentPhysicalWidth;
   int m_CurrentPhysicalHeight;
@@ -114,8 +119,18 @@ namespace Artifact
   void drawLineLocal(float2 p1, float2 p2, const FloatColor& color1,const FloatColor& color2);
   void drawThickLineLocal(float2 p1, float2 p2, float thickness, const FloatColor& color);
   void drawDotLineLocal(float2 p1, float2 p2, float thickness, float spacing, const FloatColor& color);
+  void drawBezierLocal(float2 p0, float2 p1, float2 p2, float thickness, const FloatColor& color);
+  void drawBezierLocal(float2 p0, float2 p1, float2 p2, float2 p3, float thickness, const FloatColor& color);
+  void drawSolidTriangleLocal(float2 p0, float2 p1, float2 p2, const FloatColor& color);
   void drawRectOutlineLocal(float x, float y, float w, float h, const FloatColor& color);
 
+  void setViewportSize(float w, float h) { viewport_.SetViewportSize(w, h); }
+  void setCanvasSize(float w, float h) { viewport_.SetCanvasSize(w, h); }
+  void setPan(float x, float y) { viewport_.SetPan(x, y); }
+  void setZoom(float zoom) { viewport_.SetZoom(zoom); }
+  float2 canvasToViewport(float2 pos) const { return viewport_.CanvasToViewport(pos); }
+  float2 viewportToCanvas(float2 pos) const { return viewport_.ViewportToCanvas(pos); }
+ 
   void destroy();
  };
 
@@ -322,6 +337,7 @@ namespace Artifact
      
 	 pDevice_->CreateShader(solidRectVsInfo2, &m_draw_solid_shaders.VS);
 	 pDevice_->CreateShader(solidRectPsInfo2, &m_draw_solid_shaders.PS);
+	 m_draw_solid_triangle_shaders = m_draw_solid_shaders;
 
   {
    ShaderCreateInfo thickLineVsInfo;
@@ -435,6 +451,15 @@ namespace Artifact
    if (m_draw_solid_rect_pso_and_srb.pPSO)
    {
 	m_draw_solid_rect_pso_and_srb.pPSO->CreateShaderResourceBinding(&m_draw_solid_rect_pso_and_srb.pSRB, true);
+   }
+ 
+   GraphicsPipelineStateCreateInfo drawSolidTrianglePSOCreateInfo = drawSolidRectPSOCreateInfo;
+   drawSolidTrianglePSOCreateInfo.PSODesc.Name = "DrawSolidTriangle PSO";
+   drawSolidTrianglePSOCreateInfo.GraphicsPipeline.PrimitiveTopology = PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+   pDevice_->CreateGraphicsPipelineState(drawSolidTrianglePSOCreateInfo, &m_draw_solid_triangle_pso_and_srb.pPSO);
+   if (m_draw_solid_triangle_pso_and_srb.pPSO)
+   {
+    m_draw_solid_triangle_pso_and_srb.pPSO->CreateShaderResourceBinding(&m_draw_solid_triangle_pso_and_srb.pSRB, true);
    }
 
 
@@ -652,6 +677,10 @@ void ArtifactIRenderer::Impl::createConstantBuffers()
   vbDesc.CPUAccessFlags = CPU_ACCESS_WRITE;
   vbDesc.Size = sizeof(RectVertex) * 4;
   pDevice_->CreateBuffer(vbDesc, nullptr, &m_draw_solid_rect_vertex_buffer);
+ 
+  vbDesc.Name = "SolidTriangle Vertex Buffer";
+  vbDesc.Size = sizeof(RectVertex) * 3;
+  pDevice_->CreateBuffer(vbDesc, nullptr, &m_draw_solid_triangle_vertex_buffer);
  }
 
  // DrawSolidRect用のインデックスバッファ
@@ -1012,12 +1041,12 @@ void ArtifactIRenderer::Impl::createSwapChain(QWidget* window)
 	 }
 
 	 {
-	  auto desc = pSwapChain_->GetDesc();
+	  auto viewportCB = viewport_.GetViewportCB();
 	  CBSolidTransform2D cbTransform;
-	  cbTransform.offset = { (float)pan_.x(), (float)pan_.y() };
-	  cbTransform.scale = { 1, 1 };
-	  cbTransform.screenSize = { float(desc.Width), float(desc.Height) };
-
+	  cbTransform.offset = viewportCB.offset;
+	  cbTransform.scale = viewportCB.scale;
+	  cbTransform.screenSize = viewportCB.screenSize;
+ 
 	  void* pData = nullptr;
 	  pImmediateContext_->MapBuffer(m_draw_solid_rect_trnsform_cb, MAP_WRITE, MAP_FLAG_DISCARD, pData);
 	  std::memcpy(pData, &cbTransform, sizeof(cbTransform));
@@ -1071,12 +1100,12 @@ void ArtifactIRenderer::Impl::createSwapChain(QWidget* window)
   }
 
   {
-   auto desc = pSwapChain_->GetDesc();
+   auto viewportCB = viewport_.GetViewportCB();
    CBSolidTransform2D cbTransform;
-   cbTransform.offset = { (float)pan_.x(), (float)pan_.y() };
-   cbTransform.scale = { 1, 1 };
-   cbTransform.screenSize = { float(desc.Width), float(desc.Height) };
-
+   cbTransform.offset = viewportCB.offset;
+   cbTransform.scale = viewportCB.scale;
+   cbTransform.screenSize = viewportCB.screenSize;
+ 
    void* pData = nullptr;
    pImmediateContext_->MapBuffer(m_draw_solid_rect_trnsform_cb, MAP_WRITE, MAP_FLAG_DISCARD, pData);
    std::memcpy(pData, &cbTransform, sizeof(cbTransform));
@@ -1130,11 +1159,11 @@ void ArtifactIRenderer::Impl::createSwapChain(QWidget* window)
    }
  
    {
-    auto desc = pSwapChain_->GetDesc();
+    auto viewportCB = viewport_.GetViewportCB();
     CBSolidTransform2D cbTransform;
-    cbTransform.offset = { (float)pan_.x(), (float)pan_.y() };
-    cbTransform.scale = { 1, 1 };
-    cbTransform.screenSize = { float(desc.Width), float(desc.Height) };
+    cbTransform.offset = viewportCB.offset;
+    cbTransform.scale = viewportCB.scale;
+    cbTransform.screenSize = viewportCB.screenSize;
  
     void* pData = nullptr;
     pImmediateContext_->MapBuffer(m_draw_solid_rect_trnsform_cb, MAP_WRITE, MAP_FLAG_DISCARD, pData);
@@ -1163,6 +1192,81 @@ void ArtifactIRenderer::Impl::createSwapChain(QWidget* window)
  
    DrawAttribs drawAttrs;
    drawAttrs.NumVertices = 4;
+   drawAttrs.Flags = DRAW_FLAG_VERIFY_ALL;
+   pImmediateContext_->Draw(drawAttrs);
+  }
+ 
+  void ArtifactIRenderer::Impl::drawBezierLocal(float2 p0, float2 p1, float2 p2, float thickness, const FloatColor& color)
+  {
+   const int segments = 24;
+   float2 lastPos = p0;
+   for (int i = 1; i <= segments; ++i) {
+    float t = (float)i / (float)segments;
+    QPointF qp = BezierCalculator::evaluateQuadratic({ p0.x, p0.y }, { p1.x, p1.y }, { p2.x, p2.y }, t);
+    float2 currentPos = { (float)qp.x(), (float)qp.y() };
+    drawThickLineLocal(lastPos, currentPos, thickness, color);
+    lastPos = currentPos;
+   }
+  }
+ 
+  void ArtifactIRenderer::Impl::drawBezierLocal(float2 p0, float2 p1, float2 p2, float2 p3, float thickness, const FloatColor& color)
+  {
+   const int segments = 32;
+   float2 lastPos = p0;
+   for (int i = 1; i <= segments; ++i) {
+    float t = (float)i / (float)segments;
+    QPointF qp = BezierCalculator::evaluateCubic({ p0.x, p0.y }, { p1.x, p1.y }, { p2.x, p2.y }, { p3.x, p3.y }, t);
+    float2 currentPos = { (float)qp.x(), (float)qp.y() };
+    drawThickLineLocal(lastPos, currentPos, thickness, color);
+    lastPos = currentPos;
+   }
+  }
+ 
+  void ArtifactIRenderer::Impl::drawSolidTriangleLocal(float2 p0, float2 p1, float2 p2, const FloatColor& color)
+  {
+   if (!pSwapChain_ || !m_draw_solid_triangle_pso_and_srb.pPSO) return;
+ 
+   float4 c = { color.r(), color.g(), color.b(), 1.0f };
+   RectVertex vertices[3] = {
+    {{p0.x, p0.y}, c},
+    {{p1.x, p1.y}, c},
+    {{p2.x, p2.y}, c}
+   };
+ 
+   auto swapChainRTV = pSwapChain_->GetCurrentBackBufferRTV();
+   pImmediateContext_->SetRenderTargets(1, &swapChainRTV, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+ 
+   {
+    void* pData = nullptr;
+    pImmediateContext_->MapBuffer(m_draw_solid_triangle_vertex_buffer, MAP_WRITE, MAP_FLAG_DISCARD, pData);
+    std::memcpy(pData, vertices, sizeof(vertices));
+    pImmediateContext_->UnmapBuffer(m_draw_solid_triangle_vertex_buffer, MAP_WRITE);
+   }
+ 
+   {
+    auto viewportCB = viewport_.GetViewportCB();
+    CBSolidTransform2D cbTransform;
+    cbTransform.offset = viewportCB.offset;
+    cbTransform.scale = viewportCB.scale;
+    cbTransform.screenSize = viewportCB.screenSize;
+ 
+    void* pData = nullptr;
+    pImmediateContext_->MapBuffer(m_draw_solid_rect_trnsform_cb, MAP_WRITE, MAP_FLAG_DISCARD, pData);
+    std::memcpy(pData, &cbTransform, sizeof(cbTransform));
+    pImmediateContext_->UnmapBuffer(m_draw_solid_rect_trnsform_cb, MAP_WRITE);
+   }
+ 
+   pImmediateContext_->SetPipelineState(m_draw_solid_triangle_pso_and_srb.pPSO);
+ 
+   IBuffer* pBuffers[] = { m_draw_solid_triangle_vertex_buffer };
+   Uint64 offsets[] = { 0 };
+   pImmediateContext_->SetVertexBuffers(0, 1, pBuffers, offsets, RESOURCE_STATE_TRANSITION_MODE_TRANSITION, SET_VERTEX_BUFFERS_FLAG_RESET);
+ 
+   m_draw_solid_triangle_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_VERTEX, "TransformCB")->Set(m_draw_solid_rect_trnsform_cb);
+   pImmediateContext_->CommitShaderResources(m_draw_solid_triangle_pso_and_srb.pSRB, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+ 
+   DrawAttribs drawAttrs;
+   drawAttrs.NumVertices = 3;
    drawAttrs.Flags = DRAW_FLAG_VERIFY_ALL;
    pImmediateContext_->Draw(drawAttrs);
   }
@@ -1231,10 +1335,12 @@ void ArtifactIRenderer::Impl::createSwapChain(QWidget* window)
 
   float screenW = static_cast<float>(desc.Width);
   float screenH = static_cast<float>(desc.Height);
-  float left = (x + pan_.x()) / screenW * 2.0f - 1.0f;
-  float right = (x + w + pan_.x()) / screenW * 2.0f - 1.0f;
-  float top = 1.0f - (y + pan_.y()) / screenH * 2.0f;
-  float bottom = 1.0f - ((y + h) + pan_.y()) / screenH * 2.0f;
+  float2 p1_ndc = viewport_.CanvasToNDC({x, y});
+  float2 p2_ndc = viewport_.CanvasToNDC({x + w, y + h});
+  float left = p1_ndc.x;
+  float right = p2_ndc.x;
+  float top = p1_ndc.y;
+  float bottom = p2_ndc.y;
 
   struct SpriteVertexVL
   {
@@ -1391,11 +1497,38 @@ void ArtifactIRenderer::Impl::createSwapChain(QWidget* window)
    impl_->drawDotLineLocal(p1, p2, thickness, spacing, color);
   }
  
+  void ArtifactIRenderer::drawBezierLocal(float2 p0, float2 p1, float2 p2, float thickness, const FloatColor& color)
+  {
+   impl_->drawBezierLocal(p0, p1, p2, thickness, color);
+  }
+ 
+  void ArtifactIRenderer::drawBezierLocal(float2 p0, float2 p1, float2 p2, float2 p3, float thickness, const FloatColor& color)
+  {
+   impl_->drawBezierLocal(p0, p1, p2, p3, thickness, color);
+  }
+ 
+  void ArtifactIRenderer::drawSolidTriangleLocal(float2 p0, float2 p1, float2 p2, const FloatColor& color)
+  {
+   impl_->drawSolidTriangleLocal(p0, p1, p2, color);
+  }
+ 
   void ArtifactIRenderer::present()
   {
    if (!impl_->pSwapChain_) return;
    impl_->pSwapChain_->Present();
   }
+ 
+  void ArtifactIRenderer::setViewportSize(float w, float h) { impl_->setViewportSize(w, h); }
+  void ArtifactIRenderer::setCanvasSize(float w, float h) { impl_->setCanvasSize(w, h); }
+  void ArtifactIRenderer::setPan(float x, float y) { impl_->setPan(x, y); }
+  void ArtifactIRenderer::setZoom(float zoom) { impl_->setZoom(zoom); }
+  void ArtifactIRenderer::panBy(float dx, float dy) { impl_->viewport_.PanBy(dx, dy); }
+  void ArtifactIRenderer::resetView() { impl_->viewport_.ResetView(); }
+  void ArtifactIRenderer::fitToViewport(float margin) { impl_->viewport_.FitCanvasToViewport(margin); }
+  void ArtifactIRenderer::zoomAroundViewportPoint(float2 viewportPos, float newZoom) { impl_->viewport_.ZoomAroundViewportPoint(viewportPos, newZoom); }
+
+  float2 ArtifactIRenderer::canvasToViewport(float2 pos) const { return impl_->viewport_.CanvasToViewport(pos); }
+  float2 ArtifactIRenderer::viewportToCanvas(float2 pos) const { return impl_->viewportToCanvas(pos); }
  
   void ArtifactIRenderer::destroy()
   {

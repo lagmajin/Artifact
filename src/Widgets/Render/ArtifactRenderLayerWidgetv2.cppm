@@ -323,7 +323,24 @@ W_OBJECT_IMPL(ArtifactLayerEditorWidgetV2)
 
  void ArtifactLayerEditorWidgetV2::resetView()
  {
+  if (impl_->renderer_) impl_->renderer_->resetView();
+ }
+ 
+ void ArtifactLayerEditorWidgetV2::fitToViewport()
+ {
+  if (impl_->renderer_) impl_->renderer_->fitToViewport();
+ }
+ 
+ void ArtifactLayerEditorWidgetV2::panBy(const QPointF& delta)
+ {
+  if (impl_->renderer_) impl_->renderer_->panBy((float)delta.x(), (float)delta.y());
+ }
 
+ void ArtifactLayerEditorWidgetV2::zoomAroundPoint(const QPointF& viewportPos, float newZoom)
+ {
+  if (impl_->renderer_) {
+      impl_->renderer_->zoomAroundViewportPoint({(float)viewportPos.x(), (float)viewportPos.y()}, newZoom);
+  }
  }
 
  void ArtifactLayerEditorWidgetV2::setEditMode(EditMode mode)
