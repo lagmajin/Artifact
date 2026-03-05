@@ -28,7 +28,6 @@ import Artifact.Layer.Abstract;
 import Artifact.Layer.InitParams;
 import File.TypeDetector;
 
-
 namespace Artifact
 {
  using namespace ArtifactCore;
@@ -61,511 +60,352 @@ namespace Artifact
   }
  }
 
+ // ============================================================================
+ // ArtifactLayerPanelHeaderWidget Implementation
+ // ============================================================================
+
  class ArtifactLayerPanelHeaderWidget::Impl
  {
  public:
-  Impl();
+  Impl()
+  {
+    visibilityIcon = QPixmap(resolveIconPath("visibility.png"));
+    lockIcon = QPixmap(resolveIconPath("lock.png"));
+    if (lockIcon.isNull()) lockIcon = QPixmap(resolveIconPath("unlock.png"));
+    soloIcon = QPixmap(resolveIconPath("solo.png"));
+  }
   ~Impl() = default;
+
   QPixmap visibilityIcon;
   QPixmap lockIcon;
   QPixmap soloIcon;
+  
   QPushButton* visibilityButton = nullptr;
   QPushButton* lockButton = nullptr;
   QPushButton* soloButton = nullptr;
   QPushButton* soundButton = nullptr;
   QPushButton* layerNameButton = nullptr;
-  QPushButton* layerBlendModeButton = nullptr;
-  
-  QPushButton* parentButton = nullptr;
-  QPushButton* fxButton = nullptr;
   QPushButton* shyButton = nullptr;
-  QPushButton* adjButton = nullptr;
-  QPushButton* blurButton = nullptr;
  };
 
- ArtifactLayerPanelHeaderWidget::Impl::Impl()
- {
-  visibilityIcon = QPixmap(getIconPath() + "/visibility.png");
- }
-	
  W_OBJECT_IMPL(ArtifactLayerPanelHeaderWidget)
-  ArtifactLayerPanelHeaderWidget::ArtifactLayerPanelHeaderWidget(QWidget* parent /*= nullptr*/) :QWidget(parent), impl_(new Impl())
+
+ ArtifactLayerPanelHeaderWidget::ArtifactLayerPanelHeaderWidget(QWidget* parent)
+  : QWidget(parent), impl_(new Impl())
  {
-  auto visiblityButton = impl_->visibilityButton = new QPushButton();
-  visiblityButton->setFixedSize(QSize(28, 28));
-  visiblityButton->setIcon(impl_->visibilityIcon);
-  visiblityButton->setStyleSheet("background-color: #2D2D30; color: #CCC; border: none; border-right: 1px solid #1a1a1a;");
-  visiblityButton->setFlat(true);
+  auto visButton = impl_->visibilityButton = new QPushButton();
+  visButton->setFixedSize(QSize(28, 28));
+  visButton->setIcon(impl_->visibilityIcon);
+  visButton->setStyleSheet("background-color: #2D2D30; border: none; border-right: 1px solid #1a1a1a;");
+  visButton->setFlat(true);
+  
   auto lockButton = impl_->lockButton = new QPushButton();
-  lockButton->setStyleSheet("background-color: #2D2D30; color: #CCC; border: none; border-right: 1px solid #1a1a1a;");
   lockButton->setFixedSize(QSize(28, 28));
+  if (!impl_->lockIcon.isNull()) lockButton->setIcon(impl_->lockIcon);
+  lockButton->setStyleSheet("background-color: #2D2D30; border: none; border-right: 1px solid #1a1a1a;");
+
   auto soloButton = impl_->soloButton = new QPushButton();
   soloButton->setFixedSize(QSize(28, 28));
-  soloButton->setStyleSheet("background-color: #2D2D30; color: #CCC; border: none; border-right: 1px solid #1a1a1a;");
- 	
+  if (!impl_->soloIcon.isNull()) soloButton->setIcon(impl_->soloIcon);
+  soloButton->setStyleSheet("background-color: #2D2D30; border: none; border-right: 1px solid #1a1a1a;");
+
   auto soundButton = impl_->soundButton = new QPushButton();
   soundButton->setFixedSize(QSize(28, 28));
-  soundButton->setStyleSheet("background-color: #2D2D30; color: #CCC; border: none; border-right: 1px solid #1a1a1a;");
- 	
-  auto layerNameButton = impl_->layerNameButton = new QPushButton();
-  layerNameButton->setText("Layer Name");
-  layerNameButton->setCheckable(false);
- 	
-  auto parentButton = impl_->parentButton = new QPushButton();
-  parentButton->setText("Parent");
- 	
-  auto layerBlendModeButton = impl_->layerBlendModeButton = new QPushButton();
-  layerBlendModeButton->setText("Blend Mode");
-  auto shyButton=impl_->shyButton = new QPushButton;
+  soundButton->setStyleSheet("background-color: #2D2D30; border: none; border-right: 1px solid #1a1a1a;");
+
+  auto shyButton = impl_->shyButton = new QPushButton;
   shyButton->setFixedSize(QSize(28, 28));
-  auto blurButton = impl_->blurButton = new QPushButton();
-  blurButton->setFixedSize(QSize(28, 28));
- 	
-  auto adjButton = impl_->adjButton = new QPushButton();
-  adjButton->setFixedSize(QSize(28, 28));
- 	
-  //blurButton->setText("Layer Name");
-  auto qHBoxLayout = new QHBoxLayout();
-  qHBoxLayout->setContentsMargins(0, 0, 0, 0);
-  qHBoxLayout->setSpacing(0);
-  qHBoxLayout->addWidget(visiblityButton);
-  qHBoxLayout->addWidget(lockButton);
-  qHBoxLayout->addWidget(soloButton);
-  qHBoxLayout->addWidget(soundButton);
-  
-  // Style strings
+  shyButton->setCheckable(true);
+  shyButton->setToolTip("Master Shy Switch");
+  shyButton->setStyleSheet("QPushButton { background-color: #2D2D30; border: none; border-right: 1px solid #1a1a1a; } QPushButton:checked { background-color: #3b3bef; }");
+
+  auto layerNameButton = impl_->layerNameButton = new QPushButton("Layer Name");
   QString btnStyle = "QPushButton { background-color: #2D2D30; color: #CCC; border: none; border-right: 1px solid #1a1a1a; font-size: 11px; text-align: left; padding-left: 5px; }";
   layerNameButton->setStyleSheet(btnStyle);
-  layerBlendModeButton->setStyleSheet(btnStyle);
-  parentButton->setStyleSheet(btnStyle);
 
-  qHBoxLayout->addWidget(layerNameButton, 1); // Layer Name expands to fill space
+  auto* layout = new QHBoxLayout(this);
+  layout->setContentsMargins(0, 0, 0, 0);
+  layout->setSpacing(0);
+  layout->addWidget(visButton);
+  layout->addWidget(lockButton);
+  layout->addWidget(soloButton);
+  layout->addWidget(soundButton);
+  layout->addWidget(shyButton);
+  layout->addWidget(layerNameButton, 1);
 
-  // We hide the unfinished columns for now as they are not drawn in the list below.
-  layerBlendModeButton->hide();
-  parentButton->hide();
-  blurButton->hide();
-  adjButton->hide();
+  QObject::connect(shyButton, &QPushButton::toggled, this, [this](bool checked) {
+    Q_EMIT shyToggled(checked);
+  });
 
-  setLayout(qHBoxLayout);
   setStyleSheet("background-color: #2D2D30; border-bottom: 1px solid #1a1a1a;");
+  setFixedHeight(28);
  }
 
  ArtifactLayerPanelHeaderWidget::~ArtifactLayerPanelHeaderWidget()
  {
-
+  delete impl_;
  }
 
- int ArtifactLayerPanelHeaderWidget::buttonSize() const
+ int ArtifactLayerPanelHeaderWidget::buttonSize() const { return 28; }
+ int ArtifactLayerPanelHeaderWidget::iconSize() const { return 16; }
+ int ArtifactLayerPanelHeaderWidget::totalHeaderHeight() const { return height(); }
+
+ // ============================================================================
+ // ArtifactLayerPanelWidget Implementation
+ // ============================================================================
+
+ class ArtifactLayerPanelWidget::Impl
  {
-  return 28;  // Fixed button size defined in constructor
- }
-
- int ArtifactLayerPanelHeaderWidget::iconSize() const
- {
-  return 16;  // Icon size used within buttons
- }
-
- int ArtifactLayerPanelHeaderWidget::totalHeaderHeight() const
- {
-  return height();  // Returns the actual widget height
- }
- W_OBJECT_IMPL(ArtifactLayerPanelWidget)
-
-  class ArtifactLayerPanelWidget::Impl
- {
- private:
-
-
  public:
-  Impl();
-  ~Impl();
+  Impl()
+  {
+    visibilityIcon = QPixmap(resolveIconPath("visibility.png"));
+    lockIcon = QPixmap(resolveIconPath("lock.png"));
+    if (lockIcon.isNull()) lockIcon = QPixmap(resolveIconPath("unlock.png"));
+    soloIcon = QPixmap(resolveIconPath("solo.png"));
+  }
+  ~Impl() = default;
+
   CompositionID compositionId;
   QPixmap visibilityIcon;
   QPixmap lockIcon;
   QPixmap soloIcon;
-  QPixmap normalLayerIcon;
-  QPixmap adjLayerIcon;
-  QPixmap nullLayerIcon;
-  int hoveredLayerIndex = -1;  // マウスホバー中のレイヤーインデックス
-  LayerID selectedLayerId;     // 選択されたレイヤーID
+  bool shyHidden = false;
+  int hoveredLayerIndex = -1;
+  LayerID selectedLayerId;
  };
 
- ArtifactLayerPanelWidget::Impl::Impl()
+ W_OBJECT_IMPL(ArtifactLayerPanelWidget)
+
+ ArtifactLayerPanelWidget::ArtifactLayerPanelWidget(QWidget* parent)
+  : QWidget(parent), impl_(new Impl())
  {
-  visibilityIcon = QPixmap(getIconPath() + "/Png/visibility.png");
-  visibilityIcon = visibilityIcon.scaled(28,28, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+  setMouseTracking(true);
+  setAcceptDrops(true);
 
-  lockIcon = QPixmap(getIconPath() + "/Png/lock.png");
-  if (!lockIcon.isNull()) {
-    lockIcon = lockIcon.scaled(28,28, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+  if (auto* service = ArtifactProjectService::instance()) {
+    QObject::connect(service, &ArtifactProjectService::layerCreated, this, [this](const CompositionID& compId, const LayerID&) {
+      if (impl_->compositionId == compId) this->updateLayout();
+    });
+    QObject::connect(service, &ArtifactProjectService::layerRemoved, this, [this](const CompositionID& compId, const LayerID&) {
+      if (impl_->compositionId == compId) this->updateLayout();
+    });
+    QObject::connect(service, &ArtifactProjectService::layerSelected, this, [this](const LayerID& layerId) {
+      if (impl_->selectedLayerId != layerId) {
+        impl_->selectedLayerId = layerId;
+        update();
+      }
+    });
   }
-
-  soloIcon = QPixmap(getIconPath() + "/Png/solo.png");
-  if (!soloIcon.isNull()) {
-    soloIcon = soloIcon.scaled(28,28, Qt::KeepAspectRatio, Qt::SmoothTransformation);
-  }
  }
-
- ArtifactLayerPanelWidget::Impl::~Impl()
- {
-
- }
-
-ArtifactLayerPanelWidget::ArtifactLayerPanelWidget(QWidget* parent /*= nullptr*/) :QWidget(parent), impl_(new Impl)
-{
- setWindowTitle("ArtifactLayerPanel");
- setAcceptDrops(true);
-
- if (auto* service = ArtifactProjectService::instance()) {
-   QObject::connect(service, &ArtifactProjectService::layerCreated, this, [this](const CompositionID& compId, const LayerID&) {
-     if (impl_->compositionId == compId) { 
-         auto comp = safeCompositionLookup(impl_->compositionId);
-         int count = comp ? comp->allLayer().size() : 0;
-         setMinimumHeight(std::max(100, count * 28));
-         update(); 
-     }
-   });
-   QObject::connect(service, &ArtifactProjectService::layerRemoved, this, [this](const CompositionID& compId, const LayerID&) {
-     if (impl_->compositionId == compId) {
-         auto comp = safeCompositionLookup(impl_->compositionId);
-         int count = comp ? comp->allLayer().size() : 0;
-         setMinimumHeight(std::max(100, count * 28));
-         update(); 
-     }
-   });
-   QObject::connect(service, &ArtifactProjectService::layerSelected, this, [this](const LayerID& layerId) {
-     if (impl_->selectedLayerId != layerId) {
-         impl_->selectedLayerId = layerId;
-         update();
-     }
-   });
- }
-}
-
-void ArtifactLayerPanelWidget::setComposition(const CompositionID& id)
-{
-    impl_->compositionId = id;
-    impl_->selectedLayerId = LayerID();  // Reset selection on comp change
-    
-    auto comp = safeCompositionLookup(impl_->compositionId);
-    int count = comp ? comp->allLayer().size() : 0;
-    setMinimumHeight(std::max(100, count * 28));
-    
-    // trigger repaint
-    update();
-}
 
  ArtifactLayerPanelWidget::~ArtifactLayerPanelWidget()
  {
   delete impl_;
  }
 
+ void ArtifactLayerPanelWidget::setComposition(const CompositionID& id)
+ {
+  impl_->compositionId = id;
+  impl_->selectedLayerId = LayerID();
+  updateLayout();
+ }
+
+ void ArtifactLayerPanelWidget::setShyHidden(bool hidden)
+ {
+  impl_->shyHidden = hidden;
+  updateLayout();
+ }
+
+ void ArtifactLayerPanelWidget::updateLayout()
+ {
+  auto comp = safeCompositionLookup(impl_->compositionId);
+  if (!comp) return;
+
+  auto all = comp->allLayer();
+  int count = 0;
+  if (impl_->shyHidden) {
+    for (auto& l : all) if (l && !l->isShy()) count++;
+  } else {
+    count = all.size();
+  }
+  setMinimumHeight(std::max(100, count * 28));
+  update();
+ }
+
  void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
  {
-    const int rowH = 28;
-    const int colW = 28;
+  const int rowH = 28;
+  const int colW = 28;
+  int idx = event->pos().y() / rowH;
+  int clickX = event->pos().x();
 
-    int idx = event->pos().y() / rowH;
-    int clickX = event->pos().x();
+  auto comp = safeCompositionLookup(impl_->compositionId);
+  if (!comp) return;
 
-    auto comp = safeCompositionLookup(impl_->compositionId);
-    if (!comp) {
-        QWidget::mousePressEvent(event);
-        return;
+  auto all = comp->allLayer();
+  QVector<ArtifactAbstractLayerPtr> layers;
+  if (impl_->shyHidden) {
+    for (auto& l : all) if (l && !l->isShy()) layers.push_back(l);
+  } else {
+    layers = all;
+  }
+
+  if (idx < 0 || idx >= layers.size()) return;
+  auto layer = layers[idx];
+  if (!layer) return;
+
+  if (event->button() == Qt::LeftButton) {
+    if (clickX < colW) {
+      layer->setVisible(!layer->isVisible());
+    } else if (clickX < colW * 2) {
+      layer->setLocked(!layer->isLocked());
+    } else if (clickX < colW * 3) {
+      layer->setSolo(!layer->isSolo());
+    } else if (clickX < colW * 4) {
+      // Sound toggle
+    } else if (clickX < colW * 5) {
+      layer->setShy(!layer->isShy());
+    } else if (clickX < colW * 6) {
+      layer->setGuide(!layer->isGuide());
+    } else {
+      if (auto* service = ArtifactProjectService::instance()) {
+        service->selectLayer(layer->id());
+      }
     }
-
-    const auto layers = comp->allLayer();
-    if (idx < 0 || idx >= layers.size()) {
-        QWidget::mousePressEvent(event);
-        return;
+    update();
+  } else if (event->button() == Qt::RightButton) {
+    QMenu menu(this);
+    QAction* del = menu.addAction("Delete Layer");
+    if (menu.exec(event->globalPosition().toPoint()) == del) {
+      if (auto* service = ArtifactProjectService::instance()) {
+        service->removeLayerFromComposition(impl_->compositionId, layer->id());
+      }
     }
-
-    auto layer = layers[idx];
-    if (!layer) {
-        QWidget::mousePressEvent(event);
-        return;
-    }
-
-    // Column 0: Visibility
-    if (event->button() == Qt::LeftButton && clickX >= 0 && clickX < colW) {
-        bool currentVisibility = layer->isVisible();
-        layer->setVisible(!currentVisibility);
-        update();
-        event->accept();
-        return;
-    }
-
-    // Column 1: Lock
-    if (event->button() == Qt::LeftButton && clickX >= colW && clickX < colW * 2) {
-        // TODO: Toggle lock state
-        event->accept();
-        return;
-    }
-
-    // Column 2: Solo
-    if (event->button() == Qt::LeftButton && clickX >= colW * 2 && clickX < colW * 3) {
-        // TODO: Toggle solo state
-        event->accept();
-        return;
-    }
-
-    // Column 3: Sound
-    if (event->button() == Qt::LeftButton && clickX >= colW * 3 && clickX < colW * 4) {
-        // TODO: Toggle sound state
-        event->accept();
-        return;
-    }
-
-    // Right-click -> context menu
-    if (event->button() == Qt::RightButton) {
-        QMenu menu(this);
-        QAction* del = menu.addAction("Delete Layer");
-        QAction* rename = menu.addAction("Rename Layer");
-        QAction* duplicate = menu.addAction("Duplicate Layer");
-
-        QAction* act = menu.exec(event->globalPosition().toPoint());
-        if (act == del) {
-            if (auto* service = ArtifactProjectService::instance()) {
-                service->removeLayerFromComposition(impl_->compositionId, layer->id());
-            }
-        } else if (act == rename) {
-            // TODO: Implement rename
-        } else if (act == duplicate) {
-            // TODO: Implement duplicate
-        }
-        event->accept();
-        return;
-    }
-
-    // Left-click on layer name or other columns -> select layer
-    if (event->button() == Qt::LeftButton) {
-        impl_->hoveredLayerIndex = idx; // Used temporarily as hover highlight for now, keep it visible
-        if (auto* service = ArtifactProjectService::instance()) {
-            service->selectLayer(layer->id());
-        }
-        update();
-    }
-
-    QWidget::mousePressEvent(event);
+  }
+  event->accept();
  }
 
  void ArtifactLayerPanelWidget::mouseMoveEvent(QMouseEvent* event)
  {
-    const int rowH = 28;
-    const int colW = 28;
-
-    int idx = event->pos().y() / rowH;
-    int mouseX = event->pos().x();
-
-    if (idx != impl_->hoveredLayerIndex) {
-        impl_->hoveredLayerIndex = idx;
-        update();
-    }
-
-    // Pointer cursor on icon columns
-    if (mouseX >= 0 && mouseX < colW * 4) {
-        setCursor(Qt::PointingHandCursor);
-    } else {
-        setCursor(Qt::ArrowCursor);
-    }
+  int idx = event->pos().y() / 28;
+  if (idx != impl_->hoveredLayerIndex) {
+    impl_->hoveredLayerIndex = idx;
+    update();
+  }
+  setCursor(event->pos().x() < 28 * 6 ? Qt::PointingHandCursor : Qt::ArrowCursor);
  }
 
- void ArtifactLayerPanelWidget::leaveEvent(QEvent* event)
+ void ArtifactLayerPanelWidget::leaveEvent(QEvent*)
  {
-    if (impl_->hoveredLayerIndex >= 0) {
-        impl_->hoveredLayerIndex = -1;
-        update();
-    }
-    QWidget::leaveEvent(event);
+  impl_->hoveredLayerIndex = -1;
+  update();
  }
 
-  void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
+ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent*)
  {
   QPainter p(this);
-  const int rowH = 28; 
+  const int rowH = 28;
   const int colW = 28;
   const int iconSize = 16;
-  
-  auto compShared = safeCompositionLookup(impl_->compositionId);
+  const int offset = (colW - iconSize) / 2;
+
+  auto comp = safeCompositionLookup(impl_->compositionId);
+  if (!comp) return;
+
+  auto all = comp->allLayer();
   QVector<ArtifactAbstractLayerPtr> layers;
-  if (compShared) {
-      layers = compShared->allLayer();
-  }
-
-  // 背景描画
-  for (int i = 0; i * rowH < height(); ++i) {
-   int y = i * rowH;
-   
-   bool isSelected = false;
-   if (i < layers.size() && layers[i]) {
-       isSelected = (layers[i]->id() == impl_->selectedLayerId);
-   }
-
-   if (isSelected) {
-       p.fillRect(0, y, width(), rowH, QColor(70, 100, 150)); // Selected color
-   } else if (i == impl_->hoveredLayerIndex) {
-       p.fillRect(0, y, width(), rowH, QColor(55, 55, 80));  // Hover color
-   } else if (i % 2 == 0) {
-       p.fillRect(0, y, width(), rowH, QColor(42, 42, 42));  // Even row
-   } else {
-       p.fillRect(0, y, width(), rowH, QColor(45, 45, 45));  // Odd row
-   }
-   
-   p.setPen(QColor(60, 60, 60));
-   p.drawLine(0, y + rowH, width(), y + rowH);
-  }
-
-  if (compShared) {
-    for (int idx = 0; idx < layers.size(); ++idx) {
-      int y = idx * rowH;
-      auto layer = layers[idx];
-      if (!layer) continue;
-
-      QString layerName = layer->layerName();
-      if (layerName.isEmpty()) layerName = QString("Layer %1").arg(idx + 1);
-
-      int currentX = 0;
-      int iconOffset = (colW - iconSize) / 2;
-
-      // Visibility Icon (Col 0)
-      bool isVisible = layer->isVisible();
-      if (!impl_->visibilityIcon.isNull()) {
-        p.setOpacity(isVisible ? 1.0 : 0.3);
-        p.drawPixmap(currentX + iconOffset, y + (rowH - iconSize) / 2, iconSize, iconSize, impl_->visibilityIcon);
-        p.setOpacity(1.0);
-      } else {
-        QColor visColor = isVisible ? QColor(100, 200, 100) : QColor(80, 80, 80);
-        p.fillRect(currentX + iconOffset, y + (rowH - iconSize) / 2, iconSize, iconSize, visColor);
-      }
-      
-      // Draw vertical separator
-      p.setPen(QPen(QColor(60, 60, 60), 1));
-      p.drawLine(currentX + colW - 1, y, currentX + colW - 1, y + rowH);
-      currentX += colW;
-
-      // Lock Icon (Col 1)
-      if (!impl_->lockIcon.isNull()) {
-        p.drawPixmap(currentX + iconOffset, y + (rowH - iconSize) / 2, iconSize, iconSize, impl_->lockIcon);
-      }
-      p.drawLine(currentX + colW - 1, y, currentX + colW - 1, y + rowH);
-      currentX += colW;
-
-      // Solo Icon (Col 2)
-      if (!impl_->soloIcon.isNull()) {
-        p.drawPixmap(currentX + iconOffset, y + (rowH - iconSize) / 2, iconSize, iconSize, impl_->soloIcon);
-      }
-      p.drawLine(currentX + colW - 1, y, currentX + colW - 1, y + rowH);
-      currentX += colW;
-
-      // Sound Icon (Col 3) - Empty placeholder for now
-      p.drawLine(currentX + colW - 1, y, currentX + colW - 1, y + rowH);
-      currentX += colW;
-
-      // Layer Name (Col 4 onwards)
-      p.setPen(Qt::white);
-      QFont font = p.font();
-      font.setPointSize(10);
-      font.setBold(false);
-      p.setFont(font);
-
-      int textX = currentX + 8; // Small padding
-      int textWidth = width() - textX;
-      QRect textRect(textX, y, textWidth, rowH);
-
-      p.drawText(textRect, Qt::AlignVCenter | Qt::AlignLeft, layerName);
-    }
+  if (impl_->shyHidden) {
+    for (auto& l : all) if (l && !l->isShy()) layers.push_back(l);
   } else {
-    p.setPen(Qt::gray);
-    p.drawText(rect(), Qt::AlignCenter, "No composition");
+    layers = all;
+  }
+
+  for (int i = 0; i < layers.size(); ++i) {
+    int y = i * rowH;
+    auto l = layers[i];
+    bool sel = (l->id() == impl_->selectedLayerId);
+
+    if (sel) p.fillRect(0, y, width(), rowH, QColor(70, 100, 150));
+    else if (i == impl_->hoveredLayerIndex) p.fillRect(0, y, width(), rowH, QColor(55, 55, 80));
+    else p.fillRect(0, y, width(), rowH, (i % 2 == 0) ? QColor(42, 42, 42) : QColor(45, 45, 45));
+
+    p.setPen(QColor(60, 60, 60));
+    p.drawLine(0, y + rowH, width(), y + rowH);
+
+    int curX = 0;
+    // Visibility
+    p.setOpacity(l->isVisible() ? 1.0 : 0.3);
+    if (!impl_->visibilityIcon.isNull()) p.drawPixmap(curX + offset, y + offset, iconSize, iconSize, impl_->visibilityIcon);
+    else p.fillRect(curX + offset, y + offset, iconSize, iconSize, Qt::green);
+    curX += colW;
+    p.drawLine(curX - 1, y, curX - 1, y + rowH);
+
+    // Lock
+    bool locked = l->isLocked();
+    p.setOpacity(locked ? 1.0 : 0.15);
+    if (!impl_->lockIcon.isNull()) p.drawPixmap(curX + offset, y + offset, iconSize, iconSize, impl_->lockIcon);
+    else if (locked) p.fillRect(curX + offset + 4, y + offset + 4, 8, 8, Qt::red);
+    curX += colW;
+    p.drawLine(curX - 1, y, curX - 1, y + rowH);
+
+    // Solo
+    bool solo = l->isSolo();
+    p.setOpacity(solo ? 1.0 : 0.15);
+    if (!impl_->soloIcon.isNull()) p.drawPixmap(curX + offset, y + offset, iconSize, iconSize, impl_->soloIcon);
+    else if (solo) p.fillRect(curX + offset + 4, y + offset + 4, 8, 8, Qt::yellow);
+    curX += colW;
+    p.drawLine(curX - 1, y, curX - 1, y + rowH);
+
+    // Sound
+    curX += colW;
+    p.drawLine(curX - 1, y, curX - 1, y + rowH);
+
+    // Shy
+    bool shy = l->isShy();
+    p.setOpacity(1.0);
+    if (shy) p.fillRect(curX + offset + 4, y + offset + 4, 8, 8, QColor(100, 100, 255));
+    else { p.setPen(QColor(80, 80, 80)); p.drawRect(curX + offset + 4, y + offset + 4, 8, 8); }
+    curX += colW;
+    p.drawLine(curX - 1, y, curX - 1, y + rowH);
+
+    // Guide
+    bool guide = l->isGuide();
+    if (guide) p.fillRect(curX + offset + 4, y + offset + 4, 8, 8, QColor(50, 200, 50));
+    else { p.setPen(QColor(80, 80, 80)); p.drawRect(curX + offset + 4, y + offset + 4, 8, 8); }
+    curX += colW;
+    p.drawLine(curX - 1, y, curX - 1, y + rowH);
+
+    // Name
+    p.setPen(Qt::white);
+    p.drawText(curX + 8, y, width() - curX - 8, rowH, Qt::AlignVCenter | Qt::AlignLeft, l->layerName());
   }
  }
 
- void ArtifactLayerPanelWidget::dragEnterEvent(QDragEnterEvent* event)
- {
-  // Accept layer ID, asset ID, and file URLs
-  if (event->mimeData()->hasFormat("application/x-artifact-layerid") ||
-      event->mimeData()->hasFormat("application/x-artifact-assetid") ||
-      event->mimeData()->hasUrls()) {
-    event->acceptProposedAction();
-  }
- }
-
- void ArtifactLayerPanelWidget::dragMoveEvent(QDragMoveEvent* event)
- {
-  // Keep accepting while dragging
-  if (event->mimeData()->hasFormat("application/x-artifact-layerid") ||
-      event->mimeData()->hasFormat("application/x-artifact-assetid") ||
-      event->mimeData()->hasUrls()) {
-    event->acceptProposedAction();
-  }
- }
-
- void ArtifactLayerPanelWidget::dragLeaveEvent(QDragLeaveEvent* event)
- {
-  // Optional: Could reset visual feedback here
-  event->accept();
- }
-
+ void ArtifactLayerPanelWidget::dragEnterEvent(QDragEnterEvent* e) { e->acceptProposedAction(); }
+ void ArtifactLayerPanelWidget::dragMoveEvent(QDragMoveEvent* e) { e->acceptProposedAction(); }
+ void ArtifactLayerPanelWidget::dragLeaveEvent(QDragLeaveEvent* e) { e->accept(); }
  void ArtifactLayerPanelWidget::dropEvent(QDropEvent* event)
  {
-  const QMimeData* mimeData = event->mimeData();
-
-  // Handle LayerID drop
-  if (mimeData->hasFormat("application/x-artifact-layerid")) {
-   QByteArray data = mimeData->data("application/x-artifact-layerid");
-   QString layerIdStr = QString::fromUtf8(data);
-   LayerID layerId(layerIdStr);
-   
-   qDebug() << "[ArtifactLayerPanelWidget::dropEvent] Received LayerID:" << layerIdStr;
-   
-   // TODO: Handle layer drop - could be layer relocation, layer copy, etc.
-   event->acceptProposedAction();
-  }
-  // Handle AssetID drop
-  else if (mimeData->hasFormat("application/x-artifact-assetid")) {
-   QByteArray data = mimeData->data("application/x-artifact-assetid");
-   QString assetIdStr = QString::fromUtf8(data);
-   
-   qDebug() << "[ArtifactLayerPanelWidget::dropEvent] Received AssetID:" << assetIdStr;
-   
-   // TODO: Handle asset drop - could create new layer from asset
-   event->acceptProposedAction();
-  }
-  // Handle file URL drop
-  else if (mimeData->hasUrls()) {
-   const QList<QUrl> urls = mimeData->urls();
-   auto* service = ArtifactProjectService::instance();
-   if (!service) {
-    event->ignore();
-    return;
-   }
-
-   QStringList importPaths;
-   for (const QUrl& url : urls) {
-    if (url.isLocalFile()) {
-     QString filePath = url.toLocalFile();
-     if (!filePath.isEmpty()) {
-      importPaths.append(filePath);
-     }
+  const QMimeData* mime = event->mimeData();
+  if (mime->hasUrls()) {
+    QStringList paths;
+    for (auto& url : mime->urls()) if (url.isLocalFile()) paths.append(url.toLocalFile());
+    if (auto* svc = ArtifactProjectService::instance()) {
+      auto imported = svc->importAssetsFromPaths(paths);
+      for (auto& path : imported) {
+        LayerType type = inferLayerTypeFromFile(path);
+        ArtifactLayerInitParams p(QFileInfo(path).baseName(), type);
+        svc->addLayerToCurrentComposition(p);
+      }
     }
-   }
-
-   const QStringList imported = service->importAssetsFromPaths(importPaths);
-   auto project = service->getCurrentProjectSharedPtr();
-   for (const auto& filePath : imported) {
-    QFileInfo fi(filePath);
-    LayerType layerType = inferLayerTypeFromFile(filePath);
-    ArtifactLayerInitParams params(fi.completeBaseName().isEmpty() ? fi.fileName() : fi.completeBaseName(), layerType);
-    if (project && !impl_->compositionId.isNil()) {
-     project->createLayerAndAddToComposition(impl_->compositionId, params);
-    } else {
-     service->addLayerToCurrentComposition(params);
-    }
-   }
-   event->acceptProposedAction();
+    event->acceptProposedAction();
   }
  }
+
+ // ============================================================================
+ // ArtifactLayerTimelinePanelWrapper Implementation
+ // ============================================================================
 
  class ArtifactLayerTimelinePanelWrapper::Impl
  {
@@ -577,61 +417,31 @@ void ArtifactLayerPanelWidget::setComposition(const CompositionID& id)
  };
 
  ArtifactLayerTimelinePanelWrapper::ArtifactLayerTimelinePanelWrapper(QWidget* parent)
-  : QWidget(parent),
-  impl_(new Impl)
+  : QWidget(parent), impl_(new Impl)
  {
-  impl_->header = new ArtifactLayerPanelHeaderWidget();
-  impl_->panel = new ArtifactLayerPanelWidget;
-  impl_->scroll = new QScrollArea(this);
+  auto* layout = new QVBoxLayout(this);
+  layout->setContentsMargins(0,0,0,0);
+  layout->setSpacing(0);
 
-  // Set panel minimum width/height
-  impl_->panel->setMinimumHeight(100);
+  impl_->header = new ArtifactLayerPanelHeaderWidget();
+  impl_->panel = new ArtifactLayerPanelWidget();
+  impl_->scroll = new QScrollArea();
   impl_->scroll->setWidget(impl_->panel);
   impl_->scroll->setWidgetResizable(true);
   impl_->scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+  impl_->scroll->setFrameShape(QFrame::NoFrame);
 
-  auto* layout = new QVBoxLayout(this);
-  layout->setContentsMargins(0, 0, 0, 0);
-  layout->setSpacing(0);
   layout->addWidget(impl_->header);
-  layout->addWidget(impl_->scroll, 1);  // Add stretch factor to fill remaining space
-  setLayout(layout);
+  layout->addWidget(impl_->scroll, 1);
 
-  // Set header height based on button size
-  int headerHeight = impl_->header->buttonSize();
-  impl_->header->setFixedHeight(headerHeight);
-  qDebug() << "[ArtifactLayerTimelinePanelWrapper] Header height set to:" << headerHeight;
+  QObject::connect(impl_->header, &ArtifactLayerPanelHeaderWidget::shyToggled,
+                   impl_->panel, &ArtifactLayerPanelWidget::setShyHidden);
  }
 
- ArtifactLayerTimelinePanelWrapper::ArtifactLayerTimelinePanelWrapper(const CompositionID& id, QWidget* parent /*= nullptr*/):QWidget(parent),impl_(new Impl())
+ ArtifactLayerTimelinePanelWrapper::ArtifactLayerTimelinePanelWrapper(const CompositionID& id, QWidget* parent)
+  : ArtifactLayerTimelinePanelWrapper(parent)
  {
-    // Initialize children and set the composition id
-    impl_->header = new ArtifactLayerPanelHeaderWidget();
-    impl_->panel = new ArtifactLayerPanelWidget;
-    impl_->scroll = new QScrollArea(this);
-
-    // Set panel minimum width/height
-    impl_->panel->setMinimumHeight(100);
-    impl_->scroll->setWidget(impl_->panel);
-    impl_->scroll->setWidgetResizable(true);
-    impl_->scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-
-    auto* layout = new QVBoxLayout(this);
-    layout->setContentsMargins(0, 0, 0, 0);
-    layout->setSpacing(0);
-    layout->addWidget(impl_->header);
-    layout->addWidget(impl_->scroll, 1);  // Add stretch factor to fill remaining space
-    setLayout(layout);
-
-    // Set header height based on button size
-    int headerHeight = impl_->header->buttonSize();
-    impl_->header->setFixedHeight(headerHeight);
-    qDebug() << "[ArtifactLayerTimelinePanelWrapper] Header height set to:" << headerHeight;
-
-    if (!id.isNil() && ArtifactProjectService::instance()) {
-        impl_->panel->setComposition(id);
-        impl_->id = id;
-    }
+  setComposition(id);
  }
 
  ArtifactLayerTimelinePanelWrapper::~ArtifactLayerTimelinePanelWrapper()
@@ -642,22 +452,12 @@ void ArtifactLayerPanelWidget::setComposition(const CompositionID& id)
  void ArtifactLayerTimelinePanelWrapper::setComposition(const CompositionID& id)
  {
   impl_->id = id;
-  if (impl_->panel) {
-   impl_->panel->setComposition(id);
-  }
+  impl_->panel->setComposition(id);
  }
 
  QScrollBar* ArtifactLayerTimelinePanelWrapper::verticalScrollBar() const
  {
-  if (impl_->scroll) {
-   return impl_->scroll->verticalScrollBar();
-  }
-  return nullptr;
+  return impl_->scroll->verticalScrollBar();
  }
 
-
-
-}
-
-
-
+} // namespace Artifact

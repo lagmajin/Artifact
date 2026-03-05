@@ -29,7 +29,8 @@ export namespace Artifact
 
    public /*signals*/:
     void lockClicked() W_SIGNAL(lockClicked)
- void soloClicked() W_SIGNAL(soloClicked) 	
+    void soloClicked() W_SIGNAL(soloClicked)
+    void shyToggled(bool hidden) W_SIGNAL(shyToggled, hidden)
    };
 
 
@@ -55,6 +56,8 @@ export namespace Artifact
  
   // Set the composition to display layers for
   void setComposition(const CompositionID& id);
+  void setShyHidden(bool hidden);
+  void updateLayout();
 
  };
 
@@ -73,8 +76,5 @@ export namespace Artifact
   class QScrollBar* verticalScrollBar() const;
  	
  };
-
-
-
 
 };

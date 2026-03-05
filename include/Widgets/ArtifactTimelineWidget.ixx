@@ -126,6 +126,8 @@ class TimelineTrackView :public QGraphicsView {
   // Layer management
   void onLayerCreated(const CompositionID& compId, const LayerID& layerId);
   void onLayerRemoved(const CompositionID& compId, const LayerID& layerId);
+  void onShyChanged(bool active);
+  void refreshTracks();
 
   /*signals:*/
  public /*slots*/:

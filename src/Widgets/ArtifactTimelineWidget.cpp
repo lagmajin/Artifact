@@ -38,6 +38,8 @@ import Panel.DraggableSplitter;
 import Artifact.Timeline.Objects;
 import Artifact.Widgets.Timeline.GlobalSwitches;
 import Artifact.Service.Project;
+import Artifact.Composition.Abstract;
+import Artifact.Layer.Abstract;
 
 
 
@@ -45,6 +47,18 @@ namespace Artifact {
 
 using namespace ArtifactCore;
 using namespace ArtifactWidgets;
+
+ namespace {
+  std::shared_ptr<ArtifactAbstractComposition> safeCompositionLookup(const CompositionID& id)
+  {
+    if (id.isNil()) return nullptr;
+    auto* service = ArtifactProjectService::instance();
+    if (!service) return nullptr;
+    auto result = service->findComposition(id);
+    if (!result.success) return nullptr;
+    return result.ptr.lock();
+  }
+ }
 
 W_OBJECT_IMPL(TimelineScene)
 
@@ -290,6 +304,7 @@ W_OBJECT_IMPL(ArtifactTimelineWidget)
    ArtifactLayerTimelinePanelWrapper* layerTimelinePanel_ = nullptr;
    TimelineTrackView* trackView_ = nullptr;  // Right-side timeline view
    CompositionID compositionId_;
+   bool shyActive_ = false;
 
   };
 
@@ -341,6 +356,9 @@ W_OBJECT_IMPL(ArtifactTimelineWidget)
   searchBarLayout->setStretch(0, 0);
   searchBarLayout->setStretch(1, 1);
   searchBarLayout->setStretch(2, 0);
+ 
+   QObject::connect(globalSwitches, &ArtifactTimelineGlobalSwitches::shyChanged, 
+                    this, &ArtifactTimelineWidget::onShyChanged);
   
   auto headerWidget = new QWidget();
   headerWidget->setLayout(searchBarLayout);
@@ -468,6 +486,7 @@ W_OBJECT_IMPL(ArtifactTimelineWidget)
    double startFrame = 0.0;
    double duration = 100.0;
    ClipItem* clip = impl_->trackView_->addClip(trackIndex, startFrame, duration);
+   refreshTracks();
   }
 
   void ArtifactTimelineWidget::onLayerRemoved(const CompositionID& compId, const LayerID& lid)
@@ -476,7 +495,35 @@ W_OBJECT_IMPL(ArtifactTimelineWidget)
    qDebug() << "[ArtifactTimelineWidget::onLayerRemoved] Layer removed:" << lid.toString();
   }
 
- void ArtifactTimelineWidget::paintEvent(QPaintEvent* event)
+   void ArtifactTimelineWidget::onShyChanged(bool active)
+   {
+       impl_->shyActive_ = active;
+       if (impl_->layerTimelinePanel_) {
+           refreshTracks();
+       }
+   }
+
+  void ArtifactTimelineWidget::refreshTracks()
+  {
+      if (!impl_->trackView_) return;
+      impl_->trackView_->clearTracks();
+      
+      auto comp = safeCompositionLookup(impl_->compositionId_);
+      if (!comp) return;
+
+       auto allLayers = comp->allLayer();
+       
+       for (auto& l : allLayers) {
+           if (l) {
+               if (impl_->shyActive_ && l->isShy()) continue;
+               
+               int trackIndex = impl_->trackView_->addTrack(28.0);
+               impl_->trackView_->addClip(trackIndex, 0, 300);
+           }
+       }
+  }
+
+  void ArtifactTimelineWidget::paintEvent(QPaintEvent* event)
  {
 
  }
@@ -818,7 +865,7 @@ TimelineTrackView::TimelineTrackView(QWidget* parent /*= nullptr*/) :QGraphicsVi
      
      if (!(event->modifiers() & Qt::ShiftModifier)) {
       clearSelection();
-     }
+      }
     }
    }
 
