@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <QList>
 #include <QImage>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/RenderDevice.h>
@@ -11,6 +11,7 @@
 #include <DiligentCore/Common/interface/BasicMath.hpp>
 #include <oneapi/tbb/tick_count.h>
 #include <oneapi/tbb/parallel_invoke.h>
+#include <windows.h>
 
 
 module Artifact.Render.IRenderer;
@@ -31,7 +32,7 @@ namespace Artifact
  using namespace Diligent;
  using namespace ArtifactCore;
 
- class AritfactIRenderer::Impl
+ class ArtifactIRenderer::Impl
  {
  private:
   RefCntAutoPtr<IBuffer> m_draw_sprite_vertex_buffer;
@@ -48,10 +49,14 @@ namespace Artifact
   RenderShaderPair m_draw_outline_shaders;
   RenderShaderPair m_draw_solid_shaders;
   RenderShaderPair m_draw_thick_line_shaders;
+  RenderShaderPair m_draw_dot_line_shaders;
   RefCntAutoPtr<IBuffer> m_draw_thick_line_vertex_buffer;
+  RefCntAutoPtr<IBuffer> m_draw_dot_line_vertex_buffer;
+  RefCntAutoPtr<IBuffer> m_draw_dot_line_cb;
   QWidget* widget_;
+  HWND renderHwnd_ = nullptr;
   QPointF pan_;
-   
+
   bool m_initialized = false;
  bool m_frameQueryInitialized = false;
  double m_lastGpuFrameTimeMs = 0.0;
@@ -96,7 +101,8 @@ namespace Artifact
   void endFrameGpuProfiling();
   double lastFrameGpuTimeMs() const;
   void drawParticles();
-  void drawRectOutline(float2 pos,const FloatColor& color);
+   void drawRectOutline(float x, float y, float w, float h, const FloatColor& color);
+   void drawRectOutline(float2 pos, float2 size, const FloatColor& color);
   void drawSolidLine(float2 start, float2 end, const FloatColor& color, float thickness);
   void drawSolidRect(float x, float y, float w, float h);
   void drawSolidRect(float2 pos, float2 size, const FloatColor& color);
@@ -107,11 +113,13 @@ namespace Artifact
   void drawSpriteLocal(float x,float y,float w,float h,const QImage& image);
   void drawLineLocal(float2 p1, float2 p2, const FloatColor& color1,const FloatColor& color2);
   void drawThickLineLocal(float2 p1, float2 p2, float thickness, const FloatColor& color);
+  void drawDotLineLocal(float2 p1, float2 p2, float thickness, float spacing, const FloatColor& color);
+  void drawRectOutlineLocal(float x, float y, float w, float h, const FloatColor& color);
 
   void destroy();
  };
 
- AritfactIRenderer::Impl::Impl(RefCntAutoPtr<IRenderDevice> device, RefCntAutoPtr<IDeviceContext>& context, QWidget* widget) :pDevice_(device), pImmediateContext_(context)
+ ArtifactIRenderer::Impl::Impl(RefCntAutoPtr<IRenderDevice> device, RefCntAutoPtr<IDeviceContext>& context, QWidget* widget) :pDevice_(device), pImmediateContext_(context)
  {
   //createConstantBuffers();
   //createShaders();
@@ -121,17 +129,17 @@ namespace Artifact
 
  }
 
- AritfactIRenderer::Impl::Impl()
+ ArtifactIRenderer::Impl::Impl()
  {
 
  }
 
- AritfactIRenderer::Impl::~Impl()
+ ArtifactIRenderer::Impl::~Impl()
  {
 
  }
 
- void AritfactIRenderer::Impl::initialize(QWidget* widget)
+ void ArtifactIRenderer::Impl::initialize(QWidget* widget)
  {
   //diligent engine directx12で初期化
   auto* pFactory = GetEngineFactoryD3D12();
@@ -144,9 +152,7 @@ namespace Artifact
   CreationAttribs.EnableValidation = true;
 
 
-  // ウィンドウハンドルを設定
-  Win32NativeWindow hWindow;
-  hWindow.hWnd = reinterpret_cast<HWND>(widget_->winId());
+  // ウィンドウハンドルを設定（デバイス作成のみ使用。スワップチェーンは子HWNDを使う）
   pFactory->CreateDeviceAndContextsD3D12(CreationAttribs, &pDevice_, &pImmediateContext_);
 
   if (!pDevice_)
@@ -159,6 +165,15 @@ namespace Artifact
   m_CurrentPhysicalWidth = static_cast<int>(widget_->width() * widget_->devicePixelRatio());
   m_CurrentPhysicalHeight = static_cast<int>(widget_->height() * widget_->devicePixelRatio());
   m_CurrentDevicePixelRatio = widget_->devicePixelRatio();
+
+  // DXGI の Present() がバックグラウンドスレッドからウィンドウメッセージをポンプしても
+  // Qtの内部状態に触れないよう、スワップチェーン専用の子HWNDを作成する
+  HWND parentHwnd = reinterpret_cast<HWND>(widget_->winId());
+  renderHwnd_ = CreateWindowEx(
+	  0, L"STATIC", nullptr,
+	  WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS,
+	  0, 0, m_CurrentPhysicalWidth, m_CurrentPhysicalHeight,
+	  parentHwnd, nullptr, GetModuleHandle(nullptr), nullptr);
 
   // スワップチェインを作成
   SwapChainDesc SCDesc;
@@ -173,7 +188,9 @@ namespace Artifact
   FullScreenModeDesc fullScreenDesc;
   fullScreenDesc.Fullscreen = false;
 
-  pFactory->CreateSwapChainD3D12(pDevice_, pImmediateContext_, SCDesc, fullScreenDesc, hWindow, &pSwapChain_);
+  Win32NativeWindow swapChainWindow;
+  swapChainWindow.hWnd = renderHwnd_;
+  pFactory->CreateSwapChainD3D12(pDevice_, pImmediateContext_, SCDesc, fullScreenDesc, swapChainWindow, &pSwapChain_);
 
   Diligent::Viewport VP;
   VP.Width = static_cast<float>(m_CurrentPhysicalWidth);
@@ -191,7 +208,7 @@ namespace Artifact
   createPSOs();
  }
 
- void AritfactIRenderer::Impl::initFrameQueries()
+ void ArtifactIRenderer::Impl::initFrameQueries()
  {
   if (m_frameQueryInitialized || !pDevice_)
    return;
@@ -208,14 +225,14 @@ namespace Artifact
   m_frameQueryInitialized = true;
  }
 
- void AritfactIRenderer::Impl::initContext(RefCntAutoPtr<IRenderDevice> device)
+ void ArtifactIRenderer::Impl::initContext(RefCntAutoPtr<IRenderDevice> device)
  {
   
   device->CreateDeferredContext(&pDeferredContext_);
  
  }
 
- void AritfactIRenderer::Impl::createShaders()
+ void ArtifactIRenderer::Impl::createShaders()
  {
   ShaderCreateInfo lineVsInfo;
 
@@ -324,9 +341,28 @@ namespace Artifact
    pDevice_->CreateShader(thickLineVsInfo, &m_draw_thick_line_shaders.VS);
    pDevice_->CreateShader(thickLinePsInfo, &m_draw_thick_line_shaders.PS);
   }
+ 
+  {
+   ShaderCreateInfo dotLineVsInfo;
+   dotLineVsInfo.SourceLanguage = Diligent::SHADER_SOURCE_LANGUAGE_HLSL;
+   dotLineVsInfo.Desc.ShaderType = Diligent::SHADER_TYPE_VERTEX;
+   dotLineVsInfo.Desc.Name = "DotLineVertexShader";
+   dotLineVsInfo.Source = g_dotLineVS.constData();
+   dotLineVsInfo.SourceLength = g_dotLineVS.length();
+ 
+   ShaderCreateInfo dotLinePsInfo;
+   dotLinePsInfo.SourceLanguage = Diligent::SHADER_SOURCE_LANGUAGE_HLSL;
+   dotLinePsInfo.Desc.ShaderType = Diligent::SHADER_TYPE_PIXEL;
+   dotLinePsInfo.Desc.Name = "DotLinePixelShader";
+   dotLinePsInfo.Source = g_dotLinePS.constData();
+   dotLinePsInfo.SourceLength = g_dotLinePS.length();
+ 
+   pDevice_->CreateShader(dotLineVsInfo, &m_draw_dot_line_shaders.VS);
+   pDevice_->CreateShader(dotLinePsInfo, &m_draw_dot_line_shaders.PS);
+  }
  }
 
-  void AritfactIRenderer::Impl::createPSOs()
+  void ArtifactIRenderer::Impl::createPSOs()
   {
    GraphicsPipelineStateCreateInfo drawLinePSOCreateInfo;
    drawLinePSOCreateInfo.PSODesc.Name = "DrawLine PSO";
@@ -481,10 +517,48 @@ namespace Artifact
 	m_draw_thick_line_pso_and_srb.pPSO->CreateShaderResourceBinding(&m_draw_thick_line_pso_and_srb.pSRB, true);
    }
   }
+ 
+  // DotLine PSO (Task 3)
+  {
+   GraphicsPipelineStateCreateInfo dotLinePSOCreateInfo;
+   dotLinePSOCreateInfo.PSODesc.Name = "DrawDotLine PSO";
+   dotLinePSOCreateInfo.PSODesc.PipelineType = PIPELINE_TYPE_GRAPHICS;
+ 
+   LayoutElement dotLineLayoutElems[] = {
+ 	 LayoutElement{0, 0, 2, VT_FLOAT32, false},
+ 	 LayoutElement{1, 0, 4, VT_FLOAT32, false},
+     LayoutElement{2, 0, 1, VT_FLOAT32, false}
+   };
+ 
+   auto& DLGP = dotLinePSOCreateInfo.GraphicsPipeline;
+   DLGP.NumRenderTargets = 1;
+   DLGP.RTVFormats[0] = MAIN_RTV_FORMAT;
+   DLGP.PrimitiveTopology = PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP;
+   DLGP.RasterizerDesc.CullMode = CULL_MODE_NONE;
+   DLGP.DepthStencilDesc.DepthEnable = False;
+   DLGP.InputLayout.LayoutElements = dotLineLayoutElems;
+   DLGP.InputLayout.NumElements = 3;
+ 
+   ShaderResourceVariableDesc dotLineVars[] = {
+ 	 { SHADER_TYPE_VERTEX, "TransformCB", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC },
+     { SHADER_TYPE_PIXEL,  "DotLineCB",   SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC }
+   };
+   dotLinePSOCreateInfo.PSODesc.ResourceLayout.Variables = dotLineVars;
+   dotLinePSOCreateInfo.PSODesc.ResourceLayout.NumVariables = 2;
+ 
+   dotLinePSOCreateInfo.pVS = m_draw_dot_line_shaders.VS;
+   dotLinePSOCreateInfo.pPS = m_draw_dot_line_shaders.PS;
+ 
+   pDevice_->CreateGraphicsPipelineState(dotLinePSOCreateInfo, &m_draw_dot_line_pso_and_srb.pPSO);
+   if (m_draw_dot_line_pso_and_srb.pPSO)
+   {
+ 	 m_draw_dot_line_pso_and_srb.pPSO->CreateShaderResourceBinding(&m_draw_dot_line_pso_and_srb.pSRB, true);
+   }
+  }
 
   }
 
- void AritfactIRenderer::Impl::beginFrameGpuProfiling()
+ void ArtifactIRenderer::Impl::beginFrameGpuProfiling()
  {
   initFrameQueries();
   auto& query = m_frameQueries[m_frameQueryIndex];
@@ -494,7 +568,7 @@ namespace Artifact
   pImmediateContext_->BeginQuery(query);
  }
 
- void AritfactIRenderer::Impl::endFrameGpuProfiling()
+ void ArtifactIRenderer::Impl::endFrameGpuProfiling()
  {
   auto& query = m_frameQueries[m_frameQueryIndex];
   if (!query || !pImmediateContext_)
@@ -516,12 +590,12 @@ namespace Artifact
   m_frameQueryIndex = (m_frameQueryIndex + 1) % FrameQueryCount;
  }
 
- double AritfactIRenderer::Impl::lastFrameGpuTimeMs() const
+ double ArtifactIRenderer::Impl::lastFrameGpuTimeMs() const
  {
   return m_lastGpuFrameTimeMs;
  }
 
-void AritfactIRenderer::Impl::createConstantBuffers()
+void ArtifactIRenderer::Impl::createConstantBuffers()
 {
  {
   BufferDesc VertDesc;
@@ -608,10 +682,33 @@ void AritfactIRenderer::Impl::createConstantBuffers()
   vbDesc.Size = sizeof(RectVertex) * 4;
   pDevice_->CreateBuffer(vbDesc, nullptr, &m_draw_thick_line_vertex_buffer);
  }
+ 
+ // DotLine用の頂点バッファ
+ {
+  BufferDesc vbDesc;
+  vbDesc.Name = "DotLine Vertex Buffer";
+  vbDesc.BindFlags = BIND_VERTEX_BUFFER;
+  vbDesc.Usage = USAGE_DYNAMIC;
+  vbDesc.CPUAccessFlags = CPU_ACCESS_WRITE;
+  vbDesc.Size = sizeof(DotLineVertex) * 4;
+  pDevice_->CreateBuffer(vbDesc, nullptr, &m_draw_dot_line_vertex_buffer);
+ }
+ 
+ // DotLine用定数バッファ
+ {
+  struct DotLineShaderCB { float thickness; float spacing; float2 padding; };
+  BufferDesc CBDesc;
+  CBDesc.Name = "DotLineParamsCB";
+  CBDesc.Usage = USAGE_DYNAMIC;
+  CBDesc.BindFlags = BIND_UNIFORM_BUFFER;
+  CBDesc.CPUAccessFlags = CPU_ACCESS_WRITE;
+  CBDesc.Size = sizeof(DotLineShaderCB);
+  pDevice_->CreateBuffer(CBDesc, nullptr, &m_draw_dot_line_cb);
+ }
  }
 
  
-void AritfactIRenderer::Impl::createSwapChain(QWidget* window)
+void ArtifactIRenderer::Impl::createSwapChain(QWidget* window)
  {
  if (!window || !pDevice_)
  {
@@ -649,7 +746,7 @@ void AritfactIRenderer::Impl::createSwapChain(QWidget* window)
    
  }
 
- void AritfactIRenderer::Impl::recreateSwapChain(QWidget* widget)
+ void ArtifactIRenderer::Impl::recreateSwapChain(QWidget* widget)
  {
   if (!widget || !pDevice_ || !pSwapChain_)
   {
@@ -667,7 +764,9 @@ void AritfactIRenderer::Impl::createSwapChain(QWidget* window)
    << ", Physical:" << newWidth << "x" << newHeight;
   qDebug() << "Before Resize - SwapChain Desc:" << pSwapChain_->GetDesc().Width << "x" << pSwapChain_->GetDesc().Height;
   pSwapChain_->Resize(newWidth, newHeight);
-
+  if (renderHwnd_)
+   SetWindowPos(renderHwnd_, nullptr, 0, 0, newWidth, newHeight,
+				SWP_NOZORDER | SWP_NOMOVE | SWP_NOACTIVATE);
 
   qDebug() << "After Resize - SwapChain Desc:" << pSwapChain_->GetDesc().Width << "x" << pSwapChain_->GetDesc().Height;
 
@@ -698,7 +797,7 @@ void AritfactIRenderer::Impl::createSwapChain(QWidget* window)
   pDevice_->CreateTexture(TexDesc, nullptr, &m_layerRT);
   //calcProjection(m_CurrentPhysicalWidth, m_CurrentPhysicalHeight);
  }
- void AritfactIRenderer::Impl::drawSprite(const QImage& image)
+ void ArtifactIRenderer::Impl::drawSprite(const QImage& image)
  {
   QImage rgba = image.convertToFormat(QImage::Format_RGBA8888);
   RectVertex vertices[4] = {
@@ -712,36 +811,21 @@ void AritfactIRenderer::Impl::createSwapChain(QWidget* window)
    
    
  }
- void AritfactIRenderer::Impl::drawSolidRect(float2 pos, float2 size, const FloatColor& color)
- {
-  RectVertex vertices[4] = {
-	 {{0.0f, 0.0f}, {1, 0, 0, 1}}, // 左上
-	 {{1.0f, 0.0f}, {1, 0, 0, 1}}, // 右上
-	 {{0.0f, 1.0f}, {1, 0, 0, 1}}, // 左下
-	 {{1.0f, 1.0f}, {1, 0, 0, 1}}, // 右下
-  };
+  void ArtifactIRenderer::Impl::drawSolidRect(float2 pos, float2 size, const FloatColor& color)
+  {
+   drawRectLocal(pos.x, pos.y, size.x, size.y, color);
+  }
 
-  auto* pRTV = pSwapChain_->GetCurrentBackBufferRTV();
-
- }
-
- void AritfactIRenderer::Impl::drawSolidRect(float x, float y, float w, float h)
- {
-  RectVertex vertices[4] = {
-{{0.0f, 0.0f}, {1, 0, 0, 1}}, // 左上
-{{1.0f, 0.0f}, {1, 0, 0, 1}}, // 右上
-{{0.0f, 1.0f}, {1, 0, 0, 1}}, // 左下
-{{1.0f, 1.0f}, {1, 0, 0, 1}}, // 右下
-  };
-
-
- }
- void AritfactIRenderer::Impl::drawSprite(float2 pos, float2 size)
+  void ArtifactIRenderer::Impl::drawSolidRect(float x, float y, float w, float h)
+  {
+   drawRectLocal(x, y, w, h, {1.0f, 1.0f, 1.0f, 1.0f}); // Default to white
+  }
+ void ArtifactIRenderer::Impl::drawSprite(float2 pos, float2 size)
  {
 
  }
 
- void AritfactIRenderer::Impl::clear()
+ void ArtifactIRenderer::Impl::clear()
  {
   if (!pSwapChain_ || !pImmediateContext_) return;
   // クリアカラーの定義 (RGBA)
@@ -758,7 +842,7 @@ void AritfactIRenderer::Impl::createSwapChain(QWidget* window)
  }
 
  
- void AritfactIRenderer::Impl::flushAndWait()
+ void ArtifactIRenderer::Impl::flushAndWait()
  {
   if (!pDevice_ || !pImmediateContext_) return;
   RefCntAutoPtr<IFence> fence;
@@ -775,12 +859,12 @@ void AritfactIRenderer::Impl::createSwapChain(QWidget* window)
   fence->Wait(1);
  }
 
- void AritfactIRenderer::Impl::captureScreenShot()
+ void ArtifactIRenderer::Impl::captureScreenShot()
  {
 
  }
 
- void AritfactIRenderer::Impl::destroy()
+ void ArtifactIRenderer::Impl::destroy()
  {
   // Diligent Engineリソースの解放（RefCntAutoPtrはnullptr代入で参照カウント減）
   m_draw_sprite_vertex_buffer = nullptr;
@@ -804,23 +888,28 @@ void AritfactIRenderer::Impl::createSwapChain(QWidget* window)
   m_draw_thick_line_vertex_buffer = nullptr;
   m_draw_thick_line_shaders.VS = nullptr;
   m_draw_thick_line_shaders.PS = nullptr;
+  m_draw_dot_line_vertex_buffer = nullptr;
+  m_draw_dot_line_cb = nullptr;
+  m_draw_dot_line_shaders.VS = nullptr;
+  m_draw_dot_line_shaders.PS = nullptr;
   pDevice_ = nullptr;
   pImmediateContext_ = nullptr;
   pDeferredContext_ = nullptr;
   pSwapChain_ = nullptr;
+  if (renderHwnd_) {
+   DestroyWindow(renderHwnd_);
+   renderHwnd_ = nullptr;
+  }
   widget_ = nullptr;
   m_initialized = false;
  }
 
- void AritfactIRenderer::Impl::drawSolidLine(float2 start, float2 end, const FloatColor& color, float thickness)
- {
-  // TODO: Implementation needed
-  // LineVertex v[4];
-  // float2 d = normalize(end - start);
-  // float2 n = float2(-d.y, d.x) * 0.5f;
- }
+  void ArtifactIRenderer::Impl::drawSolidLine(float2 start, float2 end, const FloatColor& color, float thickness)
+  {
+   drawThickLineLocal(start, end, thickness, color);
+  }
 
- void AritfactIRenderer::Impl::drawRectLocal(float x, float y, float w, float h, const FloatColor& color)
+ void ArtifactIRenderer::Impl::drawRectLocal(float x, float y, float w, float h, const FloatColor& color)
  {
   if (!pSwapChain_) return;
 
@@ -899,7 +988,7 @@ void AritfactIRenderer::Impl::createSwapChain(QWidget* window)
   pImmediateContext_->DrawIndexed(drawAttrs);
  }
 
- void AritfactIRenderer::Impl::drawLineLocal(float2 p1, float2 p2, const FloatColor& color1, const FloatColor& color2)
+ void ArtifactIRenderer::Impl::drawLineLocal(float2 p1, float2 p2, const FloatColor& color1, const FloatColor& color2)
  {
      if (!pSwapChain_) return;
 
@@ -947,7 +1036,7 @@ void AritfactIRenderer::Impl::createSwapChain(QWidget* window)
 	 pImmediateContext_->Draw(drawAttrs);
  }
 
- void AritfactIRenderer::Impl::drawThickLineLocal(float2 p1, float2 p2, float thickness, const FloatColor& color)
+ void ArtifactIRenderer::Impl::drawThickLineLocal(float2 p1, float2 p2, float thickness, const FloatColor& color)
  {
   if (!pSwapChain_ || !m_draw_thick_line_pso_and_srb.pPSO) return;
   if (thickness <= 0.0f) return;
@@ -1006,7 +1095,90 @@ void AritfactIRenderer::Impl::createSwapChain(QWidget* window)
   pImmediateContext_->Draw(drawAttrs);
  }
 
- void AritfactIRenderer::Impl::drawSpriteLocal(float x, float y, float w, float h, const QImage& image)
+  void ArtifactIRenderer::Impl::drawDotLineLocal(float2 p1, float2 p2, float thickness, float spacing, const FloatColor& color)
+  {
+   if (!pSwapChain_ || !m_draw_dot_line_pso_and_srb.pPSO) return;
+   if (thickness <= 0.0f) return;
+ 
+   float2 d = { p2.x - p1.x, p2.y - p1.y };
+   float len = std::sqrt(d.x * d.x + d.y * d.y);
+   if (len < 1e-5f) return;
+ 
+   float2 nd = { d.x / len, d.y / len };
+   float half = thickness * 0.5f;
+   float2 n = { -nd.y * half, nd.x * half };
+ 
+   float4 c = { color.r(), color.g(), color.b(), 1.0f };
+   DotLineVertex vertices[4] = {
+    { { p1.x + n.x, p1.y + n.y }, c, 0.0f },
+    { { p1.x - n.x, p1.y - n.y }, c, 0.0f },
+    { { p2.x + n.x, p2.y + n.y }, c, len },
+    { { p2.x - n.x, p2.y - n.y }, c, len },
+   };
+ 
+   auto swapChainRTV = pSwapChain_->GetCurrentBackBufferRTV();
+   pImmediateContext_->SetRenderTargets(1, &swapChainRTV, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+ 
+   {
+    void* pData = nullptr;
+    pImmediateContext_->MapBuffer(m_draw_dot_line_vertex_buffer, MAP_WRITE, MAP_FLAG_DISCARD, pData);
+    std::memcpy(pData, vertices, sizeof(vertices));
+    pImmediateContext_->UnmapBuffer(m_draw_dot_line_vertex_buffer, MAP_WRITE);
+   }
+ 
+   {
+    auto desc = pSwapChain_->GetDesc();
+    CBSolidTransform2D cbTransform;
+    cbTransform.offset = { (float)pan_.x(), (float)pan_.y() };
+    cbTransform.scale = { 1, 1 };
+    cbTransform.screenSize = { float(desc.Width), float(desc.Height) };
+ 
+    void* pData = nullptr;
+    pImmediateContext_->MapBuffer(m_draw_solid_rect_trnsform_cb, MAP_WRITE, MAP_FLAG_DISCARD, pData);
+    std::memcpy(pData, &cbTransform, sizeof(cbTransform));
+    pImmediateContext_->UnmapBuffer(m_draw_solid_rect_trnsform_cb, MAP_WRITE);
+   }
+ 
+   {
+    struct DotLineShaderCB { float thickness; float spacing; float2 padding; };
+    DotLineShaderCB cb = { thickness, spacing, {0,0} };
+    void* pData = nullptr;
+    pImmediateContext_->MapBuffer(m_draw_dot_line_cb, MAP_WRITE, MAP_FLAG_DISCARD, pData);
+    std::memcpy(pData, &cb, sizeof(cb));
+    pImmediateContext_->UnmapBuffer(m_draw_dot_line_cb, MAP_WRITE);
+   }
+ 
+   pImmediateContext_->SetPipelineState(m_draw_dot_line_pso_and_srb.pPSO);
+ 
+   IBuffer* pBuffers[] = { m_draw_dot_line_vertex_buffer };
+   Uint64 offsets[] = { 0 };
+   pImmediateContext_->SetVertexBuffers(0, 1, pBuffers, offsets, RESOURCE_STATE_TRANSITION_MODE_TRANSITION, SET_VERTEX_BUFFERS_FLAG_RESET);
+ 
+   m_draw_dot_line_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_VERTEX, "TransformCB")->Set(m_draw_solid_rect_trnsform_cb);
+   m_draw_dot_line_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_PIXEL, "DotLineCB")->Set(m_draw_dot_line_cb);
+   pImmediateContext_->CommitShaderResources(m_draw_dot_line_pso_and_srb.pSRB, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+ 
+   DrawAttribs drawAttrs;
+   drawAttrs.NumVertices = 4;
+   drawAttrs.Flags = DRAW_FLAG_VERIFY_ALL;
+   pImmediateContext_->Draw(drawAttrs);
+  }
+ 
+  void ArtifactIRenderer::Impl::drawRectOutlineLocal(float x, float y, float w, float h, const FloatColor& color)
+  {
+    // Simply draw 4 lines
+    float2 p1 = {x, y};
+    float2 p2 = {x + w, y};
+    float2 p3 = {x + w, y + h};
+    float2 p4 = {x, y + h};
+    
+    drawLineLocal(p1, p2, color, color);
+    drawLineLocal(p2, p3, color, color);
+    drawLineLocal(p3, p4, color, color);
+    drawLineLocal(p4, p1, color, color);
+  }
+
+ void ArtifactIRenderer::Impl::drawSpriteLocal(float x, float y, float w, float h, const QImage& image)
  {
   if (!pSwapChain_) return;
   if (image.isNull()) return;
@@ -1116,96 +1288,115 @@ void AritfactIRenderer::Impl::createSwapChain(QWidget* window)
   pImmediateContext_->Draw(drawAttrs);
  }
 
- AritfactIRenderer::AritfactIRenderer(RefCntAutoPtr<IRenderDevice> pDevice, RefCntAutoPtr<IDeviceContext> pImmediateContext, QWidget* widget) :impl_(new Impl(pDevice, pImmediateContext,widget))
+ ArtifactIRenderer::ArtifactIRenderer(RefCntAutoPtr<IRenderDevice> pDevice, RefCntAutoPtr<IDeviceContext> pImmediateContext, QWidget* widget) :impl_(new Impl(pDevice, pImmediateContext,widget))
  {
 
  }
 
- AritfactIRenderer::AritfactIRenderer():impl_(new Impl())
+ ArtifactIRenderer::ArtifactIRenderer():impl_(new Impl())
  {
 
  }
 
- AritfactIRenderer::~AritfactIRenderer()
+ ArtifactIRenderer::~ArtifactIRenderer()
  {
   delete impl_;
  }
 
- void AritfactIRenderer::initialize(QWidget* widget)
+ void ArtifactIRenderer::initialize(QWidget* widget)
  {
   impl_->initialize(widget);
  }
 
- void AritfactIRenderer::createSwapChain(QWidget* widget)
+ void ArtifactIRenderer::createSwapChain(QWidget* widget)
  {
   impl_->createSwapChain(widget);
  }
- void AritfactIRenderer::recreateSwapChain(QWidget* widget)
+ void ArtifactIRenderer::recreateSwapChain(QWidget* widget)
  {
   impl_->recreateSwapChain(widget);
  }
 
- void AritfactIRenderer::clear()
+ void ArtifactIRenderer::clear()
  {
   impl_->clear();
  }
 
- void AritfactIRenderer::flush()
+ void ArtifactIRenderer::flush()
  {
   if (!impl_->pImmediateContext_) return;
   impl_->pImmediateContext_->Flush();
  }
 
- void AritfactIRenderer::flushAndWait()
+ void ArtifactIRenderer::flushAndWait()
  {
   impl_->flushAndWait();
  }
 
- void AritfactIRenderer::beginFrameGpuProfiling()
+ void ArtifactIRenderer::beginFrameGpuProfiling()
  {
   impl_->beginFrameGpuProfiling();
  }
 
- void AritfactIRenderer::endFrameGpuProfiling()
+ void ArtifactIRenderer::endFrameGpuProfiling()
  {
   impl_->endFrameGpuProfiling();
  }
 
- double AritfactIRenderer::lastFrameGpuTimeMs() const
+ double ArtifactIRenderer::lastFrameGpuTimeMs() const
  {
   return impl_->lastFrameGpuTimeMs();
  }
 
- void AritfactIRenderer::drawSolidRect(float2 pos, float2 size, const FloatColor& color)
- {
-
- }
-
- void AritfactIRenderer::drawSolidRect(float x, float y, float w, float h)
- {
-
- }
-
- void AritfactIRenderer::drawRectLocal(float x, float y, float w, float h, const FloatColor& color)
- {
-  impl_->drawRectLocal(x, y, w, h, color);
- }
-
- void AritfactIRenderer::drawThickLineLocal(float2 p1, float2 p2, float thickness, const FloatColor& color)
- {
-  impl_->drawThickLineLocal(p1, p2, thickness, color);
- }
-
- void AritfactIRenderer::present()
- {
-  if (!impl_->pSwapChain_) return;
-  impl_->pSwapChain_->Present();
- }
-
- void AritfactIRenderer::destroy()
- {
-
- }
-
+  void ArtifactIRenderer::drawSolidRect(float2 pos, float2 size, const FloatColor& color)
+  {
+    impl_->drawSolidRect(pos, size, color);
+  }
+ 
+  void ArtifactIRenderer::drawSolidRect(float x, float y, float w, float h)
+  {
+    impl_->drawSolidRect(x, y, w, h);
+  }
+ 
+  void ArtifactIRenderer::drawRectOutline(float x, float y, float w, float h, const FloatColor& color)
+  {
+    impl_->drawRectOutlineLocal(x, y, w, h, color);
+  }
+ 
+  void ArtifactIRenderer::drawRectOutline(float2 pos, float2 size, const FloatColor& color)
+  {
+    impl_->drawRectOutlineLocal(pos.x, pos.y, size.x, size.y, color);
+  }
+ 
+  void ArtifactIRenderer::drawRectLocal(float x, float y, float w, float h, const FloatColor& color)
+  {
+   impl_->drawRectLocal(x, y, w, h, color);
+  }
+ 
+  void ArtifactIRenderer::drawRectOutlineLocal(float x, float y, float w, float h, const FloatColor& color)
+  {
+    impl_->drawRectOutlineLocal(x, y, w, h, color);
+  }
+ 
+  void ArtifactIRenderer::drawThickLineLocal(float2 p1, float2 p2, float thickness, const FloatColor& color)
+  {
+   impl_->drawThickLineLocal(p1, p2, thickness, color);
+  }
+ 
+  void ArtifactIRenderer::drawDotLineLocal(float2 p1, float2 p2, float thickness, float spacing, const FloatColor& color)
+  {
+   impl_->drawDotLineLocal(p1, p2, thickness, spacing, color);
+  }
+ 
+  void ArtifactIRenderer::present()
+  {
+   if (!impl_->pSwapChain_) return;
+   impl_->pSwapChain_->Present();
+  }
+ 
+  void ArtifactIRenderer::destroy()
+  {
+    impl_->destroy();
+  }
+ 
 };
-

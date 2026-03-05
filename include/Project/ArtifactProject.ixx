@@ -89,6 +89,8 @@ export namespace Artifact {
   bool hasComposition(const CompositionID& id) const;
   bool removeCompositionById(const CompositionID& id);
   void removeAllCompositions();
+  void createFolder(const QString& name);
+  bool removeItem(ProjectItem* item);
   bool isDirty() const;
   QJsonObject toJson() const;
    
@@ -105,10 +107,10 @@ export namespace Artifact {
   void preRemoveAllCompositions()
    W_SIGNAL(preRemoveAllCompositions);
 
-  void layerCreated()
-   W_SIGNAL(layerCreated);
-  void layerRemoved(const LayerID& id)
-   W_SIGNAL(layerRemoved, id);
+  void layerCreated(const CompositionID& compId, const LayerID& layerId)
+   W_SIGNAL(layerCreated, compId, layerId);
+  void layerRemoved(const CompositionID& compId, const LayerID& id)
+   W_SIGNAL(layerRemoved, compId, id);
 
  	
  };

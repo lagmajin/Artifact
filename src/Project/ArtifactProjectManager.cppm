@@ -366,6 +366,11 @@ void ArtifactProjectManager::createProject(const QString& projectName, bool forc
          compositionCreated(id);
        }
      });
+     connect(shared.get(), &ArtifactProject::layerCreated, this, [weakProj, this](const CompositionID& cid, const LayerID& lid) {
+       if (weakProj.lock()) {
+         layerCreated(cid, lid);
+       }
+     });
      impl_->signalsConnected_ = true;
    }
  } else {
@@ -471,6 +476,9 @@ ArtifactProjectManager& ArtifactProjectManager::getInstance()
     });
     connect(shared.get(), &ArtifactProject::compositionCreated, this, [weakProj, this](const CompositionID& id) {
      if (weakProj.lock()) compositionCreated(id);
+    });
+    connect(shared.get(), &ArtifactProject::layerCreated, this, [weakProj, this](const CompositionID& cid, const LayerID& lid) {
+     if (weakProj.lock()) layerCreated(cid, lid);
     });
     impl_->signalsConnected_ = true;
    }
@@ -821,7 +829,22 @@ QVector<ProjectItem*> ArtifactProjectManager::projectItems() const
   {
    auto result = impl_->addLayerToCurrentComposition(params);
    if (result.success && result.layer) {
-    layerCreated(result.layer->id());
+    // Retrieve the first composition ID from project items to include in the signal
+    CompositionID firstCompId;
+    if (impl_->currentProjectPtr_) {
+     auto items = impl_->currentProjectPtr_->projectItems();
+     for (auto item : items) {
+      if (!item) continue;
+      for (auto child : item->children) {
+       if (child && child->type() == eProjectItemType::Composition) {
+        firstCompId = static_cast<CompositionItem*>(child)->compositionId;
+        break;
+       }
+      }
+      if (!firstCompId.isNil()) break;
+     }
+    }
+    layerCreated(firstCompId, result.layer->id());
    }
    return result;
   }
@@ -830,7 +853,7 @@ QVector<ProjectItem*> ArtifactProjectManager::projectItems() const
   {
     if (!impl_->currentProjectPtr_) return false;
     bool ok = impl_->currentProjectPtr_->removeLayerFromComposition(compositionId, layerId);
-    if (ok) layerRemoved(layerId);
+    if (ok) layerRemoved(compositionId, layerId);
     return ok;
   }
 
@@ -860,7 +883,7 @@ QVector<ProjectItem*> ArtifactProjectManager::projectItems() const
   {
    auto result = impl_->addLayerToComposition(compositionId, params);
    if (result.success && result.layer) {
-    layerCreated(result.layer->id());
+    layerCreated(compositionId, result.layer->id());
    }
    return result;
   }

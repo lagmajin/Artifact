@@ -118,7 +118,7 @@
     <ClCompile Include="include\Application\ActiveContextService.ixx">
       <Filter>include</Filter>
     </ClCompile>
-    <ClCompile Include="include\Render\AritfactIRenderer.ixx">
+    <ClCompile Include="include\Render\ArtifactIRenderer.ixx">
       <Filter>include</Filter>
     </ClCompile>
     <ClCompile Include="src\Asset\ArtifactAssetResult.cpp">
@@ -250,7 +250,7 @@
     <ClCompile Include="src\Widgets\Dialog\ApplicationSettingDialog.cppm">
       <Filter>src\Widgets</Filter>
     </ClCompile>
-    <ClCompile Include="src\Render\AritfactIRenderer.cppm">
+    <ClCompile Include="src\Render\ArtifactIRenderer.cppm">
       <Filter>src\Render</Filter>
     </ClCompile>
     <ClCompile Include="include\Widgets\Render\ArtifactRenderLayerWidget.ixx">

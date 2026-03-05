@@ -38,6 +38,7 @@ export namespace Artifact {
   
   // Track management
   int addTrack(double height = 20.0);
+  void clearTracks();
   void removeTrack(int trackIndex);
   int trackCount() const;
   double trackHeight(int trackIndex) const;
@@ -88,6 +89,7 @@ class TimelineTrackView :public QGraphicsView {
   // Track and clip management
   TimelineScene* timelineScene() const;
   int addTrack(double height = 20.0);
+  void clearTracks();
   void removeTrack(int trackIndex);
   ClipItem* addClip(int trackIndex, double start, double duration);
   void removeClip(ClipItem* clip);
@@ -122,8 +124,8 @@ class TimelineTrackView :public QGraphicsView {
   void setComposition(const CompositionID& id);
 
   // Layer management
-  void onLayerCreated(const LayerID& id);
-  void onLayerRemoved(const LayerID& id);
+  void onLayerCreated(const CompositionID& compId, const LayerID& layerId);
+  void onLayerRemoved(const CompositionID& compId, const LayerID& layerId);
 
   /*signals:*/
  public /*slots*/:

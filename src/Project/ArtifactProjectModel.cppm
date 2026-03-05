@@ -75,6 +75,8 @@ void ArtifactProjectModel::Impl::refreshTree()
 
   // store item type using ProjectItemDataRole.ProjectItemType
   item->setData(static_cast<int>(it->type()), Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::ProjectItemType));
+  // store item raw pointer for quick access from view/menus
+  item->setData(QVariant::fromValue(reinterpret_cast<quintptr>(it)), Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::ProjectItemPtr));
 
   // If this is a composition item, set a simple solid-color square icon
   if (it->type() == eProjectItemType::Composition) {

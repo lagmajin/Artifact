@@ -559,10 +559,53 @@ FindCompositionResult ArtifactProject::Impl::findComposition(const CompositionID
  }
 
 
- bool ArtifactProject::removeCompositionById(const CompositionID& id)
- {
-  return impl_->removeById(id);
- }
+  bool ArtifactProject::removeCompositionById(const CompositionID& id)
+  {
+   return impl_->removeById(id);
+  }
+
+  void ArtifactProject::createFolder(const QString& name)
+  {
+    auto folderUp = std::make_unique<FolderItem>();
+    folderUp->name.setQString(name);
+    
+    ProjectItem* projectRoot = nullptr;
+    if (!impl_->ownedItems_.empty()) projectRoot = impl_->ownedItems_.front().get();
+    if (projectRoot) {
+        folderUp->parent = projectRoot;
+        projectRoot->children.append(folderUp.get());
+    }
+    impl_->ownedItems_.push_back(std::move(folderUp));
+    projectChanged();
+  }
+
+  bool ArtifactProject::removeItem(ProjectItem* item)
+  {
+    if (!item) return false;
+    
+    if (item->type() == eProjectItemType::Composition) {
+        CompositionItem* ci = static_cast<CompositionItem*>(item);
+        impl_->container_.removeById(ci->compositionId);
+    }
+    
+    while (!item->children.isEmpty()) {
+        removeItem(item->children.back());
+    }
+    
+    if (item->parent) {
+        item->parent->children.removeOne(item);
+    }
+    
+    auto it = std::find_if(impl_->ownedItems_.begin(), impl_->ownedItems_.end(), 
+        [item](const auto& up) { return up.get() == item; });
+    
+    if (it != impl_->ownedItems_.end()) {
+        impl_->ownedItems_.erase(it);
+        projectChanged();
+        return true;
+    }
+    return false;
+  }
 
  bool ArtifactProject::addImportedComposition(ArtifactCompositionPtr comp, const QString& name)
  {
@@ -809,10 +852,17 @@ FindCompositionResult ArtifactProject::Impl::findComposition(const CompositionID
     return result;
   }
 
+  
+  
   ArtifactLayerResult ArtifactProject::createLayerAndAddToComposition(const CompositionID& compositionId, ArtifactLayerInitParams& params)
   {
-   return impl_->createLayerAndAddToComposition(compositionId, params);
+   auto result = impl_->createLayerAndAddToComposition(compositionId, params);
+   if (result.success && result.layer) {
+    layerCreated(compositionId, result.layer->id());
+   }
+   return result;
   }
+
 
 
    // ArtifactLayerResult ArtifactProject::duplicateLayerInComposition - TODO: impl_->duplicateLayerInComposition not available
@@ -844,7 +894,7 @@ FindCompositionResult ArtifactProject::Impl::findComposition(const CompositionID
   bool ArtifactProject::removeLayerFromComposition(const CompositionID& compositionId, const LayerID& layerId)
   {
     bool ok = impl_->removeLayerFromComposition(compositionId, layerId);
-    if (ok) layerRemoved(layerId);
+    if (ok) layerRemoved(compositionId, layerId);
     return ok;
   }
 

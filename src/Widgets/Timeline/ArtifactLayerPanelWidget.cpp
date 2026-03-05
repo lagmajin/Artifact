@@ -75,18 +75,18 @@ namespace Artifact
   auto visiblityButton = impl_->visibilityButton = new QPushButton();
   visiblityButton->setFixedSize(QSize(28, 28));
   visiblityButton->setIcon(impl_->visibilityIcon);
-  visiblityButton->setStyleSheet("background-color: gray; color: black;");
+  visiblityButton->setStyleSheet("background-color: #2D2D30; color: #CCC; border: none; border-right: 1px solid #1a1a1a;");
   visiblityButton->setFlat(true);
   auto lockButton = impl_->lockButton = new QPushButton();
-  lockButton->setStyleSheet("background-color: gray; color: black;");
+  lockButton->setStyleSheet("background-color: #2D2D30; color: #CCC; border: none; border-right: 1px solid #1a1a1a;");
   lockButton->setFixedSize(QSize(28, 28));
   auto soloButton = impl_->soloButton = new QPushButton();
   soloButton->setFixedSize(QSize(28, 28));
-  soloButton->setStyleSheet("background-color: gray; color: black;");
+  soloButton->setStyleSheet("background-color: #2D2D30; color: #CCC; border: none; border-right: 1px solid #1a1a1a;");
  	
   auto soundButton = impl_->soundButton = new QPushButton();
   soundButton->setFixedSize(QSize(28, 28));
-  soundButton->setStyleSheet("background-color: gray; color: black;");
+  soundButton->setStyleSheet("background-color: #2D2D30; color: #CCC; border: none; border-right: 1px solid #1a1a1a;");
  	
   auto layerNameButton = impl_->layerNameButton = new QPushButton();
   layerNameButton->setText("Layer Name");
@@ -113,13 +113,23 @@ namespace Artifact
   qHBoxLayout->addWidget(lockButton);
   qHBoxLayout->addWidget(soloButton);
   qHBoxLayout->addWidget(soundButton);
-  qHBoxLayout->addWidget(layerNameButton);
-  qHBoxLayout->addWidget(layerBlendModeButton);
-  qHBoxLayout->addWidget(parentButton);
-  qHBoxLayout->addWidget(blurButton);
-  qHBoxLayout->addWidget(adjButton);
-  //qHBoxLayout->addWidget(soloButton);
+  
+  // Style strings
+  QString btnStyle = "QPushButton { background-color: #2D2D30; color: #CCC; border: none; border-right: 1px solid #1a1a1a; font-size: 11px; text-align: left; padding-left: 5px; }";
+  layerNameButton->setStyleSheet(btnStyle);
+  layerBlendModeButton->setStyleSheet(btnStyle);
+  parentButton->setStyleSheet(btnStyle);
+
+  qHBoxLayout->addWidget(layerNameButton, 1); // Layer Name expands to fill space
+
+  // We hide the unfinished columns for now as they are not drawn in the list below.
+  layerBlendModeButton->hide();
+  parentButton->hide();
+  blurButton->hide();
+  adjButton->hide();
+
   setLayout(qHBoxLayout);
+  setStyleSheet("background-color: #2D2D30; border-bottom: 1px solid #1a1a1a;");
  }
 
  ArtifactLayerPanelHeaderWidget::~ArtifactLayerPanelHeaderWidget()
@@ -189,11 +199,21 @@ ArtifactLayerPanelWidget::ArtifactLayerPanelWidget(QWidget* parent /*= nullptr*/
  setAcceptDrops(true);
 
  if (auto* service = ArtifactProjectService::instance()) {
-   QObject::connect(service, &ArtifactProjectService::layerCreated, this, [this](const LayerID&) {
-     update();
+   QObject::connect(service, &ArtifactProjectService::layerCreated, this, [this](const CompositionID& compId, const LayerID&) {
+     if (impl_->compositionId == compId) { 
+         auto comp = safeCompositionLookup(impl_->compositionId);
+         int count = comp ? comp->allLayer().size() : 0;
+         setMinimumHeight(std::max(100, count * 28));
+         update(); 
+     }
    });
-   QObject::connect(service, &ArtifactProjectService::layerRemoved, this, [this](const LayerID&) {
-     update();
+   QObject::connect(service, &ArtifactProjectService::layerRemoved, this, [this](const CompositionID& compId, const LayerID&) {
+     if (impl_->compositionId == compId) {
+         auto comp = safeCompositionLookup(impl_->compositionId);
+         int count = comp ? comp->allLayer().size() : 0;
+         setMinimumHeight(std::max(100, count * 28));
+         update(); 
+     }
    });
    QObject::connect(service, &ArtifactProjectService::layerSelected, this, [this](const LayerID& layerId) {
      if (impl_->selectedLayerId != layerId) {
@@ -208,6 +228,11 @@ void ArtifactLayerPanelWidget::setComposition(const CompositionID& id)
 {
     impl_->compositionId = id;
     impl_->selectedLayerId = LayerID();  // Reset selection on comp change
+    
+    auto comp = safeCompositionLookup(impl_->compositionId);
+    int count = comp ? comp->allLayer().size() : 0;
+    setMinimumHeight(std::max(100, count * 28));
+    
     // trigger repaint
     update();
 }

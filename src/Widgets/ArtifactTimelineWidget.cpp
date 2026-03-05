@@ -37,6 +37,7 @@ import Artifact.Timeline.TimeCodeWidget;
 import Panel.DraggableSplitter;
 import Artifact.Timeline.Objects;
 import Artifact.Widgets.Timeline.GlobalSwitches;
+import Artifact.Service.Project;
 
 
 
@@ -111,8 +112,8 @@ void TimelineScene::removeTrack(int trackIndex)
  if (trackIndex < 0 || trackIndex >= static_cast<int>(impl_->trackHeights_.size())) {
   return;
  }
-  
- auto it = impl_->clips_.begin();
+
+auto it = impl_->clips_.begin();
  while (it != impl_->clips_.end()) {
   bool isInTrack = false;
   double yPos = (*it)->pos().y();
@@ -123,7 +124,7 @@ void TimelineScene::removeTrack(int trackIndex)
   if (yPos >= trackY && yPos < trackY + impl_->trackHeights_[trackIndex]) {
    isInTrack = true;
   }
-   
+
    if (isInTrack) {
    removeItem(*it);
    destroyClipItem(*it);
@@ -132,12 +133,24 @@ void TimelineScene::removeTrack(int trackIndex)
    ++it;
   }
  }
-  
+
  impl_->trackHeights_.erase(impl_->trackHeights_.begin() + trackIndex);
  double newHeight = impl_->getTotalTrackHeight();
  QRectF sr = sceneRect();
  sr.setHeight(newHeight);
  setSceneRect(sr);
+}
+
+void TimelineScene::clearTracks()
+{
+ for (auto* clip : impl_->clips_) {
+  removeItem(clip);
+  destroyClipItem(clip);
+ }
+ impl_->clips_.clear();
+ impl_->selectedClips_.clear();
+ impl_->trackHeights_.clear();
+ setSceneRect(0, 0, 2000, 0);
 }
 
 int TimelineScene::trackCount() const
@@ -408,6 +421,12 @@ W_OBJECT_IMPL(ArtifactTimelineWidget)
    }
   }
 
+  // Connect Layer Signals
+  if (auto* svc = ArtifactProjectService::instance()) {
+   QObject::connect(svc, &ArtifactProjectService::layerCreated, this, &ArtifactTimelineWidget::onLayerCreated);
+   QObject::connect(svc, &ArtifactProjectService::layerRemoved, this, &ArtifactTimelineWidget::onLayerRemoved);
+  }
+
  }
 
  ArtifactTimelineWidget::~ArtifactTimelineWidget()
@@ -415,42 +434,48 @@ W_OBJECT_IMPL(ArtifactTimelineWidget)
 
  }
 
- void ArtifactTimelineWidget::setComposition(const CompositionID& id)
- {
-  impl_->compositionId_ = id;
-  if (impl_->layerTimelinePanel_) {
-   impl_->layerTimelinePanel_->setComposition(id);
+ 
+  void ArtifactTimelineWidget::setComposition(const CompositionID& id)
+  {
+   impl_->compositionId_ = id;
+   if (impl_->layerTimelinePanel_) {
+    impl_->layerTimelinePanel_->setComposition(id);
+   }
+
+   if (impl_->trackView_) {
+    impl_->trackView_->clearTracks();
+    if (auto svc = ArtifactProjectService::instance()) {
+     auto res = svc->findComposition(id);
+     if (res.success && !res.ptr.expired()) {
+      auto comp = res.ptr.lock();
+      auto layers = comp->allLayer();
+      for (const auto& l : layers) {
+       if (l) onLayerCreated(id, l->id());
+      }
+        }
+       }
+      }
+     }
+
+     void ArtifactTimelineWidget::onLayerCreated(const CompositionID& compId, const LayerID& lid)
+  {
+   if (compId != impl_->compositionId_) return;
+   if (!impl_->trackView_) return;
+
+   qDebug() << "[ArtifactTimelineWidget::onLayerCreated] Layer created:" << lid.toString();
+
+   int trackIndex = impl_->trackView_->addTrack(28.0);
+   double startFrame = 0.0;
+   double duration = 100.0;
+   ClipItem* clip = impl_->trackView_->addClip(trackIndex, startFrame, duration);
   }
- }
 
- void ArtifactTimelineWidget::onLayerCreated(const LayerID& id)
- {
-  // Add a ClipItem to the timeline when a layer is created
-  if (!impl_->trackView_) return;
-
-  qDebug() << "[ArtifactTimelineWidget::onLayerCreated] Layer created:" << id.toString();
-
-  // Add a new track for this layer if needed
-  int trackIndex = impl_->trackView_->addTrack(28.0);  // Standard track height of 28px
-
-  // Add a clip item spanning from frame 0 with default duration of 100 frames
-  double startFrame = 0.0;
-  double duration = 100.0;
-  ClipItem* clip = impl_->trackView_->addClip(trackIndex, startFrame, duration);
-
-  if (clip) {
-   qDebug() << "[ArtifactTimelineWidget::onLayerCreated] Added ClipItem at track" << trackIndex;
+  void ArtifactTimelineWidget::onLayerRemoved(const CompositionID& compId, const LayerID& lid)
+  {
+   if (compId != impl_->compositionId_) return;
+   qDebug() << "[ArtifactTimelineWidget::onLayerRemoved] Layer removed:" << lid.toString();
   }
- }
 
- void ArtifactTimelineWidget::onLayerRemoved(const LayerID& id)
- {
-  // Remove corresponding ClipItems when a layer is removed
-  qDebug() << "[ArtifactTimelineWidget::onLayerRemoved] Layer removed:" << id.toString();
-
-  // TODO: Implement layer removal - need to track which clip belongs to which layer
-  // For now, this is a placeholder
- }
  void ArtifactTimelineWidget::paintEvent(QPaintEvent* event)
  {
 
@@ -590,6 +615,14 @@ TimelineTrackView::TimelineTrackView(QWidget* parent /*= nullptr*/) :QGraphicsVi
  {
   if (impl_->scene_) {
    impl_->scene_->removeTrack(trackIndex);
+   viewport()->update();
+  }
+ }
+
+ void TimelineTrackView::clearTracks()
+ {
+  if (impl_->scene_) {
+   impl_->scene_->clearTracks();
    viewport()->update();
   }
  }

@@ -2,6 +2,9 @@ module;
 #include <wobjectdefs.h>
 #include <QFile>
 #include <QWidget>
+#include <QWheelEvent>
+#include <QMouseEvent>
+
 export module Artifact.Contents.Viewer;
 
 export namespace Artifact
@@ -22,6 +25,11 @@ export namespace Artifact
   void stop(); W_SLOT(stop);
   void playRange(int64_t start, int64_t end); W_SLOT(playRange);
 
+ protected:
+  void wheelEvent(QWheelEvent* event) override;
+  void mousePressEvent(QMouseEvent* event) override;
+  void mouseMoveEvent(QMouseEvent* event) override;
+  void mouseReleaseEvent(QMouseEvent* event) override;
  };
 
 };

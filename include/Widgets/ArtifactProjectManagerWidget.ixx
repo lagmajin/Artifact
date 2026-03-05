@@ -69,6 +69,7 @@ public:
 
  class ArtifactProjectManagerToolBox :public QWidget
  {
+  W_OBJECT(ArtifactProjectManagerToolBox)
  private:
   class Impl;
   Impl* impl_;
@@ -79,6 +80,11 @@ public:
  public:
   explicit ArtifactProjectManagerToolBox(QWidget* widget = nullptr);
   ~ArtifactProjectManagerToolBox();
+
+ public /*signals*/:
+  void newCompositionRequested() W_SIGNAL(newCompositionRequested);
+  void newFolderRequested() W_SIGNAL(newFolderRequested);
+  void deleteRequested() W_SIGNAL(deleteRequested);
  };
 
  class ArtifactProjectManagerWidget :public QWidget {

@@ -530,8 +530,10 @@ void ArtifactInspectorWidget::Impl::updatePropertiesForEffect(const QString& eff
    
 
    // レイヤー作成シグナルに接続（作成されたレイヤーを自動選択）
-   QObject::connect(projectService, &ArtifactProjectService::layerCreated, this, [this](const LayerID& id) {
-    impl_->handleLayerSelected(id);
+   QObject::connect(projectService, &ArtifactProjectService::layerCreated, this, [this](const CompositionID& cid, const LayerID& id) {
+    if (impl_->currentCompositionId_ == cid) {
+        impl_->handleLayerSelected(id);
+    }
    });
 
    // レイヤー選択シグナルに接続

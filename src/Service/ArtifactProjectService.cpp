@@ -163,7 +163,7 @@ void ArtifactProjectService::addLayerToCurrentComposition(const ArtifactLayerIni
 bool ArtifactProjectService::removeLayerFromComposition(const CompositionID& compositionId, const LayerID& layerId)
 {
     bool ok = impl_->projectManager().removeLayerFromComposition(compositionId, layerId);
-    if (ok) layerRemoved(layerId);
+    if (ok) layerRemoved(compositionId, layerId);
     return ok;
 }
 
@@ -243,6 +243,17 @@ QVector<ProjectItem*> ArtifactProjectService::projectItems() const
  return impl_->projectManager().getCurrentProjectSharedPtr() ? impl_->projectManager().getCurrentProjectSharedPtr()->projectItems() : QVector<ProjectItem*>();
 }
 
+void ArtifactProjectService::createComposition(const UniString& name)
+{
+ auto& manager = impl_->projectManager();
+ auto result = manager.createComposition(name);
+ if (result.success) {
+  qDebug() << "[ArtifactProjectService::createComposition(UniString)] succeeded, id:" << result.id.toString();
+ } else {
+  qDebug() << "[ArtifactProjectService::createComposition(UniString)] failed";
+ }
+}
+
 void ArtifactProjectService::createComposition(const ArtifactCompositionInitParams& params)
 {
  auto& manager = impl_->projectManager();
@@ -252,6 +263,12 @@ void ArtifactProjectService::createComposition(const ArtifactCompositionInitPara
  } else {
   qDebug() << "[ArtifactProjectService::createComposition] failed";
  }
+}
+
+void ArtifactProjectService::createProject(const ArtifactProjectSettings& setting)
+{
+ auto& manager = impl_->projectManager();
+ manager.createProject(setting.projectName());
 }
 
 void ArtifactProjectService::removeAllAssets()

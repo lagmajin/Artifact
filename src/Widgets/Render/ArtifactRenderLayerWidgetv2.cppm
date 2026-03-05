@@ -1,4 +1,4 @@
-﻿module;
+module;
 #define NOMINMAX
 #include <windows.h>
 #include <tbb/tbb.h>
@@ -55,7 +55,7 @@ W_OBJECT_IMPL(ArtifactLayerEditorWidgetV2)
   void initialize(QWidget* window);
   void initializeSwapChain(QWidget* window);
   void destroy();
-  std::unique_ptr<AritfactIRenderer> renderer_;
+  std::unique_ptr<ArtifactIRenderer> renderer_;
   bool initialized_ = false;
   bool isPanning_=false;
   QPointF lastMousePos_;
@@ -117,7 +117,7 @@ W_OBJECT_IMPL(ArtifactLayerEditorWidgetV2)
   }
    
    */
-  renderer_ = std::make_unique<AritfactIRenderer>();
+  renderer_ = std::make_unique<ArtifactIRenderer>();
   renderer_->initialize(window);
   initialized_ = true;
    

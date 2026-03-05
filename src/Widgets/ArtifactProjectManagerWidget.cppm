@@ -25,6 +25,7 @@ module;
 #include <QDesktopServices>
 #include <QHeaderView>
 #include <QPushButton>
+#include <QFileDialog>
 
 module Artifact.Widgets.ProjectManagerWidget;
 
@@ -44,6 +45,7 @@ namespace Artifact {
 
  W_OBJECT_IMPL(ArtifactProjectManagerWidget)
  W_OBJECT_IMPL(ArtifactProjectView)
+ W_OBJECT_IMPL(ArtifactProjectManagerToolBox)
 
 // --- Preview/Info Panel at top ---
 class ProjectInfoPanel : public QWidget {
@@ -308,18 +310,87 @@ void ArtifactProjectView::mouseMoveEvent(QMouseEvent* event) {
 
 void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
     QModelIndex idx = indexAt(event->pos());
-    if(!idx.isValid()) return;
     QMenu menu(this);
-    menu.addAction("Open", [this, idx]() { handleItemDoubleClicked(idx); });
-    menu.addAction("Rename", [this, idx]() {
-        bool ok;
-        QString name = QInputDialog::getText(this, "Rename", "New Name:", QLineEdit::Normal, idx.data().toString(), &ok);
-        if(ok && !name.isEmpty()) {
-             QModelIndex actualIdx = idx;
-             if(auto proxy = qobject_cast<QSortFilterProxyModel*>(model())) actualIdx = proxy->mapToSource(idx);
-             model()->setData(idx, name, Qt::EditRole);
+    auto svc = ArtifactProjectService::instance();
+
+    if (idx.isValid()) {
+        QModelIndex sourceIdx = idx;
+        if (auto proxy = qobject_cast<const QSortFilterProxyModel*>(idx.model())) {
+            sourceIdx = proxy->mapToSource(idx).siblingAtColumn(0);
+        }
+
+        QVariant ptrVar = sourceIdx.data(Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::ProjectItemPtr));
+        ProjectItem* item = ptrVar.isValid() ? reinterpret_cast<ProjectItem*>(ptrVar.value<quintptr>()) : nullptr;
+        
+        QVariant typeVar = sourceIdx.data(Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::ProjectItemType));
+        eProjectItemType type = typeVar.isValid() ? static_cast<eProjectItemType>(typeVar.toInt()) : eProjectItemType::Footage;
+
+        menu.addAction("Open", [this, idx]() { handleItemDoubleClicked(idx); });
+        
+        if (type == eProjectItemType::Composition) {
+            menu.addAction("Composition Settings...", [this, sourceIdx]() {
+                // TODO: trigger EditCompositionSettingDialog
+            });
+            
+            menu.addAction("Interpret Footage...", []() {
+                // Placeholder for footage settings
+            });
+        }
+
+        if (type == eProjectItemType::Footage) {
+            menu.addAction("Reveal in Explorer", [item]() {
+                if (item && item->type() == eProjectItemType::Footage) {
+                    QString path = static_cast<FootageItem*>(item)->filePath;
+                    QDesktopServices::openUrl(QUrl::fromLocalFile(QFileInfo(path).absolutePath()));
+                }
+            });
+        }
+
+        menu.addSeparator();
+        menu.addAction("Rename", [this, idx]() {
+            bool ok;
+            QString name = QInputDialog::getText(this, "Rename", "New Name:", QLineEdit::Normal, idx.data().toString(), &ok);
+            if(ok && !name.isEmpty()) {
+                 model()->setData(idx, name, Qt::EditRole);
+            }
+        });
+
+        menu.addAction("Delete", [this, sourceIdx, item, svc]() {
+            if (item) {
+                svc->getCurrentProjectSharedPtr()->removeItem(item);
+            }
+        });
+        
+        menu.addSeparator();
+    }
+
+    // "New" menu group
+    auto newMenu = menu.addMenu("New");
+    newMenu->addAction("Composition...", [svc]() {
+        svc->createComposition(UniString("New Comp"));
+    });
+    newMenu->addAction("Solid...", []() {
+        // Placeholder for solid creation dialog
+    });
+    newMenu->addAction("Folder", [svc]() {
+        svc->getCurrentProjectSharedPtr()->createFolder("New Folder");
+    });
+
+    menu.addSeparator();
+    menu.addAction("Import File...", [this, svc]() {
+        QStringList paths = QFileDialog::getOpenFileNames(this, "Import Files", "", "All Files (*.*)");
+        for (const auto& p : paths) {
+             impl_->handleFileDrop(p);
         }
     });
+
+    menu.setStyleSheet(R"(
+        QMenu { background-color: #2D2D30; color: #CCC; border: 1px solid #1a1a1a; padding: 4px; }
+        QMenu::item { padding: 4px 20px 4px 20px; border-radius: 2px; }
+        QMenu::item:selected { background-color: #094771; color: white; }
+        QMenu::separator { height: 1px; background: #3e3e42; margin: 4px 10px; }
+    )");
+
     menu.exec(event->globalPos());
 }
 
@@ -437,6 +508,29 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
         if (impl_->proxyModel_) impl_->infoPanel_->updateInfo(impl_->proxyModel_->mapToSource(idx));
     });
 
+    connect(impl_->toolBox, &ArtifactProjectManagerToolBox::newCompositionRequested, [this]() {
+         ArtifactProjectService::instance()->createComposition(UniString("Composition"));
+    });
+    connect(impl_->toolBox, &ArtifactProjectManagerToolBox::newFolderRequested, [this]() {
+         auto project = ArtifactProjectService::instance()->getCurrentProjectSharedPtr();
+         if (project) project->createFolder("New Folder");
+    });
+    connect(impl_->toolBox, &ArtifactProjectManagerToolBox::deleteRequested, [this]() {
+         auto selection = impl_->projectView_->selectionModel()->selectedIndexes();
+         if (!selection.isEmpty()) {
+             QModelIndex idx = selection.first();
+             QModelIndex sourceIdx = idx;
+             if (auto proxy = qobject_cast<const QSortFilterProxyModel*>(idx.model())) {
+                 sourceIdx = proxy->mapToSource(idx).siblingAtColumn(0);
+             }
+             QVariant ptrVar = sourceIdx.data(Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::ProjectItemPtr));
+             ProjectItem* item = ptrVar.isValid() ? reinterpret_cast<ProjectItem*>(ptrVar.value<quintptr>()) : nullptr;
+             
+             auto project = ArtifactProjectService::instance()->getCurrentProjectSharedPtr();
+             if (project && item) project->removeItem(item);
+         }
+    });
+
     auto svc = ArtifactProjectService::instance();
     connect(svc, &ArtifactProjectService::projectChanged, this, [this]() { updateRequested(); });
     connect(svc, &ArtifactProjectService::projectCreated, this, [this]() { updateRequested(); });
@@ -487,7 +581,9 @@ ArtifactProjectManagerToolBox::ArtifactProjectManagerToolBox(QWidget* parent) : 
     layout->addStretch();
     layout->addWidget(btnDel);
 
-    connect(btnNew, &QPushButton::clicked, []() { ArtifactProjectService::instance()->createComposition(UniString("Composition")); });
+    connect(btnNew, &QPushButton::clicked, this, &ArtifactProjectManagerToolBox::newCompositionRequested);
+    connect(btnFolder, &QPushButton::clicked, this, &ArtifactProjectManagerToolBox::newFolderRequested);
+    connect(btnDel, &QPushButton::clicked, this, &ArtifactProjectManagerToolBox::deleteRequested);
 }
 
 ArtifactProjectManagerToolBox::~ArtifactProjectManagerToolBox() {}

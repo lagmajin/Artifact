@@ -68,15 +68,15 @@ export namespace Artifact
   bool renameComposition(const CompositionID& id, const UniString& name);
   std::shared_ptr<ArtifactProject> getCurrentProjectSharedPtr() const;
  public /*signals*/:
-  void layerRemoved(const LayerID& id)
-   W_SIGNAL(layerRemoved, id);
+  void layerRemoved(const CompositionID& compId, const LayerID& layerId)
+   W_SIGNAL(layerRemoved, compId, layerId);
  public/*signals*/:
   void projectCreated()
   W_SIGNAL(projectCreated);
   void compositionCreated(const CompositionID& id)
    W_SIGNAL(compositionCreated, id);
-  void layerCreated(const LayerID& id)
-   W_SIGNAL(layerCreated, id);
+  void layerCreated(const CompositionID& compId, const LayerID& layerId)
+    W_SIGNAL(layerCreated, compId, layerId);
 
   void projectChanged()
    W_SIGNAL(projectChanged);

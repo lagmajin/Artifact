@@ -9,6 +9,7 @@ module;
 #include <DockWidget.h>
 #include <DockManager.h>
 #include <QLabel>
+#include <QHBoxLayout>
 #include <QMessageBox>
 #include <QStatusBar>
 #include <QTimer>
@@ -182,40 +183,68 @@ namespace Artifact {
 
   setDockNestingEnabled(true);
   
+  
   // Setup status bar with multiple widgets
   auto statusbar = statusBar();
+  statusbar->setStyleSheet(R"(
+      QStatusBar {
+          background: #181818;
+          border-top: 1px solid #2d2d2d;
+          min-height: 24px;
+          color: #888;
+      }
+      QStatusBar::item { border: none; }
+  )");
   
   // Create status bar labels
-  auto statusLabel = new QLabel("Ready");
-  statusLabel->setMinimumWidth(200);
+  auto statusContainer = new QWidget();
+  auto statusLayout = new QHBoxLayout(statusContainer);
+  statusLayout->setContentsMargins(8, 0, 8, 0);
+  statusLayout->setSpacing(6);
+  
+  auto statusDot = new QLabel();
+  statusDot->setFixedSize(6, 6);
+  statusDot->setStyleSheet("background-color: #4CAF50; border-radius: 3px;");
+  
+  auto statusLabel = new QLabel("READY");
+  statusLabel->setStyleSheet("color: #ccc; font-size: 10px; font-weight: bold; font-family: 'Segoe UI';");
   statusLabel->setObjectName("statusLabel");
   
+  statusLayout->addWidget(statusDot);
+  statusLayout->addWidget(statusLabel);
+  statusLayout->addStretch();
+
   auto coordinatesLabel = new QLabel("X: 0 | Y: 0");
-  coordinatesLabel->setMinimumWidth(120);
+  coordinatesLabel->setMinimumWidth(100);
   coordinatesLabel->setAlignment(Qt::AlignCenter);
   coordinatesLabel->setObjectName("coordinatesLabel");
+  coordinatesLabel->setStyleSheet("color: #888; border-left: 1px solid #2d2d2d; font-size: 10px; padding: 0 10px; font-family: 'Segoe UI';");
   
-  auto zoomLabel = new QLabel("Zoom: 100%");
-  zoomLabel->setMinimumWidth(100);
+  auto zoomLabel = new QLabel("ZOOM: 100%");
+  zoomLabel->setMinimumWidth(80);
   zoomLabel->setAlignment(Qt::AlignCenter);
   zoomLabel->setObjectName("zoomLabel");
+  zoomLabel->setStyleSheet("color: #888; border-left: 1px solid #2d2d2d; font-size: 10px; padding: 0 10px; font-family: 'Segoe UI';");
   
-  auto memoryLabel = new QLabel("Memory: 0 MB");
-  memoryLabel->setMinimumWidth(120);
+  auto memoryLabel = new QLabel("MEM: 0 MB");
+  memoryLabel->setMinimumWidth(90);
   memoryLabel->setAlignment(Qt::AlignCenter);
   memoryLabel->setObjectName("memoryLabel");
+  memoryLabel->setStyleSheet("color: #888; border-left: 1px solid #2d2d2d; font-size: 10px; padding: 0 10px; font-family: 'Segoe UI';");
   
-  auto fpsLabel = new QLabel("FPS: 0");
+  auto fpsLabel = new QLabel("FPS: 00.0");
   fpsLabel->setMinimumWidth(80);
   fpsLabel->setAlignment(Qt::AlignCenter);
   fpsLabel->setObjectName("fpsLabel");
+  fpsLabel->setStyleSheet("color: #888; border-left: 1px solid #2d2d2d; font-size: 10px; padding: 0 10px; font-family: 'Segoe UI';");
   
   // Add widgets to status bar
-  statusbar->addWidget(statusLabel, 1);  // Stretch factor 1
+  statusbar->addWidget(statusContainer, 1);
   statusbar->addPermanentWidget(fpsLabel);
   statusbar->addPermanentWidget(memoryLabel);
   statusbar->addPermanentWidget(zoomLabel);
   statusbar->addPermanentWidget(coordinatesLabel);
+
   
   // Store references in impl
   impl_->statusLabel_ = statusLabel;
@@ -346,12 +375,7 @@ namespace Artifact {
 
  }
 
- void ArtifactMainWindow::setStatusZoomLevel(float zoomPercent)
- {
-  if (impl_->zoomLabel_) {
-   impl_->zoomLabel_->setText(QString("Zoom: %1%").arg(static_cast<int>(zoomPercent)));
-  }
- }
+ void ArtifactMainWindow::setStatusZoomLevel(float zoomPercent) { if (impl_->zoomLabel_) impl_->zoomLabel_->setText(QString("ZOOM: %1%").arg(static_cast<int>(zoomPercent))); }
 
  void ArtifactMainWindow::setStatusCoordinates(int x, int y)
  {
@@ -360,19 +384,9 @@ namespace Artifact {
   }
  }
 
- void ArtifactMainWindow::setStatusMemoryUsage(uint64_t memoryMB)
- {
-  if (impl_->memoryLabel_) {
-   impl_->memoryLabel_->setText(QString("Memory: %1 MB").arg(memoryMB));
-  }
- }
+ void ArtifactMainWindow::setStatusMemoryUsage(uint64_t memoryMB) { if (impl_->memoryLabel_) impl_->memoryLabel_->setText(QString("MEM: %1 MB").arg(memoryMB)); }
 
- void ArtifactMainWindow::setStatusFPS(double fps)
- {
-  if (impl_->fpsLabel_) {
-   impl_->fpsLabel_->setText(QString("FPS: %1").arg(static_cast<int>(fps)));
-  }
- }
+ void ArtifactMainWindow::setStatusFPS(double fps) { if (impl_->fpsLabel_) impl_->fpsLabel_->setText(QString("FPS: %1").arg(QString::number(fps, 'f', 1))); }
 
  void ArtifactMainWindow::setStatusReady()
  {

@@ -100,10 +100,10 @@ export namespace Artifact {
   void compositionCreated(const CompositionID& id)
    W_SIGNAL(compositionCreated, id);
 
-  void layerCreated(const LayerID& id)
-   W_SIGNAL(layerCreated, id);
-  void layerRemoved(const LayerID& id)
-   W_SIGNAL(layerRemoved, id);
+  void layerCreated(const CompositionID& compId, const LayerID& id)
+   W_SIGNAL(layerCreated, compId, id);
+  void layerRemoved(const CompositionID& compId, const LayerID& id)
+   W_SIGNAL(layerRemoved, compId, id);
  };
 
 extern "C" {

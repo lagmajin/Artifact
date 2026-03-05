@@ -76,4 +76,64 @@ PSInput main(VSInput input)
 }
 )HLSL";
 
+ // Dotted Line shaders (Task 3)
+ inline const QByteArray g_dotLineVS = R"HLSL(
+cbuffer TransformCB : register(b0)
+{
+    float2 offset;
+    float2 scale;
+    float2 screenSize;
+};
+
+struct VSInput
+{
+    float2 pos   : ATTRIB0;
+    float4 color : ATTRIB1;
+    float  dist  : ATTRIB2;
+};
+
+struct PSInput
+{
+    float4 pos   : SV_POSITION;
+    float4 color : COLOR0;
+    float  dist  : DISTANCE0;
+};
+
+PSInput main(VSInput input)
+{
+    PSInput output;
+    float2 pos = input.pos + offset;
+    float2 ndc = (pos / screenSize) * 2.0f - float2(1.0f, 1.0f);
+    ndc.y = -ndc.y;
+    output.pos   = float4(ndc, 0.0f, 1.0f);
+    output.color = input.color;
+    output.dist  = input.dist;
+    return output;
+}
+)HLSL";
+
+ inline const QByteArray g_dotLinePS = R"HLSL(
+cbuffer DotLineCB : register(b1)
+{
+    float thickness;
+    float spacing;
+    float2 padding;
+};
+
+struct PSInput
+{
+    float4 pos   : SV_POSITION;
+    float4 color : COLOR0;
+    float  dist  : DISTANCE0;
+};
+
+float4 main(PSInput input) : SV_TARGET
+{
+    float pattern = thickness + spacing;
+    if (fmod(input.dist, pattern) > thickness)
+        discard;
+    return input.color;
+}
+)HLSL";
+
 }

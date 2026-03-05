@@ -34,6 +34,7 @@ import Artifact.Application.Manager;
 import Artifact.Service.Application;
 import Artifact.Service.Project;
 import Artifact.Service.ActiveContext;
+import Artifact.Widgets.Render.Camera;
 
 
 
@@ -131,8 +132,7 @@ namespace Artifact {
   tbb::task_group renderTask_;
   std::mutex resizeMutex_;
 
-  QPointF pan_;
-  ZoomScale2D zoom_;
+  ArtifactViewportCamera camera_;
   QPointF lastMousePos_;
   QPointF mousePos_;
   QImage takeBackBuffer() const;
@@ -923,14 +923,14 @@ namespace Artifact {
 
   {
    auto desc = pSwapChain_->GetDesc();
-   float nx = (x + pan_.x()) / float(desc.Width) * 2.0f - 1.0f;
-   float ny = 1.0f - (y + pan_.y()) / float(desc.Height) * 2.0f;
+   float nx = (x + camera_.pan().x()) / float(desc.Width) * 2.0f - 1.0f;
+   float ny = 1.0f - (y + camera_.pan().y()) / float(desc.Height) * 2.0f;
    //float aspect = float(desc.Height) / float(desc.Width);
 
 
 
    CBSolidTransform2D cbTransform;
-   cbTransform.offset = { x + (float)pan_.x(), y + (float)pan_.y() };
+   cbTransform.offset = { x + (float)camera_.pan().x(), y + (float)camera_.pan().y() };
    cbTransform.scale = { 1,1 };
    cbTransform.screenSize = { float(desc.Width), float(desc.Height) };
 
@@ -1035,8 +1035,8 @@ namespace Artifact {
 
   if (ctrl && event->key() == Qt::Key_C)
   {
-   // パン位置を初期化（例: 0,0）
-   pan_ = QPointF(0, 0);
+   // パン位置を全体リセット
+   camera_.reset();
 
    // 再描画
    //widget->update(); // もしくは repaint()
@@ -1187,9 +1187,8 @@ namespace Artifact {
    QPointF delta = event->position() - impl_->lastMousePos_;
    impl_->lastMousePos_ = event->position();
 
-   // pan_ にドラッグ差分を加算
-   impl_->pan_.setX(impl_->pan_.x() + delta.x());
-   impl_->pan_.setY(impl_->pan_.y() + delta.y());
+   // Update camera panning
+   impl_->camera_.translate(delta);
 
    update(); // 再描画
    event->accept();
@@ -1208,9 +1207,7 @@ namespace Artifact {
   const float zoomStep = 0.1f;
   float delta = event->angleDelta().y() / 120.0f;
 
-  impl_->zoom_ += delta * zoomStep;
-
-
+  impl_->camera_.zoomAdd(delta * zoomStep);
 
  }
  void ArtifactLayerEditor2DWidget::resizeEvent(QResizeEvent* event)
@@ -1262,15 +1259,13 @@ namespace Artifact {
  void ArtifactLayerEditor2DWidget::zoomIn()
  {
    // Increase zoom level by 20%
-   float currentZoom = zoom();
-   setZoomLevel(currentZoom * 1.2f);
+   impl_->camera_.zoomRelative(1.2f);
  }
 
  void ArtifactLayerEditor2DWidget::zoomOut()
  {
    // Decrease zoom level by 20%
-   float currentZoom = zoom();
-   setZoomLevel(currentZoom / 1.2f);
+   impl_->camera_.zoomRelative(1.0f / 1.2f);
  }
 
  void ArtifactLayerEditor2DWidget::zoomFitWindow()
@@ -1287,8 +1282,7 @@ namespace Artifact {
 
  void ArtifactLayerEditor2DWidget::setZoomLevel(float zoomLevel)
  {
-   // TODO: Implement actual zoom level setting
-   // This should update the view matrix and trigger a repaint
+   impl_->camera_.setZoom(zoomLevel);
  }
 
  void ArtifactLayerEditor2DWidget::keyPressEvent(QKeyEvent* event)
@@ -1373,17 +1367,17 @@ namespace Artifact {
 
   float ArtifactLayerEditor2DWidget::zoom() const
   {
-   return impl_->zoom_.scale();
+   return impl_->camera_.zoom();
   }
 
   QPointF ArtifactLayerEditor2DWidget::pan() const
   {
-   return impl_->pan_;
+   return impl_->camera_.pan();
   }
 
   void ArtifactLayerEditor2DWidget::setPan(const QPointF& offset)
   {
-   impl_->pan_ = offset;
+   impl_->camera_.setPan(offset);
   }
 
   QImage ArtifactLayerEditor2DWidget::grabScreenShot()
