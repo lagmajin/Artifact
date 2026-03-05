@@ -15,6 +15,7 @@ module Artifact.Menu.File;
 
 import  Artifact.Project.Manager;
 import  Artifact.Service.Project;
+import  Artifact.Project.Health;
 
 import Utils;
 
@@ -144,6 +145,14 @@ namespace Artifact {
   if (!ArtifactProjectManager::getInstance().isProjectCreated()) {
    return;
   }
+  auto project = ArtifactProjectManager::getInstance().getCurrentProjectSharedPtr();
+  if (project) {
+   auto report = ArtifactProjectHealthChecker::check(project.get());
+   if (!report.isHealthy) {
+    qWarning() << "[SaveProject] canceled by health check. issues=" << report.issues.size();
+    return;
+   }
+  }
   QString path = ArtifactProjectManager::getInstance().currentProjectPath();
   if (path.isEmpty()) {
    handleSaveAsProject();
@@ -160,6 +169,14 @@ namespace Artifact {
   if (!ArtifactProjectManager::getInstance().isProjectCreated()) {
    return;
   }
+  auto project = ArtifactProjectManager::getInstance().getCurrentProjectSharedPtr();
+  if (project) {
+   auto report = ArtifactProjectHealthChecker::check(project.get());
+   if (!report.isHealthy) {
+    qWarning() << "[SaveAsProject] canceled by health check. issues=" << report.issues.size();
+    return;
+   }
+  }
   QString fileName = QFileDialog::getSaveFileName(nullptr, "名前を付けて保存", "", "Artifact Project (*.art)");
   if (!fileName.isEmpty()) {
    if (!fileName.endsWith(".art", Qt::CaseInsensitive)) {
@@ -174,7 +191,8 @@ namespace Artifact {
 
  void ArtifactFileMenu::Impl::handleImportFile()
  {
-  if (!ArtifactProjectManager::getInstance().isProjectCreated()) {
+  auto* svc = ArtifactProjectService::instance();
+  if (!svc || !ArtifactProjectManager::getInstance().isProjectCreated()) {
    return;
   }
 
@@ -183,16 +201,13 @@ namespace Artifact {
    return;
   }
 
-  auto& projectManager = ArtifactProjectManager::getInstance();
-  QStringList copied = projectManager.copyFilesToProjectAssets(paths);
-  if (!copied.isEmpty()) {
-   projectManager.addAssetsFromFilePaths(copied);
-  }
+  svc->importAssetsFromPaths(paths);
  }
 
  void ArtifactFileMenu::Impl::handleImportFolder()
  {
-  if (!ArtifactProjectManager::getInstance().isProjectCreated()) {
+  auto* svc = ArtifactProjectService::instance();
+  if (!svc || !ArtifactProjectManager::getInstance().isProjectCreated()) {
    return;
   }
 
@@ -211,11 +226,7 @@ namespace Artifact {
    return;
   }
 
-  auto& projectManager = ArtifactProjectManager::getInstance();
-  QStringList copied = projectManager.copyFilesToProjectAssets(files);
-  if (!copied.isEmpty()) {
-   projectManager.addAssetsFromFilePaths(copied);
-  }
+  svc->importAssetsFromPaths(files);
  }
 
  ArtifactFileMenu::ArtifactFileMenu(QWidget* parent /*= nullptr*/) :QMenu(parent), Impl_(new Impl())

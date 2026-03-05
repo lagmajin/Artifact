@@ -163,8 +163,9 @@ public:
     QModelIndex hoverIndex;
     HoverThumbnailPopupWidget* hoverPopup = nullptr;
     void handleFileDrop(const QString& str) {
-        UniString u; u.setQString(str);
-        ArtifactProjectService::instance()->addAssetFromPath(u);
+        auto* svc = ArtifactProjectService::instance();
+        if (!svc) return;
+        svc->importAssetsFromPaths(QStringList() << str);
     }
 };
 
@@ -399,10 +400,11 @@ void ArtifactProjectView::dropEvent(QDropEvent* event) {
     const QMimeData* mimeData = event->mimeData();
     if (mimeData->hasUrls()) {
         for (const QUrl& url : mimeData->urls()) {
-            QString filePath = url.toLocalFile().toLower();
-            if (filePath.endsWith(".png") || filePath.endsWith(".jpg") || filePath.endsWith(".jpeg") ||
-                filePath.endsWith(".bmp") || filePath.endsWith(".gif") || filePath.endsWith(".mp4") ||
-                filePath.endsWith(".avi") || filePath.endsWith(".mov") || filePath.endsWith(".mkv")) {
+            QString filePath = url.toLocalFile();
+            QString lowerPath = filePath.toLower();
+            if (lowerPath.endsWith(".png") || lowerPath.endsWith(".jpg") || lowerPath.endsWith(".jpeg") ||
+                lowerPath.endsWith(".bmp") || lowerPath.endsWith(".gif") || lowerPath.endsWith(".mp4") ||
+                lowerPath.endsWith(".avi") || lowerPath.endsWith(".mov") || lowerPath.endsWith(".mkv")) {
                 impl_->handleFileDrop(filePath);
             }
         }

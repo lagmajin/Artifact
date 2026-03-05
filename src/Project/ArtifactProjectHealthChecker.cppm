@@ -5,6 +5,7 @@
 #include <QSet>
 #include <QStack>
 #include <QMap>
+#include <QFileInfo>
 
 module Artifact.Project.Health;
 
@@ -27,6 +28,7 @@ ProjectHealthReport ArtifactProjectHealthChecker::check(ArtifactProject* project
     checkCircularReferences(project, report);
     checkDuplicateIDs(project, report);
     checkFrameRanges(project, report);
+    checkMissingAssets(project, report);
 
     for (const auto& issue : report.issues) {
         if (issue.severity == HealthIssueSeverity::Error) {
@@ -112,6 +114,35 @@ void ArtifactProjectHealthChecker::checkFrameRanges(ArtifactProject* project, Pr
     };
 
     for (auto root : items) traverse(root);
+}
+
+void ArtifactProjectHealthChecker::checkMissingAssets(ArtifactProject* project, ProjectHealthReport& report) {
+    auto items = project->projectItems();
+
+    std::function<void(ProjectItem*)> traverse = [&](ProjectItem* item) {
+        if (!item) return;
+
+        if (item->type() == eProjectItemType::Footage) {
+            auto* footage = static_cast<FootageItem*>(item);
+            QFileInfo fi(footage->filePath);
+            if (!fi.exists() || !fi.isFile()) {
+                report.issues.push_back({
+                    HealthIssueSeverity::Error,
+                    QString("Missing asset file: %1").arg(footage->filePath),
+                    footage->name.toQString(),
+                    "MissingAsset"
+                });
+            }
+        }
+
+        for (auto* child : item->children) {
+            traverse(child);
+        }
+    };
+
+    for (auto* root : items) {
+        traverse(root);
+    }
 }
 
 } // namespace Artifact

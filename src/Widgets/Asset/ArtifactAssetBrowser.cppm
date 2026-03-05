@@ -479,10 +479,9 @@ namespace Artifact {
    }
 
    // Otherwise, add file to project
-   auto& projectManager = ArtifactProjectManager::getInstance();
-   QStringList copied = projectManager.copyFilesToProjectAssets(QStringList() << filePath);
-   if (copied.isEmpty()) return;
-   projectManager.addAssetsFromFilePaths(copied);
+   auto* svc = ArtifactProjectService::instance();
+   if (!svc) return;
+   svc->importAssetsFromPaths(QStringList() << filePath);
   });
 
   // Connect right-click context menu
@@ -608,12 +607,12 @@ namespace Artifact {
    }
 
    if (!filePaths.isEmpty()) {
-    auto& projectManager = ArtifactProjectManager::getInstance();
-    QStringList copied = projectManager.copyFilesToProjectAssets(filePaths);
-    if (!copied.isEmpty()) {
-     projectManager.addAssetsFromFilePaths(copied);
-     // Emit signal with actual imported paths
-     filesDropped(copied);
+    auto* svc = ArtifactProjectService::instance();
+    if (svc) {
+     QStringList imported = svc->importAssetsFromPaths(filePaths);
+     if (!imported.isEmpty()) {
+      filesDropped(imported);
+     }
     }
     // Refresh file view
     impl_->applyFilters();
@@ -708,11 +707,9 @@ namespace Artifact {
   QAction* addToProjectAction = contextMenu.addAction("Add to Project");
   connect(addToProjectAction, &QAction::triggered, this, [filePath]() {
    if (filePath.isEmpty()) return;
-   auto& projectManager = ArtifactProjectManager::getInstance();
-   QStringList copied = projectManager.copyFilesToProjectAssets(QStringList() << filePath);
-   if (!copied.isEmpty()) {
-    projectManager.addAssetsFromFilePaths(copied);
-   }
+   auto* svc = ArtifactProjectService::instance();
+   if (!svc) return;
+   svc->importAssetsFromPaths(QStringList() << filePath);
   });
 
   contextMenu.addSeparator();

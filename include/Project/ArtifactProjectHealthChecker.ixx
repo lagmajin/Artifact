@@ -38,6 +38,7 @@ private:
     static void checkCircularReferences(ArtifactProject* project, ProjectHealthReport& report);
     static void checkDuplicateIDs(ArtifactProject* project, ProjectHealthReport& report);
     static void checkFrameRanges(ArtifactProject* project, ProjectHealthReport& report);
+    static void checkMissingAssets(ArtifactProject* project, ProjectHealthReport& report);
 };
 
 } // namespace Artifact

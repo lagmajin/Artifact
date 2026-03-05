@@ -3,6 +3,7 @@
 #include <QMenu>
 #include <QAction>
 #include <QKeySequence>
+#include <QActionGroup>
 
 module Artifact.Menu.View;
 
@@ -33,6 +34,12 @@ namespace Artifact {
    QAction* snapToGuidesAction = nullptr;
    QAction* showRulersAction = nullptr;
    QAction* useDisplayColorManagementAction = nullptr;
+
+   QMenu* qualityPresetMenu = nullptr;
+   QActionGroup* qualityGroup = nullptr;
+   QAction* qualityDraftAction = nullptr;
+   QAction* qualityPreviewAction = nullptr;
+   QAction* qualityFinalAction = nullptr;
 
   };
 
@@ -84,12 +91,60 @@ namespace Artifact {
    useDisplayColorManagementAction = new QAction("ディスプレイのカラーマネジメントを使用");
    useDisplayColorManagementAction->setCheckable(true);
 
+   qualityPresetMenu = new QMenu("品質プリセット(&Q)");
+   qualityGroup = new QActionGroup(menu);
+   qualityGroup->setExclusive(true);
+
+   qualityDraftAction = qualityPresetMenu->addAction("Draft (編集優先)");
+   qualityPreviewAction = qualityPresetMenu->addAction("Preview (標準)");
+   qualityFinalAction = qualityPresetMenu->addAction("Final (品質優先)");
+
+   qualityDraftAction->setCheckable(true);
+   qualityPreviewAction->setCheckable(true);
+   qualityFinalAction->setCheckable(true);
+   qualityPreviewAction->setChecked(true);
+
+   qualityGroup->addAction(qualityDraftAction);
+   qualityGroup->addAction(qualityPreviewAction);
+   qualityGroup->addAction(qualityFinalAction);
+
+   auto* svc = ArtifactProjectService::instance();
+   if (svc) {
+    QObject::connect(qualityDraftAction, &QAction::triggered, menu, [svc]() {
+     svc->setPreviewQualityPreset(PreviewQualityPreset::Draft);
+    });
+    QObject::connect(qualityPreviewAction, &QAction::triggered, menu, [svc]() {
+     svc->setPreviewQualityPreset(PreviewQualityPreset::Preview);
+    });
+    QObject::connect(qualityFinalAction, &QAction::triggered, menu, [svc]() {
+     svc->setPreviewQualityPreset(PreviewQualityPreset::Final);
+    });
+
+    QObject::connect(svc, &ArtifactProjectService::previewQualityPresetChanged, menu, [this](PreviewQualityPreset preset) {
+     switch (preset) {
+     case PreviewQualityPreset::Draft:
+      qualityDraftAction->setChecked(true);
+      resQuarterAction->setChecked(true);
+      break;
+     case PreviewQualityPreset::Preview:
+      qualityPreviewAction->setChecked(true);
+      resHalfAction->setChecked(true);
+      break;
+     case PreviewQualityPreset::Final:
+      qualityFinalAction->setChecked(true);
+      resFullAction->setChecked(true);
+      break;
+     }
+    });
+   }
+
    menu->addAction(zoomInAction);
    menu->addAction(zoomOutAction);
    menu->addAction(defaultZoomAction);
    menu->addAction(fitToScreenAction);
    menu->addSeparator();
    menu->addMenu(resolutionMenu);
+   menu->addMenu(qualityPresetMenu);
    menu->addSeparator();
    menu->addAction(useDisplayColorManagementAction);
    menu->addSeparator();

@@ -4,6 +4,7 @@
 #include <QIcon>
 #include <QPixmap>
 #include <QColor>
+#include <QCryptographicHash>
 module Artifact.Project.Model;
 
 import std;
@@ -124,6 +125,15 @@ void ArtifactProjectModel::Impl::refreshTree()
   } else {
     // clear/empty for non-composition items
     item->setData(QString(), Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::CompositionId));
+  }
+
+  if (it->type() == eProjectItemType::Footage) {
+    auto* footage = static_cast<FootageItem*>(it);
+    const QByteArray digest = QCryptographicHash::hash(footage->filePath.toUtf8(), QCryptographicHash::Sha1).toHex();
+    item->setData(QString::fromUtf8(digest.left(16)), Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::AssetId));
+    idItem->setText(QString::fromUtf8(digest.left(16)));
+  } else {
+    item->setData(QString(), Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::AssetId));
   }
 
   // children (non-owning raw pointers)

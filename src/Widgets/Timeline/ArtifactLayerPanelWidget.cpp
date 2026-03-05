@@ -17,6 +17,7 @@
 #include <QMimeData>
 #include <QUrl>
 #include <QDebug>
+#include <QFileInfo>
 module Artifact.Widgets.LayerPanelWidget;
 
 import std;
@@ -24,6 +25,8 @@ import Utils.Path;
 import Artifact.Service.Project;
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
+import Artifact.Layer.InitParams;
+import File.TypeDetector;
 
 
 namespace Artifact
@@ -39,6 +42,22 @@ namespace Artifact
     auto result = service->findComposition(id);
     if (!result.success) return nullptr;
     return result.ptr.lock();
+  }
+
+  LayerType inferLayerTypeFromFile(const QString& filePath)
+  {
+    ArtifactCore::FileTypeDetector detector;
+    const auto type = detector.detect(filePath);
+    switch (type) {
+    case ArtifactCore::FileType::Image:
+      return LayerType::Image;
+    case ArtifactCore::FileType::Video:
+      return LayerType::Video;
+    case ArtifactCore::FileType::Audio:
+      return LayerType::Audio;
+    default:
+      return LayerType::Media;
+    }
   }
  }
 
@@ -516,13 +535,32 @@ void ArtifactLayerPanelWidget::setComposition(const CompositionID& id)
   // Handle file URL drop
   else if (mimeData->hasUrls()) {
    const QList<QUrl> urls = mimeData->urls();
+   auto* service = ArtifactProjectService::instance();
+   if (!service) {
+    event->ignore();
+    return;
+   }
+
+   QStringList importPaths;
    for (const QUrl& url : urls) {
     if (url.isLocalFile()) {
      QString filePath = url.toLocalFile();
-     qDebug() << "[ArtifactLayerPanelWidget::dropEvent] Received file:" << filePath;
-     
-     // TODO: Convert to UniString and handle file import
-     // Could create a new layer from the dropped file
+     if (!filePath.isEmpty()) {
+      importPaths.append(filePath);
+     }
+    }
+   }
+
+   const QStringList imported = service->importAssetsFromPaths(importPaths);
+   auto project = service->getCurrentProjectSharedPtr();
+   for (const auto& filePath : imported) {
+    QFileInfo fi(filePath);
+    LayerType layerType = inferLayerTypeFromFile(filePath);
+    ArtifactLayerInitParams params(fi.completeBaseName().isEmpty() ? fi.fileName() : fi.completeBaseName(), layerType);
+    if (project && !impl_->compositionId.isNil()) {
+     project->createLayerAndAddToComposition(impl_->compositionId, params);
+    } else {
+     service->addLayerToCurrentComposition(params);
     }
    }
    event->acceptProposedAction();

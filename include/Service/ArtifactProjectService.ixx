@@ -2,6 +2,7 @@
 #include <wobjectdefs.h>
 #include <QSize>
 #include <QString>
+#include <QStringList>
 #include <QObject>
 
 //#include <winrt/impl/Windows.UI.Composition.1.h>
@@ -29,6 +30,12 @@ W_REGISTER_ARGTYPE(QString)
 export namespace Artifact
 {
  using namespace ArtifactCore;
+ 
+ enum class PreviewQualityPreset {
+  Draft,
+  Preview,
+  Final
+ };
 
  class ArtifactProjectService;
 
@@ -50,7 +57,10 @@ export namespace Artifact
   void createProject(const ArtifactProjectSettings& setting);
 
   void addAssetFromPath(const UniString& path);
+  QStringList importAssetsFromPaths(const QStringList& sourcePaths);
   void removeAllAssets();
+  void setPreviewQualityPreset(PreviewQualityPreset preset);
+  PreviewQualityPreset previewQualityPreset() const;
 
   void createComposition(const UniString& name);
   void createComposition(const ArtifactCompositionInitParams& params);
@@ -82,6 +92,8 @@ export namespace Artifact
    W_SIGNAL(projectChanged);
   void layerSelected(const LayerID& id)
    W_SIGNAL(layerSelected, id);
+  void previewQualityPresetChanged(PreviewQualityPreset preset)
+   W_SIGNAL(previewQualityPresetChanged, preset);
   public:
    void selectLayer(const LayerID& id);
    void projectSettingChanged(const ArtifactProjectSettings& setting);

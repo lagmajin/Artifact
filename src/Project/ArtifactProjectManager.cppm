@@ -17,6 +17,7 @@ import Utils;
 import Artifact.Project;
 import Artifact.Project.Exporter;
 import Artifact.Project.Importer;
+import Artifact.Project.Health;
 import Artifact.Composition.Result;
 import Artifact.Composition.Abstract;
 import Composition.Settings;
@@ -378,6 +379,13 @@ void ArtifactProjectManager::createProject(const QString& projectName, bool forc
  }
 
  /*emit*/ projectCreated();
+
+ if (impl_->currentProjectPtr_) {
+  auto report = ArtifactProjectHealthChecker::check(impl_->currentProjectPtr_.get());
+  if (!report.isHealthy) {
+   qWarning() << "[createProject] health issues detected:" << report.issues.size();
+  }
+ }
 }
 
 // Call this to prevent project-created default composition creation in the
@@ -467,7 +475,7 @@ ArtifactProjectManager& ArtifactProjectManager::getInstance()
   impl_->currentProjectPtr_ = importResult.project;
   impl_->currentProjectPath_ = fullpath;
 
-  if (impl_->currentProjectPtr_) {
+ if (impl_->currentProjectPtr_) {
    if (!impl_->signalsConnected_) {
     auto shared = impl_->currentProjectPtr_;
     std::weak_ptr<ArtifactProject> weakProj = shared;
@@ -480,9 +488,13 @@ ArtifactProjectManager& ArtifactProjectManager::getInstance()
     connect(shared.get(), &ArtifactProject::layerCreated, this, [weakProj, this](const CompositionID& cid, const LayerID& lid) {
      if (weakProj.lock()) layerCreated(cid, lid);
     });
-    impl_->signalsConnected_ = true;
+   impl_->signalsConnected_ = true;
    }
    projectCreated();
+   auto report = ArtifactProjectHealthChecker::check(impl_->currentProjectPtr_.get());
+   if (!report.isHealthy) {
+    qWarning() << "[loadFromFile] health issues detected:" << report.issues.size();
+   }
   }
  }
 

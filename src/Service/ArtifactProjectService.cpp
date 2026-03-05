@@ -3,6 +3,9 @@
 #include <wobjectimpl.h>
 #include <glm/ext/matrix_projection.hpp>
 #include <QDebug>
+#include <QDir>
+#include <QFileInfo>
+#include <QImage>
 module Artifact.Service.Project;
 
 import std;
@@ -11,6 +14,8 @@ import Artifact.Project.Manager;
 import Artifact.Layer.Factory;
 import Artifact.Composition.Abstract;
 import Artifact.Project.Items;
+import File.TypeDetector;
+import Artifact.Render.FrameCache;
 
 namespace Artifact
 {
@@ -26,6 +31,9 @@ namespace Artifact
   static ArtifactProjectManager& projectManager();
   void addLayerToCurrentComposition(const ArtifactLayerInitParams& params);
   void addAssetFromPath(const UniString& path);
+  QStringList importAssetsFromPaths(const QStringList& sourcePaths);
+  void setPreviewQualityPreset(PreviewQualityPreset preset);
+  PreviewQualityPreset previewQualityPreset() const;
   UniString projectName() const;
   void changeProjectName(const UniString& name);
 
@@ -36,6 +44,10 @@ namespace Artifact
   ChangeCompositionResult changeCurrentComposition(const CompositionID& id);
 
   void removeAllAssets();
+  PreviewQualityPreset qualityPreset_ = PreviewQualityPreset::Preview;
+  ProgressiveRenderer progressiveRenderer_;
+
+  void checkImportedAssetCompatibility(const QStringList& importedPaths);
  };
 
  ArtifactProjectService::Impl::Impl()
@@ -69,10 +81,109 @@ namespace Artifact
 
  void ArtifactProjectService::Impl::addAssetFromPath(const UniString& path)
  {
-    auto& manager = projectManager();
+    QStringList input;
+    input.append(path.toQString());
+    importAssetsFromPaths(input);
+ }
 
-    manager.addAssetFromFilePath(path);
- 	
+ QStringList ArtifactProjectService::Impl::importAssetsFromPaths(const QStringList& sourcePaths)
+ {
+  QStringList importedPaths;
+  if (sourcePaths.isEmpty()) {
+   return importedPaths;
+  }
+
+  auto& manager = projectManager();
+  QString assetsRoot = manager.currentProjectAssetsPath();
+  QStringList toCopy;
+  QStringList alreadyInProject;
+
+  for (const auto& src : sourcePaths) {
+   if (src.isEmpty()) continue;
+   QFileInfo info(src);
+   if (!info.exists() || !info.isFile()) continue;
+
+   QString abs = info.absoluteFilePath();
+   if (!assetsRoot.isEmpty() && abs.startsWith(assetsRoot, Qt::CaseInsensitive)) {
+    alreadyInProject.append(abs);
+   } else {
+    toCopy.append(abs);
+   }
+  }
+
+  QStringList copied = manager.copyFilesToProjectAssets(toCopy);
+  importedPaths.append(copied);
+  importedPaths.append(alreadyInProject);
+
+  if (!importedPaths.isEmpty()) {
+   manager.addAssetsFromFilePaths(importedPaths);
+   checkImportedAssetCompatibility(importedPaths);
+  }
+
+  return importedPaths;
+ }
+
+ void ArtifactProjectService::Impl::checkImportedAssetCompatibility(const QStringList& importedPaths)
+ {
+  if (importedPaths.isEmpty()) return;
+
+  QSize compSize;
+  if (auto comp = currentComposition().lock()) {
+   compSize = comp->settings().compositionSize();
+  }
+
+  ArtifactCore::FileTypeDetector detector;
+  for (const auto& path : importedPaths) {
+   if (path.isEmpty()) continue;
+
+   auto type = detector.detect(path);
+   if (type == ArtifactCore::FileType::Unknown) {
+    qWarning() << "[CompatibilityGuard] Unknown/unsupported file type:" << path;
+    continue;
+   }
+
+   if (type == ArtifactCore::FileType::Image) {
+    QImage img(path);
+    if (img.isNull()) {
+      qWarning() << "[CompatibilityGuard] Image decode failed:" << path;
+      continue;
+    }
+    if (compSize.width() > 0 && compSize.height() > 0 &&
+        (img.width() != compSize.width() || img.height() != compSize.height())) {
+      qWarning() << "[CompatibilityGuard] Image resolution differs from composition. image="
+                 << img.width() << "x" << img.height()
+                 << " comp=" << compSize.width() << "x" << compSize.height()
+                 << " path=" << path;
+    }
+   }
+  }
+ }
+
+ void ArtifactProjectService::Impl::setPreviewQualityPreset(PreviewQualityPreset preset)
+ {
+  qualityPreset_ = preset;
+  switch (preset) {
+  case PreviewQualityPreset::Draft:
+   progressiveRenderer_.setQuality(RenderQuality::Draft);
+   progressiveRenderer_.setDraftQuality(4);
+   progressiveRenderer_.setPreviewQuality(2);
+   break;
+  case PreviewQualityPreset::Preview:
+   progressiveRenderer_.setQuality(RenderQuality::Preview);
+   progressiveRenderer_.setDraftQuality(4);
+   progressiveRenderer_.setPreviewQuality(2);
+   break;
+  case PreviewQualityPreset::Final:
+   progressiveRenderer_.setQuality(RenderQuality::Final);
+   progressiveRenderer_.setDraftQuality(2);
+   progressiveRenderer_.setPreviewQuality(1);
+   break;
+  }
+ }
+
+ PreviewQualityPreset ArtifactProjectService::Impl::previewQualityPreset() const
+ {
+  return qualityPreset_;
  }
 
  UniString ArtifactProjectService::Impl::projectName() const
@@ -212,6 +323,11 @@ bool ArtifactProjectService::removeLayerFromComposition(const CompositionID& com
   impl_->addAssetFromPath(path);
  }
 
+ QStringList ArtifactProjectService::importAssetsFromPaths(const QStringList& sourcePaths)
+ {
+  return impl_->importAssetsFromPaths(sourcePaths);
+ }
+
  ArtifactCompositionWeakPtr ArtifactProjectService::currentComposition()
  {
 
@@ -274,6 +390,17 @@ void ArtifactProjectService::removeAllAssets()
  impl_->projectManager().removeAllAssets();
  
  
+}
+
+void ArtifactProjectService::setPreviewQualityPreset(PreviewQualityPreset preset)
+{
+ impl_->setPreviewQualityPreset(preset);
+ previewQualityPresetChanged(preset);
+}
+
+PreviewQualityPreset ArtifactProjectService::previewQualityPreset() const
+{
+ return impl_->previewQualityPreset();
 }
 
 };

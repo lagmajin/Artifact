@@ -10,6 +10,7 @@
 #include <QHash>
 #include <QJsonArray>
 #include <QVector>
+#include <QDir>
 #include <QtTest/QtTest>
 //#include <QtCore/QString>
 
@@ -133,11 +134,30 @@ QVector<ProjectItem*> ArtifactProject::projectItems() const
  void ArtifactProject::Impl::addAssetFromPath(const QString& string)
  {
   if (string.isEmpty()) return;
+  QFileInfo fiInput(string);
+  QString canonicalPath = fiInput.canonicalFilePath();
+  if (canonicalPath.isEmpty()) {
+    canonicalPath = fiInput.absoluteFilePath();
+  }
+  if (canonicalPath.isEmpty()) return;
+
+  // Avoid duplicate footage entries by canonical path.
+  for (const auto& up : ownedItems_) {
+    if (!up || up->type() != eProjectItemType::Footage) continue;
+    auto* existing = static_cast<FootageItem*>(up.get());
+    QFileInfo exInfo(existing->filePath);
+    QString exCanonical = exInfo.canonicalFilePath();
+    if (exCanonical.isEmpty()) exCanonical = exInfo.absoluteFilePath();
+    if (!exCanonical.isEmpty() && exCanonical.compare(canonicalPath, Qt::CaseInsensitive) == 0) {
+      setDirty(true);
+      return;
+    }
+  }
 
   // Create a FootageItem and add it under the project root
-  auto fi = QFileInfo(string);
+  auto fi = QFileInfo(canonicalPath);
   auto footageUp = std::make_unique<FootageItem>();
-  footageUp->filePath = string;
+  footageUp->filePath = canonicalPath;
   footageUp->name.setQString(fi.fileName());
 
   // attach to project root if exists
