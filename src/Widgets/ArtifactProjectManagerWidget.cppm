@@ -208,6 +208,51 @@ ArtifactProjectView::ArtifactProjectView(QWidget* parent) : QTreeView(parent), i
         QTreeView::item:hover {
             background-color: #2D2D30;
         }
+
+        /* --- Modern ScrollBar Style --- */
+        QScrollBar:vertical {
+            border: none;
+            background: #1e1e1e;
+            width: 8px;
+            margin: 0px;
+        }
+        QScrollBar::handle:vertical {
+            background: #3e3e42;
+            min-height: 20px;
+            border-radius: 4px;
+            margin: 2px;
+        }
+        QScrollBar::handle:vertical:hover {
+            background: #505050;
+        }
+        QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+            height: 0px;
+        }
+        QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
+            background: none;
+        }
+
+        QScrollBar:horizontal {
+            border: none;
+            background: #1e1e1e;
+            height: 8px;
+            margin: 0px;
+        }
+        QScrollBar::handle:horizontal {
+            background: #3e3e42;
+            min-width: 20px;
+            border-radius: 4px;
+            margin: 2px;
+        }
+        QScrollBar::handle:horizontal:hover {
+            background: #505050;
+        }
+        QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
+            width: 0px;
+        }
+        QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {
+            background: none;
+        }
     )");
 }
 
