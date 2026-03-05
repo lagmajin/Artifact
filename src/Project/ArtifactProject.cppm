@@ -376,6 +376,30 @@ FindCompositionResult ArtifactProject::Impl::findComposition(const CompositionID
   return QStringLiteral("Composition");
  }
 
+ static LayerType inferLayerTypeFromRuntimeName(const ArtifactAbstractLayerPtr& layer)
+ {
+  if (!layer) {
+   return LayerType::Unknown;
+  }
+
+  std::string typeName = typeid(*layer).name();
+  std::transform(typeName.begin(), typeName.end(), typeName.begin(), [](unsigned char c) {
+   return static_cast<char>(std::tolower(c));
+  });
+
+  if (typeName.find("null") != std::string::npos) return LayerType::Null;
+  if (typeName.find("solid") != std::string::npos) return LayerType::Solid;
+  if (typeName.find("image") != std::string::npos) return LayerType::Image;
+  if (typeName.find("adjust") != std::string::npos) return LayerType::Adjustment;
+  if (typeName.find("text") != std::string::npos) return LayerType::Text;
+  if (typeName.find("camera") != std::string::npos) return LayerType::Camera;
+  if (typeName.find("audio") != std::string::npos) return LayerType::Audio;
+  if (typeName.find("video") != std::string::npos) return LayerType::Video;
+  if (typeName.find("media") != std::string::npos) return LayerType::Media;
+
+  return LayerType::Solid;
+ }
+
  QJsonObject ArtifactProject::Impl::toJson() const
  {
   QJsonObject result;
@@ -790,21 +814,19 @@ FindCompositionResult ArtifactProject::Impl::findComposition(const CompositionID
       return result;
     }
     
-     // Create a copy of the layer
-     // TODO: レイヤーの複製方法を実装する
-     // 現在のレイヤーの種類に応じたコピーを作成する必要がある
-     
-     // ここでは簡単な例として、レイヤーのInitParamsを取得して新しいレイヤーを作成する方法を示す
-     // TODO: ArtifactLayerInitParams has no default constructor
-     // ArtifactLayerInitParams params;
-     // TODO: レイヤーのプロパティをparamsにコピーする
-     
-     // 新しいレイヤーを作成して追加する
-     // result = createLayerAndAddToComposition(compositionId, params);
-     result.success = false;
-     // result.message.setQString("Layer duplication not yet implemented");  // ArtifactLayerResult has no message field
-     
-     return result;
+    LayerType inferredType = inferLayerTypeFromRuntimeName(layerToDuplicate);
+    if (inferredType == LayerType::Unknown || inferredType == LayerType::None) {
+      inferredType = LayerType::Solid;
+    }
+
+    QString baseName = layerToDuplicate->layerName();
+    if (baseName.isEmpty()) {
+      baseName = QStringLiteral("Layer");
+    }
+    ArtifactLayerInitParams params(baseName + QStringLiteral(" Copy"), inferredType);
+
+    result = createLayerAndAddToComposition(compositionId, params);
+    return result;
   }
 
   CreateCompositionResult ArtifactProject::Impl::duplicateComposition(const CompositionID& compositionId)
@@ -821,18 +843,18 @@ FindCompositionResult ArtifactProject::Impl::findComposition(const CompositionID
       return result;
     }
     
-    // Create a copy of the composition's settings
     ArtifactCompositionInitParams params;
-    // TODO: コンポジションのプロパティをparamsにコピーする
+    const QString sourceName = compositionNameFromItems(ownedItems_, compositionId);
+    UniString copyName;
+    copyName.setQString(sourceName + QStringLiteral(" Copy"));
+    params.setCompositionName(copyName);
     
-    // Create a new composition with the copied settings
     auto newCompResult = createComposition(params);
     if (!newCompResult.success) {
       qDebug() << "Impl::duplicateComposition failed: could not create new composition";
       return newCompResult;
     }
     
-    // Copy all layers from the original composition to the new one
     auto newCompPtr = findComposition(newCompResult.id).ptr.lock();
     if (!newCompPtr) {
       result.success = false;
@@ -841,13 +863,30 @@ FindCompositionResult ArtifactProject::Impl::findComposition(const CompositionID
       return result;
     }
     
-    // TODO: レイヤーのコピー処理を実装する
-    
-    // Return the result
+    const auto sourceLayers = compositionPtr->allLayer();
+    int copiedCount = 0;
+    for (const auto& sourceLayer : sourceLayers) {
+      if (!sourceLayer) continue;
+      LayerType inferredType = inferLayerTypeFromRuntimeName(sourceLayer);
+      if (inferredType == LayerType::Unknown || inferredType == LayerType::None) {
+        inferredType = LayerType::Solid;
+      }
+      QString layerName = sourceLayer->layerName();
+      if (layerName.isEmpty()) {
+        layerName = QStringLiteral("Layer");
+      }
+      ArtifactLayerInitParams layerParams(layerName, inferredType);
+      auto layerCreate = createLayerAndAddToComposition(newCompResult.id, layerParams);
+      if (layerCreate.success) {
+        ++copiedCount;
+      }
+    }
+
     result.success = true;
     result.id = newCompResult.id;
-    result.message.setQString("Composition duplicated successfully");
-    qDebug() << "Impl::duplicateComposition succeeded: new id=" << newCompResult.id.toString();
+    result.message.setQString(QStringLiteral("Composition duplicated (%1 layers copied)").arg(copiedCount));
+    qDebug() << "Impl::duplicateComposition succeeded: new id=" << newCompResult.id.toString()
+             << " copiedLayers=" << copiedCount;
     
     return result;
   }
@@ -864,22 +903,25 @@ FindCompositionResult ArtifactProject::Impl::findComposition(const CompositionID
   }
 
 
+  ArtifactLayerResult ArtifactProject::duplicateLayerInComposition(const CompositionID& compositionId, const LayerID& layerId)
+  {
+   auto result = impl_->duplicateLayerInComposition(compositionId, layerId);
+   if (result.success && result.layer) {
+    layerCreated(compositionId, result.layer->id());
+    projectChanged();
+   }
+   return result;
+  }
 
-   // ArtifactLayerResult ArtifactProject::duplicateLayerInComposition - TODO: impl_->duplicateLayerInComposition not available
-   // {
-   //   return impl_->duplicateLayerInComposition(compositionId, layerId);
-   // }
-
-
-   // CreateCompositionResult ArtifactProject::duplicateComposition - TODO: impl_->duplicateComposition not available
-   // {
-   //   auto result = impl_->duplicateComposition(compositionId);
-   //   if (result.success) {
-   //     // compositionCreated(result.id);  // Signal not available
-   //     // projectChanged();                // Signal not available
-   //   }
-   //   return result;
-   // }
+  CreateCompositionResult ArtifactProject::duplicateComposition(const CompositionID& compositionId)
+  {
+   auto result = impl_->duplicateComposition(compositionId);
+   if (result.success) {
+    compositionCreated(result.id);
+    projectChanged();
+   }
+   return result;
+  }
 
   FindCompositionResult ArtifactProject::findComposition(const CompositionID& id)
   {

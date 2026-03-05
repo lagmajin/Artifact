@@ -11,6 +11,7 @@ module;
 #include <QWheelEvent>
 #include <QMouseEvent>
 #include <QScrollBar>
+#include <QDebug>
 
 module Artifact.Contents.Viewer;
 
@@ -193,24 +194,65 @@ namespace Artifact
       QWidget::mouseReleaseEvent(event);
   }
 
- void ArtifactContentsViewer::play()
- {
-  // TODO: Implement playback for supported types
- }
+void ArtifactContentsViewer::play()
+{
+  if (impl_->currentFileType == ArtifactCore::FileType::Image) {
+   qDebug() << "ArtifactContentsViewer::play image (static preview):" << impl_->currentFilePath;
+   return;
+  }
 
- void ArtifactContentsViewer::pause()
- {
-  // TODO: Implement pause for supported types
- }
+  if (impl_->currentFileType == ArtifactCore::FileType::Video) {
+   impl_->infoLabel->setText("Video playback backend is not connected yet.\n" + impl_->currentFilePath);
+   impl_->stackedWidget->setCurrentWidget(impl_->infoLabel);
+   return;
+  }
 
- void ArtifactContentsViewer::stop()
- {
-  // TODO: Implement stop for supported types
- }
+  impl_->infoLabel->setText("Cannot play unsupported content.\n" + impl_->currentFilePath);
+  impl_->stackedWidget->setCurrentWidget(impl_->infoLabel);
+}
 
- void ArtifactContentsViewer::playRange(int64_t start, int64_t end)
- {
-  // TODO: Implement range playback for supported types
- }
+void ArtifactContentsViewer::pause()
+{
+  if (impl_->currentFileType == ArtifactCore::FileType::Video) {
+   impl_->infoLabel->setText("Pause requested, but video backend is not connected yet.\n" + impl_->currentFilePath);
+   impl_->stackedWidget->setCurrentWidget(impl_->infoLabel);
+   return;
+  }
+
+  qDebug() << "ArtifactContentsViewer::pause no-op for current type:" << static_cast<int>(impl_->currentFileType);
+}
+
+void ArtifactContentsViewer::stop()
+{
+  if (impl_->currentFileType == ArtifactCore::FileType::Image && !impl_->imageLabel->pixmap().isNull()) {
+   impl_->zoomLevel = 1.0;
+   impl_->imageLabel->setFixedSize(impl_->imageLabel->pixmap().size());
+   return;
+  }
+
+  if (impl_->currentFileType == ArtifactCore::FileType::Video) {
+   impl_->infoLabel->setText("Stop requested, but video backend is not connected yet.\n" + impl_->currentFilePath);
+   impl_->stackedWidget->setCurrentWidget(impl_->infoLabel);
+   return;
+  }
+
+  qDebug() << "ArtifactContentsViewer::stop no-op for current type:" << static_cast<int>(impl_->currentFileType);
+}
+
+void ArtifactContentsViewer::playRange(int64_t start, int64_t end)
+{
+  if (start > end) {
+   std::swap(start, end);
+  }
+
+  if (impl_->currentFileType == ArtifactCore::FileType::Video) {
+   impl_->infoLabel->setText(QString("Range playback (%1 - %2) requested, but video backend is not connected yet.\n%3")
+    .arg(start).arg(end).arg(impl_->currentFilePath));
+   impl_->stackedWidget->setCurrentWidget(impl_->infoLabel);
+   return;
+  }
+
+  play();
+}
 
 };

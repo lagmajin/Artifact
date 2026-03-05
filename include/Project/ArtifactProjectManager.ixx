@@ -83,6 +83,8 @@ export namespace Artifact {
   ArtifactLayerResult addLayerToCurrentComposition(ArtifactLayerInitParams& params);
   ArtifactLayerResult addLayerToComposition(const CompositionID& compositionId, ArtifactLayerInitParams& params);
   bool removeLayerFromComposition(const CompositionID& compositionId, const LayerID& layerId);
+  ArtifactLayerResult duplicateLayerInComposition(const CompositionID& compositionId, const LayerID& layerId);
+  CreateCompositionResult duplicateComposition(const CompositionID& compositionId);
 
   /* Assets */
   void addAssetFromFilePath(const QString& filePath);

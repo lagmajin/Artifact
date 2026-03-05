@@ -759,6 +759,9 @@ void ArtifactIRenderer::Impl::createSwapChain(QWidget* window)
   const int newWidth = static_cast<int>(widget->width() * widget->devicePixelRatio());
   const int newHeight = static_cast<int>(widget->height() * widget->devicePixelRatio());
   const float newDevicePixelRatio = widget->devicePixelRatio();
+  m_CurrentPhysicalWidth = newWidth;
+  m_CurrentPhysicalHeight = newHeight;
+  m_CurrentDevicePixelRatio = static_cast<int>(newDevicePixelRatio);
   qDebug() << "Impl::recreateSwapChain - Logical:" << widget->width() << "x" << widget->height()
    << ", DPI:" << newDevicePixelRatio
    << ", Physical:" << newWidth << "x" << newHeight;
@@ -827,9 +830,9 @@ void ArtifactIRenderer::Impl::createSwapChain(QWidget* window)
 
  void ArtifactIRenderer::Impl::clear()
  {
-  if (!pSwapChain_ || !pImmediateContext_) return;
+ if (!pSwapChain_ || !pImmediateContext_) return;
   // クリアカラーの定義 (RGBA)
-  float ClearColor[] = { 1.0f, 0.0f, 0.0f, 1.0f }; // 赤
+  float ClearColor[] = { 0.10f, 0.10f, 0.10f, 1.0f };
 
   // レンダリングターゲットのビューを取得
   auto* pRTV = pSwapChain_->GetCurrentBackBufferRTV();

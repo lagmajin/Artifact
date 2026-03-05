@@ -79,6 +79,8 @@ export namespace Artifact {
   // Layer management
   ArtifactLayerResult createLayerAndAddToComposition(const CompositionID& compositionId, ArtifactLayerInitParams& params);
   AppendLayerToCompositionResult addLayerToComposition(const CompositionID& compositionId, ArtifactAbstractLayerPtr layer);
+  ArtifactLayerResult duplicateLayerInComposition(const CompositionID& compositionId, const LayerID& layerId);
+  CreateCompositionResult duplicateComposition(const CompositionID& compositionId);
 
   bool removeLayerFromComposition(const CompositionID& compositionId, const LayerID& layerId);
 
