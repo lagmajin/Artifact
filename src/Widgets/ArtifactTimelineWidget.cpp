@@ -316,12 +316,24 @@ W_OBJECT_IMPL(ArtifactTimelineWidget)
   leftSplitter->setStretchFactor(1, 1); // 名前列は伸縮可能
 
   auto leftHeader = new ArtifactTimeCodeWidget(); // タイムコード
+  auto searchBar = new ArtifactTimelineSearchBarWidget(); // 検索バー
+  auto searchBarLayout = new QHBoxLayout();
+  searchBarLayout->setSpacing(0);
+  searchBarLayout->setContentsMargins(0, 0, 0, 0);
+  searchBarLayout->addWidget(leftHeader);
+  searchBarLayout->addWidget(searchBar);
+  searchBarLayout->setStretch(0, 1);
+  searchBarLayout->setStretch(1, 1);
+  
+  auto headerWidget = new QWidget();
+  headerWidget->setLayout(searchBarLayout);
+
   auto globalSwitches = new ArtifactTimelineGlobalSwitches(); // AE風ボタン群
 
   auto leftLayout = new QVBoxLayout();
   leftLayout->setSpacing(0);
   leftLayout->setContentsMargins(0, 0, 0, 0);
-  leftLayout->addWidget(leftHeader);
+  leftLayout->addWidget(headerWidget);
   leftLayout->addWidget(globalSwitches);
   leftLayout->addWidget(leftSplitter);
 

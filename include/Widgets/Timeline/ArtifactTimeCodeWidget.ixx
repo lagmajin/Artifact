@@ -18,5 +18,17 @@ export namespace Artifact
 
   void updateTimeCode(int frame);
  };
-	
+ 
+ class ArtifactTimelineSearchBarWidget :public QWidget {
+  W_OBJECT(ArtifactTimelineSearchBarWidget)
+ private:
+  class Impl;
+  Impl* impl_;
+ public:
+  explicit ArtifactTimelineSearchBarWidget(QWidget* parent = nullptr);
+  ~ArtifactTimelineSearchBarWidget();
+
+  void searchTextChanged(const QString& text) W_SIGNAL(searchTextChanged, text);
+ };
+
 };

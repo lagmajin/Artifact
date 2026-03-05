@@ -1,5 +1,6 @@
 ﻿module ;
 #include <QString>
+#include <QSize>
 
 module Composition.Settings;
 
@@ -7,59 +8,54 @@ import std;
 import Utils;
 import Utils.String.UniString;
 
+namespace ArtifactCore {
 
-namespace ArtifactCore{
+class CompositionSettings::Impl {
+public:
+    UniString compositionName_;
+    QSize compositionSize_;
 
- using namespace ArtifactCore;
+    Impl()
+        : compositionName_(std::string("")), compositionSize_(0, 0)
+    {}
 
- class CompositionSettings::Impl{
- private:
+    Impl(const Impl& other) = default;
+    ~Impl() = default;
+};
 
-  UniString compositionName_;
-
-
- public:
-  Impl();
-  ~Impl();
-  QString compositionName() const;
-  void setCompositionName(StringLike auto name);
-
- };
- 
- QString CompositionSettings::Impl::compositionName() const
- {
-  return compositionName_;
- }
-
- void CompositionSettings::Impl::setCompositionName(StringLike auto name)
- {
-  compositionName_ = toQString(name);
-  
- }
-
- CompositionSettings::Impl::Impl()
- {
-
- }
-
- CompositionSettings::Impl::~Impl()
- {
-
- }
-
- CompositionSettings::CompositionSettings()
- {
-
- }
-
- CompositionSettings::CompositionSettings(const CompositionSettings& settings)
- {
-
- }
-
- CompositionSettings::~CompositionSettings()
- {
-
- }
-
+CompositionSettings::CompositionSettings()
+    : impl_(new Impl())
+{
 }
+
+CompositionSettings::CompositionSettings(const CompositionSettings& settings)
+    : impl_(new Impl(*settings.impl_))
+{
+}
+
+CompositionSettings::~CompositionSettings()
+{
+    delete impl_;
+}
+
+UniString CompositionSettings::compositionName() const
+{
+    return impl_->compositionName_;
+}
+
+void CompositionSettings::setCompositionName(const UniString& string)
+{
+    impl_->compositionName_ = string;
+}
+
+QSize CompositionSettings::compositionSize() const
+{
+    return impl_->compositionSize_;
+}
+
+void CompositionSettings::setCompositionSize(const QSize& size)
+{
+    impl_->compositionSize_ = size;
+}
+
+} // namespace ArtifactCore

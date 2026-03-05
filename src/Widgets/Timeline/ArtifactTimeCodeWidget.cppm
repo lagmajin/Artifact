@@ -2,6 +2,9 @@ module;
 #include <QLabel>
 #include <QBoxLayout>
 #include <QString>
+#include <QLineEdit>
+#include <QHBoxLayout>
+#include <QPushButton>
 #include <wobjectimpl.h>
 
 module Artifact.Timeline.TimeCodeWidget;
@@ -27,20 +30,16 @@ namespace Artifact
 
  ArtifactTimeCodeWidget::ArtifactTimeCodeWidget(QWidget* parent /*= nullptr*/) : QWidget(parent), impl_(new Impl())
  {
-  auto vLayout = new QVBoxLayout();
-  vLayout->setSpacing(0);
-  vLayout->setContentsMargins(0, 0, 0, 0);
-  vLayout->setAlignment(Qt::AlignTop);
+  auto layout = new QHBoxLayout();
+  layout->setSpacing(8);
+  layout->setContentsMargins(10, 0, 10, 0);
+  layout->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+  
   impl_->timecodeLabel_->setObjectName("timeLabel");
   impl_->frameNumberLabel_->setObjectName("frameLabel");
 
-  vLayout->addWidget(impl_->timecodeLabel_);
-  vLayout->addWidget(impl_->frameNumberLabel_);
-
-  auto layout = new QHBoxLayout();
-  layout->setSpacing(0);
-  layout->setContentsMargins(0, 0, 0, 0);
-  layout->addLayout(vLayout);
+  layout->addWidget(impl_->timecodeLabel_);
+  layout->addWidget(impl_->frameNumberLabel_);
 
   setLayout(layout);
 
@@ -48,15 +47,18 @@ namespace Artifact
 
   setStyleSheet(
    "ArtifactTimeCodeWidget {"
-   "  background-color: #1C1C1C;"
+   "  background-color: #2D2D2D;"
    "}"
    "QLabel#timeLabel {"
-   "  font-size: 38px;"
-   "  color: #E8E8E8;"
+   "  font-family: 'Consolas', 'Courier New', monospace;"
+   "  font-size: 14px;"
+   "  font-weight: bold;"
+   "  color: #5EA7EE;"
    "}"
    "QLabel#frameLabel {"
-   "  font-size: 30px;"
-   "  color: #8A8A8A;"
+   "  font-family: 'Consolas', 'Courier New', monospace;"
+   "  font-size: 11px;"
+   "  color: #777777;"
    "}"
   );
  }
@@ -83,16 +85,73 @@ namespace Artifact
     int h = totalSeconds / 3600;
 
     QString tc = QString("%1:%2:%3:%4")
-        .arg(h, 2, 10, QChar('0'))
+        .arg(h, 1, 10)
         .arg(m, 2, 10, QChar('0'))
         .arg(s, 2, 10, QChar('0'))
         .arg(ff, 2, 10, QChar('0'));
 
     if (impl_->timecodeLabel_) impl_->timecodeLabel_->setText(tc);
-    if (impl_->frameNumberLabel_) impl_->frameNumberLabel_->setText(QString::number(totalFrames));
+    if (impl_->frameNumberLabel_) impl_->frameNumberLabel_->setText(QString("(%1 f)").arg(totalFrames));
 
     // Example use of RationalTime API (kept for future extension)
     Q_UNUSED(rt);
+ }
+
+ W_OBJECT_IMPL(ArtifactTimelineSearchBarWidget)
+
+ class ArtifactTimelineSearchBarWidget::Impl {
+ public:
+  Impl();
+  QLineEdit* searchLineEdit_ = nullptr;
+ };
+
+ ArtifactTimelineSearchBarWidget::Impl::Impl()
+ {
+  searchLineEdit_ = new QLineEdit();
+  searchLineEdit_->setPlaceholderText("検索");
+ }
+
+ ArtifactTimelineSearchBarWidget::ArtifactTimelineSearchBarWidget(QWidget* parent)
+  : QWidget(parent), impl_(new Impl())
+ {
+  auto layout = new QHBoxLayout(this);
+  layout->setSpacing(0);
+  layout->setContentsMargins(4, 2, 4, 2);
+
+  impl_->searchLineEdit_->setObjectName("timelineSearchBox");
+  
+  // Set a clear button equivalent
+  impl_->searchLineEdit_->setClearButtonEnabled(true);
+
+  layout->addWidget(impl_->searchLineEdit_);
+
+  setAttribute(Qt::WA_StyledBackground, true);
+
+  setStyleSheet(
+   "ArtifactTimelineSearchBarWidget {"
+   "  background-color: #2D2D2D;"
+   "}"
+   "QLineEdit#timelineSearchBox {"
+   "  background-color: #1E1E1E;"
+   "  color: #CCCCCC;"
+   "  border: 1px solid #3E3E3E;"
+   "  border-radius: 10px;"
+   "  padding: 0px 8px;"
+   "  font-size: 11px;"
+   "}"
+   "QLineEdit#timelineSearchBox:focus {"
+   "  border: 1px solid #007ACC;"
+   "}"
+  );
+
+  QObject::connect(impl_->searchLineEdit_, &QLineEdit::textChanged, this, [this](const QString& text) {
+   searchTextChanged(text);
+  });
+ }
+
+ ArtifactTimelineSearchBarWidget::~ArtifactTimelineSearchBarWidget()
+ {
+  delete impl_;
  }
 
 };
