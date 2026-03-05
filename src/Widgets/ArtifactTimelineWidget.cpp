@@ -82,7 +82,7 @@ public:
 TimelineScene::TimelineScene(QWidget* parent) : QGraphicsScene(parent), impl_(new Impl(this))
 {
  setSceneRect(0, 0, 2000, 800);
- impl_->trackHeights_.push_back(20.0);
+ impl_->trackHeights_.push_back(28.0);
 }
 
 TimelineScene::~TimelineScene()
@@ -400,6 +400,14 @@ W_OBJECT_IMPL(ArtifactTimelineWidget)
 
   setLayout(layout);
 
+  // Sync scrollbars
+  if (auto* leftScroll = layerTreeView->verticalScrollBar()) {
+   if (auto* rightScroll = timelineTrackView->verticalScrollBar()) {
+    QObject::connect(leftScroll, &QScrollBar::valueChanged, rightScroll, &QScrollBar::setValue);
+    QObject::connect(rightScroll, &QScrollBar::valueChanged, leftScroll, &QScrollBar::setValue);
+   }
+  }
+
  }
 
  ArtifactTimelineWidget::~ArtifactTimelineWidget()
@@ -657,6 +665,24 @@ TimelineTrackView::TimelineTrackView(QWidget* parent /*= nullptr*/) :QGraphicsVi
   painter->save();
   painter->setWorldTransform(QTransform());
   painter->fillRect(viewport()->rect(), QColor(30, 30, 30));
+
+  const double rowSpacing = 28.0;
+  int startRow = std::max(0, static_cast<int>(std::floor(rect.top() / rowSpacing)));
+  int endRow = static_cast<int>(std::ceil(rect.bottom() / rowSpacing));
+
+  for (int i = startRow; i <= endRow; ++i) {
+   double sceneY = i * rowSpacing;
+   QPointF vpYTop = mapFromScene(QPointF(0, sceneY));
+   QPointF vpYBottom = mapFromScene(QPointF(0, sceneY + rowSpacing));
+   double h = vpYBottom.y() - vpYTop.y();
+   
+   if (i % 2 == 0) {
+    painter->fillRect(QRectF(0, vpYTop.y(), viewport()->width(), h), QColor(42, 42, 42));
+   } else {
+    painter->fillRect(QRectF(0, vpYTop.y(), viewport()->width(), h), QColor(45, 45, 45));
+   }
+  }
+
   painter->restore();
 
   painter->save();
@@ -684,7 +710,7 @@ TimelineTrackView::TimelineTrackView(QWidget* parent /*= nullptr*/) :QGraphicsVi
   horizontalPen.setWidth(1);
   painter->setPen(horizontalPen);
 
-  const double rowSpacing = 20.0;
+  const double rowSpacing = 28.0;
   double rowStart = std::floor(rect.top() / rowSpacing) * rowSpacing;
   for (double y = rowStart; y <= rect.bottom(); y += rowSpacing) {
    painter->drawLine(QLineF(rect.left(), y, rect.right(), y));

@@ -584,6 +584,14 @@ void ArtifactLayerPanelWidget::setComposition(const CompositionID& id)
   }
  }
 
+ QScrollBar* ArtifactLayerTimelinePanelWrapper::verticalScrollBar() const
+ {
+  if (impl_->scroll) {
+   return impl_->scroll->verticalScrollBar();
+  }
+  return nullptr;
+ }
+
 
 
 }

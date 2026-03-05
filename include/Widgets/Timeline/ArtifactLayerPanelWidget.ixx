@@ -1,6 +1,7 @@
 ﻿module;
 #include <wobjectdefs.h>
 #include <QWidget>
+#include <QScrollBar>
 export module Artifact.Widgets.LayerPanelWidget;
 
 import Utils.Id;
@@ -69,6 +70,7 @@ export namespace Artifact
   ArtifactLayerTimelinePanelWrapper(const CompositionID& id, QWidget* parent = nullptr);
   ~ArtifactLayerTimelinePanelWrapper();
   void setComposition(const CompositionID& id);
+  class QScrollBar* verticalScrollBar() const;
  	
  };
 
