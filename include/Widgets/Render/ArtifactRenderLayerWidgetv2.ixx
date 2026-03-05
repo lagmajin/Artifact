@@ -44,6 +44,7 @@ export namespace Artifact {
   void setDisplayMode(DisplayMode mode);
   //void setTargetLayerId(int id);
   void setTargetLayer(const LayerID& id);
+  void setPan(const QPointF& offset);
   void resetView();
   void fitToViewport();
   void panBy(const QPointF& delta);

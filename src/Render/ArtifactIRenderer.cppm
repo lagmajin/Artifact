@@ -858,7 +858,7 @@ void ArtifactIRenderer::Impl::createSwapChain(QWidget* window)
   }
  void ArtifactIRenderer::Impl::drawSprite(float2 pos, float2 size)
  {
-
+  drawSpriteLocal(pos.x, pos.y, size.x, size.y, QImage());
  }
 
  void ArtifactIRenderer::Impl::clear()
@@ -1538,5 +1538,25 @@ void ArtifactIRenderer::Impl::createSwapChain(QWidget* window)
   {
     impl_->destroy();
   }
+ 
+     void ArtifactIRenderer::drawSprite(float x, float y, float w, float h) {
+         impl_->drawSprite(x, y, w, h);
+     }
+
+     void ArtifactIRenderer::drawSprite(float2 pos, float2 size) {
+         impl_->drawSprite(pos, size);
+     }
+
+  void ArtifactIRenderer::Impl::drawSprite(float x, float y, float w, float h) {
+      drawSpriteLocal(x, y, w, h, QImage());
+  }
+
+void ArtifactIRenderer::drawParticles() {
+    // Implementation for drawing particles
+}
+
+void ArtifactIRenderer::setUpscaleConfig(bool enable, float sharpness) {
+    // Implementation for setting upscale configuration
+}
  
 };

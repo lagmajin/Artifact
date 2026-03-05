@@ -1,4 +1,4 @@
-module;
+﻿module;
 
 #include <cmath>
 #include <algorithm>
@@ -61,8 +61,11 @@ bool HueAndSaturation::isColorize() const {
 }
 
 void HueAndSaturation::apply(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) {
+    // Clone source to destination
+    dst = src;
+
     // ピクセルごとの処理の骨格:
-    // r,g,b を ColorConversion::RGBToHSL または RGBToHSV で変換
+    // TODO: r,g,b を ColorConversion::RGBToHSL または RGBToHSV で変換
     // if (colorize) {
     //     // 色相を hue, 彩度を saturation, 明度は元のグレースケール輝度などに依存させる
     // } else {
@@ -77,12 +80,24 @@ void HueAndSaturation::apply(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAW
 }
 
 std::vector<AbstractProperty> HueAndSaturation::getProperties() const {
-    // TODO: プロパティリストの構築機能実装
-    return {};
+    return {
+        {"Hue", impl_->hue},
+        {"Saturation", impl_->saturation},
+        {"Lightness", impl_->lightness},
+        {"Colorize", impl_->colorize}
+    };
 }
 
 void HueAndSaturation::setPropertyValue(const UniString& name, const QVariant& value) {
-    // TODO: プロパティ設定の実装
+    if (name == "Hue") {
+        setHue(value.toFloat());
+    } else if (name == "Saturation") {
+        setSaturation(value.toFloat());
+    } else if (name == "Lightness") {
+        setLightness(value.toFloat());
+    } else if (name == "Colorize") {
+        setColorize(value.toBool());
+    }
 }
 
 } // namespace Artifact

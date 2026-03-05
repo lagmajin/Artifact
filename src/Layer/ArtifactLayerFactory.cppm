@@ -1,4 +1,7 @@
 ﻿module;
+#include <QJsonObject>
+#include <QList>
+#include <QObject>
 
 module Artifact.Layer.Factory;
 
@@ -105,20 +108,30 @@ namespace Artifact {
  {
   delete impl_;
  }
+  ArtifactAbstractLayerPtr ArtifactLayerFactory::createNewLayer(ArtifactLayerInitParams params) noexcept
+  {
+   return impl_->createNewLayer(params);
+  }
 
- ArtifactAbstractLayerPtr ArtifactLayerFactory::createNewLayer(ArtifactLayerInitParams params) noexcept
- {
-  return impl_->createNewLayer(params);
- }
+  ArtifactLayerResult ArtifactLayerFactory::createLayer(ArtifactLayerInitParams& params) noexcept
+  {
+   return impl_->createLayer(params);
+  }
 
- ArtifactLayerResult ArtifactLayerFactory::createLayer(ArtifactLayerInitParams& params) noexcept
- {
-  return impl_->createLayer(params);
- }
-
-
-
-
+  ArtifactAbstractLayerPtr ArtifactLayerFactory::createFromJson(const QJsonObject& json) noexcept
+  {
+      if (!json.contains("type")) return nullptr;
+      LayerType type = static_cast<LayerType>(json["type"].toInt());
+      QString name = json.value("name").toString("Layer");
+      
+      ArtifactLayerInitParams params(name, type);
+      
+      ArtifactLayerFactory factory;
+      auto result = factory.createLayer(params);
+      if (result.success && result.layer) {
+          result.layer->fromJsonProperties(json);
+          return result.layer;
+      }
+      return nullptr;
+  }
 }
-
-

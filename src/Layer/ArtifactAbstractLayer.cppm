@@ -23,7 +23,9 @@ import Utils;
 import Layer.State;
 import Animation.Transform2D;
 import Frame.Position;
+import Time.Rational;
 import Artifact.Layer.Settings;
+import Artifact.Composition.Abstract;
 import Artifact.Effect.Abstract;
 import Artifact.Effect.ImplBase;
 import Artifact.Mask.LayerMask;
@@ -42,9 +44,20 @@ namespace Artifact {
 
     bool is3D_ = true;
     Id id;
+    QString name_;
+    ArtifactAbstractComposition* composition_ = nullptr;
     LayerID parentLayerId_;
     LayerState state_;
-    //FramePosition framePosition_
+    FramePosition inPoint_ = FramePosition(0);
+    FramePosition outPoint_ = FramePosition(300); // Default 10s at 30fps
+    FramePosition startTime_ = FramePosition(0);
+
+    bool isLocked_ = false;
+    bool isGuide_ = false;
+    bool isSolo_ = false;
+    bool isShy_ = false;
+
+    uint32_t dirtyFlags_ = (uint32_t)LayerDirtyFlag::All;
 
     // エフェクトコンテナ
     std::vector<std::shared_ptr<ArtifactAbstractEffect>> effects_;
@@ -118,7 +131,7 @@ namespace Artifact {
 
   ArtifactAbstractLayer::ArtifactAbstractLayer():impl_(new Impl())
  {
-
+     impl_->id = Id(); // Generate new ID
  }
 
  ArtifactAbstractLayer::~ArtifactAbstractLayer()
@@ -155,14 +168,12 @@ namespace Artifact {
 
  LayerID ArtifactAbstractLayer::id() const
  {
-
-  return LayerID();
+  return impl_->id;
  }
 
  QString ArtifactAbstractLayer::layerName() const
  {
-
-  return QString();
+  return impl_->name_;
  }
 
  UniString ArtifactAbstractLayer::className() const
@@ -172,7 +183,7 @@ namespace Artifact {
 
  void ArtifactAbstractLayer::setLayerName(const QString& name)
  {
-
+     impl_->name_ = name;
  }
 
  std::type_index ArtifactAbstractLayer::type_index() const
@@ -252,6 +263,74 @@ namespace Artifact {
     // TODO: store cur into layer cache if present
     return;
  }
+
+ FramePosition ArtifactAbstractLayer::inPoint() const { return impl_->inPoint_; }
+ void ArtifactAbstractLayer::setInPoint(const FramePosition& pos) { impl_->inPoint_ = pos; }
+ FramePosition ArtifactAbstractLayer::outPoint() const { return impl_->outPoint_; }
+ void ArtifactAbstractLayer::setOutPoint(const FramePosition& pos) { impl_->outPoint_ = pos; }
+ FramePosition ArtifactAbstractLayer::startTime() const { return impl_->startTime_; }
+ void ArtifactAbstractLayer::setStartTime(const FramePosition& pos) { impl_->startTime_ = pos; }
+
+  bool ArtifactAbstractLayer::isActiveAt(const FramePosition& pos) const
+  {
+      return pos.framePosition() >= impl_->inPoint_.framePosition() && 
+             pos.framePosition() < impl_->outPoint_.framePosition();
+  }
+
+  bool ArtifactAbstractLayer::isGuide() const { return impl_->isGuide_; }
+  void ArtifactAbstractLayer::setGuide(bool guide) { impl_->isGuide_ = guide; }
+  bool ArtifactAbstractLayer::isSolo() const { return impl_->isSolo_; }
+  void ArtifactAbstractLayer::setSolo(bool solo) { impl_->isSolo_ = solo; }
+  bool ArtifactAbstractLayer::isLocked() const { return impl_->isLocked_; }
+  void ArtifactAbstractLayer::setLocked(bool locked) { impl_->isLocked_ = locked; }
+  bool ArtifactAbstractLayer::isShy() const { return impl_->isShy_; }
+  void ArtifactAbstractLayer::setShy(bool shy) { impl_->isShy_ = shy; }
+
+  void ArtifactAbstractLayer::setDirty(LayerDirtyFlag flag) { impl_->dirtyFlags_ |= (uint32_t)flag; }
+  void ArtifactAbstractLayer::clearDirty(LayerDirtyFlag flag) { impl_->dirtyFlags_ &= ~(uint32_t)flag; }
+  bool ArtifactAbstractLayer::isDirty(LayerDirtyFlag flag) const { return (impl_->dirtyFlags_ & (uint32_t)flag) != 0; }
+
+ void ArtifactAbstractLayer::setComposition(ArtifactAbstractComposition* comp)
+ {
+  impl_->composition_ = comp;
+ }
+
+ ArtifactAbstractComposition* ArtifactAbstractLayer::composition() const
+ {
+  return impl_->composition_;
+ }
+
+ ArtifactAbstractLayerPtr ArtifactAbstractLayer::parentLayer() const
+ {
+  if (!impl_->composition_ || impl_->parentLayerId_.isNil()) return nullptr;
+  return impl_->composition_->layerById(impl_->parentLayerId_);
+ }
+
+ QTransform ArtifactAbstractLayer::getLocalTransform() const
+ {
+  const auto& t = transform3D();
+  QTransform result;
+  
+  // AE-like transform: Translate(Pos) * Rotate(Rot) * Scale(Scale) * Translate(-Anchor)
+  result.translate(t.positionX(), t.positionY());
+  result.rotate(t.rotation());
+  result.scale(t.scaleX(), t.scaleY());
+  result.translate(-t.anchorX(), -t.anchorY());
+  
+  return result;
+ }
+
+ QTransform ArtifactAbstractLayer::getGlobalTransform() const
+ {
+  QTransform local = getLocalTransform();
+  auto parent = parentLayer();
+  if (parent) {
+   // In After Effects, parent transform is applied to the child's space
+   return local * parent->getGlobalTransform();
+  }
+  return local;
+ }
+
  bool ArtifactAbstractLayer::isAdjustmentLayer() const
  {
   return true;
@@ -347,61 +426,13 @@ Size_2D ArtifactAbstractLayer::aabb() const
 QRectF ArtifactAbstractLayer::transformedBoundingBox() const
 {
  const auto size = sourceSize();
- if (size.isEmpty()) {
+ if (size.width <= 0 || size.height <= 0) {
   return QRectF();
  }
 
- const float width = static_cast<float>(size.width);
- const float height = static_cast<float>(size.height);
- const float centerX = width * 0.5f;
- const float centerY = height * 0.5f;
-
- const float scaleX = transform3D().scaleX();
- const float scaleY = transform3D().scaleY();
- const float rotationDeg = transform3D().rotation();
- const float translateX = transform3D().positionX();
- const float translateY = transform3D().positionY();
-
- const float radians = rotationDeg * (3.14159265358979323846f / 180.0f);
- const float cosA = std::cos(radians);
- const float sinA = std::sin(radians);
-
- const std::array<QPointF, 4> corners = {
-  QPointF(0.0f, 0.0f),
-  QPointF(width, 0.0f),
-  QPointF(width, height),
-  QPointF(0.0f, height)
- };
-
- float minX = std::numeric_limits<float>::max();
- float minY = std::numeric_limits<float>::max();
- float maxX = std::numeric_limits<float>::lowest();
- float maxY = std::numeric_limits<float>::lowest();
-
- for (const auto& corner : corners) {
-  QPointF pt = corner;
-  pt -= QPointF(centerX, centerY);
-  pt.setX(pt.x() * scaleX);
-  pt.setY(pt.y() * scaleY);
-  const float rotatedX = pt.x() * cosA - pt.y() * sinA;
-  const float rotatedY = pt.x() * sinA + pt.y() * cosA;
-  pt.setX(rotatedX + centerX + translateX);
-  pt.setY(rotatedY + centerY + translateY);
-  if (pt.x() < minX) {
-   minX = pt.x();
-  }
-  if (pt.x() > maxX) {
-   maxX = pt.x();
-  }
-  if (pt.y() < minY) {
-   minY = pt.y();
-  }
-  if (pt.y() > maxY) {
-   maxY = pt.y();
-  }
- }
-
- return QRectF(minX, minY, maxX - minX, maxY - minY);
+ QTransform global = getGlobalTransform();
+ QRectF localRect(0, 0, static_cast<float>(size.width), static_cast<float>(size.height));
+ return global.mapRect(localRect);
 }
 
 AnimatableTransform2D& ArtifactAbstractLayer::transform2D()
@@ -432,6 +463,31 @@ QJsonObject ArtifactAbstractLayer::toJson() const
     obj["id"] = id().toString();
     obj["name"] = layerName();
     obj["type"] = static_cast<int>(LayerType::Unknown);
+    obj["parentId"] = parentLayerId().toString();
+    obj["inPoint"] = (qint64)impl_->inPoint_.framePosition();
+    obj["outPoint"] = (qint64)impl_->outPoint_.framePosition();
+    obj["startTime"] = (qint64)impl_->startTime_.framePosition();
+    obj["isVisible"] = isVisible();
+    obj["is3D"] = is3D();
+    obj["blendMode"] = static_cast<int>(layerBlendType());
+    obj["isLocked"] = impl_->isLocked_;
+    obj["isGuide"] = impl_->isGuide_;
+    obj["isSolo"] = impl_->isSolo_;
+    obj["isShy"] = impl_->isShy_;
+
+    // Transform
+    QJsonObject trans;
+    const auto& t3 = transform3D();
+    trans["px"] = t3.positionX();
+    trans["py"] = t3.positionY();
+    trans["pz"] = t3.positionZ();
+    trans["rx"] = t3.rotation(); // Currently only 1 rotation in ixx outline
+    trans["sx"] = t3.scaleX();
+    trans["sy"] = t3.scaleY();
+    trans["ax"] = t3.anchorX();
+    trans["ay"] = t3.anchorY();
+    trans["az"] = t3.anchorZ();
+    obj["transform"] = trans;
 
     // Effects and their properties
     QJsonArray effectsArr;
@@ -530,6 +586,33 @@ void ArtifactAbstractLayer::applyPropertiesFromJson(const QJsonObject& obj)
             eff->setPropertyValue(UniString(name.toStdString()), val);
         }
     }
+}
+
+void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject& obj)
+{
+    if (obj.contains("name")) setLayerName(obj["name"].toString());
+    if (obj.contains("inPoint")) setInPoint(FramePosition(obj["inPoint"].toVariant().toLongLong()));
+    if (obj.contains("outPoint")) setOutPoint(FramePosition(obj["outPoint"].toVariant().toLongLong()));
+    if (obj.contains("startTime")) setStartTime(FramePosition(obj["startTime"].toVariant().toLongLong()));
+    if (obj.contains("isVisible")) setVisible(obj["isVisible"].toBool());
+    if (obj.contains("isLocked")) setLocked(obj["isLocked"].toBool());
+    if (obj.contains("isGuide")) setGuide(obj["isGuide"].toBool());
+    if (obj.contains("isSolo")) setSolo(obj["isSolo"].toBool());
+    if (obj.contains("isShy")) setShy(obj["isShy"].toBool());
+    
+    if (obj.contains("transform") && obj["transform"].isObject()) {
+        QJsonObject trans = obj["transform"].toObject();
+        auto& t3 = transform3D();
+        // Since we are loading, we might want to set these as initial values or at time 0
+        RationalTime t0(0, 30000); // 0s
+        if (trans.contains("px")) t3.setPosition(t0, trans["px"].toDouble(), trans["py"].toDouble());
+        if (trans.contains("pz")) t3.setPositionZ(t0, trans["pz"].toDouble());
+        if (trans.contains("rx")) t3.setRotation(t0, trans["rx"].toDouble());
+        if (trans.contains("sx")) t3.setScale(t0, trans["sx"].toDouble(), trans["sy"].toDouble());
+        if (trans.contains("ax")) t3.setAnchor(t0, trans["ax"].toDouble(), trans["ay"].toDouble(), trans["az"].toDouble());
+    }
+
+    applyPropertiesFromJson(obj);
 }
 
  void ArtifactAbstractLayer::Impl::addEffect(std::shared_ptr<ArtifactAbstractEffect> effect)

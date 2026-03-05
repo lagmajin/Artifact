@@ -992,6 +992,10 @@
     <ClCompile Include="include\Widgets\Render\ArtifactRenderManagerWidget.ixx">
       <CompileAs>CompileAsCppModule</CompileAs>
     </ClCompile>
+    <ClCompile Include="include\Widgets\Render\ArtifactViewportCamera.ixx">
+      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
+      <AdditionalOptions Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">/interface %(AdditionalOptions)</AdditionalOptions>
+    </ClCompile>
     <ClCompile Include="include\Widgets\ArtifactCompositionWidget.ixx">
       <FileType>Document</FileType>
       <CompileAs>CompileAsCppModule</CompileAs>
@@ -1113,7 +1117,8 @@
     </ClCompile>
     <ClCompile Include="src\Export\Python\ArtifactPythonAPI.cpp" />
     <ClCompile Include="include\Render\ArtifactRenderer.ixx">
-      <CompileAs>CompileAsCppModule</CompileAs>
+      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
+      <AdditionalOptions Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">/interface %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>

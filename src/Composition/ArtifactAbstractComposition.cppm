@@ -24,6 +24,7 @@ import Frame.Rate;
 import Composition.Settings;
 import Artifact.Composition.Result;
 import Artifact.Layers;
+import Artifact.Layer.Factory;
 //import Playback.Clock;
 
 namespace Artifact {
@@ -38,8 +39,9 @@ namespace Artifact {
   
 
  public:
-  Impl();
+  Impl(ArtifactAbstractComposition* owner);
   ~Impl();
+  ArtifactAbstractComposition* owner_;
   MultiIndexLayerContainer layerMultiIndex_;
   CompositionSettings settings_;
   FramePosition position_;
@@ -59,15 +61,18 @@ namespace Artifact {
   QVector<ArtifactAbstractLayerPtr> allLayer() const;
   QVector<ArtifactAbstractLayerPtr> allLayerBackToFront() const;
 
-  ArtifactAbstractLayerPtr frontMostLayer() const;
-  ArtifactAbstractLayerPtr backMostLayer() const;
-  bool hasVideo() const;
-  bool hasAudio() const;
+   ArtifactAbstractLayerPtr frontMostLayer() const;
+   ArtifactAbstractLayerPtr backMostLayer() const;
+   bool hasVideo() const;
+   bool hasAudio() const;
+   void moveLayerToIndex(const LayerID& id, int newIndex);
+   void bringToFront(const LayerID& id);
+   void sendToBack(const LayerID& id);
 
-  bool isPlaying_ = false;
+   bool isPlaying_ = false;
  };
 
- ArtifactAbstractComposition::Impl::Impl()
+ ArtifactAbstractComposition::Impl::Impl(ArtifactAbstractComposition* owner) : owner_(owner)
  {
 
  }
@@ -91,6 +96,7 @@ namespace Artifact {
   auto id = layer->id();
 
   layerMultiIndex_.add(layer,id,layer->type_index());
+  layer->setComposition(owner_);
 
   result.success = true;
   result.error = AppendLayerToCompositionError::None;
@@ -105,7 +111,13 @@ namespace Artifact {
 
 void ArtifactAbstractComposition::Impl::removeLayer(const LayerID& id)
 {
-  layerMultiIndex_.removeById(id);
+   // Safe Detachment: Clear parent link of any layer that refers to this ID
+   for (auto& layer : layerMultiIndex_) {
+       if (layer->parentLayerId() == id) {
+           layer->clearParent();
+       }
+   }
+   layerMultiIndex_.removeById(id);
 }
 
  bool ArtifactAbstractComposition::Impl::containsLayerById(const LayerID& id) const
@@ -134,23 +146,60 @@ void ArtifactAbstractComposition::Impl::removeLayer(const LayerID& id)
   return position_;
  }
 
- void ArtifactAbstractComposition::Impl::goToFrame(int64_t frame/*=0*/)
- {
-  
- }
+  void ArtifactAbstractComposition::Impl::goToFrame(int64_t frame/*=0*/)
+  {
+    position_ = FramePosition(frame);
+    for (auto& layer : layerMultiIndex_) {
+        if (layer) layer->goToFrame(frame);
+    }
+  }
 
  QVector<ArtifactAbstractLayerPtr> ArtifactAbstractComposition::Impl::allLayer() const
  {
   return layerMultiIndex_.all();
  }
 
- AppendLayerToCompositionResult ArtifactAbstractComposition::Impl::appendLayerBottom(ArtifactAbstractLayerPtr layer)
- {
-     AppendLayerToCompositionResult result;
+  AppendLayerToCompositionResult ArtifactAbstractComposition::Impl::appendLayerBottom(ArtifactAbstractLayerPtr layer)
+  {
+      AppendLayerToCompositionResult result;
+      if (!layer) {
+          result.success = false;
+          result.error = AppendLayerToCompositionError::LayerNotFound;
+          return result;
+      }
+      layerMultiIndex_.insertAt(0, layer, layer->id(), layer->type_index());
+      layer->setComposition(owner_);
+      result.success = true;
+      result.error = AppendLayerToCompositionError::None;
+      return result;
+  }
 
+  void ArtifactAbstractComposition::Impl::moveLayerToIndex(const LayerID& id, int newIndex)
+  {
+      auto layer = layerMultiIndex_.findById(id);
+      if (!layer) return;
+      int oldIndex = layerMultiIndex_.indexOf(layer);
+      if (oldIndex == -1) return;
+      layerMultiIndex_.move(oldIndex, newIndex);
+  }
 
-	 return result;
- }
+  void ArtifactAbstractComposition::Impl::bringToFront(const LayerID& id)
+  {
+      auto layer = layerMultiIndex_.findById(id);
+      if (!layer) return;
+      int oldIndex = layerMultiIndex_.indexOf(layer);
+      if (oldIndex == -1) return;
+      layerMultiIndex_.move(oldIndex, layerMultiIndex_.all().size() - 1);
+  }
+
+  void ArtifactAbstractComposition::Impl::sendToBack(const LayerID& id)
+  {
+      auto layer = layerMultiIndex_.findById(id);
+      if (!layer) return;
+      int oldIndex = layerMultiIndex_.indexOf(layer);
+      if (oldIndex == -1) return;
+      layerMultiIndex_.move(oldIndex, 0);
+  }
 
  bool ArtifactAbstractComposition::Impl::hasVideo() const
  {
@@ -196,7 +245,7 @@ ArtifactAbstractLayerPtr ArtifactAbstractComposition::Impl::backMostLayer() cons
   return v;
  }
 
- ArtifactAbstractComposition::ArtifactAbstractComposition(const CompositionID& id, const ArtifactCompositionInitParams& params) :impl_(new Impl())
+ ArtifactAbstractComposition::ArtifactAbstractComposition(const CompositionID& id, const ArtifactCompositionInitParams& params) :impl_(new Impl(this))
  {
   impl_->id_ = id;
  	
@@ -246,7 +295,7 @@ ArtifactAbstractLayerPtr ArtifactAbstractComposition::layerById(const LayerID& i
 
  void ArtifactAbstractComposition::goToFrame(int64_t frameNumber /*= 0*/)
  {
-
+  impl_->goToFrame(frameNumber);
  }
 
   FrameRange ArtifactAbstractComposition::frameRange() const
@@ -288,10 +337,14 @@ ArtifactAbstractLayerPtr ArtifactAbstractComposition::layerById(const LayerID& i
 
 void ArtifactAbstractComposition::insertLayerAt(ArtifactAbstractLayerPtr layer, int index/*=0*/)
 {
-    // TODO: insertAt not yet implemented in MultiIndexContainer
-    // For now, just append to top
     if (!layer) return;
-    appendLayerTop(layer);
+    impl_->layerMultiIndex_.insertAt(index, layer, layer->id(), layer->type_index());
+    layer->setComposition(this);
+}
+
+void ArtifactAbstractComposition::moveLayerToIndex(const LayerID& id, int newIndex)
+{
+    impl_->moveLayerToIndex(id, newIndex);
 }
 
  void ArtifactAbstractComposition::removeLayer(const LayerID& id)
@@ -312,6 +365,16 @@ ArtifactAbstractLayerPtr ArtifactAbstractComposition::frontMostLayer() const
 ArtifactAbstractLayerPtr ArtifactAbstractComposition::backMostLayer() const
 {
     return impl_->backMostLayer();
+}
+
+void ArtifactAbstractComposition::bringToFront(const LayerID& id)
+{
+    impl_->bringToFront(id);
+}
+
+void ArtifactAbstractComposition::sendToBack(const LayerID& id)
+{
+    impl_->sendToBack(id);
 }
 
 CompositionID ArtifactAbstractComposition::id() const
@@ -359,33 +422,42 @@ QJsonDocument ArtifactAbstractComposition::toJson() const
     return QJsonDocument(obj);
 }
 
-// TODO: fromJson is not declared in the interface - commenting out for now
-/*
 std::shared_ptr<ArtifactAbstractComposition> ArtifactAbstractComposition::fromJson(const QJsonDocument& doc)
 {
     if (!doc.isObject()) return nullptr;
     QJsonObject obj = doc.object();
-    // ID取得
+    
     CompositionID compId;
     if (obj.contains("id")) {
         compId = CompositionID(obj["id"].toString());
     }
-    // 仮: デフォルトパラメータで生成
+    
     ArtifactCompositionInitParams params;
     auto comp = std::make_shared<ArtifactAbstractComposition>(compId, params);
-    // レイヤー復元
+    
     if (obj.contains("layers") && obj["layers"].isArray()) {
         QJsonArray arr = obj["layers"].toArray();
+        QVector<ArtifactAbstractLayerPtr> loadedLayers;
         for (const auto& v : arr) {
             if (v.isObject()) {
-                auto layer = ArtifactAbstractLayer::fromJson(v.toObject());
-                if (layer) comp->appendLayerTop(layer);
+                auto layer = ArtifactLayerFactory::createFromJson(v.toObject());
+                if (layer) {
+                    comp->appendLayerTop(layer);
+                    loadedLayers.append(layer);
+                }
+            }
+        }
+        
+        // Parent resolution pass
+        for (const auto& layer : loadedLayers) {
+            QJsonObject lobj = arr.at(loadedLayers.indexOf(layer)).toObject();
+            if (lobj.contains("parentId")) {
+                LayerID pid(lobj["parentId"].toString());
+                layer->setParentById(pid);
             }
         }
     }
-    // 必要に応じて他のプロパティも復元
     return comp;
 }
-*/
 
 };

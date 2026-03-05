@@ -4,8 +4,6 @@
 export module Render;
 
 
-
-
 export namespace Artifact {
 
  class ArtifactRenderer : public QObject {
@@ -22,12 +20,28 @@ export namespace Artifact {
  public:
     ArtifactRenderer(QObject* parent = nullptr);
     ~ArtifactRenderer();
+
+ private:
+    class Impl {
+    public:
+        Impl();
+        ~Impl();
+    };
  };
 
+ inline ArtifactRenderer::ArtifactRenderer(QObject* parent)
+    : QObject(parent), impl_(new Impl()) {
+ }
 
+ inline ArtifactRenderer::~ArtifactRenderer() {
+    delete impl_;
+ }
 
+ inline ArtifactRenderer::Impl::Impl() {
+ }
 
-
+ inline ArtifactRenderer::Impl::~Impl() {
+ }
 
 
 }

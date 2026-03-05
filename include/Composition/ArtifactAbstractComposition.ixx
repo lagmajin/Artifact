@@ -36,8 +36,9 @@ export namespace Artifact {
   ~ArtifactAbstractComposition();
   AppendLayerToCompositionResult appendLayerTop(ArtifactAbstractLayerPtr layer);
   AppendLayerToCompositionResult appendLayerBottom(ArtifactAbstractLayerPtr layer);
-  void insertLayerAt(ArtifactAbstractLayerPtr layer, int index=0);
-  void removeLayer(const LayerID& id);
+   void insertLayerAt(ArtifactAbstractLayerPtr layer, int index=0);
+   void moveLayerToIndex(const LayerID& id, int newIndex);
+   void removeLayer(const LayerID& id);
   void removeLayerById(const LayerID& id);
   void removeAllLayers();
   CompositionID id() const;
@@ -51,10 +52,10 @@ export namespace Artifact {
   ArtifactAbstractLayerPtr frontMostLayer() const;
   ArtifactAbstractLayerPtr backMostLayer() const;
 
-  void bringToFront(ArtifactAbstractLayer* layer);
-  void sendToBack(ArtifactAbstractLayer* layer);
+   void bringToFront(const LayerID& id);
+   void sendToBack(const LayerID& id);
 
-  void setBackGroundColor(const FloatColor& color);
+   void setBackGroundColor(const FloatColor& color);
   FramePosition framePosition() const;
   void setFramePosition(const FramePosition& position);
   void setTimeCode();

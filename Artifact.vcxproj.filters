@@ -893,6 +893,7 @@
     <ClCompile Include="include\Widgets\ArtifactCompositionGraphWidget.ixx" />
     <ClCompile Include="src\Widgets\ArtifactExpressionCopilotWidget.cppm" />
     <ClCompile Include="src\Widgets\ArtifactCompositionGraphWidget.cppm" />
+    <ClCompile Include="include\Widgets\Render\ArtifactViewportCamera.ixx" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Generated\TestService.h" />

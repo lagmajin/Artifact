@@ -1,4 +1,5 @@
 ﻿module;
+#include <QJsonObject>
 
 export module Artifact.Layer.Factory;
 
@@ -20,6 +21,7 @@ export namespace Artifact {
   ~ArtifactLayerFactory();
   ArtifactAbstractLayerPtr createNewLayer(ArtifactLayerInitParams params) noexcept;
   ArtifactLayerResult createLayer(ArtifactLayerInitParams& params) noexcept;
+  static ArtifactAbstractLayerPtr createFromJson(const QJsonObject& json) noexcept;
  };
 
 

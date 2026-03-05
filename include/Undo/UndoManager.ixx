@@ -12,6 +12,9 @@ import Artifact.Effect.Abstract;
 export namespace Artifact {
  using namespace ArtifactCore;
 
+ class ArtifactAbstractLayer;
+ class ArtifactAbstractComposition;
+
 class UndoCommand {
 public:
     virtual ~UndoCommand() = default;
@@ -29,6 +32,28 @@ private:
     UniString name_;
     QVariant oldValue_;
     QVariant newValue_;
+};
+
+class AddLayerCommand : public UndoCommand {
+public:
+    AddLayerCommand(std::shared_ptr<ArtifactAbstractComposition> comp, std::shared_ptr<ArtifactAbstractLayer> layer, bool atTop = true);
+    void undo() override;
+    void redo() override;
+private:
+    std::shared_ptr<ArtifactAbstractComposition> comp_;
+    std::shared_ptr<ArtifactAbstractLayer> layer_;
+    bool atTop_;
+};
+
+class RemoveLayerCommand : public UndoCommand {
+public:
+    RemoveLayerCommand(std::shared_ptr<ArtifactAbstractComposition> comp, std::shared_ptr<ArtifactAbstractLayer> layer);
+    void undo() override;
+    void redo() override;
+private:
+    std::shared_ptr<ArtifactAbstractComposition> comp_;
+    std::shared_ptr<ArtifactAbstractLayer> layer_;
+    int originalIndex_;
 };
 
 class UndoManager : public QObject {

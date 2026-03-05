@@ -7,6 +7,8 @@
 #include <qtypes.h>
 #include <QJsonObject>
 #include <QImage>
+#include <QTransform>
+#include <memory>
 
 export module Artifact.Layer.Abstract;
 
@@ -22,6 +24,7 @@ import Animation.Transform2D;
 import Animation.Transform3D;
 import Artifact.Effect.Abstract;
 import Artifact.Mask.LayerMask;
+import Frame.Position;
 
 import <cstdint> ;
 
@@ -44,10 +47,20 @@ export namespace Artifact {
   Audio,       // 音声レイヤー
   Video,       // 映像レイヤー
   Media,       // 映像・音声メディア
-  Camera,
- };
+   Camera,
+  };
+
+  enum class LayerDirtyFlag : uint32_t {
+      Clean = 0,
+      Transform = 1 << 0,
+      Effect = 1 << 1,
+      Mask = 1 << 2,
+      Source = 1 << 3, // For image/video changes
+      All = 0xFFFFFFFF
+  };
 
  class ArtifactAbstractLayer;
+ class ArtifactAbstractComposition;
 
  using ArtifactAbstractLayerPtr = std::shared_ptr<ArtifactAbstractLayer>;
  using ArtifactAbstractLayerWeak = std::weak_ptr<ArtifactAbstractLayer>;
@@ -77,6 +90,9 @@ export namespace Artifact {
   void setVisible(bool visible=true);
   QString layerName() const;
   void setLayerName(const QString& name);
+  
+  void setComposition(ArtifactAbstractComposition* comp);
+  ArtifactAbstractComposition* composition() const;
 
   virtual void draw() = 0;
 
@@ -99,19 +115,33 @@ export namespace Artifact {
   AnimatableTransform3D& transform3D();
   const AnimatableTransform3D& transform3D() const;
   void setTransform();
+  QTransform getGlobalTransform() const;
+  QTransform getLocalTransform() const;
+  ArtifactAbstractLayerPtr parentLayer() const;
   bool isTimeRemapEnabled() const;
   void setTimeRemapEnabled(bool);
   void setTimeRemapKey(int64_t compFrame, double sourceFrame);
  	/*Transform*/
  	
  	/*Timeline*/
-  void goToStartFrame();
+   FramePosition inPoint() const;
+   void setInPoint(const FramePosition& pos);
+   FramePosition outPoint() const;
+   void setOutPoint(const FramePosition& pos);
+   FramePosition startTime() const;
+   void setStartTime(const FramePosition& pos);
+
+   bool isActiveAt(const FramePosition& pos) const;
+
+   void goToStartFrame();
   void goToEndFrame();
   void goToNextFrame();
   void goToPrevFrame();
-  void goToFrame(int64_t frameNumber = 0);
-  // Apply properties from JSON object (used when loading project)
-  void applyPropertiesFromJson(const QJsonObject& obj);
+   void goToFrame(int64_t frameNumber = 0);
+   // Apply properties from JSON object (used when loading project)
+   void applyPropertiesFromJson(const QJsonObject& obj);
+   // Sync properties from JSON
+   void fromJsonProperties(const QJsonObject& obj);
   // Optional cache API: subclasses may implement.
   // bool getCachedFrame(const FramePosition& pos, ArtifactCore::ImageF32x4RGBAWithCache& out) const;
   // void clearFrameCache();
@@ -133,9 +163,24 @@ export namespace Artifact {
   virtual bool hasVideo() const;
 
   bool isClicked() const;
-  bool preciseHit() const;
+   bool preciseHit() const;
 
-  /*Thumbnail*/
+   // Flags
+   bool isGuide() const;
+   void setGuide(bool guide);
+   bool isSolo() const;
+   void setSolo(bool solo);
+   bool isLocked() const;
+   void setLocked(bool locked);
+   bool isShy() const;
+   void setShy(bool shy);
+
+   // Dirty Management
+   void setDirty(LayerDirtyFlag flag = LayerDirtyFlag::All);
+   void clearDirty(LayerDirtyFlag flag = LayerDirtyFlag::All);
+   bool isDirty(LayerDirtyFlag flag = LayerDirtyFlag::All) const;
+
+   /*Thumbnail*/
   QImage getThumbnail(int width = 128, int height = 128) const;
   /*Thumbnail*/
 

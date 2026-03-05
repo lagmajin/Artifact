@@ -12,6 +12,8 @@ import Undo.UndoManager;
 import std;
 import Utils.String.UniString;
 import Artifact.Effect.Abstract;
+import Artifact.Layer.Abstract;
+import Artifact.Composition.Abstract;
 
 namespace Artifact {
 

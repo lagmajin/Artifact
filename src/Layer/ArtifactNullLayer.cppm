@@ -25,10 +25,10 @@ namespace Artifact {
 
  }
 
- ArtifactNullLayer::ArtifactNullLayer():impl_(new Impl())
- {
-
- }
+  ArtifactNullLayer::ArtifactNullLayer():impl_(new Impl())
+  {
+   setSourceSize(Size_2D(100, 100));
+  }
 
  ArtifactNullLayer::~ArtifactNullLayer()
  {
