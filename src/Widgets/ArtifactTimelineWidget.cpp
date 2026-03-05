@@ -710,7 +710,7 @@ TimelineTrackView::TimelineTrackView(QWidget* parent /*= nullptr*/) :QGraphicsVi
   horizontalPen.setWidth(1);
   painter->setPen(horizontalPen);
 
-  const double rowSpacing = 28.0;
+  //const double rowSpacing = 28.0;
   double rowStart = std::floor(rect.top() / rowSpacing) * rowSpacing;
   for (double y = rowStart; y <= rect.bottom(); y += rowSpacing) {
    painter->drawLine(QLineF(rect.left(), y, rect.right(), y));
