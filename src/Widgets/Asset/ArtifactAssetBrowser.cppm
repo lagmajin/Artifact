@@ -91,6 +91,7 @@ namespace Artifact {
   Impl();
   ~Impl();
   QTreeView* directoryView_ = nullptr;
+  AssetDirectoryModel* directoryModel_ = nullptr;
   QListView* fileView_ = nullptr;
   AssetMenuModel* assetModel_ = nullptr;
   QLineEdit* searchEdit_ = nullptr;
@@ -115,6 +116,7 @@ namespace Artifact {
   bool isImageFile(const QString& fileName) const;
   bool isVideoFile(const QString& fileName) const;
   bool isAudioFile(const QString& fileName) const;
+  void syncProjectAssetRoot();
  };
 
  ArtifactAssetBrowser::Impl::Impl()
@@ -257,6 +259,33 @@ namespace Artifact {
   thumbnailCache_.clear();
  }
 
+ void ArtifactAssetBrowser::Impl::syncProjectAssetRoot()
+ {
+  if (!directoryModel_) return;
+
+  QString assetsPath = ArtifactProjectManager::getInstance().currentProjectAssetsPath();
+  if (assetsPath.isEmpty()) {
+   assetsPath = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation) + "/Assets";
+  }
+
+  QDir assetsDir(assetsPath);
+  if (!assetsDir.exists()) {
+   assetsDir.mkpath(".");
+  }
+
+  QString previousRoot = currentDirectoryPath_;
+  directoryModel_->setAssetRootPath(assetsPath);
+
+  if (previousRoot.isEmpty() || !QDir(previousRoot).exists() || !previousRoot.startsWith(assetsPath, Qt::CaseInsensitive)) {
+   currentDirectoryPath_ = assetsPath;
+  } else {
+   currentDirectoryPath_ = previousRoot;
+  }
+
+  clearThumbnailCache();
+  applyFilters();
+ }
+
  void ArtifactAssetBrowser::Impl::applyFilters()
  {
   if (!fileView_ || !assetModel_ || currentDirectoryPath_.isEmpty()) return;
@@ -358,9 +387,12 @@ namespace Artifact {
   auto layout = new QHBoxLayout();
 
   auto directoryView = impl_->directoryView_ = new QTreeView();
-  auto directoryModel = new AssetDirectoryModel(this);
+  auto directoryModel = impl_->directoryModel_ = new AssetDirectoryModel(this);
 
-  QString assetsPath = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation) + "/Assets";
+  QString assetsPath = ArtifactProjectManager::getInstance().currentProjectAssetsPath();
+  if (assetsPath.isEmpty()) {
+   assetsPath = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation) + "/Assets";
+  }
   QString packagesPath = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation) + "/Packages";
 
   directoryModel->setAssetRootPath(assetsPath);
@@ -372,7 +404,7 @@ namespace Artifact {
   directoryView->setExpandsOnDoubleClick(true);
   directoryView->setAnimated(true);
 
-  QString desktopPath = QStandardPaths::writableLocation(QStandardPaths::DesktopLocation);
+  QString desktopPath = assetsPath;
 
   auto assetPathLabel = new QLabel("Assets");
   assetPathLabel->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
@@ -507,6 +539,16 @@ namespace Artifact {
 
   // Initial load
   impl_->applyFilters();
+
+  auto* projectService = ArtifactProjectService::instance();
+  if (projectService) {
+   connect(projectService, &ArtifactProjectService::projectCreated, this, [this]() {
+    impl_->syncProjectAssetRoot();
+   });
+   connect(projectService, &ArtifactProjectService::projectChanged, this, [this]() {
+    impl_->syncProjectAssetRoot();
+   });
+  }
 
   auto VBoxLayout = new  QVBoxLayout();
   VBoxLayout->addWidget(assetPathLabel);

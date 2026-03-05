@@ -6,6 +6,8 @@
 #include <QPropertyAnimation>
 #include <QGraphicsOpacityEffect>
 #include <QFileDialog>
+#include <QDir>
+#include <QDirIterator>
 
 #include <QApplication>
 
@@ -50,6 +52,8 @@ namespace Artifact {
    void handleSaveProject();
    void handleSaveAsProject();
    void handleCloseProject();
+   void handleImportFile();
+   void handleImportFolder();
 
  };
 
@@ -168,6 +172,52 @@ namespace Artifact {
   }
  }
 
+ void ArtifactFileMenu::Impl::handleImportFile()
+ {
+  if (!ArtifactProjectManager::getInstance().isProjectCreated()) {
+   return;
+  }
+
+  QStringList paths = QFileDialog::getOpenFileNames(nullptr, "Import Files", QString(), "All Files (*.*)");
+  if (paths.isEmpty()) {
+   return;
+  }
+
+  auto& projectManager = ArtifactProjectManager::getInstance();
+  QStringList copied = projectManager.copyFilesToProjectAssets(paths);
+  if (!copied.isEmpty()) {
+   projectManager.addAssetsFromFilePaths(copied);
+  }
+ }
+
+ void ArtifactFileMenu::Impl::handleImportFolder()
+ {
+  if (!ArtifactProjectManager::getInstance().isProjectCreated()) {
+   return;
+  }
+
+  QString folderPath = QFileDialog::getExistingDirectory(nullptr, "Import Folder");
+  if (folderPath.isEmpty()) {
+   return;
+  }
+
+  QStringList files;
+  QDirIterator it(folderPath, QDir::Files, QDirIterator::Subdirectories);
+  while (it.hasNext()) {
+   files.append(it.next());
+  }
+
+  if (files.isEmpty()) {
+   return;
+  }
+
+  auto& projectManager = ArtifactProjectManager::getInstance();
+  QStringList copied = projectManager.copyFilesToProjectAssets(files);
+  if (!copied.isEmpty()) {
+   projectManager.addAssetsFromFilePaths(copied);
+  }
+ }
+
  ArtifactFileMenu::ArtifactFileMenu(QWidget* parent /*= nullptr*/) :QMenu(parent), Impl_(new Impl())
  {
   setObjectName("FileMenu");
@@ -206,6 +256,12 @@ namespace Artifact {
 
   connect(Impl_->saveProjectAsAction, &QAction::triggered,
    [this]() { Impl_->handleSaveAsProject(); });
+
+  connect(Impl_->importFileAction, &QAction::triggered,
+   [this]() { Impl_->handleImportFile(); });
+
+  connect(Impl_->importFolderAction, &QAction::triggered,
+   [this]() { Impl_->handleImportFolder(); });
 
   connect(Impl_->quitApplicationAction, &QAction::triggered,
    this, &ArtifactFileMenu::quitApplication);

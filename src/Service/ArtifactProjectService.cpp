@@ -72,10 +72,6 @@ namespace Artifact
     auto& manager = projectManager();
 
     manager.addAssetFromFilePath(path);
-
-    // Notify listeners that project changed so UI updates immediately
-    // Notify manager/service that project changed so UI updates immediately
-    manager.projectChanged();
  	
  }
 

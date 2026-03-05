@@ -626,12 +626,20 @@ QVector<ProjectItem*> ArtifactProjectManager::projectItems() const
 
  void ArtifactProjectManager::addAssetFromFilePath(const QString& filePath)
  {
+  if (!impl_ || !impl_->currentProjectPtr_) {
+   return;
+  }
   impl_->addAssetFromFilePath(filePath);
+  projectChanged();
  }
 
  void ArtifactProjectManager::addAssetsFromFilePaths(const QStringList& filePaths)
  {
+  if (!impl_ || !impl_->currentProjectPtr_) {
+   return;
+  }
   impl_->addAssetsFromFilePaths(filePaths);
+  projectChanged();
  }
 
  ArtifactCompositionPtr ArtifactProjectManager::currentComposition()

@@ -425,7 +425,22 @@ void ArtifactProjectView::dragMoveEvent(QDragMoveEvent* event) {
 void ArtifactProjectView::mousePressEvent(QMouseEvent* event) {
     if (event->button() == Qt::LeftButton) {
          QModelIndex idx = indexAt(event->position().toPoint());
-         if (idx.isValid()) itemSelected(idx);
+         if (idx.isValid()) {
+             itemSelected(idx);
+
+             QModelIndex sourceIdx = idx;
+             if (auto proxy = qobject_cast<const QSortFilterProxyModel*>(idx.model())) {
+                 sourceIdx = proxy->mapToSource(idx).siblingAtColumn(0);
+             }
+             QVariant typeVar = sourceIdx.data(Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::ProjectItemType));
+             if (typeVar.isValid() && typeVar.toInt() == static_cast<int>(eProjectItemType::Composition)) {
+                 QVariant idVar = sourceIdx.data(Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::CompositionId));
+                 if (idVar.isValid()) {
+                     CompositionID cid(idVar.toString());
+                     ArtifactProjectService::instance()->changeCurrentComposition(cid);
+                 }
+             }
+         }
     }
     QTreeView::mousePressEvent(event);
 }
