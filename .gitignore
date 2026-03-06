@@ -364,12 +364,18 @@ FodyWeavers.xsd
 
 *.ifc
 *.lib
-/App/libvlccore.dll
-/App/libvlc.dll
-/App/Halide.dll
-/AbstractDecoder.ixx.ifc.dt.d.json
-/AbstractCompositionBuffer2D.hpp_C7B68ADB99E08A11.ifc.dt.module.json.command
-/App/Artifact.exp
-/App/Artifact.exe
 *.dll
 *.exp
+*.cso
+*.pdb
+/App/*.exe
+/App/*.dll
+/App/*.pdb
+/App/*.cso
+/temp/
+**/temp/
+*.ifc.dt.d.json
+*.module.json.command
+*.tlog
+build_log*.txt
+test_output.png

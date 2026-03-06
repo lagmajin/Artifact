@@ -1,0 +1,193 @@
+module;
+#include <QWidget>
+#include <QTreeWidget>
+#include <QVBoxLayout>
+#include <QHBoxLayout>
+#include <QPushButton>
+#include <QLabel>
+#include <QIcon>
+#include <QHeaderView>
+#include <QStyle>
+#include <wobjectdefs.h>
+#include <wobjectimpl.h>
+
+export module Artifact.Widgets.ProjectHealthDashboard;
+
+import std;
+import Artifact.Project;
+import Artifact.Project.Health;
+import Utils.String.UniString;
+
+namespace Artifact {
+
+/**
+ * @brief Artifact Project Health Dashboard
+ * 
+ * A standalone widget to visualize project health issues detected by ArtifactProjectHealthChecker.
+ */
+export class ArtifactProjectHealthDashboard : public QWidget {
+    W_OBJECT(ArtifactProjectHealthDashboard)
+
+public:
+    explicit ArtifactProjectHealthDashboard(ArtifactProject* project = nullptr, QWidget* parent = nullptr)
+        : QWidget(parent), project_(project) 
+    {
+        setupUI();
+        if (project_) {
+            refresh();
+        }
+    }
+
+    void setProject(ArtifactProject* project) {
+        project_ = project;
+        refresh();
+    }
+
+    /**
+     * @brief Run the health check and update the UI
+     */
+    void refresh() {
+        if (!project_) {
+            statusLabel_->setText("No project loaded.");
+            statusLabel_->setStyleSheet("color: #888; font-weight: bold;");
+            issuesTree_->clear();
+            return;
+        }
+
+        issuesTree_->clear();
+        ArtifactProjectHealthChecker checker;
+        ProjectHealthReport report = checker.check(project_);
+
+        // Update overall status
+        if (report.isHealthy) {
+            if (report.issues.isEmpty()) {
+                statusLabel_->setText("Project is Healthy");
+                statusLabel_->setStyleSheet("color: #4CAF50; font-weight: bold; font-size: 14px;");
+            } else {
+                statusLabel_->setText("Project has Minor Warnings");
+                statusLabel_->setStyleSheet("color: #FF9800; font-weight: bold; font-size: 14px;");
+            }
+        } else {
+            statusLabel_->setText("Project has Critical Issues");
+            statusLabel_->setStyleSheet("color: #F44336; font-weight: bold; font-size: 14px;");
+        }
+
+        // Add issues to tree
+        for (const auto& issue : report.issues) {
+            auto item = new QTreeWidgetItem(issuesTree_);
+            
+            // Set Icon based on severity
+            QIcon icon;
+            if (issue.severity == HealthIssueSeverity::Error) {
+                icon = style()->standardIcon(QStyle::SP_MessageBoxCritical);
+                item->setForeground(0, Qt::red);
+            } else {
+                icon = style()->standardIcon(QStyle::SP_MessageBoxWarning);
+                item->setForeground(0, QColor(255, 165, 0)); // Orange
+            }
+            item->setIcon(0, icon);
+            
+            item->setText(1, issue.message);
+            item->setText(2, issue.targetName);
+            item->setText(3, issue.category);
+            
+            // Add tooltip for full message
+            item->setToolTip(1, issue.message);
+        }
+
+        issuesTree_->header()->setSectionResizeMode(1, QHeaderView::Stretch);
+    }
+
+private:
+    void setupUI() {
+        auto mainLayout = new QVBoxLayout(this);
+        mainLayout->setContentsMargins(15, 15, 15, 15);
+        mainLayout->setSpacing(12);
+
+        // Header Panel
+        auto headerLayout = new QHBoxLayout();
+        statusLabel_ = new QLabel("Loading...");
+        statusLabel_->setStyleSheet("font-weight: bold; font-size: 14px;");
+        
+        auto refreshBtn = new QPushButton("Scan Project");
+        refreshBtn->setFixedWidth(120);
+        refreshBtn->setStyleSheet(R"(
+            QPushButton {
+                background-color: #3e3e42;
+                color: #eee;
+                border: 1px solid #555;
+                padding: 6px 12px;
+                border-radius: 4px;
+            }
+            QPushButton:hover {
+                background-color: #4e4e52;
+                border: 1px solid #777;
+            }
+        )");
+        connect(refreshBtn, &QPushButton::clicked, this, &ArtifactProjectHealthDashboard::refresh);
+
+        headerLayout->addWidget(statusLabel_);
+        headerLayout->addStretch();
+        headerLayout->addWidget(refreshBtn);
+        mainLayout->addLayout(headerLayout);
+
+        // Issues Tree
+        issuesTree_ = new QTreeWidget();
+        QStringList headers = {"", "Issue Description", "Target Object", "Category"};
+        issuesTree_->setHeaderLabels(headers);
+        issuesTree_->setColumnWidth(0, 30);
+        issuesTree_->setColumnWidth(2, 120);
+        issuesTree_->setColumnWidth(3, 100);
+        issuesTree_->setAlternatingRowColors(true);
+        issuesTree_->setIndentation(0);
+        issuesTree_->setStyleSheet(R"(
+            QTreeWidget {
+                background-color: #1e1e1e;
+                color: #ccc;
+                border: 1px solid #333;
+                selection-background-color: #3f3f46;
+                alternate-background-color: #252526;
+            }
+            QHeaderView::section {
+                background-color: #2d2d2d;
+                color: #aaa;
+                padding: 4px;
+                border: 1px solid #1a1a1a;
+            }
+        )");
+        mainLayout->addWidget(issuesTree_);
+
+        // Footer Actions
+        auto footerLayout = new QHBoxLayout();
+        auto fixBtn = new QPushButton("Fix Selected Issue");
+        fixBtn->setEnabled(false); // Placeholder for future feature
+        fixBtn->setStyleSheet(R"(
+            QPushButton {
+                background-color: #007acc;
+                color: white;
+                border: none;
+                padding: 8px 16px;
+                border-radius: 4px;
+            }
+            QPushButton:disabled {
+                background-color: #444;
+                color: #888;
+            }
+        )");
+
+        footerLayout->addStretch();
+        footerLayout->addWidget(fixBtn);
+        mainLayout->addLayout(footerLayout);
+
+        // Set modern dark theme appearance
+        setStyleSheet("background-color: #1e1e1e; color: #ccc;");
+    }
+
+    ArtifactProject* project_ = nullptr;
+    QTreeWidget* issuesTree_ = nullptr;
+    QLabel* statusLabel_ = nullptr;
+};
+
+W_OBJECT_IMPL(ArtifactProjectHealthDashboard)
+
+} // namespace Artifact
