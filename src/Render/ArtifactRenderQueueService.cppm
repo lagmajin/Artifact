@@ -4,14 +4,17 @@ module;
 #include <QThread>
 #include <QDir>
 #include <wobjectimpl.h>
+#include <mutex>
+#include <map>
+
 module Artifact.Render.Queue.Service;
 
 import std;
-//import Container.MultiIndex;
-//import Artifact.Render.Queue;
 import Render.Queue.Manager;
 import Artifact.Project.Manager;
 import Artifact.Project.Items;
+import Encoder.FFmpegEncoder;
+import Image.ImageF32x4_RGBA;
 
 namespace Artifact
 {
@@ -169,6 +172,25 @@ namespace Artifact
     class ArtifactRenderQueueService::Impl {
     public:
         Impl() {
+            // ArtifactCoreのレンダリングキューマネージャにコールバックを登録
+            auto& coreQueueManager = ArtifactCore::RendererQueueManager::instance();
+            coreQueueManager.setRenderFrameFunc([this](const ArtifactCore::Id& compId, int frame, const QString& path) {
+                // 順序制御を行いつつエンコーダに送る
+                {
+                    std::lock_guard<std::mutex> lock(encoderMutex);
+                    // 本来はここでレンダリングされたImageを取得し、バッファに格納する
+                    // frameBuffer[frame] = renderedImage; 
+
+                    while (frameBuffer.count(nextFrameToEncode)) {
+                        if (ffmpegEncoder) {
+                            ffmpegEncoder->addImage(frameBuffer[nextFrameToEncode]);
+                        }
+                        frameBuffer.erase(nextFrameToEncode);
+                        nextFrameToEncode++;
+                    }
+                }
+            });
+
             queueManager.jobAdded = [this](int index) {
                 handleJobAdded(index);
             };
@@ -193,7 +215,10 @@ namespace Artifact
         ~Impl() = default;
 
         ArtifactRenderQueueManager queueManager;
-        QThread* renderingThread = nullptr;
+        std::unique_ptr<ArtifactCore::FFmpegEncoder> ffmpegEncoder;
+        std::map<int, ArtifactCore::ImageF32x4_RGBA> frameBuffer;
+        int nextFrameToEncode = 0;
+        std::mutex encoderMutex;
         bool isRendering = false;
 
         void handleJobAdded(int index) {
@@ -237,13 +262,8 @@ namespace Artifact
     }
 
     void ArtifactRenderQueueService::addRenderQueue() {
-        // TODO: Implement with proper composition API
-        // auto& projectManager = ArtifactProjectManager::getInstance();
-        // auto currentComp = projectManager.currentComposition();
-
-        // Create a default job for now
         ArtifactRenderJob job;
-        job.compositionName = "DefaultComposition";
+        job.compositionName = "New Render Job";
         job.status = ArtifactRenderJob::Status::Pending;
         job.outputPath = QDir::homePath() + "/Desktop/output.mp4";
         job.outputFormat = "MP4";
@@ -251,23 +271,33 @@ namespace Artifact
         job.resolutionWidth = 1920;
         job.resolutionHeight = 1080;
         job.frameRate = 30.0;
-        job.bitrate = 8000; // 8Mbps
+        job.bitrate = 8000;
         job.startFrame = 0;
         job.endFrame = 100;
 
         impl_->queueManager.addJob(job);
+        
+        // ArtifactCore側にもジョブを追加
+        ArtifactCore::RendererQueueManager::instance().addJob(ArtifactCore::Id(), job.compositionName);
     }
 
     void ArtifactRenderQueueService::removeRenderQueue() {
-        // 実装予定: 選択されたジョブを削除
+        // 実装予定
     }
 
     void ArtifactRenderQueueService::removeAllRenderQueues() {
         impl_->queueManager.removeAllJobs();
+        ArtifactCore::RendererQueueManager::instance().clearRenderQueue();
     }
 
     void ArtifactRenderQueueService::startAllJobs() {
         impl_->queueManager.startAllJobs();
+        
+        // エンコーダの初期化 (Mock)
+        impl_->ffmpegEncoder = std::make_unique<ArtifactCore::FFmpegEncoder>();
+        impl_->nextFrameToEncode = 0;
+        
+        ArtifactCore::RendererQueueManager::instance().startRendering();
     }
 
     void ArtifactRenderQueueService::pauseAllJobs() {
@@ -281,10 +311,6 @@ namespace Artifact
     int ArtifactRenderQueueService::jobCount() const {
         return impl_->queueManager.jobCount();
     }
-
-    // ArtifactRenderJob ArtifactRenderQueueService::getJob(int index) const {
-    //     return impl_->queueManager.getJob(index);
-    // }
 
     int ArtifactRenderQueueService::getTotalProgress() const {
         return impl_->queueManager.getTotalProgress();
@@ -302,10 +328,6 @@ namespace Artifact
     void ArtifactRenderQueueService::setJobUpdatedCallback(std::function<void(int)> callback) {
         impl_->jobUpdated = callback;
     }
-
-    // void ArtifactRenderQueueService::setJobStatusChangedCallback(std::function<void(int, ArtifactRenderJob::Status)> callback) {
-    //     impl_->jobStatusChanged = callback;
-    // }
 
     void ArtifactRenderQueueService::setJobProgressChangedCallback(std::function<void(int, int)> callback) {
         impl_->jobProgressChanged = callback;

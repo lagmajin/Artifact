@@ -81,11 +81,15 @@ namespace Artifact {
     impl_->hasImage_ = true;
  }
 
- void ArtifactImageLayer::draw()
+ void ArtifactImageLayer::render(ArtifactIRenderer* renderer)
  {
-    // Ensure GPU texture updated from CPU image if needed
     if (!impl_->hasImage_) return;
-    impl_->cache_->UpdateGpuTextureFromCpuData();
+    
+    QImage img = toQImage();
+    if (img.isNull()) return;
+
+    auto size = sourceSize();
+    renderer->drawSprite(0.0f, 0.0f, (float)size.width, (float)size.height, img);
  }
 
  QImage ArtifactImageLayer::toQImage() const

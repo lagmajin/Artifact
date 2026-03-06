@@ -231,11 +231,24 @@ namespace Artifact {
    }
   }
 
-  // For video files, use a default video icon
-  // TODO: In the future, extract first frame as thumbnail
+  // Extract first frame as thumbnail for video files
   if (isVideoFile(fileInfo.fileName())) {
-   thumbnailCache_[filePath] = defaultVideoIcon_;
-   return defaultVideoIcon_;
+      cv::VideoCapture cap(filePath.toLocal8Bit().constData());
+      if (cap.isOpened()) {
+          cv::Mat frame;
+          if (cap.read(frame) && !frame.empty()) {
+              cv::Mat rgb;
+              cv::cvtColor(frame, rgb, cv::COLOR_BGR2RGB);
+              QImage qimg(rgb.data, rgb.cols, rgb.rows, rgb.step, QImage::Format_RGB888);
+              QPixmap pixmap = QPixmap::fromImage(qimg).scaled(thumbnailSize_, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+              QIcon icon(pixmap);
+              thumbnailCache_[filePath] = icon;
+              return icon;
+          }
+      }
+      // Fallback
+      thumbnailCache_[filePath] = defaultVideoIcon_;
+      return defaultVideoIcon_;
   }
 
   // For audio files, use a default audio icon

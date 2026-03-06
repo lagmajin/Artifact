@@ -17,7 +17,8 @@ import std;
 import Utils.String.UniString;
 import Color.Float;
 import Image.ImageF32x4RGBAWithCache;
-//import Graphics.GPUTexture;
+import MeshImporter;
+import Mesh;
 
 namespace Artifact {
 
@@ -26,7 +27,7 @@ namespace Artifact {
  W_OBJECT_IMPL(Artifact3DModelViewer)
 
   /**
-   * @brief 内部実装クラス
+   * @brief 3D Model Viewer Impl
    */
   class Artifact3DModelViewer::Impl {
  public:
@@ -37,14 +38,11 @@ namespace Artifact {
   float cameraPitch = 0.0f;
   QVector3D cameraPosition{0.0f, 0.0f, 5.0f};
 
-  // GPU関連
+  // GPU
   ImageF32x4RGBAWithCache* renderTarget = nullptr;
-  // GPUTexture* modelTexture = nullptr; // TODO: 後で実装
 
-  // モデルデータ（仮）
-  std::vector<QVector3D> vertices;
-  std::vector<QVector3D> normals;
-  std::vector<QVector2D> uvs;
+  // Assimp Mesh Data
+  std::shared_ptr<ArtifactCore::Mesh> currentMesh = nullptr;
 
   bool modelLoaded = false;
   bool needsRedraw = true;
@@ -52,37 +50,43 @@ namespace Artifact {
 
   Impl() {
     renderTarget = new ImageF32x4RGBAWithCache();
-    // modelTexture = new GPUTexture(); // TODO: 後で実装
   }
   ~Impl() {
     delete renderTarget;
-    // delete modelTexture; // TODO: 後で実装
   }
 
   void loadModelAsync(const ArtifactCore::UniString& path) {
-    // TODO: 非同期モデルロードの実装
-    // 実際にはQThreadやQtConcurrentを使ってOBJ/FBXファイルをロード
     currentModelPath = path;
-    modelLoaded = true;
+    
+    // Load model using Assimp-based MeshImporter
+    ArtifactCore::MeshImporter importer;
+    currentMesh = importer.importMeshFromFile(path);
+    
+    if (currentMesh && currentMesh->isValid()) {
+        modelLoaded = true;
+        qDebug() << "Model loaded successfully. Vertices:" << currentMesh->vertexCount();
+    } else {
+        modelLoaded = false;
+        qDebug() << "Failed to load model:" << path.toQString();
+    }
+    
     needsRedraw = true;
   }
 
   void updateCamera() {
-    // カメラ行列の更新
     QMatrix4x4 viewMatrix;
     viewMatrix.translate(cameraPosition);
     viewMatrix.rotate(cameraYaw, QVector3D(0, 1, 0));
     viewMatrix.rotate(cameraPitch, QVector3D(1, 0, 0));
-    // TODO: 実際のレンダラーに適用
   }
 
   void render() {
     if (!needsRedraw) return;
 
-    // TODO: 実際の3Dレンダリング
-    // - 背景クリア
-    // - モデル描画
-    // - GPUテクスチャ更新
+    // TODO: 3D Render
+    // - Clear Background
+    // - Draw Mesh
+    // - Update GPU Texture
 
     renderTarget->UpdateGpuTextureFromCpuData();
     needsRedraw = false;
@@ -92,16 +96,13 @@ namespace Artifact {
  Artifact3DModelViewer::Artifact3DModelViewer(QWidget* parent)
   : QWidget(parent), impl_(new Impl())
  {
-  // UI初期化
   auto* layout = new QVBoxLayout(this);
   layout->setContentsMargins(0, 0, 0, 0);
 
-  // Qt初期設定
   setAttribute(Qt::WA_OpaquePaintEvent);
   setAttribute(Qt::WA_NoSystemBackground);
   setMinimumSize(400, 300);
 
-  // 定期レンダリングタイマー
   auto* renderTimer = new QTimer(this);
   connect(renderTimer, &QTimer::timeout, this, &Artifact3DModelViewer::requestUpdate);
   renderTimer->start(16); // ~60fps
@@ -122,9 +123,7 @@ namespace Artifact {
  {
   impl_->currentModelPath = ArtifactCore::UniString();
   impl_->modelLoaded = false;
-  impl_->vertices.clear();
-  impl_->normals.clear();
-  impl_->uvs.clear();
+  impl_->currentMesh = nullptr;
   impl_->needsRedraw = true;
   requestUpdate();
  }
@@ -179,11 +178,9 @@ namespace Artifact {
   update(); // QWidget::update()
  }
 
- // マウスイベントでカメラ操作
  void Artifact3DModelViewer::mousePressEvent(QMouseEvent* event)
  {
   if (event->button() == Qt::LeftButton) {
-    // カメラ回転開始
     impl_->lastMousePos = event->pos();
   }
  }
@@ -191,7 +188,6 @@ namespace Artifact {
  void Artifact3DModelViewer::mouseMoveEvent(QMouseEvent* event)
  {
   if (event->buttons() & Qt::LeftButton) {
-    // カメラ回転
     QPoint delta = event->pos() - impl_->lastMousePos;
     impl_->cameraYaw += delta.x() * 0.5f;
     impl_->cameraPitch += delta.y() * 0.5f;
@@ -210,19 +206,21 @@ namespace Artifact {
  void Artifact3DModelViewer::paintEvent(QPaintEvent* event)
  {
   QPainter painter(this);
-  // TODO: ImageF32x4RGBAWithCacheからQImageへの変換を実装
-  // if (impl_->renderTarget && impl_->renderTarget->width() > 0) {
-  //   QImage img = impl_->renderTarget->toCVMat(); // 変換メソッドを実装
-  //   painter.drawImage(rect(), img);
-  // } else {
   
-  // 現在はプレースホルダーのみ描画
   painter.fillRect(rect(), QColor(impl_->backgroundColor.r() * 255,
                                  impl_->backgroundColor.g() * 255,
                                  impl_->backgroundColor.b() * 255));
   painter.setPen(Qt::white);
-  painter.drawText(rect(), Qt::AlignCenter, "3D Model Viewer\nDrop model file here");
-  // }
+  
+  if (impl_->modelLoaded && impl_->currentMesh) {
+      QString stats = QString("3D Model Loaded Successfully\n\nFile: %1\nVertices: %2\nPolygons: %3")
+                      .arg(impl_->currentModelPath.toQString())
+                      .arg(impl_->currentMesh->vertexCount())
+                      .arg(impl_->currentMesh->polygonCount());
+      painter.drawText(rect(), Qt::AlignCenter, stats);
+  } else {
+      painter.drawText(rect(), Qt::AlignCenter, "3D Model Viewer\nDrop model file here");
+  }
  }
 
 }

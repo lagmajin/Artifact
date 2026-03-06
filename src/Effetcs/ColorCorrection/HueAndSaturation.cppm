@@ -2,6 +2,7 @@
 
 #include <cmath>
 #include <algorithm>
+#include <opencv2/opencv.hpp>
 
 module HueAndSaturation;
 
@@ -61,22 +62,43 @@ bool HueAndSaturation::isColorize() const {
 }
 
 void HueAndSaturation::apply(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) {
-    // Clone source to destination
     dst = src;
+    cv::Mat mat = dst.image().toCVMat();
+    if (mat.empty()) return;
 
-    // ピクセルごとの処理の骨格:
-    // TODO: r,g,b を ColorConversion::RGBToHSL または RGBToHSV で変換
-    // if (colorize) {
-    //     // 色相を hue, 彩度を saturation, 明度は元のグレースケール輝度などに依存させる
-    // } else {
-    //     H = H + hue
-    //     S = S * saturation
-    //     L/V = L/V + lightness (あるいは乗算・加算の複合)
-    // }
-    // HSLToRGB / HSVToRGB で r,g,b に戻す。
-    // alpha は元のまま。
-    //
-    // GPU実装はHLSLシェーダ側にて並列処理を実施。
+    // Convert from RGBA/BGRA float to HSV
+    // OpenCV expects BGR float to be in 0.0 - 1.0 range, H will be 0-360, S,V 0-1
+    cv::Mat bgr, hsv;
+    int from_to[] = { 0,2, 1,1, 2,0 };
+    bgr.create(mat.size(), CV_32FC3);
+    cv::mixChannels(&mat, 1, &bgr, 1, from_to, 3);
+    
+    cv::cvtColor(bgr, hsv, cv::COLOR_BGR2HSV);
+
+    for (int y = 0; y < hsv.rows; ++y) {
+        for (int x = 0; x < hsv.cols; ++x) {
+            cv::Vec3f& pixel = hsv.at<cv::Vec3f>(y, x);
+            
+            if (impl_->colorize) {
+                pixel[0] = std::fmod(impl_->hue + 360.0f, 360.0f);
+                pixel[1] = impl_->saturation;
+                pixel[2] = std::clamp(pixel[2] + impl_->lightness, 0.0f, 1.0f);
+            } else {
+                pixel[0] = std::fmod(pixel[0] + impl_->hue + 360.0f, 360.0f);
+                pixel[1] = std::clamp(pixel[1] * impl_->saturation, 0.0f, 1.0f);
+                pixel[2] = std::clamp(pixel[2] + impl_->lightness, 0.0f, 1.0f);
+            }
+        }
+    }
+
+    cv::cvtColor(hsv, bgr, cv::COLOR_HSV2BGR);
+    
+    // Copy back to RGBA, preserving original alpha
+    int back_from_to[] = { 2,0, 1,1, 0,2 };
+    cv::mixChannels(&bgr, 1, &mat, 1, back_from_to, 3);
+    
+    dst.image().setFromCVMat(mat);
+    dst.UpdateGpuTextureFromCpuData();
 }
 
 std::vector<AbstractProperty> HueAndSaturation::getProperties() const {

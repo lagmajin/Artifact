@@ -25,7 +25,7 @@ export namespace Artifact {
   void setFromCvMat(const cv::Mat& mat);
   void setFromCvMat();
 
-  void draw() override;
+  void render(ArtifactIRenderer* renderer) override;
 
  };
 

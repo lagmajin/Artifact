@@ -2,6 +2,7 @@ module;
 
 #include <cmath>
 #include <algorithm>
+#include <opencv2/opencv.hpp>
 
 module ExposureEffect;
 
@@ -51,28 +52,56 @@ float ExposureEffect::gammaCorrection() const {
 }
 
 void ExposureEffect::apply(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) {
-    // ピクセルごとの処理:
-    // 1. Exposure (EV): pixel * pow(2.0, exposure)
-    //    → 1EV上がると2倍の明るさ（実際のカメラの絞り・シャッタースピードに相当）
-    // 2. Offset: pixel + offset
-    //    → リニア空間でのシフト（暗部の底上げに有効）
-    // 3. Gamma Correction: pow(pixel, 1.0 / gamma)
-    //    → ガンマカーブによる中間調の調整
-    //
-    // 処理順: Exposure → Offset → Gamma
-    // Alphaチャンネルは変更しない
-    //
-    // 実際のピクセル操作は ImageF32x4RGBAWithCache の
-    // イテレーションAPIに依存する。
+    dst = src;
+    cv::Mat mat = dst.image().toCVMat();
+    if (mat.empty()) return;
+
+    float exposureMultiplier = std::pow(2.0f, impl_->exposure);
+    float offsetVal = impl_->offset;
+    float gammaInv = 1.0f / std::max(0.0001f, impl_->gammaCorrection);
+
+    // BGR/RGBA のうちRGB(A)のRGB部分だけ処理
+    // cv::MatはCV_32FC4と仮定
+    for (int y = 0; y < mat.rows; ++y) {
+        for (int x = 0; x < mat.cols; ++x) {
+            cv::Vec4f& pixel = mat.at<cv::Vec4f>(y, x);
+            
+            for (int c = 0; c < 3; ++c) {
+                // 1. Exposure
+                float val = pixel[c] * exposureMultiplier;
+                // 2. Offset
+                val += offsetVal;
+                // Clamp before gamma to avoid NaN on negative
+                val = std::max(0.0f, val);
+                // 3. Gamma
+                if (gammaInv != 1.0f) {
+                    val = std::pow(val, gammaInv);
+                }
+                pixel[c] = std::clamp(val, 0.0f, 1.0f);
+            }
+        }
+    }
+
+    dst.image().setFromCVMat(mat);
+    dst.UpdateGpuTextureFromCpuData();
 }
 
 std::vector<AbstractProperty> ExposureEffect::getProperties() const {
-    // TODO: AbstractPropertyの生成仕様に準じてプロパティリストを返す
-    return {};
+    return {
+        {"Exposure", impl_->exposure},
+        {"Offset", impl_->offset},
+        {"Gamma", impl_->gammaCorrection}
+    };
 }
 
 void ExposureEffect::setPropertyValue(const UniString& name, const QVariant& value) {
-    // TODO: プロパティ名に応じたセッター呼び出し
+    if (name == "Exposure") {
+        setExposure(value.toFloat());
+    } else if (name == "Offset") {
+        setOffset(value.toFloat());
+    } else if (name == "Gamma") {
+        setGammaCorrection(value.toFloat());
+    }
 }
 
 } // namespace Artifact

@@ -56,9 +56,10 @@ namespace  Artifact
   setSourceSize(Size_2D(width, height));
  }
 
- void ArtifactSolid2DLayer::draw()
+ void ArtifactSolid2DLayer::render(ArtifactIRenderer* renderer)
  {
-  throw std::logic_error("The method or operation is not implemented.");
+  auto size = sourceSize();
+  renderer->drawSolidRect(0, 0, (float)size.width, (float)size.height, impl_->color());
  }
 
 }

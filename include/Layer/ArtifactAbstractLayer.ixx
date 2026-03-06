@@ -26,6 +26,8 @@ import Artifact.Effect.Abstract;
 import Artifact.Mask.LayerMask;
 import Frame.Position;
 
+import Artifact.Render.IRenderer;
+
 import <cstdint> ;
 
 
@@ -91,7 +93,7 @@ export namespace Artifact {
   void setComposition(ArtifactAbstractComposition* comp);
   ArtifactAbstractComposition* composition() const;
 
-  virtual void draw() = 0;
+  virtual void render(ArtifactIRenderer* renderer) = 0;
 
   LAYER_BLEND_TYPE layerBlendType() const;
   void setBlendMode(LAYER_BLEND_TYPE type);

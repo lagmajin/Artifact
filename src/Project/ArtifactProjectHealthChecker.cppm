@@ -13,6 +13,7 @@ import Artifact.Project;
 import Artifact.Project.Items;
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
+import Artifact.Layer.Composition; // CompositionLayerのインポート
 import Utils.Id;
 
 namespace Artifact {
@@ -41,11 +42,75 @@ ProjectHealthReport ArtifactProjectHealthChecker::check(ArtifactProject* project
 }
 
 void ArtifactProjectHealthChecker::checkCircularReferences(ArtifactProject* project, ProjectHealthReport& report) {
-    // 循環参照チェック (コンポジション A がコンポジション B を含み、B が A を含むようなケース)
-    // 現状のレイヤー構造に PreComposeLayer 等がある場合、その依存グラフを走査します。
-    
-    // TODO: ここにグラフ巡回(DFS)による閉路検出ロジックを実装
-    // 今回はスタブとして「チェック済み」のメッセージを残します。
+    // 全コンポジションを収集
+    auto items = project->projectItems();
+    QMap<QString, ArtifactAbstractComposition*> compMap;
+    QMap<QString, QString> compNames; // エラー報告用
+
+    std::function<void(ProjectItem*)> gatherComps = [&](ProjectItem* item) {
+        if (!item) return;
+        if (item->type() == eProjectItemType::Composition) {
+            auto* compItem = static_cast<CompositionItem*>(item);
+            auto res = project->findComposition(compItem->compositionId);
+            if (res.success) {
+                if (auto comp = res.ptr.lock()) {
+                    QString idStr = comp->id().toString();
+                    compMap.insert(idStr, comp.get());
+                    compNames.insert(idStr, compItem->name.toQString());
+                }
+            }
+        }
+        for (auto child : item->children) gatherComps(child);
+    };
+
+    for (auto root : items) gatherComps(root);
+
+    // DFS (深さ優先探索) を用いた有向グラフの閉路検出
+    QSet<QString> visited;
+    QSet<QString> recStack;
+
+    std::function<bool(const QString&, QStringList&)> dfs = [&](const QString& compId, QStringList& path) -> bool {
+        visited.insert(compId);
+        recStack.insert(compId);
+        path.push_back(compNames.value(compId, compId)); // 名前をパスに記録
+
+        if (compMap.contains(compId)) {
+            auto comp = compMap[compId];
+            for (auto layer : comp->allLayer()) {
+                if (!layer) continue;
+                // コンポジションレイヤーかどうかを判定
+                if (auto compLayer = dynamic_cast<ArtifactCompositionLayer*>(layer.get())) {
+                    QString targetId = compLayer->sourceCompositionId().toString();
+                    if (!visited.contains(targetId)) {
+                        if (dfs(targetId, path)) return true;
+                    } else if (recStack.contains(targetId)) {
+                        // 閉路を検出 (自身が再帰スタックに存在するノードに到達した)
+                        path.push_back(compNames.value(targetId, targetId));
+                        return true; 
+                    }
+                }
+            }
+        }
+
+        recStack.remove(compId);
+        path.pop_back();
+        return false;
+    };
+
+    // 全てのコンポジションノードを起点としてチェック
+    for (auto it = compMap.begin(); it != compMap.end(); ++it) {
+        if (!visited.contains(it.key())) {
+            QStringList path;
+            if (dfs(it.key(), path)) {
+                report.issues.push_back({
+                    HealthIssueSeverity::Error,
+                    QString("Circular reference (Infinite Loop) detected in composition nesting: %1").arg(path.join(" -> ")),
+                    compNames.value(it.key(), "Composition"),
+                    "CircularReference"
+                });
+            }
+        }
+    }
 }
 
 void ArtifactProjectHealthChecker::checkDuplicateIDs(ArtifactProject* project, ProjectHealthReport& report) {

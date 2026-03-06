@@ -5,6 +5,7 @@
 #include <QHash>
 #include <QDebug>
 #include <cmath>
+#include <opencv2/opencv.hpp>
 
 module Generator.Effector;
 
@@ -184,8 +185,11 @@ namespace Artifact
     float b = solidColor_.blueF();
     float a = solidColor_.alphaF();
 
-    // TODO: cv::Mat を使ってピクセル塗りつぶし
-    qDebug() << "[SolidGenerator] Generated solid color:" << solidColor_.name();
+    cv::Mat mat(height, width, CV_32FC4, cv::Scalar(r, g, b, a));
+    dst.image().setFromCVMat(mat);
+    dst.UpdateGpuTextureFromCpuData();
+
+    qDebug() << "[SolidGenerator] Generated solid color:" << solidColor_.name() << width << "x" << height;
   }
 
   // ==================== GradientGeneratorEffector ====================
@@ -236,7 +240,34 @@ namespace Artifact
                                                   int width, 
                                                   int height)
   {
-    // TODO: cv::Mat を使ってグラデーションを描画
+    cv::Mat mat(height, width, CV_32FC4);
+    
+    cv::Vec4f cStart(startColor_.redF(), startColor_.greenF(), startColor_.blueF(), startColor_.alphaF());
+    cv::Vec4f cEnd(endColor_.redF(), endColor_.greenF(), endColor_.blueF(), endColor_.alphaF());
+
+    if (gradientType_ == Linear) {
+        for (int y = 0; y < height; ++y) {
+            float t = static_cast<float>(y) / std::max(1, height - 1);
+            cv::Vec4f color = cStart * (1.0f - t) + cEnd * t;
+            mat.row(y).setTo(color);
+        }
+    } else {
+        // Radial (簡易実装: 中心から円形に)
+        float cx = width / 2.0f;
+        float cy = height / 2.0f;
+        float maxDist = std::sqrt(cx*cx + cy*cy);
+        for (int y = 0; y < height; ++y) {
+            for (int x = 0; x < width; ++x) {
+                float dist = std::sqrt((x-cx)*(x-cx) + (y-cy)*(y-cy));
+                float t = std::min(1.0f, dist / maxDist);
+                mat.at<cv::Vec4f>(y, x) = cStart * (1.0f - t) + cEnd * t;
+            }
+        }
+    }
+
+    dst.image().setFromCVMat(mat);
+    dst.UpdateGpuTextureFromCpuData();
+
     qDebug() << "[GradientGenerator] Generated gradient:" 
              << startColor_.name() << "to" << endColor_.name();
   }
@@ -299,7 +330,22 @@ namespace Artifact
                                                int width, 
                                                int height)
   {
-    // TODO: Perlin/Simplex ノイズライブラリを使用
+    cv::Mat mat(height, width, CV_32FC4);
+    
+    // 簡易的なノイズ生成（本来はPerlin/Simplexノイズライブラリを使用する）
+    cv::Mat noise(height, width, CV_32FC4);
+    cv::randu(noise, cv::Scalar::all(0.0f), cv::Scalar::all(amplitude_));
+    
+    // アルファチャンネルは1.0に固定
+    int from_to[] = { 0,0, 1,1, 2,2 };
+    cv::mixChannels(&noise, 1, &mat, 1, from_to, 3);
+    cv::Mat alpha(height, width, CV_32FC1, cv::Scalar(1.0f));
+    int alpha_from_to[] = { 0, 3 };
+    cv::mixChannels(&alpha, 1, &mat, 1, alpha_from_to, 1);
+
+    dst.image().setFromCVMat(mat);
+    dst.UpdateGpuTextureFromCpuData();
+
     qDebug() << "[NoiseGenerator] Generated noise - Type:" << static_cast<int>(noiseType_)
              << "Scale:" << scale_ << "Octaves:" << octaves_;
   }
@@ -362,7 +408,49 @@ namespace Artifact
                                                int width, 
                                                int height)
   {
-    // TODO: cv::rectangle, cv::circle などで描画
+    cv::Scalar bg(backgroundColor_.redF(), backgroundColor_.greenF(), backgroundColor_.blueF(), backgroundColor_.alphaF());
+    cv::Scalar fg(shapeColor_.redF(), shapeColor_.greenF(), shapeColor_.blueF(), shapeColor_.alphaF());
+    
+    cv::Mat mat(height, width, CV_32FC4, bg);
+
+    int cx = width / 2;
+    int cy = height / 2;
+    int size = static_cast<int>(std::min(width, height) * shapeSize_);
+
+    switch (shapeType_) {
+        case Rectangle:
+            cv::rectangle(mat, 
+                          cv::Point(cx - size/2, cy - size/2), 
+                          cv::Point(cx + size/2, cy + size/2), 
+                          fg, cv::FILLED);
+            break;
+        case Circle:
+            cv::circle(mat, cv::Point(cx, cy), size/2, fg, cv::FILLED);
+            break;
+        case Triangle: {
+            std::vector<cv::Point> pts = {
+                cv::Point(cx, cy - size/2),
+                cv::Point(cx - size/2, cy + size/2),
+                cv::Point(cx + size/2, cy + size/2)
+            };
+            cv::fillPoly(mat, std::vector<std::vector<cv::Point>>{pts}, fg);
+            break;
+        }
+        case Polygon: {
+            // 仮実装: 5角形
+            std::vector<cv::Point> pts;
+            for (int i = 0; i < 5; ++i) {
+                float angle = i * 2.0f * CV_PI / 5.0f - CV_PI / 2.0f;
+                pts.push_back(cv::Point(cx + std::cos(angle) * size/2, cy + std::sin(angle) * size/2));
+            }
+            cv::fillPoly(mat, std::vector<std::vector<cv::Point>>{pts}, fg);
+            break;
+        }
+    }
+
+    dst.image().setFromCVMat(mat);
+    dst.UpdateGpuTextureFromCpuData();
+
     const char* shapeNames[] = {"Rectangle", "Circle", "Triangle", "Polygon"};
     qDebug() << "[ShapeGenerator] Generated shape:" << shapeNames[static_cast<int>(shapeType_)]
              << "Color:" << shapeColor_.name();

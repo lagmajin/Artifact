@@ -18,6 +18,8 @@ module Artifact.Contents.Viewer;
 import std;
 import Artifact.Preview.Pipeline;
 import File.TypeDetector;
+import Artifact.Widgets.ModelViewer;
+import Utils.String.UniString;
 
 namespace Artifact
 {
@@ -31,6 +33,7 @@ namespace Artifact
    QScrollArea* imageScrollArea;
    QLabel* imageLabel;
    QLabel* infoLabel;
+   Artifact3DModelViewer* modelViewer; // 3Dビューワーの追加
    QString currentFilePath;
    ArtifactCore::FileType currentFileType;
    double zoomLevel = 1.0;
@@ -83,8 +86,12 @@ namespace Artifact
    infoLabel->setWordWrap(true);
    infoLabel->setStyleSheet("color: #888; background-color: #1a1a1a; font-family: 'Segoe UI'; font-size: 14px;");
 
+   // 3D Model Viewer Setup
+   modelViewer = new Artifact3DModelViewer(parent);
+
    stackedWidget->addWidget(imageScrollArea);
    stackedWidget->addWidget(infoLabel);
+   stackedWidget->addWidget(modelViewer); // スタックに追加
 
    auto layout = new QVBoxLayout(parent);
    layout->setContentsMargins(0, 0, 0, 0);
@@ -134,6 +141,11 @@ namespace Artifact
    case ArtifactCore::FileType::Video:
      impl_->infoLabel->setText("Video Playback coming soon...\n" + filepath);
      impl_->stackedWidget->setCurrentWidget(impl_->infoLabel);
+     break;
+   case ArtifactCore::FileType::Model3D:
+     // 3Dモデルファイルのロードとビューワーの切り替え
+     impl_->modelViewer->loadModel(ArtifactCore::UniString(filepath.toStdString()));
+     impl_->stackedWidget->setCurrentWidget(impl_->modelViewer);
      break;
    default:
      impl_->infoLabel->setText("Unsupported Content:\n" + filepath);
