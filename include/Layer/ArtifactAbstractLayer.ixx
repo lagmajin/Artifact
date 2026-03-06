@@ -77,13 +77,10 @@ export namespace Artifact {
  public:
   ArtifactAbstractLayer();
   virtual ~ArtifactAbstractLayer();
-  // Serialization (stub implementations returning empty/default values)
-  // Return a JSON representation of this layer. Default implementation
-  // returns an empty object; override in derived classes to provide data.
-  QJsonObject toJson() const;
 
-  // Construct a layer from JSON. Default returns empty shared_ptr.
+  QJsonObject toJson() const;
   static ArtifactAbstractLayerPtr fromJson(const QJsonObject &obj);
+  
   void Show();
   void Hide();
   bool isVisible() const;
@@ -138,13 +135,8 @@ export namespace Artifact {
   void goToNextFrame();
   void goToPrevFrame();
    void goToFrame(int64_t frameNumber = 0);
-   // Apply properties from JSON object (used when loading project)
    void applyPropertiesFromJson(const QJsonObject& obj);
-   // Sync properties from JSON
    void fromJsonProperties(const QJsonObject& obj);
-  // Optional cache API: subclasses may implement.
-  // bool getCachedFrame(const FramePosition& pos, ArtifactCore::ImageF32x4RGBAWithCache& out) const;
-  // void clearFrameCache();
  	/*Timeline*/
  	
   void setParentById(const LayerID& id);
@@ -157,7 +149,6 @@ export namespace Artifact {
   void setAdjustmentLayer(bool isAdjustment);
 
   bool is3D() const;
-  //Audio
 
   virtual bool hasAudio() const;
   virtual bool hasVideo() const;
@@ -203,15 +194,14 @@ export namespace Artifact {
    bool hasMasks() const;
    /*Masks*/
 
-  public:
+  void changed() W_SIGNAL(changed);
 
+  public:
 
  };
 
  inline uint qHash(const Artifact::ArtifactAbstractLayerPtr& key, uint seed = 0) noexcept {
   return static_cast<uint>(::qHash(reinterpret_cast<quintptr>(key.get()), seed));
  }
-
-
 
 }

@@ -300,13 +300,16 @@ W_OBJECT_IMPL(ArtifactTimelineWidget)
   public:
    Impl();
    ~Impl();
-   ArtifactTimelineBottomLabel* timelineLabel_ = nullptr;
-   ArtifactLayerTimelinePanelWrapper* layerTimelinePanel_ = nullptr;
-   TimelineTrackView* trackView_ = nullptr;  // Right-side timeline view
-   CompositionID compositionId_;
-   bool shyActive_ = false;
-
-  };
+    Impl();
+    ~Impl();
+    ArtifactTimelineBottomLabel* timelineLabel_ = nullptr;
+    ArtifactLayerTimelinePanelWrapper* layerTimelinePanel_ = nullptr;
+    TimelineTrackView* trackView_ = nullptr;  // Right-side timeline view
+    WorkAreaControl* workArea_ = nullptr;
+    ArtifactTimelineRulerWidget* ruler_ = nullptr;
+    CompositionID compositionId_;
+    bool shyActive_ = false;
+   };
 
  ArtifactTimelineWidget::Impl::Impl()
  {
@@ -378,11 +381,40 @@ W_OBJECT_IMPL(ArtifactTimelineWidget)
   auto* rightPanelLayout = new QVBoxLayout();
   rightPanelLayout->setSpacing(0);
   rightPanelLayout->setContentsMargins(0, 0, 0, 0);
-  auto timeRulerWidget = new ArtifactTimelineRulerWidget();
-  auto timeScaleWidget = new TimelineScaleWidget();
-  auto workAreaWidget = new WorkAreaControl();
-  auto timelineTrackView = new TimelineTrackView();
-  impl_->trackView_ = timelineTrackView;  // Store reference for layer creation
+    auto timeRulerWidget = impl_->ruler_ = new ArtifactTimelineRulerWidget();
+    auto timeScaleWidget = new TimelineScaleWidget();
+    auto workAreaWidget = impl_->workArea_ = new WorkAreaControl();
+    auto timelineTrackView = impl_->trackView_ = new TimelineTrackView();
+ 
+    // Sync Ruler and WorkArea
+    QObject::connect(timeRulerWidget, &ArtifactTimelineRulerWidget::startChanged, workAreaWidget, &WorkAreaControl::setStart);
+    QObject::connect(timeRulerWidget, &ArtifactTimelineRulerWidget::endChanged, workAreaWidget, &WorkAreaControl::setEnd);
+    QObject::connect(workAreaWidget, &WorkAreaControl::startChanged, timeRulerWidget, &ArtifactTimelineRulerWidget::setStart);
+    QObject::connect(workAreaWidget, &WorkAreaControl::endChanged, timeRulerWidget, &ArtifactTimelineRulerWidget::setEnd);
+ 
+    // Zoom/Scale Integration
+    auto updateZoom = [this]() {
+      if (!impl_->trackView_ || !impl_->workArea_) return;
+      double duration = impl_->trackView_->duration();
+      float s = impl_->workArea_->start;
+      float e = impl_->workArea_->end;
+      double range = std::max(0.01f, e - s);
+      
+      int viewW = impl_->trackView_->viewport()->width();
+      if (viewW > 0) {
+        double newZoom = viewW / (duration * range);
+        impl_->trackView_->setZoomLevel(newZoom);
+        
+        if (auto* hBar = impl_->trackView_->horizontalScrollBar()) {
+          hBar->setValue(static_cast<int>(s * duration * newZoom));
+        }
+      }
+    };
+
+    QObject::connect(workAreaWidget, &WorkAreaControl::startChanged, this, updateZoom);
+    QObject::connect(workAreaWidget, &WorkAreaControl::endChanged, this, updateZoom);
+
+    impl_->trackView_ = timelineTrackView;  // Store reference for layer creation
   //auto layerTimelinePanel = new ArtifactLayerTimelinePanelWrapper();
   //layerTimelinePanel->setMinimumWidth(220);
   //layerTimelinePanel->setMaximumWidth(320);
@@ -466,6 +498,8 @@ W_OBJECT_IMPL(ArtifactTimelineWidget)
      auto res = svc->findComposition(id);
      if (res.success && !res.ptr.expired()) {
       auto comp = res.ptr.lock();
+      impl_->trackView_->setDuration(static_cast<double>(comp->frameRange().duration().toFrame()));
+       
       auto layers = comp->allLayer();
       for (const auto& l : layers) {
        if (l) onLayerCreated(id, l->id());

@@ -550,8 +550,7 @@
     <ClCompile Include="include\Widgets\Render\ArtifactCompositionViewerFooter.ixx">
       <CompileAs>CompileAsCppModule</CompileAs>
     </ClCompile>
-    <ClCompile Include="include\Widgets\Render\ArtifactDiligentEngineRenderWidget.cpp" />
-    <ClCompile Include="include\Widgets\Render\ArtifactDiligentEngineRenderWidget.ixx">
+    <ClCompile Include="include\Widgets\Render\ArtifactCompositionRenderWidget.ixx">
       <CompileAs>CompileAsCppModule</CompileAs>
     </ClCompile>
     <ClCompile Include="include\Widgets\Render\ArtifactLayerEditorPanel.ixx">
@@ -825,6 +824,9 @@
       <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Widgets\Render\ArtifactRenderLayerWidgetv2.cppm">
+      <CompileAs>CompileAsCpp</CompileAs>
+    </ClCompile>
+    <ClCompile Include="src\Widgets\Render\ArtifactCompositionRenderWidget.cppm">
       <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Widgets\Render\ArtifactRenderWrapperWidget.cpp" />

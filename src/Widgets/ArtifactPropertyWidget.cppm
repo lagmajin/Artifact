@@ -54,7 +54,19 @@ ArtifactPropertyWidget::~ArtifactPropertyWidget() {
 
 void ArtifactPropertyWidget::setLayer(ArtifactAbstractLayerPtr layer) {
     if (impl_->currentLayer == layer) return;
+    
+    // Disconnect from old layer
+    if (impl_->currentLayer) {
+        disconnect(impl_->currentLayer.get(), &ArtifactAbstractLayer::changed, this, &ArtifactPropertyWidget::updateProperties);
+    }
+
     impl_->currentLayer = layer;
+    
+    // Connect to new layer
+    if (impl_->currentLayer) {
+        connect(impl_->currentLayer.get(), &ArtifactAbstractLayer::changed, this, &ArtifactPropertyWidget::updateProperties);
+    }
+
     updateProperties();
 }
 

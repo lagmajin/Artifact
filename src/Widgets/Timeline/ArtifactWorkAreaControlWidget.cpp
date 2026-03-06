@@ -17,7 +17,7 @@ namespace Artifact
   bool draggingRight{ false };
  };
 
-
+ 
 
  WorkAreaControl::WorkAreaControl(QWidget* parent /*= nullptr*/):QWidget(parent),impl_(new Impl())
  {
@@ -28,6 +28,22 @@ namespace Artifact
  WorkAreaControl::~WorkAreaControl()
  {
   delete impl_;
+ }
+
+ void WorkAreaControl::setStart(float s) {
+  if (start != s) {
+    start = s;
+    startChanged(s);
+    update();
+  }
+ }
+
+ void WorkAreaControl::setEnd(float e) {
+  if (end != e) {
+    end = e;
+    endChanged(e);
+    update();
+  }
  }
 
  void WorkAreaControl::paintEvent(QPaintEvent*)
@@ -76,13 +92,11 @@ namespace Artifact
 
   if (impl_->draggingLeft) {
    float newStart = (float(ev->pos().x()) - handleHalfW) / float(usableWidth);
-   start = qBound(0.0f, newStart, end - 0.01f);
-   update();
+   setStart(qBound(0.0f, newStart, end - 0.01f));
   }
   else if (impl_->draggingRight) {
    float newEnd = (float(ev->pos().x()) - handleHalfW) / float(usableWidth);
-   end = qBound(start + 0.01f, newEnd, 1.0f);
-   update();
+   setEnd(qBound(start + 0.01f, newEnd, 1.0f));
   }
  }
 

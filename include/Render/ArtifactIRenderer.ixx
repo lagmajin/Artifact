@@ -41,6 +41,10 @@ export namespace Artifact
    virtual void drawBezierLocal(float2 p0, float2 p1, float2 p2, float thickness, const FloatColor& color); // Quadratic
    virtual void drawBezierLocal(float2 p0, float2 p1, float2 p2, float2 p3, float thickness, const FloatColor& color); // Cubic
    virtual void drawSolidTriangleLocal(float2 p0, float2 p1, float2 p2, const FloatColor& color);
+   
+   // Viewer Helpers
+   virtual void drawCheckerboard(float x, float y, float w, float h, float tileSize, const FloatColor& c1, const FloatColor& c2);
+   virtual void drawGrid(float x, float y, float w, float h, float spacing, float thickness, const FloatColor& color);
  
    // Viewport Transform (Proposal 4)
    virtual void setViewportSize(float w, float h);

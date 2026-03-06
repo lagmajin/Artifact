@@ -11,6 +11,7 @@ import Artifact.Test.ProjectManager;
 import Artifact.Project.Manager;
 import Artifact.Service.ActiveContext;
 import Artifact.Tool.Manager;
+import Artifact.Layers.Selection.Manager;
 
 namespace Artifact
 {
@@ -22,6 +23,7 @@ namespace Artifact
   ArtifactTestProjectManager testProjectManager_;
   ArtifactToolManager toolManager_;
   EnvironmentVariableManager manager_;
+  ArtifactLayerSelectionManager selectionManager_;
  	
   entt::registry registry_;
   entt::dispatcher dispather_;
@@ -33,7 +35,8 @@ namespace Artifact
   ArtifactProjectManager* projectManager() const;
   ArtifactGlobalEffectManager* const effectManager();
   ArtifactActiveContextService* activeContext_=new ArtifactActiveContextService();
-  //GlobalEffectManager
+  ArtifactLayerSelectionManager* layerSelectionManager();
+  ArtifactToolManager* toolManager();
  };
 
  ArtifactApplicationManager::Impl::Impl()
@@ -43,7 +46,7 @@ namespace Artifact
 
  ArtifactApplicationManager::Impl::~Impl()
  {
-
+  delete activeContext_;
  }
 
  entt::registry& ArtifactApplicationManager::Impl::registry()
@@ -60,6 +63,16 @@ namespace Artifact
  {
   static ArtifactProjectManager manager;
   return &manager;
+ }
+
+ ArtifactLayerSelectionManager* ArtifactApplicationManager::Impl::layerSelectionManager()
+ {
+  return &selectionManager_;
+ }
+
+ ArtifactToolManager* ArtifactApplicationManager::Impl::toolManager()
+ {
+  return &toolManager_;
  }
 
  ArtifactApplicationManager::ArtifactApplicationManager() :impl_(new Impl())
@@ -88,6 +101,16 @@ namespace Artifact
  ArtifactActiveContextService* ArtifactApplicationManager::activeContextService()
  {
   return impl_->activeContext_;
+ }
+
+ ArtifactLayerSelectionManager* ArtifactApplicationManager::layerSelectionManager() const
+ {
+  return impl_->layerSelectionManager();
+ }
+
+ ArtifactToolManager* ArtifactApplicationManager::toolManager() const
+ {
+  return impl_->toolManager();
  }
 
  entt::registry& ArtifactApplicationManager::registry()

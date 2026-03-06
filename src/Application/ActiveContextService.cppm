@@ -1,117 +1,120 @@
 module;
-
 #include <wobjectimpl.h>
-#include <QPointer>
+#include <QMetaObject>
 module Artifact.Service.ActiveContext;
 
 import std;
+import Artifact.Application.Manager;
+import Artifact.Layers.Selection.Manager;
 
 namespace Artifact
 {
+
  class ArtifactActiveContextService::Impl
  {
- private:
-  
  public:
-  Impl();
-  QPointer<QObject> pointer_;
+  QObject* handler_ = nullptr;
+  ArtifactCompositionPtr activeComp_ = nullptr;
  };
-
- ArtifactActiveContextService::Impl::Impl()
- {
-
- }
 
  W_OBJECT_IMPL(ArtifactActiveContextService)
 
-  ArtifactActiveContextService::ArtifactActiveContextService(QObject* parent/*=nullptr*/) :QObject(parent), impl_(new Impl())
+ ArtifactActiveContextService::ArtifactActiveContextService(QObject* parent) 
+  : QObject(parent), impl_(new Impl())
  {
-
  }
 
- ArtifactActiveContextService::~ArtifactActiveContextService()
- {
+ ArtifactActiveContextService::~ArtifactActiveContextService() {
   delete impl_;
  }
 
- void ArtifactActiveContextService::setHandler(QObject* obj)
- {
-  impl_->pointer_ = obj;
- 	
- 	
+ void ArtifactActiveContextService::setHandler(QObject* obj) {
+  impl_->handler_ = obj;
  }
 
- void ArtifactActiveContextService::sendPlayToActiveContext()
- {
-  if (!impl_->pointer_)
-   return;
-
-  QMetaObject::invokeMethod(impl_->pointer_, "play",
-   Qt::QueuedConnection);
+ void ArtifactActiveContextService::setActiveComposition(ArtifactCompositionPtr comp) {
+  if (impl_->activeComp_ == comp) return;
+  impl_->activeComp_ = comp;
+  activeCompositionChanged(comp);
  }
 
- void ArtifactActiveContextService::sendPauseToActiveContext()
- {
-  if (!impl_->pointer_)
-   return;
-
-  QMetaObject::invokeMethod(impl_->pointer_, "pause",
-   Qt::QueuedConnection);
+ ArtifactCompositionPtr ArtifactActiveContextService::activeComposition() const {
+  return impl_->activeComp_;
  }
 
- void ArtifactActiveContextService::sendStopToActiveContext()
- {
-  if (!impl_->pointer_)
-   return;
-
-  QMetaObject::invokeMethod(impl_->pointer_, "stop",
-   Qt::QueuedConnection);
+ // --- Playback Actions ---
+ void ArtifactActiveContextService::play() {
+  if (impl_->handler_) QMetaObject::invokeMethod(impl_->handler_, "play");
+  else if (impl_->activeComp_) impl_->activeComp_->play();
  }
 
- void ArtifactActiveContextService::sendNextFrameToActiveContext()
- {
-  if (!impl_->pointer_)
-   return;
-
-  QMetaObject::invokeMethod(impl_->pointer_, "nextFrame",
-   Qt::QueuedConnection);
+ void ArtifactActiveContextService::pause() {
+  if (impl_->handler_) QMetaObject::invokeMethod(impl_->handler_, "pause");
+  else if (impl_->activeComp_) impl_->activeComp_->pause();
  }
 
- void ArtifactActiveContextService::sendPreviousFrameToActiveContext()
- {
-  if (!impl_->pointer_)
-   return;
-
-  QMetaObject::invokeMethod(impl_->pointer_, "previousFrame",
-   Qt::QueuedConnection);
+ void ArtifactActiveContextService::togglePlayPause() {
+  if (impl_->handler_) QMetaObject::invokeMethod(impl_->handler_, "togglePlayPause");
+  else if (impl_->activeComp_) impl_->activeComp_->togglePlayPause();
  }
 
- void ArtifactActiveContextService::sendGoToStartToActiveContext()
- {
-  if (!impl_->pointer_)
-   return;
-
-  QMetaObject::invokeMethod(impl_->pointer_, "goToStart",
-   Qt::QueuedConnection);
+ void ArtifactActiveContextService::stop() {
+  if (impl_->handler_) QMetaObject::invokeMethod(impl_->handler_, "stop");
+  else if (impl_->activeComp_) impl_->activeComp_->stop();
  }
 
- void ArtifactActiveContextService::sendGoToEndToActiveContext()
- {
-  if (!impl_->pointer_)
-   return;
-
-  QMetaObject::invokeMethod(impl_->pointer_, "goToEnd",
-   Qt::QueuedConnection);
+ void ArtifactActiveContextService::nextFrame() {
+  if (impl_->handler_) QMetaObject::invokeMethod(impl_->handler_, "nextFrame");
+  else if (impl_->activeComp_) impl_->activeComp_->goToFrame(impl_->activeComp_->framePosition().currentFrame() + 1);
  }
 
- void ArtifactActiveContextService::sendSeekToFrameToActiveContext(int frame)
- {
-  if (!impl_->pointer_)
-   return;
+ void ArtifactActiveContextService::prevFrame() {
+  if (impl_->handler_) QMetaObject::invokeMethod(impl_->handler_, "prevFrame");
+  else if (impl_->activeComp_) impl_->activeComp_->goToFrame(impl_->activeComp_->framePosition().currentFrame() - 1);
+ }
 
-  QMetaObject::invokeMethod(impl_->pointer_, "seekToFrame",
-   Qt::QueuedConnection,
-   Q_ARG(int, frame));
+ void ArtifactActiveContextService::goToStart() {
+  if (impl_->handler_) QMetaObject::invokeMethod(impl_->handler_, "goToStart");
+  else if (impl_->activeComp_) impl_->activeComp_->goToStartFrame();
+ }
+
+ void ArtifactActiveContextService::goToEnd() {
+  if (impl_->handler_) QMetaObject::invokeMethod(impl_->handler_, "goToEnd");
+  else if (impl_->activeComp_) impl_->activeComp_->goToEndFrame();
+ }
+
+ void ArtifactActiveContextService::seekToFrame(int64_t frame) {
+  if (impl_->handler_) QMetaObject::invokeMethod(impl_->handler_, "seekToFrame", Q_ARG(int64_t, frame));
+  else if (impl_->activeComp_) impl_->activeComp_->goToFrame(frame);
+ }
+
+ // --- Layer Actions ---
+ void ArtifactActiveContextService::setLayerInAtCurrentTime() {
+  auto l = ArtifactApplicationManager::instance()->layerSelectionManager()->currentLayer();
+  if (l && impl_->activeComp_) {
+   l->setInPoint(impl_->activeComp_->framePosition());
+   qDebug() << "[ActiveContext] Set In for" << l->layerName() << "to" << impl_->activeComp_->framePosition().currentFrame();
+  }
+ }
+
+ void ArtifactActiveContextService::setLayerOutAtCurrentTime() {
+  auto l = ArtifactApplicationManager::instance()->layerSelectionManager()->currentLayer();
+  if (l && impl_->activeComp_) {
+   l->setOutPoint(impl_->activeComp_->framePosition());
+  }
+ }
+
+ void ArtifactActiveContextService::trimLayerInAtCurrentTime() {
+  auto l = ArtifactApplicationManager::instance()->layerSelectionManager()->currentLayer();
+  if (l && impl_->activeComp_) {
+   auto now = impl_->activeComp_->framePosition();
+   l->setInPoint(now);
+   l->setStartTime(now);
+  }
+ }
+
+ void ArtifactActiveContextService::trimLayerOutAtCurrentTime() {
+  // Trim Out logic
  }
 
 };

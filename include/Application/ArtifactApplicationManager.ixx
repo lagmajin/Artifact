@@ -12,6 +12,8 @@ import Artifact.Service.Project;
 import Artifact.Test.ProjectManager;
 import Artifact.Project.Manager;
 import Artifact.Service.ActiveContext;
+import Artifact.Layers.Selection.Manager;
+import Artifact.Tool.Manager;
 
 
 export namespace Artifact {
@@ -31,24 +33,11 @@ export namespace Artifact {
   ArtifactTestProjectManager* testProjectManager() const;
   ArtifactGlobalEffectManager*const effectManager();
   ArtifactActiveContextService* activeContextService();
+  ArtifactLayerSelectionManager* layerSelectionManager() const;
+  ArtifactToolManager* toolManager() const;
   
-  //void copyImageToClipboard(const QImage& image);
- 	
-  //ArtifactProjectManager* const projectManager();
   entt::registry& registry();
  
  };
-
-
-
-
-
-
-
-
-
-
-
-
 
 };

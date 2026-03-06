@@ -2,6 +2,7 @@ module;
 
 export module Artifact.Preview.Pipeline;
 import Artifact.Composition.Abstract;
+import Artifact.Render.IRenderer;
 
 export namespace Artifact
 {
@@ -14,8 +15,11 @@ export namespace Artifact
  
   ArtifactPreviewCompositionPipeline();
   ~ArtifactPreviewCompositionPipeline();
-  void setComposition(ArtifactCompositionPtr& composition);
-  void renderFrame();
+  void setComposition(Artifact::ArtifactCompositionPtr composition);
+  Artifact::ArtifactCompositionPtr composition() const;
+  void setSelectedLayerId(const ArtifactCore::LayerID& id);
+  void setCurrentFrame(int64_t frame);
+  void render(ArtifactIRenderer* renderer);
 
  };
 

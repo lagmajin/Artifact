@@ -28,6 +28,7 @@ import Core.Transform.Viewport;
 import Math.Bezier;
 import VertexBuffer;
 import Render.Shader.ThickLine;
+import Render.Shader.ViewerHelpers;
 
 namespace Artifact
 {
@@ -55,9 +56,11 @@ namespace Artifact
   RenderShaderPair m_draw_solid_triangle_shaders;
  
   RefCntAutoPtr<IBuffer> m_draw_thick_line_vertex_buffer;
-  RefCntAutoPtr<IBuffer> m_draw_dot_line_vertex_buffer;
   RefCntAutoPtr<IBuffer> m_draw_solid_triangle_vertex_buffer;
   RefCntAutoPtr<IBuffer> m_draw_dot_line_cb;
+  RefCntAutoPtr<IBuffer> m_draw_viewer_helper_cb;
+  RenderShaderPair m_draw_checkerboard_shaders;
+  RenderShaderPair m_draw_grid_shaders;
   QWidget* widget_;
   HWND renderHwnd_ = nullptr;
   ViewportTransformer viewport_;
@@ -94,6 +97,8 @@ namespace Artifact
   PSOAndSRB m_draw_sprite_pso_and_srb;
   PSOAndSRB m_draw_thick_line_pso_and_srb;
   PSOAndSRB m_draw_solid_triangle_pso_and_srb;
+  PSOAndSRB m_draw_checkerboard_pso_and_srb;
+  PSOAndSRB m_draw_grid_pso_and_srb;
   RefCntAutoPtr<ISampler> m_draw_sprite_sampler;
   int m_CurrentPhysicalWidth;
   int m_CurrentPhysicalHeight;
@@ -332,12 +337,30 @@ namespace Artifact
   solidRectPsInfo2.Source = g_qsSolidColorPSSource.constData();
   solidRectPsInfo2.SourceLength = g_qsSolidColorPSSource.length();
    
-     tbb::parallel_invoke(
-         [&] { pDevice_->CreateShader(lineVsInfo, &m_draw_line_shaders.VS); },
-         [&] { pDevice_->CreateShader(linePsInfo, &m_draw_line_shaders.PS); },
-         [&] { pDevice_->CreateShader(sprite2DVsInfo, &m_draw_sprite_shaders.VS); },
-         [&] { pDevice_->CreateShader(sprite2DPsInfo, &m_draw_sprite_shaders.PS); }
-     );
+  ShaderCreateInfo checkerboardPsInfo;
+  checkerboardPsInfo.SourceLanguage = Diligent::SHADER_SOURCE_LANGUAGE_HLSL;
+  checkerboardPsInfo.Desc.ShaderType = Diligent::SHADER_TYPE_PIXEL;
+  checkerboardPsInfo.Desc.Name = "CheckerboardPixelShader";
+  checkerboardPsInfo.Source = g_checkerboardPS.constData();
+  checkerboardPsInfo.SourceLength = g_checkerboardPS.length();
+
+  ShaderCreateInfo gridPsInfo;
+  gridPsInfo.SourceLanguage = Diligent::SHADER_SOURCE_LANGUAGE_HLSL;
+  gridPsInfo.Desc.ShaderType = Diligent::SHADER_TYPE_PIXEL;
+  gridPsInfo.Desc.Name = "GridPixelShader";
+  gridPsInfo.Source = g_gridPS.constData();
+  gridPsInfo.SourceLength = g_gridPS.length();
+
+  tbb::parallel_invoke(
+      [&] { pDevice_->CreateShader(lineVsInfo, &m_draw_line_shaders.VS); },
+      [&] { pDevice_->CreateShader(linePsInfo, &m_draw_line_shaders.PS); },
+      [&] { pDevice_->CreateShader(sprite2DVsInfo, &m_draw_sprite_shaders.VS); },
+      [&] { pDevice_->CreateShader(sprite2DPsInfo, &m_draw_sprite_shaders.PS); },
+      [&] { pDevice_->CreateShader(checkerboardPsInfo, &m_draw_checkerboard_shaders.PS); },
+      [&] { pDevice_->CreateShader(gridPsInfo, &m_draw_grid_shaders.PS); }
+  );
+  m_draw_checkerboard_shaders.VS = m_draw_solid_shaders.VS; // Reuse VS
+  m_draw_grid_shaders.VS = m_draw_solid_shaders.VS;
      
 	 pDevice_->CreateShader(solidRectVsInfo2, &m_draw_solid_shaders.VS);
 	 pDevice_->CreateShader(solidRectPsInfo2, &m_draw_solid_shaders.PS);
@@ -585,6 +608,37 @@ namespace Artifact
    }
   }
 
+   // Checkerboard PSO
+   {
+    GraphicsPipelineStateCreateInfo PSOCreateInfo = drawSolidRectPSOCreateInfo;
+    PSOCreateInfo.PSODesc.Name = "Checkerboard PSO";
+    PSOCreateInfo.pPS = m_draw_checkerboard_shaders.PS;
+    ShaderResourceVariableDesc Vars[] = {
+        { SHADER_TYPE_VERTEX, "TransformCB", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC },
+        { SHADER_TYPE_PIXEL,  "ViewerHelperCB", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC }
+    };
+    PSOCreateInfo.PSODesc.ResourceLayout.Variables = Vars;
+    PSOCreateInfo.PSODesc.ResourceLayout.NumVariables = _countof(Vars);
+    pDevice_->CreateGraphicsPipelineState(PSOCreateInfo, &m_draw_checkerboard_pso_and_srb.pPSO);
+    if (m_draw_checkerboard_pso_and_srb.pPSO)
+        m_draw_checkerboard_pso_and_srb.pPSO->CreateShaderResourceBinding(&m_draw_checkerboard_pso_and_srb.pSRB, true);
+   }
+
+   // Grid PSO
+   {
+    GraphicsPipelineStateCreateInfo PSOCreateInfo = drawSolidRectPSOCreateInfo;
+    PSOCreateInfo.PSODesc.Name = "Grid PSO";
+    PSOCreateInfo.pPS = m_draw_grid_shaders.PS;
+    ShaderResourceVariableDesc Vars[] = {
+        { SHADER_TYPE_VERTEX, "TransformCB", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC },
+        { SHADER_TYPE_PIXEL,  "ViewerHelperCB", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC }
+    };
+    PSOCreateInfo.PSODesc.ResourceLayout.Variables = Vars;
+    PSOCreateInfo.PSODesc.ResourceLayout.NumVariables = _countof(Vars);
+    pDevice_->CreateGraphicsPipelineState(PSOCreateInfo, &m_draw_grid_pso_and_srb.pPSO);
+    if (m_draw_grid_pso_and_srb.pPSO)
+        m_draw_grid_pso_and_srb.pPSO->CreateShaderResourceBinding(&m_draw_grid_pso_and_srb.pSRB, true);
+   }
   }
 
  void ArtifactIRenderer::Impl::beginFrameGpuProfiling()
@@ -731,12 +785,20 @@ void ArtifactIRenderer::Impl::createConstantBuffers()
  {
   struct DotLineShaderCB { float thickness; float spacing; float2 padding; };
   BufferDesc CBDesc;
-  CBDesc.Name = "DotLineParamsCB";
+  CBDesc.Size = sizeof(DotLineShaderCB);
+  pDevice_->CreateBuffer(CBDesc, nullptr, &m_draw_dot_line_cb);
+ }
+ 
+ // ViewerHelper用定数バッファ
+ {
+  struct CBViewerHelper { float v1; float v2; float2 p; float4 c1; float4 c2; };
+  BufferDesc CBDesc;
+  CBDesc.Name = "ViewerHelperCB";
   CBDesc.Usage = USAGE_DYNAMIC;
   CBDesc.BindFlags = BIND_UNIFORM_BUFFER;
   CBDesc.CPUAccessFlags = CPU_ACCESS_WRITE;
-  CBDesc.Size = sizeof(DotLineShaderCB);
-  pDevice_->CreateBuffer(CBDesc, nullptr, &m_draw_dot_line_cb);
+  CBDesc.Size = sizeof(CBViewerHelper);
+  pDevice_->CreateBuffer(CBDesc, nullptr, &m_draw_viewer_helper_cb);
  }
  }
 
@@ -951,9 +1013,9 @@ void ArtifactIRenderer::Impl::createSwapChain(QWidget* window)
 
   RectVertex vertices[4] = {
    {{0,0}, {color.r(), color.g(), color.b(), 1}}, // 左上
-   {{w, 0.0f}, {color.r(), color.g(), color.b(), 1}}, // 右上
-   {{0.0f, h}, {color.r(), color.g(), color.b(), 1}}, // 左下
-   {{w, h}, {color.r(), color.g(), color.b(), 1}}, // 右下
+   {{w, 0.0f}, {1,1,1,1}}, // 右上
+   {{0.0f, h}, {1,1,1,1}}, // 左下
+   {{w, h}, {1,1,1,1}}, // 右下
   };
 
   auto swapChainRTV = pSwapChain_->GetCurrentBackBufferRTV();
@@ -1511,16 +1573,193 @@ void ArtifactIRenderer::Impl::createSwapChain(QWidget* window)
    impl_->drawBezierLocal(p0, p1, p2, p3, thickness, color);
   }
  
-  void ArtifactIRenderer::drawSolidTriangleLocal(float2 p0, float2 p1, float2 p2, const FloatColor& color)
+   void ArtifactIRenderer::drawCheckerboard(float x, float y, float w, float h, float tileSize, const FloatColor& c1, const FloatColor& c2)
+   {
+    impl_->drawCheckerboard(x, y, w, h, tileSize, c1, c2);
+   }
+
+   void ArtifactIRenderer::drawGrid(float x, float y, float w, float h, float spacing, float thickness, const FloatColor& color)
+   {
+    impl_->drawGrid(x, y, w, h, spacing, thickness, color);
+   }
+
+  void ArtifactIRenderer::Impl::drawSolidTriangleLocal(float2 p0, float2 p1, float2 p2, const FloatColor& color)
   {
-   impl_->drawSolidTriangleLocal(p0, p1, p2, color);
+   if (!pSwapChain_ || !m_draw_solid_triangle_pso_and_srb.pPSO) return;
+ 
+   float4 c = { color.r(), color.g(), color.b(), 1.0f };
+   RectVertex vertices[3] = {
+    {{p0.x, p0.y}, c},
+    {{p1.x, p1.y}, c},
+    {{p2.x, p2.y}, c}
+   };
+ 
+   auto swapChainRTV = pSwapChain_->GetCurrentBackBufferRTV();
+   pImmediateContext_->SetRenderTargets(1, &swapChainRTV, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+ 
+   {
+    void* pData = nullptr;
+    pImmediateContext_->MapBuffer(m_draw_solid_triangle_vertex_buffer, MAP_WRITE, MAP_FLAG_DISCARD, pData);
+    std::memcpy(pData, vertices, sizeof(vertices));
+    pImmediateContext_->UnmapBuffer(m_draw_solid_triangle_vertex_buffer, MAP_WRITE);
+   }
+ 
+   {
+    auto viewportCB = viewport_.GetViewportCB();
+    CBSolidTransform2D cbTransform;
+    cbTransform.offset = viewportCB.offset;
+    cbTransform.scale = viewportCB.scale;
+    cbTransform.screenSize = viewportCB.screenSize;
+ 
+    void* pData = nullptr;
+    pImmediateContext_->MapBuffer(m_draw_solid_rect_trnsform_cb, MAP_WRITE, MAP_FLAG_DISCARD, pData);
+    std::memcpy(pData, &cbTransform, sizeof(cbTransform));
+    pImmediateContext_->UnmapBuffer(m_draw_solid_rect_trnsform_cb, MAP_WRITE);
+   }
+ 
+   pImmediateContext_->SetPipelineState(m_draw_solid_triangle_pso_and_srb.pPSO);
+ 
+   IBuffer* pBuffers[] = { m_draw_solid_triangle_vertex_buffer };
+   Uint64 offsets[] = { 0 };
+   pImmediateContext_->SetVertexBuffers(0, 1, pBuffers, offsets, RESOURCE_STATE_TRANSITION_MODE_TRANSITION, SET_VERTEX_BUFFERS_FLAG_RESET);
+ 
+   m_draw_solid_triangle_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_VERTEX, "TransformCB")->Set(m_draw_solid_rect_trnsform_cb);
+   pImmediateContext_->CommitShaderResources(m_draw_solid_triangle_pso_and_srb.pSRB, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+ 
+   DrawAttribs drawAttrs;
+   drawAttrs.NumVertices = 3;
+   drawAttrs.Flags = DRAW_FLAG_VERIFY_ALL;
+   pImmediateContext_->Draw(drawAttrs);
   }
+ 
+   void ArtifactIRenderer::Impl::drawCheckerboard(float x, float y, float w, float h, float tileSize, const FloatColor& c1, const FloatColor& c2)
+   {
+    if (!pSwapChain_ || !m_draw_checkerboard_pso_and_srb.pPSO) return;
+
+    RectVertex vertices[4] = {
+     {{0,0}, {1,1,1,1}}, 
+     {{w, 0.0f}, {1,1,1,1}},
+     {{0.0f, h}, {1,1,1,1}},
+     {{w, h}, {1,1,1,1}},
+    };
+
+    auto swapChainRTV = pSwapChain_->GetCurrentBackBufferRTV();
+    pImmediateContext_->SetRenderTargets(1, &swapChainRTV, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+
+    {
+     void* pData = nullptr;
+     pImmediateContext_->MapBuffer(m_draw_solid_rect_vertex_buffer, MAP_WRITE, MAP_FLAG_DISCARD, pData);
+     std::memcpy(pData, vertices, sizeof(vertices));
+     pImmediateContext_->UnmapBuffer(m_draw_solid_rect_vertex_buffer, MAP_WRITE);
+    }
+
+    {
+     struct CBViewerHelper { float tileSize; float thickness; float2 padding; float4 color1; float4 color2; };
+     CBViewerHelper cb;
+     cb.tileSize = tileSize;
+     cb.color1 = {c1.r(), c1.g(), c1.b(), 1.0f};
+     cb.color2 = {c2.r(), c2.g(), c2.b(), 1.0f};
+
+     void* pData = nullptr;
+     pImmediateContext_->MapBuffer(m_draw_viewer_helper_cb, MAP_WRITE, MAP_FLAG_DISCARD, pData);
+     std::memcpy(pData, &cb, sizeof(cb));
+     pImmediateContext_->UnmapBuffer(m_draw_viewer_helper_cb, MAP_WRITE);
+    }
+
+    {
+     auto desc = pSwapChain_->GetDesc();
+     CBSolidTransform2D cbTransform;
+     cbTransform.offset = { x + viewport_.GetPan().x, y + viewport_.GetPan().y };
+     cbTransform.scale = { 1,1 };
+     cbTransform.screenSize = { float(desc.Width), float(desc.Height) };
+
+     void* pData = nullptr;
+     pImmediateContext_->MapBuffer(m_draw_solid_rect_trnsform_cb, MAP_WRITE, MAP_FLAG_DISCARD, pData);
+     std::memcpy(pData, &cbTransform, sizeof(cbTransform));
+     pImmediateContext_->UnmapBuffer(m_draw_solid_rect_trnsform_cb, MAP_WRITE);
+    }
+
+    pImmediateContext_->SetPipelineState(m_draw_checkerboard_pso_and_srb.pPSO);
+    IBuffer* pBuffers[] = { m_draw_solid_rect_vertex_buffer };
+    Uint64 offsets[] = { 0 };
+    pImmediateContext_->SetVertexBuffers(0, 1, pBuffers, offsets, RESOURCE_STATE_TRANSITION_MODE_TRANSITION, SET_VERTEX_BUFFERS_FLAG_RESET);
+
+    m_draw_checkerboard_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_VERTEX, "TransformCB")->Set(m_draw_solid_rect_trnsform_cb);
+    m_draw_checkerboard_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_PIXEL, "ViewerHelperCB")->Set(m_draw_viewer_helper_cb);
+    pImmediateContext_->CommitShaderResources(m_draw_checkerboard_pso_and_srb.pSRB, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+
+    DrawAttribs drawAttrs;
+    drawAttrs.NumVertices = 4;
+    drawAttrs.Flags = DRAW_FLAG_VERIFY_ALL;
+    pImmediateContext_->Draw(drawAttrs);
+   }
+
+   void ArtifactIRenderer::Impl::drawGrid(float x, float y, float w, float h, float spacing, float thickness, const FloatColor& color)
+   {
+    if (!pSwapChain_ || !m_draw_grid_pso_and_srb.pPSO) return;
+
+    RectVertex vertices[4] = {
+     {{0,0}, {1,1,1,1}},
+     {{w, 0.0f}, {1,1,1,1}},
+     {{0.0f, h}, {1,1,1,1}},
+     {{w, h}, {1,1,1,1}},
+    };
+
+    auto swapChainRTV = pSwapChain_->GetCurrentBackBufferRTV();
+    pImmediateContext_->SetRenderTargets(1, &swapChainRTV, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+
+    {
+     void* pData = nullptr;
+     pImmediateContext_->MapBuffer(m_draw_solid_rect_vertex_buffer, MAP_WRITE, MAP_FLAG_DISCARD, pData);
+     std::memcpy(pData, vertices, sizeof(vertices));
+     pImmediateContext_->UnmapBuffer(m_draw_solid_rect_vertex_buffer, MAP_WRITE);
+    }
+
+    {
+     struct CBViewerHelper { float spacing; float thickness; float2 padding; float4 color1; float4 color2; };
+     CBViewerHelper cb;
+     cb.spacing = spacing;
+     cb.thickness = thickness;
+     cb.color1 = {color.r(), color.g(), color.b(), 1.0f};
+
+     void* pData = nullptr;
+     pImmediateContext_->MapBuffer(m_draw_viewer_helper_cb, MAP_WRITE, MAP_FLAG_DISCARD, pData);
+     std::memcpy(pData, &cb, sizeof(cb));
+     pImmediateContext_->UnmapBuffer(m_draw_viewer_helper_cb, MAP_WRITE);
+    }
+
+    {
+     auto desc = pSwapChain_->GetDesc();
+     CBSolidTransform2D cbTransform;
+     cbTransform.offset = { x + viewport_.GetPan().x, y + viewport_.GetPan().y };
+     cbTransform.scale = { 1,1 };
+     cbTransform.screenSize = { float(desc.Width), float(desc.Height) };
+
+     void* pData = nullptr;
+     pImmediateContext_->MapBuffer(m_draw_solid_rect_trnsform_cb, MAP_WRITE, MAP_FLAG_DISCARD, pData);
+     std::memcpy(pData, &cbTransform, sizeof(cbTransform));
+     pImmediateContext_->UnmapBuffer(m_draw_solid_rect_trnsform_cb, MAP_WRITE);
+    }
+
+    pImmediateContext_->SetPipelineState(m_draw_grid_pso_and_srb.pPSO);
+    IBuffer* pBuffers[] = { m_draw_solid_rect_vertex_buffer };
+    Uint64 offsets[] = { 0 };
+    pImmediateContext_->SetVertexBuffers(0, 1, pBuffers, offsets, RESOURCE_STATE_TRANSITION_MODE_TRANSITION, SET_VERTEX_BUFFERS_FLAG_RESET);
+
+    m_draw_grid_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_VERTEX, "TransformCB")->Set(m_draw_solid_rect_trnsform_cb);
+    m_draw_grid_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_PIXEL, "ViewerHelperCB")->Set(m_draw_viewer_helper_cb);
+    pImmediateContext_->CommitShaderResources(m_draw_grid_pso_and_srb.pSRB, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+
+    DrawAttribs drawAttrs;
+    drawAttrs.NumVertices = 4;
+    drawAttrs.Flags = DRAW_FLAG_VERIFY_ALL;
+    pImmediateContext_->Draw(drawAttrs);
+   }
  
   void ArtifactIRenderer::present()
   {
    if (!impl_->pSwapChain_) return;
    impl_->pSwapChain_->Present();
-  }
  
   void ArtifactIRenderer::setViewportSize(float w, float h) { impl_->setViewportSize(w, h); }
   void ArtifactIRenderer::setCanvasSize(float w, float h) { impl_->setCanvasSize(w, h); }

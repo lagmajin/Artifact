@@ -44,6 +44,22 @@ namespace Artifact
    delete impl_;
  }
 
+ void ArtifactTimelineRulerWidget::setStart(float s) {
+  if (start != s) {
+    start = s;
+    startChanged(s);
+    update();
+  }
+ }
+
+ void ArtifactTimelineRulerWidget::setEnd(float e) {
+  if (end != e) {
+    end = e;
+    endChanged(e);
+    update();
+  }
+ }
+
   void ArtifactTimelineRulerWidget::paintEvent(QPaintEvent*)
   {
    QPainter p(this);
@@ -63,8 +79,8 @@ namespace Artifact
    const int handleW = handleHalfW * 2;
    int usableWidth = width() - handleW;
 
-   int x1 = handleHalfW + static_cast<int>(impl_->start * usableWidth);
-   int x2 = handleHalfW + static_cast<int>(impl_->end * usableWidth);
+   int x1 = handleHalfW + static_cast<int>(start * usableWidth);
+   int x2 = handleHalfW + static_cast<int>(end * usableWidth);
 
    // Darken outside range
    p.fillRect(0, 0, x1, height(), QColor(0, 0, 0, 100));
@@ -86,7 +102,7 @@ namespace Artifact
    p.setPen(QPen(Qt::white, 1));
    p.drawRoundedRect(QRectF(x1 - handleHalfW, 2, handleW, height() - 4), 2, 2);
    p.drawRoundedRect(QRectF(x2 - handleHalfW, 2, handleW, height() - 4), 2, 2);
-  }
+ }
 
  void ArtifactTimelineRulerWidget::mousePressEvent(QMouseEvent* ev)
  {
@@ -94,8 +110,8 @@ namespace Artifact
   const int handleW = handleHalfW * 2;
   int usableWidth = width() - handleW;
 
-  int x1 = handleHalfW + static_cast<int>(impl_->start * usableWidth);
-  int x2 = handleHalfW + static_cast<int>(impl_->end * usableWidth);
+  int x1 = handleHalfW + static_cast<int>(start * usableWidth);
+  int x2 = handleHalfW + static_cast<int>(end * usableWidth);
 
   if (QRect(x1 - handleHalfW, 0, handleW, height()).contains(ev->pos()))
    impl_->draggingLeft = true;
@@ -111,13 +127,11 @@ namespace Artifact
 
   if (impl_->draggingLeft) {
    float newStart = (float(ev->pos().x()) - handleHalfW) / float(usableWidth);
-   impl_->start = qBound(0.0f, newStart, impl_->end - 0.01f);
-   update();
+   setStart(qBound(0.0f, newStart, end - 0.01f));
   }
   else if (impl_->draggingRight) {
    float newEnd = (float(ev->pos().x()) - handleHalfW) / float(usableWidth);
-   impl_->end = qBound(impl_->start + 0.01f, newEnd, 1.0f);
-   update();
+   setEnd(qBound(start + 0.01f, newEnd, 1.0f));
   }
  }
 

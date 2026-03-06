@@ -8,6 +8,11 @@ export module Undo.UndoManager;
 import std;
 import Utils.String.UniString;
 import Artifact.Effect.Abstract;
+import Artifact.Layer.Abstract;
+
+namespace ArtifactCore {
+    class RationalTime;
+}
 
 export namespace Artifact {
  using namespace ArtifactCore;
@@ -32,6 +37,17 @@ private:
     UniString name_;
     QVariant oldValue_;
     QVariant newValue_;
+};
+
+class MoveLayerCommand : public UndoCommand {
+public:
+    MoveLayerCommand(ArtifactAbstractLayerPtr layer, float deltaX, float deltaY, int64_t frame);
+    void undo() override;
+    void redo() override;
+private:
+    ArtifactAbstractLayerWeak layer_;
+    float dx_, dy_;
+    int64_t frame_;
 };
 
 class AddLayerCommand : public UndoCommand {
@@ -70,39 +86,20 @@ public:
 
     // === History Management ===
     
-    /// Clear all undo/redo history
     void clearHistory();
-    
-    /// Get undo history size
     size_t undoCount() const;
-    
-    /// Get redo history size
     size_t redoCount() const;
-    
-    /// Get description of next undo action
     QString undoDescription() const;
-    
-    /// Get description of next redo action
     QString redoDescription() const;
-    
-    /// Set maximum history size
     void setMaxHistorySize(size_t maxSize);
-    
-    /// Get maximum history size
     size_t maxHistorySize() const;
 
     // === Serialization for Project Save ===
     
-    /// Check if there are unsaved changes
     bool hasUnsavedChanges() const;
-    
-    /// Mark current state as saved (clear dirty flag)
     void markAsSaved();
-    
-    /// Get current dirty state version
     int64_t currentVersion() const;
 
-    // Emit when a property's value changed (effect id as QString)
     void notifyPropertyChanged(const QString& effectId);
     void notifyAnythingChanged();
 
@@ -111,7 +108,6 @@ public:
     void anythingChanged() W_SIGNAL(anythingChanged);
 
 private:
-    // opaque storage
     class Impl;
     Impl* impl_;
 };

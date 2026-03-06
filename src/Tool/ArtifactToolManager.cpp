@@ -1,40 +1,47 @@
 module;
-#include <QSpinBox>
 #include <wobjectimpl.h>
 module Artifact.Tool.Manager;
 
+namespace Artifact {
 
-namespace Artifact
-{
- class ArtifactToolManager::Impl
- {
- private:
+ class ArtifactToolManager::Impl {
  public:
-  Impl();
-  ~Impl();
+  ToolType activeTool_ = ToolType::Selection;
  };
 
- ArtifactToolManager::Impl::Impl()
- {
+ W_OBJECT_IMPL(ArtifactToolManager)
 
+ ArtifactToolManager::ArtifactToolManager(QObject* parent) 
+  : QObject(parent), impl_(new Impl()) 
+ {
  }
 
- ArtifactToolManager::Impl::~Impl()
- {
-
- }
-
-
-	//W_OBJECT_IMPL(ArtifactToolManager)
-
- ArtifactToolManager::ArtifactToolManager():impl_(new Impl())
- {
-
- }
-
- ArtifactToolManager::~ArtifactToolManager()
- {
+ ArtifactToolManager::~ArtifactToolManager() {
   delete impl_;
  }
 
-};
+ void ArtifactToolManager::setActiveTool(ToolType type) {
+  if (impl_->activeTool_ == type) return;
+  impl_->activeTool_ = type;
+  toolChanged(type);
+ }
+
+ ToolType ArtifactToolManager::activeTool() const {
+  return impl_->activeTool_;
+ }
+
+ QString ArtifactToolManager::toolName(ToolType type) const {
+  switch (type) {
+   case ToolType::Selection: return "SelectionTool";
+   case ToolType::Hand: return "HandTool";
+   case ToolType::Zoom: return "ZoomTool";
+   case ToolType::Rotation: return "RotationTool";
+   case ToolType::AnchorPoint: return "AnchorPointTool";
+   case ToolType::Pen: return "PenTool";
+   case ToolType::Text: return "TextTool";
+   case ToolType::Shape: return "ShapeTool";
+   default: return "Unknown";
+  }
+ }
+
+}

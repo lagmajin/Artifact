@@ -7,10 +7,10 @@ import std;
 
 export namespace Artifact
 {
- class ArtifactTimelineRulerWidget :public QWidget
- {
- 	
- private:
+  class ArtifactTimelineRulerWidget :public QWidget
+  {
+   W_OBJECT(ArtifactTimelineRulerWidget)
+  private:
   class Impl;
   Impl* impl_;
   float start{ 0.2f }; // 0..1
@@ -23,7 +23,14 @@ export namespace Artifact
  public:
   explicit ArtifactTimelineRulerWidget(QWidget* parent = nullptr);
   ~ArtifactTimelineRulerWidget();
- 	//signals
+
+  // Property accessors with signals
+  void setStart(float s);
+  void setEnd(float e);
+
+public:
+  void startChanged(float value) W_SIGNAL(startChanged, value)
+  void endChanged(float value) W_SIGNAL(endChanged, value)
  };
 
 

@@ -5,7 +5,6 @@
 #include <memory>
 #include <utility>
 
-
 module Undo.UndoManager;
 
 import Undo.UndoManager;
@@ -14,6 +13,8 @@ import Utils.String.UniString;
 import Artifact.Effect.Abstract;
 import Artifact.Layer.Abstract;
 import Artifact.Composition.Abstract;
+import Animation.Transform3D;
+import Time.Rational;
 
 namespace Artifact {
 
@@ -23,18 +24,18 @@ class UndoManager::Impl {
 public:
     std::vector<std::unique_ptr<UndoCommand>> undoStack;
     std::vector<std::unique_ptr<UndoCommand>> redoStack;
-    size_t maxHistorySize_ = 100;  // Maximum undo history
-    int64_t version_ = 0;          // Incremented on each push
-    int64_t savedVersion_ = 0;     // Version when last saved
+    size_t maxHistorySize_ = 100;
+    int64_t version_ = 0;
+    int64_t savedVersion_ = 0;
 };
 
+// --- SetPropertyCommand ---
 SetPropertyCommand::SetPropertyCommand(std::shared_ptr<ArtifactAbstractEffect> target, const UniString& propName, const QVariant& oldValue, const QVariant& newValue)
     : target_(target), name_(propName), oldValue_(oldValue), newValue_(newValue) {}
 
 void SetPropertyCommand::undo() {
     auto t = target_.lock();
     if (t) t->setPropertyValue(name_, oldValue_);
-    // notify listeners that a property changed
     if (auto mgr = UndoManager::instance()) {
         mgr->notifyPropertyChanged(t ? t->effectID().toQString() : QString());
     }
@@ -48,6 +49,47 @@ void SetPropertyCommand::redo() {
     }
 }
 
+// --- MoveLayerCommand ---
+MoveLayerCommand::MoveLayerCommand(ArtifactAbstractLayerPtr layer, float deltaX, float deltaY, int64_t frame)
+    : layer_(layer), dx_(deltaX), dy_(deltaY), frame_(frame) {}
+
+void MoveLayerCommand::undo() {
+    auto l = layer_.lock();
+    if (l) {
+        auto& t3 = l->transform3D();
+        ArtifactCore::RationalTime t0(frame_, 30000); // simplified rate
+        t3.setPosition(t0, t3.positionX() - dx_, t3.positionY() - dy_);
+        if (auto mgr = UndoManager::instance()) mgr->notifyAnythingChanged();
+    }
+}
+
+void MoveLayerCommand::redo() {
+    auto l = layer_.lock();
+    if (l) {
+        auto& t3 = l->transform3D();
+        ArtifactCore::RationalTime t0(frame_, 30000);
+        t3.setPosition(t0, t3.positionX() + dx_, t3.positionY() + dy_);
+        if (auto mgr = UndoManager::instance()) mgr->notifyAnythingChanged();
+    }
+}
+
+// --- AddLayerCommand ---
+AddLayerCommand::AddLayerCommand(std::shared_ptr<ArtifactAbstractComposition> comp, std::shared_ptr<ArtifactAbstractLayer> layer, bool atTop)
+    : comp_(comp), layer_(layer), atTop_(atTop) {}
+
+void AddLayerCommand::undo() {
+    if (comp_ && layer_) comp_->removeLayerById(layer_->id());
+}
+
+void AddLayerCommand::redo() {
+    if (comp_ && layer_) {
+        if (atTop_) comp_->appendLayerTop(layer_);
+        else comp_->appendLayerBottom(layer_);
+    }
+}
+
+
+// --- UndoManager ---
 UndoManager::UndoManager(): impl_(new Impl()) {}
 
 UndoManager::~UndoManager() { delete impl_; }
@@ -70,7 +112,6 @@ void UndoManager::push(std::unique_ptr<UndoCommand> cmd) {
     // Execute immediately and record for undo
     cmd->redo();
     
-    // Enforce max history size
     while (impl_->undoStack.size() >= impl_->maxHistorySize_) {
         impl_->undoStack.erase(impl_->undoStack.begin());
     }
@@ -99,7 +140,6 @@ void UndoManager::redo() {
 bool UndoManager::canUndo() const { return !impl_->undoStack.empty(); }
 bool UndoManager::canRedo() const { return !impl_->redoStack.empty(); }
 
-// === History Management ===
 void UndoManager::clearHistory() {
     impl_->undoStack.clear();
     impl_->redoStack.clear();
@@ -107,16 +147,10 @@ void UndoManager::clearHistory() {
     impl_->savedVersion_ = 0;
 }
 
-size_t UndoManager::undoCount() const {
-    return impl_->undoStack.size();
-}
-
-size_t UndoManager::redoCount() const {
-    return impl_->redoStack.size();
-}
+size_t UndoManager::undoCount() const { return impl_->undoStack.size(); }
+size_t UndoManager::redoCount() const { return impl_->redoStack.size(); }
 
 QString UndoManager::undoDescription() const {
-    // Could be extended to return command description
     if (impl_->undoStack.empty()) return QString();
     return QString("Undo (%1 actions)").arg(impl_->undoStack.size());
 }
@@ -128,27 +162,14 @@ QString UndoManager::redoDescription() const {
 
 void UndoManager::setMaxHistorySize(size_t maxSize) {
     impl_->maxHistorySize_ = maxSize;
-    // Trim if needed
     while (impl_->undoStack.size() > impl_->maxHistorySize_) {
         impl_->undoStack.erase(impl_->undoStack.begin());
     }
 }
 
-size_t UndoManager::maxHistorySize() const {
-    return impl_->maxHistorySize_;
-}
-
-// === Serialization for Project Save ===
-bool UndoManager::hasUnsavedChanges() const {
-    return impl_->version_ != impl_->savedVersion_;
-}
-
-void UndoManager::markAsSaved() {
-    impl_->savedVersion_ = impl_->version_;
-}
-
-int64_t UndoManager::currentVersion() const {
-    return impl_->version_;
-}
+size_t UndoManager::maxHistorySize() const { return impl_->maxHistorySize_; }
+bool UndoManager::hasUnsavedChanges() const { return impl_->version_ != impl_->savedVersion_; }
+void UndoManager::markAsSaved() { impl_->savedVersion_ = impl_->version_; }
+int64_t UndoManager::currentVersion() const { return impl_->version_; }
 
 }

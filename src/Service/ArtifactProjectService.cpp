@@ -15,6 +15,8 @@ import Artifact.Layer.Factory;
 import Artifact.Composition.Abstract;
 import Artifact.Project.Items;
 import File.TypeDetector;
+import Artifact.Layers.Selection.Manager;
+import Artifact.Application.Manager;
 //import Artifact.Render.FrameCache;
 
 namespace Artifact

@@ -22,11 +22,18 @@ export namespace Artifact
   float start{ 0.2f }; // 0..1
   float end{ 0.8f };   // 0..1
 
- 	
+  // Property accessors with signals
+  void setStart(float s);
+  void setEnd(float e);
+
+ public:
+   void startChanged(float value) W_SIGNAL(startChanged, value)
+   void endChanged(float value) W_SIGNAL(endChanged, value)
+
  public: 
- 	
+ 
  };
-	
-	
+ 	
+ 	
 
 };;
