@@ -14,6 +14,8 @@ static const uint IMAGE_FLAG_DISTORTION_MASK = 1u << 8u;
 
 struct ImageConstants
 {
+	float4x4 world_matrix; // Full 3D/2D Transformation matrix (Baseline + Offset)
+
 	uint flags;
 	float hdr_scaling;
 	uint2 packed_color; // packed half4
