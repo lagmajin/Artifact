@@ -3,7 +3,6 @@
 #include <QAction>
 #include <QKeySequence>
 #include <wobjectimpl.h>
-#include <qcoro6/qcoro/qcorotask.h>
 
 module Menu.Animation;
 

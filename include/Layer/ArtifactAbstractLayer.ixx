@@ -43,6 +43,7 @@
 #include <numeric>
 #include <regex>
 #include <random>
+#include <cstdint>
 export module Artifact.Layer.Abstract;
 
 
@@ -62,8 +63,6 @@ import Artifact.Mask.LayerMask;
 import Frame.Position;
 
 import Artifact.Render.IRenderer;
-
-import <cstdint> ;
 
 
 export namespace Artifact {

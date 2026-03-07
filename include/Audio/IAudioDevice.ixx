@@ -32,12 +32,8 @@
 #include <numeric>
 #include <regex>
 #include <random>
+#include <cstdint>
 export module Audio.IAudioDevice;
-
-
-
-
-import <cstdint>;
 import Utils.String.UniString;
 
 export namespace Artifact {

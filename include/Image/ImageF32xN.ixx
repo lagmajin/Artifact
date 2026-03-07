@@ -35,12 +35,6 @@
 #include <random>
 export module Image.ImageF32xN;
 
-
-
-
-import <vector>;
-import <memory>;
-
 export namespace ArtifactCore {
 
 class ImageF32xN {

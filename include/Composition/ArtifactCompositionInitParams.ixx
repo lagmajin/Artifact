@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <QSize>
 #include <iostream>
 #include <vector>
@@ -33,6 +33,7 @@ module;
 #include <numeric>
 #include <regex>
 #include <random>
+#include <cstdint>
 export module Artifact.Composition.InitParams;
 
 
@@ -47,8 +48,6 @@ import Time.Code;
 import Time.Rational;
 import Core.AspectRatio;
 import Preview.Quality;
-
-import <cstdint>;
 
 export namespace Artifact {
 
