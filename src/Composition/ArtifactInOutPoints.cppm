@@ -9,7 +9,7 @@ module;
 #include <QXmlStreamWriter>
 #include <QXmlStreamReader>
 
-export module Artifact.Composition.InOutPoints;
+module Artifact.Composition.InOutPoints;
 
 import std;
 import Frame.Position;

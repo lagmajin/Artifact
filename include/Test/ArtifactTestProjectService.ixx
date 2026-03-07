@@ -2,7 +2,7 @@ module;
 
 #include <QObject>
 
-export module Artifact.Test.ProjectManager;
+export module Artifact.Test.ProjectService;
 
 export namespace Artifact
 {

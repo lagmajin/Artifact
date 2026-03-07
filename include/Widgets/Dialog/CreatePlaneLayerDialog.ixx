@@ -3,7 +3,7 @@
 #include <QWidget>
 
 #include <wobjectdefs.h>
-export module Artifact.Widgets.CreateLayerDialog;
+export module Artifact.Widgets.CreatePlaneLayerDialog;
 
 import std;
 import Widgets.Dialog.Abstract;
