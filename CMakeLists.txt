@@ -90,6 +90,12 @@ target_link_libraries(Artifact PRIVATE TBB::tbb)
 find_package(glm CONFIG REQUIRED)
 target_link_libraries(Artifact PRIVATE glm::glm)
 
+find_package(stb CONFIG REQUIRED)
+target_link_libraries(Artifact PRIVATE stb::stb)
+
+find_package(Boost REQUIRED COMPONENTS iostreams)
+target_link_libraries(Artifact PRIVATE Boost::iostreams)
+
 # Windows 固有
 if(WIN32)
     target_link_libraries(Artifact PRIVATE dwmapi shell32 user32 ole32 advapi32)
