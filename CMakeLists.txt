@@ -84,6 +84,9 @@ target_link_libraries(Artifact PRIVATE ${OpenCV_LIBS})
 find_package(OpenMP REQUIRED)
 target_link_libraries(Artifact PRIVATE OpenMP::OpenMP_CXX)
 
+find_package(TBB REQUIRED)
+target_link_libraries(Artifact PRIVATE TBB::tbb)
+
 # Windows 固有
 if(WIN32)
     target_link_libraries(Artifact PRIVATE dwmapi shell32 user32 ole32 advapi32)
