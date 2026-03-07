@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.30)
+﻿cmake_minimum_required(VERSION 3.30)
 project(Artifact)
 
 # ---------------------------------------------------------------------------
@@ -86,8 +86,6 @@ target_include_directories(Artifact
     PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}/include"
         "${CMAKE_CURRENT_SOURCE_DIR}/../third_party"
-        "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/verdigris/src"
-        "C:/Program Files/dotnet/packs/Microsoft.NETCore.App.Host.win-x64/9.0.5/runtimes/win-x64/native"
         "${CMAKE_CURRENT_SOURCE_DIR}/../libs/DiligentEngine"
         "${CMAKE_CURRENT_SOURCE_DIR}/../libs/DiligentEngine/DiligentCore"
         "${CMAKE_CURRENT_SOURCE_DIR}/../libs/DiligentEngine/DiligentCore/Graphics/GraphicsEngine/interface"
@@ -95,6 +93,8 @@ target_include_directories(Artifact
         "${CMAKE_CURRENT_SOURCE_DIR}/../libs/DiligentEngine/DiligentCore/Common/interface"
         "${CMAKE_CURRENT_SOURCE_DIR}/../libs/DiligentEngine/DiligentCore/Platforms/interface"
         "${CMAKE_CURRENT_SOURCE_DIR}/../libs/DiligentEngine/DiligentCore/Primitives/interface"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../libs/DiligentEngine/DiligentTools"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../libs/DiligentEngine/DiligentTools/ThirdParty/imgui"
         "${VCPKG_INSTALLED}/include/qtadvanceddocking-qt6"
 )
 

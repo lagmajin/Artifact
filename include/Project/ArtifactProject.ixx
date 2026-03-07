@@ -1,4 +1,4 @@
-module;
+﻿module;
 
 //#include <memory>
 #include <QObject>
@@ -7,7 +7,7 @@ module;
 #include <wobjectdefs.h>
 #include <QJsonObject>
 
-#include <boost/signals2.hpp>
+//#include <boost/signals2.hpp>
 
 #include <iostream>
 #include <vector>

@@ -70,8 +70,7 @@ public:
     virtual ~ArtifactAbstractAudioEffect() = default;
 
     // ArtifactCore::AudioEffect インターフェース
-    // 既存の process(const AudioSegment&) は削除、またはブリッジとして残す
-    virtual void process(ArtifactCore::AudioSegment& segment) override = 0;
+    virtual void process(ArtifactCore::AudioSegment& segment, const ArtifactCore::AudioSegment* sideChain = nullptr) override = 0;
 
     // エフェクト名と説明
     virtual std::string getName() const override = 0;
