@@ -87,6 +87,9 @@ target_link_libraries(Artifact PRIVATE OpenMP::OpenMP_CXX)
 find_package(TBB REQUIRED)
 target_link_libraries(Artifact PRIVATE TBB::tbb)
 
+find_package(glm CONFIG REQUIRED)
+target_link_libraries(Artifact PRIVATE glm::glm)
+
 # Windows 固有
 if(WIN32)
     target_link_libraries(Artifact PRIVATE dwmapi shell32 user32 ole32 advapi32)
