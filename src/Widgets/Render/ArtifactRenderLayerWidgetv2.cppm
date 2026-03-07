@@ -5,19 +5,19 @@ module;
 #include <QList>
 #include <d3d12.h>
 //#include <d3>
-#include <DiligentCore/Graphics/GraphicsEngine/interface/RenderDevice.h>
-#include <DiligentCore/Graphics/GraphicsEngine/interface/DeviceContext.h>
+#include <RenderDevice.h>
+#include <DeviceContext.h>
 //#include <DiligentCore/Common/interface/map>
 
-#include <DiligentCore/Graphics/GraphicsEngineD3D12/interface/EngineFactoryD3D12.h>
-#include <DiligentCore/Graphics/GraphicsEngineD3D12/interface/DeviceContextD3D12.h>
-#include <DiligentCore/Graphics/GraphicsEngine/interface/SwapChain.h>
+#include <EngineFactoryD3D12.h>
+#include <DeviceContextD3D12.h>
+#include <SwapChain.h>
 #include <DiligentCore/Common/interface/RefCntAutoPtr.hpp>
 #include <DiligentTools/Imgui/interface/ImGuiDiligentRenderer.hpp>
 
 
 #include <wobjectimpl.h>
-#include <DiligentCore/Graphics/GraphicsEngineD3D12/interface/RenderDeviceD3D12.h>
+#include <RenderDeviceD3D12.h>
 #include <QTimer>
 #include <QDebug>
 #include <QKeyEvent>
