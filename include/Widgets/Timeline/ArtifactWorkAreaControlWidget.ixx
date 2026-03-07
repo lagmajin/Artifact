@@ -19,10 +19,12 @@ export namespace Artifact
  public:
   explicit WorkAreaControl(QWidget* parent = nullptr);
   ~WorkAreaControl();
-  float start{ 0.2f }; // 0..1
-  float end{ 0.8f };   // 0..1
+  float start{ 0.0f }; // 0..1
+  float end{ 1.0f };   // 0..1
 
   // Property accessors with signals
+  float startValue() const { return start; }
+  float endValue() const { return end; }
   void setStart(float s);
   void setEnd(float e);
 

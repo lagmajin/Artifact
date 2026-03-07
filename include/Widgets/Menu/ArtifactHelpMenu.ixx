@@ -1,4 +1,4 @@
-﻿
+
 module;
 #include <QMenu>
 #include <QWidget>
@@ -8,7 +8,7 @@ module;
 export module Menu.Help;
 
 
-namespace Artifact {
+export namespace Artifact {
 
  class ArtifactHelpMenu :public QMenu{
   W_OBJECT(ArtifactHelpMenu)

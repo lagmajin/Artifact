@@ -81,7 +81,8 @@ namespace Artifact {
     impl_->hasImage_ = true;
  }
 
- void ArtifactImageLayer::render(ArtifactIRenderer* renderer)
+ void ArtifactImageLayer::draw(ArtifactIRenderer* renderer)
+
  {
     if (!impl_->hasImage_) return;
     

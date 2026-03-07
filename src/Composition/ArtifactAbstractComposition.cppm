@@ -407,8 +407,38 @@ bool ArtifactAbstractComposition::isPlaying() const
  return impl_->isPlaying_;
 }
 
-QJsonDocument ArtifactAbstractComposition::toJson() const
+void ArtifactAbstractComposition::play()
 {
+    impl_->isPlaying_ = true;
+}
+
+void ArtifactAbstractComposition::pause()
+{
+    impl_->isPlaying_ = false;
+}
+
+void ArtifactAbstractComposition::stop()
+{
+    impl_->isPlaying_ = false;
+    goToStartFrame();
+}
+
+void ArtifactAbstractComposition::togglePlayPause()
+{
+    impl_->isPlaying_ = !impl_->isPlaying_;
+}
+
+float ArtifactAbstractComposition::playbackSpeed() const
+{
+    return 1.0f; // Placeholder
+}
+
+void ArtifactAbstractComposition::setPlaybackSpeed(float speed)
+{
+    // Placeholder
+}
+
+QJsonDocument ArtifactAbstractComposition::toJson() const{
     QJsonObject obj;
     obj["id"] = id().toString();
     QJsonArray layersArray;
@@ -422,8 +452,12 @@ QJsonDocument ArtifactAbstractComposition::toJson() const
     return QJsonDocument(obj);
 }
 
-std::shared_ptr<ArtifactAbstractComposition> ArtifactAbstractComposition::fromJson(const QJsonDocument& doc)
+void ArtifactAbstractComposition::removeLayerById(const ArtifactCore::LayerID& id)
 {
+    // Placeholder for removing layer by ID
+}
+
+std::shared_ptr<ArtifactAbstractComposition> ArtifactAbstractComposition::fromJson(const QJsonDocument& doc){
     if (!doc.isObject()) return nullptr;
     QJsonObject obj = doc.object();
     

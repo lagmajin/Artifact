@@ -1,89 +1,65 @@
-ï»¿module;
+module;
+
 #include <QString>
 #include <QMenuBar>
 module Menu.MenuBar;
 
 import Menu;
+import Menu.Help;
 
 import Artifact.MainWindow;
-
-
 
 namespace Artifact {
 
  class ArtifactMenuBar::Impl {
- private:
-
  public:
   ArtifactMainWindow* mainWindow_ = nullptr;
-  ArtifactMenuBar* menuBar = nullptr;
   QMenu* fileMenu = nullptr;
   ArtifactEditMenu* editMenu = nullptr;
-
-  //QMenu* compositionMenu=nullptr;
-  QMenu* layerMenu = nullptr;
-  QMenu* viewMenu = nullptr;
   ArtifactCompositionMenu* compositionMenu_ = nullptr;
   ArtifactLayerMenu* layerMenu_ = nullptr;
   ArtifactEffectMenu* effectMenu = nullptr;
   ArtifactAnimationMenu* animationMenu = nullptr;
-  //ArtifactHelpMenu* helpMenu = nullptr;
+  ArtifactViewMenu* viewMenu = nullptr;
+  ArtifactHelpMenu* helpMenu = nullptr;
+
   Impl(ArtifactMainWindow* mainWindow, ArtifactMenuBar* menu);
-  ~Impl();
-  //void setUpUI(QMenu* menu);
+  ~Impl() = default;
  };
 
  ArtifactMenuBar::Impl::Impl(ArtifactMainWindow* mainWindow, ArtifactMenuBar* menu) :mainWindow_(mainWindow)
  {
   fileMenu = new ArtifactFileMenu(menu);
-
   editMenu = new ArtifactEditMenu(menu);
   compositionMenu_ = new ArtifactCompositionMenu(mainWindow, menu);
   animationMenu = new ArtifactAnimationMenu(menu);
   effectMenu = new ArtifactEffectMenu(menu);
-
   layerMenu_ = new ArtifactLayerMenu(menu);
+  viewMenu = new ArtifactViewMenu(menu);
+  helpMenu = new ArtifactHelpMenu(menu);
 
+  // ˆê”Ô‰E‚ÉHelp‚ª—ˆ‚é‚æ‚¤‚É‡˜‚ð®—
   menu->addMenu(fileMenu);
   menu->addMenu(editMenu);
   menu->addMenu(compositionMenu_);
   menu->addMenu(layerMenu_);
   menu->addMenu(effectMenu);
   menu->addMenu(animationMenu);
+  menu->addMenu(viewMenu);
+  menu->addMenu(helpMenu);
 
   QFont font("Segoe UI", 10);
-  font.setWeight(QFont::DemiBold);  // or QFont::Bold
-  
+  font.setWeight(QFont::DemiBold);
   menu->setFont(font);
  }
 
- ArtifactMenuBar::Impl::~Impl()
+ ArtifactMenuBar::ArtifactMenuBar(ArtifactMainWindow* mainWindow, QWidget* parent/*=nullptr*/) 
+  : QMenuBar(parent), impl_(new Impl(mainWindow, this))
  {
-
- }
-
-
- ArtifactMenuBar::ArtifactMenuBar(ArtifactMainWindow* mainWindow, QWidget* parent/*=nullptr*/) :QMenuBar(parent), impl_(new Impl(mainWindow, this))
- {
-
-  impl_->editMenu = new ArtifactEditMenu(this);
-
-
-
-  impl_->viewMenu = new ArtifactViewMenu(this);
-  //impl_->helpMenu = new ArtifactHelpMenu();
-
-
-
-  //addMenu(impl_->compositionMenu);
-  //addMenu(impl_->layerMenu);
-  addMenu(impl_->viewMenu);
-  //addMenu(impl_->helpMenu);
-
   QString styleSheet = R"(
         QMenuBar {
             background-color: #1E1E1E;
-            color: #CCCCCC;
+            color: #E0E0E0;
             border-bottom: 1px solid #111111;
             padding: 2px 0px;
         }
@@ -92,7 +68,7 @@ namespace Artifact {
             spacing: 5px;
             padding: 6px 12px;
             background-color: transparent;
-            color: #CCCCCC;
+            color: #E0E0E0;
             border-radius: 4px;
             font-size: 13px;
         }
@@ -108,40 +84,37 @@ namespace Artifact {
         }
 
         QMenu {
-            background-color: #2D2D30;
-            color: #CCCCCC;
-            border: 1px solid #1A1A1A;
+            background-color: #252526;
+            color: #E0E0E0;
+            border: 1px solid #454545;
             padding: 4px 0px;
-            /* In Qt, drop-shadow can be natively enabled on menus via window flags, 
-               but setting a slightly darker border simulates it nicely. */
         }
 
         QMenu::item {
-            padding: 6px 30px 6px 24px; /* top, right, bottom, left */
-            color: #CCCCCC;
+            padding: 6px 40px 6px 28px;
+            color: #E0E0E0;
             font-size: 13px;
             background-color: transparent;
         }
 
         QMenu::item:selected {
-            background-color: #094771; /* Deep blue highlight */
+            background-color: #007ACC;
             color: #FFFFFF;
         }
-        
+
         QMenu::item:disabled {
             color: #666666;
-            background-color: transparent;
         }
 
         QMenu::separator {
             height: 1px;
-            background-color: #3E3E42;
+            background-color: #454545;
             margin: 4px 10px;
         }
-        
-        QMenu::indicator {
-            width: 13px;
-            height: 13px;
+
+        QMenu::shortcut {
+            color: #888888;
+            padding-right: 10px;
         }
     )";
 
@@ -155,8 +128,6 @@ namespace Artifact {
 
  void ArtifactMenuBar::setMainWindow(ArtifactMainWindow* window)
  {
-
  }
 
-
-};
+}

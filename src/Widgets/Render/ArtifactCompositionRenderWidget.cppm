@@ -1,16 +1,21 @@
-module;
+﻿module;
 #define NOMINMAX
 #include <windows.h>
 #include <tbb/tbb.h>
 #include <QWidget>
-#include <wobjectimpl.h>
-#include <QTimer>
-#include <QDebug>
+#include <QMenu>
 #include <QResizeEvent>
 #include <QMouseEvent>
 #include <QWheelEvent>
+#include <QKeyEvent>
+#include <QFocusEvent>
+#include <QShowEvent>
+#include <QCloseEvent>
+#include <QTimer>
+#include <QDebug>
+#include <wobjectimpl.h>
 
-module Widgets.Render.Composition;
+module Artifact.Widgets.CompositionRenderWidget;
 
 import Artifact.Render.IRenderer;
 import Artifact.Preview.Pipeline;
@@ -20,11 +25,18 @@ import Artifact.Application.Manager;
 import Artifact.Layers.Selection.Manager;
 import Artifact.Tool.Manager;
 import Artifact.Service.ActiveContext;
+import InputEvent;
+import Input.Operator;
 import Undo.UndoManager;
 import Time.Rational;
 import Utils.Id;
+import Utils.Point.Like;
+import InputEvent;
+import Input.Operator;
 
 namespace Artifact {
+
+ using namespace ArtifactCore;
 
  W_OBJECT_IMPL(ArtifactCompositionRenderWidget)
 
@@ -88,18 +100,18 @@ namespace Artifact {
    if (comp) {
     auto size = comp->settings().compositionSize();
     renderer_->setCanvasSize((float)size.width(), (float)size.height());
-    previewPipeline_.setCurrentFrame(comp->framePosition().currentFrame());
+    previewPipeline_.setCurrentFrame(comp->framePosition().framePosition());
    }
    previewPipeline_.render(renderer_.get());
    renderer_->present();
   }
   
-  static InputEvent::Modifiers translateModifiers(Qt::KeyboardModifiers qtMods) {
-   InputEvent::Modifiers mods = InputEvent::ModifierKey::None;
-   if (qtMods & Qt::ShiftModifier) mods |= InputEvent::ModifierKey::LShift;
-   if (qtMods & Qt::ControlModifier) mods |= InputEvent::ModifierKey::LCtrl;
-   if (qtMods & Qt::AltModifier) mods |= InputEvent::ModifierKey::LAlt;
-   if (qtMods & Qt::MetaModifier) mods |= InputEvent::ModifierKey::LMeta;
+  static ArtifactCore::InputEvent::Modifiers translateModifiers(Qt::KeyboardModifiers qtMods) {
+   ArtifactCore::InputEvent::Modifiers mods = ArtifactCore::InputEvent::ModifierKey::None;
+   if (qtMods & Qt::ShiftModifier) mods |= ArtifactCore::InputEvent::ModifierKey::LShift;
+   if (qtMods & Qt::ControlModifier) mods |= ArtifactCore::InputEvent::ModifierKey::LCtrl;
+   if (qtMods & Qt::AltModifier) mods |= ArtifactCore::InputEvent::ModifierKey::LAlt;
+   if (qtMods & Qt::MetaModifier) mods |= ArtifactCore::InputEvent::ModifierKey::LMeta;
    return mods;
   }
 
@@ -132,6 +144,21 @@ namespace Artifact {
    impl_->renderer_->fitToViewport();
   }
   ArtifactApplicationManager::instance()->activeContextService()->setActiveComposition(composition);
+ }
+
+ void ArtifactCompositionRenderWidget::setClearColor(const FloatColor& color) {
+  if (impl_->renderer_) {
+   std::lock_guard<std::mutex> lock(impl_->renderMutex_);
+   impl_->renderer_->setClearColor(color);
+  }
+ }
+
+ void ArtifactCompositionRenderWidget::play() {
+  impl_->isPlaying_ = true;
+ }
+
+ void ArtifactCompositionRenderWidget::stop() {
+  impl_->isPlaying_ = false;
  }
 
  void ArtifactCompositionRenderWidget::resetView() {
@@ -207,9 +234,13 @@ namespace Artifact {
   QWidget::closeEvent(event);
  }
 
- void ArtifactCompositionRenderWidget::focusInEvent(QFocusEvent* event) {
+  void ArtifactCompositionRenderWidget::focusInEvent(QFocusEvent* event) {
   QWidget::focusInEvent(event);
-  InputOperator::instance()->setActiveContext("Viewport");
+  ArtifactCore::InputOperator::instance()->setActiveContext("Viewport");
+ }
+
+ void ArtifactCompositionRenderWidget::focusOutEvent(QFocusEvent* event) {
+  QWidget::focusOutEvent(event);
  }
 
  void ArtifactCompositionRenderWidget::mouseDoubleClickEvent(QMouseEvent* event) {
@@ -230,7 +261,7 @@ namespace Artifact {
 
  void ArtifactCompositionRenderWidget::mousePressEvent(QMouseEvent* event) {
   auto* tm = ArtifactApplicationManager::instance()->toolManager();
-  bool isHandShortcut = (event->modifiers() & Qt::SpaceModifier);
+  bool isHandShortcut = false; // Space checking needs explicit key tracking
   
   if (event->button() == Qt::MiddleButton || (event->button() == Qt::LeftButton && (tm->activeTool() == ToolType::Hand || isHandShortcut))) {
    setCursor(Qt::ClosedHandCursor);
@@ -241,7 +272,7 @@ namespace Artifact {
       // Context Menu
       if (impl_->renderer_) {
           std::lock_guard<std::mutex> lock(impl_->renderMutex_);
-          float2 cPos = impl_->renderer_->viewportToCanvas({(float)event->position().x(), (float)event->position().y()});
+          auto cPos = impl_->renderer_->viewportToCanvas({(float)event->position().x(), (float)event->position().y()});
           auto comp = impl_->previewPipeline_.composition();
           if (comp) {
               auto layers = comp->allLayer();
@@ -260,7 +291,7 @@ namespace Artifact {
                   menu.addAction("Center in Comp", [hitLayer, comp]() {
                       auto size = comp->settings().compositionSize();
                       auto& t3 = hitLayer->transform3D();
-                      t3.setPosition(comp->framePosition(), size.width() / 2.0f, size.height() / 2.0f);
+                      t3.setPosition(ArtifactCore::RationalTime(comp->framePosition().framePosition(), 30000), size.width() / 2.0f, size.height() / 2.0f);
                       hitLayer->changed();
                   });
                   menu.addSeparator();
@@ -274,7 +305,7 @@ namespace Artifact {
   } else if (event->button() == Qt::LeftButton && tm->activeTool() == ToolType::Selection) {
    if (impl_->renderer_) {
     std::lock_guard<std::mutex> lock(impl_->renderMutex_);
-    float2 cPos = impl_->renderer_->viewportToCanvas({(float)event->position().x(), (float)event->position().y()});
+    auto cPos = impl_->renderer_->viewportToCanvas({(float)event->position().x(), (float)event->position().y()});
     auto comp = impl_->previewPipeline_.composition();
     if (comp) {
      auto layers = comp->allLayer();
@@ -315,7 +346,7 @@ namespace Artifact {
   if (impl_->isDraggingLayer_) {
    if (impl_->renderer_) {
     std::lock_guard<std::mutex> lock(impl_->renderMutex_);
-    float2 cPos = impl_->renderer_->viewportToCanvas({(float)event->position().x(), (float)event->position().y()});
+    auto cPos = impl_->renderer_->viewportToCanvas({(float)event->position().x(), (float)event->position().y()});
     QPointF totalDelta = QPointF(cPos.x, cPos.y) - impl_->dragStartCanvasPos_;
     
     // Applying snapping/constraints on total delta if Shift was held during release? 
@@ -327,7 +358,7 @@ namespace Artifact {
      if (layer) {
       // Final position snapshot for undo
       auto& t3 = layer->transform3D();
-      ArtifactCore::RationalTime t0(comp->framePosition().currentFrame(), 30000);
+      ArtifactCore::RationalTime t0(comp->framePosition().framePosition(), 30000);
       
       // Since it was already moving in real-time in mouseMove, 
       // we need to calculate the REAL delta from drag start.
@@ -336,7 +367,7 @@ namespace Artifact {
       // Let's assume MoveLayerCommand(layer, dx, dy) adds dx, dy to OLD values on Redo.
       // So we must pass the actual delta we moved.
       
-      auto cmd = std::make_unique<MoveLayerCommand>(layer, (float)totalDelta.x(), (float)totalDelta.y(), comp->framePosition().currentFrame());
+      auto cmd = std::make_unique<MoveLayerCommand>(layer, (float)totalDelta.x(), (float)totalDelta.y(), comp->framePosition().framePosition());
       
       // Revert the real-time move before pushing so redo() applies it cleanly
       t3.setPosition(t0, t3.positionX() - (float)totalDelta.x(), t3.positionY() - (float)totalDelta.y());
@@ -366,7 +397,7 @@ namespace Artifact {
   } else if (event->buttons() & Qt::LeftButton && impl_->isDraggingLayer_) {
    if (impl_->renderer_) {
     std::lock_guard<std::mutex> lock(impl_->renderMutex_);
-    float2 cPos = impl_->renderer_->viewportToCanvas({(float)event->position().x(), (float)event->position().y()});
+    auto cPos = impl_->renderer_->viewportToCanvas({(float)event->position().x(), (float)event->position().y()});
     
     QPointF currentCanvasPos(cPos.x, cPos.y);
     QPointF totalDelta = currentCanvasPos - impl_->dragStartCanvasPos_;
@@ -401,7 +432,7 @@ namespace Artifact {
      auto layer = comp->layerById(impl_->selectedLayerId_);
      if (layer) {
       auto& t3 = layer->transform3D();
-      ArtifactCore::RationalTime t0(comp->framePosition().currentFrame(), 30000);
+      ArtifactCore::RationalTime t0(comp->framePosition().framePosition(), 30000);
       
       // Calculate new position based on original start + constrained/snapped delta
       // We actually need the INITIAL position before drag. Let's add that to Impl.
@@ -463,7 +494,7 @@ namespace Artifact {
               float step = (event->modifiers() & Qt::ShiftModifier) ? 10.0f : 1.0f;
               auto& t3 = l->transform3D();
               auto comp = am->activeContextService()->activeComposition();
-              ArtifactCore::RationalTime t0(comp ? comp->framePosition().currentFrame() : 0, 30000);
+              ArtifactCore::RationalTime t0(comp ? comp->framePosition().framePosition() : 0, 30000);
               float dx = 0, dy = 0;
               if (event->key() == Qt::Key_Left) dx = -step;
               if (event->key() == Qt::Key_Right) dx = step;

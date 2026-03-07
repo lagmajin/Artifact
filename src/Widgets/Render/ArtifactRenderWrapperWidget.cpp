@@ -3,7 +3,7 @@
 module Artifact.Render.WrapperWidget;
 
 import std;
-import Widgets.Render.Composition;
+import Artifact.Widgets.CompositionRenderWidget;
 
 
 namespace Artifact {

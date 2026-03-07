@@ -12,6 +12,7 @@ module Generator.Effector;
 import std;
 import Utils.String.UniString;
 import Image.ImageF32x4RGBAWithCache;
+import Image.ImageF32x4_RGBA;
 
 namespace Artifact
 {

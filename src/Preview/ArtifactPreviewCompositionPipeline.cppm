@@ -61,8 +61,8 @@ namespace Artifact
      renderer->drawThickLineLocal({(float)p3.x(), (float)p3.y()}, {(float)p0.x(), (float)p0.y()}, 1.0f, cyan);
 
      // Draw Anchor Point
-     auto anchor = layer->transform3D().anchor(); // x, y, z
-     auto pAnchor = global.map(QPointF(anchor.x, anchor.y));
+     auto& t3d = layer->transform3D();
+     auto pAnchor = global.map(QPointF(t3d.anchorX(), t3d.anchorY()));
      // Renderer should have a way to draw dots or small circles.
      // Let's use thick lines or small solid rects.
      float handleSize = 6.0f; // in units? No, ideally in pixels. 

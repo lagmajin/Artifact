@@ -13,8 +13,8 @@ export namespace Artifact
   private:
   class Impl;
   Impl* impl_;
-  float start{ 0.2f }; // 0..1
-  float end{ 0.8f };
+  float start{ 0.0f }; // 0..1
+  float end{ 1.0f };
  protected:
   void paintEvent(QPaintEvent*) override;
   void mousePressEvent(QMouseEvent* ev) override;
@@ -25,6 +25,8 @@ export namespace Artifact
   ~ArtifactTimelineRulerWidget();
 
   // Property accessors with signals
+  float startValue() const { return start; }
+  float endValue() const { return end; }
   void setStart(float s);
   void setEnd(float e);
 

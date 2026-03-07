@@ -32,7 +32,7 @@ public:
     // Trigger update of internal image
     void updateImage();
 
-    void draw() override;
+    void draw(ArtifactIRenderer* renderer) override;
 };
 
 }

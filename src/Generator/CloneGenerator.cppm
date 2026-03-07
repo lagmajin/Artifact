@@ -11,6 +11,7 @@ module Generator.Clone;
 
 import std;
 import Artifact.Effect.Clone.Core; // MoGraphコアをインポート
+import Generator.DistributionModes;
 
 namespace Artifact
 {
@@ -514,6 +515,8 @@ namespace Artifact
     break;
    }
   }
+  return transforms;
+ }
 
  std::vector<CloneData> CloneGenerator::generateCloneData() const
  {

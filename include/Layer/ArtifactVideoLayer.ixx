@@ -197,7 +197,7 @@ public:
 
     // === Overrides ===
     
-    void draw() override;
+    void draw(ArtifactIRenderer* renderer) override;
     bool hasVideo() const override;
 
 private:

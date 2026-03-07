@@ -26,6 +26,7 @@ enum class ComputeMode {
 };
 
 enum class EffectPipelineStage {
+    PreProcess,
     Generator,
     GeometryTransform,
     MaterialRender,

@@ -13,6 +13,7 @@ import Utils.String.UniString;
 import Artifact.Effect.Abstract;
 import Artifact.Layer.Abstract;
 import Artifact.Composition.Abstract;
+import Artifact.Composition.Result;
 import Animation.Transform3D;
 import Time.Rational;
 

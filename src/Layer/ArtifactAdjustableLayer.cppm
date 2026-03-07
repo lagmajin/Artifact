@@ -15,7 +15,7 @@ namespace Artifact
 
  }
 
- void ArtifactAdjustableLayer::draw()
+ void ArtifactAdjustableLayer::draw(ArtifactIRenderer* renderer)
  {
   throw std::logic_error("The method or operation is not implemented.");
  }

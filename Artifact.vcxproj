@@ -81,6 +81,7 @@
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <LinkIncremental>true</LinkIncremental>
     <OutDir>$(SolutionDir)\App\</OutDir>
     <IncludePath>X:\vcpkg\installed\x64-windows\include\python3.12;X:\vcpkg\installed\x64-windows\include\qtadvanceddocking-qt6;X:\vcpkg\installed\x64-windows\include\Qt6;X:\vcpkg\installed\x64-windows\include\Qt6\QtCore;X:\vcpkg\installed\x64-windows\include\Qt6\QtWidgets;X:\vcpkg\installed\x64-windows\include\Qt6\QtMultimedia;X:\vcpkg\installed\x64-windows\include\Qt6\QtGui;X:\Build\install\include;C:\Program Files\dotnet\packs\Microsoft.NETCore.App.Host.win-x64\9.0.5\runtimes\win-x64\native;C:\Users\lagma\Desktop\Artifact\third_party;X:\opencv\build\include;X:\ogre-sdk-v14.3.2-msvc142-x64\include;X:\WickedEngine-master\WickedEngine;C:\Users\lagma\Desktop\Artifact\ArtifactWidgets\include;C:\Program Files\Assimp\include;$(IncludePath)</IncludePath>
     <LibraryPath>X:\Build\install\lib\DiligentCore\Debug;C:\Program Files\dotnet\packs\Microsoft.NETCore.App.Host.win-x64\9.0.5\runtimes\win-x64\native;X:\opencv\build\x64\vc16\lib;C:\Users\lagma\Desktop\Artifact\Artifact\lib;X:\Build\Graphics\GraphicsEngineD3D12\Debug;E:\libs;X:\ogre-sdk-v14.3.2-msvc142-x64\lib;X:\WickedEngine-master\BUILD\x64\Debug;D:\WickedEngine-master\BUILD\x64\Debug;$(SolutionDir)\lib;$(LibraryPath)</LibraryPath>
@@ -153,10 +154,11 @@
       <OutputFile>$(OutDir)$(TargetName)$(TargetExt)</OutputFile>
       <ForceFileOutput>Enabled</ForceFileOutput>
       <ImportLibrary>artifactimport</ImportLibrary>
-      <LinkStatus>true</LinkStatus>
+      <LinkStatus>false</LinkStatus>
       <AdditionalOptions> %(AdditionalOptions)</AdditionalOptions>
-      <OptimizeReferences>false</OptimizeReferences>
+      <OptimizeReferences>true</OptimizeReferences>
       <EnableCOMDATFolding>false</EnableCOMDATFolding>
+      <LinkTimeCodeGeneration>UseFastLinkTimeCodeGeneration</LinkTimeCodeGeneration>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -258,6 +260,9 @@
     <ClCompile Include="include\Core\SystemStats.ixx">
       <CompileAs>CompileAsCppModule</CompileAs>
     </ClCompile>
+    <ClCompile Include="include\Effetcs\Clone\CloneCore.ixx">
+      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
+    </ClCompile>
     <ClCompile Include="include\Effetcs\ArtifactEffectImplBase.ixx">
       <CompileAs>CompileAsCppModule</CompileAs>
     </ClCompile>
@@ -305,6 +310,9 @@
     </ClCompile>
     <ClCompile Include="include\Export\Python\Python.ixx">
       <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Generator\DistributionModes.ixx">
+      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
     </ClCompile>
     <ClCompile Include="include\Generator\CloneGenerator.ixx">
       <CompileAs>CompileAsCppModule</CompileAs>
@@ -446,6 +454,9 @@
     </ClCompile>
     <ClCompile Include="include\Render\Element\ArtifactRenderElement.ixx">
       <CompileAs>CompileAsCppModule</CompileAs>
+    </ClCompile>
+    <ClCompile Include="include\Render\ViewerHelperShaders.ixx">
+      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">CompileAsCppModule</CompileAs>
     </ClCompile>
     <ClCompile Include="include\Render\ArtifactIRenderer.ixx">
       <CompileAs>CompileAsCppModule</CompileAs>
@@ -652,7 +663,9 @@
       <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="src\Effetcs\Blur\GauusianBlur.cpp" />
-    <ClCompile Include="src\Effetcs\ColorCorrection\HueAndSaturation.cpp" />
+    <ClCompile Include="src\Effetcs\ColorCorrection\HueAndSaturation.cppm">
+      <CompileAs>CompileAsCpp</CompileAs>
+    </ClCompile>
     <ClCompile Include="src\Effetcs\ArtifactGlobalEffectManager.cpp" />
     <ClCompile Include="src\Effetcs\Glow\GlowEffect.cpp" />
     <ClCompile Include="src\Effetcs\Glow\NoiseEffect.cppm">

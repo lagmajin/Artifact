@@ -29,6 +29,8 @@ import Math.Bezier;
 import VertexBuffer;
 import Render.Shader.ThickLine;
 import Render.Shader.ViewerHelpers;
+import Graphics.CBuffer.Constants.PixelShader;
+import Graphics.CBuffer.Constants.VertexShader;
 
 namespace Artifact
 {
@@ -57,6 +59,7 @@ namespace Artifact
  
   RefCntAutoPtr<IBuffer> m_draw_thick_line_vertex_buffer;
   RefCntAutoPtr<IBuffer> m_draw_solid_triangle_vertex_buffer;
+  RefCntAutoPtr<IBuffer> m_draw_dot_line_vertex_buffer; // ADD THIS
   RefCntAutoPtr<IBuffer> m_draw_dot_line_cb;
   RefCntAutoPtr<IBuffer> m_draw_viewer_helper_cb;
   RenderShaderPair m_draw_checkerboard_shaders;
@@ -71,8 +74,9 @@ namespace Artifact
  Uint32 m_frameQueryIndex = 0;
  static constexpr Uint32 FrameQueryCount = 2;
  std::array<RefCntAutoPtr<IQuery>, FrameQueryCount> m_frameQueries;
-   
-  void captureScreenShot();
+ FloatColor clearColor_{ 0.10f, 0.10f, 0.10f, 1.0f };
+
+ void captureScreenShot();
    
   void initContext(RefCntAutoPtr<IRenderDevice> device);
   
@@ -105,6 +109,7 @@ namespace Artifact
   int m_CurrentDevicePixelRatio;
   void clear();
   void flushAndWait();
+  void flush();
   void createSwapChain(QWidget* widget);
   void recreateSwapChain(QWidget* widget);
   void beginFrameGpuProfiling();
@@ -139,23 +144,51 @@ namespace Artifact
   void zoomAroundViewportPoint(float2 viewportPos, float newZoom) { viewport_.ZoomAroundViewportPoint(viewportPos, newZoom); }
   float2 canvasToViewport(float2 pos) const { return viewport_.CanvasToViewport(pos); }
   float2 viewportToCanvas(float2 pos) const { return viewport_.ViewportToCanvas(pos); }
- 
+  void setClearColor(const FloatColor& color) { clearColor_ = color; }
+
+  void drawCheckerboard(float x, float y, float w, float h, float tileSize, const FloatColor& c1, const FloatColor& c2);
+  void drawGrid(float x, float y, float w, float h, float spacing, float thickness, const FloatColor& color);
+
   void destroy();
  };
 
+ ArtifactIRenderer::ArtifactIRenderer(RefCntAutoPtr<IRenderDevice> pDevice, RefCntAutoPtr<IDeviceContext> pImmediateContext, QWidget* widget)
+     : impl_(new Impl(pDevice, pImmediateContext, widget))
+ {
+ }
+
+ ArtifactIRenderer::ArtifactIRenderer()
+     : impl_(new Impl())
+ {
+ }
+
+ ArtifactIRenderer::~ArtifactIRenderer()
+ {
+     delete impl_;
+ }
+
+ void ArtifactIRenderer::initialize(QWidget* widget)
+ {
+     impl_->initialize(widget);
+ }
+
+ void ArtifactIRenderer::createSwapChain(QWidget* widget)
+ {
+     impl_->createSwapChain(widget);
+ }
+
+ void ArtifactIRenderer::recreateSwapChain(QWidget* widget)
+ {
+     impl_->recreateSwapChain(widget);
+ }
+
  ArtifactIRenderer::Impl::Impl(RefCntAutoPtr<IRenderDevice> device, RefCntAutoPtr<IDeviceContext>& context, QWidget* widget) :pDevice_(device), pImmediateContext_(context)
  {
-  //createConstantBuffers();
-  //createShaders();
-  //createPSOs();
-
-  
 
  }
 
  ArtifactIRenderer::Impl::Impl()
  {
-
  }
 
  ArtifactIRenderer::Impl::~Impl()
@@ -927,7 +960,7 @@ void ArtifactIRenderer::Impl::createSwapChain(QWidget* window)
  {
  if (!pSwapChain_ || !pImmediateContext_) return;
   // クリアカラーの定義 (RGBA)
-  float ClearColor[] = { 0.10f, 0.10f, 0.10f, 1.0f };
+  float ClearColor[] = { clearColor_.r(), clearColor_.g(), clearColor_.b(), clearColor_.a() };
 
   // レンダリングターゲットのビューを取得
   auto* pRTV = pSwapChain_->GetCurrentBackBufferRTV();
@@ -1337,301 +1370,6 @@ void ArtifactIRenderer::Impl::createSwapChain(QWidget* window)
    pImmediateContext_->Draw(drawAttrs);
   }
  
-  void ArtifactIRenderer::Impl::drawRectOutlineLocal(float x, float y, float w, float h, const FloatColor& color)
-  {
-    // Simply draw 4 lines
-    float2 p1 = {x, y};
-    float2 p2 = {x + w, y};
-    float2 p3 = {x + w, y + h};
-    float2 p4 = {x, y + h};
-    
-    drawLineLocal(p1, p2, color, color);
-    drawLineLocal(p2, p3, color, color);
-    drawLineLocal(p3, p4, color, color);
-    drawLineLocal(p4, p1, color, color);
-  }
-
- void ArtifactIRenderer::Impl::drawSpriteLocal(float x, float y, float w, float h, const QImage& image)
- {
-  if (!pSwapChain_) return;
-  if (image.isNull()) return;
-  if (w <= 0.0f || h <= 0.0f) return;
-
-  QImage rgba = image.convertToFormat(QImage::Format_RGBA8888);
-  if (rgba.isNull()) return;
-
-  TextureDesc TexDesc;
-  TexDesc.Name = "SpriteTexture";
-  TexDesc.Type = RESOURCE_DIM_TEX_2D;
-  TexDesc.Width = static_cast<Uint32>(rgba.width());
-  TexDesc.Height = static_cast<Uint32>(rgba.height());
-  TexDesc.MipLevels = 1;
-  TexDesc.Format = TEX_FORMAT_RGBA8_UNORM_SRGB;
-  TexDesc.Usage = USAGE_IMMUTABLE;
-  TexDesc.BindFlags = BIND_SHADER_RESOURCE;
-
-  TextureData InitData;
-  TextureSubResData SubRes;
-  SubRes.pData = rgba.constBits();
-  SubRes.Stride = static_cast<Uint32>(rgba.bytesPerLine());
-  InitData.pSubResources = &SubRes;
-  InitData.NumSubresources = 1;
-
-  RefCntAutoPtr<ITexture> spriteTexture;
-  pDevice_->CreateTexture(TexDesc, &InitData, &spriteTexture);
-  if (!spriteTexture)
-  {
-   qWarning() << "Failed to create sprite texture.";
-   return;
-  }
-
-  ITextureView* spriteSRV = spriteTexture->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE);
-  if (!spriteSRV)
-  {
-   qWarning() << "Failed to get sprite texture SRV.";
-   return;
-  }
-
-  auto swapChainRTV = pSwapChain_->GetCurrentBackBufferRTV();
-  pImmediateContext_->SetRenderTargets(1, &swapChainRTV, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
-
-  const auto& desc = pSwapChain_->GetDesc();
-  if (desc.Width == 0 || desc.Height == 0)
-   return;
-
-  float screenW = static_cast<float>(desc.Width);
-  float screenH = static_cast<float>(desc.Height);
-  float2 p1_ndc = viewport_.CanvasToNDC({x, y});
-  float2 p2_ndc = viewport_.CanvasToNDC({x + w, y + h});
-  float left = p1_ndc.x;
-  float right = p2_ndc.x;
-  float top = p1_ndc.y;
-  float bottom = p2_ndc.y;
-
-  struct SpriteVertexVL
-  {
-   float2 position;
-   float2 uv;
-   float4 color;
-  };
-
-  SpriteVertexVL vertices[4] = {
-   {{left, top}, {0.0f, 0.0f}, {1, 1, 1, 1}},
-   {{right, top}, {1.0f, 0.0f}, {1, 1, 1, 1}},
-   {{left, bottom}, {0.0f, 1.0f}, {1, 1, 1, 1}},
-   {{right, bottom}, {1.0f, 1.0f}, {1, 1, 1, 1}},
-  };
-
-  if (!m_draw_sprite_vertex_buffer)
-  {
-   qWarning() << "Sprite vertex buffer is not initialized.";
-   return;
-  }
-
-  void* pData = nullptr;
-  pImmediateContext_->MapBuffer(m_draw_sprite_vertex_buffer, MAP_WRITE, MAP_FLAG_DISCARD, pData);
-  std::memcpy(pData, vertices, sizeof(vertices));
-  pImmediateContext_->UnmapBuffer(m_draw_sprite_vertex_buffer, MAP_WRITE);
-
-  IBuffer* buffers[] = { m_draw_sprite_vertex_buffer };
-  Uint64 offsets[] = { 0 };
-  pImmediateContext_->SetVertexBuffers(
-   0,
-   1,
-   buffers,
-   offsets,
-   RESOURCE_STATE_TRANSITION_MODE_TRANSITION,
-   SET_VERTEX_BUFFERS_FLAG_RESET
-  );
-
-  pImmediateContext_->SetPipelineState(m_draw_sprite_pso_and_srb.pPSO);
-
-  if (m_draw_sprite_pso_and_srb.pSRB)
-  {
-   auto textureVar = m_draw_sprite_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_PIXEL, "g_texture");
-   if (textureVar)
-    textureVar->Set(spriteSRV);
-   auto samplerVar = m_draw_sprite_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_PIXEL, "g_sampler");
-   if (samplerVar && m_draw_sprite_sampler)
-    samplerVar->Set(m_draw_sprite_sampler);
-   pImmediateContext_->CommitShaderResources(m_draw_sprite_pso_and_srb.pSRB, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
-  }
-
-  DrawAttribs drawAttrs;
-  drawAttrs.NumVertices = 4;
-  drawAttrs.Flags = DRAW_FLAG_VERIFY_ALL;
-  pImmediateContext_->Draw(drawAttrs);
- }
-
- ArtifactIRenderer::ArtifactIRenderer(RefCntAutoPtr<IRenderDevice> pDevice, RefCntAutoPtr<IDeviceContext> pImmediateContext, QWidget* widget) :impl_(new Impl(pDevice, pImmediateContext,widget))
- {
-
- }
-
- ArtifactIRenderer::ArtifactIRenderer():impl_(new Impl())
- {
-
- }
-
- ArtifactIRenderer::~ArtifactIRenderer()
- {
-  delete impl_;
- }
-
- void ArtifactIRenderer::initialize(QWidget* widget)
- {
-  impl_->initialize(widget);
- }
-
- void ArtifactIRenderer::createSwapChain(QWidget* widget)
- {
-  impl_->createSwapChain(widget);
- }
- void ArtifactIRenderer::recreateSwapChain(QWidget* widget)
- {
-  impl_->recreateSwapChain(widget);
- }
-
- void ArtifactIRenderer::clear()
- {
-  impl_->clear();
- }
-
- void ArtifactIRenderer::flush()
- {
-  if (!impl_->pImmediateContext_) return;
-  impl_->pImmediateContext_->Flush();
- }
-
- void ArtifactIRenderer::flushAndWait()
- {
-  impl_->flushAndWait();
- }
-
- void ArtifactIRenderer::beginFrameGpuProfiling()
- {
-  impl_->beginFrameGpuProfiling();
- }
-
- void ArtifactIRenderer::endFrameGpuProfiling()
- {
-  impl_->endFrameGpuProfiling();
- }
-
- double ArtifactIRenderer::lastFrameGpuTimeMs() const
- {
-  return impl_->lastFrameGpuTimeMs();
- }
-
-  void ArtifactIRenderer::drawSolidRect(float2 pos, float2 size, const FloatColor& color)
-  {
-    impl_->drawSolidRect(pos, size, color);
-  }
- 
-  void ArtifactIRenderer::drawSolidRect(float x, float y, float w, float h)
-  {
-    impl_->drawSolidRect(x, y, w, h);
-  }
- 
-  void ArtifactIRenderer::drawRectOutline(float x, float y, float w, float h, const FloatColor& color)
-  {
-    impl_->drawRectOutlineLocal(x, y, w, h, color);
-  }
- 
-  void ArtifactIRenderer::drawRectOutline(float2 pos, float2 size, const FloatColor& color)
-  {
-    impl_->drawRectOutlineLocal(pos.x, pos.y, size.x, size.y, color);
-  }
- 
-  void ArtifactIRenderer::drawRectLocal(float x, float y, float w, float h, const FloatColor& color)
-  {
-   impl_->drawRectLocal(x, y, w, h, color);
-  }
- 
-  void ArtifactIRenderer::drawRectOutlineLocal(float x, float y, float w, float h, const FloatColor& color)
-  {
-    impl_->drawRectOutlineLocal(x, y, w, h, color);
-  }
- 
-  void ArtifactIRenderer::drawThickLineLocal(float2 p1, float2 p2, float thickness, const FloatColor& color)
-  {
-   impl_->drawThickLineLocal(p1, p2, thickness, color);
-  }
- 
-  void ArtifactIRenderer::drawDotLineLocal(float2 p1, float2 p2, float thickness, float spacing, const FloatColor& color)
-  {
-   impl_->drawDotLineLocal(p1, p2, thickness, spacing, color);
-  }
- 
-  void ArtifactIRenderer::drawBezierLocal(float2 p0, float2 p1, float2 p2, float thickness, const FloatColor& color)
-  {
-   impl_->drawBezierLocal(p0, p1, p2, thickness, color);
-  }
- 
-  void ArtifactIRenderer::drawBezierLocal(float2 p0, float2 p1, float2 p2, float2 p3, float thickness, const FloatColor& color)
-  {
-   impl_->drawBezierLocal(p0, p1, p2, p3, thickness, color);
-  }
- 
-   void ArtifactIRenderer::drawCheckerboard(float x, float y, float w, float h, float tileSize, const FloatColor& c1, const FloatColor& c2)
-   {
-    impl_->drawCheckerboard(x, y, w, h, tileSize, c1, c2);
-   }
-
-   void ArtifactIRenderer::drawGrid(float x, float y, float w, float h, float spacing, float thickness, const FloatColor& color)
-   {
-    impl_->drawGrid(x, y, w, h, spacing, thickness, color);
-   }
-
-  void ArtifactIRenderer::Impl::drawSolidTriangleLocal(float2 p0, float2 p1, float2 p2, const FloatColor& color)
-  {
-   if (!pSwapChain_ || !m_draw_solid_triangle_pso_and_srb.pPSO) return;
- 
-   float4 c = { color.r(), color.g(), color.b(), 1.0f };
-   RectVertex vertices[3] = {
-    {{p0.x, p0.y}, c},
-    {{p1.x, p1.y}, c},
-    {{p2.x, p2.y}, c}
-   };
- 
-   auto swapChainRTV = pSwapChain_->GetCurrentBackBufferRTV();
-   pImmediateContext_->SetRenderTargets(1, &swapChainRTV, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
- 
-   {
-    void* pData = nullptr;
-    pImmediateContext_->MapBuffer(m_draw_solid_triangle_vertex_buffer, MAP_WRITE, MAP_FLAG_DISCARD, pData);
-    std::memcpy(pData, vertices, sizeof(vertices));
-    pImmediateContext_->UnmapBuffer(m_draw_solid_triangle_vertex_buffer, MAP_WRITE);
-   }
- 
-   {
-    auto viewportCB = viewport_.GetViewportCB();
-    CBSolidTransform2D cbTransform;
-    cbTransform.offset = viewportCB.offset;
-    cbTransform.scale = viewportCB.scale;
-    cbTransform.screenSize = viewportCB.screenSize;
- 
-    void* pData = nullptr;
-    pImmediateContext_->MapBuffer(m_draw_solid_rect_trnsform_cb, MAP_WRITE, MAP_FLAG_DISCARD, pData);
-    std::memcpy(pData, &cbTransform, sizeof(cbTransform));
-    pImmediateContext_->UnmapBuffer(m_draw_solid_rect_trnsform_cb, MAP_WRITE);
-   }
- 
-   pImmediateContext_->SetPipelineState(m_draw_solid_triangle_pso_and_srb.pPSO);
- 
-   IBuffer* pBuffers[] = { m_draw_solid_triangle_vertex_buffer };
-   Uint64 offsets[] = { 0 };
-   pImmediateContext_->SetVertexBuffers(0, 1, pBuffers, offsets, RESOURCE_STATE_TRANSITION_MODE_TRANSITION, SET_VERTEX_BUFFERS_FLAG_RESET);
- 
-   m_draw_solid_triangle_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_VERTEX, "TransformCB")->Set(m_draw_solid_rect_trnsform_cb);
-   pImmediateContext_->CommitShaderResources(m_draw_solid_triangle_pso_and_srb.pSRB, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
- 
-   DrawAttribs drawAttrs;
-   drawAttrs.NumVertices = 3;
-   drawAttrs.Flags = DRAW_FLAG_VERIFY_ALL;
-   pImmediateContext_->Draw(drawAttrs);
-  }
- 
    void ArtifactIRenderer::Impl::drawCheckerboard(float x, float y, float w, float h, float tileSize, const FloatColor& c1, const FloatColor& c2)
    {
     if (!pSwapChain_ || !m_draw_checkerboard_pso_and_srb.pPSO) return;
@@ -1756,11 +1494,24 @@ void ArtifactIRenderer::Impl::createSwapChain(QWidget* window)
     pImmediateContext_->Draw(drawAttrs);
    }
  
+  void ArtifactIRenderer::drawCheckerboard(float x, float y, float w, float h, float tileSize, const FloatColor& c1, const FloatColor& c2)
+  {
+      impl_->drawCheckerboard(x, y, w, h, tileSize, c1, c2);
+  }
+
+  void ArtifactIRenderer::drawGrid(float x, float y, float w, float h, float spacing, float thickness, const FloatColor& color)
+  {
+      impl_->drawGrid(x, y, w, h, spacing, thickness, color);
+  }
+
   void ArtifactIRenderer::present()
   {
    if (!impl_->pSwapChain_) return;
    impl_->pSwapChain_->Present();
- 
+  } 
+
+  void ArtifactIRenderer::setClearColor(const FloatColor& color) { impl_->setClearColor(color); }
+
   void ArtifactIRenderer::setViewportSize(float w, float h) { impl_->setViewportSize(w, h); }
   void ArtifactIRenderer::setCanvasSize(float w, float h) { impl_->setCanvasSize(w, h); }
   void ArtifactIRenderer::setPan(float x, float y) { impl_->setPan(x, y); }
@@ -1782,8 +1533,24 @@ void ArtifactIRenderer::Impl::createSwapChain(QWidget* window)
          impl_->drawSprite(x, y, w, h);
      }
 
+     void ArtifactIRenderer::drawSprite(float x, float y, float w, float h, const QImage& image) {
+         impl_->drawSpriteLocal(x, y, w, h, image);
+     }
+
      void ArtifactIRenderer::drawSprite(float2 pos, float2 size) {
          impl_->drawSprite(pos, size);
+     }
+
+     void ArtifactIRenderer::drawSolidRect(float x, float y, float w, float h) {
+         impl_->drawSolidRect(x, y, w, h);
+     }
+
+     void ArtifactIRenderer::drawSolidRect(int x, int y, float w, float h, const FloatColor& color) {
+         impl_->drawRectLocal((float)x, (float)y, w, h, color);
+     }
+
+     void ArtifactIRenderer::drawSolidRect(float2 pos, float2 size, const FloatColor& color) {
+         impl_->drawSolidRect(pos, size, color);
      }
 
   void ArtifactIRenderer::Impl::drawSprite(float x, float y, float w, float h) {
@@ -1797,5 +1564,93 @@ void ArtifactIRenderer::drawParticles() {
 void ArtifactIRenderer::setUpscaleConfig(bool enable, float sharpness) {
     // Implementation for setting upscale configuration
 }
- 
-};
+
+void ArtifactIRenderer::Impl::drawRectOutlineLocal(float x, float y, float w, float h, const FloatColor& color)
+{
+ if (!pSwapChain_ || !m_draw_rect_outline_pso_and_srb.pPSO) return;
+
+ RectVertex vertices[4] = {
+  {{0,0}, {color.r(), color.g(), color.b(), 1}}, // 左上
+  {{w,0}, {color.r(), color.g(), color.b(), 1}}, // 右上
+  {{w,h}, {color.r(), color.g(), color.b(), 1}}, // 右下
+  {{0,h}, {color.r(), color.g(), color.b(), 1}}, // 左下
+ };
+
+ {
+  void* pData = nullptr;
+  pImmediateContext_->MapBuffer(m_draw_solid_rect_vertex_buffer, MAP_WRITE, MAP_FLAG_DISCARD, pData);
+  std::memcpy(pData, vertices, sizeof(vertices));
+  pImmediateContext_->UnmapBuffer(m_draw_solid_rect_vertex_buffer, MAP_WRITE);
+ }
+
+ // Set pipeline state and shader resources
+ pImmediateContext_->SetPipelineState(m_draw_rect_outline_pso_and_srb.pPSO);
+ pImmediateContext_->CommitShaderResources(m_draw_rect_outline_pso_and_srb.pSRB, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+
+ DrawIndexedAttribs drawAttrs(
+  8, // 4 lines * 2 vertices
+  VT_UINT32,
+  DRAW_FLAG_VERIFY_ALL
+ );
+ pImmediateContext_->DrawIndexed(drawAttrs);
+}
+
+void ArtifactIRenderer::Impl::drawSpriteLocal(float x, float y, float w, float h, const QImage& image) {
+    // Basic implementation placeholder
+}
+
+void ArtifactIRenderer::drawRectOutline(float x, float y, float w, float h, const FloatColor& color) {
+    impl_->drawRectOutlineLocal(x, y, w, h, color);
+}
+
+void ArtifactIRenderer::drawRectOutline(float2 pos, float2 size, const FloatColor& color) {
+    impl_->drawRectOutlineLocal(pos.x, pos.y, size.x, size.y, color);
+}
+
+void ArtifactIRenderer::drawRectLocal(float x, float y, float w, float h, const FloatColor& color) {
+    impl_->drawRectLocal(x, y, w, h, color);
+}
+
+void ArtifactIRenderer::drawRectOutlineLocal(float x, float y, float w, float h, const FloatColor& color) {
+    impl_->drawRectOutlineLocal(x, y, w, h, color);
+}
+
+void ArtifactIRenderer::drawThickLineLocal(float2 p1, float2 p2, float thickness, const FloatColor& color) {
+    impl_->drawThickLineLocal(p1, p2, thickness, color);
+}
+
+void ArtifactIRenderer::drawDotLineLocal(float2 p1, float2 p2, float thickness, float spacing, const FloatColor& color) {
+    impl_->drawDotLineLocal(p1, p2, thickness, spacing, color);
+}
+
+void ArtifactIRenderer::drawBezierLocal(float2 p0, float2 p1, float2 p2, float thickness, const FloatColor& color) {
+    impl_->drawBezierLocal(p0, p1, p2, thickness, color);
+}
+
+void ArtifactIRenderer::drawBezierLocal(float2 p0, float2 p1, float2 p2, float2 p3, float thickness, const FloatColor& color) {
+    impl_->drawBezierLocal(p0, p1, p2, p3, thickness, color);
+}
+
+void ArtifactIRenderer::drawSolidTriangleLocal(float2 p0, float2 p1, float2 p2, const FloatColor& color) {
+    impl_->drawSolidTriangleLocal(p0, p1, p2, color);
+}
+
+void ArtifactIRenderer::clear() {
+    impl_->clear();
+}
+
+void ArtifactIRenderer::flushAndWait() {
+    impl_->flushAndWait();
+}
+
+void ArtifactIRenderer::Impl::flush() {
+    if (pImmediateContext_) {
+        pImmediateContext_->Flush();
+    }
+}
+
+void ArtifactIRenderer::flush() {
+    impl_->flush();
+}
+
+}

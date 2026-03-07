@@ -2,6 +2,7 @@ module;
 #include <QPainter>
 #include <QMouseEvent>
 #include <QWidget>
+#include <wobjectimpl.h>
 
 module Artifact.Timeline.RulerWidget;
 
@@ -9,7 +10,10 @@ module Artifact.Timeline.RulerWidget;
 
 namespace Artifact
 {
+ W_OBJECT_IMPL(ArtifactTimelineRulerWidget)
+
  class ArtifactTimelineRulerWidget::Impl
+
  {
  private:
 
@@ -18,8 +22,7 @@ namespace Artifact
   ~Impl();
   bool draggingLeft{ false };
   bool draggingRight{ false };
-  float start{ 0.2f }; // 0..1
-  float end{ 0.8f };
+  
  };
 
  ArtifactTimelineRulerWidget::Impl::Impl()
