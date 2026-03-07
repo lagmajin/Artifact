@@ -12,7 +12,7 @@ module;
 #include <EngineFactoryD3D12.h>
 #include <DeviceContextD3D12.h>
 #include <SwapChain.h>
-#include <DiligentCore/Common/interface/RefCntAutoPtr.hpp>
+#include <RefCntAutoPtr.hpp>
 #include <DiligentTools/Imgui/interface/ImGuiDiligentRenderer.hpp>
 
 

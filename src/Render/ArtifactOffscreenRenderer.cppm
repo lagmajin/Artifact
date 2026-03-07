@@ -2,7 +2,7 @@ module;
 #include <RenderDevice.h>
 #include <DeviceContext.h>
 #include <Texture.h>
-#include <DiligentCore/Common/interface/RefCntAutoPtr.hpp>
+#include <RefCntAutoPtr.hpp>
 #include <QImage>
 #include <QDebug>
 

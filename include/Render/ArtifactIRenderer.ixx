@@ -1,5 +1,5 @@
 ﻿module;
-#include <DiligentCore/Common/interface/BasicMath.hpp>
+#include <BasicMath.hpp>
 #include <QWidget>
 
 export module Artifact.Render.IRenderer;

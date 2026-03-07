@@ -3,9 +3,9 @@
 #include <d3d12.h>
 
 
-#include <DiligentCore/Graphics/GraphicsEngine/interface/DeviceContext.h>
+#include <DeviceContext.h>
 
-#include <DiligentCore/Graphics/GraphicsEngineD3D12/interface/DeviceContextD3D12.h>
+#include <DeviceContextD3D12.h>
 
 #include <boost/signals2.hpp>
 
