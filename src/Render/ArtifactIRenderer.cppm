@@ -1,10 +1,10 @@
 ﻿module;
 #include <QList>
 #include <QImage>
-#include <DiligentCore/Graphics/GraphicsEngine/interface/RenderDevice.h>
-#include <DiligentCore/Graphics/GraphicsEngine/interface/DeviceContext.h>
-#include <DiligentCore/Graphics/GraphicsEngine/interface/Query.h>
-#include <DiligentCore/Graphics/GraphicsEngine/interface/SwapChain.h>
+#include <RenderDevice.h>
+#include <DeviceContext.h>
+#include <Query.h>
+#include <SwapChain.h>
 //#include <DiligentCore/Graphics/GraphicsEngineD3D12/interface/TextureD3D12.h>
 #include <DiligentCore/Graphics/GraphicsEngineD3D12/interface/EngineFactoryD3D12.h>
 #include <DiligentCore/Common/interface/RefCntAutoPtr.hpp>

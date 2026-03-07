@@ -5,9 +5,9 @@
 #include <QThreadPool>
 #include <boost/range/size.hpp>
 #include <DiligentCore/Common/interface/RefCntAutoPtr.hpp>
-#include <DiligentCore/Graphics/GraphicsEngine/interface/Fence.h>
-#include <DiligentCore/Graphics/GraphicsEngine/interface/DeviceContext.h>
-#include <DiligentCore/Graphics/GraphicsEngine/interface/RenderDevice.h>
+#include <Fence.h>
+#include <DeviceContext.h>
+#include <RenderDevice.h>
 
 
 #include <DiligentCore/Graphics/GraphicsEngineD3D12/interface/EngineFactoryD3D12.h>
