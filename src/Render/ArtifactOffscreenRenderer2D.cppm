@@ -10,7 +10,7 @@
 #include <RenderDevice.h>
 
 
-#include <DiligentCore/Graphics/GraphicsEngineD3D12/interface/EngineFactoryD3D12.h>
+#include <EngineFactoryD3D12.h>
 
 
 module Artifact.Render.Offscreen;

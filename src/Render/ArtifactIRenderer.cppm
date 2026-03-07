@@ -5,8 +5,8 @@
 #include <DeviceContext.h>
 #include <Query.h>
 #include <SwapChain.h>
-//#include <DiligentCore/Graphics/GraphicsEngineD3D12/interface/TextureD3D12.h>
-#include <DiligentCore/Graphics/GraphicsEngineD3D12/interface/EngineFactoryD3D12.h>
+//#include <TextureD3D12.h>
+#include <EngineFactoryD3D12.h>
 #include <DiligentCore/Common/interface/RefCntAutoPtr.hpp>
 #include <DiligentCore/Common/interface/BasicMath.hpp>
 #include <oneapi/tbb/tick_count.h>
