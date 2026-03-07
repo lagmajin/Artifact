@@ -4,7 +4,7 @@
 #include <QDebug>
 #include <QThreadPool>
 #include <boost/range/size.hpp>
-#include <DiligentCore/Common/interface/RefCntAutoPtr.hpp>
+#include <RefCntAutoPtr.hpp>
 #include <Fence.h>
 #include <DeviceContext.h>
 #include <RenderDevice.h>

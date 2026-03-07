@@ -1,6 +1,6 @@
 ﻿module;
 
-#include <DiligentCore/Common/interface/BasicMath.hpp>
+#include <BasicMath.hpp>
 export module GridRenderer;
 
 

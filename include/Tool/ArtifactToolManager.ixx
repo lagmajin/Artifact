@@ -15,7 +15,12 @@ export namespace Artifact {
   AnchorPoint,
   Pen,
   Text,
-  Shape
+  Shape,
+  // Advanced Trimming Tools
+  Ripple,
+  Rolling,
+  Slip,
+  Slide
  };
 
  class ArtifactToolManager : public QObject {

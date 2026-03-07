@@ -7,8 +7,8 @@
 #include <SwapChain.h>
 //#include <TextureD3D12.h>
 #include <EngineFactoryD3D12.h>
-#include <DiligentCore/Common/interface/RefCntAutoPtr.hpp>
-#include <DiligentCore/Common/interface/BasicMath.hpp>
+#include <RefCntAutoPtr.hpp>
+#include <BasicMath.hpp>
 #include <oneapi/tbb/tick_count.h>
 #include <oneapi/tbb/parallel_invoke.h>
 #include <windows.h>
