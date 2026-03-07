@@ -1,5 +1,5 @@
 module;
-#include <DiligentCore/Graphics/GraphicsEngine/interface/DeviceContext.h>
+#include <DeviceContext.h>
 export module Artifact.Effect.Context;
 
 export namespace Artifact
