@@ -73,8 +73,8 @@ target_link_libraries(Artifact PRIVATE
 )
 
 # Qt6
-find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Network Multimedia)
-target_link_libraries(Artifact PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network Qt6::Multimedia)
+find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Network Multimedia Concurrent)
+target_link_libraries(Artifact PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network Qt6::Multimedia Qt6::Concurrent)
 
 # OpenCV
 find_package(OpenCV REQUIRED)
