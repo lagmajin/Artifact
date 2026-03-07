@@ -2,7 +2,42 @@ module;
 #include <QSize>
 export module Artifact.Composition.InitParams;
 
-import std;
+#include <iostream>
+#include <vector>
+#include <string>
+#include <map>
+#include <unordered_map>
+#include <set>
+#include <unordered_set>
+#include <memory>
+#include <algorithm>
+#include <cmath>
+#include <functional>
+#include <optional>
+#include <utility>
+#include <array>
+#include <mutex>
+#include <thread>
+#include <chrono>
+#include <filesystem>
+#include <fstream>
+#include <sstream>
+#include <stdexcept>
+#include <type_traits>
+#include <variant>
+#include <any>
+#include <atomic>
+#include <condition_variable>
+#include <queue>
+#include <deque>
+#include <list>
+#include <tuple>
+#include <numeric>
+#include <regex>
+#include <random>
+
+
+
 import Utils.String.UniString;
 import Utils.Id;
 import Size;
@@ -20,23 +55,23 @@ export namespace Artifact {
  using namespace ArtifactCore;
  using Size = ArtifactCore::Size_2D;
 
- // ƒ‚[ƒVƒ‡ƒ“ƒuƒ‰[İ’è
+ // [Vu[İ’
  struct MotionBlurSettings {
-  float shutterAngle = 180.0f;      // ƒVƒƒƒbƒ^[ƒAƒ“ƒOƒ‹i0-720“xj
-  float shutterPhase = -90.0f;      // ƒVƒƒƒbƒ^[ƒtƒF[ƒYi-360`360“xj
-  int samplesPerFrame = 16;         // ƒtƒŒ[ƒ€‚ ‚½‚è‚ÌƒTƒ“ƒvƒ‹”
-  float adaptiveSampleLimit = 128;  // “K‰ƒTƒ“ƒvƒ‹ãŒÀ
-  bool enabled = false;             // ƒ‚[ƒVƒ‡ƒ“ƒuƒ‰[—LŒø
+  float shutterAngle = 180.0f;      // Vb^[AOi0-720xj
+  float shutterPhase = -90.0f;      // Vb^[tF[Yi-360`360xj
+  int samplesPerFrame = 16;         // t[ÌƒTv
+  float adaptiveSampleLimit = 128;  // KTv
+  bool enabled = false;             // [Vu[L
  };
 
- // 3DƒŒƒ“ƒ_ƒ‰[İ’è
+ // 3D_[İ’
  enum class Renderer3DType {
   Classic3D,
   Advanced3D,
   RayTraced
  };
 
- // ‰ğ‘œ“xƒ_ƒEƒ“ƒTƒ“ƒvƒŠƒ“ƒO
+ // ğ‘œ“x_ETvO
  enum class ResolutionFactor {
   Full,        // 1:1
   Half,        // 1:2
@@ -45,7 +80,7 @@ export namespace Artifact {
   Custom
  };
 
- // ì‹ÆƒGƒŠƒAiƒ[ƒNƒGƒŠƒAj
+ // ÆƒGAi[NGAj
  struct WorkArea {
   RationalTime inPoint;
   RationalTime outPoint;
@@ -59,7 +94,7 @@ export namespace Artifact {
   Impl* impl_;
 
  public:
-  // === ƒRƒ“ƒXƒgƒ‰ƒNƒ^EƒfƒXƒgƒ‰ƒNƒ^ ===
+  // === RXgN^EfXgN^ ===
   ArtifactCompositionInitParams();
   explicit ArtifactCompositionInitParams(const UniString& name, const FloatColor& backgroundColor);
   ArtifactCompositionInitParams(const ArtifactCompositionInitParams& other);
@@ -68,31 +103,31 @@ export namespace Artifact {
   ArtifactCompositionInitParams& operator=(ArtifactCompositionInitParams&& other) noexcept;
   ~ArtifactCompositionInitParams();
 
-  // === Šî–{İ’è ===
+  // === {İ’ ===
   
-  // ƒRƒ“ƒ|ƒWƒVƒ‡ƒ“–¼
+  // R|WV
   UniString compositionName() const;
   void setCompositionName(const UniString& name);
 
-  // ‰ğ‘œ“xi•E‚‚³j
+  // ğ‘œ“xiEj
   Size resolution() const;
   void setResolution(const Size& size);
   void setResolution(int width, int height);
   int width() const;
   int height() const;
 
-  // ƒsƒNƒZƒ‹ƒAƒXƒyƒNƒg”ä
+  // sNZAXyNg
   AspectRatio pixelAspectRatio() const;
   void setPixelAspectRatio(const AspectRatio& ratio);
 
-  // ƒtƒŒ[ƒ€ƒŒ[ƒg
+  // t[[g
   FrameRate frameRate() const;
   void setFrameRate(const FrameRate& rate);
   void setFrameRate(double fps);
 
-  // === ŠÔİ’è ===
+  // === Ôİ’ ===
 
-  // ƒfƒ…ƒŒ[ƒVƒ‡ƒ“i’·‚³j
+  // f[Vij
   RationalTime duration() const;
   void setDuration(const RationalTime& duration);
   void setDurationFrames(int64_t frames);
@@ -100,28 +135,28 @@ export namespace Artifact {
   int64_t durationFrames() const;
   double durationSeconds() const;
 
-  // ŠJnƒ^ƒCƒ€ƒR[ƒh
+  // Jn^CR[h
   const TimeCode& startTimeCode() const;
   void setStartTimeCode(const TimeCode& tc);
 
-  // ƒ[ƒNƒGƒŠƒA
+  // [NGA
   WorkArea workArea() const;
   void setWorkArea(const WorkArea& area);
   void setWorkArea(const RationalTime& inPoint, const RationalTime& outPoint);
 
-  // === •\¦İ’è ===
+  // === \İ’ ===
 
-  // ”wŒiF
+  // wiF
   FloatColor backgroundColor() const;
   void setBackgroundColor(const FloatColor& color);
 
-  // ƒvƒŒƒrƒ…[•i¿E‰ğ‘œ“x
+  // vr[iEğ‘œ“x
   PreviewQuality previewQuality() const;
   void setPreviewQuality(const PreviewQuality& quality);
   ResolutionFactor resolutionFactor() const;
   void setResolutionFactor(ResolutionFactor factor);
 
-  // === ƒ‚[ƒVƒ‡ƒ“ƒuƒ‰[İ’è ===
+  // === [Vu[İ’ ===
 
   MotionBlurSettings motionBlurSettings() const;
   void setMotionBlurSettings(const MotionBlurSettings& settings);
@@ -132,26 +167,26 @@ export namespace Artifact {
   float shutterPhase() const;
   void setShutterPhase(float phase);
 
-  // === 3Dİ’è ===
+  // === 3Dİ’ ===
 
   Renderer3DType renderer3D() const;
   void setRenderer3D(Renderer3DType type);
 
-  // === ƒvƒŠƒZƒbƒg ===
+  // === vZbg ===
 
   static ArtifactCompositionInitParams hdPreset();       // 1920x1080, 30fps
   static ArtifactCompositionInitParams fullHd60Preset(); // 1920x1080, 60fps
   static ArtifactCompositionInitParams fourKPreset();    // 3840x2160, 30fps
   static ArtifactCompositionInitParams squarePreset();   // 1080x1080, 30fps (SNS)
-  static ArtifactCompositionInitParams verticalPreset(); // 1080x1920, 30fps (c“®‰æ)
-  static ArtifactCompositionInitParams cinemaPreset();   // 2048x858, 24fps (ƒVƒlƒXƒR)
+  static ArtifactCompositionInitParams verticalPreset(); // 1080x1920, 30fps (c)
+  static ArtifactCompositionInitParams cinemaPreset();   // 2048x858, 24fps (VlXR)
 
-  // === ƒoƒŠƒf[ƒVƒ‡ƒ“ ===
+  // === of[V ===
 
   bool isValid() const;
   UniString validationError() const;
 
-  // === ”äŠr‰‰Zq ===
+  // === rZq ===
 
   bool operator==(const ArtifactCompositionInitParams& other) const;
   bool operator!=(const ArtifactCompositionInitParams& other) const;
