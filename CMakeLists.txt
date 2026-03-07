@@ -5,18 +5,47 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # ---------------------------------------------------------------------------
-# ソース収集 (vcxproj の ItemGroup を参考に)
+# ソース収集とモジュール分類
 # ---------------------------------------------------------------------------
-file(GLOB_RECURSE APP_IMPL CONFIGURE_DEPENDS 
-    "src/*.cpp"
+file(GLOB_RECURSE POTENTIAL_SOURCES CONFIGURE_DEPENDS 
+    "src/*.cpp" "src/*.cppm" "src/*.ixx"
+    "include/*.ixx" "include/*.cppm"
 )
 
-# モジュールインターフェース / 実装ユニット
-file(GLOB_RECURSE APP_MODULES CONFIGURE_DEPENDS 
-    "include/*.ixx" 
-    "src/*.ixx" 
-    "src/*.cppm"
-)
+set(APP_MODULES "")
+set(APP_IMPL "")
+set(_PROVIDED_MODULES "")
+
+foreach(file_path ${POTENTIAL_SOURCES})
+    if(file_path MATCHES "\\.bak$")
+        continue()
+    endif()
+
+    file(READ "${file_path}" content LIMIT 4096)
+    
+    set(is_mod TRUE)
+    set(found_mod_name "")
+
+    if(content MATCHES "export[ \t\r\n]+module[ \t\r\n]+([a-zA-Z0-9\\._:]+)")
+        set(found_mod_name "${CMAKE_MATCH_1}")
+    elseif(content MATCHES "module[ \t\r\n]+([a-zA-Z0-9\\._]+:[a-zA-Z0-9\\._:]+)")
+        set(found_mod_name "${CMAKE_MATCH_1}")
+    else()
+        set(is_mod FALSE)
+    endif()
+
+    if(is_mod)
+        list(FIND _PROVIDED_MODULES "${found_mod_name}" _mod_idx)
+        if(_mod_idx EQUAL -1)
+            list(APPEND APP_MODULES "${file_path}")
+            list(APPEND _PROVIDED_MODULES "${found_mod_name}")
+        else()
+            list(APPEND APP_IMPL "${file_path}")
+        endif()
+    else()
+        list(APPEND APP_IMPL "${file_path}")
+    endif()
+endforeach()
 
 # ---------------------------------------------------------------------------
 # ターゲット定義
@@ -24,8 +53,8 @@ file(GLOB_RECURSE APP_MODULES CONFIGURE_DEPENDS
 add_executable(Artifact WIN32)
 
 target_sources(Artifact
-    PUBLIC 
-        FILE_SET CXX_MODULES FILES ${APP_MODULES} ${APP_IMPL}
+    PRIVATE ${APP_IMPL}
+    PUBLIC FILE_SET CXX_MODULES FILES ${APP_MODULES}
 )
 
 # MSVC フラグ
@@ -107,8 +136,3 @@ target_link_libraries(Artifact PRIVATE Boost::iostreams)
 if(WIN32)
     target_link_libraries(Artifact PRIVATE dwmapi shell32 user32 ole32 advapi32)
 endif()
-
-# ---------------------------------------------------------------------------
-# シェーダー (簡易的な HLSL 登録)
-# ---------------------------------------------------------------------------
-# TODO: FxCompile の CMake 対応が必要であれば追加
