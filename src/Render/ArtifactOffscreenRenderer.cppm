@@ -1,7 +1,7 @@
 module;
-#include <DiligentCore/Graphics/GraphicsEngine/interface/RenderDevice.h>
-#include <DiligentCore/Graphics/GraphicsEngine/interface/DeviceContext.h>
-#include <DiligentCore/Graphics/GraphicsEngine/interface/Texture.h>
+#include <RenderDevice.h>
+#include <DeviceContext.h>
+#include <Texture.h>
 #include <DiligentCore/Common/interface/RefCntAutoPtr.hpp>
 #include <QImage>
 #include <QDebug>
