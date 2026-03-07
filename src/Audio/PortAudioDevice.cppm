@@ -35,12 +35,8 @@
 #include <numeric>
 #include <regex>
 #include <random>
+#include <cstdint>
 module Audio.PortAudioDevice;
-
-
-
-
-import <cstdint>;
 import Audio.IAudioDevice;
 
 namespace Artifact {

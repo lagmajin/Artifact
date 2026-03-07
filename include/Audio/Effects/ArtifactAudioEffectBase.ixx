@@ -41,6 +41,7 @@ export module Artifact.Audio.Effects.Base;
 
 
 import Audio.Segment;
+import Audio.Effect;
 
 export namespace Artifact {
 
@@ -64,15 +65,16 @@ struct AudioEffectParameter {
 };
 
 // 抽象オーディオエフェクト基底クラス
-class ArtifactAbstractAudioEffect {
+class ArtifactAbstractAudioEffect : public ArtifactCore::AudioEffect {
 public:
     virtual ~ArtifactAbstractAudioEffect() = default;
 
-    // エフェクト処理の実行
-    virtual ArtifactCore::AudioSegment process(const ArtifactCore::AudioSegment& input) = 0;
+    // ArtifactCore::AudioEffect インターフェース
+    // 既存の process(const AudioSegment&) は削除、またはブリッジとして残す
+    virtual void process(ArtifactCore::AudioSegment& segment) override = 0;
 
     // エフェクト名と説明
-    virtual std::string getName() const = 0;
+    virtual std::string getName() const override = 0;
     virtual std::string getDescription() const = 0;
 
     // パラメータ管理

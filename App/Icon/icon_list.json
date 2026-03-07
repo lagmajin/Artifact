@@ -1,0 +1,541 @@
+﻿{
+    "base_dir":  "App/Icon/Material",
+    "project":  "Artifact",
+    "count":  89,
+    "icons":  [
+                  {
+                      "path":  "App/Icon/Material/aspect_ratio.svg",
+                      "category":  "general",
+                      "id":  "aspect_ratio",
+                      "file":  "aspect_ratio.svg"
+                  },
+                  {
+                      "path":  "App/Icon/Material/audiotrack.svg",
+                      "category":  "audio",
+                      "id":  "audiotrack",
+                      "file":  "audiotrack.svg"
+                  },
+                  {
+                      "path":  "App/Icon/Material/auto_awesome.svg",
+                      "category":  "general",
+                      "id":  "auto_awesome",
+                      "file":  "auto_awesome.svg"
+                  },
+                  {
+                      "path":  "App/Icon/Material/auto_fix_high.svg",
+                      "category":  "general",
+                      "id":  "auto_fix_high",
+                      "file":  "auto_fix_high.svg"
+                  },
+                  {
+                      "path":  "App/Icon/Material/blur_on.svg",
+                      "category":  "effects",
+                      "id":  "blur_on",
+                      "file":  "blur_on.svg"
+                  },
+                  {
+                      "path":  "App/Icon/Material/brightness_6.svg",
+                      "category":  "effects",
+                      "id":  "brightness_6",
+                      "file":  "brightness_6.svg"
+                  },
+                  {
+                      "path":  "App/Icon/Material/brush.svg",
+                      "category":  "tools",
+                      "id":  "brush",
+                      "file":  "brush.svg"
+                  },
+                  {
+                      "path":  "App/Icon/Material/colorize.svg",
+                      "category":  "tools",
+                      "id":  "colorize",
+                      "file":  "colorize.svg"
+                  },
+                  {
+                      "path":  "App/Icon/Material/content_copy.svg",
+                      "category":  "tools",
+                      "id":  "content_copy",
+                      "file":  "content_copy.svg"
+                  },
+                  {
+                      "path":  "App/Icon/Material/content_cut.svg",
+                      "category":  "tools",
+                      "id":  "content_cut",
+                      "file":  "content_cut.svg"
+                  },
+                  {
+                      "path":  "App/Icon/Material/content_paste.svg",
+                      "category":  "tools",
+                      "id":  "content_paste",
+                      "file":  "content_paste.svg"
+                  },
+                  {
+                      "path":  "App/Icon/Material/contrast.svg",
+                      "category":  "effects",
+                      "id":  "contrast",
+                      "file":  "contrast.svg"
+                  },
+                  {
+                      "path":  "App/Icon/Material/create_new_folder.svg",
+                      "category":  "system",
+                      "id":  "create_new_folder",
+                      "file":  "create_new_folder.svg"
+                  },
+                  {
+                      "path":  "App/Icon/Material/crop.svg",
+                      "category":  "tools",
+                      "id":  "crop",
+                      "file":  "crop.svg"
+                  },
+                  {
+                      "path":  "App/Icon/Material/delete.svg",
+                      "category":  "general",
+                      "id":  "delete",
+                      "file":  "delete.svg"
+                  },
+                  {
+                      "path":  "App/Icon/Material/download.svg",
+                      "category":  "system",
+                      "id":  "download",
+                      "file":  "download.svg"
+                  },
+                  {
+                      "path":  "App/Icon/Material/draw.svg",
+                      "category":  "tools",
+                      "id":  "draw",
+                      "file":  "draw.svg"
+                  },
+                  {
+                      "path":  "App/Icon/Material/edit.svg",
+                      "category":  "tools",
+                      "id":  "edit",
+                      "file":  "edit.svg"
+                  },
+                  {
+                      "path":  "App/Icon/Material/equalizer.svg",
+                      "category":  "general",
+                      "id":  "equalizer",
+                      "file":  "equalizer.svg"
+                  },
+                  {
+                      "path":  "App/Icon/Material/fast_forward.svg",
+                      "category":  "transport",
+                      "id":  "fast_forward",
+                      "file":  "fast_forward.svg"
+                  },
+                  {
+                      "path":  "App/Icon/Material/fast_rewind.svg",
+                      "category":  "transport",
+                      "id":  "fast_rewind",
+                      "file":  "fast_rewind.svg"
+                  },
+                  {
+                      "path":  "App/Icon/Material/file_open.svg",
+                      "category":  "system",
+                      "id":  "file_open",
+                      "file":  "file_open.svg"
+                  },
+                  {
+                      "path":  "App/Icon/Material/fit_screen.svg",
+                      "category":  "general",
+                      "id":  "fit_screen",
+                      "file":  "fit_screen.svg"
+                  },
+                  {
+                      "path":  "App/Icon/Material/folder.svg",
+                      "category":  "system",
+                      "id":  "folder",
+                      "file":  "folder.svg"
+                  },
+                  {
+                      "path":  "App/Icon/Material/format_shapes.svg",
+                      "category":  "general",
+                      "id":  "format_shapes",
+                      "file":  "format_shapes.svg"
+                  },
+                  {
+                      "path":  "App/Icon/Material/fullscreen.svg",
+                      "category":  "general",
+                      "id":  "fullscreen",
+                      "file":  "fullscreen.svg"
+                  },
+                  {
+                      "path":  "App/Icon/Material/fullscreen_exit.svg",
+                      "category":  "general",
+                      "id":  "fullscreen_exit",
+                      "file":  "fullscreen_exit.svg"
+                  },
+                  {
+                      "path":  "App/Icon/Material/graphic_eq.svg",
+                      "category":  "general",
+                      "id":  "graphic_eq",
+                      "file":  "graphic_eq.svg"
+                  },
+                  {
+                      "path":  "App/Icon/Material/grid_off.svg",
+                      "category":  "general",
+                      "id":  "grid_off",
+                      "file":  "grid_off.svg"
+                  },
+                  {
+                      "path":  "App/Icon/Material/grid_on.svg",
+                      "category":  "general",
+                      "id":  "grid_on",
+                      "file":  "grid_on.svg"
+                  },
+                  {
+                      "path":  "App/Icon/Material/grid_view.svg",
+                      "category":  "general",
+                      "id":  "grid_view",
+                      "file":  "grid_view.svg"
+                  },
+                  {
+                      "path":  "App/Icon/Material/group.svg",
+                      "category":  "general",
+                      "id":  "group",
+                      "file":  "group.svg"
+                  },
+                  {
+                      "path":  "App/Icon/Material/hdr_on.svg",
+                      "category":  "general",
+                      "id":  "hdr_on",
+                      "file":  "hdr_on.svg"
+                  },
+                  {
+                      "path":  "App/Icon/Material/headset.svg",
+                      "category":  "audio",
+                      "id":  "headset",
+                      "file":  "headset.svg"
+                  },
+                  {
+                      "path":  "App/Icon/Material/help.svg",
+                      "category":  "general",
+                      "id":  "help",
+                      "file":  "help.svg"
+                  },
+                  {
+                      "path":  "App/Icon/Material/history.svg",
+                      "category":  "general",
+                      "id":  "history",
+                      "file":  "history.svg"
+                  },
+                  {
+                      "path":  "App/Icon/Material/info.svg",
+                      "category":  "general",
+                      "id":  "info",
+                      "file":  "info.svg"
+                  },
+                  {
+                      "path":  "App/Icon/Material/inventory.svg",
+                      "category":  "general",
+                      "id":  "inventory",
+                      "file":  "inventory.svg"
+                  },
+                  {
+                      "path":  "App/Icon/Material/invert_colors.svg",
+                      "category":  "effects",
+                      "id":  "invert_colors",
+                      "file":  "invert_colors.svg"
+                  },
+                  {
+                      "path":  "App/Icon/Material/linear_scale.svg",
+                      "category":  "general",
+                      "id":  "linear_scale",
+                      "file":  "linear_scale.svg"
+                  },
+                  {
+                      "path":  "App/Icon/Material/link.svg",
+                      "category":  "general",
+                      "id":  "link",
+                      "file":  "link.svg"
+                  },
+                  {
+                      "path":  "App/Icon/Material/link_off.svg",
+                      "category":  "general",
+                      "id":  "link_off",
+                      "file":  "link_off.svg"
+                  },
+                  {
+                      "path":  "App/Icon/Material/lock.svg",
+                      "category":  "timeline",
+                      "id":  "lock",
+                      "file":  "lock.svg"
+                  },
+                  {
+                      "path":  "App/Icon/Material/lock_open.svg",
+                      "category":  "timeline",
+                      "id":  "lock_open",
+                      "file":  "lock_open.svg"
+                  },
+                  {
+                      "path":  "App/Icon/Material/loop.svg",
+                      "category":  "general",
+                      "id":  "loop",
+                      "file":  "loop.svg"
+                  },
+                  {
+                      "path":  "App/Icon/Material/mic.svg",
+                      "category":  "audio",
+                      "id":  "mic",
+                      "file":  "mic.svg"
+                  },
+                  {
+                      "path":  "App/Icon/Material/movie.svg",
+                      "category":  "general",
+                      "id":  "movie",
+                      "file":  "movie.svg"
+                  },
+                  {
+                      "path":  "App/Icon/Material/movie_creation.svg",
+                      "category":  "general",
+                      "id":  "movie_creation",
+                      "file":  "movie_creation.svg"
+                  },
+                  {
+                      "path":  "App/Icon/Material/palette.svg",
+                      "category":  "effects",
+                      "id":  "palette",
+                      "file":  "palette.svg"
+                  },
+                  {
+                      "path":  "App/Icon/Material/pause.svg",
+                      "category":  "transport",
+                      "id":  "pause",
+                      "file":  "pause.svg"
+                  },
+                  {
+                      "path":  "App/Icon/Material/pause_circle.svg",
+                      "category":  "transport",
+                      "id":  "pause_circle",
+                      "file":  "pause_circle.svg"
+                  },
+                  {
+                      "path":  "App/Icon/Material/photo_filter.svg",
+                      "category":  "general",
+                      "id":  "photo_filter",
+                      "file":  "photo_filter.svg"
+                  },
+                  {
+                      "path":  "App/Icon/Material/photo_library.svg",
+                      "category":  "general",
+                      "id":  "photo_library",
+                      "file":  "photo_library.svg"
+                  },
+                  {
+                      "path":  "App/Icon/Material/play_arrow.svg",
+                      "category":  "transport",
+                      "id":  "play_arrow",
+                      "file":  "play_arrow.svg"
+                  },
+                  {
+                      "path":  "App/Icon/Material/play_circle.svg",
+                      "category":  "transport",
+                      "id":  "play_circle",
+                      "file":  "play_circle.svg"
+                  },
+                  {
+                      "path":  "App/Icon/Material/publish.svg",
+                      "category":  "general",
+                      "id":  "publish",
+                      "file":  "publish.svg"
+                  },
+                  {
+                      "path":  "App/Icon/Material/push_pin.svg",
+                      "category":  "general",
+                      "id":  "push_pin",
+                      "file":  "push_pin.svg"
+                  },
+                  {
+                      "path":  "App/Icon/Material/redo.svg",
+                      "category":  "timeline",
+                      "id":  "redo",
+                      "file":  "redo.svg"
+                  },
+                  {
+                      "path":  "App/Icon/Material/replay.svg",
+                      "category":  "transport",
+                      "id":  "replay",
+                      "file":  "replay.svg"
+                  },
+                  {
+                      "path":  "App/Icon/Material/save.svg",
+                      "category":  "system",
+                      "id":  "save",
+                      "file":  "save.svg"
+                  },
+                  {
+                      "path":  "App/Icon/Material/search.svg",
+                      "category":  "general",
+                      "id":  "search",
+                      "file":  "search.svg"
+                  },
+                  {
+                      "path":  "App/Icon/Material/settings.svg",
+                      "category":  "general",
+                      "id":  "settings",
+                      "file":  "settings.svg"
+                  },
+                  {
+                      "path":  "App/Icon/Material/settings_voice.svg",
+                      "category":  "general",
+                      "id":  "settings_voice",
+                      "file":  "settings_voice.svg"
+                  },
+                  {
+                      "path":  "App/Icon/Material/skip_next.svg",
+                      "category":  "transport",
+                      "id":  "skip_next",
+                      "file":  "skip_next.svg"
+                  },
+                  {
+                      "path":  "App/Icon/Material/skip_previous.svg",
+                      "category":  "transport",
+                      "id":  "skip_previous",
+                      "file":  "skip_previous.svg"
+                  },
+                  {
+                      "path":  "App/Icon/Material/slow_motion_video.svg",
+                      "category":  "general",
+                      "id":  "slow_motion_video",
+                      "file":  "slow_motion_video.svg"
+                  },
+                  {
+                      "path":  "App/Icon/Material/speaker.svg",
+                      "category":  "audio",
+                      "id":  "speaker",
+                      "file":  "speaker.svg"
+                  },
+                  {
+                      "path":  "App/Icon/Material/speed.svg",
+                      "category":  "transport",
+                      "id":  "speed",
+                      "file":  "speed.svg"
+                  },
+                  {
+                      "path":  "App/Icon/Material/stop.svg",
+                      "category":  "transport",
+                      "id":  "stop",
+                      "file":  "stop.svg"
+                  },
+                  {
+                      "path":  "App/Icon/Material/straighten.svg",
+                      "category":  "general",
+                      "id":  "straighten",
+                      "file":  "straighten.svg"
+                  },
+                  {
+                      "path":  "App/Icon/Material/timeline.svg",
+                      "category":  "timeline",
+                      "id":  "timeline",
+                      "file":  "timeline.svg"
+                  },
+                  {
+                      "path":  "App/Icon/Material/title.svg",
+                      "category":  "general",
+                      "id":  "title",
+                      "file":  "title.svg"
+                  },
+                  {
+                      "path":  "App/Icon/Material/tonality.svg",
+                      "category":  "general",
+                      "id":  "tonality",
+                      "file":  "tonality.svg"
+                  },
+                  {
+                      "path":  "App/Icon/Material/transform.svg",
+                      "category":  "general",
+                      "id":  "transform",
+                      "file":  "transform.svg"
+                  },
+                  {
+                      "path":  "App/Icon/Material/tune.svg",
+                      "category":  "effects",
+                      "id":  "tune",
+                      "file":  "tune.svg"
+                  },
+                  {
+                      "path":  "App/Icon/Material/undo.svg",
+                      "category":  "timeline",
+                      "id":  "undo",
+                      "file":  "undo.svg"
+                  },
+                  {
+                      "path":  "App/Icon/Material/upload.svg",
+                      "category":  "system",
+                      "id":  "upload",
+                      "file":  "upload.svg"
+                  },
+                  {
+                      "path":  "App/Icon/Material/video_library.svg",
+                      "category":  "general",
+                      "id":  "video_library",
+                      "file":  "video_library.svg"
+                  },
+                  {
+                      "path":  "App/Icon/Material/view_sidebar.svg",
+                      "category":  "general",
+                      "id":  "view_sidebar",
+                      "file":  "view_sidebar.svg"
+                  },
+                  {
+                      "path":  "App/Icon/Material/vignette.svg",
+                      "category":  "general",
+                      "id":  "vignette",
+                      "file":  "vignette.svg"
+                  },
+                  {
+                      "path":  "App/Icon/Material/visibility.svg",
+                      "category":  "timeline",
+                      "id":  "visibility",
+                      "file":  "visibility.svg"
+                  },
+                  {
+                      "path":  "App/Icon/Material/visibility_off.svg",
+                      "category":  "timeline",
+                      "id":  "visibility_off",
+                      "file":  "visibility_off.svg"
+                  },
+                  {
+                      "path":  "App/Icon/Material/volume_down.svg",
+                      "category":  "audio",
+                      "id":  "volume_down",
+                      "file":  "volume_down.svg"
+                  },
+                  {
+                      "path":  "App/Icon/Material/volume_mute.svg",
+                      "category":  "audio",
+                      "id":  "volume_mute",
+                      "file":  "volume_mute.svg"
+                  },
+                  {
+                      "path":  "App/Icon/Material/volume_off.svg",
+                      "category":  "audio",
+                      "id":  "volume_off",
+                      "file":  "volume_off.svg"
+                  },
+                  {
+                      "path":  "App/Icon/Material/volume_up.svg",
+                      "category":  "audio",
+                      "id":  "volume_up",
+                      "file":  "volume_up.svg"
+                  },
+                  {
+                      "path":  "App/Icon/Material/wb_sunny.svg",
+                      "category":  "general",
+                      "id":  "wb_sunny",
+                      "file":  "wb_sunny.svg"
+                  },
+                  {
+                      "path":  "App/Icon/Material/zoom_in.svg",
+                      "category":  "general",
+                      "id":  "zoom_in",
+                      "file":  "zoom_in.svg"
+                  },
+                  {
+                      "path":  "App/Icon/Material/zoom_out.svg",
+                      "category":  "general",
+                      "id":  "zoom_out",
+                      "file":  "zoom_out.svg"
+                  }
+              ]
+}

@@ -8,7 +8,6 @@
 #include <QDialog>
 #include <QKeySequence>
 #include <QColorDialog>
-#include <qcoro6/qcoro/qcorotask.h>
 module Menu.Composition;
 
 import  Artifact.Project.Manager;
@@ -47,7 +46,7 @@ namespace Artifact {
 
   void showCreateCompositionSettingDialog();
   void showBackgroundColorDialog();
-  QCoro::Task<> showChangeCompositionSettingsDialogAsync();
+  void showChangeCompositionSettingsDialog();
   void handleAddRenderQueueRequest();
   void handleSaveAsImageRequest();
  };

@@ -34,12 +34,8 @@
 #include <numeric>
 #include <regex>
 #include <random>
+#include <cstdint>
 module Audio.WASAPIDevice;
-
-
-
-
-import <cstdint>;
 import Audio.IAudioDevice;
 
 namespace Artifact {
