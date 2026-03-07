@@ -97,6 +97,9 @@ target_link_libraries(Artifact PRIVATE assimp::assimp)
 find_package(EnTT CONFIG REQUIRED)
 target_link_libraries(Artifact PRIVATE EnTT::EnTT)
 
+find_package(magic_enum CONFIG REQUIRED)
+target_link_libraries(Artifact PRIVATE magic_enum::magic_enum)
+
 find_package(Boost REQUIRED COMPONENTS iostreams)
 target_link_libraries(Artifact PRIVATE Boost::iostreams)
 
