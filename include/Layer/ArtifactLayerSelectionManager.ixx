@@ -1,10 +1,6 @@
-module ;
 #include <QSet>
 #include <QObject>
 #include <wobjectdefs.h>
-
-export module Artifact.Layers.Selection.Manager;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -38,6 +34,10 @@ export module Artifact.Layers.Selection.Manager;
 #include <numeric>
 #include <regex>
 #include <random>
+module ;
+
+export module Artifact.Layers.Selection.Manager;
+
 
 
 

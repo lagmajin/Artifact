@@ -1,7 +1,5 @@
 ﻿module;
 #include <opencv2/opencv.hpp>
-export module Image.ImageF32xN;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -35,6 +33,8 @@ export module Image.ImageF32xN;
 #include <numeric>
 #include <regex>
 #include <random>
+export module Image.ImageF32xN;
+
 
 
 

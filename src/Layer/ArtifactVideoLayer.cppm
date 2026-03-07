@@ -12,8 +12,6 @@
 #include <unordered_map>
 #include <deque>
 
-module Artifact.Layer.Video;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -47,6 +45,8 @@ module Artifact.Layer.Video;
 #include <numeric>
 #include <regex>
 #include <random>
+module Artifact.Layer.Video;
+
 
 
 

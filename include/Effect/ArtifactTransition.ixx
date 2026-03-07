@@ -8,8 +8,6 @@ module;
 #include <memory>
 #include <wobjectdefs.h>
 
-export module Artifact.Effect.Transition;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -43,6 +41,8 @@ export module Artifact.Effect.Transition;
 #include <numeric>
 #include <regex>
 #include <random>
+export module Artifact.Effect.Transition;
+
 
 
 

@@ -2,8 +2,6 @@
 #include <QString>
 #include <memory>
 
-export module Artifact.Layer.Search.Query;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -37,6 +35,8 @@ export module Artifact.Layer.Search.Query;
 #include <numeric>
 #include <regex>
 #include <random>
+export module Artifact.Layer.Search.Query;
+
 
 
 

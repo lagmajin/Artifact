@@ -6,8 +6,6 @@ module;
 #include <QObject>
 #include <wobjectdefs.h>
 
-export module Artifact.Project.Manager;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -41,6 +39,8 @@ export module Artifact.Project.Manager;
 #include <numeric>
 #include <regex>
 #include <random>
+export module Artifact.Project.Manager;
+
 
 
 

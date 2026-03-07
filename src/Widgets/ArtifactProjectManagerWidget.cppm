@@ -27,8 +27,6 @@ module;
 #include <QPushButton>
 #include <QFileDialog>
 
-module Artifact.Widgets.ProjectManagerWidget;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -62,6 +60,8 @@ module Artifact.Widgets.ProjectManagerWidget;
 #include <numeric>
 #include <regex>
 #include <random>
+module Artifact.Widgets.ProjectManagerWidget;
+
 
 
 

@@ -9,8 +9,6 @@
 #include <QBoxLayout>
 #include <QFileDialog>
 #include <QProgressBar>
-module Artifact.Widgets.RenderQueueJobPanel;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -44,6 +42,8 @@ module Artifact.Widgets.RenderQueueJobPanel;
 #include <numeric>
 #include <regex>
 #include <random>
+module Artifact.Widgets.RenderQueueJobPanel;
+
 
 
 import Widgets.Utils.CSS;

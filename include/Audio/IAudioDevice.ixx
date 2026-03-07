@@ -1,6 +1,4 @@
 ﻿module;
-export module Audio.IAudioDevice;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -34,6 +32,8 @@ export module Audio.IAudioDevice;
 #include <numeric>
 #include <regex>
 #include <random>
+export module Audio.IAudioDevice;
+
 
 
 

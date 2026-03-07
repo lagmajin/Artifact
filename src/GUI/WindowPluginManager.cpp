@@ -1,7 +1,5 @@
 module;
 #include <QVector>
-module WindowManager;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -35,6 +33,8 @@ module WindowManager;
 #include <numeric>
 #include <regex>
 #include <random>
+module WindowManager;
+
 
 
 

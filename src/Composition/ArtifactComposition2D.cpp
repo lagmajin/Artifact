@@ -1,7 +1,5 @@
 ﻿module;
 #include <QJsonObject>
-module Artifact.Composition._2D;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -35,6 +33,8 @@ module Artifact.Composition._2D;
 #include <numeric>
 #include <regex>
 #include <random>
+module Artifact.Composition._2D;
+
 
 
 import Artifact.Layer.Abstract;

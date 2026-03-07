@@ -6,8 +6,6 @@
 #include <QList>
 #include <opencv2/opencv.hpp>
 
-module HueAndSaturation;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -41,6 +39,8 @@ module HueAndSaturation;
 #include <numeric>
 #include <regex>
 #include <random>
+module HueAndSaturation;
+
 
 
 

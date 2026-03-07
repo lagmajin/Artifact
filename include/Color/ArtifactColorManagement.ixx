@@ -4,8 +4,6 @@ module;
 #include <QVector>
 #include <QMatrix4x4>
 
-export module Artifact.Color.Management;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -39,6 +37,8 @@ export module Artifact.Color.Management;
 #include <numeric>
 #include <regex>
 #include <random>
+export module Artifact.Color.Management;
+
 
 
 

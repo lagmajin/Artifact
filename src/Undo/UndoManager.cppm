@@ -5,8 +5,6 @@
 #include <memory>
 #include <utility>
 
-module Undo.UndoManager;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -40,6 +38,8 @@ module Undo.UndoManager;
 #include <numeric>
 #include <regex>
 #include <random>
+module Undo.UndoManager;
+
 
 
 import Undo.UndoManager;

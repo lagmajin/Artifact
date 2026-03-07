@@ -4,8 +4,6 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QDebug>
-module Artifact.Project.Importer;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -39,6 +37,8 @@ module Artifact.Project.Importer;
 #include <numeric>
 #include <regex>
 #include <random>
+module Artifact.Project.Importer;
+
 
 
 

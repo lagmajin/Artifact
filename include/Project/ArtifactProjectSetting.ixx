@@ -7,8 +7,6 @@ module;
 #include <vulkan/vulkan_core.h>
 
 
-export module Artifact.Project.Settings;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -42,6 +40,8 @@ export module Artifact.Project.Settings;
 #include <numeric>
 #include <regex>
 #include <random>
+export module Artifact.Project.Settings;
+
 
 
 

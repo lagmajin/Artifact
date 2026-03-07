@@ -3,8 +3,6 @@
 #include <wobjectimpl.h>
 #include <QComboBox>
 
-module Artifact.Dialog.EditComposition;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -38,6 +36,8 @@ module Artifact.Dialog.EditComposition;
 #include <numeric>
 #include <regex>
 #include <random>
+module Artifact.Dialog.EditComposition;
+
 
 
 

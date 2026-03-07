@@ -4,8 +4,6 @@ module;
 #include <QVector3D>
 #include <QColor>
 
-module Artifact.Generator.Particle;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -39,6 +37,8 @@ module Artifact.Generator.Particle;
 #include <numeric>
 #include <regex>
 #include <random>
+module Artifact.Generator.Particle;
+
 
 
 

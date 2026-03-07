@@ -3,8 +3,6 @@
 #include <thread>
 #include <chrono>
 
-module AI.Client;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -38,6 +36,8 @@ module AI.Client;
 #include <numeric>
 #include <regex>
 #include <random>
+module AI.Client;
+
 
 
 

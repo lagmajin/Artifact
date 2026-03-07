@@ -1,7 +1,5 @@
 ﻿module;
 #include <QJsonObject>
-export module Composition3D;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -35,6 +33,8 @@ export module Composition3D;
 #include <numeric>
 #include <regex>
 #include <random>
+export module Composition3D;
+
 
 
 

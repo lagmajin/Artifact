@@ -5,8 +5,6 @@
 #include <QList>
 #include <QIcon>
 
-export module AssetMenuModel;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -40,6 +38,8 @@ export module AssetMenuModel;
 #include <numeric>
 #include <regex>
 #include <random>
+export module AssetMenuModel;
+
 
 
 

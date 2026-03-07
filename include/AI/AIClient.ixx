@@ -1,6 +1,4 @@
 ﻿module;
-export module AI.Client;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -34,6 +32,8 @@ export module AI.Client;
 #include <numeric>
 #include <regex>
 #include <random>
+export module AI.Client;
+
 
 
 

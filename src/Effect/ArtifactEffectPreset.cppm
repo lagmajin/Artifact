@@ -10,8 +10,6 @@ module;
 #include <QJsonArray>
 #include <QDebug>
 
-module Artifact.Effect.Preset;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -45,6 +43,8 @@ module Artifact.Effect.Preset;
 #include <numeric>
 #include <regex>
 #include <random>
+module Artifact.Effect.Preset;
+
 
 
 

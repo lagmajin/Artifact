@@ -2,8 +2,6 @@ module;
 #include <QString>
 #include <QVector>
 #include <QColor>
-module Artifact.Project.Items;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -37,6 +35,8 @@ module Artifact.Project.Items;
 #include <numeric>
 #include <regex>
 #include <random>
+module Artifact.Project.Items;
+
 
 
 

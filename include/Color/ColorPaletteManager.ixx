@@ -8,8 +8,6 @@ module;
 #include <QJsonArray>
 #include <QJsonDocument>
 
-export module Artifact.Color.Palette;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -43,6 +41,8 @@ export module Artifact.Color.Palette;
 #include <numeric>
 #include <regex>
 #include <random>
+export module Artifact.Color.Palette;
+
 
 
 

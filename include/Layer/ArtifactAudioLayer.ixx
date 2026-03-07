@@ -1,8 +1,6 @@
 module;
 
 
-export module Artifact.Layer.Audio;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -36,6 +34,8 @@ export module Artifact.Layer.Audio;
 #include <numeric>
 #include <regex>
 #include <random>
+export module Artifact.Layer.Audio;
+
 
 
 

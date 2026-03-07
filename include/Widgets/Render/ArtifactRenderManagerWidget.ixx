@@ -6,8 +6,6 @@
 #include <memory>
 #include <QWidget>
 
-export module ArtifactRenderManagerWidget;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -41,6 +39,8 @@ export module ArtifactRenderManagerWidget;
 #include <numeric>
 #include <regex>
 #include <random>
+export module ArtifactRenderManagerWidget;
+
 
 
 

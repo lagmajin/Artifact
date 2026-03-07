@@ -1,8 +1,6 @@
 module;
 #include <QVector>
 #include <QColor>
-export module Artifact.Project.Items;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -36,6 +34,8 @@ export module Artifact.Project.Items;
 #include <numeric>
 #include <regex>
 #include <random>
+export module Artifact.Project.Items;
+
 
 
 

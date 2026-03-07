@@ -5,8 +5,6 @@
 #include <QKeySequence>
 #include <QActionGroup>
 
-module Artifact.Menu.View;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -40,6 +38,8 @@ module Artifact.Menu.View;
 #include <numeric>
 #include <regex>
 #include <random>
+module Artifact.Menu.View;
+
 
 
 

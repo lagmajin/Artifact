@@ -2,8 +2,6 @@
 #ifdef USE_PORTAUDIO
 #include <portaudio.h>
 #endif
-module Audio.PortAudioDevice;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -37,6 +35,8 @@ module Audio.PortAudioDevice;
 #include <numeric>
 #include <regex>
 #include <random>
+module Audio.PortAudioDevice;
+
 
 
 

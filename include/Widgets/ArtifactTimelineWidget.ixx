@@ -11,8 +11,6 @@
 
 #include <wobjectdefs.h>
 
-export module Artifact.Widgets.Timeline;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -46,6 +44,8 @@ export module Artifact.Widgets.Timeline;
 #include <numeric>
 #include <regex>
 #include <random>
+export module Artifact.Widgets.Timeline;
+
 
 
 import Utils.Id;

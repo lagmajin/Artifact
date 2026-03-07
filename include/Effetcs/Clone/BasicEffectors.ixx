@@ -4,8 +4,6 @@ module;
 #include <QColor>
 #include <cmath>
 
-export module Artifact.Effect.Clone.Basic;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -39,6 +37,8 @@ export module Artifact.Effect.Clone.Basic;
 #include <numeric>
 #include <regex>
 #include <random>
+export module Artifact.Effect.Clone.Basic;
+
 
 
 

@@ -1,7 +1,5 @@
 ﻿module;
 #include <QtGlobal>
-export module Core.SystemStats;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -35,6 +33,8 @@ export module Core.SystemStats;
 #include <numeric>
 #include <regex>
 #include <random>
+export module Core.SystemStats;
+
 
 
 

@@ -1,8 +1,6 @@
 ﻿module;
 
 #include <QAbstractItemModel>
-export module Artifact.Layers.Hierarchy.Model;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -36,6 +34,8 @@ export module Artifact.Layers.Hierarchy.Model;
 #include <numeric>
 #include <regex>
 #include <random>
+export module Artifact.Layers.Hierarchy.Model;
+
 
 
 

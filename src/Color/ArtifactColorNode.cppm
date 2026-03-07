@@ -9,8 +9,6 @@ module;
 #include <memory>
 #include <vector>
 
-module Artifact.Color.Node;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -44,6 +42,8 @@ module Artifact.Color.Node;
 #include <numeric>
 #include <regex>
 #include <random>
+module Artifact.Color.Node;
+
 
 
 

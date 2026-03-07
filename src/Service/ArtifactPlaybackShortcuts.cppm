@@ -4,8 +4,6 @@ module;
 #include <QDebug>
 #include <wobjectimpl.h>
 
-module Artifact.Service.PlaybackShortcuts;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -39,6 +37,8 @@ module Artifact.Service.PlaybackShortcuts;
 #include <numeric>
 #include <regex>
 #include <random>
+module Artifact.Service.PlaybackShortcuts;
+
 
 
 

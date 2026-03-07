@@ -9,8 +9,6 @@ module;
 
 #include <boost/signals2.hpp>
 
-export module Artifact.Project;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -44,6 +42,8 @@ export module Artifact.Project;
 #include <numeric>
 #include <regex>
 #include <random>
+export module Artifact.Project;
+
 
 
 export import Artifact.Project.Settings;

@@ -6,8 +6,6 @@
 #include <QDir>
 #include <QFileInfo>
 #include <QImage>
-module Artifact.Service.Project;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -41,6 +39,8 @@ module Artifact.Service.Project;
 #include <numeric>
 #include <regex>
 #include <random>
+module Artifact.Service.Project;
+
 
 
 

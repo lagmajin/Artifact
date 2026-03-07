@@ -3,8 +3,6 @@ module;
 #include <QString>
 #include <QVariant>
 
-export module HueAndSaturation;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -38,6 +36,8 @@ export module HueAndSaturation;
 #include <numeric>
 #include <regex>
 #include <random>
+export module HueAndSaturation;
+
 
 
 

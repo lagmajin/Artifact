@@ -1,8 +1,6 @@
 ﻿module;
 
 #include "Define/DllExportMacro.hpp"
-export module Artifact.Layers.Abstract._2D;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -36,6 +34,8 @@ export module Artifact.Layers.Abstract._2D;
 #include <numeric>
 #include <regex>
 #include <random>
+export module Artifact.Layers.Abstract._2D;
+
 
 
 

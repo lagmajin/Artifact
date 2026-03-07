@@ -1,7 +1,5 @@
 ﻿module;
 #include <cstdint>
-export module Audio.WASAPIDevice;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -35,6 +33,8 @@ export module Audio.WASAPIDevice;
 #include <numeric>
 #include <regex>
 #include <random>
+export module Audio.WASAPIDevice;
+
 
 
 

@@ -3,8 +3,6 @@ module;
 #include <QSize>
 #include <memory>
 
-export module Artifact.Composition.FindQuery;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -38,6 +36,8 @@ export module Artifact.Composition.FindQuery;
 #include <numeric>
 #include <regex>
 #include <random>
+export module Artifact.Composition.FindQuery;
+
 
 
 

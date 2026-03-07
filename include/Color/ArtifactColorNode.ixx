@@ -6,8 +6,6 @@ module;
 #include <memory>
 #include <wobjectdefs.h>
 
-export module Artifact.Color.Node;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -41,6 +39,8 @@ export module Artifact.Color.Node;
 #include <numeric>
 #include <regex>
 #include <random>
+export module Artifact.Color.Node;
+
 
 
 

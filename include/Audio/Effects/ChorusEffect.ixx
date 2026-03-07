@@ -3,8 +3,6 @@
 #include <string>
 #include <memory>
 #include <cmath>
-export module Artifact.Audio.Effects.Chorus;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -38,6 +36,8 @@ export module Artifact.Audio.Effects.Chorus;
 #include <numeric>
 #include <regex>
 #include <random>
+export module Artifact.Audio.Effects.Chorus;
+
 
 
 

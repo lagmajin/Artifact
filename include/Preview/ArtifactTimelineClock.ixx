@@ -3,8 +3,6 @@ module;
 #include <QObject>
 #include <QString>
 
-export module Artifact.Preview.Clock;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -38,6 +36,8 @@ export module Artifact.Preview.Clock;
 #include <numeric>
 #include <regex>
 #include <random>
+export module Artifact.Preview.Clock;
+
 
 
 

@@ -1,11 +1,7 @@
-module ;
 #include <string.h>
 #include <string.h>
 #include <QString>
 #include <QSize>
-
-module Composition.Settings;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -39,6 +35,10 @@ module Composition.Settings;
 #include <numeric>
 #include <regex>
 #include <random>
+module ;
+
+module Composition.Settings;
+
 
 
 

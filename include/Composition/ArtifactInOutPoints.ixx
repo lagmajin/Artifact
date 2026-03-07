@@ -6,8 +6,6 @@ module;
 #include <vector>
 #include <wobjectdefs.h>
 
-export module Artifact.Composition.InOutPoints;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -41,6 +39,8 @@ export module Artifact.Composition.InOutPoints;
 #include <numeric>
 #include <regex>
 #include <random>
+export module Artifact.Composition.InOutPoints;
+
 
 
 

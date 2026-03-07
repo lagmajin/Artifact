@@ -10,8 +10,6 @@
 #include <opencv2/opencv.hpp>
 #include <opencv2/imgproc.hpp>
 
-module Artifact.Layer.Text;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -45,6 +43,8 @@ module Artifact.Layer.Text;
 #include <numeric>
 #include <regex>
 #include <random>
+module Artifact.Layer.Text;
+
 
 
 

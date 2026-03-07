@@ -6,8 +6,6 @@
 #include <QStringList>
 #include <QListView>
 
-export module Widgets.AssetBrowser;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -41,6 +39,8 @@ export module Widgets.AssetBrowser;
 #include <numeric>
 #include <regex>
 #include <random>
+export module Widgets.AssetBrowser;
+
 
 
 //#pragma once

@@ -14,8 +14,6 @@ module;
 
 // Q_MOC_RUN skip workaround
 #ifndef Q_MOC_RUN
-module Artifact.Widgets.ColorPaletteWidget;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -49,6 +47,8 @@ module Artifact.Widgets.ColorPaletteWidget;
 #include <numeric>
 #include <regex>
 #include <random>
+module Artifact.Widgets.ColorPaletteWidget;
+
 
 
 

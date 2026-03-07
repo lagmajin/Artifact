@@ -6,8 +6,6 @@ module;
 #include <QDebug>
 #include <wobjectimpl.h>
 
-module Artifact.Effect.MotionBlur;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -41,6 +39,8 @@ module Artifact.Effect.MotionBlur;
 #include <numeric>
 #include <regex>
 #include <random>
+module Artifact.Effect.MotionBlur;
+
 
 
 

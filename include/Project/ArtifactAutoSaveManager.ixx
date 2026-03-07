@@ -3,8 +3,6 @@ module;
 #include <QString>
 #include <QTimer>
 
-export module Artifact.Project.AutoSaveManager;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -38,6 +36,8 @@ export module Artifact.Project.AutoSaveManager;
 #include <numeric>
 #include <regex>
 #include <random>
+export module Artifact.Project.AutoSaveManager;
+
 
 
 

@@ -6,8 +6,6 @@ module;
 #include <QHash>
 #include <QDebug>
 
-module Artifact.Audio.Mixer;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -41,6 +39,8 @@ module Artifact.Audio.Mixer;
 #include <numeric>
 #include <regex>
 #include <random>
+module Artifact.Audio.Mixer;
+
 
 
 

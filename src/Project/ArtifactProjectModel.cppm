@@ -5,8 +5,6 @@
 #include <QPixmap>
 #include <QColor>
 #include <QCryptographicHash>
-module Artifact.Project.Model;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -40,6 +38,8 @@ module Artifact.Project.Model;
 #include <numeric>
 #include <regex>
 #include <random>
+module Artifact.Project.Model;
+
 
 
 

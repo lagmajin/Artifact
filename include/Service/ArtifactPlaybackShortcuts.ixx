@@ -3,8 +3,6 @@ module;
 #include <memory>
 #include <wobjectdefs.h>
 
-export module Artifact.Service.PlaybackShortcuts;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -38,6 +36,8 @@ export module Artifact.Service.PlaybackShortcuts;
 #include <numeric>
 #include <regex>
 #include <random>
+export module Artifact.Service.PlaybackShortcuts;
+
 
 
 

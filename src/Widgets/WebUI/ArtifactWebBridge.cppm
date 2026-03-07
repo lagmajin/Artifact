@@ -5,8 +5,6 @@ module;
 #include <QJsonObject>
 #include <QJsonArray>
 
-module Artifact.Widgets.WebBridge;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -40,6 +38,8 @@ module Artifact.Widgets.WebBridge;
 #include <numeric>
 #include <regex>
 #include <random>
+module Artifact.Widgets.WebBridge;
+
 
 
 

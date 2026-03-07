@@ -7,8 +7,6 @@ module;
 #include <QDebug>
 #include <wobjectimpl.h>
 
-module Artifact.Render.Scheduler;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -42,6 +40,8 @@ module Artifact.Render.Scheduler;
 #include <numeric>
 #include <regex>
 #include <random>
+module Artifact.Render.Scheduler;
+
 
 
 

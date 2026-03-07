@@ -3,8 +3,6 @@ module;
 #include <QBoxLayout>
 
 
-module Artifact.Widgets.LayerEditorPanel;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -38,6 +36,8 @@ module Artifact.Widgets.LayerEditorPanel;
 #include <numeric>
 #include <regex>
 #include <random>
+module Artifact.Widgets.LayerEditorPanel;
+
 
 
 

@@ -3,8 +3,6 @@
 #include <QColor>
 #include <QHash>
 
-export module Generator.Effector;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -38,6 +36,8 @@ export module Generator.Effector;
 #include <numeric>
 #include <regex>
 #include <random>
+export module Generator.Effector;
+
 
 
 

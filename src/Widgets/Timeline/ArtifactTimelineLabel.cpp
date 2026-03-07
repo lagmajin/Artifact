@@ -2,8 +2,6 @@ module;
 #include <QLabel>
 #include <QHBoxLayout>
 #include <wobjectimpl.h>
-module Artifact.Widgets.Timeline.Label;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -37,6 +35,8 @@ module Artifact.Widgets.Timeline.Label;
 #include <numeric>
 #include <regex>
 #include <random>
+module Artifact.Widgets.Timeline.Label;
+
 
 
 

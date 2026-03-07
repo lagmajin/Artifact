@@ -3,8 +3,6 @@
 #include <QMenu>
 #include <wobjectdefs.h>
 
-export module Menu.Animation;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -38,6 +36,8 @@ export module Menu.Animation;
 #include <numeric>
 #include <regex>
 #include <random>
+export module Menu.Animation;
+
 
 
 

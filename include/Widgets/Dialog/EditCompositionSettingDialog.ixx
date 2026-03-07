@@ -1,8 +1,6 @@
 ﻿module;
 #include <wobjectdefs.h>
 #include <QDialog>
-export module Artifact.Dialog.EditComposition;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -36,6 +34,8 @@ export module Artifact.Dialog.EditComposition;
 #include <numeric>
 #include <regex>
 #include <random>
+export module Artifact.Dialog.EditComposition;
+
 
 
 import Widgets.Dialog.Abstract;

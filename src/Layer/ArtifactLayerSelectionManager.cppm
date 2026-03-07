@@ -1,8 +1,6 @@
 module;
 #include <QSet>
 #include <wobjectimpl.h>
-module Artifact.Layers.Selection.Manager;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -36,6 +34,8 @@ module Artifact.Layers.Selection.Manager;
 #include <numeric>
 #include <regex>
 #include <random>
+module Artifact.Layers.Selection.Manager;
+
 
 
 

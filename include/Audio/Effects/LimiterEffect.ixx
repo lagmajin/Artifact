@@ -4,8 +4,6 @@
 #include <memory>
 #include <cmath>
 #include <qlist>
-export module Artifact.Audio.Effects.Limiter;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -39,6 +37,8 @@ export module Artifact.Audio.Effects.Limiter;
 #include <numeric>
 #include <regex>
 #include <random>
+export module Artifact.Audio.Effects.Limiter;
+
 
 
 

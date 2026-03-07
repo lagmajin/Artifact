@@ -2,8 +2,6 @@ module;
 #include <QVector>
 #include <memory>
 #include <vector>
-export module Artifact.Audio.Effects.Base;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -37,6 +35,8 @@ export module Artifact.Audio.Effects.Base;
 #include <numeric>
 #include <regex>
 #include <random>
+export module Artifact.Audio.Effects.Base;
+
 
 
 

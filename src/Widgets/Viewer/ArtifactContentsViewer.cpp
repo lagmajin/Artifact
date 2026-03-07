@@ -13,8 +13,6 @@ module;
 #include <QScrollBar>
 #include <QDebug>
 
-module Artifact.Contents.Viewer;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -48,6 +46,8 @@ module Artifact.Contents.Viewer;
 #include <numeric>
 #include <regex>
 #include <random>
+module Artifact.Contents.Viewer;
+
 
 
 

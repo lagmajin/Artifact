@@ -3,8 +3,6 @@ module;
 #include <map>
 #include <QWidget>
 #include <QPointer>
-module Artifact.Controller.TimelineViewProvider;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -38,6 +36,8 @@ module Artifact.Controller.TimelineViewProvider;
 #include <numeric>
 #include <regex>
 #include <random>
+module Artifact.Controller.TimelineViewProvider;
+
 
 
 import Artifact.Composition.Abstract;

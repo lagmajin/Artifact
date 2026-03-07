@@ -8,8 +8,6 @@
 // #include <ofx/ofxImageEffect.h>
 #include <iostream>
 
-export module Artifact.Effect.Ofx.Host;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -43,6 +41,8 @@ export module Artifact.Effect.Ofx.Host;
 #include <numeric>
 #include <regex>
 #include <random>
+export module Artifact.Effect.Ofx.Host;
+
 
 
 

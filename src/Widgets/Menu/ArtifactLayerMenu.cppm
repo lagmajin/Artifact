@@ -4,8 +4,6 @@
 #include <QMenu>
 #include <QWidget>
 #include <QDebug>
-module Artifact.Menu.Layer;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -39,6 +37,8 @@ module Artifact.Menu.Layer;
 #include <numeric>
 #include <regex>
 #include <random>
+module Artifact.Menu.Layer;
+
 
 
  

@@ -1,8 +1,6 @@
 module;
 #include <QString>
 #include <wobjectdefs.h>
-export module Artifact.Layer.InitParams;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -36,6 +34,8 @@ export module Artifact.Layer.InitParams;
 #include <numeric>
 #include <regex>
 #include <random>
+export module Artifact.Layer.InitParams;
+
 
 
 

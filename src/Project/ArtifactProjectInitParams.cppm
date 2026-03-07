@@ -4,8 +4,6 @@ module;
 #include <QJsonObject>
 #include <QVariant>
 
-module ArtifactProjectInitParams;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -39,6 +37,8 @@ module ArtifactProjectInitParams;
 #include <numeric>
 #include <regex>
 #include <random>
+module ArtifactProjectInitParams;
+
 
 
 

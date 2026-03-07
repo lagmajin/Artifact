@@ -1,7 +1,5 @@
 ﻿module;
 
-export module Artifact.Layer.Composition;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -35,6 +33,8 @@ export module Artifact.Layer.Composition;
 #include <numeric>
 #include <regex>
 #include <random>
+export module Artifact.Layer.Composition;
+
 
 
 

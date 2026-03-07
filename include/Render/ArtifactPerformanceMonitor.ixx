@@ -2,8 +2,6 @@ module;
 #include <QLabel>
 #include <QTimer>
 
-export module Artifact.Render.PerformanceMonitor;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -37,6 +35,8 @@ export module Artifact.Render.PerformanceMonitor;
 #include <numeric>
 #include <regex>
 #include <random>
+export module Artifact.Render.PerformanceMonitor;
+
 
 
 

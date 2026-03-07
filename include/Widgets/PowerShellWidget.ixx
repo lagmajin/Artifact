@@ -1,8 +1,6 @@
 ﻿module;
 #include <QWidget>
 #include <wobjectdefs.h>
-export module Widgets.PowerShellWidget;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -36,6 +34,8 @@ export module Widgets.PowerShellWidget;
 #include <numeric>
 #include <regex>
 #include <random>
+export module Widgets.PowerShellWidget;
+
 
 
 

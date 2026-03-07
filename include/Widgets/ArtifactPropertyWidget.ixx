@@ -5,8 +5,6 @@
 #include <QScrollArea>
 #include <wobjectdefs.h>
 
-export module Artifact.Widgets.ArtifactPropertyWidget;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -40,6 +38,8 @@ export module Artifact.Widgets.ArtifactPropertyWidget;
 #include <numeric>
 #include <regex>
 #include <random>
+export module Artifact.Widgets.ArtifactPropertyWidget;
+
 
 
 

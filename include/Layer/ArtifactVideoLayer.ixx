@@ -5,8 +5,6 @@ module;
 #include <memory>
 #include <chrono>
 
-export module Artifact.Layer.Video;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -40,6 +38,8 @@ export module Artifact.Layer.Video;
 #include <numeric>
 #include <regex>
 #include <random>
+export module Artifact.Layer.Video;
+
 
 
 import Artifact.Layer.Abstract;

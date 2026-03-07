@@ -7,8 +7,6 @@
 
 //#include <winrt/impl/Windows.UI.Composition.1.h>
 
-export module Artifact.Service.Project;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -42,6 +40,8 @@ export module Artifact.Service.Project;
 #include <numeric>
 #include <regex>
 #include <random>
+export module Artifact.Service.Project;
+
 
 
 

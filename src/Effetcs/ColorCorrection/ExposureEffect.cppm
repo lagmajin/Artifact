@@ -4,8 +4,6 @@ module;
 #include <algorithm>
 #include <opencv2/opencv.hpp>
 
-module ExposureEffect;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -39,6 +37,8 @@ module ExposureEffect;
 #include <numeric>
 #include <regex>
 #include <random>
+module ExposureEffect;
+
 
 
 

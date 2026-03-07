@@ -1,6 +1,4 @@
 module;
-module Artifact.Layers.Abstract._2D;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -34,6 +32,8 @@ module Artifact.Layers.Abstract._2D;
 #include <numeric>
 #include <regex>
 #include <random>
+module Artifact.Layers.Abstract._2D;
+
 
 
 

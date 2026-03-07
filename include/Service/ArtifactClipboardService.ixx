@@ -1,7 +1,5 @@
 module;
 #include <QImage>
-export module Artifact.Service.ClipboardManager;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -35,6 +33,8 @@ export module Artifact.Service.ClipboardManager;
 #include <numeric>
 #include <regex>
 #include <random>
+export module Artifact.Service.ClipboardManager;
+
 
 
 

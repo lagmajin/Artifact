@@ -3,8 +3,6 @@
 
 #include <QObject>
 #include <QImage>
-export module Artifact.Composition.Abstract;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -38,6 +36,8 @@ export module Artifact.Composition.Abstract;
 #include <numeric>
 #include <regex>
 #include <random>
+export module Artifact.Composition.Abstract;
+
 
 
 

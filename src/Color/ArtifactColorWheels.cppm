@@ -5,8 +5,6 @@ module;
 #include <QDebug>
 #include <wobjectimpl.h>
 
-module Artifact.Color.Wheels;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -40,6 +38,8 @@ module Artifact.Color.Wheels;
 #include <numeric>
 #include <regex>
 #include <random>
+module Artifact.Color.Wheels;
+
 
 
 

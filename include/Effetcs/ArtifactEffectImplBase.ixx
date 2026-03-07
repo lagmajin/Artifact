@@ -1,7 +1,5 @@
 module;
 #include <opencv2/opencv.hpp>
-export module Artifact.Effect.ImplBase;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -35,6 +33,8 @@ export module Artifact.Effect.ImplBase;
 #include <numeric>
 #include <regex>
 #include <random>
+export module Artifact.Effect.ImplBase;
+
 
 
 

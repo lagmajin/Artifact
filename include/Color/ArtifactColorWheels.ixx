@@ -5,8 +5,6 @@ module;
 #include <array>
 #include <wobjectdefs.h>
 
-export module Artifact.Color.Wheels;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -40,6 +38,8 @@ export module Artifact.Color.Wheels;
 #include <numeric>
 #include <regex>
 #include <random>
+export module Artifact.Color.Wheels;
+
 
 
 

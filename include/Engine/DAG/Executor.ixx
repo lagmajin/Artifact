@@ -4,8 +4,6 @@ module;
 #include <future>
 #include <atomic>
 
-export module Artifact.Engine.DAG.Executor;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -39,6 +37,8 @@ export module Artifact.Engine.DAG.Executor;
 #include <numeric>
 #include <regex>
 #include <random>
+export module Artifact.Engine.DAG.Executor;
+
 
 
 

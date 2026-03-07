@@ -1,8 +1,6 @@
 ﻿module;
 #include <QtWidgets>
 
-export module Menu.MenuBar;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -36,6 +34,8 @@ export module Menu.MenuBar;
 #include <numeric>
 #include <regex>
 #include <random>
+export module Menu.MenuBar;
+
 
 
 

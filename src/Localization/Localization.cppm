@@ -3,8 +3,6 @@
 #include <unordered_map>
 #include <string>
 
-module Localization.Localization;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -38,6 +36,8 @@ module Localization.Localization;
 #include <numeric>
 #include <regex>
 #include <random>
+module Localization.Localization;
+
 
 
 import Localization.Localization;

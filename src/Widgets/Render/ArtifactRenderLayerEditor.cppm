@@ -4,8 +4,6 @@
 #include <QAction>
 #include <wobjectimpl.h>
 
-module Artifact.Widgets.RenderLayerEditor;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -39,6 +37,8 @@ module Artifact.Widgets.RenderLayerEditor;
 #include <numeric>
 #include <regex>
 #include <random>
+module Artifact.Widgets.RenderLayerEditor;
+
 
 
 import Artifact.Widgets.RenderLayerWidgetv2;

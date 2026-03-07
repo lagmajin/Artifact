@@ -5,8 +5,6 @@ module;
 #include <QPainter>
 #include <QMouseEvent>
 #include <QDebug>
-module Artifact.Widgets.SeekBar;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -40,6 +38,8 @@ module Artifact.Widgets.SeekBar;
 #include <numeric>
 #include <regex>
 #include <random>
+module Artifact.Widgets.SeekBar;
+
 
 
 

@@ -4,8 +4,6 @@ module;
 #include <vector>
 #include <wobjectimpl.h>
 
-module Artifact.Effect.Stabilizer;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -39,6 +37,8 @@ module Artifact.Effect.Stabilizer;
 #include <numeric>
 #include <regex>
 #include <random>
+module Artifact.Effect.Stabilizer;
+
 
 
 

@@ -1,7 +1,5 @@
 ﻿module;
 #include <QPointF>
-export module Artifact.Mask.Path;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -35,6 +33,8 @@ export module Artifact.Mask.Path;
 #include <numeric>
 #include <regex>
 #include <random>
+export module Artifact.Mask.Path;
+
 
 
 

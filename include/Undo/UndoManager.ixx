@@ -3,8 +3,6 @@
 #include <QString>
 #include <QVariant>
 #include <QObject>
-export module Undo.UndoManager;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -38,6 +36,8 @@ export module Undo.UndoManager;
 #include <numeric>
 #include <regex>
 #include <random>
+export module Undo.UndoManager;
+
 
 
 

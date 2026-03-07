@@ -14,8 +14,6 @@
 #include <windows.h>
 
 
-module Artifact.Render.IRenderer;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -49,6 +47,8 @@ module Artifact.Render.IRenderer;
 #include <numeric>
 #include <regex>
 #include <random>
+module Artifact.Render.IRenderer;
+
 
 
 

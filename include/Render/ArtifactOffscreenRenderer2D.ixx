@@ -9,8 +9,6 @@
 
 #include <boost/signals2.hpp>
 
-export module Artifact.Render.Offscreen;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -44,6 +42,8 @@ export module Artifact.Render.Offscreen;
 #include <numeric>
 #include <regex>
 #include <random>
+export module Artifact.Render.Offscreen;
+
 
 
 

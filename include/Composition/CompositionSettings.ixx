@@ -4,8 +4,6 @@
 #include "../ArtifactCore/include/Define/DllExportMacro.hpp"
 
 
-export module Composition.Settings;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -39,6 +37,8 @@ export module Composition.Settings;
 #include <numeric>
 #include <regex>
 #include <random>
+export module Composition.Settings;
+
 
 
 

@@ -2,8 +2,6 @@ module;
 
 #include <QString>
 
-module Artifact.Color.Settings;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -37,6 +35,8 @@ module Artifact.Color.Settings;
 #include <numeric>
 #include <regex>
 #include <random>
+module Artifact.Color.Settings;
+
 
 
 

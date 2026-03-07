@@ -2,8 +2,6 @@
 #include <wobjectdefs.h>
 #include <QList>
 #include <QString>
-module Artifact.Project.Settings;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -37,6 +35,8 @@ module Artifact.Project.Settings;
 #include <numeric>
 #include <regex>
 #include <random>
+module Artifact.Project.Settings;
+
 
 
 

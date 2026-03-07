@@ -1,8 +1,6 @@
 module;
 #include <QList>
 
-module HueAndSaturation;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -36,6 +34,8 @@ module HueAndSaturation;
 #include <numeric>
 #include <regex>
 #include <random>
+module HueAndSaturation;
+
 
 
 import Artifact.Effect.ImplBase;

@@ -4,8 +4,6 @@ module;
 #include <QVector>
 #include <QObject>
 
-export module Artifact.Audio.Mixer;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -39,6 +37,8 @@ export module Artifact.Audio.Mixer;
 #include <numeric>
 #include <regex>
 #include <random>
+export module Artifact.Audio.Mixer;
+
 
 
 

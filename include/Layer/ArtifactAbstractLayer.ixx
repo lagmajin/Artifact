@@ -10,8 +10,6 @@
 #include <QTransform>
 #include <memory>
 
-export module Artifact.Layer.Abstract;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -45,6 +43,8 @@ export module Artifact.Layer.Abstract;
 #include <numeric>
 #include <regex>
 #include <random>
+export module Artifact.Layer.Abstract;
+
 
 
 

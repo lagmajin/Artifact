@@ -1,8 +1,6 @@
 module;
 #include <QObject>
 #include <QString>
-export module Artifact.PreviewController;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -36,6 +34,8 @@ export module Artifact.PreviewController;
 #include <numeric>
 #include <regex>
 #include <random>
+export module Artifact.PreviewController;
+
 
 
 
