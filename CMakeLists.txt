@@ -24,10 +24,8 @@ file(GLOB_RECURSE APP_MODULES CONFIGURE_DEPENDS
 add_executable(Artifact WIN32)
 
 target_sources(Artifact
-    PRIVATE 
-        ${APP_IMPL}
     PUBLIC 
-        FILE_SET CXX_MODULES FILES ${APP_MODULES}
+        FILE_SET CXX_MODULES FILES ${APP_MODULES} ${APP_IMPL}
 )
 
 # MSVC フラグ
