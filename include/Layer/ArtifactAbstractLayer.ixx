@@ -93,7 +93,7 @@ export namespace Artifact {
   void setComposition(ArtifactAbstractComposition* comp);
   ArtifactAbstractComposition* composition() const;
 
-  virtual void render(ArtifactIRenderer* renderer) = 0;
+  virtual void draw(ArtifactIRenderer* renderer) = 0;
 
   LAYER_BLEND_TYPE layerBlendType() const;
   void setBlendMode(LAYER_BLEND_TYPE type);

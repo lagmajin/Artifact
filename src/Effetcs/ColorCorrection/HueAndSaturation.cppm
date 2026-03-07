@@ -2,14 +2,21 @@
 
 #include <cmath>
 #include <algorithm>
+#include <QVariant>
+#include <QList>
 #include <opencv2/opencv.hpp>
 
 module HueAndSaturation;
 
 import std;
 import Color.Conversion;
+import Image.ImageF32x4_RGBA;
+import Utils.String.UniString;
+import Property.Abstract;
 
 namespace Artifact {
+
+using namespace ArtifactCore;
 
 class HueAndSaturation::Impl {
 public:
@@ -102,12 +109,25 @@ void HueAndSaturation::apply(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAW
 }
 
 std::vector<AbstractProperty> HueAndSaturation::getProperties() const {
-    return {
-        {"Hue", impl_->hue},
-        {"Saturation", impl_->saturation},
-        {"Lightness", impl_->lightness},
-        {"Colorize", impl_->colorize}
-    };
+    std::vector<AbstractProperty> props(4);
+    
+    props[0].setName("Hue");
+    props[0].setValue(impl_->hue);
+    props[0].setType(PropertyType::Float);
+    
+    props[1].setName("Saturation");
+    props[1].setValue(impl_->saturation);
+    props[1].setType(PropertyType::Float);
+    
+    props[2].setName("Lightness");
+    props[2].setValue(impl_->lightness);
+    props[2].setType(PropertyType::Float);
+    
+    props[3].setName("Colorize");
+    props[3].setValue(impl_->colorize);
+    props[3].setType(PropertyType::Boolean);
+
+    return props;
 }
 
 void HueAndSaturation::setPropertyValue(const UniString& name, const QVariant& value) {

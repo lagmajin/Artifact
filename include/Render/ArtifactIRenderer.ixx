@@ -28,8 +28,10 @@ export namespace Artifact
    void createSwapChain(QWidget* widget);
    void recreateSwapChain(QWidget* widget);
    virtual void drawSprite(float x,float y,float w,float h);
+   virtual void drawSprite(float x, float y, float w, float h, const QImage& image);
    virtual void drawSprite(float2 pos, float2 size);
    virtual void drawSolidRect(float x, float y, float w, float h);
+   virtual void drawSolidRect(int x, int y, float w, float h, const FloatColor& color);
    virtual void drawSolidRect(float2 pos, float2 size,const FloatColor& color);
    virtual void drawRectOutline(float x, float y, float w, float h, const FloatColor& color);
    virtual void drawRectOutline(float2 pos, float2 size, const FloatColor& color);
@@ -61,7 +63,8 @@ export namespace Artifact
  
   virtual void setUpscaleConfig(bool enable, float sharpness = 0.5f);
  
-   
+
+  virtual void setClearColor(const FloatColor& color);
   void clear();
   void flush();
   void present();

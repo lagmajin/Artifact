@@ -1,4 +1,4 @@
-ï»¿module;
+module;
 
 #include <QWidget>
 #include <QLabel>
@@ -300,8 +300,6 @@ W_OBJECT_IMPL(ArtifactTimelineWidget)
   public:
    Impl();
    ~Impl();
-    Impl();
-    ~Impl();
     ArtifactTimelineBottomLabel* timelineLabel_ = nullptr;
     ArtifactLayerTimelinePanelWrapper* layerTimelinePanel_ = nullptr;
     TimelineTrackView* trackView_ = nullptr;  // Right-side timeline view
@@ -343,12 +341,12 @@ W_OBJECT_IMPL(ArtifactTimelineWidget)
   auto leftSplitter = new DraggableSplitter(Qt::Horizontal);
   //leftSplitter->addWidget(iconView);
   leftSplitter->addWidget(layerTreeView);
-  leftSplitter->setStretchFactor(0, 0); // ã‚¢ã‚¤ã‚³ãƒ³åˆ—ã¯å›ºå®š
-  leftSplitter->setStretchFactor(1, 1); // åå‰åˆ—ã¯ä¼¸ç¸®å¯èƒ½
+  leftSplitter->setStretchFactor(0, 0); // ƒAƒCƒRƒ“—ñ‚ÍŒÅ’è
+  leftSplitter->setStretchFactor(1, 1); // –¼‘O—ñ‚ÍLk‰Â”\
 
-  auto leftHeader = new ArtifactTimeCodeWidget(); // ã‚¿ã‚¤ãƒ ã‚³ãƒ¼ãƒ‰
-  auto searchBar = new ArtifactTimelineSearchBarWidget(); // æ¤œç´¢ãƒãƒ¼
-  auto globalSwitches = new ArtifactTimelineGlobalSwitches(); // AEé¢¨ãƒœã‚¿ãƒ³ç¾¤
+  auto leftHeader = new ArtifactTimeCodeWidget(); // ƒ^ƒCƒ€ƒR[ƒh
+  auto searchBar = new ArtifactTimelineSearchBarWidget(); // ŒŸõƒo[
+  auto globalSwitches = new ArtifactTimelineGlobalSwitches(); // AE•—ƒ{ƒ^ƒ“ŒQ
 
   auto searchBarLayout = new QHBoxLayout();
   searchBarLayout->setSpacing(8);
@@ -364,7 +362,7 @@ W_OBJECT_IMPL(ArtifactTimelineWidget)
                     this, &ArtifactTimelineWidget::onShyChanged);
   
   auto headerWidget = new QWidget();
-  headerWidget->setLayout(searchBarLayout);
+  headerWidget->setLayout(searchBarLayout); headerWidget->setFixedHeight(28); headerWidget->setFixedHeight(28);
 
   auto leftLayout = new QVBoxLayout();
   leftLayout->setSpacing(0);
@@ -387,17 +385,17 @@ W_OBJECT_IMPL(ArtifactTimelineWidget)
     auto timelineTrackView = impl_->trackView_ = new TimelineTrackView();
  
     // Sync Ruler and WorkArea
-    QObject::connect(timeRulerWidget, &ArtifactTimelineRulerWidget::startChanged, workAreaWidget, &WorkAreaControl::setStart);
-    QObject::connect(timeRulerWidget, &ArtifactTimelineRulerWidget::endChanged, workAreaWidget, &WorkAreaControl::setEnd);
-    QObject::connect(workAreaWidget, &WorkAreaControl::startChanged, timeRulerWidget, &ArtifactTimelineRulerWidget::setStart);
-    QObject::connect(workAreaWidget, &WorkAreaControl::endChanged, timeRulerWidget, &ArtifactTimelineRulerWidget::setEnd);
+    // Sync disabled
+    
+    
+    
  
     // Zoom/Scale Integration
     auto updateZoom = [this]() {
       if (!impl_->trackView_ || !impl_->workArea_) return;
       double duration = impl_->trackView_->duration();
-      float s = impl_->workArea_->start;
-      float e = impl_->workArea_->end;
+      float s = impl_->ruler_->startValue();
+      float e = impl_->ruler_->endValue();
       double range = std::max(0.01f, e - s);
       
       int viewW = impl_->trackView_->viewport()->width();
@@ -411,8 +409,8 @@ W_OBJECT_IMPL(ArtifactTimelineWidget)
       }
     };
 
-    QObject::connect(workAreaWidget, &WorkAreaControl::startChanged, this, updateZoom);
-    QObject::connect(workAreaWidget, &WorkAreaControl::endChanged, this, updateZoom);
+    QObject::connect(timeRulerWidget, &ArtifactTimelineRulerWidget::startChanged, this, updateZoom);
+    QObject::connect(timeRulerWidget, &ArtifactTimelineRulerWidget::endChanged, this, updateZoom);
 
     impl_->trackView_ = timelineTrackView;  // Store reference for layer creation
   //auto layerTimelinePanel = new ArtifactLayerTimelinePanelWrapper();
@@ -437,7 +435,7 @@ W_OBJECT_IMPL(ArtifactTimelineWidget)
 
 
 
-  // å…¨ä½“ã®ã‚¿ã‚¤ãƒ ãƒ©ã‚¤ãƒ³ã‚¹ãƒ—ãƒªãƒƒã‚¿ãƒ¼
+  // ‘S‘Ì‚Ìƒ^ƒCƒ€ƒ‰ƒCƒ“ƒXƒvƒŠƒbƒ^[
   auto mainSplitter = new QSplitter(Qt::Horizontal);
   mainSplitter->setStyleSheet(R"(
     QSplitter::handle {
@@ -498,7 +496,7 @@ W_OBJECT_IMPL(ArtifactTimelineWidget)
      auto res = svc->findComposition(id);
      if (res.success && !res.ptr.expired()) {
       auto comp = res.ptr.lock();
-      impl_->trackView_->setDuration(static_cast<double>(comp->frameRange().duration().toFrame()));
+      impl_->trackView_->setDuration(static_cast<double>(comp->frameRange().duration()));
        
       auto layers = comp->allLayer();
       for (const auto& l : layers) {
@@ -984,8 +982,8 @@ TimelineTrackView::TimelineTrackView(QWidget* parent /*= nullptr*/) :QGraphicsVi
 
  ArtifactTimelineIconView::ArtifactTimelineIconView(QWidget* parent /*= nullptr*/) :QTreeView(parent)
  {
-  //setHeaderHidden(true); // ãƒ˜ãƒƒãƒ€ãƒ¼éè¡¨ç¤ºã‚‚å¯
-  setColumnWidth(0, 16); // ã‚¢ã‚¤ã‚³ãƒ³åˆ—å¹…
+  //setHeaderHidden(true); // ƒwƒbƒ_[”ñ•\¦‚à‰Â
+  setColumnWidth(0, 16); // ƒAƒCƒRƒ“—ñ•
   setColumnWidth(1, 16);
   setColumnWidth(2, 16);
   setColumnWidth(3, 16);

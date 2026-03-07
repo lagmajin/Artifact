@@ -30,9 +30,9 @@ namespace Artifact
 
  ArtifactTimeCodeWidget::ArtifactTimeCodeWidget(QWidget* parent /*= nullptr*/) : QWidget(parent), impl_(new Impl())
  {
-  auto layout = new QVBoxLayout();
-  layout->setSpacing(0);
-  layout->setContentsMargins(10, 4, 10, 4);
+  auto layout = new QHBoxLayout();
+  layout->setSpacing(8);
+  layout->setContentsMargins(8, 2, 8, 2);
   layout->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
   
   impl_->timecodeLabel_->setObjectName("timeLabel");
@@ -42,6 +42,7 @@ namespace Artifact
   layout->addWidget(impl_->frameNumberLabel_);
 
   setLayout(layout);
+  setFixedHeight(28);
 
   setAttribute(Qt::WA_StyledBackground, true);
 
@@ -51,13 +52,13 @@ namespace Artifact
    "}"
    "QLabel#timeLabel {"
    "  font-family: 'Consolas', 'Courier New', monospace;"
-   "  font-size: 14px;"
+   "  font-size: 12px;"
    "  font-weight: bold;"
    "  color: #5EA7EE;"
    "}"
    "QLabel#frameLabel {"
    "  font-family: 'Consolas', 'Courier New', monospace;"
-   "  font-size: 11px;"
+   "  font-size: 9px;"
    "  color: #777777;"
    "}"
   );
@@ -115,13 +116,14 @@ namespace Artifact
   : QWidget(parent), impl_(new Impl())
  {
   auto layout = new QHBoxLayout(this);
-  layout->setSpacing(0);
-  layout->setContentsMargins(4, 2, 4, 2);
+  layout->setSpacing(8);
+  layout->setContentsMargins(4, 0, 4, 0);
 
   impl_->searchLineEdit_->setObjectName("timelineSearchBox");
   
   // Set a clear button equivalent
   impl_->searchLineEdit_->setClearButtonEnabled(true);
+  setFixedHeight(28);
 
   layout->addWidget(impl_->searchLineEdit_);
 
@@ -137,7 +139,7 @@ namespace Artifact
    "  border: 1px solid #3E3E3E;"
    "  border-radius: 10px;"
    "  padding: 0px 8px;"
-   "  font-size: 11px;"
+   "  font-size: 9px;"
    "}"
    "QLineEdit#timelineSearchBox:focus {"
    "  border: 1px solid #007ACC;"

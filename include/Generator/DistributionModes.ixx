@@ -28,7 +28,7 @@ enum class TransformSpace
 };
 
 // Spline用単純な曲線クラス（実装-placeholder）
-class SimpleSpline
+export class SimpleSpline
 {
 public:
     struct Point

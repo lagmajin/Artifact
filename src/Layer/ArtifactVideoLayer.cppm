@@ -650,7 +650,7 @@ std::shared_ptr<ArtifactVideoLayer> ArtifactVideoLayer::fromJson(const QJsonObje
 }
 
 // === Overrides ===
-void ArtifactVideoLayer::draw()
+void ArtifactVideoLayer::draw(ArtifactIRenderer* renderer)
 {
     if (!impl_->videoEnabled_ || !impl_->isLoaded_) return;
     
@@ -660,8 +660,14 @@ void ArtifactVideoLayer::draw()
         decodeCurrentFrame();
     }
     
-    // TODO: Integrate with rendering pipeline
-    // For now, just ensure frame is decoded
+    if (impl_->currentFrameData_.empty()) return;
+
+    cv::Mat bgra;
+    cv::cvtColor(impl_->currentFrameData_, bgra, cv::COLOR_BGR2BGRA);
+    QImage img((uchar*)bgra.data, bgra.cols, bgra.rows, bgra.step, QImage::Format_RGBA8888);
+    
+    auto size = sourceSize();
+    renderer->drawSprite(0.0f, 0.0f, (float)size.width, (float)size.height, img);
 }
 
 bool ArtifactVideoLayer::hasVideo() const

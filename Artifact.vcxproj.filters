@@ -63,7 +63,6 @@
     <ClCompile Include="include\Widgets\Timeline\TimelineScaleWidget.ixx" />
     <ClCompile Include="src\Controller\TimelineViewProvider.cpp" />
     <ClCompile Include="src\Effetcs\Blur\GauusianBlur.cpp" />
-    <ClCompile Include="src\Effetcs\ColorCorrection\HueAndSaturation.cpp" />
     <ClCompile Include="src\Effetcs\Glow\GlowEffect.cpp" />
     <ClCompile Include="src\Effetcs\Glow\NoiseEffect.cppm" />
     <ClCompile Include="src\Generator\GeneratorManager.cppm" />
@@ -207,9 +206,6 @@
     </ClCompile>
     <ClCompile Include="src\Composition\ArtifactCompositionSetting.cpp">
       <Filter>src</Filter>
-    </ClCompile>
-    <ClCompile Include="include\Widgets\Render\ArtifactDiligentEngineRenderWidget.ixx">
-      <Filter>include</Filter>
     </ClCompile>
     <ClCompile Include="include\Widgets\Render\ArtifactCompositionViewerFooter.ixx">
       <Filter>include</Filter>
@@ -358,9 +354,6 @@
       <Filter>src\Widgets</Filter>
     </ClCompile>
     <ClCompile Include="src\Widgets\ArtifactCurveEditorWidget.cppm">
-      <Filter>src\Widgets</Filter>
-    </ClCompile>
-    <ClCompile Include="include\Widgets\Render\ArtifactDiligentEngineRenderWidget.cpp">
       <Filter>src\Widgets</Filter>
     </ClCompile>
     <ClCompile Include="src\Widgets\Render\ArtifactDiligentEngineRenderWindow.cpp">
@@ -894,6 +887,12 @@
     <ClCompile Include="src\Widgets\ArtifactExpressionCopilotWidget.cppm" />
     <ClCompile Include="src\Widgets\ArtifactCompositionGraphWidget.cppm" />
     <ClCompile Include="include\Widgets\Render\ArtifactViewportCamera.ixx" />
+    <ClCompile Include="include\Effetcs\Clone\CloneCore.ixx" />
+    <ClCompile Include="include\Generator\DistributionModes.ixx" />
+    <ClCompile Include="include\Render\ViewerHelperShaders.ixx" />
+    <ClCompile Include="include\Widgets\Render\ArtifactCompositionRenderWidget.ixx" />
+    <ClCompile Include="src\Effetcs\ColorCorrection\HueAndSaturation.cppm" />
+    <ClCompile Include="src\Widgets\Render\ArtifactCompositionRenderWidget.cppm" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Generated\TestService.h" />

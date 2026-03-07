@@ -1,6 +1,8 @@
-module;
+﻿module;
 #include <wobjectimpl.h>
 #include <QMetaObject>
+#include <qlogging.h>
+#include <QDebug>
 module Artifact.Service.ActiveContext;
 
 import std;
@@ -65,12 +67,12 @@ namespace Artifact
 
  void ArtifactActiveContextService::nextFrame() {
   if (impl_->handler_) QMetaObject::invokeMethod(impl_->handler_, "nextFrame");
-  else if (impl_->activeComp_) impl_->activeComp_->goToFrame(impl_->activeComp_->framePosition().currentFrame() + 1);
+  else if (impl_->activeComp_) impl_->activeComp_->goToFrame(impl_->activeComp_->framePosition().framePosition() + 1);
  }
 
  void ArtifactActiveContextService::prevFrame() {
   if (impl_->handler_) QMetaObject::invokeMethod(impl_->handler_, "prevFrame");
-  else if (impl_->activeComp_) impl_->activeComp_->goToFrame(impl_->activeComp_->framePosition().currentFrame() - 1);
+  else if (impl_->activeComp_) impl_->activeComp_->goToFrame(impl_->activeComp_->framePosition().framePosition() - 1);
  }
 
  void ArtifactActiveContextService::goToStart() {
@@ -93,7 +95,7 @@ namespace Artifact
   auto l = ArtifactApplicationManager::instance()->layerSelectionManager()->currentLayer();
   if (l && impl_->activeComp_) {
    l->setInPoint(impl_->activeComp_->framePosition());
-   qDebug() << "[ActiveContext] Set In for" << l->layerName() << "to" << impl_->activeComp_->framePosition().currentFrame();
+   qDebug() << "[ActiveContext] Set In for" << l->layerName() << "to" << impl_->activeComp_->framePosition().framePosition();
   }
  }
 

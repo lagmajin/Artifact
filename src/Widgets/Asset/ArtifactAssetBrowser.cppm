@@ -28,6 +28,9 @@
 #include <QSlider>
 #include <QGroupBox>
 #include <QGridLayout>
+#include <opencv2/opencv.hpp>
+#include <opencv2/videoio.hpp>
+#include <opencv2/imgproc.hpp>
 #include <QHBoxLayout>
 #include <wobjectimpl.h>
 

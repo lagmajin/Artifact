@@ -6,12 +6,13 @@ module;
 
 export module Generator.Clone;
 
+import Generator.DistributionModes;
+import Artifact.Effect.Clone.Core;
+import std;
+
 export namespace Artifact
 {
 
-// 前方宣言
-export enum class DistributionMode;
-export enum class TransformSpace;
 export class SimpleSpline;
 
  class CloneGenerator
@@ -84,6 +85,7 @@ export class SimpleSpline;
 
   // 変換行列生成
   virtual QVector<QMatrix4x4> generateTransforms() const;
+  virtual std::vector<CloneData> generateCloneData() const;
  };
 
 };

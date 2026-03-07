@@ -99,14 +99,11 @@ FloatRGBA ArtifactTextLayer::textColor() const
     return impl_->color_;
 }
 
-void ArtifactTextLayer::draw()
+void ArtifactTextLayer::draw(ArtifactIRenderer* renderer)
 {
     // Text layer drawing implementation
     // This would typically render the text to the current render target
     // For now, we can call updateImage() to ensure the image is up to date
-    // Ensure updateImage is available; implement a simple fallback if missing
-    // Ensure the layer has an updated image; if implementation missing,
-    // provide a simple local implementation to avoid link errors.
     updateImage();
 }
 

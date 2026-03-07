@@ -56,7 +56,8 @@ namespace  Artifact
   setSourceSize(Size_2D(width, height));
  }
 
- void ArtifactSolid2DLayer::render(ArtifactIRenderer* renderer)
+ void ArtifactSolid2DLayer::draw(ArtifactIRenderer* renderer)
+
  {
   auto size = sourceSize();
   renderer->drawSolidRect(0, 0, (float)size.width, (float)size.height, impl_->color());

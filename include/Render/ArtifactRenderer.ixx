@@ -1,5 +1,6 @@
 ﻿module;
 #include <wobjectdefs.h>
+#include <wobjectimpl.h>
 #include <QObject>
 export module Render;
 
@@ -28,6 +29,8 @@ export namespace Artifact {
         ~Impl();
     };
  };
+
+ W_OBJECT_IMPL(ArtifactRenderer)
 
  inline ArtifactRenderer::ArtifactRenderer(QObject* parent)
     : QObject(parent), impl_(new Impl()) {

@@ -1,8 +1,10 @@
 module;
+#include <cstdint>
 
 export module Artifact.Preview.Pipeline;
 import Artifact.Composition.Abstract;
 import Artifact.Render.IRenderer;
+import Utils.Id;
 
 export namespace Artifact
 {

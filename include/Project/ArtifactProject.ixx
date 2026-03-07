@@ -1,4 +1,4 @@
-Ôªømodule;
+module;
 
 //#include <memory>
 #include <QObject>
@@ -66,7 +66,7 @@ export namespace Artifact {
   void setProjectName(const QString& name);
   void setAuthor(const QString& author);
 
-  // AIÂêë„Åë„É°„Çø„Éá„Éº„Çø
+  // AIå¸ÇØÉÅÉ^ÉfÅ[É^
   void setAIDescription(const QString& description);
   QString aiDescription() const;
   void setAITags(const QStringList& tags);
@@ -74,7 +74,8 @@ export namespace Artifact {
   void setAINotes(const QString& notes);
   QString aiNotes() const;
 
-  FindCompositionResult findComposition(const CompositionID& id);
+  void createCompositions(const QStringList& names);
+   FindCompositionResult findComposition(const CompositionID& id);
 
   // Layer management
   ArtifactLayerResult createLayerAndAddToComposition(const CompositionID& compositionId, ArtifactLayerInitParams& params);

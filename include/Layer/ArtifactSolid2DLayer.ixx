@@ -22,7 +22,7 @@ export namespace Artifact
   void setColor(const FloatColor& color);
   void setSize(int width, int height);
 
-  void render(ArtifactIRenderer* renderer) override;
+  void draw(ArtifactIRenderer* renderer) override;
 
  };
 

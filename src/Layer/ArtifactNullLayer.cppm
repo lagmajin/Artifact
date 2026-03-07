@@ -35,7 +35,7 @@ namespace Artifact {
   delete impl_;
  }
 
- void ArtifactNullLayer::draw()
+ void ArtifactNullLayer::draw(ArtifactIRenderer* renderer)
  {
   //throw std::logic_error("The method or operation is not implemented.");
  }

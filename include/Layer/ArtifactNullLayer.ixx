@@ -24,7 +24,7 @@ export namespace Artifact {
   ArtifactNullLayer();
   ~ArtifactNullLayer();
 
-  void draw() override;
+  void draw(ArtifactIRenderer* renderer) override;
 
 
   bool isAdjustmentLayer() const override;
