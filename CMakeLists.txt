@@ -93,6 +93,9 @@ target_link_libraries(Artifact PRIVATE glm::glm)
 find_package(Stb REQUIRED)
 target_include_directories(Artifact PRIVATE ${Stb_INCLUDE_DIR})
 
+find_package(assimp REQUIRED)
+target_link_libraries(Artifact PRIVATE assimp::assimp)
+
 find_package(Boost REQUIRED COMPONENTS iostreams)
 target_link_libraries(Artifact PRIVATE Boost::iostreams)
 
