@@ -2,7 +2,7 @@
 #include <wobjectdefs.h>
 #include <wobjectimpl.h>
 #include <QObject>
-export module Render;
+export module Artifact.Render.Renderer;
 
 
 export namespace Artifact {

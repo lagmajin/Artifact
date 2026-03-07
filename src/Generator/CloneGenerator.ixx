@@ -7,7 +7,7 @@ module;
 #include <random>
 #include <memory>
 
-export module Generator.Clone;
+module Generator.Clone;
 
 import std;
 import Artifact.Effect.Clone.Core;

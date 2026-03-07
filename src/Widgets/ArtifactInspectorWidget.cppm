@@ -43,6 +43,8 @@ import Artifact.Effect.LayerTransform.Transform2D;
 import Artifact.Effect.Rasterizer.Blur;
 import Artifact.Effect.Rasterizer.DropShadow;
 import Artifact.Effect.Glow;
+import Artifact.Effect.Wave;
+import Artifact.Effect.Spherize;
 
 namespace Artifact {
 
@@ -349,6 +351,8 @@ void ArtifactInspectorWidget::Impl::updatePropertiesForEffect(const QString& eff
            effectMenu.addAction("Blur", [addAndRefresh]() { addAndRefresh(std::make_shared<BlurEffect>()); });
            effectMenu.addAction("Glow", [addAndRefresh]() { addAndRefresh(std::make_shared<GlowEffect>()); });
            effectMenu.addAction("Drop Shadow", [addAndRefresh]() { addAndRefresh(std::make_shared<DropShadowEffect>()); });
+           effectMenu.addAction("Wave", [addAndRefresh]() { addAndRefresh(std::make_shared<WaveEffect>()); });
+           effectMenu.addAction("Spherize", [addAndRefresh]() { addAndRefresh(std::make_shared<SpherizeEffect>()); });
            break;
       case EffectPipelineStage::LayerTransform:
           effectMenu.addAction("Transform 2D", [addAndRefresh]() { addAndRefresh(std::make_shared<LayerTransform2D>()); });

@@ -6,7 +6,7 @@ module;
 #include <QImage>
 #include <QDebug>
 
-export module Artifact.Render.Offscreen;
+module Artifact.Render.Offscreen;
 
 import Artifact.Render.IRenderer;
 import Artifact.Composition.Abstract;
