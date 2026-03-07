@@ -1,7 +1,7 @@
 ﻿module;
-#include <DiligentCore/Graphics/GraphicsEngine/interface/EngineFactory.h>
-#include <DiligentCore/Graphics/GraphicsEngineD3D12/interface/EngineFactoryD3D12.h>
-#include <DiligentCore/Graphics/GraphicsEngine/interface/PipelineState.h>
+#include <EngineFactory.h>
+#include <EngineFactoryD3D12.h>
+#include <PipelineState.h>
 #include <wobjectimpl.h>
 #include <windows.h>
 
