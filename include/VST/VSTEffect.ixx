@@ -57,7 +57,7 @@ public:
     bool isPluginLoaded() const;
     
     // ArtifactAbstractAudioEffect インターフェース
-    void process(ArtifactCore::AudioSegment& segment) override;
+    void process(ArtifactCore::AudioSegment& segment, const ArtifactCore::AudioSegment* sideChain = nullptr) override;
     std::string getName() const override { return "VST Effect"; }
     std::string getDescription() const override { return "VST plugin effect"; }
     

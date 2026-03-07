@@ -1,13 +1,15 @@
-module;
+﻿module;
 #include <wobjectimpl.h>
 #include <QVBoxLayout>
 #include <QDebug>
 #include <QUrl>
 
 // QWebEngine includes — require `QT += webenginewidgets webchannel` in build
+#ifdef USE_WEBENGINE
 #include <QWebEngineView>
 #include <QWebEnginePage>
 #include <QWebChannel>
+#endif
 
 module Artifact.Widgets.WebUIHost;
 

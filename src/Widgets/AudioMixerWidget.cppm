@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <QWidget>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -17,7 +17,6 @@ import Audio.Bus;
 import Audio.Mixer;
 import Artifact.VST.Effect;
 import Artifact.VST.Host;
-import std;
 
 namespace Artifact {
 
@@ -239,9 +238,13 @@ void AudioChannelStripWidget::paintEvent(QPaintEvent* event) {
     int fillH = static_cast<int>(peakNorm * meterH);
     painter.fillRect(meterX, meterY + meterH - fillH, meterW, fillH, grad);
 
-    // Peak Hold (簡易線)
-    painter.setPen(QPen(Qt::white, 1));
-    painter.drawLine(meterX, meterY + meterH - fillH, meterX + meterW, meterY + meterH - fillH);
+    // 5. Gain Reduction Meter (Orange bar, top-down)
+    float gr = bus_->getGainReduction(); // 0.0 ~ 1.0 (1.0 = no reduction)
+    if (gr < 0.99f) {
+        int grX = meterX - 8;
+        int grFillH = static_cast<int>((1.0f - gr) * meterH);
+        painter.fillRect(grX, meterY, 4, grFillH, QColor(255, 128, 0));
+    }
 }
 
 // ============================================================================

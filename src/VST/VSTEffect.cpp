@@ -129,7 +129,7 @@ bool VSTEffect::isPluginLoaded() const {
     return impl_->isLoaded;
 }
 
-void VSTEffect::process(ArtifactCore::AudioSegment& segment) {
+void VSTEffect::process(ArtifactCore::AudioSegment& segment, const ArtifactCore::AudioSegment* sideChain) {
     if (!impl_->isLoaded || impl_->pluginId < 0) {
         return;
     }
