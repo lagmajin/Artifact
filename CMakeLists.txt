@@ -48,8 +48,13 @@ target_include_directories(Artifact
         "${CMAKE_CURRENT_SOURCE_DIR}/include"
         "${CMAKE_CURRENT_SOURCE_DIR}/../third_party"
         "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/verdigris/src"
-        "${VCPKG_INSTALLED}/include/python3.12"
         "C:/Program Files/dotnet/packs/Microsoft.NETCore.App.Host.win-x64/9.0.5/runtimes/win-x64/native"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../libs/DiligentEngine/DiligentCore/Graphics/GraphicsEngine/interface"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../libs/DiligentEngine/DiligentCore/Graphics/GraphicsEngineD3D12/interface"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../libs/DiligentEngine/DiligentCore/Common/interface"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../libs/DiligentEngine/DiligentCore/Platforms/interface"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../libs/DiligentEngine/DiligentCore/Primitives/interface"
+        "${VCPKG_INSTALLED}/include/qtadvanceddocking-qt6"
 )
 
 # ---------------------------------------------------------------------------
@@ -68,11 +73,11 @@ target_link_libraries(Artifact PRIVATE
 )
 
 # Qt6
-find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Network Multimedia HINTS "${VCPKG_INSTALLED}/share/Qt6")
+find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Network Multimedia)
 target_link_libraries(Artifact PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network Qt6::Multimedia)
 
 # OpenCV
-find_package(OpenCV REQUIRED HINTS "${OPENCV_BUILD_DIR}")
+find_package(OpenCV REQUIRED)
 target_link_libraries(Artifact PRIVATE ${OpenCV_LIBS})
 
 # OpenMP
