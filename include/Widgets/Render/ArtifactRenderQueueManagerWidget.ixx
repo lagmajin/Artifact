@@ -4,8 +4,6 @@ module;
 
 
 
-export module Artifact.Widgets.Render.QueueManager;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -39,6 +37,8 @@ export module Artifact.Widgets.Render.QueueManager;
 #include <numeric>
 #include <regex>
 #include <random>
+export module Artifact.Widgets.Render.QueueManager;
+
 
 
 

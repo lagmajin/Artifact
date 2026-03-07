@@ -4,8 +4,6 @@ module;
 #include <QVector>
 #include <QMap>
 
-export module Artifact.Project.Statistics;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -39,6 +37,8 @@ export module Artifact.Project.Statistics;
 #include <numeric>
 #include <regex>
 #include <random>
+export module Artifact.Project.Statistics;
+
 
 
 

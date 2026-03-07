@@ -6,8 +6,6 @@
 // OpenCV is used in CPU implementation; include in implementation scope
 #include <opencv2/opencv.hpp>
 
-module Artifact.Effect.Keying.ChromaKey;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -41,6 +39,8 @@ module Artifact.Effect.Keying.ChromaKey;
 #include <numeric>
 #include <regex>
 #include <random>
+module Artifact.Effect.Keying.ChromaKey;
+
 
 
 

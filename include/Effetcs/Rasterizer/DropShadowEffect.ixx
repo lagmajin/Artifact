@@ -2,8 +2,6 @@
 #include <QString>
 #include <QColor>
 
-export module Artifact.Effect.Rasterizer.DropShadow;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -37,6 +35,8 @@ export module Artifact.Effect.Rasterizer.DropShadow;
 #include <numeric>
 #include <regex>
 #include <random>
+export module Artifact.Effect.Rasterizer.DropShadow;
+
 
 
 

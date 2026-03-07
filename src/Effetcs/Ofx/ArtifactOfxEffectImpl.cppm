@@ -6,8 +6,6 @@
 
 
 
-export module Artifact.Effect.Ofx.Impl;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -41,6 +39,8 @@ export module Artifact.Effect.Ofx.Impl;
 #include <numeric>
 #include <regex>
 #include <random>
+export module Artifact.Effect.Ofx.Impl;
+
 
 
 

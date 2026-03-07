@@ -3,8 +3,6 @@
 #include <QVariant>
 #include <opencv2/core/mat.hpp>
 
-module Artifact.Effect.Glow;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -38,6 +36,8 @@ module Artifact.Effect.Glow;
 #include <numeric>
 #include <regex>
 #include <random>
+module Artifact.Effect.Glow;
+
 
 
 

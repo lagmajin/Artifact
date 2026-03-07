@@ -4,8 +4,6 @@ module;
 #include <QVector>
 #include <QColor>
 
-export module Artifact.Layer.Group;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -39,6 +37,8 @@ export module Artifact.Layer.Group;
 #include <numeric>
 #include <regex>
 #include <random>
+export module Artifact.Layer.Group;
+
 
 
 

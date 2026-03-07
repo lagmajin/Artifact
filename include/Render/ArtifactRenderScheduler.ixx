@@ -8,8 +8,6 @@ module;
 #include <functional>
 #include <wobjectdefs.h>
 
-export module Artifact.Render.Scheduler;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -43,6 +41,8 @@ export module Artifact.Render.Scheduler;
 #include <numeric>
 #include <regex>
 #include <random>
+export module Artifact.Render.Scheduler;
+
 
 
 

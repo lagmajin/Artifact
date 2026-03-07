@@ -1,8 +1,6 @@
 ﻿module;
 #include <wobjectdefs.h>
 #include <QStandardItemModel>
-export module Artifact.Project.Model;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -36,6 +34,8 @@ export module Artifact.Project.Model;
 #include <numeric>
 #include <regex>
 #include <random>
+export module Artifact.Project.Model;
+
 
 
 

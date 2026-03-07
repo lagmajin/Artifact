@@ -6,8 +6,6 @@ module;
 #include <vector>
 #include <wobjectdefs.h>
 
-export module Artifact.Audio.Waveform;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -41,6 +39,8 @@ export module Artifact.Audio.Waveform;
 #include <numeric>
 #include <regex>
 #include <random>
+export module Artifact.Audio.Waveform;
+
 
 
 

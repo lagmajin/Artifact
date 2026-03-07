@@ -3,8 +3,6 @@
 #include <QElapsedTimer>
 #include <wobjectimpl.h>
 
-module Artifact.Service.Playback;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -38,6 +36,8 @@ module Artifact.Service.Playback;
 #include <numeric>
 #include <regex>
 #include <random>
+module Artifact.Service.Playback;
+
 
 
 

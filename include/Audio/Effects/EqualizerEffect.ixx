@@ -2,8 +2,6 @@ module;
 #include <vector>
 #include <string>
 #include <memory>
-export module Artifact.Audio.Effects.Equalizer;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -37,6 +35,8 @@ export module Artifact.Audio.Effects.Equalizer;
 #include <numeric>
 #include <regex>
 #include <random>
+export module Artifact.Audio.Effects.Equalizer;
+
 
 
 

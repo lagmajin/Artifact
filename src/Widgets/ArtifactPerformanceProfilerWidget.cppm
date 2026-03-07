@@ -9,8 +9,6 @@ module;
 #include <wobjectdefs.h>
 #include <wobjectimpl.h>
 
-export module Artifact.Widgets.PerformanceProfilerWidget;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -44,6 +42,8 @@ export module Artifact.Widgets.PerformanceProfilerWidget;
 #include <numeric>
 #include <regex>
 #include <random>
+export module Artifact.Widgets.PerformanceProfilerWidget;
+
 
 
 

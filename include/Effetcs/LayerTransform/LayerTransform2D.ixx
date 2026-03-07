@@ -2,8 +2,6 @@ module;
 #include <QString>
 #include <QPointF>
 
-export module Artifact.Effect.LayerTransform.Transform2D;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -37,6 +35,8 @@ export module Artifact.Effect.LayerTransform.Transform2D;
 #include <numeric>
 #include <regex>
 #include <random>
+export module Artifact.Effect.LayerTransform.Transform2D;
+
 
 
 

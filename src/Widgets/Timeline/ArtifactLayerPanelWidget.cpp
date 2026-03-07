@@ -18,8 +18,6 @@
 #include <QUrl>
 #include <QDebug>
 #include <QFileInfo>
-module Artifact.Widgets.LayerPanelWidget;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -53,6 +51,8 @@ module Artifact.Widgets.LayerPanelWidget;
 #include <numeric>
 #include <regex>
 #include <random>
+module Artifact.Widgets.LayerPanelWidget;
+
 
 
 

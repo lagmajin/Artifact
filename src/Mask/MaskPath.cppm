@@ -7,8 +7,6 @@
 #include <algorithm>
 #include <string>
 
-module Artifact.Mask.Path;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -42,6 +40,8 @@ module Artifact.Mask.Path;
 #include <numeric>
 #include <regex>
 #include <random>
+module Artifact.Mask.Path;
+
 
 
 

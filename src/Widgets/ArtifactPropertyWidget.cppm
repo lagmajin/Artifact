@@ -13,8 +13,6 @@
 #include <QGroupBox>
 #include <wobjectimpl.h>
 
-module Artifact.Widgets.ArtifactPropertyWidget;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -48,6 +46,8 @@ module Artifact.Widgets.ArtifactPropertyWidget;
 #include <numeric>
 #include <regex>
 #include <random>
+module Artifact.Widgets.ArtifactPropertyWidget;
+
 
 
 

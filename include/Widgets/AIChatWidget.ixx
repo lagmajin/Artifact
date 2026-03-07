@@ -1,8 +1,6 @@
 ﻿module;
 #include <QWidget>
 #include <wobjectdefs.h>
-export module Widgets.AIChatWidget;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -36,6 +34,8 @@ export module Widgets.AIChatWidget;
 #include <numeric>
 #include <regex>
 #include <random>
+export module Widgets.AIChatWidget;
+
 
 
 

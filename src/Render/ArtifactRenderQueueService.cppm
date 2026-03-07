@@ -7,8 +7,6 @@ module;
 #include <mutex>
 #include <map>
 
-module Artifact.Render.Queue.Service;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -42,6 +40,8 @@ module Artifact.Render.Queue.Service;
 #include <numeric>
 #include <regex>
 #include <random>
+module Artifact.Render.Queue.Service;
+
 
 
 

@@ -5,8 +5,6 @@
 #include <QMap>
 #include <QDebug>
 
-module Artifact.Project.Statistics;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -40,6 +38,8 @@ module Artifact.Project.Statistics;
 #include <numeric>
 #include <regex>
 #include <random>
+module Artifact.Project.Statistics;
+
 
 
 

@@ -6,8 +6,6 @@ module;
 #include <QJsonDocument>
 #include <QFile>
 
-export module Artifact.Project.PresetManager;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -41,6 +39,8 @@ export module Artifact.Project.PresetManager;
 #include <numeric>
 #include <regex>
 #include <random>
+export module Artifact.Project.PresetManager;
+
 
 
 

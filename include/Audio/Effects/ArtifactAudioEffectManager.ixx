@@ -3,8 +3,6 @@ module;
 #include <unordered_map>
 #include <vector>
 #include <string>
-export module Artifact.Audio.Effects.Manager;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -38,6 +36,8 @@ export module Artifact.Audio.Effects.Manager;
 #include <numeric>
 #include <regex>
 #include <random>
+export module Artifact.Audio.Effects.Manager;
+
 
 
 

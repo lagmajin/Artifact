@@ -11,8 +11,6 @@
 #include <QVariant>
 #include <QColor>
 
-module Artifact.Layer.Abstract;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -46,14 +44,16 @@ module Artifact.Layer.Abstract;
 #include <numeric>
 #include <regex>
 #include <random>
-
-
-
-
 #include <array>
 #include <algorithm>
 #include <cmath>
 #include <limits>
+module Artifact.Layer.Abstract;
+
+
+
+
+
 import Utils;
 import Layer.State;
 import Animation.Transform2D;

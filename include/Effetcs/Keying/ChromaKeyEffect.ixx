@@ -1,6 +1,4 @@
 ﻿module;
-export module Artifact.Effect.Keying.ChromaKey;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -34,6 +32,8 @@ export module Artifact.Effect.Keying.ChromaKey;
 #include <numeric>
 #include <regex>
 #include <random>
+export module Artifact.Effect.Keying.ChromaKey;
+
 
 
 

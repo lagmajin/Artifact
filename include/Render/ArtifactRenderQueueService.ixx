@@ -2,8 +2,6 @@ module;
 #include <wobjectdefs.h>
 #include <QObject>
 
-export module Artifact.Render.Queue.Service;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -37,6 +35,8 @@ export module Artifact.Render.Queue.Service;
 #include <numeric>
 #include <regex>
 #include <random>
+export module Artifact.Render.Queue.Service;
+
 
 
 

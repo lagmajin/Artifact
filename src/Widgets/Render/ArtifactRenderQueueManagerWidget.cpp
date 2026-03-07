@@ -7,8 +7,6 @@ module;
 #include <QHBoxLayout>
 #include <wobjectimpl.h>
 
-module Artifact.Widgets.Render.QueueManager;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -42,6 +40,8 @@ module Artifact.Widgets.Render.QueueManager;
 #include <numeric>
 #include <regex>
 #include <random>
+module Artifact.Widgets.Render.QueueManager;
+
 
 
 

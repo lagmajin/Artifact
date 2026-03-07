@@ -6,8 +6,6 @@
 #include <QDebug>
 #include <wobjectimpl.h>
 
-module Artifact.Render.FrameCache;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -41,6 +39,8 @@ module Artifact.Render.FrameCache;
 #include <numeric>
 #include <regex>
 #include <random>
+module Artifact.Render.FrameCache;
+
 
 
 

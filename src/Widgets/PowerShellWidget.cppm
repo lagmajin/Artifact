@@ -6,8 +6,6 @@
 #include <QProcess>
 #include <wobjectimpl.h>
 
-module Widgets.PowerShellWidget;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -41,6 +39,8 @@ module Widgets.PowerShellWidget;
 #include <numeric>
 #include <regex>
 #include <random>
+module Widgets.PowerShellWidget;
+
 
 
 

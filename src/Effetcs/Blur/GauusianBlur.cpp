@@ -1,8 +1,6 @@
 module;
 #include <opencv2/opencv.hpp>
 
-module Artifact.Effect.GauusianBlur;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -36,6 +34,8 @@ module Artifact.Effect.GauusianBlur;
 #include <numeric>
 #include <regex>
 #include <random>
+module Artifact.Effect.GauusianBlur;
+
 
 
 

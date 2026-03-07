@@ -2,8 +2,6 @@
 #include <QIcon>
 #include <QAbstractItemModel>
 
-module Artifact.Layers.Hierarchy.Model;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -37,6 +35,8 @@ module Artifact.Layers.Hierarchy.Model;
 #include <numeric>
 #include <regex>
 #include <random>
+module Artifact.Layers.Hierarchy.Model;
+
 
 
 

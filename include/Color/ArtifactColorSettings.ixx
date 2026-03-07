@@ -3,8 +3,6 @@ module;
 #include <QString>
 #include <QMatrix4x4>
 
-export module Artifact.Color.Settings;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -38,6 +36,8 @@ export module Artifact.Color.Settings;
 #include <numeric>
 #include <regex>
 #include <random>
+export module Artifact.Color.Settings;
+
 
 
 

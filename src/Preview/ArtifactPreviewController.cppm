@@ -1,7 +1,5 @@
 module;
 #include <QList>
-module Artifact.PreviewController;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -35,6 +33,8 @@ module Artifact.PreviewController;
 #include <numeric>
 #include <regex>
 #include <random>
+module Artifact.PreviewController;
+
 
 
 

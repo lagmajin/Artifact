@@ -3,8 +3,6 @@
 #include <QMetaObject>
 #include <qlogging.h>
 #include <QDebug>
-module Artifact.Service.ActiveContext;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -38,6 +36,8 @@ module Artifact.Service.ActiveContext;
 #include <numeric>
 #include <regex>
 #include <random>
+module Artifact.Service.ActiveContext;
+
 
 
 

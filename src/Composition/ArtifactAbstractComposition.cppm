@@ -14,8 +14,6 @@ module;
 #include <QJsonObject>
 #include <QJsonArray>
 
-module Artifact.Composition.Abstract;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -49,6 +47,8 @@ module Artifact.Composition.Abstract;
 #include <numeric>
 #include <regex>
 #include <random>
+module Artifact.Composition.Abstract;
+
 
 
 

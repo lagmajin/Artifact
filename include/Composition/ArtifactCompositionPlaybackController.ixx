@@ -4,8 +4,6 @@
 #include <functional>
 #include <wobjectdefs.h>
 
-export module Artifact.Composition.PlaybackController;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -39,6 +37,8 @@ export module Artifact.Composition.PlaybackController;
 #include <numeric>
 #include <regex>
 #include <random>
+export module Artifact.Composition.PlaybackController;
+
 
 
 

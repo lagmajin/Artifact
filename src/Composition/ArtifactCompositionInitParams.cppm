@@ -5,8 +5,6 @@ module;
 #include <string>
 #include <cstdint>
 
-module Artifact.Composition.InitParams;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -40,6 +38,8 @@ module Artifact.Composition.InitParams;
 #include <numeric>
 #include <regex>
 #include <random>
+module Artifact.Composition.InitParams;
+
 
 
 

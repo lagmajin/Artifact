@@ -12,8 +12,6 @@ module;
 #include <algorithm>
 #include <wobjectimpl.h>
 
-module Artifact.Effect.Transition;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -47,6 +45,8 @@ module Artifact.Effect.Transition;
 #include <numeric>
 #include <regex>
 #include <random>
+module Artifact.Effect.Transition;
+
 
 
 

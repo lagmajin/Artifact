@@ -1,8 +1,6 @@
 ﻿module;
 #include <QString>
 
-export module Artifact.Project.Importer;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -36,6 +34,8 @@ export module Artifact.Project.Importer;
 #include <numeric>
 #include <regex>
 #include <random>
+export module Artifact.Project.Importer;
+
 
 
 

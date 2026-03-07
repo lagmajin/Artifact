@@ -3,8 +3,6 @@
 #include <QWidget>
 #include <QMenu>
 #include <QKeySequence>
-module Artifact.Menu.Effect;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -38,6 +36,8 @@ module Artifact.Menu.Effect;
 #include <numeric>
 #include <regex>
 #include <random>
+module Artifact.Menu.Effect;
+
 
 
 

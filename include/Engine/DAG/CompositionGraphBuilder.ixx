@@ -4,8 +4,6 @@ module;
 #include <unordered_map>
 #include <memory>
 
-export module Artifact.Engine.DAG.CompositionGraphBuilder;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -39,6 +37,8 @@ export module Artifact.Engine.DAG.CompositionGraphBuilder;
 #include <numeric>
 #include <regex>
 #include <random>
+export module Artifact.Engine.DAG.CompositionGraphBuilder;
+
 
 
 

@@ -8,8 +8,6 @@
 #include <QModelIndex>
 #include <QStringList>
 
-export module Artifact.Widgets.ProjectManagerWidget;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -43,6 +41,8 @@ export module Artifact.Widgets.ProjectManagerWidget;
 #include <numeric>
 #include <regex>
 #include <random>
+export module Artifact.Widgets.ProjectManagerWidget;
+
 
 
 

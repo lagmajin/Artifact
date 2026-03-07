@@ -1,7 +1,5 @@
 ﻿module;
 #include <QWidget>
-module Artifact.Render.WrapperWidget;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -35,6 +33,8 @@ module Artifact.Render.WrapperWidget;
 #include <numeric>
 #include <regex>
 #include <random>
+module Artifact.Render.WrapperWidget;
+
 
 
 

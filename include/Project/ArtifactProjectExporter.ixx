@@ -1,7 +1,5 @@
 ﻿module;
 #include <QFile>
-export module Artifact.Project.Exporter;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -35,6 +33,8 @@ export module Artifact.Project.Exporter;
 #include <numeric>
 #include <regex>
 #include <random>
+export module Artifact.Project.Exporter;
+
 
 
 

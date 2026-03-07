@@ -7,8 +7,6 @@
 #include <cmath>
 #include <opencv2/opencv.hpp>
 
-module Generator.Effector;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -42,6 +40,8 @@ module Generator.Effector;
 #include <numeric>
 #include <regex>
 #include <random>
+module Generator.Effector;
+
 
 
 

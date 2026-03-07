@@ -1,8 +1,6 @@
 ﻿module;
 #include <QImage>
 #include <opencv2/opencv.hpp>
-module Artifact.Layer.Image;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -36,6 +34,8 @@ module Artifact.Layer.Image;
 #include <numeric>
 #include <regex>
 #include <random>
+module Artifact.Layer.Image;
+
 
 
 

@@ -1,7 +1,5 @@
 module;
 #include <QVector>
-module Artifact.Preview.Pipeline;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -35,6 +33,8 @@ module Artifact.Preview.Pipeline;
 #include <numeric>
 #include <regex>
 #include <random>
+module Artifact.Preview.Pipeline;
+
 
 
 

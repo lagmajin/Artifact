@@ -4,8 +4,6 @@ module;
 #include <QTimer>
 #include <QString>
 
-module Artifact.Preview.Clock;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -39,6 +37,8 @@ module Artifact.Preview.Clock;
 #include <numeric>
 #include <regex>
 #include <random>
+module Artifact.Preview.Clock;
+
 
 
 

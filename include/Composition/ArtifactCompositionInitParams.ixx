@@ -1,7 +1,5 @@
 module;
 #include <QSize>
-export module Artifact.Composition.InitParams;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -35,6 +33,8 @@ export module Artifact.Composition.InitParams;
 #include <numeric>
 #include <regex>
 #include <random>
+export module Artifact.Composition.InitParams;
+
 
 
 

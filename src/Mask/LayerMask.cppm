@@ -4,8 +4,6 @@
 #include <cmath>
 #include <algorithm>
 
-module Artifact.Mask.LayerMask;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -39,6 +37,8 @@ module Artifact.Mask.LayerMask;
 #include <numeric>
 #include <regex>
 #include <random>
+module Artifact.Mask.LayerMask;
+
 
 
 

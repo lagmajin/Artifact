@@ -3,8 +3,6 @@ module;
 #include <cmath>
 #include <algorithm>
 
-module BrightnessEffect;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -38,6 +36,8 @@ module BrightnessEffect;
 #include <numeric>
 #include <regex>
 #include <random>
+module BrightnessEffect;
+
 
 
 

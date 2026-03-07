@@ -1,6 +1,4 @@
 ﻿module;
-module Audio.AudioClockProvider;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -34,6 +32,8 @@ module Audio.AudioClockProvider;
 #include <numeric>
 #include <regex>
 #include <random>
+module Audio.AudioClockProvider;
+
 
 
 

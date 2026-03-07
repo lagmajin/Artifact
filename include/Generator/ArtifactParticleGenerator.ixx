@@ -9,8 +9,6 @@ module;
 #include <vector>
 #include <wobjectdefs.h>
 
-export module Artifact.Generator.Particle;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -44,6 +42,8 @@ export module Artifact.Generator.Particle;
 #include <numeric>
 #include <regex>
 #include <random>
+export module Artifact.Generator.Particle;
+
 
 
 

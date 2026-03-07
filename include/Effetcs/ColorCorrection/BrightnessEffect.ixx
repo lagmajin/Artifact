@@ -3,8 +3,6 @@ module;
 #include <QString>
 #include <QVariant>
 
-export module BrightnessEffect;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -38,6 +36,8 @@ export module BrightnessEffect;
 #include <numeric>
 #include <regex>
 #include <random>
+export module BrightnessEffect;
+
 
 
 

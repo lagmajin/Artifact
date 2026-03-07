@@ -2,8 +2,6 @@
 #include <QProxyStyle>
 #include <wobjectdefs.h>
 
-export module Widgets.Dock.GlowStyle;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -37,6 +35,8 @@ export module Widgets.Dock.GlowStyle;
 #include <numeric>
 #include <regex>
 #include <random>
+export module Widgets.Dock.GlowStyle;
+
 
 
 

@@ -22,8 +22,6 @@
 #include <QVariant>
 #include <cstdlib>
 
-module Widgets.Inspector;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -57,6 +55,8 @@ module Widgets.Inspector;
 #include <numeric>
 #include <regex>
 #include <random>
+module Widgets.Inspector;
+
 
 
 import Utils.Id;

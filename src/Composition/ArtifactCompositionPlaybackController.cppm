@@ -4,8 +4,6 @@
 #include <QDebug>
 #include <wobjectimpl.h>
 
-module Artifact.Composition.PlaybackController;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -39,6 +37,8 @@ module Artifact.Composition.PlaybackController;
 #include <numeric>
 #include <regex>
 #include <random>
+module Artifact.Composition.PlaybackController;
+
 
 
 

@@ -1,6 +1,4 @@
 module;
-export module Artifact.Layer.Text;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -34,6 +32,8 @@ export module Artifact.Layer.Text;
 #include <numeric>
 #include <regex>
 #include <random>
+export module Artifact.Layer.Text;
+
 
 
 

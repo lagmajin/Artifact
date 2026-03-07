@@ -1,8 +1,6 @@
 ﻿module;
 #include <Audioclient.h>
 #include <Mmdeviceapi.h>
-module Audio.WASAPIDevice;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -36,6 +34,8 @@ module Audio.WASAPIDevice;
 #include <numeric>
 #include <regex>
 #include <random>
+module Audio.WASAPIDevice;
+
 
 
 

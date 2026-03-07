@@ -1,8 +1,6 @@
 ﻿module;
 #include <entt/entt.hpp>
 
-module Artifact.Application.Manager;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -36,6 +34,8 @@ module Artifact.Application.Manager;
 #include <numeric>
 #include <regex>
 #include <random>
+module Artifact.Application.Manager;
+
 
 
 

@@ -13,8 +13,6 @@
 #include <EngineFactoryD3D12.h>
 
 
-module Artifact.Render.Offscreen;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -48,6 +46,8 @@ module Artifact.Render.Offscreen;
 #include <numeric>
 #include <regex>
 #include <random>
+module Artifact.Render.Offscreen;
+
 
 
 import Core.Point2D;

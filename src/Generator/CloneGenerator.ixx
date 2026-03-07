@@ -7,8 +7,6 @@ module;
 #include <random>
 #include <memory>
 
-module Generator.Clone;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -42,6 +40,8 @@ module Generator.Clone;
 #include <numeric>
 #include <regex>
 #include <random>
+module Generator.Clone;
+
 
 
 

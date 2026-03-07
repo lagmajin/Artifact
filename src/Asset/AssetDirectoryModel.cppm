@@ -12,8 +12,6 @@
 #include <QUuid>
 #include <wobjectimpl.h>
 
-module AssetDirectoryModel;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -47,6 +45,8 @@ module AssetDirectoryModel;
 #include <numeric>
 #include <regex>
 #include <random>
+module AssetDirectoryModel;
+
 
 
 

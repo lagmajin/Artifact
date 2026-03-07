@@ -14,8 +14,6 @@
 
 #include <QtGlobal>
 
-module Core.SystemStats;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -49,6 +47,8 @@ module Core.SystemStats;
 #include <numeric>
 #include <regex>
 #include <random>
+module Core.SystemStats;
+
 
 
 

@@ -5,8 +5,6 @@ module;
 #include <memory>
 #include <wobjectdefs.h>
 
-export module Artifact.Layer.Particle;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -40,6 +38,8 @@ export module Artifact.Layer.Particle;
 #include <numeric>
 #include <regex>
 #include <random>
+export module Artifact.Layer.Particle;
+
 
 
 

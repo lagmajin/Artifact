@@ -10,8 +10,6 @@ module;
 #include <unordered_set>
 #include <queue>
 
-module Artifact.Color.NodeGraph;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -45,6 +43,8 @@ module Artifact.Color.NodeGraph;
 #include <numeric>
 #include <regex>
 #include <random>
+module Artifact.Color.NodeGraph;
+
 
 
 

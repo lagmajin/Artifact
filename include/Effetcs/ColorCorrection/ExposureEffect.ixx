@@ -3,8 +3,6 @@ module;
 #include <QString>
 #include <QVariant>
 
-export module ExposureEffect;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -38,6 +36,8 @@ export module ExposureEffect;
 #include <numeric>
 #include <regex>
 #include <random>
+export module ExposureEffect;
+
 
 
 

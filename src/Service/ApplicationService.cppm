@@ -1,7 +1,5 @@
 module;
 
-module Artifact.Service.Application;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -35,6 +33,8 @@ module Artifact.Service.Application;
 #include <numeric>
 #include <regex>
 #include <random>
+module Artifact.Service.Application;
+
 
 
 

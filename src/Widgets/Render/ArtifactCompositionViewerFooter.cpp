@@ -7,8 +7,6 @@
 #include <wobjectimpl.h>
 #include <QTimer>
 
-module Artifact.Widgets.CompositionFooter;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -42,6 +40,8 @@ module Artifact.Widgets.CompositionFooter;
 #include <numeric>
 #include <regex>
 #include <random>
+module Artifact.Widgets.CompositionFooter;
+
 
 
 

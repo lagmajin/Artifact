@@ -17,8 +17,6 @@ module;
 #include <algorithm>
 #include <vector>
 #include <qtmetamacros.h>
-module Artifact.Widgets.Timeline;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -52,6 +50,8 @@ module Artifact.Widgets.Timeline;
 #include <numeric>
 #include <regex>
 #include <random>
+module Artifact.Widgets.Timeline;
+
 
 
 

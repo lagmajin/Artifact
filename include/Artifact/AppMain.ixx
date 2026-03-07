@@ -4,8 +4,6 @@
 // This file provides the `Artifact.AppMain` module so the
 // implementation in `src/AppMain.cppm` can compile and link.
 
-export module Artifact.AppMain;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -39,6 +37,8 @@ export module Artifact.AppMain;
 #include <numeric>
 #include <regex>
 #include <random>
+export module Artifact.AppMain;
+
 
 
 

@@ -6,8 +6,6 @@ module;
 #include <QColor>
 #include <QUuid>
 
-export module Artifact.Effect.Preset;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -41,6 +39,8 @@ export module Artifact.Effect.Preset;
 #include <numeric>
 #include <regex>
 #include <random>
+export module Artifact.Effect.Preset;
+
 
 
 

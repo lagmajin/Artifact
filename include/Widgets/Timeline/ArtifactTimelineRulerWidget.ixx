@@ -1,8 +1,6 @@
 module;
 #include <wobjectdefs.h>
 #include <QWidget>
-export module Artifact.Timeline.RulerWidget;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -36,6 +34,8 @@ export module Artifact.Timeline.RulerWidget;
 #include <numeric>
 #include <regex>
 #include <random>
+export module Artifact.Timeline.RulerWidget;
+
 
 
 

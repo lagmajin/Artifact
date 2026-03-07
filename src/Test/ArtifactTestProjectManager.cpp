@@ -1,7 +1,5 @@
 module;
 #include <wobjectimpl.h>
-module Artifact.Test.ProjectManager;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -35,6 +33,8 @@ module Artifact.Test.ProjectManager;
 #include <numeric>
 #include <regex>
 #include <random>
+module Artifact.Test.ProjectManager;
+
 
 
 

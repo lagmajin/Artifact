@@ -5,8 +5,6 @@ module;
 #include <cmath>
 #include <random>
 
-export module Artifact.Effect.Clone.Advanced;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -40,6 +38,8 @@ export module Artifact.Effect.Clone.Advanced;
 #include <numeric>
 #include <regex>
 #include <random>
+export module Artifact.Effect.Clone.Advanced;
+
 
 
 

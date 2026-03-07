@@ -3,8 +3,6 @@
 #include <wobjectdefs.h>
 #include "DockManager.h"
 
-export module Widgets.Dock.StyleManager;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -38,6 +36,8 @@ export module Widgets.Dock.StyleManager;
 #include <numeric>
 #include <regex>
 #include <random>
+export module Widgets.Dock.StyleManager;
+
 
 
 

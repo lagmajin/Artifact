@@ -1,8 +1,6 @@
 ﻿module;
 #include <QString>
 
-export module Artifact.Effect.Field.Radial;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -36,6 +34,8 @@ export module Artifact.Effect.Field.Radial;
 #include <numeric>
 #include <regex>
 #include <random>
+export module Artifact.Effect.Field.Radial;
+
 
 
 

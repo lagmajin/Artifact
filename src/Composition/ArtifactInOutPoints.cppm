@@ -9,8 +9,6 @@ module;
 #include <QXmlStreamWriter>
 #include <QXmlStreamReader>
 
-module Artifact.Composition.InOutPoints;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -44,6 +42,8 @@ module Artifact.Composition.InOutPoints;
 #include <numeric>
 #include <regex>
 #include <random>
+module Artifact.Composition.InOutPoints;
+
 
 
 

@@ -1,6 +1,4 @@
 module;
-export module Artifact.Result;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -34,6 +32,8 @@ export module Artifact.Result;
 #include <numeric>
 #include <regex>
 #include <random>
+export module Artifact.Result;
+
 
 
 

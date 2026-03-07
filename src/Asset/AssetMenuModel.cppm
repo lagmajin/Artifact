@@ -9,8 +9,6 @@
 #include <QStyle>
 #include <QVariant>
 
-module AssetMenuModel;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -44,6 +42,8 @@ module AssetMenuModel;
 #include <numeric>
 #include <regex>
 #include <random>
+module AssetMenuModel;
+
 
 
 

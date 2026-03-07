@@ -6,8 +6,6 @@
 #include <QDesktopServices>
 #include <QUrl>
 
-module Menu.Help;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -41,6 +39,8 @@ module Menu.Help;
 #include <numeric>
 #include <regex>
 #include <random>
+module Menu.Help;
+
 
 
 

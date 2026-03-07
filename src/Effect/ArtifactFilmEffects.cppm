@@ -11,8 +11,6 @@ module;
 #include <QDebug>
 #include <wobjectimpl.h>
 
-module Artifact.Effect.Film;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -46,6 +44,8 @@ module Artifact.Effect.Film;
 #include <numeric>
 #include <regex>
 #include <random>
+module Artifact.Effect.Film;
+
 
 
 

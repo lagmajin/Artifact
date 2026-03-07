@@ -2,8 +2,6 @@
 #include <BasicMath.hpp>
 #include <QWidget>
 
-export module Artifact.Render.IRenderer;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -37,6 +35,8 @@ export module Artifact.Render.IRenderer;
 #include <numeric>
 #include <regex>
 #include <random>
+export module Artifact.Render.IRenderer;
+
 
 
 

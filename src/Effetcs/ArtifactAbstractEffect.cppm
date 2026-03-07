@@ -1,8 +1,6 @@
 ﻿module;
 #include <QString>
 
-module Artifact.Effect.Abstract;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -36,6 +34,8 @@ module Artifact.Effect.Abstract;
 #include <numeric>
 #include <regex>
 #include <random>
+module Artifact.Effect.Abstract;
+
 
 
 

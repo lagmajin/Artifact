@@ -5,8 +5,6 @@
 
 #include <wobjectdefs.h>
 
-export module Artifact.Composition._2D;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -40,6 +38,8 @@ export module Artifact.Composition._2D;
 #include <numeric>
 #include <regex>
 #include <random>
+export module Artifact.Composition._2D;
+
 
 
 

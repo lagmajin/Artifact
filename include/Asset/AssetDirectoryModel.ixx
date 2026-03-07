@@ -9,8 +9,6 @@
 #include <QFileInfo>
 #include <wobjectdefs.h>
 
-export module AssetDirectoryModel;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -44,6 +42,8 @@ export module AssetDirectoryModel;
 #include <numeric>
 #include <regex>
 #include <random>
+export module AssetDirectoryModel;
+
 
 
 

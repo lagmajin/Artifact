@@ -4,8 +4,6 @@
 #include <QWidget>
 #include <QPushButton>
 #include <QToolButton>
-module Artifact.Widgets.PlaybackControlWidget;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -39,6 +37,8 @@ module Artifact.Widgets.PlaybackControlWidget;
 #include <numeric>
 #include <regex>
 #include <random>
+module Artifact.Widgets.PlaybackControlWidget;
+
 
 
 

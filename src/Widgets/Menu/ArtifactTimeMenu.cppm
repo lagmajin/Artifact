@@ -1,7 +1,5 @@
 ﻿module;
 #include <QMenu>
-module Menu.Time;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -35,6 +33,8 @@ module Menu.Time;
 #include <numeric>
 #include <regex>
 #include <random>
+module Menu.Time;
+
 
 
 //#include "../../../include/Widgets/Menu/ArtifactTimeMenu.hpp"

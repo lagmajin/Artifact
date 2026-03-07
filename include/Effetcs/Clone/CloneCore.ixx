@@ -5,8 +5,6 @@ module;
 #include <memory>
 #include <QVector3D>
 
-export module Artifact.Effect.Clone.Core;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -40,6 +38,8 @@ export module Artifact.Effect.Clone.Core;
 #include <numeric>
 #include <regex>
 #include <random>
+export module Artifact.Effect.Clone.Core;
+
 
 
 

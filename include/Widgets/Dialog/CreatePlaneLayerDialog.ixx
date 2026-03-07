@@ -3,8 +3,6 @@
 #include <QWidget>
 
 #include <wobjectdefs.h>
-export module Artifact.Widgets.CreatePlaneLayerDialog;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -38,6 +36,8 @@ export module Artifact.Widgets.CreatePlaneLayerDialog;
 #include <numeric>
 #include <regex>
 #include <random>
+export module Artifact.Widgets.CreatePlaneLayerDialog;
+
 
 
 

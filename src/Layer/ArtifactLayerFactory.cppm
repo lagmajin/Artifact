@@ -3,8 +3,6 @@
 #include <QList>
 #include <QObject>
 
-module Artifact.Layer.Factory;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -38,6 +36,8 @@ module Artifact.Layer.Factory;
 #include <numeric>
 #include <regex>
 #include <random>
+module Artifact.Layer.Factory;
+
 
 
 

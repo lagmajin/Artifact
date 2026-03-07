@@ -1,6 +1,4 @@
 module;
-export module Artifact.PythonAPI;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -34,6 +32,8 @@ export module Artifact.PythonAPI;
 #include <numeric>
 #include <regex>
 #include <random>
+export module Artifact.PythonAPI;
+
 
 
 

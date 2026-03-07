@@ -3,8 +3,6 @@ module;
 #include <QWidget>
 #include <QString>
 
-export module Artifact.Widgets.ColorPaletteWidget;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -38,6 +36,8 @@ export module Artifact.Widgets.ColorPaletteWidget;
 #include <numeric>
 #include <regex>
 #include <random>
+export module Artifact.Widgets.ColorPaletteWidget;
+
 
 
 

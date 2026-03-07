@@ -1,7 +1,5 @@
 module;
 #include <wobjectimpl.h>
-module Artifact.Test.RenderQueue;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -35,6 +33,8 @@ module Artifact.Test.RenderQueue;
 #include <numeric>
 #include <regex>
 #include <random>
+module Artifact.Test.RenderQueue;
+
 
 
 

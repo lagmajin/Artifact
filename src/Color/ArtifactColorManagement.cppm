@@ -8,8 +8,6 @@ module;
 #include <QDebug>
 #include <cmath>
 
-module Artifact.Color.Management;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -43,6 +41,8 @@ module Artifact.Color.Management;
 #include <numeric>
 #include <regex>
 #include <random>
+module Artifact.Color.Management;
+
 
 
 

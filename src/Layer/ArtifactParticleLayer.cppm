@@ -8,8 +8,6 @@ module;
 #include <QVariant>
 #include <wobjectimpl.h>
 
-module Artifact.Layer.Particle;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -43,6 +41,8 @@ module Artifact.Layer.Particle;
 #include <numeric>
 #include <regex>
 #include <random>
+module Artifact.Layer.Particle;
+
 
 
 

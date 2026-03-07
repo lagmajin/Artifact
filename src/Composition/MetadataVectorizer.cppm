@@ -6,8 +6,6 @@
 #include <cmath>
 #include <algorithm>
 
-module Composition.MetadataVectorizer;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -41,6 +39,8 @@ module Composition.MetadataVectorizer;
 #include <numeric>
 #include <regex>
 #include <random>
+module Composition.MetadataVectorizer;
+
 
 
 

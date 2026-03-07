@@ -10,8 +10,6 @@ module;
 #include <wobjectimpl.h>
 //#include <folly\Singleton.h>
 
-module Artifact.Project.Manager;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -45,6 +43,8 @@ module Artifact.Project.Manager;
 #include <numeric>
 #include <regex>
 #include <random>
+module Artifact.Project.Manager;
+
 
 
 

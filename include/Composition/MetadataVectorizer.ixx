@@ -4,8 +4,6 @@
 #include <QVector>
 #include <vector>
 
-export module Composition.MetadataVectorizer;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -39,6 +37,8 @@ export module Composition.MetadataVectorizer;
 #include <numeric>
 #include <regex>
 #include <random>
+export module Composition.MetadataVectorizer;
+
 
 
 

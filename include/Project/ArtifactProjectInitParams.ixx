@@ -2,8 +2,6 @@ module;
 #include <cstdint>
 #include <QJsonObject>
 
-export module ArtifactProjectInitParams;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -37,6 +35,8 @@ export module ArtifactProjectInitParams;
 #include <numeric>
 #include <regex>
 #include <random>
+export module ArtifactProjectInitParams;
+
 
 
 

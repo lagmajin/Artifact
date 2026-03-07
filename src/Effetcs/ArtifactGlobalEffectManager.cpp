@@ -1,7 +1,5 @@
 ﻿module;
 #include <QHash>
-module Artifact.Effects.Manager;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -35,6 +33,8 @@ module Artifact.Effects.Manager;
 #include <numeric>
 #include <regex>
 #include <random>
+module Artifact.Effects.Manager;
+
 
 
 

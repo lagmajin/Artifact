@@ -4,8 +4,6 @@ module;
 #include <QString>
 #include <QVector3D>
 
-export module Generator.Clone;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -39,6 +37,8 @@ export module Generator.Clone;
 #include <numeric>
 #include <regex>
 #include <random>
+export module Generator.Clone;
+
 
 
 import Generator.DistributionModes;

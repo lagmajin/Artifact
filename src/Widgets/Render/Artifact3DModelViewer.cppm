@@ -11,8 +11,6 @@ module;
 #include <QPainter>
 #include <wobjectimpl.h>
 
-module Artifact.Widgets.ModelViewer;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -46,6 +44,8 @@ module Artifact.Widgets.ModelViewer;
 #include <numeric>
 #include <regex>
 #include <random>
+module Artifact.Widgets.ModelViewer;
+
 
 
 

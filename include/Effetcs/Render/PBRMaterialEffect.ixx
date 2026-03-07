@@ -2,8 +2,6 @@
 #include <QString>
 #include <QColor>
 
-export module Artifact.Effect.Render.PBRMaterial;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -37,6 +35,8 @@ export module Artifact.Effect.Render.PBRMaterial;
 #include <numeric>
 #include <regex>
 #include <random>
+export module Artifact.Effect.Render.PBRMaterial;
+
 
 
 

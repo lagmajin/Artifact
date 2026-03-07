@@ -8,8 +8,6 @@
 #include <memory>
 #include <wobjectdefs.h>
 
-export module Artifact.Render.FrameCache;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -43,6 +41,8 @@ export module Artifact.Render.FrameCache;
 #include <numeric>
 #include <regex>
 #include <random>
+export module Artifact.Render.FrameCache;
+
 
 
 

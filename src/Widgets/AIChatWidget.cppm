@@ -5,8 +5,6 @@
 #include <QLineEdit>
 #include <wobjectimpl.h>
 
-module Widgets.AIChatWidget;
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -40,6 +38,8 @@ module Widgets.AIChatWidget;
 #include <numeric>
 #include <regex>
 #include <random>
+module Widgets.AIChatWidget;
+
 
 
 
