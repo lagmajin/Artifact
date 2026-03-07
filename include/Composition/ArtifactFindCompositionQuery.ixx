@@ -5,19 +5,54 @@ module;
 
 export module Artifact.Composition.FindQuery;
 
-import std;
+#include <iostream>
+#include <vector>
+#include <string>
+#include <map>
+#include <unordered_map>
+#include <set>
+#include <unordered_set>
+#include <memory>
+#include <algorithm>
+#include <cmath>
+#include <functional>
+#include <optional>
+#include <utility>
+#include <array>
+#include <mutex>
+#include <thread>
+#include <chrono>
+#include <filesystem>
+#include <fstream>
+#include <sstream>
+#include <stdexcept>
+#include <type_traits>
+#include <variant>
+#include <any>
+#include <atomic>
+#include <condition_variable>
+#include <queue>
+#include <deque>
+#include <list>
+#include <tuple>
+#include <numeric>
+#include <regex>
+#include <random>
+
+
+
 
 export namespace Artifact {
 
- // ŒŸõƒtƒBƒ‹ƒ^[ƒIƒvƒVƒ‡ƒ“
+ // tB^[IvV
  enum class CompositionSearchOption {
-  CaseSensitive = 1 << 0,    // ‘å•¶š¬•¶š‚ğ‹æ•Ê
-  RegexPattern  = 1 << 1,    // ³‹K•\Œ»‚ğg—p
-  WholeWord     = 1 << 2,    // ’PŒê‘S‘Ì‚ÅŒŸõ
-  ExactMatch    = 1 << 3     // Š®‘Sˆê’v
+  CaseSensitive = 1 << 0,    // å•¶
+  RegexPattern  = 1 << 1,    // K\gp
+  WholeWord     = 1 << 2,    // PSÌ‚ÅŒ
+  ExactMatch    = 1 << 3     // Sv
  };
 
- // ‰ğ‘œ“x”ÍˆÍ
+ // ğ‘œ“xÍˆ
  struct ResolutionRange {
   int minWidth = 0;
   int maxWidth = 30000;
@@ -30,7 +65,7 @@ export namespace Artifact {
   }
  };
 
- // ƒtƒŒ[ƒ€ƒŒ[ƒg”ÍˆÍ
+ // t[[gÍˆ
  struct FrameRateRange {
   double minFps = 0.0;
   double maxFps = 999.0;
@@ -40,26 +75,26 @@ export namespace Artifact {
   }
  };
 
- // ƒfƒ…ƒŒ[ƒVƒ‡ƒ“”ÍˆÍi•bj
+ // f[VÍˆÍibj
  struct DurationRange {
   double minSeconds = 0.0;
-  double maxSeconds = 10800.0;  // 3ŠÔ
+  double maxSeconds = 10800.0;  // 3
   
   bool matches(double seconds) const {
    return seconds >= minSeconds && seconds <= maxSeconds;
   }
  };
 
- // ƒ\[ƒg‡˜‚ÆƒtƒB[ƒ‹ƒh
+ // \[gÆƒtB[h
  enum class CompositionSortOrder { Ascending, Descending };
  enum class CompositionSortField {
-  Name,           // –¼‘O
-  CreatedTime,    // ì¬“ú
-  ModifiedTime,   // XV“ú
-  Width,          // •
-  Height,         // ‚‚³
-  FrameRate,      // ƒtƒŒ[ƒ€ƒŒ[ƒg
-  Duration        // ƒfƒ…ƒŒ[ƒVƒ‡ƒ“
+  Name,           // O
+  CreatedTime,    // ì¬
+  ModifiedTime,   // XV
+  Width,          // 
+  Height,         // 
+  FrameRate,      // t[[g
+  Duration        // f[V
  };
 
  class ArtifactFindCompositionQuery {
@@ -88,7 +123,7 @@ export namespace Artifact {
   ArtifactFindCompositionQuery& operator=(const ArtifactFindCompositionQuery&) = default;
   ArtifactFindCompositionQuery& operator=(ArtifactFindCompositionQuery&&) noexcept = default;
 
-  // ---- ŒŸõƒeƒLƒXƒg ----
+  // ---- eLXg ----
 
   void setSearchText(const QString& text) {
    if (data_) data_->searchText = text;
@@ -98,7 +133,7 @@ export namespace Artifact {
    return data_ ? data_->searchText : QString();
   }
 
-  // ---- ƒtƒBƒ‹ƒ^[ƒIƒvƒVƒ‡ƒ“ ----
+  // ---- tB^[IvV ----
 
   void setFilterOptions(int options) {
    if (data_) data_->filterOptions = options;
@@ -120,7 +155,7 @@ export namespace Artifact {
    if (data_) data_->filterOptions &= ~static_cast<int>(option);
   }
 
-  // ---- ‰ğ‘œ“xƒtƒBƒ‹ƒ^[ ----
+  // ---- ğ‘œ“xtB^[ ----
 
   void setResolutionRange(const ResolutionRange& range) {
    if (data_) {
@@ -151,7 +186,7 @@ export namespace Artifact {
    }
   }
 
-  // ---- ƒtƒŒ[ƒ€ƒŒ[ƒgƒtƒBƒ‹ƒ^[ ----
+  // ---- t[[gtB^[ ----
 
   void setFrameRateRange(const FrameRateRange& range) {
    if (data_) {
@@ -182,7 +217,7 @@ export namespace Artifact {
    }
   }
 
-  // ---- ƒfƒ…ƒŒ[ƒVƒ‡ƒ“ƒtƒBƒ‹ƒ^[ ----
+  // ---- f[VtB^[ ----
 
   void setDurationRange(const DurationRange& range) {
    if (data_) {
@@ -199,7 +234,7 @@ export namespace Artifact {
    if (data_) data_->enableDurationFilter = false;
   }
 
-  // ---- ƒ\[ƒgİ’è ----
+  // ---- \[gİ’ ----
 
   void setSortField(CompositionSortField field) {
    if (data_) data_->sortField = static_cast<int>(field);
@@ -217,7 +252,7 @@ export namespace Artifact {
    return data_ ? static_cast<CompositionSortOrder>(data_->sortOrder) : CompositionSortOrder::Ascending;
   }
 
-  // ---- ƒNƒGƒŠÀs ----
+  // ---- NGs ----
 
   void reset() {
    if (data_) {
@@ -257,7 +292,7 @@ export namespace Artifact {
    return count;
   }
 
-  // ---- ƒ}ƒbƒ`ƒ“ƒO”»’è ----
+  // ---- }b`O ----
 
   bool matchesName(const QString& name) const {
    if (!data_ || data_->searchText.isEmpty()) return true;
@@ -278,24 +313,24 @@ export namespace Artifact {
   bool matchesResolution(int width, int height) const {
    if (!data_ || !data_->enableResolutionFilter) return true;
 
-   // Š®‘Sˆê’vƒ`ƒFƒbƒN
+   // Sv`FbN
    if (data_->exactResolution.width() > 0 && data_->exactResolution.height() > 0) {
     return width == data_->exactResolution.width() && height == data_->exactResolution.height();
    }
 
-   // ”ÍˆÍƒ`ƒFƒbƒN
+   // ÍˆÍƒ`FbN
    return data_->resolutionRange.matches(width, height);
   }
 
   bool matchesFrameRate(double fps) const {
    if (!data_ || !data_->enableFrameRateFilter) return true;
 
-   // Š®‘Sˆê’vƒ`ƒFƒbƒN
+   // Sv`FbN
    if (data_->exactFrameRate > 0.0) {
     return std::abs(fps - data_->exactFrameRate) < 0.001;
    }
 
-   // ”ÍˆÍƒ`ƒFƒbƒN
+   // ÍˆÍƒ`FbN
    return data_->frameRateRange.matches(fps);
   }
 
@@ -313,7 +348,7 @@ export namespace Artifact {
    return true;
   }
 
-  // ---- ƒ†[ƒeƒBƒŠƒeƒB ----
+  // ---- [eBeB ----
 
   QString toString() const {
    if (!data_) return QString();

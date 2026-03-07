@@ -7,7 +7,42 @@ module;
 #include <QDebug>
 module Artifact.Widgets.SeekBar;
 
-import std;
+#include <iostream>
+#include <vector>
+#include <string>
+#include <map>
+#include <unordered_map>
+#include <set>
+#include <unordered_set>
+#include <memory>
+#include <algorithm>
+#include <cmath>
+#include <functional>
+#include <optional>
+#include <utility>
+#include <array>
+#include <mutex>
+#include <thread>
+#include <chrono>
+#include <filesystem>
+#include <fstream>
+#include <sstream>
+#include <stdexcept>
+#include <type_traits>
+#include <variant>
+#include <any>
+#include <atomic>
+#include <condition_variable>
+#include <queue>
+#include <deque>
+#include <list>
+#include <tuple>
+#include <numeric>
+#include <regex>
+#include <random>
+
+
+
 import Frame.Position;
 
 namespace Artifact
@@ -21,22 +56,22 @@ namespace Artifact
   Impl();
   ~Impl();
 
-  FramePosition currentFrame_;  // Œ»İ‚ÌƒtƒŒ[ƒ€ˆÊ’u
-  int totalFrames_ = 100;       // ‘ƒtƒŒ[ƒ€”
-  bool dragging_ = false;       // ƒhƒ‰ƒbƒO’†‚©
-  int handleWidth_ = 12;        // ƒnƒ“ƒhƒ‹•
-  int handleHeight_ = 20;       // ƒnƒ“ƒhƒ‹‚‚³
-  bool seekLockDuringPlayback_ = true; // Ä¶’†‚ÌƒV[ƒN‚ğƒƒbƒN
-  bool isPlaying_ = false;      // Ä¶’†‚©‚Ç‚¤‚©
+  FramePosition currentFrame_;  // İ‚Ìƒt[Ê’u
+  int totalFrames_ = 100;       // t[
+  bool dragging_ = false;       // hbO
+  int handleWidth_ = 12;        // nh
+  int handleHeight_ = 20;       // nh
+  bool seekLockDuringPlayback_ = true; // ÄÌƒV[NbN
+  bool isPlaying_ = false;      // ÄÇ‚
 
-  // ƒtƒŒ[ƒ€ˆÊ’u‚©‚çXÀ•W‚ğŒvZ
+  // t[Ê’uXWvZ
   int frameToX(int frame) const
   {
    if (totalFrames_ <= 1) return 0;
    return static_cast<int>((static_cast<double>(frame) / (totalFrames_ - 1)) * (widgetWidth_ - 1));
   }
 
-  // XÀ•W‚©‚çƒtƒŒ[ƒ€ˆÊ’u‚ğŒvZ
+  // XWt[Ê’uvZ
   int xToFrame(int x) const
   {
    if (widgetWidth_ <= 1) return 0;
@@ -65,7 +100,7 @@ namespace Artifact
   setAttribute(Qt::WA_OpaquePaintEvent, true);
   setAttribute(Qt::WA_TranslucentBackground);
 
-  setMouseTracking(true);  // ƒ}ƒEƒX’ÇÕ‚ğ—LŒø‰»
+  setMouseTracking(true);  // }EXÇÕ‚L
  }
 
  ArtifactSeekBar::~ArtifactSeekBar()
@@ -81,7 +116,7 @@ namespace Artifact
  void ArtifactSeekBar::setCurrentFrame(const FramePosition& frame)
  {
   int frameValue = frame.framePosition();
-  // ”ÍˆÍ‚ğ§ŒÀ
+  // ÍˆÍ‚ğ§Œ
   frameValue = qBound(0, frameValue, impl_->totalFrames_ - 1);
 
   if (impl_->currentFrame_.framePosition() != frameValue) {
@@ -95,7 +130,7 @@ namespace Artifact
  {
   if (totalFrames > 0 && impl_->totalFrames_ != totalFrames) {
    impl_->totalFrames_ = totalFrames;
-   // Œ»İƒtƒŒ[ƒ€‚ª”ÍˆÍŠO‚É‚È‚Á‚½ê‡‚Í’²®
+   // İƒt[ÍˆÍŠOÉ‚È‚ê‡Í’
    if (impl_->currentFrame_.framePosition() >= totalFrames) {
     setCurrentFrame(FramePosition(totalFrames - 1));
    }
@@ -170,17 +205,17 @@ namespace Artifact
    void ArtifactSeekBar::mousePressEvent(QMouseEvent* event)
  {
   if (event->button() == Qt::LeftButton) {
-   // Ä¶’†‚ÅƒV[ƒNƒƒbƒN‚ª—LŒø‚Èê‡‚Í‘€ì‚ğ–³‹
+   // ÄÅƒV[NbNLÈê‡Í‘ğ–³
    if (impl_->isPlaying_ && impl_->seekLockDuringPlayback_) {
     event->ignore();
     return;
    }
    
-   // ƒnƒ“ƒhƒ‹—Ìˆæ‚Ü‚½‚Íüã‚ÅƒNƒŠƒbƒN‚³‚ê‚½ê‡
+   // nhÌˆÜ‚ÍÅƒNbNê‚½ê‡
    int currentX = impl_->frameToX(impl_->currentFrame_.framePosition());
    int handleHalfWidth = impl_->handleWidth_ / 2;
 
-   // ƒNƒŠƒbƒNˆÊ’u‚ªƒnƒ“ƒhƒ‹‚Ü‚½‚Íü‚Ì‹ß‚­‚©ƒ`ƒFƒbƒN
+   // NbNÊ’unhÜ‚ÍÌ‹ß‚`FbN
    if (qAbs(event->pos().x() - currentX) <= handleHalfWidth + 5) {
     impl_->dragging_ = true;
     Q_EMIT frameDragStarted();
@@ -192,7 +227,7 @@ namespace Artifact
  void ArtifactSeekBar::mouseMoveEvent(QMouseEvent* event)
  {
   if (impl_->dragging_) {
-   // ƒhƒ‰ƒbƒO’†‚ÍƒtƒŒ[ƒ€ˆÊ’u‚ğXV
+   // hbOÍƒt[Ê’uXV
    int newFrame = impl_->xToFrame(event->pos().x());
    newFrame = qBound(0, newFrame, impl_->totalFrames_ - 1);
 
@@ -203,7 +238,7 @@ namespace Artifact
    }
    event->accept();
   } else {
-   // ƒzƒo[‚ÌƒJ[ƒ\ƒ‹•ÏX
+   // zo[ÌƒJ[\ÏX
    int currentX = impl_->frameToX(impl_->currentFrame_.framePosition());
    int handleHalfWidth = impl_->handleWidth_ / 2;
 

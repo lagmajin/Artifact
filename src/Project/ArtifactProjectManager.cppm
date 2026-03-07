@@ -12,7 +12,42 @@ module;
 
 module Artifact.Project.Manager;
 
-import std;
+#include <iostream>
+#include <vector>
+#include <string>
+#include <map>
+#include <unordered_map>
+#include <set>
+#include <unordered_set>
+#include <memory>
+#include <algorithm>
+#include <cmath>
+#include <functional>
+#include <optional>
+#include <utility>
+#include <array>
+#include <mutex>
+#include <thread>
+#include <chrono>
+#include <filesystem>
+#include <fstream>
+#include <sstream>
+#include <stdexcept>
+#include <type_traits>
+#include <variant>
+#include <any>
+#include <atomic>
+#include <condition_variable>
+#include <queue>
+#include <deque>
+#include <list>
+#include <tuple>
+#include <numeric>
+#include <regex>
+#include <random>
+
+
+
 import Utils;
 import Artifact.Project;
 import Artifact.Project.Exporter;
@@ -456,7 +491,7 @@ QString ArtifactProjectManager::relativeAssetPath(const QString& absoluteAssetPa
 
 ArtifactProjectManager& ArtifactProjectManager::getInstance()
 {
-  static ArtifactProjectManager instance; // Å‰‚ÌŒÄ‚Ño‚µ‚É‚Ì‚İ‰Šú‰»
+  static ArtifactProjectManager instance; // ÅÌŒÄ‚ÑoÉ‚Ì‚İ
   return instance;
  }
 
@@ -686,8 +721,8 @@ QVector<ProjectItem*> ArtifactProjectManager::projectItems() const
 
  FindCompositionResult ArtifactProjectManager::findComposition(const CompositionID& id)
  {
-  // shared_ptr ‚Ì‹ÇŠƒRƒs[‚ğì¬‚µ‚ÄƒXƒŒƒbƒhƒZ[ƒt‚ÉƒAƒNƒZƒX
-  // ‚±‚ê‚É‚æ‚èA‚±‚ÌŠÖ”Às’†‚Éƒ|ƒCƒ“ƒ^‚ª–³Œø‰»‚³‚ê‚é‚±‚Æ‚ğ–h~
+  // shared_ptr Ì‹ÇRs[ì¬ÄƒXbhZ[tÉƒANZX
+  // É‚AÌŠÖsÉƒ|C^é‚±Æ‚h~
   auto projectPtr = impl_->currentProjectPtr_;
 
   if (!projectPtr) {
@@ -706,7 +741,7 @@ QVector<ProjectItem*> ArtifactProjectManager::projectItems() const
 
  int ArtifactProjectManager::compositionCount() const
  {
-  // shared_ptr ‚Ì‹ÇŠƒRƒs[‚ğì¬‚µ‚ÄƒXƒŒƒbƒhƒZ[ƒt‚ÉƒAƒNƒZƒX
+  // shared_ptr Ì‹ÇRs[ì¬ÄƒXbhZ[tÉƒANZX
   auto projectPtr = impl_->currentProjectPtr_;
 
   if (!projectPtr) return 0;

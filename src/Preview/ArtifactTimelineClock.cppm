@@ -6,7 +6,42 @@ module;
 
 module Artifact.Preview.Clock;
 
-import std;
+#include <iostream>
+#include <vector>
+#include <string>
+#include <map>
+#include <unordered_map>
+#include <set>
+#include <unordered_set>
+#include <memory>
+#include <algorithm>
+#include <cmath>
+#include <functional>
+#include <optional>
+#include <utility>
+#include <array>
+#include <mutex>
+#include <thread>
+#include <chrono>
+#include <filesystem>
+#include <fstream>
+#include <sstream>
+#include <stdexcept>
+#include <type_traits>
+#include <variant>
+#include <any>
+#include <atomic>
+#include <condition_variable>
+#include <queue>
+#include <deque>
+#include <list>
+#include <tuple>
+#include <numeric>
+#include <regex>
+#include <random>
+
+
+
 import Frame.Rate;
 import Frame.Range;
 import Frame.Position;
@@ -19,8 +54,8 @@ namespace Artifact
  class ArtifactTimelineClock::Impl
  {
  public:
-  TimelineClock timelineClock_;  // 高精度クロック
-  QTimer* uiUpdateTimer_;        // UI更新用タイマー（60fps）
+  TimelineClock timelineClock_;  // xNbN
+  QTimer* uiUpdateTimer_;        // UIXVp^C}[i60fpsj
   ArtifactTimelineClock* parent_;
   
   QString lastTimecode_;
@@ -30,7 +65,7 @@ namespace Artifact
    : parent_(parent)
    , uiUpdateTimer_(new QTimer(parent))
   {
-   // UI更新は60fps（16ms間隔）
+   // UIXV60fpsi16msﾔ隔j
    uiUpdateTimer_->setInterval(16);
    
    QObject::connect(uiUpdateTimer_, &QTimer::timeout, parent, [this]() {
@@ -41,21 +76,21 @@ namespace Artifact
   ~Impl() = default;
   
   void updateUI() {
-   // 再生状態が変わったら通知
+   // ﾄ赤ぱぬ知
    bool isPlaying = timelineClock_.isPlaying();
    if (isPlaying != lastPlayingState_) {
     lastPlayingState_ = isPlaying;
     parent_->playbackStateChanged(isPlaying);
    }
    
-   // タイムコードが変わったら通知
+   // ^CR[hﾏぬ知
    QString timecode = timelineClock_.timecode();
    if (timecode != lastTimecode_) {
     lastTimecode_ = timecode;
     parent_->timecodeChanged(timecode);
    }
    
-   // フレーム位置を通知
+   // t[ﾊ置ﾊ知
    auto position = timelineClock_.currentPosition();
    parent_->tickFrame(position);
    parent_->tick();
@@ -100,7 +135,7 @@ namespace Artifact
   impl_->lastPlayingState_ = false;
   playbackStateChanged(false);
   
-  // 停止時に最終状態を通知
+  // ~ﾉ最終ﾔぬ知
   impl_->updateUI();
  }
 

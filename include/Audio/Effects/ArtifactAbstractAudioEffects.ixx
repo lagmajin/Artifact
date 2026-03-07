@@ -1,29 +1,64 @@
 module;
 export module ArtifactAbstractAudioEffects;
 
-import std;
+#include <iostream>
+#include <vector>
+#include <string>
+#include <map>
+#include <unordered_map>
+#include <set>
+#include <unordered_set>
+#include <memory>
+#include <algorithm>
+#include <cmath>
+#include <functional>
+#include <optional>
+#include <utility>
+#include <array>
+#include <mutex>
+#include <thread>
+#include <chrono>
+#include <filesystem>
+#include <fstream>
+#include <sstream>
+#include <stdexcept>
+#include <type_traits>
+#include <variant>
+#include <any>
+#include <atomic>
+#include <condition_variable>
+#include <queue>
+#include <deque>
+#include <list>
+#include <tuple>
+#include <numeric>
+#include <regex>
+#include <random>
+
+
+
 
 export namespace Artifact {
 
-// オーディオエフェクトの抽象ベースクラス
+// I[fBIGtFNgﾌ紬ベ[XNX
 class ArtifactAbstractAudioEffects {
 public:
     ArtifactAbstractAudioEffects() = default;
     virtual ~ArtifactAbstractAudioEffects() = default;
 
-    // エフェクト名
+    // GtFNg
     virtual std::string name() const = 0;
 
-    // 有効/無効
+    // L/
     virtual void setEnabled(bool enabled) { enabled_ = enabled; }
     virtual bool isEnabled() const { return enabled_; }
 
-    // パラメータ（例: key-value）
+    // p[^i: key-valuej
     virtual void setParameter(const std::string& key, float value) = 0;
     virtual float getParameter(const std::string& key) const = 0;
 
-    // オーディオ処理（in-place）
-    // buffer: float配列, samples: サンプル数, channels: チャンネル数
+    // I[fBIiin-placej
+    // buffer: floatz, samples: Tv, channels: `l
     virtual void process(float* buffer, int samples, int channels) = 0;
 
 protected:

@@ -19,8 +19,43 @@ module;
 #include <qtmetamacros.h>
 module Artifact.Widgets.Timeline;
 
+#include <iostream>
+#include <vector>
+#include <string>
+#include <map>
+#include <unordered_map>
+#include <set>
+#include <unordered_set>
+#include <memory>
+#include <algorithm>
+#include <cmath>
+#include <functional>
+#include <optional>
+#include <utility>
+#include <array>
+#include <mutex>
+#include <thread>
+#include <chrono>
+#include <filesystem>
+#include <fstream>
+#include <sstream>
+#include <stdexcept>
+#include <type_traits>
+#include <variant>
+#include <any>
+#include <atomic>
+#include <condition_variable>
+#include <queue>
+#include <deque>
+#include <list>
+#include <tuple>
+#include <numeric>
+#include <regex>
+#include <random>
 
-import std;
+
+
+
 import Widgets.Utils.CSS;
 
 import Artifact.Layers.Hierarchy.Model;
@@ -341,12 +376,12 @@ W_OBJECT_IMPL(ArtifactTimelineWidget)
   auto leftSplitter = new DraggableSplitter(Qt::Horizontal);
   //leftSplitter->addWidget(iconView);
   leftSplitter->addWidget(layerTreeView);
-  leftSplitter->setStretchFactor(0, 0); // ÉAÉCÉRÉìóÒÇÕå≈íË
-  leftSplitter->setStretchFactor(1, 1); // ñºëOóÒÇÕêLèkâ¬î\
+  leftSplitter->setStretchFactor(0, 0); // ACRÕå≈í
+  leftSplitter->setStretchFactor(1, 1); // OÕêLk¬î\
 
-  auto leftHeader = new ArtifactTimeCodeWidget(); // É^ÉCÉÄÉRÅ[Éh
-  auto searchBar = new ArtifactTimelineSearchBarWidget(); // åüçıÉoÅ[
-  auto globalSwitches = new ArtifactTimelineGlobalSwitches(); // AEïóÉ{É^ÉìåQ
+  auto leftHeader = new ArtifactTimeCodeWidget(); // ^CR[h
+  auto searchBar = new ArtifactTimelineSearchBarWidget(); // o[
+  auto globalSwitches = new ArtifactTimelineGlobalSwitches(); // AE{^Q
 
   auto searchBarLayout = new QHBoxLayout();
   searchBarLayout->setSpacing(8);
@@ -435,7 +470,7 @@ W_OBJECT_IMPL(ArtifactTimelineWidget)
 
 
 
-  // ëSëÃÇÃÉ^ÉCÉÄÉâÉCÉìÉXÉvÉäÉbÉ^Å[
+  // SÃÇÃÉ^CCXvb^[
   auto mainSplitter = new QSplitter(Qt::Horizontal);
   mainSplitter->setStyleSheet(R"(
     QSplitter::handle {
@@ -982,8 +1017,8 @@ TimelineTrackView::TimelineTrackView(QWidget* parent /*= nullptr*/) :QGraphicsVi
 
  ArtifactTimelineIconView::ArtifactTimelineIconView(QWidget* parent /*= nullptr*/) :QTreeView(parent)
  {
-  //setHeaderHidden(true); // ÉwÉbÉ_Å[îÒï\é¶Ç‡â¬
-  setColumnWidth(0, 16); // ÉAÉCÉRÉìóÒïù
+  //setHeaderHidden(true); // wb_[\
+  setColumnWidth(0, 16); // ACR
   setColumnWidth(1, 16);
   setColumnWidth(2, 16);
   setColumnWidth(3, 16);

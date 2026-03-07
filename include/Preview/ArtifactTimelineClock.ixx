@@ -5,7 +5,42 @@ module;
 
 export module Artifact.Preview.Clock;
 
-import std;
+#include <iostream>
+#include <vector>
+#include <string>
+#include <map>
+#include <unordered_map>
+#include <set>
+#include <unordered_set>
+#include <memory>
+#include <algorithm>
+#include <cmath>
+#include <functional>
+#include <optional>
+#include <utility>
+#include <array>
+#include <mutex>
+#include <thread>
+#include <chrono>
+#include <filesystem>
+#include <fstream>
+#include <sstream>
+#include <stdexcept>
+#include <type_traits>
+#include <variant>
+#include <any>
+#include <atomic>
+#include <condition_variable>
+#include <queue>
+#include <deque>
+#include <list>
+#include <tuple>
+#include <numeric>
+#include <regex>
+#include <random>
+
+
+
 import Frame.Rate;
 import Frame.Range;
 import Frame.Position;
@@ -14,17 +49,17 @@ export namespace Artifact
 {
  using namespace ArtifactCore;
  
- // UI‘w‚Ìƒ^ƒCƒ€ƒ‰ƒCƒ“ƒNƒƒbƒN’Ê’mƒNƒ‰ƒX
+ // UIwÌƒ^CCNbNÊ’mNX
  // 
- // İŒv•ûj:
- // - ‚¸“xƒ^ƒCƒ~ƒ“ƒO‚Í ArtifactCore::TimelineClock ‚Åˆ—iƒ}ƒCƒNƒ•b¸“xj
- // - UI‚Ö‚Ì’Ê’m‚Ì‚İ Signal/Slot ‚ğg—pi60fps = 16msŠÔŠuj
- // - Composition/Layer‚Í clock() ‚Å’¼ÚTimelineClock‚ğQÆ‚µ‚Ä‚¸“xƒ^ƒCƒ~ƒ“ƒO‚ğæ“¾
+ // İŒvj:
+ // - x^C~O ArtifactCore::TimelineClock Åi}CNbxj
+ // - UIÖ‚Ì’Ê’mÌ‚ Signal/Slot gpi60fps = 16msÔŠuj
+ // - Composition/Layer clock() Å’TimelineClockQÆ‚Äx^C~Oæ“¾
  // 
- // Signal/Slot‚ğg‚í‚È‚¢——R:
- // - Qt ‚ÌƒCƒxƒ“ƒgƒLƒ…[ƒCƒ“ƒO’x‰„i”ƒ~ƒŠ•bj‚É‚æ‚è‚¸“x‚ª¸‚í‚ê‚é
- // - ƒXƒŒƒbƒhŠÔ’ÊM‚Å‚Í‚³‚ç‚É’x‰„‚ª”­¶
- // - UIXV‚Í60fpsi16msj‚Å\•ª
+ // Signal/SlotgÈ‚R:
+ // - Qt ÌƒCxgL[COxi~bjÉ‚è‚x
+ // - XbhÔ’ÊMÅ‚Í‚É’x
+ // - UIXV60fpsi16msjÅ\
  class ArtifactTimelineClock : public QObject
  {
   W_OBJECT(ArtifactTimelineClock)
@@ -36,14 +71,14 @@ export namespace Artifact
   ArtifactTimelineClock(QObject* parent = nullptr);
   ~ArtifactTimelineClock();
   
-  // ‚¸“xƒNƒƒbƒN‚Ö‚Ì’¼ÚƒAƒNƒZƒXiComposition/Layer‚Åg—pj
-  // ’ˆÓ: ‚±‚Ìƒƒ\ƒbƒh‚ÍƒXƒŒƒbƒhƒZ[ƒt‚Å‚·
+  // xNbNÖ‚Ì’ÚƒANZXiComposition/LayerÅgpj
+  // : Ìƒ\bhÍƒXbhZ[tÅ‚
   class TimelineClock* clock();
   const class TimelineClock* clock() const;
   
  public /*signals*/:
-  // UIXV—p‚ÌƒVƒOƒiƒ‹i60fps’ö“x‚Å”­s‚³‚ê‚éj
-  // ’ˆÓ: ‚±‚ê‚ç‚Í‚¸“xƒ^ƒCƒ~ƒ“ƒO‚É‚Íg—p‚µ‚È‚¢‚±‚Æ
+  // UIXVpÌƒVOii60fpsxÅ”sj
+  // : Íx^C~OÉ‚ÍgpÈ‚
   void tick() W_SIGNAL(tick);
   void tickFrame(const FramePosition& position) W_SIGNAL(tickFrame, position);
   void playbackStateChanged(bool isPlaying) W_SIGNAL(playbackStateChanged, isPlaying);
