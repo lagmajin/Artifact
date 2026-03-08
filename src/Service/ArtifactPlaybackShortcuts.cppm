@@ -1,4 +1,4 @@
-module;
+﻿module;
 
 #include <QKeySequence>
 #include <QDebug>
@@ -156,6 +156,13 @@ void ArtifactPlaybackShortcuts::setup(ArtifactCompositionPlaybackController* con
 
 void ArtifactPlaybackShortcuts::registerDefaultBindings(KeyMap* keyMap) {
     auto* am = ActionManager::instance();
+    const auto kAlt = InputEvent::Modifiers(InputEvent::ModifierKey::LAlt)
+                    | InputEvent::Modifiers(InputEvent::ModifierKey::RAlt);
+    const auto kShift = InputEvent::Modifiers(InputEvent::ModifierKey::LShift)
+                      | InputEvent::Modifiers(InputEvent::ModifierKey::RShift);
+    const auto kCtrl = InputEvent::Modifiers(InputEvent::ModifierKey::LCtrl)
+                     | InputEvent::Modifiers(InputEvent::ModifierKey::RCtrl);
+    const auto kCtrlShift = kCtrl | kShift;
     
     // ==================== After Effects-like shortcuts ====================
     
@@ -187,9 +194,9 @@ void ArtifactPlaybackShortcuts::registerDefaultBindings(KeyMap* keyMap) {
     keyMap->addBinding(Qt::Key_O, InputEvent::Modifiers(),
                       am->getAction(Impl::ACTION_SET_OUT_POINT), "Set Out Point");
     
-    keyMap->addBinding(Qt::Key_I, InputEvent::ModifierKey::Alt,
+    keyMap->addBinding(Qt::Key_I, kAlt,
                       am->getAction(Impl::ACTION_CLEAR_IN_POINT), "Clear In Point");
-    keyMap->addBinding(Qt::Key_O, InputEvent::ModifierKey::Alt,
+    keyMap->addBinding(Qt::Key_O, kAlt,
                       am->getAction(Impl::ACTION_CLEAR_OUT_POINT), "Clear Out Point");
     
     // Go to in/out
@@ -202,27 +209,25 @@ void ArtifactPlaybackShortcuts::registerDefaultBindings(KeyMap* keyMap) {
     
     keyMap->addBinding(Qt::Key_M, InputEvent::Modifiers(),
                       am->getAction(Impl::ACTION_ADD_MARKER), "Add Marker");
-    keyMap->addBinding(Qt::Key_M, InputEvent::ModifierKey::Shift,
+    keyMap->addBinding(Qt::Key_M, kShift,
                       am->getAction(Impl::ACTION_NEXT_MARKER), "Next Marker");
-    keyMap->addBinding(Qt::Key_M, InputEvent::ModifierKey::Ctrl | InputEvent::ModifierKey::Shift,
+    keyMap->addBinding(Qt::Key_M, kCtrlShift,
                       am->getAction(Impl::ACTION_PREV_MARKER), "Previous Marker");
     
     // Chapters
-    keyMap->addBinding(Qt::Key_Return, InputEvent::ModifierKey::Shift,
+    keyMap->addBinding(Qt::Key_Return, kShift,
                       am->getAction(Impl::ACTION_NEXT_CHAPTER), "Next Chapter");
-    keyMap->addBinding(Qt::Key_Return, InputEvent::Modifiers(),
-                      am->getAction(Impl::ACTION_PREV_CHAPTER), "Previous Chapter");
-    
+
     // ==================== Playback Speed ====================
-    
-    keyMap->addBinding(Qt::Key_0, InputEvent::ModifierKey::Ctrl,
+
+    keyMap->addBinding(Qt::Key_0, kCtrl,
                       am->getAction(Impl::ACTION_SPEED_NORMAL), "Normal Speed");
-    keyMap->addBinding(Qt::Key_1, InputEvent::ModifierKey::Ctrl,
+    keyMap->addBinding(Qt::Key_1, kCtrl,
                       am->getAction(Impl::ACTION_SPEED_HALF), "Half Speed");
-    keyMap->addBinding(Qt::Key_2, InputEvent::ModifierKey::Ctrl,
+    keyMap->addBinding(Qt::Key_2, kCtrl,
                       am->getAction(Impl::ACTION_SPEED_DOUBLE), "Double Speed");
-    
-    keyMap->addBinding(Qt::Key_L, InputEvent::ModifierKey::Alt,
+
+    keyMap->addBinding(Qt::Key_L, kAlt,
                       am->getAction(Impl::ACTION_TOGGLE_LOOP), "Toggle Loop");
     
     // ==================== Scrubbing (drag on timeline) ====================
@@ -315,7 +320,7 @@ void ArtifactPlaybackShortcuts::setInPoint() {
     if (!impl_->inOutPoints_ || !impl_->controller_) return;
     auto frame = impl_->controller_->currentFrame();
     impl_->inOutPoints_->setInPoint(frame);
-    emit inPointSet(frame.value());
+    // emit inPointSet(frame.value());
     emit shortcutExecuted(Impl::ACTION_SET_IN_POINT);
 }
 
@@ -323,7 +328,7 @@ void ArtifactPlaybackShortcuts::setOutPoint() {
     if (!impl_->inOutPoints_ || !impl_->controller_) return;
     auto frame = impl_->controller_->currentFrame();
     impl_->inOutPoints_->setOutPoint(frame);
-    emit outPointSet(frame.value());
+    // emit outPointSet(frame.value());
     emit shortcutExecuted(Impl::ACTION_SET_OUT_POINT);
 }
 
@@ -370,7 +375,7 @@ void ArtifactPlaybackShortcuts::addMarker(const QString& comment) {
     auto frame = impl_->controller_->currentFrame();
     auto* marker = impl_->inOutPoints_->addMarker(frame, comment, MarkerType::Comment);
     Q_UNUSED(marker);
-    emit markerAdded(frame.value(), comment);
+    // emit markerAdded(frame.value(), comment);
     emit shortcutExecuted(Impl::ACTION_ADD_MARKER);
 }
 
@@ -379,7 +384,7 @@ void ArtifactPlaybackShortcuts::addChapterMarker(const QString& name) {
     auto frame = impl_->controller_->currentFrame();
     auto* marker = impl_->inOutPoints_->addMarker(frame, name, MarkerType::Chapter);
     Q_UNUSED(marker);
-    emit markerAdded(frame.value(), name);
+    // emit markerAdded(frame.value(), name);
     emit shortcutExecuted(Impl::ACTION_ADD_CHAPTER);
 }
 

@@ -1,4 +1,5 @@
 module;
+#include <algorithm>
 
 #include <QString>
 #include <QVector>
@@ -47,22 +48,21 @@ import Utils.Id;
 
 namespace Artifact
 {
+    using namespace ArtifactCore;
 
 // ==================== ArtifactLayerGroup::Impl ====================
 
 class ArtifactLayerGroup::Impl
 {
 public:
-    LayerID id_ = 0;
+    LayerID id_;
     QString name_ = "New Group";
-    LayerID parentGroupId_ = 0;  // 0 = no parent (root level)
-
+    LayerID parentGroupId_ = LayerID(Id::Nil());
     QVector<LayerID> childLayers_;
-
     bool isExpanded_ = true;
     bool isMuted_ = false;
     float groupOpacity_ = 1.0f;
-    LAYER_BLEND_TYPE groupBlendMode_ = LAYER_BLEND_TYPE::Normal;
+    LAYER_BLEND_TYPE groupBlendMode_ = LAYER_BLEND_TYPE::BLEND_NORMAL;
     QColor groupColor_ = Qt::gray;
     bool isLocked_ = false;
 };
@@ -72,13 +72,13 @@ public:
 ArtifactLayerGroup::ArtifactLayerGroup()
     : impl_(new Impl())
 {
-    impl_->id_ = generateId();
+    impl_->id_ = LayerID();
 }
 
 ArtifactLayerGroup::ArtifactLayerGroup(const QString& name)
     : impl_(new Impl())
 {
-    impl_->id_ = generateId();
+    impl_->id_ = LayerID();
     impl_->name_ = name;
 }
 
@@ -171,7 +171,7 @@ float ArtifactLayerGroup::groupOpacity() const
 
 void ArtifactLayerGroup::setGroupOpacity(float opacity)
 {
-    impl_->groupOpacity_ = std::max(0.0f, std::min(1.0f, opacity));
+    impl_->groupOpacity_ = qBound(0.0f, opacity, 1.0f);
 }
 
 LAYER_BLEND_TYPE ArtifactLayerGroup::groupBlendMode() const
@@ -227,7 +227,7 @@ void ArtifactLayerGroup::moveLayerToIndex(LayerID layerId, int index)
     int idx = impl_->childLayers_.indexOf(layerId);
     if (idx >= 0) {
         impl_->childLayers_.removeAt(idx);
-        index = std::max(0, std::min(index, impl_->childLayers_.size()));
+        index = std::max(0, std::min(index, static_cast<int>(impl_->childLayers_.size())));
         impl_->childLayers_.insert(index, layerId);
     }
 }
@@ -243,11 +243,11 @@ QVector<ArtifactLayerGroup::LayerID> ArtifactLayerGroup::flatten() const
 class ArtifactLayerGroupCollection::Impl
 {
 public:
-    QHash<LayerID, std::unique_ptr<ArtifactLayerGroup>> groups_;
+    std::map<LayerID, std::unique_ptr<ArtifactLayerGroup>> groups_;
     QHash<LayerID, LayerID> layerToGroupMap_;  // layerId -> groupId
 
-    LayerID nextGroupId_ = 1;
-    const LayerID rootGroupId_ = 0;  // 特別なルートグループID
+    LayerID nextGroupId_; // Unused if using random IDs
+    const LayerID rootGroupId_ = LayerID(Id::Nil()); // 特別なルートグループID
 };
 
 ArtifactLayerGroupCollection::ArtifactLayerGroupCollection()
@@ -262,9 +262,8 @@ ArtifactLayerGroupCollection::~ArtifactLayerGroupCollection()
 
 ArtifactLayerGroup* ArtifactLayerGroupCollection::createGroup(const QString& name)
 {
-    LayerID newId = impl_->nextGroupId_++;
     auto group = std::make_unique<ArtifactLayerGroup>(name);
-    group->setId(newId);
+    LayerID newId = group->id();
     ArtifactLayerGroup* ptr = group.get();
     impl_->groups_[newId] = std::move(group);
     return ptr;
@@ -286,24 +285,26 @@ void ArtifactLayerGroupCollection::deleteGroup(LayerID groupId)
         }
 
         // 子グループも削除（再帰的）
-        for (auto& [id, g] : impl_->groups_) {
-            if (g->parentGroupId() == groupId) {
-                deleteGroup(id);
+        for (auto& pair : impl_->groups_) {
+            if (pair.second->parentGroupId() == groupId) {
+                deleteGroup(pair.first);
             }
         }
     }
 
-    impl_->groups_.remove(groupId);
+    impl_->groups_.erase(groupId);
 }
 
 ArtifactLayerGroup* ArtifactLayerGroupCollection::getGroup(LayerID groupId)
 {
     if (groupId == impl_->rootGroupId_) {
-        // ルートグループのロジックが必要な場合はここで処理
         return nullptr;
     }
     auto it = impl_->groups_.find(groupId);
-    return (it != impl_->groups_.end()) ? it->get() : nullptr;
+    if (it != impl_->groups_.end()) {
+        return it->second.get();
+    }
+    return nullptr;
 }
 
 const ArtifactLayerGroup* ArtifactLayerGroupCollection::getGroup(LayerID groupId) const
@@ -312,14 +313,17 @@ const ArtifactLayerGroup* ArtifactLayerGroupCollection::getGroup(LayerID groupId
         return nullptr;
     }
     auto it = impl_->groups_.find(groupId);
-    return (it != impl_->groups_.end()) ? it->get() : nullptr;
+    if (it != impl_->groups_.end()) {
+        return it->second.get();
+    }
+    return nullptr;
 }
 
 QVector<ArtifactLayerGroup*> ArtifactLayerGroupCollection::allGroups()
 {
     QVector<ArtifactLayerGroup*> result;
-    for (auto& [id, group] : impl_->groups_) {
-        result.append(group.get());
+    for (auto& pair : impl_->groups_) {
+        result.append(pair.second.get());
     }
     return result;
 }
@@ -327,8 +331,8 @@ QVector<ArtifactLayerGroup*> ArtifactLayerGroupCollection::allGroups()
 QVector<const ArtifactLayerGroup*> ArtifactLayerGroupCollection::allGroups() const
 {
     QVector<const ArtifactLayerGroup*> result;
-    for (const auto& [id, group] : impl_->groups_) {
-        result.append(group.get());
+    for (const auto& pair : impl_->groups_) {
+        result.append(pair.second.get());
     }
     return result;
 }
@@ -341,9 +345,9 @@ ArtifactLayerGroup::LayerID ArtifactLayerGroupCollection::rootGroupId() const
 QVector<ArtifactLayerGroup*> ArtifactLayerGroupCollection::getRootGroups()
 {
     QVector<ArtifactLayerGroup*> result;
-    for (auto& [id, group] : impl_->groups_) {
-        if (group->parentGroupId() == impl_->rootGroupId_) {
-            result.append(group.get());
+    for (auto& pair : impl_->groups_) {
+        if (pair.second->parentGroupId() == impl_->rootGroupId_) {
+            result.append(pair.second.get());
         }
     }
     return result;
@@ -352,9 +356,9 @@ QVector<ArtifactLayerGroup*> ArtifactLayerGroupCollection::getRootGroups()
 QVector<ArtifactLayerGroup*> ArtifactLayerGroupCollection::getChildGroups(LayerID parentId)
 {
     QVector<ArtifactLayerGroup*> result;
-    for (auto& [id, group] : impl_->groups_) {
-        if (group->parentGroupId() == parentId) {
-            result.append(group.get());
+    for (auto& pair : impl_->groups_) {
+        if (pair.second->parentGroupId() == parentId) {
+            result.append(pair.second.get());
         }
     }
     return result;

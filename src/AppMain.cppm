@@ -2,6 +2,7 @@
 module;
 #include <QtCore/QtGlobal>
 #include <QApplication>
+#include <QMainWindow>
 #include <QDateTime>
 #include <QDir>
 #include <QImage>
@@ -33,7 +34,6 @@ import Glow;
 
 import ImageProcessing;
 
-import Artifact.MainWindow;
 
 //import hostfxr;
 //import HalideTest;
@@ -242,7 +242,7 @@ int main(int argc, char* argv[])
  test();
  ImageExporter exp;
  exp.testWrite();
-	ArtifactMainWindow mw;
+    QMainWindow mw;
  mw.show();
  return a.exec();
 

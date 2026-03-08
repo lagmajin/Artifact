@@ -15,7 +15,7 @@ import Color.Float;
 import Core.Point2D;
 import Image.ImageF32x4_RGBA;
 import Frame.Position;
-import std std;
+import std;
 
 namespace Artifact
 {
@@ -55,7 +55,7 @@ namespace Artifact
     };
 }
 
-module : private;
+
 
 namespace Artifact
 {
@@ -109,7 +109,7 @@ namespace Artifact
         for (auto& layer : layers) {
             if (layer && layer->isActiveAt(position) && layer->isVisible()) {
                 // 各レイヤーの描画ロジック（render）を呼び出し
-                layer->render(renderer_.get());
+                layer->draw(renderer_.get());
             }
         }
         
@@ -153,7 +153,7 @@ namespace Artifact
         for (Uint32 y = 0; y < height_; ++y) {
             for (Uint32 x = 0; x < width_; ++x) {
                 const uint8_t* pPixel = pSrc + y * MappedData.Stride + x * 4;
-                ArtifactCore::FloatColor col(pPixel[0]/255.0f, pPixel[1]/255.0f, pPixel[2]/255.0f, pPixel[3]/255.0f);
+                ArtifactCore::FloatRGBA col(pPixel[0]/255.0f, pPixel[1]/255.0f, pPixel[2]/255.0f, pPixel[3]/255.0f);
                 image.setPixel(x, y, col);
             }
         }
@@ -170,7 +170,7 @@ namespace Artifact
         for (Uint32 y = 0; y < height_; ++y) {
             for (Uint32 x = 0; x < width_; ++x) {
                 auto col = img.getPixel(x, y);
-                qimg.setPixelColor(x, y, QColor::fromRgbF(col.r, col.g, col.b, col.a));
+                qimg.setPixelColor(x, y, QColor::fromRgbF(col.r(), col.g(), col.b(), col.a()));
             }
         }
         return qimg.save(path);

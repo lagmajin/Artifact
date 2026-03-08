@@ -316,6 +316,7 @@ public:
     float windStrength = 50.0f;
     float turbulence = 10.0f;
     float turbulenceFrequency = 0.5f;
+    float evolution = 0.0f;
     
     WindEffector() { type = EffectorType::Wind; }
     void apply(Particle& particle, float deltaTime) override;

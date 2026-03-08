@@ -1,68 +1,34 @@
-﻿module Artifact.Layer.AdjustableLayer;
+﻿module;
 
-#include <iostream>
-#include <vector>
-#include <string>
-#include <map>
-#include <unordered_map>
-#include <set>
-#include <unordered_set>
-#include <memory>
-#include <algorithm>
-#include <cmath>
-#include <functional>
-#include <optional>
-#include <utility>
-#include <array>
-#include <mutex>
-#include <thread>
-#include <chrono>
-#include <filesystem>
-#include <fstream>
-#include <sstream>
 #include <stdexcept>
-#include <type_traits>
-#include <variant>
-#include <any>
-#include <atomic>
-#include <condition_variable>
-#include <queue>
-#include <deque>
-#include <list>
-#include <tuple>
-#include <numeric>
-#include <regex>
-#include <random>
 
-
-
+module Artifact.Layer.AdjustableLayer;
 
 namespace Artifact
 {
 
- ArtifactAdjustableLayer::ArtifactAdjustableLayer()
- {
+ArtifactAdjustableLayer::ArtifactAdjustableLayer()
+{
+}
 
- }
+ArtifactAdjustableLayer::~ArtifactAdjustableLayer()
+{
+}
 
- ArtifactAdjustableLayer::~ArtifactAdjustableLayer()
- {
+void ArtifactAdjustableLayer::draw(ArtifactIRenderer* renderer)
+{
+    (void)renderer;
+    throw std::logic_error("The method or operation is not implemented.");
+}
 
- }
+bool ArtifactAdjustableLayer::isAdjustmentLayer() const
+{
+    return true;
+}
 
- void ArtifactAdjustableLayer::draw(ArtifactIRenderer* renderer)
- {
-  throw std::logic_error("The method or operation is not implemented.");
- }
-
- bool ArtifactAdjustableLayer::isAdjustmentLayer() const
- {
-  return true;
- }
-
- bool ArtifactAdjustableLayer::isNullLayer() const
- {
-  return false;
- }
+bool ArtifactAdjustableLayer::isNullLayer() const
+{
+    return false;
+}
 
 }

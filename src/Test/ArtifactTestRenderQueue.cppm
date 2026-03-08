@@ -1,5 +1,6 @@
-module;
+﻿module;
 #include <wobjectimpl.h>
+#include <QDebug>
 #include <iostream>
 #include <vector>
 #include <string>
@@ -33,15 +34,12 @@ module;
 #include <numeric>
 #include <regex>
 #include <random>
-module Artifact.Test.RenderQueue;
 
-
-
+export module Artifact.Test.RenderQueue;
 
 import Artifact.Render.Queue.Service;
 
-namespace Artifact
-{
+namespace Artifact {
  class ArtifactTestRenderQueue::Impl
  {
  private:

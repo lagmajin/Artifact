@@ -104,14 +104,15 @@ export namespace Artifact {
    void setSearchFilter(const QString& filter);
    void setFileTypeFilter(const QString& type); // "all", "images", "videos", "audio"
   
+  public:
+   void folderChanged(const QString& folderPath) W_SIGNAL(folderChanged, folderPath)
+   void selectionChanged(const QStringList& selectedFiles) W_SIGNAL(selectionChanged, selectedFiles)
+   void itemDoubleClicked(const QString& itemPath) W_SIGNAL(itemDoubleClicked, itemPath)
+   void filesDropped(const QStringList& filePaths) W_SIGNAL(filesDropped, filePaths)
+ 
   protected:
    void showContextMenu(const QPoint& pos);
    void updateFileInfo(const QString& filePath);
-
-  void folderChanged(const QString& folderPath) W_SIGNAL(folderChanged, folderPath)
-  void selectionChanged(const QStringList& selectedFiles) W_SIGNAL(selectionChanged, selectedFiles)
-  void itemDoubleClicked(const QString& itemPath) W_SIGNAL(itemDoubleClicked, itemPath)
-  void filesDropped(const QStringList& filePaths) W_SIGNAL(filesDropped, filePaths)
 
 
  };

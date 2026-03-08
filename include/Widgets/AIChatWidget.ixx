@@ -40,9 +40,9 @@ export module Widgets.AIChatWidget;
 
 
 import Utils.String.UniString;
-import AI.Client;
 
 export namespace Artifact {
+using ArtifactCore::UniString;
 
 class AIChatWidget : public QWidget {
  W_OBJECT(AIChatWidget)

@@ -1,4 +1,4 @@
-module;
+﻿module;
 
 #include <QString>
 #include <QVector>
@@ -39,7 +39,10 @@ module;
 #include <numeric>
 #include <regex>
 #include <random>
+#include <wobjectimpl.h>
 module Artifact.Audio.Mixer;
+
+import Artifact.Audio.Mixer;
 
 
 
@@ -47,13 +50,18 @@ module Artifact.Audio.Mixer;
 
 namespace Artifact
 {
+    using namespace ArtifactCore;
+
+    W_OBJECT_IMPL(AudioMixerChannelStrip)
+    W_OBJECT_IMPL(AudioMixerMasterBus)
+    W_OBJECT_IMPL(AudioMixer)
 
 // ==================== AudioMixerChannelStrip::Impl ====================
 
 class AudioMixerChannelStrip::Impl
 {
 public:
-    LayerID layerId_ = 0;
+    LayerID layerId_;
     QString layerName_;
 
     float volume_ = 1.0f;      // 1.0 = 0dB
@@ -289,7 +297,7 @@ void AudioMixerMasterBus::updateLevels(float left, float right)
 class AudioMixer::Impl
 {
 public:
-    QHash<LayerID, std::unique_ptr<AudioMixerChannelStrip>> channelStrips_;
+    std::map<LayerID, std::unique_ptr<AudioMixerChannelStrip>> channelStrips_;
     std::unique_ptr<AudioMixerMasterBus> masterBus_;
 
     int sampleRate_ = 44100;
@@ -312,8 +320,9 @@ AudioMixer::~AudioMixer()
 
 AudioMixerChannelStrip* AudioMixer::addChannelStrip(LayerID layerId)
 {
-    if (impl_->channelStrips_.contains(layerId)) {
-        return impl_->channelStrips_[layerId].get();
+    auto it = impl_->channelStrips_.find(layerId);
+    if (it != impl_->channelStrips_.end()) {
+        return it->second.get();
     }
 
     auto strip = std::make_unique<AudioMixerChannelStrip>(this);
@@ -327,8 +336,7 @@ AudioMixerChannelStrip* AudioMixer::addChannelStrip(LayerID layerId)
 
 void AudioMixer::removeChannelStrip(LayerID layerId)
 {
-    if (impl_->channelStrips_.contains(layerId)) {
-        impl_->channelStrips_.remove(layerId);
+    if (impl_->channelStrips_.erase(layerId) > 0) {
         Q_EMIT channelStripRemoved(layerId);
     }
 }
@@ -336,14 +344,14 @@ void AudioMixer::removeChannelStrip(LayerID layerId)
 AudioMixerChannelStrip* AudioMixer::getChannelStrip(LayerID layerId)
 {
     auto it = impl_->channelStrips_.find(layerId);
-    return (it != impl_->channelStrips_.end()) ? it->get() : nullptr;
+    return (it != impl_->channelStrips_.end()) ? it->second.get() : nullptr;
 }
 
 QVector<AudioMixerChannelStrip*> AudioMixer::allChannelStrips() const
 {
     QVector<AudioMixerChannelStrip*> result;
-    for (auto& [id, strip] : impl_->channelStrips_) {
-        result.append(strip.get());
+    for (auto& pair : impl_->channelStrips_) {
+        result.append(pair.second.get());
     }
     return result;
 }
@@ -365,8 +373,8 @@ const AudioMixerMasterBus* AudioMixer::masterBus() const
 
 bool AudioMixer::hasAnySolo() const
 {
-    for (const auto& [id, strip] : impl_->channelStrips_) {
-        if (strip->isSolo()) return true;
+    for (auto const& pair : impl_->channelStrips_) {
+        if (pair.second->isSolo()) return true;
     }
     return false;
 }
@@ -374,29 +382,25 @@ bool AudioMixer::hasAnySolo() const
 void AudioMixer::updateSoloStates()
 {
     bool anySolo = hasAnySolo();
-    for (auto& [id, strip] : impl_->channelStrips_) {
+    for (auto& pair : impl_->channelStrips_) {
         if (anySolo) {
-            // Solo状態がある場合、solo以外のチャンネルをミュート
-            strip->setMuted(!strip->isSolo());
-        } else {
-            // Soloがない場合、通常のミュート状態にリセット
-            // （実際の実装では元の状态を保存が必要）
+            pair.second->setMuted(!pair.second->isSolo());
         }
     }
 }
 
 void AudioMixer::setAllMuted(bool muted)
 {
-    for (auto& [id, strip] : impl_->channelStrips_) {
-        strip->setMuted(muted);
+    for (auto& pair : impl_->channelStrips_) {
+        pair.second->setMuted(muted);
     }
     impl_->masterBus_->setMuted(muted);
 }
 
 void AudioMixer::resetAllPeaks()
 {
-    for (auto& [id, strip] : impl_->channelStrips_) {
-        strip->resetPeak();
+    for (auto& pair : impl_->channelStrips_) {
+        pair.second->resetPeak();
     }
 }
 

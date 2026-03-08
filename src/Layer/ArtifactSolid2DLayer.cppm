@@ -1,11 +1,13 @@
-﻿module;
+module;
 #include <QList>
 
 module Artifact.Layer.Solid2D;
 
+import Artifact.Render.IRenderer;
 
-namespace  Artifact
+namespace Artifact
 {
+
 
  class ArtifactSolid2DLayer::Impl
  {
@@ -56,11 +58,14 @@ namespace  Artifact
   setSourceSize(Size_2D(width, height));
  }
 
- void ArtifactSolid2DLayer::draw(ArtifactIRenderer* renderer)
+void ArtifactSolid2DLayer::draw(ArtifactIRenderer* renderer)
 
  {
   auto size = sourceSize();
-  renderer->drawSolidRect(0, 0, (float)size.width, (float)size.height, impl_->color());
+  renderer->drawSolidRect(Detail::float2(0.0f, 0.0f),
+                          Detail::float2(static_cast<float>(size.width),
+                                         static_cast<float>(size.height)),
+                          impl_->color());
  }
 
 }

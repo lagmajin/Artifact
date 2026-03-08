@@ -1,3 +1,4 @@
+﻿module ;
 #include <string.h>
 #include <string.h>
 #include <QString>
@@ -35,7 +36,6 @@
 #include <numeric>
 #include <regex>
 #include <random>
-module ;
 
 module Composition.Settings;
 

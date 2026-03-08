@@ -9,7 +9,9 @@
 #include <QTimer>
 #include <QMenu>
 #include <QAction>
+#include <QMouseEvent>
 #include <cmath>
+#include <wobjectimpl.h>
 
 module Artifact.Widgets.AudioMixer;
 
@@ -19,6 +21,9 @@ import Artifact.VST.Effect;
 import Artifact.VST.Host;
 
 namespace Artifact {
+W_OBJECT_IMPL(AudioEffectSlotWidget)
+W_OBJECT_IMPL(AudioChannelStripWidget)
+W_OBJECT_IMPL(AudioMixerWidget)
 
 // ============================================================================
 // AudioEffectSlotWidget
@@ -119,7 +124,8 @@ AudioChannelStripWidget::AudioChannelStripWidget(std::shared_ptr<ArtifactCore::A
     layout->addLayout(fxLayout);
 
     // 1. Bus Name Label
-    QLabel* nameLabel = new QLabel(QString::fromStdString(bus->getName().toStdString()), this);
+    QString busName = QString::fromStdString(bus->getName());
+    QLabel* nameLabel = new QLabel(busName, this);
     nameLabel->setAlignment(Qt::AlignCenter);
     nameLabel->setStyleSheet("color: #E0E0E0; font-weight: bold; font-family: 'Inter', sans-serif; font-size: 11px;");
     layout->addWidget(nameLabel);

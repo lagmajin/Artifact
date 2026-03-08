@@ -1,5 +1,5 @@
-module;
 
+module;
 #include <QThreadPool>
 #include <QtConcurrent>
 #include <QFutureWatcher>
@@ -45,6 +45,8 @@ module Artifact.Render.Scheduler;
 
 
 
+
+import Artifact.Render.Scheduler;
 import Frame.Position;
 import Frame.Range;
 
@@ -394,7 +396,7 @@ void BatchRenderer::renderRange(const FrameRange& range, TaskPriority priority) 
     emit batchStarted();
     
     // Create tasks for each frame in range
-    for (long long f = range.start().value(); f <= range.end().value(); ++f) {
+        for (long long f = range.startPosition().framePosition(); f <= range.endPosition().framePosition(); ++f) {
         auto* task = new RenderTask(FrameRange(FramePosition(f), FramePosition(f)), priority);
         impl_->scheduler_->submitTask(task);
     }
@@ -417,8 +419,8 @@ void BatchRenderer::renderMissingFrames() {
 }
 
 void BatchRenderer::renderAroundFrame(const FramePosition& frame, int radius) {
-    FrameRange range(FramePosition(frame.value() - radius),
-                   FramePosition(frame.value() + radius));
+    FrameRange range(FramePosition(frame.framePosition() - radius),
+                   FramePosition(frame.framePosition() + radius));
     renderRange(range, TaskPriority::High);
 }
 
@@ -429,7 +431,7 @@ void BatchRenderer::cancelBatch() {
     impl_->batchRunning_ = false;
 }
 
-float BatchRenderer::batchProgress() const {
+float BatchRenderer::currentBatchProgress() const {
     return impl_->batchProgress_.load();
 }
 

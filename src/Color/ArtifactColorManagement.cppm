@@ -6,6 +6,7 @@ module;
 #include <QFile>
 #include <QTextStream>
 #include <QDebug>
+#include <QRegularExpression>
 #include <cmath>
 
 #include <iostream>
@@ -219,7 +220,7 @@ bool LUTData::loadFromFile(const QString& filePath)
             continue;
         } else {
             // 数値行
-            QStringList values = line.split(QRegExp("\\s+"), QString::SkipEmptyParts);
+            QStringList values = line.split(QRegularExpression("\\s+"), Qt::SkipEmptyParts);
             if (values.size() >= 3) {
                 float r = values[0].toFloat();
                 float g = values[1].toFloat();

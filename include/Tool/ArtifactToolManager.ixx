@@ -1,7 +1,7 @@
+﻿module ;
 #include <wobjectdefs.h>
 #include <QObject>
 #include <QString>
-module ;
 
 export module Artifact.Tool.Manager;
 

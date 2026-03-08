@@ -131,8 +131,7 @@ public:
 
 TimelineScene::TimelineScene(QWidget* parent) : QGraphicsScene(parent), impl_(new Impl(this))
 {
- setSceneRect(0, 0, 2000, 800);
- impl_->trackHeights_.push_back(28.0);
+ setSceneRect(0, 0, 2000, 0);
 }
 
 TimelineScene::~TimelineScene()
@@ -877,8 +876,30 @@ TimelineTrackView::TimelineTrackView(QWidget* parent /*= nullptr*/) :QGraphicsVi
   painter->save();
   painter->setWorldTransform(QTransform());
   QRectF viewRect = viewport()->rect();
+  if (impl_->scene_ && impl_->scene_->trackCount() == 0) {
+   QRectF emptyRect = viewRect.adjusted(0, 0, 0, -30);
+   QFont emptyTitle = painter->font();
+   emptyTitle.setPointSize(11);
+   emptyTitle.setBold(true);
+   painter->setFont(emptyTitle);
+   painter->setPen(QColor(205, 205, 205));
+   painter->drawText(emptyRect, Qt::AlignCenter, "No layers");
+
+   QFont emptyHint = painter->font();
+   emptyHint.setPointSize(9);
+   emptyHint.setBold(false);
+   painter->setFont(emptyHint);
+   painter->setPen(QColor(145, 145, 145));
+   painter->drawText(emptyRect.adjusted(0, 24, 0, 0), Qt::AlignHCenter | Qt::AlignTop,
+     "Add a layer to see timeline clips");
+  }
+
   QRectF barRect(0, viewRect.height() - 30, viewRect.width(), 30);
   painter->fillRect(barRect, QColor(28, 28, 28, 220));
+
+  painter->setPen(QColor(150, 150, 150));
+  painter->drawText(barRect.adjusted(10, 0, -10, 0), Qt::AlignVCenter | Qt::AlignLeft,
+   "Ctrl + Wheel: Zoom");
   painter->restore();
  }
 

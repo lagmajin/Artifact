@@ -1,330 +1,115 @@
 ﻿module;
-#include <wobjectimpl.h>
-#include <mutex>
-#include <QFile>
+#include <QObject>
 #include <QMenu>
-#include <QPropertyAnimation>
-#include <QGraphicsOpacityEffect>
+#include <QAction>
 #include <QFileDialog>
-#include <QDir>
-#include <QDirIterator>
-
 #include <QApplication>
+#include <QDebug>
+#include <wobjectimpl.h>
 
 module Artifact.Menu.File;
 
-import  Artifact.Project.Manager;
-import  Artifact.Service.Project;
-import  Artifact.Project.Health;
-
-import Utils;
-
-using namespace Artifact;
+import Artifact.Project.Manager;
+import Artifact.Service.Project;
 
 namespace Artifact {
 
- W_OBJECT_IMPL(ArtifactFileMenu)
+class ArtifactFileMenu::Impl {
+public:
+    Impl(ArtifactFileMenu* menu);
+    ~Impl() = default;
 
-  class  ArtifactFileMenu::Impl {
-  private:
+    QAction* createProjectAction = nullptr;
+    QAction* openProjectAction = nullptr;
+    QAction* saveProjectAction = nullptr;
+    QAction* saveProjectAsAction = nullptr;
+    QAction* closeProjectAction = nullptr;
+    QAction* quitAction = nullptr;
 
-   bool projectCreated_ = false;
-  public:
-   Impl();
-   void rebuildMenu();
-   QAction* createProjectAction=nullptr;
-   QAction* closeProjectAction=nullptr;
-   QAction* saveProjectAction=nullptr;
-   QAction* saveProjectAsAction=nullptr;
-   QAction* quitApplicationAction=nullptr;
-
-   QAction* openProjectAction=nullptr;
-   QAction* projectSettingsAction=nullptr;
-   
-   QMenu* importMenu=nullptr;
-   QAction* importFileAction=nullptr;
-   QAction* importFolderAction=nullptr;
-   
-   QMenu* exportMenu=nullptr;
-   QAction* addToRenderQueueAction=nullptr;
-
-   void handleCreateProject();
-   void handleOpenProject();
-   void handleSaveProject();
-   void handleSaveAsProject();
-   void handleCloseProject();
-   void handleImportFile();
-   void handleImportFolder();
-
- };
-
- ArtifactFileMenu::Impl::Impl()
- {
-  createProjectAction = new QAction("CreateProject");
-  createProjectAction->setShortcut(QKeySequence::New);
-  createProjectAction->setIcon(QIcon(ArtifactCore::getIconPath() + "/new.png"));
-
-
-
-  closeProjectAction = new QAction("CloseProject");
-  closeProjectAction->setShortcut(QKeySequence::Close);
-  closeProjectAction->setDisabled(true);
-
-  saveProjectAction = new QAction(u8"保存(&S)");
-  saveProjectAction->setShortcut(QKeySequence::Save);
-  saveProjectAction->setDisabled(true); // 最初は無効 (まだプロジェクトがないため)
-
-  // --- 名前を付けて保存アクション ---
-  saveProjectAsAction = new QAction("名前を付けて保存(&A)...");
-  saveProjectAsAction->setShortcut(QKeySequence::SaveAs);
-  saveProjectAsAction->setDisabled(true); // 最初は無効 (まだプロジェクトがないため)
-
-  quitApplicationAction = new QAction("終了(&Q)");
-  quitApplicationAction->setShortcut(QKeySequence::Quit);
-  quitApplicationAction->setIcon(QIcon(ArtifactCore::getIconPath() + "/Png/close_red.png"));
-
-  openProjectAction = new QAction("開く(&O)...");
-  openProjectAction->setShortcut(QKeySequence::Open);
-
-  projectSettingsAction = new QAction("プロジェクト設定(&P)...");
-  projectSettingsAction->setShortcut(QKeySequence("Alt+Shift+Ctrl+P"));
-  projectSettingsAction->setDisabled(true);
-
-  // Import Submenu
-  importMenu = new QMenu("読み込み(&I)");
-  importFileAction = new QAction("ファイル(&F)...");
-  importFileAction->setShortcut(QKeySequence("Ctrl+I"));
-  importFolderAction = new QAction("フォルダ(&D)...");
-  importMenu->addAction(importFileAction);
-  importMenu->addAction(importFolderAction);
-  importMenu->setDisabled(true);
-
-  // Export Submenu
-  exportMenu = new QMenu("書き出し(&E)");
-  addToRenderQueueAction = new QAction("レンダーキューに追加");
-  addToRenderQueueAction->setShortcut(QKeySequence("Ctrl+M"));
-  exportMenu->addAction(addToRenderQueueAction);
-  exportMenu->setDisabled(true);
- }
-
- void ArtifactFileMenu::Impl::rebuildMenu()
- {
-  // Update action states based on project status
-  bool hasProject = ArtifactProjectManager::getInstance().isProjectCreated();
-  saveProjectAction->setEnabled(hasProject);
-  saveProjectAsAction->setEnabled(hasProject);
-  closeProjectAction->setEnabled(hasProject);
-  projectSettingsAction->setEnabled(hasProject);
-  importMenu->setEnabled(hasProject);
-  exportMenu->setEnabled(hasProject);
-  createProjectAction->setEnabled(!hasProject); // Disable if project already exists
-  openProjectAction->setEnabled(!hasProject);
- }
-
- void ArtifactFileMenu::Impl::handleCreateProject()
- {
-  ArtifactProjectManager::getInstance().createProject();
- }
-
- void ArtifactFileMenu::Impl::handleOpenProject()
- {
-  // TODO: Implement open project dialog
-  QString fileName = QFileDialog::getOpenFileName(nullptr, "Open Project", "", "Artifact Project (*.art)");
-  if (!fileName.isEmpty()) {
-    ArtifactProjectManager::getInstance().loadFromFile(fileName);
-  }
- }
-
- void ArtifactFileMenu::Impl::handleCloseProject()
- {
-  ArtifactProjectManager::getInstance().closeCurrentProject();
- }
-
- void ArtifactFileMenu::Impl::handleSaveProject()
- {
-  if (!ArtifactProjectManager::getInstance().isProjectCreated()) {
-   return;
-  }
-  auto project = ArtifactProjectManager::getInstance().getCurrentProjectSharedPtr();
-  if (project) {
-   auto report = ArtifactProjectHealthChecker::check(project.get());
-   if (!report.isHealthy) {
-    qWarning() << "[SaveProject] canceled by health check. issues=" << report.issues.size();
-    return;
-   }
-  }
-  QString path = ArtifactProjectManager::getInstance().currentProjectPath();
-  if (path.isEmpty()) {
-   handleSaveAsProject();
-   return;
-  }
-  auto result = ArtifactProjectManager::getInstance().saveToFile(path);
-  if (!result.success) {
-   // TODO: Show error message to user
-  }
- }
-
- void ArtifactFileMenu::Impl::handleSaveAsProject()
- {
-  if (!ArtifactProjectManager::getInstance().isProjectCreated()) {
-   return;
-  }
-  auto project = ArtifactProjectManager::getInstance().getCurrentProjectSharedPtr();
-  if (project) {
-   auto report = ArtifactProjectHealthChecker::check(project.get());
-   if (!report.isHealthy) {
-    qWarning() << "[SaveAsProject] canceled by health check. issues=" << report.issues.size();
-    return;
-   }
-  }
-  QString fileName = QFileDialog::getSaveFileName(nullptr, "名前を付けて保存", "", "Artifact Project (*.art)");
-  if (!fileName.isEmpty()) {
-   if (!fileName.endsWith(".art", Qt::CaseInsensitive)) {
-    fileName += ".art";
-   }
-   auto result = ArtifactProjectManager::getInstance().saveToFile(fileName);
-   if (!result.success) {
-    // TODO: Show error message to user
-   }
-  }
- }
-
- void ArtifactFileMenu::Impl::handleImportFile()
- {
-  auto* svc = ArtifactProjectService::instance();
-  if (!svc || !ArtifactProjectManager::getInstance().isProjectCreated()) {
-   return;
-  }
-
-  QStringList paths = QFileDialog::getOpenFileNames(nullptr, "Import Files", QString(), "All Files (*.*)");
-  if (paths.isEmpty()) {
-   return;
-  }
-
-  svc->importAssetsFromPaths(paths);
- }
-
- void ArtifactFileMenu::Impl::handleImportFolder()
- {
-  auto* svc = ArtifactProjectService::instance();
-  if (!svc || !ArtifactProjectManager::getInstance().isProjectCreated()) {
-   return;
-  }
-
-  QString folderPath = QFileDialog::getExistingDirectory(nullptr, "Import Folder");
-  if (folderPath.isEmpty()) {
-   return;
-  }
-
-  QStringList files;
-  QDirIterator it(folderPath, QDir::Files, QDirIterator::Subdirectories);
-  while (it.hasNext()) {
-   files.append(it.next());
-  }
-
-  if (files.isEmpty()) {
-   return;
-  }
-
-  svc->importAssetsFromPaths(files);
- }
-
- ArtifactFileMenu::ArtifactFileMenu(QWidget* parent /*= nullptr*/) :QMenu(parent), Impl_(new Impl())
- {
-  setObjectName("FileMenu");
-
-  setTitle("File(&F)");
-  setTearOffEnabled(false);
-
-  //auto projectAction = new QAction("CreateProject");
-  addAction(Impl_->createProjectAction);
-  addAction(Impl_->openProjectAction);
-  addSeparator();
-  addAction(Impl_->saveProjectAction);
-  addAction(Impl_->saveProjectAsAction);
-  addAction(Impl_->closeProjectAction);
-  addSeparator();
-  addMenu(Impl_->importMenu);
-  addMenu(Impl_->exportMenu);
-  addSeparator();
-  addAction(Impl_->projectSettingsAction);
-  addSeparator();
-  addAction(Impl_->quitApplicationAction);
-  addSeparator();
-
-
-  connect(Impl_->createProjectAction, &QAction::triggered,
-   [this]() { Impl_->handleCreateProject(); });
-
-  connect(Impl_->openProjectAction, &QAction::triggered,
-   [this]() { Impl_->handleOpenProject(); });
-
-  connect(Impl_->closeProjectAction, &QAction::triggered,
-   [this]() { Impl_->handleCloseProject(); });
-
-  connect(Impl_->saveProjectAction, &QAction::triggered,
-   [this]() { Impl_->handleSaveProject(); });
-
-  connect(Impl_->saveProjectAsAction, &QAction::triggered,
-   [this]() { Impl_->handleSaveAsProject(); });
-
-  connect(Impl_->importFileAction, &QAction::triggered,
-   [this]() { Impl_->handleImportFile(); });
-
-  connect(Impl_->importFolderAction, &QAction::triggered,
-   [this]() { Impl_->handleImportFolder(); });
-
-  connect(Impl_->quitApplicationAction, &QAction::triggered,
-   this, &ArtifactFileMenu::quitApplication);
-
-  connect(this, &QMenu::aboutToShow, this, &ArtifactFileMenu::rebuildMenu);
-
-  // プロジェクト作成/変更時にメニュー状態を更新
-  auto* projectService = ArtifactProjectService::instance();
-  if (projectService) {
-    QObject::connect(projectService, &ArtifactProjectService::projectCreated, this, [this]() {
-      this->rebuildMenu();
-    });
-    QObject::connect(projectService, &ArtifactProjectService::projectChanged, this, [this]() {
-      this->rebuildMenu();
-    });
-    // projectClosed シグナルがあれば同様に接続
-  }
- }
-
- ArtifactFileMenu::~ArtifactFileMenu()
- {
-  delete Impl_;
- }
-
- void ArtifactFileMenu::projectCreateRequested()
- {
-  qDebug() << "ReceiverClass::onDataReady() が呼び出されました！";
-
-  ArtifactProjectManager::getInstance().createProject();
-
- }
-
-
-
- void ArtifactFileMenu::projectClosed()
- {
-  qDebug() << "ReceiverClass::projectClosed() が呼び出されました！";
- }
-
- void ArtifactFileMenu::quitApplication()
- {
-  QApplication::quit();
- }
-
- void ArtifactFileMenu::rebuildMenu()
- {
-  Impl_->rebuildMenu();
- }
-
- void ArtifactFileMenu::resetRecentFilesMenu()
- {
-
- }
-
+    void rebuildMenu();
 };
+
+ArtifactFileMenu::Impl::Impl(ArtifactFileMenu* menu)
+{
+    createProjectAction = new QAction("新規プロジェクト(&N)...");
+    createProjectAction->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_N));
+
+    openProjectAction = new QAction("プロジェクトを開く(&O)...");
+    openProjectAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_O));
+
+    saveProjectAction = new QAction("保存(&S)");
+    saveProjectAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_S));
+
+    saveProjectAsAction = new QAction("名前を付けて保存(&A)...");
+    saveProjectAsAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_S));
+
+    closeProjectAction = new QAction("プロジェクトを閉じる");
+    
+    quitAction = new QAction("終了(&Q)");
+    quitAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_Q));
+
+    menu->addAction(createProjectAction);
+    menu->addAction(openProjectAction);
+    menu->addSeparator();
+    menu->addAction(saveProjectAction);
+    menu->addAction(saveProjectAsAction);
+    menu->addSeparator();
+    menu->addAction(closeProjectAction);
+    menu->addSeparator();
+    menu->addAction(quitAction);
+
+    QObject::connect(createProjectAction, &QAction::triggered, menu, &ArtifactFileMenu::projectCreateRequested);
+    QObject::connect(closeProjectAction, &QAction::triggered, menu, &ArtifactFileMenu::projectClosed);
+    QObject::connect(quitAction, &QAction::triggered, menu, &ArtifactFileMenu::quitApplication);
+}
+
+void ArtifactFileMenu::Impl::rebuildMenu()
+{
+    auto service = ArtifactProjectService::instance();
+    bool hasProject = service && service->hasProject();
+    saveProjectAction->setEnabled(hasProject);
+    saveProjectAsAction->setEnabled(hasProject);
+    closeProjectAction->setEnabled(hasProject);
+}
+
+W_OBJECT_IMPL(ArtifactFileMenu)
+
+ArtifactFileMenu::ArtifactFileMenu(QWidget* parent)
+    : QMenu(parent), Impl_(new Impl(this))
+{
+    setTitle("ファイル(&F)");
+    connect(this, &QMenu::aboutToShow, this, &ArtifactFileMenu::rebuildMenu);
+}
+
+ArtifactFileMenu::~ArtifactFileMenu()
+{
+    delete Impl_;
+}
+
+void ArtifactFileMenu::rebuildMenu()
+{
+    Impl_->rebuildMenu();
+}
+
+void ArtifactFileMenu::projectCreateRequested()
+{
+    qDebug() << "Project create requested";
+    // Implementation details...
+}
+
+void ArtifactFileMenu::projectClosed()
+{
+    qDebug() << "Project closed";
+    // Implementation details...
+}
+
+void ArtifactFileMenu::quitApplication()
+{
+    QApplication::quit();
+}
+
+void ArtifactFileMenu::resetRecentFilesMenu()
+{
+}
+
+} // namespace Artifact

@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <vector>
 #include <string>
 #include <memory>
@@ -45,19 +45,19 @@ import Artifact.Audio.Effects.Base;
 
 export namespace Artifact {
 
-class EqualizerEffect : public ArtifactAbstractAudioEffect {
+class EqualizerEffect {
 public:
     EqualizerEffect();
-    ~EqualizerEffect() override = default;
+    ~EqualizerEffect() = default;
 
-    // ArtifactAbstractAudioEffect interface
-    ArtifactCore::AudioSegment process(const ArtifactCore::AudioSegment& input) override;
-    std::string getName() const override { return "Equalizer"; }
-    std::string getDescription() const override { return "Multi-band equalizer effect"; }
-    
-    std::vector<AudioEffectParameter> getParameters() const override;
-    void setParameter(const std::string& name, float value) override;
-    float getParameter(const std::string& name) const override;
+    // Audio processing
+    void process(float* buffer, int samples, int channels);
+    std::string name() const { return "Equalizer"; }
+    std::string getDescription() const { return "Multi-band equalizer effect"; }
+
+    std::vector<AudioEffectParameter> getParameters() const;
+    void setParameter(const std::string& name, float value);
+    float getParameter(const std::string& name) const;
 
 private:
     struct Band {
@@ -67,7 +67,8 @@ private:
     };
 
     std::vector<Band> bands_;
-    
+    float sampleRate_ = 44100.0f;
+
     // バンドパスフィルタの適用
     void applyBandFilter(std::vector<float>& channelData, const Band& band);
 

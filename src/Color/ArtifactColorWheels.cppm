@@ -1,4 +1,4 @@
-module;
+﻿module;
 
 #include <cmath>
 #include <algorithm>
@@ -68,16 +68,13 @@ public:
     ArtifactCore::ColorGrader core_;
 };
 
-// W_OBJECT_IMPL for Qt signals/slots
-W_OBJECT_IMPL(ColorWheelsProcessor)
-W_OBJECT_IMPL(ColorCurves)
-W_OBJECT_IMPL(ColorGrader)
-
 // ==================== ColorWheelsProcessor ====================
 
 ColorWheelsProcessor::ColorWheelsProcessor(QObject* parent)
     : QObject(parent)
     , impl_(new Impl())
+{
+}
 {
 }
 

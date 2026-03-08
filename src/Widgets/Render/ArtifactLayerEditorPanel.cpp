@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <QWidget>
 #include <QBoxLayout>
 
@@ -42,7 +42,7 @@ module Artifact.Widgets.LayerEditorPanel;
 
 
 import Artifact.Widgets.CompositionFooter;
-import Artifact.Widgets.Render.Layer;
+import Artifact.Widgets.RenderLayerWidgetv2;
 
 namespace Artifact {
 
@@ -50,7 +50,7 @@ namespace Artifact {
  private:
 
  public:
-  ArtifactLayerEditor2DWidget* editor_ = nullptr;
+  ArtifactLayerEditorWidgetV2* editor_ = nullptr;
   ArtifactCompositionViewerFooter* footer_ = nullptr;
 
   Impl();
@@ -59,11 +59,11 @@ namespace Artifact {
 
  ArtifactLayerEditorPanel::Impl::Impl()
  {
-  editor_ = new ArtifactLayerEditor2DWidget();
+  editor_ = new ArtifactLayerEditorWidgetV2();
   
   footer_ = new ArtifactCompositionViewerFooter();
 
-  connect(footer_, &ArtifactCompositionViewerFooter::takeSnapShotRequested, editor_, &ArtifactLayerEditor2DWidget::takeScreenShot);
+  QObject::connect(footer_, &ArtifactCompositionViewerFooter::takeSnapShotRequested, editor_, &ArtifactLayerEditorWidgetV2::takeScreenShot);
  }
 
  ArtifactLayerEditorPanel::Impl::~Impl()

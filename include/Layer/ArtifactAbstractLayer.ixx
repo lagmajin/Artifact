@@ -9,6 +9,7 @@
 #include <QImage>
 #include <QTransform>
 #include <memory>
+#include <typeindex>
 
 #include <iostream>
 #include <vector>

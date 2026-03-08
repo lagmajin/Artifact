@@ -42,16 +42,16 @@
 #include <numeric>
 #include <regex>
 #include <random>
-#pragma comment(lib,"DiligentCore.lib")
-#pragma comment(lib,"Diligent-Common.lib")
-#pragma comment(lib,"Diligent-BasicPlatform.lib")
-#pragma comment(lib,"Diligent-Win32Platform.lib")
-#pragma comment(lib,"Diligent-GraphicsEngine.lib")
-#pragma comment(lib,"Diligent-GraphicsEngineD3D12-static.lib")
-#pragma comment(lib,"Diligent-GraphicsEngineD3DBase.lib")
-#pragma comment(lib,"Diligent-GraphicsTools.lib")
-#pragma comment(lib,"Diligent-GraphicsAccessories.lib")
-#pragma comment(lib,"Diligent-Archiver-static.lib")
+// #pragma comment(lib,"DiligentCore.lib")
+// #pragma comment(lib,"Diligent-Common.lib")
+// #pragma comment(lib,"Diligent-BasicPlatform.lib")
+// #pragma comment(lib,"Diligent-Win32Platform.lib")
+// #pragma comment(lib,"Diligent-GraphicsEngine.lib")
+// #pragma comment(lib,"Diligent-GraphicsEngineD3D12-static.lib")
+// #pragma comment(lib,"Diligent-GraphicsEngineD3DBase.lib")
+// #pragma comment(lib,"Diligent-GraphicsTools.lib")
+// #pragma comment(lib,"Diligent-GraphicsAccessories.lib")
+// #pragma comment(lib,"Diligent-Archiver-static.lib")
 module ArtifactDiligentEngineRenderWindow;
 
 

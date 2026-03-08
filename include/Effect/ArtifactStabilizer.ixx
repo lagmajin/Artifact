@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <QObject>
 #include <QString>
 #include <QVector>
@@ -56,6 +56,7 @@ using ArtifactCore::FeatureTrack;
 using ArtifactCore::FrameMotion;
 using ArtifactCore::FeatureDetectionParams;
 using ArtifactCore::StabilizerParams;
+using ArtifactCore::FramePosition;
 
 /**
  * @brief Video stabilization effect
@@ -88,7 +89,7 @@ public:
     bool isStabilized() const { return stabilized_; }
     
     // Frame management
-    void addFrame(const QImage& frame, FramePosition pos = FramePosition(0));
+    void addFrame(const QImage& frame, const FramePosition& pos = FramePosition(0));
     void clearFrames();
     int frameCount() const { return frames_.size(); }
     

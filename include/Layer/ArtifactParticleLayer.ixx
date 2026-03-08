@@ -67,8 +67,8 @@ public:
     virtual ~ArtifactParticleLayer();
     
     // Layer interface
-    void draw() override;
-    QJsonObject toJson() const override;
+    void draw(ArtifactIRenderer* renderer) override;
+    QJsonObject toJson() const;
     static ArtifactAbstractLayerPtr fromJson(const QJsonObject& obj);
     
     // Layer identification
@@ -123,7 +123,7 @@ public:
     void preWarm(float duration);
     
     // Layer time handling
-    void goToFrame(int64_t frameNumber) override;
+    void goToFrame(int64_t frameNumber);
     
     // Render output
     QImage renderFrame(int width, int height, float time);

@@ -59,7 +59,7 @@ public:
     explicit ArtifactPropertyWidget(QWidget* parent = nullptr);
     ~ArtifactPropertyWidget();
 
-    void setLayer(ArtifactAbstractLayerPtr layer);
+    void setLayer(Artifact::ArtifactAbstractLayerPtr layer);
     void clear();
 
     void updateProperties();

@@ -91,7 +91,7 @@ export namespace Artifact {
                 auto renderNode = std::make_shared<EffectNode>(
                     NodeID(QString("Render_%1").arg(layer->id().toString())),
                     "LayerRender",
-                    EffectPipelineStage::Render,
+                    EffectPipelineStage::Rasterizer,
                     nullptr // LayerRenderProcessor を渡す
                 );
                 graph->addNode(renderNode);
@@ -125,7 +125,7 @@ export namespace Artifact {
             auto compositeNode = std::make_shared<EffectNode>(
                 NodeID("Composite_Output"),
                 "Final Composite",
-                EffectPipelineStage::PostProcess,
+                EffectPipelineStage::LayerTransform,
                 nullptr
             );
             graph->addNode(compositeNode);

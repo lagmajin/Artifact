@@ -361,9 +361,12 @@ void ParticleEmitter::initializeParticle(Particle& p)
     // Apply color variation
     if (params_.colorVariation > 0.0f) {
         float var = params_.colorVariation;
-        int r = std::clamp(p.colorStart.red() + static_cast<int>(impl_->rng.bounded(-var, var) * 255), 0, 255);
-        int g = std::clamp(p.colorStart.green() + static_cast<int>(impl_->rng.bounded(-var, var) * 255), 0, 255);
-        int b = std::clamp(p.colorStart.blue() + static_cast<int>(impl_->rng.bounded(-var, var) * 255), 0, 255);
+        auto variation = [&]() -> float {
+            return static_cast<float>(impl_->rng.generateDouble() * (2.0 * var) - var);
+        };
+        int r = std::clamp(p.colorStart.red() + static_cast<int>(variation() * 255.0f), 0, 255);
+        int g = std::clamp(p.colorStart.green() + static_cast<int>(variation() * 255.0f), 0, 255);
+        int b = std::clamp(p.colorStart.blue() + static_cast<int>(variation() * 255.0f), 0, 255);
         p.colorStart = QColor(r, g, b, p.colorStart.alpha());
     }
     
@@ -716,9 +719,9 @@ void ParticleSystem::renderGPU(float* vertexBuffer, int maxVertices, int& vertex
             // Each particle needs 4 vertices (quad)
             int idx = vertexCount * 8;  // 8 floats per vertex (pos + uv + color)
             
-            float halfSize = p->scale * 5.0f;
-            float cosR = std::cos(p->rotation * M_PI / 180.0f);
-            float sinR = std::sin(p->rotation * M_PI / 180.0f);
+            float halfSize = p.scale * 5.0f;
+            float cosR = std::cos(p.rotation * M_PI / 180.0f);
+            float sinR = std::sin(p.rotation * M_PI / 180.0f);
             
             // Four corners
             float corners[4][2] = {
@@ -729,17 +732,17 @@ void ParticleSystem::renderGPU(float* vertexBuffer, int maxVertices, int& vertex
             };
             
             for (int i = 0; i < 4; i++) {
-                float x = corners[i][0] * cosR - corners[i][1] * sinR + p->position.x();
-                float y = corners[i][0] * sinR + corners[i][1] * cosR + p->position.y();
+                float x = corners[i][0] * cosR - corners[i][1] * sinR + p.position.x();
+                float y = corners[i][0] * sinR + corners[i][1] * cosR + p.position.y();
                 
                 vertexBuffer[idx + i * 8 + 0] = x;
                 vertexBuffer[idx + i * 8 + 1] = y;
                 vertexBuffer[idx + i * 8 + 2] = (i == 0 || i == 3) ? 0.0f : 1.0f;  // UV
                 vertexBuffer[idx + i * 8 + 3] = (i == 0 || i == 1) ? 0.0f : 1.0f;
-                vertexBuffer[idx + i * 8 + 4] = p->color.redF();
-                vertexBuffer[idx + i * 8 + 5] = p->color.greenF();
-                vertexBuffer[idx + i * 8 + 6] = p->color.blueF();
-                vertexBuffer[idx + i * 8 + 7] = p->color.alphaF() * p->opacity;
+                vertexBuffer[idx + i * 8 + 4] = p.color.redF();
+                vertexBuffer[idx + i * 8 + 5] = p.color.greenF();
+                vertexBuffer[idx + i * 8 + 6] = p.color.blueF();
+                vertexBuffer[idx + i * 8 + 7] = p.color.alphaF() * p.opacity;
             }
             
             vertexCount += 4;
@@ -1149,7 +1152,7 @@ EmitterParams ParticlePresets::bubbles()
 
 class ParticleManager::Impl {
 public:
-    QMap<QString, std::unique_ptr<ParticleSystem>> systems;
+    std::map<QString, std::unique_ptr<ParticleSystem>> systems;
 };
 
 // ==================== ParticleManager ====================
@@ -1166,34 +1169,41 @@ ParticleManager::~ParticleManager()
 
 ParticleSystem* ParticleManager::createSystem(const QString& name)
 {
-    if (impl_->systems.contains(name)) {
-        return impl_->systems[name].get();
+    auto found = impl_->systems.find(name);
+    if (found != impl_->systems.end()) {
+        return found->second.get();
     }
     
     auto system = std::make_unique<ParticleSystem>(this);
     ParticleSystem* ptr = system.get();
-    impl_->systems[name] = std::move(system);
+    impl_->systems.emplace(name, std::move(system));
     emit systemCreated(name);
     return ptr;
 }
 
 ParticleSystem* ParticleManager::system(const QString& name) const
 {
-    if (impl_->systems.contains(name)) {
-        return impl_->systems[name].get();
+    auto found = impl_->systems.find(name);
+    if (found != impl_->systems.end()) {
+        return found->second.get();
     }
     return nullptr;
 }
 
 void ParticleManager::removeSystem(const QString& name)
 {
-    impl_->systems.remove(name);
+    impl_->systems.erase(name);
     emit systemRemoved(name);
 }
 
 void ParticleManager::clearSystems()
 {
-    QStringList names = impl_->systems.keys();
+    QStringList names;
+    names.reserve(static_cast<qsizetype>(impl_->systems.size()));
+    for (const auto& [name, system] : impl_->systems) {
+        Q_UNUSED(system);
+        names.append(name);
+    }
     for (const QString& name : names) {
         removeSystem(name);
     }
@@ -1201,26 +1211,35 @@ void ParticleManager::clearSystems()
 
 void ParticleManager::update(float deltaTime)
 {
-    for (auto& system : impl_->systems) {
+    for (auto& [name, system] : impl_->systems) {
+        Q_UNUSED(name);
         system->update(deltaTime);
     }
 }
 
 void ParticleManager::preWarm(float duration)
 {
-    for (auto& system : impl_->systems) {
+    for (auto& [name, system] : impl_->systems) {
+        Q_UNUSED(name);
         system->preWarm(duration);
     }
 }
 
 QStringList ParticleManager::systemNames() const
 {
-    return impl_->systems.keys();
+    QStringList names;
+    names.reserve(static_cast<qsizetype>(impl_->systems.size()));
+    for (const auto& [name, system] : impl_->systems) {
+        Q_UNUSED(system);
+        names.append(name);
+    }
+    return names;
 }
 
 void ParticleManager::setAllPaused(bool paused)
 {
-    for (auto& system : impl_->systems) {
+    for (auto& [name, system] : impl_->systems) {
+        Q_UNUSED(name);
         system->setPaused(paused);
     }
 }

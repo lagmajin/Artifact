@@ -1,6 +1,7 @@
-module;
+﻿module;
 #include <memory>
 #include <vector>
+#include <string>
 module Artifact.Audio.Effects.Manager;
 
 import Artifact.Audio.Effects.Base;

@@ -48,6 +48,13 @@ export module Artifact.Render.FrameCache;
 
 import Frame.Position;
 
+export namespace Artifact {
+
+struct FrameRange {
+    int start = 0;
+    int end = 0;
+};
+
 W_REGISTER_ARGTYPE(ArtifactCore::FramePosition)
 
 export namespace Artifact {

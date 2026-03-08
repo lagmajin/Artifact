@@ -283,6 +283,11 @@ namespace Artifact
 
  }
 
+ bool ArtifactProjectService::hasProject() const
+ {
+  return impl_->projectManager().getCurrentProjectSharedPtr() != nullptr;
+ }
+
  void ArtifactProjectService::projectSettingChanged(const ArtifactProjectSettings& setting)
  {
 

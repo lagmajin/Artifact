@@ -1,3 +1,4 @@
+module;
 #include <QSet>
 #include <QObject>
 #include <wobjectdefs.h>
@@ -34,11 +35,7 @@
 #include <numeric>
 #include <regex>
 #include <random>
-module ;
-
 export module Artifact.Layers.Selection.Manager;
-
-
 
 
 import Artifact.Layer.Abstract;

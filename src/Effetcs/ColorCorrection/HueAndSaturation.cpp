@@ -61,14 +61,5 @@ class HueAndSaturationGPUMode:public ArtifactEffectImplBase {
 
  };
 
- HueAndSaturation::HueAndSaturation()
- {
-
- }
-
- HueAndSaturation::~HueAndSaturation()
- {
-
- }
 
 };

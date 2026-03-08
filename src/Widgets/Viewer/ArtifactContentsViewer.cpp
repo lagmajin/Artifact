@@ -12,6 +12,11 @@ module;
 #include <QMouseEvent>
 #include <QScrollBar>
 #include <QDebug>
+#include <QFileInfo>
+#include <QUrl>
+#include <QMediaPlayer>
+#include <QAudioOutput>
+#include <QVideoWidget>
 
 #include <iostream>
 #include <vector>
@@ -63,17 +68,119 @@ namespace Artifact
   public:
    Impl(ArtifactContentsViewer* parent);
    ~Impl();
- 
-   QStackedWidget* stackedWidget;
-   QScrollArea* imageScrollArea;
-   QLabel* imageLabel;
-   QLabel* infoLabel;
-   Artifact3DModelViewer* modelViewer; // 3Dビューワーの追加
+
+   void showInfoMessage(const QString& text);
+   void clearPlaybackRange();
+   void setPlaybackRange(int64_t startFrame, int64_t endFrame);
+   void resetCurrentMode();
+   void activateImage(const QString& filepath);
+   void activateVideo(const QString& filepath);
+   void activateModel(const QString& filepath);
+
+   static qint64 framesToMs(int64_t frame);
+
+   QStackedWidget* stackedWidget = nullptr;
+   QScrollArea* imageScrollArea = nullptr;
+   QLabel* imageLabel = nullptr;
+   QVideoWidget* videoWidget = nullptr;
+   QMediaPlayer* mediaPlayer = nullptr;
+   QAudioOutput* audioOutput = nullptr;
+   QLabel* infoLabel = nullptr;
+   Artifact3DModelViewer* modelViewer = nullptr;
    QString currentFilePath;
-   ArtifactCore::FileType currentFileType;
+   ArtifactCore::FileType currentFileType = ArtifactCore::FileType::Unknown;
    double zoomLevel = 1.0;
    QPoint lastMousePos;
+   bool playbackRangeActive = false;
+   qint64 playbackRangeStartMs = 0;
+   qint64 playbackRangeEndMs = 0;
   };
+
+  qint64 ArtifactContentsViewer::Impl::framesToMs(int64_t frame)
+  {
+   constexpr double kDefaultFps = 30.0;
+   return static_cast<qint64>(std::llround((static_cast<double>(frame) / kDefaultFps) * 1000.0));
+  }
+
+  void ArtifactContentsViewer::Impl::showInfoMessage(const QString& text)
+  {
+   infoLabel->setText(text);
+   stackedWidget->setCurrentWidget(infoLabel);
+  }
+
+  void ArtifactContentsViewer::Impl::clearPlaybackRange()
+  {
+   playbackRangeActive = false;
+   playbackRangeStartMs = 0;
+   playbackRangeEndMs = 0;
+  }
+
+  void ArtifactContentsViewer::Impl::setPlaybackRange(int64_t startFrame, int64_t endFrame)
+  {
+   startFrame = std::max<int64_t>(0, startFrame);
+   endFrame = std::max<int64_t>(0, endFrame);
+   if (startFrame > endFrame) {
+    std::swap(startFrame, endFrame);
+   }
+   playbackRangeStartMs = framesToMs(startFrame);
+   playbackRangeEndMs = framesToMs(endFrame);
+   playbackRangeActive = true;
+  }
+
+  void ArtifactContentsViewer::Impl::resetCurrentMode()
+  {
+   clearPlaybackRange();
+
+   if (mediaPlayer) {
+    mediaPlayer->stop();
+    mediaPlayer->setSource(QUrl());
+   }
+
+   if (imageLabel) {
+    imageLabel->clear();
+    imageLabel->setFixedSize(QSize(0, 0));
+   }
+
+   if (modelViewer) {
+    modelViewer->clearModel();
+   }
+
+   zoomLevel = 1.0;
+  }
+
+  void ArtifactContentsViewer::Impl::activateImage(const QString& filepath)
+  {
+   QPixmap pix(filepath);
+   if (pix.isNull()) {
+    showInfoMessage("Failed to load image:\n" + filepath);
+    return;
+   }
+
+   zoomLevel = 1.0;
+   imageLabel->setPixmap(pix);
+   imageLabel->setFixedSize(pix.size());
+   stackedWidget->setCurrentWidget(imageScrollArea);
+  }
+
+  void ArtifactContentsViewer::Impl::activateVideo(const QString& filepath)
+  {
+   QFileInfo info(filepath);
+   if (!info.exists()) {
+    showInfoMessage("Video file does not exist:\n" + filepath);
+    return;
+   }
+
+   clearPlaybackRange();
+   stackedWidget->setCurrentWidget(videoWidget);
+   mediaPlayer->setSource(QUrl::fromLocalFile(info.absoluteFilePath()));
+   mediaPlayer->play();
+  }
+
+  void ArtifactContentsViewer::Impl::activateModel(const QString& filepath)
+  {
+   modelViewer->loadModel(ArtifactCore::UniString(filepath.toStdString()));
+   stackedWidget->setCurrentWidget(modelViewer);
+  }
 
   ArtifactContentsViewer::Impl::Impl(ArtifactContentsViewer* parent)
    : stackedWidget(new QStackedWidget(parent))
@@ -113,7 +220,31 @@ namespace Artifact
        min-width: 20px;
        border-radius: 5px;
      }
-   )");
+    )");
+
+   // Video Viewer Setup
+   videoWidget = new QVideoWidget(parent);
+   videoWidget->setStyleSheet("background-color: #0f0f0f;");
+
+   mediaPlayer = new QMediaPlayer(parent);
+   audioOutput = new QAudioOutput(parent);
+   audioOutput->setVolume(1.0f);
+   mediaPlayer->setAudioOutput(audioOutput);
+   mediaPlayer->setVideoOutput(videoWidget);
+
+   QObject::connect(mediaPlayer, &QMediaPlayer::positionChanged, parent, [this](qint64 position) {
+    if (!playbackRangeActive) return;
+    if (position >= playbackRangeEndMs) {
+     mediaPlayer->pause();
+     mediaPlayer->setPosition(playbackRangeStartMs);
+    }
+   });
+
+   QObject::connect(mediaPlayer, &QMediaPlayer::errorOccurred, parent,
+    [this](QMediaPlayer::Error error, const QString& errorString) {
+     if (error == QMediaPlayer::NoError) return;
+     showInfoMessage("Failed to play video:\n" + currentFilePath + "\n" + errorString);
+    });
 
    // Info/Message View Setup
    infoLabel = new QLabel();
@@ -125,8 +256,9 @@ namespace Artifact
    modelViewer = new Artifact3DModelViewer(parent);
 
    stackedWidget->addWidget(imageScrollArea);
+   stackedWidget->addWidget(videoWidget);
    stackedWidget->addWidget(infoLabel);
-   stackedWidget->addWidget(modelViewer); // スタックに追加
+   stackedWidget->addWidget(modelViewer);
 
    auto layout = new QVBoxLayout(parent);
    layout->setContentsMargins(0, 0, 0, 0);
@@ -157,41 +289,29 @@ namespace Artifact
    impl_->currentFilePath = filepath;
    ArtifactCore::FileTypeDetector detector;
    impl_->currentFileType = detector.detect(filepath);
+   impl_->resetCurrentMode();
 
    switch (impl_->currentFileType) {
    case ArtifactCore::FileType::Image:
-   {
-     QPixmap pix(filepath);
-     if (!pix.isNull()) {
-         impl_->zoomLevel = 1.0;
-         impl_->imageLabel->setPixmap(pix);
-         impl_->imageLabel->setFixedSize(pix.size());
-         impl_->stackedWidget->setCurrentWidget(impl_->imageScrollArea);
-     } else {
-         impl_->infoLabel->setText("Failed to load image:\n" + filepath);
-         impl_->stackedWidget->setCurrentWidget(impl_->infoLabel);
-     }
-     break;
-   }
+    impl_->activateImage(filepath);
+    break;
    case ArtifactCore::FileType::Video:
-     impl_->infoLabel->setText("Video Playback coming soon...\n" + filepath);
-     impl_->stackedWidget->setCurrentWidget(impl_->infoLabel);
-     break;
+    impl_->activateVideo(filepath);
+    break;
    case ArtifactCore::FileType::Model3D:
-     // 3Dモデルファイルのロードとビューワーの切り替え
-     impl_->modelViewer->loadModel(ArtifactCore::UniString(filepath.toStdString()));
-     impl_->stackedWidget->setCurrentWidget(impl_->modelViewer);
-     break;
+    impl_->activateModel(filepath);
+    break;
    default:
-     impl_->infoLabel->setText("Unsupported Content:\n" + filepath);
-     impl_->stackedWidget->setCurrentWidget(impl_->infoLabel);
-     break;
+    impl_->showInfoMessage("Unsupported Content:\n" + filepath);
+    break;
    }
   }
 
   void ArtifactContentsViewer::wheelEvent(QWheelEvent* event)
   {
-      if (impl_->currentFileType == ArtifactCore::FileType::Image && !impl_->imageLabel->pixmap().isNull()) {
+      if (impl_->currentFileType == ArtifactCore::FileType::Image &&
+          impl_->stackedWidget->currentWidget() == impl_->imageScrollArea &&
+          !impl_->imageLabel->pixmap().isNull()) {
           const double scaleFactor = 1.15;
           if (event->angleDelta().y() > 0) {
               impl_->zoomLevel *= scaleFactor;
@@ -210,7 +330,9 @@ namespace Artifact
 
   void ArtifactContentsViewer::mousePressEvent(QMouseEvent* event)
   {
-      if (event->button() == Qt::LeftButton || event->button() == Qt::MiddleButton) {
+      if (impl_->currentFileType == ArtifactCore::FileType::Image &&
+          impl_->stackedWidget->currentWidget() == impl_->imageScrollArea &&
+          (event->button() == Qt::LeftButton || event->button() == Qt::MiddleButton)) {
           impl_->lastMousePos = event->pos();
           setCursor(Qt::ClosedHandCursor);
           event->accept();
@@ -221,7 +343,9 @@ namespace Artifact
 
   void ArtifactContentsViewer::mouseMoveEvent(QMouseEvent* event)
   {
-      if (event->buttons() & Qt::LeftButton || event->buttons() & Qt::MiddleButton) {
+      if (impl_->currentFileType == ArtifactCore::FileType::Image &&
+          impl_->stackedWidget->currentWidget() == impl_->imageScrollArea &&
+          (event->buttons() & Qt::LeftButton || event->buttons() & Qt::MiddleButton)) {
           QPoint delta = event->pos() - impl_->lastMousePos;
           impl_->lastMousePos = event->pos();
           
@@ -249,20 +373,24 @@ void ArtifactContentsViewer::play()
   }
 
   if (impl_->currentFileType == ArtifactCore::FileType::Video) {
-   impl_->infoLabel->setText("Video playback backend is not connected yet.\n" + impl_->currentFilePath);
-   impl_->stackedWidget->setCurrentWidget(impl_->infoLabel);
+   if (impl_->mediaPlayer->source().isEmpty() && !impl_->currentFilePath.isEmpty()) {
+    impl_->mediaPlayer->setSource(QUrl::fromLocalFile(impl_->currentFilePath));
+   }
+   if (impl_->playbackRangeActive) {
+    impl_->mediaPlayer->setPosition(impl_->playbackRangeStartMs);
+   }
+   impl_->stackedWidget->setCurrentWidget(impl_->videoWidget);
+   impl_->mediaPlayer->play();
    return;
   }
 
-  impl_->infoLabel->setText("Cannot play unsupported content.\n" + impl_->currentFilePath);
-  impl_->stackedWidget->setCurrentWidget(impl_->infoLabel);
+  impl_->showInfoMessage("Cannot play unsupported content.\n" + impl_->currentFilePath);
 }
 
 void ArtifactContentsViewer::pause()
 {
   if (impl_->currentFileType == ArtifactCore::FileType::Video) {
-   impl_->infoLabel->setText("Pause requested, but video backend is not connected yet.\n" + impl_->currentFilePath);
-   impl_->stackedWidget->setCurrentWidget(impl_->infoLabel);
+   impl_->mediaPlayer->pause();
    return;
   }
 
@@ -278,8 +406,12 @@ void ArtifactContentsViewer::stop()
   }
 
   if (impl_->currentFileType == ArtifactCore::FileType::Video) {
-   impl_->infoLabel->setText("Stop requested, but video backend is not connected yet.\n" + impl_->currentFilePath);
-   impl_->stackedWidget->setCurrentWidget(impl_->infoLabel);
+   impl_->mediaPlayer->stop();
+   if (impl_->playbackRangeActive) {
+    impl_->mediaPlayer->setPosition(impl_->playbackRangeStartMs);
+   } else {
+    impl_->mediaPlayer->setPosition(0);
+   }
    return;
   }
 
@@ -288,14 +420,14 @@ void ArtifactContentsViewer::stop()
 
 void ArtifactContentsViewer::playRange(int64_t start, int64_t end)
 {
-  if (start > end) {
-   std::swap(start, end);
-  }
-
   if (impl_->currentFileType == ArtifactCore::FileType::Video) {
-   impl_->infoLabel->setText(QString("Range playback (%1 - %2) requested, but video backend is not connected yet.\n%3")
-    .arg(start).arg(end).arg(impl_->currentFilePath));
-   impl_->stackedWidget->setCurrentWidget(impl_->infoLabel);
+   impl_->setPlaybackRange(start, end);
+   if (impl_->mediaPlayer->source().isEmpty() && !impl_->currentFilePath.isEmpty()) {
+    impl_->mediaPlayer->setSource(QUrl::fromLocalFile(impl_->currentFilePath));
+   }
+   impl_->stackedWidget->setCurrentWidget(impl_->videoWidget);
+   impl_->mediaPlayer->setPosition(impl_->playbackRangeStartMs);
+   impl_->mediaPlayer->play();
    return;
   }
 
