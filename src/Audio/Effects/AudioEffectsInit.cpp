@@ -1,6 +1,7 @@
-module;
+﻿module;
 #include <memory>
-module Artifact.Audio.Effects.Init;
+
+export module Artifact.Audio.Effects.Init;
 
 import Artifact.Audio.Effects.Base;
 import Artifact.Audio.Effects.Manager;

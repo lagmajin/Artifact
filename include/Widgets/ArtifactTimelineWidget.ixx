@@ -1,7 +1,5 @@
 ﻿module;
 
-#include <wobjectcpp.h>
-
 #include <QtWidgets/QtWidgets>
 #include <QGraphicsView>
 #include <QMouseEvent>
@@ -46,18 +44,15 @@
 #include <random>
 export module Artifact.Widgets.Timeline;
 
-
-
 import Utils.Id;
 import Artifact.Widgets.Hierarchy;
 import Artifact.Widgets.LayerPanelWidget;
 import Artifact.Timeline.Objects;
 
-//W_REGISTER_TYPE(Artifact::ClipItem)
-
 W_REGISTER_ARGTYPE(Artifact::ClipItem*)
 
 export namespace Artifact {
+using namespace ArtifactCore;
 
  class TimelineScene : public QGraphicsScene
  {
@@ -95,7 +90,6 @@ export namespace Artifact {
   void clearTrackHighlight();
  };
 
- //#right
 class TimelineTrackView :public QGraphicsView {
  W_OBJECT(TimelineTrackView)
  private:
@@ -178,10 +172,4 @@ class TimelineTrackView :public QGraphicsView {
   ~ArtifactTimelineIconView();
  };
 
-
-
-
-
-
 };
-

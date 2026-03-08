@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <QObject>
 #include <QVector>
 #include <QPointF>
@@ -94,7 +94,7 @@ public:
     // Async generation
     void generateAsync(const AudioSegment& segment, int displayWidth);
     
-signals:
+Q_SIGNALS:
     void waveformGenerated(const WaveformData& data) W_SIGNAL(waveformGenerated, data);
     void generationProgress(int percent) W_SIGNAL(generationProgress, percent);
 };
@@ -177,7 +177,7 @@ public:
     };
     std::vector<BandInfo> computeBands(const AudioSegment& segment);
     
-signals:
+Q_SIGNALS:
     void analysisComplete() W_SIGNAL(analysisComplete);
 };
 
@@ -221,7 +221,7 @@ public:
     static float linearToDb(float linear);
     static float dbToLinear(float db);
     
-signals:
+Q_SIGNALS:
     void levelsChanged(float left, float right) W_SIGNAL(levelsChanged, left, right);
     void clipDetected() W_SIGNAL(clipDetected);
 };
@@ -266,7 +266,7 @@ public:
     AudioSegment fadeIn(const AudioSegment& segment, qint64 samples);
     AudioSegment fadeOut(const AudioSegment& segment, qint64 samples);
     
-signals:
+Q_SIGNALS:
     void processingComplete() W_SIGNAL(processingComplete);
     void progress(int percent) W_SIGNAL(progress, percent);
 };

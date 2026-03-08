@@ -44,6 +44,7 @@ export module Artifact.Widgets.CreatePlaneLayerDialog;
 import Widgets.Dialog.Abstract;
 import Artifact.Layer.InitParams;
 import Color.Float;
+import Artifact.Layer.Solid2D;
 
 
 export namespace Artifact {
@@ -105,7 +106,7 @@ export namespace Artifact {
   explicit EditPlaneLayerSettingDialog(QWidget* parent = nullptr);
   ~EditPlaneLayerSettingDialog();
   void showAnimated();
-  void setupEdit(std::shared_ptr<class ArtifactSolid2DLayer> layer);
+  void setupEdit(std::shared_ptr<ArtifactSolid2DLayer> layer);
  public/*signals*/:
  };
 

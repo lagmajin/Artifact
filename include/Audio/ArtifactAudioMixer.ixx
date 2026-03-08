@@ -3,6 +3,7 @@ module;
 #include <QString>
 #include <QVector>
 #include <QObject>
+#include <wobjectdefs.h>
 
 #include <iostream>
 #include <vector>
@@ -43,16 +44,18 @@ export module Artifact.Audio.Mixer;
 
 
 import Artifact.Layer.Abstract;
+import Utils.Id;
 
 export namespace Artifact
 {
+    using namespace ArtifactCore;
 
 // オーディオミキサー用のチャンネルストリップ
 class AudioMixerChannelStrip : public QObject
 {
-    Q_OBJECT
+    W_OBJECT(AudioMixerChannelStrip)
 public:
-    using LayerID = uint64_t;
+    using LayerID = ArtifactCore::LayerID;
 
     explicit AudioMixerChannelStrip(QObject* parent = nullptr);
     ~AudioMixerChannelStrip();
@@ -96,11 +99,11 @@ public:
     void resetPeak();
 
 Q_SIGNALS:
-    void volumeChanged(float volume);
-    void panChanged(float pan);
-    void muteChanged(bool muted);
-    void soloChanged(bool solo);
-    void levelChanged(float left, float right);
+    void volumeChanged(float volume) W_SIGNAL(volumeChanged, volume);
+    void panChanged(float pan) W_SIGNAL(panChanged, pan);
+    void muteChanged(bool muted) W_SIGNAL(muteChanged, muted);
+    void soloChanged(bool solo) W_SIGNAL(soloChanged, solo);
+    void levelChanged(float left, float right) W_SIGNAL(levelChanged, left, right);
 
 private:
     class Impl;
@@ -110,7 +113,7 @@ private:
 // マスターチャンネル
 class AudioMixerMasterBus : public QObject
 {
-    Q_OBJECT
+    W_OBJECT(AudioMixerMasterBus)
 public:
     explicit AudioMixerMasterBus(QObject* parent = nullptr);
     ~AudioMixerMasterBus();
@@ -126,9 +129,9 @@ public:
     void updateLevels(float left, float right);
 
 Q_SIGNALS:
-    void volumeChanged(float volume);
-    void muteChanged(bool muted);
-    void levelChanged(float left, float right);
+    void volumeChanged(float volume) W_SIGNAL(volumeChanged, volume);
+    void muteChanged(bool muted) W_SIGNAL(muteChanged, muted);
+    void levelChanged(float left, float right) W_SIGNAL(levelChanged, left, right);
 
 private:
     class Impl;
@@ -138,8 +141,10 @@ private:
 // オーディオミキサー本体
 class AudioMixer : public QObject
 {
-    Q_OBJECT
+    W_OBJECT(AudioMixer)
 public:
+    using LayerID = AudioMixerChannelStrip::LayerID;
+
     explicit AudioMixer(QObject* parent = nullptr);
     ~AudioMixer();
 
@@ -170,8 +175,8 @@ public:
     int bufferSize() const;
 
 Q_SIGNALS:
-    void channelStripAdded(LayerID layerId);
-    void channelStripRemoved(LayerID layerId);
+    void channelStripAdded(LayerID layerId) W_SIGNAL(channelStripAdded, layerId);
+    void channelStripRemoved(LayerID layerId) W_SIGNAL(channelStripRemoved, layerId);
 
 private:
     class Impl;

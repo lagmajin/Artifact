@@ -1,5 +1,11 @@
 ﻿module;
 #include <QDialog>
+#include <QWidget>
+#include <QString>
+#include <QKeyEvent>
+#include <QMouseEvent>
+#include <QShowEvent>
+#include <QCloseEvent>
 #include <wobjectdefs.h>
 export module Dialog.Composition;
 

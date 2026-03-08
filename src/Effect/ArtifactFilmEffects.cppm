@@ -1,4 +1,4 @@
-module;
+﻿module;
 
 #include <cmath>
 #include <random>
@@ -53,7 +53,6 @@ module Artifact.Effect.Film;
 namespace Artifact {
 
 W_OBJECT_IMPL(FilmEffectPreset)
-W_OBJECT_IMPL(FilmEffectProcessor)
 
 // ==================== Grain Presets ====================
 
@@ -664,21 +663,21 @@ void FilmEffectProcessor::process(float* pixels, int width, int height, float ti
 void FilmEffectProcessor::setGrainIntensity(float intensity) {
     if (impl_->currentPreset_) {
         impl_->currentPreset_->grain().intensity = intensity;
-        emit changed();
+        emit presetChanged(impl_->currentPreset_);
     }
 }
 
 void FilmEffectProcessor::setVignetteIntensity(float intensity) {
     if (impl_->currentPreset_) {
         impl_->currentPreset_->vignette().intensity = intensity;
-        emit changed();
+        emit presetChanged(impl_->currentPreset_);
     }
 }
 
 void FilmEffectProcessor::setFlickerIntensity(float intensity) {
     if (impl_->currentPreset_) {
         impl_->currentPreset_->flicker().intensity = intensity;
-        emit changed();
+        emit presetChanged(impl_->currentPreset_);
     }
 }
 

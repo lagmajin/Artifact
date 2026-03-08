@@ -87,8 +87,9 @@ ArtifactParticleLayer::~ArtifactParticleLayer()
     delete impl_;
 }
 
-void ArtifactParticleLayer::draw()
+void ArtifactParticleLayer::draw(ArtifactIRenderer* renderer)
 {
+    (void)renderer;
     // Drawing is handled by renderFrame/renderToImage
     // This is called by the composition renderer
 }

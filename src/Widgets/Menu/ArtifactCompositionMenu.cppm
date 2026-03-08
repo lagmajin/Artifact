@@ -1,200 +1,112 @@
 ﻿module;
-#include <QObject>
-#include <QWidget>
-#include <wobjectimpl.h>
-#include <QDebug>
 #include <QMenu>
 #include <QAction>
-#include <QDialog>
-#include <QKeySequence>
 #include <QColorDialog>
+#include <QDebug>
+#include <wobjectimpl.h>
+
 module Menu.Composition;
 
-import  Artifact.Project.Manager;
-
+import Artifact.Project.Manager;
+import Artifact.Service.Project;
 import Dialog.Composition;
-
 import Artifact.MainWindow;
-
-import Utils.Path;
-import Artifact.Render.Queue.Service;
 
 namespace Artifact {
 
- W_OBJECT_IMPL(ArtifactCompositionMenu)
+W_OBJECT_IMPL(ArtifactCompositionMenu)
 
- class ArtifactCompositionMenu::Impl {
- //W_OBJECT(ArtifactCompositionMenu::Impl)
- private:
+class ArtifactCompositionMenu::Impl {
+public:
+    Impl(ArtifactCompositionMenu* menu, ArtifactMainWindow* mainWindow);
+    ~Impl() = default;
 
- public:
-  Impl(ArtifactCompositionMenu* menu, ArtifactMainWindow* mainWindow);
-  ~Impl();
-  ArtifactMainWindow* mainWindow_ = nullptr;
-  QAction* createCompositionAction=nullptr;
-  QAction* createCompositionFromFootage = nullptr;
-  QAction* changeCompositionSettingsAction = nullptr;
-  QAction* backgroundColorAction = nullptr;
+    ArtifactCompositionMenu* menu_ = nullptr;
+    ArtifactMainWindow* mainWindow_ = nullptr;
+    QAction* createAction = nullptr;
+    QAction* settingsAction = nullptr;
+    QAction* colorAction = nullptr;
 
-  QAction* saveAsFrameAction = nullptr;
-  QMenu* saveFrameAsMenu = nullptr;
-
-  QAction* addToRenderQueueAction = nullptr;
-
-  QAction* trimCompToWorkAreaAction = nullptr;
-  QAction* cropCompToROIAction = nullptr;
-
-  void showCreateCompositionSettingDialog();
-  void showBackgroundColorDialog();
-  void showChangeCompositionSettingsDialog();
-  void handleAddRenderQueueRequest();
-  void handleSaveAsImageRequest();
- };
-
- //W_OBJECT_IMPL(ArtifactCompositionMenu::Impl)
-
- ArtifactCompositionMenu::Impl::Impl(ArtifactCompositionMenu* menu,ArtifactMainWindow* mainWindow)
-{
-  createCompositionAction = new QAction("新規コンポジション(&N)...");
-  createCompositionAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_N));
-  createCompositionAction->setIcon(QIcon(ArtifactCore::getIconPath() + "/composition.png"));
-
-  createCompositionFromFootage = new QAction("フッテージから新規コンポジション...");
-  createCompositionFromFootage->setDisabled(true);
-
-  changeCompositionSettingsAction = new QAction("コンポジション設定(&S)...");
-  changeCompositionSettingsAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_K));
-  changeCompositionSettingsAction->setDisabled(true);
-
-  backgroundColorAction = new QAction("背景色(&B)...");
-  backgroundColorAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_B));
-  backgroundColorAction->setDisabled(true);
-  
-  saveFrameAsMenu = new QMenu("フレームを保存(&F)");
-  saveAsFrameAction = new QAction("ファイル(&I)...");
-  saveAsFrameAction->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_S));
-  saveAsFrameAction->setDisabled(true);
-  saveFrameAsMenu->addAction(saveAsFrameAction);
-
-  addToRenderQueueAction = new QAction("レンダーキューに追加(&M)");
-  addToRenderQueueAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_M));
-
-  trimCompToWorkAreaAction = new QAction("コンポジションをワークエリアにトリム");
-  trimCompToWorkAreaAction->setDisabled(true);
-
-  cropCompToROIAction = new QAction("コンポジションを目標領域にクロップ");
-  cropCompToROIAction->setDisabled(true);
-
-  connect(createCompositionAction, &QAction::triggered, menu, [this]() {
-   this->showCreateCompositionSettingDialog();
-   }
-   );
-  
-  connect(backgroundColorAction, &QAction::triggered, menu, [this]() {
-   this->showBackgroundColorDialog();
-   }
-   );
-
-  connect(addToRenderQueueAction, &QAction::triggered, menu, [this]() {
-   this->handleAddRenderQueueRequest();
-   }
-   );
-
-  menu->addAction(createCompositionAction);
-  menu->addAction(createCompositionFromFootage);
-  menu->addSeparator();
-  menu->addAction(changeCompositionSettingsAction);
-  menu->addAction(backgroundColorAction);
-  menu->addSeparator();
-  menu->addMenu(saveFrameAsMenu);
-  menu->addAction(addToRenderQueueAction);
-  menu->addSeparator();
-  menu->addAction(trimCompToWorkAreaAction);
-  menu->addAction(cropCompToROIAction);
- }
-
- ArtifactCompositionMenu::Impl::~Impl()
- {
-
- }
-
- void ArtifactCompositionMenu::Impl::showCreateCompositionSettingDialog()
- {
-  auto createCompositionSettingDialog = new CreateCompositionDialog();
-
-  //createCompositionSettingDialog->show();
-
-  if (createCompositionSettingDialog->exec())
-  {
-   // Composition creation is handled by the dialog's OK handler.
-  }
-
-  createCompositionSettingDialog->deleteLater();
-
- }
-
- void ArtifactCompositionMenu::Impl::showBackgroundColorDialog()
- {
-  auto& projectManager = ArtifactProjectManager::getInstance();
-  auto comp = projectManager.currentComposition();
-  if (!comp) return;
-
-  QColor color = QColorDialog::getColor(Qt::black, mainWindow_, "Composition Background Color");
-  if (color.isValid()) {
-   // Convert QColor to FloatColor
-   FloatColor floatColor(color.redF(), color.greenF(), color.blueF(), color.alphaF());
-   comp->setBackGroundColor(floatColor);
-  }
- }
-
- void ArtifactCompositionMenu::Impl::handleAddRenderQueueRequest()
- {
-  // TODO: Implement getInstance() or use dependency injection for ArtifactRenderQueueService
-  // auto& renderQueueService = ArtifactRenderQueueService::getInstance();
-  // renderQueueService.addRenderQueue();
- }
-
- void ArtifactCompositionMenu::Impl::handleSaveAsImageRequest()
- {
-
- }
-
- ArtifactCompositionMenu::ArtifactCompositionMenu(ArtifactMainWindow* mainWindow, QWidget* parent/*=nullptr*/) :QMenu(parent), impl_(new Impl(this,mainWindow))
- {
-  setTitle("コンポジション(&C)");
-  setTearOffEnabled(false);
-  setSeparatorsCollapsible(true);
-
-  connect(this, &QMenu::aboutToShow, this, &ArtifactCompositionMenu::rebuildMenu);
- }
-
- ArtifactCompositionMenu::ArtifactCompositionMenu(QWidget* parent /*= nullptr*/):QMenu(parent)
- {
-
- }
-
- ArtifactCompositionMenu::~ArtifactCompositionMenu()
- {
-
- }
-
- void ArtifactCompositionMenu::handleCreateCompositionRequested()
- {
-  auto& instance=ArtifactProjectManager::getInstance();
-  
- }
-
- void ArtifactCompositionMenu::rebuildMenu()
- {
-  auto& projectManager = ArtifactProjectManager::getInstance();
-  bool hasActiveComposition = projectManager.currentComposition() != nullptr;
-
-  impl_->changeCompositionSettingsAction->setEnabled(hasActiveComposition);
-  impl_->backgroundColorAction->setEnabled(hasActiveComposition);
-  impl_->saveAsFrameAction->setEnabled(hasActiveComposition);
-  impl_->trimCompToWorkAreaAction->setEnabled(hasActiveComposition);
-  impl_->cropCompToROIAction->setEnabled(hasActiveComposition);
-  impl_->addToRenderQueueAction->setEnabled(hasActiveComposition);
- }
-
+    void showCreate();
+    void showSettings();
+    void showColor();
 };
+
+ArtifactCompositionMenu::Impl::Impl(ArtifactCompositionMenu* menu, ArtifactMainWindow* mainWindow)
+    : menu_(menu), mainWindow_(mainWindow)
+{
+    createAction = new QAction("新規コンポジション(&N)...");
+    createAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_N));
+    
+    settingsAction = new QAction("コンポジション設定(&S)...");
+    settingsAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_K));
+    
+    colorAction = new QAction("背景色(&B)...");
+    colorAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_B));
+
+    menu->addAction(createAction);
+    menu->addAction(settingsAction);
+    menu->addAction(colorAction);
+
+    QObject::connect(createAction, &QAction::triggered, menu, [this]() { showCreate(); });
+    QObject::connect(settingsAction, &QAction::triggered, menu, [this]() { showSettings(); });
+    QObject::connect(colorAction, &QAction::triggered, menu, [this]() { showColor(); });
+}
+
+void ArtifactCompositionMenu::Impl::showCreate()
+{
+    auto dialog = new CreateCompositionDialog(reinterpret_cast<QWidget*>(mainWindow_));
+    if (dialog->exec()) {
+        // Handled by dialog
+    }
+    dialog->deleteLater();
+}
+
+void ArtifactCompositionMenu::Impl::showSettings()
+{
+    // TODO: Implement
+}
+
+void ArtifactCompositionMenu::Impl::showColor()
+{
+    auto service = ArtifactProjectService::instance();
+    if (auto comp = service->currentComposition().lock()) {
+        QColor color = QColorDialog::getColor(Qt::black, reinterpret_cast<QWidget*>(mainWindow_), "Background Color");
+        if (color.isValid()) {
+            comp->setBackGroundColor(FloatColor(color.redF(), color.greenF(), color.blueF(), color.alphaF()));
+        }
+    }
+}
+
+ArtifactCompositionMenu::ArtifactCompositionMenu(ArtifactMainWindow* mainWindow, QWidget* parent)
+    : QMenu(parent), impl_(new Impl(this, mainWindow))
+{
+    setTitle("コンポジション(&C)");
+    connect(this, &QMenu::aboutToShow, this, &ArtifactCompositionMenu::rebuildMenu);
+}
+
+ArtifactCompositionMenu::ArtifactCompositionMenu(QWidget* parent)
+    : QMenu(parent), impl_(nullptr)
+{
+}
+
+ArtifactCompositionMenu::~ArtifactCompositionMenu()
+{
+    delete impl_;
+}
+
+void ArtifactCompositionMenu::rebuildMenu()
+{
+    if (!impl_) return;
+    auto service = ArtifactProjectService::instance();
+    bool hasComp = !service->currentComposition().expired();
+    impl_->settingsAction->setEnabled(hasComp);
+    impl_->colorAction->setEnabled(hasComp);
+}
+
+void ArtifactCompositionMenu::handleCreateCompositionRequested()
+{
+    if (impl_) impl_->showCreate();
+}
+
+} // namespace Artifact

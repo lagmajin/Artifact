@@ -10,7 +10,7 @@
 #include <QColorDialog>
 #include <QPropertyAnimation>
 #include <wobjectimpl.h>
-module Artifact.Widgets.CreateLayerDialog;
+module Artifact.Widgets.CreatePlaneLayerDialog;
 
 import Widgets.Dialog.Abstract;
 import Artifact.Layer.Abstract;

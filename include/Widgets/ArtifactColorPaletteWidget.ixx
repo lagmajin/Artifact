@@ -2,6 +2,7 @@ module;
 
 #include <QWidget>
 #include <QString>
+#include <wobjectdefs.h>
 
 #include <iostream>
 #include <vector>
@@ -46,7 +47,7 @@ import Artifact.Color.Palette;
 export namespace Artifact {
 
 class ArtifactColorPaletteWidget : public QWidget {
-    Q_OBJECT
+    W_OBJECT(ArtifactColorPaletteWidget)
 private:
     class Impl;
     Impl* impl_;
@@ -68,7 +69,7 @@ public Q_SLOTS:
     void onSavePalettes();
 
 Q_SIGNALS:
-    void paletteSelected(const ColorPalette& palette);
+    void paletteSelected(const ColorPalette& palette) W_SIGNAL(paletteSelected, palette);
 };
 
 } // namespace Artifact

@@ -88,6 +88,7 @@ export namespace Artifact
   ~ArtifactProjectService();
   static ArtifactProjectService* instance();
   UniString projectName() const;
+  bool hasProject() const;
   void changeProjectName(const UniString& string);
   void createProject(const ArtifactProjectSettings& setting);
 

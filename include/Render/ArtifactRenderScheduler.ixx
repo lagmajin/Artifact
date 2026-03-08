@@ -4,6 +4,8 @@ module;
 #include <QThreadPool>
 #include <QFuture>
 #include <QVector>
+#include <QMutex>
+#include <QMutexLocker>
 #include <atomic>
 #include <functional>
 #include <wobjectdefs.h>
@@ -129,6 +131,7 @@ class RenderScheduler : public QObject {
 private:
     class Impl;
     std::unique_ptr<Impl> impl_;
+    void processNextTask();
     
 public:
     explicit RenderScheduler(QObject* parent = nullptr);
@@ -242,7 +245,7 @@ public:
     void cancelBatch();
     
     // Progress
-    float batchProgress() const;
+    float currentBatchProgress() const;
     FrameRange batchRange() const;
     
 signals:

@@ -20,9 +20,10 @@ export namespace Artifact {
 
   void resetRecentFilesMenu();
   /*signals:*/
- protected:
+ public:
   void rebuildMenu();
   W_SLOT(rebuildMenu, ());
+ protected:
  public:
   void projectCreateRequested();
   void projectClosed();

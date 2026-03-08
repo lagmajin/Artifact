@@ -1,4 +1,4 @@
-module;
+﻿module;
 
 #include <QString>
 #include <QMatrix4x4>
@@ -117,8 +117,8 @@ public:
     int bitDepth() const;
 
     // Core LUTへのブリッジ
-    void setLUT(ArtifactCore::LUT* lut);
-    ArtifactCore::LUT* lut() const;
+    void setLUT(void* lut);
+    void* lut() const;
 };
 
 // Core LUTを使用したエフェクト
@@ -133,8 +133,8 @@ public:
     ~LUTColorEffect();
 
     // LUT設定
-    void setLUT(ArtifactCore::LUT* lut);
-    ArtifactCore::LUT* lut() const;
+    void setLUT(void* lut);
+    void* lut() const;
 
     void setLUTByName(const QString& name);
 

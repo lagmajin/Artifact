@@ -89,7 +89,7 @@ namespace Artifact
      auto p2 = global.map(QPointF(w, h));
      auto p3 = global.map(QPointF(0, h));
 
-     FloatColor cyan = { 0.0f, 0.7f, 1.0f, 1.0f };
+     FloatColor cyan(0.0f, 0.7f, 1.0f, 1.0f);
      renderer->drawThickLineLocal({(float)p0.x(), (float)p0.y()}, {(float)p1.x(), (float)p1.y()}, 1.0f, cyan);
      renderer->drawThickLineLocal({(float)p1.x(), (float)p1.y()}, {(float)p2.x(), (float)p2.y()}, 1.0f, cyan);
      renderer->drawThickLineLocal({(float)p2.x(), (float)p2.y()}, {(float)p3.x(), (float)p3.y()}, 1.0f, cyan);
@@ -102,21 +102,22 @@ namespace Artifact
      // Let's use thick lines or small solid rects.
      float handleSize = 6.0f; // in units? No, ideally in pixels. 
      // For now, draw a small cross at anchor point
-     renderer->drawThickLineLocal({(float)pAnchor.x() - 5, (float)pAnchor.y()}, {(float)pAnchor.x() + 5, (float)pAnchor.y()}, 1.0f, {1,1,1,1});
-     renderer->drawThickLineLocal({(float)pAnchor.x(), (float)pAnchor.y() - 5}, {(float)pAnchor.x(), (float)pAnchor.y() + 5}, 1.0f, {1,1,1,1});
+     FloatColor white(1.0f, 1.0f, 1.0f, 1.0f);
+     renderer->drawThickLineLocal({(float)pAnchor.x() - 5, (float)pAnchor.y()}, {(float)pAnchor.x() + 5, (float)pAnchor.y()}, 1.0f, white);
+     renderer->drawThickLineLocal({(float)pAnchor.x(), (float)pAnchor.y() - 5}, {(float)pAnchor.x(), (float)pAnchor.y() + 5}, 1.0f, white);
 
      // Draw Corner Handles
      QPointF corners[4] = { {0,0}, {w,0}, {w,h}, {0,h} };
      for (auto& c : corners) {
       auto pc = global.map(c);
-      renderer->drawSolidRect({(float)pc.x() - 3, (float)pc.y() - 3}, {6, 6}, {1,1,1,1});
-      renderer->drawRectOutline({(float)pc.x() - 3, (float)pc.y() - 3}, {6, 6}, {0,0,0,1});
+      renderer->drawSolidRect({(float)pc.x() - 3, (float)pc.y() - 3}, {6, 6}, white);
+      renderer->drawRectOutline({(float)pc.x() - 3, (float)pc.y() - 3}, {6, 6}, FloatColor(0,0,0,1));
      }
     }
    }
 
    // 4. Grid
-   renderer->drawGrid(0, 0, compW, compH, 100.0f, 1.0f, { 1.0f, 1.0f, 1.0f, 0.1f });
+   renderer->drawGrid(0, 0, compW, compH, 100.0f, 1.0f, FloatColor(1.0f, 1.0f, 1.0f, 0.1f));
    
    renderer->flush();
   }

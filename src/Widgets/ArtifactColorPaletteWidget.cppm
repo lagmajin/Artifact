@@ -11,6 +11,7 @@ module;
 #include <QMessageBox>
 #include <QPainter>
 #include <QStyledItemDelegate>
+#include <wobjectimpl.h>
 
 // Q_MOC_RUN skip workaround
 #ifndef Q_MOC_RUN
@@ -62,6 +63,7 @@ import Analyze.SmartPalette;
 namespace Artifact {
 
 using namespace ArtifactCore;
+W_OBJECT_IMPL(ArtifactColorPaletteWidget)
 
 // Custom delegate to draw colored palettes in the list
 class PaletteItemDelegate : public QStyledItemDelegate {

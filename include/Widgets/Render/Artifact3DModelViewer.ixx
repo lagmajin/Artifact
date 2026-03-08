@@ -13,68 +13,35 @@ import Color.Float;
 
 export namespace Artifact {
 
- /**
-  * @brief 3Dモデルを表示・操作するためのウィジェットクラス
-  */
- class Artifact3DModelViewer : public QWidget {
-  W_OBJECT(Artifact3DModelViewer)
- private:
-  class Impl;
-  Impl* impl_;
+/**
+ * @brief 3D Model Viewer Widget
+ */
+class Artifact3DModelViewer : public QWidget {
+    W_OBJECT(Artifact3DModelViewer)
+private:
+    class Impl;
+    Impl* impl_;
 
- public:
-  explicit Artifact3DModelViewer(QWidget* parent = nullptr);
-  virtual ~Artifact3DModelViewer();
+public:
+    explicit Artifact3DModelViewer(QWidget* parent = nullptr);
+    virtual ~Artifact3DModelViewer();
 
-  // --- モデル操作 API ---
-  /**
-   * @brief モデルファイルをロードします
-   * @param filePath モデルへのパス (obj, fbx 等)
-   */
-  void loadModel(const ArtifactCore::UniString& filePath);
+    void loadModel(const ArtifactCore::UniString& filePath);
+    void clearModel();
+    void resetView();
 
-  /**
-   * @brief モデルをクリアします
-   */
-  void clearModel();
+    void setBackgroundColor(const ArtifactCore::FloatColor& color);
+    void setZoom(float factor);
+    void setCameraRotation(float yaw, float pitch);
+    void setCameraPosition(const QVector3D& position);
 
-  // --- ビュー・表示設定 ---
-  /**
-   * @brief カメラのリセットを行います
-   */
-  void resetView();
+    void requestUpdate();
 
-  /**
-   * @brief 背景色を設定します
-   */
-  void setBackgroundColor(const ArtifactCore::FloatColor& color);
-
-  /**
-   * @brief ズーム倍率を設定します
-   */
-  void setZoom(float factor);
-
-  /**
-   * @brief カメラの回転を設定します
-   */
-  void setCameraRotation(float yaw, float pitch);
-
-  /**
-   * @brief カメラの位置を設定します
-   */
-  void setCameraPosition(const QVector3D& position);
-
-  // --- レンダリング制御 ---
-   /**
-    * @brief フレームの更新を要求します
-    */
-   void requestUpdate();
-
-  protected:
-   void mousePressEvent(QMouseEvent* event) override;
-   void mouseMoveEvent(QMouseEvent* event) override;
-   void wheelEvent(QWheelEvent* event) override;
-   void paintEvent(QPaintEvent* event) override;
-  };
+protected:
+    void mousePressEvent(QMouseEvent* event) override;
+    void mouseMoveEvent(QMouseEvent* event) override;
+    void wheelEvent(QWheelEvent* event) override;
+    void paintEvent(QPaintEvent* event) override;
+};
 
 }

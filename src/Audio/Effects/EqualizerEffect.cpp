@@ -1,7 +1,10 @@
-module;
+﻿module;
 #include <cmath>
 #include <vector>
+#include <string>
 #include <algorithm>
+#include <memory>
+#define M_PI 3.14159265358979323846
 module Artifact.Audio.Effects.Equalizer;
 
 import Audio.Segment;
@@ -9,7 +12,7 @@ import Artifact.Audio.Effects.Base;
 
 namespace Artifact {
 
-EqualizerEffect::EqualizerEffect() {
+EqualizerEffect::EqualizerEffect() : sampleRate_(44100.0f) {
     // デフォルトのバンド設定
     bands_ = {
         {60.0f, 0.0f, 1.0f},    // Low
@@ -20,39 +23,41 @@ EqualizerEffect::EqualizerEffect() {
     };
 }
 
-ArtifactCore::AudioSegment EqualizerEffect::process(const ArtifactCore::AudioSegment& input) {
-    if (!enabled_ || input.channelData.isEmpty()) {
-        return input;
+void EqualizerEffect::process(float* buffer, int samples, int channels) {
+    if (!buffer || samples <= 0 || channels <= 0) {
+        return;
     }
 
-    ArtifactCore::AudioSegment output = input;
+    // Channel processing
+    for (int ch = 0; ch < channels; ++ch) {
+        std::vector<float> channelData(samples);
 
-    // 各チャンネルに対してエフェクトを適用
-    for (int ch = 0; ch < output.channelData.size(); ++ch) {
-        std::vector<float> channelData(output.channelData[ch].begin(), 
-                                      output.channelData[ch].end());
-        
+        // Extract channel data
+        for (int i = 0; i < samples; ++i) {
+            channelData[i] = buffer[i * channels + ch];
+        }
+
         // 各バンドのフィルタを適用
         for (const auto& band : bands_) {
             if (std::abs(band.gain) > 0.001f) {
                 applyBandFilter(channelData, band);
             }
         }
-        
-        // 処理後のデータを設定
-        output.channelData[ch] = QVector<float>(channelData.begin(), channelData.end());
-    }
 
-    return output;
+        // Write back channel data
+        for (int i = 0; i < samples; ++i) {
+            buffer[i * channels + ch] = channelData[i];
+        }
+    }
 }
 
 std::vector<AudioEffectParameter> EqualizerEffect::getParameters() const {
     std::vector<AudioEffectParameter> params;
-    
+
     const std::vector<std::string> bandNames = {
         "Low", "LowMid", "Mid", "HighMid", "High"
     };
-    
+
     for (size_t i = 0; i < bands_.size() && i < bandNames.size(); ++i) {
         AudioEffectParameter param;
         param.name = "gain_" + bandNames[i];
@@ -130,13 +135,9 @@ void EqualizerEffect::calculateBiquadCoefficients(float frequency, float gain, f
     // 正規化
     b0 /= a0;
     b1 /= a0;
-    b2 /= a0;
-    a1 /= a0;
-    a2 /= a0;
-}
-
-std::unique_ptr<ArtifactAbstractAudioEffect> createEqualizerEffect() {
-    return std::make_unique<EqualizerEffect>();
-}
+         b2 /= a0;
+         a1 /= a0;
+         a2 /= a0;
+    }
 
 } // namespace Artifact

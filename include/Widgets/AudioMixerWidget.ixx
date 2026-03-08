@@ -1,7 +1,8 @@
-module;
+﻿module;
 #include <QWidget>
 #include <memory>
 #include <string>
+#include <wobjectdefs.h>
 
 export module Artifact.Widgets.AudioMixer;
 
@@ -16,7 +17,7 @@ export namespace Artifact {
  * @brief エフェクトスロットのウィジェット
  */
 class AudioEffectSlotWidget : public QWidget {
-    Q_OBJECT
+    W_OBJECT(AudioEffectSlotWidget)
 public:
     AudioEffectSlotWidget(std::shared_ptr<ArtifactCore::AudioBus> bus, int slotIndex, QWidget* parent = nullptr);
     virtual ~AudioEffectSlotWidget();
@@ -35,7 +36,7 @@ private:
  * フェーダー、メーター、パン、Mute/Solo を備えます。
  */
 class AudioChannelStripWidget : public QWidget {
-    Q_OBJECT
+	W_OBJECT(AudioChannelStripWidget)
 public:
     AudioChannelStripWidget(std::shared_ptr<ArtifactCore::AudioBus> bus, QWidget* parent = nullptr);
     virtual ~AudioChannelStripWidget();
@@ -56,7 +57,7 @@ private:
  * 各バス（チャンネルストリップ）を横に並べて管理します。
  */
 class AudioMixerWidget : public QWidget {
-    Q_OBJECT
+    W_OBJECT(AudioMixerWidget)
 public:
     AudioMixerWidget(ArtifactCore::AudioMixer* mixer, QWidget* parent = nullptr);
     virtual ~AudioMixerWidget();

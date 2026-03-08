@@ -9,6 +9,7 @@ module;
 #include <QJsonDocument>
 #include <QJsonArray>
 #include <QDebug>
+#include <QSet>
 
 #include <iostream>
 #include <vector>
@@ -269,13 +270,13 @@ void ArtifactEffectPreset::applyTo(ArtifactAbstractEffect* effect) const
     for (const auto& p : impl_->parameters_) {
         switch (p.type) {
         case Parameter::Float:
-            effect->setParameter(p.name, p.floatValue);
+            effect->setPropertyValue(ArtifactCore::UniString(p.name), QVariant(p.floatValue));
             break;
         case Parameter::Color:
-            effect->setParameterColor(p.name, p.colorValue);
+            effect->setPropertyValue(ArtifactCore::UniString(p.name), QVariant(p.colorValue));
             break;
         case Parameter::String:
-            // 文字列パラメータは文字列として設定
+            effect->setPropertyValue(ArtifactCore::UniString(p.name), QVariant(p.stringValue));
             break;
         }
     }
@@ -296,7 +297,7 @@ void ArtifactEffectPreset::setThumbnail(const QByteArray& data)
 class ArtifactEffectPresetCollection::Impl
 {
 public:
-    QHash<PresetID, std::unique_ptr<ArtifactEffectPreset>> presets_;
+    std::map<ArtifactEffectPreset::PresetID, std::unique_ptr<ArtifactEffectPreset>> presets_;
 };
 
 ArtifactEffectPresetCollection::ArtifactEffectPresetCollection()
@@ -312,33 +313,34 @@ ArtifactEffectPresetCollection::~ArtifactEffectPresetCollection()
 ArtifactEffectPreset* ArtifactEffectPresetCollection::createPreset(const QString& name)
 {
     auto preset = std::make_unique<ArtifactEffectPreset>(name);
-    PresetID id = preset->id();
+    ArtifactEffectPreset::PresetID id = preset->id();
     ArtifactEffectPreset* ptr = preset.get();
     impl_->presets_[id] = std::move(preset);
     return ptr;
 }
 
-void ArtifactEffectPresetCollection::deletePreset(const PresetID& id)
+void ArtifactEffectPresetCollection::deletePreset(const ArtifactEffectPreset::PresetID& id)
 {
-    impl_->presets_.remove(id);
+    impl_->presets_.erase(id);
 }
 
-ArtifactEffectPreset* ArtifactEffectPresetCollection::getPreset(const PresetID& id)
+ArtifactEffectPreset* ArtifactEffectPresetCollection::getPreset(const ArtifactEffectPreset::PresetID& id)
 {
     auto it = impl_->presets_.find(id);
-    return (it != impl_->presets_.end()) ? it->get() : nullptr;
+    return (it != impl_->presets_.end()) ? it->second.get() : nullptr;
 }
 
-const ArtifactEffectPreset* ArtifactEffectPresetCollection::getPreset(const PresetID& id) const
+const ArtifactEffectPreset* ArtifactEffectPresetCollection::getPreset(const ArtifactEffectPreset::PresetID& id) const
 {
     auto it = impl_->presets_.find(id);
-    return (it != impl_->presets_.end()) ? it->get() : nullptr;
+    return (it != impl_->presets_.end()) ? it->second.get() : nullptr;
 }
 
 QVector<ArtifactEffectPreset*> ArtifactEffectPresetCollection::getPresetsByCategory(const QString& category) const
 {
     QVector<ArtifactEffectPreset*> result;
     for (const auto& [id, preset] : impl_->presets_) {
+        Q_UNUSED(id);
         if (preset->category() == category) {
             result.append(preset.get());
         }
@@ -350,15 +352,17 @@ QStringList ArtifactEffectPresetCollection::allCategories() const
 {
     QSet<QString> cats;
     for (const auto& [id, preset] : impl_->presets_) {
+        Q_UNUSED(id);
         cats.insert(preset->category());
     }
-    return cats.toList();
+    return cats.values();
 }
 
 QVector<ArtifactEffectPreset*> ArtifactEffectPresetCollection::allPresets()
 {
     QVector<ArtifactEffectPreset*> result;
     for (auto& [id, preset] : impl_->presets_) {
+        Q_UNUSED(id);
         result.append(preset.get());
     }
     return result;
@@ -368,6 +372,7 @@ QVector<const ArtifactEffectPreset*> ArtifactEffectPresetCollection::allPresets(
 {
     QVector<const ArtifactEffectPreset*> result;
     for (const auto& [id, preset] : impl_->presets_) {
+        Q_UNUSED(id);
         result.append(preset.get());
     }
     return result;
@@ -387,6 +392,7 @@ bool ArtifactEffectPresetCollection::saveToFile(const QString& filePath) const
 {
     QJsonArray arr;
     for (const auto& [id, preset] : impl_->presets_) {
+        Q_UNUSED(id);
         arr.append(preset->toJson());
     }
 

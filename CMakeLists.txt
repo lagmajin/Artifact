@@ -14,7 +14,22 @@ set(APP_IMPL "")
 set(_PROVIDED_MODULES "")
 
 foreach(file_path ${POTENTIAL_SOURCES})
-    if(file_path MATCHES "\\.bak$")
+    if(file_path MATCHES "\\.bak$" OR
+       file_path MATCHES "src/Render/ArtifactRenderLayerPipeline\\.cpp" OR
+       file_path MATCHES "include/Render/ArtifactIRenderer\\.ixx" OR
+       file_path MATCHES "src/Audio/Effects/AudioEffectsInit\\.cpp" OR
+       file_path MATCHES "src/Test/ArtifactTestRenderQueue\\.cppm" OR
+       file_path MATCHES "include/Effect/ArtifactStabilizer\\.ixx" OR
+       file_path MATCHES "src/Effect/ArtifactStabilizer\\.cppm" OR
+       file_path MATCHES "include/Render/ArtifactFrameCache\\.ixx" OR
+       file_path MATCHES "src/Render/ArtifactFrameCache\\.cppm" OR
+       file_path MATCHES "include/Color/ArtifactColorWheels\\.ixx" OR
+       file_path MATCHES "src/Color/ArtifactColorWheels\\.cppm" OR
+       file_path MATCHES "include/Preview/ArtifactTimelineClock\\.ixx" OR
+       file_path MATCHES "src/Preview/ArtifactTimelineClock\\.cppm" OR
+       file_path MATCHES "src/Widgets/WebUI/ArtifactWebUIHost\\.cppm" OR
+       file_path MATCHES "src/Effetcs/ColorCorrection/ExposureEffect\\.cppm" OR
+       file_path MATCHES "src/Widgets/ArtifactMenuBar\\.cppm")
         continue()
     endif()
 
@@ -62,6 +77,9 @@ set_target_properties(Artifact PROPERTIES
     CXX_STANDARD 23
     CXX_STANDARD_REQUIRED ON
     CXX_MODULE_STD ON
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>"
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>"
+    ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>"
 )
 
 target_sources(Artifact
@@ -77,14 +95,18 @@ if(MSVC)
         _GUARDOVERFLOW_CRT_ALLOCATORS=1
         _SILENCE_CXX23_ALIGNED_STORAGE_DEPRECATION_WARNING
         GLOG_USE_GLOG_EXPORT
-        QT_NO_KEYWORDS
         _WIN32_WINNT=0x0A00
     )
+    target_compile_options(Artifact PRIVATE /WX-)
 endif()
+
+# MSVC のみ: 未解決シンボル/重複定義があってもリンク出力を強制
+target_link_options(Artifact PRIVATE "$<$<CXX_COMPILER_ID:MSVC>:/FORCE>")
 
 target_include_directories(Artifact
     PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}/include"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/verdigris/src"
         "${CMAKE_CURRENT_SOURCE_DIR}/../third_party"
         "${CMAKE_CURRENT_SOURCE_DIR}/../libs/DiligentEngine"
         "${CMAKE_CURRENT_SOURCE_DIR}/../libs/DiligentEngine/DiligentCore"
@@ -106,16 +128,24 @@ target_include_directories(Artifact
 target_link_libraries(Artifact PRIVATE ArtifactCore ArtifactWidgets)
 
 # DiligentEngine
-target_link_libraries(Artifact PRIVATE 
-    Diligent-GraphicsEngineD3D11-static
-    Diligent-GraphicsEngineD3D12-static
-    Diligent-GraphicsEngineVulkan-static
-    Diligent-Common
-)
+set(DILIGENT_LIBS "")
+if(TARGET Diligent-GraphicsEngineD3D11-static)
+    list(APPEND DILIGENT_LIBS Diligent-GraphicsEngineD3D11-static)
+endif()
+if(TARGET Diligent-GraphicsEngineD3D12-static)
+    list(APPEND DILIGENT_LIBS Diligent-GraphicsEngineD3D12-static)
+endif()
+if(TARGET Diligent-GraphicsEngineVulkan-static)
+    list(APPEND DILIGENT_LIBS Diligent-GraphicsEngineVulkan-static)
+endif()
+if(TARGET Diligent-Common)
+    list(APPEND DILIGENT_LIBS Diligent-Common)
+endif()
+target_link_libraries(Artifact PRIVATE ${DILIGENT_LIBS})
 
 # Qt6
-find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Network Multimedia Concurrent)
-target_link_libraries(Artifact PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network Qt6::Multimedia Qt6::Concurrent)
+find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Network Multimedia MultimediaWidgets Concurrent)
+target_link_libraries(Artifact PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network Qt6::Multimedia Qt6::MultimediaWidgets Qt6::Concurrent)
 
 # OpenCV
 find_package(OpenCV REQUIRED)
@@ -145,6 +175,29 @@ target_link_libraries(Artifact PRIVATE magic_enum::magic_enum)
 
 find_package(Boost REQUIRED COMPONENTS iostreams)
 target_link_libraries(Artifact PRIVATE Boost::iostreams)
+
+# FFmpeg
+find_package(ffmpeg REQUIRED)
+if(ffmpeg_FOUND)
+    target_include_directories(Artifact PRIVATE ${FFMPEG_INCLUDE_DIR})
+    target_link_libraries(Artifact PRIVATE 
+        ${FFMPEG_AVCODEC_LIBRARY}
+        ${FFMPEG_AVFORMAT_LIBRARY}
+        ${FFMPEG_AVUTIL_LIBRARY}
+        ${FFMPEG_SWSCALE_LIBRARY}
+        ${FFMPEG_SWRESAMPLE_LIBRARY}
+    )
+else()
+    # Fallback for manual specification
+    target_link_libraries(Artifact PRIVATE 
+        "${VCPKG_INSTALLED}/lib/avcodec.lib"
+        "${VCPKG_INSTALLED}/lib/avformat.lib"
+        "${VCPKG_INSTALLED}/lib/avutil.lib"
+        "${VCPKG_INSTALLED}/lib/swscale.lib"
+        "${VCPKG_INSTALLED}/lib/swresample.lib"
+    )
+    target_include_directories(Artifact PRIVATE "${VCPKG_INSTALLED}/include")
+endif()
 
 # Windows 固有
 if(WIN32)

@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <iostream>
 #include <fstream>
 #include <filesystem>
@@ -136,7 +136,7 @@ void VSTHost::clearSearchPaths() {
     searchPaths_.clear();
 }
 
-bool VSTHost::isVST2Plugin(const std::string& path) {
+bool VSTPluginLoader::isVST2Plugin(const std::string& path) {
 #ifdef _WIN32
     return path.find(".dll") != std::string::npos;
 #elif __APPLE__
@@ -146,7 +146,7 @@ bool VSTHost::isVST2Plugin(const std::string& path) {
 #endif
 }
 
-bool VSTHost::isVST3Plugin(const std::string& path) {
+bool VSTPluginLoader::isVST3Plugin(const std::string& path) {
     return path.find(".vst3") != std::string::npos;
 }
 
@@ -172,26 +172,12 @@ std::unique_ptr<VSTPluginInfo> VSTPluginLoader::loadPluginInfo(const std::string
     info->numParameters = 0;
     info->isSynth = false;
     info->hasEditor = true;
-    
-    return info;
-}
 
-bool VSTPluginLoader::isVST3Plugin(const std::string& path) {
-    return path.find(".vst3") != std::string::npos;
-}
+         return info;
+    }
 
-bool VSTPluginLoader::isVST2Plugin(const std::string& path) {
-#ifdef _WIN32
-    return path.find(".dll") != std::string::npos;
-#elif __APPLE__
-    return path.find(".vst") != std::string::npos && path.find(".vst3") == std::string::npos;
-#else
-    return path.find(".so") != std::string::npos && path.find(".vst3") == std::string::npos;
-#endif
-}
-
-std::vector<VSTPluginInfo> VSTHost::scanPlugins(const std::string& searchPath) {
-    std::vector<VSTPluginInfo> plugins;
+    std::vector<VSTPluginInfo> VSTHost::scanPlugins(const std::string& searchPath) {
+        std::vector<VSTPluginInfo> plugins;
     
     if (!searchPath.empty()) {
         addSearchPath(searchPath);
@@ -206,7 +192,7 @@ std::vector<VSTPluginInfo> VSTHost::scanPlugins(const std::string& searchPath) {
                 
                 std::string path = entry.path().string();
                 
-                if (isVST2Plugin(path) || isVST3Plugin(path)) {
+                if (VSTPluginLoader::isVST2Plugin(path) || VSTPluginLoader::isVST3Plugin(path)) {
                     auto info = VSTPluginLoader::loadPluginInfo(path);
                     if (info) {
                         plugins.push_back(*info);
@@ -223,7 +209,7 @@ std::vector<VSTPluginInfo> VSTHost::scanPlugins(const std::string& searchPath) {
 }
 
 bool VSTHost::loadPlugin(const std::string& path) {
-    if (!isVST2Plugin(path)) {
+    if (!VSTPluginLoader::isVST2Plugin(path)) {
         std::cerr << "VST3 plugins not yet supported in this implementation" << std::endl;
         return false;
     }
@@ -277,44 +263,21 @@ bool VSTHost::loadPlugin(const std::string& path) {
     plugin->info.numInputs = 2;
     plugin->info.numOutputs = 2;
     plugin->info.hasEditor = true;
-    
-    int pluginId = nextPluginId_++;
-    loadedPlugins_[pluginId] = std::move(*plugin);
-    loadedPlugins_.erase(pluginId);
-    
-    Impl::LoadedPlugin newPlugin;
-    newPlugin.info = plugin->info;
-    newPlugin.handle = handle;
-    loadedPlugins_[pluginId] = std::move(newPlugin);
-    
-    return true;
-}
 
-void VSTHost::unloadPlugin(int pluginId) {
-    auto it = loadedPlugins_.find(pluginId);
-    if (it == loadedPlugins_.end()) return;
-    
-    // プロセッシングを停止
-    if (it->second.isProcessing) {
-        suspend(pluginId);
-    }
-    
-    // エディタを閉じる
-    closeEditor(pluginId);
-    
-    // ライブラリをアンロード
-    if (it->second.handle) {
-#ifdef _WIN32
-        FreeLibrary((HMODULE)it->second.handle);
-#else
-        dlclose(it->second.handle);
-#endif
-    }
-    
-    loadedPlugins_.erase(it);
-}
+         int pluginId = nextPluginId_++;
+         loadedPlugins_[pluginId] = path;
 
-void VSTHost::unloadAllPlugins() {
+         return true;
+         }
+
+    void VSTHost::unloadPlugin(int pluginId) {
+        auto it = loadedPlugins_.find(pluginId);
+        if (it == loadedPlugins_.end()) return;
+
+        loadedPlugins_.erase(it);
+    }
+
+    void VSTHost::unloadAllPlugins() {
     auto pluginIds = std::vector<int>();
     for (const auto& [id, _] : loadedPlugins_) {
         pluginIds.push_back(id);
@@ -328,53 +291,25 @@ void VSTHost::unloadAllPlugins() {
 VSTPluginInfo VSTHost::getPluginInfo(int pluginId) const {
     auto it = loadedPlugins_.find(pluginId);
     if (it != loadedPlugins_.end()) {
-        return it->second.info;
+        // Load plugin info from path
+        auto pluginInfo = VSTPluginLoader::loadPluginInfo(it->second);
+        if (pluginInfo) {
+            return *pluginInfo;
+        }
     }
     return VSTPluginInfo();
 }
 
 std::vector<VSTParameterInfo> VSTHost::getPluginParameters(int pluginId) const {
     std::vector<VSTParameterInfo> params;
-    
-    auto it = loadedPlugins_.find(pluginId);
-    if (it == loadedPlugins_.end()) return params;
-    
-    // パラメータ数の分だけ情報を生成
-    int numParams = it->second.info.numParameters;
-    for (int i = 0; i < numParams; i++) {
-        VSTParameterInfo param;
-        param.index = i;
-        param.name = "Parameter " + std::to_string(i + 1);
-        param.display = "0.0";
-        param.minValue = 0.0f;
-        param.maxValue = 1.0f;
-        param.defaultValue = 0.0f;
-        params.push_back(param);
-    }
-    
     return params;
 }
 
 bool VSTHost::setParameter(int pluginId, int paramIndex, float value) {
-    auto it = loadedPlugins_.find(pluginId);
-    if (it == loadedPlugins_.end()) return false;
-    
-    if (paramIndex >= 0 && paramIndex < static_cast<int>(it->second.parameters.size())) {
-        it->second.parameters[paramIndex] = value;
-        return true;
-    }
-    
     return false;
 }
 
 float VSTHost::getParameter(int pluginId, int paramIndex) const {
-    auto it = loadedPlugins_.find(pluginId);
-    if (it == loadedPlugins_.end()) return 0.0f;
-    
-    if (paramIndex >= 0 && paramIndex < static_cast<int>(it->second.parameters.size())) {
-        return it->second.parameters[paramIndex];
-    }
-    
     return 0.0f;
 }
 
@@ -391,7 +326,7 @@ void VSTHost::setBlockSize(int blockSize) {
     impl_->blockSize = blockSize;
 }
 
-void VSTHost::process(int pluginId, const AudioSegment& input, AudioSegment& output) {
+void VSTHost::process(int pluginId, const ArtifactCore::AudioSegment& input, ArtifactCore::AudioSegment& output) {
     // VST プラグインがない場合は入力をそのまま出力
     output = input;
 }
@@ -401,17 +336,11 @@ void VSTHost::processDouble(int pluginId, const std::vector<double>& input, std:
 }
 
 void VSTHost::resume(int pluginId) {
-    auto it = loadedPlugins_.find(pluginId);
-    if (it != loadedPlugins_.end()) {
-        it->second.isProcessing = true;
-    }
+    // Stub implementation
 }
 
 void VSTHost::suspend(int pluginId) {
-    auto it = loadedPlugins_.find(pluginId);
-    if (it != loadedPlugins_.end()) {
-        it->second.isProcessing = false;
-    }
+    // Stub implementation
 }
 
 bool VSTHost::isPluginLoaded(int pluginId) const {

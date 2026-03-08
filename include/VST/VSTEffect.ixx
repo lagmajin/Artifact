@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <iostream>
 #include <vector>
 #include <string>
@@ -69,10 +69,10 @@ public:
     void openEditor(void* parentWindow);
     void closeEditor();
     bool hasEditor() const;
-    
+
     // サンプルレート設定
-    void setSampleRate(double sampleRate);
-    double getSampleRate() const;
+    void setSampleRate(int sampleRate);
+    int getSampleRate() const;
 
 private:
     class Impl;

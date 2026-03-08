@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <iostream>
 #include <vector>
 #include <string>
@@ -98,7 +98,7 @@ public:
     void setBlockSize(int blockSize);
     
     // プロセッシング
-    void process(int pluginId, const AudioSegment& input, AudioSegment& output);
+    void process(int pluginId, const ArtifactCore::AudioSegment& input, ArtifactCore::AudioSegment& output);
     void processDouble(int pluginId, const std::vector<double>& input, std::vector<double>& output);
     
     // 状態管理

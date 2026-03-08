@@ -140,9 +140,9 @@ public: // signals
     void frameRangeChanged(const FrameRange& range)
         W_SIGNAL(frameRangeChanged, range);
         
-private :
- void onTimerTick();
-     W_SLOT(onTimerTick);
+public:
+    void onTimerTick();
+    W_SLOT(onTimerTick);
 };
 
 }

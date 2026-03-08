@@ -32,10 +32,11 @@
 #include <numeric>
 #include <regex>
 #include <random>
+#include <QObject>
+#include <QString>
+#include <wobjectdefs.h>
+
 export module AI.Client;
-
-
-
 
 import Utils.String.UniString;
 
@@ -43,7 +44,12 @@ export namespace Artifact {
 
 using namespace ArtifactCore;
 
-class AIClient {
+/**
+ * @brief AI Client for communication with LLM backends.
+ * Refactored to be asynchronous using Qt signals.
+ */
+class AIClient : public QObject {
+    W_OBJECT(AIClient)
 private:
     class Impl;
     Impl* impl_;
@@ -58,8 +64,16 @@ public:
     void setApiKey(const UniString& key);
     void setProvider(const UniString& provider);
 
-    // Send a message to AI and get a (dummy) response synchronously for now
+    // Send a message to AI synchronously (legacy/wait)
     UniString sendMessage(const UniString& message);
+
+    // Send a message asynchronously
+    void postMessage(const UniString& message);
+
+    // Signals
+    void messageReceived(QString message) W_SIGNAL(messageReceived, message);
+    void partialMessageReceived(QString partialText) W_SIGNAL(partialMessageReceived, partialText);
+    void errorOccurred(QString error) W_SIGNAL(errorOccurred, error);
 };
 
 }

@@ -70,12 +70,19 @@ namespace Artifact
  namespace {
   std::shared_ptr<ArtifactAbstractComposition> safeCompositionLookup(const CompositionID& id)
   {
-    if (id.isNil()) return nullptr;
     auto* service = ArtifactProjectService::instance();
     if (!service) return nullptr;
-    auto result = service->findComposition(id);
-    if (!result.success) return nullptr;
-    return result.ptr.lock();
+
+    if (!id.isNil()) {
+      auto result = service->findComposition(id);
+      if (result.success) {
+        if (auto comp = result.ptr.lock()) {
+          return comp;
+        }
+      }
+    }
+
+    return service->currentComposition().lock();
   }
 
   LayerType inferLayerTypeFromFile(const QString& filePath)
@@ -231,6 +238,15 @@ namespace Artifact
         update();
       }
     });
+    QObject::connect(service, &ArtifactProjectService::compositionCreated, this, [this](const CompositionID& compId) {
+      if (impl_->compositionId.isNil()) {
+        impl_->compositionId = compId;
+      }
+      updateLayout();
+    });
+    QObject::connect(service, &ArtifactProjectService::projectChanged, this, [this]() {
+      updateLayout();
+    });
   }
  }
 
@@ -255,14 +271,23 @@ namespace Artifact
  void ArtifactLayerPanelWidget::updateLayout()
  {
   auto comp = safeCompositionLookup(impl_->compositionId);
-  if (!comp) return;
 
-  auto all = comp->allLayer();
   int count = 0;
-  if (impl_->shyHidden) {
-    for (auto& l : all) if (l && !l->isShy()) count++;
-  } else {
-    count = all.size();
+  if (comp) {
+    auto all = comp->allLayer();
+    if (impl_->shyHidden) {
+      for (auto& l : all) {
+        if (l && !l->isShy()) {
+          ++count;
+        }
+      }
+    } else {
+      for (auto& l : all) {
+        if (l) {
+          ++count;
+        }
+      }
+    }
   }
   setMinimumHeight(std::max(100, count * 28));
   update();
@@ -280,10 +305,10 @@ namespace Artifact
 
   auto all = comp->allLayer();
   QVector<ArtifactAbstractLayerPtr> layers;
-  if (impl_->shyHidden) {
-    for (auto& l : all) if (l && !l->isShy()) layers.push_back(l);
-  } else {
-    layers = all;
+  for (auto& l : all) {
+    if (!l) continue;
+    if (impl_->shyHidden && l->isShy()) continue;
+    layers.push_back(l);
   }
 
   if (idx < 0 || idx >= layers.size()) return;
@@ -344,16 +369,27 @@ namespace Artifact
   const int colW = 28;
   const int iconSize = 16;
   const int offset = (colW - iconSize) / 2;
+  p.fillRect(rect(), QColor(42, 42, 42));
 
   auto comp = safeCompositionLookup(impl_->compositionId);
-  if (!comp) return;
+  if (!comp) {
+    p.setPen(QColor(150, 150, 150));
+    p.drawText(rect(), Qt::AlignCenter, "No composition selected");
+    return;
+  }
 
   auto all = comp->allLayer();
   QVector<ArtifactAbstractLayerPtr> layers;
-  if (impl_->shyHidden) {
-    for (auto& l : all) if (l && !l->isShy()) layers.push_back(l);
-  } else {
-    layers = all;
+  for (auto& l : all) {
+    if (!l) continue;
+    if (impl_->shyHidden && l->isShy()) continue;
+    layers.push_back(l);
+  }
+
+  if (layers.isEmpty()) {
+    p.setPen(QColor(150, 150, 150));
+    p.drawText(rect(), Qt::AlignCenter, "No layers");
+    return;
   }
 
   for (int i = 0; i < layers.size(); ++i) {

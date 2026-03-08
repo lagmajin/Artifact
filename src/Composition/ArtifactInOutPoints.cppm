@@ -1,4 +1,4 @@
-module;
+﻿module;
 
 #include <algorithm>
 #include <optional>
@@ -8,6 +8,7 @@ module;
 #include <QColor>
 #include <QXmlStreamWriter>
 #include <QXmlStreamReader>
+#include <wobjectimpl.h>
 
 #include <iostream>
 #include <vector>
@@ -52,6 +53,8 @@ import Frame.Range;
 import Artifact.Composition.InOutPoints;
 
 namespace Artifact {
+W_OBJECT_IMPL(ArtifactMarker)
+W_OBJECT_IMPL(ArtifactInOutPoints)
 
 // ==================== ArtifactMarker Implementation ====================
 
@@ -429,12 +432,12 @@ bool ArtifactInOutPoints::importFromXML(const QString& xml) {
     // Clear existing markers
     clearAllMarkers();
     clearAllPoints();
-    
+
     while (reader.readNextStartElement()) {
         if (reader.name() == "InOutPoints") {
             while (reader.readNextStartElement()) {
-                QStringRef name = reader.name();
-                
+                QStringView name = reader.name();
+
                 if (name == "InPoint") {
                     QString frameStr = reader.attributes().value("frame").toString();
                     bool ok = false;
@@ -494,21 +497,21 @@ QString ArtifactInOutPoints::exportToXML() const {
     // Write in point
     if (hasInPoint()) {
         writer.writeStartElement("InPoint");
-        writer.writeAttribute("frame", QString::number(inPoint()->value()));
+        writer.writeAttribute("frame", QString::number(inPoint()->framePosition()));
         writer.writeEndElement();
     }
-    
+
     // Write out point
     if (hasOutPoint()) {
         writer.writeStartElement("OutPoint");
-        writer.writeAttribute("frame", QString::number(outPoint()->value()));
+        writer.writeAttribute("frame", QString::number(outPoint()->framePosition()));
         writer.writeEndElement();
     }
-    
+
     // Write markers
     for (auto* marker : allMarkers()) {
         writer.writeStartElement("Marker");
-        writer.writeAttribute("frame", QString::number(marker->position().value()));
+        writer.writeAttribute("frame", QString::number(marker->position().framePosition()));
         writer.writeAttribute("comment", marker->comment());
         
         QString typeStr = "Comment";

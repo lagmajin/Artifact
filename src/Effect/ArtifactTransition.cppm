@@ -6,6 +6,7 @@ module;
 #include <QImage>
 #include <QEasingCurve>
 #include <QPainter>
+#include <QPainterPath>
 #include <QtMath>
 #include <QRandomGenerator>
 #include <cmath>
@@ -831,32 +832,32 @@ QString TransitionFactory::transitionName(TransitionType type)
 QString TransitionFactory::transitionDisplayName(TransitionType type)
 {
     switch (type) {
-        case TransitionType::CrossDissolve: return tr("Cross Dissolve");
-        case TransitionType::Fade: return tr("Fade");
-        case TransitionType::DipToBlack: return tr("Dip to Black");
-        case TransitionType::DipToWhite: return tr("Dip to White");
-        case TransitionType::WipeLeft: return tr("Wipe Left");
-        case TransitionType::WipeRight: return tr("Wipe Right");
-        case TransitionType::WipeUp: return tr("Wipe Up");
-        case TransitionType::WipeDown: return tr("Wipe Down");
-        case TransitionType::WipeRadial: return tr("Radial Wipe");
-        case TransitionType::WipeClock: return tr("Clock Wipe");
-        case TransitionType::WipeDiamond: return tr("Diamond Wipe");
-        case TransitionType::SlideLeft: return tr("Slide Left");
-        case TransitionType::SlideRight: return tr("Slide Right");
-        case TransitionType::SlideUp: return tr("Slide Up");
-        case TransitionType::SlideDown: return tr("Slide Down");
-        case TransitionType::PushLeft: return tr("Push Left");
-        case TransitionType::PushRight: return tr("Push Right");
-        case TransitionType::PushUp: return tr("Push Up");
-        case TransitionType::PushDown: return tr("Push Down");
-        case TransitionType::ZoomIn: return tr("Zoom In");
-        case TransitionType::ZoomOut: return tr("Zoom Out");
-        case TransitionType::ZoomRotate: return tr("Zoom Rotate");
-        case TransitionType::Glitch: return tr("Glitch");
-        case TransitionType::PageCurl: return tr("Page Curl");
-        case TransitionType::RippleDissolve: return tr("Ripple Dissolve");
-        default: return tr("Unknown");
+        case TransitionType::CrossDissolve: return QObject::tr("Cross Dissolve");
+        case TransitionType::Fade: return QObject::tr("Fade");
+        case TransitionType::DipToBlack: return QObject::tr("Dip to Black");
+        case TransitionType::DipToWhite: return QObject::tr("Dip to White");
+        case TransitionType::WipeLeft: return QObject::tr("Wipe Left");
+        case TransitionType::WipeRight: return QObject::tr("Wipe Right");
+        case TransitionType::WipeUp: return QObject::tr("Wipe Up");
+        case TransitionType::WipeDown: return QObject::tr("Wipe Down");
+        case TransitionType::WipeRadial: return QObject::tr("Radial Wipe");
+        case TransitionType::WipeClock: return QObject::tr("Clock Wipe");
+        case TransitionType::WipeDiamond: return QObject::tr("Diamond Wipe");
+        case TransitionType::SlideLeft: return QObject::tr("Slide Left");
+        case TransitionType::SlideRight: return QObject::tr("Slide Right");
+        case TransitionType::SlideUp: return QObject::tr("Slide Up");
+        case TransitionType::SlideDown: return QObject::tr("Slide Down");
+        case TransitionType::PushLeft: return QObject::tr("Push Left");
+        case TransitionType::PushRight: return QObject::tr("Push Right");
+        case TransitionType::PushUp: return QObject::tr("Push Up");
+        case TransitionType::PushDown: return QObject::tr("Push Down");
+        case TransitionType::ZoomIn: return QObject::tr("Zoom In");
+        case TransitionType::ZoomOut: return QObject::tr("Zoom Out");
+        case TransitionType::ZoomRotate: return QObject::tr("Zoom Rotate");
+        case TransitionType::Glitch: return QObject::tr("Glitch");
+        case TransitionType::PageCurl: return QObject::tr("Page Curl");
+        case TransitionType::RippleDissolve: return QObject::tr("Ripple Dissolve");
+        default: return QObject::tr("Unknown");
     }
 }
 
@@ -988,7 +989,7 @@ SlideTransition* TransitionPresets::quickSlide()
 
 class TransitionManager::Impl {
 public:
-    QMap<QString, std::unique_ptr<AbstractTransition>> transitions;
+    std::map<QString, std::unique_ptr<AbstractTransition>> transitions;
     QString defaultTransition = "CrossDissolve";
 };
 
@@ -1021,8 +1022,9 @@ void TransitionManager::registerTransition(const QString& name, std::unique_ptr<
 
 AbstractTransition* TransitionManager::transition(const QString& name) const
 {
-    if (impl_->transitions.contains(name)) {
-        return impl_->transitions[name].get();
+    auto it = impl_->transitions.find(name);
+    if (it != impl_->transitions.end()) {
+        return it->second.get();
     }
     return nullptr;
 }
@@ -1045,7 +1047,13 @@ void TransitionManager::applyTransition(const QString& name,
 
 QStringList TransitionManager::availableTransitions() const
 {
-    return impl_->transitions.keys();
+    QStringList names;
+    names.reserve(static_cast<qsizetype>(impl_->transitions.size()));
+    for (const auto& [name, transition] : impl_->transitions) {
+        Q_UNUSED(transition);
+        names.append(name);
+    }
+    return names;
 }
 
 QString TransitionManager::defaultTransition() const

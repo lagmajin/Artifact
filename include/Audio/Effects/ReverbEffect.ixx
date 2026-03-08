@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <vector>
 #include <string>
 #include <memory>
@@ -55,23 +55,23 @@ export namespace Artifact {
  * Features modulated all-pass diffusers, absorptive low-pass filters in the tank,
  * and cross-coupled delay lines for a lush, wide stereo image.
  */
-class ReverbEffect : public ArtifactAbstractAudioEffect {
+class ReverbEffect {
 public:
     ReverbEffect();
-    ~ReverbEffect() override = default;
+    ~ReverbEffect() = default;
 
-    // ArtifactAbstractAudioEffect interface
-    ArtifactCore::AudioSegment process(const ArtifactCore::AudioSegment& input) override;
-    std::string getName() const override { return "Dattorro Plate Reverb"; }
-    std::string getDescription() const override {
+    // Audio processing
+    void process(float* buffer, int samples, int channels);
+    std::string name() const { return "Dattorro Plate Reverb"; }
+    std::string getDescription() const { 
         return "High-end algorithmic plate reverb with modulated diffusion";
     }
-    
-    std::vector<AudioEffectParameter> getParameters() const override;
-    void setParameter(const std::string& name, float value) override;
-    float getParameter(const std::string& name) const override;
 
-    void setSampleRate(int sampleRate) override;
+    std::vector<AudioEffectParameter> getParameters() const;
+    void setParameter(const std::string& name, float value);
+    float getParameter(const std::string& name) const;
+
+    void setSampleRate(int sampleRate);
 
 private:
     // === Input Diffusion Stage ===
@@ -101,6 +101,7 @@ private:
     float wetLevel_   = 0.35f;
     float dryLevel_   = 0.65f;
     float size_       = 1.0f;    // 0.5 .. 2.0  (scale all delay times)
+    float sampleRate_ = 44100.0f; // Current sample rate
 
     // Internal state
     float tankAccumL_ = 0.0f;

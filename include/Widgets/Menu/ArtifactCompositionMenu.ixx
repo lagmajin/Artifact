@@ -25,7 +25,7 @@ export namespace Artifact {
   class Impl;
   Impl* impl_;
   //QScopedPointer<ArtifactCompositionMenuPrivate> pImpl_;
- protected:
+ public:
   void rebuildMenu();
   W_SLOT(rebuildMenu, ());
 

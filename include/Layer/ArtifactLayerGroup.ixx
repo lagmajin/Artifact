@@ -43,15 +43,17 @@ export module Artifact.Layer.Group;
 
 
 import Artifact.Layer.Abstract;
+import Layer.Blend;
+import Utils.Id;
 
 export namespace Artifact
 {
-
+    using namespace ArtifactCore;
 // レイヤーグループ（Photoshopのフォルダ一样的機能）
 class ArtifactLayerGroup
 {
 public:
-    using LayerID = uint64_t;
+    using LayerID = ArtifactCore::LayerID;
 
 private:
     class Impl;
@@ -121,6 +123,7 @@ private:
     Impl* impl_;
 
 public:
+    using LayerID = ArtifactLayerGroup::LayerID;
     ArtifactLayerGroupCollection();
     ~ArtifactLayerGroupCollection();
 

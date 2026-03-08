@@ -1,8 +1,10 @@
-﻿module;
+
+module;
 #include <QVBoxLayout>
 #include <QTextEdit>
 #include <QPushButton>
 #include <QLineEdit>
+#include <QTextCursor>
 #include <wobjectimpl.h>
 
 #include <iostream>
@@ -38,10 +40,8 @@
 #include <numeric>
 #include <regex>
 #include <random>
+
 module Widgets.AIChatWidget;
-
-
-
 
 import Utils.String.UniString;
 import AI.Client;
@@ -56,6 +56,10 @@ public:
     QTextEdit* history = nullptr;
     QLineEdit* input = nullptr;
     QPushButton* send = nullptr;
+    
+    // Tracking current streaming message
+    bool isStreaming = false;
+    int lastMessagePos = 0;
 };
 
 AIChatWidget::AIChatWidget(QWidget* parent) : QWidget(parent), impl_(new Impl()) {
@@ -69,22 +73,45 @@ AIChatWidget::AIChatWidget(QWidget* parent) : QWidget(parent), impl_(new Impl())
     impl_->layout->addWidget(impl_->input);
     impl_->layout->addWidget(impl_->send);
 
-    QObject::connect(impl_->send, &QPushButton::clicked, [this]() {
+    // AI Client Signals
+    auto client = AIClient::instance();
+    
+    QObject::connect(client, &AIClient::partialMessageReceived, [this](QString partial) {
+        if (!impl_->isStreaming) {
+            impl_->isStreaming = true;
+            impl_->history->append("<b>AI:</b> ");
+            impl_->lastMessagePos = impl_->history->textCursor().position();
+        }
+        
+        // Update the last message
+        QTextCursor cursor = impl_->history->textCursor();
+        cursor.setPosition(impl_->lastMessagePos, QTextCursor::MoveAnchor);
+        cursor.movePosition(QTextCursor::End, QTextCursor::KeepAnchor);
+        cursor.insertText(partial);
+        impl_->history->ensureCursorVisible();
+    });
+
+    QObject::connect(client, &AIClient::messageReceived, [this](QString final) {
+        impl_->isStreaming = false;
+        impl_->history->append(""); // New line for next message
+    });
+
+    QObject::connect(impl_->send, &QPushButton::clicked, [this, client]() {
         QString txt = impl_->input->text();
         if (txt.isEmpty()) return;
-        impl_->history->append(QString("You: %1").arg(txt));
+        impl_->history->append(QString("<b>You:</b> %1").arg(txt));
         impl_->input->clear();
-        auto resp = AIClient::instance()->sendMessage(UniString(txt));
-        impl_->history->append(resp.toQString());
+        
+        // Use non-blocking async message
+        client->postMessage(UniString(txt));
     });
 }
 
 AIChatWidget::~AIChatWidget() { delete impl_; }
 
 void AIChatWidget::sendUserMessage(const UniString& msg) {
-    auto resp = AIClient::instance()->sendMessage(msg);
-    impl_->history->append(msg.toQString());
-    impl_->history->append(resp.toQString());
+    impl_->history->append(QString("<b>You:</b> %1").arg(msg.toQString()));
+    AIClient::instance()->postMessage(msg);
 }
 
 void AIChatWidget::setProvider(const UniString& provider) {

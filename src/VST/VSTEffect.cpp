@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <cstring>
 #include <algorithm>
 
@@ -153,19 +153,17 @@ std::vector<AudioEffectParameter> VSTEffect::getParameters() const {
     
     auto& host = VSTHost::getInstance();
     auto pluginParams = host.getPluginParameters(impl_->pluginId);
-    
+
     for (const auto& param : pluginParams) {
         AudioEffectParameter effectParam;
         effectParam.name = param.name;
-        effectParam.display = param.display;
         effectParam.minValue = param.minValue;
         effectParam.maxValue = param.maxValue;
         effectParam.defaultValue = param.defaultValue;
-        effectParam.isAutomatable = param.isAutomatable;
-        
+
         // 現在値を取得
-        effectParam.value = host.getParameter(impl_->pluginId, param.index);
-        
+        // effectParam.value = host.getParameter(impl_->pluginId, param.index);
+
         params.push_back(effectParam);
     }
     
@@ -217,16 +215,16 @@ bool VSTEffect::hasEditor() const {
     return host.getPluginInfo(impl_->pluginId).hasEditor;
 }
 
-void VSTEffect::setSampleRate(double sampleRate) {
+void VSTEffect::setSampleRate(int sampleRate) {
     impl_->sampleRate = sampleRate;
-    
+
     if (impl_->isLoaded && impl_->pluginId >= 0) {
         auto& host = VSTHost::getInstance();
         host.setSampleRate(sampleRate);
     }
 }
 
-double VSTEffect::getSampleRate() const {
+int VSTEffect::getSampleRate() const {
     return impl_->sampleRate;
 }
 

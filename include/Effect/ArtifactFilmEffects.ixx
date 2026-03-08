@@ -1,7 +1,8 @@
-module;
+﻿module;
 #include <QObject>
 #include <QString>
 #include <QVector>
+#include <QVector2D>
 #include <QColor>
 #include <random>
 #include <memory>
