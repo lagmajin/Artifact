@@ -3,6 +3,7 @@ module;
 #include <QtCore/QtGlobal>
 #include <QApplication>
 #include <QMainWindow>
+#include <QSettings>
 #include <QDateTime>
 #include <QDir>
 #include <QImage>
@@ -39,6 +40,7 @@ import ImageProcessing;
 //import HalideTest;
 import Graphics;
 import SearchImage;
+import UI.Layout.State;
 
 import Test;
 
@@ -243,7 +245,30 @@ int main(int argc, char* argv[])
  ImageExporter exp;
  exp.testWrite();
     QMainWindow mw;
- mw.show();
- return a.exec();
+    mw.setObjectName("ArtifactMainWindow");
+    mw.setWindowTitle("Artifact");
+
+    {
+        QSettings settings("ArtifactStudio", "Artifact");
+        auto layoutState = UiLayoutState::loadFromSettings(settings, "MainWindow");
+        if (!layoutState.geometry.isEmpty()) {
+            mw.restoreGeometry(layoutState.geometry);
+        }
+        if (!layoutState.state.isEmpty()) {
+            mw.restoreState(layoutState.state);
+        }
+    }
+
+    QObject::connect(&a, &QCoreApplication::aboutToQuit, [&mw]() {
+        QSettings settings("ArtifactStudio", "Artifact");
+        UiLayoutState layoutState("ArtifactMainWindow");
+        layoutState.geometry = mw.saveGeometry();
+        layoutState.state = mw.saveState();
+        layoutState.saveToSettings(settings, "MainWindow");
+        settings.sync();
+    });
+
+    mw.show();
+    return a.exec();
 
 }

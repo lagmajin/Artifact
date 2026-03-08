@@ -4,6 +4,8 @@
 #include <QAction>
 #include <QKeySequence>
 #include <QActionGroup>
+#include <QPointer>
+#include <QApplication>
 
 #include <iostream>
 #include <vector>
@@ -46,6 +48,20 @@ module Artifact.Menu.View;
 import Artifact.Service.Project;
 
 namespace Artifact {
+ namespace {
+  QWidget* findWidgetByClassHint(const QString& classHint)
+  {
+   const auto widgets = QApplication::allWidgets();
+   for (QWidget* w : widgets) {
+    if (!w) continue;
+    const QString className = QString::fromLatin1(w->metaObject()->className());
+    if (className.contains(classHint, Qt::CaseInsensitive)) {
+     return w;
+    }
+   }
+   return nullptr;
+  }
+ }
 
   class ArtifactViewMenu::Impl {
   public:
@@ -75,6 +91,9 @@ namespace Artifact {
    QAction* qualityDraftAction = nullptr;
    QAction* qualityPreviewAction = nullptr;
    QAction* qualityFinalAction = nullptr;
+   QMenu* windowPanelsMenu = nullptr;
+   QAction* openProjectPanelAction = nullptr;
+   QAction* openInspectorPanelAction = nullptr;
 
   };
 
@@ -188,6 +207,25 @@ namespace Artifact {
    menu->addAction(showGuidesAction);
    menu->addAction(snapToGuidesAction);
    menu->addAction(showRulersAction);
+   menu->addSeparator();
+   windowPanelsMenu = menu->addMenu("ウィンドウパネル(&W)");
+   openProjectPanelAction = windowPanelsMenu->addAction("プロジェクト");
+   openInspectorPanelAction = windowPanelsMenu->addAction("インスペクター");
+
+   QObject::connect(openProjectPanelAction, &QAction::triggered, menu, []() {
+    if (QWidget* w = findWidgetByClassHint("ArtifactProjectManagerWidget")) {
+     w->show();
+     w->raise();
+     w->activateWindow();
+    }
+   });
+   QObject::connect(openInspectorPanelAction, &QAction::triggered, menu, []() {
+    if (QWidget* w = findWidgetByClassHint("ArtifactInspectorWidget")) {
+     w->show();
+     w->raise();
+     w->activateWindow();
+    }
+   });
   }
 
  ArtifactViewMenu::Impl::~Impl()
@@ -208,7 +246,48 @@ namespace Artifact {
 
  void ArtifactViewMenu::registerView(const QString& name, QWidget* view)
  {
+  if (!impl_ || !impl_->windowPanelsMenu || !view) return;
 
+  QAction* action = impl_->windowPanelsMenu->addAction(name);
+  action->setCheckable(true);
+  action->setChecked(view->isVisible());
+
+  QPointer<QWidget> guardedView(view);
+  QObject::connect(action, &QAction::toggled, this, [guardedView](bool checked) {
+   if (!guardedView) return;
+   guardedView->setVisible(checked);
+   if (checked) {
+    guardedView->raise();
+    guardedView->activateWindow();
+   }
+  });
+
+  QObject::connect(view, &QWidget::destroyed, this, [this, action]() {
+   if (impl_ && impl_->windowPanelsMenu && action) {
+    impl_->windowPanelsMenu->removeAction(action);
+   }
+   if (action) {
+    action->deleteLater();
+   }
+  });
+
+  auto syncAction = [action, guardedView]() {
+   if (!action || !guardedView) return;
+   const bool vis = guardedView->isVisible();
+   if (action->isChecked() != vis) {
+    action->setChecked(vis);
+   }
+  };
+
+  if (view->isWindow()) {
+   QObject::connect(view, &QWidget::windowTitleChanged, this, [action](const QString& t) {
+    if (action && !t.isEmpty()) action->setText(t);
+   });
+  }
+
+  QObject::connect(action, &QAction::hovered, this, [syncAction]() mutable {
+   syncAction();
+  });
  }
 
 };

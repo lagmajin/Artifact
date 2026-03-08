@@ -26,6 +26,9 @@ module;
 #include <QHeaderView>
 #include <QPushButton>
 #include <QFileDialog>
+#include <QApplication>
+#include <QShortcut>
+#include <QRegularExpression>
 
 #include <iostream>
 #include <vector>
@@ -72,6 +75,7 @@ import Artifact.Service.Project;
 import Artifact.Project.Model;
 import Artifact.Project.Items;
 import Artifact.Project.Roles;
+import Artifact.Layer.Search.Query;
 import Artifact.Widgets.LayerPanelWidget;
 
 namespace Artifact {
@@ -190,6 +194,44 @@ void HoverThumbnailPopupWidget::setThumbnail(const QPixmap& px) { if(impl_->thum
 void HoverThumbnailPopupWidget::setLabels(const QStringList& ls) { for(int i=0; i<impl_->infoLabels.size() && i<ls.size(); ++i) impl_->infoLabels[i]->setText(ls[i]); }
 void HoverThumbnailPopupWidget::setLabel(int idx, const QString& t) { if(idx>=0 && idx<impl_->infoLabels.size()) impl_->infoLabels[idx]->setText(t); }
 void HoverThumbnailPopupWidget::showAt(const QPoint& p) { move(p); show(); raise(); QTimer::singleShot(5000, this, &QWidget::hide); }
+
+class ProjectFilterProxyModel : public QSortFilterProxyModel {
+public:
+    explicit ProjectFilterProxyModel(QObject* parent = nullptr)
+        : QSortFilterProxyModel(parent) {}
+
+    void setSearchQuery(const ArtifactLayerSearchQuery& query) {
+        query_ = query;
+        invalidateFilter();
+    }
+
+protected:
+    bool filterAcceptsRow(int sourceRow, const QModelIndex& sourceParent) const override {
+        if (query_.isSearchTextEmpty()) {
+            return true;
+        }
+
+        const int cols = sourceModel() ? sourceModel()->columnCount(sourceParent) : 0;
+        for (int c = 0; c < cols; ++c) {
+            const QModelIndex idx = sourceModel()->index(sourceRow, c, sourceParent);
+            const QString text = sourceModel()->data(idx, Qt::DisplayRole).toString();
+            if (query_.matches(text, LayerSearchType::Any, true, false, false)) {
+                return true;
+            }
+        }
+
+        const int childCount = sourceModel() ? sourceModel()->rowCount(sourceModel()->index(sourceRow, 0, sourceParent)) : 0;
+        for (int r = 0; r < childCount; ++r) {
+            if (filterAcceptsRow(r, sourceModel()->index(sourceRow, 0, sourceParent))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+private:
+    ArtifactLayerSearchQuery query_;
+};
 
 // --- Project View (Tree) ---
 class ArtifactProjectView::Impl {
@@ -362,8 +404,18 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
         eProjectItemType type = typeVar.isValid() ? static_cast<eProjectItemType>(typeVar.toInt()) : eProjectItemType::Footage;
 
         menu.addAction("Open", [this, idx]() { handleItemDoubleClicked(idx); });
+        menu.addAction("Copy Name", [sourceIdx]() {
+            QApplication::clipboard()->setText(sourceIdx.data(Qt::DisplayRole).toString());
+        });
         
         if (type == eProjectItemType::Composition) {
+            menu.addAction("Set as Active Composition", [sourceIdx]() {
+                QVariant idVar = sourceIdx.data(Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::CompositionId));
+                if (idVar.isValid()) {
+                    ArtifactProjectService::instance()->changeCurrentComposition(CompositionID(idVar.toString()));
+                }
+            });
+
             menu.addAction("Composition Settings...", [this, sourceIdx]() {
                 // TODO: trigger EditCompositionSettingDialog
             });
@@ -378,6 +430,11 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
                 if (item && item->type() == eProjectItemType::Footage) {
                     QString path = static_cast<FootageItem*>(item)->filePath;
                     QDesktopServices::openUrl(QUrl::fromLocalFile(QFileInfo(path).absolutePath()));
+                }
+            });
+            menu.addAction("Copy File Path", [item]() {
+                if (item && item->type() == eProjectItemType::Footage) {
+                    QApplication::clipboard()->setText(static_cast<FootageItem*>(item)->filePath);
                 }
             });
         }
@@ -396,6 +453,10 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
                 svc->getCurrentProjectSharedPtr()->removeItem(item);
             }
         });
+
+        menu.addSeparator();
+        menu.addAction("Expand Children", [this, idx]() { setExpanded(idx, true); });
+        menu.addAction("Collapse Children", [this, idx]() { setExpanded(idx, false); });
         
         menu.addSeparator();
     }
@@ -412,6 +473,10 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
         svc->getCurrentProjectSharedPtr()->createFolder("New Folder");
     });
 
+    menu.addSeparator();
+    menu.addAction("Expand All", [this]() { expandAll(); });
+    menu.addAction("Collapse All", [this]() { collapseAll(); });
+    menu.addAction("Refresh View", [this]() { viewport()->update(); });
     menu.addSeparator();
     menu.addAction("Import File...", [this, svc]() {
         QStringList paths = QFileDialog::getOpenFileNames(this, "Import Files", "", "All Files (*.*)");
@@ -494,11 +559,12 @@ class ArtifactProjectManagerWidget::Impl {
 public:
     ArtifactProjectView* projectView_ = nullptr;
     ArtifactProjectModel* projectModel_ = nullptr;
-    QSortFilterProxyModel* proxyModel_ = nullptr;
+    ProjectFilterProxyModel* proxyModel_ = nullptr;
     ProjectInfoPanel* infoPanel_ = nullptr;
     QLineEdit* searchBar = nullptr;
     ArtifactProjectManagerToolBox* toolBox = nullptr;
     QLabel* projectNameLabel = nullptr;
+    bool thumbnailEnabled = true;
 
     void update() {
         auto shared = ArtifactProjectService::instance()->getCurrentProjectSharedPtr();
@@ -506,16 +572,32 @@ public:
         projectModel_->setProject(shared);
 
         if (!proxyModel_) {
-            proxyModel_ = new QSortFilterProxyModel();
+            proxyModel_ = new ProjectFilterProxyModel();
             proxyModel_->setSourceModel(projectModel_);
             proxyModel_->setFilterCaseSensitivity(Qt::CaseInsensitive);
             proxyModel_->setRecursiveFilteringEnabled(true);
+            proxyModel_->setSortCaseSensitivity(Qt::CaseInsensitive);
         }
-        if (projectView_) projectView_->setModel(proxyModel_);
+        if (projectView_) {
+            projectView_->setModel(proxyModel_);
+            projectView_->setSortingEnabled(true);
+            projectView_->sortByColumn(0, Qt::AscendingOrder);
+            projectView_->header()->setStretchLastSection(true);
+            projectView_->header()->setSectionResizeMode(0, QHeaderView::Stretch);
+            for (int col = 1; col < projectView_->model()->columnCount(); ++col) {
+                projectView_->header()->setSectionResizeMode(col, QHeaderView::ResizeToContents);
+            }
+            projectView_->expandToDepth(1);
+        }
     }
 
     void handleSearch(const QString& text) {
-        if(proxyModel_) proxyModel_->setFilterFixedString(text);
+        if (!proxyModel_) return;
+        const QString trimmed = text.trimmed();
+        ArtifactLayerSearchQuery query;
+        query.setSearchText(trimmed);
+        proxyModel_->setSearchQuery(query);
+        if (!trimmed.isEmpty() && projectView_) projectView_->expandAll();
     }
 };
 
@@ -547,6 +629,7 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
         }
         QLineEdit:focus { border: 1px solid #007ACC; color: white; }
     )");
+    impl_->searchBar->setClearButtonEnabled(true);
     mainLayout->addWidget(impl_->searchBar);
 
     impl_->projectView_ = new ArtifactProjectView();
@@ -587,6 +670,21 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     connect(svc, &ArtifactProjectService::projectChanged, this, [this]() { updateRequested(); });
     connect(svc, &ArtifactProjectService::projectCreated, this, [this]() { updateRequested(); });
 
+    auto* focusSearchShortcut = new QShortcut(QKeySequence::Find, this);
+    connect(focusSearchShortcut, &QShortcut::activated, this, [this]() {
+        if (impl_->searchBar) {
+            impl_->searchBar->setFocus();
+            impl_->searchBar->selectAll();
+        }
+    });
+
+    auto* clearSearchShortcut = new QShortcut(QKeySequence(Qt::Key_Escape), impl_->searchBar);
+    connect(clearSearchShortcut, &QShortcut::activated, this, [this]() {
+        if (impl_->searchBar && !impl_->searchBar->text().isEmpty()) {
+            impl_->searchBar->clear();
+        }
+    });
+
     impl_->update();
 }
 
@@ -598,8 +696,16 @@ void ArtifactProjectManagerWidget::updateRequested() {
 }
 
 void ArtifactProjectManagerWidget::triggerUpdate() { impl_->update(); }
-void ArtifactProjectManagerWidget::setFilter() {}
-void ArtifactProjectManagerWidget::setThumbnailEnabled(bool) {}
+void ArtifactProjectManagerWidget::setFilter() {
+    if (!impl_ || !impl_->searchBar) return;
+    impl_->searchBar->setFocus();
+    impl_->searchBar->selectAll();
+}
+void ArtifactProjectManagerWidget::setThumbnailEnabled(bool b) {
+    if (!impl_ || !impl_->infoPanel_) return;
+    impl_->thumbnailEnabled = b;
+    impl_->infoPanel_->thumbnail->setVisible(b);
+}
 void ArtifactProjectManagerWidget::dropEvent(QDropEvent* event) { /* Handled by child view but kept for API */ }
 void ArtifactProjectManagerWidget::dragEnterEvent(QDragEnterEvent* event) { /* Handled by child view but kept for API */ }
 void ArtifactProjectManagerWidget::contextMenuEvent(QContextMenuEvent* event) { /* Handled by child view but kept for API */ }
