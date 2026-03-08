@@ -66,7 +66,13 @@ namespace Artifact
    return p;
   };
 
-  audioGroup.addProperty(makeProp(QStringLiteral("audio.volume"), ArtifactCore::PropertyType::Float, impl_->volume_, -120));
+  auto volumeProp = makeProp(QStringLiteral("audio.volume"), ArtifactCore::PropertyType::Float, impl_->volume_, -120);
+  volumeProp->setHardRange(0.0, 1.0);
+  volumeProp->setSoftRange(0.0, 1.0);
+  volumeProp->setStep(0.01);
+  volumeProp->setUnit(QStringLiteral("linear"));
+  volumeProp->setTooltip(QStringLiteral("Audio gain (0.0 - 1.0)"));
+  audioGroup.addProperty(volumeProp);
   audioGroup.addProperty(makeProp(QStringLiteral("audio.muted"), ArtifactCore::PropertyType::Boolean, impl_->muted_, -110));
 
   groups.push_back(audioGroup);

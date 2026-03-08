@@ -29,6 +29,9 @@ module;
 #include <QApplication>
 #include <QShortcut>
 #include <QRegularExpression>
+#include <QDirIterator>
+#include <QMessageBox>
+#include <QHash>
 
 #include <iostream>
 #include <vector>
@@ -92,6 +95,7 @@ public:
     QLabel* thumbnail;
     QLabel* titleLabel;
     QLabel* detailsLabel;
+    QHash<QString, QPixmap> previewCache;
 
     ProjectInfoPanel(QWidget* parent = nullptr) : QWidget(parent) {
         setFixedHeight(90);
@@ -139,9 +143,12 @@ public:
         if (!index.isValid()) {
             titleLabel->setText("Project");
             detailsLabel->setText("No selection");
+            thumbnail->setText("PREVIEW");
+            thumbnail->setPixmap(QPixmap());
             return;
         }
-        QString name = index.data(Qt::DisplayRole).toString();
+        const QModelIndex source0 = index.siblingAtColumn(0);
+        QString name = source0.data(Qt::DisplayRole).toString();
         titleLabel->setText(name);
 
         QString size = index.siblingAtColumn(1).data(Qt::DisplayRole).toString();
@@ -153,6 +160,42 @@ public:
         } else {
             detailsLabel->setText("Folder or Footage Asset");
         }
+
+        // Lazy preview generation: only decode imagery when the selected row needs it.
+        thumbnail->setText("PREVIEW");
+        thumbnail->setPixmap(QPixmap());
+        QVariant ptrVar = source0.data(Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::ProjectItemPtr));
+        ProjectItem* item = ptrVar.isValid() ? reinterpret_cast<ProjectItem*>(ptrVar.value<quintptr>()) : nullptr;
+        if (!item || item->type() != eProjectItemType::Footage) {
+            return;
+        }
+
+        const QString path = static_cast<FootageItem*>(item)->filePath;
+        if (path.isEmpty()) {
+            return;
+        }
+        const QFileInfo info(path);
+        if (!info.exists()) {
+            thumbnail->setText("MISSING");
+            return;
+        }
+
+        auto cacheIt = previewCache.constFind(path);
+        if (cacheIt != previewCache.constEnd()) {
+            thumbnail->setPixmap(*cacheIt);
+            thumbnail->setText(QString());
+            return;
+        }
+
+        QPixmap pix(path);
+        if (!pix.isNull()) {
+            QPixmap scaled = pix.scaled(thumbnail->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation);
+            previewCache.insert(path, scaled);
+            thumbnail->setPixmap(scaled);
+            thumbnail->setText(QString());
+            return;
+        }
+        thumbnail->setText(info.suffix().toUpper());
     }
 };
 
@@ -243,6 +286,43 @@ public:
         auto* svc = ArtifactProjectService::instance();
         if (!svc) return;
         svc->importAssetsFromPaths(QStringList() << str);
+    }
+
+    static void collectFootage(ProjectItem* item, QVector<FootageItem*>& out) {
+        if (!item) return;
+        if (item->type() == eProjectItemType::Footage) {
+            out.append(static_cast<FootageItem*>(item));
+        }
+        for (auto* child : item->children) {
+            collectFootage(child, out);
+        }
+    }
+
+    static QString findByFileName(const QString& rootDir, const QString& fileName) {
+        if (rootDir.isEmpty() || fileName.isEmpty()) return QString();
+        QDirIterator it(rootDir, QDir::Files, QDirIterator::Subdirectories);
+        while (it.hasNext()) {
+            const QString candidate = it.next();
+            if (QFileInfo(candidate).fileName().compare(fileName, Qt::CaseInsensitive) == 0) {
+                return candidate;
+            }
+        }
+        return QString();
+    }
+
+    static int relinkMissingFootage(const QString& rootDir, const QVector<FootageItem*>& targets) {
+        int relinked = 0;
+        for (auto* footage : targets) {
+            if (!footage) continue;
+            const QFileInfo currentInfo(footage->filePath);
+            if (currentInfo.exists()) continue;
+            const QString replacement = findByFileName(rootDir, currentInfo.fileName());
+            if (!replacement.isEmpty()) {
+                footage->filePath = QFileInfo(replacement).absoluteFilePath();
+                ++relinked;
+            }
+        }
+        return relinked;
     }
 };
 
@@ -437,6 +517,19 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
                     QApplication::clipboard()->setText(static_cast<FootageItem*>(item)->filePath);
                 }
             });
+            menu.addAction("Relink Selected Footage...", [this, item, svc]() {
+                if (!svc || !item || item->type() != eProjectItemType::Footage) return;
+                const QString root = QFileDialog::getExistingDirectory(this, "Relink Selected Footage - Search Root");
+                if (root.isEmpty()) return;
+                QVector<FootageItem*> targets;
+                targets.append(static_cast<FootageItem*>(item));
+                const int relinked = Impl::relinkMissingFootage(root, targets);
+                if (relinked > 0) {
+                    svc->projectChanged();
+                }
+                QMessageBox::information(this, "Relink Result",
+                                         QString("Relinked %1 file(s).").arg(relinked));
+            });
         }
 
         menu.addSeparator();
@@ -477,6 +570,25 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
     menu.addAction("Expand All", [this]() { expandAll(); });
     menu.addAction("Collapse All", [this]() { collapseAll(); });
     menu.addAction("Refresh View", [this]() { viewport()->update(); });
+    menu.addSeparator();
+    menu.addAction("Relink Missing Footage...", [this, svc]() {
+        if (!svc) return;
+        const QString root = QFileDialog::getExistingDirectory(this, "Relink Missing Footage - Search Root");
+        if (root.isEmpty()) return;
+
+        QVector<FootageItem*> targets;
+        const auto roots = svc->projectItems();
+        for (auto* r : roots) {
+            Impl::collectFootage(r, targets);
+        }
+
+        const int relinked = Impl::relinkMissingFootage(root, targets);
+        if (relinked > 0) {
+            svc->projectChanged();
+        }
+        QMessageBox::information(this, "Relink Result",
+                                 QString("Relinked %1 missing footage item(s).").arg(relinked));
+    });
     menu.addSeparator();
     menu.addAction("Import File...", [this, svc]() {
         QStringList paths = QFileDialog::getOpenFileNames(this, "Import Files", "", "All Files (*.*)");

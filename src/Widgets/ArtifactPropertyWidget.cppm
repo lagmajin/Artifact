@@ -70,6 +70,8 @@ public:
     QWidget* containerWidget = nullptr;
     QVBoxLayout* mainLayout = nullptr;
     ArtifactAbstractLayerPtr currentLayer;
+    QString filterText;
+    bool rebuilding = false;
 
     void rebuildUI();
 };
@@ -112,11 +114,24 @@ void ArtifactPropertyWidget::clear() {
     updateProperties();
 }
 
+void ArtifactPropertyWidget::setFilterText(const QString& text) {
+    if (impl_->filterText == text) return;
+    impl_->filterText = text;
+    updateProperties();
+}
+
+QString ArtifactPropertyWidget::filterText() const {
+    return impl_->filterText;
+}
+
 void ArtifactPropertyWidget::updateProperties() {
     impl_->rebuildUI();
 }
 
 void ArtifactPropertyWidget::Impl::rebuildUI() {
+    if (rebuilding) return;
+    rebuilding = true;
+
     // 古いウィジェットをクリア
     QLayoutItem* child;
     while ((child = mainLayout->takeAt(0)) != nullptr) {
@@ -126,10 +141,20 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
         delete child;
     }
 
+    auto* searchEdit = new QLineEdit();
+    searchEdit->setPlaceholderText("Search properties...");
+    searchEdit->setText(filterText);
+    QObject::connect(searchEdit, &QLineEdit::textChanged, [this](const QString& text) {
+        filterText = text;
+        rebuildUI();
+    });
+    mainLayout->addWidget(searchEdit);
+
     if (!currentLayer) {
         QLabel* emptyLabel = new QLabel("No layer selected");
         emptyLabel->setAlignment(Qt::AlignCenter);
         mainLayout->addWidget(emptyLabel);
+        rebuilding = false;
         return;
     }
 
@@ -173,7 +198,19 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
     const auto addPropertyRow = [this, &humanizePropertyLabel](QFormLayout* form,
                                        const ArtifactCore::AbstractProperty& p,
                                        const std::function<void(const QString&, const QVariant&)>& applyValue) {
-        QLabel* label = new QLabel(humanizePropertyLabel(p.getName()));
+        const QString query = filterText.trimmed();
+        if (!query.isEmpty()) {
+            const QString key = p.getName();
+            const QString friendly = humanizePropertyLabel(key);
+            if (!key.contains(query, Qt::CaseInsensitive) &&
+                !friendly.contains(query, Qt::CaseInsensitive)) {
+                return;
+            }
+        }
+
+        const auto meta = p.metadata();
+        const QString labelText = meta.displayLabel.isEmpty() ? humanizePropertyLabel(p.getName()) : meta.displayLabel;
+        QLabel* label = new QLabel(labelText);
         QWidget* editor = nullptr;
 
         const QString propName = p.getName();
@@ -182,8 +219,12 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
         switch (p.getType()) {
             case ArtifactCore::PropertyType::Float: {
                 auto* spin = new QDoubleSpinBox();
-                spin->setRange(-1e6, 1e6);
+                const double minValue = meta.hardMin.isValid() ? meta.hardMin.toDouble() : -1e6;
+                const double maxValue = meta.hardMax.isValid() ? meta.hardMax.toDouble() : 1e6;
+                spin->setRange(minValue, maxValue);
                 spin->setValue(curVal.toDouble());
+                if (meta.step.isValid()) spin->setSingleStep(meta.step.toDouble());
+                if (!meta.unit.isEmpty()) spin->setSuffix(" " + meta.unit);
                 editor = spin;
                 QObject::connect(spin, &QDoubleSpinBox::editingFinished, [applyValue, propName, spin]() {
                     applyValue(propName, spin->value());
@@ -192,8 +233,12 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
             }
             case ArtifactCore::PropertyType::Integer: {
                 auto* spin = new QSpinBox();
-                spin->setRange(-1e6, 1e6);
+                const int minValue = meta.hardMin.isValid() ? meta.hardMin.toInt() : -1000000;
+                const int maxValue = meta.hardMax.isValid() ? meta.hardMax.toInt() : 1000000;
+                spin->setRange(minValue, maxValue);
                 spin->setValue(curVal.toInt());
+                if (meta.step.isValid()) spin->setSingleStep(meta.step.toInt());
+                if (!meta.unit.isEmpty()) spin->setSuffix(" " + meta.unit);
                 editor = spin;
                 QObject::connect(spin, &QSpinBox::editingFinished, [applyValue, propName, spin]() {
                     applyValue(propName, spin->value());
@@ -239,6 +284,10 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
         }
 
         if (!editor) return;
+        if (!meta.tooltip.isEmpty()) {
+            label->setToolTip(meta.tooltip);
+            editor->setToolTip(meta.tooltip);
+        }
 
         QWidget* rowWidget = new QWidget();
         QHBoxLayout* rowLayout = new QHBoxLayout(rowWidget);
@@ -326,6 +375,7 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
     }
 
     mainLayout->addStretch();
+    rebuilding = false;
 }
 
 } // namespace Artifact

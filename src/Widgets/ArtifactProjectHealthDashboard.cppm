@@ -8,6 +8,7 @@ module;
 #include <QIcon>
 #include <QHeaderView>
 #include <QStyle>
+#include <QMessageBox>
 #include <wobjectdefs.h>
 #include <wobjectimpl.h>
 
@@ -92,6 +93,7 @@ public:
         issuesTree_->clear();
         ArtifactProjectHealthChecker checker;
         ProjectHealthReport report = checker.check(project_);
+        lastReport_ = report;
 
         // Update overall status
         if (report.isHealthy) {
@@ -131,6 +133,9 @@ public:
         }
 
         issuesTree_->header()->setSectionResizeMode(1, QHeaderView::Stretch);
+        if (fixBtn_) {
+            fixBtn_->setEnabled(!report.isHealthy || !report.issues.isEmpty());
+        }
     }
 
 private:
@@ -194,9 +199,9 @@ private:
 
         // Footer Actions
         auto footerLayout = new QHBoxLayout();
-        auto fixBtn = new QPushButton("Fix Selected Issue");
-        fixBtn->setEnabled(false); // Placeholder for future feature
-        fixBtn->setStyleSheet(R"(
+        fixBtn_ = new QPushButton("Auto Repair");
+        fixBtn_->setEnabled(false);
+        fixBtn_->setStyleSheet(R"(
             QPushButton {
                 background-color: #007acc;
                 color: white;
@@ -209,9 +214,22 @@ private:
                 color: #888;
             }
         )");
+        connect(fixBtn_, &QPushButton::clicked, this, [this]() {
+            if (!project_) return;
+            AutoRepairOptions options;
+            options.repairFrameRanges = true;
+            options.normalizeCompositionRanges = true;
+            options.removeMissingAssets = true;
+
+            AutoRepairResult repaired = ArtifactProjectHealthChecker::checkAndRepair(project_, options);
+            QMessageBox::information(this,
+                                     "Project Auto Repair",
+                                     QString("Fixed: %1\nSkipped: %2").arg(repaired.fixedCount).arg(repaired.skippedCount));
+            refresh();
+        });
 
         footerLayout->addStretch();
-        footerLayout->addWidget(fixBtn);
+        footerLayout->addWidget(fixBtn_);
         mainLayout->addLayout(footerLayout);
 
         // Set modern dark theme appearance
@@ -221,6 +239,8 @@ private:
     ArtifactProject* project_ = nullptr;
     QTreeWidget* issuesTree_ = nullptr;
     QLabel* statusLabel_ = nullptr;
+    QPushButton* fixBtn_ = nullptr;
+    ProjectHealthReport lastReport_;
 };
 
 W_OBJECT_IMPL(ArtifactProjectHealthDashboard)

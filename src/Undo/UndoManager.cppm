@@ -85,6 +85,10 @@ void SetPropertyCommand::redo() {
     }
 }
 
+QString SetPropertyCommand::label() const {
+    return QStringLiteral("Set Property: %1").arg(name_.toQString());
+}
+
 // --- MoveLayerCommand ---
 MoveLayerCommand::MoveLayerCommand(ArtifactAbstractLayerPtr layer, float deltaX, float deltaY, int64_t frame)
     : layer_(layer), dx_(deltaX), dy_(deltaY), frame_(frame) {}
@@ -109,6 +113,10 @@ void MoveLayerCommand::redo() {
     }
 }
 
+QString MoveLayerCommand::label() const {
+    return QStringLiteral("Move Layer");
+}
+
 // --- AddLayerCommand ---
 AddLayerCommand::AddLayerCommand(std::shared_ptr<ArtifactAbstractComposition> comp, std::shared_ptr<ArtifactAbstractLayer> layer, bool atTop)
     : comp_(comp), layer_(layer), atTop_(atTop) {}
@@ -122,6 +130,14 @@ void AddLayerCommand::redo() {
         if (atTop_) comp_->appendLayerTop(layer_);
         else comp_->appendLayerBottom(layer_);
     }
+}
+
+QString AddLayerCommand::label() const {
+    return QStringLiteral("Add Layer");
+}
+
+QString RemoveLayerCommand::label() const {
+    return QStringLiteral("Remove Layer");
 }
 
 
@@ -155,6 +171,7 @@ void UndoManager::push(std::unique_ptr<UndoCommand> cmd) {
     impl_->undoStack.push_back(std::move(cmd));
     impl_->redoStack.clear();
     impl_->version_++;
+    Q_EMIT historyChanged();
 }
 
 void UndoManager::undo() {
@@ -163,6 +180,7 @@ void UndoManager::undo() {
     impl_->undoStack.pop_back();
     cmd->undo();
     impl_->redoStack.push_back(std::move(cmd));
+    Q_EMIT historyChanged();
 }
 
 void UndoManager::redo() {
@@ -171,6 +189,7 @@ void UndoManager::redo() {
     impl_->redoStack.pop_back();
     cmd->redo();
     impl_->undoStack.push_back(std::move(cmd));
+    Q_EMIT historyChanged();
 }
 
 bool UndoManager::canUndo() const { return !impl_->undoStack.empty(); }
@@ -181,6 +200,7 @@ void UndoManager::clearHistory() {
     impl_->redoStack.clear();
     impl_->version_ = 0;
     impl_->savedVersion_ = 0;
+    Q_EMIT historyChanged();
 }
 
 size_t UndoManager::undoCount() const { return impl_->undoStack.size(); }
@@ -196,11 +216,30 @@ QString UndoManager::redoDescription() const {
     return QString("Redo (%1 actions)").arg(impl_->redoStack.size());
 }
 
+QStringList UndoManager::undoHistoryLabels() const {
+    QStringList labels;
+    labels.reserve(static_cast<int>(impl_->undoStack.size()));
+    for (auto it = impl_->undoStack.rbegin(); it != impl_->undoStack.rend(); ++it) {
+        labels.append((*it) ? (*it)->label() : QStringLiteral("Command"));
+    }
+    return labels;
+}
+
+QStringList UndoManager::redoHistoryLabels() const {
+    QStringList labels;
+    labels.reserve(static_cast<int>(impl_->redoStack.size()));
+    for (auto it = impl_->redoStack.rbegin(); it != impl_->redoStack.rend(); ++it) {
+        labels.append((*it) ? (*it)->label() : QStringLiteral("Command"));
+    }
+    return labels;
+}
+
 void UndoManager::setMaxHistorySize(size_t maxSize) {
     impl_->maxHistorySize_ = maxSize;
     while (impl_->undoStack.size() > impl_->maxHistorySize_) {
         impl_->undoStack.erase(impl_->undoStack.begin());
     }
+    Q_EMIT historyChanged();
 }
 
 size_t UndoManager::maxHistorySize() const { return impl_->maxHistorySize_; }

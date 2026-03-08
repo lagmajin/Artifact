@@ -4,6 +4,7 @@ module;
 #include <QThreadPool>
 #include <QFuture>
 #include <QVector>
+#include <QMap>
 #include <QMutex>
 #include <QMutexLocker>
 #include <atomic>
@@ -116,6 +117,14 @@ enum class ParallelStrategy {
     Adaptive          // Auto-select best strategy
 };
 
+enum class FrameDropReason {
+    None = 0,
+    Cancelled,
+    ExecutionError,
+    OverBudget,
+    QueueStarvation
+};
+
 /**
  * @brief Multi-threaded render scheduler
  * 
@@ -182,6 +191,8 @@ public:
     double averageFrameTime() const;
     double estimatedTimeRemaining() const;
     size_t memoryUsage() const;
+    QMap<FrameDropReason, int> frameDropStats() const;
+    void resetFrameDropStats();
     
 signals:
     void executionStarted() W_SIGNAL(executionStarted);
@@ -196,6 +207,7 @@ signals:
     
     void progressChanged(float progress) W_SIGNAL(progressChanged, progress);
     void frameProcessed(const FramePosition& frame) W_SIGNAL(frameProcessed, frame);
+    void frameDropped(FrameDropReason reason, int totalCount) W_SIGNAL(frameDropped, reason, totalCount);
     
     void performanceWarning(const QString& warning) W_SIGNAL(performanceWarning, warning);
 };

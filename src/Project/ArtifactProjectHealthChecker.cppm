@@ -15,6 +15,8 @@ import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
 import Artifact.Layer.Composition; // CompositionLayerのインポート
 import Utils.Id;
+import Frame.Range;
+import Frame.Position;
 
 namespace Artifact {
 
@@ -39,6 +41,28 @@ ProjectHealthReport ArtifactProjectHealthChecker::check(ArtifactProject* project
     }
 
     return report;
+}
+
+AutoRepairResult ArtifactProjectHealthChecker::checkAndRepair(ArtifactProject* project, const AutoRepairOptions& options) {
+    AutoRepairResult result;
+    if (!project) {
+        result.skippedCount++;
+        result.appliedFixes.push_back({
+            HealthIssueSeverity::Error,
+            "Auto-repair skipped: project pointer is null",
+            "Project",
+            "System"
+        });
+        return result;
+    }
+
+    if (options.repairFrameRanges) {
+        repairFrameRanges(project, result, options);
+    }
+    if (options.removeMissingAssets) {
+        repairMissingAssets(project, result, options);
+    }
+    return result;
 }
 
 void ArtifactProjectHealthChecker::checkCircularReferences(ArtifactProject* project, ProjectHealthReport& report) {
@@ -207,6 +231,94 @@ void ArtifactProjectHealthChecker::checkMissingAssets(ArtifactProject* project, 
 
     for (auto* root : items) {
         traverse(root);
+    }
+}
+
+void ArtifactProjectHealthChecker::repairFrameRanges(ArtifactProject* project, AutoRepairResult& result, const AutoRepairOptions& options) {
+    auto items = project->projectItems();
+    std::function<void(ProjectItem*)> traverse = [&](ProjectItem* item) {
+        if (!item) return;
+        if (item->type() == eProjectItemType::Composition) {
+            auto* compItem = static_cast<CompositionItem*>(item);
+            auto compRes = project->findComposition(compItem->compositionId);
+            if (compRes.success) {
+                if (auto comp = compRes.ptr.lock()) {
+                    if (options.normalizeCompositionRanges) {
+                        auto range = comp->frameRange();
+                        if (range.duration() <= 0) {
+                            const auto start = range.start();
+                            comp->setFrameRange(ArtifactCore::FrameRange(start, start + 1));
+                            result.fixedCount++;
+                            result.appliedFixes.push_back({
+                                HealthIssueSeverity::Warning,
+                                QString("Fixed composition frame range to [%1, %2]").arg(start).arg(start + 1),
+                                compItem->name.toQString(),
+                                "FrameRange"
+                            });
+                        }
+                    }
+
+                    for (const auto& layer : comp->allLayer()) {
+                        if (!layer) continue;
+                        const int64_t inFrame = layer->inPoint().framePosition();
+                        const int64_t outFrame = layer->outPoint().framePosition();
+                        if (outFrame <= inFrame) {
+                            layer->setOutPoint(ArtifactCore::FramePosition(inFrame + 1));
+                            result.fixedCount++;
+                            result.appliedFixes.push_back({
+                                HealthIssueSeverity::Warning,
+                                QString("Adjusted layer out-point from %1 to %2").arg(outFrame).arg(inFrame + 1),
+                                layer->layerName(),
+                                "FrameRange"
+                            });
+                        }
+                    }
+                }
+            }
+        }
+        for (auto* child : item->children) traverse(child);
+    };
+
+    for (auto* root : items) {
+        traverse(root);
+    }
+}
+
+void ArtifactProjectHealthChecker::repairMissingAssets(ArtifactProject* project, AutoRepairResult& result, const AutoRepairOptions& options) {
+    if (!options.removeMissingAssets) return;
+
+    QVector<ProjectItem*> toRemove;
+    auto items = project->projectItems();
+    std::function<void(ProjectItem*)> traverse = [&](ProjectItem* item) {
+        if (!item) return;
+        if (item->type() == eProjectItemType::Footage) {
+            auto* footage = static_cast<FootageItem*>(item);
+            QFileInfo fi(footage->filePath);
+            if (!fi.exists() || !fi.isFile()) {
+                toRemove.push_back(item);
+            }
+        }
+        for (auto* child : item->children) traverse(child);
+    };
+    for (auto* root : items) {
+        traverse(root);
+    }
+
+    for (auto* item : toRemove) {
+        auto* footage = static_cast<FootageItem*>(item);
+        const QString filePath = footage->filePath;
+        const QString targetName = footage->name.toQString();
+        if (project->removeItem(item)) {
+            result.fixedCount++;
+            result.appliedFixes.push_back({
+                HealthIssueSeverity::Warning,
+                QString("Removed missing asset entry: %1").arg(filePath),
+                targetName,
+                "MissingAsset"
+            });
+        } else {
+            result.skippedCount++;
+        }
     }
 }
 

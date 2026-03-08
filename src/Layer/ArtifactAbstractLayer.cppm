@@ -96,6 +96,7 @@ namespace Artifact {
     bool isShy_ = false;
 
     uint32_t dirtyFlags_ = (uint32_t)LayerDirtyFlag::All;
+    uint64_t dirtyReasonMask_ = static_cast<uint64_t>(LayerDirtyReason::PropertyChanged);
 
     // エフェクトコンテナ
     std::vector<std::shared_ptr<ArtifactAbstractEffect>> effects_;
@@ -327,6 +328,10 @@ namespace Artifact {
   void ArtifactAbstractLayer::setDirty(LayerDirtyFlag flag) { impl_->dirtyFlags_ |= (uint32_t)flag; }
   void ArtifactAbstractLayer::clearDirty(LayerDirtyFlag flag) { impl_->dirtyFlags_ &= ~(uint32_t)flag; }
   bool ArtifactAbstractLayer::isDirty(LayerDirtyFlag flag) const { return (impl_->dirtyFlags_ & (uint32_t)flag) != 0; }
+  void ArtifactAbstractLayer::addDirtyReason(LayerDirtyReason reason) { impl_->dirtyReasonMask_ |= static_cast<uint64_t>(reason); }
+  bool ArtifactAbstractLayer::hasDirtyReason(LayerDirtyReason reason) const { return (impl_->dirtyReasonMask_ & static_cast<uint64_t>(reason)) != 0; }
+  uint64_t ArtifactAbstractLayer::dirtyReasonMask() const { return impl_->dirtyReasonMask_; }
+  void ArtifactAbstractLayer::clearDirtyReasons() { impl_->dirtyReasonMask_ = static_cast<uint64_t>(LayerDirtyReason::None); }
 
  void ArtifactAbstractLayer::setComposition(ArtifactAbstractComposition* comp)
  {
@@ -739,6 +744,9 @@ void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject& obj)
    p->setType(type);
    p->setValue(value);
    p->setDisplayPriority(priority);
+   if (type == PropertyType::Integer) {
+    p->setStep(1);
+   }
    return p;
   };
 
@@ -749,9 +757,20 @@ void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject& obj)
   layerGroup.addProperty(makeProp(QStringLiteral("layer.solo"), PropertyType::Boolean, isSolo(), -160));
   layerGroup.addProperty(makeProp(QStringLiteral("layer.shy"), PropertyType::Boolean, isShy(), -150));
 
-  layerGroup.addProperty(makeProp(QStringLiteral("time.inPoint"), PropertyType::Integer, static_cast<qint64>(inPoint().framePosition()), -90));
-  layerGroup.addProperty(makeProp(QStringLiteral("time.outPoint"), PropertyType::Integer, static_cast<qint64>(outPoint().framePosition()), -80));
-  layerGroup.addProperty(makeProp(QStringLiteral("time.startTime"), PropertyType::Integer, static_cast<qint64>(startTime().framePosition()), -70));
+  auto inPointProp = makeProp(QStringLiteral("time.inPoint"), PropertyType::Integer, static_cast<qint64>(inPoint().framePosition()), -90);
+  inPointProp->setUnit(QStringLiteral("frames"));
+  inPointProp->setTooltip(QStringLiteral("Layer in-point on timeline"));
+  layerGroup.addProperty(inPointProp);
+
+  auto outPointProp = makeProp(QStringLiteral("time.outPoint"), PropertyType::Integer, static_cast<qint64>(outPoint().framePosition()), -80);
+  outPointProp->setUnit(QStringLiteral("frames"));
+  outPointProp->setTooltip(QStringLiteral("Layer out-point on timeline"));
+  layerGroup.addProperty(outPointProp);
+
+  auto startTimeProp = makeProp(QStringLiteral("time.startTime"), PropertyType::Integer, static_cast<qint64>(startTime().framePosition()), -70);
+  startTimeProp->setUnit(QStringLiteral("frames"));
+  startTimeProp->setTooltip(QStringLiteral("Layer start offset in source time"));
+  layerGroup.addProperty(startTimeProp);
 
   const auto sz = sourceSize();
   layerGroup.addProperty(makeProp(QStringLiteral("source.width"), PropertyType::Integer, sz.width, -40));
@@ -764,58 +783,69 @@ void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject& obj)
  {
   if (propertyPath == QStringLiteral("layer.name")) {
    setLayerName(value.toString());
+   addDirtyReason(LayerDirtyReason::PropertyChanged);
    Q_EMIT changed();
    return true;
   }
   if (propertyPath == QStringLiteral("layer.visible")) {
    setVisible(value.toBool());
+   addDirtyReason(LayerDirtyReason::VisibilityChanged);
    Q_EMIT changed();
    return true;
   }
   if (propertyPath == QStringLiteral("layer.locked")) {
    setLocked(value.toBool());
+   addDirtyReason(LayerDirtyReason::PropertyChanged);
    Q_EMIT changed();
    return true;
   }
   if (propertyPath == QStringLiteral("layer.guide")) {
    setGuide(value.toBool());
+   addDirtyReason(LayerDirtyReason::PropertyChanged);
    Q_EMIT changed();
    return true;
   }
   if (propertyPath == QStringLiteral("layer.solo")) {
    setSolo(value.toBool());
+   addDirtyReason(LayerDirtyReason::PlaybackChanged);
    Q_EMIT changed();
    return true;
   }
   if (propertyPath == QStringLiteral("layer.shy")) {
    setShy(value.toBool());
+   addDirtyReason(LayerDirtyReason::PropertyChanged);
    Q_EMIT changed();
    return true;
   }
   if (propertyPath == QStringLiteral("time.inPoint")) {
    setInPoint(FramePosition(value.toLongLong()));
+   addDirtyReason(LayerDirtyReason::TimelineChanged);
    Q_EMIT changed();
    return true;
   }
   if (propertyPath == QStringLiteral("time.outPoint")) {
    setOutPoint(FramePosition(value.toLongLong()));
+   addDirtyReason(LayerDirtyReason::TimelineChanged);
    Q_EMIT changed();
    return true;
   }
   if (propertyPath == QStringLiteral("time.startTime")) {
    setStartTime(FramePosition(value.toLongLong()));
+   addDirtyReason(LayerDirtyReason::TimelineChanged);
    Q_EMIT changed();
    return true;
   }
   if (propertyPath == QStringLiteral("source.width")) {
    const auto cur = sourceSize();
    setSourceSize(Size_2D(value.toInt(), cur.height));
+   addDirtyReason(LayerDirtyReason::SourceChanged);
    Q_EMIT changed();
    return true;
   }
   if (propertyPath == QStringLiteral("source.height")) {
    const auto cur = sourceSize();
    setSourceSize(Size_2D(cur.width, value.toInt()));
+   addDirtyReason(LayerDirtyReason::SourceChanged);
    Q_EMIT changed();
    return true;
   }

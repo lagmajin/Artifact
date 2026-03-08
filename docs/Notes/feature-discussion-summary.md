@@ -36,3 +36,23 @@
 
 ---
 このファイルはリポジトリ内 `docs/Notes/feature-discussion-summary.md` に保存しました。必要なら別フォーマット（Issue / TODO リスト / RFC）に変換します。
+追記（2026-03-09 実装済み）
+- `ArtifactProjectView` に不足素材向けの一括再リンクを追加。
+  - `Relink Selected Footage...`
+  - `Relink Missing Footage...`
+- Projectパネル上段プレビューを遅延ロード化。
+  - フッテージ選択時のみサムネイル生成
+  - 生成済みプレビューはパス単位でキャッシュ
+  - 欠損ファイルは `MISSING` 表示
+- `ArtifactMarker` にタグ機能を追加。
+  - `tags()/setTags()/addTag()/removeTag()/hasTag()`
+  - `markersByTag()` / `searchMarkers()` を `ArtifactInOutPoints` に追加
+  - XML Import/Export で `tags` 属性を保存/復元
+- `UndoManager` に履歴参照APIを追加。
+  - `undoHistoryLabels()` / `redoHistoryLabels()`
+  - `historyChanged` シグナル
+  - 各UndoCommandに `label()` を追加（履歴表示用）
+- `Undo History` UI を追加。
+  - 新規 `ArtifactUndoHistoryWidget`（Undo/Redoスタック表示、Undo/Redo/Clear操作）
+  - `UndoManager::historyChanged` と連動してリアルタイム更新
+  - `AppMain` で右ドック (`UndoHistoryDock`) として表示

@@ -728,13 +728,26 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactVideoLayer::getLayerPropertyGro
     };
 
     videoGroup.addProperty(makeProp(QStringLiteral("video.sourcePath"), ArtifactCore::PropertyType::String, sourcePath(), -120));
-    videoGroup.addProperty(makeProp(QStringLiteral("video.playbackSpeed"), ArtifactCore::PropertyType::Float, playbackSpeed(), -110));
+    auto speedProp = makeProp(QStringLiteral("video.playbackSpeed"), ArtifactCore::PropertyType::Float, playbackSpeed(), -110);
+    speedProp->setHardRange(0.1, 8.0);
+    speedProp->setSoftRange(0.25, 2.0);
+    speedProp->setStep(0.05);
+    speedProp->setUnit(QStringLiteral("x"));
+    videoGroup.addProperty(speedProp);
     videoGroup.addProperty(makeProp(QStringLiteral("video.loopEnabled"), ArtifactCore::PropertyType::Boolean, isLoopEnabled(), -100));
-    videoGroup.addProperty(makeProp(QStringLiteral("video.audioVolume"), ArtifactCore::PropertyType::Float, audioVolume(), -90));
+    auto volumeProp = makeProp(QStringLiteral("video.audioVolume"), ArtifactCore::PropertyType::Float, audioVolume(), -90);
+    volumeProp->setHardRange(0.0, 1.0);
+    volumeProp->setSoftRange(0.0, 1.0);
+    volumeProp->setStep(0.01);
+    volumeProp->setUnit(QStringLiteral("linear"));
+    videoGroup.addProperty(volumeProp);
     videoGroup.addProperty(makeProp(QStringLiteral("video.audioMuted"), ArtifactCore::PropertyType::Boolean, isAudioMuted(), -80));
     videoGroup.addProperty(makeProp(QStringLiteral("video.audioEnabled"), ArtifactCore::PropertyType::Boolean, hasAudio(), -70));
     videoGroup.addProperty(makeProp(QStringLiteral("video.videoEnabled"), ArtifactCore::PropertyType::Boolean, hasVideo(), -60));
-    videoGroup.addProperty(makeProp(QStringLiteral("video.proxyQuality"), ArtifactCore::PropertyType::Integer, static_cast<int>(proxyQuality()), -50));
+    auto proxyProp = makeProp(QStringLiteral("video.proxyQuality"), ArtifactCore::PropertyType::Integer, static_cast<int>(proxyQuality()), -50);
+    proxyProp->setHardRange(0, 3);
+    proxyProp->setTooltip(QStringLiteral("0=None, 1=Quarter, 2=Half, 3=Full"));
+    videoGroup.addProperty(proxyProp);
 
     groups.push_back(videoGroup);
     return groups;

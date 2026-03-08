@@ -1,4 +1,4 @@
-﻿module;
+module;
 
 #include <algorithm>
 #include <optional>
@@ -84,8 +84,8 @@ FramePosition ArtifactMarker::position() const {
 void ArtifactMarker::setPosition(const FramePosition& position) {
     if (position_ != position) {
         position_ = position;
-        emit positionChanged(position);
-        emit markerChanged();
+        Q_EMIT positionChanged(position);
+        Q_EMIT markerChanged();
     }
 }
 
@@ -96,8 +96,8 @@ QString ArtifactMarker::comment() const {
 void ArtifactMarker::setComment(const QString& comment) {
     if (comment_ != comment) {
         comment_ = comment;
-        emit commentChanged(comment);
-        emit markerChanged();
+        Q_EMIT commentChanged(comment);
+        Q_EMIT markerChanged();
     }
 }
 
@@ -108,8 +108,8 @@ MarkerType ArtifactMarker::type() const {
 void ArtifactMarker::setType(MarkerType type) {
     if (type_ != type) {
         type_ = type;
-        emit typeChanged(type);
-        emit markerChanged();
+        Q_EMIT typeChanged(type);
+        Q_EMIT markerChanged();
     }
 }
 
@@ -120,8 +120,8 @@ QColor ArtifactMarker::color() const {
 void ArtifactMarker::setColor(const QColor& color) {
     if (color_ != color) {
         color_ = color;
-        emit colorChanged(color);
-        emit markerChanged();
+        Q_EMIT colorChanged(color);
+        Q_EMIT markerChanged();
     }
 }
 
@@ -132,9 +132,64 @@ QString ArtifactMarker::webLink() const {
 void ArtifactMarker::setWebLink(const QString& link) {
     if (webLink_ != link) {
         webLink_ = link;
-        emit webLinkChanged(link);
-        emit markerChanged();
+        Q_EMIT webLinkChanged(link);
+        Q_EMIT markerChanged();
     }
+}
+
+QStringList ArtifactMarker::tags() const {
+    return tags_;
+}
+
+void ArtifactMarker::setTags(const QStringList& tags) {
+    QStringList normalized = tags;
+    normalized.removeDuplicates();
+    for (QString& t : normalized) {
+        t = t.trimmed();
+    }
+    normalized.erase(std::remove_if(normalized.begin(), normalized.end(), [](const QString& t) {
+        return t.isEmpty();
+    }), normalized.end());
+
+    if (tags_ != normalized) {
+        tags_ = normalized;
+        Q_EMIT tagsChanged(tags_);
+        Q_EMIT markerChanged();
+    }
+}
+
+void ArtifactMarker::addTag(const QString& tag) {
+    const QString trimmed = tag.trimmed();
+    if (trimmed.isEmpty() || tags_.contains(trimmed, Qt::CaseInsensitive)) {
+        return;
+    }
+    tags_.append(trimmed);
+    Q_EMIT tagsChanged(tags_);
+    Q_EMIT markerChanged();
+}
+
+void ArtifactMarker::removeTag(const QString& tag) {
+    const QString trimmed = tag.trimmed();
+    if (trimmed.isEmpty()) return;
+    const int before = tags_.size();
+    tags_.erase(std::remove_if(tags_.begin(), tags_.end(), [&](const QString& v) {
+        return v.compare(trimmed, Qt::CaseInsensitive) == 0;
+    }), tags_.end());
+    if (before != tags_.size()) {
+        Q_EMIT tagsChanged(tags_);
+        Q_EMIT markerChanged();
+    }
+}
+
+bool ArtifactMarker::hasTag(const QString& tag) const {
+    const QString trimmed = tag.trimmed();
+    if (trimmed.isEmpty()) return false;
+    for (const QString& t : tags_) {
+        if (t.compare(trimmed, Qt::CaseInsensitive) == 0) {
+            return true;
+        }
+    }
+    return false;
 }
 
 bool ArtifactMarker::operator<(const ArtifactMarker& other) const {
@@ -185,12 +240,12 @@ ArtifactInOutPoints::~ArtifactInOutPoints() = default;
 // In Point
 void ArtifactInOutPoints::setInPoint(const FramePosition& frame) {
     impl_->inPoint_ = frame;
-    emit inPointChanged(impl_->inPoint_);
+    Q_EMIT inPointChanged(impl_->inPoint_);
 }
 
 void ArtifactInOutPoints::clearInPoint() {
     impl_->inPoint_ = std::nullopt;
-    emit inPointChanged(impl_->inPoint_);
+    Q_EMIT inPointChanged(impl_->inPoint_);
 }
 
 std::optional<FramePosition> ArtifactInOutPoints::inPoint() const {
@@ -208,12 +263,12 @@ void ArtifactInOutPoints::setInPointAtCurrent(const FramePosition& currentFrame)
 // Out Point
 void ArtifactInOutPoints::setOutPoint(const FramePosition& frame) {
     impl_->outPoint_ = frame;
-    emit outPointChanged(impl_->outPoint_);
+    Q_EMIT outPointChanged(impl_->outPoint_);
 }
 
 void ArtifactInOutPoints::clearOutPoint() {
     impl_->outPoint_ = std::nullopt;
-    emit outPointChanged(impl_->outPoint_);
+    Q_EMIT outPointChanged(impl_->outPoint_);
 }
 
 std::optional<FramePosition> ArtifactInOutPoints::outPoint() const {
@@ -248,7 +303,7 @@ bool ArtifactInOutPoints::isRangeLimited() const {
 void ArtifactInOutPoints::clearAllPoints() {
     impl_->inPoint_ = std::nullopt;
     impl_->outPoint_ = std::nullopt;
-    emit pointsCleared();
+    Q_EMIT pointsCleared();
 }
 
 // Markers
@@ -262,7 +317,7 @@ ArtifactMarker* ArtifactInOutPoints::addMarker(const FramePosition& position,
         it->second->setComment(comment);
         it->second->setType(type);
         impl_->chaptersDirty_ = true;
-        emit markerChanged(it->second);
+        Q_EMIT markerChanged(it->second);
         return it->second;
     }
     
@@ -271,7 +326,7 @@ ArtifactMarker* ArtifactInOutPoints::addMarker(const FramePosition& position,
     impl_->markers_[position] = marker;
     impl_->chaptersDirty_ = true;
     
-    emit markerAdded(marker);
+    Q_EMIT markerAdded(marker);
     return marker;
 }
 
@@ -282,7 +337,7 @@ bool ArtifactInOutPoints::removeMarker(const FramePosition& position) {
         impl_->markers_.erase(it);
         impl_->chaptersDirty_ = true;
         
-        emit markerRemoved(marker);
+        Q_EMIT markerRemoved(marker);
         delete marker;
         return true;
     }
@@ -297,7 +352,7 @@ void ArtifactInOutPoints::removeMarker(ArtifactMarker* marker) {
         impl_->markers_.erase(it);
         impl_->chaptersDirty_ = true;
         
-        emit markerRemoved(marker);
+        Q_EMIT markerRemoved(marker);
         delete marker;
     }
 }
@@ -344,6 +399,50 @@ std::vector<ArtifactMarker*> ArtifactInOutPoints::markersByType(MarkerType type)
     return result;
 }
 
+std::vector<ArtifactMarker*> ArtifactInOutPoints::markersByTag(const QString& tag) const {
+    std::vector<ArtifactMarker*> result;
+    for (auto& [pos, marker] : impl_->markers_) {
+        if (marker && marker->hasTag(tag)) {
+            result.push_back(marker);
+        }
+    }
+    std::sort(result.begin(), result.end(),
+              [](ArtifactMarker* a, ArtifactMarker* b) {
+                  return a->position() < b->position();
+              });
+    return result;
+}
+
+std::vector<ArtifactMarker*> ArtifactInOutPoints::searchMarkers(const QString& text) const {
+    std::vector<ArtifactMarker*> result;
+    const QString needle = text.trimmed();
+    if (needle.isEmpty()) {
+        return allMarkers();
+    }
+
+    for (auto& [pos, marker] : impl_->markers_) {
+        if (!marker) continue;
+        const bool inComment = marker->comment().contains(needle, Qt::CaseInsensitive);
+        const bool inLink = marker->webLink().contains(needle, Qt::CaseInsensitive);
+        bool inTags = false;
+        for (const QString& tag : marker->tags()) {
+            if (tag.contains(needle, Qt::CaseInsensitive)) {
+                inTags = true;
+                break;
+            }
+        }
+        if (inComment || inLink || inTags) {
+            result.push_back(marker);
+        }
+    }
+
+    std::sort(result.begin(), result.end(),
+              [](ArtifactMarker* a, ArtifactMarker* b) {
+                  return a->position() < b->position();
+              });
+    return result;
+}
+
 std::vector<ArtifactMarker*> ArtifactInOutPoints::markersInRange(const FrameRange& range) const {
     std::vector<ArtifactMarker*> result;
     
@@ -368,14 +467,14 @@ std::vector<ArtifactMarker*> ArtifactInOutPoints::chapterMarkers() const {
 
 void ArtifactInOutPoints::clearAllMarkers() {
     for (auto& [pos, marker] : impl_->markers_) {
-        emit markerRemoved(marker);
+        Q_EMIT markerRemoved(marker);
         delete marker;
     }
     impl_->markers_.clear();
     impl_->chapters_.clear();
     impl_->chaptersDirty_ = false;
     
-    emit allMarkersCleared();
+    Q_EMIT allMarkersCleared();
 }
 
 size_t ArtifactInOutPoints::markerCount() const {
@@ -470,8 +569,14 @@ bool ArtifactInOutPoints::importFromXML(const QString& xml) {
                         else if (typeStr == "Flash") type = MarkerType::Flash;
                         else if (typeStr == "WebLink") type = MarkerType::WebLink;
                         else if (typeStr == "Color") type = MarkerType::Color;
-                        
-                        addMarker(FramePosition(frame), comment, type);
+
+                        ArtifactMarker* marker = addMarker(FramePosition(frame), comment, type);
+                        if (marker) {
+                            const QString tagsJoined = reader.attributes().value("tags").toString();
+                            if (!tagsJoined.isEmpty()) {
+                                marker->setTags(tagsJoined.split(';', Qt::SkipEmptyParts));
+                            }
+                        }
                     }
                     
                     reader.skipCurrentElement();
@@ -513,6 +618,9 @@ QString ArtifactInOutPoints::exportToXML() const {
         writer.writeStartElement("Marker");
         writer.writeAttribute("frame", QString::number(marker->position().framePosition()));
         writer.writeAttribute("comment", marker->comment());
+        if (!marker->tags().isEmpty()) {
+            writer.writeAttribute("tags", marker->tags().join(';'));
+        }
         
         QString typeStr = "Comment";
         switch (marker->type()) {

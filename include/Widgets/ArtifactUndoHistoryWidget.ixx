@@ -1,8 +1,10 @@
-﻿module;
-
+module;
 #include <QWidget>
+#include <QListWidget>
+#include <QLabel>
+#include <QPushButton>
 #include <QVBoxLayout>
-#include <QScrollArea>
+#include <QHBoxLayout>
 #include <wobjectdefs.h>
 
 #include <iostream>
@@ -38,33 +40,26 @@
 #include <numeric>
 #include <regex>
 #include <random>
-export module Artifact.Widgets.ArtifactPropertyWidget;
+export module Artifact.Widgets.UndoHistoryWidget;
 
 
 
 
-import Artifact.Layer.Abstract;
+import Undo.UndoManager;
 
 export namespace Artifact {
 
-using namespace ArtifactCore;
-
-class ArtifactPropertyWidget : public QScrollArea {
- W_OBJECT(ArtifactPropertyWidget)
-private:
-    class Impl;
-    Impl* impl_;
-
+class ArtifactUndoHistoryWidget : public QWidget {
+ W_OBJECT(ArtifactUndoHistoryWidget)
 public:
-    explicit ArtifactPropertyWidget(QWidget* parent = nullptr);
-    ~ArtifactPropertyWidget();
+ explicit ArtifactUndoHistoryWidget(QWidget* parent = nullptr);
+ ~ArtifactUndoHistoryWidget() override;
 
-    void setLayer(Artifact::ArtifactAbstractLayerPtr layer);
-    void clear();
-    void setFilterText(const QString& text);
-    QString filterText() const;
+ void refreshHistory();
 
-    void updateProperties();
+private:
+ class Impl;
+ Impl* impl_;
 };
 
-} // namespace Artifact
+}
