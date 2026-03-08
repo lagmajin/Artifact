@@ -32,6 +32,7 @@ namespace Artifact
   TimelineScene* parent_ = nullptr;
   QGraphicsRectItem* highlightRect_ = nullptr;
   bool rippleEditEnabled_ = true;
+  TimelineScene::SnapStrength snapStrength_ = TimelineScene::SnapStrength::Medium;
 
   struct DragContext
   {
@@ -149,8 +150,22 @@ namespace Artifact
    const int targetTrack,
    const std::vector<ClipItem*>& movingClips) const
   {
-   constexpr double kGrid = 10.0;
-   constexpr double kTolerance = 6.0;
+   double kGrid = 10.0;
+   double kTolerance = 6.0;
+   switch (snapStrength_)
+   {
+   case TimelineScene::SnapStrength::Low:
+    kGrid = 20.0;
+    kTolerance = 3.0;
+    break;
+   case TimelineScene::SnapStrength::High:
+    kGrid = 5.0;
+    kTolerance = 10.0;
+    break;
+   case TimelineScene::SnapStrength::Medium:
+   default:
+    break;
+   }
 
    double best = std::max(0.0, x);
    double bestDistance = kTolerance + 1.0;
@@ -534,5 +549,15 @@ void TimelineScene::clearSelection()
  const std::vector<ClipItem*>& TimelineScene::getSelectedClips() const
  {
   return impl_->selectedClips_;
+ }
+
+ void TimelineScene::setSnapStrength(const SnapStrength strength)
+ {
+  impl_->snapStrength_ = strength;
+ }
+
+ TimelineScene::SnapStrength TimelineScene::snapStrength() const
+ {
+  return impl_->snapStrength_;
  }
 }

@@ -1,9 +1,9 @@
 module;
 
-#include <QtWidgets/QAction>
-#include <QtWidgets/QLabel>
-#include <QtWidgets/QMenu>
-#include <QtCore/QString>
+#include <QAction>
+#include <QLabel>
+#include <QMenu>
+#include <QString>
 
 module ArtifactStatusBar;
 

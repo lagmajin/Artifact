@@ -234,6 +234,8 @@ public:
     
     void draw(ArtifactIRenderer* renderer) override;
     bool hasVideo() const override;
+    std::vector<ArtifactCore::PropertyGroup> getLayerPropertyGroups() const override;
+    bool setLayerPropertyValue(const QString& propertyPath, const QVariant& value) override;
 
 private:
     /// Internal frame decoding

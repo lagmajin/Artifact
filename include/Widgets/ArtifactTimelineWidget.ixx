@@ -61,6 +61,13 @@ using namespace ArtifactCore;
   class Impl;
   Impl* impl_;
  public:
+  enum class SnapStrength
+  {
+   Low = 0,
+   Medium,
+   High
+  };
+
   explicit TimelineScene(QWidget* parent = nullptr);
   ~TimelineScene();
   
@@ -84,6 +91,10 @@ using namespace ArtifactCore;
   // Selection
   void clearSelection();
   const std::vector<ClipItem*>& getSelectedClips() const;
+
+  // Snap strength control
+  void setSnapStrength(SnapStrength strength);
+  [[nodiscard]] SnapStrength snapStrength() const;
   
   // Visual helpers
   void highlightTrack(int trackIndex);

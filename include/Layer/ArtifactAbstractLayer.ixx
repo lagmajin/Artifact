@@ -62,6 +62,7 @@ import Animation.Transform3D;
 import Artifact.Effect.Abstract;
 import Artifact.Mask.LayerMask;
 import Frame.Position;
+export import Property.Group;
 
 import Artifact.Render.IRenderer;
 
@@ -220,6 +221,11 @@ export namespace Artifact {
   std::shared_ptr<class ArtifactAbstractEffect> getEffect(const UniString& effectID) const;
   int effectCount() const;
    /*Effects*/
+
+   /*Generic Properties*/
+   virtual std::vector<ArtifactCore::PropertyGroup> getLayerPropertyGroups() const;
+   virtual bool setLayerPropertyValue(const QString& propertyPath, const QVariant& value);
+   /*Generic Properties*/
 
    /*Masks*/
    void addMask(const LayerMask& mask);

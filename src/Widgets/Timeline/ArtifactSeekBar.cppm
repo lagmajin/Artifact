@@ -5,6 +5,7 @@ module;
 #include <QPainter>
 #include <QMouseEvent>
 #include <QDebug>
+#include <QPaintEvent>
 #include <iostream>
 #include <vector>
 #include <string>
@@ -63,6 +64,7 @@ namespace Artifact
   int handleHeight_ = 20;       // nh
   bool seekLockDuringPlayback_ = true; // Đ̃V[NbN
   bool isPlaying_ = false;      // Đǂ
+  bool hover_ = false;
 
   // t[ʒuXWvZ
   int frameToX(int frame) const
@@ -168,11 +170,27 @@ namespace Artifact
     p.setRenderHint(QPainter::Antialiasing, true);
 
     impl_->widgetWidth_ = width();
-    p.fillRect(rect(), Qt::transparent);
+    p.fillRect(rect(), QColor(24, 24, 24));
 
     int currentX = impl_->frameToX(impl_->currentFrame_.framePosition());
 
     QColor playheadColor(86, 156, 214);
+    QColor railColor(62, 62, 62);
+
+    // Rail
+    p.setPen(QPen(railColor, 2));
+    p.drawLine(0, height() / 2, width(), height() / 2);
+
+    // Ticks
+    if (impl_->totalFrames_ > 1) {
+      const int majorTicks = 10;
+      p.setPen(QPen(QColor(90, 90, 90), 1));
+      for (int i = 0; i <= majorTicks; ++i) {
+        const int x = static_cast<int>((static_cast<double>(i) / majorTicks) * (width() - 1));
+        const int tickH = (i % 5 == 0) ? 8 : 5;
+        p.drawLine(x, height() / 2 - tickH, x, height() / 2 + tickH);
+      }
+    }
 
     p.setPen(QPen(playheadColor, 1));
     p.drawLine(currentX, 0, currentX, height());
@@ -194,12 +212,18 @@ namespace Artifact
     shadowPolygon.translate(1, 1);
     p.drawPolygon(shadowPolygon);
 
-    p.setBrush(playheadColor);
+    p.setBrush(impl_->hover_ || impl_->dragging_ ? playheadColor.lighter(120) : playheadColor);
     p.setPen(QPen(playheadColor.darker(120), 1));
     p.drawPolygon(handlePolygon);
     
     p.setPen(QPen(playheadColor.lighter(130), 1));
     p.drawLine(currentX - halfW + 1, 1, currentX + halfW - 1, 1);
+
+    // Current frame label
+    const QString label = QString("F%1").arg(impl_->currentFrame_.framePosition());
+    const QRect textRect(6, 2, 90, height() - 4);
+    p.setPen(QColor(210, 210, 210));
+    p.drawText(textRect, Qt::AlignLeft | Qt::AlignVCenter, label);
    }
 
    void ArtifactSeekBar::mousePressEvent(QMouseEvent* event)
@@ -211,16 +235,17 @@ namespace Artifact
     return;
    }
    
-   // nḧ܂͐ŃNbNꂽꍇ
-   int currentX = impl_->frameToX(impl_->currentFrame_.framePosition());
-   int handleHalfWidth = impl_->handleWidth_ / 2;
-
-   // NbNʒunh܂͐̋߂`FbN
-   if (qAbs(event->pos().x() - currentX) <= handleHalfWidth + 5) {
-    impl_->dragging_ = true;
-    Q_EMIT frameDragStarted();
-    event->accept();
+   // Click anywhere to seek, then start drag immediately.
+   int newFrame = impl_->xToFrame(event->pos().x());
+   newFrame = qBound(0, newFrame, impl_->totalFrames_ - 1);
+   if (impl_->currentFrame_.framePosition() != newFrame) {
+    impl_->currentFrame_ = FramePosition(newFrame);
+    update();
+    Q_EMIT frameChanged(impl_->currentFrame_);
    }
+   impl_->dragging_ = true;
+   Q_EMIT frameDragStarted();
+   event->accept();
   }
  }
 
@@ -238,15 +263,18 @@ namespace Artifact
    }
    event->accept();
   } else {
-   // zo[̃J[\ύX
+   // hover cursor state
    int currentX = impl_->frameToX(impl_->currentFrame_.framePosition());
    int handleHalfWidth = impl_->handleWidth_ / 2;
 
    if (qAbs(event->pos().x() - currentX) <= handleHalfWidth + 5) {
     setCursor(Qt::PointingHandCursor);
+    impl_->hover_ = true;
    } else {
-    setCursor(Qt::ArrowCursor);
+    setCursor(Qt::SizeHorCursor);
+    impl_->hover_ = false;
    }
+   update();
   }
  }
 
@@ -254,8 +282,10 @@ namespace Artifact
  {
   if (event->button() == Qt::LeftButton && impl_->dragging_) {
    impl_->dragging_ = false;
+   impl_->hover_ = false;
    Q_EMIT frameDragFinished();
    event->accept();
+   update();
   }
  }
 

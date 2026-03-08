@@ -1,4 +1,6 @@
-﻿module;
+module;
+
+#include <QVariant>
 
 #include <iostream>
 #include <vector>
@@ -35,32 +37,26 @@
 #include <random>
 module Artifact.Layer.Composition;
 
-
-
-
 import Artifact.Composition.Abstract;
-
+import Property.Abstract;
+import Property.Group;
 
 namespace Artifact {
 
  class ArtifactCompositionLayer::Impl
  {
- private:
-  
  public:
-  Impl();
-  ~Impl();
   CompositionID id_;
  };
 
  ArtifactCompositionLayer::ArtifactCompositionLayer()
+  : impl_(new Impl())
  {
-
  }
 
  ArtifactCompositionLayer::~ArtifactCompositionLayer()
  {
-
+  delete impl_;
  }
 
  CompositionID ArtifactCompositionLayer::sourceCompositionId() const
@@ -71,8 +67,32 @@ namespace Artifact {
  void ArtifactCompositionLayer::setCompositionId(const CompositionID& id)
  {
   impl_->id_ = id;
+  Q_EMIT changed();
  }
 
+ std::vector<ArtifactCore::PropertyGroup> ArtifactCompositionLayer::getLayerPropertyGroups() const
+ {
+  auto groups = ArtifactAbstractLayer::getLayerPropertyGroups();
+  ArtifactCore::PropertyGroup compGroup(QStringLiteral("Composition"));
 
+  auto idProp = std::make_shared<ArtifactCore::AbstractProperty>();
+  idProp->setName(QStringLiteral("composition.sourceId"));
+  idProp->setType(ArtifactCore::PropertyType::String);
+  idProp->setValue(sourceCompositionId().toString());
+  idProp->setDisplayPriority(-120);
+  compGroup.addProperty(idProp);
+
+  groups.push_back(compGroup);
+  return groups;
+ }
+
+ bool ArtifactCompositionLayer::setLayerPropertyValue(const QString& propertyPath, const QVariant& value)
+ {
+  if (propertyPath == QStringLiteral("composition.sourceId")) {
+   setCompositionId(CompositionID(value.toString()));
+   return true;
+  }
+  return ArtifactAbstractLayer::setLayerPropertyValue(propertyPath, value);
+ }
 
 };

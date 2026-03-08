@@ -6,6 +6,7 @@
 #include <QFile>
 #include <QDir>
 #include <QFileInfo>
+#include <QVariant>
 #include <opencv2/opencv.hpp>
 #include <opencv2/videoio.hpp>
 #include <mutex>
@@ -53,6 +54,8 @@ module Artifact.Layer.Video;
 import Artifact.Layer.Video;
 import Utils.String.UniString;
 import Utils.Id;
+import Property.Abstract;
+import Property.Group;
 
 namespace Artifact {
 
@@ -708,6 +711,81 @@ void ArtifactVideoLayer::draw(ArtifactIRenderer* renderer)
 bool ArtifactVideoLayer::hasVideo() const
 {
     return impl_->videoEnabled_ && impl_->isLoaded_;
+}
+
+std::vector<ArtifactCore::PropertyGroup> ArtifactVideoLayer::getLayerPropertyGroups() const
+{
+    auto groups = ArtifactAbstractLayer::getLayerPropertyGroups();
+    ArtifactCore::PropertyGroup videoGroup(QStringLiteral("Video"));
+
+    auto makeProp = [](const QString& name, ArtifactCore::PropertyType type, const QVariant& value, int priority = 0) {
+        auto p = std::make_shared<ArtifactCore::AbstractProperty>();
+        p->setName(name);
+        p->setType(type);
+        p->setValue(value);
+        p->setDisplayPriority(priority);
+        return p;
+    };
+
+    videoGroup.addProperty(makeProp(QStringLiteral("video.sourcePath"), ArtifactCore::PropertyType::String, sourcePath(), -120));
+    videoGroup.addProperty(makeProp(QStringLiteral("video.playbackSpeed"), ArtifactCore::PropertyType::Float, playbackSpeed(), -110));
+    videoGroup.addProperty(makeProp(QStringLiteral("video.loopEnabled"), ArtifactCore::PropertyType::Boolean, isLoopEnabled(), -100));
+    videoGroup.addProperty(makeProp(QStringLiteral("video.audioVolume"), ArtifactCore::PropertyType::Float, audioVolume(), -90));
+    videoGroup.addProperty(makeProp(QStringLiteral("video.audioMuted"), ArtifactCore::PropertyType::Boolean, isAudioMuted(), -80));
+    videoGroup.addProperty(makeProp(QStringLiteral("video.audioEnabled"), ArtifactCore::PropertyType::Boolean, hasAudio(), -70));
+    videoGroup.addProperty(makeProp(QStringLiteral("video.videoEnabled"), ArtifactCore::PropertyType::Boolean, hasVideo(), -60));
+    videoGroup.addProperty(makeProp(QStringLiteral("video.proxyQuality"), ArtifactCore::PropertyType::Integer, static_cast<int>(proxyQuality()), -50));
+
+    groups.push_back(videoGroup);
+    return groups;
+}
+
+bool ArtifactVideoLayer::setLayerPropertyValue(const QString& propertyPath, const QVariant& value)
+{
+    if (propertyPath == QStringLiteral("video.sourcePath")) {
+        const auto path = value.toString().trimmed();
+        if (!path.isEmpty()) {
+            setSourceFile(path);
+            Q_EMIT changed();
+        }
+        return true;
+    }
+    if (propertyPath == QStringLiteral("video.playbackSpeed")) {
+        setPlaybackSpeed(value.toDouble());
+        Q_EMIT changed();
+        return true;
+    }
+    if (propertyPath == QStringLiteral("video.loopEnabled")) {
+        setLoopEnabled(value.toBool());
+        Q_EMIT changed();
+        return true;
+    }
+    if (propertyPath == QStringLiteral("video.audioVolume")) {
+        setAudioVolume(value.toDouble());
+        Q_EMIT changed();
+        return true;
+    }
+    if (propertyPath == QStringLiteral("video.audioMuted")) {
+        setAudioMuted(value.toBool());
+        Q_EMIT changed();
+        return true;
+    }
+    if (propertyPath == QStringLiteral("video.audioEnabled")) {
+        setHasAudio(value.toBool());
+        Q_EMIT changed();
+        return true;
+    }
+    if (propertyPath == QStringLiteral("video.videoEnabled")) {
+        setHasVideo(value.toBool());
+        Q_EMIT changed();
+        return true;
+    }
+    if (propertyPath == QStringLiteral("video.proxyQuality")) {
+        setProxyQuality(static_cast<ProxyQuality>(value.toInt()));
+        Q_EMIT changed();
+        return true;
+    }
+    return ArtifactAbstractLayer::setLayerPropertyValue(propertyPath, value);
 }
 
 } // namespace Artifact

@@ -86,8 +86,8 @@ target_sources(Artifact
     PUBLIC FILE_SET CXX_MODULES FILES ${APP_MODULES}
 )
 
-# MSVC フラグ
-if(MSVC)
+# Strict MSVC-cl only flags
+if(ARTIFACT_COMPILER_MSVC_CL)
     target_compile_options(Artifact PRIVATE /Zf /Zc:__cplusplus /utf-8 /openmp)
     target_compile_definitions(Artifact PRIVATE 
         PLATFORM_WIN32
@@ -97,10 +97,20 @@ if(MSVC)
         _WIN32_WINNT=0x0A00
     )
     target_compile_options(Artifact PRIVATE /WX-)
+elseif(ARTIFACT_FRONTEND_MSVC)
+    # clang-cl / icx-cl (MSVC-like frontend)
+    target_compile_options(Artifact PRIVATE /Zc:__cplusplus /utf-8 /WX-)
+    target_compile_definitions(Artifact PRIVATE 
+        PLATFORM_WIN32
+        _GUARDOVERFLOW_CRT_ALLOCATORS=1
+        _SILENCE_CXX23_ALIGNED_STORAGE_DEPRECATION_WARNING
+        GLOG_USE_GLOG_EXPORT
+        _WIN32_WINNT=0x0A00
+    )
 endif()
 
-# MSVC のみ: 未解決シンボル/重複定義があってもリンク出力を強制
-target_link_options(Artifact PRIVATE "$<$<CXX_COMPILER_ID:MSVC>:/FORCE>")
+# MSVC-style linker only: force output even with unresolved/duplicate symbols
+target_link_options(Artifact PRIVATE "$<$<BOOL:${ARTIFACT_FRONTEND_MSVC}>:/FORCE>")
 
 target_include_directories(Artifact
     PRIVATE

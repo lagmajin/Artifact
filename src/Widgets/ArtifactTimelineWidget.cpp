@@ -13,6 +13,7 @@ module;
 #include <QGraphicsRectItem>
 #include <QBrush>
 #include <QResizeEvent>
+#include <QMenu>
 #include <cmath>
 #include <algorithm>
 #include <vector>
@@ -75,6 +76,7 @@ import Artifact.Widgets.Timeline.GlobalSwitches;
 import Artifact.Service.Project;
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
+import Frame.Position;
 
 
 
@@ -110,6 +112,7 @@ W_OBJECT_IMPL(ArtifactTimelineWidget)
     ArtifactTimelineBottomLabel* timelineLabel_ = nullptr;
     ArtifactLayerTimelinePanelWrapper* layerTimelinePanel_ = nullptr;
     TimelineTrackView* trackView_ = nullptr;  // Right-side timeline view
+    ArtifactSeekBar* seekBar_ = nullptr;
     WorkAreaControl* workArea_ = nullptr;
     ArtifactTimelineRulerWidget* ruler_ = nullptr;
     CompositionID compositionId_;
@@ -189,7 +192,11 @@ W_OBJECT_IMPL(ArtifactTimelineWidget)
     auto timeRulerWidget = impl_->ruler_ = new ArtifactTimelineRulerWidget();
     auto timeScaleWidget = new TimelineScaleWidget();
     auto workAreaWidget = impl_->workArea_ = new WorkAreaControl();
+    auto seekBar = impl_->seekBar_ = new ArtifactSeekBar();
     auto timelineTrackView = impl_->trackView_ = new TimelineTrackView();
+    seekBar->setFixedHeight(22);
+    seekBar->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    seekBar->setTotalFrames(static_cast<int>(timelineTrackView->duration()));
  
     // Sync Ruler and WorkArea
     // Sync disabled
@@ -218,6 +225,14 @@ W_OBJECT_IMPL(ArtifactTimelineWidget)
 
     QObject::connect(timeRulerWidget, &ArtifactTimelineRulerWidget::startChanged, this, updateZoom);
     QObject::connect(timeRulerWidget, &ArtifactTimelineRulerWidget::endChanged, this, updateZoom);
+    QObject::connect(seekBar, &ArtifactSeekBar::frameChanged, this, [timelineTrackView](const auto& frame) {
+      timelineTrackView->setPosition(static_cast<double>(frame.framePosition()));
+    });
+    QObject::connect(timelineTrackView, &TimelineTrackView::seekPositionChanged, this, [timelineTrackView, seekBar](double ratio) {
+      const double duration = timelineTrackView->duration();
+      const int frame = static_cast<int>(std::round(std::clamp(ratio, 0.0, 1.0) * duration));
+      seekBar->setCurrentFrame(FramePosition(frame));
+    });
 
     impl_->trackView_ = timelineTrackView;  // Store reference for layer creation
   //auto layerTimelinePanel = new ArtifactLayerTimelinePanelWrapper();
@@ -235,6 +250,7 @@ W_OBJECT_IMPL(ArtifactTimelineWidget)
   auto rightPanel = new QWidget();
 
   rightPanelLayout->addWidget(timeRulerWidget);
+  rightPanelLayout->addWidget(seekBar);
   rightPanelLayout->addWidget(timeScaleWidget);
   rightPanelLayout->addWidget(workAreaWidget);
   rightPanelLayout->addWidget(trackSplitter);
@@ -303,7 +319,12 @@ W_OBJECT_IMPL(ArtifactTimelineWidget)
      auto res = svc->findComposition(id);
      if (res.success && !res.ptr.expired()) {
       auto comp = res.ptr.lock();
-      impl_->trackView_->setDuration(static_cast<double>(comp->frameRange().duration()));
+      const int totalFrames = static_cast<int>(comp->frameRange().duration());
+      impl_->trackView_->setDuration(static_cast<double>(totalFrames));
+      if (impl_->seekBar_) {
+       impl_->seekBar_->setTotalFrames(std::max(1, totalFrames));
+       impl_->seekBar_->setCurrentFrame(FramePosition(0));
+      }
        
       auto layers = comp->allLayer();
       for (const auto& l : layers) {
@@ -691,7 +712,7 @@ TimelineTrackView::TimelineTrackView(QWidget* parent /*= nullptr*/) :QGraphicsVi
     return;
    }
 
-   if (event->button() == Qt::LeftButton) {
+  if (event->button() == Qt::LeftButton) {
     const QPointF scenePos = mapToScene(event->pos());
     
     // Check if clicking on a clip
@@ -727,8 +748,77 @@ TimelineTrackView::TimelineTrackView(QWidget* parent /*= nullptr*/) :QGraphicsVi
      if (!(event->modifiers() & Qt::ShiftModifier)) {
       clearSelection();
       }
+   }
+  }
+
+  if (event->button() == Qt::RightButton) {
+   const QPointF scenePos = mapToScene(event->pos());
+   auto items = scene()->items(scenePos, Qt::IntersectsItemShape);
+   ClipItem* clickedClip = nullptr;
+   for (auto* item : items) {
+    if (auto* clip = dynamic_cast<ClipItem*>(item)) {
+     clickedClip = clip;
+     break;
     }
    }
+
+   QMenu menu(this);
+   if (clickedClip && impl_->scene_) {
+    QAction* deleteClipAction = menu.addAction("Delete Clip");
+    QAction* duplicateClipAction = menu.addAction("Duplicate Clip");
+    QAction* splitClipAction = menu.addAction("Split At Playhead");
+
+    QObject::connect(deleteClipAction, &QAction::triggered, this, [this, clickedClip]() {
+     removeClip(clickedClip);
+    });
+    QObject::connect(duplicateClipAction, &QAction::triggered, this, [this, clickedClip]() {
+     if (!impl_->scene_) return;
+     const int trackIndex = impl_->scene_->getTrackAtPosition(clickedClip->pos().y() + 1.0);
+     if (trackIndex < 0) return;
+     const double start = clickedClip->pos().x();
+     const double duration = clickedClip->getDuration();
+     addClip(trackIndex, start + duration + 5.0, duration);
+    });
+    QObject::connect(splitClipAction, &QAction::triggered, this, [this, clickedClip]() {
+     if (!impl_->scene_) return;
+     const double playhead = impl_->position_;
+     const double start = clickedClip->pos().x();
+     const double end = start + clickedClip->getDuration();
+     if (playhead <= start + 1.0 || playhead >= end - 1.0) return;
+     const int trackIndex = impl_->scene_->getTrackAtPosition(clickedClip->pos().y() + 1.0);
+     if (trackIndex < 0) return;
+     const double leftDuration = playhead - start;
+     const double rightDuration = end - playhead;
+     clickedClip->setDuration(leftDuration);
+     addClip(trackIndex, playhead, rightDuration);
+    });
+
+    menu.addSeparator();
+   }
+
+   if (impl_->scene_) {
+    QMenu* snapMenu = menu.addMenu("Snap Strength");
+    QAction* low = snapMenu->addAction("Low");
+    QAction* medium = snapMenu->addAction("Medium");
+    QAction* high = snapMenu->addAction("High");
+    low->setCheckable(true);
+    medium->setCheckable(true);
+    high->setCheckable(true);
+
+    const auto strength = impl_->scene_->snapStrength();
+    low->setChecked(strength == TimelineScene::SnapStrength::Low);
+    medium->setChecked(strength == TimelineScene::SnapStrength::Medium);
+    high->setChecked(strength == TimelineScene::SnapStrength::High);
+
+    QObject::connect(low, &QAction::triggered, this, [this]() { if (impl_->scene_) impl_->scene_->setSnapStrength(TimelineScene::SnapStrength::Low); });
+    QObject::connect(medium, &QAction::triggered, this, [this]() { if (impl_->scene_) impl_->scene_->setSnapStrength(TimelineScene::SnapStrength::Medium); });
+    QObject::connect(high, &QAction::triggered, this, [this]() { if (impl_->scene_) impl_->scene_->setSnapStrength(TimelineScene::SnapStrength::High); });
+   }
+
+   menu.exec(event->globalPos());
+   event->accept();
+   return;
+  }
 
    QGraphicsView::mousePressEvent(event);
   }

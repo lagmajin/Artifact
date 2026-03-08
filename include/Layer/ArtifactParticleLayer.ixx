@@ -2,6 +2,7 @@ module;
 #include <QObject>
 #include <QImage>
 #include <QJsonObject>
+#include <QVariant>
 #include <memory>
 #include <wobjectdefs.h>
 
@@ -139,6 +140,8 @@ public:
     
     // Serialization
     void applyPropertiesFromJson(const QJsonObject& obj);
+    std::vector<ArtifactCore::PropertyGroup> getLayerPropertyGroups() const override;
+    bool setLayerPropertyValue(const QString& propertyPath, const QVariant& value) override;
     
 signals:
     void particleSystemChanged() W_SIGNAL(particleSystemChanged);

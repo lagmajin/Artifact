@@ -66,6 +66,8 @@ import Artifact.Effect.ImplBase;
 import Artifact.Mask.LayerMask;
 import Image.ImageF32x4_RGBA;
 import Image.ImageF32x4RGBAWithCache;
+import Property.Abstract;
+import Property.Group;
 
 
 namespace Artifact {
@@ -78,6 +80,7 @@ namespace Artifact {
   public:
 
     bool is3D_ = true;
+    bool isVisible_ = true;
     Id id;
     QString name_;
     ArtifactAbstractComposition* composition_ = nullptr;
@@ -176,17 +179,17 @@ namespace Artifact {
  
  void ArtifactAbstractLayer::setVisible(bool visible/*=true*/)
  {
-  //impl_->state_.setVisible(visible);
+  impl_->isVisible_ = visible;
  }
 
  void ArtifactAbstractLayer::Show()
  {
-
+  setVisible(true);
  }
 
  void ArtifactAbstractLayer::Hide()
  {
-
+  setVisible(false);
 
  }
 
@@ -377,7 +380,7 @@ namespace Artifact {
 
  bool ArtifactAbstractLayer::isVisible() const
  {
-  return false;
+  return impl_->isVisible_;
  }
 
  void ArtifactAbstractLayer::setParentById(const LayerID& id)
@@ -723,6 +726,100 @@ void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject& obj)
  int ArtifactAbstractLayer::effectCount() const
  {
   return impl_->effectCount();
+ }
+
+ std::vector<ArtifactCore::PropertyGroup> ArtifactAbstractLayer::getLayerPropertyGroups() const
+ {
+  using namespace ArtifactCore;
+  PropertyGroup layerGroup(QStringLiteral("Layer"));
+
+  auto makeProp = [](const QString& name, PropertyType type, const QVariant& value, int priority = 0) {
+   auto p = std::make_shared<AbstractProperty>();
+   p->setName(name);
+   p->setType(type);
+   p->setValue(value);
+   p->setDisplayPriority(priority);
+   return p;
+  };
+
+  layerGroup.addProperty(makeProp(QStringLiteral("layer.name"), PropertyType::String, layerName(), -200));
+  layerGroup.addProperty(makeProp(QStringLiteral("layer.visible"), PropertyType::Boolean, isVisible(), -190));
+  layerGroup.addProperty(makeProp(QStringLiteral("layer.locked"), PropertyType::Boolean, isLocked(), -180));
+  layerGroup.addProperty(makeProp(QStringLiteral("layer.guide"), PropertyType::Boolean, isGuide(), -170));
+  layerGroup.addProperty(makeProp(QStringLiteral("layer.solo"), PropertyType::Boolean, isSolo(), -160));
+  layerGroup.addProperty(makeProp(QStringLiteral("layer.shy"), PropertyType::Boolean, isShy(), -150));
+
+  layerGroup.addProperty(makeProp(QStringLiteral("time.inPoint"), PropertyType::Integer, static_cast<qint64>(inPoint().framePosition()), -90));
+  layerGroup.addProperty(makeProp(QStringLiteral("time.outPoint"), PropertyType::Integer, static_cast<qint64>(outPoint().framePosition()), -80));
+  layerGroup.addProperty(makeProp(QStringLiteral("time.startTime"), PropertyType::Integer, static_cast<qint64>(startTime().framePosition()), -70));
+
+  const auto sz = sourceSize();
+  layerGroup.addProperty(makeProp(QStringLiteral("source.width"), PropertyType::Integer, sz.width, -40));
+  layerGroup.addProperty(makeProp(QStringLiteral("source.height"), PropertyType::Integer, sz.height, -30));
+
+  return {layerGroup};
+ }
+
+ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString& propertyPath, const QVariant& value)
+ {
+  if (propertyPath == QStringLiteral("layer.name")) {
+   setLayerName(value.toString());
+   Q_EMIT changed();
+   return true;
+  }
+  if (propertyPath == QStringLiteral("layer.visible")) {
+   setVisible(value.toBool());
+   Q_EMIT changed();
+   return true;
+  }
+  if (propertyPath == QStringLiteral("layer.locked")) {
+   setLocked(value.toBool());
+   Q_EMIT changed();
+   return true;
+  }
+  if (propertyPath == QStringLiteral("layer.guide")) {
+   setGuide(value.toBool());
+   Q_EMIT changed();
+   return true;
+  }
+  if (propertyPath == QStringLiteral("layer.solo")) {
+   setSolo(value.toBool());
+   Q_EMIT changed();
+   return true;
+  }
+  if (propertyPath == QStringLiteral("layer.shy")) {
+   setShy(value.toBool());
+   Q_EMIT changed();
+   return true;
+  }
+  if (propertyPath == QStringLiteral("time.inPoint")) {
+   setInPoint(FramePosition(value.toLongLong()));
+   Q_EMIT changed();
+   return true;
+  }
+  if (propertyPath == QStringLiteral("time.outPoint")) {
+   setOutPoint(FramePosition(value.toLongLong()));
+   Q_EMIT changed();
+   return true;
+  }
+  if (propertyPath == QStringLiteral("time.startTime")) {
+   setStartTime(FramePosition(value.toLongLong()));
+   Q_EMIT changed();
+   return true;
+  }
+  if (propertyPath == QStringLiteral("source.width")) {
+   const auto cur = sourceSize();
+   setSourceSize(Size_2D(value.toInt(), cur.height));
+   Q_EMIT changed();
+   return true;
+  }
+  if (propertyPath == QStringLiteral("source.height")) {
+   const auto cur = sourceSize();
+   setSourceSize(Size_2D(cur.width, value.toInt()));
+   Q_EMIT changed();
+   return true;
+  }
+  return false;
  }
 
  QImage ArtifactAbstractLayer::getThumbnail(int width, int height) const
