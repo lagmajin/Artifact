@@ -9,6 +9,19 @@ module;
 #include <QtMath>
 #include <cmath>
 #include <algorithm>
+#include <map>
+#include <tuple>
+#ifdef emit
+#pragma push_macro("emit")
+#undef emit
+#define ARTIFACT_RESTORE_QT_EMIT_MACRO
+#endif
+#include <tbb/parallel_for.h>
+#include <tbb/blocked_range.h>
+#ifdef ARTIFACT_RESTORE_QT_EMIT_MACRO
+#pragma pop_macro("emit")
+#undef ARTIFACT_RESTORE_QT_EMIT_MACRO
+#endif
 #include <wobjectimpl.h>
 
 #include <iostream>
@@ -203,7 +216,10 @@ void KillZoneEffector::apply(Particle& particle, float deltaTime)
 
 class ParticleEmitter::Impl {
 public:
-    QRandomGenerator rng;
+    mutable QRandomGenerator rng;
+    float fixedStepAccumulator = 0.0f;
+    bool seeded = false;
+    std::uint32_t currentSeed = 0;
 };
 
 // ==================== ParticleEmitter ====================
@@ -212,6 +228,9 @@ ParticleEmitter::ParticleEmitter(QObject* parent)
     : QObject(parent)
     , impl_(std::make_unique<Impl>())
 {
+    impl_->rng.seed(params_.randomSeed);
+    impl_->seeded = true;
+    impl_->currentSeed = params_.randomSeed;
 }
 
 ParticleEmitter::~ParticleEmitter()
@@ -334,6 +353,12 @@ QVector3D ParticleEmitter::getEmissionDirection() const
 
 void ParticleEmitter::initializeParticle(Particle& p)
 {
+    if (!impl_->seeded || impl_->currentSeed != params_.randomSeed) {
+        impl_->rng.seed(params_.randomSeed);
+        impl_->seeded = true;
+        impl_->currentSeed = params_.randomSeed;
+    }
+
     // Position
     p.position = getEmissionPosition();
     p.prevPosition = p.position;
@@ -400,7 +425,7 @@ void ParticleEmitter::emitParticles(int count)
     }
     
     if (toEmit > 0) {
-        emit particleEmitted(toEmit);
+        Q_EMIT particleEmitted(toEmit);
     }
 }
 
@@ -473,12 +498,98 @@ void ParticleEmitter::removeDeadParticles()
     );
 }
 
-void ParticleEmitter::update(float deltaTime)
+void ParticleEmitter::applySelfCollisionBroadPhase(float deltaTime)
 {
-    if (!active_) return;
-    
-    time_ += deltaTime;
-    
+    if (!params_.enableSelfCollision || particles_.size() < 2) {
+        return;
+    }
+
+    const float radius = std::max(0.001f, params_.selfCollisionRadius);
+    const float radius2 = radius * radius;
+    const float cellSize = radius * 2.0f;
+    const float response = std::clamp(params_.selfCollisionResponse, 0.0f, 1.0f);
+
+    struct CellKey {
+        int x = 0;
+        int y = 0;
+        int z = 0;
+        bool operator<(const CellKey& rhs) const {
+            if (x != rhs.x) return x < rhs.x;
+            if (y != rhs.y) return y < rhs.y;
+            return z < rhs.z;
+        }
+    };
+
+    std::map<CellKey, std::vector<int>> grid;
+    for (int i = 0; i < static_cast<int>(particles_.size()); ++i) {
+        if (!particles_[i].alive) continue;
+        const QVector3D& pos = particles_[i].position;
+        CellKey key{
+            static_cast<int>(std::floor(pos.x() / cellSize)),
+            static_cast<int>(std::floor(pos.y() / cellSize)),
+            static_cast<int>(std::floor(pos.z() / cellSize))
+        };
+        grid[key].push_back(i);
+    }
+
+    for (auto& [cell, indices] : grid) {
+        for (int dz = -1; dz <= 1; ++dz) {
+            for (int dy = -1; dy <= 1; ++dy) {
+                for (int dx = -1; dx <= 1; ++dx) {
+                    CellKey nearCell{cell.x + dx, cell.y + dy, cell.z + dz};
+                    auto found = grid.find(nearCell);
+                    if (found == grid.end()) {
+                        continue;
+                    }
+
+                    const bool sameCell = (dx == 0 && dy == 0 && dz == 0);
+                    auto& nearIndices = found->second;
+
+                    for (int iIdx = 0; iIdx < static_cast<int>(indices.size()); ++iIdx) {
+                        int i = indices[iIdx];
+                        int jStart = 0;
+                        if (sameCell) {
+                            jStart = iIdx + 1;
+                        }
+                        for (int jIdx = jStart; jIdx < static_cast<int>(nearIndices.size()); ++jIdx) {
+                            int j = nearIndices[jIdx];
+                            if (i >= j && !sameCell) {
+                                continue;
+                            }
+                            if (!particles_[i].alive || !particles_[j].alive) {
+                                continue;
+                            }
+
+                            QVector3D delta = particles_[i].position - particles_[j].position;
+                            float dist2 = delta.lengthSquared();
+                            if (dist2 <= 0.0f || dist2 >= radius2) {
+                                continue;
+                            }
+
+                            float dist = std::sqrt(dist2);
+                            float penetration = radius - dist;
+                            if (penetration <= 0.0f) {
+                                continue;
+                            }
+
+                            QVector3D normal = delta / dist;
+                            QVector3D correction = normal * (penetration * 0.5f);
+                            particles_[i].position += correction;
+                            particles_[j].position -= correction;
+
+                            QVector3D impulse = normal * (penetration * response / std::max(deltaTime, 1e-6f));
+                            particles_[i].velocity += impulse;
+                            particles_[j].velocity -= impulse;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+void ParticleEmitter::simulateStep(float deltaTime)
+{
     // Emit new particles
     switch (params_.mode) {
         case EmissionMode::Continuous: {
@@ -502,17 +613,67 @@ void ParticleEmitter::update(float deltaTime)
             // Manual emission only
             break;
     }
-    
-    // Update existing particles
-    for (auto& p : particles_) {
-        if (p.alive) {
+
+    // Phase 1: effectors + integration (particle-local)
+    const int aliveCount = static_cast<int>(
+        std::count_if(particles_.begin(), particles_.end(), [](const Particle& p) { return p.alive; })
+    );
+
+    constexpr int kParallelThreshold = 2048;
+    if (aliveCount >= kParallelThreshold) {
+        const std::size_t size = particles_.size();
+        tbb::parallel_for(tbb::blocked_range<std::size_t>(0, size),
+            [this, deltaTime](const tbb::blocked_range<std::size_t>& range) {
+                for (std::size_t i = range.begin(); i < range.end(); ++i) {
+                    Particle& p = particles_[i];
+                    if (!p.alive) continue;
+                    applyEffectors(p, deltaTime);
+                    updateParticle(p, deltaTime);
+                }
+            });
+    } else {
+        for (auto& p : particles_) {
+            if (!p.alive) continue;
             applyEffectors(p, deltaTime);
             updateParticle(p, deltaTime);
         }
     }
-    
-    // Remove dead particles
+
+    // Phase 2: broad-phase collision (deterministic ordered grid)
+    applySelfCollisionBroadPhase(deltaTime);
+
+    // Phase 3: compact dead particles
     removeDeadParticles();
+}
+
+void ParticleEmitter::update(float deltaTime)
+{
+    if (!active_) return;
+
+    time_ += deltaTime;
+
+    if (params_.deterministic && params_.fixedTimeStep > 0.0f) {
+        const float fixedDt = params_.fixedTimeStep;
+        impl_->fixedStepAccumulator += deltaTime;
+
+        int steps = std::min(
+            static_cast<int>(impl_->fixedStepAccumulator / fixedDt),
+            std::max(1, params_.maxSubSteps)
+        );
+
+        for (int i = 0; i < steps; ++i) {
+            simulateStep(fixedDt);
+        }
+
+        impl_->fixedStepAccumulator -= steps * fixedDt;
+        const float maxCarry = fixedDt * std::max(1, params_.maxSubSteps);
+        if (impl_->fixedStepAccumulator > maxCarry) {
+            impl_->fixedStepAccumulator = maxCarry;
+        }
+        return;
+    }
+
+    simulateStep(deltaTime);
 }
 
 void ParticleEmitter::clear()
@@ -521,6 +682,10 @@ void ParticleEmitter::clear()
     time_ = 0.0f;
     emitAccumulator_ = 0.0f;
     burstTimer_ = 0.0f;
+    impl_->fixedStepAccumulator = 0.0f;
+    impl_->rng.seed(params_.randomSeed);
+    impl_->seeded = true;
+    impl_->currentSeed = params_.randomSeed;
 }
 
 void ParticleEmitter::preWarm(float duration, float stepSize)
@@ -558,7 +723,7 @@ ParticleEmitter* ParticleSystem::createEmitter()
     auto emitter = std::make_unique<ParticleEmitter>(this);
     ParticleEmitter* ptr = emitter.get();
     emitters_.push_back(std::move(emitter));
-    emit emitterAdded(ptr);
+    Q_EMIT emitterAdded(ptr);
     return ptr;
 }
 
@@ -569,7 +734,7 @@ void ParticleSystem::removeEmitter(ParticleEmitter* emitter)
             [emitter](const std::unique_ptr<ParticleEmitter>& e) { return e.get() == emitter; }),
         emitters_.end()
     );
-    emit emitterRemoved(emitter);
+    Q_EMIT emitterRemoved(emitter);
 }
 
 void ParticleSystem::removeEmitter(int index)
@@ -577,7 +742,7 @@ void ParticleSystem::removeEmitter(int index)
     if (index >= 0 && index < static_cast<int>(emitters_.size())) {
         ParticleEmitter* ptr = emitters_[index].get();
         emitters_.erase(emitters_.begin() + index);
-        emit emitterRemoved(ptr);
+        Q_EMIT emitterRemoved(ptr);
     }
 }
 
@@ -606,7 +771,145 @@ void ParticleSystem::update(float deltaTime)
         emitter->update(scaledDelta);
     }
     
-    emit updated(deltaTime);
+    Q_EMIT updated(deltaTime);
+}
+
+QImage ParticleSystem::updateAndRenderSoftwareFrame(float deltaTime, int width, int height, const QColor& clearColor)
+{
+    if (width <= 0 || height <= 0) {
+        return QImage();
+    }
+
+    update(deltaTime);
+
+    QImage target(width, height, QImage::Format_ARGB32_Premultiplied);
+    target.fill(qPremultiply(clearColor.rgba()));
+
+    std::vector<const Particle*> allParticles;
+    for (const auto& emitter : emitters_) {
+        for (const auto& p : emitter->particles()) {
+            if (p.alive) {
+                allParticles.push_back(&p);
+            }
+        }
+    }
+
+    std::sort(allParticles.begin(), allParticles.end(),
+        [this](const Particle* a, const Particle* b) {
+            const float distA = (a->position - impl_->cameraPosition).lengthSquared();
+            const float distB = (b->position - impl_->cameraPosition).lengthSquared();
+            return distA > distB; // far to near
+        });
+
+    const float fovDeg = 60.0f;
+    const float nearPlane = 1.0f;
+    const float halfH = static_cast<float>(height) * 0.5f;
+    const float halfW = static_cast<float>(width) * 0.5f;
+    const float focal = halfH / std::tan(qDegreesToRadians(fovDeg * 0.5f));
+
+    const auto blendPixel = [this](QRgb& dst, int srcR, int srcG, int srcB, int srcA) {
+        if (srcA <= 0) return;
+
+        int dA = qAlpha(dst);
+        int dR = qRed(dst);
+        int dG = qGreen(dst);
+        int dB = qBlue(dst);
+
+        switch (renderSettings_.blendMode) {
+            case ParticleBlendMode::Additive:
+            case ParticleBlendMode::Screen: {
+                dR = std::min(255, dR + srcR);
+                dG = std::min(255, dG + srcG);
+                dB = std::min(255, dB + srcB);
+                dA = std::min(255, dA + srcA);
+                dst = qRgba(dR, dG, dB, dA);
+                break;
+            }
+            case ParticleBlendMode::Normal:
+            case ParticleBlendMode::Multiply:
+            case ParticleBlendMode::Subtractive:
+            default: {
+                const int invA = 255 - srcA;
+                const int outA = srcA + (dA * invA + 127) / 255;
+                const int outR = srcR + (dR * invA + 127) / 255;
+                const int outG = srcG + (dG * invA + 127) / 255;
+                const int outB = srcB + (dB * invA + 127) / 255;
+                dst = qRgba(outR, outG, outB, outA);
+                break;
+            }
+        }
+    };
+
+    auto* scan = reinterpret_cast<QRgb*>(target.bits());
+    const int stride = target.bytesPerLine() / static_cast<int>(sizeof(QRgb));
+
+    for (const Particle* p : allParticles) {
+        const QVector3D view = p->position - impl_->cameraPosition;
+        const float depth = view.z();
+        if (depth <= nearPlane) {
+            continue;
+        }
+
+        const float invDepth = 1.0f / depth;
+        const float sx = halfW + view.x() * focal * invDepth;
+        const float sy = halfH - view.y() * focal * invDepth;
+        const int px = static_cast<int>(std::round(sx));
+        const int py = static_cast<int>(std::round(sy));
+
+        const float projectedRadius = std::max(1.0f, p->scale * 12.0f * focal * invDepth);
+        const int radius = static_cast<int>(projectedRadius);
+        if (radius <= 0) continue;
+
+        const int minX = std::max(0, px - radius);
+        const int maxX = std::min(width - 1, px + radius);
+        const int minY = std::max(0, py - radius);
+        const int maxY = std::min(height - 1, py + radius);
+        if (minX > maxX || minY > maxY) {
+            continue;
+        }
+
+        const float alpha = std::clamp(p->color.alphaF() * p->opacity, 0.0f, 1.0f);
+        const int baseA = static_cast<int>(alpha * 255.0f);
+        if (baseA <= 0) continue;
+
+        const int baseR = p->color.red();
+        const int baseG = p->color.green();
+        const int baseB = p->color.blue();
+        const float radius2 = static_cast<float>(radius * radius);
+
+        for (int y = minY; y <= maxY; ++y) {
+            const int dy = y - py;
+            auto* row = scan + y * stride;
+            for (int x = minX; x <= maxX; ++x) {
+                const int dx = x - px;
+                const float dist2 = static_cast<float>(dx * dx + dy * dy);
+                if (dist2 > radius2) {
+                    continue;
+                }
+
+                const float falloff = 1.0f - (dist2 / radius2);
+                const int a = static_cast<int>(baseA * falloff);
+                if (a <= 0) continue;
+
+                const int srcR = (baseR * a + 127) / 255;
+                const int srcG = (baseG * a + 127) / 255;
+                const int srcB = (baseB * a + 127) / 255;
+                blendPixel(row[x], srcR, srcG, srcB, a);
+            }
+        }
+    }
+
+    return target;
+}
+
+void ParticleSystem::setCameraPosition(const QVector3D& position)
+{
+    impl_->cameraPosition = position;
+}
+
+QVector3D ParticleSystem::cameraPosition() const
+{
+    return impl_->cameraPosition;
 }
 
 void ParticleSystem::clear()
@@ -1177,7 +1480,7 @@ ParticleSystem* ParticleManager::createSystem(const QString& name)
     auto system = std::make_unique<ParticleSystem>(this);
     ParticleSystem* ptr = system.get();
     impl_->systems.emplace(name, std::move(system));
-    emit systemCreated(name);
+    Q_EMIT systemCreated(name);
     return ptr;
 }
 
@@ -1193,7 +1496,7 @@ ParticleSystem* ParticleManager::system(const QString& name) const
 void ParticleManager::removeSystem(const QString& name)
 {
     impl_->systems.erase(name);
-    emit systemRemoved(name);
+    Q_EMIT systemRemoved(name);
 }
 
 void ParticleManager::clearSystems()

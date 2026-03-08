@@ -22,9 +22,17 @@ namespace Artifact
  using namespace Diligent;
 
 
- class ArtifactDiligentEngineRenderWindow : public QWindow
+ export class ArtifactDiligentEngineRenderWindow : public QWindow
  {
   W_OBJECT(ArtifactDiligentEngineRenderWindow)
+ public:
+  enum class ShadingMode
+  {
+   Solid,
+   Wireframe,
+   SolidWithWire
+  };
+
  private:
   class Impl;
   Impl* impl_;
@@ -32,6 +40,8 @@ namespace Artifact
   RefCntAutoPtr<IRenderDevice> pDevice;
   RefCntAutoPtr<IDeviceContext> pImmediateContext;
   RefCntAutoPtr<ISwapChain> pSwapChain;
+  ShadingMode shadingMode_ = ShadingMode::Solid;
+  QColor clearColor_{ 38, 38, 44 };
   void render();
   void present();
  protected:
@@ -50,12 +60,17 @@ namespace Artifact
   void renderWireframeObject();
   void renderQuadWithTexture();
   bool initialize();
+  void setShadingMode(ShadingMode mode);
+  ShadingMode shadingMode() const;
+  void setClearColor(const QColor& color);
+  QColor clearColor() const;
+  void requestRender();
   bool m_initialized = false;
   void pickingRay(int posx,int posy);
 
  };
 
- class DiligentViewportWidget :public QWidget {
+ export class DiligentViewportWidget :public QWidget {
  private:
   class Impl;
   Impl* impl_;
