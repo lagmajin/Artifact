@@ -1,9 +1,6 @@
 module;
 #include <QWidget>
 #include <QVector3D>
-#include <QMouseEvent>
-#include <QWheelEvent>
-#include <QPaintEvent>
 #include <wobjectdefs.h>
 
 export module Artifact.Widgets.ModelViewer;
@@ -18,6 +15,12 @@ export namespace Artifact {
  */
 class Artifact3DModelViewer : public QWidget {
     W_OBJECT(Artifact3DModelViewer)
+public:
+    enum class DisplayMode {
+        Solid,
+        Wireframe,
+        SolidWithWire
+    };
 private:
     class Impl;
     Impl* impl_;
@@ -34,14 +37,10 @@ public:
     void setZoom(float factor);
     void setCameraRotation(float yaw, float pitch);
     void setCameraPosition(const QVector3D& position);
+    void setDisplayMode(DisplayMode mode);
+    DisplayMode displayMode() const;
 
     void requestUpdate();
-
-protected:
-    void mousePressEvent(QMouseEvent* event) override;
-    void mouseMoveEvent(QMouseEvent* event) override;
-    void wheelEvent(QWheelEvent* event) override;
-    void paintEvent(QPaintEvent* event) override;
 };
 
 }

@@ -203,3 +203,43 @@ endif()
 if(WIN32)
     target_link_libraries(Artifact PRIVATE dwmapi shell32 user32 ole32 advapi32)
 endif()
+
+# ---------------------------------------------------------------------------
+# Qt runtime deployment (Windows)
+# ---------------------------------------------------------------------------
+if(WIN32)
+    find_program(WINDEPLOYQT_EXECUTABLE windeployqt)
+    if(WINDEPLOYQT_EXECUTABLE)
+        set(_ARTIFACT_DEPLOY_QT_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/cmake/RunWindeployqt.cmake")
+        add_custom_command(TARGET Artifact POST_BUILD
+            COMMAND "${CMAKE_COMMAND}"
+                "-DWINDEPLOYQT_EXECUTABLE=${WINDEPLOYQT_EXECUTABLE}"
+                "-DTARGET_FILE=$<TARGET_FILE:Artifact>"
+                "-DVCPKG_INSTALLED=${VCPKG_INSTALLED}"
+                "-DCONFIG=$<CONFIG>"
+                -P "${_ARTIFACT_DEPLOY_QT_SCRIPT}"
+            COMMENT "Deploying Qt runtime for Artifact with windeployqt"
+            VERBATIM
+        )
+    else()
+        message(WARNING "windeployqt not found. Qt plugins and runtime DLLs will not be auto-deployed.")
+    endif()
+endif()
+
+# ---------------------------------------------------------------------------
+# Optional deploy copy (no hard-coded path)
+# ---------------------------------------------------------------------------
+if(ARTIFACT_DEPLOY_DIR)
+    add_custom_command(TARGET Artifact POST_BUILD
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${ARTIFACT_DEPLOY_DIR}/$<CONFIG>"
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+            "$<TARGET_FILE:Artifact>"
+            "${ARTIFACT_DEPLOY_DIR}/$<CONFIG>/"
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+            $<TARGET_RUNTIME_DLLS:Artifact>
+            "${ARTIFACT_DEPLOY_DIR}/$<CONFIG>/"
+        COMMENT "Copying Artifact executable and runtime DLLs to ARTIFACT_DEPLOY_DIR"
+        COMMAND_EXPAND_LISTS
+        VERBATIM
+    )
+endif()

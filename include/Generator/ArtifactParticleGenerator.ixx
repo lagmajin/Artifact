@@ -7,6 +7,7 @@ module;
 #include <QRandomGenerator>
 #include <memory>
 #include <vector>
+#include <cstdint>
 #include <wobjectdefs.h>
 
 #include <iostream>
@@ -199,6 +200,17 @@ public:
     bool worldSpace = true;
     bool preWarm = false;
     int maxParticles = 1000;
+
+    // Simulation quality / determinism
+    bool deterministic = true;
+    std::uint32_t randomSeed = 1337u;
+    float fixedTimeStep = 1.0f / 120.0f;
+    int maxSubSteps = 8;
+
+    // Optional particle-particle collision (CPU broad-phase grid)
+    bool enableSelfCollision = false;
+    float selfCollisionRadius = 4.0f;
+    float selfCollisionResponse = 0.35f;
     
     // Texture
     QString texturePath;
@@ -367,7 +379,7 @@ public:
     // Parameters
     EmitterParams& params() { return params_; }
     const EmitterParams& params() const { return params_; }
-    void setParams(const EmitterParams& p) { params_ = p; emit changed(); }
+    void setParams(const EmitterParams& p) { params_ = p; Q_EMIT changed(); }
     
     // Active state
     bool active() const { return active_; }
@@ -406,6 +418,8 @@ private:
     QVector3D getEmissionDirection() const;
     void updateParticle(Particle& p, float deltaTime);
     void applyEffectors(Particle& p, float deltaTime);
+    void simulateStep(float deltaTime);
+    void applySelfCollisionBroadPhase(float deltaTime);
     void removeDeadParticles();
 };
 
@@ -491,6 +505,8 @@ public:
     
     // Simulation
     void update(float deltaTime);
+    QImage updateAndRenderSoftwareFrame(float deltaTime, int width, int height,
+                                       const QColor& clearColor = QColor(0, 0, 0, 0));
     void setPaused(bool paused) { paused_ = paused; }
     bool isPaused() const { return paused_; }
     
@@ -508,6 +524,8 @@ public:
     // Rendering
     void render(QPainter& painter, const QTransform& transform = QTransform());
     void render(QImage& target, const QTransform& transform = QTransform());
+    void setCameraPosition(const QVector3D& position);
+    QVector3D cameraPosition() const;
     
     // GPU rendering (for shader-based)
     void renderGPU(float* vertexBuffer, int maxVertices, int& vertexCount);

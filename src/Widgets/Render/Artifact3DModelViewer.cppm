@@ -1,14 +1,12 @@
 module;
 #include <QWidget>
 #include <QVBoxLayout>
+#include <QHBoxLayout>
+#include <QLabel>
+#include <QComboBox>
+#include <QWindow>
 #include <QTimer>
-#include <QVector3D>
-#include <QVector2D>
-#include <QMatrix4x4>
-#include <QMouseEvent>
-#include <QWheelEvent>
-#include <QPaintEvent>
-#include <QPainter>
+#include <QDebug>
 #include <wobjectimpl.h>
 
 #include <iostream>
@@ -46,216 +44,229 @@ module;
 #include <random>
 module Artifact.Widgets.ModelViewer;
 
-
-
-
 import Utils.String.UniString;
 import Color.Float;
-import Image.ImageF32x4RGBAWithCache;
 import MeshImporter;
 import Mesh;
+import ArtifactDiligentEngineRenderWindow;
 
 namespace Artifact {
 
- using namespace ArtifactCore;
+using namespace ArtifactCore;
 
- W_OBJECT_IMPL(Artifact3DModelViewer)
+W_OBJECT_IMPL(Artifact3DModelViewer)
 
-  /**
-   * @brief 3D Model Viewer Impl
-   */
-  class Artifact3DModelViewer::Impl {
- public:
-  ArtifactCore::UniString currentModelPath;
-  ArtifactCore::FloatColor backgroundColor{ 0.1f, 0.1f, 0.1f, 1.0f };
-  float zoomFactor = 1.0f;
-  float cameraYaw = 0.0f;
-  float cameraPitch = 0.0f;
-  QVector3D cameraPosition{0.0f, 0.0f, 5.0f};
+class Artifact3DModelViewer::Impl {
+public:
+    Artifact3DModelViewer* owner = nullptr;
 
-  // GPU
-  ImageF32x4RGBAWithCache* renderTarget = nullptr;
+    ArtifactCore::UniString currentModelPath;
+    ArtifactCore::FloatColor backgroundColor{0.1f, 0.1f, 0.1f, 1.0f};
+    float zoomFactor = 1.0f;
+    float cameraYaw = 0.0f;
+    float cameraPitch = 0.0f;
+    QVector3D cameraPosition{0.0f, 0.0f, 5.0f};
 
-  // Assimp Mesh Data
-  std::shared_ptr<ArtifactCore::Mesh> currentMesh = nullptr;
+    std::shared_ptr<ArtifactCore::Mesh> currentMesh = nullptr;
+    bool modelLoaded = false;
+    DisplayMode mode = DisplayMode::Solid;
 
-  bool modelLoaded = false;
-  bool needsRedraw = true;
-  QPoint lastMousePos;
+    ArtifactDiligentEngineRenderWindow* renderWindow = nullptr;
+    QWidget* renderContainer = nullptr;
+    QComboBox* modeCombo = nullptr;
+    QLabel* statusLabel = nullptr;
 
-  Impl() {
-    renderTarget = new ImageF32x4RGBAWithCache();
-  }
-  ~Impl() {
-    delete renderTarget;
-  }
-
-  void loadModelAsync(const ArtifactCore::UniString& path) {
-    currentModelPath = path;
-    
-    // Load model using Assimp-based MeshImporter
-    ArtifactCore::MeshImporter importer;
-    currentMesh = importer.importMeshFromFile(path);
-    
-    if (currentMesh && currentMesh->isValid()) {
-        modelLoaded = true;
-        qDebug() << "Model loaded successfully. Vertices:" << currentMesh->vertexCount();
-    } else {
-        modelLoaded = false;
-        qDebug() << "Failed to load model:" << path.toQString();
+    explicit Impl(Artifact3DModelViewer* widget)
+        : owner(widget)
+    {
     }
-    
-    needsRedraw = true;
-  }
 
-  void updateCamera() {
-    QMatrix4x4 viewMatrix;
-    viewMatrix.translate(cameraPosition);
-    viewMatrix.rotate(cameraYaw, QVector3D(0, 1, 0));
-    viewMatrix.rotate(cameraPitch, QVector3D(1, 0, 0));
-  }
+    static ArtifactDiligentEngineRenderWindow::ShadingMode toShadingMode(DisplayMode mode)
+    {
+        switch (mode) {
+            case DisplayMode::Wireframe:
+                return ArtifactDiligentEngineRenderWindow::ShadingMode::Wireframe;
+            case DisplayMode::SolidWithWire:
+                return ArtifactDiligentEngineRenderWindow::ShadingMode::SolidWithWire;
+            case DisplayMode::Solid:
+            default:
+                return ArtifactDiligentEngineRenderWindow::ShadingMode::Solid;
+        }
+    }
 
-  void render() {
-    if (!needsRedraw) return;
+    void updateStatus()
+    {
+        if (!statusLabel) {
+            return;
+        }
 
-    // TODO: 3D Render
-    // - Clear Background
-    // - Draw Mesh
-    // - Update GPU Texture
+        if (modelLoaded && currentMesh) {
+            statusLabel->setText(
+                QString("Model: %1 | Vertices: %2 | Polygons: %3")
+                    .arg(currentModelPath.toQString())
+                    .arg(currentMesh->vertexCount())
+                    .arg(currentMesh->polygonCount()));
+        } else {
+            statusLabel->setText("3D Model Viewer: no model loaded");
+        }
+    }
+};
 
-    renderTarget->UpdateGpuTextureFromCpuData();
-    needsRedraw = false;
-  }
- };
+Artifact3DModelViewer::Artifact3DModelViewer(QWidget* parent)
+    : QWidget(parent)
+    , impl_(new Impl(this))
+{
+    auto* rootLayout = new QVBoxLayout(this);
+    rootLayout->setContentsMargins(0, 0, 0, 0);
+    rootLayout->setSpacing(4);
 
- Artifact3DModelViewer::Artifact3DModelViewer(QWidget* parent)
-  : QWidget(parent), impl_(new Impl())
- {
-  auto* layout = new QVBoxLayout(this);
-  layout->setContentsMargins(0, 0, 0, 0);
+    auto* toolbar = new QWidget(this);
+    auto* toolbarLayout = new QHBoxLayout(toolbar);
+    toolbarLayout->setContentsMargins(8, 6, 8, 0);
+    toolbarLayout->setSpacing(8);
 
-  setAttribute(Qt::WA_OpaquePaintEvent);
-  setAttribute(Qt::WA_NoSystemBackground);
-  setMinimumSize(400, 300);
+    auto* modeLabel = new QLabel("Viewport", toolbar);
+    impl_->modeCombo = new QComboBox(toolbar);
+    impl_->modeCombo->addItem("Solid");
+    impl_->modeCombo->addItem("Wireframe");
+    impl_->modeCombo->addItem("Solid + Wire");
 
-  auto* renderTimer = new QTimer(this);
-  connect(renderTimer, &QTimer::timeout, this, &Artifact3DModelViewer::requestUpdate);
-  renderTimer->start(16); // ~60fps
- }
+    toolbarLayout->addWidget(modeLabel);
+    toolbarLayout->addWidget(impl_->modeCombo, 0);
+    toolbarLayout->addStretch(1);
+    rootLayout->addWidget(toolbar);
 
- Artifact3DModelViewer::~Artifact3DModelViewer()
- {
-  delete impl_;
- }
+    impl_->renderWindow = new ArtifactDiligentEngineRenderWindow();
+    impl_->renderContainer = QWidget::createWindowContainer(impl_->renderWindow, this);
+    impl_->renderContainer->setMinimumSize(400, 280);
+    impl_->renderContainer->setFocusPolicy(Qt::StrongFocus);
+    rootLayout->addWidget(impl_->renderContainer, 1);
 
- void Artifact3DModelViewer::loadModel(const ArtifactCore::UniString& filePath)
- {
-  impl_->loadModelAsync(filePath);
-  requestUpdate();
- }
+    impl_->statusLabel = new QLabel(this);
+    impl_->statusLabel->setObjectName("Artifact3DViewerStatus");
+    rootLayout->addWidget(impl_->statusLabel);
 
- void Artifact3DModelViewer::clearModel()
- {
-  impl_->currentModelPath = ArtifactCore::UniString();
-  impl_->modelLoaded = false;
-  impl_->currentMesh = nullptr;
-  impl_->needsRedraw = true;
-  requestUpdate();
- }
+    connect(impl_->modeCombo, &QComboBox::currentIndexChanged, this, [this](int index) {
+        switch (index) {
+            case 1:
+                setDisplayMode(DisplayMode::Wireframe);
+                break;
+            case 2:
+                setDisplayMode(DisplayMode::SolidWithWire);
+                break;
+            case 0:
+            default:
+                setDisplayMode(DisplayMode::Solid);
+                break;
+        }
+    });
 
- void Artifact3DModelViewer::resetView()
- {
-  impl_->zoomFactor = 1.0f;
-  impl_->cameraYaw = 0.0f;
-  impl_->cameraPitch = 0.0f;
-  impl_->cameraPosition = QVector3D(0.0f, 0.0f, 5.0f);
-  impl_->updateCamera();
-  impl_->needsRedraw = true;
-  requestUpdate();
- }
+    setDisplayMode(DisplayMode::Solid);
+    impl_->updateStatus();
 
- void Artifact3DModelViewer::setBackgroundColor(const ArtifactCore::FloatColor& color)
- {
-  impl_->backgroundColor = color;
-  impl_->needsRedraw = true;
-  requestUpdate();
- }
-
- void Artifact3DModelViewer::setZoom(float factor)
- {
-  impl_->zoomFactor = factor;
-  impl_->cameraPosition.setZ(5.0f / factor);
-  impl_->updateCamera();
-  impl_->needsRedraw = true;
-  requestUpdate();
- }
-
- void Artifact3DModelViewer::setCameraRotation(float yaw, float pitch)
- {
-  impl_->cameraYaw = yaw;
-  impl_->cameraPitch = pitch;
-  impl_->updateCamera();
-  impl_->needsRedraw = true;
-  requestUpdate();
- }
-
- void Artifact3DModelViewer::setCameraPosition(const QVector3D& position)
- {
-  impl_->cameraPosition = position;
-  impl_->updateCamera();
-  impl_->needsRedraw = true;
-  requestUpdate();
- }
-
- void Artifact3DModelViewer::requestUpdate()
- {
-  impl_->render();
-  update(); // QWidget::update()
- }
-
- void Artifact3DModelViewer::mousePressEvent(QMouseEvent* event)
- {
-  if (event->button() == Qt::LeftButton) {
-    impl_->lastMousePos = event->pos();
-  }
- }
-
- void Artifact3DModelViewer::mouseMoveEvent(QMouseEvent* event)
- {
-  if (event->buttons() & Qt::LeftButton) {
-    QPoint delta = event->pos() - impl_->lastMousePos;
-    impl_->cameraYaw += delta.x() * 0.5f;
-    impl_->cameraPitch += delta.y() * 0.5f;
-    impl_->updateCamera();
-    impl_->needsRedraw = true;
-    impl_->lastMousePos = event->pos();
-  }
- }
-
- void Artifact3DModelViewer::wheelEvent(QWheelEvent* event)
- {
-  float zoomDelta = event->angleDelta().y() > 0 ? 1.1f : 0.9f;
-  setZoom(impl_->zoomFactor * zoomDelta);
- }
-
- void Artifact3DModelViewer::paintEvent(QPaintEvent* event)
- {
-  QPainter painter(this);
-  
-  painter.fillRect(rect(), QColor(impl_->backgroundColor.r() * 255,
-                                 impl_->backgroundColor.g() * 255,
-                                 impl_->backgroundColor.b() * 255));
-  painter.setPen(Qt::white);
-  
-  if (impl_->modelLoaded && impl_->currentMesh) {
-      QString stats = QString("3D Model Loaded Successfully\n\nFile: %1\nVertices: %2\nPolygons: %3")
-                      .arg(impl_->currentModelPath.toQString())
-                      .arg(impl_->currentMesh->vertexCount())
-                      .arg(impl_->currentMesh->polygonCount());
-      painter.drawText(rect(), Qt::AlignCenter, stats);
-  } else {
-      painter.drawText(rect(), Qt::AlignCenter, "3D Model Viewer\nDrop model file here");
-  }
- }
-
+    auto* renderTimer = new QTimer(this);
+    connect(renderTimer, &QTimer::timeout, this, &Artifact3DModelViewer::requestUpdate);
+    renderTimer->start(16);
 }
+
+Artifact3DModelViewer::~Artifact3DModelViewer()
+{
+    delete impl_;
+}
+
+void Artifact3DModelViewer::loadModel(const ArtifactCore::UniString& filePath)
+{
+    impl_->currentModelPath = filePath;
+
+    ArtifactCore::MeshImporter importer;
+    impl_->currentMesh = importer.importMeshFromFile(filePath);
+
+    if (impl_->currentMesh && impl_->currentMesh->isValid()) {
+        impl_->modelLoaded = true;
+        qDebug() << "Model loaded successfully. Vertices:" << impl_->currentMesh->vertexCount();
+    } else {
+        impl_->modelLoaded = false;
+        qDebug() << "Failed to load model:" << filePath.toQString();
+    }
+
+    impl_->updateStatus();
+    requestUpdate();
+}
+
+void Artifact3DModelViewer::clearModel()
+{
+    impl_->currentModelPath = ArtifactCore::UniString();
+    impl_->modelLoaded = false;
+    impl_->currentMesh = nullptr;
+    impl_->updateStatus();
+    requestUpdate();
+}
+
+void Artifact3DModelViewer::resetView()
+{
+    impl_->zoomFactor = 1.0f;
+    impl_->cameraYaw = 0.0f;
+    impl_->cameraPitch = 0.0f;
+    impl_->cameraPosition = QVector3D(0.0f, 0.0f, 5.0f);
+    requestUpdate();
+}
+
+void Artifact3DModelViewer::setBackgroundColor(const ArtifactCore::FloatColor& color)
+{
+    impl_->backgroundColor = color;
+    if (impl_->renderWindow) {
+        impl_->renderWindow->setClearColor(
+            QColor::fromRgbF(color.r(), color.g(), color.b(), color.a()));
+    }
+}
+
+void Artifact3DModelViewer::setZoom(float factor)
+{
+    impl_->zoomFactor = std::max(0.05f, factor);
+    impl_->cameraPosition.setZ(5.0f / impl_->zoomFactor);
+    requestUpdate();
+}
+
+void Artifact3DModelViewer::setCameraRotation(float yaw, float pitch)
+{
+    impl_->cameraYaw = yaw;
+    impl_->cameraPitch = pitch;
+    requestUpdate();
+}
+
+void Artifact3DModelViewer::setCameraPosition(const QVector3D& position)
+{
+    impl_->cameraPosition = position;
+    requestUpdate();
+}
+
+void Artifact3DModelViewer::setDisplayMode(DisplayMode mode)
+{
+    impl_->mode = mode;
+    if (impl_->renderWindow) {
+        impl_->renderWindow->setShadingMode(Impl::toShadingMode(mode));
+    }
+
+    if (impl_->modeCombo) {
+        const int desiredIndex = (mode == DisplayMode::Solid)
+            ? 0
+            : (mode == DisplayMode::Wireframe ? 1 : 2);
+        if (impl_->modeCombo->currentIndex() != desiredIndex) {
+            impl_->modeCombo->setCurrentIndex(desiredIndex);
+        }
+    }
+}
+
+Artifact3DModelViewer::DisplayMode Artifact3DModelViewer::displayMode() const
+{
+    return impl_->mode;
+}
+
+void Artifact3DModelViewer::requestUpdate()
+{
+    if (impl_->renderWindow) {
+        impl_->renderWindow->requestRender();
+    }
+}
+
+} // namespace Artifact

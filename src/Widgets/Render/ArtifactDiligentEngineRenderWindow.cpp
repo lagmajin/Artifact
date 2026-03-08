@@ -150,6 +150,38 @@ namespace Artifact {
   return true;
  }
 
+ void ArtifactDiligentEngineRenderWindow::setShadingMode(ShadingMode mode)
+ {
+  shadingMode_ = mode;
+  requestRender();
+ }
+
+ ArtifactDiligentEngineRenderWindow::ShadingMode ArtifactDiligentEngineRenderWindow::shadingMode() const
+ {
+  return shadingMode_;
+ }
+
+ void ArtifactDiligentEngineRenderWindow::setClearColor(const QColor& color)
+ {
+  clearColor_ = color;
+  requestRender();
+ }
+
+ QColor ArtifactDiligentEngineRenderWindow::clearColor() const
+ {
+  return clearColor_;
+ }
+
+ void ArtifactDiligentEngineRenderWindow::requestRender()
+ {
+  if (!isExposed())
+   return;
+  if (!m_initialized)
+   initialize();
+  render();
+  present();
+ }
+
  void ArtifactDiligentEngineRenderWindow::pickingRay(int posx, int posy)
  {
 
@@ -164,7 +196,17 @@ namespace Artifact {
   auto* pDSV = pSwapChain->GetDepthBufferDSV();
 
   pImmediateContext->SetRenderTargets(1, &pRTV, pDSV, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
-  const float ClearColor[] = { 0.650f, 0.350f, 0.350f, 1.0f };
+  float r = static_cast<float>(clearColor_.redF());
+  float g = static_cast<float>(clearColor_.greenF());
+  float b = static_cast<float>(clearColor_.blueF());
+  if (shadingMode_ == ShadingMode::Wireframe) {
+   r = (std::min)(1.0f, r + 0.10f);
+   g = (std::min)(1.0f, g + 0.10f);
+   b = (std::min)(1.0f, b + 0.10f);
+  } else if (shadingMode_ == ShadingMode::SolidWithWire) {
+   b = (std::min)(1.0f, b + 0.12f);
+  }
+  const float ClearColor[] = { r, g, b, 1.0f };
   // Let the engine perform required state transitions
   pImmediateContext->ClearRenderTarget(pRTV, ClearColor, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
   pImmediateContext->ClearDepthStencil(pDSV, CLEAR_DEPTH_FLAG, 1.f, 0, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
