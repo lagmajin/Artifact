@@ -56,3 +56,10 @@
   - 新規 `ArtifactUndoHistoryWidget`（Undo/Redoスタック表示、Undo/Redo/Clear操作）
   - `UndoManager::historyChanged` と連動してリアルタイム更新
   - `AppMain` で右ドック (`UndoHistoryDock`) として表示
+- 追加実装（2026-03-09 / batch-2）
+  - `ProjectView` 検索を複合クエリ対応（`type:` `tag:` `regex:` `unused:true`）
+  - `ProjectView` に `Unused only` フィルタを追加（未使用素材抽出を連動）
+  - `ProjectManagerToolBox` に Proxy生成ボタンを追加し、バックグラウンドキューで順次プロキシ生成
+  - Pythonフックを追加（`scripts/hooks/before_project_save.py` `after_project_export.py` `on_project_save_failed.py` `on_startup.py`）
+  - 起動時クラッシュリカバリUIを追加（Recovery snapshot検出→復旧選択）
+  - 定期Recovery snapshot作成（dirty時 120秒間隔 + 終了時）

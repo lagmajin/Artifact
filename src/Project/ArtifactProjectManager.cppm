@@ -1,10 +1,12 @@
 module;
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QJsonObject>
 #include <QRegularExpression>
 #include <QStandardPaths>
 #include <QStringList>
+#include <QCoreApplication>
 
 #include <QTextStream>
 #include <wobjectimpl.h>
@@ -60,6 +62,7 @@ import Artifact.Composition.InitParams;
 import Artifact.Layer.InitParams;
 import Artifact.Layer.Result;
 import Artifact.Layer.Factory;
+import Script.Python.Engine;
 
 
 namespace Artifact {
@@ -125,6 +128,26 @@ namespace Artifact {
     }
     for (const QString& subfolder : kProjectSubfolders) {
       root.mkpath(subfolder);
+    }
+  }
+  void runProjectHookScript(const QString& hookName, const QString& path)
+  {
+    auto& py = ArtifactCore::PythonEngine::instance();
+    if (!py.isInitialized()) {
+      return;
+    }
+    py.setGlobalString("artifact_project_path", path.toStdString());
+
+    const QString appDir = QCoreApplication::applicationDirPath();
+    const QStringList candidates = {
+      QDir(appDir).filePath(QStringLiteral("scripts/hooks/%1.py").arg(hookName)),
+      QDir(QDir::currentPath()).filePath(QStringLiteral("scripts/hooks/%1.py").arg(hookName))
+    };
+    for (const QString& c : candidates) {
+      if (QFileInfo::exists(c)) {
+        py.executeFile(c.toStdString());
+        break;
+      }
     }
   }
  }
@@ -533,7 +556,7 @@ ArtifactProjectManager& ArtifactProjectManager::getInstance()
   }
  }
 
- ArtifactProjectExporterResult ArtifactProjectManager::saveToFile(const QString& fullpath)
+ArtifactProjectExporterResult ArtifactProjectManager::saveToFile(const QString& fullpath)
  {
   ArtifactProjectExporterResult result;
   result.success = false;
@@ -543,6 +566,7 @@ ArtifactProjectManager& ArtifactProjectManager::getInstance()
    return result;
   }
 
+  runProjectHookScript(QStringLiteral("before_project_save"), fullpath);
   ArtifactProjectExporter exporter;
   exporter.setProject(projectPtr);
   exporter.setOutputPath(fullpath);
@@ -550,6 +574,9 @@ ArtifactProjectManager& ArtifactProjectManager::getInstance()
 
   if (result.success) {
    impl_->currentProjectPath_ = fullpath;
+   runProjectHookScript(QStringLiteral("after_project_export"), fullpath);
+  } else {
+   runProjectHookScript(QStringLiteral("on_project_save_failed"), fullpath);
   }
   return result;
  }

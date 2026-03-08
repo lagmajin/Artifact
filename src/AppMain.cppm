@@ -9,6 +9,11 @@ module;
 #include <QImage>
 #include <QTimer>
 #include <QElapsedTimer>
+#include <QMessageBox>
+#include <QStandardPaths>
+#include <QJsonDocument>
+#include <QFileInfo>
+#include <QFile>
 #include <QCommandLineOption>
 #include <qthreadpool.h>
 #include <QFileInfoList>
@@ -62,6 +67,8 @@ import Script.Python.Engine;
 import Artifact.Service.Playback;
 import Artifact.Service.Project;
 import Artifact.Widgets.UndoHistoryWidget;
+import Artifact.Project.Manager;
+import Artifact.Project.AutoSaveManager;
 
 using namespace Artifact;
 using namespace ArtifactCore;
@@ -114,6 +121,84 @@ namespace
     py.executeFile(fileInfo.absoluteFilePath().toStdString());
    }
   }
+ }
+
+ void runStartupHookScript()
+ {
+  auto& py = PythonEngine::instance();
+  if (!py.isInitialized())
+  {
+   return;
+  }
+
+  const QString appDir = QCoreApplication::applicationDirPath();
+  const QStringList candidates = {
+   QDir(appDir).filePath("scripts/hooks/on_startup.py"),
+   QDir(QDir::currentPath()).filePath("scripts/hooks/on_startup.py")
+  };
+  for (const QString& script : candidates)
+  {
+   if (QFileInfo::exists(script))
+   {
+    py.executeFile(script.toStdString());
+    break;
+   }
+  }
+ }
+
+ QByteArray currentProjectSnapshotJson()
+ {
+  auto project = ArtifactProjectManager::getInstance().getCurrentProjectSharedPtr();
+  if (!project)
+  {
+   return {};
+  }
+  const QJsonDocument doc(project->toJson());
+  return doc.toJson(QJsonDocument::Indented);
+ }
+
+ bool showRecoveryPrompt(ArtifactAutoSaveManager& autoSave, QWidget* parent)
+ {
+  if (!autoSave.hasRecoveryPoint())
+  {
+   return false;
+  }
+
+  QMessageBox box(parent);
+  box.setIcon(QMessageBox::Warning);
+  box.setWindowTitle("Recovery Snapshot Found");
+  box.setText("A crash recovery snapshot was found.");
+  box.setInformativeText("Recover the latest snapshot now?");
+  auto* recover = box.addButton("Recover", QMessageBox::AcceptRole);
+  box.addButton("Ignore", QMessageBox::RejectRole);
+  box.exec();
+
+  if (box.clickedButton() != recover)
+  {
+   return false;
+  }
+
+  QByteArray recoveredJson;
+  QString sourcePath;
+  if (!autoSave.loadLatestRecoveryPoint(&recoveredJson, &sourcePath) || recoveredJson.isEmpty())
+  {
+   return false;
+  }
+
+  const QString tempRoot = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+  QDir tempDir(tempRoot);
+  tempDir.mkpath(".");
+  const QString recoveredPath = tempDir.filePath("RecoveredProject.artifact.json");
+  QFile out(recoveredPath);
+  if (!out.open(QIODevice::WriteOnly | QIODevice::Truncate))
+  {
+   return false;
+  }
+  out.write(recoveredJson);
+  out.close();
+
+  ArtifactProjectManager::getInstance().loadFromFile(recoveredPath);
+  return true;
  }
 }
 
@@ -304,6 +389,7 @@ int main(int argc, char* argv[])
 	 pool->setMaxThreadCount(10);
 
   bootstrapPythonScripts();
+  runStartupHookScript();
  test();
  ImageExporter exp;
  exp.testWrite();
@@ -323,16 +409,30 @@ int main(int argc, char* argv[])
 
     auto* projectService = ArtifactProjectService::instance();
     auto* playbackService = ArtifactPlaybackService::instance();
+    auto* autoSaveManager = new ArtifactAutoSaveManager();
+    const QString recoveryDir = QDir(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)).filePath("Recovery");
+    autoSaveManager->initialize("ArtifactProject", recoveryDir);
+    autoSaveManager->start();
+    showRecoveryPrompt(*autoSaveManager, &mw);
 
     if (projectService) {
         QObject::connect(projectService, &ArtifactProjectService::projectChanged, &mw, [status]() {
             status->setProjectText("Modified");
         });
+        QObject::connect(projectService, &ArtifactProjectService::projectChanged, &mw, [autoSaveManager]() {
+            if (autoSaveManager) autoSaveManager->markDirty();
+        });
         QObject::connect(projectService, &ArtifactProjectService::layerCreated, &mw, [status](const CompositionID&, const LayerID&) {
             status->setProjectText("Layer Added");
         });
+        QObject::connect(projectService, &ArtifactProjectService::layerCreated, &mw, [autoSaveManager](const CompositionID&, const LayerID&) {
+            if (autoSaveManager) autoSaveManager->markDirty();
+        });
         QObject::connect(projectService, &ArtifactProjectService::layerRemoved, &mw, [status](const CompositionID&, const LayerID&) {
             status->setProjectText("Layer Removed");
+        });
+        QObject::connect(projectService, &ArtifactProjectService::layerRemoved, &mw, [autoSaveManager](const CompositionID&, const LayerID&) {
+            if (autoSaveManager) autoSaveManager->markDirty();
         });
     }
 
@@ -365,6 +465,19 @@ int main(int argc, char* argv[])
     });
     statsTimer->start();
 
+    auto* recoveryTimer = new QTimer(&mw);
+    recoveryTimer->setInterval(120000);
+    QObject::connect(recoveryTimer, &QTimer::timeout, &mw, [autoSaveManager]() {
+        if (!autoSaveManager || !autoSaveManager->isDirty()) {
+            return;
+        }
+        const QByteArray snapshot = currentProjectSnapshotJson();
+        if (!snapshot.isEmpty()) {
+            autoSaveManager->createRecoveryPoint(snapshot);
+        }
+    });
+    recoveryTimer->start();
+
     if (playbackService) {
         QObject::connect(playbackService, &ArtifactPlaybackService::frameChanged, &mw,
             [latestFrame, hasFrameUpdate, frameCounter](const FramePosition& position) {
@@ -392,6 +505,17 @@ int main(int argc, char* argv[])
         layoutState.state = mw.saveState();
         layoutState.saveToSettings(settings, "MainWindow");
         settings.sync();
+    });
+    QObject::connect(&a, &QCoreApplication::aboutToQuit, [&]() {
+        if (!autoSaveManager) return;
+        if (autoSaveManager->isDirty()) {
+            const QByteArray snapshot = currentProjectSnapshotJson();
+            if (!snapshot.isEmpty()) {
+                autoSaveManager->createRecoveryPoint(snapshot);
+            }
+        }
+        autoSaveManager->stop();
+        delete autoSaveManager;
     });
 
     mw.show();

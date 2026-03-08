@@ -4,11 +4,13 @@
 #include <QAction>
 #include <QFileDialog>
 #include <QApplication>
+#include <QCoreApplication>
 #include <QDebug>
 #include <QDesktopServices>
 #include <QUrl>
 #include <QInputDialog>
 #include <QLineEdit>
+#include <QDir>
 #include <QFileInfo>
 #include <wobjectimpl.h>
 
@@ -16,8 +18,42 @@ module Artifact.Menu.File;
 
 import Artifact.Project.Manager;
 import Artifact.Service.Project;
+import Script.Python.Engine;
 
 namespace Artifact {
+
+namespace {
+void runPythonFileHook(const QString& scriptPath, const QStringList& args = {})
+{
+    if (scriptPath.isEmpty()) return;
+    QFileInfo fi(scriptPath);
+    if (!fi.exists() || !fi.isFile()) return;
+    auto& py = ArtifactCore::PythonEngine::instance();
+    if (!py.isInitialized()) return;
+
+    py.setGlobalString("artifact_hook_file", fi.absoluteFilePath().toStdString());
+    py.setGlobalString("artifact_hook_args", args.join('|').toStdString());
+    py.executeFile(fi.absoluteFilePath().toStdString());
+}
+
+void runNamedHook(const QString& hookName, const QStringList& args = {})
+{
+    auto& py = ArtifactCore::PythonEngine::instance();
+    if (!py.isInitialized()) return;
+
+    const QString appDir = QCoreApplication::applicationDirPath();
+    const QStringList candidates = {
+        QDir(appDir).filePath(QStringLiteral("scripts/hooks/%1.py").arg(hookName)),
+        QDir(QDir::currentPath()).filePath(QStringLiteral("scripts/hooks/%1.py").arg(hookName))
+    };
+    for (const QString& c : candidates) {
+        if (QFileInfo::exists(c)) {
+            runPythonFileHook(c, args);
+            break;
+        }
+    }
+}
+}
 
 class ArtifactFileMenu::Impl {
 public:
@@ -127,9 +163,13 @@ void ArtifactFileMenu::Impl::handleSaveProject()
         path = QFileDialog::getSaveFileName(menu_, "プロジェクトを保存", QString(), "Artifact Project (*.artifact *.json);;All Files (*.*)");
         if (path.isEmpty()) return;
     }
+    runNamedHook(QStringLiteral("before_project_save"), QStringList() << path);
     auto result = manager.saveToFile(path);
     if (!result.success) {
         qWarning() << "Save project failed";
+        runNamedHook(QStringLiteral("on_project_save_failed"), QStringList() << path);
+    } else {
+        runNamedHook(QStringLiteral("after_project_export"), QStringList() << path);
     }
 }
 
@@ -138,9 +178,13 @@ void ArtifactFileMenu::Impl::handleSaveProjectAs()
     if (!menu_) return;
     const QString path = QFileDialog::getSaveFileName(menu_, "名前を付けて保存", QString(), "Artifact Project (*.artifact *.json);;All Files (*.*)");
     if (path.isEmpty()) return;
+    runNamedHook(QStringLiteral("before_project_save"), QStringList() << path);
     auto result = ArtifactProjectManager::getInstance().saveToFile(path);
     if (!result.success) {
         qWarning() << "Save project as failed";
+        runNamedHook(QStringLiteral("on_project_save_failed"), QStringList() << path);
+    } else {
+        runNamedHook(QStringLiteral("after_project_export"), QStringList() << path);
     }
 }
 
