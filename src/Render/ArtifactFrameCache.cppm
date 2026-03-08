@@ -72,6 +72,7 @@ public:
     // Statistics
     size_t hitCount_ = 0;
     size_t missCount_ = 0;
+    uint64_t generation_ = 1;
     
     // Thread safety
     mutable QMutex mutex_;
@@ -212,6 +213,13 @@ std::shared_ptr<FrameCacheEntry> FrameCache::get(const FramePosition& frame) {
     
     auto it = impl_->entries_.find(frame);
     if (it != impl_->entries_.end()) {
+        if (it->second && it->second->generation != impl_->generation_) {
+            impl_->entries_.erase(it);
+            impl_->accessTimes_.erase(frame);
+            impl_->accessCounts_.erase(frame);
+            impl_->missCount_++;
+            return nullptr;
+        }
         impl_->hitCount_++;
         
         // Update access tracking
@@ -247,6 +255,7 @@ void FrameCache::put(std::shared_ptr<FrameCacheEntry> entry) {
     impl_->evictToFit(targetMem, targetCount);
 
     // Add new entry
+    entry->generation = impl_->generation_;
     impl_->entries_[entry->frame] = entry;
     impl_->accessTimes_[entry->frame] = std::chrono::steady_clock::now().time_since_epoch().count();
     impl_->accessCounts_[entry->frame] = 1;
@@ -298,13 +307,43 @@ void FrameCache::invalidateRange(const FrameRange& range) {
     }
 }
 
+void FrameCache::invalidateStaleGenerations(uint64_t minGenerationToKeep) {
+    QMutexLocker locker(&impl_->mutex_);
+    std::vector<FramePosition> toRemove;
+    for (const auto& [pos, entry] : impl_->entries_) {
+        if (entry && entry->generation < minGenerationToKeep) {
+            toRemove.push_back(pos);
+        }
+    }
+    for (const auto& frame : toRemove) {
+        emit frameRemoved(frame);
+        impl_->entries_.erase(frame);
+        impl_->accessTimes_.erase(frame);
+        impl_->accessCounts_.erase(frame);
+    }
+}
+
 void FrameCache::invalidateAll() {
     QMutexLocker locker(&impl_->mutex_);
     impl_->entries_.clear();
     impl_->accessTimes_.clear();
     impl_->accessCounts_.clear();
     impl_->insertionOrder_.clear();
+    impl_->generation_++;
     emit cacheCleared();
+    emit generationChanged(impl_->generation_, QStringLiteral("invalidateAll"));
+}
+
+uint64_t FrameCache::generation() const {
+    QMutexLocker locker(&impl_->mutex_);
+    return impl_->generation_;
+}
+
+uint64_t FrameCache::bumpGeneration(const QString& reason) {
+    QMutexLocker locker(&impl_->mutex_);
+    impl_->generation_++;
+    emit generationChanged(impl_->generation_, reason);
+    return impl_->generation_;
 }
 
 size_t FrameCache::currentMemoryUsage() const {

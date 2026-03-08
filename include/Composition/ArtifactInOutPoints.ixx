@@ -1,6 +1,7 @@
 module;
 #include <QObject>
 #include <QString>
+#include <QStringList>
 #include <QColor>
 #include <optional>
 #include <vector>
@@ -75,6 +76,7 @@ private:
     MarkerType type_;
     QColor color_;
     QString webLink_;
+    QStringList tags_;
     
 public:
     explicit ArtifactMarker(const FramePosition& position, 
@@ -101,6 +103,13 @@ public:
     // Web link
     QString webLink() const;
     void setWebLink(const QString& link);
+
+    // Tags
+    QStringList tags() const;
+    void setTags(const QStringList& tags);
+    void addTag(const QString& tag);
+    void removeTag(const QString& tag);
+    bool hasTag(const QString& tag) const;
     
     // Operators
     bool operator<(const ArtifactMarker& other) const;
@@ -112,6 +121,7 @@ signals:
     void typeChanged(MarkerType type) W_SIGNAL(typeChanged, type);
     void colorChanged(QColor color) W_SIGNAL(colorChanged, color);
     void webLinkChanged(QString link) W_SIGNAL(webLinkChanged, link);
+    void tagsChanged(QStringList tags) W_SIGNAL(tagsChanged, tags);
     void markerChanged() W_SIGNAL(markerChanged);
 };
 
@@ -256,6 +266,8 @@ public:
      * @return Vector of markers of specified type
      */
     std::vector<ArtifactMarker*> markersByType(MarkerType type) const;
+    std::vector<ArtifactMarker*> markersByTag(const QString& tag) const;
+    std::vector<ArtifactMarker*> searchMarkers(const QString& text) const;
     
     /**
      * @brief Get markers within range

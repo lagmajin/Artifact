@@ -98,6 +98,8 @@ public:
     QElapsedTimer executionTimer_;
     std::deque<double> frameTimes_;
     FramePosition currentFrame_;
+    std::array<int, 5> dropCounts_ {0,0,0,0,0};
+    double frameBudgetMs_ = 16.67;
     
     // Callbacks
     std::function<void(RenderTask*)> taskExecutor_;
@@ -111,9 +113,9 @@ public:
         delete threadPool_;
     }
     
-    void executeTask(RenderTask* task) {
+    bool executeTask(RenderTask* task, QString* outError) {
         if (task->isCancelled() || stopRequested_) {
-            return;
+            return false;
         }
         
         // Execute the task
@@ -122,12 +124,14 @@ public:
                 taskExecutor_(task);
             } catch (const std::exception& e) {
                 emit task->failed(QString::fromUtf8(e.what()));
-                return;
+                if (outError) *outError = QString::fromUtf8(e.what());
+                return false;
             }
         }
         
         // Mark complete
         completedCount_++;
+        return true;
     }
 };
 
@@ -267,6 +271,11 @@ void RenderScheduler::processNextTask() {
         QMutexLocker locker(&impl_->mutex_);
         
         if (impl_->pendingTasks_.empty()) {
+            if (impl_->completedCount_ < impl_->totalCount_) {
+                impl_->dropCounts_[static_cast<int>(FrameDropReason::QueueStarvation)]++;
+                emit frameDropped(FrameDropReason::QueueStarvation,
+                                  impl_->dropCounts_[static_cast<int>(FrameDropReason::QueueStarvation)]);
+            }
             if (impl_->completedCount_ >= impl_->totalCount_) {
                 impl_->executing_ = false;
                 emit executionCompleted();
@@ -281,11 +290,35 @@ void RenderScheduler::processNextTask() {
     
     if (task && !task->isCancelled()) {
         emit taskStarted(task);
-        
-        // Execute task (in real implementation, this would run in thread)
-        impl_->executeTask(task);
-        
-        if (!task->isCancelled()) {
+
+        const auto startNs = std::chrono::steady_clock::now().time_since_epoch().count();
+        QString execError;
+        const bool ok = impl_->executeTask(task, &execError);
+        const auto endNs = std::chrono::steady_clock::now().time_since_epoch().count();
+        const double elapsedMs = (endNs - startNs) / 1000000.0;
+        impl_->frameTimes_.push_back(elapsedMs);
+        if (impl_->frameTimes_.size() > 240) {
+            impl_->frameTimes_.pop_front();
+        }
+
+        if (!ok) {
+            if (task->isCancelled()) {
+                impl_->dropCounts_[static_cast<int>(FrameDropReason::Cancelled)]++;
+                emit frameDropped(FrameDropReason::Cancelled,
+                                  impl_->dropCounts_[static_cast<int>(FrameDropReason::Cancelled)]);
+            } else {
+                impl_->dropCounts_[static_cast<int>(FrameDropReason::ExecutionError)]++;
+                emit frameDropped(FrameDropReason::ExecutionError,
+                                  impl_->dropCounts_[static_cast<int>(FrameDropReason::ExecutionError)]);
+                emit taskFailed(task, execError);
+            }
+        } else if (!task->isCancelled()) {
+            if (elapsedMs > impl_->frameBudgetMs_) {
+                impl_->dropCounts_[static_cast<int>(FrameDropReason::OverBudget)]++;
+                emit frameDropped(FrameDropReason::OverBudget,
+                                  impl_->dropCounts_[static_cast<int>(FrameDropReason::OverBudget)]);
+                emit performanceWarning(QString("Frame budget exceeded: %1 ms").arg(elapsedMs, 0, 'f', 2));
+            }
             emit taskCompleted(task);
             emit frameProcessed(task->range().startPosition());
         }
@@ -358,6 +391,19 @@ double RenderScheduler::estimatedTimeRemaining() const {
 size_t RenderScheduler::memoryUsage() const {
     // Would query actual memory usage
     return 0;
+}
+
+QMap<FrameDropReason, int> RenderScheduler::frameDropStats() const {
+    QMap<FrameDropReason, int> map;
+    map.insert(FrameDropReason::Cancelled, impl_->dropCounts_[static_cast<int>(FrameDropReason::Cancelled)]);
+    map.insert(FrameDropReason::ExecutionError, impl_->dropCounts_[static_cast<int>(FrameDropReason::ExecutionError)]);
+    map.insert(FrameDropReason::OverBudget, impl_->dropCounts_[static_cast<int>(FrameDropReason::OverBudget)]);
+    map.insert(FrameDropReason::QueueStarvation, impl_->dropCounts_[static_cast<int>(FrameDropReason::QueueStarvation)]);
+    return map;
+}
+
+void RenderScheduler::resetFrameDropStats() {
+    impl_->dropCounts_ = {0,0,0,0,0};
 }
 
 // ==================== BatchRenderer::Impl ====================

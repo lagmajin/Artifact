@@ -12,6 +12,7 @@ module;
 #include <QCommandLineOption>
 #include <qthreadpool.h>
 #include <QFileInfoList>
+#include <QDockWidget>
 #include <memory>
 #include <atomic>
 
@@ -60,6 +61,7 @@ import Artifact.PythonAPI;
 import Script.Python.Engine;
 import Artifact.Service.Playback;
 import Artifact.Service.Project;
+import Artifact.Widgets.UndoHistoryWidget;
 
 using namespace Artifact;
 using namespace ArtifactCore;
@@ -312,6 +314,12 @@ int main(int argc, char* argv[])
     mw.setStatusBar(status);
     status->showReadyMessage();
     status->setProjectText("Loaded");
+
+    auto* undoDock = new QDockWidget(QStringLiteral("Undo History"), &mw);
+    undoDock->setObjectName(QStringLiteral("UndoHistoryDock"));
+    undoDock->setWidget(new ArtifactUndoHistoryWidget(undoDock));
+    undoDock->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
+    mw.addDockWidget(Qt::RightDockWidgetArea, undoDock);
 
     auto* projectService = ArtifactProjectService::instance();
     auto* playbackService = ArtifactPlaybackService::instance();

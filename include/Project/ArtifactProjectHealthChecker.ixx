@@ -30,15 +30,30 @@ struct ProjectHealthReport {
     QVector<HealthIssue> issues;
 };
 
+struct AutoRepairOptions {
+    bool repairFrameRanges = true;
+    bool removeMissingAssets = false;
+    bool normalizeCompositionRanges = true;
+};
+
+struct AutoRepairResult {
+    int fixedCount = 0;
+    int skippedCount = 0;
+    QVector<HealthIssue> appliedFixes;
+};
+
 class ArtifactProjectHealthChecker {
 public:
     static ProjectHealthReport check(ArtifactProject* project);
+    static AutoRepairResult checkAndRepair(ArtifactProject* project, const AutoRepairOptions& options = {});
 
 private:
     static void checkCircularReferences(ArtifactProject* project, ProjectHealthReport& report);
     static void checkDuplicateIDs(ArtifactProject* project, ProjectHealthReport& report);
     static void checkFrameRanges(ArtifactProject* project, ProjectHealthReport& report);
     static void checkMissingAssets(ArtifactProject* project, ProjectHealthReport& report);
+    static void repairFrameRanges(ArtifactProject* project, AutoRepairResult& result, const AutoRepairOptions& options);
+    static void repairMissingAssets(ArtifactProject* project, AutoRepairResult& result, const AutoRepairOptions& options);
 };
 
 } // namespace Artifact

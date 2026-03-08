@@ -24,12 +24,14 @@ namespace Artifact
    case ArtifactStatusBar::Item::FPS:
     return QStringLiteral("FPS: -");
    case ArtifactStatusBar::Item::Memory:
-    return QStringLiteral("RAM: - MB");
-   case ArtifactStatusBar::Item::Project:
-    return QStringLiteral("Project: Ready");
-   }
-   return QString();
+   return QStringLiteral("RAM: - MB");
+  case ArtifactStatusBar::Item::Project:
+   return QStringLiteral("Project: Ready");
+  case ArtifactStatusBar::Item::Drops:
+   return QStringLiteral("Drops: -");
   }
+  return QString();
+ }
  }
 
  ArtifactStatusBar::ArtifactStatusBar(QWidget* parent)
@@ -43,6 +45,7 @@ namespace Artifact
   labels_[itemIndex(Item::Zoom)] = new QLabel(defaultTextForItem(Item::Zoom), this);
   labels_[itemIndex(Item::FPS)] = new QLabel(defaultTextForItem(Item::FPS), this);
   labels_[itemIndex(Item::Memory)] = new QLabel(defaultTextForItem(Item::Memory), this);
+  labels_[itemIndex(Item::Drops)] = new QLabel(defaultTextForItem(Item::Drops), this);
 
   addWidget(labels_[itemIndex(Item::Project)], 1);
   addPermanentWidget(labels_[itemIndex(Item::Coordinates)]);
@@ -50,6 +53,7 @@ namespace Artifact
   addPermanentWidget(labels_[itemIndex(Item::Zoom)]);
   addPermanentWidget(labels_[itemIndex(Item::FPS)]);
   addPermanentWidget(labels_[itemIndex(Item::Memory)]);
+  addPermanentWidget(labels_[itemIndex(Item::Drops)]);
  }
 
  ArtifactStatusBar::~ArtifactStatusBar() = default;
@@ -102,6 +106,14 @@ namespace Artifact
   }
  }
 
+ void ArtifactStatusBar::setDropSummaryText(const QString& text)
+ {
+  if (auto* label = itemLabel(Item::Drops))
+  {
+   label->setText(QStringLiteral("Drops: %1").arg(text));
+  }
+ }
+
  void ArtifactStatusBar::setItemVisible(const Item item, const bool visible)
  {
   if (auto* label = itemLabel(item))
@@ -121,7 +133,7 @@ namespace Artifact
 
  void ArtifactStatusBar::setAllItemsVisible(const bool visible)
  {
-  for (const auto item : { Item::Zoom, Item::Coordinates, Item::Frame, Item::FPS, Item::Memory, Item::Project })
+  for (const auto item : { Item::Zoom, Item::Coordinates, Item::Frame, Item::FPS, Item::Memory, Item::Project, Item::Drops })
   {
    setItemVisible(item, visible);
   }
@@ -159,6 +171,7 @@ namespace Artifact
   case Item::FPS: return 3;
   case Item::Memory: return 4;
   case Item::Project: return 5;
+  case Item::Drops: return 6;
   }
   return -1;
  }
@@ -173,13 +186,14 @@ namespace Artifact
   case Item::FPS: return QStringLiteral("FPS");
   case Item::Memory: return QStringLiteral("Memory");
   case Item::Project: return QStringLiteral("Project");
+  case Item::Drops: return QStringLiteral("Drops");
   }
   return QStringLiteral("Unknown");
  }
 
  void ArtifactStatusBar::rebuildVisibilityMenu(QMenu& menu)
  {
-  for (const auto item : { Item::Project, Item::Coordinates, Item::Frame, Item::Zoom, Item::FPS, Item::Memory })
+  for (const auto item : { Item::Project, Item::Coordinates, Item::Frame, Item::Zoom, Item::FPS, Item::Memory, Item::Drops })
   {
    QAction* action = menu.addAction(itemTitle(item));
    action->setCheckable(true);

@@ -97,6 +97,18 @@ export namespace Artifact {
       All = 0xFFFFFFFF
   };
 
+  enum class LayerDirtyReason : uint64_t {
+      None = 0,
+      PropertyChanged = 1ull << 0,
+      TransformChanged = 1ull << 1,
+      EffectChanged = 1ull << 2,
+      SourceChanged = 1ull << 3,
+      TimelineChanged = 1ull << 4,
+      VisibilityChanged = 1ull << 5,
+      PlaybackChanged = 1ull << 6,
+      UserEdit = 1ull << 7
+  };
+
  class ArtifactAbstractLayer;
  class ArtifactAbstractComposition;
 
@@ -208,6 +220,10 @@ export namespace Artifact {
    void setDirty(LayerDirtyFlag flag = LayerDirtyFlag::All);
    void clearDirty(LayerDirtyFlag flag = LayerDirtyFlag::All);
    bool isDirty(LayerDirtyFlag flag = LayerDirtyFlag::All) const;
+   void addDirtyReason(LayerDirtyReason reason);
+   bool hasDirtyReason(LayerDirtyReason reason) const;
+   uint64_t dirtyReasonMask() const;
+   void clearDirtyReasons();
 
    /*Thumbnail*/
   QImage getThumbnail(int width = 128, int height = 128) const;

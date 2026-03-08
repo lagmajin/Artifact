@@ -1,6 +1,7 @@
 ﻿module;
 #include <QObject>
 #include <QSize>
+#include <QString>
 #include <QMutex>
 #include <QWaitCondition>
 #include <map>
@@ -69,6 +70,7 @@ struct FrameCacheEntry {
     int width = 0;
     int height = 0;
     FramePosition frame;
+    uint64_t generation = 0;
     uint64_t timestamp = 0;
     size_t memorySize = 0;
     bool isDirty = false;
@@ -139,7 +141,10 @@ public:
     
     void invalidate(const FramePosition& frame);
     void invalidateRange(const FrameRange& range);
+    void invalidateStaleGenerations(uint64_t minGenerationToKeep);
     void invalidateAll();
+    uint64_t generation() const;
+    uint64_t bumpGeneration(const QString& reason = QStringLiteral("manual"));
     
     // Statistics
     size_t currentMemoryUsage() const;
@@ -165,6 +170,7 @@ signals:
     void frameRemoved(const FramePosition& frame) W_SIGNAL(frameRemoved, frame);
     void frameEvicted(const FramePosition& frame) W_SIGNAL(frameEvicted, frame);
     void cacheCleared() W_SIGNAL(cacheCleared);
+    void generationChanged(uint64_t generation, const QString& reason) W_SIGNAL(generationChanged, generation, reason);
     void memoryPressure(size_t used, size_t max) W_SIGNAL(memoryPressure, used, max);
     void hitRateChanged(float rate) W_SIGNAL(hitRateChanged, rate);
 };

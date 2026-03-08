@@ -1,6 +1,7 @@
 ﻿module;
 #include <wobjectdefs.h>
 #include <QString>
+#include <QStringList>
 #include <QVariant>
 #include <QObject>
 #include <iostream>
@@ -60,6 +61,7 @@ public:
     virtual ~UndoCommand() = default;
     virtual void undo() = 0;
     virtual void redo() = 0;
+    virtual QString label() const { return QStringLiteral("Command"); }
 };
 
 class SetPropertyCommand : public UndoCommand {
@@ -67,6 +69,7 @@ public:
     SetPropertyCommand(std::shared_ptr<ArtifactAbstractEffect> target, const UniString& propName, const QVariant& oldValue, const QVariant& newValue);
     void undo() override;
     void redo() override;
+    QString label() const override;
 private:
     std::weak_ptr<ArtifactAbstractEffect> target_;
     UniString name_;
@@ -79,6 +82,7 @@ public:
     MoveLayerCommand(ArtifactAbstractLayerPtr layer, float deltaX, float deltaY, int64_t frame);
     void undo() override;
     void redo() override;
+    QString label() const override;
 private:
     ArtifactAbstractLayerWeak layer_;
     float dx_, dy_;
@@ -90,6 +94,7 @@ public:
     AddLayerCommand(std::shared_ptr<ArtifactAbstractComposition> comp, std::shared_ptr<ArtifactAbstractLayer> layer, bool atTop = true);
     void undo() override;
     void redo() override;
+    QString label() const override;
 private:
     std::shared_ptr<ArtifactAbstractComposition> comp_;
     std::shared_ptr<ArtifactAbstractLayer> layer_;
@@ -101,6 +106,7 @@ public:
     RemoveLayerCommand(std::shared_ptr<ArtifactAbstractComposition> comp, std::shared_ptr<ArtifactAbstractLayer> layer);
     void undo() override;
     void redo() override;
+    QString label() const override;
 private:
     std::shared_ptr<ArtifactAbstractComposition> comp_;
     std::shared_ptr<ArtifactAbstractLayer> layer_;
@@ -126,6 +132,8 @@ public:
     size_t redoCount() const;
     QString undoDescription() const;
     QString redoDescription() const;
+    QStringList undoHistoryLabels() const;
+    QStringList redoHistoryLabels() const;
     void setMaxHistorySize(size_t maxSize);
     size_t maxHistorySize() const;
 
@@ -141,6 +149,7 @@ public:
     // Verdigris signal declaration
     void propertyChanged(const QString& effectId) W_SIGNAL(propertyChanged, effectId);
     void anythingChanged() W_SIGNAL(anythingChanged);
+    void historyChanged() W_SIGNAL(historyChanged);
 
 private:
     class Impl;
