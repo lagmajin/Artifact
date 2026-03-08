@@ -53,6 +53,8 @@ import Animation.Transform3D;
 import Size;
 import Utils.Id;
 import Utils.String.UniString;
+import Property.Abstract;
+import Property.Group;
 
 namespace Artifact {
 
@@ -676,6 +678,99 @@ QStringList ArtifactParticleLayer::availablePresets() const
         "confetti",
         "bubbles"
     };
+}
+
+std::vector<ArtifactCore::PropertyGroup> ArtifactParticleLayer::getLayerPropertyGroups() const
+{
+    auto groups = ArtifactAbstractLayer::getLayerPropertyGroups();
+    ArtifactCore::PropertyGroup particleGroup(QStringLiteral("Particle"));
+
+    auto makeProp = [](const QString& name, ArtifactCore::PropertyType type, const QVariant& value, int priority = 0) {
+        auto p = std::make_shared<ArtifactCore::AbstractProperty>();
+        p->setName(name);
+        p->setType(type);
+        p->setValue(value);
+        p->setDisplayPriority(priority);
+        return p;
+    };
+
+    particleGroup.addProperty(makeProp(QStringLiteral("particle.playing"), ArtifactCore::PropertyType::Boolean, isPlaying(), -140));
+    particleGroup.addProperty(makeProp(QStringLiteral("particle.timeScale"), ArtifactCore::PropertyType::Float, timeScale(), -130));
+    particleGroup.addProperty(makeProp(QStringLiteral("particle.emitterCount"), ArtifactCore::PropertyType::Integer, emitterCount(), -120));
+    particleGroup.addProperty(makeProp(QStringLiteral("particle.previewWidth"), ArtifactCore::PropertyType::Integer, impl_->width, -110));
+    particleGroup.addProperty(makeProp(QStringLiteral("particle.previewHeight"), ArtifactCore::PropertyType::Integer, impl_->height, -100));
+
+    const auto& rs = renderSettings();
+    particleGroup.addProperty(makeProp(QStringLiteral("particle.render.blendMode"), ArtifactCore::PropertyType::Integer, static_cast<int>(rs.blendMode), -90));
+    particleGroup.addProperty(makeProp(QStringLiteral("particle.render.billboardMode"), ArtifactCore::PropertyType::Integer, static_cast<int>(rs.billboardMode), -80));
+    particleGroup.addProperty(makeProp(QStringLiteral("particle.render.sortMode"), ArtifactCore::PropertyType::Integer, static_cast<int>(rs.sortMode), -70));
+    particleGroup.addProperty(makeProp(QStringLiteral("particle.render.depthTest"), ArtifactCore::PropertyType::Boolean, rs.depthTest, -60));
+    particleGroup.addProperty(makeProp(QStringLiteral("particle.render.depthWrite"), ArtifactCore::PropertyType::Boolean, rs.depthWrite, -50));
+
+    groups.push_back(particleGroup);
+    return groups;
+}
+
+bool ArtifactParticleLayer::setLayerPropertyValue(const QString& propertyPath, const QVariant& value)
+{
+    if (propertyPath == QStringLiteral("particle.playing")) {
+        value.toBool() ? play() : pause();
+        Q_EMIT changed();
+        return true;
+    }
+    if (propertyPath == QStringLiteral("particle.timeScale")) {
+        setTimeScale(static_cast<float>(value.toDouble()));
+        Q_EMIT changed();
+        return true;
+    }
+    if (propertyPath == QStringLiteral("particle.previewWidth")) {
+        impl_->width = std::max(1, value.toInt());
+        clearFrameCache();
+        Q_EMIT changed();
+        return true;
+    }
+    if (propertyPath == QStringLiteral("particle.previewHeight")) {
+        impl_->height = std::max(1, value.toInt());
+        clearFrameCache();
+        Q_EMIT changed();
+        return true;
+    }
+    if (propertyPath == QStringLiteral("particle.render.blendMode")) {
+        auto rs = renderSettings();
+        rs.blendMode = static_cast<ParticleBlendMode>(value.toInt());
+        setRenderSettings(rs);
+        Q_EMIT changed();
+        return true;
+    }
+    if (propertyPath == QStringLiteral("particle.render.billboardMode")) {
+        auto rs = renderSettings();
+        rs.billboardMode = static_cast<ParticleRenderSettings::BillboardMode>(value.toInt());
+        setRenderSettings(rs);
+        Q_EMIT changed();
+        return true;
+    }
+    if (propertyPath == QStringLiteral("particle.render.sortMode")) {
+        auto rs = renderSettings();
+        rs.sortMode = static_cast<ParticleRenderSettings::SortMode>(value.toInt());
+        setRenderSettings(rs);
+        Q_EMIT changed();
+        return true;
+    }
+    if (propertyPath == QStringLiteral("particle.render.depthTest")) {
+        auto rs = renderSettings();
+        rs.depthTest = value.toBool();
+        setRenderSettings(rs);
+        Q_EMIT changed();
+        return true;
+    }
+    if (propertyPath == QStringLiteral("particle.render.depthWrite")) {
+        auto rs = renderSettings();
+        rs.depthWrite = value.toBool();
+        setRenderSettings(rs);
+        Q_EMIT changed();
+        return true;
+    }
+    return ArtifactAbstractLayer::setLayerPropertyValue(propertyPath, value);
 }
 
 // ==================== Factory Functions ====================

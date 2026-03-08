@@ -1,5 +1,6 @@
 module;
 
+#include <QVariant>
 
 #include <iostream>
 #include <vector>
@@ -36,10 +37,6 @@ module;
 #include <random>
 export module Artifact.Layer.Audio;
 
-
-
-
-
 import Audio.Volume;
 import Artifact.Layer.Abstract;
 
@@ -55,11 +52,18 @@ export namespace Artifact
  public:
   ArtifactAudioLayer();
   ~ArtifactAudioLayer();
-  void setVolume();
-  //bool isMuted() const;
+
+  void setVolume(float volume);
+  float volume() const;
+  bool isMuted() const;
   void mute();
+
+  std::vector<ArtifactCore::PropertyGroup> getLayerPropertyGroups() const override;
+  bool setLayerPropertyValue(const QString& propertyPath, const QVariant& value) override;
+
+  void draw(ArtifactIRenderer* renderer) override;
+  bool hasVideo() const override;
+  bool hasAudio() const override;
  };
 
-
 };
-

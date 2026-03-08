@@ -66,6 +66,8 @@ public:
 
     // Trigger update of internal image
     void updateImage();
+    std::vector<ArtifactCore::PropertyGroup> getLayerPropertyGroups() const override;
+    bool setLayerPropertyValue(const QString& propertyPath, const QVariant& value) override;
 
     void draw(ArtifactIRenderer* renderer) override;
 };

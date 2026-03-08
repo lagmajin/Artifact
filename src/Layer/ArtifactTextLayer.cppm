@@ -7,6 +7,7 @@
 #include <QString>
 #include <QRect>
 #include <QSize>
+#include <QVariant>
 #include <opencv2/opencv.hpp>
 #include <opencv2/imgproc.hpp>
 
@@ -53,6 +54,8 @@ import Utils.String.UniString;
 import FloatRGBA;
 import Image.ImageF32x4_RGBA;
 import Size;
+import Property.Abstract;
+import Property.Group;
 
 namespace Artifact
 {
@@ -140,6 +143,63 @@ void ArtifactTextLayer::draw(ArtifactIRenderer* renderer)
     // This would typically render the text to the current render target
     // For now, we can call updateImage() to ensure the image is up to date
     updateImage();
+}
+
+std::vector<ArtifactCore::PropertyGroup> ArtifactTextLayer::getLayerPropertyGroups() const
+{
+    auto groups = ArtifactAbstractLayer::getLayerPropertyGroups();
+    ArtifactCore::PropertyGroup textGroup(QStringLiteral("Text"));
+
+    auto makeProp = [](const QString& name, ArtifactCore::PropertyType type, const QVariant& value, int priority = 0) {
+        auto p = std::make_shared<ArtifactCore::AbstractProperty>();
+        p->setName(name);
+        p->setType(type);
+        p->setValue(value);
+        p->setDisplayPriority(priority);
+        return p;
+    };
+
+    textGroup.addProperty(makeProp(QStringLiteral("text.value"), ArtifactCore::PropertyType::String, text().toQString(), -120));
+    textGroup.addProperty(makeProp(QStringLiteral("text.fontFamily"), ArtifactCore::PropertyType::String, fontFamily().toQString(), -110));
+    textGroup.addProperty(makeProp(QStringLiteral("text.fontSize"), ArtifactCore::PropertyType::Float, fontSize(), -100));
+
+    const auto c = textColor();
+    auto colorProp = std::make_shared<ArtifactCore::AbstractProperty>();
+    colorProp->setName(QStringLiteral("text.color"));
+    colorProp->setType(ArtifactCore::PropertyType::Color);
+    colorProp->setColorValue(QColor::fromRgbF(c.r(), c.g(), c.b(), c.a()));
+    colorProp->setValue(colorProp->getColorValue());
+    colorProp->setDisplayPriority(-90);
+    textGroup.addProperty(colorProp);
+
+    groups.push_back(textGroup);
+    return groups;
+}
+
+bool ArtifactTextLayer::setLayerPropertyValue(const QString& propertyPath, const QVariant& value)
+{
+    if (propertyPath == QStringLiteral("text.value")) {
+        setText(UniString(value.toString()));
+        Q_EMIT changed();
+        return true;
+    }
+    if (propertyPath == QStringLiteral("text.fontFamily")) {
+        setFontFamily(UniString(value.toString()));
+        Q_EMIT changed();
+        return true;
+    }
+    if (propertyPath == QStringLiteral("text.fontSize")) {
+        setFontSize(static_cast<float>(value.toDouble()));
+        Q_EMIT changed();
+        return true;
+    }
+    if (propertyPath == QStringLiteral("text.color")) {
+        const auto c = value.value<QColor>();
+        setTextColor(FloatRGBA(c.redF(), c.greenF(), c.blueF(), c.alphaF()));
+        Q_EMIT changed();
+        return true;
+    }
+    return ArtifactAbstractLayer::setLayerPropertyValue(propertyPath, value);
 }
 
 // Provide a default implementation for updateImage to satisfy linkage.

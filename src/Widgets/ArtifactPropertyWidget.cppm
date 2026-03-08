@@ -11,6 +11,8 @@
 #include <QFormLayout>
 #include <QColorDialog>
 #include <QGroupBox>
+#include <QHBoxLayout>
+#include <QCursor>
 #include <wobjectimpl.h>
 
 #include <iostream>
@@ -131,13 +133,158 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
         return;
     }
 
-    // レイヤー名を最上部に表示
     QLabel* layerNameLabel = new QLabel(QString("<b>Layer: %1</b>").arg(currentLayer->layerName()));
     mainLayout->addWidget(layerNameLabel);
 
-    // エフェクトからプロパティを取得
-    auto effects = currentLayer->getEffects();
-    
+    const auto humanizePropertyLabel = [](QString name) {
+        const int dot = name.lastIndexOf('.');
+        if (dot >= 0 && dot + 1 < name.size()) {
+            name = name.mid(dot + 1);
+        }
+
+        QString out;
+        out.reserve(name.size() * 2);
+        for (int i = 0; i < name.size(); ++i) {
+            const QChar ch = name.at(i);
+            if (ch == '_' || ch == '-') {
+                out += ' ';
+                continue;
+            }
+            if (i > 0 && ch.isUpper() && name.at(i - 1).isLetterOrNumber()) {
+                out += ' ';
+            }
+            out += ch;
+        }
+
+        bool cap = true;
+        for (int i = 0; i < out.size(); ++i) {
+            if (out.at(i).isSpace()) {
+                cap = true;
+                continue;
+            }
+            if (cap) {
+                out[i] = out.at(i).toUpper();
+                cap = false;
+            }
+        }
+        return out;
+    };
+
+    const auto addPropertyRow = [this, &humanizePropertyLabel](QFormLayout* form,
+                                       const ArtifactCore::AbstractProperty& p,
+                                       const std::function<void(const QString&, const QVariant&)>& applyValue) {
+        QLabel* label = new QLabel(humanizePropertyLabel(p.getName()));
+        QWidget* editor = nullptr;
+
+        const QString propName = p.getName();
+        const QVariant curVal = p.getValue();
+
+        switch (p.getType()) {
+            case ArtifactCore::PropertyType::Float: {
+                auto* spin = new QDoubleSpinBox();
+                spin->setRange(-1e6, 1e6);
+                spin->setValue(curVal.toDouble());
+                editor = spin;
+                QObject::connect(spin, &QDoubleSpinBox::editingFinished, [applyValue, propName, spin]() {
+                    applyValue(propName, spin->value());
+                });
+                break;
+            }
+            case ArtifactCore::PropertyType::Integer: {
+                auto* spin = new QSpinBox();
+                spin->setRange(-1e6, 1e6);
+                spin->setValue(curVal.toInt());
+                editor = spin;
+                QObject::connect(spin, &QSpinBox::editingFinished, [applyValue, propName, spin]() {
+                    applyValue(propName, spin->value());
+                });
+                break;
+            }
+            case ArtifactCore::PropertyType::Boolean: {
+                auto* cb = new QCheckBox();
+                cb->setChecked(curVal.toBool());
+                editor = cb;
+                QObject::connect(cb, &QCheckBox::toggled, [applyValue, propName](bool checked) {
+                    applyValue(propName, checked);
+                });
+                break;
+            }
+            case ArtifactCore::PropertyType::Color: {
+                auto* btn = new QPushButton(QStringLiteral(" "));
+                QColor c = p.getColorValue();
+                if (!c.isValid() && curVal.canConvert<QColor>()) {
+                    c = curVal.value<QColor>();
+                }
+                btn->setStyleSheet(QString("background-color: %1").arg(c.isValid() ? c.name() : QStringLiteral("#000000")));
+                editor = btn;
+                QObject::connect(btn, &QPushButton::clicked, [applyValue, propName, btn, c]() {
+                    const QColor newColor = QColorDialog::getColor(c, btn, QStringLiteral("Select Color"));
+                    if (!newColor.isValid()) return;
+                    btn->setStyleSheet(QString("background-color: %1").arg(newColor.name()));
+                    applyValue(propName, newColor);
+                });
+                break;
+            }
+            case ArtifactCore::PropertyType::String: {
+                auto* line = new QLineEdit(curVal.toString());
+                editor = line;
+                QObject::connect(line, &QLineEdit::editingFinished, [applyValue, propName, line]() {
+                    applyValue(propName, line->text());
+                });
+                break;
+            }
+            default:
+                editor = new QLabel(curVal.toString());
+                break;
+        }
+
+        if (!editor) return;
+
+        QWidget* rowWidget = new QWidget();
+        QHBoxLayout* rowLayout = new QHBoxLayout(rowWidget);
+        rowLayout->setContentsMargins(0, 0, 0, 0);
+        rowLayout->setSpacing(4);
+        editor->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+        rowLayout->addWidget(editor);
+
+        QPushButton* copilotBtn = new QPushButton(QString::fromUtf8("✨"));
+        copilotBtn->setToolTip("Expression Copilot");
+        copilotBtn->setFixedSize(24, 24);
+        QObject::connect(copilotBtn, &QPushButton::clicked, [propName]() {
+            auto copilot = new ArtifactExpressionCopilotWidget();
+            copilot->setWindowFlags(Qt::Window | Qt::WindowStaysOnTopHint | Qt::Tool);
+            copilot->setWindowTitle("Expression Copilot: " + propName);
+            copilot->setAttribute(Qt::WA_DeleteOnClose);
+            copilot->move(QCursor::pos() - QPoint(150, 200));
+            copilot->show();
+        });
+        rowLayout->addWidget(copilotBtn);
+        form->addRow(label, rowWidget);
+    };
+
+    bool hasAnyProperties = false;
+
+    const auto layerGroups = currentLayer->getLayerPropertyGroups();
+    for (const auto& groupDef : layerGroups) {
+        QGroupBox* group = new QGroupBox(groupDef.name().isEmpty() ? QStringLiteral("Layer") : groupDef.name());
+        QFormLayout* form = new QFormLayout(group);
+        form->setLabelAlignment(Qt::AlignLeft);
+        form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+
+        auto sortedProps = groupDef.sortedProperties();
+        for (const auto& ptr : sortedProps) {
+            if (!ptr) continue;
+            addPropertyRow(form, *ptr, [this](const QString& name, const QVariant& value) {
+                if (currentLayer) {
+                    currentLayer->setLayerPropertyValue(name, value);
+                }
+            });
+            hasAnyProperties = true;
+        }
+        mainLayout->addWidget(group);
+    }
+
+    const auto effects = currentLayer->getEffects();
     for (const auto& effect : effects) {
         if (!effect) continue;
 
@@ -155,117 +302,29 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
         form->setLabelAlignment(Qt::AlignLeft);
         form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
 
-        auto props = effect->getProperties();
-
-        // PropertyGroupを使って表示優先度（displayPriority）のテストも兼ねる
         ArtifactCore::PropertyGroup propGroup(effect->displayName().toQString());
-        
-        for (const auto& p : props) {
-            auto ptr = std::make_shared<ArtifactCore::AbstractProperty>(p);
-            propGroup.addProperty(ptr);
+        for (const auto& p : effect->getProperties()) {
+            propGroup.addProperty(std::make_shared<ArtifactCore::AbstractProperty>(p));
         }
 
-        // 表示優先度順にソートしてUI生成
         auto sortedProps = propGroup.sortedProperties();
-
         for (const auto& ptr : sortedProps) {
-            const auto& p = *ptr;
-            QLabel* label = new QLabel(p.getName());
-            QWidget* editor = nullptr;
-
-            auto type = p.getType();
-            QVariant curVal = p.getValue();
-
-            // Store copies for capturing in lambdas
-            auto effectRef = effect;
-            QString propName = p.getName();
-
-            switch (type) {
-                case ArtifactCore::PropertyType::Float: {
-                    auto* spin = new QDoubleSpinBox();
-                    spin->setRange(-1e6, 1e6);
-                    spin->setValue(curVal.toDouble());
-                    editor = spin;
-                    
-                    QObject::connect(spin, &QDoubleSpinBox::editingFinished, [effectRef, propName, spin]() {
-                        effectRef->setPropertyValue(propName, spin->value());
-                    });
-                    break;
-                }
-                case ArtifactCore::PropertyType::Integer: {
-                    auto* spin = new QSpinBox();
-                    spin->setRange(-1e6, 1e6);
-                    spin->setValue(curVal.toInt());
-                    editor = spin;
-                    
-                    QObject::connect(spin, &QSpinBox::editingFinished, [effectRef, propName, spin]() {
-                        effectRef->setPropertyValue(propName, spin->value());
-                    });
-                    break;
-                }
-                case ArtifactCore::PropertyType::Boolean: {
-                    auto* cb = new QCheckBox();
-                    cb->setChecked(curVal.toBool());
-                    editor = cb;
-                    
-                    QObject::connect(cb, &QCheckBox::clicked, [effectRef, propName, cb](bool checked) {
-                        effectRef->setPropertyValue(propName, checked);
-                    });
-                    break;
-                }
-                case ArtifactCore::PropertyType::Color: {
-                    auto* btn = new QPushButton("");
-                    QColor c = p.getColorValue();
-                    btn->setStyleSheet(QString("background-color: %1").arg(c.name()));
-                    editor = btn;
-                    
-                    QObject::connect(btn, &QPushButton::clicked, [effectRef, propName, btn]() {
-                        // In a real Qt setup we usually exec QColorDialog
-                        // Placeholder just to show the binding structure
-                        // QColor newColor = QColorDialog::getColor(...);
-                        // effectRef->setPropertyValue(propName, newColor);
-                    });
-                    break;
-                }
-                default:
-                    editor = new QLabel(curVal.toString());
-                    break;
-            }
-            if (editor) {
-                QWidget* rowWidget = new QWidget();
-                QHBoxLayout* rowLayout = new QHBoxLayout(rowWidget);
-                rowLayout->setContentsMargins(0, 0, 0, 0);
-                rowLayout->setSpacing(4);
-                
-                editor->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-                rowLayout->addWidget(editor);
-                
-                QPushButton* copilotBtn = new QPushButton(QString::fromUtf8("✨"));
-                copilotBtn->setToolTip("Expression Copilot");
-                copilotBtn->setFixedSize(24, 24);
-                
-                // Clicking the magic button opens the AI Copilot popup
-                QObject::connect(copilotBtn, &QPushButton::clicked, [propName, copilotBtn]() {
-                    auto copilot = new ArtifactExpressionCopilotWidget();
-                    copilot->setWindowFlags(Qt::Window | Qt::WindowStaysOnTopHint | Qt::Tool);
-                    copilot->setWindowTitle("Expression Copilot: " + propName);
-                    copilot->setAttribute(Qt::WA_DeleteOnClose);
-                    
-                    // Center it relative to the button or mouse
-                    copilot->move(QCursor::pos() - QPoint(150, 200));
-                    copilot->show();
-                    
-                    qDebug() << "[AI Copilot] Opened for:" << propName;
-                });
-                
-                rowLayout->addWidget(copilotBtn);
-                
-                form->addRow(label, rowWidget);
-            }
+            if (!ptr) continue;
+            addPropertyRow(form, *ptr, [effect](const QString& name, const QVariant& value) {
+                effect->setPropertyValue(name, value);
+            });
+            hasAnyProperties = true;
         }
+
         mainLayout->addWidget(group);
     }
-    
+
+    if (!hasAnyProperties) {
+        QLabel* emptyProps = new QLabel("No editable properties");
+        emptyProps->setAlignment(Qt::AlignCenter);
+        mainLayout->addWidget(emptyProps);
+    }
+
     mainLayout->addStretch();
 }
 

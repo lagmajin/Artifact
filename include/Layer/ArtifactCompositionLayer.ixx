@@ -1,4 +1,6 @@
-﻿module;
+module;
+
+#include <QVariant>
 
 #include <iostream>
 #include <vector>
@@ -35,17 +37,10 @@
 #include <random>
 export module Artifact.Layer.Composition;
 
-
-
-
 import Utils;
 import Artifact.Layer.Abstract;
 
-
-
 export namespace Artifact {
-
- //class ArtifactCompositionLayerPrivate;
 
  class ArtifactCompositionLayer:public ArtifactAbstractLayer {
  private:
@@ -56,11 +51,8 @@ export namespace Artifact {
   ~ArtifactCompositionLayer();
   CompositionID sourceCompositionId() const;
   void setCompositionId(const CompositionID& id);
+  std::vector<ArtifactCore::PropertyGroup> getLayerPropertyGroups() const override;
+  bool setLayerPropertyValue(const QString& propertyPath, const QVariant& value) override;
  };
-
-
-
-
-
 
 }
