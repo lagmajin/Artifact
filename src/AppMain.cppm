@@ -7,8 +7,13 @@ module;
 #include <QDateTime>
 #include <QDir>
 #include <QImage>
+#include <QTimer>
+#include <QElapsedTimer>
 #include <QCommandLineOption>
 #include <qthreadpool.h>
+#include <QFileInfoList>
+#include <memory>
+#include <atomic>
 
 #define _CRT_SECURE_NO_WARNINGS
 #pragma warning(disable:4996)
@@ -50,9 +55,65 @@ import Codec.Thumbnail.FFmpeg;
 
 import Widgets.Render.Queue;
 import IO.ImageExporter;
+import ArtifactStatusBar;
+import Artifact.PythonAPI;
+import Script.Python.Engine;
+import Artifact.Service.Playback;
+import Artifact.Service.Project;
 
 using namespace Artifact;
 using namespace ArtifactCore;
+
+namespace
+{
+ quint64 processWorkingSetMB()
+ {
+#if defined(_WIN32)
+  MEMORYSTATUSEX memStatus{};
+  memStatus.dwLength = sizeof(memStatus);
+  if (GlobalMemoryStatusEx(&memStatus))
+  {
+   const quint64 totalPhys = static_cast<quint64>(memStatus.ullTotalPhys);
+   const quint64 availPhys = static_cast<quint64>(memStatus.ullAvailPhys);
+   return (totalPhys - availPhys) / (1024ull * 1024ull);
+  }
+#endif
+  return 0;
+ }
+
+ void bootstrapPythonScripts()
+ {
+  auto& py = PythonEngine::instance();
+  if (!py.initialize())
+  {
+   return;
+  }
+
+  ArtifactPythonAPI::registerAll();
+
+  const QString appDir = QCoreApplication::applicationDirPath();
+  const QStringList scriptDirs = {
+   QDir(appDir).filePath("scripts"),
+   QDir(QDir::currentPath()).filePath("scripts")
+  };
+
+  for (const QString& dirPath : scriptDirs)
+  {
+   QDir dir(dirPath);
+   if (!dir.exists())
+   {
+    continue;
+   }
+
+   py.addSearchPath(dir.absolutePath().toStdString());
+   const QFileInfoList files = dir.entryInfoList(QStringList() << "*.py", QDir::Files, QDir::Name);
+   for (const QFileInfo& fileInfo : files)
+   {
+    py.executeFile(fileInfo.absoluteFilePath().toStdString());
+   }
+  }
+ }
+}
 
 void test()
 {
@@ -240,13 +301,70 @@ int main(int argc, char* argv[])
 
 	 pool->setMaxThreadCount(10);
 
-	
+  bootstrapPythonScripts();
  test();
  ImageExporter exp;
  exp.testWrite();
     QMainWindow mw;
     mw.setObjectName("ArtifactMainWindow");
     mw.setWindowTitle("Artifact");
+    auto* status = new ArtifactStatusBar(&mw);
+    mw.setStatusBar(status);
+    status->showReadyMessage();
+    status->setProjectText("Loaded");
+
+    auto* projectService = ArtifactProjectService::instance();
+    auto* playbackService = ArtifactPlaybackService::instance();
+
+    if (projectService) {
+        QObject::connect(projectService, &ArtifactProjectService::projectChanged, &mw, [status]() {
+            status->setProjectText("Modified");
+        });
+        QObject::connect(projectService, &ArtifactProjectService::layerCreated, &mw, [status](const CompositionID&, const LayerID&) {
+            status->setProjectText("Layer Added");
+        });
+        QObject::connect(projectService, &ArtifactProjectService::layerRemoved, &mw, [status](const CompositionID&, const LayerID&) {
+            status->setProjectText("Layer Removed");
+        });
+    }
+
+    auto latestFrame = std::make_shared<std::atomic<long long>>(0);
+    auto hasFrameUpdate = std::make_shared<std::atomic_bool>(false);
+    auto frameCounter = std::make_shared<std::atomic<int>>(0);
+
+    auto* uiTimer = new QTimer(&mw);
+    uiTimer->setInterval(33); // ~30Hz UI update
+    QObject::connect(uiTimer, &QTimer::timeout, &mw, [status, latestFrame, hasFrameUpdate]() {
+        if (hasFrameUpdate->exchange(false)) {
+            status->setFrame(latestFrame->load());
+        }
+    });
+    uiTimer->start();
+
+    auto* statsTimer = new QTimer(&mw);
+    statsTimer->setInterval(500);
+    auto fpsElapsed = std::make_shared<QElapsedTimer>();
+    fpsElapsed->start();
+    QObject::connect(statsTimer, &QTimer::timeout, &mw, [status, fpsElapsed, frameCounter]() {
+        status->setMemoryMB(processWorkingSetMB());
+        const qint64 elapsedMs = fpsElapsed->elapsed();
+        if (elapsedMs > 0) {
+            const int frames = frameCounter->exchange(0);
+            const double fps = frames * 1000.0 / static_cast<double>(elapsedMs);
+            status->setFPS(fps);
+        }
+        fpsElapsed->restart();
+    });
+    statsTimer->start();
+
+    if (playbackService) {
+        QObject::connect(playbackService, &ArtifactPlaybackService::frameChanged, &mw,
+            [latestFrame, hasFrameUpdate, frameCounter](const FramePosition& position) {
+                latestFrame->store(position.framePosition());
+                hasFrameUpdate->store(true);
+                frameCounter->fetch_add(1);
+            });
+    }
 
     {
         QSettings settings("ArtifactStudio", "Artifact");
