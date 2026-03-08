@@ -1,6 +1,7 @@
 module;
 #include <QLabel>
 #include <QBoxLayout>
+#include <QVBoxLayout>
 #include <QString>
 #include <QLineEdit>
 #include <QHBoxLayout>
@@ -26,23 +27,26 @@ namespace Artifact
   timecodeLabel_ = new QLabel();
   timecodeLabel_->setText("00:00:00:00");
   frameNumberLabel_ = new QLabel();
+  frameNumberLabel_->setText("(0 f)");
  }
 
  ArtifactTimeCodeWidget::ArtifactTimeCodeWidget(QWidget* parent /*= nullptr*/) : QWidget(parent), impl_(new Impl())
  {
-  auto layout = new QHBoxLayout();
-  layout->setSpacing(8);
+  auto layout = new QVBoxLayout();
+  layout->setSpacing(0);
   layout->setContentsMargins(8, 2, 8, 2);
   layout->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
   
   impl_->timecodeLabel_->setObjectName("timeLabel");
   impl_->frameNumberLabel_->setObjectName("frameLabel");
+  impl_->timecodeLabel_->setAlignment(Qt::AlignLeft | Qt::AlignBottom);
+  impl_->frameNumberLabel_->setAlignment(Qt::AlignLeft | Qt::AlignTop);
 
   layout->addWidget(impl_->timecodeLabel_);
   layout->addWidget(impl_->frameNumberLabel_);
 
   setLayout(layout);
-  setFixedHeight(28);
+  setFixedHeight(34);
 
   setAttribute(Qt::WA_StyledBackground, true);
 
@@ -59,7 +63,7 @@ namespace Artifact
    "QLabel#frameLabel {"
    "  font-family: 'Consolas', 'Courier New', monospace;"
    "  font-size: 9px;"
-   "  color: #777777;"
+   "  color: #9A9A9A;"
    "}"
   );
  }

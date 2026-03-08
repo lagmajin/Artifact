@@ -20,6 +20,9 @@
 #include <QLineEdit>
 #include <QColorDialog>
 #include <QVariant>
+#include <QContextMenuEvent>
+#include <QApplication>
+#include <QClipboard>
 #include <cstdlib>
 
 #include <iostream>
@@ -125,6 +128,10 @@ namespace Artifact {
    void defaultHandleMousePressEvent(QMouseEvent* event);
 
    void showContextMenu();
+   void showContextMenu(const QPoint& globalPos);
+   void showRackContextMenu(int rackIndex, QListWidgetItem* item, const QPoint& globalPos);
+   bool removeEffectById(const QString& effectId);
+   bool setEffectEnabledById(const QString& effectId, bool enabled);
    void handleProjectCreated();
    void handleProjectClosed();
    void handleCompositionCreated(const CompositionID& id);
@@ -162,6 +169,160 @@ void ArtifactInspectorWidget::Impl::updatePropertiesForEffect(const QString& eff
 
  void ArtifactInspectorWidget::Impl::defaultHandleKeyPressEvent(QKeyEvent* event)
  {
+ }
+
+ void ArtifactInspectorWidget::Impl::showContextMenu()
+ {
+  showContextMenu(QCursor::pos());
+ }
+
+ void ArtifactInspectorWidget::Impl::showContextMenu(const QPoint& globalPos)
+ {
+  QMenu menu;
+  menu.addAction("Refresh Inspector", [this]() {
+   updateLayerInfo();
+   updateEffectsList();
+  });
+  menu.addSeparator();
+  menu.addAction("Show Layer Info Tab", [this]() {
+   if (tabWidget) tabWidget->setCurrentIndex(0);
+  });
+  menu.addAction("Show Effects Tab", [this]() {
+   if (tabWidget) tabWidget->setCurrentIndex(1);
+  });
+  menu.addAction("Show Properties Tab", [this]() {
+   if (tabWidget) tabWidget->setCurrentIndex(2);
+  });
+  menu.addSeparator();
+  menu.addAction("Expand All Racks", [this]() {
+   for (auto& rack : racks) {
+    if (rack.listWidget) rack.listWidget->setMaximumHeight(10000);
+   }
+  });
+  menu.addAction("Collapse All Racks", [this]() {
+   for (auto& rack : racks) {
+    if (rack.listWidget) rack.listWidget->setMaximumHeight(100);
+   }
+  });
+  menu.exec(globalPos);
+ }
+
+ void ArtifactInspectorWidget::Impl::showRackContextMenu(int rackIndex, QListWidgetItem* item, const QPoint& globalPos)
+ {
+  QMenu menu;
+
+  if (rackIndex >= 0 && rackIndex < 5) {
+   menu.addAction("Add Effect...", [this, rackIndex]() { handleAddEffectClicked(rackIndex); });
+  }
+
+  if (!item) {
+   menu.addSeparator();
+   menu.addAction("Refresh Inspector", [this]() {
+    updateLayerInfo();
+    updateEffectsList();
+   });
+   menu.exec(globalPos);
+   return;
+  }
+
+  const QString effectId = item->data(Qt::UserRole).toString();
+  if (effectId.isEmpty()) {
+   menu.exec(globalPos);
+   return;
+  }
+
+  bool isEnabled = false;
+  bool found = false;
+  auto projectService = ArtifactProjectService::instance();
+  if (projectService && !currentCompositionId_.isNil() && !currentLayerId_.isNil()) {
+   auto findResult = projectService->findComposition(currentCompositionId_);
+   if (findResult.success) {
+    auto comp = findResult.ptr.lock();
+    if (comp) {
+     auto layer = comp->layerById(currentLayerId_);
+     if (layer) {
+      for (const auto& effect : layer->getEffects()) {
+       if (effect && effect->effectID().toQString() == effectId) {
+        isEnabled = effect->isEnabled();
+        found = true;
+        break;
+       }
+      }
+     }
+    }
+   }
+  }
+
+  if (found) {
+   QAction* toggleAction = menu.addAction(isEnabled ? "Disable Effect" : "Enable Effect");
+   QObject::connect(toggleAction, &QAction::triggered, [this, effectId, isEnabled]() {
+    if (setEffectEnabledById(effectId, !isEnabled)) {
+     updateEffectsList();
+    }
+   });
+  }
+
+  QAction* removeAction = menu.addAction("Remove Effect");
+  QObject::connect(removeAction, &QAction::triggered, [this, effectId]() {
+   if (removeEffectById(effectId)) {
+    updateEffectsList();
+   }
+  });
+
+  menu.addSeparator();
+  QAction* copyIdAction = menu.addAction("Copy Effect ID");
+  QObject::connect(copyIdAction, &QAction::triggered, [effectId]() {
+   if (auto* cb = QApplication::clipboard()) {
+    cb->setText(effectId);
+   }
+  });
+
+  menu.exec(globalPos);
+ }
+
+ bool ArtifactInspectorWidget::Impl::removeEffectById(const QString& effectId)
+ {
+  if (effectId.isEmpty() || currentLayerId_.isNil() || currentCompositionId_.isNil()) return false;
+
+  auto projectService = ArtifactProjectService::instance();
+  if (!projectService) return false;
+
+  auto findResult = projectService->findComposition(currentCompositionId_);
+  if (!findResult.success) return false;
+
+  auto comp = findResult.ptr.lock();
+  if (!comp) return false;
+
+  auto layer = comp->layerById(currentLayerId_);
+  if (!layer) return false;
+
+  layer->removeEffect(UniString(effectId.toStdString()));
+  return true;
+ }
+
+ bool ArtifactInspectorWidget::Impl::setEffectEnabledById(const QString& effectId, bool enabled)
+ {
+  if (effectId.isEmpty() || currentLayerId_.isNil() || currentCompositionId_.isNil()) return false;
+
+  auto projectService = ArtifactProjectService::instance();
+  if (!projectService) return false;
+
+  auto findResult = projectService->findComposition(currentCompositionId_);
+  if (!findResult.success) return false;
+
+  auto comp = findResult.ptr.lock();
+  if (!comp) return false;
+
+  auto layer = comp->layerById(currentLayerId_);
+  if (!layer) return false;
+
+  for (const auto& effect : layer->getEffects()) {
+   if (effect && effect->effectID().toQString() == effectId) {
+    effect->setEnabled(enabled);
+    return true;
+   }
+  }
+  return false;
  }
 
  void ArtifactInspectorWidget::Impl::handleProjectCreated()
@@ -499,6 +660,7 @@ void ArtifactInspectorWidget::Impl::updatePropertiesForEffect(const QString& eff
       
       impl_->racks[i].listWidget = new QListWidget();
       impl_->racks[i].listWidget->setMaximumHeight(100);
+      impl_->racks[i].listWidget->setContextMenuPolicy(Qt::CustomContextMenu);
       
       auto btnLayout = new QHBoxLayout();
       impl_->racks[i].addButton = new QPushButton("+ Add");
@@ -519,6 +681,12 @@ void ArtifactInspectorWidget::Impl::updatePropertiesForEffect(const QString& eff
       });
       QObject::connect(impl_->racks[i].removeButton, &QPushButton::clicked, this, [this, i]() {
           impl_->handleRemoveEffectClicked(i);
+      });
+      QObject::connect(impl_->racks[i].listWidget, &QListWidget::customContextMenuRequested, this, [this, i](const QPoint& pos) {
+          auto* lw = impl_->racks[i].listWidget;
+          if (!lw) return;
+          QListWidgetItem* item = lw->itemAt(pos);
+          impl_->showRackContextMenu(i, item, lw->viewport()->mapToGlobal(pos));
       });
   }
 
@@ -592,10 +760,10 @@ void ArtifactInspectorWidget::Impl::updatePropertiesForEffect(const QString& eff
   update();
  }
 
- void ArtifactInspectorWidget::contextMenuEvent(QContextMenuEvent*)
+ void ArtifactInspectorWidget::contextMenuEvent(QContextMenuEvent* event)
  {
-
-
+  if (!impl_ || !event) return;
+  impl_->showContextMenu(event->globalPos());
 
  }
 

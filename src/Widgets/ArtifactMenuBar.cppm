@@ -9,6 +9,7 @@ import Artifact.MainWindow;
 import Artifact.Menu.File;
 import Menu.Composition;
 import Artifact.Menu.Layer;
+import Artifact.Menu.View;
 import Artifact.Menu.Help;
 
 namespace Artifact {
@@ -24,6 +25,7 @@ public:
     ArtifactFileMenu* fileMenu = nullptr;
     ArtifactCompositionMenu* compMenu = nullptr;
     ArtifactLayerMenu* layerMenu = nullptr;
+    ArtifactViewMenu* viewMenu = nullptr;
     ArtifactHelpMenu* helpMenu = nullptr;
 };
 
@@ -33,11 +35,13 @@ ArtifactMenuBar::Impl::Impl(ArtifactMainWindow* mainWindow, ArtifactMenuBar* men
     fileMenu = new ArtifactFileMenu(menuBar);
     compMenu = new ArtifactCompositionMenu(mainWindow, menuBar);
     layerMenu = new ArtifactLayerMenu(menuBar);
+    viewMenu = new ArtifactViewMenu(menuBar);
     helpMenu = new ArtifactHelpMenu(menuBar);
 
     menuBar->addMenu(fileMenu);
     menuBar->addMenu(compMenu);
     menuBar->addMenu(layerMenu);
+    menuBar->addMenu(viewMenu);
     menuBar->addMenu(helpMenu);
 }
 

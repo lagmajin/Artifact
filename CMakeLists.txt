@@ -16,7 +16,6 @@ set(_PROVIDED_MODULES "")
 foreach(file_path ${POTENTIAL_SOURCES})
     if(file_path MATCHES "\\.bak$" OR
        file_path MATCHES "src/Render/ArtifactRenderLayerPipeline\\.cpp" OR
-       file_path MATCHES "include/Render/ArtifactIRenderer\\.ixx" OR
        file_path MATCHES "src/Audio/Effects/AudioEffectsInit\\.cpp" OR
        file_path MATCHES "src/Test/ArtifactTestRenderQueue\\.cppm" OR
        file_path MATCHES "include/Effect/ArtifactStabilizer\\.ixx" OR
@@ -147,6 +146,22 @@ target_link_libraries(Artifact PRIVATE ${DILIGENT_LIBS})
 find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Network Multimedia MultimediaWidgets Concurrent)
 target_link_libraries(Artifact PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network Qt6::Multimedia Qt6::MultimediaWidgets Qt6::Concurrent)
 
+# Qt resource bundle: app icons
+file(GLOB_RECURSE ARTIFACT_ICON_RESOURCE_FILES CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/App/Icon/*.svg"
+    "${CMAKE_CURRENT_SOURCE_DIR}/App/Icon/*.png"
+    "${CMAKE_CURRENT_SOURCE_DIR}/App/Icon/*.json"
+)
+list(FILTER ARTIFACT_ICON_RESOURCE_FILES EXCLUDE REGEX "\\.crdownload$")
+list(FILTER ARTIFACT_ICON_RESOURCE_FILES EXCLUDE REGEX "desktop\\.ini$")
+if(ARTIFACT_ICON_RESOURCE_FILES)
+    qt_add_resources(Artifact "ArtifactIconResources"
+        PREFIX "/icons"
+        BASE "${CMAKE_CURRENT_SOURCE_DIR}/App/Icon"
+        FILES ${ARTIFACT_ICON_RESOURCE_FILES}
+    )
+endif()
+
 # OpenCV
 find_package(OpenCV REQUIRED)
 target_link_libraries(Artifact PRIVATE ${OpenCV_LIBS})
@@ -211,11 +226,15 @@ if(WIN32)
     find_program(WINDEPLOYQT_EXECUTABLE windeployqt)
     if(WINDEPLOYQT_EXECUTABLE)
         set(_ARTIFACT_DEPLOY_QT_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/cmake/RunWindeployqt.cmake")
+        set(_ARTIFACT_VCPKG_INSTALLED "${VCPKG_INSTALLED}")
+        if(EXISTS "${CMAKE_BINARY_DIR}/vcpkg_installed/x64-windows")
+            set(_ARTIFACT_VCPKG_INSTALLED "${CMAKE_BINARY_DIR}/vcpkg_installed/x64-windows")
+        endif()
         add_custom_command(TARGET Artifact POST_BUILD
             COMMAND "${CMAKE_COMMAND}"
                 "-DWINDEPLOYQT_EXECUTABLE=${WINDEPLOYQT_EXECUTABLE}"
                 "-DTARGET_FILE=$<TARGET_FILE:Artifact>"
-                "-DVCPKG_INSTALLED=${VCPKG_INSTALLED}"
+                "-DVCPKG_INSTALLED=${_ARTIFACT_VCPKG_INSTALLED}"
                 "-DCONFIG=$<CONFIG>"
                 -P "${_ARTIFACT_DEPLOY_QT_SCRIPT}"
             COMMENT "Deploying Qt runtime for Artifact with windeployqt"
