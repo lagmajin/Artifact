@@ -32,6 +32,11 @@ module;
 #include <QDirIterator>
 #include <QMessageBox>
 #include <QHash>
+#include <QComboBox>
+#include <QCheckBox>
+#include <QProgressBar>
+#include <QStandardPaths>
+#include <QSet>
 
 #include <iostream>
 #include <vector>
@@ -78,6 +83,7 @@ import Artifact.Service.Project;
 import Artifact.Project.Model;
 import Artifact.Project.Items;
 import Artifact.Project.Roles;
+import Artifact.Project.Cleanup;
 import Artifact.Layer.Search.Query;
 import Artifact.Widgets.LayerPanelWidget;
 
@@ -248,8 +254,53 @@ public:
         invalidateFilter();
     }
 
+    void setUnusedAssetPaths(const QSet<QString>& unusedPaths) {
+        unusedAssetPaths_ = unusedPaths;
+        invalidateFilter();
+    }
+
+    void setAdvancedFilter(const QString& expression, const QString& typeFilter, const bool unusedOnly) {
+        rawExpression_ = expression.trimmed();
+        typeFilter_ = typeFilter.trimmed().toLower();
+        unusedOnly_ = unusedOnly;
+        parseExpression();
+        invalidateFilter();
+    }
+
 protected:
     bool filterAcceptsRow(int sourceRow, const QModelIndex& sourceParent) const override {
+        const QModelIndex rowIdx0 = sourceModel()->index(sourceRow, 0, sourceParent);
+        if (!rowIdx0.isValid()) {
+            return false;
+        }
+
+        const QVariant typeVar = sourceModel()->data(
+            rowIdx0, Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::ProjectItemType));
+        const eProjectItemType itemType = typeVar.isValid()
+            ? static_cast<eProjectItemType>(typeVar.toInt())
+            : eProjectItemType::Unknown;
+
+        const QVariant ptrVar = sourceModel()->data(
+            rowIdx0, Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::ProjectItemPtr));
+        ProjectItem* item = ptrVar.isValid() ? reinterpret_cast<ProjectItem*>(ptrVar.value<quintptr>()) : nullptr;
+
+        const bool rowMatch = matchesAdvanced(rowIdx0, itemType, item) && matchesLegacyQuery(sourceRow, sourceParent);
+        if (rowMatch) {
+            return true;
+        }
+
+        // Keep parent folders visible if any child matches.
+        const int childCount = sourceModel() ? sourceModel()->rowCount(rowIdx0) : 0;
+        for (int r = 0; r < childCount; ++r) {
+            if (filterAcceptsRow(r, rowIdx0)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+private:
+    bool matchesLegacyQuery(const int sourceRow, const QModelIndex& sourceParent) const {
         if (query_.isSearchTextEmpty()) {
             return true;
         }
@@ -262,18 +313,98 @@ protected:
                 return true;
             }
         }
+        return false;
+    }
 
-        const int childCount = sourceModel() ? sourceModel()->rowCount(sourceModel()->index(sourceRow, 0, sourceParent)) : 0;
-        for (int r = 0; r < childCount; ++r) {
-            if (filterAcceptsRow(r, sourceModel()->index(sourceRow, 0, sourceParent))) {
-                return true;
+    void parseExpression() {
+        plainTerms_.clear();
+        tagTerms_.clear();
+        regexPattern_.clear();
+        regexEnabled_ = false;
+
+        const QStringList tokens = rawExpression_.split(' ', Qt::SkipEmptyParts);
+        for (const QString& token : tokens) {
+            if (token.startsWith("tag:", Qt::CaseInsensitive)) {
+                const QString value = token.mid(4).trimmed();
+                if (!value.isEmpty()) tagTerms_.append(value);
+                continue;
+            }
+            if (token.startsWith("regex:", Qt::CaseInsensitive)) {
+                regexPattern_ = token.mid(6).trimmed();
+                regexEnabled_ = !regexPattern_.isEmpty();
+                continue;
+            }
+            if (token.startsWith("type:", Qt::CaseInsensitive)) {
+                const QString v = token.mid(5).trimmed().toLower();
+                if (!v.isEmpty()) typeFilter_ = v;
+                continue;
+            }
+            if (token.compare("unused:true", Qt::CaseInsensitive) == 0 ||
+                token.compare("is:unused", Qt::CaseInsensitive) == 0) {
+                unusedOnly_ = true;
+                continue;
+            }
+            plainTerms_.append(token);
+        }
+    }
+
+    bool typeMatches(const eProjectItemType itemType) const {
+        if (typeFilter_.isEmpty() || typeFilter_ == "all") {
+            return true;
+        }
+        if (typeFilter_ == "composition") return itemType == eProjectItemType::Composition;
+        if (typeFilter_ == "footage") return itemType == eProjectItemType::Footage;
+        if (typeFilter_ == "folder") return itemType == eProjectItemType::Folder;
+        if (typeFilter_ == "solid") return itemType == eProjectItemType::Solid;
+        return true;
+    }
+
+    bool matchesAdvanced(const QModelIndex& idx0, const eProjectItemType itemType, ProjectItem* item) const {
+        if (!typeMatches(itemType)) return false;
+
+        const QString name = sourceModel()->data(idx0, Qt::DisplayRole).toString();
+        QString searchBlob = name;
+        if (item && itemType == eProjectItemType::Footage) {
+            const QString path = static_cast<FootageItem*>(item)->filePath;
+            searchBlob += QStringLiteral(" ") + path;
+            if (unusedOnly_ && !unusedAssetPaths_.contains(path)) {
+                return false;
+            }
+        } else if (unusedOnly_) {
+            return false;
+        }
+
+        for (const QString& term : plainTerms_) {
+            if (!searchBlob.contains(term, Qt::CaseInsensitive)) {
+                return false;
             }
         }
-        return false;
+
+        for (const QString& tag : tagTerms_) {
+            if (!searchBlob.contains(tag, Qt::CaseInsensitive)) {
+                return false;
+            }
+        }
+
+        if (regexEnabled_) {
+            const QRegularExpression rx(regexPattern_, QRegularExpression::CaseInsensitiveOption);
+            if (!rx.isValid()) return false;
+            if (!rx.match(searchBlob).hasMatch()) return false;
+        }
+
+        return true;
     }
 
 private:
     ArtifactLayerSearchQuery query_;
+    QSet<QString> unusedAssetPaths_;
+    QString rawExpression_;
+    QString typeFilter_;
+    bool unusedOnly_ = false;
+    bool regexEnabled_ = false;
+    QString regexPattern_;
+    QStringList plainTerms_;
+    QStringList tagTerms_;
 };
 
 // --- Project View (Tree) ---
@@ -674,9 +805,93 @@ public:
     ProjectFilterProxyModel* proxyModel_ = nullptr;
     ProjectInfoPanel* infoPanel_ = nullptr;
     QLineEdit* searchBar = nullptr;
+    QComboBox* typeFilterBox = nullptr;
+    QCheckBox* unusedOnlyCheck = nullptr;
+    QProgressBar* proxyQueueProgress = nullptr;
     ArtifactProjectManagerToolBox* toolBox = nullptr;
     QLabel* projectNameLabel = nullptr;
     bool thumbnailEnabled = true;
+    QSet<QString> unusedAssetPaths_;
+    struct ProxyJob {
+        QString inputPath;
+        QString outputPath;
+    };
+    std::deque<ProxyJob> proxyJobs_;
+    QTimer* proxyQueueTimer_ = nullptr;
+
+    static void collectFootageRecursive(ProjectItem* item, QVector<FootageItem*>& out) {
+        if (!item) return;
+        if (item->type() == eProjectItemType::Footage) {
+            out.append(static_cast<FootageItem*>(item));
+        }
+        for (auto* child : item->children) {
+            collectFootageRecursive(child, out);
+        }
+    }
+
+    void queueProxyGeneration(const QVector<FootageItem*>& footageItems) {
+        const QString appDataRoot = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+        QDir proxyDir(appDataRoot);
+        proxyDir.mkpath(QStringLiteral("ProxyCache"));
+        const QString proxyRoot = proxyDir.filePath(QStringLiteral("ProxyCache"));
+
+        for (auto* f : footageItems) {
+            if (!f || f->filePath.isEmpty()) continue;
+            const QFileInfo src(f->filePath);
+            if (!src.exists()) continue;
+            const QString out = QDir(proxyRoot).filePath(src.completeBaseName() + QStringLiteral(".proxy.jpg"));
+            proxyJobs_.push_back({src.absoluteFilePath(), out});
+        }
+        if (!proxyQueueTimer_) {
+            proxyQueueTimer_ = new QTimer();
+            proxyQueueTimer_->setInterval(5);
+            QObject::connect(proxyQueueTimer_, &QTimer::timeout, [this]() {
+                processNextProxyJob();
+            });
+        }
+        if (!proxyJobs_.empty()) {
+            if (proxyQueueProgress) {
+                proxyQueueProgress->setMaximum(static_cast<int>(proxyJobs_.size()));
+                proxyQueueProgress->setValue(0);
+                proxyQueueProgress->setVisible(true);
+            }
+            proxyQueueTimer_->start();
+        }
+    }
+
+    void processNextProxyJob() {
+        if (proxyJobs_.empty()) {
+            if (proxyQueueTimer_) proxyQueueTimer_->stop();
+            if (proxyQueueProgress) proxyQueueProgress->setVisible(false);
+            return;
+        }
+
+        const ProxyJob job = proxyJobs_.front();
+        proxyJobs_.pop_front();
+        QImage img(job.inputPath);
+        if (!img.isNull()) {
+            const QImage scaled = img.scaled(640, 360, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+            scaled.save(job.outputPath, "JPG", 80);
+        }
+
+        if (proxyQueueProgress) {
+            const int done = proxyQueueProgress->maximum() - static_cast<int>(proxyJobs_.size());
+            proxyQueueProgress->setValue(done);
+        }
+    }
+
+    void refreshUnusedAssetCache() {
+        unusedAssetPaths_.clear();
+        auto shared = ArtifactProjectService::instance()->getCurrentProjectSharedPtr();
+        if (!shared) return;
+        const QStringList list = ArtifactProjectCleanupTool::findUnusedAssetPaths(shared.get());
+        for (const QString& s : list) {
+            unusedAssetPaths_.insert(s);
+        }
+        if (proxyModel_) {
+            proxyModel_->setUnusedAssetPaths(unusedAssetPaths_);
+        }
+    }
 
     void update() {
         auto shared = ArtifactProjectService::instance()->getCurrentProjectSharedPtr();
@@ -701,6 +916,13 @@ public:
             }
             projectView_->expandToDepth(1);
         }
+        refreshUnusedAssetCache();
+        if (proxyModel_) {
+            proxyModel_->setAdvancedFilter(
+                searchBar ? searchBar->text() : QString(),
+                typeFilterBox ? typeFilterBox->currentText() : QString(),
+                unusedOnlyCheck ? unusedOnlyCheck->isChecked() : false);
+        }
     }
 
     void handleSearch(const QString& text) {
@@ -709,6 +931,10 @@ public:
         ArtifactLayerSearchQuery query;
         query.setSearchText(trimmed);
         proxyModel_->setSearchQuery(query);
+        proxyModel_->setAdvancedFilter(
+            trimmed,
+            typeFilterBox ? typeFilterBox->currentText() : QString(),
+            unusedOnlyCheck ? unusedOnlyCheck->isChecked() : false);
         if (!trimmed.isEmpty() && projectView_) projectView_->expandAll();
     }
 };
@@ -728,7 +954,7 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     mainLayout->addWidget(impl_->projectNameLabel);
 
     impl_->searchBar = new QLineEdit();
-    impl_->searchBar->setPlaceholderText("Search project...");
+    impl_->searchBar->setPlaceholderText("Search (type:footage tag:png regex:shot_.* unused:true)...");
     impl_->searchBar->setStyleSheet(R"(
         QLineEdit {
             background-color: #1E1E1E;
@@ -744,6 +970,22 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     impl_->searchBar->setClearButtonEnabled(true);
     mainLayout->addWidget(impl_->searchBar);
 
+    auto* filterBar = new QHBoxLayout();
+    filterBar->setContentsMargins(10, 0, 10, 6);
+    filterBar->setSpacing(8);
+    impl_->typeFilterBox = new QComboBox(this);
+    impl_->typeFilterBox->addItems(QStringList() << "All" << "Composition" << "Footage" << "Folder" << "Solid");
+    impl_->unusedOnlyCheck = new QCheckBox("Unused only", this);
+    impl_->proxyQueueProgress = new QProgressBar(this);
+    impl_->proxyQueueProgress->setVisible(false);
+    impl_->proxyQueueProgress->setTextVisible(true);
+    impl_->proxyQueueProgress->setFormat("Proxy queue %v/%m");
+    filterBar->addWidget(impl_->typeFilterBox);
+    filterBar->addWidget(impl_->unusedOnlyCheck);
+    filterBar->addStretch();
+    filterBar->addWidget(impl_->proxyQueueProgress, 1);
+    mainLayout->addLayout(filterBar);
+
     impl_->projectView_ = new ArtifactProjectView();
     mainLayout->addWidget(impl_->projectView_);
 
@@ -751,6 +993,12 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     mainLayout->addWidget(impl_->toolBox);
 
     connect(impl_->searchBar, &QLineEdit::textChanged, [this](const QString& t) { impl_->handleSearch(t); });
+    connect(impl_->typeFilterBox, &QComboBox::currentTextChanged, [this](const QString&) {
+        impl_->handleSearch(impl_->searchBar ? impl_->searchBar->text() : QString());
+    });
+    connect(impl_->unusedOnlyCheck, &QCheckBox::toggled, [this](bool) {
+        impl_->handleSearch(impl_->searchBar ? impl_->searchBar->text() : QString());
+    });
     connect(impl_->projectView_, &ArtifactProjectView::itemSelected, [this](const QModelIndex& idx) {
         if (impl_->proxyModel_) impl_->infoPanel_->updateInfo(impl_->proxyModel_->mapToSource(idx));
     });
@@ -761,6 +1009,17 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     connect(impl_->toolBox, &ArtifactProjectManagerToolBox::newFolderRequested, [this]() {
          auto project = ArtifactProjectService::instance()->getCurrentProjectSharedPtr();
          if (project) project->createFolder("New Folder");
+    });
+    connect(impl_->toolBox, &ArtifactProjectManagerToolBox::generateProxyRequested, [this]() {
+         QVector<FootageItem*> footage;
+         auto project = ArtifactProjectService::instance()->getCurrentProjectSharedPtr();
+         if (project) {
+             const auto roots = project->projectItems();
+             for (auto* root : roots) {
+                 Impl::collectFootageRecursive(root, footage);
+             }
+         }
+         impl_->queueProxyGeneration(footage);
     });
     connect(impl_->toolBox, &ArtifactProjectManagerToolBox::deleteRequested, [this]() {
          auto selection = impl_->projectView_->selectionModel()->selectedIndexes();
@@ -844,15 +1103,18 @@ ArtifactProjectManagerToolBox::ArtifactProjectManagerToolBox(QWidget* parent) : 
 
     auto btnNew = createBtn("📜", "New Composition");
     auto btnFolder = createBtn("📁", "New Folder");
+    auto btnProxy = createBtn("🧊", "Generate Proxies");
     auto btnDel = createBtn("🗑️", "Delete");
 
     layout->addWidget(btnNew);
     layout->addWidget(btnFolder);
+    layout->addWidget(btnProxy);
     layout->addStretch();
     layout->addWidget(btnDel);
 
     connect(btnNew, &QPushButton::clicked, this, &ArtifactProjectManagerToolBox::newCompositionRequested);
     connect(btnFolder, &QPushButton::clicked, this, &ArtifactProjectManagerToolBox::newFolderRequested);
+    connect(btnProxy, &QPushButton::clicked, this, &ArtifactProjectManagerToolBox::generateProxyRequested);
     connect(btnDel, &QPushButton::clicked, this, &ArtifactProjectManagerToolBox::deleteRequested);
 }
 

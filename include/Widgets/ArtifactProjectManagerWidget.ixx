@@ -120,6 +120,7 @@ public:
   void newCompositionRequested() W_SIGNAL(newCompositionRequested);
   void newFolderRequested() W_SIGNAL(newFolderRequested);
   void deleteRequested() W_SIGNAL(deleteRequested);
+  void generateProxyRequested() W_SIGNAL(generateProxyRequested);
  };
 
  class ArtifactProjectManagerWidget :public QWidget {
