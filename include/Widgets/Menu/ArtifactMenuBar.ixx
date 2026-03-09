@@ -34,6 +34,8 @@
 #include <numeric>
 #include <regex>
 #include <random>
+
+#include <wobjectdefs.h>
 export module Menu.MenuBar;
 
 
@@ -66,6 +68,7 @@ export namespace Artifact {
 
 
  class ArtifactMenuBar :public QMenuBar{
+	 W_OBJECT(ArtifactMenuBar)
  private:
   class Impl;
   Impl* impl_;

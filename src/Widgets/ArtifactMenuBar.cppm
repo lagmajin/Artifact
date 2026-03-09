@@ -1,8 +1,7 @@
-module;
+﻿module;
 #include <QMenuBar>
 #include <QMenu>
 #include <wobjectimpl.h>
-
 module Menu.MenuBar;
 
 import Artifact.MainWindow;
@@ -10,9 +9,11 @@ import Artifact.Menu.File;
 import Menu.Composition;
 import Artifact.Menu.Layer;
 import Artifact.Menu.View;
-import Artifact.Menu.Help;
+import Menu.Help;
 
 namespace Artifact {
+
+
 
 class ArtifactMenuBar::Impl {
 public:
@@ -28,7 +29,6 @@ public:
     ArtifactViewMenu* viewMenu = nullptr;
     ArtifactHelpMenu* helpMenu = nullptr;
 };
-
 ArtifactMenuBar::Impl::Impl(ArtifactMainWindow* mainWindow, ArtifactMenuBar* menuBar)
     : mainWindow_(mainWindow), menuBar_(menuBar)
 {

@@ -1,5 +1,6 @@
 ﻿module;
 #include <QMenu>
+#include <wobjectimpl.h>
 
 export module Artifact.Menu.View;
 //#pragma once
@@ -14,7 +15,7 @@ export namespace Artifact {
 
 
  class ArtifactViewMenu :public QMenu{
-  //Q_OBJECT
+  W_OBJECT(ArtifactViewMenu)
  private:
   class Impl;
   Impl* impl_;
