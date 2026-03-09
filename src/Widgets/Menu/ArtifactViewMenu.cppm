@@ -40,6 +40,9 @@
 #include <numeric>
 #include <regex>
 #include <random>
+
+#include <wobjectimpl.h>
+
 module Artifact.Menu.View;
 
 
@@ -232,6 +235,8 @@ namespace Artifact {
  {
 
  }
+
+ W_OBJECT_IMPL(ArtifactViewMenu)
 
  ArtifactViewMenu::ArtifactViewMenu(QWidget* parent/*=nullptr*/):QMenu(parent),impl_(new Impl(this))
  {

@@ -86,8 +86,10 @@ ArtifactCompositionMenu::ArtifactCompositionMenu(ArtifactMainWindow* mainWindow,
 }
 
 ArtifactCompositionMenu::ArtifactCompositionMenu(QWidget* parent)
-    : QMenu(parent), impl_(nullptr)
+    : QMenu(parent), impl_(new Impl(this, nullptr))
 {
+    setTitle("コンポジション(&C)");
+    connect(this, &QMenu::aboutToShow, this, &ArtifactCompositionMenu::rebuildMenu);
 }
 
 ArtifactCompositionMenu::~ArtifactCompositionMenu()

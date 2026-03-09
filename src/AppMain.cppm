@@ -19,7 +19,7 @@ module;
 #include <QCommandLineOption>
 #include <qthreadpool.h>
 #include <QFileInfoList>
-#include <QDockWidget>
+#include <ads_globals.h>
 #include <memory>
 #include <atomic>
 
@@ -70,6 +70,7 @@ import Artifact.Service.Playback;
 import Artifact.Service.Project;
 import Artifact.Widgets.UndoHistoryWidget;
 import Artifact.Widgets.PythonHookManagerWidget;
+import Artifact.MainWindow;
 import Artifact.Project.Manager;
 import Artifact.Project.AutoSaveManager;
 import Artifact.Script.Hooks;
@@ -371,27 +372,15 @@ int main(int argc, char* argv[])
 
   bootstrapPythonScripts();
   ArtifactPythonHookManager::runHook(QStringLiteral("on_startup"));
- test();
- ImageExporter exp;
- exp.testWrite();
-    QMainWindow mw;
+    ArtifactMainWindow mw;
     mw.setObjectName("ArtifactMainWindow");
     mw.setWindowTitle("Artifact");
     auto* status = new ArtifactStatusBar(&mw);
     mw.setStatusBar(status);
     status->showReadyMessage();
     status->setProjectText("Loaded");
-
-    auto* undoDock = new QDockWidget(QStringLiteral("Undo History"), &mw);
-    undoDock->setObjectName(QStringLiteral("UndoHistoryDock"));
-    undoDock->setWidget(new ArtifactUndoHistoryWidget(undoDock));
-    undoDock->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
-    mw.addDockWidget(Qt::RightDockWidgetArea, undoDock);
-    auto* hookDock = new QDockWidget(QStringLiteral("Python Hooks"), &mw);
-    hookDock->setObjectName(QStringLiteral("PythonHooksDock"));
-    hookDock->setWidget(new ArtifactPythonHookManagerWidget(hookDock));
-    hookDock->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
-    mw.addDockWidget(Qt::RightDockWidgetArea, hookDock);
+    mw.addDockedWidget(QStringLiteral("Undo History"), ads::RightDockWidgetArea, new ArtifactUndoHistoryWidget(&mw));
+    mw.addDockedWidget(QStringLiteral("Python Hooks"), ads::RightDockWidgetArea, new ArtifactPythonHookManagerWidget(&mw));
 
     auto* projectService = ArtifactProjectService::instance();
     auto* playbackService = ArtifactPlaybackService::instance();
@@ -491,11 +480,19 @@ int main(int argc, char* argv[])
     {
         QSettings settings("ArtifactStudio", "Artifact");
         auto layoutState = UiLayoutState::loadFromSettings(settings, "MainWindow");
+        bool geometryRestored = true;
+        bool stateRestored = true;
         if (!layoutState.geometry.isEmpty()) {
-            mw.restoreGeometry(layoutState.geometry);
+            geometryRestored = mw.restoreGeometry(layoutState.geometry);
         }
         if (!layoutState.state.isEmpty()) {
-            mw.restoreState(layoutState.state);
+            stateRestored = mw.restoreState(layoutState.state);
+        }
+        if ((!layoutState.geometry.isEmpty() && !geometryRestored) ||
+            (!layoutState.state.isEmpty() && !stateRestored)) {
+            // Saved layout is likely incompatible with current dock/widget set.
+            settings.remove("MainWindow");
+            mw.resize(1600, 900);
         }
     }
 

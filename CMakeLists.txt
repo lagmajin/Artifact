@@ -28,8 +28,7 @@ foreach(file_path ${POTENTIAL_SOURCES})
        file_path MATCHES "include/Preview/ArtifactTimelineClock\\.ixx" OR
        file_path MATCHES "src/Preview/ArtifactTimelineClock\\.cppm" OR
        file_path MATCHES "src/Widgets/WebUI/ArtifactWebUIHost\\.cppm" OR
-       file_path MATCHES "src/Effetcs/ColorCorrection/ExposureEffect\\.cppm" OR
-       file_path MATCHES "src/Widgets/ArtifactMenuBar\\.cppm")
+       file_path MATCHES "src/Effetcs/ColorCorrection/ExposureEffect\\.cppm")
         continue()
     endif()
 
@@ -111,7 +110,11 @@ elseif(ARTIFACT_FRONTEND_MSVC)
 endif()
 
 # MSVC-style linker only: force output even with unresolved/duplicate symbols
+option(ARTIFACT_LINK_VERBOSE_LIB "Enable MSVC linker library-resolution diagnostics" ON)
 target_link_options(Artifact PRIVATE "$<$<BOOL:${ARTIFACT_FRONTEND_MSVC}>:/FORCE>")
+if(ARTIFACT_LINK_VERBOSE_LIB)
+    target_link_options(Artifact PRIVATE "$<$<BOOL:${ARTIFACT_FRONTEND_MSVC}>:/VERBOSE:LIB>")
+endif()
 
 target_include_directories(Artifact
     PRIVATE
@@ -183,6 +186,9 @@ target_link_libraries(Artifact PRIVATE OpenMP::OpenMP_CXX)
 
 find_package(TBB REQUIRED)
 target_link_libraries(Artifact PRIVATE TBB::tbb)
+
+find_package(qtadvanceddocking-qt6 REQUIRED)
+target_link_libraries(Artifact PRIVATE ads::qtadvanceddocking-qt6)
 
 find_package(glm CONFIG REQUIRED)
 target_link_libraries(Artifact PRIVATE glm::glm)
@@ -256,6 +262,7 @@ if(WIN32)
     endif()
 
     set(_ARTIFACT_COPY_RUNTIME_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/cmake/CopyVcpkgRuntimeDeps.cmake")
+    set(_ARTIFACT_COPY_QT_PLATFORM_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/cmake/CopyQtPlatformPlugin.cmake")
     set(_ARTIFACT_VCPKG_INSTALLED "${VCPKG_INSTALLED}")
     if(EXISTS "${CMAKE_BINARY_DIR}/vcpkg_installed/x64-windows")
         set(_ARTIFACT_VCPKG_INSTALLED "${CMAKE_BINARY_DIR}/vcpkg_installed/x64-windows")
@@ -267,6 +274,15 @@ if(WIN32)
             "-DCONFIG=$<CONFIG>"
             -P "${_ARTIFACT_COPY_RUNTIME_SCRIPT}"
         COMMENT "Deploying vcpkg runtime DLLs for Artifact"
+        VERBATIM
+    )
+    add_custom_command(TARGET Artifact POST_BUILD
+        COMMAND "${CMAKE_COMMAND}"
+            "-DTARGET_FILE_DIR=$<TARGET_FILE_DIR:Artifact>"
+            "-DVCPKG_INSTALLED=${_ARTIFACT_VCPKG_INSTALLED}"
+            "-DCONFIG=$<CONFIG>"
+            -P "${_ARTIFACT_COPY_QT_PLATFORM_SCRIPT}"
+        COMMENT "Deploying Qt platform plugin for Artifact"
         VERBATIM
     )
 endif()
