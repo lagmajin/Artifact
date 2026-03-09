@@ -7,6 +7,7 @@ project(Artifact)
 file(GLOB_RECURSE POTENTIAL_SOURCES CONFIGURE_DEPENDS 
     "src/*.cpp" "src/*.cppm" "src/*.ixx"
     "include/*.ixx" "include/*.cppm"
+    "include/**/*.ixx" "include/**/*.cppm"
 )
 
 set(APP_MODULES "")
@@ -253,6 +254,21 @@ if(WIN32)
     else()
         message(WARNING "windeployqt not found. Qt plugins and runtime DLLs will not be auto-deployed.")
     endif()
+
+    set(_ARTIFACT_COPY_RUNTIME_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/cmake/CopyVcpkgRuntimeDeps.cmake")
+    set(_ARTIFACT_VCPKG_INSTALLED "${VCPKG_INSTALLED}")
+    if(EXISTS "${CMAKE_BINARY_DIR}/vcpkg_installed/x64-windows")
+        set(_ARTIFACT_VCPKG_INSTALLED "${CMAKE_BINARY_DIR}/vcpkg_installed/x64-windows")
+    endif()
+    add_custom_command(TARGET Artifact POST_BUILD
+        COMMAND "${CMAKE_COMMAND}"
+            "-DTARGET_FILE_DIR=$<TARGET_FILE_DIR:Artifact>"
+            "-DVCPKG_INSTALLED=${_ARTIFACT_VCPKG_INSTALLED}"
+            "-DCONFIG=$<CONFIG>"
+            -P "${_ARTIFACT_COPY_RUNTIME_SCRIPT}"
+        COMMENT "Deploying vcpkg runtime DLLs for Artifact"
+        VERBATIM
+    )
 endif()
 
 # ---------------------------------------------------------------------------

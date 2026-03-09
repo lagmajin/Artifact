@@ -10,6 +10,8 @@ module;
 #include <QTimer>
 #include <QElapsedTimer>
 #include <QMessageBox>
+#include <QAbstractButton>
+#include <QPushButton>
 #include <QStandardPaths>
 #include <QJsonDocument>
 #include <QFileInfo>
@@ -67,8 +69,10 @@ import Script.Python.Engine;
 import Artifact.Service.Playback;
 import Artifact.Service.Project;
 import Artifact.Widgets.UndoHistoryWidget;
+import Artifact.Widgets.PythonHookManagerWidget;
 import Artifact.Project.Manager;
 import Artifact.Project.AutoSaveManager;
+import Artifact.Script.Hooks;
 
 using namespace Artifact;
 using namespace ArtifactCore;
@@ -119,29 +123,6 @@ namespace
    for (const QFileInfo& fileInfo : files)
    {
     py.executeFile(fileInfo.absoluteFilePath().toStdString());
-   }
-  }
- }
-
- void runStartupHookScript()
- {
-  auto& py = PythonEngine::instance();
-  if (!py.isInitialized())
-  {
-   return;
-  }
-
-  const QString appDir = QCoreApplication::applicationDirPath();
-  const QStringList candidates = {
-   QDir(appDir).filePath("scripts/hooks/on_startup.py"),
-   QDir(QDir::currentPath()).filePath("scripts/hooks/on_startup.py")
-  };
-  for (const QString& script : candidates)
-  {
-   if (QFileInfo::exists(script))
-   {
-    py.executeFile(script.toStdString());
-    break;
    }
   }
  }
@@ -389,7 +370,7 @@ int main(int argc, char* argv[])
 	 pool->setMaxThreadCount(10);
 
   bootstrapPythonScripts();
-  runStartupHookScript();
+  ArtifactPythonHookManager::runHook(QStringLiteral("on_startup"));
  test();
  ImageExporter exp;
  exp.testWrite();
@@ -406,6 +387,11 @@ int main(int argc, char* argv[])
     undoDock->setWidget(new ArtifactUndoHistoryWidget(undoDock));
     undoDock->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
     mw.addDockWidget(Qt::RightDockWidgetArea, undoDock);
+    auto* hookDock = new QDockWidget(QStringLiteral("Python Hooks"), &mw);
+    hookDock->setObjectName(QStringLiteral("PythonHooksDock"));
+    hookDock->setWidget(new ArtifactPythonHookManagerWidget(hookDock));
+    hookDock->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
+    mw.addDockWidget(Qt::RightDockWidgetArea, hookDock);
 
     auto* projectService = ArtifactProjectService::instance();
     auto* playbackService = ArtifactPlaybackService::instance();
@@ -419,11 +405,17 @@ int main(int argc, char* argv[])
         QObject::connect(projectService, &ArtifactProjectService::projectChanged, &mw, [status]() {
             status->setProjectText("Modified");
         });
+        QObject::connect(projectService, &ArtifactProjectService::projectChanged, &mw, []() {
+            ArtifactPythonHookManager::runHook(QStringLiteral("project_changed"));
+        });
         QObject::connect(projectService, &ArtifactProjectService::projectChanged, &mw, [autoSaveManager]() {
             if (autoSaveManager) autoSaveManager->markDirty();
         });
         QObject::connect(projectService, &ArtifactProjectService::layerCreated, &mw, [status](const CompositionID&, const LayerID&) {
             status->setProjectText("Layer Added");
+        });
+        QObject::connect(projectService, &ArtifactProjectService::layerCreated, &mw, [](const CompositionID& compId, const LayerID& layerId) {
+            ArtifactPythonHookManager::runHook(QStringLiteral("layer_added"), QStringList() << compId.toString() << layerId.toString());
         });
         QObject::connect(projectService, &ArtifactProjectService::layerCreated, &mw, [autoSaveManager](const CompositionID&, const LayerID&) {
             if (autoSaveManager) autoSaveManager->markDirty();
@@ -431,8 +423,17 @@ int main(int argc, char* argv[])
         QObject::connect(projectService, &ArtifactProjectService::layerRemoved, &mw, [status](const CompositionID&, const LayerID&) {
             status->setProjectText("Layer Removed");
         });
+        QObject::connect(projectService, &ArtifactProjectService::layerRemoved, &mw, [](const CompositionID& compId, const LayerID& layerId) {
+            ArtifactPythonHookManager::runHook(QStringLiteral("layer_removed"), QStringList() << compId.toString() << layerId.toString());
+        });
         QObject::connect(projectService, &ArtifactProjectService::layerRemoved, &mw, [autoSaveManager](const CompositionID&, const LayerID&) {
             if (autoSaveManager) autoSaveManager->markDirty();
+        });
+        QObject::connect(projectService, &ArtifactProjectService::compositionCreated, &mw, [](const CompositionID& compId) {
+            ArtifactPythonHookManager::runHook(QStringLiteral("composition_created"), QStringList() << compId.toString());
+        });
+        QObject::connect(projectService, &ArtifactProjectService::projectCreated, &mw, []() {
+            ArtifactPythonHookManager::runHook(QStringLiteral("project_opened"));
         });
     }
 

@@ -62,7 +62,7 @@ import Artifact.Composition.InitParams;
 import Artifact.Layer.InitParams;
 import Artifact.Layer.Result;
 import Artifact.Layer.Factory;
-import Script.Python.Engine;
+import Artifact.Script.Hooks;
 
 
 namespace Artifact {
@@ -132,23 +132,7 @@ namespace Artifact {
   }
   void runProjectHookScript(const QString& hookName, const QString& path)
   {
-    auto& py = ArtifactCore::PythonEngine::instance();
-    if (!py.isInitialized()) {
-      return;
-    }
-    py.setGlobalString("artifact_project_path", path.toStdString());
-
-    const QString appDir = QCoreApplication::applicationDirPath();
-    const QStringList candidates = {
-      QDir(appDir).filePath(QStringLiteral("scripts/hooks/%1.py").arg(hookName)),
-      QDir(QDir::currentPath()).filePath(QStringLiteral("scripts/hooks/%1.py").arg(hookName))
-    };
-    for (const QString& c : candidates) {
-      if (QFileInfo::exists(c)) {
-        py.executeFile(c.toStdString());
-        break;
-      }
-    }
+    ArtifactPythonHookManager::runHook(hookName, QStringList() << path);
   }
  }
 
