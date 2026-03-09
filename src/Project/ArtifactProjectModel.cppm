@@ -5,6 +5,7 @@
 #include <QPixmap>
 #include <QColor>
 #include <QCryptographicHash>
+#include <QFileInfo>
 #include <iostream>
 #include <vector>
 #include <string>
@@ -71,8 +72,8 @@ ArtifactProjectModel::Impl::Impl()
 {
   // create the internal model with no parent for now; ownership will be transferred
   model_ = new QStandardItemModel();
-  // ensure five columns: Name, Size, Duration, Frame Rate, ID
-  model_->setColumnCount(5);
+  // six columns: Name, Size, Duration, Frame Rate, Updated, ID
+  model_->setColumnCount(6);
 }
 
 ArtifactProjectModel::Impl::~Impl()
@@ -107,6 +108,7 @@ void ArtifactProjectModel::Impl::refreshTree()
   QStandardItem* sizeItem = new QStandardItem();
   QStandardItem* durationItem = new QStandardItem();
   QStandardItem* frameRateItem = new QStandardItem();
+  QStandardItem* updatedItem = new QStandardItem();
   QStandardItem* idItem = new QStandardItem();
 
   // store item type using ProjectItemDataRole.ProjectItemType
@@ -167,8 +169,17 @@ void ArtifactProjectModel::Impl::refreshTree()
     const QByteArray digest = QCryptographicHash::hash(footage->filePath.toUtf8(), QCryptographicHash::Sha1).toHex();
     item->setData(QString::fromUtf8(digest.left(16)), Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::AssetId));
     idItem->setText(QString::fromUtf8(digest.left(16)));
+    const QFileInfo fi(footage->filePath);
+    if (fi.exists()) {
+      sizeItem->setText(QString::number(fi.size() / 1024) + " KB");
+      updatedItem->setText(fi.lastModified().toString("yyyy-MM-dd HH:mm"));
+    } else {
+      sizeItem->setText("-");
+      updatedItem->setText("Missing");
+    }
   } else {
     item->setData(QString(), Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::AssetId));
+    updatedItem->setText("-");
   }
 
   // children (non-owning raw pointers)
@@ -177,7 +188,7 @@ void ArtifactProjectModel::Impl::refreshTree()
     item->appendRow(childRow);
   }
 
-  return QList<QStandardItem*>() << item << sizeItem << durationItem << frameRateItem << idItem;
+  return QList<QStandardItem*>() << item << sizeItem << durationItem << frameRateItem << updatedItem << idItem;
  };
 
  // Treat the first element in the project's root list as the project-root placeholder
@@ -248,7 +259,7 @@ ArtifactProjectModel::ArtifactProjectModel(QObject* parent/*=nullptr*/) :QAbstra
 
   // Ensure the internal model provides horizontal header labels for columns
   if (impl_->model_) {
-    impl_->model_->setHorizontalHeaderLabels(QStringList() << tr("Name") << tr("Size") << tr("Duration") << tr("Frame Rate") << tr("ID"));
+    impl_->model_->setHorizontalHeaderLabels(QStringList() << tr("Name") << tr("Size") << tr("Duration") << tr("Frame Rate") << tr("Updated") << tr("ID"));
   }
 }
 
@@ -346,14 +357,14 @@ return impl_->model_->rowCount(srcParent);
 
 int ArtifactProjectModel::columnCount(const QModelIndex& parent) const
 {
-  if (!impl_->model_) return 5;  // Default to 5 columns
+  if (!impl_->model_) return 6;  // Default to 6 columns
   if (!parent.isValid()) {
     int c = impl_->model_->columnCount();
-    return c > 0 ? c : 5; // ensure at least five columns for the view
+    return c > 0 ? c : 6; // ensure at least six columns for the view
   }
   QModelIndex srcParent = impl_->model_->index(parent.row(), 0, QModelIndex());
   int c = impl_->model_->columnCount(srcParent);
-  return c > 0 ? c : 5;
+  return c > 0 ? c : 6;
 }
 
 QVariant ArtifactProjectModel::headerData(int section, Qt::Orientation orientation, int role) const
@@ -372,7 +383,8 @@ QVariant ArtifactProjectModel::headerData(int section, Qt::Orientation orientati
     if (section == 1) return tr("Size");
     if (section == 2) return tr("Duration");
     if (section == 3) return tr("Frame Rate");
-    if (section == 4) return tr("ID");
+    if (section == 4) return tr("Updated");
+    if (section == 5) return tr("ID");
     return QVariant();
   }
   return impl_->model_->headerData(section, orientation, role);

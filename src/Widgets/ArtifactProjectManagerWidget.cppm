@@ -37,6 +37,8 @@ module;
 #include <QProgressBar>
 #include <QStandardPaths>
 #include <QSet>
+#include <QDialog>
+#include <QTreeWidget>
 
 #include <iostream>
 #include <vector>
@@ -84,6 +86,7 @@ import Artifact.Project.Model;
 import Artifact.Project.Items;
 import Artifact.Project.Roles;
 import Artifact.Project.Cleanup;
+import Artifact.Composition.Abstract;
 import Artifact.Layer.Search.Query;
 import Artifact.Widgets.LayerPanelWidget;
 
@@ -455,6 +458,88 @@ public:
         }
         return relinked;
     }
+
+    static void showDependencyGraphDialog(QWidget* parent, ArtifactProjectService* svc) {
+        if (!svc) return;
+        auto project = svc->getCurrentProjectSharedPtr();
+        if (!project) return;
+
+        auto* dialog = new QDialog(parent);
+        dialog->setWindowTitle("Composition Dependency Graph");
+        dialog->resize(720, 520);
+        auto* layout = new QVBoxLayout(dialog);
+        auto* tree = new QTreeWidget(dialog);
+        tree->setColumnCount(3);
+        tree->setHeaderLabels(QStringList() << "Node" << "Depends On" << "Type");
+        layout->addWidget(tree);
+
+        QHash<QString, QString> footageByPath;
+        const auto roots = project->projectItems();
+        std::function<void(ProjectItem*)> gather = [&](ProjectItem* item) {
+            if (!item) return;
+            if (item->type() == eProjectItemType::Footage) {
+                auto* f = static_cast<FootageItem*>(item);
+                footageByPath.insert(f->filePath, f->name.toQString());
+            }
+            for (auto* c : item->children) gather(c);
+        };
+        for (auto* r : roots) gather(r);
+
+        std::function<void(ProjectItem*)> visit = [&](ProjectItem* item) {
+            if (!item) return;
+            if (item->type() == eProjectItemType::Composition) {
+                auto* compItem = static_cast<CompositionItem*>(item);
+                auto rootNode = new QTreeWidgetItem(tree);
+                rootNode->setText(0, compItem->name.toQString());
+                rootNode->setText(1, "-");
+                rootNode->setText(2, "Composition");
+
+                auto findRes = project->findComposition(compItem->compositionId);
+                if (findRes.success) {
+                    if (auto comp = findRes.ptr.lock()) {
+                        for (const auto& layer : comp->allLayer()) {
+                            if (!layer) continue;
+                            auto* layerNode = new QTreeWidgetItem(rootNode);
+                            layerNode->setText(0, layer->layerName());
+                            layerNode->setText(1, "-");
+                            layerNode->setText(2, "Layer");
+
+                            const auto groups = layer->getLayerPropertyGroups();
+                            for (const auto& g : groups) {
+                                for (const auto& p : g.allProperties()) {
+                                    if (!p) continue;
+                                    const QString propName = p->getName().toLower();
+                                    if (!propName.contains("path") &&
+                                        !propName.contains("source") &&
+                                        !propName.contains("composition")) {
+                                        continue;
+                                    }
+                                    const QString value = p->getValue().toString().trimmed();
+                                    if (value.isEmpty()) continue;
+                                    auto* depNode = new QTreeWidgetItem(layerNode);
+                                    depNode->setText(0, p->getName());
+                                    depNode->setText(1, value);
+                                    if (footageByPath.contains(value)) {
+                                        depNode->setText(2, "Footage");
+                                    } else if (value.contains('-') || value.contains('{')) {
+                                        depNode->setText(2, "Composition?");
+                                    } else {
+                                        depNode->setText(2, "PropertyRef");
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            for (auto* c : item->children) visit(c);
+        };
+        for (auto* r : roots) visit(r);
+
+        tree->expandToDepth(1);
+        dialog->exec();
+        dialog->deleteLater();
+    }
 };
 
 ArtifactProjectView::ArtifactProjectView(QWidget* parent) : QTreeView(parent), impl_(new Impl()) {
@@ -701,6 +786,9 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
     menu.addAction("Expand All", [this]() { expandAll(); });
     menu.addAction("Collapse All", [this]() { collapseAll(); });
     menu.addAction("Refresh View", [this]() { viewport()->update(); });
+    menu.addAction("Show Dependency Graph...", [this, svc]() {
+        Impl::showDependencyGraphDialog(this, svc);
+    });
     menu.addSeparator();
     menu.addAction("Relink Missing Footage...", [this, svc]() {
         if (!svc) return;

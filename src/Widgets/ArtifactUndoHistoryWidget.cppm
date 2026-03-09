@@ -1,6 +1,12 @@
 module;
 #include <wobjectimpl.h>
+#include <QWidget>
 #include <QFrame>
+#include <QLabel>
+#include <QListWidget>
+#include <QPushButton>
+#include <QVBoxLayout>
+#include <QHBoxLayout>
 
 #include <iostream>
 #include <vector>
