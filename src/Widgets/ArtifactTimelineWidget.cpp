@@ -965,21 +965,19 @@ TimelineTrackView::TimelineTrackView(QWidget* parent /*= nullptr*/) :QGraphicsVi
     }
     
     if (clickedHandle) {
-     // Do not seek when operating resize handles; let QGraphicsItem drag logic own the input.
+     // Do not seek when operating resize handles; let QGraphicsItem input own this event.
+     QGraphicsView::mousePressEvent(event);
+     return;
     } else if (clickedClip) {
-     // Clip selected/deselected
-     bool isSelected = clickedClip->isSelected();
-     if (!isSelected && !(event->modifiers() & Qt::ShiftModifier)) {
-      clearSelection();
-     }
-     clickedClip->setSelected(!isSelected);
-     
+     // Let scene/view default selection logic run, then publish selection signal.
+     QGraphicsView::mousePressEvent(event);
      if (clickedClip->isSelected()) {
       impl_->lastSelectedClip_ = clickedClip;
       Q_EMIT clipSelected(clickedClip);
      } else {
       Q_EMIT clipDeselected(clickedClip);
      }
+     return;
     } else {
      // Scrub hotspot at the very top of the right clip scene.
      // Only seek from this zone when no clip/handle is under cursor.
