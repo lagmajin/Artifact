@@ -2,6 +2,7 @@ module;
 #include <QCoreApplication>
 #include <QDir>
 #include <QFileInfo>
+#include <QStandardPaths>
 #include <QSettings>
 
 #include <iostream>
@@ -41,8 +42,27 @@ module Artifact.Script.Hooks;
 
 import Artifact.Script.Hooks;
 import Script.Python.Engine;
+import Core.FastSettingsStore;
 
 namespace Artifact {
+namespace {
+ArtifactCore::FastSettingsStore& hookSettingsStore()
+{
+ static ArtifactCore::FastSettingsStore store;
+ static bool initialized = false;
+ if (!initialized) {
+  const QString appDataDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+  QDir dir(appDataDir);
+  if (!dir.exists()) {
+   dir.mkpath(QStringLiteral("."));
+  }
+  store.open(dir.filePath(QStringLiteral("python_hooks.cbor")));
+  store.setAutoSyncThreshold(4);
+  initialized = true;
+ }
+ return store;
+}
+}
 
 QStringList ArtifactPythonHookManager::knownHooks()
 {
@@ -81,19 +101,28 @@ bool ArtifactPythonHookManager::hookScriptExists(const QString& hookName)
 
 bool ArtifactPythonHookManager::isHookEnabled(const QString& hookName)
 {
- QSettings settings(QStringLiteral("ArtifactStudio"), QStringLiteral("Artifact"));
- settings.beginGroup(QStringLiteral("PythonHooks/Enabled"));
- const bool enabled = settings.value(hookName, true).toBool();
- settings.endGroup();
+ auto& store = hookSettingsStore();
+ const QString key = QStringLiteral("PythonHooks/Enabled/%1").arg(hookName);
+ if (store.contains(key)) {
+  return store.value(key, true).toBool();
+ }
+
+ // Backward compatibility: migrate once from QSettings.
+ QSettings legacy(QStringLiteral("ArtifactStudio"), QStringLiteral("Artifact"));
+ legacy.beginGroup(QStringLiteral("PythonHooks/Enabled"));
+ const bool enabled = legacy.value(hookName, true).toBool();
+ legacy.endGroup();
+ store.setValue(key, enabled);
+ store.sync();
  return enabled;
 }
 
 void ArtifactPythonHookManager::setHookEnabled(const QString& hookName, bool enabled)
 {
- QSettings settings(QStringLiteral("ArtifactStudio"), QStringLiteral("Artifact"));
- settings.beginGroup(QStringLiteral("PythonHooks/Enabled"));
- settings.setValue(hookName, enabled);
- settings.endGroup();
+ auto& store = hookSettingsStore();
+ const QString key = QStringLiteral("PythonHooks/Enabled/%1").arg(hookName);
+ store.setValue(key, enabled);
+ store.sync();
 }
 
 bool ArtifactPythonHookManager::runHook(const QString& hookName, const QStringList& args)

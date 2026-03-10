@@ -3,9 +3,9 @@ module;
 #include <QtCore/QtGlobal>
 #include <QApplication>
 #include <QMainWindow>
-#include <QSettings>
 #include <QDateTime>
 #include <QDir>
+#include <QSettings>
 #include <QImage>
 #include <QTimer>
 #include <QElapsedTimer>
@@ -54,6 +54,7 @@ import ImageProcessing;
 import Graphics;
 import SearchImage;
 import UI.Layout.State;
+import Core.FastSettingsStore;
 
 import Test;
 
@@ -530,8 +531,24 @@ int main(int argc, char* argv[])
     }
 
     {
-        QSettings settings("ArtifactStudio", "Artifact");
-        auto layoutState = UiLayoutState::loadFromSettings(settings, "MainWindow");
+        const QString appDataDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+        QDir dataDir(appDataDir);
+        if (!dataDir.exists()) {
+            dataDir.mkpath(QStringLiteral("."));
+        }
+        ArtifactCore::FastSettingsStore layoutStore(dataDir.filePath(QStringLiteral("main_window_layout.cbor")));
+        if (!layoutStore.contains(QStringLiteral("MainWindow/layoutKey")) &&
+            !layoutStore.contains(QStringLiteral("MainWindow/geometry")) &&
+            !layoutStore.contains(QStringLiteral("MainWindow/state"))) {
+            // Backward compatibility: import once from legacy QSettings.
+            QSettings legacy(QStringLiteral("ArtifactStudio"), QStringLiteral("Artifact"));
+            auto legacyState = UiLayoutState::loadFromSettings(legacy, QStringLiteral("MainWindow"));
+            if (!legacyState.isEmpty()) {
+                legacyState.saveToStore(layoutStore, QStringLiteral("MainWindow"));
+                layoutStore.sync();
+            }
+        }
+        auto layoutState = UiLayoutState::loadFromStore(layoutStore, "MainWindow");
         bool geometryRestored = true;
         bool stateRestored = true;
         if (!layoutState.geometry.isEmpty()) {
@@ -543,19 +560,28 @@ int main(int argc, char* argv[])
         if ((!layoutState.geometry.isEmpty() && !geometryRestored) ||
             (!layoutState.state.isEmpty() && !stateRestored)) {
             // Saved layout is likely incompatible with current dock/widget set.
-            settings.remove("MainWindow");
+            layoutStore.remove("MainWindow/layoutKey");
+            layoutStore.remove("MainWindow/version");
+            layoutStore.remove("MainWindow/geometry");
+            layoutStore.remove("MainWindow/state");
+            layoutStore.sync();
             mw->resize(1600, 900);
         }
     }
     mw->setDockVisible(QStringLiteral("Layer View (Diligent)"), true);
 
     QObject::connect(&a, &QCoreApplication::aboutToQuit, [mw]() {
-        QSettings settings("ArtifactStudio", "Artifact");
+        const QString appDataDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+        QDir dataDir(appDataDir);
+        if (!dataDir.exists()) {
+            dataDir.mkpath(QStringLiteral("."));
+        }
+        ArtifactCore::FastSettingsStore layoutStore(dataDir.filePath(QStringLiteral("main_window_layout.cbor")));
         UiLayoutState layoutState("ArtifactMainWindow");
         layoutState.geometry = mw->saveGeometry();
         layoutState.state = mw->saveState();
-        layoutState.saveToSettings(settings, "MainWindow");
-        settings.sync();
+        layoutState.saveToStore(layoutStore, "MainWindow");
+        layoutStore.sync();
     });
     QObject::connect(&a, &QCoreApplication::aboutToQuit, mw, &QObject::deleteLater);
     QObject::connect(&a, &QCoreApplication::aboutToQuit, [&]() {

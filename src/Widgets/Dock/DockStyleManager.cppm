@@ -4,6 +4,7 @@
 #include <QColor>
 #include <QGraphicsDropShadowEffect>
 #include <QPointer>
+#include <QWidget>
 #include <wobjectimpl.h>
 #include "DockManager.h"
 #include "DockWidget.h"
@@ -36,7 +37,7 @@ DockStyleManager::DockStyleManager(ads::CDockManager* dockManager, QObject* pare
     
     auto applyTabGlow = [](ads::CDockWidget* dockWidget) {
         if (!dockWidget) return;
-        auto* tab = dockWidget->tabWidget();
+        auto* tab = reinterpret_cast<QWidget*>(dockWidget->tabWidget());
         if (!tab) return;
 
         tab->setProperty("artifactActiveTab", true);
@@ -50,7 +51,7 @@ DockStyleManager::DockStyleManager(ads::CDockManager* dockManager, QObject* pare
 
     auto clearTabGlow = [](ads::CDockWidget* dockWidget) {
         if (!dockWidget) return;
-        auto* tab = dockWidget->tabWidget();
+        auto* tab = reinterpret_cast<QWidget*>(dockWidget->tabWidget());
         if (!tab) return;
 
         tab->setProperty("artifactActiveTab", false);
