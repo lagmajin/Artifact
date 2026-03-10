@@ -200,13 +200,21 @@ using namespace ArtifactWidgets;
     if (!trackView_ || !seekBar_) {
      return QObject::eventFilter(watched, event);
     }
-    if (event->type() != QEvent::MouseButtonPress) {
+    if (event->type() != QEvent::MouseButtonPress &&
+        event->type() != QEvent::MouseMove) {
      return QObject::eventFilter(watched, event);
     }
 
     auto* mouseEvent = dynamic_cast<QMouseEvent*>(event);
     auto* sourceWidget = qobject_cast<QWidget*>(watched);
-    if (!mouseEvent || !sourceWidget || mouseEvent->button() != Qt::LeftButton) {
+    if (!mouseEvent || !sourceWidget) {
+     return QObject::eventFilter(watched, event);
+    }
+
+    if (event->type() == QEvent::MouseButtonPress && mouseEvent->button() != Qt::LeftButton) {
+     return QObject::eventFilter(watched, event);
+    }
+    if (event->type() == QEvent::MouseMove && !(mouseEvent->buttons() & Qt::LeftButton)) {
      return QObject::eventFilter(watched, event);
     }
 
@@ -215,7 +223,26 @@ using namespace ArtifactWidgets;
     }
 
     const QPoint viewportPos = sourceWidget->mapTo(trackView_->viewport(), mouseEvent->pos());
+    if (!trackView_->viewport()->rect().contains(viewportPos)) {
+     return QObject::eventFilter(watched, event);
+    }
+
+    // For the clip viewport, only treat the top scrub zone as direct seek area.
+    if (sourceWidget == trackView_->viewport() && viewportPos.y() > kTopSeekHotZonePx) {
+     return QObject::eventFilter(watched, event);
+    }
+
     const QPointF scenePos = trackView_->mapToScene(viewportPos);
+    if (sourceWidget == trackView_->viewport() && trackView_->scene()) {
+     // Do not steal input from clip/resize handle interactions.
+     const auto items = trackView_->scene()->items(scenePos, Qt::IntersectsItemShape);
+     for (auto* item : items) {
+      if (dynamic_cast<ResizeHandle*>(item) || dynamic_cast<ClipItem*>(item)) {
+       return QObject::eventFilter(watched, event);
+      }
+     }
+    }
+
     const double frameMax = std::max(1.0, timelineFrameMax(trackView_->duration()));
     const double clamped = std::clamp(scenePos.x(), 0.0, frameMax);
     const int frame = static_cast<int>(std::round(clamped));
@@ -424,6 +451,9 @@ W_OBJECT_IMPL(ArtifactTimelineWidget)
   timeRulerWidget->installEventFilter(headerSeekFilter);
   timeScaleWidget->installEventFilter(headerSeekFilter);
   workAreaWidget->installEventFilter(headerSeekFilter);
+  if (timelineTrackView->viewport()) {
+   timelineTrackView->viewport()->installEventFilter(headerSeekFilter);
+  }
 
   auto* playheadOverlay = new TimelinePlayheadOverlay(rightPanel);
   auto* playheadSync = new PlayheadSyncFilter(rightPanel, timelineTrackView, playheadOverlay, rightPanel);
