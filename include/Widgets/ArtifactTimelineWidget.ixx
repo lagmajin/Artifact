@@ -4,6 +4,7 @@
 #include <QGraphicsView>
 #include <QMouseEvent>
 #include <QWheelEvent>
+#include <QKeyEvent>
 #include <QGraphicsScene>
 #include <vector>
 
@@ -95,6 +96,8 @@ using namespace ArtifactCore;
   // Snap strength control
   void setSnapStrength(SnapStrength strength);
   [[nodiscard]] SnapStrength snapStrength() const;
+  void setRippleEditEnabled(bool enabled);
+  [[nodiscard]] bool rippleEditEnabled() const;
   
   // Visual helpers
   void highlightTrack(int trackIndex);
@@ -113,6 +116,7 @@ class TimelineTrackView :public QGraphicsView {
   void mousePressEvent(QMouseEvent* event) override;
   void mouseMoveEvent(QMouseEvent* event) override;
   void mouseReleaseEvent(QMouseEvent* event) override;
+  void keyPressEvent(QKeyEvent* event) override;
   void wheelEvent(QWheelEvent* event) override;
   void resizeEvent(QResizeEvent* event) override;
 

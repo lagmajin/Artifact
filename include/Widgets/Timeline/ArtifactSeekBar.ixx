@@ -20,9 +20,11 @@ export namespace Artifact
 
  protected:
   void paintEvent(QPaintEvent* event) override;
-  void mousePressEvent(QMouseEvent* event) override;
-  void mouseMoveEvent(QMouseEvent* event) override;
-  void mouseReleaseEvent(QMouseEvent* event) override;
+ void mousePressEvent(QMouseEvent* event) override;
+ void mouseMoveEvent(QMouseEvent* event) override;
+ void mouseReleaseEvent(QMouseEvent* event) override;
+ QSize sizeHint() const override;
+ QSize minimumSizeHint() const override;
 
  public:
   explicit ArtifactSeekBar(QWidget* parent = nullptr);

@@ -42,7 +42,9 @@ export namespace Artifact
    Impl* impl_;
   protected:
    void mousePressEvent(QMouseEvent* event) override;
+   void mouseDoubleClickEvent(QMouseEvent* event) override;
    void mouseMoveEvent(QMouseEvent* event) override;
+   void keyPressEvent(QKeyEvent* event) override;
    void leaveEvent(QEvent* event) override;
    void paintEvent(QPaintEvent* event) override;
    void dragEnterEvent(class QDragEnterEvent* event) override;

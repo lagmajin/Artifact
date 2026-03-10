@@ -85,6 +85,7 @@ namespace Artifact {
     QString name_;
     ArtifactAbstractComposition* composition_ = nullptr;
     LayerID parentLayerId_;
+    LAYER_BLEND_TYPE blendMode_ = LAYER_BLEND_TYPE::BLEND_NORMAL;
     LayerState state_;
     FramePosition inPoint_ = FramePosition(0);
     FramePosition outPoint_ = FramePosition(300); // Default 10s at 30fps
@@ -194,16 +195,21 @@ namespace Artifact {
 
  }
 
- LAYER_BLEND_TYPE ArtifactAbstractLayer::layerBlendType() const
- {
+LAYER_BLEND_TYPE ArtifactAbstractLayer::layerBlendType() const
+{
+  return impl_->blendMode_;
+}
 
-  return LAYER_BLEND_TYPE::BLEND_ADD;
- }
-
- void ArtifactAbstractLayer::setBlendMode(LAYER_BLEND_TYPE type)
- {
-
- }
+void ArtifactAbstractLayer::setBlendMode(LAYER_BLEND_TYPE type)
+{
+  if (impl_->blendMode_ == type) {
+   return;
+  }
+  impl_->blendMode_ = type;
+  setDirty(LayerDirtyFlag::Effect);
+  addDirtyReason(LayerDirtyReason::PropertyChanged);
+  Q_EMIT changed();
+}
 
  LayerID ArtifactAbstractLayer::id() const
  {
@@ -388,21 +394,66 @@ namespace Artifact {
   return impl_->isVisible_;
  }
 
- void ArtifactAbstractLayer::setParentById(const LayerID& id)
- {
+void ArtifactAbstractLayer::setParentById(const LayerID& id)
+{
+  if (id.isNil()) {
+   clearParent();
+   return;
+  }
+
+  if (id == this->id()) {
+   qWarning() << "[Layer] Reject self-parent:" << id.toString();
+   return;
+  }
+
+  if (impl_->composition_) {
+   auto parent = impl_->composition_->layerById(id);
+   if (!parent) {
+    qWarning() << "[Layer] Reject invalid parent id:" << id.toString();
+    return;
+   }
+
+   LayerID cursor = id;
+   int guard = 0;
+   while (!cursor.isNil() && guard++ < 1024) {
+    if (cursor == this->id()) {
+     qWarning() << "[Layer] Reject cyclic parent:" << id.toString();
+     return;
+    }
+    auto node = impl_->composition_->layerById(cursor);
+    if (!node) {
+     break;
+    }
+    cursor = node->parentLayerId();
+   }
+  }
+
+  if (impl_->parentLayerId_ == id) {
+   return;
+  }
+
   impl_->parentLayerId_ = id;
+  setDirty(LayerDirtyFlag::Transform);
+  addDirtyReason(LayerDirtyReason::TransformChanged);
   qDebug() << "[Layer] Parent set to:" << id.toString();
- }
+  Q_EMIT changed();
+}
 
  LayerID ArtifactAbstractLayer::parentLayerId() const
  {
   return impl_->parentLayerId_;
  }
 
- void ArtifactAbstractLayer::clearParent()
- {
+void ArtifactAbstractLayer::clearParent()
+{
+  if (impl_->parentLayerId_.isNil()) {
+   return;
+  }
   impl_->parentLayerId_ = LayerID();
- }
+  setDirty(LayerDirtyFlag::Transform);
+  addDirtyReason(LayerDirtyReason::TransformChanged);
+  Q_EMIT changed();
+}
 
  bool ArtifactAbstractLayer::hasParent() const
  {
@@ -642,6 +693,15 @@ void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject& obj)
     if (obj.contains("isGuide")) setGuide(obj["isGuide"].toBool());
     if (obj.contains("isSolo")) setSolo(obj["isSolo"].toBool());
     if (obj.contains("isShy")) setShy(obj["isShy"].toBool());
+    if (obj.contains("blendMode")) {
+        const int mode = obj["blendMode"].toInt(static_cast<int>(LAYER_BLEND_TYPE::BLEND_NORMAL));
+        setBlendMode(static_cast<LAYER_BLEND_TYPE>(mode));
+    }
+    if (obj.contains("parentId")) {
+        const QString parentId = obj["parentId"].toString();
+        if (parentId.isEmpty()) clearParent();
+        else setParentById(LayerID(parentId));
+    }
     
     if (obj.contains("transform") && obj["transform"].isObject()) {
         QJsonObject trans = obj["transform"].toObject();

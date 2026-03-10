@@ -18,6 +18,12 @@ module Artifact.Timeline.Objects;
 
 namespace Artifact
 {
+namespace {
+// Prevent recursive resize notifications while ClipItem synchronizes geometry.
+thread_local bool g_clipGeometrySyncInProgress = false;
+constexpr double kResizeHandleHalfWidth = 4.0;
+constexpr double kMinClipDuration = 10.0;
+}
 
 // Pimpl for ClipItem
 class ClipItem::Impl {
@@ -39,18 +45,17 @@ public:
 
  ResizeHandle::ResizeHandle(Side s, QGraphicsItem* parent) : QGraphicsObject(parent), side(s)
  {
-  //setRect(0, 0, 6, parent->boundingRect().height());
-  //setBrush(Qt::gray);
-  //setCursor(s == Left ? Qt::SizeHorCursor : Qt::SizeHorCursor);
-  setFlag(ItemIsMovable);
+  setFlag(ItemIsMovable, false);
   setFlag(ItemSendsGeometryChanges);
+  setAcceptedMouseButtons(Qt::LeftButton);
   setCursor(Qt::SizeHorCursor);
  }
 
 W_OBJECT_IMPL(ClipItem)
 
 QRectF ResizeHandle::boundingRect() const {
-    return QRectF(0, 0, 6, parentItem() ? parentItem()->boundingRect().height() : 20);
+    return QRectF(-kResizeHandleHalfWidth, 0, kResizeHandleHalfWidth * 2.0,
+        parentItem() ? parentItem()->boundingRect().height() : 20.0);
 }
 
 void ResizeHandle::paint(QPainter* painter, const QStyleOptionGraphicsItem* option, QWidget* widget)
@@ -58,9 +63,14 @@ void ResizeHandle::paint(QPainter* painter, const QStyleOptionGraphicsItem* opti
     Q_UNUSED(option);
     Q_UNUSED(widget);
     painter->save();
-    painter->setPen(Qt::NoPen);
-    painter->setBrush(QColor(200, 200, 200));
-    painter->drawRect(boundingRect());
+    const QRectF r = boundingRect();
+    painter->setPen(QPen(QColor(18, 18, 18, 160), 1));
+    painter->setBrush(QColor(226, 226, 226, 220));
+    painter->drawRoundedRect(r.adjusted(0.5, 0.5, -0.5, -0.5), 2.0, 2.0);
+    painter->setPen(QPen(QColor(70, 70, 70, 180), 1));
+    const qreal cx = 0.0;
+    const qreal cy = r.center().y();
+    painter->drawLine(QPointF(cx, cy - 5.0), QPointF(cx, cy + 5.0));
     painter->restore();
 }
 
@@ -68,17 +78,47 @@ void ResizeHandle::paint(QPainter* painter, const QStyleOptionGraphicsItem* opti
 
 QVariant ResizeHandle::itemChange(GraphicsItemChange change, const QVariant& value)
 {
+    if (g_clipGeometrySyncInProgress) {
+        return QGraphicsObject::itemChange(change, value);
+    }
     if (change == QGraphicsItem::ItemPositionChange && parentItem()) {
-        // Notify parent clip about handle move
-        auto clip = dynamic_cast<ClipItem*>(parentItem());
-        if (clip) {
-            QPointF newPos = value.toPointF();
-            // newPos is in parent's coordinates; convert to scene X
-            qreal sceneX = parentItem()->mapToScene(newPos).x();
-            clip->handleMoved(side, sceneX);
+        Q_UNUSED(value);
+        if (auto* clip = dynamic_cast<ClipItem*>(parentItem())) {
+            const qreal anchoredX = (side == Left) ? 0.0 : clip->getDuration();
+            return QPointF(anchoredX, 0.0);
         }
+        return QPointF(0.0, 0.0);
     }
     return QGraphicsObject::itemChange(change, value);
+}
+
+void ResizeHandle::mousePressEvent(QGraphicsSceneMouseEvent* event)
+{
+    if (auto* clip = dynamic_cast<ClipItem*>(parentItem())) {
+        // Prevent parent clip from receiving a tiny move while resizing.
+        clip->setFlag(QGraphicsItem::ItemIsMovable, false);
+    }
+    grabMouse();
+    event->accept();
+}
+
+void ResizeHandle::mouseMoveEvent(QGraphicsSceneMouseEvent* event)
+{
+    if (auto* clip = dynamic_cast<ClipItem*>(parentItem())) {
+        clip->handleMoved(side, event->scenePos().x());
+    }
+    event->accept();
+}
+
+void ResizeHandle::mouseReleaseEvent(QGraphicsSceneMouseEvent* event)
+{
+    if (scene() && scene()->mouseGrabberItem() == this) {
+        ungrabMouse();
+    }
+    if (auto* clip = dynamic_cast<ClipItem*>(parentItem())) {
+        clip->setFlag(QGraphicsItem::ItemIsMovable, true);
+    }
+    event->accept();
 }
 
 
@@ -183,27 +223,24 @@ void ClipItem::handleMoved(ResizeHandle::Side side, qreal sceneX)
     if (!impl_) {
         return;
     }
-    
-    double newStart = impl_->start;
+
+    const double oldStart = impl_->start;
+    const double oldEnd = impl_->start + impl_->duration;
+    double newStart = oldStart;
     double newDuration = impl_->duration;
-    
+
     if (side == ResizeHandle::Left) {
-        // Left handle: adjust start and duration
-        double delta = sceneX - (impl_->start + mapToScene(pos()).x());
-        newStart = std::max(0.0, impl_->start + delta);
-        newDuration = impl_->duration - (newStart - impl_->start);
-        
-        // Maintain minimum duration
-        if (newDuration < impl_->minDuration) {
-            newStart = impl_->start + (impl_->duration - impl_->minDuration);
-            newDuration = impl_->minDuration;
-        }
+        // Left edge follows handle scene-x. Keep right edge fixed.
+        const double maxStart = oldEnd - impl_->minDuration;
+        newStart = std::clamp(static_cast<double>(sceneX), 0.0, maxStart);
+        newDuration = oldEnd - newStart;
     } else if (side == ResizeHandle::Right) {
-        // Right handle: adjust duration only
-        double newEnd = sceneX;
-        newDuration = std::max(impl_->minDuration, newEnd - impl_->start);
+        // Right edge follows handle scene-x. Keep left edge fixed.
+        const double minEnd = oldStart + impl_->minDuration;
+        const double newEnd = std::max(static_cast<double>(sceneX), minEnd);
+        newDuration = newEnd - oldStart;
     }
-    
+
     setStartDuration(newStart, newDuration);
     update();
 }
@@ -214,19 +251,24 @@ void ClipItem::setStartDuration(double start, double duration)
         return;
     }
     
+    g_clipGeometrySyncInProgress = true;
     impl_->start = std::max(0.0, start);
     impl_->duration = std::max(impl_->minDuration, duration);
     
     // Update position
-    setPos(impl_->start, pos().y());
+    setPos(impl_->start, std::round(pos().y()));
     
     // Update right handle position
+    if (impl_->leftHandle) {
+        impl_->leftHandle->setPos(0.0, 0.0);
+    }
     if (impl_->rightHandle) {
         impl_->rightHandle->setPos(impl_->duration, 0);
     }
     
     // Update bounding rect
     prepareGeometryChange();
+    g_clipGeometrySyncInProgress = false;
 }
 
 double ClipItem::getStart() const
@@ -242,8 +284,10 @@ double ClipItem::getDuration() const
 void ClipItem::setStart(double start)
 {
     if (impl_) {
+        g_clipGeometrySyncInProgress = true;
         impl_->start = std::max(0.0, start);
-        setPos(impl_->start, pos().y());
+        setPos(impl_->start, std::round(pos().y()));
+        g_clipGeometrySyncInProgress = false;
         update();
     }
 }
@@ -251,11 +295,16 @@ void ClipItem::setStart(double start)
 void ClipItem::setDuration(double duration)
 {
     if (impl_) {
+        g_clipGeometrySyncInProgress = true;
         impl_->duration = std::max(impl_->minDuration, duration);
+        if (impl_->leftHandle) {
+            impl_->leftHandle->setPos(0.0, 0.0);
+        }
         if (impl_->rightHandle) {
             impl_->rightHandle->setPos(impl_->duration, 0);
         }
         prepareGeometryChange();
+        g_clipGeometrySyncInProgress = false;
         update();
     }
 }
@@ -263,6 +312,10 @@ void ClipItem::setDuration(double duration)
 void ClipItem::mousePressEvent(QGraphicsSceneMouseEvent* event)
 {
     if (!impl_) return;
+    if (!flags().testFlag(QGraphicsItem::ItemIsMovable)) {
+        event->accept();
+        return;
+    }
     impl_->dragStartScenePos = event->scenePos();
     impl_->dragStartItemPos = pos();
     impl_->isDragging = false;
@@ -274,6 +327,10 @@ void ClipItem::mousePressEvent(QGraphicsSceneMouseEvent* event)
 void ClipItem::mouseMoveEvent(QGraphicsSceneMouseEvent* event)
 {
     if (!impl_) return;
+    if (!flags().testFlag(QGraphicsItem::ItemIsMovable)) {
+        event->accept();
+        return;
+    }
     QPointF delta = event->scenePos() - impl_->dragStartScenePos;
     // start drag if moved beyond threshold
     if (!impl_->isDragging && (std::abs(delta.x()) > 4 || std::abs(delta.y()) > 4)) {
@@ -301,6 +358,10 @@ void ClipItem::mouseMoveEvent(QGraphicsSceneMouseEvent* event)
 void ClipItem::mouseReleaseEvent(QGraphicsSceneMouseEvent* event)
 {
     if (!impl_) return;
+    if (!flags().testFlag(QGraphicsItem::ItemIsMovable)) {
+        event->accept();
+        return;
+    }
     if (impl_->isDragging) {
         // finalize drag
         if (impl_->ghostRect) {

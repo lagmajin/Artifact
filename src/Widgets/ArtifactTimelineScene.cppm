@@ -103,7 +103,10 @@ namespace Artifact
     {
      continue;
     }
-    clip->setPos(clip->pos().x(), trackTopY(trackIndex));
+    const double trackH = trackHeights_[trackIndex];
+    const double clipH = clip->sceneBoundingRect().height();
+    const double centeredY = trackTopY(trackIndex) + std::max(0.0, (trackH - clipH) * 0.5);
+    clip->setPos(clip->pos().x(), centeredY);
    }
   }
 
@@ -408,10 +411,11 @@ TimelineScene::TimelineScene(QWidget* parent) : QGraphicsScene(parent), impl_(ne
    return nullptr;
   }
 
-  const double yPos = getTrackYPosition(trackIndex);
-  const double height = impl_->trackHeights_[trackIndex];
+  const double trackHeight = impl_->trackHeights_[trackIndex];
+  const double clipHeight = std::max(14.0, trackHeight - 6.0);
+  const double yPos = getTrackYPosition(trackIndex) + std::max(0.0, (trackHeight - clipHeight) * 0.5);
 
-  auto* clip = createClipItem(start, duration, height);
+  auto* clip = createClipItem(start, duration, clipHeight);
   clip->setPos(std::max(0.0, start), yPos);
   addItem(clip);
   impl_->clips_.push_back(clip);
@@ -474,7 +478,10 @@ TimelineScene::TimelineScene(QWidget* parent) : QGraphicsScene(parent), impl_(ne
     impl_->clipTracks_[movingClip] = dstTrack;
 
     const double dstX = std::max(0.0, posIt->second.x() + deltaX);
-    movingClip->setPos(dstX, getTrackYPosition(dstTrack));
+    const double trackH = impl_->trackHeights_[dstTrack];
+    const double clipH = movingClip->sceneBoundingRect().height();
+    const double centeredY = getTrackYPosition(dstTrack) + std::max(0.0, (trackH - clipH) * 0.5);
+    movingClip->setPos(dstX, centeredY);
     moved.insert(movingClip);
    }
 
@@ -559,5 +566,15 @@ void TimelineScene::clearSelection()
  TimelineScene::SnapStrength TimelineScene::snapStrength() const
  {
   return impl_->snapStrength_;
+ }
+
+ void TimelineScene::setRippleEditEnabled(const bool enabled)
+ {
+  impl_->rippleEditEnabled_ = enabled;
+ }
+
+ bool TimelineScene::rippleEditEnabled() const
+ {
+  return impl_->rippleEditEnabled_;
  }
 }
