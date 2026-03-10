@@ -199,6 +199,51 @@ void sanitizeSessionStateStore()
   {
     sessionStore.remove(QStringLiteral("Session/lastCleanExitTimestamp"));
   }
+
+  const QVariant layoutAttempted = sessionStore.value(QStringLiteral("Session/layoutRestoreAttempted"));
+  if (layoutAttempted.isValid() && layoutAttempted.typeId() != QMetaType::Bool)
+  {
+    sessionStore.remove(QStringLiteral("Session/layoutRestoreAttempted"));
+  }
+
+  const QVariant layoutGeomRestored = sessionStore.value(QStringLiteral("Session/layoutGeometryRestored"));
+  if (layoutGeomRestored.isValid() && layoutGeomRestored.typeId() != QMetaType::Bool)
+  {
+    sessionStore.remove(QStringLiteral("Session/layoutGeometryRestored"));
+  }
+
+  const QVariant layoutStateRestored = sessionStore.value(QStringLiteral("Session/layoutStateRestored"));
+  if (layoutStateRestored.isValid() && layoutStateRestored.typeId() != QMetaType::Bool)
+  {
+    sessionStore.remove(QStringLiteral("Session/layoutStateRestored"));
+  }
+
+  const QVariant layoutResetApplied = sessionStore.value(QStringLiteral("Session/layoutResetApplied"));
+  if (layoutResetApplied.isValid() && layoutResetApplied.typeId() != QMetaType::Bool)
+  {
+    sessionStore.remove(QStringLiteral("Session/layoutResetApplied"));
+  }
+
+  const QVariant layoutRestoreTs = sessionStore.value(QStringLiteral("Session/layoutRestoreTimestamp"));
+  if (layoutRestoreTs.isValid() && layoutRestoreTs.typeId() != QMetaType::QString)
+  {
+    sessionStore.remove(QStringLiteral("Session/layoutRestoreTimestamp"));
+  }
+  sessionStore.sync();
+}
+
+void recordLayoutRestoreResult(
+  bool attempted,
+  bool geometryRestored,
+  bool stateRestored,
+  bool resetApplied)
+{
+  ArtifactCore::FastSettingsStore sessionStore(sessionStateFilePath());
+  sessionStore.setValue(QStringLiteral("Session/layoutRestoreAttempted"), attempted);
+  sessionStore.setValue(QStringLiteral("Session/layoutGeometryRestored"), geometryRestored);
+  sessionStore.setValue(QStringLiteral("Session/layoutStateRestored"), stateRestored);
+  sessionStore.setValue(QStringLiteral("Session/layoutResetApplied"), resetApplied);
+  sessionStore.setValue(QStringLiteral("Session/layoutRestoreTimestamp"), QDateTime::currentDateTime().toString(Qt::ISODate));
   sessionStore.sync();
 }
 
@@ -678,12 +723,15 @@ int main(int argc, char* argv[])
         auto layoutState = UiLayoutState::loadFromStore(layoutStore, "MainWindow");
         bool geometryRestored = true;
         bool stateRestored = true;
+        const bool hasGeometry = !layoutState.geometry.isEmpty();
+        const bool hasState = !layoutState.state.isEmpty();
         if (!layoutState.geometry.isEmpty()) {
             geometryRestored = mw->restoreGeometry(layoutState.geometry);
         }
         if (!layoutState.state.isEmpty()) {
             stateRestored = mw->restoreState(layoutState.state);
         }
+        bool resetApplied = false;
         if ((!layoutState.geometry.isEmpty() && !geometryRestored) ||
             (!layoutState.state.isEmpty() && !stateRestored)) {
             // Saved layout is likely incompatible with current dock/widget set.
@@ -693,7 +741,9 @@ int main(int argc, char* argv[])
             layoutStore.remove("MainWindow/state");
             layoutStore.sync();
             mw->resize(1600, 900);
+            resetApplied = true;
         }
+        recordLayoutRestoreResult(hasGeometry || hasState, geometryRestored, stateRestored, resetApplied);
     }
     mw->setDockVisible(QStringLiteral("Layer View (Diligent)"), true);
 

@@ -17,6 +17,7 @@
 #include <QSysInfo>
 #include <QVariant>
 #include <QWidget>
+#include <QMenuBar>
 
 #include <iostream>
 #include <vector>
@@ -146,6 +147,7 @@ namespace Artifact {
     const QString appDataDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
     const QString sessionPath = QDir(appDataDir).filePath(QStringLiteral("session_state.cbor"));
     const QString historyPath = QDir(appDataDir).filePath(QStringLiteral("render_queue_history.cbor"));
+    const QString layoutPath = QDir(appDataDir).filePath(QStringLiteral("main_window_layout.cbor"));
     const QString recoveryDir = QDir(appDataDir).filePath(QStringLiteral("Recovery"));
     ArtifactCore::FastSettingsStore sessionStore(sessionPath);
 
@@ -164,6 +166,8 @@ namespace Artifact {
     ts << "Session File Exists: " << (QFileInfo::exists(sessionPath) ? "true" : "false") << "\n";
     ts << "RenderQueue History File: " << historyPath << "\n";
     ts << "RenderQueue History Exists: " << (QFileInfo::exists(historyPath) ? "true" : "false") << "\n";
+    ts << "Layout File: " << layoutPath << "\n";
+    ts << "Layout File Exists: " << (QFileInfo::exists(layoutPath) ? "true" : "false") << "\n";
     ts << "Recovery Dir: " << recoveryDir << "\n";
     ts << "Recovery Dir Exists: " << (QDir(recoveryDir).exists() ? "true" : "false") << "\n\n";
 
@@ -172,6 +176,13 @@ namespace Artifact {
     ts << "Session/startTimestamp: " << sessionStore.value(QStringLiteral("Session/startTimestamp"), QString()).toString() << "\n";
     ts << "Session/lastCleanExitTimestamp: " << sessionStore.value(QStringLiteral("Session/lastCleanExitTimestamp"), QString()).toString() << "\n";
     ts << "Session/pid: " << sessionStore.value(QStringLiteral("Session/pid"), QVariant()).toString() << "\n\n";
+
+    ts << "[Layout Restore Result]\n";
+    ts << "Session/layoutRestoreAttempted: " << sessionStore.value(QStringLiteral("Session/layoutRestoreAttempted"), false).toBool() << "\n";
+    ts << "Session/layoutGeometryRestored: " << sessionStore.value(QStringLiteral("Session/layoutGeometryRestored"), false).toBool() << "\n";
+    ts << "Session/layoutStateRestored: " << sessionStore.value(QStringLiteral("Session/layoutStateRestored"), false).toBool() << "\n";
+    ts << "Session/layoutResetApplied: " << sessionStore.value(QStringLiteral("Session/layoutResetApplied"), false).toBool() << "\n";
+    ts << "Session/layoutRestoreTimestamp: " << sessionStore.value(QStringLiteral("Session/layoutRestoreTimestamp"), QString()).toString() << "\n\n";
 
     ts << "[Recovery Snapshots]\n";
     int snapshotCount = 0;
@@ -209,6 +220,34 @@ namespace Artifact {
       }
     }
     if (dockCount == 0) {
+      ts << "(none)\n";
+    }
+    ts << "\n";
+
+    ts << "[Menu Actions]\n";
+    int actionCount = 0;
+    if (auto* top = this->window()) {
+      auto* menuBar = top->findChild<QMenuBar*>();
+      if (menuBar) {
+        const auto topMenus = menuBar->actions();
+        for (auto* menuAction : topMenus) {
+          if (!menuAction) continue;
+          auto* menu = menuAction->menu();
+          if (!menu) continue;
+          ts << "Menu: " << menu->title() << "\n";
+          const auto actions = menu->actions();
+          for (auto* action : actions) {
+            if (!action || action->isSeparator()) continue;
+            ts << "  - " << action->text()
+               << " | enabled=" << (action->isEnabled() ? "true" : "false")
+               << " | checked=" << (action->isCheckable() ? (action->isChecked() ? "true" : "false") : "n/a")
+               << "\n";
+            ++actionCount;
+          }
+        }
+      }
+    }
+    if (actionCount == 0) {
       ts << "(none)\n";
     }
     ts << "\n";
