@@ -3,6 +3,11 @@ module;
 #include <QList>
 #include <QThread>
 #include <QDir>
+#include <QImage>
+#include <QPainter>
+#include <QDateTime>
+#include <QFileInfo>
+#include <QPointF>
 #include <wobjectimpl.h>
 #include <mutex>
 #include <map>
@@ -50,6 +55,8 @@ import Artifact.Project.Manager;
 import Artifact.Project.Items;
 import Encoder.FFmpegEncoder;
 import Image.ImageF32x4_RGBA;
+import Utils.Id;
+import Artifact.Render.SoftwareCompositor;
 
 namespace Artifact
 {
@@ -64,6 +71,7 @@ namespace Artifact
             Canceled       // キャンセル
         };
 
+        ArtifactCore::CompositionID compositionId; // 対象コンポジションID
         QString compositionName;      // コンポジション名
         QString outputPath;           // 出力パス
         QString outputFormat;         // 出力形式 (MP4, PNG sequence等)
@@ -77,6 +85,10 @@ namespace Artifact
         Status status;                // ステータス
         int progress;                 // 進捗率 (0-100)
         QString errorMessage;         // エラーメッセージ
+        float overlayOffsetX;
+        float overlayOffsetY;
+        float overlayScale;
+        float overlayRotationDeg;
 
         ArtifactRenderJob()
             : resolutionWidth(1920)
@@ -87,6 +99,10 @@ namespace Artifact
             , endFrame(100)
             , status(Status::Pending)
             , progress(0)
+            , overlayOffsetX(0.0f)
+            , overlayOffsetY(0.0f)
+            , overlayScale(1.0f)
+            , overlayRotationDeg(0.0f)
         {
         }
     };
@@ -149,6 +165,90 @@ namespace Artifact
             }
         }
 
+        void setJobProgress(int index, int progress) {
+            if (index < 0 || index >= jobs.size()) return;
+            jobs[index].progress = std::clamp(progress, 0, 100);
+            if (jobProgressChanged) jobProgressChanged(index, jobs[index].progress);
+            if (jobUpdated) jobUpdated(index);
+        }
+
+        void setJobCompleted(int index) {
+            if (index < 0 || index >= jobs.size()) return;
+            jobs[index].status = ArtifactRenderJob::Status::Completed;
+            jobs[index].progress = 100;
+            if (jobStatusChanged) jobStatusChanged(index, jobs[index].status);
+            if (jobProgressChanged) jobProgressChanged(index, jobs[index].progress);
+            if (jobUpdated) jobUpdated(index);
+        }
+
+        void setJobFailed(int index, const QString& message) {
+            if (index < 0 || index >= jobs.size()) return;
+            jobs[index].status = ArtifactRenderJob::Status::Failed;
+            jobs[index].errorMessage = message;
+            if (jobStatusChanged) jobStatusChanged(index, jobs[index].status);
+            if (jobUpdated) jobUpdated(index);
+        }
+
+        void setJobOutputPath(int index, const QString& outputPath) {
+            if (index < 0 || index >= jobs.size()) return;
+            jobs[index].outputPath = outputPath;
+            if (jobUpdated) jobUpdated(index);
+        }
+
+        bool jobFrameRangeAt(int index, int* startFrame, int* endFrame) const {
+            if (index < 0 || index >= jobs.size()) {
+                return false;
+            }
+            if (startFrame) *startFrame = jobs[index].startFrame;
+            if (endFrame) *endFrame = jobs[index].endFrame;
+            return true;
+        }
+
+        void setJobFrameRange(int index, int startFrame, int endFrame) {
+            if (index < 0 || index >= jobs.size()) return;
+            const int clampedStart = std::max(0, startFrame);
+            const int clampedEnd = std::max(clampedStart, endFrame);
+            jobs[index].startFrame = clampedStart;
+            jobs[index].endFrame = clampedEnd;
+            if (jobUpdated) jobUpdated(index);
+        }
+
+        bool jobOutputSettingsAt(
+            int index,
+            QString* outputFormat,
+            QString* codec,
+            int* width,
+            int* height) const
+        {
+            if (index < 0 || index >= jobs.size()) {
+                return false;
+            }
+            const auto& job = jobs[index];
+            if (outputFormat) *outputFormat = job.outputFormat;
+            if (codec) *codec = job.codec;
+            if (width) *width = job.resolutionWidth;
+            if (height) *height = job.resolutionHeight;
+            return true;
+        }
+
+        void setJobOutputSettings(
+            int index,
+            const QString& outputFormat,
+            const QString& codec,
+            int width,
+            int height)
+        {
+            if (index < 0 || index >= jobs.size()) return;
+            auto& job = jobs[index];
+            const QString fmt = outputFormat.trimmed();
+            const QString cdc = codec.trimmed();
+            job.outputFormat = fmt.isEmpty() ? QStringLiteral("MP4") : fmt;
+            job.codec = cdc.isEmpty() ? QStringLiteral("H.264") : cdc;
+            job.resolutionWidth = std::clamp(width, 16, 16384);
+            job.resolutionHeight = std::clamp(height, 16, 16384);
+            if (jobUpdated) jobUpdated(index);
+        }
+
         void pauseAllJobs() {
             for (int i = 0; i < jobs.size(); ++i) {
                 if (jobs[i].status == ArtifactRenderJob::Status::Rendering) {
@@ -160,7 +260,8 @@ namespace Artifact
 
         void cancelAllJobs() {
             for (int i = 0; i < jobs.size(); ++i) {
-                if (jobs[i].status == ArtifactRenderJob::Status::Rendering) {
+                if (jobs[i].status == ArtifactRenderJob::Status::Rendering ||
+                    jobs[i].status == ArtifactRenderJob::Status::Pending) {
                     jobs[i].status = ArtifactRenderJob::Status::Canceled;
                     if (jobStatusChanged) jobStatusChanged(i, jobs[i].status);
                 }
@@ -169,6 +270,93 @@ namespace Artifact
 
         ArtifactRenderJob getJob(int index) const {
             return index >= 0 && index < jobs.size() ? jobs[index] : ArtifactRenderJob();
+        }
+
+        QString jobCompositionNameAt(int index) const {
+            if (index < 0 || index >= jobs.size()) {
+                return {};
+            }
+            return jobs[index].compositionName;
+        }
+
+        QString jobStatusAt(int index) const {
+            if (index < 0 || index >= jobs.size()) {
+                return QStringLiteral("Pending");
+            }
+            switch (jobs[index].status) {
+            case ArtifactRenderJob::Status::Pending: return QStringLiteral("Pending");
+            case ArtifactRenderJob::Status::Rendering: return QStringLiteral("Rendering");
+            case ArtifactRenderJob::Status::Completed: return QStringLiteral("Completed");
+            case ArtifactRenderJob::Status::Failed: return QStringLiteral("Failed");
+            case ArtifactRenderJob::Status::Canceled: return QStringLiteral("Canceled");
+            default: return QStringLiteral("Pending");
+            }
+        }
+
+        QString jobOutputPathAt(int index) const {
+            if (index < 0 || index >= jobs.size()) {
+                return {};
+            }
+            return jobs[index].outputPath;
+        }
+
+        QString jobErrorMessageAt(int index) const {
+            if (index < 0 || index >= jobs.size()) {
+                return {};
+            }
+            return jobs[index].errorMessage;
+        }
+
+        bool jobOverlayTransformAt(int index, float* offsetX, float* offsetY, float* scale, float* rotationDeg) const {
+            if (index < 0 || index >= jobs.size()) {
+                return false;
+            }
+            const auto& job = jobs[index];
+            if (offsetX) *offsetX = job.overlayOffsetX;
+            if (offsetY) *offsetY = job.overlayOffsetY;
+            if (scale) *scale = job.overlayScale;
+            if (rotationDeg) *rotationDeg = job.overlayRotationDeg;
+            return true;
+        }
+
+        void setJobOverlayTransform(int index, float offsetX, float offsetY, float scale, float rotationDeg) {
+            if (index < 0 || index >= jobs.size()) {
+                return;
+            }
+            auto& job = jobs[index];
+            job.overlayOffsetX = offsetX;
+            job.overlayOffsetY = offsetY;
+            job.overlayScale = std::clamp(scale, 0.05f, 8.0f);
+            job.overlayRotationDeg = rotationDeg;
+            if (jobUpdated) jobUpdated(index);
+        }
+
+        int countJobsForComposition(const ArtifactCore::CompositionID& compositionId) const {
+            int count = 0;
+            for (const auto& job : jobs) {
+                if (job.compositionId == compositionId) {
+                    ++count;
+                }
+            }
+            return count;
+        }
+
+        bool hasJobForComposition(const ArtifactCore::CompositionID& compositionId) const {
+            return countJobsForComposition(compositionId) > 0;
+        }
+
+        void removeJobsForComposition(const ArtifactCore::CompositionID& compositionId) {
+            for (int i = jobs.size() - 1; i >= 0; --i) {
+                if (jobs[i].compositionId == compositionId) {
+                    jobs.removeAt(i);
+                    if (jobRemoved) {
+                        jobRemoved(i);
+                    }
+                }
+            }
+            if (jobs.isEmpty() && allJobsRemoved) {
+                allJobsRemoved();
+            }
         }
 
         int jobCount() const {
@@ -196,6 +384,7 @@ namespace Artifact
         std::function<void(int)> jobRemoved;
         std::function<void(int)> jobUpdated;
         std::function<void(int, ArtifactRenderJob::Status)> jobStatusChanged;
+        std::function<void(int, int)> jobStatusChangedForUi;
         std::function<void(int, int)> jobProgressChanged;
         std::function<void()> allJobsCompleted;
         std::function<void()> allJobsRemoved;
@@ -256,6 +445,126 @@ namespace Artifact
         std::mutex encoderMutex;
         bool isRendering = false;
 
+        QString resolveDummyOutputPath(const ArtifactRenderJob& job, int index) const {
+            QString target = job.outputPath.trimmed();
+            const QString safeName = job.compositionName.trimmed().isEmpty()
+                ? QStringLiteral("Composition")
+                : job.compositionName.trimmed();
+            const QString stamp = QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd_HHmmss"));
+            const QString fileName = QStringLiteral("%1_%2_%3.png").arg(safeName).arg(index + 1).arg(stamp);
+
+            if (target.isEmpty()) {
+                return QDir(QDir::homePath() + QStringLiteral("/Desktop")).filePath(fileName);
+            }
+
+            QFileInfo info(target);
+            if (info.isDir()) {
+                return QDir(info.absoluteFilePath()).filePath(fileName);
+            }
+
+            QString dir = info.absolutePath();
+            if (dir.isEmpty()) {
+                dir = QDir::homePath() + QStringLiteral("/Desktop");
+            }
+            QString base = info.completeBaseName();
+            if (base.isEmpty()) {
+                base = QStringLiteral("render");
+            }
+            return QDir(dir).filePath(base + QStringLiteral(".png"));
+        }
+
+        bool renderSingleFrameDummy(const ArtifactRenderJob& job, int index, QString* outputPath, QString* errorMessage) {
+            const int width = std::max(16, job.resolutionWidth);
+            const int height = std::max(16, job.resolutionHeight);
+            QImage background(width, height, QImage::Format_ARGB32_Premultiplied);
+            background.fill(QColor(24, 26, 30, 255));
+            {
+                QPainter painter(&background);
+                painter.setRenderHint(QPainter::Antialiasing, true);
+                painter.fillRect(QRect(0, 0, width, height), QColor(32, 36, 42));
+            }
+
+            QImage foreground(width, height, QImage::Format_ARGB32_Premultiplied);
+            foreground.fill(Qt::transparent);
+            {
+                QPainter painter(&foreground);
+                painter.setRenderHint(QPainter::Antialiasing, true);
+                painter.fillRect(QRect(width / 16, height / 8, width * 7 / 8, height * 3 / 4), QColor(64, 84, 132, 220));
+                painter.setPen(QColor(230, 230, 230));
+                painter.drawText(QRect(0, 0, width, height / 3),
+                                 Qt::AlignCenter,
+                                 QStringLiteral("Artifact Dummy Render"));
+                painter.drawText(QRect(0, height / 3, width, height / 3),
+                                 Qt::AlignCenter,
+                                 QStringLiteral("Comp: %1").arg(job.compositionName));
+                painter.drawText(QRect(0, (height * 2) / 3, width, height / 3),
+                                 Qt::AlignCenter,
+                                 QStringLiteral("Frame: %1").arg(job.startFrame));
+            }
+
+            QImage overlay(width, height, QImage::Format_ARGB32_Premultiplied);
+            overlay.fill(Qt::transparent);
+            {
+                QPainter painter(&overlay);
+                painter.setRenderHint(QPainter::Antialiasing, true);
+                painter.setPen(Qt::NoPen);
+                painter.setBrush(QColor(255, 190, 90, 180));
+                painter.drawEllipse(QRect(width * 3 / 5, height / 8, width / 4, height / 4));
+            }
+
+            SoftwareRender::CompositeRequest request;
+            request.background = background;
+            request.foreground = foreground;
+            request.overlay = overlay;
+            request.outputSize = QSize(width, height);
+            request.backend = SoftwareRender::CompositeBackend::QtPainter;
+            request.blendMode = SoftwareRender::BlendMode::Screen;
+            request.cvEffect = SoftwareRender::CvEffectMode::None;
+            request.overlayOpacity = 0.70f;
+            request.overlayOffset = QPointF(job.overlayOffsetX, job.overlayOffsetY);
+            request.overlayScale = job.overlayScale;
+            request.overlayRotationDeg = job.overlayRotationDeg;
+            request.useForeground = true;
+
+            QImage image = SoftwareRender::compose(request);
+            if (image.isNull()) {
+                if (errorMessage) {
+                    *errorMessage = QStringLiteral("Failed to compose dummy frame");
+                }
+                return false;
+            }
+
+            const QString outPath = resolveDummyOutputPath(job, index);
+            if (outputPath) {
+                *outputPath = outPath;
+            }
+            QDir outDir(QFileInfo(outPath).absolutePath());
+            if (!outDir.exists() && !outDir.mkpath(QStringLiteral("."))) {
+                if (errorMessage) {
+                    *errorMessage = QStringLiteral("Failed to create output directory: %1").arg(outDir.absolutePath());
+                }
+                return false;
+            }
+
+            if (!image.save(outPath, "PNG")) {
+                if (errorMessage) {
+                    *errorMessage = QStringLiteral("Failed to save image: %1").arg(outPath);
+                }
+                return false;
+            }
+            return true;
+        }
+
+        void syncCoreQueueModel() {
+            auto& coreQueue = ArtifactCore::RendererQueueManager::instance();
+            coreQueue.clearRenderQueue();
+            const int count = queueManager.jobCount();
+            for (int i = 0; i < count; ++i) {
+                const auto job = queueManager.getJob(i);
+                coreQueue.addJob(job.compositionId, job.compositionName);
+            }
+        }
+
         void handleJobAdded(int index) {
             if (jobAdded) jobAdded(index);
         }
@@ -269,6 +578,7 @@ namespace Artifact
         }
 
         void handleJobStatusChanged(int index, ArtifactRenderJob::Status status) {
+            if (jobStatusChangedForUi) jobStatusChangedForUi(index, static_cast<int>(status));
             if (jobStatusChanged) jobStatusChanged(index, status);
         }
 
@@ -296,8 +606,22 @@ namespace Artifact
         delete impl_;
     }
 
+    ArtifactRenderQueueService* ArtifactRenderQueueService::instance()
+    {
+        static ArtifactRenderQueueService service;
+        return &service;
+    }
+
     void ArtifactRenderQueueService::addRenderQueue() {
+        auto currentComposition = ArtifactProjectManager::getInstance().currentComposition();
+        if (currentComposition) {
+            const auto compositionName = currentComposition->settings().compositionName().toQString();
+            addRenderQueueForComposition(currentComposition->id(), compositionName);
+            return;
+        }
+
         ArtifactRenderJob job;
+        job.compositionId = ArtifactCore::CompositionID::Nil();
         job.compositionName = "New Render Job";
         job.status = ArtifactRenderJob::Status::Pending;
         job.outputPath = QDir::homePath() + "/Desktop/output.mp4";
@@ -311,27 +635,194 @@ namespace Artifact
         job.endFrame = 100;
 
         impl_->queueManager.addJob(job);
-        
-        // ArtifactCore側にもジョブを追加
-        ArtifactCore::RendererQueueManager::instance().addJob(ArtifactCore::Id(), job.compositionName);
+        impl_->syncCoreQueueModel();
+    }
+
+    void ArtifactRenderQueueService::addRenderQueueForComposition(const ArtifactCore::CompositionID& compositionId, const QString& compositionName)
+    {
+        ArtifactRenderJob job;
+        job.compositionId = compositionId;
+        job.compositionName = compositionName.trimmed().isEmpty() ? QStringLiteral("Composition") : compositionName.trimmed();
+        job.status = ArtifactRenderJob::Status::Pending;
+        job.outputPath = QDir::homePath() + "/Desktop/output.mp4";
+        job.outputFormat = "MP4";
+        job.codec = "H.264";
+        job.resolutionWidth = 1920;
+        job.resolutionHeight = 1080;
+        job.frameRate = 30.0;
+        job.bitrate = 8000;
+        job.startFrame = 0;
+        job.endFrame = 100;
+
+        impl_->queueManager.addJob(job);
+        impl_->syncCoreQueueModel();
     }
 
     void ArtifactRenderQueueService::removeRenderQueue() {
-        // 実装予定
+        const int count = impl_->queueManager.jobCount();
+        if (count <= 0) {
+            return;
+        }
+        impl_->queueManager.removeJob(count - 1);
+        impl_->syncCoreQueueModel();
+    }
+
+    void ArtifactRenderQueueService::removeRenderQueueAt(int index) {
+        impl_->queueManager.removeJob(index);
+        impl_->syncCoreQueueModel();
+    }
+
+    void ArtifactRenderQueueService::duplicateRenderQueueAt(int index)
+    {
+        const int count = impl_->queueManager.jobCount();
+        if (index < 0 || index >= count) {
+            return;
+        }
+        const ArtifactRenderJob source = impl_->queueManager.getJob(index);
+        ArtifactRenderJob copy = source;
+        copy.status = ArtifactRenderJob::Status::Pending;
+        copy.progress = 0;
+        copy.errorMessage.clear();
+        if (!copy.compositionName.trimmed().isEmpty()) {
+            copy.compositionName += QStringLiteral(" Copy");
+        }
+
+        impl_->queueManager.addJob(copy);
+        impl_->syncCoreQueueModel();
+    }
+
+    void ArtifactRenderQueueService::moveRenderQueue(int fromIndex, int toIndex)
+    {
+        const int count = impl_->queueManager.jobCount();
+        if (fromIndex < 0 || fromIndex >= count || toIndex < 0 || toIndex >= count || fromIndex == toIndex) {
+            return;
+        }
+        impl_->queueManager.moveJob(fromIndex, toIndex);
+        impl_->syncCoreQueueModel();
     }
 
     void ArtifactRenderQueueService::removeAllRenderQueues() {
         impl_->queueManager.removeAllJobs();
-        ArtifactCore::RendererQueueManager::instance().clearRenderQueue();
+        impl_->syncCoreQueueModel();
+    }
+
+    void ArtifactRenderQueueService::removeRenderQueuesForComposition(const ArtifactCore::CompositionID& compositionId)
+    {
+        impl_->queueManager.removeJobsForComposition(compositionId);
+        impl_->syncCoreQueueModel();
+    }
+
+    bool ArtifactRenderQueueService::hasRenderQueueForComposition(const ArtifactCore::CompositionID& compositionId) const
+    {
+        return impl_->queueManager.hasJobForComposition(compositionId);
+    }
+
+    int ArtifactRenderQueueService::renderQueueCountForComposition(const ArtifactCore::CompositionID& compositionId) const
+    {
+        return impl_->queueManager.countJobsForComposition(compositionId);
+    }
+
+    QString ArtifactRenderQueueService::jobCompositionNameAt(int index) const
+    {
+        return impl_->queueManager.jobCompositionNameAt(index);
+    }
+
+    QString ArtifactRenderQueueService::jobStatusAt(int index) const
+    {
+        return impl_->queueManager.jobStatusAt(index);
+    }
+
+    QString ArtifactRenderQueueService::jobOutputPathAt(int index) const
+    {
+        return impl_->queueManager.jobOutputPathAt(index);
+    }
+
+    void ArtifactRenderQueueService::setJobOutputPathAt(int index, const QString& outputPath)
+    {
+        impl_->queueManager.setJobOutputPath(index, outputPath.trimmed());
+        impl_->syncCoreQueueModel();
+    }
+
+    bool ArtifactRenderQueueService::jobFrameRangeAt(int index, int* startFrame, int* endFrame) const
+    {
+        return impl_->queueManager.jobFrameRangeAt(index, startFrame, endFrame);
+    }
+
+    void ArtifactRenderQueueService::setJobFrameRangeAt(int index, int startFrame, int endFrame)
+    {
+        impl_->queueManager.setJobFrameRange(index, startFrame, endFrame);
+        impl_->syncCoreQueueModel();
+    }
+
+    bool ArtifactRenderQueueService::jobOutputSettingsAt(
+        int index,
+        QString* outputFormat,
+        QString* codec,
+        int* width,
+        int* height) const
+    {
+        return impl_->queueManager.jobOutputSettingsAt(index, outputFormat, codec, width, height);
+    }
+
+    void ArtifactRenderQueueService::setJobOutputSettingsAt(
+        int index,
+        const QString& outputFormat,
+        const QString& codec,
+        int width,
+        int height)
+    {
+        impl_->queueManager.setJobOutputSettings(index, outputFormat, codec, width, height);
+        impl_->syncCoreQueueModel();
+    }
+
+    QString ArtifactRenderQueueService::jobErrorMessageAt(int index) const
+    {
+        return impl_->queueManager.jobErrorMessageAt(index);
+    }
+
+    bool ArtifactRenderQueueService::jobOverlayTransformAt(int index, float* offsetX, float* offsetY, float* scale, float* rotationDeg) const
+    {
+        return impl_->queueManager.jobOverlayTransformAt(index, offsetX, offsetY, scale, rotationDeg);
+    }
+
+    void ArtifactRenderQueueService::setJobOverlayTransform(int index, float offsetX, float offsetY, float scale, float rotationDeg)
+    {
+        impl_->queueManager.setJobOverlayTransform(index, offsetX, offsetY, scale, rotationDeg);
     }
 
     void ArtifactRenderQueueService::startAllJobs() {
         impl_->queueManager.startAllJobs();
-        
+
         // エンコーダの初期化 (Mock)
         impl_->ffmpegEncoder = std::make_unique<ArtifactCore::FFmpegEncoder>();
         impl_->nextFrameToEncode = 0;
-        
+
+        const int count = impl_->queueManager.jobCount();
+        for (int i = 0; i < count; ++i) {
+            const auto job = impl_->queueManager.getJob(i);
+            if (job.status != ArtifactRenderJob::Status::Rendering &&
+                job.status != ArtifactRenderJob::Status::Pending) {
+                continue;
+            }
+
+            impl_->queueManager.setJobProgress(i, 10);
+
+            QString outputPath;
+            QString error;
+            const bool ok = impl_->renderSingleFrameDummy(job, i, &outputPath, &error);
+            if (ok) {
+                impl_->queueManager.setJobOutputPath(i, outputPath);
+                impl_->queueManager.setJobProgress(i, 100);
+                impl_->queueManager.setJobCompleted(i);
+            } else {
+                impl_->queueManager.setJobFailed(i, error);
+            }
+        }
+
+        if (impl_->allJobsCompleted) {
+            impl_->allJobsCompleted();
+        }
+
         ArtifactCore::RendererQueueManager::instance().startRendering();
     }
 
@@ -366,6 +857,10 @@ namespace Artifact
 
     void ArtifactRenderQueueService::setJobProgressChangedCallback(std::function<void(int, int)> callback) {
         impl_->jobProgressChanged = callback;
+    }
+
+    void ArtifactRenderQueueService::setJobStatusChangedCallback(std::function<void(int, int)> callback) {
+        impl_->jobStatusChangedForUi = callback;
     }
 
     void ArtifactRenderQueueService::setAllJobsCompletedCallback(std::function<void()> callback) {

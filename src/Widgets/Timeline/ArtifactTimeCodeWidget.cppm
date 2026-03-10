@@ -34,13 +34,13 @@ namespace Artifact
  {
   auto layout = new QVBoxLayout();
   layout->setSpacing(0);
-  layout->setContentsMargins(8, 2, 8, 2);
+  layout->setContentsMargins(8, 1, 8, 1);
   layout->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
   
   impl_->timecodeLabel_->setObjectName("timeLabel");
   impl_->frameNumberLabel_->setObjectName("frameLabel");
   impl_->timecodeLabel_->setAlignment(Qt::AlignLeft | Qt::AlignBottom);
-  impl_->frameNumberLabel_->setAlignment(Qt::AlignLeft | Qt::AlignTop);
+  impl_->frameNumberLabel_->setAlignment(Qt::AlignHCenter | Qt::AlignTop);
 
   layout->addWidget(impl_->timecodeLabel_);
   layout->addWidget(impl_->frameNumberLabel_);
@@ -56,13 +56,13 @@ namespace Artifact
    "}"
    "QLabel#timeLabel {"
    "  font-family: 'Consolas', 'Courier New', monospace;"
-   "  font-size: 12px;"
+   "  font-size: 14px;"
    "  font-weight: bold;"
    "  color: #5EA7EE;"
    "}"
    "QLabel#frameLabel {"
    "  font-family: 'Consolas', 'Courier New', monospace;"
-   "  font-size: 9px;"
+   "  font-size: 11px;"
    "  color: #9A9A9A;"
    "}"
   );

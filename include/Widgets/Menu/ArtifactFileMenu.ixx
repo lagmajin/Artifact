@@ -27,9 +27,11 @@ export namespace Artifact {
  public:
   void projectCreateRequested();
   void projectClosed();
+  void restartApplication();
   void quitApplication();
   W_SLOT(projectCreateRequested, ());
   W_SLOT(projectClosed, ());
+  W_SLOT(restartApplication, ());
   W_SLOT(quitApplication, ());
  };
 

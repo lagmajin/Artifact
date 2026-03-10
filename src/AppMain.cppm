@@ -73,9 +73,11 @@ import Artifact.Widgets.UndoHistoryWidget;
 import Artifact.Widgets.PythonHookManagerWidget;
 import Artifact.Widgets.ProjectManagerWidget;
 import Artifact.Widgets.Timeline;
-import Artifact.Widgets.CompositionRenderWidget;
+import Artifact.Widgets.CompositionEditor;
 import Artifact.Widgets.RenderLayerEditor;
 import Artifact.Widgets.Render.QueueManager;
+import Widgets.Inspector;
+import Artifact.Widgets.ArtifactPropertyWidget;
 import Artifact.MainWindow;
 import Artifact.Project.Manager;
 import Artifact.Project.AutoSaveManager;
@@ -386,14 +388,19 @@ int main(int argc, char* argv[])
     mw->setStatusBar(status);
     status->showReadyMessage();
     status->setProjectText("Loaded");
-    mw->addDockedWidget(QStringLiteral("Composition Viewer"), ads::CenterDockWidgetArea, new ArtifactCompositionRenderWidget(mw));
-    mw->addDockedWidget(QStringLiteral("Layer View (Diligent)"), ads::CenterDockWidgetArea, new ArtifactRenderLayerEditor(mw));
+    auto* compositionEditor = new ArtifactCompositionEditor(mw);
+    mw->addDockedWidget(QStringLiteral("Composition Viewer"), ads::CenterDockWidgetArea, compositionEditor);
+    auto* layerViewEditor = new ArtifactRenderLayerEditor(mw);
+    mw->addDockedWidget(QStringLiteral("Layer View (Diligent)"), ads::CenterDockWidgetArea, layerViewEditor);
     mw->addDockedWidget(QStringLiteral("Render Queue"), ads::BottomDockWidgetArea, new RenderQueueManagerWidget(mw));
     mw->addDockedWidget(QStringLiteral("Project"), ads::LeftDockWidgetArea, new ArtifactProjectManagerWidget(mw));
+    mw->addDockedWidget(QStringLiteral("Inspector"), ads::RightDockWidgetArea, new ArtifactInspectorWidget(mw));
+    mw->addDockedWidget(QStringLiteral("Properties"), ads::RightDockWidgetArea, new ArtifactPropertyWidget(mw));
     mw->addDockedWidget(QStringLiteral("Undo History"), ads::RightDockWidgetArea, new ArtifactUndoHistoryWidget(mw));
     mw->addDockedWidget(QStringLiteral("Python Hooks"), ads::RightDockWidgetArea, new ArtifactPythonHookManagerWidget(mw));
     mw->setDockVisible(QStringLiteral("Undo History"), false);
     mw->setDockVisible(QStringLiteral("Python Hooks"), false);
+    mw->setDockVisible(QStringLiteral("Layer View (Diligent)"), true);
 
     auto* projectService = ArtifactProjectService::instance();
     auto* playbackService = ArtifactPlaybackService::instance();
@@ -422,6 +429,22 @@ int main(int argc, char* argv[])
         QObject::connect(projectService, &ArtifactProjectService::layerCreated, mw, [autoSaveManager](const CompositionID&, const LayerID&) {
             if (autoSaveManager) autoSaveManager->markDirty();
         });
+        QObject::connect(projectService, &ArtifactProjectService::layerSelected, mw, [mw, layerViewEditor](const LayerID& layerId) {
+            if (layerViewEditor) {
+                layerViewEditor->setTargetLayer(layerId);
+            }
+            mw->activateDock(QStringLiteral("Layer View (Diligent)"));
+        });
+        QObject::connect(projectService, &ArtifactProjectService::currentCompositionChanged, mw, [mw, compositionEditor, projectService](const CompositionID& compId) {
+            if (!compositionEditor || !projectService) {
+                return;
+            }
+            const auto found = projectService->findComposition(compId);
+            if (found.success && !found.ptr.expired()) {
+                compositionEditor->setComposition(found.ptr.lock());
+                mw->activateDock(QStringLiteral("Composition Viewer"));
+            }
+        });
         QObject::connect(projectService, &ArtifactProjectService::layerRemoved, mw, [status](const CompositionID&, const LayerID&) {
             status->setProjectText("Layer Removed");
         });
@@ -447,6 +470,12 @@ int main(int argc, char* argv[])
         QObject::connect(projectService, &ArtifactProjectService::projectCreated, mw, []() {
             ArtifactPythonHookManager::runHook(QStringLiteral("project_opened"));
         });
+    }
+
+    if (projectService && compositionEditor) {
+        if (auto current = projectService->currentComposition().lock()) {
+            compositionEditor->setComposition(current);
+        }
     }
 
     auto latestFrame = std::make_shared<std::atomic<long long>>(0);
@@ -518,6 +547,7 @@ int main(int argc, char* argv[])
             mw->resize(1600, 900);
         }
     }
+    mw->setDockVisible(QStringLiteral("Layer View (Diligent)"), true);
 
     QObject::connect(&a, &QCoreApplication::aboutToQuit, [mw]() {
         QSettings settings("ArtifactStudio", "Artifact");

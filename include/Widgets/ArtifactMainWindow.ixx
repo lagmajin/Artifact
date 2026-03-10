@@ -38,6 +38,7 @@ export namespace Artifact {
   void addWidget();
   void addDockedWidget(const QString& title, ads::DockWidgetArea area,QWidget* widget);
   void setDockVisible(const QString& title, bool visible);
+  void activateDock(const QString& title);
 
   void closeAllDocks();
   void showStatusMessage(const QString& message, int timeoutMs = 2000);

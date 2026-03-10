@@ -1,6 +1,7 @@
 module;
 #define NOMINMAX
 #include <windows.h>
+#include <cstring>
 #include <tbb/tbb.h>
 #include <QList>
 #include <d3d12.h>
@@ -10,6 +11,7 @@ module;
 //#include <DiligentCore/Common/interface/map>
 
 #include <EngineFactoryD3D12.h>
+#include <DiligentCore/Graphics/GraphicsEngineVulkan/interface/EngineFactoryVk.h>
 #include <DeviceContextD3D12.h>
 #include <SwapChain.h>
 #include <RefCntAutoPtr.hpp>
@@ -21,6 +23,7 @@ module;
 #include <QTimer>
 #include <QDebug>
 #include <QKeyEvent>
+#include <QHashFunctions>
 
 module Artifact.Widgets.RenderLayerWidgetv2;
 import Graphics;
@@ -39,6 +42,85 @@ import Artifact.Preview.Pipeline;
 namespace Artifact {
 
  using namespace ArtifactCore;
+
+namespace {
+  enum class RenderBackendPreference {
+   Auto,
+   D3D12,
+   Vulkan
+  };
+
+  RenderBackendPreference getBackendPreferenceFromEnv()
+  {
+   char value[64] = {};
+   const DWORD len = ::GetEnvironmentVariableA("ARTIFACT_RENDER_BACKEND", value, static_cast<DWORD>(sizeof(value)));
+   if (len == 0 || len >= sizeof(value)) {
+    return RenderBackendPreference::Auto;
+   }
+   CharLowerA(value);
+   if (strcmp(value, "vulkan") == 0 || strcmp(value, "vk") == 0) {
+    return RenderBackendPreference::Vulkan;
+   }
+   if (strcmp(value, "d3d12") == 0 || strcmp(value, "dx12") == 0) {
+    return RenderBackendPreference::D3D12;
+   }
+   return RenderBackendPreference::Auto;
+  }
+
+  Diligent::IEngineFactoryVk* resolveVkFactoryFromDll()
+  {
+   using GetFactoryFn = Diligent::IEngineFactoryVk* (*)();
+   static const wchar_t* kDllCandidates[] = {
+    L"GraphicsEngineVk_64d.dll",
+    L"GraphicsEngineVk_64r.dll",
+    L"GraphicsEngineVk.dll"
+   };
+   for (const auto* dllName : kDllCandidates) {
+    HMODULE mod = ::GetModuleHandleW(dllName);
+    if (!mod) {
+     mod = ::LoadLibraryW(dllName);
+    }
+    if (!mod) {
+     continue;
+    }
+    auto* fn = reinterpret_cast<GetFactoryFn>(::GetProcAddress(mod, "GetEngineFactoryVk"));
+    if (!fn) {
+     fn = reinterpret_cast<GetFactoryFn>(::GetProcAddress(mod, "Diligent_GetEngineFactoryVk"));
+    }
+    if (fn) {
+     return fn();
+    }
+   }
+   return nullptr;
+  }
+
+  Diligent::IEngineFactoryD3D12* resolveD3D12FactoryFromDll()
+  {
+   using GetFactoryFn = Diligent::IEngineFactoryD3D12* (*)();
+   static const wchar_t* kDllCandidates[] = {
+    L"GraphicsEngineD3D12_64d.dll",
+    L"GraphicsEngineD3D12_64r.dll",
+    L"GraphicsEngineD3D12.dll"
+   };
+   for (const auto* dllName : kDllCandidates) {
+    HMODULE mod = ::GetModuleHandleW(dllName);
+    if (!mod) {
+     mod = ::LoadLibraryW(dllName);
+    }
+    if (!mod) {
+     continue;
+    }
+    auto* fn = reinterpret_cast<GetFactoryFn>(::GetProcAddress(mod, "GetEngineFactoryD3D12"));
+    if (!fn) {
+     fn = reinterpret_cast<GetFactoryFn>(::GetProcAddress(mod, "Diligent_GetEngineFactoryD3D12"));
+    }
+    if (fn) {
+     return fn();
+    }
+   }
+   return nullptr;
+  }
+ }
 
 W_OBJECT_IMPL(ArtifactLayerEditorWidgetV2)
  void ArtifactLayerEditorWidgetV2::play() {}
@@ -67,10 +149,12 @@ W_OBJECT_IMPL(ArtifactLayerEditorWidgetV2)
   std::mutex resizeMutex_;
   
   
-  bool released = true;
-  bool m_initialized;
-  RefCntAutoPtr<ITexture> m_layerRT;
-  RefCntAutoPtr<IFence> m_layer_fence;
+ bool released = true;
+ bool m_initialized;
+ RefCntAutoPtr<ITexture> m_layerRT;
+ RefCntAutoPtr<IFence> m_layer_fence;
+  LayerID targetLayerId_{};
+  FloatColor targetLayerTint_{ 1.0f, 0.5f, 0.5f, 1.0f };
   
   void defaultHandleKeyPressEvent(QKeyEvent* event);
   void defaultHandleKeyReleaseEvent(QKeyEvent* event);
@@ -93,37 +177,78 @@ W_OBJECT_IMPL(ArtifactLayerEditorWidgetV2)
  }
 
  void ArtifactLayerEditorWidgetV2::Impl::initialize(QWidget* window)
- {/*
+ {
   widget_ = window;
-  //view_ = CreateInitialViewMatrix();
+  const auto backendPref = getBackendPreferenceFromEnv();
 
-  auto* pFactory = LoadAndGetEngineFactoryD3D12();
-
-  EngineD3D12CreateInfo CreationAttribs = {};
-  CreationAttribs.EnableValidation = true;
-  CreationAttribs.SetValidationLevel(Diligent::VALIDATION_LEVEL_2);
-  CreationAttribs.EnableValidation = true;
-   //CreationAttribs.Features
-  // ウィンドウハンドルを設定
-  Win32NativeWindow hWindow;
-  hWindow.hWnd = reinterpret_cast<HWND>(window->winId());
-  pFactory->CreateDeviceAndContextsD3D12(CreationAttribs, &pDevice, &pImmediateContext);
-
-  if (!pDevice)
+  auto tryInitVk = [&]() -> bool
   {
-   // エラーログ出力、アプリケーション終了などの処理
-   qWarning() << "Failed to create Diligent Engine device and contexts.";
-   return;
+   auto* pFactoryVk = resolveVkFactoryFromDll();
+   if (!pFactoryVk) {
+    return false;
+   }
+   EngineVkCreateInfo creationAttribs = {};
+   creationAttribs.EnableValidation = true;
+   creationAttribs.SetValidationLevel(Diligent::VALIDATION_LEVEL_2);
+   pFactoryVk->CreateDeviceAndContextsVk(creationAttribs, &pDevice, &pImmediateContext);
+   if (!pDevice || !pImmediateContext) {
+    return false;
+   }
+   renderer_ = std::make_unique<ArtifactIRenderer>(pDevice, pImmediateContext, window);
+   renderer_->createSwapChain(window);
+   qDebug() << "[ArtifactLayerEditorWidgetV2] Initialized with direct Diligent Vulkan device/context.";
+   return true;
+  };
+
+  auto tryInitD3D12 = [&]() -> bool
+  {
+   auto* pFactoryD3D12 = resolveD3D12FactoryFromDll();
+   if (!pFactoryD3D12) {
+    return false;
+   }
+   EngineD3D12CreateInfo creationAttribs = {};
+   creationAttribs.EnableValidation = true;
+   creationAttribs.SetValidationLevel(Diligent::VALIDATION_LEVEL_2);
+   pFactoryD3D12->CreateDeviceAndContextsD3D12(creationAttribs, &pDevice, &pImmediateContext);
+   if (!pDevice || !pImmediateContext) {
+    return false;
+   }
+   renderer_ = std::make_unique<ArtifactIRenderer>(pDevice, pImmediateContext, window);
+   renderer_->createSwapChain(window);
+   qDebug() << "[ArtifactLayerEditorWidgetV2] Initialized with direct Diligent D3D12 device/context.";
+   return true;
+  };
+
+  bool initializedDirect = false;
+  switch (backendPref) {
+  case RenderBackendPreference::Vulkan:
+   initializedDirect = tryInitVk();
+   if (!initializedDirect) {
+    initializedDirect = tryInitD3D12();
+   }
+   break;
+  case RenderBackendPreference::D3D12:
+   initializedDirect = tryInitD3D12();
+   if (!initializedDirect) {
+    initializedDirect = tryInitVk();
+   }
+   break;
+  case RenderBackendPreference::Auto:
+  default:
+   initializedDirect = tryInitD3D12();
+   if (!initializedDirect) {
+    initializedDirect = tryInitVk();
+   }
+   break;
   }
-   
-   */
-  renderer_ = std::make_unique<ArtifactIRenderer>();
-  renderer_->initialize(window);
+
+  if (!initializedDirect) {
+   renderer_ = std::make_unique<ArtifactIRenderer>();
+   renderer_->initialize(window);
+   qWarning() << "[ArtifactLayerEditorWidgetV2] Falling back to ArtifactIRenderer internal initialization.";
+  }
+
   initialized_ = true;
-   
-
-
-
  }
 
  void ArtifactLayerEditorWidgetV2::Impl::initializeSwapChain(QWidget* window)
@@ -188,18 +313,20 @@ W_OBJECT_IMPL(ArtifactLayerEditorWidgetV2)
 
   renderTask_.wait();
 
-  renderer_->flushAndWait();
+  if (renderer_) {
+   renderer_->flushAndWait();
+  }
  }
 
  void ArtifactLayerEditorWidgetV2::Impl::renderOneFrame()
  {
-  if (!initialized_ || !renderer_)
-   return;
-  renderer_->clear();
-  renderer_->drawRectLocal(0,0, 400, 450, FloatColor(1.0f, 0.5f, 0.5f, 1.0f));
+ if (!initialized_ || !renderer_)
+  return;
+ renderer_->clear();
+  renderer_->drawRectLocal(0,0, 400, 450, targetLayerTint_);
   renderer_->flush();
   renderer_->present();
- }
+}
 
  void ArtifactLayerEditorWidgetV2::Impl::recreateSwapChain(QWidget* window)
  {
@@ -316,10 +443,20 @@ W_OBJECT_IMPL(ArtifactLayerEditorWidgetV2)
 
  }
 
- void ArtifactLayerEditorWidgetV2::setTargetLayer(const LayerID& id)
- {
-
+void ArtifactLayerEditorWidgetV2::setTargetLayer(const LayerID& id)
+{
+ std::lock_guard<std::mutex> lock(impl_->resizeMutex_);
+ impl_->targetLayerId_ = id;
+ const uint seed = qHash(id.toString());
+ const auto channel = [seed](int shift) -> float {
+  const int value = static_cast<int>((seed >> shift) & 0xFFu);
+  return 0.25f + (static_cast<float>(value) / 255.0f) * 0.65f;
+ };
+ impl_->targetLayerTint_ = FloatColor(channel(0), channel(8), channel(16), 1.0f);
+ if (impl_->renderer_) {
+  impl_->renderer_->resetView();
  }
+}
 
  void ArtifactLayerEditorWidgetV2::resetView()
  {

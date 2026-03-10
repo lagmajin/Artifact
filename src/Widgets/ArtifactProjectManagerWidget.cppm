@@ -818,8 +818,44 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
         });
 
         menu.addAction("Delete", [this, sourceIdx, item, svc]() {
-            if (item) {
-                svc->getCurrentProjectSharedPtr()->removeItem(item);
+            if (!svc || !item) {
+                return;
+            }
+
+            if (item->type() == eProjectItemType::Composition) {
+                const QVariant idVar = sourceIdx.data(Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::CompositionId));
+                if (!idVar.isValid()) {
+                    return;
+                }
+                const CompositionID compId(idVar.toString());
+                const int queuedCount = svc->renderQueueCountForComposition(compId);
+
+                QString message = QStringLiteral("このコンポジションを削除しますか？");
+                if (queuedCount > 0) {
+                    message = QStringLiteral(
+                        "このコンポジションはレンダーキューに %1 件登録されています。\n"
+                        "削除すると該当キューも削除されます。\n"
+                        "続行しますか？").arg(queuedCount);
+                }
+                const auto answer = QMessageBox::question(
+                    this,
+                    QStringLiteral("コンポジション削除"),
+                    message,
+                    QMessageBox::Yes | QMessageBox::No,
+                    QMessageBox::No);
+                if (answer != QMessageBox::Yes) {
+                    return;
+                }
+
+                if (!svc->removeCompositionWithRenderQueueCleanup(compId)) {
+                    QMessageBox::warning(this, QStringLiteral("削除失敗"),
+                        QStringLiteral("コンポジションの削除に失敗しました。"));
+                }
+                return;
+            }
+
+            if (auto shared = svc->getCurrentProjectSharedPtr()) {
+                shared->removeItem(item);
             }
         });
 

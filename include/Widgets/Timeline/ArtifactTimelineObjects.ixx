@@ -55,6 +55,8 @@ export namespace Artifact
  public:
   // Called by child resize handles when moved
   void handleMoved(ResizeHandle::Side side, qreal sceneX);
+  void beginHandleResize(ResizeHandle::Side side, qreal sceneX);
+  void endHandleResize(ResizeHandle::Side side);
   
   // Set size/position (start = x in scene coords, duration = width in pixels)
   void setStartDuration(double start, double duration);

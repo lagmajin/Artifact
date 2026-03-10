@@ -1,0 +1,35 @@
+module;
+#include <QWidget>
+#include <wobjectdefs.h>
+
+export module Artifact.Widgets.CompositionEditor;
+
+import Color.Float;
+import Artifact.Composition.Abstract;
+
+export namespace Artifact {
+
+class ArtifactCompositionEditor : public QWidget {
+ W_OBJECT(ArtifactCompositionEditor)
+private:
+ class Impl;
+ Impl* impl_;
+
+public:
+ explicit ArtifactCompositionEditor(QWidget* parent = nullptr);
+ ~ArtifactCompositionEditor();
+
+ void setComposition(ArtifactCompositionPtr composition);
+ void setClearColor(const FloatColor& color);
+
+public /*slots*/:
+ void play(); W_SLOT(play);
+ void stop(); W_SLOT(stop);
+ void resetView(); W_SLOT(resetView);
+ void zoomIn(); W_SLOT(zoomIn);
+ void zoomOut(); W_SLOT(zoomOut);
+ void zoomFit(); W_SLOT(zoomFit);
+ void zoom100(); W_SLOT(zoom100);
+};
+
+}

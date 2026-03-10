@@ -110,7 +110,25 @@ export namespace Artifact
   void addLayer(const CompositionID& id, const ArtifactLayerInitParams& params);
   void addLayerToCurrentComposition(const ArtifactLayerInitParams& params);
   bool removeLayerFromComposition(const CompositionID& compositionId, const LayerID& layerId);
+  bool duplicateLayerInCurrentComposition(const LayerID& layerId);
+  bool renameLayerInCurrentComposition(const LayerID& layerId, const QString& newName);
+  bool isLayerVisibleInCurrentComposition(const LayerID& layerId);
+  bool isLayerLockedInCurrentComposition(const LayerID& layerId);
+  bool isLayerSoloInCurrentComposition(const LayerID& layerId);
+  bool isLayerShyInCurrentComposition(const LayerID& layerId);
+  bool setLayerVisibleInCurrentComposition(const LayerID& layerId, bool visible);
+  bool setLayerLockedInCurrentComposition(const LayerID& layerId, bool locked);
+  bool setLayerSoloInCurrentComposition(const LayerID& layerId, bool solo);
+  bool setLayerShyInCurrentComposition(const LayerID& layerId, bool shy);
+  bool soloOnlyLayerInCurrentComposition(const LayerID& layerId);
+  bool clearLayerParentInCurrentComposition(const LayerID& layerId);
+  bool layerHasParentInCurrentComposition(const LayerID& layerId);
+  LayerID layerParentIdInCurrentComposition(const LayerID& layerId);
+  QString layerNameInCurrentComposition(const LayerID& layerId);
   bool removeComposition(const CompositionID& id);
+  int renderQueueCountForComposition(const CompositionID& id) const;
+  bool removeCompositionWithRenderQueueCleanup(const CompositionID& id, int* removedQueueCount = nullptr);
+  bool duplicateComposition(const CompositionID& id);
   bool renameComposition(const CompositionID& id, const UniString& name);
   std::shared_ptr<ArtifactProject> getCurrentProjectSharedPtr() const;
  public /*signals*/:
@@ -121,6 +139,8 @@ export namespace Artifact
   W_SIGNAL(projectCreated);
   void compositionCreated(const CompositionID& id)
    W_SIGNAL(compositionCreated, id);
+  void currentCompositionChanged(const CompositionID& id)
+   W_SIGNAL(currentCompositionChanged, id);
   void layerCreated(const CompositionID& compId, const LayerID& layerId)
     W_SIGNAL(layerCreated, compId, layerId);
 

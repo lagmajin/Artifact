@@ -13,6 +13,7 @@
 #include <QRectF>
 #include <QBrush>
 #include <algorithm>
+#include <cmath>
 
 module Artifact.Timeline.Objects;
 
@@ -28,12 +29,22 @@ constexpr double kMinClipDuration = 10.0;
 // Pimpl for ClipItem
 class ClipItem::Impl {
 public:
+    enum class InteractionState {
+        Idle,
+        ResizingLeft,
+        ResizingRight
+    };
+
     double start = 0.0;
     double duration = 100.0;
     double height = 20.0;
     double minDuration = 10.0;
     ResizeHandle* leftHandle = nullptr;
     ResizeHandle* rightHandle = nullptr;
+    InteractionState interaction = InteractionState::Idle;
+    double resizePressSceneX = 0.0;
+    double resizeInitialStart = 0.0;
+    double resizeInitialDuration = 0.0;
     // Drag/ghost support
     bool isDragging = false;
     QGraphicsRectItem* ghostRect = nullptr;
@@ -97,8 +108,7 @@ QVariant ResizeHandle::itemChange(GraphicsItemChange change, const QVariant& val
 void ResizeHandle::mousePressEvent(QGraphicsSceneMouseEvent* event)
 {
     if (auto* clip = dynamic_cast<ClipItem*>(parentItem())) {
-        // Prevent parent clip from receiving a tiny move while resizing.
-        clip->setFlag(QGraphicsItem::ItemIsMovable, false);
+        clip->beginHandleResize(side, event->scenePos().x());
     }
     grabMouse();
     event->accept();
@@ -118,7 +128,7 @@ void ResizeHandle::mouseReleaseEvent(QGraphicsSceneMouseEvent* event)
         ungrabMouse();
     }
     if (auto* clip = dynamic_cast<ClipItem*>(parentItem())) {
-        clip->setFlag(QGraphicsItem::ItemIsMovable, true);
+        clip->endHandleResize(side);
     }
     event->accept();
 }
@@ -154,7 +164,8 @@ void ResizeHandle::mouseReleaseEvent(QGraphicsSceneMouseEvent* event)
 
  ClipItem::~ClipItem()
  {
-
+  delete impl_;
+  impl_ = nullptr;
  }
 
  QRectF ClipItem::boundingRect() const
@@ -226,21 +237,35 @@ void ClipItem::handleMoved(ResizeHandle::Side side, qreal sceneX)
         return;
     }
 
-    const double oldStart = impl_->start;
-    const double oldEnd = impl_->start + impl_->duration;
-    double newStart = oldStart;
+    double newStart = impl_->start;
     double newDuration = impl_->duration;
 
-    if (side == ResizeHandle::Left) {
-        // Left edge follows handle scene-x. Keep right edge fixed.
-        const double maxStart = oldEnd - impl_->minDuration;
-        newStart = std::clamp(static_cast<double>(sceneX), 0.0, maxStart);
-        newDuration = oldEnd - newStart;
-    } else if (side == ResizeHandle::Right) {
-        // Right edge follows handle scene-x. Keep left edge fixed.
-        const double minEnd = oldStart + impl_->minDuration;
-        const double newEnd = std::max(static_cast<double>(sceneX), minEnd);
-        newDuration = newEnd - oldStart;
+    const bool resizingLeft = impl_->interaction == Impl::InteractionState::ResizingLeft && side == ResizeHandle::Left;
+    const bool resizingRight = impl_->interaction == Impl::InteractionState::ResizingRight && side == ResizeHandle::Right;
+
+    if (resizingLeft || resizingRight) {
+        const double delta = static_cast<double>(sceneX) - impl_->resizePressSceneX;
+        if (resizingLeft) {
+            const double oldEnd = impl_->resizeInitialStart + impl_->resizeInitialDuration;
+            const double maxStart = oldEnd - impl_->minDuration;
+            newStart = std::clamp(impl_->resizeInitialStart + delta, 0.0, maxStart);
+            newDuration = oldEnd - newStart;
+        } else {
+            newStart = impl_->resizeInitialStart;
+            newDuration = std::max(impl_->minDuration, impl_->resizeInitialDuration + delta);
+        }
+    } else {
+        const double oldStart = impl_->start;
+        const double oldEnd = impl_->start + impl_->duration;
+        if (side == ResizeHandle::Left) {
+            const double maxStart = oldEnd - impl_->minDuration;
+            newStart = std::clamp(static_cast<double>(sceneX), 0.0, maxStart);
+            newDuration = oldEnd - newStart;
+        } else if (side == ResizeHandle::Right) {
+            const double minEnd = oldStart + impl_->minDuration;
+            const double newEnd = std::max(static_cast<double>(sceneX), minEnd);
+            newDuration = newEnd - oldStart;
+        }
     }
 
     setStartDuration(newStart, newDuration);
@@ -252,25 +277,53 @@ void ClipItem::setStartDuration(double start, double duration)
     if (!impl_) {
         return;
     }
-    
+
+    const double newStart = std::max(0.0, start);
+    const double newDuration = std::max(impl_->minDuration, duration);
+    const double oldDuration = impl_->duration;
+    const double keepY = pos().y();
+
     g_clipGeometrySyncInProgress = true;
-    impl_->start = std::max(0.0, start);
-    impl_->duration = std::max(impl_->minDuration, duration);
-    
-    // Update position
-    setPos(impl_->start, std::round(pos().y()));
-    
-    // Update right handle position
+    if (std::abs(newDuration - oldDuration) > 1e-9) {
+        prepareGeometryChange();
+    }
+    impl_->start = newStart;
+    impl_->duration = newDuration;
+
+    // Keep clip on the exact same track Y while resizing.
+    setPos(impl_->start, keepY);
+
     if (impl_->leftHandle) {
         impl_->leftHandle->setPos(0.0, 0.0);
     }
     if (impl_->rightHandle) {
         impl_->rightHandle->setPos(impl_->duration, 0);
     }
-    
-    // Update bounding rect
-    prepareGeometryChange();
     g_clipGeometrySyncInProgress = false;
+}
+
+void ClipItem::beginHandleResize(ResizeHandle::Side side, qreal sceneX)
+{
+    if (!impl_) {
+        return;
+    }
+    impl_->resizePressSceneX = static_cast<double>(sceneX);
+    impl_->resizeInitialStart = impl_->start;
+    impl_->resizeInitialDuration = impl_->duration;
+    impl_->interaction = (side == ResizeHandle::Left)
+        ? Impl::InteractionState::ResizingLeft
+        : Impl::InteractionState::ResizingRight;
+}
+
+void ClipItem::endHandleResize(ResizeHandle::Side side)
+{
+    if (!impl_) {
+        return;
+    }
+    if ((side == ResizeHandle::Left && impl_->interaction == Impl::InteractionState::ResizingLeft) ||
+        (side == ResizeHandle::Right && impl_->interaction == Impl::InteractionState::ResizingRight)) {
+        impl_->interaction = Impl::InteractionState::Idle;
+    }
 }
 
 double ClipItem::getStart() const
@@ -288,7 +341,7 @@ void ClipItem::setStart(double start)
     if (impl_) {
         g_clipGeometrySyncInProgress = true;
         impl_->start = std::max(0.0, start);
-        setPos(impl_->start, std::round(pos().y()));
+        setPos(impl_->start, pos().y());
         g_clipGeometrySyncInProgress = false;
         update();
     }
@@ -297,15 +350,19 @@ void ClipItem::setStart(double start)
 void ClipItem::setDuration(double duration)
 {
     if (impl_) {
+        const double newDuration = std::max(impl_->minDuration, duration);
+        const double oldDuration = impl_->duration;
         g_clipGeometrySyncInProgress = true;
-        impl_->duration = std::max(impl_->minDuration, duration);
+        if (std::abs(newDuration - oldDuration) > 1e-9) {
+            prepareGeometryChange();
+        }
+        impl_->duration = newDuration;
         if (impl_->leftHandle) {
             impl_->leftHandle->setPos(0.0, 0.0);
         }
         if (impl_->rightHandle) {
             impl_->rightHandle->setPos(impl_->duration, 0);
         }
-        prepareGeometryChange();
         g_clipGeometrySyncInProgress = false;
         update();
     }
@@ -329,7 +386,7 @@ void ClipItem::mousePressEvent(QGraphicsSceneMouseEvent* event)
 void ClipItem::mouseMoveEvent(QGraphicsSceneMouseEvent* event)
 {
     if (!impl_) return;
-    if (!flags().testFlag(QGraphicsItem::ItemIsMovable)) {
+    if (impl_->interaction != Impl::InteractionState::Idle) {
         event->accept();
         return;
     }
@@ -352,9 +409,8 @@ void ClipItem::mouseMoveEvent(QGraphicsSceneMouseEvent* event)
         QPointF newPos = impl_->dragStartItemPos + QPointF(delta.x(), delta.y());
         impl_->ghostRect->setPos(newPos);
         Q_EMIT dragMoved(this, impl_->ghostRect->scenePos().x(), impl_->ghostRect->scenePos().y());
-    } else {
-        QGraphicsObject::mouseMoveEvent(event);
     }
+    event->accept();
 }
 
 void ClipItem::mouseReleaseEvent(QGraphicsSceneMouseEvent* event)

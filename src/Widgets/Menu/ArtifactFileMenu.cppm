@@ -11,6 +11,9 @@
 #include <QLineEdit>
 #include <QFileInfo>
 #include <QSet>
+#include <QProcess>
+#include <QCoreApplication>
+#include <QTimer>
 #include <wobjectimpl.h>
 
 module Artifact.Menu.File;
@@ -65,6 +68,7 @@ public:
     QAction* newCompositionAction = nullptr;
     QAction* importAssetsAction = nullptr;
     QAction* revealProjectFolderAction = nullptr;
+    QAction* restartAction = nullptr;
     QAction* quitAction = nullptr;
     QMenu* recentProjectsMenu = nullptr;
     ArtifactFileMenu* menu_ = nullptr;
@@ -100,6 +104,7 @@ ArtifactFileMenu::Impl::Impl(ArtifactFileMenu* menu)
     importAssetsAction = new QAction("アセットを読み込み(&I)...");
     importAssetsAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_I));
     revealProjectFolderAction = new QAction("プロジェクトフォルダを開く");
+    restartAction = new QAction("再起動");
     
     quitAction = new QAction("終了(&Q)");
     quitAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_Q));
@@ -117,6 +122,7 @@ ArtifactFileMenu::Impl::Impl(ArtifactFileMenu* menu)
     menu->addAction(revealProjectFolderAction);
     recentProjectsMenu = menu->addMenu("最近使ったプロジェクト");
     menu->addSeparator();
+    menu->addAction(restartAction);
     menu->addAction(quitAction);
 
     QObject::connect(createProjectAction, &QAction::triggered, menu, [this]() { handleCreateProject(); });
@@ -127,6 +133,7 @@ ArtifactFileMenu::Impl::Impl(ArtifactFileMenu* menu)
     QObject::connect(importAssetsAction, &QAction::triggered, menu, [this]() { handleImportAssets(); });
     QObject::connect(revealProjectFolderAction, &QAction::triggered, menu, [this]() { handleRevealProjectFolder(); });
     QObject::connect(closeProjectAction, &QAction::triggered, menu, &ArtifactFileMenu::projectClosed);
+    QObject::connect(restartAction, &QAction::triggered, menu, &ArtifactFileMenu::restartApplication);
     QObject::connect(quitAction, &QAction::triggered, menu, &ArtifactFileMenu::quitApplication);
 }
 
@@ -271,6 +278,23 @@ void ArtifactFileMenu::projectClosed()
 void ArtifactFileMenu::quitApplication()
 {
     QApplication::quit();
+}
+
+void ArtifactFileMenu::restartApplication()
+{
+    const QString program = QCoreApplication::applicationFilePath();
+    QStringList args = QCoreApplication::arguments();
+    if (!args.isEmpty()) {
+        args.removeFirst();
+    }
+    const bool launched = QProcess::startDetached(program, args);
+    if (!launched) {
+        qWarning() << "Failed to restart application:" << program;
+        return;
+    }
+    QTimer::singleShot(0, []() {
+        QApplication::quit();
+    });
 }
 
 void ArtifactFileMenu::resetRecentFilesMenu()
