@@ -52,6 +52,11 @@ v0.2 の安定化が前提。
 - 完了条件:
   - 値変更から表示更新までの遅延が体感で即時
   - レイヤー選択切替時のクラッシュ/破棄バグがない
+- 進捗 (2026-03-11):
+  - Inspector の Effects Pipeline で操作性改善
+  - ラックの Add/Remove を選択状態に応じて有効化
+  - エフェクト項目ダブルクリックで Enable/Disable 切替
+  - エフェクト削除に確認ダイアログを追加
 
 ### 4. 依存削除確認の統一
 
@@ -62,6 +67,9 @@ v0.2 の安定化が前提。
 - 完了条件:
   - Composition削除時に RenderQueue/参照レイヤーを確認
   - どの導線から削除しても同一メッセージ・同一結果
+- 進捗 (2026-03-11):
+  - `ArtifactProjectService::compositionRemovalConfirmationMessage(...)` を追加
+  - CompositionMenu / ProjectManagerWidget の削除確認文言を Service 経由へ統一
 
 ### 5. RenderQueue 管理機能
 
@@ -76,6 +84,8 @@ v0.2 の安定化が前提。
   - `Completed/Failed/Canceled` を `Pending` に戻す `resetJobForRerun()` を Service に追加
   - `Completed/Failed` 一括再実行リセット API を追加
   - RenderQueue UI に `Rerun Selected` / `Rerun Done/Failed` ボタンを追加
+  - RenderQueue UI にジョブ設定プリセット保存/読込/削除を追加（FastSettingsStore永続化）
+  - プリセット保存時の同名上書き確認ダイアログを追加
 
 ### 6. View 同期完成
 

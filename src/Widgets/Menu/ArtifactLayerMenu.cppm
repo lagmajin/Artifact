@@ -217,14 +217,16 @@ bool ArtifactLayerMenu::Impl::hasSelectedLayer() const
 void ArtifactLayerMenu::Impl::refreshEnabledState()
 {
     auto* service = ArtifactProjectService::instance();
+    const bool hasProject = service && service->hasProject();
     const bool hasComp = hasCurrentComposition();
     const bool hasLayer = hasSelectedLayer();
     const bool hasParent = hasLayer && service && service->layerHasParentInCurrentComposition(selectedLayerId_);
 
-    createSolidAction->setEnabled(hasComp);
-    createNullAction->setEnabled(hasComp);
-    createAdjustAction->setEnabled(hasComp);
-    createTextAction->setEnabled(hasComp);
+    // Creation actions can auto-create first composition when a project exists.
+    createSolidAction->setEnabled(hasProject);
+    createNullAction->setEnabled(hasProject);
+    createAdjustAction->setEnabled(hasProject);
+    createTextAction->setEnabled(hasProject);
 
     duplicateLayerAction->setEnabled(hasLayer);
     renameLayerAction->setEnabled(hasLayer);

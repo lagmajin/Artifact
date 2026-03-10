@@ -19,6 +19,7 @@
 #include <QCheckBox>
 #include <QLineEdit>
 #include <QColorDialog>
+#include <QMessageBox>
 #include <QVariant>
 #include <QContextMenuEvent>
 #include <QApplication>
@@ -142,6 +143,8 @@ namespace Artifact {
    void handleAddEffectClicked(int rackIndex);
    void handleAddGeneratorEffect(int rackIndex);
    void handleRemoveEffectClicked(int rackIndex);
+   void refreshRackButtons();
+   void setEffectRackEnabled(bool enabled);
    void setNoProjectState();
    void setNoLayerState();
   };
@@ -429,7 +432,7 @@ void ArtifactInspectorWidget::Impl::updatePropertiesForEffect(const QString& eff
   qDebug() << "[Inspector] Updated layer info:" << layerName << "Type:" << layerType;
  }
 
- void ArtifactInspectorWidget::Impl::setNoProjectState()
+void ArtifactInspectorWidget::Impl::setNoProjectState()
  {
   containerWidget->setEnabled(false);
   layerNameLabel->setText("Layer: (No project)");
@@ -437,9 +440,10 @@ void ArtifactInspectorWidget::Impl::updatePropertiesForEffect(const QString& eff
   statusLabel->setText("Status: Create or open a project");
   currentCompositionId_ = CompositionID();
   currentLayerId_ = LayerID();
+  setEffectRackEnabled(false);
  }
 
- void ArtifactInspectorWidget::Impl::setNoLayerState()
+void ArtifactInspectorWidget::Impl::setNoLayerState()
  {
   layerNameLabel->setText("Layer: (No layer selected)");
   layerTypeLabel->setText("Type: N/A");
@@ -452,8 +456,41 @@ void ArtifactInspectorWidget::Impl::updatePropertiesForEffect(const QString& eff
     rack.listWidget->clear();
    }
   }
+  setEffectRackEnabled(false);
+  refreshRackButtons();
   if (propertyWidget) {
       propertyWidget->clear();
+  }
+ }
+
+ void ArtifactInspectorWidget::Impl::setEffectRackEnabled(bool enabled)
+ {
+  for (auto& rack : racks) {
+   if (rack.listWidget) {
+    rack.listWidget->setEnabled(enabled);
+   }
+   if (rack.addButton) {
+    rack.addButton->setEnabled(enabled);
+   }
+   if (rack.removeButton) {
+    rack.removeButton->setEnabled(false);
+   }
+  }
+ }
+
+ void ArtifactInspectorWidget::Impl::refreshRackButtons()
+ {
+  const bool canEdit = !currentLayerId_.isNil() && !currentCompositionId_.isNil();
+  for (auto& rack : racks) {
+   if (rack.addButton) {
+    rack.addButton->setEnabled(canEdit);
+   }
+   if (!rack.removeButton || !rack.listWidget) {
+    continue;
+   }
+   auto* current = rack.listWidget->currentItem();
+   const bool hasEffectItem = canEdit && current && current->data(Qt::UserRole).toString().trimmed().size() > 0;
+   rack.removeButton->setEnabled(hasEffectItem);
   }
  }
 
@@ -479,6 +516,7 @@ void ArtifactInspectorWidget::Impl::updatePropertiesForEffect(const QString& eff
   if (!layer) return;
 
   auto effects = layer->getEffects();
+  setEffectRackEnabled(true);
 
   for (const auto& effect : effects) {
    if (effect) {
@@ -502,6 +540,7 @@ void ArtifactInspectorWidget::Impl::updatePropertiesForEffect(const QString& eff
           racks[i].listWidget->addItem(item);
       }
   }
+  refreshRackButtons();
  }
 
  void ArtifactInspectorWidget::Impl::handleAddEffectClicked(int rackIndex)
@@ -528,6 +567,12 @@ void ArtifactInspectorWidget::Impl::updatePropertiesForEffect(const QString& eff
           newEffect->setEffectID(ArtifactCore::UniString(std::to_string(std::rand()).c_str()));
           layer->addEffect(newEffect);
           updateEffectsList();
+          if (statusLabel) {
+           statusLabel->setText(QStringLiteral("Status: Effect added - %1").arg(newEffect->displayName().toQString()));
+          }
+          if (tabWidget) {
+           tabWidget->setCurrentIndex(2); // Properties
+          }
       }
   };
 
@@ -563,7 +608,7 @@ void ArtifactInspectorWidget::Impl::updatePropertiesForEffect(const QString& eff
   // Obsolete function. Kept temporarily to appease class signature.
  }
 
- void ArtifactInspectorWidget::Impl::handleRemoveEffectClicked(int rackIndex)
+void ArtifactInspectorWidget::Impl::handleRemoveEffectClicked(int rackIndex)
  {
   if (!racks[rackIndex].listWidget) return;
 
@@ -584,15 +629,30 @@ void ArtifactInspectorWidget::Impl::updatePropertiesForEffect(const QString& eff
   auto layer = comp->layerById(currentLayerId_);
   if (!layer) return;
 
+  const auto answer = QMessageBox::question(
+   containerWidget,
+   QStringLiteral("Remove Effect"),
+   QStringLiteral("選択したエフェクトを削除しますか？"),
+   QMessageBox::Yes | QMessageBox::No,
+   QMessageBox::No);
+  if (answer != QMessageBox::Yes) {
+   return;
+  }
+
+  int removedCount = 0;
   for (auto item : selectedItems) {
    UniString effectID(item->data(Qt::UserRole).toString().toStdString());
    if(effectID.length() > 0) {
        layer->removeEffect(effectID);
        qDebug() << "[Inspector] Effect removed:" << effectID.toQString();
+       ++removedCount;
    }
   }
 
   updateEffectsList();
+  if (removedCount > 0 && statusLabel) {
+   statusLabel->setText(QStringLiteral("Status: Removed %1 effect(s)").arg(removedCount));
+  }
  }
 
  void ArtifactInspectorWidget::update()
@@ -688,6 +748,37 @@ void ArtifactInspectorWidget::Impl::updatePropertiesForEffect(const QString& eff
           QListWidgetItem* item = lw->itemAt(pos);
           impl_->showRackContextMenu(i, item, lw->viewport()->mapToGlobal(pos));
       });
+      QObject::connect(impl_->racks[i].listWidget, &QListWidget::currentItemChanged, this, [this](QListWidgetItem*, QListWidgetItem*) {
+          impl_->refreshRackButtons();
+      });
+      QObject::connect(impl_->racks[i].listWidget, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem* item) {
+          if (!item) return;
+          const QString effectId = item->data(Qt::UserRole).toString();
+          if (effectId.trimmed().isEmpty()) return;
+          bool isEnabled = true;
+          auto* projectService = ArtifactProjectService::instance();
+          if (projectService && !impl_->currentCompositionId_.isNil() && !impl_->currentLayerId_.isNil()) {
+              auto findResult = projectService->findComposition(impl_->currentCompositionId_);
+              if (findResult.success) {
+                  if (auto comp = findResult.ptr.lock()) {
+                      if (auto layer = comp->layerById(impl_->currentLayerId_)) {
+                          for (const auto& effect : layer->getEffects()) {
+                              if (effect && effect->effectID().toQString() == effectId) {
+                                  isEnabled = effect->isEnabled();
+                                  break;
+                              }
+                          }
+                      }
+                  }
+              }
+          }
+          if (impl_->setEffectEnabledById(effectId, !isEnabled)) {
+              impl_->updateEffectsList();
+              if (impl_->statusLabel) {
+                  impl_->statusLabel->setText(QStringLiteral("Status: Effect %1").arg(!isEnabled ? "enabled" : "disabled"));
+              }
+          }
+      });
   }
 
   effectsLayout->addStretch();
@@ -748,6 +839,7 @@ void ArtifactInspectorWidget::Impl::updatePropertiesForEffect(const QString& eff
     impl_->handleLayerSelected(id);
    });
   }
+  impl_->refreshRackButtons();
  }
 
  ArtifactInspectorWidget::~ArtifactInspectorWidget()
