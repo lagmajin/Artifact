@@ -1,5 +1,6 @@
 ﻿module;
 #include <QObject>
+#include <QColor>
 #include <wobjectdefs.h>
 #include "DockManager.h"
 

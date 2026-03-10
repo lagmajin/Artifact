@@ -13,7 +13,7 @@ module Menu.Composition;
 
 import Artifact.Service.Project;
 import Artifact.Composition.InitParams;
-import Artifact.Render.Manager;
+import Artifact.Render.Queue.Service;
 import Artifact.Layer.InitParams;
 import Dialog.Composition;
 
@@ -219,8 +219,13 @@ void ArtifactCompositionMenu::Impl::runMilestoneDummyPipeline()
 {
  auto* parent = mainWindow_ ? mainWindow_ : menu_;
  auto* projectService = ArtifactProjectService::instance();
+ auto* queueService = ArtifactRenderQueueService::instance();
  if (!projectService) {
   QMessageBox::warning(parent, "Milestone", "ProjectService が利用できません。");
+  return;
+ }
+ if (!queueService) {
+  QMessageBox::warning(parent, "Milestone", "RenderQueueService が利用できません。");
   return;
  }
 
@@ -248,22 +253,13 @@ void ArtifactCompositionMenu::Impl::runMilestoneDummyPipeline()
   return;
  }
 
- DummyRenderRequest request;
- request.compositionId = currentComp->id().toString();
- request.compositionName = params.compositionName().toQString();
- request.frameSize = QSize(params.width(), params.height());
- auto renderResult = ArtifactRenderManager::instance().renderDummyImage(request);
-
- if (!renderResult.success) {
-  QMessageBox::warning(parent, "Milestone", QStringLiteral("ダミーレンダーに失敗しました。\n%1").arg(renderResult.message));
-  return;
- }
+ queueService->addRenderQueueForComposition(currentComp->id(), params.compositionName().toQString());
+ queueService->startAllJobs();
 
  QMessageBox::information(
   parent,
   "Milestone",
-  QStringLiteral("完了しました。\n1) コンポ作成\n2) 平面追加\n3) レンダーマネージャー経由でダミー出力\n\n出力先:\n%1")
-   .arg(renderResult.outputPath));
+  QStringLiteral("完了しました。\n1) コンポ作成\n2) 平面追加\n3) RenderQueueService 経由でキュー登録と実行"));
 }
 
 ArtifactCompositionMenu::ArtifactCompositionMenu(QWidget* mainWindow, QWidget* parent)

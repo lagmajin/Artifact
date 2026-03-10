@@ -218,7 +218,9 @@ namespace Artifact
             QString* outputFormat,
             QString* codec,
             int* width,
-            int* height) const
+            int* height,
+            double* fps,
+            int* bitrateKbps) const
         {
             if (index < 0 || index >= jobs.size()) {
                 return false;
@@ -228,6 +230,8 @@ namespace Artifact
             if (codec) *codec = job.codec;
             if (width) *width = job.resolutionWidth;
             if (height) *height = job.resolutionHeight;
+            if (fps) *fps = job.frameRate;
+            if (bitrateKbps) *bitrateKbps = job.bitrate;
             return true;
         }
 
@@ -236,7 +240,9 @@ namespace Artifact
             const QString& outputFormat,
             const QString& codec,
             int width,
-            int height)
+            int height,
+            double fps,
+            int bitrateKbps)
         {
             if (index < 0 || index >= jobs.size()) return;
             auto& job = jobs[index];
@@ -246,6 +252,8 @@ namespace Artifact
             job.codec = cdc.isEmpty() ? QStringLiteral("H.264") : cdc;
             job.resolutionWidth = std::clamp(width, 16, 16384);
             job.resolutionHeight = std::clamp(height, 16, 16384);
+            job.frameRate = std::clamp(fps, 1.0, 240.0);
+            job.bitrate = std::clamp(bitrateKbps, 128, 200000);
             if (jobUpdated) jobUpdated(index);
         }
 
@@ -300,6 +308,13 @@ namespace Artifact
             return jobs[index].outputPath;
         }
 
+        int jobProgressAt(int index) const {
+            if (index < 0 || index >= jobs.size()) {
+                return 0;
+            }
+            return jobs[index].progress;
+        }
+
         QString jobErrorMessageAt(int index) const {
             if (index < 0 || index >= jobs.size()) {
                 return {};
@@ -329,6 +344,36 @@ namespace Artifact
             job.overlayScale = std::clamp(scale, 0.05f, 8.0f);
             job.overlayRotationDeg = rotationDeg;
             if (jobUpdated) jobUpdated(index);
+        }
+
+        bool resetJobForRerun(int index) {
+            if (index < 0 || index >= jobs.size()) {
+                return false;
+            }
+            auto& job = jobs[index];
+            const bool wasRenderable = (job.status == ArtifactRenderJob::Status::Completed
+                || job.status == ArtifactRenderJob::Status::Failed
+                || job.status == ArtifactRenderJob::Status::Canceled);
+            job.status = ArtifactRenderJob::Status::Pending;
+            job.progress = 0;
+            job.errorMessage.clear();
+            if (jobStatusChanged) jobStatusChanged(index, job.status);
+            if (jobProgressChanged) jobProgressChanged(index, job.progress);
+            if (jobUpdated) jobUpdated(index);
+            return wasRenderable;
+        }
+
+        int resetCompletedAndFailedJobsForRerun() {
+            int changed = 0;
+            for (int i = 0; i < jobs.size(); ++i) {
+                const auto status = jobs[i].status;
+                if (status == ArtifactRenderJob::Status::Completed
+                    || status == ArtifactRenderJob::Status::Failed) {
+                    resetJobForRerun(i);
+                    ++changed;
+                }
+            }
+            return changed;
         }
 
         int countJobsForComposition(const ArtifactCore::CompositionID& compositionId) const {
@@ -732,6 +777,11 @@ namespace Artifact
         return impl_->queueManager.jobStatusAt(index);
     }
 
+    int ArtifactRenderQueueService::jobProgressAt(int index) const
+    {
+        return impl_->queueManager.jobProgressAt(index);
+    }
+
     QString ArtifactRenderQueueService::jobOutputPathAt(int index) const
     {
         return impl_->queueManager.jobOutputPathAt(index);
@@ -759,9 +809,11 @@ namespace Artifact
         QString* outputFormat,
         QString* codec,
         int* width,
-        int* height) const
+        int* height,
+        double* fps,
+        int* bitrateKbps) const
     {
-        return impl_->queueManager.jobOutputSettingsAt(index, outputFormat, codec, width, height);
+        return impl_->queueManager.jobOutputSettingsAt(index, outputFormat, codec, width, height, fps, bitrateKbps);
     }
 
     void ArtifactRenderQueueService::setJobOutputSettingsAt(
@@ -769,9 +821,11 @@ namespace Artifact
         const QString& outputFormat,
         const QString& codec,
         int width,
-        int height)
+        int height,
+        double fps,
+        int bitrateKbps)
     {
-        impl_->queueManager.setJobOutputSettings(index, outputFormat, codec, width, height);
+        impl_->queueManager.setJobOutputSettings(index, outputFormat, codec, width, height, fps, bitrateKbps);
         impl_->syncCoreQueueModel();
     }
 
@@ -788,6 +842,22 @@ namespace Artifact
     void ArtifactRenderQueueService::setJobOverlayTransform(int index, float offsetX, float offsetY, float scale, float rotationDeg)
     {
         impl_->queueManager.setJobOverlayTransform(index, offsetX, offsetY, scale, rotationDeg);
+        impl_->syncCoreQueueModel();
+    }
+
+    void ArtifactRenderQueueService::resetJobForRerun(int index)
+    {
+        impl_->queueManager.resetJobForRerun(index);
+        impl_->syncCoreQueueModel();
+    }
+
+    int ArtifactRenderQueueService::resetCompletedAndFailedJobsForRerun()
+    {
+        const int changed = impl_->queueManager.resetCompletedAndFailedJobsForRerun();
+        if (changed > 0) {
+            impl_->syncCoreQueueModel();
+        }
+        return changed;
     }
 
     void ArtifactRenderQueueService::startAllJobs() {

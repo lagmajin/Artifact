@@ -69,6 +69,7 @@ export namespace Artifact
   int renderQueueCountForComposition(const ArtifactCore::CompositionID& compositionId) const;
   QString jobCompositionNameAt(int index) const;
   QString jobStatusAt(int index) const;
+  int jobProgressAt(int index) const;
   QString jobOutputPathAt(int index) const;
   void setJobOutputPathAt(int index, const QString& outputPath);
   bool jobFrameRangeAt(int index, int* startFrame, int* endFrame) const;
@@ -78,16 +79,22 @@ export namespace Artifact
     QString* outputFormat,
     QString* codec,
     int* width,
-    int* height) const;
+    int* height,
+    double* fps,
+    int* bitrateKbps) const;
   void setJobOutputSettingsAt(
     int index,
     const QString& outputFormat,
     const QString& codec,
     int width,
-    int height);
+    int height,
+    double fps,
+    int bitrateKbps);
   QString jobErrorMessageAt(int index) const;
   bool jobOverlayTransformAt(int index, float* offsetX, float* offsetY, float* scale, float* rotationDeg) const;
   void setJobOverlayTransform(int index, float offsetX, float offsetY, float scale, float rotationDeg);
+  void resetJobForRerun(int index);
+  int resetCompletedAndFailedJobsForRerun();
 
   void startRenderQueue();
   void startAllRenderQueues();

@@ -11,6 +11,9 @@ module;
 #include <QDoubleSpinBox>
 #include <QSpinBox>
 #include <QFileDialog>
+#include <QDateTime>
+#include <QStandardPaths>
+#include <QDir>
 #include <QListWidgetItem>
 #include <QSignalBlocker>
 #include <QShortcut>
@@ -56,6 +59,7 @@ module Artifact.Widgets.Render.QueueManager;
 
 import Widgets.Utils.CSS;
 import Artifact.Render.Queue.Service;
+import Core.FastSettingsStore;
 
 
 namespace Artifact
@@ -94,28 +98,41 @@ namespace Artifact
   QPushButton* startButton;
   QPushButton* pauseButton;
   QPushButton* cancelButton;
+  QPushButton* rerunSelectedButton = nullptr;
+  QPushButton* rerunDoneFailedButton = nullptr;
   QProgressBar* totalProgressBar;
   QLabel* summaryLabel;
   QLabel* statusLabel;
+  QListWidget* historyListWidget = nullptr;
+  QPushButton* clearHistoryButton = nullptr;
   QLineEdit* outputPathEdit = nullptr;
   QPushButton* outputBrowseButton = nullptr;
   QComboBox* outputFormatCombo = nullptr;
   QComboBox* codecCombo = nullptr;
   QSpinBox* outputWidthSpin = nullptr;
   QSpinBox* outputHeightSpin = nullptr;
+  QDoubleSpinBox* fpsSpin = nullptr;
+  QSpinBox* bitrateSpin = nullptr;
   QSpinBox* startFrameSpin = nullptr;
   QSpinBox* endFrameSpin = nullptr;
   QDoubleSpinBox* overlayXSpin = nullptr;
   QDoubleSpinBox* overlayYSpin = nullptr;
   QDoubleSpinBox* overlayScaleSpin = nullptr;
   QDoubleSpinBox* overlayRotationSpin = nullptr;
+  std::unique_ptr<ArtifactCore::FastSettingsStore> historyStore_;
   bool syncingTransformControls = false;
   bool syncingJobDetails = false;
 
   static QString normalizeStatus(const QString& status);
+  void loadHistory();
+  void saveHistory() const;
   int selectedSourceIndex() const;
   bool statusMatchesFilter(const QString& status) const;
   void updateSummary();
+  void addHistoryEntry(const QString& message);
+  void addJobSettingsSnapshotToHistory(int sourceIndex);
+  void syncJobsFromService();
+  void selectSourceIndex(int sourceIndex);
   void updateJobList();
   void handleJobSelected();
   void updateJobDetailEditorsForSelection();
@@ -133,10 +150,21 @@ namespace Artifact
 RenderQueueManagerWidget::Impl::Impl()
 {
   service = ArtifactRenderQueueService::instance();
+  const QString appDataDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+  if (!appDataDir.isEmpty()) {
+    QDir dir(appDataDir);
+    if (!dir.exists()) {
+      dir.mkpath(QStringLiteral("."));
+    }
+    const QString historyFile = dir.filePath(QStringLiteral("render_queue_history.cbor"));
+    historyStore_ = std::make_unique<ArtifactCore::FastSettingsStore>(historyFile);
+    historyStore_->setAutoSyncThreshold(8);
+  }
 }
 
 RenderQueueManagerWidget::Impl::~Impl()
 {
+  saveHistory();
   service = nullptr;
 }
 
@@ -207,6 +235,163 @@ void RenderQueueManagerWidget::Impl::updateSummary()
   }
 }
 
+void RenderQueueManagerWidget::Impl::addHistoryEntry(const QString& message)
+{
+  if (!historyListWidget || message.trimmed().isEmpty()) {
+    return;
+  }
+  const QString stamp = QDateTime::currentDateTime().toString("HH:mm:ss");
+  historyListWidget->addItem(QString("[%1] %2").arg(stamp, message));
+  while (historyListWidget->count() > 300) {
+    delete historyListWidget->takeItem(0);
+  }
+  historyListWidget->scrollToBottom();
+  saveHistory();
+}
+
+void RenderQueueManagerWidget::Impl::addJobSettingsSnapshotToHistory(int sourceIndex)
+{
+  if (!service || sourceIndex < 0 || sourceIndex >= service->jobCount()) {
+    return;
+  }
+  QString format;
+  QString codec;
+  int width = 0;
+  int height = 0;
+  double fps = 0.0;
+  int bitrateKbps = 0;
+  int startFrame = 0;
+  int endFrame = 0;
+  service->jobOutputSettingsAt(sourceIndex, &format, &codec, &width, &height, &fps, &bitrateKbps);
+  service->jobFrameRangeAt(sourceIndex, &startFrame, &endFrame);
+  const QString jobName = service->jobCompositionNameAt(sourceIndex).trimmed().isEmpty()
+    ? QString("Job #%1").arg(sourceIndex + 1)
+    : service->jobCompositionNameAt(sourceIndex).trimmed();
+  addHistoryEntry(QString("Snapshot: %1 | %2/%3 | %4x%5 @ %6fps | %7 kbps | %8-%9")
+    .arg(jobName)
+    .arg(format)
+    .arg(codec)
+    .arg(width)
+    .arg(height)
+    .arg(QString::number(fps, 'f', 3))
+    .arg(bitrateKbps)
+    .arg(startFrame)
+    .arg(endFrame));
+}
+
+void RenderQueueManagerWidget::Impl::loadHistory()
+{
+  if (!historyListWidget || !historyStore_) {
+    return;
+  }
+  const QStringList lines = historyStore_->value(QStringLiteral("renderQueue/historyLines")).toStringList();
+  for (const QString& line : lines) {
+    if (!line.trimmed().isEmpty()) {
+      historyListWidget->addItem(line);
+    }
+  }
+  while (historyListWidget->count() > 300) {
+    delete historyListWidget->takeItem(0);
+  }
+  historyListWidget->scrollToBottom();
+}
+
+void RenderQueueManagerWidget::Impl::saveHistory() const
+{
+  if (!historyListWidget || !historyStore_) {
+    return;
+  }
+  QStringList lines;
+  lines.reserve(historyListWidget->count());
+  for (int i = 0; i < historyListWidget->count(); ++i) {
+    auto* item = historyListWidget->item(i);
+    if (!item) {
+      continue;
+    }
+    const QString text = item->text();
+    if (!text.trimmed().isEmpty()) {
+      lines.push_back(text);
+    }
+  }
+  historyStore_->setValue(QStringLiteral("renderQueue/historyLines"), lines);
+  historyStore_->sync();
+}
+
+void RenderQueueManagerWidget::Impl::syncJobsFromService()
+{
+  const QList<JobEntry> previousJobs = jobs;
+  if (!service) {
+    jobs.clear();
+    updateJobList();
+    return;
+  }
+
+  jobs.clear();
+  const int count = service->jobCount();
+  jobs.reserve(count);
+  for (int i = 0; i < count; ++i) {
+    JobEntry entry;
+    const QString name = service->jobCompositionNameAt(i).trimmed();
+    entry.name = name.isEmpty() ? QString("Render Job %1").arg(i + 1) : name;
+    entry.status = normalizeStatus(service->jobStatusAt(i));
+    entry.progress = std::clamp(service->jobProgressAt(i), 0, 100);
+    jobs.push_back(entry);
+  }
+
+  if (!previousJobs.isEmpty()) {
+    const int common = std::min(previousJobs.size(), jobs.size());
+    for (int i = 0; i < common; ++i) {
+      const QString prevStatus = normalizeStatus(previousJobs[i].status);
+      const QString currStatus = normalizeStatus(jobs[i].status);
+      if (prevStatus == currStatus) {
+        continue;
+      }
+      const QString jobName = jobs[i].name;
+      if (currStatus == "Completed") {
+        const QString path = service->jobOutputPathAt(i).trimmed();
+        if (!path.isEmpty()) {
+          addHistoryEntry(QString("Completed: %1 -> %2").arg(jobName, path));
+        } else {
+          addHistoryEntry(QString("Completed: %1").arg(jobName));
+        }
+      } else if (currStatus == "Failed") {
+        const QString err = service->jobErrorMessageAt(i).trimmed();
+        if (!err.isEmpty()) {
+          addHistoryEntry(QString("Failed: %1 (%2)").arg(jobName, err));
+        } else {
+          addHistoryEntry(QString("Failed: %1").arg(jobName));
+        }
+      } else if (currStatus == "Canceled") {
+        addHistoryEntry(QString("Canceled: %1").arg(jobName));
+      } else if (currStatus == "Rendering" && prevStatus != "Rendering") {
+        addHistoryEntry(QString("Started: %1").arg(jobName));
+      }
+    }
+
+    if (jobs.size() > previousJobs.size()) {
+      addHistoryEntry(QString("Queue: %1 job(s) added").arg(jobs.size() - previousJobs.size()));
+    } else if (jobs.size() < previousJobs.size()) {
+      addHistoryEntry(QString("Queue: %1 job(s) removed").arg(previousJobs.size() - jobs.size()));
+    }
+  }
+
+  updateJobList();
+}
+
+void RenderQueueManagerWidget::Impl::selectSourceIndex(int sourceIndex)
+{
+  if (!jobListWidget || sourceIndex < 0) {
+    return;
+  }
+  for (int row = 0; row < jobListWidget->count(); ++row) {
+    auto* item = jobListWidget->item(row);
+    if (item && item->data(Qt::UserRole).toInt() == sourceIndex) {
+      jobListWidget->setCurrentRow(row);
+      return;
+    }
+  }
+}
+
  void RenderQueueManagerWidget::Impl::updateJobList()
  {
   const int selectedSourceBefore = selectedSourceIndex();
@@ -256,9 +441,9 @@ void RenderQueueManagerWidget::Impl::updateSummary()
 
  void RenderQueueManagerWidget::Impl::handleJobSelected()
  {
-  const bool hasSelection = jobListWidget->currentRow() >= 0;
-  removeButton->setEnabled(hasSelection);
-  if (duplicateButton) duplicateButton->setEnabled(hasSelection);
+ const bool hasSelection = jobListWidget->currentRow() >= 0;
+ removeButton->setEnabled(hasSelection);
+ if (duplicateButton) duplicateButton->setEnabled(hasSelection);
   const int sourceIndex = selectedSourceIndex();
   if (moveUpButton) moveUpButton->setEnabled(hasSelection && sourceIndex > 0);
   if (moveDownButton) moveDownButton->setEnabled(hasSelection && sourceIndex >= 0 && sourceIndex < (jobs.size() - 1));
@@ -267,6 +452,24 @@ void RenderQueueManagerWidget::Impl::updateSummary()
   if (hasSelection) {
     updateJobDetailEditorsForSelection();
     updateTransformEditorsForSelection();
+  }
+  const QString selectedStatus = (sourceIndex >= 0 && sourceIndex < jobs.size())
+    ? normalizeStatus(jobs[sourceIndex].status)
+    : QString();
+  const bool canRerunSelected = (selectedStatus == "Completed" || selectedStatus == "Failed" || selectedStatus == "Canceled");
+  if (rerunSelectedButton) {
+    rerunSelectedButton->setEnabled(canRerunSelected);
+  }
+  bool hasRerunnable = false;
+  for (const auto& job : jobs) {
+    const QString status = normalizeStatus(job.status);
+    if (status == "Completed" || status == "Failed") {
+      hasRerunnable = true;
+      break;
+    }
+  }
+  if (rerunDoneFailedButton) {
+    rerunDoneFailedButton->setEnabled(hasRerunnable);
   }
  }
 
@@ -278,6 +481,8 @@ void RenderQueueManagerWidget::Impl::setJobDetailEditorsEnabled(bool enabled)
   if (codecCombo) codecCombo->setEnabled(enabled);
   if (outputWidthSpin) outputWidthSpin->setEnabled(enabled);
   if (outputHeightSpin) outputHeightSpin->setEnabled(enabled);
+  if (fpsSpin) fpsSpin->setEnabled(enabled);
+  if (bitrateSpin) bitrateSpin->setEnabled(enabled);
   if (startFrameSpin) startFrameSpin->setEnabled(enabled);
   if (endFrameSpin) endFrameSpin->setEnabled(enabled);
 }
@@ -300,7 +505,9 @@ void RenderQueueManagerWidget::Impl::updateJobDetailEditorsForSelection()
   QString codec;
   int width = 1920;
   int height = 1080;
-  if (service->jobOutputSettingsAt(sourceIndex, &outputFormat, &codec, &width, &height)) {
+  double fps = 30.0;
+  int bitrateKbps = 8000;
+  if (service->jobOutputSettingsAt(sourceIndex, &outputFormat, &codec, &width, &height, &fps, &bitrateKbps)) {
     if (outputFormatCombo) {
       QSignalBlocker block(outputFormatCombo);
       int idx = outputFormatCombo->findText(outputFormat);
@@ -326,6 +533,14 @@ void RenderQueueManagerWidget::Impl::updateJobDetailEditorsForSelection()
     if (outputHeightSpin) {
       QSignalBlocker block(outputHeightSpin);
       outputHeightSpin->setValue(height);
+    }
+    if (fpsSpin) {
+      QSignalBlocker block(fpsSpin);
+      fpsSpin->setValue(fps);
+    }
+    if (bitrateSpin) {
+      QSignalBlocker block(bitrateSpin);
+      bitrateSpin->setValue(bitrateKbps);
     }
   }
   int startFrame = 0;
@@ -389,35 +604,20 @@ void RenderQueueManagerWidget::Impl::updateTransformEditorsForSelection()
 
  void RenderQueueManagerWidget::Impl::handleJobAdded(int index)
  {
-  const int maxInsertIndex = static_cast<int>(jobs.size());
-  const int insertIndex = std::clamp<int>(index, 0, maxInsertIndex);
-  JobEntry entry;
-  if (service) {
-    const QString name = service->jobCompositionNameAt(index).trimmed();
-    entry.name = name.isEmpty() ? QString("Render Job %1").arg(insertIndex + 1) : name;
-    entry.status = normalizeStatus(service->jobStatusAt(index));
-  } else {
-    entry.name = QString("Render Job %1").arg(insertIndex + 1);
-    entry.status = "Pending";
-  }
-  entry.progress = 0;
-  jobs.insert(insertIndex, entry);
-  updateJobList();
+  Q_UNUSED(index);
+  syncJobsFromService();
  }
 
  void RenderQueueManagerWidget::Impl::handleJobRemoved(int index)
  {
-  if (index >= 0 && index < jobs.size()) {
-    jobs.removeAt(index);
-  }
-  updateJobList();
+  Q_UNUSED(index);
+  syncJobsFromService();
  }
 
  void RenderQueueManagerWidget::Impl::handleJobUpdated(int index)
  {
-  if (index >= 0 && index < jobs.size() && service) {
+  if (service) {
     const QString status = normalizeStatus(service->jobStatusAt(index));
-    jobs[index].status = status;
     if (status == "Completed") {
       const QString path = service->jobOutputPathAt(index).trimmed();
       if (!path.isEmpty() && statusLabel) {
@@ -430,33 +630,28 @@ void RenderQueueManagerWidget::Impl::updateTransformEditorsForSelection()
       }
     }
   }
-  updateJobList();
+  syncJobsFromService();
  }
 
  void RenderQueueManagerWidget::Impl::handleJobStatusChanged(int index, int status)
  {
   Q_UNUSED(status);
-  if (index >= 0 && index < jobs.size()) {
-    if (service) {
-      const QString st = normalizeStatus(service->jobStatusAt(index));
-      jobs[index].status = st;
-      if (statusLabel) {
-        statusLabel->setText(QString("Job #%1: %2").arg(index + 1).arg(st));
-      }
+  if (service) {
+    const QString st = normalizeStatus(service->jobStatusAt(index));
+    if (statusLabel) {
+      statusLabel->setText(QString("Job #%1: %2").arg(index + 1).arg(st));
     }
   }
-  updateJobList();
+  syncJobsFromService();
  }
 
  void RenderQueueManagerWidget::Impl::handleJobProgressChanged(int index, int progress)
  {
-  if (index >= 0 && index < jobs.size()) {
-    jobs[index].progress = std::clamp(progress, 0, 100);
-    if (jobs[index].progress >= 100) {
-      jobs[index].status = "Completed";
-    } else if (jobs[index].progress > 0 && jobs[index].status == "Pending") {
-      jobs[index].status = "Rendering";
-    }
+  Q_UNUSED(index);
+  Q_UNUSED(progress);
+  if (service) {
+    syncJobsFromService();
+    return;
   }
   updateJobList();
  }
@@ -521,6 +716,19 @@ void RenderQueueManagerWidget::Impl::updateTransformEditorsForSelection()
   resolutionRow->addWidget(impl_->outputHeightSpin, 1);
   ioLayout->addRow("Resolution", resolutionRow);
 
+  impl_->fpsSpin = new QDoubleSpinBox(this);
+  impl_->fpsSpin->setRange(1.0, 240.0);
+  impl_->fpsSpin->setDecimals(3);
+  impl_->fpsSpin->setSingleStep(0.5);
+  impl_->fpsSpin->setValue(30.0);
+  ioLayout->addRow("FPS", impl_->fpsSpin);
+
+  impl_->bitrateSpin = new QSpinBox(this);
+  impl_->bitrateSpin->setRange(128, 200000);
+  impl_->bitrateSpin->setSingleStep(100);
+  impl_->bitrateSpin->setValue(8000);
+  ioLayout->addRow("Bitrate", impl_->bitrateSpin);
+
   impl_->startFrameSpin = new QSpinBox(this);
   impl_->endFrameSpin = new QSpinBox(this);
   impl_->startFrameSpin->setRange(0, 2000000);
@@ -567,6 +775,8 @@ void RenderQueueManagerWidget::Impl::updateTransformEditorsForSelection()
   impl_->startButton = new QPushButton("Start", this);
   impl_->pauseButton = new QPushButton("Pause", this);
   impl_->cancelButton = new QPushButton("Cancel", this);
+  impl_->rerunSelectedButton = new QPushButton("Rerun Selected", this);
+  impl_->rerunDoneFailedButton = new QPushButton("Rerun Done/Failed", this);
 
   controlLayout->addWidget(impl_->addButton);
   controlLayout->addWidget(impl_->duplicateButton);
@@ -577,6 +787,8 @@ void RenderQueueManagerWidget::Impl::updateTransformEditorsForSelection()
   controlLayout->addWidget(impl_->startButton);
   controlLayout->addWidget(impl_->pauseButton);
   controlLayout->addWidget(impl_->cancelButton);
+  controlLayout->addWidget(impl_->rerunSelectedButton);
+  controlLayout->addWidget(impl_->rerunDoneFailedButton);
 
   mainLayout->addLayout(controlLayout);
 
@@ -591,6 +803,19 @@ void RenderQueueManagerWidget::Impl::updateTransformEditorsForSelection()
 
   impl_->statusLabel = new QLabel("Ready", this);
   mainLayout->addWidget(impl_->statusLabel);
+
+  auto* historyHeader = new QHBoxLayout();
+  auto* historyLabel = new QLabel("History", this);
+  impl_->clearHistoryButton = new QPushButton("Clear History", this);
+  historyHeader->addWidget(historyLabel, 0);
+  historyHeader->addStretch(1);
+  historyHeader->addWidget(impl_->clearHistoryButton, 0);
+  mainLayout->addLayout(historyHeader);
+
+  impl_->historyListWidget = new QListWidget(this);
+  impl_->historyListWidget->setMinimumHeight(110);
+  mainLayout->addWidget(impl_->historyListWidget);
+  impl_->loadHistory();
 
   // スタイルの設定
   auto style = getDCCStyleSheetPreset(DccStylePreset::ModoStyle);
@@ -618,6 +843,7 @@ void RenderQueueManagerWidget::Impl::updateTransformEditorsForSelection()
         impl_->service->removeRenderQueueAt(sourceIndex);
       }
       impl_->statusLabel->setText("Removed selected render job");
+      impl_->addHistoryEntry(QString("Removed job #%1").arg(sourceIndex + 1));
     }
   });
 
@@ -627,7 +853,10 @@ void RenderQueueManagerWidget::Impl::updateTransformEditorsForSelection()
       return;
     }
     impl_->service->duplicateRenderQueueAt(sourceIndex);
+    impl_->syncJobsFromService();
+    impl_->selectSourceIndex(sourceIndex + 1);
     impl_->statusLabel->setText("Duplicated selected render job");
+    impl_->addHistoryEntry(QString("Duplicated job #%1").arg(sourceIndex + 1));
   });
 
   connect(impl_->moveUpButton, &QPushButton::clicked, this, [this]() {
@@ -636,20 +865,10 @@ void RenderQueueManagerWidget::Impl::updateTransformEditorsForSelection()
       return;
     }
     impl_->service->moveRenderQueue(sourceIndex, sourceIndex - 1);
-    if (sourceIndex >= 0 && sourceIndex < impl_->jobs.size()) {
-      auto moved = impl_->jobs.takeAt(sourceIndex);
-      const int target = sourceIndex - 1;
-      impl_->jobs.insert(target, moved);
-      impl_->updateJobList();
-      for (int row = 0; row < impl_->jobListWidget->count(); ++row) {
-        auto* item = impl_->jobListWidget->item(row);
-        if (item && item->data(Qt::UserRole).toInt() == target) {
-          impl_->jobListWidget->setCurrentRow(row);
-          break;
-        }
-      }
-    }
+    impl_->syncJobsFromService();
+    impl_->selectSourceIndex(sourceIndex - 1);
     impl_->statusLabel->setText("Moved job up");
+    impl_->addHistoryEntry(QString("Moved job #%1 up").arg(sourceIndex + 1));
   });
 
   connect(impl_->moveDownButton, &QPushButton::clicked, this, [this]() {
@@ -658,35 +877,29 @@ void RenderQueueManagerWidget::Impl::updateTransformEditorsForSelection()
       return;
     }
     impl_->service->moveRenderQueue(sourceIndex, sourceIndex + 1);
-    if (sourceIndex >= 0 && sourceIndex < impl_->jobs.size()) {
-      auto moved = impl_->jobs.takeAt(sourceIndex);
-      const int target = std::min(sourceIndex + 1, impl_->jobs.size());
-      impl_->jobs.insert(target, moved);
-      impl_->updateJobList();
-      for (int row = 0; row < impl_->jobListWidget->count(); ++row) {
-        auto* item = impl_->jobListWidget->item(row);
-        if (item && item->data(Qt::UserRole).toInt() == target) {
-          impl_->jobListWidget->setCurrentRow(row);
-          break;
-        }
-      }
-    }
+    impl_->syncJobsFromService();
+    impl_->selectSourceIndex(sourceIndex + 1);
     impl_->statusLabel->setText("Moved job down");
+    impl_->addHistoryEntry(QString("Moved job #%1 down").arg(sourceIndex + 1));
   });
 
   connect(impl_->clearButton, &QPushButton::clicked, this, [this]() {
-    impl_->jobs.clear();
-    impl_->updateJobList();
     if (impl_->service) {
       impl_->service->removeAllRenderQueues();
     }
+    impl_->syncJobsFromService();
     impl_->statusLabel->setText("Cleared all render jobs");
+    impl_->addHistoryEntry("Cleared all render jobs");
   });
 
   connect(impl_->startButton, &QPushButton::clicked, this, [this]() {
     if (impl_->service) {
+      for (int i = 0; i < impl_->service->jobCount(); ++i) {
+        impl_->addJobSettingsSnapshotToHistory(i);
+      }
       impl_->service->startAllJobs();
       impl_->statusLabel->setText("Started all jobs");
+      impl_->addHistoryEntry("Start all jobs");
     } else {
       impl_->statusLabel->setText("Render service unavailable");
     }
@@ -696,6 +909,7 @@ void RenderQueueManagerWidget::Impl::updateTransformEditorsForSelection()
     if (impl_->service) {
       impl_->service->pauseAllJobs();
       impl_->statusLabel->setText("Paused rendering jobs");
+      impl_->addHistoryEntry("Paused rendering jobs");
     } else {
       impl_->statusLabel->setText("Render service unavailable");
     }
@@ -705,8 +919,41 @@ void RenderQueueManagerWidget::Impl::updateTransformEditorsForSelection()
     if (impl_->service) {
       impl_->service->cancelAllJobs();
       impl_->statusLabel->setText("Canceled all jobs");
+      impl_->addHistoryEntry("Canceled all jobs");
     } else {
       impl_->statusLabel->setText("Render service unavailable");
+    }
+  });
+
+  connect(impl_->rerunSelectedButton, &QPushButton::clicked, this, [this]() {
+    if (!impl_->service) {
+      return;
+    }
+    const int sourceIndex = impl_->selectedSourceIndex();
+    if (sourceIndex < 0) {
+      return;
+    }
+    impl_->service->resetJobForRerun(sourceIndex);
+    impl_->syncJobsFromService();
+    impl_->selectSourceIndex(sourceIndex);
+    impl_->statusLabel->setText(QString("Reset job #%1 for rerun").arg(sourceIndex + 1));
+    impl_->addHistoryEntry(QString("Rerun reset: job #%1").arg(sourceIndex + 1));
+  });
+
+  connect(impl_->rerunDoneFailedButton, &QPushButton::clicked, this, [this]() {
+    if (!impl_->service) {
+      return;
+    }
+    const int changed = impl_->service->resetCompletedAndFailedJobsForRerun();
+    impl_->syncJobsFromService();
+    impl_->statusLabel->setText(QString("Reset %1 completed/failed job(s)").arg(changed));
+    impl_->addHistoryEntry(QString("Rerun reset batch: %1 job(s)").arg(changed));
+  });
+
+  connect(impl_->clearHistoryButton, &QPushButton::clicked, this, [this]() {
+    if (impl_->historyListWidget) {
+      impl_->historyListWidget->clear();
+      impl_->saveHistory();
     }
   });
 
@@ -747,6 +994,7 @@ void RenderQueueManagerWidget::Impl::updateTransformEditorsForSelection()
     impl_->outputPathEdit->setText(path);
     impl_->service->setJobOutputPathAt(sourceIndex, path);
     impl_->statusLabel->setText(QString("Output set: %1").arg(path));
+    impl_->addHistoryEntry(QString("Output updated for job #%1").arg(sourceIndex + 1));
   });
 
   auto applyOutputSettings = [this]() {
@@ -761,7 +1009,9 @@ void RenderQueueManagerWidget::Impl::updateTransformEditorsForSelection()
     const QString codec = impl_->codecCombo ? impl_->codecCombo->currentText() : QStringLiteral("H.264");
     const int width = impl_->outputWidthSpin ? impl_->outputWidthSpin->value() : 1920;
     const int height = impl_->outputHeightSpin ? impl_->outputHeightSpin->value() : 1080;
-    impl_->service->setJobOutputSettingsAt(sourceIndex, format, codec, width, height);
+    const double fps = impl_->fpsSpin ? impl_->fpsSpin->value() : 30.0;
+    const int bitrateKbps = impl_->bitrateSpin ? impl_->bitrateSpin->value() : 8000;
+    impl_->service->setJobOutputSettingsAt(sourceIndex, format, codec, width, height, fps, bitrateKbps);
   };
 
   connect(impl_->outputFormatCombo, &QComboBox::currentTextChanged, this, [applyOutputSettings](const QString&) {
@@ -774,6 +1024,12 @@ void RenderQueueManagerWidget::Impl::updateTransformEditorsForSelection()
     applyOutputSettings();
   });
   connect(impl_->outputHeightSpin, qOverload<int>(&QSpinBox::valueChanged), this, [applyOutputSettings](int) {
+    applyOutputSettings();
+  });
+  connect(impl_->fpsSpin, qOverload<double>(&QDoubleSpinBox::valueChanged), this, [applyOutputSettings](double) {
+    applyOutputSettings();
+  });
+  connect(impl_->bitrateSpin, qOverload<int>(&QSpinBox::valueChanged), this, [applyOutputSettings](int) {
     applyOutputSettings();
   });
 
@@ -841,12 +1097,14 @@ void RenderQueueManagerWidget::Impl::updateTransformEditorsForSelection()
   }
   
   // Initialize UI
-  impl_->updateJobList();
+  impl_->syncJobsFromService();
   impl_->setJobDetailEditorsEnabled(false);
   impl_->setTransformEditorsEnabled(false);
   impl_->duplicateButton->setEnabled(false);
   impl_->moveUpButton->setEnabled(false);
   impl_->moveDownButton->setEnabled(false);
+  impl_->rerunSelectedButton->setEnabled(false);
+  impl_->rerunDoneFailedButton->setEnabled(false);
 
   // 初期状態でRemoveボタンを無効化
   impl_->removeButton->setEnabled(false);

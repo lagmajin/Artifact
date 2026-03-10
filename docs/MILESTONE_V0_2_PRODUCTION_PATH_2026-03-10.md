@@ -124,9 +124,20 @@
   - `RenderQueue` 操作に `Duplicate / Move Up / Move Down` を追加
   - `RenderQueue` ジョブごとの出力先/開始フレーム/終了フレーム編集UIを追加
   - `RenderQueue` ジョブごとの出力フォーマット/コーデック/解像度編集UIを追加
+  - `RenderQueue` ジョブごとの `FPS / Bitrate` 編集UIを追加
+  - `RenderQueue` リスト表示を Service のジョブ情報（name/status/progress）同期ベースへ寄せる改善を追加
+  - `RenderQueue` 履歴表示（開始/完了/失敗/キャンセル/出力先）を追加
+  - `RenderQueue` 履歴のセッション永続化（再起動後復元）を追加
+  - `RenderQueue` の再実行導線を追加（`Rerun Selected` / `Rerun Done/Failed`）
+  - `RenderQueueService` に再実行リセットAPI（単体/一括）を追加
+  - 履歴永続化バックエンドを `QSettings` から `ArtifactCore::FastSettingsStore`（CBOR+キャッシュ）へ移行
+  - MainWindow レイアウト保存/復元も `FastSettingsStore` 経由へ移行（段階的QSettings脱却）
+  - Python Hook の有効/無効設定保存も `FastSettingsStore` へ移行
+  - 旧 `QSettings` からの一回移行フォールバックを追加（互換維持）
+  - `ArtifactCompositionMenu` のマイルストーン実行を `RenderManager` 直呼びから `RenderQueueService` 経由へ置換（UI->Serviceルール順守）
 - 次:
-  - Queueジョブ設定にFPS/Bitrate編集を追加
-  - ジョブ並べ替え時のUI同期を Service 単一ソースにさらに寄せる
+  - ジョブ並べ替え時の選択保持を Service 側インデックス変動込みで厳密化
+  - Queue履歴にジョブ設定スナップショット（出力設定）を記録
 
 ## Execution Order
 
@@ -141,3 +152,13 @@
 - Timeline入力系は回帰しやすい。修正時はハンドル・シーク・選択をセットで確認する。
 - Queue/UI同期は二重状態を作ると破綻する。Serviceを唯一の状態ソースに維持する。
 - Dock見た目調整は機能実装と分離して小さく反復する。
+
+## v0.2 Remaining Focus (Immediate)
+
+次の 5 項目を先に閉じると v0.2 を実質完了にできる。
+
+1. RenderQueue ジョブ編集に `FPS/Bitrate` を追加
+2. RenderQueue 並び替えのUI同期を完全に Service 駆動へ寄せる
+3. タイムライン左/右ペインの行・ヘッダ整列を最終固定
+4. メニュー有効条件の統一（対象なし時 disabled）
+5. 破棄後コールバック呼び出しの棚卸し（Widget/Service全体）
