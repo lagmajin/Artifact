@@ -830,7 +830,19 @@ TimelineTrackView::TimelineTrackView(QWidget* parent /*= nullptr*/) :QGraphicsVi
     return;
    }
 
-  if (event->button() == Qt::LeftButton) {
+ if (event->button() == Qt::LeftButton) {
+    // Scrub hotspot at the very top of the right clip scene:
+    // clicking this band always seeks, even when clips exist below.
+    constexpr int kTopSeekHotZonePx = 8;
+    if (event->pos().y() <= kTopSeekHotZonePx) {
+      const QPointF topScenePos = mapToScene(event->pos());
+      setPosition(topScenePos.x());
+      const double ratio = impl_->duration_ > 0.0 ? impl_->position_ / impl_->duration_ : 0.0;
+      Q_EMIT seekPositionChanged(ratio);
+      event->accept();
+      return;
+    }
+
     const QPointF scenePos = mapToScene(event->pos());
     
     // Check if clicking on a clip/resize handle.

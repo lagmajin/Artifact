@@ -5,8 +5,6 @@ module;
 #include <QLineEdit>
 #include <QMenu>
 #include <QMessageBox>
-#include <QApplication>
-#include <QTimer>
 #include <wobjectimpl.h>
 
 module Artifact.Menu.Layer;
@@ -223,17 +221,15 @@ void ArtifactLayerMenu::Impl::refreshEnabledState()
 void ArtifactLayerMenu::Impl::handleCreateSolid()
 {
     auto service = ArtifactProjectService::instance();
-    QWidget* parentWindow = menu_ ? menu_->window() : QApplication::activeWindow();
-    auto* dialog = new CreateSolidLayerSettingDialog(parentWindow);
-    dialog->setAttribute(Qt::WA_DeleteOnClose);
-    QObject::connect(dialog, &CreateSolidLayerSettingDialog::submit, menu_, [service](const ArtifactSolidLayerInitParams& params) {
+    QWidget* parentWindow = menu_ ? menu_->window() : nullptr;
+    CreateSolidLayerSettingDialog dialog(parentWindow);
+    QObject::connect(&dialog, &CreateSolidLayerSettingDialog::submit, menu_, [service](const ArtifactSolidLayerInitParams& params) {
         if (service) {
             service->addLayerToCurrentComposition(params);
         }
     });
-    dialog->setModal(true);
-    // Defer open until menu event processing is fully finished.
-    QTimer::singleShot(0, dialog, [dialog]() { dialog->open(); });
+    dialog.setModal(true);
+    dialog.exec();
 }
 
 void ArtifactLayerMenu::Impl::handleCreateNull()
