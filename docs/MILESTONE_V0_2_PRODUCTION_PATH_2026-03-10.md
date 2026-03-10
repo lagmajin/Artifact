@@ -130,11 +130,14 @@
   - `RenderQueue` 履歴のセッション永続化（再起動後復元）を追加
   - `RenderQueue` の再実行導線を追加（`Rerun Selected` / `Rerun Done/Failed`）
   - `RenderQueueService` に再実行リセットAPI（単体/一括）を追加
+  - `RenderQueue` ジョブ設定プリセット保存/適用/削除を追加（FastSettingsStore）
   - 履歴永続化バックエンドを `QSettings` から `ArtifactCore::FastSettingsStore`（CBOR+キャッシュ）へ移行
   - MainWindow レイアウト保存/復元も `FastSettingsStore` 経由へ移行（段階的QSettings脱却）
   - Python Hook の有効/無効設定保存も `FastSettingsStore` へ移行
   - 旧 `QSettings` からの一回移行フォールバックを追加（互換維持）
   - `ArtifactCompositionMenu` のマイルストーン実行を `RenderManager` 直呼びから `RenderQueueService` 経由へ置換（UI->Serviceルール順守）
+  - `Composition/Layer` メニューの有効条件を厳格化（プロジェクト未作成時は無効、作成系はプロジェクト単位で有効）
+  - RenderQueue の実行中メッセージを強化（時刻付きステータス、サービスイベント、進捗25%刻み履歴）
 - 次:
   - ジョブ並べ替え時の選択保持を Service 側インデックス変動込みで厳密化
   - Queue履歴にジョブ設定スナップショット（出力設定）を記録

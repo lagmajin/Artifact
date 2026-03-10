@@ -127,6 +127,7 @@ export namespace Artifact
   QString layerNameInCurrentComposition(const LayerID& layerId);
   bool removeComposition(const CompositionID& id);
   int renderQueueCountForComposition(const CompositionID& id) const;
+  QString compositionRemovalConfirmationMessage(const CompositionID& id) const;
   bool removeCompositionWithRenderQueueCleanup(const CompositionID& id, int* removedQueueCount = nullptr);
   bool duplicateComposition(const CompositionID& id);
   bool renameComposition(const CompositionID& id, const UniString& name);

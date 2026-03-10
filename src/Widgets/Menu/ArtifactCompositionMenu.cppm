@@ -169,15 +169,7 @@ void ArtifactCompositionMenu::Impl::removeCurrent()
   return;
  }
 
- const int queuedCount = service->renderQueueCountForComposition(current->id());
-
- QString message = QStringLiteral("現在のコンポジションを削除しますか？");
- if (queuedCount > 0) {
-  message = QStringLiteral(
-   "現在のコンポジションはレンダーキューに %1 件登録されています。\n"
-   "削除すると該当キューも削除されます。\n"
-   "続行しますか？").arg(queuedCount);
- }
+ const QString message = service->compositionRemovalConfirmationMessage(current->id());
 
  const auto answer = QMessageBox::question(
   mainWindow_ ? mainWindow_ : menu_,
@@ -285,13 +277,18 @@ void ArtifactCompositionMenu::rebuildMenu()
 {
  if (!impl_) return;
  auto service = ArtifactProjectService::instance();
- bool hasComp = !service->currentComposition().expired();
+ const bool hasProject = service && service->hasProject();
+ const bool hasComp = service && !service->currentComposition().expired();
+ impl_->createAction->setEnabled(hasProject);
+ if (impl_->presetMenu) {
+  impl_->presetMenu->setEnabled(hasProject);
+ }
  impl_->duplicateAction->setEnabled(hasComp);
  impl_->renameAction->setEnabled(hasComp);
  impl_->deleteAction->setEnabled(hasComp);
  impl_->settingsAction->setEnabled(hasComp);
  impl_->colorAction->setEnabled(hasComp);
- impl_->milestoneDummyAction->setEnabled(true);
+ impl_->milestoneDummyAction->setEnabled(hasProject);
 }
 
 void ArtifactCompositionMenu::handleCreateCompositionRequested()

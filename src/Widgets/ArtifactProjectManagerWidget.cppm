@@ -828,15 +828,7 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
                     return;
                 }
                 const CompositionID compId(idVar.toString());
-                const int queuedCount = svc->renderQueueCountForComposition(compId);
-
-                QString message = QStringLiteral("このコンポジションを削除しますか？");
-                if (queuedCount > 0) {
-                    message = QStringLiteral(
-                        "このコンポジションはレンダーキューに %1 件登録されています。\n"
-                        "削除すると該当キューも削除されます。\n"
-                        "続行しますか？").arg(queuedCount);
-                }
+                const QString message = svc->compositionRemovalConfirmationMessage(compId);
                 const auto answer = QMessageBox::question(
                     this,
                     QStringLiteral("コンポジション削除"),

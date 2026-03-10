@@ -571,6 +571,18 @@ QString ArtifactProjectService::layerNameInCurrentComposition(const LayerID& lay
   return queueService ? queueService->renderQueueCountForComposition(id) : 0;
  }
 
+ QString ArtifactProjectService::compositionRemovalConfirmationMessage(const CompositionID& id) const
+ {
+  const int queuedCount = renderQueueCountForComposition(id);
+  if (queuedCount <= 0) {
+   return QStringLiteral("このコンポジションを削除しますか？");
+  }
+  return QStringLiteral(
+   "このコンポジションはレンダーキューに %1 件登録されています。\n"
+   "削除すると該当キューも削除されます。\n"
+   "続行しますか？").arg(queuedCount);
+ }
+
  bool ArtifactProjectService::removeCompositionWithRenderQueueCleanup(const CompositionID& id, int* removedQueueCount)
  {
   int queuedCount = renderQueueCountForComposition(id);
