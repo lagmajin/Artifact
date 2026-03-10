@@ -386,6 +386,8 @@ int main(int argc, char* argv[])
     mw->addDockedWidget(QStringLiteral("Project"), ads::LeftDockWidgetArea, new ArtifactProjectManagerWidget(mw));
     mw->addDockedWidget(QStringLiteral("Undo History"), ads::RightDockWidgetArea, new ArtifactUndoHistoryWidget(mw));
     mw->addDockedWidget(QStringLiteral("Python Hooks"), ads::RightDockWidgetArea, new ArtifactPythonHookManagerWidget(mw));
+    mw->setDockVisible(QStringLiteral("Undo History"), false);
+    mw->setDockVisible(QStringLiteral("Python Hooks"), false);
 
     auto* projectService = ArtifactProjectService::instance();
     auto* playbackService = ArtifactPlaybackService::instance();

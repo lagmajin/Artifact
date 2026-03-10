@@ -6,6 +6,8 @@ module;
 #include <QMouseEvent>
 #include <QDebug>
 #include <QPaintEvent>
+#include <QSizePolicy>
+#include <QLinearGradient>
 #include <iostream>
 #include <vector>
 #include <string>
@@ -60,28 +62,26 @@ namespace Artifact
   FramePosition currentFrame_;  // ݂̃t[ʒu
   int totalFrames_ = 100;       // t[
   bool dragging_ = false;       // hbO
-  int handleWidth_ = 12;        // nh
-  int handleHeight_ = 20;       // nh
+  int handleWidth_ = 10;        // nh
+  int handleHeight_ = 22;       // nh
   bool seekLockDuringPlayback_ = true; // Đ̃V[NbN
   bool isPlaying_ = false;      // Đǂ
   bool hover_ = false;
 
   // t[ʒuXWvZ
-  int frameToX(int frame) const
+  int frameToX(int frame, int width) const
   {
-   if (totalFrames_ <= 1) return 0;
-   return static_cast<int>((static_cast<double>(frame) / (totalFrames_ - 1)) * (widgetWidth_ - 1));
+   if (totalFrames_ <= 1 || width <= 1) return 0;
+   return static_cast<int>((static_cast<double>(frame) / (totalFrames_ - 1)) * (width - 1));
   }
 
   // XWt[ʒuvZ
-  int xToFrame(int x) const
+  int xToFrame(int x, int width) const
   {
-   if (widgetWidth_ <= 1) return 0;
-   double ratio = static_cast<double>(x) / (widgetWidth_ - 1);
+   if (width <= 1) return 0;
+   double ratio = static_cast<double>(x) / (width - 1);
    return static_cast<int>(ratio * (totalFrames_ - 1) + 0.5);
   }
-
-  int widgetWidth_ = 0;
  };
 
  ArtifactSeekBar::Impl::Impl()
@@ -96,18 +96,27 @@ namespace Artifact
  ArtifactSeekBar::ArtifactSeekBar(QWidget* parent)
   : QWidget(parent), impl_(new Impl)
  {
-  resize(6, 800);
-
   setAttribute(Qt::WA_NoSystemBackground);
   setAttribute(Qt::WA_OpaquePaintEvent, true);
   setAttribute(Qt::WA_TranslucentBackground);
 
   setMouseTracking(true);  // }EXǐՂL
+  setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
  }
 
  ArtifactSeekBar::~ArtifactSeekBar()
  {
   delete impl_;
+ }
+
+ QSize ArtifactSeekBar::sizeHint() const
+ {
+  return QSize(640, 20);
+ }
+
+ QSize ArtifactSeekBar::minimumSizeHint() const
+ {
+  return QSize(120, 20);
  }
 
  FramePosition ArtifactSeekBar::currentFrame() const
@@ -166,64 +175,95 @@ namespace Artifact
  }
   void ArtifactSeekBar::paintEvent(QPaintEvent* event)
    {
+    Q_UNUSED(event);
     QPainter p(this);
     p.setRenderHint(QPainter::Antialiasing, true);
 
-    impl_->widgetWidth_ = width();
-    p.fillRect(rect(), QColor(24, 24, 24));
+    const QRect r = rect();
+    const int w = r.width();
+    const int h = r.height();
+    const int currentX = impl_->frameToX(impl_->currentFrame_.framePosition(), w);
+    const int centerY = h / 2;
+    const int railHalfH = std::max(3, h / 7);
+    const QRect railRect(8, centerY - railHalfH, std::max(10, w - 16), railHalfH * 2);
 
-    int currentX = impl_->frameToX(impl_->currentFrame_.framePosition());
+    const QColor bgTop(32, 32, 36);
+    const QColor bgBottom(24, 24, 27);
+    const QColor railColor(62, 62, 68);
+    const QColor railBorder(78, 78, 86);
+    const QColor accent(104, 171, 234);
+    const QColor accentStrong = impl_->dragging_ ? accent.lighter(120) : (impl_->hover_ ? accent.lighter(110) : accent);
 
-    QColor playheadColor(86, 156, 214);
-    QColor railColor(62, 62, 62);
+    QLinearGradient bgGrad(r.topLeft(), r.bottomLeft());
+    bgGrad.setColorAt(0.0, bgTop);
+    bgGrad.setColorAt(1.0, bgBottom);
+    p.fillRect(r, bgGrad);
 
-    // Rail
-    p.setPen(QPen(railColor, 2));
-    p.drawLine(0, height() / 2, width(), height() / 2);
+    p.setPen(QColor(18, 18, 18, 180));
+    p.drawLine(r.topLeft(), r.topRight());
+    p.setPen(QColor(0, 0, 0, 160));
+    p.drawLine(r.bottomLeft(), r.bottomRight());
 
-    // Ticks
-    if (impl_->totalFrames_ > 1) {
-      const int majorTicks = 10;
-      p.setPen(QPen(QColor(90, 90, 90), 1));
-      for (int i = 0; i <= majorTicks; ++i) {
-        const int x = static_cast<int>((static_cast<double>(i) / majorTicks) * (width() - 1));
-        const int tickH = (i % 5 == 0) ? 8 : 5;
-        p.drawLine(x, height() / 2 - tickH, x, height() / 2 + tickH);
+    p.setPen(QPen(railBorder, 1));
+    p.setBrush(railColor);
+    p.drawRoundedRect(railRect, railHalfH, railHalfH);
+
+    const int clampedX = std::clamp(currentX, railRect.left(), railRect.right());
+    QRect activeRect = railRect;
+    activeRect.setRight(std::max(activeRect.left(), clampedX));
+    if (activeRect.width() > 1) {
+      QLinearGradient activeGrad(activeRect.topLeft(), activeRect.bottomLeft());
+      activeGrad.setColorAt(0.0, accentStrong.lighter(118));
+      activeGrad.setColorAt(1.0, accentStrong.darker(120));
+      p.setPen(Qt::NoPen);
+      p.setBrush(activeGrad);
+      p.drawRoundedRect(activeRect, railHalfH, railHalfH);
+    }
+
+    if (impl_->totalFrames_ > 1 && railRect.width() > 20) {
+      const int approxMajorCount = std::clamp(railRect.width() / 90, 6, 16);
+      const int majorStepFrames = std::max(1, (impl_->totalFrames_ - 1) / approxMajorCount);
+      const int minorStepFrames = std::max(1, majorStepFrames / 5);
+
+      p.setPen(QPen(QColor(95, 95, 105, 170), 1));
+      for (int f = 0; f < impl_->totalFrames_; f += minorStepFrames) {
+        const int x = impl_->frameToX(f, w);
+        if (x < railRect.left() || x > railRect.right()) continue;
+        const bool major = (f % majorStepFrames) == 0;
+        const int tickH = major ? 6 : 3;
+        p.drawLine(x, railRect.top() - tickH, x, railRect.top() - 1);
       }
     }
 
-    p.setPen(QPen(playheadColor, 1));
-    p.drawLine(currentX, 0, currentX, height());
+    p.setPen(QPen(accentStrong, 1));
+    p.drawLine(clampedX, 0, clampedX, h);
 
-    int halfW = impl_->handleWidth_ / 2;
-    int h = impl_->handleHeight_;
-    int pointOffset = 6;
+    const int handleW = impl_->handleWidth_;
+    const int handleH = std::min(std::max(16, h - 6), impl_->handleHeight_);
+    const QRect handleRect(clampedX - handleW / 2, 2, handleW, handleH);
+    p.setPen(QColor(18, 18, 18, 200));
+    p.setBrush(QColor(220, 226, 235, impl_->dragging_ ? 255 : 235));
+    p.drawRoundedRect(handleRect, 3, 3);
+    p.setPen(QColor(120, 130, 145, 220));
+    p.drawLine(handleRect.center().x(), handleRect.top() + 3, handleRect.center().x(), handleRect.bottom() - 3);
 
-    QPolygon handlePolygon;
-    handlePolygon << QPoint(currentX - halfW, 0)
-                  << QPoint(currentX + halfW, 0)
-                  << QPoint(currentX + halfW, h - pointOffset)
-                  << QPoint(currentX, h)
-                  << QPoint(currentX - halfW, h - pointOffset);
+    const int frame = impl_->currentFrame_.framePosition();
+    const int totalSeconds = frame / 30;
+    const int ff = frame % 30;
+    const int ss = totalSeconds % 60;
+    const int mm = (totalSeconds / 60) % 60;
+    const int hh = totalSeconds / 3600;
+    const QString leftLabel = QString("F%1").arg(frame);
+    const QString rightLabel = QString("%1:%2:%3:%4")
+      .arg(hh, 2, 10, QChar('0'))
+      .arg(mm, 2, 10, QChar('0'))
+      .arg(ss, 2, 10, QChar('0'))
+      .arg(ff, 2, 10, QChar('0'));
 
-    p.setPen(Qt::NoPen);
-    p.setBrush(QColor(0, 0, 0, 100));
-    QPolygon shadowPolygon = handlePolygon;
-    shadowPolygon.translate(1, 1);
-    p.drawPolygon(shadowPolygon);
-
-    p.setBrush(impl_->hover_ || impl_->dragging_ ? playheadColor.lighter(120) : playheadColor);
-    p.setPen(QPen(playheadColor.darker(120), 1));
-    p.drawPolygon(handlePolygon);
-    
-    p.setPen(QPen(playheadColor.lighter(130), 1));
-    p.drawLine(currentX - halfW + 1, 1, currentX + halfW - 1, 1);
-
-    // Current frame label
-    const QString label = QString("F%1").arg(impl_->currentFrame_.framePosition());
-    const QRect textRect(6, 2, 90, height() - 4);
-    p.setPen(QColor(210, 210, 210));
-    p.drawText(textRect, Qt::AlignLeft | Qt::AlignVCenter, label);
+    p.setPen(QColor(225, 225, 230));
+    p.drawText(QRect(10, 0, 88, h), Qt::AlignVCenter | Qt::AlignLeft, leftLabel);
+    p.setPen(QColor(170, 170, 178));
+    p.drawText(QRect(w - 128, 0, 118, h), Qt::AlignVCenter | Qt::AlignRight, rightLabel);
    }
 
    void ArtifactSeekBar::mousePressEvent(QMouseEvent* event)
@@ -235,16 +275,26 @@ namespace Artifact
     return;
    }
    
-   // Click anywhere to seek, then start drag immediately.
-   int newFrame = impl_->xToFrame(event->pos().x());
+   // Click anywhere to seek.
+   int newFrame = impl_->xToFrame(event->pos().x(), width());
    newFrame = qBound(0, newFrame, impl_->totalFrames_ - 1);
    if (impl_->currentFrame_.framePosition() != newFrame) {
     impl_->currentFrame_ = FramePosition(newFrame);
     update();
     Q_EMIT frameChanged(impl_->currentFrame_);
    }
-   impl_->dragging_ = true;
-   Q_EMIT frameDragStarted();
+
+   // Start drag only when pressing near the handle.
+   const int currentX = impl_->frameToX(impl_->currentFrame_.framePosition(), width());
+   const int handleHalfWidth = impl_->handleWidth_ / 2;
+   const bool onHandle = qAbs(event->pos().x() - currentX) <= handleHalfWidth + 3 &&
+    event->pos().y() >= 0 && event->pos().y() <= impl_->handleHeight_ + 4;
+   if (onHandle) {
+    impl_->dragging_ = true;
+    Q_EMIT frameDragStarted();
+   } else {
+    impl_->dragging_ = false;
+   }
    event->accept();
   }
  }
@@ -253,7 +303,7 @@ namespace Artifact
  {
   if (impl_->dragging_) {
    // hbO̓t[ʒuXV
-   int newFrame = impl_->xToFrame(event->pos().x());
+   int newFrame = impl_->xToFrame(event->pos().x(), width());
    newFrame = qBound(0, newFrame, impl_->totalFrames_ - 1);
 
    if (impl_->currentFrame_.framePosition() != newFrame) {
@@ -264,14 +314,15 @@ namespace Artifact
    event->accept();
   } else {
    // hover cursor state
-   int currentX = impl_->frameToX(impl_->currentFrame_.framePosition());
+   int currentX = impl_->frameToX(impl_->currentFrame_.framePosition(), width());
    int handleHalfWidth = impl_->handleWidth_ / 2;
 
-   if (qAbs(event->pos().x() - currentX) <= handleHalfWidth + 5) {
+   if (qAbs(event->pos().x() - currentX) <= handleHalfWidth + 3 &&
+    event->pos().y() >= 0 && event->pos().y() <= impl_->handleHeight_ + 4) {
     setCursor(Qt::PointingHandCursor);
     impl_->hover_ = true;
    } else {
-    setCursor(Qt::SizeHorCursor);
+    setCursor(Qt::ArrowCursor);
     impl_->hover_ = false;
    }
    update();

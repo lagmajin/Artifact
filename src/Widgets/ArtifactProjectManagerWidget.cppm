@@ -27,6 +27,7 @@ module;
 #include <QPushButton>
 #include <QFileDialog>
 #include <QApplication>
+#include <QCursor>
 #include <QGuiApplication>
 #include <QScreen>
 #include <QShortcut>
@@ -436,6 +437,7 @@ public:
     QTimer* hoverTimer = nullptr;
     QModelIndex hoverIndex;
     HoverThumbnailPopupWidget* hoverPopup = nullptr;
+    QPoint hoverStartPos;
     void handleFileDrop(const QString& str) {
         auto* svc = ArtifactProjectService::instance();
         if (!svc) return;
@@ -680,28 +682,64 @@ void ArtifactProjectView::mouseDoubleClickEvent(QMouseEvent* event) {
 }
 
 void ArtifactProjectView::mouseMoveEvent(QMouseEvent* event) {
-    QModelIndex idx = indexAt(event->position().toPoint());
+    const QPoint mousePos = event->position().toPoint();
+    QModelIndex idx = indexAt(mousePos);
     if (!impl_->hoverTimer) {
         impl_->hoverTimer = new QTimer(this);
         impl_->hoverTimer->setSingleShot(true);
         connect(impl_->hoverTimer, &QTimer::timeout, this, [this]() {
-            if (impl_->hoverIndex.isValid()) {
-                if (!impl_->hoverPopup) impl_->hoverPopup = new HoverThumbnailPopupWidget();
-                QString text = impl_->hoverIndex.data(Qt::DisplayRole).toString();
-                impl_->hoverPopup->setLabels(QStringList() << text << "Metadata Info" << "");
-                const QRect itemRect = visualRect(impl_->hoverIndex);
-                QPoint popupPos = viewport()->mapToGlobal(itemRect.topRight() + QPoint(14, 6));
-                impl_->hoverPopup->showAt(popupPos);
+            const QPoint localPos = viewport()->mapFromGlobal(QCursor::pos());
+            if (!viewport()->rect().contains(localPos)) return;
+
+            const QModelIndex currentIndex = indexAt(localPos);
+            if (!currentIndex.isValid() || currentIndex != impl_->hoverIndex) return;
+
+            QModelIndex sourceIdx = currentIndex;
+            if (auto proxy = qobject_cast<const QSortFilterProxyModel*>(currentIndex.model())) {
+                sourceIdx = proxy->mapToSource(currentIndex).siblingAtColumn(0);
             }
+            const QVariant typeVar = sourceIdx.data(Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::ProjectItemType));
+            if (!typeVar.isValid()) return;
+            const auto type = static_cast<eProjectItemType>(typeVar.toInt());
+            if (type != eProjectItemType::Footage && type != eProjectItemType::Composition) return;
+
+            if (!impl_->hoverPopup) impl_->hoverPopup = new HoverThumbnailPopupWidget();
+            QString text = currentIndex.data(Qt::DisplayRole).toString();
+            impl_->hoverPopup->setLabels(QStringList() << text << "Metadata Info" << "");
+            const QRect itemRect = visualRect(currentIndex);
+            QPoint popupPos = viewport()->mapToGlobal(itemRect.topRight() + QPoint(14, 6));
+            impl_->hoverPopup->showAt(popupPos);
         });
+    }
+    if (event->buttons() != Qt::NoButton) {
+        if (impl_->hoverPopup) impl_->hoverPopup->hide();
+        impl_->hoverTimer->stop();
+        impl_->hoverIndex = QModelIndex();
+        QTreeView::mouseMoveEvent(event);
+        return;
     }
     if (idx != impl_->hoverIndex) {
         if (impl_->hoverPopup) impl_->hoverPopup->hide();
         impl_->hoverIndex = idx;
+        impl_->hoverStartPos = mousePos;
         impl_->hoverTimer->stop();
-        if (idx.isValid()) impl_->hoverTimer->start(950);
+        if (idx.isValid()) impl_->hoverTimer->start(1100);
+    } else if (idx.isValid() && (mousePos - impl_->hoverStartPos).manhattanLength() > 6) {
+        if (impl_->hoverPopup) impl_->hoverPopup->hide();
+        impl_->hoverTimer->stop();
+        impl_->hoverStartPos = mousePos;
+        impl_->hoverTimer->start(1100);
     }
     QTreeView::mouseMoveEvent(event);
+}
+
+void ArtifactProjectView::leaveEvent(QEvent* event) {
+    if (impl_) {
+        if (impl_->hoverTimer) impl_->hoverTimer->stop();
+        if (impl_->hoverPopup) impl_->hoverPopup->hide();
+        impl_->hoverIndex = QModelIndex();
+    }
+    QTreeView::leaveEvent(event);
 }
 
 void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
@@ -878,6 +916,10 @@ void ArtifactProjectView::dragMoveEvent(QDragMoveEvent* event) {
 }
 
 void ArtifactProjectView::mousePressEvent(QMouseEvent* event) {
+    if (impl_) {
+        if (impl_->hoverTimer) impl_->hoverTimer->stop();
+        if (impl_->hoverPopup) impl_->hoverPopup->hide();
+    }
     if (event->button() == Qt::LeftButton) {
          QModelIndex idx = indexAt(event->position().toPoint());
          if (idx.isValid()) {
@@ -1114,15 +1156,21 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     });
 
     connect(impl_->toolBox, &ArtifactProjectManagerToolBox::newCompositionRequested, [this]() {
-         ArtifactProjectService::instance()->createComposition(UniString("Composition"));
+         if (auto* svc = ArtifactProjectService::instance()) {
+             svc->createComposition(UniString("Composition"));
+         }
     });
     connect(impl_->toolBox, &ArtifactProjectManagerToolBox::newFolderRequested, [this]() {
-         auto project = ArtifactProjectService::instance()->getCurrentProjectSharedPtr();
+         auto* svc = ArtifactProjectService::instance();
+         if (!svc) return;
+         auto project = svc->getCurrentProjectSharedPtr();
          if (project) project->createFolder("New Folder");
     });
     connect(impl_->toolBox, &ArtifactProjectManagerToolBox::generateProxyRequested, [this]() {
          QVector<FootageItem*> footage;
-         auto project = ArtifactProjectService::instance()->getCurrentProjectSharedPtr();
+         auto* svc = ArtifactProjectService::instance();
+         if (!svc) return;
+         auto project = svc->getCurrentProjectSharedPtr();
          if (project) {
              const auto roots = project->projectItems();
              for (auto* root : roots) {
@@ -1132,6 +1180,7 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
          impl_->queueProxyGeneration(footage);
     });
     connect(impl_->toolBox, &ArtifactProjectManagerToolBox::deleteRequested, [this]() {
+         if (!impl_->projectView_ || !impl_->projectView_->selectionModel()) return;
          auto selection = impl_->projectView_->selectionModel()->selectedIndexes();
          if (!selection.isEmpty()) {
              QModelIndex idx = selection.first();
@@ -1142,7 +1191,9 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
              QVariant ptrVar = sourceIdx.data(Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::ProjectItemPtr));
              ProjectItem* item = ptrVar.isValid() ? reinterpret_cast<ProjectItem*>(ptrVar.value<quintptr>()) : nullptr;
              
-             auto project = ArtifactProjectService::instance()->getCurrentProjectSharedPtr();
+             auto* svc = ArtifactProjectService::instance();
+             if (!svc) return;
+             auto project = svc->getCurrentProjectSharedPtr();
              if (project && item) project->removeItem(item);
          }
     });
@@ -1200,21 +1251,21 @@ ArtifactProjectManagerToolBox::ArtifactProjectManagerToolBox(QWidget* parent) : 
     layout->setContentsMargins(10, 0, 10, 0);
     layout->setSpacing(10);
 
-    auto createBtn = [](const QString& icon, const QString& tip) {
-        auto b = new QPushButton(icon);
+    auto createBtn = [](const QString& label, const QString& tip) {
+        auto b = new QPushButton(label);
         b->setFixedSize(24, 24);
         b->setToolTip(tip);
         b->setStyleSheet(R"(
-            QPushButton { background: transparent; border: none; font-size: 14px; color: #888; border-radius: 3px; }
+            QPushButton { background: transparent; border: none; font-size: 11px; font-weight: bold; color: #aaa; border-radius: 3px; }
             QPushButton:hover { background: #444; color: white; }
         )");
         return b;
     };
 
-    auto btnNew = createBtn("📜", "New Composition");
-    auto btnFolder = createBtn("📁", "New Folder");
-    auto btnProxy = createBtn("🧊", "Generate Proxies");
-    auto btnDel = createBtn("🗑️", "Delete");
+    auto btnNew = createBtn("N", "New Composition");
+    auto btnFolder = createBtn("F", "New Folder");
+    auto btnProxy = createBtn("P", "Generate Proxies");
+    auto btnDel = createBtn("D", "Delete");
 
     layout->addWidget(btnNew);
     layout->addWidget(btnFolder);

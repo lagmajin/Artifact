@@ -2,6 +2,7 @@ module;
 #include <QWidget>
 #include <QPainter>
 #include <QMouseEvent>
+#include <algorithm>
 
 #include <wobjectimpl.h>
 module Artifact.Widget.WorkAreaControlWidget;
@@ -15,6 +16,8 @@ namespace Artifact
  public:
   bool draggingLeft{ false };
   bool draggingRight{ false };
+  bool draggingRange{ false };
+  float dragGrabRatio{ 0.0f };
  };
 
  
@@ -88,7 +91,12 @@ namespace Artifact
  {
   const int handleHalfW = 6;
   const int handleW = handleHalfW * 2;
-  int usableWidth = width() - handleW;
+  const int usableWidth = std::max(1, width() - handleW);
+
+  if (!(ev->buttons() & Qt::LeftButton)) {
+   impl_->draggingLeft = impl_->draggingRight = impl_->draggingRange = false;
+   return;
+  }
 
   if (impl_->draggingLeft) {
    float newStart = (float(ev->pos().x()) - handleHalfW) / float(usableWidth);
@@ -97,25 +105,37 @@ namespace Artifact
   else if (impl_->draggingRight) {
    float newEnd = (float(ev->pos().x()) - handleHalfW) / float(usableWidth);
    setEnd(qBound(start + 0.01f, newEnd, 1.0f));
+  } else if (impl_->draggingRange) {
+   const float range = std::max(0.01f, end - start);
+   float left = (float(ev->pos().x()) - handleHalfW) / float(usableWidth) - impl_->dragGrabRatio;
+   left = qBound(0.0f, left, 1.0f - range);
+   setStart(left);
+   setEnd(left + range);
   }
  }
 
  void WorkAreaControl::mouseReleaseEvent(QMouseEvent*)
  {
-  impl_->draggingLeft = impl_->draggingRight = false;
+  impl_->draggingLeft = impl_->draggingRight = impl_->draggingRange = false;
  }
 
  void WorkAreaControl::mousePressEvent(QMouseEvent* ev)
  {
+  if (ev->button() != Qt::LeftButton) return;
   const int handleHalfW = 6;
   const int handleW = handleHalfW * 2;
-  int usableWidth = width() - handleW;
+  const int usableWidth = std::max(1, width() - handleW);
 
   int x1 = handleHalfW + static_cast<int>(start * usableWidth);
   int x2 = handleHalfW + static_cast<int>(end * usableWidth);
   
   if (QRect(x1 - handleHalfW, 0, handleW, height()).contains(ev->pos())) impl_->draggingLeft = true;
   else if (QRect(x2 - handleHalfW, 0, handleW, height()).contains(ev->pos())) impl_->draggingRight = true;
+  else if (QRect(x1 + handleHalfW, 0, std::max(0, x2 - x1 - handleW), height()).contains(ev->pos())) {
+   impl_->draggingRange = true;
+   const float normalizedX = (float(ev->pos().x()) - handleHalfW) / float(usableWidth);
+   impl_->dragGrabRatio = normalizedX - start;
+  }
  }
 
 };

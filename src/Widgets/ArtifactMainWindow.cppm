@@ -104,6 +104,17 @@ void ArtifactMainWindow::addDockedWidget(const QString& title, ads::DockWidgetAr
  impl_->dockWidgets.push_back(dock);
 }
 
+void ArtifactMainWindow::setDockVisible(const QString& title, const bool visible)
+{
+ if (!impl_) return;
+ for (auto* dock : impl_->dockWidgets) {
+  if (!dock) continue;
+  if (dock->objectName() == title || dock->windowTitle() == title) {
+   dock->setVisible(visible);
+  }
+ }
+}
+
 void ArtifactMainWindow::closeAllDocks()
 {
  if (!impl_) return;

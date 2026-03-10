@@ -13,6 +13,8 @@ module;
 #include <QGraphicsRectItem>
 #include <QBrush>
 #include <QResizeEvent>
+#include <QEvent>
+#include <QPainter>
 #include <QMenu>
 #include <cmath>
 #include <algorithm>
@@ -86,6 +88,10 @@ using namespace ArtifactCore;
 using namespace ArtifactWidgets;
 
  namespace {
+  constexpr double kTimelineRowHeight = 28.0;
+  constexpr int kTimelineTopRowHeight = 16;   // aligns with right ruler row
+  constexpr int kTimelineHeaderRowHeight = 34; // fits timecode + frame labels without compression
+  constexpr int kDefaultTimelineFrames = 300;
   std::shared_ptr<ArtifactAbstractComposition> safeCompositionLookup(const CompositionID& id)
   {
     if (id.isNil()) return nullptr;
@@ -95,6 +101,84 @@ using namespace ArtifactWidgets;
     if (!result.success) return nullptr;
     return result.ptr.lock();
   }
+
+  class TimelinePlayheadOverlay final : public QWidget
+  {
+  public:
+   explicit TimelinePlayheadOverlay(QWidget* parent = nullptr) : QWidget(parent)
+   {
+    setAttribute(Qt::WA_TransparentForMouseEvents, true);
+    setAttribute(Qt::WA_NoSystemBackground, true);
+    setAttribute(Qt::WA_TranslucentBackground, true);
+   }
+
+   void setPlayheadX(const int x)
+   {
+    if (playheadX_ == x) {
+     return;
+    }
+    playheadX_ = x;
+    update();
+   }
+
+  protected:
+   void paintEvent(QPaintEvent* event) override
+   {
+    Q_UNUSED(event);
+    QPainter painter(this);
+    painter.setRenderHint(QPainter::Antialiasing, false);
+    painter.setPen(QPen(QColor(255, 80, 60, 220), 1));
+    painter.drawLine(playheadX_, 0, playheadX_, height());
+   }
+
+  private:
+   int playheadX_ = 0;
+  };
+
+  class PlayheadSyncFilter final : public QObject
+  {
+  public:
+   PlayheadSyncFilter(QWidget* host, TimelineTrackView* trackView, TimelinePlayheadOverlay* overlay, QObject* parent = nullptr)
+    : QObject(parent), host_(host), trackView_(trackView), overlay_(overlay)
+   {
+   }
+
+   void sync()
+   {
+    if (!host_ || !trackView_ || !overlay_ || !trackView_->viewport()) {
+     return;
+    }
+    overlay_->setGeometry(host_->rect());
+    overlay_->raise();
+
+    const QPoint viewportPos = trackView_->mapFromScene(QPointF(trackView_->position(), 0.0));
+    const int xInHost = trackView_->viewport()->mapTo(host_, viewportPos).x();
+    overlay_->setPlayheadX(xInHost);
+   }
+
+  protected:
+   bool eventFilter(QObject* watched, QEvent* event) override
+   {
+    Q_UNUSED(watched);
+    switch (event->type()) {
+    case QEvent::Resize:
+    case QEvent::LayoutRequest:
+    case QEvent::Paint:
+    case QEvent::Show:
+    case QEvent::Move:
+     sync();
+     break;
+    default:
+     break;
+    }
+    return QObject::eventFilter(watched, event);
+   }
+
+  private:
+   QWidget* host_ = nullptr;
+   TimelineTrackView* trackView_ = nullptr;
+   TimelinePlayheadOverlay* overlay_ = nullptr;
+  };
  }
 
 // ===== ArtifactTimelineWidget Implementation =====
@@ -113,6 +197,8 @@ W_OBJECT_IMPL(ArtifactTimelineWidget)
     ArtifactLayerTimelinePanelWrapper* layerTimelinePanel_ = nullptr;
     TimelineTrackView* trackView_ = nullptr;  // Right-side timeline view
     ArtifactSeekBar* seekBar_ = nullptr;
+    TimelinePlayheadOverlay* playheadOverlay_ = nullptr;
+    PlayheadSyncFilter* playheadSync_ = nullptr;
     WorkAreaControl* workArea_ = nullptr;
     ArtifactTimelineRulerWidget* ruler_ = nullptr;
     CompositionID compositionId_;
@@ -157,6 +243,8 @@ W_OBJECT_IMPL(ArtifactTimelineWidget)
   auto leftHeader = new ArtifactTimeCodeWidget(); // ^CR[h
   auto searchBar = new ArtifactTimelineSearchBarWidget(); // o[
   auto globalSwitches = new ArtifactTimelineGlobalSwitches(); // AE{^Q
+  searchBar->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+  searchBar->setFixedWidth(260);
 
   auto searchBarLayout = new QHBoxLayout();
   searchBarLayout->setSpacing(8);
@@ -164,19 +252,28 @@ W_OBJECT_IMPL(ArtifactTimelineWidget)
   searchBarLayout->addWidget(leftHeader);
   searchBarLayout->addWidget(searchBar);
   searchBarLayout->addWidget(globalSwitches);
+  searchBarLayout->addStretch(1);
   searchBarLayout->setStretch(0, 0);
-  searchBarLayout->setStretch(1, 1);
+  searchBarLayout->setStretch(1, 0);
   searchBarLayout->setStretch(2, 0);
+  searchBarLayout->setStretch(3, 1);
  
    QObject::connect(globalSwitches, &ArtifactTimelineGlobalSwitches::shyChanged, 
                     this, &ArtifactTimelineWidget::onShyChanged);
   
   auto headerWidget = new QWidget();
-  headerWidget->setLayout(searchBarLayout); headerWidget->setFixedHeight(28); headerWidget->setFixedHeight(28);
+  headerWidget->setLayout(searchBarLayout);
+  headerWidget->setFixedHeight(kTimelineHeaderRowHeight);
+
+  auto leftTopSpacer = new QWidget();
+  leftTopSpacer->setFixedHeight(kTimelineTopRowHeight);
+  leftTopSpacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+  leftTopSpacer->setStyleSheet("background-color: #2D2D30; border-bottom: 1px solid #1a1a1a;");
 
   auto leftLayout = new QVBoxLayout();
   leftLayout->setSpacing(0);
   leftLayout->setContentsMargins(0, 0, 0, 0);
+  leftLayout->addWidget(leftTopSpacer);
   leftLayout->addWidget(headerWidget);
   leftLayout->addWidget(leftSplitter);
 
@@ -194,9 +291,13 @@ W_OBJECT_IMPL(ArtifactTimelineWidget)
     auto workAreaWidget = impl_->workArea_ = new WorkAreaControl();
     auto seekBar = impl_->seekBar_ = new ArtifactSeekBar();
     auto timelineTrackView = impl_->trackView_ = new TimelineTrackView();
-    seekBar->setFixedHeight(22);
+    timelineTrackView->setDuration(kDefaultTimelineFrames);
+    timeRulerWidget->setFixedHeight(kTimelineTopRowHeight);
+    timeRulerWidget->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    seekBar->setFixedHeight(kTimelineHeaderRowHeight);
     seekBar->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-    seekBar->setTotalFrames(static_cast<int>(timelineTrackView->duration()));
+    seekBar->setTotalFrames(kDefaultTimelineFrames);
+    seekBar->setCurrentFrame(FramePosition(0));
  
     // Sync Ruler and WorkArea
     // Sync disabled
@@ -248,13 +349,26 @@ W_OBJECT_IMPL(ArtifactTimelineWidget)
 
 
   auto rightPanel = new QWidget();
-
   rightPanelLayout->addWidget(timeRulerWidget);
   rightPanelLayout->addWidget(seekBar);
   rightPanelLayout->addWidget(timeScaleWidget);
   rightPanelLayout->addWidget(workAreaWidget);
   rightPanelLayout->addWidget(trackSplitter);
   rightPanel->setLayout(rightPanelLayout);
+
+  auto* playheadOverlay = new TimelinePlayheadOverlay(rightPanel);
+  auto* playheadSync = new PlayheadSyncFilter(rightPanel, timelineTrackView, playheadOverlay, rightPanel);
+  rightPanel->installEventFilter(playheadSync);
+  if (timelineTrackView->viewport()) {
+   timelineTrackView->viewport()->installEventFilter(playheadSync);
+  }
+  if (auto* hBar = timelineTrackView->horizontalScrollBar()) {
+   QObject::connect(hBar, &QScrollBar::valueChanged, this, [playheadSync](int) { playheadSync->sync(); });
+  }
+  QObject::connect(seekBar, &ArtifactSeekBar::frameChanged, this, [playheadSync](const auto&) { playheadSync->sync(); });
+  impl_->playheadOverlay_ = playheadOverlay;
+  impl_->playheadSync_ = playheadSync;
+  playheadSync->sync();
 
 
 
@@ -265,7 +379,7 @@ W_OBJECT_IMPL(ArtifactTimelineWidget)
         background: #555555;
     }
 )");
-  mainSplitter->setHandleWidth(10);
+  mainSplitter->setHandleWidth(7);
   mainSplitter->addWidget(leftPanel);
   mainSplitter->addWidget(rightPanel);
   //mainSplitter->addWidget(leftSplitter);
@@ -319,11 +433,17 @@ W_OBJECT_IMPL(ArtifactTimelineWidget)
      auto res = svc->findComposition(id);
      if (res.success && !res.ptr.expired()) {
       auto comp = res.ptr.lock();
-      const int totalFrames = static_cast<int>(comp->frameRange().duration());
+      int totalFrames = static_cast<int>(std::round(comp->frameRange().duration()));
+      if (totalFrames < 2) {
+       totalFrames = kDefaultTimelineFrames;
+      }
       impl_->trackView_->setDuration(static_cast<double>(totalFrames));
       if (impl_->seekBar_) {
        impl_->seekBar_->setTotalFrames(std::max(1, totalFrames));
        impl_->seekBar_->setCurrentFrame(FramePosition(0));
+      }
+      if (impl_->playheadSync_) {
+       impl_->playheadSync_->sync();
       }
        
       auto layers = comp->allLayer();
@@ -342,7 +462,7 @@ W_OBJECT_IMPL(ArtifactTimelineWidget)
 
    qDebug() << "[ArtifactTimelineWidget::onLayerCreated] Layer created:" << lid.toString();
 
-   int trackIndex = impl_->trackView_->addTrack(28.0);
+   int trackIndex = impl_->trackView_->addTrack(kTimelineRowHeight);
    double startFrame = 0.0;
    double duration = 100.0;
    ClipItem* clip = impl_->trackView_->addClip(trackIndex, startFrame, duration);
@@ -377,7 +497,7 @@ W_OBJECT_IMPL(ArtifactTimelineWidget)
            if (l) {
                if (impl_->shyActive_ && l->isShy()) continue;
                
-               int trackIndex = impl_->trackView_->addTrack(28.0);
+               int trackIndex = impl_->trackView_->addTrack(kTimelineRowHeight);
                impl_->trackView_->addClip(trackIndex, 0, 300);
            }
        }
@@ -464,6 +584,7 @@ TimelineTrackView::TimelineTrackView(QWidget* parent /*= nullptr*/) :QGraphicsVi
  setTransformationAnchor(QGraphicsView::AnchorUnderMouse);
  setResizeAnchor(QGraphicsView::AnchorViewCenter);
  setDragMode(QGraphicsView::NoDrag);
+ setFocusPolicy(Qt::StrongFocus);
 
  setZoomLevel(impl_->zoomLevel_);
 }
@@ -606,7 +727,7 @@ TimelineTrackView::TimelineTrackView(QWidget* parent /*= nullptr*/) :QGraphicsVi
   painter->setWorldTransform(QTransform());
   painter->fillRect(viewport()->rect(), QColor(30, 30, 30));
 
-  const double rowSpacing = 28.0;
+  const double rowSpacing = kTimelineRowHeight;
   int startRow = std::max(0, static_cast<int>(std::floor(rect.top() / rowSpacing)));
   int endRow = static_cast<int>(std::ceil(rect.bottom() / rowSpacing));
 
@@ -660,18 +781,13 @@ TimelineTrackView::TimelineTrackView(QWidget* parent /*= nullptr*/) :QGraphicsVi
 
  void TimelineTrackView::drawForeground(QPainter* painter, const QRectF& rect)
  {
-  painter->save();
-  QPen headPen(QColor(255, 80, 60));
-  headPen.setWidth(2);
-  painter->setPen(headPen);
-  painter->drawLine(QLineF(impl_->position_, rect.top(), impl_->position_, rect.bottom()));
-  painter->restore();
-
+  Q_UNUSED(rect);
   painter->save();
   painter->setWorldTransform(QTransform());
   QRectF viewRect = viewport()->rect();
-  if (impl_->scene_ && impl_->scene_->trackCount() == 0) {
-   QRectF emptyRect = viewRect.adjusted(0, 0, 0, -30);
+  const bool hasTracks = impl_->scene_ && impl_->scene_->trackCount() > 0;
+  if (!hasTracks) {
+   QRectF emptyRect = viewRect;
    QFont emptyTitle = painter->font();
    emptyTitle.setPointSize(11);
    emptyTitle.setBold(true);
@@ -688,12 +804,13 @@ TimelineTrackView::TimelineTrackView(QWidget* parent /*= nullptr*/) :QGraphicsVi
      "Add a layer to see timeline clips");
   }
 
-  QRectF barRect(0, viewRect.height() - 30, viewRect.width(), 30);
-  painter->fillRect(barRect, QColor(28, 28, 28, 220));
-
-  painter->setPen(QColor(150, 150, 150));
-  painter->drawText(barRect.adjusted(10, 0, -10, 0), Qt::AlignVCenter | Qt::AlignLeft,
-   "Ctrl + Wheel: Zoom");
+  if (hasTracks) {
+   QRectF barRect(0, viewRect.height() - 30, viewRect.width(), 30);
+   painter->fillRect(barRect, QColor(28, 28, 28, 220));
+   painter->setPen(QColor(150, 150, 150));
+   painter->drawText(barRect.adjusted(10, 0, -10, 0), Qt::AlignVCenter | Qt::AlignLeft,
+    "Ctrl + Wheel: Zoom");
+  }
   painter->restore();
  }
 
@@ -704,6 +821,7 @@ TimelineTrackView::TimelineTrackView(QWidget* parent /*= nullptr*/) :QGraphicsVi
 
   void TimelineTrackView::mousePressEvent(QMouseEvent* event)
   {
+   setFocus(Qt::MouseFocusReason);
    if (event->button() == Qt::MiddleButton) {
     impl_->isPanning_ = true;
     impl_->lastPanPoint_ = event->pos();
@@ -763,40 +881,48 @@ TimelineTrackView::TimelineTrackView(QWidget* parent /*= nullptr*/) :QGraphicsVi
    }
 
    QMenu menu(this);
+   QAction* deleteClipAction = nullptr;
+   QAction* duplicateClipAction = nullptr;
+   QAction* splitClipAction = nullptr;
+   QAction* trimInAtPlayheadAction = nullptr;
+   QAction* trimOutAtPlayheadAction = nullptr;
+   QAction* nudgeLeftAction = nullptr;
+   QAction* nudgeRightAction = nullptr;
+   QAction* moveTrackUpAction = nullptr;
+   QAction* moveTrackDownAction = nullptr;
+   QAction* deleteSelectedAction = nullptr;
+   QAction* selectTrackClipsAction = nullptr;
+   QAction* clearSelectionAction = nullptr;
+   QAction* addTrackAction = nullptr;
+   QAction* removeTrackAction = nullptr;
+
    if (clickedClip && impl_->scene_) {
-    QAction* deleteClipAction = menu.addAction("Delete Clip");
-    QAction* duplicateClipAction = menu.addAction("Duplicate Clip");
-    QAction* splitClipAction = menu.addAction("Split At Playhead");
-
-    QObject::connect(deleteClipAction, &QAction::triggered, this, [this, clickedClip]() {
-     removeClip(clickedClip);
-    });
-    QObject::connect(duplicateClipAction, &QAction::triggered, this, [this, clickedClip]() {
-     if (!impl_->scene_) return;
-     const int trackIndex = impl_->scene_->getTrackAtPosition(clickedClip->pos().y() + 1.0);
-     if (trackIndex < 0) return;
-     const double start = clickedClip->pos().x();
-     const double duration = clickedClip->getDuration();
-     addClip(trackIndex, start + duration + 5.0, duration);
-    });
-    QObject::connect(splitClipAction, &QAction::triggered, this, [this, clickedClip]() {
-     if (!impl_->scene_) return;
-     const double playhead = impl_->position_;
-     const double start = clickedClip->pos().x();
-     const double end = start + clickedClip->getDuration();
-     if (playhead <= start + 1.0 || playhead >= end - 1.0) return;
-     const int trackIndex = impl_->scene_->getTrackAtPosition(clickedClip->pos().y() + 1.0);
-     if (trackIndex < 0) return;
-     const double leftDuration = playhead - start;
-     const double rightDuration = end - playhead;
-     clickedClip->setDuration(leftDuration);
-     addClip(trackIndex, playhead, rightDuration);
-    });
-
+    deleteClipAction = menu.addAction("Delete Clip");
+    duplicateClipAction = menu.addAction("Duplicate Clip");
+    splitClipAction = menu.addAction("Split At Playhead");
+    trimInAtPlayheadAction = menu.addAction("Trim In to Playhead");
+    trimOutAtPlayheadAction = menu.addAction("Trim Out to Playhead");
+    menu.addSeparator();
+    nudgeLeftAction = menu.addAction("Nudge Left 1f");
+    nudgeRightAction = menu.addAction("Nudge Right 1f");
+    moveTrackUpAction = menu.addAction("Move Clip to Track Up");
+    moveTrackDownAction = menu.addAction("Move Clip to Track Down");
     menu.addSeparator();
    }
 
    if (impl_->scene_) {
+    deleteSelectedAction = menu.addAction("Delete Selected Clips");
+    selectTrackClipsAction = menu.addAction("Select All Clips in This Track");
+    clearSelectionAction = menu.addAction("Clear Selection");
+    menu.addSeparator();
+   }
+
+   if (impl_->scene_) {
+    QMenu* editModeMenu = menu.addMenu("Edit Mode");
+    QAction* rippleAction = editModeMenu->addAction("Ripple Edit");
+    rippleAction->setCheckable(true);
+    rippleAction->setChecked(impl_->scene_->rippleEditEnabled());
+
     QMenu* snapMenu = menu.addMenu("Snap Strength");
     QAction* low = snapMenu->addAction("Low");
     QAction* medium = snapMenu->addAction("Medium");
@@ -810,14 +936,114 @@ TimelineTrackView::TimelineTrackView(QWidget* parent /*= nullptr*/) :QGraphicsVi
     medium->setChecked(strength == TimelineScene::SnapStrength::Medium);
     high->setChecked(strength == TimelineScene::SnapStrength::High);
 
-    QObject::connect(low, &QAction::triggered, this, [this]() { if (impl_->scene_) impl_->scene_->setSnapStrength(TimelineScene::SnapStrength::Low); });
-    QObject::connect(medium, &QAction::triggered, this, [this]() { if (impl_->scene_) impl_->scene_->setSnapStrength(TimelineScene::SnapStrength::Medium); });
-    QObject::connect(high, &QAction::triggered, this, [this]() { if (impl_->scene_) impl_->scene_->setSnapStrength(TimelineScene::SnapStrength::High); });
-   }
+    menu.addSeparator();
+    addTrackAction = menu.addAction("Add Track");
+    removeTrackAction = menu.addAction("Remove This Track");
+    const int cursorTrack = impl_->scene_->getTrackAtPosition(scenePos.y());
+    removeTrackAction->setEnabled(cursorTrack >= 0 && impl_->scene_->trackCount() > 1);
 
-   menu.exec(event->globalPos());
-   event->accept();
-   return;
+    QAction* chosen = menu.exec(event->globalPos());
+    if (!chosen) {
+     event->accept();
+     return;
+    }
+
+    if (chosen == deleteClipAction && clickedClip) {
+     removeClip(clickedClip);
+    } else if (chosen == duplicateClipAction && clickedClip) {
+     const int trackIndex = impl_->scene_->getTrackAtPosition(clickedClip->pos().y() + 1.0);
+     if (trackIndex >= 0) {
+      const double start = clickedClip->pos().x();
+      const double duration = clickedClip->getDuration();
+      addClip(trackIndex, start + duration + 5.0, duration);
+     }
+    } else if (chosen == splitClipAction && clickedClip) {
+     const double playhead = impl_->position_;
+     const double start = clickedClip->pos().x();
+     const double end = start + clickedClip->getDuration();
+     if (playhead > start + 1.0 && playhead < end - 1.0) {
+      const int trackIndex = impl_->scene_->getTrackAtPosition(clickedClip->pos().y() + 1.0);
+      if (trackIndex >= 0) {
+       const double leftDuration = playhead - start;
+       const double rightDuration = end - playhead;
+       clickedClip->setDuration(leftDuration);
+       addClip(trackIndex, playhead, rightDuration);
+      }
+     }
+    } else if (chosen == trimInAtPlayheadAction && clickedClip) {
+     const double playhead = impl_->position_;
+     const double start = clickedClip->getStart();
+     const double end = start + clickedClip->getDuration();
+     if (playhead > start + 1.0 && playhead < end - 1.0) {
+      clickedClip->setStartDuration(playhead, end - playhead);
+     }
+    } else if (chosen == trimOutAtPlayheadAction && clickedClip) {
+     const double playhead = impl_->position_;
+     const double start = clickedClip->getStart();
+     const double end = start + clickedClip->getDuration();
+     if (playhead > start + 1.0 && playhead < end - 1.0) {
+      clickedClip->setDuration(playhead - start);
+     }
+    } else if (chosen == nudgeLeftAction && clickedClip) {
+     clickedClip->setStart(std::max(0.0, clickedClip->getStart() - 1.0));
+    } else if (chosen == nudgeRightAction && clickedClip) {
+     clickedClip->setStart(clickedClip->getStart() + 1.0);
+    } else if (chosen == moveTrackUpAction && clickedClip) {
+     const int trackIndex = impl_->scene_->getTrackAtPosition(clickedClip->pos().y() + 1.0);
+     if (trackIndex > 0) {
+      const double d = clickedClip->getDuration();
+      const double s = clickedClip->getStart();
+      removeClip(clickedClip);
+      addClip(trackIndex - 1, s, d);
+     }
+    } else if (chosen == moveTrackDownAction && clickedClip) {
+     const int trackIndex = impl_->scene_->getTrackAtPosition(clickedClip->pos().y() + 1.0);
+     if (trackIndex >= 0 && trackIndex + 1 < impl_->scene_->trackCount()) {
+      const double d = clickedClip->getDuration();
+      const double s = clickedClip->getStart();
+      removeClip(clickedClip);
+      addClip(trackIndex + 1, s, d);
+     }
+    } else if (chosen == deleteSelectedAction) {
+     auto selected = impl_->scene_->getSelectedClips();
+     std::vector<ClipItem*> snapshot(selected.begin(), selected.end());
+     for (auto* clip : snapshot) {
+      removeClip(clip);
+     }
+    } else if (chosen == selectTrackClipsAction) {
+     const int trackIndex = impl_->scene_->getTrackAtPosition(scenePos.y());
+     if (trackIndex >= 0) {
+      impl_->scene_->clearSelection();
+      for (auto* clip : impl_->scene_->getClips()) {
+       if (!clip) continue;
+       const int clipTrack = impl_->scene_->getTrackAtPosition(clip->pos().y() + 1.0);
+       if (clipTrack == trackIndex) {
+        clip->setSelected(true);
+       }
+      }
+     }
+    } else if (chosen == clearSelectionAction) {
+     clearSelection();
+    } else if (chosen == rippleAction) {
+     impl_->scene_->setRippleEditEnabled(rippleAction->isChecked());
+    } else if (chosen == low) {
+     impl_->scene_->setSnapStrength(TimelineScene::SnapStrength::Low);
+    } else if (chosen == medium) {
+     impl_->scene_->setSnapStrength(TimelineScene::SnapStrength::Medium);
+    } else if (chosen == high) {
+     impl_->scene_->setSnapStrength(TimelineScene::SnapStrength::High);
+    } else if (chosen == addTrackAction) {
+     addTrack(kTimelineRowHeight);
+    } else if (chosen == removeTrackAction) {
+     const int trackIndex = impl_->scene_->getTrackAtPosition(scenePos.y());
+     if (trackIndex >= 0 && impl_->scene_->trackCount() > 1) {
+      impl_->scene_->removeTrack(trackIndex);
+     }
+    }
+
+    event->accept();
+    return;
+   }
   }
 
    QGraphicsView::mousePressEvent(event);
@@ -847,6 +1073,73 @@ TimelineTrackView::TimelineTrackView(QWidget* parent /*= nullptr*/) :QGraphicsVi
    }
 
    QGraphicsView::mouseReleaseEvent(event);
+  }
+
+  void TimelineTrackView::keyPressEvent(QKeyEvent* event)
+  {
+   int frameDelta = 0;
+   if (event->key() == Qt::Key_Left) {
+    frameDelta = -1;
+   } else if (event->key() == Qt::Key_Right) {
+    frameDelta = 1;
+   }
+
+   if (frameDelta == 0) {
+    QGraphicsView::keyPressEvent(event);
+    return;
+   }
+
+   if (!impl_->scene_) {
+    event->accept();
+    return;
+   }
+
+   const auto& selected = impl_->scene_->getSelectedClips();
+   if (selected.empty()) {
+    setPosition(impl_->position_ + static_cast<double>(frameDelta));
+    const double ratio = impl_->duration_ > 0.0 ? impl_->position_ / impl_->duration_ : 0.0;
+    Q_EMIT seekPositionChanged(ratio);
+    event->accept();
+    return;
+   }
+
+   double minStart = 0.0;
+   bool hasMin = false;
+   for (auto* clip : selected) {
+    if (!clip) {
+     continue;
+    }
+    const double start = clip->getStart();
+    if (!hasMin || start < minStart) {
+     minStart = start;
+     hasMin = true;
+    }
+   }
+
+   if (!hasMin) {
+    event->accept();
+    return;
+   }
+
+   double appliedDelta = static_cast<double>(frameDelta);
+   if (frameDelta < 0 && minStart + appliedDelta < 0.0) {
+    // Keep multi-selection aligned and never move past frame 0.
+    appliedDelta = -std::floor(minStart);
+   }
+
+   if (std::abs(appliedDelta) < 1e-6) {
+    event->accept();
+    return;
+   }
+
+   for (auto* clip : selected) {
+    if (!clip) {
+     continue;
+    }
+    clip->setStart(std::max(0.0, clip->getStart() + appliedDelta));
+   }
+   viewport()->update();
+   event->accept();
   }
 
   void TimelineTrackView::wheelEvent(QWheelEvent* event)
@@ -901,7 +1194,7 @@ TimelineTrackView::TimelineTrackView(QWidget* parent /*= nullptr*/) :QGraphicsVi
 
  ArtifactTimelineIconView::ArtifactTimelineIconView(QWidget* parent /*= nullptr*/) :QTreeView(parent)
  {
-  //setHeaderHidden(true); // wb_[\
+  //setHeaderHidden(true); // optional compact header mode
   setColumnWidth(0, 16); // ACR
   setColumnWidth(1, 16);
   setColumnWidth(2, 16);
