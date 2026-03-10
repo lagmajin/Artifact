@@ -41,6 +41,9 @@
 5. [v0.9 Operations and Diagnostics](./MILESTONE_V0_9_OPERATIONS_AND_DIAGNOSTICS_2026-03-11.md)
 - 目的: 実運用での復旧・診断・保守導線を完成させる
 
+6. [v1.0 Production Readiness](./MILESTONE_V1_0_PRODUCTION_READINESS_2026-03-11.md)
+- 目的: 日常運用できる制作ワークフローを固定し、1.0 の完成条件を満たす
+
 ## Suggested Delivery Rhythm
 
 1. 週前半: v0.2 残件の実装
