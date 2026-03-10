@@ -47,6 +47,8 @@ public:
  {
   setFlag(ItemIsMovable, false);
   setFlag(ItemSendsGeometryChanges);
+  // Keep handle size constant in screen space even when timeline view is zoomed.
+  setFlag(ItemIgnoresTransformations, true);
   setAcceptedMouseButtons(Qt::LeftButton);
   setCursor(Qt::SizeHorCursor);
  }

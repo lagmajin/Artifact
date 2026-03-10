@@ -73,6 +73,8 @@ import Artifact.Widgets.UndoHistoryWidget;
 import Artifact.Widgets.PythonHookManagerWidget;
 import Artifact.Widgets.ProjectManagerWidget;
 import Artifact.Widgets.Timeline;
+import Artifact.Widgets.CompositionRenderWidget;
+import Artifact.Widgets.LayerEditorPanel;
 import Artifact.MainWindow;
 import Artifact.Project.Manager;
 import Artifact.Project.AutoSaveManager;
@@ -383,6 +385,8 @@ int main(int argc, char* argv[])
     mw->setStatusBar(status);
     status->showReadyMessage();
     status->setProjectText("Loaded");
+    mw->addDockedWidget(QStringLiteral("Composition Viewer"), ads::CenterDockWidgetArea, new ArtifactCompositionRenderWidget(mw));
+    mw->addDockedWidget(QStringLiteral("Layer Viewer"), ads::CenterDockWidgetArea, new ArtifactLayerEditorPanel(mw));
     mw->addDockedWidget(QStringLiteral("Project"), ads::LeftDockWidgetArea, new ArtifactProjectManagerWidget(mw));
     mw->addDockedWidget(QStringLiteral("Undo History"), ads::RightDockWidgetArea, new ArtifactUndoHistoryWidget(mw));
     mw->addDockedWidget(QStringLiteral("Python Hooks"), ads::RightDockWidgetArea, new ArtifactPythonHookManagerWidget(mw));

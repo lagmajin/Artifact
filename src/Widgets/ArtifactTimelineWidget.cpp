@@ -833,17 +833,27 @@ TimelineTrackView::TimelineTrackView(QWidget* parent /*= nullptr*/) :QGraphicsVi
   if (event->button() == Qt::LeftButton) {
     const QPointF scenePos = mapToScene(event->pos());
     
-    // Check if clicking on a clip
+    // Check if clicking on a clip/resize handle.
     auto items = scene()->items(scenePos, Qt::IntersectsItemShape);
+    ResizeHandle* clickedHandle = nullptr;
     ClipItem* clickedClip = nullptr;
     for (auto item : items) {
-     if (auto clip = dynamic_cast<ClipItem*>(item)) {
+     if (auto* handle = dynamic_cast<ResizeHandle*>(item)) {
+      clickedHandle = handle;
+      if (auto* parentClip = dynamic_cast<ClipItem*>(handle->parentItem())) {
+       clickedClip = parentClip;
+      }
+      break;
+     }
+     if (auto* clip = dynamic_cast<ClipItem*>(item)) {
       clickedClip = clip;
       break;
      }
     }
     
-    if (clickedClip) {
+    if (clickedHandle) {
+     // Do not seek when operating resize handles; let QGraphicsItem drag logic own the input.
+    } else if (clickedClip) {
      // Clip selected/deselected
      bool isSelected = clickedClip->isSelected();
      if (!isSelected && !(event->modifiers() & Qt::ShiftModifier)) {

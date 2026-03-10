@@ -88,7 +88,7 @@ target_sources(Artifact
 
 # Strict MSVC-cl only flags
 if(ARTIFACT_COMPILER_MSVC_CL)
-    target_compile_options(Artifact PRIVATE /Zf /Zc:__cplusplus /utf-8 /openmp)
+    target_compile_options(Artifact PRIVATE /Zf /Zc:__cplusplus /utf-8 /openmp /wd5050)
     target_compile_definitions(Artifact PRIVATE 
         PLATFORM_WIN32
         _GUARDOVERFLOW_CRT_ALLOCATORS=1
@@ -99,7 +99,7 @@ if(ARTIFACT_COMPILER_MSVC_CL)
     target_compile_options(Artifact PRIVATE /WX-)
 elseif(ARTIFACT_FRONTEND_MSVC)
     # clang-cl / icx-cl (MSVC-like frontend)
-    target_compile_options(Artifact PRIVATE /Zc:__cplusplus /utf-8 /WX-)
+    target_compile_options(Artifact PRIVATE /Zc:__cplusplus /utf-8 /WX- /wd5050)
     target_compile_definitions(Artifact PRIVATE 
         PLATFORM_WIN32
         _GUARDOVERFLOW_CRT_ALLOCATORS=1
