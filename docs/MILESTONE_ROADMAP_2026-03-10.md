@@ -44,6 +44,9 @@
 6. [v1.0 Production Readiness](./MILESTONE_V1_0_PRODUCTION_READINESS_2026-03-11.md)
 - 目的: 日常運用できる制作ワークフローを固定し、1.0 の完成条件を満たす
 
+7. [v1.1 Rendering Dual Backend](./MILESTONE_V1_1_RENDERING_DUAL_BACKEND_2026-03-11.md)
+- 目的: Diligent と Software/OpenCV の二重描画経路を運用可能にし、Vulkan準備へ接続する
+
 ## Suggested Delivery Rhythm
 
 1. 週前半: v0.2 残件の実装
