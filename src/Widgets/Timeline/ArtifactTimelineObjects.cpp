@@ -378,8 +378,8 @@ void ClipItem::mousePressEvent(QGraphicsSceneMouseEvent* event)
     impl_->dragStartScenePos = event->scenePos();
     impl_->dragStartItemPos = pos();
     impl_->isDragging = false;
-    // toggle selection on click
-    setSelected(!isSelected());
+    // Selection state is managed by TimelineTrackView mouse handling to avoid
+    // double-toggle between view-level and item-level press events.
     QGraphicsObject::mousePressEvent(event);
 }
 
