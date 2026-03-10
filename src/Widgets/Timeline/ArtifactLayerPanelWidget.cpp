@@ -378,7 +378,9 @@ namespace {
      const auto nodeChildren = children.value(nodeId);
      const bool hasChildren = !nodeChildren.isEmpty();
      const bool expanded = expandedByLayerId.value(nodeId, true);
-     visibleRows.push_back(VisibleRow{ node, depth, hasChildren, expanded });
+     // Always expose a disclosure toggle per-layer so newly added leaf layers
+     // (e.g. Null) still present tree-expand affordance in the UI.
+     visibleRows.push_back(VisibleRow{ node, depth, true, expanded });
      emitted.insert(nodeId);
 
      if (!hasChildren || !expanded) return;

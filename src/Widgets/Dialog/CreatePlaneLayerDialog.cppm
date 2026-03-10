@@ -178,7 +178,7 @@ namespace Artifact {
  {
   setWindowTitle(u8"平面設定");
   setFixedSize(600, 400);
-  setWindowFlags(Qt::FramelessWindowHint);
+  setWindowFlags(windowFlags() | Qt::Dialog | Qt::FramelessWindowHint);
   setAttribute(Qt::WA_NoChildEventsForParent);
   QVBoxLayout* layout = new QVBoxLayout();
 
@@ -216,22 +216,22 @@ namespace Artifact {
 
  void CreateSolidLayerSettingDialog::keyPressEvent(QKeyEvent* event)
  {
-
+  QDialog::keyPressEvent(event);
  }
 
  void CreateSolidLayerSettingDialog::mousePressEvent(QMouseEvent* event)
  {
-
+  QDialog::mousePressEvent(event);
  }
 
  void CreateSolidLayerSettingDialog::mouseReleaseEvent(QMouseEvent* event)
  {
-
+  QDialog::mouseReleaseEvent(event);
  }
 
  void CreateSolidLayerSettingDialog::mouseMoveEvent(QMouseEvent* event)
  {
-
+  QDialog::mouseMoveEvent(event);
  }
 
  W_OBJECT_IMPL(EditPlaneLayerSettingDialog)
@@ -249,7 +249,7 @@ namespace Artifact {
  {
   setWindowTitle(u8"平面設定の編集");
   setFixedSize(600, 400);
-  setWindowFlags(Qt::FramelessWindowHint);
+  setWindowFlags(windowFlags() | Qt::Dialog | Qt::FramelessWindowHint);
   setAttribute(Qt::WA_NoChildEventsForParent);
   QVBoxLayout* layout = new QVBoxLayout();
 
@@ -288,10 +288,10 @@ namespace Artifact {
   delete impl_;
  }
 
- void EditPlaneLayerSettingDialog::keyPressEvent(QKeyEvent* event) {}
- void EditPlaneLayerSettingDialog::mousePressEvent(QMouseEvent* event) {}
- void EditPlaneLayerSettingDialog::mouseReleaseEvent(QMouseEvent* event) {}
- void EditPlaneLayerSettingDialog::mouseMoveEvent(QMouseEvent* event) {}
+ void EditPlaneLayerSettingDialog::keyPressEvent(QKeyEvent* event) { QDialog::keyPressEvent(event); }
+ void EditPlaneLayerSettingDialog::mousePressEvent(QMouseEvent* event) { QDialog::mousePressEvent(event); }
+ void EditPlaneLayerSettingDialog::mouseReleaseEvent(QMouseEvent* event) { QDialog::mouseReleaseEvent(event); }
+ void EditPlaneLayerSettingDialog::mouseMoveEvent(QMouseEvent* event) { QDialog::mouseMoveEvent(event); }
 
  void EditPlaneLayerSettingDialog::showAnimated()
  {
