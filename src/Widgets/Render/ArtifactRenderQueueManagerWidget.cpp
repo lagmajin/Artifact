@@ -1262,6 +1262,19 @@ void RenderQueueManagerWidget::Impl::handleProjectClosed()
   });
 
   connect(impl_->clearButton, &QPushButton::clicked, this, [this]() {
+    if (!impl_->service || impl_->service->jobCount() <= 0) {
+      return;
+    }
+    const auto answer = QMessageBox::question(
+      this,
+      QStringLiteral("Clear Render Queue"),
+      QStringLiteral("レンダーキュー内の全ジョブを削除しますか？"),
+      QMessageBox::Yes | QMessageBox::No,
+      QMessageBox::No);
+    if (answer != QMessageBox::Yes) {
+      impl_->logUiEvent(QStringLiteral("Requested: clear all render jobs (canceled)"), true);
+      return;
+    }
     if (impl_->service) {
       impl_->service->removeAllRenderQueues();
     }

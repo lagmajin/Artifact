@@ -5,6 +5,18 @@
 #include <QMessageBox>
 #include <QDesktopServices>
 #include <QUrl>
+#include <QFileDialog>
+#include <QFile>
+#include <QFileInfo>
+#include <QTextStream>
+#include <QDateTime>
+#include <QCoreApplication>
+#include <QStandardPaths>
+#include <QDir>
+#include <QDirIterator>
+#include <QSysInfo>
+#include <QVariant>
+#include <QWidget>
 
 #include <iostream>
 #include <vector>
@@ -41,6 +53,8 @@
 #include <random>
 module Menu.Help;
 
+import Core.FastSettingsStore;
+
 
 
 
@@ -58,6 +72,7 @@ namespace Artifact {
   QAction* aboutAction_ = nullptr;
   QAction* docsAction_ = nullptr;
   QAction* checkUpdatesAction_ = nullptr;
+  QAction* exportDiagnosticsAction_ = nullptr;
  };
 
  ArtifactHelpMenu::Impl::Impl()
@@ -66,6 +81,7 @@ namespace Artifact {
   aboutAction_ = new QAction(u8"About Artifact");
   docsAction_ = new QAction(u8"Documentation");
   checkUpdatesAction_ = new QAction(u8"Check for Updates");
+  exportDiagnosticsAction_ = new QAction(u8"Export Diagnostics...");
  }
 
  ArtifactHelpMenu::Impl::~Impl()
@@ -74,6 +90,7 @@ namespace Artifact {
   delete aboutAction_;
   delete docsAction_;
   delete checkUpdatesAction_;
+  delete exportDiagnosticsAction_;
  }
 
  ArtifactHelpMenu::ArtifactHelpMenu(QWidget* parent /*= nullptr*/):QMenu(parent),impl_(new Impl())
@@ -88,6 +105,7 @@ namespace Artifact {
   addAction(impl_->docsAction_);
   addSeparator();
   addAction(impl_->checkUpdatesAction_);
+  addAction(impl_->exportDiagnosticsAction_);
 
   // connections
   connect(impl_->versionInfoAction_, &QAction::triggered, this, [this]() {
@@ -104,6 +122,103 @@ namespace Artifact {
 
   connect(impl_->checkUpdatesAction_, &QAction::triggered, this, [this]() {
     QMessageBox::information(this, tr("Updates"), tr("No updates available."));
+  });
+
+  connect(impl_->exportDiagnosticsAction_, &QAction::triggered, this, [this]() {
+    const QString defaultDir = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
+    const QString defaultName = QStringLiteral("artifact_diagnostics_%1.txt")
+      .arg(QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd_HHmmss")));
+    const QString path = QFileDialog::getSaveFileName(
+      this,
+      tr("Export Diagnostics"),
+      QDir(defaultDir).filePath(defaultName),
+      tr("Text Files (*.txt);;All Files (*)"));
+    if (path.trimmed().isEmpty()) {
+      return;
+    }
+
+    QFile out(path);
+    if (!out.open(QIODevice::WriteOnly | QIODevice::Text | QIODevice::Truncate)) {
+      QMessageBox::warning(this, tr("Diagnostics"), tr("Failed to open file for writing."));
+      return;
+    }
+
+    const QString appDataDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+    const QString sessionPath = QDir(appDataDir).filePath(QStringLiteral("session_state.cbor"));
+    const QString historyPath = QDir(appDataDir).filePath(QStringLiteral("render_queue_history.cbor"));
+    const QString recoveryDir = QDir(appDataDir).filePath(QStringLiteral("Recovery"));
+    ArtifactCore::FastSettingsStore sessionStore(sessionPath);
+
+    QTextStream ts(&out);
+    ts << "Artifact Diagnostics Report\n";
+    ts << "Generated: " << QDateTime::currentDateTime().toString(Qt::ISODate) << "\n\n";
+    ts << "[Runtime]\n";
+    ts << "Qt Version: " << qVersion() << "\n";
+    ts << "Product: " << QSysInfo::prettyProductName() << "\n";
+    ts << "CPU Arch: " << QSysInfo::currentCpuArchitecture() << "\n";
+    ts << "App Dir: " << QCoreApplication::applicationDirPath() << "\n";
+    ts << "AppData Dir: " << appDataDir << "\n\n";
+
+    ts << "[Session State]\n";
+    ts << "Session File: " << sessionPath << "\n";
+    ts << "Session File Exists: " << (QFileInfo::exists(sessionPath) ? "true" : "false") << "\n";
+    ts << "RenderQueue History File: " << historyPath << "\n";
+    ts << "RenderQueue History Exists: " << (QFileInfo::exists(historyPath) ? "true" : "false") << "\n";
+    ts << "Recovery Dir: " << recoveryDir << "\n";
+    ts << "Recovery Dir Exists: " << (QDir(recoveryDir).exists() ? "true" : "false") << "\n\n";
+
+    ts << "[Session Keys]\n";
+    ts << "Session/isRunning: " << sessionStore.value(QStringLiteral("Session/isRunning"), false).toBool() << "\n";
+    ts << "Session/startTimestamp: " << sessionStore.value(QStringLiteral("Session/startTimestamp"), QString()).toString() << "\n";
+    ts << "Session/lastCleanExitTimestamp: " << sessionStore.value(QStringLiteral("Session/lastCleanExitTimestamp"), QString()).toString() << "\n";
+    ts << "Session/pid: " << sessionStore.value(QStringLiteral("Session/pid"), QVariant()).toString() << "\n\n";
+
+    ts << "[Recovery Snapshots]\n";
+    int snapshotCount = 0;
+    if (QDir(recoveryDir).exists()) {
+      QDirIterator it(recoveryDir, QDir::Files, QDirIterator::Subdirectories);
+      while (it.hasNext()) {
+        const QString filePath = it.next();
+        const QFileInfo fi(filePath);
+        ts << "- " << fi.fileName() << " | " << fi.size() << " bytes | " << fi.lastModified().toString(Qt::ISODate) << "\n";
+        ++snapshotCount;
+      }
+    }
+    if (snapshotCount == 0) {
+      ts << "(none)\n";
+    }
+    ts << "\n";
+
+    ts << "[Dock Widgets]\n";
+    int dockCount = 0;
+    if (auto* top = this->window()) {
+      const auto objects = top->findChildren<QObject*>();
+      for (auto* obj : objects) {
+        if (!obj) continue;
+        const QString className = obj->metaObject() ? QString::fromLatin1(obj->metaObject()->className()) : QString();
+        if (!className.contains(QStringLiteral("CDockWidget"), Qt::CaseInsensitive)) {
+          continue;
+        }
+        auto* widget = qobject_cast<QWidget*>(obj);
+        const QString title = obj->property("windowTitle").toString();
+        ts << "- " << (title.isEmpty() ? obj->objectName() : title)
+           << " | object=" << obj->objectName()
+           << " | visible=" << ((widget && widget->isVisible()) ? "true" : "false")
+           << "\n";
+        ++dockCount;
+      }
+    }
+    if (dockCount == 0) {
+      ts << "(none)\n";
+    }
+    ts << "\n";
+
+    ts << "[Notes]\n";
+    ts << "- If previous session crashed, check Recovery folder and RenderQueue history.\n";
+    ts << "- Attach this report when filing bug reports.\n";
+    out.close();
+
+    QMessageBox::information(this, tr("Diagnostics"), tr("Diagnostics exported:\n%1").arg(path));
   });
  }
 

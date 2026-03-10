@@ -11,6 +11,7 @@
 #include <QLineEdit>
 #include <QFileInfo>
 #include <QSet>
+#include <QMessageBox>
 #include <QProcess>
 #include <QCoreApplication>
 #include <QTimer>
@@ -52,6 +53,17 @@ bool isSupportedAssetPath(const QString& path)
         QStringLiteral("usda"), QStringLiteral("usdc")
     };
     return kExt.contains(QFileInfo(path).suffix().toLower());
+}
+
+bool confirmPotentiallyDestructiveAction(QWidget* parent, const QString& title, const QString& text)
+{
+    const auto answer = QMessageBox::question(
+        parent,
+        title,
+        text,
+        QMessageBox::Yes | QMessageBox::No,
+        QMessageBox::No);
+    return answer == QMessageBox::Yes;
 }
 }
 
@@ -272,16 +284,47 @@ void ArtifactFileMenu::projectCreateRequested()
 
 void ArtifactFileMenu::projectClosed()
 {
+    if (auto* svc = ArtifactProjectService::instance()) {
+        if (svc->hasProject()) {
+            if (!confirmPotentiallyDestructiveAction(
+                this,
+                QStringLiteral("プロジェクトを閉じる"),
+                QStringLiteral("現在のプロジェクトを閉じますか？\n未保存の変更は失われる可能性があります。"))) {
+                return;
+            }
+        }
+    }
     ArtifactProjectManager::getInstance().closeCurrentProject();
 }
 
 void ArtifactFileMenu::quitApplication()
 {
+    if (auto* svc = ArtifactProjectService::instance()) {
+        if (svc->hasProject()) {
+            if (!confirmPotentiallyDestructiveAction(
+                this,
+                QStringLiteral("終了確認"),
+                QStringLiteral("Artifact を終了しますか？\n未保存の変更は失われる可能性があります。"))) {
+                return;
+            }
+        }
+    }
     QApplication::quit();
 }
 
 void ArtifactFileMenu::restartApplication()
 {
+    if (auto* svc = ArtifactProjectService::instance()) {
+        if (svc->hasProject()) {
+            if (!confirmPotentiallyDestructiveAction(
+                this,
+                QStringLiteral("再起動確認"),
+                QStringLiteral("Artifact を再起動しますか？\n未保存の変更は失われる可能性があります。"))) {
+                return;
+            }
+        }
+    }
+
     const QString program = QCoreApplication::applicationFilePath();
     QStringList args = QCoreApplication::arguments();
     if (!args.isEmpty()) {

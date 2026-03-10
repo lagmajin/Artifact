@@ -17,6 +17,9 @@ module;
 #include <QFileInfo>
 #include <QFile>
 #include <QCommandLineOption>
+#include <QMetaType>
+#include <QDesktopServices>
+#include <QUrl>
 #include <qthreadpool.h>
 #include <QFileInfoList>
 #include <ads_globals.h>
@@ -159,8 +162,71 @@ namespace
   return dataDir.filePath(QStringLiteral("session_state.cbor"));
  }
 
- bool markSessionStartAndDetectUncleanExit()
- {
+QString recoveryDirectoryPath()
+{
+  const QString appDataDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+  QDir dataDir(appDataDir);
+  if (!dataDir.exists())
+  {
+   dataDir.mkpath(QStringLiteral("."));
+  }
+  return dataDir.filePath(QStringLiteral("Recovery"));
+}
+
+void sanitizeSessionStateStore()
+{
+  ArtifactCore::FastSettingsStore sessionStore(sessionStateFilePath());
+  const QVariant running = sessionStore.value(QStringLiteral("Session/isRunning"), false);
+  if (running.isValid() && running.typeId() != QMetaType::Bool)
+  {
+    sessionStore.setValue(QStringLiteral("Session/isRunning"), false);
+  }
+
+  const QVariant pid = sessionStore.value(QStringLiteral("Session/pid"));
+  if (pid.isValid() && !pid.canConvert<qlonglong>())
+  {
+    sessionStore.remove(QStringLiteral("Session/pid"));
+  }
+
+  const QVariant startTs = sessionStore.value(QStringLiteral("Session/startTimestamp"));
+  if (startTs.isValid() && startTs.typeId() != QMetaType::QString)
+  {
+    sessionStore.remove(QStringLiteral("Session/startTimestamp"));
+  }
+
+  const QVariant cleanTs = sessionStore.value(QStringLiteral("Session/lastCleanExitTimestamp"));
+  if (cleanTs.isValid() && cleanTs.typeId() != QMetaType::QString)
+  {
+    sessionStore.remove(QStringLiteral("Session/lastCleanExitTimestamp"));
+  }
+  sessionStore.sync();
+}
+
+void sanitizeLayoutStore(ArtifactCore::FastSettingsStore& layoutStore)
+{
+  const QVariant geometry = layoutStore.value(QStringLiteral("MainWindow/geometry"));
+  if (geometry.isValid() && !geometry.canConvert<QByteArray>())
+  {
+    layoutStore.remove(QStringLiteral("MainWindow/geometry"));
+  }
+
+  const QVariant state = layoutStore.value(QStringLiteral("MainWindow/state"));
+  if (state.isValid() && !state.canConvert<QByteArray>())
+  {
+    layoutStore.remove(QStringLiteral("MainWindow/state"));
+  }
+
+  const QVariant version = layoutStore.value(QStringLiteral("MainWindow/version"));
+  if (version.isValid() && version.typeId() != QMetaType::QString)
+  {
+    layoutStore.remove(QStringLiteral("MainWindow/version"));
+  }
+  layoutStore.sync();
+}
+
+bool markSessionStartAndDetectUncleanExit()
+{
+  sanitizeSessionStateStore();
   ArtifactCore::FastSettingsStore sessionStore(sessionStateFilePath());
   const bool wasRunning = sessionStore.value(QStringLiteral("Session/isRunning"), false).toBool();
   sessionStore.setValue(QStringLiteral("Session/isRunning"), true);
@@ -185,10 +251,25 @@ namespace
    return;
   }
 
-  QMessageBox::warning(
-   parent,
-   QStringLiteral("Previous Session Did Not Exit Cleanly"),
-   QStringLiteral("前回セッションが正常終了していません。\n最新の復旧スナップショットを確認してください。"));
+  QMessageBox box(parent);
+  box.setIcon(QMessageBox::Warning);
+  box.setWindowTitle(QStringLiteral("Previous Session Did Not Exit Cleanly"));
+  box.setText(QStringLiteral("前回セッションが正常終了していません。"));
+  box.setInformativeText(QStringLiteral("復旧スナップショットの場所を開きますか？"));
+  auto* openFolder = box.addButton(QStringLiteral("Open Recovery Folder"), QMessageBox::ActionRole);
+  box.addButton(QStringLiteral("Continue"), QMessageBox::AcceptRole);
+  box.exec();
+
+  if (box.clickedButton() == openFolder)
+  {
+   const QString recoveryDir = recoveryDirectoryPath();
+   QDir dir(recoveryDir);
+   if (!dir.exists())
+   {
+    dir.mkpath(QStringLiteral("."));
+   }
+   QDesktopServices::openUrl(QUrl::fromLocalFile(recoveryDir));
+  }
  }
 
  bool showRecoveryPrompt(ArtifactAutoSaveManager& autoSave, QWidget* parent)
@@ -582,6 +663,7 @@ int main(int argc, char* argv[])
             dataDir.mkpath(QStringLiteral("."));
         }
         ArtifactCore::FastSettingsStore layoutStore(dataDir.filePath(QStringLiteral("main_window_layout.cbor")));
+        sanitizeLayoutStore(layoutStore);
         if (!layoutStore.contains(QStringLiteral("MainWindow/layoutKey")) &&
             !layoutStore.contains(QStringLiteral("MainWindow/geometry")) &&
             !layoutStore.contains(QStringLiteral("MainWindow/state"))) {

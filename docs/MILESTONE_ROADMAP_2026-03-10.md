@@ -38,6 +38,9 @@
 4. [v0.8 RC Foundation](./MILESTONE_V0_8_RC_FOUNDATION_2026-03-11.md)
 - 目的: リリース候補品質の安定性・復旧性・可観測性を固める
 
+5. [v0.9 Operations and Diagnostics](./MILESTONE_V0_9_OPERATIONS_AND_DIAGNOSTICS_2026-03-11.md)
+- 目的: 実運用での復旧・診断・保守導線を完成させる
+
 ## Suggested Delivery Rhythm
 
 1. 週前半: v0.2 残件の実装
