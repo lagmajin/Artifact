@@ -27,6 +27,8 @@ module;
 #include <QPushButton>
 #include <QFileDialog>
 #include <QApplication>
+#include <QGuiApplication>
+#include <QScreen>
 #include <QShortcut>
 #include <QRegularExpression>
 #include <QDirIterator>
@@ -245,7 +247,25 @@ HoverThumbnailPopupWidget::~HoverThumbnailPopupWidget() { delete impl_; }
 void HoverThumbnailPopupWidget::setThumbnail(const QPixmap& px) { if(impl_->thumbnailLabel) impl_->thumbnailLabel->setPixmap(px); }
 void HoverThumbnailPopupWidget::setLabels(const QStringList& ls) { for(int i=0; i<impl_->infoLabels.size() && i<ls.size(); ++i) impl_->infoLabels[i]->setText(ls[i]); }
 void HoverThumbnailPopupWidget::setLabel(int idx, const QString& t) { if(idx>=0 && idx<impl_->infoLabels.size()) impl_->infoLabels[idx]->setText(t); }
-void HoverThumbnailPopupWidget::showAt(const QPoint& p) { move(p); show(); raise(); QTimer::singleShot(5000, this, &QWidget::hide); }
+void HoverThumbnailPopupWidget::showAt(const QPoint& p) {
+  QPoint pos = p;
+  const QSize popupSize = sizeHint().expandedTo(QSize(240, 140));
+  if (QScreen* screen = QGuiApplication::screenAt(p)) {
+    const QRect avail = screen->availableGeometry();
+    if (pos.x() + popupSize.width() > avail.right() - 8) {
+      pos.setX(avail.right() - popupSize.width() - 8);
+    }
+    if (pos.y() + popupSize.height() > avail.bottom() - 8) {
+      pos.setY(avail.bottom() - popupSize.height() - 8);
+    }
+    pos.setX(std::max(avail.left() + 8, pos.x()));
+    pos.setY(std::max(avail.top() + 8, pos.y()));
+  }
+  move(pos);
+  show();
+  raise();
+  QTimer::singleShot(4500, this, &QWidget::hide);
+}
 
 class ProjectFilterProxyModel : public QSortFilterProxyModel {
 public:
@@ -669,7 +689,9 @@ void ArtifactProjectView::mouseMoveEvent(QMouseEvent* event) {
                 if (!impl_->hoverPopup) impl_->hoverPopup = new HoverThumbnailPopupWidget();
                 QString text = impl_->hoverIndex.data(Qt::DisplayRole).toString();
                 impl_->hoverPopup->setLabels(QStringList() << text << "Metadata Info" << "");
-                impl_->hoverPopup->showAt(QCursor::pos() + QPoint(15, 15));
+                const QRect itemRect = visualRect(impl_->hoverIndex);
+                QPoint popupPos = viewport()->mapToGlobal(itemRect.topRight() + QPoint(14, 6));
+                impl_->hoverPopup->showAt(popupPos);
             }
         });
     }
@@ -677,7 +699,7 @@ void ArtifactProjectView::mouseMoveEvent(QMouseEvent* event) {
         if (impl_->hoverPopup) impl_->hoverPopup->hide();
         impl_->hoverIndex = idx;
         impl_->hoverTimer->stop();
-        if (idx.isValid()) impl_->hoverTimer->start(600);
+        if (idx.isValid()) impl_->hoverTimer->start(950);
     }
     QTreeView::mouseMoveEvent(event);
 }

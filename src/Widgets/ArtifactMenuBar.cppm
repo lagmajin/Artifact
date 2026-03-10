@@ -54,7 +54,9 @@ ArtifactMenuBar::Impl::Impl(QWidget* mainWindow, ArtifactMenuBar* menuBar)
  timeMenu = new ArtifactTimeMenu(menuBar);
  viewMenu = new ArtifactViewMenu(menuBar);
  optionMenu = new ArtifactOptionMenu(menuBar);
+#if defined(_DEBUG) || !defined(NDEBUG)
  testMenu = new ArtifactTestMenu(menuBar);
+#endif
  helpMenu = new ArtifactHelpMenu(menuBar);
 
  menuBar->addMenu(fileMenu);
@@ -66,7 +68,11 @@ ArtifactMenuBar::Impl::Impl(QWidget* mainWindow, ArtifactMenuBar* menuBar)
  menuBar->addMenu(timeMenu);
  menuBar->addMenu(viewMenu);
  menuBar->addMenu(optionMenu);
- menuBar->addMenu(testMenu);
+#if defined(_DEBUG) || !defined(NDEBUG)
+ if (testMenu) {
+  menuBar->addMenu(testMenu);
+ }
+#endif
  menuBar->addMenu(helpMenu);
 }
 
