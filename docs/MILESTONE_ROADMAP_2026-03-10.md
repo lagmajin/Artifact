@@ -17,6 +17,13 @@
   - Inspector Effects 操作性改善
   - View同期の取りこぼし解消
 
+3. [v0.6 Effects Pipeline Usability](./MILESTONE_V0_6_EFFECTS_PIPELINE_USABILITY_2026-03-11.md)
+- 目的: エフェクト編集導線を実運用可能なUXへ改善
+- 現在の主タスク:
+  - Effect 並び替え導線（Up/Down）の運用固定
+  - Effect 選択と Property 表示同期の完成
+  - Effect 操作の Service 経由化を継続
+
 ## Next
 
 1. [v0.4 Pipeline Foundation](./MILESTONE_V0_4_PIPELINE_FOUNDATION_2026-03-10.md)
@@ -25,8 +32,11 @@
 2. [v0.5 Playable Editor](./MILESTONE_V0_5_PLAYABLE_EDITOR_2026-03-11.md)
 - 目的: 実作業で回せる編集安定性と運用導線の完成
 
-3. [v0.6 Effects Pipeline Usability](./MILESTONE_V0_6_EFFECTS_PIPELINE_USABILITY_2026-03-11.md)
-- 目的: エフェクト編集導線を実運用可能なUXへ改善
+3. [v0.7 Execution Loop](./MILESTONE_V0_7_EXECUTION_LOOP_2026-03-11.md)
+- 目的: 編集から出力までの制作ループを運用可能レベルへ固定
+
+4. [v0.8 RC Foundation](./MILESTONE_V0_8_RC_FOUNDATION_2026-03-11.md)
+- 目的: リリース候補品質の安定性・復旧性・可観測性を固める
 
 ## Suggested Delivery Rhythm
 

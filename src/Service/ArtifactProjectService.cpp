@@ -555,6 +555,204 @@ QString ArtifactProjectService::layerNameInCurrentComposition(const LayerID& lay
     return layer ? layer->layerName() : QString();
 }
 
+bool ArtifactProjectService::addEffectToLayerInCurrentComposition(const LayerID& layerId, std::shared_ptr<ArtifactAbstractEffect> effect)
+{
+    auto comp = currentComposition().lock();
+    if (!comp || layerId.isNil() || !effect) {
+        return false;
+    }
+    auto layer = comp->layerById(layerId);
+    if (!layer) {
+        return false;
+    }
+    layer->addEffect(effect);
+    return true;
+}
+
+bool ArtifactProjectService::removeEffectFromLayerInCurrentComposition(const LayerID& layerId, const QString& effectId)
+{
+    if (effectId.trimmed().isEmpty()) {
+        return false;
+    }
+    auto comp = currentComposition().lock();
+    if (!comp || layerId.isNil()) {
+        return false;
+    }
+    auto layer = comp->layerById(layerId);
+    if (!layer) {
+        return false;
+    }
+    layer->removeEffect(UniString(effectId.toStdString()));
+    return true;
+}
+
+bool ArtifactProjectService::setEffectEnabledInLayerInCurrentComposition(const LayerID& layerId, const QString& effectId, bool enabled)
+{
+    if (effectId.trimmed().isEmpty()) {
+        return false;
+    }
+    auto comp = currentComposition().lock();
+    if (!comp || layerId.isNil()) {
+        return false;
+    }
+    auto layer = comp->layerById(layerId);
+    if (!layer) {
+        return false;
+    }
+
+    for (const auto& effect : layer->getEffects()) {
+        if (effect && effect->effectID().toQString() == effectId) {
+            effect->setEnabled(enabled);
+            return true;
+        }
+    }
+    return false;
+}
+
+bool ArtifactProjectService::moveEffectInLayerInCurrentComposition(const LayerID& layerId, const QString& effectId, int direction)
+{
+    if (effectId.trimmed().isEmpty() || direction == 0) {
+        return false;
+    }
+    auto comp = currentComposition().lock();
+    if (!comp || layerId.isNil()) {
+        return false;
+    }
+    auto layer = comp->layerById(layerId);
+    if (!layer) {
+        return false;
+    }
+
+    auto effects = layer->getEffects();
+    if (effects.empty()) {
+        return false;
+    }
+
+    int currentIndex = -1;
+    EffectPipelineStage currentStage = EffectPipelineStage::Generator;
+    for (int i = 0; i < static_cast<int>(effects.size()); ++i) {
+        const auto& effect = effects[i];
+        if (effect && effect->effectID().toQString() == effectId) {
+            currentIndex = i;
+            currentStage = effect->pipelineStage();
+            break;
+        }
+    }
+    if (currentIndex < 0) {
+        return false;
+    }
+
+    int swapIndex = -1;
+    if (direction < 0) {
+        for (int i = currentIndex - 1; i >= 0; --i) {
+            if (effects[i] && effects[i]->pipelineStage() == currentStage) {
+                swapIndex = i;
+                break;
+            }
+        }
+    } else {
+        for (int i = currentIndex + 1; i < static_cast<int>(effects.size()); ++i) {
+            if (effects[i] && effects[i]->pipelineStage() == currentStage) {
+                swapIndex = i;
+                break;
+            }
+        }
+    }
+
+    if (swapIndex < 0 || swapIndex == currentIndex) {
+        return false;
+    }
+
+    std::swap(effects[currentIndex], effects[swapIndex]);
+    layer->clearEffects();
+    for (const auto& effect : effects) {
+        if (effect) {
+            layer->addEffect(effect);
+        }
+    }
+    return true;
+}
+
+QString ArtifactProjectService::layerRemovalConfirmationMessage(const CompositionID& compositionId, const LayerID& layerId) const
+{
+  if (compositionId.isNil() || layerId.isNil()) {
+    return QStringLiteral("このレイヤーを削除しますか？");
+  }
+
+  auto findResult = impl_->projectManager().findComposition(compositionId);
+  if (!findResult.success) {
+    return QStringLiteral("このレイヤーを削除しますか？");
+  }
+  auto comp = findResult.ptr.lock();
+  if (!comp) {
+    return QStringLiteral("このレイヤーを削除しますか？");
+  }
+
+  auto layer = comp->layerById(layerId);
+  if (!layer) {
+    return QStringLiteral("このレイヤーを削除しますか？");
+  }
+
+  int childCount = 0;
+  for (const auto& candidate : comp->allLayer()) {
+    if (!candidate) continue;
+    if (candidate->parentLayerId() == layerId) {
+      ++childCount;
+    }
+  }
+  const int effectCount = layer->effectCount();
+  const QString layerName = layer->layerName().trimmed().isEmpty()
+    ? QStringLiteral("(Unnamed)")
+    : layer->layerName().trimmed();
+
+  if (childCount <= 0 && effectCount <= 0) {
+    return QStringLiteral("レイヤー \"%1\" を削除しますか？").arg(layerName);
+  }
+  return QStringLiteral(
+    "レイヤー \"%1\" を削除しますか？\n"
+    "子レイヤー: %2 / エフェクト: %3\n"
+    "この操作は元に戻せない場合があります。")
+    .arg(layerName)
+    .arg(childCount)
+    .arg(effectCount);
+}
+
+bool ArtifactProjectService::removeProjectItem(ProjectItem* item)
+{
+  if (!item) {
+    return false;
+  }
+  if (item->type() == eProjectItemType::Composition) {
+    auto* compItem = static_cast<CompositionItem*>(item);
+    return removeCompositionWithRenderQueueCleanup(compItem->compositionId);
+  }
+
+  auto shared = getCurrentProjectSharedPtr();
+  if (!shared) {
+    return false;
+  }
+  shared->removeItem(item);
+  return true;
+}
+
+QString ArtifactProjectService::projectItemRemovalConfirmationMessage(ProjectItem* item) const
+{
+  if (!item) {
+    return QStringLiteral("この項目を削除しますか？");
+  }
+  if (item->type() == eProjectItemType::Composition) {
+    auto* compItem = static_cast<CompositionItem*>(item);
+    return compositionRemovalConfirmationMessage(compItem->compositionId);
+  }
+  if (item->type() == eProjectItemType::Footage) {
+    return QStringLiteral("フッテージ項目を削除しますか？\n（元ファイル自体は削除されません）");
+  }
+  if (item->type() == eProjectItemType::Folder) {
+    return QStringLiteral("フォルダ項目を削除しますか？\n（子項目も同時に削除されます）");
+  }
+  return QStringLiteral("この項目を削除しますか？");
+}
+
  bool ArtifactProjectService::removeComposition(const CompositionID& id)
  {
    auto& pm = impl_->projectManager();

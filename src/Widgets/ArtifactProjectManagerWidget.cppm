@@ -817,37 +817,23 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
             }
         });
 
-        menu.addAction("Delete", [this, sourceIdx, item, svc]() {
+        menu.addAction("Delete", [this, item, svc]() {
             if (!svc || !item) {
                 return;
             }
-
-            if (item->type() == eProjectItemType::Composition) {
-                const QVariant idVar = sourceIdx.data(Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::CompositionId));
-                if (!idVar.isValid()) {
-                    return;
-                }
-                const CompositionID compId(idVar.toString());
-                const QString message = svc->compositionRemovalConfirmationMessage(compId);
-                const auto answer = QMessageBox::question(
-                    this,
-                    QStringLiteral("コンポジション削除"),
-                    message,
-                    QMessageBox::Yes | QMessageBox::No,
-                    QMessageBox::No);
-                if (answer != QMessageBox::Yes) {
-                    return;
-                }
-
-                if (!svc->removeCompositionWithRenderQueueCleanup(compId)) {
-                    QMessageBox::warning(this, QStringLiteral("削除失敗"),
-                        QStringLiteral("コンポジションの削除に失敗しました。"));
-                }
+            const QString message = svc->projectItemRemovalConfirmationMessage(item);
+            const auto answer = QMessageBox::question(
+                this,
+                QStringLiteral("項目削除"),
+                message,
+                QMessageBox::Yes | QMessageBox::No,
+                QMessageBox::No);
+            if (answer != QMessageBox::Yes) {
                 return;
             }
-
-            if (auto shared = svc->getCurrentProjectSharedPtr()) {
-                shared->removeItem(item);
+            if (!svc->removeProjectItem(item)) {
+                QMessageBox::warning(this, QStringLiteral("削除失敗"),
+                    QStringLiteral("項目の削除に失敗しました。"));
             }
         });
 

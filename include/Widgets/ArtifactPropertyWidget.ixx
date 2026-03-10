@@ -60,6 +60,7 @@ public:
     ~ArtifactPropertyWidget();
 
     void setLayer(Artifact::ArtifactAbstractLayerPtr layer);
+    void setFocusedEffectId(const QString& effectId);
     void clear();
     void setFilterText(const QString& text);
     QString filterText() const;

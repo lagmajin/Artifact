@@ -55,6 +55,7 @@ import Artifact.Composition.Result;
 import Artifact.Composition.Abstract;
 import Artifact.Composition.InitParams;
 import Artifact.Project.Items;
+import Artifact.Effect.Abstract;
 
 import Artifact.Project;
 
@@ -125,6 +126,13 @@ export namespace Artifact
   bool layerHasParentInCurrentComposition(const LayerID& layerId);
   LayerID layerParentIdInCurrentComposition(const LayerID& layerId);
   QString layerNameInCurrentComposition(const LayerID& layerId);
+  bool addEffectToLayerInCurrentComposition(const LayerID& layerId, std::shared_ptr<ArtifactAbstractEffect> effect);
+  bool removeEffectFromLayerInCurrentComposition(const LayerID& layerId, const QString& effectId);
+  bool setEffectEnabledInLayerInCurrentComposition(const LayerID& layerId, const QString& effectId, bool enabled);
+  bool moveEffectInLayerInCurrentComposition(const LayerID& layerId, const QString& effectId, int direction);
+  QString layerRemovalConfirmationMessage(const CompositionID& compositionId, const LayerID& layerId) const;
+  bool removeProjectItem(ProjectItem* item);
+  QString projectItemRemovalConfirmationMessage(ProjectItem* item) const;
   bool removeComposition(const CompositionID& id);
   int renderQueueCountForComposition(const CompositionID& id) const;
   QString compositionRemovalConfirmationMessage(const CompositionID& id) const;

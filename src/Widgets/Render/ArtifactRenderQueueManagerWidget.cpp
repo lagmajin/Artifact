@@ -11,6 +11,8 @@ module;
 #include <QDoubleSpinBox>
 #include <QSpinBox>
 #include <QFileDialog>
+#include <QFile>
+#include <QTextStream>
 #include <QDateTime>
 #include <QStandardPaths>
 #include <QDir>
@@ -112,6 +114,8 @@ namespace Artifact
   QLabel* statusLabel;
   QListWidget* historyListWidget = nullptr;
   QPushButton* clearHistoryButton = nullptr;
+  QPushButton* exportHistoryButton = nullptr;
+  QComboBox* progressLogStepCombo = nullptr;
   QLineEdit* outputPathEdit = nullptr;
   QPushButton* outputBrowseButton = nullptr;
   QComboBox* outputFormatCombo = nullptr;
@@ -132,12 +136,17 @@ namespace Artifact
   bool syncingJobDetails = false;
   bool syncingPresetCombo = false;
   std::map<int, int> lastProgressBucketByJob;
+  int progressLogStepPercent = 25;
 
   static QString normalizeStatus(const QString& status);
   void setStatusMessage(const QString& message, bool alsoHistory = false);
+  void logUiEvent(const QString& event, bool alsoHistory = true);
   void logServiceEvent(const QString& event, int sourceIndex = -1, bool alsoHistory = true);
   void loadHistory();
   void saveHistory() const;
+  void loadUiPreferences();
+  void saveUiPreferences() const;
+  void setProgressLogStepPercent(int stepPercent);
   QStringList presetNames() const;
   QString presetKeyForName(const QString& name) const;
   void reloadPresetList();
@@ -181,10 +190,12 @@ RenderQueueManagerWidget::Impl::Impl()
     presetStore_ = std::make_unique<ArtifactCore::FastSettingsStore>(presetFile);
     presetStore_->setAutoSyncThreshold(4);
   }
+  loadUiPreferences();
 }
 
 RenderQueueManagerWidget::Impl::~Impl()
 {
+  saveUiPreferences();
   saveHistory();
   service = nullptr;
 }
@@ -283,6 +294,14 @@ void RenderQueueManagerWidget::Impl::setStatusMessage(const QString& message, bo
   }
 }
 
+void RenderQueueManagerWidget::Impl::logUiEvent(const QString& event, bool alsoHistory)
+{
+  setStatusMessage(QString("[UI] %1").arg(event), false);
+  if (alsoHistory) {
+    addHistoryEntry(QString("[UI] %1").arg(event));
+  }
+}
+
 void RenderQueueManagerWidget::Impl::logServiceEvent(const QString& event, int sourceIndex, bool alsoHistory)
 {
   QString suffix;
@@ -294,7 +313,10 @@ void RenderQueueManagerWidget::Impl::logServiceEvent(const QString& event, int s
   } else if (sourceIndex >= 0) {
     suffix = QString(" (Job #%1)").arg(sourceIndex + 1);
   }
-  setStatusMessage(QString("%1%2").arg(event, suffix), alsoHistory);
+  setStatusMessage(QString("[Service] %1%2").arg(event, suffix), false);
+  if (alsoHistory) {
+    addHistoryEntry(QString("[Service] %1%2").arg(event, suffix));
+  }
 }
 
 void RenderQueueManagerWidget::Impl::addJobSettingsSnapshotToHistory(int sourceIndex)
@@ -363,6 +385,30 @@ void RenderQueueManagerWidget::Impl::saveHistory() const
   }
   historyStore_->setValue(QStringLiteral("renderQueue/historyLines"), lines);
   historyStore_->sync();
+}
+
+void RenderQueueManagerWidget::Impl::loadUiPreferences()
+{
+  if (!historyStore_) {
+    progressLogStepPercent = 25;
+    return;
+  }
+  const int stored = historyStore_->value(QStringLiteral("renderQueue/progressLogStepPercent"), 25).toInt();
+  setProgressLogStepPercent(stored);
+}
+
+void RenderQueueManagerWidget::Impl::saveUiPreferences() const
+{
+  if (!historyStore_) {
+    return;
+  }
+  historyStore_->setValue(QStringLiteral("renderQueue/progressLogStepPercent"), progressLogStepPercent);
+  historyStore_->sync();
+}
+
+void RenderQueueManagerWidget::Impl::setProgressLogStepPercent(int stepPercent)
+{
+  progressLogStepPercent = std::clamp(stepPercent, 5, 100);
 }
 
 QStringList RenderQueueManagerWidget::Impl::presetNames() const
@@ -835,12 +881,12 @@ void RenderQueueManagerWidget::Impl::updateTransformEditorsForSelection()
     if (status == "Completed") {
       const QString path = service->jobOutputPathAt(index).trimmed();
       if (!path.isEmpty() && statusLabel) {
-        setStatusMessage(QString("Completed: %1").arg(path), true);
+        logServiceEvent(QString("Completed: %1").arg(path), index, true);
       }
     } else if (status == "Failed") {
       const QString error = service->jobErrorMessageAt(index).trimmed();
       if (!error.isEmpty() && statusLabel) {
-        setStatusMessage(QString("Failed: %1").arg(error), true);
+        logServiceEvent(QString("Failed: %1").arg(error), index, true);
       }
     } else {
       logServiceEvent(QStringLiteral("Job updated"), index, false);
@@ -861,8 +907,9 @@ void RenderQueueManagerWidget::Impl::updateTransformEditorsForSelection()
 
  void RenderQueueManagerWidget::Impl::handleJobProgressChanged(int index, int progress)
  {
-  const int safeProgress = std::clamp(progress, 0, 100);
-  const int bucket = safeProgress / 25;
+ const int safeProgress = std::clamp(progress, 0, 100);
+  const int step = std::max(5, progressLogStepPercent);
+  const int bucket = safeProgress / step;
   auto it = lastProgressBucketByJob.find(index);
   if (it == lastProgressBucketByJob.end() || it->second != bucket || safeProgress == 100) {
     lastProgressBucketByJob[index] = bucket;
@@ -880,13 +927,13 @@ void RenderQueueManagerWidget::Impl::updateTransformEditorsForSelection()
   updateJobList();
  }
 
- void RenderQueueManagerWidget::Impl::handleProjectClosed()
- {
-  setStatusMessage(QStringLiteral("Queue cleared: project closed"), true);
+void RenderQueueManagerWidget::Impl::handleProjectClosed()
+{
+  logServiceEvent(QStringLiteral("Queue cleared: project closed"), -1, true);
   lastProgressBucketByJob.clear();
   jobs.clear();
   updateJobList();
- }
+}
 
  RenderQueueManagerWidget::RenderQueueManagerWidget(QWidget* parent /*= nullptr*/) :QWidget(parent),impl_(new Impl())
  {
@@ -1045,9 +1092,19 @@ void RenderQueueManagerWidget::Impl::updateTransformEditorsForSelection()
 
   auto* historyHeader = new QHBoxLayout();
   auto* historyLabel = new QLabel("History", this);
+  auto* progressLogLabel = new QLabel("Progress Log Step", this);
+  impl_->progressLogStepCombo = new QComboBox(this);
+  impl_->progressLogStepCombo->addItem("10%", 10);
+  impl_->progressLogStepCombo->addItem("25%", 25);
+  impl_->progressLogStepCombo->addItem("50%", 50);
+  impl_->progressLogStepCombo->addItem("100%", 100);
+  impl_->exportHistoryButton = new QPushButton("Export History", this);
   impl_->clearHistoryButton = new QPushButton("Clear History", this);
   historyHeader->addWidget(historyLabel, 0);
   historyHeader->addStretch(1);
+  historyHeader->addWidget(progressLogLabel, 0);
+  historyHeader->addWidget(impl_->progressLogStepCombo, 0);
+  historyHeader->addWidget(impl_->exportHistoryButton, 0);
   historyHeader->addWidget(impl_->clearHistoryButton, 0);
   mainLayout->addLayout(historyHeader);
 
@@ -1055,6 +1112,11 @@ void RenderQueueManagerWidget::Impl::updateTransformEditorsForSelection()
   impl_->historyListWidget->setMinimumHeight(110);
   mainLayout->addWidget(impl_->historyListWidget);
   impl_->loadHistory();
+  if (impl_->progressLogStepCombo) {
+    QSignalBlocker block(impl_->progressLogStepCombo);
+    const int idx = impl_->progressLogStepCombo->findData(impl_->progressLogStepPercent);
+    impl_->progressLogStepCombo->setCurrentIndex(idx >= 0 ? idx : 1);
+  }
 
   // スタイルの設定
   auto style = getDCCStyleSheetPreset(DccStylePreset::ModoStyle);
@@ -1111,7 +1173,7 @@ void RenderQueueManagerWidget::Impl::updateTransformEditorsForSelection()
         impl_->presetCombo->setCurrentIndex(idx);
       }
     }
-    impl_->setStatusMessage(QString("Preset saved: %1").arg(name.trimmed()), true);
+    impl_->logUiEvent(QString("Preset saved: %1").arg(name.trimmed()), true);
   });
 
   connect(impl_->loadPresetButton, &QPushButton::clicked, this, [this]() {
@@ -1123,7 +1185,7 @@ void RenderQueueManagerWidget::Impl::updateTransformEditorsForSelection()
       QMessageBox::warning(this, QStringLiteral("Preset"), QStringLiteral("Failed to apply preset."));
       return;
     }
-    impl_->setStatusMessage(QString("Preset applied: %1").arg(name), true);
+    impl_->logUiEvent(QString("Preset applied: %1").arg(name), true);
   });
 
   connect(impl_->deletePresetButton, &QPushButton::clicked, this, [this]() {
@@ -1145,13 +1207,13 @@ void RenderQueueManagerWidget::Impl::updateTransformEditorsForSelection()
       return;
     }
     impl_->reloadPresetList();
-    impl_->setStatusMessage(QString("Preset deleted: %1").arg(name), true);
+    impl_->logUiEvent(QString("Preset deleted: %1").arg(name), true);
   });
 
   connect(impl_->addButton, &QPushButton::clicked, this, [this]() {
     if (impl_->service) {
       impl_->service->addRenderQueue();
-      impl_->setStatusMessage(QStringLiteral("Requested: add render job"), true);
+      impl_->logUiEvent(QStringLiteral("Requested: add render job"), true);
     }
   });
 
@@ -1162,7 +1224,7 @@ void RenderQueueManagerWidget::Impl::updateTransformEditorsForSelection()
       if (impl_->service) {
         impl_->service->removeRenderQueueAt(sourceIndex);
       }
-      impl_->setStatusMessage(QString("Requested: remove job #%1").arg(sourceIndex + 1), true);
+      impl_->logUiEvent(QString("Requested: remove job #%1").arg(sourceIndex + 1), true);
     }
   });
 
@@ -1174,7 +1236,7 @@ void RenderQueueManagerWidget::Impl::updateTransformEditorsForSelection()
     impl_->service->duplicateRenderQueueAt(sourceIndex);
     impl_->syncJobsFromService();
     impl_->selectSourceIndex(sourceIndex + 1);
-    impl_->setStatusMessage(QString("Requested: duplicate job #%1").arg(sourceIndex + 1), true);
+    impl_->logUiEvent(QString("Requested: duplicate job #%1").arg(sourceIndex + 1), true);
   });
 
   connect(impl_->moveUpButton, &QPushButton::clicked, this, [this]() {
@@ -1185,7 +1247,7 @@ void RenderQueueManagerWidget::Impl::updateTransformEditorsForSelection()
     impl_->service->moveRenderQueue(sourceIndex, sourceIndex - 1);
     impl_->syncJobsFromService();
     impl_->selectSourceIndex(sourceIndex - 1);
-    impl_->setStatusMessage(QString("Requested: move job #%1 up").arg(sourceIndex + 1), true);
+    impl_->logUiEvent(QString("Requested: move job #%1 up").arg(sourceIndex + 1), true);
   });
 
   connect(impl_->moveDownButton, &QPushButton::clicked, this, [this]() {
@@ -1196,7 +1258,7 @@ void RenderQueueManagerWidget::Impl::updateTransformEditorsForSelection()
     impl_->service->moveRenderQueue(sourceIndex, sourceIndex + 1);
     impl_->syncJobsFromService();
     impl_->selectSourceIndex(sourceIndex + 1);
-    impl_->setStatusMessage(QString("Requested: move job #%1 down").arg(sourceIndex + 1), true);
+    impl_->logUiEvent(QString("Requested: move job #%1 down").arg(sourceIndex + 1), true);
   });
 
   connect(impl_->clearButton, &QPushButton::clicked, this, [this]() {
@@ -1204,7 +1266,7 @@ void RenderQueueManagerWidget::Impl::updateTransformEditorsForSelection()
       impl_->service->removeAllRenderQueues();
     }
     impl_->syncJobsFromService();
-    impl_->setStatusMessage(QStringLiteral("Requested: clear all render jobs"), true);
+    impl_->logUiEvent(QStringLiteral("Requested: clear all render jobs"), true);
   });
 
   connect(impl_->startButton, &QPushButton::clicked, this, [this]() {
@@ -1213,27 +1275,27 @@ void RenderQueueManagerWidget::Impl::updateTransformEditorsForSelection()
         impl_->addJobSettingsSnapshotToHistory(i);
       }
       impl_->service->startAllJobs();
-      impl_->setStatusMessage(QStringLiteral("Requested: start all jobs"), true);
+      impl_->logUiEvent(QStringLiteral("Requested: start all jobs"), true);
     } else {
-      impl_->setStatusMessage(QStringLiteral("Render service unavailable"), true);
+      impl_->logUiEvent(QStringLiteral("Render service unavailable"), true);
     }
   });
 
   connect(impl_->pauseButton, &QPushButton::clicked, this, [this]() {
     if (impl_->service) {
       impl_->service->pauseAllJobs();
-      impl_->setStatusMessage(QStringLiteral("Requested: pause all jobs"), true);
+      impl_->logUiEvent(QStringLiteral("Requested: pause all jobs"), true);
     } else {
-      impl_->setStatusMessage(QStringLiteral("Render service unavailable"), true);
+      impl_->logUiEvent(QStringLiteral("Render service unavailable"), true);
     }
   });
 
   connect(impl_->cancelButton, &QPushButton::clicked, this, [this]() {
     if (impl_->service) {
       impl_->service->cancelAllJobs();
-      impl_->setStatusMessage(QStringLiteral("Requested: cancel all jobs"), true);
+      impl_->logUiEvent(QStringLiteral("Requested: cancel all jobs"), true);
     } else {
-      impl_->setStatusMessage(QStringLiteral("Render service unavailable"), true);
+      impl_->logUiEvent(QStringLiteral("Render service unavailable"), true);
     }
   });
 
@@ -1248,7 +1310,7 @@ void RenderQueueManagerWidget::Impl::updateTransformEditorsForSelection()
     impl_->service->resetJobForRerun(sourceIndex);
     impl_->syncJobsFromService();
     impl_->selectSourceIndex(sourceIndex);
-    impl_->setStatusMessage(QString("Requested: rerun reset job #%1").arg(sourceIndex + 1), true);
+    impl_->logUiEvent(QString("Requested: rerun reset job #%1").arg(sourceIndex + 1), true);
   });
 
   connect(impl_->rerunDoneFailedButton, &QPushButton::clicked, this, [this]() {
@@ -1257,7 +1319,7 @@ void RenderQueueManagerWidget::Impl::updateTransformEditorsForSelection()
     }
     const int changed = impl_->service->resetCompletedAndFailedJobsForRerun();
     impl_->syncJobsFromService();
-    impl_->setStatusMessage(QString("Requested: rerun reset batch (%1 jobs)").arg(changed), true);
+    impl_->logUiEvent(QString("Requested: rerun reset batch (%1 jobs)").arg(changed), true);
   });
 
   connect(impl_->clearHistoryButton, &QPushButton::clicked, this, [this]() {
@@ -1265,6 +1327,49 @@ void RenderQueueManagerWidget::Impl::updateTransformEditorsForSelection()
       impl_->historyListWidget->clear();
       impl_->saveHistory();
     }
+  });
+
+  connect(impl_->progressLogStepCombo, qOverload<int>(&QComboBox::currentIndexChanged), this, [this](int) {
+    if (!impl_->progressLogStepCombo) {
+      return;
+    }
+    const int step = impl_->progressLogStepCombo->currentData().toInt();
+    impl_->setProgressLogStepPercent(step);
+    impl_->lastProgressBucketByJob.clear();
+    impl_->saveUiPreferences();
+    impl_->logUiEvent(QString("Progress log step set to %1%").arg(impl_->progressLogStepPercent), true);
+  });
+
+  connect(impl_->exportHistoryButton, &QPushButton::clicked, this, [this]() {
+    if (!impl_->historyListWidget || impl_->historyListWidget->count() == 0) {
+      impl_->logUiEvent(QStringLiteral("History export skipped: no entries"), true);
+      return;
+    }
+    const QString defaultName = QString("render_queue_history_%1.log")
+      .arg(QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss"));
+    const QString defaultPath = QDir(QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation)).filePath(defaultName);
+    const QString path = QFileDialog::getSaveFileName(
+      this,
+      QStringLiteral("Export Render Queue History"),
+      defaultPath,
+      QStringLiteral("Log Files (*.log);;Text Files (*.txt);;All Files (*)"));
+    if (path.trimmed().isEmpty()) {
+      return;
+    }
+    QFile out(path);
+    if (!out.open(QIODevice::WriteOnly | QIODevice::Text | QIODevice::Truncate)) {
+      QMessageBox::warning(this, QStringLiteral("Export History"), QStringLiteral("Failed to open file for writing."));
+      impl_->logUiEvent(QString("History export failed: %1").arg(path), true);
+      return;
+    }
+    QTextStream ts(&out);
+    for (int i = 0; i < impl_->historyListWidget->count(); ++i) {
+      if (auto* item = impl_->historyListWidget->item(i)) {
+        ts << item->text() << '\n';
+      }
+    }
+    out.close();
+    impl_->logUiEvent(QString("History exported: %1").arg(path), true);
   });
 
   connect(impl_->jobListWidget, &QListWidget::currentRowChanged, this, [this](int row) {
@@ -1303,7 +1408,7 @@ void RenderQueueManagerWidget::Impl::updateTransformEditorsForSelection()
     }
     impl_->outputPathEdit->setText(path);
     impl_->service->setJobOutputPathAt(sourceIndex, path);
-    impl_->setStatusMessage(QString("Output updated for job #%1").arg(sourceIndex + 1), true);
+    impl_->logUiEvent(QString("Output updated for job #%1").arg(sourceIndex + 1), true);
   });
 
   auto applyOutputSettings = [this]() {

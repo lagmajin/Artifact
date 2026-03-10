@@ -338,7 +338,19 @@ void ArtifactLayerMenu::Impl::handleDeleteLayer()
     if (!service || selectedLayerId_.isNil()) return;
     auto comp = service->currentComposition().lock();
     if (!comp) return;
-    service->removeLayerFromComposition(comp->id(), selectedLayerId_);
+    const QString message = service->layerRemovalConfirmationMessage(comp->id(), selectedLayerId_);
+    const auto answer = QMessageBox::question(
+        menu_->window(),
+        QStringLiteral("レイヤー削除"),
+        message,
+        QMessageBox::Yes | QMessageBox::No,
+        QMessageBox::No);
+    if (answer != QMessageBox::Yes) {
+        return;
+    }
+    if (!service->removeLayerFromComposition(comp->id(), selectedLayerId_)) {
+        QMessageBox::warning(menu_->window(), QStringLiteral("削除失敗"), QStringLiteral("レイヤー削除に失敗しました。"));
+    }
 }
 
 void ArtifactLayerMenu::Impl::handleToggleVisible()
