@@ -390,6 +390,13 @@ namespace Artifact
             return countJobsForComposition(compositionId) > 0;
         }
 
+        ArtifactCore::CompositionID jobCompositionIdAt(int index) const {
+            if (index < 0 || index >= jobs.size()) {
+                return ArtifactCore::CompositionID::Nil();
+            }
+            return jobs[index].compositionId;
+        }
+
         void removeJobsForComposition(const ArtifactCore::CompositionID& compositionId) {
             for (int i = jobs.size() - 1; i >= 0; --i) {
                 if (jobs[i].compositionId == compositionId) {
@@ -765,6 +772,11 @@ namespace Artifact
     int ArtifactRenderQueueService::renderQueueCountForComposition(const ArtifactCore::CompositionID& compositionId) const
     {
         return impl_->queueManager.countJobsForComposition(compositionId);
+    }
+
+    ArtifactCore::CompositionID ArtifactRenderQueueService::jobCompositionIdAt(int index) const
+    {
+        return impl_->queueManager.jobCompositionIdAt(index);
     }
 
     QString ArtifactRenderQueueService::jobCompositionNameAt(int index) const

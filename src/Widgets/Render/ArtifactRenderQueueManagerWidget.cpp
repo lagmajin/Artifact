@@ -64,6 +64,7 @@ module Artifact.Widgets.Render.QueueManager;
 
 import Widgets.Utils.CSS;
 import Artifact.Render.Queue.Service;
+import Artifact.Service.Project;
 import Core.FastSettingsStore;
 
 
@@ -580,7 +581,21 @@ void RenderQueueManagerWidget::Impl::syncJobsFromService()
   jobs.reserve(count);
   for (int i = 0; i < count; ++i) {
     JobEntry entry;
-    const QString name = service->jobCompositionNameAt(i).trimmed();
+    QString name = service->jobCompositionNameAt(i).trimmed();
+    const auto compositionId = service->jobCompositionIdAt(i);
+    if (!compositionId.isNil()) {
+      if (auto* projectService = ArtifactProjectService::instance()) {
+        const auto found = projectService->findComposition(compositionId);
+        if (found.success) {
+          if (const auto composition = found.ptr.lock()) {
+            const QString liveName = composition->settings().compositionName().toQString().trimmed();
+            if (!liveName.isEmpty()) {
+              name = liveName;
+            }
+          }
+        }
+      }
+    }
     entry.name = name.isEmpty() ? QString("Render Job %1").arg(i + 1) : name;
     entry.status = normalizeStatus(service->jobStatusAt(i));
     entry.progress = std::clamp(service->jobProgressAt(i), 0, 100);

@@ -67,6 +67,7 @@ export namespace Artifact
   void removeRenderQueuesForComposition(const ArtifactCore::CompositionID& compositionId);
   bool hasRenderQueueForComposition(const ArtifactCore::CompositionID& compositionId) const;
   int renderQueueCountForComposition(const ArtifactCore::CompositionID& compositionId) const;
+  ArtifactCore::CompositionID jobCompositionIdAt(int index) const;
   QString jobCompositionNameAt(int index) const;
   QString jobStatusAt(int index) const;
   int jobProgressAt(int index) const;
