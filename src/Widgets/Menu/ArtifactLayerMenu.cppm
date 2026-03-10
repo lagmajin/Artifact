@@ -5,12 +5,15 @@ module;
 #include <QLineEdit>
 #include <QMenu>
 #include <QMessageBox>
+#include <QApplication>
+#include <QTimer>
 #include <wobjectimpl.h>
 
 module Artifact.Menu.Layer;
 
 import Artifact.Project.Manager;
 import Artifact.Service.Project;
+import Utils.Id;
 import Artifact.Layer.InitParams;
 import Artifact.Layer.Factory;
 import Artifact.Composition.Abstract;
@@ -27,7 +30,7 @@ public:
     ~Impl() = default;
 
     ArtifactLayerMenu* menu_ = nullptr;
-    LayerID selectedLayerId_;
+    ArtifactCore::LayerID selectedLayerId_;
 
     QMenu* createMenu = nullptr;
     QMenu* switchMenu = nullptr;
@@ -164,7 +167,7 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     QObject::connect(splitAction, &QAction::triggered, menu, [this]() { handleSplitLayer(); });
 
     auto* service = ArtifactProjectService::instance();
-    QObject::connect(service, &ArtifactProjectService::layerSelected, menu, [this](const LayerID& id) {
+    QObject::connect(service, &ArtifactProjectService::layerSelected, menu, [this](const ArtifactCore::LayerID& id) {
         selectedLayerId_ = id;
     });
     QObject::connect(menu, &QMenu::aboutToShow, menu, [this]() {
@@ -220,15 +223,17 @@ void ArtifactLayerMenu::Impl::refreshEnabledState()
 void ArtifactLayerMenu::Impl::handleCreateSolid()
 {
     auto service = ArtifactProjectService::instance();
-    QWidget* parentWindow = menu_ ? menu_->window() : nullptr;
-    CreateSolidLayerSettingDialog dialog(parentWindow);
-    QObject::connect(&dialog, &CreateSolidLayerSettingDialog::submit, menu_, [service](const ArtifactSolidLayerInitParams& params) {
+    QWidget* parentWindow = menu_ ? menu_->window() : QApplication::activeWindow();
+    auto* dialog = new CreateSolidLayerSettingDialog(parentWindow);
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    QObject::connect(dialog, &CreateSolidLayerSettingDialog::submit, menu_, [service](const ArtifactSolidLayerInitParams& params) {
         if (service) {
             service->addLayerToCurrentComposition(params);
         }
     });
-    dialog.setModal(true);
-    dialog.exec();
+    dialog->setModal(true);
+    // Defer open until menu event processing is fully finished.
+    QTimer::singleShot(0, dialog, [dialog]() { dialog->open(); });
 }
 
 void ArtifactLayerMenu::Impl::handleCreateNull()

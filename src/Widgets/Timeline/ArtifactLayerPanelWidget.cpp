@@ -76,8 +76,9 @@ import File.TypeDetector;
 namespace Artifact
 {
  using namespace ArtifactCore;
- namespace {
+namespace {
   constexpr int kLayerRowHeight = 28;
+  constexpr int kLayerHeaderHeight = 34;
   constexpr int kLayerColumnWidth = 28;
   constexpr int kLayerPropertyColumnCount = 5;
   constexpr int kInlineComboHeight = 24;
@@ -261,8 +262,8 @@ namespace Artifact
   });
 
   setStyleSheet("background-color: #2D2D30; border-bottom: 1px solid #1a1a1a;");
-  setFixedHeight(28);
- }
+  setFixedHeight(kLayerHeaderHeight);
+}
 
  ArtifactLayerPanelHeaderWidget::~ArtifactLayerPanelHeaderWidget()
  {
