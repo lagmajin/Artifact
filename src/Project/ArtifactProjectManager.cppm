@@ -438,40 +438,29 @@ void ArtifactProjectManager::suppressDefaultCreate(bool v)
   if (impl_) impl_->suppressDefaultCreate_ = v;
 }
 
- // CreateProjectResult ArtifactProjectManager::createProject(const UniString& name, bool force)
- // {
- //  CreateProjectResult result;
- //  
- //  // Check if project already exists and force flag is not set
- //  if (impl_->currentProjectPtr_ && !force) {
- //    result.success = false;
- //    result.message.setQString("Project already exists. Use force=true to overwrite.");
- //    qDebug() << "createProject failed: project already exists";
- //    return result;
- //  }
- //  
- //  // Create the project
- //  impl_->createProject();
- //  
- //  if (!impl_->currentProjectPtr_) {
- //    result.success = false;
- //    result.message.setQString("Failed to create project");
- //    qDebug() << "createProject failed: currentProjectPtr_ is null after creation";
- //    return result;
- //  }
- //  
- //  // Set project name if provided
- //  if (!name.isEmpty()) {
- //    impl_->currentProjectPtr_->setProjectName(name.toQString());
- //  }
- //  
- //  result.success = true;
- //  result.message.setQString("Project created successfully");
- //  // Note: projectId could be set here if CreateProjectResult has such field
- //  
- //  qDebug() << "createProject succeeded with name:" << (name.isEmpty() ? "<default>" : name.toQString());
- //  return result;
- // }
+CreateProjectResult ArtifactProjectManager::createProject(const UniString& name, bool force)
+{
+ CreateProjectResult result;
+
+ if (impl_->currentProjectPtr_ && !force) {
+  result.isSuccess = false;
+  return result;
+ }
+
+ const QString projectName = name.toQString().trimmed().isEmpty()
+  ? defaultProjectDisplayName()
+  : name.toQString();
+
+ createProject(projectName, force);
+
+ if (!impl_->currentProjectPtr_) {
+  result.isSuccess = false;
+  return result;
+ }
+
+ result.isSuccess = true;
+ return result;
+}
 
 QString ArtifactProjectManager::currentProjectAssetsPath() const
 {

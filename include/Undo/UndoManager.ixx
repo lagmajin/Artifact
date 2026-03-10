@@ -46,15 +46,8 @@ import Utils.String.UniString;
 import Artifact.Effect.Abstract;
 import Artifact.Layer.Abstract;
 
-namespace ArtifactCore {
-    class RationalTime;
-}
-
 export namespace Artifact {
  using namespace ArtifactCore;
-
- class ArtifactAbstractLayer;
- class ArtifactAbstractComposition;
 
 class UndoCommand {
 public:
@@ -91,25 +84,25 @@ private:
 
 class AddLayerCommand : public UndoCommand {
 public:
-    AddLayerCommand(std::shared_ptr<ArtifactAbstractComposition> comp, std::shared_ptr<ArtifactAbstractLayer> layer, bool atTop = true);
+    AddLayerCommand(std::shared_ptr<void> comp, ArtifactAbstractLayerPtr layer, bool atTop = true);
     void undo() override;
     void redo() override;
     QString label() const override;
 private:
-    std::shared_ptr<ArtifactAbstractComposition> comp_;
-    std::shared_ptr<ArtifactAbstractLayer> layer_;
+    std::shared_ptr<void> comp_;
+    ArtifactAbstractLayerPtr layer_;
     bool atTop_;
 };
 
 class RemoveLayerCommand : public UndoCommand {
 public:
-    RemoveLayerCommand(std::shared_ptr<ArtifactAbstractComposition> comp, std::shared_ptr<ArtifactAbstractLayer> layer);
+    RemoveLayerCommand(std::shared_ptr<void> comp, ArtifactAbstractLayerPtr layer);
     void undo() override;
     void redo() override;
     QString label() const override;
 private:
-    std::shared_ptr<ArtifactAbstractComposition> comp_;
-    std::shared_ptr<ArtifactAbstractLayer> layer_;
+    std::shared_ptr<void> comp_;
+    ArtifactAbstractLayerPtr layer_;
     int originalIndex_;
 };
 

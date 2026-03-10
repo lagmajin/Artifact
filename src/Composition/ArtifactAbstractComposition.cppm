@@ -58,7 +58,7 @@ import Frame.Range;
 import Frame.Rate;
 import Composition.Settings;
 import Artifact.Composition.Result;
-import Artifact.Layers;
+import Artifact.Layer.Abstract;
 import Artifact.Layer.Factory;
 //import Playback.Clock;
 
@@ -80,6 +80,10 @@ namespace Artifact {
   MultiIndexLayerContainer layerMultiIndex_;
   CompositionSettings settings_;
   FramePosition position_;
+  FrameRange frameRange_ = FrameRange(0, 300);
+  FrameRate frameRate_;
+  bool looping_ = false;
+  float playbackSpeed_ = 1.0f;
   CompositionID id_;
   //PlaybackClock playbackClock_;  // 高精度再生クロック
   
@@ -131,7 +135,6 @@ namespace Artifact {
   auto id = layer->id();
 
   layerMultiIndex_.add(layer,id,layer->type_index());
-  layer->setComposition(owner_);
 
   result.success = true;
   result.error = AppendLayerToCompositionError::None;
@@ -203,7 +206,6 @@ void ArtifactAbstractComposition::Impl::removeLayer(const LayerID& id)
           return result;
       }
       layerMultiIndex_.insertAt(0, layer, layer->id(), layer->type_index());
-      layer->setComposition(owner_);
       result.success = true;
       result.error = AppendLayerToCompositionError::None;
       return result;
@@ -335,14 +337,12 @@ ArtifactAbstractLayerPtr ArtifactAbstractComposition::layerById(const LayerID& i
 
   FrameRange ArtifactAbstractComposition::frameRange() const
   {
-   // TODO: return actual frame range from settings or init params
-   return FrameRange();
+   return impl_->frameRange_;
   }
 
   FrameRate ArtifactAbstractComposition::frameRate() const
   {
-   // TODO: return actual frame rate from settings or init params
-   return FrameRate();
+   return impl_->frameRate_;
   }
 
  bool ArtifactAbstractComposition::hasVideo() const
@@ -374,7 +374,6 @@ void ArtifactAbstractComposition::insertLayerAt(ArtifactAbstractLayerPtr layer, 
 {
     if (!layer) return;
     impl_->layerMultiIndex_.insertAt(index, layer, layer->id(), layer->type_index());
-    layer->setComposition(this);
 }
 
 void ArtifactAbstractComposition::moveLayerToIndex(const LayerID& id, int newIndex)
@@ -465,12 +464,32 @@ void ArtifactAbstractComposition::togglePlayPause()
 
 float ArtifactAbstractComposition::playbackSpeed() const
 {
-    return 1.0f; // Placeholder
+    return impl_->playbackSpeed_;
 }
 
 void ArtifactAbstractComposition::setPlaybackSpeed(float speed)
 {
-    // Placeholder
+    impl_->playbackSpeed_ = speed;
+}
+
+bool ArtifactAbstractComposition::isLooping() const
+{
+    return impl_->looping_;
+}
+
+void ArtifactAbstractComposition::setLooping(bool loop)
+{
+    impl_->looping_ = loop;
+}
+
+void ArtifactAbstractComposition::setFrameRange(const FrameRange& range)
+{
+    impl_->frameRange_ = range;
+}
+
+void ArtifactAbstractComposition::setFrameRate(const FrameRate& rate)
+{
+    impl_->frameRate_ = rate;
 }
 
 QJsonDocument ArtifactAbstractComposition::toJson() const{

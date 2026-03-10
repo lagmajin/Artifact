@@ -372,15 +372,15 @@ int main(int argc, char* argv[])
 
   bootstrapPythonScripts();
   ArtifactPythonHookManager::runHook(QStringLiteral("on_startup"));
-    ArtifactMainWindow mw;
-    mw.setObjectName("ArtifactMainWindow");
-    mw.setWindowTitle("Artifact");
-    auto* status = new ArtifactStatusBar(&mw);
-    mw.setStatusBar(status);
+    auto* mw = new ArtifactMainWindow();
+    mw->setObjectName("ArtifactMainWindow");
+    mw->setWindowTitle("Artifact");
+    auto* status = new ArtifactStatusBar(mw);
+    mw->setStatusBar(status);
     status->showReadyMessage();
     status->setProjectText("Loaded");
-    mw.addDockedWidget(QStringLiteral("Undo History"), ads::RightDockWidgetArea, new ArtifactUndoHistoryWidget(&mw));
-    mw.addDockedWidget(QStringLiteral("Python Hooks"), ads::RightDockWidgetArea, new ArtifactPythonHookManagerWidget(&mw));
+    mw->addDockedWidget(QStringLiteral("Undo History"), ads::RightDockWidgetArea, new ArtifactUndoHistoryWidget(mw));
+    mw->addDockedWidget(QStringLiteral("Python Hooks"), ads::RightDockWidgetArea, new ArtifactPythonHookManagerWidget(mw));
 
     auto* projectService = ArtifactProjectService::instance();
     auto* playbackService = ArtifactPlaybackService::instance();
@@ -388,40 +388,40 @@ int main(int argc, char* argv[])
     const QString recoveryDir = QDir(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)).filePath("Recovery");
     autoSaveManager->initialize("ArtifactProject", recoveryDir);
     autoSaveManager->start();
-    showRecoveryPrompt(*autoSaveManager, &mw);
+    showRecoveryPrompt(*autoSaveManager, mw);
 
     if (projectService) {
-        QObject::connect(projectService, &ArtifactProjectService::projectChanged, &mw, [status]() {
+        QObject::connect(projectService, &ArtifactProjectService::projectChanged, mw, [status]() {
             status->setProjectText("Modified");
         });
-        QObject::connect(projectService, &ArtifactProjectService::projectChanged, &mw, []() {
+        QObject::connect(projectService, &ArtifactProjectService::projectChanged, mw, []() {
             ArtifactPythonHookManager::runHook(QStringLiteral("project_changed"));
         });
-        QObject::connect(projectService, &ArtifactProjectService::projectChanged, &mw, [autoSaveManager]() {
+        QObject::connect(projectService, &ArtifactProjectService::projectChanged, mw, [autoSaveManager]() {
             if (autoSaveManager) autoSaveManager->markDirty();
         });
-        QObject::connect(projectService, &ArtifactProjectService::layerCreated, &mw, [status](const CompositionID&, const LayerID&) {
+        QObject::connect(projectService, &ArtifactProjectService::layerCreated, mw, [status](const CompositionID&, const LayerID&) {
             status->setProjectText("Layer Added");
         });
-        QObject::connect(projectService, &ArtifactProjectService::layerCreated, &mw, [](const CompositionID& compId, const LayerID& layerId) {
+        QObject::connect(projectService, &ArtifactProjectService::layerCreated, mw, [](const CompositionID& compId, const LayerID& layerId) {
             ArtifactPythonHookManager::runHook(QStringLiteral("layer_added"), QStringList() << compId.toString() << layerId.toString());
         });
-        QObject::connect(projectService, &ArtifactProjectService::layerCreated, &mw, [autoSaveManager](const CompositionID&, const LayerID&) {
+        QObject::connect(projectService, &ArtifactProjectService::layerCreated, mw, [autoSaveManager](const CompositionID&, const LayerID&) {
             if (autoSaveManager) autoSaveManager->markDirty();
         });
-        QObject::connect(projectService, &ArtifactProjectService::layerRemoved, &mw, [status](const CompositionID&, const LayerID&) {
+        QObject::connect(projectService, &ArtifactProjectService::layerRemoved, mw, [status](const CompositionID&, const LayerID&) {
             status->setProjectText("Layer Removed");
         });
-        QObject::connect(projectService, &ArtifactProjectService::layerRemoved, &mw, [](const CompositionID& compId, const LayerID& layerId) {
+        QObject::connect(projectService, &ArtifactProjectService::layerRemoved, mw, [](const CompositionID& compId, const LayerID& layerId) {
             ArtifactPythonHookManager::runHook(QStringLiteral("layer_removed"), QStringList() << compId.toString() << layerId.toString());
         });
-        QObject::connect(projectService, &ArtifactProjectService::layerRemoved, &mw, [autoSaveManager](const CompositionID&, const LayerID&) {
+        QObject::connect(projectService, &ArtifactProjectService::layerRemoved, mw, [autoSaveManager](const CompositionID&, const LayerID&) {
             if (autoSaveManager) autoSaveManager->markDirty();
         });
-        QObject::connect(projectService, &ArtifactProjectService::compositionCreated, &mw, [](const CompositionID& compId) {
+        QObject::connect(projectService, &ArtifactProjectService::compositionCreated, mw, [](const CompositionID& compId) {
             ArtifactPythonHookManager::runHook(QStringLiteral("composition_created"), QStringList() << compId.toString());
         });
-        QObject::connect(projectService, &ArtifactProjectService::projectCreated, &mw, []() {
+        QObject::connect(projectService, &ArtifactProjectService::projectCreated, mw, []() {
             ArtifactPythonHookManager::runHook(QStringLiteral("project_opened"));
         });
     }
@@ -430,20 +430,20 @@ int main(int argc, char* argv[])
     auto hasFrameUpdate = std::make_shared<std::atomic_bool>(false);
     auto frameCounter = std::make_shared<std::atomic<int>>(0);
 
-    auto* uiTimer = new QTimer(&mw);
+    auto* uiTimer = new QTimer(mw);
     uiTimer->setInterval(33); // ~30Hz UI update
-    QObject::connect(uiTimer, &QTimer::timeout, &mw, [status, latestFrame, hasFrameUpdate]() {
+    QObject::connect(uiTimer, &QTimer::timeout, mw, [status, latestFrame, hasFrameUpdate]() {
         if (hasFrameUpdate->exchange(false)) {
             status->setFrame(latestFrame->load());
         }
     });
     uiTimer->start();
 
-    auto* statsTimer = new QTimer(&mw);
+    auto* statsTimer = new QTimer(mw);
     statsTimer->setInterval(500);
     auto fpsElapsed = std::make_shared<QElapsedTimer>();
     fpsElapsed->start();
-    QObject::connect(statsTimer, &QTimer::timeout, &mw, [status, fpsElapsed, frameCounter]() {
+    QObject::connect(statsTimer, &QTimer::timeout, mw, [status, fpsElapsed, frameCounter]() {
         status->setMemoryMB(processWorkingSetMB());
         const qint64 elapsedMs = fpsElapsed->elapsed();
         if (elapsedMs > 0) {
@@ -455,9 +455,9 @@ int main(int argc, char* argv[])
     });
     statsTimer->start();
 
-    auto* recoveryTimer = new QTimer(&mw);
+    auto* recoveryTimer = new QTimer(mw);
     recoveryTimer->setInterval(120000);
-    QObject::connect(recoveryTimer, &QTimer::timeout, &mw, [autoSaveManager]() {
+    QObject::connect(recoveryTimer, &QTimer::timeout, mw, [autoSaveManager]() {
         if (!autoSaveManager || !autoSaveManager->isDirty()) {
             return;
         }
@@ -469,7 +469,7 @@ int main(int argc, char* argv[])
     recoveryTimer->start();
 
     if (playbackService) {
-        QObject::connect(playbackService, &ArtifactPlaybackService::frameChanged, &mw,
+        QObject::connect(playbackService, &ArtifactPlaybackService::frameChanged, mw,
             [latestFrame, hasFrameUpdate, frameCounter](const FramePosition& position) {
                 latestFrame->store(position.framePosition());
                 hasFrameUpdate->store(true);
@@ -483,27 +483,28 @@ int main(int argc, char* argv[])
         bool geometryRestored = true;
         bool stateRestored = true;
         if (!layoutState.geometry.isEmpty()) {
-            geometryRestored = mw.restoreGeometry(layoutState.geometry);
+            geometryRestored = mw->restoreGeometry(layoutState.geometry);
         }
         if (!layoutState.state.isEmpty()) {
-            stateRestored = mw.restoreState(layoutState.state);
+            stateRestored = mw->restoreState(layoutState.state);
         }
         if ((!layoutState.geometry.isEmpty() && !geometryRestored) ||
             (!layoutState.state.isEmpty() && !stateRestored)) {
             // Saved layout is likely incompatible with current dock/widget set.
             settings.remove("MainWindow");
-            mw.resize(1600, 900);
+            mw->resize(1600, 900);
         }
     }
 
-    QObject::connect(&a, &QCoreApplication::aboutToQuit, [&mw]() {
+    QObject::connect(&a, &QCoreApplication::aboutToQuit, [mw]() {
         QSettings settings("ArtifactStudio", "Artifact");
         UiLayoutState layoutState("ArtifactMainWindow");
-        layoutState.geometry = mw.saveGeometry();
-        layoutState.state = mw.saveState();
+        layoutState.geometry = mw->saveGeometry();
+        layoutState.state = mw->saveState();
         layoutState.saveToSettings(settings, "MainWindow");
         settings.sync();
     });
+    QObject::connect(&a, &QCoreApplication::aboutToQuit, mw, &QObject::deleteLater);
     QObject::connect(&a, &QCoreApplication::aboutToQuit, [&]() {
         if (!autoSaveManager) return;
         if (autoSaveManager->isDirty()) {
@@ -516,7 +517,7 @@ int main(int argc, char* argv[])
         delete autoSaveManager;
     });
 
-    mw.show();
+    mw->show();
     return a.exec();
 
 }

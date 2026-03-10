@@ -49,17 +49,16 @@ import Frame.Rate;
 import Frame.Range;
 import Frame.Position;
 import Container.MultiIndex;
-import Artifact.Layers;
+import Artifact.Layer.Abstract;
+import Artifact.Composition.Result;
 import Artifact.Composition.InitParams;
 import Composition.Settings;
 //import Artifact.Layer.Abstract;
-//import Artifact.Composition.Result;
 //import Artifact.Preview.Controller;
 
 export namespace Artifact {
 
  using namespace ArtifactCore;
- struct AppendLayerToCompositionResult;
 
  class ArtifactAbstractComposition:public QObject {
   W_OBJECT(ArtifactAbstractComposition)

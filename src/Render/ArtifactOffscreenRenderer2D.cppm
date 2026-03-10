@@ -1,4 +1,11 @@
-﻿module;
+module;
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
 #include <tbb/tbb.h>
 #include <QMap>
 #include <QDebug>
@@ -64,6 +71,28 @@ import Graphics.Resource.PSOAndSRB;
 
 namespace Artifact
 {
+ namespace {
+  Diligent::IEngineFactoryD3D12* resolveD3D12FactoryFromDll()
+  {
+   using GetFactoryFn = Diligent::IEngineFactoryD3D12* (*)();
+   static const wchar_t* kDllCandidates[] = {
+    L"GraphicsEngineD3D12_64d.dll",
+    L"GraphicsEngineD3D12_64r.dll",
+    L"GraphicsEngineD3D12.dll"
+   };
+   for (const auto* dllName : kDllCandidates) {
+    HMODULE mod = ::GetModuleHandleW(dllName);
+    if (!mod) mod = ::LoadLibraryW(dllName);
+    if (!mod) continue;
+    auto* fn = reinterpret_cast<GetFactoryFn>(::GetProcAddress(mod, "GetEngineFactoryD3D12"));
+    if (!fn) {
+     fn = reinterpret_cast<GetFactoryFn>(::GetProcAddress(mod, "Diligent_GetEngineFactoryD3D12"));
+    }
+    if (fn) return fn();
+   }
+   return nullptr;
+  }
+ }
  
 
 
@@ -147,7 +176,10 @@ namespace Artifact
 
  void OffscreenRenderer2D::Impl::initialize()
  {
-  auto* pFactory = GetEngineFactoryD3D12();
+  auto* pFactory = resolveD3D12FactoryFromDll();
+  if (!pFactory) {
+   return;
+  }
 
 
   EngineD3D12CreateInfo CreationAttribs = {};

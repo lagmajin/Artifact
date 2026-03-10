@@ -10,6 +10,7 @@
 #include <QInputDialog>
 #include <QLineEdit>
 #include <QFileInfo>
+#include <QSet>
 #include <wobjectimpl.h>
 
 module Artifact.Menu.File;
@@ -18,6 +19,38 @@ import Artifact.Project.Manager;
 import Artifact.Service.Project;
 
 namespace Artifact {
+namespace {
+QString supportedAssetFilter()
+{
+    return QStringLiteral(
+        "対応アセット (*.png *.jpg *.jpeg *.bmp *.tif *.tiff *.exr *.hdr "
+        "*.mp4 *.mov *.mkv *.avi *.webm *.mp3 *.wav *.flac *.ogg *.aac *.m4a "
+        "*.obj *.fbx *.gltf *.glb *.abc *.usd *.usda *.usdc);;"
+        "画像 (*.png *.jpg *.jpeg *.bmp *.tif *.tiff *.exr *.hdr);;"
+        "動画 (*.mp4 *.mov *.mkv *.avi *.webm);;"
+        "音声 (*.mp3 *.wav *.flac *.ogg *.aac *.m4a);;"
+        "3D (*.obj *.fbx *.gltf *.glb *.abc *.usd *.usda *.usdc)"
+    );
+}
+
+bool isSupportedAssetPath(const QString& path)
+{
+    static const QSet<QString> kExt = {
+        QStringLiteral("png"), QStringLiteral("jpg"), QStringLiteral("jpeg"),
+        QStringLiteral("bmp"), QStringLiteral("tif"), QStringLiteral("tiff"),
+        QStringLiteral("exr"), QStringLiteral("hdr"),
+        QStringLiteral("mp4"), QStringLiteral("mov"), QStringLiteral("mkv"),
+        QStringLiteral("avi"), QStringLiteral("webm"),
+        QStringLiteral("mp3"), QStringLiteral("wav"), QStringLiteral("flac"),
+        QStringLiteral("ogg"), QStringLiteral("aac"), QStringLiteral("m4a"),
+        QStringLiteral("obj"), QStringLiteral("fbx"),
+        QStringLiteral("gltf"), QStringLiteral("glb"),
+        QStringLiteral("abc"), QStringLiteral("usd"),
+        QStringLiteral("usda"), QStringLiteral("usdc")
+    };
+    return kExt.contains(QFileInfo(path).suffix().toLower());
+}
+}
 
 class ArtifactFileMenu::Impl {
 public:
@@ -158,10 +191,26 @@ void ArtifactFileMenu::Impl::handleNewComposition()
 void ArtifactFileMenu::Impl::handleImportAssets()
 {
     if (!menu_) return;
-    const QStringList files = QFileDialog::getOpenFileNames(menu_, "アセットを読み込み", QString(), "All Files (*.*)");
+    const QStringList files = QFileDialog::getOpenFileNames(
+        menu_,
+        QStringLiteral("アセットを読み込み"),
+        QString(),
+        supportedAssetFilter()
+    );
     if (files.isEmpty()) return;
+    QStringList supported;
+    supported.reserve(files.size());
+    for (const QString& path : files) {
+        if (isSupportedAssetPath(path)) {
+            supported.push_back(path);
+        }
+    }
+    if (supported.isEmpty()) {
+        qWarning() << "No supported asset files selected";
+        return;
+    }
     if (auto* svc = ArtifactProjectService::instance()) {
-        svc->importAssetsFromPaths(files);
+        svc->importAssetsFromPaths(supported);
     }
 }
 

@@ -214,8 +214,8 @@ QUuid ColorNodeGraph::addNode(std::unique_ptr<ColorNode> node) {
 
     impl_->nodes_[id] = std::move(node);
     impl_->invalidateOrder();
-    emit nodeAdded(id);
-    emit graphChanged();
+    Q_EMIT nodeAdded(id);
+    Q_EMIT graphChanged();
     return id;
 }
 
@@ -237,8 +237,8 @@ bool ColorNodeGraph::removeNode(const QUuid& nodeId) {
 
     impl_->nodes_.erase(it);
     impl_->invalidateOrder();
-    emit nodeRemoved(nodeId);
-    emit graphChanged();
+    Q_EMIT nodeRemoved(nodeId);
+    Q_EMIT graphChanged();
     return true;
 }
 
@@ -283,8 +283,9 @@ bool ColorNodeGraph::connect(const PortId& source, const PortId& destination) {
     NodeConnection conn{ source, destination };
     impl_->connections_.push_back(conn);
     impl_->invalidateOrder();
-    emit connectionAdded(conn);
-    emit graphChanged();
+    // Temporarily disabled: unresolved signal thunk under current module build.
+    // Q_EMIT connectionAdded(conn);
+    Q_EMIT graphChanged();
     return true;
 }
 
@@ -307,8 +308,9 @@ bool ColorNodeGraph::disconnect(const PortId& source, const PortId& destination)
     NodeConnection conn = *it;
     impl_->connections_.erase(it);
     impl_->invalidateOrder();
-    emit connectionRemoved(conn);
-    emit graphChanged();
+    // Temporarily disabled: unresolved signal thunk under current module build.
+    // Q_EMIT connectionRemoved(conn);
+    Q_EMIT graphChanged();
     return true;
 }
 
@@ -320,7 +322,7 @@ void ColorNodeGraph::disconnectAll(const PortId& portId) {
     if (it != impl_->connections_.end()) {
         impl_->connections_.erase(it, impl_->connections_.end());
         impl_->invalidateOrder();
-        emit graphChanged();
+        Q_EMIT graphChanged();
     }
 }
 
@@ -332,7 +334,7 @@ void ColorNodeGraph::disconnectNode(const QUuid& nodeId) {
     if (it != impl_->connections_.end()) {
         impl_->connections_.erase(it, impl_->connections_.end());
         impl_->invalidateOrder();
-        emit graphChanged();
+        Q_EMIT graphChanged();
     }
 }
 
@@ -599,6 +601,15 @@ std::unique_ptr<ColorNodeGraph> ColorNodeGraph::createParallelTemplate() {
     graph->connect(mergeId, 0, outputId, 0);
 
     return graph;
+}
+
+// Verdigris method index helpers may require concrete method symbols.
+void ColorNodeGraph::connectionAdded(const NodeConnection& conn) {
+    (void)conn;
+}
+
+void ColorNodeGraph::connectionRemoved(const NodeConnection& conn) {
+    (void)conn;
 }
 
 } // namespace Artifact

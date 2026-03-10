@@ -1,5 +1,7 @@
 module;
 
+#include <QObject>
+#include <wobjectdefs.h>
 #include <QString>
 #include <QVector>
 #include <QMatrix4x4>
@@ -191,7 +193,9 @@ public:
 
 // カラーマネージャー（グローバル設定）
 class ColorManager
+    : public QObject
 {
+    W_OBJECT(ColorManager)
 private:
     class Impl;
     Impl* impl_;
@@ -224,8 +228,8 @@ public:
     ColorSpace workingSpace() const;
 
 Q_SIGNALS:
-    void colorSpaceChanged(ColorSpace space);
-    void hdrModeChanged(HDRMode mode);
+    void colorSpaceChanged(ColorSpace space) W_SIGNAL(colorSpaceChanged, space);
+    void hdrModeChanged(HDRMode mode) W_SIGNAL(hdrModeChanged, mode);
 
 private:
     ColorManager(const ColorManager&) = delete;

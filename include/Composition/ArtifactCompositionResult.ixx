@@ -1,34 +1,31 @@
-﻿module;
+module;
 #include <QString>
 #include <QVector>
+#include <memory>
 export module Artifact.Composition.Result;
 
 import Utils;
 import Utils.String.UniString;
 
-import Artifact.Composition.Abstract;
-
 export namespace Artifact {
 
  using namespace ArtifactCore;
+ class ArtifactAbstractComposition;
 
  struct CreateCompositionResult {
   CompositionID id{};
-  //ArtifactCompositionPtr composition;
-  bool success{ false };
+  bool success{false};
   UniString message;
  };
 
  struct ChangeCompositionResult {
   bool success = false;
   UniString message;
-
  };
 
- struct FindCompositionResult
- {
+ struct FindCompositionResult {
   bool success = false;
-  ArtifactCompositionWeakPtr ptr;
+  std::weak_ptr<ArtifactAbstractComposition> ptr;
  };
 
  enum class AppendLayerToCompositionError {
@@ -43,20 +40,14 @@ export namespace Artifact {
   bool success = false;
   AppendLayerToCompositionError error = AppendLayerToCompositionError::None;
   UniString message;
-
  };
 
- struct AllCompositionResult
- {
+ struct AllCompositionResult {
   bool success = false;
-
  };
 
- struct RemoveAllCompositionResult
- {
+ struct RemoveAllCompositionResult {
   bool success = false;
-
  };
 
-
-};
+}
