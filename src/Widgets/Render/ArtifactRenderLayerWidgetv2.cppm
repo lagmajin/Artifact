@@ -97,7 +97,7 @@ W_OBJECT_IMPL(ArtifactLayerEditorWidgetV2)
   widget_ = window;
   //view_ = CreateInitialViewMatrix();
 
-  auto* pFactory = GetEngineFactoryD3D12();
+  auto* pFactory = LoadAndGetEngineFactoryD3D12();
 
   EngineD3D12CreateInfo CreationAttribs = {};
   CreationAttribs.EnableValidation = true;

@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <wobjectimpl.h>
 #include <DockManager.h>
 #include <DockWidget.h>
@@ -9,6 +9,7 @@ module;
 #include <QCloseEvent>
 #include <QShowEvent>
 #include <QList>
+#include <QTimer>
 
 module Artifact.MainWindow;
 
@@ -27,16 +28,21 @@ public:
  CDockManager* dockManager = nullptr;
  QWidget* centralWidgetHost = nullptr;
  QList<CDockWidget*> dockWidgets;
+ bool menuBarInitialized = false;
 };
 
 ArtifactMainWindow::ArtifactMainWindow(QWidget* parent)
  : QMainWindow(parent), impl_(new Impl())
 {
- CDockManager::setConfigFlags(CDockManager::DefaultOpaqueConfig);
- CDockManager::setConfigFlag(CDockManager::RetainTabSizeWhenCloseButtonHidden, true);
+ //CDockManager::setConfigFlags(CDockManager::DefaultOpaqueConfig);
+ //CDockManager::setConfigFlag(CDockManager::RetainTabSizeWhenCloseButtonHidden, true);
 
- auto* menuBar = new ArtifactMenuBar(this, this);
- setMenuBar(menuBar);
+ QTimer::singleShot(0, this, [this]() {
+  if (!impl_ || impl_->menuBarInitialized) return;
+  auto* menuBar = new ArtifactMenuBar(this, this);
+  setMenuBar(menuBar);
+  impl_->menuBarInitialized = true;
+ });
 
  auto* toolBar = new ArtifactToolBar(this);
  addToolBar(toolBar);

@@ -6,7 +6,7 @@ export module Menu.Option;
 
 
 
-namespace Artifact {
+export namespace Artifact {
 
  class ArtifactOptionMenuPrivate;
 

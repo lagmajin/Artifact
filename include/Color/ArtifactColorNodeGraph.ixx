@@ -44,6 +44,8 @@ export module Artifact.Color.NodeGraph;
 
 
 import Artifact.Color.Node;
+W_REGISTER_ARGTYPE(Artifact::PortId)
+W_REGISTER_ARGTYPE(Artifact::NodeConnection)
 
 export namespace Artifact {
 
@@ -163,7 +165,7 @@ public:
     /// Create a parallel graph with two correction branches
     static std::unique_ptr<ColorNodeGraph> createParallelTemplate();
 
-signals:
+public:
     void nodeAdded(const QUuid& nodeId)                 W_SIGNAL(nodeAdded, nodeId);
     void nodeRemoved(const QUuid& nodeId)               W_SIGNAL(nodeRemoved, nodeId);
     void connectionAdded(const NodeConnection& conn)    W_SIGNAL(connectionAdded, conn);

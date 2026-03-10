@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <EngineFactory.h>
 #include <EngineFactoryD3D12.h>
 #include <PipelineState.h>
@@ -60,6 +60,28 @@ module ArtifactDiligentEngineRenderWindow;
 import Graphics;
 
 
+namespace {
+ Diligent::IEngineFactoryD3D12* resolveD3D12FactoryFromDll()
+ {
+  using GetFactoryFn = Diligent::IEngineFactoryD3D12* (*)();
+  static const wchar_t* kDllCandidates[] = {
+   L"GraphicsEngineD3D12_64d.dll",
+   L"GraphicsEngineD3D12_64r.dll",
+   L"GraphicsEngineD3D12.dll"
+  };
+  for (const auto* dllName : kDllCandidates) {
+   HMODULE mod = ::GetModuleHandleW(dllName);
+   if (!mod) mod = ::LoadLibraryW(dllName);
+   if (!mod) continue;
+   auto* fn = reinterpret_cast<GetFactoryFn>(::GetProcAddress(mod, "GetEngineFactoryD3D12"));
+   if (!fn) {
+    fn = reinterpret_cast<GetFactoryFn>(::GetProcAddress(mod, "Diligent_GetEngineFactoryD3D12"));
+   }
+   if (fn) return fn();
+  }
+  return nullptr;
+ }
+}
 namespace Artifact {
 
  W_OBJECT_IMPL(ArtifactDiligentEngineRenderWindow)
@@ -125,7 +147,10 @@ namespace Artifact {
 
  bool ArtifactDiligentEngineRenderWindow::initialize()
  {
-  auto* pFactory = GetEngineFactoryD3D12();
+  auto* pFactory = resolveD3D12FactoryFromDll();
+  if (!pFactory) {
+   return false;
+  }
 
   EngineD3D12CreateInfo CreationAttribs = {};
   CreationAttribs.EnableValidation = true;

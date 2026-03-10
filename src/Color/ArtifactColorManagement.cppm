@@ -7,6 +7,7 @@ module;
 #include <QTextStream>
 #include <QDebug>
 #include <QRegularExpression>
+#include <wobjectimpl.h>
 #include <cmath>
 
 #include <iostream>
@@ -50,6 +51,7 @@ module Artifact.Color.Management;
 
 namespace Artifact
 {
+W_OBJECT_IMPL(ColorManager)
 
 // ==================== ColorSettings::Impl ====================
 

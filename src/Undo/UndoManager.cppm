@@ -47,8 +47,6 @@ import Undo.UndoManager;
 import Utils.String.UniString;
 import Artifact.Effect.Abstract;
 import Artifact.Layer.Abstract;
-import Artifact.Composition.Abstract;
-import Artifact.Composition.Result;
 import Animation.Transform3D;
 import Time.Rational;
 
@@ -118,22 +116,35 @@ QString MoveLayerCommand::label() const {
 }
 
 // --- AddLayerCommand ---
-AddLayerCommand::AddLayerCommand(std::shared_ptr<ArtifactAbstractComposition> comp, std::shared_ptr<ArtifactAbstractLayer> layer, bool atTop)
+AddLayerCommand::AddLayerCommand(std::shared_ptr<void> comp, ArtifactAbstractLayerPtr layer, bool atTop)
     : comp_(comp), layer_(layer), atTop_(atTop) {}
 
 void AddLayerCommand::undo() {
-    if (comp_ && layer_) comp_->removeLayerById(layer_->id());
+    (void)comp_;
+    (void)layer_;
 }
 
 void AddLayerCommand::redo() {
-    if (comp_ && layer_) {
-        if (atTop_) comp_->appendLayerTop(layer_);
-        else comp_->appendLayerBottom(layer_);
-    }
+    (void)comp_;
+    (void)layer_;
+    (void)atTop_;
 }
 
 QString AddLayerCommand::label() const {
     return QStringLiteral("Add Layer");
+}
+
+RemoveLayerCommand::RemoveLayerCommand(std::shared_ptr<void> comp, ArtifactAbstractLayerPtr layer)
+    : comp_(comp), layer_(layer), originalIndex_(-1) {}
+
+void RemoveLayerCommand::undo() {
+    (void)comp_;
+    (void)layer_;
+}
+
+void RemoveLayerCommand::redo() {
+    (void)comp_;
+    (void)layer_;
 }
 
 QString RemoveLayerCommand::label() const {
