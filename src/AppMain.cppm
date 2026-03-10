@@ -148,6 +148,49 @@ namespace
   return doc.toJson(QJsonDocument::Indented);
  }
 
+ QString sessionStateFilePath()
+ {
+  const QString appDataDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+  QDir dataDir(appDataDir);
+  if (!dataDir.exists())
+  {
+   dataDir.mkpath(QStringLiteral("."));
+  }
+  return dataDir.filePath(QStringLiteral("session_state.cbor"));
+ }
+
+ bool markSessionStartAndDetectUncleanExit()
+ {
+  ArtifactCore::FastSettingsStore sessionStore(sessionStateFilePath());
+  const bool wasRunning = sessionStore.value(QStringLiteral("Session/isRunning"), false).toBool();
+  sessionStore.setValue(QStringLiteral("Session/isRunning"), true);
+  sessionStore.setValue(QStringLiteral("Session/startTimestamp"), QDateTime::currentDateTime().toString(Qt::ISODate));
+  sessionStore.setValue(QStringLiteral("Session/pid"), static_cast<qlonglong>(QCoreApplication::applicationPid()));
+  sessionStore.sync();
+  return wasRunning;
+ }
+
+ void markSessionEndClean()
+ {
+  ArtifactCore::FastSettingsStore sessionStore(sessionStateFilePath());
+  sessionStore.setValue(QStringLiteral("Session/isRunning"), false);
+  sessionStore.setValue(QStringLiteral("Session/lastCleanExitTimestamp"), QDateTime::currentDateTime().toString(Qt::ISODate));
+  sessionStore.sync();
+ }
+
+ void showUncleanExitNoticeIfNeeded(bool hadUncleanExit, QWidget* parent)
+ {
+  if (!hadUncleanExit)
+  {
+   return;
+  }
+
+  QMessageBox::warning(
+   parent,
+   QStringLiteral("Previous Session Did Not Exit Cleanly"),
+   QStringLiteral("前回セッションが正常終了していません。\n最新の復旧スナップショットを確認してください。"));
+ }
+
  bool showRecoveryPrompt(ArtifactAutoSaveManager& autoSave, QWidget* parent)
  {
   if (!autoSave.hasRecoveryPoint())
@@ -382,6 +425,7 @@ int main(int argc, char* argv[])
 
   bootstrapPythonScripts();
   ArtifactPythonHookManager::runHook(QStringLiteral("on_startup"));
+    const bool hadUncleanExit = markSessionStartAndDetectUncleanExit();
     auto* mw = new ArtifactMainWindow();
     mw->setObjectName("ArtifactMainWindow");
     mw->setWindowTitle("Artifact");
@@ -409,6 +453,7 @@ int main(int argc, char* argv[])
     const QString recoveryDir = QDir(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)).filePath("Recovery");
     autoSaveManager->initialize("ArtifactProject", recoveryDir);
     autoSaveManager->start();
+    showUncleanExitNoticeIfNeeded(hadUncleanExit, mw);
     showRecoveryPrompt(*autoSaveManager, mw);
 
     if (projectService) {
@@ -585,15 +630,17 @@ int main(int argc, char* argv[])
     });
     QObject::connect(&a, &QCoreApplication::aboutToQuit, mw, &QObject::deleteLater);
     QObject::connect(&a, &QCoreApplication::aboutToQuit, [&]() {
-        if (!autoSaveManager) return;
-        if (autoSaveManager->isDirty()) {
-            const QByteArray snapshot = currentProjectSnapshotJson();
-            if (!snapshot.isEmpty()) {
-                autoSaveManager->createRecoveryPoint(snapshot);
+        if (autoSaveManager) {
+            if (autoSaveManager->isDirty()) {
+                const QByteArray snapshot = currentProjectSnapshotJson();
+                if (!snapshot.isEmpty()) {
+                    autoSaveManager->createRecoveryPoint(snapshot);
+                }
             }
+            autoSaveManager->stop();
+            delete autoSaveManager;
         }
-        autoSaveManager->stop();
-        delete autoSaveManager;
+        markSessionEndClean();
     });
 
     mw->show();

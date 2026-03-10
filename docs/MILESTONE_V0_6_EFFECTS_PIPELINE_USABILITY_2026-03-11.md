@@ -39,6 +39,10 @@ v0.6 は「機能はあるが扱いにくい」状態から、エフェクト編
 - 完了条件:
   - エフェクト選択でプロパティの表示対象が明示される
   - レイヤー切替時に古い参照が残らない
+- 進捗 (2026-03-11):
+  - PropertyWidget に `focusedEffectId` を追加
+  - Inspector の effect 選択変更時に focusedEffectId を同期
+  - レイヤー切替/未選択化で focusedEffectId をクリア
 
 ### 3. Ordering and Safety
 
@@ -48,6 +52,11 @@ v0.6 は「機能はあるが扱いにくい」状態から、エフェクト編
 - 完了条件:
   - ステージ内の順序変更（Up/Down）導線を追加
   - 誤操作防止の確認・無効条件を統一
+- 進捗 (2026-03-11):
+  - Inspector の各ラックに `Up/Down` ボタンを追加
+  - ラック右クリックメニューに `Move Up/Move Down` を追加
+  - 並び替えは同一ステージ内のみ許可（境界越えを禁止）
+  - UI からの effect 編集（追加/削除/有効切替/並び替え）を Service API 経由へ集約開始
 
 ### 4. Service Boundary Cleanup
 
@@ -57,6 +66,12 @@ v0.6 は「機能はあるが扱いにくい」状態から、エフェクト編
 - 完了条件:
   - UI層が直接レイヤー内部実装へ触れない補助APIを追加
   - Effects編集経路を Service 経由へ段階移行
+- 進捗 (2026-03-11):
+  - `ArtifactProjectService` に effect 編集 API を追加:
+    - `addEffectToLayerInCurrentComposition`
+    - `removeEffectFromLayerInCurrentComposition`
+    - `setEffectEnabledInLayerInCurrentComposition`
+    - `moveEffectInLayerInCurrentComposition`
 
 ### 5. Regression Scenarios
 
@@ -72,4 +87,3 @@ v0.6 は「機能はあるが扱いにくい」状態から、エフェクト編
 1. `1 -> 2`（まず操作性と同期を固定）
 2. `3`（順序変更を導入）
 3. `4 -> 5`（境界整理と回帰防止）
-

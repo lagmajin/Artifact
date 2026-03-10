@@ -71,6 +71,7 @@ public:
     QVBoxLayout* mainLayout = nullptr;
     ArtifactAbstractLayerPtr currentLayer;
     QString filterText;
+    QString focusedEffectId;
     bool rebuilding = false;
 
     void rebuildUI();
@@ -109,8 +110,15 @@ void ArtifactPropertyWidget::setLayer(ArtifactAbstractLayerPtr layer) {
     updateProperties();
 }
 
+void ArtifactPropertyWidget::setFocusedEffectId(const QString& effectId) {
+    if (impl_->focusedEffectId == effectId) return;
+    impl_->focusedEffectId = effectId;
+    updateProperties();
+}
+
 void ArtifactPropertyWidget::clear() {
     impl_->currentLayer = nullptr;
+    impl_->focusedEffectId.clear();
     updateProperties();
 }
 
@@ -334,8 +342,17 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
     }
 
     const auto effects = currentLayer->getEffects();
+    const bool hasFocusedEffect = !focusedEffectId.trimmed().isEmpty();
+    if (hasFocusedEffect) {
+        QLabel* focusedLabel = new QLabel(QString("Focused Effect ID: %1").arg(focusedEffectId));
+        focusedLabel->setStyleSheet("QLabel { color: #9aa7b5; font-size: 11px; }");
+        mainLayout->addWidget(focusedLabel);
+    }
     for (const auto& effect : effects) {
         if (!effect) continue;
+        if (hasFocusedEffect && effect->effectID().toQString() != focusedEffectId) {
+            continue;
+        }
 
         QString stageName = "Unknown";
         switch (effect->pipelineStage()) {
