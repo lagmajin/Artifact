@@ -1,8 +1,13 @@
 ﻿module;
 #include <QObject>
 #include <QApplication>
+#include <QColor>
+#include <QGraphicsDropShadowEffect>
+#include <QPointer>
 #include <wobjectimpl.h>
 #include "DockManager.h"
+#include "DockWidget.h"
+#include "DockWidgetTab.h"
 
 module Widgets.Dock.StyleManager;
 
@@ -16,6 +21,7 @@ class DockStyleManager::Impl {
 public:
     ads::CDockManager* dockManager_ = nullptr;
     DockGlowStyle* glowStyle_ = nullptr;
+    QPointer<ads::CDockWidget> focusedDockWidget_;
 };
 
 DockStyleManager::DockStyleManager(ads::CDockManager* dockManager, QObject* parent)
@@ -28,12 +34,51 @@ DockStyleManager::DockStyleManager(ads::CDockManager* dockManager, QObject* pare
     // DockManagerに適用
     impl_->dockManager_->setStyle(impl_->glowStyle_);
     
-    // フォーカス変更時に再描画を促す
+    auto applyTabGlow = [](ads::CDockWidget* dockWidget) {
+        if (!dockWidget) return;
+        auto* tab = dockWidget->tabWidget();
+        if (!tab) return;
+
+        tab->setProperty("artifactActiveTab", true);
+        auto* fx = new QGraphicsDropShadowEffect(tab);
+        fx->setBlurRadius(18.0);
+        fx->setOffset(0.0, 0.0);
+        fx->setColor(QColor(86, 156, 214, 210));
+        tab->setGraphicsEffect(fx);
+        tab->update();
+    };
+
+    auto clearTabGlow = [](ads::CDockWidget* dockWidget) {
+        if (!dockWidget) return;
+        auto* tab = dockWidget->tabWidget();
+        if (!tab) return;
+
+        tab->setProperty("artifactActiveTab", false);
+        tab->setGraphicsEffect(nullptr);
+        tab->update();
+    };
+
+    // フォーカス変更時に再描画とタブ発光更新
     connect(dockManager, &ads::CDockManager::focusedDockWidgetChanged,
-            [this](ads::CDockWidget* old, ads::CDockWidget* now) {
-        if (old) old->update();
-        if (now) now->update();
+            [this, applyTabGlow, clearTabGlow](ads::CDockWidget* old, ads::CDockWidget* now) {
+        if (old) {
+            clearTabGlow(old);
+            old->setProperty("artifactActiveDock", false);
+            old->update();
+        }
+        if (now) {
+            applyTabGlow(now);
+            now->setProperty("artifactActiveDock", true);
+            now->update();
+        }
+        impl_->focusedDockWidget_ = now;
     });
+
+    if (auto* focused = dockManager->focusedDockWidget()) {
+        applyTabGlow(focused);
+        focused->setProperty("artifactActiveDock", true);
+        impl_->focusedDockWidget_ = focused;
+    }
 }
 
 DockStyleManager::~DockStyleManager() {

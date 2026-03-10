@@ -82,6 +82,14 @@ ads--CDockWidgetTab[activeTab="true"] {
  color: #f0f0f0;
  border-color: #4c4c4c;
 }
+ads--CDockWidgetTab[artifactActiveTab="true"] {
+ background: #1d2430;
+ color: #f4f8ff;
+ border-color: #569cd6;
+}
+ads--CDockWidget[artifactActiveDock="true"] {
+ border: 1px solid #569cd6;
+}
 ads--CDockWidgetTab QAbstractButton#tabCloseButton,
 ads--CDockWidgetTab QPushButton#tabCloseButton {
  background: transparent;
@@ -143,6 +151,20 @@ void ArtifactMainWindow::setDockVisible(const QString& title, const bool visible
   if (!dock) continue;
   if (dock->objectName() == title || dock->windowTitle() == title) {
    dock->setVisible(visible);
+  }
+ }
+}
+
+void ArtifactMainWindow::activateDock(const QString& title)
+{
+ if (!impl_) return;
+ for (auto* dock : impl_->dockWidgets) {
+  if (!dock) continue;
+  if (dock->objectName() == title || dock->windowTitle() == title) {
+   dock->toggleView(true);
+   dock->setAsCurrentTab();
+   dock->raise();
+   return;
   }
  }
 }

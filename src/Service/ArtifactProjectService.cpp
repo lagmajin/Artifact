@@ -52,6 +52,7 @@ import Artifact.Project.Items;
 import File.TypeDetector;
 import Artifact.Layers.Selection.Manager;
 import Artifact.Application.Manager;
+import Artifact.Render.Queue.Service;
 //import Artifact.Render.FrameCache;
 
 namespace Artifact
@@ -81,7 +82,8 @@ namespace Artifact
   ChangeCompositionResult changeCurrentComposition(const CompositionID& id);
 
   void removeAllAssets();
-  PreviewQualityPreset qualityPreset_ = PreviewQualityPreset::Preview;
+ PreviewQualityPreset qualityPreset_ = PreviewQualityPreset::Preview;
+  CompositionID currentCompositionId_{};
   //ProgressiveRenderer progressiveRenderer_;
 
   void checkImportedAssetCompatibility(const QStringList& importedPaths);
@@ -239,8 +241,31 @@ namespace Artifact
 
  ChangeCompositionResult ArtifactProjectService::Impl::changeCurrentComposition(const CompositionID& id)
  {
+  ChangeCompositionResult result;
+  if (id.isNil()) {
+   result.success = false;
+   result.message.setQString(QStringLiteral("Invalid composition id"));
+   return result;
+  }
 
-  return ChangeCompositionResult();
+  auto find = projectManager().findComposition(id);
+  if (!find.success || find.ptr.expired()) {
+   result.success = false;
+   result.message.setQString(QStringLiteral("Composition not found"));
+   return result;
+  }
+
+  currentCompositionId_ = id;
+  if (auto comp = find.ptr.lock()) {
+   if (auto* app = ArtifactApplicationManager::instance()) {
+    if (auto* active = app->activeContextService()) {
+     active->setActiveComposition(comp);
+    }
+   }
+  }
+
+  result.success = true;
+  return result;
  }
 
  void ArtifactProjectService::Impl::removeAllAssets()
@@ -255,15 +280,37 @@ namespace Artifact
 
  ArtifactCompositionWeakPtr ArtifactProjectService::Impl::currentComposition()
  {
-  return projectManager().currentComposition();
+  if (!currentCompositionId_.isNil()) {
+   auto found = projectManager().findComposition(currentCompositionId_);
+   if (found.success && !found.ptr.expired()) {
+    return found.ptr;
+   }
+   currentCompositionId_ = {};
+  }
+
+  auto fallback = projectManager().currentComposition();
+  if (fallback) {
+   currentCompositionId_ = fallback->id();
+   return fallback;
+  }
+
+  return {};
  }
 
  W_OBJECT_IMPL(ArtifactProjectService)
 	
  ArtifactProjectService::ArtifactProjectService(QObject*parent):QObject(parent),impl_(new Impl())
  {
-  connect(&impl_->projectManager(),&ArtifactProjectManager::projectCreated,this,&ArtifactProjectService::projectCreated);
-  connect(&impl_->projectManager(), &ArtifactProjectManager::compositionCreated, this, &ArtifactProjectService::compositionCreated);
+  connect(&impl_->projectManager(),&ArtifactProjectManager::projectCreated,this,[this]() {
+   impl_->currentCompositionId_ = {};
+   projectCreated();
+  });
+ connect(&impl_->projectManager(), &ArtifactProjectManager::compositionCreated, this, [this](const CompositionID& id) {
+   if (impl_->currentCompositionId_.isNil()) {
+    changeCurrentComposition(id);
+   }
+   compositionCreated(id);
+  });
   connect(&impl_->projectManager(), &ArtifactProjectManager::layerCreated, this, &ArtifactProjectService::layerCreated);
   connect(&impl_->projectManager(), &ArtifactProjectManager::projectChanged, this, &ArtifactProjectService::projectChanged);
   
@@ -316,6 +363,198 @@ bool ArtifactProjectService::removeLayerFromComposition(const CompositionID& com
     return ok;
 }
 
+bool ArtifactProjectService::duplicateLayerInCurrentComposition(const LayerID& layerId)
+{
+    auto comp = currentComposition().lock();
+    if (!comp || layerId.isNil()) {
+        return false;
+    }
+
+    auto result = impl_->projectManager().duplicateLayerInComposition(comp->id(), layerId);
+    return result.success;
+}
+
+bool ArtifactProjectService::renameLayerInCurrentComposition(const LayerID& layerId, const QString& newName)
+{
+    auto comp = currentComposition().lock();
+    if (!comp || layerId.isNil()) {
+        return false;
+    }
+
+    auto layer = comp->layerById(layerId);
+    if (!layer) {
+        return false;
+    }
+
+    const QString trimmed = newName.trimmed();
+    if (trimmed.isEmpty()) {
+        return false;
+    }
+    layer->setLayerName(trimmed);
+    return true;
+}
+
+bool ArtifactProjectService::isLayerVisibleInCurrentComposition(const LayerID& layerId)
+{
+    auto comp = currentComposition().lock();
+    if (!comp || layerId.isNil()) {
+        return false;
+    }
+    auto layer = comp->layerById(layerId);
+    return layer ? layer->isVisible() : false;
+}
+
+bool ArtifactProjectService::isLayerLockedInCurrentComposition(const LayerID& layerId)
+{
+    auto comp = currentComposition().lock();
+    if (!comp || layerId.isNil()) {
+        return false;
+    }
+    auto layer = comp->layerById(layerId);
+    return layer ? layer->isLocked() : false;
+}
+
+bool ArtifactProjectService::isLayerSoloInCurrentComposition(const LayerID& layerId)
+{
+    auto comp = currentComposition().lock();
+    if (!comp || layerId.isNil()) {
+        return false;
+    }
+    auto layer = comp->layerById(layerId);
+    return layer ? layer->isSolo() : false;
+}
+
+bool ArtifactProjectService::isLayerShyInCurrentComposition(const LayerID& layerId)
+{
+    auto comp = currentComposition().lock();
+    if (!comp || layerId.isNil()) {
+        return false;
+    }
+    auto layer = comp->layerById(layerId);
+    return layer ? layer->isShy() : false;
+}
+
+bool ArtifactProjectService::setLayerVisibleInCurrentComposition(const LayerID& layerId, bool visible)
+{
+    auto comp = currentComposition().lock();
+    if (!comp || layerId.isNil()) {
+        return false;
+    }
+    auto layer = comp->layerById(layerId);
+    if (!layer) {
+        return false;
+    }
+    layer->setVisible(visible);
+    return true;
+}
+
+bool ArtifactProjectService::setLayerLockedInCurrentComposition(const LayerID& layerId, bool locked)
+{
+    auto comp = currentComposition().lock();
+    if (!comp || layerId.isNil()) {
+        return false;
+    }
+    auto layer = comp->layerById(layerId);
+    if (!layer) {
+        return false;
+    }
+    layer->setLocked(locked);
+    return true;
+}
+
+bool ArtifactProjectService::setLayerSoloInCurrentComposition(const LayerID& layerId, bool solo)
+{
+    auto comp = currentComposition().lock();
+    if (!comp || layerId.isNil()) {
+        return false;
+    }
+    auto layer = comp->layerById(layerId);
+    if (!layer) {
+        return false;
+    }
+    layer->setSolo(solo);
+    return true;
+}
+
+bool ArtifactProjectService::setLayerShyInCurrentComposition(const LayerID& layerId, bool shy)
+{
+    auto comp = currentComposition().lock();
+    if (!comp || layerId.isNil()) {
+        return false;
+    }
+    auto layer = comp->layerById(layerId);
+    if (!layer) {
+        return false;
+    }
+    layer->setShy(shy);
+    return true;
+}
+
+bool ArtifactProjectService::soloOnlyLayerInCurrentComposition(const LayerID& layerId)
+{
+    auto comp = currentComposition().lock();
+    if (!comp || layerId.isNil()) {
+        return false;
+    }
+    auto selected = comp->layerById(layerId);
+    if (!selected) {
+        return false;
+    }
+
+    for (const auto& candidate : comp->allLayer()) {
+        if (!candidate) continue;
+        candidate->setSolo(candidate->id() == layerId);
+    }
+    return true;
+}
+
+bool ArtifactProjectService::clearLayerParentInCurrentComposition(const LayerID& layerId)
+{
+    auto comp = currentComposition().lock();
+    if (!comp || layerId.isNil()) {
+        return false;
+    }
+    auto layer = comp->layerById(layerId);
+    if (!layer) {
+        return false;
+    }
+    layer->clearParent();
+    return true;
+}
+
+bool ArtifactProjectService::layerHasParentInCurrentComposition(const LayerID& layerId)
+{
+    auto comp = currentComposition().lock();
+    if (!comp || layerId.isNil()) {
+        return false;
+    }
+    auto layer = comp->layerById(layerId);
+    return layer ? layer->hasParent() : false;
+}
+
+LayerID ArtifactProjectService::layerParentIdInCurrentComposition(const LayerID& layerId)
+{
+    auto comp = currentComposition().lock();
+    if (!comp || layerId.isNil()) {
+        return {};
+    }
+    auto layer = comp->layerById(layerId);
+    if (!layer || !layer->hasParent()) {
+        return {};
+    }
+    return layer->parentLayerId();
+}
+
+QString ArtifactProjectService::layerNameInCurrentComposition(const LayerID& layerId)
+{
+    auto comp = currentComposition().lock();
+    if (!comp || layerId.isNil()) {
+        return QString();
+    }
+    auto layer = comp->layerById(layerId);
+    return layer ? layer->layerName() : QString();
+}
+
  bool ArtifactProjectService::removeComposition(const CompositionID& id)
  {
    auto& pm = impl_->projectManager();
@@ -324,6 +563,36 @@ bool ArtifactProjectService::removeLayerFromComposition(const CompositionID& com
    bool ok = projectShared->removeCompositionById(id);
    if (ok) projectShared->projectChanged();
    return ok;
+ }
+
+ int ArtifactProjectService::renderQueueCountForComposition(const CompositionID& id) const
+ {
+  auto* queueService = ArtifactRenderQueueService::instance();
+  return queueService ? queueService->renderQueueCountForComposition(id) : 0;
+ }
+
+ bool ArtifactProjectService::removeCompositionWithRenderQueueCleanup(const CompositionID& id, int* removedQueueCount)
+ {
+  int queuedCount = renderQueueCountForComposition(id);
+  if (removedQueueCount) {
+   *removedQueueCount = queuedCount;
+  }
+  if (queuedCount > 0) {
+   if (auto* queueService = ArtifactRenderQueueService::instance()) {
+    queueService->removeRenderQueuesForComposition(id);
+   }
+  }
+  return removeComposition(id);
+ }
+
+ bool ArtifactProjectService::duplicateComposition(const CompositionID& id)
+ {
+  auto result = impl_->projectManager().duplicateComposition(id);
+  if (!result.success) {
+   return false;
+  }
+  changeCurrentComposition(result.id);
+  return true;
  }
 
  bool ArtifactProjectService::renameComposition(const CompositionID& id, const UniString& name)
@@ -381,11 +650,14 @@ std::shared_ptr<ArtifactProject> ArtifactProjectService::getCurrentProjectShared
     return impl_->projectManager().getCurrentProjectSharedPtr();
 }
 
- ChangeCompositionResult ArtifactProjectService::changeCurrentComposition(const CompositionID& id)
- {
-
-  return impl_->changeCurrentComposition(id);
- }
+ChangeCompositionResult ArtifactProjectService::changeCurrentComposition(const CompositionID& id)
+{
+  auto result = impl_->changeCurrentComposition(id);
+  if (result.success) {
+   currentCompositionChanged(id);
+  }
+  return result;
+}
 
 FindCompositionResult ArtifactProjectService::findComposition(const CompositionID& id)
  {
@@ -402,6 +674,7 @@ void ArtifactProjectService::createComposition(const UniString& name)
  auto& manager = impl_->projectManager();
  auto result = manager.createComposition(name);
  if (result.success) {
+  changeCurrentComposition(result.id);
   qDebug() << "[ArtifactProjectService::createComposition(UniString)] succeeded, id:" << result.id.toString();
  } else {
   qDebug() << "[ArtifactProjectService::createComposition(UniString)] failed";
@@ -413,6 +686,7 @@ void ArtifactProjectService::createComposition(const ArtifactCompositionInitPara
  auto& manager = impl_->projectManager();
  auto result = manager.createComposition(params);
  if (result.success) {
+  changeCurrentComposition(result.id);
   qDebug() << "[ArtifactProjectService::createComposition] succeeded, id:" << result.id.toString();
  } else {
   qDebug() << "[ArtifactProjectService::createComposition] failed";

@@ -2,8 +2,10 @@
 module;
 #include <QMenu>
 #include <QWidget>
+#include <QAction>
 module Menu.Test;
 
+import Artifact.Widgets.SoftwareRenderTest;
 
 
 
@@ -26,9 +28,16 @@ namespace Artifact {
  {
   setTitle("Test");
 
-  //auto imageProcessingTestMenu = new ArtifactImageProcessingTestMenu(this);
-
-  //addMenu(imageProcessingTestMenu);
+  auto* softwareRenderTestAction = new QAction("Software 3D Render Test...", this);
+  addAction(softwareRenderTestAction);
+  QObject::connect(softwareRenderTestAction, &QAction::triggered, this, []() {
+      auto* w = new ArtifactSoftwareRenderTestWidget();
+      w->setAttribute(Qt::WA_DeleteOnClose, true);
+      w->resize(960, 600);
+      w->show();
+      w->raise();
+      w->activateWindow();
+  });
 
  }
 

@@ -11,7 +11,6 @@
 
 module Menu.Composition;
 
-import Artifact.Project.Manager;
 import Artifact.Service.Project;
 import Artifact.Composition.InitParams;
 import Artifact.Render.Manager;
@@ -107,12 +106,14 @@ void ArtifactCompositionMenu::Impl::showCreate()
 
 void ArtifactCompositionMenu::Impl::createFromPreset(const ArtifactCompositionInitParams& params)
 {
- auto result = ArtifactProjectManager::getInstance().createComposition(params);
- if (!result.success) {
+ auto* service = ArtifactProjectService::instance();
+ if (!service) {
   QMessageBox::warning(mainWindow_ ? mainWindow_ : menu_,
    "Composition",
-   "プリセットからのコンポジション作成に失敗しました。");
+   "プロジェクトサービスが利用できません。");
+  return;
  }
+ service->createComposition(params);
 }
 
 void ArtifactCompositionMenu::Impl::duplicateCurrent()
@@ -123,8 +124,7 @@ void ArtifactCompositionMenu::Impl::duplicateCurrent()
   return;
  }
 
- auto result = ArtifactProjectManager::getInstance().duplicateComposition(current->id());
- if (!result.success) {
+ if (!service->duplicateComposition(current->id())) {
   QMessageBox::warning(mainWindow_ ? mainWindow_ : menu_,
    "Composition",
    "コンポジションの複製に失敗しました。");
@@ -169,17 +169,27 @@ void ArtifactCompositionMenu::Impl::removeCurrent()
   return;
  }
 
+ const int queuedCount = service->renderQueueCountForComposition(current->id());
+
+ QString message = QStringLiteral("現在のコンポジションを削除しますか？");
+ if (queuedCount > 0) {
+  message = QStringLiteral(
+   "現在のコンポジションはレンダーキューに %1 件登録されています。\n"
+   "削除すると該当キューも削除されます。\n"
+   "続行しますか？").arg(queuedCount);
+ }
+
  const auto answer = QMessageBox::question(
   mainWindow_ ? mainWindow_ : menu_,
   "コンポジション削除",
-  "現在のコンポジションを削除しますか？",
+  message,
   QMessageBox::Yes | QMessageBox::No,
   QMessageBox::No);
  if (answer != QMessageBox::Yes) {
   return;
  }
 
- if (!service->removeComposition(current->id())) {
+ if (!service->removeCompositionWithRenderQueueCleanup(current->id())) {
   QMessageBox::warning(mainWindow_ ? mainWindow_ : menu_,
    "Composition",
    "コンポジションの削除に失敗しました。");
@@ -208,31 +218,38 @@ void ArtifactCompositionMenu::Impl::showColor()
 void ArtifactCompositionMenu::Impl::runMilestoneDummyPipeline()
 {
  auto* parent = mainWindow_ ? mainWindow_ : menu_;
+ auto* projectService = ArtifactProjectService::instance();
+ if (!projectService) {
+  QMessageBox::warning(parent, "Milestone", "ProjectService が利用できません。");
+  return;
+ }
 
  ArtifactCompositionInitParams params = ArtifactCompositionInitParams::hdPreset();
  const QString stamp = QDateTime::currentDateTime().toString(QStringLiteral("MMdd_HHmm"));
  params.setCompositionName(UniString(QStringLiteral("Milestone_%1").arg(stamp)));
 
- auto& projectManager = ArtifactProjectManager::getInstance();
- auto compResult = projectManager.createComposition(params);
- if (!compResult.success) {
+ projectService->createComposition(params);
+ auto currentComp = projectService->currentComposition().lock();
+ if (!currentComp) {
   QMessageBox::warning(parent, "Milestone", "コンポジション作成に失敗しました。");
   return;
  }
+ const int beforeLayerCount = currentComp->allLayer().size();
 
  ArtifactSolidLayerInitParams solidParams(QStringLiteral("Solid 1"));
  solidParams.setWidth(params.width());
  solidParams.setHeight(params.height());
  solidParams.setColor(FloatColor(0.22f, 0.52f, 0.88f, 1.0f));
 
- auto layerResult = projectManager.addLayerToComposition(compResult.id, solidParams);
- if (!layerResult.success) {
+ projectService->addLayerToCurrentComposition(solidParams);
+ currentComp = projectService->currentComposition().lock();
+ if (!currentComp || currentComp->allLayer().size() <= beforeLayerCount) {
   QMessageBox::warning(parent, "Milestone", "平面レイヤー追加に失敗しました。");
   return;
  }
 
  DummyRenderRequest request;
- request.compositionId = compResult.id.toString();
+ request.compositionId = currentComp->id().toString();
  request.compositionName = params.compositionName().toQString();
  request.frameSize = QSize(params.width(), params.height());
  auto renderResult = ArtifactRenderManager::instance().renderDummyImage(request);

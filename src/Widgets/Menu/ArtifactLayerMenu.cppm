@@ -9,13 +9,12 @@ module;
 
 module Artifact.Menu.Layer;
 
-import Artifact.Project.Manager;
 import Artifact.Service.Project;
 import Utils.Id;
+import Utils.String.UniString;
 import Artifact.Layer.InitParams;
 import Artifact.Layer.Factory;
 import Artifact.Composition.Abstract;
-import Artifact.Layer.Abstract;
 import Artifact.Widgets.CreatePlaneLayerDialog;
 
 namespace Artifact {
@@ -76,8 +75,9 @@ public:
     void handlePrecompose();
     void handleSplitLayer();
 
-    ArtifactAbstractLayerPtr selectedLayer() const;
-    std::shared_ptr<ArtifactAbstractComposition> currentComposition() const;
+    bool hasCurrentComposition() const;
+    bool ensureCurrentComposition();
+    bool hasSelectedLayer() const;
     void refreshEnabledState();
 };
 
@@ -167,42 +167,64 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     auto* service = ArtifactProjectService::instance();
     QObject::connect(service, &ArtifactProjectService::layerSelected, menu, [this](const ArtifactCore::LayerID& id) {
         selectedLayerId_ = id;
+        refreshEnabledState();
+    });
+    QObject::connect(service, &ArtifactProjectService::layerRemoved, menu, [this](const ArtifactCore::CompositionID&, const ArtifactCore::LayerID& id) {
+        if (selectedLayerId_ == id) {
+            selectedLayerId_ = {};
+        }
+        refreshEnabledState();
+    });
+    QObject::connect(service, &ArtifactProjectService::compositionCreated, menu, [this](const ArtifactCore::CompositionID&) {
+        refreshEnabledState();
+    });
+    QObject::connect(service, &ArtifactProjectService::projectChanged, menu, [this]() {
+        refreshEnabledState();
     });
     QObject::connect(menu, &QMenu::aboutToShow, menu, [this]() {
         refreshEnabledState();
     });
 }
 
-std::shared_ptr<ArtifactAbstractComposition> ArtifactLayerMenu::Impl::currentComposition() const
+bool ArtifactLayerMenu::Impl::hasCurrentComposition() const
 {
     auto* service = ArtifactProjectService::instance();
-    return service ? service->currentComposition().lock() : nullptr;
+    return service && static_cast<bool>(service->currentComposition().lock());
 }
 
-ArtifactAbstractLayerPtr ArtifactLayerMenu::Impl::selectedLayer() const
+bool ArtifactLayerMenu::Impl::ensureCurrentComposition()
 {
-    auto comp = currentComposition();
-    if (!comp) return nullptr;
-
-    if (!selectedLayerId_.isNil()) {
-        if (auto selected = comp->layerById(selectedLayerId_)) {
-            return selected;
-        }
+    auto* service = ArtifactProjectService::instance();
+    if (!service) {
+        return false;
+    }
+    if (service->currentComposition().lock()) {
+        return true;
+    }
+    if (!service->hasProject()) {
+        return false;
     }
 
-    const auto all = comp->allLayer();
-    for (const auto& l : all) {
-        if (l) return l;
-    }
-    return nullptr;
+    service->createComposition(UniString(QStringLiteral("Composition")));
+    return static_cast<bool>(service->currentComposition().lock());
+}
+
+bool ArtifactLayerMenu::Impl::hasSelectedLayer() const
+{
+    return hasCurrentComposition() && !selectedLayerId_.isNil();
 }
 
 void ArtifactLayerMenu::Impl::refreshEnabledState()
 {
-    const auto comp = currentComposition();
-    const auto layer = selectedLayer();
-    const bool hasComp = static_cast<bool>(comp);
-    const bool hasLayer = static_cast<bool>(layer);
+    auto* service = ArtifactProjectService::instance();
+    const bool hasComp = hasCurrentComposition();
+    const bool hasLayer = hasSelectedLayer();
+    const bool hasParent = hasLayer && service && service->layerHasParentInCurrentComposition(selectedLayerId_);
+
+    createSolidAction->setEnabled(hasComp);
+    createNullAction->setEnabled(hasComp);
+    createAdjustAction->setEnabled(hasComp);
+    createTextAction->setEnabled(hasComp);
 
     duplicateLayerAction->setEnabled(hasLayer);
     renameLayerAction->setEnabled(hasLayer);
@@ -212,8 +234,8 @@ void ArtifactLayerMenu::Impl::refreshEnabledState()
     toggleSoloAction->setEnabled(hasLayer);
     toggleShyAction->setEnabled(hasLayer);
     soloOnlyAction->setEnabled(hasLayer && hasComp);
-    selectParentAction->setEnabled(hasLayer && layer->hasParent());
-    clearParentAction->setEnabled(hasLayer && layer->hasParent());
+    selectParentAction->setEnabled(hasParent);
+    clearParentAction->setEnabled(hasParent);
     precomposeAction->setEnabled(hasLayer);
     splitAction->setEnabled(hasLayer);
 }
@@ -221,6 +243,10 @@ void ArtifactLayerMenu::Impl::refreshEnabledState()
 void ArtifactLayerMenu::Impl::handleCreateSolid()
 {
     auto service = ArtifactProjectService::instance();
+    if (!ensureCurrentComposition()) {
+        QMessageBox::warning(menu_ ? menu_->window() : nullptr, "Layer", "コンポジションが選択されていません。");
+        return;
+    }
     QWidget* parentWindow = menu_ ? menu_->window() : nullptr;
     CreateSolidLayerSettingDialog dialog(parentWindow);
     QObject::connect(&dialog, &CreateSolidLayerSettingDialog::submit, menu_, [service](const ArtifactSolidLayerInitParams& params) {
@@ -234,6 +260,10 @@ void ArtifactLayerMenu::Impl::handleCreateSolid()
 
 void ArtifactLayerMenu::Impl::handleCreateNull()
 {
+    if (!ensureCurrentComposition()) {
+        QMessageBox::warning(menu_ ? menu_->window() : nullptr, "Layer", "コンポジションが選択されていません。");
+        return;
+    }
     ArtifactNullLayerInitParams params(u8"Null 1");
     auto* service = ArtifactProjectService::instance();
     if (auto comp = service->currentComposition().lock()) {
@@ -246,6 +276,10 @@ void ArtifactLayerMenu::Impl::handleCreateNull()
 
 void ArtifactLayerMenu::Impl::handleCreateAdjust()
 {
+    if (!ensureCurrentComposition()) {
+        QMessageBox::warning(menu_ ? menu_->window() : nullptr, "Layer", "コンポジションが選択されていません。");
+        return;
+    }
     ArtifactSolidLayerInitParams params(u8"Adjustment Layer");
     auto* service = ArtifactProjectService::instance();
     if (auto comp = service->currentComposition().lock()) {
@@ -259,25 +293,28 @@ void ArtifactLayerMenu::Impl::handleCreateAdjust()
 
 void ArtifactLayerMenu::Impl::handleCreateText()
 {
+    if (!ensureCurrentComposition()) {
+        QMessageBox::warning(menu_ ? menu_->window() : nullptr, "Layer", "コンポジションが選択されていません。");
+        return;
+    }
     ArtifactTextLayerInitParams params(u8"Text 1");
     ArtifactProjectService::instance()->addLayerToCurrentComposition(params);
 }
 
 void ArtifactLayerMenu::Impl::handleDuplicateLayer()
 {
-    auto comp = currentComposition();
-    auto layer = selectedLayer();
-    if (!comp || !layer) return;
-    auto result = ArtifactProjectManager::getInstance().duplicateLayerInComposition(comp->id(), layer->id());
-    if (!result.success) {
+    auto* service = ArtifactProjectService::instance();
+    if (!service || selectedLayerId_.isNil()) return;
+    if (!service->duplicateLayerInCurrentComposition(selectedLayerId_)) {
         QMessageBox::warning(menu_->window(), "Layer", "レイヤー複製に失敗しました。");
     }
 }
 
 void ArtifactLayerMenu::Impl::handleRenameLayer()
 {
-    auto layer = selectedLayer();
-    if (!layer) return;
+    auto* service = ArtifactProjectService::instance();
+    if (!service || selectedLayerId_.isNil()) return;
+    const QString layerName = service->layerNameInCurrentComposition(selectedLayerId_);
 
     bool ok = false;
     const QString newName = QInputDialog::getText(
@@ -285,79 +322,76 @@ void ArtifactLayerMenu::Impl::handleRenameLayer()
         "レイヤー名の変更",
         "新しい名前:",
         QLineEdit::Normal,
-        layer->layerName(),
+        layerName,
         &ok);
     if (!ok) return;
-    const QString trimmed = newName.trimmed();
-    if (trimmed.isEmpty()) return;
-    layer->setLayerName(trimmed);
+    if (!service->renameLayerInCurrentComposition(selectedLayerId_, newName)) {
+        QMessageBox::warning(menu_->window(), "Layer", "レイヤー名の変更に失敗しました。");
+    }
 }
 
 void ArtifactLayerMenu::Impl::handleDeleteLayer()
 {
-    auto comp = currentComposition();
-    auto layer = selectedLayer();
-    if (!comp || !layer) return;
-
     auto* service = ArtifactProjectService::instance();
-    service->removeLayerFromComposition(comp->id(), layer->id());
+    if (!service || selectedLayerId_.isNil()) return;
+    auto comp = service->currentComposition().lock();
+    if (!comp) return;
+    service->removeLayerFromComposition(comp->id(), selectedLayerId_);
 }
 
 void ArtifactLayerMenu::Impl::handleToggleVisible()
 {
-    auto layer = selectedLayer();
-    if (!layer) return;
-    layer->setVisible(!layer->isVisible());
+    auto* service = ArtifactProjectService::instance();
+    if (!service || selectedLayerId_.isNil()) return;
+    const bool current = service->isLayerVisibleInCurrentComposition(selectedLayerId_);
+    service->setLayerVisibleInCurrentComposition(selectedLayerId_, !current);
 }
 
 void ArtifactLayerMenu::Impl::handleToggleLock()
 {
-    auto layer = selectedLayer();
-    if (!layer) return;
-    layer->setLocked(!layer->isLocked());
+    auto* service = ArtifactProjectService::instance();
+    if (!service || selectedLayerId_.isNil()) return;
+    const bool current = service->isLayerLockedInCurrentComposition(selectedLayerId_);
+    service->setLayerLockedInCurrentComposition(selectedLayerId_, !current);
 }
 
 void ArtifactLayerMenu::Impl::handleToggleSolo()
 {
-    auto layer = selectedLayer();
-    if (!layer) return;
-    layer->setSolo(!layer->isSolo());
+    auto* service = ArtifactProjectService::instance();
+    if (!service || selectedLayerId_.isNil()) return;
+    const bool current = service->isLayerSoloInCurrentComposition(selectedLayerId_);
+    service->setLayerSoloInCurrentComposition(selectedLayerId_, !current);
 }
 
 void ArtifactLayerMenu::Impl::handleToggleShy()
 {
-    auto layer = selectedLayer();
-    if (!layer) return;
-    layer->setShy(!layer->isShy());
+    auto* service = ArtifactProjectService::instance();
+    if (!service || selectedLayerId_.isNil()) return;
+    const bool current = service->isLayerShyInCurrentComposition(selectedLayerId_);
+    service->setLayerShyInCurrentComposition(selectedLayerId_, !current);
 }
 
 void ArtifactLayerMenu::Impl::handleSoloOnlySelected()
 {
-    auto comp = currentComposition();
-    auto layer = selectedLayer();
-    if (!comp || !layer) return;
-
-    for (const auto& candidate : comp->allLayer()) {
-        if (!candidate) continue;
-        candidate->setSolo(candidate->id() == layer->id());
-    }
+    auto* service = ArtifactProjectService::instance();
+    if (!service || selectedLayerId_.isNil()) return;
+    service->soloOnlyLayerInCurrentComposition(selectedLayerId_);
 }
 
 void ArtifactLayerMenu::Impl::handleSelectParent()
 {
-    auto comp = currentComposition();
-    auto layer = selectedLayer();
-    if (!comp || !layer || !layer->hasParent()) return;
-
     auto* service = ArtifactProjectService::instance();
-    service->selectLayer(layer->parentLayerId());
+    if (!service || selectedLayerId_.isNil()) return;
+    const auto parentId = service->layerParentIdInCurrentComposition(selectedLayerId_);
+    if (parentId.isNil()) return;
+    service->selectLayer(parentId);
 }
 
 void ArtifactLayerMenu::Impl::handleClearParent()
 {
-    auto layer = selectedLayer();
-    if (!layer) return;
-    layer->clearParent();
+    auto* service = ArtifactProjectService::instance();
+    if (!service || selectedLayerId_.isNil()) return;
+    service->clearLayerParentInCurrentComposition(selectedLayerId_);
 }
 
 void ArtifactLayerMenu::Impl::handlePrecompose()

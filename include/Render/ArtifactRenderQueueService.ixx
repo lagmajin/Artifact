@@ -36,6 +36,7 @@ module;
 #include <regex>
 #include <random>
 export module Artifact.Render.Queue.Service;
+import Utils.Id;
 
 
 
@@ -53,11 +54,40 @@ export namespace Artifact
    class Impl;
    Impl* impl_;
  public:
-  explicit ArtifactRenderQueueService(QObject*parent=nullptr);
+ explicit ArtifactRenderQueueService(QObject*parent=nullptr);
   ~ArtifactRenderQueueService();
+  static ArtifactRenderQueueService* instance();
   void addRenderQueue();
+  void addRenderQueueForComposition(const ArtifactCore::CompositionID& compositionId, const QString& compositionName);
   void removeRenderQueue();
+  void removeRenderQueueAt(int index);
+  void duplicateRenderQueueAt(int index);
+  void moveRenderQueue(int fromIndex, int toIndex);
   void removeAllRenderQueues();
+  void removeRenderQueuesForComposition(const ArtifactCore::CompositionID& compositionId);
+  bool hasRenderQueueForComposition(const ArtifactCore::CompositionID& compositionId) const;
+  int renderQueueCountForComposition(const ArtifactCore::CompositionID& compositionId) const;
+  QString jobCompositionNameAt(int index) const;
+  QString jobStatusAt(int index) const;
+  QString jobOutputPathAt(int index) const;
+  void setJobOutputPathAt(int index, const QString& outputPath);
+  bool jobFrameRangeAt(int index, int* startFrame, int* endFrame) const;
+  void setJobFrameRangeAt(int index, int startFrame, int endFrame);
+  bool jobOutputSettingsAt(
+    int index,
+    QString* outputFormat,
+    QString* codec,
+    int* width,
+    int* height) const;
+  void setJobOutputSettingsAt(
+    int index,
+    const QString& outputFormat,
+    const QString& codec,
+    int width,
+    int height);
+  QString jobErrorMessageAt(int index) const;
+  bool jobOverlayTransformAt(int index, float* offsetX, float* offsetY, float* scale, float* rotationDeg) const;
+  void setJobOverlayTransform(int index, float offsetX, float offsetY, float scale, float rotationDeg);
 
   void startRenderQueue();
   void startAllRenderQueues();
@@ -76,7 +106,7 @@ export namespace Artifact
   void setJobAddedCallback(std::function<void(int)> callback);
   void setJobRemovedCallback(std::function<void(int)> callback);
   void setJobUpdatedCallback(std::function<void(int)> callback);
-  // void setJobStatusChangedCallback(std::function<void(int, ArtifactRenderJob::Status)> callback);  // Commented out - ArtifactRenderJob not exported
+  void setJobStatusChangedCallback(std::function<void(int, int)> callback);
   void setJobProgressChangedCallback(std::function<void(int, int)> callback);
   void setAllJobsCompletedCallback(std::function<void()> callback);
   void setAllJobsRemovedCallback(std::function<void()> callback);

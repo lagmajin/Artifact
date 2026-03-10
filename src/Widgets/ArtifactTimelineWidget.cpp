@@ -76,6 +76,7 @@ import Panel.DraggableSplitter;
 import Artifact.Timeline.Objects;
 import Artifact.Widgets.Timeline.GlobalSwitches;
 import Artifact.Service.Project;
+import Artifact.Application.Manager;
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
 import Frame.Position;
@@ -88,10 +89,15 @@ using namespace ArtifactCore;
 using namespace ArtifactWidgets;
 
  namespace {
-  constexpr double kTimelineRowHeight = 28.0;
-  constexpr int kTimelineTopRowHeight = 16;   // aligns with right ruler row
-  constexpr int kTimelineHeaderRowHeight = 34; // fits timecode + frame labels without compression
-  constexpr int kDefaultTimelineFrames = 300;
+ constexpr double kTimelineRowHeight = 28.0;
+ constexpr int kTimelineTopRowHeight = 16;   // aligns with right ruler row
+ constexpr int kTimelineHeaderRowHeight = 34; // fits timecode + frame labels without compression
+ constexpr int kDefaultTimelineFrames = 300;
+ constexpr int kTopSeekHotZonePx = 28; // allow seeking from top band of clip scene
+ inline double timelineFrameMax(const double duration)
+ {
+  return std::max(0.0, duration - 1.0);
+ }
   std::shared_ptr<ArtifactAbstractComposition> safeCompositionLookup(const CompositionID& id)
   {
     if (id.isNil()) return nullptr;
@@ -178,6 +184,51 @@ using namespace ArtifactWidgets;
    QWidget* host_ = nullptr;
    TimelineTrackView* trackView_ = nullptr;
    TimelinePlayheadOverlay* overlay_ = nullptr;
+  };
+
+  class HeaderSeekFilter final : public QObject
+  {
+  public:
+   HeaderSeekFilter(TimelineTrackView* trackView, ArtifactSeekBar* seekBar, QObject* parent = nullptr)
+    : QObject(parent), trackView_(trackView), seekBar_(seekBar)
+   {
+   }
+
+  protected:
+   bool eventFilter(QObject* watched, QEvent* event) override
+   {
+    if (!trackView_ || !seekBar_) {
+     return QObject::eventFilter(watched, event);
+    }
+    if (event->type() != QEvent::MouseButtonPress) {
+     return QObject::eventFilter(watched, event);
+    }
+
+    auto* mouseEvent = dynamic_cast<QMouseEvent*>(event);
+    auto* sourceWidget = qobject_cast<QWidget*>(watched);
+    if (!mouseEvent || !sourceWidget || mouseEvent->button() != Qt::LeftButton) {
+     return QObject::eventFilter(watched, event);
+    }
+
+    if (!trackView_->viewport()) {
+      return QObject::eventFilter(watched, event);
+    }
+
+    const QPoint viewportPos = sourceWidget->mapTo(trackView_->viewport(), mouseEvent->pos());
+    const QPointF scenePos = trackView_->mapToScene(viewportPos);
+    const double frameMax = std::max(1.0, timelineFrameMax(trackView_->duration()));
+    const double clamped = std::clamp(scenePos.x(), 0.0, frameMax);
+    const int frame = static_cast<int>(std::round(clamped));
+
+    trackView_->setPosition(clamped);
+    seekBar_->setCurrentFrame(FramePosition(frame));
+    event->accept();
+    return true;
+   }
+
+  private:
+   TimelineTrackView* trackView_ = nullptr;
+   ArtifactSeekBar* seekBar_ = nullptr;
   };
  }
 
@@ -270,11 +321,17 @@ W_OBJECT_IMPL(ArtifactTimelineWidget)
   leftTopSpacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
   leftTopSpacer->setStyleSheet("background-color: #2D2D30; border-bottom: 1px solid #1a1a1a;");
 
+  auto leftSubHeaderSpacer = new QWidget();
+  leftSubHeaderSpacer->setFixedHeight(0);
+  leftSubHeaderSpacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+  leftSubHeaderSpacer->setStyleSheet("background-color: #2D2D30; border-bottom: 1px solid #1a1a1a;");
+
   auto leftLayout = new QVBoxLayout();
   leftLayout->setSpacing(0);
   leftLayout->setContentsMargins(0, 0, 0, 0);
   leftLayout->addWidget(leftTopSpacer);
   leftLayout->addWidget(headerWidget);
+  leftLayout->addWidget(leftSubHeaderSpacer);
   leftLayout->addWidget(leftSplitter);
 
   auto leftPanel = new QWidget();
@@ -298,6 +355,8 @@ W_OBJECT_IMPL(ArtifactTimelineWidget)
     seekBar->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     seekBar->setTotalFrames(kDefaultTimelineFrames);
     seekBar->setCurrentFrame(FramePosition(0));
+    const int rightAuxHeaderHeight = timeScaleWidget->sizeHint().height() + workAreaWidget->sizeHint().height();
+    leftSubHeaderSpacer->setFixedHeight(std::max(0, rightAuxHeaderHeight));
  
     // Sync Ruler and WorkArea
     // Sync disabled
@@ -328,10 +387,15 @@ W_OBJECT_IMPL(ArtifactTimelineWidget)
     QObject::connect(timeRulerWidget, &ArtifactTimelineRulerWidget::endChanged, this, updateZoom);
     QObject::connect(seekBar, &ArtifactSeekBar::frameChanged, this, [timelineTrackView](const auto& frame) {
       timelineTrackView->setPosition(static_cast<double>(frame.framePosition()));
+      if (auto* app = ArtifactApplicationManager::instance()) {
+       if (auto* ctx = app->activeContextService()) {
+        ctx->seekToFrame(frame.framePosition());
+       }
+      }
     });
     QObject::connect(timelineTrackView, &TimelineTrackView::seekPositionChanged, this, [timelineTrackView, seekBar](double ratio) {
-      const double duration = timelineTrackView->duration();
-      const int frame = static_cast<int>(std::round(std::clamp(ratio, 0.0, 1.0) * duration));
+      const double frameMax = std::max(1.0, static_cast<double>(seekBar->totalFrames() - 1));
+      const int frame = static_cast<int>(std::round(std::clamp(ratio, 0.0, 1.0) * frameMax));
       seekBar->setCurrentFrame(FramePosition(frame));
     });
 
@@ -355,6 +419,11 @@ W_OBJECT_IMPL(ArtifactTimelineWidget)
   rightPanelLayout->addWidget(workAreaWidget);
   rightPanelLayout->addWidget(trackSplitter);
   rightPanel->setLayout(rightPanelLayout);
+
+  auto* headerSeekFilter = new HeaderSeekFilter(timelineTrackView, seekBar, rightPanel);
+  timeRulerWidget->installEventFilter(headerSeekFilter);
+  timeScaleWidget->installEventFilter(headerSeekFilter);
+  workAreaWidget->installEventFilter(headerSeekFilter);
 
   auto* playheadOverlay = new TimelinePlayheadOverlay(rightPanel);
   auto* playheadSync = new PlayheadSyncFilter(rightPanel, timelineTrackView, playheadOverlay, rightPanel);
@@ -382,6 +451,9 @@ W_OBJECT_IMPL(ArtifactTimelineWidget)
   mainSplitter->setHandleWidth(7);
   mainSplitter->addWidget(leftPanel);
   mainSplitter->addWidget(rightPanel);
+  mainSplitter->setChildrenCollapsible(false);
+  leftPanel->setMinimumWidth(280);
+  rightPanel->setMinimumWidth(480);
   //mainSplitter->addWidget(leftSplitter);
 
   mainSplitter->setStretchFactor(0, 1);
@@ -430,9 +502,15 @@ W_OBJECT_IMPL(ArtifactTimelineWidget)
    if (impl_->trackView_) {
     impl_->trackView_->clearTracks();
     if (auto svc = ArtifactProjectService::instance()) {
+     svc->changeCurrentComposition(id);
      auto res = svc->findComposition(id);
      if (res.success && !res.ptr.expired()) {
       auto comp = res.ptr.lock();
+      if (auto* app = ArtifactApplicationManager::instance()) {
+       if (auto* ctx = app->activeContextService()) {
+        ctx->setActiveComposition(comp);
+       }
+      }
       int totalFrames = static_cast<int>(std::round(comp->frameRange().duration()));
       if (totalFrames < 2) {
        totalFrames = kDefaultTimelineFrames;
@@ -441,6 +519,11 @@ W_OBJECT_IMPL(ArtifactTimelineWidget)
       if (impl_->seekBar_) {
        impl_->seekBar_->setTotalFrames(std::max(1, totalFrames));
        impl_->seekBar_->setCurrentFrame(FramePosition(0));
+      }
+      if (auto* app = ArtifactApplicationManager::instance()) {
+       if (auto* ctx = app->activeContextService()) {
+        ctx->seekToFrame(0);
+       }
       }
       if (impl_->playheadSync_) {
        impl_->playheadSync_->sync();
@@ -601,7 +684,7 @@ TimelineTrackView::TimelineTrackView(QWidget* parent /*= nullptr*/) :QGraphicsVi
 
  void TimelineTrackView::setPosition(double position)
  {
-  impl_->position_ = qBound(0.0, position, impl_->duration_);
+  impl_->position_ = qBound(0.0, position, timelineFrameMax(impl_->duration_));
   viewport()->update();
  }
 
@@ -612,7 +695,7 @@ TimelineTrackView::TimelineTrackView(QWidget* parent /*= nullptr*/) :QGraphicsVi
 
  void TimelineTrackView::setDuration(double duration)
  {
-  impl_->duration_ = std::max(0.0, duration);
+  impl_->duration_ = std::max(1.0, duration);
   if (impl_->scene_) {
    QRectF rect = impl_->scene_->sceneRect();
    rect.setWidth(std::max(rect.width(), impl_->duration_));
@@ -831,18 +914,6 @@ TimelineTrackView::TimelineTrackView(QWidget* parent /*= nullptr*/) :QGraphicsVi
    }
 
  if (event->button() == Qt::LeftButton) {
-    // Scrub hotspot at the very top of the right clip scene:
-    // clicking this band always seeks, even when clips exist below.
-    constexpr int kTopSeekHotZonePx = 8;
-    if (event->pos().y() <= kTopSeekHotZonePx) {
-      const QPointF topScenePos = mapToScene(event->pos());
-      setPosition(topScenePos.x());
-      const double ratio = impl_->duration_ > 0.0 ? impl_->position_ / impl_->duration_ : 0.0;
-      Q_EMIT seekPositionChanged(ratio);
-      event->accept();
-      return;
-    }
-
     const QPointF scenePos = mapToScene(event->pos());
     
     // Check if clicking on a clip/resize handle.
@@ -880,9 +951,21 @@ TimelineTrackView::TimelineTrackView(QWidget* parent /*= nullptr*/) :QGraphicsVi
       Q_EMIT clipDeselected(clickedClip);
      }
     } else {
+     // Scrub hotspot at the very top of the right clip scene.
+     // Only seek from this zone when no clip/handle is under cursor.
+     if (event->pos().y() <= kTopSeekHotZonePx) {
+      setPosition(scenePos.x());
+      const double frameMax = std::max(1.0, timelineFrameMax(impl_->duration_));
+      const double ratio = impl_->position_ / frameMax;
+      Q_EMIT seekPositionChanged(ratio);
+      event->accept();
+      return;
+     }
+
      // Click on timeline for seeking
      setPosition(scenePos.x());
-     double ratio = impl_->duration_ > 0.0 ? impl_->position_ / impl_->duration_ : 0.0;
+     const double frameMax = std::max(1.0, timelineFrameMax(impl_->duration_));
+     double ratio = impl_->position_ / frameMax;
      Q_EMIT seekPositionChanged(ratio);
      
      if (!(event->modifiers() & Qt::ShiftModifier)) {
@@ -1118,8 +1201,9 @@ TimelineTrackView::TimelineTrackView(QWidget* parent /*= nullptr*/) :QGraphicsVi
 
    const auto& selected = impl_->scene_->getSelectedClips();
    if (selected.empty()) {
-    setPosition(impl_->position_ + static_cast<double>(frameDelta));
-    const double ratio = impl_->duration_ > 0.0 ? impl_->position_ / impl_->duration_ : 0.0;
+   setPosition(impl_->position_ + static_cast<double>(frameDelta));
+    const double frameMax = std::max(1.0, timelineFrameMax(impl_->duration_));
+    const double ratio = impl_->position_ / frameMax;
     Q_EMIT seekPositionChanged(ratio);
     event->accept();
     return;

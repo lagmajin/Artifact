@@ -281,12 +281,20 @@ namespace {
  class ArtifactLayerPanelWidget::Impl
  {
  public:
+  enum class RowKind
+  {
+   Layer,
+   Group
+  };
+
   struct VisibleRow
   {
    ArtifactAbstractLayerPtr layer;
    int depth = 0;
    bool hasChildren = false;
    bool expanded = true;
+   RowKind kind = RowKind::Layer;
+   QString label;
   };
 
   Impl()
@@ -376,14 +384,23 @@ namespace {
      if (emitted.contains(nodeId)) return;
 
      const auto nodeChildren = children.value(nodeId);
-     const bool hasChildren = !nodeChildren.isEmpty();
+     const bool hasChildren = !nodeChildren.isEmpty() || node->isNullLayer();
      const bool expanded = expandedByLayerId.value(nodeId, true);
-     // Always expose a disclosure toggle per-layer so newly added leaf layers
-     // (e.g. Null) still present tree-expand affordance in the UI.
-     visibleRows.push_back(VisibleRow{ node, depth, true, expanded });
+     visibleRows.push_back(VisibleRow{ node, depth, hasChildren, expanded, RowKind::Layer, QString() });
      emitted.insert(nodeId);
 
      if (!hasChildren || !expanded) return;
+
+     if (node->isNullLayer()) {
+      visibleRows.push_back(VisibleRow{
+       node,
+       depth + 1,
+       false,
+       false,
+       RowKind::Group,
+       QStringLiteral("Transform")
+      });
+     }
 
      stack.insert(nodeId);
      for (const auto& child : nodeChildren) {
@@ -483,6 +500,16 @@ namespace {
   const auto& row = impl_->visibleRows[idx];
   auto layer = row.layer;
   if (!layer) return;
+  if (row.kind != Impl::RowKind::Layer) {
+   if (event->button() == Qt::LeftButton) {
+    if (auto* service = ArtifactProjectService::instance()) {
+     service->selectLayer(layer->id());
+    }
+    update();
+   }
+   event->accept();
+   return;
+  }
   const int y = idx * rowH;
   const bool showInlineCombos = width() >= (kLayerColumnWidth * kLayerPropertyColumnCount + kInlineComboReserve + kLayerNameMinWidth);
   const int parentRectX = width() - kInlineComboReserve;
@@ -762,6 +789,10 @@ void ArtifactLayerPanelWidget::mouseDoubleClickEvent(QMouseEvent* event)
    QWidget::mouseDoubleClickEvent(event);
    return;
   }
+  if (row.kind != Impl::RowKind::Layer) {
+   QWidget::mouseDoubleClickEvent(event);
+   return;
+  }
 
   if (row.hasChildren) {
    const int nameStartX = colW * kLayerPropertyColumnCount;
@@ -929,14 +960,22 @@ void ArtifactLayerPanelWidget::keyPressEvent(QKeyEvent* event)
     const auto& row = impl_->visibleRows[i];
     auto l = row.layer;
     if (!l) continue;
+    const bool isGroupRow = (row.kind == Impl::RowKind::Group);
     bool sel = (l->id() == impl_->selectedLayerId);
 
-    if (sel) p.fillRect(0, y, width(), rowH, QColor(70, 100, 150));
+    if (sel && !isGroupRow) p.fillRect(0, y, width(), rowH, QColor(70, 100, 150));
     else if (i == impl_->hoveredLayerIndex) p.fillRect(0, y, width(), rowH, QColor(55, 55, 80));
     else p.fillRect(0, y, width(), rowH, (i % 2 == 0) ? QColor(42, 42, 42) : QColor(45, 45, 45));
 
     p.setPen(QColor(60, 60, 60));
     p.drawLine(0, y + rowH, width(), y + rowH);
+
+    if (isGroupRow) {
+      const int textX = nameStartX + row.depth * indent + 4;
+      p.setPen(QColor(196, 196, 196));
+      p.drawText(textX, y, std::max(20, width() - textX - 8), rowH, Qt::AlignVCenter | Qt::AlignLeft, row.label);
+      continue;
+    }
 
     int curX = 0;
     // Visibility

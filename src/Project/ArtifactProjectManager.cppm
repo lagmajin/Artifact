@@ -909,7 +909,10 @@ QVector<ProjectItem*> ArtifactProjectManager::projectItems() const
       if (!firstCompId.isNil()) break;
      }
     }
-    // redundant signal removed
+    if (!firstCompId.isNil()) {
+     layerCreated(firstCompId, result.layer->id());
+    }
+    projectChanged();
    }
    return result;
   }
