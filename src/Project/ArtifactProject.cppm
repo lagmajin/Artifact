@@ -456,12 +456,11 @@ void ArtifactProject::Impl::createCompositions(const QStringList& names) {}
   return result;
  }
 	
- ArtifactProject::ArtifactProject() :impl_(new Impl())
- {
-  // create a root folder for project items and own it
+ArtifactProject::ArtifactProject() :impl_(new Impl())
+{
+  // Always keep a stable project-root placeholder at index 0.
   auto rootUp = std::make_unique<FolderItem>();
   rootUp->name.setQString("Project Root");
-  ProjectItem* root = rootUp.get();
   impl_->ownedItems_.push_back(std::move(rootUp));
 
   Q_EMIT projectCreated();
@@ -470,12 +469,22 @@ void ArtifactProject::Impl::createCompositions(const QStringList& names) {}
 
  ArtifactProject::ArtifactProject(const QString& name) :impl_(new Impl())
  {
+  auto rootUp = std::make_unique<FolderItem>();
+  rootUp->name.setQString("Project Root");
+  impl_->ownedItems_.push_back(std::move(rootUp));
+  impl_->setProjectName(name);
 
   Q_EMIT projectCreated();
  }
 
  ArtifactProject::ArtifactProject(const ArtifactProjectSettings& setting) :impl_(new Impl())
  {
+  auto rootUp = std::make_unique<FolderItem>();
+  rootUp->name.setQString("Project Root");
+  impl_->ownedItems_.push_back(std::move(rootUp));
+  impl_->setProjectName(setting.projectName());
+  impl_->setAuthor(setting.author().toQString());
+
   Q_EMIT projectCreated();
 
  }

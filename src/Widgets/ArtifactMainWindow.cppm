@@ -48,6 +48,33 @@ ArtifactMainWindow::ArtifactMainWindow(QWidget* parent)
  addToolBar(toolBar);
 
  impl_->dockManager = new CDockManager(this);
+ impl_->dockManager->setStyleSheet(R"(
+ads--CDockAreaWidget {
+ background: #1f1f1f;
+}
+ads--CDockAreaTitleBar {
+ background: #232323;
+ border-bottom: 1px solid #2d2d2d;
+}
+ads--CDockWidgetTab {
+ background: #2b2b2b;
+ color: #a9a9a9;
+ border: 1px solid #333333;
+ border-bottom: none;
+ border-top-left-radius: 3px;
+ border-top-right-radius: 3px;
+ padding: 4px 10px;
+}
+ads--CDockWidgetTab:hover {
+ background: #343434;
+ color: #d0d0d0;
+}
+ads--CDockWidgetTab[activeTab="true"] {
+ background: #1e1e1e;
+ color: #f0f0f0;
+ border-color: #4c4c4c;
+}
+)");
  impl_->centralWidgetHost = new QWidget(this);
  auto* centralDock = new CDockWidget(QStringLiteral("Workspace"), this);
  centralDock->setObjectName(QStringLiteral("ArtifactCentralDock"));

@@ -17,6 +17,7 @@ module;
 #include <QMediaPlayer>
 #include <QAudioOutput>
 #include <QVideoWidget>
+#include <QTransform>
 
 #include <iostream>
 #include <vector>
@@ -90,6 +91,8 @@ namespace Artifact
    QString currentFilePath;
    ArtifactCore::FileType currentFileType = ArtifactCore::FileType::Unknown;
    double zoomLevel = 1.0;
+   double rotationDegrees = 0.0;
+   QPixmap originalImage;
    QPoint lastMousePos;
    bool playbackRangeActive = false;
    qint64 playbackRangeStartMs = 0;
@@ -140,12 +143,14 @@ namespace Artifact
     imageLabel->clear();
     imageLabel->setFixedSize(QSize(0, 0));
    }
+   originalImage = QPixmap();
 
    if (modelViewer) {
     modelViewer->clearModel();
    }
 
    zoomLevel = 1.0;
+   rotationDegrees = 0.0;
   }
 
   void ArtifactContentsViewer::Impl::activateImage(const QString& filepath)
@@ -157,8 +162,10 @@ namespace Artifact
    }
 
    zoomLevel = 1.0;
-   imageLabel->setPixmap(pix);
-   imageLabel->setFixedSize(pix.size());
+   rotationDegrees = 0.0;
+   originalImage = pix;
+   imageLabel->setPixmap(originalImage);
+   imageLabel->setFixedSize(originalImage.size());
    stackedWidget->setCurrentWidget(imageScrollArea);
   }
 
@@ -432,6 +439,46 @@ void ArtifactContentsViewer::playRange(int64_t start, int64_t end)
   }
 
   play();
+}
+
+void ArtifactContentsViewer::rotateLeft()
+{
+ if (impl_->currentFileType != ArtifactCore::FileType::Image || impl_->originalImage.isNull()) {
+  return;
+ }
+
+ impl_->rotationDegrees -= 90.0;
+ QTransform transform;
+ transform.rotate(impl_->rotationDegrees);
+ const QPixmap rotated = impl_->originalImage.transformed(transform, Qt::SmoothTransformation);
+ impl_->imageLabel->setPixmap(rotated);
+ impl_->imageLabel->setFixedSize(rotated.size() * impl_->zoomLevel);
+}
+
+void ArtifactContentsViewer::rotateRight()
+{
+ if (impl_->currentFileType != ArtifactCore::FileType::Image || impl_->originalImage.isNull()) {
+  return;
+ }
+
+ impl_->rotationDegrees += 90.0;
+ QTransform transform;
+ transform.rotate(impl_->rotationDegrees);
+ const QPixmap rotated = impl_->originalImage.transformed(transform, Qt::SmoothTransformation);
+ impl_->imageLabel->setPixmap(rotated);
+ impl_->imageLabel->setFixedSize(rotated.size() * impl_->zoomLevel);
+}
+
+void ArtifactContentsViewer::resetView()
+{
+ if (impl_->currentFileType != ArtifactCore::FileType::Image || impl_->originalImage.isNull()) {
+  return;
+ }
+
+ impl_->zoomLevel = 1.0;
+ impl_->rotationDegrees = 0.0;
+ impl_->imageLabel->setPixmap(impl_->originalImage);
+ impl_->imageLabel->setFixedSize(impl_->originalImage.size());
 }
 
 };

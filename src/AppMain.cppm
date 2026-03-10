@@ -62,6 +62,7 @@ import ImageProcessing.SpectralGlow;
 import Codec.Thumbnail.FFmpeg;
 
 import Widgets.Render.Queue;
+import Widgets.Utils.CSS;
 import IO.ImageExporter;
 import ArtifactStatusBar;
 import Artifact.PythonAPI;
@@ -70,6 +71,8 @@ import Artifact.Service.Playback;
 import Artifact.Service.Project;
 import Artifact.Widgets.UndoHistoryWidget;
 import Artifact.Widgets.PythonHookManagerWidget;
+import Artifact.Widgets.ProjectManagerWidget;
+import Artifact.Widgets.Timeline;
 import Artifact.MainWindow;
 import Artifact.Project.Manager;
 import Artifact.Project.AutoSaveManager;
@@ -366,6 +369,7 @@ int main(int argc, char* argv[])
 	 }
 	
 	 QApplication a(argc, argv);
+     a.setStyleSheet(getDCCStyleSheetPreset(DccStylePreset::ModoStyle));
 	 auto pool = QThreadPool::globalInstance();
 
 	 pool->setMaxThreadCount(10);
@@ -379,6 +383,7 @@ int main(int argc, char* argv[])
     mw->setStatusBar(status);
     status->showReadyMessage();
     status->setProjectText("Loaded");
+    mw->addDockedWidget(QStringLiteral("Project"), ads::LeftDockWidgetArea, new ArtifactProjectManagerWidget(mw));
     mw->addDockedWidget(QStringLiteral("Undo History"), ads::RightDockWidgetArea, new ArtifactUndoHistoryWidget(mw));
     mw->addDockedWidget(QStringLiteral("Python Hooks"), ads::RightDockWidgetArea, new ArtifactPythonHookManagerWidget(mw));
 
@@ -420,6 +425,16 @@ int main(int argc, char* argv[])
         });
         QObject::connect(projectService, &ArtifactProjectService::compositionCreated, mw, [](const CompositionID& compId) {
             ArtifactPythonHookManager::runHook(QStringLiteral("composition_created"), QStringList() << compId.toString());
+        });
+        QObject::connect(projectService, &ArtifactProjectService::compositionCreated, mw, [mw](const CompositionID& compId) {
+            QTimer::singleShot(0, mw, [mw, compId]() {
+                auto* panel = new ArtifactTimelineWidget(mw);
+                panel->setComposition(compId);
+                mw->addDockedWidget(
+                    QStringLiteral("Timeline - %1").arg(compId.toString()),
+                    ads::BottomDockWidgetArea,
+                    panel);
+            });
         });
         QObject::connect(projectService, &ArtifactProjectService::projectCreated, mw, []() {
             ArtifactPythonHookManager::runHook(QStringLiteral("project_opened"));

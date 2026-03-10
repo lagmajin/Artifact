@@ -87,6 +87,14 @@ void ArtifactProjectModel::Impl::refreshTree()
  if (!model_) return;
  // reset model so view updates cleanly
  this->model_->clear();
+ this->model_->setColumnCount(6);
+ this->model_->setHorizontalHeaderLabels(QStringList()
+  << QObject::tr("Name")
+  << QObject::tr("Size")
+  << QObject::tr("Duration")
+  << QObject::tr("Frame Rate")
+  << QObject::tr("Updated")
+  << QObject::tr("ID"));
 
  auto shared = projectPtr_.lock();
  if (!shared) return;
@@ -191,12 +199,17 @@ void ArtifactProjectModel::Impl::refreshTree()
   return QList<QStandardItem*>() << item << sizeItem << durationItem << frameRateItem << updatedItem << idItem;
  };
 
- // Treat the first element in the project's root list as the project-root placeholder
- // and do not display it as a top-level item. Append its children as top-level rows
- // instead. This avoids relying on the root's name for identification.
+ // Treat only an explicit "Project Root" folder as a hidden placeholder.
+ // Older/broken project data may have non-placeholder items at index 0.
  ProjectItem* projectPlaceholder = nullptr;
- if (!roots.isEmpty())
-     projectPlaceholder = roots.at(0);
+ if (!roots.isEmpty()) {
+     ProjectItem* first = roots.at(0);
+     if (first &&
+         first->type() == eProjectItemType::Folder &&
+         first->name.toQString() == QStringLiteral("Project Root")) {
+         projectPlaceholder = first;
+     }
+ }
 
  for (auto root : roots) {
   if (!root) continue;
