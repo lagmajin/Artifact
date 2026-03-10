@@ -37,6 +37,7 @@ v0.8 は「機能開発中心」から「リリース候補品質」へ移行す
     - 起動時: `Session/isRunning=true` を記録
     - 正常終了時: `Session/isRunning=false` に更新
   - 起動時に前回異常終了を検知した場合の警告ダイアログを追加
+  - 異常終了警告から Recovery フォルダを開ける導線を追加
   - 既存の Recovery Snapshot 導線と併用
 
 ### 2. Operation Safety
@@ -54,6 +55,7 @@ v0.8 は「機能開発中心」から「リリース候補品質」へ移行す
     - `removeProjectItem(...)`
   - LayerMenu のレイヤー削除を確認付きに変更
   - ProjectManagerWidget の Delete を Service 経由へ統一
+  - RenderQueue の `Clear All` に確認ダイアログを追加
 
 ### 3. RenderQueue Diagnostics
 
