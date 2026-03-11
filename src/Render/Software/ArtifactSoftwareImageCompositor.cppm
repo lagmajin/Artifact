@@ -177,7 +177,7 @@ QImage composeOpenCV(const CompositeRequest& request)
   if (fgBgr.size() != canvasBgr.size()) {
    cv::resize(fgBgr, fgBgr, canvasBgr.size(), 0.0, 0.0, cv::INTER_LINEAR);
   }
-  blendBgrInPlace(canvasBgr, fgBgr, 1.0f, BlendMode::Normal);
+  blendBgrInPlace(canvasBgr, fgBgr, 1.0f, ArtifactCore::BlendMode::Normal);
  }
 
  if (!request.overlay.isNull()) {
