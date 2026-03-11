@@ -564,7 +564,7 @@ int main(int argc, char* argv[])
     mw->addDockedWidget(QStringLiteral("Composition Viewer"), ads::CenterDockWidgetArea, compositionEditor);
     auto* layerViewEditor = new ArtifactRenderLayerEditor(mw);
     mw->addDockedWidget(QStringLiteral("Layer View (Diligent)"), ads::CenterDockWidgetArea, layerViewEditor);
-    mw->addDockedWidget(QStringLiteral("Render Queue"), ads::BottomDockWidgetArea, new RenderQueueManagerWidget(mw));
+    mw->addDockedWidgetTabbed(QStringLiteral("Render Queue"), ads::BottomDockWidgetArea, new RenderQueueManagerWidget(mw), QStringLiteral("Timeline - "));
     mw->addDockedWidget(QStringLiteral("Project"), ads::LeftDockWidgetArea, new ArtifactProjectManagerWidget(mw));
     mw->addDockedWidget(QStringLiteral("Inspector"), ads::RightDockWidgetArea, new ArtifactInspectorWidget(mw));
     auto* propertyPanel = new ArtifactPropertyWidget(mw);
@@ -606,7 +606,11 @@ int main(int argc, char* argv[])
         });
         QObject::connect(projectService, &ArtifactProjectService::layerSelected, mw, [mw, layerViewEditor, propertyPanel, projectService](const LayerID& layerId) {
             if (layerViewEditor) {
-                layerViewEditor->setTargetLayer(layerId);
+                if (layerId.isNil()) {
+                    layerViewEditor->view()->clearTargetLayer();
+                } else {
+                    layerViewEditor->setTargetLayer(layerId);
+                }
             }
             if (propertyPanel) {
                 propertyPanel->setFocusedEffectId(QString());
@@ -630,16 +634,27 @@ int main(int argc, char* argv[])
                 mw->activateDock(QStringLiteral("Composition Viewer"));
             }
         });
+        QObject::connect(projectService, &ArtifactProjectService::currentCompositionChanged, mw, [layerViewEditor]() {
+            if (layerViewEditor) {
+                layerViewEditor->view()->clearTargetLayer();
+            }
+        });
         QObject::connect(projectService, &ArtifactProjectService::currentCompositionChanged, mw, [propertyPanel]() {
             if (propertyPanel) {
                 propertyPanel->setFocusedEffectId(QString());
                 propertyPanel->clear();
             }
         });
-        QObject::connect(projectService, &ArtifactProjectService::projectCreated, mw, [propertyPanel]() {
+        QObject::connect(projectService, &ArtifactProjectService::projectCreated, mw, [propertyPanel, layerViewEditor, compositionEditor]() {
             if (propertyPanel) {
                 propertyPanel->setFocusedEffectId(QString());
                 propertyPanel->clear();
+            }
+            if (layerViewEditor) {
+                layerViewEditor->view()->clearTargetLayer();
+            }
+            if (compositionEditor) {
+                compositionEditor->setComposition(nullptr);
             }
         });
         QObject::connect(projectService, &ArtifactProjectService::layerRemoved, mw, [status](const CompositionID&, const LayerID&) {
