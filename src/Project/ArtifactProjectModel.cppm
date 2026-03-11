@@ -53,8 +53,6 @@ import Artifact.Project.Roles;
 namespace Artifact
 {
 
-using namespace ArtifactCore;
-
 namespace {
 
 QIcon makeProjectItemIcon(const QColor& fill, const QString& text = {})
@@ -75,48 +73,6 @@ QIcon makeProjectItemIcon(const QColor& fill, const QString& text = {})
     painter.drawText(QRectF(0, 0, 16, 16), Qt::AlignCenter, text.left(1).toUpper());
   }
   return QIcon(px);
-}
-
-QIcon iconForProjectItem(ProjectItem* it)
-{
-  if (!it) {
-    return makeProjectItemIcon(QColor(90, 90, 90), QStringLiteral("?"));
-  }
-  switch (it->type()) {
-  case eProjectItemType::Folder:
-    return makeProjectItemIcon(QColor(176, 138, 46), QStringLiteral("F"));
-  case eProjectItemType::Composition:
-    return makeProjectItemIcon(QColor(74, 128, 191), QStringLiteral("C"));
-  case eProjectItemType::Solid:
-    return makeProjectItemIcon(QColor(110, 88, 170), QStringLiteral("S"));
-  case eProjectItemType::Footage: {
-    auto* footage = static_cast<FootageItem*>(it);
-    const QFileInfo info(footage->filePath);
-    if (!info.exists()) {
-      return makeProjectItemIcon(QColor(140, 54, 54), QStringLiteral("!"));
-    }
-    const QString suffix = info.suffix().toLower();
-    if (QStringList{QStringLiteral("ttf"), QStringLiteral("otf"), QStringLiteral("ttc"), QStringLiteral("woff"), QStringLiteral("woff2")}.contains(suffix)) {
-      return makeProjectItemIcon(QColor(121, 82, 168), QStringLiteral("T"));
-    }
-    if (QStringList{QStringLiteral("png"), QStringLiteral("jpg"), QStringLiteral("jpeg"), QStringLiteral("bmp"),
-                    QStringLiteral("gif"), QStringLiteral("tif"), QStringLiteral("tiff"), QStringLiteral("webp"),
-                    QStringLiteral("exr")}.contains(suffix)) {
-      return makeProjectItemIcon(QColor(66, 148, 98), QStringLiteral("I"));
-    }
-    if (QStringList{QStringLiteral("mp4"), QStringLiteral("mov"), QStringLiteral("avi"), QStringLiteral("mkv"),
-                    QStringLiteral("webm")}.contains(suffix)) {
-      return makeProjectItemIcon(QColor(170, 90, 48), QStringLiteral("V"));
-    }
-    if (QStringList{QStringLiteral("wav"), QStringLiteral("mp3"), QStringLiteral("flac"), QStringLiteral("ogg"),
-                    QStringLiteral("m4a"), QStringLiteral("aac")}.contains(suffix)) {
-      return makeProjectItemIcon(QColor(52, 120, 148), QStringLiteral("A"));
-    }
-    return makeProjectItemIcon(QColor(96, 96, 96), QStringLiteral("F"));
-  }
-  default:
-    return makeProjectItemIcon(QColor(90, 90, 90), QStringLiteral("?"));
-  }
 }
 
 } // namespace
@@ -178,6 +134,47 @@ void ArtifactProjectModel::Impl::refreshTree()
     qDebug() << "  child:" << c->name.toQString() << " type:" << (int)c->type();
   }
  }
+
+ auto iconForProjectItem = [](auto* it) -> QIcon {
+  if (!it) {
+   return makeProjectItemIcon(QColor(90, 90, 90), QStringLiteral("?"));
+  }
+  switch (it->type()) {
+  case eProjectItemType::Folder:
+   return makeProjectItemIcon(QColor(176, 138, 46), QStringLiteral("F"));
+  case eProjectItemType::Composition:
+   return makeProjectItemIcon(QColor(74, 128, 191), QStringLiteral("C"));
+  case eProjectItemType::Solid:
+   return makeProjectItemIcon(QColor(110, 88, 170), QStringLiteral("S"));
+  case eProjectItemType::Footage: {
+   auto* footage = static_cast<FootageItem*>(it);
+   const QFileInfo info(footage->filePath);
+   if (!info.exists()) {
+    return makeProjectItemIcon(QColor(140, 54, 54), QStringLiteral("!"));
+   }
+   const QString suffix = info.suffix().toLower();
+   if (QStringList{QStringLiteral("ttf"), QStringLiteral("otf"), QStringLiteral("ttc"), QStringLiteral("woff"), QStringLiteral("woff2")}.contains(suffix)) {
+    return makeProjectItemIcon(QColor(121, 82, 168), QStringLiteral("T"));
+   }
+   if (QStringList{QStringLiteral("png"), QStringLiteral("jpg"), QStringLiteral("jpeg"), QStringLiteral("bmp"),
+                   QStringLiteral("gif"), QStringLiteral("tif"), QStringLiteral("tiff"), QStringLiteral("webp"),
+                   QStringLiteral("exr")}.contains(suffix)) {
+    return makeProjectItemIcon(QColor(66, 148, 98), QStringLiteral("I"));
+   }
+   if (QStringList{QStringLiteral("mp4"), QStringLiteral("mov"), QStringLiteral("avi"), QStringLiteral("mkv"),
+                   QStringLiteral("webm")}.contains(suffix)) {
+    return makeProjectItemIcon(QColor(170, 90, 48), QStringLiteral("V"));
+   }
+   if (QStringList{QStringLiteral("wav"), QStringLiteral("mp3"), QStringLiteral("flac"), QStringLiteral("ogg"),
+                   QStringLiteral("m4a"), QStringLiteral("aac")}.contains(suffix)) {
+    return makeProjectItemIcon(QColor(52, 120, 148), QStringLiteral("A"));
+   }
+   return makeProjectItemIcon(QColor(96, 96, 96), QStringLiteral("F"));
+  }
+  default:
+   return makeProjectItemIcon(QColor(90, 90, 90), QStringLiteral("?"));
+  }
+ };
 
  std::function<QList<QStandardItem*>(ProjectItem*)> buildItem =
    [&](ProjectItem* it) -> QList<QStandardItem*> {

@@ -420,7 +420,7 @@ ArtifactFontFamilyPropertyEditor::ArtifactFontFamilyPropertyEditor(const Artifac
 
     setValueFromVariant(property.getValue());
     QObject::connect(comboBox_, &QFontComboBox::currentFontChanged, this, [this](const QFont& font) {
-        commitValue(FontManager::resolvedFamily(font.family()));
+        commitValue(ArtifactCore::FontManager::resolvedFamily(font.family()));
     });
 }
 
@@ -434,7 +434,7 @@ void ArtifactFontFamilyPropertyEditor::setValueFromVariant(const QVariant& value
     if (!comboBox_) {
         return;
     }
-    const QString family = FontManager::resolvedFamily(value.toString());
+    const QString family = ArtifactCore::FontManager::resolvedFamily(value.toString());
     const QSignalBlocker blocker(comboBox_);
     comboBox_->setCurrentFont(QFont(family));
 }

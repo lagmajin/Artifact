@@ -46,6 +46,8 @@ public:
     explicit ArtifactFloatPropertyEditor(const ArtifactCore::AbstractProperty& property, QWidget* parent = nullptr);
     QVariant value() const override;
     void setValueFromVariant(const QVariant& value) override;
+    bool supportsScrub() const override;
+    void scrubByPixels(int deltaPixels, bool fineAdjust) override;
 
 private:
     QDoubleSpinBox* spinBox_ = nullptr;
@@ -59,6 +61,8 @@ public:
     explicit ArtifactIntPropertyEditor(const ArtifactCore::AbstractProperty& property, QWidget* parent = nullptr);
     QVariant value() const override;
     void setValueFromVariant(const QVariant& value) override;
+    bool supportsScrub() const override;
+    void scrubByPixels(int deltaPixels, bool fineAdjust) override;
 
 private:
     QSpinBox* spinBox_ = nullptr;
