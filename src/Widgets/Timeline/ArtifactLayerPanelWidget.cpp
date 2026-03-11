@@ -374,13 +374,16 @@ int ArtifactLayerPanelHeaderWidget::totalHeaderHeight() const
    if (visibleRows.isEmpty()) {
     return 0;
    }
-   return std::clamp((y + (kLayerRowHeight / 2)) / kLayerRowHeight, 0, visibleRows.size());
+   return std::clamp<int>(
+    (y + (kLayerRowHeight / 2)) / kLayerRowHeight,
+    0,
+    static_cast<int>(visibleRows.size()));
   }
 
   int layerCountBeforeVisibleRow(const int visibleRowIndex) const
   {
    int count = 0;
-   const int limit = std::clamp(visibleRowIndex, 0, visibleRows.size());
+   const int limit = std::clamp<int>(visibleRowIndex, 0, static_cast<int>(visibleRows.size()));
    for (int i = 0; i < limit; ++i) {
     const auto& row = visibleRows[i];
     if (row.kind == RowKind::Layer && row.layer) {
@@ -989,13 +992,13 @@ void ArtifactLayerPanelWidget::mouseDoubleClickEvent(QMouseEvent* event)
     }
 
     if (oldIndex >= 0 && !visibleLayerIds.isEmpty()) {
-      const int targetVisibleIndex = std::clamp(
-       impl_->layerCountBeforeVisibleRow(impl_->dragInsertVisibleRow),
-       0,
-       visibleLayerIds.size());
+     const int targetVisibleIndex = std::clamp(
+      impl_->layerCountBeforeVisibleRow(impl_->dragInsertVisibleRow),
+      0,
+      static_cast<int>(visibleLayerIds.size()));
 
       int newIndex = oldIndex;
-      if (targetVisibleIndex >= visibleLayerIds.size()) {
+      if (targetVisibleIndex >= static_cast<int>(visibleLayerIds.size())) {
        newIndex = allLayers.size() - 1;
       } else {
        const LayerID targetLayerId = visibleLayerIds[targetVisibleIndex];
@@ -1011,7 +1014,10 @@ void ArtifactLayerPanelWidget::mouseDoubleClickEvent(QMouseEvent* event)
        }
       }
 
-      newIndex = std::clamp(newIndex, 0, std::max(0, allLayers.size() - 1));
+      newIndex = std::clamp(
+       newIndex,
+       0,
+       std::max(0, static_cast<int>(allLayers.size()) - 1));
       if (newIndex != oldIndex) {
        service->moveLayerInCurrentComposition(impl_->draggedLayerId, newIndex);
        updateLayout();
