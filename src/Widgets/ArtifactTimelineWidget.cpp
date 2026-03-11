@@ -196,13 +196,15 @@ using namespace ArtifactWidgets;
   private:
    void ensureOverlayHost()
    {
-    QWidget* desiredHost = regionWidget_ ? regionWidget_->window() : nullptr;
+    QWidget* desiredHost = regionWidget_;
     if (overlayHost_ == desiredHost) {
      return;
     }
 
     if (overlayHost_) {
-     overlayHost_->removeEventFilter(this);
+     if (overlayHost_ != regionWidget_) {
+      overlayHost_->removeEventFilter(this);
+     }
     }
     overlayHost_ = desiredHost;
     if (!overlayHost_) {
@@ -210,7 +212,9 @@ using namespace ArtifactWidgets;
     }
 
     overlay_->setParent(overlayHost_);
-    overlayHost_->installEventFilter(this);
+    if (overlayHost_ != regionWidget_) {
+     overlayHost_->installEventFilter(this);
+    }
    }
 
    QWidget* regionWidget_ = nullptr;
@@ -822,7 +826,7 @@ W_OBJECT_IMPL(ArtifactTimelineWidget)
   rightPanelLayout->addWidget(trackSplitter);
   rightPanel->setLayout(rightPanelLayout);
 
-  auto* playheadOverlay = new TimelinePlayheadOverlay(window() ? window() : rightPanel);
+  auto* playheadOverlay = new TimelinePlayheadOverlay(rightPanel);
 
   auto* playheadSync = new PlayheadSyncFilter(rightPanel, timelineTrackView, playheadOverlay, rightPanel);
   rightPanel->installEventFilter(playheadSync);
