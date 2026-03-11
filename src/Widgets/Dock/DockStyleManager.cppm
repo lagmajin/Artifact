@@ -91,8 +91,26 @@ bool isDockRelatedObject(QObject* watched, ads::CDockManager* dockManager) {
     return widget && dockManager->isAncestorOf(widget);
 }
 
+ads::CDockWidget* dockFromObject(QObject* object) {
+    QObject* cursor = object;
+    while (cursor) {
+        if (auto* tab = qobject_cast<ads::CDockWidgetTab*>(cursor)) {
+            return tab->dockWidget();
+        }
+        if (auto* dock = qobject_cast<ads::CDockWidget*>(cursor)) {
+            return dock;
+        }
+        cursor = cursor->parent();
+    }
+    return nullptr;
+}
+
 ads::CDockWidget* resolveActiveDock(ads::CDockManager* dockManager, ads::CDockWidget* rememberedDock) {
     if (!dockManager) return nullptr;
+
+    if (rememberedDock && rememberedDock->isVisible()) {
+        return rememberedDock;
+    }
 
     if (auto* focusedDock = dockManager->focusedDockWidget()) {
         if (focusedDock->isVisible()) {
@@ -117,10 +135,6 @@ ads::CDockWidget* resolveActiveDock(ads::CDockManager* dockManager, ads::CDockWi
         if (dock && dock->isVisible() && dock->isCurrentTab()) {
             return dock;
         }
-    }
-
-    if (rememberedDock && rememberedDock->isVisible()) {
-        return rememberedDock;
     }
 
     return nullptr;
@@ -206,13 +220,9 @@ bool DockStyleManager::eventFilter(QObject* watched, QEvent* event) {
         bool refreshImmediately = false;
         if ((event->type() == QEvent::MouseButtonPress || event->type() == QEvent::MouseButtonRelease) &&
             watched) {
-            if (auto* tab = qobject_cast<ads::CDockWidgetTab*>(watched)) {
-                if (auto* dock = tab->dockWidget()) {
-                    impl_->focusedDockWidget_ = dock;
-                    refreshImmediately = (event->type() == QEvent::MouseButtonPress);
-                }
-            } else if (auto* dock = qobject_cast<ads::CDockWidget*>(watched)) {
+            if (auto* dock = dockFromObject(watched)) {
                 impl_->focusedDockWidget_ = dock;
+                refreshImmediately = (event->type() == QEvent::MouseButtonPress);
             }
         }
 
