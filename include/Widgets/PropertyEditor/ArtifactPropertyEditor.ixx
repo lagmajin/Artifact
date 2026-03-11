@@ -5,6 +5,13 @@ module;
 #include <QPushButton>
 #include <QVariant>
 #include <QColor>
+#include <QCheckBox>
+#include <QComboBox>
+#include <QDoubleSpinBox>
+#include <QFontComboBox>
+#include <QLineEdit>
+#include <QSlider>
+#include <QSpinBox>
 
 export module Artifact.Widgets.PropertyEditor;
 
@@ -41,8 +48,8 @@ public:
     void setValueFromVariant(const QVariant& value) override;
 
 private:
-    class QDoubleSpinBox* spinBox_ = nullptr;
-    class QSlider* slider_ = nullptr;
+    QDoubleSpinBox* spinBox_ = nullptr;
+    QSlider* slider_ = nullptr;
     double softMin_ = 0.0;
     double softMax_ = 1.0;
 };
@@ -54,8 +61,8 @@ public:
     void setValueFromVariant(const QVariant& value) override;
 
 private:
-    class QSpinBox* spinBox_ = nullptr;
-    class QSlider* slider_ = nullptr;
+    QSpinBox* spinBox_ = nullptr;
+    QSlider* slider_ = nullptr;
     int softMin_ = 0;
     int softMax_ = 100;
 };
@@ -67,7 +74,7 @@ public:
     void setValueFromVariant(const QVariant& value) override;
 
 private:
-    class QCheckBox* checkBox_ = nullptr;
+    QCheckBox* checkBox_ = nullptr;
 };
 
 class ArtifactStringPropertyEditor final : public ArtifactAbstractPropertyEditor {
@@ -77,7 +84,7 @@ public:
     void setValueFromVariant(const QVariant& value) override;
 
 private:
-    class QLineEdit* lineEdit_ = nullptr;
+    QLineEdit* lineEdit_ = nullptr;
 };
 
 class ArtifactFontFamilyPropertyEditor final : public ArtifactAbstractPropertyEditor {
@@ -87,7 +94,7 @@ public:
     void setValueFromVariant(const QVariant& value) override;
 
 private:
-    class QFontComboBox* comboBox_ = nullptr;
+    QFontComboBox* comboBox_ = nullptr;
 };
 
 class ArtifactPathPropertyEditor final : public ArtifactAbstractPropertyEditor {
@@ -97,8 +104,8 @@ public:
     void setValueFromVariant(const QVariant& value) override;
 
 private:
-    class QLineEdit* lineEdit_ = nullptr;
-    class QPushButton* browseButton_ = nullptr;
+    QLineEdit* lineEdit_ = nullptr;
+    QPushButton* browseButton_ = nullptr;
 };
 
 class ArtifactEnumPropertyEditor final : public ArtifactAbstractPropertyEditor {
@@ -110,7 +117,7 @@ public:
     void setValueFromVariant(const QVariant& value) override;
 
 private:
-    class QComboBox* comboBox_ = nullptr;
+    QComboBox* comboBox_ = nullptr;
     OptionList options_;
 };
 
@@ -121,11 +128,11 @@ public:
     void setValueFromVariant(const QVariant& value) override;
 
 private:
-    void applyColor(const class QColor& color);
+    void applyColor(const QColor& color);
 
-    class QPushButton* button_ = nullptr;
-    class QLabel* valueLabel_ = nullptr;
-    class QColor currentColor_;
+    QPushButton* button_ = nullptr;
+    QLabel* valueLabel_ = nullptr;
+    QColor currentColor_;
 };
 
 class ArtifactPropertyEditorRowWidget final : public QWidget {
