@@ -137,6 +137,8 @@ namespace Artifact {
   bool isVideoFile(const QString& fileName) const;
   bool isAudioFile(const QString& fileName) const;
   bool isFontFile(const QString& fileName) const;
+  bool isImportedAssetPath(const QString& filePath) const;
+  QStringList selectedAssetPaths() const;
   void syncProjectAssetRoot();
   void syncDirectorySelection();
  };
@@ -234,6 +236,73 @@ bool ArtifactAssetBrowser::Impl::isFontFile(const QString& fileName) const
   return lower.endsWith(".ttf") || lower.endsWith(".otf") ||
          lower.endsWith(".ttc") || lower.endsWith(".woff") ||
          lower.endsWith(".woff2");
+}
+
+bool ArtifactAssetBrowser::Impl::isImportedAssetPath(const QString& filePath) const
+{
+  if (filePath.isEmpty()) {
+   return false;
+  }
+
+  auto* svc = ArtifactProjectService::instance();
+  if (!svc) {
+   return false;
+  }
+
+  const QString canonicalTarget = QFileInfo(filePath).canonicalFilePath().isEmpty()
+    ? QFileInfo(filePath).absoluteFilePath()
+    : QFileInfo(filePath).canonicalFilePath();
+
+  std::function<bool(ProjectItem*)> containsPath = [&](ProjectItem* item) -> bool {
+   if (!item) {
+    return false;
+   }
+   if (item->type() == eProjectItemType::Footage) {
+    const QString candidatePath = static_cast<FootageItem*>(item)->filePath;
+    const QString canonicalCandidate = QFileInfo(candidatePath).canonicalFilePath().isEmpty()
+      ? QFileInfo(candidatePath).absoluteFilePath()
+      : QFileInfo(candidatePath).canonicalFilePath();
+    if (QDir::cleanPath(canonicalCandidate) == QDir::cleanPath(canonicalTarget)) {
+     return true;
+    }
+   }
+   for (auto* child : item->children) {
+    if (containsPath(child)) {
+     return true;
+    }
+   }
+   return false;
+  };
+
+  const auto roots = svc->projectItems();
+  for (auto* root : roots) {
+   if (containsPath(root)) {
+    return true;
+   }
+  }
+  return false;
+}
+
+QStringList ArtifactAssetBrowser::Impl::selectedAssetPaths() const
+{
+  QStringList paths;
+  if (!fileView_ || !assetModel_ || !fileView_->selectionModel()) {
+   return paths;
+  }
+
+  const QModelIndexList selectedIndexes = fileView_->selectionModel()->selectedIndexes();
+  paths.reserve(selectedIndexes.size());
+  for (const QModelIndex& index : selectedIndexes) {
+   const AssetMenuItem item = assetModel_->itemAt(index.row());
+   if (!item.isFolder) {
+    const QString path = item.path.toQString();
+    if (!path.isEmpty()) {
+     paths.append(path);
+    }
+   }
+  }
+  paths.removeDuplicates();
+  return paths;
 }
 
  QIcon ArtifactAssetBrowser::Impl::generateThumbnail(const QString& filePath)
@@ -417,7 +486,11 @@ bool ArtifactAssetBrowser::Impl::isFontFile(const QString& fileName) const
    AssetMenuItem item;
    item.name = UniString::fromQString(entry);
    item.path = UniString::fromQString(fullPath);
-   item.type = UniString::fromQString(isDir ? "Folder" : fileInfo.suffix().toUpper());
+   QString itemType = isDir ? QStringLiteral("Folder") : fileInfo.suffix().toUpper();
+   if (!isDir && isImportedAssetPath(fullPath)) {
+    itemType = QStringLiteral("Imported • %1").arg(itemType);
+   }
+   item.type = UniString::fromQString(itemType);
    item.isFolder = isDir;
 
    // Generate thumbnail/icon for display
@@ -811,6 +884,7 @@ bool ArtifactAssetBrowser::Impl::isFontFile(const QString& fileName) const
   if (fileInfo.isDir()) {
    info += "Type: Folder<br>";
    info += QString("Entries: %1<br>").arg(QDir(filePath).entryList(QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot).size());
+   info += QString("Project: %1<br>").arg(impl_->isImportedAssetPath(filePath) ? QStringLiteral("Imported") : QStringLiteral("Not Imported"));
    impl_->fileInfoLabel_->setText(info);
    return;
   }
@@ -818,6 +892,7 @@ bool ArtifactAssetBrowser::Impl::isFontFile(const QString& fileName) const
   info += QString("Size: %1 KB<br>").arg(fileInfo.size() / 1024);
   info += QString("Type: %1<br>").arg(fileInfo.suffix().toUpper());
   info += QString("Modified: %1<br>").arg(fileInfo.lastModified().toString("yyyy-MM-dd hh:mm"));
+  info += QString("Project: %1<br>").arg(impl_->isImportedAssetPath(filePath) ? QStringLiteral("Imported") : QStringLiteral("Not Imported"));
 
   // Get image resolution for image files
   QString fileName = fileInfo.fileName();
@@ -874,13 +949,23 @@ bool ArtifactAssetBrowser::Impl::isFontFile(const QString& fileName) const
   // Create context menu
   QMenu contextMenu;
 
+  const QStringList selectedAssetPaths = impl_->selectedAssetPaths();
+  const QStringList importTargets = selectedAssetPaths.isEmpty() ? QStringList{filePath} : selectedAssetPaths;
+
   // Add to Project action
-  QAction* addToProjectAction = contextMenu.addAction("Add to Project");
-  connect(addToProjectAction, &QAction::triggered, this, [filePath]() {
-   if (filePath.isEmpty()) return;
+  const QString addActionLabel = importTargets.size() > 1
+   ? QStringLiteral("Add %1 Items to Project").arg(importTargets.size())
+   : QStringLiteral("Add to Project");
+  QAction* addToProjectAction = contextMenu.addAction(addActionLabel);
+  connect(addToProjectAction, &QAction::triggered, this, [this, importTargets, filePath]() {
+   if (importTargets.isEmpty() && filePath.isEmpty()) return;
    auto* svc = ArtifactProjectService::instance();
    if (!svc) return;
-   svc->importAssetsFromPaths(QStringList() << filePath);
+   const QStringList imported = svc->importAssetsFromPaths(importTargets.isEmpty() ? QStringList{filePath} : importTargets);
+   if (!imported.isEmpty()) {
+    filesDropped(imported);
+    impl_->applyFilters();
+   }
   });
 
   contextMenu.addSeparator();
