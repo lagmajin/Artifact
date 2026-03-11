@@ -1,4 +1,4 @@
-﻿module;
+module;
 #if defined(_WIN32)
 #include <Windows.h>
 #else
@@ -14,44 +14,9 @@
 
 #include <QtGlobal>
 
-#include <iostream>
-#include <vector>
-#include <string>
-#include <map>
-#include <unordered_map>
-#include <set>
-#include <unordered_set>
-#include <memory>
-#include <algorithm>
-#include <cmath>
-#include <functional>
-#include <optional>
-#include <utility>
-#include <array>
-#include <mutex>
-#include <thread>
-#include <chrono>
-#include <filesystem>
-#include <fstream>
-#include <sstream>
-#include <stdexcept>
-#include <type_traits>
-#include <variant>
-#include <any>
-#include <atomic>
-#include <condition_variable>
-#include <queue>
-#include <deque>
-#include <list>
-#include <tuple>
-#include <numeric>
-#include <regex>
-#include <random>
 module Core.SystemStats;
 
-
-
-
+import std;
 
 namespace ArtifactCore {
 
@@ -61,7 +26,6 @@ CpuMonitor::~CpuMonitor() {}
 SystemMemoryInfo CpuMonitor::queryMemory() const {
     SystemMemoryInfo info;
 #if defined(_WIN32)
-    // Windows implementation could be added later
     Q_UNUSED(info);
 #else
     FILE* f = fopen("/proc/meminfo", "r");
@@ -89,16 +53,16 @@ ProcessCpuInfo CpuMonitor::queryProcessCpu() {
 #else
     struct rusage usage;
     if (getrusage(RUSAGE_SELF, &usage) == 0) {
-        double procSecs = usage.ru_utime.tv_sec + usage.ru_utime.tv_usec / 1e6
-                         + usage.ru_stime.tv_sec + usage.ru_stime.tv_usec / 1e6;
+        const double procSecs = usage.ru_utime.tv_sec + usage.ru_utime.tv_usec / 1e6
+                              + usage.ru_stime.tv_sec + usage.ru_stime.tv_usec / 1e6;
         static double prevProc = 0.0;
         static double prevTime = 0.0;
         struct timespec ts;
         clock_gettime(CLOCK_MONOTONIC, &ts);
-        double now = ts.tv_sec + ts.tv_nsec / 1e9;
+        const double now = ts.tv_sec + ts.tv_nsec / 1e9;
         if (prevTime > 0.0) {
-            double dProc = procSecs - prevProc;
-            double dTime = now - prevTime;
+            const double dProc = procSecs - prevProc;
+            const double dTime = now - prevTime;
             if (dTime > 0.0) info.processPercent = (dProc / dTime) * 100.0;
         }
         prevProc = procSecs;

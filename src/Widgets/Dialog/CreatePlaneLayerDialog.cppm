@@ -12,6 +12,7 @@
 #include <wobjectimpl.h>
 module Artifact.Widgets.CreatePlaneLayerDialog;
 
+import std;
 import Widgets.Dialog.Abstract;
 import Artifact.Layer.Abstract;
 import Artifact.Layer.InitParams;
@@ -22,7 +23,7 @@ import Color.Float;
 import Artifact.Service.Project;
 import Artifact.Composition.Abstract;
 import Composition.Settings;
-import Artifact.Layer.Solid2D;
+import Artifact.Layers.SolidImage;
 
 namespace Artifact {
 	
@@ -242,7 +243,7 @@ namespace Artifact {
   EditableLabel* nameEditableLabel = nullptr;
   PlaneLayerSettingPage* settingPage = nullptr;
   QDialogButtonBox* dialogButtonBox = nullptr;
-  ArtifactSolid2DLayer* targetLayer = nullptr;
+  ArtifactSolidImageLayer* targetLayer = nullptr;
  };
 
  EditPlaneLayerSettingDialog::EditPlaneLayerSettingDialog(QWidget* parent) :QDialog(parent), impl_(new Impl())
@@ -297,7 +298,7 @@ namespace Artifact {
  {
  }
 
- void EditPlaneLayerSettingDialog::setupEdit(std::shared_ptr<ArtifactSolid2DLayer> layer)
+ void EditPlaneLayerSettingDialog::setupEdit(std::shared_ptr<ArtifactSolidImageLayer> layer)
  {
      if (!layer) return;
      impl_->targetLayer = layer.get();
