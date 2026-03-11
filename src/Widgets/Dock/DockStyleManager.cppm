@@ -203,15 +203,23 @@ bool DockStyleManager::eventFilter(QObject* watched, QEvent* event) {
     }
 
     if (isDockRelatedObject(watched, impl_->dockManager_)) {
+        bool refreshImmediately = false;
         if ((event->type() == QEvent::MouseButtonPress || event->type() == QEvent::MouseButtonRelease) &&
             watched) {
             if (auto* tab = qobject_cast<ads::CDockWidgetTab*>(watched)) {
                 if (auto* dock = tab->dockWidget()) {
                     impl_->focusedDockWidget_ = dock;
+                    refreshImmediately = (event->type() == QEvent::MouseButtonPress);
                 }
             } else if (auto* dock = qobject_cast<ads::CDockWidget*>(watched)) {
                 impl_->focusedDockWidget_ = dock;
             }
+        }
+
+        if (refreshImmediately) {
+            impl_->refreshScheduled_ = false;
+            refreshDockDecorations();
+            return QObject::eventFilter(watched, event);
         }
 
         switch (event->type()) {
