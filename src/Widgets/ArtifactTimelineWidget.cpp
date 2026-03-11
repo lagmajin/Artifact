@@ -38,6 +38,7 @@ import Panel.DraggableSplitter;
 import Artifact.Timeline.Objects;
 import Artifact.Widgets.Timeline.GlobalSwitches;
 import Artifact.Service.Project;
+import Artifact.Service.Playback;
 import Artifact.Application.Manager;
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
@@ -805,6 +806,11 @@ W_OBJECT_IMPL(ArtifactTimelineWidget)
       const int frame = static_cast<int>(std::round(std::clamp(ratio, 0.0, 1.0) * frameMax));
       scrubBar->setCurrentFrame(FramePosition(frame));
     });
+    QObject::connect(timelineTrackView, &TimelineTrackView::seekPositionChanged, this, [this](double) {
+      if (impl_->playheadSync_) {
+       impl_->playheadSync_->sync();
+      }
+    });
 
     impl_->trackView_ = timelineTrackView;  // Store reference for layer creation
   //auto layerTimelinePanel = new ArtifactLayerTimelinePanelWrapper();
@@ -862,6 +868,21 @@ W_OBJECT_IMPL(ArtifactTimelineWidget)
     impl_->playheadSync_->sync();
    }
   });
+  if (auto* playbackService = ArtifactPlaybackService::instance()) {
+   QObject::connect(playbackService, &ArtifactPlaybackService::frameChanged, this,
+    [this, timelineTrackView, scrubBar, playbackService](const FramePosition& frame) {
+     const auto currentComp = playbackService->currentComposition();
+     if (!currentComp || currentComp->id() != impl_->compositionId_) {
+      return;
+     }
+
+     timelineTrackView->setPosition(static_cast<double>(frame.framePosition()));
+     scrubBar->setCurrentFrame(frame);
+     if (impl_->playheadSync_) {
+      impl_->playheadSync_->sync();
+     }
+    });
+  }
   QTimer::singleShot(0, this, [updateZoom]() {
    updateZoom();
   });
@@ -974,7 +995,10 @@ W_OBJECT_IMPL(ArtifactTimelineWidget)
       }
       int totalFrames = static_cast<int>(std::round(comp->frameRange().duration()));
       if (totalFrames < 2) {
-       totalFrames = kDefaultTimelineFrames;
+        totalFrames = kDefaultTimelineFrames;
+      }
+      if (auto* playbackService = ArtifactPlaybackService::instance()) {
+       playbackService->setCurrentComposition(comp);
       }
       impl_->trackView_->setDuration(static_cast<double>(totalFrames));
       if (impl_->workArea_) {
@@ -985,13 +1009,14 @@ W_OBJECT_IMPL(ArtifactTimelineWidget)
        impl_->workArea_->setStart(static_cast<float>(startNorm));
        impl_->workArea_->setEnd(static_cast<float>(endNorm));
       }
-      if (impl_->scrubBar_) {
-       impl_->scrubBar_->setTotalFrames(std::max(1, totalFrames));
-       impl_->scrubBar_->setCurrentFrame(FramePosition(0));
-      }
-      if (auto* app = ArtifactApplicationManager::instance()) {
-       if (auto* ctx = app->activeContextService()) {
-        ctx->seekToFrame(0);
+       if (impl_->scrubBar_) {
+        impl_->scrubBar_->setTotalFrames(std::max(1, totalFrames));
+        impl_->scrubBar_->setCurrentFrame(FramePosition(0));
+       }
+       impl_->trackView_->setPosition(0.0);
+       if (auto* app = ArtifactApplicationManager::instance()) {
+        if (auto* ctx = app->activeContextService()) {
+         ctx->seekToFrame(0);
        }
       }
       if (impl_->playheadSync_) {
