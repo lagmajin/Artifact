@@ -74,12 +74,28 @@ namespace {
 
   Diligent::IEngineFactoryVk* resolveVkFactory()
   {
+#if VULKAN_SUPPORTED
+#if DILIGENT_VK_EXPLICIT_LOAD
    return Diligent::LoadAndGetEngineFactoryVk();
+#else
+   return Diligent::GetEngineFactoryVk();
+#endif
+#else
+   return nullptr;
+#endif
   }
 
   Diligent::IEngineFactoryD3D12* resolveD3D12Factory()
   {
+#if D3D12_SUPPORTED
+#if DILIGENT_D3D12_SHARED
    return Diligent::LoadAndGetEngineFactoryD3D12();
+#else
+   return Diligent::GetEngineFactoryD3D12();
+#endif
+#else
+   return nullptr;
+#endif
   }
  }
 
