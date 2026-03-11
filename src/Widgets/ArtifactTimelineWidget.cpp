@@ -768,6 +768,7 @@ W_OBJECT_IMPL(ArtifactTimelineWidget)
     auto scrubBar = impl_->scrubBar_ = new ArtifactTimelineScrubBar();
     auto timelineTrackView = impl_->trackView_ = new TimelineTrackView();
     timelineTrackView->setDuration(kDefaultTimelineFrames);
+    timeNavigatorWidget->setTotalFrames(kDefaultTimelineFrames);
     timeNavigatorWidget->setFixedHeight(kTimelineTopRowHeight);
     timeNavigatorWidget->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     scrubBar->setFixedHeight(kTimelineHeaderRowHeight);
@@ -1056,7 +1057,10 @@ W_OBJECT_IMPL(ArtifactTimelineWidget)
         impl_->scrubBar_->setTotalFrames(std::max(1, totalFrames));
         impl_->scrubBar_->setCurrentFrame(FramePosition(0));
        }
-       impl_->trackView_->setPosition(0.0);
+       if (impl_->navigator_) {
+        impl_->navigator_->setTotalFrames(std::max(1, totalFrames));
+       }
+        impl_->trackView_->setPosition(0.0);
        if (auto* app = ArtifactApplicationManager::instance()) {
         if (auto* ctx = app->activeContextService()) {
          ctx->seekToFrame(0);
