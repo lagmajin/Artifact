@@ -374,7 +374,8 @@ bool ArtifactProjectService::moveLayerInCurrentComposition(const LayerID& layerI
         return false;
     }
 
-    const int clampedIndex = std::clamp(newIndex, 0, layers.size() - 1);
+    const int lastIndex = static_cast<int>(layers.size()) - 1;
+    const int clampedIndex = std::clamp<int>(newIndex, 0, lastIndex);
     comp->moveLayerToIndex(layerId, clampedIndex);
     notifyProjectMutation(impl_->projectManager());
     return true;
