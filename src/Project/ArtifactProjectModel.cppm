@@ -53,6 +53,8 @@ import Artifact.Project.Roles;
 namespace Artifact
 {
 
+using namespace ArtifactCore;
+
 namespace {
 
 QIcon makeProjectItemIcon(const QColor& fill, const QString& text = {})
@@ -75,20 +77,20 @@ QIcon makeProjectItemIcon(const QColor& fill, const QString& text = {})
   return QIcon(px);
 }
 
-QIcon iconForProjectItem(Artifact::ProjectItem* it)
+QIcon iconForProjectItem(ProjectItem* it)
 {
   if (!it) {
     return makeProjectItemIcon(QColor(90, 90, 90), QStringLiteral("?"));
   }
   switch (it->type()) {
-  case Artifact::eProjectItemType::Folder:
+  case eProjectItemType::Folder:
     return makeProjectItemIcon(QColor(176, 138, 46), QStringLiteral("F"));
-  case Artifact::eProjectItemType::Composition:
+  case eProjectItemType::Composition:
     return makeProjectItemIcon(QColor(74, 128, 191), QStringLiteral("C"));
-  case Artifact::eProjectItemType::Solid:
+  case eProjectItemType::Solid:
     return makeProjectItemIcon(QColor(110, 88, 170), QStringLiteral("S"));
-  case Artifact::eProjectItemType::Footage: {
-    auto* footage = static_cast<Artifact::FootageItem*>(it);
+  case eProjectItemType::Footage: {
+    auto* footage = static_cast<FootageItem*>(it);
     const QFileInfo info(footage->filePath);
     if (!info.exists()) {
       return makeProjectItemIcon(QColor(140, 54, 54), QStringLiteral("!"));
@@ -177,8 +179,8 @@ void ArtifactProjectModel::Impl::refreshTree()
   }
  }
 
- std::function<QList<QStandardItem*>(Artifact::ProjectItem*)> buildItem =
-   [&](Artifact::ProjectItem* it) -> QList<QStandardItem*> {
+ std::function<QList<QStandardItem*>(ProjectItem*)> buildItem =
+   [&](ProjectItem* it) -> QList<QStandardItem*> {
   QString text = it->name.toQString();
   QStandardItem* item = new QStandardItem(text);
   QStandardItem* sizeItem = new QStandardItem();
