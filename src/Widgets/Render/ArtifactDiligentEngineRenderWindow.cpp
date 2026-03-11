@@ -1,7 +1,7 @@
 module;
 #include <EngineFactory.h>
 #include <EngineFactoryD3D12.h>
-#include <EngineFactoryVk.h>
+#include <DiligentCore/Graphics/GraphicsEngineVulkan/interface/EngineFactoryVk.h>
 #include <PipelineState.h>
 #include <wobjectimpl.h>
 #include <windows.h>
