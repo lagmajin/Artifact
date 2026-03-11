@@ -1029,6 +1029,7 @@ public:
     };
     std::deque<ProxyJob> proxyJobs_;
     QTimer* proxyQueueTimer_ = nullptr;
+    QMetaObject::Connection currentRowChangedConnection_;
 
     QModelIndex currentSourceIndexFromSelection() const {
         if (!projectView_ || !projectView_->selectionModel()) {
@@ -1237,14 +1238,15 @@ public:
             }
             projectView_->expandToDepth(1);
             if (projectView_->selectionModel()) {
-                QObject::connect(projectView_->selectionModel(), &QItemSelectionModel::currentRowChanged, projectView_,
+                QObject::disconnect(currentRowChangedConnection_);
+                currentRowChangedConnection_ =
+                    QObject::connect(projectView_->selectionModel(), &QItemSelectionModel::currentRowChanged, projectView_,
                     [this](const QModelIndex& current, const QModelIndex&) {
                         if (!current.isValid() || !proxyModel_ || !infoPanel_) {
                             return;
                         }
                         infoPanel_->updateInfo(proxyModel_->mapToSource(current));
-                    },
-                    Qt::UniqueConnection);
+                    });
             }
         }
         refreshUnusedAssetCache();
