@@ -57,6 +57,7 @@ import Image.ImageF32x4_RGBA;
 import Size;
 import Property.Abstract;
 import Property.Group;
+import Font.FreeFont;
 import Text.Style;
 
 namespace Artifact
@@ -327,10 +328,7 @@ void ArtifactTextLayer::updateImage() {
         displayText = QStringLiteral(" ");
     }
 
-    QFont font(impl_->textStyle_.fontFamily.toQString(), static_cast<int>(std::round(impl_->textStyle_.fontSize)));
-    font.setBold(impl_->textStyle_.bold);
-    font.setItalic(impl_->textStyle_.italic);
-    font.setLetterSpacing(QFont::AbsoluteSpacing, impl_->textStyle_.tracking);
+    QFont font = FontManager::makeFont(impl_->textStyle_);
 
     QFontMetricsF metrics(font);
     const QStringList lines = displayText.split('\n');
