@@ -348,6 +348,24 @@ bool ArtifactProjectService::removeLayerFromComposition(const CompositionID& com
     return ok;
 }
 
+bool ArtifactProjectService::moveLayerInCurrentComposition(const LayerID& layerId, int newIndex)
+{
+    auto comp = currentComposition().lock();
+    if (!comp || layerId.isNil()) {
+        return false;
+    }
+
+    const auto layers = comp->allLayer();
+    if (layers.isEmpty()) {
+        return false;
+    }
+
+    const int clampedIndex = std::clamp(newIndex, 0, layers.size() - 1);
+    comp->moveLayerToIndex(layerId, clampedIndex);
+    notifyProjectMutation(impl_->projectManager());
+    return true;
+}
+
 bool ArtifactProjectService::duplicateLayerInCurrentComposition(const LayerID& layerId)
 {
     auto comp = currentComposition().lock();

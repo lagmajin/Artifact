@@ -77,6 +77,7 @@ export namespace Artifact
   void addLayer(const CompositionID& id, const ArtifactLayerInitParams& params);
   void addLayerToCurrentComposition(const ArtifactLayerInitParams& params);
   bool removeLayerFromComposition(const CompositionID& compositionId, const LayerID& layerId);
+  bool moveLayerInCurrentComposition(const LayerID& layerId, int newIndex);
   bool duplicateLayerInCurrentComposition(const LayerID& layerId);
   bool renameLayerInCurrentComposition(const LayerID& layerId, const QString& newName);
   bool isLayerVisibleInCurrentComposition(const LayerID& layerId);
