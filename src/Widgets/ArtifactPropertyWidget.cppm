@@ -3,15 +3,9 @@
 #include <QWidget>
 #include <QVBoxLayout>
 #include <QLabel>
-#include <QDoubleSpinBox>
-#include <QSpinBox>
-#include <QCheckBox>
-#include <QPushButton>
 #include <QLineEdit>
 #include <QFormLayout>
-#include <QColorDialog>
 #include <QGroupBox>
-#include <QHBoxLayout>
 #include <QCursor>
 #include <wobjectimpl.h>
 
@@ -60,6 +54,7 @@ import Undo.UndoManager;
 import Artifact.Effect.Abstract;
 import Utils.String.UniString;
 import Artifact.Widgets.ExpressionCopilotWidget;
+import Artifact.Widgets.PropertyEditor;
 
 namespace Artifact {
 
@@ -76,6 +71,140 @@ public:
 
     void rebuildUI();
 };
+
+namespace {
+
+QString humanizePropertyLabel(QString name)
+{
+    const int dot = name.lastIndexOf('.');
+    if (dot >= 0 && dot + 1 < name.size()) {
+        name = name.mid(dot + 1);
+    }
+
+    QString out;
+    out.reserve(name.size() * 2);
+    for (int i = 0; i < name.size(); ++i) {
+        const QChar ch = name.at(i);
+        if (ch == '_' || ch == '-') {
+            out += ' ';
+            continue;
+        }
+        if (i > 0 && ch.isUpper() && name.at(i - 1).isLetterOrNumber()) {
+            out += ' ';
+        }
+        out += ch;
+    }
+
+    bool cap = true;
+    for (int i = 0; i < out.size(); ++i) {
+        if (out.at(i).isSpace()) {
+            cap = true;
+            continue;
+        }
+        if (cap) {
+            out[i] = out.at(i).toUpper();
+            cap = false;
+        }
+    }
+    return out;
+}
+
+bool propertyMatchesFilter(const ArtifactCore::AbstractProperty& property, const QString& filterText)
+{
+    const QString query = filterText.trimmed();
+    if (query.isEmpty()) {
+        return true;
+    }
+
+    const QString key = property.getName();
+    const QString friendly = humanizePropertyLabel(key);
+    return key.contains(query, Qt::CaseInsensitive) || friendly.contains(query, Qt::CaseInsensitive);
+}
+
+ArtifactPropertyEditorRowWidget* createPropertyRow(
+    QWidget* parent,
+    const ArtifactCore::AbstractProperty& property,
+    const std::function<void(const QString&, const QVariant&)>& applyValue)
+{
+    auto* editor = createPropertyEditorWidget(property, parent);
+    if (!editor) {
+        return nullptr;
+    }
+
+    const auto meta = property.metadata();
+    const QString labelText = meta.displayLabel.isEmpty() ? humanizePropertyLabel(property.getName()) : meta.displayLabel;
+    auto* row = new ArtifactPropertyEditorRowWidget(labelText, editor, property.getName(), parent);
+    editor->setCommitHandler([applyValue, propertyName = property.getName()](const QVariant& value) {
+        applyValue(propertyName, value);
+    });
+
+    if (!meta.tooltip.isEmpty()) {
+        row->setEditorToolTip(meta.tooltip);
+    }
+
+    row->setExpressionHandler([propertyName = property.getName()]() {
+        auto* copilot = new ArtifactExpressionCopilotWidget();
+        copilot->setWindowFlags(Qt::Window | Qt::WindowStaysOnTopHint | Qt::Tool);
+        copilot->setWindowTitle(QStringLiteral("Expression Copilot: %1").arg(propertyName));
+        copilot->setAttribute(Qt::WA_DeleteOnClose);
+        copilot->move(QCursor::pos() - QPoint(150, 200));
+        copilot->show();
+    });
+
+    return row;
+}
+
+void addRowsFromProperties(
+    QWidget* parent,
+    QVBoxLayout* layout,
+    const std::vector<std::shared_ptr<ArtifactCore::AbstractProperty>>& properties,
+    const QString& filterText,
+    const std::function<void(const QString&, const QVariant&)>& applyValue,
+    bool* addedAny)
+{
+    for (const auto& ptr : properties) {
+        if (!ptr || !propertyMatchesFilter(*ptr, filterText)) {
+            continue;
+        }
+        if (auto* row = createPropertyRow(parent, *ptr, applyValue)) {
+            layout->addWidget(row);
+            if (addedAny) {
+                *addedAny = true;
+            }
+        }
+    }
+}
+
+std::vector<std::shared_ptr<ArtifactCore::AbstractProperty>> prioritizedSummaryProperties(
+    const std::vector<std::shared_ptr<ArtifactCore::AbstractProperty>>& properties,
+    const std::unordered_set<std::string>& preferredKeys,
+    const std::size_t maxCount)
+{
+    std::vector<std::shared_ptr<ArtifactCore::AbstractProperty>> preferred;
+    std::vector<std::shared_ptr<ArtifactCore::AbstractProperty>> fallback;
+    preferred.reserve(properties.size());
+    fallback.reserve(properties.size());
+
+    for (const auto& property : properties) {
+        if (!property) {
+            continue;
+        }
+        const auto key = property->getName().toStdString();
+        if (preferredKeys.contains(key)) {
+            preferred.push_back(property);
+        } else {
+            fallback.push_back(property);
+        }
+    }
+
+    preferred.insert(preferred.end(), fallback.begin(), fallback.end());
+    if (preferred.size() > maxCount) {
+        preferred.resize(maxCount);
+    }
+    return preferred;
+}
+
+} // namespace
 
 ArtifactPropertyWidget::ArtifactPropertyWidget(QWidget* parent)
     : QScrollArea(parent), impl_(new Impl()) 
@@ -169,185 +298,120 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
     QLabel* layerNameLabel = new QLabel(QString("<b>Layer: %1</b>").arg(currentLayer->layerName()));
     mainLayout->addWidget(layerNameLabel);
 
-    const auto humanizePropertyLabel = [](QString name) {
-        const int dot = name.lastIndexOf('.');
-        if (dot >= 0 && dot + 1 < name.size()) {
-            name = name.mid(dot + 1);
-        }
-
-        QString out;
-        out.reserve(name.size() * 2);
-        for (int i = 0; i < name.size(); ++i) {
-            const QChar ch = name.at(i);
-            if (ch == '_' || ch == '-') {
-                out += ' ';
-                continue;
-            }
-            if (i > 0 && ch.isUpper() && name.at(i - 1).isLetterOrNumber()) {
-                out += ' ';
-            }
-            out += ch;
-        }
-
-        bool cap = true;
-        for (int i = 0; i < out.size(); ++i) {
-            if (out.at(i).isSpace()) {
-                cap = true;
-                continue;
-            }
-            if (cap) {
-                out[i] = out.at(i).toUpper();
-                cap = false;
-            }
-        }
-        return out;
-    };
-
-    const auto addPropertyRow = [this, &humanizePropertyLabel](QFormLayout* form,
-                                       const ArtifactCore::AbstractProperty& p,
-                                       const std::function<void(const QString&, const QVariant&)>& applyValue) {
-        const QString query = filterText.trimmed();
-        if (!query.isEmpty()) {
-            const QString key = p.getName();
-            const QString friendly = humanizePropertyLabel(key);
-            if (!key.contains(query, Qt::CaseInsensitive) &&
-                !friendly.contains(query, Qt::CaseInsensitive)) {
-                return;
-            }
-        }
-
-        const auto meta = p.metadata();
-        const QString labelText = meta.displayLabel.isEmpty() ? humanizePropertyLabel(p.getName()) : meta.displayLabel;
-        QLabel* label = new QLabel(labelText);
-        QWidget* editor = nullptr;
-
-        const QString propName = p.getName();
-        const QVariant curVal = p.getValue();
-
-        switch (p.getType()) {
-            case ArtifactCore::PropertyType::Float: {
-                auto* spin = new QDoubleSpinBox();
-                const double minValue = meta.hardMin.isValid() ? meta.hardMin.toDouble() : -1e6;
-                const double maxValue = meta.hardMax.isValid() ? meta.hardMax.toDouble() : 1e6;
-                spin->setRange(minValue, maxValue);
-                spin->setValue(curVal.toDouble());
-                if (meta.step.isValid()) spin->setSingleStep(meta.step.toDouble());
-                if (!meta.unit.isEmpty()) spin->setSuffix(" " + meta.unit);
-                editor = spin;
-                QObject::connect(spin, &QDoubleSpinBox::editingFinished, [applyValue, propName, spin]() {
-                    applyValue(propName, spin->value());
-                });
-                break;
-            }
-            case ArtifactCore::PropertyType::Integer: {
-                auto* spin = new QSpinBox();
-                const int minValue = meta.hardMin.isValid() ? meta.hardMin.toInt() : -1000000;
-                const int maxValue = meta.hardMax.isValid() ? meta.hardMax.toInt() : 1000000;
-                spin->setRange(minValue, maxValue);
-                spin->setValue(curVal.toInt());
-                if (meta.step.isValid()) spin->setSingleStep(meta.step.toInt());
-                if (!meta.unit.isEmpty()) spin->setSuffix(" " + meta.unit);
-                editor = spin;
-                QObject::connect(spin, &QSpinBox::editingFinished, [applyValue, propName, spin]() {
-                    applyValue(propName, spin->value());
-                });
-                break;
-            }
-            case ArtifactCore::PropertyType::Boolean: {
-                auto* cb = new QCheckBox();
-                cb->setChecked(curVal.toBool());
-                editor = cb;
-                QObject::connect(cb, &QCheckBox::toggled, [applyValue, propName](bool checked) {
-                    applyValue(propName, checked);
-                });
-                break;
-            }
-            case ArtifactCore::PropertyType::Color: {
-                auto* btn = new QPushButton(QStringLiteral(" "));
-                QColor c = p.getColorValue();
-                if (!c.isValid() && curVal.canConvert<QColor>()) {
-                    c = curVal.value<QColor>();
-                }
-                btn->setStyleSheet(QString("background-color: %1").arg(c.isValid() ? c.name() : QStringLiteral("#000000")));
-                editor = btn;
-                QObject::connect(btn, &QPushButton::clicked, [applyValue, propName, btn, c]() {
-                    const QColor newColor = QColorDialog::getColor(c, btn, QStringLiteral("Select Color"));
-                    if (!newColor.isValid()) return;
-                    btn->setStyleSheet(QString("background-color: %1").arg(newColor.name()));
-                    applyValue(propName, newColor);
-                });
-                break;
-            }
-            case ArtifactCore::PropertyType::String: {
-                auto* line = new QLineEdit(curVal.toString());
-                editor = line;
-                QObject::connect(line, &QLineEdit::editingFinished, [applyValue, propName, line]() {
-                    applyValue(propName, line->text());
-                });
-                break;
-            }
-            default:
-                editor = new QLabel(curVal.toString());
-                break;
-        }
-
-        if (!editor) return;
-        if (!meta.tooltip.isEmpty()) {
-            label->setToolTip(meta.tooltip);
-            editor->setToolTip(meta.tooltip);
-        }
-
-        QWidget* rowWidget = new QWidget();
-        QHBoxLayout* rowLayout = new QHBoxLayout(rowWidget);
-        rowLayout->setContentsMargins(0, 0, 0, 0);
-        rowLayout->setSpacing(4);
-        editor->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-        rowLayout->addWidget(editor);
-
-        QPushButton* copilotBtn = new QPushButton(QString::fromUtf8("✨"));
-        copilotBtn->setToolTip("Expression Copilot");
-        copilotBtn->setFixedSize(24, 24);
-        QObject::connect(copilotBtn, &QPushButton::clicked, [propName]() {
-            auto copilot = new ArtifactExpressionCopilotWidget();
-            copilot->setWindowFlags(Qt::Window | Qt::WindowStaysOnTopHint | Qt::Tool);
-            copilot->setWindowTitle("Expression Copilot: " + propName);
-            copilot->setAttribute(Qt::WA_DeleteOnClose);
-            copilot->move(QCursor::pos() - QPoint(150, 200));
-            copilot->show();
-        });
-        rowLayout->addWidget(copilotBtn);
-        form->addRow(label, rowWidget);
-    };
-
     bool hasAnyProperties = false;
 
-    const auto layerGroups = currentLayer->getLayerPropertyGroups();
-    for (const auto& groupDef : layerGroups) {
-        QGroupBox* group = new QGroupBox(groupDef.name().isEmpty() ? QStringLiteral("Layer") : groupDef.name());
-        QFormLayout* form = new QFormLayout(group);
-        form->setLabelAlignment(Qt::AlignLeft);
-        form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+    auto* summaryGroup = new QGroupBox(QStringLiteral("Summary"));
+    auto* summaryLayout = new QVBoxLayout(summaryGroup);
+    summaryLayout->setContentsMargins(8, 8, 8, 8);
+    summaryLayout->setSpacing(4);
 
+    const std::unordered_set<std::string> keyLayerProperties = {
+        "layer.name",
+        "layer.visible",
+        "layer.locked",
+        "layer.solo",
+        "layer.shy",
+        "time.inPoint",
+        "time.outPoint",
+        "time.startTime"
+    };
+
+    const auto layerGroups = currentLayer->getLayerPropertyGroups();
+    std::vector<std::shared_ptr<ArtifactCore::AbstractProperty>> layerSummaryProperties;
+    for (const auto& groupDef : layerGroups) {
         auto sortedProps = groupDef.sortedProperties();
-        for (const auto& ptr : sortedProps) {
-            if (!ptr) continue;
-            addPropertyRow(form, *ptr, [this](const QString& name, const QVariant& value) {
-                if (currentLayer) {
-                    currentLayer->setLayerPropertyValue(name, value);
-                }
-            });
-            hasAnyProperties = true;
-        }
-        mainLayout->addWidget(group);
+        auto picked = prioritizedSummaryProperties(sortedProps, keyLayerProperties, 4);
+        layerSummaryProperties.insert(layerSummaryProperties.end(), picked.begin(), picked.end());
     }
+
+    bool hasSummaryProperties = false;
+    addRowsFromProperties(
+        summaryGroup,
+        summaryLayout,
+        layerSummaryProperties,
+        filterText,
+        [this](const QString& name, const QVariant& value) {
+            if (currentLayer) {
+                currentLayer->setLayerPropertyValue(name, value);
+            }
+        },
+        &hasSummaryProperties);
 
     const auto effects = currentLayer->getEffects();
     const bool hasFocusedEffect = !focusedEffectId.trimmed().isEmpty();
+    for (const auto& effect : effects) {
+        if (!effect) {
+            continue;
+        }
+        if (hasFocusedEffect && effect->effectID().toQString() != focusedEffectId) {
+            continue;
+        }
+
+        ArtifactCore::PropertyGroup propGroup(effect->displayName().toQString());
+        for (const auto& property : effect->getProperties()) {
+            propGroup.addProperty(std::make_shared<ArtifactCore::AbstractProperty>(property));
+        }
+
+        auto effectSummary = prioritizedSummaryProperties(propGroup.sortedProperties(), {}, 3);
+        if (effectSummary.empty()) {
+            continue;
+        }
+
+        auto* effectLabel = new QLabel(QStringLiteral("Effect: %1").arg(effect->displayName().toQString()), summaryGroup);
+        effectLabel->setStyleSheet(QStringLiteral("QLabel { color: #9aa7b5; font-weight: bold; }"));
+        summaryLayout->addWidget(effectLabel);
+
+        addRowsFromProperties(
+            summaryGroup,
+            summaryLayout,
+            effectSummary,
+            filterText,
+            [effect](const QString& name, const QVariant& value) {
+                effect->setPropertyValue(name, value);
+            },
+            &hasSummaryProperties);
+    }
+
+    if (hasSummaryProperties) {
+        mainLayout->addWidget(summaryGroup);
+        hasAnyProperties = true;
+    } else {
+        delete summaryGroup;
+    }
+
+    for (const auto& groupDef : layerGroups) {
+        QGroupBox* group = new QGroupBox(groupDef.name().isEmpty() ? QStringLiteral("Layer") : groupDef.name());
+        auto* groupLayout = new QVBoxLayout(group);
+        groupLayout->setContentsMargins(8, 8, 8, 8);
+        groupLayout->setSpacing(4);
+
+        auto sortedProps = groupDef.sortedProperties();
+        bool addedGroupProperties = false;
+        addRowsFromProperties(
+            group,
+            groupLayout,
+            sortedProps,
+            filterText,
+            [this](const QString& name, const QVariant& value) {
+                if (currentLayer) {
+                    currentLayer->setLayerPropertyValue(name, value);
+                }
+            },
+            &addedGroupProperties);
+        if (addedGroupProperties) {
+            mainLayout->addWidget(group);
+            hasAnyProperties = true;
+        } else {
+            delete group;
+        }
+    }
+
     if (hasFocusedEffect) {
-        QLabel* focusedLabel = new QLabel(QString("Focused Effect ID: %1").arg(focusedEffectId));
-        focusedLabel->setStyleSheet("QLabel { color: #9aa7b5; font-size: 11px; }");
+        auto* focusedLabel = new QLabel(QStringLiteral("Focused Effect ID: %1").arg(focusedEffectId));
+        focusedLabel->setStyleSheet(QStringLiteral("QLabel { color: #9aa7b5; font-size: 11px; }"));
         mainLayout->addWidget(focusedLabel);
     }
+
     for (const auto& effect : effects) {
         if (!effect) continue;
         if (hasFocusedEffect && effect->effectID().toQString() != focusedEffectId) {
@@ -364,9 +428,9 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
         }
 
         QGroupBox* group = new QGroupBox(QString("%1 %2").arg(stageName).arg(effect->displayName().toQString()));
-        QFormLayout* form = new QFormLayout(group);
-        form->setLabelAlignment(Qt::AlignLeft);
-        form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+        auto* groupLayout = new QVBoxLayout(group);
+        groupLayout->setContentsMargins(8, 8, 8, 8);
+        groupLayout->setSpacing(4);
 
         ArtifactCore::PropertyGroup propGroup(effect->displayName().toQString());
         for (const auto& p : effect->getProperties()) {
@@ -374,15 +438,23 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
         }
 
         auto sortedProps = propGroup.sortedProperties();
-        for (const auto& ptr : sortedProps) {
-            if (!ptr) continue;
-            addPropertyRow(form, *ptr, [effect](const QString& name, const QVariant& value) {
+        bool addedGroupProperties = false;
+        addRowsFromProperties(
+            group,
+            groupLayout,
+            sortedProps,
+            filterText,
+            [effect](const QString& name, const QVariant& value) {
                 effect->setPropertyValue(name, value);
-            });
-            hasAnyProperties = true;
-        }
+            },
+            &addedGroupProperties);
 
-        mainLayout->addWidget(group);
+        if (addedGroupProperties) {
+            mainLayout->addWidget(group);
+            hasAnyProperties = true;
+        } else {
+            delete group;
+        }
     }
 
     if (!hasAnyProperties) {
