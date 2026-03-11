@@ -481,6 +481,28 @@ public:
         return relinked;
     }
 
+    static bool renameProjectItem(ProjectItem* item, const QString& newName) {
+        auto* svc = ArtifactProjectService::instance();
+        if (!svc || !item) {
+            return false;
+        }
+        const QString trimmed = newName.trimmed();
+        if (trimmed.isEmpty()) {
+            return false;
+        }
+        if (item->type() == eProjectItemType::Composition) {
+            auto* compItem = static_cast<CompositionItem*>(item);
+            return svc->renameComposition(compItem->compositionId, UniString::fromQString(trimmed));
+        }
+        auto shared = svc->getCurrentProjectSharedPtr();
+        if (!shared) {
+            return false;
+        }
+        item->name = UniString::fromQString(trimmed);
+        shared->projectChanged();
+        return true;
+    }
+
     static void showDependencyGraphDialog(QWidget* parent, ArtifactProjectService* svc) {
         if (!svc) return;
         auto project = svc->getCurrentProjectSharedPtr();
@@ -667,10 +689,20 @@ void ArtifactProjectView::handleItemDoubleClicked(const QModelIndex& index) {
              QVariant idVar = actualIdx.data(Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::CompositionId));
              if (idVar.isValid()) {
                  CompositionID cid(idVar.toString());
+                 ArtifactProjectService::instance()->changeCurrentComposition(cid);
                  ArtifactLayerTimelinePanelWrapper* panel = new ArtifactLayerTimelinePanelWrapper(cid);
                  panel->setAttribute(Qt::WA_DeleteOnClose);
                  panel->show();
              }
+        } else if (typeVar.toInt() == static_cast<int>(eProjectItemType::Footage)) {
+            QVariant ptrVar = actualIdx.data(Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::ProjectItemPtr));
+            ProjectItem* item = ptrVar.isValid() ? reinterpret_cast<ProjectItem*>(ptrVar.value<quintptr>()) : nullptr;
+            if (item && item->type() == eProjectItemType::Footage) {
+                const QString path = static_cast<FootageItem*>(item)->filePath;
+                if (!path.isEmpty()) {
+                    QDesktopServices::openUrl(QUrl::fromLocalFile(QFileInfo(path).absolutePath()));
+                }
+            }
         }
     }
 }
@@ -813,7 +845,16 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
             bool ok;
             QString name = QInputDialog::getText(this, "Rename", "New Name:", QLineEdit::Normal, idx.data().toString(), &ok);
             if(ok && !name.isEmpty()) {
-                 model()->setData(idx, name, Qt::EditRole);
+                 QModelIndex sourceIdx = idx;
+                 if (auto proxy = qobject_cast<const QSortFilterProxyModel*>(idx.model())) {
+                     sourceIdx = proxy->mapToSource(idx).siblingAtColumn(0);
+                 }
+                 QVariant ptrVar = sourceIdx.data(Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::ProjectItemPtr));
+                 ProjectItem* item = ptrVar.isValid() ? reinterpret_cast<ProjectItem*>(ptrVar.value<quintptr>()) : nullptr;
+                 if (!Impl::renameProjectItem(item, name)) {
+                     QMessageBox::warning(this, QStringLiteral("Rename Failed"),
+                         QStringLiteral("Could not rename the selected project item."));
+                 }
             }
         });
 
@@ -985,6 +1026,114 @@ public:
     std::deque<ProxyJob> proxyJobs_;
     QTimer* proxyQueueTimer_ = nullptr;
 
+    QModelIndex currentSourceIndexFromSelection() const {
+        if (!projectView_ || !projectView_->selectionModel()) {
+            return {};
+        }
+        const auto selectedRows = projectView_->selectionModel()->selectedRows(0);
+        if (selectedRows.isEmpty()) {
+            return {};
+        }
+        QModelIndex current = selectedRows.first();
+        if (auto proxy = qobject_cast<const QSortFilterProxyModel*>(current.model())) {
+            current = proxy->mapToSource(current).siblingAtColumn(0);
+        }
+        return current;
+    }
+
+    ProjectItem* currentSelectedItem() const {
+        const QModelIndex sourceIdx = currentSourceIndexFromSelection();
+        const QVariant ptrVar = sourceIdx.data(Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::ProjectItemPtr));
+        return ptrVar.isValid() ? reinterpret_cast<ProjectItem*>(ptrVar.value<quintptr>()) : nullptr;
+    }
+
+    bool renameSelectedItem(QWidget* parent) {
+        ProjectItem* item = currentSelectedItem();
+        if (!item) {
+            return false;
+        }
+        bool ok = false;
+        const QString currentName = item->name.toQString();
+        const QString newName = QInputDialog::getText(parent, "Rename", "New Name:", QLineEdit::Normal, currentName, &ok);
+        if (!ok || newName.trimmed().isEmpty()) {
+            return false;
+        }
+        return ArtifactProjectView::Impl::renameProjectItem(item, newName);
+    }
+
+    bool deleteSelectedItem(QWidget* parent) {
+        ProjectItem* item = currentSelectedItem();
+        auto* svc = ArtifactProjectService::instance();
+        if (!item || !svc) {
+            return false;
+        }
+        const QString message = svc->projectItemRemovalConfirmationMessage(item);
+        const auto answer = QMessageBox::question(
+            parent,
+            QStringLiteral("項目削除"),
+            message,
+            QMessageBox::Yes | QMessageBox::No,
+            QMessageBox::No);
+        if (answer != QMessageBox::Yes) {
+            return false;
+        }
+        return svc->removeProjectItem(item);
+    }
+
+    void syncSelectionToCurrentComposition() {
+        if (!projectView_ || !proxyModel_) {
+            return;
+        }
+        auto* svc = ArtifactProjectService::instance();
+        if (!svc) {
+            return;
+        }
+        auto currentComp = svc->currentComposition().lock();
+        if (!currentComp) {
+            return;
+        }
+
+        std::function<QModelIndex(const QModelIndex&)> findCompositionIndex = [&](const QModelIndex& parent) -> QModelIndex {
+            if (!projectModel_) {
+                return {};
+            }
+            const int rowCount = projectModel_->rowCount(parent);
+            for (int row = 0; row < rowCount; ++row) {
+                const QModelIndex idx = projectModel_->index(row, 0, parent);
+                if (!idx.isValid()) {
+                    continue;
+                }
+                const QVariant typeVar = idx.data(Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::ProjectItemType));
+                if (typeVar.isValid() && typeVar.toInt() == static_cast<int>(eProjectItemType::Composition)) {
+                    const QVariant idVar = idx.data(Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::CompositionId));
+                    if (idVar.isValid() && idVar.toString() == currentComp->id().toString()) {
+                        return idx;
+                    }
+                }
+                if (const QModelIndex child = findCompositionIndex(idx); child.isValid()) {
+                    return child;
+                }
+            }
+            return {};
+        };
+
+        const QModelIndex sourceIndex = findCompositionIndex({});
+        if (!sourceIndex.isValid()) {
+            return;
+        }
+        const QModelIndex proxyIndex = proxyModel_->mapFromSource(sourceIndex);
+        if (!proxyIndex.isValid()) {
+            return;
+        }
+        projectView_->expand(proxyIndex.parent());
+        projectView_->selectionModel()->setCurrentIndex(
+            proxyIndex,
+            QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows | QItemSelectionModel::Current);
+        if (infoPanel_) {
+            infoPanel_->updateInfo(sourceIndex);
+        }
+    }
+
     static void collectFootageRecursive(ProjectItem* item, QVector<FootageItem*>& out) {
         if (!item) return;
         if (item->type() == eProjectItemType::Footage) {
@@ -1083,6 +1232,16 @@ public:
                 projectView_->header()->setSectionResizeMode(col, QHeaderView::ResizeToContents);
             }
             projectView_->expandToDepth(1);
+            if (projectView_->selectionModel()) {
+                QObject::connect(projectView_->selectionModel(), &QItemSelectionModel::currentRowChanged, projectView_,
+                    [this](const QModelIndex& current, const QModelIndex&) {
+                        if (!current.isValid() || !proxyModel_ || !infoPanel_) {
+                            return;
+                        }
+                        infoPanel_->updateInfo(proxyModel_->mapToSource(current));
+                    },
+                    Qt::UniqueConnection);
+            }
         }
         refreshUnusedAssetCache();
         if (proxyModel_) {
@@ -1091,6 +1250,7 @@ public:
                 typeFilterBox ? typeFilterBox->currentText() : QString(),
                 unusedOnlyCheck ? unusedOnlyCheck->isChecked() : false);
         }
+        syncSelectionToCurrentComposition();
     }
 
     void handleSearch(const QString& text) {
@@ -1170,7 +1330,6 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     connect(impl_->projectView_, &ArtifactProjectView::itemSelected, [this](const QModelIndex& idx) {
         if (impl_->proxyModel_) impl_->infoPanel_->updateInfo(impl_->proxyModel_->mapToSource(idx));
     });
-
     connect(impl_->toolBox, &ArtifactProjectManagerToolBox::newCompositionRequested, [this]() {
          if (auto* svc = ArtifactProjectService::instance()) {
              svc->createComposition(UniString("Composition"));
@@ -1233,7 +1392,25 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
         }
     });
 
+    auto* renameShortcut = new QShortcut(QKeySequence(Qt::Key_F2), this);
+    connect(renameShortcut, &QShortcut::activated, this, [this]() {
+        if (!impl_->renameSelectedItem(this)) {
+            return;
+        }
+    });
+
+    auto* deleteShortcut = new QShortcut(QKeySequence::Delete, this);
+    connect(deleteShortcut, &QShortcut::activated, this, [this]() {
+        if (!impl_->deleteSelectedItem(this)) {
+            return;
+        }
+    });
+
     impl_->update();
+
+    connect(ArtifactProjectService::instance(), &ArtifactProjectService::currentCompositionChanged, this, [this](const CompositionID&) {
+        impl_->syncSelectionToCurrentComposition();
+    });
 }
 
 ArtifactProjectManagerWidget::~ArtifactProjectManagerWidget() { delete impl_; }
