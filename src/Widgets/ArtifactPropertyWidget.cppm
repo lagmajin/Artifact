@@ -142,6 +142,16 @@ ArtifactPropertyEditorRowWidget* createPropertyRow(
         row->setEditorToolTip(meta.tooltip);
     }
 
+    const QVariant defaultValue = property.getDefaultValue();
+    row->setShowResetButton(defaultValue.isValid());
+    if (defaultValue.isValid()) {
+        row->setResetHandler([editor, applyValue, propertyName = property.getName(), defaultValue]() {
+            editor->setValueFromVariant(defaultValue);
+            applyValue(propertyName, defaultValue);
+        });
+    }
+
+    row->setShowKeyframeButton(property.isAnimatable());
     row->setExpressionHandler([propertyName = property.getName()]() {
         auto* copilot = new ArtifactExpressionCopilotWidget();
         copilot->setWindowFlags(Qt::Window | Qt::WindowStaysOnTopHint | Qt::Tool);
