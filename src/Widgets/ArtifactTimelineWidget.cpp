@@ -94,6 +94,19 @@ using namespace ArtifactWidgets;
   const QPoint angleDelta = event->angleDelta();
   return horizontal ? angleDelta.x() : angleDelta.y();
  }
+ inline int layerInsertionIndexForTrackDrop(const QVector<LayerID>& trackLayerIds, const LayerID& draggedLayerId, const int trackIndex)
+ {
+  int targetLayerIndex = 0;
+  const int upperBound = std::clamp(trackIndex, 0, trackLayerIds.size());
+  for (int i = 0; i < upperBound; ++i) {
+   const auto& candidate = trackLayerIds[i];
+   if (candidate.isNil() || candidate == draggedLayerId) {
+    continue;
+   }
+   ++targetLayerIndex;
+  }
+  return targetLayerIndex;
+ }
   std::shared_ptr<ArtifactAbstractComposition> safeCompositionLookup(const CompositionID& id)
   {
     if (id.isNil()) return nullptr;
@@ -888,14 +901,13 @@ W_OBJECT_IMPL(ArtifactTimelineWidget)
        if (result.success) {
        if (auto comp = result.ptr.lock()) {
          if (auto layer = comp->layerById(layerId)) {
-          const int64_t oldInPoint = layer->inPoint().framePosition();
+         const int64_t oldInPoint = layer->inPoint().framePosition();
           const int64_t oldOutPoint = layer->outPoint().framePosition();
-          const int64_t oldDuration = std::max<int64_t>(1, oldOutPoint - oldInPoint);
           const int64_t inPoint = std::max<int64_t>(0, static_cast<int64_t>(std::llround(start)));
           const int64_t outPoint = std::max<int64_t>(inPoint + 1, static_cast<int64_t>(std::llround(start + duration)));
           layer->setInPoint(FramePosition(inPoint));
           layer->setOutPoint(FramePosition(outPoint));
-          if (inPoint != oldInPoint && (outPoint - inPoint) != oldDuration) {
+          if (inPoint != oldInPoint) {
            const int64_t delta = inPoint - oldInPoint;
            layer->setStartTime(FramePosition(layer->startTime().framePosition() + delta));
           }
@@ -910,13 +922,8 @@ W_OBJECT_IMPL(ArtifactTimelineWidget)
        return;
       }
 
-      int targetLayerIndex = 0;
-      const int upperBound = std::clamp(trackIndex, 0, impl_->trackLayerIds_.size());
-      for (int i = 0; i < upperBound; ++i) {
-       if (!impl_->trackLayerIds_[i].isNil()) {
-        ++targetLayerIndex;
-       }
-      }
+      const int targetLayerIndex =
+       layerInsertionIndexForTrackDrop(impl_->trackLayerIds_, layerId, trackIndex);
 
       if (auto* svc = ArtifactProjectService::instance()) {
        svc->moveLayerInCurrentComposition(layerId, targetLayerIndex);

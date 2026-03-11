@@ -393,6 +393,23 @@ int ArtifactLayerPanelHeaderWidget::totalHeaderHeight() const
    return count;
   }
 
+  int layerCountBeforeVisibleRowExcluding(const int visibleRowIndex, const LayerID& excludedLayerId) const
+  {
+   int count = 0;
+   const int limit = std::clamp<int>(visibleRowIndex, 0, static_cast<int>(visibleRows.size()));
+   for (int i = 0; i < limit; ++i) {
+    const auto& row = visibleRows[i];
+    if (row.kind != RowKind::Layer || !row.layer) {
+     continue;
+    }
+    if (!excludedLayerId.isNil() && row.layer->id() == excludedLayerId) {
+     continue;
+    }
+    ++count;
+   }
+   return count;
+  }
+
   void rebuildVisibleRows()
   {
    visibleRows.clear();
@@ -992,36 +1009,44 @@ void ArtifactLayerPanelWidget::mouseDoubleClickEvent(QMouseEvent* event)
     }
 
     if (oldIndex >= 0 && !visibleLayerIds.isEmpty()) {
+     QVector<LayerID> remainingVisibleLayerIds;
+     remainingVisibleLayerIds.reserve(visibleLayerIds.size());
+     for (const auto& layerId : visibleLayerIds) {
+      if (layerId != impl_->draggedLayerId) {
+       remainingVisibleLayerIds.push_back(layerId);
+      }
+     }
+
      const int targetVisibleIndex = std::clamp(
-      impl_->layerCountBeforeVisibleRow(impl_->dragInsertVisibleRow),
+      impl_->layerCountBeforeVisibleRowExcluding(impl_->dragInsertVisibleRow, impl_->draggedLayerId),
       0,
-      static_cast<int>(visibleLayerIds.size()));
+      static_cast<int>(remainingVisibleLayerIds.size()));
 
-      int newIndex = oldIndex;
-      if (targetVisibleIndex >= static_cast<int>(visibleLayerIds.size())) {
-       newIndex = allLayers.size() - 1;
-      } else {
-       const LayerID targetLayerId = visibleLayerIds[targetVisibleIndex];
-       int targetIndex = -1;
-       for (int i = 0; i < allLayers.size(); ++i) {
-        if (allLayers[i] && allLayers[i]->id() == targetLayerId) {
-         targetIndex = i;
-         break;
-        }
-       }
-       if (targetIndex >= 0) {
-        newIndex = (oldIndex < targetIndex) ? (targetIndex - 1) : targetIndex;
+     int newIndex = oldIndex;
+     if (targetVisibleIndex >= static_cast<int>(remainingVisibleLayerIds.size())) {
+      newIndex = static_cast<int>(allLayers.size()) - 1;
+     } else {
+      const LayerID targetLayerId = remainingVisibleLayerIds[targetVisibleIndex];
+      int targetIndex = -1;
+      for (int i = 0; i < allLayers.size(); ++i) {
+       if (allLayers[i] && allLayers[i]->id() == targetLayerId) {
+        targetIndex = i;
+        break;
        }
       }
-
-      newIndex = std::clamp(
-       newIndex,
-       0,
-       std::max(0, static_cast<int>(allLayers.size()) - 1));
-      if (newIndex != oldIndex) {
-       service->moveLayerInCurrentComposition(impl_->draggedLayerId, newIndex);
-       updateLayout();
+      if (targetIndex >= 0) {
+       newIndex = targetIndex;
       }
+     }
+
+     newIndex = std::clamp(
+      newIndex,
+      0,
+      std::max(0, static_cast<int>(allLayers.size()) - 1));
+     if (newIndex != oldIndex) {
+      service->moveLayerInCurrentComposition(impl_->draggedLayerId, newIndex);
+      updateLayout();
+     }
     }
    }
    impl_->clearDragState();
