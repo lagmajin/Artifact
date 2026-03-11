@@ -1,5 +1,6 @@
 ﻿module;
 #include <wobjectimpl.h>
+#include <QApplication>
 #include <QPainter>
 #include <QWidget>
 #include <QString>
@@ -336,6 +337,10 @@ int ArtifactLayerPanelHeaderWidget::totalHeaderHeight() const
   QPointer<QComboBox> inlineBlendEditor;
   QPointer<QLineEdit> inlineNameEditor;
   LayerID editingLayerId;
+  QPoint dragStartPos;
+  LayerID dragCandidateLayerId;
+  LayerID draggedLayerId;
+  int dragInsertVisibleRow = -1;
 
   void clearInlineEditors()
   {
@@ -355,6 +360,34 @@ int ArtifactLayerPanelHeaderWidget::totalHeaderHeight() const
     inlineNameEditor = nullptr;
    }
    editingLayerId = LayerID();
+  }
+
+  void clearDragState()
+  {
+   dragCandidateLayerId = LayerID();
+   draggedLayerId = LayerID();
+   dragInsertVisibleRow = -1;
+  }
+
+  int insertionVisibleRowForY(const int y) const
+  {
+   if (visibleRows.isEmpty()) {
+    return 0;
+   }
+   return std::clamp((y + (kLayerRowHeight / 2)) / kLayerRowHeight, 0, visibleRows.size());
+  }
+
+  int layerCountBeforeVisibleRow(const int visibleRowIndex) const
+  {
+   int count = 0;
+   const int limit = std::clamp(visibleRowIndex, 0, visibleRows.size());
+   for (int i = 0; i < limit; ++i) {
+    const auto& row = visibleRows[i];
+    if (row.kind == RowKind::Layer && row.layer) {
+     ++count;
+    }
+   }
+   return count;
   }
 
   void rebuildVisibleRows()
@@ -524,6 +557,7 @@ int ArtifactLayerPanelHeaderWidget::totalHeaderHeight() const
  void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
  {
   setFocus();
+  impl_->clearDragState();
   const int rowH = kLayerRowHeight;
   const int colW = kLayerColumnWidth;
   int idx = event->pos().y() / rowH;
@@ -545,6 +579,7 @@ int ArtifactLayerPanelHeaderWidget::totalHeaderHeight() const
    return;
   }
   const int y = idx * rowH;
+  const int nameStartX = colW * kLayerPropertyColumnCount;
   const bool showInlineCombos = width() >= (kLayerColumnWidth * kLayerPropertyColumnCount + kInlineComboReserve + kLayerNameMinWidth);
   const int parentRectX = width() - kInlineComboReserve;
   const QRect parentRect(parentRectX, y + kInlineComboMarginY, kInlineParentWidth, kInlineComboHeight);
@@ -643,7 +678,6 @@ int ArtifactLayerPanelHeaderWidget::totalHeaderHeight() const
     } else if (clickX < colW * 5) {
       if (service) service->setLayerShyInCurrentComposition(layer->id(), !layer->isShy());
     } else {
-      const int nameStartX = colW * kLayerPropertyColumnCount;
       const int indent = 14;
       const int toggleSize = 10;
       const int toggleX = nameStartX + row.depth * indent + 2;
@@ -658,6 +692,8 @@ int ArtifactLayerPanelHeaderWidget::totalHeaderHeight() const
       if (service) {
         service->selectLayer(layer->id());
       }
+      impl_->dragStartPos = event->pos();
+      impl_->dragCandidateLayerId = layer->id();
     }
     update();
   } else if (event->button() == Qt::RightButton) {
@@ -892,6 +928,23 @@ void ArtifactLayerPanelWidget::mouseDoubleClickEvent(QMouseEvent* event)
 
  void ArtifactLayerPanelWidget::mouseMoveEvent(QMouseEvent* event)
  {
+  if ((event->buttons() & Qt::LeftButton) && !impl_->dragCandidateLayerId.isNil()) {
+    const int dragDistance = (event->pos() - impl_->dragStartPos).manhattanLength();
+    if (impl_->draggedLayerId.isNil() && dragDistance >= QApplication::startDragDistance()) {
+      impl_->draggedLayerId = impl_->dragCandidateLayerId;
+    }
+    if (!impl_->draggedLayerId.isNil()) {
+      const int nextInsertRow = impl_->insertionVisibleRowForY(event->pos().y());
+      if (nextInsertRow != impl_->dragInsertVisibleRow) {
+        impl_->dragInsertVisibleRow = nextInsertRow;
+        update();
+      }
+      setCursor(Qt::ClosedHandCursor);
+      event->accept();
+      return;
+    }
+  }
+
   int idx = event->pos().y() / kLayerRowHeight;
   if (idx != impl_->hoveredLayerIndex) {
     impl_->hoveredLayerIndex = idx;
@@ -910,6 +963,71 @@ void ArtifactLayerPanelWidget::mouseDoubleClickEvent(QMouseEvent* event)
     }
   }
   setCursor(pointer ? Qt::PointingHandCursor : Qt::ArrowCursor);
+ }
+
+ void ArtifactLayerPanelWidget::mouseReleaseEvent(QMouseEvent* event)
+ {
+  if (event->button() == Qt::LeftButton && !impl_->draggedLayerId.isNil()) {
+   auto* service = ArtifactProjectService::instance();
+   auto comp = safeCompositionLookup(impl_->compositionId);
+   if (service && comp) {
+    QVector<LayerID> visibleLayerIds;
+    visibleLayerIds.reserve(impl_->visibleRows.size());
+    for (const auto& row : impl_->visibleRows) {
+     if (row.kind == Impl::RowKind::Layer && row.layer) {
+      visibleLayerIds.push_back(row.layer->id());
+     }
+    }
+
+    const auto allLayers = comp->allLayer();
+    int oldIndex = -1;
+    for (int i = 0; i < allLayers.size(); ++i) {
+     if (allLayers[i] && allLayers[i]->id() == impl_->draggedLayerId) {
+      oldIndex = i;
+      break;
+     }
+    }
+
+    if (oldIndex >= 0 && !visibleLayerIds.isEmpty()) {
+      const int targetVisibleIndex = std::clamp(
+       impl_->layerCountBeforeVisibleRow(impl_->dragInsertVisibleRow),
+       0,
+       visibleLayerIds.size());
+
+      int newIndex = oldIndex;
+      if (targetVisibleIndex >= visibleLayerIds.size()) {
+       newIndex = allLayers.size() - 1;
+      } else {
+       const LayerID targetLayerId = visibleLayerIds[targetVisibleIndex];
+       int targetIndex = -1;
+       for (int i = 0; i < allLayers.size(); ++i) {
+        if (allLayers[i] && allLayers[i]->id() == targetLayerId) {
+         targetIndex = i;
+         break;
+        }
+       }
+       if (targetIndex >= 0) {
+        newIndex = (oldIndex < targetIndex) ? (targetIndex - 1) : targetIndex;
+       }
+      }
+
+      newIndex = std::clamp(newIndex, 0, std::max(0, allLayers.size() - 1));
+      if (newIndex != oldIndex) {
+       service->moveLayerInCurrentComposition(impl_->draggedLayerId, newIndex);
+       updateLayout();
+      }
+    }
+   }
+   impl_->clearDragState();
+   unsetCursor();
+   update();
+   event->accept();
+   return;
+  }
+
+  impl_->clearDragState();
+  unsetCursor();
+  QWidget::mouseReleaseEvent(event);
  }
 
 void ArtifactLayerPanelWidget::keyPressEvent(QKeyEvent* event)
@@ -969,8 +1087,8 @@ void ArtifactLayerPanelWidget::keyPressEvent(QKeyEvent* event)
   update();
  }
 
- void ArtifactLayerPanelWidget::paintEvent(QPaintEvent*)
- {
+void ArtifactLayerPanelWidget::paintEvent(QPaintEvent*)
+{
   QPainter p(this);
   const int rowH = kLayerRowHeight;
   const int colW = kLayerColumnWidth;
@@ -1110,7 +1228,21 @@ void ArtifactLayerPanelWidget::keyPressEvent(QKeyEvent* event)
     const int textWidth = showInlineCombos ? std::max(20, parentRect.left() - textX - 8) : std::max(20, width() - textX - 8);
     p.drawText(textX + 4, y, textWidth, rowH, Qt::AlignVCenter | Qt::AlignLeft, l->layerName());
   }
- }
+
+  if (!impl_->draggedLayerId.isNil() && impl_->dragInsertVisibleRow >= 0) {
+    const int lineY = std::clamp(impl_->dragInsertVisibleRow * rowH, 1, std::max(1, height() - 2));
+    const QColor accent(0, 153, 255);
+    QPen pen(accent, 2);
+    p.setPen(pen);
+    p.drawLine(0, lineY, width(), lineY);
+
+    p.setPen(Qt::NoPen);
+    p.setBrush(accent);
+    const int markerSize = 6;
+    p.drawEllipse(QPoint(markerSize, lineY), markerSize / 2, markerSize / 2);
+    p.drawEllipse(QPoint(std::max(markerSize, width() - markerSize), lineY), markerSize / 2, markerSize / 2);
+  }
+}
 
  void ArtifactLayerPanelWidget::dragEnterEvent(QDragEnterEvent* e) { e->acceptProposedAction(); }
  void ArtifactLayerPanelWidget::dragMoveEvent(QDragMoveEvent* e) { e->acceptProposedAction(); }
