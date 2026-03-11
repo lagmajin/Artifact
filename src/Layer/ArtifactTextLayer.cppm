@@ -8,6 +8,7 @@
 #include <QRect>
 #include <QSize>
 #include <QVariant>
+#include <QTextOption>
 #include <opencv2/opencv.hpp>
 #include <opencv2/imgproc.hpp>
 
@@ -56,6 +57,7 @@ import Image.ImageF32x4_RGBA;
 import Size;
 import Property.Abstract;
 import Property.Group;
+import Text.Style;
 
 namespace Artifact
 {
@@ -65,19 +67,20 @@ class ArtifactTextLayer::Impl
 {
 public:
     UniString text_;
-    float fontSize_;
-    UniString fontFamily_;
-    FloatRGBA color_;
+    TextStyle textStyle_;
+    ParagraphStyle paragraphStyle_;
+    QImage renderedImage_;
 
     Impl();
 };
 
 ArtifactTextLayer::Impl::Impl()
     : text_(QString("New Text Layer"))
-    , fontSize_(60.0f)
-    , fontFamily_(QString("Arial"))
-    , color_(1.0f, 1.0f, 1.0f, 1.0f)
 {
+    textStyle_.fontFamily = UniString(QStringLiteral("Arial"));
+    textStyle_.fontSize = 60.0f;
+    textStyle_.fillColor = FloatRGBA(1.0f, 1.0f, 1.0f, 1.0f);
+    paragraphStyle_.horizontalAlignment = TextHorizontalAlignment::Left;
 }
 
 ArtifactTextLayer::ArtifactTextLayer() 
@@ -106,43 +109,116 @@ UniString ArtifactTextLayer::text() const
 void ArtifactTextLayer::setFontSize(float size)
 {
     if (size <= 0.0f) size = 1.0f;
-    impl_->fontSize_ = size;
+    impl_->textStyle_.fontSize = size;
     updateImage();
 }
 
 float ArtifactTextLayer::fontSize() const
 {
-    return impl_->fontSize_;
+    return impl_->textStyle_.fontSize;
 }
 
 void ArtifactTextLayer::setFontFamily(const UniString& family)
 {
-    impl_->fontFamily_ = family;
+    impl_->textStyle_.fontFamily = family;
     updateImage();
 }
 
 UniString ArtifactTextLayer::fontFamily() const
 {
-    return impl_->fontFamily_;
+    return impl_->textStyle_.fontFamily;
 }
 
 void ArtifactTextLayer::setTextColor(const FloatRGBA& color)
 {
-    impl_->color_ = color;
+    impl_->textStyle_.fillColor = color;
     updateImage();
 }
 
 FloatRGBA ArtifactTextLayer::textColor() const
 {
-    return impl_->color_;
+    return impl_->textStyle_.fillColor;
+}
+
+void ArtifactTextLayer::setTracking(float tracking)
+{
+    impl_->textStyle_.tracking = tracking;
+    updateImage();
+}
+
+float ArtifactTextLayer::tracking() const
+{
+    return impl_->textStyle_.tracking;
+}
+
+void ArtifactTextLayer::setLeading(float leading)
+{
+    impl_->textStyle_.leading = leading;
+    updateImage();
+}
+
+float ArtifactTextLayer::leading() const
+{
+    return impl_->textStyle_.leading;
+}
+
+void ArtifactTextLayer::setBold(bool enabled)
+{
+    impl_->textStyle_.bold = enabled;
+    updateImage();
+}
+
+bool ArtifactTextLayer::isBold() const
+{
+    return impl_->textStyle_.bold;
+}
+
+void ArtifactTextLayer::setItalic(bool enabled)
+{
+    impl_->textStyle_.italic = enabled;
+    updateImage();
+}
+
+bool ArtifactTextLayer::isItalic() const
+{
+    return impl_->textStyle_.italic;
+}
+
+void ArtifactTextLayer::setAllCaps(bool enabled)
+{
+    impl_->textStyle_.allCaps = enabled;
+    updateImage();
+}
+
+bool ArtifactTextLayer::isAllCaps() const
+{
+    return impl_->textStyle_.allCaps;
+}
+
+void ArtifactTextLayer::setHorizontalAlignment(TextHorizontalAlignment alignment)
+{
+    impl_->paragraphStyle_.horizontalAlignment = alignment;
+    updateImage();
+}
+
+TextHorizontalAlignment ArtifactTextLayer::horizontalAlignment() const
+{
+    return impl_->paragraphStyle_.horizontalAlignment;
 }
 
 void ArtifactTextLayer::draw(ArtifactIRenderer* renderer)
 {
-    // Text layer drawing implementation
-    // This would typically render the text to the current render target
-    // For now, we can call updateImage() to ensure the image is up to date
-    updateImage();
+    if (!renderer) {
+        return;
+    }
+    if (impl_->renderedImage_.isNull()) {
+        updateImage();
+    }
+    const auto size = sourceSize();
+    if (impl_->renderedImage_.isNull() || size.width <= 0 || size.height <= 0) {
+        return;
+    }
+    renderer->drawSprite(0.0f, 0.0f, static_cast<float>(size.width), static_cast<float>(size.height), impl_->renderedImage_);
 }
 
 std::vector<ArtifactCore::PropertyGroup> ArtifactTextLayer::getLayerPropertyGroups() const
@@ -162,6 +238,16 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactTextLayer::getLayerPropertyGrou
     textGroup.addProperty(makeProp(QStringLiteral("text.value"), ArtifactCore::PropertyType::String, text().toQString(), -120));
     textGroup.addProperty(makeProp(QStringLiteral("text.fontFamily"), ArtifactCore::PropertyType::String, fontFamily().toQString(), -110));
     textGroup.addProperty(makeProp(QStringLiteral("text.fontSize"), ArtifactCore::PropertyType::Float, fontSize(), -100));
+    textGroup.addProperty(makeProp(QStringLiteral("text.tracking"), ArtifactCore::PropertyType::Float, tracking(), -95));
+    textGroup.addProperty(makeProp(QStringLiteral("text.leading"), ArtifactCore::PropertyType::Float, leading(), -94));
+    textGroup.addProperty(makeProp(QStringLiteral("text.bold"), ArtifactCore::PropertyType::Boolean, isBold(), -93));
+    textGroup.addProperty(makeProp(QStringLiteral("text.italic"), ArtifactCore::PropertyType::Boolean, isItalic(), -92));
+    textGroup.addProperty(makeProp(QStringLiteral("text.allCaps"), ArtifactCore::PropertyType::Boolean, isAllCaps(), -91));
+
+    auto alignmentProp = makeProp(QStringLiteral("text.alignment"), ArtifactCore::PropertyType::Integer,
+        static_cast<int>(horizontalAlignment()), -89);
+    alignmentProp->setTooltip(QStringLiteral("0=Left, 1=Center, 2=Right, 3=Justify"));
+    textGroup.addProperty(alignmentProp);
 
     const auto c = textColor();
     auto colorProp = std::make_shared<ArtifactCore::AbstractProperty>();
@@ -193,6 +279,36 @@ bool ArtifactTextLayer::setLayerPropertyValue(const QString& propertyPath, const
         Q_EMIT changed();
         return true;
     }
+    if (propertyPath == QStringLiteral("text.tracking")) {
+        setTracking(static_cast<float>(value.toDouble()));
+        Q_EMIT changed();
+        return true;
+    }
+    if (propertyPath == QStringLiteral("text.leading")) {
+        setLeading(static_cast<float>(value.toDouble()));
+        Q_EMIT changed();
+        return true;
+    }
+    if (propertyPath == QStringLiteral("text.bold")) {
+        setBold(value.toBool());
+        Q_EMIT changed();
+        return true;
+    }
+    if (propertyPath == QStringLiteral("text.italic")) {
+        setItalic(value.toBool());
+        Q_EMIT changed();
+        return true;
+    }
+    if (propertyPath == QStringLiteral("text.allCaps")) {
+        setAllCaps(value.toBool());
+        Q_EMIT changed();
+        return true;
+    }
+    if (propertyPath == QStringLiteral("text.alignment")) {
+        setHorizontalAlignment(static_cast<TextHorizontalAlignment>(value.toInt()));
+        Q_EMIT changed();
+        return true;
+    }
     if (propertyPath == QStringLiteral("text.color")) {
         const auto c = value.value<QColor>();
         setTextColor(FloatRGBA(c.redF(), c.greenF(), c.blueF(), c.alphaF()));
@@ -202,13 +318,73 @@ bool ArtifactTextLayer::setLayerPropertyValue(const QString& propertyPath, const
     return ArtifactAbstractLayer::setLayerPropertyValue(propertyPath, value);
 }
 
-// Provide a default implementation for updateImage to satisfy linkage.
 void ArtifactTextLayer::updateImage() {
-    // Render text to an internal QImage or no-op placeholder
-    // Keep minimal to avoid heavy dependencies here
-    QImage img(1,1,QImage::Format_RGBA8888);
-    img.fill(Qt::transparent);
-    (void)img;
+    QString displayText = impl_->text_.toQString();
+    if (impl_->textStyle_.allCaps) {
+        displayText = displayText.toUpper();
+    }
+    if (displayText.isEmpty()) {
+        displayText = QStringLiteral(" ");
+    }
+
+    QFont font(impl_->textStyle_.fontFamily.toQString(), static_cast<int>(std::round(impl_->textStyle_.fontSize)));
+    font.setBold(impl_->textStyle_.bold);
+    font.setItalic(impl_->textStyle_.italic);
+    font.setLetterSpacing(QFont::AbsoluteSpacing, impl_->textStyle_.tracking);
+
+    QFontMetricsF metrics(font);
+    const QStringList lines = displayText.split('\n');
+    qreal maxWidth = 1.0;
+    for (const QString& line : lines) {
+        maxWidth = std::max(maxWidth, metrics.horizontalAdvance(line.isEmpty() ? QStringLiteral(" ") : line));
+    }
+
+    const qreal lineAdvance = impl_->textStyle_.leading > 0.0f ? impl_->textStyle_.leading : metrics.lineSpacing();
+    const qreal paragraphSpacing = impl_->paragraphStyle_.paragraphSpacing;
+    const qreal lineCount = static_cast<qreal>(lines.size());
+    const qreal contentHeight = std::max<qreal>(
+        lineAdvance,
+        lineCount * lineAdvance + std::max<qreal>(0.0, (lineCount - 1.0) * paragraphSpacing));
+    const int width = std::max(1, static_cast<int>(std::ceil(maxWidth + 24.0)));
+    const int height = std::max(1, static_cast<int>(std::ceil(contentHeight + 24.0)));
+
+    impl_->renderedImage_ = QImage(width, height, QImage::Format_ARGB32_Premultiplied);
+    impl_->renderedImage_.fill(Qt::transparent);
+
+    QPainter painter(&impl_->renderedImage_);
+    painter.setRenderHint(QPainter::TextAntialiasing);
+    painter.setRenderHint(QPainter::Antialiasing);
+    painter.setFont(font);
+    painter.setPen(QColor::fromRgbF(
+        impl_->textStyle_.fillColor.r(),
+        impl_->textStyle_.fillColor.g(),
+        impl_->textStyle_.fillColor.b(),
+        impl_->textStyle_.fillColor.a()));
+
+    qreal y = 12.0 + metrics.ascent();
+    for (const QString& line : lines) {
+        const QString actualLine = line.isEmpty() ? QStringLiteral(" ") : line;
+        const qreal lineWidth = metrics.horizontalAdvance(actualLine);
+        qreal x = 12.0;
+        switch (impl_->paragraphStyle_.horizontalAlignment) {
+        case TextHorizontalAlignment::Center:
+            x = std::max<qreal>(12.0, (static_cast<qreal>(width) - lineWidth) * 0.5);
+            break;
+        case TextHorizontalAlignment::Right:
+            x = std::max<qreal>(12.0, static_cast<qreal>(width) - lineWidth - 12.0);
+            break;
+        case TextHorizontalAlignment::Justify:
+        case TextHorizontalAlignment::Left:
+        default:
+            x = 12.0;
+            break;
+        }
+        painter.drawText(QPointF(x, y), actualLine);
+        y += lineAdvance + paragraphSpacing;
+    }
+    painter.end();
+
+    setSourceSize(Size_2D(width, height));
 }
 
 } // namespace Artifact

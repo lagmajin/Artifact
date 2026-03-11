@@ -40,6 +40,7 @@ export module Artifact.Layer.Text;
 import Artifact.Layer.Abstract;
 import Utils.String.UniString;
 import FloatRGBA;
+import Text.Style;
 import Artifact.Layers;
 
 export namespace Artifact {
@@ -63,6 +64,24 @@ public:
 
     void setTextColor(const FloatRGBA& color);
     FloatRGBA textColor() const;
+
+    void setTracking(float tracking);
+    float tracking() const;
+
+    void setLeading(float leading);
+    float leading() const;
+
+    void setBold(bool enabled);
+    bool isBold() const;
+
+    void setItalic(bool enabled);
+    bool isItalic() const;
+
+    void setAllCaps(bool enabled);
+    bool isAllCaps() const;
+
+    void setHorizontalAlignment(ArtifactCore::TextHorizontalAlignment alignment);
+    ArtifactCore::TextHorizontalAlignment horizontalAlignment() const;
 
     // Trigger update of internal image
     void updateImage();
