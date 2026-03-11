@@ -6,6 +6,7 @@
 #include <QColor>
 #include <QCryptographicHash>
 #include <QFileInfo>
+#include <QPainter>
 #include <iostream>
 #include <vector>
 #include <string>
@@ -51,6 +52,69 @@ import Artifact.Project.Roles;
 
 namespace Artifact
 {
+
+namespace {
+
+QIcon makeProjectItemIcon(const QColor& fill, const QString& text = {})
+{
+  QPixmap px(16, 16);
+  px.fill(Qt::transparent);
+  QPainter painter(&px);
+  painter.setRenderHint(QPainter::Antialiasing);
+  painter.setPen(QPen(QColor(24, 24, 24), 1.0));
+  painter.setBrush(fill);
+  painter.drawRoundedRect(QRectF(0.5, 0.5, 15.0, 15.0), 3.0, 3.0);
+  if (!text.isEmpty()) {
+    QFont font = painter.font();
+    font.setBold(true);
+    font.setPixelSize(8);
+    painter.setFont(font);
+    painter.setPen(QColor(245, 245, 245));
+    painter.drawText(QRectF(0, 0, 16, 16), Qt::AlignCenter, text.left(1).toUpper());
+  }
+  return QIcon(px);
+}
+
+QIcon iconForProjectItem(ProjectItem* it)
+{
+  if (!it) {
+    return makeProjectItemIcon(QColor(90, 90, 90), QStringLiteral("?"));
+  }
+  switch (it->type()) {
+  case eProjectItemType::Folder:
+    return makeProjectItemIcon(QColor(176, 138, 46), QStringLiteral("F"));
+  case eProjectItemType::Composition:
+    return makeProjectItemIcon(QColor(74, 128, 191), QStringLiteral("C"));
+  case eProjectItemType::Solid:
+    return makeProjectItemIcon(QColor(110, 88, 170), QStringLiteral("S"));
+  case eProjectItemType::Footage: {
+    auto* footage = static_cast<FootageItem*>(it);
+    const QFileInfo info(footage->filePath);
+    if (!info.exists()) {
+      return makeProjectItemIcon(QColor(140, 54, 54), QStringLiteral("!"));
+    }
+    const QString suffix = info.suffix().toLower();
+    if (QStringList{QStringLiteral("png"), QStringLiteral("jpg"), QStringLiteral("jpeg"), QStringLiteral("bmp"),
+                    QStringLiteral("gif"), QStringLiteral("tif"), QStringLiteral("tiff"), QStringLiteral("webp"),
+                    QStringLiteral("exr")}.contains(suffix)) {
+      return makeProjectItemIcon(QColor(66, 148, 98), QStringLiteral("I"));
+    }
+    if (QStringList{QStringLiteral("mp4"), QStringLiteral("mov"), QStringLiteral("avi"), QStringLiteral("mkv"),
+                    QStringLiteral("webm")}.contains(suffix)) {
+      return makeProjectItemIcon(QColor(170, 90, 48), QStringLiteral("V"));
+    }
+    if (QStringList{QStringLiteral("wav"), QStringLiteral("mp3"), QStringLiteral("flac"), QStringLiteral("ogg"),
+                    QStringLiteral("m4a"), QStringLiteral("aac")}.contains(suffix)) {
+      return makeProjectItemIcon(QColor(52, 120, 148), QStringLiteral("A"));
+    }
+    return makeProjectItemIcon(QColor(96, 96, 96), QStringLiteral("F"));
+  }
+  default:
+    return makeProjectItemIcon(QColor(90, 90, 90), QStringLiteral("?"));
+  }
+}
+
+} // namespace
 
  class ArtifactProjectModel::Impl
  {
@@ -124,14 +188,7 @@ void ArtifactProjectModel::Impl::refreshTree()
   // store item raw pointer for quick access from view/menus
   item->setData(QVariant::fromValue(reinterpret_cast<quintptr>(it)), Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::ProjectItemPtr));
 
-  // If this is a composition item, set a simple solid-color square icon
-  if (it->type() == eProjectItemType::Composition) {
-    // create a small pixmap filled with a single color
-    QPixmap px(16, 16);
-    QColor col(120, 160, 200); // simple default tint; could be derived from id
-    px.fill(col);
-    item->setIcon(QIcon(px));
-  }
+  item->setIcon(iconForProjectItem(it));
 
   // store composition ID as string in UserRole+1 instead of raw pointer
   // store composition ID using ProjectItemDataRole enum to avoid magic numbers
@@ -149,18 +206,18 @@ void ArtifactProjectModel::Impl::refreshTree()
       if (findResult.success && findResult.ptr.lock()) {
         auto composition = findResult.ptr.lock();
 
-        // Set size/resolution
-        // TODO: Get actual width/height from composition
-        sizeItem->setText("1920x1080");
+        const QSize compSize = composition->settings().compositionSize();
+        if (compSize.width() > 0 && compSize.height() > 0) {
+          sizeItem->setText(QStringLiteral("%1x%2").arg(compSize.width()).arg(compSize.height()));
+        } else {
+          sizeItem->setText(QStringLiteral("-"));
+        }
 
-        // Set duration
-        // TODO: Calculate duration from frame range and frame rate
-        int totalFrames = 100; // Placeholder
-        durationItem->setText(QString::number(totalFrames) + " frames");
-
-        // Set frame rate
-        // TODO: Get actual frame rate from composition
-        frameRateItem->setText("30 fps");
+        const auto frameRange = composition->frameRange();
+        const auto fps = composition->frameRate().framerate();
+        const int64_t totalFrames = std::max<int64_t>(0, frameRange.end() - frameRange.start());
+        durationItem->setText(QStringLiteral("%1 frames").arg(totalFrames));
+        frameRateItem->setText(QStringLiteral("%1 fps").arg(QString::number(fps, 'f', fps == std::floor(fps) ? 0 : 3)));
 
         qDebug() << "[ProjectModel] Added composition metadata - ID:" << idItem->text()
                  << "Size:" << sizeItem->text() 
@@ -180,9 +237,26 @@ void ArtifactProjectModel::Impl::refreshTree()
     const QFileInfo fi(footage->filePath);
     if (fi.exists()) {
       sizeItem->setText(QString::number(fi.size() / 1024) + " KB");
+      durationItem->setText(fi.suffix().toUpper());
+      const QString suffix = fi.suffix().toLower();
+      if (QStringList{QStringLiteral("png"), QStringLiteral("jpg"), QStringLiteral("jpeg"), QStringLiteral("bmp"),
+                      QStringLiteral("gif"), QStringLiteral("tif"), QStringLiteral("tiff"), QStringLiteral("webp"),
+                      QStringLiteral("exr")}.contains(suffix)) {
+        frameRateItem->setText(QStringLiteral("Image"));
+      } else if (QStringList{QStringLiteral("mp4"), QStringLiteral("mov"), QStringLiteral("avi"), QStringLiteral("mkv"),
+                             QStringLiteral("webm")}.contains(suffix)) {
+        frameRateItem->setText(QStringLiteral("Video"));
+      } else if (QStringList{QStringLiteral("wav"), QStringLiteral("mp3"), QStringLiteral("flac"), QStringLiteral("ogg"),
+                             QStringLiteral("m4a"), QStringLiteral("aac")}.contains(suffix)) {
+        frameRateItem->setText(QStringLiteral("Audio"));
+      } else {
+        frameRateItem->setText(QStringLiteral("Footage"));
+      }
       updatedItem->setText(fi.lastModified().toString("yyyy-MM-dd HH:mm"));
     } else {
       sizeItem->setText("-");
+      durationItem->setText(QStringLiteral("Missing"));
+      frameRateItem->setText(QStringLiteral("-"));
       updatedItem->setText("Missing");
     }
   } else {
