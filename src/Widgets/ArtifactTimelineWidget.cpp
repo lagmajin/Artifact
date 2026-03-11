@@ -250,20 +250,16 @@ using namespace ArtifactWidgets;
      return QObject::eventFilter(watched, event);
     }
 
-    if (event->type() == QEvent::MouseButtonRelease) {
-     if (mouseEvent->button() == Qt::LeftButton) {
-      seeking_ = false;
-      seekSource_ = nullptr;
-     }
-     return QObject::eventFilter(watched, event);
-    }
-
     if (event->type() == QEvent::MouseButtonPress && mouseEvent->button() != Qt::LeftButton) {
+     reservedClickCandidate_ = false;
+     reservedClickSource_ = nullptr;
      return QObject::eventFilter(watched, event);
     }
     if (event->type() == QEvent::MouseMove && !(mouseEvent->buttons() & Qt::LeftButton)) {
      seeking_ = false;
      seekSource_ = nullptr;
+     reservedClickCandidate_ = false;
+     reservedClickSource_ = nullptr;
      return QObject::eventFilter(watched, event);
     }
 
@@ -271,11 +267,60 @@ using namespace ArtifactWidgets;
       return QObject::eventFilter(watched, event);
     }
 
-    if (event->type() == QEvent::MouseMove && (!seeking_ || seekSource_ != sourceWidget)) {
+    const double frameMax = std::max(1.0, timelineFrameMax(trackView_->duration()));
+    const auto seekFromHeaderWidget = [&](QWidget* widget, const QPoint& pos) -> double {
+      const QRect viewportRect = trackView_->viewport()->rect();
+      if (viewportRect.isEmpty()) {
+       return 0.0;
+      }
+
+      const QPoint globalPos = widget->mapToGlobal(pos);
+      int viewportX = trackView_->viewport()->mapFromGlobal(globalPos).x();
+      viewportX = std::clamp(viewportX, viewportRect.left(), viewportRect.right());
+      const int viewportY = std::clamp(kTopSeekHotZonePx / 2, viewportRect.top(), viewportRect.bottom());
+      const QPointF scenePos = trackView_->mapToScene(QPoint(viewportX, viewportY));
+      return std::clamp(scenePos.x(), 0.0, frameMax);
+    };
+
+    if (event->type() == QEvent::MouseButtonRelease) {
+     const bool reservedClick = reservedClickCandidate_ && reservedClickSource_ == sourceWidget &&
+      mouseEvent->button() == Qt::LeftButton;
+     const int dragDistance = reservedClick
+      ? (sourceWidget->mapToGlobal(mouseEvent->pos()) - reservedPressGlobalPos_).manhattanLength()
+      : 0;
+
+     if (mouseEvent->button() == Qt::LeftButton) {
+      seeking_ = false;
+      seekSource_ = nullptr;
+     }
+
+     reservedClickCandidate_ = false;
+     reservedClickSource_ = nullptr;
+
+     if (reservedClick && dragDistance <= kReservedClickDragThresholdPx) {
+      const double clamped = seekFromHeaderWidget(sourceWidget, mouseEvent->pos());
+      const int frame = static_cast<int>(std::round(clamped));
+      trackView_->setPosition(clamped);
+      scrubBar_->setCurrentFrame(FramePosition(frame));
+      event->accept();
+      return true;
+     }
+
      return QObject::eventFilter(watched, event);
     }
 
-    const double frameMax = std::max(1.0, timelineFrameMax(trackView_->duration()));
+    if (event->type() == QEvent::MouseMove && reservedClickCandidate_ && reservedClickSource_ == sourceWidget) {
+     const int dragDistance = (sourceWidget->mapToGlobal(mouseEvent->pos()) - reservedPressGlobalPos_).manhattanLength();
+     if (dragDistance > kReservedClickDragThresholdPx) {
+      reservedClickCandidate_ = false;
+      reservedClickSource_ = nullptr;
+     }
+     return QObject::eventFilter(watched, event);
+    }
+
+    if (event->type() == QEvent::MouseMove && (!seeking_ || seekSource_ != sourceWidget)) {
+     return QObject::eventFilter(watched, event);
+    }
     double clamped = 0.0;
 
     if (sourceWidget == trackView_->viewport()) {
@@ -304,20 +349,14 @@ using namespace ArtifactWidgets;
      if (event->type() == QEvent::MouseButtonPress && isReservedRangeInteraction(sourceWidget, mouseEvent->pos())) {
       seeking_ = false;
       seekSource_ = nullptr;
+      reservedClickCandidate_ = true;
+      reservedClickSource_ = sourceWidget;
+      reservedPressGlobalPos_ = sourceWidget->mapToGlobal(mouseEvent->pos());
       return QObject::eventFilter(watched, event);
      }
-
-     const QRect viewportRect = trackView_->viewport()->rect();
-     if (viewportRect.isEmpty()) {
-      return QObject::eventFilter(watched, event);
-     }
-
-     const QPoint globalPos = sourceWidget->mapToGlobal(mouseEvent->pos());
-     int viewportX = trackView_->viewport()->mapFromGlobal(globalPos).x();
-     viewportX = std::clamp(viewportX, viewportRect.left(), viewportRect.right());
-     const int viewportY = std::clamp(kTopSeekHotZonePx / 2, viewportRect.top(), viewportRect.bottom());
-     const QPointF scenePos = trackView_->mapToScene(QPoint(viewportX, viewportY));
-     clamped = std::clamp(scenePos.x(), 0.0, frameMax);
+     reservedClickCandidate_ = false;
+     reservedClickSource_ = nullptr;
+     clamped = seekFromHeaderWidget(sourceWidget, mouseEvent->pos());
     }
 
     seeking_ = true;
@@ -371,6 +410,10 @@ using namespace ArtifactWidgets;
    ArtifactTimelineScrubBar* scrubBar_ = nullptr;
    bool seeking_ = false;
    QWidget* seekSource_ = nullptr;
+   bool reservedClickCandidate_ = false;
+   QWidget* reservedClickSource_ = nullptr;
+   QPoint reservedPressGlobalPos_;
+   static constexpr int kReservedClickDragThresholdPx = 4;
   };
 
   class HeaderScrollFilter final : public QObject

@@ -75,7 +75,7 @@ namespace Artifact {
    resolution_.height = 1080;
    workArea_.inPoint = RationalTime(0, 30.0);
    workArea_.outPoint = duration_;
-   workArea_.enabled = false;
+   workArea_.enabled = true;
   }
  };
 
