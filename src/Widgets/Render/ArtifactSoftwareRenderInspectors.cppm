@@ -319,6 +319,7 @@ class ArtifactSoftwareCompositionTestWidget::Impl {
 public:
     ArtifactProjectService* service_ = nullptr;
     QComboBox* compositionCombo_ = nullptr;
+    QCheckBox* followCurrentCompositionCheck_ = nullptr;
     QComboBox* backendCombo_ = nullptr;
     QComboBox* effectCombo_ = nullptr;
     QLabel* summaryLabel_ = nullptr;
@@ -405,6 +406,7 @@ public:
     ArtifactProjectService* service_ = nullptr;
     QComboBox* compositionCombo_ = nullptr;
     QComboBox* layerCombo_ = nullptr;
+    QCheckBox* followCurrentCompositionCheck_ = nullptr;
     QCheckBox* followSelectionCheck_ = nullptr;
     QComboBox* backendCombo_ = nullptr;
     QComboBox* effectCombo_ = nullptr;
@@ -580,6 +582,8 @@ ArtifactSoftwareCompositionTestWidget::ArtifactSoftwareCompositionTestWidget(QWi
     auto* root = new QVBoxLayout(this);
     auto* controls = new QHBoxLayout();
     impl_->compositionCombo_ = new QComboBox(this);
+    impl_->followCurrentCompositionCheck_ = new QCheckBox(QStringLiteral("Follow current composition"), this);
+    impl_->followCurrentCompositionCheck_->setChecked(true);
     impl_->backendCombo_ = new QComboBox(this);
     impl_->backendCombo_->addItems(QStringList{QStringLiteral("QImage/QPainter"), QStringLiteral("OpenCV")});
     impl_->effectCombo_ = new QComboBox(this);
@@ -589,6 +593,7 @@ ArtifactSoftwareCompositionTestWidget::ArtifactSoftwareCompositionTestWidget(QWi
 
     controls->addWidget(new QLabel(QStringLiteral("Composition"), this), 0);
     controls->addWidget(impl_->compositionCombo_, 1);
+    controls->addWidget(impl_->followCurrentCompositionCheck_, 0);
     controls->addWidget(new QLabel(QStringLiteral("Backend"), this), 0);
     controls->addWidget(impl_->backendCombo_, 0);
     controls->addWidget(new QLabel(QStringLiteral("Effect"), this), 0);
@@ -633,11 +638,15 @@ ArtifactSoftwareCompositionTestWidget::ArtifactSoftwareCompositionTestWidget(QWi
         });
         QObject::connect(impl_->service_, &ArtifactProjectService::compositionCreated, this, [this](const ArtifactCore::CompositionID& id) {
             impl_->reloadCompositions();
-            impl_->setCurrentCompositionSelection(id);
+            if (impl_->followCurrentCompositionCheck_ && impl_->followCurrentCompositionCheck_->isChecked()) {
+                impl_->setCurrentCompositionSelection(id);
+            }
             impl_->refreshPreview();
         });
         QObject::connect(impl_->service_, &ArtifactProjectService::currentCompositionChanged, this, [this](const ArtifactCore::CompositionID& id) {
-            impl_->setCurrentCompositionSelection(id);
+            if (impl_->followCurrentCompositionCheck_ && impl_->followCurrentCompositionCheck_->isChecked()) {
+                impl_->setCurrentCompositionSelection(id);
+            }
             impl_->refreshPreview();
         });
         QObject::connect(impl_->service_, &ArtifactProjectService::layerCreated, this, [this](const ArtifactCore::CompositionID&, const ArtifactCore::LayerID&) {
@@ -672,12 +681,15 @@ ArtifactSoftwareLayerTestWidget::ArtifactSoftwareLayerTestWidget(QWidget* parent
     auto* topRow = new QHBoxLayout();
     impl_->compositionCombo_ = new QComboBox(this);
     impl_->layerCombo_ = new QComboBox(this);
+    impl_->followCurrentCompositionCheck_ = new QCheckBox(QStringLiteral("Follow current composition"), this);
+    impl_->followCurrentCompositionCheck_->setChecked(true);
     impl_->followSelectionCheck_ = new QCheckBox(QStringLiteral("Follow layer selection"), this);
     impl_->followSelectionCheck_->setChecked(true);
     auto* refreshButton = new QPushButton(QStringLiteral("Refresh"), this);
     auto* saveButton = new QPushButton(QStringLiteral("Save PNG"), this);
     topRow->addWidget(new QLabel(QStringLiteral("Composition"), this), 0);
     topRow->addWidget(impl_->compositionCombo_, 1);
+    topRow->addWidget(impl_->followCurrentCompositionCheck_, 0);
     topRow->addWidget(new QLabel(QStringLiteral("Layer"), this), 0);
     topRow->addWidget(impl_->layerCombo_, 1);
     topRow->addWidget(impl_->followSelectionCheck_, 0);
@@ -778,8 +790,10 @@ ArtifactSoftwareLayerTestWidget::ArtifactSoftwareLayerTestWidget(QWidget* parent
             impl_->refreshPreview();
         });
         QObject::connect(impl_->service_, &ArtifactProjectService::currentCompositionChanged, this, [this](const ArtifactCore::CompositionID& id) {
-            impl_->setCurrentCompositionSelection(id);
-            impl_->reloadLayers();
+            if (impl_->followCurrentCompositionCheck_ && impl_->followCurrentCompositionCheck_->isChecked()) {
+                impl_->setCurrentCompositionSelection(id);
+                impl_->reloadLayers();
+            }
             impl_->refreshPreview();
         });
         QObject::connect(impl_->service_, &ArtifactProjectService::layerCreated, this, [this](const ArtifactCore::CompositionID&, const ArtifactCore::LayerID&) {
