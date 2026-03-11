@@ -326,6 +326,7 @@ void ClipItem::endHandleResize(ResizeHandle::Side side)
     if ((side == ResizeHandle::Left && impl_->interaction == Impl::InteractionState::ResizingLeft) ||
         (side == ResizeHandle::Right && impl_->interaction == Impl::InteractionState::ResizingRight)) {
         impl_->interaction = Impl::InteractionState::Idle;
+        Q_EMIT geometryEdited(this, impl_->start, impl_->duration);
     }
 }
 
@@ -445,6 +446,7 @@ void ClipItem::mouseReleaseEvent(QGraphicsSceneMouseEvent* event)
             impl_->ghostRect = nullptr;
         }
         impl_->isDragging = false;
+        Q_EMIT geometryEdited(this, getStart(), getDuration());
     }
     QGraphicsObject::mouseReleaseEvent(event);
 }

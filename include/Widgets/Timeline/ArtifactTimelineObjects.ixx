@@ -77,6 +77,7 @@ export namespace Artifact
   void dragStarted(ClipItem* clip) W_SIGNAL(dragStarted,clip);
   void dragMoved(ClipItem* clip, double sceneX, double sceneY) W_SIGNAL(dragMoved,clip,sceneX,sceneY);
   void dragEnded(ClipItem* clip, double sceneX, double sceneY) W_SIGNAL(dragEnded,clip,sceneX,sceneY);
+  void geometryEdited(ClipItem* clip, double start, double duration) W_SIGNAL(geometryEdited, clip, start, duration);
  };
 
 // Forward declarations of factory functions
