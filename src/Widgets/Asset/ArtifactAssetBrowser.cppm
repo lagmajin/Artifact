@@ -141,6 +141,7 @@ namespace Artifact {
   bool isFontFile(const QString& fileName) const;
   bool isImportedAssetPath(const QString& filePath) const;
   bool isUnusedAssetPath(const QString& filePath) const;
+  bool isMissingAssetPath(const QString& filePath) const;
   QStringList selectedAssetPaths() const;
   void syncProjectAssetRoot();
   void syncDirectorySelection();
@@ -316,6 +317,14 @@ bool ArtifactAssetBrowser::Impl::isUnusedAssetPath(const QString& filePath) cons
     : QFileInfo(filePath).canonicalFilePath();
   return unusedAssetPaths_.contains(QDir::cleanPath(canonicalPath))
     || unusedAssetPaths_.contains(QDir::cleanPath(filePath));
+}
+
+bool ArtifactAssetBrowser::Impl::isMissingAssetPath(const QString& filePath) const
+{
+  if (filePath.isEmpty()) {
+   return false;
+  }
+  return !QFileInfo::exists(filePath);
 }
 
  QIcon ArtifactAssetBrowser::Impl::generateThumbnail(const QString& filePath)
@@ -525,7 +534,14 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
    if (!isDir) {
     const bool imported = isImportedAssetPath(fullPath);
     const bool unused = isUnusedAssetPath(fullPath);
-    if (imported && unused) {
+    const bool missing = isMissingAssetPath(fullPath);
+    if (missing && imported && unused) {
+     itemType = QStringLiteral("Missing • Imported • Unused • %1").arg(itemType);
+    } else if (missing && imported) {
+     itemType = QStringLiteral("Missing • Imported • %1").arg(itemType);
+    } else if (missing) {
+     itemType = QStringLiteral("Missing • %1").arg(itemType);
+    } else if (imported && unused) {
      itemType = QStringLiteral("Imported • Unused • %1").arg(itemType);
     } else if (imported) {
      itemType = QStringLiteral("Imported • %1").arg(itemType);
@@ -929,6 +945,7 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
    info += QString("Entries: %1<br>").arg(QDir(filePath).entryList(QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot).size());
    info += QString("Project: %1<br>").arg(impl_->isImportedAssetPath(filePath) ? QStringLiteral("Imported") : QStringLiteral("Not Imported"));
    info += QString("Usage: %1<br>").arg(impl_->isUnusedAssetPath(filePath) ? QStringLiteral("Unused") : QStringLiteral("In Use / N.A."));
+   info += QString("Status: %1<br>").arg(impl_->isMissingAssetPath(filePath) ? QStringLiteral("Missing") : QStringLiteral("OK"));
    impl_->fileInfoLabel_->setText(info);
    return;
   }
@@ -938,6 +955,7 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
   info += QString("Modified: %1<br>").arg(fileInfo.lastModified().toString("yyyy-MM-dd hh:mm"));
   info += QString("Project: %1<br>").arg(impl_->isImportedAssetPath(filePath) ? QStringLiteral("Imported") : QStringLiteral("Not Imported"));
   info += QString("Usage: %1<br>").arg(impl_->isUnusedAssetPath(filePath) ? QStringLiteral("Unused") : QStringLiteral("In Use"));
+  info += QString("Status: %1<br>").arg(impl_->isMissingAssetPath(filePath) ? QStringLiteral("Missing") : QStringLiteral("OK"));
 
   // Get image resolution for image files
   QString fileName = fileInfo.fileName();
