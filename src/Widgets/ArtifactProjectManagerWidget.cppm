@@ -167,7 +167,9 @@ public:
         QString duration = index.siblingAtColumn(2).data(Qt::DisplayRole).toString();
         QString fps = index.siblingAtColumn(3).data(Qt::DisplayRole).toString();
 
-        if (!size.isEmpty() || !duration.isEmpty()) {
+        if (fps == QStringLiteral("Font")) {
+            detailsLabel->setText(QStringLiteral("Font Asset\n%1").arg(duration));
+        } else if (!size.isEmpty() || !duration.isEmpty()) {
             detailsLabel->setText(QString("%1\n%2, %3").arg(size).arg(duration).arg(fps));
         } else {
             detailsLabel->setText("Folder or Footage Asset");
@@ -950,7 +952,9 @@ void ArtifactProjectView::dropEvent(QDropEvent* event) {
             QString lowerPath = filePath.toLower();
             if (lowerPath.endsWith(".png") || lowerPath.endsWith(".jpg") || lowerPath.endsWith(".jpeg") ||
                 lowerPath.endsWith(".bmp") || lowerPath.endsWith(".gif") || lowerPath.endsWith(".mp4") ||
-                lowerPath.endsWith(".avi") || lowerPath.endsWith(".mov") || lowerPath.endsWith(".mkv")) {
+                lowerPath.endsWith(".avi") || lowerPath.endsWith(".mov") || lowerPath.endsWith(".mkv") ||
+                lowerPath.endsWith(".ttf") || lowerPath.endsWith(".otf") || lowerPath.endsWith(".ttc") ||
+                lowerPath.endsWith(".woff") || lowerPath.endsWith(".woff2")) {
                 impl_->handleFileDrop(filePath);
             }
         }

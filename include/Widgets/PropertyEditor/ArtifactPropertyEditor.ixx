@@ -80,6 +80,16 @@ private:
     class QLineEdit* lineEdit_ = nullptr;
 };
 
+class ArtifactFontFamilyPropertyEditor final : public ArtifactAbstractPropertyEditor {
+public:
+    explicit ArtifactFontFamilyPropertyEditor(const ArtifactCore::AbstractProperty& property, QWidget* parent = nullptr);
+    QVariant value() const override;
+    void setValueFromVariant(const QVariant& value) override;
+
+private:
+    class QFontComboBox* comboBox_ = nullptr;
+};
+
 class ArtifactPathPropertyEditor final : public ArtifactAbstractPropertyEditor {
 public:
     explicit ArtifactPathPropertyEditor(const ArtifactCore::AbstractProperty& property, QWidget* parent = nullptr);

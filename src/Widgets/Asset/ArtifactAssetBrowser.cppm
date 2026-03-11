@@ -90,6 +90,7 @@ namespace Artifact {
   QIcon defaultImageIcon_;
   QIcon defaultVideoIcon_;
   QIcon defaultAudioIcon_;
+  QIcon defaultFontIcon_;
  public:
   Impl();
   ~Impl();
@@ -119,6 +120,7 @@ namespace Artifact {
   bool isImageFile(const QString& fileName) const;
   bool isVideoFile(const QString& fileName) const;
   bool isAudioFile(const QString& fileName) const;
+  bool isFontFile(const QString& fileName) const;
   void syncProjectAssetRoot();
  };
 
@@ -131,6 +133,7 @@ namespace Artifact {
    defaultImageIcon_ = style->standardIcon(QStyle::SP_FileIcon);
    defaultVideoIcon_ = style->standardIcon(QStyle::SP_MediaPlay);
    defaultAudioIcon_ = style->standardIcon(QStyle::SP_MediaVolume);
+   defaultFontIcon_ = style->standardIcon(QStyle::SP_FileDialogDetailedView);
   }
  }
 
@@ -168,6 +171,11 @@ namespace Artifact {
           lower.endsWith(".ogg") || lower.endsWith(".flac") ||
           lower.endsWith(".aac") || lower.endsWith(".m4a");
   }
+  else if (currentFileTypeFilter_ == "fonts") {
+   return lower.endsWith(".ttf") || lower.endsWith(".otf") ||
+          lower.endsWith(".ttc") || lower.endsWith(".woff") ||
+          lower.endsWith(".woff2");
+  }
 
   return true;
  }
@@ -195,13 +203,21 @@ namespace Artifact {
          lower.endsWith(".webm") || lower.endsWith(".flv");
  }
 
- bool ArtifactAssetBrowser::Impl::isAudioFile(const QString& fileName) const
- {
+bool ArtifactAssetBrowser::Impl::isAudioFile(const QString& fileName) const
+{
   QString lower = fileName.toLower();
   return lower.endsWith(".mp3") || lower.endsWith(".wav") ||
          lower.endsWith(".ogg") || lower.endsWith(".flac") ||
          lower.endsWith(".aac") || lower.endsWith(".m4a");
- }
+}
+
+bool ArtifactAssetBrowser::Impl::isFontFile(const QString& fileName) const
+{
+  QString lower = fileName.toLower();
+  return lower.endsWith(".ttf") || lower.endsWith(".otf") ||
+         lower.endsWith(".ttc") || lower.endsWith(".woff") ||
+         lower.endsWith(".woff2");
+}
 
  QIcon ArtifactAssetBrowser::Impl::generateThumbnail(const QString& filePath)
  {
@@ -258,6 +274,11 @@ namespace Artifact {
   if (isAudioFile(fileInfo.fileName())) {
    thumbnailCache_[filePath] = defaultAudioIcon_;
    return defaultAudioIcon_;
+  }
+
+  if (isFontFile(fileInfo.fileName())) {
+   thumbnailCache_[filePath] = defaultFontIcon_;
+   return defaultFontIcon_;
   }
 
   // Default file icon
@@ -387,15 +408,21 @@ namespace Artifact {
   audioButton->setText("Audio");
   audioButton->setCheckable(true);
 
+  auto fontsButton = new QToolButton();
+  fontsButton->setText("Fonts");
+  fontsButton->setCheckable(true);
+
   impl_->filterButtonGroup_->addButton(allButton, 0);
   impl_->filterButtonGroup_->addButton(imagesButton, 1);
   impl_->filterButtonGroup_->addButton(videosButton, 2);
   impl_->filterButtonGroup_->addButton(audioButton, 3);
+  impl_->filterButtonGroup_->addButton(fontsButton, 4);
 
   filterButtonsLayout->addWidget(allButton);
   filterButtonsLayout->addWidget(imagesButton);
   filterButtonsLayout->addWidget(videosButton);
   filterButtonsLayout->addWidget(audioButton);
+  filterButtonsLayout->addWidget(fontsButton);
   filterButtonsLayout->addStretch();
 
   auto vLayout = new QVBoxLayout();
@@ -459,9 +486,10 @@ namespace Artifact {
   connect(impl_->filterButtonGroup_, &QButtonGroup::idClicked, this, [this](int id) {
    switch(id) {
     case 0: impl_->currentFileTypeFilter_ = "all"; break;
-    case 1: impl_->currentFileTypeFilter_ = "images"; break;
-    case 2: impl_->currentFileTypeFilter_ = "videos"; break;
-    case 3: impl_->currentFileTypeFilter_ = "audio"; break;
+   case 1: impl_->currentFileTypeFilter_ = "images"; break;
+   case 2: impl_->currentFileTypeFilter_ = "videos"; break;
+   case 3: impl_->currentFileTypeFilter_ = "audio"; break;
+   case 4: impl_->currentFileTypeFilter_ = "fonts"; break;
    }
    impl_->applyFilters();
   });
@@ -657,6 +685,7 @@ namespace Artifact {
    else if (type == "images") impl_->filterButtonGroup_->button(1)->setChecked(true);
    else if (type == "videos") impl_->filterButtonGroup_->button(2)->setChecked(true);
    else if (type == "audio") impl_->filterButtonGroup_->button(3)->setChecked(true);
+   else if (type == "fonts") impl_->filterButtonGroup_->button(4)->setChecked(true);
   }
 
   impl_->applyFilters();
@@ -703,9 +732,12 @@ namespace Artifact {
     info += QString("Format: %1-bit").arg(image.depth());
    }
   }
+  else if (impl_->isFontFile(fileName)) {
+   info += QString("Kind: Font<br>");
+  }
 
   impl_->fileInfoLabel_->setText(info);
- }
+}
 
  void ArtifactAssetBrowser::showContextMenu(const QPoint& pos)
  {
