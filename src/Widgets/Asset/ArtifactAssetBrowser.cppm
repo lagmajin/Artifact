@@ -40,6 +40,7 @@ module Widgets.AssetBrowser;
 import Widgets.Utils.CSS;
 import Artifact.Service.Project;
 import Artifact.Project.Manager;
+import Artifact.Project.Cleanup;
 import AssetMenuModel;
 import AssetDirectoryModel;
 import Utils.String.UniString;
@@ -105,6 +106,7 @@ namespace Artifact {
   QIcon defaultVideoIcon_;
   QIcon defaultAudioIcon_;
   QIcon defaultFontIcon_;
+  QSet<QString> unusedAssetPaths_;
  public:
   Impl();
   ~Impl();
@@ -138,9 +140,11 @@ namespace Artifact {
   bool isAudioFile(const QString& fileName) const;
   bool isFontFile(const QString& fileName) const;
   bool isImportedAssetPath(const QString& filePath) const;
+  bool isUnusedAssetPath(const QString& filePath) const;
   QStringList selectedAssetPaths() const;
   void syncProjectAssetRoot();
   void syncDirectorySelection();
+  void refreshUnusedAssetCache();
  };
 
  ArtifactAssetBrowser::Impl::Impl()
@@ -305,6 +309,15 @@ QStringList ArtifactAssetBrowser::Impl::selectedAssetPaths() const
   return paths;
 }
 
+bool ArtifactAssetBrowser::Impl::isUnusedAssetPath(const QString& filePath) const
+{
+  const QString canonicalPath = QFileInfo(filePath).canonicalFilePath().isEmpty()
+    ? QFileInfo(filePath).absoluteFilePath()
+    : QFileInfo(filePath).canonicalFilePath();
+  return unusedAssetPaths_.contains(QDir::cleanPath(canonicalPath))
+    || unusedAssetPaths_.contains(QDir::cleanPath(filePath));
+}
+
  QIcon ArtifactAssetBrowser::Impl::generateThumbnail(const QString& filePath)
  {
   // Check cache first
@@ -382,8 +395,8 @@ QStringList ArtifactAssetBrowser::Impl::selectedAssetPaths() const
   thumbnailCache_.clear();
  }
 
- void ArtifactAssetBrowser::Impl::syncProjectAssetRoot()
- {
+void ArtifactAssetBrowser::Impl::syncProjectAssetRoot()
+{
   if (!directoryModel_) return;
 
   QString assetsPath = ArtifactProjectManager::getInstance().currentProjectAssetsPath();
@@ -405,10 +418,32 @@ QStringList ArtifactAssetBrowser::Impl::selectedAssetPaths() const
    currentDirectoryPath_ = previousRoot;
   }
 
+  refreshUnusedAssetCache();
   clearThumbnailCache();
   applyFilters();
   syncDirectorySelection();
- }
+}
+
+void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
+{
+  unusedAssetPaths_.clear();
+  auto* svc = ArtifactProjectService::instance();
+  if (!svc) {
+   return;
+  }
+  auto project = svc->getCurrentProjectSharedPtr();
+  if (!project) {
+   return;
+  }
+  const QStringList unused = ArtifactProjectCleanupTool::findUnusedAssetPaths(project.get());
+  for (const QString& path : unused) {
+   const QString canonicalPath = QFileInfo(path).canonicalFilePath().isEmpty()
+    ? QFileInfo(path).absoluteFilePath()
+    : QFileInfo(path).canonicalFilePath();
+   unusedAssetPaths_.insert(QDir::cleanPath(path));
+   unusedAssetPaths_.insert(QDir::cleanPath(canonicalPath));
+  }
+}
 
  void ArtifactAssetBrowser::Impl::syncDirectorySelection()
  {
@@ -487,8 +522,16 @@ QStringList ArtifactAssetBrowser::Impl::selectedAssetPaths() const
    item.name = UniString::fromQString(entry);
    item.path = UniString::fromQString(fullPath);
    QString itemType = isDir ? QStringLiteral("Folder") : fileInfo.suffix().toUpper();
-   if (!isDir && isImportedAssetPath(fullPath)) {
-    itemType = QStringLiteral("Imported • %1").arg(itemType);
+   if (!isDir) {
+    const bool imported = isImportedAssetPath(fullPath);
+    const bool unused = isUnusedAssetPath(fullPath);
+    if (imported && unused) {
+     itemType = QStringLiteral("Imported • Unused • %1").arg(itemType);
+    } else if (imported) {
+     itemType = QStringLiteral("Imported • %1").arg(itemType);
+    } else if (unused) {
+     itemType = QStringLiteral("Unused • %1").arg(itemType);
+    }
    }
    item.type = UniString::fromQString(itemType);
    item.isFolder = isDir;
@@ -885,6 +928,7 @@ QStringList ArtifactAssetBrowser::Impl::selectedAssetPaths() const
    info += "Type: Folder<br>";
    info += QString("Entries: %1<br>").arg(QDir(filePath).entryList(QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot).size());
    info += QString("Project: %1<br>").arg(impl_->isImportedAssetPath(filePath) ? QStringLiteral("Imported") : QStringLiteral("Not Imported"));
+   info += QString("Usage: %1<br>").arg(impl_->isUnusedAssetPath(filePath) ? QStringLiteral("Unused") : QStringLiteral("In Use / N.A."));
    impl_->fileInfoLabel_->setText(info);
    return;
   }
@@ -893,6 +937,7 @@ QStringList ArtifactAssetBrowser::Impl::selectedAssetPaths() const
   info += QString("Type: %1<br>").arg(fileInfo.suffix().toUpper());
   info += QString("Modified: %1<br>").arg(fileInfo.lastModified().toString("yyyy-MM-dd hh:mm"));
   info += QString("Project: %1<br>").arg(impl_->isImportedAssetPath(filePath) ? QStringLiteral("Imported") : QStringLiteral("Not Imported"));
+  info += QString("Usage: %1<br>").arg(impl_->isUnusedAssetPath(filePath) ? QStringLiteral("Unused") : QStringLiteral("In Use"));
 
   // Get image resolution for image files
   QString fileName = fileInfo.fileName();
