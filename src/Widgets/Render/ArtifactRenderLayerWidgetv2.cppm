@@ -72,58 +72,14 @@ namespace {
    return RenderBackendPreference::Auto;
   }
 
-  Diligent::IEngineFactoryVk* resolveVkFactoryFromDll()
+  Diligent::IEngineFactoryVk* resolveVkFactory()
   {
-   using GetFactoryFn = Diligent::IEngineFactoryVk* (*)();
-   static const wchar_t* kDllCandidates[] = {
-    L"GraphicsEngineVk_64d.dll",
-    L"GraphicsEngineVk_64r.dll",
-    L"GraphicsEngineVk.dll"
-   };
-   for (const auto* dllName : kDllCandidates) {
-    HMODULE mod = ::GetModuleHandleW(dllName);
-    if (!mod) {
-     mod = ::LoadLibraryW(dllName);
-    }
-    if (!mod) {
-     continue;
-    }
-    auto* fn = reinterpret_cast<GetFactoryFn>(::GetProcAddress(mod, "GetEngineFactoryVk"));
-    if (!fn) {
-     fn = reinterpret_cast<GetFactoryFn>(::GetProcAddress(mod, "Diligent_GetEngineFactoryVk"));
-    }
-    if (fn) {
-     return fn();
-    }
-   }
-   return nullptr;
+   return Diligent::LoadAndGetEngineFactoryVk();
   }
 
-  Diligent::IEngineFactoryD3D12* resolveD3D12FactoryFromDll()
+  Diligent::IEngineFactoryD3D12* resolveD3D12Factory()
   {
-   using GetFactoryFn = Diligent::IEngineFactoryD3D12* (*)();
-   static const wchar_t* kDllCandidates[] = {
-    L"GraphicsEngineD3D12_64d.dll",
-    L"GraphicsEngineD3D12_64r.dll",
-    L"GraphicsEngineD3D12.dll"
-   };
-   for (const auto* dllName : kDllCandidates) {
-    HMODULE mod = ::GetModuleHandleW(dllName);
-    if (!mod) {
-     mod = ::LoadLibraryW(dllName);
-    }
-    if (!mod) {
-     continue;
-    }
-    auto* fn = reinterpret_cast<GetFactoryFn>(::GetProcAddress(mod, "GetEngineFactoryD3D12"));
-    if (!fn) {
-     fn = reinterpret_cast<GetFactoryFn>(::GetProcAddress(mod, "Diligent_GetEngineFactoryD3D12"));
-    }
-    if (fn) {
-     return fn();
-    }
-   }
-   return nullptr;
+   return Diligent::LoadAndGetEngineFactoryD3D12();
   }
  }
 
@@ -186,7 +142,7 @@ W_OBJECT_IMPL(ArtifactLayerEditorWidgetV2)
 
   auto tryInitVk = [&]() -> bool
   {
-   auto* pFactoryVk = resolveVkFactoryFromDll();
+   auto* pFactoryVk = resolveVkFactory();
    if (!pFactoryVk) {
     return false;
    }
@@ -205,7 +161,7 @@ W_OBJECT_IMPL(ArtifactLayerEditorWidgetV2)
 
   auto tryInitD3D12 = [&]() -> bool
   {
-   auto* pFactoryD3D12 = resolveD3D12FactoryFromDll();
+   auto* pFactoryD3D12 = resolveD3D12Factory();
    if (!pFactoryD3D12) {
     return false;
    }
