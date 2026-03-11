@@ -1,4 +1,4 @@
-module;
+﻿module;
 #define NOMINMAX
 #include <windows.h>
 #include <cstring>
