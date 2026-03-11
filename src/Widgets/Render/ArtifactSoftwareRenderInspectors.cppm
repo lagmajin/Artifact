@@ -30,7 +30,7 @@ import Artifact.Service.Project;
 import Artifact.Project.Items;
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
-import Artifact.Layer.Solid2D;
+import Artifact.Layers.SolidImage;
 import Layer.Blend;
 
 namespace Artifact {
@@ -254,7 +254,7 @@ QImage renderCompositionForeground(
         }
         ++visibleCount;
         QRectF layerRect = layer->transformedBoundingBox();
-        const auto solidLayer = std::dynamic_pointer_cast<ArtifactSolid2DLayer>(layer);
+        const auto solidLayer = std::dynamic_pointer_cast<ArtifactSolidImageLayer>(layer);
         if (solidLayer) {
             ++solidCount;
             const auto source = solidLayer->sourceSize();

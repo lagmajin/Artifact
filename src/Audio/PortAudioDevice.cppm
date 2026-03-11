@@ -1,42 +1,12 @@
-﻿module;
+module;
 #ifdef USE_PORTAUDIO
 #include <portaudio.h>
 #endif
-#include <iostream>
-#include <vector>
-#include <string>
-#include <map>
-#include <unordered_map>
-#include <set>
-#include <unordered_set>
-#include <memory>
-#include <algorithm>
-#include <cmath>
-#include <functional>
-#include <optional>
-#include <utility>
-#include <array>
-#include <mutex>
-#include <thread>
-#include <chrono>
-#include <filesystem>
-#include <fstream>
-#include <sstream>
-#include <stdexcept>
-#include <type_traits>
-#include <variant>
-#include <any>
-#include <atomic>
-#include <condition_variable>
-#include <queue>
-#include <deque>
-#include <list>
-#include <tuple>
-#include <numeric>
-#include <regex>
-#include <random>
 #include <cstdint>
+
 module Audio.PortAudioDevice;
+
+import std;
 import Audio.IAudioDevice;
 
 namespace Artifact {
@@ -97,7 +67,7 @@ void PortAudioDevice::close() {
 bool PortAudioDevice::start() {
 #ifdef USE_PORTAUDIO
     if (!impl_->stream_) return false;
-    PaError err = Pa_StartStream(impl_->stream_);
+    const PaError err = Pa_StartStream(impl_->stream_);
     if (err != paNoError) return false;
     impl_->state_ = AudioDeviceState::Started;
     return true;
@@ -122,13 +92,11 @@ void PortAudioDevice::write(const float* interleaved, size_t frames) {
     Pa_WriteStream(impl_->stream_, interleaved, static_cast<unsigned long>(frames));
     impl_->framesWritten_ += frames;
 #else
-    // No-op when PortAudio not present
     (void)interleaved; (void)frames;
 #endif
 }
 
 std::uint64_t PortAudioDevice::position() const { return impl_->framesWritten_; }
-
 AudioDeviceState PortAudioDevice::state() const { return impl_->state_; }
 
 }

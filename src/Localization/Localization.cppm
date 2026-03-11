@@ -1,47 +1,10 @@
-﻿module;
+module;
 #include <QString>
-#include <unordered_map>
-#include <string>
 
-#include <iostream>
-#include <vector>
-#include <string>
-#include <map>
-#include <unordered_map>
-#include <set>
-#include <unordered_set>
-#include <memory>
-#include <algorithm>
-#include <cmath>
-#include <functional>
-#include <optional>
-#include <utility>
-#include <array>
-#include <mutex>
-#include <thread>
-#include <chrono>
-#include <filesystem>
-#include <fstream>
-#include <sstream>
-#include <stdexcept>
-#include <type_traits>
-#include <variant>
-#include <any>
-#include <atomic>
-#include <condition_variable>
-#include <queue>
-#include <deque>
-#include <list>
-#include <tuple>
-#include <numeric>
-#include <regex>
-#include <random>
 module Localization.Localization;
 
-
-
+import std;
 import Localization.Localization;
-
 import Utils.String.UniString;
 
 namespace ArtifactCore {
@@ -52,7 +15,6 @@ public:
     std::unordered_map<std::string, std::unordered_map<std::string, std::string>> data;
 
     Impl() {
-        // minimal built-in dictionaries
         data["eng"]["menu.file"] = "File";
         data["eng"]["menu.edit"] = "Edit";
         data["eng"]["menu.view"] = "View";
@@ -82,16 +44,14 @@ UniString LocalizationManager::locale() const {
 }
 
 UniString LocalizationManager::translate(const UniString& key) const {
-    QString qk = key.toQString();
-    std::string k = qk.toStdString();
-    auto it = impl_->data.find(impl_->currentLocale);
+    const std::string k = key.toQString().toStdString();
+    const auto it = impl_->data.find(impl_->currentLocale);
     if (it != impl_->data.end()) {
-        auto it2 = it->second.find(k);
+        const auto it2 = it->second.find(k);
         if (it2 != it->second.end()) {
             return UniString(QString::fromStdString(it2->second));
         }
     }
-    // fallback: return key
     return key;
 }
 

@@ -3,48 +3,13 @@
 #include <QWidget>
 
 #include <wobjectdefs.h>
-#include <iostream>
-#include <vector>
-#include <string>
-#include <map>
-#include <unordered_map>
-#include <set>
-#include <unordered_set>
-#include <memory>
-#include <algorithm>
-#include <cmath>
-#include <functional>
-#include <optional>
-#include <utility>
-#include <array>
-#include <mutex>
-#include <thread>
-#include <chrono>
-#include <filesystem>
-#include <fstream>
-#include <sstream>
-#include <stdexcept>
-#include <type_traits>
-#include <variant>
-#include <any>
-#include <atomic>
-#include <condition_variable>
-#include <queue>
-#include <deque>
-#include <list>
-#include <tuple>
-#include <numeric>
-#include <regex>
-#include <random>
 export module Artifact.Widgets.CreatePlaneLayerDialog;
-
-
-
+import std;
 
 import Widgets.Dialog.Abstract;
 import Artifact.Layer.InitParams;
 import Color.Float;
-import Artifact.Layer.Solid2D;
+import Artifact.Layers.SolidImage;
 
 
 export namespace Artifact {
@@ -106,7 +71,7 @@ export namespace Artifact {
   explicit EditPlaneLayerSettingDialog(QWidget* parent = nullptr);
   ~EditPlaneLayerSettingDialog();
   void showAnimated();
-  void setupEdit(std::shared_ptr<ArtifactSolid2DLayer> layer);
+  void setupEdit(std::shared_ptr<ArtifactSolidImageLayer> layer);
  public/*signals*/:
  };
 

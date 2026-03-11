@@ -3,50 +3,15 @@
 #include <QList>
 #include <QObject>
 
-#include <iostream>
-#include <vector>
-#include <string>
-#include <map>
-#include <unordered_map>
-#include <set>
-#include <unordered_set>
-#include <memory>
-#include <algorithm>
-#include <cmath>
-#include <functional>
-#include <optional>
-#include <utility>
-#include <array>
-#include <mutex>
-#include <thread>
-#include <chrono>
-#include <filesystem>
-#include <fstream>
-#include <sstream>
-#include <stdexcept>
-#include <type_traits>
-#include <variant>
-#include <any>
-#include <atomic>
-#include <condition_variable>
-#include <queue>
-#include <deque>
-#include <list>
-#include <tuple>
-#include <numeric>
-#include <regex>
-#include <random>
 module Artifact.Layer.Factory;
-
-
-
+import std;
 
 import Utils.String.UniString;
 import Artifact.Layer.Result;
 import Artifact.Layer.Null;
 import Artifact.Layer.Image;
 import Artifact.Layer.Shape;
-import Artifact.Layer.Solid2D;
+import Artifact.Layers.SolidImage;
 import Artifact.Layer.AdjustableLayer;
 import Artifact.Layer.Media;
 import Artifact.Layer.Camera;
@@ -93,7 +58,7 @@ namespace Artifact {
    ptr = std::make_shared<ArtifactNullLayer>();
    break;
   case LayerType::Solid:
-   ptr = std::make_shared<ArtifactSolid2DLayer>();
+   ptr = std::make_shared<ArtifactSolidImageLayer>();
    break;
   case LayerType::Image:
    ptr = std::make_shared<ArtifactImageLayer>();

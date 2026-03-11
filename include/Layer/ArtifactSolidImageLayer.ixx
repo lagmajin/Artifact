@@ -1,10 +1,10 @@
-﻿module;
-
+module;
 
 export module Artifact.Layers.SolidImage;
 
+import std;
 import Color.Float;
-
+import Artifact.Layer.Abstract;
 
 export namespace Artifact
 {
@@ -12,27 +12,26 @@ export namespace Artifact
 
  class ArtifactSolidImageLayerSettings
  {
- private:
-
  public:
   ArtifactSolidImageLayerSettings();
   ~ArtifactSolidImageLayerSettings();
  };
 
-
- class ArtifactSolidImageLayer
- {private:
+ class ArtifactSolidImageLayer : public ArtifactAbstractLayer
+ {
+ private:
   class Impl;
   Impl* impl_;
+
  public:
   ArtifactSolidImageLayer();
   ~ArtifactSolidImageLayer();
-  FloatColor layerColor() const;
-  void setLayerColor(const FloatColor& color);
+
+  FloatColor color() const;
+  void setColor(const FloatColor& color);
+  void setSize(int width, int height);
+  std::vector<ArtifactCore::PropertyGroup> getLayerPropertyGroups() const override;
+  bool setLayerPropertyValue(const QString& propertyPath, const QVariant& value) override;
+  void draw(ArtifactIRenderer* renderer) override;
  };
-
-
-
-
-
 }

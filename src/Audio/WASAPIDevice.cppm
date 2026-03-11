@@ -1,46 +1,15 @@
-﻿module;
+module;
 #include <Audioclient.h>
 #include <Mmdeviceapi.h>
-#include <iostream>
-#include <vector>
-#include <string>
-#include <map>
-#include <unordered_map>
-#include <set>
-#include <unordered_set>
-#include <memory>
-#include <algorithm>
-#include <cmath>
-#include <functional>
-#include <optional>
-#include <utility>
-#include <array>
-#include <mutex>
-#include <thread>
-#include <chrono>
-#include <filesystem>
-#include <fstream>
-#include <sstream>
-#include <stdexcept>
-#include <type_traits>
-#include <variant>
-#include <any>
-#include <atomic>
-#include <condition_variable>
-#include <queue>
-#include <deque>
-#include <list>
-#include <tuple>
-#include <numeric>
-#include <regex>
-#include <random>
 #include <cstdint>
+
 module Audio.WASAPIDevice;
+
+import std;
 import Audio.IAudioDevice;
 
 namespace Artifact {
 
-// Impl holds Windows COM members and state
 class WASAPIDevice::Impl {
 public:
     IAudioClient* audioClient_ = nullptr;
@@ -52,9 +21,6 @@ public:
     int channels_ = 2;
     int framesPerBuffer_ = 512;
     AudioDeviceState state_ = AudioDeviceState::Closed;
-
-    Impl() {}
-    ~Impl() {}
 };
 
 WASAPIDevice::WASAPIDevice() : impl_(new Impl()) {}
@@ -62,9 +28,7 @@ WASAPIDevice::~WASAPIDevice() { close(); delete impl_; impl_ = nullptr; }
 
 bool WASAPIDevice::open(int sampleRate, int channels, int framesPerBuffer) {
     impl_->sampleRate_ = sampleRate; impl_->channels_ = channels; impl_->framesPerBuffer_ = framesPerBuffer;
-    HRESULT hr;
-
-    hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    HRESULT hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
     if (FAILED(hr)) return false;
 
     IMMDeviceEnumerator* enumerator = nullptr;
@@ -81,8 +45,7 @@ bool WASAPIDevice::open(int sampleRate, int channels, int framesPerBuffer) {
     hr = impl_->audioClient_->GetMixFormat(&impl_->mixFormat_);
     if (FAILED(hr) || !impl_->mixFormat_) return false;
 
-    // Initialize audio client for shared mode
-    REFERENCE_TIME bufferDuration = (REFERENCE_TIME)((impl_->framesPerBuffer_ * 10000000LL) / impl_->sampleRate_);
+    const REFERENCE_TIME bufferDuration = (REFERENCE_TIME)((impl_->framesPerBuffer_ * 10000000LL) / impl_->sampleRate_);
     hr = impl_->audioClient_->Initialize(AUDCLNT_SHAREMODE_SHARED, 0, bufferDuration, 0, impl_->mixFormat_, nullptr);
     if (FAILED(hr)) return false;
 
@@ -105,7 +68,7 @@ void WASAPIDevice::close() {
 
 bool WASAPIDevice::start() {
     if (!impl_ || !impl_->audioClient_) return false;
-    HRESULT hr = impl_->audioClient_->Start();
+    const HRESULT hr = impl_->audioClient_->Start();
     if (FAILED(hr)) return false;
     impl_->state_ = AudioDeviceState::Started;
     return true;
@@ -131,7 +94,6 @@ void WASAPIDevice::write(const float* interleaved, size_t frames) {
 }
 
 std::uint64_t WASAPIDevice::position() const { return impl_ ? impl_->framesWritten_ : 0; }
-
 AudioDeviceState WASAPIDevice::state() const { return impl_ ? impl_->state_ : AudioDeviceState::Closed; }
 
 }

@@ -44,6 +44,7 @@
 - `2026-03-11`
   - current composition 追従付きの `Software Composition Test` / `Software Layer Test` は導入済み
   - 初手として `Solid Layer Preview Fidelity` に着手
+  - `LayerType::Solid` の実体を `ArtifactSolidImageLayer` へ寄せる移行を開始
 
 ## Suggested Order
 
