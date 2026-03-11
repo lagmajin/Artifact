@@ -24,6 +24,11 @@ module;
 #include <QDebug>
 #include <QKeyEvent>
 #include <QHashFunctions>
+#include <QDateTime>
+#include <QDir>
+#include <QFileDialog>
+#include <QImage>
+#include <QStandardPaths>
 
 module Artifact.Widgets.RenderLayerWidgetv2;
 import Graphics;
@@ -123,9 +128,6 @@ namespace {
  }
 
 W_OBJECT_IMPL(ArtifactLayerEditorWidgetV2)
- void ArtifactLayerEditorWidgetV2::play() {}
- void ArtifactLayerEditorWidgetV2::stop() {}
- void ArtifactLayerEditorWidgetV2::takeScreenShot() {}
 
  class ArtifactLayerEditorWidgetV2::Impl {
  private:
@@ -155,6 +157,7 @@ W_OBJECT_IMPL(ArtifactLayerEditorWidgetV2)
  RefCntAutoPtr<IFence> m_layer_fence;
   LayerID targetLayerId_{};
   FloatColor targetLayerTint_{ 1.0f, 0.5f, 0.5f, 1.0f };
+  FloatColor clearColor_{ 0.10f, 0.10f, 0.10f, 1.0f };
   
   void defaultHandleKeyPressEvent(QKeyEvent* event);
   void defaultHandleKeyReleaseEvent(QKeyEvent* event);
@@ -323,6 +326,7 @@ W_OBJECT_IMPL(ArtifactLayerEditorWidgetV2)
  if (!initialized_ || !renderer_)
   return;
  renderer_->clear();
+  renderer_->drawRectLocal(-8192, -8192, 16384, 16384, clearColor_);
   renderer_->drawRectLocal(0,0, 400, 450, targetLayerTint_);
   renderer_->flush();
   renderer_->present();
@@ -454,7 +458,7 @@ W_OBJECT_IMPL(ArtifactLayerEditorWidgetV2)
  void ArtifactLayerEditorWidgetV2::closeEvent(QCloseEvent* event)
  {
   impl_->destroy();
-  QWidget::closeEvent(event);
+ QWidget::closeEvent(event);
  }
 
  void ArtifactLayerEditorWidgetV2::focusInEvent(QFocusEvent* event)
@@ -464,7 +468,8 @@ W_OBJECT_IMPL(ArtifactLayerEditorWidgetV2)
 
  void ArtifactLayerEditorWidgetV2::setClearColor(const FloatColor& color)
  {
-
+  std::lock_guard<std::mutex> lock(impl_->resizeMutex_);
+  impl_->clearColor_ = color;
  }
 
 void ArtifactLayerEditorWidgetV2::setTargetLayer(const LayerID& id)
@@ -517,6 +522,60 @@ void ArtifactLayerEditorWidgetV2::setTargetLayer(const LayerID& id)
  void ArtifactLayerEditorWidgetV2::setPan(const QPointF& offset)
  {
 
+ }
+
+ float ArtifactLayerEditorWidgetV2::zoom() const
+ {
+  return 1.0f;
+ }
+
+ void ArtifactLayerEditorWidgetV2::setTargetLayer(LayerID& id)
+ {
+  setTargetLayer(static_cast<const LayerID&>(id));
+ }
+
+ QImage ArtifactLayerEditorWidgetV2::grabScreenShot()
+ {
+  return grab().toImage();
+ }
+
+ void ArtifactLayerEditorWidgetV2::play()
+ {
+  if (!impl_->initialized_) {
+   return;
+  }
+  impl_->isPlay_ = true;
+  impl_->startRenderLoop();
+ }
+
+ void ArtifactLayerEditorWidgetV2::stop()
+ {
+  impl_->isPlay_ = false;
+  impl_->stopRenderLoop();
+ }
+
+ void ArtifactLayerEditorWidgetV2::takeScreenShot()
+ {
+  const QImage image = grabScreenShot();
+  if (image.isNull()) {
+   return;
+  }
+
+  QString defaultDir = QStandardPaths::writableLocation(QStandardPaths::PicturesLocation);
+  if (defaultDir.isEmpty()) {
+   defaultDir = QDir::homePath();
+  }
+  const QString defaultPath = QDir(defaultDir).filePath(
+   QStringLiteral("artifact-layer-view-%1.png").arg(QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd-hhmmss"))));
+  const QString filePath = QFileDialog::getSaveFileName(
+   this,
+   QStringLiteral("Save Layer View Snapshot"),
+   defaultPath,
+   QStringLiteral("PNG Image (*.png)"));
+  if (filePath.isEmpty()) {
+   return;
+  }
+  image.save(filePath);
  }
 
 };
