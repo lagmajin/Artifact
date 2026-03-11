@@ -49,3 +49,12 @@ Project View / Project panel を独立して改善するための実装メモ。
   - rename を `model()->setData()` の疑似編集から service / project 更新へ修正
   - `F2` rename、`Delete` remove の keyboard shortcut を追加
   - double-click on footage は source location を開く形で整理
+  - composition metadata を placeholder ではなく actual `compositionSize / frameRange / frameRate` から表示
+  - project item type icon を folder / composition / solid / image / video / audio / missing で描き分け
+
+## Next Slice for M-PV-3
+
+- folder/bin の配置先選択
+- nested folder 作成 API
+- drag & drop で project item 整理
+- unused / recent / tag の仮想 view
