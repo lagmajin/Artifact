@@ -97,7 +97,8 @@ using namespace ArtifactWidgets;
  inline int layerInsertionIndexForTrackDrop(const QVector<LayerID>& trackLayerIds, const LayerID& draggedLayerId, const int trackIndex)
  {
   int targetLayerIndex = 0;
-  const int upperBound = std::clamp(trackIndex, 0, trackLayerIds.size());
+  const int trackCount = static_cast<int>(trackLayerIds.size());
+  const int upperBound = std::clamp<int>(trackIndex, 0, trackCount);
   for (int i = 0; i < upperBound; ++i) {
    const auto& candidate = trackLayerIds[i];
    if (candidate.isNil() || candidate == draggedLayerId) {
