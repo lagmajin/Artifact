@@ -701,9 +701,15 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactParticleLayer::getLayerProperty
     particleGroup.addProperty(makeProp(QStringLiteral("particle.previewHeight"), ArtifactCore::PropertyType::Integer, impl_->height, -100));
 
     const auto& rs = renderSettings();
-    particleGroup.addProperty(makeProp(QStringLiteral("particle.render.blendMode"), ArtifactCore::PropertyType::Integer, static_cast<int>(rs.blendMode), -90));
-    particleGroup.addProperty(makeProp(QStringLiteral("particle.render.billboardMode"), ArtifactCore::PropertyType::Integer, static_cast<int>(rs.billboardMode), -80));
-    particleGroup.addProperty(makeProp(QStringLiteral("particle.render.sortMode"), ArtifactCore::PropertyType::Integer, static_cast<int>(rs.sortMode), -70));
+    auto blendModeProp = makeProp(QStringLiteral("particle.render.blendMode"), ArtifactCore::PropertyType::Integer, static_cast<int>(rs.blendMode), -90);
+    blendModeProp->setTooltip(QStringLiteral("0=Additive, 1=Subtractive, 2=Normal, 3=Screen, 4=Multiply"));
+    particleGroup.addProperty(blendModeProp);
+    auto billboardModeProp = makeProp(QStringLiteral("particle.render.billboardMode"), ArtifactCore::PropertyType::Integer, static_cast<int>(rs.billboardMode), -80);
+    billboardModeProp->setTooltip(QStringLiteral("0=None, 1=ScreenAligned, 2=ViewPlane, 3=VelocityAligned"));
+    particleGroup.addProperty(billboardModeProp);
+    auto sortModeProp = makeProp(QStringLiteral("particle.render.sortMode"), ArtifactCore::PropertyType::Integer, static_cast<int>(rs.sortMode), -70);
+    sortModeProp->setTooltip(QStringLiteral("0=None, 1=Distance, 2=OldestFirst, 3=YoungestFirst"));
+    particleGroup.addProperty(sortModeProp);
     particleGroup.addProperty(makeProp(QStringLiteral("particle.render.depthTest"), ArtifactCore::PropertyType::Boolean, rs.depthTest, -60));
     particleGroup.addProperty(makeProp(QStringLiteral("particle.render.depthWrite"), ArtifactCore::PropertyType::Boolean, rs.depthWrite, -50));
 

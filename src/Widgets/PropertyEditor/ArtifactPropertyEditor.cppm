@@ -3,7 +3,9 @@ module;
 #include <QCheckBox>
 #include <QColor>
 #include <QColorDialog>
+#include <QComboBox>
 #include <QDoubleSpinBox>
+#include <QFileDialog>
 #include <QHBoxLayout>
 #include <QLineEdit>
 #include <QPushButton>
@@ -80,6 +82,91 @@ double sliderPositionToFloat(const int sliderValue, const double minValue, const
     }
     const double normalized = static_cast<double>(sliderValue) / 1000.0;
     return minValue + (maxValue - minValue) * normalized;
+}
+
+QString fileDialogFilterForProperty(const QString& propertyName)
+{
+    if (propertyName.contains(QStringLiteral("video"), Qt::CaseInsensitive)
+        || propertyName.contains(QStringLiteral("media"), Qt::CaseInsensitive))
+    {
+        return QStringLiteral("Media Files (*.mp4 *.mov *.avi *.mkv *.webm *.mp3 *.wav *.flac);;All Files (*.*)");
+    }
+    if (propertyName.contains(QStringLiteral("audio"), Qt::CaseInsensitive)) {
+        return QStringLiteral("Audio Files (*.wav *.mp3 *.flac *.ogg *.m4a);;All Files (*.*)");
+    }
+    if (propertyName.contains(QStringLiteral("image"), Qt::CaseInsensitive)
+        || propertyName.endsWith(QStringLiteral("sourcePath"), Qt::CaseInsensitive))
+    {
+        return QStringLiteral("Image Files (*.png *.jpg *.jpeg *.bmp *.tif *.tiff *.webp *.exr);;All Files (*.*)");
+    }
+    return QStringLiteral("All Files (*.*)");
+}
+
+bool isPathProperty(const ArtifactCore::AbstractProperty& property)
+{
+    if (property.getType() != ArtifactCore::PropertyType::String) {
+        return false;
+    }
+    const QString name = property.getName();
+    return name.endsWith(QStringLiteral(".sourcePath"), Qt::CaseInsensitive)
+        || name.compare(QStringLiteral("sourcePath"), Qt::CaseInsensitive) == 0;
+}
+
+std::optional<ArtifactEnumPropertyEditor::OptionList> parseTooltipEnumOptions(const QString& tooltip)
+{
+    ArtifactEnumPropertyEditor::OptionList options;
+    const auto entries = tooltip.split(',', Qt::SkipEmptyParts);
+    for (const QString& rawEntry : entries) {
+        const QString entry = rawEntry.trimmed();
+        const int equalIndex = entry.indexOf('=');
+        if (equalIndex <= 0 || equalIndex + 1 >= entry.size()) {
+            return std::nullopt;
+        }
+        bool ok = false;
+        const int value = entry.left(equalIndex).trimmed().toInt(&ok);
+        if (!ok) {
+            return std::nullopt;
+        }
+        const QString label = entry.mid(equalIndex + 1).trimmed();
+        if (label.isEmpty()) {
+            return std::nullopt;
+        }
+        options.emplace_back(value, label);
+    }
+    if (options.empty()) {
+        return std::nullopt;
+    }
+    return options;
+}
+
+std::optional<ArtifactEnumPropertyEditor::OptionList> enumOptionsForProperty(const ArtifactCore::AbstractProperty& property)
+{
+    if (property.getType() != ArtifactCore::PropertyType::Integer) {
+        return std::nullopt;
+    }
+
+    const auto meta = property.metadata();
+    if (!meta.tooltip.isEmpty()) {
+        if (const auto parsed = parseTooltipEnumOptions(meta.tooltip)) {
+            return parsed;
+        }
+    }
+
+    const QString name = property.getName();
+    if (name == QStringLiteral("waveType")) {
+        return ArtifactEnumPropertyEditor::OptionList{
+            {0, QStringLiteral("Sine")},
+            {1, QStringLiteral("Cosine")}
+        };
+    }
+    if (name == QStringLiteral("orientation")) {
+        return ArtifactEnumPropertyEditor::OptionList{
+            {0, QStringLiteral("Horizontal")},
+            {1, QStringLiteral("Vertical")}
+        };
+    }
+
+    return std::nullopt;
 }
 
 } // namespace
@@ -310,6 +397,97 @@ void ArtifactStringPropertyEditor::setValueFromVariant(const QVariant& value)
     lineEdit_->setText(value.toString());
 }
 
+ArtifactPathPropertyEditor::ArtifactPathPropertyEditor(const ArtifactCore::AbstractProperty& property, QWidget* parent)
+    : ArtifactAbstractPropertyEditor(parent)
+{
+    lineEdit_ = new QLineEdit(property.getValue().toString(), this);
+    browseButton_ = new QPushButton(QStringLiteral("..."), this);
+    browseButton_->setFixedWidth(32);
+
+    auto* layout = new QHBoxLayout(this);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(4);
+    layout->addWidget(lineEdit_, 1);
+    layout->addWidget(browseButton_, 0);
+
+    const QString propertyName = property.getName();
+    QObject::connect(lineEdit_, &QLineEdit::editingFinished, this, [this]() {
+        commitValue(lineEdit_->text());
+    });
+    QObject::connect(browseButton_, &QPushButton::clicked, this, [this, propertyName]() {
+        const QString initialPath = lineEdit_->text().trimmed();
+        const QString selectedPath = QFileDialog::getOpenFileName(
+            this,
+            QStringLiteral("Select Source"),
+            initialPath,
+            fileDialogFilterForProperty(propertyName));
+        if (selectedPath.isEmpty()) {
+            return;
+        }
+        lineEdit_->setText(selectedPath);
+        commitValue(selectedPath);
+    });
+}
+
+QVariant ArtifactPathPropertyEditor::value() const
+{
+    return lineEdit_ ? QVariant(lineEdit_->text()) : QVariant();
+}
+
+void ArtifactPathPropertyEditor::setValueFromVariant(const QVariant& value)
+{
+    if (!lineEdit_) {
+        return;
+    }
+    const QSignalBlocker blocker(lineEdit_);
+    lineEdit_->setText(value.toString());
+}
+
+ArtifactEnumPropertyEditor::ArtifactEnumPropertyEditor(
+    const ArtifactCore::AbstractProperty& property,
+    OptionList options,
+    QWidget* parent)
+    : ArtifactAbstractPropertyEditor(parent),
+      options_(std::move(options))
+{
+    comboBox_ = new QComboBox(this);
+    auto* layout = new QHBoxLayout(this);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->addWidget(comboBox_);
+
+    for (const auto& [value, label] : options_) {
+        comboBox_->addItem(label, value);
+    }
+    setValueFromVariant(property.getValue());
+
+    QObject::connect(comboBox_, &QComboBox::currentIndexChanged, this, [this](int index) {
+        if (index < 0) {
+            return;
+        }
+        commitValue(comboBox_->currentData());
+    });
+}
+
+QVariant ArtifactEnumPropertyEditor::value() const
+{
+    return comboBox_ ? comboBox_->currentData() : QVariant();
+}
+
+void ArtifactEnumPropertyEditor::setValueFromVariant(const QVariant& value)
+{
+    if (!comboBox_) {
+        return;
+    }
+    const int desired = value.toInt();
+    for (int i = 0; i < comboBox_->count(); ++i) {
+        if (comboBox_->itemData(i).toInt() == desired) {
+            const QSignalBlocker blocker(comboBox_);
+            comboBox_->setCurrentIndex(i);
+            return;
+        }
+    }
+}
+
 ArtifactColorPropertyEditor::ArtifactColorPropertyEditor(const ArtifactCore::AbstractProperty& property, QWidget* parent)
     : ArtifactAbstractPropertyEditor(parent)
 {
@@ -505,6 +683,13 @@ bool ArtifactPropertyEditorRowWidget::eventFilter(QObject* watched, QEvent* even
 
 ArtifactAbstractPropertyEditor* createPropertyEditorWidget(const ArtifactCore::AbstractProperty& property, QWidget* parent)
 {
+    if (isPathProperty(property)) {
+        return new ArtifactPathPropertyEditor(property, parent);
+    }
+    if (const auto enumOptions = enumOptionsForProperty(property)) {
+        return new ArtifactEnumPropertyEditor(property, *enumOptions, parent);
+    }
+
     switch (property.getType()) {
     case ArtifactCore::PropertyType::Float:
         return new ArtifactFloatPropertyEditor(property, parent);
