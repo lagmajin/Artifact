@@ -6,6 +6,7 @@ module;
 module Menu.Test;
 
 import Artifact.Widgets.SoftwareRenderTest;
+import Artifact.Widgets.SoftwareRenderInspectors;
 
 
 
@@ -34,6 +35,28 @@ namespace Artifact {
       auto* w = new ArtifactSoftwareRenderTestWidget();
       w->setAttribute(Qt::WA_DeleteOnClose, true);
       w->resize(960, 600);
+      w->show();
+      w->raise();
+      w->activateWindow();
+  });
+
+  auto* softwareCompositionTestAction = new QAction("Software Composition Test...", this);
+  addAction(softwareCompositionTestAction);
+  QObject::connect(softwareCompositionTestAction, &QAction::triggered, this, []() {
+      auto* w = new ArtifactSoftwareCompositionTestWidget();
+      w->setAttribute(Qt::WA_DeleteOnClose, true);
+      w->resize(1100, 760);
+      w->show();
+      w->raise();
+      w->activateWindow();
+  });
+
+  auto* softwareLayerTestAction = new QAction("Software Layer Test...", this);
+  addAction(softwareLayerTestAction);
+  QObject::connect(softwareLayerTestAction, &QAction::triggered, this, []() {
+      auto* w = new ArtifactSoftwareLayerTestWidget();
+      w->setAttribute(Qt::WA_DeleteOnClose, true);
+      w->resize(1100, 820);
       w->show();
       w->raise();
       w->activateWindow();
