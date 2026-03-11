@@ -74,6 +74,41 @@ bool isDockRelatedObject(QObject* watched, ads::CDockManager* dockManager) {
     return widget && dockManager->isAncestorOf(widget);
 }
 
+ads::CDockWidget* resolveActiveDock(ads::CDockManager* dockManager, ads::CDockWidget* rememberedDock) {
+    if (!dockManager) return nullptr;
+
+    if (auto* focusedDock = dockManager->focusedDockWidget()) {
+        if (focusedDock->isVisible()) {
+            return focusedDock;
+        }
+    }
+
+    if (auto* focusedWidget = QApplication::focusWidget()) {
+        QObject* cursor = focusedWidget;
+        while (cursor) {
+            if (auto* dock = qobject_cast<ads::CDockWidget*>(cursor)) {
+                if (dock->isVisible()) {
+                    return dock;
+                }
+            }
+            cursor = cursor->parent();
+        }
+    }
+
+    if (rememberedDock && rememberedDock->isVisible()) {
+        return rememberedDock;
+    }
+
+    const auto docks = dockManager->findChildren<ads::CDockWidget*>();
+    for (auto* dock : docks) {
+        if (dock && dock->isVisible() && dock->isCurrentTab()) {
+            return dock;
+        }
+    }
+
+    return nullptr;
+}
+
 }
 
 DockStyleManager::DockStyleManager(ads::CDockManager* dockManager, QObject* parent)
@@ -193,11 +228,14 @@ void DockStyleManager::refreshDockDecorations() {
         return;
     }
 
+    auto* activeDock = resolveActiveDock(impl_->dockManager_, impl_->focusedDockWidget_);
+    impl_->focusedDockWidget_ = activeDock;
+
     const auto docks = impl_->dockManager_->findChildren<ads::CDockWidget*>();
     for (auto* dock : docks) {
         if (!dock) continue;
 
-        const bool isActive = dock->isCurrentTab();
+        const bool isActive = (dock == activeDock);
         dock->setProperty("artifactActiveDock", isActive);
         repolishWidget(dock);
 
@@ -216,10 +254,6 @@ void DockStyleManager::refreshDockDecorations() {
             clearTabGlow(tab);
         }
         repolishWidget(tab);
-    }
-
-    if (auto* focused = impl_->dockManager_->focusedDockWidget()) {
-        impl_->focusedDockWidget_ = focused;
     }
     impl_->dockManager_->update();
 }
