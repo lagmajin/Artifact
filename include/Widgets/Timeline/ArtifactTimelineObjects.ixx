@@ -8,8 +8,12 @@
 
 export module Artifact.Timeline.Objects;
 
+import Utils.Id;
+
 export namespace Artifact
 {
+ using namespace ArtifactCore;
+
  class ResizeHandle : public QGraphicsObject{
  	//W_OBJECT(ResizeHandle)
  protected:
@@ -66,6 +70,8 @@ export namespace Artifact
   double getDuration() const;
   void setStart(double start);
   void setDuration(double duration);
+  void setLayerId(const LayerID& layerId);
+  LayerID layerId() const;
 
   // Drag lifecycle signals (foundation): emit during drag so external code can react
   void dragStarted(ClipItem* clip) W_SIGNAL(dragStarted,clip);

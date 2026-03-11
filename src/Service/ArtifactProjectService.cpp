@@ -322,6 +322,18 @@ namespace Artifact
 
  void ArtifactProjectService::selectLayer(const LayerID& id)
  {
+  if (auto* app = ArtifactApplicationManager::instance()) {
+   if (auto* selectionManager = app->layerSelectionManager()) {
+    selectionManager->setActiveComposition(currentComposition().lock());
+    if (id.isNil()) {
+     selectionManager->clearSelection();
+    } else if (auto comp = currentComposition().lock()) {
+      selectionManager->selectLayer(comp->layerById(id));
+    } else {
+      selectionManager->clearSelection();
+    }
+   }
+  }
   layerSelected(id);
  }
 

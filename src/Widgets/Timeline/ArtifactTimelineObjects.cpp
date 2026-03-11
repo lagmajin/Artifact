@@ -15,9 +15,12 @@
 
 module Artifact.Timeline.Objects;
 import std;
+import Utils.Id;
 
 namespace Artifact
 {
+using namespace ArtifactCore;
+
 namespace {
 // Prevent recursive resize notifications while ClipItem synchronizes geometry.
 thread_local bool g_clipGeometrySyncInProgress = false;
@@ -38,6 +41,7 @@ public:
     double duration = 100.0;
     double height = 20.0;
     double minDuration = 10.0;
+    LayerID layerId_{};
     ResizeHandle* leftHandle = nullptr;
     ResizeHandle* rightHandle = nullptr;
     InteractionState interaction = InteractionState::Idle;
@@ -365,6 +369,18 @@ void ClipItem::setDuration(double duration)
         g_clipGeometrySyncInProgress = false;
         update();
     }
+}
+
+void ClipItem::setLayerId(const LayerID& layerId)
+{
+    if (impl_) {
+        impl_->layerId_ = layerId;
+    }
+}
+
+LayerID ClipItem::layerId() const
+{
+    return impl_ ? impl_->layerId_ : LayerID();
 }
 
 void ClipItem::mousePressEvent(QGraphicsSceneMouseEvent* event)
