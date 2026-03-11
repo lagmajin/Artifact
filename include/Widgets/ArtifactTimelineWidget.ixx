@@ -51,6 +51,7 @@ import Artifact.Widgets.LayerPanelWidget;
 import Artifact.Timeline.Objects;
 
 W_REGISTER_ARGTYPE(Artifact::ClipItem*)
+W_REGISTER_ARGTYPE(ArtifactCore::LayerID)
 
 export namespace Artifact {
 using namespace ArtifactCore;
@@ -140,6 +141,7 @@ class TimelineTrackView :public QGraphicsView {
   ClipItem* addClip(int trackIndex, double start, double duration);
   void removeClip(ClipItem* clip);
   void clearSelection();
+  void selectClipForLayer(const LayerID& layerId);
 
   QSize minimumSizeHint() const override;
 
@@ -147,6 +149,8 @@ class TimelineTrackView :public QGraphicsView {
   void seekPositionChanged(double ratio) W_SIGNAL(seekPositionChanged,ratio);
   void clipSelected(ClipItem* clip) W_SIGNAL(clipSelected,clip);
   void clipDeselected(ClipItem* clip) W_SIGNAL(clipDeselected,clip);
+  void layerClipEdited(LayerID layerId, int trackIndex, double start, double duration)
+   W_SIGNAL(layerClipEdited, layerId, trackIndex, start, duration);
  };
 
 

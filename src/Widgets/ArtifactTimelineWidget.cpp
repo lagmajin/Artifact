@@ -662,6 +662,8 @@ W_OBJECT_IMPL(ArtifactTimelineWidget)
     ArtifactTimelineNavigatorWidget* navigator_ = nullptr;
     CompositionID compositionId_;
     bool shyActive_ = false;
+    QVector<LayerID> trackLayerIds_;
+    bool syncingLayerSelection_ = false;
    };
 
  ArtifactTimelineWidget::Impl::Impl()
@@ -855,6 +857,50 @@ W_OBJECT_IMPL(ArtifactTimelineWidget)
        impl_->playheadSync_->sync();
       }
     });
+    QObject::connect(timelineTrackView, &TimelineTrackView::clipSelected, this, [this](ClipItem* clip) {
+      if (!clip || impl_->syncingLayerSelection_) {
+       return;
+      }
+      if (auto* svc = ArtifactProjectService::instance()) {
+       svc->selectLayer(clip->layerId());
+      }
+    });
+    QObject::connect(timelineTrackView, &TimelineTrackView::clipDeselected, this, [this](ClipItem*) {
+      if (impl_->syncingLayerSelection_) {
+       return;
+      }
+      if (!impl_->trackView_ || !impl_->trackView_->timelineScene() ||
+          !impl_->trackView_->timelineScene()->getSelectedClips().empty()) {
+       return;
+      }
+      if (auto* svc = ArtifactProjectService::instance()) {
+       svc->selectLayer(LayerID());
+      }
+    });
+    QObject::connect(timelineTrackView, &TimelineTrackView::layerClipEdited, this,
+     [this](const LayerID& layerId, const int trackIndex, const double, const double) {
+      if (layerId.isNil() || trackIndex < 0) {
+       return;
+      }
+
+      const int oldTrackIndex = impl_->trackLayerIds_.indexOf(layerId);
+      if (oldTrackIndex < 0 || oldTrackIndex == trackIndex) {
+       return;
+      }
+
+      int targetLayerIndex = 0;
+      const int upperBound = std::clamp(trackIndex, 0, impl_->trackLayerIds_.size());
+      for (int i = 0; i < upperBound; ++i) {
+       if (!impl_->trackLayerIds_[i].isNil()) {
+        ++targetLayerIndex;
+       }
+      }
+
+      if (auto* svc = ArtifactProjectService::instance()) {
+       svc->moveLayerInCurrentComposition(layerId, targetLayerIndex);
+       svc->selectLayer(layerId);
+      }
+     });
 
     impl_->trackView_ = timelineTrackView;  // Store reference for layer creation
   //auto layerTimelinePanel = new ArtifactLayerTimelinePanelWrapper();
@@ -1001,6 +1047,14 @@ W_OBJECT_IMPL(ArtifactTimelineWidget)
   if (auto* svc = ArtifactProjectService::instance()) {
    QObject::connect(svc, &ArtifactProjectService::layerCreated, this, &ArtifactTimelineWidget::onLayerCreated);
    QObject::connect(svc, &ArtifactProjectService::layerRemoved, this, &ArtifactTimelineWidget::onLayerRemoved);
+   QObject::connect(svc, &ArtifactProjectService::layerSelected, this, [this](const LayerID& layerId) {
+    if (!impl_->trackView_) {
+     return;
+    }
+    impl_->syncingLayerSelection_ = true;
+    impl_->trackView_->selectClipForLayer(layerId);
+    impl_->syncingLayerSelection_ = false;
+   });
    QObject::connect(svc, &ArtifactProjectService::projectChanged, this, [this]() {
     refreshTracks();
    });
@@ -1032,11 +1086,14 @@ W_OBJECT_IMPL(ArtifactTimelineWidget)
      auto res = svc->findComposition(id);
      if (res.success && !res.ptr.expired()) {
       auto comp = res.ptr.lock();
-      if (auto* app = ArtifactApplicationManager::instance()) {
-       if (auto* ctx = app->activeContextService()) {
-        ctx->setActiveComposition(comp);
+       if (auto* app = ArtifactApplicationManager::instance()) {
+        if (auto* ctx = app->activeContextService()) {
+         ctx->setActiveComposition(comp);
+        }
+        if (auto* selectionManager = app->layerSelectionManager()) {
+         selectionManager->setActiveComposition(comp);
+        }
        }
-      }
       int totalFrames = static_cast<int>(std::round(comp->frameRange().duration()));
       if (totalFrames < 2) {
         totalFrames = kDefaultTimelineFrames;
@@ -1140,16 +1197,19 @@ W_OBJECT_IMPL(ArtifactTimelineWidget)
        }
       }
 
+      impl_->trackLayerIds_ = visibleRows;
       std::unordered_set<std::string> clipRowsByLayerId;
       for (const auto& rowLayerId : visibleRows) {
-       const int trackIndex = impl_->trackView_->addTrack(kTimelineRowHeight);
-       if (!rowLayerId.isNil()) {
-        const std::string layerKey = rowLayerId.toString().toStdString();
-        if (!clipRowsByLayerId.insert(layerKey).second) {
-         continue;
+        const int trackIndex = impl_->trackView_->addTrack(kTimelineRowHeight);
+        if (!rowLayerId.isNil()) {
+         const std::string layerKey = rowLayerId.toString().toStdString();
+         if (!clipRowsByLayerId.insert(layerKey).second) {
+          continue;
+         }
+         if (auto* clip = impl_->trackView_->addClip(trackIndex, 0, 300)) {
+          clip->setLayerId(rowLayerId);
+         }
         }
-        impl_->trackView_->addClip(trackIndex, 0, 300);
-       }
       }
 
   }
@@ -1343,7 +1403,16 @@ double TimelineTrackView::visibleEndFrame() const
  ClipItem* TimelineTrackView::addClip(int trackIndex, double start, double duration)
  {
   if (impl_->scene_) {
-   return impl_->scene_->addClip(trackIndex, start, duration);
+   if (auto* clip = impl_->scene_->addClip(trackIndex, start, duration)) {
+    QObject::connect(clip, &ClipItem::dragEnded, this, [this, clip](ClipItem*, const double, const double sceneY) {
+     if (!impl_->scene_ || !clip) {
+      return;
+     }
+     const int dropTrackIndex = impl_->scene_->getTrackAtPosition(sceneY);
+     Q_EMIT layerClipEdited(clip->layerId(), dropTrackIndex, clip->getStart(), clip->getDuration());
+    });
+    return clip;
+   }
   }
   return nullptr;
  }
@@ -1363,6 +1432,34 @@ double TimelineTrackView::visibleEndFrame() const
    impl_->lastSelectedClip_ = nullptr;
    viewport()->update();
   }
+ }
+
+ void TimelineTrackView::selectClipForLayer(const LayerID& layerId)
+ {
+  if (!impl_->scene_) {
+   return;
+  }
+
+  impl_->scene_->clearSelection();
+  impl_->lastSelectedClip_ = nullptr;
+
+  if (layerId.isNil()) {
+   viewport()->update();
+   return;
+  }
+
+  for (auto* clip : impl_->scene_->getClips()) {
+   if (!clip) {
+    continue;
+   }
+   if (clip->layerId() == layerId) {
+    clip->setSelected(true);
+    impl_->lastSelectedClip_ = clip;
+    ensureVisible(clip);
+    break;
+   }
+  }
+  viewport()->update();
  }
 
  namespace {
@@ -1553,6 +1650,10 @@ void TimelineTrackView::setZoomLevel(double pixelsPerFrame)
     if (clickedHandle) {
      // Do not seek when operating resize handles; let QGraphicsItem input own this event.
      QGraphicsView::mousePressEvent(event);
+     if (clickedClip) {
+      impl_->lastSelectedClip_ = clickedClip;
+      Q_EMIT clipSelected(clickedClip);
+     }
      return;
     } else if (clickedClip) {
      // Let scene/view default selection logic run, then publish selection signal.
@@ -1582,10 +1683,12 @@ void TimelineTrackView::setZoomLevel(double pixelsPerFrame)
      double ratio = impl_->position_ / frameMax;
      Q_EMIT seekPositionChanged(ratio);
      
-     if (!(event->modifiers() & Qt::ShiftModifier)) {
-      clearSelection();
-      }
-   }
+      if (!(event->modifiers() & Qt::ShiftModifier)) {
+       clearSelection();
+       Q_EMIT clipDeselected(impl_->lastSelectedClip_);
+       impl_->lastSelectedClip_ = nullptr;
+       }
+    }
   }
 
   if (event->button() == Qt::RightButton) {
