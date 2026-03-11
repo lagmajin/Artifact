@@ -29,6 +29,7 @@
 #include <QKeyEvent>
 #include <QWheelEvent>
 #include <QInputDialog>
+#include <QFileDialog>
 module Artifact.Widgets.LayerPanelWidget;
 
 import std;
@@ -38,6 +39,8 @@ import Artifact.Service.Project;
 import Artifact.Project.Manager;
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
+import Artifact.Layer.Image;
+import Artifact.Layer.Video;
 import Layer.Blend;
 import Artifact.Layer.InitParams;
 import File.TypeDetector;
@@ -723,12 +726,20 @@ int ArtifactLayerPanelHeaderWidget::totalHeaderHeight() const
 
     QMenu menu(this);
     QAction* renameAct = menu.addAction("Rename Layer...");
+    QAction* replaceSourceAct = nullptr;
     QAction* duplicateAct = menu.addAction("Duplicate Layer");
     QAction* deleteAct = menu.addAction("Delete Layer");
     QAction* expandAct = nullptr;
     QAction* collapseAct = nullptr;
     QAction* expandAllAct = nullptr;
     QAction* collapseAllAct = nullptr;
+
+    const bool supportsSourceReplacement =
+      static_cast<bool>(std::dynamic_pointer_cast<ArtifactImageLayer>(layer)) ||
+      static_cast<bool>(std::dynamic_pointer_cast<ArtifactVideoLayer>(layer));
+    if (supportsSourceReplacement) {
+      replaceSourceAct = menu.addAction("Replace Source...");
+    }
 
     if (row.hasChildren) {
       expandAct = menu.addAction("Expand Children");
@@ -774,6 +785,24 @@ int ArtifactLayerPanelHeaderWidget::totalHeaderHeight() const
        if (!trimmed.isEmpty()) {
         if (service) service->renameLayerInCurrentComposition(layer->id(), trimmed);
         update();
+       }
+      }
+    } else if (chosen == replaceSourceAct) {
+      QString filter;
+      if (std::dynamic_pointer_cast<ArtifactImageLayer>(layer)) {
+       filter = QStringLiteral("Images (*.png *.jpg *.jpeg *.bmp *.tif *.tiff *.webp);;All Files (*.*)");
+      } else {
+       filter = QStringLiteral("Media Files (*.mp4 *.mov *.mkv *.avi *.webm *.mp3 *.wav *.flac *.aac *.m4a *.ogg);;All Files (*.*)");
+      }
+
+      const QString filePath = QFileDialog::getOpenFileName(
+       this,
+       QStringLiteral("Replace Layer Source"),
+       QString(),
+       filter);
+      if (!filePath.isEmpty() && service) {
+       if (!service->replaceLayerSourceInCurrentComposition(layer->id(), filePath)) {
+        qWarning() << "Replace source failed for layer" << layer->id().toString() << filePath;
        }
       }
     } else if (chosen == duplicateAct) {

@@ -16,6 +16,8 @@ import Artifact.Layer.Factory;
 import Artifact.Layer.Result;
 import Artifact.Composition.Abstract;
 import Artifact.Project.Items;
+import Artifact.Layer.Image;
+import Artifact.Layer.Video;
 import File.TypeDetector;
 import Artifact.Layers.Selection.Manager;
 import Artifact.Application.Manager;
@@ -406,6 +408,38 @@ bool ArtifactProjectService::renameLayerInCurrentComposition(const LayerID& laye
         return false;
     }
     layer->setLayerName(trimmed);
+    notifyProjectMutation(impl_->projectManager());
+    return true;
+}
+
+bool ArtifactProjectService::replaceLayerSourceInCurrentComposition(const LayerID& layerId, const QString& sourcePath)
+{
+    auto comp = currentComposition().lock();
+    if (!comp || layerId.isNil()) {
+        return false;
+    }
+
+    auto layer = comp->layerById(layerId);
+    if (!layer) {
+        return false;
+    }
+
+    const QString trimmed = sourcePath.trimmed();
+    if (trimmed.isEmpty()) {
+        return false;
+    }
+
+    bool replaced = false;
+    if (auto imageLayer = std::dynamic_pointer_cast<ArtifactImageLayer>(layer)) {
+        replaced = imageLayer->loadFromPath(trimmed);
+    } else if (auto videoLayer = std::dynamic_pointer_cast<ArtifactVideoLayer>(layer)) {
+        replaced = videoLayer->loadFromPath(trimmed);
+    }
+
+    if (!replaced) {
+        return false;
+    }
+
     notifyProjectMutation(impl_->projectManager());
     return true;
 }
