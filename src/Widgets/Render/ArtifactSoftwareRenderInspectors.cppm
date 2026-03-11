@@ -30,6 +30,7 @@ import Artifact.Service.Project;
 import Artifact.Project.Items;
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
+import Artifact.Layer.Solid2D;
 import Layer.Blend;
 
 namespace Artifact {
@@ -245,6 +246,7 @@ QImage renderCompositionForeground(
 
     const auto layers = composition->allLayer();
     int visibleCount = 0;
+    int solidCount = 0;
     for (int i = 0; i < layers.size(); ++i) {
         const auto& layer = layers.at(i);
         if (!layer || !layer->isVisible()) {
@@ -252,6 +254,38 @@ QImage renderCompositionForeground(
         }
         ++visibleCount;
         QRectF layerRect = layer->transformedBoundingBox();
+        const auto solidLayer = std::dynamic_pointer_cast<ArtifactSolid2DLayer>(layer);
+        if (solidLayer) {
+            ++solidCount;
+            const auto source = solidLayer->sourceSize();
+            const qreal sx = canvasRect.width() / static_cast<qreal>(compSize.width());
+            const qreal sy = canvasRect.height() / static_cast<qreal>(compSize.height());
+            const qreal solidWidth = std::max(24.0, static_cast<qreal>(std::max(1, source.width)) * sx);
+            const qreal solidHeight = std::max(18.0, static_cast<qreal>(std::max(1, source.height)) * sy);
+            if (layerRect.isEmpty()) {
+                layerRect = QRectF(
+                    canvasRect.left() + 18.0 + (i * 12.0),
+                    canvasRect.top() + 18.0 + (i * 10.0),
+                    std::min(canvasRect.width() - 24.0, solidWidth),
+                    std::min(canvasRect.height() - 24.0, solidHeight));
+            } else {
+                layerRect = QRectF(
+                    canvasRect.left() + (layerRect.left() * sx),
+                    canvasRect.top() + (layerRect.top() * sy),
+                    std::max(24.0, layerRect.width() * sx),
+                    std::max(18.0, layerRect.height() * sy));
+            }
+
+            const auto c = solidLayer->color();
+            const QColor fill = QColor::fromRgbF(c.r(), c.g(), c.b(), std::clamp(c.a(), 0.15f, 1.0f));
+            painter.setBrush(fill);
+            painter.setPen(QPen(fill.lighter(145), 1.5));
+            painter.drawRoundedRect(layerRect, 6.0, 6.0);
+            painter.setPen(QColor(255, 255, 255));
+            painter.drawText(layerRect.adjusted(10.0, 6.0, -10.0, -6.0), Qt::AlignLeft | Qt::AlignVCenter, layer->layerName());
+            continue;
+        }
+
         if (layerRect.isEmpty()) {
             const qreal width = std::max(160.0, canvasRect.width() * 0.42);
             layerRect = QRectF(
@@ -278,12 +312,13 @@ QImage renderCompositionForeground(
     }
 
     if (summaryText) {
-        *summaryText = QStringLiteral("%1 | %2x%3 | Layers: %4 | Visible: %5 | FPS: %6")
+        *summaryText = QStringLiteral("%1 | %2x%3 | Layers: %4 | Visible: %5 | Solids: %6 | FPS: %7")
             .arg(composition->settings().compositionName().toQString())
             .arg(compSize.width())
             .arg(compSize.height())
             .arg(layers.size())
             .arg(visibleCount)
+            .arg(solidCount)
             .arg(QString::number(composition->frameRate().framerate(), 'f', 3));
     }
     return image;

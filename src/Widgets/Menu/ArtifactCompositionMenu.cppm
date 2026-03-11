@@ -14,8 +14,8 @@ import std;
 
 import Artifact.Service.Project;
 import Artifact.Composition.InitParams;
-import Artifact.Render.Queue.Service;
 import Artifact.Layer.InitParams;
+import Artifact.Widgets.SoftwareRenderInspectors;
 import Dialog.Composition;
 
 namespace Artifact {
@@ -71,7 +71,7 @@ ArtifactCompositionMenu::Impl::Impl(ArtifactCompositionMenu* menu, QWidget* main
 
  colorAction = new QAction("背景色(&B)...");
  colorAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_B));
- milestoneDummyAction = new QAction("マイルストーン: 平面追加してダミーレンダー(&M)...");
+ milestoneDummyAction = new QAction("マイルストーン: Software制作パスを初期化(&M)...");
 
  menu->addAction(createAction);
  menu->addMenu(presetMenu);
@@ -212,19 +212,14 @@ void ArtifactCompositionMenu::Impl::runMilestoneDummyPipeline()
 {
  auto* parent = mainWindow_ ? mainWindow_ : menu_;
  auto* projectService = ArtifactProjectService::instance();
- auto* queueService = ArtifactRenderQueueService::instance();
  if (!projectService) {
   QMessageBox::warning(parent, "Milestone", "ProjectService が利用できません。");
-  return;
- }
- if (!queueService) {
-  QMessageBox::warning(parent, "Milestone", "RenderQueueService が利用できません。");
   return;
  }
 
  ArtifactCompositionInitParams params = ArtifactCompositionInitParams::hdPreset();
  const QString stamp = QDateTime::currentDateTime().toString(QStringLiteral("MMdd_HHmm"));
- params.setCompositionName(UniString(QStringLiteral("Milestone_%1").arg(stamp)));
+ params.setCompositionName(UniString(QStringLiteral("SoftwarePipeline_%1").arg(stamp)));
 
  projectService->createComposition(params);
  auto currentComp = projectService->currentComposition().lock();
@@ -246,13 +241,17 @@ void ArtifactCompositionMenu::Impl::runMilestoneDummyPipeline()
   return;
  }
 
- queueService->addRenderQueueForComposition(currentComp->id(), params.compositionName().toQString());
- queueService->startAllJobs();
+ auto* preview = new ArtifactSoftwareCompositionTestWidget();
+ preview->setAttribute(Qt::WA_DeleteOnClose, true);
+ preview->resize(1100, 760);
+ preview->show();
+ preview->raise();
+ preview->activateWindow();
 
  QMessageBox::information(
   parent,
   "Milestone",
-  QStringLiteral("完了しました。\n1) コンポ作成\n2) 平面追加\n3) RenderQueueService 経由でキュー登録と実行"));
+  QStringLiteral("初期化しました。\n1) コンポ作成\n2) 平面追加\n3) Software Composition Test を起動\n\n次は effect と image sequence render を詰めます。"));
 }
 
 ArtifactCompositionMenu::ArtifactCompositionMenu(QWidget* mainWindow, QWidget* parent)
