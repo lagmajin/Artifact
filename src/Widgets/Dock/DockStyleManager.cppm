@@ -56,10 +56,27 @@ QGraphicsDropShadowEffect* ensureTabGlow(QWidget* tab) {
     return effect;
 }
 
+QGraphicsDropShadowEffect* ensureDockGlow(QWidget* dock) {
+    if (!dock) return nullptr;
+    auto* effect = qobject_cast<QGraphicsDropShadowEffect*>(dock->graphicsEffect());
+    if (!effect) {
+        effect = new QGraphicsDropShadowEffect(dock);
+        dock->setGraphicsEffect(effect);
+    }
+    return effect;
+}
+
 void clearTabGlow(QWidget* tab) {
     if (!tab) return;
     if (tab->graphicsEffect()) {
         tab->setGraphicsEffect(nullptr);
+    }
+}
+
+void clearDockGlow(QWidget* dock) {
+    if (!dock) return;
+    if (dock->graphicsEffect()) {
+        dock->setGraphicsEffect(nullptr);
     }
 }
 
@@ -237,6 +254,16 @@ void DockStyleManager::refreshDockDecorations() {
 
         const bool isActive = (dock == activeDock);
         dock->setProperty("artifactActiveDock", isActive);
+        if (isActive && impl_->glowEnabled_) {
+            auto* effect = ensureDockGlow(dock);
+            effect->setBlurRadius(24.0 + static_cast<qreal>(impl_->glowWidth_) * 3.0);
+            effect->setOffset(0.0, 0.0);
+            QColor glowColor = impl_->glowColor_;
+            glowColor.setAlphaF(std::clamp(impl_->glowIntensity_ * 0.9f, 0.0f, 1.0f));
+            effect->setColor(glowColor);
+        } else {
+            clearDockGlow(dock);
+        }
         repolishWidget(dock);
 
         auto* tab = dock->tabWidget();
