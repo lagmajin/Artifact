@@ -8,6 +8,7 @@ module;
 #include <QDateTime>
 #include <QFileInfo>
 #include <QPointF>
+#include <QRegularExpression>
 #include <wobjectimpl.h>
 #include <mutex>
 #include <map>
@@ -602,7 +603,7 @@ namespace Artifact
             request.overlay = overlay;
             request.outputSize = QSize(width, height);
             request.backend = SoftwareRender::CompositeBackend::QtPainter;
-            request.blendMode = SoftwareRender::BlendMode::Screen;
+            request.blendMode = ArtifactCore::BlendMode::Screen;
             request.cvEffect = SoftwareRender::CvEffectMode::None;
             request.overlayOpacity = 0.70f;
             request.overlayOffset = QPointF(job.overlayOffsetX, job.overlayOffsetY);
