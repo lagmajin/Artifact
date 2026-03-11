@@ -141,14 +141,14 @@ void ArtifactProjectModel::Impl::refreshTree()
    return makeProjectItemIcon(QColor(90, 90, 90), QStringLiteral("?"));
   }
   switch (it->type()) {
-  case eProjectItemType::Folder:
+  case Artifact::eProjectItemType::Folder:
    return makeProjectItemIcon(QColor(176, 138, 46), QStringLiteral("F"));
-  case eProjectItemType::Composition:
+  case Artifact::eProjectItemType::Composition:
    return makeProjectItemIcon(QColor(74, 128, 191), QStringLiteral("C"));
-  case eProjectItemType::Solid:
+  case Artifact::eProjectItemType::Solid:
    return makeProjectItemIcon(QColor(110, 88, 170), QStringLiteral("S"));
-  case eProjectItemType::Footage: {
-   auto* footage = static_cast<FootageItem*>(it);
+  case Artifact::eProjectItemType::Footage: {
+   auto* footage = static_cast<Artifact::FootageItem*>(it);
    const QFileInfo info(footage->filePath);
    if (!info.exists()) {
     return makeProjectItemIcon(QColor(140, 54, 54), QStringLiteral("!"));
@@ -177,8 +177,8 @@ void ArtifactProjectModel::Impl::refreshTree()
   }
  };
 
- std::function<QList<QStandardItem*>(ProjectItem*)> buildItem =
-   [&](ProjectItem* it) -> QList<QStandardItem*> {
+ std::function<QList<QStandardItem*>(Artifact::ProjectItem*)> buildItem =
+   [&](Artifact::ProjectItem* it) -> QList<QStandardItem*> {
   QString text = it->name.toQString();
   QStandardItem* item = new QStandardItem(text);
   QStandardItem* sizeItem = new QStandardItem();
@@ -196,8 +196,8 @@ void ArtifactProjectModel::Impl::refreshTree()
 
   // store composition ID as string in UserRole+1 instead of raw pointer
   // store composition ID using ProjectItemDataRole enum to avoid magic numbers
-  if (it->type() == eProjectItemType::Composition) {
-    CompositionItem* comp = static_cast<CompositionItem*>(it);
+  if (it->type() == Artifact::eProjectItemType::Composition) {
+    Artifact::CompositionItem* comp = static_cast<Artifact::CompositionItem*>(it);
     item->setData(comp->compositionId.toString(), Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::CompositionId));
 
     // Display ID in the ID column
@@ -233,8 +233,8 @@ void ArtifactProjectModel::Impl::refreshTree()
     item->setData(QString(), Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::CompositionId));
   }
 
-  if (it->type() == eProjectItemType::Footage) {
-    auto* footage = static_cast<FootageItem*>(it);
+  if (it->type() == Artifact::eProjectItemType::Footage) {
+    auto* footage = static_cast<Artifact::FootageItem*>(it);
     const QByteArray digest = QCryptographicHash::hash(footage->filePath.toUtf8(), QCryptographicHash::Sha1).toHex();
     item->setData(QString::fromUtf8(digest.left(16)), Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::AssetId));
     idItem->setText(QString::fromUtf8(digest.left(16)));
@@ -281,11 +281,11 @@ void ArtifactProjectModel::Impl::refreshTree()
 
  // Treat only an explicit "Project Root" folder as a hidden placeholder.
  // Older/broken project data may have non-placeholder items at index 0.
- ProjectItem* projectPlaceholder = nullptr;
+ Artifact::ProjectItem* projectPlaceholder = nullptr;
  if (!roots.isEmpty()) {
-     ProjectItem* first = roots.at(0);
+     Artifact::ProjectItem* first = roots.at(0);
      if (first &&
-         first->type() == eProjectItemType::Folder &&
+         first->type() == Artifact::eProjectItemType::Folder &&
          first->name.toQString() == QStringLiteral("Project Root")) {
          projectPlaceholder = first;
      }
