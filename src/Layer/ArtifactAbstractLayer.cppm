@@ -369,12 +369,12 @@ void ArtifactAbstractLayer::setBlendMode(LAYER_BLEND_TYPE type)
   uint64_t ArtifactAbstractLayer::dirtyReasonMask() const { return impl_->dirtyReasonMask_; }
   void ArtifactAbstractLayer::clearDirtyReasons() { impl_->dirtyReasonMask_ = static_cast<uint64_t>(LayerDirtyReason::None); }
 
- void ArtifactAbstractLayer::setComposition(ArtifactAbstractComposition* comp)
+ void ArtifactAbstractLayer::setCompositionOpaque(void* comp)
  {
-  impl_->composition_ = comp;
+  impl_->composition_ = static_cast<ArtifactAbstractComposition*>(comp);
  }
 
- ArtifactAbstractComposition* ArtifactAbstractLayer::composition() const
+ void* ArtifactAbstractLayer::compositionOpaque() const
  {
   return impl_->composition_;
  }

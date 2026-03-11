@@ -83,6 +83,8 @@ export namespace Artifact {
  private:
   class Impl;
   Impl* impl_;
+  void setCompositionOpaque(void* comp);
+  void* compositionOpaque() const;
  protected:
  	void setSourceSize(const Size_2D& size);
  public:
@@ -99,8 +101,8 @@ export namespace Artifact {
   QString layerName() const;
   void setLayerName(const QString& name);
   
-  void setComposition(ArtifactAbstractComposition* comp);
-  ArtifactAbstractComposition* composition() const;
+  void setComposition(ArtifactAbstractComposition* comp) { setCompositionOpaque(static_cast<void*>(comp)); }
+  ArtifactAbstractComposition* composition() const { return static_cast<ArtifactAbstractComposition*>(compositionOpaque()); }
 
   virtual void draw(ArtifactIRenderer* renderer) = 0;
 
