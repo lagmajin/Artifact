@@ -30,8 +30,10 @@ export namespace Artifact
 
   float startValue() const { return start; }
   float endValue() const { return end; }
+  int totalFrames() const;
   void setStart(float s);
   void setEnd(float e);
+  void setTotalFrames(int totalFrames);
 
   void startChanged(float value) W_SIGNAL(startChanged, value)
   void endChanged(float value) W_SIGNAL(endChanged, value)

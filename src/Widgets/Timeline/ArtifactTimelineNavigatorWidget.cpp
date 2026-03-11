@@ -23,6 +23,7 @@ namespace Artifact
  public:
   Impl();
   ~Impl();
+  int totalFrames_ = 300;
   bool draggingLeft{ false };
   bool draggingRight{ false };
   bool draggingRange{ false };
@@ -49,6 +50,11 @@ namespace Artifact
   delete impl_;
  }
 
+ int ArtifactTimelineNavigatorWidget::totalFrames() const
+ {
+  return impl_ ? impl_->totalFrames_ : 0;
+ }
+
  void ArtifactTimelineNavigatorWidget::setStart(float s)
  {
   if (start != s) {
@@ -63,6 +69,15 @@ namespace Artifact
   if (end != e) {
    end = e;
    endChanged(e);
+   update();
+  }
+ }
+
+ void ArtifactTimelineNavigatorWidget::setTotalFrames(const int totalFrames)
+ {
+  const int sanitized = std::max(1, totalFrames);
+  if (impl_ && impl_->totalFrames_ != sanitized) {
+   impl_->totalFrames_ = sanitized;
    update();
   }
  }
@@ -105,6 +120,25 @@ namespace Artifact
   for (int i = 1; i < segmentCount; ++i) {
    const int x = trackRect.left() + static_cast<int>(std::lround((static_cast<double>(i) / segmentCount) * trackRect.width()));
    p.drawLine(x, trackRect.top() + 2, x, trackRect.bottom() - 2);
+  }
+
+  if (impl_->totalFrames_ > 1 && trackRect.width() > 24) {
+   const int approxMajorCount = std::clamp(trackRect.width() / 96, 4, 10);
+   const int majorStepFrames = std::max(1, (impl_->totalFrames_ - 1) / approxMajorCount);
+   const int minorStepFrames = std::max(1, majorStepFrames / 4);
+
+   p.setPen(QPen(QColor(118, 118, 128, 150), 1));
+   for (int f = 0; f < impl_->totalFrames_; f += minorStepFrames) {
+    const double ratio = static_cast<double>(f) / std::max(1, impl_->totalFrames_ - 1);
+    const int x = trackRect.left() + static_cast<int>(std::lround(ratio * trackRect.width()));
+    if (x < trackRect.left() || x > trackRect.right()) {
+     continue;
+    }
+    const bool major = (f % majorStepFrames) == 0;
+    const int tickTop = major ? trackRect.top() + 1 : trackRect.top() + 4;
+    const int tickBottom = major ? trackRect.bottom() - 1 : trackRect.bottom() - 4;
+    p.drawLine(x, tickTop, x, tickBottom);
+   }
   }
 
   const QRect rangeRect(clampedX1, trackRect.top(), std::max(1, clampedX2 - clampedX1), trackRect.height());
