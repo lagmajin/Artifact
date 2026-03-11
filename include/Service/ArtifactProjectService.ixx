@@ -80,6 +80,7 @@ export namespace Artifact
   bool moveLayerInCurrentComposition(const LayerID& layerId, int newIndex);
   bool duplicateLayerInCurrentComposition(const LayerID& layerId);
   bool renameLayerInCurrentComposition(const LayerID& layerId, const QString& newName);
+  bool replaceLayerSourceInCurrentComposition(const LayerID& layerId, const QString& sourcePath);
   bool isLayerVisibleInCurrentComposition(const LayerID& layerId);
   bool isLayerLockedInCurrentComposition(const LayerID& layerId);
   bool isLayerSoloInCurrentComposition(const LayerID& layerId);

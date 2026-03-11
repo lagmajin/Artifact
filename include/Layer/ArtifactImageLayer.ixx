@@ -20,6 +20,8 @@ export namespace Artifact {
   ArtifactImageLayer();
   ~ArtifactImageLayer();
   QImage toQImage() const;
+  bool loadFromPath(const QString& path);
+  QString sourcePath() const;
   void setFromQImage(const QImage& image);
   void setFromCvMat(const cv::Mat& mat);
   void setFromCvMat();

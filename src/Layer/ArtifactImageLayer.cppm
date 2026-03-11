@@ -1,5 +1,6 @@
 module;
 #include <QImage>
+#include <QFileInfo>
 #include <QVariant>
 #include <opencv2/opencv.hpp>
 #include <iostream>
@@ -51,10 +52,11 @@ namespace Artifact {
  {
  public:
   ImageF32x4RGBAWithCachePtr cache_;
-  int width_ = 0;
+ int width_ = 0;
   int height_ = 0;
   bool hasImage_ = false;
   bool fitToLayer_ = true;
+  QString sourcePath_;
 
   Impl() = default;
   ~Impl() = default;
@@ -68,6 +70,28 @@ namespace Artifact {
  ArtifactImageLayer::~ArtifactImageLayer()
  {
   delete impl_;
+ }
+
+ bool ArtifactImageLayer::loadFromPath(const QString& path)
+ {
+    const QString trimmed = path.trimmed();
+    if (trimmed.isEmpty()) {
+        return false;
+    }
+
+    QImage image(trimmed);
+    if (image.isNull()) {
+        return false;
+    }
+
+    impl_->sourcePath_ = QFileInfo(trimmed).absoluteFilePath();
+    setFromQImage(image);
+    return true;
+ }
+
+ QString ArtifactImageLayer::sourcePath() const
+ {
+    return impl_->sourcePath_;
  }
 
  void ArtifactImageLayer::setFromQImage(const QImage& image)
@@ -158,6 +182,7 @@ namespace Artifact {
     };
 
     imageGroup.addProperty(makeProp(QStringLiteral("image.loaded"), ArtifactCore::PropertyType::Boolean, impl_->hasImage_, -120));
+    imageGroup.addProperty(makeProp(QStringLiteral("image.sourcePath"), ArtifactCore::PropertyType::String, impl_->sourcePath_, -115));
     imageGroup.addProperty(makeProp(QStringLiteral("image.pixelWidth"), ArtifactCore::PropertyType::Integer, impl_->width_, -110));
     imageGroup.addProperty(makeProp(QStringLiteral("image.pixelHeight"), ArtifactCore::PropertyType::Integer, impl_->height_, -100));
     imageGroup.addProperty(makeProp(QStringLiteral("image.fitToLayer"), ArtifactCore::PropertyType::Boolean, impl_->fitToLayer_, -90));
@@ -168,6 +193,17 @@ namespace Artifact {
 
  bool ArtifactImageLayer::setLayerPropertyValue(const QString& propertyPath, const QVariant& value)
  {
+    if (propertyPath == QStringLiteral("image.sourcePath")) {
+        const auto path = value.toString().trimmed();
+        if (path.isEmpty()) {
+            return false;
+        }
+        const bool loaded = loadFromPath(path);
+        if (loaded) {
+            Q_EMIT changed();
+        }
+        return loaded;
+    }
     if (propertyPath == QStringLiteral("image.fitToLayer")) {
         impl_->fitToLayer_ = value.toBool();
         Q_EMIT changed();
