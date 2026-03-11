@@ -138,6 +138,7 @@ namespace Artifact {
   bool isAudioFile(const QString& fileName) const;
   bool isFontFile(const QString& fileName) const;
   void syncProjectAssetRoot();
+  void syncDirectorySelection();
  };
 
  ArtifactAssetBrowser::Impl::Impl()
@@ -337,6 +338,44 @@ bool ArtifactAssetBrowser::Impl::isFontFile(const QString& fileName) const
 
   clearThumbnailCache();
   applyFilters();
+  syncDirectorySelection();
+ }
+
+ void ArtifactAssetBrowser::Impl::syncDirectorySelection()
+ {
+  if (!directoryView_ || !directoryModel_ || currentDirectoryPath_.isEmpty()) {
+   return;
+  }
+
+  std::function<QModelIndex(const QModelIndex&)> findByPath = [&](const QModelIndex& parent) -> QModelIndex {
+   const int rowCount = directoryModel_->rowCount(parent);
+   for (int row = 0; row < rowCount; ++row) {
+    const QModelIndex index = directoryModel_->index(row, 0, parent);
+    if (!index.isValid()) {
+     continue;
+    }
+    const QString path = directoryModel_->pathFromIndex(index);
+    if (QDir::cleanPath(path) == QDir::cleanPath(currentDirectoryPath_)) {
+     return index;
+    }
+    if (directoryModel_->canFetchMore(index)) {
+     directoryModel_->fetchMore(index);
+    }
+    if (const QModelIndex child = findByPath(index); child.isValid()) {
+     return child;
+    }
+   }
+   return {};
+  };
+
+  const QModelIndex matchedIndex = findByPath({});
+  if (!matchedIndex.isValid()) {
+   return;
+  }
+
+  directoryView_->expand(matchedIndex.parent());
+  directoryView_->setCurrentIndex(matchedIndex);
+  directoryView_->scrollTo(matchedIndex, QAbstractItemView::PositionAtCenter);
  }
 
  void ArtifactAssetBrowser::Impl::applyFilters()
@@ -510,13 +549,14 @@ bool ArtifactAssetBrowser::Impl::isFontFile(const QString& fileName) const
     if (nextPath.isEmpty()) {
      nextPath = assetsRoot;
     }
-    if (!assetsRoot.isEmpty() && !nextPath.startsWith(assetsRoot, Qt::CaseInsensitive)) {
+   if (!assetsRoot.isEmpty() && !nextPath.startsWith(assetsRoot, Qt::CaseInsensitive)) {
      nextPath = assetsRoot;
     }
     if (nextPath.isEmpty() || nextPath == impl_->currentDirectoryPath_) return;
     impl_->currentDirectoryPath_ = nextPath;
     impl_->clearThumbnailCache();
     impl_->applyFilters();
+    impl_->syncDirectorySelection();
     folderChanged(nextPath);
    });
   }
@@ -548,6 +588,7 @@ bool ArtifactAssetBrowser::Impl::isFontFile(const QString& fileName) const
     impl_->currentDirectoryPath_ = path;
     impl_->clearThumbnailCache();
     impl_->applyFilters();
+    impl_->syncDirectorySelection();
     folderChanged(path);
    }
   });
@@ -565,6 +606,7 @@ bool ArtifactAssetBrowser::Impl::isFontFile(const QString& fileName) const
     impl_->currentDirectoryPath_ = filePath;
     impl_->clearThumbnailCache();
     impl_->applyFilters();
+    impl_->syncDirectorySelection();
     folderChanged(filePath);
     return;
    }
@@ -850,6 +892,7 @@ bool ArtifactAssetBrowser::Impl::isFontFile(const QString& fileName) const
     impl_->currentDirectoryPath_ = filePath;
     impl_->clearThumbnailCache();
     impl_->applyFilters();
+    impl_->syncDirectorySelection();
     folderChanged(filePath);
    });
    contextMenu.addSeparator();
