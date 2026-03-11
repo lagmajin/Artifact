@@ -32,6 +32,7 @@
 #include <opencv2/videoio.hpp>
 #include <opencv2/imgproc.hpp>
 #include <QHBoxLayout>
+#include <QAbstractItemView>
 #include <wobjectimpl.h>
 
 module Widgets.AssetBrowser;
@@ -72,6 +73,19 @@ namespace Artifact {
  ArtifactAssetBrowserToolBar::ArtifactAssetBrowserToolBar(QWidget* parent /*= nullptr*/) :QWidget(parent),impl_(new Impl())
  {
   auto layout = new QHBoxLayout();
+  auto upButton = new QToolButton(this);
+  upButton->setObjectName(QStringLiteral("assetBrowserUpButton"));
+  upButton->setText(QStringLiteral("Up"));
+  upButton->setToolTip(QStringLiteral("Go to parent folder"));
+  auto refreshButton = new QToolButton(this);
+  refreshButton->setObjectName(QStringLiteral("assetBrowserRefreshButton"));
+  refreshButton->setText(QStringLiteral("Refresh"));
+  refreshButton->setToolTip(QStringLiteral("Refresh current folder"));
+  impl_->searchWidget->setPlaceholderText(QStringLiteral("Search assets..."));
+  impl_->searchWidget->setClearButtonEnabled(true);
+  layout->setContentsMargins(0, 0, 0, 0);
+  layout->addWidget(upButton);
+  layout->addWidget(refreshButton);
   layout->addWidget(impl_->searchWidget);
   setLayout(layout);
  }
@@ -94,6 +108,8 @@ namespace Artifact {
  public:
   Impl();
   ~Impl();
+  QToolButton* upButton_ = nullptr;
+  QToolButton* refreshButton_ = nullptr;
   QTreeView* directoryView_ = nullptr;
   AssetDirectoryModel* directoryModel_ = nullptr;
   QListView* fileView_ = nullptr;
@@ -386,6 +402,8 @@ bool ArtifactAssetBrowser::Impl::isFontFile(const QString& fileName) const
 
   auto assetToolBar = new ArtifactAssetBrowserToolBar();
   impl_->searchEdit_ = assetToolBar->findChild<QLineEdit*>();
+  impl_->upButton_ = assetToolBar->findChild<QToolButton*>(QStringLiteral("assetBrowserUpButton"));
+  impl_->refreshButton_ = assetToolBar->findChild<QToolButton*>(QStringLiteral("assetBrowserRefreshButton"));
 
   // File type filter buttons
   auto filterButtonsLayout = new QHBoxLayout();
@@ -472,12 +490,40 @@ bool ArtifactAssetBrowser::Impl::isFontFile(const QString& fileName) const
   fileView->setSpacing(5);  // Uniform spacing between items
   fileView->setUniformItemSizes(true);  // Optimize rendering with uniform sizes
   fileView->setDragEnabled(true);
+  fileView->setSelectionMode(QAbstractItemView::ExtendedSelection);
   fileView->setContextMenuPolicy(Qt::CustomContextMenu);  // Enable custom context menu
 
   // Connect search filter
   if (impl_->searchEdit_) {
    connect(impl_->searchEdit_, &QLineEdit::textChanged, this, [this](const QString& text) {
     impl_->currentSearchFilter_ = text;
+    impl_->applyFilters();
+   });
+  }
+
+  if (impl_->upButton_) {
+   connect(impl_->upButton_, &QToolButton::clicked, this, [this]() {
+    if (impl_->currentDirectoryPath_.isEmpty()) return;
+    const QString assetsRoot = ArtifactProjectManager::getInstance().currentProjectAssetsPath();
+    const QDir currentDir(impl_->currentDirectoryPath_);
+    QString nextPath = QFileInfo(currentDir.absolutePath()).dir().absolutePath();
+    if (nextPath.isEmpty()) {
+     nextPath = assetsRoot;
+    }
+    if (!assetsRoot.isEmpty() && !nextPath.startsWith(assetsRoot, Qt::CaseInsensitive)) {
+     nextPath = assetsRoot;
+    }
+    if (nextPath.isEmpty() || nextPath == impl_->currentDirectoryPath_) return;
+    impl_->currentDirectoryPath_ = nextPath;
+    impl_->clearThumbnailCache();
+    impl_->applyFilters();
+    folderChanged(nextPath);
+   });
+  }
+
+  if (impl_->refreshButton_) {
+   connect(impl_->refreshButton_, &QToolButton::clicked, this, [this]() {
+    impl_->clearThumbnailCache();
     impl_->applyFilters();
    });
   }
@@ -512,6 +558,7 @@ bool ArtifactAssetBrowser::Impl::isFontFile(const QString& fileName) const
    AssetMenuItem item = impl_->assetModel_->itemAt(index.row());
    QString filePath = item.path.toQString();
    if (filePath.isEmpty()) return;
+   itemDoubleClicked(filePath);
 
    // If it's a folder, navigate into it
    if (item.isFolder) {
@@ -534,11 +581,23 @@ bool ArtifactAssetBrowser::Impl::isFontFile(const QString& fileName) const
   // Connect file item selection to update details
   connect(fileView->selectionModel(), &QItemSelectionModel::selectionChanged, this, [this]() {
    QModelIndexList selectedIndexes = impl_->fileView_->selectionModel()->selectedIndexes();
+   QStringList selectedFiles;
+   selectedFiles.reserve(selectedIndexes.size());
    if (!selectedIndexes.isEmpty()) {
-    AssetMenuItem item = impl_->assetModel_->itemAt(selectedIndexes.first().row());
-    QString filePath = item.path.toQString();
-    updateFileInfo(filePath);
+    for (const QModelIndex& index : selectedIndexes) {
+     const AssetMenuItem item = impl_->assetModel_->itemAt(index.row());
+     const QString filePath = item.path.toQString();
+     if (!filePath.isEmpty()) {
+      selectedFiles.append(filePath);
+     }
+    }
+    if (!selectedFiles.isEmpty()) {
+     updateFileInfo(selectedFiles.first());
+    }
+   } else if (impl_->fileInfoLabel_) {
+    impl_->fileInfoLabel_->setText(QStringLiteral("No file selected"));
    }
+   selectionChanged(selectedFiles);
   });
 
   // Create thumbnail size adjustment
@@ -709,6 +768,7 @@ bool ArtifactAssetBrowser::Impl::isFontFile(const QString& fileName) const
   // Check if it's a folder
   if (fileInfo.isDir()) {
    info += "Type: Folder<br>";
+   info += QString("Entries: %1<br>").arg(QDir(filePath).entryList(QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot).size());
    impl_->fileInfoLabel_->setText(info);
    return;
   }
@@ -731,6 +791,27 @@ bool ArtifactAssetBrowser::Impl::isFontFile(const QString& fileName) const
     // Color depth info
     info += QString("Format: %1-bit").arg(image.depth());
    }
+  }
+  else if (impl_->isVideoFile(fileName)) {
+   cv::VideoCapture cap(filePath.toLocal8Bit().constData());
+   if (cap.isOpened()) {
+    const double width = cap.get(cv::CAP_PROP_FRAME_WIDTH);
+    const double height = cap.get(cv::CAP_PROP_FRAME_HEIGHT);
+    const double fps = cap.get(cv::CAP_PROP_FPS);
+    const double frameCount = cap.get(cv::CAP_PROP_FRAME_COUNT);
+    if (width > 0.0 && height > 0.0) {
+     info += QString("Resolution: %1 x %2 px<br>").arg(static_cast<int>(width)).arg(static_cast<int>(height));
+    }
+    if (fps > 0.0) {
+     info += QString("FPS: %1<br>").arg(QString::number(fps, 'f', fps == std::floor(fps) ? 0 : 2));
+    }
+    if (fps > 0.0 && frameCount > 0.0) {
+     info += QString("Duration: %1 s<br>").arg(QString::number(frameCount / fps, 'f', 2));
+    }
+   }
+  }
+  else if (impl_->isAudioFile(fileName)) {
+   info += QString("Kind: Audio<br>");
   }
   else if (impl_->isFontFile(fileName)) {
    info += QString("Kind: Font<br>");
@@ -761,6 +842,18 @@ bool ArtifactAssetBrowser::Impl::isFontFile(const QString& fileName) const
   });
 
   contextMenu.addSeparator();
+
+  if (item.isFolder) {
+   QAction* openFolderAction = contextMenu.addAction("Open Folder");
+   connect(openFolderAction, &QAction::triggered, this, [this, filePath]() {
+    if (filePath.isEmpty()) return;
+    impl_->currentDirectoryPath_ = filePath;
+    impl_->clearThumbnailCache();
+    impl_->applyFilters();
+    folderChanged(filePath);
+   });
+   contextMenu.addSeparator();
+  }
 
   // Open in File Explorer action
   QAction* openInExplorerAction = contextMenu.addAction("Open in File Explorer");
