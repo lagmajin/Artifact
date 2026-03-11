@@ -5,6 +5,7 @@
 #include <QString>
 #include <QVector>
 #include <QScrollArea>
+#include <QScrollBar>
 #include <QBoxLayout>
 #include <QPushButton>
 #include <QMenu>
@@ -25,44 +26,11 @@
 #include <QPointer>
 #include <QLineEdit>
 #include <QKeyEvent>
+#include <QWheelEvent>
 #include <QInputDialog>
-#include <iostream>
-#include <vector>
-#include <string>
-#include <map>
-#include <unordered_map>
-#include <set>
-#include <unordered_set>
-#include <memory>
-#include <algorithm>
-#include <cmath>
-#include <functional>
-#include <optional>
-#include <utility>
-#include <array>
-#include <mutex>
-#include <thread>
-#include <chrono>
-#include <filesystem>
-#include <fstream>
-#include <sstream>
-#include <stdexcept>
-#include <type_traits>
-#include <variant>
-#include <any>
-#include <atomic>
-#include <condition_variable>
-#include <queue>
-#include <deque>
-#include <list>
-#include <tuple>
-#include <numeric>
-#include <regex>
-#include <random>
 module Artifact.Widgets.LayerPanelWidget;
 
-
-
+import std;
 
 import Utils.Path;
 import Artifact.Service.Project;
@@ -78,7 +46,8 @@ namespace Artifact
  using namespace ArtifactCore;
 namespace {
   constexpr int kLayerRowHeight = 28;
-  constexpr int kLayerHeaderHeight = 34;
+  constexpr int kLayerHeaderHeight = 26;
+  constexpr int kLayerHeaderButtonSize = 24;
   constexpr int kLayerColumnWidth = 28;
   constexpr int kLayerPropertyColumnCount = 5;
   constexpr int kInlineComboHeight = 24;
@@ -87,10 +56,55 @@ namespace {
   constexpr int kInlineComboGap = 6;
   constexpr int kInlineComboMarginY = 2;
   constexpr int kInlineComboReserve = kInlineParentWidth + kInlineBlendWidth + kInlineComboGap + 10;
-  constexpr int kLayerNameMinWidth = 120;
+ constexpr int kLayerNameMinWidth = 120;
  }
 
  namespace {
+  class LayerPanelWheelFilter final : public QObject
+  {
+  public:
+   explicit LayerPanelWheelFilter(QScrollArea* scrollArea, QObject* parent = nullptr)
+    : QObject(parent), scrollArea_(scrollArea)
+   {
+   }
+
+  protected:
+   bool eventFilter(QObject* watched, QEvent* event) override
+   {
+    Q_UNUSED(watched);
+    if (!scrollArea_ || event->type() != QEvent::Wheel) {
+     return QObject::eventFilter(watched, event);
+    }
+
+    auto* wheelEvent = static_cast<QWheelEvent*>(event);
+    auto* bar = scrollArea_->verticalScrollBar();
+    if (!bar || bar->maximum() <= 0) {
+     return QObject::eventFilter(watched, event);
+    }
+
+    int delta = 0;
+    if (!wheelEvent->pixelDelta().isNull()) {
+     delta = wheelEvent->pixelDelta().y();
+    } else {
+     delta = bar->singleStep() * (wheelEvent->angleDelta().y() / 120);
+     if (delta == 0) {
+      delta = wheelEvent->angleDelta().y() / 6;
+     }
+    }
+
+    if (delta == 0) {
+     return QObject::eventFilter(watched, event);
+    }
+
+    bar->setValue(bar->value() - delta);
+    wheelEvent->accept();
+    return true;
+   }
+
+  private:
+   QScrollArea* scrollArea_ = nullptr;
+  };
+
   std::shared_ptr<ArtifactAbstractComposition> safeCompositionLookup(const CompositionID& id)
   {
     auto* service = ArtifactProjectService::instance();
@@ -208,27 +222,27 @@ namespace {
   : QWidget(parent), impl_(new Impl())
  {
   auto visButton = impl_->visibilityButton = new QPushButton();
-  visButton->setFixedSize(QSize(28, 28));
+  visButton->setFixedSize(QSize(kLayerHeaderButtonSize, kLayerHeaderButtonSize));
   visButton->setIcon(impl_->visibilityIcon);
   visButton->setStyleSheet("background-color: #2D2D30; border: none; border-right: 1px solid #1a1a1a;");
   visButton->setFlat(true);
   
   auto lockButton = impl_->lockButton = new QPushButton();
-  lockButton->setFixedSize(QSize(28, 28));
+  lockButton->setFixedSize(QSize(kLayerHeaderButtonSize, kLayerHeaderButtonSize));
   if (!impl_->lockIcon.isNull()) lockButton->setIcon(impl_->lockIcon);
   lockButton->setStyleSheet("background-color: #2D2D30; border: none; border-right: 1px solid #1a1a1a;");
 
   auto soloButton = impl_->soloButton = new QPushButton();
-  soloButton->setFixedSize(QSize(28, 28));
+  soloButton->setFixedSize(QSize(kLayerHeaderButtonSize, kLayerHeaderButtonSize));
   if (!impl_->soloIcon.isNull()) soloButton->setIcon(impl_->soloIcon);
   soloButton->setStyleSheet("background-color: #2D2D30; border: none; border-right: 1px solid #1a1a1a;");
 
   auto soundButton = impl_->soundButton = new QPushButton();
-  soundButton->setFixedSize(QSize(28, 28));
+  soundButton->setFixedSize(QSize(kLayerHeaderButtonSize, kLayerHeaderButtonSize));
   soundButton->setStyleSheet("background-color: #2D2D30; border: none; border-right: 1px solid #1a1a1a;");
 
   auto shyButton = impl_->shyButton = new QPushButton;
-  shyButton->setFixedSize(QSize(28, 28));
+  shyButton->setFixedSize(QSize(kLayerHeaderButtonSize, kLayerHeaderButtonSize));
   shyButton->setCheckable(true);
   shyButton->setToolTip("Master Shy Switch");
   shyButton->setStyleSheet("QPushButton { background-color: #2D2D30; border: none; border-right: 1px solid #1a1a1a; } QPushButton:checked { background-color: #3b3bef; }");
@@ -270,9 +284,12 @@ namespace {
   delete impl_;
  }
 
- int ArtifactLayerPanelHeaderWidget::buttonSize() const { return 28; }
- int ArtifactLayerPanelHeaderWidget::iconSize() const { return 16; }
- int ArtifactLayerPanelHeaderWidget::totalHeaderHeight() const { return height(); }
+int ArtifactLayerPanelHeaderWidget::buttonSize() const { return kLayerHeaderButtonSize; }
+int ArtifactLayerPanelHeaderWidget::iconSize() const { return 14; }
+int ArtifactLayerPanelHeaderWidget::totalHeaderHeight() const
+{
+ return minimumHeight() > 0 ? minimumHeight() : sizeHint().height();
+}
 
  // ============================================================================
  // ArtifactLayerPanelWidget Implementation
@@ -479,13 +496,29 @@ namespace {
 
  void ArtifactLayerPanelWidget::updateLayout()
  {
-  impl_->clearInlineEditors();
-  impl_->rebuildVisibleRows();
+ impl_->clearInlineEditors();
+ impl_->rebuildVisibleRows();
   const int count = impl_->visibleRows.size();
   const int contentHeight = std::max(kLayerRowHeight, count * kLayerRowHeight);
   setMinimumHeight(0);
   setFixedHeight(contentHeight);
+  updateGeometry();
   update();
+  Q_EMIT visibleRowsChanged();
+ }
+
+ QVector<LayerID> ArtifactLayerPanelWidget::visibleTimelineRows() const
+ {
+  QVector<LayerID> rows;
+  rows.reserve(impl_->visibleRows.size());
+  for (const auto& row : impl_->visibleRows) {
+   if (row.kind == Impl::RowKind::Layer && row.layer) {
+    rows.push_back(row.layer->id());
+   } else {
+    rows.push_back(LayerID());
+   }
+  }
+  return rows;
  }
 
  void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
@@ -500,9 +533,10 @@ namespace {
   const auto& row = impl_->visibleRows[idx];
   auto layer = row.layer;
   if (!layer) return;
+  auto* service = ArtifactProjectService::instance();
   if (row.kind != Impl::RowKind::Layer) {
    if (event->button() == Qt::LeftButton) {
-    if (auto* service = ArtifactProjectService::instance()) {
+    if (service) {
      service->selectLayer(layer->id());
     }
     update();
@@ -543,10 +577,15 @@ namespace {
           break;
         }
       }
-      QObject::connect(combo, QOverload<int>::of(&QComboBox::activated), this, [this, layer, combo](int i) {
+      QObject::connect(combo, QOverload<int>::of(&QComboBox::activated), this, [this, service, layer, combo](int i) {
         const QString parentId = combo->itemData(i).toString();
-        if (parentId.isEmpty()) layer->clearParent();
-        else layer->setParentById(LayerID(parentId));
+        if (service) {
+          if (parentId.isEmpty()) {
+            service->clearLayerParentInCurrentComposition(layer->id());
+          } else {
+            service->setLayerParentInCurrentComposition(layer->id(), LayerID(parentId));
+          }
+        }
         combo->deleteLater();
         updateLayout();
       });
@@ -575,9 +614,14 @@ namespace {
           break;
         }
       }
-      QObject::connect(combo, QOverload<int>::of(&QComboBox::activated), this, [this, layer, combo](int i) {
+      QObject::connect(combo, QOverload<int>::of(&QComboBox::activated), this, [this, service, layer, combo](int i) {
         const auto mode = static_cast<LAYER_BLEND_TYPE>(combo->itemData(i).toInt());
         layer->setBlendMode(mode);
+        if (service) {
+          if (auto project = service->getCurrentProjectSharedPtr()) {
+            project->projectChanged();
+          }
+        }
         combo->deleteLater();
         update();
       });
@@ -589,15 +633,15 @@ namespace {
       return;
     }
     if (clickX < colW) {
-      layer->setVisible(!layer->isVisible());
+      if (service) service->setLayerVisibleInCurrentComposition(layer->id(), !layer->isVisible());
     } else if (clickX < colW * 2) {
-      layer->setLocked(!layer->isLocked());
+      if (service) service->setLayerLockedInCurrentComposition(layer->id(), !layer->isLocked());
     } else if (clickX < colW * 3) {
-      layer->setSolo(!layer->isSolo());
+      if (service) service->setLayerSoloInCurrentComposition(layer->id(), !layer->isSolo());
     } else if (clickX < colW * 4) {
       // Sound toggle
     } else if (clickX < colW * 5) {
-      layer->setShy(!layer->isShy());
+      if (service) service->setLayerShyInCurrentComposition(layer->id(), !layer->isShy());
     } else {
       const int nameStartX = colW * kLayerPropertyColumnCount;
       const int indent = 14;
@@ -611,13 +655,13 @@ namespace {
         event->accept();
         return;
       }
-      if (auto* service = ArtifactProjectService::instance()) {
+      if (service) {
         service->selectLayer(layer->id());
       }
     }
     update();
   } else if (event->button() == Qt::RightButton) {
-    if (auto* service = ArtifactProjectService::instance()) {
+    if (service) {
       service->selectLayer(layer->id());
     }
 
@@ -672,14 +716,13 @@ namespace {
       if (ok) {
        const QString trimmed = newName.trimmed();
        if (!trimmed.isEmpty()) {
-        layer->setLayerName(trimmed);
+        if (service) service->renameLayerInCurrentComposition(layer->id(), trimmed);
         update();
        }
       }
     } else if (chosen == duplicateAct) {
-      if (comp) {
-       auto result = ArtifactProjectManager::getInstance().duplicateLayerInComposition(comp->id(), layer->id());
-       if (!result.success) {
+      if (service) {
+       if (!service->duplicateLayerInCurrentComposition(layer->id())) {
         qWarning() << "Duplicate layer failed";
        }
       }
@@ -709,25 +752,25 @@ namespace {
       }
       updateLayout();
     } else if (chosen == visAct) {
-      layer->setVisible(!layer->isVisible());
+      if (service) service->setLayerVisibleInCurrentComposition(layer->id(), !layer->isVisible());
       update();
     } else if (chosen == lockAct) {
-      layer->setLocked(!layer->isLocked());
+      if (service) service->setLayerLockedInCurrentComposition(layer->id(), !layer->isLocked());
       update();
     } else if (chosen == soloAct) {
-      layer->setSolo(!layer->isSolo());
+      if (service) service->setLayerSoloInCurrentComposition(layer->id(), !layer->isSolo());
       update();
     } else if (chosen == shyAct) {
-      layer->setShy(!layer->isShy());
+      if (service) service->setLayerShyInCurrentComposition(layer->id(), !layer->isShy());
       updateLayout();
     } else if (chosen == selectParentAct) {
       if (layer->hasParent()) {
-       if (auto* service = ArtifactProjectService::instance()) {
+       if (service) {
         service->selectLayer(layer->parentLayerId());
        }
       }
     } else if (chosen == clearParentAct) {
-      layer->clearParent();
+      if (service) service->clearLayerParentInCurrentComposition(layer->id());
       updateLayout();
     } else if (chosen == createSolidAct) {
       ArtifactSolidLayerInitParams params(QStringLiteral("Solid"));
@@ -736,7 +779,7 @@ namespace {
        params.setWidth(sz.width());
        params.setHeight(sz.height());
       }
-      if (auto* service = ArtifactProjectService::instance()) {
+      if (service) {
        service->addLayerToCurrentComposition(params);
       }
     } else if (chosen == createNullAct) {
@@ -746,7 +789,7 @@ namespace {
        params.setWidth(sz.width());
        params.setHeight(sz.height());
       }
-      if (auto* service = ArtifactProjectService::instance()) {
+      if (service) {
        service->addLayerToCurrentComposition(params);
       }
     } else if (chosen == createAdjustAct) {
@@ -757,12 +800,12 @@ namespace {
        params.setHeight(sz.height());
       }
       params.setColor(FloatColor(0.0f, 0.0f, 0.0f, 1.0f));
-      if (auto* service = ArtifactProjectService::instance()) {
+      if (service) {
        service->addLayerToCurrentComposition(params);
       }
     } else if (chosen == createTextAct) {
       ArtifactTextLayerInitParams params(QStringLiteral("Text"));
-      if (auto* service = ArtifactProjectService::instance()) {
+      if (service) {
        service->addLayerToCurrentComposition(params);
       }
     }
@@ -834,13 +877,8 @@ void ArtifactLayerPanelWidget::mouseDoubleClickEvent(QMouseEvent* event)
    if (!editor || !editor->isVisible()) return;
    const QString newName = editor->text().trimmed();
    if (!newName.isEmpty()) {
-    if (auto comp = safeCompositionLookup(impl_->compositionId)) {
-     for (auto& l : comp->allLayer()) {
-      if (l && l->id() == impl_->editingLayerId) {
-       l->setLayerName(newName);
-       break;
-      }
-     }
+    if (auto* service = ArtifactProjectService::instance()) {
+     service->renameLayerInCurrentComposition(impl_->editingLayerId, newName);
     }
    }
    impl_->clearInlineEditors();
@@ -1108,6 +1146,8 @@ void ArtifactLayerPanelWidget::keyPressEvent(QKeyEvent* event)
   CompositionID id;
  };
 
+ W_OBJECT_IMPL(ArtifactLayerTimelinePanelWrapper)
+
  ArtifactLayerTimelinePanelWrapper::ArtifactLayerTimelinePanelWrapper(QWidget* parent)
   : QWidget(parent), impl_(new Impl)
  {
@@ -1121,13 +1161,23 @@ void ArtifactLayerPanelWidget::keyPressEvent(QKeyEvent* event)
   impl_->scroll->setWidget(impl_->panel);
   impl_->scroll->setWidgetResizable(true);
   impl_->scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+  impl_->scroll->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
   impl_->scroll->setFrameShape(QFrame::NoFrame);
+  impl_->panel->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+
+  auto* wheelFilter = new LayerPanelWheelFilter(impl_->scroll, this);
+  this->installEventFilter(wheelFilter);
+  impl_->header->installEventFilter(wheelFilter);
+  impl_->panel->installEventFilter(wheelFilter);
+  impl_->scroll->viewport()->installEventFilter(wheelFilter);
 
   layout->addWidget(impl_->header);
   layout->addWidget(impl_->scroll, 1);
 
   QObject::connect(impl_->header, &ArtifactLayerPanelHeaderWidget::shyToggled,
                    impl_->panel, &ArtifactLayerPanelWidget::setShyHidden);
+  QObject::connect(impl_->panel, &ArtifactLayerPanelWidget::visibleRowsChanged,
+                   this, &ArtifactLayerTimelinePanelWrapper::visibleRowsChanged);
  }
 
  ArtifactLayerTimelinePanelWrapper::ArtifactLayerTimelinePanelWrapper(const CompositionID& id, QWidget* parent)
@@ -1150,6 +1200,14 @@ void ArtifactLayerPanelWidget::keyPressEvent(QKeyEvent* event)
  QScrollBar* ArtifactLayerTimelinePanelWrapper::verticalScrollBar() const
  {
   return impl_->scroll->verticalScrollBar();
+ }
+
+ QVector<LayerID> ArtifactLayerTimelinePanelWrapper::visibleTimelineRows() const
+ {
+  if (!impl_ || !impl_->panel) {
+   return {};
+  }
+  return impl_->panel->visibleTimelineRows();
  }
 
 } // namespace Artifact

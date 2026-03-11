@@ -262,7 +262,7 @@ namespace Artifact
    shaderCI.SourceLength = shaderCode.length();
    shaderCI.Desc.ShaderType = SHADER_TYPE_COMPUTE;
 
-   createInfoMap[blendType] = shaderCI;
+   createInfoMap[toLegacyBlendType(blendType)] = shaderCI;
   }
 
 

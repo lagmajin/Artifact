@@ -118,6 +118,7 @@ export namespace Artifact
   void setJobProgressChangedCallback(std::function<void(int, int)> callback);
   void setAllJobsCompletedCallback(std::function<void()> callback);
   void setAllJobsRemovedCallback(std::function<void()> callback);
+  void setQueueReorderedCallback(std::function<void(int, int)> callback);
 
  };
 

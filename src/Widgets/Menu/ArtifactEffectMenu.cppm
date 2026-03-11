@@ -3,55 +3,30 @@
 #include <QWidget>
 #include <QMenu>
 #include <QKeySequence>
-#include <iostream>
-#include <vector>
-#include <string>
-#include <map>
-#include <unordered_map>
-#include <set>
-#include <unordered_set>
-#include <memory>
-#include <algorithm>
-#include <cmath>
-#include <functional>
-#include <optional>
-#include <utility>
-#include <array>
-#include <mutex>
-#include <thread>
-#include <chrono>
-#include <filesystem>
-#include <fstream>
-#include <sstream>
-#include <stdexcept>
-#include <type_traits>
-#include <variant>
-#include <any>
-#include <atomic>
-#include <condition_variable>
-#include <queue>
-#include <deque>
-#include <list>
-#include <tuple>
-#include <numeric>
-#include <regex>
-#include <random>
+#include <wobjectimpl.h>
+
 module Artifact.Menu.Effect;
-
-
-
+import std;
 
 import Artifact.Service.Effect;
+import Artifact.Service.Project;
+import Utils.Id;
 
 namespace Artifact
 {
+ W_OBJECT_IMPL(ArtifactEffectMenu)
+
  class ArtifactEffectMenu::Impl
  {
  private:
   
  public:
-  Impl(QMenu*menu);
+  Impl(ArtifactEffectMenu*menu);
   ~Impl();
+  
+  ArtifactEffectMenu* menu_ = nullptr;
+  ArtifactCore::LayerID selectedLayerId_;
+
   QAction* inspectorAction_ = nullptr;
   QAction* removeAllAction_ = nullptr;
   QMenu* keyframeAssistantMenu_ = nullptr;
@@ -68,18 +43,20 @@ namespace Artifact
   QMenu* perspectiveMenu_ = nullptr;
   QMenu* keyingMenu_ = nullptr;
   QMenu* obsoleteMenu_ = nullptr;
+
+  void refreshEnabledState();
  };
 
- ArtifactEffectMenu::Impl::Impl(QMenu*menu)
+ ArtifactEffectMenu::Impl::Impl(ArtifactEffectMenu*menu) : menu_(menu)
 {
-  inspectorAction_ = new QAction("エフェクトコントロール");
+  inspectorAction_ = new QAction("エフェクトコントロール", menu);
   inspectorAction_->setShortcut(QKeySequence(Qt::Key_F3));
 
-  removeAllAction_ = new QAction("すべてを削除");
+  removeAllAction_ = new QAction("すべてを削除", menu);
   removeAllAction_->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_X));
 
   // Keyframe Assistant submenu
-  keyframeAssistantMenu_ = new QMenu("キーフレーム補助(&K)");
+  keyframeAssistantMenu_ = new QMenu("キーフレーム補助(&K)", menu);
   keyframeAssistantMenu_->addAction("イージーイーズ");
   keyframeAssistantMenu_->addAction("イージーイーズイン");
   keyframeAssistantMenu_->addAction("イージーイーズアウト");
@@ -90,7 +67,7 @@ namespace Artifact
   keyframeAssistantMenu_->addAction("エクスプレッションをキーフレームに変換");
 
   // Expression Controls submenu
-  expressionControlsMenu_ = new QMenu("エクスプレッション制御(&E)");
+  expressionControlsMenu_ = new QMenu("エクスプレッション制御(&E)", menu);
   expressionControlsMenu_->addAction("角度制御");
   expressionControlsMenu_->addAction("チェックボックス制御");
   expressionControlsMenu_->addAction("カラー制御");
@@ -99,7 +76,7 @@ namespace Artifact
   expressionControlsMenu_->addAction("スライダー制御");
 
   // Channel submenu
-  channelMenu_ = new QMenu("チャンネル(&C)");
+  channelMenu_ = new QMenu("チャンネル(&C)", menu);
   channelMenu_->addAction("マット設定");
   channelMenu_->addAction("算術");
   channelMenu_->addAction("ブレンド");
@@ -108,14 +85,14 @@ namespace Artifact
   channelMenu_->addAction("チャンネルコンバイナー");
 
   // Stylize submenu
-  stylizeMenu_ = new QMenu("スタイライズ(&S)");
+  stylizeMenu_ = new QMenu("スタイライズ(&S)", menu);
   stylizeMenu_->addAction("ドロップシャドウ");
   stylizeMenu_->addAction("グロー");
   stylizeMenu_->addAction("ベベルアルファ");
   stylizeMenu_->addAction("ベベルエッジ");
 
   // Color Correction submenu
-  colorCorrectionMenu_ = new QMenu("カラー補正(&C)");
+  colorCorrectionMenu_ = new QMenu("カラー補正(&C)", menu);
   colorCorrectionMenu_->addAction("輝度＆コントラスト");
   colorCorrectionMenu_->addAction("トーンカーブ");
   colorCorrectionMenu_->addAction("色相/彩度");
@@ -124,7 +101,7 @@ namespace Artifact
   colorCorrectionMenu_->addAction("写真フィルター");
 
   // Distort submenu
-  distortMenu_ = new QMenu("ディストーション(&D)");
+  distortMenu_ = new QMenu("ディストーション(&D)", menu);
   distortMenu_->addAction("バルジ");
   distortMenu_->addAction("コーナーピン");
   distortMenu_->addAction("レンズ補正");
@@ -138,7 +115,7 @@ namespace Artifact
   distortMenu_->addAction("波形ワープ");
 
   // Blur & Sharpen submenu
-  blurSharpenMenu_ = new QMenu("ブラー＆シャープ(&B)");
+  blurSharpenMenu_ = new QMenu("ブラー＆シャープ(&B)", menu);
   blurSharpenMenu_->addAction("ブラー (ガウス)");
   blurSharpenMenu_->addAction("ブラー (滑らか)");
   blurSharpenMenu_->addAction("ブラー (方向)");
@@ -147,7 +124,7 @@ namespace Artifact
   blurSharpenMenu_->addAction("アンシャープマスク");
 
   // Noise & Grain submenu
-  noiseGrainMenu_ = new QMenu("Noise & Grain");
+  noiseGrainMenu_ = new QMenu("Noise & Grain", menu);
   noiseGrainMenu_->addAction("Add Grain");
   noiseGrainMenu_->addAction("Dust & Scratches");
   noiseGrainMenu_->addAction("Fractal Noise");
@@ -158,7 +135,7 @@ namespace Artifact
   noiseGrainMenu_->addAction("Remove Grain");
 
   // Transition submenu
-  transitionMenu_ = new QMenu("Transition");
+  transitionMenu_ = new QMenu("Transition", menu);
   transitionMenu_->addAction("Linear Wipe");
   transitionMenu_->addAction("Radial Wipe");
   transitionMenu_->addAction("Venetian Blinds");
@@ -167,7 +144,7 @@ namespace Artifact
   transitionMenu_->addAction("Fade Out");
 
   // Utility submenu
-  utilityMenu_ = new QMenu("Utility");
+  utilityMenu_ = new QMenu("Utility", menu);
   utilityMenu_->addAction("Apply Color LUT");
   utilityMenu_->addAction("Change Colorspace");
   utilityMenu_->addAction("Change To Color");
@@ -185,7 +162,7 @@ namespace Artifact
   utilityMenu_->addAction("Write-on");
 
   // Matte submenu
-  matteMenu_ = new QMenu("Matte");
+  matteMenu_ = new QMenu("Matte", menu);
   matteMenu_->addAction("Matte Choker");
   matteMenu_->addAction("Simple Choker");
   matteMenu_->addAction("Alpha Levels");
@@ -195,19 +172,19 @@ namespace Artifact
   matteMenu_->addAction("Track Matte");
 
   // Perspective submenu
-  perspectiveMenu_ = new QMenu("Perspective");
+  perspectiveMenu_ = new QMenu("Perspective", menu);
   perspectiveMenu_->addAction("Bevel Alpha");
   perspectiveMenu_->addAction("Bevel Edges");
   perspectiveMenu_->addAction("Drop Shadow");
 
   // Keying submenu
-  keyingMenu_ = new QMenu("Keying");
+  keyingMenu_ = new QMenu("Keying", menu);
   keyingMenu_->addAction("Chroma Key");
   keyingMenu_->addAction("Color Key");
   keyingMenu_->addAction("Luma Key");
 
   // Obsolete submenu
-  obsoleteMenu_ = new QMenu("Obsolete");
+  obsoleteMenu_ = new QMenu("Obsolete", menu);
   obsoleteMenu_->addAction("3D Glasses");
   obsoleteMenu_->addAction("Audio Spectrum");
   obsoleteMenu_->addAction("Audio Waveform");
@@ -271,11 +248,54 @@ namespace Artifact
   menu->addMenu(keyingMenu_);
   menu->addMenu(perspectiveMenu_);
   menu->addMenu(obsoleteMenu_);
+  
+  auto* service = ArtifactProjectService::instance();
+  if (service) {
+      QObject::connect(service, &ArtifactProjectService::layerSelected, menu, [this](const ArtifactCore::LayerID& id) {
+          selectedLayerId_ = id;
+          refreshEnabledState();
+      });
+      QObject::connect(service, &ArtifactProjectService::layerRemoved, menu, [this](const ArtifactCore::CompositionID&, const ArtifactCore::LayerID& id) {
+          if (selectedLayerId_ == id) {
+              selectedLayerId_ = {};
+          }
+          refreshEnabledState();
+      });
+      QObject::connect(service, &ArtifactProjectService::projectChanged, menu, [this]() {
+          refreshEnabledState();
+      });
+  }
+  QObject::connect(menu, &QMenu::aboutToShow, menu, [this]() {
+      refreshEnabledState();
+  });
  }
 
  ArtifactEffectMenu::Impl::~Impl()
  {
 
+ }
+
+ void ArtifactEffectMenu::Impl::refreshEnabledState()
+ {
+     auto* service = ArtifactProjectService::instance();
+     bool hasLayer = service && service->hasProject() && static_cast<bool>(service->currentComposition().lock()) && !selectedLayerId_.isNil();
+     
+     inspectorAction_->setEnabled(hasLayer);
+     removeAllAction_->setEnabled(hasLayer);
+     keyframeAssistantMenu_->setEnabled(hasLayer);
+     expressionControlsMenu_->setEnabled(hasLayer);
+     channelMenu_->setEnabled(hasLayer);
+     stylizeMenu_->setEnabled(hasLayer);
+     colorCorrectionMenu_->setEnabled(hasLayer);
+     distortMenu_->setEnabled(hasLayer);
+     blurSharpenMenu_->setEnabled(hasLayer);
+     noiseGrainMenu_->setEnabled(hasLayer);
+     transitionMenu_->setEnabled(hasLayer);
+     utilityMenu_->setEnabled(hasLayer);
+     matteMenu_->setEnabled(hasLayer);
+     perspectiveMenu_->setEnabled(hasLayer);
+     keyingMenu_->setEnabled(hasLayer);
+     obsoleteMenu_->setEnabled(hasLayer);
  }
 
  ArtifactEffectMenu::ArtifactEffectMenu(QWidget* parent /*= nullptr*/):QMenu(parent),impl_(new Impl(this))
@@ -284,6 +304,7 @@ namespace Artifact
   setTearOffEnabled(false);
 
   // Menu is built in Impl constructor
+  impl_->refreshEnabledState();
  }
 
  ArtifactEffectMenu::~ArtifactEffectMenu()

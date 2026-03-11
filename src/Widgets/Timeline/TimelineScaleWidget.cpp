@@ -5,6 +5,8 @@ module;
 
 module Artifact.Timeline.ScaleWidget;
 
+import std;
+
 import Artifact.Project.Manager;
 
 
@@ -20,7 +22,8 @@ namespace Artifact
   Impl();
   ~Impl();
   int frameCount = 1000;
-  float zoom = 1.0f; // sNZ/t[
+  double visibleStartFrame = 0.0;
+  double visibleEndFrame = 100.0;
   void draw(QPainter& painter, const QRect& rect)
   {
    painter.save();
@@ -34,26 +37,28 @@ namespace Artifact
    font.setPointSize(8);
    painter.setFont(font);
 
+   const double visibleSpan = std::max(1.0, visibleEndFrame - visibleStartFrame);
+   const double pixelsPerFrame = std::max(0.001, static_cast<double>(rect.width()) / visibleSpan);
    const int baseMajorStep = 10;
    const int minorStep = 1;
-
-   int left = rect.left();
-   int right = rect.right();
-
-   // --- Calculate steps ---
-   const int minLabelPx = 45;       // Space for text
+   const int minLabelPx = 45;
    int majorStep = baseMajorStep;
 
-   while (majorStep * zoom < minLabelPx) {
+   while (majorStep * pixelsPerFrame < minLabelPx) {
     majorStep *= 2;
    }
 
+   const int maxFrame = std::max(0, frameCount - 1);
+   const int firstFrame = std::clamp(static_cast<int>(std::floor(visibleStartFrame / majorStep)) * majorStep, 0, maxFrame);
+   const int lastFrame = std::clamp(static_cast<int>(std::ceil(visibleEndFrame)), firstFrame, maxFrame);
+
    // Draw ticks and labels
-   for (int f = 0; f <= frameCount; ++f)
+   for (int f = firstFrame; f <= lastFrame; ++f)
    {
-    int x = left + static_cast<int>(f * zoom);
-    if (x < left) continue;
-    if (x > right) break;
+    const double normalized = (static_cast<double>(f) - visibleStartFrame) / visibleSpan;
+    const int x = rect.left() + static_cast<int>(std::lround(normalized * rect.width()));
+    if (x < rect.left()) continue;
+    if (x > rect.right()) break;
 
     if (f % majorStep == 0)
     {
@@ -104,14 +109,39 @@ namespace Artifact
    setMaximumHeight(24);
  }
 
- TimelineScaleWidget::~TimelineScaleWidget()
- {
+TimelineScaleWidget::~TimelineScaleWidget()
+{
   delete impl_;
- }
+}
 
- void TimelineScaleWidget::paintEvent(QPaintEvent* event)
- {
-  QPainter p(this);
+void TimelineScaleWidget::setFrameCount(int frameCount)
+{
+ if (!impl_) return;
+ const int clamped = std::max(1, frameCount);
+ if (impl_->frameCount == clamped) {
+  return;
+ }
+ impl_->frameCount = clamped;
+ update();
+}
+
+void TimelineScaleWidget::setVisibleRange(double startFrame, double endFrame)
+{
+ if (!impl_) return;
+ const double nextStart = std::max(0.0, startFrame);
+ const double nextEnd = std::max(nextStart + 1.0, endFrame);
+ if (std::abs(impl_->visibleStartFrame - nextStart) < 0.001 &&
+     std::abs(impl_->visibleEndFrame - nextEnd) < 0.001) {
+  return;
+ }
+ impl_->visibleStartFrame = nextStart;
+ impl_->visibleEndFrame = nextEnd;
+ update();
+}
+
+void TimelineScaleWidget::paintEvent(QPaintEvent* event)
+{
+ QPainter p(this);
   p.setRenderHint(QPainter::Antialiasing, false);
   impl_->draw(p, rect());
   //p.setClipRect(r);

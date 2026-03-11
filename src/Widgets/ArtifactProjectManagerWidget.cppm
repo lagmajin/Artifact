@@ -1075,6 +1075,8 @@ public:
             projectView_->setModel(proxyModel_);
             projectView_->setSortingEnabled(true);
             projectView_->sortByColumn(0, Qt::AscendingOrder);
+            projectView_->header()->setSortIndicatorShown(false);
+            projectView_->header()->setSectionsClickable(false);
             projectView_->header()->setStretchLastSection(true);
             projectView_->header()->setSectionResizeMode(0, QHeaderView::Stretch);
             for (int col = 1; col < projectView_->model()->columnCount(); ++col) {

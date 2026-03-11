@@ -115,16 +115,40 @@ private:
     void updateMetrics() {
         auto samples = ArtifactCore::PerformanceRegistry::instance().getLatestSamples();
         double totalTime = 0;
+        double queueWaitTime = 0; // If it exists, otherwise 0
+
+        std::vector<std::pair<std::string, double>> sortedSamples;
+
         for (const auto& [name, sample] : samples) {
             totalTime += sample.durationMs;
+            if (name.find("Queue") != std::string::npos || name.find("Wait") != std::string::npos) {
+                queueWaitTime += sample.durationMs;
+            }
+            sortedSamples.push_back({name, sample.durationMs});
         }
         
         double fps = 1000.0 / (totalTime + 0.001);
-        fpsLabel_->setText(QString("FPS: %1").arg(fps, 0, 'f', 1));
+        fpsLabel_->setText(QString("FPS: %1\nFrame: %2 ms\nQ-Wait: %3 ms")
+            .arg(fps, 0, 'f', 1)
+            .arg(totalTime, 0, 'f', 1)
+            .arg(queueWaitTime, 0, 'f', 2));
         
-        if (fps < 30) fpsLabel_->setStyleSheet("color: #F44336; font-size: 24px; font-weight: bold;");
-        else if (fps < 55) fpsLabel_->setStyleSheet("color: #FF9800; font-size: 24px; font-weight: bold;");
-        else fpsLabel_->setStyleSheet("color: #4CAF50; font-size: 24px; font-weight: bold;");
+        if (fps < 30) fpsLabel_->setStyleSheet("color: #F44336; font-size: 16px; font-weight: bold;");
+        else if (fps < 55) fpsLabel_->setStyleSheet("color: #FF9800; font-size: 16px; font-weight: bold;");
+        else fpsLabel_->setStyleSheet("color: #4CAF50; font-size: 16px; font-weight: bold;");
+
+        // 重い処理上位3件のログ出力 (1秒に1回)
+        static int logCounter = 0;
+        if (++logCounter >= 10) {
+            std::sort(sortedSamples.begin(), sortedSamples.end(), [](const auto& a, const auto& b) {
+                return a.second > b.second;
+            });
+            qDebug() << "--- Top 3 Heaviest Processes ---";
+            for (size_t i = 0; i < std::min<size_t>(3, sortedSamples.size()); ++i) {
+                qDebug() << i + 1 << ":" << QString::fromStdString(sortedSamples[i].first) << "-" << QString::number(sortedSamples[i].second, 'f', 2) << "ms";
+            }
+            logCounter = 0;
+        }
         
         update(); // Force repaint
     }

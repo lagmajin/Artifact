@@ -6,47 +6,14 @@
 #include <QDir>
 #include <QFileInfo>
 #include <QImage>
-#include <iostream>
-#include <vector>
-#include <string>
-#include <map>
-#include <unordered_map>
-#include <set>
-#include <unordered_set>
-#include <memory>
-#include <algorithm>
-#include <cmath>
-#include <functional>
-#include <optional>
-#include <utility>
-#include <array>
-#include <mutex>
-#include <thread>
-#include <chrono>
-#include <filesystem>
-#include <fstream>
-#include <sstream>
-#include <stdexcept>
-#include <type_traits>
-#include <variant>
-#include <any>
-#include <atomic>
-#include <condition_variable>
-#include <queue>
-#include <deque>
-#include <list>
-#include <tuple>
-#include <numeric>
-#include <regex>
-#include <random>
 module Artifact.Service.Project;
 
-
-
+import std;
 
 import Utils.String.UniString;
 import Artifact.Project.Manager;
 import Artifact.Layer.Factory;
+import Artifact.Layer.Result;
 import Artifact.Composition.Abstract;
 import Artifact.Project.Items;
 import File.TypeDetector;
@@ -57,6 +24,14 @@ import Artifact.Render.Queue.Service;
 
 namespace Artifact
 {
+ namespace {
+  void notifyProjectMutation(ArtifactProjectManager& manager)
+  {
+   if (auto project = manager.getCurrentProjectSharedPtr()) {
+    project->projectChanged();
+   }
+  }
+ }
 	
  class ArtifactProjectService::Impl
  {
@@ -108,14 +83,19 @@ namespace Artifact
 
  void ArtifactProjectService::Impl::addLayerToCurrentComposition(const ArtifactLayerInitParams& params)
  {
- 	
-  	
-    // Delegate to ArtifactProjectManager - this is the proper flow
-    auto& manager = projectManager();
-    auto result = manager.addLayerToCurrentComposition(const_cast<ArtifactLayerInitParams&>(params));
-    qDebug() << "[ArtifactProjectService::Impl::addLayerToCurrentComposition] delegated to manager, result=" << result.success;
- 	
- 	
+  auto& manager = projectManager();
+  ArtifactLayerResult result;
+  bool targetedCurrentComposition = false;
+  if (auto comp = currentComposition().lock()) {
+   result = manager.addLayerToComposition(comp->id(), const_cast<ArtifactLayerInitParams&>(params));
+   targetedCurrentComposition = true;
+  } else {
+   result = manager.addLayerToCurrentComposition(const_cast<ArtifactLayerInitParams&>(params));
+  }
+  if (result.success && targetedCurrentComposition) {
+   notifyProjectMutation(manager);
+  }
+  qDebug() << "[ArtifactProjectService::Impl::addLayerToCurrentComposition] delegated to manager, result=" << result.success;
  }
 
  void ArtifactProjectService::Impl::addAssetFromPath(const UniString& path)
@@ -347,8 +327,10 @@ namespace Artifact
 
  void ArtifactProjectService::addLayer(const CompositionID& id, const ArtifactLayerInitParams& param)
  {
- 	
-
+  auto result = impl_->projectManager().addLayerToComposition(id, const_cast<ArtifactLayerInitParams&>(param));
+  if (result.success) {
+   notifyProjectMutation(impl_->projectManager());
+  }
  }
 
 void ArtifactProjectService::addLayerToCurrentComposition(const ArtifactLayerInitParams& params)
@@ -359,7 +341,10 @@ void ArtifactProjectService::addLayerToCurrentComposition(const ArtifactLayerIni
 bool ArtifactProjectService::removeLayerFromComposition(const CompositionID& compositionId, const LayerID& layerId)
 {
     bool ok = impl_->projectManager().removeLayerFromComposition(compositionId, layerId);
-    if (ok) layerRemoved(compositionId, layerId);
+    if (ok) {
+        layerRemoved(compositionId, layerId);
+        notifyProjectMutation(impl_->projectManager());
+    }
     return ok;
 }
 
@@ -391,6 +376,7 @@ bool ArtifactProjectService::renameLayerInCurrentComposition(const LayerID& laye
         return false;
     }
     layer->setLayerName(trimmed);
+    notifyProjectMutation(impl_->projectManager());
     return true;
 }
 
@@ -445,6 +431,7 @@ bool ArtifactProjectService::setLayerVisibleInCurrentComposition(const LayerID& 
         return false;
     }
     layer->setVisible(visible);
+    notifyProjectMutation(impl_->projectManager());
     return true;
 }
 
@@ -459,6 +446,7 @@ bool ArtifactProjectService::setLayerLockedInCurrentComposition(const LayerID& l
         return false;
     }
     layer->setLocked(locked);
+    notifyProjectMutation(impl_->projectManager());
     return true;
 }
 
@@ -473,6 +461,7 @@ bool ArtifactProjectService::setLayerSoloInCurrentComposition(const LayerID& lay
         return false;
     }
     layer->setSolo(solo);
+    notifyProjectMutation(impl_->projectManager());
     return true;
 }
 
@@ -487,6 +476,7 @@ bool ArtifactProjectService::setLayerShyInCurrentComposition(const LayerID& laye
         return false;
     }
     layer->setShy(shy);
+    notifyProjectMutation(impl_->projectManager());
     return true;
 }
 
@@ -505,6 +495,30 @@ bool ArtifactProjectService::soloOnlyLayerInCurrentComposition(const LayerID& la
         if (!candidate) continue;
         candidate->setSolo(candidate->id() == layerId);
     }
+    notifyProjectMutation(impl_->projectManager());
+    return true;
+}
+
+bool ArtifactProjectService::setLayerParentInCurrentComposition(const LayerID& layerId, const LayerID& parentLayerId)
+{
+    auto comp = currentComposition().lock();
+    if (!comp || layerId.isNil()) {
+        return false;
+    }
+    auto layer = comp->layerById(layerId);
+    if (!layer) {
+        return false;
+    }
+    if (parentLayerId.isNil()) {
+        layer->clearParent();
+    } else {
+        auto parent = comp->layerById(parentLayerId);
+        if (!parent || parent->id() == layerId) {
+            return false;
+        }
+        layer->setParentById(parentLayerId);
+    }
+    notifyProjectMutation(impl_->projectManager());
     return true;
 }
 
@@ -519,6 +533,7 @@ bool ArtifactProjectService::clearLayerParentInCurrentComposition(const LayerID&
         return false;
     }
     layer->clearParent();
+    notifyProjectMutation(impl_->projectManager());
     return true;
 }
 
@@ -882,6 +897,9 @@ QVector<ProjectItem*> ArtifactProjectService::projectItems() const
 void ArtifactProjectService::createComposition(const UniString& name)
 {
  auto& manager = impl_->projectManager();
+ if (!hasProject()) {
+  manager.createProject();
+ }
  auto result = manager.createComposition(name);
  if (result.success) {
   changeCurrentComposition(result.id);
@@ -894,6 +912,9 @@ void ArtifactProjectService::createComposition(const UniString& name)
 void ArtifactProjectService::createComposition(const ArtifactCompositionInitParams& params)
 {
  auto& manager = impl_->projectManager();
+ if (!hasProject()) {
+  manager.createProject();
+ }
  auto result = manager.createComposition(params);
  if (result.success) {
   changeCurrentComposition(result.id);

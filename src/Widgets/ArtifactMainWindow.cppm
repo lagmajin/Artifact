@@ -86,6 +86,8 @@ ads--CDockWidgetTab[artifactActiveTab="true"] {
  background: #1d2430;
  color: #f4f8ff;
  border-color: #569cd6;
+ border-top: 2px solid #78b7f2;
+ font-weight: 600;
 }
 ads--CDockWidget[artifactActiveDock="true"] {
  border: 1px solid #569cd6;
@@ -120,6 +122,7 @@ ads--CDockWidgetTab QPushButton#tabCloseButton:pressed {
  centralDock->setObjectName(QStringLiteral("ArtifactCentralDock"));
  centralDock->setWidget(impl_->centralWidgetHost);
  impl_->dockManager->setCentralWidget(centralDock);
+ impl_->dockStyleManager->applyStyle();
 
  statusBar()->showMessage(QStringLiteral("Ready"), 2000);
  resize(1280, 900);
@@ -142,6 +145,43 @@ void ArtifactMainWindow::addDockedWidget(const QString& title, ads::DockWidgetAr
  dock->setWidget(widget);
  impl_->dockManager->addDockWidget(area, dock);
  impl_->dockWidgets.push_back(dock);
+ impl_->dockStyleManager->applyStyle();
+}
+
+void ArtifactMainWindow::addDockedWidgetTabbed(const QString& title, ads::DockWidgetArea area, QWidget* widget, const QString& tabGroupPrefix)
+{
+ if (!impl_ || !impl_->dockManager || !widget) return;
+
+ auto* dock = new CDockWidget(title, this);
+ dock->setObjectName(title);
+ dock->setWidget(widget);
+
+ ads::CDockAreaWidget* targetArea = nullptr;
+ if (!tabGroupPrefix.isEmpty()) {
+  for (auto it = impl_->dockWidgets.crbegin(); it != impl_->dockWidgets.crend(); ++it) {
+   auto* existingDock = *it;
+   if (!existingDock) continue;
+   const QString objectName = existingDock->objectName();
+   const QString windowTitle = existingDock->windowTitle();
+   if ((objectName.startsWith(tabGroupPrefix) || windowTitle.startsWith(tabGroupPrefix)) &&
+       existingDock->dockAreaWidget()) {
+    targetArea = existingDock->dockAreaWidget();
+    break;
+   }
+  }
+ }
+
+ if (targetArea) {
+  impl_->dockManager->addDockWidget(ads::CenterDockWidgetArea, dock, targetArea);
+ } else {
+  impl_->dockManager->addDockWidget(area, dock);
+ }
+
+ impl_->dockWidgets.push_back(dock);
+ dock->toggleView(true);
+ dock->setAsCurrentTab();
+ dock->raise();
+ impl_->dockStyleManager->applyStyle();
 }
 
 void ArtifactMainWindow::setDockVisible(const QString& title, const bool visible)
@@ -164,6 +204,7 @@ void ArtifactMainWindow::activateDock(const QString& title)
    dock->toggleView(true);
    dock->setAsCurrentTab();
    dock->raise();
+   impl_->dockStyleManager->applyStyle();
    return;
   }
  }

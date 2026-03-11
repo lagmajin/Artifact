@@ -1,50 +1,16 @@
 module;
 
 #include <QString>
+#include <QStringList>
 #include <QVector>
 #include <QObject>
 #include <wobjectdefs.h>
-
-#include <iostream>
-#include <vector>
-#include <string>
-#include <map>
-#include <unordered_map>
-#include <set>
-#include <unordered_set>
-#include <memory>
-#include <algorithm>
-#include <cmath>
-#include <functional>
-#include <optional>
-#include <utility>
-#include <array>
-#include <mutex>
-#include <thread>
-#include <chrono>
-#include <filesystem>
-#include <fstream>
-#include <sstream>
-#include <stdexcept>
-#include <type_traits>
-#include <variant>
-#include <any>
-#include <atomic>
-#include <condition_variable>
-#include <queue>
-#include <deque>
-#include <list>
-#include <tuple>
-#include <numeric>
-#include <regex>
-#include <random>
 export module Artifact.Audio.Mixer;
 
-
-
-
 import Artifact.Layer.Abstract;
+import Artifact.Composition.Abstract;
 import Utils.Id;
+import std;
 
 export namespace Artifact
 {
@@ -158,6 +124,10 @@ public:
     // マスターバス
     AudioMixerMasterBus* masterBus();
     const AudioMixerMasterBus* masterBus() const;
+
+    void clearChannelStrips();
+    void syncFromComposition(ArtifactCompositionPtr composition);
+    ArtifactCompositionPtr composition() const;
 
     // Solo管理（複数のsolo状態管理）
     bool hasAnySolo() const;

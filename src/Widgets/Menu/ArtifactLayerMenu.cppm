@@ -8,6 +8,7 @@ module;
 #include <wobjectimpl.h>
 
 module Artifact.Menu.Layer;
+import std;
 
 import Artifact.Service.Project;
 import Utils.Id;
@@ -435,3 +436,4 @@ QMenu* ArtifactLayerMenu::newLayerMenu() const
 }
 
 } // namespace Artifact
+

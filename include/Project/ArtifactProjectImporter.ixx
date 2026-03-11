@@ -40,6 +40,7 @@ export module Artifact.Project.Importer;
 
 
 import Artifact.Project;
+import Artifact.Project.Health;
 import Utils.String.UniString;
 
 export namespace Artifact
@@ -53,6 +54,7 @@ export namespace Artifact
   UniString errorMessage;
   int compositionsLoaded = 0;
   int layersLoaded = 0;
+  ProjectHealthReport healthReport;
  };
 
  class ArtifactProjectImporter {

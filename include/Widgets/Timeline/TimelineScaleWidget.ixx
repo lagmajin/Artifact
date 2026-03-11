@@ -17,6 +17,8 @@ export namespace Artifact
  public:
   explicit TimelineScaleWidget(QWidget* parent = nullptr);
   ~TimelineScaleWidget();
+  void setFrameCount(int frameCount);
+  void setVisibleRange(double startFrame, double endFrame);
  };
 
 	

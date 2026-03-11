@@ -18,6 +18,7 @@
 #include <wobjectimpl.h>
 
 module Artifact.Menu.File;
+import std;
 
 import Artifact.Project.Manager;
 import Artifact.Service.Project;
@@ -247,7 +248,7 @@ void ArtifactFileMenu::Impl::rebuildMenu()
     saveProjectAction->setEnabled(hasProject);
     saveProjectAsAction->setEnabled(hasProject);
     closeProjectAction->setEnabled(hasProject);
-    newCompositionAction->setEnabled(hasProject);
+    newCompositionAction->setEnabled(service != nullptr);
     importAssetsAction->setEnabled(hasProject);
     revealProjectFolderAction->setEnabled(hasProject);
 

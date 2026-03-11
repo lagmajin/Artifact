@@ -1,7 +1,8 @@
-﻿module;
+module;
 #include <wobjectdefs.h>
 #include <QWidget>
 #include <QScrollBar>
+#include <QVector>
 export module Artifact.Widgets.LayerPanelWidget;
 
 import Utils.Id;
@@ -60,11 +61,16 @@ export namespace Artifact
   void setComposition(const CompositionID& id);
   void setShyHidden(bool hidden);
   void updateLayout();
+  QVector<LayerID> visibleTimelineRows() const;
+
+  public /*signals*/:
+   void visibleRowsChanged() W_SIGNAL(visibleRowsChanged)
 
  };
 
  class ArtifactLayerTimelinePanelWrapper :public QWidget
  {
+  W_OBJECT(ArtifactLayerTimelinePanelWrapper)
  private:
   class Impl;
   Impl* impl_;
@@ -76,6 +82,10 @@ export namespace Artifact
   ~ArtifactLayerTimelinePanelWrapper();
   void setComposition(const CompositionID& id);
   class QScrollBar* verticalScrollBar() const;
+  QVector<LayerID> visibleTimelineRows() const;
+
+  public /*signals*/:
+   void visibleRowsChanged() W_SIGNAL(visibleRowsChanged)
  	
  };
 

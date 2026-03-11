@@ -47,6 +47,12 @@
 7. [v1.1 Rendering Dual Backend](./MILESTONE_V1_1_RENDERING_DUAL_BACKEND_2026-03-11.md)
 - 目的: Diligent と Software/OpenCV の二重描画経路を運用可能にし、Vulkan準備へ接続する
 
+8. [v1.2 Toolchain and Module Hardening](./MILESTONE_V1_2_TOOLCHAIN_AND_MODULE_HARDENING_2026-03-11.md)
+- 目的: C++23 / import std / C++ Modules のビルド安定化を段階的に完了する
+
+9. [v1.3 Layer API Migration](./MILESTONE_V1_3_LAYER_API_MIGRATION_2026-03-11.md)
+- 目的: Layer API の新旧互換を固定し、段階移行でビルド破壊を防ぐ
+
 ## Suggested Delivery Rhythm
 
 1. 週前半: v0.2 残件の実装

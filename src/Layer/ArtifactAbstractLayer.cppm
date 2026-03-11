@@ -10,49 +10,9 @@
 #include <QJsonArray>
 #include <QVariant>
 #include <QColor>
-
-#include <iostream>
-#include <vector>
-#include <string>
-#include <map>
-#include <unordered_map>
-#include <set>
-#include <unordered_set>
-#include <memory>
-#include <algorithm>
-#include <cmath>
-#include <functional>
-#include <optional>
-#include <utility>
-#include <array>
-#include <mutex>
-#include <thread>
-#include <chrono>
-#include <filesystem>
-#include <fstream>
-#include <sstream>
-#include <stdexcept>
-#include <type_traits>
-#include <variant>
-#include <any>
-#include <atomic>
-#include <condition_variable>
-#include <queue>
-#include <deque>
-#include <list>
-#include <tuple>
-#include <numeric>
-#include <regex>
-#include <random>
-#include <array>
-#include <algorithm>
-#include <cmath>
-#include <limits>
 module Artifact.Layer.Abstract;
 
-
-
-
+import std;
 
 import Utils;
 import Layer.State;
@@ -75,6 +35,28 @@ namespace Artifact {
  using namespace ArtifactCore;
 
  W_OBJECT_IMPL(ArtifactAbstractLayer)
+
+ namespace {
+  template <typename T>
+  bool assignIfChanged(T& current, const T& next)
+  {
+   if (current == next) {
+    return false;
+   }
+   current = next;
+   return true;
+  }
+
+  void notifyLayerMutation(ArtifactAbstractLayer* layer, LayerDirtyFlag flag, LayerDirtyReason reason)
+  {
+   if (!layer) {
+    return;
+   }
+   layer->setDirty(flag);
+   layer->addDirtyReason(reason);
+   Q_EMIT layer->changed();
+  }
+ }
 
   class ArtifactAbstractLayer::Impl {
   public:
@@ -181,7 +163,10 @@ namespace Artifact {
  
  void ArtifactAbstractLayer::setVisible(bool visible/*=true*/)
  {
-  impl_->isVisible_ = visible;
+  if (!assignIfChanged(impl_->isVisible_, visible)) {
+   return;
+  }
+  notifyLayerMutation(this, LayerDirtyFlag::All, LayerDirtyReason::VisibilityChanged);
  }
 
  void ArtifactAbstractLayer::Show()
@@ -228,7 +213,10 @@ void ArtifactAbstractLayer::setBlendMode(LAYER_BLEND_TYPE type)
 
  void ArtifactAbstractLayer::setLayerName(const QString& name)
  {
-     impl_->name_ = name;
+  if (!assignIfChanged(impl_->name_, name)) {
+   return;
+  }
+  notifyLayerMutation(this, LayerDirtyFlag::All, LayerDirtyReason::PropertyChanged);
  }
 
  std::type_index ArtifactAbstractLayer::type_index() const
@@ -310,11 +298,29 @@ void ArtifactAbstractLayer::setBlendMode(LAYER_BLEND_TYPE type)
  }
 
  FramePosition ArtifactAbstractLayer::inPoint() const { return impl_->inPoint_; }
- void ArtifactAbstractLayer::setInPoint(const FramePosition& pos) { impl_->inPoint_ = pos; }
+ void ArtifactAbstractLayer::setInPoint(const FramePosition& pos)
+ {
+  if (!assignIfChanged(impl_->inPoint_, pos)) {
+   return;
+  }
+  notifyLayerMutation(this, LayerDirtyFlag::All, LayerDirtyReason::TimelineChanged);
+ }
  FramePosition ArtifactAbstractLayer::outPoint() const { return impl_->outPoint_; }
- void ArtifactAbstractLayer::setOutPoint(const FramePosition& pos) { impl_->outPoint_ = pos; }
+ void ArtifactAbstractLayer::setOutPoint(const FramePosition& pos)
+ {
+  if (!assignIfChanged(impl_->outPoint_, pos)) {
+   return;
+  }
+  notifyLayerMutation(this, LayerDirtyFlag::All, LayerDirtyReason::TimelineChanged);
+ }
  FramePosition ArtifactAbstractLayer::startTime() const { return impl_->startTime_; }
- void ArtifactAbstractLayer::setStartTime(const FramePosition& pos) { impl_->startTime_ = pos; }
+ void ArtifactAbstractLayer::setStartTime(const FramePosition& pos)
+ {
+  if (!assignIfChanged(impl_->startTime_, pos)) {
+   return;
+  }
+  notifyLayerMutation(this, LayerDirtyFlag::All, LayerDirtyReason::TimelineChanged);
+ }
 
   bool ArtifactAbstractLayer::isActiveAt(const FramePosition& pos) const
   {
@@ -323,13 +329,37 @@ void ArtifactAbstractLayer::setBlendMode(LAYER_BLEND_TYPE type)
   }
 
   bool ArtifactAbstractLayer::isGuide() const { return impl_->isGuide_; }
-  void ArtifactAbstractLayer::setGuide(bool guide) { impl_->isGuide_ = guide; }
+  void ArtifactAbstractLayer::setGuide(bool guide)
+  {
+   if (!assignIfChanged(impl_->isGuide_, guide)) {
+    return;
+   }
+   notifyLayerMutation(this, LayerDirtyFlag::All, LayerDirtyReason::PropertyChanged);
+  }
   bool ArtifactAbstractLayer::isSolo() const { return impl_->isSolo_; }
-  void ArtifactAbstractLayer::setSolo(bool solo) { impl_->isSolo_ = solo; }
+  void ArtifactAbstractLayer::setSolo(bool solo)
+  {
+   if (!assignIfChanged(impl_->isSolo_, solo)) {
+    return;
+   }
+   notifyLayerMutation(this, LayerDirtyFlag::All, LayerDirtyReason::PlaybackChanged);
+  }
   bool ArtifactAbstractLayer::isLocked() const { return impl_->isLocked_; }
-  void ArtifactAbstractLayer::setLocked(bool locked) { impl_->isLocked_ = locked; }
+  void ArtifactAbstractLayer::setLocked(bool locked)
+  {
+   if (!assignIfChanged(impl_->isLocked_, locked)) {
+    return;
+   }
+   notifyLayerMutation(this, LayerDirtyFlag::All, LayerDirtyReason::PropertyChanged);
+  }
   bool ArtifactAbstractLayer::isShy() const { return impl_->isShy_; }
-  void ArtifactAbstractLayer::setShy(bool shy) { impl_->isShy_ = shy; }
+  void ArtifactAbstractLayer::setShy(bool shy)
+  {
+   if (!assignIfChanged(impl_->isShy_, shy)) {
+    return;
+   }
+   notifyLayerMutation(this, LayerDirtyFlag::All, LayerDirtyReason::PropertyChanged);
+  }
 
   void ArtifactAbstractLayer::setDirty(LayerDirtyFlag flag) { impl_->dirtyFlags_ |= (uint32_t)flag; }
   void ArtifactAbstractLayer::clearDirty(LayerDirtyFlag flag) { impl_->dirtyFlags_ &= ~(uint32_t)flag; }
@@ -843,70 +873,58 @@ void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject& obj)
  {
   if (propertyPath == QStringLiteral("layer.name")) {
    setLayerName(value.toString());
-   addDirtyReason(LayerDirtyReason::PropertyChanged);
-   Q_EMIT changed();
    return true;
   }
   if (propertyPath == QStringLiteral("layer.visible")) {
    setVisible(value.toBool());
-   addDirtyReason(LayerDirtyReason::VisibilityChanged);
-   Q_EMIT changed();
    return true;
   }
   if (propertyPath == QStringLiteral("layer.locked")) {
    setLocked(value.toBool());
-   addDirtyReason(LayerDirtyReason::PropertyChanged);
-   Q_EMIT changed();
    return true;
   }
   if (propertyPath == QStringLiteral("layer.guide")) {
    setGuide(value.toBool());
-   addDirtyReason(LayerDirtyReason::PropertyChanged);
-   Q_EMIT changed();
    return true;
   }
   if (propertyPath == QStringLiteral("layer.solo")) {
    setSolo(value.toBool());
-   addDirtyReason(LayerDirtyReason::PlaybackChanged);
-   Q_EMIT changed();
    return true;
   }
   if (propertyPath == QStringLiteral("layer.shy")) {
    setShy(value.toBool());
-   addDirtyReason(LayerDirtyReason::PropertyChanged);
-   Q_EMIT changed();
    return true;
   }
   if (propertyPath == QStringLiteral("time.inPoint")) {
    setInPoint(FramePosition(value.toLongLong()));
-   addDirtyReason(LayerDirtyReason::TimelineChanged);
-   Q_EMIT changed();
    return true;
   }
   if (propertyPath == QStringLiteral("time.outPoint")) {
    setOutPoint(FramePosition(value.toLongLong()));
-   addDirtyReason(LayerDirtyReason::TimelineChanged);
-   Q_EMIT changed();
    return true;
   }
   if (propertyPath == QStringLiteral("time.startTime")) {
    setStartTime(FramePosition(value.toLongLong()));
-   addDirtyReason(LayerDirtyReason::TimelineChanged);
-   Q_EMIT changed();
    return true;
   }
   if (propertyPath == QStringLiteral("source.width")) {
    const auto cur = sourceSize();
-   setSourceSize(Size_2D(value.toInt(), cur.height));
-   addDirtyReason(LayerDirtyReason::SourceChanged);
-   Q_EMIT changed();
+   const int width = value.toInt();
+   if (cur.width == width) {
+    return true;
+   }
+   setSourceSize(Size_2D(width, cur.height));
+   notifyLayerMutation(this, LayerDirtyFlag::Source, LayerDirtyReason::SourceChanged);
    return true;
   }
   if (propertyPath == QStringLiteral("source.height")) {
    const auto cur = sourceSize();
-   setSourceSize(Size_2D(cur.width, value.toInt()));
-   addDirtyReason(LayerDirtyReason::SourceChanged);
-   Q_EMIT changed();
+   const int height = value.toInt();
+   if (cur.height == height) {
+    return true;
+   }
+   setSourceSize(Size_2D(cur.width, height));
+   notifyLayerMutation(this, LayerDirtyFlag::Source, LayerDirtyReason::SourceChanged);
    return true;
   }
   return false;

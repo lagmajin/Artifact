@@ -1,62 +1,107 @@
-﻿module;
+module;
 
-#include <QString>
-#include <QVector>
-#include <QObject>
-#include <QHash>
 #include <QDebug>
-
-#include <iostream>
-#include <vector>
-#include <string>
-#include <map>
-#include <unordered_map>
-#include <set>
-#include <unordered_set>
-#include <memory>
-#include <algorithm>
-#include <cmath>
-#include <functional>
-#include <optional>
-#include <utility>
-#include <array>
-#include <mutex>
-#include <thread>
-#include <chrono>
-#include <filesystem>
-#include <fstream>
-#include <sstream>
-#include <stdexcept>
-#include <type_traits>
-#include <variant>
-#include <any>
-#include <atomic>
-#include <condition_variable>
-#include <queue>
-#include <deque>
-#include <list>
-#include <tuple>
-#include <numeric>
-#include <regex>
-#include <random>
+#include <QHash>
+#include <QObject>
+#include <QSignalBlocker>
+#include <QString>
+#include <QStringList>
+#include <QVector>
 #include <wobjectimpl.h>
+
 module Artifact.Audio.Mixer;
 
 import Artifact.Audio.Mixer;
-
-
-
-
+import Artifact.Composition.Abstract;
+import Artifact.Layer.Audio;
+import Artifact.Layer.Video;
+import std;
 
 namespace Artifact
 {
     using namespace ArtifactCore;
 
+namespace
+{
+float readLayerVolume(const ArtifactAbstractLayerPtr& layer)
+{
+    if (!layer) {
+        return 1.0f;
+    }
+    if (auto audioLayer = std::dynamic_pointer_cast<ArtifactAudioLayer>(layer)) {
+        return audioLayer->volume();
+    }
+    if (auto videoLayer = std::dynamic_pointer_cast<ArtifactVideoLayer>(layer)) {
+        return static_cast<float>(videoLayer->audioVolume());
+    }
+    return 1.0f;
+}
+
+bool readLayerMuted(const ArtifactAbstractLayerPtr& layer)
+{
+    if (!layer) {
+        return false;
+    }
+    if (auto audioLayer = std::dynamic_pointer_cast<ArtifactAudioLayer>(layer)) {
+        return audioLayer->isMuted();
+    }
+    if (auto videoLayer = std::dynamic_pointer_cast<ArtifactVideoLayer>(layer)) {
+        return videoLayer->isAudioMuted();
+    }
+    return false;
+}
+
+void applyLayerVolume(const ArtifactAbstractLayerPtr& layer, const float volume)
+{
+    if (!layer) {
+        return;
+    }
+    if (auto audioLayer = std::dynamic_pointer_cast<ArtifactAudioLayer>(layer)) {
+        audioLayer->setVolume(volume);
+        return;
+    }
+    if (auto videoLayer = std::dynamic_pointer_cast<ArtifactVideoLayer>(layer)) {
+        videoLayer->setAudioVolume(volume);
+        layer->changed();
+    }
+}
+
+void applyLayerMuted(const ArtifactAbstractLayerPtr& layer, const bool muted)
+{
+    if (!layer) {
+        return;
+    }
+    if (auto audioLayer = std::dynamic_pointer_cast<ArtifactAudioLayer>(layer)) {
+        if (audioLayer->isMuted() != muted) {
+            audioLayer->mute();
+        }
+        return;
+    }
+    if (auto videoLayer = std::dynamic_pointer_cast<ArtifactVideoLayer>(layer)) {
+        videoLayer->setAudioMuted(muted);
+        layer->changed();
+    }
+}
+
+void applyLayerSolo(const ArtifactAbstractLayerPtr& layer, const bool solo)
+{
+    if (!layer || layer->isSolo() == solo) {
+        return;
+    }
+    layer->setSolo(solo);
+    layer->changed();
+}
+
+bool supportsMixerLayer(const ArtifactAbstractLayerPtr& layer)
+{
+    return static_cast<bool>(std::dynamic_pointer_cast<ArtifactAudioLayer>(layer)) ||
+        static_cast<bool>(std::dynamic_pointer_cast<ArtifactVideoLayer>(layer));
+}
+}
+
     W_OBJECT_IMPL(AudioMixerChannelStrip)
     W_OBJECT_IMPL(AudioMixerMasterBus)
     W_OBJECT_IMPL(AudioMixer)
-
-// ==================== AudioMixerChannelStrip::Impl ====================
 
 class AudioMixerChannelStrip::Impl
 {
@@ -64,22 +109,18 @@ public:
     LayerID layerId_;
     QString layerName_;
 
-    float volume_ = 1.0f;      // 1.0 = 0dB
-    float pan_ = 0.0f;         // -1.0 to 1.0
+    float volume_ = 1.0f;
+    float pan_ = 0.0f;
     bool muted_ = false;
     bool solo_ = false;
     bool stereoLinked_ = true;
 
     QStringList effectChain_;
-
-    // メータリング
-    float leftLevel_ = -60.0f;   // dB
+    float leftLevel_ = -60.0f;
     float rightLevel_ = -60.0f;
     float peakLeft_ = -60.0f;
     float peakRight_ = -60.0f;
 };
-
-// ==================== AudioMixerChannelStrip ====================
 
 AudioMixerChannelStrip::AudioMixerChannelStrip(QObject* parent)
     : QObject(parent)
@@ -114,7 +155,7 @@ QString AudioMixerChannelStrip::layerName() const
 
 void AudioMixerChannelStrip::setVolume(float volume)
 {
-    impl_->volume_ = std::max(0.0f, std::min(2.0f, volume));
+    impl_->volume_ = std::clamp(volume, 0.0f, 2.0f);
     Q_EMIT volumeChanged(impl_->volume_);
 }
 
@@ -125,7 +166,7 @@ float AudioMixerChannelStrip::volume() const
 
 void AudioMixerChannelStrip::setPan(float pan)
 {
-    impl_->pan_ = std::max(-1.0f, std::min(1.0f, pan));
+    impl_->pan_ = std::clamp(pan, -1.0f, 1.0f);
     Q_EMIT panChanged(impl_->pan_);
 }
 
@@ -215,11 +256,8 @@ void AudioMixerChannelStrip::updateLevels(float left, float right)
 {
     impl_->leftLevel_ = left;
     impl_->rightLevel_ = right;
-
-    // ピーク更新
-    if (left > impl_->peakLeft_) impl_->peakLeft_ = left;
-    if (right > impl_->peakRight_) impl_->peakRight_ = right;
-
+    impl_->peakLeft_ = std::max(impl_->peakLeft_, left);
+    impl_->peakRight_ = std::max(impl_->peakRight_, right);
     Q_EMIT levelChanged(left, right);
 }
 
@@ -229,8 +267,6 @@ void AudioMixerChannelStrip::resetPeak()
     impl_->peakRight_ = -60.0f;
 }
 
-// ==================== AudioMixerMasterBus::Impl ====================
-
 class AudioMixerMasterBus::Impl
 {
 public:
@@ -239,8 +275,6 @@ public:
     float leftLevel_ = -60.0f;
     float rightLevel_ = -60.0f;
 };
-
-// ==================== AudioMixerMasterBus ====================
 
 AudioMixerMasterBus::AudioMixerMasterBus(QObject* parent)
     : QObject(parent)
@@ -255,7 +289,7 @@ AudioMixerMasterBus::~AudioMixerMasterBus()
 
 void AudioMixerMasterBus::setVolume(float volume)
 {
-    impl_->volume_ = std::max(0.0f, std::min(2.0f, volume));
+    impl_->volume_ = std::clamp(volume, 0.0f, 2.0f);
     Q_EMIT volumeChanged(impl_->volume_);
 }
 
@@ -292,19 +326,15 @@ void AudioMixerMasterBus::updateLevels(float left, float right)
     Q_EMIT levelChanged(left, right);
 }
 
-// ==================== AudioMixer::Impl ====================
-
 class AudioMixer::Impl
 {
 public:
     std::map<LayerID, std::unique_ptr<AudioMixerChannelStrip>> channelStrips_;
     std::unique_ptr<AudioMixerMasterBus> masterBus_;
-
+    ArtifactCompositionPtr composition_;
     int sampleRate_ = 44100;
     int bufferSize_ = 512;
 };
-
-// ==================== AudioMixer ====================
 
 AudioMixer::AudioMixer(QObject* parent)
     : QObject(parent)
@@ -329,7 +359,6 @@ AudioMixerChannelStrip* AudioMixer::addChannelStrip(LayerID layerId)
     strip->setLayerId(layerId);
     AudioMixerChannelStrip* ptr = strip.get();
     impl_->channelStrips_[layerId] = std::move(strip);
-
     Q_EMIT channelStripAdded(layerId);
     return ptr;
 }
@@ -344,13 +373,13 @@ void AudioMixer::removeChannelStrip(LayerID layerId)
 AudioMixerChannelStrip* AudioMixer::getChannelStrip(LayerID layerId)
 {
     auto it = impl_->channelStrips_.find(layerId);
-    return (it != impl_->channelStrips_.end()) ? it->second.get() : nullptr;
+    return it != impl_->channelStrips_.end() ? it->second.get() : nullptr;
 }
 
 QVector<AudioMixerChannelStrip*> AudioMixer::allChannelStrips() const
 {
     QVector<AudioMixerChannelStrip*> result;
-    for (auto& pair : impl_->channelStrips_) {
+    for (const auto& pair : impl_->channelStrips_) {
         result.append(pair.second.get());
     }
     return result;
@@ -358,7 +387,7 @@ QVector<AudioMixerChannelStrip*> AudioMixer::allChannelStrips() const
 
 int AudioMixer::channelCount() const
 {
-    return impl_->channelStrips_.size();
+    return static_cast<int>(impl_->channelStrips_.size());
 }
 
 AudioMixerMasterBus* AudioMixer::masterBus()
@@ -371,18 +400,81 @@ const AudioMixerMasterBus* AudioMixer::masterBus() const
     return impl_->masterBus_.get();
 }
 
+void AudioMixer::clearChannelStrips()
+{
+    std::vector<LayerID> removedIds;
+    removedIds.reserve(impl_->channelStrips_.size());
+    for (const auto& pair : impl_->channelStrips_) {
+        removedIds.push_back(pair.first);
+    }
+    impl_->channelStrips_.clear();
+    for (const auto& id : removedIds) {
+        Q_EMIT channelStripRemoved(id);
+    }
+}
+
+void AudioMixer::syncFromComposition(ArtifactCompositionPtr composition)
+{
+    impl_->composition_ = composition;
+    clearChannelStrips();
+
+    if (!composition) {
+        return;
+    }
+
+    for (const auto& layer : composition->allLayer()) {
+        if (!layer || !supportsMixerLayer(layer)) {
+            continue;
+        }
+
+        auto* strip = addChannelStrip(layer->id());
+        {
+            const QSignalBlocker blocker(strip);
+            const QString layerName = layer->layerName().trimmed().isEmpty()
+                ? QStringLiteral("Audio Layer")
+                : layer->layerName();
+            strip->setLayerName(layerName);
+            strip->setStereoLinked(true);
+            strip->setPan(0.0f);
+            strip->setVolume(readLayerVolume(layer));
+            strip->setMuted(readLayerMuted(layer));
+            strip->setSolo(layer->isSolo());
+        }
+
+        QObject::connect(strip, &AudioMixerChannelStrip::volumeChanged, this,
+            [layer](const float volume) {
+                applyLayerVolume(layer, volume);
+            });
+        QObject::connect(strip, &AudioMixerChannelStrip::muteChanged, this,
+            [layer](const bool muted) {
+                applyLayerMuted(layer, muted);
+            });
+        QObject::connect(strip, &AudioMixerChannelStrip::soloChanged, this,
+            [layer](const bool solo) {
+                applyLayerSolo(layer, solo);
+            });
+    }
+}
+
+ArtifactCompositionPtr AudioMixer::composition() const
+{
+    return impl_->composition_;
+}
+
 bool AudioMixer::hasAnySolo() const
 {
-    for (auto const& pair : impl_->channelStrips_) {
-        if (pair.second->isSolo()) return true;
+    for (const auto& pair : impl_->channelStrips_) {
+        if (pair.second->isSolo()) {
+            return true;
+        }
     }
     return false;
 }
 
 void AudioMixer::updateSoloStates()
 {
-    bool anySolo = hasAnySolo();
-    for (auto& pair : impl_->channelStrips_) {
+    const bool anySolo = hasAnySolo();
+    for (const auto& pair : impl_->channelStrips_) {
         if (anySolo) {
             pair.second->setMuted(!pair.second->isSolo());
         }
@@ -391,7 +483,7 @@ void AudioMixer::updateSoloStates()
 
 void AudioMixer::setAllMuted(bool muted)
 {
-    for (auto& pair : impl_->channelStrips_) {
+    for (const auto& pair : impl_->channelStrips_) {
         pair.second->setMuted(muted);
     }
     impl_->masterBus_->setMuted(muted);
@@ -399,7 +491,7 @@ void AudioMixer::setAllMuted(bool muted)
 
 void AudioMixer::resetAllPeaks()
 {
-    for (auto& pair : impl_->channelStrips_) {
+    for (const auto& pair : impl_->channelStrips_) {
         pair.second->resetPeak();
     }
 }

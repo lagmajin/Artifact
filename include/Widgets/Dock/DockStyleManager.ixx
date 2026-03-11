@@ -1,6 +1,7 @@
 ﻿module;
 #include <QObject>
 #include <QColor>
+#include <QEvent>
 #include <wobjectdefs.h>
 #include "DockManager.h"
 
@@ -50,6 +51,9 @@ class DockStyleManager : public QObject {
 private:
     class Impl;
     Impl* impl_;
+
+    void scheduleRefresh();
+    void refreshDockDecorations();
     
 public:
     explicit DockStyleManager(ads::CDockManager* dockManager, QObject* parent = nullptr);
@@ -60,6 +64,9 @@ public:
     void setGlowWidth(int width);
     void setGlowIntensity(float intensity);
     void applyStyle();
+
+protected:
+    bool eventFilter(QObject* watched, QEvent* event) override;
 };
 
 }

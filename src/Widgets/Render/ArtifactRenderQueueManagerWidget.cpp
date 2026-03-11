@@ -674,9 +674,31 @@ void RenderQueueManagerWidget::Impl::selectSourceIndex(int sourceIndex)
     if (!statusMatchesFilter(status)) continue;
     if (hasNeedle && !job.name.contains(needle, Qt::CaseInsensitive)) continue;
 
-    auto* item = new QListWidgetItem(QString("#%1  %2  [%3]  %4%")
-      .arg(i + 1).arg(job.name).arg(status).arg(job.progress));
+    auto* item = new QListWidgetItem(QString("#%1  %2    %3%")
+      .arg(i + 1, 2, 10, QChar('0')).arg(job.name).arg(job.progress, 3));
     item->setData(Qt::UserRole, i);
+    item->setToolTip(QString("Status: %1\nProgress: %2%\nJob: %3")
+      .arg(status).arg(job.progress).arg(job.name));
+    item->setSizeHint(QSize(0, 28));
+    if (status == "Rendering") {
+      item->setForeground(QColor(255, 211, 94));
+      item->setBackground(QColor(58, 49, 28));
+    } else if (status == "Completed") {
+      item->setForeground(QColor(167, 231, 168));
+      item->setBackground(QColor(30, 56, 36));
+    } else if (status == "Failed") {
+      item->setForeground(QColor(255, 165, 165));
+      item->setBackground(QColor(64, 31, 31));
+    } else if (status == "Paused") {
+      item->setForeground(QColor(178, 200, 255));
+      item->setBackground(QColor(34, 46, 71));
+    } else if (status == "Canceled") {
+      item->setForeground(QColor(203, 203, 203));
+      item->setBackground(QColor(45, 45, 45));
+    } else {
+      item->setForeground(QColor(221, 221, 221));
+      item->setBackground(QColor(41, 41, 41));
+    }
     jobListWidget->addItem(item);
     visibleToSource.push_back(i);
 
@@ -953,11 +975,19 @@ void RenderQueueManagerWidget::Impl::handleProjectClosed()
  RenderQueueManagerWidget::RenderQueueManagerWidget(QWidget* parent /*= nullptr*/) :QWidget(parent),impl_(new Impl())
  {
  auto mainLayout = new QVBoxLayout(this);
+ mainLayout->setContentsMargins(8, 8, 8, 8);
+ mainLayout->setSpacing(6);
+
+ auto* titleLabel = new QLabel("Render Queue", this);
+ titleLabel->setObjectName("renderQueueTitle");
+ mainLayout->addWidget(titleLabel);
 
   auto topControls = new QHBoxLayout();
   impl_->searchEdit = new QLineEdit(this);
   impl_->searchEdit->setPlaceholderText("Search jobs...");
+  impl_->searchEdit->setObjectName("renderQueueSearch");
   impl_->filterCombo = new QComboBox(this);
+  impl_->filterCombo->setObjectName("renderQueueFilter");
   impl_->filterCombo->addItems(QStringList{
     "All", "Pending", "Rendering", "Paused", "Completed", "Failed", "Canceled"
   });
@@ -980,6 +1010,9 @@ void RenderQueueManagerWidget::Impl::handleProjectClosed()
 
   // ジョブリスト
   impl_->jobListWidget = new QListWidget(this);
+  impl_->jobListWidget->setObjectName("renderQueueList");
+  impl_->jobListWidget->setAlternatingRowColors(false);
+  impl_->jobListWidget->setUniformItemSizes(true);
   mainLayout->addWidget(impl_->jobListWidget);
 
   auto* ioLayout = new QFormLayout();
@@ -1067,15 +1100,15 @@ void RenderQueueManagerWidget::Impl::handleProjectClosed()
 
   // コントロールボタン
   auto controlLayout = new QHBoxLayout();
-  impl_->addButton = new QPushButton("Add", this);
+  impl_->addButton = new QPushButton("Add to Queue", this);
   impl_->duplicateButton = new QPushButton("Duplicate", this);
   impl_->moveUpButton = new QPushButton("Up", this);
   impl_->moveDownButton = new QPushButton("Down", this);
   impl_->removeButton = new QPushButton("Remove", this);
   impl_->clearButton = new QPushButton("Clear All", this);
-  impl_->startButton = new QPushButton("Start", this);
+  impl_->startButton = new QPushButton("Render", this);
   impl_->pauseButton = new QPushButton("Pause", this);
-  impl_->cancelButton = new QPushButton("Cancel", this);
+  impl_->cancelButton = new QPushButton("Stop", this);
   impl_->rerunSelectedButton = new QPushButton("Rerun Selected", this);
   impl_->rerunDoneFailedButton = new QPushButton("Rerun Done/Failed", this);
 
@@ -1135,6 +1168,40 @@ void RenderQueueManagerWidget::Impl::handleProjectClosed()
 
   // スタイルの設定
   auto style = getDCCStyleSheetPreset(DccStylePreset::ModoStyle);
+  style += QStringLiteral(R"(
+QLabel#renderQueueTitle {
+  font-size: 12px;
+  font-weight: 700;
+  color: #d7d7d7;
+  padding: 2px 2px 4px 2px;
+}
+QLineEdit#renderQueueSearch, QComboBox#renderQueueFilter {
+  min-height: 22px;
+  border: 1px solid #3a3a3a;
+  background: #242424;
+  color: #dfdfdf;
+  border-radius: 3px;
+  padding: 2px 6px;
+}
+QListWidget#renderQueueList {
+  border: 1px solid #393939;
+  background: #1d1d1d;
+  outline: none;
+}
+QListWidget#renderQueueList::item {
+  border: 1px solid #2d2d2d;
+  margin: 2px 2px;
+  padding: 4px 8px;
+  border-radius: 3px;
+}
+QListWidget#renderQueueList::item:selected {
+  border: 1px solid #4e8fd6;
+  background: #223247;
+}
+QPushButton {
+  min-height: 22px;
+}
+)");
   setStyleSheet(style);
 
   connect(impl_->searchEdit, &QLineEdit::textChanged, this, [this](const QString&) {
@@ -1260,8 +1327,6 @@ void RenderQueueManagerWidget::Impl::handleProjectClosed()
       return;
     }
     impl_->service->moveRenderQueue(sourceIndex, sourceIndex - 1);
-    impl_->syncJobsFromService();
-    impl_->selectSourceIndex(sourceIndex - 1);
     impl_->logUiEvent(QString("Requested: move job #%1 up").arg(sourceIndex + 1), true);
   });
 
@@ -1271,8 +1336,6 @@ void RenderQueueManagerWidget::Impl::handleProjectClosed()
       return;
     }
     impl_->service->moveRenderQueue(sourceIndex, sourceIndex + 1);
-    impl_->syncJobsFromService();
-    impl_->selectSourceIndex(sourceIndex + 1);
     impl_->logUiEvent(QString("Requested: move job #%1 down").arg(sourceIndex + 1), true);
   });
 
@@ -1536,6 +1599,10 @@ void RenderQueueManagerWidget::Impl::handleProjectClosed()
     impl_->service->setJobStatusChangedCallback([this](int index, int status) { impl_->handleJobStatusChanged(index, status); });
     impl_->service->setJobProgressChangedCallback([this](int index, int progress) { impl_->handleJobProgressChanged(index, progress); });
     impl_->service->setAllJobsRemovedCallback([this]() { impl_->handleProjectClosed(); });
+    impl_->service->setQueueReorderedCallback([this](int from, int to) {
+        impl_->syncJobsFromService();
+        impl_->selectSourceIndex(to);
+    });
   }
   
   // Initialize UI
@@ -1565,10 +1632,10 @@ void RenderQueueManagerWidget::Impl::handleProjectClosed()
     impl_->service->setJobStatusChangedCallback({});
     impl_->service->setJobProgressChangedCallback({});
     impl_->service->setAllJobsRemovedCallback({});
+    impl_->service->setQueueReorderedCallback({});
   }
   delete impl_;
  }
-
  QSize RenderQueueManagerWidget::sizeHint() const
  {
   return QSize(600, 600);

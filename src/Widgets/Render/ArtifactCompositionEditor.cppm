@@ -15,6 +15,7 @@ module Artifact.Widgets.CompositionEditor;
 import Artifact.Widgets.CompositionRenderController;
 import Color.Float;
 import Artifact.Composition.Abstract;
+import Artifact.Service.Project;
 
 namespace Artifact {
 
@@ -174,6 +175,24 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget* parent)
  QObject::connect(impl_->zoomOutAction_, &QAction::triggered, this, &ArtifactCompositionEditor::zoomOut);
  QObject::connect(impl_->zoomFitAction_, &QAction::triggered, this, &ArtifactCompositionEditor::zoomFit);
  QObject::connect(impl_->zoom100Action_, &QAction::triggered, this, &ArtifactCompositionEditor::zoom100);
+
+ if (auto* service = ArtifactProjectService::instance()) {
+  QObject::connect(service, &ArtifactProjectService::currentCompositionChanged, this, [this](const ArtifactCore::CompositionID& id) {
+   if (id.isNil()) {
+    setComposition(nullptr);
+   } else {
+    auto compResult = ArtifactProjectService::instance()->findComposition(id);
+    if (compResult.success) {
+     setComposition(compResult.ptr.lock());
+    } else {
+     setComposition(nullptr);
+    }
+   }
+  });
+  QObject::connect(service, &ArtifactProjectService::projectChanged, this, [this]() {
+   setComposition(nullptr);
+  });
+ }
 }
 
 ArtifactCompositionEditor::~ArtifactCompositionEditor()

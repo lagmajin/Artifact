@@ -1,10 +1,14 @@
-﻿module;
+module;
 #include <QObject>
 #include <QApplication>
 #include <QColor>
+#include <QEvent>
 #include <QGraphicsDropShadowEffect>
 #include <QPointer>
+#include <QStyle>
+#include <QTimer>
 #include <QWidget>
+#include <algorithm>
 #include <wobjectimpl.h>
 #include "DockManager.h"
 #include "DockWidget.h"
@@ -23,101 +27,201 @@ public:
     ads::CDockManager* dockManager_ = nullptr;
     DockGlowStyle* glowStyle_ = nullptr;
     QPointer<ads::CDockWidget> focusedDockWidget_;
+    bool glowEnabled_ = true;
+    QColor glowColor_ = QColor(86, 156, 214);
+    int glowWidth_ = 3;
+    float glowIntensity_ = 0.82f;
+    bool refreshScheduled_ = false;
 };
+
+namespace {
+
+void repolishWidget(QWidget* widget) {
+    if (!widget) return;
+    widget->setAttribute(Qt::WA_StyledBackground, true);
+    if (auto* style = widget->style()) {
+        style->unpolish(widget);
+        style->polish(widget);
+    }
+    widget->update();
+}
+
+QGraphicsDropShadowEffect* ensureTabGlow(QWidget* tab) {
+    if (!tab) return nullptr;
+    auto* effect = qobject_cast<QGraphicsDropShadowEffect*>(tab->graphicsEffect());
+    if (!effect) {
+        effect = new QGraphicsDropShadowEffect(tab);
+        tab->setGraphicsEffect(effect);
+    }
+    return effect;
+}
+
+void clearTabGlow(QWidget* tab) {
+    if (!tab) return;
+    if (tab->graphicsEffect()) {
+        tab->setGraphicsEffect(nullptr);
+    }
+}
+
+bool isDockRelatedObject(QObject* watched, ads::CDockManager* dockManager) {
+    if (!watched || !dockManager) return false;
+    if (watched == dockManager) return true;
+    if (qobject_cast<ads::CDockWidget*>(watched) || qobject_cast<ads::CDockWidgetTab*>(watched)) {
+        return true;
+    }
+
+    auto* widget = qobject_cast<QWidget*>(watched);
+    return widget && dockManager->isAncestorOf(widget);
+}
+
+}
 
 DockStyleManager::DockStyleManager(ads::CDockManager* dockManager, QObject* parent)
     : QObject(parent), impl_(new Impl()) {
     impl_->dockManager_ = dockManager;
-    
-    // カスタムスタイルを作成
+
     impl_->glowStyle_ = new DockGlowStyle(QApplication::style());
-    
-    // DockManagerに適用
     impl_->dockManager_->setStyle(impl_->glowStyle_);
-    
-    auto applyTabGlow = [](ads::CDockWidget* dockWidget) {
-        if (!dockWidget) return;
-        auto* tab = reinterpret_cast<QWidget*>(dockWidget->tabWidget());
-        if (!tab) return;
 
-        tab->setProperty("artifactActiveTab", true);
-        auto* fx = new QGraphicsDropShadowEffect(tab);
-        fx->setBlurRadius(18.0);
-        fx->setOffset(0.0, 0.0);
-        fx->setColor(QColor(86, 156, 214, 210));
-        tab->setGraphicsEffect(fx);
-        tab->update();
-    };
+    qApp->installEventFilter(this);
 
-    auto clearTabGlow = [](ads::CDockWidget* dockWidget) {
-        if (!dockWidget) return;
-        auto* tab = reinterpret_cast<QWidget*>(dockWidget->tabWidget());
-        if (!tab) return;
-
-        tab->setProperty("artifactActiveTab", false);
-        tab->setGraphicsEffect(nullptr);
-        tab->update();
-    };
-
-    // フォーカス変更時に再描画とタブ発光更新
     connect(dockManager, &ads::CDockManager::focusedDockWidgetChanged,
-            [this, applyTabGlow, clearTabGlow](ads::CDockWidget* old, ads::CDockWidget* now) {
-        if (old) {
-            clearTabGlow(old);
-            old->setProperty("artifactActiveDock", false);
-            old->update();
-        }
-        if (now) {
-            applyTabGlow(now);
-            now->setProperty("artifactActiveDock", true);
-            now->update();
-        }
+            this, [this](ads::CDockWidget*, ads::CDockWidget* now) {
         impl_->focusedDockWidget_ = now;
+        scheduleRefresh();
     });
 
-    if (auto* focused = dockManager->focusedDockWidget()) {
-        applyTabGlow(focused);
-        focused->setProperty("artifactActiveDock", true);
-        impl_->focusedDockWidget_ = focused;
-    }
+    connect(qApp, &QApplication::focusChanged,
+            this, [this](QWidget*, QWidget*) {
+        scheduleRefresh();
+    });
+
+    impl_->focusedDockWidget_ = dockManager->focusedDockWidget();
+    scheduleRefresh();
 }
 
 DockStyleManager::~DockStyleManager() {
+    if (qApp) {
+        qApp->removeEventFilter(this);
+    }
     delete impl_;
 }
 
 void DockStyleManager::setGlowEnabled(bool enabled) {
     if (impl_->glowStyle_) {
+        impl_->glowEnabled_ = enabled;
         impl_->glowStyle_->setGlowEnabled(enabled);
-        impl_->dockManager_->update();
+        scheduleRefresh();
     }
 }
 
 void DockStyleManager::setGlowColor(const QColor& color) {
     if (impl_->glowStyle_) {
+        impl_->glowColor_ = color;
         impl_->glowStyle_->setGlowColor(color);
-        impl_->dockManager_->update();
+        scheduleRefresh();
     }
 }
 
 void DockStyleManager::setGlowWidth(int width) {
     if (impl_->glowStyle_) {
+        impl_->glowWidth_ = width;
         impl_->glowStyle_->setGlowWidth(width);
-        impl_->dockManager_->update();
+        scheduleRefresh();
     }
 }
 
 void DockStyleManager::setGlowIntensity(float intensity) {
     if (impl_->glowStyle_) {
+        impl_->glowIntensity_ = intensity;
         impl_->glowStyle_->setGlowIntensity(intensity);
-        impl_->dockManager_->update();
+        scheduleRefresh();
     }
 }
 
 void DockStyleManager::applyStyle() {
     if (impl_->dockManager_) {
-        impl_->dockManager_->update();
+        scheduleRefresh();
     }
+}
+
+bool DockStyleManager::eventFilter(QObject* watched, QEvent* event) {
+    if (!impl_ || !impl_->dockManager_ || !event) {
+        return QObject::eventFilter(watched, event);
+    }
+
+    if (isDockRelatedObject(watched, impl_->dockManager_)) {
+        switch (event->type()) {
+        case QEvent::ChildAdded:
+        case QEvent::ChildRemoved:
+        case QEvent::FocusIn:
+        case QEvent::FocusOut:
+        case QEvent::Hide:
+        case QEvent::LayoutRequest:
+        case QEvent::MouseButtonPress:
+        case QEvent::MouseButtonRelease:
+        case QEvent::Polish:
+        case QEvent::Show:
+        case QEvent::WindowActivate:
+        case QEvent::WindowDeactivate:
+        case QEvent::ZOrderChange:
+            scheduleRefresh();
+            break;
+        default:
+            break;
+        }
+    }
+
+    return QObject::eventFilter(watched, event);
+}
+
+void DockStyleManager::scheduleRefresh() {
+    if (!impl_ || !impl_->dockManager_ || impl_->refreshScheduled_) {
+        return;
+    }
+
+    impl_->refreshScheduled_ = true;
+    QTimer::singleShot(0, this, [this]() {
+        if (!impl_) return;
+        impl_->refreshScheduled_ = false;
+        refreshDockDecorations();
+    });
+}
+
+void DockStyleManager::refreshDockDecorations() {
+    if (!impl_ || !impl_->dockManager_) {
+        return;
+    }
+
+    const auto docks = impl_->dockManager_->findChildren<ads::CDockWidget*>();
+    for (auto* dock : docks) {
+        if (!dock) continue;
+
+        const bool isActive = dock->isCurrentTab();
+        dock->setProperty("artifactActiveDock", isActive);
+        repolishWidget(dock);
+
+        auto* tab = dock->tabWidget();
+        if (!tab) continue;
+
+        tab->setProperty("artifactActiveTab", isActive);
+        if (isActive && impl_->glowEnabled_) {
+            auto* effect = ensureTabGlow(tab);
+            effect->setBlurRadius(18.0 + static_cast<qreal>(impl_->glowWidth_) * 2.0);
+            effect->setOffset(0.0, 0.0);
+            QColor glowColor = impl_->glowColor_;
+            glowColor.setAlphaF(std::clamp(impl_->glowIntensity_, 0.0f, 1.0f));
+            effect->setColor(glowColor);
+        } else {
+            clearTabGlow(tab);
+        }
+        repolishWidget(tab);
+    }
+
+    if (auto* focused = impl_->dockManager_->focusedDockWidget()) {
+        impl_->focusedDockWidget_ = focused;
+    }
+    impl_->dockManager_->update();
 }
 
 }

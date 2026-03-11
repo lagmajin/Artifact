@@ -8,49 +8,13 @@ module;
 #include <QHash>
 #include <QVector>
 #include <QMultiMap>
-#include <typeindex>
 #include <QString>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
-
-#include <iostream>
-#include <vector>
-#include <string>
-#include <map>
-#include <unordered_map>
-#include <set>
-#include <unordered_set>
-#include <memory>
-#include <algorithm>
-#include <cmath>
-#include <functional>
-#include <optional>
-#include <utility>
-#include <array>
-#include <mutex>
-#include <thread>
-#include <chrono>
-#include <filesystem>
-#include <fstream>
-#include <sstream>
-#include <stdexcept>
-#include <type_traits>
-#include <variant>
-#include <any>
-#include <atomic>
-#include <condition_variable>
-#include <queue>
-#include <deque>
-#include <list>
-#include <tuple>
-#include <numeric>
-#include <regex>
-#include <random>
 module Artifact.Composition.Abstract;
 
-
-
+import std;
 
 import Container;
 import Frame.Position;
@@ -81,6 +45,7 @@ namespace Artifact {
   CompositionSettings settings_;
   FramePosition position_;
   FrameRange frameRange_ = FrameRange(0, 300);
+  FrameRange workAreaRange_ = FrameRange(0, 300);
   FrameRate frameRate_;
   bool looping_ = false;
   float playbackSpeed_ = 1.0f;
@@ -134,6 +99,7 @@ namespace Artifact {
 
   auto id = layer->id();
 
+  layer->setComposition(owner_);
   layerMultiIndex_.add(layer,id,layer->type_index());
 
   result.success = true;
@@ -144,11 +110,17 @@ namespace Artifact {
 
  void ArtifactAbstractComposition::Impl::removeAllLayers()
  {
+  for (auto& layer : layerMultiIndex_) {
+   if (layer) {
+    layer->setComposition(nullptr);
+   }
+  }
   layerMultiIndex_.clear();
  }
 
 void ArtifactAbstractComposition::Impl::removeLayer(const LayerID& id)
 {
+   auto removedLayer = layerMultiIndex_.findById(id);
    // Safe Detachment: Clear parent link of any layer that refers to this ID
    for (auto& layer : layerMultiIndex_) {
        if (layer->parentLayerId() == id) {
@@ -156,6 +128,9 @@ void ArtifactAbstractComposition::Impl::removeLayer(const LayerID& id)
        }
    }
    layerMultiIndex_.removeById(id);
+   if (removedLayer) {
+    removedLayer->setComposition(nullptr);
+   }
 }
 
  bool ArtifactAbstractComposition::Impl::containsLayerById(const LayerID& id) const
@@ -205,6 +180,7 @@ void ArtifactAbstractComposition::Impl::removeLayer(const LayerID& id)
           result.error = AppendLayerToCompositionError::LayerNotFound;
           return result;
       }
+      layer->setComposition(owner_);
       layerMultiIndex_.insertAt(0, layer, layer->id(), layer->type_index());
       result.success = true;
       result.error = AppendLayerToCompositionError::None;
@@ -285,8 +261,22 @@ ArtifactAbstractLayerPtr ArtifactAbstractComposition::Impl::backMostLayer() cons
  ArtifactAbstractComposition::ArtifactAbstractComposition(const CompositionID& id, const ArtifactCompositionInitParams& params) :impl_(new Impl(this))
  {
   impl_->id_ = id;
- 	
- 	
+
+  impl_->settings_.setCompositionName(params.compositionName());
+  impl_->settings_.setCompositionSize(QSize(params.width(), params.height()));
+  impl_->frameRate_ = params.frameRate();
+
+  const int64_t totalFrames = std::max<int64_t>(1, params.durationFrames());
+  impl_->frameRange_ = FrameRange(0, totalFrames);
+
+  const auto workArea = params.workArea();
+  if (workArea.enabled) {
+   const int64_t workStart = std::clamp<int64_t>(workArea.inPoint.rescaledTo(static_cast<int64_t>(std::round(impl_->frameRate_.framerate()))), 0, totalFrames);
+   const int64_t workEnd = std::clamp<int64_t>(workArea.outPoint.rescaledTo(static_cast<int64_t>(std::round(impl_->frameRate_.framerate()))), workStart, totalFrames);
+   impl_->workAreaRange_ = FrameRange(workStart, workEnd);
+  } else {
+   impl_->workAreaRange_ = impl_->frameRange_;
+  }
  }
 
  ArtifactAbstractComposition::~ArtifactAbstractComposition()
@@ -345,15 +335,15 @@ ArtifactAbstractLayerPtr ArtifactAbstractComposition::layerById(const LayerID& i
    return impl_->frameRate_;
   }
 
- bool ArtifactAbstractComposition::hasVideo() const
- {
-  return true;
- }
+bool ArtifactAbstractComposition::hasVideo() const
+{
+  return impl_->hasVideo();
+}
 
- bool ArtifactAbstractComposition::hasAudio() const
- {
-  return true;
- }
+bool ArtifactAbstractComposition::hasAudio() const
+{
+  return impl_->hasAudio();
+}
 
  QVector<Artifact::ArtifactAbstractLayerPtr> ArtifactAbstractComposition::allLayer()
  {
@@ -373,6 +363,7 @@ ArtifactAbstractLayerPtr ArtifactAbstractComposition::layerById(const LayerID& i
 void ArtifactAbstractComposition::insertLayerAt(ArtifactAbstractLayerPtr layer, int index/*=0*/)
 {
     if (!layer) return;
+    layer->setComposition(this);
     impl_->layerMultiIndex_.insertAt(index, layer, layer->id(), layer->type_index());
 }
 
@@ -484,7 +475,27 @@ void ArtifactAbstractComposition::setLooping(bool loop)
 
 void ArtifactAbstractComposition::setFrameRange(const FrameRange& range)
 {
-    impl_->frameRange_ = range;
+    const FrameRange normalized = range.normalized();
+    impl_->frameRange_ = normalized;
+    impl_->workAreaRange_.clip(impl_->frameRange_);
+    if (!impl_->workAreaRange_.isValid() || impl_->workAreaRange_.isEmpty()) {
+        impl_->workAreaRange_ = impl_->frameRange_;
+    }
+}
+
+FrameRange ArtifactAbstractComposition::workAreaRange() const
+{
+    return impl_->workAreaRange_;
+}
+
+void ArtifactAbstractComposition::setWorkAreaRange(const FrameRange& range)
+{
+    FrameRange normalized = range.normalized();
+    normalized.clip(impl_->frameRange_);
+    if (!normalized.isValid() || normalized.isEmpty()) {
+        normalized = impl_->frameRange_;
+    }
+    impl_->workAreaRange_ = normalized;
 }
 
 void ArtifactAbstractComposition::setFrameRate(const FrameRate& rate)
@@ -495,6 +506,9 @@ void ArtifactAbstractComposition::setFrameRate(const FrameRate& rate)
 QJsonDocument ArtifactAbstractComposition::toJson() const{
     QJsonObject obj;
     obj["id"] = id().toString();
+    obj["frameRange"] = impl_->frameRange_.toJson();
+    obj["workAreaRange"] = impl_->workAreaRange_.toJson();
+    obj["name"] = impl_->settings_.compositionName().toQString();
     QJsonArray layersArray;
     for (const auto& layer : impl_->layerMultiIndex_.all()) {
         if (layer) {
@@ -521,7 +535,16 @@ std::shared_ptr<ArtifactAbstractComposition> ArtifactAbstractComposition::fromJs
     }
     
     ArtifactCompositionInitParams params;
+    if (obj.contains("name")) {
+        params.setCompositionName(obj["name"].toString());
+    }
     auto comp = std::make_shared<ArtifactAbstractComposition>(compId, params);
+    if (obj.contains("frameRange") && obj["frameRange"].isObject()) {
+        comp->setFrameRange(FrameRange::fromJson(obj["frameRange"].toObject()));
+    }
+    if (obj.contains("workAreaRange") && obj["workAreaRange"].isObject()) {
+        comp->setWorkAreaRange(FrameRange::fromJson(obj["workAreaRange"].toObject()));
+    }
     
     if (obj.contains("layers") && obj["layers"].isArray()) {
         QJsonArray arr = obj["layers"].toArray();

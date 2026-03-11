@@ -1,8 +1,5 @@
 module;
 #include <QDebug>
-#include <memory>
-#include <vector>
-#include <typeindex>
 #include <wobjectimpl.h>
 #include <wobjectdefs.h>
 #include <QFileInfo>
@@ -13,9 +10,9 @@ module;
 #include <QDir>
 #include <QtTest/QtTest>
 //#include <QtCore/QString>
-
-
 module Artifact.Project;
+
+import std;
 
 import Utils;
 import Utils.String.Like;

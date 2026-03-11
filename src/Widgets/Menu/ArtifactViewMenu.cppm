@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <QWidget>
 #include <QMenu>
 #include <QAction>
@@ -7,46 +7,11 @@
 #include <QPointer>
 #include <QApplication>
 
-#include <iostream>
-#include <vector>
-#include <string>
-#include <map>
-#include <unordered_map>
-#include <set>
-#include <unordered_set>
-#include <memory>
-#include <algorithm>
-#include <cmath>
-#include <functional>
-#include <optional>
-#include <utility>
-#include <array>
-#include <mutex>
-#include <thread>
-#include <chrono>
-#include <filesystem>
-#include <fstream>
-#include <sstream>
-#include <stdexcept>
-#include <type_traits>
-#include <variant>
-#include <any>
-#include <atomic>
-#include <condition_variable>
-#include <queue>
-#include <deque>
-#include <list>
-#include <tuple>
-#include <numeric>
-#include <regex>
-#include <random>
 
 #include <wobjectimpl.h>
 
 module Artifact.Menu.View;
-
-
-
+import std;
 
 import Artifact.Service.Project;
 
@@ -98,6 +63,7 @@ namespace Artifact {
    QAction* openProjectPanelAction = nullptr;
    QAction* openInspectorPanelAction = nullptr;
 
+   void refreshEnabledState();
   };
 
   ArtifactViewMenu::Impl::Impl(ArtifactViewMenu* menu)
@@ -193,7 +159,18 @@ namespace Artifact {
       break;
      }
     });
+
+    QObject::connect(svc, &ArtifactProjectService::projectChanged, menu, [this]() {
+     refreshEnabledState();
+    });
+    QObject::connect(svc, &ArtifactProjectService::compositionCreated, menu, [this](const auto&) {
+     refreshEnabledState();
+    });
    }
+   
+   QObject::connect(menu, &QMenu::aboutToShow, menu, [this]() {
+    refreshEnabledState();
+   });
 
    menu->addAction(zoomInAction);
    menu->addAction(zoomOutAction);
@@ -236,12 +213,35 @@ namespace Artifact {
 
  }
 
+ void ArtifactViewMenu::Impl::refreshEnabledState()
+ {
+  auto* svc = ArtifactProjectService::instance();
+  const bool hasProject = svc && svc->hasProject();
+  const bool hasComp = hasProject && static_cast<bool>(svc->currentComposition().lock());
+
+  zoomInAction->setEnabled(hasComp);
+  zoomOutAction->setEnabled(hasComp);
+  defaultZoomAction->setEnabled(hasComp);
+  fitToScreenAction->setEnabled(hasComp);
+  
+  resolutionMenu->setEnabled(hasComp);
+  qualityPresetMenu->setEnabled(hasComp);
+  
+  showGridAction->setEnabled(hasComp);
+  snapToGridAction->setEnabled(hasComp);
+  showGuidesAction->setEnabled(hasComp);
+  snapToGuidesAction->setEnabled(hasComp);
+  showRulersAction->setEnabled(hasComp);
+  useDisplayColorManagementAction->setEnabled(hasComp);
+ }
+
  W_OBJECT_IMPL(ArtifactViewMenu)
 
  ArtifactViewMenu::ArtifactViewMenu(QWidget* parent/*=nullptr*/):QMenu(parent),impl_(new Impl(this))
  {
   setTitle("表示(&V)");
   setTearOffEnabled(false);
+  impl_->refreshEnabledState();
  }
 
  ArtifactViewMenu::~ArtifactViewMenu()
@@ -296,3 +296,4 @@ namespace Artifact {
  }
 
 };
+

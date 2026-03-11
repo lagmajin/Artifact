@@ -32,6 +32,7 @@ ProjectHealthReport ArtifactProjectHealthChecker::check(ArtifactProject* project
     checkDuplicateIDs(project, report);
     checkFrameRanges(project, report);
     checkMissingAssets(project, report);
+    checkBrokenReferences(project, report);
 
     for (const auto& issue : report.issues) {
         if (issue.severity == HealthIssueSeverity::Error) {
@@ -61,6 +62,9 @@ AutoRepairResult ArtifactProjectHealthChecker::checkAndRepair(ArtifactProject* p
     }
     if (options.removeMissingAssets) {
         repairMissingAssets(project, result, options);
+    }
+    if (options.removeBrokenReferences) {
+        repairBrokenReferences(project, result, options);
     }
     return result;
 }
@@ -205,6 +209,89 @@ void ArtifactProjectHealthChecker::checkFrameRanges(ArtifactProject* project, Pr
     for (auto root : items) traverse(root);
 }
 
+void ArtifactProjectHealthChecker::checkBrokenReferences(ArtifactProject* project, ProjectHealthReport& report) {
+    auto items = project->projectItems();
+    
+    std::function<void(ProjectItem*)> traverse = [&](ProjectItem* item) {
+        if (!item) return;
+        
+        if (item->type() == eProjectItemType::Composition) {
+            auto* compItem = static_cast<CompositionItem*>(item);
+            auto res = project->findComposition(compItem->compositionId);
+            if (res.success) {
+                auto comp = res.ptr.lock();
+                if (comp) {
+                    for (const auto& layer : comp->allLayer()) {
+                        if (!layer) continue;
+                        
+                        if (auto compLayer = dynamic_cast<ArtifactCompositionLayer*>(layer.get())) {
+                            auto sourceRes = project->findComposition(compLayer->sourceCompositionId());
+                            if (!sourceRes.success || sourceRes.ptr.expired()) {
+                                report.issues.push_back({
+                                    HealthIssueSeverity::Error,
+                                    QString("Composition layer references missing composition: %1").arg(compLayer->sourceCompositionId().toString()),
+                                    compItem->name.toQString() + " / " + layer->layerName(),
+                                    "BrokenReference"
+                                });
+                            }
+                        }
+                        
+                        // We can add other reference checks here (e.g. Missing media in VideoLayer)
+                    }
+                }
+            }
+        }
+        
+        for (auto child : item->children) traverse(child);
+    };
+
+    for (auto root : items) traverse(root);
+}
+
+void ArtifactProjectHealthChecker::repairBrokenReferences(ArtifactProject* project, AutoRepairResult& result, const AutoRepairOptions& options) {
+    if (!options.removeBrokenReferences) return;
+
+    auto items = project->projectItems();
+    std::function<void(ProjectItem*)> traverse = [&](ProjectItem* item) {
+        if (!item) return;
+        
+        if (item->type() == eProjectItemType::Composition) {
+            auto* compItem = static_cast<CompositionItem*>(item);
+            auto res = project->findComposition(compItem->compositionId);
+            if (res.success) {
+                auto comp = res.ptr.lock();
+                if (comp) {
+                    QVector<LayerID> toRemove;
+                    for (const auto& layer : comp->allLayer()) {
+                        if (!layer) continue;
+                        
+                        if (auto compLayer = dynamic_cast<ArtifactCompositionLayer*>(layer.get())) {
+                            auto sourceRes = project->findComposition(compLayer->sourceCompositionId());
+                            if (!sourceRes.success || sourceRes.ptr.expired()) {
+                                toRemove.push_back(layer->id());
+                            }
+                        }
+                    }
+
+                    for (const auto& id : toRemove) {
+                        comp->removeLayer(id);
+                        result.fixedCount++;
+                        result.appliedFixes.push_back({
+                            HealthIssueSeverity::Warning,
+                            QString("Removed layer with broken reference: %1").arg(id.toString()),
+                            compItem->name.toQString(),
+                            "BrokenReference"
+                        });
+                    }
+                }
+            }
+        }
+        
+        for (auto child : item->children) traverse(child);
+    };
+
+    for (auto root : items) traverse(root);
+}
 void ArtifactProjectHealthChecker::checkMissingAssets(ArtifactProject* project, ProjectHealthReport& report) {
     auto items = project->projectItems();
 

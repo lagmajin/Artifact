@@ -10,17 +10,19 @@ module;
 
 module Artifact.Render.SoftwareCompositor;
 
+import Layer.Blend;
+
 namespace Artifact::SoftwareRender {
 
 namespace {
 
-QPainter::CompositionMode toCompositionMode(const BlendMode mode)
+QPainter::CompositionMode toCompositionMode(const ArtifactCore::BlendMode mode)
 {
  switch (mode) {
- case BlendMode::Add: return QPainter::CompositionMode_Plus;
- case BlendMode::Multiply: return QPainter::CompositionMode_Multiply;
- case BlendMode::Screen: return QPainter::CompositionMode_Screen;
- case BlendMode::Normal:
+ case ArtifactCore::BlendMode::Add: return QPainter::CompositionMode_Plus;
+ case ArtifactCore::BlendMode::Multiply: return QPainter::CompositionMode_Multiply;
+ case ArtifactCore::BlendMode::Screen: return QPainter::CompositionMode_Screen;
+ case ArtifactCore::BlendMode::Normal:
  default:
   return QPainter::CompositionMode_SourceOver;
  }
@@ -75,7 +77,7 @@ QImage matRGBAToQImage(const cv::Mat& mat)
  return image.copy();
 }
 
-void blendBgrInPlace(cv::Mat& dstBgr, const cv::Mat& srcBgr, const float opacity, const BlendMode mode)
+void blendBgrInPlace(cv::Mat& dstBgr, const cv::Mat& srcBgr, const float opacity, const ArtifactCore::BlendMode mode)
 {
  const float a = std::clamp(opacity, 0.0f, 1.0f);
  if (a <= 0.0f) {
@@ -89,17 +91,17 @@ void blendBgrInPlace(cv::Mat& dstBgr, const cv::Mat& srcBgr, const float opacity
 
  cv::Mat blended = dstF.clone();
  switch (mode) {
- case BlendMode::Normal:
+ case ArtifactCore::BlendMode::Normal:
   blended = srcF;
   break;
- case BlendMode::Add:
+ case ArtifactCore::BlendMode::Add:
   cv::add(dstF, srcF, blended);
   cv::min(blended, 1.0f, blended);
   break;
- case BlendMode::Multiply:
+ case ArtifactCore::BlendMode::Multiply:
   cv::multiply(dstF, srcF, blended);
   break;
- case BlendMode::Screen:
+ case ArtifactCore::BlendMode::Screen:
   blended = 1.0f - (1.0f - dstF).mul(1.0f - srcF);
   break;
  }
@@ -227,13 +229,13 @@ QString backendText(const CompositeBackend backend)
  }
 }
 
-QString blendModeText(const BlendMode mode)
+QString blendModeText(const ArtifactCore::BlendMode mode)
 {
  switch (mode) {
- case BlendMode::Normal: return QStringLiteral("Normal");
- case BlendMode::Add: return QStringLiteral("Add");
- case BlendMode::Multiply: return QStringLiteral("Multiply");
- case BlendMode::Screen: return QStringLiteral("Screen");
+ case ArtifactCore::BlendMode::Normal: return QStringLiteral("Normal");
+ case ArtifactCore::BlendMode::Add: return QStringLiteral("Add");
+ case ArtifactCore::BlendMode::Multiply: return QStringLiteral("Multiply");
+ case ArtifactCore::BlendMode::Screen: return QStringLiteral("Screen");
  default: return QStringLiteral("Normal");
  }
 }

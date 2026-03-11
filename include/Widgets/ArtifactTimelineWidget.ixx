@@ -129,6 +129,8 @@ class TimelineTrackView :public QGraphicsView {
   void setDuration(double duration);
   double zoomLevel() const;
   void setZoomLevel(double pixelsPerFrame);
+  double visibleStartFrame() const;
+  double visibleEndFrame() const;
 
   // Track and clip management
   TimelineScene* timelineScene() const;

@@ -37,6 +37,7 @@ export namespace Artifact {
  public /*slots*/:
   void addWidget();
   void addDockedWidget(const QString& title, ads::DockWidgetArea area,QWidget* widget);
+  void addDockedWidgetTabbed(const QString& title, ads::DockWidgetArea area, QWidget* widget, const QString& tabGroupPrefix);
   void setDockVisible(const QString& title, bool visible);
   void activateDock(const QString& title);
 
