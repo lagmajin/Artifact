@@ -34,7 +34,7 @@ namespace Artifact
  {
   auto layout = new QVBoxLayout();
   layout->setSpacing(0);
-  layout->setContentsMargins(8, 1, 8, 1);
+  layout->setContentsMargins(8, 0, 8, 0);
   layout->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
   
   impl_->timecodeLabel_->setObjectName("timeLabel");
@@ -56,13 +56,13 @@ namespace Artifact
    "}"
    "QLabel#timeLabel {"
    "  font-family: 'Consolas', 'Courier New', monospace;"
-   "  font-size: 14px;"
+   "  font-size: 18px;"
    "  font-weight: bold;"
    "  color: #5EA7EE;"
    "}"
    "QLabel#frameLabel {"
    "  font-family: 'Consolas', 'Courier New', monospace;"
-   "  font-size: 11px;"
+   "  font-size: 14px;"
    "  color: #9A9A9A;"
    "}"
   );
@@ -116,18 +116,19 @@ namespace Artifact
   searchLineEdit_->setPlaceholderText("検索");
  }
 
- ArtifactTimelineSearchBarWidget::ArtifactTimelineSearchBarWidget(QWidget* parent)
+ArtifactTimelineSearchBarWidget::ArtifactTimelineSearchBarWidget(QWidget* parent)
   : QWidget(parent), impl_(new Impl())
  {
   auto layout = new QHBoxLayout(this);
   layout->setSpacing(8);
-  layout->setContentsMargins(4, 0, 4, 0);
+  layout->setContentsMargins(4, 3, 4, 3);
 
   impl_->searchLineEdit_->setObjectName("timelineSearchBox");
   
   // Set a clear button equivalent
   impl_->searchLineEdit_->setClearButtonEnabled(true);
-  setFixedHeight(28);
+  impl_->searchLineEdit_->setMinimumHeight(26);
+  setFixedHeight(34);
 
   layout->addWidget(impl_->searchLineEdit_);
 
@@ -141,9 +142,9 @@ namespace Artifact
    "  background-color: #1E1E1E;"
    "  color: #CCCCCC;"
    "  border: 1px solid #3E3E3E;"
-   "  border-radius: 10px;"
-   "  padding: 0px 8px;"
-   "  font-size: 9px;"
+   "  border-radius: 12px;"
+   "  padding: 0px 10px;"
+   "  font-size: 11px;"
    "}"
    "QLineEdit#timelineSearchBox:focus {"
    "  border: 1px solid #007ACC;"

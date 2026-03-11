@@ -7,43 +7,9 @@
 
 //#include <winrt/impl/Windows.UI.Composition.1.h>
 
-#include <iostream>
-#include <vector>
-#include <string>
-#include <map>
-#include <unordered_map>
-#include <set>
-#include <unordered_set>
-#include <memory>
-#include <algorithm>
-#include <cmath>
-#include <functional>
-#include <optional>
-#include <utility>
-#include <array>
-#include <mutex>
-#include <thread>
-#include <chrono>
-#include <filesystem>
-#include <fstream>
-#include <sstream>
-#include <stdexcept>
-#include <type_traits>
-#include <variant>
-#include <any>
-#include <atomic>
-#include <condition_variable>
-#include <queue>
-#include <deque>
-#include <list>
-#include <tuple>
-#include <numeric>
-#include <regex>
-#include <random>
 export module Artifact.Service.Project;
 
-
-
+import std;
 
 import Utils;
 import Utils.String.Like;
@@ -122,6 +88,7 @@ export namespace Artifact
   bool setLayerSoloInCurrentComposition(const LayerID& layerId, bool solo);
   bool setLayerShyInCurrentComposition(const LayerID& layerId, bool shy);
   bool soloOnlyLayerInCurrentComposition(const LayerID& layerId);
+  bool setLayerParentInCurrentComposition(const LayerID& layerId, const LayerID& parentLayerId);
   bool clearLayerParentInCurrentComposition(const LayerID& layerId);
   bool layerHasParentInCurrentComposition(const LayerID& layerId);
   LayerID layerParentIdInCurrentComposition(const LayerID& layerId);

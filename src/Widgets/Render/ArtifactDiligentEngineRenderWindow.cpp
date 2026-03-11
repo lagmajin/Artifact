@@ -1,6 +1,7 @@
 module;
 #include <EngineFactory.h>
 #include <EngineFactoryD3D12.h>
+#include <EngineFactoryVk.h>
 #include <PipelineState.h>
 #include <wobjectimpl.h>
 #include <windows.h>
@@ -42,23 +43,10 @@ module;
 #include <numeric>
 #include <regex>
 #include <random>
-// #pragma comment(lib,"DiligentCore.lib")
-// #pragma comment(lib,"Diligent-Common.lib")
-// #pragma comment(lib,"Diligent-BasicPlatform.lib")
-// #pragma comment(lib,"Diligent-Win32Platform.lib")
-// #pragma comment(lib,"Diligent-GraphicsEngine.lib")
-// #pragma comment(lib,"Diligent-GraphicsEngineD3D12-static.lib")
-// #pragma comment(lib,"Diligent-GraphicsEngineD3DBase.lib")
-// #pragma comment(lib,"Diligent-GraphicsTools.lib")
-// #pragma comment(lib,"Diligent-GraphicsAccessories.lib")
-// #pragma comment(lib,"Diligent-Archiver-static.lib")
+
 module ArtifactDiligentEngineRenderWindow;
 
-
-
-
 import Graphics;
-
 
 namespace {
  Diligent::IEngineFactoryD3D12* resolveD3D12FactoryFromDll()
@@ -81,7 +69,29 @@ namespace {
   }
   return nullptr;
  }
+
+ Diligent::IEngineFactoryVk* resolveVkFactoryFromDll()
+ {
+  using GetFactoryFn = Diligent::IEngineFactoryVk* (*)();
+  static const wchar_t* kDllCandidates[] = {
+   L"GraphicsEngineVk_64d.dll",
+   L"GraphicsEngineVk_64r.dll",
+   L"GraphicsEngineVk.dll"
+  };
+  for (const auto* dllName : kDllCandidates) {
+   HMODULE mod = ::GetModuleHandleW(dllName);
+   if (!mod) mod = ::LoadLibraryW(dllName);
+   if (!mod) continue;
+   auto* fn = reinterpret_cast<GetFactoryFn>(::GetProcAddress(mod, "GetEngineFactoryVk"));
+   if (!fn) {
+    fn = reinterpret_cast<GetFactoryFn>(::GetProcAddress(mod, "Diligent_GetEngineFactoryVk"));
+   }
+   if (fn) return fn();
+  }
+  return nullptr;
+ }
 }
+
 namespace Artifact {
 
  W_OBJECT_IMPL(ArtifactDiligentEngineRenderWindow)
@@ -92,8 +102,6 @@ namespace Artifact {
   RefCntAutoPtr<IRenderDevice> pDevice;
   RefCntAutoPtr<IDeviceContext> pImmediateContext;
   RefCntAutoPtr<ISwapChain> pSwapChain;
-
-  //RefCntAutoPtr<PipelineStateCreateInfo> gridPSO_;
 
  public:
   Impl();
@@ -134,41 +142,56 @@ namespace Artifact {
  {
   PipelineStateCreateInfo PSOCreateInfo;
   auto desc=PSOCreateInfo.PSODesc;
-
-
-  
-
-	// GraphicsPipelineCreateInfo& GraphicsPipeline = PSOCreateInfo.
-
-  //RasterizerStateDesc& RasterizerDesc = GraphicsPipeline.RasterizerDesc;
-  //RasterizerDesc.FillMode = FILL_MODE_WIREFRAME; // ワイヤーフレームモードを指定
-  //RasterizerDesc.CullMode = CULL_MODE_NONE;
  }
 
  bool ArtifactDiligentEngineRenderWindow::initialize()
  {
-  auto* pFactory = resolveD3D12FactoryFromDll();
-  if (!pFactory) {
-   return false;
+  auto tryInitD3D12 = [&]() -> bool {
+   auto* pFactory = resolveD3D12FactoryFromDll();
+   if (!pFactory) return false;
+   EngineD3D12CreateInfo CreationAttribs = {};
+   CreationAttribs.EnableValidation = true;
+   Win32NativeWindow VkWindow;
+   VkWindow.hWnd = reinterpret_cast<HWND>(winId());
+   pFactory->CreateDeviceAndContextsD3D12(CreationAttribs, &pDevice, &pImmediateContext);
+   if (!pDevice || !pImmediateContext) return false;
+   SwapChainDesc SCDesc;
+   FullScreenModeDesc desc;
+   desc.Fullscreen = false;
+   pFactory->CreateSwapChainD3D12(pDevice, pImmediateContext, SCDesc, desc, VkWindow, &pSwapChain);
+   return pSwapChain != nullptr;
+  };
+
+  auto tryInitVk = [&]() -> bool {
+   auto* pFactoryVk = resolveVkFactoryFromDll();
+   if (!pFactoryVk) return false;
+   EngineVkCreateInfo CreationAttribs = {};
+   CreationAttribs.EnableValidation = true;
+   Win32NativeWindow VkWindow;
+   VkWindow.hWnd = reinterpret_cast<HWND>(winId());
+   pFactoryVk->CreateDeviceAndContextsVk(CreationAttribs, &pDevice, &pImmediateContext);
+   if (!pDevice || !pImmediateContext) return false;
+   SwapChainDesc SCDesc;
+   FullScreenModeDesc desc;
+   desc.Fullscreen = false;
+   pFactoryVk->CreateSwapChainVk(pDevice, pImmediateContext, SCDesc, VkWindow, &pSwapChain);
+   return pSwapChain != nullptr;
+  };
+
+  QString backendStr = qEnvironmentVariable("ARTIFACT_RENDER_BACKEND").toLower();
+  bool initSuccess = false;
+
+  if (backendStr == "vulkan" || backendStr == "vk") {
+      initSuccess = tryInitVk() || tryInitD3D12();
+  } else if (backendStr == "software" || backendStr == "sw") {
+      initSuccess = false; // Force software
+  } else {
+      initSuccess = tryInitD3D12() || tryInitVk();
   }
 
-  EngineD3D12CreateInfo CreationAttribs = {};
-  CreationAttribs.EnableValidation = true;
-
-  // ウィンドウハンドルを設定
-  Win32NativeWindow VkWindow;
-  VkWindow.hWnd = reinterpret_cast<HWND>(winId());
-  pFactory->CreateDeviceAndContextsD3D12(CreationAttribs, &pDevice, &pImmediateContext);
-
-  // スワップチェインを作成
-  SwapChainDesc SCDesc;
-  
-  FullScreenModeDesc desc;
-
-  desc.Fullscreen = false;
-
-  pFactory->CreateSwapChainD3D12(pDevice, pImmediateContext, SCDesc, desc, VkWindow, &pSwapChain);
-
+  if (!initSuccess) {
+      useSoftwareFallback_ = true;
+  }
   
   m_initialized = true;
 
@@ -217,6 +240,12 @@ namespace Artifact {
   if (!m_initialized)
    return;
 
+  if (useSoftwareFallback_) {
+      return; // fallback placeholder
+  }
+
+  if (!pSwapChain || !pImmediateContext) return;
+
   auto* pRTV = pSwapChain->GetCurrentBackBufferRTV();
   auto* pDSV = pSwapChain->GetDepthBufferDSV();
 
@@ -235,15 +264,15 @@ namespace Artifact {
   // Let the engine perform required state transitions
   pImmediateContext->ClearRenderTarget(pRTV, ClearColor, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
   pImmediateContext->ClearDepthStencil(pDSV, CLEAR_DEPTH_FLAG, 1.f, 0, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
- 
-  
  }
 
  void ArtifactDiligentEngineRenderWindow::present()
  {
+  if (useSoftwareFallback_) return;
 
-
-  pSwapChain->Present();
+  if (pSwapChain) {
+      pSwapChain->Present();
+  }
  }
 
  void ArtifactDiligentEngineRenderWindow::resizeEvent(QResizeEvent* event)

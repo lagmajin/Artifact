@@ -252,6 +252,22 @@ namespace Artifact
    }
   }
 
+  // 健康状態のチェックと自動修復の実行
+  ArtifactProjectHealthChecker::checkAndRepair(projectPtr.get(), AutoRepairOptions{
+      true, // repairFrameRanges
+      false, // removeMissingAssets (アセットは後で再リンク可能にするため残すのが一般的)
+      true, // normalizeCompositionRanges
+      true  // removeBrokenReferences (存在しないコンポジションへの参照などは削除)
+  });
+  
+  result.healthReport = ArtifactProjectHealthChecker::check(projectPtr.get());
+  if (!result.healthReport.isHealthy) {
+      qWarning() << "[Importer] Project health check failed with issues:";
+      for (const auto& issue : result.healthReport.issues) {
+          qWarning() << "  [" << issue.category << "]" << issue.targetName << ":" << issue.message;
+      }
+  }
+
   result.project = projectPtr;
   result.success = true;
   qDebug() << "[Importer] Project imported successfully - Compositions:" 

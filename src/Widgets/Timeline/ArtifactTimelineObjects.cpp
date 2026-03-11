@@ -12,10 +12,9 @@
 #include <QPointF>
 #include <QRectF>
 #include <QBrush>
-#include <algorithm>
-#include <cmath>
 
 module Artifact.Timeline.Objects;
+import std;
 
 namespace Artifact
 {

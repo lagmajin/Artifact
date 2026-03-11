@@ -19,6 +19,7 @@ module;
 
 module Artifact.Widgets.SoftwareRenderTest;
 import Artifact.Render.SoftwareCompositor;
+import Layer.Blend;
 
 namespace Artifact {
 
@@ -63,13 +64,6 @@ public:
         OpenCV
     };
 
-    enum class BlendMode {
-        Normal,
-        Add,
-        Multiply,
-        Screen
-    };
-
     enum class CvEffectMode {
         None,
         GaussianBlur,
@@ -82,7 +76,7 @@ public:
     bool solid = true;
     bool showCube = true;
     CompositeBackend backend = CompositeBackend::QtPainter;
-    BlendMode blendMode = BlendMode::Normal;
+    ArtifactCore::BlendMode blendMode = ArtifactCore::BlendMode::Normal;
     CvEffectMode cvEffect = CvEffectMode::None;
     float overlayOpacity = 0.75f;
     QPointF overlayOffset = QPointF(0.0, 0.0);
@@ -195,13 +189,13 @@ public:
         }
     }
 
-    static QString blendModeText(BlendMode mode)
+    static QString blendModeText(ArtifactCore::BlendMode mode)
     {
         switch (mode) {
-        case BlendMode::Normal:   return QStringLiteral("Normal");
-        case BlendMode::Add:      return QStringLiteral("Add");
-        case BlendMode::Multiply: return QStringLiteral("Multiply");
-        case BlendMode::Screen:   return QStringLiteral("Screen");
+        case ArtifactCore::BlendMode::Normal:   return QStringLiteral("Normal");
+        case ArtifactCore::BlendMode::Add:      return QStringLiteral("Add");
+        case ArtifactCore::BlendMode::Multiply: return QStringLiteral("Multiply");
+        case ArtifactCore::BlendMode::Screen:   return QStringLiteral("Screen");
         default:                  return QStringLiteral("Normal");
         }
     }
@@ -225,13 +219,13 @@ public:
         }
     }
 
-    static QPainter::CompositionMode compositionMode(BlendMode mode)
+    static QPainter::CompositionMode compositionMode(ArtifactCore::BlendMode mode)
     {
         switch (mode) {
-        case BlendMode::Add:      return QPainter::CompositionMode_Plus;
-        case BlendMode::Multiply: return QPainter::CompositionMode_Multiply;
-        case BlendMode::Screen:   return QPainter::CompositionMode_Screen;
-        case BlendMode::Normal:
+        case ArtifactCore::BlendMode::Add:      return QPainter::CompositionMode_Plus;
+        case ArtifactCore::BlendMode::Multiply: return QPainter::CompositionMode_Multiply;
+        case ArtifactCore::BlendMode::Screen:   return QPainter::CompositionMode_Screen;
+        case ArtifactCore::BlendMode::Normal:
         default:
             return QPainter::CompositionMode_SourceOver;
         }
@@ -330,7 +324,7 @@ public:
         return image.copy();
     }
 
-    static void blendBgrInPlace(cv::Mat& dstBgr, const cv::Mat& srcBgr, float opacity, BlendMode mode)
+    static void blendBgrInPlace(cv::Mat& dstBgr, const cv::Mat& srcBgr, float opacity, ArtifactCore::BlendMode mode)
     {
         const float a = std::clamp(opacity, 0.0f, 1.0f);
         if (a <= 0.0f) {
@@ -344,18 +338,21 @@ public:
 
         cv::Mat blended = dstF.clone();
         switch (mode) {
-        case BlendMode::Normal:
+        case ArtifactCore::BlendMode::Normal:
             blended = srcF;
             break;
-        case BlendMode::Add:
+        case ArtifactCore::BlendMode::Add:
             cv::add(dstF, srcF, blended);
             cv::min(blended, 1.0f, blended);
             break;
-        case BlendMode::Multiply:
+        case ArtifactCore::BlendMode::Multiply:
             cv::multiply(dstF, srcF, blended);
             break;
-        case BlendMode::Screen:
+        case ArtifactCore::BlendMode::Screen:
             blended = 1.0f - (1.0f - dstF).mul(1.0f - srcF);
+            break;
+        default:
+            blended = srcF;
             break;
         }
 
@@ -384,7 +381,7 @@ public:
             cv::Mat cubeRgba = qImageToMatRGBA(cubeLayer);
             cv::Mat cubeBgr;
             cv::cvtColor(cubeRgba, cubeBgr, cv::COLOR_RGBA2BGR);
-            blendBgrInPlace(canvasBgr, cubeBgr, 1.0f, BlendMode::Normal);
+            blendBgrInPlace(canvasBgr, cubeBgr, 1.0f, ArtifactCore::BlendMode::Normal);
         }
 
         if (!overlayImage.isNull()) {
@@ -466,15 +463,11 @@ public:
         request.overlayRotationDeg = overlayRotationDeg;
         request.useForeground = showCube;
 
-        switch (blendMode) {
-        case BlendMode::Normal:   request.blendMode = SoftwareRender::BlendMode::Normal; break;
-        case BlendMode::Add:      request.blendMode = SoftwareRender::BlendMode::Add; break;
-        case BlendMode::Multiply: request.blendMode = SoftwareRender::BlendMode::Multiply; break;
-        case BlendMode::Screen:   request.blendMode = SoftwareRender::BlendMode::Screen; break;
-        }
+        request.blendMode = blendMode;
         request.backend = (backend == CompositeBackend::OpenCV)
             ? SoftwareRender::CompositeBackend::OpenCV
             : SoftwareRender::CompositeBackend::QtPainter;
+        
         switch (cvEffect) {
         case CvEffectMode::None:         request.cvEffect = SoftwareRender::CvEffectMode::None; break;
         case CvEffectMode::GaussianBlur: request.cvEffect = SoftwareRender::CvEffectMode::GaussianBlur; break;
@@ -579,10 +572,11 @@ void ArtifactSoftwareRenderTestWidget::keyPressEvent(QKeyEvent* event)
     }
     if (event->key() == Qt::Key_M) {
         switch (impl_->blendMode) {
-        case Impl::BlendMode::Normal: impl_->blendMode = Impl::BlendMode::Add; break;
-        case Impl::BlendMode::Add: impl_->blendMode = Impl::BlendMode::Multiply; break;
-        case Impl::BlendMode::Multiply: impl_->blendMode = Impl::BlendMode::Screen; break;
-        case Impl::BlendMode::Screen: impl_->blendMode = Impl::BlendMode::Normal; break;
+        case ArtifactCore::BlendMode::Normal: impl_->blendMode = ArtifactCore::BlendMode::Add; break;
+        case ArtifactCore::BlendMode::Add: impl_->blendMode = ArtifactCore::BlendMode::Multiply; break;
+        case ArtifactCore::BlendMode::Multiply: impl_->blendMode = ArtifactCore::BlendMode::Screen; break;
+        case ArtifactCore::BlendMode::Screen: impl_->blendMode = ArtifactCore::BlendMode::Normal; break;
+        default: impl_->blendMode = ArtifactCore::BlendMode::Normal; break;
         }
         update();
         event->accept();

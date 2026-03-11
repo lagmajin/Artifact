@@ -34,6 +34,7 @@ struct AutoRepairOptions {
     bool repairFrameRanges = true;
     bool removeMissingAssets = false;
     bool normalizeCompositionRanges = true;
+    bool removeBrokenReferences = true;
 };
 
 struct AutoRepairResult {
@@ -52,8 +53,10 @@ private:
     static void checkDuplicateIDs(ArtifactProject* project, ProjectHealthReport& report);
     static void checkFrameRanges(ArtifactProject* project, ProjectHealthReport& report);
     static void checkMissingAssets(ArtifactProject* project, ProjectHealthReport& report);
+    static void checkBrokenReferences(ArtifactProject* project, ProjectHealthReport& report);
     static void repairFrameRanges(ArtifactProject* project, AutoRepairResult& result, const AutoRepairOptions& options);
     static void repairMissingAssets(ArtifactProject* project, AutoRepairResult& result, const AutoRepairOptions& options);
+    static void repairBrokenReferences(ArtifactProject* project, AutoRepairResult& result, const AutoRepairOptions& options);
 };
 
 } // namespace Artifact

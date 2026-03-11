@@ -6,18 +6,13 @@ module;
 
 export module Artifact.Render.SoftwareCompositor;
 
+import Layer.Blend;
+
 export namespace Artifact::SoftwareRender {
 
 enum class CompositeBackend {
  QtPainter,
  OpenCV
-};
-
-enum class BlendMode {
- Normal,
- Add,
- Multiply,
- Screen
 };
 
 enum class CvEffectMode {
@@ -31,7 +26,7 @@ struct CompositeRequest {
  QImage foreground;
  QImage overlay;
  QSize outputSize;
- BlendMode blendMode = BlendMode::Normal;
+ ArtifactCore::BlendMode blendMode = ArtifactCore::BlendMode::Normal;
  CompositeBackend backend = CompositeBackend::QtPainter;
  CvEffectMode cvEffect = CvEffectMode::None;
  float overlayOpacity = 1.0f;
@@ -43,7 +38,7 @@ struct CompositeRequest {
 
 QImage compose(const CompositeRequest& request);
 QString backendText(CompositeBackend backend);
-QString blendModeText(BlendMode mode);
+QString blendModeText(ArtifactCore::BlendMode mode);
 QString cvEffectText(CvEffectMode mode);
 
 } // namespace Artifact::SoftwareRender

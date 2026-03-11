@@ -29,6 +29,8 @@ v1.0 は「開発者向け試作」から「日常運用できる制作ツール
   - ClipItem の選択トグルを View 側と二重実行しないよう整理
   - 右ペイン上部（Ruler/Scale/WorkArea/TrackView上端）での seek 入力フィルタを強化
   - ハンドル/クリップ上の入力を seek が奪わないガードを追加
+  - SeekBar 上部の視認性を改善（トップバンド/マーカー）
+  - 初期フレーム0の表示更新を確実化
 
 ### 2. Render Queue End-to-End
 - キュー登録の対象名表示を統一（Composition名）

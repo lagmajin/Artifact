@@ -348,6 +348,30 @@ W_OBJECT_IMPL(ArtifactLayerEditorWidgetV2)
 
   setWindowTitle("ArtifactLayerEditor");
 
+  if (auto* service = ArtifactProjectService::instance()) {
+   QObject::connect(service, &ArtifactProjectService::layerSelected, this, [this](const ArtifactCore::LayerID& id) {
+    setTargetLayer(id);
+   });
+   QObject::connect(service, &ArtifactProjectService::layerRemoved, this, [this](const ArtifactCore::CompositionID&, const ArtifactCore::LayerID& id) {
+    if (impl_->targetLayerId_ == id) {
+     clearTargetLayer();
+    }
+   });
+   QObject::connect(service, &ArtifactProjectService::projectChanged, this, [this]() {
+    clearTargetLayer();
+   });
+  }
+ }
+
+ void ArtifactLayerEditorWidgetV2::clearTargetLayer()
+ {
+  std::lock_guard<std::mutex> lock(impl_->resizeMutex_);
+  impl_->targetLayerId_ = LayerID();
+  if (impl_->renderer_) {
+   impl_->renderer_->clear();
+   impl_->renderer_->flush();
+   impl_->renderer_->present();
+  }
  }
 
  ArtifactLayerEditorWidgetV2::~ArtifactLayerEditorWidgetV2()

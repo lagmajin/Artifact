@@ -1,6 +1,7 @@
 ﻿module;
 #include <QImage>
 #include <QWidget>
+#include <QPainter>
 #include <windows.h>
 #include <RenderDevice.h>
 #include <DeviceContext.h>
@@ -14,27 +15,84 @@ namespace Artifact {
 
 class ArtifactIRenderer::Impl {
 public:
-    Impl() = default;
+    Impl() : useSoftwareFallback(true) {}
     Impl(Diligent::RefCntAutoPtr<Diligent::IRenderDevice> pDevice,
          Diligent::RefCntAutoPtr<Diligent::IDeviceContext> pContext,
          QWidget* widget)
-        : pDevice(pDevice), pContext(pContext)
+        : pDevice(pDevice), pContext(pContext), useSoftwareFallback(false)
     {
-        (void)widget;
+        targetWidget = widget;
+        if (!pDevice || !pContext) {
+            useSoftwareFallback = true;
+        }
     }
 
     Diligent::RefCntAutoPtr<Diligent::IRenderDevice> pDevice;
     Diligent::RefCntAutoPtr<Diligent::IDeviceContext> pContext;
+    QWidget* targetWidget = nullptr;
+    bool useSoftwareFallback = false;
 
-    void initialize(QWidget* parent) { (void)parent; }
-    void createSwapChain(QWidget* widget) { (void)widget; }
-    void recreateSwapChain(QWidget* widget) { (void)widget; }
-    void clear() {}
+    // Software fallback data
+    QImage canvas;
+    std::unique_ptr<QPainter> painter;
+    FloatColor clearColor_{0.0f, 0.0f, 0.0f, 1.0f};
+
+    void initialize(QWidget* parent) {
+        targetWidget = parent;
+        if (useSoftwareFallback && targetWidget) {
+            canvas = QImage(targetWidget->size(), QImage::Format_ARGB32_Premultiplied);
+            canvas.fill(Qt::black);
+        }
+    }
+
+    void createSwapChain(QWidget* widget) {
+        targetWidget = widget;
+    }
+
+    void recreateSwapChain(QWidget* widget) {
+        targetWidget = widget;
+        if (useSoftwareFallback && targetWidget) {
+            if (canvas.size() != targetWidget->size()) {
+                canvas = QImage(targetWidget->size(), QImage::Format_ARGB32_Premultiplied);
+                canvas.fill(Qt::black);
+            }
+        }
+    }
+
+    void clear() {
+        if (useSoftwareFallback) {
+            if (painter) painter->end();
+            QColor qc(
+                static_cast<int>(clearColor_.r() * 255),
+                static_cast<int>(clearColor_.g() * 255),
+                static_cast<int>(clearColor_.b() * 255),
+                static_cast<int>(clearColor_.a() * 255)
+            );
+            canvas.fill(qc);
+            painter = std::make_unique<QPainter>(&canvas);
+            painter->setRenderHint(QPainter::Antialiasing);
+        }
+    }
+
     void flushAndWait() {}
-    void flush() {}
-    void destroy() {}
+    void flush() {
+        if (useSoftwareFallback && painter) {
+            painter->end();
+            painter.reset();
+        }
+    }
 
-    void setClearColor(const FloatColor& color) { (void)color; }
+    void destroy() {
+        if (painter) {
+            painter->end();
+            painter.reset();
+        }
+    }
+
+    void setClearColor(const FloatColor& color) {
+        clearColor_ = color;
+    }
+
     void setViewportSize(float w, float h) { (void)w; (void)h; }
     void setCanvasSize(float w, float h) { (void)w; (void)h; }
     void setPan(float x, float y) { (void)x; (void)y; }
@@ -49,19 +107,36 @@ public:
 
     void drawRectOutline(float x, float y, float w, float h, const FloatColor& color)
     {
-        (void)x; (void)y; (void)w; (void)h; (void)color;
+        if (useSoftwareFallback && painter) {
+            painter->setPen(QColor(color.r()*255, color.g()*255, color.b()*255, color.a()*255));
+            painter->setBrush(Qt::NoBrush);
+            painter->drawRect(QRectF(x, y, w, h));
+        }
     }
     void drawSolidLine(Detail::float2 start, Detail::float2 end, const FloatColor& color, float thickness)
     {
-        (void)start; (void)end; (void)color; (void)thickness;
+        if (useSoftwareFallback && painter) {
+            QPen pen(QColor(color.r()*255, color.g()*255, color.b()*255, color.a()*255));
+            pen.setWidthF(thickness);
+            painter->setPen(pen);
+            painter->drawLine(QPointF(start.x, start.y), QPointF(end.x, end.y));
+        }
     }
     void drawSolidRect(float x, float y, float w, float h)
     {
-        (void)x; (void)y; (void)w; (void)h;
+        if (useSoftwareFallback && painter) {
+            painter->setPen(Qt::NoPen);
+            painter->setBrush(Qt::white);
+            painter->drawRect(QRectF(x, y, w, h));
+        }
     }
     void drawSolidRect(Detail::float2 pos, Detail::float2 size, const FloatColor& color)
     {
-        (void)pos; (void)size; (void)color;
+        if (useSoftwareFallback && painter) {
+            painter->setPen(Qt::NoPen);
+            painter->setBrush(QColor(color.r()*255, color.g()*255, color.b()*255, color.a()*255));
+            painter->drawRect(QRectF(pos.x, pos.y, size.x, size.y));
+        }
     }
     void drawSprite(float x, float y, float w, float h)
     {
@@ -73,46 +148,113 @@ public:
     }
     void drawRectLocal(float x, float y, float w, float h, const FloatColor& color)
     {
-        (void)x; (void)y; (void)w; (void)h; (void)color;
+        if (useSoftwareFallback && painter) {
+            painter->setPen(Qt::NoPen);
+            painter->setBrush(QColor(color.r()*255, color.g()*255, color.b()*255, color.a()*255));
+            painter->drawRect(QRectF(x, y, w, h));
+        }
     }
     void drawSpriteLocal(float x, float y, float w, float h, const QImage& image)
     {
-        (void)x; (void)y; (void)w; (void)h; (void)image;
+        if (useSoftwareFallback && painter) {
+            painter->drawImage(QRectF(x, y, w, h), image);
+        }
     }
     void drawThickLineLocal(Detail::float2 p1, Detail::float2 p2, float thickness, const FloatColor& color)
     {
-        (void)p1; (void)p2; (void)thickness; (void)color;
+        drawSolidLine(p1, p2, color, thickness);
     }
     void drawDotLineLocal(Detail::float2 p1, Detail::float2 p2, float thickness, float spacing, const FloatColor& color)
     {
-        (void)p1; (void)p2; (void)thickness; (void)spacing; (void)color;
+        if (useSoftwareFallback && painter) {
+            QPen pen(QColor(color.r()*255, color.g()*255, color.b()*255, color.a()*255));
+            pen.setWidthF(thickness);
+            QVector<qreal> dashes;
+            qreal space = spacing / thickness;
+            dashes << 1 << space;
+            pen.setDashPattern(dashes);
+            painter->setPen(pen);
+            painter->drawLine(QPointF(p1.x, p1.y), QPointF(p2.x, p2.y));
+        }
     }
     void drawBezierLocal(Detail::float2 p0, Detail::float2 p1, Detail::float2 p2, float thickness, const FloatColor& color)
     {
-        (void)p0; (void)p1; (void)p2; (void)thickness; (void)color;
+        if (useSoftwareFallback && painter) {
+            QPainterPath path;
+            path.moveTo(p0.x, p0.y);
+            path.quadTo(p1.x, p1.y, p2.x, p2.y);
+            QPen pen(QColor(color.r()*255, color.g()*255, color.b()*255, color.a()*255));
+            pen.setWidthF(thickness);
+            painter->setPen(pen);
+            painter->setBrush(Qt::NoBrush);
+            painter->drawPath(path);
+        }
     }
     void drawBezierLocal(Detail::float2 p0, Detail::float2 p1, Detail::float2 p2, Detail::float2 p3, float thickness, const FloatColor& color)
     {
-        (void)p0; (void)p1; (void)p2; (void)p3; (void)thickness; (void)color;
+        if (useSoftwareFallback && painter) {
+            QPainterPath path;
+            path.moveTo(p0.x, p0.y);
+            path.cubicTo(p1.x, p1.y, p2.x, p2.y, p3.x, p3.y);
+            QPen pen(QColor(color.r()*255, color.g()*255, color.b()*255, color.a()*255));
+            pen.setWidthF(thickness);
+            painter->setPen(pen);
+            painter->setBrush(Qt::NoBrush);
+            painter->drawPath(path);
+        }
     }
     void drawSolidTriangleLocal(Detail::float2 p0, Detail::float2 p1, Detail::float2 p2, const FloatColor& color)
     {
-        (void)p0; (void)p1; (void)p2; (void)color;
+        if (useSoftwareFallback && painter) {
+            QPainterPath path;
+            path.moveTo(p0.x, p0.y);
+            path.lineTo(p1.x, p1.y);
+            path.lineTo(p2.x, p2.y);
+            path.closeSubpath();
+            painter->setPen(Qt::NoPen);
+            painter->setBrush(QColor(color.r()*255, color.g()*255, color.b()*255, color.a()*255));
+            painter->drawPath(path);
+        }
     }
     void drawRectOutlineLocal(float x, float y, float w, float h, const FloatColor& color)
     {
-        (void)x; (void)y; (void)w; (void)h; (void)color;
+        drawRectOutline(x, y, w, h, color);
     }
     void drawCheckerboard(float x, float y, float w, float h, float tileSize, const FloatColor& c1, const FloatColor& c2)
     {
-        (void)x; (void)y; (void)w; (void)h; (void)tileSize; (void)c1; (void)c2;
+        if (useSoftwareFallback && painter) {
+            painter->setPen(Qt::NoPen);
+            for (float ty = y; ty < y + h; ty += tileSize) {
+                for (float tx = x; tx < x + w; tx += tileSize) {
+                    bool isC1 = (static_cast<int>(tx / tileSize) + static_cast<int>(ty / tileSize)) % 2 == 0;
+                    const auto& c = isC1 ? c1 : c2;
+                    painter->setBrush(QColor(c.r()*255, c.g()*255, c.b()*255, c.a()*255));
+                    painter->drawRect(QRectF(tx, ty, std::min(tileSize, x + w - tx), std::min(tileSize, y + h - ty)));
+                }
+            }
+        }
     }
     void drawGrid(float x, float y, float w, float h, float spacing, float thickness, const FloatColor& color)
     {
-        (void)x; (void)y; (void)w; (void)h; (void)spacing; (void)thickness; (void)color;
+        if (useSoftwareFallback && painter) {
+            QPen pen(QColor(color.r()*255, color.g()*255, color.b()*255, color.a()*255));
+            pen.setWidthF(thickness);
+            painter->setPen(pen);
+            for (float ty = y; ty <= y + h; ty += spacing) {
+                painter->drawLine(QPointF(x, ty), QPointF(x + w, ty));
+            }
+            for (float tx = x; tx <= x + w; tx += spacing) {
+                painter->drawLine(QPointF(tx, y), QPointF(tx, y + h));
+            }
+        }
     }
     void drawParticles() {}
-    void present() {}
+    void present() {
+        if (useSoftwareFallback && targetWidget && !canvas.isNull()) {
+            QPainter p(targetWidget);
+            p.drawImage(0, 0, canvas);
+        }
+    }
 };
 
 ArtifactIRenderer::ArtifactIRenderer() : impl_(std::make_unique<Impl>()) {}

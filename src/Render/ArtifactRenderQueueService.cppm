@@ -131,7 +131,7 @@ namespace Artifact
             if (fromIndex >= 0 && fromIndex < jobs.size() && toIndex >= 0 && toIndex < jobs.size()) {
                 ArtifactRenderJob job = jobs.takeAt(fromIndex);
                 jobs.insert(toIndex, job);
-                if (jobUpdated) jobUpdated(toIndex);
+                if (queueReordered) queueReordered(fromIndex, toIndex);
             }
         }
 
@@ -354,6 +354,31 @@ namespace Artifact
             const bool wasRenderable = (job.status == ArtifactRenderJob::Status::Completed
                 || job.status == ArtifactRenderJob::Status::Failed
                 || job.status == ArtifactRenderJob::Status::Canceled);
+            
+            // 既存ファイルの上書き防止のためのリネーム処理 (_v1, _v2 ...)
+            QFileInfo fi(job.outputPath);
+            if (fi.exists() && job.status == ArtifactRenderJob::Status::Completed) {
+                QString basePath = fi.path() + "/" + fi.completeBaseName();
+                QString ext = fi.suffix();
+                if (!ext.isEmpty()) ext = "." + ext;
+                
+                // すでに _v\d+ が付いている場合はそこからインクリメントを試みる
+                QRegularExpression re("_v(\\d+)$");
+                QRegularExpressionMatch match = re.match(basePath);
+                int version = 1;
+                if (match.hasMatch()) {
+                    version = match.captured(1).toInt() + 1;
+                    basePath = basePath.left(match.capturedStart());
+                }
+
+                QString newPath;
+                do {
+                    newPath = QString("%1_v%2%3").arg(basePath).arg(version).arg(ext);
+                    version++;
+                } while (QFile::exists(newPath));
+                job.outputPath = newPath;
+            }
+
             job.status = ArtifactRenderJob::Status::Pending;
             job.progress = 0;
             job.errorMessage.clear();
@@ -440,6 +465,7 @@ namespace Artifact
         std::function<void(int, int)> jobProgressChanged;
         std::function<void()> allJobsCompleted;
         std::function<void()> allJobsRemoved;
+        std::function<void(int, int)> queueReordered;
 
     private:
         QList<ArtifactRenderJob> jobs;
@@ -485,6 +511,12 @@ namespace Artifact
 
             queueManager.jobProgressChanged = [this](int index, int progress) {
                 handleJobProgressChanged(index, progress);
+            };
+
+            queueManager.queueReordered = [this](int fromIndex, int toIndex) {
+                if (queueReordered) {
+                    queueReordered(fromIndex, toIndex);
+                }
             };
         }
 
@@ -642,10 +674,12 @@ namespace Artifact
         std::function<void(int)> jobAdded;
         std::function<void(int)> jobRemoved;
         std::function<void(int)> jobUpdated;
+        std::function<void(int, int)> jobStatusChangedForUi;
         std::function<void(int, ArtifactRenderJob::Status)> jobStatusChanged;
         std::function<void(int, int)> jobProgressChanged;
         std::function<void()> allJobsCompleted;
         std::function<void()> allJobsRemoved;
+        std::function<void(int, int)> queueReordered;
     };
 
     W_OBJECT_IMPL(ArtifactRenderQueueService)
@@ -705,6 +739,26 @@ namespace Artifact
         job.bitrate = 8000;
         job.startFrame = 0;
         job.endFrame = 100;
+
+        const auto found = ArtifactProjectManager::getInstance().findComposition(compositionId);
+        if (found.success) {
+            if (const auto comp = found.ptr.lock()) {
+                const auto totalRange = comp->frameRange();
+                const auto workAreaRange = comp->workAreaRange();
+                job.startFrame = static_cast<int>(std::max<int64_t>(0, workAreaRange.start()));
+                job.endFrame = static_cast<int>(std::max<int64_t>(job.startFrame + 1, workAreaRange.end()));
+                job.frameRate = comp->frameRate().framerate();
+                const QSize size = comp->settings().compositionSize();
+                if (size.width() > 0 && size.height() > 0) {
+                    job.resolutionWidth = size.width();
+                    job.resolutionHeight = size.height();
+                }
+                if (!totalRange.isValid() || totalRange.duration() <= 0) {
+                    job.startFrame = 0;
+                    job.endFrame = 100;
+                }
+            }
+        }
 
         impl_->queueManager.addJob(job);
         impl_->syncCoreQueueModel();
@@ -951,5 +1005,9 @@ namespace Artifact
 
     void ArtifactRenderQueueService::setAllJobsRemovedCallback(std::function<void()> callback) {
         impl_->allJobsRemoved = callback;
+    }
+
+    void ArtifactRenderQueueService::setQueueReorderedCallback(std::function<void(int, int)> callback) {
+        impl_->queueReordered = callback;
     }
 };

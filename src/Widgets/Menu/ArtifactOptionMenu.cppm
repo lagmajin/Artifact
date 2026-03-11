@@ -1,9 +1,10 @@
-﻿module;
+module;
 #include <QList>
 #include <QMenu>
 #include <wobjectimpl.h>
 
 module Menu.Option;
+import std;
 
 
 
@@ -55,4 +56,5 @@ namespace Artifact {
  }
 
 };
+
 

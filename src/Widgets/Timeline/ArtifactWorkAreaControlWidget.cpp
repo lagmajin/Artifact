@@ -81,10 +81,12 @@ namespace Artifact
   p.drawLine(x1, height() - 1, x2, height() - 1);
 
   // Handles (Blue AE style)
+  const int handleTopInset = 1;
+  const int handleHeight = std::max(1, height() - 2);
   p.setBrush(QColor(0, 120, 215));
   p.setPen(QPen(Qt::white, 1));
-  p.drawRoundedRect(QRectF(x1 - handleHalfW, 2, handleW, height() - 4), 2, 2);
-  p.drawRoundedRect(QRectF(x2 - handleHalfW, 2, handleW, height() - 4), 2, 2);
+  p.drawRoundedRect(QRectF(x1 - handleHalfW, handleTopInset, handleW, handleHeight), 2, 2);
+  p.drawRoundedRect(QRectF(x2 - handleHalfW, handleTopInset, handleW, handleHeight), 2, 2);
  }
 
  void WorkAreaControl::mouseMoveEvent(QMouseEvent* ev)

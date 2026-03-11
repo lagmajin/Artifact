@@ -1,10 +1,14 @@
-﻿module;
+module;
 #include <QMenu>
 #include <QAction>
 #include <QKeySequence>
 #include <wobjectimpl.h>
 
 module Menu.Animation;
+import std;
+
+import Artifact.Service.Project;
+import Utils.Id;
 
 W_OBJECT_IMPL(Artifact::ArtifactAnimationMenu)
 
@@ -12,8 +16,11 @@ namespace Artifact {
 
  class ArtifactAnimationMenu::Impl {
  public:
-  Impl();
+  Impl(ArtifactAnimationMenu* menu);
   ~Impl();
+
+  ArtifactAnimationMenu* menu_ = nullptr;
+  ArtifactCore::LayerID selectedLayerId_;
 
   // ---- キーフレーム操作アクション ----
   QAction* addKeyframeAction = nullptr;
@@ -74,18 +81,60 @@ namespace Artifact {
   QMenu* timeRemapMenu = nullptr;
   QMenu* expressionMenu = nullptr;
   QMenu* presetMenu = nullptr;
+
+  void refreshEnabledState();
  };
 
- ArtifactAnimationMenu::Impl::Impl()
+ ArtifactAnimationMenu::Impl::Impl(ArtifactAnimationMenu* menu) : menu_(menu)
  {
+  auto* service = ArtifactProjectService::instance();
+  if (service) {
+   QObject::connect(service, &ArtifactProjectService::layerSelected, menu, [this](const ArtifactCore::LayerID& id) {
+    selectedLayerId_ = id;
+    refreshEnabledState();
+   });
+   QObject::connect(service, &ArtifactProjectService::layerRemoved, menu, [this](const ArtifactCore::CompositionID&, const ArtifactCore::LayerID& id) {
+    if (selectedLayerId_ == id) {
+     selectedLayerId_ = {};
+    }
+    refreshEnabledState();
+   });
+   QObject::connect(service, &ArtifactProjectService::projectChanged, menu, [this]() {
+    refreshEnabledState();
+   });
+  }
+  QObject::connect(menu, &QMenu::aboutToShow, menu, [this]() {
+   refreshEnabledState();
+  });
  }
 
  ArtifactAnimationMenu::Impl::~Impl()
  {
  }
 
+ void ArtifactAnimationMenu::Impl::refreshEnabledState()
+ {
+  auto* service = ArtifactProjectService::instance();
+  bool hasLayer = service && service->hasProject() && static_cast<bool>(service->currentComposition().lock()) && !selectedLayerId_.isNil();
+
+  addKeyframeAction->setEnabled(hasLayer);
+  removeKeyframeAction->setEnabled(hasLayer);
+  selectAllKeyframesAction->setEnabled(hasLayer);
+  copyKeyframesAction->setEnabled(hasLayer);
+  pasteKeyframesAction->setEnabled(hasLayer);
+  if (reverseKeyframesAction) reverseKeyframesAction->setEnabled(hasLayer);
+
+  easingMenu->setEnabled(hasLayer);
+  interpolationMenu->setEnabled(hasLayer);
+  graphEditorMenu->setEnabled(hasLayer);
+  navigationMenu->setEnabled(hasLayer);
+  timeRemapMenu->setEnabled(hasLayer);
+  expressionMenu->setEnabled(hasLayer);
+  presetMenu->setEnabled(hasLayer);
+ }
+
  ArtifactAnimationMenu::ArtifactAnimationMenu(QWidget* parent)
-  : QMenu(parent), impl_(new Impl())
+  : QMenu(parent), impl_(new Impl(this))
  {
   setTitle("アニメーション(&A)");
   setTearOffEnabled(false);
@@ -260,6 +309,8 @@ namespace Artifact {
   impl_->presetMenu->addSeparator();
 
   impl_->browsePresetsAction = impl_->presetMenu->addAction("プリセットを参照...");
+
+  impl_->refreshEnabledState();
  }
 
  ArtifactAnimationMenu::~ArtifactAnimationMenu()

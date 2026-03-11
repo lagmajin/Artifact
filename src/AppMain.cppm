@@ -76,6 +76,7 @@ import Artifact.Service.Project;
 import Artifact.Widgets.UndoHistoryWidget;
 import Artifact.Widgets.PythonHookManagerWidget;
 import Artifact.Widgets.ProjectManagerWidget;
+import Artifact.Widgets.CompositionAudioMixer;
 import Artifact.Widgets.Timeline;
 import Artifact.Widgets.CompositionEditor;
 import Artifact.Widgets.RenderLayerEditor;
@@ -567,6 +568,7 @@ int main(int argc, char* argv[])
     mw->addDockedWidget(QStringLiteral("Project"), ads::LeftDockWidgetArea, new ArtifactProjectManagerWidget(mw));
     mw->addDockedWidget(QStringLiteral("Inspector"), ads::RightDockWidgetArea, new ArtifactInspectorWidget(mw));
     mw->addDockedWidget(QStringLiteral("Properties"), ads::RightDockWidgetArea, new ArtifactPropertyWidget(mw));
+    mw->addDockedWidget(QStringLiteral("Audio Mixer"), ads::RightDockWidgetArea, new ArtifactCompositionAudioMixerWidget(mw));
     mw->addDockedWidget(QStringLiteral("Undo History"), ads::RightDockWidgetArea, new ArtifactUndoHistoryWidget(mw));
     mw->addDockedWidget(QStringLiteral("Python Hooks"), ads::RightDockWidgetArea, new ArtifactPythonHookManagerWidget(mw));
     mw->setDockVisible(QStringLiteral("Undo History"), false);
@@ -633,10 +635,11 @@ int main(int argc, char* argv[])
             QTimer::singleShot(0, mw, [mw, compId]() {
                 auto* panel = new ArtifactTimelineWidget(mw);
                 panel->setComposition(compId);
-                mw->addDockedWidget(
+                mw->addDockedWidgetTabbed(
                     QStringLiteral("Timeline - %1").arg(compId.toString()),
                     ads::BottomDockWidgetArea,
-                    panel);
+                    panel,
+                    QStringLiteral("Timeline - "));
             });
         });
         QObject::connect(projectService, &ArtifactProjectService::projectCreated, mw, []() {
