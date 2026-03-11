@@ -567,7 +567,8 @@ int main(int argc, char* argv[])
     mw->addDockedWidget(QStringLiteral("Render Queue"), ads::BottomDockWidgetArea, new RenderQueueManagerWidget(mw));
     mw->addDockedWidget(QStringLiteral("Project"), ads::LeftDockWidgetArea, new ArtifactProjectManagerWidget(mw));
     mw->addDockedWidget(QStringLiteral("Inspector"), ads::RightDockWidgetArea, new ArtifactInspectorWidget(mw));
-    mw->addDockedWidget(QStringLiteral("Properties"), ads::RightDockWidgetArea, new ArtifactPropertyWidget(mw));
+    auto* propertyPanel = new ArtifactPropertyWidget(mw);
+    mw->addDockedWidget(QStringLiteral("Properties"), ads::RightDockWidgetArea, propertyPanel);
     mw->addDockedWidget(QStringLiteral("Audio Mixer"), ads::RightDockWidgetArea, new ArtifactCompositionAudioMixerWidget(mw));
     mw->addDockedWidget(QStringLiteral("Undo History"), ads::RightDockWidgetArea, new ArtifactUndoHistoryWidget(mw));
     mw->addDockedWidget(QStringLiteral("Python Hooks"), ads::RightDockWidgetArea, new ArtifactPythonHookManagerWidget(mw));
@@ -603,9 +604,19 @@ int main(int argc, char* argv[])
         QObject::connect(projectService, &ArtifactProjectService::layerCreated, mw, [autoSaveManager](const CompositionID&, const LayerID&) {
             if (autoSaveManager) autoSaveManager->markDirty();
         });
-        QObject::connect(projectService, &ArtifactProjectService::layerSelected, mw, [mw, layerViewEditor](const LayerID& layerId) {
+        QObject::connect(projectService, &ArtifactProjectService::layerSelected, mw, [mw, layerViewEditor, propertyPanel, projectService](const LayerID& layerId) {
             if (layerViewEditor) {
                 layerViewEditor->setTargetLayer(layerId);
+            }
+            if (propertyPanel) {
+                propertyPanel->setFocusedEffectId(QString());
+                if (layerId.isNil()) {
+                    propertyPanel->clear();
+                } else if (auto comp = projectService->currentComposition().lock()) {
+                    propertyPanel->setLayer(comp->layerById(layerId));
+                } else {
+                    propertyPanel->clear();
+                }
             }
             mw->activateDock(QStringLiteral("Layer View (Diligent)"));
         });
@@ -617,6 +628,18 @@ int main(int argc, char* argv[])
             if (found.success && !found.ptr.expired()) {
                 compositionEditor->setComposition(found.ptr.lock());
                 mw->activateDock(QStringLiteral("Composition Viewer"));
+            }
+        });
+        QObject::connect(projectService, &ArtifactProjectService::currentCompositionChanged, mw, [propertyPanel]() {
+            if (propertyPanel) {
+                propertyPanel->setFocusedEffectId(QString());
+                propertyPanel->clear();
+            }
+        });
+        QObject::connect(projectService, &ArtifactProjectService::projectCreated, mw, [propertyPanel]() {
+            if (propertyPanel) {
+                propertyPanel->setFocusedEffectId(QString());
+                propertyPanel->clear();
             }
         });
         QObject::connect(projectService, &ArtifactProjectService::layerRemoved, mw, [status](const CompositionID&, const LayerID&) {
