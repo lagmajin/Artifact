@@ -11,6 +11,9 @@ module;
 #include <QSpinBox>
 #include <QLabel>
 #include <QSignalBlocker>
+#include <QMouseEvent>
+#include <QEvent>
+#include <QCursor>
 
 module Artifact.Widgets.PropertyEditor;
 
@@ -33,6 +36,17 @@ void ArtifactAbstractPropertyEditor::commitValue(const QVariant& value) const
     if (commitHandler_) {
         commitHandler_(value);
     }
+}
+
+bool ArtifactAbstractPropertyEditor::supportsScrub() const
+{
+    return false;
+}
+
+void ArtifactAbstractPropertyEditor::scrubByPixels(int deltaPixels, bool fineAdjust)
+{
+    Q_UNUSED(deltaPixels);
+    Q_UNUSED(fineAdjust);
 }
 
 namespace {
@@ -139,6 +153,22 @@ void ArtifactFloatPropertyEditor::setValueFromVariant(const QVariant& value)
     slider_->setValue(floatToSliderPosition(nextValue, softMin_, softMax_));
 }
 
+bool ArtifactFloatPropertyEditor::supportsScrub() const
+{
+    return true;
+}
+
+void ArtifactFloatPropertyEditor::scrubByPixels(const int deltaPixels, const bool fineAdjust)
+{
+    if (!spinBox_) {
+        return;
+    }
+    const double step = spinBox_->singleStep() * (fineAdjust ? 0.1 : 1.0);
+    const double nextValue = spinBox_->value() + static_cast<double>(deltaPixels) * step;
+    spinBox_->setValue(nextValue);
+    commitValue(spinBox_->value());
+}
+
 ArtifactIntPropertyEditor::ArtifactIntPropertyEditor(const ArtifactCore::AbstractProperty& property, QWidget* parent)
     : ArtifactAbstractPropertyEditor(parent)
 {
@@ -205,6 +235,23 @@ void ArtifactIntPropertyEditor::setValueFromVariant(const QVariant& value)
     }
     const QSignalBlocker sliderBlocker(slider_);
     slider_->setValue(std::clamp(nextValue, softMin_, softMax_));
+}
+
+bool ArtifactIntPropertyEditor::supportsScrub() const
+{
+    return true;
+}
+
+void ArtifactIntPropertyEditor::scrubByPixels(const int deltaPixels, const bool fineAdjust)
+{
+    if (!spinBox_) {
+        return;
+    }
+    const int baseStep = std::max(1, spinBox_->singleStep());
+    const double scaledStep = static_cast<double>(baseStep) * (fineAdjust ? 0.25 : 1.0);
+    const int nextValue = static_cast<int>(std::llround(static_cast<double>(spinBox_->value()) + static_cast<double>(deltaPixels) * scaledStep));
+    spinBox_->setValue(nextValue);
+    commitValue(spinBox_->value());
 }
 
 ArtifactBoolPropertyEditor::ArtifactBoolPropertyEditor(const ArtifactCore::AbstractProperty& property, QWidget* parent)
@@ -341,6 +388,8 @@ ArtifactPropertyEditorRowWidget::ArtifactPropertyEditorRowWidget(
     resetButton_->setFixedSize(22, 22);
     expressionButton_->setToolTip(QStringLiteral("Expression Copilot: %1").arg(propertyName));
     expressionButton_->setFixedSize(24, 24);
+    label_->installEventFilter(this);
+    label_->setCursor(editor_->supportsScrub() ? Qt::SizeHorCursor : Qt::ArrowCursor);
 
     layout->addWidget(label_);
     layout->addWidget(editor_, 1);
@@ -405,6 +454,53 @@ void ArtifactPropertyEditorRowWidget::setShowKeyframeButton(const bool visible)
 {
     keyframeButton_->setVisible(visible);
     keyframeButton_->setEnabled(visible);
+}
+
+bool ArtifactPropertyEditorRowWidget::eventFilter(QObject* watched, QEvent* event)
+{
+    if (watched != label_ || !editor_ || !editor_->supportsScrub()) {
+        return QWidget::eventFilter(watched, event);
+    }
+
+    switch (event->type()) {
+    case QEvent::MouseButtonPress: {
+        auto* mouseEvent = static_cast<QMouseEvent*>(event);
+        if (mouseEvent->button() != Qt::LeftButton) {
+            break;
+        }
+        scrubbing_ = true;
+        scrubStartX_ = mouseEvent->globalPosition().toPoint().x();
+        scrubStartValue_ = editor_->value();
+        label_->grabMouse();
+        label_->setCursor(Qt::SizeHorCursor);
+        return true;
+    }
+    case QEvent::MouseMove: {
+        if (!scrubbing_) {
+            break;
+        }
+        auto* mouseEvent = static_cast<QMouseEvent*>(event);
+        const int currentX = mouseEvent->globalPosition().toPoint().x();
+        const int deltaPixels = currentX - scrubStartX_;
+        editor_->setValueFromVariant(scrubStartValue_);
+        editor_->scrubByPixels(deltaPixels, mouseEvent->modifiers().testFlag(Qt::ShiftModifier));
+        return true;
+    }
+    case QEvent::MouseButtonRelease: {
+        auto* mouseEvent = static_cast<QMouseEvent*>(event);
+        if (scrubbing_ && mouseEvent->button() == Qt::LeftButton) {
+            scrubbing_ = false;
+            label_->releaseMouse();
+            label_->setCursor(Qt::SizeHorCursor);
+            return true;
+        }
+        break;
+    }
+    default:
+        break;
+    }
+
+    return QWidget::eventFilter(watched, event);
 }
 
 ArtifactAbstractPropertyEditor* createPropertyEditorWidget(const ArtifactCore::AbstractProperty& property, QWidget* parent)

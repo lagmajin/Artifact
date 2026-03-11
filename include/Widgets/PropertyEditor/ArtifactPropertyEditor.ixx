@@ -24,6 +24,8 @@ public:
     void setCommitHandler(CommitHandler handler);
     virtual QVariant value() const = 0;
     virtual void setValueFromVariant(const QVariant& value) = 0;
+    virtual bool supportsScrub() const;
+    virtual void scrubByPixels(int deltaPixels, bool fineAdjust);
 
 protected:
     void commitValue(const QVariant& value) const;
@@ -118,6 +120,12 @@ private:
     QPushButton* expressionButton_ = nullptr;
     std::function<void()> expressionHandler_;
     std::function<void()> resetHandler_;
+    bool scrubbing_ = false;
+    int scrubStartX_ = 0;
+    QVariant scrubStartValue_;
+
+protected:
+    bool eventFilter(QObject* watched, QEvent* event) override;
 };
 
 ArtifactAbstractPropertyEditor* createPropertyEditorWidget(
