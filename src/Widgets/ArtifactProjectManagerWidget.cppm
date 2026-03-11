@@ -431,6 +431,28 @@ private:
     QStringList tagTerms_;
 };
 
+bool renameProjectItem(ProjectItem* item, const QString& newName) {
+    auto* svc = ArtifactProjectService::instance();
+    if (!svc || !item) {
+        return false;
+    }
+    const QString trimmed = newName.trimmed();
+    if (trimmed.isEmpty()) {
+        return false;
+    }
+    if (item->type() == eProjectItemType::Composition) {
+        auto* compItem = static_cast<CompositionItem*>(item);
+        return svc->renameComposition(compItem->compositionId, UniString::fromQString(trimmed));
+    }
+    auto shared = svc->getCurrentProjectSharedPtr();
+    if (!shared) {
+        return false;
+    }
+    item->name = UniString::fromQString(trimmed);
+    shared->projectChanged();
+    return true;
+}
+
 // --- Project View (Tree) ---
 class ArtifactProjectView::Impl {
 public:
@@ -479,28 +501,6 @@ public:
             }
         }
         return relinked;
-    }
-
-    static bool renameProjectItem(ProjectItem* item, const QString& newName) {
-        auto* svc = ArtifactProjectService::instance();
-        if (!svc || !item) {
-            return false;
-        }
-        const QString trimmed = newName.trimmed();
-        if (trimmed.isEmpty()) {
-            return false;
-        }
-        if (item->type() == eProjectItemType::Composition) {
-            auto* compItem = static_cast<CompositionItem*>(item);
-            return svc->renameComposition(compItem->compositionId, UniString::fromQString(trimmed));
-        }
-        auto shared = svc->getCurrentProjectSharedPtr();
-        if (!shared) {
-            return false;
-        }
-        item->name = UniString::fromQString(trimmed);
-        shared->projectChanged();
-        return true;
     }
 
     static void showDependencyGraphDialog(QWidget* parent, ArtifactProjectService* svc) {
@@ -851,7 +851,7 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
                  }
                  QVariant ptrVar = sourceIdx.data(Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::ProjectItemPtr));
                  ProjectItem* item = ptrVar.isValid() ? reinterpret_cast<ProjectItem*>(ptrVar.value<quintptr>()) : nullptr;
-                 if (!Impl::renameProjectItem(item, name)) {
+                 if (!renameProjectItem(item, name)) {
                      QMessageBox::warning(this, QStringLiteral("Rename Failed"),
                          QStringLiteral("Could not rename the selected project item."));
                  }
@@ -1058,7 +1058,7 @@ public:
         if (!ok || newName.trimmed().isEmpty()) {
             return false;
         }
-        return ArtifactProjectView::Impl::renameProjectItem(item, newName);
+        return renameProjectItem(item, newName);
     }
 
     bool deleteSelectedItem(QWidget* parent) {
