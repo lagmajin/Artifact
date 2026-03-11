@@ -2,6 +2,10 @@
 #include <QImage>
 #include <QWidget>
 #include <QPainter>
+#include <QPainterPath>
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #include <windows.h>
 #include <RenderDevice.h>
 #include <DeviceContext.h>
