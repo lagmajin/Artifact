@@ -112,15 +112,15 @@ ads::CDockWidget* resolveActiveDock(ads::CDockManager* dockManager, ads::CDockWi
         }
     }
 
-    if (rememberedDock && rememberedDock->isVisible()) {
-        return rememberedDock;
-    }
-
     const auto docks = dockManager->findChildren<ads::CDockWidget*>();
     for (auto* dock : docks) {
         if (dock && dock->isVisible() && dock->isCurrentTab()) {
             return dock;
         }
+    }
+
+    if (rememberedDock && rememberedDock->isVisible()) {
+        return rememberedDock;
     }
 
     return nullptr;
@@ -203,6 +203,17 @@ bool DockStyleManager::eventFilter(QObject* watched, QEvent* event) {
     }
 
     if (isDockRelatedObject(watched, impl_->dockManager_)) {
+        if ((event->type() == QEvent::MouseButtonPress || event->type() == QEvent::MouseButtonRelease) &&
+            watched) {
+            if (auto* tab = qobject_cast<ads::CDockWidgetTab*>(watched)) {
+                if (auto* dock = tab->dockWidget()) {
+                    impl_->focusedDockWidget_ = dock;
+                }
+            } else if (auto* dock = qobject_cast<ads::CDockWidget*>(watched)) {
+                impl_->focusedDockWidget_ = dock;
+            }
+        }
+
         switch (event->type()) {
         case QEvent::ChildAdded:
         case QEvent::ChildRemoved:
