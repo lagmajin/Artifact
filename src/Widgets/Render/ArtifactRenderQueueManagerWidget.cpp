@@ -65,6 +65,7 @@ module Artifact.Widgets.Render.QueueManager;
 import Widgets.Utils.CSS;
 import Artifact.Render.Queue.Service;
 import Artifact.Service.Project;
+import Artifact.Widget.Dialog.RenderOutputSetting;
 import Core.FastSettingsStore;
 
 
@@ -119,12 +120,8 @@ namespace Artifact
   QComboBox* progressLogStepCombo = nullptr;
   QLineEdit* outputPathEdit = nullptr;
   QPushButton* outputBrowseButton = nullptr;
-  QComboBox* outputFormatCombo = nullptr;
-  QComboBox* codecCombo = nullptr;
-  QSpinBox* outputWidthSpin = nullptr;
-  QSpinBox* outputHeightSpin = nullptr;
-  QDoubleSpinBox* fpsSpin = nullptr;
-  QSpinBox* bitrateSpin = nullptr;
+  QLabel* outputSettingsSummaryLabel = nullptr;
+  QPushButton* outputSettingsButton = nullptr;
   QSpinBox* startFrameSpin = nullptr;
   QSpinBox* endFrameSpin = nullptr;
   QDoubleSpinBox* overlayXSpin = nullptr;
@@ -165,6 +162,7 @@ namespace Artifact
   void handleJobSelected();
   void updateJobDetailEditorsForSelection();
   void setJobDetailEditorsEnabled(bool enabled);
+  void updateOutputSettingsSummaryForSelection();
   void updateTransformEditorsForSelection();
   void setTransformEditorsEnabled(bool enabled);
   void handleJobAdded(int index);
@@ -737,6 +735,8 @@ void RenderQueueManagerWidget::Impl::selectSourceIndex(int sourceIndex)
   if (hasSelection) {
     updateJobDetailEditorsForSelection();
     updateTransformEditorsForSelection();
+  } else {
+    updateOutputSettingsSummaryForSelection();
   }
   const QString selectedStatus = (sourceIndex >= 0 && sourceIndex < jobs.size())
     ? normalizeStatus(jobs[sourceIndex].status)
@@ -772,14 +772,38 @@ void RenderQueueManagerWidget::Impl::setJobDetailEditorsEnabled(bool enabled)
 {
   if (outputPathEdit) outputPathEdit->setEnabled(enabled);
   if (outputBrowseButton) outputBrowseButton->setEnabled(enabled);
-  if (outputFormatCombo) outputFormatCombo->setEnabled(enabled);
-  if (codecCombo) codecCombo->setEnabled(enabled);
-  if (outputWidthSpin) outputWidthSpin->setEnabled(enabled);
-  if (outputHeightSpin) outputHeightSpin->setEnabled(enabled);
-  if (fpsSpin) fpsSpin->setEnabled(enabled);
-  if (bitrateSpin) bitrateSpin->setEnabled(enabled);
+  if (outputSettingsSummaryLabel) outputSettingsSummaryLabel->setEnabled(enabled);
+  if (outputSettingsButton) outputSettingsButton->setEnabled(enabled);
   if (startFrameSpin) startFrameSpin->setEnabled(enabled);
   if (endFrameSpin) endFrameSpin->setEnabled(enabled);
+}
+
+void RenderQueueManagerWidget::Impl::updateOutputSettingsSummaryForSelection()
+{
+  if (!outputSettingsSummaryLabel) {
+    return;
+  }
+  const int sourceIndex = selectedSourceIndex();
+  if (!service || sourceIndex < 0 || sourceIndex >= service->jobCount()) {
+    outputSettingsSummaryLabel->setText(QStringLiteral("No job selected"));
+    return;
+  }
+
+  QString outputFormat = QStringLiteral("MP4");
+  QString codec = QStringLiteral("H.264");
+  int width = 1920;
+  int height = 1080;
+  double fps = 30.0;
+  int bitrateKbps = 8000;
+  service->jobOutputSettingsAt(sourceIndex, &outputFormat, &codec, &width, &height, &fps, &bitrateKbps);
+
+  outputSettingsSummaryLabel->setText(QStringLiteral("%1 / %2 / %3x%4 / %5 fps / %6 kbps")
+    .arg(outputFormat)
+    .arg(codec)
+    .arg(width)
+    .arg(height)
+    .arg(QString::number(fps, 'f', 3))
+    .arg(bitrateKbps));
 }
 
 void RenderQueueManagerWidget::Impl::updateJobDetailEditorsForSelection()
@@ -796,48 +820,7 @@ void RenderQueueManagerWidget::Impl::updateJobDetailEditorsForSelection()
     QSignalBlocker block(outputPathEdit);
     outputPathEdit->setText(service->jobOutputPathAt(sourceIndex));
   }
-  QString outputFormat;
-  QString codec;
-  int width = 1920;
-  int height = 1080;
-  double fps = 30.0;
-  int bitrateKbps = 8000;
-  if (service->jobOutputSettingsAt(sourceIndex, &outputFormat, &codec, &width, &height, &fps, &bitrateKbps)) {
-    if (outputFormatCombo) {
-      QSignalBlocker block(outputFormatCombo);
-      int idx = outputFormatCombo->findText(outputFormat);
-      if (idx < 0) {
-        outputFormatCombo->addItem(outputFormat);
-        idx = outputFormatCombo->findText(outputFormat);
-      }
-      outputFormatCombo->setCurrentIndex(std::max(0, idx));
-    }
-    if (codecCombo) {
-      QSignalBlocker block(codecCombo);
-      int idx = codecCombo->findText(codec);
-      if (idx < 0) {
-        codecCombo->addItem(codec);
-        idx = codecCombo->findText(codec);
-      }
-      codecCombo->setCurrentIndex(std::max(0, idx));
-    }
-    if (outputWidthSpin) {
-      QSignalBlocker block(outputWidthSpin);
-      outputWidthSpin->setValue(width);
-    }
-    if (outputHeightSpin) {
-      QSignalBlocker block(outputHeightSpin);
-      outputHeightSpin->setValue(height);
-    }
-    if (fpsSpin) {
-      QSignalBlocker block(fpsSpin);
-      fpsSpin->setValue(fps);
-    }
-    if (bitrateSpin) {
-      QSignalBlocker block(bitrateSpin);
-      bitrateSpin->setValue(bitrateKbps);
-    }
-  }
+  updateOutputSettingsSummaryForSelection();
   int startFrame = 0;
   int endFrame = 100;
   if (service->jobFrameRangeAt(sourceIndex, &startFrame, &endFrame)) {
@@ -1024,44 +1007,13 @@ void RenderQueueManagerWidget::Impl::handleProjectClosed()
   outputPathRow->addWidget(impl_->outputBrowseButton, 0);
   ioLayout->addRow("Output", outputPathRow);
 
-  impl_->outputFormatCombo = new QComboBox(this);
-  impl_->outputFormatCombo->addItems(QStringList{
-    "MP4", "PNG Sequence", "EXR Sequence"
-  });
-  ioLayout->addRow("Format", impl_->outputFormatCombo);
-
-  impl_->codecCombo = new QComboBox(this);
-  impl_->codecCombo->addItems(QStringList{
-    "H.264", "H.265", "ProRes", "PNG", "EXR"
-  });
-  ioLayout->addRow("Codec", impl_->codecCombo);
-
-  auto* resolutionRow = new QHBoxLayout();
-  impl_->outputWidthSpin = new QSpinBox(this);
-  impl_->outputHeightSpin = new QSpinBox(this);
-  impl_->outputWidthSpin->setRange(16, 16384);
-  impl_->outputHeightSpin->setRange(16, 16384);
-  impl_->outputWidthSpin->setValue(1920);
-  impl_->outputHeightSpin->setValue(1080);
-  impl_->outputWidthSpin->setSingleStep(8);
-  impl_->outputHeightSpin->setSingleStep(8);
-  resolutionRow->addWidget(impl_->outputWidthSpin, 1);
-  resolutionRow->addWidget(new QLabel("x", this));
-  resolutionRow->addWidget(impl_->outputHeightSpin, 1);
-  ioLayout->addRow("Resolution", resolutionRow);
-
-  impl_->fpsSpin = new QDoubleSpinBox(this);
-  impl_->fpsSpin->setRange(1.0, 240.0);
-  impl_->fpsSpin->setDecimals(3);
-  impl_->fpsSpin->setSingleStep(0.5);
-  impl_->fpsSpin->setValue(30.0);
-  ioLayout->addRow("FPS", impl_->fpsSpin);
-
-  impl_->bitrateSpin = new QSpinBox(this);
-  impl_->bitrateSpin->setRange(128, 200000);
-  impl_->bitrateSpin->setSingleStep(100);
-  impl_->bitrateSpin->setValue(8000);
-  ioLayout->addRow("Bitrate", impl_->bitrateSpin);
+  auto* outputSettingsRow = new QHBoxLayout();
+  impl_->outputSettingsSummaryLabel = new QLabel("MP4 / H.264 / 1920x1080 / 30.000 fps / 8000 kbps", this);
+  impl_->outputSettingsSummaryLabel->setWordWrap(true);
+  impl_->outputSettingsButton = new QPushButton("Settings...", this);
+  outputSettingsRow->addWidget(impl_->outputSettingsSummaryLabel, 1);
+  outputSettingsRow->addWidget(impl_->outputSettingsButton, 0);
+  ioLayout->addRow("Settings", outputSettingsRow);
 
   impl_->startFrameSpin = new QSpinBox(this);
   impl_->endFrameSpin = new QSpinBox(this);
@@ -1491,8 +1443,8 @@ QPushButton {
     const QString path = QFileDialog::getSaveFileName(
       this,
       QStringLiteral("Select Render Output"),
-      initial.isEmpty() ? QStringLiteral("render.png") : initial,
-      QStringLiteral("PNG Image (*.png);;All Files (*.*)")
+      initial.isEmpty() ? QStringLiteral("render.mp4") : initial,
+      QStringLiteral("Render Outputs (*.mp4 *.mov *.avi *.png *.exr);;All Files (*.*)")
     );
     if (path.isEmpty()) {
       return;
@@ -1502,7 +1454,7 @@ QPushButton {
     impl_->logUiEvent(QString("Output updated for job #%1").arg(sourceIndex + 1), true);
   });
 
-  auto applyOutputSettings = [this]() {
+  connect(impl_->outputSettingsButton, &QPushButton::clicked, this, [this]() {
     if (!impl_->service || impl_->syncingJobDetails) {
       return;
     }
@@ -1510,32 +1462,43 @@ QPushButton {
     if (sourceIndex < 0) {
       return;
     }
-    const QString format = impl_->outputFormatCombo ? impl_->outputFormatCombo->currentText() : QStringLiteral("MP4");
-    const QString codec = impl_->codecCombo ? impl_->codecCombo->currentText() : QStringLiteral("H.264");
-    const int width = impl_->outputWidthSpin ? impl_->outputWidthSpin->value() : 1920;
-    const int height = impl_->outputHeightSpin ? impl_->outputHeightSpin->value() : 1080;
-    const double fps = impl_->fpsSpin ? impl_->fpsSpin->value() : 30.0;
-    const int bitrateKbps = impl_->bitrateSpin ? impl_->bitrateSpin->value() : 8000;
-    impl_->service->setJobOutputSettingsAt(sourceIndex, format, codec, width, height, fps, bitrateKbps);
-  };
+    QString format = QStringLiteral("MP4");
+    QString codec = QStringLiteral("H.264");
+    int width = 1920;
+    int height = 1080;
+    double fps = 30.0;
+    int bitrateKbps = 8000;
+    impl_->service->jobOutputSettingsAt(sourceIndex, &format, &codec, &width, &height, &fps, &bitrateKbps);
 
-  connect(impl_->outputFormatCombo, &QComboBox::currentTextChanged, this, [applyOutputSettings](const QString&) {
-    applyOutputSettings();
-  });
-  connect(impl_->codecCombo, &QComboBox::currentTextChanged, this, [applyOutputSettings](const QString&) {
-    applyOutputSettings();
-  });
-  connect(impl_->outputWidthSpin, qOverload<int>(&QSpinBox::valueChanged), this, [applyOutputSettings](int) {
-    applyOutputSettings();
-  });
-  connect(impl_->outputHeightSpin, qOverload<int>(&QSpinBox::valueChanged), this, [applyOutputSettings](int) {
-    applyOutputSettings();
-  });
-  connect(impl_->fpsSpin, qOverload<double>(&QDoubleSpinBox::valueChanged), this, [applyOutputSettings](double) {
-    applyOutputSettings();
-  });
-  connect(impl_->bitrateSpin, qOverload<int>(&QSpinBox::valueChanged), this, [applyOutputSettings](int) {
-    applyOutputSettings();
+    ArtifactRenderOutputSettingDialog dialog(this);
+    dialog.setOutputPath(impl_->outputPathEdit ? impl_->outputPathEdit->text() : impl_->service->jobOutputPathAt(sourceIndex));
+    dialog.setOutputFormat(format);
+    dialog.setCodec(codec);
+    dialog.setResolution(width, height);
+    dialog.setFrameRate(fps);
+    dialog.setBitrateKbps(bitrateKbps);
+    dialog.setWindowTitle(QStringLiteral("Render Output Settings"));
+
+    if (dialog.exec() != QDialog::Accepted) {
+      return;
+    }
+
+    const QString path = dialog.outputPath().trimmed();
+    if (impl_->outputPathEdit) {
+      QSignalBlocker block(impl_->outputPathEdit);
+      impl_->outputPathEdit->setText(path);
+    }
+    impl_->service->setJobOutputPathAt(sourceIndex, path);
+    impl_->service->setJobOutputSettingsAt(
+      sourceIndex,
+      dialog.outputFormat(),
+      dialog.codec(),
+      dialog.outputWidth(),
+      dialog.outputHeight(),
+      dialog.frameRate(),
+      dialog.bitrateKbps());
+    impl_->updateOutputSettingsSummaryForSelection();
+    impl_->logUiEvent(QString("Output settings updated for job #%1").arg(sourceIndex + 1), true);
   });
 
   auto applyFrameRange = [this]() {
@@ -1608,6 +1571,7 @@ QPushButton {
   // Initialize UI
   impl_->reloadPresetList();
   impl_->syncJobsFromService();
+  impl_->updateOutputSettingsSummaryForSelection();
   impl_->setJobDetailEditorsEnabled(false);
   impl_->setTransformEditorsEnabled(false);
   impl_->duplicateButton->setEnabled(false);
