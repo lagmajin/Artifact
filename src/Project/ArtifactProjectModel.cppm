@@ -46,6 +46,7 @@ module Artifact.Project.Model;
 
 
 import Artifact.Project;
+import Artifact.Project.Items;
 import Artifact.Service.Project;
 import Artifact.Project.Manager;
 import Artifact.Project.Roles;
