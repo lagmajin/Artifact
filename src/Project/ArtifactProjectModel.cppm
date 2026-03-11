@@ -94,6 +94,9 @@ QIcon iconForProjectItem(ProjectItem* it)
       return makeProjectItemIcon(QColor(140, 54, 54), QStringLiteral("!"));
     }
     const QString suffix = info.suffix().toLower();
+    if (QStringList{QStringLiteral("ttf"), QStringLiteral("otf"), QStringLiteral("ttc"), QStringLiteral("woff"), QStringLiteral("woff2")}.contains(suffix)) {
+      return makeProjectItemIcon(QColor(121, 82, 168), QStringLiteral("T"));
+    }
     if (QStringList{QStringLiteral("png"), QStringLiteral("jpg"), QStringLiteral("jpeg"), QStringLiteral("bmp"),
                     QStringLiteral("gif"), QStringLiteral("tif"), QStringLiteral("tiff"), QStringLiteral("webp"),
                     QStringLiteral("exr")}.contains(suffix)) {
@@ -239,7 +242,9 @@ void ArtifactProjectModel::Impl::refreshTree()
       sizeItem->setText(QString::number(fi.size() / 1024) + " KB");
       durationItem->setText(fi.suffix().toUpper());
       const QString suffix = fi.suffix().toLower();
-      if (QStringList{QStringLiteral("png"), QStringLiteral("jpg"), QStringLiteral("jpeg"), QStringLiteral("bmp"),
+      if (QStringList{QStringLiteral("ttf"), QStringLiteral("otf"), QStringLiteral("ttc"), QStringLiteral("woff"), QStringLiteral("woff2")}.contains(suffix)) {
+        frameRateItem->setText(QStringLiteral("Font"));
+      } else if (QStringList{QStringLiteral("png"), QStringLiteral("jpg"), QStringLiteral("jpeg"), QStringLiteral("bmp"),
                       QStringLiteral("gif"), QStringLiteral("tif"), QStringLiteral("tiff"), QStringLiteral("webp"),
                       QStringLiteral("exr")}.contains(suffix)) {
         frameRateItem->setText(QStringLiteral("Image"));

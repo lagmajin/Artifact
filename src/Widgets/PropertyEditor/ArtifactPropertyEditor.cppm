@@ -6,6 +6,7 @@ module;
 #include <QComboBox>
 #include <QDoubleSpinBox>
 #include <QFileDialog>
+#include <QFontComboBox>
 #include <QHBoxLayout>
 #include <QLineEdit>
 #include <QPushButton>
@@ -20,6 +21,7 @@ module;
 module Artifact.Widgets.PropertyEditor;
 
 import std;
+import Font.FreeFont;
 
 namespace Artifact {
 
@@ -110,6 +112,17 @@ bool isPathProperty(const ArtifactCore::AbstractProperty& property)
     const QString name = property.getName();
     return name.endsWith(QStringLiteral(".sourcePath"), Qt::CaseInsensitive)
         || name.compare(QStringLiteral("sourcePath"), Qt::CaseInsensitive) == 0;
+}
+
+bool isFontFamilyProperty(const ArtifactCore::AbstractProperty& property)
+{
+    if (property.getType() != ArtifactCore::PropertyType::String) {
+        return false;
+    }
+    const QString name = property.getName();
+    return name.compare(QStringLiteral("text.fontFamily"), Qt::CaseInsensitive) == 0
+        || name.endsWith(QStringLiteral(".fontFamily"), Qt::CaseInsensitive)
+        || name.compare(QStringLiteral("fontFamily"), Qt::CaseInsensitive) == 0;
 }
 
 std::optional<ArtifactEnumPropertyEditor::OptionList> parseTooltipEnumOptions(const QString& tooltip)
@@ -395,6 +408,35 @@ void ArtifactStringPropertyEditor::setValueFromVariant(const QVariant& value)
     }
     const QSignalBlocker blocker(lineEdit_);
     lineEdit_->setText(value.toString());
+}
+
+ArtifactFontFamilyPropertyEditor::ArtifactFontFamilyPropertyEditor(const ArtifactCore::AbstractProperty& property, QWidget* parent)
+    : ArtifactAbstractPropertyEditor(parent)
+{
+    comboBox_ = new QFontComboBox(this);
+    auto* layout = new QHBoxLayout(this);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->addWidget(comboBox_);
+
+    setValueFromVariant(property.getValue());
+    QObject::connect(comboBox_, &QFontComboBox::currentFontChanged, this, [this](const QFont& font) {
+        commitValue(FontManager::resolvedFamily(font.family()));
+    });
+}
+
+QVariant ArtifactFontFamilyPropertyEditor::value() const
+{
+    return comboBox_ ? QVariant(comboBox_->currentFont().family()) : QVariant();
+}
+
+void ArtifactFontFamilyPropertyEditor::setValueFromVariant(const QVariant& value)
+{
+    if (!comboBox_) {
+        return;
+    }
+    const QString family = FontManager::resolvedFamily(value.toString());
+    const QSignalBlocker blocker(comboBox_);
+    comboBox_->setCurrentFont(QFont(family));
 }
 
 ArtifactPathPropertyEditor::ArtifactPathPropertyEditor(const ArtifactCore::AbstractProperty& property, QWidget* parent)
@@ -683,6 +725,9 @@ bool ArtifactPropertyEditorRowWidget::eventFilter(QObject* watched, QEvent* even
 
 ArtifactAbstractPropertyEditor* createPropertyEditorWidget(const ArtifactCore::AbstractProperty& property, QWidget* parent)
 {
+    if (isFontFamilyProperty(property)) {
+        return new ArtifactFontFamilyPropertyEditor(property, parent);
+    }
     if (isPathProperty(property)) {
         return new ArtifactPathPropertyEditor(property, parent);
     }
