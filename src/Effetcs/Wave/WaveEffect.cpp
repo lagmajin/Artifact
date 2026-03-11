@@ -249,12 +249,14 @@ std::vector<ArtifactCore::AbstractProperty> WaveEffect::getProperties() const {
     waveTypeProp.setType(ArtifactCore::PropertyType::Integer);
     waveTypeProp.setDefaultValue(QVariant(waveType()));
     waveTypeProp.setValue(QVariant(waveType()));
+    waveTypeProp.setTooltip(QStringLiteral("0=Sine, 1=Cosine"));
 
     auto& orientProp = props.emplace_back();
     orientProp.setName("orientation");
     orientProp.setType(ArtifactCore::PropertyType::Integer);
     orientProp.setDefaultValue(QVariant(orientation()));
     orientProp.setValue(QVariant(orientation()));
+    orientProp.setTooltip(QStringLiteral("0=Horizontal, 1=Vertical"));
 
     return props;
 }

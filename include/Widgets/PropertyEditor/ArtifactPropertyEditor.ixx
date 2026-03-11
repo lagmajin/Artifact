@@ -80,6 +80,30 @@ private:
     class QLineEdit* lineEdit_ = nullptr;
 };
 
+class ArtifactPathPropertyEditor final : public ArtifactAbstractPropertyEditor {
+public:
+    explicit ArtifactPathPropertyEditor(const ArtifactCore::AbstractProperty& property, QWidget* parent = nullptr);
+    QVariant value() const override;
+    void setValueFromVariant(const QVariant& value) override;
+
+private:
+    class QLineEdit* lineEdit_ = nullptr;
+    class QPushButton* browseButton_ = nullptr;
+};
+
+class ArtifactEnumPropertyEditor final : public ArtifactAbstractPropertyEditor {
+public:
+    using OptionList = std::vector<std::pair<int, QString>>;
+
+    ArtifactEnumPropertyEditor(const ArtifactCore::AbstractProperty& property, OptionList options, QWidget* parent = nullptr);
+    QVariant value() const override;
+    void setValueFromVariant(const QVariant& value) override;
+
+private:
+    class QComboBox* comboBox_ = nullptr;
+    OptionList options_;
+};
+
 class ArtifactColorPropertyEditor final : public ArtifactAbstractPropertyEditor {
 public:
     explicit ArtifactColorPropertyEditor(const ArtifactCore::AbstractProperty& property, QWidget* parent = nullptr);
