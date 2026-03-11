@@ -1,4 +1,5 @@
 module;
+#include <algorithm>
 #include <wobjectimpl.h>
 #include <QDialog>
 #include <QFormLayout>
@@ -10,7 +11,10 @@ module;
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QComboBox>
+#include <QDoubleSpinBox>
+#include <QSignalBlocker>
 #include <QSpinBox>
+#include <QStringList>
 module Artifact.Widget.Dialog.RenderOutputSetting;
 
 
@@ -27,13 +31,18 @@ namespace Artifact
   QLineEdit* outputPathEdit = nullptr;
   QPushButton* browseButton = nullptr;
   QComboBox* formatCombo = nullptr;
+  QComboBox* codecCombo = nullptr;
   QComboBox* resolutionCombo = nullptr;
   QSpinBox* widthSpin = nullptr;
   QSpinBox* heightSpin = nullptr;
-  QComboBox* fpsCombo = nullptr;
+  QDoubleSpinBox* fpsSpin = nullptr;
+  QSpinBox* bitrateSpin = nullptr;
   QDialogButtonBox* buttonBox = nullptr;
   
   void handleBrowseClicked(ArtifactRenderOutputSettingDialog* dialog);
+  void syncResolutionEditors();
+  void syncResolutionPreset();
+  static void ensureComboContains(QComboBox* combo, const QString& value);
  };
 
  ArtifactRenderOutputSettingDialog::Impl::Impl()
@@ -52,11 +61,72 @@ namespace Artifact
          dialog,
          "Select Output File",
          "",
-         "Video Files (*.mp4 *.mov *.avi);;All Files (*.*)"
+         "Render Outputs (*.mp4 *.mov *.avi *.png *.exr);;All Files (*.*)"
      );
      if (!filePath.isEmpty()) {
          outputPathEdit->setText(filePath);
      }
+ }
+
+ void ArtifactRenderOutputSettingDialog::Impl::syncResolutionEditors()
+ {
+   if (!resolutionCombo || !widthSpin || !heightSpin) {
+     return;
+   }
+   const QString preset = resolutionCombo->currentText();
+   if (preset == "3840 x 2160") {
+     widthSpin->setValue(3840);
+     heightSpin->setValue(2160);
+     widthSpin->setEnabled(false);
+     heightSpin->setEnabled(false);
+     return;
+   }
+   if (preset == "1920 x 1080") {
+     widthSpin->setValue(1920);
+     heightSpin->setValue(1080);
+     widthSpin->setEnabled(false);
+     heightSpin->setEnabled(false);
+     return;
+   }
+   if (preset == "1280 x 720") {
+     widthSpin->setValue(1280);
+     heightSpin->setValue(720);
+     widthSpin->setEnabled(false);
+     heightSpin->setEnabled(false);
+     return;
+   }
+   widthSpin->setEnabled(true);
+   heightSpin->setEnabled(true);
+ }
+
+ void ArtifactRenderOutputSettingDialog::Impl::syncResolutionPreset()
+ {
+   if (!resolutionCombo || !widthSpin || !heightSpin) {
+     return;
+   }
+   QString preset = "Custom";
+   if (widthSpin->value() == 3840 && heightSpin->value() == 2160) {
+     preset = "3840 x 2160";
+   } else if (widthSpin->value() == 1920 && heightSpin->value() == 1080) {
+     preset = "1920 x 1080";
+   } else if (widthSpin->value() == 1280 && heightSpin->value() == 720) {
+     preset = "1280 x 720";
+   }
+   const QSignalBlocker blocker(resolutionCombo);
+   const int index = resolutionCombo->findText(preset);
+   resolutionCombo->setCurrentIndex(index >= 0 ? index : resolutionCombo->findText("Custom"));
+   widthSpin->setEnabled(preset == "Custom");
+   heightSpin->setEnabled(preset == "Custom");
+ }
+
+ void ArtifactRenderOutputSettingDialog::Impl::ensureComboContains(QComboBox* combo, const QString& value)
+ {
+   if (!combo || value.trimmed().isEmpty()) {
+     return;
+   }
+   if (combo->findText(value) < 0) {
+     combo->addItem(value);
+   }
  }
 	
 	W_OBJECT_IMPL(ArtifactRenderOutputSettingDialog)
@@ -81,14 +151,20 @@ namespace Artifact
 
     // Format selection
     impl_->formatCombo = new QComboBox();
-    impl_->formatCombo->addItem("MP4 (H.264)");
-    impl_->formatCombo->addItem("MOV");
-    impl_->formatCombo->addItem("AVI");
-    impl_->formatCombo->addItem("Image Sequence (PNG)");
+    impl_->formatCombo->addItems(QStringList{
+      "MP4", "PNG Sequence", "EXR Sequence"
+    });
     formLayout->addRow("Format:", impl_->formatCombo);
+
+    impl_->codecCombo = new QComboBox();
+    impl_->codecCombo->addItems(QStringList{
+      "H.264", "H.265", "ProRes", "PNG", "EXR"
+    });
+    formLayout->addRow("Codec:", impl_->codecCombo);
 
     // Resolution presets + custom width/height
     impl_->resolutionCombo = new QComboBox();
+    impl_->resolutionCombo->addItem("3840 x 2160");
     impl_->resolutionCombo->addItem("1920 x 1080");
     impl_->resolutionCombo->addItem("1280 x 720");
     impl_->resolutionCombo->addItem("Custom");
@@ -111,15 +187,19 @@ namespace Artifact
     formLayout->addRow("Resolution:", resLayout);
 
     // Frame rate selection
-    impl_->fpsCombo = new QComboBox();
-    impl_->fpsCombo->addItem("23.976");
-    impl_->fpsCombo->addItem("24");
-    impl_->fpsCombo->addItem("25");
-    impl_->fpsCombo->addItem("29.97");
-    impl_->fpsCombo->addItem("30");
-    impl_->fpsCombo->addItem("60");
-    impl_->fpsCombo->setCurrentIndex(3); // default 29.97
-    formLayout->addRow("Frame Rate:", impl_->fpsCombo);
+    impl_->fpsSpin = new QDoubleSpinBox();
+    impl_->fpsSpin->setRange(1.0, 240.0);
+    impl_->fpsSpin->setDecimals(3);
+    impl_->fpsSpin->setSingleStep(0.5);
+    impl_->fpsSpin->setValue(30.0);
+    formLayout->addRow("Frame Rate:", impl_->fpsSpin);
+
+    impl_->bitrateSpin = new QSpinBox();
+    impl_->bitrateSpin->setRange(128, 200000);
+    impl_->bitrateSpin->setSingleStep(100);
+    impl_->bitrateSpin->setValue(8000);
+    impl_->bitrateSpin->setSuffix(" kbps");
+    formLayout->addRow("Bitrate:", impl_->bitrateSpin);
     
     // OK/Cancel buttons
     impl_->buttonBox = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
@@ -135,30 +215,112 @@ namespace Artifact
         impl_->handleBrowseClicked(this);
     });
 
-    QObject::connect(impl_->resolutionCombo, &QComboBox::currentTextChanged, [this](const QString& text){
-        if (text.contains("1920")) {
-            impl_->widthSpin->setValue(1920);
-            impl_->heightSpin->setValue(1080);
-            impl_->widthSpin->setEnabled(false);
-            impl_->heightSpin->setEnabled(false);
-        } else if (text.contains("1280")) {
-            impl_->widthSpin->setValue(1280);
-            impl_->heightSpin->setValue(720);
-            impl_->widthSpin->setEnabled(false);
-            impl_->heightSpin->setEnabled(false);
-        } else {
-            impl_->widthSpin->setEnabled(true);
-            impl_->heightSpin->setEnabled(true);
-        }
+    QObject::connect(impl_->resolutionCombo, &QComboBox::currentTextChanged, [this](const QString&) {
+        impl_->syncResolutionEditors();
+    });
+    QObject::connect(impl_->widthSpin, qOverload<int>(&QSpinBox::valueChanged), [this](int) {
+        impl_->syncResolutionPreset();
+    });
+    QObject::connect(impl_->heightSpin, qOverload<int>(&QSpinBox::valueChanged), [this](int) {
+        impl_->syncResolutionPreset();
     });
     
     QObject::connect(impl_->buttonBox, &QDialogButtonBox::accepted, this, &QDialog::accept);
     QObject::connect(impl_->buttonBox, &QDialogButtonBox::rejected, this, &QDialog::reject);
+    impl_->syncResolutionPreset();
  }
 
  ArtifactRenderOutputSettingDialog::~ArtifactRenderOutputSettingDialog()
  {
   delete impl_;
+ }
+
+ void ArtifactRenderOutputSettingDialog::setOutputPath(const QString& path)
+ {
+   if (impl_->outputPathEdit) {
+     impl_->outputPathEdit->setText(path);
+   }
+ }
+
+ QString ArtifactRenderOutputSettingDialog::outputPath() const
+ {
+   return impl_->outputPathEdit ? impl_->outputPathEdit->text() : QString();
+ }
+
+ void ArtifactRenderOutputSettingDialog::setOutputFormat(const QString& format)
+ {
+   Impl::ensureComboContains(impl_->formatCombo, format);
+   if (!impl_->formatCombo) {
+     return;
+   }
+   impl_->formatCombo->setCurrentIndex(std::max(0, impl_->formatCombo->findText(format)));
+ }
+
+ QString ArtifactRenderOutputSettingDialog::outputFormat() const
+ {
+   return impl_->formatCombo ? impl_->formatCombo->currentText() : QStringLiteral("MP4");
+ }
+
+ void ArtifactRenderOutputSettingDialog::setCodec(const QString& codec)
+ {
+   Impl::ensureComboContains(impl_->codecCombo, codec);
+   if (!impl_->codecCombo) {
+     return;
+   }
+   impl_->codecCombo->setCurrentIndex(std::max(0, impl_->codecCombo->findText(codec)));
+ }
+
+ QString ArtifactRenderOutputSettingDialog::codec() const
+ {
+   return impl_->codecCombo ? impl_->codecCombo->currentText() : QStringLiteral("H.264");
+ }
+
+ void ArtifactRenderOutputSettingDialog::setResolution(int width, int height)
+ {
+   if (!impl_->widthSpin || !impl_->heightSpin) {
+     return;
+   }
+   {
+     const QSignalBlocker widthBlock(impl_->widthSpin);
+     const QSignalBlocker heightBlock(impl_->heightSpin);
+     impl_->widthSpin->setValue(std::max(1, width));
+     impl_->heightSpin->setValue(std::max(1, height));
+   }
+   impl_->syncResolutionPreset();
+ }
+
+ int ArtifactRenderOutputSettingDialog::outputWidth() const
+ {
+   return impl_->widthSpin ? impl_->widthSpin->value() : 1920;
+ }
+
+ int ArtifactRenderOutputSettingDialog::outputHeight() const
+ {
+   return impl_->heightSpin ? impl_->heightSpin->value() : 1080;
+ }
+
+ void ArtifactRenderOutputSettingDialog::setFrameRate(double fps)
+ {
+   if (impl_->fpsSpin) {
+     impl_->fpsSpin->setValue(std::max(1.0, fps));
+   }
+ }
+
+ double ArtifactRenderOutputSettingDialog::frameRate() const
+ {
+   return impl_->fpsSpin ? impl_->fpsSpin->value() : 30.0;
+ }
+
+ void ArtifactRenderOutputSettingDialog::setBitrateKbps(int bitrateKbps)
+ {
+   if (impl_->bitrateSpin) {
+     impl_->bitrateSpin->setValue(std::max(128, bitrateKbps));
+   }
+ }
+
+ int ArtifactRenderOutputSettingDialog::bitrateKbps() const
+ {
+   return impl_->bitrateSpin ? impl_->bitrateSpin->value() : 8000;
  }
 
 };
