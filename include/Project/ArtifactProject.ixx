@@ -96,6 +96,7 @@ export namespace Artifact {
   void createFolder(const QString& name);
   bool moveItem(ProjectItem* item, ProjectItem* newParent);
   bool removeItem(ProjectItem* item);
+  bool validateProjectTree(QString* errorMessage = nullptr) const;
   bool isDirty() const;
   QJsonObject toJson() const;
    

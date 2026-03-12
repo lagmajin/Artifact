@@ -65,6 +65,7 @@ This milestone is focused on perceived product completeness rather than adding m
 6. Project View internal drag-and-drop supports moving items into folders.
 7. RC-5 regression checklist document added.
 8. Save/Load project tree verification case document added.
+9. Project tree integrity validation added before serialization (`ArtifactProject::toJson` path).
 
 ## Next Slice
 
