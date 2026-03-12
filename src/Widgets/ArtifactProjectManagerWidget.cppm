@@ -1018,6 +1018,37 @@ void ArtifactProjectView::leaveEvent(QEvent* event) {
     QTreeView::leaveEvent(event);
 }
 
+void ArtifactProjectView::showEvent(QShowEvent* event)
+{
+    QTreeView::showEvent(event);
+    QTimer::singleShot(0, this, [this]() {
+        refreshVisibleContent();
+    });
+}
+
+bool ArtifactProjectView::event(QEvent* event)
+{
+    const bool handled = QTreeView::event(event);
+    if (event && (event->type() == QEvent::WindowActivate ||
+                  event->type() == QEvent::ActivationChange ||
+                  event->type() == QEvent::PolishRequest)) {
+        QTimer::singleShot(0, this, [this]() {
+            refreshVisibleContent();
+        });
+    }
+    return handled;
+}
+
+void ArtifactProjectView::refreshVisibleContent()
+{
+    doItemsLayout();
+    updateGeometries();
+    if (viewport()) {
+        viewport()->update();
+    }
+    update();
+}
+
 void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
     QModelIndex idx = indexAt(event->pos());
     QMenu menu(this);
@@ -2005,6 +2036,42 @@ ArtifactProjectManagerWidget::~ArtifactProjectManagerWidget() { delete impl_; }
 void ArtifactProjectManagerWidget::updateRequested() {
     impl_->update();
     setEnabled(true);
+}
+
+void ArtifactProjectManagerWidget::showEvent(QShowEvent* event)
+{
+    QWidget::showEvent(event);
+    QTimer::singleShot(0, this, [this]() {
+        if (!impl_) {
+            return;
+        }
+        impl_->update();
+        if (impl_->projectView_) {
+            impl_->projectView_->refreshVisibleContent();
+        }
+    });
+}
+
+bool ArtifactProjectManagerWidget::event(QEvent* event)
+{
+    const bool handled = QWidget::event(event);
+    if (event && (event->type() == QEvent::WindowActivate ||
+                  event->type() == QEvent::ActivationChange ||
+                  event->type() == QEvent::PolishRequest)) {
+        QTimer::singleShot(0, this, [this]() {
+            if (!impl_) {
+                return;
+            }
+            if (impl_->projectView_ && impl_->projectView_->viewport()) {
+                impl_->projectView_->viewport()->update();
+            }
+            if (impl_->projectView_) {
+                impl_->projectView_->update();
+            }
+            update();
+        });
+    }
+    return handled;
 }
 
 void ArtifactProjectManagerWidget::triggerUpdate() { impl_->update(); }

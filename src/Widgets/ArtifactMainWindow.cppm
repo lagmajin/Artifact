@@ -2,15 +2,27 @@
 #include <wobjectimpl.h>
 #include <DockManager.h>
 #include <DockWidget.h>
+#include <DockWidgetTab.h>
+#include <FloatingDockContainer.h>
+#include <QAbstractScrollArea>
+#include <QApplication>
 #include <QWidget>
 #include <QColor>
 #include <QStatusBar>
 #include <QMessageBox>
+#include <QEvent>
 #include <QKeyEvent>
+#include <QLayout>
 #include <QCloseEvent>
 #include <QShowEvent>
 #include <QList>
 #include <QTimer>
+#if defined(_WIN32)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#endif
 
 module Artifact.MainWindow;
 
@@ -22,6 +34,184 @@ import Widgets.Dock.StyleManager;
 namespace Artifact {
 
 using namespace ads;
+
+namespace
+{
+#if defined(_WIN32)
+using DwmSetWindowAttributeFn = HRESULT(WINAPI*)(HWND, DWORD, LPCVOID, DWORD);
+
+void applyDarkNativeTitleBar(QWidget* widget)
+{
+ if (!widget) {
+  return;
+ }
+
+ const HWND hwnd = reinterpret_cast<HWND>(widget->winId());
+ if (!hwnd) {
+  return;
+ }
+
+ static HMODULE dwmModule = ::LoadLibraryW(L"dwmapi.dll");
+ if (!dwmModule) {
+  return;
+ }
+
+ static const auto setWindowAttribute =
+  reinterpret_cast<DwmSetWindowAttributeFn>(::GetProcAddress(dwmModule, "DwmSetWindowAttribute"));
+ if (!setWindowAttribute) {
+  return;
+ }
+
+ const BOOL darkModeEnabled = TRUE;
+ const DWORD darkModeAttributes[] = {20u, 19u};
+ for (const DWORD attribute : darkModeAttributes) {
+  setWindowAttribute(hwnd, attribute, &darkModeEnabled, sizeof(darkModeEnabled));
+ }
+
+ const COLORREF captionColor = RGB(36, 43, 52);
+ const COLORREF textColor = RGB(236, 242, 248);
+ const COLORREF borderColor = RGB(74, 96, 122);
+ setWindowAttribute(hwnd, 35u, &captionColor, sizeof(captionColor));
+ setWindowAttribute(hwnd, 36u, &textColor, sizeof(textColor));
+ setWindowAttribute(hwnd, 34u, &borderColor, sizeof(borderColor));
+}
+#else
+void applyDarkNativeTitleBar(QWidget*) {}
+#endif
+
+void refreshFloatingWidgetTree(QWidget* widget)
+{
+ if (!widget) {
+  return;
+ }
+
+ if (auto* layout = widget->layout()) {
+  layout->invalidate();
+  layout->activate();
+ }
+
+ widget->updateGeometry();
+ widget->update();
+
+ for (auto* scrollArea : widget->findChildren<QAbstractScrollArea*>()) {
+  if (!scrollArea) {
+   continue;
+  }
+  scrollArea->updateGeometry();
+  if (scrollArea->viewport()) {
+   scrollArea->viewport()->update();
+  }
+  scrollArea->update();
+ }
+
+ for (auto* child : widget->findChildren<QWidget*>()) {
+  if (!child || child->isWindow()) {
+   continue;
+  }
+  child->updateGeometry();
+  child->update();
+ }
+}
+
+ads::CFloatingDockContainer* findFloatingDockContainer(QWidget* widget)
+{
+ QWidget* cursor = widget;
+ while (cursor) {
+  if (auto* floatingWidget = qobject_cast<ads::CFloatingDockContainer*>(cursor)) {
+   return floatingWidget;
+  }
+  cursor = cursor->parentWidget();
+ }
+ return nullptr;
+}
+
+void refreshDockWidgetSurface(ads::CDockWidget* dock)
+{
+ if (!dock) {
+  return;
+ }
+
+ dock->updateGeometry();
+ dock->update();
+
+ if (auto* tab = dock->tabWidget()) {
+  tab->updateStyle();
+  tab->updateGeometry();
+  tab->update();
+  for (auto* child : tab->findChildren<QWidget*>()) {
+   if (!child) {
+    continue;
+   }
+   child->updateGeometry();
+   child->update();
+  }
+ }
+
+ if (auto* content = dock->widget()) {
+  refreshFloatingWidgetTree(content);
+ }
+}
+
+void scheduleFloatingRefresh(ads::CFloatingDockContainer* floatingWidget)
+{
+ if (!floatingWidget) {
+  return;
+ }
+
+ if (floatingWidget->property("artifactFloatingRefreshScheduled").toBool()) {
+  return;
+ }
+
+ floatingWidget->setProperty("artifactFloatingRefreshScheduled", true);
+ QTimer::singleShot(0, floatingWidget, [floatingWidget]() {
+  floatingWidget->setProperty("artifactFloatingRefreshScheduled", false);
+  refreshFloatingWidgetTree(floatingWidget);
+ });
+}
+
+void prepareFloatingDockContainer(ads::CFloatingDockContainer* floatingWidget, QObject* eventFilterOwner);
+
+void wireDockWidgetSignals(ads::CDockWidget* dock, QObject* owner)
+{
+ if (!dock || !owner || dock->property("artifactFloatingHooksInstalled").toBool()) {
+  return;
+ }
+
+ dock->setProperty("artifactFloatingHooksInstalled", true);
+
+ QObject::connect(dock, &ads::CDockWidget::topLevelChanged, owner, [dock, owner](bool) {
+  refreshDockWidgetSurface(dock);
+  if (auto* floatingWidget = findFloatingDockContainer(dock)) {
+   prepareFloatingDockContainer(floatingWidget, owner);
+  }
+ });
+
+ QObject::connect(dock, &ads::CDockWidget::visibilityChanged, owner, [dock](bool) {
+  refreshDockWidgetSurface(dock);
+  if (auto* floatingWidget = findFloatingDockContainer(dock)) {
+   scheduleFloatingRefresh(floatingWidget);
+  }
+ });
+}
+
+void prepareFloatingDockContainer(ads::CFloatingDockContainer* floatingWidget, QObject* eventFilterOwner)
+{
+ if (!floatingWidget) {
+  return;
+ }
+
+ if (eventFilterOwner) {
+  floatingWidget->removeEventFilter(eventFilterOwner);
+  floatingWidget->installEventFilter(eventFilterOwner);
+ }
+
+ QTimer::singleShot(0, floatingWidget, [floatingWidget]() {
+  applyDarkNativeTitleBar(floatingWidget);
+  floatingWidget->setAttribute(Qt::WA_StyledBackground, true);
+  scheduleFloatingRefresh(floatingWidget);
+ });
+}
+}
 
 W_OBJECT_IMPL(ArtifactMainWindow)
 
@@ -55,6 +245,12 @@ ArtifactMainWindow::ArtifactMainWindow(QWidget* parent)
 
  impl_->dockManager = new CDockManager(this);
  impl_->dockStyleManager = new DockStyleManager(impl_->dockManager, this);
+ if (qApp) {
+  qApp->installEventFilter(this);
+ }
+ QObject::connect(impl_->dockManager, &CDockManager::floatingWidgetCreated, this, [this](ads::CFloatingDockContainer* floatingWidget) {
+  prepareFloatingDockContainer(floatingWidget, this);
+ });
  impl_->dockStyleManager->setGlowEnabled(true);
  impl_->dockStyleManager->setGlowColor(QColor(86, 156, 214));
  impl_->dockStyleManager->setGlowWidth(3);
@@ -106,35 +302,83 @@ ads--CFloatingDockContainer ads--CDockAreaTitleBar {
 ads--CFloatingDockContainer ads--CDockAreaTitleBar QLabel {
  color: #eef5ff;
 }
-ads--CFloatingDockContainer ads--CDockWidgetTab[activeTab="true"] {
- background: #223041;
- border-color: #5f7fa2;
- color: #f4f8ff;
-}
 ads--CDockWidgetTab {
- background: #2b2b2b;
- color: #a9a9a9;
- border: 1px solid #333333;
+ background: #262b31;
+ color: #b3bcc7;
+ border: 1px solid #3d4652;
  border-bottom: none;
- border-top-left-radius: 3px;
- border-top-right-radius: 3px;
- padding: 4px 10px;
+ border-top-left-radius: 4px;
+ border-top-right-radius: 4px;
+ padding: 5px 10px 5px 12px;
 }
 ads--CDockWidgetTab:hover {
- background: #343434;
- color: #d0d0d0;
+ background: #313943;
+ color: #edf2f7;
+ border-color: #58677a;
 }
 ads--CDockWidgetTab[activeTab="true"] {
- background: #1e1e1e;
- color: #f0f0f0;
- border-color: #4c4c4c;
+ background: #3a444f;
+ color: #f4f7fb;
+ border-color: #73849a;
 }
 ads--CDockWidgetTab[artifactActiveTab="true"] {
- background: #1d2430;
- color: #f4f8ff;
- border-color: #569cd6;
- border-top: 2px solid #78b7f2;
+ background: #4f6478;
+ color: #ffffff;
+ border-color: #9cb2c7;
+ border-top: 2px solid #d1dee9;
  font-weight: 600;
+}
+ads--CDockWidgetTab QLabel,
+ads--CDockWidgetTab ads--CElidingLabel {
+ background: transparent;
+ color: #b3bcc7;
+ padding-left: 0px;
+ padding-right: 0px;
+}
+ads--CDockWidgetTab[activeTab="true"] QLabel,
+ads--CDockWidgetTab[activeTab="true"] ads--CElidingLabel {
+ color: #f4f7fb;
+}
+ads--CDockWidgetTab[artifactActiveTab="true"] QLabel,
+ads--CDockWidgetTab[artifactActiveTab="true"] ads--CElidingLabel {
+ color: #ffffff;
+ font-weight: 600;
+}
+ads--CDockWidgetTab[artifactFloatingTab="true"] {
+ background: #232a32;
+ color: #b4c0cc;
+ border-color: #4a5765;
+}
+ads--CDockWidgetTab[artifactFloatingTab="true"] QLabel,
+ads--CDockWidgetTab[artifactFloatingTab="true"] ads--CElidingLabel {
+ color: #b4c0cc;
+}
+ads--CDockWidgetTab[artifactFloatingTab="true"]:hover {
+ background: #303b47;
+ color: #f3f7fb;
+ border-color: #66798e;
+}
+ads--CDockWidgetTab[artifactFloatingTab="true"]:hover QLabel,
+ads--CDockWidgetTab[artifactFloatingTab="true"]:hover ads--CElidingLabel {
+ color: #f3f7fb;
+}
+ads--CDockWidgetTab[artifactFloatingTab="true"][activeTab="true"] {
+ background: #435364;
+ color: #f7fbff;
+ border-color: #8ea4bc;
+}
+ads--CDockWidgetTab[artifactFloatingTab="true"][activeTab="true"] QLabel,
+ads--CDockWidgetTab[artifactFloatingTab="true"][activeTab="true"] ads--CElidingLabel {
+ color: #f7fbff;
+}
+ads--CDockWidgetTab[artifactFloatingTab="true"][artifactActiveTab="true"] {
+ background: #5a7086;
+ color: #ffffff;
+ border-color: #c0d0de;
+}
+ads--CDockWidgetTab[artifactFloatingTab="true"][artifactActiveTab="true"] QLabel,
+ads--CDockWidgetTab[artifactFloatingTab="true"][artifactActiveTab="true"] ads--CElidingLabel {
+ color: #ffffff;
 }
 ads--CDockWidget[artifactActiveDock="true"] {
  background: #1c2430;
@@ -153,13 +397,25 @@ ads--CDockWidgetTab QPushButton#tabCloseButton {
  background: transparent;
  border: 1px solid transparent;
  border-radius: 6px;
- color: #a8a8a8;
- min-width: 14px;
- min-height: 14px;
- max-width: 14px;
- max-height: 14px;
+ color: transparent;
+ min-width: 0px;
+ min-height: 13px;
+ max-width: 0px;
+ max-height: 13px;
  padding: 0px;
- margin-left: 6px;
+ margin-left: 0px;
+ margin-right: 0px;
+}
+ads--CDockWidgetTab:hover QAbstractButton#tabCloseButton,
+ads--CDockWidgetTab:hover QPushButton#tabCloseButton,
+ads--CDockWidgetTab[activeTab="true"] QAbstractButton#tabCloseButton,
+ads--CDockWidgetTab[activeTab="true"] QPushButton#tabCloseButton,
+ads--CDockWidgetTab[artifactActiveTab="true"] QAbstractButton#tabCloseButton,
+ads--CDockWidgetTab[artifactActiveTab="true"] QPushButton#tabCloseButton {
+ color: #a8a8a8;
+ min-width: 13px;
+ max-width: 13px;
+ margin-left: 3px;
 }
 ads--CDockWidgetTab QAbstractButton#tabCloseButton:hover,
 ads--CDockWidgetTab QPushButton#tabCloseButton:hover {
@@ -187,6 +443,9 @@ ads--CDockWidgetTab QPushButton#tabCloseButton:pressed {
 
 ArtifactMainWindow::~ArtifactMainWindow()
 {
+ if (qApp) {
+  qApp->removeEventFilter(this);
+ }
  delete impl_;
 }
 
@@ -205,6 +464,7 @@ void ArtifactMainWindow::addDockedWidget(const QString& title, ads::DockWidgetAr
   if (!impl_->dockWidgets.contains(impl_->primaryCenterDock)) {
    impl_->dockWidgets.push_back(impl_->primaryCenterDock);
   }
+  wireDockWidgetSignals(impl_->primaryCenterDock, this);
   impl_->dockStyleManager->applyStyle();
   return;
  }
@@ -213,6 +473,7 @@ void ArtifactMainWindow::addDockedWidget(const QString& title, ads::DockWidgetAr
  dock->setWidget(widget);
  impl_->dockManager->addDockWidget(area, dock);
  impl_->dockWidgets.push_back(dock);
+ wireDockWidgetSignals(dock, this);
  impl_->dockStyleManager->applyStyle();
 }
 
@@ -226,6 +487,20 @@ void ArtifactMainWindow::addDockedWidgetTabbed(const QString& title, ads::DockWi
 
  ads::CDockAreaWidget* targetArea = nullptr;
  if (!tabGroupPrefix.isEmpty()) {
+  for (auto it = impl_->dockWidgets.crbegin(); it != impl_->dockWidgets.crend(); ++it) {
+   auto* existingDock = *it;
+   if (!existingDock) continue;
+   const QString objectName = existingDock->objectName();
+   const QString windowTitle = existingDock->windowTitle();
+   if ((objectName == tabGroupPrefix || windowTitle == tabGroupPrefix) &&
+       existingDock->dockAreaWidget()) {
+    targetArea = existingDock->dockAreaWidget();
+    break;
+   }
+  }
+ }
+
+ if (!targetArea && !tabGroupPrefix.isEmpty()) {
   for (auto it = impl_->dockWidgets.crbegin(); it != impl_->dockWidgets.crend(); ++it) {
    auto* existingDock = *it;
    if (!existingDock) continue;
@@ -249,6 +524,54 @@ void ArtifactMainWindow::addDockedWidgetTabbed(const QString& title, ads::DockWi
  dock->toggleView(true);
  dock->setAsCurrentTab();
  dock->raise();
+ wireDockWidgetSignals(dock, this);
+ impl_->dockStyleManager->applyStyle();
+}
+
+void ArtifactMainWindow::moveDockToTabGroup(const QString& title, const QString& tabGroupPrefix)
+{
+ if (!impl_ || !impl_->dockManager || title.isEmpty() || tabGroupPrefix.isEmpty()) return;
+
+ CDockWidget* dockToMove = nullptr;
+ ads::CDockAreaWidget* targetArea = nullptr;
+
+ for (auto it = impl_->dockWidgets.crbegin(); it != impl_->dockWidgets.crend(); ++it) {
+  auto* existingDock = *it;
+  if (!existingDock) continue;
+
+  const QString objectName = existingDock->objectName();
+  const QString windowTitle = existingDock->windowTitle();
+  if (!dockToMove && (objectName == title || windowTitle == title)) {
+   dockToMove = existingDock;
+  }
+  if (!targetArea &&
+      (objectName == tabGroupPrefix || windowTitle == tabGroupPrefix) &&
+      existingDock->dockAreaWidget()) {
+   targetArea = existingDock->dockAreaWidget();
+  }
+ }
+
+ if (!targetArea) {
+  for (auto it = impl_->dockWidgets.crbegin(); it != impl_->dockWidgets.crend(); ++it) {
+   auto* existingDock = *it;
+   if (!existingDock) continue;
+
+   const QString objectName = existingDock->objectName();
+   const QString windowTitle = existingDock->windowTitle();
+   if ((objectName.startsWith(tabGroupPrefix) || windowTitle.startsWith(tabGroupPrefix)) &&
+       existingDock->dockAreaWidget()) {
+    targetArea = existingDock->dockAreaWidget();
+    break;
+   }
+  }
+ }
+
+ if (!dockToMove || !targetArea || dockToMove->dockAreaWidget() == targetArea) {
+  return;
+ }
+
+ impl_->dockManager->addDockWidgetTabToArea(dockToMove, targetArea);
+ dockToMove->toggleView(true);
  impl_->dockStyleManager->applyStyle();
 }
 
@@ -351,6 +674,60 @@ void ArtifactMainWindow::closeEvent(QCloseEvent* event)
 void ArtifactMainWindow::showEvent(QShowEvent* event)
 {
  QMainWindow::showEvent(event);
+ QTimer::singleShot(0, this, [this]() {
+  if (!impl_ || !impl_->dockManager) {
+   return;
+  }
+  applyDarkNativeTitleBar(this);
+  refreshFloatingWidgetTree(this);
+  for (auto* dock : impl_->dockWidgets) {
+   wireDockWidgetSignals(dock, this);
+   refreshDockWidgetSurface(dock);
+  }
+  const auto floatingWidgets = impl_->dockManager->floatingWidgets();
+  for (auto* floatingWidget : floatingWidgets) {
+   prepareFloatingDockContainer(floatingWidget, this);
+  }
+ });
+}
+
+bool ArtifactMainWindow::eventFilter(QObject* watched, QEvent* event)
+{
+ ads::CFloatingDockContainer* floatingWidget = qobject_cast<ads::CFloatingDockContainer*>(watched);
+ if (!floatingWidget) {
+  if (auto* watchedWidget = qobject_cast<QWidget*>(watched)) {
+   floatingWidget = findFloatingDockContainer(watchedWidget);
+  }
+ }
+
+ if (floatingWidget) {
+  const bool isRootFloatingWidget = (watched == floatingWidget);
+  switch (event ? event->type() : QEvent::None) {
+  case QEvent::Resize:
+  case QEvent::Show:
+  case QEvent::Hide:
+   scheduleFloatingRefresh(floatingWidget);
+   break;
+  case QEvent::ActivationChange:
+  case QEvent::ChildAdded:
+  case QEvent::ChildRemoved:
+  case QEvent::LayoutRequest:
+  case QEvent::Polish:
+  case QEvent::PolishRequest:
+  case QEvent::WindowActivate:
+  case QEvent::WindowDeactivate:
+  case QEvent::WindowStateChange:
+  case QEvent::ZOrderChange:
+   if (isRootFloatingWidget) {
+    scheduleFloatingRefresh(floatingWidget);
+   }
+   break;
+  default:
+   break;
+  }
+ }
+
+ return QMainWindow::eventFilter(watched, event);
 }
 
 }

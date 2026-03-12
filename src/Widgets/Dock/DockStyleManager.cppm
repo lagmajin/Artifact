@@ -3,6 +3,7 @@ module;
 #include <QApplication>
 #include <QColor>
 #include <QEvent>
+#include <QLabel>
 #include <QGraphicsDropShadowEffect>
 #include <QPointer>
 #include <QStyle>
@@ -107,10 +108,7 @@ ads::CDockWidget* dockFromObject(QObject* object) {
 
 ads::CDockWidget* resolveActiveDock(ads::CDockManager* dockManager, ads::CDockWidget* rememberedDock) {
     if (!dockManager) return nullptr;
-
-    if (rememberedDock && rememberedDock->isVisible()) {
-        return rememberedDock;
-    }
+    Q_UNUSED(rememberedDock);
 
     if (auto* focusedDock = dockManager->focusedDockWidget()) {
         if (focusedDock->isVisible()) {
@@ -138,6 +136,38 @@ ads::CDockWidget* resolveActiveDock(ads::CDockManager* dockManager, ads::CDockWi
     }
 
     return nullptr;
+}
+
+QString tabTextColor(const bool isActiveDock, const bool isFloatingTab, const bool isCurrentTab)
+{
+    if (isActiveDock) {
+        return QStringLiteral("#ffffff");
+    }
+    if (isFloatingTab && isCurrentTab) {
+        return QStringLiteral("#f7fbff");
+    }
+    if (isCurrentTab) {
+        return QStringLiteral("#eef5fd");
+    }
+    if (isFloatingTab) {
+        return QStringLiteral("#a7b8ca");
+    }
+    return QStringLiteral("#95a4b4");
+}
+
+void applyTabLabelColors(ads::CDockWidgetTab* tab, const QString& color, const bool emphasize)
+{
+    if (!tab) {
+        return;
+    }
+
+    const QString labelStyle = QStringLiteral("color: %1; background: transparent; font-weight: %2;")
+        .arg(color, emphasize ? QStringLiteral("600") : QStringLiteral("500"));
+    for (auto* label : tab->findChildren<QLabel*>()) {
+        if (label) {
+            label->setStyleSheet(labelStyle);
+        }
+    }
 }
 
 }
@@ -281,25 +311,24 @@ void DockStyleManager::refreshDockDecorations() {
     for (auto* dock : docks) {
         if (!dock) continue;
 
-        const bool isActive = (dock == activeDock);
-        dock->setProperty("artifactActiveDock", isActive);
+        const bool isActiveDock = (dock == activeDock);
+        const bool isFloating = dock->isInFloatingContainer();
+        dock->setProperty("artifactActiveDock", isActiveDock);
+        dock->setProperty("artifactFloatingDock", isFloating);
         clearDockGlow(dock);
         repolishWidget(dock);
 
         auto* tab = dock->tabWidget();
         if (!tab) continue;
 
-        tab->setProperty("artifactActiveTab", isActive);
-        if (isActive && impl_->glowEnabled_) {
-            auto* effect = ensureTabGlow(tab);
-            effect->setBlurRadius(18.0 + static_cast<qreal>(impl_->glowWidth_) * 2.0);
-            effect->setOffset(0.0, 0.0);
-            QColor glowColor = impl_->glowColor_;
-            glowColor.setAlphaF(std::clamp(impl_->glowIntensity_, 0.0f, 1.0f));
-            effect->setColor(glowColor);
-        } else {
-            clearTabGlow(tab);
-        }
+        const bool isCurrentTab = tab->isActiveTab();
+        const bool isActiveTab = isActiveDock && isCurrentTab;
+        tab->setProperty("artifactActiveTab", isActiveTab);
+        tab->setProperty("artifactFloatingTab", isFloating);
+        tab->setProperty("artifactCurrentTab", isCurrentTab);
+        clearTabGlow(tab);
+        applyTabLabelColors(tab, tabTextColor(isActiveTab, isFloating, isCurrentTab), isActiveTab || isCurrentTab);
+        tab->updateStyle();
         repolishWidget(tab);
     }
     impl_->dockManager_->update();

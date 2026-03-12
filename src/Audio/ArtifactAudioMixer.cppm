@@ -97,6 +97,14 @@ bool supportsMixerLayer(const ArtifactAbstractLayerPtr& layer)
     return static_cast<bool>(std::dynamic_pointer_cast<ArtifactAudioLayer>(layer)) ||
         static_cast<bool>(std::dynamic_pointer_cast<ArtifactVideoLayer>(layer));
 }
+
+float volumeToMeterDb(const float volume, const bool muted)
+{
+    if (muted || volume <= 0.0001f) {
+        return -60.0f;
+    }
+    return std::clamp(20.0f * std::log10(volume), -60.0f, 0.0f);
+}
 }
 
     W_OBJECT_IMPL(AudioMixerChannelStrip)
@@ -155,7 +163,11 @@ QString AudioMixerChannelStrip::layerName() const
 
 void AudioMixerChannelStrip::setVolume(float volume)
 {
-    impl_->volume_ = std::clamp(volume, 0.0f, 2.0f);
+    const float clamped = std::clamp(volume, 0.0f, 2.0f);
+    if (std::abs(impl_->volume_ - clamped) <= 0.0001f) {
+        return;
+    }
+    impl_->volume_ = clamped;
     Q_EMIT volumeChanged(impl_->volume_);
 }
 
@@ -289,7 +301,11 @@ AudioMixerMasterBus::~AudioMixerMasterBus()
 
 void AudioMixerMasterBus::setVolume(float volume)
 {
-    impl_->volume_ = std::clamp(volume, 0.0f, 2.0f);
+    const float clamped = std::clamp(volume, 0.0f, 2.0f);
+    if (std::abs(impl_->volume_ - clamped) <= 0.0001f) {
+        return;
+    }
+    impl_->volume_ = clamped;
     Q_EMIT volumeChanged(impl_->volume_);
 }
 
@@ -334,6 +350,38 @@ public:
     ArtifactCompositionPtr composition_;
     int sampleRate_ = 44100;
     int bufferSize_ = 512;
+
+    void refreshDerivedLevels() const
+    {
+        float masterLeft = -60.0f;
+        float masterRight = -60.0f;
+
+        for (const auto& pair : channelStrips_) {
+            auto* strip = pair.second.get();
+            if (!strip) {
+                continue;
+            }
+
+            const float level = volumeToMeterDb(strip->volume(), strip->isMuted());
+            strip->updateLevels(level, level);
+            masterLeft = std::max(masterLeft, level);
+            masterRight = std::max(masterRight, level);
+        }
+
+        if (!masterBus_) {
+            return;
+        }
+
+        if (masterBus_->isMuted() || channelStrips_.empty()) {
+            masterBus_->updateLevels(-60.0f, -60.0f);
+            return;
+        }
+
+        const float masterGain = volumeToMeterDb(masterBus_->volume(), false);
+        masterBus_->updateLevels(
+            std::clamp(masterLeft + masterGain, -60.0f, 0.0f),
+            std::clamp(masterRight + masterGain, -60.0f, 0.0f));
+    }
 };
 
 AudioMixer::AudioMixer(QObject* parent)
@@ -341,6 +389,14 @@ AudioMixer::AudioMixer(QObject* parent)
     , impl_(new Impl())
 {
     impl_->masterBus_ = std::make_unique<AudioMixerMasterBus>(this);
+    QObject::connect(impl_->masterBus_.get(), &AudioMixerMasterBus::volumeChanged, this,
+        [this](const float) {
+            impl_->refreshDerivedLevels();
+        });
+    QObject::connect(impl_->masterBus_.get(), &AudioMixerMasterBus::muteChanged, this,
+        [this](const bool) {
+            impl_->refreshDerivedLevels();
+        });
 }
 
 AudioMixer::~AudioMixer()
@@ -419,6 +475,7 @@ void AudioMixer::syncFromComposition(ArtifactCompositionPtr composition)
     clearChannelStrips();
 
     if (!composition) {
+        impl_->refreshDerivedLevels();
         return;
     }
 
@@ -442,18 +499,23 @@ void AudioMixer::syncFromComposition(ArtifactCompositionPtr composition)
         }
 
         QObject::connect(strip, &AudioMixerChannelStrip::volumeChanged, this,
-            [layer](const float volume) {
+            [this, layer](const float volume) {
                 applyLayerVolume(layer, volume);
+                impl_->refreshDerivedLevels();
             });
         QObject::connect(strip, &AudioMixerChannelStrip::muteChanged, this,
-            [layer](const bool muted) {
+            [this, layer](const bool muted) {
                 applyLayerMuted(layer, muted);
+                impl_->refreshDerivedLevels();
             });
         QObject::connect(strip, &AudioMixerChannelStrip::soloChanged, this,
-            [layer](const bool solo) {
+            [this, layer](const bool solo) {
                 applyLayerSolo(layer, solo);
+                impl_->refreshDerivedLevels();
             });
     }
+
+    impl_->refreshDerivedLevels();
 }
 
 ArtifactCompositionPtr AudioMixer::composition() const
@@ -487,6 +549,7 @@ void AudioMixer::setAllMuted(bool muted)
         pair.second->setMuted(muted);
     }
     impl_->masterBus_->setMuted(muted);
+    impl_->refreshDerivedLevels();
 }
 
 void AudioMixer::resetAllPeaks()
