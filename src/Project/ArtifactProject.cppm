@@ -8,6 +8,7 @@ module;
 #include <QJsonArray>
 #include <QVector>
 #include <QDir>
+#include <QSet>
 #include <QtTest/QtTest>
 //#include <QtCore/QString>
 module Artifact.Project;
@@ -380,9 +381,17 @@ void ArtifactProject::Impl::createCompositions(const QStringList& names) {}
   setDirty(true);
  }
 
- QString ArtifactProject::Impl::aiNotes() const
+	 QString ArtifactProject::Impl::aiNotes() const
+	 {
+	  return aiNotes_;
+	 }
+
+ static bool setTreeError(QString* errorMessage, const QString& message)
  {
-  return aiNotes_;
+  if (errorMessage) {
+   *errorMessage = message;
+  }
+  return false;
  }
 
  static QString compositionNameFromItems(const std::vector<std::unique_ptr<ProjectItem>>& ownedItems, const CompositionID& id)
@@ -419,8 +428,8 @@ void ArtifactProject::Impl::createCompositions(const QStringList& names) {}
   return LayerType::Solid;
  }
 
- QJsonObject ArtifactProject::Impl::toJson() const
- {
+	 QJsonObject ArtifactProject::Impl::toJson() const
+	 {
   QJsonObject result;
   result["name"] = projectSettings_.projectName();
   result["author"] = projectSettings_.author().toQString();
@@ -450,9 +459,94 @@ void ArtifactProject::Impl::createCompositions(const QStringList& names) {}
    }
   }
   result["compositions"] = compsArray;
-  return result;
+	  return result;
+	 }
+
+ bool ArtifactProject::validateProjectTree(QString* errorMessage) const
+ {
+  if (!impl_) {
+   return setTreeError(errorMessage, QStringLiteral("Project impl is null."));
+  }
+  if (impl_->ownedItems_.empty()) {
+   return setTreeError(errorMessage, QStringLiteral("Owned item list is empty."));
+  }
+
+  ProjectItem* const root = impl_->ownedItems_.front().get();
+  if (!root) {
+   return setTreeError(errorMessage, QStringLiteral("Project root item is null."));
+  }
+  if (root->type() != eProjectItemType::Folder) {
+   return setTreeError(errorMessage, QStringLiteral("Project root item must be a folder."));
+  }
+  if (root->parent != nullptr) {
+   return setTreeError(errorMessage, QStringLiteral("Project root parent must be null."));
+  }
+
+  QSet<const ProjectItem*> ownedSet;
+  for (const auto& up : impl_->ownedItems_) {
+   if (!up) {
+    return setTreeError(errorMessage, QStringLiteral("Owned item contains null pointer."));
+   }
+   const ProjectItem* raw = up.get();
+   if (ownedSet.contains(raw)) {
+    return setTreeError(errorMessage, QStringLiteral("Duplicate project item pointer detected."));
+   }
+   ownedSet.insert(raw);
+  }
+
+  QSet<const ProjectItem*> activePath;
+  QSet<const ProjectItem*> visited;
+  std::function<bool(const ProjectItem*)> walk = [&](const ProjectItem* node) -> bool {
+   if (!node) {
+    return setTreeError(errorMessage, QStringLiteral("Encountered null node during walk."));
+   }
+   if (!ownedSet.contains(node)) {
+    return setTreeError(errorMessage, QStringLiteral("Encountered node not owned by project."));
+   }
+   if (activePath.contains(node)) {
+    return setTreeError(errorMessage, QStringLiteral("Cycle detected in project tree."));
+   }
+   if (visited.contains(node)) {
+    return true;
+   }
+
+   activePath.insert(node);
+   visited.insert(node);
+   for (const auto* child : node->children) {
+    if (!child) {
+     return setTreeError(errorMessage, QStringLiteral("Child pointer is null."));
+    }
+    if (child->parent != node) {
+      return setTreeError(errorMessage, QStringLiteral("Child parent pointer mismatch."));
+    }
+    if (!walk(child)) {
+     return false;
+    }
+   }
+   activePath.remove(node);
+   return true;
+  };
+
+  if (!walk(root)) {
+   return false;
+  }
+
+  for (const auto& up : impl_->ownedItems_) {
+   const ProjectItem* node = up.get();
+   if (!visited.contains(node)) {
+    return setTreeError(errorMessage, QStringLiteral("Found unreachable project item from root."));
+   }
+   if (node != root && node->parent == nullptr) {
+    return setTreeError(errorMessage, QStringLiteral("Non-root item has null parent."));
+   }
+  }
+
+  if (errorMessage) {
+   errorMessage->clear();
+  }
+  return true;
  }
-	
+		
 ArtifactProject::ArtifactProject() :impl_(new Impl())
 {
   // Always keep a stable project-root placeholder at index 0.
@@ -788,11 +882,14 @@ ArtifactProject::ArtifactProject() :impl_(new Impl())
  //  impl_->setDirty(dirty);
  // }
 
-  QJsonObject ArtifactProject::toJson() const
-  {
-
-   return  impl_->toJson();
-  }
+	  QJsonObject ArtifactProject::toJson() const
+	  {
+   QString treeError;
+   if (!validateProjectTree(&treeError)) {
+    qWarning() << "[ArtifactProject::toJson] Project tree integrity check failed:" << treeError;
+   }
+	   return  impl_->toJson();
+	  }
 
   ArtifactLayerResult ArtifactProject::Impl::createLayerAndAddToComposition(const CompositionID& compositionId, ArtifactLayerInitParams& params)
   {
