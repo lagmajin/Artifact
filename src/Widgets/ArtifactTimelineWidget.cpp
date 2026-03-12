@@ -772,8 +772,6 @@ W_OBJECT_IMPL(ArtifactTimelineWidget)
     scrubBar->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     workAreaWidget->setFixedHeight(kTimelineWorkAreaRowHeight);
     workAreaWidget->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-    timeNavigatorWidget->setVisible(false);
-    workAreaWidget->setVisible(false);
     scrubBar->setTotalFrames(kDefaultTimelineFrames);
     scrubBar->setCurrentFrame(FramePosition(0));
     scrubBar->setVisible(true);
@@ -1007,8 +1005,9 @@ W_OBJECT_IMPL(ArtifactTimelineWidget)
   rightPanel->setMinimumWidth(480);
   //mainSplitter->addWidget(leftSplitter);
 
-  mainSplitter->setStretchFactor(0, 1);
-  mainSplitter->setStretchFactor(1, 3);
+  mainSplitter->setStretchFactor(0, 3);
+  mainSplitter->setStretchFactor(1, 5);
+  mainSplitter->setSizes({420, 760});
 
   auto label = new ArtifactTimelineBottomLabel();
 
@@ -1104,9 +1103,7 @@ W_OBJECT_IMPL(ArtifactTimelineWidget)
      if (res.success && !res.ptr.expired()) {
      auto comp = res.ptr.lock();
       const QString compositionLabel = comp->settings().compositionName().toQString().trimmed();
-      setWindowTitle(compositionLabel.isEmpty()
-       ? QStringLiteral("Timeline - %1").arg(id.toString())
-       : QStringLiteral("Timeline - %1").arg(compositionLabel));
+      setWindowTitle(compositionLabel.isEmpty() ? id.toString() : compositionLabel);
        if (auto* app = ArtifactApplicationManager::instance()) {
         if (auto* ctx = app->activeContextService()) {
          ctx->setActiveComposition(comp);
@@ -1239,15 +1236,17 @@ W_OBJECT_IMPL(ArtifactTimelineWidget)
       const auto composition = safeCompositionLookup(impl_->compositionId_);
       for (const auto& rowLayerId : timelineRows) {
         const int trackIndex = impl_->trackView_->addTrack(kTimelineRowHeight);
-        if (!rowLayerId.isNil()) {
-         const auto layer = composition ? composition->layerById(rowLayerId) : nullptr;
-         const double clipStart = layer ? static_cast<double>(layer->inPoint().framePosition()) : 0.0;
-         const double clipDuration = layer
-          ? std::max(1.0, static_cast<double>(layer->outPoint().framePosition() - layer->inPoint().framePosition()))
-          : 300.0;
-         if (auto* clip = impl_->trackView_->addClip(trackIndex, clipStart, clipDuration)) {
-          clip->setLayerId(rowLayerId);
-         }
+        if (rowLayerId.isNil()) {
+         continue;
+        }
+
+        const auto layer = composition ? composition->layerById(rowLayerId) : nullptr;
+        const double clipStart = layer ? static_cast<double>(layer->inPoint().framePosition()) : 0.0;
+        const double clipDuration = layer
+         ? std::max(1.0, static_cast<double>(layer->outPoint().framePosition() - layer->inPoint().framePosition()))
+         : 300.0;
+        if (auto* clip = impl_->trackView_->addClip(trackIndex, clipStart, clipDuration)) {
+         clip->setLayerId(rowLayerId);
         }
       }
 

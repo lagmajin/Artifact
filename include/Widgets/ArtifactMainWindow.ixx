@@ -27,10 +27,11 @@ export namespace Artifact {
   class Impl;
   Impl* impl_;
  protected:
-  void keyPressEvent(QKeyEvent* event) override;
-  void keyReleaseEvent(QKeyEvent* event) override;
-  void closeEvent(QCloseEvent* event) override;
+ void keyPressEvent(QKeyEvent* event) override;
+ void keyReleaseEvent(QKeyEvent* event) override;
+ void closeEvent(QCloseEvent* event) override;
   void showEvent(QShowEvent* event) override;
+  bool eventFilter(QObject* watched, QEvent* event) override;
  public:
   explicit ArtifactMainWindow(QWidget* parent = nullptr);
   ~ArtifactMainWindow();
@@ -38,6 +39,7 @@ export namespace Artifact {
   void addWidget();
   void addDockedWidget(const QString& title, ads::DockWidgetArea area,QWidget* widget);
   void addDockedWidgetTabbed(const QString& title, ads::DockWidgetArea area, QWidget* widget, const QString& tabGroupPrefix);
+  void moveDockToTabGroup(const QString& title, const QString& tabGroupPrefix);
   void setDockVisible(const QString& title, bool visible);
   void activateDock(const QString& title);
 

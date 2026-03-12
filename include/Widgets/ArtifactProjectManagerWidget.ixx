@@ -85,6 +85,8 @@ public:
   void dropEvent(QDropEvent* event) override;
   void dragMoveEvent(QDragMoveEvent* event) override;
   void dragEnterEvent(QDragEnterEvent* event) override;
+  void showEvent(QShowEvent* event) override;
+  bool event(QEvent* event) override;
   void mouseMoveEvent(QMouseEvent* event) override;
   void leaveEvent(QEvent* event) override;
   void mousePressEvent(QMouseEvent* event) override;
@@ -95,6 +97,7 @@ public:
   explicit ArtifactProjectView(QWidget* parent = nullptr);
   ~ArtifactProjectView();
   void handleItemDoubleClicked(const QModelIndex& index);
+  void refreshVisibleContent();
 
 
   QSize sizeHint() const override;
@@ -133,6 +136,8 @@ public:
   void dropEvent(QDropEvent* event);
   void dragEnterEvent(QDragEnterEvent* event);
   QSize sizeHint() const;
+  void showEvent(QShowEvent* event) override;
+  bool event(QEvent* event) override;
 
   void contextMenuEvent(QContextMenuEvent* event) override;
 

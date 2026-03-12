@@ -684,18 +684,23 @@ int main(int argc, char* argv[])
                     }
                 }
             }
-            return QStringLiteral("Timeline - %1").arg(compositionLabel);
+            return compositionLabel;
         };
         QObject::connect(projectService, &ArtifactProjectService::compositionCreated, mw, [mw, timelineDockTitle](const CompositionID& compId) {
             QTimer::singleShot(0, mw, [mw, compId, timelineDockTitle]() {
+                const QString dockTitle = timelineDockTitle(compId);
                 auto* panel = new ArtifactTimelineWidget(mw);
                 panel->setComposition(compId);
-                panel->setWindowTitle(timelineDockTitle(compId));
+                panel->setWindowTitle(dockTitle);
                 mw->addDockedWidgetTabbed(
-                    timelineDockTitle(compId),
+                    dockTitle,
                     ads::BottomDockWidgetArea,
                     panel,
-                    QStringLiteral("Timeline - "));
+                    dockTitle);
+                mw->moveDockToTabGroup(QStringLiteral("Render Queue"), dockTitle);
+                QTimer::singleShot(0, mw, [mw, dockTitle]() {
+                    mw->activateDock(dockTitle);
+                });
             });
         });
         QObject::connect(projectService, &ArtifactProjectService::projectCreated, mw, []() {

@@ -70,7 +70,6 @@ import Widgets.Utils.CSS;
 import Artifact.Service.Project;
 import Artifact.Composition.Abstract;
 import Artifact.Effect.Abstract;
-import Artifact.Widgets.ArtifactPropertyWidget;
 import Undo.UndoManager;
 import Generator.Effector;
 import Artifact.Effect.Generator.Cloner;
@@ -119,8 +118,6 @@ namespace Artifact {
        QPushButton* moveDownButton = nullptr;
    };
    EffectRack racks[5];
-   ArtifactPropertyWidget* propertyWidget = nullptr;
-
    QMenu* inspectorMenu_ = nullptr;
 
    CompositionID currentCompositionId_;
@@ -195,9 +192,6 @@ void ArtifactInspectorWidget::Impl::updatePropertiesForEffect(const QString& eff
   });
   menu.addAction("Show Effects Tab", [this]() {
    if (tabWidget) tabWidget->setCurrentIndex(1);
-  });
-  menu.addAction("Show Properties Tab", [this]() {
-   if (tabWidget) tabWidget->setCurrentIndex(2);
   });
   menu.addSeparator();
   menu.addAction("Expand All Racks", [this]() {
@@ -384,11 +378,8 @@ void ArtifactInspectorWidget::Impl::updatePropertiesForEffect(const QString& eff
 
  void ArtifactInspectorWidget::Impl::handleLayerSelected(const LayerID& id)
  {
-  qDebug() << "[Inspector] Layer selected:" << id.toString();
+ qDebug() << "[Inspector] Layer selected:" << id.toString();
   currentLayerId_ = id;
-  if (propertyWidget) {
-   propertyWidget->setFocusedEffectId(QString());
-  }
   updateLayerInfo();
   updateEffectsList();
  }
@@ -455,11 +446,6 @@ void ArtifactInspectorWidget::Impl::updatePropertiesForEffect(const QString& eff
 
   statusLabel->setText(QString("Status: Layer selected - ID: %1").arg(currentLayerId_.toString()));
 
-  // プロパティウィジェットにも選択レイヤーを反映
-  if (propertyWidget) {
-      propertyWidget->setLayer(layer);
-  }
-
   qDebug() << "[Inspector] Updated layer info:" << layerName << "Type:" << layerType;
  }
 
@@ -489,10 +475,6 @@ void ArtifactInspectorWidget::Impl::setNoLayerState()
   }
   setEffectRackEnabled(false);
   refreshRackButtons();
-  if (propertyWidget) {
-      propertyWidget->setFocusedEffectId(QString());
-      propertyWidget->clear();
-  }
  }
 
  void ArtifactInspectorWidget::Impl::setEffectRackEnabled(bool enabled)
@@ -841,9 +823,6 @@ void ArtifactInspectorWidget::Impl::handleRemoveEffectClicked(int rackIndex)
                   break;
               }
           }
-          if (impl_->propertyWidget) {
-              impl_->propertyWidget->setFocusedEffectId(focusedEffectId);
-          }
           impl_->refreshRackButtons();
       });
       QObject::connect(impl_->racks[i].listWidget, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem* item) {
@@ -867,11 +846,6 @@ void ArtifactInspectorWidget::Impl::handleRemoveEffectClicked(int rackIndex)
   impl_->effectsTabWidget->setLayout(effectsLayout);
   impl_->effectsScrollArea->setWidget(impl_->effectsTabWidget);
   impl_->tabWidget->addTab(impl_->effectsScrollArea, "Effects Pipeline");
-
-  // ================== Properties Tab ==================
-  impl_->propertyWidget = new ArtifactPropertyWidget();
-  impl_->tabWidget->addTab(impl_->propertyWidget, "Properties");
-
 
   // タブをメインレイアウトに追加
   mainLayout->addWidget(impl_->tabWidget);
@@ -902,9 +876,6 @@ void ArtifactInspectorWidget::Impl::handleRemoveEffectClicked(int rackIndex)
    QObject::connect(projectService, &ArtifactProjectService::compositionCreated, this, [this](const CompositionID& id) {
     impl_->handleCompositionCreated(id);
    });
-
-   // When effect list selection changes, update properties (now we show layer props in propertyWidget)
-   
 
    // レイヤー作成シグナルに接続（作成されたレイヤーを自動選択）
    QObject::connect(projectService, &ArtifactProjectService::layerCreated, this, [this](const CompositionID& cid, const LayerID& id) {
