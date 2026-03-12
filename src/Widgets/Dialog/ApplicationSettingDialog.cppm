@@ -22,9 +22,12 @@
 #include <QHeaderView>
 #include <QFileDialog>
 #include <QDir>
+#include <QFile>
+#include <QFileInfo>
 #include <QFileInfoList>
 #include <QPluginLoader>
 #include <QDesktopServices>
+#include <QStandardPaths>
 #include <QUrl>
 #ifdef Q_OS_WIN
 #include <windows.h>
@@ -400,6 +403,12 @@ public:
     unsigned long long prevTickMs_;
     int processorCount_;
 
+    struct CacheClearStats {
+        int removedFiles = 0;
+        int removedDirectories = 0;
+        int failedPaths = 0;
+    };
+
     void initializeProcessorCount()
     {
 #ifdef Q_OS_WIN
@@ -474,6 +483,56 @@ public:
         if (cpuLabel_) cpuLabel_->setText("N/A");
 #endif
     }
+
+    void clearPathRecursive(const QString& path, CacheClearStats& stats)
+    {
+        QFileInfo info(path);
+        if (!info.exists()) {
+            return;
+        }
+
+        if (info.isDir()) {
+            QDir dir(path);
+            const QFileInfoList entries = dir.entryInfoList(QDir::NoDotAndDotDot | QDir::AllEntries);
+            for (const QFileInfo& entry : entries) {
+                clearPathRecursive(entry.absoluteFilePath(), stats);
+            }
+            QDir parentDir = info.dir();
+            if (parentDir.rmdir(info.fileName())) {
+                ++stats.removedDirectories;
+            } else {
+                ++stats.failedPaths;
+            }
+            return;
+        }
+
+        if (QFile::remove(path)) {
+            ++stats.removedFiles;
+        } else {
+            ++stats.failedPaths;
+        }
+    }
+
+    CacheClearStats clearAppCaches()
+    {
+        CacheClearStats stats;
+        const QString appDataDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+        if (appDataDir.isEmpty()) {
+            return stats;
+        }
+
+        const QStringList cacheTargets = {
+            QDir(appDataDir).filePath(QStringLiteral("ProxyCache")),
+            QDir(appDataDir).filePath(QStringLiteral("Recovery")),
+            QDir(appDataDir).filePath(QStringLiteral("RecoveredProject.artifact.json"))
+        };
+
+        for (const QString& target : cacheTargets) {
+            clearPathRecursive(target, stats);
+        }
+
+        return stats;
+    }
 };
 
 MemoryAndCpuSettingPage::MemoryAndCpuSettingPage(QWidget* parent /*= nullptr*/)
@@ -547,10 +606,26 @@ MemoryAndCpuSettingPage::MemoryAndCpuSettingPage(QWidget* parent /*= nullptr*/)
         impl_->workerThreadsSpinBox_->setValue(recommended);
     });
 
-    // Clear cache handler (placeholder)
+    // Clear cache handler
     connect(impl_->clearCacheButton_, &QPushButton::clicked, this, [this]() {
-        // TODO: wire into actual cache clearing; placeholder visual feedback
-        QMessageBox::information(this, "Clear Cache", "Cache cleared (placeholder).");
+        const auto answer = QMessageBox::question(
+            this,
+            QStringLiteral("Clear Cache"),
+            QStringLiteral("Remove generated proxy and recovery cache files?"),
+            QMessageBox::Yes | QMessageBox::No,
+            QMessageBox::No);
+        if (answer != QMessageBox::Yes) {
+            return;
+        }
+
+        const Impl::CacheClearStats stats = impl_->clearAppCaches();
+        const QString summary = QStringLiteral("Removed %1 file(s), %2 folder(s).%3")
+            .arg(stats.removedFiles)
+            .arg(stats.removedDirectories)
+            .arg(stats.failedPaths > 0
+                ? QStringLiteral("\nFailed to remove %1 path(s).").arg(stats.failedPaths)
+                : QString());
+        QMessageBox::information(this, QStringLiteral("Clear Cache"), summary);
     });
 }
 
