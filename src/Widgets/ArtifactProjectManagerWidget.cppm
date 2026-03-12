@@ -572,6 +572,10 @@ public:
     QModelIndex hoverIndex;
     HoverThumbnailPopupWidget* hoverPopup = nullptr;
     QPoint hoverStartPos;
+    QString lastContextCommandId;
+    QString lastContextCommandLabel;
+    QString lastNewCommandId;
+    QString lastNewCommandLabel;
     void handleFileDrop(const QString& str) {
         auto* svc = ArtifactProjectService::instance();
         if (!svc) return;
@@ -893,6 +897,30 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
     QModelIndex idx = indexAt(event->pos());
     QMenu menu(this);
     auto svc = ArtifactProjectService::instance();
+    QHash<QString, std::function<void()>> availableContextCommands;
+    QHash<QString, QString> availableContextLabels;
+    QHash<QString, std::function<void()>> availableNewCommands;
+    QHash<QString, QString> availableNewLabels;
+
+    auto addTrackedAction = [this, &menu, &availableContextCommands, &availableContextLabels](const QString& id, const QString& label, std::function<void()> run) {
+        availableContextCommands.insert(id, run);
+        availableContextLabels.insert(id, label);
+        menu.addAction(label, [this, id, label, run = std::move(run)]() mutable {
+            impl_->lastContextCommandId = id;
+            impl_->lastContextCommandLabel = label;
+            run();
+        });
+    };
+
+    auto addTrackedNewAction = [this, &availableNewCommands, &availableNewLabels](QMenu* targetMenu, const QString& id, const QString& label, std::function<void()> run) {
+        availableNewCommands.insert(id, run);
+        availableNewLabels.insert(id, label);
+        targetMenu->addAction(label, [this, id, label, run = std::move(run)]() mutable {
+            impl_->lastNewCommandId = id;
+            impl_->lastNewCommandLabel = label;
+            run();
+        });
+    };
 
     if (idx.isValid()) {
         QModelIndex sourceIdx = idx;
@@ -906,20 +934,22 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
         QVariant typeVar = sourceIdx.data(Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::ProjectItemType));
         eProjectItemType type = typeVar.isValid() ? static_cast<eProjectItemType>(typeVar.toInt()) : eProjectItemType::Footage;
 
-        menu.addAction("Open", [this, idx]() { handleItemDoubleClicked(idx); });
-        menu.addAction("Copy Name", [sourceIdx]() {
+        addTrackedAction(QStringLiteral("open"), QStringLiteral("Open"), [this, idx]() {
+            handleItemDoubleClicked(idx);
+        });
+        addTrackedAction(QStringLiteral("copy_name"), QStringLiteral("Copy Name"), [sourceIdx]() {
             QApplication::clipboard()->setText(sourceIdx.data(Qt::DisplayRole).toString());
         });
         
         if (type == eProjectItemType::Composition) {
-            menu.addAction("Set as Active Composition", [sourceIdx]() {
+            addTrackedAction(QStringLiteral("set_active_composition"), QStringLiteral("Set as Active Composition"), [sourceIdx]() {
                 QVariant idVar = sourceIdx.data(Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::CompositionId));
                 if (idVar.isValid()) {
                     ArtifactProjectService::instance()->changeCurrentComposition(CompositionID(idVar.toString()));
                 }
             });
 
-            menu.addAction("Composition Settings...", [this, sourceIdx]() {
+            addTrackedAction(QStringLiteral("composition_settings"), QStringLiteral("Composition Settings..."), [this, sourceIdx]() {
                 auto* svc = ArtifactProjectService::instance();
                 if (!svc) {
                     return;
@@ -1042,24 +1072,24 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
                 dialog->exec();
             });
             
-            menu.addAction("Interpret Footage...", []() {
+            addTrackedAction(QStringLiteral("interpret_footage"), QStringLiteral("Interpret Footage..."), []() {
                 // Placeholder for footage settings
             });
         }
 
         if (type == eProjectItemType::Footage) {
-            menu.addAction("Reveal in Explorer", [item]() {
+            addTrackedAction(QStringLiteral("reveal_in_explorer"), QStringLiteral("Reveal in Explorer"), [item]() {
                 if (item && item->type() == eProjectItemType::Footage) {
                     QString path = static_cast<FootageItem*>(item)->filePath;
                     QDesktopServices::openUrl(QUrl::fromLocalFile(QFileInfo(path).absolutePath()));
                 }
             });
-            menu.addAction("Copy File Path", [item]() {
+            addTrackedAction(QStringLiteral("copy_file_path"), QStringLiteral("Copy File Path"), [item]() {
                 if (item && item->type() == eProjectItemType::Footage) {
                     QApplication::clipboard()->setText(static_cast<FootageItem*>(item)->filePath);
                 }
             });
-            menu.addAction("Relink Selected Footage...", [this, item, svc]() {
+            addTrackedAction(QStringLiteral("relink_selected_footage"), QStringLiteral("Relink Selected Footage..."), [this, item, svc]() {
                 if (!svc || !item || item->type() != eProjectItemType::Footage) return;
                 const QString root = QFileDialog::getExistingDirectory(this, "Relink Selected Footage - Search Root");
                 if (root.isEmpty()) return;
@@ -1075,7 +1105,7 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
         }
 
         menu.addSeparator();
-        menu.addAction("Rename", [this, idx]() {
+        addTrackedAction(QStringLiteral("rename"), QStringLiteral("Rename"), [this, idx]() {
             bool ok;
             QString name = QInputDialog::getText(this, "Rename", "New Name:", QLineEdit::Normal, idx.data().toString(), &ok);
             if(ok && !name.isEmpty()) {
@@ -1092,7 +1122,7 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
             }
         });
 
-        menu.addAction("Delete", [this, item, svc]() {
+        addTrackedAction(QStringLiteral("delete"), QStringLiteral("Delete"), [this, item, svc]() {
             if (!svc || !item) {
                 return;
             }
@@ -1113,33 +1143,41 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
         });
 
         menu.addSeparator();
-        menu.addAction("Expand Children", [this, idx]() { setExpanded(idx, true); });
-        menu.addAction("Collapse Children", [this, idx]() { setExpanded(idx, false); });
+        addTrackedAction(QStringLiteral("expand_children"), QStringLiteral("Expand Children"), [this, idx]() {
+            setExpanded(idx, true);
+        });
+        addTrackedAction(QStringLiteral("collapse_children"), QStringLiteral("Collapse Children"), [this, idx]() {
+            setExpanded(idx, false);
+        });
         
         menu.addSeparator();
     }
 
     // "New" menu group
     auto newMenu = menu.addMenu("New");
-    newMenu->addAction("Composition...", [svc]() {
-        svc->createComposition(UniString("New Comp"));
+    addTrackedNewAction(newMenu, QStringLiteral("new_composition"), QStringLiteral("Composition..."), [svc]() {
+        if (svc) {
+            svc->createComposition(UniString("New Comp"));
+        }
     });
-    newMenu->addAction("Solid...", []() {
+    addTrackedNewAction(newMenu, QStringLiteral("new_solid"), QStringLiteral("Solid..."), []() {
         // Placeholder for solid creation dialog
     });
-    newMenu->addAction("Folder", [svc]() {
-        svc->getCurrentProjectSharedPtr()->createFolder("New Folder");
+    addTrackedNewAction(newMenu, QStringLiteral("new_folder"), QStringLiteral("Folder"), [svc]() {
+        if (svc && svc->getCurrentProjectSharedPtr()) {
+            svc->getCurrentProjectSharedPtr()->createFolder("New Folder");
+        }
     });
 
     menu.addSeparator();
-    menu.addAction("Expand All", [this]() { expandAll(); });
-    menu.addAction("Collapse All", [this]() { collapseAll(); });
-    menu.addAction("Refresh View", [this]() { viewport()->update(); });
-    menu.addAction("Show Dependency Graph...", [this, svc]() {
+    addTrackedAction(QStringLiteral("expand_all"), QStringLiteral("Expand All"), [this]() { expandAll(); });
+    addTrackedAction(QStringLiteral("collapse_all"), QStringLiteral("Collapse All"), [this]() { collapseAll(); });
+    addTrackedAction(QStringLiteral("refresh_view"), QStringLiteral("Refresh View"), [this]() { viewport()->update(); });
+    addTrackedAction(QStringLiteral("show_dependency_graph"), QStringLiteral("Show Dependency Graph..."), [this, svc]() {
         Impl::showDependencyGraphDialog(this, svc);
     });
     menu.addSeparator();
-    menu.addAction("Relink Missing Footage...", [this, svc]() {
+    addTrackedAction(QStringLiteral("relink_missing_footage"), QStringLiteral("Relink Missing Footage..."), [this, svc]() {
         if (!svc) return;
         const QString root = QFileDialog::getExistingDirectory(this, "Relink Missing Footage - Search Root");
         if (root.isEmpty()) return;
@@ -1158,12 +1196,53 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
                                  QString("Relinked %1 missing footage item(s).").arg(relinked));
     });
     menu.addSeparator();
-    menu.addAction("Import File...", [this, svc]() {
+    addTrackedAction(QStringLiteral("import_file"), QStringLiteral("Import File..."), [this, svc]() {
+        Q_UNUSED(svc);
         QStringList paths = QFileDialog::getOpenFileNames(this, "Import Files", "", "All Files (*.*)");
         for (const auto& p : paths) {
              impl_->handleFileDrop(p);
         }
     });
+
+    if (!impl_->lastContextCommandId.isEmpty() && availableContextCommands.contains(impl_->lastContextCommandId)) {
+        QAction* firstAction = menu.actions().isEmpty() ? nullptr : menu.actions().first();
+        QAction* separator = firstAction ? menu.insertSeparator(firstAction) : menu.addSeparator();
+        const QString repeatLabel = QStringLiteral("Repeat Last Command: %1").arg(
+            availableContextLabels.value(impl_->lastContextCommandId, impl_->lastContextCommandLabel));
+        QAction* repeatAction = new QAction(repeatLabel, &menu);
+        const QString commandId = impl_->lastContextCommandId;
+        const QString commandLabel = availableContextLabels.value(commandId, impl_->lastContextCommandLabel);
+        QObject::connect(repeatAction, &QAction::triggered, &menu, [this, commandId, commandLabel, run = availableContextCommands.value(commandId)]() mutable {
+            impl_->lastContextCommandId = commandId;
+            impl_->lastContextCommandLabel = commandLabel;
+            run();
+        });
+        if (separator) {
+            menu.insertAction(separator, repeatAction);
+        } else {
+            menu.addAction(repeatAction);
+        }
+    }
+
+    if (!impl_->lastNewCommandId.isEmpty() && availableNewCommands.contains(impl_->lastNewCommandId)) {
+        QAction* firstNewAction = newMenu->actions().isEmpty() ? nullptr : newMenu->actions().first();
+        QAction* separator = firstNewAction ? newMenu->insertSeparator(firstNewAction) : newMenu->addSeparator();
+        const QString repeatLabel = QStringLiteral("Repeat Last New Command: %1").arg(
+            availableNewLabels.value(impl_->lastNewCommandId, impl_->lastNewCommandLabel));
+        QAction* repeatAction = new QAction(repeatLabel, newMenu);
+        const QString commandId = impl_->lastNewCommandId;
+        const QString commandLabel = availableNewLabels.value(commandId, impl_->lastNewCommandLabel);
+        QObject::connect(repeatAction, &QAction::triggered, newMenu, [this, commandId, commandLabel, run = availableNewCommands.value(commandId)]() mutable {
+            impl_->lastNewCommandId = commandId;
+            impl_->lastNewCommandLabel = commandLabel;
+            run();
+        });
+        if (separator) {
+            newMenu->insertAction(separator, repeatAction);
+        } else {
+            newMenu->addAction(repeatAction);
+        }
+    }
 
     menu.setStyleSheet(R"(
         QMenu { background-color: #2D2D30; color: #CCC; border: 1px solid #1a1a1a; padding: 4px; }

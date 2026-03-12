@@ -52,6 +52,8 @@ Project View / Project panel を独立して改善するための実装メモ。
   - composition metadata を placeholder ではなく actual `compositionSize / frameRange / frameRate` から表示
   - project item type icon を folder / composition / solid / image / video / audio / missing で描き分け
 
+  - context menu に `Repeat Last Command` / `Repeat Last New Command` を追加
+
 ## Next Slice for M-PV-3
 
 - folder/bin の配置先選択
