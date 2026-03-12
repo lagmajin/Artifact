@@ -1,4 +1,4 @@
-module;
+ï»¿module;
 #include <QObject>
 module Artifact.Layers.Model3D;
 
@@ -8,7 +8,7 @@ class Artifact3DLayer::Impl {
 public:
     Impl() {}
     ~Impl() {}
-    // TODO: ‚±‚±‚É3Dƒ‚ƒfƒ‹ƒf[ƒ^‚âƒŠƒ\[ƒXŠÇ——p‚Ìƒƒ“ƒo[‚ğ’Ç‰Á
+    // TODO: add 3D model data and resource management members.
 };
 
 Artifact3DLayer::Artifact3DLayer() : impl_(new Impl()) {}

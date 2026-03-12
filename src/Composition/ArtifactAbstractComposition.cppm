@@ -581,4 +581,25 @@ std::shared_ptr<ArtifactAbstractComposition> ArtifactAbstractComposition::fromJs
     return comp;
 }
 
+QImage ArtifactAbstractComposition::getThumbnail(int width, int height) const
+{
+    const int safeWidth = std::max(1, width);
+    const int safeHeight = std::max(1, height);
+
+    const auto layers = impl_->allLayerBackToFront();
+    for (const auto& layer : layers) {
+        if (!layer) {
+            continue;
+        }
+        const QImage thumbnail = layer->getThumbnail(safeWidth, safeHeight);
+        if (!thumbnail.isNull()) {
+            return thumbnail;
+        }
+    }
+
+    QImage thumbnail(safeWidth, safeHeight, QImage::Format_ARGB32_Premultiplied);
+    thumbnail.fill(QColor(24, 24, 24, 255));
+    return thumbnail;
+}
+
 };

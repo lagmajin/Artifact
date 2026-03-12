@@ -1352,6 +1352,7 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent*)
   impl_->scroll = new QScrollArea();
   impl_->scroll->setWidget(impl_->panel);
   impl_->scroll->setWidgetResizable(true);
+  impl_->scroll->setAlignment(Qt::AlignHCenter | Qt::AlignVCenter);
   impl_->scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
   impl_->scroll->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
   impl_->scroll->setFrameShape(QFrame::NoFrame);

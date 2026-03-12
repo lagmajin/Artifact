@@ -12,6 +12,7 @@
 #include <QPointF>
 #include <QRectF>
 #include <QBrush>
+#include <QPointer>
 
 module Artifact.Timeline.Objects;
 import std;
@@ -436,17 +437,30 @@ void ClipItem::mouseReleaseEvent(QGraphicsSceneMouseEvent* event)
         event->accept();
         return;
     }
+    QPointer<ClipItem> selfGuard(this);
     if (impl_->isDragging) {
-        // finalize drag
+        QPointF endPos = pos();
         if (impl_->ghostRect) {
-            QPointF endPos = impl_->ghostRect->scenePos();
-            Q_EMIT dragEnded(this, endPos.x(), endPos.y());
-            scene()->removeItem(impl_->ghostRect);
+            endPos = impl_->ghostRect->scenePos();
+            if (auto* ghostScene = impl_->ghostRect->scene()) {
+                ghostScene->removeItem(impl_->ghostRect);
+            }
             delete impl_->ghostRect;
             impl_->ghostRect = nullptr;
         }
         impl_->isDragging = false;
+
+        Q_EMIT dragEnded(this, endPos.x(), endPos.y());
+        if (!selfGuard || !impl_) {
+            event->accept();
+            return;
+        }
+
         Q_EMIT geometryEdited(this, getStart(), getDuration());
+        if (!selfGuard || !impl_) {
+            event->accept();
+            return;
+        }
     }
     QGraphicsObject::mouseReleaseEvent(event);
 }

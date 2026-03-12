@@ -1,21 +1,21 @@
-module;
+ï»¿module;
 export module Tool;
 
 export namespace Artifact {
  enum class EditMode
  {
-  View,           // •\¦ê—piƒY[ƒ€Eƒpƒ“j
-  Transform,      // ƒgƒ‰ƒ“ƒXƒtƒH[ƒ€•ÒW
-  Mask,           // ƒ}ƒXƒN•ÒW
-  Paint           // ƒyƒCƒ“ƒgi”CˆÓj
+  View,           // View-only mode (zoom and pan)
+  Transform,      // Transform editing
+  Mask,           // Mask editing
+  Paint           // Paint mode
  };
 
  enum class DisplayMode
  {
-  Color,          // ’ÊíƒJƒ‰[
-  Alpha,          // ƒAƒ‹ƒtƒ@•\¦
-  Mask,           // ƒ}ƒXƒNƒI[ƒo[ƒŒƒC•\¦
-  Wireframe       // ƒKƒCƒhE‹«ŠEü
+  Color,          // Standard color view
+  Alpha,          // Alpha channel view
+  Mask,           // Mask overlay view
+  Wireframe       // Guide and outline view
  };
 
 }

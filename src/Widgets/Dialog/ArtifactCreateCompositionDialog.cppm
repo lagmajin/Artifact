@@ -80,6 +80,12 @@ namespace Artifact {
   impl_->resolutionCombobox_->addItem("4K UHD (3840x2160)", QVariant::fromValue(QSize(3840, 2160)));
   impl_->resolutionCombobox_->addItem("Custom...", QVariant::fromValue(QSize(-1, -1)));
 
+  const QSize initialResolution = impl_->resolutionCombobox_->currentData().toSize();
+  if (initialResolution.width() > 0 && initialResolution.height() > 0) {
+    impl_->widthSpinBox->setValue(initialResolution.width());
+    impl_->heightSpinBox->setValue(initialResolution.height());
+  }
+
   auto sizeWidget = new QWidget();
   auto sizeHBox = new QHBoxLayout(sizeWidget);
   sizeHBox->setContentsMargins(0, 0, 0, 0);

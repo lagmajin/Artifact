@@ -563,17 +563,17 @@ int main(int argc, char* argv[])
     auto* compositionEditor = new ArtifactCompositionEditor(mw);
     mw->addDockedWidget(QStringLiteral("Composition Viewer"), ads::CenterDockWidgetArea, compositionEditor);
     auto* layerViewEditor = new ArtifactRenderLayerEditor(mw);
-    mw->addDockedWidget(QStringLiteral("Layer View (Diligent)"), ads::CenterDockWidgetArea, layerViewEditor);
-    mw->addDockedWidgetTabbed(QStringLiteral("Render Queue"), ads::BottomDockWidgetArea, new RenderQueueManagerWidget(mw), QStringLiteral("Timeline - "));
+    mw->addDockedWidgetTabbed(
+        QStringLiteral("Layer View (Diligent)"),
+        ads::CenterDockWidgetArea,
+        layerViewEditor,
+        QStringLiteral("Composition Viewer"));
+    mw->addDockedWidget(QStringLiteral("Render Queue"), ads::BottomDockWidgetArea, new RenderQueueManagerWidget(mw));
     mw->addDockedWidget(QStringLiteral("Project"), ads::LeftDockWidgetArea, new ArtifactProjectManagerWidget(mw));
     mw->addDockedWidget(QStringLiteral("Inspector"), ads::RightDockWidgetArea, new ArtifactInspectorWidget(mw));
     auto* propertyPanel = new ArtifactPropertyWidget(mw);
     mw->addDockedWidget(QStringLiteral("Properties"), ads::RightDockWidgetArea, propertyPanel);
     mw->addDockedWidget(QStringLiteral("Audio Mixer"), ads::RightDockWidgetArea, new ArtifactCompositionAudioMixerWidget(mw));
-    mw->addDockedWidget(QStringLiteral("Undo History"), ads::RightDockWidgetArea, new ArtifactUndoHistoryWidget(mw));
-    mw->addDockedWidget(QStringLiteral("Python Hooks"), ads::RightDockWidgetArea, new ArtifactPythonHookManagerWidget(mw));
-    mw->setDockVisible(QStringLiteral("Undo History"), false);
-    mw->setDockVisible(QStringLiteral("Python Hooks"), false);
     mw->setDockVisible(QStringLiteral("Layer View (Diligent)"), true);
 
     auto* projectService = ArtifactProjectService::instance();

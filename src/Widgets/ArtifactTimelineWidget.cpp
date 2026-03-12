@@ -1,4 +1,4 @@
-module;
+﻿module;
 
 #include <QWidget>
 #include <QLabel>
@@ -157,32 +157,30 @@ using namespace ArtifactWidgets;
   class PlayheadSyncFilter final : public QObject
   {
   public:
-   PlayheadSyncFilter(QWidget* regionWidget, TimelineTrackView* trackView, TimelinePlayheadOverlay* overlay, QObject* parent = nullptr)
-    : QObject(parent), regionWidget_(regionWidget), trackView_(trackView), overlay_(overlay)
-   {
-   }
+   PlayheadSyncFilter(QWidget* activeRegionWidget, QWidget* overlayHostWidget, TimelineTrackView* trackView, TimelinePlayheadOverlay* overlay, QObject* parent = nullptr)
+    : QObject(parent), activeRegionWidget_(activeRegionWidget), overlayHostWidget_(overlayHostWidget), trackView_(trackView), overlay_(overlay)
+    {
+    }
 
    void sync()
    {
-    if (!regionWidget_ || !trackView_ || !overlay_ || !trackView_->viewport()) {
+    if (!activeRegionWidget_ || !overlayHostWidget_ || !trackView_ || !overlay_ || !trackView_->viewport()) {
      return;
     }
 
-    if (!regionWidget_->isVisible() || !trackView_->isVisible() || !trackView_->viewport()->isVisible()) {
+    if (!activeRegionWidget_->isVisible() || !overlayHostWidget_->isVisible() || !trackView_->isVisible() || !trackView_->viewport()->isVisible()) {
      overlay_->hide();
      return;
     }
 
-    ensureOverlayHost();
-    if (!overlayHost_) {
-     overlay_->hide();
-     return;
+    if (overlay_->parentWidget() != overlayHostWidget_) {
+     overlay_->setParent(overlayHostWidget_);
     }
 
-    overlay_->setGeometry(overlayHost_->rect());
-    const QRect activeRect(regionWidget_->mapTo(overlayHost_, QPoint(0, 0)), regionWidget_->size());
+    overlay_->setGeometry(overlayHostWidget_->rect());
+    const QRect activeRect(activeRegionWidget_->mapTo(overlayHostWidget_, QPoint(0, 0)), activeRegionWidget_->size());
     const QPoint viewportPos = trackView_->mapFromScene(QPointF(trackView_->position(), 0.0));
-    const int xInOverlay = trackView_->viewport()->mapTo(overlayHost_, viewportPos).x();
+    const int xInOverlay = trackView_->viewport()->mapTo(overlayHostWidget_, viewportPos).x();
     overlay_->setPlayheadLine(activeRect, xInOverlay);
     overlay_->show();
     overlay_->raise();
@@ -209,33 +207,10 @@ using namespace ArtifactWidgets;
    }
 
   private:
-   void ensureOverlayHost()
-   {
-    QWidget* desiredHost = regionWidget_;
-    if (overlayHost_ == desiredHost) {
-     return;
-    }
-
-    if (overlayHost_) {
-     if (overlayHost_ != regionWidget_) {
-      overlayHost_->removeEventFilter(this);
-     }
-    }
-    overlayHost_ = desiredHost;
-    if (!overlayHost_) {
-     return;
-    }
-
-    overlay_->setParent(overlayHost_);
-    if (overlayHost_ != regionWidget_) {
-     overlayHost_->installEventFilter(this);
-    }
-   }
-
-   QWidget* regionWidget_ = nullptr;
+   QWidget* activeRegionWidget_ = nullptr;
+   QWidget* overlayHostWidget_ = nullptr;
    TimelineTrackView* trackView_ = nullptr;
    TimelinePlayheadOverlay* overlay_ = nullptr;
-   QWidget* overlayHost_ = nullptr;
   };
 
   class HeaderSeekFilter final : public QObject
@@ -714,6 +689,12 @@ W_OBJECT_IMPL(ArtifactTimelineWidget)
   leftSplitter->addWidget(layerTreeView);
   leftSplitter->setStretchFactor(0, 0); // ACR͌Œ
   leftSplitter->setStretchFactor(1, 1); // O͐Lk\
+  leftSplitter->setHandleWidth(4);
+  leftSplitter->setStyleSheet(R"(
+    QSplitter::handle {
+        background: #4a4a4a;
+    }
+  )");
 
   auto leftHeader = new ArtifactTimeCodeWidget(); // ^CR[h
   auto searchBar = new ArtifactTimelineSearchBarWidget(); // o[
@@ -894,7 +875,7 @@ W_OBJECT_IMPL(ArtifactTimelineWidget)
     QObject::connect(timelineTrackView, &TimelineTrackView::layerClipEdited, this,
      [this](const LayerID& layerId, const int trackIndex, const double start, const double duration) {
       if (layerId.isNil() || trackIndex < 0) {
-       return;
+        return;
       }
 
       if (auto* svc = ArtifactProjectService::instance()) {
@@ -927,9 +908,16 @@ W_OBJECT_IMPL(ArtifactTimelineWidget)
        layerInsertionIndexForTrackDrop(impl_->trackLayerIds_, layerId, trackIndex);
 
       if (auto* svc = ArtifactProjectService::instance()) {
-       svc->moveLayerInCurrentComposition(layerId, targetLayerIndex);
-       svc->selectLayer(layerId);
+        svc->moveLayerInCurrentComposition(layerId, targetLayerIndex);
+        svc->selectLayer(layerId);
       }
+
+      QMetaObject::invokeMethod(this, [this]() {
+       if (!impl_ || !impl_->trackView_) {
+        return;
+       }
+       refreshTracks();
+      }, Qt::QueuedConnection);
      });
 
     impl_->trackView_ = timelineTrackView;  // Store reference for layer creation
@@ -937,24 +925,16 @@ W_OBJECT_IMPL(ArtifactTimelineWidget)
   //layerTimelinePanel->setMinimumWidth(220);
   //layerTimelinePanel->setMaximumWidth(320);
 
-  auto* trackSplitter = new DraggableSplitter(Qt::Horizontal);
-  //trackSplitter->addWidget(layerTimelinePanel);
-  trackSplitter->addWidget(timelineTrackView);
-  trackSplitter->setStretchFactor(0, 0);
-  trackSplitter->setStretchFactor(1, 1);
-  trackSplitter->setHandleWidth(5);
-
-
   auto rightPanel = new QWidget();
   rightPanelLayout->addWidget(timeNavigatorWidget);
   rightPanelLayout->addWidget(scrubBar);
   rightPanelLayout->addWidget(workAreaWidget);
-  rightPanelLayout->addWidget(trackSplitter);
+  rightPanelLayout->addWidget(timelineTrackView);
   rightPanel->setLayout(rightPanelLayout);
 
   auto* playheadOverlay = new TimelinePlayheadOverlay(rightPanel);
 
-  auto* playheadSync = new PlayheadSyncFilter(rightPanel, timelineTrackView, playheadOverlay, rightPanel);
+  auto* playheadSync = new PlayheadSyncFilter(rightPanel, rightPanel, timelineTrackView, playheadOverlay, rightPanel);
   rightPanel->installEventFilter(playheadSync);
   timelineTrackView->installEventFilter(playheadSync);
   if (timelineTrackView->viewport()) {
@@ -1014,10 +994,10 @@ W_OBJECT_IMPL(ArtifactTimelineWidget)
   auto mainSplitter = new QSplitter(Qt::Horizontal);
   mainSplitter->setStyleSheet(R"(
     QSplitter::handle {
-        background: #555555;
+        background: #4a4a4a;
     }
 )");
-  mainSplitter->setHandleWidth(6);
+  mainSplitter->setHandleWidth(4);
   mainSplitter->addWidget(leftPanel);
   mainSplitter->addWidget(rightPanel);
   mainSplitter->setChildrenCollapsible(false);
@@ -1086,7 +1066,12 @@ W_OBJECT_IMPL(ArtifactTimelineWidget)
     impl_->syncingLayerSelection_ = false;
    });
    QObject::connect(svc, &ArtifactProjectService::projectChanged, this, [this]() {
-    refreshTracks();
+    QMetaObject::invokeMethod(this, [this]() {
+     if (!impl_ || !impl_->trackView_) {
+      return;
+     }
+     refreshTracks();
+    }, Qt::QueuedConnection);
    });
   }
 
@@ -1246,6 +1231,16 @@ W_OBJECT_IMPL(ArtifactTimelineWidget)
           clip->setLayerId(rowLayerId);
          }
         }
+      }
+
+      if (auto* scene = impl_->trackView_->timelineScene()) {
+       scene->invalidate(scene->sceneRect(), QGraphicsScene::AllLayers);
+       scene->update(scene->sceneRect());
+      }
+      impl_->trackView_->viewport()->update();
+      impl_->trackView_->update();
+      if (impl_->playheadSync_) {
+       impl_->playheadSync_->sync();
       }
 
   }

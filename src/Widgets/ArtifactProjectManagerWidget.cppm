@@ -656,6 +656,45 @@ public:
     QString lastContextCommandLabel;
     QString lastNewCommandId;
     QString lastNewCommandLabel;
+
+    FolderItem* currentFolderTarget(const ArtifactProjectView* view) const {
+        if (!view || !view->selectionModel()) {
+            return nullptr;
+        }
+        const auto rows = view->selectionModel()->selectedRows(0);
+        if (rows.isEmpty()) {
+            return nullptr;
+        }
+        QModelIndex sourceIdx = rows.first();
+        if (auto proxy = qobject_cast<const QSortFilterProxyModel*>(sourceIdx.model())) {
+            sourceIdx = proxy->mapToSource(sourceIdx).siblingAtColumn(0);
+        }
+        const QVariant ptrVar = sourceIdx.data(Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::ProjectItemPtr));
+        ProjectItem* item = ptrVar.isValid() ? reinterpret_cast<ProjectItem*>(ptrVar.value<quintptr>()) : nullptr;
+        if (!item) {
+            return nullptr;
+        }
+        if (item->type() == eProjectItemType::Folder) {
+            return static_cast<FolderItem*>(item);
+        }
+        if (item->parent && item->parent->type() == eProjectItemType::Folder) {
+            return static_cast<FolderItem*>(item->parent);
+        }
+        return nullptr;
+    }
+
+    void createFolderAtSelection(ArtifactProjectView* view) const {
+        auto* svc = ArtifactProjectService::instance();
+        if (!svc) {
+            return;
+        }
+        auto project = svc->getCurrentProjectSharedPtr();
+        if (!project) {
+            return;
+        }
+        project->createFolder(QStringLiteral("New Folder"), currentFolderTarget(view));
+    }
+
     void handleFileDrop(const QString& str) {
         auto* svc = ArtifactProjectService::instance();
         if (!svc) return;
@@ -1085,7 +1124,7 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
                 fpsSpin->setRange(1.0, 240.0);
                 fpsSpin->setDecimals(3);
                 fpsSpin->setSingleStep(0.5);
-                fpsSpin->setValue(std::max(1.0, composition->frameRate().framerate()));
+                fpsSpin->setValue(std::max(1.0, static_cast<double>(composition->frameRate().framerate())));
                 fpsLayout->addWidget(new QLabel(QStringLiteral("Frame Rate"), dialog));
                 fpsLayout->addWidget(fpsSpin);
                 layout->addLayout(fpsLayout);
@@ -1094,10 +1133,10 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
                 auto* rangeLayout = new QHBoxLayout();
                 auto* startSpin = new QSpinBox(dialog);
                 startSpin->setRange(-1000000, 1000000);
-                startSpin->setValue(static_cast<int>(currentRange.start().value()));
+                startSpin->setValue(static_cast<int>(currentRange.start()));
                 auto* endSpin = new QSpinBox(dialog);
                 endSpin->setRange(-1000000, 1000000);
-                endSpin->setValue(static_cast<int>(currentRange.end().value()));
+                endSpin->setValue(static_cast<int>(currentRange.end()));
                 rangeLayout->addWidget(new QLabel(QStringLiteral("Start"), dialog));
                 rangeLayout->addWidget(startSpin);
                 rangeLayout->addWidget(new QLabel(QStringLiteral("End"), dialog));
@@ -1286,10 +1325,8 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
     addTrackedNewAction(newMenu, QStringLiteral("new_solid"), QStringLiteral("Solid..."), []() {
         // Placeholder for solid creation dialog
     });
-    addTrackedNewAction(newMenu, QStringLiteral("new_folder"), QStringLiteral("Folder"), [svc]() {
-        if (svc && svc->getCurrentProjectSharedPtr()) {
-            svc->getCurrentProjectSharedPtr()->createFolder("New Folder");
-        }
+    addTrackedNewAction(newMenu, QStringLiteral("new_folder"), QStringLiteral("Folder"), [this]() {
+        impl_->createFolderAtSelection(this);
     });
 
     menu.addSeparator();
@@ -1571,6 +1608,32 @@ public:
         const QModelIndex sourceIdx = currentSourceIndexFromSelection();
         const QVariant ptrVar = sourceIdx.data(Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::ProjectItemPtr));
         return ptrVar.isValid() ? reinterpret_cast<ProjectItem*>(ptrVar.value<quintptr>()) : nullptr;
+    }
+
+    FolderItem* currentFolderTarget() const {
+        ProjectItem* item = currentSelectedItem();
+        if (!item) {
+            return nullptr;
+        }
+        if (item->type() == eProjectItemType::Folder) {
+            return static_cast<FolderItem*>(item);
+        }
+        if (item->parent && item->parent->type() == eProjectItemType::Folder) {
+            return static_cast<FolderItem*>(item->parent);
+        }
+        return nullptr;
+    }
+
+    void createFolderAtSelection() const {
+        auto* svc = ArtifactProjectService::instance();
+        if (!svc) {
+            return;
+        }
+        auto project = svc->getCurrentProjectSharedPtr();
+        if (!project) {
+            return;
+        }
+        project->createFolder(QStringLiteral("New Folder"), currentFolderTarget());
     }
 
     bool renameSelectedItem(QWidget* parent) {
@@ -1863,10 +1926,7 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
          }
     });
     connect(impl_->toolBox, &ArtifactProjectManagerToolBox::newFolderRequested, [this]() {
-         auto* svc = ArtifactProjectService::instance();
-         if (!svc) return;
-         auto project = svc->getCurrentProjectSharedPtr();
-         if (project) project->createFolder("New Folder");
+         impl_->createFolderAtSelection();
     });
     connect(impl_->toolBox, &ArtifactProjectManagerToolBox::generateProxyRequested, [this]() {
          QVector<FootageItem*> footage;
