@@ -422,6 +422,16 @@ CompositionSettings ArtifactAbstractComposition::settings() const
   return impl_->settings_;
 }
 
+void ArtifactAbstractComposition::setCompositionName(const UniString& name)
+{
+    impl_->settings_.setCompositionName(name);
+}
+
+void ArtifactAbstractComposition::setCompositionSize(const QSize& size)
+{
+    impl_->settings_.setCompositionSize(size);
+}
+
 bool ArtifactAbstractComposition::isVisual() const
 {
  return true;

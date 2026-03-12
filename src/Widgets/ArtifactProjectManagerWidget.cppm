@@ -42,6 +42,9 @@ module;
 #include <QSet>
 #include <QDialog>
 #include <QTreeWidget>
+#include <QSpinBox>
+#include <QDoubleSpinBox>
+#include <QDialogButtonBox>
 
 #include <iostream>
 #include <vector>
@@ -85,6 +88,7 @@ import Utils.String.UniString;
 import Utils.Id;
 import Artifact.Project.Manager;
 import Artifact.Service.Project;
+import Artifact.Service.Playback;
 import Artifact.Project.Model;
 import Artifact.Project.Items;
 import Artifact.Project.Roles;
@@ -807,7 +811,126 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
             });
 
             menu.addAction("Composition Settings...", [this, sourceIdx]() {
-                // TODO: trigger EditCompositionSettingDialog
+                auto* svc = ArtifactProjectService::instance();
+                if (!svc) {
+                    return;
+                }
+
+                const QVariant idVar = sourceIdx.data(Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::CompositionId));
+                if (!idVar.isValid()) {
+                    return;
+                }
+
+                const CompositionID compositionId(idVar.toString());
+                const auto found = svc->findComposition(compositionId);
+                auto composition = found.ptr.lock();
+                if (!found.success || !composition) {
+                    QMessageBox::warning(this, QStringLiteral("Composition Settings"),
+                        QStringLiteral("Could not load the selected composition."));
+                    return;
+                }
+
+                auto* dialog = new QDialog(this);
+                dialog->setAttribute(Qt::WA_DeleteOnClose);
+                dialog->setWindowTitle(QStringLiteral("Composition Settings"));
+                dialog->setModal(true);
+                dialog->resize(360, 260);
+
+                auto* layout = new QVBoxLayout(dialog);
+                auto* nameLabel = new QLabel(QStringLiteral("Name"), dialog);
+                auto* nameEdit = new QLineEdit(composition->settings().compositionName().toQString(), dialog);
+                layout->addWidget(nameLabel);
+                layout->addWidget(nameEdit);
+
+                auto* sizeLayout = new QHBoxLayout();
+                auto* widthSpin = new QSpinBox(dialog);
+                widthSpin->setRange(1, 32768);
+                widthSpin->setValue(std::max(1, composition->settings().compositionSize().width()));
+                auto* heightSpin = new QSpinBox(dialog);
+                heightSpin->setRange(1, 32768);
+                heightSpin->setValue(std::max(1, composition->settings().compositionSize().height()));
+                sizeLayout->addWidget(new QLabel(QStringLiteral("Width"), dialog));
+                sizeLayout->addWidget(widthSpin);
+                sizeLayout->addWidget(new QLabel(QStringLiteral("Height"), dialog));
+                sizeLayout->addWidget(heightSpin);
+                layout->addLayout(sizeLayout);
+
+                auto* fpsLayout = new QHBoxLayout();
+                auto* fpsSpin = new QDoubleSpinBox(dialog);
+                fpsSpin->setRange(1.0, 240.0);
+                fpsSpin->setDecimals(3);
+                fpsSpin->setSingleStep(0.5);
+                fpsSpin->setValue(std::max(1.0, composition->frameRate().framerate()));
+                fpsLayout->addWidget(new QLabel(QStringLiteral("Frame Rate"), dialog));
+                fpsLayout->addWidget(fpsSpin);
+                layout->addLayout(fpsLayout);
+
+                const FrameRange currentRange = composition->frameRange().normalized();
+                auto* rangeLayout = new QHBoxLayout();
+                auto* startSpin = new QSpinBox(dialog);
+                startSpin->setRange(-1000000, 1000000);
+                startSpin->setValue(static_cast<int>(currentRange.start().value()));
+                auto* endSpin = new QSpinBox(dialog);
+                endSpin->setRange(-1000000, 1000000);
+                endSpin->setValue(static_cast<int>(currentRange.end().value()));
+                rangeLayout->addWidget(new QLabel(QStringLiteral("Start"), dialog));
+                rangeLayout->addWidget(startSpin);
+                rangeLayout->addWidget(new QLabel(QStringLiteral("End"), dialog));
+                rangeLayout->addWidget(endSpin);
+                layout->addLayout(rangeLayout);
+
+                auto* infoLabel = new QLabel(
+                    QStringLiteral("ID: %1").arg(compositionId.toString()), dialog);
+                infoLabel->setStyleSheet(QStringLiteral("color: #888;"));
+                layout->addWidget(infoLabel);
+
+                auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, dialog);
+                layout->addWidget(buttons);
+
+                QObject::connect(buttons, &QDialogButtonBox::rejected, dialog, &QDialog::reject);
+                QObject::connect(buttons, &QDialogButtonBox::accepted, dialog, [this, dialog, svc, compositionId, composition, nameEdit, widthSpin, heightSpin, fpsSpin, startSpin, endSpin]() {
+                    const QString trimmedName = nameEdit->text().trimmed();
+                    if (trimmedName.isEmpty()) {
+                        QMessageBox::warning(dialog, QStringLiteral("Composition Settings"),
+                            QStringLiteral("Name must not be empty."));
+                        return;
+                    }
+
+                    const int startFrame = startSpin->value();
+                    const int endFrame = endSpin->value();
+                    if (startFrame > endFrame) {
+                        QMessageBox::warning(dialog, QStringLiteral("Composition Settings"),
+                            QStringLiteral("Start frame must be less than or equal to end frame."));
+                        return;
+                    }
+
+                    composition->setCompositionName(UniString::fromQString(trimmedName));
+                    composition->setCompositionSize(QSize(widthSpin->value(), heightSpin->value()));
+                    composition->setFrameRate(FrameRate(static_cast<float>(fpsSpin->value())));
+                    composition->setFrameRange(FrameRange(FramePosition(startFrame), FramePosition(endFrame)));
+
+                    if (!svc->renameComposition(compositionId, UniString::fromQString(trimmedName))) {
+                        QMessageBox::warning(dialog, QStringLiteral("Composition Settings"),
+                            QStringLiteral("Failed to update composition name."));
+                        return;
+                    }
+
+                    if (auto project = svc->getCurrentProjectSharedPtr()) {
+                        project->projectChanged();
+                    }
+                    if (auto current = svc->currentComposition().lock()) {
+                        if (current->id() == compositionId) {
+                            if (auto* playback = ArtifactPlaybackService::instance()) {
+                                playback->setFrameRange(composition->frameRange());
+                                playback->setFrameRate(composition->frameRate());
+                            }
+                        }
+                    }
+
+                    dialog->accept();
+                });
+
+                dialog->exec();
             });
             
             menu.addAction("Interpret Footage...", []() {
