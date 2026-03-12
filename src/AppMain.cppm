@@ -93,6 +93,8 @@ using namespace ArtifactCore;
 
 namespace
 {
+ constexpr int kMainWindowLayoutVersion = 3;
+
  quint64 processWorkingSetMB()
  {
 #if defined(_WIN32)
@@ -669,12 +671,28 @@ int main(int argc, char* argv[])
         QObject::connect(projectService, &ArtifactProjectService::compositionCreated, mw, [](const CompositionID& compId) {
             ArtifactPythonHookManager::runHook(QStringLiteral("composition_created"), QStringList() << compId.toString());
         });
-        QObject::connect(projectService, &ArtifactProjectService::compositionCreated, mw, [mw](const CompositionID& compId) {
-            QTimer::singleShot(0, mw, [mw, compId]() {
+        const auto timelineDockTitle = [projectService](const CompositionID& compId) {
+            QString compositionLabel = compId.toString();
+            if (projectService) {
+                const auto found = projectService->findComposition(compId);
+                if (found.success) {
+                    if (auto composition = found.ptr.lock()) {
+                        const QString liveName = composition->settings().compositionName().toQString().trimmed();
+                        if (!liveName.isEmpty()) {
+                            compositionLabel = liveName;
+                        }
+                    }
+                }
+            }
+            return QStringLiteral("Timeline - %1").arg(compositionLabel);
+        };
+        QObject::connect(projectService, &ArtifactProjectService::compositionCreated, mw, [mw, timelineDockTitle](const CompositionID& compId) {
+            QTimer::singleShot(0, mw, [mw, compId, timelineDockTitle]() {
                 auto* panel = new ArtifactTimelineWidget(mw);
                 panel->setComposition(compId);
+                panel->setWindowTitle(timelineDockTitle(compId));
                 mw->addDockedWidgetTabbed(
-                    QStringLiteral("Timeline - %1").arg(compId.toString()),
+                    timelineDockTitle(compId),
                     ads::BottomDockWidgetArea,
                     panel,
                     QStringLiteral("Timeline - "));
@@ -762,6 +780,14 @@ int main(int argc, char* argv[])
             }
         }
         auto layoutState = UiLayoutState::loadFromStore(layoutStore, "MainWindow");
+        if (layoutState.version != kMainWindowLayoutVersion) {
+            layoutStore.remove("MainWindow/layoutKey");
+            layoutStore.remove("MainWindow/version");
+            layoutStore.remove("MainWindow/geometry");
+            layoutStore.remove("MainWindow/state");
+            layoutStore.sync();
+            layoutState = UiLayoutState("ArtifactMainWindow");
+        }
         bool geometryRestored = true;
         bool stateRestored = true;
         const bool hasGeometry = !layoutState.geometry.isEmpty();
@@ -796,6 +822,7 @@ int main(int argc, char* argv[])
         }
         ArtifactCore::FastSettingsStore layoutStore(dataDir.filePath(QStringLiteral("main_window_layout.cbor")));
         UiLayoutState layoutState("ArtifactMainWindow");
+        layoutState.version = kMainWindowLayoutVersion;
         layoutState.geometry = mw->saveGeometry();
         layoutState.state = mw->saveState();
         layoutState.saveToStore(layoutStore, "MainWindow");

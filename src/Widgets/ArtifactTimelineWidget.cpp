@@ -668,9 +668,9 @@ W_OBJECT_IMPL(ArtifactTimelineWidget)
  ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget* parent/*=nullptr*/) :QWidget(parent), impl_(new Impl())
  {
 
-  setWindowFlags(Qt::FramelessWindowHint);
+ setWindowFlags(Qt::FramelessWindowHint);
 
-  setWindowTitle("TimelineWidget");
+  setWindowTitle("Timeline");
 
   auto style = getDCCStyleSheetPreset(DccStylePreset::ModoStyle);
 
@@ -1100,7 +1100,11 @@ W_OBJECT_IMPL(ArtifactTimelineWidget)
      svc->changeCurrentComposition(id);
      auto res = svc->findComposition(id);
      if (res.success && !res.ptr.expired()) {
-      auto comp = res.ptr.lock();
+     auto comp = res.ptr.lock();
+      const QString compositionLabel = comp->settings().compositionName().toQString().trimmed();
+      setWindowTitle(compositionLabel.isEmpty()
+       ? QStringLiteral("Timeline - %1").arg(id.toString())
+       : QStringLiteral("Timeline - %1").arg(compositionLabel));
        if (auto* app = ArtifactApplicationManager::instance()) {
         if (auto* ctx = app->activeContextService()) {
          ctx->setActiveComposition(comp);
@@ -1212,17 +1216,29 @@ W_OBJECT_IMPL(ArtifactTimelineWidget)
        }
       }
 
-      impl_->trackLayerIds_ = visibleRows;
-      std::unordered_set<std::string> clipRowsByLayerId;
+      QVector<LayerID> timelineRows;
+      timelineRows.reserve(visibleRows.size());
+      std::unordered_set<std::string> seenLayerIds;
       for (const auto& rowLayerId : visibleRows) {
+        if (rowLayerId.isNil()) {
+         timelineRows.push_back(rowLayerId);
+         continue;
+        }
+
+        const std::string layerKey = rowLayerId.toString().toStdString();
+        if (!seenLayerIds.insert(layerKey).second) {
+         continue;
+        }
+
+        timelineRows.push_back(rowLayerId);
+      }
+
+      impl_->trackLayerIds_ = timelineRows;
+      const auto composition = safeCompositionLookup(impl_->compositionId_);
+      for (const auto& rowLayerId : timelineRows) {
         const int trackIndex = impl_->trackView_->addTrack(kTimelineRowHeight);
         if (!rowLayerId.isNil()) {
-         const std::string layerKey = rowLayerId.toString().toStdString();
-         if (!clipRowsByLayerId.insert(layerKey).second) {
-          continue;
-         }
-         const auto result = safeCompositionLookup(impl_->compositionId_);
-         const auto layer = result ? result->layerById(rowLayerId) : nullptr;
+         const auto layer = composition ? composition->layerById(rowLayerId) : nullptr;
          const double clipStart = layer ? static_cast<double>(layer->inPoint().framePosition()) : 0.0;
          const double clipDuration = layer
           ? std::max(1.0, static_cast<double>(layer->outPoint().framePosition() - layer->inPoint().framePosition()))

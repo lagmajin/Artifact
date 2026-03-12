@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <QVector>
 #include <QMatrix4x4>
 #include <QString>
@@ -40,7 +40,7 @@ module;
 #include <numeric>
 #include <regex>
 #include <random>
-module Generator.Clone;
+export module Generator.Clone;
 
 
 

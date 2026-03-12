@@ -1352,7 +1352,7 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent*)
   impl_->scroll = new QScrollArea();
   impl_->scroll->setWidget(impl_->panel);
   impl_->scroll->setWidgetResizable(true);
-  impl_->scroll->setAlignment(Qt::AlignHCenter | Qt::AlignVCenter);
+  impl_->scroll->setAlignment(Qt::AlignLeft | Qt::AlignTop);
   impl_->scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
   impl_->scroll->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
   impl_->scroll->setFrameShape(QFrame::NoFrame);
@@ -1370,8 +1370,13 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent*)
   QObject::connect(impl_->header, &ArtifactLayerPanelHeaderWidget::shyToggled,
                    impl_->panel, &ArtifactLayerPanelWidget::setShyHidden);
   QObject::connect(impl_->panel, &ArtifactLayerPanelWidget::visibleRowsChanged,
-                   this, &ArtifactLayerTimelinePanelWrapper::visibleRowsChanged);
- }
+                   this, [this]() {
+                    const bool isEmpty = impl_->panel->visibleTimelineRows().isEmpty();
+                    impl_->scroll->setAlignment(isEmpty ? (Qt::AlignHCenter | Qt::AlignVCenter)
+                                                        : (Qt::AlignLeft | Qt::AlignTop));
+                    Q_EMIT visibleRowsChanged();
+                   });
+}
 
  ArtifactLayerTimelinePanelWrapper::ArtifactLayerTimelinePanelWrapper(const CompositionID& id, QWidget* parent)
   : ArtifactLayerTimelinePanelWrapper(parent)
