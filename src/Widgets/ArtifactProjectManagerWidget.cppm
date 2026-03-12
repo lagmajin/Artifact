@@ -104,6 +104,48 @@ namespace Artifact {
 
 namespace {
 
+bool isImportableAssetFile(const QString& path)
+{
+    const QString lower = path.toLower();
+    return lower.endsWith(".png") || lower.endsWith(".jpg") ||
+        lower.endsWith(".jpeg") || lower.endsWith(".bmp") ||
+        lower.endsWith(".gif") || lower.endsWith(".tga") ||
+        lower.endsWith(".tiff") || lower.endsWith(".exr") ||
+        lower.endsWith(".mp4") || lower.endsWith(".mov") ||
+        lower.endsWith(".avi") || lower.endsWith(".mkv") ||
+        lower.endsWith(".webm") || lower.endsWith(".flv") ||
+        lower.endsWith(".mp3") || lower.endsWith(".wav") ||
+        lower.endsWith(".ogg") || lower.endsWith(".flac") ||
+        lower.endsWith(".aac") || lower.endsWith(".m4a") ||
+        lower.endsWith(".ttf") || lower.endsWith(".otf") ||
+        lower.endsWith(".ttc") || lower.endsWith(".woff") ||
+        lower.endsWith(".woff2");
+}
+
+void collectImportablePaths(const QString& localPath, QStringList& outPaths)
+{
+    if (localPath.isEmpty()) {
+        return;
+    }
+    const QFileInfo info(localPath);
+    if (!info.exists()) {
+        return;
+    }
+    if (info.isDir()) {
+        QDirIterator it(localPath, QDir::Files, QDirIterator::Subdirectories);
+        while (it.hasNext()) {
+            const QString candidate = it.next();
+            if (isImportableAssetFile(candidate)) {
+                outPaths.append(candidate);
+            }
+        }
+        return;
+    }
+    if (isImportableAssetFile(localPath)) {
+        outPaths.append(localPath);
+    }
+}
+
 QString projectItemTypeLabel(const eProjectItemType type)
 {
     switch (type) {
@@ -579,7 +621,11 @@ public:
     void handleFileDrop(const QString& str) {
         auto* svc = ArtifactProjectService::instance();
         if (!svc) return;
-        svc->importAssetsFromPaths(QStringList() << str);
+        QStringList importTargets;
+        collectImportablePaths(str, importTargets);
+        importTargets.removeDuplicates();
+        if (importTargets.isEmpty()) return;
+        svc->importAssetsFromPaths(importTargets);
     }
 
     static void collectFootage(ProjectItem* item, QVector<FootageItem*>& out) {
@@ -1255,24 +1301,31 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
 }
 
 void ArtifactProjectView::dropEvent(QDropEvent* event) {
-    event->setDropAction(Qt::CopyAction);
     const QMimeData* mimeData = event->mimeData();
-    if (mimeData->hasUrls()) {
-        for (const QUrl& url : mimeData->urls()) {
-            QString filePath = url.toLocalFile();
-            QString lowerPath = filePath.toLower();
-            if (lowerPath.endsWith(".png") || lowerPath.endsWith(".jpg") || lowerPath.endsWith(".jpeg") ||
-                lowerPath.endsWith(".bmp") || lowerPath.endsWith(".gif") || lowerPath.endsWith(".mp4") ||
-                lowerPath.endsWith(".avi") || lowerPath.endsWith(".mov") || lowerPath.endsWith(".mkv") ||
-                lowerPath.endsWith(".ttf") || lowerPath.endsWith(".otf") || lowerPath.endsWith(".ttc") ||
-                lowerPath.endsWith(".woff") || lowerPath.endsWith(".woff2")) {
-                impl_->handleFileDrop(filePath);
-            }
-        }
-        event->acceptProposedAction();
-    } else {
+    if (!mimeData->hasUrls()) {
         event->ignore();
+        return;
     }
+
+    QStringList importTargets;
+    for (const QUrl& url : mimeData->urls()) {
+        if (!url.isLocalFile()) {
+            continue;
+        }
+        collectImportablePaths(url.toLocalFile(), importTargets);
+    }
+    importTargets.removeDuplicates();
+    if (importTargets.isEmpty()) {
+        event->ignore();
+        return;
+    }
+
+    if (auto* svc = ArtifactProjectService::instance()) {
+        svc->importAssetsFromPaths(importTargets);
+        event->acceptProposedAction();
+        return;
+    }
+    event->ignore();
 }
 
 void ArtifactProjectView::dragEnterEvent(QDragEnterEvent* event) {
