@@ -631,6 +631,54 @@ ArtifactProject::ArtifactProject() :impl_(new Impl())
     projectChanged();
   }
 
+  bool ArtifactProject::moveItem(ProjectItem* item, ProjectItem* newParent)
+  {
+    if (!item || !newParent) {
+      return false;
+    }
+    if (impl_->ownedItems_.empty()) {
+      return false;
+    }
+
+    ProjectItem* const projectRoot = impl_->ownedItems_.front().get();
+    if (!projectRoot) {
+      return false;
+    }
+    // Keep root placeholder fixed.
+    if (item == projectRoot) {
+      return false;
+    }
+    if (newParent->type() != eProjectItemType::Folder) {
+      return false;
+    }
+    if (item == newParent) {
+      return false;
+    }
+
+    // Avoid folder cycles (moving a folder under its own descendant).
+    for (ProjectItem* p = newParent; p; p = p->parent) {
+      if (p == item) {
+        return false;
+      }
+    }
+
+    if (item->parent == newParent) {
+      return true;
+    }
+
+    if (item->parent) {
+      item->parent->children.removeOne(item);
+    }
+    item->parent = newParent;
+    if (!newParent->children.contains(item)) {
+      newParent->children.append(item);
+    }
+
+    impl_->setDirty(true);
+    projectChanged();
+    return true;
+  }
+
   bool ArtifactProject::removeItem(ProjectItem* item)
   {
     if (!item) return false;

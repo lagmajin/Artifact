@@ -101,6 +101,7 @@ export namespace Artifact
   bool moveEffectInLayerInCurrentComposition(const LayerID& layerId, const QString& effectId, int direction);
   QString layerRemovalConfirmationMessage(const CompositionID& compositionId, const LayerID& layerId) const;
   bool removeProjectItem(ProjectItem* item);
+  bool moveProjectItem(ProjectItem* item, ProjectItem* newParent);
   QString projectItemRemovalConfirmationMessage(ProjectItem* item) const;
   bool removeComposition(const CompositionID& id);
   int renderQueueCountForComposition(const CompositionID& id) const;

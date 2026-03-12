@@ -146,6 +146,44 @@ void collectImportablePaths(const QString& localPath, QStringList& outPaths)
     }
 }
 
+void collectFolders(ProjectItem* item, QVector<FolderItem*>& out)
+{
+    if (!item) {
+        return;
+    }
+    if (item->type() == eProjectItemType::Folder) {
+        out.append(static_cast<FolderItem*>(item));
+    }
+    for (auto* child : item->children) {
+        collectFolders(child, out);
+    }
+}
+
+bool isDescendantOf(const ProjectItem* node, const ProjectItem* potentialAncestor)
+{
+    for (const ProjectItem* p = node; p; p = p->parent) {
+        if (p == potentialAncestor) {
+            return true;
+        }
+    }
+    return false;
+}
+
+QString folderDisplayPath(const FolderItem* folder)
+{
+    if (!folder) {
+        return QStringLiteral("(Folder)");
+    }
+    QStringList names;
+    const ProjectItem* cur = folder;
+    while (cur) {
+        const QString n = cur->name.toQString().trimmed();
+        names.prepend(n.isEmpty() ? QStringLiteral("(Unnamed)") : n);
+        cur = cur->parent;
+    }
+    return names.join(QStringLiteral(" / "));
+}
+
 QString projectItemTypeLabel(const eProjectItemType type)
 {
     switch (type) {
@@ -1164,9 +1202,46 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
                  if (!renameProjectItem(item, name)) {
                      QMessageBox::warning(this, QStringLiteral("Rename Failed"),
                          QStringLiteral("Could not rename the selected project item."));
-                 }
+                }
             }
         });
+
+        QMenu* moveToFolderMenu = menu.addMenu(QStringLiteral("Move to Folder"));
+        bool hasMoveTarget = false;
+        if (svc && item) {
+            if (auto project = svc->getCurrentProjectSharedPtr()) {
+                QVector<FolderItem*> folders;
+                const auto roots = project->projectItems();
+                for (auto* root : roots) {
+                    collectFolders(root, folders);
+                }
+                for (auto* folder : folders) {
+                    if (!folder) {
+                        continue;
+                    }
+                    QAction* moveAction = moveToFolderMenu->addAction(folderDisplayPath(folder));
+                    const bool canMove = (folder != item) && !isDescendantOf(folder, item);
+                    moveAction->setEnabled(canMove);
+                    if (!canMove) {
+                        continue;
+                    }
+                    hasMoveTarget = true;
+                    QObject::connect(moveAction, &QAction::triggered, this, [this, svc, item, folder]() {
+                        if (!svc || !item || !folder) {
+                            return;
+                        }
+                        if (!svc->moveProjectItem(item, folder)) {
+                            QMessageBox::warning(this, QStringLiteral("Move Failed"),
+                                QStringLiteral("Could not move the selected item to the target folder."));
+                        }
+                    });
+                }
+            }
+        }
+        if (!hasMoveTarget) {
+            QAction* emptyAction = moveToFolderMenu->addAction(QStringLiteral("(No valid target folder)"));
+            emptyAction->setEnabled(false);
+        }
 
         addTrackedAction(QStringLiteral("delete"), QStringLiteral("Delete"), [this, item, svc]() {
             if (!svc || !item) {
