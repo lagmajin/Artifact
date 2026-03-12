@@ -35,6 +35,7 @@ module;
 #include <QDirIterator>
 #include <QMessageBox>
 #include <QHash>
+#include <QFileInfo>
 #include <QComboBox>
 #include <QCheckBox>
 #include <QProgressBar>
@@ -100,6 +101,114 @@ import Artifact.Widgets.LayerPanelWidget;
 namespace Artifact {
 
  using namespace ArtifactCore;
+
+namespace {
+
+QString projectItemTypeLabel(const eProjectItemType type)
+{
+    switch (type) {
+    case eProjectItemType::Composition:
+        return QStringLiteral("Composition");
+    case eProjectItemType::Footage:
+        return QStringLiteral("Footage");
+    case eProjectItemType::Folder:
+        return QStringLiteral("Folder");
+    case eProjectItemType::Solid:
+        return QStringLiteral("Solid");
+    default:
+        return QStringLiteral("Item");
+    }
+}
+
+QPixmap projectItemPreviewPixmap(ProjectItem* item, const QSize& targetSize)
+{
+    if (!item) {
+        return {};
+    }
+
+    if (item->type() == eProjectItemType::Footage) {
+        const QString path = static_cast<FootageItem*>(item)->filePath;
+        const QFileInfo info(path);
+        if (!info.exists()) {
+            return {};
+        }
+        QPixmap pix(path);
+        if (pix.isNull()) {
+            return {};
+        }
+        return pix.scaled(targetSize, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    }
+
+    if (item->type() == eProjectItemType::Composition) {
+        auto* svc = ArtifactProjectService::instance();
+        if (!svc) {
+            return {};
+        }
+        const auto found = svc->findComposition(static_cast<CompositionItem*>(item)->compositionId);
+        if (!found.success) {
+            return {};
+        }
+        if (auto composition = found.ptr.lock()) {
+            const QImage thumb = composition->getThumbnail(targetSize.width(), targetSize.height());
+            if (!thumb.isNull()) {
+                return QPixmap::fromImage(thumb);
+            }
+        }
+    }
+
+    return {};
+}
+
+QStringList projectItemMetadataLines(const QModelIndex& sourceIndex, ProjectItem* item)
+{
+    const QModelIndex source0 = sourceIndex.siblingAtColumn(0);
+    const QString title = source0.data(Qt::DisplayRole).toString();
+    const QString size = sourceIndex.siblingAtColumn(1).data(Qt::DisplayRole).toString().trimmed();
+    const QString duration = sourceIndex.siblingAtColumn(2).data(Qt::DisplayRole).toString().trimmed();
+    const QString fps = sourceIndex.siblingAtColumn(3).data(Qt::DisplayRole).toString().trimmed();
+    const QString updated = sourceIndex.siblingAtColumn(4).data(Qt::DisplayRole).toString().trimmed();
+
+    QStringList lines;
+    lines << title;
+
+    if (!item) {
+        lines << QStringLiteral("Unknown item") << QStringLiteral("No metadata");
+        return lines;
+    }
+
+    if (item->type() == eProjectItemType::Footage) {
+        const QString path = static_cast<FootageItem*>(item)->filePath;
+        const QFileInfo info(path);
+        const QString state = info.exists() ? QStringLiteral("Available") : QStringLiteral("Missing");
+        lines << QStringLiteral("%1 • %2").arg(projectItemTypeLabel(item->type()), state);
+        if (!size.isEmpty() || !duration.isEmpty() || !fps.isEmpty()) {
+            lines << QStringLiteral("%1  %2  %3").arg(size, duration, fps).trimmed();
+        } else {
+            lines << info.fileName();
+        }
+        return lines;
+    }
+
+    if (item->type() == eProjectItemType::Composition) {
+        QString secondLine = projectItemTypeLabel(item->type());
+        if (!size.isEmpty()) {
+            secondLine += QStringLiteral(" • %1").arg(size);
+        }
+        lines << secondLine;
+        lines << QStringLiteral("%1  %2  Updated %3").arg(duration, fps, updated).trimmed();
+        return lines;
+    }
+
+    lines << projectItemTypeLabel(item->type());
+    if (!updated.isEmpty() && updated != QStringLiteral("-")) {
+        lines << QStringLiteral("Updated %1").arg(updated);
+    } else {
+        lines << QStringLiteral("No preview available");
+    }
+    return lines;
+}
+
+} // namespace
 
  W_OBJECT_IMPL(ArtifactProjectManagerWidget)
  W_OBJECT_IMPL(ArtifactProjectView)
@@ -167,53 +276,46 @@ public:
         QString name = source0.data(Qt::DisplayRole).toString();
         titleLabel->setText(name);
 
-        QString size = index.siblingAtColumn(1).data(Qt::DisplayRole).toString();
-        QString duration = index.siblingAtColumn(2).data(Qt::DisplayRole).toString();
-        QString fps = index.siblingAtColumn(3).data(Qt::DisplayRole).toString();
-
-        if (fps == QStringLiteral("Font")) {
-            detailsLabel->setText(QStringLiteral("Font Asset\n%1").arg(duration));
-        } else if (!size.isEmpty() || !duration.isEmpty()) {
-            detailsLabel->setText(QString("%1\n%2, %3").arg(size).arg(duration).arg(fps));
-        } else {
-            detailsLabel->setText("Folder or Footage Asset");
-        }
-
         // Lazy preview generation: only decode imagery when the selected row needs it.
         thumbnail->setText("PREVIEW");
         thumbnail->setPixmap(QPixmap());
         QVariant ptrVar = source0.data(Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::ProjectItemPtr));
         ProjectItem* item = ptrVar.isValid() ? reinterpret_cast<ProjectItem*>(ptrVar.value<quintptr>()) : nullptr;
-        if (!item || item->type() != eProjectItemType::Footage) {
+        const QStringList metadata = projectItemMetadataLines(index, item);
+        detailsLabel->setText(metadata.mid(1).join(QStringLiteral("\n")));
+
+        if (!item) {
             return;
         }
 
-        const QString path = static_cast<FootageItem*>(item)->filePath;
-        if (path.isEmpty()) {
-            return;
-        }
-        const QFileInfo info(path);
-        if (!info.exists()) {
-            thumbnail->setText("MISSING");
-            return;
-        }
+        const QString cacheKey = item->type() == eProjectItemType::Composition
+            ? QStringLiteral("comp:%1").arg(static_cast<CompositionItem*>(item)->compositionId.toString())
+            : (item->type() == eProjectItemType::Footage
+                ? QStringLiteral("footage:%1").arg(static_cast<FootageItem*>(item)->filePath)
+                : QStringLiteral("%1:%2").arg(static_cast<int>(item->type())).arg(name));
 
-        auto cacheIt = previewCache.constFind(path);
+        auto cacheIt = previewCache.constFind(cacheKey);
         if (cacheIt != previewCache.constEnd()) {
             thumbnail->setPixmap(*cacheIt);
             thumbnail->setText(QString());
             return;
         }
 
-        QPixmap pix(path);
+        const QPixmap pix = projectItemPreviewPixmap(item, thumbnail->size());
         if (!pix.isNull()) {
-            QPixmap scaled = pix.scaled(thumbnail->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation);
-            previewCache.insert(path, scaled);
-            thumbnail->setPixmap(scaled);
+            previewCache.insert(cacheKey, pix);
+            thumbnail->setPixmap(pix);
             thumbnail->setText(QString());
             return;
         }
-        thumbnail->setText(info.suffix().toUpper());
+
+        if (item->type() == eProjectItemType::Footage &&
+            !QFileInfo(static_cast<FootageItem*>(item)->filePath).exists()) {
+            thumbnail->setText("MISSING");
+            return;
+        }
+
+        thumbnail->setText(projectItemTypeLabel(item->type()).toUpper());
     }
 };
 
@@ -252,7 +354,11 @@ HoverThumbnailPopupWidget::HoverThumbnailPopupWidget(QWidget* parent) : QWidget(
 
 HoverThumbnailPopupWidget::~HoverThumbnailPopupWidget() { delete impl_; }
 void HoverThumbnailPopupWidget::setThumbnail(const QPixmap& px) { if(impl_->thumbnailLabel) impl_->thumbnailLabel->setPixmap(px); }
-void HoverThumbnailPopupWidget::setLabels(const QStringList& ls) { for(int i=0; i<impl_->infoLabels.size() && i<ls.size(); ++i) impl_->infoLabels[i]->setText(ls[i]); }
+void HoverThumbnailPopupWidget::setLabels(const QStringList& ls) {
+  for (int i = 0; i < impl_->infoLabels.size(); ++i) {
+    impl_->infoLabels[i]->setText(i < ls.size() ? ls[i] : QString());
+  }
+}
 void HoverThumbnailPopupWidget::setLabel(int idx, const QString& t) { if(idx>=0 && idx<impl_->infoLabels.size()) impl_->infoLabels[idx]->setText(t); }
 void HoverThumbnailPopupWidget::showAt(const QPoint& p) {
   QPoint pos = p;
@@ -742,8 +848,11 @@ void ArtifactProjectView::mouseMoveEvent(QMouseEvent* event) {
             if (type != eProjectItemType::Footage && type != eProjectItemType::Composition) return;
 
             if (!impl_->hoverPopup) impl_->hoverPopup = new HoverThumbnailPopupWidget();
-            QString text = currentIndex.data(Qt::DisplayRole).toString();
-            impl_->hoverPopup->setLabels(QStringList() << text << "Metadata Info" << "");
+            const QVariant ptrVar = sourceIdx.data(Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::ProjectItemPtr));
+            ProjectItem* item = ptrVar.isValid() ? reinterpret_cast<ProjectItem*>(ptrVar.value<quintptr>()) : nullptr;
+            const QPixmap preview = projectItemPreviewPixmap(item, QSize(200, 112));
+            impl_->hoverPopup->setThumbnail(preview);
+            impl_->hoverPopup->setLabels(projectItemMetadataLines(sourceIdx, item));
             const QRect itemRect = visualRect(currentIndex);
             QPoint popupPos = viewport()->mapToGlobal(itemRect.topRight() + QPoint(14, 6));
             impl_->hoverPopup->showAt(popupPos);
