@@ -2,7 +2,6 @@
 #define NOMINMAX
 #include <windows.h>
 #include <cstring>
-#include <tbb/tbb.h>
 #include <QList>
 #include <d3d12.h>
 //#include <d3>
@@ -135,7 +134,7 @@ W_OBJECT_IMPL(ArtifactLayerEditorWidgetV2)
   //bool isPanning_ = false;
   bool isPlay_ = false;
   std::atomic_bool running_{ false };
-  tbb::task_group renderTask_;
+  QTimer* renderTimer_ = nullptr;
   std::mutex resizeMutex_;
   
   
@@ -284,28 +283,17 @@ W_OBJECT_IMPL(ArtifactLayerEditorWidgetV2)
   if (running_)
    return;
   running_ = true;
-
-  renderTask_.run([this]()
-   {
-	while (running_.load(std::memory_order_acquire))
-	{
-	 {
-	  std::lock_guard<std::mutex> lock(resizeMutex_);
-	  renderOneFrame();
-	 }
-	 std::this_thread::sleep_for(std::chrono::milliseconds(16));
-	}
-
-	// ループ終了時に GPU 完全停止
-	//pDevice->WaitForIdle();
-   });
+  if (renderTimer_ && !renderTimer_->isActive()) {
+   renderTimer_->start();
+  }
  }
 
  void ArtifactLayerEditorWidgetV2::Impl::stopRenderLoop()
  {
   running_ = false;        // ループを抜ける
-
-  renderTask_.wait();
+  if (renderTimer_) {
+   renderTimer_->stop();
+  }
 
   if (renderer_) {
    renderer_->flushAndWait();
@@ -336,7 +324,7 @@ void ArtifactLayerEditorWidgetV2::Impl::recreateSwapChain(QWidget* window)
   renderer_->setViewportSize(static_cast<float>(window->width()), static_cast<float>(window->height()));
  }
 
- ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nullptr*/) :QWidget(parent), impl_(new Impl())
+ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nullptr*/) :QWidget(parent), impl_(new Impl())
  {
   setMinimumSize(1, 1);
 
@@ -346,6 +334,19 @@ void ArtifactLayerEditorWidgetV2::Impl::recreateSwapChain(QWidget* window)
   setAttribute(Qt::WA_NoSystemBackground);
 
   setWindowTitle("ArtifactLayerEditor");
+
+  impl_->renderTimer_ = new QTimer(this);
+  impl_->renderTimer_->setInterval(16);
+  QObject::connect(impl_->renderTimer_, &QTimer::timeout, this, [this]() {
+   if (!impl_ || !impl_->initialized_ || !impl_->renderer_ || !impl_->running_.load(std::memory_order_acquire)) {
+    return;
+   }
+   if (!isVisible() || width() <= 0 || height() <= 0) {
+    return;
+   }
+   std::lock_guard<std::mutex> lock(impl_->resizeMutex_);
+   impl_->renderOneFrame();
+  });
 
   if (auto* service = ArtifactProjectService::instance()) {
    QObject::connect(service, &ArtifactProjectService::layerSelected, this, [this](const ArtifactCore::LayerID& id) {

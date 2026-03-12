@@ -772,6 +772,8 @@ W_OBJECT_IMPL(ArtifactTimelineWidget)
     scrubBar->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     workAreaWidget->setFixedHeight(kTimelineWorkAreaRowHeight);
     workAreaWidget->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    timeNavigatorWidget->setVisible(false);
+    workAreaWidget->setVisible(false);
     scrubBar->setTotalFrames(kDefaultTimelineFrames);
     scrubBar->setCurrentFrame(FramePosition(0));
     scrubBar->setVisible(true);

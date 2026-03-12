@@ -239,20 +239,6 @@ void ArtifactMainWindow::addDockedWidgetTabbed(const QString& title, ads::DockWi
   }
  }
 
- if (!targetArea && title.startsWith(QStringLiteral("Timeline - "))) {
-  for (auto it = impl_->dockWidgets.crbegin(); it != impl_->dockWidgets.crend(); ++it) {
-   auto* existingDock = *it;
-   if (!existingDock) continue;
-   const QString objectName = existingDock->objectName();
-   const QString windowTitle = existingDock->windowTitle();
-   if ((objectName == QStringLiteral("Render Queue") || windowTitle == QStringLiteral("Render Queue")) &&
-       existingDock->dockAreaWidget()) {
-    targetArea = existingDock->dockAreaWidget();
-    break;
-   }
-  }
- }
-
  if (targetArea) {
   impl_->dockManager->addDockWidget(ads::CenterDockWidgetArea, dock, targetArea);
  } else {
