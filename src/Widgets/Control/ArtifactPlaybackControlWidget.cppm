@@ -47,6 +47,7 @@ import Widgets.Utils.CSS;
 import Artifact.Application.Manager;
 
 import Artifact.Service.ActiveContext;
+import Artifact.Service.Playback;
 
 
 namespace Artifact
@@ -68,11 +69,13 @@ namespace Artifact
   QToolButton* seekStartButton_ = nullptr;
   QToolButton* seekEndButton_ = nullptr;
   
-  bool isPlaying_ = false;
-  bool isLooping_ = false;
+ bool isPlaying_ = false;
+ bool isLooping_ = false;
   float playbackSpeed_ = 1.0f;
   
   void setIconSize(const QSize& size);
+  void syncFromService();
+  void refreshButtonStates();
 
   void handlePlayButtonClicked();
   void handleStopButtonClicked();
@@ -118,45 +121,92 @@ namespace Artifact
 
  void ArtifactPlaybackControlWidget::Impl::setIconSize(const QSize& size)
  {
+  playButton_->setIconSize(size);
+  pauseButton_->setIconSize(size);
+  stopButton_->setIconSize(size);
+  stepBackwardButton_->setIconSize(size);
+  stepForwardButton_->setIconSize(size);
+  seekStartButton_->setIconSize(size);
+  seekEndButton_->setIconSize(size);
+ }
 
+ void ArtifactPlaybackControlWidget::Impl::syncFromService()
+ {
+  if (auto* service = ArtifactPlaybackService::instance()) {
+   isPlaying_ = service->isPlaying();
+   isLooping_ = service->isLooping();
+   playbackSpeed_ = service->playbackSpeed();
+  }
+  refreshButtonStates();
+ }
+
+ void ArtifactPlaybackControlWidget::Impl::refreshButtonStates()
+ {
+  if (playButton_) {
+   playButton_->setEnabled(!isPlaying_);
+  }
+  if (pauseButton_) {
+   pauseButton_->setEnabled(isPlaying_);
+  }
+  if (stopButton_) {
+   stopButton_->setEnabled(isPlaying_);
+  }
  }
 
  void ArtifactPlaybackControlWidget::Impl::handlePlayButtonClicked()
  {
-  isPlaying_ = !isPlaying_;
-  // TODO: 再生サービスに通知
+  if (auto* service = ArtifactPlaybackService::instance()) {
+   service->play();
+  }
+  syncFromService();
  }
 
  void ArtifactPlaybackControlWidget::Impl::handleStopButtonClicked()
  {
-  isPlaying_ = false;
-  // TODO: 再生サービスに通知
+  if (auto* service = ArtifactPlaybackService::instance()) {
+   service->stop();
+  }
+  syncFromService();
  }
 
  void ArtifactPlaybackControlWidget::Impl::handlePauseButtonClicked()
  {
-  isPlaying_ = false;
-  // TODO: 再生サービスに通知
+  if (auto* service = ArtifactPlaybackService::instance()) {
+   service->pause();
+  }
+  syncFromService();
  }
 
  void ArtifactPlaybackControlWidget::Impl::handleStepForwardClicked()
  {
-  // TODO: 再生サービスに通知
+  if (auto* service = ArtifactPlaybackService::instance()) {
+   service->goToNextFrame();
+  }
+  syncFromService();
  }
 
  void ArtifactPlaybackControlWidget::Impl::handleStepBackwardClicked()
  {
-  // TODO: 再生サービスに通知
+  if (auto* service = ArtifactPlaybackService::instance()) {
+   service->goToPreviousFrame();
+  }
+  syncFromService();
  }
 
  void ArtifactPlaybackControlWidget::Impl::handleSeekStartClicked()
  {
-  // TODO: 再生サービスに通知
+  if (auto* service = ArtifactPlaybackService::instance()) {
+   service->goToStartFrame();
+  }
+  syncFromService();
  }
 
  void ArtifactPlaybackControlWidget::Impl::handleSeekEndClicked()
  {
-  // TODO: 再生サービスに通知
+  if (auto* service = ArtifactPlaybackService::instance()) {
+   service->goToEndFrame();
+  }
+  syncFromService();
  }
 
  W_OBJECT_IMPL(ArtifactPlaybackControlWidget)
@@ -189,24 +239,45 @@ namespace Artifact
    this, &ArtifactPlaybackControlWidget::play);
 
   connect(impl_->pauseButton_, &QToolButton::clicked,
-   this, &ArtifactPlaybackControlWidget::pauseButtonClicked);
+   this, [this]() {
+    impl_->handlePauseButtonClicked();
+    Q_EMIT pauseButtonClicked();
+   });
 
   connect(impl_->stopButton_, &QToolButton::clicked,
    this, &ArtifactPlaybackControlWidget::stop);
 
   connect(impl_->stepForwardButton_, &QToolButton::clicked,
-   this, &ArtifactPlaybackControlWidget::stepForwardClicked);
+   this, &ArtifactPlaybackControlWidget::stepForward);
 
   connect(impl_->stepBackwardButton_, &QToolButton::clicked,
-   this, &ArtifactPlaybackControlWidget::stepBackwardClicked);
+   this, &ArtifactPlaybackControlWidget::stepBackward);
 
   connect(impl_->seekStartButton_, &QToolButton::clicked,
-   this, &ArtifactPlaybackControlWidget::seekStartClicked);
+   this, &ArtifactPlaybackControlWidget::seekStart);
 
   connect(impl_->seekEndButton_, &QToolButton::clicked,
-   this, &ArtifactPlaybackControlWidget::seekEndClicked);
+   this, &ArtifactPlaybackControlWidget::seekEnd);
+
+  if (auto* playbackService = ArtifactPlaybackService::instance()) {
+   connect(playbackService, &ArtifactPlaybackService::playbackStateChanged, this,
+    [this](PlaybackState) {
+     impl_->syncFromService();
+    });
+   connect(playbackService, &ArtifactPlaybackService::playbackSpeedChanged, this,
+    [this](float speed) {
+     impl_->playbackSpeed_ = speed;
+     impl_->refreshButtonStates();
+    });
+   connect(playbackService, &ArtifactPlaybackService::loopingChanged, this,
+    [this](bool loop) {
+     impl_->isLooping_ = loop;
+     impl_->refreshButtonStates();
+    });
+  }
 
   setMinimumSize(0, 32);
+  impl_->syncFromService();
  }
 
  ArtifactPlaybackControlWidget::~ArtifactPlaybackControlWidget()
@@ -253,6 +324,10 @@ namespace Artifact
  void ArtifactPlaybackControlWidget::setLoopEnabled(bool enabled)
  {
   impl_->isLooping_ = enabled;
+  if (auto* service = ArtifactPlaybackService::instance()) {
+   service->setLooping(enabled);
+  }
+  impl_->refreshButtonStates();
   Q_EMIT loopToggled(enabled);
  }
 
@@ -264,6 +339,9 @@ namespace Artifact
  void ArtifactPlaybackControlWidget::setPlaybackSpeed(float speed)
  {
   impl_->playbackSpeed_ = qBound(0.1f, speed, 10.0f);
+  if (auto* service = ArtifactPlaybackService::instance()) {
+   service->setPlaybackSpeed(impl_->playbackSpeed_);
+  }
   Q_EMIT playbackSpeedChanged(speed);
  }
 
