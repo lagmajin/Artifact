@@ -60,9 +60,9 @@ This milestone is focused on perceived product completeness rather than adding m
 3. Import handling logic is aligned between context menu import and direct drop paths.
 4. Project View context menu supports "Move to Folder" for project items.
 5. Reparent safety guards are enabled (no self/descendant move, root fixed).
+6. Project View internal drag-and-drop supports moving items into folders.
 
 ## Next Slice
 
 1. Add explicit regression checklist document for RC-5.
 2. Add save/load verification cases for project tree integrity.
-3. Add drag-and-drop project-item reparent in Project View (UI gesture parity).
