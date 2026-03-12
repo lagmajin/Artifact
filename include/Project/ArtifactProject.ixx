@@ -94,6 +94,7 @@ export namespace Artifact {
   bool removeCompositionById(const CompositionID& id);
   void removeAllCompositions();
   void createFolder(const QString& name);
+  void createFolder(const QString& name, FolderItem* parentFolder);
   bool moveItem(ProjectItem* item, ProjectItem* newParent);
   bool removeItem(ProjectItem* item);
   bool validateProjectTree(QString* errorMessage = nullptr) const;

@@ -90,7 +90,12 @@ ads--CDockWidgetTab[artifactActiveTab="true"] {
  font-weight: 600;
 }
 ads--CDockWidget[artifactActiveDock="true"] {
- border: 1px solid #569cd6;
+ background: #1c2430;
+ border: 2px solid #569cd6;
+}
+ads--CDockWidget[artifactActiveDock="true"] ads--CDockAreaTitleBar {
+ background: #253246;
+ border-bottom: 1px solid #569cd6;
 }
 ads--CDockWidgetTab QAbstractButton#tabCloseButton,
 ads--CDockWidgetTab QPushButton#tabCloseButton {

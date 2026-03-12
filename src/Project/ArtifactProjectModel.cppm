@@ -504,9 +504,21 @@ QModelIndex ArtifactProjectModel::parent(const QModelIndex& index) const
 
 Qt::ItemFlags ArtifactProjectModel::flags(const QModelIndex &index) const
 {
-  if (!index.isValid()) return Qt::NoItemFlags;
-  // Basic selectable/enabled flags; expand as needed
-  return Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsDragEnabled;
+  if (!index.isValid()) {
+    return Qt::ItemIsDropEnabled;
+  }
+
+  Qt::ItemFlags flags = Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsDragEnabled;
+  const QVariant typeVar = data(index.siblingAtColumn(0), Qt::UserRole + 1);
+  if (typeVar.isValid() && typeVar.toInt() == static_cast<int>(eProjectItemType::Folder)) {
+    flags |= Qt::ItemIsDropEnabled;
+  }
+  return flags;
+}
+
+Qt::DropActions ArtifactProjectModel::supportedDropActions() const
+{
+  return Qt::MoveAction;
 }
 
  QModelIndex ArtifactProjectModel::index(int row, int column, const QModelIndex& parent) const

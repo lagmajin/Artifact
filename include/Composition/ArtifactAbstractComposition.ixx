@@ -3,11 +3,14 @@
 
 #include <QObject>
 #include <QImage>
+#include <QJsonDocument>
+#include <QSize>
 export module Artifact.Composition.Abstract;
 
 import std;
 
 import Utils;
+import Utils.String.UniString;
 
 import Color.Float;
 

@@ -712,14 +712,23 @@ ArtifactProject::ArtifactProject() :impl_(new Impl())
 
   void ArtifactProject::createFolder(const QString& name)
   {
+    createFolder(name, nullptr);
+  }
+
+  void ArtifactProject::createFolder(const QString& name, FolderItem* parentFolder)
+  {
     auto folderUp = std::make_unique<FolderItem>();
     folderUp->name.setQString(name);
-    
+
     ProjectItem* projectRoot = nullptr;
-    if (!impl_->ownedItems_.empty()) projectRoot = impl_->ownedItems_.front().get();
-    if (projectRoot) {
-        folderUp->parent = projectRoot;
-        projectRoot->children.append(folderUp.get());
+    if (!impl_->ownedItems_.empty()) {
+      projectRoot = impl_->ownedItems_.front().get();
+    }
+
+    ProjectItem* targetParent = parentFolder ? static_cast<ProjectItem*>(parentFolder) : projectRoot;
+    if (targetParent) {
+        folderUp->parent = targetParent;
+        targetParent->children.append(folderUp.get());
     }
     impl_->ownedItems_.push_back(std::move(folderUp));
     projectChanged();
