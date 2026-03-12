@@ -50,25 +50,17 @@ namespace Artifact
    return { value.x, value.y };
   }
 
-  Diligent::IEngineFactoryD3D12* resolveD3D12FactoryFromDll()
+  Diligent::IEngineFactoryD3D12* resolveD3D12Factory()
   {
-   using GetFactoryFn = Diligent::IEngineFactoryD3D12* (*)();
-   static const wchar_t* kDllCandidates[] = {
-    L"GraphicsEngineD3D12_64d.dll",
-    L"GraphicsEngineD3D12_64r.dll",
-    L"GraphicsEngineD3D12.dll"
-   };
-   for (const auto* dllName : kDllCandidates) {
-    HMODULE mod = ::GetModuleHandleW(dllName);
-    if (!mod) mod = ::LoadLibraryW(dllName);
-    if (!mod) continue;
-    auto* fn = reinterpret_cast<GetFactoryFn>(::GetProcAddress(mod, "GetEngineFactoryD3D12"));
-    if (!fn) {
-     fn = reinterpret_cast<GetFactoryFn>(::GetProcAddress(mod, "Diligent_GetEngineFactoryD3D12"));
-    }
-    if (fn) return fn();
-   }
+#if D3D12_SUPPORTED
+#if DILIGENT_D3D12_SHARED
+   return Diligent::LoadAndGetEngineFactoryD3D12();
+#else
+   return Diligent::GetEngineFactoryD3D12();
+#endif
+#else
    return nullptr;
+#endif
   }
  }
 
@@ -232,7 +224,11 @@ namespace Artifact
  void ArtifactIRenderer::Impl::initialize(QWidget* widget)
  {
   //diligent engine directx12で初期化
-  auto* pFactory = GetEngineFactoryD3D12();
+  auto* pFactory = resolveD3D12Factory();
+  if (!pFactory) {
+   qWarning() << "D3D12 factory is unavailable in the current build.";
+   return;
+  }
 
   widget_ = widget;
 
@@ -889,7 +885,7 @@ void ArtifactIRenderer::Impl::createSwapChain(QWidget* window)
  }
 
  if (!pSwapChain_) {
-  auto* pFactory = GetEngineFactoryD3D12();
+  auto* pFactory = resolveD3D12Factory();
   if (!pFactory || !renderHwnd_) {
    return;
   }
@@ -944,16 +940,17 @@ void ArtifactIRenderer::Impl::createSwapChain(QWidget* window)
 
  void ArtifactIRenderer::Impl::recreateSwapChain(QWidget* widget)
  {
-  if (!widget || !pDevice_ || !pSwapChain_)
-  {
+ if (!widget || !pDevice_ || !pSwapChain_)
+ {
 
-   return;
-  }
+  return;
+ }
 
-
-  //pSwapChain->Release();
   const int newWidth = static_cast<int>(widget->width() * widget->devicePixelRatio());
   const int newHeight = static_cast<int>(widget->height() * widget->devicePixelRatio());
+  if (newWidth <= 0 || newHeight <= 0) {
+   return;
+  }
   const float newDevicePixelRatio = widget->devicePixelRatio();
   m_CurrentPhysicalWidth = newWidth;
   m_CurrentPhysicalHeight = newHeight;

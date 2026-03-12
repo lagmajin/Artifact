@@ -19,6 +19,7 @@ foreach(file_path ${POTENTIAL_SOURCES})
        file_path MATCHES "src/Render/ArtifactRenderLayerPipeline\\.cpp" OR
        file_path MATCHES "src/Audio/Effects/AudioEffectsInit\\.cpp" OR
        file_path MATCHES "src/Test/ArtifactTestRenderQueue\\.cppm" OR
+       file_path MATCHES "src/Generator/CloneGenerator\\.ixx" OR
        file_path MATCHES "include/Effect/ArtifactStabilizer\\.ixx" OR
        file_path MATCHES "src/Effect/ArtifactStabilizer\\.cppm" OR
        file_path MATCHES "include/Render/ArtifactFrameCache\\.ixx" OR
@@ -144,23 +145,20 @@ set(DILIGENT_LIBS "")
 set(DILIGENT_COMPILE_DEFINITIONS "")
 if(TARGET Diligent-GraphicsEngineD3D11-static)
     list(APPEND DILIGENT_LIBS Diligent-GraphicsEngineD3D11-static)
-endif()
-if(TARGET Diligent-GraphicsEngineD3D11-shared)
+elseif(TARGET Diligent-GraphicsEngineD3D11-shared)
     list(APPEND DILIGENT_LIBS Diligent-GraphicsEngineD3D11-shared)
 endif()
 if(TARGET Diligent-GraphicsEngineD3D12-static)
     list(APPEND DILIGENT_LIBS Diligent-GraphicsEngineD3D12-static)
-endif()
-if(TARGET Diligent-GraphicsEngineD3D12-shared)
+elseif(TARGET Diligent-GraphicsEngineD3D12-shared)
     list(APPEND DILIGENT_LIBS Diligent-GraphicsEngineD3D12-shared)
     list(APPEND DILIGENT_COMPILE_DEFINITIONS DILIGENT_D3D12_SHARED=1)
 endif()
-if(TARGET Diligent-GraphicsEngineVulkan-static)
-    list(APPEND DILIGENT_LIBS Diligent-GraphicsEngineVulkan-static)
-endif()
-if(TARGET Diligent-GraphicsEngineVulkan-shared)
-    list(APPEND DILIGENT_LIBS Diligent-GraphicsEngineVulkan-shared)
-    list(APPEND DILIGENT_COMPILE_DEFINITIONS DILIGENT_VK_EXPLICIT_LOAD=1)
+if(TARGET Diligent-GraphicsEngineVk-static)
+    list(APPEND DILIGENT_LIBS Diligent-GraphicsEngineVk-static)
+elseif(TARGET Diligent-GraphicsEngineVk-shared)
+    list(APPEND DILIGENT_LIBS Diligent-GraphicsEngineVk-shared)
+    list(APPEND DILIGENT_COMPILE_DEFINITIONS DILIGENT_VK_SHARED=1)
 endif()
 if(TARGET Diligent-GraphicsEngineD3DBase)
     list(APPEND DILIGENT_LIBS Diligent-GraphicsEngineD3DBase)

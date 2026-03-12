@@ -85,6 +85,22 @@ namespace {
 #endif
   }
 
+  bool hasUsableVulkanLoader()
+  {
+#if VULKAN_SUPPORTED
+   HMODULE loader = ::GetModuleHandleW(L"vulkan-1.dll");
+   if (!loader) {
+    loader = ::LoadLibraryW(L"vulkan-1.dll");
+   }
+   if (!loader) {
+    return false;
+   }
+   return ::GetProcAddress(loader, "vkGetInstanceProcAddr") != nullptr;
+#else
+   return false;
+#endif
+  }
+
   Diligent::IEngineFactoryD3D12* resolveD3D12Factory()
   {
 #if D3D12_SUPPORTED
@@ -156,7 +172,7 @@ W_OBJECT_IMPL(ArtifactLayerEditorWidgetV2)
   widget_ = window;
   const auto backendPref = getBackendPreferenceFromEnv();
 
-  auto tryInitVk = [&]() -> bool
+  auto tryInitVkUnsafe = [&]() -> bool
   {
    auto* pFactoryVk = resolveVkFactory();
    if (!pFactoryVk) {
@@ -173,6 +189,15 @@ W_OBJECT_IMPL(ArtifactLayerEditorWidgetV2)
    renderer_->createSwapChain(window);
    qDebug() << "[ArtifactLayerEditorWidgetV2] Initialized with direct Diligent Vulkan device/context.";
    return true;
+  };
+
+  auto tryInitVk = [&]() -> bool
+  {
+   if (!hasUsableVulkanLoader()) {
+    qWarning() << "[ArtifactLayerEditorWidgetV2] Vulkan loader was not available. Skipping Vulkan backend.";
+    return false;
+   }
+   return tryInitVkUnsafe();
   };
 
   auto tryInitD3D12 = [&]() -> bool
@@ -204,16 +229,10 @@ W_OBJECT_IMPL(ArtifactLayerEditorWidgetV2)
    break;
   case RenderBackendPreference::D3D12:
    initializedDirect = tryInitD3D12();
-   if (!initializedDirect) {
-    initializedDirect = tryInitVk();
-   }
    break;
   case RenderBackendPreference::Auto:
   default:
    initializedDirect = tryInitD3D12();
-   if (!initializedDirect) {
-    initializedDirect = tryInitVk();
-   }
    break;
   }
 
@@ -304,13 +323,17 @@ W_OBJECT_IMPL(ArtifactLayerEditorWidgetV2)
   renderer_->present();
 }
 
- void ArtifactLayerEditorWidgetV2::Impl::recreateSwapChain(QWidget* window)
+void ArtifactLayerEditorWidgetV2::Impl::recreateSwapChain(QWidget* window)
  {
   if (!initialized_ || !renderer_) {
    return;
   }
+  if (!window || window->width() <= 0 || window->height() <= 0) {
+   return;
+  }
   std::lock_guard<std::mutex> lock(resizeMutex_);
   renderer_->recreateSwapChain(window);
+  renderer_->setViewportSize(static_cast<float>(window->width()), static_cast<float>(window->height()));
  }
 
  ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nullptr*/) :QWidget(parent), impl_(new Impl())
@@ -409,8 +432,11 @@ W_OBJECT_IMPL(ArtifactLayerEditorWidgetV2)
  void ArtifactLayerEditorWidgetV2::resizeEvent(QResizeEvent* event)
  {
   QWidget::resizeEvent(event);
+  if (event->size().width() <= 0 || event->size().height() <= 0) {
+   return;
+  }
   impl_->recreateSwapChain(this);
-
+  update();
  }
 
  void ArtifactLayerEditorWidgetV2::paintEvent(QPaintEvent* event)
