@@ -50,6 +50,8 @@ This milestone is focused on perceived product completeness rather than adding m
 
 1. Manual regression checklist dedicated to Editing Ready Cut
 2. Crash/diagnostic checkpoints on import/delete/reopen paths
+3. Checklist: `Artifact/docs/RC5_EDITING_READY_REGRESSION_CHECKLIST_2026-03-12.md`
+4. Save/Load cases: `Artifact/docs/SAVE_LOAD_PROJECT_TREE_VERIFICATION_2026-03-12.md`
 
 ## Initial Slice Completed on 2026-03-12
 
@@ -61,8 +63,11 @@ This milestone is focused on perceived product completeness rather than adding m
 4. Project View context menu supports "Move to Folder" for project items.
 5. Reparent safety guards are enabled (no self/descendant move, root fixed).
 6. Project View internal drag-and-drop supports moving items into folders.
+7. RC-5 regression checklist document added.
+8. Save/Load project tree verification case document added.
 
 ## Next Slice
 
-1. Add explicit regression checklist document for RC-5.
-2. Add save/load verification cases for project tree integrity.
+1. Execute checklist run and publish first result report (with P0/P1 counts).
+2. Add targeted fixes for any P1 found in Save/Load or move/reparent paths.
+3. Add lightweight automated smoke checks for project tree serialization stability.
