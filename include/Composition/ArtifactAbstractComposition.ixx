@@ -45,6 +45,8 @@ export namespace Artifact {
   int layerCount() const;
   
   CompositionSettings settings() const;
+  void setCompositionName(const UniString& name);
+  void setCompositionSize(const QSize& size);
 
   ArtifactAbstractLayerPtr layerById(const LayerID& id);
   bool containsLayerById(const LayerID& id);

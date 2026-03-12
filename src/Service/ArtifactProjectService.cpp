@@ -890,6 +890,9 @@ QString ArtifactProjectService::projectItemRemovalConfirmationMessage(ProjectIte
    auto& pm = impl_->projectManager();
    auto projectShared = pm.getCurrentProjectSharedPtr();
    if (!projectShared) return false;
+   if (auto comp = pm.findComposition(id).ptr.lock()) {
+     comp->setCompositionName(name);
+   }
    auto items = projectShared->projectItems();
    for (auto root : items) {
      if (!root) continue;
