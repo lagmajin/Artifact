@@ -793,6 +793,8 @@ ArtifactProjectView::ArtifactProjectView(QWidget* parent) : QTreeView(parent), i
     setDragEnabled(true);
     setAcceptDrops(true);
     setDropIndicatorShown(true);
+    setDragDropMode(QAbstractItemView::DragDrop);
+    setDefaultDropAction(Qt::MoveAction);
     setRootIsDecorated(true);
     setIndentation(15);
     setAlternatingRowColors(true);
@@ -1377,6 +1379,74 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
 
 void ArtifactProjectView::dropEvent(QDropEvent* event) {
     const QMimeData* mimeData = event->mimeData();
+    auto mapToSourceColumn0 = [](const QModelIndex& idx) -> QModelIndex {
+        if (!idx.isValid()) {
+            return {};
+        }
+        if (auto proxy = qobject_cast<const QSortFilterProxyModel*>(idx.model())) {
+            return proxy->mapToSource(idx).siblingAtColumn(0);
+        }
+        return idx.siblingAtColumn(0);
+    };
+    auto itemFromIndex = [&](const QModelIndex& idx) -> ProjectItem* {
+        const QModelIndex src = mapToSourceColumn0(idx);
+        const QVariant ptrVar = src.data(Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::ProjectItemPtr));
+        return ptrVar.isValid() ? reinterpret_cast<ProjectItem*>(ptrVar.value<quintptr>()) : nullptr;
+    };
+
+    // Internal DnD move: reparent the currently selected item to a folder.
+    const bool isInternalDnD = (event->source() == this)
+        && mimeData->hasFormat(QStringLiteral("application/x-qabstractitemmodeldatalist"));
+    if (isInternalDnD) {
+        auto* svc = ArtifactProjectService::instance();
+        if (!svc) {
+            event->ignore();
+            return;
+        }
+
+        QModelIndex draggedIndex = currentIndex();
+        if (selectionModel()) {
+            const QModelIndexList rows = selectionModel()->selectedRows(0);
+            if (!rows.isEmpty()) {
+                draggedIndex = rows.first();
+            }
+        }
+        ProjectItem* draggedItem = itemFromIndex(draggedIndex);
+        if (!draggedItem) {
+            event->ignore();
+            return;
+        }
+
+        const QModelIndex targetIndex = indexAt(event->position().toPoint());
+        ProjectItem* targetItem = itemFromIndex(targetIndex);
+        ProjectItem* targetFolder = nullptr;
+
+        if (!targetItem) {
+            if (auto project = svc->getCurrentProjectSharedPtr()) {
+                const auto roots = project->projectItems();
+                for (auto* root : roots) {
+                    if (root && root->type() == eProjectItemType::Folder) {
+                        targetFolder = root;
+                        break;
+                    }
+                }
+            }
+        } else if (targetItem->type() == eProjectItemType::Folder) {
+            targetFolder = targetItem;
+        } else {
+            targetFolder = targetItem->parent;
+        }
+
+        if (!targetFolder || !svc->moveProjectItem(draggedItem, targetFolder)) {
+            event->ignore();
+            return;
+        }
+
+        event->setDropAction(Qt::MoveAction);
+        event->accept();
+        return;
+    }
+
     if (!mimeData->hasUrls()) {
         event->ignore();
         return;
@@ -1404,11 +1474,23 @@ void ArtifactProjectView::dropEvent(QDropEvent* event) {
 }
 
 void ArtifactProjectView::dragEnterEvent(QDragEnterEvent* event) {
+    const bool isInternalDnD = (event->source() == this)
+        && event->mimeData()->hasFormat(QStringLiteral("application/x-qabstractitemmodeldatalist"));
+    if (isInternalDnD) {
+        event->acceptProposedAction();
+        return;
+    }
     if (event->mimeData()->hasUrls()) event->acceptProposedAction();
     else event->ignore();
 }
 
 void ArtifactProjectView::dragMoveEvent(QDragMoveEvent* event) {
+    const bool isInternalDnD = (event->source() == this)
+        && event->mimeData()->hasFormat(QStringLiteral("application/x-qabstractitemmodeldatalist"));
+    if (isInternalDnD) {
+        event->acceptProposedAction();
+        return;
+    }
     if (event->mimeData()->hasUrls()) event->acceptProposedAction();
     else event->ignore();
 }
