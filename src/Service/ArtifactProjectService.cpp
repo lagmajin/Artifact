@@ -815,6 +815,18 @@ bool ArtifactProjectService::removeProjectItem(ProjectItem* item)
   return true;
 }
 
+bool ArtifactProjectService::moveProjectItem(ProjectItem* item, ProjectItem* newParent)
+{
+  if (!item || !newParent) {
+    return false;
+  }
+  auto shared = getCurrentProjectSharedPtr();
+  if (!shared) {
+    return false;
+  }
+  return shared->moveItem(item, newParent);
+}
+
 QString ArtifactProjectService::projectItemRemovalConfirmationMessage(ProjectItem* item) const
 {
   if (!item) {
