@@ -109,6 +109,7 @@ namespace Artifact {
    // Effects Pipeline Tab
    QScrollArea* effectsScrollArea = nullptr;
    QWidget* effectsTabWidget = nullptr;
+   QLabel* effectsStateLabel = nullptr;
 
    struct EffectRack {
        QListWidget* listWidget = nullptr;
@@ -145,6 +146,7 @@ namespace Artifact {
    void handleRemoveEffectClicked(int rackIndex);
    void refreshRackButtons();
    void setEffectRackEnabled(bool enabled);
+   void setEffectsStateText(const QString& text, bool visible);
    void setNoProjectState();
    void setNoLayerState();
   };
@@ -158,6 +160,13 @@ void ArtifactInspectorWidget::Impl::updatePropertiesForEffect(const QString& eff
 {
     // Now handled entirely by ArtifactPropertyWidget when a layer is set.
     // Kept here for compatibility until we completely remove old effect list coupling.
+}
+
+void ArtifactInspectorWidget::Impl::setEffectsStateText(const QString& text, bool visible)
+{
+ if (!effectsStateLabel) return;
+ effectsStateLabel->setText(text);
+ effectsStateLabel->setVisible(visible);
 }
 
  ArtifactInspectorWidget::Impl::~Impl()
@@ -354,10 +363,11 @@ void ArtifactInspectorWidget::Impl::updatePropertiesForEffect(const QString& eff
  {
   qDebug() << "[Inspector] Project created";
   // プロジェクト作成時はまだレイヤーがないので「レイヤー未選択」状態に
-  containerWidget->setEnabled(true);
+ containerWidget->setEnabled(true);
   layerNameLabel->setText("Layer: (No layer selected)");
   layerTypeLabel->setText("Type: N/A");
   statusLabel->setText("Status: Waiting for layer selection");
+  setEffectsStateText("Select a layer to manage effects.", true);
  }
 
  void ArtifactInspectorWidget::Impl::handleProjectClosed()
@@ -374,6 +384,7 @@ void ArtifactInspectorWidget::Impl::updatePropertiesForEffect(const QString& eff
   layerNameLabel->setText("Layer: (No layer in composition)");
   layerTypeLabel->setText("Type: N/A");
   statusLabel->setText("Status: Add layers to the composition");
+  setEffectsStateText("Add and select a layer to manage effects.", true);
  }
 
  void ArtifactInspectorWidget::Impl::handleLayerSelected(const LayerID& id)
@@ -445,6 +456,7 @@ void ArtifactInspectorWidget::Impl::updatePropertiesForEffect(const QString& eff
   layerTypeLabel->setText(QString("Type: %1").arg(layerType));
 
   statusLabel->setText(QString("Status: Layer selected - ID: %1").arg(currentLayerId_.toString()));
+  setEffectsStateText(QString(), false);
 
   qDebug() << "[Inspector] Updated layer info:" << layerName << "Type:" << layerType;
  }
@@ -458,6 +470,7 @@ void ArtifactInspectorWidget::Impl::setNoProjectState()
   currentCompositionId_ = CompositionID();
   currentLayerId_ = LayerID();
   setEffectRackEnabled(false);
+  setEffectsStateText("Create or open a project to manage effects.", true);
  }
 
 void ArtifactInspectorWidget::Impl::setNoLayerState()
@@ -474,6 +487,7 @@ void ArtifactInspectorWidget::Impl::setNoLayerState()
    }
   }
   setEffectRackEnabled(false);
+  setEffectsStateText("Select a layer to manage effects.", true);
   refreshRackButtons();
  }
 
@@ -525,28 +539,60 @@ void ArtifactInspectorWidget::Impl::setNoLayerState()
   for (int i=0; i<5; ++i) {
       if (racks[i].listWidget) racks[i].listWidget->clear();
   }
-  if (currentLayerId_.isNil()) return;
+  if (currentLayerId_.isNil()) {
+      setEffectRackEnabled(false);
+      setEffectsStateText("Select a layer to manage effects.", true);
+      refreshRackButtons();
+      return;
+  }
 
   auto projectService = ArtifactProjectService::instance();
-  if (!projectService) return;
+  if (!projectService) {
+      setEffectRackEnabled(false);
+      setEffectsStateText("Create or open a project to manage effects.", true);
+      refreshRackButtons();
+      return;
+  }
 
-  if (currentCompositionId_.isNil()) return;
+  if (currentCompositionId_.isNil()) {
+      setEffectRackEnabled(false);
+      setEffectsStateText("Open a composition to manage effects.", true);
+      refreshRackButtons();
+      return;
+  }
 
   auto findResult = projectService->findComposition(currentCompositionId_);
-  if (!findResult.success) return;
+  if (!findResult.success) {
+      setEffectRackEnabled(false);
+      setEffectsStateText("Open a composition to manage effects.", true);
+      refreshRackButtons();
+      return;
+  }
 
   auto comp = findResult.ptr.lock();
-  if (!comp) return;
+  if (!comp) {
+      setEffectRackEnabled(false);
+      setEffectsStateText("Open a composition to manage effects.", true);
+      refreshRackButtons();
+      return;
+  }
 
   auto layer = comp->layerById(currentLayerId_);
-  if (!layer) return;
+  if (!layer) {
+      setEffectRackEnabled(false);
+      setEffectsStateText("Select a layer to manage effects.", true);
+      refreshRackButtons();
+      return;
+  }
   Q_UNUSED(layer);
 
   auto effects = layer->getEffects();
   setEffectRackEnabled(true);
+  int effectCount = 0;
 
   for (const auto& effect : effects) {
    if (effect) {
+    ++effectCount;
     QString effectName = effect->displayName().toQString();
     QString effectStatus = effect->isEnabled() ? "✓" : "✗";
     QString itemText = QString("[%1] %2").arg(effectStatus, effectName);
@@ -566,6 +612,11 @@ void ArtifactInspectorWidget::Impl::setNoLayerState()
           item->setFlags(item->flags() & ~Qt::ItemIsSelectable);
           racks[i].listWidget->addItem(item);
       }
+  }
+  if (effectCount == 0) {
+      setEffectsStateText("No effects on the selected layer yet.", true);
+  } else {
+      setEffectsStateText(QString(), false);
   }
   refreshRackButtons();
  }
@@ -598,7 +649,7 @@ void ArtifactInspectorWidget::Impl::setNoLayerState()
             statusLabel->setText(QStringLiteral("Status: Effect added - %1").arg(newEffect->displayName().toQString()));
            }
            if (tabWidget) {
-            tabWidget->setCurrentIndex(2); // Properties
+            tabWidget->setCurrentIndex(1); // Effects
            }
           }
       }
@@ -734,6 +785,9 @@ void ArtifactInspectorWidget::Impl::handleRemoveEffectClicked(int rackIndex)
   impl_->effectsScrollArea->setWidgetResizable(true);
   impl_->effectsTabWidget = new QWidget();
   auto effectsLayout = new QVBoxLayout();
+  impl_->effectsStateLabel = new QLabel("Create or open a project to manage effects.");
+  impl_->effectsStateLabel->setWordWrap(true);
+  effectsLayout->addWidget(impl_->effectsStateLabel);
 
   QString rackNames[5] = {
       "1. Generator",
@@ -845,7 +899,7 @@ void ArtifactInspectorWidget::Impl::handleRemoveEffectClicked(int rackIndex)
 
   impl_->effectsTabWidget->setLayout(effectsLayout);
   impl_->effectsScrollArea->setWidget(impl_->effectsTabWidget);
-  impl_->tabWidget->addTab(impl_->effectsScrollArea, "Effects Pipeline");
+  impl_->tabWidget->addTab(impl_->effectsScrollArea, "Effects");
 
   // タブをメインレイアウトに追加
   mainLayout->addWidget(impl_->tabWidget);
