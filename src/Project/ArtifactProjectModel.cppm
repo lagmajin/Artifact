@@ -50,6 +50,7 @@ import Artifact.Project.Items;
 import Artifact.Service.Project;
 import Artifact.Project.Manager;
 import Artifact.Project.Roles;
+import Utils.Path;
 
 namespace Artifact
 {
@@ -74,6 +75,16 @@ QIcon makeProjectItemIcon(const QColor& fill, const QString& text = {})
     painter.drawText(QRectF(0, 0, 16, 16), Qt::AlignCenter, text.left(1).toUpper());
   }
   return QIcon(px);
+}
+
+QIcon loadProjectIcon(const QString& relativePath)
+{
+  QIcon icon(ArtifactCore::resolveIconResourcePath(relativePath));
+  if (!icon.isNull()) {
+    return icon;
+  }
+  icon = QIcon(ArtifactCore::resolveIconPath(relativePath));
+  return icon;
 }
 
 } // namespace
@@ -137,43 +148,51 @@ void ArtifactProjectModel::Impl::refreshTree()
  }
 
  auto iconForProjectItem = [](auto* it) -> QIcon {
+  auto iconOrFallback = [](const QString& relativePath, const QColor& fallbackColor, const QString& fallbackText) -> QIcon {
+   QIcon icon = loadProjectIcon(relativePath);
+   if (!icon.isNull()) {
+    return icon;
+   }
+   return makeProjectItemIcon(fallbackColor, fallbackText);
+  };
+
   if (!it) {
    return makeProjectItemIcon(QColor(90, 90, 90), QStringLiteral("?"));
   }
   switch (it->type()) {
   case Artifact::eProjectItemType::Folder:
-   return makeProjectItemIcon(QColor(176, 138, 46), QStringLiteral("F"));
+   return iconOrFallback(QStringLiteral("MaterialVS/yellow/folder.svg"), QColor(176, 138, 46), QStringLiteral("F"));
   case Artifact::eProjectItemType::Composition:
-   return makeProjectItemIcon(QColor(74, 128, 191), QStringLiteral("C"));
+   return iconOrFallback(QStringLiteral("MaterialVS/blue/movie.svg"), QColor(74, 128, 191), QStringLiteral("C"));
   case Artifact::eProjectItemType::Solid:
-   return makeProjectItemIcon(QColor(110, 88, 170), QStringLiteral("S"));
+   return iconOrFallback(QStringLiteral("MaterialVS/purple/format_shapes.svg"), QColor(110, 88, 170), QStringLiteral("S"));
   case Artifact::eProjectItemType::Footage: {
    auto* footage = static_cast<Artifact::FootageItem*>(it);
    const QFileInfo info(footage->filePath);
    if (!info.exists()) {
-    return makeProjectItemIcon(QColor(140, 54, 54), QStringLiteral("!"));
+    return iconOrFallback(QStringLiteral("MaterialVS/red/error.svg"), QColor(140, 54, 54), QStringLiteral("!"));
    }
    const QString suffix = info.suffix().toLower();
    if (QStringList{QStringLiteral("ttf"), QStringLiteral("otf"), QStringLiteral("ttc"), QStringLiteral("woff"), QStringLiteral("woff2")}.contains(suffix)) {
-    return makeProjectItemIcon(QColor(121, 82, 168), QStringLiteral("T"));
+    return iconOrFallback(QStringLiteral("MaterialVS/purple/title.svg"), QColor(121, 82, 168), QStringLiteral("T"));
    }
    if (QStringList{QStringLiteral("png"), QStringLiteral("jpg"), QStringLiteral("jpeg"), QStringLiteral("bmp"),
                    QStringLiteral("gif"), QStringLiteral("tif"), QStringLiteral("tiff"), QStringLiteral("webp"),
                    QStringLiteral("exr")}.contains(suffix)) {
-    return makeProjectItemIcon(QColor(66, 148, 98), QStringLiteral("I"));
+    return iconOrFallback(QStringLiteral("MaterialVS/green/photo_library.svg"), QColor(66, 148, 98), QStringLiteral("I"));
    }
    if (QStringList{QStringLiteral("mp4"), QStringLiteral("mov"), QStringLiteral("avi"), QStringLiteral("mkv"),
                    QStringLiteral("webm")}.contains(suffix)) {
-    return makeProjectItemIcon(QColor(170, 90, 48), QStringLiteral("V"));
+    return iconOrFallback(QStringLiteral("MaterialVS/blue/video_library.svg"), QColor(170, 90, 48), QStringLiteral("V"));
    }
    if (QStringList{QStringLiteral("wav"), QStringLiteral("mp3"), QStringLiteral("flac"), QStringLiteral("ogg"),
                    QStringLiteral("m4a"), QStringLiteral("aac")}.contains(suffix)) {
-    return makeProjectItemIcon(QColor(52, 120, 148), QStringLiteral("A"));
+    return iconOrFallback(QStringLiteral("MaterialVS/orange/audiotrack.svg"), QColor(52, 120, 148), QStringLiteral("A"));
    }
-   return makeProjectItemIcon(QColor(96, 96, 96), QStringLiteral("F"));
+   return iconOrFallback(QStringLiteral("MaterialVS/neutral/inventory.svg"), QColor(96, 96, 96), QStringLiteral("F"));
   }
   default:
-   return makeProjectItemIcon(QColor(90, 90, 90), QStringLiteral("?"));
+   return iconOrFallback(QStringLiteral("MaterialVS/neutral/help.svg"), QColor(90, 90, 90), QStringLiteral("?"));
   }
  };
 

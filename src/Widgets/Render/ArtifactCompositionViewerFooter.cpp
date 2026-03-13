@@ -49,6 +49,18 @@ import Utils.Path;
 import Artifact.Service.Project;
 
 
+namespace {
+QIcon loadIconWithFallback(const QString& fileName)
+{
+  const QString resourcePath = ArtifactCore::resolveIconResourcePath(fileName);
+  QIcon icon(resourcePath);
+  if (!icon.isNull()) {
+    return icon;
+  }
+  return QIcon(ArtifactCore::resolveIconPath(fileName));
+}
+}
+
 
 namespace Artifact {
 
@@ -76,10 +88,10 @@ namespace Artifact {
  ArtifactCompositionViewerFooter::Impl::Impl()
  {
   pSnapShotButton = new QToolButton();
-  pSnapShotButton->setIcon(QIcon(ArtifactCore::getIconPath() + "/Png/photo_camera.png"));
+  pSnapShotButton->setIcon(loadIconWithFallback("Png/photo_camera.png"));
   pShutterButton = new QToolButton();
   pPlayPauseButton = new QToolButton();
-  pPlayPauseButton->setIcon(QIcon(ArtifactCore::getIconPath() + "/Png/play_arrow.png"));
+  pPlayPauseButton->setIcon(loadIconWithFallback("Png/play_arrow.png"));
   fpsLabel = new QLabel("FPS: N/A");
   memLabel = new QLabel("Mem: N/A");
   selectionLabel = new QLabel("");
@@ -144,9 +156,9 @@ namespace Artifact {
     impl_->isPlaying_ = !impl_->isPlaying_;
     // update icon
     if (impl_->isPlaying_) {
-      impl_->pPlayPauseButton->setIcon(QIcon(ArtifactCore::getIconPath() + "/Png/pause.png"));
+      impl_->pPlayPauseButton->setIcon(loadIconWithFallback("Png/pause.png"));
     } else {
-      impl_->pPlayPauseButton->setIcon(QIcon(ArtifactCore::getIconPath() + "/Png/play_arrow.png"));
+      impl_->pPlayPauseButton->setIcon(loadIconWithFallback("Png/play_arrow.png"));
     }
     Q_EMIT playPauseToggled(impl_->isPlaying_);
   });

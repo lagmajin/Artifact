@@ -18,6 +18,7 @@ module;
 #include <QSortFilterProxyModel>
 #include <QMenu>
 #include <QPixmap>
+#include <QIcon>
 #include <QStringList>
 #include <QTimer>
 #include <QInputDialog>
@@ -97,6 +98,7 @@ import Artifact.Project.Cleanup;
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Search.Query;
 import Artifact.Widgets.LayerPanelWidget;
+import Utils.Path;
 
 namespace Artifact {
 
@@ -286,6 +288,18 @@ QStringList projectItemMetadataLines(const QModelIndex& sourceIndex, ProjectItem
         lines << QStringLiteral("No preview available");
     }
     return lines;
+}
+
+QIcon loadProjectViewIcon(const QString& resourceRelativePath, const QString& fallbackFileName = {})
+{
+    QIcon icon(ArtifactCore::resolveIconResourcePath(resourceRelativePath));
+    if (!icon.isNull()) {
+        return icon;
+    }
+    if (!fallbackFileName.isEmpty()) {
+        icon = QIcon(ArtifactCore::resolveIconPath(fallbackFileName));
+    }
+    return icon;
 }
 
 } // namespace
@@ -1058,24 +1072,30 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
     QHash<QString, std::function<void()>> availableNewCommands;
     QHash<QString, QString> availableNewLabels;
 
-    auto addTrackedAction = [this, &menu, &availableContextCommands, &availableContextLabels](const QString& id, const QString& label, std::function<void()> run) {
+    auto addTrackedAction = [this, &menu, &availableContextCommands, &availableContextLabels](const QString& id, const QString& label, std::function<void()> run, const QIcon& icon = QIcon()) {
         availableContextCommands.insert(id, run);
         availableContextLabels.insert(id, label);
-        menu.addAction(label, [this, id, label, run = std::move(run)]() mutable {
+        QAction* action = menu.addAction(label, [this, id, label, run = std::move(run)]() mutable {
             impl_->lastContextCommandId = id;
             impl_->lastContextCommandLabel = label;
             run();
         });
+        if (!icon.isNull()) {
+            action->setIcon(icon);
+        }
     };
 
-    auto addTrackedNewAction = [this, &availableNewCommands, &availableNewLabels](QMenu* targetMenu, const QString& id, const QString& label, std::function<void()> run) {
+    auto addTrackedNewAction = [this, &availableNewCommands, &availableNewLabels](QMenu* targetMenu, const QString& id, const QString& label, std::function<void()> run, const QIcon& icon = QIcon()) {
         availableNewCommands.insert(id, run);
         availableNewLabels.insert(id, label);
-        targetMenu->addAction(label, [this, id, label, run = std::move(run)]() mutable {
+        QAction* action = targetMenu->addAction(label, [this, id, label, run = std::move(run)]() mutable {
             impl_->lastNewCommandId = id;
             impl_->lastNewCommandLabel = label;
             run();
         });
+        if (!icon.isNull()) {
+            action->setIcon(icon);
+        }
     };
 
     if (idx.isValid()) {
@@ -1092,10 +1112,10 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
 
         addTrackedAction(QStringLiteral("open"), QStringLiteral("Open"), [this, idx]() {
             handleItemDoubleClicked(idx);
-        });
+        }, loadProjectViewIcon(QStringLiteral("MaterialVS/blue/file_open.svg")));
         addTrackedAction(QStringLiteral("copy_name"), QStringLiteral("Copy Name"), [sourceIdx]() {
             QApplication::clipboard()->setText(sourceIdx.data(Qt::DisplayRole).toString());
-        });
+        }, loadProjectViewIcon(QStringLiteral("MaterialVS/neutral/content_copy.svg")));
         
         if (type == eProjectItemType::Composition) {
             addTrackedAction(QStringLiteral("set_active_composition"), QStringLiteral("Set as Active Composition"), [sourceIdx]() {
@@ -1103,7 +1123,7 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
                 if (idVar.isValid()) {
                     ArtifactProjectService::instance()->changeCurrentComposition(CompositionID(idVar.toString()));
                 }
-            });
+            }, loadProjectViewIcon(QStringLiteral("MaterialVS/blue/movie.svg")));
 
             addTrackedAction(QStringLiteral("composition_settings"), QStringLiteral("Composition Settings..."), [this, sourceIdx]() {
                 auto* svc = ArtifactProjectService::instance();
@@ -1226,11 +1246,11 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
                 });
 
                 dialog->exec();
-            });
+            }, loadProjectViewIcon(QStringLiteral("MaterialVS/neutral/settings.svg")));
             
             addTrackedAction(QStringLiteral("interpret_footage"), QStringLiteral("Interpret Footage..."), []() {
                 // Placeholder for footage settings
-            });
+            }, loadProjectViewIcon(QStringLiteral("MaterialVS/purple/info.svg")));
         }
 
         if (type == eProjectItemType::Footage) {
@@ -1239,12 +1259,12 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
                     QString path = static_cast<FootageItem*>(item)->filePath;
                     QDesktopServices::openUrl(QUrl::fromLocalFile(QFileInfo(path).absolutePath()));
                 }
-            });
+            }, loadProjectViewIcon(QStringLiteral("MaterialVS/blue/folder.svg")));
             addTrackedAction(QStringLiteral("copy_file_path"), QStringLiteral("Copy File Path"), [item]() {
                 if (item && item->type() == eProjectItemType::Footage) {
                     QApplication::clipboard()->setText(static_cast<FootageItem*>(item)->filePath);
                 }
-            });
+            }, loadProjectViewIcon(QStringLiteral("MaterialVS/neutral/content_copy.svg")));
             addTrackedAction(QStringLiteral("relink_selected_footage"), QStringLiteral("Relink Selected Footage..."), [this, item, svc]() {
                 if (!svc || !item || item->type() != eProjectItemType::Footage) return;
                 const QString root = QFileDialog::getExistingDirectory(this, "Relink Selected Footage - Search Root");
@@ -1257,7 +1277,7 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
                 }
                 QMessageBox::information(this, "Relink Result",
                                          QString("Relinked %1 file(s).").arg(relinked));
-            });
+            }, loadProjectViewIcon(QStringLiteral("MaterialVS/yellow/link.svg")));
         }
 
         menu.addSeparator();
@@ -1273,12 +1293,13 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
                  ProjectItem* item = ptrVar.isValid() ? reinterpret_cast<ProjectItem*>(ptrVar.value<quintptr>()) : nullptr;
                  if (!renameProjectItem(item, name)) {
                      QMessageBox::warning(this, QStringLiteral("Rename Failed"),
-                         QStringLiteral("Could not rename the selected project item."));
+                        QStringLiteral("Could not rename the selected project item."));
                 }
             }
-        });
+        }, loadProjectViewIcon(QStringLiteral("MaterialVS/blue/edit.svg")));
 
         QMenu* moveToFolderMenu = menu.addMenu(QStringLiteral("Move to Folder"));
+        moveToFolderMenu->setIcon(loadProjectViewIcon(QStringLiteral("MaterialVS/yellow/folder.svg")));
         bool hasMoveTarget = false;
         if (svc && item) {
             if (auto project = svc->getCurrentProjectSharedPtr()) {
@@ -1333,7 +1354,7 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
                 QMessageBox::warning(this, QStringLiteral("削除失敗"),
                     QStringLiteral("項目の削除に失敗しました。"));
             }
-        });
+        }, loadProjectViewIcon(QStringLiteral("MaterialVS/red/delete.svg")));
 
         menu.addSeparator();
         addTrackedAction(QStringLiteral("expand_children"), QStringLiteral("Expand Children"), [this, idx]() {
@@ -1348,22 +1369,24 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
 
     // "New" menu group
     auto newMenu = menu.addMenu("New");
+    newMenu->setIcon(loadProjectViewIcon(QStringLiteral("MaterialVS/green/check_circle.svg")));
     addTrackedNewAction(newMenu, QStringLiteral("new_composition"), QStringLiteral("Composition..."), [svc]() {
         if (svc) {
             svc->createComposition(UniString("New Comp"));
         }
-    });
+    }, loadProjectViewIcon(QStringLiteral("MaterialVS/blue/movie.svg")));
     addTrackedNewAction(newMenu, QStringLiteral("new_solid"), QStringLiteral("Solid..."), []() {
         // Placeholder for solid creation dialog
-    });
+    }, loadProjectViewIcon(QStringLiteral("MaterialVS/purple/format_shapes.svg")));
     addTrackedNewAction(newMenu, QStringLiteral("new_folder"), QStringLiteral("Folder"), [this]() {
         impl_->createFolderAtSelection(this);
-    });
+    }, loadProjectViewIcon(QStringLiteral("MaterialVS/yellow/folder.svg")));
 
     menu.addSeparator();
     addTrackedAction(QStringLiteral("expand_all"), QStringLiteral("Expand All"), [this]() { expandAll(); });
     addTrackedAction(QStringLiteral("collapse_all"), QStringLiteral("Collapse All"), [this]() { collapseAll(); });
-    addTrackedAction(QStringLiteral("refresh_view"), QStringLiteral("Refresh View"), [this]() { viewport()->update(); });
+    addTrackedAction(QStringLiteral("refresh_view"), QStringLiteral("Refresh View"), [this]() { viewport()->update(); },
+                     loadProjectViewIcon(QStringLiteral("MaterialVS/blue/replay.svg")));
     addTrackedAction(QStringLiteral("show_dependency_graph"), QStringLiteral("Show Dependency Graph..."), [this, svc]() {
         Impl::showDependencyGraphDialog(this, svc);
     });
@@ -1385,7 +1408,7 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
         }
         QMessageBox::information(this, "Relink Result",
                                  QString("Relinked %1 missing footage item(s).").arg(relinked));
-    });
+    }, loadProjectViewIcon(QStringLiteral("MaterialVS/yellow/link.svg")));
     menu.addSeparator();
     addTrackedAction(QStringLiteral("import_file"), QStringLiteral("Import File..."), [this, svc]() {
         Q_UNUSED(svc);
@@ -1393,7 +1416,7 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
         for (const auto& p : paths) {
              impl_->handleFileDrop(p);
         }
-    });
+    }, loadProjectViewIcon(QStringLiteral("MaterialVS/green/file_open.svg")));
 
     if (!impl_->lastContextCommandId.isEmpty() && availableContextCommands.contains(impl_->lastContextCommandId)) {
         QAction* firstAction = menu.actions().isEmpty() ? nullptr : menu.actions().first();
