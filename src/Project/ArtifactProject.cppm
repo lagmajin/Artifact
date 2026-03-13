@@ -423,7 +423,6 @@ void ArtifactProject::Impl::createCompositions(const QStringList& names) {}
   if (typeName.find("camera") != std::string::npos) return LayerType::Camera;
   if (typeName.find("audio") != std::string::npos) return LayerType::Audio;
   if (typeName.find("video") != std::string::npos) return LayerType::Video;
-  if (typeName.find("media") != std::string::npos) return LayerType::Media;
 
   return LayerType::Solid;
  }

@@ -138,7 +138,7 @@ namespace {
     case ArtifactCore::FileType::Audio:
       return LayerType::Audio;
     default:
-      return LayerType::Media;
+      return LayerType::Video;
     }
   }
 

@@ -43,11 +43,10 @@ export namespace Artifact {
   Text,        // テキストレイヤー
   Shape,       // シェイプレイヤー
   Precomp,     // プリコンポジション
-  Audio,       // 音声レイヤー
-  Video,       // 映像レイヤー
-  Media,       // 映像・音声メディア
-   Camera,
-  };
+	  Audio,       // 音声レイヤー
+	  Video,       // 映像・音声フッテージ
+	   Camera,
+	  };
 
   enum class LayerDirtyFlag : uint32_t {
       Clean = 0,
