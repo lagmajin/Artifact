@@ -13,7 +13,7 @@ import Artifact.Layer.Image;
 import Artifact.Layer.Shape;
 import Artifact.Layers.SolidImage;
 import Artifact.Layer.AdjustableLayer;
-import Artifact.Layer.Media;
+import Artifact.Layer.Video;
 import Artifact.Layer.Camera;
 import Artifact.Layer.Text;
 //import Artifact.Layer.Video;
@@ -69,17 +69,14 @@ namespace Artifact {
   case LayerType::Text:
    ptr = std::make_shared<ArtifactTextLayer>();
    break;
-  case LayerType::Media:
-   ptr = std::make_shared<ArtifactMediaLayer>();
-   break;
   case LayerType::Audio: {
-   auto mediaLayer = std::make_shared<ArtifactMediaLayer>();
-   mediaLayer->setHasVideo(false);
-   ptr = mediaLayer;
+   auto videoLayer = std::make_shared<ArtifactVideoLayer>();
+   videoLayer->setHasVideo(false);
+   ptr = videoLayer;
    break;
   }
   case LayerType::Video:
-   ptr = std::make_shared<ArtifactMediaLayer>();
+   ptr = std::make_shared<ArtifactVideoLayer>();
    break;
   case LayerType::Precomp:
    //ptr = std::make_shared<ArtifactCompositionLayer>();

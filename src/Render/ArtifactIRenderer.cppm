@@ -1,16 +1,22 @@
 ﻿module;
+// ArtifactIRenderer maintenance rule:
+// Do not rewrite the existing D3D12-specific path by guesswork.
+// Do not replace this renderer with a Qt-only implementation.
+// Extend backends carefully while preserving the current Diligent/D3D12 architecture.
 #include <array>
 #include <cmath>
 #include <cstring>
 #include <QList>
 #include <QImage>
 #include <QDebug>
+#include <QString>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/RenderDevice.h>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/DeviceContext.h>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/Query.h>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/SwapChain.h>
 //#include <DiligentCore/Graphics/GraphicsEngineD3D12/interface/TextureD3D12.h>
 #include <DiligentCore/Graphics/GraphicsEngineD3D12/interface/EngineFactoryD3D12.h>
+#include <DiligentCore/Graphics/GraphicsEngineVulkan/interface/EngineFactoryVk.h>
 #include <DiligentCore/Common/interface/RefCntAutoPtr.hpp>
 #include <DiligentCore/Common/interface/BasicMath.hpp>
 #include <windows.h>
@@ -40,6 +46,24 @@ namespace Artifact
  using float2 = Diligent::float2;
 
  namespace {
+  enum class RenderBackendPreference {
+   Auto,
+   D3D12,
+   Vulkan
+  };
+
+  RenderBackendPreference getBackendPreferenceFromEnv()
+  {
+   const QString value = qEnvironmentVariable("ARTIFACT_RENDER_BACKEND").trimmed().toLower();
+   if (value == "vulkan" || value == "vk") {
+    return RenderBackendPreference::Vulkan;
+   }
+   if (value == "d3d12" || value == "dx12") {
+    return RenderBackendPreference::D3D12;
+   }
+   return RenderBackendPreference::Auto;
+  }
+
   Diligent::float2 toDiligentFloat2(Detail::float2 value)
   {
    return { value.x, value.y };
@@ -60,6 +84,35 @@ namespace Artifact
 #endif
 #else
    return nullptr;
+#endif
+  }
+
+  Diligent::IEngineFactoryVk* resolveVkFactory()
+  {
+#if VULKAN_SUPPORTED
+#if DILIGENT_VK_EXPLICIT_LOAD
+   return Diligent::LoadAndGetEngineFactoryVk();
+#else
+   return Diligent::GetEngineFactoryVk();
+#endif
+#else
+   return nullptr;
+#endif
+  }
+
+  bool hasUsableVulkanLoader()
+  {
+#if VULKAN_SUPPORTED
+   HMODULE loader = ::GetModuleHandleW(L"vulkan-1.dll");
+   if (!loader) {
+    loader = ::LoadLibraryW(L"vulkan-1.dll");
+   }
+   if (!loader) {
+    return false;
+   }
+   return ::GetProcAddress(loader, "vkGetInstanceProcAddr") != nullptr;
+#else
+   return false;
 #endif
   }
  }
@@ -142,6 +195,7 @@ namespace Artifact
   void beginFrameGpuProfiling();
   void endFrameGpuProfiling();
   double lastFrameGpuTimeMs() const;
+  bool createSwapChainForCurrentBackend();
   void drawParticles();
    void drawRectOutline(float x, float y, float w, float h, const FloatColor& color);
    void drawRectOutline(float2 pos, float2 size, const FloatColor& color);
@@ -223,27 +277,57 @@ namespace Artifact
 
  void ArtifactIRenderer::Impl::initialize(QWidget* widget)
  {
-  //diligent engine directx12で初期化
-  auto* pFactory = resolveD3D12Factory();
-  if (!pFactory) {
-   qWarning() << "D3D12 factory is unavailable in the current build.";
-   return;
+  widget_ = widget;
+  const auto backendPreference = getBackendPreferenceFromEnv();
+
+  auto tryInitD3D12 = [&]() -> bool
+  {
+   auto* pFactory = resolveD3D12Factory();
+   if (!pFactory) {
+    return false;
+   }
+
+   EngineD3D12CreateInfo creationAttribs = {};
+   creationAttribs.EnableValidation = true;
+   creationAttribs.SetValidationLevel(Diligent::VALIDATION_LEVEL_2);
+   pFactory->CreateDeviceAndContextsD3D12(creationAttribs, &pDevice_, &pImmediateContext_);
+   return pDevice_ && pImmediateContext_;
+  };
+
+  auto tryInitVulkan = [&]() -> bool
+  {
+   if (!hasUsableVulkanLoader()) {
+    return false;
+   }
+
+   auto* pFactory = resolveVkFactory();
+   if (!pFactory) {
+    return false;
+   }
+
+   EngineVkCreateInfo creationAttribs = {};
+   creationAttribs.EnableValidation = true;
+   creationAttribs.SetValidationLevel(Diligent::VALIDATION_LEVEL_2);
+   pFactory->CreateDeviceAndContextsVk(creationAttribs, &pDevice_, &pImmediateContext_);
+   return pDevice_ && pImmediateContext_;
+  };
+
+  bool initialized = false;
+  switch (backendPreference) {
+   case RenderBackendPreference::Vulkan:
+    initialized = tryInitVulkan() || tryInitD3D12();
+    break;
+   case RenderBackendPreference::D3D12:
+    initialized = tryInitD3D12();
+    break;
+   case RenderBackendPreference::Auto:
+   default:
+    initialized = tryInitD3D12() || tryInitVulkan();
+    break;
   }
 
-  widget_ = widget;
-
-  EngineD3D12CreateInfo CreationAttribs = {};
-  CreationAttribs.EnableValidation = true;
-  CreationAttribs.SetValidationLevel(Diligent::VALIDATION_LEVEL_2);
-  CreationAttribs.EnableValidation = true;
-
-
-  // ウィンドウハンドルを設定（デバイス作成のみ使用。スワップチェーンは子HWNDを使う）
-  pFactory->CreateDeviceAndContextsD3D12(CreationAttribs, &pDevice_, &pImmediateContext_);
-
-  if (!pDevice_)
+  if (!initialized)
   {
-   // エラーログ出力、アプリケーション終了などの処理
    qWarning() << "Failed to create Diligent Engine device and contexts.";
    return;
   }
@@ -276,7 +360,10 @@ namespace Artifact
 
   Win32NativeWindow swapChainWindow;
   swapChainWindow.hWnd = renderHwnd_;
-  pFactory->CreateSwapChainD3D12(pDevice_, pImmediateContext_, SCDesc, fullScreenDesc, swapChainWindow, &pSwapChain_);
+  if (!createSwapChainForCurrentBackend()) {
+   qWarning() << "Failed to create swap chain for the current backend.";
+   return;
+  }
 
   Diligent::Viewport VP;
   VP.Width = static_cast<float>(m_CurrentPhysicalWidth);
@@ -292,6 +379,44 @@ namespace Artifact
   createConstantBuffers();
   createShaders();
   createPSOs();
+ }
+
+ bool ArtifactIRenderer::Impl::createSwapChainForCurrentBackend()
+ {
+  if (!pDevice_ || !pImmediateContext_ || !renderHwnd_) {
+   return false;
+  }
+
+  SwapChainDesc SCDesc;
+  SCDesc.Width = m_CurrentPhysicalWidth;
+  SCDesc.Height = m_CurrentPhysicalHeight;
+  SCDesc.ColorBufferFormat = MAIN_RTV_FORMAT;
+  SCDesc.DepthBufferFormat = TEX_FORMAT_UNKNOWN;
+  SCDesc.BufferCount = 2;
+  SCDesc.Usage = SWAP_CHAIN_USAGE_RENDER_TARGET;
+
+  Win32NativeWindow swapChainWindow;
+  swapChainWindow.hWnd = renderHwnd_;
+
+  const auto deviceType = pDevice_->GetDeviceInfo().Type;
+  if (deviceType == RENDER_DEVICE_TYPE_VULKAN) {
+   auto* pFactoryVk = resolveVkFactory();
+   if (!pFactoryVk) {
+    return false;
+   }
+   pFactoryVk->CreateSwapChainVk(pDevice_, pImmediateContext_, SCDesc, swapChainWindow, &pSwapChain_);
+   return pSwapChain_ != nullptr;
+  }
+
+  auto* pFactoryD3D12 = resolveD3D12Factory();
+  if (!pFactoryD3D12) {
+   return false;
+  }
+
+  FullScreenModeDesc fullScreenDesc;
+  fullScreenDesc.Fullscreen = false;
+  pFactoryD3D12->CreateSwapChainD3D12(pDevice_, pImmediateContext_, SCDesc, fullScreenDesc, swapChainWindow, &pSwapChain_);
+  return pSwapChain_ != nullptr;
  }
 
  void ArtifactIRenderer::Impl::initFrameQueries()
@@ -885,25 +1010,9 @@ void ArtifactIRenderer::Impl::createSwapChain(QWidget* window)
  }
 
  if (!pSwapChain_) {
-  auto* pFactory = resolveD3D12Factory();
-  if (!pFactory || !renderHwnd_) {
+  if (!renderHwnd_ || !createSwapChainForCurrentBackend()) {
    return;
   }
-
-  SwapChainDesc SCDesc;
-  SCDesc.Width = m_CurrentPhysicalWidth;
-  SCDesc.Height = m_CurrentPhysicalHeight;
-  SCDesc.ColorBufferFormat = MAIN_RTV_FORMAT;
-  SCDesc.DepthBufferFormat = TEX_FORMAT_UNKNOWN;
-  SCDesc.BufferCount = 2;
-  SCDesc.Usage = SWAP_CHAIN_USAGE_RENDER_TARGET;
-
-  FullScreenModeDesc desc;
-  desc.Fullscreen = false;
-
-  Win32NativeWindow swapChainWindow;
-  swapChainWindow.hWnd = renderHwnd_;
-  pFactory->CreateSwapChainD3D12(pDevice_, pImmediateContext_, SCDesc, desc, swapChainWindow, &pSwapChain_);
 
   if (pImmediateContext_) {
    Diligent::Viewport VP;

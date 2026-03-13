@@ -1,4 +1,8 @@
 ﻿module;
+// ArtifactIRenderer maintenance rule:
+// Do not rewrite the existing D3D12-specific path by guesswork.
+// Do not replace this renderer with a Qt-only implementation.
+// Extend backends carefully while preserving the current Diligent/D3D12 architecture.
 #include <QImage>
 #include <QWidget>
 #include <RenderDevice.h>

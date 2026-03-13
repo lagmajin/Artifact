@@ -110,7 +110,8 @@ bool isPathProperty(const ArtifactCore::AbstractProperty& property)
         return false;
     }
     const QString name = property.getName();
-    return name.endsWith(QStringLiteral(".sourcePath"), Qt::CaseInsensitive)
+    return name.compare(QStringLiteral("video.sourcePath"), Qt::CaseInsensitive) == 0
+        || name.endsWith(QStringLiteral(".sourcePath"), Qt::CaseInsensitive)
         || name.compare(QStringLiteral("sourcePath"), Qt::CaseInsensitive) == 0;
 }
 

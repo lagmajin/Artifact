@@ -56,124 +56,9 @@ import Utils.String.UniString;
 import Utils.Id;
 import Property.Abstract;
 import Property.Group;
+import MediaPlaybackController;
 
 namespace Artifact {
-
-// ============================================================================
-// VideoDecoder - Internal class for video decoding using OpenCV
-// ============================================================================
-class VideoDecoder {
-public:
-    VideoDecoder() = default;
-    ~VideoDecoder() = default;
-
-    bool open(const QString& path) {
-        std::lock_guard<std::mutex> lock(mutex_);
-        
-        if (!QFile::exists(path)) {
-            qWarning() << "[VideoDecoder] File not found:" << path;
-            return false;
-        }
-
-        cap_.open(path.toStdString());
-        if (!cap_.isOpened()) {
-            qWarning() << "[VideoDecoder] Failed to open video:" << path;
-            return false;
-        }
-
-        sourcePath_ = path;
-        
-        // Extract video info
-        info_.width = static_cast<int>(cap_.get(cv::CAP_PROP_FRAME_WIDTH));
-        info_.height = static_cast<int>(cap_.get(cv::CAP_PROP_FRAME_HEIGHT));
-        info_.frameRate = cap_.get(cv::CAP_PROP_FPS);
-        info_.frameCount = static_cast<int64_t>(cap_.get(cv::CAP_PROP_FRAME_COUNT));
-        info_.duration = info_.frameCount / (info_.frameRate > 0 ? info_.frameRate : 30.0);
-        info_.bitRate = 0; // OpenCV doesn't expose this directly
-        info_.hasAudio = true; // Assume has audio (check separately if needed)
-        
-        // Try to get codec name
-        int fourcc = static_cast<int>(cap_.get(cv::CAP_PROP_FOURCC));
-        char codecChars[5] = { (char)(fourcc & 0xFF), (char)((fourcc >> 8) & 0xFF),
-                               (char)((fourcc >> 16) & 0xFF), (char)((fourcc >> 24) & 0xFF), 0 };
-        info_.codecName = QString::fromLatin1(codecChars);
-
-        qDebug() << "[VideoDecoder] Opened video:" << path
-                 << "Size:" << info_.width << "x" << info_.height
-                 << "FPS:" << info_.frameRate
-                 << "Frames:" << info_.frameCount;
-
-        return true;
-    }
-
-    void close() {
-        std::lock_guard<std::mutex> lock(mutex_);
-        if (cap_.isOpened()) {
-            cap_.release();
-        }
-        sourcePath_.clear();
-    }
-
-    bool isOpened() const {
-        return cap_.isOpened();
-    }
-
-    const VideoStreamInfo& info() const { return info_; }
-    QString sourcePath() const { return sourcePath_; }
-
-    bool seek(int64_t frame) {
-        std::lock_guard<std::mutex> lock(mutex_);
-        if (!cap_.isOpened()) return false;
-        
-        cap_.set(cv::CAP_PROP_POS_FRAMES, static_cast<double>(frame));
-        currentFrame_ = frame;
-        return true;
-    }
-
-    bool seekToTime(double timeSeconds) {
-        std::lock_guard<std::mutex> lock(mutex_);
-        if (!cap_.isOpened()) return false;
-        
-        cap_.set(cv::CAP_PROP_POS_MSEC, timeSeconds * 1000.0);
-        currentFrame_ = static_cast<int64_t>(cap_.get(cv::CAP_PROP_POS_FRAMES));
-        return true;
-    }
-
-    int64_t currentFrame() const {
-        if (!cap_.isOpened()) return -1;
-        return static_cast<int64_t>(cap_.get(cv::CAP_PROP_POS_FRAMES));
-    }
-
-    bool readFrame(cv::Mat& frame) {
-        std::lock_guard<std::mutex> lock(mutex_);
-        if (!cap_.isOpened()) return false;
-        
-        bool success = cap_.read(frame);
-        if (success) {
-            currentFrame_++;
-        }
-        return success;
-    }
-
-    bool readFrameAt(int64_t frame, cv::Mat& outFrame) {
-        std::lock_guard<std::mutex> lock(mutex_);
-        if (!cap_.isOpened()) return false;
-        
-        cap_.set(cv::CAP_PROP_POS_FRAMES, static_cast<double>(frame));
-        bool success = cap_.read(outFrame);
-        if (success) {
-            currentFrame_ = frame + 1;
-        }
-        return success;
-    }
-
-private:
-    cv::VideoCapture cap_;
-    VideoStreamInfo info_;
-    QString sourcePath_;
-    int64_t currentFrame_ = 0;
-    mutable std::mutex mutex_;
-};
 
 // ============================================================================
 // FrameCache - LRU cache for decoded frames
@@ -183,7 +68,7 @@ public:
     explicit FrameCache(size_t maxFrames = 30)
         : maxFrames_(maxFrames) {}
 
-    void put(int64_t frame, const cv::Mat& frameData) {
+    void put(int64_t frame, const QImage& frameData) {
         std::lock_guard<std::mutex> lock(mutex_);
         
         // Remove oldest if at capacity
@@ -193,16 +78,16 @@ public:
             cache_.erase(oldest);
         }
         
-        cache_[frame] = frameData.clone();
+        cache_[frame] = frameData.copy();
         cacheOrder_.push_front(frame);
     }
 
-    bool get(int64_t frame, cv::Mat& outFrame) {
+    bool get(int64_t frame, QImage& outFrame) {
         std::lock_guard<std::mutex> lock(mutex_);
 
         auto it = cache_.find(frame);
         if (it != cache_.end()) {
-            outFrame = it->second.clone();
+            outFrame = it->second.copy();
             // Move to front (most recently used)
             auto orderIt = std::find(cacheOrder_.begin(), cacheOrder_.end(), frame);
             if (orderIt != cacheOrder_.end()) {
@@ -232,7 +117,7 @@ public:
 
 private:
     mutable std::mutex mutex_;
-    std::unordered_map<int64_t, cv::Mat> cache_;
+    std::unordered_map<int64_t, QImage> cache_;
     std::deque<int64_t> cacheOrder_;
     size_t maxFrames_;
 };
@@ -242,7 +127,7 @@ private:
 // ============================================================================
 class ArtifactVideoLayer::Impl {
 public:
-    std::unique_ptr<VideoDecoder> decoder_;
+    std::unique_ptr<ArtifactCore::MediaPlaybackController> playbackController_;
     FrameCache frameCache_;
     VideoStreamInfo streamInfo_;
     
@@ -263,10 +148,9 @@ public:
     bool audioEnabled_ = true;
     bool videoEnabled_ = true;
     
-    cv::Mat currentFrameData_;
     QImage currentQImage_;
     
-    Impl() : frameCache_(30), decoder_(std::make_unique<VideoDecoder>()) {}
+    Impl() : playbackController_(std::make_unique<ArtifactCore::MediaPlaybackController>()), frameCache_(30) {}
     ~Impl() = default;
 };
 
@@ -281,8 +165,8 @@ ArtifactVideoLayer::ArtifactVideoLayer()
 
 ArtifactVideoLayer::~ArtifactVideoLayer()
 {
-    if (impl_->decoder_) {
-        impl_->decoder_->close();
+    if (impl_->playbackController_) {
+        impl_->playbackController_->closeMedia();
     }
     delete impl_;
     qDebug() << "[VideoLayer] Destroyed";
@@ -312,22 +196,55 @@ void ArtifactVideoLayer::setHasVideo(bool hasVideo)
 
 bool ArtifactVideoLayer::loadFromPath(const QString& path)
 {
-    if (!impl_->decoder_->open(path)) {
+    const QString normalizedPath = QFileInfo(path).absoluteFilePath();
+    if (!impl_->playbackController_->openMediaFile(normalizedPath)) {
         qWarning() << "[VideoLayer] Failed to load video:" << path;
         impl_->isLoaded_ = false;
         return false;
     }
-    
-    impl_->sourcePath_ = path;
-    impl_->streamInfo_ = impl_->decoder_->info();
+
+    impl_->sourcePath_ = normalizedPath;
+    impl_->streamInfo_ = VideoStreamInfo{};
+
+    const auto playbackInfo = impl_->playbackController_->getPlaybackInfo();
+    const auto metadata = impl_->playbackController_->getMetadata();
+    if (const auto* videoStream = metadata.getFirstVideoStream()) {
+        impl_->streamInfo_.width = videoStream->resolution.width();
+        impl_->streamInfo_.height = videoStream->resolution.height();
+        impl_->streamInfo_.frameRate = videoStream->frameRate > 0.0 ? videoStream->frameRate : playbackInfo.fps;
+        impl_->streamInfo_.frameCount = videoStream->frameCount > 0 ? videoStream->frameCount : playbackInfo.totalFrames;
+        impl_->streamInfo_.duration = videoStream->duration > 0.0 ? videoStream->duration : playbackInfo.durationSec;
+        impl_->streamInfo_.codecName = videoStream->videoCodec.codecName;
+        impl_->streamInfo_.bitRate = static_cast<int>(videoStream->bitrate);
+    } else {
+        impl_->streamInfo_.frameRate = playbackInfo.fps;
+        impl_->streamInfo_.frameCount = playbackInfo.totalFrames;
+        impl_->streamInfo_.duration = playbackInfo.durationSec;
+    }
+    if (const auto* audioStream = metadata.getFirstAudioStream()) {
+        impl_->streamInfo_.hasAudio = true;
+        impl_->streamInfo_.audioChannels = audioStream->audioCodec.channels;
+        impl_->streamInfo_.audioSampleRate = audioStream->audioCodec.sampleRate;
+    }
+
     impl_->isLoaded_ = true;
     impl_->currentFrame_ = 0;
     impl_->inPoint_ = 0;
-    impl_->outPoint_ = impl_->streamInfo_.frameCount - 1;
+    impl_->outPoint_ = impl_->streamInfo_.frameCount > 0 ? impl_->streamInfo_.frameCount - 1 : -1;
     impl_->frameCache_.clear();
-    
-    // Set source size for parent class
-    // setSourceSize({impl_->streamInfo_.width, impl_->streamInfo_.height});
+
+    const QImage firstFrame = impl_->playbackController_->getVideoFrameAtFrame(0);
+    impl_->currentQImage_ = firstFrame;
+    if (!firstFrame.isNull()) {
+        impl_->frameCache_.put(0, firstFrame);
+        if (impl_->streamInfo_.width <= 0 || impl_->streamInfo_.height <= 0) {
+            impl_->streamInfo_.width = firstFrame.width();
+            impl_->streamInfo_.height = firstFrame.height();
+        }
+    }
+    if (impl_->streamInfo_.width > 0 && impl_->streamInfo_.height > 0) {
+        setSourceSize(Size_2D(impl_->streamInfo_.width, impl_->streamInfo_.height));
+    }
     
     qDebug() << "[VideoLayer] Loaded:" << path
              << "Duration:" << impl_->streamInfo_.duration << "s"
@@ -355,12 +272,11 @@ const VideoStreamInfo& ArtifactVideoLayer::streamInfo() const
 void ArtifactVideoLayer::seekToFrame(int64_t frame)
 {
     if (!impl_->isLoaded_) return;
-    
-    // Clamp to valid range
-    frame = std::max(impl_->inPoint_, std::min(frame, impl_->outPoint_));
+    const int64_t maxFrame = impl_->outPoint_ >= 0 ? impl_->outPoint_ : std::max<int64_t>(impl_->streamInfo_.frameCount - 1, impl_->inPoint_);
+    frame = std::max(impl_->inPoint_, std::min(frame, maxFrame));
     
     impl_->currentFrame_ = frame;
-    impl_->decoder_->seek(frame);
+    impl_->playbackController_->seekToFrame(frame);
     decodeCurrentFrame();
 }
 
@@ -379,6 +295,9 @@ int64_t ArtifactVideoLayer::currentFrame() const
 
 double ArtifactVideoLayer::currentTime() const
 {
+    if (impl_->playbackController_ && impl_->playbackController_->isMediaOpen()) {
+        return impl_->playbackController_->getCurrentPositionSeconds();
+    }
     if (impl_->streamInfo_.frameRate > 0) {
         return impl_->currentFrame_ / impl_->streamInfo_.frameRate;
     }
@@ -401,52 +320,31 @@ void ArtifactVideoLayer::decodeCurrentFrame()
     if (!impl_->isLoaded_) return;
     
     // Check cache first
-    if (impl_->frameCache_.get(impl_->currentFrame_, impl_->currentFrameData_)) {
+    if (impl_->frameCache_.get(impl_->currentFrame_, impl_->currentQImage_)) {
         qDebug() << "[VideoLayer] Frame" << impl_->currentFrame_ << "from cache";
         return;
     }
     
-    // Decode from video
-    if (impl_->decoder_->readFrameAt(impl_->currentFrame_, impl_->currentFrameData_)) {
-        // Cache the frame
-        impl_->frameCache_.put(impl_->currentFrame_, impl_->currentFrameData_);
+    // Decode from controller
+    impl_->currentQImage_ = impl_->playbackController_->getVideoFrameAtFrame(impl_->currentFrame_);
+    if (!impl_->currentQImage_.isNull()) {
+        impl_->frameCache_.put(impl_->currentFrame_, impl_->currentQImage_);
         qDebug() << "[VideoLayer] Decoded frame" << impl_->currentFrame_;
     }
 }
 
 QImage ArtifactVideoLayer::currentFrameToQImage() const
 {
-    if (!impl_->isLoaded_ || impl_->currentFrameData_.empty()) {
-        return QImage();
-    }
-    
-    cv::Mat rgb;
-    if (impl_->currentFrameData_.channels() == 3) {
-        cv::cvtColor(impl_->currentFrameData_, rgb, cv::COLOR_BGR2RGB);
-    } else if (impl_->currentFrameData_.channels() == 4) {
-        cv::cvtColor(impl_->currentFrameData_, rgb, cv::COLOR_BGRA2RGB);
-    } else {
-        rgb = impl_->currentFrameData_;
-    }
-    
-    return QImage(rgb.data, rgb.cols, rgb.rows, static_cast<int>(rgb.step),
-                  QImage::Format_RGB888).copy();
+    return impl_->currentQImage_;
 }
 
 QImage ArtifactVideoLayer::decodeFrameToQImage(int64_t frameNumber) const
 {
     if (!impl_->isLoaded_) return QImage();
     
-    cv::Mat frame;
+    QImage frame;
     if (impl_->frameCache_.get(frameNumber, frame)) {
-        cv::Mat rgb;
-        if (frame.channels() == 3) {
-            cv::cvtColor(frame, rgb, cv::COLOR_BGR2RGB);
-        } else {
-            rgb = frame;
-        }
-        return QImage(rgb.data, rgb.cols, rgb.rows, static_cast<int>(rgb.step),
-                      QImage::Format_RGB888).copy();
+        return frame;
     }
     
     // Need to decode - non-const operation
@@ -465,10 +363,10 @@ void ArtifactVideoLayer::preloadFrames(int64_t startFrame, int count)
     
     for (int i = 0; i < count; ++i) {
         int64_t frame = startFrame + i;
-        if (frame >= impl_->inPoint_ && frame <= impl_->outPoint_) {
+        if (frame >= impl_->inPoint_ && (impl_->outPoint_ < 0 || frame <= impl_->outPoint_)) {
             if (!impl_->frameCache_.contains(frame)) {
-                cv::Mat frameData;
-                if (impl_->decoder_->readFrameAt(frame, frameData)) {
+                const QImage frameData = impl_->playbackController_->getVideoFrameAtFrame(frame);
+                if (!frameData.isNull()) {
                     impl_->frameCache_.put(frame, frameData);
                 }
             }
@@ -546,7 +444,8 @@ void ArtifactVideoLayer::clearProxy()
 // === In-Point / Out-Point ===
 void ArtifactVideoLayer::setInPoint(int64_t frame)
 {
-    impl_->inPoint_ = std::max(0LL, std::min(frame, impl_->streamInfo_.frameCount - 1));
+    const int64_t maxFrame = std::max<int64_t>(0, impl_->streamInfo_.frameCount - 1);
+    impl_->inPoint_ = std::max<int64_t>(0, std::min(frame, maxFrame));
     if (impl_->outPoint_ < impl_->inPoint_) {
         impl_->outPoint_ = impl_->inPoint_;
     }
@@ -555,7 +454,8 @@ void ArtifactVideoLayer::setInPoint(int64_t frame)
 
 void ArtifactVideoLayer::setOutPoint(int64_t frame)
 {
-    impl_->outPoint_ = std::max(impl_->inPoint_, std::min(frame, impl_->streamInfo_.frameCount - 1));
+    const int64_t maxFrame = std::max<int64_t>(impl_->inPoint_, impl_->streamInfo_.frameCount - 1);
+    impl_->outPoint_ = std::max(impl_->inPoint_, std::min(frame, maxFrame));
     qDebug() << "[VideoLayer] Out-point set to" << impl_->outPoint_;
 }
 
@@ -693,24 +593,19 @@ void ArtifactVideoLayer::draw(ArtifactIRenderer* renderer)
     if (!impl_->videoEnabled_ || !impl_->isLoaded_) return;
     
     // Decode current frame if needed
-    if (impl_->currentFrameData_.empty() || 
-        impl_->currentFrame_ != impl_->decoder_->currentFrame()) {
+    if (impl_->currentQImage_.isNull()) {
         decodeCurrentFrame();
     }
     
-    if (impl_->currentFrameData_.empty()) return;
-
-    cv::Mat bgra;
-    cv::cvtColor(impl_->currentFrameData_, bgra, cv::COLOR_BGR2BGRA);
-    QImage img((uchar*)bgra.data, bgra.cols, bgra.rows, bgra.step, QImage::Format_RGBA8888);
+    if (impl_->currentQImage_.isNull()) return;
     
     auto size = sourceSize();
-    renderer->drawSprite(0.0f, 0.0f, (float)size.width, (float)size.height, img);
+    renderer->drawSprite(0.0f, 0.0f, (float)size.width, (float)size.height, impl_->currentQImage_);
 }
 
 bool ArtifactVideoLayer::hasVideo() const
 {
-    return impl_->videoEnabled_ && impl_->isLoaded_;
+    return impl_->videoEnabled_ && impl_->isLoaded_ && impl_->streamInfo_.width > 0 && impl_->streamInfo_.height > 0;
 }
 
 std::vector<ArtifactCore::PropertyGroup> ArtifactVideoLayer::getLayerPropertyGroups() const

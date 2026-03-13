@@ -81,7 +81,7 @@ enum class ProxyQuality {
     Full = 3        // Full resolution (same as None, for clarity)
 };
 
-/// Video layer for timeline-based video playback
+/// Canonical video layer for timeline-based imported footage.
 /// Supports:
 /// - Frame-accurate seeking and playback
 /// - Proxy workflow for large video files
@@ -97,14 +97,13 @@ public:
     ~ArtifactVideoLayer() override;
 
     // === Source Management ===
-    // Compatibility API shared with ArtifactMediaLayer.
     void setSourceFile(const QString& path);
     QString sourceFile() const;
     void setHasAudio(bool hasAudio);
     void setHasVideo(bool hasVideo);
     
-    /// Load video from file path
-    /// @param path Absolute or relative path to video file
+    /// Load video or audio-backed footage from file path
+    /// @param path Absolute or relative path to source file
     /// @return true if successful
     bool loadFromPath(const QString& path);
     
@@ -114,7 +113,7 @@ public:
     /// Check if video is loaded
     bool isLoaded() const;
     
-    /// Get video stream information
+    /// Get source stream information
     const VideoStreamInfo& streamInfo() const;
 
     // === Playback Control ===
