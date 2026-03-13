@@ -23,6 +23,7 @@
 #include <QHash>
 #include <QSet>
 #include <QPolygon>
+#include <QIcon>
 #include <QComboBox>
 #include <QPointer>
 #include <QLineEdit>
@@ -61,6 +62,31 @@ namespace {
   constexpr int kInlineComboMarginY = 2;
   constexpr int kInlineComboReserve = kInlineParentWidth + kInlineBlendWidth + kInlineComboGap + 10;
  constexpr int kLayerNameMinWidth = 120;
+
+ QIcon loadLayerPanelIcon(const QString& resourceRelativePath, const QString& fallbackFileName = {})
+ {
+  QIcon icon(resolveIconResourcePath(resourceRelativePath));
+  if (!icon.isNull()) {
+   return icon;
+  }
+  if (!fallbackFileName.isEmpty()) {
+   icon = QIcon(resolveIconPath(fallbackFileName));
+  }
+  return icon;
+ }
+
+ QPixmap loadLayerPanelPixmap(const QString& resourceRelativePath, const QString& fallbackFileName = {})
+ {
+  QIcon icon = loadLayerPanelIcon(resourceRelativePath, fallbackFileName);
+  if (icon.isNull()) {
+   return QPixmap();
+  }
+  QPixmap pix = icon.pixmap(16, 16);
+  if (pix.isNull()) {
+   pix = icon.pixmap(20, 20);
+  }
+  return pix;
+ }
  }
 
  namespace {
@@ -199,16 +225,20 @@ namespace {
  public:
   Impl()
   {
-    visibilityIcon = QPixmap(resolveIconPath("visibility.png"));
-    lockIcon = QPixmap(resolveIconPath("lock.png"));
-    if (lockIcon.isNull()) lockIcon = QPixmap(resolveIconPath("unlock.png"));
-    soloIcon = QPixmap(resolveIconPath("solo.png"));
+    visibilityIcon = loadLayerPanelPixmap(QStringLiteral("MaterialVS/neutral/visibility.svg"), QStringLiteral("visibility.png"));
+    lockIcon = loadLayerPanelPixmap(QStringLiteral("MaterialVS/yellow/lock.svg"), QStringLiteral("lock.png"));
+    if (lockIcon.isNull()) lockIcon = loadLayerPanelPixmap(QStringLiteral("MaterialVS/yellow/lock_open.svg"), QStringLiteral("unlock.png"));
+    soloIcon = loadLayerPanelPixmap(QStringLiteral("MaterialVS/purple/group.svg"), QStringLiteral("solo.png"));
+    soundIcon = loadLayerPanelPixmap(QStringLiteral("MaterialVS/blue/volume_up.svg"));
+    shyIcon = loadLayerPanelPixmap(QStringLiteral("MaterialVS/orange/visibility_off.svg"));
   }
   ~Impl() = default;
 
   QPixmap visibilityIcon;
   QPixmap lockIcon;
   QPixmap soloIcon;
+  QPixmap soundIcon;
+  QPixmap shyIcon;
   
   QPushButton* visibilityButton = nullptr;
   QPushButton* lockButton = nullptr;
@@ -243,11 +273,13 @@ namespace {
 
   auto soundButton = impl_->soundButton = new QPushButton();
   soundButton->setFixedSize(QSize(kLayerHeaderButtonSize, kLayerHeaderButtonSize));
+  if (!impl_->soundIcon.isNull()) soundButton->setIcon(impl_->soundIcon);
   soundButton->setStyleSheet("background-color: #2D2D30; border: none; border-right: 1px solid #1a1a1a;");
 
   auto shyButton = impl_->shyButton = new QPushButton;
   shyButton->setFixedSize(QSize(kLayerHeaderButtonSize, kLayerHeaderButtonSize));
   shyButton->setCheckable(true);
+  if (!impl_->shyIcon.isNull()) shyButton->setIcon(impl_->shyIcon);
   shyButton->setToolTip("Master Shy Switch");
   shyButton->setStyleSheet("QPushButton { background-color: #2D2D30; border: none; border-right: 1px solid #1a1a1a; } QPushButton:checked { background-color: #3b3bef; }");
 
@@ -320,10 +352,10 @@ int ArtifactLayerPanelHeaderWidget::totalHeaderHeight() const
 
   Impl()
   {
-    visibilityIcon = QPixmap(resolveIconPath("visibility.png"));
-    lockIcon = QPixmap(resolveIconPath("lock.png"));
-    if (lockIcon.isNull()) lockIcon = QPixmap(resolveIconPath("unlock.png"));
-    soloIcon = QPixmap(resolveIconPath("solo.png"));
+    visibilityIcon = loadLayerPanelPixmap(QStringLiteral("MaterialVS/neutral/visibility.svg"), QStringLiteral("visibility.png"));
+    lockIcon = loadLayerPanelPixmap(QStringLiteral("MaterialVS/yellow/lock.svg"), QStringLiteral("lock.png"));
+    if (lockIcon.isNull()) lockIcon = loadLayerPanelPixmap(QStringLiteral("MaterialVS/yellow/lock_open.svg"), QStringLiteral("unlock.png"));
+    soloIcon = loadLayerPanelPixmap(QStringLiteral("MaterialVS/purple/group.svg"), QStringLiteral("solo.png"));
   }
   ~Impl() = default;
 
@@ -733,12 +765,16 @@ int ArtifactLayerPanelHeaderWidget::totalHeaderHeight() const
     QAction* collapseAct = nullptr;
     QAction* expandAllAct = nullptr;
     QAction* collapseAllAct = nullptr;
+    renameAct->setIcon(loadLayerPanelIcon(QStringLiteral("MaterialVS/blue/edit.svg")));
+    duplicateAct->setIcon(loadLayerPanelIcon(QStringLiteral("MaterialVS/neutral/content_copy.svg")));
+    deleteAct->setIcon(loadLayerPanelIcon(QStringLiteral("MaterialVS/red/delete.svg")));
 
     const bool supportsSourceReplacement =
       static_cast<bool>(std::dynamic_pointer_cast<ArtifactImageLayer>(layer)) ||
       static_cast<bool>(std::dynamic_pointer_cast<ArtifactVideoLayer>(layer));
     if (supportsSourceReplacement) {
       replaceSourceAct = menu.addAction("Replace Source...");
+      replaceSourceAct->setIcon(loadLayerPanelIcon(QStringLiteral("MaterialVS/blue/file_open.svg")));
     }
 
     if (row.hasChildren) {
@@ -755,10 +791,21 @@ int ArtifactLayerPanelHeaderWidget::totalHeaderHeight() const
     QAction* lockAct = menu.addAction(layer->isLocked() ? "Unlock Layer" : "Lock Layer");
     QAction* soloAct = menu.addAction(layer->isSolo() ? "Disable Solo" : "Enable Solo");
     QAction* shyAct = menu.addAction(layer->isShy() ? "Disable Shy" : "Enable Shy");
+    visAct->setIcon(loadLayerPanelIcon(layer->isVisible()
+      ? QStringLiteral("MaterialVS/neutral/visibility_off.svg")
+      : QStringLiteral("MaterialVS/neutral/visibility.svg")));
+    lockAct->setIcon(loadLayerPanelIcon(layer->isLocked()
+      ? QStringLiteral("MaterialVS/yellow/lock_open.svg")
+      : QStringLiteral("MaterialVS/yellow/lock.svg")));
+    soloAct->setIcon(loadLayerPanelIcon(QStringLiteral("MaterialVS/purple/group.svg")));
+    shyAct->setIcon(loadLayerPanelIcon(QStringLiteral("MaterialVS/orange/visibility_off.svg")));
 
     QMenu* parentMenu = menu.addMenu("Parent");
     QAction* selectParentAct = parentMenu->addAction("Select Parent");
     QAction* clearParentAct = parentMenu->addAction("Clear Parent");
+    parentMenu->setIcon(loadLayerPanelIcon(QStringLiteral("MaterialVS/neutral/link.svg")));
+    selectParentAct->setIcon(loadLayerPanelIcon(QStringLiteral("MaterialVS/neutral/link.svg")));
+    clearParentAct->setIcon(loadLayerPanelIcon(QStringLiteral("MaterialVS/orange/link_off.svg")));
     selectParentAct->setEnabled(layer->hasParent());
     clearParentAct->setEnabled(layer->hasParent());
 
@@ -767,6 +814,11 @@ int ArtifactLayerPanelHeaderWidget::totalHeaderHeight() const
     QAction* createNullAct = createMenu->addAction("Null Layer");
     QAction* createAdjustAct = createMenu->addAction("Adjustment Layer");
     QAction* createTextAct = createMenu->addAction("Text Layer");
+    createMenu->setIcon(loadLayerPanelIcon(QStringLiteral("MaterialVS/green/format_shapes.svg")));
+    createSolidAct->setIcon(loadLayerPanelIcon(QStringLiteral("MaterialVS/green/format_shapes.svg")));
+    createNullAct->setIcon(loadLayerPanelIcon(QStringLiteral("MaterialVS/purple/group.svg")));
+    createAdjustAct->setIcon(loadLayerPanelIcon(QStringLiteral("MaterialVS/orange/warning.svg")));
+    createTextAct->setIcon(loadLayerPanelIcon(QStringLiteral("MaterialVS/purple/title.svg")));
 
     QAction* chosen = menu.exec(event->globalPosition().toPoint());
     auto comp = safeCompositionLookup(impl_->compositionId);

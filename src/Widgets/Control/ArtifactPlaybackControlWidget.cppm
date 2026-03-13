@@ -49,6 +49,17 @@ import Artifact.Application.Manager;
 import Artifact.Service.ActiveContext;
 import Artifact.Service.Playback;
 
+namespace {
+QIcon loadIconWithFallback(const QString& fileName)
+{
+  const QString resourcePath = ArtifactCore::resolveIconResourcePath(fileName);
+  QIcon icon(resourcePath);
+  if (!icon.isNull()) {
+    return icon;
+  }
+  return QIcon(ArtifactCore::resolveIconPath(fileName));
+}
+}
 
 namespace Artifact
 {
@@ -89,31 +100,31 @@ namespace Artifact
  ArtifactPlaybackControlWidget::Impl::Impl()
  {
   playButton_ = new QToolButton();
-  playButton_->setIcon(QIcon(getIconPath() + "/PlayArrow.png"));
+  playButton_->setIcon(loadIconWithFallback("PlayArrow.png"));
   playButton_->setIconSize(QSize(32, 32));
   
   pauseButton_ = new QToolButton();
-  pauseButton_->setIcon(QIcon(getIconPath() + "/Png/pause.png"));
+  pauseButton_->setIcon(loadIconWithFallback("Png/pause.png"));
   pauseButton_->setIconSize(QSize(32, 32));
   
   stopButton_ = new QToolButton();
-  stopButton_->setIcon(QIcon(getIconPath() + "/Png/stop.png"));
+  stopButton_->setIcon(loadIconWithFallback("Png/stop.png"));
   stopButton_->setIconSize(QSize(32, 32));
   
   stepBackwardButton_ = new QToolButton();
-  stepBackwardButton_->setIcon(QIcon(getIconPath() + "/Png/step_backward.png"));
+  stepBackwardButton_->setIcon(loadIconWithFallback("Png/step_backward.png"));
   stepBackwardButton_->setIconSize(QSize(24, 24));
   
   stepForwardButton_ = new QToolButton();
-  stepForwardButton_->setIcon(QIcon(getIconPath() + "/Png/step_forward.png"));
+  stepForwardButton_->setIcon(loadIconWithFallback("Png/step_forward.png"));
   stepForwardButton_->setIconSize(QSize(24, 24));
   
   seekStartButton_ = new QToolButton();
-  seekStartButton_->setIcon(QIcon(getIconPath() + "/Png/seek_start.png"));
+  seekStartButton_->setIcon(loadIconWithFallback("Png/seek_start.png"));
   seekStartButton_->setIconSize(QSize(24, 24));
   
   seekEndButton_ = new QToolButton();
-  seekEndButton_->setIcon(QIcon(getIconPath() + "/Png/seek_end.png"));
+  seekEndButton_->setIcon(loadIconWithFallback("Png/seek_end.png"));
   seekEndButton_->setIconSize(QSize(24, 24));
   
   backForward_ = new QToolButton();
