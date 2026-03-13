@@ -186,7 +186,7 @@ namespace Artifact
   RefCntAutoPtr<ISampler> m_draw_sprite_sampler;
   int m_CurrentPhysicalWidth;
   int m_CurrentPhysicalHeight;
-  int m_CurrentDevicePixelRatio;
+  qreal m_CurrentDevicePixelRatio = 1.0;
   void clear();
   void flushAndWait();
   void flush();
@@ -542,14 +542,14 @@ namespace Artifact
   pDevice_->CreateShader(linePsInfo, &m_draw_line_shaders.PS);
   pDevice_->CreateShader(sprite2DVsInfo, &m_draw_sprite_shaders.VS);
   pDevice_->CreateShader(sprite2DPsInfo, &m_draw_sprite_shaders.PS);
+  pDevice_->CreateShader(solidRectVsInfo2, &m_draw_solid_shaders.VS);
+  pDevice_->CreateShader(solidRectPsInfo2, &m_draw_solid_shaders.PS);
+  m_draw_solid_triangle_shaders = m_draw_solid_shaders;
+
   pDevice_->CreateShader(checkerboardPsInfo, &m_draw_checkerboard_shaders.PS);
   pDevice_->CreateShader(gridPsInfo, &m_draw_grid_shaders.PS);
-  m_draw_checkerboard_shaders.VS = m_draw_solid_shaders.VS; // Reuse VS
+  m_draw_checkerboard_shaders.VS = m_draw_solid_shaders.VS; // Reuse solid VS after creation
   m_draw_grid_shaders.VS = m_draw_solid_shaders.VS;
-     
-	 pDevice_->CreateShader(solidRectVsInfo2, &m_draw_solid_shaders.VS);
-	 pDevice_->CreateShader(solidRectPsInfo2, &m_draw_solid_shaders.PS);
-	 m_draw_solid_triangle_shaders = m_draw_solid_shaders;
 
   {
    ShaderCreateInfo thickLineVsInfo;
@@ -970,6 +970,10 @@ void ArtifactIRenderer::Impl::createConstantBuffers()
  {
   struct DotLineShaderCB { float thickness; float spacing; float2 padding; };
   BufferDesc CBDesc;
+  CBDesc.Name = "DotLineCB";
+  CBDesc.Usage = USAGE_DYNAMIC;
+  CBDesc.BindFlags = BIND_UNIFORM_BUFFER;
+  CBDesc.CPUAccessFlags = CPU_ACCESS_WRITE;
   CBDesc.Size = sizeof(DotLineShaderCB);
   pDevice_->CreateBuffer(CBDesc, nullptr, &m_draw_dot_line_cb);
  }
@@ -1060,10 +1064,10 @@ void ArtifactIRenderer::Impl::createSwapChain(QWidget* window)
   if (newWidth <= 0 || newHeight <= 0) {
    return;
   }
-  const float newDevicePixelRatio = widget->devicePixelRatio();
+  const qreal newDevicePixelRatio = widget->devicePixelRatio();
   m_CurrentPhysicalWidth = newWidth;
   m_CurrentPhysicalHeight = newHeight;
-  m_CurrentDevicePixelRatio = static_cast<int>(newDevicePixelRatio);
+  m_CurrentDevicePixelRatio = newDevicePixelRatio;
   qDebug() << "Impl::recreateSwapChain - Logical:" << widget->width() << "x" << widget->height()
    << ", DPI:" << newDevicePixelRatio
    << ", Physical:" << newWidth << "x" << newHeight;
