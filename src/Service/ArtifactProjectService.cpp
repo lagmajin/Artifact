@@ -851,7 +851,10 @@ QString ArtifactProjectService::projectItemRemovalConfirmationMessage(ProjectIte
    auto projectShared = pm.getCurrentProjectSharedPtr();
    if (!projectShared) return false;
    bool ok = projectShared->removeCompositionById(id);
-   if (ok) projectShared->projectChanged();
+   if (ok) {
+    compositionRemoved(id);
+    projectShared->projectChanged();
+   }
    return ok;
  }
 

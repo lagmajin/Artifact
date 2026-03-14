@@ -47,6 +47,7 @@ module;
 #include <QSpinBox>
 #include <QDoubleSpinBox>
 #include <QDialogButtonBox>
+#include <QStyle>
 
 #include <iostream>
 #include <vector>
@@ -293,11 +294,17 @@ QStringList projectItemMetadataLines(const QModelIndex& sourceIndex, ProjectItem
 QIcon loadProjectViewIcon(const QString& resourceRelativePath, const QString& fallbackFileName = {})
 {
     QIcon icon(ArtifactCore::resolveIconResourcePath(resourceRelativePath));
-    if (!icon.isNull()) {
+    if (!icon.isNull() && !icon.pixmap(16, 16).isNull()) {
         return icon;
     }
     if (!fallbackFileName.isEmpty()) {
         icon = QIcon(ArtifactCore::resolveIconPath(fallbackFileName));
+        if (!icon.isNull() && !icon.pixmap(16, 16).isNull()) {
+            return icon;
+        }
+    }
+    if (auto* appStyle = QApplication::style()) {
+        return appStyle->standardIcon(QStyle::SP_FileIcon);
     }
     return icon;
 }
@@ -852,6 +859,8 @@ ArtifactProjectView::ArtifactProjectView(QWidget* parent) : QTreeView(parent), i
     setIndentation(15);
     setAlternatingRowColors(true);
     setAnimated(true);
+    setTextElideMode(Qt::ElideRight);
+    setWordWrap(false);
 
     header()->setStyleSheet(R"(
         QHeaderView::section {
@@ -945,9 +954,6 @@ void ArtifactProjectView::handleItemDoubleClicked(const QModelIndex& index) {
              if (idVar.isValid()) {
                  CompositionID cid(idVar.toString());
                  ArtifactProjectService::instance()->changeCurrentComposition(cid);
-                 ArtifactLayerTimelinePanelWrapper* panel = new ArtifactLayerTimelinePanelWrapper(cid);
-                 panel->setAttribute(Qt::WA_DeleteOnClose);
-                 panel->show();
              }
         } else if (typeVar.toInt() == static_cast<int>(eProjectItemType::Footage)) {
             QVariant ptrVar = actualIdx.data(Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::ProjectItemPtr));
@@ -1030,6 +1036,14 @@ void ArtifactProjectView::leaveEvent(QEvent* event) {
         impl_->hoverIndex = QModelIndex();
     }
     QTreeView::leaveEvent(event);
+}
+
+void ArtifactProjectView::resizeEvent(QResizeEvent* event)
+{
+    QTreeView::resizeEvent(event);
+    if (viewport()) {
+        viewport()->update();
+    }
 }
 
 void ArtifactProjectView::showEvent(QShowEvent* event)
@@ -1313,6 +1327,7 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
                         continue;
                     }
                     QAction* moveAction = moveToFolderMenu->addAction(folderDisplayPath(folder));
+                    moveAction->setIcon(loadProjectViewIcon(QStringLiteral("MaterialVS/yellow/folder.svg")));
                     const bool canMove = (folder != item) && !isDescendantOf(folder, item);
                     moveAction->setEnabled(canMove);
                     if (!canMove) {
@@ -1333,6 +1348,7 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
         }
         if (!hasMoveTarget) {
             QAction* emptyAction = moveToFolderMenu->addAction(QStringLiteral("(No valid target folder)"));
+            emptyAction->setIcon(loadProjectViewIcon(QStringLiteral("MaterialVS/neutral/help.svg")));
             emptyAction->setEnabled(false);
         }
 
@@ -1359,10 +1375,10 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
         menu.addSeparator();
         addTrackedAction(QStringLiteral("expand_children"), QStringLiteral("Expand Children"), [this, idx]() {
             setExpanded(idx, true);
-        });
+        }, loadProjectViewIcon(QStringLiteral("MaterialVS/blue/visibility.svg")));
         addTrackedAction(QStringLiteral("collapse_children"), QStringLiteral("Collapse Children"), [this, idx]() {
             setExpanded(idx, false);
-        });
+        }, loadProjectViewIcon(QStringLiteral("MaterialVS/orange/visibility_off.svg")));
         
         menu.addSeparator();
     }
@@ -1383,13 +1399,15 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
     }, loadProjectViewIcon(QStringLiteral("MaterialVS/yellow/folder.svg")));
 
     menu.addSeparator();
-    addTrackedAction(QStringLiteral("expand_all"), QStringLiteral("Expand All"), [this]() { expandAll(); });
-    addTrackedAction(QStringLiteral("collapse_all"), QStringLiteral("Collapse All"), [this]() { collapseAll(); });
+    addTrackedAction(QStringLiteral("expand_all"), QStringLiteral("Expand All"), [this]() { expandAll(); },
+                     loadProjectViewIcon(QStringLiteral("MaterialVS/blue/visibility.svg")));
+    addTrackedAction(QStringLiteral("collapse_all"), QStringLiteral("Collapse All"), [this]() { collapseAll(); },
+                     loadProjectViewIcon(QStringLiteral("MaterialVS/orange/visibility_off.svg")));
     addTrackedAction(QStringLiteral("refresh_view"), QStringLiteral("Refresh View"), [this]() { viewport()->update(); },
                      loadProjectViewIcon(QStringLiteral("MaterialVS/blue/replay.svg")));
     addTrackedAction(QStringLiteral("show_dependency_graph"), QStringLiteral("Show Dependency Graph..."), [this, svc]() {
         Impl::showDependencyGraphDialog(this, svc);
-    });
+    }, loadProjectViewIcon(QStringLiteral("MaterialVS/yellow/link.svg")));
     menu.addSeparator();
     addTrackedAction(QStringLiteral("relink_missing_footage"), QStringLiteral("Relink Missing Footage..."), [this, svc]() {
         if (!svc) return;
@@ -1424,6 +1442,7 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
         const QString repeatLabel = QStringLiteral("Repeat Last Command: %1").arg(
             availableContextLabels.value(impl_->lastContextCommandId, impl_->lastContextCommandLabel));
         QAction* repeatAction = new QAction(repeatLabel, &menu);
+        repeatAction->setIcon(loadProjectViewIcon(QStringLiteral("MaterialVS/blue/replay.svg")));
         const QString commandId = impl_->lastContextCommandId;
         const QString commandLabel = availableContextLabels.value(commandId, impl_->lastContextCommandLabel);
         QObject::connect(repeatAction, &QAction::triggered, &menu, [this, commandId, commandLabel, run = availableContextCommands.value(commandId)]() mutable {
@@ -1444,6 +1463,7 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
         const QString repeatLabel = QStringLiteral("Repeat Last New Command: %1").arg(
             availableNewLabels.value(impl_->lastNewCommandId, impl_->lastNewCommandLabel));
         QAction* repeatAction = new QAction(repeatLabel, newMenu);
+        repeatAction->setIcon(loadProjectViewIcon(QStringLiteral("MaterialVS/green/replay.svg")));
         const QString commandId = impl_->lastNewCommandId;
         const QString commandLabel = availableNewLabels.value(commandId, impl_->lastNewCommandLabel);
         QObject::connect(repeatAction, &QAction::triggered, newMenu, [this, commandId, commandLabel, run = availableNewCommands.value(commandId)]() mutable {
@@ -1642,6 +1662,7 @@ public:
     std::deque<ProxyJob> proxyJobs_;
     QTimer* proxyQueueTimer_ = nullptr;
     QMetaObject::Connection currentRowChangedConnection_;
+    bool headerLayoutInitialized_ = false;
 
     QModelIndex currentSourceIndexFromSelection() const {
         if (!projectView_ || !projectView_->selectionModel()) {
@@ -1867,12 +1888,22 @@ public:
             projectView_->setModel(proxyModel_);
             projectView_->setSortingEnabled(true);
             projectView_->sortByColumn(0, Qt::AscendingOrder);
-            projectView_->header()->setSortIndicatorShown(false);
-            projectView_->header()->setSectionsClickable(false);
-            projectView_->header()->setStretchLastSection(true);
-            projectView_->header()->setSectionResizeMode(0, QHeaderView::Stretch);
-            for (int col = 1; col < projectView_->model()->columnCount(); ++col) {
-                projectView_->header()->setSectionResizeMode(col, QHeaderView::ResizeToContents);
+            if (!headerLayoutInitialized_) {
+                auto* header = projectView_->header();
+                header->setSortIndicatorShown(false);
+                header->setSectionsClickable(false);
+                header->setStretchLastSection(false);
+                header->setMinimumSectionSize(56);
+                header->setSectionResizeMode(QHeaderView::Interactive);
+
+                // Name 列を潰れにくくして、以後はユーザーが自由にリサイズできる。
+                projectView_->setColumnWidth(0, 260);
+                projectView_->setColumnWidth(1, 120);
+                projectView_->setColumnWidth(2, 120);
+                projectView_->setColumnWidth(3, 100);
+                projectView_->setColumnWidth(4, 140);
+                projectView_->setColumnWidth(5, 180);
+                headerLayoutInitialized_ = true;
             }
             projectView_->expandToDepth(1);
             if (projectView_->selectionModel()) {
@@ -2061,6 +2092,17 @@ void ArtifactProjectManagerWidget::updateRequested() {
     setEnabled(true);
 }
 
+void ArtifactProjectManagerWidget::resizeEvent(QResizeEvent* event)
+{
+    QWidget::resizeEvent(event);
+    if (impl_ && impl_->projectView_) {
+        if (impl_->projectView_->viewport()) {
+            impl_->projectView_->viewport()->update();
+        }
+        impl_->projectView_->update();
+    }
+}
+
 void ArtifactProjectManagerWidget::showEvent(QShowEvent* event)
 {
     QWidget::showEvent(event);
@@ -2121,21 +2163,31 @@ ArtifactProjectManagerToolBox::ArtifactProjectManagerToolBox(QWidget* parent) : 
     layout->setContentsMargins(10, 0, 10, 0);
     layout->setSpacing(10);
 
-    auto createBtn = [](const QString& label, const QString& tip) {
-        auto b = new QPushButton(label);
+    auto createBtn = [](const QString& tip, const QString& iconPath, QStyle::StandardPixmap fallbackIcon, const QString& fallbackText) {
+        auto b = new QPushButton();
         b->setFixedSize(24, 24);
         b->setToolTip(tip);
+        QIcon icon = loadProjectViewIcon(iconPath);
+        if ((icon.isNull() || icon.pixmap(16, 16).isNull()) && QApplication::style()) {
+            icon = QApplication::style()->standardIcon(fallbackIcon);
+        }
+        if (!icon.isNull() && !icon.pixmap(16, 16).isNull()) {
+            b->setIcon(icon);
+        } else {
+            b->setText(fallbackText);
+        }
+        b->setIconSize(QSize(16, 16));
         b->setStyleSheet(R"(
-            QPushButton { background: transparent; border: none; font-size: 11px; font-weight: bold; color: #aaa; border-radius: 3px; }
-            QPushButton:hover { background: #444; color: white; }
+            QPushButton { background: transparent; border: none; border-radius: 3px; padding: 2px; color: #ddd; font-size: 10px; font-weight: bold; }
+            QPushButton:hover { background: #444; }
         )");
         return b;
     };
 
-    auto btnNew = createBtn("N", "New Composition");
-    auto btnFolder = createBtn("F", "New Folder");
-    auto btnProxy = createBtn("P", "Generate Proxies");
-    auto btnDel = createBtn("D", "Delete");
+    auto btnNew = createBtn("New Composition", QStringLiteral("MaterialVS/blue/movie.svg"), QStyle::SP_FileDialogNewFolder, QStringLiteral("N"));
+    auto btnFolder = createBtn("New Folder", QStringLiteral("MaterialVS/yellow/folder.svg"), QStyle::SP_DirIcon, QStringLiteral("F"));
+    auto btnProxy = createBtn("Generate Proxies", QStringLiteral("MaterialVS/green/replay.svg"), QStyle::SP_BrowserReload, QStringLiteral("P"));
+    auto btnDel = createBtn("Delete", QStringLiteral("MaterialVS/red/delete.svg"), QStyle::SP_TrashIcon, QStringLiteral("D"));
 
     layout->addWidget(btnNew);
     layout->addWidget(btnFolder);

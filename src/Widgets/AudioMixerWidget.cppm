@@ -244,6 +244,42 @@ void AudioChannelStripWidget::paintEvent(QPaintEvent* event) {
     int fillH = static_cast<int>(peakNorm * meterH);
     painter.fillRect(meterX, meterY + meterH - fillH, meterW, fillH, grad);
 
+    // 目盛り (dBFS scale)
+    static const struct { float db; bool showLabel; } kMarks[] = {
+        {  0.0f, true  },
+        { -3.0f, false },
+        { -6.0f, true  },
+        {-12.0f, true  },
+        {-18.0f, false },
+        {-24.0f, true  },
+        {-36.0f, false },
+        {-48.0f, true  },
+    };
+    {
+        QFont scaleFont;
+        scaleFont.setFamily(QStringLiteral("Consolas"));
+        scaleFont.setPixelSize(8);
+        painter.setFont(scaleFont);
+
+        for (const auto& mark : kMarks) {
+            const float norm = (mark.db + 60.0f) / 60.0f;
+            const int tickY = meterY + meterH - static_cast<int>(norm * meterH);
+
+            // メーターバーを横断するティックライン (半透明白)
+            painter.setPen(QPen(QColor(255, 255, 255, 65), 1));
+            painter.drawLine(meterX, tickY, meterX + meterW, tickY);
+
+            if (mark.showLabel) {
+                const QString label = (mark.db == 0.0f)
+                    ? QStringLiteral("0")
+                    : QString::number(static_cast<int>(mark.db));
+                painter.setPen(QColor(120, 140, 158));
+                painter.drawText(QRect(meterX - 22, tickY - 4, 20, 9),
+                                 Qt::AlignRight | Qt::AlignVCenter, label);
+            }
+        }
+    }
+
     // 5. Gain Reduction Meter (Orange bar, top-down)
     float gr = bus_->getGainReduction(); // 0.0 ~ 1.0 (1.0 = no reduction)
     if (gr < 0.99f) {

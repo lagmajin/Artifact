@@ -79,7 +79,11 @@ ArtifactMenuBar::Impl::Impl(QWidget* mainWindow, ArtifactMenuBar* menuBar)
 ArtifactMenuBar::ArtifactMenuBar(QWidget* mainWindow, QWidget* parent)
  : QMenuBar(parent), impl_(new Impl(mainWindow, this))
 {
- setStyleSheet("QMenuBar { background-color: #1E1E1E; color: #E0E0E0; }");
+ setStyleSheet(R"(
+QMenuBar { background-color: #1E1E1E; color: #E0E0E0; font-size: 13px; }
+QMenuBar::item { padding: 4px 10px; }
+QMenu { font-size: 12px; }
+)");
 }
 
 ArtifactMenuBar::~ArtifactMenuBar()

@@ -214,6 +214,41 @@ namespace {
       {QStringLiteral("Luminosity"), LAYER_BLEND_TYPE::BLEND_LUMINOSITY}
     };
   }
+
+  QVector<QString> layerPanelGroupLabels(const ArtifactAbstractLayerPtr& layer)
+  {
+   QVector<QString> labels;
+   if (!layer) {
+    return labels;
+   }
+
+   auto hasLabel = [&labels](const QString& candidate) -> bool {
+    return std::any_of(labels.cbegin(), labels.cend(), [&candidate](const QString& existing) {
+     return existing.compare(candidate, Qt::CaseInsensitive) == 0;
+    });
+   };
+
+   for (const auto& group : layer->getLayerPropertyGroups()) {
+    const QString groupName = group.name().trimmed();
+    if (groupName.isEmpty()) {
+     continue;
+    }
+    if (groupName.compare(QStringLiteral("Layer"), Qt::CaseInsensitive) == 0) {
+     continue;
+    }
+    if (!hasLabel(groupName)) {
+     labels.push_back(groupName);
+    }
+   }
+
+   // Fallback for visual/null-style layers that should expose timeline transform controls.
+   const QString transformLabel = QStringLiteral("Transform");
+   if ((layer->isNullLayer() || layer->isAdjustmentLayer() || layer->hasVideo()) && !hasLabel(transformLabel)) {
+    labels.prepend(transformLabel);
+   }
+
+   return labels;
+  }
  }
 
  // ============================================================================
@@ -489,21 +524,22 @@ int ArtifactLayerPanelHeaderWidget::totalHeaderHeight() const
      if (emitted.contains(nodeId)) return;
 
      const auto nodeChildren = children.value(nodeId);
-     const bool hasChildren = !nodeChildren.isEmpty() || node->isNullLayer();
+     const auto panelGroups = layerPanelGroupLabels(node);
+     const bool hasChildren = !nodeChildren.isEmpty() || !panelGroups.isEmpty();
      const bool expanded = expandedByLayerId.value(nodeId, true);
      visibleRows.push_back(VisibleRow{ node, depth, hasChildren, expanded, RowKind::Layer, QString() });
      emitted.insert(nodeId);
 
      if (!hasChildren || !expanded) return;
 
-     if (node->isNullLayer()) {
+     for (const auto& groupLabel : panelGroups) {
       visibleRows.push_back(VisibleRow{
        node,
        depth + 1,
        false,
        false,
        RowKind::Group,
-       QStringLiteral("Transform")
+       groupLabel
       });
      }
 
@@ -1191,13 +1227,56 @@ void ArtifactLayerPanelWidget::keyPressEvent(QKeyEvent* event)
    return;
   }
   QWidget::keyPressEvent(event);
- }
+  }
 
- void ArtifactLayerPanelWidget::leaveEvent(QEvent*)
- {
-  impl_->hoveredLayerIndex = -1;
-  update();
- }
+  void ArtifactLayerPanelWidget::wheelEvent(QWheelEvent* event)
+  {
+   const int delta = event->angleDelta().y();
+   if (delta == 0 || impl_->visibleRows.isEmpty()) {
+    QWidget::wheelEvent(event);
+    return;
+   }
+   // 現在の選択インデックスを探す
+   int selectedIdx = -1;
+   for (int i = 0; i < impl_->visibleRows.size(); ++i) {
+    if (impl_->visibleRows[i].kind == Impl::RowKind::Layer &&
+        impl_->visibleRows[i].layer &&
+        impl_->visibleRows[i].layer->id() == impl_->selectedLayerId) {
+     selectedIdx = i;
+     break;
+    }
+   }
+   // ホイール上 → 前(index小)、下 → 次(index大)
+   const int dir = (delta > 0) ? -1 : 1;
+   int newIdx = (selectedIdx < 0) ? (dir > 0 ? 0 : impl_->visibleRows.size() - 1)
+                                  : (selectedIdx + dir);
+   // RowKind::Layerの行を探す
+   while (newIdx >= 0 && newIdx < impl_->visibleRows.size()) {
+    if (impl_->visibleRows[newIdx].kind == Impl::RowKind::Layer &&
+        impl_->visibleRows[newIdx].layer)
+     break;
+    newIdx += dir;
+   }
+   if (newIdx < 0 || newIdx >= impl_->visibleRows.size()) {
+    event->accept();
+    return;
+   }
+   const auto& row = impl_->visibleRows[newIdx];
+   if (row.layer) {
+    impl_->selectedLayerId = row.layer->id();
+    if (auto* svc = ArtifactProjectService::instance()) {
+     svc->selectLayer(row.layer->id());
+    }
+    update();
+    event->accept();
+   }
+  }
+
+  void ArtifactLayerPanelWidget::leaveEvent(QEvent*)
+  {
+   impl_->hoveredLayerIndex = -1;
+   update();
+  }
 
 void ArtifactLayerPanelWidget::paintEvent(QPaintEvent*)
 {

@@ -1,19 +1,18 @@
-module;
+﻿module;
 #include <QObject>
 #include <QApplication>
 #include <QColor>
 #include <QEvent>
 #include <QLabel>
-#include <QGraphicsDropShadowEffect>
 #include <QPointer>
 #include <QStyle>
 #include <QTimer>
 #include <QWidget>
-#include <algorithm>
 #include <wobjectimpl.h>
 #include "DockManager.h"
 #include "DockWidget.h"
 #include "DockWidgetTab.h"
+#include "FloatingDockContainer.h"
 
 module Widgets.Dock.StyleManager;
 
@@ -47,40 +46,6 @@ void repolishWidget(QWidget* widget) {
     widget->update();
 }
 
-QGraphicsDropShadowEffect* ensureTabGlow(QWidget* tab) {
-    if (!tab) return nullptr;
-    auto* effect = qobject_cast<QGraphicsDropShadowEffect*>(tab->graphicsEffect());
-    if (!effect) {
-        effect = new QGraphicsDropShadowEffect(tab);
-        tab->setGraphicsEffect(effect);
-    }
-    return effect;
-}
-
-QGraphicsDropShadowEffect* ensureDockGlow(QWidget* dock) {
-    if (!dock) return nullptr;
-    auto* effect = qobject_cast<QGraphicsDropShadowEffect*>(dock->graphicsEffect());
-    if (!effect) {
-        effect = new QGraphicsDropShadowEffect(dock);
-        dock->setGraphicsEffect(effect);
-    }
-    return effect;
-}
-
-void clearTabGlow(QWidget* tab) {
-    if (!tab) return;
-    if (tab->graphicsEffect()) {
-        tab->setGraphicsEffect(nullptr);
-    }
-}
-
-void clearDockGlow(QWidget* dock) {
-    if (!dock) return;
-    if (dock->graphicsEffect()) {
-        dock->setGraphicsEffect(nullptr);
-    }
-}
-
 bool isDockRelatedObject(QObject* watched, ads::CDockManager* dockManager) {
     if (!watched || !dockManager) return false;
     if (watched == dockManager) return true;
@@ -89,7 +54,17 @@ bool isDockRelatedObject(QObject* watched, ads::CDockManager* dockManager) {
     }
 
     auto* widget = qobject_cast<QWidget*>(watched);
-    return widget && dockManager->isAncestorOf(widget);
+    if (!widget) return false;
+    if (dockManager->isAncestorOf(widget)) return true;
+
+    // Floating dock containers are separate top-level windows that are
+    // NOT children of CDockManager, so isAncestorOf() misses them.
+    for (auto* w = widget->parentWidget(); w; w = w->parentWidget()) {
+        if (qobject_cast<ads::CFloatingDockContainer*>(w)) {
+            return true;
+        }
+    }
+    return false;
 }
 
 ads::CDockWidget* dockFromObject(QObject* object) {
@@ -108,46 +83,22 @@ ads::CDockWidget* dockFromObject(QObject* object) {
 
 ads::CDockWidget* resolveActiveDock(ads::CDockManager* dockManager, ads::CDockWidget* rememberedDock) {
     if (!dockManager) return nullptr;
-    Q_UNUSED(rememberedDock);
 
-    if (auto* focusedDock = dockManager->focusedDockWidget()) {
-        if (focusedDock->isVisible()) {
-            return focusedDock;
-        }
+    // rememberedDock はユーザーのクリックまたは focusedDockWidgetChanged シグナルで
+    // 設定される。タブクリック直後はまだ isVisible() == false の場合があるため、
+    // ここでは可視性チェックを行わない。
+    if (rememberedDock) {
+        return rememberedDock;
     }
 
-    if (auto* focusedWidget = QApplication::focusWidget()) {
-        QObject* cursor = focusedWidget;
-        while (cursor) {
-            if (auto* dock = qobject_cast<ads::CDockWidget*>(cursor)) {
-                if (dock->isVisible()) {
-                    return dock;
-                }
-            }
-            cursor = cursor->parent();
-        }
-    }
-
-    const auto docks = dockManager->findChildren<ads::CDockWidget*>();
-    for (auto* dock : docks) {
-        if (dock && dock->isVisible() && dock->isCurrentTab()) {
-            return dock;
-        }
-    }
-
-    return nullptr;
+    // フォールバック: QAds が内部的に追跡しているフォーカスドックを使用
+    return dockManager->focusedDockWidget();
 }
 
-QString tabTextColor(const bool isActiveDock, const bool isFloatingTab, const bool isCurrentTab)
+QString tabTextColor(const bool isActiveDock, const bool isFloatingTab, const bool /*isCurrentTab*/)
 {
     if (isActiveDock) {
         return QStringLiteral("#ffffff");
-    }
-    if (isFloatingTab && isCurrentTab) {
-        return QStringLiteral("#f7fbff");
-    }
-    if (isCurrentTab) {
-        return QStringLiteral("#eef5fd");
     }
     if (isFloatingTab) {
         return QStringLiteral("#a7b8ca");
@@ -246,41 +197,36 @@ bool DockStyleManager::eventFilter(QObject* watched, QEvent* event) {
         return QObject::eventFilter(watched, event);
     }
 
+    // 高速パス: ドック装飾に無関係なイベント型は isDockRelatedObject の
+    // 高コストな isAncestorOf 呼び出しを行わず即座にスキップする。
+    // ChildAdded / ChildRemoved / LayoutRequest / Polish はレイアウト処理中に
+    // 大量発生するため、アクティブドック状態の更新トリガーから除外する。
+    switch (event->type()) {
+    case QEvent::FocusIn:
+    case QEvent::FocusOut:
+    case QEvent::Hide:
+    case QEvent::MouseButtonPress:
+    case QEvent::MouseButtonRelease:
+    case QEvent::Show:
+    case QEvent::WindowActivate:
+    case QEvent::WindowDeactivate:
+    case QEvent::ZOrderChange:
+        break;
+    default:
+        return QObject::eventFilter(watched, event);
+    }
+
     if (isDockRelatedObject(watched, impl_->dockManager_)) {
-        bool refreshImmediately = false;
         if ((event->type() == QEvent::MouseButtonPress || event->type() == QEvent::MouseButtonRelease) &&
             watched) {
             if (auto* dock = dockFromObject(watched)) {
                 impl_->focusedDockWidget_ = dock;
-                refreshImmediately = (event->type() == QEvent::MouseButtonPress);
             }
         }
 
-        if (refreshImmediately) {
-            impl_->refreshScheduled_ = false;
-            refreshDockDecorations();
-            return QObject::eventFilter(watched, event);
-        }
-
-        switch (event->type()) {
-        case QEvent::ChildAdded:
-        case QEvent::ChildRemoved:
-        case QEvent::FocusIn:
-        case QEvent::FocusOut:
-        case QEvent::Hide:
-        case QEvent::LayoutRequest:
-        case QEvent::MouseButtonPress:
-        case QEvent::MouseButtonRelease:
-        case QEvent::Polish:
-        case QEvent::Show:
-        case QEvent::WindowActivate:
-        case QEvent::WindowDeactivate:
-        case QEvent::ZOrderChange:
-            scheduleRefresh();
-            break;
-        default:
-            break;
-        }
+        // 常に遅延リフレッシュ。即時リフレッシュは QAds のタブ切替処理前に
+        // 実行されるため、古い状態を参照してしまう問題があった。
+        scheduleRefresh();
     }
 
     return QObject::eventFilter(watched, event);
@@ -305,33 +251,50 @@ void DockStyleManager::refreshDockDecorations() {
     }
 
     auto* activeDock = resolveActiveDock(impl_->dockManager_, impl_->focusedDockWidget_);
-    impl_->focusedDockWidget_ = activeDock;
 
-    const auto docks = impl_->dockManager_->findChildren<ads::CDockWidget*>();
+    const auto docks = impl_->dockManager_->dockWidgetsMap().values();
+    bool anyChanged = false;
     for (auto* dock : docks) {
         if (!dock) continue;
 
         const bool isActiveDock = (dock == activeDock);
         const bool isFloating = dock->isInFloatingContainer();
-        dock->setProperty("artifactActiveDock", isActiveDock);
-        dock->setProperty("artifactFloatingDock", isFloating);
-        clearDockGlow(dock);
-        repolishWidget(dock);
+
+        const bool dockActivePrev = dock->property("artifactActiveDock").toBool();
+        const bool dockFloatPrev  = dock->property("artifactFloatingDock").toBool();
+        const bool dockChanged = (dockActivePrev != isActiveDock) || (dockFloatPrev != isFloating);
+
+        if (dockChanged) {
+            dock->setProperty("artifactActiveDock", isActiveDock);
+            dock->setProperty("artifactFloatingDock", isFloating);
+            repolishWidget(dock);
+            anyChanged = true;
+        }
 
         auto* tab = dock->tabWidget();
         if (!tab) continue;
 
         const bool isCurrentTab = tab->isActiveTab();
         const bool isActiveTab = isActiveDock && isCurrentTab;
-        tab->setProperty("artifactActiveTab", isActiveTab);
-        tab->setProperty("artifactFloatingTab", isFloating);
-        tab->setProperty("artifactCurrentTab", isCurrentTab);
-        clearTabGlow(tab);
-        applyTabLabelColors(tab, tabTextColor(isActiveTab, isFloating, isCurrentTab), isActiveTab || isCurrentTab);
-        tab->updateStyle();
-        repolishWidget(tab);
+
+        const bool tabActivePrev  = tab->property("artifactActiveTab").toBool();
+        const bool tabFloatPrev   = tab->property("artifactFloatingTab").toBool();
+        const bool tabCurrentPrev = tab->property("artifactCurrentTab").toBool();
+        const bool tabChanged = (tabActivePrev != isActiveTab) || (tabFloatPrev != isFloating)
+                                || (tabCurrentPrev != isCurrentTab);
+
+        if (tabChanged) {
+            tab->setProperty("artifactActiveTab", isActiveTab);
+            tab->setProperty("artifactFloatingTab", isFloating);
+            tab->setProperty("artifactCurrentTab", isCurrentTab);
+            applyTabLabelColors(tab, tabTextColor(isActiveTab, isFloating, isCurrentTab), isActiveTab);
+            repolishWidget(tab);
+            anyChanged = true;
+        }
     }
-    impl_->dockManager_->update();
+    if (anyChanged) {
+        impl_->dockManager_->update();
+    }
 }
 
 }
