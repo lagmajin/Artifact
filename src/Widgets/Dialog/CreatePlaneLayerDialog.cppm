@@ -9,6 +9,11 @@
 #include <QPushButton>
 #include <QColorDialog>
 #include <QPropertyAnimation>
+#include <QGuiApplication>
+#include <QScreen>
+#include <QHBoxLayout>
+#include <QLabel>
+#include <QMouseEvent>
 #include <wobjectimpl.h>
 module Artifact.Widgets.CreatePlaneLayerDialog;
 
@@ -167,6 +172,8 @@ namespace Artifact {
   QDialogButtonBox* dialogButtonBox = nullptr;
   QPropertyAnimation* m_showAnimation = nullptr;
   QPropertyAnimation* m_hideAnimation = nullptr;
+  QPoint m_dragPosition;
+  bool m_isDragging = false;
   Impl();
   ~Impl()=default;
  };
@@ -177,27 +184,52 @@ namespace Artifact {
 
  CreateSolidLayerSettingDialog::CreateSolidLayerSettingDialog(QWidget* parent /*= nullptr*/) :QDialog(parent),impl_(new Impl())
  {
-  setWindowTitle(u8"平面設定");
-  setFixedSize(600, 400);
+ setWindowTitle(u8"平面設定");
+  setFixedSize(520, 420);
   setWindowFlags(windowFlags() | Qt::Dialog | Qt::FramelessWindowHint);
   setAttribute(Qt::WA_NoChildEventsForParent);
-  QVBoxLayout* layout = new QVBoxLayout();
+  auto* mainLayout = new QVBoxLayout(this);
+  mainLayout->setContentsMargins(0, 0, 0, 0);
+  mainLayout->setSpacing(0);
+
+  auto* header = new QWidget(this);
+  header->setFixedHeight(44);
+  header->setStyleSheet("background-color: #2D2D30; border-bottom: 1px solid #444;");
+  auto* headerLayout = new QHBoxLayout(header);
+  headerLayout->setContentsMargins(14, 0, 14, 0);
+  auto* title = new QLabel(QStringLiteral("Solid Layer Settings"), header);
+  title->setStyleSheet("color: white; font-weight: bold; font-size: 13px;");
+  headerLayout->addWidget(title);
+  headerLayout->addStretch();
+  mainLayout->addWidget(header);
+
+  auto* content = new QWidget(this);
+  auto* contentLayout = new QVBoxLayout(content);
+  contentLayout->setContentsMargins(16, 14, 16, 10);
+  contentLayout->setSpacing(12);
 
   auto editableLabel = impl_->nameEditableLabel = new EditableLabel();
   editableLabel->setText("平面 1");
-  
-  auto settingPage = impl_->settingPage = new PlaneLayerSettingPage(this);
-  
-  auto dialogButtonBox = impl_->dialogButtonBox = new QDialogButtonBox();
-  dialogButtonBox->setStandardButtons(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
-  
-  layout->addWidget(editableLabel);
-  layout->addWidget(settingPage);
-  layout->addWidget(dialogButtonBox, 0, Qt::AlignRight);
-  setLayout(layout);
-  auto style = getDCCStyleSheetPreset(DccStylePreset::ModoStyle);
+  editableLabel->setStyleSheet("background: #252526; padding: 6px; border-radius: 4px; font-weight: bold;");
 
-  setStyleSheet(style);
+  auto settingPage = impl_->settingPage = new PlaneLayerSettingPage(this);
+  settingPage->resizeCompositionSize();
+
+  contentLayout->addWidget(editableLabel);
+  contentLayout->addWidget(settingPage);
+  mainLayout->addWidget(content, 1);
+
+  auto* footer = new QWidget(this);
+  footer->setStyleSheet("background-color: #252526; border-top: 1px solid #333;");
+  auto* footerLayout = new QHBoxLayout(footer);
+  footerLayout->setContentsMargins(14, 10, 14, 10);
+  auto* dialogButtonBox = impl_->dialogButtonBox = new QDialogButtonBox();
+  dialogButtonBox->setStandardButtons(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+  footerLayout->addStretch();
+  footerLayout->addWidget(dialogButtonBox);
+  mainLayout->addWidget(footer);
+
+  setStyleSheet("QDialog { background-color: #1E1E20; border: 1px solid #444; }");
   
   // Connect button box signals to close dialog
   QObject::connect(dialogButtonBox, &QDialogButtonBox::accepted, this, [this]() {
@@ -220,19 +252,48 @@ namespace Artifact {
   QDialog::keyPressEvent(event);
  }
 
- void CreateSolidLayerSettingDialog::mousePressEvent(QMouseEvent* event)
- {
+void CreateSolidLayerSettingDialog::mousePressEvent(QMouseEvent* event)
+{
+  if (event->button() == Qt::LeftButton) {
+   impl_->m_dragPosition = event->globalPosition().toPoint() - frameGeometry().topLeft();
+   impl_->m_isDragging = true;
+   event->accept();
+   return;
+  }
   QDialog::mousePressEvent(event);
- }
+}
 
  void CreateSolidLayerSettingDialog::mouseReleaseEvent(QMouseEvent* event)
  {
+  if (impl_->m_isDragging && event->button() == Qt::LeftButton) {
+   impl_->m_isDragging = false;
+   event->accept();
+   return;
+  }
   QDialog::mouseReleaseEvent(event);
  }
 
  void CreateSolidLayerSettingDialog::mouseMoveEvent(QMouseEvent* event)
  {
+  if (impl_->m_isDragging && (event->buttons() & Qt::LeftButton)) {
+   move(event->globalPosition().toPoint() - impl_->m_dragPosition);
+   event->accept();
+   return;
+  }
   QDialog::mouseMoveEvent(event);
+ }
+
+ void CreateSolidLayerSettingDialog::showEvent(QShowEvent* event)
+ {
+  QDialog::showEvent(event);
+  QPoint endPos;
+  if (parentWidget()) {
+   const QRect pr = parentWidget()->geometry();
+   endPos = pr.center() - rect().center();
+  } else {
+   endPos = QGuiApplication::primaryScreen()->availableGeometry().center() - rect().center();
+  }
+  move(endPos);
  }
 
  W_OBJECT_IMPL(EditPlaneLayerSettingDialog)
@@ -290,9 +351,21 @@ namespace Artifact {
  }
 
  void EditPlaneLayerSettingDialog::keyPressEvent(QKeyEvent* event) { QDialog::keyPressEvent(event); }
- void EditPlaneLayerSettingDialog::mousePressEvent(QMouseEvent* event) { QDialog::mousePressEvent(event); }
- void EditPlaneLayerSettingDialog::mouseReleaseEvent(QMouseEvent* event) { QDialog::mouseReleaseEvent(event); }
- void EditPlaneLayerSettingDialog::mouseMoveEvent(QMouseEvent* event) { QDialog::mouseMoveEvent(event); }
+void EditPlaneLayerSettingDialog::mousePressEvent(QMouseEvent* event) { QDialog::mousePressEvent(event); }
+void EditPlaneLayerSettingDialog::mouseReleaseEvent(QMouseEvent* event) { QDialog::mouseReleaseEvent(event); }
+void EditPlaneLayerSettingDialog::mouseMoveEvent(QMouseEvent* event) { QDialog::mouseMoveEvent(event); }
+void EditPlaneLayerSettingDialog::showEvent(QShowEvent* event)
+{
+  QDialog::showEvent(event);
+  QPoint endPos;
+  if (parentWidget()) {
+   const QRect pr = parentWidget()->geometry();
+   endPos = pr.center() - rect().center();
+  } else {
+   endPos = QGuiApplication::primaryScreen()->availableGeometry().center() - rect().center();
+  }
+  move(endPos);
+}
 
  void EditPlaneLayerSettingDialog::showAnimated()
  {

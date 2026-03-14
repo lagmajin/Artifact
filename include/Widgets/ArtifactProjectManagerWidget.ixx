@@ -85,6 +85,7 @@ public:
   void dropEvent(QDropEvent* event) override;
   void dragMoveEvent(QDragMoveEvent* event) override;
   void dragEnterEvent(QDragEnterEvent* event) override;
+  void resizeEvent(QResizeEvent* event) override;
   void showEvent(QShowEvent* event) override;
   bool event(QEvent* event) override;
   void mouseMoveEvent(QMouseEvent* event) override;
@@ -135,6 +136,7 @@ public:
  protected:
   void dropEvent(QDropEvent* event);
   void dragEnterEvent(QDragEnterEvent* event);
+  void resizeEvent(QResizeEvent* event) override;
   QSize sizeHint() const;
   void showEvent(QShowEvent* event) override;
   bool event(QEvent* event) override;

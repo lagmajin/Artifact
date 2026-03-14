@@ -76,11 +76,15 @@ add_executable(Artifact WIN32)
 set_target_properties(Artifact PROPERTIES
     CXX_STANDARD 23
     CXX_STANDARD_REQUIRED ON
-    CXX_MODULE_STD ON
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>"
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>"
     ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>"
 )
+if(TARGET __CMAKE::CXX23)
+    set_property(TARGET Artifact PROPERTY CXX_MODULE_STD ON)
+else()
+    set_property(TARGET Artifact PROPERTY CXX_MODULE_STD OFF)
+endif()
 
 target_sources(Artifact
     PRIVATE ${APP_IMPL}
@@ -173,15 +177,14 @@ if(DILIGENT_COMPILE_DEFINITIONS)
 endif()
 
 # Qt6
-find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Network Multimedia MultimediaWidgets Concurrent)
-target_link_libraries(Artifact PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network Qt6::Multimedia Qt6::MultimediaWidgets Qt6::Concurrent)
+find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Network Multimedia MultimediaWidgets Concurrent Svg)
+target_link_libraries(Artifact PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network Qt6::Multimedia Qt6::MultimediaWidgets Qt6::Concurrent Qt6::Svg)
 
 # Qt resource bundle: app icons
 file(GLOB_RECURSE ARTIFACT_ICON_RESOURCE_FILES CONFIGURE_DEPENDS
-    "${CMAKE_CURRENT_SOURCE_DIR}/App/Icon/*.svg"
-    "${CMAKE_CURRENT_SOURCE_DIR}/App/Icon/*.png"
-    "${CMAKE_CURRENT_SOURCE_DIR}/App/Icon/*.json"
+    "${CMAKE_CURRENT_SOURCE_DIR}/App/Icon/*"
 )
+list(FILTER ARTIFACT_ICON_RESOURCE_FILES INCLUDE REGEX "\\.(svg|png|json)$")
 list(FILTER ARTIFACT_ICON_RESOURCE_FILES EXCLUDE REGEX "\\.crdownload$")
 list(FILTER ARTIFACT_ICON_RESOURCE_FILES EXCLUDE REGEX "desktop\\.ini$")
 if(ARTIFACT_ICON_RESOURCE_FILES)

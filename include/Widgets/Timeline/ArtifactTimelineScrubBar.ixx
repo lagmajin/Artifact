@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <QMouseEvent>
 #include <QPaintEvent>
 #include <QSize>
@@ -40,6 +40,10 @@ export namespace Artifact
 
   void setTotalFrames(int totalFrames);
   int totalFrames() const;
+
+  // タイムラインズーム座標に合わせたルーラーのための設定
+  void setRulerPixelsPerFrame(double ppf);
+  void setRulerHorizontalOffset(double offset);
 
   void setSeekLockDuringPlayback(bool lock);
   bool isSeekLockedDuringPlayback() const;

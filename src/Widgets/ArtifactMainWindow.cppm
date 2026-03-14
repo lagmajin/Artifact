@@ -85,19 +85,25 @@ void refreshFloatingWidgetTree(QWidget* widget)
   return;
  }
 
- if (auto* layout = widget->layout()) {
-  layout->invalidate();
-  layout->activate();
- }
+ // Do NOT call layout->invalidate()/activate() here.
+ // Qt's layout system already propagates geometry changes when the
+ // floating container is resized, shown, or activated.  Invalidating
+ // and re-activating the layout after Qt has finished processing can
+ // undo or interfere with correct child geometry — especially for
+ // complex widgets like QTreeView whose internal item layout depends
+ // on stable viewport dimensions.
+ //
+ // Similarly, do NOT call updateGeometry() on children.  That tells
+ // parent layouts that size hints may have changed, triggering
+ // unnecessary layout recalculation (layout thrashing) that can leave
+ // child widgets with stale or inconsistent geometry.
 
- widget->updateGeometry();
  widget->update();
 
  for (auto* scrollArea : widget->findChildren<QAbstractScrollArea*>()) {
   if (!scrollArea) {
    continue;
   }
-  scrollArea->updateGeometry();
   if (scrollArea->viewport()) {
    scrollArea->viewport()->update();
   }
@@ -108,7 +114,6 @@ void refreshFloatingWidgetTree(QWidget* widget)
   if (!child || child->isWindow()) {
    continue;
   }
-  child->updateGeometry();
   child->update();
  }
 }
@@ -286,6 +291,35 @@ ads--CDockAreaTitleBar QToolButton:pressed {
  background: #273244;
  border-color: #6d8fb8;
 }
+ads--CDockAreaTitleBar QToolButton#tabsMenuButton,
+ads--CDockAreaTitleBar QToolButton#undockButton,
+ads--CDockAreaTitleBar QToolButton#closeButton {
+ min-width: 20px;
+ min-height: 20px;
+ max-width: 20px;
+ max-height: 20px;
+ border-radius: 6px;
+ margin-left: 3px;
+ padding: 0px;
+}
+ads--CDockAreaTitleBar QToolButton#tabsMenuButton:hover,
+ads--CDockAreaTitleBar QToolButton#undockButton:hover,
+ads--CDockAreaTitleBar QToolButton#closeButton:hover {
+ background: #3b4d66;
+ border-color: #6786ac;
+ color: #f7fbff;
+}
+ads--CDockAreaTitleBar QToolButton#closeButton:hover {
+ background: #5a2e38;
+ border-color: #a95b70;
+ color: #ffe8ee;
+}
+ads--CDockAreaTitleBar QToolButton#tabsMenuButton:pressed,
+ads--CDockAreaTitleBar QToolButton#undockButton:pressed,
+ads--CDockAreaTitleBar QToolButton#closeButton:pressed {
+ background: #253447;
+ border-color: #7ba0cb;
+}
 ads--CFloatingDockContainer {
  background: #171c24;
  border: 1px solid #41546d;
@@ -317,9 +351,9 @@ ads--CDockWidgetTab:hover {
  border-color: #58677a;
 }
 ads--CDockWidgetTab[activeTab="true"] {
- background: #3a444f;
- color: #f4f7fb;
- border-color: #73849a;
+ background: #262b31;
+ color: #b3bcc7;
+ border-color: #3d4652;
 }
 ads--CDockWidgetTab[artifactActiveTab="true"] {
  background: #4f6478;
@@ -337,7 +371,7 @@ ads--CDockWidgetTab ads--CElidingLabel {
 }
 ads--CDockWidgetTab[activeTab="true"] QLabel,
 ads--CDockWidgetTab[activeTab="true"] ads--CElidingLabel {
- color: #f4f7fb;
+ color: #b3bcc7;
 }
 ads--CDockWidgetTab[artifactActiveTab="true"] QLabel,
 ads--CDockWidgetTab[artifactActiveTab="true"] ads--CElidingLabel {
@@ -363,13 +397,13 @@ ads--CDockWidgetTab[artifactFloatingTab="true"]:hover ads--CElidingLabel {
  color: #f3f7fb;
 }
 ads--CDockWidgetTab[artifactFloatingTab="true"][activeTab="true"] {
- background: #435364;
- color: #f7fbff;
- border-color: #8ea4bc;
+ background: #232a32;
+ color: #b4c0cc;
+ border-color: #4a5765;
 }
 ads--CDockWidgetTab[artifactFloatingTab="true"][activeTab="true"] QLabel,
 ads--CDockWidgetTab[artifactFloatingTab="true"][activeTab="true"] ads--CElidingLabel {
- color: #f7fbff;
+ color: #b4c0cc;
 }
 ads--CDockWidgetTab[artifactFloatingTab="true"][artifactActiveTab="true"] {
  background: #5a7086;
@@ -408,25 +442,23 @@ ads--CDockWidgetTab QPushButton#tabCloseButton {
 }
 ads--CDockWidgetTab:hover QAbstractButton#tabCloseButton,
 ads--CDockWidgetTab:hover QPushButton#tabCloseButton,
-ads--CDockWidgetTab[activeTab="true"] QAbstractButton#tabCloseButton,
-ads--CDockWidgetTab[activeTab="true"] QPushButton#tabCloseButton,
 ads--CDockWidgetTab[artifactActiveTab="true"] QAbstractButton#tabCloseButton,
 ads--CDockWidgetTab[artifactActiveTab="true"] QPushButton#tabCloseButton {
- color: #a8a8a8;
- min-width: 13px;
- max-width: 13px;
- margin-left: 3px;
+ color: #cad4de;
+ min-width: 14px;
+ max-width: 14px;
+ margin-left: 4px;
 }
 ads--CDockWidgetTab QAbstractButton#tabCloseButton:hover,
 ads--CDockWidgetTab QPushButton#tabCloseButton:hover {
- background: #3a3a3a;
- border-color: #565656;
- color: #f2f2f2;
+ background: #3a4654;
+ border-color: #5f748e;
+ color: #f4f8ff;
 }
 ads--CDockWidgetTab QAbstractButton#tabCloseButton:pressed,
 ads--CDockWidgetTab QPushButton#tabCloseButton:pressed {
- background: #4a4a4a;
- border-color: #6a6a6a;
+ background: #304257;
+ border-color: #7b97b9;
 }
 )");
  impl_->centralWidgetHost = new QWidget(this);
@@ -437,7 +469,7 @@ ads--CDockWidgetTab QPushButton#tabCloseButton:pressed {
  impl_->primaryCenterDock = centralDock;
  impl_->dockStyleManager->applyStyle();
 
- statusBar()->showMessage(QStringLiteral("Ready"), 2000);
+ statusBar();
  resize(1280, 900);
 }
 
@@ -479,10 +511,15 @@ void ArtifactMainWindow::addDockedWidget(const QString& title, ads::DockWidgetAr
 
 void ArtifactMainWindow::addDockedWidgetTabbed(const QString& title, ads::DockWidgetArea area, QWidget* widget, const QString& tabGroupPrefix)
 {
+ addDockedWidgetTabbedWithId(title, title, area, widget, tabGroupPrefix);
+}
+
+void ArtifactMainWindow::addDockedWidgetTabbedWithId(const QString& title, const QString& dockId, ads::DockWidgetArea area, QWidget* widget, const QString& tabGroupPrefix)
+{
  if (!impl_ || !impl_->dockManager || !widget) return;
 
  auto* dock = new CDockWidget(title, this);
- dock->setObjectName(title);
+ dock->setObjectName(dockId.isEmpty() ? title : dockId);
  dock->setWidget(widget);
 
  ads::CDockAreaWidget* targetArea = nullptr;
@@ -581,7 +618,7 @@ void ArtifactMainWindow::setDockVisible(const QString& title, const bool visible
  for (auto* dock : impl_->dockWidgets) {
   if (!dock) continue;
   if (dock->objectName() == title || dock->windowTitle() == title) {
-   dock->setVisible(visible);
+   dock->toggleView(visible);
   }
  }
 }
@@ -599,6 +636,20 @@ void ArtifactMainWindow::activateDock(const QString& title)
    return;
   }
  }
+}
+
+bool ArtifactMainWindow::closeDock(const QString& title)
+{
+ if (!impl_ || title.isEmpty()) return false;
+ for (auto* dock : impl_->dockWidgets) {
+  if (!dock) continue;
+  if (dock->objectName() == title || dock->windowTitle() == title) {
+   dock->closeDockWidget();
+   impl_->dockStyleManager->applyStyle();
+   return true;
+  }
+ }
+ return false;
 }
 
 void ArtifactMainWindow::closeAllDocks()
@@ -693,6 +744,27 @@ void ArtifactMainWindow::showEvent(QShowEvent* event)
 
 bool ArtifactMainWindow::eventFilter(QObject* watched, QEvent* event)
 {
+ // 高速パス: フローティングドックに無関係なイベント型は
+ // qobject_cast / findFloatingDockContainer の高コスト処理を
+ // スキップして即座に返す。
+ // ChildAdded / ChildRemoved / LayoutRequest / Polish / PolishRequest は
+ // レイアウト処理中に大量発生するためトリガーから除外する。
+ if (event) {
+  switch (event->type()) {
+  case QEvent::Resize:
+  case QEvent::Show:
+  case QEvent::Hide:
+  case QEvent::ActivationChange:
+  case QEvent::WindowActivate:
+  case QEvent::WindowDeactivate:
+  case QEvent::WindowStateChange:
+  case QEvent::ZOrderChange:
+   break;
+  default:
+   return QMainWindow::eventFilter(watched, event);
+  }
+ }
+
  ads::CFloatingDockContainer* floatingWidget = qobject_cast<ads::CFloatingDockContainer*>(watched);
  if (!floatingWidget) {
   if (auto* watchedWidget = qobject_cast<QWidget*>(watched)) {
@@ -704,16 +776,19 @@ bool ArtifactMainWindow::eventFilter(QObject* watched, QEvent* event)
   const bool isRootFloatingWidget = (watched == floatingWidget);
   switch (event ? event->type() : QEvent::None) {
   case QEvent::Resize:
+   // ルートコンテナのリサイズのみ再描画をスケジュールする。
+   // 子ウィジェットのリサイズにも反応すると refreshFloatingWidgetTree 内の
+   // layout->invalidate()/activate() が子リサイズを発火させ、イベントフィルタに
+   // 戻り、再び refresh をスケジュールする無限カスケードが発生していた。
+   if (isRootFloatingWidget) {
+    scheduleFloatingRefresh(floatingWidget);
+   }
+   break;
   case QEvent::Show:
   case QEvent::Hide:
    scheduleFloatingRefresh(floatingWidget);
    break;
   case QEvent::ActivationChange:
-  case QEvent::ChildAdded:
-  case QEvent::ChildRemoved:
-  case QEvent::LayoutRequest:
-  case QEvent::Polish:
-  case QEvent::PolishRequest:
   case QEvent::WindowActivate:
   case QEvent::WindowDeactivate:
   case QEvent::WindowStateChange:

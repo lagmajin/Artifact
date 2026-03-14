@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <QDebug>
 #include <QLinearGradient>
 #include <QMouseEvent>
@@ -39,6 +39,8 @@ namespace Artifact
   bool seekLockDuringPlayback_ = true;
   bool isPlaying_ = false;
   bool hover_ = false;
+  double rulerPixelsPerFrame_ = 0.0;  // 0 = ruler無効
+  double rulerHorizontalOffset_ = 0.0;
 
   int trackLeft(int width) const
   {
@@ -71,6 +73,26 @@ namespace Artifact
    const int clampedX = std::clamp(x, left, right);
    const double ratio = static_cast<double>(clampedX - left) / span;
    return static_cast<int>(std::lround(ratio * (totalFrames_ - 1)));
+  }
+
+  // When the ruler overlay is active, use zoom-based coordinates so that
+  // the handle position and mouse-seek both align with the ruler tick marks.
+  int resolveFrameToX(int frame, int width) const
+  {
+   if (rulerPixelsPerFrame_ > 0.001) {
+    return static_cast<int>(std::round(frame * rulerPixelsPerFrame_ - rulerHorizontalOffset_));
+   }
+   return frameToX(frame, width);
+  }
+
+  int resolveXToFrame(int x, int width) const
+  {
+   if (rulerPixelsPerFrame_ > 0.001) {
+    const double f = (static_cast<double>(x) + rulerHorizontalOffset_)
+                     / std::max(0.001, rulerPixelsPerFrame_);
+    return std::clamp(static_cast<int>(std::round(f)), 0, std::max(0, totalFrames_ - 1));
+   }
+   return xToFrame(x, width);
   }
  };
 
@@ -162,6 +184,22 @@ namespace Artifact
   return impl_->isPlaying_;
  }
 
+ void ArtifactTimelineScrubBar::setRulerPixelsPerFrame(double ppf)
+ {
+  if (std::abs(impl_->rulerPixelsPerFrame_ - ppf) > 0.0001) {
+   impl_->rulerPixelsPerFrame_ = ppf;
+   update();
+  }
+ }
+
+ void ArtifactTimelineScrubBar::setRulerHorizontalOffset(double offset)
+ {
+  if (std::abs(impl_->rulerHorizontalOffset_ - offset) > 0.0001) {
+   impl_->rulerHorizontalOffset_ = offset;
+   update();
+  }
+ }
+
  void ArtifactTimelineScrubBar::paintEvent(QPaintEvent* event)
  {
   Q_UNUSED(event);
@@ -171,13 +209,13 @@ namespace Artifact
   const QRect r = rect();
   const int w = r.width();
   const int h = r.height();
-  const int currentX = impl_->frameToX(std::max(0, static_cast<int>(impl_->currentFrame_.framePosition())), w);
+  const int currentX = impl_->resolveFrameToX(std::max(0, static_cast<int>(impl_->currentFrame_.framePosition())), w);
   const int railHalfH = std::max(3, h / 7);
   const int railBottomInset = std::max(3, h / 10);
   const int centerY = h - railBottomInset - railHalfH;
   const int trackLeft = impl_->trackLeft(w);
   const int trackRight = impl_->trackRight(w);
-  const int topBandHeight = std::max(6, h / 4);
+  const int topBandHeight = std::max(11, h / 3);
   const QRect railRect(trackLeft, centerY - railHalfH + 2, std::max(1, trackRight - trackLeft + 1), railHalfH * 2);
 
   const QColor bgTop(32, 32, 36);
@@ -205,6 +243,49 @@ namespace Artifact
   p.drawLine(r.bottomLeft(), r.bottomRight());
   p.setPen(QColor(90, 90, 96, 180));
   p.drawRect(r.adjusted(0, 0, -1, -1));
+
+  // ── タイムラインズームに合わせたルーラー描画 ──────────────────────
+  if (impl_->rulerPixelsPerFrame_ > 0.001) {
+   const double ppf    = impl_->rulerPixelsPerFrame_;
+   const double xOff   = impl_->rulerHorizontalOffset_;
+   // ズームに応じてメジャーステップを動的に決定 (ラベル同士が60px以上離れるように)
+   constexpr int kMajorStepCandidates[] = {1,2,5,10,15,20,30,50,100,150,200,300,600};
+   int majorStep = 10;
+   for (int c : kMajorStepCandidates) {
+    if (c * ppf >= 60.0) { majorStep = c; break; }
+   }
+   const int minorStep = std::max(1, majorStep / 5);
+
+   const int fStart = std::max(0, static_cast<int>(std::floor(xOff / ppf)));
+   const int fEnd   = std::min(impl_->totalFrames_,
+                               static_cast<int>(std::ceil((xOff + w) / ppf)) + 1);
+
+   QFont rulerFont;
+   rulerFont.setPixelSize(9);
+   p.setFont(rulerFont);
+
+   double lastLabelRight = -1.0;
+   for (int f = fStart; f <= fEnd; f += minorStep) {
+    const double rx = f * ppf - xOff;
+    if (rx < 0.0 || rx > w) continue;
+    const bool isMajor = (f % majorStep) == 0;
+    const int tickH = isMajor ? (topBandHeight - 2) : (topBandHeight / 2);
+    p.setPen(QPen(isMajor ? QColor(160, 165, 180, 200) : QColor(90, 95, 110, 160), 1));
+    p.drawLine(QPointF(rx, topBandHeight - tickH), QPointF(rx, topBandHeight - 1));
+    if (isMajor) {
+     const QString label = QString::number(f);
+     const double labelW = static_cast<double>(QFontMetrics(p.font()).horizontalAdvance(label));
+     const double labelX = rx + 3.0;
+     if (labelX <= lastLabelRight + 6.0) {
+      continue;
+     }
+     p.setPen(QColor(180, 185, 200));
+     p.drawText(QRectF(labelX, 0.0, labelW + 6.0, topBandHeight - 2), Qt::AlignLeft | Qt::AlignVCenter, label);
+     lastLabelRight = labelX + labelW;
+    }
+   }
+  }
+  // ──────────────────────────────────────────────────────────────────
 
   p.setPen(QPen(railBorder, 1));
   p.setBrush(railColor);
@@ -267,7 +348,7 @@ namespace Artifact
     return;
    }
 
-   int newFrame = impl_->xToFrame(event->pos().x(), width());
+   int newFrame = impl_->resolveXToFrame(event->pos().x(), width());
    newFrame = qBound(0, newFrame, impl_->totalFrames_ - 1);
    if (impl_->currentFrame_.framePosition() != newFrame) {
     impl_->currentFrame_ = FramePosition(newFrame);
@@ -275,7 +356,7 @@ namespace Artifact
     Q_EMIT frameChanged(impl_->currentFrame_);
    }
 
-   const int currentX = impl_->frameToX(impl_->currentFrame_.framePosition(), width());
+   const int currentX = impl_->resolveFrameToX(impl_->currentFrame_.framePosition(), width());
    const int handleHalfWidth = impl_->handleWidth_ / 2;
    const bool onHandle = qAbs(event->pos().x() - currentX) <= handleHalfWidth + 3 &&
     event->pos().y() >= 0 && event->pos().y() <= impl_->handleHeight_ + 4;
@@ -292,7 +373,7 @@ namespace Artifact
  void ArtifactTimelineScrubBar::mouseMoveEvent(QMouseEvent* event)
  {
   if (impl_->dragging_) {
-   int newFrame = impl_->xToFrame(event->pos().x(), width());
+   int newFrame = impl_->resolveXToFrame(event->pos().x(), width());
    newFrame = qBound(0, newFrame, impl_->totalFrames_ - 1);
 
    if (impl_->currentFrame_.framePosition() != newFrame) {
@@ -302,7 +383,7 @@ namespace Artifact
    }
    event->accept();
   } else {
-   const int currentX = impl_->frameToX(impl_->currentFrame_.framePosition(), width());
+   const int currentX = impl_->resolveFrameToX(impl_->currentFrame_.framePosition(), width());
    const int handleHalfWidth = impl_->handleWidth_ / 2;
 
    if (qAbs(event->pos().x() - currentX) <= handleHalfWidth + 3 &&

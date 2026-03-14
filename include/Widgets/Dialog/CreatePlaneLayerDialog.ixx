@@ -49,6 +49,7 @@ export namespace Artifact {
   void mousePressEvent(QMouseEvent* event) override;
   void mouseReleaseEvent(QMouseEvent* event) override;
   void mouseMoveEvent(QMouseEvent* event) override;
+  void showEvent(QShowEvent* event) override;
  public:
   explicit CreateSolidLayerSettingDialog(QWidget* parent = nullptr);
   ~CreateSolidLayerSettingDialog();
@@ -67,6 +68,7 @@ export namespace Artifact {
   void mousePressEvent(QMouseEvent* event) override;
   void mouseReleaseEvent(QMouseEvent* event) override;
   void mouseMoveEvent(QMouseEvent* event) override;
+  void showEvent(QShowEvent* event) override;
  public:
   explicit EditPlaneLayerSettingDialog(QWidget* parent = nullptr);
   ~EditPlaneLayerSettingDialog();

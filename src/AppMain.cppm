@@ -25,6 +25,7 @@ module;
 #include <ads_globals.h>
 #include <memory>
 #include <atomic>
+#include <algorithm>
 
 #define _CRT_SECURE_NO_WARNINGS
 #pragma warning(disable:4996)
@@ -93,7 +94,7 @@ using namespace ArtifactCore;
 
 namespace
 {
- constexpr int kMainWindowLayoutVersion = 3;
+ constexpr int kMainWindowLayoutVersion = 4;
 
  quint64 processWorkingSetMB()
  {
@@ -176,6 +177,35 @@ QString recoveryDirectoryPath()
   return dataDir.filePath(QStringLiteral("Recovery"));
 }
 
+bool isStartupDialogSuppressed()
+{
+  ArtifactCore::FastSettingsStore sessionStore(sessionStateFilePath());
+  const QString suppressUntilIso = sessionStore.value(
+    QStringLiteral("Session/startupDialogSuppressUntil"),
+    QString()).toString();
+  if (suppressUntilIso.isEmpty())
+  {
+    return false;
+  }
+
+  const QDateTime suppressUntil = QDateTime::fromString(suppressUntilIso, Qt::ISODate);
+  if (!suppressUntil.isValid())
+  {
+    return false;
+  }
+  return QDateTime::currentDateTime() < suppressUntil;
+}
+
+void suppressStartupDialogForDays(int days)
+{
+  ArtifactCore::FastSettingsStore sessionStore(sessionStateFilePath());
+  const QDateTime suppressUntil = QDateTime::currentDateTime().addDays(std::max(1, days));
+  sessionStore.setValue(
+    QStringLiteral("Session/startupDialogSuppressUntil"),
+    suppressUntil.toString(Qt::ISODate));
+  sessionStore.sync();
+}
+
 void sanitizeSessionStateStore()
 {
   ArtifactCore::FastSettingsStore sessionStore(sessionStateFilePath());
@@ -231,6 +261,13 @@ void sanitizeSessionStateStore()
   if (layoutRestoreTs.isValid() && layoutRestoreTs.typeId() != QMetaType::QString)
   {
     sessionStore.remove(QStringLiteral("Session/layoutRestoreTimestamp"));
+  }
+
+  const QVariant startupDialogSuppressUntil = sessionStore.value(
+    QStringLiteral("Session/startupDialogSuppressUntil"));
+  if (startupDialogSuppressUntil.isValid() && startupDialogSuppressUntil.typeId() != QMetaType::QString)
+  {
+    sessionStore.remove(QStringLiteral("Session/startupDialogSuppressUntil"));
   }
   sessionStore.sync();
 }
@@ -574,8 +611,10 @@ int main(int argc, char* argv[])
     mw->addDockedWidget(QStringLiteral("Project"), ads::LeftDockWidgetArea, new ArtifactProjectManagerWidget(mw));
     mw->addDockedWidget(QStringLiteral("Inspector"), ads::RightDockWidgetArea, new ArtifactInspectorWidget(mw));
     auto* propertyPanel = new ArtifactPropertyWidget(mw);
-    mw->addDockedWidget(QStringLiteral("Properties"), ads::RightDockWidgetArea, propertyPanel);
+    mw->addDockedWidgetTabbed(QStringLiteral("Properties"), ads::RightDockWidgetArea, propertyPanel, QStringLiteral("Inspector"));
     mw->addDockedWidget(QStringLiteral("Audio Mixer"), ads::RightDockWidgetArea, new ArtifactCompositionAudioMixerWidget(mw));
+    mw->setDockVisible(QStringLiteral("Audio Mixer"), false);
+    mw->setDockVisible(QStringLiteral("Render Queue"), false);
     mw->setDockVisible(QStringLiteral("Layer View (Diligent)"), true);
 
     auto* projectService = ArtifactProjectService::instance();
@@ -584,8 +623,14 @@ int main(int argc, char* argv[])
     const QString recoveryDir = QDir(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)).filePath("Recovery");
     autoSaveManager->initialize("ArtifactProject", recoveryDir);
     autoSaveManager->start();
-    showUncleanExitNoticeIfNeeded(hadUncleanExit, mw);
-    showRecoveryPrompt(*autoSaveManager, mw);
+    if (!isStartupDialogSuppressed()) {
+        const bool hasRecoveryPoint = autoSaveManager->hasRecoveryPoint();
+        showUncleanExitNoticeIfNeeded(hadUncleanExit, mw);
+        showRecoveryPrompt(*autoSaveManager, mw);
+        if (hadUncleanExit || hasRecoveryPoint) {
+            suppressStartupDialogForDays(3);
+        }
+    }
 
     if (projectService) {
         QObject::connect(projectService, &ArtifactProjectService::projectChanged, mw, [status]() {
@@ -686,22 +731,29 @@ int main(int argc, char* argv[])
             }
             return compositionLabel;
         };
-        QObject::connect(projectService, &ArtifactProjectService::compositionCreated, mw, [mw, timelineDockTitle](const CompositionID& compId) {
-            QTimer::singleShot(0, mw, [mw, compId, timelineDockTitle]() {
+        const auto timelineDockObjectId = [](const CompositionID& compId) {
+            return QStringLiteral("timeline::%1").arg(compId.toString());
+        };
+        QObject::connect(projectService, &ArtifactProjectService::compositionCreated, mw, [mw, timelineDockTitle, timelineDockObjectId](const CompositionID& compId) {
+            QTimer::singleShot(0, mw, [mw, compId, timelineDockTitle, timelineDockObjectId]() {
                 const QString dockTitle = timelineDockTitle(compId);
+                const QString dockId = timelineDockObjectId(compId);
                 auto* panel = new ArtifactTimelineWidget(mw);
                 panel->setComposition(compId);
                 panel->setWindowTitle(dockTitle);
-                mw->addDockedWidgetTabbed(
+                mw->addDockedWidgetTabbedWithId(
                     dockTitle,
+                    dockId,
                     ads::BottomDockWidgetArea,
                     panel,
-                    dockTitle);
-                mw->moveDockToTabGroup(QStringLiteral("Render Queue"), dockTitle);
-                QTimer::singleShot(0, mw, [mw, dockTitle]() {
-                    mw->activateDock(dockTitle);
+                    QStringLiteral("Render Queue"));
+                QTimer::singleShot(0, mw, [mw, dockId]() {
+                    mw->activateDock(dockId);
                 });
             });
+        });
+        QObject::connect(projectService, &ArtifactProjectService::compositionRemoved, mw, [mw, timelineDockObjectId](const CompositionID& compId) {
+            mw->closeDock(timelineDockObjectId(compId));
         });
         QObject::connect(projectService, &ArtifactProjectService::projectCreated, mw, []() {
             ArtifactPythonHookManager::runHook(QStringLiteral("project_opened"));
