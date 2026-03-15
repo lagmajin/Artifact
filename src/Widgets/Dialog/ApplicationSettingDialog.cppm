@@ -610,7 +610,7 @@ MemoryAndCpuSettingPage::MemoryAndCpuSettingPage(QWidget* parent /*= nullptr*/)
 
     // Clear cache handler
     connect(impl_->clearCacheButton_, &QPushButton::clicked, this, [this]() {
-        if (!ArtifactMessageBox::confirmDelete(this,
+        if (!Artifact::ArtifactMessageBox::confirmDelete(this,
             QStringLiteral("Clear Cache"),
             QStringLiteral("Remove generated proxy and recovery cache files?"))) {
             return;
