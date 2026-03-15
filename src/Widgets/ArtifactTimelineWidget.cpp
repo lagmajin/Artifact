@@ -815,6 +815,13 @@ W_OBJECT_IMPL(ArtifactTimelineWidget)
     auto timeNavigatorWidget = impl_->navigator_ = new ArtifactTimelineNavigatorWidget();
     auto workAreaWidget = impl_->workArea_ = new WorkAreaControl();
     auto scrubBar = impl_->scrubBar_ = new ArtifactTimelineScrubBar();
+    
+    // ズームレベル表示ラベル
+    auto* zoomLabel = new QLabel("Zoom: 100%");
+    zoomLabel->setFixedHeight(20);
+    zoomLabel->setStyleSheet("QLabel { color: #AAAAAA; background-color: #232323; padding: 2px 6px; font-size: 11px; }");
+    zoomLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    
     auto timelineTrackView = impl_->trackView_ = new TimelineTrackView();
     auto painterTrackView = impl_->painterTrackView_ = new ArtifactTimelineTrackPainterView();
     timelineTrackView->setDuration(kDefaultTimelineFrames);
@@ -841,7 +848,7 @@ W_OBJECT_IMPL(ArtifactTimelineWidget)
     trackStack->addWidget(painterTrackView);
     trackHost->setLayout(trackStack);
  
-    auto updateZoom = [this]() {
+    auto updateZoom = [this, zoomLabel]() {
       if (!impl_->trackView_ || !impl_->workArea_) return;
       double duration = impl_->trackView_->duration();
       float s = impl_->navigator_->startValue();
@@ -858,6 +865,10 @@ W_OBJECT_IMPL(ArtifactTimelineWidget)
         if (impl_->scrubBar_) {
          impl_->scrubBar_->setRulerPixelsPerFrame(newZoom);
         }
+        
+        // ズームレベルをラベルに表示
+        int zoomPercent = static_cast<int>(newZoom * 100);
+        zoomLabel->setText(QString("Zoom: %1%").arg(zoomPercent));
 
         if (auto* hBar = impl_->trackView_->horizontalScrollBar()) {
           hBar->setValue(static_cast<int>(s * duration * newZoom));
@@ -1016,6 +1027,7 @@ W_OBJECT_IMPL(ArtifactTimelineWidget)
   rightPanelLayout->addWidget(timeNavigatorWidget);
   rightPanelLayout->addWidget(scrubBar);
   rightPanelLayout->addWidget(workAreaWidget);
+  rightPanelLayout->addWidget(zoomLabel);
   rightPanelLayout->addWidget(trackHost);
   rightPanel->setLayout(rightPanelLayout);
 
@@ -1422,10 +1434,52 @@ W_OBJECT_IMPL(ArtifactTimelineWidget)
 
  void ArtifactTimelineWidget::keyPressEvent(QKeyEvent* event)
  {
+  // I / O キーでワークエリアの IN / OUT を設定
+  if (event->key() == Qt::Key_I || event->key() == Qt::Key_O) {
+    auto* svc = ArtifactProjectService::instance();
+    auto comp = svc ? svc->currentComposition().lock() : nullptr;
+    if (comp) {
+      const int64_t currentFrame = static_cast<int64_t>(impl_->trackView_->position());
+      
+      if (event->key() == Qt::Key_I) {
+        // IN ポイントを現在フレームに設定
+        const int64_t outPoint = comp->workAreaRange().end();
+        comp->setWorkAreaRange(FrameRange(currentFrame, std::max(currentFrame + 1, outPoint)));
+      } else if (event->key() == Qt::Key_O) {
+        // OUT ポイントを現在フレームに設定
+        const int64_t inPoint = comp->workAreaRange().start();
+        comp->setWorkAreaRange(FrameRange(std::min(inPoint, currentFrame), std::max(currentFrame + 1, inPoint)));
+      }
+      event->accept();
+      return;
+    }
+  }
 
+  // スペースキーで再生/一時停止
+  if (event->key() == Qt::Key_Space) {
+    if (auto* svc = ArtifactPlaybackService::instance()) {
+      svc->togglePlayPause();
+    }
+    event->accept();
+    return;
+  }
 
+  // Home / End キーで最初/最後のフレームへ
+  if (event->key() == Qt::Key_Home || event->key() == Qt::Key_End) {
+    auto* svc = ArtifactProjectService::instance();
+    auto comp = svc ? svc->currentComposition().lock() : nullptr;
+    if (comp) {
+      if (event->key() == Qt::Key_Home) {
+        comp->goToStartFrame();
+      } else if (event->key() == Qt::Key_End) {
+        comp->goToEndFrame();
+      }
+      event->accept();
+      return;
+    }
+  }
 
-  //throw std::logic_error("The method or operation is not implemented.");
+  QWidget::keyPressEvent(event);
  }
 
  void ArtifactTimelineWidget::keyReleaseEvent(QKeyEvent* event)

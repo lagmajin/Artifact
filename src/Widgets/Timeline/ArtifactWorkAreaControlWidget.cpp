@@ -18,6 +18,9 @@ namespace Artifact
   bool draggingRight{ false };
   bool draggingRange{ false };
   float dragGrabRatio{ 0.0f };
+  bool hoveringLeft{ false };
+  bool hoveringRight{ false };
+  bool hoveringRange{ false };
  };
 
  
@@ -80,12 +83,25 @@ namespace Artifact
   p.setPen(QPen(QColor(0, 150, 255), 2));
   p.drawLine(x1, height() - 1, x2, height() - 1);
 
-  // Handles (Blue AE style)
+  // Handles (Blue AE style) - highlight on hover
   const int handleTopInset = 1;
   const int handleHeight = std::max(1, height() - 2);
-  p.setBrush(QColor(0, 120, 215));
+  
+  // Left handle
+  if (impl_->hoveringLeft || impl_->draggingLeft) {
+    p.setBrush(QColor(60, 160, 255));  // Brighter on hover
+  } else {
+    p.setBrush(QColor(0, 120, 215));
+  }
   p.setPen(QPen(Qt::white, 1));
   p.drawRoundedRect(QRectF(x1 - handleHalfW, handleTopInset, handleW, handleHeight), 2, 2);
+  
+  // Right handle
+  if (impl_->hoveringRight || impl_->draggingRight) {
+    p.setBrush(QColor(60, 160, 255));  // Brighter on hover
+  } else {
+    p.setBrush(QColor(0, 120, 215));
+  }
   p.drawRoundedRect(QRectF(x2 - handleHalfW, handleTopInset, handleW, handleHeight), 2, 2);
  }
 
@@ -94,6 +110,35 @@ namespace Artifact
   const int handleHalfW = 6;
   const int handleW = handleHalfW * 2;
   const int usableWidth = std::max(1, width() - handleW);
+
+  // Update hover state
+  int x1 = handleHalfW + static_cast<int>(start * usableWidth);
+  int x2 = handleHalfW + static_cast<int>(end * usableWidth);
+  
+  bool newHoverLeft = QRect(x1 - handleHalfW, 0, handleW, height()).contains(ev->pos());
+  bool newHoverRight = QRect(x2 - handleHalfW, 0, handleW, height()).contains(ev->pos());
+  bool newHoverRange = QRect(x1 + handleHalfW, 0, std::max(0, x2 - x1 - handleW), height()).contains(ev->pos());
+  
+  bool hoverChanged = (impl_->hoveringLeft != newHoverLeft) || 
+                      (impl_->hoveringRight != newHoverRight) || 
+                      (impl_->hoveringRange != newHoverRange);
+  
+  impl_->hoveringLeft = newHoverLeft;
+  impl_->hoveringRight = newHoverRight;
+  impl_->hoveringRange = newHoverRange;
+  
+  // Update cursor
+  if (impl_->hoveringLeft || impl_->hoveringRight) {
+    setCursor(Qt::SizeHorCursor);
+  } else if (impl_->hoveringRange) {
+    setCursor(Qt::SizeAllCursor);
+  } else {
+    unsetCursor();
+  }
+  
+  if (hoverChanged) {
+    update();
+  }
 
   if (!(ev->buttons() & Qt::LeftButton)) {
    impl_->draggingLeft = impl_->draggingRight = impl_->draggingRange = false;
@@ -119,6 +164,10 @@ namespace Artifact
  void WorkAreaControl::mouseReleaseEvent(QMouseEvent*)
  {
   impl_->draggingLeft = impl_->draggingRight = impl_->draggingRange = false;
+  // Reset hover state on release
+  impl_->hoveringLeft = impl_->hoveringRight = impl_->hoveringRange = false;
+  unsetCursor();
+  update();
  }
 
  void WorkAreaControl::mousePressEvent(QMouseEvent* ev)
@@ -130,7 +179,7 @@ namespace Artifact
 
   int x1 = handleHalfW + static_cast<int>(start * usableWidth);
   int x2 = handleHalfW + static_cast<int>(end * usableWidth);
-  
+
   if (QRect(x1 - handleHalfW, 0, handleW, height()).contains(ev->pos())) impl_->draggingLeft = true;
   else if (QRect(x2 - handleHalfW, 0, handleW, height()).contains(ev->pos())) impl_->draggingRight = true;
   else if (QRect(x1 + handleHalfW, 0, std::max(0, x2 - x1 - handleW), height()).contains(ev->pos())) {
@@ -138,6 +187,14 @@ namespace Artifact
    const float normalizedX = (float(ev->pos().x()) - handleHalfW) / float(usableWidth);
    impl_->dragGrabRatio = normalizedX - start;
   }
+ }
+
+ void WorkAreaControl::leaveEvent(QEvent* event)
+ {
+  impl_->hoveringLeft = impl_->hoveringRight = impl_->hoveringRange = false;
+  unsetCursor();
+  update();
+  QWidget::leaveEvent(event);
  }
 
 };

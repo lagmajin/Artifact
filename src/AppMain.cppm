@@ -22,6 +22,7 @@ module;
 #include <QUrl>
 #include <qthreadpool.h>
 #include <QFileInfoList>
+#include <QStyleFactory>
 #include <ads_globals.h>
 #include <memory>
 #include <atomic>
@@ -81,6 +82,7 @@ import Artifact.Widgets.CompositionAudioMixer;
 import Artifact.Widgets.Timeline;
 import Artifact.Widgets.CompositionEditor;
 import Artifact.Widgets.RenderLayerEditor;
+import Artifact.Widgets.SoftwareRenderInspectors;
 import Artifact.Widgets.Render.QueueManager;
 import Widgets.Inspector;
 import Artifact.Widgets.ArtifactPropertyWidget;
@@ -94,7 +96,7 @@ using namespace ArtifactCore;
 
 namespace
 {
- constexpr int kMainWindowLayoutVersion = 4;
+ constexpr int kMainWindowLayoutVersion = 5;
 
  quint64 processWorkingSetMB()
  {
@@ -584,7 +586,11 @@ int main(int argc, char* argv[])
 	 }
 	
 	 QApplication a(argc, argv);
-     a.setStyleSheet(getDCCStyleSheetPreset(DccStylePreset::ModoStyle));
+	 a.addLibraryPath(QCoreApplication::applicationDirPath() + QStringLiteral("/plugins"));
+	 a.setStyle(QStyleFactory::create(QStringLiteral("Fusion")));
+	 auto modoTheme = ArtifactCore::getDCCTheme(DccStylePreset::ModoStyle);
+	 a.setPalette(ArtifactCore::buildDCCPalette(modoTheme));
+	 a.setStyleSheet(ArtifactCore::buildDCCStyleSheet(modoTheme));
 	 auto pool = QThreadPool::globalInstance();
 
 	 pool->setMaxThreadCount(10);
@@ -601,21 +607,34 @@ int main(int argc, char* argv[])
     status->setProjectText("Loaded");
     auto* compositionEditor = new ArtifactCompositionEditor(mw);
     mw->addDockedWidget(QStringLiteral("Composition Viewer"), ads::CenterDockWidgetArea, compositionEditor);
+    auto* softwareCompositionView = new ArtifactSoftwareCompositionTestWidget(mw);
+    mw->addDockedWidgetTabbed(
+        QStringLiteral("Composition View (Software)"),
+        ads::CenterDockWidgetArea,
+        softwareCompositionView,
+        QStringLiteral("Composition Viewer"));
     auto* layerViewEditor = new ArtifactRenderLayerEditor(mw);
     mw->addDockedWidgetTabbed(
         QStringLiteral("Layer View (Diligent)"),
         ads::CenterDockWidgetArea,
         layerViewEditor,
         QStringLiteral("Composition Viewer"));
-    mw->addDockedWidget(QStringLiteral("Render Queue"), ads::BottomDockWidgetArea, new RenderQueueManagerWidget(mw));
+    auto* softwareLayerView = new ArtifactSoftwareLayerTestWidget(mw);
+    mw->addDockedWidgetTabbed(
+        QStringLiteral("Layer View (Software)"),
+        ads::CenterDockWidgetArea,
+        softwareLayerView,
+        QStringLiteral("Layer View (Diligent)"));
     mw->addDockedWidget(QStringLiteral("Project"), ads::LeftDockWidgetArea, new ArtifactProjectManagerWidget(mw));
     mw->addDockedWidget(QStringLiteral("Inspector"), ads::RightDockWidgetArea, new ArtifactInspectorWidget(mw));
     auto* propertyPanel = new ArtifactPropertyWidget(mw);
     mw->addDockedWidgetTabbed(QStringLiteral("Properties"), ads::RightDockWidgetArea, propertyPanel, QStringLiteral("Inspector"));
     mw->addDockedWidget(QStringLiteral("Audio Mixer"), ads::RightDockWidgetArea, new ArtifactCompositionAudioMixerWidget(mw));
     mw->setDockVisible(QStringLiteral("Audio Mixer"), false);
-    mw->setDockVisible(QStringLiteral("Render Queue"), false);
+    mw->setDockVisible(QStringLiteral("Render Manager"), true);
+    mw->setDockVisible(QStringLiteral("Composition View (Software)"), true);
     mw->setDockVisible(QStringLiteral("Layer View (Diligent)"), true);
+    mw->setDockVisible(QStringLiteral("Layer View (Software)"), true);
 
     auto* projectService = ArtifactProjectService::instance();
     auto* playbackService = ArtifactPlaybackService::instance();
@@ -651,7 +670,7 @@ int main(int argc, char* argv[])
         QObject::connect(projectService, &ArtifactProjectService::layerCreated, mw, [autoSaveManager](const CompositionID&, const LayerID&) {
             if (autoSaveManager) autoSaveManager->markDirty();
         });
-        QObject::connect(projectService, &ArtifactProjectService::layerSelected, mw, [mw, layerViewEditor, propertyPanel, projectService](const LayerID& layerId) {
+        QObject::connect(projectService, &ArtifactProjectService::layerSelected, mw, [layerViewEditor, propertyPanel, projectService](const LayerID& layerId) {
             if (layerViewEditor) {
                 if (layerId.isNil()) {
                     layerViewEditor->view()->clearTargetLayer();
@@ -669,16 +688,24 @@ int main(int argc, char* argv[])
                     propertyPanel->clear();
                 }
             }
-            mw->activateDock(QStringLiteral("Layer View (Diligent)"));
         });
-        QObject::connect(projectService, &ArtifactProjectService::currentCompositionChanged, mw, [mw, compositionEditor, projectService](const CompositionID& compId) {
+        QObject::connect(projectService, &ArtifactProjectService::currentCompositionChanged, mw, [compositionEditor, projectService](const CompositionID& compId) {
             if (!compositionEditor || !projectService) {
                 return;
             }
             const auto found = projectService->findComposition(compId);
             if (found.success && !found.ptr.expired()) {
-                compositionEditor->setComposition(found.ptr.lock());
-                mw->activateDock(QStringLiteral("Composition Viewer"));
+                auto comp = found.ptr.lock();
+                compositionEditor->setComposition(comp);
+                
+                // タブタイトルにコンポジション名を表示
+                const QString compName = comp->settings().compositionName().toQString();
+                if (!compName.isEmpty()) {
+                    // compositionEditor が属する CDockWidget のタイトルを更新
+                    if (auto* dockWidget = qobject_cast<ads::CDockWidget*>(compositionEditor->parentWidget())) {
+                        dockWidget->setWindowTitle(compName);
+                    }
+                }
             }
         });
         QObject::connect(projectService, &ArtifactProjectService::currentCompositionChanged, mw, [layerViewEditor]() {
@@ -746,12 +773,21 @@ int main(int argc, char* argv[])
                     dockId,
                     ads::BottomDockWidgetArea,
                     panel,
-                    QStringLiteral("Render Queue"));
+                    QStringLiteral("timeline::"));
                 QTimer::singleShot(0, mw, [mw, dockId]() {
                     mw->activateDock(dockId);
                 });
             });
         });
+
+        // Add Render Queue Manager widget to timeline dock area
+        auto* renderQueueWidget = new ArtifactWidgets::RenderQueueManagerWidget(mw);
+        mw->addDockedWidgetTabbedWithId(
+            QStringLiteral("Render Manager"),
+            QStringLiteral("render_manager_dock"),
+            ads::BottomDockWidgetArea,
+            renderQueueWidget,
+            QStringLiteral("timeline::"));
         QObject::connect(projectService, &ArtifactProjectService::compositionRemoved, mw, [mw, timelineDockObjectId](const CompositionID& compId) {
             mw->closeDock(timelineDockObjectId(compId));
         });

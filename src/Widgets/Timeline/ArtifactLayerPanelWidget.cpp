@@ -1280,6 +1280,44 @@ void ArtifactLayerPanelWidget::mouseDoubleClickEvent(QMouseEvent* event)
 
 void ArtifactLayerPanelWidget::keyPressEvent(QKeyEvent* event)
 {
+  // Ctrl + [ / ] でレイヤー順序を移動
+  if (event->modifiers() & Qt::ControlModifier) {
+    if (event->key() == Qt::Key_BracketLeft || event->key() == Qt::Key_BracketRight) {
+      if (!impl_->selectedLayerId.isNil()) {
+        auto* service = ArtifactProjectService::instance();
+        auto comp = service ? service->currentComposition().lock() : nullptr;
+        if (comp) {
+          // 現在のレイヤーインデックスを取得
+          int currentLayerIndex = -1;
+          auto layers = comp->allLayer();
+          for (int i = 0; i < layers.size(); ++i) {
+            if (layers[i]->id() == impl_->selectedLayerId) {
+              currentLayerIndex = i;
+              break;
+            }
+          }
+          
+          if (currentLayerIndex >= 0) {
+            int newIndex = currentLayerIndex;
+            if (event->key() == Qt::Key_BracketLeft) {
+              // 背面へ (インデックスを減らす)
+              newIndex = std::max(0, currentLayerIndex - 1);
+            } else if (event->key() == Qt::Key_BracketRight) {
+              // 前面へ (インデックスを増やす)
+              newIndex = std::min(layers.size() - 1, currentLayerIndex + 1);
+            }
+            
+            if (newIndex != currentLayerIndex) {
+              service->moveLayerInCurrentComposition(impl_->selectedLayerId, newIndex);
+              event->accept();
+              return;
+            }
+          }
+        }
+      }
+    }
+  }
+
   if (event->key() == Qt::Key_Left || event->key() == Qt::Key_Right) {
    int selectedIdx = -1;
    for (int i = 0; i < impl_->visibleRows.size(); ++i) {
@@ -1535,25 +1573,109 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent*)
   }
 }
 
- void ArtifactLayerPanelWidget::dragEnterEvent(QDragEnterEvent* e) { e->acceptProposedAction(); }
- void ArtifactLayerPanelWidget::dragMoveEvent(QDragMoveEvent* e) { e->acceptProposedAction(); }
- void ArtifactLayerPanelWidget::dragLeaveEvent(QDragLeaveEvent* e) { e->accept(); }
+ void ArtifactLayerPanelWidget::dragEnterEvent(QDragEnterEvent* e)
+ {
+   const QMimeData* mime = e->mimeData();
+   if (mime->hasUrls()) {
+     for (const auto& url : mime->urls()) {
+       if (url.isLocalFile()) {
+         const QString filePath = url.toLocalFile();
+         const LayerType type = inferLayerTypeFromFile(filePath);
+         if (type == LayerType::Image || type == LayerType::Video || type == LayerType::Audio) {
+           e->acceptProposedAction();
+           update();
+           return;
+         }
+       }
+     }
+   }
+   if (mime->hasText()) {
+     const QStringList paths = mime->text().split(QStringLiteral("\n"), Qt::SkipEmptyParts);
+     for (const QString& path : paths) {
+       const QString trimmed = path.trimmed();
+       if (!trimmed.isEmpty()) {
+         const LayerType type = inferLayerTypeFromFile(trimmed);
+         if (type == LayerType::Image || type == LayerType::Video || type == LayerType::Audio) {
+           e->acceptProposedAction();
+           update();
+           return;
+         }
+       }
+     }
+   }
+   e->ignore();
+ }
+
+ void ArtifactLayerPanelWidget::dragMoveEvent(QDragMoveEvent* e)
+ {
+   const QMimeData* mime = e->mimeData();
+   if (mime->hasUrls()) {
+     e->acceptProposedAction();
+   } else if (mime->hasText()) {
+     e->acceptProposedAction();
+   } else {
+     e->ignore();
+   }
+ }
+ void ArtifactLayerPanelWidget::dragLeaveEvent(QDragLeaveEvent* e)
+ {
+   e->accept();
+   update();  // ビジュアルフィードバック解除用に再描画
+ }
  void ArtifactLayerPanelWidget::dropEvent(QDropEvent* event)
  {
   const QMimeData* mime = event->mimeData();
+  if (!mime) {
+    event->ignore();
+    return;
+  }
+
+  QStringList validPaths;
+
   if (mime->hasUrls()) {
-    QStringList paths;
-    for (auto& url : mime->urls()) if (url.isLocalFile()) paths.append(url.toLocalFile());
-    if (auto* svc = ArtifactProjectService::instance()) {
-      auto imported = svc->importAssetsFromPaths(paths);
-      for (auto& path : imported) {
-        LayerType type = inferLayerTypeFromFile(path);
-        ArtifactLayerInitParams p(QFileInfo(path).baseName(), type);
-        svc->addLayerToCurrentComposition(p);
+    for (const auto& url : mime->urls()) {
+      if (url.isLocalFile()) {
+        const QString filePath = url.toLocalFile();
+        const LayerType type = inferLayerTypeFromFile(filePath);
+        if (type == LayerType::Image || type == LayerType::Video || type == LayerType::Audio) {
+          validPaths.append(filePath);
+        }
       }
     }
-    event->acceptProposedAction();
   }
+
+  if (validPaths.isEmpty() && mime->hasText()) {
+    const QStringList paths = mime->text().split(QStringLiteral("\n"), Qt::SkipEmptyParts);
+    for (const QString& path : paths) {
+      const QString trimmed = path.trimmed();
+      if (trimmed.isEmpty()) continue;
+      const LayerType type = inferLayerTypeFromFile(trimmed);
+      if (type == LayerType::Image || type == LayerType::Video || type == LayerType::Audio) {
+        validPaths.append(trimmed);
+      }
+    }
+  }
+
+  if (validPaths.isEmpty()) {
+    event->ignore();
+    return;
+  }
+
+  auto* svc = ArtifactProjectService::instance();
+  if (!svc) {
+    event->ignore();
+    return;
+  }
+
+  auto imported = svc->importAssetsFromPaths(validPaths);
+
+  for (const auto& path : imported) {
+    LayerType type = inferLayerTypeFromFile(path);
+    ArtifactLayerInitParams params(QFileInfo(path).baseName(), type);
+    svc->addLayerToCurrentComposition(params);
+  }
+
+  event->acceptProposedAction();
  }
 
  // ============================================================================

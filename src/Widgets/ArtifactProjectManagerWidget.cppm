@@ -1640,9 +1640,34 @@ void ArtifactProjectView::mouseMoveEvent(QMouseEvent* event) {
         if ((mousePos - impl_->dragStartPos).manhattanLength() >= QApplication::startDragDistance()) {
             const QModelIndex dragIdx = indexAt(impl_->dragStartPos);
             if (dragIdx.isValid() && selectionModel()) {
+                auto* mime = new QMimeData();
+                QList<QUrl> urls;
+                QStringList filePaths;
+                const auto selectedRows = selectionModel()->selectedRows(0);
+                for (const QModelIndex& proxyIdx : selectedRows) {
+                    QModelIndex sourceIdx = proxyIdx;
+                    if (auto* proxy = qobject_cast<const QSortFilterProxyModel*>(proxyIdx.model()))
+                        sourceIdx = proxy->mapToSource(proxyIdx).siblingAtColumn(0);
+                    const QVariant ptrVar = sourceIdx.data(Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::ProjectItemPtr));
+                    ProjectItem* item = ptrVar.isValid() ? reinterpret_cast<ProjectItem*>(ptrVar.value<quintptr>()) : nullptr;
+                    if (item && item->type() == eProjectItemType::Footage) {
+                        const QString path = static_cast<FootageItem*>(item)->filePath;
+                        if (!path.isEmpty()) {
+                            urls.append(QUrl::fromLocalFile(path));
+                            filePaths.append(path);
+                        }
+                    }
+                }
+                if (!urls.isEmpty()) {
+                    mime->setUrls(urls);
+                    mime->setText(filePaths.join(QStringLiteral("\n")));
+                } else {
+                    delete mime;
+                    mime = impl_->model->mimeData(selectedRows);
+                }
                 auto* drag = new QDrag(this);
-                drag->setMimeData(impl_->model->mimeData(selectionModel()->selectedRows(0)));
-                drag->exec(Qt::MoveAction);
+                drag->setMimeData(mime);
+                drag->exec(Qt::CopyAction | Qt::MoveAction);
             }
         }
         event->accept();
@@ -1924,7 +1949,7 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
         }
 
         if (type == eProjectItemType::Footage) {
-            addTrackedAction(QStringLiteral("reveal_in_explorer"), QStringLiteral("Reveal in Explorer"), [item]() {
+            addTrackedAction(QStringLiteral("reveal_in_explorer"), QStringLiteral("Reveal in Explorer (R)"), [item]() {
                 if (item && item->type() == eProjectItemType::Footage) {
                     QString path = static_cast<FootageItem*>(item)->filePath;
                     QDesktopServices::openUrl(QUrl::fromLocalFile(QFileInfo(path).absolutePath()));
@@ -2332,6 +2357,26 @@ void ArtifactProjectView::keyPressEvent(QKeyEvent* event)
 {
     if (!impl_ || impl_->visibleRows.isEmpty()) { QAbstractScrollArea::keyPressEvent(event); return; }
     if (event->key() == Qt::Key_F2) { if (currentIndex().isValid()) editIndex(currentIndex()); return; }
+    
+    // R キーで選択フッテージをエクスプローラーで表示
+    if (event->key() == Qt::Key_R) {
+        QModelIndex idx = currentIndex();
+        if (idx.isValid()) {
+            QModelIndex sourceIdx = idx;
+            if (auto proxy = qobject_cast<const QSortFilterProxyModel*>(idx.model())) {
+                sourceIdx = proxy->mapToSource(idx).siblingAtColumn(0);
+            }
+            QVariant ptrVar = sourceIdx.data(Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::ProjectItemPtr));
+            ProjectItem* item = ptrVar.isValid() ? reinterpret_cast<ProjectItem*>(ptrVar.value<quintptr>()) : nullptr;
+            if (item && item->type() == eProjectItemType::Footage) {
+                QString path = static_cast<FootageItem*>(item)->filePath;
+                QDesktopServices::openUrl(QUrl::fromLocalFile(QFileInfo(path).absolutePath()));
+                event->accept();
+                return;
+            }
+        }
+    }
+    
     QModelIndex target = currentIndex();
     int currRow = impl_->rowForIndex(target);
     if (currRow < 0) { currRow = 0; target = impl_->visibleRows.front().index0; }

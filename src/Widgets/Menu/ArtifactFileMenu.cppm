@@ -15,6 +15,7 @@ module;
 #include <QProcess>
 #include <QCoreApplication>
 #include <QTimer>
+#include <QSettings>
 #include <wobjectimpl.h>
 
 module Artifact.Menu.File;
@@ -28,17 +29,30 @@ import Artifact.Widgets.AppDialogs;
 namespace Artifact {
 using namespace ArtifactCore;
 namespace {
-QString supportedAssetFilter()
+constexpr int kMaxRecentProjects = 5;
+constexpr const char* kRecentFilesKey = "recentProjects";
+
+QStringList readRecentProjects()
 {
-    return QStringLiteral(
-        "対応アセット (*.png *.jpg *.jpeg *.bmp *.tif *.tiff *.exr *.hdr "
-        "*.mp4 *.mov *.mkv *.avi *.webm *.mp3 *.wav *.flac *.ogg *.aac *.m4a "
-        "*.obj *.fbx *.gltf *.glb *.abc *.usd *.usda *.usdc);;"
-        "画像 (*.png *.jpg *.jpeg *.bmp *.tif *.tiff *.exr *.hdr);;"
-        "動画 (*.mp4 *.mov *.mkv *.avi *.webm);;"
-        "音声 (*.mp3 *.wav *.flac *.ogg *.aac *.m4a);;"
-        "3D (*.obj *.fbx *.gltf *.glb *.abc *.usd *.usda *.usdc)"
-    );
+    QSettings settings;
+    return settings.value(kRecentFilesKey, QStringList()).toStringList();
+}
+
+void writeRecentProjects(const QStringList& paths)
+{
+    QSettings settings;
+    settings.setValue(kRecentFilesKey, paths);
+}
+
+void addRecentProject(const QString& path)
+{
+    auto recent = readRecentProjects();
+    recent.removeAll(path);
+    recent.prepend(path);
+    while (recent.size() > kMaxRecentProjects) {
+        recent.removeLast();
+    }
+    writeRecentProjects(recent);
 }
 
 bool isSupportedAssetPath(const QString& path)
@@ -57,6 +71,19 @@ bool isSupportedAssetPath(const QString& path)
         QStringLiteral("usda"), QStringLiteral("usdc")
     };
     return kExt.contains(QFileInfo(path).suffix().toLower());
+}
+
+QString supportedAssetFilter()
+{
+    return QStringLiteral(
+        "対応アセット (*.png *.jpg *.jpeg *.bmp *.tif *.tiff *.exr *.hdr "
+        "*.mp4 *.mov *.mkv *.avi *.webm *.mp3 *.wav *.flac *.ogg *.aac *.m4a "
+        "*.obj *.fbx *.gltf *.glb *.abc *.usd *.usda *.usdc);;"
+        "画像 (*.png *.jpg *.jpeg *.bmp *.tif *.tiff *.exr *.hdr);;"
+        "動画 (*.mp4 *.mov *.mkv *.avi *.webm);;"
+        "音声 (*.mp3 *.wav *.flac *.ogg *.aac *.m4a);;"
+        "3D (*.obj *.fbx *.gltf *.glb *.abc *.usd *.usda *.usdc)"
+    );
 }
 
 bool confirmPotentiallyDestructiveAction(QWidget* parent, const QString& title, const QString& text)
@@ -185,6 +212,7 @@ void ArtifactFileMenu::Impl::handleOpenProject()
     if (!menu_) return;
     const QString filePath = QFileDialog::getOpenFileName(menu_, "プロジェクトを開く", QString(), "Artifact Project (*.artifact *.json);;All Files (*.*)");
     if (filePath.isEmpty()) return;
+    addRecentProject(filePath);
     ArtifactProjectManager::getInstance().loadFromFile(filePath);
 }
 
@@ -196,6 +224,7 @@ void ArtifactFileMenu::Impl::handleSaveProject()
     if (path.isEmpty()) {
         path = QFileDialog::getSaveFileName(menu_, "プロジェクトを保存", QString(), "Artifact Project (*.artifact *.json);;All Files (*.*)");
         if (path.isEmpty()) return;
+        addRecentProject(path);
     }
     auto result = manager.saveToFile(path);
     if (!result.success) {
@@ -208,6 +237,7 @@ void ArtifactFileMenu::Impl::handleSaveProjectAs()
     if (!menu_) return;
     const QString path = QFileDialog::getSaveFileName(menu_, "名前を付けて保存", QString(), "Artifact Project (*.artifact *.json);;All Files (*.*)");
     if (path.isEmpty()) return;
+    addRecentProject(path);
     auto result = ArtifactProjectManager::getInstance().saveToFile(path);
     if (!result.success) {
         qWarning() << "Save project as failed";
@@ -269,10 +299,24 @@ void ArtifactFileMenu::Impl::rebuildMenu()
     importAssetsAction->setEnabled(hasProject);
     revealProjectFolderAction->setEnabled(hasProject);
 
+    // 最近使ったプロジェクトメニューを更新
     if (recentProjectsMenu) {
         recentProjectsMenu->clear();
-        auto* noRecent = recentProjectsMenu->addAction("(近日対応)");
-        noRecent->setEnabled(false);
+        auto recent = readRecentProjects();
+        if (recent.isEmpty()) {
+            auto* noRecent = recentProjectsMenu->addAction("なし");
+            noRecent->setEnabled(false);
+        } else {
+            for (const auto& path : recent) {
+                QFileInfo fi(path);
+                auto* action = recentProjectsMenu->addAction(fi.fileName());
+                action->setData(path);
+                action->setStatusTip(path);
+                QObject::connect(action, &QAction::triggered, menu_, [path]() {
+                    ArtifactProjectManager::getInstance().loadFromFile(path);
+                });
+            }
+        }
     }
 }
 

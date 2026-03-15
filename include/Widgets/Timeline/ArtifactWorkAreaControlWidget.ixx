@@ -16,6 +16,7 @@ export namespace Artifact
   void mousePressEvent(QMouseEvent* ev) override;
   void mouseMoveEvent(QMouseEvent* ev) override;
   void mouseReleaseEvent(QMouseEvent*) override;
+  void leaveEvent(QEvent* event) override;
  public:
   explicit WorkAreaControl(QWidget* parent = nullptr);
   ~WorkAreaControl();
