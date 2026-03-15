@@ -1538,7 +1538,8 @@ void ArtifactProjectView::editIndex(const QModelIndex& index) {
     impl_->editingIndex = index.siblingAtColumn(0);
     
     if (!impl_->nameEditor) {
-        impl_->nameEditor = new QLineEdit(viewport());
+        QLineEdit* editor = new QLineEdit(this->viewport());
+        impl_->nameEditor = editor;
         impl_->nameEditor->setStyleSheet("background: #333; color: white; border: 1px solid #007ACC; padding: 1px; selection-background-color: #005A9E;");
         connect(impl_->nameEditor, &QLineEdit::editingFinished, this, [this]() {
             if (!impl_ || !impl_->editingIndex.isValid() || !impl_->nameEditor) return;
@@ -1556,13 +1557,13 @@ void ArtifactProjectView::editIndex(const QModelIndex& index) {
             }
             impl_->editingIndex = QModelIndex();
             impl_->nameEditor->hide();
-            viewport()->update();
+            this->viewport()->update();
         });
     }
     
     impl_->nameEditor->setText(index.data(Qt::DisplayRole).toString());
     impl_->nameEditor->selectAll();
-    viewport()->update();
+    this->viewport()->update();
 }
 
 void ArtifactProjectView::mouseMoveEvent(QMouseEvent* event) {
