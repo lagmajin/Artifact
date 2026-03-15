@@ -1239,6 +1239,15 @@ QPushButton {
 
   connect(impl_->addButton, &QPushButton::clicked, this, [this]() {
     if (impl_->service) {
+      if (auto* projectService = ArtifactProjectService::instance()) {
+        if (auto composition = projectService->currentComposition().lock()) {
+          impl_->service->addRenderQueueForComposition(
+            composition->id(),
+            composition->settings().compositionName().toQString());
+          impl_->logUiEvent(QStringLiteral("Requested: add current composition to queue"), true);
+          return;
+        }
+      }
       impl_->service->addRenderQueue();
       impl_->logUiEvent(QStringLiteral("Requested: add render job"), true);
     }

@@ -59,12 +59,14 @@ module Artifact.Render.Queue.Service;
 import Render.Queue.Manager;
 import Artifact.Project.Manager;
 import Artifact.Project.Items;
+import Artifact.Service.Project;
 import Encoder.FFmpegEncoder;
 import Image.ImageF32x4_RGBA;
 import CvUtils;
 import Utils.Id;
 import Artifact.Render.SoftwareCompositor;
 import Artifact.Render.IRenderer;
+import Artifact.Composition.Abstract;
 
 namespace Artifact
 {
@@ -716,7 +718,13 @@ namespace Artifact
     }
 
     void ArtifactRenderQueueService::addRenderQueue() {
-        auto currentComposition = ArtifactProjectManager::getInstance().currentComposition();
+        ArtifactCompositionPtr currentComposition;
+        if (auto* projectService = ArtifactProjectService::instance()) {
+            currentComposition = projectService->currentComposition().lock();
+        }
+        if (!currentComposition) {
+            currentComposition = ArtifactProjectManager::getInstance().currentComposition();
+        }
         if (currentComposition) {
             const auto compositionName = currentComposition->settings().compositionName().toQString();
             addRenderQueueForComposition(currentComposition->id(), compositionName);

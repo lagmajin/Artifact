@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <QImage>
 #include <QFileInfo>
 #include <QVariant>
@@ -147,24 +147,17 @@ namespace Artifact {
         size = Size_2D(impl_->width_, impl_->height_);
     }
 
-    renderer->drawSprite(0.0f, 0.0f, (float)size.width, (float)size.height, img);
+    // Diligent렌더러에서 drawSprite를 호출
+    // 다른 렌더러 타입의 경우 동적으로 처리되어야 함
+    if (renderer != nullptr) {
+        renderer->drawSprite(0.0f, 0.0f, (float)size.width, (float)size.height, img);
+    }
  }
 
  QImage ArtifactImageLayer::toQImage() const
  {
     if (!impl_->hasImage_ || !impl_->cache_) return QImage();
-
-    auto& cpu = impl_->cache_->image();
-    cv::Mat mat = cpu.toCVMat();
-    cv::Mat bgr;
-    if (mat.type() == CV_32FC4) {
-        cv::Mat tmp;
-        mat.convertTo(tmp, CV_8UC4, 255.0);
-        cv::cvtColor(tmp, bgr, cv::COLOR_RGBA2BGRA);
-        QImage img((uchar*)bgr.data, bgr.cols, bgr.rows, bgr.step, QImage::Format_RGBA8888);
-        return img.copy();
-    }
-    return QImage();
+    return impl_->cache_->image().toQImage();
  }
 
  std::vector<ArtifactCore::PropertyGroup> ArtifactImageLayer::getLayerPropertyGroups() const

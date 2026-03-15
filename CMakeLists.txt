@@ -79,6 +79,7 @@ set_target_properties(Artifact PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>"
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>"
     ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>"
+    VS_DEBUGGER_WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>"
 )
 if(TARGET __CMAKE::CXX23)
     set_property(TARGET Artifact PROPERTY CXX_MODULE_STD ON)
@@ -134,7 +135,6 @@ target_include_directories(Artifact
         "${CMAKE_CURRENT_SOURCE_DIR}/../libs/DiligentEngine/DiligentCore/Primitives/interface"
         "${CMAKE_CURRENT_SOURCE_DIR}/../libs/DiligentEngine/DiligentTools"
         "${CMAKE_CURRENT_SOURCE_DIR}/../libs/DiligentEngine/DiligentTools/ThirdParty/imgui"
-        "${VCPKG_INSTALLED}/include/qtadvanceddocking-qt6"
 )
 
 # ---------------------------------------------------------------------------
@@ -206,7 +206,9 @@ target_link_libraries(Artifact PRIVATE OpenMP::OpenMP_CXX)
 find_package(TBB REQUIRED)
 target_link_libraries(Artifact PRIVATE TBB::tbb)
 
-find_package(qtadvanceddocking-qt6 REQUIRED)
+if(NOT TARGET ads::qtadvanceddocking-qt6)
+    find_package(qtadvanceddocking-qt6 REQUIRED)
+endif()
 target_link_libraries(Artifact PRIVATE ads::qtadvanceddocking-qt6)
 
 find_package(glm CONFIG REQUIRED)

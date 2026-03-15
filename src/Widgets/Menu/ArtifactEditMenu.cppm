@@ -1,5 +1,3 @@
-﻿//module;
-
 module;
 #include <QMenu>
 #include <wobjectimpl.h>
@@ -9,12 +7,11 @@ module;
 module Artifact.Menu.Edit;
 import std;
 
-
-
-
 import Artifact.Project.Manager;
+import Utils.Path;
 
 namespace Artifact {
+ using namespace ArtifactCore;
 
  W_OBJECT_IMPL(ArtifactEditMenu)
 
@@ -59,15 +56,19 @@ namespace Artifact {
   // Basic edit actions
   undoAction = new QAction("元に戻す(&U)");
   undoAction->setShortcut(QKeySequence::Undo);
+  undoAction->setIcon(QIcon(resolveIconPath("Material/undo.svg")));
 
   redoAction = new QAction("やり直し(&R)");
   redoAction->setShortcut(QKeySequence::Redo);
+  redoAction->setIcon(QIcon(resolveIconPath("Material/redo.svg")));
 
   duplicateAction = new QAction("複製(&D)");
   duplicateAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_D));
+  duplicateAction->setIcon(QIcon(resolveIconPath("Material/content_copy.svg")));
 
   splitAction = new QAction("レイヤーを分割(&S)");
   splitAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_D));
+  splitAction->setIcon(QIcon(resolveIconPath("Material/content_cut.svg")));
 
   trimInAction = new QAction("インポイントを現在の時間にトリム");
   trimOutAction = new QAction("アウトポイントを現在の時間にトリム");
@@ -77,20 +78,26 @@ namespace Artifact {
 
   findAction = new QAction("検索(&F)...");
   findAction->setShortcut(QKeySequence::Find);
+  findAction->setIcon(QIcon(resolveIconPath("Material/search.svg")));
 
   preferencesAction = new QAction("環境設定(&P)...");
+  preferencesAction->setIcon(QIcon(resolveIconPath("Material/settings.svg")));
 
   copyAction_ = new QAction("コピー(&C)");
   copyAction_->setShortcut(QKeySequence::Copy);
+  copyAction_->setIcon(QIcon(resolveIconPath("Material/content_copy.svg")));
 
   cutAction_ = new QAction("切り取り(&T)");
   cutAction_->setShortcut(QKeySequence::Cut);
+  cutAction_->setIcon(QIcon(resolveIconPath("Material/content_cut.svg")));
 
   pasteAction_ = new QAction("貼り付け(&P)");
   pasteAction_->setShortcut(QKeySequence::Paste);
+  pasteAction_->setIcon(QIcon(resolveIconPath("Material/content_paste.svg")));
 
   deleteAction_ = new QAction("削除(&D)");
   deleteAction_->setShortcut(QKeySequence::Delete);
+  deleteAction_->setIcon(QIcon(resolveIconPath("Material/delete.svg")));
 
   // Build menu
   menu->addAction(undoAction);
@@ -112,18 +119,18 @@ namespace Artifact {
   menu->addAction(preferencesAction);
 
   // Connections
-  connect(copyAction_, &QAction::triggered, [this]() { handleCopyAction(); });
-  connect(cutAction_, &QAction::triggered, [this]() { handleCutAction(); });
-  connect(pasteAction_, &QAction::triggered, [this]() { handlePasteAction(); });
-  connect(undoAction, &QAction::triggered, [this]() { handleUndo(); });
-  connect(redoAction, &QAction::triggered, [this]() { handleRedo(); });
-  connect(duplicateAction, &QAction::triggered, [this]() { handleDuplicate(); });
-  connect(splitAction, &QAction::triggered, [this]() { handleSplit(); });
-  connect(trimInAction, &QAction::triggered, [this]() { handleTrimIn(); });
-  connect(trimOutAction, &QAction::triggered, [this]() { handleTrimOut(); });
-  connect(selectAllAction, &QAction::triggered, [this]() { handleSelectAll(); });
-  connect(findAction, &QAction::triggered, [this]() { handleFind(); });
-  connect(preferencesAction, &QAction::triggered, [this]() { handlePreferences(); });
+  QObject::connect(copyAction_, &QAction::triggered, [this]() { handleCopyAction(); });
+  QObject::connect(cutAction_, &QAction::triggered, [this]() { handleCutAction(); });
+  QObject::connect(pasteAction_, &QAction::triggered, [this]() { handlePasteAction(); });
+  QObject::connect(undoAction, &QAction::triggered, [this]() { handleUndo(); });
+  QObject::connect(redoAction, &QAction::triggered, [this]() { handleRedo(); });
+  QObject::connect(duplicateAction, &QAction::triggered, [this]() { handleDuplicate(); });
+  QObject::connect(splitAction, &QAction::triggered, [this]() { handleSplit(); });
+  QObject::connect(trimInAction, &QAction::triggered, [this]() { handleTrimIn(); });
+  QObject::connect(trimOutAction, &QAction::triggered, [this]() { handleTrimOut(); });
+  QObject::connect(selectAllAction, &QAction::triggered, [this]() { handleSelectAll(); });
+  QObject::connect(findAction, &QAction::triggered, [this]() { handleFind(); });
+  QObject::connect(preferencesAction, &QAction::triggered, [this]() { handlePreferences(); });
  }
 
  void ArtifactEditMenu::Impl::rebuildMenu()
@@ -215,14 +222,4 @@ namespace Artifact {
   delete impl_;
  }
 
-
-
-
-
-
-
-
-
 };
-
-

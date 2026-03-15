@@ -1,5 +1,4 @@
-﻿export module Artifact.Effect.Field;
-
+﻿module;
 #include <iostream>
 #include <vector>
 #include <string>
@@ -33,6 +32,9 @@
 #include <numeric>
 #include <regex>
 #include <random>
+export module Artifact.Effect.Field;
+
+
 
 
 

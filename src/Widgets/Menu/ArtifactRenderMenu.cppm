@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <QMenu>
 #include <QAction>
 #include <QMessageBox>
@@ -10,12 +10,16 @@ import std;
 
 import Artifact.Service.Project;
 import Artifact.Render.Queue.Service;
+import Artifact.MainWindow;
 import Utils.Path;
 
 namespace Artifact {
 using namespace ArtifactCore;
 
 namespace {
+ const QString kRenderQueueDockId = QStringLiteral("render_manager_dock");
+ const QString kRenderQueueDockTitle = QStringLiteral("Render Manager");
+
  QWidget* findWidgetByClassHint(const QString& classHint)
  {
   const auto widgets = QApplication::allWidgets();
@@ -41,12 +45,14 @@ public:
  QWidget* mainWindow_ = nullptr;
  QAction* addCurrentToQueueAction = nullptr;
  QAction* showQueueAction = nullptr;
+ QAction* showRenderManagerAction = nullptr;
  QAction* renderSettingsAction = nullptr;
  QAction* startRenderAction = nullptr;
  QAction* clearAllAction = nullptr;
 
  void addCurrentToQueue();
  void showQueue();
+ void showRenderManager();
  void showRenderSettings();
  void startRender();
  void clearAll();
@@ -63,6 +69,10 @@ ArtifactRenderMenu::Impl::Impl(ArtifactRenderMenu* menu, QWidget* mainWindow)
  showQueueAction->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_R));
  showQueueAction->setIcon(QIcon(resolveIconPath("Material/view_list.svg")));
 
+ showRenderManagerAction = new QAction("レンダーマネージャーを表示(&M)...");
+ showRenderManagerAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_R));
+ showRenderManagerAction->setIcon(QIcon(resolveIconPath("Material/settings_suggest.svg")));
+
  renderSettingsAction = new QAction("レンダー出力設定(&S)...");
  renderSettingsAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_K));
  renderSettingsAction->setIcon(QIcon(resolveIconPath("Material/settings.svg")));
@@ -77,6 +87,7 @@ ArtifactRenderMenu::Impl::Impl(ArtifactRenderMenu* menu, QWidget* mainWindow)
  menu->addAction(addCurrentToQueueAction);
  menu->addSeparator();
  menu->addAction(showQueueAction);
+ menu->addAction(showRenderManagerAction);
  menu->addAction(renderSettingsAction);
  menu->addSeparator();
  menu->addAction(startRenderAction);
@@ -84,6 +95,7 @@ ArtifactRenderMenu::Impl::Impl(ArtifactRenderMenu* menu, QWidget* mainWindow)
 
  QObject::connect(addCurrentToQueueAction, &QAction::triggered, menu, [this]() { addCurrentToQueue(); });
  QObject::connect(showQueueAction, &QAction::triggered, menu, [this]() { showQueue(); });
+ QObject::connect(showRenderManagerAction, &QAction::triggered, menu, [this]() { showRenderManager(); });
  QObject::connect(renderSettingsAction, &QAction::triggered, menu, [this]() { showRenderSettings(); });
  QObject::connect(startRenderAction, &QAction::triggered, menu, [this]() { startRender(); });
  QObject::connect(clearAllAction, &QAction::triggered, menu, [this]() { clearAll(); });
@@ -108,7 +120,30 @@ void ArtifactRenderMenu::Impl::addCurrentToQueue()
 
 void ArtifactRenderMenu::Impl::showQueue()
 {
- if (QWidget* w = findWidgetByClassHint("RenderQueueManagerWidget")) {
+ if (auto* mw = qobject_cast<ArtifactMainWindow*>(mainWindow_)) {
+  mw->activateDock(kRenderQueueDockId);
+  mw->activateDock(kRenderQueueDockTitle);
+  return;
+ }
+ const auto widgets = QApplication::allWidgets();
+ for (QWidget* w : widgets) {
+  if (!w) continue;
+  const QString className = QString::fromLatin1(w->metaObject()->className());
+  if (className.contains("RenderQueueManagerWidget", Qt::CaseInsensitive)) {
+   w->show();
+   w->raise();
+   w->activateWindow();
+   return;
+  }
+ }
+}
+
+void ArtifactRenderMenu::Impl::showRenderManager()
+{
+ if (auto* mw = qobject_cast<ArtifactMainWindow*>(mainWindow_)) {
+  mw->activateDock(kRenderQueueDockId);
+  mw->activateDock(kRenderQueueDockTitle);
+ } else if (QWidget* w = findWidgetByClassHint("RenderQueueManagerWidget")) {
   w->show();
   w->raise();
   w->activateWindow();

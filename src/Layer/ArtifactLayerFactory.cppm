@@ -57,9 +57,17 @@ namespace Artifact {
   case LayerType::Null:
    ptr = std::make_shared<ArtifactNullLayer>();
    break;
-  case LayerType::Solid:
-   ptr = std::make_shared<ArtifactSolidImageLayer>();
+  case LayerType::Solid: {
+   auto solidLayer = std::make_shared<ArtifactSolidImageLayer>();
+   if (auto* solidParams = dynamic_cast<ArtifactSolidLayerInitParams*>(&params)) {
+    solidLayer->setSize(solidParams->width(), solidParams->height());
+    solidLayer->setColor(solidParams->color());
+   } else {
+    solidLayer->setSize(1920, 1080);
+   }
+   ptr = solidLayer;
    break;
+  }
   case LayerType::Image:
    ptr = std::make_shared<ArtifactImageLayer>();
    break;

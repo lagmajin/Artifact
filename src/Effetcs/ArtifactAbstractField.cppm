@@ -1,6 +1,8 @@
 ﻿module;
 module Artifact.Effect.Field;
 
+import std;
+
 namespace Artifact {
 
     ArtifactAbstractField::ArtifactAbstractField(FieldType type, const UniString& name)

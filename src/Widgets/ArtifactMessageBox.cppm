@@ -4,7 +4,7 @@ module;
 #include <QString>
 #include <QPushButton>
 
-module Artifact.Widgets.AppMessageBox;
+module Artifact.Widgets.AppDialogs;
 
 namespace Artifact {
 

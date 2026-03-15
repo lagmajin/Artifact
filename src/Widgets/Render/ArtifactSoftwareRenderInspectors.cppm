@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <QWidget>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -7,8 +7,8 @@ module;
 #include <QComboBox>
 #include <QPushButton>
 #include <QCheckBox>
-#include <QDoubleSpinBox>
 #include <QFileDialog>
+#include <QFileInfo>
 #include <QFrame>
 #include <QPainter>
 #include <QPixmap>
@@ -30,7 +30,11 @@ import Artifact.Service.Project;
 import Artifact.Project.Items;
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
+import Artifact.Layer.Image;
+import Artifact.Layer.Text;
+import Artifact.Layer.Video;
 import Artifact.Layers.SolidImage;
+import Artifact.Layer.Solid2D;
 import Layer.Blend;
 
 namespace Artifact {
@@ -40,20 +44,6 @@ namespace {
 QString blendLabel(const ArtifactCore::BlendMode mode)
 {
     return SoftwareRender::blendModeText(mode);
-}
-
-ArtifactCore::BlendMode blendModeFromText(const QString& text)
-{
-    if (text == QStringLiteral("Add")) {
-        return ArtifactCore::BlendMode::Add;
-    }
-    if (text == QStringLiteral("Multiply")) {
-        return ArtifactCore::BlendMode::Multiply;
-    }
-    if (text == QStringLiteral("Screen")) {
-        return ArtifactCore::BlendMode::Screen;
-    }
-    return ArtifactCore::BlendMode::Normal;
 }
 
 SoftwareRender::CompositeBackend backendFromIndex(const int index)
@@ -74,6 +64,18 @@ QColor colorForKey(const QString& key)
 {
     const uint h = qHash(key);
     return QColor::fromHsv(static_cast<int>(h % 360), 160, 210, 220);
+}
+
+QPainter::CompositionMode compositionMode(ArtifactCore::BlendMode mode)
+{
+    switch (mode) {
+    case ArtifactCore::BlendMode::Add:      return QPainter::CompositionMode_Plus;
+    case ArtifactCore::BlendMode::Multiply: return QPainter::CompositionMode_Multiply;
+    case ArtifactCore::BlendMode::Screen:   return QPainter::CompositionMode_Screen;
+    case ArtifactCore::BlendMode::Normal:
+    default:
+        return QPainter::CompositionMode_SourceOver;
+    }
 }
 
 QImage makeCheckerboard(const QSize& size)
@@ -220,108 +222,245 @@ QImage renderLayerCard(const ArtifactAbstractLayerPtr& layer, const QSize& size,
     return image;
 }
 
-QImage renderCompositionForeground(
-    const ArtifactCompositionPtr& composition,
-    const QSize& previewSize,
-    QString* summaryText)
+QColor toQColor(const FloatColor& color, const float alphaScale = 1.0f)
 {
-    QImage image(previewSize, QImage::Format_ARGB32_Premultiplied);
-    image.fill(Qt::transparent);
+    return QColor::fromRgbF(
+        std::clamp(color.r(), 0.0f, 1.0f),
+        std::clamp(color.g(), 0.0f, 1.0f),
+        std::clamp(color.b(), 0.0f, 1.0f),
+        std::clamp(color.a() * alphaScale, 0.0f, 1.0f));
+}
 
-    if (!composition) {
-        if (summaryText) {
-            *summaryText = QStringLiteral("No composition");
-        }
+QPainter::CompositionMode compositionModeForLayer(const ArtifactAbstractLayerPtr& layer)
+{
+    return compositionMode(ArtifactCore::toBlendMode(layer ? layer->layerBlendType() : LAYER_BLEND_TYPE::BLEND_NORMAL));
+}
+
+QSize safeLayerSize(const ArtifactAbstractLayerPtr& layer, const QSize& fallback = QSize(320, 180))
+{
+    if (!layer) {
+        return fallback;
+    }
+    const auto source = layer->sourceSize();
+    return QSize(std::max(16, source.width), std::max(16, source.height));
+}
+
+QImage renderTextLayerSurface(const std::shared_ptr<ArtifactTextLayer>& textLayer, const QSize& size)
+{
+    QImage image(size, QImage::Format_ARGB32_Premultiplied);
+    image.fill(Qt::transparent);
+    if (!textLayer) {
         return image;
     }
 
-    const QSize compSize = safeCompositionSize(composition);
-    const QRectF canvasRect = fitCanvasRect(previewSize, compSize).adjusted(12.0, 12.0, -12.0, -12.0);
+    QPainter painter(&image);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    QFont font(textLayer->fontFamily().toQString());
+    font.setPointSizeF(std::max(6.0f, textLayer->fontSize()));
+    font.setBold(textLayer->isBold());
+    font.setItalic(textLayer->isItalic());
+    painter.setFont(font);
+    painter.setPen(QColor::fromRgbF(
+        textLayer->textColor().r(),
+        textLayer->textColor().g(),
+        textLayer->textColor().b(),
+        textLayer->textColor().a()));
+    QTextOption option;
+    option.setWrapMode(QTextOption::WordWrap);
+    option.setAlignment(Qt::AlignLeft | Qt::AlignTop);
+    painter.drawText(QRectF(0.0, 0.0, size.width(), size.height()), textLayer->text().toQString(), option);
+    return image;
+}
+
+QImage renderVideoLayerSurface(const std::shared_ptr<ArtifactVideoLayer>& videoLayer, const QSize& size)
+{
+    QImage image(size, QImage::Format_ARGB32_Premultiplied);
+    image.fill(QColor(20, 24, 30));
+    if (!videoLayer) {
+        return image;
+    }
 
     QPainter painter(&image);
     painter.setRenderHint(QPainter::Antialiasing, true);
-    painter.setPen(QPen(QColor(96, 104, 120), 1.0));
-    painter.setBrush(QColor(18, 20, 24, 70));
-    painter.drawRoundedRect(canvasRect, 8.0, 8.0);
+    painter.fillRect(image.rect(), QLinearGradient(0.0, 0.0, static_cast<qreal>(size.width()), static_cast<qreal>(size.height())));
+    painter.fillRect(image.rect(), QColor(34, 40, 48));
+    painter.setPen(QPen(QColor(104, 148, 196), 2.0));
+    painter.setBrush(Qt::NoBrush);
+    painter.drawRoundedRect(image.rect().adjusted(8, 8, -8, -8), 12.0, 12.0);
+    painter.setPen(QColor(240, 244, 248));
+    QFont titleFont = painter.font();
+    titleFont.setPointSize(14);
+    titleFont.setBold(true);
+    painter.setFont(titleFont);
+    painter.drawText(QRect(18, 18, size.width() - 36, 28), Qt::AlignLeft | Qt::AlignVCenter, videoLayer->layerName());
+
+    painter.setPen(QColor(194, 205, 216));
+    QFont bodyFont = painter.font();
+    bodyFont.setPointSize(10);
+    bodyFont.setBold(false);
+    painter.setFont(bodyFont);
+    const auto info = videoLayer->streamInfo();
+    const QString sourceName = QFileInfo(videoLayer->sourcePath()).fileName();
+    const QString body = QStringLiteral("%1\n%2x%3  %4 fps")
+        .arg(sourceName.isEmpty() ? QStringLiteral("Video layer") : sourceName)
+        .arg(info.width > 0 ? info.width : size.width())
+        .arg(info.height > 0 ? info.height : size.height())
+        .arg(info.frameRate > 0.0 ? QString::number(info.frameRate, 'f', 3) : QStringLiteral("-"));
+    painter.drawText(QRect(18, 56, size.width() - 36, size.height() - 74), Qt::AlignLeft | Qt::AlignTop | Qt::TextWordWrap, body);
+    return image;
+}
+
+QImage renderLayerSurface(const ArtifactAbstractLayerPtr& layer)
+{
+    if (!layer) {
+        return {};
+    }
+
+    const QSize layerSize = safeLayerSize(layer);
+
+    if (const auto imageLayer = std::dynamic_pointer_cast<ArtifactImageLayer>(layer)) {
+        QImage image = imageLayer->toQImage();
+        if (!image.isNull()) {
+            return image.convertToFormat(QImage::Format_ARGB32_Premultiplied);
+        }
+        // フォールバック: 画像が読み込まれていない場合はプレースホルダーを返す
+        QImage placeholder(layerSize, QImage::Format_ARGB32_Premultiplied);
+        placeholder.fill(QColor(60, 60, 60));
+        QPainter p(&placeholder);
+        p.setPen(QColor(200, 100, 100));
+        p.drawText(QRect(0, 0, layerSize.width(), layerSize.height()), 
+                   Qt::AlignCenter, QStringLiteral("No Image"));
+        return placeholder;
+    }
+
+    if (const auto solidLayer = std::dynamic_pointer_cast<ArtifactSolidImageLayer>(layer)) {
+        QImage image(layerSize, QImage::Format_ARGB32_Premultiplied);
+        image.fill(toQColor(solidLayer->color()));
+        return image;
+    }
+
+    if (const auto solid2DLayer = std::dynamic_pointer_cast<ArtifactSolid2DLayer>(layer)) {
+        QImage image(layerSize, QImage::Format_ARGB32_Premultiplied);
+        image.fill(toQColor(solid2DLayer->color()));
+        return image;
+    }
+
+    if (const auto textLayer = std::dynamic_pointer_cast<ArtifactTextLayer>(layer)) {
+        return renderTextLayerSurface(textLayer, layerSize);
+    }
+
+    if (const auto videoLayer = std::dynamic_pointer_cast<ArtifactVideoLayer>(layer)) {
+        return renderVideoLayerSurface(videoLayer, layerSize);
+    }
+
+    return renderLayerCard(layer, layerSize, QStringLiteral("Data-driven fallback"));
+}
+
+void drawLayerOnCanvas(QPainter& painter, const ArtifactAbstractLayerPtr& layer, const qreal opacityScale)
+{
+    if (!layer || !layer->isVisible()) {
+        return;
+    }
+
+    const QImage surface = renderLayerSurface(layer);
+    if (surface.isNull()) {
+        return;
+    }
+
+    painter.save();
+    painter.setOpacity(std::clamp(opacityScale, 0.0, 1.0));
+    painter.setCompositionMode(compositionModeForLayer(layer));
+    painter.setTransform(layer->getGlobalTransform(), true);
+    const auto size = safeLayerSize(layer, surface.size());
+    painter.drawImage(QRectF(0.0, 0.0, size.width(), size.height()), surface, QRectF(0.0, 0.0, surface.width(), surface.height()));
+    painter.restore();
+}
+
+QImage renderCompositionCanvas(
+    const ArtifactCompositionPtr& composition,
+    const std::optional<ArtifactCore::LayerID>& focusLayerId = std::nullopt,
+    const bool drawFocusedOnly = false,
+    const qreal nonFocusedOpacity = 1.0)
+{
+    const QSize compSize = safeCompositionSize(composition);
+    QImage canvas(compSize, QImage::Format_ARGB32_Premultiplied);
+    canvas.fill(QColor(18, 20, 24));
+    if (!composition) {
+        return canvas;
+    }
+
+    QPainter painter(&canvas);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    painter.setRenderHint(QPainter::SmoothPixmapTransform, true);
 
     const auto layers = composition->allLayer();
-    int visibleCount = 0;
-    int solidCount = 0;
-    for (int i = 0; i < layers.size(); ++i) {
-        const auto& layer = layers.at(i);
+    for (const auto& layer : layers) {
         if (!layer || !layer->isVisible()) {
             continue;
         }
-        ++visibleCount;
-        QRectF layerRect = layer->transformedBoundingBox();
-        const auto solidLayer = std::dynamic_pointer_cast<ArtifactSolidImageLayer>(layer);
-        if (solidLayer) {
-            ++solidCount;
-            const auto source = solidLayer->sourceSize();
-            const qreal sx = canvasRect.width() / static_cast<qreal>(compSize.width());
-            const qreal sy = canvasRect.height() / static_cast<qreal>(compSize.height());
-            const qreal solidWidth = std::max(24.0, static_cast<qreal>(std::max(1, source.width)) * sx);
-            const qreal solidHeight = std::max(18.0, static_cast<qreal>(std::max(1, source.height)) * sy);
-            if (layerRect.isEmpty()) {
-                layerRect = QRectF(
-                    canvasRect.left() + 18.0 + (i * 12.0),
-                    canvasRect.top() + 18.0 + (i * 10.0),
-                    std::min(canvasRect.width() - 24.0, solidWidth),
-                    std::min(canvasRect.height() - 24.0, solidHeight));
-            } else {
-                layerRect = QRectF(
-                    canvasRect.left() + (layerRect.left() * sx),
-                    canvasRect.top() + (layerRect.top() * sy),
-                    std::max(24.0, layerRect.width() * sx),
-                    std::max(18.0, layerRect.height() * sy));
-            }
-
-            const auto c = solidLayer->color();
-            const QColor fill = QColor::fromRgbF(c.r(), c.g(), c.b(), std::clamp(c.a(), 0.15f, 1.0f));
-            painter.setBrush(fill);
-            painter.setPen(QPen(fill.lighter(145), 1.5));
-            painter.drawRoundedRect(layerRect, 6.0, 6.0);
-            painter.setPen(QColor(255, 255, 255));
-            painter.drawText(layerRect.adjusted(10.0, 6.0, -10.0, -6.0), Qt::AlignLeft | Qt::AlignVCenter, layer->layerName());
+        const bool isFocused = focusLayerId.has_value() && layer->id() == *focusLayerId;
+        if (drawFocusedOnly && !isFocused) {
             continue;
         }
+        const qreal opacity = focusLayerId.has_value() && !isFocused ? nonFocusedOpacity : 1.0;
+        drawLayerOnCanvas(painter, layer, opacity);
+    }
+    return canvas;
+}
 
-        if (layerRect.isEmpty()) {
-            const qreal width = std::max(160.0, canvasRect.width() * 0.42);
-            layerRect = QRectF(
-                canvasRect.left() + 22.0 + (i * 18.0),
-                canvasRect.top() + 22.0 + (i * 16.0),
-                width,
-                44.0 + ((i % 3) * 8.0));
-        } else {
-            const qreal sx = canvasRect.width() / static_cast<qreal>(compSize.width());
-            const qreal sy = canvasRect.height() / static_cast<qreal>(compSize.height());
-            layerRect = QRectF(
-                canvasRect.left() + (layerRect.left() * sx),
-                canvasRect.top() + (layerRect.top() * sy),
-                std::max(24.0, layerRect.width() * sx),
-                std::max(18.0, layerRect.height() * sy));
-        }
-
-        const QColor base = colorForKey(layer->layerName() + QString::number(i));
-        painter.setBrush(base);
-        painter.setPen(QPen(base.lighter(160), 1.5));
-        painter.drawRoundedRect(layerRect, 6.0, 6.0);
-        painter.setPen(QColor(255, 255, 255));
-        painter.drawText(layerRect.adjusted(10.0, 6.0, -10.0, -6.0), Qt::AlignLeft | Qt::AlignVCenter, layer->layerName());
+QImage fitCanvasImageToPreview(const QImage& canvas, const QSize& previewSize)
+{
+    QImage image(previewSize, QImage::Format_ARGB32_Premultiplied);
+    image.fill(Qt::transparent);
+    if (canvas.isNull()) {
+        return image;
     }
 
-    if (summaryText) {
-        *summaryText = QStringLiteral("%1 | %2x%3 | Layers: %4 | Visible: %5 | Solids: %6 | FPS: %7")
-            .arg(composition->settings().compositionName().toQString())
-            .arg(compSize.width())
-            .arg(compSize.height())
-            .arg(layers.size())
-            .arg(visibleCount)
-            .arg(solidCount)
-            .arg(QString::number(composition->frameRate().framerate(), 'f', 3));
-    }
+    QPainter painter(&image);
+    painter.setRenderHint(QPainter::SmoothPixmapTransform, true);
+    const QRectF targetRect = fitCanvasRect(previewSize, canvas.size()).adjusted(12.0, 12.0, -12.0, -12.0);
+    painter.drawImage(targetRect, canvas, QRectF(0.0, 0.0, canvas.width(), canvas.height()));
     return image;
+}
+
+QString compositionSummaryText(const ArtifactCompositionPtr& composition)
+{
+    if (!composition) {
+        return QStringLiteral("No composition selected");
+    }
+
+    const QSize compSize = safeCompositionSize(composition);
+    const auto layers = composition->allLayer();
+    int visibleCount = 0;
+    int solidCount = 0;
+    int imageCount = 0;
+    int textCount = 0;
+    for (const auto& layer : layers) {
+        if (!layer) {
+            continue;
+        }
+        if (layer->isVisible()) {
+            ++visibleCount;
+        }
+        if (std::dynamic_pointer_cast<ArtifactSolidImageLayer>(layer) || std::dynamic_pointer_cast<ArtifactSolid2DLayer>(layer)) {
+            ++solidCount;
+        } else if (std::dynamic_pointer_cast<ArtifactImageLayer>(layer)) {
+            ++imageCount;
+        } else if (std::dynamic_pointer_cast<ArtifactTextLayer>(layer)) {
+            ++textCount;
+        }
+    }
+
+    return QStringLiteral("%1 | %2x%3 | Layers: %4 | Visible: %5 | Solids: %6 | Images: %7 | Text: %8 | FPS: %9")
+        .arg(composition->settings().compositionName().toQString())
+        .arg(compSize.width())
+        .arg(compSize.height())
+        .arg(layers.size())
+        .arg(visibleCount)
+        .arg(solidCount)
+        .arg(imageCount)
+        .arg(textCount)
+        .arg(QString::number(composition->frameRate().framerate(), 'f', 3));
 }
 
 QImage renderCompositionOverlay(const ArtifactCompositionPtr& composition, const QSize& previewSize)
@@ -332,9 +471,7 @@ QImage renderCompositionOverlay(const ArtifactCompositionPtr& composition, const
         return image;
     }
 
-    const QSize compSize = safeCompositionSize(composition);
-    const QRectF canvasRect = fitCanvasRect(previewSize, compSize).adjusted(12.0, 12.0, -12.0, -12.0);
-
+    const QRectF canvasRect = fitCanvasRect(previewSize, safeCompositionSize(composition)).adjusted(12.0, 12.0, -12.0, -12.0);
     QPainter painter(&image);
     painter.setRenderHint(QPainter::Antialiasing, true);
     painter.setPen(QPen(QColor(120, 180, 255, 180), 1.0, Qt::DashLine));
@@ -343,6 +480,86 @@ QImage renderCompositionOverlay(const ArtifactCompositionPtr& composition, const
     painter.drawLine(QPointF(canvasRect.center().x(), canvasRect.top()), QPointF(canvasRect.center().x(), canvasRect.bottom()));
     painter.drawLine(QPointF(canvasRect.left(), canvasRect.center().y()), QPointF(canvasRect.right(), canvasRect.center().y()));
     return image;
+}
+
+QImage renderFocusedLayerOverlay(
+    const ArtifactCompositionPtr& composition,
+    const ArtifactAbstractLayerPtr& layer,
+    const QSize& previewSize)
+{
+    QImage image(previewSize, QImage::Format_ARGB32_Premultiplied);
+    image.fill(Qt::transparent);
+    if (!composition || !layer) {
+        return image;
+    }
+
+    const QSize compSize = safeCompositionSize(composition);
+    const QRectF canvasRect = fitCanvasRect(previewSize, compSize).adjusted(12.0, 12.0, -12.0, -12.0);
+    const QRectF bounds = layer->transformedBoundingBox();
+    if (bounds.isEmpty()) {
+        return image;
+    }
+
+    const qreal sx = canvasRect.width() / static_cast<qreal>(std::max(1, compSize.width()));
+    const qreal sy = canvasRect.height() / static_cast<qreal>(std::max(1, compSize.height()));
+    const QRectF mapped(
+        canvasRect.left() + bounds.left() * sx,
+        canvasRect.top() + bounds.top() * sy,
+        std::max(1.0, bounds.width() * sx),
+        std::max(1.0, bounds.height() * sy));
+
+    QPainter painter(&image);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    painter.setPen(QPen(QColor(255, 215, 96, 220), 2.0, Qt::DashLine));
+    painter.setBrush(Qt::NoBrush);
+    painter.drawRoundedRect(mapped, 6.0, 6.0);
+    painter.setPen(QColor(255, 244, 208));
+    painter.drawText(mapped.adjusted(8.0, 6.0, -8.0, -6.0), Qt::AlignLeft | Qt::AlignTop, layer->layerName());
+    return image;
+}
+
+QImage mergePreviewImages(std::initializer_list<QImage> images, const QSize& size)
+{
+    QImage merged(size, QImage::Format_ARGB32_Premultiplied);
+    merged.fill(Qt::transparent);
+
+    QPainter painter(&merged);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    painter.setRenderHint(QPainter::SmoothPixmapTransform, true);
+    for (const QImage& image : images) {
+        if (!image.isNull()) {
+            painter.drawImage(QPoint(0, 0), image);
+        }
+    }
+    return merged;
+}
+
+QString layerSummaryText(const ArtifactCompositionPtr& composition, const ArtifactAbstractLayerPtr& layer)
+{
+    if (!layer) {
+        return QStringLiteral("No layer selected");
+    }
+
+    const auto sourceSize = layer->sourceSize();
+    const QRectF bounds = layer->transformedBoundingBox();
+    QString sourceLabel = QStringLiteral("%1x%2")
+        .arg(std::max(0, sourceSize.width))
+        .arg(std::max(0, sourceSize.height));
+    if (sourceSize.width <= 0 || sourceSize.height <= 0) {
+        sourceLabel = QStringLiteral("-");
+    }
+
+    return QStringLiteral("%1 | %2 | Blend=%3 | Visible=%4 | Source=%5 | Bounds=(%6, %7, %8x%9)%10")
+        .arg(layer->layerName())
+        .arg(layer->className().toQString())
+        .arg(blendLabel(ArtifactCore::toBlendMode(layer->layerBlendType())))
+        .arg(layer->isVisible() ? QStringLiteral("Yes") : QStringLiteral("No"))
+        .arg(sourceLabel)
+        .arg(QString::number(bounds.x(), 'f', 1))
+        .arg(QString::number(bounds.y(), 'f', 1))
+        .arg(QString::number(bounds.width(), 'f', 1))
+        .arg(QString::number(bounds.height(), 'f', 1))
+        .arg(composition ? QStringLiteral(" | Comp=%1").arg(composition->settings().compositionName().toQString()) : QString());
 }
 
 } // namespace
@@ -415,10 +632,10 @@ public:
     {
         const QSize renderSize = safePreviewSize(previewLabel_);
         const ArtifactCompositionPtr composition = selectedComposition();
-        QString summary;
+        const QImage compositionCanvas = renderCompositionCanvas(composition);
         SoftwareRender::CompositeRequest request;
         request.background = makeCheckerboard(renderSize);
-        request.foreground = renderCompositionForeground(composition, renderSize, &summary);
+        request.foreground = fitCanvasImageToPreview(compositionCanvas, renderSize);
         request.overlay = renderCompositionOverlay(composition, renderSize);
         request.outputSize = renderSize;
         request.backend = backendFromIndex(backendCombo_ ? backendCombo_->currentIndex() : 0);
@@ -431,7 +648,7 @@ public:
             previewLabel_->setPixmap(QPixmap::fromImage(lastImage_));
         }
         if (summaryLabel_) {
-            summaryLabel_->setText(summary.isEmpty() ? QStringLiteral("No composition selected") : summary);
+            summaryLabel_->setText(compositionSummaryText(composition));
         }
     }
 };
@@ -445,12 +662,6 @@ public:
     QCheckBox* followSelectionCheck_ = nullptr;
     QComboBox* backendCombo_ = nullptr;
     QComboBox* effectCombo_ = nullptr;
-    QComboBox* blendCombo_ = nullptr;
-    QDoubleSpinBox* opacitySpin_ = nullptr;
-    QDoubleSpinBox* offsetXSpin_ = nullptr;
-    QDoubleSpinBox* offsetYSpin_ = nullptr;
-    QDoubleSpinBox* scaleSpin_ = nullptr;
-    QDoubleSpinBox* rotationSpin_ = nullptr;
     QLabel* infoLabel_ = nullptr;
     QLabel* previewLabel_ = nullptr;
     QImage lastImage_;
@@ -571,24 +782,26 @@ void ArtifactSoftwareLayerTestWidget::Impl::refreshPreview()
     const QSize renderSize = safePreviewSize(previewLabel_);
     const ArtifactAbstractLayerPtr layer = selectedLayer();
     const ArtifactCompositionPtr composition = selectedComposition();
+    const std::optional<ArtifactCore::LayerID> focusLayerId = layer ? std::optional<ArtifactCore::LayerID>(layer->id()) : std::nullopt;
+    const QImage contextCanvas = renderCompositionCanvas(composition, focusLayerId, false, 0.18);
+    const QImage focusedCanvas = renderCompositionCanvas(composition, focusLayerId, true, 1.0);
+    const QImage overlayImage = mergePreviewImages(
+        {
+            fitCanvasImageToPreview(focusedCanvas, renderSize),
+            renderCompositionOverlay(composition, renderSize),
+            renderFocusedLayerOverlay(composition, layer, renderSize)
+        },
+        renderSize);
 
     SoftwareRender::CompositeRequest request;
     request.background = makeCheckerboard(renderSize);
-    request.foreground = renderCompositionOverlay(composition, renderSize);
-    request.overlay = renderLayerCard(
-        layer,
-        QSize(std::max(240, renderSize.width() / 2), std::max(180, renderSize.height() / 2)),
-        QStringLiteral("Sandbox only: this does not write back to the project"));
+    request.foreground = fitCanvasImageToPreview(contextCanvas, renderSize);
+    request.overlay = overlayImage;
     request.outputSize = renderSize;
     request.backend = backendFromIndex(backendCombo_ ? backendCombo_->currentIndex() : 0);
     request.cvEffect = effectFromIndex(effectCombo_ ? effectCombo_->currentIndex() : 0);
-    request.blendMode = blendModeFromText(blendCombo_ ? blendCombo_->currentText() : QStringLiteral("Normal"));
-    request.overlayOpacity = static_cast<float>(opacitySpin_ ? opacitySpin_->value() : 1.0);
-    request.overlayOffset = QPointF(
-        offsetXSpin_ ? offsetXSpin_->value() : 0.0,
-        offsetYSpin_ ? offsetYSpin_->value() : 0.0);
-    request.overlayScale = static_cast<float>(scaleSpin_ ? scaleSpin_->value() : 1.0);
-    request.overlayRotationDeg = static_cast<float>(rotationSpin_ ? rotationSpin_->value() : 0.0);
+    request.blendMode = layer ? ArtifactCore::toBlendMode(layer->layerBlendType()) : ArtifactCore::BlendMode::Normal;
+    request.overlayOpacity = 1.0f;
     request.useForeground = true;
 
     lastImage_ = SoftwareRender::compose(request);
@@ -597,15 +810,7 @@ void ArtifactSoftwareLayerTestWidget::Impl::refreshPreview()
     }
 
     if (infoLabel_) {
-        if (!layer) {
-            infoLabel_->setText(QStringLiteral("No layer selected"));
-        } else {
-            infoLabel_->setText(QStringLiteral("%1 | %2 | Blend=%3 | Visible=%4")
-                .arg(layer->layerName())
-                .arg(layer->className().toQString())
-                .arg(blendLabel(ArtifactCore::toBlendMode(layer->layerBlendType())))
-                .arg(layer->isVisible() ? QStringLiteral("Yes") : QStringLiteral("No")));
-        }
+        infoLabel_->setText(layerSummaryText(composition, layer));
     }
 }
 
@@ -737,43 +942,9 @@ ArtifactSoftwareLayerTestWidget::ArtifactSoftwareLayerTestWidget(QWidget* parent
     impl_->backendCombo_->addItems(QStringList{QStringLiteral("QImage/QPainter"), QStringLiteral("OpenCV")});
     impl_->effectCombo_ = new QComboBox(this);
     impl_->effectCombo_->addItems(QStringList{QStringLiteral("None"), QStringLiteral("GaussianBlur"), QStringLiteral("EdgeOverlay")});
-    impl_->blendCombo_ = new QComboBox(this);
-    impl_->blendCombo_->addItems(QStringList{
-        QStringLiteral("Normal"),
-        QStringLiteral("Add"),
-        QStringLiteral("Multiply"),
-        QStringLiteral("Screen")
-    });
-    impl_->opacitySpin_ = new QDoubleSpinBox(this);
-    impl_->opacitySpin_->setRange(0.0, 1.0);
-    impl_->opacitySpin_->setDecimals(2);
-    impl_->opacitySpin_->setSingleStep(0.05);
-    impl_->opacitySpin_->setValue(0.85);
-    impl_->offsetXSpin_ = new QDoubleSpinBox(this);
-    impl_->offsetYSpin_ = new QDoubleSpinBox(this);
-    impl_->scaleSpin_ = new QDoubleSpinBox(this);
-    impl_->rotationSpin_ = new QDoubleSpinBox(this);
-    for (QDoubleSpinBox* spin : {impl_->offsetXSpin_, impl_->offsetYSpin_}) {
-        spin->setRange(-800.0, 800.0);
-        spin->setDecimals(1);
-        spin->setSingleStep(10.0);
-    }
-    impl_->scaleSpin_->setRange(0.10, 4.0);
-    impl_->scaleSpin_->setDecimals(2);
-    impl_->scaleSpin_->setSingleStep(0.05);
-    impl_->scaleSpin_->setValue(1.0);
-    impl_->rotationSpin_->setRange(-180.0, 180.0);
-    impl_->rotationSpin_->setDecimals(1);
-    impl_->rotationSpin_->setSingleStep(5.0);
 
     controlGrid->addRow(QStringLiteral("Backend"), impl_->backendCombo_);
     controlGrid->addRow(QStringLiteral("Effect"), impl_->effectCombo_);
-    controlGrid->addRow(QStringLiteral("Blend"), impl_->blendCombo_);
-    controlGrid->addRow(QStringLiteral("Opacity"), impl_->opacitySpin_);
-    controlGrid->addRow(QStringLiteral("Offset X"), impl_->offsetXSpin_);
-    controlGrid->addRow(QStringLiteral("Offset Y"), impl_->offsetYSpin_);
-    controlGrid->addRow(QStringLiteral("Scale"), impl_->scaleSpin_);
-    controlGrid->addRow(QStringLiteral("Rotation"), impl_->rotationSpin_);
     root->addLayout(controlGrid);
 
     impl_->infoLabel_ = new QLabel(QStringLiteral("No layer selected"), this);
@@ -796,15 +967,9 @@ ArtifactSoftwareLayerTestWidget::ArtifactSoftwareLayerTestWidget(QWidget* parent
     connect(impl_->layerCombo_, &QComboBox::currentTextChanged, this, [this](const QString&) {
         impl_->refreshPreview();
     });
-    for (QObject* control : {static_cast<QObject*>(impl_->backendCombo_), static_cast<QObject*>(impl_->effectCombo_), static_cast<QObject*>(impl_->blendCombo_),
-                             static_cast<QObject*>(impl_->opacitySpin_), static_cast<QObject*>(impl_->offsetXSpin_), static_cast<QObject*>(impl_->offsetYSpin_),
-                             static_cast<QObject*>(impl_->scaleSpin_), static_cast<QObject*>(impl_->rotationSpin_)}) {
+    for (QObject* control : {static_cast<QObject*>(impl_->backendCombo_), static_cast<QObject*>(impl_->effectCombo_)}) {
         if (auto* combo = qobject_cast<QComboBox*>(control)) {
             connect(combo, &QComboBox::currentTextChanged, this, [this](const QString&) {
-                impl_->refreshPreview();
-            });
-        } else if (auto* spin = qobject_cast<QDoubleSpinBox*>(control)) {
-            connect(spin, qOverload<double>(&QDoubleSpinBox::valueChanged), this, [this](double) {
                 impl_->refreshPreview();
             });
         }

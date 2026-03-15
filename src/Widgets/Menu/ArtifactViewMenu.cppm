@@ -14,8 +14,10 @@ module Artifact.Menu.View;
 import std;
 
 import Artifact.Service.Project;
+import Utils.Path;
 
 namespace Artifact {
+ using namespace ArtifactCore;
  namespace {
   QWidget* findWidgetByClassHint(const QString& classHint)
   {
@@ -70,15 +72,19 @@ namespace Artifact {
   {
    zoomInAction = new QAction("ズームイン(&I)");
    zoomInAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_Equal));
+   zoomInAction->setIcon(QIcon(resolveIconPath("Material/zoom_in.svg")));
    
    zoomOutAction = new QAction("ズームアウト(&O)");
    zoomOutAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_Minus));
+   zoomOutAction->setIcon(QIcon(resolveIconPath("Material/zoom_out.svg")));
 
    defaultZoomAction = new QAction("100% ズーム");
    defaultZoomAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_Slash));
+   defaultZoomAction->setIcon(QIcon(resolveIconPath("Material/aspect_ratio.svg")));
 
    fitToScreenAction = new QAction("画面に合わせる(&F)");
    fitToScreenAction->setShortcut(QKeySequence(Qt::SHIFT | Qt::Key_Slash));
+   fitToScreenAction->setIcon(QIcon(resolveIconPath("Material/fit_screen.svg")));
 
    resolutionMenu = new QMenu("解像度(&R)");
    resFullAction = resolutionMenu->addAction("フル画質");
@@ -94,6 +100,7 @@ namespace Artifact {
    showGridAction = new QAction("グリッドを表示(&G)");
    showGridAction->setShortcut(QKeySequence("Ctrl+'"));
    showGridAction->setCheckable(true);
+   showGridAction->setIcon(QIcon(resolveIconPath("Material/grid_on.svg")));
 
    snapToGridAction = new QAction("グリッドにスナップ(&S)");
    snapToGridAction->setShortcut(QKeySequence("Ctrl+Shift+'"));
@@ -110,6 +117,7 @@ namespace Artifact {
    showRulersAction = new QAction("定規を表示(&R)");
    showRulersAction->setShortcut(QKeySequence("Ctrl+R"));
    showRulersAction->setCheckable(true);
+   showRulersAction->setIcon(QIcon(resolveIconPath("Material/straighten.svg")));
 
    useDisplayColorManagementAction = new QAction("ディスプレイのカラーマネジメントを使用");
    useDisplayColorManagementAction->setCheckable(true);
@@ -189,8 +197,8 @@ namespace Artifact {
    menu->addAction(showRulersAction);
    menu->addSeparator();
    windowPanelsMenu = menu->addMenu("ウィンドウパネル(&W)");
-   openProjectPanelAction = windowPanelsMenu->addAction("プロジェクト");
-   openInspectorPanelAction = windowPanelsMenu->addAction("インスペクター");
+   openProjectPanelAction = windowPanelsMenu->addAction(QIcon(resolveIconPath("Material/inventory.svg")), "プロジェクト");
+   openInspectorPanelAction = windowPanelsMenu->addAction(QIcon(resolveIconPath("Material/edit.svg")), "インスペクター");
 
    QObject::connect(openProjectPanelAction, &QAction::triggered, menu, []() {
     if (QWidget* w = findWidgetByClassHint("ArtifactProjectManagerWidget")) {
