@@ -156,8 +156,28 @@ namespace Artifact {
 
  QImage ArtifactImageLayer::toQImage() const
  {
-    if (!impl_->hasImage_ || !impl_->cache_) return QImage();
-    return impl_->cache_->image().toQImage();
+    if (!impl_->hasImage_ || !impl_->cache_) {
+        qDebug() << "[ArtifactImageLayer::toQImage] No cache: hasImage=" << impl_->hasImage_ 
+                 << "cache=" << (impl_->cache_ ? "valid" : "null");
+        return QImage();
+    }
+    
+    // キャッシュから QImage を生成
+    QImage qimg = impl_->cache_->image().toQImage();
+    if (!qimg.isNull()) {
+        return qimg;
+    }
+    
+    // フォールバック：キャッシュが破損している場合
+    qDebug() << "[ArtifactImageLayer::toQImage] Cache returned null, using fallback:"
+             << "size=" << impl_->width_ << "x" << impl_->height_;
+    // 空の画像を返す代わりに、エラー画像を生成
+    QImage errorImg(impl_->width_, impl_->height_, QImage::Format_ARGB32_Premultiplied);
+    errorImg.fill(QColor(100, 50, 50));
+    QPainter p(&errorImg);
+    p.setPen(QColor(255, 100, 100));
+    p.drawText(errorImg.rect(), Qt::AlignCenter, QStringLiteral("Cache Error"));
+    return errorImg;
  }
 
  std::vector<ArtifactCore::PropertyGroup> ArtifactImageLayer::getLayerPropertyGroups() const
