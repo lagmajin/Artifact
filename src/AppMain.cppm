@@ -701,14 +701,8 @@ int main(int argc, char* argv[])
                 // タブタイトルにコンポジション名を表示
                 const QString compName = comp->settings().compositionName().toQString();
                 if (!compName.isEmpty()) {
-                    // compositionEditor が属する CDockWidget のタイトルを更新
-                    auto* parentWidget = compositionEditor->parentWidget();
-                    if (parentWidget) {
-                        auto* dockWidget = dynamic_cast<ads::CDockWidget*>(parentWidget);
-                        if (dockWidget) {
-                            dockWidget->setWindowTitle(compName);
-                        }
-                    }
+                    // compositionEditor のウィンドウタイトルを更新（タブに表示）
+                    compositionEditor->setWindowTitle(compName);
                 }
             }
         });
