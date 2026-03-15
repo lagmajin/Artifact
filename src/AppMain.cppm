@@ -697,13 +697,17 @@ int main(int argc, char* argv[])
             if (found.success && !found.ptr.expired()) {
                 auto comp = found.ptr.lock();
                 compositionEditor->setComposition(comp);
-                
+
                 // タブタイトルにコンポジション名を表示
                 const QString compName = comp->settings().compositionName().toQString();
                 if (!compName.isEmpty()) {
                     // compositionEditor が属する CDockWidget のタイトルを更新
-                    if (auto* dockWidget = qobject_cast<ads::CDockWidget*>(compositionEditor->parentWidget())) {
-                        dockWidget->setWindowTitle(compName);
+                    auto* parentWidget = compositionEditor->parentWidget();
+                    if (parentWidget) {
+                        auto* dockWidget = dynamic_cast<ads::CDockWidget*>(parentWidget);
+                        if (dockWidget) {
+                            dockWidget->setWindowTitle(compName);
+                        }
                     }
                 }
             }
