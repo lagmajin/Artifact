@@ -9,6 +9,7 @@
 #include <QFileInfo>
 #include <QPointF>
 #include <QRegularExpression>
+#include <opencv2/opencv.hpp>
 #include <wobjectimpl.h>
 #include <mutex>
 #include <map>
@@ -970,52 +971,49 @@ namespace Artifact
             std::map<int, ArtifactCore::ImageF32x4_RGBA> localFrameBuffer;
 
             // TBBを利用したマルチフレームレンダリング (MFR)
-            tbb::parallel_for(tbb::blocked_range<int>(startF, endF + 1),
-                [&](const tbb::blocked_range<int>& r) {
-                    for (int f = r.begin(); f != r.end(); ++f) {
-                        if (!success.load(std::memory_order_relaxed)) break;
+            tbb::parallel_for(startF, endF + 1, [&](int f) {
+                if (!success.load(std::memory_order_relaxed)) return;
 
-                        // To properly stop rendering if canceled/paused, we should check status
-                        const auto currentJobStatus = impl_->queueManager.getJob(i).status;
-                        if (currentJobStatus != ArtifactRenderJob::Status::Rendering) {
-                            success.store(false, std::memory_order_relaxed);
-                            break;
-                        }
+                // To properly stop rendering if canceled/paused, we should check status
+                const auto currentJobStatus = impl_->queueManager.getJob(i).status;
+                if (currentJobStatus != ArtifactRenderJob::Status::Rendering) {
+                    success.store(false, std::memory_order_relaxed);
+                    return;
+                }
 
-                        // Render frame (スレッドセーフなソフトウェアレンダリング)
-                        QImage qimg = impl_->renderSingleFrameDummy(job, f);
+                // Render frame (スレッドセーフなソフトウェアレンダリング)
+                QImage qimg = impl_->renderSingleFrameDummy(job, f);
 
-                        // Add to encoder
-                        if (!qimg.isNull()) {
-                            cv::Mat mat = ArtifactCore::CvUtils::qImageToCvMat(qimg);
-                            ArtifactCore::ImageF32x4_RGBA frameImage;
-                            frameImage.setFromCVMat(mat);
+                // Add to encoder
+                if (!qimg.isNull()) {
+                    cv::Mat mat = ArtifactCore::CvUtils::qImageToCvMat(qimg);
+                    ArtifactCore::ImageF32x4_RGBA frameImage;
+                    frameImage.setFromCVMat(mat);
 
-                            // エンコーダは順序を保証する必要があるため、ロックを取得してバッファ経由で渡す
-                            std::lock_guard<std::mutex> lock(localEncoderMutex);
-                            localFrameBuffer[f] = frameImage;
-                            
-                            while (localFrameBuffer.count(localNextFrame)) {
-                                impl_->ffmpegEncoder->addImage(localFrameBuffer[localNextFrame]);
-                                localFrameBuffer.erase(localNextFrame);
-                                localNextFrame++;
-                            }
-
-                            int rendered = ++framesRendered;
-                            // Update progress
-                            int progress = static_cast<int>((static_cast<float>(rendered) / totalFrames) * 100);
-                            // UI更新はメインスレッドから呼ばれる想定だが、setJobProgress内で適切に処理されると仮定
-                            QMetaObject::invokeMethod(this, [this, i, progress]() {
-                                impl_->queueManager.setJobProgress(i, progress);
-                            }, Qt::QueuedConnection);
-                            
-                        } else {
-                            success.store(false, std::memory_order_relaxed);
-                            break;
+                    // エンコーダは順序を保証する必要があるため、ロックを取得してバッファ経由で渡す
+                    {
+                        std::lock_guard<std::mutex> lock(localEncoderMutex);
+                        localFrameBuffer[f] = frameImage;
+                        
+                        while (localFrameBuffer.count(localNextFrame)) {
+                            impl_->ffmpegEncoder->addImage(localFrameBuffer[localNextFrame]);
+                            localFrameBuffer.erase(localNextFrame);
+                            localNextFrame++;
                         }
                     }
+
+                    int rendered = ++framesRendered;
+                    // Update progress
+                    int progress = static_cast<int>((static_cast<float>(rendered) / totalFrames) * 100);
+                    // UI更新はメインスレッドから呼ばれる想定だが、setJobProgress内で適切に処理されると仮定
+                    QMetaObject::invokeMethod(this, [this, i, progress]() {
+                        impl_->queueManager.setJobProgress(i, progress);
+                    }, Qt::QueuedConnection);
+                    
+                } else {
+                    success.store(false, std::memory_order_relaxed);
                 }
-            );
+            });
 
             impl_->ffmpegEncoder->close();
 

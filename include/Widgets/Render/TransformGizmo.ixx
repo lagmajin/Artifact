@@ -6,6 +6,7 @@ export module Artifact.Widgets.TransformGizmo;
 
 import Artifact.Render.IRenderer;
 import Artifact.Composition.Abstract;
+import Artifact.Layer.Abstract;
 import Utils.Id;
 import Color.Float;
 
