@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <QDialogButtonBox>
 #include <QVBoxLayout>
 #include <QWidget>
@@ -24,7 +24,9 @@ import Artifact.Layer.InitParams;
 import Widgets.Utils.CSS;
 import Widgets.EditableLabel;
 import DragSpinBox;
+import Utils.String.UniString;
 import Color.Float;
+import Color.Utils;
 import Artifact.Service.Project;
 import Artifact.Composition.Abstract;
 import Composition.Settings;
@@ -32,7 +34,10 @@ import Artifact.Layers.SolidImage;
 
 namespace Artifact {
 	
+ using namespace ArtifactCore;
  using namespace ArtifactWidgets;
+
+ W_OBJECT_IMPL(PlaneLayerSettingPage)
 
  class PlaneLayerSettingPage::Impl {
  public:
@@ -88,7 +93,6 @@ namespace Artifact {
     }
   });
 
-  // valueChanged(int) passes an int argument; accept it and ignore inside the handler
   auto forceCustom = [this](int) {
       impl_->resolutionCombobox_->blockSignals(true);
       impl_->resolutionCombobox_->setCurrentIndex(impl_->resolutionCombobox_->count() - 1);
@@ -103,6 +107,11 @@ namespace Artifact {
           impl_->bgColor = c;
           QString style = QString("background-color: %1; border: 1px solid #555;").arg(c.name());
           impl_->bgColorButton->setStyleSheet(style);
+          
+          // Suggest name
+          FloatColor fc(c.redF(), c.greenF(), c.blueF(), c.alphaF());
+          UniString naturalName = ColorUtils::getNaturalColorName(fc);
+          Q_EMIT colorChanged(naturalName.toQString());
       }
   });
 
@@ -124,22 +133,22 @@ namespace Artifact {
 
  void PlaneLayerSettingPage::resizeCompositionSize()
  {
-     auto service = ArtifactProjectService::instance();
-     if (service) {
-         auto compWeak = service->currentComposition();
-         if (auto comp = compWeak.lock()) {
-             auto size = comp->settings().compositionSize();
-             if (size.width() > 0 && size.height() > 0) {
-                 impl_->widthSpinBox->setValue(size.width());
-                 impl_->heightSpinBox->setValue(size.height());
-                 return;
-             }
-         }
-     }
-     impl_->widthSpinBox->setValue(1920);
-     impl_->heightSpinBox->setValue(1080);
+      auto service = ArtifactProjectService::instance();
+      if (service) {
+          auto compWeak = service->currentComposition();
+          if (auto comp = compWeak.lock()) {
+              auto size = comp->settings().compositionSize();
+              if (size.width() > 0 && size.height() > 0) {
+                  impl_->widthSpinBox->setValue(size.width());
+                  impl_->heightSpinBox->setValue(size.height());
+                  return;
+              }
+          }
+      }
+      impl_->widthSpinBox->setValue(1920);
+      impl_->heightSpinBox->setValue(1080);
  }
- 
+  
   void PlaneLayerSettingPage::setInitialParams(int p_width, int p_height, const FloatColor& color)
   {
       impl_->widthSpinBox->setValue(p_width);
@@ -160,9 +169,8 @@ namespace Artifact {
      params.setColor(FloatColor(c.redF(), c.greenF(), c.blueF(), c.alphaF()));
      return params;
  }
- // ReSharper disable CppUnusedFunction
+
  W_OBJECT_IMPL(CreateSolidLayerSettingDialog)
-  // ReSharper restore CppUnusedFunction
 	
   class CreateSolidLayerSettingDialog::Impl
  {
@@ -184,7 +192,7 @@ namespace Artifact {
 
  CreateSolidLayerSettingDialog::CreateSolidLayerSettingDialog(QWidget* parent /*= nullptr*/) :QDialog(parent),impl_(new Impl())
  {
- setWindowTitle(u8"平面設定");
+  setWindowTitle(u8"平面設定");
   setFixedSize(520, 420);
   setWindowFlags(windowFlags() | Qt::Dialog | Qt::FramelessWindowHint);
   setAttribute(Qt::WA_NoChildEventsForParent);
@@ -220,7 +228,7 @@ namespace Artifact {
   mainLayout->addWidget(content, 1);
 
   auto* footer = new QWidget(this);
-  footer->setStyleSheet("background-color: #252526; border-top: 1px solid #333;");
+  footer->setStyleSheet("background-color: #252526; border-top: 1 solid #333;");
   auto* footerLayout = new QHBoxLayout(footer);
   footerLayout->setContentsMargins(14, 10, 14, 10);
   auto* dialogButtonBox = impl_->dialogButtonBox = new QDialogButtonBox();
@@ -231,7 +239,6 @@ namespace Artifact {
 
   setStyleSheet("QDialog { background-color: #1E1E20; border: 1px solid #444; }");
   
-  // Connect button box signals to close dialog
   QObject::connect(dialogButtonBox, &QDialogButtonBox::accepted, this, [this]() {
       if (impl_->nameEditableLabel) impl_->nameEditableLabel->finishEdit();
       QString name = impl_->nameEditableLabel ? impl_->nameEditableLabel->text() : "Solid";
@@ -240,6 +247,12 @@ namespace Artifact {
       accept();
   });
   QObject::connect(dialogButtonBox, &QDialogButtonBox::rejected, this, &QDialog::reject);
+
+  QObject::connect(settingPage, &PlaneLayerSettingPage::colorChanged, this, [this](const QString& name) {
+      if (impl_->nameEditableLabel) {
+          impl_->nameEditableLabel->setText(name);
+      }
+  });
  }
 
  CreateSolidLayerSettingDialog::~CreateSolidLayerSettingDialog()
@@ -316,7 +329,7 @@ void CreateSolidLayerSettingDialog::mousePressEvent(QMouseEvent* event)
   QVBoxLayout* layout = new QVBoxLayout();
 
   auto editableLabel = impl_->nameEditableLabel = new EditableLabel();
-  editableLabel->setText("Solid"); // will be updated when a layer is set
+  editableLabel->setText("Solid");
   
   auto settingPage = impl_->settingPage = new PlaneLayerSettingPage(this);
   
@@ -343,6 +356,12 @@ void CreateSolidLayerSettingDialog::mousePressEvent(QMouseEvent* event)
       accept();
   });
   QObject::connect(dialogButtonBox, &QDialogButtonBox::rejected, this, &QDialog::reject);
+
+  QObject::connect(settingPage, &PlaneLayerSettingPage::colorChanged, this, [this](const QString& name) {
+      if (impl_->nameEditableLabel) {
+          impl_->nameEditableLabel->setText(name);
+      }
+  });
  }
 
  EditPlaneLayerSettingDialog::~EditPlaneLayerSettingDialog()
@@ -366,10 +385,6 @@ void EditPlaneLayerSettingDialog::showEvent(QShowEvent* event)
   }
   move(endPos);
 }
-
- void EditPlaneLayerSettingDialog::showAnimated()
- {
- }
 
  void EditPlaneLayerSettingDialog::setupEdit(std::shared_ptr<ArtifactSolidImageLayer> layer)
  {

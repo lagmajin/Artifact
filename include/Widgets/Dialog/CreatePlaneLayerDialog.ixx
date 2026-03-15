@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <QDialog>
 #include <QWidget>
 
@@ -17,7 +17,7 @@ export namespace Artifact {
  using namespace ArtifactCore;
 
  class PlaneLayerSettingPage :public QWidget {
-  //Q_OBJECT
+  W_OBJECT(PlaneLayerSettingPage)
  private:
   class Impl;
   Impl* impl_;
@@ -31,6 +31,7 @@ export namespace Artifact {
   ArtifactSolidLayerInitParams getInitParams(const QString& name) const;
  //signals:
   void editComplete();
+  void colorChanged(const QString& name) W_SIGNAL(colorChanged, name);
  //private slots:
   void spouitMode();
   void resizeCompositionSize();
@@ -40,7 +41,7 @@ export namespace Artifact {
 
  class CreateSolidLayerSettingDialog final:public QDialog
  {
- 	W_OBJECT(CreateSolidLayerSettingDialog)
+  W_OBJECT(CreateSolidLayerSettingDialog)
  private:
   class Impl;
   Impl* impl_;
@@ -74,7 +75,7 @@ export namespace Artifact {
   ~EditPlaneLayerSettingDialog();
   void showAnimated();
   void setupEdit(std::shared_ptr<ArtifactSolidImageLayer> layer);
- public/*signals*/:
+  public/*signals*/:
  };
 
 };

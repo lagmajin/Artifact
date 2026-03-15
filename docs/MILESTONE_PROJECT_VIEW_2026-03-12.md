@@ -60,3 +60,11 @@ Project View / Project panel を独立して改善するための実装メモ。
 - nested folder 作成 API
 - drag & drop で project item 整理
 - unused / recent / tag の仮想 view
+
+## Follow-up Notes
+
+- `2026-03-15`
+  - `ArtifactProjectView` に `Up/Down/Home/End/PageUp/PageDown/Left/Right/Enter` の keyboard navigation を追加
+  - current composition 同期時、対象 composition の親 folder を 1 段だけでなく root まで展開するよう修正
+  - 選択変更時に `ensureIndexVisible()` を通し、深い階層でも current composition が viewport 外へ取り残されないよう修正
+  - これにより、custom `QAbstractScrollArea` ベース Project View でも `M-PV-1 Basic Operations` の「selection と current composition が一致する」を見失いにくくした
