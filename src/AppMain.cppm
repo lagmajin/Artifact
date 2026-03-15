@@ -759,13 +759,17 @@ int main(int argc, char* argv[])
         const auto timelineDockObjectId = [](const CompositionID& compId) {
             return QStringLiteral("timeline::%1").arg(compId.toString());
         };
-        QObject::connect(projectService, &ArtifactProjectService::compositionCreated, mw, [mw, timelineDockTitle, timelineDockObjectId](const CompositionID& compId) {
-            QTimer::singleShot(0, mw, [mw, compId, timelineDockTitle, timelineDockObjectId]() {
+        QObject::connect(projectService, &ArtifactProjectService::compositionCreated, mw, [mw, timelineDockTitle, timelineDockObjectId, status](const CompositionID& compId) {
+            QTimer::singleShot(0, mw, [mw, compId, timelineDockTitle, timelineDockObjectId, status]() {
                 const QString dockTitle = timelineDockTitle(compId);
                 const QString dockId = timelineDockObjectId(compId);
                 auto* panel = new ArtifactTimelineWidget(mw);
                 panel->setComposition(compId);
                 panel->setWindowTitle(dockTitle);
+                
+                // ズームレベル変更をステータスバーに接続
+                QObject::connect(panel, &ArtifactTimelineWidget::zoomLevelChanged, status, &ArtifactStatusBar::setZoomPercent);
+                
                 mw->addDockedWidgetTabbedWithId(
                     dockTitle,
                     dockId,
