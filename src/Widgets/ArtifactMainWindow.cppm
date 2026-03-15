@@ -34,7 +34,7 @@ import Artifact.Widgets.ProjectManagerWidget;
 import Menu.MenuBar;
 import Widgets.ToolBar;
 import Widgets.Dock.StyleManager;
-import Artifact.Widgets.MessageBox;
+import Artifact.Widgets.AppDialogs;
 
 namespace Artifact {
 

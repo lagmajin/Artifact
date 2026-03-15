@@ -18,7 +18,7 @@ import Artifact.Composition.InitParams;
 import Artifact.Layer.InitParams;
 import Artifact.Widgets.SoftwareRenderInspectors;
 import Dialog.Composition;
-import Artifact.Widgets.MessageBox;
+import Artifact.Widgets.AppDialogs;
 
 namespace Artifact {
 using namespace ArtifactCore;

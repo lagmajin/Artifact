@@ -67,7 +67,7 @@ import Artifact.Render.Queue.Service;
 import Artifact.Service.Project;
 import Artifact.Widget.Dialog.RenderOutputSetting;
 import Core.FastSettingsStore;
-import Artifact.Widgets.MessageBox;
+import Artifact.Widgets.AppDialogs;
 
 
 namespace Artifact

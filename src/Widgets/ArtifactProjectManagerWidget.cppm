@@ -107,7 +107,7 @@ import Artifact.Layer.Search.Query;
 import Artifact.Layer.InitParams;
 import Artifact.Widgets.LayerPanelWidget;
 import Artifact.Widgets.CreatePlaneLayerDialog;
-import Artifact.Widgets.MessageBox;
+import Artifact.Widgets.AppDialogs;
 import Dialog.Composition;
 import Utils.Path;
 

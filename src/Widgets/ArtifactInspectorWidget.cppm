@@ -83,7 +83,7 @@ import Artifact.Effect.Rasterizer.DropShadow;
 import Artifact.Effect.Glow;
 import Artifact.Effect.Wave;
 import Artifact.Effect.Spherize;
-import Artifact.Widgets.AppMessageBox;
+import Artifact.Widgets.AppDialogs;
 
 namespace Artifact {
 

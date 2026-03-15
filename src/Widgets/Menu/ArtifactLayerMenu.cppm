@@ -18,7 +18,7 @@ import Artifact.Layer.InitParams;
 import Artifact.Layer.Factory;
 import Artifact.Composition.Abstract;
 import Artifact.Widgets.CreatePlaneLayerDialog;
-import Artifact.Widgets.MessageBox;
+import Artifact.Widgets.AppDialogs;
 
 namespace Artifact {
 using namespace ArtifactCore;
