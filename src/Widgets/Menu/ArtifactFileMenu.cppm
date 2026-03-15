@@ -23,7 +23,7 @@ import std;
 import Artifact.Project.Manager;
 import Artifact.Service.Project;
 import Utils.Path;
-import Artifact.Widgets.MessageBox;
+import Artifact.Widgets.AppDialogs;
 
 namespace Artifact {
 using namespace ArtifactCore;

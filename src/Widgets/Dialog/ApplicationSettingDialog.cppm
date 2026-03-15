@@ -40,7 +40,7 @@
  module ApplicationSettingDialog;
 
 import Artifact.Service.Application;
-import Artifact.Widgets.MessageBox;
+import Artifact.Widgets.AppDialogs;
 
 namespace ArtifactCore {
 
