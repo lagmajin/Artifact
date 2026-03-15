@@ -32,6 +32,7 @@
 #include <QWheelEvent>
 #include <QInputDialog>
 #include <QFileDialog>
+#include <QTimer>
 module Artifact.Widgets.LayerPanelWidget;
 
 import std;
@@ -720,11 +721,11 @@ int ArtifactLayerPanelHeaderWidget::totalHeaderHeight() const
     impl_->inlineNameEditor->setStyleSheet("background-color: #2D2D30; color: white; border: 1px solid #007ACC;");
 
     // Position it
-    const int indent = impl_->visibleRows[idx].depth * kLayerIndent;
-    int xOffset = kLayerColorTagWidth + kLayerEyeWidth + kLayerLockWidth + kLayerSoloWidth + kLayerArrowWidth + indent;
-    const int headerW = impl_->header ? impl_->header->buttonSize() * 2 : 56;
-    const int editorWidth = std::max(60, kLayerColumnWidth - xOffset - headerW - 4);
-    impl_->inlineNameEditor->setGeometry(xOffset + 2, idx * kLayerRowHeight + 2, editorWidth, kLayerRowHeight - 4);
+    const int rowIndent = impl_->visibleRows[idx].depth * 14;
+    const int nameStartX = kLayerColumnWidth * kLayerPropertyColumnCount;
+    const int textX = nameStartX + rowIndent + (impl_->visibleRows[idx].hasChildren ? 16 : 4);
+    const int editorWidth = std::max(60, width() - textX - kInlineParentWidth - kInlineBlendWidth - 8);
+    impl_->inlineNameEditor->setGeometry(textX, idx * kLayerRowHeight + 2, editorWidth, kLayerRowHeight - 4);
 
     QObject::connect(impl_->inlineNameEditor, &QLineEdit::editingFinished, this, [this, id]() {
       if (!impl_->inlineNameEditor) return;
