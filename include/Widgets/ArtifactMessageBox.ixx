@@ -1,9 +1,8 @@
 module;
 #include <QString>
+#include <QWidget>
 
 export module Artifact.Widgets.MessageBox;
-
-class QWidget;
 
 export namespace Artifact {
 
