@@ -758,6 +758,8 @@ public:
     int resizeStartX = 0;
     int hoverHeaderColumn = -1;
     QModelIndex hoverBranchIndex;
+    QLineEdit* nameEditor = nullptr;
+    QModelIndex editingIndex;
     int headerHeight = 24;
     int rowHeight = 28;
     int indentWidth = 16;
@@ -1437,45 +1439,50 @@ void ArtifactProjectView::paintEvent(QPaintEvent* event)
                 painter.setPen(selected ? Impl::Colors::RowSelectedText : Impl::Colors::RowText);
 
                 if (column == 0) {
-                    const int indent = visibleRow.depth * impl_->indentWidth;
-                    const QRect contentRect = cellRect.adjusted(8 + indent, 0, -8, 0);
-
-                    if (impl_->hasChildren(index0)) {
-                        const QRect branchRect(contentRect.left(), contentRect.center().y() - 6, 12, 12);
-                        const bool branchHovered = (impl_->hoverBranchIndex == index0);
-
-                        QPainterPath branchPath;
-                        if (impl_->isExpanded(index0)) {
-                            branchPath.moveTo(branchRect.left() + 2, branchRect.top() + 4);
-                            branchPath.lineTo(branchRect.right() - 2, branchRect.top() + 4);
-                            branchPath.lineTo(branchRect.center().x(), branchRect.bottom() - 2);
-                        } else {
-                            branchPath.moveTo(branchRect.left() + 4, branchRect.top() + 2);
-                            branchPath.lineTo(branchRect.left() + 4, branchRect.bottom() - 2);
-                            branchPath.lineTo(branchRect.right() - 2, branchRect.center().y());
+                    if (impl_->editingIndex.isValid() && impl_->editingIndex == index0 && impl_->nameEditor) {
+                        const int indent = visibleRow.depth * impl_->indentWidth;
+                        int textLeft = cellRect.left() + 8 + indent + (impl_->hasChildren(index0) ? 18 : 0);
+                        const QVariant iconVar = cellIndex.data(Qt::DecorationRole);
+                        if (iconVar.canConvert<QIcon>()) { textLeft += 22; }
+                        const QRect editorRect(textLeft, cellRect.top() + 2, std::max(50, cellRect.right() - textLeft - 8), cellRect.height() - 4);
+                        if (impl_->nameEditor->geometry() != editorRect) impl_->nameEditor->setGeometry(editorRect);
+                        if (!impl_->nameEditor->isVisible()) { impl_->nameEditor->show(); impl_->nameEditor->setFocus(); }
+                    } else {
+                        const int indent = visibleRow.depth * impl_->indentWidth;
+                        const QRect contentRect = cellRect.adjusted(8 + indent, 0, -8, 0);
+                        if (impl_->hasChildren(index0)) {
+                            const QRect branchRect(contentRect.left(), contentRect.center().y() - 6, 12, 12);
+                            const bool branchHovered = (impl_->hoverBranchIndex == index0);
+                            QPainterPath branchPath;
+                            if (impl_->isExpanded(index0)) {
+                                branchPath.moveTo(branchRect.left() + 2, branchRect.top() + 4);
+                                branchPath.lineTo(branchRect.right() - 2, branchRect.top() + 4);
+                                branchPath.lineTo(branchRect.center().x(), branchRect.bottom() - 2);
+                            } else {
+                                branchPath.moveTo(branchRect.left() + 4, branchRect.top() + 2);
+                                branchPath.lineTo(branchRect.left() + 4, branchRect.bottom() - 2);
+                                branchPath.lineTo(branchRect.right() - 2, branchRect.center().y());
+                            }
+                            painter.fillPath(branchPath, (selected || branchHovered) ? Impl::Colors::RowSelectedText : Impl::Colors::BranchNormal);
                         }
-                        painter.fillPath(branchPath, (selected || branchHovered) ? Impl::Colors::RowSelectedText : Impl::Colors::BranchNormal);
+                        int textLeft = contentRect.left() + (impl_->hasChildren(index0) ? 18 : 0);
+                        const QVariant iconVar = cellIndex.data(Qt::DecorationRole);
+                        if (iconVar.canConvert<QIcon>()) {
+                            const QIcon icon = qvariant_cast<QIcon>(iconVar);
+                            const QRect iconRect(textLeft, rowRect.top() + (rowRect.height() - 16) / 2, 16, 16);
+                            icon.paint(&painter, iconRect);
+                            textLeft += 22;
+                        }
+                        painter.drawText(QRect(textLeft, rowRect.top(), std::max(0, cellRect.right() - textLeft - 8), rowRect.height()),
+                            Qt::AlignVCenter | Qt::AlignLeft,
+                            painter.fontMetrics().elidedText(cellIndex.data(Qt::DisplayRole).toString(), Qt::ElideRight, std::max(0, cellRect.width() - (textLeft - cellRect.left()) - 12)));
                     }
-
-                    int textLeft = contentRect.left() + (impl_->hasChildren(index0) ? 18 : 0);
-                    const QVariant iconVar = cellIndex.data(Qt::DecorationRole);
-                    if (iconVar.canConvert<QIcon>()) {
-                        const QIcon icon = qvariant_cast<QIcon>(iconVar);
-                        const QRect iconRect(textLeft, rowRect.top() + (rowRect.height() - 16) / 2, 16, 16);
-                        icon.paint(&painter, iconRect);
-                        textLeft += 22;
-                    }
-
-                    painter.drawText(
-                        QRect(textLeft, rowRect.top(), std::max(0, cellRect.right() - textLeft - 8), rowRect.height()),
-                        Qt::AlignVCenter | Qt::AlignLeft,
-                        painter.fontMetrics().elidedText(cellIndex.data(Qt::DisplayRole).toString(), Qt::ElideRight, std::max(0, cellRect.width() - (textLeft - cellRect.left()) - 12)));
                 } else {
-                    painter.drawText(cellRect.adjusted(8, 0, -8, 0), Qt::AlignVCenter | Qt::AlignLeft,
-                        painter.fontMetrics().elidedText(cellIndex.data(Qt::DisplayRole).toString(), Qt::ElideRight, cellRect.width() - 16));
+                    const QString text = cellIndex.data(Qt::DisplayRole).toString();
+                    Qt::Alignment alignment = Qt::AlignVCenter | Qt::AlignLeft;
+                    if (column == 1 || column == 2 || column == 3) alignment = Qt::AlignVCenter | Qt::AlignRight;
+                    painter.drawText(cellRect.adjusted(8, 0, -8, 0), alignment, painter.fontMetrics().elidedText(text, Qt::ElideRight, cellRect.width() - 16));
                 }
-
-                // Vertical separator in rows
                 painter.setPen(Impl::Colors::RowBorder);
                 painter.drawLine(cellRect.topRight(), cellRect.bottomRight());
             }
@@ -1522,21 +1529,50 @@ void ArtifactProjectView::mouseDoubleClickEvent(QMouseEvent* event) {
     event->ignore();
 }
 
+void ArtifactProjectView::editIndex(const QModelIndex& index) {
+    if (!index.isValid() || !impl_) return;
+    impl_->editingIndex = index.siblingAtColumn(0);
+    
+    if (!impl_->nameEditor) {
+        impl_->nameEditor = new QLineEdit(viewport());
+        impl_->nameEditor->setStyleSheet("background: #333; color: white; border: 1px solid #007ACC; padding: 1px; selection-background-color: #005A9E;");
+        connect(impl_->nameEditor, &QLineEdit::editingFinished, this, [this]() {
+            if (!impl_ || !impl_->editingIndex.isValid() || !impl_->nameEditor) return;
+            const QString newName = impl_->nameEditor->text().trimmed();
+            if (!newName.isEmpty()) {
+                QModelIndex sourceIdx = impl_->editingIndex;
+                if (auto proxy = qobject_cast<const QSortFilterProxyModel*>(sourceIdx.model())) {
+                    sourceIdx = proxy->mapToSource(sourceIdx);
+                }
+                QVariant ptrVar = sourceIdx.data(Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::ProjectItemPtr));
+                ProjectItem* item = ptrVar.isValid() ? reinterpret_cast<ProjectItem*>(ptrVar.value<quintptr>()) : nullptr;
+                if (item) {
+                    renameProjectItem(item, newName);
+                }
+            }
+            impl_->editingIndex = QModelIndex();
+            impl_->nameEditor->hide();
+            viewport()->update();
+        });
+    }
+    
+    impl_->nameEditor->setText(index.data(Qt::DisplayRole).toString());
+    impl_->nameEditor->selectAll();
+    viewport()->update();
+}
+
 void ArtifactProjectView::mouseMoveEvent(QMouseEvent* event) {
     const QPoint mousePos = event->position().toPoint();
 
-    // Column Resizing Logic
     if (impl_->resizingColumn != -1) {
         const int deltaX = mousePos.x() - impl_->resizeStartX;
-        const int newWidth = std::max(40, impl_->columnWidths[impl_->resizingColumn] + deltaX);
-        impl_->columnWidths[impl_->resizingColumn] = newWidth;
+        impl_->columnWidths[impl_->resizingColumn] = std::max(40, impl_->columnWidths[impl_->resizingColumn] + deltaX);
         impl_->resizeStartX = mousePos.x();
         refreshVisibleContent();
         event->accept();
         return;
     }
 
-    // Header Hover / Resize Cursor Logic
     if (mousePos.y() < impl_->headerHeight) {
         int x = -horizontalScrollBar()->value();
         int hoveredCol = -1;
@@ -1545,57 +1581,29 @@ void ArtifactProjectView::mouseMoveEvent(QMouseEvent* event) {
             const int width = impl_->columnWidths[i];
             if (mousePos.x() >= x && mousePos.x() < x + width) {
                 hoveredCol = i;
-                if (std::abs(mousePos.x() - (x + width)) < 5) {
-                    nearEdge = true;
-                }
-                if (i > 0 && std::abs(mousePos.x() - x) < 5) {
-                    hoveredCol = i - 1;
-                    nearEdge = true;
-                }
+                if (std::abs(mousePos.x() - (x + width)) < 5) nearEdge = true;
+                if (i > 0 && std::abs(mousePos.x() - x) < 5) { hoveredCol = i - 1; nearEdge = true; }
                 break;
             }
             x += width;
         }
-
-        if (nearEdge) {
-            viewport()->setCursor(Qt::SplitHCursor);
-        } else {
-            viewport()->unsetCursor();
-        }
-
-        if (hoveredCol != impl_->hoverHeaderColumn) {
-            impl_->hoverHeaderColumn = hoveredCol;
-            viewport()->update();
-        }
+        viewport()->setCursor(nearEdge ? Qt::SplitHCursor : Qt::ArrowCursor);
+        if (hoveredCol != impl_->hoverHeaderColumn) { impl_->hoverHeaderColumn = hoveredCol; viewport()->update(); }
     } else {
-        viewport()->unsetCursor();
-        if (impl_->hoverHeaderColumn != -1) {
-            impl_->hoverHeaderColumn = -1;
-            viewport()->update();
-        }
+        viewport()->setCursor(Qt::ArrowCursor);
+        if (impl_->hoverHeaderColumn != -1) { impl_->hoverHeaderColumn = -1; viewport()->update(); }
     }
 
     const QModelIndex idx = indexAt(mousePos);
-
-    // Branch Hover Logic
     QModelIndex branchIdx;
     if (idx.isValid() && mousePos.y() >= impl_->headerHeight) {
         const QRect rowRect = visualRect(idx);
         const int row = impl_->rowForIndex(idx);
         const int depth = (row >= 0 && row < impl_->visibleRows.size()) ? impl_->visibleRows[row].depth : 0;
-        const QRect branchRect(
-            8 + depth * impl_->indentWidth - horizontalScrollBar()->value(),
-            rowRect.top(),
-            20,
-            rowRect.height());
-        if (impl_->hasChildren(idx) && branchRect.contains(mousePos)) {
-            branchIdx = idx;
-        }
+        const QRect branchRect(8 + depth * impl_->indentWidth - horizontalScrollBar()->value(), rowRect.top(), 20, rowRect.height());
+        if (impl_->hasChildren(idx) && branchRect.contains(mousePos)) branchIdx = idx;
     }
-    if (branchIdx != impl_->hoverBranchIndex) {
-        impl_->hoverBranchIndex = branchIdx;
-        viewport()->update();
-    }
+    if (branchIdx != impl_->hoverBranchIndex) { impl_->hoverBranchIndex = branchIdx; viewport()->update(); }
 
     if (!impl_->hoverTimer) {
         impl_->hoverTimer = new QTimer(this);
@@ -1603,66 +1611,48 @@ void ArtifactProjectView::mouseMoveEvent(QMouseEvent* event) {
         connect(impl_->hoverTimer, &QTimer::timeout, this, [this]() {
             const QPoint localPos = viewport()->mapFromGlobal(QCursor::pos());
             if (!viewport()->rect().contains(localPos)) return;
-
             const QModelIndex currentIndex = indexAt(localPos);
             if (!currentIndex.isValid() || currentIndex != impl_->hoverIndex) return;
-
             QModelIndex sourceIdx = currentIndex;
-            if (auto proxy = qobject_cast<const QSortFilterProxyModel*>(currentIndex.model())) {
-                sourceIdx = proxy->mapToSource(currentIndex).siblingAtColumn(0);
-            }
+            if (auto proxy = qobject_cast<const QSortFilterProxyModel*>(currentIndex.model())) sourceIdx = proxy->mapToSource(currentIndex).siblingAtColumn(0);
             const QVariant typeVar = sourceIdx.data(Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::ProjectItemType));
             if (!typeVar.isValid()) return;
             const auto type = static_cast<eProjectItemType>(typeVar.toInt());
             if (type != eProjectItemType::Footage && type != eProjectItemType::Composition) return;
-
             if (!impl_->hoverPopup) impl_->hoverPopup = new HoverThumbnailPopupWidget();
             const QVariant ptrVar = sourceIdx.data(Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::ProjectItemPtr));
             ProjectItem* item = ptrVar.isValid() ? reinterpret_cast<ProjectItem*>(ptrVar.value<quintptr>()) : nullptr;
-            const QPixmap preview = projectItemPreviewPixmap(item, QSize(200, 112));
-            impl_->hoverPopup->setThumbnail(preview);
+            impl_->hoverPopup->setThumbnail(projectItemPreviewPixmap(item, QSize(200, 112)));
             impl_->hoverPopup->setLabels(projectItemMetadataLines(sourceIdx, item));
-            const QRect itemRect = visualRect(currentIndex);
-            QPoint popupPos = viewport()->mapToGlobal(itemRect.topRight() + QPoint(14, 6));
-            impl_->hoverPopup->showAt(popupPos);
+            impl_->hoverPopup->showAt(viewport()->mapToGlobal(visualRect(currentIndex).topRight() + QPoint(14, 6)));
         });
     }
+
     if (event->buttons() != Qt::NoButton && impl_->resizingColumn == -1) {
-        if (impl_->hoverPopup) {
-            impl_->hoverPopup->hide();
-        }
+        if (impl_->hoverPopup) impl_->hoverPopup->hide();
         impl_->hoverTimer->stop();
         impl_->hoverIndex = QModelIndex();
-        
-        // Start Drag if moved enough
         if ((mousePos - impl_->dragStartPos).manhattanLength() >= QApplication::startDragDistance()) {
             const QModelIndex dragIdx = indexAt(impl_->dragStartPos);
-            if (dragIdx.isValid()) {
+            if (dragIdx.isValid() && selectionModel()) {
                 auto* drag = new QDrag(this);
-                auto* mimeData = impl_->model->mimeData({dragIdx});
-                drag->setMimeData(mimeData);
+                drag->setMimeData(impl_->model->mimeData(selectionModel()->selectedRows(0)));
                 drag->exec(Qt::MoveAction);
             }
         }
-        
         event->accept();
         return;
     }
+
     if (idx != impl_->hoverIndex) {
-        if (impl_->hoverPopup) {
-            impl_->hoverPopup->hide();
-        }
+        if (impl_->hoverPopup) impl_->hoverPopup->hide();
         impl_->hoverIndex = idx;
         impl_->hoverStartPos = mousePos;
         impl_->hoverTimer->stop();
-        if (idx.isValid()) {
-            impl_->hoverTimer->start(1100);
-        }
+        if (idx.isValid()) impl_->hoverTimer->start(1100);
         viewport()->update();
     } else if (idx.isValid() && (mousePos - impl_->hoverStartPos).manhattanLength() > 6) {
-        if (impl_->hoverPopup) {
-            impl_->hoverPopup->hide();
-        }
+        if (impl_->hoverPopup) impl_->hoverPopup->hide();
         impl_->hoverTimer->stop();
         impl_->hoverStartPos = mousePos;
         impl_->hoverTimer->start(1100);
@@ -2269,55 +2259,25 @@ void ArtifactProjectView::dragMoveEvent(QDragMoveEvent* event) {
 
 void ArtifactProjectView::mousePressEvent(QMouseEvent* event) {
     if (impl_) {
-        if (impl_->hoverTimer) {
-            impl_->hoverTimer->stop();
-        }
-        if (impl_->hoverPopup) {
-            impl_->hoverPopup->hide();
-        }
+        impl_->hoverTimer->stop();
+        if (impl_->hoverPopup) impl_->hoverPopup->hide();
+        if (impl_->nameEditor && impl_->nameEditor->isVisible()) { impl_->nameEditor->hide(); impl_->editingIndex = QModelIndex(); viewport()->update(); }
     }
-
     const QPoint mousePos = event->position().toPoint();
-
-    // Header Interaction (Sort / Start Resize)
     if (mousePos.y() < impl_->headerHeight) {
         int x = -horizontalScrollBar()->value();
         for (int i = 0; i < impl_->columnWidths.size(); ++i) {
             const int width = impl_->columnWidths[i];
-            const QRect headerRect(x, 0, width, impl_->headerHeight);
-            if (headerRect.contains(mousePos)) {
-                // Check for resize start (near right edge)
-                if (std::abs(mousePos.x() - headerRect.right()) < 5) {
-                    impl_->resizingColumn = i;
-                    impl_->resizeStartX = mousePos.x();
-                    event->accept();
-                    return;
-                }
-                // Check for resize start (near left edge)
-                if (i > 0 && std::abs(mousePos.x() - headerRect.left()) < 5) {
-                    impl_->resizingColumn = i - 1;
-                    impl_->resizeStartX = mousePos.x();
-                    event->accept();
-                    return;
-                }
-                
-                // Sorting Toggle
-                if (impl_->sortingEnabled) {
-                    if (impl_->sortColumn == i) {
-                        impl_->sortOrder = (impl_->sortOrder == Qt::AscendingOrder) ? Qt::DescendingOrder : Qt::AscendingOrder;
-                    } else {
-                        impl_->sortColumn = i;
-                        impl_->sortOrder = Qt::AscendingOrder;
-                    }
-                    sortByColumn(impl_->sortColumn, impl_->sortOrder);
-                }
-                event->accept();
+            const QRect hr(x, 0, width, impl_->headerHeight);
+            if (hr.contains(mousePos)) {
+                if (std::abs(mousePos.x() - hr.right()) < 5) { impl_->resizingColumn = i; impl_->resizeStartX = mousePos.x(); return; }
+                if (i > 0 && std::abs(mousePos.x() - hr.left()) < 5) { impl_->resizingColumn = i - 1; impl_->resizeStartX = mousePos.x(); return; }
+                if (impl_->sortingEnabled) { impl_->sortOrder = (impl_->sortColumn == i && impl_->sortOrder == Qt::AscendingOrder) ? Qt::DescendingOrder : Qt::AscendingOrder; impl_->sortColumn = i; sortByColumn(i, impl_->sortOrder); }
                 return;
             }
             x += width;
         }
     }
-
     if (event->button() == Qt::LeftButton) {
         impl_->dragStartPos = mousePos;
         const QModelIndex idx = indexAt(mousePos);
@@ -2325,128 +2285,50 @@ void ArtifactProjectView::mousePressEvent(QMouseEvent* event) {
             const QRect rowRect = visualRect(idx);
             const int row = impl_->rowForIndex(idx);
             const int depth = (row >= 0 && row < impl_->visibleRows.size()) ? impl_->visibleRows[row].depth : 0;
-            const QRect branchRect(
-                8 + depth * impl_->indentWidth - horizontalScrollBar()->value(),
-                rowRect.top(),
-                20,
-                rowRect.height());
-            if (impl_->hasChildren(idx) && branchRect.contains(mousePos)) {
-                setExpanded(idx, !impl_->isExpanded(idx));
-                event->accept();
-                return;
+            const QRect branchRect(8 + depth * impl_->indentWidth - horizontalScrollBar()->value(), rowRect.top(), 20, rowRect.height());
+            if (impl_->hasChildren(idx) && branchRect.contains(mousePos)) { setExpanded(idx, !impl_->isExpanded(idx)); return; }
+            if (selectionModel()) {
+                if (event->modifiers() & Qt::ControlModifier) selectionModel()->select(idx, QItemSelectionModel::Toggle | QItemSelectionModel::Rows);
+                else if (event->modifiers() & Qt::ShiftModifier) {
+                    QModelIndex curr = selectionModel()->currentIndex();
+                    int s = impl_->rowForIndex(curr), e = impl_->rowForIndex(idx);
+                    if (s != -1 && e != -1) { QItemSelection sel; for (int i = std::min(s, e); i <= std::max(s, e); ++i) sel.select(impl_->visibleRows[i].index0, impl_->visibleRows[i].index0); selectionModel()->select(sel, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows); }
+                } else selectionModel()->setCurrentIndex(idx, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
             }
-
-            setCurrentIndex(idx);
             itemSelected(idx);
-
-            QModelIndex sourceIdx = idx;
-            if (auto proxy = qobject_cast<const QSortFilterProxyModel*>(idx.model())) {
-                sourceIdx = proxy->mapToSource(idx).siblingAtColumn(0);
-            }
-            const QVariant typeVar = sourceIdx.data(Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::ProjectItemType));
-            if (typeVar.isValid() && typeVar.toInt() == static_cast<int>(eProjectItemType::Composition)) {
-                const QVariant idVar = sourceIdx.data(Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::CompositionId));
-                if (idVar.isValid()) {
-                    const CompositionID cid(idVar.toString());
-                    ArtifactProjectService::instance()->changeCurrentComposition(cid);
-                }
-            }
-            event->accept();
             return;
         }
-        if (selectionModel()) {
-            selectionModel()->clearSelection();
-        }
+        if (selectionModel()) selectionModel()->clearSelection();
         viewport()->update();
     }
     QAbstractScrollArea::mousePressEvent(event);
 }
 
 void ArtifactProjectView::mouseReleaseEvent(QMouseEvent* event) {
-    if (impl_) {
-        if (impl_->hoverTimer) {
-            impl_->hoverTimer->stop();
-        }
-        if (impl_->resizingColumn != -1) {
-            impl_->resizingColumn = -1;
-            viewport()->unsetCursor();
-            event->accept();
-            return;
-        }
-    }
+    if (impl_->resizingColumn != -1) { impl_->resizingColumn = -1; viewport()->unsetCursor(); return; }
     QAbstractScrollArea::mouseReleaseEvent(event);
 }
 
 void ArtifactProjectView::keyPressEvent(QKeyEvent* event)
 {
-    if (!impl_ || impl_->visibleRows.isEmpty()) {
-        QAbstractScrollArea::keyPressEvent(event);
-        return;
-    }
-
+    if (!impl_ || impl_->visibleRows.isEmpty()) { QAbstractScrollArea::keyPressEvent(event); return; }
+    if (event->key() == Qt::Key_F2) { if (currentIndex().isValid()) editIndex(currentIndex()); return; }
     QModelIndex target = currentIndex();
-    int currentRow = impl_->rowForIndex(target);
-    if (currentRow < 0) {
-        currentRow = 0;
-        target = impl_->visibleRows.front().index0;
-    }
-
-    const int viewportRows = std::max(1, (viewport()->height() - impl_->headerHeight) / std::max(1, impl_->rowHeight));
-    const int lastVisibleRow = static_cast<int>(impl_->visibleRows.size()) - 1;
+    int currRow = impl_->rowForIndex(target);
+    if (currRow < 0) { currRow = 0; target = impl_->visibleRows.front().index0; }
+    const int vRows = (viewport()->height() - impl_->headerHeight) / impl_->rowHeight;
+    const int lastRow = static_cast<int>(impl_->visibleRows.size()) - 1;
     switch (event->key()) {
-    case Qt::Key_Up:
-        target = impl_->visibleRows[std::max(0, currentRow - 1)].index0;
-        break;
-    case Qt::Key_Down:
-        target = impl_->visibleRows[std::min(currentRow + 1, lastVisibleRow)].index0;
-        break;
-    case Qt::Key_Home:
-        target = impl_->visibleRows.front().index0;
-        break;
-    case Qt::Key_End:
-        target = impl_->visibleRows.back().index0;
-        break;
-    case Qt::Key_PageUp:
-        target = impl_->visibleRows[std::max(0, currentRow - viewportRows)].index0;
-        break;
-    case Qt::Key_PageDown:
-        target = impl_->visibleRows[std::min(currentRow + viewportRows, lastVisibleRow)].index0;
-        break;
-    case Qt::Key_Left:
-        if (target.isValid() && impl_->hasChildren(target) && impl_->isExpanded(target)) {
-            collapse(target);
-        } else if (target.parent().isValid()) {
-            target = target.parent().siblingAtColumn(0);
-        } else {
-            event->accept();
-            return;
-        }
-        break;
-    case Qt::Key_Right:
-        if (target.isValid() && impl_->hasChildren(target) && !impl_->isExpanded(target)) {
-            expand(target);
-        } else if (target.isValid() && impl_->hasChildren(target) && impl_->model->rowCount(target) > 0) {
-            target = impl_->model->index(0, 0, target);
-        } else {
-            event->accept();
-            return;
-        }
-        break;
-    case Qt::Key_Return:
-    case Qt::Key_Enter:
-        handleItemDoubleClicked(target);
-        event->accept();
-        return;
-    default:
-        QAbstractScrollArea::keyPressEvent(event);
-        return;
+    case Qt::Key_Up: target = impl_->visibleRows[std::max(0, currRow - 1)].index0; break;
+    case Qt::Key_Down: target = impl_->visibleRows[std::min(currRow + 1, lastRow)].index0; break;
+    case Qt::Key_PageUp: target = impl_->visibleRows[std::max(0, currRow - vRows)].index0; break;
+    case Qt::Key_PageDown: target = impl_->visibleRows[std::min(currRow + vRows, lastRow)].index0; break;
+    case Qt::Key_Left: if (target.isValid() && impl_->hasChildren(target) && impl_->isExpanded(target)) collapse(target); else if (target.parent().isValid()) target = target.parent().siblingAtColumn(0); return;
+    case Qt::Key_Right: if (target.isValid() && impl_->hasChildren(target) && !impl_->isExpanded(target)) expand(target); else if (target.isValid() && impl_->hasChildren(target)) target = impl_->model->index(0, 0, target); return;
+    case Qt::Key_Return: case Qt::Key_Enter: handleItemDoubleClicked(target); return;
+    default: QAbstractScrollArea::keyPressEvent(event); return;
     }
-
-    if (target.isValid()) {
-        setCurrentIndex(target);
-        itemSelected(target);
-    }
-    event->accept();
+    if (target.isValid()) { setCurrentIndex(target); itemSelected(target); }
 }
 
 QSize ArtifactProjectView::sizeHint() const { return QSize(400, 400); }
