@@ -13,6 +13,7 @@ module;
 module Artifact.Widgets.CompositionEditor;
 
 import Artifact.Widgets.CompositionRenderController;
+import Artifact.Widgets.TransformGizmo;
 import Color.Float;
 import Artifact.Composition.Abstract;
 import Artifact.Service.Project;
