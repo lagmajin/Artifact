@@ -8,6 +8,7 @@
 #include <QApplication>
 #include <QWidget>
 #include <QColor>
+#include <QHeaderView>
 #include <QStatusBar>
 #include <QMessageBox>
 #include <QEvent>
@@ -17,6 +18,7 @@
 #include <QShowEvent>
 #include <QList>
 #include <QTimer>
+#include <QTreeView>
 #if defined(_WIN32)
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -27,9 +29,11 @@
 module Artifact.MainWindow;
 
 import Artifact.MainWindow;
+import Artifact.Widgets.ProjectManagerWidget;
 import Menu.MenuBar;
 import Widgets.ToolBar;
 import Widgets.Dock.StyleManager;
+import Artifact.Widgets.MessageBox;
 
 namespace Artifact {
 
@@ -85,37 +89,22 @@ void refreshFloatingWidgetTree(QWidget* widget)
   return;
  }
 
- // Do NOT call layout->invalidate()/activate() here.
- // Qt's layout system already propagates geometry changes when the
- // floating container is resized, shown, or activated.  Invalidating
- // and re-activating the layout after Qt has finished processing can
- // undo or interfere with correct child geometry — especially for
- // complex widgets like QTreeView whose internal item layout depends
- // on stable viewport dimensions.
+ // With WA_OpaquePaintEvent removed from the project panel hierarchy,
+ // Qt's backing store now properly clears newly exposed areas during
+ // resize.  We only need to ensure QTreeView's internal item layout
+ // is up-to-date and schedule a normal (deferred) repaint.
  //
- // Similarly, do NOT call updateGeometry() on children.  That tells
- // parent layouts that size hints may have changed, triggering
- // unnecessary layout recalculation (layout thrashing) that can leave
- // child widgets with stale or inconsistent geometry.
+ // Avoid layout->activate(), forced repaint(), or updateGeometry()
+ // on children — these fight against Qt's own layout propagation
+ // and can produce stale-geometry artifacts during live resize.
+
+ for (auto* projectView : widget->findChildren<Artifact::ArtifactProjectView*>()) {
+  if (projectView) {
+   projectView->refreshVisibleContent();
+  }
+ }
 
  widget->update();
-
- for (auto* scrollArea : widget->findChildren<QAbstractScrollArea*>()) {
-  if (!scrollArea) {
-   continue;
-  }
-  if (scrollArea->viewport()) {
-   scrollArea->viewport()->update();
-  }
-  scrollArea->update();
- }
-
- for (auto* child : widget->findChildren<QWidget*>()) {
-  if (!child || child->isWindow()) {
-   continue;
-  }
-  child->update();
- }
 }
 
 ads::CFloatingDockContainer* findFloatingDockContainer(QWidget* widget)
@@ -136,20 +125,11 @@ void refreshDockWidgetSurface(ads::CDockWidget* dock)
   return;
  }
 
- dock->updateGeometry();
  dock->update();
 
  if (auto* tab = dock->tabWidget()) {
   tab->updateStyle();
-  tab->updateGeometry();
   tab->update();
-  for (auto* child : tab->findChildren<QWidget*>()) {
-   if (!child) {
-    continue;
-   }
-   child->updateGeometry();
-   child->update();
-  }
  }
 
  if (auto* content = dock->widget()) {
@@ -171,6 +151,9 @@ void scheduleFloatingRefresh(ads::CFloatingDockContainer* floatingWidget)
  QTimer::singleShot(0, floatingWidget, [floatingWidget]() {
   floatingWidget->setProperty("artifactFloatingRefreshScheduled", false);
   refreshFloatingWidgetTree(floatingWidget);
+  QTimer::singleShot(16, floatingWidget, [floatingWidget]() {
+   refreshFloatingWidgetTree(floatingWidget);
+  });
  });
 }
 
@@ -234,7 +217,7 @@ public:
 ArtifactMainWindow::ArtifactMainWindow(QWidget* parent)
  : QMainWindow(parent), impl_(new Impl())
 {
- //CDockManager::setConfigFlags(CDockManager::DefaultOpaqueConfig);
+ CDockManager::setConfigFlags(CDockManager::DefaultOpaqueConfig);
  //CDockManager::setConfigFlag(CDockManager::RetainTabSizeWhenCloseButtonHidden, true);
  CDockManager::setConfigFlag(CDockManager::FocusHighlighting, true);
 
@@ -710,12 +693,7 @@ void ArtifactMainWindow::keyReleaseEvent(QKeyEvent* event)
 
 void ArtifactMainWindow::closeEvent(QCloseEvent* event)
 {
- const auto ret = QMessageBox::question(
-  this,
-  QStringLiteral("Confirm"),
-  QStringLiteral("Close Artifact?"),
-  QMessageBox::Yes | QMessageBox::No);
- if (ret == QMessageBox::Yes) {
+ if (ArtifactMessageBox::confirmAction(this, QStringLiteral("終了"), QStringLiteral("Artifact を終了しますか？"))) {
   event->accept();
  } else {
   event->ignore();

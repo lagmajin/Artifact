@@ -39,6 +39,7 @@
  module ApplicationSettingDialog;
 
 import Artifact.Service.Application;
+import Artifact.Widgets.MessageBox;
 
 namespace ArtifactCore {
 
@@ -608,13 +609,9 @@ MemoryAndCpuSettingPage::MemoryAndCpuSettingPage(QWidget* parent /*= nullptr*/)
 
     // Clear cache handler
     connect(impl_->clearCacheButton_, &QPushButton::clicked, this, [this]() {
-        const auto answer = QMessageBox::question(
-            this,
+        if (!ArtifactMessageBox::confirmDelete(this,
             QStringLiteral("Clear Cache"),
-            QStringLiteral("Remove generated proxy and recovery cache files?"),
-            QMessageBox::Yes | QMessageBox::No,
-            QMessageBox::No);
-        if (answer != QMessageBox::Yes) {
+            QStringLiteral("Remove generated proxy and recovery cache files?"))) {
             return;
         }
 
