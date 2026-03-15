@@ -107,6 +107,7 @@ import Artifact.Layer.Search.Query;
 import Artifact.Layer.InitParams;
 import Artifact.Widgets.LayerPanelWidget;
 import Artifact.Widgets.CreatePlaneLayerDialog;
+import Artifact.Widgets.MessageBox;
 import Dialog.Composition;
 import Utils.Path;
 
@@ -2011,13 +2012,7 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
                 return;
             }
             const QString message = svc->projectItemRemovalConfirmationMessage(item);
-            const auto answer = QMessageBox::question(
-                this,
-                QStringLiteral("項目削除"),
-                message,
-                QMessageBox::Yes | QMessageBox::No,
-                QMessageBox::No);
-            if (answer != QMessageBox::Yes) {
+            if (!ArtifactMessageBox::confirmDelete(this, QStringLiteral("項目削除"), message)) {
                 return;
             }
             if (!svc->removeProjectItem(item)) {

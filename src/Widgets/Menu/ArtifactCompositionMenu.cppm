@@ -18,6 +18,7 @@ import Artifact.Composition.InitParams;
 import Artifact.Layer.InitParams;
 import Artifact.Widgets.SoftwareRenderInspectors;
 import Dialog.Composition;
+import Artifact.Widgets.MessageBox;
 
 namespace Artifact {
 using namespace ArtifactCore;
@@ -173,13 +174,7 @@ void ArtifactCompositionMenu::Impl::removeCurrent()
 
  const QString message = service->compositionRemovalConfirmationMessage(current->id());
 
- const auto answer = QMessageBox::question(
-  mainWindow_ ? mainWindow_ : menu_,
-  "コンポジション削除",
-  message,
-  QMessageBox::Yes | QMessageBox::No,
-  QMessageBox::No);
- if (answer != QMessageBox::Yes) {
+ if (!ArtifactMessageBox::confirmDelete(mainWindow_ ? mainWindow_ : menu_, "コンポジション削除", message)) {
   return;
  }
 

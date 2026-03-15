@@ -67,6 +67,7 @@ import Artifact.Render.Queue.Service;
 import Artifact.Service.Project;
 import Artifact.Widget.Dialog.RenderOutputSetting;
 import Core.FastSettingsStore;
+import Artifact.Widgets.MessageBox;
 
 
 namespace Artifact
@@ -1185,13 +1186,9 @@ QPushButton {
     if (impl_->presetStore_) {
       const QString key = impl_->presetKeyForName(name.trimmed());
       if (!key.isEmpty() && impl_->presetStore_->contains(key)) {
-        const auto overwrite = QMessageBox::question(
-          this,
+        if (!ArtifactMessageBox::confirmOverwrite(this,
           QStringLiteral("Overwrite Preset"),
-          QStringLiteral("Preset \"%1\" already exists. Overwrite?").arg(name.trimmed()),
-          QMessageBox::Yes | QMessageBox::No,
-          QMessageBox::No);
-        if (overwrite != QMessageBox::Yes) {
+          QStringLiteral("Preset \"%1\" already exists. Overwrite?").arg(name.trimmed()))) {
           return;
         }
       }
@@ -1227,13 +1224,9 @@ QPushButton {
       return;
     }
     const QString name = impl_->presetCombo->currentText().trimmed();
-    const auto answer = QMessageBox::question(
-      this,
+    if (!ArtifactMessageBox::confirmDelete(this,
       QStringLiteral("Delete Preset"),
-      QStringLiteral("Delete preset \"%1\"?").arg(name),
-      QMessageBox::Yes | QMessageBox::No,
-      QMessageBox::No);
-    if (answer != QMessageBox::Yes) {
+      QStringLiteral("Delete preset \"%1\"?").arg(name))) {
       return;
     }
     if (!impl_->removePreset(name)) {
@@ -1295,13 +1288,9 @@ QPushButton {
     if (!impl_->service || impl_->service->jobCount() <= 0) {
       return;
     }
-    const auto answer = QMessageBox::question(
-      this,
+    if (!ArtifactMessageBox::confirmDelete(this,
       QStringLiteral("Clear Render Queue"),
-      QStringLiteral("レンダーキュー内の全ジョブを削除しますか？"),
-      QMessageBox::Yes | QMessageBox::No,
-      QMessageBox::No);
-    if (answer != QMessageBox::Yes) {
+      QStringLiteral("レンダーキュー内の全ジョブを削除しますか？"))) {
       impl_->logUiEvent(QStringLiteral("Requested: clear all render jobs (canceled)"), true);
       return;
     }

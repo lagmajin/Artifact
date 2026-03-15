@@ -83,6 +83,7 @@ import Artifact.Effect.Rasterizer.DropShadow;
 import Artifact.Effect.Glow;
 import Artifact.Effect.Wave;
 import Artifact.Effect.Spherize;
+import Artifact.Widgets.MessageBox;
 
 namespace Artifact {
 
@@ -709,13 +710,9 @@ void ArtifactInspectorWidget::Impl::handleRemoveEffectClicked(int rackIndex)
   if (!layer) return;
   Q_UNUSED(layer);
 
-  const auto answer = QMessageBox::question(
-   containerWidget,
+  if (!ArtifactMessageBox::confirmDelete(containerWidget,
    QStringLiteral("Remove Effect"),
-   QStringLiteral("選択したエフェクトを削除しますか？"),
-   QMessageBox::Yes | QMessageBox::No,
-   QMessageBox::No);
-  if (answer != QMessageBox::Yes) {
+   QStringLiteral("選択したエフェクトを削除しますか？"))) {
    return;
   }
 
