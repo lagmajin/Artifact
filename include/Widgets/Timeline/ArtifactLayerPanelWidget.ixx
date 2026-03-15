@@ -65,6 +65,8 @@ export namespace Artifact
   void setShyHidden(bool hidden);
   void updateLayout();
   QVector<LayerID> visibleTimelineRows() const;
+  int layerRowIndex(const LayerID& id) const;
+  void editLayerName(const LayerID& id);
 
   public /*signals*/:
    void visibleRowsChanged() W_SIGNAL(visibleRowsChanged)

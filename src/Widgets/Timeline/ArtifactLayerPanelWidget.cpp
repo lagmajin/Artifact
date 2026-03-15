@@ -24,6 +24,7 @@
 #include <QSet>
 #include <QPolygon>
 #include <QIcon>
+#include <QtSVG/QSvgRenderer>
 #include <QComboBox>
 #include <QPointer>
 #include <QLineEdit>
@@ -63,14 +64,36 @@ namespace {
   constexpr int kInlineComboReserve = kInlineParentWidth + kInlineBlendWidth + kInlineComboGap + 10;
  constexpr int kLayerNameMinWidth = 120;
 
+ QIcon loadSvgAsIcon(const QString& path, int size = 16)
+ {
+  if (path.isEmpty()) {
+   return QIcon();
+  }
+  if (path.endsWith(QStringLiteral(".svg"), Qt::CaseInsensitive)) {
+   QSvgRenderer renderer(path);
+   if (renderer.isValid()) {
+    QPixmap pixmap(size, size);
+    pixmap.fill(Qt::transparent);
+    QPainter painter(&pixmap);
+    renderer.render(&painter);
+    painter.end();
+    if (!pixmap.isNull()) {
+     return QIcon(pixmap);
+    }
+   }
+   return QIcon();
+  }
+  return QIcon(path);
+ }
+
  QIcon loadLayerPanelIcon(const QString& resourceRelativePath, const QString& fallbackFileName = {})
  {
-  QIcon icon(resolveIconResourcePath(resourceRelativePath));
+  QIcon icon = loadSvgAsIcon(resolveIconResourcePath(resourceRelativePath));
   if (!icon.isNull()) {
    return icon;
   }
   if (!fallbackFileName.isEmpty()) {
-   icon = QIcon(resolveIconPath(fallbackFileName));
+   icon = loadSvgAsIcon(resolveIconPath(fallbackFileName));
   }
   return icon;
  }
@@ -291,28 +314,28 @@ namespace {
   : QWidget(parent), impl_(new Impl())
  {
   auto visButton = impl_->visibilityButton = new QPushButton();
-  visButton->setFixedSize(QSize(kLayerHeaderButtonSize, kLayerHeaderButtonSize));
+  visButton->setFixedSize(QSize(kLayerColumnWidth, kLayerHeaderButtonSize));
   visButton->setIcon(impl_->visibilityIcon);
   visButton->setStyleSheet("background-color: #2D2D30; border: none; border-right: 1px solid #1a1a1a;");
   visButton->setFlat(true);
-  
+
   auto lockButton = impl_->lockButton = new QPushButton();
-  lockButton->setFixedSize(QSize(kLayerHeaderButtonSize, kLayerHeaderButtonSize));
+  lockButton->setFixedSize(QSize(kLayerColumnWidth, kLayerHeaderButtonSize));
   if (!impl_->lockIcon.isNull()) lockButton->setIcon(impl_->lockIcon);
   lockButton->setStyleSheet("background-color: #2D2D30; border: none; border-right: 1px solid #1a1a1a;");
 
   auto soloButton = impl_->soloButton = new QPushButton();
-  soloButton->setFixedSize(QSize(kLayerHeaderButtonSize, kLayerHeaderButtonSize));
+  soloButton->setFixedSize(QSize(kLayerColumnWidth, kLayerHeaderButtonSize));
   if (!impl_->soloIcon.isNull()) soloButton->setIcon(impl_->soloIcon);
   soloButton->setStyleSheet("background-color: #2D2D30; border: none; border-right: 1px solid #1a1a1a;");
 
   auto soundButton = impl_->soundButton = new QPushButton();
-  soundButton->setFixedSize(QSize(kLayerHeaderButtonSize, kLayerHeaderButtonSize));
+  soundButton->setFixedSize(QSize(kLayerColumnWidth, kLayerHeaderButtonSize));
   if (!impl_->soundIcon.isNull()) soundButton->setIcon(impl_->soundIcon);
   soundButton->setStyleSheet("background-color: #2D2D30; border: none; border-right: 1px solid #1a1a1a;");
 
   auto shyButton = impl_->shyButton = new QPushButton;
-  shyButton->setFixedSize(QSize(kLayerHeaderButtonSize, kLayerHeaderButtonSize));
+  shyButton->setFixedSize(QSize(kLayerColumnWidth, kLayerHeaderButtonSize));
   shyButton->setCheckable(true);
   if (!impl_->shyIcon.isNull()) shyButton->setIcon(impl_->shyIcon);
   shyButton->setToolTip("Master Shy Switch");
@@ -576,8 +599,30 @@ int ArtifactLayerPanelHeaderWidget::totalHeaderHeight() const
   setFocusPolicy(Qt::StrongFocus);
 
   if (auto* service = ArtifactProjectService::instance()) {
-    QObject::connect(service, &ArtifactProjectService::layerCreated, this, [this](const CompositionID& compId, const LayerID&) {
-      if (impl_->compositionId == compId) this->updateLayout();
+    QObject::connect(service, &ArtifactProjectService::layerCreated, this, [this](const CompositionID& compId, const LayerID& layerId) {
+      if (impl_->compositionId == compId) {
+        this->updateLayout();
+        
+        // Auto-focus Inspector
+        const auto widgets = QApplication::allWidgets();
+        for (QWidget* w : widgets) {
+         if (!w) continue;
+         const QString className = QString::fromLatin1(w->metaObject()->className());
+         if (className.contains("ArtifactInspectorWidget", Qt::CaseInsensitive)) {
+          w->show();
+          w->raise();
+          w->activateWindow();
+          break;
+         }
+        }
+        
+        // Start inline editing of the new layer on the next event loop tick
+        QTimer::singleShot(0, this, [this, layerId]() {
+          this->editLayerName(layerId);
+          // Ensure layer is visible in the scroll area wrapper if possible
+          Q_EMIT visibleRowsChanged();
+        });
+      }
     });
     QObject::connect(service, &ArtifactProjectService::layerRemoved, this, [this](const CompositionID& compId, const LayerID&) {
       if (impl_->compositionId == compId) this->updateLayout();
@@ -637,13 +682,67 @@ int ArtifactLayerPanelHeaderWidget::totalHeaderHeight() const
   rows.reserve(impl_->visibleRows.size());
   for (const auto& row : impl_->visibleRows) {
    if (row.kind == Impl::RowKind::Layer && row.layer) {
-    rows.push_back(row.layer->id());
+    rows.append(row.layer->id());
    } else {
-    rows.push_back(LayerID());
+    rows.append(LayerID::Nil());
    }
   }
   return rows;
  }
+
+ int ArtifactLayerPanelWidget::layerRowIndex(const LayerID& id) const
+ {
+  for (int i = 0; i < impl_->visibleRows.size(); ++i) {
+   if (impl_->visibleRows[i].layer && impl_->visibleRows[i].layer->id() == id) {
+    return i;
+   }
+  }
+  return -1;
+ }
+
+ void ArtifactLayerPanelWidget::editLayerName(const LayerID& id)
+ {
+  int idx = layerRowIndex(id);
+  if (idx >= 0) {
+   impl_->selectedLayerId = id;
+   update();
+
+   // Fire a dummy F2 event or replicate F2 logic
+   if (!impl_->inlineNameEditor) {
+    auto comp = safeCompositionLookup(impl_->compositionId);
+    if (!comp) return;
+    auto l = comp->layerById(id);
+    if (!l) return;
+
+    impl_->inlineNameEditor = new QLineEdit(this);
+    impl_->inlineNameEditor->setText(l->layerName());
+    impl_->inlineNameEditor->selectAll();
+    impl_->inlineNameEditor->setStyleSheet("background-color: #2D2D30; color: white; border: 1px solid #007ACC;");
+
+    // Position it
+    const int indent = impl_->visibleRows[idx].depth * kLayerIndent;
+    int xOffset = kLayerColorTagWidth + kLayerEyeWidth + kLayerLockWidth + kLayerSoloWidth + kLayerArrowWidth + indent;
+    const int headerW = impl_->header ? impl_->header->buttonSize() * 2 : 56;
+    const int editorWidth = std::max(60, kLayerColumnWidth - xOffset - headerW - 4);
+    impl_->inlineNameEditor->setGeometry(xOffset + 2, idx * kLayerRowHeight + 2, editorWidth, kLayerRowHeight - 4);
+
+    QObject::connect(impl_->inlineNameEditor, &QLineEdit::editingFinished, this, [this, id]() {
+      if (!impl_->inlineNameEditor) return;
+      QString newName = impl_->inlineNameEditor->text();
+      impl_->inlineNameEditor->deleteLater();
+      impl_->inlineNameEditor = nullptr;
+      if (auto* svc = ArtifactProjectService::instance()) {
+        svc->renameLayerInCurrentComposition(id, newName);
+      }
+      setFocus();
+    });
+
+    impl_->inlineNameEditor->show();
+    impl_->inlineNameEditor->setFocus();
+   }
+  }
+ }
+
 
  void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
  {
