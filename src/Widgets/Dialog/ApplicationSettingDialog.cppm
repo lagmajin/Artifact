@@ -32,6 +32,7 @@
 #ifdef Q_OS_WIN
 #include <windows.h>
 #include <psapi.h>
+#undef MessageBox
 #endif
 #include <wobjectimpl.h>
 
