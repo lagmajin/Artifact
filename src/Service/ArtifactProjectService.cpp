@@ -86,6 +86,15 @@ namespace Artifact
  void ArtifactProjectService::Impl::addLayerToCurrentComposition(const ArtifactLayerInitParams& params)
  {
   auto& manager = projectManager();
+  LayerID selectedLayerId;
+  if (auto* app = ArtifactApplicationManager::instance()) {
+   if (auto* selectionManager = app->layerSelectionManager()) {
+    if (auto selectedLayer = selectionManager->currentLayer()) {
+     selectedLayerId = selectedLayer->id();
+    }
+   }
+  }
+
   ArtifactLayerResult result;
   bool targetedCurrentComposition = false;
   if (auto comp = currentComposition().lock()) {
@@ -94,8 +103,48 @@ namespace Artifact
   } else {
    result = manager.addLayerToCurrentComposition(const_cast<ArtifactLayerInitParams&>(params));
   }
-  if (result.success && targetedCurrentComposition) {
-   notifyProjectMutation(manager);
+  if (result.success && result.layer) {
+   if (targetedCurrentComposition) {
+    if (auto comp = currentComposition().lock()) {
+    if (!selectedLayerId.isNil() && comp->containsLayerById(selectedLayerId)) {
+     const auto allLayers = comp->allLayer();
+     int selectedIndex = -1;
+     int newLayerIndex = -1;
+     for (int i = 0; i < allLayers.size(); ++i) {
+      const auto& layer = allLayers[i];
+      if (!layer) {
+       continue;
+      }
+      if (layer->id() == selectedLayerId) {
+       selectedIndex = i;
+      }
+      if (layer->id() == result.layer->id()) {
+       newLayerIndex = i;
+      }
+     }
+
+     if (selectedIndex >= 0 && newLayerIndex >= 0 && newLayerIndex != selectedIndex) {
+      int targetIndex = selectedIndex;
+      if (newLayerIndex < targetIndex) {
+       targetIndex -= 1;
+      }
+      targetIndex = std::clamp(targetIndex, 0, std::max(0, static_cast<int>(allLayers.size()) - 1));
+      comp->moveLayerToIndex(result.layer->id(), targetIndex);
+     }
+
+     const auto selectedLayer = comp->layerById(selectedLayerId);
+     if (selectedLayer && selectedLayer->hasParent()) {
+      result.layer->setParentById(selectedLayer->parentLayerId());
+     }
+    }
+    }
+
+    notifyProjectMutation(manager);
+   }
+
+   if (auto* service = ArtifactProjectService::instance()) {
+    service->selectLayer(result.layer->id());
+   }
   }
   qDebug() << "[ArtifactProjectService::Impl::addLayerToCurrentComposition] delegated to manager, result=" << result.success;
  }
@@ -209,15 +258,13 @@ namespace Artifact
 
  UniString ArtifactProjectService::Impl::projectName() const
  {
-  
- 	
+  	
   return UniString();
  }
 
  void ArtifactProjectService::Impl::changeProjectName(const UniString& name)
  {
- 
-  
+  	
 
  }
 
@@ -295,8 +342,8 @@ namespace Artifact
   });
   connect(&impl_->projectManager(), &ArtifactProjectManager::layerCreated, this, &ArtifactProjectService::layerCreated);
   connect(&impl_->projectManager(), &ArtifactProjectManager::projectChanged, this, &ArtifactProjectService::projectChanged);
-  
-  
+   
+   
  }
 
  ArtifactProjectService::~ArtifactProjectService()
@@ -754,7 +801,7 @@ bool ArtifactProjectService::moveEffectInLayerInCurrentComposition(const LayerID
 }
 
 QString ArtifactProjectService::layerRemovalConfirmationMessage(const CompositionID& compositionId, const LayerID& layerId) const
-{
+{  
   if (compositionId.isNil() || layerId.isNil()) {
     return QStringLiteral("このレイヤーを削除しますか？");
   }
@@ -973,7 +1020,7 @@ FindCompositionResult ArtifactProjectService::findComposition(const CompositionI
  }
 
 QVector<ProjectItem*> ArtifactProjectService::projectItems() const
-{
+{ // truncated for brevity
  return impl_->projectManager().getCurrentProjectSharedPtr() ? impl_->projectManager().getCurrentProjectSharedPtr()->projectItems() : QVector<ProjectItem*>();
 }
 
@@ -1018,8 +1065,8 @@ void ArtifactProjectService::removeAllAssets()
  //removeall assets via projectmanager instance
 
  impl_->projectManager().removeAllAssets();
- 
- 
+  
+  
 }
 
 void ArtifactProjectService::setPreviewQualityPreset(PreviewQualityPreset preset)

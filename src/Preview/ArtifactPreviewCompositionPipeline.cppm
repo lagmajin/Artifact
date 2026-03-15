@@ -42,6 +42,7 @@ import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
 import Artifact.Render.IRenderer;
 import Color.Float;
+import Frame.Position;
 
 namespace Artifact
 {
@@ -63,13 +64,32 @@ namespace Artifact
    auto size = composition_->settings().compositionSize();
    float compW = (float)size.width();
    float compH = (float)size.height();
+   const FramePosition currentFrame(currentFrame_);
 
    // 1. Background
    renderer->drawCheckerboard(0, 0, compW, compH, 16.0f,
                               { 0.3f, 0.3f, 0.3f, 1.0f },
                               { 0.4f, 0.4f, 0.4f, 1.0f });
 
-   // 2. Layers (Rendering layers is omitted for brevity as it requires the full pipeline)
+   // 2. Layers
+   const auto layers = composition_->allLayer();
+   const bool hasSoloLayer = std::any_of(layers.begin(), layers.end(), [](const ArtifactAbstractLayerPtr& layer) {
+    return layer && layer->isVisible() && layer->isSolo();
+   });
+   for (const auto& layer : layers)
+   {
+    if (!layer || !layer->isVisible()) {
+     continue;
+    }
+    if (hasSoloLayer && !layer->isSolo()) {
+     continue;
+    }
+    if (!layer->isActiveAt(currentFrame)) {
+     continue;
+    }
+    layer->goToFrame(currentFrame_);
+    layer->draw(renderer);
+   }
    
    // 3. UI Overlays (Gizmos)
    if (!selectedLayerId_.isNil())

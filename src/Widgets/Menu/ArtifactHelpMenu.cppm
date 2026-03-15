@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <wobjectimpl.h>
 #include <QMenu>
 #include <QAction>
@@ -22,14 +22,11 @@ module Menu.Help;
 import std;
 
 import Core.FastSettingsStore;
-
-
-
-
+import Utils.Path;
 
 namespace Artifact {
+ using namespace ArtifactCore;
  W_OBJECT_IMPL(ArtifactHelpMenu)
- 
 
  class ArtifactHelpMenu::Impl {
  public:
@@ -46,10 +43,19 @@ namespace Artifact {
  ArtifactHelpMenu::Impl::Impl()
  {
   versionInfoAction_ = new QAction(u8"Version Info");
+  versionInfoAction_->setIcon(QIcon(resolveIconPath("Material/info.svg")));
+
   aboutAction_ = new QAction(u8"About Artifact");
+  aboutAction_->setIcon(QIcon(resolveIconPath("Material/info.svg")));
+
   docsAction_ = new QAction(u8"Documentation");
+  docsAction_->setIcon(QIcon(resolveIconPath("Material/help.svg")));
+
   checkUpdatesAction_ = new QAction(u8"Check for Updates");
+  checkUpdatesAction_->setIcon(QIcon(resolveIconPath("Material/history.svg")));
+
   exportDiagnosticsAction_ = new QAction(u8"Export Diagnostics...");
+  exportDiagnosticsAction_->setIcon(QIcon(resolveIconPath("Material/inventory.svg")));
  }
 
  ArtifactHelpMenu::Impl::~Impl()

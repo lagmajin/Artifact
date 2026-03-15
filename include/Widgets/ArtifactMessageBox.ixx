@@ -2,7 +2,7 @@ module;
 #include <QString>
 #include <QWidget>
 
-export module Artifact.Widgets.AppMessageBox;
+export module Artifact.Widgets.AppDialogs;
 
 export namespace Artifact {
 

@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <QDebug>
 #include <wobjectimpl.h>
 #include <wobjectdefs.h>
@@ -75,7 +75,7 @@ namespace Artifact {
 
   void createCompositions(const QStringList& names);
    FindCompositionResult findComposition(const CompositionID& id);
-  bool removeById(const CompositionID& id);
+   bool removeById(CompositionID id);
    void removeAllCompositions();
   bool addImportedComposition(ArtifactCompositionPtr comp, const QString& name);
   void setProjectName(const QString& name);
@@ -309,7 +309,7 @@ void ArtifactProject::Impl::createCompositions(const QStringList& names) {}
 
   // bool ArtifactProject::Impl::removeById(const CompositionID& id) - TODO: container_.remove() not implemented
   // Commented out - use alternative removal method
-  bool ArtifactProject::Impl::removeById(const CompositionID& id)
+  bool ArtifactProject::Impl::removeById(CompositionID id)
   {
    // Check existence
    if (!container_.containsId(id)) {
@@ -425,6 +425,41 @@ void ArtifactProject::Impl::createCompositions(const QStringList& names) {}
   if (typeName.find("video") != std::string::npos) return LayerType::Video;
 
   return LayerType::Solid;
+ }
+
+ static void copyLayerProperties(const ArtifactAbstractLayerPtr& sourceLayer, const ArtifactAbstractLayerPtr& duplicatedLayer, const QString& duplicatedName)
+ {
+  if (!sourceLayer || !duplicatedLayer) {
+   return;
+  }
+
+  for (const auto& group : sourceLayer->getLayerPropertyGroups()) {
+   for (const auto& property : group.allProperties()) {
+    if (!property) {
+     continue;
+    }
+
+    const QString propertyName = property->getName();
+    if (propertyName == QStringLiteral("layer.name")) {
+     continue;
+    }
+
+    QVariant value = property->getValue();
+    if (property->getType() == ArtifactCore::PropertyType::Color) {
+      value = property->getColorValue();
+    }
+
+    duplicatedLayer->setLayerPropertyValue(propertyName, value);
+   }
+  }
+
+  duplicatedLayer->setLayerName(duplicatedName);
+  duplicatedLayer->setBlendMode(sourceLayer->layerBlendType());
+  if (sourceLayer->hasParent()) {
+   duplicatedLayer->setParentById(sourceLayer->parentLayerId());
+  } else {
+   duplicatedLayer->clearParent();
+  }
  }
 
 	 QJsonObject ArtifactProject::Impl::toJson() const
@@ -1007,6 +1042,10 @@ ArtifactProject::ArtifactProject() :impl_(new Impl())
     ArtifactLayerInitParams params(baseName + QStringLiteral(" Copy"), inferredType);
 
     result = createLayerAndAddToComposition(compositionId, params);
+    if (result.success && result.layer) {
+      copyLayerProperties(layerToDuplicate, result.layer, params.name().toQString());
+      setDirty(true);
+    }
     return result;
   }
 
@@ -1059,6 +1098,7 @@ ArtifactProject::ArtifactProject() :impl_(new Impl())
       ArtifactLayerInitParams layerParams(layerName, inferredType);
       auto layerCreate = createLayerAndAddToComposition(newCompResult.id, layerParams);
       if (layerCreate.success) {
+        copyLayerProperties(sourceLayer, layerCreate.layer, layerName);
         ++copiedCount;
       }
     }

@@ -7,6 +7,7 @@
 #include <QCryptographicHash>
 #include <QFileInfo>
 #include <QPainter>
+#include <QtSVG/QSvgRenderer>
 #include <iostream>
 #include <vector>
 #include <string>
@@ -79,12 +80,41 @@ QIcon makeProjectItemIcon(const QColor& fill, const QString& text = {})
 
 QIcon loadProjectIcon(const QString& relativePath)
 {
-  QIcon icon(ArtifactCore::resolveIconResourcePath(relativePath));
-  if (!icon.isNull()) {
-    return icon;
+  const QString path = ArtifactCore::resolveIconPath(relativePath);
+  if (path.isEmpty()) {
+    return QIcon();
   }
-  icon = QIcon(ArtifactCore::resolveIconPath(relativePath));
+
+  // For SVG files, use QSvgRenderer directly to avoid dependency on the
+  // qsvgicon icon-engine plugin which may not be on the library search path.
+  if (path.endsWith(QStringLiteral(".svg"), Qt::CaseInsensitive)) {
+    QSvgRenderer renderer(path);
+    if (renderer.isValid()) {
+      QPixmap pixmap(16, 16);
+      pixmap.fill(Qt::transparent);
+      QPainter painter(&pixmap);
+      renderer.render(&painter);
+      painter.end();
+      if (!pixmap.isNull()) {
+        return QIcon(pixmap);
+      }
+    }
+    return QIcon();
+  }
+
+  QIcon icon(path);
+  if (icon.isNull() || icon.pixmap(16, 16).isNull()) {
+    return QIcon();
+  }
   return icon;
+}
+
+QStandardItem* projectItemFromModelIndex(const QModelIndex& index)
+{
+  if (!index.isValid()) {
+    return nullptr;
+  }
+  return static_cast<QStandardItem*>(index.internalPointer());
 }
 
 } // namespace
@@ -396,14 +426,16 @@ void ArtifactProjectModel::setProject(const std::shared_ptr<ArtifactProject>& pr
   delete impl_;
  }
 
- QVariant ArtifactProjectModel::data(const QModelIndex& index, int role) const
- {
+QVariant ArtifactProjectModel::data(const QModelIndex& index, int role) const
+{
   if (!index.isValid() || !impl_ || !impl_->model_)
    return QVariant();
-  
-  // 常に内部モデルから直接アイテムを取得（internalPointerはダングリングの可能性あり）
-  QModelIndex srcIndex = mapToSource(index);
-  QStandardItem* item = impl_->model_->itemFromIndex(srcIndex);
+
+  QStandardItem* item = projectItemFromModelIndex(index);
+  if (!item) {
+   const QModelIndex srcIndex = mapToSource(index);
+   item = impl_->model_->itemFromIndex(srcIndex);
+  }
   if (!item) return QVariant();
 
   switch (role) {
@@ -438,44 +470,31 @@ void ArtifactProjectModel::setProject(const std::shared_ptr<ArtifactProject>& pr
   if (!proxyIndex.isValid() || !impl_ || !impl_->model_)
    return QModelIndex();
 
-  // 親インデックスを再帰的にマップ
-  QModelIndex parentProxy = proxyIndex.parent();
-  if (!parentProxy.isValid()) {
-   // トップレベルアイテム
-   return impl_->model_->index(proxyIndex.row(), proxyIndex.column());
+  if (auto* item = projectItemFromModelIndex(proxyIndex)) {
+   return impl_->model_->indexFromItem(item);
   }
 
-  // 親のソースインデックスを取得
-  QModelIndex parentSource = mapToSource(parentProxy);
-  QStandardItem* parentItem = impl_->model_->itemFromIndex(parentSource);
-  if (!parentItem) return QModelIndex();
-
-  QStandardItem* childItem = parentItem->child(proxyIndex.row(), proxyIndex.column());
-  if (!childItem) return QModelIndex();
-
-  return impl_->model_->indexFromItem(childItem);
+  const QModelIndex parentSource = mapToSource(proxyIndex.parent());
+  return impl_->model_->index(proxyIndex.row(), proxyIndex.column(), parentSource);
  }
 
  int ArtifactProjectModel::rowCount(const QModelIndex& parent) const
  {
- if (!impl_->model_) return 0;
- if (!parent.isValid()) {
-  return impl_->model_->rowCount();
- }
- // map from proxy index to source
-QModelIndex srcParent = impl_->model_->index(parent.row(), 0, QModelIndex());
-return impl_->model_->rowCount(srcParent);
+  if (!impl_ || !impl_->model_) {
+   return 0;
+  }
+  if (parent.isValid() && parent.column() != 0) {
+   return 0;
+  }
+  const QModelIndex srcParent = mapToSource(parent);
+  return impl_->model_->rowCount(srcParent);
  }
 
 int ArtifactProjectModel::columnCount(const QModelIndex& parent) const
 {
-  if (!impl_->model_) return 6;  // Default to 6 columns
-  if (!parent.isValid()) {
-    int c = impl_->model_->columnCount();
-    return c > 0 ? c : 6; // ensure at least six columns for the view
-  }
-  QModelIndex srcParent = impl_->model_->index(parent.row(), 0, QModelIndex());
-  int c = impl_->model_->columnCount(srcParent);
+  if (!impl_ || !impl_->model_) return 6;
+  const QModelIndex srcParent = mapToSource(parent);
+  const int c = impl_->model_->columnCount(srcParent);
   return c > 0 ? c : 6;
 }
 
@@ -506,19 +525,21 @@ QModelIndex ArtifactProjectModel::parent(const QModelIndex& index) const
 {
   if (!index.isValid() || !impl_->model_) return QModelIndex();
 
-  QStandardItem* item = nullptr;
-  if (index.internalPointer()) item = static_cast<QStandardItem*>(index.internalPointer());
-  if (!item) {
-    // Fallback: try to get item from internal model using the index
-    QModelIndex src = impl_->model_->index(index.row(), index.column(), QModelIndex());
-    item = impl_->model_->itemFromIndex(src);
-    if (!item) return QModelIndex();
+  const QModelIndex srcIndex = mapToSource(index);
+  if (!srcIndex.isValid()) {
+   return QModelIndex();
   }
 
-  QStandardItem* parentItem = item->parent();
-  if (!parentItem) return QModelIndex();
+  const QModelIndex srcParent = srcIndex.parent();
+  if (!srcParent.isValid()) {
+   return QModelIndex();
+  }
 
-  return createIndex(parentItem->row(), parentItem->column(), parentItem);
+  auto* parentItem = impl_->model_->itemFromIndex(srcParent);
+  if (!parentItem) {
+   return QModelIndex();
+  }
+  return createIndex(srcParent.row(), srcParent.column(), parentItem);
 }
 
 Qt::ItemFlags ArtifactProjectModel::flags(const QModelIndex &index) const
@@ -528,7 +549,9 @@ Qt::ItemFlags ArtifactProjectModel::flags(const QModelIndex &index) const
   }
 
   Qt::ItemFlags flags = Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsDragEnabled;
-  const QVariant typeVar = data(index.siblingAtColumn(0), Qt::UserRole + 1);
+  const QVariant typeVar = data(
+    index.siblingAtColumn(0),
+    Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::ProjectItemType));
   if (typeVar.isValid() && typeVar.toInt() == static_cast<int>(eProjectItemType::Folder)) {
     flags |= Qt::ItemIsDropEnabled;
   }
@@ -542,16 +565,19 @@ Qt::DropActions ArtifactProjectModel::supportedDropActions() const
 
  QModelIndex ArtifactProjectModel::index(int row, int column, const QModelIndex& parent) const
  {
- if (!impl_->model_) return QModelIndex();
- if (!parent.isValid()) {
-  QStandardItem* it = impl_->model_->item(row);
-  return createIndex(row, column, it);
- }
- QStandardItem* parentItem = impl_->model_->itemFromIndex(impl_->model_->index(parent.row(), parent.column()));
- if (!parentItem) return QModelIndex();
- QStandardItem* child = parentItem->child(row, column);
- if (!child) return QModelIndex();
- return createIndex(row, column, child);
+  if (!impl_ || !impl_->model_ || row < 0 || column < 0) {
+   return QModelIndex();
+  }
+  const QModelIndex srcParent = mapToSource(parent);
+  const QModelIndex srcIndex = impl_->model_->index(row, column, srcParent);
+  if (!srcIndex.isValid()) {
+   return QModelIndex();
+  }
+  auto* item = impl_->model_->itemFromIndex(srcIndex);
+  if (!item) {
+   return QModelIndex();
+  }
+  return createIndex(row, column, item);
  }
 
 

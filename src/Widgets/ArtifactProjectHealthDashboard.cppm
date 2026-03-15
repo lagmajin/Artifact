@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <QWidget>
 #include <QTreeWidget>
 #include <QVBoxLayout>
@@ -6,6 +6,9 @@ module;
 #include <QPushButton>
 #include <QLabel>
 #include <QIcon>
+#include <QPixmap>
+#include <QPainter>
+#include <QtSVG/QSvgRenderer>
 #include <QHeaderView>
 #include <QStyle>
 #include <QMessageBox>
@@ -130,12 +133,29 @@ private:
                 break;
         }
 
-        QIcon icon(ArtifactCore::resolveIconResourcePath(relativePath));
+        auto tryLoadSvgIcon = [](const QString& path) -> QIcon {
+            if (path.isEmpty()) return QIcon();
+            if (path.endsWith(QStringLiteral(".svg"), Qt::CaseInsensitive)) {
+                QSvgRenderer renderer(path);
+                if (renderer.isValid()) {
+                    QPixmap pixmap(16, 16);
+                    pixmap.fill(Qt::transparent);
+                    QPainter painter(&pixmap);
+                    renderer.render(&painter);
+                    painter.end();
+                    if (!pixmap.isNull()) return QIcon(pixmap);
+                }
+                return QIcon();
+            }
+            return QIcon(path);
+        };
+
+        QIcon icon = tryLoadSvgIcon(ArtifactCore::resolveIconResourcePath(relativePath));
         if (!icon.isNull()) {
             return icon;
         }
 
-        icon = QIcon(ArtifactCore::resolveIconPath(relativePath));
+        icon = tryLoadSvgIcon(ArtifactCore::resolveIconPath(relativePath));
         if (!icon.isNull()) {
             return icon;
         }

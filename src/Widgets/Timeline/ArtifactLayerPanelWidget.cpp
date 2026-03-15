@@ -1304,7 +1304,7 @@ void ArtifactLayerPanelWidget::keyPressEvent(QKeyEvent* event)
               newIndex = std::max(0, currentLayerIndex - 1);
             } else if (event->key() == Qt::Key_BracketRight) {
               // 前面へ (インデックスを増やす)
-              newIndex = std::min(layers.size() - 1, currentLayerIndex + 1);
+              newIndex = std::min(static_cast<int>(layers.size()) - 1, currentLayerIndex + 1);
             }
             
             if (newIndex != currentLayerIndex) {

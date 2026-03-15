@@ -413,14 +413,12 @@ W_OBJECT_IMPL(ArtifactLayerEditorWidgetV2)
    if (auto* service = ArtifactProjectService::instance()) {
     if (auto composition = service->currentComposition().lock()) {
      if (auto layer = composition->layerById(targetLayerId_)) {
-      if (isSolidLayerForPreview(layer)) {
-       const auto source = layer->sourceSize();
-       const float rectWidth = std::max(1.0f, static_cast<float>(source.width));
-       const float rectHeight = std::max(1.0f, static_cast<float>(source.height));
-       FloatColor drawColor = targetLayerTint_;
-       (void)tryGetSolidPreviewColor(layer, drawColor);
-       renderer_->drawRectLocal(0.0f, 0.0f, rectWidth, rectHeight, drawColor);
+      layer->goToFrame(composition->framePosition().framePosition());
+      const auto source = layer->sourceSize();
+      if (source.width > 0 && source.height > 0) {
+       renderer_->setCanvasSize(static_cast<float>(source.width), static_cast<float>(source.height));
       }
+      layer->draw(renderer_.get());
      }
     }
    }
@@ -470,12 +468,24 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
    QObject::connect(service, &ArtifactProjectService::layerSelected, this, [this](const ArtifactCore::LayerID& id) {
     setTargetLayer(id);
    });
-   QObject::connect(service, &ArtifactProjectService::layerRemoved, this, [this](const ArtifactCore::CompositionID&, const ArtifactCore::LayerID& id) {
+  QObject::connect(service, &ArtifactProjectService::layerRemoved, this, [this](const ArtifactCore::CompositionID&, const ArtifactCore::LayerID& id) {
     if (impl_->targetLayerId_ == id) {
      clearTargetLayer();
     }
    });
    QObject::connect(service, &ArtifactProjectService::projectChanged, this, [this]() {
+    const auto targetId = impl_->targetLayerId_;
+    if (targetId.isNil()) {
+     return;
+    }
+    if (auto* currentService = ArtifactProjectService::instance()) {
+     if (auto composition = currentService->currentComposition().lock()) {
+      if (composition->containsLayerById(targetId)) {
+       setTargetLayer(targetId);
+       return;
+      }
+     }
+    }
     clearTargetLayer();
    });
   }
@@ -590,11 +600,14 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
  void ArtifactLayerEditorWidgetV2::showEvent(QShowEvent* event)
  {
   QWidget::showEvent(event);
-  if (!impl_->initialized_) {
-   impl_->initialize(this);
-   impl_->initializeSwapChain(this);
-   impl_->startRenderLoop();
-  }
+ if (!impl_->initialized_) {
+  impl_->initialize(this);
+  impl_->initializeSwapChain(this);
+  impl_->startRenderLoop();
+ }
+ if (!impl_->targetLayerId_.isNil()) {
+  setTargetLayer(impl_->targetLayerId_);
+ }
  }
  void ArtifactLayerEditorWidgetV2::closeEvent(QCloseEvent* event)
  {
@@ -624,6 +637,19 @@ void ArtifactLayerEditorWidgetV2::setTargetLayer(const LayerID& id)
  };
  impl_->targetLayerTint_ = FloatColor(channel(0), channel(8), channel(16), 1.0f);
  if (impl_->renderer_) {
+  if (auto* service = ArtifactProjectService::instance()) {
+   if (auto composition = service->currentComposition().lock()) {
+    if (auto layer = composition->layerById(id)) {
+     const auto source = layer->sourceSize();
+     if (source.width > 0 && source.height > 0) {
+      impl_->renderer_->setCanvasSize(static_cast<float>(source.width), static_cast<float>(source.height));
+      impl_->renderer_->fitToViewport();
+      impl_->zoomLevel_ = 1.0f;
+      return;
+     }
+    }
+   }
+  }
   impl_->renderer_->resetView();
  }
 }
