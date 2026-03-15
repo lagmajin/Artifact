@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <QObject>
 #include <QList>
 #include <QThread>
@@ -56,8 +56,10 @@ import Artifact.Project.Manager;
 import Artifact.Project.Items;
 import Encoder.FFmpegEncoder;
 import Image.ImageF32x4_RGBA;
+import CvUtils;
 import Utils.Id;
 import Artifact.Render.SoftwareCompositor;
+import Artifact.Render.IRenderer;
 
 namespace Artifact
 {
@@ -558,7 +560,7 @@ namespace Artifact
             return QDir(dir).filePath(base + QStringLiteral(".png"));
         }
 
-        bool renderSingleFrameDummy(const ArtifactRenderJob& job, int index, QString* outputPath, QString* errorMessage) {
+        QImage renderSingleFrameDummy(const ArtifactRenderJob& job, int frameNumber) {
             const int width = std::max(16, job.resolutionWidth);
             const int height = std::max(16, job.resolutionHeight);
             QImage background(width, height, QImage::Format_ARGB32_Premultiplied);
@@ -584,7 +586,7 @@ namespace Artifact
                                  QStringLiteral("Comp: %1").arg(job.compositionName));
                 painter.drawText(QRect(0, (height * 2) / 3, width, height / 3),
                                  Qt::AlignCenter,
-                                 QStringLiteral("Frame: %1").arg(job.startFrame));
+                                 QStringLiteral("Frame: %1").arg(frameNumber));
             }
 
             QImage overlay(width, height, QImage::Format_ARGB32_Premultiplied);
@@ -594,7 +596,9 @@ namespace Artifact
                 painter.setRenderHint(QPainter::Antialiasing, true);
                 painter.setPen(Qt::NoPen);
                 painter.setBrush(QColor(255, 190, 90, 180));
-                painter.drawEllipse(QRect(width * 3 / 5, height / 8, width / 4, height / 4));
+                // Animate the ellipse based on frame number
+                const int animOffset = (frameNumber * 5) % (width / 2);
+                painter.drawEllipse(QRect(width * 3 / 5 - animOffset, height / 8, width / 4, height / 4));
             }
 
             SoftwareRender::CompositeRequest request;
@@ -611,30 +615,37 @@ namespace Artifact
             request.overlayRotationDeg = job.overlayRotationDeg;
             request.useForeground = true;
 
-            QImage image = SoftwareRender::compose(request);
-            if (image.isNull()) {
-                if (errorMessage) {
-                    *errorMessage = QStringLiteral("Failed to compose dummy frame");
-                }
+            return SoftwareRender::compose(request);
+        }
+
+        bool renderSingleFrameGPU(const ArtifactRenderJob& job, int index, QString* outputPath, QString* errorMessage) {
+            const int width  = std::max(16, job.resolutionWidth);
+            const int height = std::max(16, job.resolutionHeight);
+
+            ArtifactIRenderer renderer;
+            renderer.initializeHeadless(width, height);
+            renderer.clear();
+            renderer.flush();
+
+            QImage frame = renderer.readbackToImage();
+            renderer.destroy();
+
+            if (frame.isNull()) {
+                if (errorMessage) *errorMessage = QStringLiteral("GPU readback failed");
                 return false;
             }
 
             const QString outPath = resolveDummyOutputPath(job, index);
-            if (outputPath) {
-                *outputPath = outPath;
-            }
+            if (outputPath) *outputPath = outPath;
+
             QDir outDir(QFileInfo(outPath).absolutePath());
             if (!outDir.exists() && !outDir.mkpath(QStringLiteral("."))) {
-                if (errorMessage) {
-                    *errorMessage = QStringLiteral("Failed to create output directory: %1").arg(outDir.absolutePath());
-                }
+                if (errorMessage) *errorMessage = QStringLiteral("Failed to create output directory: %1").arg(outDir.absolutePath());
                 return false;
             }
 
-            if (!image.save(outPath, "PNG")) {
-                if (errorMessage) {
-                    *errorMessage = QStringLiteral("Failed to save image: %1").arg(outPath);
-                }
+            if (!frame.save(outPath, "PNG")) {
+                if (errorMessage) *errorMessage = QStringLiteral("Failed to save image: %1").arg(outPath);
                 return false;
             }
             return true;
@@ -930,10 +941,6 @@ namespace Artifact
     void ArtifactRenderQueueService::startAllJobs() {
         impl_->queueManager.startAllJobs();
 
-        // エンコーダの初期化 (Mock)
-        impl_->ffmpegEncoder = std::make_unique<ArtifactCore::FFmpegEncoder>();
-        impl_->nextFrameToEncode = 0;
-
         const int count = impl_->queueManager.jobCount();
         for (int i = 0; i < count; ++i) {
             const auto job = impl_->queueManager.getJob(i);
@@ -942,13 +949,52 @@ namespace Artifact
                 continue;
             }
 
-            impl_->queueManager.setJobProgress(i, 10);
+            impl_->queueManager.setJobProgress(i, 0);
 
-            QString outputPath;
+            // エンコーダの初期化
+            impl_->ffmpegEncoder = std::make_unique<ArtifactCore::FFmpegEncoder>();
+            QFile outFile(job.outputPath);
+            impl_->ffmpegEncoder->open(outFile);
+
+            const int startF = job.startFrame;
+            const int endF = job.endFrame;
+            const int totalFrames = std::max(1, endF - startF + 1);
+
             QString error;
-            const bool ok = impl_->renderSingleFrameDummy(job, i, &outputPath, &error);
-            if (ok) {
-                impl_->queueManager.setJobOutputPath(i, outputPath);
+            bool success = true;
+
+            for (int f = startF; f <= endF; ++f) {
+                // To properly stop rendering if canceled/paused, we should check status
+                const auto currentJobStatus = impl_->queueManager.getJob(i).status;
+                if (currentJobStatus != ArtifactRenderJob::Status::Rendering) {
+                    success = false;
+                    error = QStringLiteral("Render interrupted");
+                    break;
+                }
+
+                // Render frame
+                QImage qimg = impl_->renderSingleFrameDummy(job, f);
+
+                // Add to encoder
+                if (!qimg.isNull()) {
+                    cv::Mat mat = ArtifactCore::CvUtils::qImageToCvMat(qimg);
+                    ArtifactCore::ImageF32x4_RGBA frameImage;
+                    frameImage.setFromCVMat(mat);
+                    impl_->ffmpegEncoder->addImage(frameImage);
+                } else {
+                    success = false;
+                    error = QStringLiteral("Failed to render frame %1").arg(f);
+                    break;
+                }
+
+                // Update progress
+                int progress = static_cast<int>((static_cast<float>(f - startF + 1) / totalFrames) * 100);
+                impl_->queueManager.setJobProgress(i, progress);
+            }
+
+            impl_->ffmpegEncoder->close();
+
+            if (success) {
                 impl_->queueManager.setJobProgress(i, 100);
                 impl_->queueManager.setJobCompleted(i);
             } else {
