@@ -816,12 +816,6 @@ W_OBJECT_IMPL(ArtifactTimelineWidget)
     auto workAreaWidget = impl_->workArea_ = new WorkAreaControl();
     auto scrubBar = impl_->scrubBar_ = new ArtifactTimelineScrubBar();
     
-    // ズームレベル表示ラベル
-    auto* zoomLabel = new QLabel("Zoom: 100%");
-    zoomLabel->setFixedHeight(20);
-    zoomLabel->setStyleSheet("QLabel { color: #AAAAAA; background-color: #232323; padding: 2px 6px; font-size: 11px; }");
-    zoomLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-    
     auto timelineTrackView = impl_->trackView_ = new TimelineTrackView();
     auto painterTrackView = impl_->painterTrackView_ = new ArtifactTimelineTrackPainterView();
     timelineTrackView->setDuration(kDefaultTimelineFrames);
@@ -848,7 +842,7 @@ W_OBJECT_IMPL(ArtifactTimelineWidget)
     trackStack->addWidget(painterTrackView);
     trackHost->setLayout(trackStack);
  
-    auto updateZoom = [this, zoomLabel]() {
+    auto updateZoom = [this]() {
       if (!impl_->trackView_ || !impl_->workArea_) return;
       double duration = impl_->trackView_->duration();
       float s = impl_->navigator_->startValue();
@@ -866,9 +860,8 @@ W_OBJECT_IMPL(ArtifactTimelineWidget)
          impl_->scrubBar_->setRulerPixelsPerFrame(newZoom);
         }
         
-        // ズームレベルをラベルに表示
-        int zoomPercent = static_cast<int>(newZoom * 100);
-        zoomLabel->setText(QString("Zoom: %1%").arg(zoomPercent));
+        // ズームレベルをシグナルで通知
+        Q_EMIT zoomLevelChanged(newZoom * 100.0);
 
         if (auto* hBar = impl_->trackView_->horizontalScrollBar()) {
           hBar->setValue(static_cast<int>(s * duration * newZoom));
@@ -1027,7 +1020,6 @@ W_OBJECT_IMPL(ArtifactTimelineWidget)
   rightPanelLayout->addWidget(timeNavigatorWidget);
   rightPanelLayout->addWidget(scrubBar);
   rightPanelLayout->addWidget(workAreaWidget);
-  rightPanelLayout->addWidget(zoomLabel);
   rightPanelLayout->addWidget(trackHost);
   rightPanel->setLayout(rightPanelLayout);
 
