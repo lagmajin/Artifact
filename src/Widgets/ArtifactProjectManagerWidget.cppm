@@ -104,7 +104,10 @@ import Artifact.Project.Roles;
 import Artifact.Project.Cleanup;
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Search.Query;
+import Artifact.Layer.InitParams;
 import Artifact.Widgets.LayerPanelWidget;
+import Artifact.Widgets.CreatePlaneLayerDialog;
+import Dialog.Composition;
 import Utils.Path;
 
 namespace Artifact {
@@ -2037,13 +2040,33 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
     // "New" menu group
     auto newMenu = menu.addMenu("New");
     newMenu->setIcon(loadProjectViewIcon(QStringLiteral("MaterialVS/green/check_circle.svg")));
-    addTrackedNewAction(newMenu, QStringLiteral("new_composition"), QStringLiteral("Composition..."), [svc]() {
-        if (svc) {
-            svc->createComposition(UniString("New Comp"));
-        }
+    addTrackedNewAction(newMenu, QStringLiteral("new_composition"), QStringLiteral("Composition..."), [this]() {
+         auto dialog = new CreateCompositionDialog(this);
+         if (dialog->exec()) {
+             // Handled internally by dialog
+         }
+         dialog->deleteLater();
     }, loadProjectViewIcon(QStringLiteral("MaterialVS/blue/movie.svg")));
-    addTrackedNewAction(newMenu, QStringLiteral("new_solid"), QStringLiteral("Solid..."), []() {
-        // Placeholder for solid creation dialog
+    addTrackedNewAction(newMenu, QStringLiteral("new_solid"), QStringLiteral("Solid..."), [this, svc]() {
+        if (!svc) return;
+        if (!svc->currentComposition().lock()) {
+            // Try to create a comp first if none exists
+            if (svc->hasProject()) {
+                svc->createComposition(UniString(QStringLiteral("Composition")));
+            }
+        }
+        if (!svc->currentComposition().lock()) {
+            QMessageBox::warning(this, "Layer", "コンポジションが選択されていません。");
+            return;
+        }
+        CreateSolidLayerSettingDialog dialog(this);
+        QObject::connect(&dialog, &CreateSolidLayerSettingDialog::submit, this, [svc](const ArtifactSolidLayerInitParams& params) {
+            if (svc) {
+                svc->addLayerToCurrentComposition(params);
+            }
+        });
+        dialog.setModal(true);
+        dialog.exec();
     }, loadProjectViewIcon(QStringLiteral("MaterialVS/purple/format_shapes.svg")));
     addTrackedNewAction(newMenu, QStringLiteral("new_folder"), QStringLiteral("Folder"), [this]() {
         impl_->createFolderAtSelection(this);
@@ -2735,9 +2758,11 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
         if (impl_->proxyModel_) impl_->infoPanel_->updateInfo(impl_->proxyModel_->mapToSource(idx));
     });
     connect(impl_->toolBox, &ArtifactProjectManagerToolBox::newCompositionRequested, [this]() {
-         if (auto* svc = ArtifactProjectService::instance()) {
-             svc->createComposition(UniString("Composition"));
+         auto dialog = new CreateCompositionDialog(this);
+         if (dialog->exec()) {
+             // The dialog itself handles creating the composition via ArtifactProjectService
          }
+         dialog->deleteLater();
     });
     connect(impl_->toolBox, &ArtifactProjectManagerToolBox::newFolderRequested, [this]() {
          impl_->createFolderAtSelection();

@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <QMenuBar>
 #include <QMenu>
 #include <wobjectimpl.h>
@@ -11,6 +11,7 @@ import Menu.Composition;
 import Artifact.Menu.Layer;
 import Artifact.Menu.Effect;
 import Menu.Animation;
+import Menu.Render;
 import Menu.Time;
 import Artifact.Menu.View;
 import Menu.Option;
@@ -35,6 +36,7 @@ public:
  ArtifactLayerMenu* layerMenu = nullptr;
  ArtifactEffectMenu* effectMenu = nullptr;
  ArtifactAnimationMenu* animationMenu = nullptr;
+ ArtifactRenderMenu* renderMenu = nullptr;
  ArtifactTimeMenu* timeMenu = nullptr;
  ArtifactViewMenu* viewMenu = nullptr;
  ArtifactOptionMenu* optionMenu = nullptr;
@@ -51,6 +53,7 @@ ArtifactMenuBar::Impl::Impl(QWidget* mainWindow, ArtifactMenuBar* menuBar)
  layerMenu = new ArtifactLayerMenu(menuBar);
  effectMenu = new ArtifactEffectMenu(menuBar);
  animationMenu = new ArtifactAnimationMenu(menuBar);
+ renderMenu = new ArtifactRenderMenu(mainWindow, menuBar);
  timeMenu = new ArtifactTimeMenu(menuBar);
  viewMenu = new ArtifactViewMenu(menuBar);
  optionMenu = new ArtifactOptionMenu(menuBar);
@@ -65,6 +68,7 @@ ArtifactMenuBar::Impl::Impl(QWidget* mainWindow, ArtifactMenuBar* menuBar)
  menuBar->addMenu(layerMenu);
  menuBar->addMenu(effectMenu);
  menuBar->addMenu(animationMenu);
+ menuBar->addMenu(renderMenu);
  menuBar->addMenu(timeMenu);
  menuBar->addMenu(viewMenu);
  menuBar->addMenu(optionMenu);
@@ -80,9 +84,11 @@ ArtifactMenuBar::ArtifactMenuBar(QWidget* mainWindow, QWidget* parent)
  : QMenuBar(parent), impl_(new Impl(mainWindow, this))
 {
  setStyleSheet(R"(
-QMenuBar { background-color: #1E1E1E; color: #E0E0E0; font-size: 13px; }
-QMenuBar::item { padding: 4px 10px; }
-QMenu { font-size: 12px; }
+ QMenuBar { background-color: #1E1E1E; color: #E0E0E0; font-size: 13px; }
+ QMenuBar::item { padding: 4px 10px; }
+ QMenu { background-color: #2D2D2D; color: #E0E0E0; font-size: 13px; icon-size: 16px; border: 1px solid #444444; }
+ QMenu::item { padding: 6px 28px 6px 28px; }
+ QMenu::item:selected { background-color: #414141; }
 )");
 }
 

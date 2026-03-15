@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <QMenu>
 #include <QAction>
 #include <QColorDialog>
@@ -13,12 +13,14 @@ module Menu.Composition;
 import std;
 
 import Artifact.Service.Project;
+import Utils.Path;
 import Artifact.Composition.InitParams;
 import Artifact.Layer.InitParams;
 import Artifact.Widgets.SoftwareRenderInspectors;
 import Dialog.Composition;
 
 namespace Artifact {
+using namespace ArtifactCore;
 
 W_OBJECT_IMPL(ArtifactCompositionMenu)
 
@@ -37,7 +39,6 @@ public:
  QAction* duplicateAction = nullptr;
  QAction* renameAction = nullptr;
  QAction* deleteAction = nullptr;
- QAction* settingsAction = nullptr;
  QAction* colorAction = nullptr;
  QAction* milestoneDummyAction = nullptr;
 
@@ -56,6 +57,7 @@ ArtifactCompositionMenu::Impl::Impl(ArtifactCompositionMenu* menu, QWidget* main
 {
  createAction = new QAction("新規コンポジション(&N)...");
  createAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_N));
+ createAction->setIcon(QIcon(resolveIconPath("Material/movie_creation.svg")));
 
  presetMenu = new QMenu("プリセットから作成(&P)", menu);
  presetHdAction = presetMenu->addAction("HD 1080p 30fps");
@@ -63,14 +65,15 @@ ArtifactCompositionMenu::Impl::Impl(ArtifactCompositionMenu* menu, QWidget* main
  presetVerticalAction = presetMenu->addAction("Vertical 1080x1920 30fps");
 
  duplicateAction = new QAction("コンポジションを複製(&D)");
+ duplicateAction->setIcon(QIcon(resolveIconPath("Material/content_copy.svg")));
  renameAction = new QAction("名前を変更(&R)...");
+ renameAction->setIcon(QIcon(resolveIconPath("Material/edit.svg")));
  deleteAction = new QAction("コンポジションを削除(&X)...");
-
- settingsAction = new QAction("レンダー出力設定(&S)...");
- settingsAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_K));
+ deleteAction->setIcon(QIcon(resolveIconPath("Material/delete.svg")));
 
  colorAction = new QAction("背景色(&B)...");
  colorAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_B));
+ colorAction->setIcon(QIcon(resolveIconPath("Material/palette.svg")));
  milestoneDummyAction = new QAction("マイルストーン: Software制作パスを初期化(&M)...");
 
  menu->addAction(createAction);
@@ -80,7 +83,6 @@ ArtifactCompositionMenu::Impl::Impl(ArtifactCompositionMenu* menu, QWidget* main
  menu->addAction(renameAction);
  menu->addAction(deleteAction);
  menu->addSeparator();
- menu->addAction(settingsAction);
  menu->addAction(colorAction);
  menu->addSeparator();
  menu->addAction(milestoneDummyAction);
@@ -92,7 +94,6 @@ ArtifactCompositionMenu::Impl::Impl(ArtifactCompositionMenu* menu, QWidget* main
  QObject::connect(duplicateAction, &QAction::triggered, menu, [this]() { duplicateCurrent(); });
  QObject::connect(renameAction, &QAction::triggered, menu, [this]() { renameCurrent(); });
  QObject::connect(deleteAction, &QAction::triggered, menu, [this]() { removeCurrent(); });
- QObject::connect(settingsAction, &QAction::triggered, menu, [this]() { showSettings(); });
  QObject::connect(colorAction, &QAction::triggered, menu, [this]() { showColor(); });
  QObject::connect(milestoneDummyAction, &QAction::triggered, menu, [this]() { runMilestoneDummyPipeline(); });
 }
@@ -189,14 +190,6 @@ void ArtifactCompositionMenu::Impl::removeCurrent()
  }
 }
 
-void ArtifactCompositionMenu::Impl::showSettings()
-{
- QMessageBox::information(
-  mainWindow_ ? mainWindow_ : menu_,
-  "レンダー出力設定",
-  "レンダー出力設定ダイアログはこれから接続します。");
-}
-
 void ArtifactCompositionMenu::Impl::showColor()
 {
  auto service = ArtifactProjectService::instance();
@@ -285,7 +278,6 @@ void ArtifactCompositionMenu::rebuildMenu()
  impl_->duplicateAction->setEnabled(hasComp);
  impl_->renameAction->setEnabled(hasComp);
  impl_->deleteAction->setEnabled(hasComp);
- impl_->settingsAction->setEnabled(hasComp);
  impl_->colorAction->setEnabled(hasComp);
  impl_->milestoneDummyAction->setEnabled(service != nullptr);
 }
