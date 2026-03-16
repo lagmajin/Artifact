@@ -1445,15 +1445,20 @@ void ArtifactLayerPanelWidget::keyPressEvent(QKeyEvent* event)
    // マウスの X 位置をチェック（ブレンドモードエリアか？）
    const int mouseX = event->position().x();
    const int blendModeStartX = kLayerColumnWidth * kLayerPropertyColumnCount;
-   const bool isBlendModeArea = (mouseX >= blendModeStartX);
+   const int blendModeEndX = width() - kInlineMatteWidth - kInlineComboGap * 2;
+   
+   // ホイール操作対象の行を取得
+   const int rowIdx = mouseY / kLayerRowHeight;
+   const bool isBlendModeArea = (mouseX >= blendModeStartX && mouseX < blendModeEndX && rowIdx >= 0 && rowIdx < impl_->visibleRows.size());
    
    if (isBlendModeArea) {
     // ブレンドモードエリア：ホイールでブレンドモードを変更
-    if (!impl_->selectedLayerId.isNil()) {
+    const auto& row = impl_->visibleRows[rowIdx];
+    if (row.kind == Impl::RowKind::Layer && row.layer) {
       auto* service = ArtifactProjectService::instance();
       auto comp = service ? service->currentComposition().lock() : nullptr;
       if (comp) {
-        auto layer = comp->layerById(impl_->selectedLayerId);
+        auto layer = comp->layerById(row.layer->id());
         if (layer) {
           const auto items = blendModeItems();
           const int currentMode = static_cast<int>(layer->layerBlendType());
