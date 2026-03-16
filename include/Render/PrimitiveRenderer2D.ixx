@@ -1,0 +1,63 @@
+﻿module;
+#include <QImage>
+#include <RenderDevice.h>
+#include <DeviceContext.h>
+#include <SwapChain.h>
+#include <Texture.h>
+#include <RefCntAutoPtr.hpp>
+#include <BasicMath.hpp>
+
+export module Artifact.Render.PrimitiveRenderer2D;
+
+import Graphics;
+import Color.Float;
+import Artifact.Render.ShaderManager;
+
+export namespace Artifact {
+
+using namespace Diligent;
+using namespace ArtifactCore;
+
+class PrimitiveRenderer2D {
+public:
+    PrimitiveRenderer2D();
+    ~PrimitiveRenderer2D();
+
+    void createBuffers(RefCntAutoPtr<IRenderDevice> device, TEXTURE_FORMAT rtvFormat);
+    void setPSOs(ShaderManager& shaderManager);
+    void setContext(IDeviceContext* ctx, ISwapChain* swapChain);
+    void setOverrideRTV(ITextureView* rtv);
+    void destroy();
+
+    void clear(const FloatColor& color);
+
+    void setViewportSize(float w, float h);
+    void setCanvasSize(float w, float h);
+    void setPan(float x, float y);
+    void setZoom(float zoom);
+    void panBy(float dx, float dy);
+    void resetView();
+    void fitToViewport(float margin);
+    void zoomAroundViewportPoint(float2 viewportPos, float newZoom);
+    float2 canvasToViewport(float2 pos) const;
+    float2 viewportToCanvas(float2 pos) const;
+
+    void drawRectLocal(float x, float y, float w, float h, const FloatColor& color);
+    void drawRectOutlineLocal(float x, float y, float w, float h, const FloatColor& color);
+    void drawLineLocal(float2 p1, float2 p2, const FloatColor& c1, const FloatColor& c2);
+    void drawThickLineLocal(float2 p1, float2 p2, float thickness, const FloatColor& color);
+    void drawDotLineLocal(float2 p1, float2 p2, float thickness, float spacing, const FloatColor& color);
+    void drawBezierLocal(float2 p0, float2 p1, float2 p2, float thickness, const FloatColor& color);
+    void drawBezierLocal(float2 p0, float2 p1, float2 p2, float2 p3, float thickness, const FloatColor& color);
+    void drawSolidTriangleLocal(float2 p0, float2 p1, float2 p2, const FloatColor& color);
+    void drawSolidRect(float x, float y, float w, float h, const FloatColor& color);
+    void drawCheckerboard(float x, float y, float w, float h, float tileSize, const FloatColor& c1, const FloatColor& c2);
+    void drawGrid(float x, float y, float w, float h, float spacing, float thickness, const FloatColor& color);
+    void drawSpriteLocal(float x, float y, float w, float h, const QImage& image);
+
+private:
+    class Impl;
+    Impl* impl_;
+};
+
+}
