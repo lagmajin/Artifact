@@ -1,10 +1,17 @@
-module;
+﻿module;
 #include <QWidget>
+#include <QImage>
+#include <QSize>
 #include <wobjectdefs.h>
 
 export module Artifact.Widgets.SoftwareRenderInspectors;
 
+import Artifact.Composition.Abstract;
+
 export namespace Artifact {
+
+// Forward declarations
+QImage generateCompositionThumbnail(const ArtifactCompositionPtr& composition, const QSize& thumbnailSize);
 
 class ArtifactSoftwareCompositionTestWidget : public QWidget {
     W_OBJECT(ArtifactSoftwareCompositionTestWidget)

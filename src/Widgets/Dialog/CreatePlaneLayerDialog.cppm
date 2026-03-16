@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <QDialogButtonBox>
 #include <QVBoxLayout>
 #include <QWidget>
@@ -26,7 +26,7 @@ import Widgets.EditableLabel;
 import DragSpinBox;
 import Utils.String.UniString;
 import Color.Float;
-import Color.Utils;
+//import Color.Utils;
 import Artifact.Service.Project;
 import Artifact.Composition.Abstract;
 import Composition.Settings;
@@ -110,8 +110,8 @@ namespace Artifact {
           
           // Suggest name
           FloatColor fc(c.redF(), c.greenF(), c.blueF(), c.alphaF());
-          UniString naturalName = ColorUtils::getNaturalColorName(fc);
-          Q_EMIT colorChanged(naturalName.toQString());
+          //UniString naturalName = ColorUtils::getNaturalColorName(fc);
+         // Q_EMIT colorChanged(naturalName.toQString());
       }
   });
 

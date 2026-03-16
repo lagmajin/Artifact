@@ -38,6 +38,8 @@
 #else
 #include <dlfcn.h>
 #endif
+
+#include <QList>
 module Artifact.VST.Host;
 
 

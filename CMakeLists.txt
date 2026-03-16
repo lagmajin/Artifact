@@ -217,9 +217,6 @@ target_link_libraries(Artifact PRIVATE glm::glm)
 find_package(Stb REQUIRED)
 target_include_directories(Artifact PRIVATE ${Stb_INCLUDE_DIR})
 
-find_package(assimp REQUIRED)
-target_link_libraries(Artifact PRIVATE assimp::assimp)
-
 find_package(EnTT CONFIG REQUIRED)
 target_link_libraries(Artifact PRIVATE EnTT::EnTT)
 

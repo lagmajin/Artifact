@@ -35,6 +35,8 @@
 #include <numeric>
 #include <regex>
 #include <random>
+
+#include <QList>
 module Artifact.VST.Effect;
 
 

@@ -7,10 +7,7 @@
             "generator": "Ninja",
             "binaryDir": "${sourceDir}/out/build/${presetName}",
             "installDir": "${sourceDir}/out/install/${presetName}",
-            "cacheVariables": {
-                "CMAKE_C_COMPILER": "cl.exe",
-                "CMAKE_CXX_COMPILER": "cl.exe"
-            },
+            "toolchainFile": "${sourceDir}/../cmake/toolchain-msvc-v143.cmake",
             "condition": {
                 "type": "equals",
                 "lhs": "${hostSystemName}",
