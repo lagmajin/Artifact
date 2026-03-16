@@ -111,8 +111,10 @@ public:
     QAction* newCompositionAction = nullptr;
     QAction* importAssetsAction = nullptr;
     QAction* revealProjectFolderAction = nullptr;
-    QAction* restartAction = nullptr;
-    QAction* quitAction = nullptr;
+    QMenu* exportMenu = nullptr;
+    QAction* exportCurrentFrameAction = nullptr;
+    QAction* exportWorkAreaAction = nullptr;
+    QAction* exportProjectPackageAction = nullptr;
     QMenu* recentProjectsMenu = nullptr;
     ArtifactFileMenu* menu_ = nullptr;
 
@@ -124,6 +126,9 @@ public:
     void handleNewComposition();
     void handleImportAssets();
     void handleRevealProjectFolder();
+    void handleExportCurrentFrame();
+    void handleExportWorkArea();
+    void handleExportProjectPackage();
 };
 
 ArtifactFileMenu::Impl::Impl(ArtifactFileMenu* menu)
@@ -286,6 +291,57 @@ void ArtifactFileMenu::Impl::handleRevealProjectFolder()
     const QString path = ArtifactProjectManager::getInstance().currentProjectPath();
     if (path.isEmpty()) return;
     QDesktopServices::openUrl(QUrl::fromLocalFile(QFileInfo(path).absolutePath()));
+}
+
+void ArtifactFileMenu::Impl::handleExportCurrentFrame()
+{
+    if (!menu_) return;
+    auto* svc = ArtifactProjectService::instance();
+    if (!svc || !svc->hasProject()) {
+        QMessageBox::warning(menu_, "エクスポート", "プロジェクトが開かれていません。");
+        return;
+    }
+    
+    const QString filePath = QFileDialog::getSaveFileName(menu_, "現在のフレームを書き出し", 
+        QString(), "PNG Image (*.png);;JPEG Image (*.jpg);;All Files (*.*)");
+    if (filePath.isEmpty()) return;
+    
+    // TODO: 現在のフレームを取得して書き出し
+    QMessageBox::information(menu_, "エクスポート", "現在のフレームの書き出し機能は現在開発中です。");
+}
+
+void ArtifactFileMenu::Impl::handleExportWorkArea()
+{
+    if (!menu_) return;
+    auto* svc = ArtifactProjectService::instance();
+    if (!svc || !svc->hasProject()) {
+        QMessageBox::warning(menu_, "エクスポート", "プロジェクトが開かれていません。");
+        return;
+    }
+    
+    const QString filePath = QFileDialog::getSaveFileName(menu_, "ワークエリアをレンダリング", 
+        QString(), "MP4 Video (*.mp4);;PNG Sequence (*.png);;All Files (*.*)");
+    if (filePath.isEmpty()) return;
+    
+    // TODO: ワークエリアをレンダリング
+    QMessageBox::information(menu_, "エクスポート", "ワークエリアのレンダリング機能は現在開発中です。\nレンダリングキューを使用してください。");
+}
+
+void ArtifactFileMenu::Impl::handleExportProjectPackage()
+{
+    if (!menu_) return;
+    auto* svc = ArtifactProjectService::instance();
+    if (!svc || !svc->hasProject()) {
+        QMessageBox::warning(menu_, "エクスポート", "プロジェクトが開かれていません。");
+        return;
+    }
+    
+    const QString dirPath = QFileDialog::getExistingDirectory(menu_, "プロジェクトをパッケージ化", 
+        QString(), QFileDialog::ShowDirsOnly);
+    if (dirPath.isEmpty()) return;
+    
+    // TODO: プロジェクトをパッケージ化
+    QMessageBox::information(menu_, "エクスポート", "プロジェクトのパッケージ化機能は現在開発中です。");
 }
 
 void ArtifactFileMenu::Impl::rebuildMenu()
