@@ -174,6 +174,7 @@ namespace Artifact {
  void ArtifactEditMenu::Impl::handleSelectSameType() { qDebug() << "Select Same Type"; }
  void ArtifactEditMenu::Impl::handleFind() { qDebug() << "Find"; }
  void ArtifactEditMenu::Impl::handlePreferences() { qDebug() << "Preferences"; }
+ void ArtifactEditMenu::Impl::rebuildMenu() { /* No-op for now */ }
 
  W_OBJECT_IMPL(ArtifactEditMenu)
 
