@@ -244,7 +244,7 @@ QPixmap projectItemPreviewPixmap(ProjectItem* item, const QSize& targetSize)
             return {};
         }
         if (auto composition = found.ptr.lock()) {
-            const QImage thumb = generateCompositionThumbnail(composition, targetSize);
+           const QImage thumb = generateCompositionThumbnail(composition, targetSize);
             if (!thumb.isNull()) {
                 return QPixmap::fromImage(thumb);
             }

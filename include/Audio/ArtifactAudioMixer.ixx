@@ -1,4 +1,4 @@
-module;
+﻿module;
 
 #include <QString>
 #include <QStringList>
@@ -64,7 +64,7 @@ public:
 
     void resetPeak();
 
-Q_SIGNALS:
+
     void volumeChanged(float volume) W_SIGNAL(volumeChanged, volume);
     void panChanged(float pan) W_SIGNAL(panChanged, pan);
     void muteChanged(bool muted) W_SIGNAL(muteChanged, muted);
@@ -94,7 +94,7 @@ public:
     float rightLevel() const;
     void updateLevels(float left, float right);
 
-Q_SIGNALS:
+
     void volumeChanged(float volume) W_SIGNAL(volumeChanged, volume);
     void muteChanged(bool muted) W_SIGNAL(muteChanged, muted);
     void levelChanged(float left, float right) W_SIGNAL(levelChanged, left, right);
@@ -144,7 +144,7 @@ public:
     void setBufferSize(int size);
     int bufferSize() const;
 
-Q_SIGNALS:
+
     void channelStripAdded(LayerID layerId) W_SIGNAL(channelStripAdded, layerId);
     void channelStripRemoved(LayerID layerId) W_SIGNAL(channelStripRemoved, layerId);
 

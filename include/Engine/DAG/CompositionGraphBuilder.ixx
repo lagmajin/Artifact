@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <QString>
 #include <vector>
 #include <unordered_map>
@@ -37,6 +37,8 @@ module;
 #include <numeric>
 #include <regex>
 #include <random>
+#include <QList>
+
 export module Artifact.Engine.DAG.CompositionGraphBuilder;
 
 

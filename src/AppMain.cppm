@@ -589,7 +589,6 @@ int main(int argc, char* argv[])
 	 a.addLibraryPath(QCoreApplication::applicationDirPath() + QStringLiteral("/plugins"));
 	 a.setStyle(QStyleFactory::create(QStringLiteral("Fusion")));
 	 auto modoTheme = ArtifactCore::getDCCTheme(DccStylePreset::ModoStyle);
-	 a.setPalette(ArtifactCore::buildDCCPalette(modoTheme));
 	 a.setStyleSheet(ArtifactCore::buildDCCStyleSheet(modoTheme));
 	 auto pool = QThreadPool::globalInstance();
 

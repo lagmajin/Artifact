@@ -34,6 +34,8 @@
 #include <numeric>
 #include <regex>
 #include <random>
+
+#include <QList>
 export module Artifact.Project.Importer;
 
 

@@ -423,6 +423,8 @@ QImage fitCanvasImageToPreview(const QImage& canvas, const QSize& previewSize)
     return image;
 }
 
+} // namespace
+
 QImage generateCompositionThumbnail(const ArtifactCompositionPtr& composition, const QSize& thumbnailSize)
 {
     if (!composition) {
@@ -456,19 +458,21 @@ QImage generateCompositionThumbnail(const ArtifactCompositionPtr& composition, c
                 painter.drawImage(QRectF(0, 0, size.width, size.height), img);
             }
         } else if (auto solidLayer = std::dynamic_pointer_cast<ArtifactSolidImageLayer>(layer)) {
-            QImage img(compSize, QImage::Format_ARGB32_Premultiplied);
-            const auto color = solidLayer->color();
-            img.fill(QColor(
-                static_cast<int>(color.r * 255),
-                static_cast<int>(color.g * 255),
-                static_cast<int>(color.b * 255)));
-            painter.drawImage(0, 0, img);
+             QImage img(compSize, QImage::Format_ARGB32_Premultiplied);
+             const auto color = solidLayer->color();
+             img.fill(QColor(
+                 static_cast<int>(color.r() * 255),
+                 static_cast<int>(color.g() * 255),
+                 static_cast<int>(color.b() * 255)));
+             painter.drawImage(0, 0, img);
         }
     }
     
     // サムネイルサイズにリサイズ
     return canvas.scaled(thumbnailSize, Qt::KeepAspectRatio, Qt::SmoothTransformation);
 }
+
+namespace {
 
 QString compositionSummaryText(const ArtifactCompositionPtr& composition)
 {
