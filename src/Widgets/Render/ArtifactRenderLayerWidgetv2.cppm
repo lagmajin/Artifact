@@ -437,11 +437,9 @@ W_OBJECT_IMPL(ArtifactLayerEditorWidgetV2)
       
       // ArtifactImageLayer の場合、追加情報を出力
       if (auto imageLayer = std::dynamic_pointer_cast<ArtifactImageLayer>(layer)) {
-       const bool hasImage = imageLayer->layerPropertyValue("image.loaded").toBool();
-       const QString path = imageLayer->layerPropertyValue("image.sourcePath").toString();
+       const QString path = imageLayer->sourcePath();
        qDebug() << "[LayerView] ArtifactImageLayer details:"
-                << "hasImage:" << hasImage
-                << "path:" << path;
+                << "sourcePath:" << path;
       }
       
       layer->draw(renderer_.get());
