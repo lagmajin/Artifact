@@ -48,6 +48,7 @@ import Property.Abstract;
 
 import Artifact.Render.IRenderer;
 import Artifact.Preview.Pipeline;
+import Artifact.Layer.Image;
 
 namespace Artifact {
 
