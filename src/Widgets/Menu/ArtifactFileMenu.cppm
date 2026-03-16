@@ -347,9 +347,9 @@ void ArtifactFileMenu::Impl::handleExportCurrentFrame()
             QImage img(compSize, QImage::Format_ARGB32_Premultiplied);
             const FloatColor solidColor = solidLayer->color();
             img.fill(QColor(
-                static_cast<int>(solidColor.r * 255),
-                static_cast<int>(solidColor.g * 255),
-                static_cast<int>(solidColor.b * 255)));
+                static_cast<int>(solidColor.r() * 255),
+                static_cast<int>(solidColor.g() * 255),
+                static_cast<int>(solidColor.b() * 255)));
             painter.drawImage(0, 0, img);
         }
     }
@@ -436,9 +436,9 @@ void ArtifactFileMenu::Impl::handleExportWorkArea()
                 QImage img(compSize, QImage::Format_ARGB32_Premultiplied);
                 const FloatColor solidColor = solidLayer->color();
                 img.fill(QColor(
-                    static_cast<int>(solidColor.r * 255),
-                    static_cast<int>(solidColor.g * 255),
-                    static_cast<int>(solidColor.b * 255)));
+                    static_cast<int>(solidColor.r() * 255),
+                    static_cast<int>(solidColor.g() * 255),
+                    static_cast<int>(solidColor.b() * 255)));
                 painter.drawImage(0, 0, img);
             }
         }
