@@ -29,6 +29,9 @@ namespace Artifact {
   QAction* trimInAction = nullptr;
   QAction* trimOutAction = nullptr;
   QAction* selectAllAction = nullptr;
+  QAction* selectNoneAction = nullptr;
+  QAction* invertSelectionAction = nullptr;
+  QAction* selectSameTypeAction = nullptr;
   QAction* findAction = nullptr;
   QAction* preferencesAction = nullptr;
 
@@ -47,6 +50,9 @@ namespace Artifact {
   void handleTrimIn();
   void handleTrimOut();
   void handleSelectAll();
+  void handleSelectNone();
+  void handleInvertSelection();
+  void handleSelectSameType();
   void handleFind();
   void handlePreferences();
  };
@@ -54,48 +60,55 @@ namespace Artifact {
  ArtifactEditMenu::Impl::Impl(QMenu* menu)
  {
   // Basic edit actions
-  undoAction = new QAction("元に戻す(&U)");
+  undoAction = new QAction("元に戻す (&U)");
   undoAction->setShortcut(QKeySequence::Undo);
   undoAction->setIcon(QIcon(resolveIconPath("Material/undo.svg")));
 
-  redoAction = new QAction("やり直し(&R)");
+  redoAction = new QAction("やり直し (&R)");
   redoAction->setShortcut(QKeySequence::Redo);
   redoAction->setIcon(QIcon(resolveIconPath("Material/redo.svg")));
 
-  duplicateAction = new QAction("複製(&D)");
+  duplicateAction = new QAction("複製 (&D)");
   duplicateAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_D));
   duplicateAction->setIcon(QIcon(resolveIconPath("Material/content_copy.svg")));
 
-  splitAction = new QAction("レイヤーを分割(&S)");
+  splitAction = new QAction("レイヤーを分割 (&S)");
   splitAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_D));
   splitAction->setIcon(QIcon(resolveIconPath("Material/content_cut.svg")));
 
   trimInAction = new QAction("インポイントを現在の時間にトリム");
   trimOutAction = new QAction("アウトポイントを現在の時間にトリム");
 
-  selectAllAction = new QAction("すべて選択(&A)");
+  selectAllAction = new QAction("すべて選択 (&A)");
   selectAllAction->setShortcut(QKeySequence::SelectAll);
 
-  findAction = new QAction("検索(&F)...");
+  selectNoneAction = new QAction("選択解除");
+  selectNoneAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_A));
+
+  invertSelectionAction = new QAction("選択を反転");
+
+  selectSameTypeAction = new QAction("同じ種類を選択");
+
+  findAction = new QAction("検索 (&F)...");
   findAction->setShortcut(QKeySequence::Find);
   findAction->setIcon(QIcon(resolveIconPath("Material/search.svg")));
 
-  preferencesAction = new QAction("環境設定(&P)...");
+  preferencesAction = new QAction("環境設定 (&P)...");
   preferencesAction->setIcon(QIcon(resolveIconPath("Material/settings.svg")));
 
-  copyAction_ = new QAction("コピー(&C)");
+  copyAction_ = new QAction("コピー (&C)");
   copyAction_->setShortcut(QKeySequence::Copy);
   copyAction_->setIcon(QIcon(resolveIconPath("Material/content_copy.svg")));
 
-  cutAction_ = new QAction("切り取り(&T)");
+  cutAction_ = new QAction("切り取り (&T)");
   cutAction_->setShortcut(QKeySequence::Cut);
   cutAction_->setIcon(QIcon(resolveIconPath("Material/content_cut.svg")));
 
-  pasteAction_ = new QAction("貼り付け(&P)");
+  pasteAction_ = new QAction("貼り付け (&P)");
   pasteAction_->setShortcut(QKeySequence::Paste);
   pasteAction_->setIcon(QIcon(resolveIconPath("Material/content_paste.svg")));
 
-  deleteAction_ = new QAction("削除(&D)");
+  deleteAction_ = new QAction("削除 (&D)");
   deleteAction_->setShortcut(QKeySequence::Delete);
   deleteAction_->setIcon(QIcon(resolveIconPath("Material/delete.svg")));
 
@@ -113,113 +126,64 @@ namespace Artifact {
   menu->addAction(trimInAction);
   menu->addAction(trimOutAction);
   menu->addSeparator();
-  menu->addAction(selectAllAction);
+  
+  // Select submenu
+  QMenu* selectMenu = menu->addMenu("選択");
+  selectMenu->addAction(selectAllAction);
+  selectMenu->addAction(selectNoneAction);
+  selectMenu->addAction(invertSelectionAction);
+  selectMenu->addSeparator();
+  selectMenu->addAction(selectSameTypeAction);
+
+  menu->addSeparator();
   menu->addAction(findAction);
   menu->addSeparator();
   menu->addAction(preferencesAction);
 
   // Connections
-  QObject::connect(copyAction_, &QAction::triggered, [this]() { handleCopyAction(); });
-  QObject::connect(cutAction_, &QAction::triggered, [this]() { handleCutAction(); });
-  QObject::connect(pasteAction_, &QAction::triggered, [this]() { handlePasteAction(); });
-  QObject::connect(undoAction, &QAction::triggered, [this]() { handleUndo(); });
-  QObject::connect(redoAction, &QAction::triggered, [this]() { handleRedo(); });
-  QObject::connect(duplicateAction, &QAction::triggered, [this]() { handleDuplicate(); });
-  QObject::connect(splitAction, &QAction::triggered, [this]() { handleSplit(); });
-  QObject::connect(trimInAction, &QAction::triggered, [this]() { handleTrimIn(); });
-  QObject::connect(trimOutAction, &QAction::triggered, [this]() { handleTrimOut(); });
-  QObject::connect(selectAllAction, &QAction::triggered, [this]() { handleSelectAll(); });
-  QObject::connect(findAction, &QAction::triggered, [this]() { handleFind(); });
-  QObject::connect(preferencesAction, &QAction::triggered, [this]() { handlePreferences(); });
+  QObject::connect(undoAction, &QAction::triggered, menu, [this]() { handleUndo(); });
+  QObject::connect(redoAction, &QAction::triggered, menu, [this]() { handleRedo(); });
+  QObject::connect(copyAction_, &QAction::triggered, menu, [this]() { handleCopyAction(); });
+  QObject::connect(cutAction_, &QAction::triggered, menu, [this]() { handleCutAction(); });
+  QObject::connect(pasteAction_, &QAction::triggered, menu, [this]() { handlePasteAction(); });
+  QObject::connect(deleteAction_, &QAction::triggered, menu, [this]() { handleDelete(); });
+  QObject::connect(duplicateAction, &QAction::triggered, menu, [this]() { handleDuplicate(); });
+  QObject::connect(splitAction, &QAction::triggered, menu, [this]() { handleSplit(); });
+  QObject::connect(trimInAction, &QAction::triggered, menu, [this]() { handleTrimIn(); });
+  QObject::connect(trimOutAction, &QAction::triggered, menu, [this]() { handleTrimOut(); });
+  QObject::connect(selectAllAction, &QAction::triggered, menu, [this]() { handleSelectAll(); });
+  QObject::connect(selectNoneAction, &QAction::triggered, menu, [this]() { handleSelectNone(); });
+  QObject::connect(invertSelectionAction, &QAction::triggered, menu, [this]() { handleInvertSelection(); });
+  QObject::connect(selectSameTypeAction, &QAction::triggered, menu, [this]() { handleSelectSameType(); });
+  QObject::connect(findAction, &QAction::triggered, menu, [this]() { handleFind(); });
+  QObject::connect(preferencesAction, &QAction::triggered, menu, [this]() { handlePreferences(); });
  }
 
- void ArtifactEditMenu::Impl::rebuildMenu()
- {
-  // Enable/disable actions based on project state (simple heuristic)
-  bool hasProject = ArtifactProjectManager::getInstance().isProjectCreated();
-  undoAction->setEnabled(hasProject);
-  redoAction->setEnabled(hasProject);
-  copyAction_->setEnabled(hasProject);
-  cutAction_->setEnabled(hasProject);
-  pasteAction_->setEnabled(hasProject);
-  deleteAction_->setEnabled(hasProject);
-  duplicateAction->setEnabled(hasProject);
-  splitAction->setEnabled(hasProject);
-  trimInAction->setEnabled(hasProject);
-  trimOutAction->setEnabled(hasProject);
-  selectAllAction->setEnabled(hasProject);
-  findAction->setEnabled(hasProject);
+ void ArtifactEditMenu::Impl::handleUndo() { qDebug() << "Undo"; }
+ void ArtifactEditMenu::Impl::handleRedo() { qDebug() << "Redo"; }
+ void ArtifactEditMenu::Impl::handleCopyAction() { qDebug() << "Copy"; }
+ void ArtifactEditMenu::Impl::handleCutAction() { qDebug() << "Cut"; }
+ void ArtifactEditMenu::Impl::handlePasteAction() { qDebug() << "Paste"; }
+ void ArtifactEditMenu::Impl::handleDelete() { qDebug() << "Delete"; }
+ void ArtifactEditMenu::Impl::handleDuplicate() { qDebug() << "Duplicate"; }
+ void ArtifactEditMenu::Impl::handleSplit() { qDebug() << "Split"; }
+ void ArtifactEditMenu::Impl::handleTrimIn() { qDebug() << "Trim In"; }
+ void ArtifactEditMenu::Impl::handleTrimOut() { qDebug() << "Trim Out"; }
+ void ArtifactEditMenu::Impl::handleSelectAll() { qDebug() << "Select All"; }
+ void ArtifactEditMenu::Impl::handleSelectNone() { qDebug() << "Select None"; }
+ void ArtifactEditMenu::Impl::handleInvertSelection() { qDebug() << "Invert Selection"; }
+ void ArtifactEditMenu::Impl::handleSelectSameType() { qDebug() << "Select Same Type"; }
+ void ArtifactEditMenu::Impl::handleFind() { qDebug() << "Find"; }
+ void ArtifactEditMenu::Impl::handlePreferences() { qDebug() << "Preferences"; }
+
+ W_OBJECT_IMPL(ArtifactEditMenu)
+
+ ArtifactEditMenu::ArtifactEditMenu(QWidget* parent) : QMenu(parent), impl_(new Impl(this)) {
+  setTitle("編集 (&E)");
  }
 
- void ArtifactEditMenu::Impl::handleCopyAction()
- {
-  qDebug() << "EditMenu: Copy triggered";
- }
+ ArtifactEditMenu::~ArtifactEditMenu() { delete impl_; }
 
- void ArtifactEditMenu::Impl::handleCutAction()
- {
-  qDebug() << "EditMenu: Cut triggered";
- }
+ void ArtifactEditMenu::rebuildMenu() { impl_->rebuildMenu(); }
 
- void ArtifactEditMenu::Impl::handlePasteAction()
- {
-  qDebug() << "EditMenu: Paste triggered";
- }
-
- void ArtifactEditMenu::Impl::handleUndo()
- {
-  qDebug() << "EditMenu: Undo triggered";
- }
-
- void ArtifactEditMenu::Impl::handleRedo()
- {
-  qDebug() << "EditMenu: Redo triggered";
- }
-
- void ArtifactEditMenu::Impl::handleDuplicate()
- {
-  qDebug() << "EditMenu: Duplicate triggered";
- }
-
- void ArtifactEditMenu::Impl::handleSplit()
- {
-  qDebug() << "EditMenu: Split Layer triggered";
- }
-
- void ArtifactEditMenu::Impl::handleTrimIn()
- {
-  qDebug() << "EditMenu: Trim In triggered";
- }
-
- void ArtifactEditMenu::Impl::handleTrimOut()
- {
-  qDebug() << "EditMenu: Trim Out triggered";
- }
-
- void ArtifactEditMenu::Impl::handleSelectAll()
- {
-  qDebug() << "EditMenu: Select All triggered";
- }
-
- void ArtifactEditMenu::Impl::handleFind()
- {
-  qDebug() << "EditMenu: Find triggered";
- }
-
- void ArtifactEditMenu::Impl::handlePreferences()
- {
-  qDebug() << "EditMenu: Preferences triggered";
- }
-
- ArtifactEditMenu::ArtifactEditMenu(QWidget* parent/*=nullptr*/):QMenu(parent),impl_(new Impl(this))
- {
-  setTitle("編集(&E)");
-  setTearOffEnabled(false);
-  connect(this, &QMenu::aboutToShow, this, [this]() { impl_->rebuildMenu(); });
- }
- ArtifactEditMenu::~ArtifactEditMenu()
- {
-  delete impl_;
- }
-
-};
+} // namespace Artifact

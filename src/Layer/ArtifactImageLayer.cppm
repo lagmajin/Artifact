@@ -36,6 +36,7 @@
 #include <numeric>
 #include <regex>
 #include <random>
+#include <QPainter>
 module Artifact.Layer.Image;
 
 import Image.ImageF32x4RGBAWithCache;
