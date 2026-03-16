@@ -1245,6 +1245,12 @@ QPushButton {
             composition->id(),
             composition->settings().compositionName().toQString());
           impl_->logUiEvent(QStringLiteral("Requested: add current composition to queue"), true);
+          impl_->setStatusMessage(QStringLiteral("コンポジション '%1' をキューに追加しました").arg(composition->settings().compositionName().toQString()), true);
+          return;
+        } else {
+          QMessageBox::warning(this, QStringLiteral("レンダーキュー"), 
+            QStringLiteral("現在のコンポジションが選択されていません。\nタイムラインでコンポジションを選択してください。"));
+          impl_->logUiEvent(QStringLiteral("Failed: no composition selected"), true);
           return;
         }
       }
