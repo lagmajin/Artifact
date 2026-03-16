@@ -1374,6 +1374,47 @@ void ArtifactLayerPanelWidget::keyPressEvent(QKeyEvent* event)
     QWidget::wheelEvent(event);
     return;
    }
+   
+   // マウスの X 位置をチェック（ブレンドモードエリアか？）
+   const int mouseX = event->position().x();
+   const int blendModeStartX = kLayerColumnWidth * kLayerPropertyColumnCount;
+   const bool isBlendModeArea = (mouseX >= blendModeStartX);
+   
+   if (isBlendModeArea) {
+    // ブレンドモードエリア：ホイールでブレンドモードを変更
+    if (!impl_->selectedLayerId.isNil()) {
+      auto* service = ArtifactProjectService::instance();
+      auto comp = service ? service->currentComposition().lock() : nullptr;
+      if (comp) {
+        auto layer = comp->layerById(impl_->selectedLayerId);
+        if (layer) {
+          const auto items = blendModeItems();
+          const int currentMode = static_cast<int>(layer->layerBlendType());
+          int currentIndex = 0;
+          for (int i = 0; i < items.size(); ++i) {
+            if (static_cast<int>(items[i].second) == currentMode) {
+              currentIndex = i;
+              break;
+            }
+          }
+          const int dir = (delta > 0) ? -1 : 1;
+          int newIndex = (currentIndex + dir + items.size()) % items.size();
+          const auto newMode = items[newIndex].second;
+          layer->setBlendMode(newMode);
+          if (service) {
+            if (auto project = service->getCurrentProjectSharedPtr()) {
+              project->projectChanged();
+            }
+          }
+          update();
+          event->accept();
+          return;
+        }
+      }
+    }
+   }
+   
+   // それ以外：選択レイヤーを変更
    // 現在の選択インデックスを探す
    int selectedIdx = -1;
    for (int i = 0; i < impl_->visibleRows.size(); ++i) {
