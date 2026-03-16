@@ -16,6 +16,8 @@ module;
 #include <QCoreApplication>
 #include <QTimer>
 #include <QSettings>
+#include <QPainter>
+#include <QImage>
 #include <wobjectimpl.h>
 
 module Artifact.Menu.File;
@@ -25,6 +27,8 @@ import Artifact.Project.Manager;
 import Artifact.Service.Project;
 import Utils.Path;
 import Artifact.Widgets.AppDialogs;
+import Artifact.Layer.Image;
+import Artifact.Layer.Solid;
 
 namespace Artifact {
 using namespace ArtifactCore;
@@ -304,12 +308,56 @@ void ArtifactFileMenu::Impl::handleExportCurrentFrame()
         return;
     }
     
-    const QString filePath = QFileDialog::getSaveFileName(menu_, "現在のフレームを書き出し", 
+    auto comp = svc->currentComposition().lock();
+    if (!comp) {
+        QMessageBox::warning(menu_, "エクスポート", "コンポジションが選択されていません。");
+        return;
+    }
+
+    const QString filePath = QFileDialog::getSaveFileName(menu_, "現在のフレームを書き出し",
         QString(), "PNG Image (*.png);;JPEG Image (*.jpg);;All Files (*.*)");
     if (filePath.isEmpty()) return;
+
+    // 現在のフレームをレンダリング
+    const QSize compSize = comp->settings().compositionSize();
+    QImage canvas(compSize, QImage::Format_ARGB32_Premultiplied);
+    canvas.fill(QColor(18, 20, 24));
     
-    // TODO: 現在のフレームを取得して書き出し
-    QMessageBox::information(menu_, "エクスポート", "現在のフレームの書き出し機能は現在開発中です。");
+    QPainter painter(&canvas);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    painter.setRenderHint(QPainter::SmoothPixmapTransform, true);
+    
+    // 全レイヤーを描画
+    const auto layers = comp->allLayer();
+    for (const auto& layer : layers) {
+        if (!layer || !layer->isVisible()) continue;
+        
+        // レイヤーを現在のフレーム位置にシーク
+        layer->goToFrame(comp->framePosition().framePosition());
+        
+        // レイヤーサーフェスを取得して描画
+        if (auto imageLayer = std::dynamic_pointer_cast<ArtifactImageLayer>(layer)) {
+            QImage img = imageLayer->toQImage();
+            if (!img.isNull()) {
+                const auto size = layer->sourceSize();
+                painter.drawImage(QRectF(0, 0, size.width, size.height), img);
+            }
+        } else if (auto solidLayer = std::dynamic_pointer_cast<ArtifactSolidImageLayer>(layer)) {
+            QImage img(compSize, QImage::Format_ARGB32_Premultiplied);
+            img.fill(toQColor(solidLayer->color()));
+            painter.drawImage(0, 0, img);
+        }
+    }
+    
+    // 画像を保存
+    if (filePath.endsWith(".jpg", Qt::CaseInsensitive)) {
+        canvas.save(filePath, "JPG", 95);
+    } else {
+        canvas.save(filePath, "PNG");
+    }
+    
+    QMessageBox::information(menu_, "エクスポート", 
+        QString("現在のフレームを保存しました:\n%1").arg(filePath));
 }
 
 void ArtifactFileMenu::Impl::handleExportWorkArea()
@@ -321,12 +369,91 @@ void ArtifactFileMenu::Impl::handleExportWorkArea()
         return;
     }
     
-    const QString filePath = QFileDialog::getSaveFileName(menu_, "ワークエリアをレンダリング", 
-        QString(), "MP4 Video (*.mp4);;PNG Sequence (*.png);;All Files (*.*)");
+    auto comp = svc->currentComposition().lock();
+    if (!comp) {
+        QMessageBox::warning(menu_, "エクスポート", "コンポジションが選択されていません。");
+        return;
+    }
+
+    const QString filePath = QFileDialog::getSaveFileName(menu_, "ワークエリアをレンダリング",
+        QString(), "PNG Sequence (*.png);;MP4 Video (*.mp4);;All Files (*.*)");
     if (filePath.isEmpty()) return;
+
+    // ワークエリア範囲を取得
+    const FrameRange workArea = comp->workAreaRange();
+    const int64_t startFrame = workArea.start();
+    const int64_t endFrame = workArea.end();
+    const int64_t totalFrames = endFrame - startFrame + 1;
     
-    // TODO: ワークエリアをレンダリング
-    QMessageBox::information(menu_, "エクスポート", "ワークエリアのレンダリング機能は現在開発中です。\nレンダリングキューを使用してください。");
+    // 進捗ダイアログを表示
+    QProgressDialog progress(menu_);
+    progress.setWindowTitle("レンダリング中");
+    progress.setLabelText("フレームを描画中...");
+    progress.setRange(0, static_cast<int>(totalFrames));
+    progress.setCancelButton(nullptr);
+    progress.setWindowModality(Qt::WindowModal);
+    progress.show();
+    
+    const QSize compSize = comp->settings().compositionSize();
+    int renderedCount = 0;
+    
+    // 各フレームをレンダリング
+    for (int64_t frame = startFrame; frame <= endFrame; ++frame) {
+        // 進捗更新
+        progress.setValue(static_cast<int>(frame - startFrame));
+        QApplication::processEvents();
+        if (progress.wasCanceled()) break;
+        
+        // キャンバスをクリア
+        QImage canvas(compSize, QImage::Format_ARGB32_Premultiplied);
+        canvas.fill(QColor(18, 20, 24));
+        
+        QPainter painter(&canvas);
+        painter.setRenderHint(QPainter::Antialiasing, true);
+        painter.setRenderHint(QPainter::SmoothPixmapTransform, true);
+        
+        // 全レイヤーを描画
+        const auto layers = comp->allLayer();
+        for (const auto& layer : layers) {
+            if (!layer || !layer->isVisible()) continue;
+            
+            // 現在のフレーム位置にシーク
+            layer->goToFrame(FramePosition(frame));
+            
+            // レイヤーサーフェスを取得して描画
+            if (auto imageLayer = std::dynamic_pointer_cast<ArtifactImageLayer>(layer)) {
+                QImage img = imageLayer->toQImage();
+                if (!img.isNull()) {
+                    const auto size = layer->sourceSize();
+                    painter.drawImage(QRectF(0, 0, size.width, size.height), img);
+                }
+            } else if (auto solidLayer = std::dynamic_pointer_cast<ArtifactSolidImageLayer>(layer)) {
+                QImage img(compSize, QImage::Format_ARGB32_Premultiplied);
+                img.fill(toQColor(solidLayer->color()));
+                painter.drawImage(0, 0, img);
+            }
+        }
+        
+        // ファイル名を生成（連番）
+        QString frameFilePath;
+        if (filePath.endsWith(".png", Qt::CaseInsensitive)) {
+            // PNG シーケンスの場合
+            QFileInfo fi(filePath);
+            frameFilePath = fi.absolutePath() + "/" + fi.completeBaseName() + 
+                           QString("_%1").arg(static_cast<int>(frame), 4, 10, QChar('0')) + ".png";
+        } else {
+            // デフォルトは PNG シーケンス
+            frameFilePath = filePath + QString("_%1.png").arg(static_cast<int>(frame), 4, 10, QChar('0'));
+        }
+        
+        canvas.save(frameFilePath, "PNG");
+        renderedCount++;
+    }
+    
+    progress.setValue(static_cast<int>(totalFrames));
+    
+    QMessageBox::information(menu_, "エクスポート",
+        QString("%1 フレームを保存しました:\n%2").arg(renderedCount).arg(filePath));
 }
 
 void ArtifactFileMenu::Impl::handleExportProjectPackage()
