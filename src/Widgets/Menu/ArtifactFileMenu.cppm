@@ -29,6 +29,7 @@ import Artifact.Service.Project;
 import Utils.Path;
 import Artifact.Widgets.AppDialogs;
 import Artifact.Layer.Image;
+import Artifact.Layer.SolidImage;
 
 namespace Artifact {
 using namespace ArtifactCore;
@@ -333,7 +334,7 @@ void ArtifactFileMenu::Impl::handleExportCurrentFrame()
         if (!layer || !layer->isVisible()) continue;
         
         // レイヤーを現在のフレーム位置にシーク
-        layer->goToFrame(comp->framePosition().framePosition());
+        layer->goToFrame(static_cast<int64_t>(comp->framePosition().framePosition()));
 
         // レイヤーサーフェスを取得して描画
         if (auto imageLayer = std::dynamic_pointer_cast<ArtifactImageLayer>(layer)) {
@@ -342,13 +343,13 @@ void ArtifactFileMenu::Impl::handleExportCurrentFrame()
                 const auto size = layer->sourceSize();
                 painter.drawImage(QRectF(0, 0, size.width, size.height), img);
             }
-        } else if (auto solidLayer = std::dynamic_pointer_cast<ArtifactSolid2DLayer>(layer)) {
+        } else if (auto solidLayer = std::dynamic_pointer_cast<ArtifactSolidImageLayer>(layer)) {
             QImage img(compSize, QImage::Format_ARGB32_Premultiplied);
-            const auto color = solidLayer->color();
+            const auto solidColor = solidLayer->color();
             img.fill(QColor(
-                static_cast<int>(color.r * 255),
-                static_cast<int>(color.g * 255),
-                static_cast<int>(color.b * 255)));
+                static_cast<int>(solidColor.r * 255),
+                static_cast<int>(solidColor.g * 255),
+                static_cast<int>(solidColor.b * 255)));
             painter.drawImage(0, 0, img);
         }
     }
@@ -422,8 +423,8 @@ void ArtifactFileMenu::Impl::handleExportWorkArea()
             if (!layer || !layer->isVisible()) continue;
             
             // 現在のフレーム位置にシーク
-            layer->goToFrame(FramePosition(frame));
-            
+            layer->goToFrame(frame);
+
             // レイヤーサーフェスを取得して描画
             if (auto imageLayer = std::dynamic_pointer_cast<ArtifactImageLayer>(layer)) {
                 QImage img = imageLayer->toQImage();
@@ -431,13 +432,13 @@ void ArtifactFileMenu::Impl::handleExportWorkArea()
                     const auto size = layer->sourceSize();
                     painter.drawImage(QRectF(0, 0, size.width, size.height), img);
                 }
-            } else if (auto solidLayer = std::dynamic_pointer_cast<ArtifactSolid2DLayer>(layer)) {
+            } else if (auto solidLayer = std::dynamic_pointer_cast<ArtifactSolidImageLayer>(layer)) {
                 QImage img(compSize, QImage::Format_ARGB32_Premultiplied);
-                const auto color = solidLayer->color();
+                const auto solidColor = solidLayer->color();
                 img.fill(QColor(
-                    static_cast<int>(color.r * 255),
-                    static_cast<int>(color.g * 255),
-                    static_cast<int>(color.b * 255)));
+                    static_cast<int>(solidColor.r * 255),
+                    static_cast<int>(solidColor.g * 255),
+                    static_cast<int>(solidColor.b * 255)));
                 painter.drawImage(0, 0, img);
             }
         }
