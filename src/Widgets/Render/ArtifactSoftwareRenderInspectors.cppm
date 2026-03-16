@@ -423,6 +423,53 @@ QImage fitCanvasImageToPreview(const QImage& canvas, const QSize& previewSize)
     return image;
 }
 
+QImage generateCompositionThumbnail(const ArtifactCompositionPtr& composition, const QSize& thumbnailSize)
+{
+    if (!composition) {
+        QImage placeholder(thumbnailSize, QImage::Format_ARGB32_Premultiplied);
+        placeholder.fill(QColor(40, 40, 40));
+        return placeholder;
+    }
+    
+    // コンポジションキャンバスをレンダリング
+    const QSize compSize = composition->settings().compositionSize();
+    QImage canvas(compSize, QImage::Format_ARGB32_Premultiplied);
+    canvas.fill(QColor(18, 20, 24));
+    
+    QPainter painter(&canvas);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    painter.setRenderHint(QPainter::SmoothPixmapTransform, true);
+    
+    // 全レイヤーを描画
+    const auto layers = composition->allLayer();
+    for (const auto& layer : layers) {
+        if (!layer || !layer->isVisible()) continue;
+        
+        // レイヤーを現在のフレーム位置にシーク
+        layer->goToFrame(composition->framePosition().framePosition());
+        
+        // レイヤーサーフェスを取得して描画
+        if (auto imageLayer = std::dynamic_pointer_cast<ArtifactImageLayer>(layer)) {
+            QImage img = imageLayer->toQImage();
+            if (!img.isNull()) {
+                const auto size = layer->sourceSize();
+                painter.drawImage(QRectF(0, 0, size.width, size.height), img);
+            }
+        } else if (auto solidLayer = std::dynamic_pointer_cast<ArtifactSolidImageLayer>(layer)) {
+            QImage img(compSize, QImage::Format_ARGB32_Premultiplied);
+            const auto color = solidLayer->color();
+            img.fill(QColor(
+                static_cast<int>(color.r * 255),
+                static_cast<int>(color.g * 255),
+                static_cast<int>(color.b * 255)));
+            painter.drawImage(0, 0, img);
+        }
+    }
+    
+    // サムネイルサイズにリサイズ
+    return canvas.scaled(thumbnailSize, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+}
+
 QString compositionSummaryText(const ArtifactCompositionPtr& composition)
 {
     if (!composition) {

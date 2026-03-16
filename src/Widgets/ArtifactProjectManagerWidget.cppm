@@ -49,6 +49,8 @@
 #include <QDoubleSpinBox>
 #include <QDialogButtonBox>
 #include <QStyle>
+#include <QPainter>
+import Artifact.Widgets.SoftwareRenderInspectors;
 #include <QScrollBar>
 #include <QKeyEvent>
 #include <QPainter>
@@ -242,7 +244,7 @@ QPixmap projectItemPreviewPixmap(ProjectItem* item, const QSize& targetSize)
             return {};
         }
         if (auto composition = found.ptr.lock()) {
-            const QImage thumb = composition->getThumbnail(targetSize.width(), targetSize.height());
+            const QImage thumb = generateCompositionThumbnail(composition, targetSize);
             if (!thumb.isNull()) {
                 return QPixmap::fromImage(thumb);
             }
