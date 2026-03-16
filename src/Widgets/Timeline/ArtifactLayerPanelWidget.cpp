@@ -435,24 +435,28 @@ int ArtifactLayerPanelHeaderWidget::totalHeaderHeight() const
   LayerID dragCandidateLayerId;
   LayerID draggedLayerId;
   int dragInsertVisibleRow = -1;
+  bool updatingLayout = false;  // 再帰呼び出し防止フラグ
 
   void clearInlineEditors()
   {
    if (inlineParentEditor) {
     inlineParentEditor->hide();
     inlineParentEditor->deleteLater();
-    inlineParentEditor = nullptr;
    }
+   inlineParentEditor = nullptr;
+   
    if (inlineBlendEditor) {
     inlineBlendEditor->hide();
     inlineBlendEditor->deleteLater();
-    inlineBlendEditor = nullptr;
    }
+   inlineBlendEditor = nullptr;
+   
    if (inlineNameEditor) {
     inlineNameEditor->hide();
     inlineNameEditor->deleteLater();
-    inlineNameEditor = nullptr;
    }
+   inlineNameEditor = nullptr;
+   
    editingLayerId = LayerID();
   }
 
@@ -666,8 +670,12 @@ int ArtifactLayerPanelHeaderWidget::totalHeaderHeight() const
 
  void ArtifactLayerPanelWidget::updateLayout()
  {
- impl_->clearInlineEditors();
- impl_->rebuildVisibleRows();
+  // 再帰呼び出しを防止
+  if (impl_->updatingLayout) return;
+  impl_->updatingLayout = true;
+  
+  impl_->clearInlineEditors();
+  impl_->rebuildVisibleRows();
   const int count = impl_->visibleRows.size();
   const int contentHeight = std::max(kLayerRowHeight, count * kLayerRowHeight);
   setMinimumHeight(0);
@@ -675,6 +683,8 @@ int ArtifactLayerPanelHeaderWidget::totalHeaderHeight() const
   updateGeometry();
   update();
   Q_EMIT visibleRowsChanged();
+  
+  impl_->updatingLayout = false;
  }
 
  QVector<LayerID> ArtifactLayerPanelWidget::visibleTimelineRows() const
