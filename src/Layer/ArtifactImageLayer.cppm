@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <QImage>
 #include <QFileInfo>
 #include <QVariant>
@@ -138,6 +138,9 @@ namespace Artifact {
 
  void ArtifactImageLayer::draw(ArtifactIRenderer* renderer)
  {
+    // デバッグログ：描画開始
+    qDebug() << "[ArtifactImageLayer::draw] Start:" << "hasImage=" << impl_->hasImage_ << "renderer=" << (renderer ? "valid" : "null");
+
     if (!impl_->hasImage_) return;
 
     QImage img = toQImage();
