@@ -16,6 +16,7 @@ module;
 #include <QCoreApplication>
 #include <QTimer>
 #include <QSettings>
+#include <QProgressDialog>
 #include <QPainter>
 #include <QImage>
 #include <wobjectimpl.h>
@@ -28,7 +29,6 @@ import Artifact.Service.Project;
 import Utils.Path;
 import Artifact.Widgets.AppDialogs;
 import Artifact.Layer.Image;
-import Artifact.Layer.Solid;
 
 namespace Artifact {
 using namespace ArtifactCore;
@@ -334,7 +334,7 @@ void ArtifactFileMenu::Impl::handleExportCurrentFrame()
         
         // レイヤーを現在のフレーム位置にシーク
         layer->goToFrame(comp->framePosition().framePosition());
-        
+
         // レイヤーサーフェスを取得して描画
         if (auto imageLayer = std::dynamic_pointer_cast<ArtifactImageLayer>(layer)) {
             QImage img = imageLayer->toQImage();
@@ -342,9 +342,13 @@ void ArtifactFileMenu::Impl::handleExportCurrentFrame()
                 const auto size = layer->sourceSize();
                 painter.drawImage(QRectF(0, 0, size.width, size.height), img);
             }
-        } else if (auto solidLayer = std::dynamic_pointer_cast<ArtifactSolidImageLayer>(layer)) {
+        } else if (auto solidLayer = std::dynamic_pointer_cast<ArtifactSolid2DLayer>(layer)) {
             QImage img(compSize, QImage::Format_ARGB32_Premultiplied);
-            img.fill(toQColor(solidLayer->color()));
+            const auto color = solidLayer->color();
+            img.fill(QColor(
+                static_cast<int>(color.r * 255),
+                static_cast<int>(color.g * 255),
+                static_cast<int>(color.b * 255)));
             painter.drawImage(0, 0, img);
         }
     }
@@ -427,9 +431,13 @@ void ArtifactFileMenu::Impl::handleExportWorkArea()
                     const auto size = layer->sourceSize();
                     painter.drawImage(QRectF(0, 0, size.width, size.height), img);
                 }
-            } else if (auto solidLayer = std::dynamic_pointer_cast<ArtifactSolidImageLayer>(layer)) {
+            } else if (auto solidLayer = std::dynamic_pointer_cast<ArtifactSolid2DLayer>(layer)) {
                 QImage img(compSize, QImage::Format_ARGB32_Premultiplied);
-                img.fill(toQColor(solidLayer->color()));
+                const auto color = solidLayer->color();
+                img.fill(QColor(
+                    static_cast<int>(color.r * 255),
+                    static_cast<int>(color.g * 255),
+                    static_cast<int>(color.b * 255)));
                 painter.drawImage(0, 0, img);
             }
         }
