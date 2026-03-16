@@ -7,6 +7,8 @@ module Menu.Test;
 
 import Artifact.Widgets.SoftwareRenderTest;
 import Artifact.Widgets.SoftwareRenderInspectors;
+import Artifact.Widgets.LayerCompositeTest;
+import Artifact.Widgets.TimelineLayerTest;
 
 
 
@@ -57,6 +59,27 @@ namespace Artifact {
       auto* w = new ArtifactSoftwareLayerTestWidget();
       w->setAttribute(Qt::WA_DeleteOnClose, true);
       w->resize(1100, 820);
+      w->show();
+      w->raise();
+      w->activateWindow();
+  });
+
+  auto* layerCompositeTestAction = new QAction("Layer Composite Test...", this);
+  addAction(layerCompositeTestAction);
+  QObject::connect(layerCompositeTestAction, &QAction::triggered, this, []() {
+      auto* w = new ArtifactLayerCompositeTestWidget();
+      w->setAttribute(Qt::WA_DeleteOnClose, true);
+      w->show();
+      w->raise();
+      w->activateWindow();
+  });
+
+  auto* timelineLayerTestAction = new QAction("Timeline Layer Test...", this);
+  addAction(timelineLayerTestAction);
+  QObject::connect(timelineLayerTestAction, &QAction::triggered, this, []() {
+      auto* w = new ArtifactTimelineLayerTestWidget();
+      w->setAttribute(Qt::WA_DeleteOnClose, true);
+      w->resize(1600, 1000);
       w->show();
       w->raise();
       w->activateWindow();

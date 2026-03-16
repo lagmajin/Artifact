@@ -38,14 +38,12 @@
 #include <random>
 export module Artifact.Service.Playback;
 
-
-
-
 import Frame.Position;
 import Frame.Rate;
 import Frame.Range;
 import Artifact.Composition.PlaybackController;
 import Artifact.Composition.Abstract;
+import Artifact.Playback.Engine;
 
 W_REGISTER_ARGTYPE(Artifact::ArtifactCompositionPtr)
 
@@ -113,11 +111,21 @@ public:
     void setAudioClockProvider(const std::function<double()>& provider);
     // Use forward declaration to avoid importing AudioClockProvider header here
     void setPlaybackClockProvider(const std::function<double()>& provider);
-    
+
     // Composition management
     void setCurrentComposition(ArtifactCompositionPtr composition);
     ArtifactCompositionPtr currentComposition() const;
-    
+
+    // In/Out Points
+    void setInOutPoints(class ArtifactInOutPoints* inOutPoints);
+    class ArtifactInOutPoints* inOutPoints() const;
+
+    // Marker navigation
+    void goToNextMarker();
+    void goToPreviousMarker();
+    void goToNextChapter();
+    void goToPreviousChapter();
+
 public: // signals
     void playbackStateChanged(PlaybackState state)
         W_SIGNAL(playbackStateChanged, state);

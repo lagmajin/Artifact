@@ -1954,6 +1954,96 @@ void TimelineTrackView::setZoomLevel(double pixelsPerFrame)
 
   void TimelineTrackView::keyPressEvent(QKeyEvent* event)
   {
+   // ナビゲーション操作
+   if (event->key() == Qt::Key_Home) {
+    setPosition(0.0);
+    const double ratio = 0.0;
+    Q_EMIT seekPositionChanged(ratio);
+    event->accept();
+    return;
+   }
+
+   if (event->key() == Qt::Key_End) {
+    const double frameMax = timelineFrameMax(impl_->duration_);
+    setPosition(frameMax);
+    const double ratio = 1.0;
+    Q_EMIT seekPositionChanged(ratio);
+    event->accept();
+    return;
+   }
+
+   if (event->key() == Qt::Key_PageUp) {
+    const int frameDelta = -10;
+    setPosition(std::max(0.0, impl_->position_ + static_cast<double>(frameDelta)));
+    const double frameMax = std::max(1.0, timelineFrameMax(impl_->duration_));
+    const double ratio = impl_->position_ / frameMax;
+    Q_EMIT seekPositionChanged(ratio);
+    event->accept();
+    return;
+   }
+
+   if (event->key() == Qt::Key_PageDown) {
+    const int frameDelta = 10;
+    const double frameMax = timelineFrameMax(impl_->duration_);
+    setPosition(std::min(frameMax, impl_->position_ + static_cast<double>(frameDelta)));
+    const double ratio = impl_->position_ / frameMax;
+    Q_EMIT seekPositionChanged(ratio);
+    event->accept();
+    return;
+   }
+
+   // 選択操作
+   if (event->key() == Qt::Key_Delete || event->key() == Qt::Key_Backspace) {
+    if (!impl_->scene_) {
+     event->accept();
+     return;
+    }
+
+    const auto& selected = impl_->scene_->getSelectedClips();
+    if (!selected.empty()) {
+     // 選択されたクリップを削除（Undo 統合は将来的に実装）
+     for (auto* clip : selected) {
+      if (clip) {
+       impl_->scene_->removeClip(clip);
+      }
+     }
+     viewport()->update();
+     event->accept();
+     return;
+    }
+    QGraphicsView::keyPressEvent(event);
+    return;
+   }
+
+   if (event->key() == Qt::Key_Escape) {
+    if (!impl_->scene_) {
+     event->accept();
+     return;
+    }
+    clearSelection();
+    viewport()->update();
+    event->accept();
+    return;
+   }
+
+   if (event->key() == Qt::Key_A && (event->modifiers() & Qt::ControlModifier)) {
+    if (!impl_->scene_) {
+     event->accept();
+     return;
+    }
+    // 全てのクリップを選択
+    const auto& allClips = impl_->scene_->getClips();
+    for (auto* clip : allClips) {
+     if (clip) {
+      clip->setSelected(true);
+     }
+    }
+    viewport()->update();
+    event->accept();
+    return;
+   }
+
+   // 矢印キーによるシーク・クリップ移動
    int frameDelta = 0;
    if (event->key() == Qt::Key_Left) {
     frameDelta = -1;

@@ -712,9 +712,10 @@ int ArtifactLayerPanelHeaderWidget::totalHeaderHeight() const
         event->accept();
         return;
       }
-      if (service) {
-        service->selectLayer(layer->id());
-      }
+    }
+    // 名前エリアまたはスイッチ列でドラッグを開始可能に
+    if (service) {
+      service->selectLayer(layer->id());
       impl_->dragStartPos = event->pos();
       impl_->dragCandidateLayerId = layer->id();
     }
@@ -1304,25 +1305,84 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent*)
   }
 }
 
- void ArtifactLayerPanelWidget::dragEnterEvent(QDragEnterEvent* e) { e->acceptProposedAction(); }
- void ArtifactLayerPanelWidget::dragMoveEvent(QDragMoveEvent* e) { e->acceptProposedAction(); }
- void ArtifactLayerPanelWidget::dragLeaveEvent(QDragLeaveEvent* e) { e->accept(); }
+ void ArtifactLayerPanelWidget::dragEnterEvent(QDragEnterEvent* e)
+ {
+  const QMimeData* mime = e->mimeData();
+  if (mime && mime->hasUrls()) {
+   for (const auto& url : mime->urls()) {
+    if (url.isLocalFile()) {
+     const QString filePath = url.toLocalFile();
+     const LayerType type = inferLayerTypeFromFile(filePath);
+     // 画像、ビデオ、オーディオレイヤーのみ受け入れ
+     if (type == LayerType::Image || type == LayerType::Video || type == LayerType::Audio) {
+      e->acceptProposedAction();
+      update();  // ビジュアルフィードバック
+      return;
+     }
+    }
+   }
+  }
+  e->ignore();
+ }
+
+ void ArtifactLayerPanelWidget::dragMoveEvent(QDragMoveEvent* e)
+ {
+  const QMimeData* mime = e->mimeData();
+  if (mime && mime->hasUrls()) {
+   e->acceptProposedAction();
+  } else {
+   e->ignore();
+  }
+ }
+
+ void ArtifactLayerPanelWidget::dragLeaveEvent(QDragLeaveEvent* e)
+ {
+  e->accept();
+  update();  // ビジュアルフィードバック解除
+ }
+
  void ArtifactLayerPanelWidget::dropEvent(QDropEvent* event)
  {
   const QMimeData* mime = event->mimeData();
-  if (mime->hasUrls()) {
-    QStringList paths;
-    for (auto& url : mime->urls()) if (url.isLocalFile()) paths.append(url.toLocalFile());
-    if (auto* svc = ArtifactProjectService::instance()) {
-      auto imported = svc->importAssetsFromPaths(paths);
-      for (auto& path : imported) {
-        LayerType type = inferLayerTypeFromFile(path);
-        ArtifactLayerInitParams p(QFileInfo(path).baseName(), type);
-        svc->addLayerToCurrentComposition(p);
-      }
-    }
-    event->acceptProposedAction();
+  if (!mime || !mime->hasUrls()) {
+   event->ignore();
+   return;
   }
+
+  QStringList validPaths;
+  for (const auto& url : mime->urls()) {
+   if (url.isLocalFile()) {
+    const QString filePath = url.toLocalFile();
+    const LayerType type = inferLayerTypeFromFile(filePath);
+    // 有効なファイル形式のみを追加
+    if (type == LayerType::Image || type == LayerType::Video || type == LayerType::Audio) {
+     validPaths.append(filePath);
+    }
+   }
+  }
+
+  if (validPaths.isEmpty()) {
+   event->ignore();
+   return;
+  }
+
+  auto* svc = ArtifactProjectService::instance();
+  if (!svc) {
+   event->ignore();
+   return;
+  }
+
+  // ファイルをアセットとしてインポート
+  auto imported = svc->importAssetsFromPaths(validPaths);
+
+  // インポート成功したファイルをレイヤーとして追加
+  for (const auto& path : imported) {
+   LayerType type = inferLayerTypeFromFile(path);
+   ArtifactLayerInitParams params(QFileInfo(path).baseName(), type);
+   svc->addLayerToCurrentComposition(params);
+  }
+
+  event->acceptProposedAction();
  }
 
  // ============================================================================
