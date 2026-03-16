@@ -412,11 +412,18 @@ W_OBJECT_IMPL(ArtifactLayerEditorWidgetV2)
   if (!targetLayerId_.isNil()) {
    if (auto* service = ArtifactProjectService::instance()) {
     if (auto composition = service->currentComposition().lock()) {
+     // コンポジションサイズを設定
+     const auto compSize = composition->settings().compositionSize();
+     if (compSize.width() > 0 && compSize.height() > 0) {
+      renderer_->setCanvasSize(static_cast<float>(compSize.width()), static_cast<float>(compSize.height()));
+     }
+     
      if (auto layer = composition->layerById(targetLayerId_)) {
       layer->goToFrame(composition->framePosition().framePosition());
       const auto source = layer->sourceSize();
       if (source.width > 0 && source.height > 0) {
-       renderer_->setCanvasSize(static_cast<float>(source.width), static_cast<float>(source.height));
+       // レイヤーサイズも設定（コンポジションサイズを上書きしないためコメントアウト）
+       // renderer_->setCanvasSize(static_cast<float>(source.width), static_cast<float>(source.height));
       }
       layer->draw(renderer_.get());
      }
@@ -639,14 +646,21 @@ void ArtifactLayerEditorWidgetV2::setTargetLayer(const LayerID& id)
  if (impl_->renderer_) {
   if (auto* service = ArtifactProjectService::instance()) {
    if (auto composition = service->currentComposition().lock()) {
+    // コンポジションサイズを設定
+    const auto compSize = composition->settings().compositionSize();
+    if (compSize.width() > 0 && compSize.height() > 0) {
+     impl_->renderer_->setCanvasSize(static_cast<float>(compSize.width()), static_cast<float>(compSize.height()));
+    }
+    
     if (auto layer = composition->layerById(id)) {
      const auto source = layer->sourceSize();
      if (source.width > 0 && source.height > 0) {
-      impl_->renderer_->setCanvasSize(static_cast<float>(source.width), static_cast<float>(source.height));
-      impl_->renderer_->fitToViewport();
-      impl_->zoomLevel_ = 1.0f;
-      return;
+      // レイヤーサイズは使用しない（コンポジションサイズを優先）
+      // impl_->renderer_->setCanvasSize(static_cast<float>(source.width), static_cast<float>(source.height));
      }
+     impl_->renderer_->fitToViewport();
+     impl_->zoomLevel_ = 1.0f;
+     return;
     }
    }
   }
