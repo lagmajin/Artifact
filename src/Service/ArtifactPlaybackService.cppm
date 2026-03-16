@@ -59,26 +59,56 @@ class ArtifactPlaybackService::Impl {
 public:
     ArtifactPlaybackService* owner_ = nullptr;
     ArtifactCompositionPlaybackController* controller_ = nullptr;
+    ArtifactPlaybackEngine* engine_ = nullptr;  // 新しいマルチスレッドエンジン
     ArtifactCompositionPtr currentComposition_;
     QElapsedTimer audioTimer_;
     double audioOffsetSeconds_ = 0.0;
     bool audioRunning_ = false;
     std::function<double()> externalAudioClockProvider_;
-    // Use std::function-based provider to avoid depending on Audio module in this file
-    std::function<double()> playbackClockProvider_; // added provider
+    std::function<double()> playbackClockProvider_;
 
     explicit Impl(ArtifactPlaybackService* owner)
         : owner_(owner) {
         controller_ = new ArtifactCompositionPlaybackController();
+        engine_ = new ArtifactPlaybackEngine();
+        
+        // エンジンのシグナルをサービスに転送
+        QObject::connect(engine_, &ArtifactPlaybackEngine::playbackStateChanged,
+                         owner_, &ArtifactPlaybackService::playbackStateChanged,
+                         Qt::DirectConnection);
+        
+        QObject::connect(engine_, &ArtifactPlaybackEngine::frameChanged,
+                         owner_, [this](const FramePosition& position, const QImage&) {
+            if (currentComposition_) {
+                currentComposition_->setFramePosition(position);
+            }
+            Q_EMIT owner_->frameChanged(position);
+        }, Qt::DirectConnection);
+        
+        QObject::connect(engine_, &ArtifactPlaybackEngine::playbackSpeedChanged,
+                         owner_, &ArtifactPlaybackService::playbackSpeedChanged,
+                         Qt::DirectConnection);
+        
+        QObject::connect(engine_, &ArtifactPlaybackEngine::loopingChanged,
+                         owner_, &ArtifactPlaybackService::loopingChanged,
+                         Qt::DirectConnection);
+        
+        QObject::connect(engine_, &ArtifactPlaybackEngine::frameRangeChanged,
+                         owner_, &ArtifactPlaybackService::frameRangeChanged,
+                         Qt::DirectConnection);
+        
+        QObject::connect(engine_, &ArtifactPlaybackEngine::droppedFrameDetected,
+                         owner_, [this](int64_t count) {
+            qDebug() << "[PlaybackService] Dropped frames:" << count;
+        });
 
-        // コントローラーのシグナルをサービスに転送（owner に直接接続）
+        // コントローラーのシグナルも転送（後方互換性）
         QObject::connect(controller_, &ArtifactCompositionPlaybackController::playbackStateChanged,
                          owner_, &ArtifactPlaybackService::playbackStateChanged,
                          Qt::DirectConnection);
 
         QObject::connect(controller_, &ArtifactCompositionPlaybackController::frameChanged,
                          owner_, [this](const FramePosition& position) {
-            // コンポジションのフレーム位置も更新（同期で即時評価）
             if (currentComposition_) {
                 currentComposition_->setFramePosition(position);
             }
@@ -97,9 +127,21 @@ public:
                          owner_, &ArtifactPlaybackService::frameRangeChanged,
                          Qt::DirectConnection);
 
-        // Provide an audio clock provider backed by a local elapsed timer.
+        // オーディオクロックプロバイダーを設定
         controller_->setAudioClockProvider([this]() -> double {
-            // If an external provider is set by other modules, prefer it.
+            if (externalAudioClockProvider_) {
+                return externalAudioClockProvider_();
+            }
+
+            double seconds = audioOffsetSeconds_;
+            if (audioRunning_) {
+                seconds += static_cast<double>(audioTimer_.elapsed()) / 1000.0;
+            }
+            return seconds;
+        });
+        
+        // エンジンにも設定
+        engine_->setAudioClockProvider([this]() -> double {
             if (externalAudioClockProvider_) {
                 return externalAudioClockProvider_();
             }
@@ -113,8 +155,10 @@ public:
     }
 
     ~Impl() {
+        delete engine_;
         delete controller_;
     }
+    
     void startAudioClock() {
         if (!audioRunning_) {
             audioTimer_.start();
@@ -153,120 +197,172 @@ ArtifactPlaybackService* ArtifactPlaybackService::instance() {
 }
 
 void ArtifactPlaybackService::play() {
+    // 新しいエンジンを使用
+    if (impl_->engine_) {
+        impl_->engine_->play();
+    }
     if (impl_->controller_) {
         impl_->controller_->play();
     }
 }
 
 void ArtifactPlaybackService::pause() {
+    if (impl_->engine_) {
+        impl_->engine_->pause();
+    }
     if (impl_->controller_) {
         impl_->controller_->pause();
     }
 }
 
 void ArtifactPlaybackService::stop() {
+    if (impl_->engine_) {
+        impl_->engine_->stop();
+    }
     if (impl_->controller_) {
         impl_->controller_->stop();
     }
 }
 
 void ArtifactPlaybackService::togglePlayPause() {
-    if (impl_->controller_) {
+    if (impl_->engine_) {
+        impl_->engine_->togglePlayPause();
+    } else if (impl_->controller_) {
         impl_->controller_->togglePlayPause();
     }
 }
 
 void ArtifactPlaybackService::goToFrame(const FramePosition& position) {
+    if (impl_->engine_) {
+        impl_->engine_->goToFrame(position);
+    }
     if (impl_->controller_) {
         impl_->controller_->goToFrame(position);
     }
 }
 
 void ArtifactPlaybackService::goToNextFrame() {
+    if (impl_->engine_) {
+        impl_->engine_->goToNextFrame();
+    }
     if (impl_->controller_) {
         impl_->controller_->goToNextFrame();
     }
 }
 
 void ArtifactPlaybackService::goToPreviousFrame() {
+    if (impl_->engine_) {
+        impl_->engine_->goToPreviousFrame();
+    }
     if (impl_->controller_) {
         impl_->controller_->goToPreviousFrame();
     }
 }
 
 void ArtifactPlaybackService::goToStartFrame() {
+    if (impl_->engine_) {
+        impl_->engine_->goToStartFrame();
+    }
     if (impl_->controller_) {
         impl_->controller_->goToStartFrame();
     }
 }
 
 void ArtifactPlaybackService::goToEndFrame() {
+    if (impl_->engine_) {
+        impl_->engine_->goToEndFrame();
+    }
     if (impl_->controller_) {
         impl_->controller_->goToEndFrame();
     }
 }
 
 bool ArtifactPlaybackService::isPlaying() const {
-    return impl_ && impl_->controller_ ? impl_->controller_->isPlaying() : false;
+    return impl_ && impl_->engine_ ? impl_->engine_->isPlaying() : false;
 }
 
 bool ArtifactPlaybackService::isPaused() const {
-    return impl_->controller_ ? impl_->controller_->isPaused() : false;
+    return impl_->engine_ ? impl_->engine_->isPaused() : false;
 }
 
 bool ArtifactPlaybackService::isStopped() const {
-    return impl_->controller_ ? impl_->controller_->isStopped() : false;
+    return impl_->engine_ ? impl_->engine_->isStopped() : false;
 }
 
 PlaybackState ArtifactPlaybackService::state() const {
+    if (impl_->engine_) {
+        if (impl_->engine_->isPlaying()) return PlaybackState::Playing;
+        if (impl_->engine_->isPaused()) return PlaybackState::Paused;
+        return PlaybackState::Stopped;
+    }
     return impl_->controller_ ? impl_->controller_->state() : PlaybackState::Stopped;
 }
 
 FramePosition ArtifactPlaybackService::currentFrame() const {
-    return impl_->controller_ ? impl_->controller_->currentFrame() : FramePosition(0);
+    return impl_->engine_ ? impl_->engine_->currentFrame() : 
+           (impl_->controller_ ? impl_->controller_->currentFrame() : FramePosition(0));
 }
 
 void ArtifactPlaybackService::setCurrentFrame(const FramePosition& position) {
+    if (impl_->engine_) {
+        impl_->engine_->setCurrentFrame(position);
+    }
     if (impl_->controller_) {
         impl_->controller_->setCurrentFrame(position);
     }
 }
 
 FrameRange ArtifactPlaybackService::frameRange() const {
-    return impl_->controller_ ? impl_->controller_->frameRange() : FrameRange(FramePosition(0), FramePosition(100));
+    return impl_->engine_ ? impl_->engine_->frameRange() :
+           (impl_->controller_ ? impl_->controller_->frameRange() : FrameRange(FramePosition(0), FramePosition(100)));
 }
 
 void ArtifactPlaybackService::setFrameRange(const FrameRange& range) {
+    if (impl_->engine_) {
+        impl_->engine_->setFrameRange(range);
+    }
     if (impl_->controller_) {
         impl_->controller_->setFrameRange(range);
     }
 }
 
 FrameRate ArtifactPlaybackService::frameRate() const {
-    return impl_->controller_ ? impl_->controller_->frameRate() : FrameRate(30.0f);
+    return impl_->engine_ ? impl_->engine_->frameRate() :
+           (impl_->controller_ ? impl_->controller_->frameRate() : FrameRate(30.0f));
 }
 
 void ArtifactPlaybackService::setFrameRate(const FrameRate& rate) {
+    if (impl_->engine_) {
+        impl_->engine_->setFrameRate(rate);
+    }
     if (impl_->controller_) {
         impl_->controller_->setFrameRate(rate);
     }
 }
 
 float ArtifactPlaybackService::playbackSpeed() const {
-    return impl_->controller_ ? impl_->controller_->playbackSpeed() : 1.0f;
+    return impl_->engine_ ? impl_->engine_->playbackSpeed() :
+           (impl_->controller_ ? impl_->controller_->playbackSpeed() : 1.0f);
 }
 
 void ArtifactPlaybackService::setPlaybackSpeed(float speed) {
+    if (impl_->engine_) {
+        impl_->engine_->setPlaybackSpeed(speed);
+    }
     if (impl_->controller_) {
         impl_->controller_->setPlaybackSpeed(speed);
     }
 }
 
 bool ArtifactPlaybackService::isLooping() const {
-    return impl_->controller_ ? impl_->controller_->isLooping() : false;
+    return impl_->engine_ ? impl_->engine_->isLooping() :
+           (impl_->controller_ ? impl_->controller_->isLooping() : false);
 }
 
 void ArtifactPlaybackService::setLooping(bool loop) {
+    if (impl_->engine_) {
+        impl_->engine_->setLooping(loop);
+    }
     if (impl_->controller_) {
         impl_->controller_->setLooping(loop);
     }
@@ -284,7 +380,6 @@ void ArtifactPlaybackService::setRealTime(bool realTime) {
 
 void ArtifactPlaybackService::setAudioClockProvider(const std::function<double()>& provider) {
     if (!impl_) return;
-    // Store provider in impl and forward to controller
     impl_->setExternalAudioClockProvider(provider);
     if (impl_->controller_) {
         impl_->controller_->setAudioClockProvider(provider);
@@ -294,14 +389,22 @@ void ArtifactPlaybackService::setAudioClockProvider(const std::function<double()
 void ArtifactPlaybackService::setCurrentComposition(ArtifactCompositionPtr composition) {
     if (impl_->currentComposition_ != composition) {
         impl_->currentComposition_ = composition;
-        
-        // コントローラーにコンポジションの設定を反映
+
+        // エンジンにコンポジションの設定を反映
+        if (impl_->engine_ && composition) {
+            impl_->engine_->setFrameRange(composition->frameRange());
+            impl_->engine_->setFrameRate(composition->frameRate());
+            impl_->engine_->setCurrentFrame(composition->framePosition());
+            impl_->engine_->setComposition(composition);
+        }
+
+        // コントローラーにも設定を反映
         if (impl_->controller_ && composition) {
             impl_->controller_->setFrameRange(composition->frameRange());
             impl_->controller_->setFrameRate(composition->frameRate());
             impl_->controller_->setCurrentFrame(composition->framePosition());
         }
-        
+
         Q_EMIT currentCompositionChanged(composition);
     }
 }
@@ -310,4 +413,58 @@ ArtifactCompositionPtr ArtifactPlaybackService::currentComposition() const {
     return impl_->currentComposition_;
 }
 
+// ==================== In/Out Points ====================
+
+void ArtifactPlaybackService::setInOutPoints(ArtifactInOutPoints* inOutPoints) {
+    if (impl_ && impl_->engine_) {
+        impl_->engine_->setInOutPoints(inOutPoints);
+    }
+    if (impl_ && impl_->controller_) {
+        impl_->controller_->setInOutPoints(inOutPoints);
+    }
 }
+
+ArtifactInOutPoints* ArtifactPlaybackService::inOutPoints() const {
+    if (impl_->engine_) {
+        return impl_->engine_->inOutPoints();
+    }
+    return impl_ && impl_->controller_ ? impl_->controller_->inOutPoints() : nullptr;
+}
+
+void ArtifactPlaybackService::goToNextMarker() {
+    if (impl_ && impl_->engine_) {
+        impl_->engine_->goToNextMarker();
+    }
+    if (impl_ && impl_->controller_) {
+        impl_->controller_->goToNextMarker();
+    }
+}
+
+void ArtifactPlaybackService::goToPreviousMarker() {
+    if (impl_ && impl_->engine_) {
+        impl_->engine_->goToPreviousMarker();
+    }
+    if (impl_ && impl_->controller_) {
+        impl_->controller_->goToPreviousMarker();
+    }
+}
+
+void ArtifactPlaybackService::goToNextChapter() {
+    if (impl_ && impl_->engine_) {
+        impl_->engine_->goToNextChapter();
+    }
+    if (impl_ && impl_->controller_) {
+        impl_->controller_->goToNextChapter();
+    }
+}
+
+void ArtifactPlaybackService::goToPreviousChapter() {
+    if (impl_ && impl_->engine_) {
+        impl_->engine_->goToPreviousChapter();
+    }
+    if (impl_ && impl_->controller_) {
+        impl_->controller_->goToPreviousChapter();
+    }
+}
+
+} // namespace Artifact
