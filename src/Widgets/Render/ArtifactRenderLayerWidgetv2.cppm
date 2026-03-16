@@ -417,7 +417,7 @@ W_OBJECT_IMPL(ArtifactLayerEditorWidgetV2)
      if (compSize.width() > 0 && compSize.height() > 0) {
       renderer_->setCanvasSize(static_cast<float>(compSize.width()), static_cast<float>(compSize.height()));
      }
-     
+
      if (auto layer = composition->layerById(targetLayerId_)) {
       layer->goToFrame(composition->framePosition().framePosition());
       const auto source = layer->sourceSize();
@@ -425,10 +425,37 @@ W_OBJECT_IMPL(ArtifactLayerEditorWidgetV2)
        // レイヤーサイズも設定（コンポジションサイズを上書きしないためコメントアウト）
        // renderer_->setCanvasSize(static_cast<float>(source.width), static_cast<float>(source.height));
       }
+      
+      // デバッグログ：レイヤー描画前
+      const QString layerType = QString::fromLatin1(layer->metaObject()->className());
+      const bool isVisible = layer->isVisible();
+      qDebug() << "[LayerView] Drawing layer:" << layerType
+               << "id:" << targetLayerId_.toString()
+               << "visible:" << isVisible
+               << "sourceSize:" << source.width << "x" << source.height;
+      
+      // ArtifactImageLayer の場合、追加情報を出力
+      if (auto imageLayer = std::dynamic_pointer_cast<ArtifactImageLayer>(layer)) {
+       const bool hasImage = imageLayer->layerPropertyValue("image.loaded").toBool();
+       const QString path = imageLayer->layerPropertyValue("image.sourcePath").toString();
+       qDebug() << "[LayerView] ArtifactImageLayer details:"
+                << "hasImage:" << hasImage
+                << "path:" << path;
+      }
+      
       layer->draw(renderer_.get());
+      qDebug() << "[LayerView] layer->draw() completed";
+     } else {
+      qDebug() << "[LayerView] Layer not found:" << targetLayerId_.toString();
      }
+    } else {
+     qDebug() << "[LayerView] No current composition";
     }
+   } else {
+    qDebug() << "[LayerView] No project service";
    }
+  } else {
+   qDebug() << "[LayerView] No target layer selected";
   }
   renderer_->flush();
   renderer_->present();
