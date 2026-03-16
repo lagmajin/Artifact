@@ -60,9 +60,10 @@ namespace {
   constexpr int kInlineComboHeight = 24;
   constexpr int kInlineBlendWidth = 120;
   constexpr int kInlineParentWidth = 150;
+  constexpr int kInlineMatteWidth = 80;
   constexpr int kInlineComboGap = 6;
   constexpr int kInlineComboMarginY = 2;
-  constexpr int kInlineComboReserve = kInlineParentWidth + kInlineBlendWidth + kInlineComboGap + 10;
+  constexpr int kInlineComboReserve = kInlineParentWidth + kInlineBlendWidth + kInlineMatteWidth + kInlineComboGap * 2 + 10;
  constexpr int kLayerNameMinWidth = 120;
 
  QIcon loadSvgAsIcon(const QString& path, int size = 16)
@@ -236,6 +237,17 @@ namespace {
       {QStringLiteral("Saturation"), LAYER_BLEND_TYPE::BLEND_SATURATION},
       {QStringLiteral("Color"), LAYER_BLEND_TYPE::BLEND_COLOR},
       {QStringLiteral("Luminosity"), LAYER_BLEND_TYPE::BLEND_LUMINOSITY}
+    };
+  }
+
+  std::vector<std::pair<QString, int>> trackMatteModeItems()
+  {
+    return {
+      {QStringLiteral("None"), 0},
+      {QStringLiteral("Alpha Matte"), 1},
+      {QStringLiteral("Alpha Inv Matte"), 2},
+      {QStringLiteral("Luma Matte"), 3},
+      {QStringLiteral("Luma Inv Matte"), 4}
     };
   }
 
@@ -429,6 +441,7 @@ int ArtifactLayerPanelHeaderWidget::totalHeaderHeight() const
   QHash<QString, bool> expandedByLayerId;
   QPointer<QComboBox> inlineParentEditor;
   QPointer<QComboBox> inlineBlendEditor;
+  QPointer<QComboBox> inlineMatteEditor;
   QPointer<QLineEdit> inlineNameEditor;
   LayerID editingLayerId;
   QPoint dragStartPos;
@@ -444,19 +457,25 @@ int ArtifactLayerPanelHeaderWidget::totalHeaderHeight() const
     inlineParentEditor->deleteLater();
    }
    inlineParentEditor = nullptr;
-   
+
    if (inlineBlendEditor) {
     inlineBlendEditor->hide();
     inlineBlendEditor->deleteLater();
    }
    inlineBlendEditor = nullptr;
-   
+
+   if (inlineMatteEditor) {
+    inlineMatteEditor->hide();
+    inlineMatteEditor->deleteLater();
+   }
+   inlineMatteEditor = nullptr;
+
    if (inlineNameEditor) {
     inlineNameEditor->hide();
     inlineNameEditor->deleteLater();
    }
    inlineNameEditor = nullptr;
-   
+
    editingLayerId = LayerID();
   }
 
@@ -785,7 +804,8 @@ int ArtifactLayerPanelHeaderWidget::totalHeaderHeight() const
   const int parentRectX = width() - kInlineComboReserve;
   const QRect parentRect(parentRectX, y + kInlineComboMarginY, kInlineParentWidth, kInlineComboHeight);
   const QRect blendRect(parentRect.right() + kInlineComboGap, y + kInlineComboMarginY, kInlineBlendWidth, kInlineComboHeight);
-  const bool clickInInlineCombo = parentRect.contains(event->pos()) || blendRect.contains(event->pos());
+  const QRect matteRect(blendRect.right() + kInlineComboGap, y + kInlineComboMarginY, kInlineMatteWidth, kInlineComboHeight);
+  const bool clickInInlineCombo = parentRect.contains(event->pos()) || blendRect.contains(event->pos()) || matteRect.contains(event->pos());
 
   if (event->button() == Qt::LeftButton) {
     if (!clickInInlineCombo) {
@@ -862,6 +882,43 @@ int ArtifactLayerPanelHeaderWidget::totalHeaderHeight() const
         update();
       });
       impl_->inlineBlendEditor = combo;
+      combo->show();
+      combo->setFocus();
+      combo->showPopup();
+      event->accept();
+      return;
+    }
+    if (showInlineCombos && matteRect.contains(event->pos())) {
+      impl_->clearInlineEditors();
+      auto* combo = new QComboBox(this);
+      combo->setGeometry(matteRect);
+      combo->setStyleSheet(
+        "QComboBox { background:#2d2d30; color:#ddd; border:1px solid #4a4a4f; padding:1px 6px; }"
+        "QComboBox::drop-down { width:18px; border-left:1px solid #4a4a4f; }");
+      const auto items = trackMatteModeItems();
+      for (const auto& [name, mode] : items) {
+        combo->addItem(name, mode);
+      }
+      // 現在のトラックマットモードを取得（ダミー：実際はレイヤープロパティから取得）
+      const int currentMatteMode = 0;  // TODO: layer->trackMatteMode() などから取得
+      for (int i = 0; i < combo->count(); ++i) {
+        if (combo->itemData(i).toInt() == currentMatteMode) {
+          combo->setCurrentIndex(i);
+          break;
+        }
+      }
+      QObject::connect(combo, QOverload<int>::of(&QComboBox::activated), this, [this, service, layer, combo](int i) {
+        const int matteMode = combo->itemData(i).toInt();
+        // TODO: layer->setTrackMatteMode(matteMode);
+        if (service) {
+          if (auto project = service->getCurrentProjectSharedPtr()) {
+            project->projectChanged();
+          }
+        }
+        combo->deleteLater();
+        update();
+      });
+      impl_->inlineMatteEditor = combo;
       combo->show();
       combo->setFocus();
       combo->showPopup();
@@ -1571,6 +1628,7 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent*)
     const int parentRectX = width() - kInlineComboReserve;
     const QRect parentRect(parentRectX, y + kInlineComboMarginY, kInlineParentWidth, kInlineComboHeight);
     const QRect blendRect(parentRect.right() + kInlineComboGap, y + kInlineComboMarginY, kInlineBlendWidth, kInlineComboHeight);
+    const QRect matteRect(blendRect.right() + kInlineComboGap, y + kInlineComboMarginY, kInlineMatteWidth, kInlineComboHeight);
 
     auto drawInlineCombo = [&](const QRect& r, const QString& label) {
       p.setPen(QColor(80, 80, 86));
@@ -1603,6 +1661,7 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent*)
     if (showInlineCombos) {
       drawInlineCombo(parentRect, QStringLiteral("Parent: %1").arg(parentName));
       drawInlineCombo(blendRect, QStringLiteral("Blend: %1").arg(blendModeToText(l->layerBlendType())));
+      drawInlineCombo(matteRect, QStringLiteral("Matte"));  // TODO: 実際のトラックマットモードを表示
     }
     p.setPen(Qt::white);
     const int textWidth = showInlineCombos ? std::max(20, parentRect.left() - textX - 8) : std::max(20, width() - textX - 8);
