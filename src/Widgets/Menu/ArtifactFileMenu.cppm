@@ -111,6 +111,8 @@ public:
     QAction* newCompositionAction = nullptr;
     QAction* importAssetsAction = nullptr;
     QAction* revealProjectFolderAction = nullptr;
+    QAction* restartAction = nullptr;
+    QAction* quitAction = nullptr;
     QMenu* exportMenu = nullptr;
     QAction* exportCurrentFrameAction = nullptr;
     QAction* exportWorkAreaAction = nullptr;
