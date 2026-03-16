@@ -13,8 +13,6 @@ import Utils.Path;
 namespace Artifact {
  using namespace ArtifactCore;
 
- W_OBJECT_IMPL(ArtifactEditMenu)
-
  class  ArtifactEditMenu::Impl {
  private:
 
@@ -43,6 +41,7 @@ namespace Artifact {
   void handleCopyAction();
   void handleCutAction();
   void handlePasteAction();
+  void handleDelete();
   void handleUndo();
   void handleRedo();
   void handleDuplicate();
