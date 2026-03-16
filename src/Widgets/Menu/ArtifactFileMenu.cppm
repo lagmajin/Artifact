@@ -29,7 +29,7 @@ import Artifact.Service.Project;
 import Utils.Path;
 import Artifact.Widgets.AppDialogs;
 import Artifact.Layer.Image;
-import Artifact.Layer.SolidImage;
+import Artifact.Layers.SolidImage;
 
 namespace Artifact {
 using namespace ArtifactCore;
@@ -345,7 +345,7 @@ void ArtifactFileMenu::Impl::handleExportCurrentFrame()
             }
         } else if (auto solidLayer = std::dynamic_pointer_cast<ArtifactSolidImageLayer>(layer)) {
             QImage img(compSize, QImage::Format_ARGB32_Premultiplied);
-            const auto solidColor = solidLayer->color();
+            const FloatColor solidColor = solidLayer->color();
             img.fill(QColor(
                 static_cast<int>(solidColor.r * 255),
                 static_cast<int>(solidColor.g * 255),
@@ -434,7 +434,7 @@ void ArtifactFileMenu::Impl::handleExportWorkArea()
                 }
             } else if (auto solidLayer = std::dynamic_pointer_cast<ArtifactSolidImageLayer>(layer)) {
                 QImage img(compSize, QImage::Format_ARGB32_Premultiplied);
-                const auto solidColor = solidLayer->color();
+                const FloatColor solidColor = solidLayer->color();
                 img.fill(QColor(
                     static_cast<int>(solidColor.r * 255),
                     static_cast<int>(solidColor.g * 255),
