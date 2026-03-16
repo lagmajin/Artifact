@@ -1671,8 +1671,16 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent*)
 
   for (const auto& path : imported) {
     LayerType type = inferLayerTypeFromFile(path);
-    ArtifactLayerInitParams params(QFileInfo(path).baseName(), type);
-    svc->addLayerToCurrentComposition(params);
+    
+    // 画像レイヤーの場合は ArtifactImageInitParams を使用してパスを設定
+    if (type == LayerType::Image) {
+      ArtifactImageInitParams params(QFileInfo(path).baseName());
+      params.setImagePath(path);
+      svc->addLayerToCurrentComposition(params);
+    } else {
+      ArtifactLayerInitParams params(QFileInfo(path).baseName(), type);
+      svc->addLayerToCurrentComposition(params);
+    }
   }
 
   event->acceptProposedAction();

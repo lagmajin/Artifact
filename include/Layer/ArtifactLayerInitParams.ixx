@@ -116,11 +116,13 @@ export namespace Artifact {
  class ArtifactImageInitParams :public ArtifactLayerInitParams
  {
  private:
-
+  QString imagePath_;
 
  public:
   ArtifactImageInitParams(const QString& name);
   ~ArtifactImageInitParams();
+  QString imagePath() const { return imagePath_; }
+  void setImagePath(const QString& path) { imagePath_ = path; }
  };
 
 

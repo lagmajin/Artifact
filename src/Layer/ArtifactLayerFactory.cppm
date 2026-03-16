@@ -70,6 +70,16 @@ namespace Artifact {
   }
   case LayerType::Image:
    ptr = std::make_shared<ArtifactImageLayer>();
+   if (ptr) {
+    // 画像パラメータからパスを取得して読み込み
+    if (auto* imageParams = dynamic_cast<ArtifactImageInitParams*>(&params)) {
+     const QString path = imageParams->imagePath();
+     if (!path.isEmpty()) {
+      auto* imageLayer = static_cast<ArtifactImageLayer*>(ptr.get());
+      imageLayer->loadFromPath(path);
+     }
+    }
+   }
    break;
   case LayerType::Adjustment:
    ptr = std::make_shared<ArtifactAdjustableLayer>();
