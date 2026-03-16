@@ -1442,11 +1442,12 @@ void ArtifactLayerPanelWidget::keyPressEvent(QKeyEvent* event)
     return;
    }
    
-   // マウスの X 位置をチェック（ブレンドモードエリアか？）
+   // マウスの位置をチェック（ブレンドモードエリアか？）
    const int mouseX = event->position().x();
+   const int mouseY = event->position().y();
    const int blendModeStartX = kLayerColumnWidth * kLayerPropertyColumnCount;
    const int blendModeEndX = width() - kInlineMatteWidth - kInlineComboGap * 2;
-   
+
    // ホイール操作対象の行を取得
    const int rowIdx = mouseY / kLayerRowHeight;
    const bool isBlendModeArea = (mouseX >= blendModeStartX && mouseX < blendModeEndX && rowIdx >= 0 && rowIdx < impl_->visibleRows.size());
