@@ -36,7 +36,6 @@ import Artifact.Layer.Video;
 import Artifact.Layers.SolidImage;
 import Artifact.Layer.Solid2D;
 import Layer.Blend;
-import Layer2D;
 
 namespace Artifact {
 
@@ -368,11 +367,8 @@ void drawLayerOnCanvas(QPainter& painter, const ArtifactAbstractLayerPtr& layer,
         return;
     }
 
-    // レイヤーの不透明度を取得（Layer2D の opacity プロパティ）
-    qreal layerOpacity = 1.0;
-    if (auto* layer2D = dynamic_cast<ArtifactCore::Layer2D*>(layer.get())) {
-        layerOpacity = static_cast<qreal>(layer2D->opacity());
-    }
+    // レイヤーの不透明度を取得（ArtifactAbstractLayer::opacity()）
+    const qreal layerOpacity = static_cast<qreal>(layer->opacity());
     
     // 渡された opacityScale とレイヤーの不透明度を乗算
     const qreal finalOpacity = std::clamp(opacityScale * layerOpacity, 0.0, 1.0);
