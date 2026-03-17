@@ -58,6 +58,7 @@ namespace Artifact
   property->setColorValue(QColor::fromRgbF(c.r(), c.g(), c.b(), c.a()));
   property->setValue(property->getColorValue());
   property->setDisplayPriority(-120);
+  property->setAnimatable(true);  // キーフレーム可能に設定
   solidGroup.addProperty(property);
 
   groups.push_back(solidGroup);
