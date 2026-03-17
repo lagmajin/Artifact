@@ -53,7 +53,7 @@ public:
     void drawSolidRect(float x, float y, float w, float h, const FloatColor& color);
     void drawCheckerboard(float x, float y, float w, float h, float tileSize, const FloatColor& c1, const FloatColor& c2);
     void drawGrid(float x, float y, float w, float h, float spacing, float thickness, const FloatColor& color);
-    void drawSpriteLocal(float x, float y, float w, float h, const QImage& image);
+    void drawSpriteLocal(float x, float y, float w, float h, const QImage& image, float opacity = 1.0f);
 
 private:
     class Impl;
