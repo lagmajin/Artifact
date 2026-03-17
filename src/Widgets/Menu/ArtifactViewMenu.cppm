@@ -142,26 +142,26 @@ namespace Artifact {
    auto* svc = ArtifactProjectService::instance();
    if (svc) {
     QObject::connect(qualityDraftAction, &QAction::triggered, menu, [svc]() {
-     svc->setPreviewQualityPreset(PreviewQualityPreset::Draft);
+     svc->setPreviewQualityPreset(::PreviewQualityPreset::Draft);
     });
     QObject::connect(qualityPreviewAction, &QAction::triggered, menu, [svc]() {
-     svc->setPreviewQualityPreset(PreviewQualityPreset::Preview);
+     svc->setPreviewQualityPreset(::PreviewQualityPreset::Preview);
     });
     QObject::connect(qualityFinalAction, &QAction::triggered, menu, [svc]() {
-     svc->setPreviewQualityPreset(PreviewQualityPreset::Final);
+     svc->setPreviewQualityPreset(::PreviewQualityPreset::Final);
     });
 
-    QObject::connect(svc, &ArtifactProjectService::previewQualityPresetChanged, menu, [this](PreviewQualityPreset preset) {
+    QObject::connect(svc, &ArtifactProjectService::previewQualityPresetChanged, menu, [this](::PreviewQualityPreset preset) {
      switch (preset) {
-     case PreviewQualityPreset::Draft:
+     case ::PreviewQualityPreset::Draft:
       qualityDraftAction->setChecked(true);
       resQuarterAction->setChecked(true);
       break;
-     case PreviewQualityPreset::Preview:
+     case ::PreviewQualityPreset::Preview:
       qualityPreviewAction->setChecked(true);
       resHalfAction->setChecked(true);
       break;
-     case PreviewQualityPreset::Final:
+     case ::PreviewQualityPreset::Final:
       qualityFinalAction->setChecked(true);
       resFullAction->setChecked(true);
       break;

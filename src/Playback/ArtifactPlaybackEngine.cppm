@@ -1,17 +1,20 @@
-module;
+﻿module;
 #include <QThread>
 #include <QElapsedTimer>
 #include <QMutexLocker>
 #include <QWaitCondition>
 #include <QImage>
+#include <QPainter>
 #include <QDebug>
 #include <wobjectimpl.h>
+#include <QFont>
 
 #include <atomic>
 #include <thread>
 #include <chrono>
 #include <mutex>
 #include <condition_variable>
+#include "../../../out/build/x64-Debug/vcpkg_installed/x64-windows/include/Qt6/QtGui/QFont"
 
 module Artifact.Playback.Engine;
 
@@ -28,8 +31,7 @@ using namespace ArtifactCore;
 W_OBJECT_IMPL(ArtifactPlaybackEngine)
 
 /// 内部実装クラス
-class ArtifactPlaybackEngine::Impl : public QObject {
-    Q_OBJECT
+class ArtifactPlaybackEngine::Impl {
 public:
     ArtifactPlaybackEngine* owner_;
     QThread* workerThread_;
@@ -55,8 +57,6 @@ public:
     // 同期プリミティブ
     std::mutex mutex_;
     std::condition_variable condition_;
-    QWaitCondition waitCondition_;
-    QMutex mutex;
     
     // フレームバッファ（ダブルバッファリング）
     QImage frontBuffer_;
@@ -76,10 +76,7 @@ public:
         : owner_(owner)
     {
         workerThread_ = new QThread();
-        moveToThread(workerThread_);
-        
-        connect(workerThread_, &QThread::started, this, &Impl::onThreadStarted);
-        connect(workerThread_, &QThread::finished, this, &Impl::onThreadFinished);
+        // connect は別途 QObject::connect で記述
     }
     
     ~Impl() {
@@ -93,6 +90,8 @@ public:
     
     void start() {
         if (!workerThread_->isRunning()) {
+            QObject::connect(workerThread_, &QThread::started, [this]() { onThreadStarted(); });
+            QObject::connect(workerThread_, &QThread::finished, [this]() { onThreadFinished(); });
             workerThread_->start(QThread::TimeCriticalPriority);
         } else {
             paused_ = false;
@@ -406,6 +405,22 @@ void ArtifactPlaybackEngine::goToEndFrame() {
     goToFrame(impl_->effectiveEndFrame());
 }
 
+void ArtifactPlaybackEngine::goToNextMarker() {
+    // TODO: マーカー実装時に実装
+}
+
+void ArtifactPlaybackEngine::goToPreviousMarker() {
+    // TODO: マーカー実装時に実装
+}
+
+void ArtifactPlaybackEngine::goToNextChapter() {
+    // TODO: チャプター実装時に実装
+}
+
+void ArtifactPlaybackEngine::goToPreviousChapter() {
+    // TODO: チャプター実装時に実装
+}
+
 bool ArtifactPlaybackEngine::isPlaying() const {
     return impl_->playing_;
 }
@@ -452,4 +467,4 @@ ArtifactCompositionPtr ArtifactPlaybackEngine::composition() const {
 
 } // namespace Artifact
 
-#include "ArtifactPlaybackEngine.moc"
+//#include "ArtifactPlaybackEngine.moc"

@@ -53,6 +53,8 @@ import Artifact.Composition.Abstract;
 
 W_REGISTER_ARGTYPE(QImage)
 W_REGISTER_ARGTYPE(ArtifactCore::FramePosition)
+W_REGISTER_ARGTYPE(ArtifactCore::FrameRange)
+W_REGISTER_ARGTYPE(ArtifactCore::FrameRate)
 
 export namespace Artifact {
 
@@ -95,6 +97,12 @@ public:
     void goToPreviousFrame();
     void goToStartFrame();
     void goToEndFrame();
+
+    // マーカー/チャプター移動
+    void goToNextMarker();
+    void goToPreviousMarker();
+    void goToNextChapter();
+    void goToPreviousChapter();
 
     // 状態取得
     bool isPlaying() const;

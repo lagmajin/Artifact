@@ -40,3 +40,5 @@ export namespace Artifact {
  };
 
 }
+
+W_REGISTER_ARGTYPE(Artifact::ToolType)

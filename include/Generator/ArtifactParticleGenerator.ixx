@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <QObject>
 #include <QVector2D>
 #include <QVector3D>
@@ -615,3 +615,5 @@ signals:
 };
 
 } // namespace Artifact
+
+W_REGISTER_ARGTYPE(Artifact::ParticleEmitter*)

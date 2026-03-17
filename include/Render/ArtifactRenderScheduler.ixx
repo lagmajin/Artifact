@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <QObject>
 #include <QThread>
 #include <QThreadPool>
@@ -268,3 +268,6 @@ signals:
 };
 
 } // namespace Artifact
+
+W_REGISTER_ARGTYPE(Artifact::RenderTask*)
+W_REGISTER_ARGTYPE(Artifact::FrameDropReason)

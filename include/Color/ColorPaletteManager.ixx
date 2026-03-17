@@ -1,4 +1,4 @@
-module;
+﻿module;
 
 #include <QString>
 #include <QColor>
@@ -41,6 +41,7 @@ module;
 #include <numeric>
 #include <regex>
 #include <random>
+#include <wobjectimpl.h>
 export module Artifact.Color.Palette;
 
 
@@ -81,3 +82,5 @@ public:
 };
 
 } // namespace Artifact
+
+W_REGISTER_ARGTYPE(Artifact::ColorPalette)

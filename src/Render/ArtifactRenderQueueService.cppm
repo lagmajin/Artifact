@@ -11,6 +11,7 @@
 #include <QFileInfo>
 #include <QPointF>
 #include <QRegularExpression>
+#include <QProcess>
 #include <opencv2/opencv.hpp>
 #include <wobjectimpl.h>
 #include <mutex>
@@ -60,7 +61,7 @@ import Render.Queue.Manager;
 import Artifact.Project.Manager;
 import Artifact.Project.Items;
 import Artifact.Service.Project;
-import Encoder.FFmpegEncoder;
+// import Encoder.FFmpegEncoder; // Temporarily disabled due to build errors
 import Image.ImageF32x4_RGBA;
 import CvUtils;
 import Utils.Id;
@@ -494,9 +495,11 @@ namespace Artifact
                     // frameBuffer[frame] = renderedImage; 
 
                     while (frameBuffer.count(nextFrameToEncode)) {
+                        /* FFmpegEncoder disabled
                         if (ffmpegEncoder) {
                             ffmpegEncoder->addImage(frameBuffer[nextFrameToEncode]);
                         }
+                        */
                         frameBuffer.erase(nextFrameToEncode);
                         nextFrameToEncode++;
                     }
@@ -533,7 +536,7 @@ namespace Artifact
         ~Impl() = default;
 
         ArtifactRenderQueueManager queueManager;
-        std::unique_ptr<ArtifactCore::FFmpegEncoder> ffmpegEncoder;
+        void* ffmpegEncoder = nullptr; // Temporarily void* to bypass build error
         std::map<int, ArtifactCore::ImageF32x4_RGBA> frameBuffer;
         int nextFrameToEncode = 0;
         std::mutex encoderMutex;
@@ -669,26 +672,32 @@ namespace Artifact
         }
 
         void handleJobAdded(int index) {
+            Q_EMIT owner_->jobAdded(index);
             if (jobAdded) jobAdded(index);
         }
 
         void handleJobRemoved(int index) {
+            Q_EMIT owner_->jobRemoved(index);
             if (jobRemoved) jobRemoved(index);
         }
 
         void handleJobUpdated(int index) {
+            Q_EMIT owner_->jobUpdated(index);
             if (jobUpdated) jobUpdated(index);
         }
 
         void handleJobStatusChanged(int index, ArtifactRenderJob::Status status) {
+            Q_EMIT owner_->jobStatusChanged(index, static_cast<int>(status));
             if (jobStatusChangedForUi) jobStatusChangedForUi(index, static_cast<int>(status));
             if (jobStatusChanged) jobStatusChanged(index, status);
         }
 
         void handleJobProgressChanged(int index, int progress) {
+            Q_EMIT owner_->jobProgressChanged(index, progress);
             if (jobProgressChanged) jobProgressChanged(index, progress);
         }
 
+        ArtifactRenderQueueService* owner_ = nullptr;
         // シグナル
         std::function<void(int)> jobAdded;
         std::function<void(int)> jobRemoved;
@@ -705,6 +714,7 @@ namespace Artifact
 
     ArtifactRenderQueueService::ArtifactRenderQueueService(QObject* parent /*= nullptr*/)
         : QObject(parent), impl_(new Impl) {
+        impl_->owner_ = this;
     }
 
     ArtifactRenderQueueService::~ArtifactRenderQueueService() {
@@ -1015,92 +1025,133 @@ namespace Artifact
     }
 
     void ArtifactRenderQueueService::startAllJobs() {
+        if (impl_->isRendering) return;
+        impl_->isRendering = true;
+
         impl_->queueManager.startAllJobs();
 
-        const int count = impl_->queueManager.jobCount();
-        for (int i = 0; i < count; ++i) {
-            const auto job = impl_->queueManager.getJob(i);
-            if (job.status != ArtifactRenderJob::Status::Rendering &&
-                job.status != ArtifactRenderJob::Status::Pending) {
-                continue;
-            }
-
-            impl_->queueManager.setJobProgress(i, 0);
-
-            // エンコーダの初期化
-            impl_->ffmpegEncoder = std::make_unique<ArtifactCore::FFmpegEncoder>();
-            QFile outFile(job.outputPath);
-            impl_->ffmpegEncoder->open(outFile);
-
-            const int startF = job.startFrame;
-            const int endF = job.endFrame;
-            const int totalFrames = std::max(1, endF - startF + 1);
-
-            QString error;
-            std::atomic<bool> success = true;
-            std::atomic<int> framesRendered = 0;
-            std::mutex localEncoderMutex;
-            int localNextFrame = startF;
-            std::map<int, ArtifactCore::ImageF32x4_RGBA> localFrameBuffer;
-
-            // TBBを利用したマルチフレームレンダリング (MFR)
-            tbb::parallel_for(startF, endF + 1, [&](int f) {
-                if (!success.load(std::memory_order_relaxed)) return;
-
-                // To properly stop rendering if canceled/paused, we should check status
-                const auto currentJobStatus = impl_->queueManager.getJob(i).status;
-                if (currentJobStatus != ArtifactRenderJob::Status::Rendering) {
-                    success.store(false, std::memory_order_relaxed);
-                    return;
+        // UI スレッドをブロックしないよう、ワーカースレッドで実行
+        std::thread([this]() {
+            const int count = impl_->queueManager.jobCount();
+            for (int i = 0; i < count; ++i) {
+                const auto job = impl_->queueManager.getJob(i);
+                if (job.status != ArtifactRenderJob::Status::Rendering &&
+                    job.status != ArtifactRenderJob::Status::Pending) {
+                    continue;
                 }
 
-                // Render frame (スレッドセーフなソフトウェアレンダリング)
-                QImage qimg = impl_->renderSingleFrameDummy(job, f);
+                QMetaObject::invokeMethod(this, [this, i]() {
+                    impl_->queueManager.setJobProgress(i, 0);
+                }, Qt::QueuedConnection);
 
-                // Add to encoder
-                if (!qimg.isNull()) {
-                    cv::Mat mat = ArtifactCore::CvUtils::qImageToCvMat(qimg);
-                    ArtifactCore::ImageF32x4_RGBA frameImage;
-                    frameImage.setFromCVMat(mat);
+                // 出力設定
+                const QString outputPath = job.outputPath.trimmed();
+                const QFileInfo outInfo(outputPath);
+                QDir outDir = outInfo.dir();
+                if (!outDir.exists()) outDir.mkpath(".");
 
-                    // エンコーダは順序を保証する必要があるため、ロックを取得してバッファ経由で渡す
-                    {
-                        std::lock_guard<std::mutex> lock(localEncoderMutex);
-                        localFrameBuffer[f] = frameImage;
-                        
-                        while (localFrameBuffer.count(localNextFrame)) {
-                            impl_->ffmpegEncoder->addImage(localFrameBuffer[localNextFrame]);
-                            localFrameBuffer.erase(localNextFrame);
-                            localNextFrame++;
-                        }
+                const QString ext = outInfo.suffix().toLower();
+                bool isVideo = (ext == "mp4" || ext == "mov" || ext == "avi" || ext == "mkv");
+
+                const int startF = job.startFrame;
+                const int endF = job.endFrame;
+                const int totalFrames = std::max(1, endF - startF + 1);
+
+                std::atomic<bool> success = true;
+                std::atomic<int> framesRendered = 0;
+
+                // --- FFmpeg Setup (Video mode only) ---
+                std::unique_ptr<QProcess> ffmpeg;
+                std::mutex pipeMutex;
+                int nextFrameToWrite = startF;
+                std::map<int, QImage> frameOrderBuffer;
+
+                if (isVideo) {
+                    ffmpeg = std::make_unique<QProcess>();
+                    QStringList args;
+                    args << "-y" << "-f" << "rawvideo" << "-pixel_format" << "bgra" 
+                         << "-video_size" << QString("%1x%2").arg(job.resolutionWidth).arg(job.resolutionHeight)
+                         << "-framerate" << QString::number(job.frameRate)
+                         << "-i" << "-" << "-c:v" << "libx264" << "-pix_fmt" << "yuv420p" << outputPath;
+                    
+                    ffmpeg->start("ffmpeg", args);
+                    if (!ffmpeg->waitForStarted()) {
+                        qWarning() << "[RenderService] Failed to start FFmpeg. Falling back to sequence.";
+                        isVideo = false; // Fallback
+                    }
+                }
+
+                // TBBを利用したマルチフレームレンダリング (MFR)
+                tbb::parallel_for(startF, endF + 1, [&](int f) {
+                    if (!success.load(std::memory_order_relaxed)) return;
+
+                    // ステータスチェック
+                    const auto currentJobStatus = impl_->queueManager.getJob(i).status;
+                    if (currentJobStatus != ArtifactRenderJob::Status::Rendering) {
+                        success.store(false, std::memory_order_relaxed);
+                        return;
                     }
 
-                    int rendered = ++framesRendered;
-                    // Update progress
-                    int progress = static_cast<int>((static_cast<float>(rendered) / totalFrames) * 100);
-                    // UI更新はメインスレッドから呼ばれる想定だが、setJobProgress内で適切に処理されると仮定
-                    QMetaObject::invokeMethod(this, [this, i, progress]() {
-                        impl_->queueManager.setJobProgress(i, progress);
-                    }, Qt::QueuedConnection);
-                    
-                } else {
-                    success.store(false, std::memory_order_relaxed);
+                    // フレームレンダリング
+                    QImage qimg = impl_->renderSingleFrameDummy(job, f);
+
+                    if (!qimg.isNull()) {
+                        if (isVideo) {
+                            // ビデオ出力：バッファに格納して順序通りにパイプへ流す
+                            std::lock_guard<std::mutex> lock(pipeMutex);
+                            frameOrderBuffer[f] = qimg;
+
+                            while (frameOrderBuffer.count(nextFrameToWrite)) {
+                                QImage nextImg = frameOrderBuffer[nextFrameToWrite];
+                                ffmpeg->write(reinterpret_cast<const char*>(nextImg.bits()), nextImg.sizeInBytes());
+                                ffmpeg->waitForBytesWritten();
+                                frameOrderBuffer.erase(nextFrameToWrite);
+                                nextFrameToWrite++;
+                            }
+                        } else {
+                            // 連番出力
+                            QString baseName = outInfo.completeBaseName();
+                            if (baseName.isEmpty()) baseName = "render";
+                            QString framePath = outDir.filePath(QString("%1_%2.png").arg(baseName).arg(f, 4, 10, QChar('0')));
+                            qimg.save(framePath, "PNG");
+                        }
+
+                        int rendered = ++framesRendered;
+                        int progress = static_cast<int>((static_cast<float>(rendered) / totalFrames) * 100);
+                        QMetaObject::invokeMethod(this, [this, i, progress]() {
+                            impl_->queueManager.setJobProgress(i, progress);
+                        }, Qt::QueuedConnection);
+                        
+                    } else {
+                        success.store(false, std::memory_order_relaxed);
+                    }
+                });
+
+                // 終了処理
+                if (isVideo) {
+                    ffmpeg->closeWriteChannel();
+                    ffmpeg->waitForFinished();
                 }
-            });
 
-            impl_->ffmpegEncoder->close();
-
-            if (success.load()) {
-                impl_->queueManager.setJobProgress(i, 100);
-                impl_->queueManager.setJobCompleted(i);
-            } else {
-                impl_->queueManager.setJobFailed(i, QStringLiteral("Render interrupted or failed"));
+                QMetaObject::invokeMethod(this, [this, i, success_val = success.load()]() {
+                    if (success_val) {
+                        impl_->queueManager.setJobProgress(i, 100);
+                        impl_->queueManager.setJobCompleted(i);
+                    } else {
+                        impl_->queueManager.setJobFailed(i, QStringLiteral("Render interrupted or failed"));
+                    }
+                }, Qt::QueuedConnection);
             }
-        }
 
-        if (impl_->allJobsCompleted) {
-            impl_->allJobsCompleted();
-        }
+            QMetaObject::invokeMethod(this, [this]() {
+                impl_->isRendering = false;
+                if (impl_->allJobsCompleted) {
+                    impl_->allJobsCompleted();
+                }
+                Q_EMIT allJobsCompleted();
+            }, Qt::QueuedConnection);
+
+        }).detach();
 
         ArtifactCore::RendererQueueManager::instance().startRendering();
     }

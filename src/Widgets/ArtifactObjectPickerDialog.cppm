@@ -41,7 +41,7 @@ ArtifactObjectPickerDialog::ArtifactObjectPickerDialog(QWidget* parent)
     layout->addWidget(objectTree_, 1);
     
     // OK/Cancel ボタン
-    buttonBox_ = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
+    buttonBox_ = new QDialogButtonBox(static_cast<QDialogButtonBox::StandardButtons>(QDialogButtonBox::Ok | QDialogButtonBox::Cancel), this);
     layout->addWidget(buttonBox_);
     
     // シグナル接続
@@ -63,31 +63,32 @@ void ArtifactObjectPickerDialog::setReferenceType(const QString& typeName)
     referenceType_ = typeName;
 }
 
-void ArtifactObjectPickerDialog::setCurrentSelectionId(qint64 id)
+void ArtifactObjectPickerDialog::setCurrentSelectionId(const ArtifactCore::Id& id)
 {
     currentSelectionId_ = id;
     
     // 該当アイテムを選択状態に
-    auto items = objectTree_->findItems(QString::number(id), Qt::MatchExactly, 1);
+    auto items = objectTree_->findItems(id.toString(), Qt::MatchExactly, 1);
     if (!items.isEmpty()) {
         objectTree_->setCurrentItem(items.first());
     }
 }
 
-qint64 ArtifactObjectPickerDialog::selectedId() const
+ArtifactCore::Id ArtifactObjectPickerDialog::selectedId() const
 {
     auto* item = objectTree_->currentItem();
     if (!item) {
-        return -1;
+        return ArtifactCore::Id::Nil();
     }
-    return item->data(1, Qt::DisplayRole).toLongLong();
+    // 文字列から ID を復元（あるいは UserRole から取得）
+    return ArtifactCore::Id(item->text(1));
 }
 
 void ArtifactObjectPickerDialog::onObjectDoubleClicked(QTreeWidgetItem* item, int column)
 {
     Q_UNUSED(column);
     if (item) {
-        currentSelectionId_ = item->data(1, Qt::DisplayRole).toLongLong();
+        currentSelectionId_ = ArtifactCore::Id(item->text(1));
         accept();
     }
 }
@@ -101,7 +102,7 @@ void ArtifactObjectPickerDialog::onOkClicked()
 {
     auto* item = objectTree_->currentItem();
     if (item) {
-        currentSelectionId_ = item->data(1, Qt::DisplayRole).toLongLong();
+        currentSelectionId_ = ArtifactCore::Id(item->text(1));
         accept();
     } else {
         reject();
@@ -126,8 +127,8 @@ void ArtifactObjectPickerDialog::buildObjectTree()
     addCompositionTree(nullptr);
     
     // 現在選択中のアイテムを選択
-    if (currentSelectionId_ >= 0) {
-        auto items = objectTree_->findItems(QString::number(currentSelectionId_), Qt::MatchExactly, 1);
+    if (!currentSelectionId_.isNil()) {
+        auto items = objectTree_->findItems(currentSelectionId_.toString(), Qt::MatchExactly, 1);
         if (!items.isEmpty()) {
             objectTree_->setCurrentItem(items.first());
         }
@@ -146,7 +147,7 @@ void ArtifactObjectPickerDialog::addCompositionTree(QTreeWidgetItem* parent)
     if (comp) {
         auto* compItem = new QTreeWidgetItem(parent);
         compItem->setText(0, comp->settings().compositionName().toQString());
-        compItem->setData(1, Qt::DisplayRole, static_cast<qlonglong>(comp->id().id()));
+        compItem->setText(1, comp->id().toString());
         compItem->setText(2, QStringLiteral("Composition"));
         compItem->setExpanded(true);
         
@@ -157,7 +158,7 @@ void ArtifactObjectPickerDialog::addCompositionTree(QTreeWidgetItem* parent)
             
             auto* layerItem = new QTreeWidgetItem(compItem);
             layerItem->setText(0, layer->layerName());
-            layerItem->setData(1, Qt::DisplayRole, static_cast<qlonglong>(layer->id().id()));
+            layerItem->setText(1, layer->id().toString());
             layerItem->setText(2, QStringLiteral("Layer"));
         }
     }

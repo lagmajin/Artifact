@@ -28,17 +28,17 @@ import Artifact.Project;
 W_REGISTER_ARGTYPE(QSize)
 W_REGISTER_ARGTYPE(QString)
 
+export enum class PreviewQualityPreset {
+ Draft,
+ Preview,
+ Final
+};
 
-export namespace Artifact
-{
+W_REGISTER_ARGTYPE(PreviewQualityPreset)
+
+export namespace Artifact {
  using namespace ArtifactCore;
  
- enum class PreviewQualityPreset {
-  Draft,
-  Preview,
-  Final
- };
-
  class ArtifactProjectService;
 
  typedef std::shared_ptr<ArtifactProjectService> ArtifactProjectServicePtr;

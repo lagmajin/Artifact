@@ -8,6 +8,8 @@ module;
 
 export module Artifact.Widgets.ObjectPicker;
 
+import Utils.Id;
+
 export namespace Artifact {
 
 class ArtifactObjectPickerDialog : public QDialog {
@@ -18,10 +20,10 @@ public:
     
     // 設定
     void setReferenceType(const QString& typeName);
-    void setCurrentSelectionId(qint64 id);
+    void setCurrentSelectionId(const ArtifactCore::Id& id);
     
     // 結果取得
-    qint64 selectedId() const;
+    ArtifactCore::Id selectedId() const;
 
 private slots:
     void onObjectDoubleClicked(QTreeWidgetItem* item, int column);
@@ -39,7 +41,7 @@ private:
     QLineEdit* searchEdit_;        // 検索フィルター
     QDialogButtonBox* buttonBox_;  // OK/Cancel
     QString referenceType_;
-    qint64 currentSelectionId_ = -1;
+    ArtifactCore::Id currentSelectionId_;
 };
 
 } // namespace Artifact

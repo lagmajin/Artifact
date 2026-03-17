@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <QWidget>
 #include <QComboBox>
 #include <QCheckBox>
@@ -35,7 +35,7 @@ public:
         const auto presets = ArtifactRenderFormatPresetManager::instance().presetsByCategory(currentCategory);
         
         for (const auto& preset : presets) {
-            auto* item = new QListWidget::Item();
+            auto* item = new QListWidgetItem();
             item->setText(preset.name);
             item->setData(Qt::UserRole, preset.id);
             item->setToolTip(preset.description);

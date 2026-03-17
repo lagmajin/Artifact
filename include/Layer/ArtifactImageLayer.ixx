@@ -1,8 +1,10 @@
-module;
+﻿module;
 #include <QImage>
 #include <QVariant>
 
 #include <opencv2/opencv.hpp>
+
+#include <wobjectimpl.h>
 
 export module Artifact.Layer.Image;
 
@@ -13,6 +15,7 @@ import Image;
 export namespace Artifact {
 
  class ArtifactImageLayer:public ArtifactAbstractLayer {
+ W_OBJECT(ArtifactImageLayer)
  private:
   class Impl;
   Impl* impl_;
@@ -25,6 +28,8 @@ export namespace Artifact {
   void setFromQImage(const QImage& image);
   void setFromCvMat(const cv::Mat& mat);
   void setFromCvMat();
+  void setFitToLayer(bool fit);
+  bool fitToLayer() const;
   std::vector<ArtifactCore::PropertyGroup> getLayerPropertyGroups() const override;
   bool setLayerPropertyValue(const QString& propertyPath, const QVariant& value) override;
 

@@ -1,4 +1,4 @@
-module;
+﻿module;
 
 #include <QObject>
 #include <wobjectdefs.h>
@@ -237,3 +237,6 @@ private:
 };
 
 } // namespace Artifact
+
+W_REGISTER_ARGTYPE(Artifact::ColorSpace)
+W_REGISTER_ARGTYPE(Artifact::HDRMode)
