@@ -118,6 +118,8 @@ export namespace Artifact
   W_SIGNAL(projectCreated);
   void compositionCreated(const CompositionID& id)
    W_SIGNAL(compositionCreated, id);
+  void compositionRemoved(const CompositionID& id)
+   W_SIGNAL(compositionRemoved, id);
   void currentCompositionChanged(const CompositionID& id)
    W_SIGNAL(currentCompositionChanged, id);
   void layerCreated(const CompositionID& compId, const LayerID& layerId)

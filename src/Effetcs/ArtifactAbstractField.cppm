@@ -1,5 +1,8 @@
 ﻿module;
+
 module Artifact.Effect.Field;
+
+import std;
 
 namespace Artifact {
 

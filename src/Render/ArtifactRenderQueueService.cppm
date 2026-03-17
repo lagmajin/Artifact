@@ -1,4 +1,6 @@
-module;
+﻿module;
+#include <tbb/parallel_for.h>
+#include <tbb/blocked_range.h>
 #include <QObject>
 #include <QList>
 #include <QThread>
@@ -9,6 +11,7 @@ module;
 #include <QFileInfo>
 #include <QPointF>
 #include <QRegularExpression>
+#include <opencv2/opencv.hpp>
 #include <wobjectimpl.h>
 #include <mutex>
 #include <map>
@@ -46,6 +49,8 @@ module;
 #include <numeric>
 #include <regex>
 #include <random>
+#include <tbb/parallel_for.h>
+#include <tbb/blocked_range.h>
 module Artifact.Render.Queue.Service;
 
 
@@ -54,10 +59,14 @@ module Artifact.Render.Queue.Service;
 import Render.Queue.Manager;
 import Artifact.Project.Manager;
 import Artifact.Project.Items;
+import Artifact.Service.Project;
 import Encoder.FFmpegEncoder;
 import Image.ImageF32x4_RGBA;
+import CvUtils;
 import Utils.Id;
 import Artifact.Render.SoftwareCompositor;
+import Artifact.Render.IRenderer;
+import Artifact.Composition.Abstract;
 
 namespace Artifact
 {
@@ -558,7 +567,7 @@ namespace Artifact
             return QDir(dir).filePath(base + QStringLiteral(".png"));
         }
 
-        bool renderSingleFrameDummy(const ArtifactRenderJob& job, int index, QString* outputPath, QString* errorMessage) {
+        QImage renderSingleFrameDummy(const ArtifactRenderJob& job, int frameNumber) {
             const int width = std::max(16, job.resolutionWidth);
             const int height = std::max(16, job.resolutionHeight);
             QImage background(width, height, QImage::Format_ARGB32_Premultiplied);
@@ -584,7 +593,7 @@ namespace Artifact
                                  QStringLiteral("Comp: %1").arg(job.compositionName));
                 painter.drawText(QRect(0, (height * 2) / 3, width, height / 3),
                                  Qt::AlignCenter,
-                                 QStringLiteral("Frame: %1").arg(job.startFrame));
+                                 QStringLiteral("Frame: %1").arg(frameNumber));
             }
 
             QImage overlay(width, height, QImage::Format_ARGB32_Premultiplied);
@@ -594,7 +603,9 @@ namespace Artifact
                 painter.setRenderHint(QPainter::Antialiasing, true);
                 painter.setPen(Qt::NoPen);
                 painter.setBrush(QColor(255, 190, 90, 180));
-                painter.drawEllipse(QRect(width * 3 / 5, height / 8, width / 4, height / 4));
+                // Animate the ellipse based on frame number
+                const int animOffset = (frameNumber * 5) % (width / 2);
+                painter.drawEllipse(QRect(width * 3 / 5 - animOffset, height / 8, width / 4, height / 4));
             }
 
             SoftwareRender::CompositeRequest request;
@@ -611,30 +622,37 @@ namespace Artifact
             request.overlayRotationDeg = job.overlayRotationDeg;
             request.useForeground = true;
 
-            QImage image = SoftwareRender::compose(request);
-            if (image.isNull()) {
-                if (errorMessage) {
-                    *errorMessage = QStringLiteral("Failed to compose dummy frame");
-                }
+            return SoftwareRender::compose(request);
+        }
+
+        bool renderSingleFrameGPU(const ArtifactRenderJob& job, int index, QString* outputPath, QString* errorMessage) {
+            const int width  = std::max(16, job.resolutionWidth);
+            const int height = std::max(16, job.resolutionHeight);
+
+            ArtifactIRenderer renderer;
+            renderer.initializeHeadless(width, height);
+            renderer.clear();
+            renderer.flush();
+
+            QImage frame = renderer.readbackToImage();
+            renderer.destroy();
+
+            if (frame.isNull()) {
+                if (errorMessage) *errorMessage = QStringLiteral("GPU readback failed");
                 return false;
             }
 
             const QString outPath = resolveDummyOutputPath(job, index);
-            if (outputPath) {
-                *outputPath = outPath;
-            }
+            if (outputPath) *outputPath = outPath;
+
             QDir outDir(QFileInfo(outPath).absolutePath());
             if (!outDir.exists() && !outDir.mkpath(QStringLiteral("."))) {
-                if (errorMessage) {
-                    *errorMessage = QStringLiteral("Failed to create output directory: %1").arg(outDir.absolutePath());
-                }
+                if (errorMessage) *errorMessage = QStringLiteral("Failed to create output directory: %1").arg(outDir.absolutePath());
                 return false;
             }
 
-            if (!image.save(outPath, "PNG")) {
-                if (errorMessage) {
-                    *errorMessage = QStringLiteral("Failed to save image: %1").arg(outPath);
-                }
+            if (!frame.save(outPath, "PNG")) {
+                if (errorMessage) *errorMessage = QStringLiteral("Failed to save image: %1").arg(outPath);
                 return false;
             }
             return true;
@@ -700,7 +718,13 @@ namespace Artifact
     }
 
     void ArtifactRenderQueueService::addRenderQueue() {
-        auto currentComposition = ArtifactProjectManager::getInstance().currentComposition();
+        ArtifactCompositionPtr currentComposition;
+        if (auto* projectService = ArtifactProjectService::instance()) {
+            currentComposition = projectService->currentComposition().lock();
+        }
+        if (!currentComposition) {
+            currentComposition = ArtifactProjectManager::getInstance().currentComposition();
+        }
         if (currentComposition) {
             const auto compositionName = currentComposition->settings().compositionName().toQString();
             addRenderQueueForComposition(currentComposition->id(), compositionName);
@@ -763,6 +787,69 @@ namespace Artifact
 
         impl_->queueManager.addJob(job);
         impl_->syncCoreQueueModel();
+    }
+
+    void ArtifactRenderQueueService::addRenderQueueWithPreset(
+        const ArtifactCore::CompositionID& compositionId,
+        const QString& compositionName,
+        const QString& presetId)
+    {
+        ArtifactRenderJob job;
+        job.compositionId = compositionId;
+        job.compositionName = compositionName.trimmed().isEmpty() ? QStringLiteral("Composition") : compositionName.trimmed();
+        job.status = ArtifactRenderJob::Status::Pending;
+        job.outputPath = QDir::homePath() + "/Desktop/output";
+        job.outputFormat = "MP4";
+        job.codec = "H.264";
+        job.resolutionWidth = 1920;
+        job.resolutionHeight = 1080;
+        job.frameRate = 30.0;
+        job.bitrate = 8000;
+        job.startFrame = 0;
+        job.endFrame = 100;
+
+        // プリセットを適用
+        const auto* preset = ArtifactRenderFormatPresetManager::instance().findPresetById(presetId);
+        if (preset) {
+            job.outputFormat = preset->container;
+            job.codec = preset->codec;
+            if (preset->isImageSequence) {
+                job.outputPath = QDir::homePath() + "/Desktop/output_sequence";
+            }
+        }
+
+        const auto found = ArtifactProjectManager::getInstance().findComposition(compositionId);
+        if (found.success) {
+            if (const auto comp = found.ptr.lock()) {
+                const auto totalRange = comp->frameRange();
+                const auto workAreaRange = comp->workAreaRange();
+                job.startFrame = static_cast<int>(std::max<int64_t>(0, workAreaRange.start()));
+                job.endFrame = static_cast<int>(std::max<int64_t>(job.startFrame + 1, workAreaRange.end()));
+                job.frameRate = comp->frameRate().framerate();
+                const QSize size = comp->settings().compositionSize();
+                if (size.width() > 0 && size.height() > 0) {
+                    job.resolutionWidth = size.width();
+                    job.resolutionHeight = size.height();
+                }
+                if (!totalRange.isValid() || totalRange.duration() <= 0) {
+                    job.startFrame = 0;
+                    job.endFrame = 100;
+                }
+            }
+        }
+
+        impl_->queueManager.addJob(job);
+        impl_->syncCoreQueueModel();
+    }
+
+    void ArtifactRenderQueueService::addMultipleRenderQueuesForComposition(
+        const ArtifactCore::CompositionID& compositionId,
+        const QString& compositionName,
+        const QVector<QString>& presetIds)
+    {
+        for (const auto& presetId : presetIds) {
+            addRenderQueueWithPreset(compositionId, compositionName, presetId);
+        }
     }
 
     void ArtifactRenderQueueService::removeRenderQueue() {
@@ -930,10 +1017,6 @@ namespace Artifact
     void ArtifactRenderQueueService::startAllJobs() {
         impl_->queueManager.startAllJobs();
 
-        // エンコーダの初期化 (Mock)
-        impl_->ffmpegEncoder = std::make_unique<ArtifactCore::FFmpegEncoder>();
-        impl_->nextFrameToEncode = 0;
-
         const int count = impl_->queueManager.jobCount();
         for (int i = 0; i < count; ++i) {
             const auto job = impl_->queueManager.getJob(i);
@@ -942,17 +1025,76 @@ namespace Artifact
                 continue;
             }
 
-            impl_->queueManager.setJobProgress(i, 10);
+            impl_->queueManager.setJobProgress(i, 0);
 
-            QString outputPath;
+            // エンコーダの初期化
+            impl_->ffmpegEncoder = std::make_unique<ArtifactCore::FFmpegEncoder>();
+            QFile outFile(job.outputPath);
+            impl_->ffmpegEncoder->open(outFile);
+
+            const int startF = job.startFrame;
+            const int endF = job.endFrame;
+            const int totalFrames = std::max(1, endF - startF + 1);
+
             QString error;
-            const bool ok = impl_->renderSingleFrameDummy(job, i, &outputPath, &error);
-            if (ok) {
-                impl_->queueManager.setJobOutputPath(i, outputPath);
+            std::atomic<bool> success = true;
+            std::atomic<int> framesRendered = 0;
+            std::mutex localEncoderMutex;
+            int localNextFrame = startF;
+            std::map<int, ArtifactCore::ImageF32x4_RGBA> localFrameBuffer;
+
+            // TBBを利用したマルチフレームレンダリング (MFR)
+            tbb::parallel_for(startF, endF + 1, [&](int f) {
+                if (!success.load(std::memory_order_relaxed)) return;
+
+                // To properly stop rendering if canceled/paused, we should check status
+                const auto currentJobStatus = impl_->queueManager.getJob(i).status;
+                if (currentJobStatus != ArtifactRenderJob::Status::Rendering) {
+                    success.store(false, std::memory_order_relaxed);
+                    return;
+                }
+
+                // Render frame (スレッドセーフなソフトウェアレンダリング)
+                QImage qimg = impl_->renderSingleFrameDummy(job, f);
+
+                // Add to encoder
+                if (!qimg.isNull()) {
+                    cv::Mat mat = ArtifactCore::CvUtils::qImageToCvMat(qimg);
+                    ArtifactCore::ImageF32x4_RGBA frameImage;
+                    frameImage.setFromCVMat(mat);
+
+                    // エンコーダは順序を保証する必要があるため、ロックを取得してバッファ経由で渡す
+                    {
+                        std::lock_guard<std::mutex> lock(localEncoderMutex);
+                        localFrameBuffer[f] = frameImage;
+                        
+                        while (localFrameBuffer.count(localNextFrame)) {
+                            impl_->ffmpegEncoder->addImage(localFrameBuffer[localNextFrame]);
+                            localFrameBuffer.erase(localNextFrame);
+                            localNextFrame++;
+                        }
+                    }
+
+                    int rendered = ++framesRendered;
+                    // Update progress
+                    int progress = static_cast<int>((static_cast<float>(rendered) / totalFrames) * 100);
+                    // UI更新はメインスレッドから呼ばれる想定だが、setJobProgress内で適切に処理されると仮定
+                    QMetaObject::invokeMethod(this, [this, i, progress]() {
+                        impl_->queueManager.setJobProgress(i, progress);
+                    }, Qt::QueuedConnection);
+                    
+                } else {
+                    success.store(false, std::memory_order_relaxed);
+                }
+            });
+
+            impl_->ffmpegEncoder->close();
+
+            if (success.load()) {
                 impl_->queueManager.setJobProgress(i, 100);
                 impl_->queueManager.setJobCompleted(i);
             } else {
-                impl_->queueManager.setJobFailed(i, error);
+                impl_->queueManager.setJobFailed(i, QStringLiteral("Render interrupted or failed"));
             }
         }
 

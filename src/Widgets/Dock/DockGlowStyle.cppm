@@ -199,18 +199,18 @@ bool DockGlowStyle::isDockWidgetActive(const QWidget* widget) const {
     auto dockWidget = qobject_cast<const ads::CDockWidget*>(widget);
     if (!dockWidget) return false;
     
-    // Use ADS API to determine whether the dock widget is the current tab
-    // in its dock area.
-    return dockWidget->isCurrentTab();
+    // artifactActiveDock プロパティ（DockStyleManager が唯一の真のアクティブドックにのみ設定）で判定
+    return dockWidget->property("artifactActiveDock").toBool();
 }
 
 bool DockGlowStyle::isDockTabActive(const QWidget* widget) const {
     if (!widget) return false;
-    
+
     auto tab = qobject_cast<const ads::CDockWidgetTab*>(widget);
     if (!tab) return false;
-    
-    return tab->isActiveTab();
+
+    // artifactActiveTab プロパティ（真にアクティブな1つのタブのみ true）で判定
+    return tab->property("artifactActiveTab").toBool();
 }
 
 }

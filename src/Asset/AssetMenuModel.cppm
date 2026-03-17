@@ -8,6 +8,8 @@
 #include <QStringList>
 #include <QStyle>
 #include <QVariant>
+#include <QMimeData>
+#include <QUrl>
 
 #include <iostream>
 #include <vector>
@@ -135,7 +137,23 @@ namespace Artifact
   if (!index.isValid()) {
    return Qt::NoItemFlags;
   }
-  return Qt::ItemIsEnabled | Qt::ItemIsSelectable;
+  return Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsDragEnabled;
+ }
+
+ QMimeData* AssetMenuModel::mimeData(const QModelIndexList& indexes) const
+ {
+  QMimeData* mimeData = new QMimeData();
+  QList<QUrl> urls;
+  for (const QModelIndex& index : indexes) {
+   if (index.isValid() && index.row() >= 0 && index.row() < impl_->items_.size()) {
+    const QString path = impl_->items_.at(index.row()).path.toQString();
+    if (!path.isEmpty()) {
+     urls.append(QUrl::fromLocalFile(path));
+    }
+   }
+  }
+  mimeData->setUrls(urls);
+  return mimeData;
  }
 
  QHash<int, QByteArray> AssetMenuModel::roleNames() const

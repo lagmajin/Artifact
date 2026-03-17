@@ -17,6 +17,8 @@ module;
 #include <QStringList>
 module Artifact.Widget.Dialog.RenderOutputSetting;
 
+import Artifact.Render.Queue.Presets;
+
 
 namespace Artifact
 {
@@ -24,12 +26,13 @@ namespace Artifact
  class ArtifactRenderOutputSettingDialog::Impl
  {
  private:
- 	
+
  public:
   Impl();
   ~Impl();
   QLineEdit* outputPathEdit = nullptr;
   QPushButton* browseButton = nullptr;
+  QComboBox* presetCombo = nullptr;  // フォーマットプリセット選択
   QComboBox* formatCombo = nullptr;
   QComboBox* codecCombo = nullptr;
   QComboBox* resolutionCombo = nullptr;
@@ -38,11 +41,13 @@ namespace Artifact
   QDoubleSpinBox* fpsSpin = nullptr;
   QSpinBox* bitrateSpin = nullptr;
   QDialogButtonBox* buttonBox = nullptr;
-  
+
   void handleBrowseClicked(ArtifactRenderOutputSettingDialog* dialog);
   void syncResolutionEditors();
   void syncResolutionPreset();
   static void ensureComboContains(QComboBox* combo, const QString& value);
+  void loadFormatPresets();
+  void applyPresetToEditors(const QString& presetId);
  };
 
  ArtifactRenderOutputSettingDialog::Impl::Impl()
@@ -128,6 +133,47 @@ namespace Artifact
      combo->addItem(value);
    }
  }
+
+ void ArtifactRenderOutputSettingDialog::Impl::loadFormatPresets()
+ {
+   if (!presetCombo) return;
+   
+   presetCombo->clear();
+   presetCombo->addItem(QStringLiteral("─ プリセットを選択 ─"), QString());
+   
+   const auto presets = ArtifactRenderFormatPresetManager::instance().allPresets();
+   for (const auto& preset : presets) {
+     presetCombo->addItem(
+       QStringLiteral("%1 (%2/%3)").arg(preset.name, preset.container, preset.codec),
+       preset.id);
+   }
+ }
+
+ void ArtifactRenderOutputSettingDialog::Impl::applyPresetToEditors(const QString& presetId)
+ {
+   if (presetId.isEmpty() || !formatCombo || !codecCombo) return;
+   
+   const auto* preset = ArtifactRenderFormatPresetManager::instance().findPresetById(presetId);
+   if (!preset) return;
+   
+   // Format
+   const int formatIndex = formatCombo->findText(preset->container, Qt::CaseInsensitive);
+   if (formatIndex >= 0) {
+     formatCombo->setCurrentIndex(formatIndex);
+   } else {
+     formatCombo->addItem(preset->container);
+     formatCombo->setCurrentText(preset->container);
+   }
+   
+   // Codec
+   const int codecIndex = codecCombo->findText(preset->codec, Qt::CaseInsensitive);
+   if (codecIndex >= 0) {
+     codecCombo->setCurrentIndex(codecIndex);
+   } else {
+     codecCombo->addItem(preset->codec);
+     codecCombo->setCurrentText(preset->codec);
+   }
+ }
 	
 	W_OBJECT_IMPL(ArtifactRenderOutputSettingDialog)
 	
@@ -135,26 +181,31 @@ namespace Artifact
  {
     setWindowTitle("Render Output Settings");
     setMinimumWidth(500);
-    
+
     auto mainLayout = new QVBoxLayout(this);
     auto formLayout = new QFormLayout();
-    
+
     // Output path
     impl_->outputPathEdit = new QLineEdit();
     impl_->browseButton = new QPushButton("Browse...");
-    
+
     auto pathLayout = new QHBoxLayout();
     pathLayout->addWidget(impl_->outputPathEdit);
     pathLayout->addWidget(impl_->browseButton);
-    
+
     formLayout->addRow("Output To:", pathLayout);
+
+    // Format preset selection (After Effects style)
+    impl_->presetCombo = new QComboBox();
+    impl_->loadFormatPresets();
+    formLayout->addRow("Format Preset:", impl_->presetCombo);
 
     // Format selection
     impl_->formatCombo = new QComboBox();
     impl_->formatCombo->addItems(QStringList{
       "MP4", "PNG Sequence", "EXR Sequence"
     });
-    formLayout->addRow("Format:", impl_->formatCombo);
+    formLayout->addRow("Container:", impl_->formatCombo);
 
     impl_->codecCombo = new QComboBox();
     impl_->codecCombo->addItems(QStringList{
@@ -209,10 +260,18 @@ namespace Artifact
     mainLayout->addWidget(impl_->buttonBox);
     
     setLayout(mainLayout);
-    
+
     // Connections
     QObject::connect(impl_->browseButton, &QPushButton::clicked, [this]() {
         impl_->handleBrowseClicked(this);
+    });
+
+    // プリセット選択時にフォーマット・コーデックを自動設定
+    QObject::connect(impl_->presetCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), [this](int index) {
+        const QString presetId = impl_->presetCombo->itemData(index).toString();
+        if (!presetId.isEmpty()) {
+            impl_->applyPresetToEditors(presetId);
+        }
     });
 
     QObject::connect(impl_->resolutionCombo, &QComboBox::currentTextChanged, [this](const QString&) {
@@ -224,7 +283,7 @@ namespace Artifact
     QObject::connect(impl_->heightSpin, qOverload<int>(&QSpinBox::valueChanged), [this](int) {
         impl_->syncResolutionPreset();
     });
-    
+
     QObject::connect(impl_->buttonBox, &QDialogButtonBox::accepted, this, &QDialog::accept);
     QObject::connect(impl_->buttonBox, &QDialogButtonBox::rejected, this, &QDialog::reject);
     impl_->syncResolutionPreset();

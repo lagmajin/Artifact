@@ -36,6 +36,7 @@ module;
 #include <numeric>
 #include <regex>
 #include <random>
+#include <QPainter>
 module Artifact.Layer.Image;
 
 import Image.ImageF32x4RGBAWithCache;
@@ -137,6 +138,9 @@ namespace Artifact {
 
  void ArtifactImageLayer::draw(ArtifactIRenderer* renderer)
  {
+    // デバッグログ：描画開始
+    qDebug() << "[ArtifactImageLayer::draw] Start:" << "hasImage=" << impl_->hasImage_ << "renderer=" << (renderer ? "valid" : "null");
+
     if (!impl_->hasImage_) return;
 
     QImage img = toQImage();
@@ -147,24 +151,37 @@ namespace Artifact {
         size = Size_2D(impl_->width_, impl_->height_);
     }
 
-    renderer->drawSprite(0.0f, 0.0f, (float)size.width, (float)size.height, img);
+    // Diligent렌더러에서 drawSprite를 호출
+    // 다른 렌더러 타입의 경우 동적으로 처리되어야 함
+    if (renderer != nullptr) {
+        renderer->drawSprite(0.0f, 0.0f, (float)size.width, (float)size.height, img);
+    }
  }
 
  QImage ArtifactImageLayer::toQImage() const
  {
-    if (!impl_->hasImage_ || !impl_->cache_) return QImage();
-
-    auto& cpu = impl_->cache_->image();
-    cv::Mat mat = cpu.toCVMat();
-    cv::Mat bgr;
-    if (mat.type() == CV_32FC4) {
-        cv::Mat tmp;
-        mat.convertTo(tmp, CV_8UC4, 255.0);
-        cv::cvtColor(tmp, bgr, cv::COLOR_RGBA2BGRA);
-        QImage img((uchar*)bgr.data, bgr.cols, bgr.rows, bgr.step, QImage::Format_RGBA8888);
-        return img.copy();
+    if (!impl_->hasImage_ || !impl_->cache_) {
+        qDebug() << "[ArtifactImageLayer::toQImage] No cache: hasImage=" << impl_->hasImage_ 
+                 << "cache=" << (impl_->cache_ ? "valid" : "null");
+        return QImage();
     }
-    return QImage();
+    
+    // キャッシュから QImage を生成
+    QImage qimg = impl_->cache_->image().toQImage();
+    if (!qimg.isNull()) {
+        return qimg;
+    }
+    
+    // フォールバック：キャッシュが破損している場合
+    qDebug() << "[ArtifactImageLayer::toQImage] Cache returned null, using fallback:"
+             << "size=" << impl_->width_ << "x" << impl_->height_;
+    // 空の画像を返す代わりに、エラー画像を生成
+    QImage errorImg(impl_->width_, impl_->height_, QImage::Format_ARGB32_Premultiplied);
+    errorImg.fill(QColor(100, 50, 50));
+    QPainter p(&errorImg);
+    p.setPen(QColor(255, 100, 100));
+    p.drawText(errorImg.rect(), Qt::AlignCenter, QStringLiteral("Cache Error"));
+    return errorImg;
  }
 
  std::vector<ArtifactCore::PropertyGroup> ArtifactImageLayer::getLayerPropertyGroups() const

@@ -57,11 +57,29 @@ namespace Artifact {
   case LayerType::Null:
    ptr = std::make_shared<ArtifactNullLayer>();
    break;
-  case LayerType::Solid:
-   ptr = std::make_shared<ArtifactSolidImageLayer>();
+  case LayerType::Solid: {
+   auto solidLayer = std::make_shared<ArtifactSolidImageLayer>();
+   if (auto* solidParams = dynamic_cast<ArtifactSolidLayerInitParams*>(&params)) {
+    solidLayer->setSize(solidParams->width(), solidParams->height());
+    solidLayer->setColor(solidParams->color());
+   } else {
+    solidLayer->setSize(1920, 1080);
+   }
+   ptr = solidLayer;
    break;
+  }
   case LayerType::Image:
    ptr = std::make_shared<ArtifactImageLayer>();
+   if (ptr) {
+    // 画像パラメータからパスを取得して読み込み
+    if (auto* imageParams = dynamic_cast<ArtifactImageInitParams*>(&params)) {
+     const QString path = imageParams->imagePath();
+     if (!path.isEmpty()) {
+      auto* imageLayer = static_cast<ArtifactImageLayer*>(ptr.get());
+      imageLayer->loadFromPath(path);
+     }
+    }
+   }
    break;
   case LayerType::Adjustment:
    ptr = std::make_shared<ArtifactAdjustableLayer>();

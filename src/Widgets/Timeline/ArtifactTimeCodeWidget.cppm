@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <QLabel>
 #include <QBoxLayout>
 #include <QVBoxLayout>
@@ -27,23 +27,25 @@ namespace Artifact
   timecodeLabel_ = new QLabel();
   timecodeLabel_->setText("00:00:00:00");
   frameNumberLabel_ = new QLabel();
-  frameNumberLabel_->setText("(0 f)");
+  frameNumberLabel_->setText("0 f");
  }
 
  ArtifactTimeCodeWidget::ArtifactTimeCodeWidget(QWidget* parent /*= nullptr*/) : QWidget(parent), impl_(new Impl())
  {
-  auto layout = new QVBoxLayout();
+  auto layout = new QHBoxLayout();
   layout->setSpacing(0);
-  layout->setContentsMargins(8, 0, 8, 0);
+  layout->setContentsMargins(10, 0, 8, 0);
   layout->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
-  
+
   impl_->timecodeLabel_->setObjectName("timeLabel");
   impl_->frameNumberLabel_->setObjectName("frameLabel");
-  impl_->timecodeLabel_->setAlignment(Qt::AlignLeft | Qt::AlignBottom);
-  impl_->frameNumberLabel_->setAlignment(Qt::AlignHCenter | Qt::AlignTop);
+  impl_->timecodeLabel_->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+  impl_->frameNumberLabel_->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
 
   layout->addWidget(impl_->timecodeLabel_);
+  layout->addSpacing(8);
   layout->addWidget(impl_->frameNumberLabel_);
+  layout->addStretch();
 
   setLayout(layout);
   setFixedHeight(34);
@@ -52,18 +54,20 @@ namespace Artifact
 
   setStyleSheet(
    "ArtifactTimeCodeWidget {"
-   "  background-color: #2D2D2D;"
+   "  background-color: #1C222E;"
+   "  border-bottom: 1px solid #27323F;"
    "}"
    "QLabel#timeLabel {"
    "  font-family: 'Consolas', 'Courier New', monospace;"
-   "  font-size: 18px;"
+   "  font-size: 15px;"
    "  font-weight: bold;"
-   "  color: #5EA7EE;"
+   "  color: #C4D4E2;"
    "}"
    "QLabel#frameLabel {"
    "  font-family: 'Consolas', 'Courier New', monospace;"
-   "  font-size: 14px;"
-   "  color: #9A9A9A;"
+   "  font-size: 11px;"
+   "  color: #4E6475;"
+   "  padding-top: 2px;"
    "}"
   );
  }
@@ -90,13 +94,13 @@ namespace Artifact
     int h = totalSeconds / 3600;
 
     QString tc = QString("%1:%2:%3:%4")
-        .arg(h, 1, 10)
+        .arg(h, 2, 10, QChar('0'))
         .arg(m, 2, 10, QChar('0'))
         .arg(s, 2, 10, QChar('0'))
         .arg(ff, 2, 10, QChar('0'));
 
     if (impl_->timecodeLabel_) impl_->timecodeLabel_->setText(tc);
-    if (impl_->frameNumberLabel_) impl_->frameNumberLabel_->setText(QString("(%1 f)").arg(totalFrames));
+    if (impl_->frameNumberLabel_) impl_->frameNumberLabel_->setText(QString("%1 f").arg(totalFrames));
 
     // Example use of RationalTime API (kept for future extension)
     Q_UNUSED(rt);

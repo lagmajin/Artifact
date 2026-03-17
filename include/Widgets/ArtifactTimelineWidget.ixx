@@ -180,7 +180,10 @@ class TimelineTrackView :public QGraphicsView {
   void refreshTracks();
 
   /*signals:*/
- public /*slots*/:
+ public:
+  void zoomLevelChanged(double zoomPercent) W_SIGNAL(zoomLevelChanged, zoomPercent);
+  
+ public slots:
  };
 
  class ArtifactTimelineIconView :public QTreeView
