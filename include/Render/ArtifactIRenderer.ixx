@@ -48,6 +48,7 @@ public:
  ~ArtifactIRenderer();
 
  void initialize(QWidget* widget);
+ void initializeHeadless(int width, int height);
  void createSwapChain(QWidget* widget);
  void recreateSwapChain(QWidget* widget);
 
@@ -56,6 +57,8 @@ public:
  void flushAndWait();
  void destroy();
  void present();
+
+ QImage readbackToImage() const;
 
  void setClearColor(const FloatColor& color);
  void setViewportSize(float w, float h);

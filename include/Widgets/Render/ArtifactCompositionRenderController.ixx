@@ -39,13 +39,20 @@ export namespace Artifact {
   void setComposition(ArtifactCompositionPtr composition);
   ArtifactCompositionPtr composition() const;
   void setSelectedLayerId(const LayerID& id);
+void setClearColor(const FloatColor& color);
+void resetView();
+void zoomInAt(const QPointF& viewportPos);
+void zoomOutAt(const QPointF& viewportPos);
+void zoomFit();
+void zoom100();
 
-  void setClearColor(const FloatColor& color);
-  void resetView();
-  void zoomInAt(const QPointF& viewportPos);
-  void zoomOutAt(const QPointF& viewportPos);
-  void zoomFit();
-  void zoom100();
+void handleMousePress(const QPointF& viewportPos);
+void handleMouseMove(const QPointF& viewportPos);
+void handleMouseRelease();
+
+class TransformGizmo* gizmo() const;
+
+public /*slots*/:
 
   void renderOneFrame();
  };

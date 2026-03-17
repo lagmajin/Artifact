@@ -235,8 +235,8 @@ namespace Artifact {
   header->setStyleSheet("background-color: #2D2D30; border-bottom: 1px solid #444;");
   auto hLayout = new QHBoxLayout(header);
   hLayout->setContentsMargins(15, 0, 15, 0);
-  auto title = new QLabel("🎬 Composition Settings");
-  title->setStyleSheet("color: white; font-weight: bold; font-size: 14px;");
+  auto title = new QLabel("Composition Settings");
+  title->setStyleSheet("color: white; font-weight: bold; font-size: 13px;");
   hLayout->addWidget(title);
   hLayout->addStretch();
   mainLayout->addWidget(header);
@@ -278,7 +278,7 @@ namespace Artifact {
   okBtn->setStyleSheet("background: #007ACC; color: white; border-radius: 4px; font-weight: bold;");
   auto cancelBtn = new QPushButton("Cancel");
   cancelBtn->setFixedSize(80, 28);
-  cancelBtn->setStyleSheet("background: #3E3E42; color: #DDD; border-radius: 4px;");
+  cancelBtn->setStyleSheet("background: #3E3E42; color: #DDD; border-radius: 4px; border: 1px solid #555;");
   fLayout->addStretch();
   fLayout->addWidget(okBtn);
   fLayout->addWidget(cancelBtn);
@@ -333,10 +333,11 @@ namespace Artifact {
   QDialog::showEvent(event);
   QPoint endPos;
   if (parentWidget()) {
-   QRect pr = parentWidget()->geometry();
-   endPos = pr.center() - rect().center();
+   endPos = parentWidget()->mapToGlobal(parentWidget()->rect().center())
+            - QPoint(width() / 2, height() / 2);
   } else {
-   endPos = QGuiApplication::primaryScreen()->availableGeometry().center() - rect().center();
+   endPos = QGuiApplication::primaryScreen()->availableGeometry().center()
+            - QPoint(width() / 2, height() / 2);
   }
   move(endPos);
  }

@@ -39,12 +39,9 @@
 #include <random>
 module Artifact.Widgets.RenderLayerEditor;
 
-
-
 import Artifact.Widgets.RenderLayerWidgetv2;
 import Color.Float;
 import Utils.Id;
-
 
 namespace Artifact {
 

@@ -29,7 +29,7 @@ struct PSInput
 PSInput main(VSInput input)
 {
     PSInput output;
-    float2 pos = input.pos + offset;
+    float2 pos = input.pos * scale + offset;
     float2 ndc = pos / screenSize * 2.0f - float2(1.0f, 1.0f);
     ndc.y = -ndc.y;
     output.pos   = float4(ndc, 0.0f, 1.0f);

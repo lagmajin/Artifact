@@ -52,3 +52,11 @@
 2. `Software Test Entry Path`
 3. `Effect Validation Path`
 4. `Image Sequence Rendering`
+
+## Follow-up Notes
+
+- `2026-03-15`
+  - `Software Composition Test` は placeholder foreground ではなく、actual composition data から `renderCompositionCanvas()` を組み立てて preview する形へ変更
+  - `Software Layer Test` は sandbox blend/offset/scale/rotation controls を撤去し、selected layer の実データを composition 上に重ねて確認する viewer へ整理
+  - `ArtifactImageLayer` / `ArtifactSolidImageLayer` / `ArtifactSolid2DLayer` / `ArtifactTextLayer` / `ArtifactVideoLayer` を個別に surface 化し、blend mode / global transform / transformed bounds を preview に反映
+  - これにより、software rendering で作られた composition view と layer view の描画を、UI 用ダミーカードではなく current project data に一致させる方向へ寄せた

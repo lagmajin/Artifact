@@ -64,9 +64,12 @@ module Artifact.Widgets.Render.QueueManager;
 
 import Widgets.Utils.CSS;
 import Artifact.Render.Queue.Service;
+import Artifact.Render.Queue.Presets;
 import Artifact.Service.Project;
 import Artifact.Widget.Dialog.RenderOutputSetting;
+import Artifact.Widgets.RenderQueuePresetSelector;
 import Core.FastSettingsStore;
+import Artifact.Widgets.AppDialogs;
 
 
 namespace Artifact
@@ -1185,13 +1188,9 @@ QPushButton {
     if (impl_->presetStore_) {
       const QString key = impl_->presetKeyForName(name.trimmed());
       if (!key.isEmpty() && impl_->presetStore_->contains(key)) {
-        const auto overwrite = QMessageBox::question(
-          this,
+        if (!ArtifactMessageBox::confirmOverwrite(this,
           QStringLiteral("Overwrite Preset"),
-          QStringLiteral("Preset \"%1\" already exists. Overwrite?").arg(name.trimmed()),
-          QMessageBox::Yes | QMessageBox::No,
-          QMessageBox::No);
-        if (overwrite != QMessageBox::Yes) {
+          QStringLiteral("Preset \"%1\" already exists. Overwrite?").arg(name.trimmed()))) {
           return;
         }
       }
@@ -1227,13 +1226,9 @@ QPushButton {
       return;
     }
     const QString name = impl_->presetCombo->currentText().trimmed();
-    const auto answer = QMessageBox::question(
-      this,
+    if (!ArtifactMessageBox::confirmDelete(this,
       QStringLiteral("Delete Preset"),
-      QStringLiteral("Delete preset \"%1\"?").arg(name),
-      QMessageBox::Yes | QMessageBox::No,
-      QMessageBox::No);
-    if (answer != QMessageBox::Yes) {
+      QStringLiteral("Delete preset \"%1\"?").arg(name))) {
       return;
     }
     if (!impl_->removePreset(name)) {
@@ -1245,10 +1240,64 @@ QPushButton {
   });
 
   connect(impl_->addButton, &QPushButton::clicked, this, [this]() {
-    if (impl_->service) {
-      impl_->service->addRenderQueue();
-      impl_->logUiEvent(QStringLiteral("Requested: add render job"), true);
-    }
+    // フォーマットプリセット選択ダイアログを表示
+    auto* presetDialog = new ArtifactRenderQueuePresetDialog(this);
+    presetDialog->setWindowTitle(QStringLiteral("出力フォーマットを選択"));
+    
+    // ダイアログのサイズヒントを設定
+    presetDialog->resize(400, 500);
+    
+    connect(presetDialog, &ArtifactRenderQueuePresetDialog::presetsConfirmed, this, [this](const QVector<QString>& presetIds) {
+      if (presetIds.isEmpty()) {
+        return;
+      }
+      
+      if (!impl_->service) {
+        return;
+      }
+      
+      // 現在のコンポジションを取得
+      auto* projectService = ArtifactProjectService::instance();
+      if (!projectService) {
+        QMessageBox::warning(this, QStringLiteral("レンダーキュー"),
+          QStringLiteral("プロジェクトサービスが利用できません。"));
+        return;
+      }
+      
+      auto composition = projectService->currentComposition().lock();
+      if (!composition) {
+        QMessageBox::warning(this, QStringLiteral("レンダーキュー"),
+          QStringLiteral("現在のコンポジションが選択されていません。\nタイムラインでコンポジションを選択してください。"));
+        return;
+      }
+      
+      const auto compId = composition->id();
+      const QString compName = composition->settings().compositionName().toQString();
+      
+      // 複数形式でジョブを追加
+      impl_->service->addMultipleRenderQueuesForComposition(compId, compName, presetIds);
+      
+      // プリセット名を取得してログに記録
+      QStringList presetNames;
+      for (const auto& presetId : presetIds) {
+        const auto* preset = ArtifactRenderFormatPresetManager::instance().findPresetById(presetId);
+        if (preset) {
+          presetNames.push_back(preset->name);
+        }
+      }
+      
+      impl_->logUiEvent(QString("Requested: add %1 job(s) for '%2' with presets: %3")
+        .arg(presetIds.size()).arg(compName).arg(presetNames.join(", ")), true);
+      impl_->setStatusMessage(QString("%1 形式でキューに追加しました：").arg(presetNames.join(", ")) + compName, true);
+    });
+    
+    connect(presetDialog, &ArtifactRenderQueuePresetDialog::canceled, this, [this]() {
+      impl_->logUiEvent(QStringLiteral("Canceled: format selection"), false);
+    });
+    
+    presetDialog->show();
+    presetDialog->raise();
+    presetDialog->activateWindow();
   });
 
   connect(impl_->removeButton, &QPushButton::clicked, this, [this]() {
@@ -1295,13 +1344,9 @@ QPushButton {
     if (!impl_->service || impl_->service->jobCount() <= 0) {
       return;
     }
-    const auto answer = QMessageBox::question(
-      this,
+    if (!ArtifactMessageBox::confirmDelete(this,
       QStringLiteral("Clear Render Queue"),
-      QStringLiteral("レンダーキュー内の全ジョブを削除しますか？"),
-      QMessageBox::Yes | QMessageBox::No,
-      QMessageBox::No);
-    if (answer != QMessageBox::Yes) {
+      QStringLiteral("レンダーキュー内の全ジョブを削除しますか？"))) {
       impl_->logUiEvent(QStringLiteral("Requested: clear all render jobs (canceled)"), true);
       return;
     }

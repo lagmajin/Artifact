@@ -23,6 +23,8 @@
 #include <QHash>
 #include <QSet>
 #include <QPolygon>
+#include <QIcon>
+#include <QtSVG/QSvgRenderer>
 #include <QComboBox>
 #include <QPointer>
 #include <QLineEdit>
@@ -30,6 +32,7 @@
 #include <QWheelEvent>
 #include <QInputDialog>
 #include <QFileDialog>
+#include <QTimer>
 module Artifact.Widgets.LayerPanelWidget;
 
 import std;
@@ -57,10 +60,58 @@ namespace {
   constexpr int kInlineComboHeight = 24;
   constexpr int kInlineBlendWidth = 120;
   constexpr int kInlineParentWidth = 150;
+  constexpr int kInlineMatteWidth = 80;
   constexpr int kInlineComboGap = 6;
   constexpr int kInlineComboMarginY = 2;
-  constexpr int kInlineComboReserve = kInlineParentWidth + kInlineBlendWidth + kInlineComboGap + 10;
+  constexpr int kInlineComboReserve = kInlineParentWidth + kInlineBlendWidth + kInlineMatteWidth + kInlineComboGap * 2 + 10;
  constexpr int kLayerNameMinWidth = 120;
+
+ QIcon loadSvgAsIcon(const QString& path, int size = 16)
+ {
+  if (path.isEmpty()) {
+   return QIcon();
+  }
+  if (path.endsWith(QStringLiteral(".svg"), Qt::CaseInsensitive)) {
+   QSvgRenderer renderer(path);
+   if (renderer.isValid()) {
+    QPixmap pixmap(size, size);
+    pixmap.fill(Qt::transparent);
+    QPainter painter(&pixmap);
+    renderer.render(&painter);
+    painter.end();
+    if (!pixmap.isNull()) {
+     return QIcon(pixmap);
+    }
+   }
+   return QIcon();
+  }
+  return QIcon(path);
+ }
+
+ QIcon loadLayerPanelIcon(const QString& resourceRelativePath, const QString& fallbackFileName = {})
+ {
+  QIcon icon = loadSvgAsIcon(resolveIconResourcePath(resourceRelativePath));
+  if (!icon.isNull()) {
+   return icon;
+  }
+  if (!fallbackFileName.isEmpty()) {
+   icon = loadSvgAsIcon(resolveIconPath(fallbackFileName));
+  }
+  return icon;
+ }
+
+ QPixmap loadLayerPanelPixmap(const QString& resourceRelativePath, const QString& fallbackFileName = {})
+ {
+  QIcon icon = loadLayerPanelIcon(resourceRelativePath, fallbackFileName);
+  if (icon.isNull()) {
+   return QPixmap();
+  }
+  QPixmap pix = icon.pixmap(16, 16);
+  if (pix.isNull()) {
+   pix = icon.pixmap(20, 20);
+  }
+  return pix;
+ }
  }
 
  namespace {
@@ -188,6 +239,52 @@ namespace {
       {QStringLiteral("Luminosity"), LAYER_BLEND_TYPE::BLEND_LUMINOSITY}
     };
   }
+
+  std::vector<std::pair<QString, int>> trackMatteModeItems()
+  {
+    return {
+      {QStringLiteral("None"), 0},
+      {QStringLiteral("Alpha Matte"), 1},
+      {QStringLiteral("Alpha Inv Matte"), 2},
+      {QStringLiteral("Luma Matte"), 3},
+      {QStringLiteral("Luma Inv Matte"), 4}
+    };
+  }
+
+  QVector<QString> layerPanelGroupLabels(const ArtifactAbstractLayerPtr& layer)
+  {
+   QVector<QString> labels;
+   if (!layer) {
+    return labels;
+   }
+
+   auto hasLabel = [&labels](const QString& candidate) -> bool {
+    return std::any_of(labels.cbegin(), labels.cend(), [&candidate](const QString& existing) {
+     return existing.compare(candidate, Qt::CaseInsensitive) == 0;
+    });
+   };
+
+   for (const auto& group : layer->getLayerPropertyGroups()) {
+    const QString groupName = group.name().trimmed();
+    if (groupName.isEmpty()) {
+     continue;
+    }
+    if (groupName.compare(QStringLiteral("Layer"), Qt::CaseInsensitive) == 0) {
+     continue;
+    }
+    if (!hasLabel(groupName)) {
+     labels.push_back(groupName);
+    }
+   }
+
+   // Fallback for visual/null-style layers that should expose timeline transform controls.
+   const QString transformLabel = QStringLiteral("Transform");
+   if ((layer->isNullLayer() || layer->isAdjustmentLayer() || layer->hasVideo()) && !hasLabel(transformLabel)) {
+    labels.prepend(transformLabel);
+   }
+
+   return labels;
+  }
  }
 
  // ============================================================================
@@ -199,16 +296,20 @@ namespace {
  public:
   Impl()
   {
-    visibilityIcon = QPixmap(resolveIconPath("visibility.png"));
-    lockIcon = QPixmap(resolveIconPath("lock.png"));
-    if (lockIcon.isNull()) lockIcon = QPixmap(resolveIconPath("unlock.png"));
-    soloIcon = QPixmap(resolveIconPath("solo.png"));
+    visibilityIcon = loadLayerPanelPixmap(QStringLiteral("MaterialVS/neutral/visibility.svg"), QStringLiteral("visibility.png"));
+    lockIcon = loadLayerPanelPixmap(QStringLiteral("MaterialVS/yellow/lock.svg"), QStringLiteral("lock.png"));
+    if (lockIcon.isNull()) lockIcon = loadLayerPanelPixmap(QStringLiteral("MaterialVS/yellow/lock_open.svg"), QStringLiteral("unlock.png"));
+    soloIcon = loadLayerPanelPixmap(QStringLiteral("MaterialVS/purple/group.svg"), QStringLiteral("solo.png"));
+    soundIcon = loadLayerPanelPixmap(QStringLiteral("MaterialVS/blue/volume_up.svg"));
+    shyIcon = loadLayerPanelPixmap(QStringLiteral("MaterialVS/orange/visibility_off.svg"));
   }
   ~Impl() = default;
 
   QPixmap visibilityIcon;
   QPixmap lockIcon;
   QPixmap soloIcon;
+  QPixmap soundIcon;
+  QPixmap shyIcon;
   
   QPushButton* visibilityButton = nullptr;
   QPushButton* lockButton = nullptr;
@@ -226,28 +327,30 @@ namespace {
   : QWidget(parent), impl_(new Impl())
  {
   auto visButton = impl_->visibilityButton = new QPushButton();
-  visButton->setFixedSize(QSize(kLayerHeaderButtonSize, kLayerHeaderButtonSize));
+  visButton->setFixedSize(QSize(kLayerColumnWidth, kLayerHeaderButtonSize));
   visButton->setIcon(impl_->visibilityIcon);
   visButton->setStyleSheet("background-color: #2D2D30; border: none; border-right: 1px solid #1a1a1a;");
   visButton->setFlat(true);
-  
+
   auto lockButton = impl_->lockButton = new QPushButton();
-  lockButton->setFixedSize(QSize(kLayerHeaderButtonSize, kLayerHeaderButtonSize));
+  lockButton->setFixedSize(QSize(kLayerColumnWidth, kLayerHeaderButtonSize));
   if (!impl_->lockIcon.isNull()) lockButton->setIcon(impl_->lockIcon);
   lockButton->setStyleSheet("background-color: #2D2D30; border: none; border-right: 1px solid #1a1a1a;");
 
   auto soloButton = impl_->soloButton = new QPushButton();
-  soloButton->setFixedSize(QSize(kLayerHeaderButtonSize, kLayerHeaderButtonSize));
+  soloButton->setFixedSize(QSize(kLayerColumnWidth, kLayerHeaderButtonSize));
   if (!impl_->soloIcon.isNull()) soloButton->setIcon(impl_->soloIcon);
   soloButton->setStyleSheet("background-color: #2D2D30; border: none; border-right: 1px solid #1a1a1a;");
 
   auto soundButton = impl_->soundButton = new QPushButton();
-  soundButton->setFixedSize(QSize(kLayerHeaderButtonSize, kLayerHeaderButtonSize));
+  soundButton->setFixedSize(QSize(kLayerColumnWidth, kLayerHeaderButtonSize));
+  if (!impl_->soundIcon.isNull()) soundButton->setIcon(impl_->soundIcon);
   soundButton->setStyleSheet("background-color: #2D2D30; border: none; border-right: 1px solid #1a1a1a;");
 
   auto shyButton = impl_->shyButton = new QPushButton;
-  shyButton->setFixedSize(QSize(kLayerHeaderButtonSize, kLayerHeaderButtonSize));
+  shyButton->setFixedSize(QSize(kLayerColumnWidth, kLayerHeaderButtonSize));
   shyButton->setCheckable(true);
+  if (!impl_->shyIcon.isNull()) shyButton->setIcon(impl_->shyIcon);
   shyButton->setToolTip("Master Shy Switch");
   shyButton->setStyleSheet("QPushButton { background-color: #2D2D30; border: none; border-right: 1px solid #1a1a1a; } QPushButton:checked { background-color: #3b3bef; }");
 
@@ -320,10 +423,10 @@ int ArtifactLayerPanelHeaderWidget::totalHeaderHeight() const
 
   Impl()
   {
-    visibilityIcon = QPixmap(resolveIconPath("visibility.png"));
-    lockIcon = QPixmap(resolveIconPath("lock.png"));
-    if (lockIcon.isNull()) lockIcon = QPixmap(resolveIconPath("unlock.png"));
-    soloIcon = QPixmap(resolveIconPath("solo.png"));
+    visibilityIcon = loadLayerPanelPixmap(QStringLiteral("MaterialVS/neutral/visibility.svg"), QStringLiteral("visibility.png"));
+    lockIcon = loadLayerPanelPixmap(QStringLiteral("MaterialVS/yellow/lock.svg"), QStringLiteral("lock.png"));
+    if (lockIcon.isNull()) lockIcon = loadLayerPanelPixmap(QStringLiteral("MaterialVS/yellow/lock_open.svg"), QStringLiteral("unlock.png"));
+    soloIcon = loadLayerPanelPixmap(QStringLiteral("MaterialVS/purple/group.svg"), QStringLiteral("solo.png"));
   }
   ~Impl() = default;
 
@@ -338,30 +441,41 @@ int ArtifactLayerPanelHeaderWidget::totalHeaderHeight() const
   QHash<QString, bool> expandedByLayerId;
   QPointer<QComboBox> inlineParentEditor;
   QPointer<QComboBox> inlineBlendEditor;
+  QPointer<QComboBox> inlineMatteEditor;
   QPointer<QLineEdit> inlineNameEditor;
   LayerID editingLayerId;
   QPoint dragStartPos;
   LayerID dragCandidateLayerId;
   LayerID draggedLayerId;
   int dragInsertVisibleRow = -1;
+  bool updatingLayout = false;  // 再帰呼び出し防止フラグ
 
   void clearInlineEditors()
   {
    if (inlineParentEditor) {
     inlineParentEditor->hide();
     inlineParentEditor->deleteLater();
-    inlineParentEditor = nullptr;
    }
+   inlineParentEditor = nullptr;
+
    if (inlineBlendEditor) {
     inlineBlendEditor->hide();
     inlineBlendEditor->deleteLater();
-    inlineBlendEditor = nullptr;
    }
+   inlineBlendEditor = nullptr;
+
+   if (inlineMatteEditor) {
+    inlineMatteEditor->hide();
+    inlineMatteEditor->deleteLater();
+   }
+   inlineMatteEditor = nullptr;
+
    if (inlineNameEditor) {
     inlineNameEditor->hide();
     inlineNameEditor->deleteLater();
-    inlineNameEditor = nullptr;
    }
+   inlineNameEditor = nullptr;
+
    editingLayerId = LayerID();
   }
 
@@ -457,21 +571,22 @@ int ArtifactLayerPanelHeaderWidget::totalHeaderHeight() const
      if (emitted.contains(nodeId)) return;
 
      const auto nodeChildren = children.value(nodeId);
-     const bool hasChildren = !nodeChildren.isEmpty() || node->isNullLayer();
+     const auto panelGroups = layerPanelGroupLabels(node);
+     const bool hasChildren = !nodeChildren.isEmpty() || !panelGroups.isEmpty();
      const bool expanded = expandedByLayerId.value(nodeId, true);
      visibleRows.push_back(VisibleRow{ node, depth, hasChildren, expanded, RowKind::Layer, QString() });
      emitted.insert(nodeId);
 
      if (!hasChildren || !expanded) return;
 
-     if (node->isNullLayer()) {
+     for (const auto& groupLabel : panelGroups) {
       visibleRows.push_back(VisibleRow{
        node,
        depth + 1,
        false,
        false,
        RowKind::Group,
-       QStringLiteral("Transform")
+       groupLabel
       });
      }
 
@@ -508,8 +623,30 @@ int ArtifactLayerPanelHeaderWidget::totalHeaderHeight() const
   setFocusPolicy(Qt::StrongFocus);
 
   if (auto* service = ArtifactProjectService::instance()) {
-    QObject::connect(service, &ArtifactProjectService::layerCreated, this, [this](const CompositionID& compId, const LayerID&) {
-      if (impl_->compositionId == compId) this->updateLayout();
+    QObject::connect(service, &ArtifactProjectService::layerCreated, this, [this](const CompositionID& compId, const LayerID& layerId) {
+      if (impl_->compositionId == compId) {
+        this->updateLayout();
+        
+        // Auto-focus Inspector
+        const auto widgets = QApplication::allWidgets();
+        for (QWidget* w : widgets) {
+         if (!w) continue;
+         const QString className = QString::fromLatin1(w->metaObject()->className());
+         if (className.contains("ArtifactInspectorWidget", Qt::CaseInsensitive)) {
+          w->show();
+          w->raise();
+          w->activateWindow();
+          break;
+         }
+        }
+        
+        // Start inline editing of the new layer on the next event loop tick
+        QTimer::singleShot(0, this, [this, layerId]() {
+          this->editLayerName(layerId);
+          // Ensure layer is visible in the scroll area wrapper if possible
+          Q_EMIT visibleRowsChanged();
+        });
+      }
     });
     QObject::connect(service, &ArtifactProjectService::layerRemoved, this, [this](const CompositionID& compId, const LayerID&) {
       if (impl_->compositionId == compId) this->updateLayout();
@@ -552,8 +689,12 @@ int ArtifactLayerPanelHeaderWidget::totalHeaderHeight() const
 
  void ArtifactLayerPanelWidget::updateLayout()
  {
- impl_->clearInlineEditors();
- impl_->rebuildVisibleRows();
+  // 再帰呼び出しを防止
+  if (impl_->updatingLayout) return;
+  impl_->updatingLayout = true;
+  
+  impl_->clearInlineEditors();
+  impl_->rebuildVisibleRows();
   const int count = impl_->visibleRows.size();
   const int contentHeight = std::max(kLayerRowHeight, count * kLayerRowHeight);
   setMinimumHeight(0);
@@ -561,6 +702,8 @@ int ArtifactLayerPanelHeaderWidget::totalHeaderHeight() const
   updateGeometry();
   update();
   Q_EMIT visibleRowsChanged();
+  
+  impl_->updatingLayout = false;
  }
 
  QVector<LayerID> ArtifactLayerPanelWidget::visibleTimelineRows() const
@@ -569,13 +712,67 @@ int ArtifactLayerPanelHeaderWidget::totalHeaderHeight() const
   rows.reserve(impl_->visibleRows.size());
   for (const auto& row : impl_->visibleRows) {
    if (row.kind == Impl::RowKind::Layer && row.layer) {
-    rows.push_back(row.layer->id());
+    rows.append(row.layer->id());
    } else {
-    rows.push_back(LayerID());
+    rows.append(LayerID::Nil());
    }
   }
   return rows;
  }
+
+ int ArtifactLayerPanelWidget::layerRowIndex(const LayerID& id) const
+ {
+  for (int i = 0; i < impl_->visibleRows.size(); ++i) {
+   if (impl_->visibleRows[i].layer && impl_->visibleRows[i].layer->id() == id) {
+    return i;
+   }
+  }
+  return -1;
+ }
+
+ void ArtifactLayerPanelWidget::editLayerName(const LayerID& id)
+ {
+  int idx = layerRowIndex(id);
+  if (idx >= 0) {
+   impl_->selectedLayerId = id;
+   update();
+
+   // Fire a dummy F2 event or replicate F2 logic
+   if (!impl_->inlineNameEditor) {
+    auto comp = safeCompositionLookup(impl_->compositionId);
+    if (!comp) return;
+    auto l = comp->layerById(id);
+    if (!l) return;
+
+    impl_->inlineNameEditor = new QLineEdit(this);
+    impl_->inlineNameEditor->setText(l->layerName());
+    impl_->inlineNameEditor->selectAll();
+    impl_->inlineNameEditor->setStyleSheet("background-color: #2D2D30; color: white; border: 1px solid #007ACC;");
+
+    // Position it
+    const int rowIndent = impl_->visibleRows[idx].depth * 14;
+    const int nameStartX = kLayerColumnWidth * kLayerPropertyColumnCount;
+    const int textX = nameStartX + rowIndent + (impl_->visibleRows[idx].hasChildren ? 16 : 4);
+    const int editorWidth = std::max(60, width() - textX - kInlineParentWidth - kInlineBlendWidth - 8);
+    impl_->inlineNameEditor->setGeometry(textX, idx * kLayerRowHeight + 2, editorWidth, kLayerRowHeight - 4);
+
+    QObject::connect(impl_->inlineNameEditor, &QLineEdit::editingFinished, this, [this, id]() {
+      if (!impl_->inlineNameEditor) return;
+      QString newName = impl_->inlineNameEditor->text();
+      impl_->inlineNameEditor->deleteLater();
+      impl_->inlineNameEditor = nullptr;
+      if (auto* svc = ArtifactProjectService::instance()) {
+        svc->renameLayerInCurrentComposition(id, newName);
+      }
+      setFocus();
+    });
+
+    impl_->inlineNameEditor->show();
+    impl_->inlineNameEditor->setFocus();
+   }
+  }
+ }
+
 
  void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
  {
@@ -607,7 +804,8 @@ int ArtifactLayerPanelHeaderWidget::totalHeaderHeight() const
   const int parentRectX = width() - kInlineComboReserve;
   const QRect parentRect(parentRectX, y + kInlineComboMarginY, kInlineParentWidth, kInlineComboHeight);
   const QRect blendRect(parentRect.right() + kInlineComboGap, y + kInlineComboMarginY, kInlineBlendWidth, kInlineComboHeight);
-  const bool clickInInlineCombo = parentRect.contains(event->pos()) || blendRect.contains(event->pos());
+  const QRect matteRect(blendRect.right() + kInlineComboGap, y + kInlineComboMarginY, kInlineMatteWidth, kInlineComboHeight);
+  const bool clickInInlineCombo = parentRect.contains(event->pos()) || blendRect.contains(event->pos()) || matteRect.contains(event->pos());
 
   if (event->button() == Qt::LeftButton) {
     if (!clickInInlineCombo) {
@@ -690,6 +888,43 @@ int ArtifactLayerPanelHeaderWidget::totalHeaderHeight() const
       event->accept();
       return;
     }
+    if (showInlineCombos && matteRect.contains(event->pos())) {
+      impl_->clearInlineEditors();
+      auto* combo = new QComboBox(this);
+      combo->setGeometry(matteRect);
+      combo->setStyleSheet(
+        "QComboBox { background:#2d2d30; color:#ddd; border:1px solid #4a4a4f; padding:1px 6px; }"
+        "QComboBox::drop-down { width:18px; border-left:1px solid #4a4a4f; }");
+      const auto items = trackMatteModeItems();
+      for (const auto& [name, mode] : items) {
+        combo->addItem(name, mode);
+      }
+      // 現在のトラックマットモードを取得（ダミー：実際はレイヤープロパティから取得）
+      const int currentMatteMode = 0;  // TODO: layer->trackMatteMode() などから取得
+      for (int i = 0; i < combo->count(); ++i) {
+        if (combo->itemData(i).toInt() == currentMatteMode) {
+          combo->setCurrentIndex(i);
+          break;
+        }
+      }
+      QObject::connect(combo, QOverload<int>::of(&QComboBox::activated), this, [this, service, layer, combo](int i) {
+        const int matteMode = combo->itemData(i).toInt();
+        // TODO: layer->setTrackMatteMode(matteMode);
+        if (service) {
+          if (auto project = service->getCurrentProjectSharedPtr()) {
+            project->projectChanged();
+          }
+        }
+        combo->deleteLater();
+        update();
+      });
+      impl_->inlineMatteEditor = combo;
+      combo->show();
+      combo->setFocus();
+      combo->showPopup();
+      event->accept();
+      return;
+    }
     if (clickX < colW) {
       if (service) service->setLayerVisibleInCurrentComposition(layer->id(), !layer->isVisible());
     } else if (clickX < colW * 2) {
@@ -734,12 +969,16 @@ int ArtifactLayerPanelHeaderWidget::totalHeaderHeight() const
     QAction* collapseAct = nullptr;
     QAction* expandAllAct = nullptr;
     QAction* collapseAllAct = nullptr;
+    renameAct->setIcon(loadLayerPanelIcon(QStringLiteral("MaterialVS/blue/edit.svg")));
+    duplicateAct->setIcon(loadLayerPanelIcon(QStringLiteral("MaterialVS/neutral/content_copy.svg")));
+    deleteAct->setIcon(loadLayerPanelIcon(QStringLiteral("MaterialVS/red/delete.svg")));
 
     const bool supportsSourceReplacement =
       static_cast<bool>(std::dynamic_pointer_cast<ArtifactImageLayer>(layer)) ||
       static_cast<bool>(std::dynamic_pointer_cast<ArtifactVideoLayer>(layer));
     if (supportsSourceReplacement) {
       replaceSourceAct = menu.addAction("Replace Source...");
+      replaceSourceAct->setIcon(loadLayerPanelIcon(QStringLiteral("MaterialVS/blue/file_open.svg")));
     }
 
     if (row.hasChildren) {
@@ -756,10 +995,21 @@ int ArtifactLayerPanelHeaderWidget::totalHeaderHeight() const
     QAction* lockAct = menu.addAction(layer->isLocked() ? "Unlock Layer" : "Lock Layer");
     QAction* soloAct = menu.addAction(layer->isSolo() ? "Disable Solo" : "Enable Solo");
     QAction* shyAct = menu.addAction(layer->isShy() ? "Disable Shy" : "Enable Shy");
+    visAct->setIcon(loadLayerPanelIcon(layer->isVisible()
+      ? QStringLiteral("MaterialVS/neutral/visibility_off.svg")
+      : QStringLiteral("MaterialVS/neutral/visibility.svg")));
+    lockAct->setIcon(loadLayerPanelIcon(layer->isLocked()
+      ? QStringLiteral("MaterialVS/yellow/lock_open.svg")
+      : QStringLiteral("MaterialVS/yellow/lock.svg")));
+    soloAct->setIcon(loadLayerPanelIcon(QStringLiteral("MaterialVS/purple/group.svg")));
+    shyAct->setIcon(loadLayerPanelIcon(QStringLiteral("MaterialVS/orange/visibility_off.svg")));
 
     QMenu* parentMenu = menu.addMenu("Parent");
     QAction* selectParentAct = parentMenu->addAction("Select Parent");
     QAction* clearParentAct = parentMenu->addAction("Clear Parent");
+    parentMenu->setIcon(loadLayerPanelIcon(QStringLiteral("MaterialVS/neutral/link.svg")));
+    selectParentAct->setIcon(loadLayerPanelIcon(QStringLiteral("MaterialVS/neutral/link.svg")));
+    clearParentAct->setIcon(loadLayerPanelIcon(QStringLiteral("MaterialVS/orange/link_off.svg")));
     selectParentAct->setEnabled(layer->hasParent());
     clearParentAct->setEnabled(layer->hasParent());
 
@@ -768,6 +1018,11 @@ int ArtifactLayerPanelHeaderWidget::totalHeaderHeight() const
     QAction* createNullAct = createMenu->addAction("Null Layer");
     QAction* createAdjustAct = createMenu->addAction("Adjustment Layer");
     QAction* createTextAct = createMenu->addAction("Text Layer");
+    createMenu->setIcon(loadLayerPanelIcon(QStringLiteral("MaterialVS/green/format_shapes.svg")));
+    createSolidAct->setIcon(loadLayerPanelIcon(QStringLiteral("MaterialVS/green/format_shapes.svg")));
+    createNullAct->setIcon(loadLayerPanelIcon(QStringLiteral("MaterialVS/purple/group.svg")));
+    createAdjustAct->setIcon(loadLayerPanelIcon(QStringLiteral("MaterialVS/orange/warning.svg")));
+    createTextAct->setIcon(loadLayerPanelIcon(QStringLiteral("MaterialVS/purple/title.svg")));
 
     QAction* chosen = menu.exec(event->globalPosition().toPoint());
     auto comp = safeCompositionLookup(impl_->compositionId);
@@ -1093,6 +1348,44 @@ void ArtifactLayerPanelWidget::mouseDoubleClickEvent(QMouseEvent* event)
 
 void ArtifactLayerPanelWidget::keyPressEvent(QKeyEvent* event)
 {
+  // Ctrl + [ / ] でレイヤー順序を移動
+  if (event->modifiers() & Qt::ControlModifier) {
+    if (event->key() == Qt::Key_BracketLeft || event->key() == Qt::Key_BracketRight) {
+      if (!impl_->selectedLayerId.isNil()) {
+        auto* service = ArtifactProjectService::instance();
+        auto comp = service ? service->currentComposition().lock() : nullptr;
+        if (comp) {
+          // 現在のレイヤーインデックスを取得
+          int currentLayerIndex = -1;
+          auto layers = comp->allLayer();
+          for (int i = 0; i < layers.size(); ++i) {
+            if (layers[i]->id() == impl_->selectedLayerId) {
+              currentLayerIndex = i;
+              break;
+            }
+          }
+          
+          if (currentLayerIndex >= 0) {
+            int newIndex = currentLayerIndex;
+            if (event->key() == Qt::Key_BracketLeft) {
+              // 背面へ (インデックスを減らす)
+              newIndex = std::max(0, currentLayerIndex - 1);
+            } else if (event->key() == Qt::Key_BracketRight) {
+              // 前面へ (インデックスを増やす)
+              newIndex = std::min(static_cast<int>(layers.size()) - 1, currentLayerIndex + 1);
+            }
+            
+            if (newIndex != currentLayerIndex) {
+              service->moveLayerInCurrentComposition(impl_->selectedLayerId, newIndex);
+              event->accept();
+              return;
+            }
+          }
+        }
+      }
+    }
+  }
+
   if (event->key() == Qt::Key_Left || event->key() == Qt::Key_Right) {
    int selectedIdx = -1;
    for (int i = 0; i < impl_->visibleRows.size(); ++i) {
@@ -1140,13 +1433,103 @@ void ArtifactLayerPanelWidget::keyPressEvent(QKeyEvent* event)
    return;
   }
   QWidget::keyPressEvent(event);
- }
+  }
 
- void ArtifactLayerPanelWidget::leaveEvent(QEvent*)
- {
-  impl_->hoveredLayerIndex = -1;
-  update();
- }
+  void ArtifactLayerPanelWidget::wheelEvent(QWheelEvent* event)
+  {
+   const int delta = event->angleDelta().y();
+   if (delta == 0 || impl_->visibleRows.isEmpty()) {
+    QWidget::wheelEvent(event);
+    return;
+   }
+   
+   // マウスの位置をチェック（ブレンドモードエリアか？）
+   const int mouseX = event->position().x();
+   const int mouseY = event->position().y();
+   const int blendModeStartX = kLayerColumnWidth * kLayerPropertyColumnCount;
+   const int blendModeEndX = width() - kInlineMatteWidth - kInlineComboGap * 2;
+
+   // ホイール操作対象の行を取得
+   const int rowIdx = mouseY / kLayerRowHeight;
+   const bool isBlendModeArea = (mouseX >= blendModeStartX && mouseX < blendModeEndX && rowIdx >= 0 && rowIdx < impl_->visibleRows.size());
+   
+   if (isBlendModeArea) {
+    // ブレンドモードエリア：ホイールでブレンドモードを変更
+    const auto& row = impl_->visibleRows[rowIdx];
+    if (row.kind == Impl::RowKind::Layer && row.layer) {
+      auto* service = ArtifactProjectService::instance();
+      auto comp = service ? service->currentComposition().lock() : nullptr;
+      if (comp) {
+        auto layer = comp->layerById(row.layer->id());
+        if (layer) {
+          const auto items = blendModeItems();
+          const int currentMode = static_cast<int>(layer->layerBlendType());
+          int currentIndex = 0;
+          for (int i = 0; i < items.size(); ++i) {
+            if (static_cast<int>(items[i].second) == currentMode) {
+              currentIndex = i;
+              break;
+            }
+          }
+          const int dir = (delta > 0) ? -1 : 1;
+          int newIndex = (currentIndex + dir + items.size()) % items.size();
+          const auto newMode = items[newIndex].second;
+          layer->setBlendMode(newMode);
+          if (service) {
+            if (auto project = service->getCurrentProjectSharedPtr()) {
+              project->projectChanged();
+            }
+          }
+          update();
+          event->accept();
+          return;
+        }
+      }
+    }
+   }
+   
+   // それ以外：選択レイヤーを変更
+   // 現在の選択インデックスを探す
+   int selectedIdx = -1;
+   for (int i = 0; i < impl_->visibleRows.size(); ++i) {
+    if (impl_->visibleRows[i].kind == Impl::RowKind::Layer &&
+        impl_->visibleRows[i].layer &&
+        impl_->visibleRows[i].layer->id() == impl_->selectedLayerId) {
+     selectedIdx = i;
+     break;
+    }
+   }
+   // ホイール上 → 前(index小)、下 → 次(index大)
+   const int dir = (delta > 0) ? -1 : 1;
+   int newIdx = (selectedIdx < 0) ? (dir > 0 ? 0 : impl_->visibleRows.size() - 1)
+                                  : (selectedIdx + dir);
+   // RowKind::Layerの行を探す
+   while (newIdx >= 0 && newIdx < impl_->visibleRows.size()) {
+    if (impl_->visibleRows[newIdx].kind == Impl::RowKind::Layer &&
+        impl_->visibleRows[newIdx].layer)
+     break;
+    newIdx += dir;
+   }
+   if (newIdx < 0 || newIdx >= impl_->visibleRows.size()) {
+    event->accept();
+    return;
+   }
+   const auto& row = impl_->visibleRows[newIdx];
+   if (row.layer) {
+    impl_->selectedLayerId = row.layer->id();
+    if (auto* svc = ArtifactProjectService::instance()) {
+     svc->selectLayer(row.layer->id());
+    }
+    update();
+    event->accept();
+   }
+  }
+
+  void ArtifactLayerPanelWidget::leaveEvent(QEvent*)
+  {
+   impl_->hoveredLayerIndex = -1;
+   update();
+  }
 
 void ArtifactLayerPanelWidget::paintEvent(QPaintEvent*)
 {
@@ -1252,6 +1635,7 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent*)
     const int parentRectX = width() - kInlineComboReserve;
     const QRect parentRect(parentRectX, y + kInlineComboMarginY, kInlineParentWidth, kInlineComboHeight);
     const QRect blendRect(parentRect.right() + kInlineComboGap, y + kInlineComboMarginY, kInlineBlendWidth, kInlineComboHeight);
+    const QRect matteRect(blendRect.right() + kInlineComboGap, y + kInlineComboMarginY, kInlineMatteWidth, kInlineComboHeight);
 
     auto drawInlineCombo = [&](const QRect& r, const QString& label) {
       p.setPen(QColor(80, 80, 86));
@@ -1284,6 +1668,7 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent*)
     if (showInlineCombos) {
       drawInlineCombo(parentRect, QStringLiteral("Parent: %1").arg(parentName));
       drawInlineCombo(blendRect, QStringLiteral("Blend: %1").arg(blendModeToText(l->layerBlendType())));
+      drawInlineCombo(matteRect, QStringLiteral("Matte"));  // TODO: 実際のトラックマットモードを表示
     }
     p.setPen(Qt::white);
     const int textWidth = showInlineCombos ? std::max(20, parentRect.left() - textX - 8) : std::max(20, width() - textX - 8);
@@ -1307,6 +1692,7 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent*)
 
  void ArtifactLayerPanelWidget::dragEnterEvent(QDragEnterEvent* e)
  {
+<<<<<<< HEAD
   const QMimeData* mime = e->mimeData();
   if (mime && mime->hasUrls()) {
    for (const auto& url : mime->urls()) {
@@ -1323,10 +1709,42 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent*)
    }
   }
   e->ignore();
+=======
+   const QMimeData* mime = e->mimeData();
+   if (mime->hasUrls()) {
+     for (const auto& url : mime->urls()) {
+       if (url.isLocalFile()) {
+         const QString filePath = url.toLocalFile();
+         const LayerType type = inferLayerTypeFromFile(filePath);
+         if (type == LayerType::Image || type == LayerType::Video || type == LayerType::Audio) {
+           e->acceptProposedAction();
+           update();
+           return;
+         }
+       }
+     }
+   }
+   if (mime->hasText()) {
+     const QStringList paths = mime->text().split(QStringLiteral("\n"), Qt::SkipEmptyParts);
+     for (const QString& path : paths) {
+       const QString trimmed = path.trimmed();
+       if (!trimmed.isEmpty()) {
+         const LayerType type = inferLayerTypeFromFile(trimmed);
+         if (type == LayerType::Image || type == LayerType::Video || type == LayerType::Audio) {
+           e->acceptProposedAction();
+           update();
+           return;
+         }
+       }
+     }
+   }
+   e->ignore();
+>>>>>>> aed72ea
  }
 
  void ArtifactLayerPanelWidget::dragMoveEvent(QDragMoveEvent* e)
  {
+<<<<<<< HEAD
   const QMimeData* mime = e->mimeData();
   if (mime && mime->hasUrls()) {
    e->acceptProposedAction();
@@ -1364,10 +1782,64 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent*)
   if (validPaths.isEmpty()) {
    event->ignore();
    return;
+=======
+   const QMimeData* mime = e->mimeData();
+   if (mime->hasUrls()) {
+     e->acceptProposedAction();
+   } else if (mime->hasText()) {
+     e->acceptProposedAction();
+   } else {
+     e->ignore();
+   }
+ }
+ void ArtifactLayerPanelWidget::dragLeaveEvent(QDragLeaveEvent* e)
+ {
+   e->accept();
+   update();  // ビジュアルフィードバック解除用に再描画
+ }
+ void ArtifactLayerPanelWidget::dropEvent(QDropEvent* event)
+ {
+  const QMimeData* mime = event->mimeData();
+  if (!mime) {
+    event->ignore();
+    return;
+  }
+
+  QStringList validPaths;
+
+  if (mime->hasUrls()) {
+    for (const auto& url : mime->urls()) {
+      if (url.isLocalFile()) {
+        const QString filePath = url.toLocalFile();
+        const LayerType type = inferLayerTypeFromFile(filePath);
+        if (type == LayerType::Image || type == LayerType::Video || type == LayerType::Audio) {
+          validPaths.append(filePath);
+        }
+      }
+    }
+  }
+
+  if (validPaths.isEmpty() && mime->hasText()) {
+    const QStringList paths = mime->text().split(QStringLiteral("\n"), Qt::SkipEmptyParts);
+    for (const QString& path : paths) {
+      const QString trimmed = path.trimmed();
+      if (trimmed.isEmpty()) continue;
+      const LayerType type = inferLayerTypeFromFile(trimmed);
+      if (type == LayerType::Image || type == LayerType::Video || type == LayerType::Audio) {
+        validPaths.append(trimmed);
+      }
+    }
+  }
+
+  if (validPaths.isEmpty()) {
+    event->ignore();
+    return;
+>>>>>>> aed72ea
   }
 
   auto* svc = ArtifactProjectService::instance();
   if (!svc) {
+<<<<<<< HEAD
    event->ignore();
    return;
   }
@@ -1380,6 +1852,26 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent*)
    LayerType type = inferLayerTypeFromFile(path);
    ArtifactLayerInitParams params(QFileInfo(path).baseName(), type);
    svc->addLayerToCurrentComposition(params);
+=======
+    event->ignore();
+    return;
+  }
+
+  auto imported = svc->importAssetsFromPaths(validPaths);
+
+  for (const auto& path : imported) {
+    LayerType type = inferLayerTypeFromFile(path);
+    
+    // 画像レイヤーの場合は ArtifactImageInitParams を使用してパスを設定
+    if (type == LayerType::Image) {
+      ArtifactImageInitParams params(QFileInfo(path).baseName());
+      params.setImagePath(path);
+      svc->addLayerToCurrentComposition(params);
+    } else {
+      ArtifactLayerInitParams params(QFileInfo(path).baseName(), type);
+      svc->addLayerToCurrentComposition(params);
+    }
+>>>>>>> aed72ea
   }
 
   event->acceptProposedAction();

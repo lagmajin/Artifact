@@ -219,12 +219,129 @@ std::vector<std::shared_ptr<ArtifactCore::AbstractProperty>> prioritizedSummaryP
 ArtifactPropertyWidget::ArtifactPropertyWidget(QWidget* parent)
     : QScrollArea(parent), impl_(new Impl()) 
 {
+    setObjectName(QStringLiteral("artifactPropertyWidget"));
     setWidgetResizable(true);
+    setFrameShape(QFrame::NoFrame);
     impl_->containerWidget = new QWidget(this);
+    impl_->containerWidget->setObjectName(QStringLiteral("artifactPropertyContainer"));
     impl_->mainLayout = new QVBoxLayout(impl_->containerWidget);
     impl_->mainLayout->setAlignment(Qt::AlignTop);
-    
+    impl_->mainLayout->setContentsMargins(8, 8, 8, 10);
+    impl_->mainLayout->setSpacing(6);
+
     setWidget(impl_->containerWidget);
+    setStyleSheet(QStringLiteral(R"(
+QScrollArea#artifactPropertyWidget {
+ background: #171d24;
+ border: none;
+}
+QWidget#artifactPropertyContainer {
+ background: #171d24;
+}
+QLineEdit {
+ background: #202a34;
+ color: #e8eff6;
+ border: 1px solid #334355;
+ border-radius: 6px;
+ padding: 4px 8px;
+ selection-background-color: #4f7da8;
+}
+QLineEdit:focus {
+ border-color: #6e98c0;
+}
+QGroupBox {
+ color: #d7e2ee;
+ font-weight: 600;
+ border: 1px solid #324151;
+ border-radius: 8px;
+ margin-top: 10px;
+ padding-top: 8px;
+ background: #1b232c;
+}
+QGroupBox::title {
+ subcontrol-origin: margin;
+ left: 10px;
+ padding: 0 6px;
+ color: #a8bfd6;
+}
+QWidget#propertyRow {
+ background: #212a33;
+ border: 1px solid #313f4f;
+ border-radius: 6px;
+}
+QWidget#propertyRow:hover {
+ border-color: #4e6780;
+ background: #25303b;
+}
+QLabel#propertyRowLabel {
+ color: #d8e3ee;
+ font-weight: 500;
+ padding-left: 4px;
+}
+QSpinBox, QDoubleSpinBox, QComboBox, QFontComboBox {
+ min-height: 26px;
+ background: #26313d;
+ color: #e9f1f8;
+ border: 1px solid #3b4b5d;
+ border-radius: 6px;
+ padding: 2px 6px;
+}
+QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus, QFontComboBox:focus {
+ border-color: #6e98c0;
+}
+QSlider::groove:horizontal {
+ height: 4px;
+ background: #33414f;
+ border-radius: 2px;
+}
+QSlider::handle:horizontal {
+ width: 12px;
+ height: 12px;
+ margin: -4px 0;
+ background: #88abc8;
+ border: 1px solid #5d7f9c;
+ border-radius: 6px;
+}
+QPushButton#propertyKeyButton,
+QPushButton#propertyResetButton,
+QPushButton#propertyExprButton,
+QPushButton#propertyPathBrowseButton {
+ background: #2a3643;
+ color: #e2ebf3;
+ border: 1px solid #44576a;
+ border-radius: 4px;
+}
+QPushButton#propertyKeyButton:hover,
+QPushButton#propertyResetButton:hover,
+QPushButton#propertyExprButton:hover,
+QPushButton#propertyPathBrowseButton:hover {
+ background: #334455;
+ border-color: #6c8aa6;
+}
+QPushButton#propertyColorSwatchButton {
+ border: 1px solid #5a6b7a;
+ border-radius: 4px;
+}
+QLabel#propertyColorValueLabel {
+ color: #a9bccf;
+ font-family: Consolas;
+}
+QCheckBox {
+ color: #dce6ef;
+ spacing: 6px;
+}
+QCheckBox::indicator {
+ width: 15px;
+ height: 15px;
+ border: 1px solid #4e6174;
+ border-radius: 3px;
+ background: #232f3a;
+}
+QCheckBox::indicator:checked {
+ background: #6f9ac0;
+ border-color: #8eb3d3;
+}
+)"));
 }
 
 ArtifactPropertyWidget::~ArtifactPropertyWidget() {
@@ -289,6 +406,7 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
     }
 
     auto* searchEdit = new QLineEdit();
+    searchEdit->setObjectName(QStringLiteral("propertyFilterEdit"));
     searchEdit->setPlaceholderText("Search properties...");
     searchEdit->setText(filterText);
     QObject::connect(searchEdit, &QLineEdit::textChanged, [this](const QString& text) {
@@ -299,6 +417,7 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
 
     if (!currentLayer) {
         QLabel* emptyLabel = new QLabel("No layer selected");
+        emptyLabel->setObjectName(QStringLiteral("propertyEmptyLabel"));
         emptyLabel->setAlignment(Qt::AlignCenter);
         mainLayout->addWidget(emptyLabel);
         rebuilding = false;
@@ -306,6 +425,7 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
     }
 
     QLabel* layerNameLabel = new QLabel(QString("<b>Layer: %1</b>").arg(currentLayer->layerName()));
+    layerNameLabel->setObjectName(QStringLiteral("propertyLayerNameLabel"));
     mainLayout->addWidget(layerNameLabel);
 
     bool hasAnyProperties = false;

@@ -13,6 +13,7 @@ module;
 module Artifact.Widgets.CompositionEditor;
 
 import Artifact.Widgets.CompositionRenderController;
+import Artifact.Widgets.TransformGizmo;
 import Color.Float;
 import Artifact.Composition.Abstract;
 import Artifact.Service.Project;
@@ -96,20 +97,37 @@ namespace {
     event->accept();
     return;
    }
+   
+   if (controller_) {
+    controller_->handleMousePress(event->position());
+    if (controller_->gizmo() && controller_->gizmo()->isDragging()) {
+     event->accept();
+     return;
+    }
+   }
+
    QWidget::mousePressEvent(event);
   }
 
   void mouseMoveEvent(QMouseEvent* event) override
   {
-   if (!isPanning_ || !controller_) {
-    QWidget::mouseMoveEvent(event);
+   if (isPanning_ && controller_) {
+    const QPointF delta = event->position() - lastMousePos_;
+    lastMousePos_ = event->position();
+    controller_->panBy(delta);
+    event->accept();
     return;
    }
 
-   const QPointF delta = event->position() - lastMousePos_;
-   lastMousePos_ = event->position();
-   controller_->panBy(delta);
-   event->accept();
+   if (controller_) {
+    controller_->handleMouseMove(event->position());
+    if (controller_->gizmo() && controller_->gizmo()->isDragging()) {
+     event->accept();
+     return;
+    }
+   }
+
+   QWidget::mouseMoveEvent(event);
   }
 
   void mouseReleaseEvent(QMouseEvent* event) override
@@ -120,6 +138,11 @@ namespace {
     event->accept();
     return;
    }
+
+   if (controller_) {
+    controller_->handleMouseRelease();
+   }
+
    QWidget::mouseReleaseEvent(event);
   }
 

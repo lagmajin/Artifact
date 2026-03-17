@@ -76,11 +76,16 @@ add_executable(Artifact WIN32)
 set_target_properties(Artifact PROPERTIES
     CXX_STANDARD 23
     CXX_STANDARD_REQUIRED ON
-    CXX_MODULE_STD ON
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>"
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>"
     ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>"
+    VS_DEBUGGER_WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>"
 )
+if(TARGET __CMAKE::CXX23)
+    set_property(TARGET Artifact PROPERTY CXX_MODULE_STD ON)
+else()
+    set_property(TARGET Artifact PROPERTY CXX_MODULE_STD OFF)
+endif()
 
 target_sources(Artifact
     PRIVATE ${APP_IMPL}
@@ -130,7 +135,6 @@ target_include_directories(Artifact
         "${CMAKE_CURRENT_SOURCE_DIR}/../libs/DiligentEngine/DiligentCore/Primitives/interface"
         "${CMAKE_CURRENT_SOURCE_DIR}/../libs/DiligentEngine/DiligentTools"
         "${CMAKE_CURRENT_SOURCE_DIR}/../libs/DiligentEngine/DiligentTools/ThirdParty/imgui"
-        "${VCPKG_INSTALLED}/include/qtadvanceddocking-qt6"
 )
 
 # ---------------------------------------------------------------------------
@@ -173,15 +177,14 @@ if(DILIGENT_COMPILE_DEFINITIONS)
 endif()
 
 # Qt6
-find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Network Multimedia MultimediaWidgets Concurrent)
-target_link_libraries(Artifact PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network Qt6::Multimedia Qt6::MultimediaWidgets Qt6::Concurrent)
+find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Network Multimedia MultimediaWidgets Concurrent Svg)
+target_link_libraries(Artifact PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network Qt6::Multimedia Qt6::MultimediaWidgets Qt6::Concurrent Qt6::Svg)
 
 # Qt resource bundle: app icons
 file(GLOB_RECURSE ARTIFACT_ICON_RESOURCE_FILES CONFIGURE_DEPENDS
-    "${CMAKE_CURRENT_SOURCE_DIR}/App/Icon/*.svg"
-    "${CMAKE_CURRENT_SOURCE_DIR}/App/Icon/*.png"
-    "${CMAKE_CURRENT_SOURCE_DIR}/App/Icon/*.json"
+    "${CMAKE_CURRENT_SOURCE_DIR}/App/Icon/*"
 )
+list(FILTER ARTIFACT_ICON_RESOURCE_FILES INCLUDE REGEX "\\.(svg|png|json)$")
 list(FILTER ARTIFACT_ICON_RESOURCE_FILES EXCLUDE REGEX "\\.crdownload$")
 list(FILTER ARTIFACT_ICON_RESOURCE_FILES EXCLUDE REGEX "desktop\\.ini$")
 if(ARTIFACT_ICON_RESOURCE_FILES)
@@ -203,7 +206,9 @@ target_link_libraries(Artifact PRIVATE OpenMP::OpenMP_CXX)
 find_package(TBB REQUIRED)
 target_link_libraries(Artifact PRIVATE TBB::tbb)
 
-find_package(qtadvanceddocking-qt6 REQUIRED)
+if(NOT TARGET ads::qtadvanceddocking-qt6)
+    find_package(qtadvanceddocking-qt6 REQUIRED)
+endif()
 target_link_libraries(Artifact PRIVATE ads::qtadvanceddocking-qt6)
 
 find_package(glm CONFIG REQUIRED)
@@ -211,9 +216,6 @@ target_link_libraries(Artifact PRIVATE glm::glm)
 
 find_package(Stb REQUIRED)
 target_include_directories(Artifact PRIVATE ${Stb_INCLUDE_DIR})
-
-find_package(assimp REQUIRED)
-target_link_libraries(Artifact PRIVATE assimp::assimp)
 
 find_package(EnTT CONFIG REQUIRED)
 target_link_libraries(Artifact PRIVATE EnTT::EnTT)

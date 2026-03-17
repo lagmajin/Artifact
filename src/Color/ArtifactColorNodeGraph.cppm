@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <QObject>
 #include <QString>
 #include <QUuid>
@@ -601,15 +601,6 @@ std::unique_ptr<ColorNodeGraph> ColorNodeGraph::createParallelTemplate() {
     graph->connect(mergeId, 0, outputId, 0);
 
     return graph;
-}
-
-// Verdigris method index helpers may require concrete method symbols.
-void ColorNodeGraph::connectionAdded(const NodeConnection& conn) {
-    (void)conn;
-}
-
-void ColorNodeGraph::connectionRemoved(const NodeConnection& conn) {
-    (void)conn;
 }
 
 } // namespace Artifact

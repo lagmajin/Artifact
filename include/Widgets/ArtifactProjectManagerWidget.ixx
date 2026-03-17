@@ -1,11 +1,14 @@
-﻿module;
+module;
 #include <QList>
 #include <wobjectdefs.h>
 #include <QWidget>
 #include <QToolBar>
-#include <QTreeView>
+#include <QAbstractScrollArea>
 #include <QFileInfo>
+#include <QItemSelectionModel>
+#include <QKeyEvent>
 #include <QModelIndex>
+#include <QPaintEvent>
 #include <QStringList>
 
 #include <iostream>
@@ -76,7 +79,7 @@ public:
  void showAt(const QPoint& globalPos);
 };
 
- class ArtifactProjectView :public QTreeView {
+ class ArtifactProjectView :public QAbstractScrollArea {
   W_OBJECT(ArtifactProjectView)
  private:
   class Impl;
@@ -85,25 +88,49 @@ public:
   void dropEvent(QDropEvent* event) override;
   void dragMoveEvent(QDragMoveEvent* event) override;
   void dragEnterEvent(QDragEnterEvent* event) override;
+  void paintEvent(QPaintEvent* event) override;
+  void resizeEvent(QResizeEvent* event) override;
   void showEvent(QShowEvent* event) override;
   bool event(QEvent* event) override;
   void mouseMoveEvent(QMouseEvent* event) override;
+  void wheelEvent(QWheelEvent* event) override;
   void leaveEvent(QEvent* event) override;
   void mousePressEvent(QMouseEvent* event) override;
   void mouseDoubleClickEvent(QMouseEvent* event) override;
   void mouseReleaseEvent(QMouseEvent* event) override;
+  void keyPressEvent(QKeyEvent* event) override;
   void contextMenuEvent(QContextMenuEvent* event) override;
  public:
   explicit ArtifactProjectView(QWidget* parent = nullptr);
   ~ArtifactProjectView();
+  void setModel(QAbstractItemModel* model);
+  QAbstractItemModel* model() const;
+  QItemSelectionModel* selectionModel() const;
+  QModelIndex currentIndex() const;
+  void setCurrentIndex(const QModelIndex& index);
+  void setSortingEnabled(bool enabled);
+  void sortByColumn(int column, Qt::SortOrder order);
+  void setColumnWidth(int column, int width);
+  void expand(const QModelIndex& index);
+  void collapse(const QModelIndex& index);
+  void setExpanded(const QModelIndex& index, bool expanded);
+  
   void handleItemDoubleClicked(const QModelIndex& index);
+  void editIndex(const QModelIndex& index);
+  void ensureIndexVisible(const QModelIndex& index);
   void refreshVisibleContent();
 
+  void expandAll();
+  void collapseAll();
+  void expandToDepth(int depth);
+  QModelIndex indexAt(const QPoint& pos) const;
+  QRect visualRect(const QModelIndex& index) const;
 
   QSize sizeHint() const override;
 
  public /*signals*/:
   void itemSelected(const QModelIndex& index) W_SIGNAL(itemSelected, index);
+  void itemDoubleClicked(const QModelIndex& index) W_SIGNAL(itemDoubleClicked, index);
  };
 
  class ArtifactProjectManagerToolBox :public QWidget
@@ -114,6 +141,7 @@ public:
   Impl* impl_;
  protected:
 
+  void paintEvent(QPaintEvent* event) override;
   void resizeEvent(QResizeEvent* event) override;
 
  public:
@@ -135,6 +163,8 @@ public:
  protected:
   void dropEvent(QDropEvent* event);
   void dragEnterEvent(QDragEnterEvent* event);
+  void paintEvent(QPaintEvent* event) override;
+  void resizeEvent(QResizeEvent* event) override;
   QSize sizeHint() const;
   void showEvent(QShowEvent* event) override;
   bool event(QEvent* event) override;
@@ -154,11 +184,5 @@ public:
   void updateRequested();
   W_SLOT(updateRequested);
  };
-
-
-
-
-
-
 
 };

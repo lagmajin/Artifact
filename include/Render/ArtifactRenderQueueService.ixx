@@ -37,6 +37,7 @@ module;
 #include <random>
 export module Artifact.Render.Queue.Service;
 import Utils.Id;
+import Artifact.Render.Queue.Presets;
 
 
 
@@ -59,6 +60,11 @@ export namespace Artifact
   static ArtifactRenderQueueService* instance();
   void addRenderQueue();
   void addRenderQueueForComposition(const ArtifactCore::CompositionID& compositionId, const QString& compositionName);
+  
+  // 複数形式でジョブを追加（After Effects 風）
+  void addRenderQueueWithPreset(const ArtifactCore::CompositionID& compositionId, const QString& compositionName, const QString& presetId);
+  void addMultipleRenderQueuesForComposition(const ArtifactCore::CompositionID& compositionId, const QString& compositionName, const QVector<QString>& presetIds);
+  
   void removeRenderQueue();
   void removeRenderQueueAt(int index);
   void duplicateRenderQueueAt(int index);

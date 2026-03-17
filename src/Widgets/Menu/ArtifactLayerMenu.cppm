@@ -11,14 +11,17 @@ module Artifact.Menu.Layer;
 import std;
 
 import Artifact.Service.Project;
+import Utils.Path;
 import Utils.Id;
 import Utils.String.UniString;
 import Artifact.Layer.InitParams;
 import Artifact.Layer.Factory;
 import Artifact.Composition.Abstract;
 import Artifact.Widgets.CreatePlaneLayerDialog;
+import Artifact.Widgets.AppDialogs;
 
 namespace Artifact {
+using namespace ArtifactCore;
 
 W_OBJECT_IMPL(ArtifactLayerMenu)
 
@@ -87,15 +90,19 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     createMenu = new QMenu("新規(&N)", menu);
     createSolidAction = new QAction("平面(&Y)...", createMenu);
     createSolidAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_Y));
+    createSolidAction->setIcon(QIcon(resolveIconPath("Material/palette.svg")));
 
     createNullAction = new QAction("ヌルオブジェクト(&N)", createMenu);
     createNullAction->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::SHIFT | Qt::Key_Y));
+    createNullAction->setIcon(QIcon(resolveIconPath("Material/aspect_ratio.svg")));
 
     createAdjustAction = new QAction("調整レイヤー(&A)", createMenu);
     createAdjustAction->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_Y));
+    createAdjustAction->setIcon(QIcon(resolveIconPath("Material/blur_on.svg")));
 
     createTextAction = new QAction("テキスト(&T)", createMenu);
     createTextAction->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::SHIFT | Qt::Key_T));
+    createTextAction->setIcon(QIcon(resolveIconPath("Material/title.svg")));
 
     createMenu->addAction(createSolidAction);
     createMenu->addAction(createNullAction);
@@ -104,15 +111,20 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
 
     duplicateLayerAction = new QAction("レイヤーを複製(&D)", menu);
     duplicateLayerAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_D));
+    duplicateLayerAction->setIcon(QIcon(resolveIconPath("Material/content_copy.svg")));
     renameLayerAction = new QAction("レイヤー名を変更(&R)...", menu);
     renameLayerAction->setShortcut(QKeySequence(Qt::Key_F2));
     deleteLayerAction = new QAction("削除(&X)", menu);
     deleteLayerAction->setShortcut(QKeySequence(Qt::Key_Delete));
+    deleteLayerAction->setIcon(QIcon(resolveIconPath("Material/delete.svg")));
 
     switchMenu = new QMenu("スイッチ(&S)", menu);
     toggleVisibleAction = new QAction("表示/非表示を切替", switchMenu);
+    toggleVisibleAction->setIcon(QIcon(resolveIconPath("Material/visibility.svg")));
     toggleLockAction = new QAction("ロックを切替", switchMenu);
+    toggleLockAction->setIcon(QIcon(resolveIconPath("Material/lock.svg")));
     toggleSoloAction = new QAction("ソロを切替", switchMenu);
+    toggleSoloAction->setIcon(QIcon(resolveIconPath("Material/headset.svg")));
     toggleShyAction = new QAction("シャイを切替", switchMenu);
     soloOnlyAction = new QAction("選択レイヤーのみソロ", switchMenu);
     switchMenu->addAction(toggleVisibleAction);
@@ -131,6 +143,7 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     precomposeAction = new QAction("プリコンポーズ(&P)...", menu);
     splitAction = new QAction("レイヤー分割(&L)", menu);
     splitAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_D));
+    splitAction->setIcon(QIcon(resolveIconPath("Material/content_cut.svg")));
 
     menu->addMenu(createMenu);
     menu->addSeparator();
@@ -340,13 +353,7 @@ void ArtifactLayerMenu::Impl::handleDeleteLayer()
     auto comp = service->currentComposition().lock();
     if (!comp) return;
     const QString message = service->layerRemovalConfirmationMessage(comp->id(), selectedLayerId_);
-    const auto answer = QMessageBox::question(
-        menu_->window(),
-        QStringLiteral("レイヤー削除"),
-        message,
-        QMessageBox::Yes | QMessageBox::No,
-        QMessageBox::No);
-    if (answer != QMessageBox::Yes) {
+    if (!ArtifactMessageBox::confirmDelete(menu_->window(), QStringLiteral("レイヤー削除"), message)) {
         return;
     }
     if (!service->removeLayerFromComposition(comp->id(), selectedLayerId_)) {

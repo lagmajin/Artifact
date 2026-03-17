@@ -1,7 +1,7 @@
-﻿{
+{
     "base_dir":  "App/Icon/Material",
     "project":  "Artifact",
-    "count":  89,
+    "count":  92,
     "icons":  [
                   {
                       "path":  "App/Icon/Material/aspect_ratio.svg",
@@ -536,6 +536,24 @@
                       "category":  "general",
                       "id":  "zoom_out",
                       "file":  "zoom_out.svg"
+                  },
+                  {
+                      "path":  "App/Icon/Material/warning.svg",
+                      "category":  "general",
+                      "id":  "warning",
+                      "file":  "warning.svg"
+                  },
+                  {
+                      "path":  "App/Icon/Material/error.svg",
+                      "category":  "general",
+                      "id":  "error",
+                      "file":  "error.svg"
+                  },
+                  {
+                      "path":  "App/Icon/Material/check_circle.svg",
+                      "category":  "general",
+                      "id":  "check_circle",
+                      "file":  "check_circle.svg"
                   }
               ]
 }

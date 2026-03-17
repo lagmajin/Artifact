@@ -1,4 +1,4 @@
-module;
+﻿module;
 
 #include <QCheckBox>
 #include <QColor>
@@ -188,6 +188,7 @@ std::optional<ArtifactEnumPropertyEditor::OptionList> enumOptionsForProperty(con
 ArtifactFloatPropertyEditor::ArtifactFloatPropertyEditor(const ArtifactCore::AbstractProperty& property, QWidget* parent)
     : ArtifactAbstractPropertyEditor(parent)
 {
+    setObjectName(QStringLiteral("propertyFloatEditor"));
     spinBox_ = new QDoubleSpinBox(this);
     slider_ = new QSlider(Qt::Horizontal, this);
     auto* layout = new QHBoxLayout(this);
@@ -216,8 +217,10 @@ ArtifactFloatPropertyEditor::ArtifactFloatPropertyEditor(const ArtifactCore::Abs
     if (!meta.unit.isEmpty()) {
         spinBox_->setSuffix(QStringLiteral(" ") + meta.unit);
     }
+    spinBox_->setMinimumHeight(26);
 
     slider_->setRange(0, 1000);
+    slider_->setMinimumHeight(18);
     slider_->setValue(floatToSliderPosition(property.getValue().toDouble(), softMin_, softMax_));
 
     QObject::connect(spinBox_, &QDoubleSpinBox::valueChanged, this, [this](const double nextValue) {
@@ -273,6 +276,7 @@ void ArtifactFloatPropertyEditor::scrubByPixels(const int deltaPixels, const boo
 ArtifactIntPropertyEditor::ArtifactIntPropertyEditor(const ArtifactCore::AbstractProperty& property, QWidget* parent)
     : ArtifactAbstractPropertyEditor(parent)
 {
+    setObjectName(QStringLiteral("propertyIntEditor"));
     spinBox_ = new QSpinBox(this);
     slider_ = new QSlider(Qt::Horizontal, this);
     auto* layout = new QHBoxLayout(this);
@@ -301,8 +305,10 @@ ArtifactIntPropertyEditor::ArtifactIntPropertyEditor(const ArtifactCore::Abstrac
     if (!meta.unit.isEmpty()) {
         spinBox_->setSuffix(QStringLiteral(" ") + meta.unit);
     }
+    spinBox_->setMinimumHeight(26);
 
     slider_->setRange(softMin_, softMax_);
+    slider_->setMinimumHeight(18);
     slider_->setValue(std::clamp(property.getValue().toInt(), softMin_, softMax_));
 
     QObject::connect(spinBox_, &QSpinBox::valueChanged, this, [this](const int nextValue) {
@@ -358,6 +364,7 @@ void ArtifactIntPropertyEditor::scrubByPixels(const int deltaPixels, const bool 
 ArtifactBoolPropertyEditor::ArtifactBoolPropertyEditor(const ArtifactCore::AbstractProperty& property, QWidget* parent)
     : ArtifactAbstractPropertyEditor(parent)
 {
+    setObjectName(QStringLiteral("propertyBoolEditor"));
     checkBox_ = new QCheckBox(this);
     auto* layout = new QHBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
@@ -387,7 +394,9 @@ void ArtifactBoolPropertyEditor::setValueFromVariant(const QVariant& value)
 ArtifactStringPropertyEditor::ArtifactStringPropertyEditor(const ArtifactCore::AbstractProperty& property, QWidget* parent)
     : ArtifactAbstractPropertyEditor(parent)
 {
+    setObjectName(QStringLiteral("propertyStringEditor"));
     lineEdit_ = new QLineEdit(property.getValue().toString(), this);
+    lineEdit_->setMinimumHeight(26);
     auto* layout = new QHBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->addWidget(lineEdit_);
@@ -414,7 +423,9 @@ void ArtifactStringPropertyEditor::setValueFromVariant(const QVariant& value)
 ArtifactFontFamilyPropertyEditor::ArtifactFontFamilyPropertyEditor(const ArtifactCore::AbstractProperty& property, QWidget* parent)
     : ArtifactAbstractPropertyEditor(parent)
 {
+    setObjectName(QStringLiteral("propertyFontEditor"));
     comboBox_ = new QFontComboBox(this);
+    comboBox_->setMinimumHeight(26);
     auto* layout = new QHBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->addWidget(comboBox_);
@@ -443,9 +454,12 @@ void ArtifactFontFamilyPropertyEditor::setValueFromVariant(const QVariant& value
 ArtifactPathPropertyEditor::ArtifactPathPropertyEditor(const ArtifactCore::AbstractProperty& property, QWidget* parent)
     : ArtifactAbstractPropertyEditor(parent)
 {
+    setObjectName(QStringLiteral("propertyPathEditor"));
     lineEdit_ = new QLineEdit(property.getValue().toString(), this);
     browseButton_ = new QPushButton(QStringLiteral("..."), this);
-    browseButton_->setFixedWidth(32);
+    lineEdit_->setMinimumHeight(26);
+    browseButton_->setObjectName(QStringLiteral("propertyPathBrowseButton"));
+    browseButton_->setFixedSize(28, 26);
 
     auto* layout = new QHBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
@@ -493,7 +507,9 @@ ArtifactEnumPropertyEditor::ArtifactEnumPropertyEditor(
     : ArtifactAbstractPropertyEditor(parent),
       options_(std::move(options))
 {
+    setObjectName(QStringLiteral("propertyEnumEditor"));
     comboBox_ = new QComboBox(this);
+    comboBox_->setMinimumHeight(26);
     auto* layout = new QHBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->addWidget(comboBox_);
@@ -534,6 +550,7 @@ void ArtifactEnumPropertyEditor::setValueFromVariant(const QVariant& value)
 ArtifactColorPropertyEditor::ArtifactColorPropertyEditor(const ArtifactCore::AbstractProperty& property, QWidget* parent)
     : ArtifactAbstractPropertyEditor(parent)
 {
+    setObjectName(QStringLiteral("propertyColorEditor"));
     button_ = new QPushButton(QStringLiteral(" "), this);
     valueLabel_ = new QLabel(this);
     auto* layout = new QHBoxLayout(this);
@@ -542,11 +559,20 @@ ArtifactColorPropertyEditor::ArtifactColorPropertyEditor(const ArtifactCore::Abs
     layout->addWidget(button_, 0);
     layout->addWidget(valueLabel_, 1);
 
-    button_->setFixedWidth(36);
+    button_->setObjectName(QStringLiteral("propertyColorSwatchButton"));
+    valueLabel_->setObjectName(QStringLiteral("propertyColorValueLabel"));
+    button_->setFixedSize(36, 24);
     currentColor_ = propertyColor(property);
     applyColor(currentColor_);
     QObject::connect(button_, &QPushButton::clicked, this, [this]() {
-        const QColor nextColor = QColorDialog::getColor(currentColor_, button_, QStringLiteral("Select Color"));
+        QColorDialog dialog(button_);
+        dialog.setStyleSheet("");
+        dialog.setCurrentColor(currentColor_);
+        dialog.setWindowTitle(QStringLiteral("Select Color"));
+        if (dialog.exec() != QDialog::Accepted) {
+            return;
+        }
+        const QColor nextColor = dialog.currentColor();
         if (!nextColor.isValid()) {
             return;
         }
@@ -575,7 +601,7 @@ void ArtifactColorPropertyEditor::applyColor(const QColor& color)
 {
     currentColor_ = color;
     if (button_) {
-        button_->setStyleSheet(QStringLiteral("background-color: %1; border: 1px solid #666;").arg(color.name()));
+        button_->setStyleSheet(QStringLiteral("background-color: %1; border: 1px solid #5a6b7a; border-radius: 4px;").arg(color.name()));
     }
     if (valueLabel_) {
         valueLabel_->setText(color.name(QColor::HexArgb).toUpper());
@@ -594,19 +620,26 @@ ArtifactPropertyEditorRowWidget::ArtifactPropertyEditorRowWidget(
       resetButton_(new QPushButton(QStringLiteral("R"), this)),
       expressionButton_(new QPushButton(QString::fromUtf8("fx"), this))
 {
+    setObjectName(QStringLiteral("propertyRow"));
     auto* layout = new QHBoxLayout(this);
-    layout->setContentsMargins(0, 0, 0, 0);
-    layout->setSpacing(4);
+    layout->setContentsMargins(2, 2, 2, 2);
+    layout->setSpacing(6);
 
-    label_->setMinimumWidth(96);
+    label_->setObjectName(QStringLiteral("propertyRowLabel"));
+    label_->setMinimumWidth(132);
+    label_->setMaximumWidth(180);
+    label_->setMinimumHeight(24);
     editor_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    keyframeButton_->setObjectName(QStringLiteral("propertyKeyButton"));
+    resetButton_->setObjectName(QStringLiteral("propertyResetButton"));
+    expressionButton_->setObjectName(QStringLiteral("propertyExprButton"));
     keyframeButton_->setToolTip(QStringLiteral("Keyframe: %1").arg(propertyName));
-    keyframeButton_->setFixedSize(22, 22);
+    keyframeButton_->setFixedSize(24, 24);
     keyframeButton_->setCheckable(true);
     keyframeButton_->setChecked(false);
     keyframeButton_->setEnabled(false);
     resetButton_->setToolTip(QStringLiteral("Reset: %1").arg(propertyName));
-    resetButton_->setFixedSize(22, 22);
+    resetButton_->setFixedSize(24, 24);
     expressionButton_->setToolTip(QStringLiteral("Expression Copilot: %1").arg(propertyName));
     expressionButton_->setFixedSize(24, 24);
     label_->installEventFilter(this);

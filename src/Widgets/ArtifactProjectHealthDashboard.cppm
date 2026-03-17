@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <QWidget>
 #include <QTreeWidget>
 #include <QVBoxLayout>
@@ -6,6 +6,9 @@ module;
 #include <QPushButton>
 #include <QLabel>
 #include <QIcon>
+#include <QPixmap>
+#include <QPainter>
+#include <QtSVG/QSvgRenderer>
 #include <QHeaderView>
 #include <QStyle>
 #include <QMessageBox>
@@ -20,6 +23,7 @@ import std;
 
 import Artifact.Project;
 import Artifact.Project.Health;
+import Utils.Path;
 import Utils.String.UniString;
 
 namespace Artifact {
@@ -84,11 +88,14 @@ public:
             // Set Icon based on severity
             QIcon icon;
             if (issue.severity == HealthIssueSeverity::Error) {
-                icon = style()->standardIcon(QStyle::SP_MessageBoxCritical);
+                icon = loadHealthSeverityIcon(issue.severity);
                 item->setForeground(0, Qt::red);
-            } else {
-                icon = style()->standardIcon(QStyle::SP_MessageBoxWarning);
+            } else if (issue.severity == HealthIssueSeverity::Warning) {
+                icon = loadHealthSeverityIcon(issue.severity);
                 item->setForeground(0, QColor(255, 165, 0)); // Orange
+            } else {
+                icon = loadHealthSeverityIcon(issue.severity);
+                item->setForeground(0, QColor(79, 193, 255)); // Blue
             }
             item->setIcon(0, icon);
             
@@ -107,6 +114,55 @@ public:
     }
 
 private:
+    QIcon loadHealthSeverityIcon(HealthIssueSeverity severity) const {
+        QString relativePath;
+        QStyle::StandardPixmap fallback = QStyle::SP_MessageBoxInformation;
+        switch (severity) {
+            case HealthIssueSeverity::Error:
+                relativePath = QStringLiteral("MaterialVS/red/error.svg");
+                fallback = QStyle::SP_MessageBoxCritical;
+                break;
+            case HealthIssueSeverity::Warning:
+                relativePath = QStringLiteral("MaterialVS/yellow/warning.svg");
+                fallback = QStyle::SP_MessageBoxWarning;
+                break;
+            case HealthIssueSeverity::Info:
+            default:
+                relativePath = QStringLiteral("MaterialVS/blue/info.svg");
+                fallback = QStyle::SP_MessageBoxInformation;
+                break;
+        }
+
+        auto tryLoadSvgIcon = [](const QString& path) -> QIcon {
+            if (path.isEmpty()) return QIcon();
+            if (path.endsWith(QStringLiteral(".svg"), Qt::CaseInsensitive)) {
+                QSvgRenderer renderer(path);
+                if (renderer.isValid()) {
+                    QPixmap pixmap(16, 16);
+                    pixmap.fill(Qt::transparent);
+                    QPainter painter(&pixmap);
+                    renderer.render(&painter);
+                    painter.end();
+                    if (!pixmap.isNull()) return QIcon(pixmap);
+                }
+                return QIcon();
+            }
+            return QIcon(path);
+        };
+
+        QIcon icon = tryLoadSvgIcon(ArtifactCore::resolveIconResourcePath(relativePath));
+        if (!icon.isNull()) {
+            return icon;
+        }
+
+        icon = tryLoadSvgIcon(ArtifactCore::resolveIconPath(relativePath));
+        if (!icon.isNull()) {
+            return icon;
+        }
+
+        return style()->standardIcon(fallback);
+    }
+
     void setupUI() {
         auto mainLayout = new QVBoxLayout(this);
         mainLayout->setContentsMargins(15, 15, 15, 15);

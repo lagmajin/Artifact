@@ -18,6 +18,9 @@ export namespace Artifact {
   explicit ArtifactEditMenu(QWidget* parent=nullptr);
   ~ArtifactEditMenu();
 
+  void rebuildMenu();
+  W_SLOT(rebuildMenu, ());
+
  };
 
 

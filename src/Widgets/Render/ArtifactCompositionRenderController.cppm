@@ -8,7 +8,10 @@ module Artifact.Widgets.CompositionRenderController;
 import Artifact.Render.IRenderer;
 import Artifact.Preview.Pipeline;
 import Artifact.Composition.Abstract;
+import Artifact.Layer.Abstract;
+import Artifact.Widgets.TransformGizmo;
 import Utils.Id;
+import Artifact.Service.Project;
 
 namespace Artifact {
 
@@ -18,6 +21,7 @@ class CompositionRenderController::Impl {
 public:
  std::unique_ptr<ArtifactIRenderer> renderer_;
  ArtifactPreviewCompositionPipeline previewPipeline_;
+ std::unique_ptr<TransformGizmo> gizmo_;
  QTimer* renderTimer_ = nullptr;
  bool initialized_ = false;
  bool running_ = false;
@@ -26,6 +30,20 @@ public:
 CompositionRenderController::CompositionRenderController(QObject* parent)
  : QObject(parent), impl_(new Impl())
 {
+ impl_->gizmo_ = std::make_unique<TransformGizmo>();
+ 
+ // Connect to project service to track layer selection
+ if (auto* svc = ArtifactProjectService::instance()) {
+  connect(svc, &ArtifactProjectService::layerSelected, this, [this](const LayerID& id) {
+   setSelectedLayerId(id);
+   auto comp = impl_->previewPipeline_.composition();
+   if (comp) {
+    impl_->gizmo_->setLayer(comp->layerById(id));
+   } else {
+    impl_->gizmo_->setLayer(nullptr);
+   }
+  });
+ }
 }
 
 CompositionRenderController::~CompositionRenderController()
@@ -192,6 +210,32 @@ void CompositionRenderController::zoom100()
  impl_->renderer_->setZoom(1.0f);
 }
 
+void CompositionRenderController::handleMousePress(const QPointF& viewportPos)
+{
+ if (impl_->gizmo_ && impl_->renderer_) {
+  impl_->gizmo_->handleMousePress(viewportPos, impl_->renderer_.get());
+ }
+}
+
+void CompositionRenderController::handleMouseMove(const QPointF& viewportPos)
+{
+ if (impl_->gizmo_ && impl_->renderer_ && impl_->gizmo_->isDragging()) {
+  impl_->gizmo_->handleMouseMove(viewportPos, impl_->renderer_.get());
+ }
+}
+
+void CompositionRenderController::handleMouseRelease()
+{
+ if (impl_->gizmo_) {
+  impl_->gizmo_->handleMouseRelease();
+ }
+}
+
+TransformGizmo* CompositionRenderController::gizmo() const
+{
+ return impl_->gizmo_.get();
+}
+
 void CompositionRenderController::renderOneFrame()
 {
  if (!impl_->initialized_ || !impl_->renderer_) {
@@ -206,6 +250,12 @@ void CompositionRenderController::renderOneFrame()
  }
 
  impl_->previewPipeline_.render(impl_->renderer_.get());
+ 
+ // Draw Gizmo on top
+ if (impl_->gizmo_) {
+  impl_->gizmo_->draw(impl_->renderer_.get());
+ }
+
  impl_->renderer_->present();
 }
 

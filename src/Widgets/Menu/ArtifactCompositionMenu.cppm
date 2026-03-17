@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <QMenu>
 #include <QAction>
 #include <QColorDialog>
@@ -13,12 +13,15 @@ module Menu.Composition;
 import std;
 
 import Artifact.Service.Project;
+import Utils.Path;
 import Artifact.Composition.InitParams;
 import Artifact.Layer.InitParams;
 import Artifact.Widgets.SoftwareRenderInspectors;
 import Dialog.Composition;
+import Artifact.Widgets.AppDialogs;
 
 namespace Artifact {
+using namespace ArtifactCore;
 
 W_OBJECT_IMPL(ArtifactCompositionMenu)
 
@@ -37,7 +40,6 @@ public:
  QAction* duplicateAction = nullptr;
  QAction* renameAction = nullptr;
  QAction* deleteAction = nullptr;
- QAction* settingsAction = nullptr;
  QAction* colorAction = nullptr;
  QAction* milestoneDummyAction = nullptr;
 
@@ -49,6 +51,7 @@ public:
  void showSettings();
  void showColor();
  void runMilestoneDummyPipeline();
+ void startSoftwareTestPipeline(QWidget* parent);
 };
 
 ArtifactCompositionMenu::Impl::Impl(ArtifactCompositionMenu* menu, QWidget* mainWindow)
@@ -56,6 +59,7 @@ ArtifactCompositionMenu::Impl::Impl(ArtifactCompositionMenu* menu, QWidget* main
 {
  createAction = new QAction("新規コンポジション(&N)...");
  createAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_N));
+ createAction->setIcon(QIcon(resolveIconPath("Material/movie_creation.svg")));
 
  presetMenu = new QMenu("プリセットから作成(&P)", menu);
  presetHdAction = presetMenu->addAction("HD 1080p 30fps");
@@ -63,14 +67,15 @@ ArtifactCompositionMenu::Impl::Impl(ArtifactCompositionMenu* menu, QWidget* main
  presetVerticalAction = presetMenu->addAction("Vertical 1080x1920 30fps");
 
  duplicateAction = new QAction("コンポジションを複製(&D)");
+ duplicateAction->setIcon(QIcon(resolveIconPath("Material/content_copy.svg")));
  renameAction = new QAction("名前を変更(&R)...");
+ renameAction->setIcon(QIcon(resolveIconPath("Material/edit.svg")));
  deleteAction = new QAction("コンポジションを削除(&X)...");
-
- settingsAction = new QAction("レンダー出力設定(&S)...");
- settingsAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_K));
+ deleteAction->setIcon(QIcon(resolveIconPath("Material/delete.svg")));
 
  colorAction = new QAction("背景色(&B)...");
  colorAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_B));
+ colorAction->setIcon(QIcon(resolveIconPath("Material/palette.svg")));
  milestoneDummyAction = new QAction("マイルストーン: Software制作パスを初期化(&M)...");
 
  menu->addAction(createAction);
@@ -80,7 +85,6 @@ ArtifactCompositionMenu::Impl::Impl(ArtifactCompositionMenu* menu, QWidget* main
  menu->addAction(renameAction);
  menu->addAction(deleteAction);
  menu->addSeparator();
- menu->addAction(settingsAction);
  menu->addAction(colorAction);
  menu->addSeparator();
  menu->addAction(milestoneDummyAction);
@@ -92,7 +96,6 @@ ArtifactCompositionMenu::Impl::Impl(ArtifactCompositionMenu* menu, QWidget* main
  QObject::connect(duplicateAction, &QAction::triggered, menu, [this]() { duplicateCurrent(); });
  QObject::connect(renameAction, &QAction::triggered, menu, [this]() { renameCurrent(); });
  QObject::connect(deleteAction, &QAction::triggered, menu, [this]() { removeCurrent(); });
- QObject::connect(settingsAction, &QAction::triggered, menu, [this]() { showSettings(); });
  QObject::connect(colorAction, &QAction::triggered, menu, [this]() { showColor(); });
  QObject::connect(milestoneDummyAction, &QAction::triggered, menu, [this]() { runMilestoneDummyPipeline(); });
 }
@@ -172,13 +175,7 @@ void ArtifactCompositionMenu::Impl::removeCurrent()
 
  const QString message = service->compositionRemovalConfirmationMessage(current->id());
 
- const auto answer = QMessageBox::question(
-  mainWindow_ ? mainWindow_ : menu_,
-  "コンポジション削除",
-  message,
-  QMessageBox::Yes | QMessageBox::No,
-  QMessageBox::No);
- if (answer != QMessageBox::Yes) {
+ if (!ArtifactMessageBox::confirmDelete(mainWindow_ ? mainWindow_ : menu_, "コンポジション削除", message)) {
   return;
  }
 
@@ -187,14 +184,6 @@ void ArtifactCompositionMenu::Impl::removeCurrent()
    "Composition",
    "コンポジションの削除に失敗しました。");
  }
-}
-
-void ArtifactCompositionMenu::Impl::showSettings()
-{
- QMessageBox::information(
-  mainWindow_ ? mainWindow_ : menu_,
-  "レンダー出力設定",
-  "レンダー出力設定ダイアログはこれから接続します。");
 }
 
 void ArtifactCompositionMenu::Impl::showColor()
@@ -210,13 +199,18 @@ void ArtifactCompositionMenu::Impl::showColor()
 
 void ArtifactCompositionMenu::Impl::runMilestoneDummyPipeline()
 {
- auto* parent = mainWindow_ ? mainWindow_ : menu_;
+ startSoftwareTestPipeline(mainWindow_);
+}
+
+void ArtifactCompositionMenu::Impl::startSoftwareTestPipeline(QWidget* parent)
+{
  auto* projectService = ArtifactProjectService::instance();
  if (!projectService) {
-  QMessageBox::warning(parent, "Milestone", "ProjectService が利用できません。");
+  QMessageBox::warning(parent ? parent : menu_, "Software Test", "ProjectService が利用できません。");
   return;
  }
 
+ // 1. コンポジション作成
  ArtifactCompositionInitParams params = ArtifactCompositionInitParams::hdPreset();
  const QString stamp = QDateTime::currentDateTime().toString(QStringLiteral("MMdd_HHmm"));
  params.setCompositionName(UniString(QStringLiteral("SoftwarePipeline_%1").arg(stamp)));
@@ -224,11 +218,12 @@ void ArtifactCompositionMenu::Impl::runMilestoneDummyPipeline()
  projectService->createComposition(params);
  auto currentComp = projectService->currentComposition().lock();
  if (!currentComp) {
-  QMessageBox::warning(parent, "Milestone", "コンポジション作成に失敗しました。");
+  QMessageBox::warning(parent ? parent : menu_, "Software Test", "コンポジション作成に失敗しました。");
   return;
  }
  const int beforeLayerCount = currentComp->allLayer().size();
 
+ // 2. 平面レイヤー追加
  ArtifactSolidLayerInitParams solidParams(QStringLiteral("Solid 1"));
  solidParams.setWidth(params.width());
  solidParams.setHeight(params.height());
@@ -237,10 +232,11 @@ void ArtifactCompositionMenu::Impl::runMilestoneDummyPipeline()
  projectService->addLayerToCurrentComposition(solidParams);
  currentComp = projectService->currentComposition().lock();
  if (!currentComp || currentComp->allLayer().size() <= beforeLayerCount) {
-  QMessageBox::warning(parent, "Milestone", "平面レイヤー追加に失敗しました。");
+  QMessageBox::warning(parent ? parent : menu_, "Software Test", "平面レイヤー追加に失敗しました。");
   return;
  }
 
+ // 3. Software Composition Test を起動
  auto* preview = new ArtifactSoftwareCompositionTestWidget();
  preview->setAttribute(Qt::WA_DeleteOnClose, true);
  preview->resize(1100, 760);
@@ -249,9 +245,13 @@ void ArtifactCompositionMenu::Impl::runMilestoneDummyPipeline()
  preview->activateWindow();
 
  QMessageBox::information(
-  parent,
-  "Milestone",
-  QStringLiteral("初期化しました。\n1) コンポ作成\n2) 平面追加\n3) Software Composition Test を起動\n\n次は effect と image sequence render を詰めます。"));
+  parent ? parent : menu_,
+  "Software Test",
+  QStringLiteral("Software Test Pipeline を初期化しました。\n\n"
+   "1) コンポジション作成\n"
+   "2) 平面レイヤー追加\n"
+   "3) Software Composition Test 起動\n\n"
+   "このウィンドウを閉じて、Test メニューからいつでも再起動できます。"));
 }
 
 ArtifactCompositionMenu::ArtifactCompositionMenu(QWidget* mainWindow, QWidget* parent)
@@ -285,7 +285,6 @@ void ArtifactCompositionMenu::rebuildMenu()
  impl_->duplicateAction->setEnabled(hasComp);
  impl_->renameAction->setEnabled(hasComp);
  impl_->deleteAction->setEnabled(hasComp);
- impl_->settingsAction->setEnabled(hasComp);
  impl_->colorAction->setEnabled(hasComp);
  impl_->milestoneDummyAction->setEnabled(service != nullptr);
 }

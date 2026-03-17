@@ -1,8 +1,9 @@
-module;
+﻿module;
 #include <wobjectdefs.h>
 #include <QWidget>
 #include <QScrollBar>
 #include <QVector>
+#include <QWheelEvent>
 export module Artifact.Widgets.LayerPanelWidget;
 
 import Utils.Id;
@@ -47,6 +48,7 @@ export namespace Artifact
    void mouseMoveEvent(QMouseEvent* event) override;
    void mouseReleaseEvent(QMouseEvent* event) override;
    void keyPressEvent(QKeyEvent* event) override;
+   void wheelEvent(QWheelEvent* event) override;
    void leaveEvent(QEvent* event) override;
    void paintEvent(QPaintEvent* event) override;
    void dragEnterEvent(class QDragEnterEvent* event) override;
@@ -63,6 +65,8 @@ export namespace Artifact
   void setShyHidden(bool hidden);
   void updateLayout();
   QVector<LayerID> visibleTimelineRows() const;
+  int layerRowIndex(const LayerID& id) const;
+  void editLayerName(const LayerID& id);
 
   public /*signals*/:
    void visibleRowsChanged() W_SIGNAL(visibleRowsChanged)

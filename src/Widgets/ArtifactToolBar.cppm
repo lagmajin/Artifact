@@ -12,6 +12,18 @@ import Utils;
 import Artifact.Tool.Manager;
 import Artifact.Service.Application;
 
+namespace {
+QIcon loadIconWithFallback(const QString& fileName)
+{
+  const QString resourcePath = ArtifactCore::resolveIconResourcePath(fileName);
+  QIcon icon(resourcePath);
+  if (!icon.isNull()) {
+    return icon;
+  }
+  return QIcon(ArtifactCore::resolveIconPath(fileName));
+}
+}
+
 namespace Artifact
 {
 
@@ -79,7 +91,7 @@ namespace Artifact
 
   auto createTool = [this](QAction*& action, const QString& iconName, const QString& text, const QString& tooltip, const QKeySequence& shortcut) {
     action = new QAction(this);
-    action->setIcon(QIcon(ArtifactCore::getIconPath() + "/Png/" + iconName + ".png"));
+    action->setIcon(loadIconWithFallback(QStringLiteral("Png/") + iconName + QStringLiteral(".png")));
     action->setText(text);
     action->setToolTip(tooltip);
     action->setShortcut(shortcut);
@@ -90,7 +102,7 @@ namespace Artifact
 
   // Main tool actions
   impl_->homeAction_ = new QAction(this);
-  impl_->homeAction_->setIcon(QIcon(ArtifactCore::getIconPath() + "/Png/home.png"));
+  impl_->homeAction_->setIcon(loadIconWithFallback("Png/home.png"));
   impl_->homeAction_->setToolTip("ホーム");
   addAction(impl_->homeAction_);
   
