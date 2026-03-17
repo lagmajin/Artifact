@@ -51,6 +51,7 @@ public:
  void showSettings();
  void showColor();
  void runMilestoneDummyPipeline();
+ void startSoftwareTestPipeline(QWidget* parent);
 };
 
 ArtifactCompositionMenu::Impl::Impl(ArtifactCompositionMenu* menu, QWidget* mainWindow)
@@ -198,13 +199,18 @@ void ArtifactCompositionMenu::Impl::showColor()
 
 void ArtifactCompositionMenu::Impl::runMilestoneDummyPipeline()
 {
- auto* parent = mainWindow_ ? mainWindow_ : menu_;
+ startSoftwareTestPipeline(mainWindow_);
+}
+
+void ArtifactCompositionMenu::Impl::startSoftwareTestPipeline(QWidget* parent)
+{
  auto* projectService = ArtifactProjectService::instance();
  if (!projectService) {
-  QMessageBox::warning(parent, "Milestone", "ProjectService が利用できません。");
+  QMessageBox::warning(parent ? parent : menu_, "Software Test", "ProjectService が利用できません。");
   return;
  }
 
+ // 1. コンポジション作成
  ArtifactCompositionInitParams params = ArtifactCompositionInitParams::hdPreset();
  const QString stamp = QDateTime::currentDateTime().toString(QStringLiteral("MMdd_HHmm"));
  params.setCompositionName(UniString(QStringLiteral("SoftwarePipeline_%1").arg(stamp)));
@@ -212,11 +218,12 @@ void ArtifactCompositionMenu::Impl::runMilestoneDummyPipeline()
  projectService->createComposition(params);
  auto currentComp = projectService->currentComposition().lock();
  if (!currentComp) {
-  QMessageBox::warning(parent, "Milestone", "コンポジション作成に失敗しました。");
+  QMessageBox::warning(parent ? parent : menu_, "Software Test", "コンポジション作成に失敗しました。");
   return;
  }
  const int beforeLayerCount = currentComp->allLayer().size();
 
+ // 2. 平面レイヤー追加
  ArtifactSolidLayerInitParams solidParams(QStringLiteral("Solid 1"));
  solidParams.setWidth(params.width());
  solidParams.setHeight(params.height());
@@ -225,10 +232,11 @@ void ArtifactCompositionMenu::Impl::runMilestoneDummyPipeline()
  projectService->addLayerToCurrentComposition(solidParams);
  currentComp = projectService->currentComposition().lock();
  if (!currentComp || currentComp->allLayer().size() <= beforeLayerCount) {
-  QMessageBox::warning(parent, "Milestone", "平面レイヤー追加に失敗しました。");
+  QMessageBox::warning(parent ? parent : menu_, "Software Test", "平面レイヤー追加に失敗しました。");
   return;
  }
 
+ // 3. Software Composition Test を起動
  auto* preview = new ArtifactSoftwareCompositionTestWidget();
  preview->setAttribute(Qt::WA_DeleteOnClose, true);
  preview->resize(1100, 760);
@@ -237,9 +245,13 @@ void ArtifactCompositionMenu::Impl::runMilestoneDummyPipeline()
  preview->activateWindow();
 
  QMessageBox::information(
-  parent,
-  "Milestone",
-  QStringLiteral("初期化しました。\n1) コンポ作成\n2) 平面追加\n3) Software Composition Test を起動\n\n次は effect と image sequence render を詰めます。"));
+  parent ? parent : menu_,
+  "Software Test",
+  QStringLiteral("Software Test Pipeline を初期化しました。\n\n"
+   "1) コンポジション作成\n"
+   "2) 平面レイヤー追加\n"
+   "3) Software Composition Test 起動\n\n"
+   "このウィンドウを閉じて、Test メニューからいつでも再起動できます。"));
 }
 
 ArtifactCompositionMenu::ArtifactCompositionMenu(QWidget* mainWindow, QWidget* parent)

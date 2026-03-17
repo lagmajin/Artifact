@@ -789,6 +789,69 @@ namespace Artifact
         impl_->syncCoreQueueModel();
     }
 
+    void ArtifactRenderQueueService::addRenderQueueWithPreset(
+        const ArtifactCore::CompositionID& compositionId,
+        const QString& compositionName,
+        const QString& presetId)
+    {
+        ArtifactRenderJob job;
+        job.compositionId = compositionId;
+        job.compositionName = compositionName.trimmed().isEmpty() ? QStringLiteral("Composition") : compositionName.trimmed();
+        job.status = ArtifactRenderJob::Status::Pending;
+        job.outputPath = QDir::homePath() + "/Desktop/output";
+        job.outputFormat = "MP4";
+        job.codec = "H.264";
+        job.resolutionWidth = 1920;
+        job.resolutionHeight = 1080;
+        job.frameRate = 30.0;
+        job.bitrate = 8000;
+        job.startFrame = 0;
+        job.endFrame = 100;
+
+        // プリセットを適用
+        const auto* preset = ArtifactRenderFormatPresetManager::instance().findPresetById(presetId);
+        if (preset) {
+            job.outputFormat = preset->container;
+            job.codec = preset->codec;
+            if (preset->isImageSequence) {
+                job.outputPath = QDir::homePath() + "/Desktop/output_sequence";
+            }
+        }
+
+        const auto found = ArtifactProjectManager::getInstance().findComposition(compositionId);
+        if (found.success) {
+            if (const auto comp = found.ptr.lock()) {
+                const auto totalRange = comp->frameRange();
+                const auto workAreaRange = comp->workAreaRange();
+                job.startFrame = static_cast<int>(std::max<int64_t>(0, workAreaRange.start()));
+                job.endFrame = static_cast<int>(std::max<int64_t>(job.startFrame + 1, workAreaRange.end()));
+                job.frameRate = comp->frameRate().framerate();
+                const QSize size = comp->settings().compositionSize();
+                if (size.width() > 0 && size.height() > 0) {
+                    job.resolutionWidth = size.width();
+                    job.resolutionHeight = size.height();
+                }
+                if (!totalRange.isValid() || totalRange.duration() <= 0) {
+                    job.startFrame = 0;
+                    job.endFrame = 100;
+                }
+            }
+        }
+
+        impl_->queueManager.addJob(job);
+        impl_->syncCoreQueueModel();
+    }
+
+    void ArtifactRenderQueueService::addMultipleRenderQueuesForComposition(
+        const ArtifactCore::CompositionID& compositionId,
+        const QString& compositionName,
+        const QVector<QString>& presetIds)
+    {
+        for (const auto& presetId : presetIds) {
+            addRenderQueueWithPreset(compositionId, compositionName, presetId);
+        }
+    }
+
     void ArtifactRenderQueueService::removeRenderQueue() {
         const int count = impl_->queueManager.jobCount();
         if (count <= 0) {

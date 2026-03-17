@@ -64,8 +64,10 @@ module Artifact.Widgets.Render.QueueManager;
 
 import Widgets.Utils.CSS;
 import Artifact.Render.Queue.Service;
+import Artifact.Render.Queue.Presets;
 import Artifact.Service.Project;
 import Artifact.Widget.Dialog.RenderOutputSetting;
+import Artifact.Widgets.RenderQueuePresetSelector;
 import Core.FastSettingsStore;
 import Artifact.Widgets.AppDialogs;
 
@@ -1238,25 +1240,64 @@ QPushButton {
   });
 
   connect(impl_->addButton, &QPushButton::clicked, this, [this]() {
-    if (impl_->service) {
-      if (auto* projectService = ArtifactProjectService::instance()) {
-        if (auto composition = projectService->currentComposition().lock()) {
-          impl_->service->addRenderQueueForComposition(
-            composition->id(),
-            composition->settings().compositionName().toQString());
-          impl_->logUiEvent(QStringLiteral("Requested: add current composition to queue"), true);
-          impl_->setStatusMessage(QStringLiteral("コンポジション '%1' をキューに追加しました").arg(composition->settings().compositionName().toQString()), true);
-          return;
-        } else {
-          QMessageBox::warning(this, QStringLiteral("レンダーキュー"), 
-            QStringLiteral("現在のコンポジションが選択されていません。\nタイムラインでコンポジションを選択してください。"));
-          impl_->logUiEvent(QStringLiteral("Failed: no composition selected"), true);
-          return;
+    // フォーマットプリセット選択ダイアログを表示
+    auto* presetDialog = new ArtifactRenderQueuePresetDialog(this);
+    presetDialog->setWindowTitle(QStringLiteral("出力フォーマットを選択"));
+    
+    // ダイアログのサイズヒントを設定
+    presetDialog->resize(400, 500);
+    
+    connect(presetDialog, &ArtifactRenderQueuePresetDialog::presetsConfirmed, this, [this](const QVector<QString>& presetIds) {
+      if (presetIds.isEmpty()) {
+        return;
+      }
+      
+      if (!impl_->service) {
+        return;
+      }
+      
+      // 現在のコンポジションを取得
+      auto* projectService = ArtifactProjectService::instance();
+      if (!projectService) {
+        QMessageBox::warning(this, QStringLiteral("レンダーキュー"),
+          QStringLiteral("プロジェクトサービスが利用できません。"));
+        return;
+      }
+      
+      auto composition = projectService->currentComposition().lock();
+      if (!composition) {
+        QMessageBox::warning(this, QStringLiteral("レンダーキュー"),
+          QStringLiteral("現在のコンポジションが選択されていません。\nタイムラインでコンポジションを選択してください。"));
+        return;
+      }
+      
+      const auto compId = composition->id();
+      const QString compName = composition->settings().compositionName().toQString();
+      
+      // 複数形式でジョブを追加
+      impl_->service->addMultipleRenderQueuesForComposition(compId, compName, presetIds);
+      
+      // プリセット名を取得してログに記録
+      QStringList presetNames;
+      for (const auto& presetId : presetIds) {
+        const auto* preset = ArtifactRenderFormatPresetManager::instance().findPresetById(presetId);
+        if (preset) {
+          presetNames.push_back(preset->name);
         }
       }
-      impl_->service->addRenderQueue();
-      impl_->logUiEvent(QStringLiteral("Requested: add render job"), true);
-    }
+      
+      impl_->logUiEvent(QString("Requested: add %1 job(s) for '%2' with presets: %3")
+        .arg(presetIds.size()).arg(compName).arg(presetNames.join(", ")), true);
+      impl_->setStatusMessage(QString("%1 形式でキューに追加しました：").arg(presetNames.join(", ")) + compName, true);
+    });
+    
+    connect(presetDialog, &ArtifactRenderQueuePresetDialog::canceled, this, [this]() {
+      impl_->logUiEvent(QStringLiteral("Canceled: format selection"), false);
+    });
+    
+    presetDialog->show();
+    presetDialog->raise();
+    presetDialog->activateWindow();
   });
 
   connect(impl_->removeButton, &QPushButton::clicked, this, [this]() {
