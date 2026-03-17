@@ -139,6 +139,21 @@ private:
     QColor currentColor_;
 };
 
+class ArtifactObjectReferencePropertyEditor final : public ArtifactAbstractPropertyEditor {
+public:
+    explicit ArtifactObjectReferencePropertyEditor(const ArtifactCore::AbstractProperty& property, QWidget* parent = nullptr);
+    QVariant value() const override;
+    void setValueFromVariant(const QVariant& value) override;
+
+private slots:
+    void onReferencePicked();
+    void onReferenceChanged(qint64 newId);
+
+private:
+    QWidget* referenceWidget_ = nullptr;
+    qint64 currentId_ = -1;
+};
+
 class ArtifactPropertyEditorRowWidget final : public QWidget {
 public:
     explicit ArtifactPropertyEditorRowWidget(
