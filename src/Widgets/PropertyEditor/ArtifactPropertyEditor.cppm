@@ -780,9 +780,50 @@ ArtifactAbstractPropertyEditor* createPropertyEditorWidget(const ArtifactCore::A
         return new ArtifactColorPropertyEditor(property, parent);
     case ArtifactCore::PropertyType::String:
         return new ArtifactStringPropertyEditor(property, parent);
+    case ArtifactCore::PropertyType::ObjectReference:
+        return new ArtifactObjectReferencePropertyEditor(property, parent);
     default:
         return nullptr;
     }
+}
+
+// ObjectReferencePropertyEditor 実装
+ArtifactObjectReferencePropertyEditor::ArtifactObjectReferencePropertyEditor(const ArtifactCore::AbstractProperty& property, QWidget* parent)
+    : ArtifactAbstractPropertyEditor(parent)
+{
+    Q_UNUSED(property);
+    
+    // TODO: ObjectReferenceWidget を使用する実装
+    // 現在は簡易的なラベル表示のみ
+    auto* label = new QLabel(QStringLiteral("(Object Reference)"), this);
+    auto* layout = new QHBoxLayout(this);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->addWidget(label);
+}
+
+QVariant ArtifactObjectReferencePropertyEditor::value() const
+{
+    return QVariant::fromValue<qint64>(currentId_);
+}
+
+void ArtifactObjectReferencePropertyEditor::setValueFromVariant(const QVariant& value)
+{
+    if (value.canConvert<qint64>()) {
+        currentId_ = value.toLongLong();
+    } else {
+        currentId_ = -1;
+    }
+}
+
+void ArtifactObjectReferencePropertyEditor::onReferencePicked()
+{
+    // TODO: ObjectPickerDialog を表示
+}
+
+void ArtifactObjectReferencePropertyEditor::onReferenceChanged(qint64 newId)
+{
+    currentId_ = newId;
+    commitValue(value());
 }
 
 } // namespace Artifact
