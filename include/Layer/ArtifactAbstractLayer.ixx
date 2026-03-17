@@ -174,6 +174,10 @@ export namespace Artifact {
    void setLocked(bool locked);
    bool isShy() const;
    void setShy(bool shy);
+   
+   // Opacity
+   float opacity() const;
+   void setOpacity(float value);
 
    // Dirty Management
    void setDirty(LayerDirtyFlag flag = LayerDirtyFlag::All);

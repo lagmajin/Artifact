@@ -77,6 +77,7 @@ namespace Artifact {
     bool isGuide_ = false;
     bool isSolo_ = false;
     bool isShy_ = false;
+    float opacity_ = 1.0f;  // Opacity (0.0 - 1.0)
 
     uint32_t dirtyFlags_ = (uint32_t)LayerDirtyFlag::All;
     uint64_t dirtyReasonMask_ = static_cast<uint64_t>(LayerDirtyReason::PropertyChanged);
@@ -1016,6 +1017,21 @@ void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject& obj)
    bool ArtifactAbstractLayer::hasMasks() const
    {
     return impl_->maskCount() > 0;
+   }
+   
+   // Opacity
+   float ArtifactAbstractLayer::opacity() const
+   {
+    return impl_->opacity_;
+   }
+   
+   void ArtifactAbstractLayer::setOpacity(float value)
+   {
+    const float clamped = std::clamp(value, 0.0f, 1.0f);
+    if (impl_->opacity_ != clamped) {
+     impl_->opacity_ = clamped;
+     notifyLayerMutation(this, LayerDirtyFlag::Transform, LayerDirtyReason::PropertyChanged);
+    }
    }
 
   };
