@@ -616,38 +616,108 @@ ArtifactPropertyEditorRowWidget::ArtifactPropertyEditorRowWidget(
     : QWidget(parent),
       label_(new QLabel(labelText, this)),
       editor_(editor),
-      keyframeButton_(new QPushButton(QStringLiteral("K"), this)),
-      resetButton_(new QPushButton(QStringLiteral("R"), this)),
-      expressionButton_(new QPushButton(QString::fromUtf8("fx"), this))
+      keyframeButton_(new QPushButton(QString::fromUtf8("◆"), this)),
+      resetButton_(new QPushButton(QString::fromUtf8("⟲"), this)),
+      expressionButton_(new QPushButton(QString::fromUtf8("ƒx"), this))
 {
     setObjectName(QStringLiteral("propertyRow"));
     auto* layout = new QHBoxLayout(this);
-    layout->setContentsMargins(2, 2, 2, 2);
-    layout->setSpacing(6);
+    layout->setContentsMargins(4, 2, 4, 2);
+    layout->setSpacing(4);
 
     label_->setObjectName(QStringLiteral("propertyRowLabel"));
-    label_->setMinimumWidth(132);
-    label_->setMaximumWidth(180);
+    label_->setMinimumWidth(120);
+    label_->setMaximumWidth(160);
     label_->setMinimumHeight(24);
+    
     editor_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    
+    // Keyframe Controls
+    auto* keyframeControlLayout = new QHBoxLayout();
+    keyframeControlLayout->setSpacing(0);
+    
+    auto* prevKeyBtn = new QPushButton(QString::fromUtf8("◀"), this);
+    auto* nextKeyBtn = new QPushButton(QString::fromUtf8("▶"), this);
+    
+    const QString navStyle = R"(
+        QPushButton {
+            background: transparent;
+            border: none;
+            color: #5a6b7a;
+            font-size: 10px;
+            padding: 0;
+        }
+        QPushButton:hover {
+            color: #a8bfd6;
+        }
+    )";
+    
+    prevKeyBtn->setFixedSize(12, 24);
+    nextKeyBtn->setFixedSize(12, 24);
+    prevKeyBtn->setStyleSheet(navStyle);
+    nextKeyBtn->setStyleSheet(navStyle);
+    
     keyframeButton_->setObjectName(QStringLiteral("propertyKeyButton"));
-    resetButton_->setObjectName(QStringLiteral("propertyResetButton"));
-    expressionButton_->setObjectName(QStringLiteral("propertyExprButton"));
-    keyframeButton_->setToolTip(QStringLiteral("Keyframe: %1").arg(propertyName));
-    keyframeButton_->setFixedSize(24, 24);
+    keyframeButton_->setToolTip(QStringLiteral("Toggle Keyframe: %1").arg(propertyName));
+    keyframeButton_->setFixedSize(20, 24);
     keyframeButton_->setCheckable(true);
-    keyframeButton_->setChecked(false);
-    keyframeButton_->setEnabled(false);
+    keyframeButton_->setStyleSheet(R"(
+        QPushButton#propertyKeyButton {
+            background: transparent;
+            border: none;
+            color: #5a6b7a;
+            font-size: 14px;
+        }
+        QPushButton#propertyKeyButton:hover {
+            color: #8fa1b0;
+        }
+        QPushButton#propertyKeyButton:checked {
+            color: #ff6b6b;
+            text-shadow: 0 0 5px rgba(255, 107, 107, 0.5);
+        }
+    )");
+
+    keyframeControlLayout->addWidget(prevKeyBtn);
+    keyframeControlLayout->addWidget(keyframeButton_);
+    keyframeControlLayout->addWidget(nextKeyBtn);
+
+    resetButton_->setObjectName(QStringLiteral("propertyResetButton"));
     resetButton_->setToolTip(QStringLiteral("Reset: %1").arg(propertyName));
     resetButton_->setFixedSize(24, 24);
-    expressionButton_->setToolTip(QStringLiteral("Expression Copilot: %1").arg(propertyName));
+    resetButton_->setStyleSheet(R"(
+        QPushButton#propertyResetButton {
+            background: transparent;
+            border: none;
+            color: #5a6b7a;
+            font-size: 16px;
+        }
+        QPushButton#propertyResetButton:hover {
+            color: #a8bfd6;
+        }
+    )");
+
+    expressionButton_->setObjectName(QStringLiteral("propertyExprButton"));
+    expressionButton_->setToolTip(QStringLiteral("Expression: %1").arg(propertyName));
     expressionButton_->setFixedSize(24, 24);
+    expressionButton_->setStyleSheet(R"(
+        QPushButton#propertyExprButton {
+            background: transparent;
+            border: none;
+            color: #5a6b7a;
+            font-family: 'Consolas', monospace;
+            font-size: 13px;
+        }
+        QPushButton#propertyExprButton:hover {
+            color: #a8bfd6;
+        }
+    )");
+
     label_->installEventFilter(this);
     label_->setCursor(editor_->supportsScrub() ? Qt::SizeHorCursor : Qt::ArrowCursor);
 
     layout->addWidget(label_);
     layout->addWidget(editor_, 1);
-    layout->addWidget(keyframeButton_);
+    layout->addLayout(keyframeControlLayout);
     layout->addWidget(resetButton_);
     layout->addWidget(expressionButton_);
 
@@ -660,6 +730,14 @@ ArtifactPropertyEditorRowWidget::ArtifactPropertyEditorRowWidget(
         if (expressionHandler_) {
             expressionHandler_();
         }
+    });
+    
+    // Placeholder connections for navigation
+    QObject::connect(prevKeyBtn, &QPushButton::clicked, this, []() {
+        qDebug() << "Navigate to previous keyframe";
+    });
+    QObject::connect(nextKeyBtn, &QPushButton::clicked, this, []() {
+        qDebug() << "Navigate to next keyframe";
     });
 }
 

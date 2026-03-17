@@ -9,6 +9,8 @@ module;
 
 export module Artifact.Widgets.ObjectReference;
 
+import Utils.Id;
+
 export namespace Artifact {
 
 class ArtifactObjectReferenceWidget : public QWidget {
@@ -19,16 +21,16 @@ public:
     
     // 設定
     void setReferenceType(const QString& typeName);
-    void setCurrentReferenceId(qint64 id);
+    void setCurrentReferenceId(const ArtifactCore::LayerID& id);
     void setAllowNull(bool allow);
     
     // 取得
-    qint64 currentReferenceId() const;
+    ArtifactCore::LayerID currentReferenceId() const;
     QString referenceType() const;
     bool allowNull() const;
 
 signals:
-    void referenceChanged(qint64 newId);
+    void referenceChanged(const ArtifactCore::LayerID& newId);
     void referenceCleared();
     void referencePicked();
 
@@ -43,7 +45,7 @@ private:
     QPushButton* pickButton_;    // ○ ピッカーボタン
     QPushButton* clearButton_;   // × クリアボタン
     QString referenceType_;      // 参照可能タイプ
-    qint64 currentId_ = -1;      // 現在の参照 ID（-1 は null）
+    ArtifactCore::LayerID currentId_; // Nil ID (-1 相当)
     bool allowNull_ = true;
 };
 

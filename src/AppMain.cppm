@@ -780,15 +780,15 @@ int main(int argc, char* argv[])
                 });
             });
         });
-
-        // Add Render Queue Manager widget to timeline dock area
-        auto* renderQueueWidget = new ArtifactWidgets::RenderQueueManagerWidget(mw);
-        mw->addDockedWidgetTabbedWithId(
-            QStringLiteral("Render Manager"),
-            QStringLiteral("render_manager_dock"),
-            ads::BottomDockWidgetArea,
-            renderQueueWidget,
-            QStringLiteral("timeline::"));
+// Add Render Queue Manager widget to center dock area (tabbed with Composition Viewer)
+auto* renderQueueWidget = new Artifact::RenderQueueManagerWidget(mw);
+mw->addDockedWidgetTabbedWithId(
+    QStringLiteral("Render Manager"),
+    QStringLiteral("render_manager_dock"),
+    ads::CenterDockWidgetArea,
+    renderQueueWidget,
+    QStringLiteral("Composition Viewer")
+);
         QObject::connect(projectService, &ArtifactProjectService::compositionRemoved, mw, [mw, timelineDockObjectId](const CompositionID& compId) {
             mw->closeDock(timelineDockObjectId(compId));
         });

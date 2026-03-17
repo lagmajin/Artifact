@@ -17,6 +17,7 @@ module;
 #include <QScrollArea>
 #include <QTimer>
 #include <QDateTime>
+#include <wobjectimpl.h>
 
 #include <vector>
 #include <memory>
@@ -27,6 +28,7 @@ import Artifact.Render.SoftwareCompositor;
 import Artifact.Service.Project;
 import Artifact.Project.Items;
 import Artifact.Composition.Abstract;
+import Artifact.Composition.PlaybackController;
 import Artifact.Layer.Abstract;
 import Artifact.Layer.Image;
 import Artifact.Layer.Video;
@@ -203,17 +205,17 @@ public:
         if (!service || !compositionCombo) return;
         
         const QString previous = compositionCombo->currentData().toString();
-        QVector<QPair<ArtifactCore::CompositionID, QString>> entries;
+        QList<QPair<ArtifactCore::CompositionID, QString>> entries;
         
         auto collectEntries = [&](const auto& items) {
-            for (const auto& item : items) {
-                if (auto comp = std::dynamic_pointer_cast<ArtifactComposition>(item)) {
-                    entries.append({comp->id(), comp->settings().compositionName()});
+            for (auto* item : items) {
+                if (auto* comp = dynamic_cast<ArtifactAbstractComposition*>(item)) {
+                    entries.append(qMakePair(comp->id(), comp->settings().compositionName().toQString()));
                 }
             }
         };
         
-        if (auto project = service->getCurrentProject()) {
+        if (auto project = service->getCurrentProjectSharedPtr()) {
             collectEntries(project->projectItems());
         }
         
@@ -236,14 +238,16 @@ public:
         compositionCombo->setCurrentIndex(std::max(0, index));
     }
     
-    void reloadLayerControls()
+    void reloadLayerControls(ArtifactTimelineLayerTestWidget* parent)
     {
         if (!layerControlsContainer || !layerControlsLayout) return;
         
         // 既存のコントロールをクリア
         QLayoutItem* child;
         while ((child = layerControlsLayout->takeAt(0)) != nullptr) {
-            child->widget()->deleteLater();
+            if (child->widget()) {
+                child->widget()->deleteLater();
+            }
             delete child;
         }
         layerControls.clear();
@@ -277,7 +281,7 @@ public:
                 control.opacitySpin = new QDoubleSpinBox();
                 control.opacitySpin->setRange(0.0, 1.0);
                 control.opacitySpin->setSingleStep(0.05);
-                control.opacitySpin->setValue(solidLayer->color().a());
+                control.opacitySpin->setValue(solidLayer->color().alpha());
                 control.opacitySpin->setSuffix(" (Alpha)");
                 layout->addRow("Opacity:", control.opacitySpin);
             }
@@ -296,17 +300,17 @@ public:
             layerControlsLayout->addWidget(group);
             layerControls.push_back(control);
             
-            // シグナル接続
+            // シグナル接続 (Impl:: reloadLayerControls 内なので、parent を使用する)
             QObject::connect(control.visibleCheck, &QCheckBox::stateChanged, 
-                this, [this]() { if (autoRefresh()) updateComposite(); });
+                parent, [this]() { if (autoRefresh()) updateComposite(); });
             
             if (control.opacitySpin) {
                 QObject::connect(control.opacitySpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
-                    this, [this]() { if (autoRefresh()) updateComposite(); });
+                    parent, [this]() { if (autoRefresh()) updateComposite(); });
             }
             
             QObject::connect(control.blendCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
-                this, [this]() { if (autoRefresh()) updateComposite(); });
+                parent, [this]() { if (autoRefresh()) updateComposite(); });
         }
         
         layerControlsLayout->addStretch();
@@ -381,7 +385,7 @@ public:
         
         if (infoLabel) {
             const QString info = QString("Composition: %1 | Layers: %2 | Visible: %3")
-                .arg(currentComposition->settings().compositionName())
+                .arg(currentComposition->settings().compositionName().toQString())
                 .arg(currentComposition->allLayer().size())
                 .arg(visibleLayerCount);
             infoLabel->setText(info);
@@ -393,7 +397,7 @@ public:
         if (!currentComposition || !service) return;
         
         for (auto& control : layerControls) {
-            auto layer = control.layerPtr.lock();
+            auto layer = control.layerPtr;
             if (!layer) continue;
             
             // Visible 状態を適用
@@ -413,7 +417,7 @@ public:
             if (control.opacitySpin) {
                 if (auto solidLayer = std::dynamic_pointer_cast<ArtifactSolidImageLayer>(layer)) {
                     auto color = solidLayer->color();
-                    color.a = static_cast<float>(control.opacitySpin->value());
+                    color.setAlpha(static_cast<float>(control.opacitySpin->value()));
                     solidLayer->setColor(color);
                 }
             }
@@ -466,7 +470,6 @@ ArtifactTimelineLayerTestWidget::ArtifactTimelineLayerTestWidget(QWidget* parent
     
     impl_->layerControlsContainer = new QWidget();
     impl_->layerControlsLayout = new QVBoxLayout(impl_->layerControlsContainer);
-    impl_->layerControlsLayout->addStretch();
     
     scrollArea->setWidget(impl_->layerControlsContainer);
     layersLayout->addWidget(scrollArea);
@@ -509,7 +512,7 @@ ArtifactTimelineLayerTestWidget::ArtifactTimelineLayerTestWidget(QWidget* parent
                 const auto result = impl_->service->findComposition(ArtifactCore::CompositionID(idStr));
                 impl_->currentComposition = result.success ? result.ptr.lock() : nullptr;
             }
-            impl_->reloadLayerControls();
+            impl_->reloadLayerControls(this);
             impl_->updateComposite();
         });
     
@@ -520,7 +523,7 @@ ArtifactTimelineLayerTestWidget::ArtifactTimelineLayerTestWidget(QWidget* parent
             const auto result = impl_->service->findComposition(ArtifactCore::CompositionID(idStr));
             impl_->currentComposition = result.success ? result.ptr.lock() : nullptr;
         }
-        impl_->reloadLayerControls();
+        impl_->reloadLayerControls(this);
         impl_->updateComposite();
     });
     
@@ -537,14 +540,14 @@ ArtifactTimelineLayerTestWidget::ArtifactTimelineLayerTestWidget(QWidget* parent
         QObject::connect(impl_->service, &ArtifactProjectService::layerCreated, this, [this]() {
             if (impl_->followCurrentComposition->isChecked()) {
                 impl_->reloadCompositions();
-                impl_->reloadLayerControls();
+                impl_->reloadLayerControls(this);
                 impl_->updateComposite();
             }
         });
         
         QObject::connect(impl_->service, &ArtifactProjectService::layerRemoved, this, [this]() {
             if (impl_->followCurrentComposition->isChecked()) {
-                impl_->reloadLayerControls();
+                impl_->reloadLayerControls(this);
                 impl_->updateComposite();
             }
         });
@@ -557,7 +560,7 @@ ArtifactTimelineLayerTestWidget::ArtifactTimelineLayerTestWidget(QWidget* parent
             const auto result = impl_->service->findComposition(ArtifactCore::CompositionID(idStr));
             impl_->currentComposition = result.success ? result.ptr.lock() : nullptr;
         }
-        impl_->reloadLayerControls();
+        impl_->reloadLayerControls(this);
     }
     
     impl_->updateComposite();
@@ -572,7 +575,7 @@ void ArtifactTimelineLayerTestWidget::keyPressEvent(QKeyEvent* event)
 {
     if (event->key() == Qt::Key_F5) {
         impl_->reloadCompositions();
-        impl_->reloadLayerControls();
+        impl_->reloadLayerControls(this);
         impl_->updateComposite();
         event->accept();
         return;

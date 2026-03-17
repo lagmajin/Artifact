@@ -46,10 +46,10 @@ public:
     // 選択中のプリセット ID リスト（複数選択モード）
     QVector<QString> selectedPresetIds() const;
     
-signals:
-    void presetSelected(const QString& presetId);
-    void presetsConfirmed(const QVector<QString>& presetIds);
-    void canceled();
+public:
+    void presetSelected(const QString& presetId) W_SIGNAL(presetSelected, presetId)
+    void presetsConfirmed(const QVector<QString>& presetIds) W_SIGNAL(presetsConfirmed, presetIds)
+    void canceled() W_SIGNAL(canceled)
     
 private:
     class Impl;
@@ -70,6 +70,10 @@ public:
     
     // プリセット ID を直接設定（テスト用）
     void setInitialSelection(const QVector<QString>& presetIds);
+    
+public:
+    void presetsConfirmed(const QVector<QString>& presetIds) W_SIGNAL(presetsConfirmed, presetIds)
+    void canceled() W_SIGNAL(canceled)
     
 private:
     class Impl;

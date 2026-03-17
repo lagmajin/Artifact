@@ -45,7 +45,7 @@ module Artifact.Composition.PlaybackController;
 import Frame.Position;
 import Frame.Rate;
 import Frame.Range;
-// import Artifact.Composition.InOutPoints; // module not yet in project build
+import Artifact.Composition.InOutPoints;
 
 namespace Artifact {
 

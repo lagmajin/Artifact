@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <algorithm>
 #include <wobjectimpl.h>
 #include <QDialog>
@@ -157,16 +157,16 @@ namespace Artifact
    if (!preset) return;
    
    // Format
-   const int formatIndex = formatCombo->findText(preset->container, Qt::CaseInsensitive);
+   const int formatIndex = formatCombo->findText(preset->container);
    if (formatIndex >= 0) {
      formatCombo->setCurrentIndex(formatIndex);
    } else {
      formatCombo->addItem(preset->container);
      formatCombo->setCurrentText(preset->container);
    }
-   
+
    // Codec
-   const int codecIndex = codecCombo->findText(preset->codec, Qt::CaseInsensitive);
+   const int codecIndex = codecCombo->findText(preset->codec);
    if (codecIndex >= 0) {
      codecCombo->setCurrentIndex(codecIndex);
    } else {

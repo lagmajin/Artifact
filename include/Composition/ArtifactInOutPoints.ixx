@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <QObject>
 #include <QString>
 #include <QStringList>
@@ -64,6 +64,8 @@ enum class MarkerType {
     WebLink,      // Web link marker
     Color         // Color correction point
 };
+
+// Register MarkerType for use as signal/slot parameter
 
 /**
  * @brief Timeline marker with position, comment, and type
@@ -357,3 +359,7 @@ public: // signals
 };
 
 } // namespace Artifact
+
+W_REGISTER_ARGTYPE(Artifact::MarkerType)
+W_REGISTER_ARGTYPE(std::optional<ArtifactCore::FramePosition>)
+W_REGISTER_ARGTYPE(Artifact::ArtifactMarker*)

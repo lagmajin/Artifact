@@ -1,5 +1,6 @@
-module;
+﻿module;
 
+#include <QDebug>
 #include <QImage>
 #include <QPainter>
 #include <wobjectimpl.h>
@@ -22,6 +23,7 @@ public:
     bool fitToLayer_ = true;
     int width_ = 0;
     int height_ = 0;
+    QString sourcePath_;
     std::shared_ptr<QImage> cache_;
 };
 
@@ -32,6 +34,49 @@ ArtifactImageLayer::ArtifactImageLayer() : impl_(new Impl()) {
 
 ArtifactImageLayer::~ArtifactImageLayer() {
     delete impl_;
+}
+
+bool ArtifactImageLayer::loadFromPath(const QString& path)
+{
+    QImage image(path);
+    if (image.isNull()) {
+        qWarning() << "[ArtifactImageLayer] Failed to load image from:" << path;
+        return false;
+    }
+
+    impl_->sourcePath_ = path;
+    setFromQImage(image);
+    return true;
+}
+
+QString ArtifactImageLayer::sourcePath() const
+{
+    return impl_->sourcePath_;
+}
+
+std::vector<ArtifactCore::PropertyGroup> ArtifactImageLayer::getLayerPropertyGroups() const
+{
+    std::vector<ArtifactCore::PropertyGroup> groups;
+    
+    ArtifactCore::PropertyGroup group("Image Layer");
+    // TODO: プロパティの追加
+    
+    groups.push_back(group);
+    
+    // Base class groups (Transform, etc.)
+    auto baseGroups = ArtifactAbstractLayer::getLayerPropertyGroups();
+    groups.insert(groups.end(), baseGroups.begin(), baseGroups.end());
+    
+    return groups;
+}
+
+bool ArtifactImageLayer::setLayerPropertyValue(const QString& propertyPath, const QVariant& value)
+{
+    if (propertyPath == "sourcePath") {
+        return loadFromPath(value.toString());
+    }
+    
+    return ArtifactAbstractLayer::setLayerPropertyValue(propertyPath, value);
 }
 
 void ArtifactImageLayer::draw(ArtifactIRenderer* renderer)
@@ -49,7 +94,7 @@ void ArtifactImageLayer::draw(ArtifactIRenderer* renderer)
     // Diligent レンデラーで drawSprite を呼び出し
     // 他のレンデラータイプの場合は動的に処理されるべき
     if (renderer != nullptr) {
-        renderer->drawSprite(0.0f, 0.0f, (float)size.width, (float)size.height, img, opacity());
+        renderer->drawSprite(0.0f, 0.0f, (float)size.width, (float)size.height, img);
     }
 }
 
@@ -62,7 +107,7 @@ QImage ArtifactImageLayer::toQImage() const
     }
 
     // キャッシュから QImage を生成
-    QImage qimg = impl_->cache_->image().toQImage();
+    QImage qimg = *impl_->cache_;
     if (!qimg.isNull()) {
         return qimg;
     }
@@ -79,7 +124,7 @@ QImage ArtifactImageLayer::toQImage() const
     return errorImg;
 }
 
-void ArtifactImageLayer::setImage(const QImage& image)
+void ArtifactImageLayer::setFromQImage(const QImage& image)
 {
     if (image.isNull()) {
         impl_->hasImage_ = false;

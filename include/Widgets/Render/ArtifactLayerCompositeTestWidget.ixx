@@ -1,6 +1,7 @@
-module;
+﻿module;
 #include <QWidget>
 #include <QKeyEvent>
+#include <wobjectdefs.h>
 
 export module Artifact.Widgets.LayerCompositeTest;
 

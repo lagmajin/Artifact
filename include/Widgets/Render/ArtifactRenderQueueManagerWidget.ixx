@@ -64,6 +64,8 @@ export namespace Artifact
   ~RenderQueueManagerWidget();
   QSize sizeHint() const override;
   void setFloatingMode(bool isFloating);
+ protected:
+  void showEvent(QShowEvent* event) override;
  };
 
 

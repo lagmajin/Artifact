@@ -45,7 +45,7 @@ export module Artifact.Composition.PlaybackController;
 import Frame.Position;
 import Frame.Rate;
 import Frame.Range;
-// import Artifact.Composition.InOutPoints; // forward declare below instead
+import Artifact.Composition.InOutPoints;
 
 W_REGISTER_ARGTYPE(ArtifactCore::FramePosition)
 W_REGISTER_ARGTYPE(ArtifactCore::FrameRange)
@@ -55,8 +55,6 @@ W_REGISTER_ARGTYPE(ArtifactCore::FrameRate)
 export namespace Artifact {
 
 using namespace ArtifactCore;
-
-class ArtifactInOutPoints; // forward declaration
 
 enum class PlaybackState {
     Stopped,
@@ -146,3 +144,5 @@ public:
 };
 
 }
+
+W_REGISTER_ARGTYPE(Artifact::PlaybackState)

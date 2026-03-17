@@ -36,6 +36,9 @@
 #include <numeric>
 #include <regex>
 #include <random>
+
+
+#include <QDebug>
 module Artifact.Service.Playback;
 
 
@@ -74,8 +77,13 @@ public:
         
         // エンジンのシグナルをサービスに転送
         QObject::connect(engine_, &ArtifactPlaybackEngine::playbackStateChanged,
-                         owner_, &ArtifactPlaybackService::playbackStateChanged,
-                         Qt::DirectConnection);
+                         owner_, [this](bool playing, bool paused, bool stopped) {
+            PlaybackState state = PlaybackState::Stopped;
+            if (playing) state = PlaybackState::Playing;
+            else if (paused) state = PlaybackState::Paused;
+            else if (stopped) state = PlaybackState::Stopped;
+            Q_EMIT owner_->playbackStateChanged(state);
+        }, Qt::DirectConnection);
         
         QObject::connect(engine_, &ArtifactPlaybackEngine::frameChanged,
                          owner_, [this](const FramePosition& position, const QImage&) {

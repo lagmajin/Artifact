@@ -18,7 +18,7 @@ namespace Artifact {
 W_OBJECT_IMPL(ArtifactObjectReferenceWidget)
 
 ArtifactObjectReferenceWidget::ArtifactObjectReferenceWidget(QWidget* parent)
-    : QWidget(parent)
+    : QWidget(parent), currentId_(ArtifactCore::LayerID(ArtifactCore::Id::Nil()))
 {
     auto* layout = new QHBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
@@ -58,7 +58,7 @@ void ArtifactObjectReferenceWidget::setReferenceType(const QString& typeName)
     referenceType_ = typeName;
 }
 
-void ArtifactObjectReferenceWidget::setCurrentReferenceId(qint64 id)
+void ArtifactObjectReferenceWidget::setCurrentReferenceId(const ArtifactCore::LayerID& id)
 {
     currentId_ = id;
     updateDisplay();
@@ -67,10 +67,10 @@ void ArtifactObjectReferenceWidget::setCurrentReferenceId(qint64 id)
 void ArtifactObjectReferenceWidget::setAllowNull(bool allow)
 {
     allowNull_ = allow;
-    clearButton_->setEnabled(allow && currentId_ >= 0);
+    clearButton_->setEnabled(allow && !currentId_.isNil());
 }
 
-qint64 ArtifactObjectReferenceWidget::currentReferenceId() const
+ArtifactCore::LayerID ArtifactObjectReferenceWidget::currentReferenceId() const
 {
     return currentId_;
 }
@@ -94,21 +94,21 @@ void ArtifactObjectReferenceWidget::onPickButtonClicked()
 void ArtifactObjectReferenceWidget::onClearButtonClicked()
 {
     if (allowNull_) {
-        currentId_ = -1;
+        currentId_ = ArtifactCore::LayerID(ArtifactCore::Id::Nil());
         updateDisplay();
         Q_EMIT referenceCleared();
-        Q_EMIT referenceChanged(-1);
+        Q_EMIT referenceChanged(currentId_);
     }
 }
 
 void ArtifactObjectReferenceWidget::updateDisplay()
 {
-    if (currentId_ < 0) {
+    if (currentId_.isNil()) {
         nameEdit_->setText(QStringLiteral("None"));
         nameEdit_->setStyleSheet(QStringLiteral("color: gray;"));
         clearButton_->setEnabled(false);
     } else {
-        nameEdit_->setText(QString::number(currentId_));
+        nameEdit_->setText(currentId_.toString());
         nameEdit_->setStyleSheet(QString());
         clearButton_->setEnabled(allowNull_);
         
@@ -117,14 +117,18 @@ void ArtifactObjectReferenceWidget::updateDisplay()
         if (service) {
             auto comp = service->currentComposition().lock();
             if (comp) {
-                auto layer = comp->layerById(ArtifactCore::LayerID(currentId_));
+                auto layer = comp->layerById(currentId_);
                 if (layer) {
-                    nameEdit_->setText(layer->layerName() + QStringLiteral(" (ID: %1)").arg(currentId_));
+                    nameEdit_->setText(layer->layerName() + QStringLiteral(" (ID: %1)").arg(currentId_.toString()));
                     nameEdit_->setStyleSheet(QString());
                 }
             }
         }
     }
 }
+
+void ArtifactObjectReferenceWidget::referenceChanged(const ArtifactCore::LayerID& newId) {}
+void ArtifactObjectReferenceWidget::referenceCleared() {}
+void ArtifactObjectReferenceWidget::referencePicked() {}
 
 } // namespace Artifact

@@ -106,3 +106,6 @@ export namespace Artifact {
  typedef MultiIndexContainer<ArtifactCompositionPtr, CompositionID> ArtifactCompositionMultiIndexContainer;
  using MultiIndexLayerContainer = MultiIndexContainer<ArtifactAbstractLayerPtr, LayerID>;
 };
+
+
+W_REGISTER_ARGTYPE(Artifact::ArtifactCompositionPtr)

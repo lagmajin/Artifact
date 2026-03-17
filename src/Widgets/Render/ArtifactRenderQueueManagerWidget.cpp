@@ -22,6 +22,10 @@ module;
 #include <QShortcut>
 #include <QInputDialog>
 #include <QMessageBox>
+#include <QSplitter>
+#include <QScrollArea>
+#include <QGroupBox>
+#include <QToolButton>
 #include <wobjectimpl.h>
 
 #include <iostream>
@@ -104,9 +108,9 @@ namespace Artifact
   QPushButton* deletePresetButton = nullptr;
   QListWidget* jobListWidget;
   QPushButton* addButton;
-  QPushButton* duplicateButton;
-  QPushButton* moveUpButton;
-  QPushButton* moveDownButton;
+  QAbstractButton* duplicateButton;
+  QAbstractButton* moveUpButton;
+  QAbstractButton* moveDownButton;
   QPushButton* removeButton;
   QPushButton* clearButton;
   QPushButton* startButton;
@@ -961,207 +965,325 @@ void RenderQueueManagerWidget::Impl::handleProjectClosed()
  RenderQueueManagerWidget::RenderQueueManagerWidget(QWidget* parent /*= nullptr*/) :QWidget(parent),impl_(new Impl())
  {
  auto mainLayout = new QVBoxLayout(this);
- mainLayout->setContentsMargins(8, 8, 8, 8);
- mainLayout->setSpacing(6);
+ mainLayout->setContentsMargins(4, 4, 4, 4);
+ mainLayout->setSpacing(4);
 
- auto* titleLabel = new QLabel("Render Queue", this);
+ // --- Top Toolbar ---
+ auto topLayout = new QHBoxLayout();
+ topLayout->setSpacing(8);
+
+ auto* titleLabel = new QLabel("RENDER QUEUE", this);
  titleLabel->setObjectName("renderQueueTitle");
- mainLayout->addWidget(titleLabel);
+ topLayout->addWidget(titleLabel);
+ topLayout->addSpacing(10);
 
-  auto topControls = new QHBoxLayout();
-  impl_->searchEdit = new QLineEdit(this);
-  impl_->searchEdit->setPlaceholderText("Search jobs...");
-  impl_->searchEdit->setObjectName("renderQueueSearch");
-  impl_->filterCombo = new QComboBox(this);
-  impl_->filterCombo->setObjectName("renderQueueFilter");
-  impl_->filterCombo->addItems(QStringList{
-    "All", "Pending", "Rendering", "Paused", "Completed", "Failed", "Canceled"
-  });
-  topControls->addWidget(impl_->searchEdit, 1);
-  topControls->addWidget(impl_->filterCombo, 0);
-  mainLayout->addLayout(topControls);
+ impl_->searchEdit = new QLineEdit(this);
+ impl_->searchEdit->setPlaceholderText("Search jobs...");
+ impl_->searchEdit->setObjectName("renderQueueSearch");
+ impl_->searchEdit->setClearButtonEnabled(true);
+ topLayout->addWidget(impl_->searchEdit, 1);
 
-  auto presetControls = new QHBoxLayout();
-  auto* presetLabel = new QLabel("Preset", this);
-  impl_->presetCombo = new QComboBox(this);
-  impl_->savePresetButton = new QPushButton("Save Preset", this);
-  impl_->loadPresetButton = new QPushButton("Load Preset", this);
-  impl_->deletePresetButton = new QPushButton("Delete Preset", this);
-  presetControls->addWidget(presetLabel, 0);
-  presetControls->addWidget(impl_->presetCombo, 1);
-  presetControls->addWidget(impl_->savePresetButton, 0);
-  presetControls->addWidget(impl_->loadPresetButton, 0);
-  presetControls->addWidget(impl_->deletePresetButton, 0);
-  mainLayout->addLayout(presetControls);
+ impl_->filterCombo = new QComboBox(this);
+ impl_->filterCombo->setObjectName("renderQueueFilter");
+ impl_->filterCombo->addItems(QStringList{
+   "All", "Pending", "Rendering", "Paused", "Completed", "Failed", "Canceled"
+ });
+ topLayout->addWidget(impl_->filterCombo, 0);
 
-  // ジョブリスト
-  impl_->jobListWidget = new QListWidget(this);
-  impl_->jobListWidget->setObjectName("renderQueueList");
-  impl_->jobListWidget->setAlternatingRowColors(false);
-  impl_->jobListWidget->setUniformItemSizes(true);
-  mainLayout->addWidget(impl_->jobListWidget);
+ auto* presetGroup = new QHBoxLayout();
+ presetGroup->setSpacing(2);
+ impl_->presetCombo = new QComboBox(this);
+ impl_->presetCombo->setMinimumWidth(120);
+ impl_->savePresetButton = new QPushButton("Save", this);
+ impl_->loadPresetButton = new QPushButton("Load", this);
+ impl_->deletePresetButton = new QPushButton("Del", this);
+ presetGroup->addWidget(new QLabel("Preset:", this));
+ presetGroup->addWidget(impl_->presetCombo);
+ presetGroup->addWidget(impl_->savePresetButton);
+ presetGroup->addWidget(impl_->loadPresetButton);
+ presetGroup->addWidget(impl_->deletePresetButton);
+ topLayout->addLayout(presetGroup);
 
-  auto* ioLayout = new QFormLayout();
-  auto* outputPathRow = new QHBoxLayout();
-  impl_->outputPathEdit = new QLineEdit(this);
-  impl_->outputBrowseButton = new QPushButton("...", this);
-  impl_->outputBrowseButton->setFixedWidth(28);
-  outputPathRow->addWidget(impl_->outputPathEdit, 1);
-  outputPathRow->addWidget(impl_->outputBrowseButton, 0);
-  ioLayout->addRow("Output", outputPathRow);
+ mainLayout->addLayout(topLayout);
 
-  auto* outputSettingsRow = new QHBoxLayout();
-  impl_->outputSettingsSummaryLabel = new QLabel("MP4 / H.264 / 1920x1080 / 30.000 fps / 8000 kbps", this);
-  impl_->outputSettingsSummaryLabel->setWordWrap(true);
-  impl_->outputSettingsButton = new QPushButton("Settings...", this);
-  outputSettingsRow->addWidget(impl_->outputSettingsSummaryLabel, 1);
-  outputSettingsRow->addWidget(impl_->outputSettingsButton, 0);
-  ioLayout->addRow("Settings", outputSettingsRow);
+ // --- Main Content (Splitter) ---
+ auto* mainSplitter = new QSplitter(Qt::Horizontal, this);
+ mainSplitter->setObjectName("renderQueueSplitter");
 
-  impl_->startFrameSpin = new QSpinBox(this);
-  impl_->endFrameSpin = new QSpinBox(this);
-  impl_->startFrameSpin->setRange(0, 2000000);
-  impl_->endFrameSpin->setRange(0, 2000000);
-  ioLayout->addRow("Start", impl_->startFrameSpin);
-  ioLayout->addRow("End", impl_->endFrameSpin);
-  mainLayout->addLayout(ioLayout);
+ // Left Pane: Job List & List Actions
+ auto* leftPane = new QWidget();
+ auto* leftLayout = new QVBoxLayout(leftPane);
+ leftLayout->setContentsMargins(0, 0, 0, 0);
+ leftLayout->setSpacing(2);
 
-  auto* transformLayout = new QFormLayout();
-  impl_->overlayXSpin = new QDoubleSpinBox(this);
-  impl_->overlayYSpin = new QDoubleSpinBox(this);
-  impl_->overlayScaleSpin = new QDoubleSpinBox(this);
-  impl_->overlayRotationSpin = new QDoubleSpinBox(this);
+ impl_->jobListWidget = new QListWidget(this);
+ impl_->jobListWidget->setObjectName("renderQueueList");
+ impl_->jobListWidget->setAlternatingRowColors(false);
+ impl_->jobListWidget->setUniformItemSizes(true);
+ leftLayout->addWidget(impl_->jobListWidget);
 
-  impl_->overlayXSpin->setRange(-8192.0, 8192.0);
-  impl_->overlayYSpin->setRange(-8192.0, 8192.0);
-  impl_->overlayScaleSpin->setRange(0.05, 8.0);
-  impl_->overlayRotationSpin->setRange(-3600.0, 3600.0);
+ auto* listActionsLayout = new QHBoxLayout();
+ listActionsLayout->setSpacing(2);
+ impl_->addButton = new QPushButton("+ Add", this);
+ impl_->duplicateButton = new QToolButton(this);
+ impl_->duplicateButton->setText("❐");
+ impl_->duplicateButton->setToolTip("Duplicate Selected");
+ impl_->moveUpButton = new QToolButton(this);
+ impl_->moveUpButton->setText("▲");
+ impl_->moveUpButton->setToolTip("Move Up");
+ impl_->moveDownButton = new QToolButton(this);
+ impl_->moveDownButton->setText("▼");
+ impl_->moveDownButton->setToolTip("Move Down");
+ impl_->removeButton = new QPushButton("- Remove", this);
+ impl_->clearButton = new QPushButton("Clear All", this);
 
-  impl_->overlayXSpin->setDecimals(1);
-  impl_->overlayYSpin->setDecimals(1);
-  impl_->overlayScaleSpin->setDecimals(3);
-  impl_->overlayRotationSpin->setDecimals(1);
+ listActionsLayout->addWidget(impl_->addButton);
+ listActionsLayout->addWidget(impl_->duplicateButton);
+ listActionsLayout->addWidget(impl_->moveUpButton);
+ listActionsLayout->addWidget(impl_->moveDownButton);
+ listActionsLayout->addStretch(1);
+ listActionsLayout->addWidget(impl_->removeButton);
+ listActionsLayout->addWidget(impl_->clearButton);
+ leftLayout->addLayout(listActionsLayout);
 
-  impl_->overlayXSpin->setSingleStep(1.0);
-  impl_->overlayYSpin->setSingleStep(1.0);
-  impl_->overlayScaleSpin->setSingleStep(0.05);
-  impl_->overlayRotationSpin->setSingleStep(1.0);
+ mainSplitter->addWidget(leftPane);
 
-  transformLayout->addRow("Overlay X", impl_->overlayXSpin);
-  transformLayout->addRow("Overlay Y", impl_->overlayYSpin);
-  transformLayout->addRow("Overlay Scale", impl_->overlayScaleSpin);
-  transformLayout->addRow("Overlay Rot", impl_->overlayRotationSpin);
-  mainLayout->addLayout(transformLayout);
+ // Right Pane: Job Details (Scrollable)
+ auto* detailScroll = new QScrollArea();
+ detailScroll->setWidgetResizable(true);
+ detailScroll->setFrameShape(QFrame::NoFrame);
+ detailScroll->setObjectName("renderQueueDetailScroll");
 
-  // コントロールボタン
-  auto controlLayout = new QHBoxLayout();
-  impl_->addButton = new QPushButton("Add to Queue", this);
-  impl_->duplicateButton = new QPushButton("Duplicate", this);
-  impl_->moveUpButton = new QPushButton("Up", this);
-  impl_->moveDownButton = new QPushButton("Down", this);
-  impl_->removeButton = new QPushButton("Remove", this);
-  impl_->clearButton = new QPushButton("Clear All", this);
-  impl_->startButton = new QPushButton("Render", this);
-  impl_->pauseButton = new QPushButton("Pause", this);
-  impl_->cancelButton = new QPushButton("Stop", this);
-  impl_->rerunSelectedButton = new QPushButton("Rerun Selected", this);
-  impl_->rerunDoneFailedButton = new QPushButton("Rerun Done/Failed", this);
+ auto* detailWidget = new QWidget();
+ auto* detailLayout = new QVBoxLayout(detailWidget);
+ detailLayout->setContentsMargins(8, 0, 8, 0);
+ detailLayout->setSpacing(12);
 
-  controlLayout->addWidget(impl_->addButton);
-  controlLayout->addWidget(impl_->duplicateButton);
-  controlLayout->addWidget(impl_->moveUpButton);
-  controlLayout->addWidget(impl_->moveDownButton);
-  controlLayout->addWidget(impl_->removeButton);
-  controlLayout->addWidget(impl_->clearButton);
-  controlLayout->addWidget(impl_->startButton);
-  controlLayout->addWidget(impl_->pauseButton);
-  controlLayout->addWidget(impl_->cancelButton);
-  controlLayout->addWidget(impl_->rerunSelectedButton);
-  controlLayout->addWidget(impl_->rerunDoneFailedButton);
+ // Group: Output
+ auto* outputGroup = new QGroupBox("Output Settings");
+ auto* outputLayout = new QFormLayout(outputGroup);
+ outputLayout->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
 
-  mainLayout->addLayout(controlLayout);
+ auto* outputPathRow = new QHBoxLayout();
+ impl_->outputPathEdit = new QLineEdit(this);
+ impl_->outputBrowseButton = new QPushButton("...", this);
+ impl_->outputBrowseButton->setFixedWidth(30);
+ outputPathRow->addWidget(impl_->outputPathEdit, 1);
+ outputPathRow->addWidget(impl_->outputBrowseButton, 0);
+ outputLayout->addRow("Path:", outputPathRow);
 
-  // 進捗表示
-  impl_->totalProgressBar = new QProgressBar(this);
-  impl_->totalProgressBar->setRange(0, 100);
-  impl_->totalProgressBar->setValue(0);
-  mainLayout->addWidget(impl_->totalProgressBar);
+ auto* settingsRow = new QHBoxLayout();
+ impl_->outputSettingsSummaryLabel = new QLabel("No job selected", this);
+ impl_->outputSettingsSummaryLabel->setStyleSheet("color: #aaa; font-size: 11px;");
+ impl_->outputSettingsSummaryLabel->setWordWrap(true);
+ impl_->outputSettingsButton = new QPushButton("Format...", this);
+ settingsRow->addWidget(impl_->outputSettingsSummaryLabel, 1);
+ settingsRow->addWidget(impl_->outputSettingsButton, 0);
+ outputLayout->addRow("Format:", settingsRow);
+ detailLayout->addWidget(outputGroup);
 
-  impl_->summaryLabel = new QLabel("Jobs: 0", this);
-  mainLayout->addWidget(impl_->summaryLabel);
+ // Group: Range
+ auto* rangeGroup = new QGroupBox("Frame Range");
+ auto* rangeLayout = new QFormLayout(rangeGroup);
+ impl_->startFrameSpin = new QSpinBox(this);
+ impl_->endFrameSpin = new QSpinBox(this);
+ impl_->startFrameSpin->setRange(0, 2000000);
+ impl_->endFrameSpin->setRange(0, 2000000);
+ rangeLayout->addRow("Start Frame:", impl_->startFrameSpin);
+ rangeLayout->addRow("End Frame:", impl_->endFrameSpin);
+ detailLayout->addWidget(rangeGroup);
 
-  impl_->statusLabel = new QLabel("Ready", this);
-  mainLayout->addWidget(impl_->statusLabel);
+ // Group: Overlay
+ auto* transformGroup = new QGroupBox("Overlay Transform");
+ auto* transformLayout = new QFormLayout(transformGroup);
+ impl_->overlayXSpin = new QDoubleSpinBox(this);
+ impl_->overlayYSpin = new QDoubleSpinBox(this);
+ impl_->overlayScaleSpin = new QDoubleSpinBox(this);
+ impl_->overlayRotationSpin = new QDoubleSpinBox(this);
 
-  auto* historyHeader = new QHBoxLayout();
-  auto* historyLabel = new QLabel("History", this);
-  auto* progressLogLabel = new QLabel("Progress Log Step", this);
-  impl_->progressLogStepCombo = new QComboBox(this);
-  impl_->progressLogStepCombo->addItem("10%", 10);
-  impl_->progressLogStepCombo->addItem("25%", 25);
-  impl_->progressLogStepCombo->addItem("50%", 50);
-  impl_->progressLogStepCombo->addItem("100%", 100);
-  impl_->exportHistoryButton = new QPushButton("Export History", this);
-  impl_->clearHistoryButton = new QPushButton("Clear History", this);
-  historyHeader->addWidget(historyLabel, 0);
-  historyHeader->addStretch(1);
-  historyHeader->addWidget(progressLogLabel, 0);
-  historyHeader->addWidget(impl_->progressLogStepCombo, 0);
-  historyHeader->addWidget(impl_->exportHistoryButton, 0);
-  historyHeader->addWidget(impl_->clearHistoryButton, 0);
-  mainLayout->addLayout(historyHeader);
+ impl_->overlayXSpin->setRange(-8192.0, 8192.0);
+ impl_->overlayYSpin->setRange(-8192.0, 8192.0);
+ impl_->overlayScaleSpin->setRange(0.01, 100.0);
+ impl_->overlayRotationSpin->setRange(-3600.0, 3600.0);
+ impl_->overlayScaleSpin->setSingleStep(0.1);
 
-  impl_->historyListWidget = new QListWidget(this);
-  impl_->historyListWidget->setMinimumHeight(110);
-  mainLayout->addWidget(impl_->historyListWidget);
-  impl_->loadHistory();
-  if (impl_->progressLogStepCombo) {
-    QSignalBlocker block(impl_->progressLogStepCombo);
-    const int idx = impl_->progressLogStepCombo->findData(impl_->progressLogStepPercent);
-    impl_->progressLogStepCombo->setCurrentIndex(idx >= 0 ? idx : 1);
-  }
+ transformLayout->addRow("Offset X:", impl_->overlayXSpin);
+ transformLayout->addRow("Offset Y:", impl_->overlayYSpin);
+ transformLayout->addRow("Scale:", impl_->overlayScaleSpin);
+ transformLayout->addRow("Rotation:", impl_->overlayRotationSpin);
+ detailLayout->addWidget(transformGroup);
 
-  // スタイルの設定
-  auto style = getDCCStyleSheetPreset(DccStylePreset::ModoStyle);
-  style += QStringLiteral(R"(
+ detailLayout->addStretch(1);
+ detailScroll->setWidget(detailWidget);
+ mainSplitter->addWidget(detailScroll);
+ mainSplitter->setStretchFactor(0, 3);
+ mainSplitter->setStretchFactor(1, 2);
+
+ mainLayout->addWidget(mainSplitter, 1);
+
+ // --- Bottom Area ---
+ auto* bottomContainer = new QFrame();
+ bottomContainer->setObjectName("renderQueueBottomBar");
+ auto* bottomLayout = new QVBoxLayout(bottomContainer);
+ bottomLayout->setContentsMargins(4, 4, 4, 4);
+ bottomLayout->setSpacing(4);
+
+ // Progress & Status
+ auto* progressRow = new QHBoxLayout();
+ impl_->totalProgressBar = new QProgressBar(this);
+ impl_->totalProgressBar->setRange(0, 100);
+ impl_->totalProgressBar->setFixedHeight(12);
+ impl_->totalProgressBar->setTextVisible(false);
+ progressRow->addWidget(impl_->totalProgressBar, 1);
+ impl_->summaryLabel = new QLabel("Jobs: 0", this);
+ impl_->summaryLabel->setStyleSheet("font-weight: bold;");
+ progressRow->addWidget(impl_->summaryLabel, 0);
+ bottomLayout->addLayout(progressRow);
+
+ impl_->statusLabel = new QLabel("Ready", this);
+ impl_->statusLabel->setStyleSheet("color: #888; font-size: 11px;");
+ bottomLayout->addWidget(impl_->statusLabel);
+
+ // Main Control Buttons
+ auto mainButtonsLayout = new QHBoxLayout();
+ mainButtonsLayout->setSpacing(4);
+ impl_->startButton = new QPushButton("START RENDER", this);
+ impl_->startButton->setObjectName("renderStartBtn");
+ impl_->startButton->setMinimumHeight(32);
+ impl_->pauseButton = new QPushButton("Pause", this);
+ impl_->cancelButton = new QPushButton("Stop", this);
+ impl_->rerunSelectedButton = new QPushButton("Rerun Selected", this);
+ impl_->rerunDoneFailedButton = new QPushButton("Rerun All Finished", this);
+
+ mainButtonsLayout->addWidget(impl_->startButton, 2);
+ mainButtonsLayout->addWidget(impl_->pauseButton, 1);
+ mainButtonsLayout->addWidget(impl_->cancelButton, 1);
+ mainButtonsLayout->addSpacing(10);
+ mainButtonsLayout->addWidget(impl_->rerunSelectedButton, 1);
+ mainButtonsLayout->addWidget(impl_->rerunDoneFailedButton, 1);
+ bottomLayout->addLayout(mainButtonsLayout);
+
+ mainLayout->addWidget(bottomContainer);
+
+ // History (Collapsible or just small at bottom)
+ auto* historyHeader = new QHBoxLayout();
+ auto* historyLabel = new QLabel("HISTORY", this);
+ historyLabel->setStyleSheet("font-weight: bold; color: #666;");
+ impl_->progressLogStepCombo = new QComboBox(this);
+ impl_->progressLogStepCombo->addItem("10%", 10);
+ impl_->progressLogStepCombo->addItem("25%", 25);
+ impl_->progressLogStepCombo->addItem("50%", 50);
+ impl_->progressLogStepCombo->addItem("100%", 100);
+ impl_->exportHistoryButton = new QPushButton("Export", this);
+ impl_->clearHistoryButton = new QPushButton("Clear", this);
+ historyHeader->addWidget(historyLabel, 0);
+ historyHeader->addStretch(1);
+ historyHeader->addWidget(new QLabel("Log Step:", this));
+ historyHeader->addWidget(impl_->progressLogStepCombo);
+ historyHeader->addWidget(impl_->exportHistoryButton);
+ historyHeader->addWidget(impl_->clearHistoryButton);
+ mainLayout->addLayout(historyHeader);
+
+ impl_->historyListWidget = new QListWidget(this);
+ impl_->historyListWidget->setMaximumHeight(100);
+ impl_->historyListWidget->setObjectName("renderQueueHistory");
+ mainLayout->addWidget(impl_->historyListWidget);
+
+ impl_->loadHistory();
+ if (impl_->progressLogStepCombo) {
+   QSignalBlocker block(impl_->progressLogStepCombo);
+   const int idx = impl_->progressLogStepCombo->findData(impl_->progressLogStepPercent);
+   impl_->progressLogStepCombo->setCurrentIndex(idx >= 0 ? idx : 1);
+ }
+
+ // --- Enhanced Styling ---
+ auto style = getDCCStyleSheetPreset(DccStylePreset::ModoStyle);
+ style += QStringLiteral(R"(
 QLabel#renderQueueTitle {
-  font-size: 12px;
-  font-weight: 700;
-  color: #d7d7d7;
-  padding: 2px 2px 4px 2px;
+  font-size: 13px;
+  font-weight: 800;
+  color: #55aaff;
+  padding: 4px;
+  letter-spacing: 1px;
 }
 QLineEdit#renderQueueSearch, QComboBox#renderQueueFilter {
-  min-height: 22px;
-  border: 1px solid #3a3a3a;
-  background: #242424;
-  color: #dfdfdf;
-  border-radius: 3px;
-  padding: 2px 6px;
+  background: #181818;
+  border: 1px solid #333;
+  border-radius: 4px;
+  padding: 3px 8px;
+}
+QSplitter::handle {
+  background: #333;
 }
 QListWidget#renderQueueList {
-  border: 1px solid #393939;
-  background: #1d1d1d;
-  outline: none;
+  background: #121212;
+  border: 1px solid #282828;
+  border-radius: 4px;
 }
 QListWidget#renderQueueList::item {
-  border: 1px solid #2d2d2d;
-  margin: 2px 2px;
-  padding: 4px 8px;
-  border-radius: 3px;
+  border-bottom: 1px solid #222;
+  padding: 6px 10px;
 }
 QListWidget#renderQueueList::item:selected {
-  border: 1px solid #4e8fd6;
-  background: #223247;
+  background: #2a3a4a;
+  border-left: 3px solid #55aaff;
 }
-QPushButton {
-  min-height: 22px;
+QGroupBox {
+  font-weight: bold;
+  border: 1px solid #333;
+  border-radius: 6px;
+  margin-top: 10px;
+  padding-top: 10px;
+  color: #aaa;
+}
+QGroupBox::title {
+  subcontrol-origin: margin;
+  subcontrol-position: top left;
+  left: 10px;
+  padding: 0 5px;
+}
+QPushButton#renderStartBtn {
+  background-color: #2d5a88;
+  color: white;
+  font-weight: bold;
+  border-radius: 4px;
+}
+QPushButton#renderStartBtn:hover {
+  background-color: #3d6a98;
+}
+QPushButton#renderStartBtn:pressed {
+  background-color: #1d4a78;
+}
+QProgressBar {
+  background: #181818;
+  border: 1px solid #333;
+  border-radius: 6px;
+}
+QProgressBar::chunk {
+  background-color: #55aaff;
+  border-radius: 5px;
+}
+QListWidget#renderQueueHistory {
+  background: #0f0f0f;
+  border: 1px solid #222;
+  color: #777;
+  font-family: 'Consolas', monospace;
+  font-size: 10px;
+}
+QToolButton {
+  background: #333;
+  border-radius: 3px;
+  padding: 2px;
+}
+QToolButton:hover {
+  background: #444;
 }
 )");
-  setStyleSheet(style);
+ setStyleSheet(style);
 
-  connect(impl_->searchEdit, &QLineEdit::textChanged, this, [this](const QString&) {
-    impl_->updateJobList();
-  });
+ connect(impl_->searchEdit, &QLineEdit::textChanged, this, [this](const QString&) {
+   impl_->updateJobList();
+ });
   connect(impl_->filterCombo, &QComboBox::currentTextChanged, this, [this](const QString&) {
     impl_->updateJobList();
   });
@@ -1601,13 +1723,13 @@ QPushButton {
   });
 
   if (impl_->service) {
-    impl_->service->setJobAddedCallback([this](int index) { impl_->handleJobAdded(index); });
-    impl_->service->setJobRemovedCallback([this](int index) { impl_->handleJobRemoved(index); });
-    impl_->service->setJobUpdatedCallback([this](int index) { impl_->handleJobUpdated(index); });
-    impl_->service->setJobStatusChangedCallback([this](int index, int status) { impl_->handleJobStatusChanged(index, status); });
-    impl_->service->setJobProgressChangedCallback([this](int index, int progress) { impl_->handleJobProgressChanged(index, progress); });
-    impl_->service->setAllJobsRemovedCallback([this]() { impl_->handleProjectClosed(); });
-    impl_->service->setQueueReorderedCallback([this](int from, int to) {
+    connect(impl_->service, &ArtifactRenderQueueService::jobAdded, this, [this](int index) { impl_->handleJobAdded(index); });
+    connect(impl_->service, &ArtifactRenderQueueService::jobRemoved, this, [this](int index) { impl_->handleJobRemoved(index); });
+    connect(impl_->service, &ArtifactRenderQueueService::jobUpdated, this, [this](int index) { impl_->handleJobUpdated(index); });
+    connect(impl_->service, &ArtifactRenderQueueService::jobStatusChanged, this, [this](int index, int status) { impl_->handleJobStatusChanged(index, status); });
+    connect(impl_->service, &ArtifactRenderQueueService::jobProgressChanged, this, [this](int index, int progress) { impl_->handleJobProgressChanged(index, progress); });
+    connect(impl_->service, &ArtifactRenderQueueService::allJobsRemoved, this, [this]() { impl_->handleProjectClosed(); });
+    connect(impl_->service, &ArtifactRenderQueueService::queueReordered, this, [this](int from, int to) {
         impl_->syncJobsFromService();
         impl_->selectSourceIndex(to);
     });
@@ -1634,15 +1756,6 @@ QPushButton {
 
  RenderQueueManagerWidget::~RenderQueueManagerWidget()
  {
-  if (impl_ && impl_->service) {
-    impl_->service->setJobAddedCallback({});
-    impl_->service->setJobRemovedCallback({});
-    impl_->service->setJobUpdatedCallback({});
-    impl_->service->setJobStatusChangedCallback({});
-    impl_->service->setJobProgressChangedCallback({});
-    impl_->service->setAllJobsRemovedCallback({});
-    impl_->service->setQueueReorderedCallback({});
-  }
   delete impl_;
  }
  QSize RenderQueueManagerWidget::sizeHint() const
@@ -1659,6 +1772,14 @@ QPushButton {
     setWindowFlag(Qt::Window, false);
   }
   show();
+ }
+
+ void RenderQueueManagerWidget::showEvent(QShowEvent* event)
+ {
+  QWidget::showEvent(event);
+  if (impl_) {
+    impl_->syncJobsFromService();
+  }
  }
 
 

@@ -154,3 +154,5 @@ private:
 };
 
 } // namespace Artifact
+
+W_REGISTER_ARGTYPE(Artifact::LayerID)

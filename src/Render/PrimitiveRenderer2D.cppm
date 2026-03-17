@@ -784,7 +784,7 @@ void PrimitiveRenderer2D::drawRectOutlineLocal(float x, float y, float w, float 
     impl_->pCtx_->DrawIndexed(drawAttrs);
 }
 
-void PrimitiveRenderer2D::drawSpriteLocal(float x, float y, float w, float h, const QImage& image)
+void PrimitiveRenderer2D::drawSpriteLocal(float x, float y, float w, float h, const QImage& image, float opacity)
 {
     if (!impl_->hasRenderTarget() || !impl_->m_draw_sprite_pso_and_srb.pPSO) return;
     if (image.isNull() || w <= 0.0f || h <= 0.0f) return;
@@ -841,10 +841,10 @@ void PrimitiveRenderer2D::drawSpriteLocal(float x, float y, float w, float h, co
     const float2 ndc3 = canvasToNdc({x + w, y + h});
 
     SpriteVertex vertices[4] = {
-        { ndc0, {0.0f, 0.0f}, {1.0f, 1.0f, 1.0f, 1.0f} },
-        { ndc1, {1.0f, 0.0f}, {1.0f, 1.0f, 1.0f, 1.0f} },
-        { ndc2, {0.0f, 1.0f}, {1.0f, 1.0f, 1.0f, 1.0f} },
-        { ndc3, {1.0f, 1.0f}, {1.0f, 1.0f, 1.0f, 1.0f} },
+        { ndc0, {0.0f, 0.0f}, {1.0f, 1.0f, 1.0f, opacity} },
+        { ndc1, {1.0f, 0.0f}, {1.0f, 1.0f, 1.0f, opacity} },
+        { ndc2, {0.0f, 1.0f}, {1.0f, 1.0f, 1.0f, opacity} },
+        { ndc3, {1.0f, 1.0f}, {1.0f, 1.0f, 1.0f, opacity} },
     };
 
     impl_->pCtx_->SetRenderTargets(1, &pRTV, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);

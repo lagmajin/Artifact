@@ -17,6 +17,7 @@ module;
 #include <QGroupBox>
 #include <QGridLayout>
 #include <QTimer>
+#include <wobjectimpl.h>
 
 #include <vector>
 #include <memory>
@@ -121,8 +122,6 @@ ArtifactCore::BlendMode blendModeFromIndex(int index)
 }
 
 } // namespace
-
-W_OBJECT_IMPL(ArtifactLayerCompositeTestWidget)
 
 class ArtifactLayerCompositeTestWidget::Impl {
 public:
@@ -384,5 +383,7 @@ void ArtifactLayerCompositeTestWidget::keyPressEvent(QKeyEvent* event)
     }
     QWidget::keyPressEvent(event);
 }
+
+W_OBJECT_IMPL(ArtifactLayerCompositeTestWidget);
 
 } // namespace Artifact

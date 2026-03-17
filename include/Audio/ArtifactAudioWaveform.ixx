@@ -272,3 +272,6 @@ Q_SIGNALS:
 };
 
 } // namespace Artifact
+
+
+W_REGISTER_ARGTYPE(Artifact::WaveformData)

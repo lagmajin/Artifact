@@ -89,3 +89,5 @@ void destroyClipItem(ClipItem* clip);
 
 
 };
+
+W_REGISTER_ARGTYPE(Artifact::ClipItem*)
