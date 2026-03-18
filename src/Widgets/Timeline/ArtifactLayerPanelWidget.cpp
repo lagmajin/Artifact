@@ -106,9 +106,10 @@ namespace {
   if (icon.isNull()) {
    return QPixmap();
   }
-  QPixmap pix = icon.pixmap(16, 16);
+  // Increase pixmap resolution for High DPI displays
+  QPixmap pix = icon.pixmap(32, 32);
   if (pix.isNull()) {
-   pix = icon.pixmap(20, 20);
+   pix = icon.pixmap(48, 48);
   }
   return pix;
  }
@@ -423,10 +424,11 @@ int ArtifactLayerPanelHeaderWidget::totalHeaderHeight() const
 
   Impl()
   {
-    visibilityIcon = loadLayerPanelPixmap(QStringLiteral("MaterialVS/neutral/visibility.svg"), QStringLiteral("visibility.png"));
+    visibilityIcon = loadLayerPanelPixmap(QStringLiteral("MaterialVS/neutral/visibility.svg"), QStringLiteral("eye.png"));
     lockIcon = loadLayerPanelPixmap(QStringLiteral("MaterialVS/yellow/lock.svg"), QStringLiteral("lock.png"));
-    if (lockIcon.isNull()) lockIcon = loadLayerPanelPixmap(QStringLiteral("MaterialVS/yellow/lock_open.svg"), QStringLiteral("unlock.png"));
     soloIcon = loadLayerPanelPixmap(QStringLiteral("MaterialVS/purple/group.svg"), QStringLiteral("solo.png"));
+    audioIcon = loadLayerPanelPixmap(QStringLiteral("MaterialVS/neutral/volume.svg"), QStringLiteral("volume.png"));
+    shyIcon = loadLayerPanelPixmap(QStringLiteral("MaterialVS/neutral/shy.svg"), QStringLiteral("shy.png"));
   }
   ~Impl() = default;
 
@@ -434,6 +436,8 @@ int ArtifactLayerPanelHeaderWidget::totalHeaderHeight() const
   QPixmap visibilityIcon;
   QPixmap lockIcon;
   QPixmap soloIcon;
+  QPixmap audioIcon;
+  QPixmap shyIcon;
   bool shyHidden = false;
   int hoveredLayerIndex = -1;
   LayerID selectedLayerId;
@@ -1534,6 +1538,7 @@ void ArtifactLayerPanelWidget::keyPressEvent(QKeyEvent* event)
 void ArtifactLayerPanelWidget::paintEvent(QPaintEvent*)
 {
   QPainter p(this);
+  p.setRenderHint(QPainter::SmoothPixmapTransform);
   const int rowH = kLayerRowHeight;
   const int colW = kLayerColumnWidth;
   const int iconSize = 16;
@@ -1580,37 +1585,51 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent*)
     int curX = 0;
     // Visibility
     p.setOpacity(l->isVisible() ? 1.0 : 0.3);
-    if (!impl_->visibilityIcon.isNull()) p.drawPixmap(curX + offset, y + offset, iconSize, iconSize, impl_->visibilityIcon);
-    else p.fillRect(curX + offset, y + offset, iconSize, iconSize, Qt::green);
+    if (!impl_->visibilityIcon.isNull()) {
+      p.drawPixmap(QRect(curX + offset, y + offset, iconSize, iconSize), impl_->visibilityIcon);
+    }
     curX += colW;
+    p.setOpacity(1.0);
     p.drawLine(curX - 1, y, curX - 1, y + rowH);
 
     // Lock
     bool locked = l->isLocked();
     p.setOpacity(locked ? 1.0 : 0.15);
-    if (!impl_->lockIcon.isNull()) p.drawPixmap(curX + offset, y + offset, iconSize, iconSize, impl_->lockIcon);
-    else if (locked) p.fillRect(curX + offset + 4, y + offset + 4, 8, 8, Qt::red);
+    if (!impl_->lockIcon.isNull()) {
+      p.drawPixmap(QRect(curX + offset, y + offset, iconSize, iconSize), impl_->lockIcon);
+    }
     curX += colW;
+    p.setOpacity(1.0);
     p.drawLine(curX - 1, y, curX - 1, y + rowH);
 
     // Solo
     bool solo = l->isSolo();
     p.setOpacity(solo ? 1.0 : 0.15);
-    if (!impl_->soloIcon.isNull()) p.drawPixmap(curX + offset, y + offset, iconSize, iconSize, impl_->soloIcon);
-    else if (solo) p.fillRect(curX + offset + 4, y + offset + 4, 8, 8, Qt::yellow);
+    if (!impl_->soloIcon.isNull()) {
+      p.drawPixmap(QRect(curX + offset, y + offset, iconSize, iconSize), impl_->soloIcon);
+    }
     curX += colW;
+    p.setOpacity(1.0);
     p.drawLine(curX - 1, y, curX - 1, y + rowH);
 
-    // Sound
+    // Sound/Audio
+    // TODO: Connect to actual audio state if available. For now, assume always "on" but low opacity if not active.
+    p.setOpacity(0.15);
+    if (!impl_->audioIcon.isNull()) {
+      p.drawPixmap(QRect(curX + offset, y + offset, iconSize, iconSize), impl_->audioIcon);
+    }
     curX += colW;
+    p.setOpacity(1.0);
     p.drawLine(curX - 1, y, curX - 1, y + rowH);
 
     // Shy
     bool shy = l->isShy();
-    p.setOpacity(1.0);
-    if (shy) p.fillRect(curX + offset + 4, y + offset + 4, 8, 8, QColor(100, 100, 255));
-    else { p.setPen(QColor(80, 80, 80)); p.drawRect(curX + offset + 4, y + offset + 4, 8, 8); }
+    p.setOpacity(shy ? 1.0 : 0.15);
+    if (!impl_->shyIcon.isNull()) {
+      p.drawPixmap(QRect(curX + offset, y + offset, iconSize, iconSize), impl_->shyIcon);
+    }
     curX += colW;
+    p.setOpacity(1.0);
     p.drawLine(curX - 1, y, curX - 1, y + rowH);
 
     // Name

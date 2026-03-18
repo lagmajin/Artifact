@@ -65,8 +65,24 @@ public:
     void setTextColor(const FloatRGBA& color);
     FloatRGBA textColor() const;
 
-    void setTracking(float tracking);
-    float tracking() const;
+    void setStrokeEnabled(bool enabled);
+    bool isStrokeEnabled() const;
+    void setStrokeColor(const FloatRGBA& color);
+    FloatRGBA strokeColor() const;
+    void setStrokeWidth(float width);
+    float strokeWidth() const;
+
+    void setShadowEnabled(bool enabled);
+    bool isShadowEnabled() const;
+    void setShadowColor(const FloatRGBA& color);
+    FloatRGBA shadowColor() const;
+    void setShadowOffset(float x, float y);
+    float shadowOffsetX() const;
+    float shadowOffsetY() const;
+    void setShadowBlur(float blur);
+    float shadowBlur() const;
+
+    void setTracking(float tracking);    float tracking() const;
 
     void setLeading(float leading);
     float leading() const;

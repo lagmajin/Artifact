@@ -90,6 +90,7 @@ import Artifact.MainWindow;
 import Artifact.Project.Manager;
 import Artifact.Project.AutoSaveManager;
 import Artifact.Script.Hooks;
+import Artifact.Widgets.Test.ScrollPoC;
 
 using namespace Artifact;
 using namespace ArtifactCore;

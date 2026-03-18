@@ -29,6 +29,7 @@ import Artifact.Service.Project;
 import Artifact.Project.Items;
 import Artifact.Composition.Abstract;
 import Artifact.Composition.PlaybackController;
+import Artifact.Service.Playback;
 import Artifact.Layer.Abstract;
 import Artifact.Layer.Image;
 import Artifact.Layer.Video;
@@ -371,6 +372,7 @@ public:
             request.foreground = layerImage;
             request.outputSize = canvasSize;
             request.blendMode = blendMode;
+            request.overlayOpacity = control.layerPtr->opacity(); // Pass layer opacity
             request.backend = SoftwareRender::CompositeBackend::QtPainter;
             request.useForeground = true;
             
@@ -561,6 +563,13 @@ ArtifactTimelineLayerTestWidget::ArtifactTimelineLayerTestWidget(QWidget* parent
             impl_->currentComposition = result.success ? result.ptr.lock() : nullptr;
         }
         impl_->reloadLayerControls(this);
+    }
+    
+    // Playback サービスの接続
+    if (auto* playbackService = ArtifactPlaybackService::instance()) {
+        QObject::connect(playbackService, &ArtifactPlaybackService::frameChanged, this, [this]() {
+            impl_->updateComposite();
+        });
     }
     
     impl_->updateComposite();

@@ -15,7 +15,6 @@ export module Artifact.Render.IRenderer;
 import Color.Float;
 
 export namespace Artifact {
-
 using namespace ArtifactCore;
 
 export namespace Detail {
@@ -77,11 +76,13 @@ public:
  void drawRectOutline(Detail::float2 pos, Detail::float2 size, const FloatColor& color);
  void drawSolidLine(Detail::float2 start, Detail::float2 end, const FloatColor& color, float thickness);
  void drawSolidRect(float x, float y, float w, float h);
- void drawSolidRect(Detail::float2 pos, Detail::float2 size, const FloatColor& color);
+ void drawSolidRect(float x, float y, float w, float h, const FloatColor& color, float opacity = 1.0f);
+ void drawSolidRect(Detail::float2 pos, Detail::float2 size, const FloatColor& color, float opacity = 1.0f);
+ void drawPoint(float x, float y, float size, const FloatColor& color);
  void drawSprite(float x, float y, float w, float h);
  void drawSprite(Detail::float2 pos, Detail::float2 size);
- void drawSprite(float x, float y, float w, float h, const QImage& image);
- void drawRectLocal(float x, float y, float w, float h, const FloatColor& color);
+ void drawSprite(float x, float y, float w, float h, const QImage& image, float opacity = 1.0f);
+ void drawRectLocal(float x, float y, float w, float h, const FloatColor& color, float opacity = 1.0f);
  void drawRectOutlineLocal(float x, float y, float w, float h, const FloatColor& color);
  void drawThickLineLocal(Detail::float2 p1, Detail::float2 p2, float thickness, const FloatColor& color);
  void drawDotLineLocal(Detail::float2 p1, Detail::float2 p2, float thickness, float spacing, const FloatColor& color);

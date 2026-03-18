@@ -2,8 +2,8 @@ module;
 #include <QList>
 #include <wobjectdefs.h>
 #include <QWidget>
+#include <QScrollBar>
 #include <QToolBar>
-#include <QAbstractScrollArea>
 #include <QFileInfo>
 #include <QItemSelectionModel>
 #include <QKeyEvent>
@@ -79,7 +79,7 @@ public:
  void showAt(const QPoint& globalPos);
 };
 
- class ArtifactProjectView :public QAbstractScrollArea {
+ class ArtifactProjectView :public QWidget {
   W_OBJECT(ArtifactProjectView)
  private:
   class Impl;
@@ -131,6 +131,20 @@ public:
  public /*signals*/:
   void itemSelected(const QModelIndex& index) W_SIGNAL(itemSelected, index);
   void itemDoubleClicked(const QModelIndex& index) W_SIGNAL(itemDoubleClicked, index);
+
+ private:
+  void updateScrollRange();
+  QScrollBar* verticalScrollBar_;
+  int scrollY_ = 0;
+  
+  struct RenderItem {
+      QModelIndex index;
+      int level = 0;
+      bool isExpanded = false;
+      QRect rect;
+      QRect expandRect;
+  };
+  QList<RenderItem> visibleItems_;
  };
 
  class ArtifactProjectManagerToolBox :public QWidget

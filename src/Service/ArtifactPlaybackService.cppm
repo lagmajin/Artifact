@@ -193,6 +193,8 @@ public:
 
 ArtifactPlaybackService::ArtifactPlaybackService(QObject* parent)
     : QObject(parent), impl_(new Impl(this)) {
+    // デフォルトの再生範囲を設定
+    setFrameRange(FrameRange(FramePosition(0), FramePosition(300)));
 }
 
 ArtifactPlaybackService::~ArtifactPlaybackService() {

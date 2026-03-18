@@ -74,7 +74,7 @@ int floatToSliderPosition(const double value, const double minValue, const doubl
         return 0;
     }
     const double normalized = std::clamp((value - minValue) / (maxValue - minValue), 0.0, 1.0);
-    return static_cast<int>(std::lround(normalized * 1000.0));
+    return static_cast<int>(std::lround(normalized * 10000.0));
 }
 
 double sliderPositionToFloat(const int sliderValue, const double minValue, const double maxValue)
@@ -82,7 +82,7 @@ double sliderPositionToFloat(const int sliderValue, const double minValue, const
     if (maxValue <= minValue) {
         return minValue;
     }
-    const double normalized = static_cast<double>(sliderValue) / 1000.0;
+    const double normalized = static_cast<double>(sliderValue) / 10000.0;
     return minValue + (maxValue - minValue) * normalized;
 }
 
@@ -219,8 +219,9 @@ ArtifactFloatPropertyEditor::ArtifactFloatPropertyEditor(const ArtifactCore::Abs
     }
     spinBox_->setMinimumHeight(26);
 
-    slider_->setRange(0, 1000);
+    slider_->setRange(0, 10000); // 精度を向上
     slider_->setMinimumHeight(18);
+    slider_->setTracking(true); // ドラッグ中の追従を有効化
     slider_->setValue(floatToSliderPosition(property.getValue().toDouble(), softMin_, softMax_));
 
     QObject::connect(spinBox_, &QDoubleSpinBox::valueChanged, this, [this](const double nextValue) {
@@ -230,12 +231,44 @@ ArtifactFloatPropertyEditor::ArtifactFloatPropertyEditor(const ArtifactCore::Abs
     QObject::connect(spinBox_, &QDoubleSpinBox::editingFinished, this, [this]() {
         commitValue(spinBox_->value());
     });
+    
+    // valueChanged ではなく sliderMoved と actionTriggered を組み合わせるか、
+    // あるいは単純に高精度化した valueChanged を使用する
     QObject::connect(slider_, &QSlider::valueChanged, this, [this](const int sliderValue) {
-        const double nextValue = sliderPositionToFloat(sliderValue, softMin_, softMax_);
+        const double nextValue = this->sliderPositionToFloat(sliderValue, softMin_, softMax_);
         const QSignalBlocker blocker(spinBox_);
         spinBox_->setValue(nextValue);
         commitValue(nextValue);
     });
+
+    // クリックでジャンプする挙動を追加
+    slider_->installEventFilter(this);
+}
+
+bool ArtifactFloatPropertyEditor::eventFilter(QObject* watched, QEvent* event)
+{
+    if (watched == slider_ && event->type() == QEvent::MouseButtonPress) {
+        auto* mouseEvent = static_cast<QMouseEvent*>(event);
+        if (mouseEvent->button() == Qt::LeftButton) {
+            // クリックした位置にジャンプ
+            double ratio = static_cast<double>(mouseEvent->pos().x()) / static_cast<double>(slider_->width());
+            int newValue = static_cast<int>(std::clamp(ratio, 0.0, 1.0) * 10000.0);
+            slider_->setValue(newValue);
+            return true;
+        }
+    }
+    return ArtifactAbstractPropertyEditor::eventFilter(watched, event);
+}
+
+int ArtifactFloatPropertyEditor::floatToSliderPosition(double val, double min, double max) const {
+    if (std::abs(max - min) < 1e-7) return 0;
+    double ratio = (val - min) / (max - min);
+    return static_cast<int>(std::clamp(ratio, 0.0, 1.0) * 10000.0);
+}
+
+double ArtifactFloatPropertyEditor::sliderPositionToFloat(int pos, double min, double max) const {
+    double ratio = static_cast<double>(pos) / 10000.0;
+    return min + ratio * (max - min);
 }
 
 QVariant ArtifactFloatPropertyEditor::value() const
@@ -254,7 +287,7 @@ void ArtifactFloatPropertyEditor::setValueFromVariant(const QVariant& value)
         spinBox_->setValue(nextValue);
     }
     const QSignalBlocker sliderBlocker(slider_);
-    slider_->setValue(floatToSliderPosition(nextValue, softMin_, softMax_));
+    slider_->setValue(this->floatToSliderPosition(nextValue, softMin_, softMax_));
 }
 
 bool ArtifactFloatPropertyEditor::supportsScrub() const
@@ -267,8 +300,18 @@ void ArtifactFloatPropertyEditor::scrubByPixels(const int deltaPixels, const boo
     if (!spinBox_) {
         return;
     }
-    const double step = spinBox_->singleStep() * (fineAdjust ? 0.1 : 1.0);
-    const double nextValue = spinBox_->value() + static_cast<double>(deltaPixels) * step;
+    
+    // DCCツール風の感度計算:
+    // softMax - softMin の範囲の 1/500 を 1ピクセルあたりの基本移動量とする
+    double range = std::abs(softMax_ - softMin_);
+    if (range < 1e-5) range = 100.0; // フォールバック
+    
+    double sensitivity = range / 500.0;
+    if (fineAdjust) {
+        sensitivity *= 0.1; // Ctrlキー等での微調整
+    }
+    
+    const double nextValue = spinBox_->value() + static_cast<double>(deltaPixels) * sensitivity;
     spinBox_->setValue(nextValue);
     commitValue(spinBox_->value());
 }
@@ -618,7 +661,9 @@ ArtifactPropertyEditorRowWidget::ArtifactPropertyEditorRowWidget(
       editor_(editor),
       keyframeButton_(new QPushButton(QString::fromUtf8("◆"), this)),
       resetButton_(new QPushButton(QString::fromUtf8("⟲"), this)),
-      expressionButton_(new QPushButton(QString::fromUtf8("ƒx"), this))
+      expressionButton_(new QPushButton(QString::fromUtf8("ƒx"), this)),
+      prevKeyBtn_(new QPushButton(QString::fromUtf8("◀"), this)),
+      nextKeyBtn_(new QPushButton(QString::fromUtf8("▶"), this))
 {
     setObjectName(QStringLiteral("propertyRow"));
     auto* layout = new QHBoxLayout(this);
@@ -636,26 +681,23 @@ ArtifactPropertyEditorRowWidget::ArtifactPropertyEditorRowWidget(
     auto* keyframeControlLayout = new QHBoxLayout();
     keyframeControlLayout->setSpacing(0);
     
-    auto* prevKeyBtn = new QPushButton(QString::fromUtf8("◀"), this);
-    auto* nextKeyBtn = new QPushButton(QString::fromUtf8("▶"), this);
-    
     const QString navStyle = R"(
         QPushButton {
             background: transparent;
             border: none;
-            color: #5a6b7a;
+            color: #888888;
             font-size: 10px;
             padding: 0;
         }
         QPushButton:hover {
-            color: #a8bfd6;
+            color: #BBBBBB;
         }
     )";
     
-    prevKeyBtn->setFixedSize(12, 24);
-    nextKeyBtn->setFixedSize(12, 24);
-    prevKeyBtn->setStyleSheet(navStyle);
-    nextKeyBtn->setStyleSheet(navStyle);
+    prevKeyBtn_->setFixedSize(12, 24);
+    nextKeyBtn_->setFixedSize(12, 24);
+    prevKeyBtn_->setStyleSheet(navStyle);
+    nextKeyBtn_->setStyleSheet(navStyle);
     
     keyframeButton_->setObjectName(QStringLiteral("propertyKeyButton"));
     keyframeButton_->setToolTip(QStringLiteral("Toggle Keyframe: %1").arg(propertyName));
@@ -665,21 +707,21 @@ ArtifactPropertyEditorRowWidget::ArtifactPropertyEditorRowWidget(
         QPushButton#propertyKeyButton {
             background: transparent;
             border: none;
-            color: #5a6b7a;
+            color: #888888;
             font-size: 14px;
         }
         QPushButton#propertyKeyButton:hover {
-            color: #8fa1b0;
+            color: #AAAAAA;
         }
         QPushButton#propertyKeyButton:checked {
-            color: #ff6b6b;
-            text-shadow: 0 0 5px rgba(255, 107, 107, 0.5);
+            color: #D47D32; /* Modo Orange for active keyframe */
+            text-shadow: 0 0 5px rgba(212, 125, 50, 0.5);
         }
     )");
 
-    keyframeControlLayout->addWidget(prevKeyBtn);
+    keyframeControlLayout->addWidget(prevKeyBtn_);
     keyframeControlLayout->addWidget(keyframeButton_);
-    keyframeControlLayout->addWidget(nextKeyBtn);
+    keyframeControlLayout->addWidget(nextKeyBtn_);
 
     resetButton_->setObjectName(QStringLiteral("propertyResetButton"));
     resetButton_->setToolTip(QStringLiteral("Reset: %1").arg(propertyName));
@@ -688,11 +730,11 @@ ArtifactPropertyEditorRowWidget::ArtifactPropertyEditorRowWidget(
         QPushButton#propertyResetButton {
             background: transparent;
             border: none;
-            color: #5a6b7a;
+            color: #888888;
             font-size: 16px;
         }
         QPushButton#propertyResetButton:hover {
-            color: #a8bfd6;
+            color: #BBBBBB;
         }
     )");
 
@@ -703,12 +745,12 @@ ArtifactPropertyEditorRowWidget::ArtifactPropertyEditorRowWidget(
         QPushButton#propertyExprButton {
             background: transparent;
             border: none;
-            color: #5a6b7a;
+            color: #888888;
             font-family: 'Consolas', monospace;
             font-size: 13px;
         }
         QPushButton#propertyExprButton:hover {
-            color: #a8bfd6;
+            color: #BBBBBB;
         }
     )");
 
@@ -732,12 +774,21 @@ ArtifactPropertyEditorRowWidget::ArtifactPropertyEditorRowWidget(
         }
     });
     
-    // Placeholder connections for navigation
-    QObject::connect(prevKeyBtn, &QPushButton::clicked, this, []() {
-        qDebug() << "Navigate to previous keyframe";
+    QObject::connect(keyframeButton_, &QPushButton::toggled, this, [this](bool checked) {
+        if (keyframeHandler_) {
+            keyframeHandler_(checked);
+        }
     });
-    QObject::connect(nextKeyBtn, &QPushButton::clicked, this, []() {
-        qDebug() << "Navigate to next keyframe";
+    
+    QObject::connect(prevKeyBtn_, &QPushButton::clicked, this, [this]() {
+        if (navigationHandler_) {
+            navigationHandler_(-1);
+        }
+    });
+    QObject::connect(nextKeyBtn_, &QPushButton::clicked, this, [this]() {
+        if (navigationHandler_) {
+            navigationHandler_(1);
+        }
     });
 }
 
@@ -763,11 +814,23 @@ void ArtifactPropertyEditorRowWidget::setResetHandler(std::function<void()> hand
     resetHandler_ = std::move(handler);
 }
 
+void ArtifactPropertyEditorRowWidget::setKeyframeHandler(KeyFrameHandler handler)
+{
+    keyframeHandler_ = std::move(handler);
+}
+
+void ArtifactPropertyEditorRowWidget::setNavigationHandler(NavigationHandler handler)
+{
+    navigationHandler_ = std::move(handler);
+}
+
 void ArtifactPropertyEditorRowWidget::setEditorToolTip(const QString& tooltip)
 {
     label_->setToolTip(tooltip);
     editor_->setToolTip(tooltip);
     keyframeButton_->setToolTip(tooltip);
+    prevKeyBtn_->setToolTip(tooltip);
+    nextKeyBtn_->setToolTip(tooltip);
     resetButton_->setToolTip(tooltip);
     expressionButton_->setToolTip(tooltip);
 }
@@ -785,7 +848,21 @@ void ArtifactPropertyEditorRowWidget::setShowResetButton(const bool visible)
 void ArtifactPropertyEditorRowWidget::setShowKeyframeButton(const bool visible)
 {
     keyframeButton_->setVisible(visible);
-    keyframeButton_->setEnabled(visible);
+    prevKeyBtn_->setVisible(visible);
+    nextKeyBtn_->setVisible(visible);
+}
+
+void ArtifactPropertyEditorRowWidget::setKeyframeChecked(const bool checked)
+{
+    const QSignalBlocker blocker(keyframeButton_);
+    keyframeButton_->setChecked(checked);
+}
+
+void ArtifactPropertyEditorRowWidget::setKeyframeEnabled(const bool enabled)
+{
+    keyframeButton_->setEnabled(enabled);
+    prevKeyBtn_->setEnabled(enabled);
+    nextKeyBtn_->setEnabled(enabled);
 }
 
 bool ArtifactPropertyEditorRowWidget::eventFilter(QObject* watched, QEvent* event)

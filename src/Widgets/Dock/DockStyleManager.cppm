@@ -95,15 +95,12 @@ ads::CDockWidget* resolveActiveDock(ads::CDockManager* dockManager, ads::CDockWi
     return dockManager->focusedDockWidget();
 }
 
-QString tabTextColor(const bool isActiveDock, const bool isFloatingTab, const bool /*isCurrentTab*/)
+QString tabTextColor(const bool isActiveDock, const bool /*isFloatingTab*/, const bool /*isCurrentTab*/)
 {
     if (isActiveDock) {
         return QStringLiteral("#ffffff");
     }
-    if (isFloatingTab) {
-        return QStringLiteral("#a7b8ca");
-    }
-    return QStringLiteral("#95a4b4");
+    return QStringLiteral("#BBBBBB");
 }
 
 void applyTabLabelColors(ads::CDockWidgetTab* tab, const QString& color, const bool emphasize)

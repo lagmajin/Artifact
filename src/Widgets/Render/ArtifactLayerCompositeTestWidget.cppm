@@ -26,6 +26,7 @@ module Artifact.Widgets.LayerCompositeTest;
 
 import Artifact.Render.SoftwareCompositor;
 import Artifact.Service.Project;
+import Artifact.Service.Playback;
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
 import Layer.Blend;
@@ -197,6 +198,7 @@ public:
             request.foreground = layerImage;
             request.outputSize = canvasSize;
             request.blendMode = layerBlendModes[i];
+            request.overlayOpacity = layerOpacities[i];
             request.backend = SoftwareRender::CompositeBackend::QtPainter;
             request.useForeground = true;
             
@@ -362,6 +364,13 @@ ArtifactLayerCompositeTestWidget::ArtifactLayerCompositeTestWidget(QWidget* pare
     
     // 初期合成
     impl_->updateComposite();
+    
+    // Playback サービスの接続
+    if (auto* playbackService = ArtifactPlaybackService::instance()) {
+        QObject::connect(playbackService, &ArtifactPlaybackService::frameChanged, this, [this]() {
+            impl_->updateComposite();
+        });
+    }
 }
 
 ArtifactLayerCompositeTestWidget::~ArtifactLayerCompositeTestWidget()

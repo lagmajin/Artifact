@@ -49,6 +49,13 @@ public:
     bool supportsScrub() const override;
     void scrubByPixels(int deltaPixels, bool fineAdjust) override;
 
+protected:
+    bool eventFilter(QObject* watched, QEvent* event) override;
+
+private:
+    int floatToSliderPosition(double val, double min, double max) const;
+    double sliderPositionToFloat(int pos, double min, double max) const;
+
 private:
     QDoubleSpinBox* spinBox_ = nullptr;
     QSlider* slider_ = nullptr;
@@ -156,6 +163,9 @@ private:
 
 class ArtifactPropertyEditorRowWidget final : public QWidget {
 public:
+    using KeyFrameHandler = std::function<void(bool)>;
+    using NavigationHandler = std::function<void(int)>; // -1 for prev, 1 for next
+
     explicit ArtifactPropertyEditorRowWidget(
         const QString& labelText,
         ArtifactAbstractPropertyEditor* editor,
@@ -167,10 +177,16 @@ public:
     ArtifactAbstractPropertyEditor* editor() const;
     void setExpressionHandler(std::function<void()> handler);
     void setResetHandler(std::function<void()> handler);
+    void setKeyframeHandler(KeyFrameHandler handler);
+    void setNavigationHandler(NavigationHandler handler);
+    
     void setEditorToolTip(const QString& tooltip);
     void setShowExpressionButton(bool visible);
     void setShowResetButton(bool visible);
     void setShowKeyframeButton(bool visible);
+    
+    void setKeyframeChecked(bool checked);
+    void setKeyframeEnabled(bool enabled);
 
 private:
     QLabel* label_ = nullptr;
@@ -178,8 +194,14 @@ private:
     QPushButton* keyframeButton_ = nullptr;
     QPushButton* resetButton_ = nullptr;
     QPushButton* expressionButton_ = nullptr;
+    QPushButton* prevKeyBtn_ = nullptr;
+    QPushButton* nextKeyBtn_ = nullptr;
+    
     std::function<void()> expressionHandler_;
     std::function<void()> resetHandler_;
+    KeyFrameHandler keyframeHandler_;
+    NavigationHandler navigationHandler_;
+    
     bool scrubbing_ = false;
     int scrubStartX_ = 0;
     QVariant scrubStartValue_;
