@@ -61,6 +61,8 @@ export namespace Artifact {
    void sendToBack(const LayerID& id);
 
    void setBackGroundColor(const FloatColor& color);
+   FloatColor backgroundColor() const;
+   void changed() W_SIGNAL(changed);
   FramePosition framePosition() const;
   void setFramePosition(const FramePosition& position);
   void setTimeCode();

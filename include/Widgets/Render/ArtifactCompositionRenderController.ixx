@@ -40,6 +40,14 @@ export namespace Artifact {
   ArtifactCompositionPtr composition() const;
   void setSelectedLayerId(const LayerID& id);
 void setClearColor(const FloatColor& color);
+
+void setShowGrid(bool show);
+bool isShowGrid() const;
+void setShowGuides(bool show);
+bool isShowGuides() const;
+void setShowSafeMargins(bool show);
+bool isShowSafeMargins() const;
+
 void resetView();
 void zoomInAt(const QPointF& viewportPos);
 void zoomOutAt(const QPointF& viewportPos);

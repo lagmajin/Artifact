@@ -1,6 +1,7 @@
 ﻿module;
 #include <tbb/parallel_for.h>
 #include <tbb/blocked_range.h>
+#include <tbb/task_arena.h>
 #include <QObject>
 #include <QList>
 #include <QThread>

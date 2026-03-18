@@ -288,7 +288,11 @@ public:
     void handlePlayButtonClicked()
     {
         if (auto* service = ArtifactPlaybackService::instance()) {
-            service->play();
+            if (service->isPlaying()) {
+                service->pause();
+            } else {
+                service->play();
+            }
         }
         Q_EMIT owner_->playRequested();
     }
@@ -387,9 +391,12 @@ public:
         isPaused_ = (state == ::Artifact::PlaybackState::Paused);
         isStopped_ = (state == ::Artifact::PlaybackState::Stopped);
         
-        // ボタンの状態を更新
+        // ボタンの状態と外観を更新
         if (playButton_) {
-            playButton_->setEnabled(isStopped_ || isPaused_);
+            // 再生中はハイライトするかアイコンを変える（ここでは一旦ハイライト）
+            playButton_->setChecked(isPlaying_);
+            // Resolveスタイル：再生中は一時停止アイコンにするか、あるいはそのまま
+            // 今回は分かりやすく「再生中は一時停止も兼ねる」トグル動作にする
         }
         if (pauseButton_) {
             pauseButton_->setEnabled(isPlaying_);

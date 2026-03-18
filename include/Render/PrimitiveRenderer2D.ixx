@@ -42,7 +42,7 @@ public:
     float2 canvasToViewport(float2 pos) const;
     float2 viewportToCanvas(float2 pos) const;
 
-    void drawRectLocal(float x, float y, float w, float h, const FloatColor& color);
+    void drawRectLocal(float x, float y, float w, float h, const FloatColor& color, float opacity = 1.0f);
     void drawRectOutlineLocal(float x, float y, float w, float h, const FloatColor& color);
     void drawLineLocal(float2 p1, float2 p2, const FloatColor& c1, const FloatColor& c2);
     void drawThickLineLocal(float2 p1, float2 p2, float thickness, const FloatColor& color);
@@ -50,7 +50,8 @@ public:
     void drawBezierLocal(float2 p0, float2 p1, float2 p2, float thickness, const FloatColor& color);
     void drawBezierLocal(float2 p0, float2 p1, float2 p2, float2 p3, float thickness, const FloatColor& color);
     void drawSolidTriangleLocal(float2 p0, float2 p1, float2 p2, const FloatColor& color);
-    void drawSolidRect(float x, float y, float w, float h, const FloatColor& color);
+    void drawSolidRect(float x, float y, float w, float h, const FloatColor& color, float opacity = 1.0f);
+    void drawPoint(float x, float y, float size, const FloatColor& color);
     void drawCheckerboard(float x, float y, float w, float h, float tileSize, const FloatColor& c1, const FloatColor& c2);
     void drawGrid(float x, float y, float w, float h, float spacing, float thickness, const FloatColor& color);
     void drawSpriteLocal(float x, float y, float w, float h, const QImage& image, float opacity = 1.0f);

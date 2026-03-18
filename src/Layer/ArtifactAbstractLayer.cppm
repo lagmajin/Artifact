@@ -599,6 +599,7 @@ QJsonObject ArtifactAbstractLayer::toJson() const
     obj["isGuide"] = impl_->isGuide_;
     obj["isSolo"] = impl_->isSolo_;
     obj["isShy"] = impl_->isShy_;
+    obj["opacity"] = static_cast<double>(impl_->opacity_);
 
     // Transform
     QJsonObject trans;
@@ -724,6 +725,7 @@ void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject& obj)
     if (obj.contains("isGuide")) setGuide(obj["isGuide"].toBool());
     if (obj.contains("isSolo")) setSolo(obj["isSolo"].toBool());
     if (obj.contains("isShy")) setShy(obj["isShy"].toBool());
+    if (obj.contains("opacity")) setOpacity(static_cast<float>(obj["opacity"].toDouble(1.0)));
     if (obj.contains("blendMode")) {
         const int mode = obj["blendMode"].toInt(static_cast<int>(LAYER_BLEND_TYPE::BLEND_NORMAL));
         setBlendMode(static_cast<LAYER_BLEND_TYPE>(mode));
@@ -848,6 +850,12 @@ void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject& obj)
   layerGroup.addProperty(makeProp(QStringLiteral("layer.solo"), PropertyType::Boolean, isSolo(), -160));
   layerGroup.addProperty(makeProp(QStringLiteral("layer.shy"), PropertyType::Boolean, isShy(), -150));
 
+  auto opacityProp = makeProp(QStringLiteral("layer.opacity"), PropertyType::Float, static_cast<double>(opacity()), -140);
+  opacityProp->setHardRange(0.0, 1.0);
+  opacityProp->setSoftRange(0.0, 1.0);
+  opacityProp->setStep(0.01);
+  layerGroup.addProperty(opacityProp);
+
   auto inPointProp = makeProp(QStringLiteral("time.inPoint"), PropertyType::Integer, static_cast<qint64>(inPoint().framePosition()), -90);
   inPointProp->setUnit(QStringLiteral("frames"));
   inPointProp->setTooltip(QStringLiteral("Layer in-point on timeline"));
@@ -894,6 +902,10 @@ void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject& obj)
   }
   if (propertyPath == QStringLiteral("layer.shy")) {
    setShy(value.toBool());
+   return true;
+  }
+  if (propertyPath == QStringLiteral("layer.opacity")) {
+   setOpacity(static_cast<float>(value.toDouble()));
    return true;
   }
   if (propertyPath == QStringLiteral("time.inPoint")) {
@@ -1031,7 +1043,7 @@ void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject& obj)
     if (impl_->opacity_ != clamped) {
      impl_->opacity_ = clamped;
      notifyLayerMutation(this, LayerDirtyFlag::Transform, LayerDirtyReason::PropertyChanged);
+     Q_EMIT changed();
     }
    }
-
   };

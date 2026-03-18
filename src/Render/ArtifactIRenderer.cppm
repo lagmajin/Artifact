@@ -114,8 +114,8 @@ namespace Artifact
   }
 
   // Draw (all delegate to primitiveRenderer_)
-  void drawRectLocal(float x, float y, float w, float h, const FloatColor& color)
-  { primitiveRenderer_.drawRectLocal(x, y, w, h, color); }
+  void drawRectLocal(float x, float y, float w, float h, const FloatColor& color, float opacity)
+  { primitiveRenderer_.drawRectLocal(x, y, w, h, color, opacity); }
   void drawRectOutlineLocal(float x, float y, float w, float h, const FloatColor& color)
   { primitiveRenderer_.drawRectOutlineLocal(x, y, w, h, color); }
   void drawRectOutline(float x, float y, float w, float h, const FloatColor& color)
@@ -124,16 +124,18 @@ namespace Artifact
   { primitiveRenderer_.drawRectOutlineLocal(pos.x, pos.y, size.x, size.y, color); }
   void drawSolidLine(float2 start, float2 end, const FloatColor& color, float thickness)
   { primitiveRenderer_.drawThickLineLocal(start, end, thickness, color); }
-  void drawSolidRect(float2 pos, float2 size, const FloatColor& color)
-  { primitiveRenderer_.drawRectLocal(pos.x, pos.y, size.x, size.y, color); }
-  void drawSolidRect(float x, float y, float w, float h)
-  { primitiveRenderer_.drawSolidRect(x, y, w, h, {1.0f, 1.0f, 1.0f, 1.0f}); }
+  void drawSolidRect(float2 pos, float2 size, const FloatColor& color, float opacity)
+  { primitiveRenderer_.drawRectLocal(pos.x, pos.y, size.x, size.y, color, opacity); }
+  void drawSolidRect(float x, float y, float w, float h, const FloatColor& color, float opacity)
+  { primitiveRenderer_.drawRectLocal(x, y, w, h, color, opacity); }
+  void drawPoint(float x, float y, float size, const FloatColor& color)
+  { primitiveRenderer_.drawPoint(x, y, size, color); }
   void drawSprite(float x, float y, float w, float h)
   { primitiveRenderer_.drawSpriteLocal(x, y, w, h, QImage()); }
   void drawSprite(float2 pos, float2 size)
   { primitiveRenderer_.drawSpriteLocal(pos.x, pos.y, size.x, size.y, QImage()); }
-  void drawSpriteLocal(float x, float y, float w, float h, const QImage& image)
-  { primitiveRenderer_.drawSpriteLocal(x, y, w, h, image); }
+  void drawSpriteLocal(float x, float y, float w, float h, const QImage& image, float opacity)
+  { primitiveRenderer_.drawSpriteLocal(x, y, w, h, image, opacity); }
   void drawThickLineLocal(float2 p1, float2 p2, float thickness, const FloatColor& color)
   { primitiveRenderer_.drawThickLineLocal(p1, p2, thickness, color); }
   void drawDotLineLocal(float2 p1, float2 p2, float thickness, float spacing, const FloatColor& color)
@@ -514,7 +516,7 @@ namespace Artifact
  }
 
  void ArtifactIRenderer::setClearColor(const FloatColor& color) { impl_->setClearColor(color); }
- void ArtifactIRenderer::setViewportSize(float w, float h)      { impl_->setViewportSize(w, h); }
+ void ArtifactIRenderer::setViewportSize(float w, float h) { impl_->setViewportSize(w, h); }
  void ArtifactIRenderer::setCanvasSize(float w, float h)        { impl_->setCanvasSize(w, h); }
  void ArtifactIRenderer::setPan(float x, float y)               { impl_->setPan(x, y); }
  void ArtifactIRenderer::setZoom(float zoom)                    { impl_->setZoom(zoom); }
@@ -537,17 +539,22 @@ namespace Artifact
                                        const FloatColor& color, float thickness)
  { impl_->drawSolidLine(toDiligentFloat2(start), toDiligentFloat2(end), color, thickness); }
  void ArtifactIRenderer::drawSolidRect(float x, float y, float w, float h)
- { impl_->drawSolidRect(x, y, w, h); }
- void ArtifactIRenderer::drawSolidRect(Detail::float2 pos, Detail::float2 size, const FloatColor& color)
- { impl_->drawSolidRect(toDiligentFloat2(pos), toDiligentFloat2(size), color); }
+ { impl_->drawSolidRect(float2(x, y), float2(w, h), {1.0f, 1.0f, 1.0f, 1.0f}, 1.0f); }
+ void ArtifactIRenderer::drawSolidRect(float x, float y, float w, float h, const FloatColor& color, float opacity)
+ { impl_->drawSolidRect(float2(x, y), float2(w, h), color, opacity); }
+ void ArtifactIRenderer::drawSolidRect(Detail::float2 pos, Detail::float2 size, const FloatColor& color, float opacity)
+ { impl_->drawSolidRect(toDiligentFloat2(pos), toDiligentFloat2(size), color, opacity); }
+ void ArtifactIRenderer::drawPoint(float x, float y, float size, const FloatColor& color)
+ { impl_->drawPoint(x, y, size, color); }
+
  void ArtifactIRenderer::drawSprite(float x, float y, float w, float h)
  { impl_->drawSprite(x, y, w, h); }
  void ArtifactIRenderer::drawSprite(Detail::float2 pos, Detail::float2 size)
  { impl_->drawSprite(toDiligentFloat2(pos), toDiligentFloat2(size)); }
- void ArtifactIRenderer::drawSprite(float x, float y, float w, float h, const QImage& image)
- { impl_->drawSpriteLocal(x, y, w, h, image); }
- void ArtifactIRenderer::drawRectLocal(float x, float y, float w, float h, const FloatColor& color)
- { impl_->drawRectLocal(x, y, w, h, color); }
+ void ArtifactIRenderer::drawSprite(float x, float y, float w, float h, const QImage& image, float opacity)
+ { impl_->drawSpriteLocal(x, y, w, h, image, opacity); }
+ void ArtifactIRenderer::drawRectLocal(float x, float y, float w, float h, const FloatColor& color, float opacity)
+ { impl_->drawRectLocal(x, y, w, h, color, opacity); }
  void ArtifactIRenderer::drawRectOutlineLocal(float x, float y, float w, float h, const FloatColor& color)
  { impl_->drawRectOutlineLocal(x, y, w, h, color); }
  void ArtifactIRenderer::drawThickLineLocal(Detail::float2 p1, Detail::float2 p2,

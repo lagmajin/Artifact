@@ -1,6 +1,7 @@
 ﻿module;
 #include <QImage>
 #include <QPainter>
+#include <QPainterPath>
 #include <QFont>
 #include <QFontMetrics>
 #include <QColor>
@@ -141,6 +142,89 @@ FloatRGBA ArtifactTextLayer::textColor() const
     return impl_->textStyle_.fillColor;
 }
 
+void ArtifactTextLayer::setStrokeEnabled(bool enabled)
+{
+    impl_->textStyle_.strokeEnabled = enabled;
+    updateImage();
+}
+
+bool ArtifactTextLayer::isStrokeEnabled() const
+{
+    return impl_->textStyle_.strokeEnabled;
+}
+
+void ArtifactTextLayer::setStrokeColor(const FloatRGBA& color)
+{
+    impl_->textStyle_.strokeColor = color;
+    updateImage();
+}
+
+FloatRGBA ArtifactTextLayer::strokeColor() const
+{
+    return impl_->textStyle_.strokeColor;
+}
+
+void ArtifactTextLayer::setStrokeWidth(float width)
+{
+    impl_->textStyle_.strokeWidth = width;
+    updateImage();
+}
+
+float ArtifactTextLayer::strokeWidth() const
+{
+    return impl_->textStyle_.strokeWidth;
+}
+
+void ArtifactTextLayer::setShadowEnabled(bool enabled)
+{
+    impl_->textStyle_.shadowEnabled = enabled;
+    updateImage();
+}
+
+bool ArtifactTextLayer::isShadowEnabled() const
+{
+    return impl_->textStyle_.shadowEnabled;
+}
+
+void ArtifactTextLayer::setShadowColor(const FloatRGBA& color)
+{
+    impl_->textStyle_.shadowColor = color;
+    updateImage();
+}
+
+FloatRGBA ArtifactTextLayer::shadowColor() const
+{
+    return impl_->textStyle_.shadowColor;
+}
+
+void ArtifactTextLayer::setShadowOffset(float x, float y)
+{
+    impl_->textStyle_.shadowOffsetX = x;
+    impl_->textStyle_.shadowOffsetY = y;
+    updateImage();
+}
+
+float ArtifactTextLayer::shadowOffsetX() const
+{
+    return impl_->textStyle_.shadowOffsetX;
+}
+
+float ArtifactTextLayer::shadowOffsetY() const
+{
+    return impl_->textStyle_.shadowOffsetY;
+}
+
+void ArtifactTextLayer::setShadowBlur(float blur)
+{
+    impl_->textStyle_.shadowBlur = blur;
+    updateImage();
+}
+
+float ArtifactTextLayer::shadowBlur() const
+{
+    return impl_->textStyle_.shadowBlur;
+}
+
 void ArtifactTextLayer::setTracking(float tracking)
 {
     impl_->textStyle_.tracking = tracking;
@@ -259,6 +343,32 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactTextLayer::getLayerPropertyGrou
     colorProp->setDisplayPriority(-90);
     textGroup.addProperty(colorProp);
 
+    // Stroke
+    textGroup.addProperty(makeProp(QStringLiteral("text.strokeEnabled"), ArtifactCore::PropertyType::Boolean, isStrokeEnabled(), -85));
+    const auto sc = strokeColor();
+    auto strokeColorProp = std::make_shared<ArtifactCore::AbstractProperty>();
+    strokeColorProp->setName(QStringLiteral("text.strokeColor"));
+    strokeColorProp->setType(ArtifactCore::PropertyType::Color);
+    strokeColorProp->setColorValue(QColor::fromRgbF(sc.r(), sc.g(), sc.b(), sc.a()));
+    strokeColorProp->setValue(strokeColorProp->getColorValue());
+    strokeColorProp->setDisplayPriority(-84);
+    textGroup.addProperty(strokeColorProp);
+    textGroup.addProperty(makeProp(QStringLiteral("text.strokeWidth"), ArtifactCore::PropertyType::Float, strokeWidth(), -83));
+
+    // Shadow
+    textGroup.addProperty(makeProp(QStringLiteral("text.shadowEnabled"), ArtifactCore::PropertyType::Boolean, isShadowEnabled(), -80));
+    const auto shc = shadowColor();
+    auto shadowColorProp = std::make_shared<ArtifactCore::AbstractProperty>();
+    shadowColorProp->setName(QStringLiteral("text.shadowColor"));
+    shadowColorProp->setType(ArtifactCore::PropertyType::Color);
+    shadowColorProp->setColorValue(QColor::fromRgbF(shc.r(), shc.g(), shc.b(), shc.a()));
+    shadowColorProp->setValue(shadowColorProp->getColorValue());
+    shadowColorProp->setDisplayPriority(-79);
+    textGroup.addProperty(shadowColorProp);
+    textGroup.addProperty(makeProp(QStringLiteral("text.shadowOffsetX"), ArtifactCore::PropertyType::Float, shadowOffsetX(), -78));
+    textGroup.addProperty(makeProp(QStringLiteral("text.shadowOffsetY"), ArtifactCore::PropertyType::Float, shadowOffsetY(), -77));
+    textGroup.addProperty(makeProp(QStringLiteral("text.shadowBlur"), ArtifactCore::PropertyType::Float, shadowBlur(), -76));
+
     groups.push_back(textGroup);
     return groups;
 }
@@ -316,6 +426,48 @@ bool ArtifactTextLayer::setLayerPropertyValue(const QString& propertyPath, const
         Q_EMIT changed();
         return true;
     }
+    if (propertyPath == QStringLiteral("text.strokeEnabled")) {
+        setStrokeEnabled(value.toBool());
+        Q_EMIT changed();
+        return true;
+    }
+    if (propertyPath == QStringLiteral("text.strokeColor")) {
+        const auto c = value.value<QColor>();
+        setStrokeColor(FloatRGBA(c.redF(), c.greenF(), c.blueF(), c.alphaF()));
+        Q_EMIT changed();
+        return true;
+    }
+    if (propertyPath == QStringLiteral("text.strokeWidth")) {
+        setStrokeWidth(static_cast<float>(value.toDouble()));
+        Q_EMIT changed();
+        return true;
+    }
+    if (propertyPath == QStringLiteral("text.shadowEnabled")) {
+        setShadowEnabled(value.toBool());
+        Q_EMIT changed();
+        return true;
+    }
+    if (propertyPath == QStringLiteral("text.shadowColor")) {
+        const auto c = value.value<QColor>();
+        setShadowColor(FloatRGBA(c.redF(), c.greenF(), c.blueF(), c.alphaF()));
+        Q_EMIT changed();
+        return true;
+    }
+    if (propertyPath == QStringLiteral("text.shadowOffsetX")) {
+        setShadowOffset(static_cast<float>(value.toDouble()), shadowOffsetY());
+        Q_EMIT changed();
+        return true;
+    }
+    if (propertyPath == QStringLiteral("text.shadowOffsetY")) {
+        setShadowOffset(shadowOffsetX(), static_cast<float>(value.toDouble()));
+        Q_EMIT changed();
+        return true;
+    }
+    if (propertyPath == QStringLiteral("text.shadowBlur")) {
+        setShadowBlur(static_cast<float>(value.toDouble()));
+        Q_EMIT changed();
+        return true;
+    }
     return ArtifactAbstractLayer::setLayerPropertyValue(propertyPath, value);
 }
 
@@ -329,10 +481,11 @@ void ArtifactTextLayer::updateImage() {
     }
 
     QFont font = FontManager::makeFont(impl_->textStyle_);
-
     QFontMetricsF metrics(font);
     const QStringList lines = displayText.split('\n');
-    qreal maxWidth = 1.0;
+    
+    // Calculate content size
+    qreal maxWidth = 0.0;
     for (const QString& line : lines) {
         maxWidth = std::max(maxWidth, metrics.horizontalAdvance(line.isEmpty() ? QStringLiteral(" ") : line));
     }
@@ -343,45 +496,102 @@ void ArtifactTextLayer::updateImage() {
     const qreal contentHeight = std::max<qreal>(
         lineAdvance,
         lineCount * lineAdvance + std::max<qreal>(0.0, (lineCount - 1.0) * paragraphSpacing));
-    const int width = std::max(1, static_cast<int>(std::ceil(maxWidth + 24.0)));
-    const int height = std::max(1, static_cast<int>(std::ceil(contentHeight + 24.0)));
+
+    // Padding for stroke and shadow blur
+    const qreal margin = 24.0 + (impl_->textStyle_.strokeEnabled ? impl_->textStyle_.strokeWidth : 0.0) 
+                              + (impl_->textStyle_.shadowEnabled ? impl_->textStyle_.shadowBlur * 2.0 : 0.0);
+    
+    const int width = std::max(1, static_cast<int>(std::ceil(maxWidth + margin * 2.0)));
+    const int height = std::max(1, static_cast<int>(std::ceil(contentHeight + margin * 2.0)));
 
     impl_->renderedImage_ = QImage(width, height, QImage::Format_ARGB32_Premultiplied);
     impl_->renderedImage_.fill(Qt::transparent);
 
     QPainter painter(&impl_->renderedImage_);
-    painter.setRenderHint(QPainter::TextAntialiasing);
     painter.setRenderHint(QPainter::Antialiasing);
-    painter.setFont(font);
-    painter.setPen(QColor::fromRgbF(
+    painter.setRenderHint(QPainter::TextAntialiasing);
+
+    // Helper to draw the text path
+    auto drawTextPath = [&](QPainter& p, const QColor& fill, bool drawStroke, const QColor& stroke, qreal sw) {
+        qreal currentY = margin + metrics.ascent();
+        for (const QString& line : lines) {
+            const QString actualLine = line.isEmpty() ? QStringLiteral(" ") : line;
+            const qreal lineWidth = metrics.horizontalAdvance(actualLine);
+            qreal currentX = margin;
+            
+            switch (impl_->paragraphStyle_.horizontalAlignment) {
+            case TextHorizontalAlignment::Center:
+                currentX = (static_cast<qreal>(width) - lineWidth) * 0.5;
+                break;
+            case TextHorizontalAlignment::Right:
+                currentX = static_cast<qreal>(width) - lineWidth - margin;
+                break;
+            default:
+                break;
+            }
+
+            QPainterPath path;
+            path.addText(QPointF(currentX, currentY), font, actualLine);
+
+            if (drawStroke && sw > 0.0) {
+                QPen pen(stroke, sw, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
+                p.strokePath(path, pen);
+            }
+            
+            p.fillPath(path, fill);
+            currentY += lineAdvance + paragraphSpacing;
+        }
+    };
+
+    // 1. Draw Shadow
+    if (impl_->textStyle_.shadowEnabled) {
+        QImage shadowImg(width, height, QImage::Format_ARGB32_Premultiplied);
+        shadowImg.fill(Qt::transparent);
+        QPainter shadowPainter(&shadowImg);
+        shadowPainter.setRenderHint(QPainter::Antialiasing);
+        
+        QColor shColor = QColor::fromRgbF(
+            impl_->textStyle_.shadowColor.r(),
+            impl_->textStyle_.shadowColor.g(),
+            impl_->textStyle_.shadowColor.b(),
+            impl_->textStyle_.shadowColor.a());
+            
+        drawTextPath(shadowPainter, shColor, false, Qt::black, 0.0);
+        shadowPainter.end();
+
+        // High quality blur using OpenCV
+        if (impl_->textStyle_.shadowBlur > 0.1f) {
+            cv::Mat mat(shadowImg.height(), shadowImg.width(), CV_8UC4, const_cast<uchar*>(shadowImg.bits()), shadowImg.bytesPerLine());
+            // OpenCV uses BGRA by default for CV_8UC4 from QImage::Format_ARGB32
+            int ksize = static_cast<int>(impl_->textStyle_.shadowBlur * 3.0f);
+            if (ksize % 2 == 0) ksize++;
+            if (ksize >= 3) {
+                cv::GaussianBlur(mat, mat, cv::Size(ksize, ksize), impl_->textStyle_.shadowBlur);
+            }
+        }
+
+        painter.save();
+        painter.translate(impl_->textStyle_.shadowOffsetX, impl_->textStyle_.shadowOffsetY);
+        painter.drawImage(0, 0, shadowImg);
+        painter.restore();
+    }
+
+    // 2. Draw Main Text (Fill + Stroke)
+    QColor fillCol = QColor::fromRgbF(
         impl_->textStyle_.fillColor.r(),
         impl_->textStyle_.fillColor.g(),
         impl_->textStyle_.fillColor.b(),
-        impl_->textStyle_.fillColor.a()));
+        impl_->textStyle_.fillColor.a());
+        
+    QColor strokeCol = QColor::fromRgbF(
+        impl_->textStyle_.strokeColor.r(),
+        impl_->textStyle_.strokeColor.g(),
+        impl_->textStyle_.strokeColor.b(),
+        impl_->textStyle_.strokeColor.a());
 
-    qreal y = 12.0 + metrics.ascent();
-    for (const QString& line : lines) {
-        const QString actualLine = line.isEmpty() ? QStringLiteral(" ") : line;
-        const qreal lineWidth = metrics.horizontalAdvance(actualLine);
-        qreal x = 12.0;
-        switch (impl_->paragraphStyle_.horizontalAlignment) {
-        case TextHorizontalAlignment::Center:
-            x = std::max<qreal>(12.0, (static_cast<qreal>(width) - lineWidth) * 0.5);
-            break;
-        case TextHorizontalAlignment::Right:
-            x = std::max<qreal>(12.0, static_cast<qreal>(width) - lineWidth - 12.0);
-            break;
-        case TextHorizontalAlignment::Justify:
-        case TextHorizontalAlignment::Left:
-        default:
-            x = 12.0;
-            break;
-        }
-        painter.drawText(QPointF(x, y), actualLine);
-        y += lineAdvance + paragraphSpacing;
-    }
+    drawTextPath(painter, fillCol, impl_->textStyle_.strokeEnabled, strokeCol, impl_->textStyle_.strokeWidth);
+
     painter.end();
-
     setSourceSize(Size_2D(width, height));
 }
 

@@ -12,6 +12,8 @@ import Artifact.Layer.Abstract;
 import Artifact.Widgets.TransformGizmo;
 import Utils.Id;
 import Artifact.Service.Project;
+import Artifact.Service.Playback; // 追加
+import Color.Float;
 
 namespace Artifact {
 
@@ -25,6 +27,11 @@ public:
  QTimer* renderTimer_ = nullptr;
  bool initialized_ = false;
  bool running_ = false;
+
+ LayerID selectedLayerId_;
+ bool showGrid_ = false;
+ bool showGuides_ = false;
+ bool showSafeMargins_ = false;
 };
 
 CompositionRenderController::CompositionRenderController(QObject* parent)
@@ -42,6 +49,7 @@ CompositionRenderController::CompositionRenderController(QObject* parent)
    } else {
     impl_->gizmo_->setLayer(nullptr);
    }
+   renderOneFrame();
   });
  }
 }
@@ -61,6 +69,7 @@ void CompositionRenderController::initialize(QWidget* hostWidget)
  impl_->renderer_ = std::make_unique<ArtifactIRenderer>();
  impl_->renderer_->initialize(hostWidget);
  impl_->renderer_->setViewportSize((float)hostWidget->width(), (float)hostWidget->height());
+ 
  const auto comp = impl_->previewPipeline_.composition();
  if (comp) {
   auto size = comp->settings().compositionSize();
@@ -71,6 +80,13 @@ void CompositionRenderController::initialize(QWidget* hostWidget)
  impl_->renderTimer_ = new QTimer(this);
  impl_->renderTimer_->setTimerType(Qt::PreciseTimer);
  connect(impl_->renderTimer_, &QTimer::timeout, this, &CompositionRenderController::renderOneFrame);
+
+ // PlaybackService のフレーム変更に合わせて再描画
+ if (auto* playback = ArtifactPlaybackService::instance()) {
+  connect(playback, &ArtifactPlaybackService::frameChanged, this, [this]() {
+   renderOneFrame();
+  });
+ }
 
  impl_->initialized_ = true;
 }
@@ -149,6 +165,18 @@ void CompositionRenderController::setComposition(ArtifactCompositionPtr composit
   auto size = composition->settings().compositionSize();
   impl_->renderer_->setCanvasSize((float)size.width(), (float)size.height());
   impl_->renderer_->fitToViewport();
+  
+  // 各レイヤーの変更を監視
+  for (auto& layer : composition->allLayer()) {
+   if (layer) {
+    connect(layer.get(), &ArtifactAbstractLayer::changed, this, [this]() {
+     renderOneFrame();
+    });
+   }
+  }
+
+  // コンポジションがセットされた瞬間に1フレーム描画
+  renderOneFrame();
  }
 }
 
@@ -159,67 +187,73 @@ ArtifactCompositionPtr CompositionRenderController::composition() const
 
 void CompositionRenderController::setSelectedLayerId(const LayerID& id)
 {
- impl_->previewPipeline_.setSelectedLayerId(id);
+ impl_->selectedLayerId_ = id;
 }
 
 void CompositionRenderController::setClearColor(const FloatColor& color)
 {
- if (!impl_->renderer_) {
-  return;
+ if (impl_->renderer_) {
+  impl_->renderer_->setClearColor(color);
  }
- impl_->renderer_->setClearColor(color);
 }
+
+void CompositionRenderController::setShowGrid(bool show) { impl_->showGrid_ = show; renderOneFrame(); }
+bool CompositionRenderController::isShowGrid() const { return impl_->showGrid_; }
+void CompositionRenderController::setShowGuides(bool show) { impl_->showGuides_ = show; renderOneFrame(); }
+bool CompositionRenderController::isShowGuides() const { return impl_->showGuides_; }
+void CompositionRenderController::setShowSafeMargins(bool show) { impl_->showSafeMargins_ = show; renderOneFrame(); }
+bool CompositionRenderController::isShowSafeMargins() const { return impl_->showSafeMargins_; }
 
 void CompositionRenderController::resetView()
 {
- if (!impl_->renderer_) {
-  return;
+ if (impl_->renderer_) {
+  impl_->renderer_->resetView();
+  renderOneFrame();
  }
- impl_->renderer_->resetView();
 }
 
 void CompositionRenderController::zoomInAt(const QPointF& viewportPos)
 {
- if (!impl_->renderer_) {
-  return;
+ if (impl_->renderer_) {
+  impl_->renderer_->zoomAroundViewportPoint({ (float)viewportPos.x(), (float)viewportPos.y() }, -1.0f);
+  renderOneFrame();
  }
- impl_->renderer_->zoomAroundViewportPoint({(float)viewportPos.x(), (float)viewportPos.y()}, 1.1f);
 }
 
 void CompositionRenderController::zoomOutAt(const QPointF& viewportPos)
 {
- if (!impl_->renderer_) {
-  return;
+ if (impl_->renderer_) {
+  impl_->renderer_->zoomAroundViewportPoint({ (float)viewportPos.x(), (float)viewportPos.y() }, -1.0f);
+  renderOneFrame();
  }
- impl_->renderer_->zoomAroundViewportPoint({(float)viewportPos.x(), (float)viewportPos.y()}, 0.909f);
 }
 
 void CompositionRenderController::zoomFit()
 {
- if (!impl_->renderer_) {
-  return;
+ if (impl_->renderer_) {
+  impl_->renderer_->fitToViewport();
+  renderOneFrame();
  }
- impl_->renderer_->fitToViewport();
 }
 
 void CompositionRenderController::zoom100()
 {
- if (!impl_->renderer_) {
-  return;
+ if (impl_->renderer_) {
+  impl_->renderer_->setZoom(1.0f);
+  renderOneFrame();
  }
- impl_->renderer_->setZoom(1.0f);
 }
 
 void CompositionRenderController::handleMousePress(const QPointF& viewportPos)
 {
- if (impl_->gizmo_ && impl_->renderer_) {
+ if (impl_->gizmo_) {
   impl_->gizmo_->handleMousePress(viewportPos, impl_->renderer_.get());
  }
 }
 
 void CompositionRenderController::handleMouseMove(const QPointF& viewportPos)
 {
- if (impl_->gizmo_ && impl_->renderer_ && impl_->gizmo_->isDragging()) {
+ if (impl_->gizmo_) {
   impl_->gizmo_->handleMouseMove(viewportPos, impl_->renderer_.get());
  }
 }
@@ -246,12 +280,59 @@ void CompositionRenderController::renderOneFrame()
  if (comp) {
   auto size = comp->settings().compositionSize();
   impl_->renderer_->setCanvasSize((float)size.width(), (float)size.height());
-  impl_->previewPipeline_.setCurrentFrame(comp->framePosition().framePosition());
- }
+  const float cw = static_cast<float>(size.width());
+  const float ch = static_cast<float>(size.height());
 
- impl_->previewPipeline_.render(impl_->renderer_.get());
+  // コンポジションの背景色でクリア
+  const FloatColor bgColor = comp->backgroundColor();
+  impl_->renderer_->setClearColor(bgColor);
+  impl_->renderer_->clear();
+
+  // 1. 背景の描画 (チェッカーボード)
+  // 1. 背景の描画 (チェッカーボードは透過部分の確認用に残す場合は背景色の上に描く)
+  impl_->renderer_->drawCheckerboard(0, 0, cw, ch, 16.0f,
+                                     { 0.15f, 0.15f, 0.15f, 1.0f },
+                                     { 0.20f, 0.20f, 0.20f, 1.0f });
+
+  // 2. グリッド描画
+  if (impl_->showGrid_) {
+      impl_->renderer_->drawGrid(0, 0, cw, ch, 100.0f, 1.0f, { 0.3f, 0.3f, 0.3f, 0.5f });
+  }
+
+  // 3. 全レイヤーの描画 (奥から手前へ)
+  auto layers = comp->allLayer();
+  for (auto it = layers.rbegin(); it != layers.rend(); ++it) {
+   auto& layer = *it;
+   if (layer && layer->isVisible()) {
+    layer->draw(impl_->renderer_.get());
+   }
+  }
+
+  // 4. セーフマージンの描画
+  if (impl_->showSafeMargins_) {
+      const float actionSafeW = cw * 0.9f;
+      const float actionSafeH = ch * 0.9f;
+      const float titleSafeW = cw * 0.8f;
+      const float titleSafeH = ch * 0.8f;
+      const FloatColor marginColor = { 0.5f, 0.5f, 0.5f, 0.6f };
+
+      // Action Safe (90%)
+      impl_->renderer_->drawRectOutline((cw - actionSafeW) * 0.5f, (ch - actionSafeH) * 0.5f,
+                                        actionSafeW, actionSafeH, marginColor);
+      // Title Safe (80%)
+      impl_->renderer_->drawRectOutline((cw - titleSafeW) * 0.5f, (ch - titleSafeH) * 0.5f,
+                                        titleSafeW, titleSafeH, marginColor);
+      
+      // 中央の十字
+      const float crossSize = 20.0f;
+      impl_->renderer_->drawSolidLine({cw*0.5f - crossSize, ch*0.5f}, {cw*0.5f + crossSize, ch*0.5f}, marginColor, 1.0f);
+      impl_->renderer_->drawSolidLine({cw*0.5f, ch*0.5f - crossSize}, {cw*0.5f, ch*0.5f + crossSize}, marginColor, 1.0f);
+  }
+ } else {
+  impl_->renderer_->clear();
+ }
  
- // Draw Gizmo on top
+ // 最前面にギズモを描画
  if (impl_->gizmo_) {
   impl_->gizmo_->draw(impl_->renderer_.get());
  }

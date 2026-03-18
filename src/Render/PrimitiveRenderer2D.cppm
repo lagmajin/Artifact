@@ -310,15 +310,16 @@ void PrimitiveRenderer2D::clear(const FloatColor& color)
 // Draw primitives
 // -------------------------------------------------------------------------
 
-void PrimitiveRenderer2D::drawRectLocal(float x, float y, float w, float h, const FloatColor& color)
+void PrimitiveRenderer2D::drawRectLocal(float x, float y, float w, float h, const FloatColor& color, float opacity)
 {
     if (!impl_->hasRenderTarget() || !impl_->m_draw_solid_rect_pso_and_srb.pPSO) return;
 
+    float alpha = color.a() * opacity;
     RectVertex vertices[4] = {
-        {{0,0},   {color.r(), color.g(), color.b(), 1}},
-        {{w, 0},  {color.r(), color.g(), color.b(), 1}},
-        {{0,  h}, {color.r(), color.g(), color.b(), 1}},
-        {{w,  h}, {color.r(), color.g(), color.b(), 1}},
+        {{0,0},   {color.r(), color.g(), color.b(), alpha}},
+        {{w, 0},  {color.r(), color.g(), color.b(), alpha}},
+        {{0,  h}, {color.r(), color.g(), color.b(), alpha}},
+        {{w,  h}, {color.r(), color.g(), color.b(), alpha}},
     };
 
     auto* pRTV = impl_->getCurrentRTV();
@@ -332,7 +333,7 @@ void PrimitiveRenderer2D::drawRectLocal(float x, float y, float w, float h, cons
     }
 
     {
-        CBSolidColor cb = { {color.r(), color.g(), color.b(), 1.0f} };
+        CBSolidColor cb = { {color.r(), color.g(), color.b(), alpha} };
         void* pData = nullptr;
         impl_->pCtx_->MapBuffer(impl_->m_draw_solid_rect_cb, MAP_WRITE, MAP_FLAG_DISCARD, pData);
         std::memcpy(pData, &cb, sizeof(cb));
@@ -369,9 +370,9 @@ void PrimitiveRenderer2D::drawRectLocal(float x, float y, float w, float h, cons
     impl_->pCtx_->DrawIndexed(drawAttrs);
 }
 
-void PrimitiveRenderer2D::drawSolidRect(float x, float y, float w, float h, const FloatColor& color)
+void PrimitiveRenderer2D::drawSolidRect(float x, float y, float w, float h, const FloatColor& color, float opacity)
 {
-    drawRectLocal(x, y, w, h, color);
+    this->drawRectLocal(x, y, w, h, color, opacity);
 }
 
 void PrimitiveRenderer2D::drawLineLocal(float2 p1, float2 p2, const FloatColor& c1, const FloatColor& c2)
@@ -628,8 +629,14 @@ void PrimitiveRenderer2D::drawSolidTriangleLocal(float2 p0, float2 p1, float2 p2
     impl_->pCtx_->Draw(drawAttrs);
 }
 
-void PrimitiveRenderer2D::drawCheckerboard(float x, float y, float w, float h,
-    float tileSize, const FloatColor& c1, const FloatColor& c2)
+void PrimitiveRenderer2D::drawPoint(float x, float y, float size, const FloatColor& color)
+{
+    // 中心座標(x,y)からサイズ分だけオフセットさせて矩形描画を呼ぶ
+    const float half = size * 0.5f;
+    this->drawRectLocal(x - half, y - half, size, size, color, 1.0f);
+}
+
+void PrimitiveRenderer2D::drawCheckerboard(float x, float y, float w, float h, float tileSize, const FloatColor& c1, const FloatColor& c2)
 {
     if (!impl_->hasRenderTarget() || !impl_->m_draw_checkerboard_pso_and_srb.pPSO) return;
 

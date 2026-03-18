@@ -55,6 +55,8 @@ import Artifact.Effect.Abstract;
 import Utils.String.UniString;
 import Artifact.Widgets.ExpressionCopilotWidget;
 import Artifact.Widgets.PropertyEditor;
+import Artifact.Service.Playback;
+import Time.Rational;
 
 namespace Artifact {
 
@@ -123,9 +125,12 @@ bool propertyMatchesFilter(const ArtifactCore::AbstractProperty& property, const
 
 ArtifactPropertyEditorRowWidget* createPropertyRow(
     QWidget* parent,
-    const ArtifactCore::AbstractProperty& property,
+    const std::shared_ptr<ArtifactCore::AbstractProperty>& propertyPtr,
     const std::function<void(const QString&, const QVariant&)>& applyValue)
 {
+    if (!propertyPtr) return nullptr;
+    const auto& property = *propertyPtr;
+
     auto* editor = createPropertyEditorWidget(property, parent);
     if (!editor) {
         return nullptr;
@@ -134,6 +139,7 @@ ArtifactPropertyEditorRowWidget* createPropertyRow(
     const auto meta = property.metadata();
     const QString labelText = meta.displayLabel.isEmpty() ? humanizePropertyLabel(property.getName()) : meta.displayLabel;
     auto* row = new ArtifactPropertyEditorRowWidget(labelText, editor, property.getName(), parent);
+    
     editor->setCommitHandler([applyValue, propertyName = property.getName()](const QVariant& value) {
         applyValue(propertyName, value);
     });
@@ -151,7 +157,61 @@ ArtifactPropertyEditorRowWidget* createPropertyRow(
         });
     }
 
-    row->setShowKeyframeButton(property.isAnimatable());
+    const bool animatable = property.isAnimatable();
+    row->setShowKeyframeButton(animatable);
+    if (animatable) {
+        auto* playback = ArtifactPlaybackService::instance();
+        const auto frameRate = playback ? playback->frameRate() : FrameRate(30.0f);
+        const int64_t fps_val = static_cast<int64_t>(std::round(frameRate.framerate()));
+        
+        // 現時点でのキーフレーム状態を反映
+        if (playback) {
+            const auto now = RationalTime(playback->currentFrame().framePosition(), fps_val);
+            row->setKeyframeChecked(property.hasKeyFrameAt(now));
+        }
+
+        // キーフレームトグル (◆ボタン)
+        row->setKeyframeHandler([propertyPtr, playback, row, fps_val](bool checked) {
+            if (!playback) return;
+            const auto nowPos = playback->currentFrame();
+            const auto nowTime = RationalTime(nowPos.framePosition(), fps_val);
+            
+            if (checked) {
+                propertyPtr->addKeyFrame(nowTime, propertyPtr->getValue());
+            } else {
+                propertyPtr->removeKeyFrame(nowTime);
+            }
+            // 状態を再反映
+            row->setKeyframeChecked(propertyPtr->hasKeyFrameAt(nowTime));
+        });
+
+        // ナビゲーション (◀ ▶ボタン)
+        row->setNavigationHandler([propertyPtr, playback, fps_val](int direction) {
+            if (!playback) return;
+            const auto kfs = propertyPtr->getKeyFrames();
+            if (kfs.empty()) return;
+
+            const auto nowTime = RationalTime(playback->currentFrame().framePosition(), fps_val);
+            if (direction > 0) {
+                // 次のキーフレームへ
+                for (const auto& kf : kfs) {
+                    if (kf.time > nowTime) {
+                        playback->goToFrame(FramePosition(static_cast<int>(kf.time.rescaledTo(fps_val))));
+                        break;
+                    }
+                }
+            } else {
+                // 前のキーフレームへ
+                for (auto it = kfs.rbegin(); it != kfs.rend(); ++it) {
+                    if (it->time < nowTime) {
+                        playback->goToFrame(FramePosition(static_cast<int>(it->time.rescaledTo(fps_val))));
+                        break;
+                    }
+                }
+            }
+        });
+    }
+
     row->setExpressionHandler([propertyName = property.getName()]() {
         auto* copilot = new ArtifactExpressionCopilotWidget();
         copilot->setWindowFlags(Qt::Window | Qt::WindowStaysOnTopHint | Qt::Tool);
@@ -176,7 +236,7 @@ void addRowsFromProperties(
         if (!ptr || !propertyMatchesFilter(*ptr, filterText)) {
             continue;
         }
-        if (auto* row = createPropertyRow(parent, *ptr, applyValue)) {
+        if (auto* row = createPropertyRow(parent, ptr, applyValue)) {
             layout->addWidget(row);
             if (addedAny) {
                 *addedAny = true;

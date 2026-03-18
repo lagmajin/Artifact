@@ -50,6 +50,7 @@ namespace Artifact {
   bool looping_ = false;
   float playbackSpeed_ = 1.0f;
   CompositionID id_;
+  FloatColor backgroundColor_ = { 0.1f, 0.1f, 0.1f, 1.0f };
   //PlaybackClock playbackClock_;  // 高精度再生クロック
   
   AppendLayerToCompositionResult appendLayerTop(ArtifactAbstractLayerPtr layer);
@@ -297,7 +298,13 @@ ArtifactAbstractLayerPtr ArtifactAbstractComposition::layerById(const LayerID& i
 
  void ArtifactAbstractComposition::setBackGroundColor(const FloatColor& color)
  {
+  impl_->backgroundColor_ = color;
+  Q_EMIT changed();
+ }
 
+ FloatColor ArtifactAbstractComposition::backgroundColor() const
+ {
+  return impl_->backgroundColor_;
  }
  
  void ArtifactAbstractComposition::setFramePosition(const FramePosition& position)

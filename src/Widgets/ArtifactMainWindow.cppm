@@ -73,9 +73,9 @@ void applyDarkNativeTitleBar(QWidget* widget)
   setWindowAttribute(hwnd, attribute, &darkModeEnabled, sizeof(darkModeEnabled));
  }
 
- const COLORREF captionColor = RGB(36, 43, 52);
- const COLORREF textColor = RGB(236, 242, 248);
- const COLORREF borderColor = RGB(74, 96, 122);
+ const COLORREF captionColor = RGB(40, 40, 40);
+ const COLORREF textColor = RGB(187, 187, 187);
+ const COLORREF borderColor = RGB(24, 24, 24);
  setWindowAttribute(hwnd, 35u, &captionColor, sizeof(captionColor));
  setWindowAttribute(hwnd, 36u, &textColor, sizeof(textColor));
  setWindowAttribute(hwnd, 34u, &borderColor, sizeof(borderColor));
@@ -241,19 +241,19 @@ ArtifactMainWindow::ArtifactMainWindow(QWidget* parent)
   prepareFloatingDockContainer(floatingWidget, this);
  });
  impl_->dockStyleManager->setGlowEnabled(true);
- impl_->dockStyleManager->setGlowColor(QColor(232, 120, 41));
+ impl_->dockStyleManager->setGlowColor(QColor(212, 125, 50));
  impl_->dockStyleManager->setGlowWidth(2);
  impl_->dockStyleManager->setGlowIntensity(0.72f);
 impl_->dockManager->setStyleSheet(R"(
 ads--CDockAreaWidget {
- background: #252525;
+ background: #282828;
 }
 ads--CDockAreaTitleBar {
- background: #2e2e2e;
- border-bottom: 1px solid #1a1a1a;
+ background: #333333;
+ border-bottom: 1px solid #181818;
 }
 ads--CDockAreaTitleBar QLabel {
- color: #c8c8c8;
+ color: #BBBBBB;
  padding-left: 4px;
  font-weight: 600;
 }
@@ -261,19 +261,19 @@ ads--CDockAreaTitleBar QToolButton {
  background: transparent;
  border: 1px solid transparent;
  border-radius: 4px;
- color: #b0b0b0;
+ color: #BBBBBB;
  min-width: 18px;
  min-height: 18px;
  padding: 1px;
 }
 ads--CDockAreaTitleBar QToolButton:hover {
- background: #484848;
- border-color: #606060;
- color: #e8e8e8;
+ background: #404040;
+ border-color: #555555;
+ color: #FFFFFF;
 }
 ads--CDockAreaTitleBar QToolButton:pressed {
- background: #3a3a3a;
- border-color: #787878;
+ background: #303030;
+ border-color: #666666;
 }
 ads--CDockAreaTitleBar QToolButton#tabsMenuButton,
 ads--CDockAreaTitleBar QToolButton#undockButton,
@@ -288,8 +288,8 @@ ads--CDockAreaTitleBar QToolButton#closeButton {
 }
 ads--CDockAreaTitleBar QToolButton#tabsMenuButton:hover,
 ads--CDockAreaTitleBar QToolButton#undockButton:hover {
- background: #525252;
- border-color: #707070;
+ background: #484848;
+ border-color: #606060;
  color: #ffffff;
 }
 ads--CDockAreaTitleBar QToolButton#closeButton:hover {
@@ -300,112 +300,112 @@ ads--CDockAreaTitleBar QToolButton#closeButton:hover {
 ads--CDockAreaTitleBar QToolButton#tabsMenuButton:pressed,
 ads--CDockAreaTitleBar QToolButton#undockButton:pressed,
 ads--CDockAreaTitleBar QToolButton#closeButton:pressed {
- background: #404040;
- border-color: #888888;
+ background: #383838;
+ border-color: #777777;
 }
 ads--CFloatingDockContainer {
  background: #222222;
- border: 1px solid #4a4a4a;
+ border: 1px solid #181818;
 }
 ads--CFloatingDockContainer ads--CDockAreaWidget {
  background: #222222;
 }
 ads--CFloatingDockContainer ads--CDockAreaTitleBar {
- background: #363636;
- border-bottom: 1px solid #1a1a1a;
+ background: #333333;
+ border-bottom: 1px solid #181818;
 }
 ads--CFloatingDockContainer ads--CDockAreaTitleBar QLabel {
- color: #d4d4d4;
+ color: #BBBBBB;
 }
 ads--CDockWidgetTab {
- background: #2a2a2a;
- color: #989898;
- border: 1px solid #393939;
+ background: #222222;
+ color: #BBBBBB;
+ border: 1px solid #181818;
  border-bottom: none;
  border-top-left-radius: 4px;
  border-top-right-radius: 4px;
  padding: 5px 10px 5px 12px;
 }
 ads--CDockWidgetTab:hover {
- background: #353535;
- color: #d0d0d0;
- border-color: #525252;
+ background: #333333;
+ color: #FFFFFF;
+ border-color: #444444;
 }
 ads--CDockWidgetTab[activeTab="true"] {
- background: #2a2a2a;
- color: #989898;
- border-color: #393939;
+ background: #222222;
+ color: #BBBBBB;
+ border-color: #181818;
 }
 ads--CDockWidgetTab[artifactActiveTab="true"] {
- background: #383838;
- color: #f0f0f0;
- border-color: #e87829;
- border-top: 2px solid #e87829;
+ background: #282828;
+ color: #FFFFFF;
+ border-color: #D47D32;
+ border-top: 2px solid #D47D32;
  font-weight: 600;
 }
 ads--CDockWidgetTab QLabel,
 ads--CDockWidgetTab ads--CElidingLabel {
  background: transparent;
- color: #989898;
+ color: #BBBBBB;
  padding-left: 0px;
  padding-right: 0px;
 }
 ads--CDockWidgetTab[activeTab="true"] QLabel,
 ads--CDockWidgetTab[activeTab="true"] ads--CElidingLabel {
- color: #989898;
+ color: #BBBBBB;
 }
 ads--CDockWidgetTab[artifactActiveTab="true"] QLabel,
 ads--CDockWidgetTab[artifactActiveTab="true"] ads--CElidingLabel {
- color: #f0f0f0;
+ color: #FFFFFF;
  font-weight: 600;
 }
 ads--CDockWidgetTab[artifactFloatingTab="true"] {
- background: #2e2e2e;
- color: #a0a0a0;
- border-color: #484848;
+ background: #222222;
+ color: #BBBBBB;
+ border-color: #181818;
 }
 ads--CDockWidgetTab[artifactFloatingTab="true"] QLabel,
 ads--CDockWidgetTab[artifactFloatingTab="true"] ads--CElidingLabel {
- color: #a0a0a0;
+ color: #BBBBBB;
 }
 ads--CDockWidgetTab[artifactFloatingTab="true"]:hover {
- background: #3c3c3c;
- color: #e0e0e0;
- border-color: #686868;
+ background: #333333;
+ color: #FFFFFF;
+ border-color: #444444;
 }
 ads--CDockWidgetTab[artifactFloatingTab="true"]:hover QLabel,
 ads--CDockWidgetTab[artifactFloatingTab="true"]:hover ads--CElidingLabel {
- color: #e0e0e0;
+ color: #FFFFFF;
 }
 ads--CDockWidgetTab[artifactFloatingTab="true"][activeTab="true"] {
- background: #2e2e2e;
- color: #a0a0a0;
- border-color: #484848;
+ background: #222222;
+ color: #BBBBBB;
+ border-color: #181818;
 }
 ads--CDockWidgetTab[artifactFloatingTab="true"][activeTab="true"] QLabel,
 ads--CDockWidgetTab[artifactFloatingTab="true"][activeTab="true"] ads--CElidingLabel {
- color: #a0a0a0;
+ color: #BBBBBB;
 }
 ads--CDockWidgetTab[artifactFloatingTab="true"][artifactActiveTab="true"] {
- background: #404040;
- color: #ffffff;
- border-color: #e87829;
- border-top: 2px solid #e87829;
+ background: #282828;
+ color: #FFFFFF;
+ border-color: #D47D32;
+ border-top: 2px solid #D47D32;
 }
 ads--CDockWidgetTab[artifactFloatingTab="true"][artifactActiveTab="true"] QLabel,
 ads--CDockWidgetTab[artifactFloatingTab="true"][artifactActiveTab="true"] ads--CElidingLabel {
- color: #ffffff;
+ color: #FFFFFF;
 }
 ads--CDockWidget[artifactActiveDock="true"] {
- background: #262626;
- border: 2px solid #e87829;
+ background: #282828;
+ border: 2px solid #D47D32;
 }
 ads--CDockWidget[artifactActiveDock="true"] ads--CDockAreaTitleBar {
  background: #333333;
- border-bottom: 1px solid #e87829;
+ border-bottom: 1px solid #D47D32;
 }
 ads--CFloatingDockContainer ads--CDockWidget[artifactActiveDock="true"] {
- border: 1px solid #e87829;
+ border: 1px solid #D47D32;
  background: #222222;
 }
 ads--CDockWidgetTab QAbstractButton#tabCloseButton,
@@ -426,7 +426,7 @@ ads--CDockWidgetTab:hover QAbstractButton#tabCloseButton,
 ads--CDockWidgetTab:hover QPushButton#tabCloseButton,
 ads--CDockWidgetTab[artifactActiveTab="true"] QAbstractButton#tabCloseButton,
 ads--CDockWidgetTab[artifactActiveTab="true"] QPushButton#tabCloseButton {
- color: #c0c0c0;
+ color: #BBBBBB;
  min-width: 14px;
  max-width: 14px;
  margin-left: 4px;
@@ -543,6 +543,25 @@ void ArtifactMainWindow::addDockedWidgetTabbedWithId(const QString& title, const
  dock->toggleView(true);
  dock->setAsCurrentTab();
  dock->raise();
+ wireDockWidgetSignals(dock, this);
+ impl_->dockStyleManager->applyStyle();
+}
+
+void ArtifactMainWindow::addDockedWidgetFloating(const QString& title, const QString& dockId, QWidget* widget, const QRect& floatingGeometry)
+{
+ if (!impl_ || !impl_->dockManager || !widget) return;
+
+ auto* dock = new CDockWidget(title, this);
+ dock->setObjectName(dockId.isEmpty() ? title : dockId);
+ dock->setWidget(widget);
+
+ auto* container = impl_->dockManager->addDockWidgetFloating(dock);
+ if (container) {
+  container->setGeometry(floatingGeometry);
+ }
+
+ impl_->dockWidgets.push_back(dock);
+ dock->toggleView(true);
  wireDockWidgetSignals(dock, this);
  impl_->dockStyleManager->applyStyle();
 }
@@ -758,10 +777,9 @@ bool ArtifactMainWindow::eventFilter(QObject* watched, QEvent* event)
    // layout->invalidate()/activate() が子リサイズを発火させ、イベントフィルタに
    // 戻り、再び refresh をスケジュールする無限カスケードが発生していた。
    if (isRootFloatingWidget) {
-    scheduleFloatingRefresh(floatingWidget);
+    refreshFloatingWidgetTree(floatingWidget);
    }
-   break;
-  case QEvent::Show:
+   break;  case QEvent::Show:
   case QEvent::Hide:
    scheduleFloatingRefresh(floatingWidget);
    break;

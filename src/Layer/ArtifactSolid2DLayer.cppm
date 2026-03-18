@@ -92,13 +92,14 @@ namespace Artifact
  }
 
 void ArtifactSolid2DLayer::draw(ArtifactIRenderer* renderer)
-
- {
-  auto size = sourceSize();
-  renderer->drawSolidRect(Detail::float2(0.0f, 0.0f),
-                          Detail::float2(static_cast<float>(size.width),
-                                         static_cast<float>(size.height)),
-                          impl_->color());
- }
+{
+ if (!renderer) return;
+ auto size = this->sourceSize();
+ renderer->drawSolidRect(0.0f, 0.0f, 
+                         static_cast<float>(size.width),
+                         static_cast<float>(size.height),
+                         impl_->color(),
+                         this->opacity());
+}
 
 }

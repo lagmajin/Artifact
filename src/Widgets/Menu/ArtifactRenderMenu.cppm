@@ -12,6 +12,7 @@ import Artifact.Service.Project;
 import Artifact.Render.Queue.Service;
 import Artifact.MainWindow;
 import Utils.Path;
+import Artifact.Widgets.Test.ScrollPoC;
 
 namespace Artifact {
 using namespace ArtifactCore;
@@ -56,6 +57,7 @@ public:
  void showRenderSettings();
  void startRender();
  void clearAll();
+ void showScrollPoC();
 };
 
 ArtifactRenderMenu::Impl::Impl(ArtifactRenderMenu* menu, QWidget* mainWindow)
@@ -84,6 +86,8 @@ ArtifactRenderMenu::Impl::Impl(ArtifactRenderMenu* menu, QWidget* mainWindow)
  clearAllAction = new QAction("すべてのジョブをクリア(&C)");
  clearAllAction->setIcon(QIcon(resolveIconPath("Material/clear_all.svg")));
 
+ auto* scrollPoCAction = new QAction("Scroll PoC (Floating)", menu);
+
  menu->addAction(addCurrentToQueueAction);
  menu->addSeparator();
  menu->addAction(showQueueAction);
@@ -92,6 +96,8 @@ ArtifactRenderMenu::Impl::Impl(ArtifactRenderMenu* menu, QWidget* mainWindow)
  menu->addSeparator();
  menu->addAction(startRenderAction);
  menu->addAction(clearAllAction);
+ menu->addSeparator();
+ menu->addAction(scrollPoCAction);
 
  QObject::connect(addCurrentToQueueAction, &QAction::triggered, menu, [this]() { addCurrentToQueue(); });
  QObject::connect(showQueueAction, &QAction::triggered, menu, [this]() { showQueue(); });
@@ -99,6 +105,20 @@ ArtifactRenderMenu::Impl::Impl(ArtifactRenderMenu* menu, QWidget* mainWindow)
  QObject::connect(renderSettingsAction, &QAction::triggered, menu, [this]() { showRenderSettings(); });
  QObject::connect(startRenderAction, &QAction::triggered, menu, [this]() { startRender(); });
  QObject::connect(clearAllAction, &QAction::triggered, menu, [this]() { clearAll(); });
+ QObject::connect(scrollPoCAction, &QAction::triggered, menu, [this]() { showScrollPoC(); });
+}
+
+void ArtifactRenderMenu::Impl::showScrollPoC()
+{
+ if (auto* mw = qobject_cast<ArtifactMainWindow*>(mainWindow_)) {
+  auto* poc = new ArtifactScrollPoCWidget();
+  mw->addDockedWidgetFloating(
+   QStringLiteral("Scroll PoC"),
+   QStringLiteral("scroll_poc_dock"),
+   poc,
+   QRect(100, 100, 600, 400)
+  );
+ }
 }
 
 void ArtifactRenderMenu::Impl::addCurrentToQueue()
