@@ -74,6 +74,7 @@ namespace Artifact
   p->setColorValue(QColor::fromRgbF(c.r(), c.g(), c.b(), c.a()));
   p->setValue(p->getColorValue());
   p->setDisplayPriority(-120);
+  p->setAnimatable(true);
   solidGroup.addProperty(p);
 
   groups.push_back(solidGroup);

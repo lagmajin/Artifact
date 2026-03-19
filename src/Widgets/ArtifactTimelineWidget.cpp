@@ -723,6 +723,9 @@ W_OBJECT_IMPL(ArtifactTimelineWidget)
  setWindowFlags(Qt::FramelessWindowHint);
 
   setWindowTitle("Timeline");
+  setMinimumHeight(500);
+  setBaseSize(1200, 500);
+  setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
 
   auto style = getDCCStyleSheetPreset(DccStylePreset::ModoStyle);
 
@@ -1106,13 +1109,13 @@ W_OBJECT_IMPL(ArtifactTimelineWidget)
   mainSplitter->addWidget(leftPanel);
   mainSplitter->addWidget(rightPanel);
   mainSplitter->setChildrenCollapsible(false);
-  leftPanel->setMinimumWidth(280);
+  leftPanel->setMinimumWidth(360);
   rightPanel->setMinimumWidth(480);
   //mainSplitter->addWidget(leftSplitter);
 
   mainSplitter->setStretchFactor(0, 3);
   mainSplitter->setStretchFactor(1, 5);
-  mainSplitter->setSizes({420, 760});
+  mainSplitter->setSizes({520, 700});
 
   auto label = new ArtifactTimelineBottomLabel();
 
@@ -2179,8 +2182,8 @@ void TimelineTrackView::setZoomLevel(double pixelsPerFrame)
      return;
     }
 
-    const auto& selected = impl_->scene_->getSelectedClips();
-    if (!selected.empty()) {
+   const auto& selected = impl_->scene_->getSelectedClips();
+   if (!selected.empty()) {
      // 選択されたクリップを削除（Undo 統合は将来的に実装）
      for (auto* clip : selected) {
       if (clip) {
@@ -2190,10 +2193,26 @@ void TimelineTrackView::setZoomLevel(double pixelsPerFrame)
      viewport()->update();
      event->accept();
      return;
-    }
-    QGraphicsView::keyPressEvent(event);
-    return;
    }
+
+   // クリップ選択が無い場合は、現在選択中のレイヤー削除へフォールバック
+   if (auto* service = ArtifactProjectService::instance()) {
+    auto comp = service->currentComposition().lock();
+    if (comp) {
+     if (auto* app = ArtifactApplicationManager::instance()) {
+      if (auto* selection = app->layerSelectionManager()) {
+       if (auto layer = selection->currentLayer()) {
+        service->removeLayerFromComposition(comp->id(), layer->id());
+        event->accept();
+        return;
+       }
+      }
+     }
+    }
+   }
+   QGraphicsView::keyPressEvent(event);
+   return;
+  }
 
    if (event->key() == Qt::Key_Escape) {
     if (!impl_->scene_) {

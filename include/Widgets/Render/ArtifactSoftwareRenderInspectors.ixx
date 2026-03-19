@@ -2,6 +2,9 @@
 #include <QWidget>
 #include <QImage>
 #include <QSize>
+#include <QKeyEvent>
+#include <QMouseEvent>
+#include <QWheelEvent>
 #include <wobjectdefs.h>
 
 export module Artifact.Widgets.SoftwareRenderInspectors;
@@ -21,6 +24,11 @@ public:
 
 protected:
     void resizeEvent(QResizeEvent* event) override;
+    void keyPressEvent(QKeyEvent* event) override;
+    void wheelEvent(QWheelEvent* event) override;
+    void mousePressEvent(QMouseEvent* event) override;
+    void mouseMoveEvent(QMouseEvent* event) override;
+    void mouseReleaseEvent(QMouseEvent* event) override;
 
 private:
     class Impl;
@@ -35,6 +43,11 @@ public:
 
 protected:
     void resizeEvent(QResizeEvent* event) override;
+    void keyPressEvent(QKeyEvent* event) override;
+    void wheelEvent(QWheelEvent* event) override;
+    void mousePressEvent(QMouseEvent* event) override;
+    void mouseMoveEvent(QMouseEvent* event) override;
+    void mouseReleaseEvent(QMouseEvent* event) override;
 
 private:
     class Impl;

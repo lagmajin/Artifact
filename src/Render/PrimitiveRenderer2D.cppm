@@ -269,6 +269,7 @@ void PrimitiveRenderer2D::setViewportSize(float w, float h)  { impl_->viewport_.
 void PrimitiveRenderer2D::setCanvasSize(float w, float h)    { impl_->viewport_.SetCanvasSize(w, h); }
 void PrimitiveRenderer2D::setPan(float x, float y)           { impl_->viewport_.SetPan(x, y); }
 void PrimitiveRenderer2D::setZoom(float zoom)                { impl_->viewport_.SetZoom(zoom); }
+float PrimitiveRenderer2D::getZoom() const                   { return impl_->viewport_.GetZoom(); }
 void PrimitiveRenderer2D::panBy(float dx, float dy)          { impl_->viewport_.PanBy(dx, dy); }
 void PrimitiveRenderer2D::resetView()                        { impl_->viewport_.ResetView(); }
 void PrimitiveRenderer2D::fitToViewport(float margin)        { impl_->viewport_.FitCanvasToViewport(margin); }
@@ -312,16 +313,6 @@ void PrimitiveRenderer2D::clear(const FloatColor& color)
 
 void PrimitiveRenderer2D::drawRectLocal(float x, float y, float w, float h, const FloatColor& color, float opacity)
 {
-    auto viewportCB = impl_->viewport_.GetViewportCB();
-    const float zoom = std::max(viewportCB.zoom, 0.001f);
-    qDebug() << "[VIEWPORT] scale=(" << viewportCB.scale.x << "," << viewportCB.scale.y << ")"
-             << "offset=(" << viewportCB.offset.x << "," << viewportCB.offset.y << ")"
-             << "screenSize=(" << viewportCB.screenSize.x << "," << viewportCB.screenSize.y << ")"
-             << "zoom=" << zoom;
-    
-    qDebug() << "[SOLIDRECT] x=" << x << "y=" << y << "w=" << w << "h=" << h
-             << "color.rgba=(" << color.r() << "," << color.g() << "," << color.b() << "," << color.a() << ")";
-    
     if (!impl_->hasRenderTarget() || !impl_->m_draw_solid_rect_pso_and_srb.pPSO) return;
 
     float alpha = color.a() * opacity;
@@ -332,9 +323,6 @@ void PrimitiveRenderer2D::drawRectLocal(float x, float y, float w, float h, cons
         {{1.0f, 1.0f}, {color.r(), color.g(), color.b(), alpha}},
     };
     
-    qDebug() << "[SOLIDRECT] Vertex[0] position=(" << vertices[0].position.x << "," << vertices[0].position.y << ")"
-             << "color.a=" << vertices[0].color.w;
-
     auto* pRTV = impl_->getCurrentRTV();
     impl_->pCtx_->SetRenderTargets(1, &pRTV, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
 
@@ -365,10 +353,6 @@ void PrimitiveRenderer2D::drawRectLocal(float x, float y, float w, float h, cons
         impl_->pCtx_->MapBuffer(impl_->m_draw_solid_rect_trnsform_cb, MAP_WRITE, MAP_FLAG_DISCARD, pData);
         std::memcpy(pData, &cbTransform, sizeof(cbTransform));
         impl_->pCtx_->UnmapBuffer(impl_->m_draw_solid_rect_trnsform_cb, MAP_WRITE);
-        
-        qDebug() << "[SOLIDRECT] TransformCB: offset=(" << cbTransform.offset.x << "," << cbTransform.offset.y << ")"
-                 << "scale=(" << cbTransform.scale.x << "," << cbTransform.scale.y << ")"
-                 << "screenSize=(" << cbTransform.screenSize.x << "," << cbTransform.screenSize.y << ")";
     }
 
     impl_->pCtx_->SetPipelineState(impl_->m_draw_solid_rect_pso_and_srb.pPSO);
@@ -818,18 +802,6 @@ void PrimitiveRenderer2D::drawRectOutlineLocal(float x, float y, float w, float 
 
 void PrimitiveRenderer2D::drawSpriteLocal(float x, float y, float w, float h, const QImage& image, float opacity)
 {
-    auto viewportCB = impl_->viewport_.GetViewportCB();
-    const float zoom = std::max(viewportCB.zoom, 0.001f);
-    qDebug() << "[VIEWPORT-SPRITE] scale=(" << viewportCB.scale.x << "," << viewportCB.scale.y << ")"
-             << "offset=(" << viewportCB.offset.x << "," << viewportCB.offset.y << ")"
-             << "screenSize=(" << viewportCB.screenSize.x << "," << viewportCB.screenSize.y << ")"
-             << "zoom=" << zoom;
-    
-    qDebug() << "[SPRITE] x=" << x << "y=" << y << "w=" << w << "h=" << h
-             << "image.isNull=" << image.isNull()
-             << "image.size=" << image.size()
-             << "image.format=" << image.format();
-    
     if (!impl_->hasRenderTarget() || !impl_->m_draw_sprite_pso_and_srb.pPSO) return;
     if (image.isNull()) return;
     if (!impl_->pDevice_ || !impl_->pCtx_) return;
@@ -872,18 +844,13 @@ void PrimitiveRenderer2D::drawSpriteLocal(float x, float y, float w, float h, co
     auto* pRTV = impl_->getCurrentRTV();
     if (!pRTV) return;
 
-    // Triangle strip: TL, TR, BL, BR (0..1 local coordinates)
+    // Triangle strip: TL, TR, BL, BR in local space (0..1).
     SpriteVertex vertices[4] = {
-        { ndc0, {0.0f, 0.0f}, {1.0f, 1.0f, 1.0f, opacity} },
-        { ndc1, {1.0f, 0.0f}, {1.0f, 1.0f, 1.0f, opacity} },
-        { ndc2, {0.0f, 1.0f}, {1.0f, 1.0f, 1.0f, opacity} },
-        { ndc3, {1.0f, 1.0f}, {1.0f, 1.0f, 1.0f, opacity} },
+        { {0.0f, 0.0f}, {0.0f, 0.0f}, {1.0f, 1.0f, 1.0f, opacity} },
+        { {1.0f, 0.0f}, {1.0f, 0.0f}, {1.0f, 1.0f, 1.0f, opacity} },
+        { {0.0f, 1.0f}, {0.0f, 1.0f}, {1.0f, 1.0f, 1.0f, opacity} },
+        { {1.0f, 1.0f}, {1.0f, 1.0f}, {1.0f, 1.0f, 1.0f, opacity} },
     };
-    
-    qDebug() << "[SPRITE] Vertex[0] position=(" << vertices[0].position.x << "," << vertices[0].position.y << ")"
-             << "uv=(" << vertices[0].uv.x << "," << vertices[0].uv.y << ")"
-             << "color.a=" << vertices[0].color.w;
-
     impl_->pCtx_->SetRenderTargets(1, &pRTV, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
 
     {
@@ -904,10 +871,6 @@ void PrimitiveRenderer2D::drawSpriteLocal(float x, float y, float w, float h, co
         impl_->pCtx_->MapBuffer(impl_->m_draw_sprite_cb, MAP_WRITE, MAP_FLAG_DISCARD, pData);
         std::memcpy(pData, &cbTransform, sizeof(cbTransform));
         impl_->pCtx_->UnmapBuffer(impl_->m_draw_sprite_cb, MAP_WRITE);
-        
-        qDebug() << "[SPRITE] TransformCB: offset=(" << cbTransform.offset.x << "," << cbTransform.offset.y << ")"
-                 << "scale=(" << cbTransform.scale.x << "," << cbTransform.scale.y << ")"
-                 << "screenSize=(" << cbTransform.screenSize.x << "," << cbTransform.screenSize.y << ")";
     }
 
     impl_->pCtx_->SetPipelineState(impl_->m_draw_sprite_pso_and_srb.pPSO);
@@ -920,7 +883,9 @@ void PrimitiveRenderer2D::drawSpriteLocal(float x, float y, float w, float h, co
         if (sampVar) sampVar->Set(impl_->m_sprite_sampler);
     }
 
-    impl_->m_draw_sprite_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_VERTEX, "TransformCB")->Set(impl_->m_draw_sprite_cb);
+    if (auto* transformVar = impl_->m_draw_sprite_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_VERTEX, "TransformCB")) {
+        transformVar->Set(impl_->m_draw_sprite_cb);
+    }
 
     impl_->pCtx_->CommitShaderResources(impl_->m_draw_sprite_pso_and_srb.pSRB,
         RESOURCE_STATE_TRANSITION_MODE_TRANSITION);

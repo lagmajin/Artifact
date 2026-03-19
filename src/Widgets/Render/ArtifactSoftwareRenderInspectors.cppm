@@ -13,6 +13,9 @@
 #include <QPainter>
 #include <QPixmap>
 #include <QResizeEvent>
+#include <QKeyEvent>
+#include <QMouseEvent>
+#include <QWheelEvent>
 #include <QSignalBlocker>
 #include <QDateTime>
 #include <QPair>
@@ -112,6 +115,94 @@ QSize safePreviewSize(const QLabel* label)
     }
     const QSize size = label->size();
     return QSize(std::max(320, size.width()), std::max(180, size.height()));
+}
+
+struct PreviewNavigationState
+{
+    float zoom = 1.0f;
+    QPointF pan = QPointF(0.0, 0.0);
+};
+
+QRectF previewCanvasRect(
+    const QSize& previewSize,
+    const QSize& canvasSize,
+    const PreviewNavigationState& nav)
+{
+    const QRectF baseRect = fitCanvasRect(previewSize, canvasSize).adjusted(12.0, 12.0, -12.0, -12.0);
+    const qreal safeZoom = std::clamp(static_cast<qreal>(nav.zoom), 0.05, 64.0);
+    const QSizeF scaled(baseRect.width() * safeZoom, baseRect.height() * safeZoom);
+    const QPointF center = baseRect.center() + nav.pan;
+    return QRectF(
+        center.x() - scaled.width() * 0.5,
+        center.y() - scaled.height() * 0.5,
+        scaled.width(),
+        scaled.height());
+}
+
+void resetNavigation(PreviewNavigationState* nav)
+{
+    if (!nav) {
+        return;
+    }
+    nav->zoom = 1.0f;
+    nav->pan = QPointF(0.0, 0.0);
+}
+
+bool handleNavigationShortcut(QKeyEvent* event, PreviewNavigationState* nav)
+{
+    if (!event || !nav) {
+        return false;
+    }
+
+    switch (event->key()) {
+    case Qt::Key_F:
+    case Qt::Key_R:
+    case Qt::Key_1:
+        resetNavigation(nav);
+        event->accept();
+        return true;
+    case Qt::Key_Plus:
+    case Qt::Key_Equal:
+        nav->zoom = std::clamp(nav->zoom * 1.1f, 0.05f, 64.0f);
+        event->accept();
+        return true;
+    case Qt::Key_Minus:
+    case Qt::Key_Underscore:
+        nav->zoom = std::clamp(nav->zoom / 1.1f, 0.05f, 64.0f);
+        event->accept();
+        return true;
+    case Qt::Key_Left:
+        nav->pan += QPointF(24.0, 0.0);
+        event->accept();
+        return true;
+    case Qt::Key_Right:
+        nav->pan += QPointF(-24.0, 0.0);
+        event->accept();
+        return true;
+    case Qt::Key_Up:
+        nav->pan += QPointF(0.0, 24.0);
+        event->accept();
+        return true;
+    case Qt::Key_Down:
+        nav->pan += QPointF(0.0, -24.0);
+        event->accept();
+        return true;
+    default:
+        break;
+    }
+
+    return false;
+}
+
+bool handleNavigationWheel(QWheelEvent* event, PreviewNavigationState* nav)
+{
+    if (!event || !nav) {
+        return false;
+    }
+    const float factor = event->angleDelta().y() >= 0 ? 1.1f : (1.0f / 1.1f);
+    nav->zoom = std::clamp(nav->zoom * factor, 0.05f, 64.0f);
+    event->accept();
+    return true;
 }
 
 QSize safeCompositionSize(const ArtifactCompositionPtr& composition)
@@ -390,7 +481,7 @@ QImage renderCompositionCanvas(
 {
     const QSize compSize = safeCompositionSize(composition);
     QImage canvas(compSize, QImage::Format_ARGB32_Premultiplied);
-    canvas.fill(QColor(18, 20, 24));
+    canvas.fill(composition ? toQColor(composition->backgroundColor()) : QColor(18, 20, 24));
     if (!composition) {
         return canvas;
     }
@@ -414,7 +505,10 @@ QImage renderCompositionCanvas(
     return canvas;
 }
 
-QImage fitCanvasImageToPreview(const QImage& canvas, const QSize& previewSize)
+QImage fitCanvasImageToPreview(
+    const QImage& canvas,
+    const QSize& previewSize,
+    const PreviewNavigationState& nav)
 {
     QImage image(previewSize, QImage::Format_ARGB32_Premultiplied);
     image.fill(Qt::transparent);
@@ -424,7 +518,7 @@ QImage fitCanvasImageToPreview(const QImage& canvas, const QSize& previewSize)
 
     QPainter painter(&image);
     painter.setRenderHint(QPainter::SmoothPixmapTransform, true);
-    const QRectF targetRect = fitCanvasRect(previewSize, canvas.size()).adjusted(12.0, 12.0, -12.0, -12.0);
+    const QRectF targetRect = previewCanvasRect(previewSize, canvas.size(), nav);
     painter.drawImage(targetRect, canvas, QRectF(0.0, 0.0, canvas.width(), canvas.height()));
     return image;
 }
@@ -440,9 +534,9 @@ QImage generateCompositionThumbnail(const ArtifactCompositionPtr& composition, c
     }
     
     // コンポジションキャンバスをレンダリング
-    const QSize compSize = composition->settings().compositionSize();
+    const QSize compSize = safeCompositionSize(composition);
     QImage canvas(compSize, QImage::Format_ARGB32_Premultiplied);
-    canvas.fill(QColor(18, 20, 24));
+    canvas.fill(toQColor(composition->backgroundColor()));
     
     QPainter painter(&canvas);
     painter.setRenderHint(QPainter::Antialiasing, true);
@@ -466,10 +560,7 @@ QImage generateCompositionThumbnail(const ArtifactCompositionPtr& composition, c
         } else if (auto solidLayer = std::dynamic_pointer_cast<ArtifactSolidImageLayer>(layer)) {
              QImage img(compSize, QImage::Format_ARGB32_Premultiplied);
              const auto color = solidLayer->color();
-             img.fill(QColor(
-                 static_cast<int>(color.r() * 255),
-                 static_cast<int>(color.g() * 255),
-                 static_cast<int>(color.b() * 255)));
+             img.fill(toQColor(color));
              painter.drawImage(0, 0, img);
         }
     }
@@ -520,7 +611,10 @@ QString compositionSummaryText(const ArtifactCompositionPtr& composition)
         .arg(QString::number(composition->frameRate().framerate(), 'f', 3));
 }
 
-QImage renderCompositionOverlay(const ArtifactCompositionPtr& composition, const QSize& previewSize)
+QImage renderCompositionOverlay(
+    const ArtifactCompositionPtr& composition,
+    const QSize& previewSize,
+    const PreviewNavigationState& nav)
 {
     QImage image(previewSize, QImage::Format_ARGB32_Premultiplied);
     image.fill(Qt::transparent);
@@ -528,7 +622,7 @@ QImage renderCompositionOverlay(const ArtifactCompositionPtr& composition, const
         return image;
     }
 
-    const QRectF canvasRect = fitCanvasRect(previewSize, safeCompositionSize(composition)).adjusted(12.0, 12.0, -12.0, -12.0);
+    const QRectF canvasRect = previewCanvasRect(previewSize, safeCompositionSize(composition), nav);
     QPainter painter(&image);
     painter.setRenderHint(QPainter::Antialiasing, true);
     painter.setPen(QPen(QColor(120, 180, 255, 180), 1.0, Qt::DashLine));
@@ -542,7 +636,8 @@ QImage renderCompositionOverlay(const ArtifactCompositionPtr& composition, const
 QImage renderFocusedLayerOverlay(
     const ArtifactCompositionPtr& composition,
     const ArtifactAbstractLayerPtr& layer,
-    const QSize& previewSize)
+    const QSize& previewSize,
+    const PreviewNavigationState& nav)
 {
     QImage image(previewSize, QImage::Format_ARGB32_Premultiplied);
     image.fill(Qt::transparent);
@@ -551,7 +646,7 @@ QImage renderFocusedLayerOverlay(
     }
 
     const QSize compSize = safeCompositionSize(composition);
-    const QRectF canvasRect = fitCanvasRect(previewSize, compSize).adjusted(12.0, 12.0, -12.0, -12.0);
+    const QRectF canvasRect = previewCanvasRect(previewSize, compSize, nav);
     const QRectF bounds = layer->transformedBoundingBox();
     if (bounds.isEmpty()) {
         return image;
@@ -634,6 +729,9 @@ public:
     QLabel* summaryLabel_ = nullptr;
     QLabel* previewLabel_ = nullptr;
     QImage lastImage_;
+    PreviewNavigationState nav_;
+    bool isPanning_ = false;
+    QPointF lastMousePos_;
 
     ArtifactCompositionPtr selectedComposition() const
     {
@@ -692,8 +790,8 @@ public:
         const QImage compositionCanvas = renderCompositionCanvas(composition);
         SoftwareRender::CompositeRequest request;
         request.background = makeCheckerboard(renderSize);
-        request.foreground = fitCanvasImageToPreview(compositionCanvas, renderSize);
-        request.overlay = renderCompositionOverlay(composition, renderSize);
+        request.foreground = fitCanvasImageToPreview(compositionCanvas, renderSize, nav_);
+        request.overlay = renderCompositionOverlay(composition, renderSize, nav_);
         request.outputSize = renderSize;
         request.backend = backendFromIndex(backendCombo_ ? backendCombo_->currentIndex() : 0);
         request.cvEffect = effectFromIndex(effectCombo_ ? effectCombo_->currentIndex() : 0);
@@ -722,6 +820,9 @@ public:
     QLabel* infoLabel_ = nullptr;
     QLabel* previewLabel_ = nullptr;
     QImage lastImage_;
+    PreviewNavigationState nav_;
+    bool isPanning_ = false;
+    QPointF lastMousePos_;
 
     ArtifactCompositionPtr selectedComposition() const;
     ArtifactAbstractLayerPtr selectedLayer() const;
@@ -844,15 +945,15 @@ void ArtifactSoftwareLayerTestWidget::Impl::refreshPreview()
     const QImage focusedCanvas = renderCompositionCanvas(composition, focusLayerId, true, 1.0);
     const QImage overlayImage = mergePreviewImages(
         {
-            fitCanvasImageToPreview(focusedCanvas, renderSize),
-            renderCompositionOverlay(composition, renderSize),
-            renderFocusedLayerOverlay(composition, layer, renderSize)
+            fitCanvasImageToPreview(focusedCanvas, renderSize, nav_),
+            renderCompositionOverlay(composition, renderSize, nav_),
+            renderFocusedLayerOverlay(composition, layer, renderSize, nav_)
         },
         renderSize);
 
     SoftwareRender::CompositeRequest request;
     request.background = makeCheckerboard(renderSize);
-    request.foreground = fitCanvasImageToPreview(contextCanvas, renderSize);
+    request.foreground = fitCanvasImageToPreview(contextCanvas, renderSize, nav_);
     request.overlay = overlayImage;
     request.outputSize = renderSize;
     request.backend = backendFromIndex(backendCombo_ ? backendCombo_->currentIndex() : 0);
@@ -874,6 +975,8 @@ void ArtifactSoftwareLayerTestWidget::Impl::refreshPreview()
 ArtifactSoftwareCompositionTestWidget::ArtifactSoftwareCompositionTestWidget(QWidget* parent)
     : QWidget(parent), impl_(new Impl())
 {
+    setFocusPolicy(Qt::StrongFocus);
+    setMouseTracking(true);
     impl_->service_ = ArtifactProjectService::instance();
 
     auto* root = new QVBoxLayout(this);
@@ -968,9 +1071,70 @@ void ArtifactSoftwareCompositionTestWidget::resizeEvent(QResizeEvent* event)
     }
 }
 
+void ArtifactSoftwareCompositionTestWidget::keyPressEvent(QKeyEvent* event)
+{
+    if (impl_ && handleNavigationShortcut(event, &impl_->nav_)) {
+        impl_->refreshPreview();
+        return;
+    }
+    QWidget::keyPressEvent(event);
+}
+
+void ArtifactSoftwareCompositionTestWidget::wheelEvent(QWheelEvent* event)
+{
+    if (impl_ && handleNavigationWheel(event, &impl_->nav_)) {
+        impl_->refreshPreview();
+        return;
+    }
+    QWidget::wheelEvent(event);
+}
+
+void ArtifactSoftwareCompositionTestWidget::mousePressEvent(QMouseEvent* event)
+{
+    if (!impl_) {
+        QWidget::mousePressEvent(event);
+        return;
+    }
+    if (event->button() == Qt::MiddleButton) {
+        impl_->isPanning_ = true;
+        impl_->lastMousePos_ = event->position();
+        setCursor(Qt::ClosedHandCursor);
+        event->accept();
+        return;
+    }
+    QWidget::mousePressEvent(event);
+}
+
+void ArtifactSoftwareCompositionTestWidget::mouseMoveEvent(QMouseEvent* event)
+{
+    if (!impl_ || !impl_->isPanning_) {
+        QWidget::mouseMoveEvent(event);
+        return;
+    }
+    const QPointF delta = event->position() - impl_->lastMousePos_;
+    impl_->lastMousePos_ = event->position();
+    impl_->nav_.pan += delta;
+    impl_->refreshPreview();
+    event->accept();
+}
+
+void ArtifactSoftwareCompositionTestWidget::mouseReleaseEvent(QMouseEvent* event)
+{
+    if (impl_ && impl_->isPanning_ &&
+        (event->button() == Qt::MiddleButton || event->button() == Qt::LeftButton)) {
+        impl_->isPanning_ = false;
+        unsetCursor();
+        event->accept();
+        return;
+    }
+    QWidget::mouseReleaseEvent(event);
+}
+
 ArtifactSoftwareLayerTestWidget::ArtifactSoftwareLayerTestWidget(QWidget* parent)
     : QWidget(parent), impl_(new Impl())
 {
+    setFocusPolicy(Qt::StrongFocus);
+    setMouseTracking(true);
     impl_->service_ = ArtifactProjectService::instance();
 
     auto* root = new QVBoxLayout(this);
@@ -1082,6 +1246,65 @@ void ArtifactSoftwareLayerTestWidget::resizeEvent(QResizeEvent* event)
     if (impl_) {
         impl_->refreshPreview();
     }
+}
+
+void ArtifactSoftwareLayerTestWidget::keyPressEvent(QKeyEvent* event)
+{
+    if (impl_ && handleNavigationShortcut(event, &impl_->nav_)) {
+        impl_->refreshPreview();
+        return;
+    }
+    QWidget::keyPressEvent(event);
+}
+
+void ArtifactSoftwareLayerTestWidget::wheelEvent(QWheelEvent* event)
+{
+    if (impl_ && handleNavigationWheel(event, &impl_->nav_)) {
+        impl_->refreshPreview();
+        return;
+    }
+    QWidget::wheelEvent(event);
+}
+
+void ArtifactSoftwareLayerTestWidget::mousePressEvent(QMouseEvent* event)
+{
+    if (!impl_) {
+        QWidget::mousePressEvent(event);
+        return;
+    }
+    if (event->button() == Qt::MiddleButton) {
+        impl_->isPanning_ = true;
+        impl_->lastMousePos_ = event->position();
+        setCursor(Qt::ClosedHandCursor);
+        event->accept();
+        return;
+    }
+    QWidget::mousePressEvent(event);
+}
+
+void ArtifactSoftwareLayerTestWidget::mouseMoveEvent(QMouseEvent* event)
+{
+    if (!impl_ || !impl_->isPanning_) {
+        QWidget::mouseMoveEvent(event);
+        return;
+    }
+    const QPointF delta = event->position() - impl_->lastMousePos_;
+    impl_->lastMousePos_ = event->position();
+    impl_->nav_.pan += delta;
+    impl_->refreshPreview();
+    event->accept();
+}
+
+void ArtifactSoftwareLayerTestWidget::mouseReleaseEvent(QMouseEvent* event)
+{
+    if (impl_ && impl_->isPanning_ &&
+        (event->button() == Qt::MiddleButton || event->button() == Qt::LeftButton)) {
+        impl_->isPanning_ = false;
+        unsetCursor();
+        event->accept();
+        return;
+    }
+    QWidget::mouseReleaseEvent(event);
 }
 
 } // namespace Artifact

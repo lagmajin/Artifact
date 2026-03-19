@@ -257,6 +257,15 @@ void ShaderManager::Impl::createPSOs()
     GP.PrimitiveTopology = PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP;
     GP.RasterizerDesc.CullMode = CULL_MODE_NONE;
     GP.DepthStencilDesc.DepthEnable = False;
+    auto& solidRTBlend = GP.BlendDesc.RenderTargets[0];
+    solidRTBlend.BlendEnable = True;
+    solidRTBlend.SrcBlend = BLEND_FACTOR_SRC_ALPHA;
+    solidRTBlend.DestBlend = BLEND_FACTOR_INV_SRC_ALPHA;
+    solidRTBlend.BlendOp = BLEND_OPERATION_ADD;
+    solidRTBlend.SrcBlendAlpha = BLEND_FACTOR_ONE;
+    solidRTBlend.DestBlendAlpha = BLEND_FACTOR_INV_SRC_ALPHA;
+    solidRTBlend.BlendOpAlpha = BLEND_OPERATION_ADD;
+    solidRTBlend.RenderTargetWriteMask = COLOR_MASK_ALL;
     LayoutElement LayoutElems2[] =
     {
         LayoutElement{0, 0, 2, VT_FLOAT32, false},
@@ -307,9 +316,19 @@ void ShaderManager::Impl::createPSOs()
     GP2.PrimitiveTopology = PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP;
     GP2.RasterizerDesc.CullMode = CULL_MODE_NONE;
     GP2.DepthStencilDesc.DepthEnable = False;
+    auto& spriteRTBlend = GP2.BlendDesc.RenderTargets[0];
+    spriteRTBlend.BlendEnable = True;
+    spriteRTBlend.SrcBlend = BLEND_FACTOR_SRC_ALPHA;
+    spriteRTBlend.DestBlend = BLEND_FACTOR_INV_SRC_ALPHA;
+    spriteRTBlend.BlendOp = BLEND_OPERATION_ADD;
+    spriteRTBlend.SrcBlendAlpha = BLEND_FACTOR_ONE;
+    spriteRTBlend.DestBlendAlpha = BLEND_FACTOR_INV_SRC_ALPHA;
+    spriteRTBlend.BlendOpAlpha = BLEND_OPERATION_ADD;
+    spriteRTBlend.RenderTargetWriteMask = COLOR_MASK_ALL;
     GP2.InputLayout.LayoutElements = spriteLayoutElems;
     GP2.InputLayout.NumElements = 3;
     ShaderResourceVariableDesc spriteVars[] = {
+        { SHADER_TYPE_VERTEX, "TransformCB", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC },
         { SHADER_TYPE_PIXEL, "g_texture", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC },
         { SHADER_TYPE_PIXEL, "g_sampler", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC },
     };

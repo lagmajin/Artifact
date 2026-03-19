@@ -50,7 +50,7 @@
 #include <QDialogButtonBox>
 #include <QStyle>
 #include <QPainter>
-import Artifact.Widgets.SoftwareRenderInspectors;
+
 #include <QScrollBar>
 #include <QKeyEvent>
 #include <QPainter>
@@ -92,7 +92,7 @@ import Artifact.Widgets.SoftwareRenderInspectors;
 #include <random>
 module Artifact.Widgets.ProjectManagerWidget;
 
-
+import Artifact.Widgets.SoftwareRenderInspectors;
 
 
 import Utils.String.UniString;

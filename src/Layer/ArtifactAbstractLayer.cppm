@@ -1,15 +1,17 @@
 ﻿module;
 
+#include <QDebug>
 #include <QPointF>
 #include <QRectF>
 #include <wobjectcpp.h>
 #include <wobjectimpl.h>
-#include <QDebug>
+
 // JSON and QVariant used in serialization
-#include <QJsonObject>
-#include <QJsonArray>
-#include <QVariant>
 #include <QColor>
+#include <QJsonArray>
+#include <QJsonObject>
+#include <QVariant>
+
 module Artifact.Layer.Abstract;
 
 import std;
@@ -29,167 +31,139 @@ import Image.ImageF32x4RGBAWithCache;
 import Property.Abstract;
 import Property.Group;
 
-
 namespace Artifact {
 
- using namespace ArtifactCore;
+using namespace ArtifactCore;
 
- W_OBJECT_IMPL(ArtifactAbstractLayer)
+W_OBJECT_IMPL(ArtifactAbstractLayer)
 
- namespace {
-  template <typename T>
-  bool assignIfChanged(T& current, const T& next)
-  {
-   if (current == next) {
+namespace {
+template <typename T> bool assignIfChanged(T &current, const T &next) {
+  if (current == next) {
     return false;
-   }
-   current = next;
-   return true;
   }
+  current = next;
+  return true;
+}
 
-  void notifyLayerMutation(ArtifactAbstractLayer* layer, LayerDirtyFlag flag, LayerDirtyReason reason)
-  {
-   if (!layer) {
+void notifyLayerMutation(ArtifactAbstractLayer *layer, LayerDirtyFlag flag,
+                         LayerDirtyReason reason) {
+  if (!layer) {
     return;
-   }
-   layer->setDirty(flag);
-   layer->addDirtyReason(reason);
-   Q_EMIT layer->changed();
   }
- }
+  layer->setDirty(flag);
+  layer->addDirtyReason(reason);
+  Q_EMIT layer->changed();
+}
+} // namespace
 
-  class ArtifactAbstractLayer::Impl {
-  public:
+class ArtifactAbstractLayer::Impl {
+public:
+  bool is3D_ = true;
+  bool isVisible_ = true;
+  Id id;
+  QString name_;
+  ArtifactAbstractComposition *composition_ = nullptr;
+  LayerID parentLayerId_;
+  LAYER_BLEND_TYPE blendMode_ = LAYER_BLEND_TYPE::BLEND_NORMAL;
+  LayerState state_;
+  FramePosition inPoint_ = FramePosition(0);
+  FramePosition outPoint_ = FramePosition(300); // Default 10s at 30fps
+  FramePosition startTime_ = FramePosition(0);
+  int64_t currentFrame_ = 0; // 現在のフレーム位置
+  int64_t currentFrame() const { return currentFrame_; }
 
-    bool is3D_ = true;
-    bool isVisible_ = true;
-    Id id;
-    QString name_;
-    ArtifactAbstractComposition* composition_ = nullptr;
-    LayerID parentLayerId_;
-    LAYER_BLEND_TYPE blendMode_ = LAYER_BLEND_TYPE::BLEND_NORMAL;
-    LayerState state_;
-    FramePosition inPoint_ = FramePosition(0);
-    FramePosition outPoint_ = FramePosition(300); // Default 10s at 30fps
-    FramePosition startTime_ = FramePosition(0);
+  bool isLocked_ = false;
+  bool isGuide_ = false;
+  bool isSolo_ = false;
+  bool isShy_ = false;
+  float opacity_ = 1.0f; // Opacity (0.0 - 1.0)
 
-    bool isLocked_ = false;
-    bool isGuide_ = false;
-    bool isSolo_ = false;
-    bool isShy_ = false;
-    float opacity_ = 1.0f;  // Opacity (0.0 - 1.0)
+  uint32_t dirtyFlags_ = (uint32_t)LayerDirtyFlag::All;
+  uint64_t dirtyReasonMask_ =
+      static_cast<uint64_t>(LayerDirtyReason::PropertyChanged);
 
-    uint32_t dirtyFlags_ = (uint32_t)LayerDirtyFlag::All;
-    uint64_t dirtyReasonMask_ = static_cast<uint64_t>(LayerDirtyReason::PropertyChanged);
+  // エフェクトコンテナ
+  std::vector<std::shared_ptr<ArtifactAbstractEffect>> effects_;
 
-    // エフェクトコンテナ
-    std::vector<std::shared_ptr<ArtifactAbstractEffect>> effects_;
+  // マスクコンテナ
+  std::vector<LayerMask> masks_;
 
-    // マスクコンテナ
-    std::vector<LayerMask> masks_;
+public:
+  Impl();
+  ~Impl();
+  std::type_index type_index_ = typeid(void);
+  void goToStartFrame();
+  void goToEndFrame();
+  void goToNextFrame();
+  void goToPrevFrame();
 
-   public:
-   Impl();
-   ~Impl();
-   std::type_index type_index_ = typeid(void);
-   void goToStartFrame();
-   void goToEndFrame();
-   void goToNextFrame();
-   void goToPrevFrame();
+  bool is3D() const;
+  AnimatableTransform3D transform_;
+  AnimatableTransform2D transform2d_;
+  Size_2D sourceSize_;
 
-   bool is3D() const;
-   AnimatableTransform3D transform_;
-   AnimatableTransform2D transform2d_;
-   Size_2D sourceSize_;
+  // エフェクト管理メソッド
+  void addEffect(std::shared_ptr<ArtifactAbstractEffect> effect);
+  void removeEffect(const UniString &effectID);
+  void clearEffects();
+  std::vector<std::shared_ptr<ArtifactAbstractEffect>> getEffects() const;
+  std::shared_ptr<ArtifactAbstractEffect>
+  getEffect(const UniString &effectID) const;
+  int effectCount() const;
 
-   // エフェクト管理メソッド
-   void addEffect(std::shared_ptr<ArtifactAbstractEffect> effect);
-   void removeEffect(const UniString& effectID);
-   void clearEffects();
-   std::vector<std::shared_ptr<ArtifactAbstractEffect>> getEffects() const;
-   std::shared_ptr<ArtifactAbstractEffect> getEffect(const UniString& effectID) const;
-    int effectCount() const;
+  // マスク管理
+  void addMask(const LayerMask &mask);
+  void removeMask(int index);
+  void setMask(int index, const LayerMask &mask);
+  LayerMask getMask(int index) const;
+  int maskCount() const;
+  void clearMasks();
+};
 
-    // マスク管理
-    void addMask(const LayerMask& mask);
-    void removeMask(int index);
-    void setMask(int index, const LayerMask& mask);
-    LayerMask getMask(int index) const;
-    int maskCount() const;
-    void clearMasks();
-   };
+ArtifactAbstractLayer::Impl::Impl() {
+  // Avoid undefined draw bounds when a layer is queried before explicit size
+  // assignment.
+  sourceSize_ = Size_2D(1920, 1080);
+}
 
-  ArtifactAbstractLayer::Impl::Impl()
-  {
-  }
+ArtifactAbstractLayer::Impl::~Impl() {}
 
-  ArtifactAbstractLayer::Impl::~Impl()
-  {
-  }
+void ArtifactAbstractLayer::Impl::goToStartFrame() {}
 
-  void ArtifactAbstractLayer::Impl::goToStartFrame()
-  {
+void ArtifactAbstractLayer::Impl::goToEndFrame() {}
 
-  }
+void ArtifactAbstractLayer::Impl::goToNextFrame() {}
 
-  void ArtifactAbstractLayer::Impl::goToEndFrame()
-  {
+void ArtifactAbstractLayer::Impl::goToPrevFrame() {}
 
-  }
+bool ArtifactAbstractLayer::Impl::is3D() const { return is3D_; }
 
-  void ArtifactAbstractLayer::Impl::goToNextFrame()
-  {
+ArtifactAbstractLayer::ArtifactAbstractLayer() : impl_(new Impl()) {
+  impl_->id = Id(); // Generate new ID
+}
 
-  }
+ArtifactAbstractLayer::~ArtifactAbstractLayer() { delete impl_; }
 
-  void ArtifactAbstractLayer::Impl::goToPrevFrame()
-  {
-
-  }
-
-  bool ArtifactAbstractLayer::Impl::is3D() const
-  {
-   return is3D_;
-  }
-
-  ArtifactAbstractLayer::ArtifactAbstractLayer():impl_(new Impl())
- {
-     impl_->id = Id(); // Generate new ID
- }
-
- ArtifactAbstractLayer::~ArtifactAbstractLayer()
- {
-  delete impl_;
- }
- 
- void ArtifactAbstractLayer::setVisible(bool visible/*=true*/)
- {
+void ArtifactAbstractLayer::setVisible(bool visible /*=true*/) {
   if (!assignIfChanged(impl_->isVisible_, visible)) {
-   return;
+    return;
   }
-  notifyLayerMutation(this, LayerDirtyFlag::All, LayerDirtyReason::VisibilityChanged);
- }
+  notifyLayerMutation(this, LayerDirtyFlag::All,
+                      LayerDirtyReason::VisibilityChanged);
+}
 
- void ArtifactAbstractLayer::Show()
- {
-  setVisible(true);
- }
+void ArtifactAbstractLayer::Show() { setVisible(true); }
 
- void ArtifactAbstractLayer::Hide()
- {
-  setVisible(false);
+void ArtifactAbstractLayer::Hide() { setVisible(false); }
 
- }
-
-LAYER_BLEND_TYPE ArtifactAbstractLayer::layerBlendType() const
-{
+LAYER_BLEND_TYPE ArtifactAbstractLayer::layerBlendType() const {
   return impl_->blendMode_;
 }
 
-void ArtifactAbstractLayer::setBlendMode(LAYER_BLEND_TYPE type)
-{
+void ArtifactAbstractLayer::setBlendMode(LAYER_BLEND_TYPE type) {
   if (impl_->blendMode_ == type) {
-   return;
+    return;
   }
   impl_->blendMode_ = type;
   setDirty(LayerDirtyFlag::Effect);
@@ -197,270 +171,208 @@ void ArtifactAbstractLayer::setBlendMode(LAYER_BLEND_TYPE type)
   Q_EMIT changed();
 }
 
- LayerID ArtifactAbstractLayer::id() const
- {
-  return impl_->id;
- }
+LayerID ArtifactAbstractLayer::id() const { return impl_->id; }
 
- QString ArtifactAbstractLayer::layerName() const
- {
-  return impl_->name_;
- }
+QString ArtifactAbstractLayer::layerName() const { return impl_->name_; }
 
- UniString ArtifactAbstractLayer::className() const
-{
-  return QString("");
- }
+UniString ArtifactAbstractLayer::className() const { return QString(""); }
 
- void ArtifactAbstractLayer::setLayerName(const QString& name)
- {
+void ArtifactAbstractLayer::setLayerName(const QString &name) {
   if (!assignIfChanged(impl_->name_, name)) {
-   return;
+    return;
   }
-  notifyLayerMutation(this, LayerDirtyFlag::All, LayerDirtyReason::PropertyChanged);
- }
+  notifyLayerMutation(this, LayerDirtyFlag::All,
+                      LayerDirtyReason::PropertyChanged);
+}
 
- std::type_index ArtifactAbstractLayer::type_index() const
- {
+std::type_index ArtifactAbstractLayer::type_index() const {
   return impl_->type_index_;
- }
+}
 
- void ArtifactAbstractLayer::goToStartFrame()
- {
+void ArtifactAbstractLayer::goToStartFrame() {}
 
- }
+void ArtifactAbstractLayer::goToEndFrame() {}
 
- void ArtifactAbstractLayer::goToEndFrame()
- {
+void ArtifactAbstractLayer::goToNextFrame() {}
 
- }
+void ArtifactAbstractLayer::goToPrevFrame() {}
 
- void ArtifactAbstractLayer::goToNextFrame()
- {
+void ArtifactAbstractLayer::goToFrame(int64_t frameNumber /*= 0*/) {
+  // 現在のフレーム位置を更新
+  impl_->currentFrame_ = frameNumber;
+}
 
- }
+int64_t ArtifactAbstractLayer::currentFrame() const {
+  return impl_->currentFrame_;
+}
 
- void ArtifactAbstractLayer::goToPrevFrame()
- {
-
- }
-
- void ArtifactAbstractLayer::goToFrame(int64_t frameNumber /*= 0*/)
- {
-    // Minimal synchronous evaluation implementation.
-    // 1) Update internal state (could store current frame if needed)
-    // 2) Evaluate transforms/animation for this frame (AnimatableTransform2D/3D)
-    // 3) Evaluate each effect synchronously using CPU backend and update a local cache image
-
-    // For now we keep a very small local evaluation: create a temporary ImageF32x4RGBAWithCache
-    // and pass it through effects sequentially. Concrete layers (image/video) should override
-    // to supply actual source image for the frame. This generic path does nothing but serve as
-    // a fallback.
-
-    Q_UNUSED(frameNumber);
-
-    // Basic evaluation: evaluate transforms and apply effects sequentially if any.
-    // This is a conservative default; concrete layers should override to provide
-    // actual source content for the frame.
-
-    // Evaluate transforms (sync)
-    (void)transform2D();
-    (void)transform3D();
-
-    // If there are effects, run them using CPU impl sequentially on a temporary image.
-    auto effects = getEffects();
-    if (effects.empty()) return;
-
-    // Create a small dummy image matching sourceSize as placeholder
-    Size_2D sz = sourceSize();
-    if (sz.width <= 0 || sz.height <= 0) return;
-
-    ArtifactCore::ImageF32x4_RGBA baseColor;
-    baseColor.resize(sz.width, sz.height);
-    ArtifactCore::ImageF32x4RGBAWithCache temp(baseColor);
-
-    ArtifactCore::ImageF32x4RGBAWithCache cur = temp;
-    ArtifactCore::ImageF32x4RGBAWithCache out;
-    for (const auto& eff : effects) {
-        if (!eff) continue;
-        // prefer CPU path for deterministic synchronous evaluation
-        eff->setComputeMode(Artifact::ComputeMode::CPU);
-        auto cpuBackend = eff->cpuImpl();
-        if (cpuBackend) {
-            cpuBackend->applyCPU(cur, out);
-        } else {
-            out = cur.DeepCopy();
-        }
-        cur = out.DeepCopy();
-    }
-
-    // TODO: store cur into layer cache if present
-    return;
- }
-
- FramePosition ArtifactAbstractLayer::inPoint() const { return impl_->inPoint_; }
- void ArtifactAbstractLayer::setInPoint(const FramePosition& pos)
- {
+FramePosition ArtifactAbstractLayer::inPoint() const { return impl_->inPoint_; }
+void ArtifactAbstractLayer::setInPoint(const FramePosition &pos) {
   if (!assignIfChanged(impl_->inPoint_, pos)) {
-   return;
+    return;
   }
-  notifyLayerMutation(this, LayerDirtyFlag::All, LayerDirtyReason::TimelineChanged);
- }
- FramePosition ArtifactAbstractLayer::outPoint() const { return impl_->outPoint_; }
- void ArtifactAbstractLayer::setOutPoint(const FramePosition& pos)
- {
+  notifyLayerMutation(this, LayerDirtyFlag::All,
+                      LayerDirtyReason::TimelineChanged);
+}
+FramePosition ArtifactAbstractLayer::outPoint() const {
+  return impl_->outPoint_;
+}
+void ArtifactAbstractLayer::setOutPoint(const FramePosition &pos) {
   if (!assignIfChanged(impl_->outPoint_, pos)) {
-   return;
+    return;
   }
-  notifyLayerMutation(this, LayerDirtyFlag::All, LayerDirtyReason::TimelineChanged);
- }
- FramePosition ArtifactAbstractLayer::startTime() const { return impl_->startTime_; }
- void ArtifactAbstractLayer::setStartTime(const FramePosition& pos)
- {
+  notifyLayerMutation(this, LayerDirtyFlag::All,
+                      LayerDirtyReason::TimelineChanged);
+}
+FramePosition ArtifactAbstractLayer::startTime() const {
+  return impl_->startTime_;
+}
+void ArtifactAbstractLayer::setStartTime(const FramePosition &pos) {
   if (!assignIfChanged(impl_->startTime_, pos)) {
-   return;
-  }
-  notifyLayerMutation(this, LayerDirtyFlag::All, LayerDirtyReason::TimelineChanged);
- }
-
-  bool ArtifactAbstractLayer::isActiveAt(const FramePosition& pos) const
-  {
-      return pos.framePosition() >= impl_->inPoint_.framePosition() && 
-             pos.framePosition() < impl_->outPoint_.framePosition();
-  }
-
-  bool ArtifactAbstractLayer::isGuide() const { return impl_->isGuide_; }
-  void ArtifactAbstractLayer::setGuide(bool guide)
-  {
-   if (!assignIfChanged(impl_->isGuide_, guide)) {
     return;
-   }
-   notifyLayerMutation(this, LayerDirtyFlag::All, LayerDirtyReason::PropertyChanged);
   }
-  bool ArtifactAbstractLayer::isSolo() const { return impl_->isSolo_; }
-  void ArtifactAbstractLayer::setSolo(bool solo)
-  {
-   if (!assignIfChanged(impl_->isSolo_, solo)) {
+  notifyLayerMutation(this, LayerDirtyFlag::All,
+                      LayerDirtyReason::TimelineChanged);
+}
+
+bool ArtifactAbstractLayer::isActiveAt(const FramePosition &pos) const {
+  return pos.framePosition() >= impl_->inPoint_.framePosition() &&
+         pos.framePosition() < impl_->outPoint_.framePosition();
+}
+
+bool ArtifactAbstractLayer::isGuide() const { return impl_->isGuide_; }
+void ArtifactAbstractLayer::setGuide(bool guide) {
+  if (!assignIfChanged(impl_->isGuide_, guide)) {
     return;
-   }
-   notifyLayerMutation(this, LayerDirtyFlag::All, LayerDirtyReason::PlaybackChanged);
   }
-  bool ArtifactAbstractLayer::isLocked() const { return impl_->isLocked_; }
-  void ArtifactAbstractLayer::setLocked(bool locked)
-  {
-   if (!assignIfChanged(impl_->isLocked_, locked)) {
+  notifyLayerMutation(this, LayerDirtyFlag::All,
+                      LayerDirtyReason::PropertyChanged);
+}
+bool ArtifactAbstractLayer::isSolo() const { return impl_->isSolo_; }
+void ArtifactAbstractLayer::setSolo(bool solo) {
+  if (!assignIfChanged(impl_->isSolo_, solo)) {
     return;
-   }
-   notifyLayerMutation(this, LayerDirtyFlag::All, LayerDirtyReason::PropertyChanged);
   }
-  bool ArtifactAbstractLayer::isShy() const { return impl_->isShy_; }
-  void ArtifactAbstractLayer::setShy(bool shy)
-  {
-   if (!assignIfChanged(impl_->isShy_, shy)) {
+  notifyLayerMutation(this, LayerDirtyFlag::All,
+                      LayerDirtyReason::PlaybackChanged);
+}
+bool ArtifactAbstractLayer::isLocked() const { return impl_->isLocked_; }
+void ArtifactAbstractLayer::setLocked(bool locked) {
+  if (!assignIfChanged(impl_->isLocked_, locked)) {
     return;
-   }
-   notifyLayerMutation(this, LayerDirtyFlag::All, LayerDirtyReason::PropertyChanged);
   }
+  notifyLayerMutation(this, LayerDirtyFlag::All,
+                      LayerDirtyReason::PropertyChanged);
+}
+bool ArtifactAbstractLayer::isShy() const { return impl_->isShy_; }
+void ArtifactAbstractLayer::setShy(bool shy) {
+  if (!assignIfChanged(impl_->isShy_, shy)) {
+    return;
+  }
+  notifyLayerMutation(this, LayerDirtyFlag::All,
+                      LayerDirtyReason::PropertyChanged);
+}
 
-  void ArtifactAbstractLayer::setDirty(LayerDirtyFlag flag) { impl_->dirtyFlags_ |= (uint32_t)flag; }
-  void ArtifactAbstractLayer::clearDirty(LayerDirtyFlag flag) { impl_->dirtyFlags_ &= ~(uint32_t)flag; }
-  bool ArtifactAbstractLayer::isDirty(LayerDirtyFlag flag) const { return (impl_->dirtyFlags_ & (uint32_t)flag) != 0; }
-  void ArtifactAbstractLayer::addDirtyReason(LayerDirtyReason reason) { impl_->dirtyReasonMask_ |= static_cast<uint64_t>(reason); }
-  bool ArtifactAbstractLayer::hasDirtyReason(LayerDirtyReason reason) const { return (impl_->dirtyReasonMask_ & static_cast<uint64_t>(reason)) != 0; }
-  uint64_t ArtifactAbstractLayer::dirtyReasonMask() const { return impl_->dirtyReasonMask_; }
-  void ArtifactAbstractLayer::clearDirtyReasons() { impl_->dirtyReasonMask_ = static_cast<uint64_t>(LayerDirtyReason::None); }
+void ArtifactAbstractLayer::setDirty(LayerDirtyFlag flag) {
+  impl_->dirtyFlags_ |= (uint32_t)flag;
+}
+void ArtifactAbstractLayer::clearDirty(LayerDirtyFlag flag) {
+  impl_->dirtyFlags_ &= ~(uint32_t)flag;
+}
+bool ArtifactAbstractLayer::isDirty(LayerDirtyFlag flag) const {
+  return (impl_->dirtyFlags_ & (uint32_t)flag) != 0;
+}
+void ArtifactAbstractLayer::addDirtyReason(LayerDirtyReason reason) {
+  impl_->dirtyReasonMask_ |= static_cast<uint64_t>(reason);
+}
+bool ArtifactAbstractLayer::hasDirtyReason(LayerDirtyReason reason) const {
+  return (impl_->dirtyReasonMask_ & static_cast<uint64_t>(reason)) != 0;
+}
+uint64_t ArtifactAbstractLayer::dirtyReasonMask() const {
+  return impl_->dirtyReasonMask_;
+}
+void ArtifactAbstractLayer::clearDirtyReasons() {
+  impl_->dirtyReasonMask_ = static_cast<uint64_t>(LayerDirtyReason::None);
+}
 
- void ArtifactAbstractLayer::setComposition(void* comp)
- {
-  impl_->composition_ = static_cast<ArtifactAbstractComposition*>(comp);
- }
+void ArtifactAbstractLayer::setComposition(void *comp) {
+  impl_->composition_ = static_cast<ArtifactAbstractComposition *>(comp);
+}
 
- void* ArtifactAbstractLayer::composition() const
- {
-  return impl_->composition_;
- }
+void *ArtifactAbstractLayer::composition() const { return impl_->composition_; }
 
- ArtifactAbstractLayerPtr ArtifactAbstractLayer::parentLayer() const
- {
-  if (!impl_->composition_ || impl_->parentLayerId_.isNil()) return nullptr;
+ArtifactAbstractLayerPtr ArtifactAbstractLayer::parentLayer() const {
+  if (!impl_->composition_ || impl_->parentLayerId_.isNil())
+    return nullptr;
   return impl_->composition_->layerById(impl_->parentLayerId_);
- }
+}
 
- QTransform ArtifactAbstractLayer::getLocalTransform() const
- {
-  const auto& t = transform3D();
+QTransform ArtifactAbstractLayer::getLocalTransform() const {
+  const auto &t = transform3D();
   QTransform result;
-  
-  // AE-like transform: Translate(Pos) * Rotate(Rot) * Scale(Scale) * Translate(-Anchor)
+
+  // AE-like transform: Translate(Pos) * Rotate(Rot) * Scale(Scale) *
+  // Translate(-Anchor)
   result.translate(t.positionX(), t.positionY());
   result.rotate(t.rotation());
   result.scale(t.scaleX(), t.scaleY());
   result.translate(-t.anchorX(), -t.anchorY());
-  
-  return result;
- }
 
- QTransform ArtifactAbstractLayer::getGlobalTransform() const
- {
+  return result;
+}
+
+QTransform ArtifactAbstractLayer::getGlobalTransform() const {
   QTransform local = getLocalTransform();
   auto parent = parentLayer();
   if (parent) {
-   // In After Effects, parent transform is applied to the child's space
-   return local * parent->getGlobalTransform();
+    // In After Effects, parent transform is applied to the child's space
+    return local * parent->getGlobalTransform();
   }
   return local;
- }
+}
 
- bool ArtifactAbstractLayer::isAdjustmentLayer() const
- {
-  return true;
- }
- void ArtifactAbstractLayer::setAdjustmentLayer(bool isAdjustment)
- {
-  //adjustmentLayer = isAdjustment;
- }
+bool ArtifactAbstractLayer::isAdjustmentLayer() const { return true; }
+void ArtifactAbstractLayer::setAdjustmentLayer(bool isAdjustment) {
+  // adjustmentLayer = isAdjustment;
+}
 
- bool ArtifactAbstractLayer::isVisible() const
- {
-  return impl_->isVisible_;
- }
+bool ArtifactAbstractLayer::isVisible() const { return impl_->isVisible_; }
 
-void ArtifactAbstractLayer::setParentById(const LayerID& id)
-{
+void ArtifactAbstractLayer::setParentById(const LayerID &id) {
   if (id.isNil()) {
-   clearParent();
-   return;
+    clearParent();
+    return;
   }
 
   if (id == this->id()) {
-   qWarning() << "[Layer] Reject self-parent:" << id.toString();
-   return;
+    qWarning() << "[Layer] Reject self-parent:" << id.toString();
+    return;
   }
 
   if (impl_->composition_) {
-   auto parent = impl_->composition_->layerById(id);
-   if (!parent) {
-    qWarning() << "[Layer] Reject invalid parent id:" << id.toString();
-    return;
-   }
+    auto parent = impl_->composition_->layerById(id);
+    if (!parent) {
+      qWarning() << "[Layer] Reject invalid parent id:" << id.toString();
+      return;
+    }
 
-   LayerID cursor = id;
-   int guard = 0;
-   while (!cursor.isNil() && guard++ < 1024) {
-    if (cursor == this->id()) {
-     qWarning() << "[Layer] Reject cyclic parent:" << id.toString();
-     return;
+    LayerID cursor = id;
+    int guard = 0;
+    while (!cursor.isNil() && guard++ < 1024) {
+      if (cursor == this->id()) {
+        qWarning() << "[Layer] Reject cyclic parent:" << id.toString();
+        return;
+      }
+      auto node = impl_->composition_->layerById(cursor);
+      if (!node) {
+        break;
+      }
+      cursor = node->parentLayerId();
     }
-    auto node = impl_->composition_->layerById(cursor);
-    if (!node) {
-     break;
-    }
-    cursor = node->parentLayerId();
-   }
   }
 
   if (impl_->parentLayerId_ == id) {
-   return;
+    return;
   }
 
   impl_->parentLayerId_ = id;
@@ -470,15 +382,13 @@ void ArtifactAbstractLayer::setParentById(const LayerID& id)
   Q_EMIT changed();
 }
 
- LayerID ArtifactAbstractLayer::parentLayerId() const
- {
+LayerID ArtifactAbstractLayer::parentLayerId() const {
   return impl_->parentLayerId_;
- }
+}
 
-void ArtifactAbstractLayer::clearParent()
-{
+void ArtifactAbstractLayer::clearParent() {
   if (impl_->parentLayerId_.isNil()) {
-   return;
+    return;
   }
   impl_->parentLayerId_ = LayerID();
   setDirty(LayerDirtyFlag::Transform);
@@ -486,564 +396,549 @@ void ArtifactAbstractLayer::clearParent()
   Q_EMIT changed();
 }
 
- bool ArtifactAbstractLayer::hasParent() const
- {
+bool ArtifactAbstractLayer::hasParent() const {
   return !impl_->parentLayerId_.isNil();
- }
-
- bool ArtifactAbstractLayer::is3D() const
- {
-  return false;
- }
-
- void ArtifactAbstractLayer::setTimeRemapEnabled(bool)
- {
-
- }
-
- void ArtifactAbstractLayer::setTimeRemapKey(int64_t compFrame, double sourceFrame)
- {
-
- }
-
- bool ArtifactAbstractLayer::isTimeRemapEnabled() const
- {
-  return false;
- }
-
- bool ArtifactAbstractLayer::isNullLayer() const
- {
-  return false;
- }
-
- bool ArtifactAbstractLayer::hasAudio() const
- {
-  return true;
- }
-
- bool ArtifactAbstractLayer::hasVideo() const
- {
-  return true;
- }
-
-Size_2D ArtifactAbstractLayer::sourceSize() const
-{
- return impl_->sourceSize_;
 }
 
-void ArtifactAbstractLayer::setSourceSize(const Size_2D& size)
-{
- impl_->sourceSize_ = size;
+bool ArtifactAbstractLayer::is3D() const { return false; }
+
+void ArtifactAbstractLayer::setTimeRemapEnabled(bool) {}
+
+void ArtifactAbstractLayer::setTimeRemapKey(int64_t compFrame,
+                                            double sourceFrame) {}
+
+bool ArtifactAbstractLayer::isTimeRemapEnabled() const { return false; }
+
+bool ArtifactAbstractLayer::isNullLayer() const { return false; }
+
+bool ArtifactAbstractLayer::hasAudio() const { return true; }
+
+bool ArtifactAbstractLayer::hasVideo() const { return true; }
+
+Size_2D ArtifactAbstractLayer::sourceSize() const { return impl_->sourceSize_; }
+
+void ArtifactAbstractLayer::setSourceSize(const Size_2D &size) {
+  impl_->sourceSize_ = size;
 }
 
-Size_2D ArtifactAbstractLayer::aabb() const
-{
- const auto bounds = transformedBoundingBox();
- if (bounds.width() <= 0 || bounds.height() <= 0) {
-  return Size_2D();
- }
- Size_2D result;
- result.width = static_cast<int>(std::ceil(bounds.width()));
- result.height = static_cast<int>(std::ceil(bounds.height()));
- return result;
+Size_2D ArtifactAbstractLayer::aabb() const {
+  const auto bounds = transformedBoundingBox();
+  if (bounds.width() <= 0 || bounds.height() <= 0) {
+    return Size_2D();
+  }
+  Size_2D result;
+  result.width = static_cast<int>(std::ceil(bounds.width()));
+  result.height = static_cast<int>(std::ceil(bounds.height()));
+  return result;
 }
 
-QRectF ArtifactAbstractLayer::transformedBoundingBox() const
-{
- const auto size = sourceSize();
- if (size.width <= 0 || size.height <= 0) {
-  return QRectF();
- }
+QRectF ArtifactAbstractLayer::transformedBoundingBox() const {
+  const auto size = sourceSize();
+  if (size.width <= 0 || size.height <= 0) {
+    return QRectF();
+  }
 
- QTransform global = getGlobalTransform();
- QRectF localRect(0, 0, static_cast<float>(size.width), static_cast<float>(size.height));
- return global.mapRect(localRect);
+  QTransform global = getGlobalTransform();
+  QRectF localRect(0, 0, static_cast<float>(size.width),
+                   static_cast<float>(size.height));
+  return global.mapRect(localRect);
 }
 
-AnimatableTransform2D& ArtifactAbstractLayer::transform2D()
-{
- return impl_->transform2d_;
+AnimatableTransform2D &ArtifactAbstractLayer::transform2D() {
+  return impl_->transform2d_;
 }
 
-const AnimatableTransform2D& ArtifactAbstractLayer::transform2D() const
-{
- return impl_->transform2d_;
+const AnimatableTransform2D &ArtifactAbstractLayer::transform2D() const {
+  return impl_->transform2d_;
 }
 
-AnimatableTransform3D& ArtifactAbstractLayer::transform3D()
-{
- return impl_->transform_;
+AnimatableTransform3D &ArtifactAbstractLayer::transform3D() {
+  return impl_->transform_;
 }
 
-const AnimatableTransform3D& ArtifactAbstractLayer::transform3D() const
-{
- return impl_->transform_;
+const AnimatableTransform3D &ArtifactAbstractLayer::transform3D() const {
+  return impl_->transform_;
 }
 
-QJsonObject ArtifactAbstractLayer::toJson() const
-{
+QJsonObject ArtifactAbstractLayer::toJson() const {
 
-    QJsonObject obj;
-    // Basic metadata
-    obj["id"] = id().toString();
-    obj["name"] = layerName();
-    obj["type"] = static_cast<int>(LayerType::Unknown);
-    obj["parentId"] = parentLayerId().toString();
-    obj["inPoint"] = (qint64)impl_->inPoint_.framePosition();
-    obj["outPoint"] = (qint64)impl_->outPoint_.framePosition();
-    obj["startTime"] = (qint64)impl_->startTime_.framePosition();
-    obj["isVisible"] = isVisible();
-    obj["is3D"] = is3D();
-    obj["blendMode"] = static_cast<int>(layerBlendType());
-    obj["isLocked"] = impl_->isLocked_;
-    obj["isGuide"] = impl_->isGuide_;
-    obj["isSolo"] = impl_->isSolo_;
-    obj["isShy"] = impl_->isShy_;
-    obj["opacity"] = static_cast<double>(impl_->opacity_);
+  QJsonObject obj;
+  // Basic metadata
+  obj["id"] = id().toString();
+  obj["name"] = layerName();
+  obj["type"] = static_cast<int>(LayerType::Unknown);
+  obj["parentId"] = parentLayerId().toString();
+  obj["inPoint"] = (qint64)impl_->inPoint_.framePosition();
+  obj["outPoint"] = (qint64)impl_->outPoint_.framePosition();
+  obj["startTime"] = (qint64)impl_->startTime_.framePosition();
+  obj["isVisible"] = isVisible();
+  obj["is3D"] = is3D();
+  obj["blendMode"] = static_cast<int>(layerBlendType());
+  obj["isLocked"] = impl_->isLocked_;
+  obj["isGuide"] = impl_->isGuide_;
+  obj["isSolo"] = impl_->isSolo_;
+  obj["isShy"] = impl_->isShy_;
+  obj["opacity"] = static_cast<double>(impl_->opacity_);
 
-    // Transform
-    QJsonObject trans;
-    const auto& t3 = transform3D();
-    trans["px"] = t3.positionX();
-    trans["py"] = t3.positionY();
-    trans["pz"] = t3.positionZ();
-    trans["rx"] = t3.rotation(); // Currently only 1 rotation in ixx outline
-    trans["sx"] = t3.scaleX();
-    trans["sy"] = t3.scaleY();
-    trans["ax"] = t3.anchorX();
-    trans["ay"] = t3.anchorY();
-    trans["az"] = t3.anchorZ();
-    obj["transform"] = trans;
+  // Transform
+  QJsonObject trans;
+  const auto &t3 = transform3D();
+  trans["px"] = t3.positionX();
+  trans["py"] = t3.positionY();
+  trans["pz"] = t3.positionZ();
+  trans["rx"] = t3.rotation(); // Currently only 1 rotation in ixx outline
+  trans["sx"] = t3.scaleX();
+  trans["sy"] = t3.scaleY();
+  trans["ax"] = t3.anchorX();
+  trans["ay"] = t3.anchorY();
+  trans["az"] = t3.anchorZ();
+  obj["transform"] = trans;
 
-    // Effects and their properties
-    QJsonArray effectsArr;
-    for (const auto& eff : getEffects()) {
-        if (!eff) continue;
-        QJsonObject eobj;
-        eobj["id"] = eff->effectID().toQString();
-        eobj["displayName"] = eff->displayName().toQString();
+  // Effects and their properties
+  QJsonArray effectsArr;
+  for (const auto &eff : getEffects()) {
+    if (!eff)
+      continue;
+    QJsonObject eobj;
+    eobj["id"] = eff->effectID().toQString();
+    eobj["displayName"] = eff->displayName().toQString();
 
-        QJsonArray propsArr;
-        auto props = eff->getProperties();
-        for (const auto& p : props) {
-            QJsonObject pobj;
-            pobj["name"] = p.getName();
-            pobj["type"] = static_cast<int>(p.getType());
-            // Serialize value depending on type
-            switch (p.getType()) {
-                case ArtifactCore::PropertyType::Float:
-                case ArtifactCore::PropertyType::Integer:
-                case ArtifactCore::PropertyType::Boolean:
-                case ArtifactCore::PropertyType::String:
-                    pobj["value"] = QJsonValue::fromVariant(p.getValue());
-                    break;
-                case ArtifactCore::PropertyType::Color: {
-                    QColor c = p.getColorValue();
-                    QJsonObject col;
-                    col["r"] = c.redF();
-                    col["g"] = c.greenF();
-                    col["b"] = c.blueF();
-                    col["a"] = c.alphaF();
-                    pobj["value"] = col;
-                    break;
-                }
-                default:
-                    pobj["value"] = QJsonValue();
-                    break;
-            }
-            propsArr.append(pobj);
-        }
-        eobj["properties"] = propsArr;
-        effectsArr.append(eobj);
+    QJsonArray propsArr;
+    auto props = eff->getProperties();
+    for (const auto &p : props) {
+      QJsonObject pobj;
+      pobj["name"] = p.getName();
+      pobj["type"] = static_cast<int>(p.getType());
+      // Serialize value depending on type
+      switch (p.getType()) {
+      case ArtifactCore::PropertyType::Float:
+      case ArtifactCore::PropertyType::Integer:
+      case ArtifactCore::PropertyType::Boolean:
+      case ArtifactCore::PropertyType::String:
+        pobj["value"] = QJsonValue::fromVariant(p.getValue());
+        break;
+      case ArtifactCore::PropertyType::Color: {
+        QColor c = p.getColorValue();
+        QJsonObject col;
+        col["r"] = c.redF();
+        col["g"] = c.greenF();
+        col["b"] = c.blueF();
+        col["a"] = c.alphaF();
+        pobj["value"] = col;
+        break;
+      }
+      default:
+        pobj["value"] = QJsonValue();
+        break;
+      }
+      propsArr.append(pobj);
     }
-    obj["effects"] = effectsArr;
+    eobj["properties"] = propsArr;
+    effectsArr.append(eobj);
+  }
+  obj["effects"] = effectsArr;
 
-    return obj;
+  return obj;
 }
 
- ArtifactAbstractLayerPtr ArtifactAbstractLayer::fromJson(const QJsonObject& obj)
- {
+ArtifactAbstractLayerPtr
+ArtifactAbstractLayer::fromJson(const QJsonObject &obj) {
   // Default: base class is abstract and cannot be instantiated here.
   // Subclasses should implement their own fromJson factory. Return nullptr
   // to indicate this layer cannot be constructed generically.
   Q_UNUSED(obj);
   return ArtifactAbstractLayerPtr();
- }
+}
 
-void ArtifactAbstractLayer::applyPropertiesFromJson(const QJsonObject& obj)
-{
-    // Default implementation: apply effect properties if matching effects exist
-    // Subclasses should override to handle layer-specific fields
-    if (!obj.contains("effects") || !obj["effects"].isArray()) return;
-    auto arr = obj["effects"].toArray();
-    for (const auto& ev : arr) {
-        if (!ev.isObject()) continue;
-        auto eobj = ev.toObject();
-        if (!eobj.contains("id")) continue;
-        UniString eid(eobj["id"].toString().toStdString());
-        auto eff = getEffect(eid);
-        if (!eff) continue;
-        if (!eobj.contains("properties") || !eobj["properties"].isArray()) continue;
-        auto props = eobj["properties"].toArray();
-        for (const auto& pv : props) {
-            if (!pv.isObject()) continue;
-            auto pobj = pv.toObject();
-            QString name = pobj.value("name").toString();
-            int t = pobj.value("type").toInt(static_cast<int>(ArtifactCore::PropertyType::String));
-            ArtifactCore::PropertyType ptype = static_cast<ArtifactCore::PropertyType>(t);
-            QVariant val;
-            if (pobj.contains("value")) {
-                if (ptype == ArtifactCore::PropertyType::Color && pobj.value("value").isObject()) {
-                    auto col = pobj.value("value").toObject();
-                    double r = col.value("r").toDouble(0.0);
-                    double g = col.value("g").toDouble(0.0);
-                    double b = col.value("b").toDouble(0.0);
-                    double a = col.value("a").toDouble(1.0);
-                    QColor qc;
-                    qc.setRedF(static_cast<float>(r));
-                    qc.setGreenF(static_cast<float>(g));
-                    qc.setBlueF(static_cast<float>(b));
-                    qc.setAlphaF(static_cast<float>(a));
-                    val = QVariant(qc);
-                } else {
-                    val = pobj.value("value").toVariant();
-                }
-            }
-            eff->setPropertyValue(UniString(name.toStdString()), val);
+void ArtifactAbstractLayer::applyPropertiesFromJson(const QJsonObject &obj) {
+  // Default implementation: apply effect properties if matching effects exist
+  // Subclasses should override to handle layer-specific fields
+  if (!obj.contains("effects") || !obj["effects"].isArray())
+    return;
+  auto arr = obj["effects"].toArray();
+  for (const auto &ev : arr) {
+    if (!ev.isObject())
+      continue;
+    auto eobj = ev.toObject();
+    if (!eobj.contains("id"))
+      continue;
+    UniString eid(eobj["id"].toString().toStdString());
+    auto eff = getEffect(eid);
+    if (!eff)
+      continue;
+    if (!eobj.contains("properties") || !eobj["properties"].isArray())
+      continue;
+    auto props = eobj["properties"].toArray();
+    for (const auto &pv : props) {
+      if (!pv.isObject())
+        continue;
+      auto pobj = pv.toObject();
+      QString name = pobj.value("name").toString();
+      int t = pobj.value("type").toInt(
+          static_cast<int>(ArtifactCore::PropertyType::String));
+      ArtifactCore::PropertyType ptype =
+          static_cast<ArtifactCore::PropertyType>(t);
+      QVariant val;
+      if (pobj.contains("value")) {
+        if (ptype == ArtifactCore::PropertyType::Color &&
+            pobj.value("value").isObject()) {
+          auto col = pobj.value("value").toObject();
+          double r = col.value("r").toDouble(0.0);
+          double g = col.value("g").toDouble(0.0);
+          double b = col.value("b").toDouble(0.0);
+          double a = col.value("a").toDouble(1.0);
+          QColor qc;
+          qc.setRedF(static_cast<float>(r));
+          qc.setGreenF(static_cast<float>(g));
+          qc.setBlueF(static_cast<float>(b));
+          qc.setAlphaF(static_cast<float>(a));
+          val = QVariant(qc);
+        } else {
+          val = pobj.value("value").toVariant();
         }
+      }
+      eff->setPropertyValue(UniString(name.toStdString()), val);
     }
-}
-
-void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject& obj)
-{
-    if (obj.contains("name")) setLayerName(obj["name"].toString());
-    if (obj.contains("inPoint")) setInPoint(FramePosition(obj["inPoint"].toVariant().toLongLong()));
-    if (obj.contains("outPoint")) setOutPoint(FramePosition(obj["outPoint"].toVariant().toLongLong()));
-    if (obj.contains("startTime")) setStartTime(FramePosition(obj["startTime"].toVariant().toLongLong()));
-    if (obj.contains("isVisible")) setVisible(obj["isVisible"].toBool());
-    if (obj.contains("isLocked")) setLocked(obj["isLocked"].toBool());
-    if (obj.contains("isGuide")) setGuide(obj["isGuide"].toBool());
-    if (obj.contains("isSolo")) setSolo(obj["isSolo"].toBool());
-    if (obj.contains("isShy")) setShy(obj["isShy"].toBool());
-    if (obj.contains("opacity")) setOpacity(static_cast<float>(obj["opacity"].toDouble(1.0)));
-    if (obj.contains("blendMode")) {
-        const int mode = obj["blendMode"].toInt(static_cast<int>(LAYER_BLEND_TYPE::BLEND_NORMAL));
-        setBlendMode(static_cast<LAYER_BLEND_TYPE>(mode));
-    }
-    if (obj.contains("parentId")) {
-        const QString parentId = obj["parentId"].toString();
-        if (parentId.isEmpty()) clearParent();
-        else setParentById(LayerID(parentId));
-    }
-    
-    if (obj.contains("transform") && obj["transform"].isObject()) {
-        QJsonObject trans = obj["transform"].toObject();
-        auto& t3 = transform3D();
-        // Since we are loading, we might want to set these as initial values or at time 0
-        RationalTime t0(0, 30000); // 0s
-        if (trans.contains("px")) t3.setPosition(t0, trans["px"].toDouble(), trans["py"].toDouble());
-        if (trans.contains("pz")) t3.setPositionZ(t0, trans["pz"].toDouble());
-        if (trans.contains("rx")) t3.setRotation(t0, trans["rx"].toDouble());
-        if (trans.contains("sx")) t3.setScale(t0, trans["sx"].toDouble(), trans["sy"].toDouble());
-        if (trans.contains("ax")) t3.setAnchor(t0, trans["ax"].toDouble(), trans["ay"].toDouble(), trans["az"].toDouble());
-    }
-
-    applyPropertiesFromJson(obj);
-}
-
- void ArtifactAbstractLayer::Impl::addEffect(std::shared_ptr<ArtifactAbstractEffect> effect)
- {
-  if (!effect) return;
-  effects_.push_back(effect);
-  qDebug() << "[ArtifactAbstractLayer] Effect added:" << effect->displayName().toQString();
- }
-
- void ArtifactAbstractLayer::Impl::removeEffect(const UniString& effectID)
- {
-  auto it = std::remove_if(effects_.begin(), effects_.end(),
-   [&effectID](const std::shared_ptr<ArtifactAbstractEffect>& e) {
-    return e && e->effectID() == effectID;
-   });
-  if (it != effects_.end()) {
-   effects_.erase(it, effects_.end());
-   qDebug() << "[ArtifactAbstractLayer] Effect removed:" << effectID.toQString();
   }
- }
+}
 
- void ArtifactAbstractLayer::Impl::clearEffects()
- {
+void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject &obj) {
+  if (obj.contains("name"))
+    setLayerName(obj["name"].toString());
+  if (obj.contains("inPoint"))
+    setInPoint(FramePosition(obj["inPoint"].toVariant().toLongLong()));
+  if (obj.contains("outPoint"))
+    setOutPoint(FramePosition(obj["outPoint"].toVariant().toLongLong()));
+  if (obj.contains("startTime"))
+    setStartTime(FramePosition(obj["startTime"].toVariant().toLongLong()));
+  if (obj.contains("isVisible"))
+    setVisible(obj["isVisible"].toBool());
+  if (obj.contains("isLocked"))
+    setLocked(obj["isLocked"].toBool());
+  if (obj.contains("isGuide"))
+    setGuide(obj["isGuide"].toBool());
+  if (obj.contains("isSolo"))
+    setSolo(obj["isSolo"].toBool());
+  if (obj.contains("isShy"))
+    setShy(obj["isShy"].toBool());
+  if (obj.contains("opacity"))
+    setOpacity(static_cast<float>(obj["opacity"].toDouble(1.0)));
+  if (obj.contains("blendMode")) {
+    const int mode = obj["blendMode"].toInt(
+        static_cast<int>(LAYER_BLEND_TYPE::BLEND_NORMAL));
+    setBlendMode(static_cast<LAYER_BLEND_TYPE>(mode));
+  }
+  if (obj.contains("parentId")) {
+    const QString parentId = obj["parentId"].toString();
+    if (parentId.isEmpty())
+      clearParent();
+    else
+      setParentById(LayerID(parentId));
+  }
+
+  if (obj.contains("transform") && obj["transform"].isObject()) {
+    QJsonObject trans = obj["transform"].toObject();
+    auto &t3 = transform3D();
+    // Since we are loading, we might want to set these as initial values or at
+    // time 0
+    RationalTime t0(0, 30000); // 0s
+    if (trans.contains("px"))
+      t3.setPosition(t0, trans["px"].toDouble(), trans["py"].toDouble());
+    if (trans.contains("pz"))
+      t3.setPositionZ(t0, trans["pz"].toDouble());
+    if (trans.contains("rx"))
+      t3.setRotation(t0, trans["rx"].toDouble());
+    if (trans.contains("sx"))
+      t3.setScale(t0, trans["sx"].toDouble(), trans["sy"].toDouble());
+    if (trans.contains("ax"))
+      t3.setAnchor(t0, trans["ax"].toDouble(), trans["ay"].toDouble(),
+                   trans["az"].toDouble());
+  }
+
+  applyPropertiesFromJson(obj);
+}
+
+void ArtifactAbstractLayer::Impl::addEffect(
+    std::shared_ptr<ArtifactAbstractEffect> effect) {
+  if (!effect)
+    return;
+  effects_.push_back(effect);
+  qDebug() << "[ArtifactAbstractLayer] Effect added:"
+           << effect->displayName().toQString();
+}
+
+void ArtifactAbstractLayer::Impl::removeEffect(const UniString &effectID) {
+  auto it = std::remove_if(
+      effects_.begin(), effects_.end(),
+      [&effectID](const std::shared_ptr<ArtifactAbstractEffect> &e) {
+        return e && e->effectID() == effectID;
+      });
+  if (it != effects_.end()) {
+    effects_.erase(it, effects_.end());
+    qDebug() << "[ArtifactAbstractLayer] Effect removed:"
+             << effectID.toQString();
+  }
+}
+
+void ArtifactAbstractLayer::Impl::clearEffects() {
   effects_.clear();
   qDebug() << "[ArtifactAbstractLayer] All effects cleared";
- }
+}
 
- std::vector<std::shared_ptr<ArtifactAbstractEffect>> ArtifactAbstractLayer::Impl::getEffects() const
- {
+std::vector<std::shared_ptr<ArtifactAbstractEffect>>
+ArtifactAbstractLayer::Impl::getEffects() const {
   return effects_;
- }
+}
 
- std::shared_ptr<ArtifactAbstractEffect> ArtifactAbstractLayer::Impl::getEffect(const UniString& effectID) const
- {
-  for (const auto& effect : effects_) {
-   if (effect && effect->effectID() == effectID) {
-    return effect;
-   }
+std::shared_ptr<ArtifactAbstractEffect>
+ArtifactAbstractLayer::Impl::getEffect(const UniString &effectID) const {
+  for (const auto &effect : effects_) {
+    if (effect && effect->effectID() == effectID) {
+      return effect;
+    }
   }
   return nullptr;
- }
+}
 
- int ArtifactAbstractLayer::Impl::effectCount() const
- {
+int ArtifactAbstractLayer::Impl::effectCount() const {
   return static_cast<int>(effects_.size());
- }
+}
 
- void ArtifactAbstractLayer::addEffect(std::shared_ptr<ArtifactAbstractEffect> effect)
- {
+void ArtifactAbstractLayer::addEffect(
+    std::shared_ptr<ArtifactAbstractEffect> effect) {
   impl_->addEffect(effect);
- }
+}
 
- void ArtifactAbstractLayer::removeEffect(const UniString& effectID)
- {
+void ArtifactAbstractLayer::removeEffect(const UniString &effectID) {
   impl_->removeEffect(effectID);
- }
+}
 
- void ArtifactAbstractLayer::clearEffects()
- {
-  impl_->clearEffects();
- }
+void ArtifactAbstractLayer::clearEffects() { impl_->clearEffects(); }
 
- std::vector<std::shared_ptr<ArtifactAbstractEffect>> ArtifactAbstractLayer::getEffects() const
- {
+std::vector<std::shared_ptr<ArtifactAbstractEffect>>
+ArtifactAbstractLayer::getEffects() const {
   return impl_->getEffects();
- }
+}
 
- std::shared_ptr<ArtifactAbstractEffect> ArtifactAbstractLayer::getEffect(const UniString& effectID) const
- {
+std::shared_ptr<ArtifactAbstractEffect>
+ArtifactAbstractLayer::getEffect(const UniString &effectID) const {
   return impl_->getEffect(effectID);
- }
+}
 
- int ArtifactAbstractLayer::effectCount() const
- {
-  return impl_->effectCount();
- }
+int ArtifactAbstractLayer::effectCount() const { return impl_->effectCount(); }
 
- std::vector<ArtifactCore::PropertyGroup> ArtifactAbstractLayer::getLayerPropertyGroups() const
- {
+std::vector<ArtifactCore::PropertyGroup>
+ArtifactAbstractLayer::getLayerPropertyGroups() const {
   using namespace ArtifactCore;
   PropertyGroup layerGroup(QStringLiteral("Layer"));
 
-  auto makeProp = [](const QString& name, PropertyType type, const QVariant& value, int priority = 0) {
-   auto p = std::make_shared<AbstractProperty>();
-   p->setName(name);
-   p->setType(type);
-   p->setValue(value);
-   p->setDisplayPriority(priority);
-   if (type == PropertyType::Integer) {
-    p->setStep(1);
-   }
-   return p;
+  auto makeProp = [](const QString &name, PropertyType type,
+                     const QVariant &value, int priority = 0) {
+    auto p = std::make_shared<AbstractProperty>();
+    p->setName(name);
+    p->setType(type);
+    p->setValue(value);
+    p->setDisplayPriority(priority);
+    if (type == PropertyType::Integer) {
+      p->setStep(1);
+    }
+    return p;
   };
 
-  layerGroup.addProperty(makeProp(QStringLiteral("layer.name"), PropertyType::String, layerName(), -200));
-  layerGroup.addProperty(makeProp(QStringLiteral("layer.visible"), PropertyType::Boolean, isVisible(), -190));
-  layerGroup.addProperty(makeProp(QStringLiteral("layer.locked"), PropertyType::Boolean, isLocked(), -180));
-  layerGroup.addProperty(makeProp(QStringLiteral("layer.guide"), PropertyType::Boolean, isGuide(), -170));
-  layerGroup.addProperty(makeProp(QStringLiteral("layer.solo"), PropertyType::Boolean, isSolo(), -160));
-  layerGroup.addProperty(makeProp(QStringLiteral("layer.shy"), PropertyType::Boolean, isShy(), -150));
+  layerGroup.addProperty(makeProp(QStringLiteral("layer.name"),
+                                  PropertyType::String, layerName(), -200));
+  layerGroup.addProperty(makeProp(QStringLiteral("layer.visible"),
+                                  PropertyType::Boolean, isVisible(), -190));
+  layerGroup.addProperty(makeProp(QStringLiteral("layer.locked"),
+                                  PropertyType::Boolean, isLocked(), -180));
+  layerGroup.addProperty(makeProp(QStringLiteral("layer.guide"),
+                                  PropertyType::Boolean, isGuide(), -170));
+  layerGroup.addProperty(makeProp(QStringLiteral("layer.solo"),
+                                  PropertyType::Boolean, isSolo(), -160));
+  layerGroup.addProperty(makeProp(QStringLiteral("layer.shy"),
+                                  PropertyType::Boolean, isShy(), -150));
 
-  auto opacityProp = makeProp(QStringLiteral("layer.opacity"), PropertyType::Float, static_cast<double>(opacity()), -140);
+  auto opacityProp =
+      makeProp(QStringLiteral("layer.opacity"), PropertyType::Float,
+               static_cast<double>(opacity()), -140);
   opacityProp->setHardRange(0.0, 1.0);
   opacityProp->setSoftRange(0.0, 1.0);
   opacityProp->setStep(0.01);
+  opacityProp->setAnimatable(true);
   layerGroup.addProperty(opacityProp);
 
-  auto inPointProp = makeProp(QStringLiteral("time.inPoint"), PropertyType::Integer, static_cast<qint64>(inPoint().framePosition()), -90);
+  auto inPointProp =
+      makeProp(QStringLiteral("time.inPoint"), PropertyType::Integer,
+               static_cast<qint64>(inPoint().framePosition()), -90);
   inPointProp->setUnit(QStringLiteral("frames"));
   inPointProp->setTooltip(QStringLiteral("Layer in-point on timeline"));
   layerGroup.addProperty(inPointProp);
 
-  auto outPointProp = makeProp(QStringLiteral("time.outPoint"), PropertyType::Integer, static_cast<qint64>(outPoint().framePosition()), -80);
+  auto outPointProp =
+      makeProp(QStringLiteral("time.outPoint"), PropertyType::Integer,
+               static_cast<qint64>(outPoint().framePosition()), -80);
   outPointProp->setUnit(QStringLiteral("frames"));
   outPointProp->setTooltip(QStringLiteral("Layer out-point on timeline"));
   layerGroup.addProperty(outPointProp);
 
-  auto startTimeProp = makeProp(QStringLiteral("time.startTime"), PropertyType::Integer, static_cast<qint64>(startTime().framePosition()), -70);
+  auto startTimeProp =
+      makeProp(QStringLiteral("time.startTime"), PropertyType::Integer,
+               static_cast<qint64>(startTime().framePosition()), -70);
   startTimeProp->setUnit(QStringLiteral("frames"));
-  startTimeProp->setTooltip(QStringLiteral("Layer start offset in source time"));
+  startTimeProp->setTooltip(
+      QStringLiteral("Layer start offset in source time"));
   layerGroup.addProperty(startTimeProp);
 
   const auto sz = sourceSize();
-  layerGroup.addProperty(makeProp(QStringLiteral("source.width"), PropertyType::Integer, sz.width, -40));
-  layerGroup.addProperty(makeProp(QStringLiteral("source.height"), PropertyType::Integer, sz.height, -30));
+  layerGroup.addProperty(makeProp(QStringLiteral("source.width"),
+                                  PropertyType::Integer, sz.width, -40));
+  layerGroup.addProperty(makeProp(QStringLiteral("source.height"),
+                                  PropertyType::Integer, sz.height, -30));
 
   return {layerGroup};
- }
+}
 
- bool ArtifactAbstractLayer::setLayerPropertyValue(const QString& propertyPath, const QVariant& value)
- {
+bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
+                                                  const QVariant &value) {
   if (propertyPath == QStringLiteral("layer.name")) {
-   setLayerName(value.toString());
-   return true;
+    setLayerName(value.toString());
+    return true;
   }
   if (propertyPath == QStringLiteral("layer.visible")) {
-   setVisible(value.toBool());
-   return true;
+    setVisible(value.toBool());
+    return true;
   }
   if (propertyPath == QStringLiteral("layer.locked")) {
-   setLocked(value.toBool());
-   return true;
+    setLocked(value.toBool());
+    return true;
   }
   if (propertyPath == QStringLiteral("layer.guide")) {
-   setGuide(value.toBool());
-   return true;
+    setGuide(value.toBool());
+    return true;
   }
   if (propertyPath == QStringLiteral("layer.solo")) {
-   setSolo(value.toBool());
-   return true;
+    setSolo(value.toBool());
+    return true;
   }
   if (propertyPath == QStringLiteral("layer.shy")) {
-   setShy(value.toBool());
-   return true;
+    setShy(value.toBool());
+    return true;
   }
   if (propertyPath == QStringLiteral("layer.opacity")) {
-   setOpacity(static_cast<float>(value.toDouble()));
-   return true;
+    setOpacity(static_cast<float>(value.toDouble()));
+    return true;
   }
   if (propertyPath == QStringLiteral("time.inPoint")) {
-   setInPoint(FramePosition(value.toLongLong()));
-   return true;
+    setInPoint(FramePosition(value.toLongLong()));
+    return true;
   }
   if (propertyPath == QStringLiteral("time.outPoint")) {
-   setOutPoint(FramePosition(value.toLongLong()));
-   return true;
+    setOutPoint(FramePosition(value.toLongLong()));
+    return true;
   }
   if (propertyPath == QStringLiteral("time.startTime")) {
-   setStartTime(FramePosition(value.toLongLong()));
-   return true;
+    setStartTime(FramePosition(value.toLongLong()));
+    return true;
   }
   if (propertyPath == QStringLiteral("source.width")) {
-   const auto cur = sourceSize();
-   const int width = value.toInt();
-   if (cur.width == width) {
+    const auto cur = sourceSize();
+    const int width = value.toInt();
+    if (cur.width == width) {
+      return true;
+    }
+    setSourceSize(Size_2D(width, cur.height));
+    notifyLayerMutation(this, LayerDirtyFlag::Source,
+                        LayerDirtyReason::SourceChanged);
     return true;
-   }
-   setSourceSize(Size_2D(width, cur.height));
-   notifyLayerMutation(this, LayerDirtyFlag::Source, LayerDirtyReason::SourceChanged);
-   return true;
   }
   if (propertyPath == QStringLiteral("source.height")) {
-   const auto cur = sourceSize();
-   const int height = value.toInt();
-   if (cur.height == height) {
+    const auto cur = sourceSize();
+    const int height = value.toInt();
+    if (cur.height == height) {
+      return true;
+    }
+    setSourceSize(Size_2D(cur.width, height));
+    notifyLayerMutation(this, LayerDirtyFlag::Source,
+                        LayerDirtyReason::SourceChanged);
     return true;
-   }
-   setSourceSize(Size_2D(cur.width, height));
-   notifyLayerMutation(this, LayerDirtyFlag::Source, LayerDirtyReason::SourceChanged);
-   return true;
   }
   return false;
- }
+}
 
- QImage ArtifactAbstractLayer::getThumbnail(int width, int height) const
- {
+QImage ArtifactAbstractLayer::getThumbnail(int width, int height) const {
   // サムネイル用に黒いイメージを作成（プレースホルダー実装）
   QImage thumbnail(width, height, QImage::Format_ARGB32);
-  thumbnail.fill(QColor(0, 0, 0, 255));  // 黒で塗りつぶし
+  thumbnail.fill(QColor(0, 0, 0, 255)); // 黒で塗りつぶし
 
   // TODO: 実際のレイヤーコンテンツをサムネイルにレンダリング
-  qDebug() << "[Thumbnail] Generated placeholder thumbnail:" << width << "x" << height;
+  qDebug() << "[Thumbnail] Generated placeholder thumbnail:" << width << "x"
+           << height;
 
-     return thumbnail;
-    }
+  return thumbnail;
+}
 
-   // -- Mask Impl methods --
+// -- Mask Impl methods --
 
-   void ArtifactAbstractLayer::Impl::addMask(const LayerMask& mask)
-   {
-    masks_.push_back(mask);
-    qDebug() << "[ArtifactAbstractLayer] Mask added, count:" << masks_.size();
-   }
+void ArtifactAbstractLayer::Impl::addMask(const LayerMask &mask) {
+  masks_.push_back(mask);
+  qDebug() << "[ArtifactAbstractLayer] Mask added, count:" << masks_.size();
+}
 
-   void ArtifactAbstractLayer::Impl::removeMask(int index)
-   {
-    if (index >= 0 && index < static_cast<int>(masks_.size())) {
-     masks_.erase(masks_.begin() + index);
-     qDebug() << "[ArtifactAbstractLayer] Mask removed at index:" << index;
-    }
-   }
+void ArtifactAbstractLayer::Impl::removeMask(int index) {
+  if (index >= 0 && index < static_cast<int>(masks_.size())) {
+    masks_.erase(masks_.begin() + index);
+    qDebug() << "[ArtifactAbstractLayer] Mask removed at index:" << index;
+  }
+}
 
-   void ArtifactAbstractLayer::Impl::setMask(int index, const LayerMask& mask)
-   {
-    if (index >= 0 && index < static_cast<int>(masks_.size()))
-     masks_[index] = mask;
-   }
+void ArtifactAbstractLayer::Impl::setMask(int index, const LayerMask &mask) {
+  if (index >= 0 && index < static_cast<int>(masks_.size()))
+    masks_[index] = mask;
+}
 
-   LayerMask ArtifactAbstractLayer::Impl::getMask(int index) const
-   {
-    if (index >= 0 && index < static_cast<int>(masks_.size()))
-     return masks_[index];
-    return {};
-   }
+LayerMask ArtifactAbstractLayer::Impl::getMask(int index) const {
+  if (index >= 0 && index < static_cast<int>(masks_.size()))
+    return masks_[index];
+  return {};
+}
 
-   int ArtifactAbstractLayer::Impl::maskCount() const
-   {
-    return static_cast<int>(masks_.size());
-   }
+int ArtifactAbstractLayer::Impl::maskCount() const {
+  return static_cast<int>(masks_.size());
+}
 
-   void ArtifactAbstractLayer::Impl::clearMasks()
-   {
-    masks_.clear();
-   }
+void ArtifactAbstractLayer::Impl::clearMasks() { masks_.clear(); }
 
-   // -- Mask public methods --
+// -- Mask public methods --
 
-   void ArtifactAbstractLayer::addMask(const LayerMask& mask)
-   {
-    impl_->addMask(mask);
-   }
+void ArtifactAbstractLayer::addMask(const LayerMask &mask) {
+  impl_->addMask(mask);
+}
 
-   void ArtifactAbstractLayer::removeMask(int index)
-   {
-    impl_->removeMask(index);
-   }
+void ArtifactAbstractLayer::removeMask(int index) { impl_->removeMask(index); }
 
-   void ArtifactAbstractLayer::setMask(int index, const LayerMask& mask)
-   {
-    impl_->setMask(index, mask);
-   }
+void ArtifactAbstractLayer::setMask(int index, const LayerMask &mask) {
+  impl_->setMask(index, mask);
+}
 
-   LayerMask ArtifactAbstractLayer::mask(int index) const
-   {
-    return impl_->getMask(index);
-   }
+LayerMask ArtifactAbstractLayer::mask(int index) const {
+  return impl_->getMask(index);
+}
 
-   int ArtifactAbstractLayer::maskCount() const
-   {
-    return impl_->maskCount();
-   }
+int ArtifactAbstractLayer::maskCount() const { return impl_->maskCount(); }
 
-   void ArtifactAbstractLayer::clearMasks()
-   {
-    impl_->clearMasks();
-   }
+void ArtifactAbstractLayer::clearMasks() { impl_->clearMasks(); }
 
-   bool ArtifactAbstractLayer::hasMasks() const
-   {
-    return impl_->maskCount() > 0;
-   }
-   
-   // Opacity
-   float ArtifactAbstractLayer::opacity() const
-   {
-    return impl_->opacity_;
-   }
-   
-   void ArtifactAbstractLayer::setOpacity(float value)
-   {
-    const float clamped = std::clamp(value, 0.0f, 1.0f);
-    if (impl_->opacity_ != clamped) {
-     impl_->opacity_ = clamped;
-     notifyLayerMutation(this, LayerDirtyFlag::Transform, LayerDirtyReason::PropertyChanged);
-     Q_EMIT changed();
-    }
-   }
-  };
+bool ArtifactAbstractLayer::hasMasks() const { return impl_->maskCount() > 0; }
+
+// Opacity
+float ArtifactAbstractLayer::opacity() const { return impl_->opacity_; }
+
+void ArtifactAbstractLayer::setOpacity(float value) {
+  const float clamped = std::clamp(value, 0.0f, 1.0f);
+  if (impl_->opacity_ != clamped) {
+    impl_->opacity_ = clamped;
+    notifyLayerMutation(this, LayerDirtyFlag::Transform,
+                        LayerDirtyReason::PropertyChanged);
+  }
+}
+}; // namespace Artifact

@@ -453,6 +453,7 @@ int ArtifactLayerPanelHeaderWidget::totalHeaderHeight() const
   LayerID draggedLayerId;
   int dragInsertVisibleRow = -1;
   bool updatingLayout = false;  // 再帰呼び出し防止フラグ
+  QHash<QString, QMetaObject::Connection> layerChangedConnections;
 
   void clearInlineEditors()
   {
@@ -488,6 +489,53 @@ int ArtifactLayerPanelHeaderWidget::totalHeaderHeight() const
    dragCandidateLayerId = LayerID();
    draggedLayerId = LayerID();
    dragInsertVisibleRow = -1;
+  }
+
+  void clearLayerChangedSubscriptions()
+  {
+   for (auto it = layerChangedConnections.begin(); it != layerChangedConnections.end(); ++it) {
+    QObject::disconnect(it.value());
+   }
+   layerChangedConnections.clear();
+  }
+
+  void refreshLayerChangedSubscriptions(ArtifactLayerPanelWidget* owner)
+  {
+   if (!owner) {
+    clearLayerChangedSubscriptions();
+    return;
+   }
+
+   auto comp = safeCompositionLookup(compositionId);
+   if (!comp) {
+    clearLayerChangedSubscriptions();
+    return;
+   }
+
+   QSet<QString> activeIds;
+   for (auto& layer : comp->allLayer()) {
+    if (!layer) {
+      continue;
+    }
+    const QString idStr = layer->id().toString();
+    activeIds.insert(idStr);
+    if (layerChangedConnections.contains(idStr)) {
+      continue;
+    }
+    layerChangedConnections.insert(
+      idStr,
+      QObject::connect(layer.get(), &ArtifactAbstractLayer::changed, owner, [owner]() {
+       owner->updateLayout();
+      }));
+   }
+
+   const auto knownIds = layerChangedConnections.keys();
+   for (const auto& idStr : knownIds) {
+    if (activeIds.contains(idStr)) {
+      continue;
+    }
+    QObject::disconnect(layerChangedConnections.take(idStr));
+   }
   }
 
   int insertionVisibleRowForY(const int y) const
@@ -673,17 +721,19 @@ int ArtifactLayerPanelHeaderWidget::totalHeaderHeight() const
   }
  }
 
- ArtifactLayerPanelWidget::~ArtifactLayerPanelWidget()
- {
+ArtifactLayerPanelWidget::~ArtifactLayerPanelWidget()
+{
+  impl_->clearLayerChangedSubscriptions();
   delete impl_;
- }
+}
 
- void ArtifactLayerPanelWidget::setComposition(const CompositionID& id)
- {
+void ArtifactLayerPanelWidget::setComposition(const CompositionID& id)
+{
   impl_->compositionId = id;
   impl_->selectedLayerId = LayerID();
+  impl_->refreshLayerChangedSubscriptions(this);
   updateLayout();
- }
+}
 
  void ArtifactLayerPanelWidget::setShyHidden(bool hidden)
  {
@@ -691,18 +741,20 @@ int ArtifactLayerPanelHeaderWidget::totalHeaderHeight() const
   updateLayout();
  }
 
- void ArtifactLayerPanelWidget::updateLayout()
- {
+void ArtifactLayerPanelWidget::updateLayout()
+{
   // 再帰呼び出しを防止
   if (impl_->updatingLayout) return;
   impl_->updatingLayout = true;
+  impl_->refreshLayerChangedSubscriptions(this);
   
   impl_->clearInlineEditors();
   impl_->rebuildVisibleRows();
   const int count = impl_->visibleRows.size();
   const int contentHeight = std::max(kLayerRowHeight, count * kLayerRowHeight);
   setMinimumHeight(0);
-  setFixedHeight(contentHeight);
+  setMinimumHeight(contentHeight);
+  setMaximumHeight(QWIDGETSIZE_MAX);
   updateGeometry();
   update();
   Q_EMIT visibleRowsChanged();
@@ -1352,6 +1404,20 @@ void ArtifactLayerPanelWidget::mouseDoubleClickEvent(QMouseEvent* event)
 
 void ArtifactLayerPanelWidget::keyPressEvent(QKeyEvent* event)
 {
+  if (event->key() == Qt::Key_Delete || event->key() == Qt::Key_Backspace) {
+    if (!impl_->selectedLayerId.isNil()) {
+      if (auto* service = ArtifactProjectService::instance()) {
+        auto comp = safeCompositionLookup(impl_->compositionId);
+        const CompositionID compId = comp ? comp->id() : impl_->compositionId;
+        if (!compId.isNil()) {
+          service->removeLayerFromComposition(compId, impl_->selectedLayerId);
+          event->accept();
+          return;
+        }
+      }
+    }
+  }
+
   // Ctrl + [ / ] でレイヤー順序を移動
   if (event->modifiers() & Qt::ControlModifier) {
     if (event->key() == Qt::Key_BracketLeft || event->key() == Qt::Key_BracketRight) {
@@ -1853,7 +1919,7 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent*)
   impl_->scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
   impl_->scroll->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
   impl_->scroll->setFrameShape(QFrame::NoFrame);
-  impl_->panel->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+  impl_->panel->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
 
   auto* wheelFilter = new LayerPanelWheelFilter(impl_->scroll, this);
   this->installEventFilter(wheelFilter);

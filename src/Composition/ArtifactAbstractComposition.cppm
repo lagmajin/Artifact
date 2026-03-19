@@ -265,6 +265,8 @@ ArtifactAbstractLayerPtr ArtifactAbstractComposition::Impl::backMostLayer() cons
 
   impl_->settings_.setCompositionName(params.compositionName());
   impl_->settings_.setCompositionSize(QSize(params.width(), params.height()));
+  // Keep init params and live composition state consistent for viewers.
+  impl_->backgroundColor_ = params.backgroundColor();
   impl_->frameRate_ = params.frameRate();
 
   const int64_t totalFrames = std::max<int64_t>(1, params.durationFrames());

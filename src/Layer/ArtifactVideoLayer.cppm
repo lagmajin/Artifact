@@ -600,7 +600,7 @@ void ArtifactVideoLayer::draw(ArtifactIRenderer* renderer)
     if (impl_->currentQImage_.isNull()) return;
     
     auto size = sourceSize();
-    renderer->drawSprite(0.0f, 0.0f, (float)size.width, (float)size.height, impl_->currentQImage_);
+    renderer->drawSprite(0.0f, 0.0f, (float)size.width, (float)size.height, impl_->currentQImage_, this->opacity());
 }
 
 bool ArtifactVideoLayer::hasVideo() const

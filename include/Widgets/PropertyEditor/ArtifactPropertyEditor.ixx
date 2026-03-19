@@ -21,6 +21,11 @@ import Property.Abstract;
 
 export namespace Artifact {
 
+enum class ArtifactPropertyRowLayoutMode {
+    LabelThenEditor = 0,
+    EditorThenLabel
+};
+
 class ArtifactAbstractPropertyEditor : public QWidget {
 public:
     using CommitHandler = std::function<void(const QVariant&)>;
@@ -188,6 +193,8 @@ public:
     void setKeyframeChecked(bool checked);
     void setKeyframeEnabled(bool enabled);
     void setNavigationEnabled(bool enabled);
+    static void setGlobalLayoutMode(ArtifactPropertyRowLayoutMode mode);
+    static ArtifactPropertyRowLayoutMode globalLayoutMode();
 
 private:
     QLabel* label_ = nullptr;

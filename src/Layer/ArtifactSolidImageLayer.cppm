@@ -9,45 +9,39 @@ import std;
 import Artifact.Render.IRenderer;
 import Property.Abstract;
 import Property.Group;
+import Animation.Value;
 
-namespace Artifact
-{
- ArtifactSolidImageLayerSettings::ArtifactSolidImageLayerSettings() = default;
- ArtifactSolidImageLayerSettings::~ArtifactSolidImageLayerSettings() = default;
+namespace Artifact {
+ArtifactSolidImageLayerSettings::ArtifactSolidImageLayerSettings() = default;
+ArtifactSolidImageLayerSettings::~ArtifactSolidImageLayerSettings() = default;
 
- class ArtifactSolidImageLayer::Impl
- {
- public:
-  FloatColor color_ = FloatColor(1.0f, 1.0f, 1.0f, 1.0f);
- };
+class ArtifactSolidImageLayer::Impl {
+public:
+  AnimatableValueT<FloatColor> color_;
+};
 
- ArtifactSolidImageLayer::ArtifactSolidImageLayer()
-  : impl_(new Impl())
- {
- }
+ArtifactSolidImageLayer::ArtifactSolidImageLayer() : impl_(new Impl()) {}
 
- ArtifactSolidImageLayer::~ArtifactSolidImageLayer()
- {
-  delete impl_;
- }
+ArtifactSolidImageLayer::~ArtifactSolidImageLayer() { delete impl_; }
 
- FloatColor ArtifactSolidImageLayer::color() const
- {
-  return impl_->color_;
- }
+FloatColor ArtifactSolidImageLayer::color() const {
+  // 現在のフレーム位置に基づく補間値を返す
+  auto frame = FramePosition(currentFrame());
+  return impl_->color_.at(frame);
+}
 
- void ArtifactSolidImageLayer::setColor(const FloatColor& color)
- {
-  impl_->color_ = color;
- }
+void ArtifactSolidImageLayer::setColor(const FloatColor &color) {
+  // 現在のフレーム位置にキーフレームを追加
+  auto frame = FramePosition(currentFrame());
+  impl_->color_.addKeyFrame(frame, color);
+}
 
- void ArtifactSolidImageLayer::setSize(const int width, const int height)
- {
+void ArtifactSolidImageLayer::setSize(const int width, const int height) {
   setSourceSize(Size_2D(width, height));
- }
+}
 
- std::vector<ArtifactCore::PropertyGroup> ArtifactSolidImageLayer::getLayerPropertyGroups() const
- {
+std::vector<ArtifactCore::PropertyGroup>
+ArtifactSolidImageLayer::getLayerPropertyGroups() const {
   auto groups = ArtifactAbstractLayer::getLayerPropertyGroups();
   ArtifactCore::PropertyGroup solidGroup(QStringLiteral("Solid"));
 
@@ -58,30 +52,32 @@ namespace Artifact
   property->setColorValue(QColor::fromRgbF(c.r(), c.g(), c.b(), c.a()));
   property->setValue(property->getColorValue());
   property->setDisplayPriority(-120);
-  property->setAnimatable(true);  // キーフレーム可能に設定
+  property->setAnimatable(true); // キーフレーム可能に設定
   solidGroup.addProperty(property);
 
   groups.push_back(solidGroup);
   return groups;
- }
+}
 
- bool ArtifactSolidImageLayer::setLayerPropertyValue(const QString& propertyPath, const QVariant& value)
- {
+bool ArtifactSolidImageLayer::setLayerPropertyValue(const QString &propertyPath,
+                                                    const QVariant &value) {
   if (propertyPath == QStringLiteral("solid.color")) {
-   const auto c = value.value<QColor>();
-   setColor(FloatColor(c.redF(), c.greenF(), c.blueF(), c.alphaF()));
-   Q_EMIT changed();
-   return true;
+    const auto c = value.value<QColor>();
+    setColor(FloatColor(c.redF(), c.greenF(), c.blueF(), c.alphaF()));
+    Q_EMIT changed();
+    return true;
   }
   return ArtifactAbstractLayer::setLayerPropertyValue(propertyPath, value);
- }
+}
 
- void ArtifactSolidImageLayer::draw(ArtifactIRenderer* renderer)
- {
+void ArtifactSolidImageLayer::draw(ArtifactIRenderer *renderer) {
   const auto size = sourceSize();
+  // 現在のフレーム位置に基づく補間値を取得
+  auto frame = FramePosition(currentFrame());
+  auto color = impl_->color_.at(frame);
   renderer->drawSolidRect(Detail::float2(0.0f, 0.0f),
                           Detail::float2(static_cast<float>(size.width),
                                          static_cast<float>(size.height)),
-                          impl_->color_);
- }
+                          color, this->opacity());
 }
+} // namespace Artifact

@@ -64,6 +64,8 @@ public:
     void clear();
     void setFilterText(const QString& text);
     QString filterText() const;
+    void setValueColumnFirst(bool enabled);
+    bool valueColumnFirst() const;
 
     void updateProperties();
 };

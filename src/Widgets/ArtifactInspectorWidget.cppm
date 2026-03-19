@@ -796,7 +796,9 @@ void ArtifactInspectorWidget::Impl::handleRemoveEffectClicked(int rackIndex)
 
   for (int i = 0; i < 5; ++i) {
       auto rackGroup = new QGroupBox(rackNames[i]);
-      //! rackGroup->setStyleSheet("QGroupBox { font-weight: bold; border: 1px solid #555; margin-top: 10px; } QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 3px 0 3px; }");
+      rackGroup->setStyleSheet(
+          "QGroupBox { font-weight: bold; border: 1px solid #555; border-radius: 4px; margin-top: 14px; padding-top: 6px; }"
+          "QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top left; left: 10px; padding: 0 4px; color: #DDD; background: #2D2D30; }");
       auto rackLayout = new QVBoxLayout();
       
       impl_->racks[i].listWidget = new QListWidget();
@@ -815,7 +817,7 @@ void ArtifactInspectorWidget::Impl::handleRemoveEffectClicked(int rackIndex)
       
       rackLayout->addWidget(impl_->racks[i].listWidget);
       rackLayout->addLayout(btnLayout);
-      rackLayout->setContentsMargins(4, 12, 4, 4);
+      rackLayout->setContentsMargins(6, 10, 6, 6);
       rackGroup->setLayout(rackLayout);
       
       effectsLayout->addWidget(rackGroup);
