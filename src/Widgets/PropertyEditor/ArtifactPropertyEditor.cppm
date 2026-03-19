@@ -183,6 +183,76 @@ std::optional<ArtifactEnumPropertyEditor::OptionList> enumOptionsForProperty(con
     return std::nullopt;
 }
 
+std::pair<double, double> resolveFloatSoftRange(
+    const ArtifactCore::AbstractProperty& property,
+    const ArtifactCore::PropertyMetadata& meta,
+    const double hardMin,
+    const double hardMax)
+{
+    if (meta.softMin.isValid() && meta.softMax.isValid()) {
+        const double softMin = meta.softMin.toDouble();
+        const double softMax = meta.softMax.toDouble();
+        if (softMax > softMin) {
+            return {softMin, softMax};
+        }
+    }
+
+    // If hard range is explicit, reuse it for slider range.
+    if (meta.hardMin.isValid() && meta.hardMax.isValid() && hardMax > hardMin) {
+        return {hardMin, hardMax};
+    }
+
+    // Adaptive fallback around current value.
+    const double currentValue = property.getValue().toDouble();
+    const double step = std::abs(meta.step.isValid() ? meta.step.toDouble() : 0.0);
+    const double halfSpan = std::max({std::abs(currentValue) * 0.5, step * 50.0, 1.0});
+    double softMin = currentValue - halfSpan;
+    double softMax = currentValue + halfSpan;
+    if (hardMax > hardMin) {
+        softMin = std::clamp(softMin, hardMin, hardMax);
+        softMax = std::clamp(softMax, hardMin, hardMax);
+    }
+    if (softMax <= softMin) {
+        return {hardMin, hardMax};
+    }
+    return {softMin, softMax};
+}
+
+std::pair<int, int> resolveIntSoftRange(
+    const ArtifactCore::AbstractProperty& property,
+    const ArtifactCore::PropertyMetadata& meta,
+    const int hardMin,
+    const int hardMax)
+{
+    if (meta.softMin.isValid() && meta.softMax.isValid()) {
+        const int softMin = meta.softMin.toInt();
+        const int softMax = meta.softMax.toInt();
+        if (softMax > softMin) {
+            return {softMin, softMax};
+        }
+    }
+
+    // If hard range is explicit, reuse it for slider range.
+    if (meta.hardMin.isValid() && meta.hardMax.isValid() && hardMax > hardMin) {
+        return {hardMin, hardMax};
+    }
+
+    // Adaptive fallback around current value.
+    const int currentValue = property.getValue().toInt();
+    const int step = std::max(1, std::abs(meta.step.isValid() ? meta.step.toInt() : 1));
+    const int halfSpan = std::max({std::abs(currentValue) / 2, step * 50, 10});
+    int softMin = currentValue - halfSpan;
+    int softMax = currentValue + halfSpan;
+    if (hardMax > hardMin) {
+        softMin = std::clamp(softMin, hardMin, hardMax);
+        softMax = std::clamp(softMax, hardMin, hardMax);
+    }
+    if (softMax <= softMin) {
+        return {hardMin, hardMax};
+    }
+    return {softMin, softMax};
+}
+
 } // namespace
 
 ArtifactFloatPropertyEditor::ArtifactFloatPropertyEditor(const ArtifactCore::AbstractProperty& property, QWidget* parent)
@@ -200,8 +270,9 @@ ArtifactFloatPropertyEditor::ArtifactFloatPropertyEditor(const ArtifactCore::Abs
     const auto meta = property.metadata();
     const double hardMin = meta.hardMin.isValid() ? meta.hardMin.toDouble() : -1e6;
     const double hardMax = meta.hardMax.isValid() ? meta.hardMax.toDouble() : 1e6;
-    softMin_ = meta.softMin.isValid() ? meta.softMin.toDouble() : hardMin;
-    softMax_ = meta.softMax.isValid() ? meta.softMax.toDouble() : hardMax;
+    const auto [resolvedSoftMin, resolvedSoftMax] = resolveFloatSoftRange(property, meta, hardMin, hardMax);
+    softMin_ = resolvedSoftMin;
+    softMax_ = resolvedSoftMax;
     if (softMax_ <= softMin_) {
         softMin_ = hardMin;
         softMax_ = hardMax;
@@ -331,8 +402,9 @@ ArtifactIntPropertyEditor::ArtifactIntPropertyEditor(const ArtifactCore::Abstrac
     const auto meta = property.metadata();
     const int hardMin = meta.hardMin.isValid() ? meta.hardMin.toInt() : -1000000;
     const int hardMax = meta.hardMax.isValid() ? meta.hardMax.toInt() : 1000000;
-    softMin_ = meta.softMin.isValid() ? meta.softMin.toInt() : hardMin;
-    softMax_ = meta.softMax.isValid() ? meta.softMax.toInt() : hardMax;
+    const auto [resolvedSoftMin, resolvedSoftMax] = resolveIntSoftRange(property, meta, hardMin, hardMax);
+    softMin_ = resolvedSoftMin;
+    softMax_ = resolvedSoftMax;
     if (softMax_ <= softMin_) {
         softMin_ = hardMin;
         softMax_ = hardMax;
@@ -659,11 +731,11 @@ ArtifactPropertyEditorRowWidget::ArtifactPropertyEditorRowWidget(
     : QWidget(parent),
       label_(new QLabel(labelText, this)),
       editor_(editor),
-      keyframeButton_(new QPushButton(QString::fromUtf8("◆"), this)),
-      resetButton_(new QPushButton(QString::fromUtf8("⟲"), this)),
-      expressionButton_(new QPushButton(QString::fromUtf8("ƒx"), this)),
-      prevKeyBtn_(new QPushButton(QString::fromUtf8("◀"), this)),
-      nextKeyBtn_(new QPushButton(QString::fromUtf8("▶"), this))
+      keyframeButton_(new QPushButton(QStringLiteral("K"), this)),
+      resetButton_(new QPushButton(QStringLiteral("R"), this)),
+      expressionButton_(new QPushButton(QStringLiteral("fx"), this)),
+      prevKeyBtn_(new QPushButton(QStringLiteral("<"), this)),
+      nextKeyBtn_(new QPushButton(QStringLiteral(">"), this))
 {
     setObjectName(QStringLiteral("propertyRow"));
     auto* layout = new QHBoxLayout(this);
@@ -683,14 +755,21 @@ ArtifactPropertyEditorRowWidget::ArtifactPropertyEditorRowWidget(
     
     const QString navStyle = R"(
         QPushButton {
-            background: transparent;
-            border: none;
-            color: #888888;
+            background: #202a34;
+            border: 1px solid #3b4b5d;
+            color: #a8b8c8;
             font-size: 10px;
             padding: 0;
+            border-radius: 3px;
         }
         QPushButton:hover {
-            color: #BBBBBB;
+            color: #d4dfeb;
+            border-color: #6e98c0;
+        }
+        QPushButton:disabled {
+            color: #5d6b79;
+            border-color: #2d3742;
+            background: #1a222b;
         }
     )";
     
@@ -701,21 +780,30 @@ ArtifactPropertyEditorRowWidget::ArtifactPropertyEditorRowWidget(
     
     keyframeButton_->setObjectName(QStringLiteral("propertyKeyButton"));
     keyframeButton_->setToolTip(QStringLiteral("Toggle Keyframe: %1").arg(propertyName));
-    keyframeButton_->setFixedSize(20, 24);
+    keyframeButton_->setFixedSize(22, 24);
     keyframeButton_->setCheckable(true);
     keyframeButton_->setStyleSheet(R"(
         QPushButton#propertyKeyButton {
-            background: transparent;
-            border: none;
-            color: #888888;
-            font-size: 14px;
+            background: #202a34;
+            border: 1px solid #3b4b5d;
+            color: #a8b8c8;
+            font-size: 11px;
+            font-weight: 700;
+            border-radius: 3px;
         }
         QPushButton#propertyKeyButton:hover {
-            color: #AAAAAA;
+            color: #d4dfeb;
+            border-color: #6e98c0;
         }
         QPushButton#propertyKeyButton:checked {
-            color: #D47D32; /* Modo Orange for active keyframe */
-            text-shadow: 0 0 5px rgba(212, 125, 50, 0.5);
+            color: #f0f5fb;
+            background: #d47d32;
+            border-color: #d47d32;
+        }
+        QPushButton#propertyKeyButton:disabled {
+            color: #5d6b79;
+            border-color: #2d3742;
+            background: #1a222b;
         }
     )");
 
@@ -740,7 +828,7 @@ ArtifactPropertyEditorRowWidget::ArtifactPropertyEditorRowWidget(
 
     expressionButton_->setObjectName(QStringLiteral("propertyExprButton"));
     expressionButton_->setToolTip(QStringLiteral("Expression: %1").arg(propertyName));
-    expressionButton_->setFixedSize(24, 24);
+    expressionButton_->setFixedSize(26, 24);
     expressionButton_->setStyleSheet(R"(
         QPushButton#propertyExprButton {
             background: transparent;
@@ -861,6 +949,10 @@ void ArtifactPropertyEditorRowWidget::setKeyframeChecked(const bool checked)
 void ArtifactPropertyEditorRowWidget::setKeyframeEnabled(const bool enabled)
 {
     keyframeButton_->setEnabled(enabled);
+}
+
+void ArtifactPropertyEditorRowWidget::setNavigationEnabled(const bool enabled)
+{
     prevKeyBtn_->setEnabled(enabled);
     nextKeyBtn_->setEnabled(enabled);
 }
