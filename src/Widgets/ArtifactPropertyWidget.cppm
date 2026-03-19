@@ -159,10 +159,12 @@ ArtifactPropertyEditorRowWidget* createPropertyRow(
 
     const bool animatable = property.isAnimatable();
     row->setShowKeyframeButton(animatable);
+    row->setNavigationEnabled(false);
     if (animatable) {
         auto* playback = ArtifactPlaybackService::instance();
         const auto frameRate = playback ? playback->frameRate() : FrameRate(30.0f);
         const int64_t fps_val = static_cast<int64_t>(std::round(frameRate.framerate()));
+        row->setNavigationEnabled(!propertyPtr->getKeyFrames().empty());
         
         // 現時点でのキーフレーム状態を反映
         if (playback) {
@@ -183,6 +185,7 @@ ArtifactPropertyEditorRowWidget* createPropertyRow(
             }
             // 状態を再反映
             row->setKeyframeChecked(propertyPtr->hasKeyFrameAt(nowTime));
+            row->setNavigationEnabled(!propertyPtr->getKeyFrames().empty());
         });
 
         // ナビゲーション (◀ ▶ボタン)
@@ -212,14 +215,20 @@ ArtifactPropertyEditorRowWidget* createPropertyRow(
         });
     }
 
-    row->setExpressionHandler([propertyName = property.getName()]() {
-        auto* copilot = new ArtifactExpressionCopilotWidget();
-        copilot->setWindowFlags(Qt::Window | Qt::WindowStaysOnTopHint | Qt::Tool);
-        copilot->setWindowTitle(QStringLiteral("Expression Copilot: %1").arg(propertyName));
-        copilot->setAttribute(Qt::WA_DeleteOnClose);
-        copilot->move(QCursor::pos() - QPoint(150, 200));
-        copilot->show();
-    });
+    const bool showExpressionButton =
+        property.getType() == ArtifactCore::PropertyType::Float ||
+        property.getType() == ArtifactCore::PropertyType::Integer;
+    row->setShowExpressionButton(showExpressionButton);
+    if (showExpressionButton) {
+        row->setExpressionHandler([propertyName = property.getName()]() {
+            auto* copilot = new ArtifactExpressionCopilotWidget();
+            copilot->setWindowFlags(Qt::Window | Qt::WindowStaysOnTopHint | Qt::Tool);
+            copilot->setWindowTitle(QStringLiteral("Expression Copilot: %1").arg(propertyName));
+            copilot->setAttribute(Qt::WA_DeleteOnClose);
+            copilot->move(QCursor::pos() - QPoint(150, 200));
+            copilot->show();
+        });
+    }
 
     return row;
 }
@@ -355,12 +364,15 @@ QSlider::groove:horizontal {
  border-radius: 2px;
 }
 QSlider::handle:horizontal {
- width: 12px;
- height: 12px;
- margin: -4px 0;
- background: #88abc8;
+ width: 6px;
+ margin: -6px 0;
+ background: #9bb9d2;
  border: 1px solid #5d7f9c;
- border-radius: 6px;
+ border-radius: 2px;
+}
+QSlider::handle:horizontal:hover {
+ background: #b6cee1;
+ border-color: #7b9ab4;
 }
 QPushButton#propertyKeyButton,
 QPushButton#propertyResetButton,

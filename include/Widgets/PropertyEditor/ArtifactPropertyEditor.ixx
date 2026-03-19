@@ -187,6 +187,7 @@ public:
     
     void setKeyframeChecked(bool checked);
     void setKeyframeEnabled(bool enabled);
+    void setNavigationEnabled(bool enabled);
 
 private:
     QLabel* label_ = nullptr;
