@@ -312,15 +312,28 @@ void PrimitiveRenderer2D::clear(const FloatColor& color)
 
 void PrimitiveRenderer2D::drawRectLocal(float x, float y, float w, float h, const FloatColor& color, float opacity)
 {
+    auto viewportCB = impl_->viewport_.GetViewportCB();
+    const float zoom = std::max(viewportCB.zoom, 0.001f);
+    qDebug() << "[VIEWPORT] scale=(" << viewportCB.scale.x << "," << viewportCB.scale.y << ")"
+             << "offset=(" << viewportCB.offset.x << "," << viewportCB.offset.y << ")"
+             << "screenSize=(" << viewportCB.screenSize.x << "," << viewportCB.screenSize.y << ")"
+             << "zoom=" << zoom;
+    
+    qDebug() << "[SOLIDRECT] x=" << x << "y=" << y << "w=" << w << "h=" << h
+             << "color.rgba=(" << color.r() << "," << color.g() << "," << color.b() << "," << color.a() << ")";
+    
     if (!impl_->hasRenderTarget() || !impl_->m_draw_solid_rect_pso_and_srb.pPSO) return;
 
     float alpha = color.a() * opacity;
     RectVertex vertices[4] = {
-        {{0,0},   {color.r(), color.g(), color.b(), alpha}},
-        {{w, 0},  {color.r(), color.g(), color.b(), alpha}},
-        {{0,  h}, {color.r(), color.g(), color.b(), alpha}},
-        {{w,  h}, {color.r(), color.g(), color.b(), alpha}},
+        {{0.0f, 0.0f}, {color.r(), color.g(), color.b(), alpha}},
+        {{1.0f, 0.0f}, {color.r(), color.g(), color.b(), alpha}},
+        {{0.0f, 1.0f}, {color.r(), color.g(), color.b(), alpha}},
+        {{1.0f, 1.0f}, {color.r(), color.g(), color.b(), alpha}},
     };
+    
+    qDebug() << "[SOLIDRECT] Vertex[0] position=(" << vertices[0].position.x << "," << vertices[0].position.y << ")"
+             << "color.a=" << vertices[0].color.w;
 
     auto* pRTV = impl_->getCurrentRTV();
     impl_->pCtx_->SetRenderTargets(1, &pRTV, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
@@ -342,14 +355,20 @@ void PrimitiveRenderer2D::drawRectLocal(float x, float y, float w, float h, cons
 
     {
         auto viewportCB = impl_->viewport_.GetViewportCB();
+        const float zoom = std::max(viewportCB.zoom, 0.001f);
         CBSolidTransform2D cbTransform;
-        cbTransform.offset     = { x * viewportCB.scale.x + viewportCB.offset.x, y * viewportCB.scale.y + viewportCB.offset.y };
-        cbTransform.scale      = viewportCB.scale;
+        // Composition -> View: viewPos = input * (size * zoom) + (position * zoom + pan)
+        cbTransform.offset     = { x * zoom + viewportCB.offset.x, y * zoom + viewportCB.offset.y };
+        cbTransform.scale      = { w * zoom, h * zoom };
         cbTransform.screenSize = viewportCB.screenSize;
         void* pData = nullptr;
         impl_->pCtx_->MapBuffer(impl_->m_draw_solid_rect_trnsform_cb, MAP_WRITE, MAP_FLAG_DISCARD, pData);
         std::memcpy(pData, &cbTransform, sizeof(cbTransform));
         impl_->pCtx_->UnmapBuffer(impl_->m_draw_solid_rect_trnsform_cb, MAP_WRITE);
+        
+        qDebug() << "[SOLIDRECT] TransformCB: offset=(" << cbTransform.offset.x << "," << cbTransform.offset.y << ")"
+                 << "scale=(" << cbTransform.scale.x << "," << cbTransform.scale.y << ")"
+                 << "screenSize=(" << cbTransform.screenSize.x << "," << cbTransform.screenSize.y << ")";
     }
 
     impl_->pCtx_->SetPipelineState(impl_->m_draw_solid_rect_pso_and_srb.pPSO);
@@ -396,9 +415,10 @@ void PrimitiveRenderer2D::drawLineLocal(float2 p1, float2 p2, const FloatColor& 
 
     {
         auto viewportCB = impl_->viewport_.GetViewportCB();
+        const float zoom = std::max(viewportCB.zoom, 0.001f);
         CBSolidTransform2D cbTransform;
         cbTransform.offset     = viewportCB.offset;
-        cbTransform.scale      = viewportCB.scale;
+        cbTransform.scale      = { zoom, zoom };
         cbTransform.screenSize = viewportCB.screenSize;
         void* pData = nullptr;
         impl_->pCtx_->MapBuffer(impl_->m_draw_solid_rect_trnsform_cb, MAP_WRITE, MAP_FLAG_DISCARD, pData);
@@ -436,7 +456,7 @@ void PrimitiveRenderer2D::drawThickLineLocal(float2 p1, float2 p2, float thickne
     float  half = thickness * 0.5f;
     float2 n    = { -nd.y * half, nd.x * half };
 
-    float4 c = { color.r(), color.g(), color.b(), 1.0f };
+    float4 c = { color.r(), color.g(), color.b(), color.a() };
     RectVertex vertices[4] = {
         { { p1.x + n.x, p1.y + n.y }, c },
         { { p1.x - n.x, p1.y - n.y }, c },
@@ -456,9 +476,10 @@ void PrimitiveRenderer2D::drawThickLineLocal(float2 p1, float2 p2, float thickne
 
     {
         auto viewportCB = impl_->viewport_.GetViewportCB();
+        const float zoom = std::max(viewportCB.zoom, 0.001f);
         CBSolidTransform2D cbTransform;
         cbTransform.offset     = viewportCB.offset;
-        cbTransform.scale      = viewportCB.scale;
+        cbTransform.scale      = { zoom, zoom };
         cbTransform.screenSize = viewportCB.screenSize;
         void* pData = nullptr;
         impl_->pCtx_->MapBuffer(impl_->m_draw_solid_rect_trnsform_cb, MAP_WRITE, MAP_FLAG_DISCARD, pData);
@@ -496,7 +517,7 @@ void PrimitiveRenderer2D::drawDotLineLocal(float2 p1, float2 p2, float thickness
     float  half = thickness * 0.5f;
     float2 n    = { -nd.y * half, nd.x * half };
 
-    float4 c = { color.r(), color.g(), color.b(), 1.0f };
+    float4 c = { color.r(), color.g(), color.b(), color.a() };
     DotLineVertex vertices[4] = {
         { { p1.x + n.x, p1.y + n.y }, c, 0.0f },
         { { p1.x - n.x, p1.y - n.y }, c, 0.0f },
@@ -516,9 +537,10 @@ void PrimitiveRenderer2D::drawDotLineLocal(float2 p1, float2 p2, float thickness
 
     {
         auto viewportCB = impl_->viewport_.GetViewportCB();
+        const float zoom = std::max(viewportCB.zoom, 0.001f);
         CBSolidTransform2D cbTransform;
         cbTransform.offset     = viewportCB.offset;
-        cbTransform.scale      = viewportCB.scale;
+        cbTransform.scale      = { zoom, zoom };
         cbTransform.screenSize = viewportCB.screenSize;
         void* pData = nullptr;
         impl_->pCtx_->MapBuffer(impl_->m_draw_solid_rect_trnsform_cb, MAP_WRITE, MAP_FLAG_DISCARD, pData);
@@ -583,7 +605,7 @@ void PrimitiveRenderer2D::drawSolidTriangleLocal(float2 p0, float2 p1, float2 p2
 {
     if (!impl_->hasRenderTarget() || !impl_->m_draw_solid_triangle_pso_and_srb.pPSO) return;
 
-    float4 c = { color.r(), color.g(), color.b(), 1.0f };
+    float4 c = { color.r(), color.g(), color.b(), color.a() };
     RectVertex vertices[3] = {
         {{p0.x, p0.y}, c},
         {{p1.x, p1.y}, c},
@@ -602,9 +624,10 @@ void PrimitiveRenderer2D::drawSolidTriangleLocal(float2 p0, float2 p1, float2 p2
 
     {
         auto viewportCB = impl_->viewport_.GetViewportCB();
+        const float zoom = std::max(viewportCB.zoom, 0.001f);
         CBSolidTransform2D cbTransform;
         cbTransform.offset     = viewportCB.offset;
-        cbTransform.scale      = viewportCB.scale;
+        cbTransform.scale      = { zoom, zoom };
         cbTransform.screenSize = viewportCB.screenSize;
         void* pData = nullptr;
         impl_->pCtx_->MapBuffer(impl_->m_draw_solid_rect_trnsform_cb, MAP_WRITE, MAP_FLAG_DISCARD, pData);
@@ -641,10 +664,10 @@ void PrimitiveRenderer2D::drawCheckerboard(float x, float y, float w, float h, f
     if (!impl_->hasRenderTarget() || !impl_->m_draw_checkerboard_pso_and_srb.pPSO) return;
 
     RectVertex vertices[4] = {
-        {{0, 0}, {1,1,1,1}},
-        {{w, 0}, {1,1,1,1}},
-        {{0, h}, {1,1,1,1}},
-        {{w, h}, {1,1,1,1}},
+        {{0.0f, 0.0f}, {1,1,1,1}},
+        {{1.0f, 0.0f}, {1,1,1,1}},
+        {{0.0f, 1.0f}, {1,1,1,1}},
+        {{1.0f, 1.0f}, {1,1,1,1}},
     };
 
     auto* pRTV = impl_->getCurrentRTV();
@@ -661,8 +684,8 @@ void PrimitiveRenderer2D::drawCheckerboard(float x, float y, float w, float h, f
         struct CBViewerHelper { float tileSize; float thickness; float2 padding; float4 color1; float4 color2; };
         CBViewerHelper cb;
         cb.tileSize = tileSize;
-        cb.color1   = { c1.r(), c1.g(), c1.b(), 1.0f };
-        cb.color2   = { c2.r(), c2.g(), c2.b(), 1.0f };
+        cb.color1   = { c1.r(), c1.g(), c1.b(), c1.a() };
+        cb.color2   = { c2.r(), c2.g(), c2.b(), c2.a() };
         void* pData = nullptr;
         impl_->pCtx_->MapBuffer(impl_->m_draw_viewer_helper_cb, MAP_WRITE, MAP_FLAG_DISCARD, pData);
         std::memcpy(pData, &cb, sizeof(cb));
@@ -671,9 +694,10 @@ void PrimitiveRenderer2D::drawCheckerboard(float x, float y, float w, float h, f
 
     {
         auto viewportCB = impl_->viewport_.GetViewportCB();
+        const float zoom = std::max(viewportCB.zoom, 0.001f);
         CBSolidTransform2D cbTransform;
-        cbTransform.offset     = { x * viewportCB.scale.x + viewportCB.offset.x, y * viewportCB.scale.y + viewportCB.offset.y };
-        cbTransform.scale      = viewportCB.scale;
+        cbTransform.offset     = { x * zoom + viewportCB.offset.x, y * zoom + viewportCB.offset.y };
+        cbTransform.scale      = { w * zoom, h * zoom };
         cbTransform.screenSize = viewportCB.screenSize;
         void* pData = nullptr;
         impl_->pCtx_->MapBuffer(impl_->m_draw_solid_rect_trnsform_cb, MAP_WRITE, MAP_FLAG_DISCARD, pData);
@@ -705,10 +729,10 @@ void PrimitiveRenderer2D::drawGrid(float x, float y, float w, float h,
     if (!impl_->hasRenderTarget() || !impl_->m_draw_grid_pso_and_srb.pPSO) return;
 
     RectVertex vertices[4] = {
-        {{0, 0}, {1,1,1,1}},
-        {{w, 0}, {1,1,1,1}},
-        {{0, h}, {1,1,1,1}},
-        {{w, h}, {1,1,1,1}},
+        {{0.0f, 0.0f}, {1,1,1,1}},
+        {{1.0f, 0.0f}, {1,1,1,1}},
+        {{0.0f, 1.0f}, {1,1,1,1}},
+        {{1.0f, 1.0f}, {1,1,1,1}},
     };
 
     auto* pRTV = impl_->getCurrentRTV();
@@ -735,9 +759,10 @@ void PrimitiveRenderer2D::drawGrid(float x, float y, float w, float h,
 
     {
         auto viewportCB = impl_->viewport_.GetViewportCB();
+        const float zoom = std::max(viewportCB.zoom, 0.001f);
         CBSolidTransform2D cbTransform;
-        cbTransform.offset     = { x * viewportCB.scale.x + viewportCB.offset.x, y * viewportCB.scale.y + viewportCB.offset.y };
-        cbTransform.scale      = viewportCB.scale;
+        cbTransform.offset     = { x * zoom + viewportCB.offset.x, y * zoom + viewportCB.offset.y };
+        cbTransform.scale      = { w * zoom, h * zoom };
         cbTransform.screenSize = viewportCB.screenSize;
         void* pData = nullptr;
         impl_->pCtx_->MapBuffer(impl_->m_draw_solid_rect_trnsform_cb, MAP_WRITE, MAP_FLAG_DISCARD, pData);
@@ -768,10 +793,10 @@ void PrimitiveRenderer2D::drawRectOutlineLocal(float x, float y, float w, float 
     if (!impl_->hasRenderTarget() || !impl_->m_draw_rect_outline_pso_and_srb.pPSO) return;
 
     RectVertex vertices[4] = {
-        {{0, 0}, {color.r(), color.g(), color.b(), 1}},
-        {{w, 0}, {color.r(), color.g(), color.b(), 1}},
-        {{w, h}, {color.r(), color.g(), color.b(), 1}},
-        {{0, h}, {color.r(), color.g(), color.b(), 1}},
+        {{0, 0}, {color.r(), color.g(), color.b(), color.a()}},
+        {{w, 0}, {color.r(), color.g(), color.b(), color.a()}},
+        {{w, h}, {color.r(), color.g(), color.b(), color.a()}},
+        {{0, h}, {color.r(), color.g(), color.b(), color.a()}},
     };
 
     {
@@ -793,8 +818,20 @@ void PrimitiveRenderer2D::drawRectOutlineLocal(float x, float y, float w, float 
 
 void PrimitiveRenderer2D::drawSpriteLocal(float x, float y, float w, float h, const QImage& image, float opacity)
 {
+    auto viewportCB = impl_->viewport_.GetViewportCB();
+    const float zoom = std::max(viewportCB.zoom, 0.001f);
+    qDebug() << "[VIEWPORT-SPRITE] scale=(" << viewportCB.scale.x << "," << viewportCB.scale.y << ")"
+             << "offset=(" << viewportCB.offset.x << "," << viewportCB.offset.y << ")"
+             << "screenSize=(" << viewportCB.screenSize.x << "," << viewportCB.screenSize.y << ")"
+             << "zoom=" << zoom;
+    
+    qDebug() << "[SPRITE] x=" << x << "y=" << y << "w=" << w << "h=" << h
+             << "image.isNull=" << image.isNull()
+             << "image.size=" << image.size()
+             << "image.format=" << image.format();
+    
     if (!impl_->hasRenderTarget() || !impl_->m_draw_sprite_pso_and_srb.pPSO) return;
-    if (image.isNull() || w <= 0.0f || h <= 0.0f) return;
+    if (image.isNull()) return;
     if (!impl_->pDevice_ || !impl_->pCtx_) return;
 
     // テクスチャキャッシュ: QImageが変化した場合のみ再生成
@@ -835,24 +872,17 @@ void PrimitiveRenderer2D::drawSpriteLocal(float x, float y, float w, float h, co
     auto* pRTV = impl_->getCurrentRTV();
     if (!pRTV) return;
 
-    // キャンバス座標をNDC座標に変換（ズームを考慮）
-    auto canvasToNdc = [&](float2 canvasPos) -> float2 {
-        float2 ndc0 = impl_->viewport_.CanvasToNDC(canvasPos);
-        return ndc0;
-    };
-
-    // Triangle strip順: TL, TR, BL, BR
-    const float2 ndc0 = canvasToNdc({x, y});
-    const float2 ndc1 = canvasToNdc({x + w, y});
-    const float2 ndc2 = canvasToNdc({x, y + h});
-    const float2 ndc3 = canvasToNdc({x + w, y + h});
-
+    // Triangle strip: TL, TR, BL, BR (0..1 local coordinates)
     SpriteVertex vertices[4] = {
         { ndc0, {0.0f, 0.0f}, {1.0f, 1.0f, 1.0f, opacity} },
         { ndc1, {1.0f, 0.0f}, {1.0f, 1.0f, 1.0f, opacity} },
         { ndc2, {0.0f, 1.0f}, {1.0f, 1.0f, 1.0f, opacity} },
         { ndc3, {1.0f, 1.0f}, {1.0f, 1.0f, 1.0f, opacity} },
     };
+    
+    qDebug() << "[SPRITE] Vertex[0] position=(" << vertices[0].position.x << "," << vertices[0].position.y << ")"
+             << "uv=(" << vertices[0].uv.x << "," << vertices[0].uv.y << ")"
+             << "color.a=" << vertices[0].color.w;
 
     impl_->pCtx_->SetRenderTargets(1, &pRTV, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
 
@@ -861,6 +891,23 @@ void PrimitiveRenderer2D::drawSpriteLocal(float x, float y, float w, float h, co
         impl_->pCtx_->MapBuffer(impl_->m_draw_sprite_vertex_buffer, MAP_WRITE, MAP_FLAG_DISCARD, pData);
         std::memcpy(pData, vertices, sizeof(vertices));
         impl_->pCtx_->UnmapBuffer(impl_->m_draw_sprite_vertex_buffer, MAP_WRITE);
+    }
+
+    {
+        auto viewportCB = impl_->viewport_.GetViewportCB();
+        const float zoom = std::max(viewportCB.zoom, 0.001f);
+        CBSolidTransform2D cbTransform;
+        cbTransform.offset     = { x * zoom + viewportCB.offset.x, y * zoom + viewportCB.offset.y };
+        cbTransform.scale      = { w * zoom, h * zoom };
+        cbTransform.screenSize = viewportCB.screenSize;
+        void* pData = nullptr;
+        impl_->pCtx_->MapBuffer(impl_->m_draw_sprite_cb, MAP_WRITE, MAP_FLAG_DISCARD, pData);
+        std::memcpy(pData, &cbTransform, sizeof(cbTransform));
+        impl_->pCtx_->UnmapBuffer(impl_->m_draw_sprite_cb, MAP_WRITE);
+        
+        qDebug() << "[SPRITE] TransformCB: offset=(" << cbTransform.offset.x << "," << cbTransform.offset.y << ")"
+                 << "scale=(" << cbTransform.scale.x << "," << cbTransform.scale.y << ")"
+                 << "screenSize=(" << cbTransform.screenSize.x << "," << cbTransform.screenSize.y << ")";
     }
 
     impl_->pCtx_->SetPipelineState(impl_->m_draw_sprite_pso_and_srb.pPSO);
@@ -872,6 +919,8 @@ void PrimitiveRenderer2D::drawSpriteLocal(float x, float y, float w, float h, co
         auto* sampVar = impl_->m_draw_sprite_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_PIXEL, "g_sampler");
         if (sampVar) sampVar->Set(impl_->m_sprite_sampler);
     }
+
+    impl_->m_draw_sprite_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_VERTEX, "TransformCB")->Set(impl_->m_draw_sprite_cb);
 
     impl_->pCtx_->CommitShaderResources(impl_->m_draw_sprite_pso_and_srb.pSRB,
         RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
