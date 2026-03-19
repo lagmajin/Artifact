@@ -35,6 +35,7 @@ public:
     void setCanvasSize(float w, float h);
     void setPan(float x, float y);
     void setZoom(float zoom);
+    float getZoom() const;
     void panBy(float dx, float dy);
     void resetView();
     void fitToViewport(float margin);

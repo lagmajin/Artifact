@@ -94,7 +94,7 @@ void ArtifactImageLayer::draw(ArtifactIRenderer* renderer)
     // Diligent レンデラーで drawSprite を呼び出し
     // 他のレンデラータイプの場合は動的に処理されるべき
     if (renderer != nullptr) {
-        renderer->drawSprite(0.0f, 0.0f, (float)size.width, (float)size.height, img);
+        renderer->drawSprite(0.0f, 0.0f, (float)size.width, (float)size.height, img, this->opacity());
     }
 }
 

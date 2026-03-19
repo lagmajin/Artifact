@@ -97,6 +97,7 @@ namespace Artifact
   void setCanvasSize(float w, float h)   { primitiveRenderer_.setCanvasSize(w, h); }
   void setPan(float x, float y)          { primitiveRenderer_.setPan(x, y); }
   void setZoom(float zoom)               { primitiveRenderer_.setZoom(zoom); }
+  float getZoom() const                  { return primitiveRenderer_.getZoom(); }
   void panBy(float dx, float dy)         { primitiveRenderer_.panBy(dx, dy); }
   void resetView()                       { primitiveRenderer_.resetView(); }
   void fitToViewport(float margin)       { primitiveRenderer_.fitToViewport(margin); }
@@ -520,6 +521,7 @@ namespace Artifact
  void ArtifactIRenderer::setCanvasSize(float w, float h)        { impl_->setCanvasSize(w, h); }
  void ArtifactIRenderer::setPan(float x, float y)               { impl_->setPan(x, y); }
  void ArtifactIRenderer::setZoom(float zoom)                    { impl_->setZoom(zoom); }
+ float ArtifactIRenderer::getZoom() const                       { return impl_->getZoom(); }
  void ArtifactIRenderer::panBy(float dx, float dy)              { impl_->panBy(dx, dy); }
  void ArtifactIRenderer::resetView()                            { impl_->resetView(); }
  void ArtifactIRenderer::fitToViewport(float margin)            { impl_->fitToViewport(margin); }

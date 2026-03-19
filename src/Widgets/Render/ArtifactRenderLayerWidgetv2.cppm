@@ -41,12 +41,14 @@ import Layer.Blend;
 import Artifact.Application.Manager;
 import Artifact.Service.Application;
 import Artifact.Service.Project;
+import Artifact.Service.Playback;
 import Artifact.Service.ActiveContext;
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
 import Property.Abstract;
 
 import Artifact.Render.IRenderer;
+import Artifact.Render.CompositionRenderer;
 import Artifact.Preview.Pipeline;
 import Artifact.Layer.Image;
 
@@ -134,6 +136,7 @@ W_OBJECT_IMPL(ArtifactLayerEditorWidgetV2)
   void initializeSwapChain(QWidget* window);
   void destroy();
   std::unique_ptr<ArtifactIRenderer> renderer_;
+  std::unique_ptr<CompositionRenderer> compositionRenderer_;
   bool initialized_ = false;
   bool isPanning_=false;
   QPointF lastMousePos_;
@@ -251,6 +254,10 @@ W_OBJECT_IMPL(ArtifactLayerEditorWidgetV2)
    qWarning() << "[ArtifactLayerEditorWidgetV2] Falling back to ArtifactIRenderer internal initialization.";
   }
 
+  if (renderer_) {
+   compositionRenderer_ = std::make_unique<CompositionRenderer>(*renderer_);
+  }
+
   initialized_ = true;
  }
 
@@ -265,9 +272,10 @@ W_OBJECT_IMPL(ArtifactLayerEditorWidgetV2)
  void ArtifactLayerEditorWidgetV2::Impl::destroy()
  {
   stopRenderLoop();
-  if (renderer_) {
+ if (renderer_) {
    renderer_->destroy();
   }
+  compositionRenderer_.reset();
   initialized_ = false;
   //pImmediateContext.Release();
   //pDevice.Release();
@@ -408,8 +416,19 @@ W_OBJECT_IMPL(ArtifactLayerEditorWidgetV2)
  {
  if (!initialized_ || !renderer_)
   return;
-  renderer_->clear();
-  renderer_->drawRectLocal(-8192, -8192, 16384, 16384, clearColor_);
+ renderer_->clear();
+  if (compositionRenderer_) {
+   if (auto* service = ArtifactProjectService::instance()) {
+    if (auto composition = service->currentComposition().lock()) {
+     const auto compSize = composition->settings().compositionSize();
+     compositionRenderer_->SetCompositionSize(static_cast<float>(compSize.width()), static_cast<float>(compSize.height()));
+    }
+   }
+   compositionRenderer_->ApplyCompositionSpace();
+   compositionRenderer_->DrawCompositionBackground(clearColor_);
+  } else {
+   renderer_->drawRectLocal(-8192, -8192, 16384, 16384, clearColor_);
+  }
   if (!targetLayerId_.isNil()) {
    if (auto* service = ArtifactProjectService::instance()) {
     if (auto composition = service->currentComposition().lock()) {
@@ -420,41 +439,25 @@ W_OBJECT_IMPL(ArtifactLayerEditorWidgetV2)
      }
 
      if (auto layer = composition->layerById(targetLayerId_)) {
-      layer->goToFrame(composition->framePosition().framePosition());
+      const auto currentFrame = ArtifactPlaybackService::instance()
+          ? ArtifactPlaybackService::instance()->currentFrame()
+          : composition->framePosition();
+      layer->goToFrame(currentFrame.framePosition());
       const auto source = layer->sourceSize();
       if (source.width > 0 && source.height > 0) {
        // レイヤーサイズも設定（コンポジションサイズを上書きしないためコメントアウト）
        // renderer_->setCanvasSize(static_cast<float>(source.width), static_cast<float>(source.height));
       }
       
-      // デバッグログ：レイヤー描画前
-      const QString layerType = QString::fromLatin1(layer->metaObject()->className());
       const bool isVisible = layer->isVisible();
-      qDebug() << "[LayerView] Drawing layer:" << layerType
-               << "id:" << targetLayerId_.toString()
-               << "visible:" << isVisible
-               << "sourceSize:" << source.width << "x" << source.height;
-      
-      // ArtifactImageLayer の場合、追加情報を出力
-      if (auto imageLayer = std::dynamic_pointer_cast<ArtifactImageLayer>(layer)) {
-       const QString path = imageLayer->sourcePath();
-       qDebug() << "[LayerView] ArtifactImageLayer details:"
-                << "sourcePath:" << path;
+      const bool isActive = layer->isActiveAt(currentFrame);
+      if (!isVisible || !isActive || layer->opacity() <= 0.0f) {
+      } else {
+       layer->draw(renderer_.get());
       }
-      
-      layer->draw(renderer_.get());
-      qDebug() << "[LayerView] layer->draw() completed";
-     } else {
-      qDebug() << "[LayerView] Layer not found:" << targetLayerId_.toString();
      }
-    } else {
-     qDebug() << "[LayerView] No current composition";
     }
-   } else {
-    qDebug() << "[LayerView] No project service";
    }
-  } else {
-   qDebug() << "[LayerView] No target layer selected";
   }
   renderer_->flush();
   renderer_->present();
@@ -554,11 +557,12 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
 
  void ArtifactLayerEditorWidgetV2::mousePressEvent(QMouseEvent* event)
  {
-  if (event->button() == Qt::MiddleButton ||
+ if (event->button() == Qt::MiddleButton ||
    (event->button() == Qt::RightButton && event->modifiers() & Qt::AltModifier))
   {
    impl_->isPanning_ = true;
    impl_->lastMousePos_ = event->position(); // 前回位置を保存
+   setCursor(Qt::ClosedHandCursor);
    event->accept();
    return;
   }
@@ -568,9 +572,10 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
 
  void ArtifactLayerEditorWidgetV2::mouseReleaseEvent(QMouseEvent* event)
  {
-  if (event->button() == Qt::MiddleButton ||
+ if (event->button() == Qt::MiddleButton ||
       event->button() == Qt::RightButton) {
    impl_->isPanning_ = false;
+   unsetCursor();
    event->accept();
    return;
   }

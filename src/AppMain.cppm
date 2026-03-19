@@ -764,6 +764,8 @@ int main(int argc, char* argv[])
                 const QString dockTitle = timelineDockTitle(compId);
                 const QString dockId = timelineDockObjectId(compId);
                 auto* panel = new ArtifactTimelineWidget(mw);
+                panel->setMinimumHeight(500);
+                panel->resize(1200, 500);
                 panel->setComposition(compId);
                 panel->setWindowTitle(dockTitle);
                 

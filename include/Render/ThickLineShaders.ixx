@@ -52,8 +52,15 @@ float4 main(PSInput input) : SV_TARGET
 }
 )HLSL";
 
- // Sprite vertex shader: NDC positions passthrough, UV forwarded to PS
+ // Sprite vertex shader: local -> view -> NDC, UV/color forwarded to PS
  inline const QByteArray g_2DSpriteVS = R"HLSL(
+cbuffer TransformCB : register(b0)
+{
+    float2 offset;
+    float2 scale;
+    float2 screenSize;
+};
+
 struct VSInput
 {
     float2 pos   : ATTRIB0;
@@ -63,15 +70,21 @@ struct VSInput
 
 struct PSInput
 {
-    float4 pos : SV_POSITION;
-    float2 uv  : TEXCOORD0;
+    float4 pos   : SV_POSITION;
+    float2 uv    : TEXCOORD0;
+    float4 color : COLOR0;
 };
 
 PSInput main(VSInput input)
 {
     PSInput output;
-    output.pos = float4(input.pos, 0.0f, 1.0f);
-    output.uv  = input.uv;
+    float2 pos = input.pos * scale + offset;
+    float2 ndc = pos / screenSize * 2.0f - float2(1.0f, 1.0f);
+    ndc.y = -ndc.y;
+
+    output.pos   = float4(ndc, 0.0f, 1.0f);
+    output.uv    = input.uv;
+    output.color = input.color;
     return output;
 }
 )HLSL";

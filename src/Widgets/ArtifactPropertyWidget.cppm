@@ -7,6 +7,7 @@
 #include <QFormLayout>
 #include <QGroupBox>
 #include <QCursor>
+#include <QTimer>
 #include <wobjectimpl.h>
 
 #include <iostream>
@@ -56,6 +57,7 @@ import Utils.String.UniString;
 import Artifact.Widgets.ExpressionCopilotWidget;
 import Artifact.Widgets.PropertyEditor;
 import Artifact.Service.Playback;
+import Artifact.Service.Project;
 import Time.Rational;
 
 namespace Artifact {
@@ -64,17 +66,102 @@ namespace Artifact {
 
 class ArtifactPropertyWidget::Impl {
 public:
+    ArtifactPropertyWidget* owner = nullptr;
     QWidget* containerWidget = nullptr;
     QVBoxLayout* mainLayout = nullptr;
     ArtifactAbstractLayerPtr currentLayer;
+    QMetaObject::Connection currentLayerChangedConnection;
+    QTimer* rebuildTimer = nullptr;
+    int rebuildDebounceMs = 80;
     QString filterText;
     QString focusedEffectId;
     bool rebuilding = false;
+    bool valueColumnFirst = false;
+    int localPropertyEditDepth = 0;
+
+    QString currentLayerKey() const
+    {
+        return currentLayer ? currentLayer->id().toString() : QString();
+    }
+
+    void scheduleRebuild(int delayMs = -1)
+    {
+        if (!rebuildTimer) {
+            return;
+        }
+        const int delay = (delayMs < 0) ? rebuildDebounceMs : delayMs;
+        rebuildTimer->start(std::max(0, delay));
+    }
 
     void rebuildUI();
 };
 
 namespace {
+
+class ScopedPropertyEditGuard final
+{
+public:
+    explicit ScopedPropertyEditGuard(int& depth) : depth_(depth) { ++depth_; }
+    ~ScopedPropertyEditGuard() { --depth_; }
+private:
+    int& depth_;
+};
+
+using PropertyKeyFrameTrack = std::vector<ArtifactCore::KeyFrame>;
+using LayerKeyFrameStore = std::map<QString, std::map<QString, PropertyKeyFrameTrack>>;
+
+LayerKeyFrameStore& keyFrameStore()
+{
+    static LayerKeyFrameStore store;
+    return store;
+}
+
+PropertyKeyFrameTrack& keyFrameTrack(const QString& layerKey, const QString& propertyName)
+{
+    return keyFrameStore()[layerKey][propertyName];
+}
+
+const PropertyKeyFrameTrack* findKeyFrameTrack(const QString& layerKey, const QString& propertyName)
+{
+    const auto layerIt = keyFrameStore().find(layerKey);
+    if (layerIt == keyFrameStore().end()) {
+        return nullptr;
+    }
+    const auto propertyIt = layerIt->second.find(propertyName);
+    if (propertyIt == layerIt->second.end()) {
+        return nullptr;
+    }
+    return &propertyIt->second;
+}
+
+bool hasKeyFrameAt(const PropertyKeyFrameTrack& track, const RationalTime& time)
+{
+    return std::any_of(track.begin(), track.end(), [&time](const ArtifactCore::KeyFrame& key) {
+        return key.time == time;
+    });
+}
+
+void addOrUpdateKeyFrame(PropertyKeyFrameTrack& track, const RationalTime& time, const QVariant& value)
+{
+    for (auto& key : track) {
+        if (key.time == time) {
+            key.value = value;
+            return;
+        }
+    }
+    track.push_back({time, value});
+    std::sort(track.begin(), track.end(), [](const ArtifactCore::KeyFrame& a, const ArtifactCore::KeyFrame& b) {
+        return a.time < b.time;
+    });
+}
+
+void removeKeyFrame(PropertyKeyFrameTrack& track, const RationalTime& time)
+{
+    const auto it = std::remove_if(track.begin(), track.end(), [&time](const ArtifactCore::KeyFrame& key) {
+        return key.time == time;
+    });
+    track.erase(it, track.end());
+}
 
 QString humanizePropertyLabel(QString name)
 {
@@ -123,10 +210,21 @@ bool propertyMatchesFilter(const ArtifactCore::AbstractProperty& property, const
     return key.contains(query, Qt::CaseInsensitive) || friendly.contains(query, Qt::CaseInsensitive);
 }
 
+void notifyProjectIfLayerNameChanged(const QString& propertyName)
+{
+    if (propertyName.compare(QStringLiteral("layer.name"), Qt::CaseInsensitive) != 0) {
+        return;
+    }
+    if (auto* service = ArtifactProjectService::instance()) {
+        service->projectChanged();
+    }
+}
+
 ArtifactPropertyEditorRowWidget* createPropertyRow(
     QWidget* parent,
     const std::shared_ptr<ArtifactCore::AbstractProperty>& propertyPtr,
-    const std::function<void(const QString&, const QVariant&)>& applyValue)
+    const std::function<void(const QString&, const QVariant&)>& applyValue,
+    const QString& layerKey)
 {
     if (!propertyPtr) return nullptr;
     const auto& property = *propertyPtr;
@@ -161,43 +259,46 @@ ArtifactPropertyEditorRowWidget* createPropertyRow(
     row->setShowKeyframeButton(animatable);
     row->setNavigationEnabled(false);
     if (animatable) {
+        const QString propertyName = property.getName();
         auto* playback = ArtifactPlaybackService::instance();
         const auto frameRate = playback ? playback->frameRate() : FrameRate(30.0f);
         const int64_t fps_val = static_cast<int64_t>(std::round(frameRate.framerate()));
-        row->setNavigationEnabled(!propertyPtr->getKeyFrames().empty());
+        auto& track = keyFrameTrack(layerKey, propertyName);
+        row->setNavigationEnabled(!track.empty());
         
         // 現時点でのキーフレーム状態を反映
         if (playback) {
             const auto now = RationalTime(playback->currentFrame().framePosition(), fps_val);
-            row->setKeyframeChecked(property.hasKeyFrameAt(now));
+            row->setKeyframeChecked(hasKeyFrameAt(track, now));
         }
 
         // キーフレームトグル (◆ボタン)
-        row->setKeyframeHandler([propertyPtr, playback, row, fps_val](bool checked) {
+        row->setKeyframeHandler([layerKey, propertyName, playback, row, editor, fps_val](bool checked) {
             if (!playback) return;
             const auto nowPos = playback->currentFrame();
             const auto nowTime = RationalTime(nowPos.framePosition(), fps_val);
-            
+
+            auto& mutableTrack = keyFrameTrack(layerKey, propertyName);
             if (checked) {
-                propertyPtr->addKeyFrame(nowTime, propertyPtr->getValue());
+                addOrUpdateKeyFrame(mutableTrack, nowTime, editor->value());
             } else {
-                propertyPtr->removeKeyFrame(nowTime);
+                removeKeyFrame(mutableTrack, nowTime);
             }
             // 状態を再反映
-            row->setKeyframeChecked(propertyPtr->hasKeyFrameAt(nowTime));
-            row->setNavigationEnabled(!propertyPtr->getKeyFrames().empty());
+            row->setKeyframeChecked(hasKeyFrameAt(mutableTrack, nowTime));
+            row->setNavigationEnabled(!mutableTrack.empty());
         });
 
         // ナビゲーション (◀ ▶ボタン)
-        row->setNavigationHandler([propertyPtr, playback, fps_val](int direction) {
+        row->setNavigationHandler([layerKey, propertyName, playback, fps_val](int direction) {
             if (!playback) return;
-            const auto kfs = propertyPtr->getKeyFrames();
-            if (kfs.empty()) return;
+            const auto* track = findKeyFrameTrack(layerKey, propertyName);
+            if (!track || track->empty()) return;
 
             const auto nowTime = RationalTime(playback->currentFrame().framePosition(), fps_val);
             if (direction > 0) {
                 // 次のキーフレームへ
-                for (const auto& kf : kfs) {
+                for (const auto& kf : *track) {
                     if (kf.time > nowTime) {
                         playback->goToFrame(FramePosition(static_cast<int>(kf.time.rescaledTo(fps_val))));
                         break;
@@ -205,7 +306,7 @@ ArtifactPropertyEditorRowWidget* createPropertyRow(
                 }
             } else {
                 // 前のキーフレームへ
-                for (auto it = kfs.rbegin(); it != kfs.rend(); ++it) {
+                for (auto it = track->rbegin(); it != track->rend(); ++it) {
                     if (it->time < nowTime) {
                         playback->goToFrame(FramePosition(static_cast<int>(it->time.rescaledTo(fps_val))));
                         break;
@@ -239,13 +340,14 @@ void addRowsFromProperties(
     const std::vector<std::shared_ptr<ArtifactCore::AbstractProperty>>& properties,
     const QString& filterText,
     const std::function<void(const QString&, const QVariant&)>& applyValue,
+    const QString& layerKey,
     bool* addedAny)
 {
     for (const auto& ptr : properties) {
         if (!ptr || !propertyMatchesFilter(*ptr, filterText)) {
             continue;
         }
-        if (auto* row = createPropertyRow(parent, ptr, applyValue)) {
+        if (auto* row = createPropertyRow(parent, ptr, applyValue, layerKey)) {
             layout->addWidget(row);
             if (addedAny) {
                 *addedAny = true;
@@ -288,7 +390,12 @@ std::vector<std::shared_ptr<ArtifactCore::AbstractProperty>> prioritizedSummaryP
 ArtifactPropertyWidget::ArtifactPropertyWidget(QWidget* parent)
     : QScrollArea(parent), impl_(new Impl()) 
 {
+    impl_->owner = this;
+    ArtifactPropertyEditorRowWidget::setGlobalLayoutMode(
+        impl_->valueColumnFirst ? ArtifactPropertyRowLayoutMode::EditorThenLabel
+                                : ArtifactPropertyRowLayoutMode::LabelThenEditor);
     setObjectName(QStringLiteral("artifactPropertyWidget"));
+    setMinimumWidth(360);
     setWidgetResizable(true);
     setFrameShape(QFrame::NoFrame);
     impl_->containerWidget = new QWidget(this);
@@ -299,6 +406,16 @@ ArtifactPropertyWidget::ArtifactPropertyWidget(QWidget* parent)
     impl_->mainLayout->setSpacing(6);
 
     setWidget(impl_->containerWidget);
+    impl_->rebuildTimer = new QTimer(this);
+    impl_->rebuildTimer->setSingleShot(true);
+    QObject::connect(impl_->rebuildTimer, &QTimer::timeout, this, [this]() {
+        impl_->rebuildUI();
+    });
+    if (auto* playback = ArtifactPlaybackService::instance()) {
+        QObject::connect(playback, &ArtifactPlaybackService::frameChanged, this, [this]() {
+            impl_->scheduleRebuild(40);
+        });
+    }
     setStyleSheet(QStringLiteral(R"(
 QScrollArea#artifactPropertyWidget {
  background: #171d24;
@@ -417,22 +534,30 @@ QCheckBox::indicator:checked {
 }
 
 ArtifactPropertyWidget::~ArtifactPropertyWidget() {
+    if (impl_->currentLayerChangedConnection) {
+        QObject::disconnect(impl_->currentLayerChangedConnection);
+    }
     delete impl_;
 }
 
 void ArtifactPropertyWidget::setLayer(ArtifactAbstractLayerPtr layer) {
     if (impl_->currentLayer == layer) return;
     
-    // Disconnect from old layer
-    if (impl_->currentLayer) {
-        disconnect(impl_->currentLayer.get(), &ArtifactAbstractLayer::changed, this, &ArtifactPropertyWidget::updateProperties);
+    if (impl_->currentLayerChangedConnection) {
+        QObject::disconnect(impl_->currentLayerChangedConnection);
     }
 
     impl_->currentLayer = layer;
     
     // Connect to new layer
     if (impl_->currentLayer) {
-        connect(impl_->currentLayer.get(), &ArtifactAbstractLayer::changed, this, &ArtifactPropertyWidget::updateProperties);
+        impl_->currentLayerChangedConnection =
+            connect(impl_->currentLayer.get(), &ArtifactAbstractLayer::changed, this, [this]() {
+                if (impl_->localPropertyEditDepth > 0) {
+                    return;
+                }
+                impl_->scheduleRebuild();
+            });
     }
 
     updateProperties();
@@ -460,7 +585,27 @@ QString ArtifactPropertyWidget::filterText() const {
     return impl_->filterText;
 }
 
+void ArtifactPropertyWidget::setValueColumnFirst(const bool enabled)
+{
+    if (impl_->valueColumnFirst == enabled) {
+        return;
+    }
+    impl_->valueColumnFirst = enabled;
+    ArtifactPropertyEditorRowWidget::setGlobalLayoutMode(
+        enabled ? ArtifactPropertyRowLayoutMode::EditorThenLabel
+                : ArtifactPropertyRowLayoutMode::LabelThenEditor);
+    updateProperties();
+}
+
+bool ArtifactPropertyWidget::valueColumnFirst() const
+{
+    return impl_->valueColumnFirst;
+}
+
 void ArtifactPropertyWidget::updateProperties() {
+    if (impl_->rebuildTimer && impl_->rebuildTimer->isActive()) {
+        impl_->rebuildTimer->stop();
+    }
     impl_->rebuildUI();
 }
 
@@ -519,6 +664,8 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
     };
 
     const auto layerGroups = currentLayer->getLayerPropertyGroups();
+    const QString layerKey = currentLayerKey();
+    const QString layerPropertyKey = layerKey + QStringLiteral("::layer");
     std::vector<std::shared_ptr<ArtifactCore::AbstractProperty>> layerSummaryProperties;
     for (const auto& groupDef : layerGroups) {
         auto sortedProps = groupDef.sortedProperties();
@@ -534,9 +681,12 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
         filterText,
         [this](const QString& name, const QVariant& value) {
             if (currentLayer) {
+                ScopedPropertyEditGuard guard(localPropertyEditDepth);
                 currentLayer->setLayerPropertyValue(name, value);
+                notifyProjectIfLayerNameChanged(name);
             }
         },
+        layerPropertyKey,
         &hasSummaryProperties);
 
     const auto effects = currentLayer->getEffects();
@@ -568,9 +718,11 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
             summaryLayout,
             effectSummary,
             filterText,
-            [effect](const QString& name, const QVariant& value) {
+            [this, effect](const QString& name, const QVariant& value) {
+                ScopedPropertyEditGuard guard(localPropertyEditDepth);
                 effect->setPropertyValue(name, value);
             },
+            layerKey + QStringLiteral("::effectSummary::") + effect->effectID().toQString(),
             &hasSummaryProperties);
     }
 
@@ -596,9 +748,12 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
             filterText,
             [this](const QString& name, const QVariant& value) {
                 if (currentLayer) {
+                    ScopedPropertyEditGuard guard(localPropertyEditDepth);
                     currentLayer->setLayerPropertyValue(name, value);
+                    notifyProjectIfLayerNameChanged(name);
                 }
             },
+            layerPropertyKey,
             &addedGroupProperties);
         if (addedGroupProperties) {
             mainLayout->addWidget(group);
@@ -646,9 +801,11 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
             groupLayout,
             sortedProps,
             filterText,
-            [effect](const QString& name, const QVariant& value) {
+            [this, effect](const QString& name, const QVariant& value) {
+                ScopedPropertyEditGuard guard(localPropertyEditDepth);
                 effect->setPropertyValue(name, value);
             },
+            layerKey + QStringLiteral("::effect::") + effect->effectID().toQString(),
             &addedGroupProperties);
 
         if (addedGroupProperties) {

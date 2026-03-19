@@ -133,18 +133,22 @@ namespace Artifact
   
   // Zoom actions
   impl_->zoomInAction_ = new QAction("+");
+  impl_->zoomInAction_->setIcon(loadIconWithFallback("Material/zoom_in.svg"));
   impl_->zoomInAction_->setToolTip("Zoom In (Ctrl++)");
   impl_->zoomInAction_->setIconText("Zoom In");
   
   impl_->zoomOutAction_ = new QAction("-");
+  impl_->zoomOutAction_->setIcon(loadIconWithFallback("Material/zoom_out.svg"));
   impl_->zoomOutAction_->setToolTip("Zoom Out (Ctrl+-)");
   impl_->zoomOutAction_->setIconText("Zoom Out");
   
   impl_->zoom100Action_ = new QAction("100%");
+  impl_->zoom100Action_->setIcon(loadIconWithFallback("Material/aspect_ratio.svg"));
   impl_->zoom100Action_->setToolTip("Reset Zoom (Ctrl+0)");
   impl_->zoom100Action_->setIconText("100%");
   
   impl_->zoomFitAction_ = new QAction("Fit");
+  impl_->zoomFitAction_->setIcon(loadIconWithFallback("Material/fit_screen.svg"));
   impl_->zoomFitAction_->setToolTip("Fit Window");
   impl_->zoomFitAction_->setIconText("Fit");
   
@@ -160,12 +164,14 @@ namespace Artifact
   impl_->gridToggleAction_ = new QAction("Grid");
   impl_->gridToggleAction_->setCheckable(true);
   impl_->gridToggleAction_->setChecked(true);
+  impl_->gridToggleAction_->setIcon(loadIconWithFallback("Material/grid_on.svg"));
   impl_->gridToggleAction_->setToolTip("Show Grid");
   impl_->gridToggleAction_->setIconText("Grid");
   
   impl_->guideToggleAction_ = new QAction("Guide");
   impl_->guideToggleAction_->setCheckable(true);
   impl_->guideToggleAction_->setChecked(true);
+  impl_->guideToggleAction_->setIcon(loadIconWithFallback("Material/visibility.svg"));
   impl_->guideToggleAction_->setToolTip("Show Guide Lines");
   impl_->guideToggleAction_->setIconText("Guide");
   
@@ -181,16 +187,19 @@ namespace Artifact
   impl_->normalViewAction_ = new QAction("Normal");
   impl_->normalViewAction_->setCheckable(true);
   impl_->normalViewAction_->setChecked(true);
+  impl_->normalViewAction_->setIcon(loadIconWithFallback("Material/view_sidebar.svg"));
   impl_->normalViewAction_->setToolTip("Normal View");
   impl_->normalViewAction_->setIconText("Normal");
   
   impl_->gridViewAction_ = new QAction("Grid");
   impl_->gridViewAction_->setCheckable(true);
+  impl_->gridViewAction_->setIcon(loadIconWithFallback("Material/grid_view.svg"));
   impl_->gridViewAction_->setToolTip("Grid View");
   impl_->gridViewAction_->setIconText("Grid");
   
   impl_->detailViewAction_ = new QAction("Detail");
   impl_->detailViewAction_->setCheckable(true);
+  impl_->detailViewAction_->setIcon(loadIconWithFallback("Material/tune.svg"));
   impl_->detailViewAction_->setToolTip("Detail View");
   impl_->detailViewAction_->setIconText("Detail");
   
@@ -235,10 +244,12 @@ namespace Artifact
   });
    
   QObject::connect(impl_->gridToggleAction_, &QAction::triggered, this, [this](bool checked) {
+   impl_->gridToggleAction_->setIcon(loadIconWithFallback(checked ? "Material/grid_on.svg" : "Material/grid_off.svg"));
    gridToggled(checked);
   });
    
   QObject::connect(impl_->guideToggleAction_, &QAction::triggered, this, [this](bool checked) {
+   impl_->guideToggleAction_->setIcon(loadIconWithFallback(checked ? "Material/visibility.svg" : "Material/visibility_off.svg"));
    guideToggled(checked);
   });
   

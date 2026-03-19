@@ -192,8 +192,8 @@ namespace Artifact {
 
  CreateSolidLayerSettingDialog::CreateSolidLayerSettingDialog(QWidget* parent /*= nullptr*/) :QDialog(parent),impl_(new Impl())
  {
-  setWindowTitle(u8"平面設定");
-  setFixedSize(520, 420);
+  setWindowTitle("Plane Layer Settings");
+  setFixedSize(520, 460);
   setWindowFlags(windowFlags() | Qt::Dialog | Qt::FramelessWindowHint);
   setAttribute(Qt::WA_NoChildEventsForParent);
   auto* mainLayout = new QVBoxLayout(this);
@@ -201,11 +201,11 @@ namespace Artifact {
   mainLayout->setSpacing(0);
 
   auto* header = new QWidget(this);
-  header->setFixedHeight(44);
+  header->setFixedHeight(50);
   header->setStyleSheet("background-color: #2D2D30; border-bottom: 1px solid #444;");
   auto* headerLayout = new QHBoxLayout(header);
-  headerLayout->setContentsMargins(14, 0, 14, 0);
-  auto* title = new QLabel(QStringLiteral("Solid Layer Settings"), header);
+  headerLayout->setContentsMargins(15, 0, 15, 0);
+  auto* title = new QLabel(QStringLiteral("Plane Layer Settings"), header);
   title->setStyleSheet("color: white; font-weight: bold; font-size: 13px;");
   headerLayout->addWidget(title);
   headerLayout->addStretch();
@@ -213,26 +213,49 @@ namespace Artifact {
 
   auto* content = new QWidget(this);
   auto* contentLayout = new QVBoxLayout(content);
-  contentLayout->setContentsMargins(16, 14, 16, 10);
-  contentLayout->setSpacing(12);
+  contentLayout->setContentsMargins(20, 20, 20, 10);
+  contentLayout->setSpacing(14);
 
   auto editableLabel = impl_->nameEditableLabel = new EditableLabel();
   editableLabel->setText("平面 1");
   editableLabel->setStyleSheet("background: #252526; padding: 6px; border-radius: 4px; font-weight: bold;");
 
+  auto* nameRow = new QHBoxLayout();
+  auto* nameLabel = new QLabel("Name:", content);
+  nameLabel->setFixedWidth(60);
+  nameLabel->setStyleSheet("color: #AAA; font-weight: bold;");
+  nameRow->addWidget(nameLabel);
+  nameRow->addWidget(editableLabel, 1);
+
   auto settingPage = impl_->settingPage = new PlaneLayerSettingPage(this);
   settingPage->resizeCompositionSize();
+  auto* settingFrame = new QWidget(content);
+  auto* settingFrameLayout = new QVBoxLayout(settingFrame);
+  settingFrameLayout->setContentsMargins(10, 10, 10, 10);
+  settingFrameLayout->setSpacing(0);
+  settingFrameLayout->addWidget(settingPage);
+  settingFrame->setStyleSheet("background-color: #232325; border: 1px solid #3F3F46; border-radius: 4px;");
 
-  contentLayout->addWidget(editableLabel);
-  contentLayout->addWidget(settingPage);
+  contentLayout->addLayout(nameRow);
+  contentLayout->addWidget(settingFrame, 1);
   mainLayout->addWidget(content, 1);
 
   auto* footer = new QWidget(this);
-  footer->setStyleSheet("background-color: #252526; border-top: 1 solid #333;");
+  footer->setStyleSheet("background-color: #252526; border-top: 1px solid #333;");
   auto* footerLayout = new QHBoxLayout(footer);
-  footerLayout->setContentsMargins(14, 10, 14, 10);
+  footerLayout->setContentsMargins(15, 10, 15, 10);
   auto* dialogButtonBox = impl_->dialogButtonBox = new QDialogButtonBox();
   dialogButtonBox->setStandardButtons(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+  if (auto* okBtn = dialogButtonBox->button(QDialogButtonBox::Ok)) {
+      okBtn->setFixedSize(80, 28);
+      okBtn->setText("OK");
+      okBtn->setStyleSheet("background: #007ACC; color: white; border-radius: 4px; font-weight: bold;");
+  }
+  if (auto* cancelBtn = dialogButtonBox->button(QDialogButtonBox::Cancel)) {
+      cancelBtn->setFixedSize(80, 28);
+      cancelBtn->setText("Cancel");
+      cancelBtn->setStyleSheet("background: #3E3E42; color: #DDD; border-radius: 4px; border: 1px solid #555;");
+  }
   footerLayout->addStretch();
   footerLayout->addWidget(dialogButtonBox);
   mainLayout->addWidget(footer);
@@ -301,11 +324,13 @@ void CreateSolidLayerSettingDialog::mousePressEvent(QMouseEvent* event)
   QDialog::showEvent(event);
   QPoint endPos;
   if (parentWidget()) {
-   const QRect pr = parentWidget()->geometry();
-   endPos = pr.center() - rect().center();
+   endPos = parentWidget()->mapToGlobal(parentWidget()->rect().center())
+            - QPoint(width() / 2, height() / 2);
   } else {
-   endPos = QGuiApplication::primaryScreen()->availableGeometry().center() - rect().center();
+   endPos = QGuiApplication::primaryScreen()->availableGeometry().center()
+            - QPoint(width() / 2, height() / 2);
   }
+  endPos += QPoint(0, 32);
   move(endPos);
  }
 

@@ -149,7 +149,7 @@ void ArtifactCompositionMenu::Impl::renameCurrent()
   "コンポジション名の変更",
   "新しい名前:",
   QLineEdit::Normal,
-  "Composition",
+  current->settings().compositionName().toQString().trimmed(),
   &ok);
  if (!ok) {
   return;

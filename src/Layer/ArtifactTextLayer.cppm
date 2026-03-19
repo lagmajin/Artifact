@@ -291,6 +291,11 @@ TextHorizontalAlignment ArtifactTextLayer::horizontalAlignment() const
     return impl_->paragraphStyle_.horizontalAlignment;
 }
 
+QImage ArtifactTextLayer::toQImage() const
+{
+    return impl_->renderedImage_;
+}
+
 void ArtifactTextLayer::draw(ArtifactIRenderer* renderer)
 {
     if (!renderer) {
@@ -303,7 +308,7 @@ void ArtifactTextLayer::draw(ArtifactIRenderer* renderer)
     if (impl_->renderedImage_.isNull() || size.width <= 0 || size.height <= 0) {
         return;
     }
-    renderer->drawSprite(0.0f, 0.0f, static_cast<float>(size.width), static_cast<float>(size.height), impl_->renderedImage_);
+    renderer->drawSprite(0.0f, 0.0f, static_cast<float>(size.width), static_cast<float>(size.height), impl_->renderedImage_, this->opacity());
 }
 
 std::vector<ArtifactCore::PropertyGroup> ArtifactTextLayer::getLayerPropertyGroups() const

@@ -1,4 +1,5 @@
 module;
+#include <QImage>
 #include <iostream>
 #include <vector>
 #include <string>
@@ -98,6 +99,7 @@ public:
 
     void setHorizontalAlignment(ArtifactCore::TextHorizontalAlignment alignment);
     ArtifactCore::TextHorizontalAlignment horizontalAlignment() const;
+    QImage toQImage() const;
 
     // Trigger update of internal image
     void updateImage();

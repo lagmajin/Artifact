@@ -253,6 +253,8 @@ std::pair<int, int> resolveIntSoftRange(
     return {softMin, softMax};
 }
 
+ArtifactPropertyRowLayoutMode g_propertyRowLayoutMode = ArtifactPropertyRowLayoutMode::LabelThenEditor;
+
 } // namespace
 
 ArtifactFloatPropertyEditor::ArtifactFloatPropertyEditor(const ArtifactCore::AbstractProperty& property, QWidget* parent)
@@ -845,8 +847,13 @@ ArtifactPropertyEditorRowWidget::ArtifactPropertyEditorRowWidget(
     label_->installEventFilter(this);
     label_->setCursor(editor_->supportsScrub() ? Qt::SizeHorCursor : Qt::ArrowCursor);
 
-    layout->addWidget(label_);
-    layout->addWidget(editor_, 1);
+    if (g_propertyRowLayoutMode == ArtifactPropertyRowLayoutMode::EditorThenLabel) {
+        layout->addWidget(editor_, 1);
+        layout->addWidget(label_);
+    } else {
+        layout->addWidget(label_);
+        layout->addWidget(editor_, 1);
+    }
     layout->addLayout(keyframeControlLayout);
     layout->addWidget(resetButton_);
     layout->addWidget(expressionButton_);
@@ -890,6 +897,16 @@ QLabel* ArtifactPropertyEditorRowWidget::label() const
 ArtifactAbstractPropertyEditor* ArtifactPropertyEditorRowWidget::editor() const
 {
     return editor_;
+}
+
+void ArtifactPropertyEditorRowWidget::setGlobalLayoutMode(const ArtifactPropertyRowLayoutMode mode)
+{
+    g_propertyRowLayoutMode = mode;
+}
+
+ArtifactPropertyRowLayoutMode ArtifactPropertyEditorRowWidget::globalLayoutMode()
+{
+    return g_propertyRowLayoutMode;
 }
 
 void ArtifactPropertyEditorRowWidget::setExpressionHandler(std::function<void()> handler)
