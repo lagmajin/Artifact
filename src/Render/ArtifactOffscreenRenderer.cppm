@@ -25,11 +25,11 @@ namespace Artifact
      * @brief 汎用コンポジションレンダラー
      * コンポジション内の各レイヤーを走査し、オフスクリーンバッファにレンダリングします。
      */
-    class CompositionRenderer
+    class OffscreenCompositionRenderer
     {
     public:
-        CompositionRenderer(RefCntAutoPtr<IRenderDevice> pDevice, Uint32 width, Uint32 height);
-        ~CompositionRenderer();
+        OffscreenCompositionRenderer(RefCntAutoPtr<IRenderDevice> pDevice, Uint32 width, Uint32 height);
+        ~OffscreenCompositionRenderer();
 
         // 指定された時刻のフレームをレンダリング
         void renderFrame(const FramePosition& position, ArtifactAbstractComposition* composition);
@@ -59,7 +59,7 @@ namespace Artifact
 
 namespace Artifact
 {
-    CompositionRenderer::CompositionRenderer(RefCntAutoPtr<IRenderDevice> pDevice, Uint32 width, Uint32 height)
+    OffscreenCompositionRenderer::OffscreenCompositionRenderer(RefCntAutoPtr<IRenderDevice> pDevice, Uint32 width, Uint32 height)
         : pDevice_(pDevice), width_(width), height_(height)
     {
         // 独自のイミディエイト/ディファードコンテキストを作成
@@ -72,9 +72,9 @@ namespace Artifact
         renderer_->setViewportSize((float)width_, (float)height_);
     }
 
-    CompositionRenderer::~CompositionRenderer() = default;
+    OffscreenCompositionRenderer::~OffscreenCompositionRenderer() = default;
 
-    void CompositionRenderer::initializeResources()
+    void OffscreenCompositionRenderer::initializeResources()
     {
         TextureDesc TexDesc;
         TexDesc.Name = "Composition Render Target";
@@ -88,7 +88,7 @@ namespace Artifact
         pDevice_->CreateTexture(TexDesc, nullptr, &pRenderTarget_);
     }
 
-    void CompositionRenderer::renderFrame(const FramePosition& position, ArtifactAbstractComposition* composition)
+    void OffscreenCompositionRenderer::renderFrame(const FramePosition& position, ArtifactAbstractComposition* composition)
     {
         if (!composition) return;
 
@@ -117,7 +117,7 @@ namespace Artifact
         pContext_->Flush();
     }
 
-    ArtifactCore::ImageF32x4_RGBA CompositionRenderer::captureImage()
+    ArtifactCore::ImageF32x4_RGBA OffscreenCompositionRenderer::captureImage()
     {
         // 1. Staging Textureの作成（読み取り用）
         TextureDesc StagingDesc;
@@ -162,7 +162,7 @@ namespace Artifact
         return image;
     }
 
-    bool CompositionRenderer::saveFrame(const QString& path)
+    bool OffscreenCompositionRenderer::saveFrame(const QString& path)
     {
         ArtifactCore::ImageF32x4_RGBA img = captureImage();
         // ImageF32x4_RGBAをQImageに変換して保存
