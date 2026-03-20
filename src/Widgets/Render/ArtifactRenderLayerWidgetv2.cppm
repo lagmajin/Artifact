@@ -1,28 +1,11 @@
 ﻿module;
-#define NOMINMAX
-#include <windows.h>
-#include <cstring>
-#include <QList>
-#include <d3d12.h>
-//#include <d3>
 #include <RenderDevice.h>
 #include <DeviceContext.h>
-//#include <DiligentCore/Common/interface/map>
-
-#include <EngineFactoryD3D12.h>
-#include <DiligentCore/Graphics/GraphicsEngineVulkan/interface/EngineFactoryVk.h>
-#include <DeviceContextD3D12.h>
-#include <SwapChain.h>
 #include <RefCntAutoPtr.hpp>
-#include <DiligentTools/Imgui/interface/ImGuiDiligentRenderer.hpp>
-
-
 #include <wobjectimpl.h>
-#include <RenderDeviceD3D12.h>
 #include <QTimer>
 #include <QDebug>
 #include <QKeyEvent>
-#include <QHashFunctions>
 #include <QDateTime>
 #include <QDir>
 #include <QFileDialog>
@@ -56,79 +39,10 @@ namespace Artifact {
 
  using namespace ArtifactCore;
 
-namespace {
-  enum class RenderBackendPreference {
-   Auto,
-   D3D12,
-   Vulkan
-  };
-
-  RenderBackendPreference getBackendPreferenceFromEnv()
-  {
-   char value[64] = {};
-   const DWORD len = ::GetEnvironmentVariableA("ARTIFACT_RENDER_BACKEND", value, static_cast<DWORD>(sizeof(value)));
-   if (len == 0 || len >= sizeof(value)) {
-    return RenderBackendPreference::Auto;
-   }
-   CharLowerA(value);
-   if (strcmp(value, "vulkan") == 0 || strcmp(value, "vk") == 0) {
-    return RenderBackendPreference::Vulkan;
-   }
-   if (strcmp(value, "d3d12") == 0 || strcmp(value, "dx12") == 0) {
-    return RenderBackendPreference::D3D12;
-   }
-   return RenderBackendPreference::Auto;
-  }
-
-  Diligent::IEngineFactoryVk* resolveVkFactory()
-  {
-#if VULKAN_SUPPORTED
-#if DILIGENT_VK_EXPLICIT_LOAD
-   return Diligent::LoadAndGetEngineFactoryVk();
-#else
-   return Diligent::GetEngineFactoryVk();
-#endif
-#else
-   return nullptr;
-#endif
-  }
-
-  bool hasUsableVulkanLoader()
-  {
-#if VULKAN_SUPPORTED
-   HMODULE loader = ::GetModuleHandleW(L"vulkan-1.dll");
-   if (!loader) {
-    loader = ::LoadLibraryW(L"vulkan-1.dll");
-   }
-   if (!loader) {
-    return false;
-   }
-   return ::GetProcAddress(loader, "vkGetInstanceProcAddr") != nullptr;
-#else
-   return false;
-#endif
-  }
-
-  Diligent::IEngineFactoryD3D12* resolveD3D12Factory()
-  {
-#if D3D12_SUPPORTED
-#if DILIGENT_D3D12_SHARED
-   return Diligent::LoadAndGetEngineFactoryD3D12();
-#else
-   return Diligent::GetEngineFactoryD3D12();
-#endif
-#else
-   return nullptr;
-#endif
-  }
- }
-
 W_OBJECT_IMPL(ArtifactLayerEditorWidgetV2)
 
  class ArtifactLayerEditorWidgetV2::Impl {
  private:
-  RefCntAutoPtr<IRenderDevice> pDevice;
-  RefCntAutoPtr<IDeviceContext> pImmediateContext;
  public:
   Impl();
   ~Impl();
@@ -182,82 +96,19 @@ W_OBJECT_IMPL(ArtifactLayerEditorWidgetV2)
  void ArtifactLayerEditorWidgetV2::Impl::initialize(QWidget* window)
  {
   widget_ = window;
-  const auto backendPref = getBackendPreferenceFromEnv();
+  renderer_ = std::make_unique<ArtifactIRenderer>();
+  renderer_->initialize(window);
 
-  auto tryInitVkUnsafe = [&]() -> bool
-  {
-   auto* pFactoryVk = resolveVkFactory();
-   if (!pFactoryVk) {
-    return false;
-   }
-   EngineVkCreateInfo creationAttribs = {};
-   creationAttribs.EnableValidation = true;
-   creationAttribs.SetValidationLevel(Diligent::VALIDATION_LEVEL_2);
-   pFactoryVk->CreateDeviceAndContextsVk(creationAttribs, &pDevice, &pImmediateContext);
-   if (!pDevice || !pImmediateContext) {
-    return false;
-   }
-   renderer_ = std::make_unique<ArtifactIRenderer>(pDevice, pImmediateContext, window);
-   renderer_->createSwapChain(window);
-   qDebug() << "[ArtifactLayerEditorWidgetV2] Initialized with direct Diligent Vulkan device/context.";
-   return true;
-  };
-
-  auto tryInitVk = [&]() -> bool
-  {
-   if (!hasUsableVulkanLoader()) {
-    qWarning() << "[ArtifactLayerEditorWidgetV2] Vulkan loader was not available. Skipping Vulkan backend.";
-    return false;
-   }
-   return tryInitVkUnsafe();
-  };
-
-  auto tryInitD3D12 = [&]() -> bool
-  {
-   auto* pFactoryD3D12 = resolveD3D12Factory();
-   if (!pFactoryD3D12) {
-    return false;
-   }
-   EngineD3D12CreateInfo creationAttribs = {};
-   creationAttribs.EnableValidation = true;
-   creationAttribs.SetValidationLevel(Diligent::VALIDATION_LEVEL_2);
-   pFactoryD3D12->CreateDeviceAndContextsD3D12(creationAttribs, &pDevice, &pImmediateContext);
-   if (!pDevice || !pImmediateContext) {
-    return false;
-   }
-   renderer_ = std::make_unique<ArtifactIRenderer>(pDevice, pImmediateContext, window);
-   renderer_->createSwapChain(window);
-   qDebug() << "[ArtifactLayerEditorWidgetV2] Initialized with direct Diligent D3D12 device/context.";
-   return true;
-  };
-
-  bool initializedDirect = false;
-  switch (backendPref) {
-  case RenderBackendPreference::Vulkan:
-   initializedDirect = tryInitVk();
-   if (!initializedDirect) {
-    initializedDirect = tryInitD3D12();
-   }
-   break;
-  case RenderBackendPreference::D3D12:
-   initializedDirect = tryInitD3D12();
-   break;
-  case RenderBackendPreference::Auto:
-  default:
-   initializedDirect = tryInitD3D12();
-   break;
+  if (!renderer_ || !renderer_->isInitialized()) {
+   qWarning() << "[ArtifactLayerEditorWidgetV2] renderer initialize failed for"
+              << window << "size=" << (window ? window->size() : QSize())
+              << "DPR=" << (window ? window->devicePixelRatio() : 0.0);
+   compositionRenderer_.reset();
+   renderer_.reset();
+   return;
   }
 
-  if (!initializedDirect) {
-   renderer_ = std::make_unique<ArtifactIRenderer>();
-   renderer_->initialize(window);
-   qWarning() << "[ArtifactLayerEditorWidgetV2] Falling back to ArtifactIRenderer internal initialization.";
-  }
-
-  if (renderer_) {
-   compositionRenderer_ = std::make_unique<CompositionRenderer>(*renderer_);
-  }
-
+  compositionRenderer_ = std::make_unique<CompositionRenderer>(*renderer_);
   initialized_ = true;
  }
 
@@ -272,13 +123,12 @@ W_OBJECT_IMPL(ArtifactLayerEditorWidgetV2)
  void ArtifactLayerEditorWidgetV2::Impl::destroy()
  {
   stopRenderLoop();
- if (renderer_) {
+  if (renderer_) {
    renderer_->destroy();
+   renderer_.reset();
   }
   compositionRenderer_.reset();
   initialized_ = false;
-  //pImmediateContext.Release();
-  //pDevice.Release();
  }
 
  void ArtifactLayerEditorWidgetV2::Impl::defaultHandleKeyPressEvent(QKeyEvent* event)
@@ -638,14 +488,16 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
  void ArtifactLayerEditorWidgetV2::showEvent(QShowEvent* event)
  {
   QWidget::showEvent(event);
- if (!impl_->initialized_) {
-  impl_->initialize(this);
-  impl_->initializeSwapChain(this);
-  impl_->startRenderLoop();
- }
- if (!impl_->targetLayerId_.isNil()) {
-  setTargetLayer(impl_->targetLayerId_);
- }
+  if (!impl_->initialized_) {
+   impl_->initialize(this);
+   if (impl_->initialized_) {
+    impl_->initializeSwapChain(this);
+    impl_->startRenderLoop();
+   }
+  }
+  if (impl_->initialized_ && !impl_->targetLayerId_.isNil()) {
+   setTargetLayer(impl_->targetLayerId_);
+  }
  }
  void ArtifactLayerEditorWidgetV2::closeEvent(QCloseEvent* event)
  {

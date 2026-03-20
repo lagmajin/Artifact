@@ -12,6 +12,12 @@ export namespace Artifact {
 
 using namespace Diligent;
 
+bool acquireSharedRenderDeviceForCurrentBackend(
+    RefCntAutoPtr<IRenderDevice>& outDevice,
+    RefCntAutoPtr<IDeviceContext>& outImmediateContext);
+void releaseSharedRenderDevice();
+RENDER_DEVICE_TYPE sharedRenderDeviceType();
+
 class DiligentDeviceManager {
 public:
     DiligentDeviceManager();

@@ -1,6 +1,8 @@
 ﻿module;
 #include <QWidget>
 #include <QDebug>
+#include <atomic>
+#include <mutex>
 #include <RenderDevice.h>
 #include <DeviceContext.h>
 #include <SwapChain.h>
@@ -22,6 +24,14 @@ namespace {
         Vulkan
     };
 
+    struct SharedRenderDeviceState {
+        std::mutex mutex;
+        RefCntAutoPtr<IRenderDevice> device;
+        RefCntAutoPtr<IDeviceContext> immediateContext;
+        RENDER_DEVICE_TYPE type = RENDER_DEVICE_TYPE_UNDEFINED;
+        std::atomic_uint32_t refCount{0};
+    };
+
     RenderBackendPreference getBackendPreferenceFromEnv()
     {
         const QString value = qEnvironmentVariable("ARTIFACT_RENDER_BACKEND").trimmed().toLower();
@@ -32,6 +42,51 @@ namespace {
             return RenderBackendPreference::D3D12;
         }
         return RenderBackendPreference::Auto;
+    }
+
+    const char* backendPreferenceName(const RenderBackendPreference pref)
+    {
+        switch (pref) {
+            case RenderBackendPreference::D3D12: return "d3d12";
+            case RenderBackendPreference::Vulkan: return "vulkan";
+            case RenderBackendPreference::Auto:
+            default: return "auto";
+        }
+    }
+
+    const char* deviceTypeName(const RENDER_DEVICE_TYPE type)
+    {
+        switch (type) {
+            case RENDER_DEVICE_TYPE_D3D12: return "d3d12";
+            case RENDER_DEVICE_TYPE_VULKAN: return "vulkan";
+            case RENDER_DEVICE_TYPE_D3D11: return "d3d11";
+            case RENDER_DEVICE_TYPE_GL: return "gl";
+            case RENDER_DEVICE_TYPE_GLES: return "gles";
+            case RENDER_DEVICE_TYPE_METAL: return "metal";
+            case RENDER_DEVICE_TYPE_WEBGPU: return "webgpu";
+            default: return "unknown";
+        }
+    }
+
+    SharedRenderDeviceState& sharedRenderDeviceState()
+    {
+        static SharedRenderDeviceState state;
+        return state;
+    }
+
+    bool backendAllowsReuse(const RenderBackendPreference pref,
+                            const RENDER_DEVICE_TYPE type)
+    {
+        switch (pref) {
+            case RenderBackendPreference::D3D12:
+                return type == RENDER_DEVICE_TYPE_D3D12;
+            case RenderBackendPreference::Vulkan:
+                return type == RENDER_DEVICE_TYPE_VULKAN;
+            case RenderBackendPreference::Auto:
+            default:
+                return type == RENDER_DEVICE_TYPE_D3D12 ||
+                       type == RENDER_DEVICE_TYPE_VULKAN;
+        }
     }
 
     Diligent::IEngineFactoryD3D12* resolveD3D12Factory()
@@ -75,6 +130,131 @@ namespace {
         return false;
 #endif
     }
+
+    bool tryCreateD3D12Device(RefCntAutoPtr<IRenderDevice>& outDevice,
+                              RefCntAutoPtr<IDeviceContext>& outImmediateContext)
+    {
+        auto* pFactory = resolveD3D12Factory();
+        if (!pFactory) {
+            return false;
+        }
+
+        EngineD3D12CreateInfo creationAttribs = {};
+        creationAttribs.EnableValidation = true;
+        creationAttribs.SetValidationLevel(Diligent::VALIDATION_LEVEL_2);
+        pFactory->CreateDeviceAndContextsD3D12(creationAttribs,
+                                               &outDevice,
+                                               &outImmediateContext);
+        return outDevice && outImmediateContext;
+    }
+
+    bool tryCreateVulkanDevice(RefCntAutoPtr<IRenderDevice>& outDevice,
+                               RefCntAutoPtr<IDeviceContext>& outImmediateContext)
+    {
+        if (!hasUsableVulkanLoader()) {
+            return false;
+        }
+
+        auto* pFactory = resolveVkFactory();
+        if (!pFactory) {
+            return false;
+        }
+
+        EngineVkCreateInfo creationAttribs = {};
+        creationAttribs.EnableValidation = true;
+        creationAttribs.SetValidationLevel(Diligent::VALIDATION_LEVEL_2);
+        pFactory->CreateDeviceAndContextsVk(creationAttribs,
+                                            &outDevice,
+                                            &outImmediateContext);
+        return outDevice && outImmediateContext;
+    }
+}
+
+bool acquireSharedRenderDeviceForCurrentBackend(
+    RefCntAutoPtr<IRenderDevice>& outDevice,
+    RefCntAutoPtr<IDeviceContext>& outImmediateContext)
+{
+    auto& shared = sharedRenderDeviceState();
+    std::lock_guard<std::mutex> lock(shared.mutex);
+
+    const auto backendPreference = getBackendPreferenceFromEnv();
+    if (shared.device && shared.immediateContext) {
+        if (!backendAllowsReuse(backendPreference, shared.type)) {
+            qWarning() << "[DiligentDeviceManager] shared device already initialized as"
+                       << deviceTypeName(shared.type)
+                       << "while requested backend is"
+                       << backendPreferenceName(backendPreference)
+                       << ". Reusing shared device.";
+        }
+        ++shared.refCount;
+        outDevice = shared.device;
+        outImmediateContext = shared.immediateContext;
+        return true;
+    }
+
+    bool created = false;
+    switch (backendPreference) {
+        case RenderBackendPreference::Vulkan:
+            created = tryCreateVulkanDevice(shared.device, shared.immediateContext);
+            if (!created) {
+                qWarning() << "[DiligentDeviceManager] Vulkan device creation failed. Falling back to d3d12.";
+                created = tryCreateD3D12Device(shared.device, shared.immediateContext);
+            }
+            break;
+        case RenderBackendPreference::D3D12:
+            created = tryCreateD3D12Device(shared.device, shared.immediateContext);
+            break;
+        case RenderBackendPreference::Auto:
+        default:
+            created = tryCreateD3D12Device(shared.device, shared.immediateContext);
+            if (!created) {
+                qWarning() << "[DiligentDeviceManager] D3D12 device creation failed. Trying Vulkan.";
+                created = tryCreateVulkanDevice(shared.device, shared.immediateContext);
+            }
+            break;
+    }
+
+    if (!created || !shared.device || !shared.immediateContext) {
+        shared.device.Release();
+        shared.immediateContext.Release();
+        shared.type = RENDER_DEVICE_TYPE_UNDEFINED;
+        return false;
+    }
+
+    shared.type = shared.device->GetDeviceInfo().Type;
+    shared.refCount = 1;
+    outDevice = shared.device;
+    outImmediateContext = shared.immediateContext;
+    qDebug() << "[DiligentDeviceManager] shared device acquired type="
+             << deviceTypeName(shared.type);
+    return true;
+}
+
+void releaseSharedRenderDevice()
+{
+    auto& shared = sharedRenderDeviceState();
+    std::lock_guard<std::mutex> lock(shared.mutex);
+
+    const auto previous = shared.refCount.load();
+    if (previous == 0) {
+        return;
+    }
+
+    const auto remaining = --shared.refCount;
+    if (remaining > 0) {
+        return;
+    }
+
+    shared.immediateContext.Release();
+    shared.device.Release();
+    shared.type = RENDER_DEVICE_TYPE_UNDEFINED;
+}
+
+RENDER_DEVICE_TYPE sharedRenderDeviceType()
+{
+    auto& shared = sharedRenderDeviceState();
+    std::lock_guard<std::mutex> lock(shared.mutex);
+    return shared.type;
 }
 
 class DiligentDeviceManager::Impl {
@@ -86,6 +266,7 @@ public:
     HWND renderHwnd_ = nullptr;
     QWidget* widget_ = nullptr;
     bool initialized_ = false;
+    bool usingSharedDevice_ = false;
     int currentPhysicalWidth_ = 0;
     int currentPhysicalHeight_ = 0;
     qreal currentDevicePixelRatio_ = 1.0;
@@ -122,58 +303,17 @@ void DiligentDeviceManager::Impl::initialize(QWidget* widget)
 
     widget_ = widget;
     const auto backendPreference = getBackendPreferenceFromEnv();
+    qDebug() << "[DiligentDeviceManager] initialize requested backend="
+             << backendPreferenceName(backendPreference);
 
-    auto tryInitD3D12 = [&]() -> bool
-    {
-        auto* pFactory = resolveD3D12Factory();
-        if (!pFactory) {
-            return false;
-        }
-
-        EngineD3D12CreateInfo creationAttribs = {};
-        creationAttribs.EnableValidation = true;
-        creationAttribs.SetValidationLevel(Diligent::VALIDATION_LEVEL_2);
-        pFactory->CreateDeviceAndContextsD3D12(creationAttribs, &device_, &immediateContext_);
-        return device_ && immediateContext_;
-    };
-
-    auto tryInitVulkan = [&]() -> bool
-    {
-        if (!hasUsableVulkanLoader()) {
-            return false;
-        }
-
-        auto* pFactory = resolveVkFactory();
-        if (!pFactory) {
-            return false;
-        }
-
-        EngineVkCreateInfo creationAttribs = {};
-        creationAttribs.EnableValidation = true;
-        creationAttribs.SetValidationLevel(Diligent::VALIDATION_LEVEL_2);
-        pFactory->CreateDeviceAndContextsVk(creationAttribs, &device_, &immediateContext_);
-        return device_ && immediateContext_;
-    };
-
-    bool deviceInitialized = false;
-    switch (backendPreference) {
-        case RenderBackendPreference::Vulkan:
-            deviceInitialized = tryInitVulkan() || tryInitD3D12();
-            break;
-        case RenderBackendPreference::D3D12:
-            deviceInitialized = tryInitD3D12();
-            break;
-        case RenderBackendPreference::Auto:
-        default:
-            deviceInitialized = tryInitD3D12() || tryInitVulkan();
-            break;
-    }
-
-    if (!deviceInitialized)
-    {
+    if (!acquireSharedRenderDeviceForCurrentBackend(device_, immediateContext_)) {
         qWarning() << "Failed to create Diligent Engine device and contexts.";
         return;
     }
+    usingSharedDevice_ = true;
+
+    qDebug() << "[DiligentDeviceManager] device created type="
+             << deviceTypeName(device_->GetDeviceInfo().Type);
 
     device_->CreateDeferredContext(&deferredContext_);
 
@@ -209,36 +349,19 @@ void DiligentDeviceManager::Impl::initializeHeadless()
 {
     const auto backendPreference = getBackendPreferenceFromEnv();
 
-    auto tryInitD3D12 = [&]() -> bool
-    {
-        auto* pFactory = resolveD3D12Factory();
-        if (!pFactory) return false;
-        EngineD3D12CreateInfo creationAttribs = {};
-        pFactory->CreateDeviceAndContextsD3D12(creationAttribs, &device_, &immediateContext_);
-        return device_ && immediateContext_;
-    };
-
-    auto tryInitVulkan = [&]() -> bool
-    {
-        if (!hasUsableVulkanLoader()) return false;
-        auto* pFactory = resolveVkFactory();
-        if (!pFactory) return false;
-        EngineVkCreateInfo creationAttribs = {};
-        pFactory->CreateDeviceAndContextsVk(creationAttribs, &device_, &immediateContext_);
-        return device_ && immediateContext_;
-    };
-
     bool ok = false;
     switch (backendPreference) {
         case RenderBackendPreference::Vulkan:
-            ok = tryInitVulkan() || tryInitD3D12();
+            ok = tryCreateVulkanDevice(device_, immediateContext_) ||
+                 tryCreateD3D12Device(device_, immediateContext_);
             break;
         case RenderBackendPreference::D3D12:
-            ok = tryInitD3D12();
+            ok = tryCreateD3D12Device(device_, immediateContext_);
             break;
         case RenderBackendPreference::Auto:
         default:
-            ok = tryInitD3D12() || tryInitVulkan();
+            ok = tryCreateD3D12Device(device_, immediateContext_) ||
+                 tryCreateVulkanDevice(device_, immediateContext_);
             break;
     }
 
@@ -248,6 +371,8 @@ void DiligentDeviceManager::Impl::initializeHeadless()
     }
 
     device_->CreateDeferredContext(&deferredContext_);
+    qDebug() << "[DiligentDeviceManager] headless device created type="
+             << deviceTypeName(device_->GetDeviceInfo().Type);
     initialized_ = true;
 }
 
@@ -353,6 +478,8 @@ bool DiligentDeviceManager::Impl::createSwapChainForBackend(HWND hwnd, int width
 
     const auto deviceType = device_->GetDeviceInfo().Type;
     if (deviceType == RENDER_DEVICE_TYPE_VULKAN) {
+        qDebug() << "[DiligentDeviceManager] creating Vulkan swapchain"
+                 << width << "x" << height;
         auto* pFactoryVk = resolveVkFactory();
         if (!pFactoryVk) {
             return false;
@@ -361,6 +488,8 @@ bool DiligentDeviceManager::Impl::createSwapChainForBackend(HWND hwnd, int width
         return swapChain_ != nullptr;
     }
 
+    qDebug() << "[DiligentDeviceManager] creating D3D12 swapchain"
+             << width << "x" << height;
     auto* pFactoryD3D12 = resolveD3D12Factory();
     if (!pFactoryD3D12) {
         return false;
@@ -383,6 +512,10 @@ void DiligentDeviceManager::Impl::destroy()
     deferredContext_.Release();
     immediateContext_.Release();
     device_.Release();
+    if (usingSharedDevice_) {
+        releaseSharedRenderDevice();
+        usingSharedDevice_ = false;
+    }
     initialized_ = false;
 }
 

@@ -47,6 +47,7 @@ module;
 module ArtifactDiligentEngineRenderWindow;
 
 import Graphics;
+import Artifact.Render.DiligentDeviceManager;
 
 namespace {
  Diligent::IEngineFactoryD3D12* resolveD3D12Factory()
@@ -117,10 +118,16 @@ namespace Artifact {
 
  }
 
- ArtifactDiligentEngineRenderWindow::~ArtifactDiligentEngineRenderWindow()
- {
-
+ArtifactDiligentEngineRenderWindow::~ArtifactDiligentEngineRenderWindow()
+{
+ if (usingSharedDevice_) {
+  pSwapChain.Release();
+  pImmediateContext.Release();
+  pDevice.Release();
+  releaseSharedRenderDevice();
+  usingSharedDevice_ = false;
  }
+}
 
  void ArtifactDiligentEngineRenderWindow::renderWireframeObject()
  {
@@ -128,52 +135,51 @@ namespace Artifact {
   auto desc=PSOCreateInfo.PSODesc;
  }
 
- bool ArtifactDiligentEngineRenderWindow::initialize()
- {
-  auto tryInitD3D12 = [&]() -> bool {
-   auto* pFactory = resolveD3D12Factory();
-   if (!pFactory) return false;
-   EngineD3D12CreateInfo CreationAttribs = {};
-   CreationAttribs.EnableValidation = true;
-   Win32NativeWindow VkWindow;
-   VkWindow.hWnd = reinterpret_cast<HWND>(winId());
-   pFactory->CreateDeviceAndContextsD3D12(CreationAttribs, &pDevice, &pImmediateContext);
-   if (!pDevice || !pImmediateContext) return false;
-   SwapChainDesc SCDesc;
-   FullScreenModeDesc desc;
-   desc.Fullscreen = false;
-   pFactory->CreateSwapChainD3D12(pDevice, pImmediateContext, SCDesc, desc, VkWindow, &pSwapChain);
-   return pSwapChain != nullptr;
-  };
+bool ArtifactDiligentEngineRenderWindow::initialize()
+{
+  const QString backendStr = qEnvironmentVariable("ARTIFACT_RENDER_BACKEND").toLower();
+  if (backendStr == "software" || backendStr == "sw") {
+      useSoftwareFallback_ = true;
+      m_initialized = true;
+      return true;
+  }
 
-  auto tryInitVk = [&]() -> bool {
-   auto* pFactoryVk = resolveVkFactory();
-   if (!pFactoryVk) return false;
-   EngineVkCreateInfo CreationAttribs = {};
-   CreationAttribs.EnableValidation = true;
-   Win32NativeWindow VkWindow;
-   VkWindow.hWnd = reinterpret_cast<HWND>(winId());
-   pFactoryVk->CreateDeviceAndContextsVk(CreationAttribs, &pDevice, &pImmediateContext);
-   if (!pDevice || !pImmediateContext) return false;
-   SwapChainDesc SCDesc;
-   FullScreenModeDesc desc;
-   desc.Fullscreen = false;
-   pFactoryVk->CreateSwapChainVk(pDevice, pImmediateContext, SCDesc, VkWindow, &pSwapChain);
-   return pSwapChain != nullptr;
-  };
+  if (!acquireSharedRenderDeviceForCurrentBackend(pDevice, pImmediateContext)) {
+      useSoftwareFallback_ = true;
+      m_initialized = true;
+      return true;
+  }
 
-  QString backendStr = qEnvironmentVariable("ARTIFACT_RENDER_BACKEND").toLower();
+  usingSharedDevice_ = true;
+  Win32NativeWindow nativeWindow;
+  nativeWindow.hWnd = reinterpret_cast<HWND>(winId());
+  SwapChainDesc swapChainDesc;
+  FullScreenModeDesc fullScreenDesc;
+  fullScreenDesc.Fullscreen = false;
+
   bool initSuccess = false;
-
-  if (backendStr == "vulkan" || backendStr == "vk") {
-      initSuccess = tryInitVk() || tryInitD3D12();
-  } else if (backendStr == "software" || backendStr == "sw") {
-      initSuccess = false; // Force software
+  if (sharedRenderDeviceType() == RENDER_DEVICE_TYPE_VULKAN) {
+      auto* pFactoryVk = resolveVkFactory();
+      if (pFactoryVk) {
+          pFactoryVk->CreateSwapChainVk(pDevice, pImmediateContext, swapChainDesc, nativeWindow, &pSwapChain);
+          initSuccess = pSwapChain != nullptr;
+      }
   } else {
-      initSuccess = tryInitD3D12();
+      auto* pFactory = resolveD3D12Factory();
+      if (pFactory) {
+          pFactory->CreateSwapChainD3D12(pDevice, pImmediateContext, swapChainDesc, fullScreenDesc, nativeWindow, &pSwapChain);
+          initSuccess = pSwapChain != nullptr;
+      }
   }
 
   if (!initSuccess) {
+      pSwapChain.Release();
+      pImmediateContext.Release();
+      pDevice.Release();
+      if (usingSharedDevice_) {
+          releaseSharedRenderDevice();
+          usingSharedDevice_ = false;
+      }
       useSoftwareFallback_ = true;
   }
   

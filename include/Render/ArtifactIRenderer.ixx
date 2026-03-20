@@ -54,8 +54,9 @@ public:
  void clear();
  void flush();
  void flushAndWait();
- void destroy();
- void present();
+  void destroy();
+  void present();
+  bool isInitialized() const;
 
  QImage readbackToImage() const;
 

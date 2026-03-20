@@ -76,7 +76,7 @@ public:
     QString filterText;
     QString focusedEffectId;
     bool rebuilding = false;
-    bool valueColumnFirst = false;
+    bool valueColumnFirst = true;
     int localPropertyEditDepth = 0;
 
     QString currentLayerKey() const

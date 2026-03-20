@@ -300,7 +300,15 @@ void PrimitiveRenderer2D::setOverrideRTV(ITextureView* rtv)
 
 void PrimitiveRenderer2D::clear(const FloatColor& color)
 {
-    if (!impl_->hasRenderTarget() || !impl_->pCtx_) return;
+    if (!impl_->hasRenderTarget() || !impl_->pCtx_) {
+        static bool warned = false;
+        if (!warned) {
+            warned = true;
+            qWarning() << "[PrimitiveRenderer2D] clear() skipped: no render target or context"
+                       << "hasRT=" << impl_->hasRenderTarget() << "hasCtx=" << (impl_->pCtx_ != nullptr);
+        }
+        return;
+    }
     float clearColor[] = { color.r(), color.g(), color.b(), color.a() };
     auto* pRTV = impl_->getCurrentRTV();
     impl_->pCtx_->SetRenderTargets(1, &pRTV, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
@@ -313,7 +321,16 @@ void PrimitiveRenderer2D::clear(const FloatColor& color)
 
 void PrimitiveRenderer2D::drawRectLocal(float x, float y, float w, float h, const FloatColor& color, float opacity)
 {
-    if (!impl_->hasRenderTarget() || !impl_->m_draw_solid_rect_pso_and_srb.pPSO) return;
+    if (!impl_->hasRenderTarget() || !impl_->m_draw_solid_rect_pso_and_srb.pPSO) {
+        static bool warned = false;
+        if (!warned) {
+            warned = true;
+            qWarning() << "[PrimitiveRenderer2D] drawRectLocal() skipped: no render target or PSO"
+                       << "hasRT=" << impl_->hasRenderTarget()
+                       << "hasPSO=" << (impl_->m_draw_solid_rect_pso_and_srb.pPSO != nullptr);
+        }
+        return;
+    }
 
     float alpha = color.a() * opacity;
     RectVertex vertices[4] = {
