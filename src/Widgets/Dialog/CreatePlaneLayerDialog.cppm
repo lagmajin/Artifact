@@ -7,7 +7,6 @@
 #include <QFormLayout>
 #include <QComboBox>
 #include <QPushButton>
-#include <QColorDialog>
 #include <QPropertyAnimation>
 #include <QGuiApplication>
 #include <QScreen>
@@ -26,6 +25,7 @@ import Widgets.EditableLabel;
 import DragSpinBox;
 import Utils.String.UniString;
 import Color.Float;
+import FloatColorPickerDialog;
 //import Color.Utils;
 import Artifact.Service.Project;
 import Artifact.Composition.Abstract;
@@ -102,17 +102,36 @@ namespace Artifact {
   QObject::connect(impl_->heightSpinBox, QOverload<int>::of(&QSpinBox::valueChanged), this, forceCustom);
 
   QObject::connect(impl_->bgColorButton, &QPushButton::clicked, this, [this]() {
-      QColor c = QColorDialog::getColor(impl_->bgColor, this, "平面のカラーを選択");
-      if (c.isValid()) {
-          impl_->bgColor = c;
-          QString style = QString("background-color: %1; border: 1px solid #555;").arg(c.name());
-          impl_->bgColorButton->setStyleSheet(style);
-          
-          // Suggest name
-          FloatColor fc(c.redF(), c.greenF(), c.blueF(), c.alphaF());
-          //UniString naturalName = ColorUtils::getNaturalColorName(fc);
-         // Q_EMIT colorChanged(naturalName.toQString());
+      FloatColorPicker picker(this);
+      picker.setWindowTitle(QStringLiteral("平面のカラーを選択"));
+      picker.setColor(FloatColor(
+          impl_->bgColor.redF(),
+          impl_->bgColor.greenF(),
+          impl_->bgColor.blueF(),
+          impl_->bgColor.alphaF()));
+
+      if (picker.exec() != QDialog::Accepted) {
+          return;
       }
+
+      const FloatColor picked = picker.getColor();
+      const QColor c = QColor::fromRgbF(
+          picked.r(),
+          picked.g(),
+          picked.b(),
+          picked.a());
+      if (!c.isValid()) {
+          return;
+      }
+
+      impl_->bgColor = c;
+      QString style = QString("background-color: %1; border: 1px solid #555;").arg(c.name());
+      impl_->bgColorButton->setStyleSheet(style);
+
+      // Suggest name
+      FloatColor fc(c.redF(), c.greenF(), c.blueF(), c.alphaF());
+      //UniString naturalName = ColorUtils::getNaturalColorName(fc);
+      // Q_EMIT colorChanged(naturalName.toQString());
   });
 
   QObject::connect(impl_->matchCompButton, &QPushButton::clicked, this, &PlaneLayerSettingPage::resizeCompositionSize);

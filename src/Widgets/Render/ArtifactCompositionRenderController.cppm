@@ -316,6 +316,14 @@ void CompositionRenderController::initialize(QWidget *hostWidget) {
 
   impl_->renderer_ = std::make_unique<ArtifactIRenderer>();
   impl_->renderer_->initialize(hostWidget);
+
+  if (!impl_->renderer_->isInitialized()) {
+    qWarning() << "[CompositionRenderController] renderer initialize failed for"
+               << hostWidget << "size=" << hostWidget->size()
+               << "DPR=" << hostWidget->devicePixelRatio();
+    impl_->renderer_.reset();
+    return;
+  }
   impl_->compositionRenderer_ =
       std::make_unique<CompositionRenderer>(*impl_->renderer_);
   impl_->renderer_->setViewportSize((float)hostWidget->width(),

@@ -43,6 +43,7 @@ namespace Artifact
   ShadingMode shadingMode_ = ShadingMode::Solid;
   QColor clearColor_{ 38, 38, 44 };
   bool useSoftwareFallback_ = false;
+  bool usingSharedDevice_ = false;
   void render();
   void present();
  protected:

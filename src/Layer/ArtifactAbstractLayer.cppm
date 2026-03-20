@@ -767,6 +767,50 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
   opacityProp->setAnimatable(true);
   layerGroup.addProperty(opacityProp);
 
+  // トランスフォームのプロパティグループ（優先度を高く設定）
+  PropertyGroup transformGroup(QStringLiteral("Transform"));
+  const auto &t3 = transform3D();
+
+  auto posXProp = makeProp(QStringLiteral("transform.position.x"),
+                           PropertyType::Float, t3.positionX(), -300);
+  posXProp->setUnit(QStringLiteral("px"));
+  posXProp->setAnimatable(true);
+  transformGroup.addProperty(posXProp);
+
+  auto posYProp = makeProp(QStringLiteral("transform.position.y"),
+                           PropertyType::Float, t3.positionY(), -299);
+  posYProp->setUnit(QStringLiteral("px"));
+  posYProp->setAnimatable(true);
+  transformGroup.addProperty(posYProp);
+
+  auto scaleXProp = makeProp(QStringLiteral("transform.scale.x"),
+                             PropertyType::Float, t3.scaleX(), -298);
+  scaleXProp->setAnimatable(true);
+  transformGroup.addProperty(scaleXProp);
+
+  auto scaleYProp = makeProp(QStringLiteral("transform.scale.y"),
+                             PropertyType::Float, t3.scaleY(), -297);
+  scaleYProp->setAnimatable(true);
+  transformGroup.addProperty(scaleYProp);
+
+  auto rotationProp = makeProp(QStringLiteral("transform.rotation"),
+                               PropertyType::Float, t3.rotation(), -296);
+  rotationProp->setUnit(QStringLiteral("deg"));
+  rotationProp->setAnimatable(true);
+  transformGroup.addProperty(rotationProp);
+
+  auto anchorXProp = makeProp(QStringLiteral("transform.anchor.x"),
+                              PropertyType::Float, t3.anchorX(), -295);
+  anchorXProp->setUnit(QStringLiteral("px"));
+  anchorXProp->setAnimatable(true);
+  transformGroup.addProperty(anchorXProp);
+
+  auto anchorYProp = makeProp(QStringLiteral("transform.anchor.y"),
+                              PropertyType::Float, t3.anchorY(), -294);
+  anchorYProp->setUnit(QStringLiteral("px"));
+  anchorYProp->setAnimatable(true);
+  transformGroup.addProperty(anchorYProp);
+
   auto inPointProp =
       makeProp(QStringLiteral("time.inPoint"), PropertyType::Integer,
                static_cast<qint64>(inPoint().framePosition()), -90);
@@ -795,7 +839,7 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
   layerGroup.addProperty(makeProp(QStringLiteral("source.height"),
                                   PropertyType::Integer, sz.height, -30));
 
-  return {layerGroup};
+  return {transformGroup, layerGroup};
 }
 
 bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
@@ -828,6 +872,54 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
     setOpacity(static_cast<float>(value.toDouble()));
     return true;
   }
+
+  // トランスフォームのプロパティ
+  auto &t3 = transform3D();
+  RationalTime t0(0, 30000); // 0s
+
+  if (propertyPath == QStringLiteral("transform.position.x")) {
+    t3.setPosition(t0, value.toDouble(), t3.positionY());
+    notifyLayerMutation(this, LayerDirtyFlag::Transform,
+                        LayerDirtyReason::TransformChanged);
+    return true;
+  }
+  if (propertyPath == QStringLiteral("transform.position.y")) {
+    t3.setPosition(t0, t3.positionX(), value.toDouble());
+    notifyLayerMutation(this, LayerDirtyFlag::Transform,
+                        LayerDirtyReason::TransformChanged);
+    return true;
+  }
+  if (propertyPath == QStringLiteral("transform.scale.x")) {
+    t3.setScale(t0, value.toDouble(), t3.scaleY());
+    notifyLayerMutation(this, LayerDirtyFlag::Transform,
+                        LayerDirtyReason::TransformChanged);
+    return true;
+  }
+  if (propertyPath == QStringLiteral("transform.scale.y")) {
+    t3.setScale(t0, t3.scaleX(), value.toDouble());
+    notifyLayerMutation(this, LayerDirtyFlag::Transform,
+                        LayerDirtyReason::TransformChanged);
+    return true;
+  }
+  if (propertyPath == QStringLiteral("transform.rotation")) {
+    t3.setRotation(t0, value.toDouble());
+    notifyLayerMutation(this, LayerDirtyFlag::Transform,
+                        LayerDirtyReason::TransformChanged);
+    return true;
+  }
+  if (propertyPath == QStringLiteral("transform.anchor.x")) {
+    t3.setAnchor(t0, value.toDouble(), t3.anchorY(), t3.anchorZ());
+    notifyLayerMutation(this, LayerDirtyFlag::Transform,
+                        LayerDirtyReason::TransformChanged);
+    return true;
+  }
+  if (propertyPath == QStringLiteral("transform.anchor.y")) {
+    t3.setAnchor(t0, t3.anchorX(), value.toDouble(), t3.anchorZ());
+    notifyLayerMutation(this, LayerDirtyFlag::Transform,
+                        LayerDirtyReason::TransformChanged);
+    return true;
+  }
+
   if (propertyPath == QStringLiteral("time.inPoint")) {
     setInPoint(FramePosition(value.toLongLong()));
     return true;

@@ -84,9 +84,10 @@ namespace Artifact
   void recreateSwapChain(QWidget* widget);
   void beginFrameGpuProfiling();
   void endFrameGpuProfiling();
-  double lastFrameGpuTimeMs() const;
+   double lastFrameGpuTimeMs() const;
+   bool isInitialized() const { return m_initialized; }
 
-  void clear();
+   void clear();
   void setClearColor(const FloatColor& color);
   void flushAndWait();
   void flush();
@@ -178,12 +179,16 @@ namespace Artifact
  // initialize
  // ---------------------------------------------------------------------------
 
- void ArtifactIRenderer::Impl::initialize(QWidget* widget)
- {
-  widget_ = widget;
-  deviceManager_.initialize(widget);
+  void ArtifactIRenderer::Impl::initialize(QWidget* widget)
+  {
+   widget_ = widget;
+   deviceManager_.initialize(widget);
 
-  if (!deviceManager_.isInitialized()) return;
+   if (!deviceManager_.isInitialized()) {
+    qWarning() << "[ArtifactIRenderer] initialize() failed: deviceManager not initialized"
+               << "widget=" << widget << "size=" << (widget ? widget->size() : QSize());
+    return;
+   }
 
   shaderManager_.initialize(deviceManager_.device(), MAIN_RTV_FORMAT);
   shaderManager_.createShaders();
@@ -475,11 +480,18 @@ namespace Artifact
   m_frameQueryInitialized = false;
  }
 
- void ArtifactIRenderer::Impl::present()
- {
-  if (auto sc = deviceManager_.swapChain())
-   sc->Present();
- }
+  void ArtifactIRenderer::Impl::present()
+  {
+   if (auto sc = deviceManager_.swapChain())
+    sc->Present();
+   else {
+    static bool warned = false;
+    if (!warned) {
+     warned = true;
+     qWarning() << "[ArtifactIRenderer] present() skipped: swapChain is null";
+    }
+   }
+  }
 
  // ---------------------------------------------------------------------------
  // ArtifactIRenderer public methods
@@ -504,10 +516,11 @@ namespace Artifact
  void ArtifactIRenderer::createSwapChain(QWidget* widget)  { impl_->createSwapChain(widget); }
  void ArtifactIRenderer::recreateSwapChain(QWidget* widget){ impl_->recreateSwapChain(widget); }
 
- void ArtifactIRenderer::clear()        { impl_->clear(); }
- void ArtifactIRenderer::flush()        { impl_->flush(); }
- void ArtifactIRenderer::flushAndWait() { impl_->flushAndWait(); }
- void ArtifactIRenderer::destroy()      { impl_->destroy(); }
+  void ArtifactIRenderer::clear()        { impl_->clear(); }
+  void ArtifactIRenderer::flush()        { impl_->flush(); }
+  void ArtifactIRenderer::flushAndWait() { impl_->flushAndWait(); }
+  void ArtifactIRenderer::destroy()      { impl_->destroy(); }
+  bool ArtifactIRenderer::isInitialized() const { return impl_->isInitialized(); }
 
  QImage ArtifactIRenderer::readbackToImage() const { return impl_->readbackToImage(); }
 

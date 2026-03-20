@@ -1,9 +1,10 @@
-module;
+﻿module;
 #include <QAction>
 #include <QCloseEvent>
 #include <QComboBox>
 #include <QDebug>
 #include <QHBoxLayout>
+#include <QHideEvent>
 #include <QMenu>
 #include <QMouseEvent>
 #include <QPaintEvent>
@@ -59,6 +60,7 @@ public:
                                QWidget *parent = nullptr)
       : QWidget(parent), controller_(controller) {
     setMinimumSize(1, 1);
+    setAttribute(Qt::WA_NativeWindow);
     setAttribute(Qt::WA_PaintOnScreen);
     setAttribute(Qt::WA_NoSystemBackground);
     setMouseTracking(true);
@@ -83,12 +85,16 @@ protected:
     }
   }
 
-  void paintEvent(QPaintEvent *event) override {
-    if (controller_ && controller_->isInitialized()) {
-      controller_->renderOneFrame();
-    } else {
-      QWidget::paintEvent(event);
+  void paintEvent(QPaintEvent *) override {
+    // Rendering is driven by QTimer in the controller.
+    // With WA_PaintOnScreen the backing store is bypassed.
+  }
+
+  void hideEvent(QHideEvent *event) override {
+    if (controller_) {
+      controller_->stop();
     }
+    QWidget::hideEvent(event);
   }
 
   void resizeEvent(QResizeEvent *event) override {
@@ -209,6 +215,7 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   mainLayout->setSpacing(0);
 
   impl_->renderController_ = new CompositionRenderController(this);
+  impl_->renderController_->setClearColor({ 0.12f, 0.13f, 0.18f, 1.0f });
   impl_->compositionView_ =
       new CompositionViewport(impl_->renderController_, this);
 

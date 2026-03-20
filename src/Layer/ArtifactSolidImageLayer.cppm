@@ -18,6 +18,13 @@ ArtifactSolidImageLayerSettings::~ArtifactSolidImageLayerSettings() = default;
 class ArtifactSolidImageLayer::Impl {
 public:
   AnimatableValueT<FloatColor> color_;
+  FloatColor defaultColor_ =
+      FloatColor(1.0f, 1.0f, 1.0f, 1.0f); // デフォルトは白色
+
+  Impl() {
+    // デフォルトのキーフレームを追加（フレーム0）
+    color_.addKeyFrame(FramePosition(0), defaultColor_);
+  }
 };
 
 ArtifactSolidImageLayer::ArtifactSolidImageLayer() : impl_(new Impl()) {}
@@ -27,12 +34,20 @@ ArtifactSolidImageLayer::~ArtifactSolidImageLayer() { delete impl_; }
 FloatColor ArtifactSolidImageLayer::color() const {
   // 現在のフレーム位置に基づく補間値を返す
   auto frame = FramePosition(currentFrame());
+  // キーフレームが存在しない場合はデフォルト値を返す
+  if (impl_->color_.getKeyFrameCount() == 0) {
+    return impl_->defaultColor_;
+  }
   return impl_->color_.at(frame);
 }
 
 void ArtifactSolidImageLayer::setColor(const FloatColor &color) {
-  // 現在のフレーム位置にキーフレームを追加
+  // 現在のフレーム位置にキーフレームを追加または更新
   auto frame = FramePosition(currentFrame());
+  // 既存のキーフレームを削除してから新しいキーフレームを追加
+  if (impl_->color_.hasKeyFrameAt(frame)) {
+    impl_->color_.removeKeyFrameAt(frame);
+  }
   impl_->color_.addKeyFrame(frame, color);
 }
 
