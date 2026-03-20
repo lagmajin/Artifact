@@ -153,6 +153,7 @@ public:
   void clearParent();
   bool hasParent() const;
   virtual bool isNullLayer() const;
+  virtual QRectF localBounds() const;
 
   virtual bool isAdjustmentLayer() const;
   void setAdjustmentLayer(bool isAdjustment);

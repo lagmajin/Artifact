@@ -452,7 +452,7 @@ ads--CDockWidgetTab QPushButton#tabCloseButton:pressed {
  impl_->dockStyleManager->applyStyle();
 
  statusBar();
- resize(1280, 900);
+ resize(1600, 1000);
 }
 
 ArtifactMainWindow::~ArtifactMainWindow()

@@ -80,6 +80,9 @@ public:
 GaussianBlur::GaussianBlur() : impl_(new Impl()) {
     setCPUImpl(impl_->cpuImpl_);
     setGPUImpl(impl_->gpuImpl_);
+    setEffectID(UniString("effect.blur.gaussian"));
+    setDisplayName(UniString("Gaussian Blur"));
+    setPipelineStage(EffectPipelineStage::Rasterizer);
 }
 
 GaussianBlur::~GaussianBlur() {

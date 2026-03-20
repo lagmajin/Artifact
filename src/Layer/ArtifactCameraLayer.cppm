@@ -80,7 +80,7 @@ QMatrix4x4 ArtifactCameraLayer::projectionMatrix() const {
     if (impl_->dirtyProj) {
         QMatrix4x4 p;
         // Build projection from core Camera
-        p.perspective(impl_->cameraCore.getFovY(), impl_->cameraCore.getAspect(), impl_->cameraCore.getNearZ(), impl_->cameraCore.getFarZ());
+        p.perspective(impl_->cameraCore.fovY(), impl_->cameraCore.aspect(), impl_->cameraCore.nearZ(), impl_->cameraCore.farZ());
         impl_->cachedProj = p;
         impl_->dirtyProj = false;
     }

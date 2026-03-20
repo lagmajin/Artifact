@@ -184,9 +184,15 @@ void Artifact3DModelViewer::loadModel(const ArtifactCore::UniString& filePath)
     if (impl_->currentMesh && impl_->currentMesh->isValid()) {
         impl_->modelLoaded = true;
         qDebug() << "Model loaded successfully. Vertices:" << impl_->currentMesh->vertexCount();
+        if (impl_->renderWindow) {
+            impl_->renderWindow->setMesh(impl_->currentMesh);
+        }
     } else {
         impl_->modelLoaded = false;
         qDebug() << "Failed to load model:" << filePath.toQString();
+        if (impl_->renderWindow) {
+            impl_->renderWindow->clearMesh();
+        }
     }
 
     impl_->updateStatus();
@@ -198,6 +204,9 @@ void Artifact3DModelViewer::clearModel()
     impl_->currentModelPath = ArtifactCore::UniString();
     impl_->modelLoaded = false;
     impl_->currentMesh = nullptr;
+    if (impl_->renderWindow) {
+        impl_->renderWindow->clearMesh();
+    }
     impl_->updateStatus();
     requestUpdate();
 }

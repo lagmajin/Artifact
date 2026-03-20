@@ -8,8 +8,11 @@
 #include <QDir>
 #include <QImage>
 #include <QPainter>
+#include <QFont>
+#include <QTextOption>
 #include <QDateTime>
 #include <QFileInfo>
+#include <QStringList>
 #include <QPointF>
 #include <QRegularExpression>
 #include <QProcess>
@@ -62,13 +65,23 @@ import Render.Queue.Manager;
 import Artifact.Project.Manager;
 import Artifact.Project.Items;
 import Artifact.Service.Project;
-// import Encoder.FFmpegEncoder; // Temporarily disabled due to build errors
 import Image.ImageF32x4_RGBA;
 import CvUtils;
 import Utils.Id;
 import Artifact.Render.SoftwareCompositor;
 import Artifact.Render.IRenderer;
+import Encoder.FFmpegEncoder;
+import IO.ImageExporter;
+import Image.ExportOptions;
 import Artifact.Composition.Abstract;
+import Artifact.Layer.Abstract;
+import Artifact.Layer.Image;
+import Artifact.Layer.Text;
+import Artifact.Layer.Video;
+import Artifact.Layers.SolidImage;
+import Artifact.Layer.Solid2D;
+import Layer.Blend;
+import Color.Float;
 
 namespace Artifact
 {
@@ -88,6 +101,7 @@ namespace Artifact
         QString outputPath;           // 出力パス
         QString outputFormat;         // 出力形式 (MP4, PNG sequence等)
         QString codec;                // コーデック
+        QString encoderBackend;       // "auto", "pipe", "native"
         int resolutionWidth;          // 解像度幅
         int resolutionHeight;         // 解像度高さ
         double frameRate;             // フレームレート
@@ -109,6 +123,7 @@ namespace Artifact
             , bitrate(8000)
             , startFrame(0)
             , endFrame(100)
+            , encoderBackend(QStringLiteral("auto"))
             , status(Status::Pending)
             , progress(0)
             , overlayOffsetX(0.0f)
@@ -118,6 +133,332 @@ namespace Artifact
         {
         }
     };
+
+    namespace {
+    enum class VideoEncodeBackendKind {
+        Auto,
+        Pipe,
+        Native
+    };
+
+    static VideoEncodeBackendKind parseVideoEncodeBackend(const QString& backend)
+    {
+        const QString value = backend.trimmed().toLower();
+        if (value == QLatin1String("pipe") || value == QLatin1String("ffmpeg.exe") || value == QLatin1String("ffmpeg")) {
+            return VideoEncodeBackendKind::Pipe;
+        }
+        if (value == QLatin1String("native") || value == QLatin1String("api") || value == QLatin1String("ffmpegapi")) {
+            return VideoEncodeBackendKind::Native;
+        }
+        return VideoEncodeBackendKind::Auto;
+    }
+
+    static QString deriveContainerFromJob(const ArtifactRenderJob& job)
+    {
+        const QFileInfo info(job.outputPath.trimmed());
+        const QString suffix = info.suffix().toLower();
+        if (!suffix.isEmpty()) {
+            return suffix;
+        }
+        const QString fmt = job.outputFormat.trimmed().toLower();
+        if (fmt.contains(QStringLiteral("sequence")) || fmt == QStringLiteral("png")) {
+            return QStringLiteral("png");
+        }
+        if (fmt.contains(QStringLiteral("exr"))) {
+            return QStringLiteral("exr");
+        }
+        if (fmt.contains(QStringLiteral("tiff")) || fmt.contains(QStringLiteral("tif"))) {
+            return QStringLiteral("tiff");
+        }
+        if (fmt.contains(QStringLiteral("jpeg")) || fmt.contains(QStringLiteral("jpg"))) {
+            return QStringLiteral("jpeg");
+        }
+        if (fmt.contains(QStringLiteral("bmp"))) {
+            return QStringLiteral("bmp");
+        }
+        if (fmt.contains(QStringLiteral("webm"))) {
+            return QStringLiteral("webm");
+        }
+        if (fmt.contains(QStringLiteral("mkv")) || fmt.contains(QStringLiteral("matroska"))) {
+            return QStringLiteral("mkv");
+        }
+        if (fmt.contains(QStringLiteral("mov")) || fmt.contains(QStringLiteral("qt"))) {
+            return QStringLiteral("mov");
+        }
+        if (fmt.contains(QStringLiteral("avi"))) {
+            return QStringLiteral("avi");
+        }
+        if (fmt.contains(QStringLiteral("wmv"))) {
+            return QStringLiteral("wmv");
+        }
+        if (fmt.contains(QStringLiteral("h.264")) || fmt.contains(QStringLiteral("h264")) ||
+            fmt.contains(QStringLiteral("avc")) || fmt.contains(QStringLiteral("mpeg4"))) {
+            return QStringLiteral("mp4");
+        }
+        if (fmt.contains(QStringLiteral("h.265")) || fmt.contains(QStringLiteral("h265")) ||
+            fmt.contains(QStringLiteral("hevc"))) {
+            return QStringLiteral("mkv");
+        }
+        if (!fmt.isEmpty()) {
+            return fmt;
+        }
+        return QStringLiteral("mp4");
+    }
+
+    static bool isImageSequenceContainer(const QString& format)
+    {
+        const QString value = format.trimmed().toLower();
+        return value.contains(QStringLiteral("sequence")) ||
+               value == QStringLiteral("png") ||
+               value == QStringLiteral("exr") ||
+               value == QStringLiteral("tiff") ||
+               value == QStringLiteral("tif") ||
+               value == QStringLiteral("jpeg") ||
+               value == QStringLiteral("jpg") ||
+               value == QStringLiteral("bmp");
+    }
+
+    static QString sequenceExtension(const QString& format, const QString& codec)
+    {
+        const QString fmt = format.trimmed().toLower();
+        const QString cdc = codec.trimmed().toLower();
+        // Check codec first, then format
+        for (const auto& s : {cdc, fmt}) {
+            if (s.contains("exr"))  return QStringLiteral("exr");
+            if (s.contains("tiff") || s.contains("tif")) return QStringLiteral("tiff");
+            if (s.contains("jpeg") || s.contains("jpg")) return QStringLiteral("jpg");
+            if (s.contains("bmp"))  return QStringLiteral("bmp");
+            if (s.contains("png"))  return QStringLiteral("png");
+        }
+        return QStringLiteral("png"); // default
+    }
+
+    static bool isVideoContainer(const QString& format)
+    {
+        const QString value = format.trimmed().toLower();
+        return value == QStringLiteral("mp4") ||
+               value == QStringLiteral("mov") ||
+               value == QStringLiteral("avi") ||
+               value == QStringLiteral("mkv") ||
+               value == QStringLiteral("webm") ||
+               value == QStringLiteral("wmv");
+    }
+
+    static ArtifactCore::FFmpegEncoderSettings buildNativeVideoSettings(const ArtifactRenderJob& job)
+    {
+        ArtifactCore::FFmpegEncoderSettings settings;
+        settings.width = std::max(1, job.resolutionWidth);
+        settings.height = std::max(1, job.resolutionHeight);
+        settings.fps = job.frameRate > 0.0 ? job.frameRate : 30.0;
+        settings.bitrateKbps = std::max(1, job.bitrate);
+        const QString codec = job.codec.trimmed().toLower();
+        if (codec.isEmpty() || codec == QStringLiteral("h.264") || codec == QStringLiteral("h264") ||
+            codec == QStringLiteral("avc") || codec == QStringLiteral("libx264")) {
+            settings.videoCodec = QStringLiteral("h264");
+        } else if (codec == QStringLiteral("h.265") || codec == QStringLiteral("h265") ||
+                   codec == QStringLiteral("hevc") || codec == QStringLiteral("libx265")) {
+            settings.videoCodec = QStringLiteral("h265");
+        } else if (codec == QStringLiteral("prores") || codec == QStringLiteral("apple_prores")) {
+            settings.videoCodec = QStringLiteral("prores");
+        } else if (codec == QStringLiteral("mjpeg") || codec == QStringLiteral("motion_jpeg")) {
+            settings.videoCodec = QStringLiteral("mjpeg");
+        } else if (codec == QStringLiteral("png")) {
+            settings.videoCodec = QStringLiteral("png");
+        } else if (codec == QStringLiteral("vp9") || codec == QStringLiteral("libvpx-vp9")) {
+            settings.videoCodec = QStringLiteral("vp9");
+        } else {
+            settings.videoCodec = codec;
+        }
+        settings.container = deriveContainerFromJob(job);
+        return settings;
+    }
+
+    static ArtifactCore::ImageF32x4_RGBA qImageToImageF32x4RGBA(const QImage& source)
+    {
+        const QImage rgba = source.convertToFormat(QImage::Format_RGBA8888);
+        ArtifactCore::ImageF32x4_RGBA out;
+        out.setFromCVMat(ArtifactCore::CvUtils::qImageToCvMat(rgba, true));
+        return out;
+    }
+
+    class IVideoEncodeBackend {
+    public:
+        virtual ~IVideoEncodeBackend() = default;
+        virtual bool open(const ArtifactRenderJob& job, QString* errorMessage) = 0;
+        virtual bool addFrame(const QImage& frame, int frameIndex, QString* errorMessage) = 0;
+        virtual void close() = 0;
+    };
+
+    class PipeFFmpegExeBackend final : public IVideoEncodeBackend {
+    public:
+        bool open(const ArtifactRenderJob& job, QString* errorMessage) override
+        {
+            close();
+
+            process_ = std::make_unique<QProcess>();
+            process_->setProcessChannelMode(QProcess::MergedChannels);
+
+            const int width = std::max(1, job.resolutionWidth);
+            const int height = std::max(1, job.resolutionHeight);
+            const double fps = job.frameRate > 0.0 ? job.frameRate : 30.0;
+
+            QStringList args;
+            args << QStringLiteral("-y")
+                 << QStringLiteral("-f") << QStringLiteral("rawvideo")
+                 << QStringLiteral("-pixel_format") << QStringLiteral("rgba")
+                 << QStringLiteral("-video_size") << QStringLiteral("%1x%2").arg(width).arg(height)
+                 << QStringLiteral("-framerate") << QString::number(fps, 'f', 6)
+                 << QStringLiteral("-i") << QStringLiteral("-")
+                 << QStringLiteral("-c:v") << QStringLiteral("libx264")
+                 << QStringLiteral("-pix_fmt") << QStringLiteral("yuv420p")
+                 << job.outputPath;
+
+            process_->start(QStringLiteral("ffmpeg.exe"), args);
+            if (!process_->waitForStarted()) {
+                if (errorMessage) {
+                    *errorMessage = QStringLiteral("Failed to start ffmpeg.exe bridge");
+                }
+                close();
+                return false;
+            }
+
+            lastError_.clear();
+            return true;
+        }
+
+        bool addFrame(const QImage& frame, int /*frameIndex*/, QString* errorMessage) override
+        {
+            if (!process_) {
+                const QString message = QStringLiteral("ffmpeg.exe bridge is not open");
+                lastError_ = message;
+                if (errorMessage) *errorMessage = message;
+                return false;
+            }
+
+            const QImage rgba = frame.convertToFormat(QImage::Format_RGBA8888);
+            const qint64 expectedBytes = static_cast<qint64>(rgba.width()) * rgba.height() * 4;
+            const qint64 written = process_->write(reinterpret_cast<const char*>(rgba.constBits()), expectedBytes);
+            if (written != expectedBytes) {
+                const QString message = QStringLiteral("Failed to write video frame to ffmpeg.exe");
+                lastError_ = message;
+                if (errorMessage) *errorMessage = message;
+                return false;
+            }
+
+            if (!process_->waitForBytesWritten(30000)) {
+                const QString message = QStringLiteral("Timed out while writing frame to ffmpeg.exe");
+                lastError_ = message;
+                if (errorMessage) *errorMessage = message;
+                return false;
+            }
+
+            return true;
+        }
+
+        void close() override
+        {
+            if (!process_) {
+                return;
+            }
+
+            process_->closeWriteChannel();
+            if (!process_->waitForFinished(30000)) {
+                process_->terminate();
+                if (!process_->waitForFinished(5000)) {
+                    process_->kill();
+                    process_->waitForFinished(5000);
+                }
+            }
+            process_.reset();
+        }
+
+        QString lastError() const { return lastError_; }
+
+    private:
+        std::unique_ptr<QProcess> process_;
+        QString lastError_;
+    };
+
+    class NativeFFmpegBackend final : public IVideoEncodeBackend {
+    public:
+        bool open(const ArtifactRenderJob& job, QString* errorMessage) override
+        {
+            const ArtifactCore::FFmpegEncoderSettings settings = buildNativeVideoSettings(job);
+            if (!encoder_.open(job.outputPath, settings)) {
+                lastError_ = encoder_.lastError();
+                if (errorMessage) *errorMessage = lastError_;
+                return false;
+            }
+
+            lastError_.clear();
+            return true;
+        }
+
+        bool addFrame(const QImage& frame, int /*frameIndex*/, QString* errorMessage) override
+        {
+            const ArtifactCore::ImageF32x4_RGBA image = qImageToImageF32x4RGBA(frame);
+            if (!encoder_.addImage(image)) {
+                lastError_ = encoder_.lastError();
+                if (errorMessage) *errorMessage = lastError_;
+                return false;
+            }
+            return true;
+        }
+
+        void close() override
+        {
+            encoder_.close();
+        }
+
+        QString lastError() const { return lastError_; }
+
+    private:
+        ArtifactCore::FFmpegEncoder encoder_;
+        QString lastError_;
+    };
+
+    static std::unique_ptr<IVideoEncodeBackend> createVideoEncodeBackend(const ArtifactRenderJob& job,
+                                                                          QString* backendName,
+                                                                          QString* errorMessage)
+    {
+        const VideoEncodeBackendKind requested = parseVideoEncodeBackend(job.encoderBackend);
+        const auto tryNative = [&]() -> std::unique_ptr<IVideoEncodeBackend> {
+            QString localError;
+            auto backend = std::make_unique<NativeFFmpegBackend>();
+            if (backend->open(job, &localError)) {
+                if (backendName) *backendName = QStringLiteral("native");
+                if (errorMessage) errorMessage->clear();
+                return backend;
+            }
+            if (errorMessage) *errorMessage = localError;
+            return nullptr;
+        };
+        const auto tryPipe = [&]() -> std::unique_ptr<IVideoEncodeBackend> {
+            QString localError;
+            auto backend = std::make_unique<PipeFFmpegExeBackend>();
+            if (backend->open(job, &localError)) {
+                if (backendName) *backendName = QStringLiteral("pipe");
+                if (errorMessage) errorMessage->clear();
+                return backend;
+            }
+            if (errorMessage) *errorMessage = localError;
+            return nullptr;
+        };
+
+        switch (requested) {
+        case VideoEncodeBackendKind::Pipe:
+            return tryPipe();
+        case VideoEncodeBackendKind::Native:
+            return tryNative();
+        case VideoEncodeBackendKind::Auto:
+        default:
+            if (auto nativeBackend = tryNative()) {
+                return nativeBackend;
+            }
+            return tryPipe();
+        }
+    }
+    } // namespace
 
     // レンダリングキューマネージャクラス
     class ArtifactRenderQueueManager {
@@ -260,12 +601,20 @@ namespace Artifact
             auto& job = jobs[index];
             const QString fmt = outputFormat.trimmed();
             const QString cdc = codec.trimmed();
-            job.outputFormat = fmt.isEmpty() ? QStringLiteral("MP4") : fmt;
+            ArtifactRenderJob normalizedJob;
+            normalizedJob.outputFormat = fmt.isEmpty() ? QStringLiteral("MP4") : fmt;
+            job.outputFormat = deriveContainerFromJob(normalizedJob);
             job.codec = cdc.isEmpty() ? QStringLiteral("H.264") : cdc;
             job.resolutionWidth = std::clamp(width, 16, 16384);
             job.resolutionHeight = std::clamp(height, 16, 16384);
             job.frameRate = std::clamp(fps, 1.0, 240.0);
             job.bitrate = std::clamp(bitrateKbps, 128, 200000);
+            if (jobUpdated) jobUpdated(index);
+        }
+
+        void updateJob(int index, const ArtifactRenderJob& job) {
+            if (index < 0 || index >= jobs.size()) return;
+            jobs[index] = job;
             if (jobUpdated) jobUpdated(index);
         }
 
@@ -571,7 +920,7 @@ namespace Artifact
             return QDir(dir).filePath(base + QStringLiteral(".png"));
         }
 
-        QImage renderSingleFrameDummy(const ArtifactRenderJob& job, int frameNumber) {
+        QImage renderSingleFrameDummy(const ArtifactRenderJob& job, int frameNumber) const {
             const int width = std::max(16, job.resolutionWidth);
             const int height = std::max(16, job.resolutionHeight);
             QImage background(width, height, QImage::Format_ARGB32_Premultiplied);
@@ -627,6 +976,187 @@ namespace Artifact
             request.useForeground = true;
 
             return SoftwareRender::compose(request);
+        }
+
+        QColor toQColor(const ArtifactCore::FloatColor& color, const float alphaScale = 1.0f) const
+        {
+            return QColor::fromRgbF(
+                std::clamp(color.r(), 0.0f, 1.0f),
+                std::clamp(color.g(), 0.0f, 1.0f),
+                std::clamp(color.b(), 0.0f, 1.0f),
+                std::clamp(color.a() * alphaScale, 0.0f, 1.0f));
+        }
+
+        QPainter::CompositionMode compositionModeForLayer(const ArtifactAbstractLayerPtr& layer) const
+        {
+            const auto blend = ArtifactCore::toBlendMode(layer ? layer->layerBlendType() : LAYER_BLEND_TYPE::BLEND_NORMAL);
+            switch (blend) {
+            case ArtifactCore::BlendMode::Add: return QPainter::CompositionMode_Plus;
+            case ArtifactCore::BlendMode::Multiply: return QPainter::CompositionMode_Multiply;
+            case ArtifactCore::BlendMode::Screen: return QPainter::CompositionMode_Screen;
+            case ArtifactCore::BlendMode::Normal:
+            default:
+                return QPainter::CompositionMode_SourceOver;
+            }
+        }
+
+        QSize safeLayerSize(const ArtifactAbstractLayerPtr& layer, const QSize& fallback = QSize(320, 180)) const
+        {
+            if (!layer) {
+                return fallback;
+            }
+            const auto source = layer->sourceSize();
+            return QSize(std::max(16, source.width), std::max(16, source.height));
+        }
+
+        QImage renderTextLayerSurface(const std::shared_ptr<ArtifactTextLayer>& textLayer, const QSize& size) const
+        {
+            QImage image(size, QImage::Format_ARGB32_Premultiplied);
+            image.fill(Qt::transparent);
+            if (!textLayer) {
+                return image;
+            }
+
+            QPainter painter(&image);
+            painter.setRenderHint(QPainter::Antialiasing, true);
+            QFont font(textLayer->fontFamily().toQString());
+            font.setPointSizeF(std::max(6.0f, textLayer->fontSize()));
+            font.setBold(textLayer->isBold());
+            font.setItalic(textLayer->isItalic());
+            painter.setFont(font);
+            painter.setPen(QColor::fromRgbF(
+                textLayer->textColor().r(),
+                textLayer->textColor().g(),
+                textLayer->textColor().b(),
+                textLayer->textColor().a()));
+
+            QTextOption option;
+            option.setWrapMode(QTextOption::WordWrap);
+            option.setAlignment(Qt::AlignLeft | Qt::AlignTop);
+            painter.drawText(QRectF(0.0, 0.0, size.width(), size.height()), textLayer->text().toQString(), option);
+            return image;
+        }
+
+        QImage renderVideoLayerSurface(const std::shared_ptr<ArtifactVideoLayer>& videoLayer, const QSize& size) const
+        {
+            if (!videoLayer) {
+                return {};
+            }
+            QImage frame = videoLayer->currentFrameToQImage();
+            if (!frame.isNull()) {
+                return frame.convertToFormat(QImage::Format_ARGB32_Premultiplied);
+            }
+
+            QImage placeholder(size, QImage::Format_ARGB32_Premultiplied);
+            placeholder.fill(QColor(28, 32, 38));
+            QPainter p(&placeholder);
+            p.setPen(QColor(220, 226, 234));
+            p.drawText(placeholder.rect(), Qt::AlignCenter, QStringLiteral("Video frame unavailable"));
+            return placeholder;
+        }
+
+        QImage renderLayerSurface(const ArtifactAbstractLayerPtr& layer) const
+        {
+            if (!layer) {
+                return {};
+            }
+
+            const QSize layerSize = safeLayerSize(layer);
+            if (const auto imageLayer = std::dynamic_pointer_cast<ArtifactImageLayer>(layer)) {
+                const QImage image = imageLayer->toQImage();
+                if (!image.isNull()) {
+                    return image.convertToFormat(QImage::Format_ARGB32_Premultiplied);
+                }
+            }
+
+            if (const auto solidLayer = std::dynamic_pointer_cast<ArtifactSolidImageLayer>(layer)) {
+                QImage image(layerSize, QImage::Format_ARGB32_Premultiplied);
+                image.fill(toQColor(solidLayer->color()));
+                return image;
+            }
+
+            if (const auto solid2DLayer = std::dynamic_pointer_cast<ArtifactSolid2DLayer>(layer)) {
+                QImage image(layerSize, QImage::Format_ARGB32_Premultiplied);
+                image.fill(toQColor(solid2DLayer->color()));
+                return image;
+            }
+
+            if (const auto textLayer = std::dynamic_pointer_cast<ArtifactTextLayer>(layer)) {
+                return renderTextLayerSurface(textLayer, layerSize);
+            }
+
+            if (const auto videoLayer = std::dynamic_pointer_cast<ArtifactVideoLayer>(layer)) {
+                return renderVideoLayerSurface(videoLayer, layerSize);
+            }
+
+            QImage fallback = layer->getThumbnail(layerSize.width(), layerSize.height());
+            if (!fallback.isNull()) {
+                return fallback.convertToFormat(QImage::Format_ARGB32_Premultiplied);
+            }
+
+            return {};
+        }
+
+        ArtifactCompositionPtr resolveComposition(const ArtifactRenderJob& job) const
+        {
+            if (job.compositionId == ArtifactCore::CompositionID::Nil()) {
+                return {};
+            }
+            const auto found = ArtifactProjectManager::getInstance().findComposition(job.compositionId);
+            if (!found.success) {
+                return {};
+            }
+            return found.ptr.lock();
+        }
+
+        QImage renderSingleFrameComposition(const ArtifactRenderJob& job, const ArtifactCompositionPtr& composition, int frameNumber) const
+        {
+            if (!composition) {
+                return renderSingleFrameDummy(job, frameNumber);
+            }
+
+            composition->goToFrame(frameNumber);
+            const QSize compSize = composition->settings().compositionSize();
+            const int compW = std::max(16, compSize.width());
+            const int compH = std::max(16, compSize.height());
+            QImage canvas(QSize(compW, compH), QImage::Format_ARGB32_Premultiplied);
+            canvas.fill(toQColor(composition->backgroundColor()));
+
+            QPainter painter(&canvas);
+            painter.setRenderHint(QPainter::Antialiasing, true);
+            painter.setRenderHint(QPainter::SmoothPixmapTransform, true);
+
+            const ArtifactCore::FramePosition currentPos(frameNumber);
+            const auto layers = composition->allLayer();
+            for (const auto& layer : layers) {
+                if (!layer || !layer->isVisible() || !layer->isActiveAt(currentPos)) {
+                    continue;
+                }
+
+                const QImage surface = renderLayerSurface(layer);
+                if (surface.isNull()) {
+                    continue;
+                }
+
+                const QSize layerSize = safeLayerSize(layer, surface.size());
+                const qreal opacity = std::clamp(static_cast<qreal>(layer->opacity()), 0.0, 1.0);
+                painter.save();
+                painter.setOpacity(opacity);
+                painter.setCompositionMode(compositionModeForLayer(layer));
+                painter.setTransform(layer->getGlobalTransform(), true);
+                painter.drawImage(
+                    QRectF(0.0, 0.0, layerSize.width(), layerSize.height()),
+                    surface,
+                    QRectF(0.0, 0.0, surface.width(), surface.height()));
+                painter.restore();
+            }
+
+            const int outW = std::max(16, job.resolutionWidth);
+            const int outH = std::max(16, job.resolutionHeight);
+            if (canvas.width() != outW || canvas.height() != outH) {
+                return canvas.scaled(outW, outH, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+            }
+            return canvas;
         }
 
         bool renderSingleFrameGPU(const ArtifactRenderJob& job, int index, QString* outputPath, QString* errorMessage) {
@@ -994,6 +1524,27 @@ namespace Artifact
         impl_->syncCoreQueueModel();
     }
 
+    QString ArtifactRenderQueueService::jobEncoderBackendAt(int index) const
+    {
+        const int count = impl_->queueManager.jobCount();
+        if (index < 0 || index >= count) {
+            return QStringLiteral("auto");
+        }
+        return impl_->queueManager.getJob(index).encoderBackend;
+    }
+
+    void ArtifactRenderQueueService::setJobEncoderBackendAt(int index, const QString& backend)
+    {
+        const int count = impl_->queueManager.jobCount();
+        if (index < 0 || index >= count) {
+            return;
+        }
+        auto job = impl_->queueManager.getJob(index);
+        job.encoderBackend = backend.trimmed().isEmpty() ? QStringLiteral("auto") : backend.trimmed().toLower();
+        impl_->queueManager.updateJob(index, job);
+        impl_->syncCoreQueueModel();
+    }
+
     QString ArtifactRenderQueueService::jobErrorMessageAt(int index) const
     {
         return impl_->queueManager.jobErrorMessageAt(index);
@@ -1052,7 +1603,12 @@ namespace Artifact
                 if (!outDir.exists()) outDir.mkpath(".");
 
                 const QString ext = outInfo.suffix().toLower();
-                bool isVideo = (ext == "mp4" || ext == "mov" || ext == "avi" || ext == "mkv");
+                const QString format = deriveContainerFromJob(job);
+                const bool isVideo = !isImageSequenceContainer(format) &&
+                    (isVideoContainer(format) ||
+                     ext == QStringLiteral("mp4") || ext == QStringLiteral("mov") ||
+                     ext == QStringLiteral("avi") || ext == QStringLiteral("mkv") ||
+                     ext == QStringLiteral("webm") || ext == QStringLiteral("wmv"));
 
                 const int startF = job.startFrame;
                 const int endF = job.endFrame;
@@ -1060,86 +1616,82 @@ namespace Artifact
 
                 std::atomic<bool> success = true;
                 std::atomic<int> framesRendered = 0;
-
-                // --- FFmpeg Setup (Video mode only) ---
-                std::unique_ptr<QProcess> ffmpeg;
-                std::mutex pipeMutex;
-                int nextFrameToWrite = startF;
-                std::map<int, QImage> frameOrderBuffer;
-
+                QString failureReason;
+                std::unique_ptr<IVideoEncodeBackend> videoBackend;
                 if (isVideo) {
-                    ffmpeg = std::make_unique<QProcess>();
-                    QStringList args;
-                    args << "-y" << "-f" << "rawvideo" << "-pixel_format" << "bgra" 
-                         << "-video_size" << QString("%1x%2").arg(job.resolutionWidth).arg(job.resolutionHeight)
-                         << "-framerate" << QString::number(job.frameRate)
-                         << "-i" << "-" << "-c:v" << "libx264" << "-pix_fmt" << "yuv420p" << outputPath;
-                    
-                    ffmpeg->start("ffmpeg", args);
-                    if (!ffmpeg->waitForStarted()) {
-                        qWarning() << "[RenderService] Failed to start FFmpeg. Falling back to sequence.";
-                        isVideo = false; // Fallback
+                    QString backendName;
+                    videoBackend = createVideoEncodeBackend(job, &backendName, &failureReason);
+                    if (!videoBackend) {
+                        qWarning() << "[RenderService] Failed to initialize video backend"
+                                   << "job=" << i
+                                   << "backend=" << backendName
+                                   << "error=" << failureReason;
+                        success.store(false, std::memory_order_relaxed);
                     }
                 }
 
-                // TBBを利用したマルチフレームレンダリング (MFR)
-                tbb::parallel_for(startF, endF + 1, [&](int f) {
-                    if (!success.load(std::memory_order_relaxed)) return;
+                const ArtifactCompositionPtr composition = impl_->resolveComposition(job);
+                for (int f = startF; f <= endF; ++f) {
+                    if (!success.load(std::memory_order_relaxed)) {
+                        break;
+                    }
 
                     // ステータスチェック
                     const auto currentJobStatus = impl_->queueManager.getJob(i).status;
                     if (currentJobStatus != ArtifactRenderJob::Status::Rendering) {
                         success.store(false, std::memory_order_relaxed);
-                        return;
+                        break;
                     }
 
-                    // フレームレンダリング
-                    QImage qimg = impl_->renderSingleFrameDummy(job, f);
-
-                    if (!qimg.isNull()) {
-                        if (isVideo) {
-                            // ビデオ出力：バッファに格納して順序通りにパイプへ流す
-                            std::lock_guard<std::mutex> lock(pipeMutex);
-                            frameOrderBuffer[f] = qimg;
-
-                            while (frameOrderBuffer.count(nextFrameToWrite)) {
-                                QImage nextImg = frameOrderBuffer[nextFrameToWrite];
-                                ffmpeg->write(reinterpret_cast<const char*>(nextImg.bits()), nextImg.sizeInBytes());
-                                ffmpeg->waitForBytesWritten();
-                                frameOrderBuffer.erase(nextFrameToWrite);
-                                nextFrameToWrite++;
-                            }
-                        } else {
-                            // 連番出力
-                            QString baseName = outInfo.completeBaseName();
-                            if (baseName.isEmpty()) baseName = "render";
-                            QString framePath = outDir.filePath(QString("%1_%2.png").arg(baseName).arg(f, 4, 10, QChar('0')));
-                            qimg.save(framePath, "PNG");
-                        }
-
-                        int rendered = ++framesRendered;
-                        int progress = static_cast<int>((static_cast<float>(rendered) / totalFrames) * 100);
-                        QMetaObject::invokeMethod(this, [this, i, progress]() {
-                            impl_->queueManager.setJobProgress(i, progress);
-                        }, Qt::QueuedConnection);
-                        
-                    } else {
+                    QImage qimg = impl_->renderSingleFrameComposition(job, composition, f);
+                    if (qimg.isNull()) {
                         success.store(false, std::memory_order_relaxed);
+                        failureReason = QStringLiteral("Rendered frame is null");
+                        break;
                     }
-                });
 
-                // 終了処理
-                if (isVideo) {
-                    ffmpeg->closeWriteChannel();
-                    ffmpeg->waitForFinished();
+                    if (isVideo) {
+                        if (!videoBackend->addFrame(qimg, f, &failureReason)) {
+                            success.store(false, std::memory_order_relaxed);
+                            break;
+                        }
+                    } else {
+                        const QString ext = sequenceExtension(job.outputFormat, job.codec);
+                        QString baseName = outInfo.completeBaseName();
+                        if (baseName.isEmpty()) baseName = "render";
+                        QString framePath = outDir.filePath(QString("%1_%2.%3").arg(baseName).arg(f, 4, 10, QChar('0')).arg(ext));
+                        ArtifactCore::ImageExporter exporter;
+                        ArtifactCore::ImageExportOptions imgOpts;
+                        imgOpts.format = ext;
+                        auto result = exporter.write(qimg, framePath, imgOpts);
+                        if (!result.success) {
+                            success.store(false, std::memory_order_relaxed);
+                            failureReason = QStringLiteral("Failed to save image sequence frame: %1").arg(result.errorMessage);
+                            break;
+                        }
+                    }
+
+                    int rendered = ++framesRendered;
+                    int progress = static_cast<int>((static_cast<float>(rendered) / totalFrames) * 100);
+                    QMetaObject::invokeMethod(this, [this, i, progress]() {
+                        impl_->queueManager.setJobProgress(i, progress);
+                    }, Qt::QueuedConnection);
                 }
 
-                QMetaObject::invokeMethod(this, [this, i, success_val = success.load()]() {
+                // 終了処理
+                if (videoBackend) {
+                    videoBackend->close();
+                }
+
+                QMetaObject::invokeMethod(this, [this, i, success_val = success.load(), failureReason]() {
                     if (success_val) {
                         impl_->queueManager.setJobProgress(i, 100);
                         impl_->queueManager.setJobCompleted(i);
                     } else {
-                        impl_->queueManager.setJobFailed(i, QStringLiteral("Render interrupted or failed"));
+                        const QString reason = failureReason.trimmed().isEmpty()
+                            ? QStringLiteral("Render interrupted or failed")
+                            : failureReason;
+                        impl_->queueManager.setJobFailed(i, reason);
                     }
                 }, Qt::QueuedConnection);
             }

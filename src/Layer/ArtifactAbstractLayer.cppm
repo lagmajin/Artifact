@@ -331,7 +331,7 @@ QTransform ArtifactAbstractLayer::getGlobalTransform() const {
   return local;
 }
 
-bool ArtifactAbstractLayer::isAdjustmentLayer() const { return true; }
+bool ArtifactAbstractLayer::isAdjustmentLayer() const { return false; }
 void ArtifactAbstractLayer::setAdjustmentLayer(bool isAdjustment) {
   // adjustmentLayer = isAdjustment;
 }
@@ -432,15 +432,21 @@ Size_2D ArtifactAbstractLayer::aabb() const {
   return result;
 }
 
-QRectF ArtifactAbstractLayer::transformedBoundingBox() const {
+QRectF ArtifactAbstractLayer::localBounds() const {
   const auto size = sourceSize();
   if (size.width <= 0 || size.height <= 0) {
     return QRectF();
   }
+  return QRectF(0.0, 0.0, static_cast<qreal>(size.width), static_cast<qreal>(size.height));
+}
+
+QRectF ArtifactAbstractLayer::transformedBoundingBox() const {
+  const QRectF localRect = localBounds();
+  if (!localRect.isValid() || localRect.width() <= 0.0 || localRect.height() <= 0.0) {
+    return QRectF();
+  }
 
   QTransform global = getGlobalTransform();
-  QRectF localRect(0, 0, static_cast<float>(size.width),
-                   static_cast<float>(size.height));
   return global.mapRect(localRect);
 }
 

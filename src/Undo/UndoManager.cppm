@@ -47,6 +47,7 @@ import Undo.UndoManager;
 import Utils.String.UniString;
 import Artifact.Effect.Abstract;
 import Artifact.Layer.Abstract;
+import Artifact.Composition.Abstract;
 import Animation.Transform3D;
 import Time.Rational;
 
@@ -116,38 +117,76 @@ QString MoveLayerCommand::label() const {
 }
 
 // --- AddLayerCommand ---
-AddLayerCommand::AddLayerCommand(std::shared_ptr<void> comp, ArtifactAbstractLayerPtr layer, bool atTop)
-    : comp_(comp), layer_(layer), atTop_(atTop) {}
+AddLayerCommand::AddLayerCommand(ArtifactCompositionPtr comp, ArtifactAbstractLayerPtr layer, bool atTop)
+    : comp_(comp), layer_(layer), atTop_(atTop), savedIndex_(-1) {}
 
 void AddLayerCommand::undo() {
-    (void)comp_;
-    (void)layer_;
+    auto comp = comp_.lock();
+    auto layer = layer_;
+    if (comp && layer) {
+        comp->removeLayer(layer->id());
+        if (auto mgr = UndoManager::instance()) mgr->notifyAnythingChanged();
+    }
 }
 
 void AddLayerCommand::redo() {
-    (void)comp_;
-    (void)layer_;
-    (void)atTop_;
+    auto comp = comp_.lock();
+    auto layer = layer_;
+    if (comp && layer) {
+        if (atTop_) {
+            comp->appendLayerTop(layer);
+        } else {
+            comp->appendLayerBottom(layer);
+        }
+        if (auto mgr = UndoManager::instance()) mgr->notifyAnythingChanged();
+    }
 }
 
 QString AddLayerCommand::label() const {
+    if (layer_) {
+        return QStringLiteral("Add Layer: %1").arg(layer_->id().toString());
+    }
     return QStringLiteral("Add Layer");
 }
 
-RemoveLayerCommand::RemoveLayerCommand(std::shared_ptr<void> comp, ArtifactAbstractLayerPtr layer)
+// --- RemoveLayerCommand ---
+RemoveLayerCommand::RemoveLayerCommand(ArtifactCompositionPtr comp, ArtifactAbstractLayerPtr layer)
     : comp_(comp), layer_(layer), originalIndex_(-1) {}
 
 void RemoveLayerCommand::undo() {
-    (void)comp_;
-    (void)layer_;
+    auto comp = comp_.lock();
+    auto layer = layer_;
+    if (comp && layer) {
+        if (originalIndex_ >= 0) {
+            comp->insertLayerAt(layer, originalIndex_);
+        } else {
+            comp->appendLayerTop(layer);
+        }
+        if (auto mgr = UndoManager::instance()) mgr->notifyAnythingChanged();
+    }
 }
 
 void RemoveLayerCommand::redo() {
-    (void)comp_;
-    (void)layer_;
+    auto comp = comp_.lock();
+    auto layer = layer_;
+    if (comp && layer) {
+        // Save original index before removing
+        auto layers = comp->allLayer();
+        for (int i = 0; i < layers.size(); ++i) {
+            if (layers[i] && layers[i]->id() == layer->id()) {
+                originalIndex_ = i;
+                break;
+            }
+        }
+        comp->removeLayer(layer->id());
+        if (auto mgr = UndoManager::instance()) mgr->notifyAnythingChanged();
+    }
 }
 
 QString RemoveLayerCommand::label() const {
+    if (layer_) {
+        return QStringLiteral("Remove Layer: %1").arg(layer_->id().toString());
+    }
     return QStringLiteral("Remove Layer");
 }
 

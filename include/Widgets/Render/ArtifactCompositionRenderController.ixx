@@ -1,5 +1,6 @@
 module;
 #include <QObject>
+#include <QCursor>
 #include <QPointF>
 #include <wobjectdefs.h>
 
@@ -56,9 +57,10 @@ void zoom100();
 
 void handleMousePress(const QPointF& viewportPos);
 void handleMouseMove(const QPointF& viewportPos);
-void handleMouseRelease();
+  void handleMouseRelease();
 
 class TransformGizmo* gizmo() const;
+ Qt::CursorShape cursorShapeForViewportPos(const QPointF& viewportPos) const;
 
 public /*slots*/:
 

@@ -65,6 +65,7 @@ HueAndSaturation::HueAndSaturation()
     : ArtifactAbstractEffect(), impl_(new Impl()) {
     setEffectID(UniString("effect.colorcorrection.hsl"));
     setDisplayName(UniString("Hue / Saturation"));
+    setPipelineStage(EffectPipelineStage::Rasterizer);
 }
 
 HueAndSaturation::~HueAndSaturation() {

@@ -1,5 +1,7 @@
 module;
 #include <QPointF>
+#include <QRectF>
+#include <QCursor>
 #include <memory>
 
 export module Artifact.Widgets.TransformGizmo;
@@ -27,6 +29,7 @@ export namespace Artifact {
 
   void setLayer(ArtifactAbstractLayerPtr layer);
   void draw(ArtifactIRenderer* renderer);
+  Qt::CursorShape cursorShapeForViewportPos(const QPointF& viewportPos, ArtifactIRenderer* renderer) const;
 
   bool handleMousePress(const QPointF& viewportPos, ArtifactIRenderer* renderer);
   bool handleMouseMove(const QPointF& viewportPos, ArtifactIRenderer* renderer);
@@ -35,11 +38,18 @@ export namespace Artifact {
   bool isDragging() const { return isDragging_; }
 
  private:
-  HandleType hitTest(const QPointF& viewportPos, ArtifactIRenderer* renderer);
+  HandleType hitTest(const QPointF& viewportPos, ArtifactIRenderer* renderer) const;
   
   ArtifactAbstractLayerPtr layer_;
   HandleType activeHandle_ = HandleType::None;
   bool isDragging_ = false;
+  QPointF dragStartCanvasPos_;
+  QPointF dragStartLayerPos_;
+  float dragStartScaleX_ = 1.0f;
+  float dragStartScaleY_ = 1.0f;
+  QRectF dragStartBoundingBox_;
+  QRectF dragStartLocalBounds_;
+  QPointF dragStartAnchor_;
   QPointF lastCanvasMousePos_;
   
   static constexpr float HANDLE_SIZE = 8.0f;

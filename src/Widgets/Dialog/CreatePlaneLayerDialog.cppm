@@ -338,8 +338,8 @@ void CreateSolidLayerSettingDialog::mousePressEvent(QMouseEvent* event)
   QDialog::mouseMoveEvent(event);
  }
 
- void CreateSolidLayerSettingDialog::showEvent(QShowEvent* event)
- {
+void CreateSolidLayerSettingDialog::showEvent(QShowEvent* event)
+{
   QDialog::showEvent(event);
   QPoint endPos;
   if (parentWidget()) {
@@ -349,9 +349,13 @@ void CreateSolidLayerSettingDialog::mousePressEvent(QMouseEvent* event)
    endPos = QGuiApplication::primaryScreen()->availableGeometry().center()
             - QPoint(width() / 2, height() / 2);
   }
-  endPos += QPoint(0, 32);
   move(endPos);
- }
+}
+
+void CreateSolidLayerSettingDialog::showAnimated()
+{
+  show();
+}
 
  W_OBJECT_IMPL(EditPlaneLayerSettingDialog)
 
@@ -422,12 +426,18 @@ void EditPlaneLayerSettingDialog::showEvent(QShowEvent* event)
   QDialog::showEvent(event);
   QPoint endPos;
   if (parentWidget()) {
-   const QRect pr = parentWidget()->geometry();
-   endPos = pr.center() - rect().center();
+   endPos = parentWidget()->mapToGlobal(parentWidget()->rect().center())
+            - QPoint(width() / 2, height() / 2);
   } else {
-   endPos = QGuiApplication::primaryScreen()->availableGeometry().center() - rect().center();
+   endPos = QGuiApplication::primaryScreen()->availableGeometry().center()
+            - QPoint(width() / 2, height() / 2);
   }
   move(endPos);
+}
+
+void EditPlaneLayerSettingDialog::showAnimated()
+{
+  show();
 }
 
  void EditPlaneLayerSettingDialog::setupEdit(std::shared_ptr<ArtifactSolidImageLayer> layer)

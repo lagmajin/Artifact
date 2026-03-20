@@ -2,12 +2,14 @@
 
 #include <QDebug>
 #include <QImage>
+#include <QImageReader>
 #include <QPainter>
 #include <wobjectimpl.h>
 
 module Artifact.Layer.Image;
 
 import std;
+import CvUtils;
 import Artifact.Render.IRenderer;
 import Image.ImageF32x4_RGBA;
 import Size;
@@ -38,13 +40,23 @@ ArtifactImageLayer::~ArtifactImageLayer() {
 
 bool ArtifactImageLayer::loadFromPath(const QString& path)
 {
-    QImage image(path);
+    QImageReader reader(path);
+    reader.setAutoTransform(true);
+    QImage image = reader.read();
     if (image.isNull()) {
-        qWarning() << "[ArtifactImageLayer] Failed to load image from:" << path;
+        qWarning() << "[ArtifactImageLayer] Failed to load image from:" << path
+                   << "format=" << reader.format()
+                   << "error=" << reader.errorString()
+                   << "supported=" << QImageReader::supportedImageFormats();
         return false;
     }
 
     impl_->sourcePath_ = path;
+    qDebug() << "[ArtifactImageLayer] Loaded image:" << path
+             << "format=" << reader.format()
+             << "size=" << image.size()
+             << "depth=" << image.depth()
+             << "bytesPerLine=" << image.bytesPerLine();
     setFromQImage(image);
     return true;
 }
@@ -77,6 +89,24 @@ bool ArtifactImageLayer::setLayerPropertyValue(const QString& propertyPath, cons
     }
     
     return ArtifactAbstractLayer::setLayerPropertyValue(propertyPath, value);
+}
+
+void ArtifactImageLayer::setFromCvMat(const cv::Mat& mat)
+{
+    if (mat.empty()) {
+        impl_->hasImage_ = false;
+        impl_->cache_.reset();
+        return;
+    }
+
+    setFromQImage(ArtifactCore::CvUtils::cvMatToQImage(mat));
+}
+
+void ArtifactImageLayer::setFromCvMat()
+{
+    if (impl_->cache_) {
+        setFromQImage(*impl_->cache_);
+    }
 }
 
 void ArtifactImageLayer::draw(ArtifactIRenderer* renderer)
@@ -148,6 +178,19 @@ void ArtifactImageLayer::setFitToLayer(bool fit)
 bool ArtifactImageLayer::fitToLayer() const
 {
     return impl_->fitToLayer_;
+}
+
+QRectF ArtifactImageLayer::localBounds() const
+{
+    if (!impl_->fitToLayer_ && impl_->width_ > 0 && impl_->height_ > 0) {
+        return QRectF(0.0, 0.0, static_cast<qreal>(impl_->width_), static_cast<qreal>(impl_->height_));
+    }
+
+    const auto size = sourceSize();
+    if (size.width <= 0 || size.height <= 0) {
+        return QRectF();
+    }
+    return QRectF(0.0, 0.0, static_cast<qreal>(size.width), static_cast<qreal>(size.height));
 }
 
 } // namespace Artifact

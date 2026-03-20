@@ -4,6 +4,7 @@
 #include <QComboBox>
 #include <QDebug>
 #include <QHBoxLayout>
+#include <QEvent>
 #include <QHideEvent>
 #include <QMenu>
 #include <QMouseEvent>
@@ -138,6 +139,8 @@ protected:
     if (controller_) {
       controller_->handleMousePress(event->position());
       if (controller_->gizmo() && controller_->gizmo()->isDragging()) {
+        const auto cursor = controller_->cursorShapeForViewportPos(event->position());
+        setCursor(cursor == Qt::OpenHandCursor ? Qt::ClosedHandCursor : cursor);
         event->accept();
         return;
       }
@@ -161,6 +164,7 @@ protected:
         event->accept();
         return;
       }
+      setCursor(controller_->cursorShapeForViewportPos(event->position()));
     }
 
     QWidget::mouseMoveEvent(event);
@@ -176,9 +180,17 @@ protected:
 
     if (controller_) {
       controller_->handleMouseRelease();
+      setCursor(controller_->cursorShapeForViewportPos(event->position()));
     }
 
     QWidget::mouseReleaseEvent(event);
+  }
+
+  void leaveEvent(QEvent *event) override {
+    if (!isPanning_) {
+      unsetCursor();
+    }
+    QWidget::leaveEvent(event);
   }
 
 private:
@@ -279,7 +291,7 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   auto *displayMenu = new QMenu(impl_->displayOptionsBtn_);
   QAction *gridAct = displayMenu->addAction("Grid");
   QAction *guidesAct = displayMenu->addAction("Guides");
-  QAction *safeMarginsAct = displayMenu->addAction("Safe Margins");
+  QAction *safeMarginsAct = displayMenu->addAction("Safe Area");
   gridAct->setCheckable(true);
   guidesAct->setCheckable(true);
   safeMarginsAct->setCheckable(true);

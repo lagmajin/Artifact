@@ -120,6 +120,14 @@ EffectPipelineStage ArtifactAbstractEffect::pipelineStage() const { return impl_
 
 void ArtifactAbstractEffect::setPipelineStage(EffectPipelineStage stage) { impl_->pipelineStage = stage; }
 
+void ArtifactAbstractEffect::applyCPUOnly(const ImageF32x4RGBAWithCache& src,
+                                         ImageF32x4RGBAWithCache& dst) {
+    const ComputeMode previousMode = impl_->mode;
+    impl_->mode = ComputeMode::CPU;
+    apply(src, dst);
+    impl_->mode = previousMode;
+}
+
 void ArtifactAbstractEffect::setContext(const EffectContext& context) {
     impl_->context_ = context;
     if (impl_->cpuImpl_) {

@@ -1539,6 +1539,16 @@ void ArtifactTimelineWidget::refreshTracks() {
   }
 }
 
+void ArtifactTimelineWidget::setLayerNameEditable(bool enabled) {
+  if (impl_->layerTimelinePanel_) {
+    impl_->layerTimelinePanel_->setLayerNameEditable(enabled);
+  }
+}
+
+bool ArtifactTimelineWidget::isLayerNameEditable() const {
+  return impl_->layerTimelinePanel_ ? impl_->layerTimelinePanel_->isLayerNameEditable() : false;
+}
+
 void ArtifactTimelineWidget::paintEvent(QPaintEvent *event) {}
 
 void ArtifactTimelineWidget::mousePressEvent(QMouseEvent *event) {}

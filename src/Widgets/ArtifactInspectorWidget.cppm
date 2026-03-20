@@ -80,7 +80,12 @@ import Artifact.Effect.Render.PBRMaterial;
 import Artifact.Effect.LayerTransform.Transform2D;
 import Artifact.Effect.Rasterizer.Blur;
 import Artifact.Effect.Rasterizer.DropShadow;
+import BrightnessEffect;
+import ExposureEffect;
+import HueAndSaturation;
 import Artifact.Effect.Glow;
+import Artifact.Effect.GauusianBlur;
+import Artifact.Effect.Keying.ChromaKey;
 import Artifact.Effect.Wave;
 import Artifact.Effect.Spherize;
 import Artifact.Widgets.AppDialogs;
@@ -670,8 +675,15 @@ void ArtifactInspectorWidget::Impl::setNoLayerState()
           break;
       case EffectPipelineStage::Rasterizer:
            effectMenu.addAction("Blur", [addAndRefresh]() { addAndRefresh(std::make_shared<BlurEffect>()); });
+           effectMenu.addAction("Gaussian Blur", [addAndRefresh]() { addAndRefresh(std::make_shared<GaussianBlur>()); });
            effectMenu.addAction("Glow", [addAndRefresh]() { addAndRefresh(std::make_shared<GlowEffect>()); });
            effectMenu.addAction("Drop Shadow", [addAndRefresh]() { addAndRefresh(std::make_shared<DropShadowEffect>()); });
+           effectMenu.addSeparator();
+           effectMenu.addAction("Brightness / Contrast", [addAndRefresh]() { addAndRefresh(std::make_shared<BrightnessEffect>()); });
+           effectMenu.addAction("Exposure", [addAndRefresh]() { addAndRefresh(std::make_shared<ExposureEffect>()); });
+           effectMenu.addAction("Hue / Saturation", [addAndRefresh]() { addAndRefresh(std::make_shared<HueAndSaturation>()); });
+           effectMenu.addSeparator();
+           effectMenu.addAction("Chroma Key", [addAndRefresh]() { addAndRefresh(std::make_shared<ChromaKeyEffect>()); });
            effectMenu.addAction("Wave", [addAndRefresh]() { addAndRefresh(std::make_shared<WaveEffect>()); });
            effectMenu.addAction("Spherize", [addAndRefresh]() { addAndRefresh(std::make_shared<SpherizeEffect>()); });
            break;
@@ -804,6 +816,9 @@ void ArtifactInspectorWidget::Impl::handleRemoveEffectClicked(int rackIndex)
       impl_->racks[i].listWidget = new QListWidget();
       impl_->racks[i].listWidget->setMaximumHeight(100);
       impl_->racks[i].listWidget->setContextMenuPolicy(Qt::CustomContextMenu);
+      if (impl_->racks[i].listWidget->viewport()) {
+          impl_->racks[i].listWidget->viewport()->setContextMenuPolicy(Qt::CustomContextMenu);
+      }
       
       auto btnLayout = new QHBoxLayout();
       impl_->racks[i].addButton = new QPushButton("+ Add");
@@ -863,6 +878,14 @@ void ArtifactInspectorWidget::Impl::handleRemoveEffectClicked(int rackIndex)
           QListWidgetItem* item = lw->itemAt(pos);
           impl_->showRackContextMenu(i, item, lw->viewport()->mapToGlobal(pos));
       });
+      if (impl_->racks[i].listWidget->viewport()) {
+          QObject::connect(impl_->racks[i].listWidget->viewport(), &QWidget::customContextMenuRequested, this, [this, i](const QPoint& pos) {
+              auto* lw = impl_->racks[i].listWidget;
+              if (!lw) return;
+              QListWidgetItem* item = lw->itemAt(pos);
+              impl_->showRackContextMenu(i, item, lw->viewport()->mapToGlobal(pos));
+          });
+      }
       QObject::connect(impl_->racks[i].listWidget, &QListWidget::currentItemChanged, this, [this](QListWidgetItem*, QListWidgetItem*) {
           QString focusedEffectId;
           for (int rackIndex = 0; rackIndex < 5; ++rackIndex) {

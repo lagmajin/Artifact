@@ -35,6 +35,7 @@ namespace Artifact
   QComboBox* presetCombo = nullptr;  // フォーマットプリセット選択
   QComboBox* formatCombo = nullptr;
   QComboBox* codecCombo = nullptr;
+  QComboBox* backendCombo = nullptr;
   QComboBox* resolutionCombo = nullptr;
   QSpinBox* widthSpin = nullptr;
   QSpinBox* heightSpin = nullptr;
@@ -48,6 +49,7 @@ namespace Artifact
   static void ensureComboContains(QComboBox* combo, const QString& value);
   void loadFormatPresets();
   void applyPresetToEditors(const QString& presetId);
+  static QString normalizeBackend(const QString& backend);
  };
 
  ArtifactRenderOutputSettingDialog::Impl::Impl()
@@ -174,6 +176,18 @@ namespace Artifact
      codecCombo->setCurrentText(preset->codec);
    }
  }
+
+ QString ArtifactRenderOutputSettingDialog::Impl::normalizeBackend(const QString& backend)
+ {
+   const QString value = backend.trimmed().toLower();
+   if (value == QStringLiteral("pipe") || value == QStringLiteral("ffmpeg.exe") || value == QStringLiteral("ffmpeg")) {
+     return QStringLiteral("pipe");
+   }
+   if (value == QStringLiteral("native") || value == QStringLiteral("api") || value == QStringLiteral("ffmpegapi")) {
+     return QStringLiteral("native");
+   }
+   return QStringLiteral("auto");
+ }
 	
 	W_OBJECT_IMPL(ArtifactRenderOutputSettingDialog)
 	
@@ -212,6 +226,12 @@ namespace Artifact
       "H.264", "H.265", "ProRes", "PNG", "EXR"
     });
     formLayout->addRow("Codec:", impl_->codecCombo);
+
+    impl_->backendCombo = new QComboBox();
+    impl_->backendCombo->addItems(QStringList{
+      "auto", "pipe", "native"
+    });
+    formLayout->addRow("Encoder Backend:", impl_->backendCombo);
 
     // Resolution presets + custom width/height
     impl_->resolutionCombo = new QComboBox();
@@ -332,6 +352,21 @@ namespace Artifact
  QString ArtifactRenderOutputSettingDialog::codec() const
  {
    return impl_->codecCombo ? impl_->codecCombo->currentText() : QStringLiteral("H.264");
+ }
+
+ void ArtifactRenderOutputSettingDialog::setEncoderBackend(const QString& backend)
+ {
+   if (!impl_->backendCombo) {
+     return;
+   }
+   const QString normalized = Impl::normalizeBackend(backend);
+   const int index = impl_->backendCombo->findText(normalized);
+   impl_->backendCombo->setCurrentIndex(index >= 0 ? index : 0);
+ }
+
+ QString ArtifactRenderOutputSettingDialog::encoderBackend() const
+ {
+   return impl_->backendCombo ? Impl::normalizeBackend(impl_->backendCombo->currentText()) : QStringLiteral("auto");
  }
 
  void ArtifactRenderOutputSettingDialog::setResolution(int width, int height)

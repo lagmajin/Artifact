@@ -33,6 +33,7 @@
 #include <QInputDialog>
 #include <QFileDialog>
 #include <QTimer>
+#include <QDrag>
 module Artifact.Widgets.LayerPanelWidget;
 
 import std;
@@ -65,6 +66,7 @@ namespace {
   constexpr int kInlineComboMarginY = 2;
   constexpr int kInlineComboReserve = kInlineParentWidth + kInlineBlendWidth + kInlineMatteWidth + kInlineComboGap * 2 + 10;
  constexpr int kLayerNameMinWidth = 120;
+  constexpr char kLayerReorderMimeType[] = "application/x-artifact-layer-reorder";
 
  QIcon loadSvgAsIcon(const QString& path, int size = 16)
  {
@@ -448,6 +450,7 @@ int ArtifactLayerPanelHeaderWidget::totalHeaderHeight() const
   QPointer<QComboBox> inlineMatteEditor;
   QPointer<QLineEdit> inlineNameEditor;
   LayerID editingLayerId;
+  bool layerNameEditable = true;
   QPoint dragStartPos;
   LayerID dragCandidateLayerId;
   LayerID draggedLayerId;
@@ -482,6 +485,20 @@ int ArtifactLayerPanelHeaderWidget::totalHeaderHeight() const
    inlineNameEditor = nullptr;
 
    editingLayerId = LayerID();
+  }
+
+  void setLayerNameEditable(bool enabled, ArtifactLayerPanelWidget* owner)
+  {
+   if (layerNameEditable == enabled) {
+    return;
+   }
+   layerNameEditable = enabled;
+   if (!layerNameEditable) {
+    clearInlineEditors();
+    if (owner) {
+     owner->update();
+    }
+   }
   }
 
   void clearDragState()
@@ -692,9 +709,11 @@ int ArtifactLayerPanelHeaderWidget::totalHeaderHeight() const
          }
         }
         
-        // Start inline editing of the new layer on the next event loop tick
-        QTimer::singleShot(0, this, [this, layerId]() {
-          this->editLayerName(layerId);
+       // Start inline editing of the new layer on the next event loop tick
+       QTimer::singleShot(0, this, [this, layerId]() {
+          if (impl_->layerNameEditable) {
+            this->editLayerName(layerId);
+          }
           // Ensure layer is visible in the scroll area wrapper if possible
           Q_EMIT visibleRowsChanged();
         });
@@ -787,7 +806,10 @@ void ArtifactLayerPanelWidget::updateLayout()
  }
 
  void ArtifactLayerPanelWidget::editLayerName(const LayerID& id)
- {
+  {
+  if (!impl_->layerNameEditable) {
+   return;
+  }
   int idx = layerRowIndex(id);
   if (idx >= 0) {
    impl_->selectedLayerId = id;
@@ -827,6 +849,16 @@ void ArtifactLayerPanelWidget::updateLayout()
     impl_->inlineNameEditor->setFocus();
    }
   }
+ }
+
+ void ArtifactLayerPanelWidget::setLayerNameEditable(bool enabled)
+ {
+  impl_->setLayerNameEditable(enabled, this);
+ }
+
+ bool ArtifactLayerPanelWidget::isLayerNameEditable() const
+ {
+  return impl_->layerNameEditable;
  }
 
 
@@ -1212,10 +1244,10 @@ void ArtifactLayerPanelWidget::updateLayout()
 
 void ArtifactLayerPanelWidget::mouseDoubleClickEvent(QMouseEvent* event)
 {
-  if (event->button() != Qt::LeftButton) {
-   QWidget::mouseDoubleClickEvent(event);
-   return;
-  }
+   if (event->button() != Qt::LeftButton) {
+    QWidget::mouseDoubleClickEvent(event);
+    return;
+   }
   const int rowH = kLayerRowHeight;
   const int colW = kLayerColumnWidth;
   const int idx = event->pos().y() / rowH;
@@ -1234,20 +1266,25 @@ void ArtifactLayerPanelWidget::mouseDoubleClickEvent(QMouseEvent* event)
    return;
   }
 
-  if (row.hasChildren) {
-   const int nameStartX = colW * kLayerPropertyColumnCount;
-   const int nameX = nameStartX + row.depth * 14;
-   const QRect treeHitRect(nameX, idx * rowH, std::max(40, width() - nameX), rowH);
-   if (treeHitRect.contains(event->pos())) {
+   if (row.hasChildren) {
+    const int nameStartX = colW * kLayerPropertyColumnCount;
+    const int nameX = nameStartX + row.depth * 14;
+    const QRect treeHitRect(nameX, idx * rowH, std::max(40, width() - nameX), rowH);
+    if (treeHitRect.contains(event->pos())) {
     const QString idStr = layer->id().toString();
     impl_->expandedByLayerId[idStr] = !impl_->expandedByLayerId.value(idStr, true);
     updateLayout();
     event->accept();
     return;
+    }
    }
-  }
 
-  const int nameStartX = colW * kLayerPropertyColumnCount;
+   if (!impl_->layerNameEditable) {
+    event->accept();
+    return;
+   }
+
+   const int nameStartX = colW * kLayerPropertyColumnCount;
   const bool showInlineCombos = width() >= (kLayerColumnWidth * kLayerPropertyColumnCount + kInlineComboReserve + kLayerNameMinWidth);
   const int parentRectX = width() - kInlineComboReserve;
   const int nameX = nameStartX + row.depth * 14 + (row.hasChildren ? 16 : 4);
@@ -1293,6 +1330,18 @@ void ArtifactLayerPanelWidget::mouseDoubleClickEvent(QMouseEvent* event)
     const int dragDistance = (event->pos() - impl_->dragStartPos).manhattanLength();
     if (impl_->draggedLayerId.isNil() && dragDistance >= QApplication::startDragDistance()) {
       impl_->draggedLayerId = impl_->dragCandidateLayerId;
+      auto* mime = new QMimeData();
+      mime->setData(kLayerReorderMimeType, impl_->draggedLayerId.toString().toUtf8());
+      mime->setText(impl_->draggedLayerId.toString());
+      QDrag drag(this);
+      drag.setMimeData(mime);
+      drag.setHotSpot(event->pos());
+      drag.exec(Qt::MoveAction);
+      impl_->clearDragState();
+      unsetCursor();
+      update();
+      event->accept();
+      return;
     }
     if (!impl_->draggedLayerId.isNil()) {
       const int nextInsertRow = impl_->insertionVisibleRowForY(event->pos().y());
@@ -1358,16 +1407,16 @@ void ArtifactLayerPanelWidget::mouseDoubleClickEvent(QMouseEvent* event)
       }
      }
 
-     const int targetVisibleIndex = std::clamp(
-      impl_->layerCountBeforeVisibleRowExcluding(impl_->dragInsertVisibleRow, impl_->draggedLayerId),
-      0,
-      static_cast<int>(remainingVisibleLayerIds.size()));
+      const int targetVisibleIndex = std::clamp(
+       impl_->layerCountBeforeVisibleRowExcluding(impl_->dragInsertVisibleRow, impl_->draggedLayerId),
+       0,
+       static_cast<int>(visibleLayerIds.size()));
 
      int newIndex = oldIndex;
-     if (targetVisibleIndex >= static_cast<int>(remainingVisibleLayerIds.size())) {
+     if (targetVisibleIndex >= static_cast<int>(visibleLayerIds.size())) {
       newIndex = static_cast<int>(allLayers.size()) - 1;
      } else {
-      const LayerID targetLayerId = remainingVisibleLayerIds[targetVisibleIndex];
+      const LayerID targetLayerId = visibleLayerIds[targetVisibleIndex];
       int targetIndex = -1;
       for (int i = 0; i < allLayers.size(); ++i) {
        if (allLayers[i] && allLayers[i]->id() == targetLayerId) {
@@ -1480,7 +1529,7 @@ void ArtifactLayerPanelWidget::keyPressEvent(QKeyEvent* event)
    }
   }
 
-  if (event->key() == Qt::Key_F2 && !impl_->inlineNameEditor) {
+  if (impl_->layerNameEditable && event->key() == Qt::Key_F2 && !impl_->inlineNameEditor) {
    int selectedIdx = -1;
    for (int i = 0; i < impl_->visibleRows.size(); ++i) {
     if (impl_->visibleRows[i].layer && impl_->visibleRows[i].layer->id() == impl_->selectedLayerId) {
@@ -1777,10 +1826,15 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent*)
 
  void ArtifactLayerPanelWidget::dragEnterEvent(QDragEnterEvent* e)
  {
-   const QMimeData* mime = e->mimeData();
-   if (mime->hasUrls()) {
-     for (const auto& url : mime->urls()) {
-       if (url.isLocalFile()) {
+  const QMimeData* mime = e->mimeData();
+  if (mime && mime->hasFormat(kLayerReorderMimeType)) {
+    e->acceptProposedAction();
+    update();
+    return;
+  }
+  if (mime->hasUrls()) {
+    for (const auto& url : mime->urls()) {
+      if (url.isLocalFile()) {
          const QString filePath = url.toLocalFile();
          const LayerType type = inferLayerTypeFromFile(filePath);
          if (type == LayerType::Image || type == LayerType::Video || type == LayerType::Audio) {
@@ -1810,18 +1864,25 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent*)
 
  void ArtifactLayerPanelWidget::dragMoveEvent(QDragMoveEvent* e)
  {
-   const QMimeData* mime = e->mimeData();
-   if (mime && (mime->hasUrls() || mime->hasText())) {
-     e->acceptProposedAction();
-   } else {
+  const QMimeData* mime = e->mimeData();
+  if (mime && mime->hasFormat(kLayerReorderMimeType)) {
+    impl_->dragInsertVisibleRow = impl_->insertionVisibleRowForY(e->position().y());
+    e->acceptProposedAction();
+    update();
+    return;
+  }
+  if (mime && (mime->hasUrls() || mime->hasText())) {
+    e->acceptProposedAction();
+  } else {
      e->ignore();
    }
  }
 
  void ArtifactLayerPanelWidget::dragLeaveEvent(QDragLeaveEvent* e)
  {
-   e->accept();
-   update();  // ビジュアルフィードバック解除
+  e->accept();
+  impl_->dragInsertVisibleRow = -1;
+  update();  // ビジュアルフィードバック解除
  }
 
  void ArtifactLayerPanelWidget::dropEvent(QDropEvent* event)
@@ -1829,6 +1890,71 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent*)
   const QMimeData* mime = event->mimeData();
   if (!mime) {
     event->ignore();
+    return;
+  }
+
+  if (mime->hasFormat(kLayerReorderMimeType)) {
+    auto* svc = ArtifactProjectService::instance();
+    auto comp = safeCompositionLookup(impl_->compositionId);
+    if (svc && comp && !impl_->draggedLayerId.isNil()) {
+      QVector<LayerID> visibleLayerIds;
+      visibleLayerIds.reserve(impl_->visibleRows.size());
+      for (const auto& row : impl_->visibleRows) {
+        if (row.kind == Impl::RowKind::Layer && row.layer) {
+          visibleLayerIds.push_back(row.layer->id());
+        }
+      }
+
+      const auto allLayers = comp->allLayer();
+      int oldIndex = -1;
+      for (int i = 0; i < allLayers.size(); ++i) {
+        if (allLayers[i] && allLayers[i]->id() == impl_->draggedLayerId) {
+          oldIndex = i;
+          break;
+        }
+      }
+
+      if (oldIndex >= 0 && !visibleLayerIds.isEmpty()) {
+        QVector<LayerID> remainingVisibleLayerIds;
+        remainingVisibleLayerIds.reserve(visibleLayerIds.size());
+        for (const auto& layerId : visibleLayerIds) {
+          if (layerId != impl_->draggedLayerId) {
+            remainingVisibleLayerIds.push_back(layerId);
+          }
+        }
+
+        const int targetVisibleIndex = std::clamp(
+          impl_->layerCountBeforeVisibleRowExcluding(impl_->dragInsertVisibleRow, impl_->draggedLayerId),
+          0,
+          static_cast<int>(visibleLayerIds.size()));
+
+        int newIndex = oldIndex;
+        if (targetVisibleIndex >= static_cast<int>(visibleLayerIds.size())) {
+          newIndex = static_cast<int>(allLayers.size()) - 1;
+        } else {
+          const LayerID targetLayerId = visibleLayerIds[targetVisibleIndex];
+          int targetIndex = -1;
+          for (int i = 0; i < allLayers.size(); ++i) {
+            if (allLayers[i] && allLayers[i]->id() == targetLayerId) {
+              targetIndex = i;
+              break;
+            }
+          }
+          if (targetIndex >= 0) {
+            newIndex = targetIndex;
+          }
+        }
+
+        newIndex = std::clamp(newIndex, 0, std::max(0, static_cast<int>(allLayers.size()) - 1));
+        if (newIndex != oldIndex) {
+          svc->moveLayerInCurrentComposition(impl_->draggedLayerId, newIndex);
+          updateLayout();
+        }
+      }
+    }
+    impl_->clearDragState();
+    event->acceptProposedAction();
+    update();
     return;
   }
 
@@ -1948,15 +2074,27 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent*)
  }
 
  ArtifactLayerTimelinePanelWrapper::~ArtifactLayerTimelinePanelWrapper()
- {
-  delete impl_;
- }
+  {
+   delete impl_;
+  }
 
- void ArtifactLayerTimelinePanelWrapper::setComposition(const CompositionID& id)
- {
-  impl_->id = id;
-  impl_->panel->setComposition(id);
- }
+  void ArtifactLayerTimelinePanelWrapper::setComposition(const CompositionID& id)
+  {
+   impl_->id = id;
+   impl_->panel->setComposition(id);
+  }
+
+  void ArtifactLayerTimelinePanelWrapper::setLayerNameEditable(bool enabled)
+  {
+   if (impl_ && impl_->panel) {
+    impl_->panel->setLayerNameEditable(enabled);
+   }
+  }
+
+  bool ArtifactLayerTimelinePanelWrapper::isLayerNameEditable() const
+  {
+   return impl_ && impl_->panel ? impl_->panel->isLayerNameEditable() : false;
+  }
 
  QScrollBar* ArtifactLayerTimelinePanelWrapper::verticalScrollBar() const
  {

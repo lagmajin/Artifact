@@ -58,6 +58,7 @@ BrightnessEffect::BrightnessEffect()
     : ArtifactAbstractEffect(), impl_(new Impl()) {
     setEffectID(UniString("effect.colorcorrection.brightness"));
     setDisplayName(UniString("Brightness / Contrast"));
+    setPipelineStage(EffectPipelineStage::Rasterizer);
 }
 
 BrightnessEffect::~BrightnessEffect() {

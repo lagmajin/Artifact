@@ -1,4 +1,4 @@
-module;
+﻿module;
 
 #include <cmath>
 #include <algorithm>
@@ -12,8 +12,6 @@ module;
 #include <set>
 #include <unordered_set>
 #include <memory>
-#include <algorithm>
-#include <cmath>
 #include <functional>
 #include <optional>
 #include <utility>
@@ -37,9 +35,11 @@ module;
 #include <numeric>
 #include <regex>
 #include <random>
+
+#include <QList>
 module ExposureEffect;
 
-
+import std;
 
 
 
@@ -56,6 +56,7 @@ ExposureEffect::ExposureEffect()
     : ArtifactAbstractEffect(), impl_(new Impl()) {
     setEffectID(UniString("effect.colorcorrection.exposure"));
     setDisplayName(UniString("Exposure"));
+    setPipelineStage(EffectPipelineStage::Rasterizer);
 }
 
 ExposureEffect::~ExposureEffect() {
@@ -122,11 +123,24 @@ void ExposureEffect::apply(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWit
 }
 
 std::vector<AbstractProperty> ExposureEffect::getProperties() const {
-    return {
-        {"Exposure", impl_->exposure},
-        {"Offset", impl_->offset},
-        {"Gamma", impl_->gammaCorrection}
-    };
+    std::vector<AbstractProperty> props(3);
+
+    props[0].setName("Exposure");
+    props[0].setType(ArtifactCore::PropertyType::Float);
+    props[0].setDefaultValue(QVariant(static_cast<double>(impl_->exposure)));
+    props[0].setValue(QVariant(static_cast<double>(impl_->exposure)));
+
+    props[1].setName("Offset");
+    props[1].setType(ArtifactCore::PropertyType::Float);
+    props[1].setDefaultValue(QVariant(static_cast<double>(impl_->offset)));
+    props[1].setValue(QVariant(static_cast<double>(impl_->offset)));
+
+    props[2].setName("Gamma");
+    props[2].setType(ArtifactCore::PropertyType::Float);
+    props[2].setDefaultValue(QVariant(static_cast<double>(impl_->gammaCorrection)));
+    props[2].setValue(QVariant(static_cast<double>(impl_->gammaCorrection)));
+
+    return props;
 }
 
 void ExposureEffect::setPropertyValue(const UniString& name, const QVariant& value) {

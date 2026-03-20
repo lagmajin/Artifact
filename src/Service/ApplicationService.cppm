@@ -1,72 +1,138 @@
 module;
-
-#include <iostream>
-#include <vector>
-#include <string>
-#include <map>
-#include <unordered_map>
-#include <set>
-#include <unordered_set>
+#include <wobjectimpl.h>
+#include <QObject>
+#include <QDebug>
 #include <memory>
-#include <algorithm>
-#include <cmath>
-#include <functional>
-#include <optional>
-#include <utility>
-#include <array>
-#include <mutex>
-#include <thread>
-#include <chrono>
-#include <filesystem>
-#include <fstream>
-#include <sstream>
-#include <stdexcept>
-#include <type_traits>
-#include <variant>
-#include <any>
-#include <atomic>
-#include <condition_variable>
-#include <queue>
-#include <deque>
-#include <list>
-#include <tuple>
-#include <numeric>
-#include <regex>
-#include <random>
+
 module Artifact.Service.Application;
 
-
-
-
 import Artifact.Application.Manager;
+import Artifact.Service.Project;
+import Artifact.Service.ActiveContext;
 import Artifact.Service.ClipboardManager;
+import Artifact.Tool.Service;
+import Artifact.Tool.Manager;
 
-namespace Artifact
-{
- class ApplicationService::Impl
- {
- private:;
- 	
- public:
-  Impl();
-  ~Impl()=default;
-  static ArtifactApplicationManager* instance();
- };
+namespace Artifact {
 
- ArtifactApplicationManager* ApplicationService::Impl::instance()
- {
+W_OBJECT_IMPL(ApplicationService)
 
-  return ArtifactApplicationManager::instance();
- }
-
- ApplicationService::ApplicationService()
- {
-
- }
-
- ApplicationService::~ApplicationService()
- {
-
- }
-
+class ApplicationService::Impl {
+public:
+ bool initialized_ = false;
+ std::unique_ptr<ArtifactClipboardService> clipboardService_;
+ std::unique_ptr<ArtifactToolService> toolService_;
 };
+
+ApplicationService::ApplicationService(QObject* parent)
+ : QObject(parent), impl_(new Impl())
+{
+}
+
+ApplicationService::~ApplicationService()
+{
+ if (impl_->initialized_) {
+  shutdown();
+ }
+ delete impl_;
+}
+
+bool ApplicationService::initialize()
+{
+ if (impl_->initialized_) {
+  qWarning() << "[ApplicationService] already initialized";
+  return true;
+ }
+
+ // Create owned services
+ impl_->clipboardService_ = std::make_unique<ArtifactClipboardService>();
+ impl_->toolService_ = std::make_unique<ArtifactToolService>();
+
+ // Bind tool service to existing tool manager if available
+ if (auto* app = ArtifactApplicationManager::instance()) {
+  if (auto* toolMgr = app->toolManager()) {
+   impl_->toolService_->setToolManager(toolMgr);
+  }
+ }
+
+ connectServices();
+
+ impl_->initialized_ = true;
+ qDebug() << "[ApplicationService] initialized";
+ initialized();
+ return true;
+}
+
+void ApplicationService::shutdown()
+{
+ if (!impl_->initialized_) return;
+
+ shutdownRequested();
+
+ impl_->toolService_.reset();
+ impl_->clipboardService_.reset();
+
+ impl_->initialized_ = false;
+ qDebug() << "[ApplicationService] shutdown";
+}
+
+bool ApplicationService::isInitialized() const
+{
+ return impl_->initialized_;
+}
+
+ArtifactApplicationManager* ApplicationService::applicationManager() const
+{
+ return ArtifactApplicationManager::instance();
+}
+
+ArtifactProjectService* ApplicationService::projectService() const
+{
+ if (auto* app = ArtifactApplicationManager::instance()) {
+  return app->projectService();
+ }
+ return nullptr;
+}
+
+ArtifactActiveContextService* ApplicationService::activeContextService() const
+{
+ if (auto* app = ArtifactApplicationManager::instance()) {
+  return app->activeContextService();
+ }
+ return nullptr;
+}
+
+ArtifactClipboardService* ApplicationService::clipboardService() const
+{
+ return impl_->clipboardService_.get();
+}
+
+ArtifactToolService* ApplicationService::toolService() const
+{
+ return impl_->toolService_.get();
+}
+
+QString ApplicationService::applicationVersion() const
+{
+ return QStringLiteral("1.0.0");
+}
+
+bool ApplicationService::isProjectOpen() const
+{
+ return projectService() != nullptr;
+}
+
+void ApplicationService::connectServices()
+{
+ // Wire tool manager signals through tool service if available
+ if (auto* app = ArtifactApplicationManager::instance()) {
+  if (auto* toolMgr = app->toolManager()) {
+   connect(toolMgr, &ArtifactToolManager::toolChanged,
+           impl_->toolService_.get(), [this](ToolType type) {
+            emit impl_->toolService_->toolChanged(type);
+           });
+  }
+ }
+}
+
+}

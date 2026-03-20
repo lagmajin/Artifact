@@ -11,8 +11,11 @@
 #include <QFocusEvent>
 #include <QShowEvent>
 #include <QCloseEvent>
+#include <QRectF>
 #include <QTimer>
 #include <QDebug>
+#include <cmath>
+#include <algorithm>
 #include <wobjectimpl.h>
 
 module Artifact.Widgets.CompositionRenderWidget;
@@ -40,6 +43,70 @@ namespace Artifact {
 
  W_OBJECT_IMPL(ArtifactCompositionRenderWidget)
 
+ namespace {
+ enum class LayerDragMode {
+  None,
+  Move,
+  ScaleTL,
+  ScaleTR,
+  ScaleBL,
+  ScaleBR
+ };
+
+ LayerDragMode hitTestLayerDragMode(const ArtifactAbstractLayerPtr& layer,
+                                    const QPointF& viewportPos,
+                                    ArtifactIRenderer* renderer)
+ {
+  if (!layer || !renderer) {
+   return LayerDragMode::None;
+  }
+
+  const QRectF bbox = layer->transformedBoundingBox();
+  if (!bbox.isValid() || bbox.width() <= 0.0 || bbox.height() <= 0.0) {
+   return LayerDragMode::None;
+  }
+
+  constexpr float kHandleHitSize = 16.0f;
+  const auto containsHandle = [&](float x, float y) {
+   const auto p = renderer->canvasToViewport({x, y});
+   const QRectF rect(p.x - kHandleHitSize * 0.5f, p.y - kHandleHitSize * 0.5f,
+                     kHandleHitSize, kHandleHitSize);
+   return rect.contains(viewportPos);
+  };
+
+  if (containsHandle((float)bbox.left(), (float)bbox.top())) {
+   return LayerDragMode::ScaleTL;
+  }
+  if (containsHandle((float)bbox.right(), (float)bbox.top())) {
+   return LayerDragMode::ScaleTR;
+  }
+  if (containsHandle((float)bbox.left(), (float)bbox.bottom())) {
+   return LayerDragMode::ScaleBL;
+  }
+ if (containsHandle((float)bbox.right(), (float)bbox.bottom())) {
+   return LayerDragMode::ScaleBR;
+  }
+
+  return LayerDragMode::Move;
+ }
+
+ Qt::CursorShape cursorForLayerDragMode(LayerDragMode mode, bool dragging)
+ {
+  switch (mode) {
+  case LayerDragMode::Move:
+   return dragging ? Qt::ClosedHandCursor : Qt::OpenHandCursor;
+  case LayerDragMode::ScaleTL:
+  case LayerDragMode::ScaleBR:
+   return Qt::SizeFDiagCursor;
+  case LayerDragMode::ScaleTR:
+  case LayerDragMode::ScaleBL:
+   return Qt::SizeBDiagCursor;
+  default:
+   return Qt::ArrowCursor;
+  }
+ }
+ } // namespace
+
  class ArtifactCompositionRenderWidget::Impl {
  public:
   std::unique_ptr<ArtifactIRenderer> renderer_;
@@ -55,8 +122,14 @@ namespace Artifact {
   ArtifactCore::LayerID selectedLayerId_ = ArtifactCore::LayerID::Nil();
   bool isDraggingLayer_ = false;
   bool isPanningViewport_ = false;
+  LayerDragMode dragMode_ = LayerDragMode::None;
   QPointF dragStartCanvasPos_;
-  QPointF lastCanvasMousePos_;
+  QPointF dragStartLayerPos_;
+  QRectF dragStartBoundingBox_;
+  float dragStartScaleX_ = 1.0f;
+  float dragStartScaleY_ = 1.0f;
+  int64_t dragFrame_ = 0;
+  QPointF dragAppliedDelta_;
   
   Impl() = default;
   ~Impl() { destroy(); }
@@ -119,6 +192,51 @@ namespace Artifact {
   float snapValue(float val, float target, float threshold) {
    if (std::abs(val - target) < threshold) return target;
    return val;
+  }
+
+  void updateHoverCursor(const QPointF& viewportPos)
+  {
+   if (isPanningViewport_) {
+    widget_->setCursor(Qt::ClosedHandCursor);
+    return;
+   }
+
+   if (isDraggingLayer_) {
+    widget_->setCursor(cursorForLayerDragMode(dragMode_, true));
+    return;
+   }
+
+   if (!renderer_) {
+    widget_->setCursor(Qt::ArrowCursor);
+    return;
+   }
+
+   std::lock_guard<std::mutex> lock(renderMutex_);
+   auto comp = previewPipeline_.composition();
+   if (!comp) {
+    auto* tm = ArtifactApplicationManager::instance()->toolManager();
+    widget_->setCursor(tm && tm->activeTool() == ToolType::Hand ? Qt::OpenHandCursor : Qt::ArrowCursor);
+    return;
+   }
+
+   auto cPos = renderer_->viewportToCanvas({(float)viewportPos.x(), (float)viewportPos.y()});
+   ArtifactAbstractLayerPtr hitLayer = nullptr;
+   const auto layers = comp->allLayer();
+   for (int i = (int)layers.size() - 1; i >= 0; --i) {
+    if (!layers[i] || !layers[i]->isVisible()) continue;
+    if (layers[i]->transformedBoundingBox().contains(cPos.x, cPos.y)) {
+     hitLayer = layers[i];
+     break;
+    }
+   }
+
+   if (hitLayer) {
+    widget_->setCursor(cursorForLayerDragMode(hitTestLayerDragMode(hitLayer, viewportPos, renderer_.get()), false));
+    return;
+   }
+
+   auto* tm = ArtifactApplicationManager::instance()->toolManager();
+   widget_->setCursor(tm && tm->activeTool() == ToolType::Hand ? Qt::OpenHandCursor : Qt::ArrowCursor);
   }
  };
 
@@ -243,6 +361,13 @@ namespace Artifact {
   QWidget::focusOutEvent(event);
  }
 
+ void ArtifactCompositionRenderWidget::leaveEvent(QEvent* event) {
+  if (!impl_->isPanningViewport_ && !impl_->isDraggingLayer_) {
+   unsetCursor();
+  }
+  QWidget::leaveEvent(event);
+ }
+
  void ArtifactCompositionRenderWidget::mouseDoubleClickEvent(QMouseEvent* event) {
   resetView();
   event->accept();
@@ -299,10 +424,11 @@ namespace Artifact {
                   menu.addAction("Send to Back", [hitLayer, comp]() { comp->sendToBack(hitLayer->id()); });
                   menu.exec(event->globalPosition().toPoint());
               }
-          }
+      }
       }
       event->accept();
-  } else if (event->button() == Qt::LeftButton && tm->activeTool() == ToolType::Selection) {
+      impl_->updateHoverCursor(event->position());
+  } else if (event->button() == Qt::LeftButton) {
    if (impl_->renderer_) {
     std::lock_guard<std::mutex> lock(impl_->renderMutex_);
     auto cPos = impl_->renderer_->viewportToCanvas({(float)event->position().x(), (float)event->position().y()});
@@ -325,35 +451,57 @@ namespace Artifact {
           ArtifactApplicationManager::instance()->layerSelectionManager()->selectLayer(hitLayer);
       }
       impl_->selectedLayerId_ = hitLayer->id();
-      impl_->isDraggingLayer_ = true;
+      impl_->previewPipeline_.setSelectedLayerId(impl_->selectedLayerId_);
+
+      if (tm->activeTool() != ToolType::Selection) {
+          impl_->isDraggingLayer_ = false;
+          impl_->dragMode_ = LayerDragMode::None;
+          impl_->updateHoverCursor(event->position());
+          event->accept();
+          return;
+      }
+
       impl_->dragStartCanvasPos_ = QPointF(cPos.x, cPos.y);
-      impl_->lastCanvasMousePos_ = QPointF(cPos.x, cPos.y);
+      impl_->dragStartLayerPos_ = QPointF(hitLayer->transform3D().positionX(),
+                                          hitLayer->transform3D().positionY());
+      impl_->dragStartScaleX_ = hitLayer->transform3D().scaleX();
+      impl_->dragStartScaleY_ = hitLayer->transform3D().scaleY();
+      impl_->dragStartBoundingBox_ = hitLayer->transformedBoundingBox();
+      impl_->dragFrame_ = comp->framePosition().framePosition();
+      impl_->dragAppliedDelta_ = QPointF(0.0, 0.0);
+      impl_->dragMode_ = hitTestLayerDragMode(hitLayer, event->position(), impl_->renderer_.get());
+      if (impl_->dragMode_ == LayerDragMode::None) {
+       impl_->dragMode_ = LayerDragMode::Move;
+      }
+      impl_->isDraggingLayer_ = true;
      } else {
       if (!(event->modifiers() & Qt::ShiftModifier)) {
           ArtifactApplicationManager::instance()->layerSelectionManager()->clearSelection();
           impl_->selectedLayerId_ = ArtifactCore::LayerID::Nil();
+          impl_->previewPipeline_.setSelectedLayerId(impl_->selectedLayerId_);
       }
       impl_->isDraggingLayer_ = false;
+      impl_->dragMode_ = LayerDragMode::None;
      }
-     impl_->previewPipeline_.setSelectedLayerId(impl_->selectedLayerId_);
     }
    }
+   impl_->updateHoverCursor(event->position());
    event->accept();
   }
  }
 
- void ArtifactCompositionRenderWidget::mouseReleaseEvent(QMouseEvent* event) {
+void ArtifactCompositionRenderWidget::mouseReleaseEvent(QMouseEvent* event) {
   if (impl_->isDraggingLayer_) {
    if (impl_->renderer_) {
     std::lock_guard<std::mutex> lock(impl_->renderMutex_);
-    auto cPos = impl_->renderer_->viewportToCanvas({(float)event->position().x(), (float)event->position().y()});
-    QPointF totalDelta = QPointF(cPos.x, cPos.y) - impl_->dragStartCanvasPos_;
+    QPointF totalDelta = impl_->dragAppliedDelta_;
     
     // Applying snapping/constraints on total delta if Shift was held during release? 
     // Usually handled during Move.
     
     auto comp = impl_->previewPipeline_.composition();
-    if (comp && !impl_->selectedLayerId_.isNil() && (std::abs(totalDelta.x()) > 0.01 || std::abs(totalDelta.y()) > 0.01)) {
+    if (comp && !impl_->selectedLayerId_.isNil() && impl_->dragMode_ == LayerDragMode::Move &&
+        (std::abs(totalDelta.x()) > 0.01 || std::abs(totalDelta.y()) > 0.01)) {
      auto layer = comp->layerById(impl_->selectedLayerId_);
      if (layer) {
       // Final position snapshot for undo
@@ -375,13 +523,15 @@ namespace Artifact {
       layer->changed(); // Final notification
      }
     }
+    impl_->dragAppliedDelta_ = totalDelta;
    }
   }
   auto* tm = ArtifactApplicationManager::instance()->toolManager();
   if (tm->activeTool() == ToolType::Hand) setCursor(Qt::OpenHandCursor);
-  else setCursor(Qt::ArrowCursor);
+  else impl_->updateHoverCursor(event->position());
   impl_->isDraggingLayer_ = false;
   impl_->isPanningViewport_ = false;
+  impl_->dragMode_ = LayerDragMode::None;
   event->accept();
  }
 
@@ -430,38 +580,66 @@ namespace Artifact {
     auto comp = impl_->previewPipeline_.composition();
     if (comp && !impl_->selectedLayerId_.isNil()) {
      auto layer = comp->layerById(impl_->selectedLayerId_);
-     if (layer) {
+      if (layer) {
       auto& t3 = layer->transform3D();
       ArtifactCore::RationalTime t0(comp->framePosition().framePosition(), 30000);
-      
-      // Calculate new position based on original start + constrained/snapped delta
-      // We actually need the INITIAL position before drag. Let's add that to Impl.
-      // For now, it's safer to just move relative to PREVIOUS mouse pos if no constraints.
-      // But for constraints, we NEED the original start position.
-      
-      // Let's use lastCanvasMousePos_ for non-constrained but it accumulates error.
-      // Best is to store initialLayerPos_ in Impl.
-      
-      // ... I will use relative move for now but fix it in next iteration if needed.
-      // Actually, let's just use the current logic but with totalDelta from DragStart.
-      
-      // Wait, I need the layer's position AT drag start.
-      // For now, I'll just use the delta.
-      
-      // REAL movement
-      static QPointF layerPosAtStart; 
-      // I should have initialized this in MousePress.
-      // I'll skip complex start pos tracking for this quick enhancement.
-      
-      t3.setPosition(t0, t3.positionX() + (float)(currentCanvasPos.x() - impl_->lastCanvasMousePos_.x()), 
-                         t3.positionY() + (float)(currentCanvasPos.y() - impl_->lastCanvasMousePos_.y()));
-      
-      impl_->lastCanvasMousePos_ = currentCanvasPos;
-      layer->changed(); // Notify UI (Inspector etc)
+      if (impl_->dragMode_ == LayerDragMode::Move) {
+       QPointF moveDelta = totalDelta;
+       t3.setPosition(t0,
+                      impl_->dragStartLayerPos_.x() + static_cast<float>(moveDelta.x()),
+                      impl_->dragStartLayerPos_.y() + static_cast<float>(moveDelta.y()));
+       layer->setDirty(LayerDirtyFlag::Transform);
+       layer->changed();
+      } else {
+       if (std::abs(totalDelta.x()) < 0.01 && std::abs(totalDelta.y()) < 0.01) {
+        impl_->dragAppliedDelta_ = totalDelta;
+        event->accept();
+        return;
+       }
+       const QRectF startBox = impl_->dragStartBoundingBox_;
+       if (startBox.isValid() && startBox.width() > 0.0 && startBox.height() > 0.0) {
+        double newW = startBox.width();
+        double newH = startBox.height();
+        switch (impl_->dragMode_) {
+        case LayerDragMode::ScaleTL:
+         newW -= totalDelta.x();
+         newH -= totalDelta.y();
+         break;
+        case LayerDragMode::ScaleTR:
+         newW += totalDelta.x();
+         newH -= totalDelta.y();
+         break;
+        case LayerDragMode::ScaleBL:
+         newW -= totalDelta.x();
+         newH += totalDelta.y();
+         break;
+        case LayerDragMode::ScaleBR:
+         newW += totalDelta.x();
+         newH += totalDelta.y();
+         break;
+        default:
+         break;
+        }
+
+        const double safeStartW = std::max(1.0, startBox.width());
+        const double safeStartH = std::max(1.0, startBox.height());
+        const double safeW = std::max(1.0, newW);
+        const double safeH = std::max(1.0, newH);
+        const float scaleFactorX = static_cast<float>(safeW / safeStartW);
+        const float scaleFactorY = static_cast<float>(safeH / safeStartH);
+        t3.setScale(t0, impl_->dragStartScaleX_ * scaleFactorX,
+                    impl_->dragStartScaleY_ * scaleFactorY);
+        layer->setDirty(LayerDirtyFlag::Transform);
+        layer->changed();
+       }
+      }
      }
-    }
+   }
+   impl_->dragAppliedDelta_ = totalDelta;
    }
    event->accept();
+  } else {
+   impl_->updateHoverCursor(event->position());
   }
  }
 

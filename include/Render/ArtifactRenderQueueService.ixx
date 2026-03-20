@@ -97,6 +97,8 @@ export namespace Artifact
     int height,
     double fps,
     int bitrateKbps);
+  QString jobEncoderBackendAt(int index) const;
+  void setJobEncoderBackendAt(int index, const QString& backend);
   QString jobErrorMessageAt(int index) const;
   bool jobOverlayTransformAt(int index, float* offsetX, float* offsetY, float* scale, float* rotationDeg) const;
   void setJobOverlayTransform(int index, float offsetX, float offsetY, float scale, float rotationDeg);

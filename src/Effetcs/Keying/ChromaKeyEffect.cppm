@@ -177,6 +177,7 @@ ChromaKeyEffect::ChromaKeyEffect() : ArtifactAbstractEffect() {
     setCPUImpl(typedCpuImpl_);
     setDisplayName("Chroma Key");
     setEffectID("Effect.Keying.ChromaKey");
+    setPipelineStage(EffectPipelineStage::Rasterizer);
 }
 
 void ChromaKeyEffect::setKeyColor(const FloatRGBA& color) {

@@ -1,5 +1,6 @@
 module;
 #include <QWidget>
+#include <QEvent>
 #include <wobjectdefs.h>
 
 export module Artifact.Widgets.CompositionRenderWidget;
@@ -21,6 +22,7 @@ export namespace Artifact {
   void paintEvent(QPaintEvent* event) override;
   void showEvent(QShowEvent* event) override;
   void closeEvent(QCloseEvent* event) override;
+  void leaveEvent(QEvent* event) override;
   
   void mouseDoubleClickEvent(QMouseEvent* event) override;
   void wheelEvent(QWheelEvent* event) override;
