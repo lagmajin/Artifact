@@ -45,6 +45,7 @@ export module Undo.UndoManager;
 import Utils.String.UniString;
 import Artifact.Effect.Abstract;
 import Artifact.Layer.Abstract;
+import Artifact.Composition.Abstract;
 
 export namespace Artifact {
  using namespace ArtifactCore;
@@ -84,26 +85,27 @@ private:
 
 class AddLayerCommand : public UndoCommand {
 public:
-    AddLayerCommand(std::shared_ptr<void> comp, ArtifactAbstractLayerPtr layer, bool atTop = true);
+    AddLayerCommand(ArtifactCompositionPtr comp, ArtifactAbstractLayerPtr layer, bool atTop = true);
     void undo() override;
     void redo() override;
     QString label() const override;
 private:
-    std::shared_ptr<void> comp_;
+    ArtifactCompositionWeakPtr comp_;
     ArtifactAbstractLayerPtr layer_;
     bool atTop_;
+    int savedIndex_ = -1;
 };
 
 class RemoveLayerCommand : public UndoCommand {
 public:
-    RemoveLayerCommand(std::shared_ptr<void> comp, ArtifactAbstractLayerPtr layer);
+    RemoveLayerCommand(ArtifactCompositionPtr comp, ArtifactAbstractLayerPtr layer);
     void undo() override;
     void redo() override;
     QString label() const override;
 private:
-    std::shared_ptr<void> comp_;
+    ArtifactCompositionWeakPtr comp_;
     ArtifactAbstractLayerPtr layer_;
-    int originalIndex_;
+    int originalIndex_ = -1;
 };
 
 class UndoManager : public QObject {

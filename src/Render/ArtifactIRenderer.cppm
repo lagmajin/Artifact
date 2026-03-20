@@ -6,6 +6,7 @@
 #include <array>
 #include <cstring>
 #include <cstdint>
+#include <mutex>
 #include <QImage>
 #include <QDebug>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/RenderDevice.h>
@@ -53,6 +54,12 @@ namespace Artifact
   PrimitiveRenderer2D primitiveRenderer_;
 
   RefCntAutoPtr<ITexture> m_layerRT;
+  mutable RefCntAutoPtr<ITexture> m_readbackStagingTex;
+  mutable RefCntAutoPtr<IFence> m_readbackFence;
+  mutable Uint32 m_readbackStagingWidth = 0;
+  mutable Uint32 m_readbackStagingHeight = 0;
+  mutable Uint64 m_readbackFenceValue = 0;
+  mutable std::mutex m_readbackMutex;
   QWidget* widget_ = nullptr;
 
   bool m_initialized = false;
@@ -244,6 +251,8 @@ namespace Artifact
 
  QImage ArtifactIRenderer::Impl::readbackToImage() const
  {
+  std::lock_guard<std::mutex> guard(m_readbackMutex);
+
   auto ctx    = deviceManager_.immediateContext();
   auto device = deviceManager_.device();
   if (!ctx || !device) return {};
@@ -282,42 +291,53 @@ namespace Artifact
   // Staging texture uses RGBA8_UNORM so the CPU can read raw bytes.
   // Diligent allows copying from a SRGB source to a linear staging texture
   // because both share the same memory layout (only the view interpretation differs).
-  RefCntAutoPtr<ITexture> stagingTex;
-  TextureDesc stagDesc;
-  stagDesc.Name           = "ReadbackStagingTexture";
-  stagDesc.Type           = RESOURCE_DIM_TEX_2D;
-  stagDesc.Width          = srcWidth;
-  stagDesc.Height         = srcHeight;
-  stagDesc.MipLevels      = 1;
-  stagDesc.Format         = TEX_FORMAT_RGBA8_UNORM;
-  stagDesc.Usage          = USAGE_STAGING;
-  stagDesc.CPUAccessFlags = CPU_ACCESS_READ;
-  stagDesc.BindFlags      = BIND_NONE;
-  device->CreateTexture(stagDesc, nullptr, &stagingTex);
-  if (!stagingTex) return {};
+  if (!m_readbackStagingTex ||
+      m_readbackStagingWidth != srcWidth ||
+      m_readbackStagingHeight != srcHeight)
+  {
+   TextureDesc stagDesc;
+   stagDesc.Name           = "ReadbackStagingTexture";
+   stagDesc.Type           = RESOURCE_DIM_TEX_2D;
+   stagDesc.Width          = srcWidth;
+   stagDesc.Height         = srcHeight;
+   stagDesc.MipLevels      = 1;
+   stagDesc.Format         = TEX_FORMAT_RGBA8_UNORM;
+   stagDesc.Usage          = USAGE_STAGING;
+   stagDesc.CPUAccessFlags = CPU_ACCESS_READ;
+   stagDesc.BindFlags      = BIND_NONE;
+   device->CreateTexture(stagDesc, nullptr, &m_readbackStagingTex);
+   if (!m_readbackStagingTex) return {};
+   m_readbackStagingWidth = srcWidth;
+   m_readbackStagingHeight = srcHeight;
+  }
+
+  if (!m_readbackFence) {
+   FenceDesc fDesc;
+   fDesc.Name = "ReadbackFence";
+   fDesc.Type = FENCE_TYPE_GENERAL;
+   device->CreateFence(fDesc, &m_readbackFence);
+   if (!m_readbackFence) return {};
+   m_readbackFenceValue = 0;
+  }
 
   // Transition both textures to the required states and issue the copy.
   CopyTextureAttribs copyAttribs;
   copyAttribs.pSrcTexture              = srcTex;
   copyAttribs.SrcTextureTransitionMode = RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
-  copyAttribs.pDstTexture              = stagingTex;
+  copyAttribs.pDstTexture              = m_readbackStagingTex;
   copyAttribs.DstTextureTransitionMode = RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
   ctx->CopyTexture(copyAttribs);
 
-  // Use a fence to block the CPU until the GPU copy completes.
-  RefCntAutoPtr<IFence> fence;
-  FenceDesc fDesc;
-  fDesc.Name = "ReadbackFence";
-  fDesc.Type = FENCE_TYPE_GENERAL;
-  device->CreateFence(fDesc, &fence);
-  ctx->EnqueueSignal(fence, 1);
+  // Reused fence: CPU waits until GPU copy completion before mapping.
+  const Uint64 waitValue = ++m_readbackFenceValue;
+  ctx->EnqueueSignal(m_readbackFence, waitValue);
   ctx->Flush();
-  fence->Wait(1);
+  m_readbackFence->Wait(waitValue);
 
   // Map the staging texture. MAP_FLAG_NONE (0) is safe here because the
   // fence->Wait(1) above guarantees the GPU copy has finished.
   MappedTextureSubresource mapped = {};
-  ctx->MapTextureSubresource(stagingTex, 0, 0, MAP_READ, MAP_FLAG_NONE, nullptr, mapped);
+  ctx->MapTextureSubresource(m_readbackStagingTex, 0, 0, MAP_READ, MAP_FLAG_NONE, nullptr, mapped);
   if (!mapped.pData) return {};
 
   QImage result(static_cast<int>(srcWidth), static_cast<int>(srcHeight), QImage::Format_RGBA8888);
@@ -326,7 +346,7 @@ namespace Artifact
    std::memcpy(result.scanLine(static_cast<int>(row)), srcRow, static_cast<size_t>(srcWidth) * 4u);
    srcRow += mapped.Stride;
   }
-  ctx->UnmapTextureSubresource(stagingTex, 0, 0);
+  ctx->UnmapTextureSubresource(m_readbackStagingTex, 0, 0);
   return result;
  }
 
@@ -470,6 +490,11 @@ namespace Artifact
 
  void ArtifactIRenderer::Impl::destroy()
  {
+  m_readbackStagingTex = nullptr;
+  m_readbackFence = nullptr;
+  m_readbackStagingWidth = 0;
+  m_readbackStagingHeight = 0;
+  m_readbackFenceValue = 0;
   m_layerRT = nullptr;
   for (auto& query : m_frameQueries) query = nullptr;
   primitiveRenderer_.destroy();

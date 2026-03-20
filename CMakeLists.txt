@@ -28,8 +28,7 @@ foreach(file_path ${POTENTIAL_SOURCES})
        file_path MATCHES "src/Color/ArtifactColorWheels\\.cppm" OR
        file_path MATCHES "include/Preview/ArtifactTimelineClock\\.ixx" OR
        file_path MATCHES "src/Preview/ArtifactTimelineClock\\.cppm" OR
-       file_path MATCHES "src/Widgets/WebUI/ArtifactWebUIHost\\.cppm" OR
-       file_path MATCHES "src/Effetcs/ColorCorrection/ExposureEffect\\.cppm")
+       file_path MATCHES "src/Widgets/WebUI/ArtifactWebUIHost\\.cppm")
         continue()
     endif()
 

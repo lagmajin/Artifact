@@ -1,10 +1,13 @@
 module;
 #include <QDebug>
+#include <QColor>
 #include <QImage>
+#include <QLoggingCategory>
 #include <QRectF>
 #include <QTimer>
 #include <QVector>
 #include <algorithm>
+#include <cmath>
 #include <memory>
 #include <wobjectimpl.h>
 
@@ -15,6 +18,7 @@ import Artifact.Render.CompositionRenderer;
 import Artifact.Preview.Pipeline;
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
+import Artifact.Effect.Abstract;
 import Artifact.Layer.Image;
 import Artifact.Layer.Video;
 import Artifact.Layer.Solid2D;
@@ -25,13 +29,22 @@ import Artifact.Widgets.TransformGizmo;
 import Utils.Id;
 import Artifact.Service.Project;
 import Artifact.Service.Playback; // 追加
+import Frame.Position;
 import Color.Float;
+import Image;
+import CvUtils;
 
 namespace Artifact {
 
 W_OBJECT_IMPL(CompositionRenderController)
 
 namespace {
+Q_LOGGING_CATEGORY(compositionViewLog, "artifact.compositionview")
+
+QColor toQColor(const FloatColor& color)
+{
+  return QColor::fromRgbF(color.r(), color.g(), color.b(), color.a());
+}
 
 ArtifactCompositionPtr
 resolvePreferredComposition(ArtifactProjectService *service) {
@@ -64,25 +77,23 @@ resolvePreferredComposition(ArtifactProjectService *service) {
 void drawLayerForCompositionView(const ArtifactAbstractLayerPtr &layer,
                                  ArtifactIRenderer *renderer) {
   if (!layer || !renderer) {
-    qDebug() << "[CompositionView] drawLayerForCompositionView: invalid "
+    qCDebug(compositionViewLog) << "[CompositionView] drawLayerForCompositionView: invalid "
                 "layer/renderer";
     return;
   }
 
-  const auto size = layer->sourceSize();
-  if (size.width <= 0 || size.height <= 0) {
-    qDebug() << "[CompositionView] skip layer: invalid source size"
-             << "id=" << layer->id().toString() << "size=" << size.width << "x"
-             << size.height;
+  const QRectF localRect = layer->localBounds();
+  if (!localRect.isValid() || localRect.width() <= 0.0 ||
+      localRect.height() <= 0.0) {
+    qCDebug(compositionViewLog) << "[CompositionView] skip layer: invalid local bounds"
+             << "id=" << layer->id().toString() << "rect=" << localRect;
     return;
   }
 
-  const QRectF localRect(0.0, 0.0, static_cast<qreal>(size.width),
-                         static_cast<qreal>(size.height));
   const QRectF worldRect = layer->getGlobalTransform().mapRect(localRect);
   if (!worldRect.isValid() || worldRect.width() <= 0.0 ||
       worldRect.height() <= 0.0) {
-    qDebug() << "[CompositionView] skip layer: invalid world rect"
+    qCDebug(compositionViewLog) << "[CompositionView] skip layer: invalid world rect"
              << "id=" << layer->id().toString() << "rect=" << worldRect;
     return;
   }
@@ -93,39 +104,104 @@ void drawLayerForCompositionView(const ArtifactAbstractLayerPtr &layer,
   const auto viewportBottomRight =
       renderer->canvasToViewport({static_cast<float>(worldRect.right()),
                                   static_cast<float>(worldRect.bottom())});
-  qDebug() << "[CompositionView] layer geometry"
+  qCDebug(compositionViewLog) << "[CompositionView] layer geometry"
            << "id=" << layer->id().toString()
-           << "type=" << layer->type_index().name() << "source=" << size.width
-           << "x" << size.height << "worldRect=" << worldRect
+           << "type=" << layer->type_index().name() << "local=" << localRect
+           << "worldRect=" << worldRect
            << "viewportRect=(" << viewportTopLeft.x << "," << viewportTopLeft.y
            << ")-(" << viewportBottomRight.x << "," << viewportBottomRight.y
            << ")";
 
+  auto applyRasterizerEffectsToSurface = [](const ArtifactAbstractLayerPtr& targetLayer,
+                                            QImage& surface) {
+    if (!targetLayer || surface.isNull()) {
+      return;
+    }
+
+    const auto effects = targetLayer->getEffects();
+    bool hasRasterizerEffect = false;
+    for (const auto& effect : effects) {
+      if (effect && effect->isEnabled() &&
+          effect->pipelineStage() == EffectPipelineStage::Rasterizer) {
+        hasRasterizerEffect = true;
+        break;
+      }
+    }
+
+    if (!hasRasterizerEffect) {
+      return;
+    }
+
+    ArtifactCore::ImageF32x4_RGBA cpuImage;
+    cpuImage.setFromCVMat(ArtifactCore::CvUtils::qImageToCvMat(surface, true));
+    ArtifactCore::ImageF32x4RGBAWithCache current(cpuImage);
+
+    for (const auto& effect : effects) {
+      if (!effect || !effect->isEnabled() ||
+          effect->pipelineStage() != EffectPipelineStage::Rasterizer) {
+        continue;
+      }
+
+      ArtifactCore::ImageF32x4RGBAWithCache next;
+      effect->applyCPUOnly(current, next);
+      current = next;
+    }
+
+    surface = current.image().toQImage();
+  };
+
+  auto applySurfaceAndDraw = [&](QImage surface, const QRectF& targetRect) {
+    if (surface.isNull()) {
+      return false;
+    }
+    applyRasterizerEffectsToSurface(layer, surface);
+    renderer->drawSprite(static_cast<float>(targetRect.x()),
+                         static_cast<float>(targetRect.y()),
+                         static_cast<float>(targetRect.width()),
+                         static_cast<float>(targetRect.height()), surface,
+                         layer->opacity());
+    return true;
+  };
+
   if (const auto solid2D =
           std::dynamic_pointer_cast<ArtifactSolid2DLayer>(layer)) {
     const auto color = solid2D->color();
-    qDebug() << "[CompositionView] draw solid2d"
+    qCDebug(compositionViewLog) << "[CompositionView] draw solid2d"
              << "id=" << layer->id().toString() << "color=(" << color.r() << ","
              << color.g() << "," << color.b() << "," << color.a() << ")";
-    renderer->drawSolidRect(static_cast<float>(worldRect.x()),
-                            static_cast<float>(worldRect.y()),
-                            static_cast<float>(worldRect.width()),
-                            static_cast<float>(worldRect.height()),
-                            solid2D->color(), layer->opacity());
+    const QSize surfaceSize(
+        std::max(1, static_cast<int>(std::ceil(localRect.width()))),
+        std::max(1, static_cast<int>(std::ceil(localRect.height()))));
+    QImage surface(surfaceSize, QImage::Format_ARGB32_Premultiplied);
+    surface.fill(toQColor(color));
+    if (!applySurfaceAndDraw(surface, worldRect)) {
+      renderer->drawSolidRect(static_cast<float>(worldRect.x()),
+                              static_cast<float>(worldRect.y()),
+                              static_cast<float>(worldRect.width()),
+                              static_cast<float>(worldRect.height()),
+                              solid2D->color(), layer->opacity());
+    }
     return;
   }
 
   if (const auto solidImage =
           std::dynamic_pointer_cast<ArtifactSolidImageLayer>(layer)) {
     const auto color = solidImage->color();
-    qDebug() << "[CompositionView] draw solid-image"
+    qCDebug(compositionViewLog) << "[CompositionView] draw solid-image"
              << "id=" << layer->id().toString() << "color=(" << color.r() << ","
              << color.g() << "," << color.b() << "," << color.a() << ")";
-    renderer->drawSolidRect(static_cast<float>(worldRect.x()),
-                            static_cast<float>(worldRect.y()),
-                            static_cast<float>(worldRect.width()),
-                            static_cast<float>(worldRect.height()),
-                            solidImage->color(), layer->opacity());
+    const QSize surfaceSize(
+        std::max(1, static_cast<int>(std::ceil(localRect.width()))),
+        std::max(1, static_cast<int>(std::ceil(localRect.height()))));
+    QImage surface(surfaceSize, QImage::Format_ARGB32_Premultiplied);
+    surface.fill(toQColor(color));
+    if (!applySurfaceAndDraw(surface, worldRect)) {
+      renderer->drawSolidRect(static_cast<float>(worldRect.x()),
+                              static_cast<float>(worldRect.y()),
+                              static_cast<float>(worldRect.width()),
+                              static_cast<float>(worldRect.height()),
+                              solidImage->color(), layer->opacity());
+    }
     return;
   }
 
@@ -133,13 +209,16 @@ void drawLayerForCompositionView(const ArtifactAbstractLayerPtr &layer,
           std::dynamic_pointer_cast<ArtifactImageLayer>(layer)) {
     const QImage img = imageLayer->toQImage();
     if (!img.isNull()) {
-      qDebug() << "[CompositionView] draw image"
+      qCDebug(compositionViewLog) << "[CompositionView] draw image"
                << "id=" << layer->id().toString() << "surface=" << img.width()
                << "x" << img.height();
-      renderer->drawSprite(
-          static_cast<float>(worldRect.x()), static_cast<float>(worldRect.y()),
-          static_cast<float>(worldRect.width()),
-          static_cast<float>(worldRect.height()), img, layer->opacity());
+      if (!applySurfaceAndDraw(img, worldRect)) {
+        renderer->drawSprite(
+            static_cast<float>(worldRect.x()),
+            static_cast<float>(worldRect.y()),
+            static_cast<float>(worldRect.width()),
+            static_cast<float>(worldRect.height()), img, layer->opacity());
+      }
       return;
     }
   }
@@ -148,13 +227,16 @@ void drawLayerForCompositionView(const ArtifactAbstractLayerPtr &layer,
           std::dynamic_pointer_cast<ArtifactVideoLayer>(layer)) {
     const QImage frame = videoLayer->currentFrameToQImage();
     if (!frame.isNull()) {
-      qDebug() << "[CompositionView] draw video"
+      qCDebug(compositionViewLog) << "[CompositionView] draw video"
                << "id=" << layer->id().toString() << "surface=" << frame.width()
                << "x" << frame.height();
-      renderer->drawSprite(
-          static_cast<float>(worldRect.x()), static_cast<float>(worldRect.y()),
-          static_cast<float>(worldRect.width()),
-          static_cast<float>(worldRect.height()), frame, layer->opacity());
+      if (!applySurfaceAndDraw(frame, worldRect)) {
+        renderer->drawSprite(
+            static_cast<float>(worldRect.x()),
+            static_cast<float>(worldRect.y()),
+            static_cast<float>(worldRect.width()),
+            static_cast<float>(worldRect.height()), frame, layer->opacity());
+      }
       return;
     }
   }
@@ -163,22 +245,25 @@ void drawLayerForCompositionView(const ArtifactAbstractLayerPtr &layer,
           std::dynamic_pointer_cast<ArtifactTextLayer>(layer)) {
     const QImage textImage = textLayer->toQImage();
     if (!textImage.isNull()) {
-      qDebug() << "[CompositionView] draw text"
+      qCDebug(compositionViewLog) << "[CompositionView] draw text"
                << "id=" << layer->id().toString()
                << "surface=" << textImage.width() << "x" << textImage.height();
-      renderer->drawSprite(
-          static_cast<float>(worldRect.x()), static_cast<float>(worldRect.y()),
-          static_cast<float>(worldRect.width()),
-          static_cast<float>(worldRect.height()), textImage, layer->opacity());
+      if (!applySurfaceAndDraw(textImage, worldRect)) {
+        renderer->drawSprite(
+            static_cast<float>(worldRect.x()),
+            static_cast<float>(worldRect.y()),
+            static_cast<float>(worldRect.width()),
+            static_cast<float>(worldRect.height()), textImage, layer->opacity());
+      }
       return;
     }
-    qDebug() << "[CompositionView] skip text layer: no surface"
+    qCDebug(compositionViewLog) << "[CompositionView] skip text layer: no surface"
              << "id=" << layer->id().toString();
     return;
   }
 
   // Fallback for layer types without a direct surface accessor.
-  qDebug() << "[CompositionView] fallback layer draw"
+  qCDebug(compositionViewLog) << "[CompositionView] fallback layer draw"
            << "id=" << layer->id().toString()
            << "type=" << layer->type_index().name();
   layer->draw(renderer);
@@ -410,7 +495,7 @@ void CompositionRenderController::panBy(const QPointF &viewportDelta) {
 
 void CompositionRenderController::setComposition(
     ArtifactCompositionPtr composition) {
-  qDebug() << "[CompositionView] setComposition"
+  qCDebug(compositionViewLog) << "[CompositionView] setComposition"
            << "isNull=" << (composition == nullptr) << "id="
            << (composition ? composition->id().toString()
                            : QStringLiteral("<null>"));
@@ -578,9 +663,17 @@ TransformGizmo *CompositionRenderController::gizmo() const {
   return impl_->gizmo_.get();
 }
 
+Qt::CursorShape CompositionRenderController::cursorShapeForViewportPos(const QPointF& viewportPos) const
+{
+  if (!impl_->gizmo_ || !impl_->renderer_) {
+    return Qt::ArrowCursor;
+  }
+  return impl_->gizmo_->cursorShapeForViewportPos(viewportPos, impl_->renderer_.get());
+}
+
 void CompositionRenderController::renderOneFrame() {
   if (!impl_->initialized_ || !impl_->renderer_) {
-    qDebug() << "[CompositionView] renderOneFrame skipped: not initialized";
+    qCDebug(compositionViewLog) << "[CompositionView] renderOneFrame skipped: not initialized";
     return;
   }
 
@@ -590,12 +683,13 @@ void CompositionRenderController::renderOneFrame() {
     if (preferred && preferred != comp) {
       comp = preferred;
       impl_->previewPipeline_.setComposition(comp);
-      qDebug()
+      qCDebug(compositionViewLog)
           << "[CompositionView] renderOneFrame resynced preferred composition"
           << "id=" << comp->id().toString()
           << "layers=" << comp->allLayer().size();
     }
   }
+  FramePosition currentFrame = comp ? comp->framePosition() : FramePosition(0);
   if (comp) {
     auto size = comp->settings().compositionSize();
     const float cw = static_cast<float>(size.width() > 0 ? size.width() : 1920);
@@ -614,17 +708,17 @@ void CompositionRenderController::renderOneFrame() {
 
     // 2) コンポ背景を Composition Space で描画
     const FloatColor bgColor = comp->backgroundColor();
-    qDebug() << "[CompositionView] frame begin"
+    qCDebug(compositionViewLog) << "[CompositionView] frame begin"
              << "compId=" << comp->id().toString() << "size=" << cw << "x" << ch
              << "bg=(" << bgColor.r() << "," << bgColor.g() << ","
              << bgColor.b() << "," << bgColor.a() << ")";
     if (impl_->compositionRenderer_) {
-      qDebug() << "[CompositionView] drawing background via CompositionRenderer"
+      qCDebug(compositionViewLog) << "[CompositionView] drawing background via CompositionRenderer"
                << "color=(" << bgColor.r() << "," << bgColor.g() << ","
                << bgColor.b() << "," << bgColor.a() << ")";
       impl_->compositionRenderer_->DrawCompositionBackground(bgColor);
     } else {
-      qDebug()
+      qCDebug(compositionViewLog)
           << "[CompositionView] drawing background via renderer_->drawRectLocal"
           << "color=(" << bgColor.r() << "," << bgColor.g() << ","
           << bgColor.b() << "," << bgColor.a() << ")";
@@ -638,7 +732,7 @@ void CompositionRenderController::renderOneFrame() {
     }
 
     // 4) レイヤー描画（Composition Space 基準）
-    auto currentFrame = comp->framePosition();
+    currentFrame = comp->framePosition();
     if (auto *playback = ArtifactPlaybackService::instance()) {
       const auto playbackComp = playback->currentComposition();
       if (!playbackComp || playbackComp->id() == comp->id()) {
@@ -646,7 +740,7 @@ void CompositionRenderController::renderOneFrame() {
       }
     }
     const auto layers = comp->allLayer();
-    qDebug() << "[CompositionView] layers total=" << layers.size()
+    qCDebug(compositionViewLog) << "[CompositionView] layers total=" << layers.size()
              << "currentFrame=" << currentFrame.framePosition();
     const bool hasSoloLayer =
         std::any_of(layers.begin(), layers.end(),
@@ -656,24 +750,24 @@ void CompositionRenderController::renderOneFrame() {
     for (const auto &layer : layers) {
       if (!layer || !layer->isVisible()) {
         if (layer) {
-          qDebug() << "[CompositionView] skip layer: invisible"
+          qCDebug(compositionViewLog) << "[CompositionView] skip layer: invisible"
                    << "id=" << layer->id().toString();
         }
         continue;
       }
       if (hasSoloLayer && !layer->isSolo()) {
-        qDebug() << "[CompositionView] skip layer: solo filter"
+        qCDebug(compositionViewLog) << "[CompositionView] skip layer: solo filter"
                  << "id=" << layer->id().toString();
         continue;
       }
       if (!layer->isActiveAt(currentFrame)) {
-        qDebug() << "[CompositionView] skip layer: inactive at frame"
+        qCDebug(compositionViewLog) << "[CompositionView] skip layer: inactive at frame"
                  << "id=" << layer->id().toString()
                  << "frame=" << currentFrame.framePosition();
         continue;
       }
       layer->goToFrame(currentFrame.framePosition());
-      qDebug() << "[CompositionView] draw layer"
+      qCDebug(compositionViewLog) << "[CompositionView] draw layer"
                << "id=" << layer->id().toString()
                << "opacity=" << layer->opacity();
       drawLayerForCompositionView(layer, impl_->renderer_.get());
@@ -709,9 +803,17 @@ void CompositionRenderController::renderOneFrame() {
     impl_->renderer_->clear();
   }
 
-  // 最前面にギズモを描画
+  // 最前面にギズモを描画。ただし選択レイヤーがそのフレームで有効な時だけ。
   if (impl_->gizmo_) {
-    impl_->gizmo_->draw(impl_->renderer_.get());
+    auto selectedLayer = (!impl_->selectedLayerId_.isNil() && comp)
+                             ? comp->layerById(impl_->selectedLayerId_)
+                             : ArtifactAbstractLayerPtr{};
+    if (selectedLayer && selectedLayer->isActiveAt(currentFrame)) {
+      impl_->gizmo_->setLayer(selectedLayer);
+      impl_->gizmo_->draw(impl_->renderer_.get());
+    } else {
+      impl_->gizmo_->setLayer(nullptr);
+    }
   }
 
   impl_->renderer_->flush();

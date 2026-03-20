@@ -117,6 +117,7 @@ namespace Artifact {
    }
   }
   layerMultiIndex_.clear();
+  Q_EMIT owner_->changed();
  }
 
 void ArtifactAbstractComposition::Impl::removeLayer(const LayerID& id)
@@ -128,10 +129,11 @@ void ArtifactAbstractComposition::Impl::removeLayer(const LayerID& id)
            layer->clearParent();
        }
    }
-   layerMultiIndex_.removeById(id);
-   if (removedLayer) {
-    removedLayer->setComposition(nullptr);
-   }
+    layerMultiIndex_.removeById(id);
+    if (removedLayer) {
+     removedLayer->setComposition(nullptr);
+     Q_EMIT owner_->changed();
+    }
 }
 
  bool ArtifactAbstractComposition::Impl::containsLayerById(const LayerID& id) const
@@ -185,6 +187,7 @@ void ArtifactAbstractComposition::Impl::removeLayer(const LayerID& id)
       layerMultiIndex_.insertAt(0, layer, layer->id(), layer->type_index());
       result.success = true;
       result.error = AppendLayerToCompositionError::None;
+      Q_EMIT owner_->changed();
       return result;
   }
 
@@ -195,6 +198,7 @@ void ArtifactAbstractComposition::Impl::removeLayer(const LayerID& id)
       int oldIndex = layerMultiIndex_.indexOf(layer);
       if (oldIndex == -1) return;
       layerMultiIndex_.move(oldIndex, newIndex);
+      Q_EMIT owner_->changed();
   }
 
   void ArtifactAbstractComposition::Impl::bringToFront(const LayerID& id)
@@ -204,6 +208,7 @@ void ArtifactAbstractComposition::Impl::removeLayer(const LayerID& id)
       int oldIndex = layerMultiIndex_.indexOf(layer);
       if (oldIndex == -1) return;
       layerMultiIndex_.move(oldIndex, layerMultiIndex_.all().size() - 1);
+      Q_EMIT owner_->changed();
   }
 
   void ArtifactAbstractComposition::Impl::sendToBack(const LayerID& id)
@@ -213,6 +218,7 @@ void ArtifactAbstractComposition::Impl::removeLayer(const LayerID& id)
       int oldIndex = layerMultiIndex_.indexOf(layer);
       if (oldIndex == -1) return;
       layerMultiIndex_.move(oldIndex, 0);
+      Q_EMIT owner_->changed();
   }
 
  bool ArtifactAbstractComposition::Impl::hasVideo() const
@@ -374,6 +380,7 @@ void ArtifactAbstractComposition::insertLayerAt(ArtifactAbstractLayerPtr layer, 
     if (!layer) return;
     layer->setComposition(this);
     impl_->layerMultiIndex_.insertAt(index, layer, layer->id(), layer->type_index());
+    Q_EMIT changed();
 }
 
 void ArtifactAbstractComposition::moveLayerToIndex(const LayerID& id, int newIndex)
@@ -381,10 +388,10 @@ void ArtifactAbstractComposition::moveLayerToIndex(const LayerID& id, int newInd
     impl_->moveLayerToIndex(id, newIndex);
 }
 
- void ArtifactAbstractComposition::removeLayer(const LayerID& id)
- {
+void ArtifactAbstractComposition::removeLayer(const LayerID& id)
+{
   impl_->removeLayer(id);
- }
+}
 
 void ArtifactAbstractComposition::removeAllLayers()
 {

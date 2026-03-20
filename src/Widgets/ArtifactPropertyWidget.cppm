@@ -76,7 +76,7 @@ public:
     QString filterText;
     QString focusedEffectId;
     bool rebuilding = false;
-    bool valueColumnFirst = true;
+    bool valueColumnFirst = false;
     int localPropertyEditDepth = 0;
 
     QString currentLayerKey() const
@@ -165,6 +165,23 @@ void removeKeyFrame(PropertyKeyFrameTrack& track, const RationalTime& time)
 
 QString humanizePropertyLabel(QString name)
 {
+    static const QHash<QString, QString> explicitLabels = {
+        { QStringLiteral("transform.position.x"), QStringLiteral("Position X") },
+        { QStringLiteral("transform.position.y"), QStringLiteral("Position Y") },
+        { QStringLiteral("transform.scale.x"),    QStringLiteral("Scale X") },
+        { QStringLiteral("transform.scale.y"),    QStringLiteral("Scale Y") },
+        { QStringLiteral("transform.rotation"),   QStringLiteral("Rotation") },
+        { QStringLiteral("transform.anchor.x"),   QStringLiteral("Anchor X") },
+        { QStringLiteral("transform.anchor.y"),   QStringLiteral("Anchor Y") },
+        { QStringLiteral("layer.opacity"),        QStringLiteral("Opacity") },
+        { QStringLiteral("time.inPoint"),         QStringLiteral("In Point") },
+        { QStringLiteral("time.outPoint"),        QStringLiteral("Out Point") },
+        { QStringLiteral("time.startTime"),       QStringLiteral("Start Time") }
+    };
+    if (const auto it = explicitLabels.constFind(name); it != explicitLabels.constEnd()) {
+        return it.value();
+    }
+
     const int dot = name.lastIndexOf('.');
     if (dot >= 0 && dot + 1 < name.size()) {
         name = name.mid(dot + 1);
@@ -622,6 +639,15 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
         delete child;
     }
 
+    if (!currentLayer) {
+        QLabel* emptyLabel = new QLabel("No layer selected");
+        emptyLabel->setObjectName(QStringLiteral("propertyEmptyLabel"));
+        emptyLabel->setAlignment(Qt::AlignCenter);
+        mainLayout->addWidget(emptyLabel);
+        rebuilding = false;
+        return;
+    }
+
     auto* searchEdit = new QLineEdit();
     searchEdit->setObjectName(QStringLiteral("propertyFilterEdit"));
     searchEdit->setPlaceholderText("Search properties...");
@@ -632,19 +658,6 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
     });
     mainLayout->addWidget(searchEdit);
 
-    if (!currentLayer) {
-        QLabel* emptyLabel = new QLabel("No layer selected");
-        emptyLabel->setObjectName(QStringLiteral("propertyEmptyLabel"));
-        emptyLabel->setAlignment(Qt::AlignCenter);
-        mainLayout->addWidget(emptyLabel);
-        rebuilding = false;
-        return;
-    }
-
-    QLabel* layerNameLabel = new QLabel(QString("<b>Layer: %1</b>").arg(currentLayer->layerName()));
-    layerNameLabel->setObjectName(QStringLiteral("propertyLayerNameLabel"));
-    mainLayout->addWidget(layerNameLabel);
-
     bool hasAnyProperties = false;
 
     auto* summaryGroup = new QGroupBox(QStringLiteral("Summary"));
@@ -653,6 +666,14 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
     summaryLayout->setSpacing(4);
 
     const std::unordered_set<std::string> keyLayerProperties = {
+        "transform.position.x",
+        "transform.position.y",
+        "transform.scale.x",
+        "transform.scale.y",
+        "transform.rotation",
+        "transform.anchor.x",
+        "transform.anchor.y",
+        "layer.opacity",
         "layer.name",
         "layer.visible",
         "layer.locked",
@@ -669,11 +690,42 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
     std::vector<std::shared_ptr<ArtifactCore::AbstractProperty>> layerSummaryProperties;
     for (const auto& groupDef : layerGroups) {
         auto sortedProps = groupDef.sortedProperties();
-        auto picked = prioritizedSummaryProperties(sortedProps, keyLayerProperties, 4);
+        // Keep the quick-edit strip large enough to include anchor and opacity.
+        auto picked = prioritizedSummaryProperties(sortedProps, keyLayerProperties, 8);
         layerSummaryProperties.insert(layerSummaryProperties.end(), picked.begin(), picked.end());
     }
 
+    auto removePropertyByName = [&layerSummaryProperties](const QString& propertyName) {
+        auto it = std::find_if(layerSummaryProperties.begin(), layerSummaryProperties.end(),
+            [&propertyName](const std::shared_ptr<ArtifactCore::AbstractProperty>& property) {
+                return property && property->getName().compare(propertyName, Qt::CaseInsensitive) == 0;
+            });
+        if (it == layerSummaryProperties.end()) {
+            return std::shared_ptr<ArtifactCore::AbstractProperty>();
+        }
+        auto property = *it;
+        layerSummaryProperties.erase(it);
+        return property;
+    };
+
     bool hasSummaryProperties = false;
+    if (auto layerNameProperty = removePropertyByName(QStringLiteral("layer.name"))) {
+        if (auto* row = createPropertyRow(
+                summaryGroup,
+                layerNameProperty,
+                [this](const QString& name, const QVariant& value) {
+                    if (currentLayer) {
+                        ScopedPropertyEditGuard guard(localPropertyEditDepth);
+                        currentLayer->setLayerPropertyValue(name, value);
+                        notifyProjectIfLayerNameChanged(name);
+                    }
+                },
+                layerPropertyKey)) {
+            summaryLayout->addWidget(row);
+            hasSummaryProperties = true;
+        }
+    }
+
     addRowsFromProperties(
         summaryGroup,
         summaryLayout,

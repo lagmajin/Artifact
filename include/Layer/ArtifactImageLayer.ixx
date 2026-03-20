@@ -30,6 +30,7 @@ export namespace Artifact {
   void setFromCvMat();
   void setFitToLayer(bool fit);
   bool fitToLayer() const;
+  QRectF localBounds() const override;
   std::vector<ArtifactCore::PropertyGroup> getLayerPropertyGroups() const override;
   bool setLayerPropertyValue(const QString& propertyPath, const QVariant& value) override;
 

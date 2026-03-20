@@ -487,6 +487,7 @@ bool RenderQueueManagerWidget::Impl::saveCurrentSelectionAsPreset(const QString&
 
   QString format;
   QString codec;
+  QString encoderBackend;
   int width = 1920;
   int height = 1080;
   double fps = 30.0;
@@ -499,12 +500,14 @@ bool RenderQueueManagerWidget::Impl::saveCurrentSelectionAsPreset(const QString&
   float rotation = 0.0f;
 
   service->jobOutputSettingsAt(sourceIndex, &format, &codec, &width, &height, &fps, &bitrateKbps);
+  encoderBackend = service->jobEncoderBackendAt(sourceIndex);
   service->jobFrameRangeAt(sourceIndex, &startFrame, &endFrame);
   service->jobOverlayTransformAt(sourceIndex, &offsetX, &offsetY, &scale, &rotation);
 
   QVariantMap map;
   map.insert(QStringLiteral("outputFormat"), format);
   map.insert(QStringLiteral("codec"), codec);
+  map.insert(QStringLiteral("encoderBackend"), encoderBackend);
   map.insert(QStringLiteral("width"), width);
   map.insert(QStringLiteral("height"), height);
   map.insert(QStringLiteral("fps"), fps);
@@ -540,6 +543,7 @@ bool RenderQueueManagerWidget::Impl::applyPresetToSelection(const QString& prese
 
   const QString format = map.value(QStringLiteral("outputFormat"), QStringLiteral("MP4")).toString();
   const QString codec = map.value(QStringLiteral("codec"), QStringLiteral("H.264")).toString();
+  const QString encoderBackend = map.value(QStringLiteral("encoderBackend"), QStringLiteral("auto")).toString();
   const int width = map.value(QStringLiteral("width"), 1920).toInt();
   const int height = map.value(QStringLiteral("height"), 1080).toInt();
   const double fps = map.value(QStringLiteral("fps"), 30.0).toDouble();
@@ -552,6 +556,7 @@ bool RenderQueueManagerWidget::Impl::applyPresetToSelection(const QString& prese
   const float rotation = static_cast<float>(map.value(QStringLiteral("overlayRotationDeg"), 0.0).toDouble());
 
   service->setJobOutputSettingsAt(sourceIndex, format, codec, width, height, fps, bitrateKbps);
+  service->setJobEncoderBackendAt(sourceIndex, encoderBackend);
   service->setJobFrameRangeAt(sourceIndex, startFrame, endFrame);
   service->setJobOverlayTransform(sourceIndex, offsetX, offsetY, scale, rotation);
   syncJobsFromService();
@@ -798,15 +803,18 @@ void RenderQueueManagerWidget::Impl::updateOutputSettingsSummaryForSelection()
 
   QString outputFormat = QStringLiteral("MP4");
   QString codec = QStringLiteral("H.264");
+  QString encoderBackend = QStringLiteral("auto");
   int width = 1920;
   int height = 1080;
   double fps = 30.0;
   int bitrateKbps = 8000;
   service->jobOutputSettingsAt(sourceIndex, &outputFormat, &codec, &width, &height, &fps, &bitrateKbps);
+  encoderBackend = service->jobEncoderBackendAt(sourceIndex);
 
-  outputSettingsSummaryLabel->setText(QStringLiteral("%1 / %2 / %3x%4 / %5 fps / %6 kbps")
+  outputSettingsSummaryLabel->setText(QStringLiteral("%1 / %2 / %3 / %4x%5 / %6 fps / %7 kbps")
     .arg(outputFormat)
     .arg(codec)
+    .arg(encoderBackend)
     .arg(width)
     .arg(height)
     .arg(QString::number(fps, 'f', 3))
@@ -1636,11 +1644,13 @@ QToolButton:hover {
     double fps = 30.0;
     int bitrateKbps = 8000;
     impl_->service->jobOutputSettingsAt(sourceIndex, &format, &codec, &width, &height, &fps, &bitrateKbps);
+    const QString backend = impl_->service->jobEncoderBackendAt(sourceIndex);
 
     ArtifactRenderOutputSettingDialog dialog(this);
     dialog.setOutputPath(impl_->outputPathEdit ? impl_->outputPathEdit->text() : impl_->service->jobOutputPathAt(sourceIndex));
     dialog.setOutputFormat(format);
     dialog.setCodec(codec);
+    dialog.setEncoderBackend(backend);
     dialog.setResolution(width, height);
     dialog.setFrameRate(fps);
     dialog.setBitrateKbps(bitrateKbps);
@@ -1664,6 +1674,7 @@ QToolButton:hover {
       dialog.outputHeight(),
       dialog.frameRate(),
       dialog.bitrateKbps());
+    impl_->service->setJobEncoderBackendAt(sourceIndex, dialog.encoderBackend());
     impl_->updateOutputSettingsSummaryForSelection();
     impl_->logUiEvent(QString("Output settings updated for job #%1").arg(sourceIndex + 1), true);
   });

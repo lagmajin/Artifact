@@ -1,4 +1,5 @@
 ﻿module;
+#include <wobjectdefs.h>
 export module Tool;
 
 export namespace Artifact {
@@ -19,3 +20,6 @@ export namespace Artifact {
  };
 
 }
+
+W_REGISTER_ARGTYPE(Artifact::EditMode)
+W_REGISTER_ARGTYPE(Artifact::DisplayMode)

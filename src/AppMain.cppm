@@ -2,11 +2,20 @@
 module;
 #include <QtCore/QtGlobal>
 #include <QApplication>
+#include <QColor>
+#include <QDebug>
+#include <QImageReader>
+#include <QLoggingCategory>
 #include <QMainWindow>
 #include <QDateTime>
 #include <QDir>
+#include <QFont>
+#include <QIcon>
 #include <QSettings>
 #include <QImage>
+#include <QImageReader>
+#include <QPainter>
+#include <QRectF>
 #include <QTimer>
 #include <QElapsedTimer>
 #include <QMessageBox>
@@ -16,6 +25,7 @@ module;
 #include <QJsonDocument>
 #include <QFileInfo>
 #include <QFile>
+#include <QPixmap>
 #include <QCommandLineOption>
 #include <QMetaType>
 #include <QDesktopServices>
@@ -114,8 +124,8 @@ namespace
   return 0;
  }
 
- void bootstrapPythonScripts()
- {
+void bootstrapPythonScripts()
+{
   auto& py = PythonEngine::instance();
   if (!py.initialize())
   {
@@ -145,6 +155,29 @@ namespace
     py.executeFile(fileInfo.absoluteFilePath().toStdString());
    }
   }
+ }
+
+ void configureQtPluginPaths()
+ {
+  const QString appDir = QCoreApplication::applicationDirPath();
+  const QStringList candidates = {
+   QDir(appDir).filePath(QStringLiteral("plugins")),
+   QDir(appDir).filePath(QStringLiteral("../vcpkg_installed/x64-windows/Qt6/plugins")),
+   QDir(appDir).filePath(QStringLiteral("../vcpkg_installed/x64-windows/debug/Qt6/plugins")),
+   QDir(appDir).filePath(QStringLiteral("../vcpkg_installed/x64-windows/Qt6/plugins")),
+   QDir(appDir).filePath(QStringLiteral("../vcpkg_installed/x64-windows/debug/Qt6/plugins"))
+  };
+
+  for (const QString& path : candidates)
+  {
+   if (QDir(path).exists())
+   {
+    QCoreApplication::addLibraryPath(path);
+   }
+  }
+
+  qDebug() << "[QtPluginPaths] libraryPaths=" << QCoreApplication::libraryPaths();
+  qDebug() << "[QtPluginPaths] supportedImageFormats=" << QImageReader::supportedImageFormats();
  }
 
  QByteArray currentProjectSnapshotJson()
@@ -309,7 +342,28 @@ void sanitizeLayoutStore(ArtifactCore::FastSettingsStore& layoutStore)
   {
     layoutStore.remove(QStringLiteral("MainWindow/version"));
   }
-  layoutStore.sync();
+ layoutStore.sync();
+}
+
+QIcon buildTemporaryAppIcon()
+{
+  QPixmap pix(256, 256);
+  pix.fill(QColor(28, 28, 32));
+
+  QPainter painter(&pix);
+  painter.setRenderHint(QPainter::Antialiasing, true);
+  painter.setPen(Qt::NoPen);
+  painter.setBrush(QColor(212, 125, 50));
+  painter.drawRoundedRect(QRectF(28.0, 28.0, 200.0, 200.0), 44.0, 44.0);
+
+  QFont font;
+  font.setBold(true);
+  font.setPointSize(120);
+  painter.setFont(font);
+  painter.setPen(Qt::white);
+  painter.drawText(pix.rect(), Qt::AlignCenter, QStringLiteral("A"));
+
+  return QIcon(pix);
 }
 
 bool markSessionStartAndDetectUncleanExit()
@@ -586,9 +640,10 @@ int main(int argc, char* argv[])
 		 
 	 }
 	
-	 QApplication a(argc, argv);
-	 a.addLibraryPath(QCoreApplication::applicationDirPath() + QStringLiteral("/plugins"));
-	 a.setStyle(QStyleFactory::create(QStringLiteral("Fusion")));
+ QApplication a(argc, argv);
+  configureQtPluginPaths();
+  QLoggingCategory::setFilterRules(QStringLiteral("artifact.compositionview.debug=false"));
+  a.setStyle(QStyleFactory::create(QStringLiteral("Fusion")));
 	 auto modoTheme = ArtifactCore::getDCCTheme(DccStylePreset::ModoStyle);
 	 a.setStyleSheet(ArtifactCore::buildDCCStyleSheet(modoTheme));
 	 auto pool = QThreadPool::globalInstance();
@@ -598,9 +653,12 @@ int main(int argc, char* argv[])
   bootstrapPythonScripts();
   ArtifactPythonHookManager::runHook(QStringLiteral("on_startup"));
     const bool hadUncleanExit = markSessionStartAndDetectUncleanExit();
+    const QIcon appIcon = buildTemporaryAppIcon();
+    QApplication::setWindowIcon(appIcon);
     auto* mw = new ArtifactMainWindow();
     mw->setObjectName("ArtifactMainWindow");
     mw->setWindowTitle("Artifact");
+    mw->setWindowIcon(appIcon);
     auto* status = new ArtifactStatusBar(mw);
     mw->setStatusBar(status);
     status->showReadyMessage();
@@ -781,17 +839,31 @@ int main(int argc, char* argv[])
                 QTimer::singleShot(0, mw, [mw, dockId]() {
                     mw->activateDock(dockId);
                 });
+                QTimer::singleShot(0, mw, [mw]() {
+                    mw->moveDockToTabGroup(QStringLiteral("Render Manager"),
+                                           QStringLiteral("timeline::"));
+                });
+                QTimer::singleShot(0, mw, [mw, dockId, panel]() {
+                    if (panel) {
+                        panel->setFocus(Qt::OtherFocusReason);
+                    }
+                    mw->activateDock(dockId);
+                });
             });
         });
-// Add Render Queue Manager widget to center dock area (tabbed with Composition Viewer)
+// Add Render Queue Manager widget to timeline area (bottom tab group)
 auto* renderQueueWidget = new Artifact::RenderQueueManagerWidget(mw);
 mw->addDockedWidgetTabbedWithId(
     QStringLiteral("Render Manager"),
     QStringLiteral("render_manager_dock"),
-    ads::CenterDockWidgetArea,
+    ads::BottomDockWidgetArea,
     renderQueueWidget,
-    QStringLiteral("Composition Viewer")
+    QStringLiteral("timeline::")
 );
+QTimer::singleShot(0, mw, [mw]() {
+    mw->moveDockToTabGroup(QStringLiteral("Render Manager"),
+                           QStringLiteral("timeline::"));
+});
         QObject::connect(projectService, &ArtifactProjectService::compositionRemoved, mw, [mw, timelineDockObjectId](const CompositionID& compId) {
             mw->closeDock(timelineDockObjectId(compId));
         });

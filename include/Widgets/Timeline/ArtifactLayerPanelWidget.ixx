@@ -63,6 +63,8 @@ export namespace Artifact
   // Set the composition to display layers for
   void setComposition(const CompositionID& id);
   void setShyHidden(bool hidden);
+  void setLayerNameEditable(bool enabled);
+  bool isLayerNameEditable() const;
   void updateLayout();
   QVector<LayerID> visibleTimelineRows() const;
   int layerRowIndex(const LayerID& id) const;
@@ -88,6 +90,8 @@ export namespace Artifact
   void setComposition(const CompositionID& id);
   class QScrollBar* verticalScrollBar() const;
   QVector<LayerID> visibleTimelineRows() const;
+  void setLayerNameEditable(bool enabled);
+  bool isLayerNameEditable() const;
 
   public /*signals*/:
    void visibleRowsChanged() W_SIGNAL(visibleRowsChanged)

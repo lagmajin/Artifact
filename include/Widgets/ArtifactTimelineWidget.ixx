@@ -178,6 +178,8 @@ class TimelineTrackView :public QGraphicsView {
   void onLayerRemoved(const CompositionID& compId, const LayerID& layerId);
   void onShyChanged(bool active);
   void refreshTracks();
+  void setLayerNameEditable(bool enabled);
+  bool isLayerNameEditable() const;
 
   /*signals:*/
  public:
