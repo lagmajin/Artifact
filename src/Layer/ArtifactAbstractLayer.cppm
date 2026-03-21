@@ -198,8 +198,11 @@ void ArtifactAbstractLayer::goToNextFrame() {}
 void ArtifactAbstractLayer::goToPrevFrame() {}
 
 void ArtifactAbstractLayer::goToFrame(int64_t frameNumber /*= 0*/) {
-  // 現在のフレーム位置を更新
-  impl_->currentFrame_ = frameNumber;
+  // グローバルフレーム → レイヤー相対フレーム:
+  // relativeFrame = globalFrame - inPoint + startTime
+  impl_->currentFrame_ = frameNumber
+    - impl_->inPoint_.framePosition()
+    + impl_->startTime_.framePosition();
 }
 
 int64_t ArtifactAbstractLayer::currentFrame() const {

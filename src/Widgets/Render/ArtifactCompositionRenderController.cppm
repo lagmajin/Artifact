@@ -1,4 +1,8 @@
 module;
+#define NOMINMAX
+#define QT_NO_KEYWORDS
+#include <opencv2/opencv.hpp>
+
 #include <QDebug>
 #include <QColor>
 #include <QImage>
@@ -26,8 +30,16 @@ import Artifact.Layer.Solid2D;
 import Artifact.Layers.SolidImage;
 import Artifact.Layer.Text;
 import Artifact.Application.Manager;
+import Artifact.Layers.Selection.Manager;
 import Artifact.Widgets.TransformGizmo;
+import Artifact.Tool.Manager;
+import Artifact.Mask.LayerMask;
+import Artifact.Mask.Path;
 import Utils.Id;
+import Artifact.Render.Pipeline;
+import Graphics.LayerBlendPipeline;
+import Graphics.GPUcomputeContext;
+
 import Artifact.Service.Project;
 import Artifact.Service.Playback; // 追加
 import Frame.Position;
@@ -91,34 +103,15 @@ void drawLayerForCompositionView(const ArtifactAbstractLayerPtr &layer,
     return;
   }
 
-  const QRectF worldRect = layer->getGlobalTransform().mapRect(localRect);
-  if (!worldRect.isValid() || worldRect.width() <= 0.0 ||
-      worldRect.height() <= 0.0) {
-    qCDebug(compositionViewLog) << "[CompositionView] skip layer: invalid world rect"
-             << "id=" << layer->id().toString() << "rect=" << worldRect;
-    return;
-  }
+  const QTransform globalTransform = layer->getGlobalTransform();
 
-  const auto viewportTopLeft =
-      renderer->canvasToViewport({static_cast<float>(worldRect.left()),
-                                  static_cast<float>(worldRect.top())});
-  const auto viewportBottomRight =
-      renderer->canvasToViewport({static_cast<float>(worldRect.right()),
-                                  static_cast<float>(worldRect.bottom())});
-  qCDebug(compositionViewLog) << "[CompositionView] layer geometry"
-           << "id=" << layer->id().toString()
-           << "type=" << layer->type_index().name() << "local=" << localRect
-           << "worldRect=" << worldRect
-           << "viewportRect=(" << viewportTopLeft.x << "," << viewportTopLeft.y
-           << ")-(" << viewportBottomRight.x << "," << viewportBottomRight.y
-           << ")";
-
-  auto applyRasterizerEffectsToSurface = [](const ArtifactAbstractLayerPtr& targetLayer,
+  auto applyRasterizerEffectsAndMasksToSurface = [&](const ArtifactAbstractLayerPtr& targetLayer,
                                             QImage& surface) {
     if (!targetLayer || surface.isNull()) {
       return;
     }
 
+    const bool hasMasks = targetLayer->hasMasks();
     const auto effects = targetLayer->getEffects();
     bool hasRasterizerEffect = false;
     for (const auto& effect : effects) {
@@ -129,31 +122,52 @@ void drawLayerForCompositionView(const ArtifactAbstractLayerPtr &layer,
       }
     }
 
-    if (!hasRasterizerEffect) {
+    if (!hasRasterizerEffect && !hasMasks) {
       return;
     }
 
-    ArtifactCore::ImageF32x4_RGBA cpuImage;
-    cpuImage.setFromCVMat(ArtifactCore::CvUtils::qImageToCvMat(surface, true));
-    ArtifactCore::ImageF32x4RGBAWithCache current(cpuImage);
-
-    for (const auto& effect : effects) {
-      if (!effect || !effect->isEnabled() ||
-          effect->pipelineStage() != EffectPipelineStage::Rasterizer) {
-        continue;
-      }
-
-      ArtifactCore::ImageF32x4RGBAWithCache next;
-      effect->applyCPUOnly(current, next);
-      current = next;
+    // Convert to float mat for processing
+    cv::Mat mat = ArtifactCore::CvUtils::qImageToCvMat(surface, true);
+    if (mat.type() != CV_32FC4) {
+        mat.convertTo(mat, CV_32FC4, 1.0 / 255.0);
     }
 
-    surface = current.image().toQImage();
+    // Apply Effects
+    if (hasRasterizerEffect) {
+        ArtifactCore::ImageF32x4_RGBA cpuImage;
+        cpuImage.setFromCVMat(mat);
+        ArtifactCore::ImageF32x4RGBAWithCache current(cpuImage);
+
+        for (const auto& effect : effects) {
+          if (!effect || !effect->isEnabled() ||
+              effect->pipelineStage() != EffectPipelineStage::Rasterizer) {
+            continue;
+          }
+
+          ArtifactCore::ImageF32x4RGBAWithCache next;
+          effect->applyCPUOnly(current, next);
+          current = next;
+        }
+        mat = current.image().toCVMat();
+    }
+
+    // Apply Masks
+    if (hasMasks) {
+        for (int m = 0; m < targetLayer->maskCount(); ++m) {
+            LayerMask mask = targetLayer->mask(m);
+            mask.applyToImage(mat.cols, mat.rows, &mat);
+        }
+    }
+
+    surface = ArtifactCore::CvUtils::cvMatToQImage(mat);
   };
 
-  auto hasRasterizerEffects = [](const ArtifactAbstractLayerPtr& targetLayer) {
+  auto hasRasterizerEffectsOrMasks = [](const ArtifactAbstractLayerPtr& targetLayer) {
     if (!targetLayer) {
       return false;
+    }
+    if (targetLayer->hasMasks()) {
+        return true;
     }
 
     for (const auto& effect : targetLayer->getEffects()) {
@@ -165,15 +179,17 @@ void drawLayerForCompositionView(const ArtifactAbstractLayerPtr &layer,
     return false;
   };
 
-  auto applySurfaceAndDraw = [&](QImage surface, const QRectF& targetRect) {
+  auto applySurfaceAndDraw = [&](QImage surface, const QRectF& rect) {
     if (surface.isNull()) {
       return false;
     }
-    applyRasterizerEffectsToSurface(layer, surface);
-    renderer->drawSprite(static_cast<float>(targetRect.x()),
-                         static_cast<float>(targetRect.y()),
-                         static_cast<float>(targetRect.width()),
-                         static_cast<float>(targetRect.height()), surface,
+    applyRasterizerEffectsAndMasksToSurface(layer, surface);
+    renderer->drawSpriteTransformed(static_cast<float>(rect.x()),
+                         static_cast<float>(rect.y()),
+                         static_cast<float>(rect.width()),
+                         static_cast<float>(rect.height()), 
+                         globalTransform,
+                         surface,
                          layer->opacity());
     return true;
   };
@@ -181,26 +197,20 @@ void drawLayerForCompositionView(const ArtifactAbstractLayerPtr &layer,
   if (const auto solid2D =
           std::dynamic_pointer_cast<ArtifactSolid2DLayer>(layer)) {
     const auto color = solid2D->color();
-    qCDebug(compositionViewLog) << "[CompositionView] draw solid2d"
-             << "id=" << layer->id().toString() << "color=(" << color.r() << ","
-             << color.g() << "," << color.b() << "," << color.a() << ")";
-    if (hasRasterizerEffects(layer)) {
+    if (hasRasterizerEffectsOrMasks(layer)) {
       const QSize surfaceSize(
           std::max(1, static_cast<int>(std::ceil(localRect.width()))),
           std::max(1, static_cast<int>(std::ceil(localRect.height()))));
       QImage surface(surfaceSize, QImage::Format_ARGB32_Premultiplied);
       surface.fill(toQColor(color));
-      renderer->drawSprite(static_cast<float>(worldRect.x()),
-                          static_cast<float>(worldRect.y()),
-                          static_cast<float>(worldRect.width()),
-                          static_cast<float>(worldRect.height()), surface,
-                          layer->opacity());
+      applySurfaceAndDraw(surface, localRect);
     } else {
-      renderer->drawSolidRect(static_cast<float>(worldRect.x()),
-                              static_cast<float>(worldRect.y()),
-                              static_cast<float>(worldRect.width()),
-                              static_cast<float>(worldRect.height()),
-                              solid2D->color(), layer->opacity());
+      renderer->drawSolidRectTransformed(static_cast<float>(localRect.x()),
+                              static_cast<float>(localRect.y()),
+                              static_cast<float>(localRect.width()),
+                              static_cast<float>(localRect.height()),
+                              globalTransform,
+                              color, layer->opacity());
     }
     return;
   }
@@ -208,26 +218,20 @@ void drawLayerForCompositionView(const ArtifactAbstractLayerPtr &layer,
   if (const auto solidImage =
           std::dynamic_pointer_cast<ArtifactSolidImageLayer>(layer)) {
     const auto color = solidImage->color();
-    qCDebug(compositionViewLog) << "[CompositionView] draw solid-image"
-             << "id=" << layer->id().toString() << "color=(" << color.r() << ","
-             << color.g() << "," << color.b() << "," << color.a() << ")";
-    if (hasRasterizerEffects(layer)) {
+    if (hasRasterizerEffectsOrMasks(layer)) {
       const QSize surfaceSize(
           std::max(1, static_cast<int>(std::ceil(localRect.width()))),
           std::max(1, static_cast<int>(std::ceil(localRect.height()))));
       QImage surface(surfaceSize, QImage::Format_ARGB32_Premultiplied);
       surface.fill(toQColor(color));
-      renderer->drawSprite(static_cast<float>(worldRect.x()),
-                          static_cast<float>(worldRect.y()),
-                          static_cast<float>(worldRect.width()),
-                          static_cast<float>(worldRect.height()), surface,
-                          layer->opacity());
+      applySurfaceAndDraw(surface, localRect);
     } else {
-      renderer->drawSolidRect(static_cast<float>(worldRect.x()),
-                              static_cast<float>(worldRect.y()),
-                              static_cast<float>(worldRect.width()),
-                              static_cast<float>(worldRect.height()),
-                              solidImage->color(), layer->opacity());
+      renderer->drawSolidRectTransformed(static_cast<float>(localRect.x()),
+                              static_cast<float>(localRect.y()),
+                              static_cast<float>(localRect.width()),
+                              static_cast<float>(localRect.height()),
+                              globalTransform,
+                              color, layer->opacity());
     }
     return;
   }
@@ -236,16 +240,7 @@ void drawLayerForCompositionView(const ArtifactAbstractLayerPtr &layer,
           std::dynamic_pointer_cast<ArtifactImageLayer>(layer)) {
     const QImage img = imageLayer->toQImage();
     if (!img.isNull()) {
-      qCDebug(compositionViewLog) << "[CompositionView] draw image"
-               << "id=" << layer->id().toString() << "surface=" << img.width()
-               << "x" << img.height();
-      if (!applySurfaceAndDraw(img, worldRect)) {
-        renderer->drawSprite(
-            static_cast<float>(worldRect.x()),
-            static_cast<float>(worldRect.y()),
-            static_cast<float>(worldRect.width()),
-            static_cast<float>(worldRect.height()), img, layer->opacity());
-      }
+      applySurfaceAndDraw(img, localRect);
       return;
     }
   }
@@ -254,16 +249,7 @@ void drawLayerForCompositionView(const ArtifactAbstractLayerPtr &layer,
           std::dynamic_pointer_cast<ArtifactVideoLayer>(layer)) {
     const QImage frame = videoLayer->currentFrameToQImage();
     if (!frame.isNull()) {
-      qCDebug(compositionViewLog) << "[CompositionView] draw video"
-               << "id=" << layer->id().toString() << "surface=" << frame.width()
-               << "x" << frame.height();
-      if (!applySurfaceAndDraw(frame, worldRect)) {
-        renderer->drawSprite(
-            static_cast<float>(worldRect.x()),
-            static_cast<float>(worldRect.y()),
-            static_cast<float>(worldRect.width()),
-            static_cast<float>(worldRect.height()), frame, layer->opacity());
-      }
+      applySurfaceAndDraw(frame, localRect);
       return;
     }
   }
@@ -272,20 +258,9 @@ void drawLayerForCompositionView(const ArtifactAbstractLayerPtr &layer,
           std::dynamic_pointer_cast<ArtifactTextLayer>(layer)) {
     const QImage textImage = textLayer->toQImage();
     if (!textImage.isNull()) {
-      qCDebug(compositionViewLog) << "[CompositionView] draw text"
-               << "id=" << layer->id().toString()
-               << "surface=" << textImage.width() << "x" << textImage.height();
-      if (!applySurfaceAndDraw(textImage, worldRect)) {
-        renderer->drawSprite(
-            static_cast<float>(worldRect.x()),
-            static_cast<float>(worldRect.y()),
-            static_cast<float>(worldRect.width()),
-            static_cast<float>(worldRect.height()), textImage, layer->opacity());
-      }
+      applySurfaceAndDraw(textImage, localRect);
       return;
     }
-    qCDebug(compositionViewLog) << "[CompositionView] skip text layer: no surface"
-             << "id=" << layer->id().toString();
     return;
   }
 
@@ -304,14 +279,19 @@ public:
   std::unique_ptr<CompositionRenderer> compositionRenderer_;
   ArtifactPreviewCompositionPipeline previewPipeline_;
   std::unique_ptr<TransformGizmo> gizmo_;
+  std::unique_ptr<ArtifactCore::GpuContext> gpuContext_;
+  std::unique_ptr<ArtifactCore::LayerBlendPipeline> blendPipeline_;
+  RenderPipeline renderPipeline_;
   QTimer *renderTimer_ = nullptr;
   bool initialized_ = false;
   bool running_ = false;
+  bool blendPipelineReady_ = false;
   QVector<QMetaObject::Connection> layerChangedConnections_;
   QMetaObject::Connection compositionChangedConnection_;
 
   LayerID selectedLayerId_;
   bool showGrid_ = false;
+  bool showCheckerboard_ = false;
   bool showGuides_ = false;
   bool showSafeMargins_ = false;
   bool showFrameInfo_ = true;
@@ -322,6 +302,15 @@ public:
   QVector<float> guideHorizontals_; // Y positions
   float lastCanvasWidth_ = 1920.0f;
   float lastCanvasHeight_ = 1080.0f;
+
+  // Mask editing state
+  int hoveredMaskIndex_ = -1;
+  int hoveredPathIndex_ = -1;
+  int hoveredVertexIndex_ = -1;
+  int draggingMaskIndex_ = -1;
+  int draggingPathIndex_ = -1;
+  int draggingVertexIndex_ = -1;
+  bool isDraggingVertex_ = false;
 
   void applyCompositionState(const ArtifactCompositionPtr &composition) {
     if (!renderer_ || !composition) {
@@ -340,6 +329,12 @@ public:
       renderer_->setCanvasSize(cw, ch);
     } else {
       renderer_->setCanvasSize(cw, ch);
+    }
+
+    // レンダーパイプラインの中間テクスチャを初期化
+    if (auto device = renderer_->device()) {
+      renderPipeline_.initialize(device, static_cast<Uint32>(cw), static_cast<Uint32>(ch),
+                                 TEX_FORMAT_RGBA8_UNORM_SRGB);
     }
   }
 
@@ -466,6 +461,17 @@ void CompositionRenderController::initialize(QWidget *hostWidget) {
   if (auto *playback = ArtifactPlaybackService::instance()) {
     connect(playback, &ArtifactPlaybackService::frameChanged, this,
             [this]() { renderOneFrame(); });
+  }
+
+  // ブレンドパイプライン初期化
+  if (auto device = impl_->renderer_->device()) {
+    if (auto ctx = impl_->renderer_->immediateContext()) {
+      impl_->gpuContext_ = std::make_unique<ArtifactCore::GpuContext>(device, ctx);
+      impl_->blendPipeline_ = std::make_unique<ArtifactCore::LayerBlendPipeline>(*impl_->gpuContext_);
+      impl_->blendPipelineReady_ = impl_->blendPipeline_->initialize();
+      qCDebug(compositionViewLog) << "[CompositionView] blend pipeline"
+               << (impl_->blendPipelineReady_ ? "initialized" : "FAILED");
+    }
   }
 
   impl_->initialized_ = true;
@@ -622,6 +628,13 @@ void CompositionRenderController::setShowGrid(bool show) {
 bool CompositionRenderController::isShowGrid() const {
   return impl_->showGrid_;
 }
+void CompositionRenderController::setShowCheckerboard(bool show) {
+  impl_->showCheckerboard_ = show;
+  renderOneFrame();
+}
+bool CompositionRenderController::isShowCheckerboard() const {
+  return impl_->showCheckerboard_;
+}
 void CompositionRenderController::setShowGuides(bool show) {
   impl_->showGuides_ = show;
   renderOneFrame();
@@ -678,19 +691,264 @@ void CompositionRenderController::zoom100() {
   }
 }
 
-void CompositionRenderController::handleMousePress(const QPointF &viewportPos) {
+void CompositionRenderController::handleMousePress(QMouseEvent *event) {
+  if (!event || !impl_->renderer_) return;
+
+  const QPointF viewportPos = event->position();
+
+  // Gizmo hit test first
   if (impl_->gizmo_) {
     impl_->gizmo_->handleMousePress(viewportPos, impl_->renderer_.get());
+    if (impl_->gizmo_->isDragging()) {
+      return;
+    }
+  }
+
+  if (event->button() == Qt::LeftButton) {
+    auto toolManager = ArtifactApplicationManager::instance()->toolManager();
+    auto activeTool = toolManager ? toolManager->activeTool() : ToolType::Selection;
+
+    auto comp = impl_->previewPipeline_.composition();
+    if (comp && impl_->renderer_) {
+      const auto cPos = impl_->renderer_->viewportToCanvas(
+          {(float)viewportPos.x(), (float)viewportPos.y()});
+      
+      // Get selected layer for Pen tool operations
+      auto selectedLayer = (!impl_->selectedLayerId_.isNil())
+                               ? comp->layerById(impl_->selectedLayerId_)
+                               : ArtifactAbstractLayerPtr{};
+
+      if (activeTool == ToolType::Pen && selectedLayer) {
+          // Convert canvas position to layer local position
+          const QTransform globalTransform = selectedLayer->getGlobalTransform();
+          bool invertible = false;
+          const QTransform invTransform = globalTransform.inverted(&invertible);
+          
+          if (invertible) {
+              const QPointF localPos = invTransform.map(QPointF(cPos.x, cPos.y));
+              
+              // 1. Hit test existing vertices for dragging or closing path
+              const float hitThreshold = 8.0f / impl_->renderer_->getZoom(); // 8px in viewport space
+              for (int m = 0; m < selectedLayer->maskCount(); ++m) {
+                  LayerMask mask = selectedLayer->mask(m);
+                  for (int p = 0; p < mask.maskPathCount(); ++p) {
+                      MaskPath path = mask.maskPath(p);
+                      for (int v = 0; v < path.vertexCount(); ++v) {
+                          MaskVertex vertex = path.vertex(v);
+                          if (QVector2D(vertex.position - localPos).length() < hitThreshold) {
+                              // If it's the first vertex and we have more than 2, close the path
+                              if (v == 0 && !path.isClosed() && path.vertexCount() > 2) {
+                                  path.setClosed(true);
+                                  mask.setMaskPath(p, path);
+                                  selectedLayer->setMask(m, mask);
+                                  qDebug() << "[PenTool] Closed path" << p;
+                                  selectedLayer->changed();
+                                  renderOneFrame();
+                                  return;
+                              }
+                              
+                              // Start dragging vertex
+                              impl_->isDraggingVertex_ = true;
+                              impl_->draggingMaskIndex_ = m;
+                              impl_->draggingPathIndex_ = p;
+                              impl_->draggingVertexIndex_ = v;
+                              qDebug() << "[PenTool] Started dragging vertex" << v;
+                              return;
+                          }
+                      }
+                  }
+              }
+
+              // 2. Add new vertex if no existing vertex was hit
+              if (selectedLayer->maskCount() == 0) {
+                  LayerMask newMask;
+                  MaskPath newPath;
+                  newMask.addMaskPath(newPath);
+                  selectedLayer->addMask(newMask);
+              }
+              
+              LayerMask mask = selectedLayer->mask(0);
+              if (mask.maskPathCount() == 0) {
+                  mask.addMaskPath(MaskPath());
+              }
+              
+              MaskPath path = mask.maskPath(0);
+              // Don't add more vertices if already closed
+              if (path.isClosed()) {
+                  // TODO: Logic to start a new path or insert vertex into existing edge
+                  return;
+              }
+
+              MaskVertex vertex;
+              vertex.position = localPos;
+              vertex.inTangent = QPointF(0, 0);
+              vertex.outTangent = QPointF(0, 0);
+              
+              path.addVertex(vertex);
+              mask.setMaskPath(0, path);
+              selectedLayer->setMask(0, mask);
+              
+              qDebug() << "[PenTool] Added vertex at local:" << localPos << "layer:" << selectedLayer->id().toString();
+              selectedLayer->changed();
+              renderOneFrame();
+              return; // Handled
+          }
+      }
+
+      const auto layers = comp->allLayer();
+
+      // 現在フレームを取得（描画ループと同じソース）
+      FramePosition currentFrame = comp->framePosition();
+      if (auto *playback = ArtifactPlaybackService::instance()) {
+        const auto playbackComp = playback->currentComposition();
+        if (!playbackComp || playbackComp->id() == comp->id()) {
+          currentFrame = playback->currentFrame();
+        }
+      }
+
+      ArtifactAbstractLayerPtr hitLayer = nullptr;
+      // allLayer() returns [backmost, ..., frontmost]
+      // Traverse from end to beginning to find the frontmost layer first
+      qCDebug(compositionViewLog) << "[HitTest] canvasPos=(" << cPos.x << "," << cPos.y << ")"
+               << "layers=" << layers.size();
+      
+      for (int i = (int)layers.size() - 1; i >= 0; --i) {
+        auto& layer = layers[i];
+        if (!layer || !layer->isVisible()) continue;
+        if (!layer->isActiveAt(currentFrame)) continue;
+
+        // Accurate hit test using inverse transform
+        const QTransform globalTransform = layer->getGlobalTransform();
+        bool invertible = false;
+        const QTransform invTransform = globalTransform.inverted(&invertible);
+        
+        if (invertible) {
+          const QPointF localPos = invTransform.map(QPointF(cPos.x, cPos.y));
+          if (layer->localBounds().contains(localPos)) {
+            hitLayer = layer;
+            qCDebug(compositionViewLog) << "[HitTest] HIT (Accurate) index=" << i
+                     << "id=" << layer->id().toString();
+            break;
+          }
+        } else {
+          // Fallback to bounding box if transform is not invertible (e.g. zero scale)
+          auto bbox = layer->transformedBoundingBox();
+          if (bbox.contains(cPos.x, cPos.y)) {
+            hitLayer = layer;
+            qCDebug(compositionViewLog) << "[HitTest] HIT (BBox Fallback) index=" << i
+                     << "id=" << layer->id().toString();
+            break;
+          }
+        }
+      }
+
+      if (hitLayer) {
+        if (event->modifiers() & Qt::ShiftModifier) {
+          ArtifactApplicationManager::instance()->layerSelectionManager()->addToSelection(hitLayer);
+        } else {
+          ArtifactApplicationManager::instance()->layerSelectionManager()->selectLayer(hitLayer);
+        }
+        impl_->selectedLayerId_ = hitLayer->id();
+        impl_->gizmo_->setLayer(hitLayer);
+      } else {
+        if (!(event->modifiers() & Qt::ShiftModifier)) {
+          ArtifactApplicationManager::instance()->layerSelectionManager()->clearSelection();
+          impl_->selectedLayerId_ = LayerID::Nil();
+          impl_->gizmo_->setLayer(nullptr);
+        }
+      }
+    }
   }
 }
 
 void CompositionRenderController::handleMouseMove(const QPointF &viewportPos) {
+  auto toolManager = ArtifactApplicationManager::instance()->toolManager();
+  auto activeTool = toolManager ? toolManager->activeTool() : ToolType::Selection;
+
+  if (activeTool == ToolType::Pen && impl_->isDraggingVertex_) {
+      auto comp = impl_->previewPipeline_.composition();
+      if (comp && impl_->renderer_) {
+          auto selectedLayer = comp->layerById(impl_->selectedLayerId_);
+          if (selectedLayer) {
+              const auto cPos = impl_->renderer_->viewportToCanvas(
+                  {(float)viewportPos.x(), (float)viewportPos.y()});
+              const QTransform globalTransform = selectedLayer->getGlobalTransform();
+              bool invertible = false;
+              const QTransform invTransform = globalTransform.inverted(&invertible);
+              
+              if (invertible) {
+                  const QPointF localPos = invTransform.map(QPointF(cPos.x, cPos.y));
+                  LayerMask mask = selectedLayer->mask(impl_->draggingMaskIndex_);
+                  MaskPath path = mask.maskPath(impl_->draggingPathIndex_);
+                  MaskVertex vertex = path.vertex(impl_->draggingVertexIndex_);
+                  
+                  vertex.position = localPos;
+                  path.setVertex(impl_->draggingVertexIndex_, vertex);
+                  mask.setMaskPath(impl_->draggingPathIndex_, path);
+                  selectedLayer->setMask(impl_->draggingMaskIndex_, mask);
+                  
+                  selectedLayer->changed();
+                  renderOneFrame();
+                  return;
+              }
+          }
+      }
+  }
+
+  // Hover detection for Pen tool
+  if (activeTool == ToolType::Pen) {
+      impl_->hoveredMaskIndex_ = -1;
+      impl_->hoveredPathIndex_ = -1;
+      impl_->hoveredVertexIndex_ = -1;
+
+      auto comp = impl_->previewPipeline_.composition();
+      if (comp && impl_->renderer_) {
+          auto selectedLayer = comp->layerById(impl_->selectedLayerId_);
+          if (selectedLayer) {
+              const auto cPos = impl_->renderer_->viewportToCanvas(
+                  {(float)viewportPos.x(), (float)viewportPos.y()});
+              const QTransform globalTransform = selectedLayer->getGlobalTransform();
+              bool invertible = false;
+              const QTransform invTransform = globalTransform.inverted(&invertible);
+              
+              if (invertible) {
+                  const QPointF localPos = invTransform.map(QPointF(cPos.x, cPos.y));
+                  const float hitThreshold = 8.0f / impl_->renderer_->getZoom();
+                  
+                  for (int m = 0; m < selectedLayer->maskCount(); ++m) {
+                      LayerMask mask = selectedLayer->mask(m);
+                      for (int p = 0; p < mask.maskPathCount(); ++p) {
+                          MaskPath path = mask.maskPath(p);
+                          for (int v = 0; v < path.vertexCount(); ++v) {
+                              MaskVertex vertex = path.vertex(v);
+                              if (QVector2D(vertex.position - localPos).length() < hitThreshold) {
+                                  impl_->hoveredMaskIndex_ = m;
+                                  impl_->hoveredPathIndex_ = p;
+                                  impl_->hoveredVertexIndex_ = v;
+                                  renderOneFrame();
+                                  break;
+                              }
+                          }
+                          if (impl_->hoveredVertexIndex_ != -1) break;
+                      }
+                      if (impl_->hoveredVertexIndex_ != -1) break;
+                  }
+              }
+          }
+      }
+  }
+
   if (impl_->gizmo_) {
     impl_->gizmo_->handleMouseMove(viewportPos, impl_->renderer_.get());
   }
 }
 
 void CompositionRenderController::handleMouseRelease() {
+  impl_->isDraggingVertex_ = false;
+  impl_->draggingMaskIndex_ = -1;
+  impl_->draggingPathIndex_ = -1;
+  impl_->draggingVertexIndex_ = -1;
+
   if (impl_->gizmo_) {
     impl_->gizmo_->handleMouseRelease();
   }
@@ -753,7 +1011,12 @@ void CompositionRenderController::renderOneFrame() {
            << "compId=" << comp->id().toString() << "size=" << cw << "x" << ch
            << "bg=(" << bgColor.r() << "," << bgColor.g() << ","
            << bgColor.b() << "," << bgColor.a() << ")";
-  if (impl_->compositionRenderer_) {
+  if (impl_->showCheckerboard_) {
+    qCDebug(compositionViewLog) << "[CompositionView] drawing checkerboard background";
+    impl_->renderer_->drawCheckerboard(0.0f, 0.0f, cw, ch, 16.0f,
+                                       {0.25f, 0.25f, 0.25f, 1.0f},
+                                       {0.35f, 0.35f, 0.35f, 1.0f});
+  } else if (impl_->compositionRenderer_) {
     qCDebug(compositionViewLog) << "[CompositionView] drawing background via CompositionRenderer"
              << "color=(" << bgColor.r() << "," << bgColor.g() << ","
              << bgColor.b() << "," << bgColor.a() << ")";
@@ -805,37 +1068,94 @@ void CompositionRenderController::renderOneFrame() {
                     [](const ArtifactAbstractLayerPtr &layer) {
                       return layer && layer->isVisible() && layer->isSolo();
                     });
-    for (const auto &layer : layers) {
-      if (!layer || !layer->isVisible()) {
-        if (layer) {
-          qCDebug(compositionViewLog) << "[CompositionView] skip layer: invisible"
-                   << "id=" << layer->id().toString();
+
+    // ブレンドパイプライン使用判定: 非 Normal ブレンドモードのレイヤーが存在するか
+    const bool hasBlendModes = impl_->blendPipelineReady_ &&
+        std::any_of(layers.begin(), layers.end(),
+                    [](const ArtifactAbstractLayerPtr &layer) {
+                      return layer && layer->isVisible() &&
+                             layer->layerBlendType() != LAYER_BLEND_TYPE::BLEND_NORMAL;
+                    });
+
+    if (hasBlendModes) {
+      // ブレンドパイプライン使用: レイヤー毎にオフスクリーン描画 → 合成
+      auto ctx = impl_->renderer_->immediateContext();
+      if (ctx && impl_->renderPipeline_.ready()) {
+        auto accumSRV = impl_->renderPipeline_.accumSRV();
+        bool isFirst = true;
+
+        for (const auto &layer : layers) {
+          if (!layer || !layer->isVisible()) continue;
+          if (hasSoloLayer && !layer->isSolo()) continue;
+          if (!layer->isActiveAt(currentFrame)) continue;
+
+          layer->goToFrame(currentFrame.framePosition());
+
+          const auto blendMode = layer->layerBlendType();
+          const float opacity = layer->opacity();
+
+          // opacity 最適化
+          if (opacity <= 0.0f) continue;
+
+          // TODO: temp テクスチャにレイヤーを描画
+          // TODO: blendPipeline_->blend() で合成
+          // TODO: accum と temp をスワップ
+
+          isFirst = false;
         }
-        continue;
+      } else {
+        // フォールバック: painter's algorithm
+        for (const auto &layer : layers) {
+          if (!layer || !layer->isVisible()) continue;
+          if (hasSoloLayer && !layer->isSolo()) continue;
+          if (!layer->isActiveAt(currentFrame)) continue;
+          layer->goToFrame(currentFrame.framePosition());
+
+          qCDebug(compositionViewLog) << "[CompositionView] drawing layer"
+                   << "id=" << layer->id().toString()
+                   << "isActive=" << layer->isActiveAt(currentFrame)
+                   << "globalFrame=" << currentFrame.framePosition()
+                   << "inPoint=" << layer->inPoint().framePosition()
+                   << "outPoint=" << layer->outPoint().framePosition()
+                   << "layerCurrentFrame=" << layer->currentFrame();
+
+          drawLayerForCompositionView(layer, impl_->renderer_.get());        }
       }
-      if (hasSoloLayer && !layer->isSolo()) {
-        qCDebug(compositionViewLog) << "[CompositionView] skip layer: solo filter"
-                 << "id=" << layer->id().toString();
-        continue;
-      }
-      if (!layer->isActiveAt(currentFrame)) {
-        qCDebug(compositionViewLog) << "[CompositionView] skip layer: inactive at frame"
+    } else {
+      // 通常描画: painter's algorithm
+      for (const auto &layer : layers) {
+        if (!layer || !layer->isVisible()) {
+          if (layer) {
+            qCDebug(compositionViewLog) << "[CompositionView] skip layer: invisible"
+                     << "id=" << layer->id().toString();
+          }
+          continue;
+        }
+        if (hasSoloLayer && !layer->isSolo()) {
+          qCDebug(compositionViewLog) << "[CompositionView] skip layer: solo filter"
+                   << "id=" << layer->id().toString();
+          continue;
+        }
+        if (!layer->isActiveAt(currentFrame)) {
+          qCDebug(compositionViewLog) << "[CompositionView] skip layer: inactive at frame"
+                   << "id=" << layer->id().toString()
+                   << "frame=" << currentFrame.framePosition()
+                   << "in=" << layer->inPoint().framePosition()
+                   << "out=" << layer->outPoint().framePosition()
+                   << "startTime=" << layer->startTime().framePosition();
+          continue;
+        }
+        layer->goToFrame(currentFrame.framePosition());
+        qCDebug(compositionViewLog) << "[CompositionView] draw layer"
                  << "id=" << layer->id().toString()
+                 << "opacity=" << layer->opacity()
+                 << "blend=" << static_cast<int>(layer->layerBlendType())
                  << "frame=" << currentFrame.framePosition()
                  << "in=" << layer->inPoint().framePosition()
                  << "out=" << layer->outPoint().framePosition()
                  << "startTime=" << layer->startTime().framePosition();
-        continue;
+        drawLayerForCompositionView(layer, impl_->renderer_.get());
       }
-      layer->goToFrame(currentFrame.framePosition());
-      qCDebug(compositionViewLog) << "[CompositionView] draw layer"
-               << "id=" << layer->id().toString()
-               << "opacity=" << layer->opacity()
-               << "frame=" << currentFrame.framePosition()
-               << "in=" << layer->inPoint().framePosition()
-               << "out=" << layer->outPoint().framePosition()
-               << "startTime=" << layer->startTime().framePosition();
-      drawLayerForCompositionView(layer, impl_->renderer_.get());
     }
   }
 
@@ -847,6 +1167,64 @@ void CompositionRenderController::renderOneFrame() {
         selectedLayer->isActiveAt(currentFrame)) {
       impl_->gizmo_->setLayer(selectedLayer);
       impl_->gizmo_->draw(impl_->renderer_.get());
+
+      // Mask Overlay Drawing
+      const int maskCount = selectedLayer->maskCount();
+      if (maskCount > 0 && impl_->renderer_) {
+          const QTransform globalTransform = selectedLayer->getGlobalTransform();
+          const FloatColor maskPointColor = {1.0f, 1.0f, 0.0f, 1.0f}; // Yellow
+          const FloatColor maskLineColor = {0.0f, 1.0f, 1.0f, 0.8f}; // Cyan
+          const FloatColor hoverColor = {1.0f, 0.5f, 0.0f, 1.0f}; // Orange
+          const FloatColor dragColor = {1.0f, 0.0f, 0.0f, 1.0f};   // Red
+
+          for (int m = 0; m < maskCount; ++m) {
+              LayerMask mask = selectedLayer->mask(m);
+              if (!mask.isEnabled()) continue;
+
+              for (int p = 0; p < mask.maskPathCount(); ++p) {
+                  MaskPath path = mask.maskPath(p);
+                  const int vertexCount = path.vertexCount();
+                  if (vertexCount == 0) continue;
+
+                  Detail::float2 lastCanvasPos;
+                  for (int v = 0; v < vertexCount; ++v) {
+                      MaskVertex vertex = path.vertex(v);
+                      QPointF canvasPos = globalTransform.map(vertex.position);
+                      Detail::float2 currentCanvasPos = {(float)canvasPos.x(), (float)canvasPos.y()};
+
+                      // Draw line from previous vertex
+                      if (v > 0) {
+                          impl_->renderer_->drawSolidLine(lastCanvasPos, currentCanvasPos, maskLineColor, 1.0f);
+                      }
+
+                      // Determine point color based on state
+                      FloatColor currentColor = maskPointColor;
+                      float currentPointSize = 6.0f;
+                      
+                      if (impl_->isDraggingVertex_ && impl_->draggingMaskIndex_ == m && 
+                          impl_->draggingPathIndex_ == p && impl_->draggingVertexIndex_ == v) {
+                          currentColor = dragColor;
+                          currentPointSize = 8.0f;
+                      } else if (impl_->hoveredMaskIndex_ == m && impl_->hoveredPathIndex_ == p && 
+                                 impl_->hoveredVertexIndex_ == v) {
+                          currentColor = hoverColor;
+                          currentPointSize = 8.0f;
+                      }
+
+                      // Draw vertex point
+                      impl_->renderer_->drawPoint(currentCanvasPos.x, currentCanvasPos.y, currentPointSize, currentColor);
+                      lastCanvasPos = currentCanvasPos;
+                  }
+
+                  // Draw closing line if path is closed
+                  if (path.isClosed() && vertexCount > 1) {
+                      MaskVertex firstVertex = path.vertex(0);
+                      QPointF firstCanvasPos = globalTransform.map(firstVertex.position);
+                      impl_->renderer_->drawSolidLine(lastCanvasPos, {(float)firstCanvasPos.x(), (float)firstCanvasPos.y()}, maskLineColor, 1.0f);
+                  }
+              }
+          }
+      }
     } else {
       impl_->gizmo_->setLayer(nullptr);
     }

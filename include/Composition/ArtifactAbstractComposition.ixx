@@ -18,6 +18,7 @@ import Frame.Rate;
 import Frame.Range;
 import Frame.Position;
 import Container.MultiIndex;
+import Composition.Context;
 import Artifact.Layer.Abstract;
 import Artifact.Composition.Result;
 import Artifact.Composition.InitParams;
@@ -48,6 +49,9 @@ export namespace Artifact {
   int layerCount() const;
   
   CompositionSettings settings() const;
+  CompositionContext& compositionContext();
+  const CompositionContext& compositionContext() const;
+  void setCompositionContext(const CompositionContext& context);
   void setCompositionName(const UniString& name);
   void setCompositionSize(const QSize& size);
 

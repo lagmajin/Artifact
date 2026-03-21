@@ -1,6 +1,7 @@
 module;
 #include <QObject>
 #include <QCursor>
+#include <QMouseEvent>
 #include <QPointF>
 #include <wobjectdefs.h>
 
@@ -44,6 +45,8 @@ void setClearColor(const FloatColor& color);
 
 void setShowGrid(bool show);
 bool isShowGrid() const;
+void setShowCheckerboard(bool show);
+bool isShowCheckerboard() const;
 void setShowGuides(bool show);
 bool isShowGuides() const;
 void setShowSafeMargins(bool show);
@@ -55,7 +58,7 @@ void zoomOutAt(const QPointF& viewportPos);
 void zoomFit();
 void zoom100();
 
-void handleMousePress(const QPointF& viewportPos);
+void handleMousePress(QMouseEvent* event);
 void handleMouseMove(const QPointF& viewportPos);
   void handleMouseRelease();
 

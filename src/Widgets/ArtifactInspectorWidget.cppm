@@ -96,6 +96,25 @@ namespace Artifact {
 
  //using namespace ArtifactWidgets;
 
+ namespace {
+ constexpr int kEffectRackCount = 5;
+
+ int rackIndexFromStage(EffectPipelineStage stage)
+ {
+  const int stageIndex = static_cast<int>(stage);
+  if (stageIndex <= static_cast<int>(EffectPipelineStage::PreProcess)) {
+   return -1;
+  }
+  const int rackIndex = stageIndex - 1;
+  return (rackIndex >= 0 && rackIndex < kEffectRackCount) ? rackIndex : -1;
+ }
+
+ EffectPipelineStage stageFromRackIndex(int rackIndex)
+ {
+  return static_cast<EffectPipelineStage>(rackIndex + 1);
+ }
+ } // namespace
+
  W_OBJECT_IMPL(ArtifactInspectorWidget)
 
   class ArtifactInspectorWidget::Impl {
@@ -124,7 +143,7 @@ namespace Artifact {
        QPushButton* moveUpButton = nullptr;
        QPushButton* moveDownButton = nullptr;
    };
-   EffectRack racks[5];
+   EffectRack racks[kEffectRackCount];
    QMenu* inspectorMenu_ = nullptr;
 
    CompositionID currentCompositionId_;
@@ -226,7 +245,7 @@ void ArtifactInspectorWidget::Impl::setEffectsStateText(const QString& text, boo
  {
   QMenu menu;
 
-  if (rackIndex >= 0 && rackIndex < 5) {
+  if (rackIndex >= 0 && rackIndex < kEffectRackCount) {
    menu.addAction("Add Effect...", [this, rackIndex]() { handleAddEffectClicked(rackIndex); });
   }
 
@@ -542,7 +561,7 @@ void ArtifactInspectorWidget::Impl::setNoLayerState()
 
   void ArtifactInspectorWidget::Impl::updateEffectsList()
  {
-  for (int i=0; i<5; ++i) {
+  for (int i=0; i<kEffectRackCount; ++i) {
       if (racks[i].listWidget) racks[i].listWidget->clear();
   }
   if (currentLayerId_.isNil()) {
@@ -606,13 +625,13 @@ void ArtifactInspectorWidget::Impl::setNoLayerState()
     auto item = new QListWidgetItem(itemText);
     item->setData(Qt::UserRole, effect->effectID().toQString());
 
-    int stageIdx = static_cast<int>(effect->pipelineStage());
-    if (stageIdx >= 0 && stageIdx < 5) {
-        if (racks[stageIdx].listWidget) racks[stageIdx].listWidget->addItem(item);
+    const int rackIdx = rackIndexFromStage(effect->pipelineStage());
+    if (rackIdx >= 0) {
+        if (racks[rackIdx].listWidget) racks[rackIdx].listWidget->addItem(item);
     }
    }
   }
-  for (int i=0; i<5; ++i) {
+  for (int i=0; i<kEffectRackCount; ++i) {
       if (racks[i].listWidget && racks[i].listWidget->count() == 0) {
           auto item = new QListWidgetItem("(No effects)");
           item->setFlags(item->flags() & ~Qt::ItemIsSelectable);
@@ -661,7 +680,7 @@ void ArtifactInspectorWidget::Impl::setNoLayerState()
       }
   };
 
-  switch (static_cast<EffectPipelineStage>(rackIndex)) {
+  switch (stageFromRackIndex(rackIndex)) {
       case EffectPipelineStage::Generator:
           effectMenu.addAction("Cloner", [addAndRefresh]() { addAndRefresh(std::make_shared<ClonerGenerator>()); });
           effectMenu.addAction("Fractal Noise", [addAndRefresh]() { addAndRefresh(std::make_shared<FractalNoiseGenerator>()); });
@@ -702,6 +721,7 @@ void ArtifactInspectorWidget::Impl::setNoLayerState()
 
 void ArtifactInspectorWidget::Impl::handleRemoveEffectClicked(int rackIndex)
  {
+  if (rackIndex < 0 || rackIndex >= kEffectRackCount) return;
   if (!racks[rackIndex].listWidget) return;
 
   auto selectedItems = racks[rackIndex].listWidget->selectedItems();
@@ -888,7 +908,7 @@ void ArtifactInspectorWidget::Impl::handleRemoveEffectClicked(int rackIndex)
       }
       QObject::connect(impl_->racks[i].listWidget, &QListWidget::currentItemChanged, this, [this](QListWidgetItem*, QListWidgetItem*) {
           QString focusedEffectId;
-          for (int rackIndex = 0; rackIndex < 5; ++rackIndex) {
+          for (int rackIndex = 0; rackIndex < kEffectRackCount; ++rackIndex) {
               auto* list = impl_->racks[rackIndex].listWidget;
               if (!list) continue;
               auto* item = list->currentItem();

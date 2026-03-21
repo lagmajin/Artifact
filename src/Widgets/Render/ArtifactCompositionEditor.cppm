@@ -138,16 +138,14 @@ protected:
     }
 
     if (controller_) {
-      controller_->handleMousePress(event->position());
+      controller_->handleMousePress(event);
       if (controller_->gizmo() && controller_->gizmo()->isDragging()) {
         const auto cursor = controller_->cursorShapeForViewportPos(event->position());
         setCursor(cursor == Qt::OpenHandCursor ? Qt::ClosedHandCursor : cursor);
-        event->accept();
-        return;
       }
+      event->accept();
+      return;
     }
-
-    QWidget::mousePressEvent(event);
   }
 
   void mouseMoveEvent(QMouseEvent *event) override {
@@ -308,22 +306,28 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   // Display Options Button (Grid/Guides)
   impl_->displayOptionsBtn_ = new QToolButton(impl_->bottomBar_);
   impl_->displayOptionsBtn_->setText("👁"); // View options icon
-  impl_->displayOptionsBtn_->setToolTip("Choose grid and guide options");
+  impl_->displayOptionsBtn_->setToolTip("Choose transparency, grid, and guide options");
   impl_->displayOptionsBtn_->setPopupMode(QToolButton::InstantPopup);
   impl_->displayOptionsBtn_->setStyleSheet(
       "QToolButton { color: #ccc; background: transparent; border: none; } "
       "QToolButton:hover { background: #444; }");
 
   auto *displayMenu = new QMenu(impl_->displayOptionsBtn_);
+  QAction *checkerboardAct = displayMenu->addAction("Checkerboard");
   QAction *gridAct = displayMenu->addAction("Grid");
   QAction *guidesAct = displayMenu->addAction("Guides");
   QAction *safeMarginsAct = displayMenu->addAction("Safe Area");
+  checkerboardAct->setCheckable(true);
   gridAct->setCheckable(true);
   guidesAct->setCheckable(true);
   safeMarginsAct->setCheckable(true);
   impl_->displayOptionsBtn_->setMenu(displayMenu);
 
   // Connect actions
+  QObject::connect(checkerboardAct, &QAction::toggled, this, [this](bool checked) {
+    if (impl_->renderController_)
+      impl_->renderController_->setShowCheckerboard(checked);
+  });
   QObject::connect(gridAct, &QAction::toggled, this, [this](bool checked) {
     if (impl_->renderController_)
       impl_->renderController_->setShowGrid(checked);
@@ -340,6 +344,7 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
 
   // Initialize checked state
   if (impl_->renderController_) {
+    checkerboardAct->setChecked(impl_->renderController_->isShowCheckerboard());
     gridAct->setChecked(impl_->renderController_->isShowGrid());
     guidesAct->setChecked(impl_->renderController_->isShowGuides());
     safeMarginsAct->setChecked(impl_->renderController_->isShowSafeMargins());

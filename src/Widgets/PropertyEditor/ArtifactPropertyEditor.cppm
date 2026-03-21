@@ -293,6 +293,7 @@ ArtifactFloatPropertyEditor::ArtifactFloatPropertyEditor(
     spinBox_->setSuffix(QStringLiteral(" ") + meta.unit);
   }
   spinBox_->setMinimumHeight(22);
+  spinBox_->setButtonSymbols(QAbstractSpinBox::NoButtons);
 
   slider_->setRange(0, 10000); // 精度を向上
   slider_->setMinimumHeight(16);
@@ -435,6 +436,7 @@ ArtifactIntPropertyEditor::ArtifactIntPropertyEditor(
     spinBox_->setSuffix(QStringLiteral(" ") + meta.unit);
   }
   spinBox_->setMinimumHeight(22);
+  spinBox_->setButtonSymbols(QAbstractSpinBox::NoButtons);
 
   slider_->setRange(0, 10000); // 精度を向上
   slider_->setMinimumHeight(16);
@@ -716,7 +718,7 @@ void ArtifactColorPropertyEditor::applyColor(const QColor &color) {
   currentColor_ = color;
   if (button_) {
     button_->setStyleSheet(QStringLiteral("background-color: %1; border: 1px "
-                                          "solid #5a6b7a; border-radius: 4px;")
+                                          "solid #454545; border-radius: 4px;")
                                .arg(color.name()));
   }
   if (valueLabel_) {
@@ -751,21 +753,22 @@ ArtifactPropertyEditorRowWidget::ArtifactPropertyEditorRowWidget(
 
   const QString navStyle = R"(
         QPushButton {
-            background: #202a34;
-            border: 1px solid #3b4b5d;
-            color: #a8b8c8;
+            background: #404040;
+            border: 1px solid #454545;
+            color: #E0E0E0;
             font-size: 10px;
             padding: 0;
             border-radius: 3px;
         }
         QPushButton:hover {
-            color: #d4dfeb;
-            border-color: #6e98c0;
+            color: #FFFFFF;
+            border-color: #606060;
+            background: #4A4A4A;
         }
         QPushButton:disabled {
-            color: #5d6b79;
-            border-color: #2d3742;
-            background: #1a222b;
+            color: #606060;
+            border-color: #353535;
+            background: #353535;
         }
     )";
 
@@ -781,26 +784,27 @@ ArtifactPropertyEditorRowWidget::ArtifactPropertyEditorRowWidget(
   keyframeButton_->setCheckable(true);
   keyframeButton_->setStyleSheet(R"(
         QPushButton#propertyKeyButton {
-            background: #202a34;
-            border: 1px solid #3b4b5d;
-            color: #a8b8c8;
+            background: #404040;
+            border: 1px solid #454545;
+            color: #E0E0E0;
             font-size: 11px;
             font-weight: 700;
             border-radius: 3px;
         }
         QPushButton#propertyKeyButton:hover {
-            color: #d4dfeb;
-            border-color: #6e98c0;
+            color: #FFFFFF;
+            border-color: #606060;
+            background: #4A4A4A;
         }
         QPushButton#propertyKeyButton:checked {
-            color: #f0f5fb;
-            background: #d47d32;
-            border-color: #d47d32;
+            color: #FFFFFF;
+            background: #F5933C;
+            border-color: #F5933C;
         }
         QPushButton#propertyKeyButton:disabled {
-            color: #5d6b79;
-            border-color: #2d3742;
-            background: #1a222b;
+            color: #606060;
+            border-color: #353535;
+            background: #353535;
         }
     )");
 

@@ -20,6 +20,7 @@ import Container;
 import Frame.Position;
 import Frame.Range;
 import Frame.Rate;
+import Composition.Context;
 import Composition.Settings;
 import Artifact.Composition.Result;
 import Artifact.Layer.Abstract;
@@ -43,6 +44,7 @@ namespace Artifact {
   ArtifactAbstractComposition* owner_;
   MultiIndexLayerContainer layerMultiIndex_;
   CompositionSettings settings_;
+  CompositionContext context_;
   FramePosition position_;
   FrameRange frameRange_ = FrameRange(0, 300);
   FrameRange workAreaRange_ = FrameRange(0, 300);
@@ -57,6 +59,7 @@ namespace Artifact {
   AppendLayerToCompositionResult appendLayerBottom(ArtifactAbstractLayerPtr layer);
   bool containsLayerById(const LayerID& id) const;
   void removeAllLayers();
+  void recalculateFrameRange();
   void removeLayer(const LayerID& id);
   const FramePosition framePosition() const;
   void setFramePosition(const FramePosition& position);
@@ -101,19 +104,43 @@ namespace Artifact {
   auto id = layer->id();
 
   layer->setComposition(owner_);
-  // デフォルトの outPoint (300) のままなら、コンポジションの長さに合わせる
-  if (layer->outPoint().framePosition() == 300) {
-    layer->setOutPoint(FramePosition(frameRange_.end()));
+  
+  // Newly created layers often have a default duration. 
+  // If it's a solid/plane layer and hasn't been configured yet, match composition duration.
+  // We use a more robust check than just '300'.
+  const int64_t currentOut = layer->outPoint().framePosition();
+  const int64_t currentIn = layer->inPoint().framePosition();
+  const int64_t compEnd = frameRange_.end();
+  
+  if (currentOut == 300 && currentIn == 0 && compEnd > 300) {
+    layer->setOutPoint(FramePosition(compEnd));
   }
+  
   layerMultiIndex_.add(layer,id,layer->type_index());
+  recalculateFrameRange();
 
   result.success = true;
   result.error = AppendLayerToCompositionError::None;
   result.message = QString("Layer added successfully");
+  
+  Q_EMIT owner_->changed();
   return result;
- }
+  }
 
- void ArtifactAbstractComposition::Impl::removeAllLayers()
+  void ArtifactAbstractComposition::Impl::recalculateFrameRange()
+  {
+   int64_t maxOut = 0;
+   for (const auto& layer : layerMultiIndex_) {
+    if (layer) {
+     maxOut = std::max(maxOut, layer->outPoint().framePosition());
+    }
+   }
+   if (maxOut > 0) {
+    frameRange_ = FrameRange(0, maxOut);
+   }
+  }
+
+  void ArtifactAbstractComposition::Impl::removeAllLayers()
  {
   for (auto& layer : layerMultiIndex_) {
    if (layer) {
@@ -157,8 +184,10 @@ void ArtifactAbstractComposition::Impl::removeLayer(const LayerID& id)
 
  void ArtifactAbstractComposition::Impl::setFramePosition(const FramePosition& position)
  {
-
- 	
+    if (position_ == position) {
+        return;
+    }
+    goToFrame(position.framePosition());
  }
 
  const FramePosition ArtifactAbstractComposition::Impl::framePosition() const
@@ -188,11 +217,17 @@ void ArtifactAbstractComposition::Impl::removeLayer(const LayerID& id)
           return result;
       }
       layer->setComposition(owner_);
-      // デフォルトの outPoint (300) のままなら、コンポジションの長さに合わせる
-      if (layer->outPoint().framePosition() == 300) {
-          layer->setOutPoint(FramePosition(frameRange_.end()));
+      
+      const int64_t currentOut = layer->outPoint().framePosition();
+      const int64_t currentIn = layer->inPoint().framePosition();
+      const int64_t compEnd = frameRange_.end();
+      
+      if (currentOut == 300 && currentIn == 0 && compEnd > 300) {
+          layer->setOutPoint(FramePosition(compEnd));
       }
+      
       layerMultiIndex_.insertAt(0, layer, layer->id(), layer->type_index());
+      recalculateFrameRange();
       result.success = true;
       result.error = AppendLayerToCompositionError::None;
       Q_EMIT owner_->changed();
@@ -387,11 +422,17 @@ void ArtifactAbstractComposition::insertLayerAt(ArtifactAbstractLayerPtr layer, 
 {
     if (!layer) return;
     layer->setComposition(this);
-    // デフォルトの outPoint (300) のままなら、コンポジションの長さに合わせる
-    if (layer->outPoint().framePosition() == 300) {
-        layer->setOutPoint(FramePosition(impl_->frameRange_.end()));
+    
+    const int64_t currentOut = layer->outPoint().framePosition();
+    const int64_t currentIn = layer->inPoint().framePosition();
+    const int64_t compEnd = impl_->frameRange_.end();
+    
+    if (currentOut == 300 && currentIn == 0 && compEnd > 300) {
+        layer->setOutPoint(FramePosition(compEnd));
     }
+    
     impl_->layerMultiIndex_.insertAt(index, layer, layer->id(), layer->type_index());
+    impl_->recalculateFrameRange();
     Q_EMIT changed();
 }
 
@@ -403,6 +444,7 @@ void ArtifactAbstractComposition::moveLayerToIndex(const LayerID& id, int newInd
 void ArtifactAbstractComposition::removeLayer(const LayerID& id)
 {
   impl_->removeLayer(id);
+  impl_->recalculateFrameRange();
 }
 
 void ArtifactAbstractComposition::removeAllLayers()
@@ -448,6 +490,22 @@ bool ArtifactAbstractComposition::isAudioOnly() const
 CompositionSettings ArtifactAbstractComposition::settings() const
 {
   return impl_->settings_;
+}
+
+CompositionContext& ArtifactAbstractComposition::compositionContext()
+{
+  return impl_->context_;
+}
+
+const CompositionContext& ArtifactAbstractComposition::compositionContext() const
+{
+  return impl_->context_;
+}
+
+void ArtifactAbstractComposition::setCompositionContext(const CompositionContext& context)
+{
+  impl_->context_ = context;
+  Q_EMIT changed();
 }
 
 void ArtifactAbstractComposition::setCompositionName(const UniString& name)

@@ -147,15 +147,44 @@ bool applyTimelineLayerRangeEdit(const CompositionID &compositionId,
 
   const int64_t oldInPoint = layer->inPoint().framePosition();
   const int64_t oldOutPoint = layer->outPoint().framePosition();
+  const int64_t oldStartTime = layer->startTime().framePosition();
   const int64_t oldDuration = std::max<int64_t>(1, oldOutPoint - oldInPoint);
+  
   const int64_t inPoint = std::max<int64_t>(0, static_cast<int64_t>(std::llround(startFrame)));
   const int64_t outPoint = preserveExistingDuration
       ? std::max<int64_t>(inPoint + 1, inPoint + oldDuration)
       : std::max<int64_t>(inPoint + 1,
                           static_cast<int64_t>(std::llround(startFrame + durationFrame)));
 
+  // Adjust startTime so the source frame maps correctly after movement.
+  // If we move the clip (preserveExistingDuration == true), we want the *same* source frame
+  // to appear at the *new* inPoint.
+  // currentFrame_ = globalFrame - inPoint + startTime
+  // At globalFrame = inPoint, currentFrame_ = startTime.
+  // Therefore, to keep the content the same, startTime must remain unchanged relative to the clip.
+  // Wait, if startTime is the *offset into the source*, it should remain constant when moving the clip.
+  // The issue is likely that changing inPoint changes when it's active, but the playback might be
+  // resetting or misinterpreting it. Let's see if startTime is changed somewhere else, or if the
+  // formula requires startTime to move with inPoint.
+  // If `currentFrame_ = frameNumber - inPoint + startTime`, and we want the same video to play
+  // from its beginning (0) when we hit `inPoint`, then `startTime` must be 0.
+  // The user says "when I move it to 1, it disappears". This implies `currentFrame_` becomes 1 - 1 + 0 = 0.
+  // Why would it disappear? Because maybe `isActiveAt` uses `inPoint` correctly, but the underlying renderer
+  // fails? Let's check `ArtifactAbstractLayer::goToFrame`.
+
   layer->setInPoint(FramePosition(inPoint));
   layer->setOutPoint(FramePosition(outPoint));
+  
+  // If it's a move operation, we don't change the source offset (startTime).
+  // But wait, if we trim the left edge (trim-in), the inPoint increases. The source should play from
+  // a later point.
+  // Example: trim left by 10 frames. new inPoint = oldInPoint + 10.
+  // At the new inPoint, we want the source to play from `oldStartTime + 10`.
+  // So `newStartTime = oldStartTime + (newInPoint - oldInPoint)`.
+  if (!preserveExistingDuration && inPoint != oldInPoint) {
+      layer->setStartTime(FramePosition(std::max<int64_t>(0, oldStartTime + (inPoint - oldInPoint))));
+  }
+  
   svc->projectChanged();
   return true;
 }
@@ -338,6 +367,10 @@ public:
                    QObject *parent = nullptr)
       : QObject(parent), trackView_(trackView), scrubBar_(scrubBar) {}
 
+  void setDebugCallback(std::function<void(const QString&)> callback) {
+    debugCallback_ = std::move(callback);
+  }
+
 protected:
   bool eventFilter(QObject *watched, QEvent *event) override {
     if (!trackView_ || !scrubBar_) {
@@ -418,6 +451,11 @@ protected:
         const int frame = static_cast<int>(std::round(clamped));
         trackView_->setPosition(clamped);
         scrubBar_->setCurrentFrame(FramePosition(frame));
+        
+        if (debugCallback_) {
+          debugCallback_(QStringLiteral("Playhead: %1 (Seek)").arg(frame));
+        }
+
         event->accept();
         return true;
       }
@@ -489,6 +527,11 @@ protected:
 
     trackView_->setPosition(clamped);
     scrubBar_->setCurrentFrame(FramePosition(frame));
+
+    if (debugCallback_) {
+      debugCallback_(QStringLiteral("Playhead: %1 (Scrubbing)").arg(frame));
+    }
+
     event->accept();
     return true;
   }
@@ -542,6 +585,7 @@ private:
   bool reservedClickCandidate_ = false;
   QWidget *reservedClickSource_ = nullptr;
   QPoint reservedPressGlobalPos_;
+  std::function<void(const QString&)> debugCallback_;
   static constexpr int kReservedClickDragThresholdPx = 4;
 };
 
@@ -813,6 +857,7 @@ public:
   bool shyActive_ = false;
   QVector<LayerID> trackLayerIds_;
   bool syncingLayerSelection_ = false;
+  QMetaObject::Connection compositionChangedConnection_;
 };
 
 ArtifactTimelineWidget::Impl::Impl() {}
@@ -844,8 +889,8 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   auto leftSplitter = new DraggableSplitter(Qt::Horizontal);
   // leftSplitter->addWidget(iconView);
   leftSplitter->addWidget(layerTreeView);
-  leftSplitter->setStretchFactor(0, 0); // ACR͌Œ
-  leftSplitter->setStretchFactor(1, 1); // O͐Lk\
+  leftSplitter->setStretchFactor(0, 0); // ACR fixed
+  leftSplitter->setStretchFactor(1, 1); // Layer Panel flexible
   leftSplitter->setHandleWidth(4);
   leftSplitter->setStyleSheet(R"(
     QSplitter::handle {
@@ -853,9 +898,9 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
     }
   )");
 
-  auto leftHeader = new ArtifactTimeCodeWidget();             // ^CR[h
-  auto searchBar = new ArtifactTimelineSearchBarWidget();     // o[
-  auto globalSwitches = new ArtifactTimelineGlobalSwitches(); // AE{^Q
+  auto leftHeader = new ArtifactTimeCodeWidget();             // Timecode
+  auto searchBar = new ArtifactTimelineSearchBarWidget();     // Search
+  auto globalSwitches = new ArtifactTimelineGlobalSwitches(); // AE Switches
   leftHeader->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
   searchBar->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
   searchBar->setMinimumWidth(96);
@@ -1063,6 +1108,9 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
                          ctx->seekToFrame(frame.framePosition());
                        }
                      }
+                     if (auto *playback = ArtifactPlaybackService::instance()) {
+                         playback->goToFrame(frame);
+                     }
                    });
   QObject::connect(scrubBar, &ArtifactTimelineScrubBar::frameChanged, this,
                    [painterTrackView](const auto &frame) {
@@ -1174,6 +1222,8 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
         applyTimelineLayerTrim(impl_->compositionId_, clipId, startFrame,
                                durationFrame);
       });
+  QObject::connect(painterTrackView, &ArtifactTimelineTrackPainterView::timelineDebugMessage, this, &ArtifactTimelineWidget::timelineDebugMessage);
+  QObject::connect(timelineTrackView, &TimelineTrackView::timelineDebugMessage, this, &ArtifactTimelineWidget::timelineDebugMessage);
 
   impl_->trackView_ = timelineTrackView; // Store reference for layer creation
   // auto layerTimelinePanel = new ArtifactLayerTimelinePanelWrapper();
@@ -1201,8 +1251,12 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
 
   auto *headerSeekFilter =
       new HeaderSeekFilter(timelineTrackView, scrubBar, rightPanel);
+  headerSeekFilter->setDebugCallback([this](const QString &msg) {
+    Q_EMIT timelineDebugMessage(msg);
+  });
   timeNavigatorWidget->installEventFilter(headerSeekFilter);
   workAreaWidget->installEventFilter(headerSeekFilter);
+  scrubBar->installEventFilter(headerSeekFilter); // Install on scrub bar
   if (timelineTrackView->viewport()) {
     timelineTrackView->viewport()->installEventFilter(headerSeekFilter);
   }
@@ -1235,7 +1289,9 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
     });
   }
   QObject::connect(scrubBar, &ArtifactTimelineScrubBar::frameChanged, this,
-                   [this](const auto &) {
+                   [this](const auto &frame) {
+                     // Emit debug message for any playhead change (playback, scroll, scrub)
+                     Q_EMIT timelineDebugMessage(QStringLiteral("Playhead: %1").arg(frame.framePosition()));
                      if (impl_->playheadSync_) {
                        impl_->playheadSync_->sync();
                      }
@@ -1388,6 +1444,15 @@ void ArtifactTimelineWidget::setComposition(const CompositionID &id) {
       auto res = svc->findComposition(id);
       if (res.success && !res.ptr.expired()) {
         auto comp = res.ptr.lock();
+        
+        // Listen to composition changes (e.g. layer additions, timeline range updates)
+        if (impl_->compositionChangedConnection_) {
+          disconnect(impl_->compositionChangedConnection_);
+        }
+        impl_->compositionChangedConnection_ = connect(comp.get(), &ArtifactAbstractComposition::changed, this, [this]() {
+          QMetaObject::invokeMethod(this, [this]() { refreshTracks(); }, Qt::QueuedConnection);
+        });
+
         const QString compositionLabel =
             comp->settings().compositionName().toQString().trimmed();
         setWindowTitle(compositionLabel.isEmpty() ? id.toString()
@@ -1722,6 +1787,53 @@ void ArtifactTimelineWidget::keyPressEvent(QKeyEvent *event) {
     }
   }
 
+  // [ / ] キーでレイヤーの移動またはトリミング
+  if (event->key() == Qt::Key_BracketLeft || event->key() == Qt::Key_BracketRight) {
+    auto *svc = ArtifactProjectService::instance();
+    auto comp = svc ? svc->currentComposition().lock() : nullptr;
+    auto *selManager = ArtifactApplicationManager::instance()->layerSelectionManager();
+    if (comp && selManager) {
+      const int64_t currentFrame = static_cast<int64_t>(std::round(impl_->trackView_->position()));
+      auto selectedLayers = selManager->selectedLayers();
+      
+      bool changed = false;
+      const bool isAlt = event->modifiers() & Qt::AltModifier;
+
+      for (auto& layer : selectedLayers) {
+        if (!layer) continue;
+
+        if (event->key() == Qt::Key_BracketLeft) {
+          if (isAlt) {
+            // Alt + [ : Trim In (端を削る)
+            applyTimelineLayerTrim(impl_->compositionId_, layer->id().toString(), currentFrame, 
+                                   layer->outPoint().framePosition() - currentFrame);
+          } else {
+            // [ : Move In (開始位置を移動)
+            applyTimelineLayerMove(impl_->compositionId_, layer->id().toString(), currentFrame, 0.0);
+          }
+          changed = true;
+        } else if (event->key() == Qt::Key_BracketRight) {
+          if (isAlt) {
+            // Alt + ] : Trim Out
+            applyTimelineLayerTrim(impl_->compositionId_, layer->id().toString(), layer->inPoint().framePosition(), 
+                                   currentFrame - layer->inPoint().framePosition());
+          } else {
+            // ] : Move Out (末尾を現在位置に合わせる)
+            const int64_t duration = layer->outPoint().framePosition() - layer->inPoint().framePosition();
+            applyTimelineLayerMove(impl_->compositionId_, layer->id().toString(), currentFrame - duration, 0.0);
+          }
+          changed = true;
+        }
+      }
+
+      if (changed) {
+        svc->projectChanged();
+      }
+      event->accept();
+      return;
+    }
+  }
+
   QWidget::keyPressEvent(event);
 }
 
@@ -1864,8 +1976,23 @@ ClipItem *TimelineTrackView::addClip(int trackIndex, double start,
                          const int trackIndex =
                              impl_->scene_->getTrackAtPosition(clip->pos().y() +
                                                                1.0);
+                         
+                         const QString status = QStringLiteral("Layer: %1 | Start: %2 | Dur: %3 (Resizing)")
+                             .arg(clip->layerId().toString())
+                             .arg(QString::number(startFrame, 'f', 1))
+                             .arg(QString::number(clipDuration, 'f', 1));
+                         Q_EMIT timelineDebugMessage(status);
+
                          Q_EMIT layerClipTrimmed(clip->layerId(), trackIndex,
                                                  startFrame, clipDuration);
+                       });
+      QObject::connect(clip, &ClipItem::dragMoved, this,
+                       [this, clip](ClipItem *, const double sceneX, const double sceneY) {
+                         if (!clip) return;
+                         const QString status = QStringLiteral("Layer: %1 | Start: %2 (Moving)")
+                             .arg(clip->layerId().toString())
+                             .arg(QString::number(sceneX, 'f', 1));
+                         Q_EMIT timelineDebugMessage(status);
                        });
       QObject::connect(
           clip, &ClipItem::dragEnded, this,

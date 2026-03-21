@@ -85,6 +85,7 @@ public:
  void drawSprite(float x, float y, float w, float h);
  void drawSprite(Detail::float2 pos, Detail::float2 size);
  void drawSprite(float x, float y, float w, float h, const QImage& image, float opacity = 1.0f);
+ void drawSpriteTransformed(float x, float y, float w, float h, const QTransform& transform, const QImage& image, float opacity = 1.0f);
  void drawRectLocal(float x, float y, float w, float h, const FloatColor& color, float opacity = 1.0f);
  void drawSolidRectTransformed(float x, float y, float w, float h, const QTransform& transform, const FloatColor& color, float opacity = 1.0f);
  void drawRectOutlineLocal(float x, float y, float w, float h, const FloatColor& color);
@@ -93,10 +94,19 @@ public:
  void drawBezierLocal(Detail::float2 p0, Detail::float2 p1, Detail::float2 p2, float thickness, const FloatColor& color);
  void drawBezierLocal(Detail::float2 p0, Detail::float2 p1, Detail::float2 p2, Detail::float2 p3, float thickness, const FloatColor& color);
  void drawSolidTriangleLocal(Detail::float2 p0, Detail::float2 p1, Detail::float2 p2, const FloatColor& color);
+ 
+ // Gizmo specialized APIs
+ void drawCircle(float x, float y, float radius, const FloatColor& color, float thickness = 1.0f, bool fill = false);
+ void drawCrosshair(float x, float y, float size, const FloatColor& color);
+
  void drawCheckerboard(float x, float y, float w, float h, float tileSize, const FloatColor& c1, const FloatColor& c2);
  void drawGrid(float x, float y, float w, float h, float spacing, float thickness, const FloatColor& color);
  void drawParticles();
  void setUpscaleConfig(bool enable, float sharpness);
+
+ Diligent::RefCntAutoPtr<Diligent::IRenderDevice> device() const;
+ Diligent::RefCntAutoPtr<Diligent::IDeviceContext> immediateContext() const;
+ void setOverrideRTV(Diligent::ITextureView* rtv);
 
 private:
  std::unique_ptr<Impl> impl_;

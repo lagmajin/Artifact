@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <array>
 #include <cmath>
 #include <cstring>
@@ -41,6 +41,7 @@ public:
     RefCntAutoPtr<IBuffer> m_draw_sprite_vertex_buffer;
     RefCntAutoPtr<IBuffer> m_draw_sprite_index_buffer;
     RefCntAutoPtr<IBuffer> m_draw_sprite_cb;
+    RefCntAutoPtr<IBuffer> m_draw_sprite_transform_matrix_cb;
 
     RefCntAutoPtr<IBuffer> m_draw_solid_rect_vertex_buffer;
     RefCntAutoPtr<IBuffer> m_draw_solid_rect_cb;
@@ -55,6 +56,7 @@ public:
     RefCntAutoPtr<IBuffer> m_draw_viewer_helper_cb;
 
     PSOAndSRB m_draw_sprite_pso_and_srb;
+    PSOAndSRB m_draw_sprite_transform_pso_and_srb;
     RefCntAutoPtr<ISampler> m_sprite_sampler;
     RefCntAutoPtr<IRenderDevice> pDevice_;
     qint64 m_spriteCacheKey = 0;
@@ -80,10 +82,6 @@ public:
     bool hasRenderTarget() const { return m_overrideRTV != nullptr || pSwapChain_ != nullptr; }
 };
 
-// -------------------------------------------------------------------------
-// PrimitiveRenderer2D public interface
-// -------------------------------------------------------------------------
-
 PrimitiveRenderer2D::PrimitiveRenderer2D()
     : impl_(new Impl())
 {
@@ -103,6 +101,7 @@ void PrimitiveRenderer2D::setContext(IDeviceContext* ctx, ISwapChain* swapChain)
 void PrimitiveRenderer2D::setPSOs(ShaderManager& shaderManager)
 {
     impl_->m_draw_sprite_pso_and_srb           = shaderManager.spritePsoAndSrb();
+    impl_->m_draw_sprite_transform_pso_and_srb = shaderManager.spriteTransformPsoAndSrb();
     impl_->m_sprite_sampler                    = shaderManager.spriteSampler();
     impl_->m_draw_solid_rect_pso_and_srb       = shaderManager.solidRectPsoAndSrb();
     impl_->m_draw_solid_rect_transform_pso_and_srb = shaderManager.solidRectTransformPsoAndSrb();
@@ -168,6 +167,16 @@ void PrimitiveRenderer2D::createBuffers(RefCntAutoPtr<IRenderDevice> device, TEX
         CBDesc.CPUAccessFlags = CPU_ACCESS_WRITE;
         CBDesc.Size           = sizeof(CBSolidRectTransform2D);
         device->CreateBuffer(CBDesc, nullptr, &impl_->m_draw_solid_rect_transform_matrix_cb);
+    }
+
+    {
+        BufferDesc CBDesc;
+        CBDesc.Name           = "DrawSpriteTransformMatrixCB";
+        CBDesc.Usage          = USAGE_DYNAMIC;
+        CBDesc.BindFlags      = BIND_UNIFORM_BUFFER;
+        CBDesc.CPUAccessFlags = CPU_ACCESS_WRITE;
+        CBDesc.Size           = sizeof(CBSolidRectTransform2D);
+        device->CreateBuffer(CBDesc, nullptr, &impl_->m_draw_sprite_transform_matrix_cb);
     }
 
     {
@@ -246,6 +255,7 @@ void PrimitiveRenderer2D::destroy()
     impl_->m_draw_sprite_vertex_buffer          = nullptr;
     impl_->m_draw_sprite_index_buffer           = nullptr;
     impl_->m_draw_sprite_cb                     = nullptr;
+    impl_->m_draw_sprite_transform_matrix_cb    = nullptr;
     impl_->m_draw_solid_rect_vertex_buffer      = nullptr;
     impl_->m_draw_solid_rect_cb                 = nullptr;
     impl_->m_draw_solid_rect_trnsform_cb        = nullptr;
@@ -258,6 +268,7 @@ void PrimitiveRenderer2D::destroy()
     impl_->m_draw_viewer_helper_cb              = nullptr;
 
     impl_->m_draw_sprite_pso_and_srb         = {};
+    impl_->m_draw_sprite_transform_pso_and_srb = {};
     impl_->m_sprite_sampler                  = nullptr;
     impl_->m_spriteCacheKey                  = 0;
     impl_->m_spriteTexCache                  = nullptr;
@@ -276,10 +287,6 @@ void PrimitiveRenderer2D::destroy()
     impl_->pSwapChain_  = nullptr;
     impl_->m_overrideRTV = nullptr;
 }
-
-// -------------------------------------------------------------------------
-// Viewport delegation
-// -------------------------------------------------------------------------
 
 void PrimitiveRenderer2D::setViewportSize(float w, float h)  { impl_->viewport_.SetViewportSize(w, h); }
 void PrimitiveRenderer2D::setCanvasSize(float w, float h)    { impl_->viewport_.SetCanvasSize(w, h); }
@@ -310,43 +317,18 @@ void PrimitiveRenderer2D::setOverrideRTV(ITextureView* rtv)
     impl_->m_overrideRTV = rtv;
 }
 
-// -------------------------------------------------------------------------
-// clear
-// -------------------------------------------------------------------------
-
 void PrimitiveRenderer2D::clear(const FloatColor& color)
 {
-    if (!impl_->hasRenderTarget() || !impl_->pCtx_) {
-        static bool warned = false;
-        if (!warned) {
-            warned = true;
-            qWarning() << "[PrimitiveRenderer2D] clear() skipped: no render target or context"
-                       << "hasRT=" << impl_->hasRenderTarget() << "hasCtx=" << (impl_->pCtx_ != nullptr);
-        }
-        return;
-    }
+    if (!impl_->hasRenderTarget() || !impl_->pCtx_) return;
     float clearColor[] = { color.r(), color.g(), color.b(), color.a() };
     auto* pRTV = impl_->getCurrentRTV();
     impl_->pCtx_->SetRenderTargets(1, &pRTV, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
     impl_->pCtx_->ClearRenderTarget(pRTV, clearColor, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
 }
 
-// -------------------------------------------------------------------------
-// Draw primitives
-// -------------------------------------------------------------------------
-
 void PrimitiveRenderer2D::drawRectLocal(float x, float y, float w, float h, const FloatColor& color, float opacity)
 {
-    if (!impl_->hasRenderTarget() || !impl_->m_draw_solid_rect_pso_and_srb.pPSO) {
-        static bool warned = false;
-        if (!warned) {
-            warned = true;
-            qWarning() << "[PrimitiveRenderer2D] drawRectLocal() skipped: no render target or PSO"
-                       << "hasRT=" << impl_->hasRenderTarget()
-                       << "hasPSO=" << (impl_->m_draw_solid_rect_pso_and_srb.pPSO != nullptr);
-        }
-        return;
-    }
+    if (!impl_->hasRenderTarget() || !impl_->m_draw_solid_rect_pso_and_srb.pPSO) return;
 
     float alpha = color.a() * opacity;
     RectVertex vertices[4] = {
@@ -378,7 +360,6 @@ void PrimitiveRenderer2D::drawRectLocal(float x, float y, float w, float h, cons
         auto viewportCB = impl_->viewport_.GetViewportCB();
         const float zoom = std::max(viewportCB.zoom, 0.001f);
         CBSolidTransform2D cbTransform;
-        // Composition -> View: viewPos = input * (size * zoom) + (position * zoom + pan)
         cbTransform.offset     = { x * zoom + viewportCB.offset.x, y * zoom + viewportCB.offset.y };
         cbTransform.scale      = { w * zoom, h * zoom };
         cbTransform.screenSize = viewportCB.screenSize;
@@ -408,16 +389,7 @@ void PrimitiveRenderer2D::drawRectLocal(float x, float y, float w, float h, cons
 
 void PrimitiveRenderer2D::drawSolidRectTransformed(float x, float y, float w, float h, const QTransform& transform, const FloatColor& color, float opacity)
 {
-    if (!impl_->hasRenderTarget() || !impl_->m_draw_solid_rect_transform_pso_and_srb.pPSO) {
-        static bool warned = false;
-        if (!warned) {
-            warned = true;
-            qWarning() << "[PrimitiveRenderer2D] drawSolidRectTransformed() skipped: no render target or PSO"
-                       << "hasRT=" << impl_->hasRenderTarget()
-                       << "hasPSO=" << (impl_->m_draw_solid_rect_transform_pso_and_srb.pPSO != nullptr);
-        }
-        return;
-    }
+    if (!impl_->hasRenderTarget() || !impl_->m_draw_solid_rect_transform_pso_and_srb.pPSO) return;
 
     float alpha = color.a() * opacity;
     RectVertex vertices[4] = {
@@ -441,6 +413,9 @@ void PrimitiveRenderer2D::drawSolidRectTransformed(float x, float y, float w, fl
         auto viewportCB = impl_->viewport_.GetViewportCB();
         const float screenW = std::max(viewportCB.screenSize.x, 0.001f);
         const float screenH = std::max(viewportCB.screenSize.y, 0.001f);
+        const float zoom = std::max(viewportCB.zoom, 0.001f);
+        const float panX = viewportCB.offset.x;
+        const float panY = viewportCB.offset.y;
 
         const float a  = transform.m11();
         const float b  = transform.m12();
@@ -448,19 +423,22 @@ void PrimitiveRenderer2D::drawSolidRectTransformed(float x, float y, float w, fl
         const float d  = transform.m22();
         const float tx = transform.dx();
         const float ty = transform.dy();
+        
+        const float localX = a * x + c * y + tx;
+        const float localY = b * x + d * y + ty;
 
         CBSolidRectTransform2D cbTransform;
         cbTransform.row0 = {
-            2.0f * (a * w) / screenW,
-            2.0f * (c * h) / screenW,
+            2.0f * (a * w * zoom) / screenW,
+            2.0f * (c * h * zoom) / screenW,
             0.0f,
-            2.0f * (a * x + c * y + tx) / screenW - 1.0f
+            2.0f * ((localX * zoom) + panX) / screenW - 1.0f
         };
         cbTransform.row1 = {
-            -2.0f * (b * w) / screenH,
-            -2.0f * (d * h) / screenH,
+            -2.0f * (b * w * zoom) / screenH,
+            -2.0f * (d * h * zoom) / screenH,
             0.0f,
-            1.0f - 2.0f * (b * x + d * y + ty) / screenH
+            1.0f - 2.0f * ((localY * zoom) + panY) / screenH
         };
         cbTransform.row2 = { 0.0f, 0.0f, 0.0f, 0.0f };
         cbTransform.row3 = { 0.0f, 0.0f, 0.0f, 1.0f };
@@ -752,9 +730,42 @@ void PrimitiveRenderer2D::drawSolidTriangleLocal(float2 p0, float2 p1, float2 p2
     impl_->pCtx_->Draw(drawAttrs);
 }
 
+void PrimitiveRenderer2D::drawCircle(float x, float y, float radius, const FloatColor& color, float thickness, bool fill)
+{
+    if (radius <= 0.0f) return;
+
+    if (fill) {
+        // Simple approximation: draw many circles to fill
+        for (float r = 0.5f; r <= radius; r += 1.0f) {
+            drawCircle(x, y, r, color, 1.5f, false);
+        }
+        return;
+    }
+
+    // Draw circle using 4 cubic bezier segments
+    const float k = 0.552284749831f; // control point offset
+    const float r = radius;
+    
+    float2 p0 = {x, y - r};
+    float2 p1 = {x + r, y};
+    float2 p2 = {x, y + r};
+    float2 p3 = {x - r, y};
+
+    drawBezierLocal(p0, {x + r * k, y - r}, {x + r, y - r * k}, p1, thickness, color);
+    drawBezierLocal(p1, {x + r, y + r * k}, {x + r * k, y + r}, p2, thickness, color);
+    drawBezierLocal(p2, {x - r * k, y + r}, {x - r, y + r * k}, p3, thickness, color);
+    drawBezierLocal(p3, {x - r, y - r * k}, {x - r * k, y - r}, p0, thickness, color);
+}
+
+void PrimitiveRenderer2D::drawCrosshair(float x, float y, float size, const FloatColor& color)
+{
+    const float half = size * 0.5f;
+    drawThickLineLocal({x - half, y}, {x + half, y}, 1.5f, color);
+    drawThickLineLocal({x, y - half}, {x, y + half}, 1.5f, color);
+}
+
 void PrimitiveRenderer2D::drawPoint(float x, float y, float size, const FloatColor& color)
 {
-    // 中心座標(x,y)からサイズ分だけオフセットさせて矩形描画を呼ぶ
     const float half = size * 0.5f;
     this->drawRectLocal(x - half, y - half, size, size, color, 1.0f);
 }
@@ -922,7 +933,6 @@ void PrimitiveRenderer2D::drawSpriteLocal(float x, float y, float w, float h, co
     if (image.isNull()) return;
     if (!impl_->pDevice_ || !impl_->pCtx_) return;
 
-    // テクスチャキャッシュ: QImageが変化した場合のみ再生成
     if (image.cacheKey() != impl_->m_spriteCacheKey || !impl_->m_spriteTexCache) {
         const QImage rgba = image.convertToFormat(QImage::Format_RGBA8888);
         const int imgW = rgba.width();
@@ -934,7 +944,7 @@ void PrimitiveRenderer2D::drawSpriteLocal(float x, float y, float w, float h, co
         texDesc.Type             = RESOURCE_DIM_TEX_2D;
         texDesc.Width            = static_cast<Uint32>(imgW);
         texDesc.Height           = static_cast<Uint32>(imgH);
-        texDesc.Format           = TEX_FORMAT_RGBA8_UNORM;
+        texDesc.Format           = TEX_FORMAT_RGBA8_UNORM_SRGB;
         texDesc.MipLevels        = 1;
         texDesc.Usage            = USAGE_IMMUTABLE;
         texDesc.BindFlags        = BIND_SHADER_RESOURCE;
@@ -960,7 +970,6 @@ void PrimitiveRenderer2D::drawSpriteLocal(float x, float y, float w, float h, co
     auto* pRTV = impl_->getCurrentRTV();
     if (!pRTV) return;
 
-    // Triangle strip: TL, TR, BL, BR in local space (0..1).
     SpriteVertex vertices[4] = {
         { {0.0f, 0.0f}, {0.0f, 0.0f}, {1.0f, 1.0f, 1.0f, opacity} },
         { {1.0f, 0.0f}, {1.0f, 0.0f}, {1.0f, 1.0f, 1.0f, opacity} },
@@ -1015,6 +1024,132 @@ void PrimitiveRenderer2D::drawSpriteLocal(float x, float y, float w, float h, co
     drawAttrs.NumVertices = 4;
     drawAttrs.Flags       = DRAW_FLAG_VERIFY_ALL;
     impl_->pCtx_->Draw(drawAttrs);
+}
+
+void PrimitiveRenderer2D::drawSpriteTransformed(float x, float y, float w, float h, const QTransform& transform, const QImage& image, float opacity)
+{
+    if (!impl_->hasRenderTarget() || !impl_->m_draw_sprite_transform_pso_and_srb.pPSO) return;
+    if (image.isNull()) return;
+    if (!impl_->pDevice_ || !impl_->pCtx_) return;
+
+    if (image.cacheKey() != impl_->m_spriteCacheKey || !impl_->m_spriteTexCache) {
+        const QImage rgba = image.convertToFormat(QImage::Format_RGBA8888);
+        const int imgW = rgba.width();
+        const int imgH = rgba.height();
+        if (imgW <= 0 || imgH <= 0) return;
+
+        RefCntAutoPtr<ITexture> newTex;
+        TextureDesc texDesc;
+        texDesc.Type             = RESOURCE_DIM_TEX_2D;
+        texDesc.Width            = static_cast<Uint32>(imgW);
+        texDesc.Height           = static_cast<Uint32>(imgH);
+        texDesc.Format           = TEX_FORMAT_RGBA8_UNORM_SRGB;
+        texDesc.MipLevels        = 1;
+        texDesc.Usage            = USAGE_IMMUTABLE;
+        texDesc.BindFlags        = BIND_SHADER_RESOURCE;
+        texDesc.CPUAccessFlags   = CPU_ACCESS_NONE;
+
+        TextureSubResData subData;
+        subData.pData  = rgba.constBits();
+        subData.Stride = static_cast<Uint64>(rgba.bytesPerLine());
+        TextureData initData;
+        initData.pSubResources   = &subData;
+        initData.NumSubresources = 1;
+
+        impl_->pDevice_->CreateTexture(texDesc, &initData, &newTex);
+        if (!newTex) return;
+
+        impl_->m_spriteTexCache = newTex;
+        impl_->m_spriteCacheKey = image.cacheKey();
+    }
+
+    auto* pSRV = impl_->m_spriteTexCache->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE);
+    if (!pSRV) return;
+
+    auto* pRTV = impl_->getCurrentRTV();
+    if (!pRTV) return;
+
+    SpriteVertex vertices[4] = {
+        { {0.0f, 0.0f}, {0.0f, 0.0f}, {1.0f, 1.0f, 1.0f, opacity} },
+        { {1.0f, 0.0f}, {1.0f, 0.0f}, {1.0f, 1.0f, 1.0f, opacity} },
+        { {0.0f, 1.0f}, {0.0f, 1.0f}, {1.0f, 1.0f, 1.0f, opacity} },
+        { {1.0f, 1.0f}, {1.0f, 1.0f}, {1.0f, 1.0f, 1.0f, opacity} },
+    };
+    impl_->pCtx_->SetRenderTargets(1, &pRTV, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+
+    {
+        void* pData = nullptr;
+        impl_->pCtx_->MapBuffer(impl_->m_draw_sprite_vertex_buffer, MAP_WRITE, MAP_FLAG_DISCARD, pData);
+        std::memcpy(pData, vertices, sizeof(vertices));
+        impl_->pCtx_->UnmapBuffer(impl_->m_draw_sprite_vertex_buffer, MAP_WRITE);
+    }
+
+    {
+        auto viewportCB = impl_->viewport_.GetViewportCB();
+        const float screenW = std::max(viewportCB.screenSize.x, 0.001f);
+        const float screenH = std::max(viewportCB.screenSize.y, 0.001f);
+        const float zoom = std::max(viewportCB.zoom, 0.001f);
+        const float panX = viewportCB.offset.x;
+        const float panY = viewportCB.offset.y;
+
+        const float a  = transform.m11();
+        const float b  = transform.m12();
+        const float c  = transform.m21();
+        const float d  = transform.m22();
+        const float tx = transform.dx();
+        const float ty = transform.dy();
+        
+        const float localX = a * x + c * y + tx;
+        const float localY = b * x + d * y + ty;
+
+        CBSolidRectTransform2D cbTransform;
+        cbTransform.row0 = {
+            2.0f * (a * w * zoom) / screenW,
+            2.0f * (c * h * zoom) / screenW,
+            0.0f,
+            2.0f * ((localX * zoom) + panX) / screenW - 1.0f
+        };
+        cbTransform.row1 = {
+            -2.0f * (b * w * zoom) / screenH,
+            -2.0f * (d * h * zoom) / screenH,
+            0.0f,
+            1.0f - 2.0f * ((localY * zoom) + panY) / screenH
+        };
+        cbTransform.row2 = { 0.0f, 0.0f, 0.0f, 0.0f };
+        cbTransform.row3 = { 0.0f, 0.0f, 0.0f, 1.0f };
+
+        void* pData = nullptr;
+        impl_->pCtx_->MapBuffer(impl_->m_draw_sprite_transform_matrix_cb, MAP_WRITE, MAP_FLAG_DISCARD, pData);
+        std::memcpy(pData, &cbTransform, sizeof(cbTransform));
+        impl_->pCtx_->UnmapBuffer(impl_->m_draw_sprite_transform_matrix_cb, MAP_WRITE);
+    }
+
+    impl_->pCtx_->SetPipelineState(impl_->m_draw_sprite_transform_pso_and_srb.pPSO);
+
+    auto* texVar = impl_->m_draw_sprite_transform_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_PIXEL, "g_texture");
+    if (texVar) texVar->Set(pSRV);
+
+    if (impl_->m_sprite_sampler) {
+        auto* sampVar = impl_->m_draw_sprite_transform_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_PIXEL, "g_sampler");
+        if (sampVar) sampVar->Set(impl_->m_sprite_sampler);
+    }
+
+    if (auto* transformVar = impl_->m_draw_sprite_transform_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_VERTEX, "TransformCB")) {
+        transformVar->Set(impl_->m_draw_sprite_transform_matrix_cb);
+    }
+
+    impl_->pCtx_->CommitShaderResources(impl_->m_draw_sprite_transform_pso_and_srb.pSRB,
+        RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+
+    IBuffer* pBuffers[] = { impl_->m_draw_sprite_vertex_buffer };
+    Uint64 offsets[] = { 0 };
+    impl_->pCtx_->SetVertexBuffers(0, 1, pBuffers, offsets,
+        RESOURCE_STATE_TRANSITION_MODE_TRANSITION, SET_VERTEX_BUFFERS_FLAG_RESET);
+    impl_->pCtx_->SetIndexBuffer(impl_->m_draw_solid_rect_index_buffer, 0,
+        RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+
+    DrawIndexedAttribs drawAttrs(6, VT_UINT32, DRAW_FLAG_VERIFY_ALL);
+    impl_->pCtx_->DrawIndexed(drawAttrs);
 }
 
 } // namespace Artifact

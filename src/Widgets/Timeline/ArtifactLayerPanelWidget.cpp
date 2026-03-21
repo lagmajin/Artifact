@@ -163,6 +163,41 @@ namespace {
    QScrollArea* scrollArea_ = nullptr;
   };
 
+  class LayerPanelDragForwardFilter final : public QObject
+  {
+  public:
+   explicit LayerPanelDragForwardFilter(QWidget* target, QObject* parent = nullptr)
+    : QObject(parent), target_(target)
+   {
+   }
+
+  protected:
+   bool eventFilter(QObject* watched, QEvent* event) override
+   {
+    if (!target_ || !watched) return false;
+    // ビューポート上のドラッグイベントをターゲットパネルに転送
+    switch (event->type()) {
+     case QEvent::DragEnter:
+      QCoreApplication::sendEvent(target_, static_cast<QDragEnterEvent*>(event));
+      return event->isAccepted();
+     case QEvent::DragMove:
+      QCoreApplication::sendEvent(target_, static_cast<QDragMoveEvent*>(event));
+      return event->isAccepted();
+     case QEvent::DragLeave:
+      QCoreApplication::sendEvent(target_, static_cast<QDragLeaveEvent*>(event));
+      return false;
+     case QEvent::Drop:
+      QCoreApplication::sendEvent(target_, static_cast<QDropEvent*>(event));
+      return event->isAccepted();
+     default:
+      return false;
+    }
+   }
+
+  private:
+   QWidget* target_ = nullptr;
+  };
+
   std::shared_ptr<ArtifactAbstractComposition> safeCompositionLookup(const CompositionID& id)
   {
     auto* service = ArtifactProjectService::instance();
@@ -455,9 +490,9 @@ int ArtifactLayerPanelHeaderWidget::totalHeaderHeight() const
   LayerID dragCandidateLayerId;
   LayerID draggedLayerId;
   int dragInsertVisibleRow = -1;
+  bool dragStarted_ = false;
   bool updatingLayout = false;  // 再帰呼び出し防止フラグ
   QHash<QString, QMetaObject::Connection> layerChangedConnections;
-
   void clearInlineEditors()
   {
    auto* parentEditor = inlineParentEditor.data();
@@ -512,6 +547,7 @@ int ArtifactLayerPanelHeaderWidget::totalHeaderHeight() const
    dragCandidateLayerId = LayerID();
    draggedLayerId = LayerID();
    dragInsertVisibleRow = -1;
+   dragStarted_ = false;
   }
 
   void clearLayerChangedSubscriptions()
@@ -875,18 +911,24 @@ void ArtifactLayerPanelWidget::updateLayout()
  void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
  {
   setFocus();
-  impl_->clearDragState();
   const int rowH = kLayerRowHeight;
   const int colW = kLayerColumnWidth;
   int idx = event->pos().y() / rowH;
   int clickX = event->pos().x();
 
-  if (idx < 0 || idx >= impl_->visibleRows.size()) return;
+  if (idx < 0 || idx >= impl_->visibleRows.size()) {
+    impl_->clearDragState();
+    return;
+  }
   const auto& row = impl_->visibleRows[idx];
   auto layer = row.layer;
-  if (!layer) return;
+  if (!layer) {
+    impl_->clearDragState();
+    return;
+  }
   auto* service = ArtifactProjectService::instance();
   if (row.kind != Impl::RowKind::Layer) {
+   impl_->clearDragState();
    if (event->button() == Qt::LeftButton) {
     if (service) {
      service->selectLayer(layer->id());
@@ -896,6 +938,15 @@ void ArtifactLayerPanelWidget::updateLayout()
    event->accept();
    return;
   }
+  
+  //名前エリアまたはスイッチ列でドラッグを開始可能にするための準備
+  if (event->button() == Qt::LeftButton) {
+    impl_->dragStartPos = event->pos();
+    impl_->dragCandidateLayerId = layer->id();
+  } else {
+    impl_->clearDragState();
+  }
+
   const int y = idx * rowH;
   const int nameStartX = colW * kLayerPropertyColumnCount;
   const bool showInlineCombos = width() >= (kLayerColumnWidth * kLayerPropertyColumnCount + kInlineComboReserve + kLayerNameMinWidth);
@@ -1338,28 +1389,23 @@ void ArtifactLayerPanelWidget::mouseDoubleClickEvent(QMouseEvent* event)
  {
   if ((event->buttons() & Qt::LeftButton) && !impl_->dragCandidateLayerId.isNil()) {
     const int dragDistance = (event->pos() - impl_->dragStartPos).manhattanLength();
-    if (impl_->draggedLayerId.isNil() && dragDistance >= QApplication::startDragDistance()) {
+    if (impl_->draggedLayerId.isNil() && !impl_->dragStarted_ && dragDistance >= QApplication::startDragDistance()) {
+      impl_->dragStarted_ = true;
       impl_->draggedLayerId = impl_->dragCandidateLayerId;
       auto* mime = new QMimeData();
       mime->setData(kLayerReorderMimeType, impl_->draggedLayerId.toString().toUtf8());
       mime->setText(impl_->draggedLayerId.toString());
+      
       QDrag drag(this);
       drag.setMimeData(mime);
-      drag.setHotSpot(event->pos());
-      drag.exec(Qt::MoveAction);
+      drag.setHotSpot(event->pos() - impl_->dragStartPos);
+      
+      // Note: exec() blocks until drop completes.
+      const Qt::DropAction dropResult = drag.exec(Qt::MoveAction);
+      
       impl_->clearDragState();
       unsetCursor();
       update();
-      event->accept();
-      return;
-    }
-    if (!impl_->draggedLayerId.isNil()) {
-      const int nextInsertRow = impl_->insertionVisibleRowForY(event->pos().y());
-      if (nextInsertRow != impl_->dragInsertVisibleRow) {
-        impl_->dragInsertVisibleRow = nextInsertRow;
-        update();
-      }
-      setCursor(Qt::ClosedHandCursor);
       event->accept();
       return;
     }
@@ -1388,72 +1434,11 @@ void ArtifactLayerPanelWidget::mouseDoubleClickEvent(QMouseEvent* event)
  void ArtifactLayerPanelWidget::mouseReleaseEvent(QMouseEvent* event)
  {
   if (event->button() == Qt::LeftButton && !impl_->draggedLayerId.isNil()) {
-   auto* service = ArtifactProjectService::instance();
-   auto comp = safeCompositionLookup(impl_->compositionId);
-   if (service && comp) {
-    QVector<LayerID> visibleLayerIds;
-    visibleLayerIds.reserve(impl_->visibleRows.size());
-    for (const auto& row : impl_->visibleRows) {
-     if (row.kind == Impl::RowKind::Layer && row.layer) {
-      visibleLayerIds.push_back(row.layer->id());
-     }
-    }
-
-    const auto allLayers = comp->allLayer();
-    int oldIndex = -1;
-    for (int i = 0; i < allLayers.size(); ++i) {
-     if (allLayers[i] && allLayers[i]->id() == impl_->draggedLayerId) {
-      oldIndex = i;
-      break;
-     }
-    }
-
-    if (oldIndex >= 0 && !visibleLayerIds.isEmpty()) {
-     QVector<LayerID> remainingVisibleLayerIds;
-     remainingVisibleLayerIds.reserve(visibleLayerIds.size());
-     for (const auto& layerId : visibleLayerIds) {
-      if (layerId != impl_->draggedLayerId) {
-       remainingVisibleLayerIds.push_back(layerId);
-      }
-     }
-
-      const int targetVisibleIndex = std::clamp(
-       impl_->layerCountBeforeVisibleRowExcluding(impl_->dragInsertVisibleRow, impl_->draggedLayerId),
-       0,
-       static_cast<int>(visibleLayerIds.size()));
-
-     int newIndex = oldIndex;
-     if (targetVisibleIndex >= static_cast<int>(visibleLayerIds.size())) {
-      newIndex = static_cast<int>(allLayers.size()) - 1;
-     } else {
-      const LayerID targetLayerId = visibleLayerIds[targetVisibleIndex];
-      int targetIndex = -1;
-      for (int i = 0; i < allLayers.size(); ++i) {
-       if (allLayers[i] && allLayers[i]->id() == targetLayerId) {
-        targetIndex = i;
-        break;
-       }
-      }
-      if (targetIndex >= 0) {
-       newIndex = targetIndex;
-      }
-     }
-
-     newIndex = std::clamp(
-      newIndex,
-      0,
-      std::max(0, static_cast<int>(allLayers.size()) - 1));
-     if (newIndex != oldIndex) {
-      service->moveLayerInCurrentComposition(impl_->draggedLayerId, newIndex);
-      updateLayout();
-     }
-    }
-   }
-   impl_->clearDragState();
-   unsetCursor();
-   update();
-   event->accept();
-   return;
+    impl_->clearDragState();
+    unsetCursor();
+    update();
+    event->accept();
+    return;
   }
 
   impl_->clearDragState();
@@ -1906,7 +1891,10 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent*)
   if (mime->hasFormat(kLayerReorderMimeType)) {
     auto* svc = ArtifactProjectService::instance();
     auto comp = safeCompositionLookup(impl_->compositionId);
-    if (svc && comp && !impl_->draggedLayerId.isNil()) {
+
+    // MIME からドラッグ中のレイヤーIDを取得（impl_->draggedLayerId は別インスタンスでは無効）
+    const LayerID dragLayerId = LayerID(QString::fromUtf8(mime->data(kLayerReorderMimeType)));
+    if (svc && comp && !dragLayerId.isNil()) {
       QVector<LayerID> visibleLayerIds;
       visibleLayerIds.reserve(impl_->visibleRows.size());
       for (const auto& row : impl_->visibleRows) {
@@ -1918,31 +1906,35 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent*)
       const auto allLayers = comp->allLayer();
       int oldIndex = -1;
       for (int i = 0; i < allLayers.size(); ++i) {
-        if (allLayers[i] && allLayers[i]->id() == impl_->draggedLayerId) {
+        if (allLayers[i] && allLayers[i]->id() == dragLayerId) {
           oldIndex = i;
           break;
         }
       }
 
       if (oldIndex >= 0 && !visibleLayerIds.isEmpty()) {
+        // ドラッグ中のレイヤーを除いた可視レイヤーリスト
         QVector<LayerID> remainingVisibleLayerIds;
         remainingVisibleLayerIds.reserve(visibleLayerIds.size());
         for (const auto& layerId : visibleLayerIds) {
-          if (layerId != impl_->draggedLayerId) {
+          if (layerId != dragLayerId) {
             remainingVisibleLayerIds.push_back(layerId);
           }
         }
 
+        // ドラッグ中のレイヤーを除いた中での挿入位置
         const int targetVisibleIndex = std::clamp(
-          impl_->layerCountBeforeVisibleRowExcluding(impl_->dragInsertVisibleRow, impl_->draggedLayerId),
+          impl_->layerCountBeforeVisibleRowExcluding(impl_->dragInsertVisibleRow, dragLayerId),
           0,
-          static_cast<int>(visibleLayerIds.size()));
+          static_cast<int>(remainingVisibleLayerIds.size()));
 
         int newIndex = oldIndex;
-        if (targetVisibleIndex >= static_cast<int>(visibleLayerIds.size())) {
+        if (targetVisibleIndex >= static_cast<int>(remainingVisibleLayerIds.size())) {
+          // 末尾に挿入
           newIndex = static_cast<int>(allLayers.size()) - 1;
         } else {
-          const LayerID targetLayerId = visibleLayerIds[targetVisibleIndex];
+          // remainingVisibleLayerIds からターゲットレイヤーを取得し、allLayers でのインデックスを求める
+          const LayerID targetLayerId = remainingVisibleLayerIds[targetVisibleIndex];
           int targetIndex = -1;
           for (int i = 0; i < allLayers.size(); ++i) {
             if (allLayers[i] && allLayers[i]->id() == targetLayerId) {
@@ -1951,13 +1943,16 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent*)
             }
           }
           if (targetIndex >= 0) {
+            if (oldIndex < targetIndex) {
+              --targetIndex;
+            }
             newIndex = targetIndex;
           }
         }
 
         newIndex = std::clamp(newIndex, 0, std::max(0, static_cast<int>(allLayers.size()) - 1));
         if (newIndex != oldIndex) {
-          svc->moveLayerInCurrentComposition(impl_->draggedLayerId, newIndex);
+          svc->moveLayerInCurrentComposition(dragLayerId, newIndex);
           updateLayout();
         }
       }
@@ -2049,19 +2044,23 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent*)
   impl_->header = new ArtifactLayerPanelHeaderWidget();
   impl_->panel = new ArtifactLayerPanelWidget();
   impl_->scroll = new QScrollArea();
-  impl_->scroll->setWidget(impl_->panel);
-  impl_->scroll->setWidgetResizable(true);
-  impl_->scroll->setAlignment(Qt::AlignLeft | Qt::AlignTop);
-  impl_->scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-  impl_->scroll->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
-  impl_->scroll->setFrameShape(QFrame::NoFrame);
-  impl_->panel->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+   impl_->scroll->setWidget(impl_->panel);
+   impl_->scroll->setWidgetResizable(true);
+   impl_->scroll->setAlignment(Qt::AlignLeft | Qt::AlignTop);
+   impl_->scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+   impl_->scroll->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+   impl_->scroll->setFrameShape(QFrame::NoFrame);
+   impl_->scroll->viewport()->setAcceptDrops(true);
+   impl_->panel->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
 
-  auto* wheelFilter = new LayerPanelWheelFilter(impl_->scroll, this);
-  this->installEventFilter(wheelFilter);
-  impl_->header->installEventFilter(wheelFilter);
-  impl_->panel->installEventFilter(wheelFilter);
-  impl_->scroll->viewport()->installEventFilter(wheelFilter);
+   auto* wheelFilter = new LayerPanelWheelFilter(impl_->scroll, this);
+   this->installEventFilter(wheelFilter);
+   impl_->header->installEventFilter(wheelFilter);
+   impl_->panel->installEventFilter(wheelFilter);
+   impl_->scroll->viewport()->installEventFilter(wheelFilter);
+
+   auto* dragFilter = new LayerPanelDragForwardFilter(impl_->panel, this);
+   impl_->scroll->viewport()->installEventFilter(dragFilter);
 
   layout->addWidget(impl_->header);
   layout->addWidget(impl_->scroll, 1);

@@ -83,6 +83,8 @@ import IO.ImageExporter;
 import ArtifactStatusBar;
 import Artifact.PythonAPI;
 import Script.Python.Engine;
+import Diagnostics.CrashHandler;
+import Translation.Manager;
 import Artifact.Service.Playback;
 import Artifact.Service.Project;
 import Artifact.Widgets.UndoHistoryWidget;
@@ -621,6 +623,8 @@ void test()
 
 int main(int argc, char* argv[])
 {
+ ArtifactCore::CrashHandler::install();
+
  tbb::global_control c(tbb::global_control::max_allowed_parallelism, std::thread::hardware_concurrency());
 
  AddDllDirectory(L"C:\\Users\\lagma\\Desktop\\Artifact\\Artifact\\App");
@@ -642,6 +646,19 @@ int main(int argc, char* argv[])
 	
  QApplication a(argc, argv);
   configureQtPluginPaths();
+
+  // Initialize translations
+  {
+   auto& tr = Artifact::TranslationManager::instance();
+   const QString translationsDir = QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("translations"));
+   if (QDir(translationsDir).exists()) {
+    tr.loadFromDirectory(translationsDir);
+    qDebug() << "[AppMain] translations loaded, locale:" << tr.locale();
+   } else {
+    qDebug() << "[AppMain] translations directory not found:" << translationsDir;
+   }
+  }
+
   QLoggingCategory::setFilterRules(QStringLiteral("artifact.compositionview.debug=false"));
   a.setStyle(QStyleFactory::create(QStringLiteral("Fusion")));
 	 auto modoTheme = ArtifactCore::getDCCTheme(DccStylePreset::ModoStyle);
@@ -829,6 +846,7 @@ int main(int argc, char* argv[])
                 
                 // ズームレベル変更をステータスバーに接続
                 QObject::connect(panel, &ArtifactTimelineWidget::zoomLevelChanged, status, &ArtifactStatusBar::setZoomPercent);
+                QObject::connect(panel, &ArtifactTimelineWidget::timelineDebugMessage, status, &ArtifactStatusBar::setTimelineDebugText);
                 
                 mw->addDockedWidgetTabbedWithId(
                     dockTitle,

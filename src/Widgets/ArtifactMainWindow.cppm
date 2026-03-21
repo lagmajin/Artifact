@@ -79,6 +79,10 @@ void applyDarkNativeTitleBar(QWidget* widget)
  setWindowAttribute(hwnd, 35u, &captionColor, sizeof(captionColor));
  setWindowAttribute(hwnd, 36u, &textColor, sizeof(textColor));
  setWindowAttribute(hwnd, 34u, &borderColor, sizeof(borderColor));
+
+ // Force frame recalculation
+ ::SetWindowPos(hwnd, nullptr, 0, 0, 0, 0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
 }
 #else
 void applyDarkNativeTitleBar(QWidget*) {}
@@ -194,11 +198,8 @@ void prepareFloatingDockContainer(ads::CFloatingDockContainer* floatingWidget, Q
   floatingWidget->installEventFilter(eventFilterOwner);
  }
 
- QTimer::singleShot(0, floatingWidget, [floatingWidget]() {
-  applyDarkNativeTitleBar(floatingWidget);
-  floatingWidget->setAttribute(Qt::WA_StyledBackground, true);
-  scheduleFloatingRefresh(floatingWidget);
- });
+ applyDarkNativeTitleBar(floatingWidget);
+ scheduleFloatingRefresh(floatingWidget);
 }
 }
 
@@ -305,7 +306,6 @@ ads--CDockAreaTitleBar QToolButton#closeButton:pressed {
 }
 ads--CFloatingDockContainer {
  background: #222222;
- border: 1px solid #181818;
 }
 ads--CFloatingDockContainer ads--CDockAreaWidget {
  background: #222222;

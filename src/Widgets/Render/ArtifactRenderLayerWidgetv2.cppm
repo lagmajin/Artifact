@@ -139,9 +139,9 @@ W_OBJECT_IMPL(ArtifactLayerEditorWidgetV2)
 
   const QPointF center(widget_->width() * 0.5, widget_->height() * 0.5);
   switch (event->key()) {
-  case Qt::Key_F:
-   renderer_->fitToViewport();
-   zoomLevel_ = 1.0f;
+   case Qt::Key_F:
+    renderer_->fitToViewport();
+    zoomLevel_ = renderer_->getZoom();
    event->accept();
    return;
   case Qt::Key_R:
@@ -464,8 +464,9 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
    return;
   }
 
+  const float currentZoom = impl_->renderer_->getZoom();
   const float zoomFactor = std::pow(1.1f, steps);
-  impl_->zoomLevel_ = std::clamp(impl_->zoomLevel_ * zoomFactor, 0.05f, 32.0f);
+  impl_->zoomLevel_ = std::clamp(currentZoom * zoomFactor, 0.05f, 32.0f);
   zoomAroundPoint(event->position(), impl_->zoomLevel_);
   event->accept();
  }
@@ -543,9 +544,9 @@ void ArtifactLayerEditorWidgetV2::setTargetLayer(const LayerID& id)
       // レイヤーサイズは使用しない（コンポジションサイズを優先）
       // impl_->renderer_->setCanvasSize(static_cast<float>(source.width), static_cast<float>(source.height));
      }
-     impl_->renderer_->fitToViewport();
-     impl_->zoomLevel_ = 1.0f;
-     return;
+      impl_->renderer_->fitToViewport();
+      impl_->zoomLevel_ = impl_->renderer_->getZoom();
+      return;
     }
    }
   }
@@ -559,11 +560,13 @@ void ArtifactLayerEditorWidgetV2::setTargetLayer(const LayerID& id)
   if (impl_->renderer_) impl_->renderer_->resetView();
  }
  
- void ArtifactLayerEditorWidgetV2::fitToViewport()
- {
-  impl_->zoomLevel_ = 1.0f;
-  if (impl_->renderer_) impl_->renderer_->fitToViewport();
- }
+  void ArtifactLayerEditorWidgetV2::fitToViewport()
+  {
+   if (impl_->renderer_) {
+    impl_->renderer_->fitToViewport();
+    impl_->zoomLevel_ = impl_->renderer_->getZoom();
+   }
+  }
  
  void ArtifactLayerEditorWidgetV2::panBy(const QPointF& delta)
  {

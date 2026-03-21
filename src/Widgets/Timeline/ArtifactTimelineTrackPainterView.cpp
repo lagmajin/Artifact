@@ -388,6 +388,14 @@ void ArtifactTimelineTrackPainterView::mouseMoveEvent(QMouseEvent* event)
    break;
   default: break;
   }
+  
+  // Debug message emission
+  const QString status = QStringLiteral("Layer: %1 | Start: %2 | Dur: %3")
+      .arg(clip.title.isEmpty() ? clip.clipId : clip.title)
+      .arg(QString::number(clip.startFrame, 'f', 1))
+      .arg(QString::number(clip.durationFrame, 'f', 1));
+  Q_EMIT timelineDebugMessage(status);
+
   update();
   event->accept();
   return;

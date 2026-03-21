@@ -130,9 +130,9 @@ public:
 
   /*Timeline*/
   FramePosition inPoint() const;
-  void setInPoint(const FramePosition &pos);
+  virtual void setInPoint(const FramePosition &pos);
   FramePosition outPoint() const;
-  void setOutPoint(const FramePosition &pos);
+  virtual void setOutPoint(const FramePosition &pos);
   FramePosition startTime() const;
   void setStartTime(const FramePosition &pos);
 
@@ -142,7 +142,7 @@ public:
   void goToEndFrame();
   void goToNextFrame();
   void goToPrevFrame();
-  void goToFrame(int64_t frameNumber = 0);
+  virtual void goToFrame(int64_t frameNumber = 0);
   int64_t currentFrame() const;
   void applyPropertiesFromJson(const QJsonObject &obj);
   void fromJsonProperties(const QJsonObject &obj);

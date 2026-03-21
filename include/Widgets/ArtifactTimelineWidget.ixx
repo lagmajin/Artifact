@@ -153,6 +153,7 @@ class TimelineTrackView :public QGraphicsView {
    W_SIGNAL(layerClipMoved, layerId, trackIndex, start);
   void layerClipTrimmed(LayerID layerId, int trackIndex, double start, double duration)
    W_SIGNAL(layerClipTrimmed, layerId, trackIndex, start, duration);
+  void timelineDebugMessage(const QString& message) W_SIGNAL(timelineDebugMessage, message);
  };
 
 
@@ -186,6 +187,7 @@ class TimelineTrackView :public QGraphicsView {
   /*signals:*/
  public:
   void zoomLevelChanged(double zoomPercent) W_SIGNAL(zoomLevelChanged, zoomPercent);
+  void timelineDebugMessage(const QString& message) W_SIGNAL(timelineDebugMessage, message);
   
  public slots:
  };
