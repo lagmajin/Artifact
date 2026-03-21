@@ -112,49 +112,51 @@ void TransformGizmo::draw(ArtifactIRenderer* renderer) {
  const float invZoom = zoom > 0.0001f ? 1.0f / zoom : 1.0f;
  const float lineThickness = 1.5f * invZoom;
  const float handleSize = HANDLE_SIZE * invZoom;
- QRectF bbox = expandedCanvasBounds(layer_->transformedBoundingBox(), zoom);
- if (bbox.isNull()) return;
+ 
+ const QRectF localRect = layer_->localBounds();
+ if (localRect.isNull()) return;
 
- const Detail::float2 tl{(float)bbox.left(), (float)bbox.top()};
- const Detail::float2 tr{(float)bbox.right(), (float)bbox.top()};
- const Detail::float2 bl{(float)bbox.left(), (float)bbox.bottom()};
- const Detail::float2 br{(float)bbox.right(), (float)bbox.bottom()};
- const Detail::float2 tc{(float)bbox.center().x(), (float)bbox.top()};
- const Detail::float2 bc{(float)bbox.center().x(), (float)bbox.bottom()};
- const Detail::float2 lc{(float)bbox.left(), (float)bbox.center().y()};
- const Detail::float2 rc{(float)bbox.right(), (float)bbox.center().y()};
-
+ const QTransform globalTransform = layer_->getGlobalTransform();
+ 
  FloatColor gizmoColor{0.0f, 0.5f, 1.0f, 1.0f}; // Cyan-ish blue
  if (isDragging_) gizmoColor = {1.0f, 1.0f, 0.0f, 1.0f}; // Yellow while dragging
 
- // Draw bounding box edges
- renderer->drawSolidLine(tl, tr, gizmoColor, lineThickness);
- renderer->drawSolidLine(tr, br, gizmoColor, lineThickness);
- renderer->drawSolidLine(br, bl, gizmoColor, lineThickness);
- renderer->drawSolidLine(bl, tl, gizmoColor, lineThickness);
+ // Transformed points for bounding box
+ const Detail::float2 tl_c((float)globalTransform.map(localRect.topLeft()).x(), (float)globalTransform.map(localRect.topLeft()).y());
+ const Detail::float2 tr_c((float)globalTransform.map(localRect.topRight()).x(), (float)globalTransform.map(localRect.topRight()).y());
+ const Detail::float2 bl_c((float)globalTransform.map(localRect.bottomLeft()).x(), (float)globalTransform.map(localRect.bottomLeft()).y());
+ const Detail::float2 br_c((float)globalTransform.map(localRect.bottomRight()).x(), (float)globalTransform.map(localRect.bottomRight()).y());
+
+ renderer->drawSolidLine(tl_c, tr_c, gizmoColor, lineThickness);
+ renderer->drawSolidLine(tr_c, br_c, gizmoColor, lineThickness);
+ renderer->drawSolidLine(br_c, bl_c, gizmoColor, lineThickness);
+ renderer->drawSolidLine(bl_c, tl_c, gizmoColor, lineThickness);
+
+ // Center points for handles
+ const Detail::float2 tc_c((float)globalTransform.map(QPointF(localRect.center().x(), localRect.top())).x(), (float)globalTransform.map(QPointF(localRect.center().x(), localRect.top())).y());
+ const Detail::float2 bc_c((float)globalTransform.map(QPointF(localRect.center().x(), localRect.bottom())).x(), (float)globalTransform.map(QPointF(localRect.center().x(), localRect.bottom())).y());
+ const Detail::float2 lc_c((float)globalTransform.map(QPointF(localRect.left(), localRect.center().y())).x(), (float)globalTransform.map(QPointF(localRect.left(), localRect.center().y())).y());
+ const Detail::float2 rc_c((float)globalTransform.map(QPointF(localRect.right(), localRect.center().y())).x(), (float)globalTransform.map(QPointF(localRect.right(), localRect.center().y())).y());
 
  // Draw handles
  auto drawHandle = [&](const Detail::float2& pos) {
   renderer->drawSolidRect(pos.x - handleSize / 2.0f, pos.y - handleSize / 2.0f,
-                          handleSize, handleSize);
+                          handleSize, handleSize, {1,1,1,1}, 1.0f);
   renderer->drawRectOutline(pos.x - handleSize / 2.0f,
                             pos.y - handleSize / 2.0f, handleSize, handleSize,
-                            {1,1,1,1});
+                            {0,0,0,1});
  };
 
- drawHandle(tl); drawHandle(tr); drawHandle(bl); drawHandle(br);
- drawHandle(tc); drawHandle(bc); drawHandle(lc); drawHandle(rc);
+ drawHandle(tl_c); drawHandle(tr_c); drawHandle(bl_c); drawHandle(br_c);
+ drawHandle(tc_c); drawHandle(bc_c); drawHandle(lc_c); drawHandle(rc_c);
 
  // Rotation handle: line from top-center upward with circle
- const float rotateDist = ROTATE_HANDLE_DISTANCE * invZoom;
- const Detail::float2 rotateTip{(float)bbox.center().x(), (float)bbox.top() - rotateDist};
- const float rotHandleR = ROTATE_HANDLE_RADIUS * invZoom;
- renderer->drawSolidLine(tc, rotateTip, gizmoColor, lineThickness);
- renderer->drawRectOutline(rotateTip.x - rotHandleR, rotateTip.y - rotHandleR,
-                           rotHandleR * 2, rotHandleR * 2, gizmoColor);
- // Fill the rotation circle
- renderer->drawSolidRect(rotateTip.x - rotHandleR * 0.6f, rotateTip.y - rotHandleR * 0.6f,
-                          rotHandleR * 1.2f, rotHandleR * 1.2f, gizmoColor, 0.3f);
+ const Detail::float2 rotateTip((float)globalTransform.map(QPointF(localRect.center().x(), localRect.top() - ROTATE_HANDLE_DISTANCE)).x(), 
+                                (float)globalTransform.map(QPointF(localRect.center().x(), localRect.top() - ROTATE_HANDLE_DISTANCE)).y());
+
+ renderer->drawSolidLine(tc_c, rotateTip, gizmoColor, lineThickness);
+ renderer->drawCircle(rotateTip.x, rotateTip.y, handleSize * 0.6f, gizmoColor, lineThickness, false);
+ renderer->drawCircle(rotateTip.x, rotateTip.y, handleSize * 0.2f, gizmoColor, 0.0f, true);
 
  // Anchor point: small crosshair at anchor position
  const auto& t3d = layer_->transform3D();

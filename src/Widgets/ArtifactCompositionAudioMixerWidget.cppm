@@ -188,7 +188,7 @@ public:
             QSlider::groove:vertical {
                 width: 8px;
                 background: #0f1419;
-                border: 1px solid #26313d;
+                 border: 1px solid #454545;
                 border-radius: 4px;
             }
             QSlider::sub-page:vertical {

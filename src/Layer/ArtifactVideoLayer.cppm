@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <QImage>
 #include <QString>
 #include <QJsonObject>
@@ -134,10 +134,6 @@ public:
     QString sourcePath_;
     bool isLoaded_ = false;
     
-    int64_t currentFrame_ = 0;
-    int64_t inPoint_ = 0;
-    int64_t outPoint_ = -1;  // -1 means end of video
-    
     double playbackSpeed_ = 1.0;
     bool loopEnabled_ = true;
     ProxyQuality proxyQuality_ = ProxyQuality::None;
@@ -228,9 +224,11 @@ bool ArtifactVideoLayer::loadFromPath(const QString& path)
     }
 
     impl_->isLoaded_ = true;
-    impl_->currentFrame_ = 0;
-    impl_->inPoint_ = 0;
-    impl_->outPoint_ = impl_->streamInfo_.frameCount > 0 ? impl_->streamInfo_.frameCount - 1 : -1;
+    
+    // Set unified timeline properties
+    setInPoint(0);
+    setOutPoint(impl_->streamInfo_.frameCount > 0 ? impl_->streamInfo_.frameCount : 300);
+    
     impl_->frameCache_.clear();
 
     const QImage firstFrame = impl_->playbackController_->getVideoFrameAtFrame(0);
@@ -272,10 +270,11 @@ const VideoStreamInfo& ArtifactVideoLayer::streamInfo() const
 void ArtifactVideoLayer::seekToFrame(int64_t frame)
 {
     if (!impl_->isLoaded_) return;
-    const int64_t maxFrame = impl_->outPoint_ >= 0 ? impl_->outPoint_ : std::max<int64_t>(impl_->streamInfo_.frameCount - 1, impl_->inPoint_);
-    frame = std::max(impl_->inPoint_, std::min(frame, maxFrame));
+    const int64_t startFrame = inPoint();
+    const int64_t endFrame = outPoint();
+    frame = std::max(startFrame, std::min(frame, endFrame - 1));
     
-    impl_->currentFrame_ = frame;
+    ArtifactAbstractLayer::goToFrame(frame);
     impl_->playbackController_->seekToFrame(frame);
     decodeCurrentFrame();
 }
@@ -290,7 +289,7 @@ void ArtifactVideoLayer::seekToTime(double time)
 
 int64_t ArtifactVideoLayer::currentFrame() const
 {
-    return impl_->currentFrame_;
+    return ArtifactAbstractLayer::currentFrame();
 }
 
 double ArtifactVideoLayer::currentTime() const
@@ -299,7 +298,7 @@ double ArtifactVideoLayer::currentTime() const
         return impl_->playbackController_->getCurrentPositionSeconds();
     }
     if (impl_->streamInfo_.frameRate > 0) {
-        return impl_->currentFrame_ / impl_->streamInfo_.frameRate;
+        return currentFrame() / impl_->streamInfo_.frameRate;
     }
     return 0.0;
 }
@@ -307,7 +306,7 @@ double ArtifactVideoLayer::currentTime() const
 VideoFrameInfo ArtifactVideoLayer::currentFrameInfo() const
 {
     VideoFrameInfo info;
-    info.frameNumber = static_cast<int>(impl_->currentFrame_);
+    info.frameNumber = static_cast<int>(currentFrame());
     info.timestamp = currentTime();
     info.duration = 1.0 / (impl_->streamInfo_.frameRate > 0 ? impl_->streamInfo_.frameRate : 30.0);
     info.isKeyFrame = false; // Would need FFmpeg to determine this
@@ -319,17 +318,36 @@ void ArtifactVideoLayer::decodeCurrentFrame()
 {
     if (!impl_->isLoaded_) return;
     
-    // Check cache first
-    if (impl_->frameCache_.get(impl_->currentFrame_, impl_->currentQImage_)) {
-        qDebug() << "[VideoLayer] Frame" << impl_->currentFrame_ << "from cache";
+    const int64_t targetFrame = currentFrame();
+    
+    // Debug: Trace the mapping from Timeline -> Source
+    // globalFrame (frameNumber) -> currentFrame_ (relative)
+    qDebug() << "[VideoLayer::decodeCurrentFrame] LayerID:" << id().toString()
+             << "Target Source Frame:" << targetFrame
+             << "InPoint:" << inPoint()
+             << "StartTime:" << startTime().framePosition();
+
+    if (targetFrame < 0 || targetFrame >= impl_->streamInfo_.frameCount) {
+        qWarning() << "[VideoLayer] Target frame out of bounds:" << targetFrame;
         return;
     }
     
-    // Decode from controller
-    impl_->currentQImage_ = impl_->playbackController_->getVideoFrameAtFrame(impl_->currentFrame_);
-    if (!impl_->currentQImage_.isNull()) {
-        impl_->frameCache_.put(impl_->currentFrame_, impl_->currentQImage_);
-        qDebug() << "[VideoLayer] Decoded frame" << impl_->currentFrame_;
+    // Check cache first
+    QImage cachedFrame;
+    if (impl_->frameCache_.get(targetFrame, cachedFrame)) {
+        impl_->currentQImage_ = cachedFrame;
+        return;
+    }
+    
+    // Decode from controller - ensure it's a fresh decode for the target frame
+    // getVideoFrameAtFrame is expected to perform necessary seeking internally.
+    QImage decoded = impl_->playbackController_->getVideoFrameAtFrame(targetFrame);
+    
+    if (!decoded.isNull()) {
+        impl_->currentQImage_ = decoded;
+        impl_->frameCache_.put(targetFrame, decoded);
+    } else {
+        qWarning() << "[VideoLayer] Failed to decode frame:" << targetFrame;
     }
 }
 
@@ -361,9 +379,12 @@ void ArtifactVideoLayer::preloadFrames(int64_t startFrame, int count)
 {
     if (!impl_->isLoaded_) return;
     
+    const int64_t startIdx = inPoint();
+    const int64_t endIdx = outPoint();
+
     for (int i = 0; i < count; ++i) {
         int64_t frame = startFrame + i;
-        if (frame >= impl_->inPoint_ && (impl_->outPoint_ < 0 || frame <= impl_->outPoint_)) {
+        if (frame >= startIdx && (endIdx < 0 || frame < endIdx)) {
             if (!impl_->frameCache_.contains(frame)) {
                 const QImage frameData = impl_->playbackController_->getVideoFrameAtFrame(frame);
                 if (!frameData.isNull()) {
@@ -442,36 +463,39 @@ void ArtifactVideoLayer::clearProxy()
 }
 
 // === In-Point / Out-Point ===
+void ArtifactVideoLayer::setInPoint(const FramePosition& pos)
+{
+    ArtifactAbstractLayer::setInPoint(pos);
+}
+
 void ArtifactVideoLayer::setInPoint(int64_t frame)
 {
-    const int64_t maxFrame = std::max<int64_t>(0, impl_->streamInfo_.frameCount - 1);
-    impl_->inPoint_ = std::max<int64_t>(0, std::min(frame, maxFrame));
-    if (impl_->outPoint_ < impl_->inPoint_) {
-        impl_->outPoint_ = impl_->inPoint_;
-    }
-    qDebug() << "[VideoLayer] In-point set to" << impl_->inPoint_;
+    setInPoint(FramePosition(frame));
+}
+
+void ArtifactVideoLayer::setOutPoint(const FramePosition& pos)
+{
+    ArtifactAbstractLayer::setOutPoint(pos);
 }
 
 void ArtifactVideoLayer::setOutPoint(int64_t frame)
 {
-    const int64_t maxFrame = std::max<int64_t>(impl_->inPoint_, impl_->streamInfo_.frameCount - 1);
-    impl_->outPoint_ = std::max(impl_->inPoint_, std::min(frame, maxFrame));
-    qDebug() << "[VideoLayer] Out-point set to" << impl_->outPoint_;
+    setOutPoint(FramePosition(frame));
 }
 
 int64_t ArtifactVideoLayer::inPoint() const
 {
-    return impl_->inPoint_;
+    return ArtifactAbstractLayer::inPoint().framePosition();
 }
 
 int64_t ArtifactVideoLayer::outPoint() const
 {
-    return impl_->outPoint_ >= 0 ? impl_->outPoint_ : impl_->streamInfo_.frameCount - 1;
+    return ArtifactAbstractLayer::outPoint().framePosition();
 }
 
 int64_t ArtifactVideoLayer::effectiveFrameCount() const
 {
-    return outPoint() - inPoint() + 1;
+    return outPoint() - inPoint();
 }
 
 // === Loop/Speed ===
@@ -528,8 +552,8 @@ QJsonObject ArtifactVideoLayer::toJson() const
     QJsonObject obj;
     obj["type"] = "VideoLayer";
     obj["sourcePath"] = impl_->sourcePath_;
-    obj["inPoint"] = static_cast<qint64>(impl_->inPoint_);
-    obj["outPoint"] = static_cast<qint64>(impl_->outPoint_);
+    obj["inPoint"] = static_cast<qint64>(inPoint());
+    obj["outPoint"] = static_cast<qint64>(outPoint());
     obj["playbackSpeed"] = impl_->playbackSpeed_;
     obj["loopEnabled"] = impl_->loopEnabled_;
     obj["audioVolume"] = impl_->audioVolume_;
@@ -554,10 +578,10 @@ std::shared_ptr<ArtifactVideoLayer> ArtifactVideoLayer::fromJson(const QJsonObje
     }
     
     if (obj.contains("inPoint")) {
-        layer->setInPoint(obj["inPoint"].toInteger());
+        layer->setInPoint(obj["inPoint"].toVariant().toLongLong());
     }
     if (obj.contains("outPoint")) {
-        layer->setOutPoint(obj["outPoint"].toInteger());
+        layer->setOutPoint(obj["outPoint"].toVariant().toLongLong());
     }
     if (obj.contains("playbackSpeed")) {
         layer->setPlaybackSpeed(obj["playbackSpeed"].toDouble());
@@ -601,6 +625,12 @@ void ArtifactVideoLayer::draw(ArtifactIRenderer* renderer)
     
     auto size = sourceSize();
     renderer->drawSprite(0.0f, 0.0f, (float)size.width, (float)size.height, impl_->currentQImage_, this->opacity());
+}
+
+void ArtifactVideoLayer::goToFrame(int64_t frameNumber)
+{
+    ArtifactAbstractLayer::goToFrame(frameNumber);
+    decodeCurrentFrame();
 }
 
 bool ArtifactVideoLayer::hasVideo() const

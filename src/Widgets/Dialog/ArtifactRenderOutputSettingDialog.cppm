@@ -151,8 +151,8 @@ namespace Artifact
    }
  }
 
- void ArtifactRenderOutputSettingDialog::Impl::applyPresetToEditors(const QString& presetId)
- {
+  void ArtifactRenderOutputSettingDialog::Impl::applyPresetToEditors(const QString& presetId)
+  {
    if (presetId.isEmpty() || !formatCombo || !codecCombo) return;
    
    const auto* preset = ArtifactRenderFormatPresetManager::instance().findPresetById(presetId);
@@ -161,21 +161,39 @@ namespace Artifact
    // Format
    const int formatIndex = formatCombo->findText(preset->container);
    if (formatIndex >= 0) {
-     formatCombo->setCurrentIndex(formatIndex);
+    formatCombo->setCurrentIndex(formatIndex);
    } else {
-     formatCombo->addItem(preset->container);
-     formatCombo->setCurrentText(preset->container);
+    formatCombo->addItem(preset->container);
+    formatCombo->setCurrentText(preset->container);
    }
 
    // Codec
    const int codecIndex = codecCombo->findText(preset->codec);
    if (codecIndex >= 0) {
-     codecCombo->setCurrentIndex(codecIndex);
+    codecCombo->setCurrentIndex(codecIndex);
    } else {
-     codecCombo->addItem(preset->codec);
-     codecCombo->setCurrentText(preset->codec);
+    codecCombo->addItem(preset->codec);
+    codecCombo->setCurrentText(preset->codec);
    }
- }
+
+   // 拡張子を自動更新
+   if (outputPathEdit) {
+    QString path = outputPathEdit->text().trimmed();
+    if (!path.isEmpty()) {
+     QString ext;
+     if (preset->isImageSequence) {
+      ext = preset->container.toLower();
+     } else if (preset->codec == QStringLiteral("ProRes")) {
+      ext = QStringLiteral("mov");
+     } else {
+      ext = preset->container.toLower();
+     }
+     QFileInfo info(path);
+     QString newPath = info.absolutePath() + "/" + info.completeBaseName() + "." + ext;
+     outputPathEdit->setText(newPath);
+    }
+   }
+  }
 
  QString ArtifactRenderOutputSettingDialog::Impl::normalizeBackend(const QString& backend)
  {
@@ -306,6 +324,45 @@ namespace Artifact
 
     QObject::connect(impl_->buttonBox, &QDialogButtonBox::accepted, this, &QDialog::accept);
     QObject::connect(impl_->buttonBox, &QDialogButtonBox::rejected, this, &QDialog::reject);
+
+    // フォーマット変更時に拡張子を自動更新
+    QObject::connect(impl_->formatCombo, &QComboBox::currentTextChanged, [this](const QString& format) {
+        if (!impl_->outputPathEdit) return;
+        QString path = impl_->outputPathEdit->text().trimmed();
+        if (path.isEmpty()) return;
+
+        // フォーマットから拡張子を決定
+        QString ext;
+        if (format == QStringLiteral("MP4")) ext = QStringLiteral("mp4");
+        else if (format == QStringLiteral("MOV")) ext = QStringLiteral("mov");
+        else if (format == QStringLiteral("AVI")) ext = QStringLiteral("avi");
+        else if (format == QStringLiteral("PNG Sequence")) ext = QStringLiteral("png");
+        else if (format == QStringLiteral("EXR Sequence")) ext = QStringLiteral("exr");
+        else ext = QStringLiteral("mp4");
+
+        // 拡張子を置換
+        QFileInfo info(path);
+        QString newPath = info.absolutePath() + "/" + info.completeBaseName() + "." + ext;
+        impl_->outputPathEdit->setText(newPath);
+    });
+
+    // コーデック変更時も拡張子を更新（ProRes → .mov など）
+    QObject::connect(impl_->codecCombo, &QComboBox::currentTextChanged, [this](const QString& codec) {
+        if (!impl_->outputPathEdit) return;
+        QString path = impl_->outputPathEdit->text().trimmed();
+        if (path.isEmpty()) return;
+
+        QString ext;
+        if (codec == QStringLiteral("ProRes")) ext = QStringLiteral("mov");
+        else if (codec == QStringLiteral("PNG")) ext = QStringLiteral("png");
+        else if (codec == QStringLiteral("EXR")) ext = QStringLiteral("exr");
+        else return; // H.264/H.265 はフォーマットに依存するためスキップ
+
+        QFileInfo info(path);
+        QString newPath = info.absolutePath() + "/" + info.completeBaseName() + "." + ext;
+        impl_->outputPathEdit->setText(newPath);
+    });
+
     impl_->syncResolutionPreset();
  }
 

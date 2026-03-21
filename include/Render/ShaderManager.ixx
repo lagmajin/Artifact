@@ -46,6 +46,7 @@ public:
     PSOAndSRB solidTrianglePsoAndSrb() const;
     PSOAndSRB checkerboardPsoAndSrb() const;
     PSOAndSRB gridPsoAndSrb() const;
+    PSOAndSRB spriteTransformPsoAndSrb() const;
 
     RefCntAutoPtr<ISampler> spriteSampler() const;
 

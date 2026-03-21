@@ -176,9 +176,11 @@ public:
     // === In-Point / Out-Point ===
     
     /// Set in-point (start frame for playback)
+    void setInPoint(const FramePosition& pos) override;
     void setInPoint(int64_t frame);
     
     /// Set out-point (end frame for playback)
+    void setOutPoint(const FramePosition& pos) override;
     void setOutPoint(int64_t frame);
     
     /// Get in-point
@@ -232,6 +234,7 @@ public:
     // === Overrides ===
     
     void draw(ArtifactIRenderer* renderer) override;
+    void goToFrame(int64_t frameNumber) override;
     bool hasVideo() const override;
     std::vector<ArtifactCore::PropertyGroup> getLayerPropertyGroups() const override;
     bool setLayerPropertyValue(const QString& propertyPath, const QVariant& value) override;

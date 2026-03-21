@@ -90,6 +90,13 @@ void ArtifactSolidImageLayer::draw(ArtifactIRenderer *renderer) {
   // 現在のフレーム位置に基づく補間値を取得
   auto frame = FramePosition(currentFrame());
   auto color = impl_->color_.at(frame);
+  
+  qDebug() << "[ArtifactSolidImageLayer::draw] id:" << id().toString()
+           << "currentFrame:" << currentFrame() 
+           << "color: (" << color.r() << color.g() << color.b() << color.a() << ")"
+           << "size:" << size.width << "x" << size.height
+           << "opacity:" << opacity();
+
   renderer->drawSolidRect(0.0f, 0.0f,
                           static_cast<float>(size.width),
                           static_cast<float>(size.height),

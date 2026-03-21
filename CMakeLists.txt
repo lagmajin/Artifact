@@ -91,6 +91,12 @@ target_sources(Artifact
     PUBLIC FILE_SET CXX_MODULES FILES ${APP_MODULES}
 )
 
+# Ensure the render pipeline implementation unit is always compiled even if the
+# source list cache is stale after a rename between .cpp and .cppm.
+target_sources(Artifact PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/ArtifactRenderLayerPipeline.cppm"
+)
+
 # Strict MSVC-cl only flags
 if(ARTIFACT_COMPILER_MSVC_CL)
     target_compile_options(Artifact PRIVATE /Zf /Zc:__cplusplus /utf-8 /openmp /wd5050)
@@ -303,6 +309,17 @@ if(WIN32)
         VERBATIM
     )
 endif()
+
+# ---------------------------------------------------------------------------
+# Translations deployment
+# ---------------------------------------------------------------------------
+add_custom_command(TARGET Artifact POST_BUILD
+    COMMAND "${CMAKE_COMMAND}" -E copy_directory
+        "${CMAKE_CURRENT_SOURCE_DIR}/translations"
+        "$<TARGET_FILE_DIR:Artifact>/translations"
+    COMMENT "Deploying translation files for Artifact"
+    VERBATIM
+)
 
 # ---------------------------------------------------------------------------
 # Optional deploy copy (no hard-coded path)

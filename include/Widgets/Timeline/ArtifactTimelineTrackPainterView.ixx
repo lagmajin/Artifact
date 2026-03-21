@@ -72,5 +72,6 @@ export namespace Artifact
   void seekRequested(double frame) W_SIGNAL(seekRequested, frame);
   void clipMoved(const QString& clipId, double startFrame) W_SIGNAL(clipMoved, clipId, startFrame);
   void clipResized(const QString& clipId, double startFrame, double durationFrame) W_SIGNAL(clipResized, clipId, startFrame, durationFrame);
+  void timelineDebugMessage(const QString& message) W_SIGNAL(timelineDebugMessage, message);
  };
 }

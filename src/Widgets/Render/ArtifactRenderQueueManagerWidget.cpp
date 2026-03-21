@@ -898,8 +898,12 @@ void RenderQueueManagerWidget::Impl::updateTransformEditorsForSelection()
  void RenderQueueManagerWidget::Impl::handleJobAdded(int index)
  {
   logServiceEvent(QStringLiteral("Queue updated: job added"), index, true);
-  Q_UNUSED(index);
   syncJobsFromService();
+  // 新しく追加した項目を選択してスクロール
+  selectSourceIndex(index);
+  if (jobListWidget) {
+   jobListWidget->scrollToBottom();
+  }
  }
 
  void RenderQueueManagerWidget::Impl::handleJobRemoved(int index)

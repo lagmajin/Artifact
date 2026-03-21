@@ -472,120 +472,120 @@ ArtifactPropertyWidget::ArtifactPropertyWidget(QWidget* parent)
     }
     setStyleSheet(QStringLiteral(R"(
 QScrollArea#artifactPropertyWidget {
- background: #171d24;
+ background: #2E2E2E;
  border: none;
 }
 QWidget#artifactPropertyContainer {
- background: #171d24;
+ background: #2E2E2E;
 }
 QLineEdit {
- background: #202a34;
- color: #e8eff6;
- border: 1px solid #334355;
+ background: #3A3A3A;
+ color: #E0E0E0;
+ border: 1px solid #454545;
  border-radius: 6px;
  padding: 4px 8px;
- selection-background-color: #4f7da8;
+ selection-background-color: #F5933C;
 }
 QLineEdit:focus {
- border-color: #6e98c0;
+ border-color: #F5933C;
 }
 QGroupBox {
- color: #d7e2ee;
+ color: #E0E0E0;
  font-weight: 600;
- border: 1px solid #324151;
+ border: 1px solid #454545;
  border-radius: 8px;
  margin-top: 10px;
  padding-top: 8px;
- background: #1b232c;
+ background: #333333;
 }
 QGroupBox::title {
  subcontrol-origin: margin;
  left: 10px;
  padding: 0 6px;
- color: #a8bfd6;
+ color: #E0E0E0;
 }
 QWidget#propertyRow {
- background: #212a33;
- border: 1px solid #313f4f;
+ background: #363636;
+ border: 1px solid #454545;
  border-radius: 6px;
 }
 QWidget#propertyRow:hover {
- border-color: #4e6780;
- background: #25303b;
+ border-color: #606060;
+ background: #3E3E3E;
 }
 QLabel#propertyRowLabel {
- color: #d8e3ee;
+ color: #E0E0E0;
  font-weight: 500;
  padding-left: 4px;
 }
 QSpinBox, QDoubleSpinBox, QComboBox, QFontComboBox {
  min-height: 26px;
- background: #26313d;
- color: #e9f1f8;
- border: 1px solid #3b4b5d;
+ background: #3A3A3A;
+ color: #E0E0E0;
+ border: 1px solid #454545;
  border-radius: 6px;
  padding: 2px 6px;
 }
 QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus, QFontComboBox:focus {
- border-color: #6e98c0;
+ border-color: #F5933C;
 }
 QSlider::groove:horizontal {
  height: 4px;
- background: #33414f;
+ background: #3A3A3A;
  border-radius: 2px;
 }
 QSlider::handle:horizontal {
  width: 6px;
  margin: -6px 0;
- background: #9bb9d2;
- border: 1px solid #5d7f9c;
+ background: #F5933C;
+ border: 1px solid #F5933C;
  border-radius: 2px;
 }
 QSlider::handle:horizontal:hover {
- background: #b6cee1;
- border-color: #7b9ab4;
+ background: #FFAA55;
+ border-color: #FFAA55;
 }
 QPushButton#propertyKeyButton,
 QPushButton#propertyResetButton,
 QPushButton#propertyExprButton,
 QPushButton#propertyPathBrowseButton {
- background: #2a3643;
- color: #e2ebf3;
- border: 1px solid #44576a;
+ background: #404040;
+ color: #E0E0E0;
+ border: 1px solid #454545;
  border-radius: 4px;
 }
 QPushButton#propertyKeyButton:hover,
 QPushButton#propertyResetButton:hover,
 QPushButton#propertyExprButton:hover,
 QPushButton#propertyPathBrowseButton:hover {
- background: #334455;
- border-color: #6c8aa6;
+ background: #4A4A4A;
+ border-color: #606060;
 }
 QPushButton#propertyColorSwatchButton {
- border: 1px solid #5a6b7a;
+ border: 1px solid #454545;
  border-radius: 4px;
 }
 QLabel#propertyColorValueLabel {
- color: #a9bccf;
+ color: #E0E0E0;
  font-family: Consolas;
 }
 QCheckBox {
- color: #dce6ef;
+ color: #E0E0E0;
  spacing: 6px;
 }
 QCheckBox::indicator {
  width: 15px;
  height: 15px;
- border: 1px solid #4e6174;
+ border: 1px solid #454545;
  border-radius: 3px;
- background: #232f3a;
+ background: #3A3A3A;
 }
 QCheckBox::indicator:checked {
- background: #6f9ac0;
- border-color: #8eb3d3;
+ background: #F5933C;
+ border-color: #F5933C;
 }
 )"));
-}
+ }
 
 ArtifactPropertyWidget::~ArtifactPropertyWidget() {
     if (impl_->currentLayerChangedConnection) {
@@ -818,7 +818,7 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
         }
 
         auto* effectLabel = new QLabel(QStringLiteral("Effect: %1").arg(effect->displayName().toQString()), summaryGroup);
-        effectLabel->setStyleSheet(QStringLiteral("QLabel { color: #9aa7b5; font-weight: bold; }"));
+        effectLabel->setStyleSheet(QStringLiteral("QLabel { color: #E0E0E0; font-weight: bold; }"));
         summaryLayout->addWidget(effectLabel);
 
         addRowsFromProperties(
@@ -874,7 +874,7 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
 
     if (hasFocusedEffect) {
         auto* focusedLabel = new QLabel(QStringLiteral("Focused Effect ID: %1").arg(focusedEffectId));
-        focusedLabel->setStyleSheet(QStringLiteral("QLabel { color: #9aa7b5; font-size: 11px; }"));
+        focusedLabel->setStyleSheet(QStringLiteral("QLabel { color: #E0E0E0; font-size: 11px; }"));
         mainLayout->addWidget(focusedLabel);
     }
 

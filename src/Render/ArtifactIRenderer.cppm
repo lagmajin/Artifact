@@ -49,7 +49,7 @@ namespace Artifact
  // ---------------------------------------------------------------------------
  class ArtifactIRenderer::Impl
  {
- private:
+ public:
   DiligentDeviceManager deviceManager_;
   ShaderManager shaderManager_;
   PrimitiveRenderer2D primitiveRenderer_;
@@ -597,6 +597,11 @@ namespace Artifact
  { impl_->drawSprite(toDiligentFloat2(pos), toDiligentFloat2(size)); }
  void ArtifactIRenderer::drawSprite(float x, float y, float w, float h, const QImage& image, float opacity)
  { impl_->drawSpriteLocal(x, y, w, h, image, opacity); }
+ void ArtifactIRenderer::drawSpriteTransformed(float x, float y, float w, float h, const QTransform& transform, const QImage& image, float opacity)
+ {
+  // Direct delegation to primitive renderer for transformed sprite drawing
+  impl_->primitiveRenderer_.drawSpriteTransformed(x, y, w, h, transform, image, opacity);
+ }
  void ArtifactIRenderer::drawRectLocal(float x, float y, float w, float h, const FloatColor& color, float opacity)
  { impl_->drawRectLocal(x, y, w, h, color, opacity); }
  void ArtifactIRenderer::drawSolidRectTransformed(float x, float y, float w, float h, const QTransform& transform, const FloatColor& color, float opacity)
@@ -622,6 +627,10 @@ namespace Artifact
                                                 Detail::float2 p2, const FloatColor& color)
  { impl_->drawSolidTriangleLocal(toDiligentFloat2(p0), toDiligentFloat2(p1),
                                  toDiligentFloat2(p2), color); }
+ void ArtifactIRenderer::drawCircle(float x, float y, float radius, const FloatColor& color, float thickness, bool fill)
+ { impl_->primitiveRenderer_.drawCircle(x, y, radius, color, thickness, fill); }
+ void ArtifactIRenderer::drawCrosshair(float x, float y, float size, const FloatColor& color)
+ { impl_->primitiveRenderer_.drawCrosshair(x, y, size, color); }
  void ArtifactIRenderer::drawCheckerboard(float x, float y, float w, float h,
                                           float tileSize, const FloatColor& c1, const FloatColor& c2)
  { impl_->drawCheckerboard(x, y, w, h, tileSize, c1, c2); }
@@ -630,5 +639,11 @@ namespace Artifact
  { impl_->drawGrid(x, y, w, h, spacing, thickness, color); }
  void ArtifactIRenderer::drawParticles()                  { impl_->drawParticles(); }
  void ArtifactIRenderer::setUpscaleConfig(bool, float)    {}
+ Diligent::RefCntAutoPtr<Diligent::IRenderDevice> ArtifactIRenderer::device() const
+ { return impl_->deviceManager_.device(); }
+ Diligent::RefCntAutoPtr<Diligent::IDeviceContext> ArtifactIRenderer::immediateContext() const
+ { return impl_->deviceManager_.immediateContext(); }
+ void ArtifactIRenderer::setOverrideRTV(Diligent::ITextureView* rtv)
+ { impl_->primitiveRenderer_.setOverrideRTV(rtv); }
 
 } // namespace Artifact

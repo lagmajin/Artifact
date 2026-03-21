@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <RenderDevice.h>
 #include <Shader.h>
 #include <PipelineState.h>
@@ -13,6 +13,7 @@ module Artifact.Render.ShaderManager;
 import Graphics.Shader.Set;
 import Graphics;
 import Graphics.Shader.Compile.Task;
+import Graphics.Shader.HLSL.Basics.Vertex;
 import Render.Shader.ThickLine;
 import Render.Shader.ViewerHelpers;
 
@@ -36,6 +37,7 @@ public:
     RenderShaderPair solidTriangleShaders_;
     RenderShaderPair checkerboardShaders_;
     RenderShaderPair gridShaders_;
+    RenderShaderPair spriteTransformShaders_;
 
     PSOAndSRB linePsoAndSrb_;
     PSOAndSRB outlinePsoAndSrb_;
@@ -47,6 +49,7 @@ public:
     PSOAndSRB solidTrianglePsoAndSrb_;
     PSOAndSRB checkerboardPsoAndSrb_;
     PSOAndSRB gridPsoAndSrb_;
+    PSOAndSRB spriteTransformPsoAndSrb_;
 
     RefCntAutoPtr<ISampler> spriteSampler_;
 
@@ -89,8 +92,8 @@ void ShaderManager::Impl::createShaders()
     drawOutlineRectVsInfo.SourceLanguage = Diligent::SHADER_SOURCE_LANGUAGE_HLSL;
     drawOutlineRectVsInfo.Desc.ShaderType = Diligent::SHADER_TYPE_VERTEX;
     drawOutlineRectVsInfo.Desc.Name = "LayerEditorOutlineVertexShader";
-    drawOutlineRectVsInfo.Source = drawOutlineRectVSSource.constData();
-    drawOutlineRectVsInfo.SourceLength = drawOutlineRectVSSource.length();
+    drawOutlineRectVsInfo.Source = ArtifactCore::drawOutlineRectVSSource.constData();
+    drawOutlineRectVsInfo.SourceLength = ArtifactCore::drawOutlineRectVSSource.length();
 
     ShaderCreateInfo drawOutlineRectPsInfo;
     drawOutlineRectPsInfo.SourceLanguage = Diligent::SHADER_SOURCE_LANGUAGE_HLSL;
@@ -103,8 +106,8 @@ void ShaderManager::Impl::createShaders()
     solidRectVsInfo.SourceLanguage = Diligent::SHADER_SOURCE_LANGUAGE_HLSL;
     solidRectVsInfo.Desc.ShaderType = Diligent::SHADER_TYPE_VERTEX;
     solidRectVsInfo.Desc.Name = "IRenderSolidRectVertexShader";
-    solidRectVsInfo.Source = drawSolidRectVSSource.constData();
-    solidRectVsInfo.SourceLength = drawSolidRectVSSource.length();
+    solidRectVsInfo.Source = ArtifactCore::drawSolidRectVSSource.constData();
+    solidRectVsInfo.SourceLength = ArtifactCore::drawSolidRectVSSource.length();
 
     ShaderCreateInfo solidPsInfo;
     solidPsInfo.SourceLanguage = Diligent::SHADER_SOURCE_LANGUAGE_HLSL;
@@ -131,15 +134,22 @@ void ShaderManager::Impl::createShaders()
     solidRectVsInfo2.SourceLanguage = Diligent::SHADER_SOURCE_LANGUAGE_HLSL;
     solidRectVsInfo2.Desc.ShaderType = Diligent::SHADER_TYPE_VERTEX;
     solidRectVsInfo2.Desc.Name = "SolidRectVertexShader";
-    solidRectVsInfo2.Source = drawSolidRectVSSource.constData();
-    solidRectVsInfo2.SourceLength = drawSolidRectVSSource.length();
+    solidRectVsInfo2.Source = ArtifactCore::drawSolidRectVSSource.constData();
+    solidRectVsInfo2.SourceLength = ArtifactCore::drawSolidRectVSSource.length();
 
     ShaderCreateInfo solidRectTransformVsInfo;
     solidRectTransformVsInfo.SourceLanguage = Diligent::SHADER_SOURCE_LANGUAGE_HLSL;
     solidRectTransformVsInfo.Desc.ShaderType = Diligent::SHADER_TYPE_VERTEX;
     solidRectTransformVsInfo.Desc.Name = "SolidRectTransformVertexShader";
-    solidRectTransformVsInfo.Source = drawSolidRectTransformVSSource.constData();
-    solidRectTransformVsInfo.SourceLength = drawSolidRectTransformVSSource.length();
+    solidRectTransformVsInfo.Source = ArtifactCore::drawSolidRectTransformVSSource.constData();
+    solidRectTransformVsInfo.SourceLength = ArtifactCore::drawSolidRectTransformVSSource.length();
+
+    ShaderCreateInfo spriteTransformVsInfo;
+    spriteTransformVsInfo.SourceLanguage = Diligent::SHADER_SOURCE_LANGUAGE_HLSL;
+    spriteTransformVsInfo.Desc.ShaderType = Diligent::SHADER_TYPE_VERTEX;
+    spriteTransformVsInfo.Desc.Name = "SpriteTransformVertexShader";
+    spriteTransformVsInfo.Source = ArtifactCore::drawSpriteTransformVSSource.constData();
+    spriteTransformVsInfo.SourceLength = ArtifactCore::drawSpriteTransformVSSource.length();
 
     ShaderCreateInfo solidRectPsInfo2;
     solidRectPsInfo2.SourceLanguage = Diligent::SHADER_SOURCE_LANGUAGE_HLSL;
@@ -171,6 +181,8 @@ void ShaderManager::Impl::createShaders()
     solidTriangleShaders_ = solidShaders_;
     device_->CreateShader(solidRectTransformVsInfo, &solidRectTransformShaders_.VS);
     device_->CreateShader(solidRectPsInfo2, &solidRectTransformShaders_.PS);
+    device_->CreateShader(spriteTransformVsInfo, &spriteTransformShaders_.VS);
+    spriteTransformShaders_.PS = spriteShaders_.PS;
 
     device_->CreateShader(checkerboardPsInfo, &checkerboardShaders_.PS);
     device_->CreateShader(gridPsInfo, &gridShaders_.PS);
@@ -314,15 +326,6 @@ void ShaderManager::Impl::createPSOs()
         solidRectTransformPsoAndSrb_.pPSO->CreateShaderResourceBinding(&solidRectTransformPsoAndSrb_.pSRB, true);
     }
 
-    GraphicsPipelineStateCreateInfo drawSolidTrianglePSOCreateInfo = drawSolidRectPSOCreateInfo;
-    drawSolidTrianglePSOCreateInfo.PSODesc.Name = "DrawSolidTriangle PSO";
-    drawSolidTrianglePSOCreateInfo.GraphicsPipeline.PrimitiveTopology = PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-    device_->CreateGraphicsPipelineState(drawSolidTrianglePSOCreateInfo, &solidTrianglePsoAndSrb_.pPSO);
-    if (solidTrianglePsoAndSrb_.pPSO)
-    {
-        solidTrianglePsoAndSrb_.pPSO->CreateShaderResourceBinding(&solidTrianglePsoAndSrb_.pSRB, true);
-    }
-
     GraphicsPipelineStateCreateInfo spritePSOCreateInfo;
     spritePSOCreateInfo.PSODesc.Name = "DrawSprite PSO";
     spritePSOCreateInfo.PSODesc.PipelineType = PIPELINE_TYPE_GRAPHICS;
@@ -357,10 +360,30 @@ void ShaderManager::Impl::createPSOs()
     spritePSOCreateInfo.PSODesc.ResourceLayout.NumVariables = _countof(spriteVars);
     spritePSOCreateInfo.pVS = spriteShaders_.VS;
     spritePSOCreateInfo.pPS = spriteShaders_.PS;
+
     device_->CreateGraphicsPipelineState(spritePSOCreateInfo, &spritePsoAndSrb_.pPSO);
     if (spritePsoAndSrb_.pPSO)
     {
         spritePsoAndSrb_.pPSO->CreateShaderResourceBinding(&spritePsoAndSrb_.pSRB, true);
+    }
+
+    GraphicsPipelineStateCreateInfo drawSpriteTransformPSOCreateInfo = spritePSOCreateInfo;
+    drawSpriteTransformPSOCreateInfo.PSODesc.Name = "DrawSpriteTransform PSO";
+    drawSpriteTransformPSOCreateInfo.pVS = spriteTransformShaders_.VS;
+    drawSpriteTransformPSOCreateInfo.pPS = spriteTransformShaders_.PS;
+    device_->CreateGraphicsPipelineState(drawSpriteTransformPSOCreateInfo, &spriteTransformPsoAndSrb_.pPSO);
+    if (spriteTransformPsoAndSrb_.pPSO)
+    {
+        spriteTransformPsoAndSrb_.pPSO->CreateShaderResourceBinding(&spriteTransformPsoAndSrb_.pSRB, true);
+    }
+
+    GraphicsPipelineStateCreateInfo drawSolidTrianglePSOCreateInfo = drawSolidRectPSOCreateInfo;
+    drawSolidTrianglePSOCreateInfo.PSODesc.Name = "DrawSolidTriangle PSO";
+    drawSolidTrianglePSOCreateInfo.GraphicsPipeline.PrimitiveTopology = PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    device_->CreateGraphicsPipelineState(drawSolidTrianglePSOCreateInfo, &solidTrianglePsoAndSrb_.pPSO);
+    if (solidTrianglePsoAndSrb_.pPSO)
+    {
+        solidTrianglePsoAndSrb_.pPSO->CreateShaderResourceBinding(&solidTrianglePsoAndSrb_.pSRB, true);
     }
 
     SamplerDesc spriteSamplerDesc;
@@ -657,6 +680,11 @@ PSOAndSRB ShaderManager::checkerboardPsoAndSrb() const
 PSOAndSRB ShaderManager::gridPsoAndSrb() const
 {
     return impl_->gridPsoAndSrb_;
+}
+
+PSOAndSRB ShaderManager::spriteTransformPsoAndSrb() const
+{
+    return impl_->spriteTransformPsoAndSrb_;
 }
 
 RefCntAutoPtr<ISampler> ShaderManager::spriteSampler() const
