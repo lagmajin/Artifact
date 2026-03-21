@@ -247,6 +247,9 @@ resolveIntSoftRange(const ArtifactCore::AbstractProperty &property,
 ArtifactPropertyRowLayoutMode g_propertyRowLayoutMode =
     ArtifactPropertyRowLayoutMode::EditorThenLabel;
 
+ArtifactNumericEditorLayoutMode g_numericEditorLayoutMode =
+    ArtifactNumericEditorLayoutMode::ValueThenSlider;
+
 } // namespace
 
 ArtifactFloatPropertyEditor::ArtifactFloatPropertyEditor(
@@ -258,8 +261,14 @@ ArtifactFloatPropertyEditor::ArtifactFloatPropertyEditor(
   auto *layout = new QHBoxLayout(this);
   layout->setContentsMargins(0, 0, 0, 0);
   layout->setSpacing(4);
-  layout->addWidget(spinBox_, 1);
-  layout->addWidget(slider_, 3);
+  if (g_numericEditorLayoutMode ==
+      ArtifactNumericEditorLayoutMode::SliderThenValue) {
+    layout->addWidget(slider_, 3);
+    layout->addWidget(spinBox_, 1);
+  } else {
+    layout->addWidget(spinBox_, 1);
+    layout->addWidget(slider_, 3);
+  }
 
   const auto meta = property.metadata();
   const double hardMin =
@@ -395,8 +404,14 @@ ArtifactIntPropertyEditor::ArtifactIntPropertyEditor(
   auto *layout = new QHBoxLayout(this);
   layout->setContentsMargins(0, 0, 0, 0);
   layout->setSpacing(4);
-  layout->addWidget(spinBox_, 1);
-  layout->addWidget(slider_, 3);
+  if (g_numericEditorLayoutMode ==
+      ArtifactNumericEditorLayoutMode::SliderThenValue) {
+    layout->addWidget(slider_, 3);
+    layout->addWidget(spinBox_, 1);
+  } else {
+    layout->addWidget(spinBox_, 1);
+    layout->addWidget(slider_, 3);
+  }
 
   const auto meta = property.metadata();
   const int hardMin = meta.hardMin.isValid() ? meta.hardMin.toInt() : -1000000;
@@ -888,6 +903,14 @@ void ArtifactPropertyEditorRowWidget::setGlobalLayoutMode(
 ArtifactPropertyRowLayoutMode
 ArtifactPropertyEditorRowWidget::globalLayoutMode() {
   return g_propertyRowLayoutMode;
+}
+
+void setGlobalNumericEditorLayoutMode(const ArtifactNumericEditorLayoutMode mode) {
+  g_numericEditorLayoutMode = mode;
+}
+
+ArtifactNumericEditorLayoutMode globalNumericEditorLayoutMode() {
+  return g_numericEditorLayoutMode;
 }
 
 void ArtifactPropertyEditorRowWidget::setExpressionHandler(

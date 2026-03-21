@@ -149,8 +149,10 @@ class TimelineTrackView :public QGraphicsView {
   void seekPositionChanged(double ratio) W_SIGNAL(seekPositionChanged,ratio);
   void clipSelected(ClipItem* clip) W_SIGNAL(clipSelected,clip);
   void clipDeselected(ClipItem* clip) W_SIGNAL(clipDeselected,clip);
-  void layerClipEdited(LayerID layerId, int trackIndex, double start, double duration)
-   W_SIGNAL(layerClipEdited, layerId, trackIndex, start, duration);
+  void layerClipMoved(LayerID layerId, int trackIndex, double start)
+   W_SIGNAL(layerClipMoved, layerId, trackIndex, start);
+  void layerClipTrimmed(LayerID layerId, int trackIndex, double start, double duration)
+   W_SIGNAL(layerClipTrimmed, layerId, trackIndex, start, duration);
  };
 
 

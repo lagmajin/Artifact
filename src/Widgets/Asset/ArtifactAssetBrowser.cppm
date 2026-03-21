@@ -24,6 +24,7 @@
 #include <QDesktopServices>
 #include <QUrl>
 #include <QClipboard>
+#include <QApplication>
 #include <QImage>
 #include <QSlider>
 #include <QGroupBox>
@@ -44,6 +45,7 @@ import Artifact.Project.Cleanup;
 import AssetMenuModel;
 import AssetDirectoryModel;
 import Utils.String.UniString;
+import File.TypeDetector;
 
 namespace Artifact {
 
@@ -122,9 +124,10 @@ namespace Artifact {
   QLabel* currentPathLabel_ = nullptr;
   QLabel* fileInfoLabel_ = nullptr;  // File details display
   QSlider* thumbnailSizeSlider_ = nullptr;  // Thumbnail size adjustment
-  QString currentDirectoryPath_;
-  QString currentFileTypeFilter_ = "all";
-  QString currentSearchFilter_;
+   QString currentDirectoryPath_;
+   QString currentFileTypeFilter_ = "all";
+   QString currentStatusFilter_ = "all";
+   QString currentSearchFilter_;
 
   void handleDirectryChanged();
   void handleDoubleClicked();
@@ -135,10 +138,11 @@ namespace Artifact {
   QIcon generateThumbnail(const QString& filePath);
   QIcon getFileIcon(const QString& fileName, const QString& filePath);
   void clearThumbnailCache();
-  bool isImageFile(const QString& fileName) const;
-  bool isVideoFile(const QString& fileName) const;
-  bool isAudioFile(const QString& fileName) const;
-  bool isFontFile(const QString& fileName) const;
+   bool isImageFile(const QString& fileName) const;
+   bool isVideoFile(const QString& fileName) const;
+   bool isAudioFile(const QString& fileName) const;
+   bool isFontFile(const QString& fileName) const;
+   ArtifactCore::FileType fileType(const QString& fileName) const;
   bool isImportedAssetPath(const QString& filePath) const;
   bool isUnusedAssetPath(const QString& filePath) const;
   bool isMissingAssetPath(const QString& filePath) const;
@@ -210,40 +214,36 @@ namespace Artifact {
   return fileName.contains(currentSearchFilter_, Qt::CaseInsensitive);
  }
 
+ FileType ArtifactAssetBrowser::Impl::fileType(const QString& fileName) const
+ {
+  static FileTypeDetector detector;
+  return detector.detectByExtension(fileName);
+ }
+
  bool ArtifactAssetBrowser::Impl::isImageFile(const QString& fileName) const
  {
-  QString lower = fileName.toLower();
-  return lower.endsWith(".png") || lower.endsWith(".jpg") ||
-         lower.endsWith(".jpeg") || lower.endsWith(".bmp") ||
-         lower.endsWith(".gif") || lower.endsWith(".tga") ||
-         lower.endsWith(".tiff") || lower.endsWith(".exr");
+  return fileType(fileName) == ArtifactCore::FileType::Image;
  }
 
  bool ArtifactAssetBrowser::Impl::isVideoFile(const QString& fileName) const
  {
-  QString lower = fileName.toLower();
-  return lower.endsWith(".mp4") || lower.endsWith(".mov") ||
-         lower.endsWith(".avi") || lower.endsWith(".mkv") ||
-         lower.endsWith(".webm") || lower.endsWith(".flv");
+  return fileType(fileName) == ArtifactCore::FileType::Video;
  }
 
-bool ArtifactAssetBrowser::Impl::isAudioFile(const QString& fileName) const
-{
-  QString lower = fileName.toLower();
-  return lower.endsWith(".mp3") || lower.endsWith(".wav") ||
-         lower.endsWith(".ogg") || lower.endsWith(".flac") ||
-         lower.endsWith(".aac") || lower.endsWith(".m4a");
-}
+ bool ArtifactAssetBrowser::Impl::isAudioFile(const QString& fileName) const
+ {
+  return fileType(fileName) == ArtifactCore::FileType::Audio;
+ }
 
-bool ArtifactAssetBrowser::Impl::isFontFile(const QString& fileName) const
-{
+ bool ArtifactAssetBrowser::Impl::isFontFile(const QString& fileName) const
+ {
   QString lower = fileName.toLower();
   return lower.endsWith(".ttf") || lower.endsWith(".otf") ||
          lower.endsWith(".ttc") || lower.endsWith(".woff") ||
          lower.endsWith(".woff2");
-}
+ }
 
-bool ArtifactAssetBrowser::Impl::isImportedAssetPath(const QString& filePath) const
+ bool ArtifactAssetBrowser::Impl::isImportedAssetPath(const QString& filePath) const
 {
   if (filePath.isEmpty()) {
    return false;
@@ -522,12 +522,22 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
     continue;
    }
 
-   // For files, check type filter
-   if (!isDir && !matchesFileTypeFilter(entry)) {
-    continue;
-   }
+    // For files, check type filter
+    if (!isDir && !matchesFileTypeFilter(entry)) {
+     continue;
+    }
 
-   AssetMenuItem item;
+    // Check status filter
+    if (!isDir && currentStatusFilter_ != "all") {
+     const bool imported = isImportedAssetPath(fullPath);
+     const bool unused = isUnusedAssetPath(fullPath);
+     const bool missing = isMissingAssetPath(fullPath);
+     if (currentStatusFilter_ == "imported" && !imported) continue;
+     if (currentStatusFilter_ == "missing" && !missing) continue;
+     if (currentStatusFilter_ == "unused" && !unused) continue;
+    }
+
+    AssetMenuItem item;
    item.name = UniString::fromQString(entry);
    item.path = UniString::fromQString(fullPath);
    QString itemType = isDir ? QStringLiteral("Folder") : fileInfo.suffix().toUpper();
@@ -607,12 +617,57 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
   impl_->filterButtonGroup_->addButton(audioButton, 3);
   impl_->filterButtonGroup_->addButton(fontsButton, 4);
 
-  filterButtonsLayout->addWidget(allButton);
-  filterButtonsLayout->addWidget(imagesButton);
-  filterButtonsLayout->addWidget(videosButton);
-  filterButtonsLayout->addWidget(audioButton);
-  filterButtonsLayout->addWidget(fontsButton);
-  filterButtonsLayout->addStretch();
+   filterButtonsLayout->addWidget(allButton);
+   filterButtonsLayout->addWidget(imagesButton);
+   filterButtonsLayout->addWidget(videosButton);
+   filterButtonsLayout->addWidget(audioButton);
+   filterButtonsLayout->addWidget(fontsButton);
+
+   // Status filter: All / Imported / Missing / Unused
+   auto* sep = new QFrame();
+   sep->setFrameShape(QFrame::VLine);
+   sep->setFixedHeight(20);
+   filterButtonsLayout->addWidget(sep);
+
+   auto statusAllBtn = new QToolButton();
+   statusAllBtn->setText("Status: All");
+   statusAllBtn->setCheckable(true);
+   statusAllBtn->setChecked(true);
+
+   auto importedBtn = new QToolButton();
+   importedBtn->setText("Imported");
+   importedBtn->setCheckable(true);
+
+   auto missingBtn = new QToolButton();
+   missingBtn->setText("Missing");
+   missingBtn->setCheckable(true);
+
+   auto unusedBtn = new QToolButton();
+   unusedBtn->setText("Unused");
+   unusedBtn->setCheckable(true);
+
+   auto* statusGroup = new QButtonGroup(this);
+   statusGroup->setExclusive(true);
+   statusGroup->addButton(statusAllBtn, 0);
+   statusGroup->addButton(importedBtn, 1);
+   statusGroup->addButton(missingBtn, 2);
+   statusGroup->addButton(unusedBtn, 3);
+
+   filterButtonsLayout->addWidget(statusAllBtn);
+   filterButtonsLayout->addWidget(importedBtn);
+   filterButtonsLayout->addWidget(missingBtn);
+   filterButtonsLayout->addWidget(unusedBtn);
+   filterButtonsLayout->addStretch();
+
+   connect(statusGroup, &QButtonGroup::idClicked, this, [this](int id) {
+    switch (id) {
+     case 0: impl_->currentStatusFilter_ = "all"; break;
+     case 1: impl_->currentStatusFilter_ = "imported"; break;
+     case 2: impl_->currentStatusFilter_ = "missing"; break;
+     case 3: impl_->currentStatusFilter_ = "unused"; break;
+    }
+    impl_->applyFilters();
+   });
 
   auto vLayout = new QVBoxLayout();
 
@@ -634,7 +689,10 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
   directoryView->setHeaderHidden(true);
   directoryView->setIndentation(15);
   directoryView->setExpandsOnDoubleClick(true);
-  directoryView->setAnimated(true);
+   directoryView->setAnimated(true);
+   directoryView->setAcceptDrops(true);
+   directoryView->setDropIndicatorShown(true);
+   directoryView->setDragDropMode(QAbstractItemView::DropOnly);
 
   QString desktopPath = assetsPath;
 
@@ -660,8 +718,12 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
   fileView->setWordWrap(true);
   fileView->setSpacing(5);  // Uniform spacing between items
   fileView->setUniformItemSizes(true);  // Optimize rendering with uniform sizes
-  fileView->setDragEnabled(true);
-  fileView->setSelectionMode(QAbstractItemView::ExtendedSelection);
+   fileView->setDragEnabled(true);
+   fileView->setAcceptDrops(true);
+   fileView->setDropIndicatorShown(true);
+   fileView->setDragDropMode(QAbstractItemView::DragDrop);
+   fileView->setDefaultDropAction(Qt::MoveAction);
+   fileView->setSelectionMode(QAbstractItemView::ExtendedSelection);
   fileView->setContextMenuPolicy(Qt::CustomContextMenu);  // Enable custom context menu
 
   // Connect search filter
@@ -854,6 +916,74 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
 
  void ArtifactAssetBrowser::keyPressEvent(QKeyEvent* event)
  {
+  if (!impl_->fileView_ || !impl_->assetModel_) {
+   QWidget::keyPressEvent(event);
+   return;
+  }
+
+  const auto* sel = impl_->fileView_->selectionModel();
+
+  // Ctrl+A — 全選択
+  if (event->key() == Qt::Key_A && (event->modifiers() & Qt::ControlModifier)) {
+   impl_->fileView_->selectAll();
+   event->accept();
+   return;
+  }
+
+  // Ctrl+C — パスをコピー
+  if (event->key() == Qt::Key_C && (event->modifiers() & Qt::ControlModifier)) {
+   QStringList paths = impl_->selectedAssetPaths();
+   if (!paths.isEmpty()) {
+    QApplication::clipboard()->setText(paths.join("\n"));
+   }
+   event->accept();
+   return;
+  }
+
+  // Ctrl+V — クリップボードのファイルをインポート
+  if (event->key() == Qt::Key_V && (event->modifiers() & Qt::ControlModifier)) {
+   const QMimeData* mime = QApplication::clipboard()->mimeData();
+   if (mime && mime->hasUrls()) {
+    QStringList paths;
+    for (const QUrl& url : mime->urls()) {
+     if (url.isLocalFile()) paths.append(url.toLocalFile());
+    }
+    if (!paths.isEmpty() && ArtifactProjectService::instance()) {
+     ArtifactProjectService::instance()->importAssetsFromPaths(paths);
+    }
+   }
+   event->accept();
+   return;
+  }
+
+  // Delete — 選択ファイルをプロジェクトから削除
+  if (event->key() == Qt::Key_Delete || event->key() == Qt::Key_Backspace) {
+   QStringList paths = impl_->selectedAssetPaths();
+   if (!paths.isEmpty()) {
+    auto* svc = ArtifactProjectService::instance();
+    if (svc) {
+     // 個別削除APIが未実装のため、removeAllAssets() は呼ばない
+     // TODO: removeAssetFromProject(path) API 追加後に差し替え
+     qWarning() << "[AssetBrowser] Delete requested for" << paths.size() << "items (individual removal not yet implemented)";
+    }
+   }
+   event->accept();
+   return;
+  }
+
+  // Enter — ダブルクリック相当
+  if (event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter) {
+   if (sel && sel->hasSelection()) {
+    QModelIndex idx = sel->currentIndex();
+    if (idx.isValid()) {
+     impl_->handleDoubleClicked();
+    }
+   }
+   event->accept();
+   return;
+  }
+
+  QWidget::keyPressEvent(event);
  }
 
  void ArtifactAssetBrowser::keyReleaseEvent(QKeyEvent* event)
@@ -908,21 +1038,37 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
   impl_->applyFilters();
  }
 
- void ArtifactAssetBrowser::setFileTypeFilter(const QString& type)
- {
-  impl_->currentFileTypeFilter_ = type;
+  void ArtifactAssetBrowser::setFileTypeFilter(const QString& type)
+  {
+   impl_->currentFileTypeFilter_ = type;
 
-  // Update button state
-  if (impl_->filterButtonGroup_) {
-   if (type == "all") impl_->filterButtonGroup_->button(0)->setChecked(true);
-   else if (type == "images") impl_->filterButtonGroup_->button(1)->setChecked(true);
-   else if (type == "videos") impl_->filterButtonGroup_->button(2)->setChecked(true);
-   else if (type == "audio") impl_->filterButtonGroup_->button(3)->setChecked(true);
-   else if (type == "fonts") impl_->filterButtonGroup_->button(4)->setChecked(true);
+   // Update button state
+   if (impl_->filterButtonGroup_) {
+    if (type == "all") impl_->filterButtonGroup_->button(0)->setChecked(true);
+    else if (type == "images") impl_->filterButtonGroup_->button(1)->setChecked(true);
+    else if (type == "videos") impl_->filterButtonGroup_->button(2)->setChecked(true);
+    else if (type == "audio") impl_->filterButtonGroup_->button(3)->setChecked(true);
+    else if (type == "fonts") impl_->filterButtonGroup_->button(4)->setChecked(true);
+   }
+
+   impl_->applyFilters();
   }
 
-  impl_->applyFilters();
- }
+  void ArtifactAssetBrowser::setStatusFilter(const QString& status)
+  {
+   impl_->currentStatusFilter_ = status;
+   impl_->applyFilters();
+  }
+
+  void ArtifactAssetBrowser::navigateToFolder(const QString& folderPath)
+  {
+   if (folderPath.isEmpty() || !QDir(folderPath).exists()) return;
+   impl_->currentDirectoryPath_ = folderPath;
+   impl_->clearThumbnailCache();
+   impl_->applyFilters();
+   impl_->syncDirectorySelection();
+   folderChanged(folderPath);
+  }
 
  void ArtifactAssetBrowser::updateFileInfo(const QString& filePath)
  {

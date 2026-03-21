@@ -96,7 +96,7 @@ void ArtifactSolid2DLayer::draw(ArtifactIRenderer* renderer)
 {
  if (!renderer) return;
  auto size = this->sourceSize();
- renderer->drawSolidRect(0.0f, 0.0f, 
+ renderer->drawSolidRect(0.0f, 0.0f,
                          static_cast<float>(size.width),
                          static_cast<float>(size.height),
                          impl_->color(),

@@ -17,6 +17,8 @@ import Time.Rational;
 namespace Artifact {
 
 namespace {
+constexpr float kPi = 3.14159265358979323846f;
+
 QRectF expandedCanvasBounds(const QRectF& bbox, float zoom)
 {
  const float safeZoom = zoom > 0.0001f ? zoom : 1.0f;
@@ -142,6 +144,26 @@ void TransformGizmo::draw(ArtifactIRenderer* renderer) {
 
  drawHandle(tl); drawHandle(tr); drawHandle(bl); drawHandle(br);
  drawHandle(tc); drawHandle(bc); drawHandle(lc); drawHandle(rc);
+
+ // Rotation handle: line from top-center upward with circle
+ const float rotateDist = ROTATE_HANDLE_DISTANCE * invZoom;
+ const Detail::float2 rotateTip{(float)bbox.center().x(), (float)bbox.top() - rotateDist};
+ const float rotHandleR = ROTATE_HANDLE_RADIUS * invZoom;
+ renderer->drawSolidLine(tc, rotateTip, gizmoColor, lineThickness);
+ renderer->drawRectOutline(rotateTip.x - rotHandleR, rotateTip.y - rotHandleR,
+                           rotHandleR * 2, rotHandleR * 2, gizmoColor);
+ // Fill the rotation circle
+ renderer->drawSolidRect(rotateTip.x - rotHandleR * 0.6f, rotateTip.y - rotHandleR * 0.6f,
+                          rotHandleR * 1.2f, rotHandleR * 1.2f, gizmoColor, 0.3f);
+
+ // Anchor point: small crosshair at anchor position
+ const auto& t3d = layer_->transform3D();
+ const float anchorX = t3d.anchorX();
+ const float anchorY = t3d.anchorY();
+ const float anchorSize = ANCHOR_HANDLE_SIZE * invZoom;
+ const FloatColor anchorColor{1.0f, 0.5f, 0.0f, 1.0f}; // Orange
+ renderer->drawSolidLine({anchorX - anchorSize, anchorY}, {anchorX + anchorSize, anchorY}, anchorColor, lineThickness);
+ renderer->drawSolidLine({anchorX, anchorY - anchorSize}, {anchorX, anchorY + anchorSize}, anchorColor, lineThickness);
 }
 
 TransformGizmo::HandleType TransformGizmo::hitTest(const QPointF& viewportPos, ArtifactIRenderer* renderer) const {
@@ -164,6 +186,25 @@ TransformGizmo::HandleType TransformGizmo::hitTest(const QPointF& viewportPos, A
  if (checkHandle((float)bbox.center().x(), (float)bbox.bottom())) return HandleType::Scale_B;
  if (checkHandle((float)bbox.left(), (float)bbox.center().y())) return HandleType::Scale_L;
  if (checkHandle((float)bbox.right(), (float)bbox.center().y())) return HandleType::Scale_R;
+
+ // Rotation handle: above top-center
+ const float zoom = renderer->getZoom();
+ const float rotDist = ROTATE_HANDLE_DISTANCE * (zoom > 0.0001f ? 1.0f / zoom : 1.0f);
+ const float rotTipX = (float)bbox.center().x();
+ const float rotTipY = (float)bbox.top() - rotDist;
+ auto rotVPos = renderer->canvasToViewport({rotTipX, rotTipY});
+ const float rotHitR = ROTATE_HANDLE_RADIUS + 4.0f;
+ QRectF rotRect(rotVPos.x - rotHitR, rotVPos.y - rotHitR, rotHitR * 2, rotHitR * 2);
+ if (rotRect.contains(viewportPos)) return HandleType::Rotate;
+
+ // Anchor point handle
+ if (layer_) {
+  const auto& t3d = layer_->transform3D();
+  auto anchorVP = renderer->canvasToViewport({(float)t3d.anchorX(), (float)t3d.anchorY()});
+  const float anchorHit = ANCHOR_HANDLE_SIZE + 4.0f;
+  QRectF anchorRect(anchorVP.x - anchorHit, anchorVP.y - anchorHit, anchorHit * 2, anchorHit * 2);
+  if (anchorRect.contains(viewportPos)) return HandleType::Move;
+ }
 
  auto canvasPos = renderer->viewportToCanvas({(float)viewportPos.x(), (float)viewportPos.y()});
  if (bbox.contains(canvasPos.x, canvasPos.y)) {
@@ -188,10 +229,12 @@ Qt::CursorShape TransformGizmo::cursorShapeForViewportPos(const QPointF& viewpor
  case HandleType::Scale_L:
  case HandleType::Scale_R:
   return Qt::SizeHorCursor;
- case HandleType::Scale_T:
- case HandleType::Scale_B:
-  return Qt::SizeVerCursor;
- default:
+  case HandleType::Scale_T:
+  case HandleType::Scale_B:
+   return Qt::SizeVerCursor;
+  case HandleType::Rotate:
+   return Qt::CrossCursor;
+  default:
   return Qt::ArrowCursor;
  }
 }
@@ -206,10 +249,11 @@ bool TransformGizmo::handleMousePress(const QPointF& viewportPos, ArtifactIRende
   dragStartCanvasPos_ = QPointF(canvasMouse.x, canvasMouse.y);
   lastCanvasMousePos_ = dragStartCanvasPos_;
   const auto &t3d = layer_->transform3D();
-  dragStartLayerPos_ = QPointF(t3d.positionX(), t3d.positionY());
-  dragStartScaleX_ = t3d.scaleX();
-  dragStartScaleY_ = t3d.scaleY();
-  dragStartBoundingBox_ = layer_->transformedBoundingBox();
+   dragStartLayerPos_ = QPointF(t3d.positionX(), t3d.positionY());
+   dragStartScaleX_ = t3d.scaleX();
+   dragStartScaleY_ = t3d.scaleY();
+   dragStartRotation_ = t3d.rotation();
+   dragStartBoundingBox_ = layer_->transformedBoundingBox();
   dragStartLocalBounds_ = layer_->localBounds();
   dragStartAnchor_ = QPointF(t3d.anchorX(), t3d.anchorY());
   return true;
@@ -226,13 +270,27 @@ bool TransformGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRender
  ArtifactCore::RationalTime time(layer_->currentFrame(), 30000);
  auto &t3d = layer_->transform3D();
 
- if (activeHandle_ == HandleType::Move) {
-  t3d.setPosition(time,
-                  dragStartLayerPos_.x() + static_cast<float>(delta.x()),
-                  dragStartLayerPos_.y() + static_cast<float>(delta.y()));
-  layer_->setDirty(LayerDirtyFlag::Transform);
-  Q_EMIT layer_->changed();
- } else if (activeHandle_ >= HandleType::Scale_TL && activeHandle_ <= HandleType::Scale_R) {
+  if (activeHandle_ == HandleType::Move) {
+   t3d.setPosition(time,
+                   dragStartLayerPos_.x() + static_cast<float>(delta.x()),
+                   dragStartLayerPos_.y() + static_cast<float>(delta.y()));
+   layer_->setDirty(LayerDirtyFlag::Transform);
+   Q_EMIT layer_->changed();
+  } else if (activeHandle_ == HandleType::Rotate) {
+   const auto& t3dStart = layer_->transform3D();
+   float anchorX = t3dStart.anchorX();
+   float anchorY = t3dStart.anchorY();
+   // Angle from anchor to start mouse position
+   float startAngle = std::atan2(dragStartCanvasPos_.y() - anchorY,
+                                  dragStartCanvasPos_.x() - anchorX);
+   // Angle from anchor to current mouse position
+   float currentAngle = std::atan2(currentCanvasPos.y() - anchorY,
+                                    currentCanvasPos.x() - anchorX);
+   float deltaAngle = (currentAngle - startAngle) * 180.0f / kPi;
+   t3d.setRotation(time, dragStartRotation_ + deltaAngle);
+   layer_->setDirty(LayerDirtyFlag::Transform);
+   Q_EMIT layer_->changed();
+  } else if (activeHandle_ >= HandleType::Scale_TL && activeHandle_ <= HandleType::Scale_R) {
   if (std::abs(delta.x()) < 0.01 && std::abs(delta.y()) < 0.01) {
    lastCanvasMousePos_ = currentCanvasPos;
    return true;

@@ -1,5 +1,6 @@
 ﻿module;
 #include <QAction>
+#include <QActionGroup>
 #include <QCloseEvent>
 #include <QComboBox>
 #include <QDebug>
@@ -256,9 +257,11 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   bottomLayout->setContentsMargins(6, 0, 6, 0);
   bottomLayout->setSpacing(8);
 
-  // Resolution Dropdown
+  // Resolution Dropdown — wired to PreviewQualityPreset
   impl_->resolutionCombo_ = new QComboBox(impl_->bottomBar_);
-  impl_->resolutionCombo_->addItems({"Full", "Half", "Third", "Quarter"});
+  impl_->resolutionCombo_->addItem("Full", QVariant::fromValue(static_cast<int>(PreviewQualityPreset::Final)));
+  impl_->resolutionCombo_->addItem("Half", QVariant::fromValue(static_cast<int>(PreviewQualityPreset::Preview)));
+  impl_->resolutionCombo_->addItem("Quarter", QVariant::fromValue(static_cast<int>(PreviewQualityPreset::Draft)));
   impl_->resolutionCombo_->setFixedWidth(70);
   impl_->resolutionCombo_->setStyleSheet(
       "QComboBox { background: #333; color: #ccc; border: 1px solid #444; "
@@ -274,9 +277,32 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
       "transparent; border: none; } QToolButton:hover { background: #444; }");
 
   auto *fastPreviewMenu = new QMenu(impl_->fastPreviewBtn_);
-  fastPreviewMenu->addAction("Off");
-  fastPreviewMenu->addAction("Adaptive Resolution");
-  fastPreviewMenu->addAction("Fast Draft");
+  QAction *fpOff = fastPreviewMenu->addAction("Off");
+  QAction *fpAdaptive = fastPreviewMenu->addAction("Adaptive Resolution");
+  QAction *fpDraft = fastPreviewMenu->addAction("Fast Draft");
+  fpOff->setCheckable(true);
+  fpAdaptive->setCheckable(true);
+  fpDraft->setCheckable(true);
+  fpOff->setChecked(true);
+  auto *fpGroup = new QActionGroup(fastPreviewMenu);
+  fpGroup->setExclusive(true);
+  fpGroup->addAction(fpOff);
+  fpGroup->addAction(fpAdaptive);
+  fpGroup->addAction(fpDraft);
+
+  QObject::connect(fpOff, &QAction::triggered, this, [this]() {
+    if (auto* svc = ArtifactProjectService::instance())
+      svc->setPreviewQualityPreset(PreviewQualityPreset::Final);
+  });
+  QObject::connect(fpAdaptive, &QAction::triggered, this, [this]() {
+    if (auto* svc = ArtifactProjectService::instance())
+      svc->setPreviewQualityPreset(PreviewQualityPreset::Preview);
+  });
+  QObject::connect(fpDraft, &QAction::triggered, this, [this]() {
+    if (auto* svc = ArtifactProjectService::instance())
+      svc->setPreviewQualityPreset(PreviewQualityPreset::Draft);
+  });
+
   impl_->fastPreviewBtn_->setMenu(fastPreviewMenu);
 
   // Display Options Button (Grid/Guides)
@@ -341,12 +367,15 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   QObject::connect(impl_->zoom100Action_, &QAction::triggered, this,
                    &ArtifactCompositionEditor::zoom100);
 
-  // Dummy connections for new UI
+  // Resolution dropdown connection
   QObject::connect(impl_->resolutionCombo_,
                    QOverload<int>::of(&QComboBox::currentIndexChanged), this,
                    [this](int index) {
-                     qDebug() << "Resolution changed to:"
-                              << impl_->resolutionCombo_->currentText();
+                     auto preset = static_cast<PreviewQualityPreset>(
+                         impl_->resolutionCombo_->itemData(index).toInt());
+                     if (auto* svc = ArtifactProjectService::instance()) {
+                       svc->setPreviewQualityPreset(preset);
+                     }
                    });
 
   if (auto *service = ArtifactProjectService::instance()) {

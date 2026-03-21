@@ -1,5 +1,6 @@
 ﻿module;
 #include <QImage>
+#include <QTransform>
 #include <RenderDevice.h>
 #include <DeviceContext.h>
 #include <SwapChain.h>
@@ -44,6 +45,7 @@ public:
     float2 viewportToCanvas(float2 pos) const;
 
     void drawRectLocal(float x, float y, float w, float h, const FloatColor& color, float opacity = 1.0f);
+    void drawSolidRectTransformed(float x, float y, float w, float h, const QTransform& transform, const FloatColor& color, float opacity = 1.0f);
     void drawRectOutlineLocal(float x, float y, float w, float h, const FloatColor& color);
     void drawLineLocal(float2 p1, float2 p2, const FloatColor& c1, const FloatColor& c2);
     void drawThickLineLocal(float2 p1, float2 p2, float thickness, const FloatColor& color);

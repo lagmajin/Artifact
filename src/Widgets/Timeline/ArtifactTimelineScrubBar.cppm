@@ -39,6 +39,7 @@ namespace Artifact
   bool seekLockDuringPlayback_ = true;
   bool isPlaying_ = false;
   bool hover_ = false;
+  int fps_ = 30;
   double rulerPixelsPerFrame_ = 0.0;  // 0 = ruler無効
   double rulerHorizontalOffset_ = 0.0;
 
@@ -179,12 +180,25 @@ namespace Artifact
   impl_->isPlaying_ = playing;
  }
 
- bool ArtifactTimelineScrubBar::isPlaying() const
- {
-  return impl_->isPlaying_;
- }
+  bool ArtifactTimelineScrubBar::isPlaying() const
+  {
+   return impl_->isPlaying_;
+  }
 
- void ArtifactTimelineScrubBar::setRulerPixelsPerFrame(double ppf)
+  void ArtifactTimelineScrubBar::setFps(int fps)
+  {
+   if (fps > 0 && impl_->fps_ != fps) {
+    impl_->fps_ = fps;
+    update();
+   }
+  }
+
+  int ArtifactTimelineScrubBar::fps() const
+  {
+   return impl_->fps_;
+  }
+
+  void ArtifactTimelineScrubBar::setRulerPixelsPerFrame(double ppf)
  {
   if (std::abs(impl_->rulerPixelsPerFrame_ - ppf) > 0.0001) {
    impl_->rulerPixelsPerFrame_ = ppf;
@@ -321,12 +335,13 @@ namespace Artifact
   p.setPen(QPen(accentStrong, impl_->dragging_ || impl_->hover_ ? 2 : 1));
   p.drawLine(clampedX, 0, clampedX, h);
 
-  const int frame = impl_->currentFrame_.framePosition();
-  const int totalSeconds = frame / 30;
-  const int ff = frame % 30;
-  const int ss = totalSeconds % 60;
-  const int mm = (totalSeconds / 60) % 60;
-  const int hh = totalSeconds / 3600;
+   const int frame = impl_->currentFrame_.framePosition();
+   const int fps = impl_->fps_ > 0 ? impl_->fps_ : 30;
+   const int totalSeconds = frame / fps;
+   const int ff = frame % fps;
+   const int ss = totalSeconds % 60;
+   const int mm = (totalSeconds / 60) % 60;
+   const int hh = totalSeconds / 3600;
   const QString leftLabel = QString("F%1").arg(frame);
   const QString rightLabel = QString("%1:%2:%3:%4")
    .arg(hh, 2, 10, QChar('0'))

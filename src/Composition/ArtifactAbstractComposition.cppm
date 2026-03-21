@@ -101,6 +101,10 @@ namespace Artifact {
   auto id = layer->id();
 
   layer->setComposition(owner_);
+  // デフォルトの outPoint (300) のままなら、コンポジションの長さに合わせる
+  if (layer->outPoint().framePosition() == 300) {
+    layer->setOutPoint(FramePosition(frameRange_.end()));
+  }
   layerMultiIndex_.add(layer,id,layer->type_index());
 
   result.success = true;
@@ -184,6 +188,10 @@ void ArtifactAbstractComposition::Impl::removeLayer(const LayerID& id)
           return result;
       }
       layer->setComposition(owner_);
+      // デフォルトの outPoint (300) のままなら、コンポジションの長さに合わせる
+      if (layer->outPoint().framePosition() == 300) {
+          layer->setOutPoint(FramePosition(frameRange_.end()));
+      }
       layerMultiIndex_.insertAt(0, layer, layer->id(), layer->type_index());
       result.success = true;
       result.error = AppendLayerToCompositionError::None;
@@ -379,6 +387,10 @@ void ArtifactAbstractComposition::insertLayerAt(ArtifactAbstractLayerPtr layer, 
 {
     if (!layer) return;
     layer->setComposition(this);
+    // デフォルトの outPoint (300) のままなら、コンポジションの長さに合わせる
+    if (layer->outPoint().framePosition() == 300) {
+        layer->setOutPoint(FramePosition(impl_->frameRange_.end()));
+    }
     impl_->layerMultiIndex_.insertAt(index, layer, layer->id(), layer->type_index());
     Q_EMIT changed();
 }
