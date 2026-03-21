@@ -492,6 +492,8 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
    impl_->initialize(this);
    if (impl_->initialized_) {
     impl_->initializeSwapChain(this);
+    impl_->renderer_->fitToViewport();
+    impl_->zoomLevel_ = impl_->renderer_->getZoom();
     impl_->startRenderLoop();
    }
   }

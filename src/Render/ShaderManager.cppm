@@ -29,6 +29,7 @@ public:
     RenderShaderPair lineShaders_;
     RenderShaderPair outlineShaders_;
     RenderShaderPair solidShaders_;
+    RenderShaderPair solidRectTransformShaders_;
     RenderShaderPair spriteShaders_;
     RenderShaderPair thickLineShaders_;
     RenderShaderPair dotLineShaders_;
@@ -39,6 +40,7 @@ public:
     PSOAndSRB linePsoAndSrb_;
     PSOAndSRB outlinePsoAndSrb_;
     PSOAndSRB solidRectPsoAndSrb_;
+    PSOAndSRB solidRectTransformPsoAndSrb_;
     PSOAndSRB spritePsoAndSrb_;
     PSOAndSRB thickLinePsoAndSrb_;
     PSOAndSRB dotLinePsoAndSrb_;
@@ -132,6 +134,13 @@ void ShaderManager::Impl::createShaders()
     solidRectVsInfo2.Source = drawSolidRectVSSource.constData();
     solidRectVsInfo2.SourceLength = drawSolidRectVSSource.length();
 
+    ShaderCreateInfo solidRectTransformVsInfo;
+    solidRectTransformVsInfo.SourceLanguage = Diligent::SHADER_SOURCE_LANGUAGE_HLSL;
+    solidRectTransformVsInfo.Desc.ShaderType = Diligent::SHADER_TYPE_VERTEX;
+    solidRectTransformVsInfo.Desc.Name = "SolidRectTransformVertexShader";
+    solidRectTransformVsInfo.Source = drawSolidRectTransformVSSource.constData();
+    solidRectTransformVsInfo.SourceLength = drawSolidRectTransformVSSource.length();
+
     ShaderCreateInfo solidRectPsInfo2;
     solidRectPsInfo2.SourceLanguage = Diligent::SHADER_SOURCE_LANGUAGE_HLSL;
     solidRectPsInfo2.Desc.ShaderType = Diligent::SHADER_TYPE_PIXEL;
@@ -160,6 +169,8 @@ void ShaderManager::Impl::createShaders()
     device_->CreateShader(solidRectVsInfo2, &solidShaders_.VS);
     device_->CreateShader(solidRectPsInfo2, &solidShaders_.PS);
     solidTriangleShaders_ = solidShaders_;
+    device_->CreateShader(solidRectTransformVsInfo, &solidRectTransformShaders_.VS);
+    device_->CreateShader(solidRectPsInfo2, &solidRectTransformShaders_.PS);
 
     device_->CreateShader(checkerboardPsInfo, &checkerboardShaders_.PS);
     device_->CreateShader(gridPsInfo, &gridShaders_.PS);
@@ -291,6 +302,16 @@ void ShaderManager::Impl::createPSOs()
     if (solidRectPsoAndSrb_.pPSO)
     {
         solidRectPsoAndSrb_.pPSO->CreateShaderResourceBinding(&solidRectPsoAndSrb_.pSRB, true);
+    }
+
+    GraphicsPipelineStateCreateInfo drawSolidRectTransformPSOCreateInfo = drawSolidRectPSOCreateInfo;
+    drawSolidRectTransformPSOCreateInfo.PSODesc.Name = "DrawSolidRectTransform PSO";
+    drawSolidRectTransformPSOCreateInfo.pVS = solidRectTransformShaders_.VS;
+    drawSolidRectTransformPSOCreateInfo.pPS = solidRectTransformShaders_.PS;
+    device_->CreateGraphicsPipelineState(drawSolidRectTransformPSOCreateInfo, &solidRectTransformPsoAndSrb_.pPSO);
+    if (solidRectTransformPsoAndSrb_.pPSO)
+    {
+        solidRectTransformPsoAndSrb_.pPSO->CreateShaderResourceBinding(&solidRectTransformPsoAndSrb_.pSRB, true);
     }
 
     GraphicsPipelineStateCreateInfo drawSolidTrianglePSOCreateInfo = drawSolidRectPSOCreateInfo;
@@ -467,6 +488,8 @@ void ShaderManager::Impl::destroy()
     outlinePsoAndSrb_.pSRB.Release();
     solidRectPsoAndSrb_.pPSO.Release();
     solidRectPsoAndSrb_.pSRB.Release();
+    solidRectTransformPsoAndSrb_.pPSO.Release();
+    solidRectTransformPsoAndSrb_.pSRB.Release();
     spritePsoAndSrb_.pPSO.Release();
     spritePsoAndSrb_.pSRB.Release();
     thickLinePsoAndSrb_.pPSO.Release();
@@ -486,6 +509,8 @@ void ShaderManager::Impl::destroy()
     outlineShaders_.PS.Release();
     solidShaders_.VS.Release();
     solidShaders_.PS.Release();
+    solidRectTransformShaders_.VS.Release();
+    solidRectTransformShaders_.PS.Release();
     spriteShaders_.VS.Release();
     spriteShaders_.PS.Release();
     thickLineShaders_.VS.Release();
@@ -597,6 +622,11 @@ PSOAndSRB ShaderManager::outlinePsoAndSrb() const
 PSOAndSRB ShaderManager::solidRectPsoAndSrb() const
 {
     return impl_->solidRectPsoAndSrb_;
+}
+
+PSOAndSRB ShaderManager::solidRectTransformPsoAndSrb() const
+{
+    return impl_->solidRectTransformPsoAndSrb_;
 }
 
 PSOAndSRB ShaderManager::spritePsoAndSrb() const

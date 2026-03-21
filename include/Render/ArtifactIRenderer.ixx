@@ -4,6 +4,7 @@
 // Do not replace this renderer with a Qt-only implementation.
 // Extend backends carefully while preserving the current Diligent/D3D12 architecture.
 #include <QImage>
+#include <QTransform>
 #include <QWidget>
 #include <RenderDevice.h>
 #include <DeviceContext.h>
@@ -85,6 +86,7 @@ public:
  void drawSprite(Detail::float2 pos, Detail::float2 size);
  void drawSprite(float x, float y, float w, float h, const QImage& image, float opacity = 1.0f);
  void drawRectLocal(float x, float y, float w, float h, const FloatColor& color, float opacity = 1.0f);
+ void drawSolidRectTransformed(float x, float y, float w, float h, const QTransform& transform, const FloatColor& color, float opacity = 1.0f);
  void drawRectOutlineLocal(float x, float y, float w, float h, const FloatColor& color);
  void drawThickLineLocal(Detail::float2 p1, Detail::float2 p2, float thickness, const FloatColor& color);
  void drawDotLineLocal(Detail::float2 p1, Detail::float2 p2, float thickness, float spacing, const FloatColor& color);

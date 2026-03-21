@@ -9,6 +9,7 @@
 #include <mutex>
 #include <QImage>
 #include <QDebug>
+#include <QTransform>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/RenderDevice.h>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/DeviceContext.h>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/Query.h>
@@ -145,6 +146,9 @@ namespace Artifact
   { primitiveRenderer_.drawSpriteLocal(pos.x, pos.y, size.x, size.y, QImage()); }
   void drawSpriteLocal(float x, float y, float w, float h, const QImage& image, float opacity)
   { primitiveRenderer_.drawSpriteLocal(x, y, w, h, image, opacity); }
+  void drawSolidRectTransformed(float x, float y, float w, float h, const QTransform& transform,
+                                const FloatColor& color, float opacity)
+  { primitiveRenderer_.drawSolidRectTransformed(x, y, w, h, transform, color, opacity); }
   void drawThickLineLocal(float2 p1, float2 p2, float thickness, const FloatColor& color)
   { primitiveRenderer_.drawThickLineLocal(p1, p2, thickness, color); }
   void drawDotLineLocal(float2 p1, float2 p2, float thickness, float spacing, const FloatColor& color)
@@ -595,6 +599,8 @@ namespace Artifact
  { impl_->drawSpriteLocal(x, y, w, h, image, opacity); }
  void ArtifactIRenderer::drawRectLocal(float x, float y, float w, float h, const FloatColor& color, float opacity)
  { impl_->drawRectLocal(x, y, w, h, color, opacity); }
+ void ArtifactIRenderer::drawSolidRectTransformed(float x, float y, float w, float h, const QTransform& transform, const FloatColor& color, float opacity)
+ { impl_->drawSolidRectTransformed(x, y, w, h, transform, color, opacity); }
  void ArtifactIRenderer::drawRectOutlineLocal(float x, float y, float w, float h, const FloatColor& color)
  { impl_->drawRectOutlineLocal(x, y, w, h, color); }
  void ArtifactIRenderer::drawThickLineLocal(Detail::float2 p1, Detail::float2 p2,

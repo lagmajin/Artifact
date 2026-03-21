@@ -4,6 +4,7 @@
 #include <cstring>
 #include <QImage>
 #include <QPointF>
+#include <QTransform>
 #include <QDebug>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/RenderDevice.h>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/DeviceContext.h>
@@ -44,6 +45,7 @@ public:
     RefCntAutoPtr<IBuffer> m_draw_solid_rect_vertex_buffer;
     RefCntAutoPtr<IBuffer> m_draw_solid_rect_cb;
     RefCntAutoPtr<IBuffer> m_draw_solid_rect_trnsform_cb;
+    RefCntAutoPtr<IBuffer> m_draw_solid_rect_transform_matrix_cb;
     RefCntAutoPtr<IBuffer> m_draw_solid_rect_index_buffer;
 
     RefCntAutoPtr<IBuffer> m_draw_thick_line_vertex_buffer;
@@ -59,6 +61,7 @@ public:
     RefCntAutoPtr<ITexture> m_spriteTexCache;
 
     PSOAndSRB m_draw_solid_rect_pso_and_srb;
+    PSOAndSRB m_draw_solid_rect_transform_pso_and_srb;
     PSOAndSRB m_draw_line_pso_and_srb;
     PSOAndSRB m_draw_thick_line_pso_and_srb;
     PSOAndSRB m_draw_dot_line_pso_and_srb;
@@ -101,7 +104,8 @@ void PrimitiveRenderer2D::setPSOs(ShaderManager& shaderManager)
 {
     impl_->m_draw_sprite_pso_and_srb           = shaderManager.spritePsoAndSrb();
     impl_->m_sprite_sampler                    = shaderManager.spriteSampler();
-    impl_->m_draw_solid_rect_pso_and_srb      = shaderManager.solidRectPsoAndSrb();
+    impl_->m_draw_solid_rect_pso_and_srb       = shaderManager.solidRectPsoAndSrb();
+    impl_->m_draw_solid_rect_transform_pso_and_srb = shaderManager.solidRectTransformPsoAndSrb();
     impl_->m_draw_line_pso_and_srb            = shaderManager.linePsoAndSrb();
     impl_->m_draw_thick_line_pso_and_srb      = shaderManager.thickLinePsoAndSrb();
     impl_->m_draw_dot_line_pso_and_srb        = shaderManager.dotLinePsoAndSrb();
@@ -154,6 +158,16 @@ void PrimitiveRenderer2D::createBuffers(RefCntAutoPtr<IRenderDevice> device, TEX
         CBDesc.CPUAccessFlags = CPU_ACCESS_WRITE;
         CBDesc.Size           = sizeof(CBSolidTransform2D);
         device->CreateBuffer(CBDesc, nullptr, &impl_->m_draw_solid_rect_trnsform_cb);
+    }
+
+    {
+        BufferDesc CBDesc;
+        CBDesc.Name           = "DrawSolidRectTransformMatrixCB";
+        CBDesc.Usage          = USAGE_DYNAMIC;
+        CBDesc.BindFlags      = BIND_UNIFORM_BUFFER;
+        CBDesc.CPUAccessFlags = CPU_ACCESS_WRITE;
+        CBDesc.Size           = sizeof(CBSolidRectTransform2D);
+        device->CreateBuffer(CBDesc, nullptr, &impl_->m_draw_solid_rect_transform_matrix_cb);
     }
 
     {
@@ -235,6 +249,7 @@ void PrimitiveRenderer2D::destroy()
     impl_->m_draw_solid_rect_vertex_buffer      = nullptr;
     impl_->m_draw_solid_rect_cb                 = nullptr;
     impl_->m_draw_solid_rect_trnsform_cb        = nullptr;
+    impl_->m_draw_solid_rect_transform_matrix_cb = nullptr;
     impl_->m_draw_solid_rect_index_buffer       = nullptr;
     impl_->m_draw_thick_line_vertex_buffer      = nullptr;
     impl_->m_draw_solid_triangle_vertex_buffer  = nullptr;
@@ -248,6 +263,7 @@ void PrimitiveRenderer2D::destroy()
     impl_->m_spriteTexCache                  = nullptr;
     impl_->pDevice_                          = nullptr;
     impl_->m_draw_solid_rect_pso_and_srb     = {};
+    impl_->m_draw_solid_rect_transform_pso_and_srb = {};
     impl_->m_draw_line_pso_and_srb           = {};
     impl_->m_draw_thick_line_pso_and_srb     = {};
     impl_->m_draw_dot_line_pso_and_srb       = {};
@@ -384,6 +400,89 @@ void PrimitiveRenderer2D::drawRectLocal(float x, float y, float w, float h, cons
     impl_->m_draw_solid_rect_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_VERTEX, "TransformCB")->Set(impl_->m_draw_solid_rect_trnsform_cb);
     impl_->m_draw_solid_rect_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_PIXEL, "ColorBuffer")->Set(impl_->m_draw_solid_rect_cb);
     impl_->pCtx_->CommitShaderResources(impl_->m_draw_solid_rect_pso_and_srb.pSRB,
+        RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+
+    DrawIndexedAttribs drawAttrs(6, VT_UINT32, DRAW_FLAG_VERIFY_ALL);
+    impl_->pCtx_->DrawIndexed(drawAttrs);
+}
+
+void PrimitiveRenderer2D::drawSolidRectTransformed(float x, float y, float w, float h, const QTransform& transform, const FloatColor& color, float opacity)
+{
+    if (!impl_->hasRenderTarget() || !impl_->m_draw_solid_rect_transform_pso_and_srb.pPSO) {
+        static bool warned = false;
+        if (!warned) {
+            warned = true;
+            qWarning() << "[PrimitiveRenderer2D] drawSolidRectTransformed() skipped: no render target or PSO"
+                       << "hasRT=" << impl_->hasRenderTarget()
+                       << "hasPSO=" << (impl_->m_draw_solid_rect_transform_pso_and_srb.pPSO != nullptr);
+        }
+        return;
+    }
+
+    float alpha = color.a() * opacity;
+    RectVertex vertices[4] = {
+        {{0.0f, 0.0f}, {color.r(), color.g(), color.b(), alpha}},
+        {{1.0f, 0.0f}, {color.r(), color.g(), color.b(), alpha}},
+        {{0.0f, 1.0f}, {color.r(), color.g(), color.b(), alpha}},
+        {{1.0f, 1.0f}, {color.r(), color.g(), color.b(), alpha}},
+    };
+
+    auto* pRTV = impl_->getCurrentRTV();
+    impl_->pCtx_->SetRenderTargets(1, &pRTV, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+
+    {
+        void* pData = nullptr;
+        impl_->pCtx_->MapBuffer(impl_->m_draw_solid_rect_vertex_buffer, MAP_WRITE, MAP_FLAG_DISCARD, pData);
+        std::memcpy(pData, vertices, sizeof(vertices));
+        impl_->pCtx_->UnmapBuffer(impl_->m_draw_solid_rect_vertex_buffer, MAP_WRITE);
+    }
+
+    {
+        auto viewportCB = impl_->viewport_.GetViewportCB();
+        const float screenW = std::max(viewportCB.screenSize.x, 0.001f);
+        const float screenH = std::max(viewportCB.screenSize.y, 0.001f);
+
+        const float a  = transform.m11();
+        const float b  = transform.m12();
+        const float c  = transform.m21();
+        const float d  = transform.m22();
+        const float tx = transform.dx();
+        const float ty = transform.dy();
+
+        CBSolidRectTransform2D cbTransform;
+        cbTransform.row0 = {
+            2.0f * (a * w) / screenW,
+            2.0f * (c * h) / screenW,
+            0.0f,
+            2.0f * (a * x + c * y + tx) / screenW - 1.0f
+        };
+        cbTransform.row1 = {
+            -2.0f * (b * w) / screenH,
+            -2.0f * (d * h) / screenH,
+            0.0f,
+            1.0f - 2.0f * (b * x + d * y + ty) / screenH
+        };
+        cbTransform.row2 = { 0.0f, 0.0f, 0.0f, 0.0f };
+        cbTransform.row3 = { 0.0f, 0.0f, 0.0f, 1.0f };
+
+        void* pData = nullptr;
+        impl_->pCtx_->MapBuffer(impl_->m_draw_solid_rect_transform_matrix_cb, MAP_WRITE, MAP_FLAG_DISCARD, pData);
+        std::memcpy(pData, &cbTransform, sizeof(cbTransform));
+        impl_->pCtx_->UnmapBuffer(impl_->m_draw_solid_rect_transform_matrix_cb, MAP_WRITE);
+    }
+
+    impl_->pCtx_->SetPipelineState(impl_->m_draw_solid_rect_transform_pso_and_srb.pPSO);
+
+    IBuffer* pBuffers[] = { impl_->m_draw_solid_rect_vertex_buffer };
+    Uint64 offsets[] = { 0 };
+    impl_->pCtx_->SetVertexBuffers(0, 1, pBuffers, offsets,
+        RESOURCE_STATE_TRANSITION_MODE_TRANSITION, SET_VERTEX_BUFFERS_FLAG_RESET);
+    impl_->pCtx_->SetIndexBuffer(impl_->m_draw_solid_rect_index_buffer, 0,
+        RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+
+    impl_->m_draw_solid_rect_transform_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_VERTEX, "TransformCB")->Set(impl_->m_draw_solid_rect_transform_matrix_cb);
+    impl_->m_draw_solid_rect_transform_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_PIXEL, "ColorBuffer")->Set(impl_->m_draw_solid_rect_cb);
+    impl_->pCtx_->CommitShaderResources(impl_->m_draw_solid_rect_transform_pso_and_srb.pSRB,
         RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
 
     DrawIndexedAttribs drawAttrs(6, VT_UINT32, DRAW_FLAG_VERIFY_ALL);

@@ -66,6 +66,8 @@ public:
     QString filterText() const;
     void setValueColumnFirst(bool enabled);
     bool valueColumnFirst() const;
+    void setSliderBeforeValue(bool enabled);
+    bool sliderBeforeValue() const;
 
     void updateProperties();
 };

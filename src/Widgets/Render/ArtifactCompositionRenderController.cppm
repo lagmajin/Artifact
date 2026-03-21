@@ -3,6 +3,7 @@ module;
 #include <QColor>
 #include <QImage>
 #include <QLoggingCategory>
+#include <QTransform>
 #include <QRectF>
 #include <QTimer>
 #include <QVector>
@@ -150,6 +151,20 @@ void drawLayerForCompositionView(const ArtifactAbstractLayerPtr &layer,
     surface = current.image().toQImage();
   };
 
+  auto hasRasterizerEffects = [](const ArtifactAbstractLayerPtr& targetLayer) {
+    if (!targetLayer) {
+      return false;
+    }
+
+    for (const auto& effect : targetLayer->getEffects()) {
+      if (effect && effect->isEnabled() &&
+          effect->pipelineStage() == EffectPipelineStage::Rasterizer) {
+        return true;
+      }
+    }
+    return false;
+  };
+
   auto applySurfaceAndDraw = [&](QImage surface, const QRectF& targetRect) {
     if (surface.isNull()) {
       return false;
@@ -169,12 +184,18 @@ void drawLayerForCompositionView(const ArtifactAbstractLayerPtr &layer,
     qCDebug(compositionViewLog) << "[CompositionView] draw solid2d"
              << "id=" << layer->id().toString() << "color=(" << color.r() << ","
              << color.g() << "," << color.b() << "," << color.a() << ")";
-    const QSize surfaceSize(
-        std::max(1, static_cast<int>(std::ceil(localRect.width()))),
-        std::max(1, static_cast<int>(std::ceil(localRect.height()))));
-    QImage surface(surfaceSize, QImage::Format_ARGB32_Premultiplied);
-    surface.fill(toQColor(color));
-    if (!applySurfaceAndDraw(surface, worldRect)) {
+    if (hasRasterizerEffects(layer)) {
+      const QSize surfaceSize(
+          std::max(1, static_cast<int>(std::ceil(localRect.width()))),
+          std::max(1, static_cast<int>(std::ceil(localRect.height()))));
+      QImage surface(surfaceSize, QImage::Format_ARGB32_Premultiplied);
+      surface.fill(toQColor(color));
+      renderer->drawSprite(static_cast<float>(worldRect.x()),
+                          static_cast<float>(worldRect.y()),
+                          static_cast<float>(worldRect.width()),
+                          static_cast<float>(worldRect.height()), surface,
+                          layer->opacity());
+    } else {
       renderer->drawSolidRect(static_cast<float>(worldRect.x()),
                               static_cast<float>(worldRect.y()),
                               static_cast<float>(worldRect.width()),
@@ -190,12 +211,18 @@ void drawLayerForCompositionView(const ArtifactAbstractLayerPtr &layer,
     qCDebug(compositionViewLog) << "[CompositionView] draw solid-image"
              << "id=" << layer->id().toString() << "color=(" << color.r() << ","
              << color.g() << "," << color.b() << "," << color.a() << ")";
-    const QSize surfaceSize(
-        std::max(1, static_cast<int>(std::ceil(localRect.width()))),
-        std::max(1, static_cast<int>(std::ceil(localRect.height()))));
-    QImage surface(surfaceSize, QImage::Format_ARGB32_Premultiplied);
-    surface.fill(toQColor(color));
-    if (!applySurfaceAndDraw(surface, worldRect)) {
+    if (hasRasterizerEffects(layer)) {
+      const QSize surfaceSize(
+          std::max(1, static_cast<int>(std::ceil(localRect.width()))),
+          std::max(1, static_cast<int>(std::ceil(localRect.height()))));
+      QImage surface(surfaceSize, QImage::Format_ARGB32_Premultiplied);
+      surface.fill(toQColor(color));
+      renderer->drawSprite(static_cast<float>(worldRect.x()),
+                          static_cast<float>(worldRect.y()),
+                          static_cast<float>(worldRect.width()),
+                          static_cast<float>(worldRect.height()), surface,
+                          layer->opacity());
+    } else {
       renderer->drawSolidRect(static_cast<float>(worldRect.x()),
                               static_cast<float>(worldRect.y()),
                               static_cast<float>(worldRect.width()),
@@ -287,6 +314,14 @@ public:
   bool showGrid_ = false;
   bool showGuides_ = false;
   bool showSafeMargins_ = false;
+  bool showFrameInfo_ = true;
+  int currentFrameForOverlay_ = 0;
+
+  // Guide positions (composition-space pixels)
+  QVector<float> guideVerticals_;   // X positions
+  QVector<float> guideHorizontals_; // Y positions
+  float lastCanvasWidth_ = 1920.0f;
+  float lastCanvasHeight_ = 1080.0f;
 
   void applyCompositionState(const ArtifactCompositionPtr &composition) {
     if (!renderer_ || !composition) {
@@ -297,6 +332,8 @@ public:
     const float cw = static_cast<float>(size.width() > 0 ? size.width() : 1920);
     const float ch =
         static_cast<float>(size.height() > 0 ? size.height() : 1080);
+    lastCanvasWidth_ = cw;
+    lastCanvasHeight_ = ch;
     if (compositionRenderer_) {
       compositionRenderer_->SetCompositionSize(cw, ch);
       compositionRenderer_->ApplyCompositionSpace();
@@ -689,57 +726,78 @@ void CompositionRenderController::renderOneFrame() {
           << "layers=" << comp->allLayer().size();
     }
   }
-  FramePosition currentFrame = comp ? comp->framePosition() : FramePosition(0);
-  if (comp) {
-    auto size = comp->settings().compositionSize();
-    const float cw = static_cast<float>(size.width() > 0 ? size.width() : 1920);
-    const float ch =
-        static_cast<float>(size.height() > 0 ? size.height() : 1080);
-    if (impl_->compositionRenderer_) {
-      impl_->compositionRenderer_->SetCompositionSize(cw, ch);
-      impl_->compositionRenderer_->ApplyCompositionSpace();
-      impl_->renderer_->setCanvasSize(cw, ch);
-    } else {
-      impl_->renderer_->setCanvasSize(cw, ch);
-    }
-
-    // 1) 画面クリア（Screen Space）
+  if (!comp) {
     impl_->renderer_->clear();
+    impl_->renderer_->flush();
+    impl_->renderer_->present();
+    return;
+  }
 
-    // 2) コンポ背景を Composition Space で描画
-    const FloatColor bgColor = comp->backgroundColor();
-    qCDebug(compositionViewLog) << "[CompositionView] frame begin"
-             << "compId=" << comp->id().toString() << "size=" << cw << "x" << ch
-             << "bg=(" << bgColor.r() << "," << bgColor.g() << ","
+  auto size = comp->settings().compositionSize();
+  const float cw = static_cast<float>(size.width() > 0 ? size.width() : 1920);
+  const float ch = static_cast<float>(size.height() > 0 ? size.height() : 1080);
+  impl_->lastCanvasWidth_ = cw;
+  impl_->lastCanvasHeight_ = ch;
+  if (impl_->compositionRenderer_) {
+    impl_->compositionRenderer_->SetCompositionSize(cw, ch);
+    impl_->compositionRenderer_->ApplyCompositionSpace();
+    impl_->renderer_->setCanvasSize(cw, ch);
+  } else {
+    impl_->renderer_->setCanvasSize(cw, ch);
+  }
+
+  impl_->renderer_->clear();
+
+  const FloatColor bgColor = comp->backgroundColor();
+  qCDebug(compositionViewLog) << "[CompositionView] frame begin"
+           << "compId=" << comp->id().toString() << "size=" << cw << "x" << ch
+           << "bg=(" << bgColor.r() << "," << bgColor.g() << ","
+           << bgColor.b() << "," << bgColor.a() << ")";
+  if (impl_->compositionRenderer_) {
+    qCDebug(compositionViewLog) << "[CompositionView] drawing background via CompositionRenderer"
+             << "color=(" << bgColor.r() << "," << bgColor.g() << ","
              << bgColor.b() << "," << bgColor.a() << ")";
-    if (impl_->compositionRenderer_) {
-      qCDebug(compositionViewLog) << "[CompositionView] drawing background via CompositionRenderer"
-               << "color=(" << bgColor.r() << "," << bgColor.g() << ","
-               << bgColor.b() << "," << bgColor.a() << ")";
-      impl_->compositionRenderer_->DrawCompositionBackground(bgColor);
-    } else {
-      qCDebug(compositionViewLog)
-          << "[CompositionView] drawing background via renderer_->drawRectLocal"
-          << "color=(" << bgColor.r() << "," << bgColor.g() << ","
-          << bgColor.b() << "," << bgColor.a() << ")";
-      impl_->renderer_->drawRectLocal(0.0f, 0.0f, cw, ch, bgColor, 1.0f);
-    }
+    impl_->compositionRenderer_->DrawCompositionBackground(bgColor);
+  } else {
+    qCDebug(compositionViewLog)
+        << "[CompositionView] drawing background via renderer_->drawRectLocal"
+        << "color=(" << bgColor.r() << "," << bgColor.g() << ","
+        << bgColor.b() << "," << bgColor.a() << ")";
+    impl_->renderer_->drawRectLocal(0.0f, 0.0f, cw, ch, bgColor, 1.0f);
+  }
 
-    // 3) グリッド描画（Composition Space）
-    if (impl_->showGrid_) {
-      impl_->renderer_->drawGrid(0, 0, cw, ch, 100.0f, 1.0f,
-                                 {0.3f, 0.3f, 0.3f, 0.5f});
-    }
+  if (impl_->showGrid_) {
+    impl_->renderer_->drawGrid(0, 0, cw, ch, 100.0f, 1.0f,
+                               {0.3f, 0.3f, 0.3f, 0.5f});
+  }
 
-    // 4) レイヤー描画（Composition Space 基準）
-    currentFrame = comp->framePosition();
-    if (auto *playback = ArtifactPlaybackService::instance()) {
-      const auto playbackComp = playback->currentComposition();
-      if (!playbackComp || playbackComp->id() == comp->id()) {
-        currentFrame = playback->currentFrame();
-      }
+  FramePosition currentFrame = comp->framePosition();
+  if (auto *playback = ArtifactPlaybackService::instance()) {
+    const auto playbackComp = playback->currentComposition();
+    if (!playbackComp || playbackComp->id() == comp->id()) {
+      currentFrame = playback->currentFrame();
     }
-    const auto layers = comp->allLayer();
+  }
+  qCDebug(compositionViewLog) << "[CompositionView] frame source"
+           << "compFrame=" << comp->framePosition().framePosition()
+           << "renderFrame=" << currentFrame.framePosition()
+           << "playbackComp="
+           << (ArtifactPlaybackService::instance()
+                   ? (ArtifactPlaybackService::instance()->currentComposition() != nullptr)
+                   : false);
+
+  const auto layers = comp->allLayer();
+  int64_t effectiveEndFrame = 0;
+  for (const auto &l : layers) {
+    if (l) {
+      effectiveEndFrame = std::max(effectiveEndFrame, l->outPoint().framePosition());
+    }
+  }
+  const int64_t framePos = currentFrame.framePosition();
+  const bool frameOutOfRange =
+      (framePos < 0 || (effectiveEndFrame > 0 && framePos >= effectiveEndFrame));
+
+  if (!frameOutOfRange) {
     qCDebug(compositionViewLog) << "[CompositionView] layers total=" << layers.size()
              << "currentFrame=" << currentFrame.framePosition();
     const bool hasSoloLayer =
@@ -763,56 +821,89 @@ void CompositionRenderController::renderOneFrame() {
       if (!layer->isActiveAt(currentFrame)) {
         qCDebug(compositionViewLog) << "[CompositionView] skip layer: inactive at frame"
                  << "id=" << layer->id().toString()
-                 << "frame=" << currentFrame.framePosition();
+                 << "frame=" << currentFrame.framePosition()
+                 << "in=" << layer->inPoint().framePosition()
+                 << "out=" << layer->outPoint().framePosition()
+                 << "startTime=" << layer->startTime().framePosition();
         continue;
       }
       layer->goToFrame(currentFrame.framePosition());
       qCDebug(compositionViewLog) << "[CompositionView] draw layer"
                << "id=" << layer->id().toString()
-               << "opacity=" << layer->opacity();
+               << "opacity=" << layer->opacity()
+               << "frame=" << currentFrame.framePosition()
+               << "in=" << layer->inPoint().framePosition()
+               << "out=" << layer->outPoint().framePosition()
+               << "startTime=" << layer->startTime().framePosition();
       drawLayerForCompositionView(layer, impl_->renderer_.get());
     }
-
-    // 5) セーフマージンの描画（Composition Space）
-    if (impl_->showSafeMargins_) {
-      const float actionSafeW = cw * 0.9f;
-      const float actionSafeH = ch * 0.9f;
-      const float titleSafeW = cw * 0.8f;
-      const float titleSafeH = ch * 0.8f;
-      const FloatColor marginColor = {0.5f, 0.5f, 0.5f, 0.6f};
-
-      // Action Safe (90%)
-      impl_->renderer_->drawRectOutline((cw - actionSafeW) * 0.5f,
-                                        (ch - actionSafeH) * 0.5f, actionSafeW,
-                                        actionSafeH, marginColor);
-      // Title Safe (80%)
-      impl_->renderer_->drawRectOutline((cw - titleSafeW) * 0.5f,
-                                        (ch - titleSafeH) * 0.5f, titleSafeW,
-                                        titleSafeH, marginColor);
-
-      // 中央の十字
-      const float crossSize = 20.0f;
-      impl_->renderer_->drawSolidLine({cw * 0.5f - crossSize, ch * 0.5f},
-                                      {cw * 0.5f + crossSize, ch * 0.5f},
-                                      marginColor, 1.0f);
-      impl_->renderer_->drawSolidLine({cw * 0.5f, ch * 0.5f - crossSize},
-                                      {cw * 0.5f, ch * 0.5f + crossSize},
-                                      marginColor, 1.0f);
-    }
-  } else {
-    impl_->renderer_->clear();
   }
 
-  // 最前面にギズモを描画。ただし選択レイヤーがそのフレームで有効な時だけ。
   if (impl_->gizmo_) {
     auto selectedLayer = (!impl_->selectedLayerId_.isNil() && comp)
                              ? comp->layerById(impl_->selectedLayerId_)
                              : ArtifactAbstractLayerPtr{};
-    if (selectedLayer && selectedLayer->isActiveAt(currentFrame)) {
+    if (selectedLayer && selectedLayer->isVisible() &&
+        selectedLayer->isActiveAt(currentFrame)) {
       impl_->gizmo_->setLayer(selectedLayer);
       impl_->gizmo_->draw(impl_->renderer_.get());
     } else {
       impl_->gizmo_->setLayer(nullptr);
+    }
+  }
+
+  if (impl_->showFrameInfo_ && impl_->renderer_) {
+    const float infoW = 60.0f;
+    const float infoH = 14.0f;
+    const float infoX = 4.0f;
+    const float infoY = impl_->lastCanvasHeight_ - infoH - 4.0f;
+    impl_->renderer_->drawSolidRect(infoX, infoY, infoW, infoH, {0.0f, 0.0f, 0.0f, 0.6f}, 0.8f);
+    const int frame = currentFrame.framePosition();
+    const float barRatio = (frame > 0) ? std::min(1.0f, static_cast<float>(frame) / 1000.0f) : 0.0f;
+    const float barW = infoW * barRatio;
+    if (barW > 1.0f) {
+      impl_->renderer_->drawSolidRect(infoX, infoY, barW, infoH, {0.2f, 0.6f, 1.0f, 0.5f}, 0.6f);
+    }
+  }
+
+  if (impl_->showSafeMargins_) {
+    const float actionSafeW = cw * 0.9f;
+    const float actionSafeH = ch * 0.9f;
+    const float titleSafeW = cw * 0.8f;
+    const float titleSafeH = ch * 0.8f;
+    const FloatColor marginColor = {0.5f, 0.5f, 0.5f, 0.6f};
+
+    impl_->renderer_->drawRectOutline((cw - actionSafeW) * 0.5f,
+                                      (ch - actionSafeH) * 0.5f, actionSafeW,
+                                      actionSafeH, marginColor);
+    impl_->renderer_->drawRectOutline((cw - titleSafeW) * 0.5f,
+                                      (ch - titleSafeH) * 0.5f, titleSafeW,
+                                      titleSafeH, marginColor);
+
+    const float crossSize = 20.0f;
+    impl_->renderer_->drawSolidLine({cw * 0.5f - crossSize, ch * 0.5f},
+                                    {cw * 0.5f + crossSize, ch * 0.5f},
+                                    marginColor, 1.0f);
+    impl_->renderer_->drawSolidLine({cw * 0.5f, ch * 0.5f - crossSize},
+                                    {cw * 0.5f, ch * 0.5f + crossSize},
+                                    marginColor, 1.0f);
+  }
+
+  if (impl_->showGuides_) {
+    const FloatColor guideColor = {0.2f, 0.8f, 1.0f, 0.7f};
+    for (float x : impl_->guideVerticals_) {
+      if (x >= 0 && x <= cw) {
+        impl_->renderer_->drawSolidLine({x, 0}, {x, ch}, guideColor, 1.0f);
+      }
+    }
+    for (float y : impl_->guideHorizontals_) {
+      if (y >= 0 && y <= ch) {
+        impl_->renderer_->drawSolidLine({0, y}, {cw, y}, guideColor, 1.0f);
+      }
+    }
+    if (impl_->guideVerticals_.isEmpty() && impl_->guideHorizontals_.isEmpty()) {
+      impl_->renderer_->drawSolidLine({cw * 0.5f, 0}, {cw * 0.5f, ch}, guideColor, 1.0f);
+      impl_->renderer_->drawSolidLine({0, ch * 0.5f}, {cw, ch * 0.5f}, guideColor, 1.0f);
     }
   }
 

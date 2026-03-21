@@ -460,29 +460,35 @@ int ArtifactLayerPanelHeaderWidget::totalHeaderHeight() const
 
   void clearInlineEditors()
   {
-   if (inlineParentEditor) {
-    inlineParentEditor->hide();
-    inlineParentEditor->deleteLater();
-   }
+   auto* parentEditor = inlineParentEditor.data();
+   auto* blendEditor = inlineBlendEditor.data();
+   auto* matteEditor = inlineMatteEditor.data();
+   auto* nameEditor = inlineNameEditor.data();
+
    inlineParentEditor = nullptr;
-
-   if (inlineBlendEditor) {
-    inlineBlendEditor->hide();
-    inlineBlendEditor->deleteLater();
-   }
    inlineBlendEditor = nullptr;
-
-   if (inlineMatteEditor) {
-    inlineMatteEditor->hide();
-    inlineMatteEditor->deleteLater();
-   }
    inlineMatteEditor = nullptr;
-
-   if (inlineNameEditor) {
-    inlineNameEditor->hide();
-    inlineNameEditor->deleteLater();
-   }
    inlineNameEditor = nullptr;
+
+   if (parentEditor) {
+    parentEditor->hide();
+    parentEditor->deleteLater();
+   }
+
+   if (blendEditor) {
+    blendEditor->hide();
+    blendEditor->deleteLater();
+   }
+
+   if (matteEditor) {
+    matteEditor->hide();
+    matteEditor->deleteLater();
+   }
+
+   if (nameEditor) {
+    nameEditor->hide();
+    nameEditor->deleteLater();
+   }
 
    editingLayerId = LayerID();
   }
@@ -542,7 +548,11 @@ int ArtifactLayerPanelHeaderWidget::totalHeaderHeight() const
     layerChangedConnections.insert(
       idStr,
       QObject::connect(layer.get(), &ArtifactAbstractLayer::changed, owner, [owner]() {
-       owner->updateLayout();
+       QTimer::singleShot(0, owner, [owner]() {
+        if (owner) {
+         owner->updateLayout();
+        }
+       });
       }));
    }
 

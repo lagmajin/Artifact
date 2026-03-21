@@ -285,6 +285,7 @@ void ClipItem::setStartDuration(double start, double duration)
     const double newStart = std::max(0.0, start);
     const double newDuration = std::max(impl_->minDuration, duration);
     const double oldDuration = impl_->duration;
+    const double oldStart = impl_->start;
     const double keepY = pos().y();
 
     g_clipGeometrySyncInProgress = true;
@@ -304,6 +305,9 @@ void ClipItem::setStartDuration(double start, double duration)
         impl_->rightHandle->setPos(impl_->duration, 0);
     }
     g_clipGeometrySyncInProgress = false;
+    if (std::abs(newStart - oldStart) > 1e-9 || std::abs(newDuration - oldDuration) > 1e-9) {
+        Q_EMIT geometryEdited(this, impl_->start, impl_->duration);
+    }
 }
 
 void ClipItem::beginHandleResize(ResizeHandle::Side side, qreal sceneX)
@@ -344,11 +348,15 @@ double ClipItem::getDuration() const
 void ClipItem::setStart(double start)
 {
     if (impl_) {
+        const double oldStart = impl_->start;
         g_clipGeometrySyncInProgress = true;
         impl_->start = std::max(0.0, start);
         setPos(impl_->start, pos().y());
         g_clipGeometrySyncInProgress = false;
         update();
+        if (std::abs(impl_->start - oldStart) > 1e-9) {
+            Q_EMIT geometryEdited(this, impl_->start, impl_->duration);
+        }
     }
 }
 
@@ -370,6 +378,9 @@ void ClipItem::setDuration(double duration)
         }
         g_clipGeometrySyncInProgress = false;
         update();
+        if (std::abs(newDuration - oldDuration) > 1e-9) {
+            Q_EMIT geometryEdited(this, impl_->start, impl_->duration);
+        }
     }
 }
 
@@ -450,13 +461,12 @@ void ClipItem::mouseReleaseEvent(QGraphicsSceneMouseEvent* event)
         }
         impl_->isDragging = false;
 
-        Q_EMIT dragEnded(this, endPos.x(), endPos.y());
-        if (!selfGuard || !impl_) {
-            event->accept();
-            return;
-        }
+        // Commit the moved clip position without treating it as a trim.
+        impl_->start = std::max(0.0, endPos.x());
+        setPos(impl_->start, pos().y());
+        update();
 
-        Q_EMIT geometryEdited(this, getStart(), getDuration());
+        Q_EMIT dragEnded(this, endPos.x(), endPos.y());
         if (!selfGuard || !impl_) {
             event->accept();
             return;

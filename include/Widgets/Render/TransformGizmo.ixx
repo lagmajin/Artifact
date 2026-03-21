@@ -47,6 +47,7 @@ export namespace Artifact {
   QPointF dragStartLayerPos_;
   float dragStartScaleX_ = 1.0f;
   float dragStartScaleY_ = 1.0f;
+  float dragStartRotation_ = 0.0f;
   QRectF dragStartBoundingBox_;
   QRectF dragStartLocalBounds_;
   QPointF dragStartAnchor_;
@@ -54,6 +55,8 @@ export namespace Artifact {
   
   static constexpr float HANDLE_SIZE = 8.0f;
   static constexpr float ROTATE_HANDLE_DISTANCE = 30.0f;
+  static constexpr float ROTATE_HANDLE_RADIUS = 6.0f;
+  static constexpr float ANCHOR_HANDLE_SIZE = 6.0f;
  };
 
 }

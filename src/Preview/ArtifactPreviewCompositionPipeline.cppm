@@ -38,6 +38,7 @@ module;
 #include <QPointF>
 #include <QSize>
 #include <QRectF>
+#include <QTransform>
 #include <QDebug>
 module Artifact.Preview.Pipeline;
 
@@ -46,6 +47,7 @@ module Artifact.Preview.Pipeline;
 
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
+import Artifact.Effect.Abstract;
 import Artifact.Layer.Image;
 import Artifact.Layer.Solid2D;
 import Artifact.Layer.Text;
@@ -78,31 +80,58 @@ namespace Artifact
     return;
    }
 
+   const auto hasRasterizerEffects = [](const ArtifactAbstractLayerPtr& targetLayer) {
+    if (!targetLayer) return false;
+    for (const auto& effect : targetLayer->getEffects()) {
+     if (effect && effect->isEnabled() &&
+         effect->pipelineStage() == EffectPipelineStage::Rasterizer) {
+      return true;
+     }
+    }
+    return false;
+   };
+
    if (const auto solid2D = std::dynamic_pointer_cast<ArtifactSolid2DLayer>(layer)) {
-    const QSize surfaceSize(
-        std::max(1, static_cast<int>(std::ceil(localRect.width()))),
-        std::max(1, static_cast<int>(std::ceil(localRect.height()))));
-    QImage surface(surfaceSize, QImage::Format_ARGB32_Premultiplied);
-    surface.fill(toQColor(solid2D->color()));
-    renderer->drawSprite(static_cast<float>(worldRect.x()),
-                         static_cast<float>(worldRect.y()),
-                         static_cast<float>(worldRect.width()),
-                         static_cast<float>(worldRect.height()), surface,
-                         layer->opacity());
+    if (hasRasterizerEffects(layer)) {
+     const QSize surfaceSize(
+         std::max(1, static_cast<int>(std::ceil(localRect.width()))),
+         std::max(1, static_cast<int>(std::ceil(localRect.height()))));
+     QImage surface(surfaceSize, QImage::Format_ARGB32_Premultiplied);
+     surface.fill(toQColor(solid2D->color()));
+     renderer->drawSprite(static_cast<float>(worldRect.x()),
+                          static_cast<float>(worldRect.y()),
+                          static_cast<float>(worldRect.width()),
+                          static_cast<float>(worldRect.height()), surface,
+                          layer->opacity());
+    } else {
+     renderer->drawSolidRect(static_cast<float>(worldRect.x()),
+                             static_cast<float>(worldRect.y()),
+                             static_cast<float>(worldRect.width()),
+                             static_cast<float>(worldRect.height()),
+                             solid2D->color(), layer->opacity());
+    }
     return;
    }
 
    if (const auto solidImage = std::dynamic_pointer_cast<ArtifactSolidImageLayer>(layer)) {
-    const QSize surfaceSize(
-        std::max(1, static_cast<int>(std::ceil(localRect.width()))),
-        std::max(1, static_cast<int>(std::ceil(localRect.height()))));
-    QImage surface(surfaceSize, QImage::Format_ARGB32_Premultiplied);
-    surface.fill(toQColor(solidImage->color()));
-    renderer->drawSprite(static_cast<float>(worldRect.x()),
-                         static_cast<float>(worldRect.y()),
-                         static_cast<float>(worldRect.width()),
-                         static_cast<float>(worldRect.height()), surface,
-                         layer->opacity());
+    if (hasRasterizerEffects(layer)) {
+     const QSize surfaceSize(
+         std::max(1, static_cast<int>(std::ceil(localRect.width()))),
+         std::max(1, static_cast<int>(std::ceil(localRect.height()))));
+     QImage surface(surfaceSize, QImage::Format_ARGB32_Premultiplied);
+     surface.fill(toQColor(solidImage->color()));
+     renderer->drawSprite(static_cast<float>(worldRect.x()),
+                          static_cast<float>(worldRect.y()),
+                          static_cast<float>(worldRect.width()),
+                          static_cast<float>(worldRect.height()), surface,
+                          layer->opacity());
+    } else {
+     renderer->drawSolidRect(static_cast<float>(worldRect.x()),
+                             static_cast<float>(worldRect.y()),
+                             static_cast<float>(worldRect.width()),
+                             static_cast<float>(worldRect.height()),
+                             solidImage->color(), layer->opacity());
+    }
     return;
    }
 

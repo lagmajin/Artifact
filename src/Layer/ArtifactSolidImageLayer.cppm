@@ -90,9 +90,10 @@ void ArtifactSolidImageLayer::draw(ArtifactIRenderer *renderer) {
   // 現在のフレーム位置に基づく補間値を取得
   auto frame = FramePosition(currentFrame());
   auto color = impl_->color_.at(frame);
-  renderer->drawSolidRect(Detail::float2(0.0f, 0.0f),
-                          Detail::float2(static_cast<float>(size.width),
-                                         static_cast<float>(size.height)),
-                          color, this->opacity());
+  renderer->drawSolidRect(0.0f, 0.0f,
+                          static_cast<float>(size.width),
+                          static_cast<float>(size.height),
+                          color,
+                          this->opacity());
 }
 } // namespace Artifact

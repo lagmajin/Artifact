@@ -26,6 +26,11 @@ enum class ArtifactPropertyRowLayoutMode {
     EditorThenLabel
 };
 
+enum class ArtifactNumericEditorLayoutMode {
+    ValueThenSlider = 0,
+    SliderThenValue
+};
+
 class ArtifactAbstractPropertyEditor : public QWidget {
 public:
     using CommitHandler = std::function<void(const QVariant&)>;
@@ -45,6 +50,9 @@ protected:
 private:
     CommitHandler commitHandler_;
 };
+
+ArtifactNumericEditorLayoutMode globalNumericEditorLayoutMode();
+void setGlobalNumericEditorLayoutMode(ArtifactNumericEditorLayoutMode mode);
 
 class ArtifactFloatPropertyEditor final : public ArtifactAbstractPropertyEditor {
 public:

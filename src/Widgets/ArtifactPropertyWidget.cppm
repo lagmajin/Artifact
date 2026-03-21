@@ -7,6 +7,7 @@
 #include <QFormLayout>
 #include <QGroupBox>
 #include <QCursor>
+#include <QMenu>
 #include <QTimer>
 #include <wobjectimpl.h>
 
@@ -77,6 +78,7 @@ public:
     QString focusedEffectId;
     bool rebuilding = false;
     bool valueColumnFirst = false;
+    bool sliderBeforeValue = false;
     int localPropertyEditDepth = 0;
 
     QString currentLayerKey() const
@@ -237,6 +239,20 @@ void notifyProjectIfLayerNameChanged(const QString& propertyName)
     }
 }
 
+void notifyProjectIfTimelinePropertyChanged(const QString& propertyName)
+{
+    const bool isTimelineProperty =
+        propertyName.compare(QStringLiteral("time.inPoint"), Qt::CaseInsensitive) == 0 ||
+        propertyName.compare(QStringLiteral("time.outPoint"), Qt::CaseInsensitive) == 0 ||
+        propertyName.compare(QStringLiteral("time.startTime"), Qt::CaseInsensitive) == 0;
+    if (!isTimelineProperty) {
+        return;
+    }
+    if (auto* service = ArtifactProjectService::instance()) {
+        service->projectChanged();
+    }
+}
+
 ArtifactPropertyEditorRowWidget* createPropertyRow(
     QWidget* parent,
     const std::shared_ptr<ArtifactCore::AbstractProperty>& propertyPtr,
@@ -333,9 +349,7 @@ ArtifactPropertyEditorRowWidget* createPropertyRow(
         });
     }
 
-    const bool showExpressionButton =
-        property.getType() == ArtifactCore::PropertyType::Float ||
-        property.getType() == ArtifactCore::PropertyType::Integer;
+    const bool showExpressionButton = false;
     row->setShowExpressionButton(showExpressionButton);
     if (showExpressionButton) {
         row->setExpressionHandler([propertyName = property.getName()]() {
@@ -411,10 +425,14 @@ ArtifactPropertyWidget::ArtifactPropertyWidget(QWidget* parent)
     ArtifactPropertyEditorRowWidget::setGlobalLayoutMode(
         impl_->valueColumnFirst ? ArtifactPropertyRowLayoutMode::EditorThenLabel
                                 : ArtifactPropertyRowLayoutMode::LabelThenEditor);
+    setGlobalNumericEditorLayoutMode(
+        impl_->sliderBeforeValue ? ArtifactNumericEditorLayoutMode::SliderThenValue
+                                 : ArtifactNumericEditorLayoutMode::ValueThenSlider);
     setObjectName(QStringLiteral("artifactPropertyWidget"));
     setMinimumWidth(360);
     setWidgetResizable(true);
     setFrameShape(QFrame::NoFrame);
+    setContextMenuPolicy(Qt::CustomContextMenu);
     impl_->containerWidget = new QWidget(this);
     impl_->containerWidget->setObjectName(QStringLiteral("artifactPropertyContainer"));
     impl_->mainLayout = new QVBoxLayout(impl_->containerWidget);
@@ -428,9 +446,28 @@ ArtifactPropertyWidget::ArtifactPropertyWidget(QWidget* parent)
     QObject::connect(impl_->rebuildTimer, &QTimer::timeout, this, [this]() {
         impl_->rebuildUI();
     });
+    QObject::connect(this, &QWidget::customContextMenuRequested, this,
+                     [this](const QPoint& pos) {
+        QMenu menu(this);
+        QAction* sliderBeforeValueAct = menu.addAction(QStringLiteral("Slider before value"));
+        sliderBeforeValueAct->setCheckable(true);
+        sliderBeforeValueAct->setChecked(impl_->sliderBeforeValue);
+        QObject::connect(sliderBeforeValueAct, &QAction::toggled, this,
+                         [this](bool checked) {
+            setSliderBeforeValue(checked);
+        });
+        menu.exec(mapToGlobal(pos));
+    });
     if (auto* playback = ArtifactPlaybackService::instance()) {
         QObject::connect(playback, &ArtifactPlaybackService::frameChanged, this, [this]() {
             impl_->scheduleRebuild(40);
+        });
+    }
+    if (auto* projectService = ArtifactProjectService::instance()) {
+        QObject::connect(projectService, &ArtifactProjectService::projectChanged, this, [this]() {
+            if (impl_->currentLayer) {
+                impl_->scheduleRebuild(0);
+            }
         });
     }
     setStyleSheet(QStringLiteral(R"(
@@ -619,6 +656,23 @@ bool ArtifactPropertyWidget::valueColumnFirst() const
     return impl_->valueColumnFirst;
 }
 
+void ArtifactPropertyWidget::setSliderBeforeValue(const bool enabled)
+{
+    if (impl_->sliderBeforeValue == enabled) {
+        return;
+    }
+    impl_->sliderBeforeValue = enabled;
+    setGlobalNumericEditorLayoutMode(
+        enabled ? ArtifactNumericEditorLayoutMode::SliderThenValue
+                : ArtifactNumericEditorLayoutMode::ValueThenSlider);
+    updateProperties();
+}
+
+bool ArtifactPropertyWidget::sliderBeforeValue() const
+{
+    return impl_->sliderBeforeValue;
+}
+
 void ArtifactPropertyWidget::updateProperties() {
     if (impl_->rebuildTimer && impl_->rebuildTimer->isActive()) {
         impl_->rebuildTimer->stop();
@@ -718,6 +772,7 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
                         ScopedPropertyEditGuard guard(localPropertyEditDepth);
                         currentLayer->setLayerPropertyValue(name, value);
                         notifyProjectIfLayerNameChanged(name);
+                        notifyProjectIfTimelinePropertyChanged(name);
                     }
                 },
                 layerPropertyKey)) {
@@ -736,6 +791,7 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
                 ScopedPropertyEditGuard guard(localPropertyEditDepth);
                 currentLayer->setLayerPropertyValue(name, value);
                 notifyProjectIfLayerNameChanged(name);
+                notifyProjectIfTimelinePropertyChanged(name);
             }
         },
         layerPropertyKey,
@@ -803,6 +859,7 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
                     ScopedPropertyEditGuard guard(localPropertyEditDepth);
                     currentLayer->setLayerPropertyValue(name, value);
                     notifyProjectIfLayerNameChanged(name);
+                    notifyProjectIfTimelinePropertyChanged(name);
                 }
             },
             layerPropertyKey,

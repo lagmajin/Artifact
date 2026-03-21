@@ -103,6 +103,8 @@ export namespace Artifact {
    // Public methods for filtering
    void setSearchFilter(const QString& filter);
    void setFileTypeFilter(const QString& type); // "all", "images", "videos", "audio"
+   void setStatusFilter(const QString& status); // "all", "imported", "missing", "unused"
+   void navigateToFolder(const QString& folderPath);
   
   public:
    void folderChanged(const QString& folderPath) W_SIGNAL(folderChanged, folderPath)

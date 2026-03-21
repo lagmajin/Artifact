@@ -17,6 +17,7 @@
 #include <QTimer>
 #include <QWheelEvent>
 #include <QWidget>
+#include <limits>
 #include <qtmetamacros.h>
 #include <wobjectdefs.h>
 #include <wobjectimpl.h>
@@ -114,6 +115,67 @@ layerInsertionIndexForTrackDrop(const QVector<LayerID> &trackLayerIds,
   }
   return targetLayerIndex;
 }
+
+bool applyTimelineLayerRangeEdit(const CompositionID &compositionId,
+                                 const QString &layerIdText,
+                                 const double startFrame,
+                                 const double durationFrame,
+                                 const bool preserveExistingDuration) {
+  if (layerIdText.trimmed().isEmpty()) {
+    return false;
+  }
+
+  auto *svc = ArtifactProjectService::instance();
+  if (!svc) {
+    return false;
+  }
+
+  auto result = svc->findComposition(compositionId);
+  if (!result.success) {
+    return false;
+  }
+
+  auto comp = result.ptr.lock();
+  if (!comp) {
+    return false;
+  }
+
+  auto layer = comp->layerById(LayerID(layerIdText));
+  if (!layer) {
+    return false;
+  }
+
+  const int64_t oldInPoint = layer->inPoint().framePosition();
+  const int64_t oldOutPoint = layer->outPoint().framePosition();
+  const int64_t oldDuration = std::max<int64_t>(1, oldOutPoint - oldInPoint);
+  const int64_t inPoint = std::max<int64_t>(0, static_cast<int64_t>(std::llround(startFrame)));
+  const int64_t outPoint = preserveExistingDuration
+      ? std::max<int64_t>(inPoint + 1, inPoint + oldDuration)
+      : std::max<int64_t>(inPoint + 1,
+                          static_cast<int64_t>(std::llround(startFrame + durationFrame)));
+
+  layer->setInPoint(FramePosition(inPoint));
+  layer->setOutPoint(FramePosition(outPoint));
+  svc->projectChanged();
+  return true;
+}
+
+bool applyTimelineLayerMove(const CompositionID &compositionId,
+                            const QString &layerIdText,
+                            const double startFrame,
+                            const double durationFrame) {
+  return applyTimelineLayerRangeEdit(compositionId, layerIdText, startFrame,
+                                     durationFrame, true);
+}
+
+bool applyTimelineLayerTrim(const CompositionID &compositionId,
+                            const QString &layerIdText,
+                            const double startFrame,
+                            const double durationFrame) {
+  return applyTimelineLayerRangeEdit(compositionId, layerIdText, startFrame,
+                                     durationFrame, false);
+}
+
 std::shared_ptr<ArtifactAbstractComposition>
 safeCompositionLookup(const CompositionID &id) {
   if (id.isNil())
@@ -229,6 +291,15 @@ public:
             ->mapTo(overlayHostWidget_, frame0ViewportPos)
             .x();
     xInOverlay = std::max(xInOverlay, frame0InOverlay);
+    // 上限クランプ: 最終フレームのスクリーン位置を超えないようにする
+    const double frameMax = std::max(0.0, trackView_->duration() - 1.0);
+    const QPoint frameMaxViewportPos =
+        trackView_->mapFromScene(QPointF(frameMax, 0.0));
+    const int frameMaxInOverlay =
+        trackView_->viewport()
+            ->mapTo(overlayHostWidget_, frameMaxViewportPos)
+            .x();
+    xInOverlay = std::min(xInOverlay, frameMaxInOverlay);
     overlay_->setPlayheadLine(activeRect, xInOverlay);
     overlay_->show();
     overlay_->raise();
@@ -1048,37 +1119,14 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
         }
       });
   QObject::connect(
-      timelineTrackView, &TimelineTrackView::layerClipEdited, this,
-      [this](const LayerID &layerId, const int trackIndex, const double start,
-             const double duration) {
+      timelineTrackView, &TimelineTrackView::layerClipMoved, this,
+      [this](const LayerID &layerId, const int trackIndex, const double start) {
         if (layerId.isNil() || trackIndex < 0) {
           return;
         }
 
-        if (auto *svc = ArtifactProjectService::instance()) {
-          auto result = svc->findComposition(impl_->compositionId_);
-          if (result.success) {
-            if (auto comp = result.ptr.lock()) {
-              if (auto layer = comp->layerById(layerId)) {
-                const int64_t oldInPoint = layer->inPoint().framePosition();
-                const int64_t oldOutPoint = layer->outPoint().framePosition();
-                const int64_t inPoint = std::max<int64_t>(
-                    0, static_cast<int64_t>(std::llround(start)));
-                const int64_t outPoint = std::max<int64_t>(
-                    inPoint + 1,
-                    static_cast<int64_t>(std::llround(start + duration)));
-                layer->setInPoint(FramePosition(inPoint));
-                layer->setOutPoint(FramePosition(outPoint));
-                if (inPoint != oldInPoint) {
-                  const int64_t delta = inPoint - oldInPoint;
-                  layer->setStartTime(FramePosition(
-                      layer->startTime().framePosition() + delta));
-                }
-              }
-            }
-          }
-          svc->projectChanged();
-        }
+        applyTimelineLayerMove(impl_->compositionId_, layerId.toString(),
+                               start, 0.0);
 
         const int oldTrackIndex = impl_->trackLayerIds_.indexOf(layerId);
         if (oldTrackIndex < 0 || oldTrackIndex == trackIndex) {
@@ -1102,6 +1150,29 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
               refreshTracks();
             },
             Qt::QueuedConnection);
+      });
+  QObject::connect(
+      timelineTrackView, &TimelineTrackView::layerClipTrimmed, this,
+      [this](const LayerID &layerId, const int trackIndex, const double start,
+             const double duration) {
+        if (layerId.isNil() || trackIndex < 0) {
+          return;
+        }
+
+        applyTimelineLayerTrim(impl_->compositionId_, layerId.toString(),
+                               start, duration);
+      });
+  QObject::connect(
+      painterTrackView, &ArtifactTimelineTrackPainterView::clipMoved, this,
+      [this](const QString &clipId, const double startFrame) {
+        applyTimelineLayerMove(impl_->compositionId_, clipId, startFrame, 0.0);
+      });
+  QObject::connect(
+      painterTrackView, &ArtifactTimelineTrackPainterView::clipResized, this,
+      [this](const QString &clipId, const double startFrame,
+             const double durationFrame) {
+        applyTimelineLayerTrim(impl_->compositionId_, clipId, startFrame,
+                               durationFrame);
       });
 
   impl_->trackView_ = timelineTrackView; // Store reference for layer creation
@@ -1359,6 +1430,10 @@ void ArtifactTimelineWidget::setComposition(const CompositionID &id) {
         if (impl_->scrubBar_) {
           impl_->scrubBar_->setTotalFrames(std::max(1, totalFrames));
           impl_->scrubBar_->setCurrentFrame(FramePosition(0));
+          // FPS をスクラブバーに反映
+          if (comp) {
+            impl_->scrubBar_->setFps(static_cast<int>(comp->frameRate().framerate()));
+          }
         }
         if (impl_->navigator_) {
           impl_->navigator_->setTotalFrames(std::max(1, totalFrames));
@@ -1555,9 +1630,50 @@ void ArtifactTimelineWidget::mousePressEvent(QMouseEvent *event) {}
 
 void ArtifactTimelineWidget::mouseMoveEvent(QMouseEvent *event) {}
 
-void ArtifactTimelineWidget::wheelEvent(QWheelEvent *event) {}
+void ArtifactTimelineWidget::wheelEvent(QWheelEvent *event) {
+  // ホイールでシーク (Ctrl+ホイールで ±10)
+  const int delta = event->angleDelta().y();
+  if (delta == 0) { event->ignore(); return; }
+
+  const int step = (event->modifiers() & Qt::ControlModifier) ? 10 : 1;
+  const int direction = (delta > 0) ? 1 : -1;
+  const int frameDelta = direction * step;
+
+  if (impl_ && impl_->trackView_) {
+    double newPos = impl_->trackView_->position() + frameDelta;
+    impl_->trackView_->setPosition(std::max(0.0, newPos));
+    impl_->trackView_->seekPositionChanged(newPos / std::max(1.0, impl_->trackView_->position()));
+  }
+  event->accept();
+}
 
 void ArtifactTimelineWidget::keyPressEvent(QKeyEvent *event) {
+  // J/K/L シャトル操作
+  if (event->key() == Qt::Key_J || event->key() == Qt::Key_K || event->key() == Qt::Key_L) {
+    if (auto *svc = ArtifactPlaybackService::instance()) {
+      if (event->key() == Qt::Key_K) {
+        svc->setPlaybackSpeed(0.0f);
+        svc->stop();
+      } else if (event->key() == Qt::Key_L) {
+        float spd = svc->playbackSpeed();
+        if (spd >= 0.0f && spd < 8.0f) {
+          svc->setPlaybackSpeed(spd <= 0.0f ? 1.0f : spd * 2.0f);
+        }
+        svc->play();
+      } else if (event->key() == Qt::Key_J) {
+        float spd = svc->playbackSpeed();
+        if (spd <= 0.0f && spd > -8.0f) {
+          svc->setPlaybackSpeed(spd >= 0.0f ? -1.0f : spd * 2.0f);
+        } else {
+          svc->setPlaybackSpeed(-1.0f);
+        }
+        svc->play();
+      }
+    }
+    event->accept();
+    return;
+  }
+
   // I / O キーでワークエリアの IN / OUT を設定
   if (event->key() == Qt::Key_I || event->key() == Qt::Key_O) {
     auto *svc = ArtifactProjectService::instance();
@@ -1748,8 +1864,8 @@ ClipItem *TimelineTrackView::addClip(int trackIndex, double start,
                          const int trackIndex =
                              impl_->scene_->getTrackAtPosition(clip->pos().y() +
                                                                1.0);
-                         Q_EMIT layerClipEdited(clip->layerId(), trackIndex,
-                                                startFrame, clipDuration);
+                         Q_EMIT layerClipTrimmed(clip->layerId(), trackIndex,
+                                                 startFrame, clipDuration);
                        });
       QObject::connect(
           clip, &ClipItem::dragEnded, this,
@@ -1759,8 +1875,8 @@ ClipItem *TimelineTrackView::addClip(int trackIndex, double start,
             }
             const int dropTrackIndex =
                 impl_->scene_->getTrackAtPosition(sceneY);
-            Q_EMIT layerClipEdited(clip->layerId(), dropTrackIndex,
-                                   clip->getStart(), clip->getDuration());
+            Q_EMIT layerClipMoved(clip->layerId(), dropTrackIndex,
+                                  clip->getStart());
           });
       return clip;
     }
