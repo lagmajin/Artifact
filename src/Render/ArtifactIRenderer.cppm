@@ -7,6 +7,7 @@
 #include <cstring>
 #include <cstdint>
 #include <mutex>
+#include <unordered_map>
 #include <QImage>
 #include <QDebug>
 #include <QTransform>
@@ -74,6 +75,8 @@ namespace Artifact
 
   FloatColor clearColor_{ 0.10f, 0.10f, 0.10f, 1.0f };
   const TEXTURE_FORMAT MAIN_RTV_FORMAT = TEX_FORMAT_RGBA8_UNORM_SRGB;
+  uint64_t m_frameCount = 0;
+  std::unordered_map<qint64, RefCntAutoPtr<ITexture>> m_textureCache;
 
   void initFrameQueries();
   void createLayerRT(QWidget* window);

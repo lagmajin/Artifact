@@ -616,7 +616,7 @@ void ArtifactVideoLayer::draw(ArtifactIRenderer* renderer)
 {
     if (!impl_->videoEnabled_ || !impl_->isLoaded_) return;
     
-    // Decode current frame if needed
+    // Decode current frame if needed (should ideally be async)
     if (impl_->currentQImage_.isNull()) {
         decodeCurrentFrame();
     }
@@ -624,7 +624,7 @@ void ArtifactVideoLayer::draw(ArtifactIRenderer* renderer)
     if (impl_->currentQImage_.isNull()) return;
     
     auto size = sourceSize();
-    renderer->drawSprite(0.0f, 0.0f, (float)size.width, (float)size.height, impl_->currentQImage_, this->opacity());
+    renderer->drawSpriteTransformed(0.0f, 0.0f, (float)size.width, (float)size.height, getGlobalTransform(), impl_->currentQImage_, this->opacity());
 }
 
 void ArtifactVideoLayer::goToFrame(int64_t frameNumber)
