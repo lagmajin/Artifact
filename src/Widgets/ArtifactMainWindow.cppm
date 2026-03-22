@@ -447,9 +447,9 @@ ads--CDockWidgetTab QPushButton#tabCloseButton:pressed {
  auto* centralDock = new CDockWidget(QStringLiteral("Workspace"), this);
  centralDock->setObjectName(QStringLiteral("ArtifactCentralDock"));
  centralDock->setWidget(impl_->centralWidgetHost);
+ centralDock->setFeatures(ads::CDockWidget::AllDockWidgetFeatures); // Enable floating, etc.
  impl_->dockManager->setCentralWidget(centralDock);
- impl_->primaryCenterDock = centralDock;
- impl_->dockStyleManager->applyStyle();
+ impl_->primaryCenterDock = centralDock; impl_->dockStyleManager->applyStyle();
 
  statusBar();
  resize(1600, 1000);
@@ -474,6 +474,7 @@ void ArtifactMainWindow::addDockedWidget(const QString& title, ads::DockWidgetAr
   impl_->primaryCenterDock->setWindowTitle(title);
   impl_->primaryCenterDock->setObjectName(title);
   impl_->primaryCenterDock->setWidget(widget);
+  impl_->primaryCenterDock->setFeatures(ads::CDockWidget::AllDockWidgetFeatures);
   impl_->primaryCenterDockAssigned = true;
   if (!impl_->dockWidgets.contains(impl_->primaryCenterDock)) {
    impl_->dockWidgets.push_back(impl_->primaryCenterDock);

@@ -308,7 +308,10 @@ void ArtifactTextLayer::draw(ArtifactIRenderer* renderer)
     if (impl_->renderedImage_.isNull() || size.width <= 0 || size.height <= 0) {
         return;
     }
-    renderer->drawSprite(0.0f, 0.0f, static_cast<float>(size.width), static_cast<float>(size.height), impl_->renderedImage_, this->opacity());
+    
+    // Use drawSpriteTransformed to support rotation/scaling in Diligent
+    renderer->drawSpriteTransformed(0.0f, 0.0f, static_cast<float>(size.width), static_cast<float>(size.height), 
+                                    getGlobalTransform(), impl_->renderedImage_, this->opacity());
 }
 
 std::vector<ArtifactCore::PropertyGroup> ArtifactTextLayer::getLayerPropertyGroups() const
