@@ -142,10 +142,11 @@ protected:
       if (controller_->gizmo() && controller_->gizmo()->isDragging()) {
         const auto cursor = controller_->cursorShapeForViewportPos(event->position());
         setCursor(cursor == Qt::OpenHandCursor ? Qt::ClosedHandCursor : cursor);
+        event->accept();
+        return;
       }
-      event->accept();
-      return;
     }
+    QWidget::mousePressEvent(event);
   }
 
   void mouseMoveEvent(QMouseEvent *event) override {
