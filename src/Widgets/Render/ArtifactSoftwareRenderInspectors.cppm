@@ -11,6 +11,7 @@
 #include <QFileInfo>
 #include <QFrame>
 #include <QPainter>
+#include <QPainterPath>
 #include <QPixmap>
 #include <QResizeEvent>
 #include <QKeyEvent>
@@ -38,6 +39,8 @@ import Artifact.Layer.Text;
 import Artifact.Layer.Video;
 import Artifact.Layers.SolidImage;
 import Artifact.Layer.Solid2D;
+import Artifact.Mask.Path;
+import Artifact.Mask.LayerMask;
 import Layer.Blend;
 
 namespace Artifact {
@@ -79,6 +82,36 @@ QPainter::CompositionMode compositionMode(ArtifactCore::BlendMode mode)
     default:
         return QPainter::CompositionMode_SourceOver;
     }
+}
+
+QPainterPath toQPainterPath(const MaskPath& path)
+{
+    QPainterPath qpath;
+    const int count = path.vertexCount();
+    if (count < 2) return qpath;
+
+    const auto v0 = path.vertex(0);
+    qpath.moveTo(v0.position);
+
+    for (int i = 0; i < count; ++i) {
+        const auto& curr = path.vertex(i);
+        const auto& next = path.vertex((i + 1) % count);
+
+        if (i == count - 1 && !path.isClosed()) break;
+
+        if (curr.outTangent.isNull() && next.inTangent.isNull()) {
+            qpath.lineTo(next.position);
+        } else {
+            qpath.cubicTo(curr.position + curr.outTangent,
+                          next.position + next.inTangent,
+                          next.position);
+        }
+    }
+
+    if (path.isClosed()) {
+        qpath.closeSubpath();
+    }
+    return qpath;
 }
 
 QImage makeCheckerboard(const QSize& size)
@@ -454,22 +487,47 @@ void drawLayerOnCanvas(QPainter& painter, const ArtifactAbstractLayerPtr& layer,
     }
 
     const QImage surface = renderLayerSurface(layer);
-    if (surface.isNull()) {
+    if (surface.isNull() && !std::dynamic_pointer_cast<ArtifactSolid2DLayer>(layer) && !std::dynamic_pointer_cast<ArtifactSolidImageLayer>(layer)) {
         return;
     }
 
-    // レイヤーの不透明度を取得（ArtifactAbstractLayer::opacity()）
-    const qreal layerOpacity = static_cast<qreal>(layer->opacity());
-    
-    // 渡された opacityScale とレイヤーの不透明度を乗算
-    const qreal finalOpacity = std::clamp(opacityScale * layerOpacity, 0.0, 1.0);
+    // Combine opacity
+    const qreal finalOpacity = std::clamp(opacityScale * static_cast<qreal>(layer->opacity()), 0.0, 1.0);
 
     painter.save();
-    painter.setOpacity(finalOpacity);
-    painter.setCompositionMode(compositionModeForLayer(layer));
+    
+    // 1. Apply Transform
     painter.setTransform(layer->getGlobalTransform(), true);
-    const auto size = safeLayerSize(layer, surface.size());
-    painter.drawImage(QRectF(0.0, 0.0, size.width(), size.height()), surface, QRectF(0.0, 0.0, surface.width(), surface.height()));
+    painter.setOpacity(finalOpacity);
+    
+    // 2. Apply Blend Mode
+    painter.setCompositionMode(compositionModeForLayer(layer));
+
+    // 3. Apply Masks
+    if (layer->hasMasks()) {
+        QPainterPath totalClip;
+        for (int m = 0; m < layer->maskCount(); ++m) {
+            const auto mask = layer->mask(m);
+            if (!mask.isEnabled()) continue;
+            for (int p = 0; p < mask.maskPathCount(); ++p) {
+                totalClip.addPath(toQPainterPath(mask.maskPath(p)));
+            }
+        }
+        if (!totalClip.isEmpty()) {
+            painter.setClipPath(totalClip, Qt::IntersectClip);
+        }
+    }
+
+    // 4. Draw Content
+    const auto size = layer->sourceSize();
+    if (const auto solidLayer = std::dynamic_pointer_cast<ArtifactSolidImageLayer>(layer)) {
+        painter.fillRect(QRectF(0, 0, size.width, size.height), toQColor(solidLayer->color()));
+    } else if (const auto solid2D = std::dynamic_pointer_cast<ArtifactSolid2DLayer>(layer)) {
+        painter.fillRect(QRectF(0, 0, size.width, size.height), toQColor(solid2D->color()));
+    } else if (!surface.isNull()) {
+        painter.drawImage(QRectF(0.0, 0.0, size.width, size.height), surface);
+    }
+
     painter.restore();
 }
 
@@ -533,39 +591,10 @@ QImage generateCompositionThumbnail(const ArtifactCompositionPtr& composition, c
         return placeholder;
     }
     
-    // コンポジションキャンバスをレンダリング
-    const QSize compSize = safeCompositionSize(composition);
-    QImage canvas(compSize, QImage::Format_ARGB32_Premultiplied);
-    canvas.fill(toQColor(composition->backgroundColor()));
+    // Use the unified rendering logic for consistent thumbnail generation
+    const QImage canvas = renderCompositionCanvas(composition);
     
-    QPainter painter(&canvas);
-    painter.setRenderHint(QPainter::Antialiasing, true);
-    painter.setRenderHint(QPainter::SmoothPixmapTransform, true);
-    
-    // 全レイヤーを描画
-    const auto layers = composition->allLayer();
-    for (const auto& layer : layers) {
-        if (!layer || !layer->isVisible()) continue;
-        
-        // レイヤーを現在のフレーム位置にシーク
-        layer->goToFrame(composition->framePosition().framePosition());
-        
-        // レイヤーサーフェスを取得して描画
-        if (auto imageLayer = std::dynamic_pointer_cast<ArtifactImageLayer>(layer)) {
-            QImage img = imageLayer->toQImage();
-            if (!img.isNull()) {
-                const auto size = layer->sourceSize();
-                painter.drawImage(QRectF(0, 0, size.width, size.height), img);
-            }
-        } else if (auto solidLayer = std::dynamic_pointer_cast<ArtifactSolidImageLayer>(layer)) {
-             QImage img(compSize, QImage::Format_ARGB32_Premultiplied);
-             const auto color = solidLayer->color();
-             img.fill(toQColor(color));
-             painter.drawImage(0, 0, img);
-        }
-    }
-    
-    // サムネイルサイズにリサイズ
+    // Resize to thumbnail size
     return canvas.scaled(thumbnailSize, Qt::KeepAspectRatio, Qt::SmoothTransformation);
 }
 
