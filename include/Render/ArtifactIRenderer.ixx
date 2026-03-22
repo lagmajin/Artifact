@@ -86,6 +86,7 @@ public:
  void drawSprite(Detail::float2 pos, Detail::float2 size);
  void drawSprite(float x, float y, float w, float h, const QImage& image, float opacity = 1.0f);
  void drawSpriteTransformed(float x, float y, float w, float h, const QTransform& transform, const QImage& image, float opacity = 1.0f);
+ void drawSpriteRotated(float x, float y, float w, float h, float angleDegrees, const QImage& image, float opacity = 1.0f);
  void drawRectLocal(float x, float y, float w, float h, const FloatColor& color, float opacity = 1.0f);
  void drawSolidRectTransformed(float x, float y, float w, float h, const QTransform& transform, const FloatColor& color, float opacity = 1.0f);
  void drawRectOutlineLocal(float x, float y, float w, float h, const FloatColor& color);
