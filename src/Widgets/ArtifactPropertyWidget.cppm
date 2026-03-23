@@ -460,7 +460,10 @@ ArtifactPropertyWidget::ArtifactPropertyWidget(QWidget* parent)
     });
     if (auto* playback = ArtifactPlaybackService::instance()) {
         QObject::connect(playback, &ArtifactPlaybackService::frameChanged, this, [this]() {
-            impl_->scheduleRebuild(40);
+            // Disabled: Rebuilding the entire property tree on every frame causes 
+            // massive UI lag and freezes when stopping playback.
+            // TODO: Implement a lightweight value-only update mechanism.
+            // impl_->scheduleRebuild(40);
         });
     }
     if (auto* projectService = ArtifactProjectService::instance()) {

@@ -165,9 +165,9 @@ void bootstrapPythonScripts()
  {
   const QString appDir = QCoreApplication::applicationDirPath();
   const QStringList candidates = {
+   appDir, // Search for plugins in the application directory (e.g. appDir/imageformats)
    QDir(appDir).filePath(QStringLiteral("plugins")),
-   QDir(appDir).filePath(QStringLiteral("../vcpkg_installed/x64-windows/Qt6/plugins")),
-   QDir(appDir).filePath(QStringLiteral("../vcpkg_installed/x64-windows/debug/Qt6/plugins")),
+   QDir(appDir).filePath(QStringLiteral("../vcpkg_installed/x64-windows/Qt6/plugins")),   QDir(appDir).filePath(QStringLiteral("../vcpkg_installed/x64-windows/debug/Qt6/plugins")),
    QDir(appDir).filePath(QStringLiteral("../vcpkg_installed/x64-windows/Qt6/plugins")),
    QDir(appDir).filePath(QStringLiteral("../vcpkg_installed/x64-windows/debug/Qt6/plugins"))
   };
