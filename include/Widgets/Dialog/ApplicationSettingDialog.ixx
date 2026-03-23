@@ -8,34 +8,48 @@ export module ApplicationSettingDialog;
 
 export namespace ArtifactCore {
 
+ // Base class for setting pages to manage loading/saving consistently
+ class ISettingPage {
+ public:
+  virtual ~ISettingPage() = default;
+  virtual void loadSettings() = 0;
+  virtual void saveSettings() = 0;
+ };
+
  // General Settings Page
- class GeneralSettingPage : public QWidget {
+ class GeneralSettingPage : public QWidget, public ISettingPage {
  private:
   class Impl;
   Impl* impl_;
  public:
   explicit GeneralSettingPage(QWidget* parent = nullptr);
   ~GeneralSettingPage();
+  void loadSettings() override;
+  void saveSettings() override;
  };
 
  // Import Settings Page
- class ImportSettingPage : public QWidget {
+ class ImportSettingPage : public QWidget, public ISettingPage {
  private:
   class Impl;
   Impl* impl_;
  public:
   explicit ImportSettingPage(QWidget* parent = nullptr);
   ~ImportSettingPage();
+  void loadSettings() override;
+  void saveSettings() override;
  };
 
  // Preview Settings Page
- class PreviewSettingPage : public QWidget {
+ class PreviewSettingPage : public QWidget, public ISettingPage {
  private:
   class Impl;
   Impl* impl_;
  public:
   explicit PreviewSettingPage(QWidget* parent = nullptr);
   ~PreviewSettingPage();
+  void loadSettings() override;
+  void saveSettings() override;
  };
 
  class LabelColorSettingWidget :public QWidget {
@@ -47,7 +61,7 @@ export namespace ArtifactCore {
  };
 
 
- class MemoryAndCpuSettingPage :public QWidget {
+ class MemoryAndCpuSettingPage :public QWidget, public ISettingPage {
   //Q_OBJECT
  private:
   class Impl;
@@ -58,11 +72,12 @@ export namespace ArtifactCore {
   virtual ~MemoryAndCpuSettingPage();
   int cpuCount() const;
   void resetSetting();
-
+  void loadSettings() override;
+  void saveSettings() override;
  };
 
 
- class ShortcutSettingPage : public QWidget {
+ class ShortcutSettingPage : public QWidget, public ISettingPage {
   //Q_OBJECT
   class Impl;
   Impl* impl_;
@@ -71,7 +86,8 @@ export namespace ArtifactCore {
   ~ShortcutSettingPage();
 
   QVector<QWidget*> settingWidgets() const;
-
+  void loadSettings() override;
+  void saveSettings() override;
  };
 
  class PluginSettingPage : public QWidget {
@@ -95,6 +111,8 @@ private:
 public:
  explicit ApplicationSettingDialog(QWidget* parent = nullptr);
  ~ApplicationSettingDialog();
+ void loadSettings();
+ void saveSettings();
 };
 
 
