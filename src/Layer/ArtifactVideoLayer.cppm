@@ -341,16 +341,41 @@ void ArtifactVideoLayer::decodeCurrentFrame()
         return;
     }
     
-    // Decode from controller - ensure it's a fresh decode for the target frame
-    // getVideoFrameAtFrame is expected to perform necessary seeking internally.
-    QImage decoded = impl_->playbackController_->getVideoFrameAtFrame(targetFrame);
-    
-    if (!decoded.isNull()) {
-        impl_->currentQImage_ = decoded;
-        impl_->frameCache_.put(targetFrame, decoded);
-    } else {
-        qWarning() << "[VideoLayer] Failed to decode frame:" << targetFrame;
+    // Prevent thread pool exhaustion and infinite loops
+    if (impl_->isDecoding_) {
+        return;
     }
+    
+    impl_->isDecoding_ = true;
+    impl_->decodingFrame_ = targetFrame;
+    
+    QPointer<ArtifactVideoLayer> self(this);
+    QtConcurrent::run([this, self, targetFrame]() {
+        if (!self) return;
+        
+        QImage decoded;
+        int64_t currentDecodedFrame = impl_->playbackController_->getCurrentFrame();
+        
+        // Optimize: If we just need the next sequential frame, don't seek!
+        if (targetFrame == currentDecodedFrame || targetFrame == currentDecodedFrame + 1) {
+            decoded = impl_->playbackController_->getNextVideoFrame();
+        } else {
+            decoded = impl_->playbackController_->getVideoFrameAtFrame(targetFrame);
+        }
+        
+        QMetaObject::invokeMethod(this, [this, self, targetFrame, decoded]() {
+            if (!self) return;
+            impl_->isDecoding_ = false;
+            
+            if (!decoded.isNull()) {
+                impl_->frameCache_.put(targetFrame, decoded);
+                if (currentFrame() == targetFrame) {
+                    impl_->currentQImage_ = decoded;
+                    Q_EMIT changed();
+                }
+            }
+        }, Qt::QueuedConnection);
+    });
 }
 
 QImage ArtifactVideoLayer::currentFrameToQImage() const
