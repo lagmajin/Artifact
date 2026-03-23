@@ -492,6 +492,13 @@ int ArtifactLayerPanelHeaderWidget::totalHeaderHeight() const
   int dragInsertVisibleRow = -1;
   bool dragStarted_ = false;
   bool updatingLayout = false;  // 再帰呼び出し防止フラグ
+  
+  // スイッチ列（表示、ソロ、ロック）の一括切り替え用
+  bool isSwipingSwitches = false;
+  int swipeColumn = -1;
+  bool swipeTargetState = false;
+  QSet<QString> swipedLayerIds;
+
   QHash<QString, QMetaObject::Connection> layerChangedConnections;
   void clearInlineEditors()
   {
@@ -1098,15 +1105,62 @@ void ArtifactLayerPanelWidget::setComposition(const CompositionID& id)
       return;
     }
     if (clickX < colW) {
-      if (service) service->setLayerVisibleInCurrentComposition(layer->id(), !layer->isVisible());
+      impl_->isSwipingSwitches = true;
+      impl_->swipeColumn = 0;
+      impl_->swipeTargetState = !layer->isVisible();
+      impl_->swipedLayerIds.clear();
+      impl_->swipedLayerIds.insert(layer->id().toString());
+      if (service) service->setLayerVisibleInCurrentComposition(layer->id(), impl_->swipeTargetState);
     } else if (clickX < colW * 2) {
-      if (service) service->setLayerLockedInCurrentComposition(layer->id(), !layer->isLocked());
+      impl_->isSwipingSwitches = true;
+      impl_->swipeColumn = 1;
+      impl_->swipeTargetState = !layer->isLocked();
+      impl_->swipedLayerIds.clear();
+      impl_->swipedLayerIds.insert(layer->id().toString());
+      if (service) service->setLayerLockedInCurrentComposition(layer->id(), impl_->swipeTargetState);
     } else if (clickX < colW * 3) {
-      if (service) service->setLayerSoloInCurrentComposition(layer->id(), !layer->isSolo());
+      impl_->isSwipingSwitches = true;
+      impl_->swipeColumn = 2;
+      impl_->swipeTargetState = !layer->isSolo();
+      impl_->swipedLayerIds.clear();
+      impl_->swipedLayerIds.insert(layer->id().toString());
+      if (service) service->setLayerSoloInCurrentComposition(layer->id(), impl_->swipeTargetState);
     } else if (clickX < colW * 4) {
       // Sound toggle
     } else if (clickX < colW * 5) {
-      if (service) service->setLayerShyInCurrentComposition(layer->id(), !layer->isShy());
+      impl_->isSwipingSwitches = true;
+      impl_->swipeColumn = 4;
+      impl_->swipeTargetState = !layer->isShy();
+      impl_->swipedLayerIds.clear();
+      impl_->swipedLayerIds.insert(layer->id().toString());
+      if (service) service->setLayerShyInCurrentComposition(layer->id(), impl_->swipeTargetState);
+    } else if (clickX < colW * kLayerPropertyColumnCount + 20) {
+      // --- Label Color Menu ---
+      QMenu menu(this);
+      static const QStringList colorNames = {"None", "Red", "Yellow", "Green", "Blue", "Purple", "Pink", "Gray"};
+      static const QVector<QColor> labelColors = {
+          QColor(200, 200, 200), QColor(255, 50, 50), QColor(255, 200, 50), QColor(50, 255, 50),
+          QColor(50, 200, 255), QColor(200, 50, 255), QColor(255, 100, 200), QColor(150, 150, 150)
+      };
+
+      for (int i = 0; i < colorNames.size(); ++i) {
+          QAction* act = menu.addAction(colorNames[i]);
+          QPixmap pix(16, 16);
+          pix.fill(i == 0 ? Qt::transparent : labelColors[i]);
+          act->setIcon(QIcon(pix));
+          connect(act, &QAction::triggered, this, [layer, i, service, this]() {
+              layer->setLabelColorIndex(i);
+              if (service) {
+                  if (auto project = service->getCurrentProjectSharedPtr()) {
+                      project->projectChanged();
+                  }
+              }
+              update();
+          });
+      }
+      menu.exec(event->globalPosition().toPoint());
+      event->accept();
+      return;
     } else {
       const int indent = 14;
       const int toggleSize = 10;
@@ -1410,6 +1464,33 @@ void ArtifactLayerPanelWidget::mouseDoubleClickEvent(QMouseEvent* event)
 
  void ArtifactLayerPanelWidget::mouseMoveEvent(QMouseEvent* event)
  {
+  const int rowH = kLayerRowHeight;
+  const int colW = kLayerColumnWidth;
+  const int idx = event->pos().y() / rowH;
+
+  // --- Switch Swiping Implementation ---
+  if (impl_->isSwipingSwitches && idx >= 0 && idx < impl_->visibleRows.size()) {
+    const auto& row = impl_->visibleRows[idx];
+    if (row.kind == Impl::RowKind::Layer && row.layer) {
+      const QString idStr = row.layer->id().toString();
+      if (!impl_->swipedLayerIds.contains(idStr)) {
+        impl_->swipedLayerIds.insert(idStr);
+        auto* service = ArtifactProjectService::instance();
+        if (service) {
+          switch (impl_->swipeColumn) {
+            case 0: service->setLayerVisibleInCurrentComposition(row.layer->id(), impl_->swipeTargetState); break;
+            case 1: service->setLayerLockedInCurrentComposition(row.layer->id(), impl_->swipeTargetState); break;
+            case 2: service->setLayerSoloInCurrentComposition(row.layer->id(), impl_->swipeTargetState); break;
+            case 4: service->setLayerShyInCurrentComposition(row.layer->id(), impl_->swipeTargetState); break;
+          }
+          update();
+        }
+      }
+    }
+    event->accept();
+    return;
+  }
+
   if ((event->buttons() & Qt::LeftButton) && !impl_->dragCandidateLayerId.isNil()) {
     const int dragDistance = (event->pos() - impl_->dragStartPos).manhattanLength();
     if (impl_->draggedLayerId.isNil() && !impl_->dragStarted_ && dragDistance >= QApplication::startDragDistance()) {
@@ -1765,8 +1846,31 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent*)
     p.setOpacity(1.0);
     p.drawLine(curX - 1, y, curX - 1, y + rowH);
 
+    // Label Color
+    static const QVector<QColor> labelColors = {
+        QColor(120, 120, 120, 0), // 0: None
+        QColor(255, 50, 50),      // 1: Red
+        QColor(255, 200, 50),     // 2: Yellow
+        QColor(50, 255, 50),      // 3: Green
+        QColor(50, 200, 255),     // 4: Blue
+        QColor(200, 50, 255),     // 5: Purple
+        QColor(255, 100, 200),    // 6: Pink
+        QColor(150, 150, 150)     // 7: Gray
+    };
+    int colorIdx = std::clamp(l->labelColorIndex(), 0, (int)labelColors.size() - 1);
+    if (colorIdx > 0) {
+        p.setBrush(labelColors[colorIdx]);
+        p.setPen(QColor(255, 255, 255, 100));
+        p.drawRect(curX + 4, y + (rowH - 12) / 2, 12, 12);
+    } else {
+        p.setBrush(Qt::NoBrush);
+        p.setPen(QColor(255, 255, 255, 40));
+        p.drawRect(curX + 4, y + (rowH - 12) / 2, 12, 12);
+    }
+    curX += 20; // Label column width
+
     // Name
-    const int nameX = nameStartX + row.depth * indent;
+    const int nameX = nameStartX + row.depth * indent + 20; // Adjust for label color
     if (row.hasChildren) {
       const int tx = nameX + 2;
       const int ty = y + (rowH - toggleSize) / 2;

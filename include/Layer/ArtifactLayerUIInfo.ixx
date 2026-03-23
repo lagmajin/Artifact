@@ -50,6 +50,7 @@ export namespace Artifact
   bool solo = false;
   bool shy = false;
   
+  int labelColorIndex = 0; // 0: None, 1: Red, 2: Yellow, etc.
 
   bool hasAudio = false;
   bool hasEffects = false;

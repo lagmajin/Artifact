@@ -176,6 +176,9 @@ public:
   bool isShy() const;
   void setShy(bool shy);
 
+  int labelColorIndex() const;
+  void setLabelColorIndex(int index);
+
   // Opacity
   float opacity() const;
   void setOpacity(float value);
