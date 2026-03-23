@@ -133,6 +133,8 @@ public:
     
     QString sourcePath_;
     bool isLoaded_ = false;
+    std::atomic<bool> isDecoding_{false};
+    std::atomic<int64_t> decodingFrame_{-1};
     
     double playbackSpeed_ = 1.0;
     bool loopEnabled_ = true;
@@ -616,9 +618,14 @@ void ArtifactVideoLayer::draw(ArtifactIRenderer* renderer)
 {
     if (!impl_->videoEnabled_ || !impl_->isLoaded_) return;
     
-    // Decode current frame if needed (should ideally be async)
-    if (impl_->currentQImage_.isNull()) {
+    const int64_t currentTarget = currentFrame();
+    
+    // Check if we need to request a new frame
+    if (!impl_->frameCache_.contains(currentTarget) && impl_->decodingFrame_ != currentTarget) {
         decodeCurrentFrame();
+    } else if (impl_->frameCache_.contains(currentTarget)) {
+        // If it's cached, ensure currentQImage_ is up to date
+        impl_->frameCache_.get(currentTarget, impl_->currentQImage_);
     }
     
     if (impl_->currentQImage_.isNull()) return;
