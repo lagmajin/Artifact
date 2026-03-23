@@ -22,6 +22,11 @@ module Artifact.Widgets.PropertyEditor;
 
 import std;
 import Font.FreeFont;
+import Artifact.Widgets.FontPicker;
+import Artifact.Widgets.ExpressionCopilotWidget;
+import Artifact.Service.Playback;
+import Artifact.Service.Project;
+import Time.Rational;
 
 namespace Artifact {
 
@@ -614,33 +619,31 @@ ArtifactFontFamilyPropertyEditor::ArtifactFontFamilyPropertyEditor(
     const ArtifactCore::AbstractProperty &property, QWidget *parent)
     : ArtifactAbstractPropertyEditor(parent) {
   setObjectName(QStringLiteral("propertyFontEditor"));
-  comboBox_ = new QFontComboBox(this);
-  comboBox_->setMinimumHeight(26);
+  fontPicker_ = new FontPickerWidget(this);
   auto *layout = new QHBoxLayout(this);
   layout->setContentsMargins(0, 0, 0, 0);
-  layout->addWidget(comboBox_);
+  layout->addWidget(fontPicker_);
 
   setValueFromVariant(property.getValue());
   QObject::connect(
-      comboBox_, &QFontComboBox::currentFontChanged, this,
-      [this](const QFont &font) {
-        commitValue(ArtifactCore::FontManager::resolvedFamily(font.family()));
+      fontPicker_, &FontPickerWidget::fontChanged, this,
+      [this](const QString &family) {
+        commitValue(ArtifactCore::FontManager::resolvedFamily(family));
       });
 }
 
 QVariant ArtifactFontFamilyPropertyEditor::value() const {
-  return comboBox_ ? QVariant(comboBox_->currentFont().family()) : QVariant();
+  return fontPicker_ ? QVariant(fontPicker_->currentFont()) : QVariant();
 }
 
 void ArtifactFontFamilyPropertyEditor::setValueFromVariant(
     const QVariant &value) {
-  if (!comboBox_) {
+  if (!fontPicker_) {
     return;
   }
   const QString family =
       ArtifactCore::FontManager::resolvedFamily(value.toString());
-  const QSignalBlocker blocker(comboBox_);
-  comboBox_->setCurrentFont(QFont(family));
+  fontPicker_->setCurrentFont(family);
 }
 
 ArtifactPathPropertyEditor::ArtifactPathPropertyEditor(

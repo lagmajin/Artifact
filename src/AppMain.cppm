@@ -96,6 +96,7 @@ import Artifact.Widgets.CompositionEditor;
 import Artifact.Widgets.RenderLayerEditor;
 import Artifact.Widgets.SoftwareRenderInspectors;
 import Artifact.Widgets.Render.QueueManager;
+import Artifact.Widgets.Alignment;
 import Widgets.Inspector;
 import Artifact.Widgets.ArtifactPropertyWidget;
 import Artifact.MainWindow;
@@ -704,6 +705,8 @@ int main(int argc, char* argv[])
     mw->addDockedWidget(QStringLiteral("Inspector"), ads::RightDockWidgetArea, new ArtifactInspectorWidget(mw));
     auto* propertyPanel = new ArtifactPropertyWidget(mw);
     mw->addDockedWidgetTabbed(QStringLiteral("Properties"), ads::RightDockWidgetArea, propertyPanel, QStringLiteral("Inspector"));
+    auto* alignmentPanel = new AlignmentWidget(mw);
+    mw->addDockedWidgetTabbed(QStringLiteral("Alignment"), ads::RightDockWidgetArea, alignmentPanel, QStringLiteral("Inspector"));
     mw->addDockedWidget(QStringLiteral("Audio Mixer"), ads::RightDockWidgetArea, new ArtifactCompositionAudioMixerWidget(mw));
     mw->setDockVisible(QStringLiteral("Audio Mixer"), false);
     mw->setDockVisible(QStringLiteral("Render Manager"), true);

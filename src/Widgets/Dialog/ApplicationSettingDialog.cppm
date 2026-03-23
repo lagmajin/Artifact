@@ -41,6 +41,7 @@
 
 import Artifact.Service.Application;
 import Artifact.Widgets.AppDialogs;
+import Application.AppSettings;
 
 namespace ArtifactCore {
 
@@ -73,14 +74,12 @@ namespace ArtifactCore {
   auto* autoSaveLayout = new QVBoxLayout(autoSaveGroup);
   
   impl_->autoSaveCheckBox_ = new QCheckBox("Enable Auto-Save", this);
-  impl_->autoSaveCheckBox_->setChecked(true);
   autoSaveLayout->addWidget(impl_->autoSaveCheckBox_);
   
   auto* intervalLayout = new QHBoxLayout();
   intervalLayout->addWidget(new QLabel("Save every:", this));
   impl_->autoSaveIntervalSpinBox_ = new QSpinBox(this);
   impl_->autoSaveIntervalSpinBox_->setRange(1, 60);
-  impl_->autoSaveIntervalSpinBox_->setValue(5);
   impl_->autoSaveIntervalSpinBox_->setSuffix(" minutes");
   intervalLayout->addWidget(impl_->autoSaveIntervalSpinBox_);
   intervalLayout->addStretch();
@@ -92,13 +91,29 @@ namespace ArtifactCore {
   auto* startupGroup = new QGroupBox("Startup", this);
   auto* startupLayout = new QVBoxLayout(startupGroup);
   
-  impl_->showStartupDialogCheckBox_ = new QCheckBox("Show startup dialog", this);
-  impl_->showStartupDialogCheckBox_->setChecked(true);
+  impl_->showStartupDialogCheckBox_ = new QCheckBox("Load last project on startup", this);
   startupLayout->addWidget(impl_->showStartupDialogCheckBox_);
   
   mainLayout->addWidget(startupGroup);
   
   mainLayout->addStretch();
+
+  loadSettings();
+ }
+
+ void GeneralSettingPage::loadSettings()
+ {
+  auto* settings = ArtifactAppSettings::instance();
+  impl_->autoSaveIntervalSpinBox_->setValue(settings->autoSaveIntervalMinutes());
+  impl_->showStartupDialogCheckBox_->setChecked(settings->loadLastProjectOnStartup());
+  // autoSaveEnabled の項目が AppSettings にまだないので、将来的に追加が必要
+ }
+
+ void GeneralSettingPage::saveSettings()
+ {
+  auto* settings = ArtifactAppSettings::instance();
+  settings->setAutoSaveIntervalMinutes(impl_->autoSaveIntervalSpinBox_->value());
+  settings->setLoadLastProjectOnStartup(impl_->showStartupDialogCheckBox_->isChecked());
  }
 
  GeneralSettingPage::~GeneralSettingPage()
@@ -625,6 +640,23 @@ MemoryAndCpuSettingPage::MemoryAndCpuSettingPage(QWidget* parent /*= nullptr*/)
                 : QString());
         QMessageBox::information(this, QStringLiteral("Clear Cache"), summary);
     });
+
+    loadSettings();
+}
+
+void MemoryAndCpuSettingPage::loadSettings() {
+    auto* settings = ArtifactAppSettings::instance();
+    int count = settings->renderThreadCount();
+    if (count <= 0) {
+        impl_->workerThreadsSpinBox_->setValue(qMax(1, impl_->processorCount_ - 1));
+    } else {
+        impl_->workerThreadsSpinBox_->setValue(count);
+    }
+}
+
+void MemoryAndCpuSettingPage::saveSettings() {
+    auto* settings = ArtifactAppSettings::instance();
+    settings->setRenderThreadCount(impl_->workerThreadsSpinBox_->value());
 }
 
 MemoryAndCpuSettingPage::~MemoryAndCpuSettingPage()
@@ -635,6 +667,15 @@ MemoryAndCpuSettingPage::~MemoryAndCpuSettingPage()
         impl_ = nullptr;
     }
 }
+
+// Add loadSettings/saveSettings stubs for other pages if not yet implemented
+void ImportSettingPage::loadSettings() {}
+void ImportSettingPage::saveSettings() {}
+void PreviewSettingPage::loadSettings() {}
+void PreviewSettingPage::saveSettings() {}
+void ShortcutSettingPage::loadSettings() {}
+void ShortcutSettingPage::saveSettings() {}
+
  class ApplicationSettingDialog::Impl
  {
  private:
@@ -723,8 +764,9 @@ MemoryAndCpuSettingPage::~MemoryAndCpuSettingPage()
   // Connect signals
   QObject::connect(categoryList_, &QListWidget::currentRowChanged,
    [this](int index) { onCategoryChanged(index); });
-  QObject::connect(buttonBox_, &QDialogButtonBox::accepted, dialog, &QDialog::accept);
+  QObject::connect(buttonBox_, &QDialogButtonBox::accepted, dialog, &ApplicationSettingDialog::accept);
   QObject::connect(buttonBox_, &QDialogButtonBox::rejected, dialog, &QDialog::reject);
+  QObject::connect(buttonBox_->button(QDialogButtonBox::Apply), &QPushButton::clicked, dialog, &ApplicationSettingDialog::saveSettings);
  }
 
  void ApplicationSettingDialog::Impl::onCategoryChanged(int index)
@@ -743,6 +785,30 @@ MemoryAndCpuSettingPage::~MemoryAndCpuSettingPage()
  ApplicationSettingDialog::~ApplicationSettingDialog()
  {
   delete impl_;
+ }
+
+ void ApplicationSettingDialog::loadSettings()
+ {
+     impl_->generalPage_->loadSettings();
+     impl_->importPage_->loadSettings();
+     impl_->previewPage_->loadSettings();
+     impl_->memoryPage_->loadSettings();
+ }
+
+ void ApplicationSettingDialog::saveSettings()
+ {
+     impl_->generalPage_->saveSettings();
+     impl_->importPage_->saveSettings();
+     impl_->previewPage_->saveSettings();
+     impl_->memoryPage_->saveSettings();
+     
+     ArtifactAppSettings::instance()->sync();
+ }
+
+ void ApplicationSettingDialog::accept()
+ {
+     saveSettings();
+     QDialog::accept();
  }
 
 // PluginSettingPage Implementation 

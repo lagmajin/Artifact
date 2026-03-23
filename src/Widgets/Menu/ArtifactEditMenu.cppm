@@ -8,6 +8,7 @@ module Artifact.Menu.Edit;
 import std;
 
 import Artifact.Project.Manager;
+import ApplicationSettingDialog;
 import Utils.Path;
 
 namespace Artifact {
@@ -173,7 +174,11 @@ namespace Artifact {
  void ArtifactEditMenu::Impl::handleInvertSelection() { qDebug() << "Invert Selection"; }
  void ArtifactEditMenu::Impl::handleSelectSameType() { qDebug() << "Select Same Type"; }
  void ArtifactEditMenu::Impl::handleFind() { qDebug() << "Find"; }
- void ArtifactEditMenu::Impl::handlePreferences() { qDebug() << "Preferences"; }
+ void ArtifactEditMenu::Impl::handlePreferences() { 
+  auto* dialog = new ApplicationSettingDialog(ArtifactApplicationManager::instance()->projectManager()->mainWindow());
+  dialog->setAttribute(Qt::WA_DeleteOnClose);
+  dialog->show();
+ }
  void ArtifactEditMenu::Impl::rebuildMenu() { /* No-op for now */ }
 
  W_OBJECT_IMPL(ArtifactEditMenu)

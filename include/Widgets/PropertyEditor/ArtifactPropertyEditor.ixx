@@ -18,6 +18,7 @@ export module Artifact.Widgets.PropertyEditor;
 import std;
 
 import Property.Abstract;
+import Artifact.Widgets.FontPicker;
 
 export namespace Artifact {
 
@@ -118,7 +119,7 @@ public:
     void setValueFromVariant(const QVariant& value) override;
 
 private:
-    QFontComboBox* comboBox_ = nullptr;
+    FontPickerWidget* fontPicker_ = nullptr;
 };
 
 class ArtifactPathPropertyEditor final : public ArtifactAbstractPropertyEditor {
