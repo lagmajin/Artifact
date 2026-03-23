@@ -7,7 +7,6 @@
 #include <cstring>
 #include <cstdint>
 #include <mutex>
-#include <unordered_map>
 #include <QImage>
 #include <QDebug>
 #include <QTransform>
@@ -33,6 +32,7 @@ import Core.Scale.Zoom;
 import Artifact.Render.DiligentDeviceManager;
 import Artifact.Render.ShaderManager;
 import Artifact.Render.PrimitiveRenderer2D;
+import Artifact.Render.Config;
 
 namespace Artifact
 {
@@ -54,6 +54,7 @@ namespace Artifact
   DiligentDeviceManager deviceManager_;
   ShaderManager shaderManager_;
   PrimitiveRenderer2D primitiveRenderer_;
+  std::unique_ptr<ArtifactCore::IRayTracingManager> rayTracingManager_;
 
   RefCntAutoPtr<ITexture> m_layerRT;
   mutable RefCntAutoPtr<ITexture> m_readbackStagingTex;
@@ -74,9 +75,6 @@ namespace Artifact
   int m_offlineHeight = 0;
 
   FloatColor clearColor_{ 0.10f, 0.10f, 0.10f, 1.0f };
-  const TEXTURE_FORMAT MAIN_RTV_FORMAT = TEX_FORMAT_RGBA8_UNORM_SRGB;
-  uint64_t m_frameCount = 0;
-  std::unordered_map<qint64, RefCntAutoPtr<ITexture>> m_textureCache;
 
   void initFrameQueries();
   void createLayerRT(QWidget* window);
@@ -113,6 +111,9 @@ namespace Artifact
   void panBy(float dx, float dy)         { primitiveRenderer_.panBy(dx, dy); }
   void resetView()                       { primitiveRenderer_.resetView(); }
   void fitToViewport(float margin)       { primitiveRenderer_.fitToViewport(margin); }
+  void setViewMatrix(const QMatrix4x4& view) { primitiveRenderer_.setViewMatrix(view); }
+  void setProjectionMatrix(const QMatrix4x4& proj) { primitiveRenderer_.setProjectionMatrix(proj); }
+  void setUseExternalMatrices(bool use)  { primitiveRenderer_.setUseExternalMatrices(use); }
   void zoomAroundViewportPoint(Detail::float2 pos, float newZoom)
   {
    primitiveRenderer_.zoomAroundViewportPoint(toDiligentFloat2(pos), newZoom);
@@ -204,11 +205,14 @@ namespace Artifact
     return;
    }
 
-  shaderManager_.initialize(deviceManager_.device(), MAIN_RTV_FORMAT);
+  shaderManager_.initialize(deviceManager_.device(), RenderConfig::MainRTVFormat);
   shaderManager_.createShaders();
   shaderManager_.createPSOs();
 
-  primitiveRenderer_.createBuffers(deviceManager_.device(), MAIN_RTV_FORMAT);
+  rayTracingManager_ = ArtifactCore::createRayTracingManager();
+  rayTracingManager_->initialize(deviceManager_.device());
+
+  primitiveRenderer_.createBuffers(deviceManager_.device(), RenderConfig::MainRTVFormat);
   primitiveRenderer_.setPSOs(shaderManager_);
   primitiveRenderer_.setContext(deviceManager_.immediateContext(),
                                 deviceManager_.swapChain());
@@ -223,11 +227,14 @@ namespace Artifact
   deviceManager_.initializeHeadless();
   if (!deviceManager_.isInitialized()) return;
 
-  shaderManager_.initialize(deviceManager_.device(), MAIN_RTV_FORMAT);
+  shaderManager_.initialize(deviceManager_.device(), RenderConfig::MainRTVFormat);
   shaderManager_.createShaders();
   shaderManager_.createPSOs();
 
-  primitiveRenderer_.createBuffers(deviceManager_.device(), MAIN_RTV_FORMAT);
+  rayTracingManager_ = ArtifactCore::createRayTracingManager();
+  rayTracingManager_->initialize(deviceManager_.device());
+
+  primitiveRenderer_.createBuffers(deviceManager_.device(), RenderConfig::MainRTVFormat);
   primitiveRenderer_.setPSOs(shaderManager_);
 
   TextureDesc TexDesc;
@@ -236,7 +243,7 @@ namespace Artifact
   TexDesc.Width     = static_cast<Uint32>(width);
   TexDesc.Height    = static_cast<Uint32>(height);
   TexDesc.MipLevels = 1;
-  TexDesc.Format    = MAIN_RTV_FORMAT;
+  TexDesc.Format    = RenderConfig::MainRTVFormat;
   TexDesc.BindFlags = BIND_RENDER_TARGET | BIND_SHADER_RESOURCE;
   deviceManager_.device()->CreateTexture(TexDesc, nullptr, &m_layerRT);
 
@@ -385,10 +392,10 @@ namespace Artifact
   deviceManager_.createSwapChain(window);
 
   if (!m_initialized) {
-   shaderManager_.initialize(deviceManager_.device(), MAIN_RTV_FORMAT);
+   shaderManager_.initialize(deviceManager_.device(), RenderConfig::MainRTVFormat);
    shaderManager_.createShaders();
    shaderManager_.createPSOs();
-   primitiveRenderer_.createBuffers(deviceManager_.device(), MAIN_RTV_FORMAT);
+   primitiveRenderer_.createBuffers(deviceManager_.device(), RenderConfig::MainRTVFormat);
    primitiveRenderer_.setPSOs(shaderManager_);
    m_initialized = true;
   }
@@ -512,10 +519,32 @@ namespace Artifact
   m_frameQueryInitialized = false;
  }
 
-  void ArtifactIRenderer::Impl::present()
+ void ArtifactIRenderer::Impl::present()
   {
    if (auto sc = deviceManager_.swapChain())
-    sc->Present();
+   {
+    try {
+     sc->Present();
+    } catch (const std::exception& ex) {
+     const QString msg = QString::fromLocal8Bit(ex.what());
+     qWarning() << "[ArtifactIRenderer] present() failed:" << msg;
+
+     const bool surfaceLost =
+         msg.contains(QStringLiteral("ERROR_SURFACE_LOST_KHR"), Qt::CaseInsensitive) ||
+         msg.contains(QStringLiteral("surface lost"), Qt::CaseInsensitive) ||
+         msg.contains(QStringLiteral("Failed to query physical device surface capabilities"), Qt::CaseInsensitive);
+
+     if (surfaceLost && widget_ && deviceManager_.device()) {
+      qWarning() << "[ArtifactIRenderer] attempting swapchain recreation after surface loss";
+      try {
+       recreateSwapChain(widget_);
+      } catch (const std::exception& recreateEx) {
+       qWarning() << "[ArtifactIRenderer] swapchain recreation failed:"
+                  << QString::fromLocal8Bit(recreateEx.what());
+      }
+     }
+    }
+   }
    else {
     static bool warned = false;
     if (!warned) {
@@ -570,6 +599,9 @@ namespace Artifact
  void ArtifactIRenderer::panBy(float dx, float dy)              { impl_->panBy(dx, dy); }
  void ArtifactIRenderer::resetView()                            { impl_->resetView(); }
  void ArtifactIRenderer::fitToViewport(float margin)            { impl_->fitToViewport(margin); }
+ void ArtifactIRenderer::setViewMatrix(const QMatrix4x4& view)  { impl_->setViewMatrix(view); }
+ void ArtifactIRenderer::setProjectionMatrix(const QMatrix4x4& proj) { impl_->setProjectionMatrix(proj); }
+ void ArtifactIRenderer::setUseExternalMatrices(bool use)       { impl_->setUseExternalMatrices(use); }
 
  void ArtifactIRenderer::zoomAroundViewportPoint(Detail::float2 viewportPos, float newZoom)
  { impl_->zoomAroundViewportPoint(viewportPos, newZoom); }
@@ -598,6 +630,8 @@ namespace Artifact
  { impl_->drawSprite(x, y, w, h); }
  void ArtifactIRenderer::drawSprite(Detail::float2 pos, Detail::float2 size)
  { impl_->drawSprite(toDiligentFloat2(pos), toDiligentFloat2(size)); }
+ void ArtifactIRenderer::drawSprite(float x, float y, float w, float h, Diligent::ITextureView* pSRV, float opacity)
+ { impl_->primitiveRenderer_.drawTextureLocal(x, y, w, h, pSRV, opacity); }
  void ArtifactIRenderer::drawSprite(float x, float y, float w, float h, const QImage& image, float opacity)
  { impl_->drawSpriteLocal(x, y, w, h, image, opacity); }
  void ArtifactIRenderer::drawSpriteTransformed(float x, float y, float w, float h, const QTransform& transform, const QImage& image, float opacity)
@@ -605,10 +639,16 @@ namespace Artifact
   // Direct delegation to primitive renderer for transformed sprite drawing
   impl_->primitiveRenderer_.drawSpriteTransformed(x, y, w, h, transform, image, opacity);
  }
+ void ArtifactIRenderer::drawSpriteTransformed(float x, float y, float w, float h, const QMatrix4x4& transform, const QImage& image, float opacity)
+ {
+  impl_->primitiveRenderer_.drawSpriteTransformed(x, y, w, h, transform, image, opacity);
+ }
  void ArtifactIRenderer::drawRectLocal(float x, float y, float w, float h, const FloatColor& color, float opacity)
  { impl_->drawRectLocal(x, y, w, h, color, opacity); }
  void ArtifactIRenderer::drawSolidRectTransformed(float x, float y, float w, float h, const QTransform& transform, const FloatColor& color, float opacity)
  { impl_->drawSolidRectTransformed(x, y, w, h, transform, color, opacity); }
+ void ArtifactIRenderer::drawSolidRectTransformed(float x, float y, float w, float h, const QMatrix4x4& transform, const FloatColor& color, float opacity)
+ { impl_->primitiveRenderer_.drawSolidRectTransformed(x, y, w, h, transform, color, opacity); }
  void ArtifactIRenderer::drawRectOutlineLocal(float x, float y, float w, float h, const FloatColor& color)
  { impl_->drawRectOutlineLocal(x, y, w, h, color); }
  void ArtifactIRenderer::drawThickLineLocal(Detail::float2 p1, Detail::float2 p2,
@@ -646,6 +686,8 @@ namespace Artifact
  { return impl_->deviceManager_.device(); }
  Diligent::RefCntAutoPtr<Diligent::IDeviceContext> ArtifactIRenderer::immediateContext() const
  { return impl_->deviceManager_.immediateContext(); }
+ ArtifactCore::IRayTracingManager* ArtifactIRenderer::rayTracingManager() const
+ { return impl_->rayTracingManager_.get(); }
  void ArtifactIRenderer::setOverrideRTV(Diligent::ITextureView* rtv)
  { impl_->primitiveRenderer_.setOverrideRTV(rtv); }
 

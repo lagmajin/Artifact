@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <QThread>
 #include <QElapsedTimer>
 #include <QMutexLocker>
@@ -23,6 +23,8 @@ import Frame.Rate;
 import Frame.Range;
 import Artifact.Composition.Abstract;
 import Artifact.Composition.InOutPoints;
+import AudioRenderer;
+import Audio.Segment;
 
 namespace Artifact {
 
@@ -63,6 +65,12 @@ public:
     QImage backBuffer_;
     QMutex bufferMutex_;
     
+    // オーディオ
+    std::unique_ptr<AudioRenderer> audioRenderer_;
+    int audioSampleRate_ = 48000;
+    float audioMasterVolume_ = 1.0f;
+    bool audioMasterMuted_ = false;
+    
     // タイミング
     QElapsedTimer elapsedTimer_;
     std::chrono::microseconds frameBudget_{0};
@@ -76,6 +84,7 @@ public:
         : owner_(owner)
     {
         workerThread_ = new QThread();
+        audioRenderer_ = std::make_unique<AudioRenderer>();
         // connect は別途 QObject::connect で記述
     }
     
@@ -90,6 +99,9 @@ public:
     
     void start() {
         if (!workerThread_->isRunning()) {
+            playing_ = true;
+            paused_ = false;
+            stopped_ = false;
             QObject::connect(workerThread_, &QThread::started, [this]() { onThreadStarted(); });
             QObject::connect(workerThread_, &QThread::finished, [this]() { onThreadFinished(); });
             workerThread_->start(QThread::TimeCriticalPriority);
@@ -106,6 +118,10 @@ public:
         paused_ = false;
         stopped_ = true;
         condition_.notify_one();
+        if (audioRenderer_) {
+            audioRenderer_->stop();
+            audioRenderer_->closeDevice();
+        }
     }
     
     void pause() {
@@ -137,6 +153,9 @@ public:
             
             // フレーム更新
             updateFrame();
+            
+            // オーディオ更新
+            updateAudio();
             
             // 経過時間計算
             auto loopEnd = std::chrono::steady_clock::now();
@@ -240,17 +259,59 @@ public:
         return frame;
     }
     
+    /// オーディオ更新
+    void updateAudio() {
+        if (!composition_ || !audioRenderer_) return;
+
+        if (!composition_->hasAudio()) {
+            if (audioRenderer_->isActive()) {
+                audioRenderer_->stop();
+                audioRenderer_->closeDevice();
+            }
+            return;
+        }
+        
+        // デバイスのオープン確認
+        if (!audioRenderer_->isActive()) {
+            if (audioRenderer_->openDevice("")) {
+                audioRenderer_->start();
+            } else {
+                return;
+            }
+        }
+
+        audioRenderer_->setMasterVolume(std::clamp(audioMasterVolume_, 0.0f, 2.0f) <= 0.0001f
+            ? -144.0f
+            : 20.0f * std::log10(std::clamp(audioMasterVolume_, 0.0f, 2.0f)));
+        audioRenderer_->setMute(audioMasterMuted_);
+        
+        // 1フレーム分のサンプル数を計算
+        int samplesPerFrame = static_cast<int>(audioSampleRate_ / frameRate_.framerate());
+        if (samplesPerFrame <= 0) return;
+        
+        AudioSegment segment;
+        if (composition_->getAudio(segment, FramePosition(currentFrame_), samplesPerFrame, audioSampleRate_)) {
+            audioRenderer_->enqueue(segment);
+        }
+    }
+    
     /// オーディオ同期
     void syncWithAudioClock() {
         if (!audioClockProvider_) return;
+        if (composition_ && !composition_->hasAudio()) return;
         
         double audioTime = audioClockProvider_();  // 秒
+
+        // 【修正】オーディオ側の時間がまったく進んでいない（0.0付近のまま）場合は、
+        //  開始直後や音声停止中のため、同期を行わないようスキップ
+        if (audioTime <= 0.001) return;
+
         double expectedTime = static_cast<double>(currentFrame_.load()) / frameRate_.framerate();
         double diff = audioTime - expectedTime;
         
         // 100ms 以上ずれていたら補正
         if (std::abs(diff) > 0.1) {
-            qDebug() << "[PlaybackEngine] Audio sync: diff =" << diff << "s, adjusting frame";
+            // qDebug() << "[PlaybackEngine] Audio sync: diff =" << diff << "s, adjusting frame";
             
             int64_t newFrame = static_cast<int64_t>(audioTime * frameRate_.framerate());
             currentFrame_ = std::clamp(newFrame, 
@@ -378,6 +439,9 @@ void ArtifactPlaybackEngine::togglePlayPause() {
 
 void ArtifactPlaybackEngine::goToFrame(const FramePosition& position) {
     impl_->currentFrame_ = position.framePosition();
+    if (impl_->audioRenderer_) {
+        impl_->audioRenderer_->clearBuffer();
+    }
     Q_EMIT frameChanged(position, QImage());
 }
 
@@ -451,6 +515,22 @@ ArtifactInOutPoints* ArtifactPlaybackEngine::inOutPoints() const {
 
 void ArtifactPlaybackEngine::setAudioClockProvider(const std::function<double()>& provider) {
     impl_->audioClockProvider_ = provider;
+}
+
+void ArtifactPlaybackEngine::setAudioMasterVolume(float volume) {
+    impl_->audioMasterVolume_ = std::clamp(volume, 0.0f, 2.0f);
+}
+
+float ArtifactPlaybackEngine::audioMasterVolume() const {
+    return impl_->audioMasterVolume_;
+}
+
+void ArtifactPlaybackEngine::setAudioMasterMuted(bool muted) {
+    impl_->audioMasterMuted_ = muted;
+}
+
+bool ArtifactPlaybackEngine::audioMasterMuted() const {
+    return impl_->audioMasterMuted_;
 }
 
 void ArtifactPlaybackEngine::setComposition(ArtifactCompositionPtr composition) {

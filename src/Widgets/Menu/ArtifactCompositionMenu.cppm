@@ -7,6 +7,7 @@ module;
 #include <QLineEdit>
 #include <QMessageBox>
 #include <QDateTime>
+#include <QTimer>
 #include <wobjectimpl.h>
 
 module Menu.Composition;
@@ -104,6 +105,12 @@ void ArtifactCompositionMenu::Impl::showCreate()
 {
  auto dialog = new CreateCompositionDialog(mainWindow_);
  if (dialog->exec()) {
+  const ArtifactCompositionInitParams params = dialog->acceptedInitParams();
+  QTimer::singleShot(0, mainWindow_ ? mainWindow_ : menu_, [params]() {
+   if (auto* service = ArtifactProjectService::instance()) {
+    service->createComposition(params);
+   }
+  });
  }
  dialog->deleteLater();
 }

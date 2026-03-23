@@ -109,6 +109,8 @@ public:
     
     // Audio clock provider (allow external modules to supply a clock)
     void setAudioClockProvider(const std::function<double()>& provider);
+    void setAudioMasterVolume(float volume);
+    void setAudioMasterMuted(bool muted);
     // Use forward declaration to avoid importing AudioClockProvider header here
     void setPlaybackClockProvider(const std::function<double()>& provider);
 

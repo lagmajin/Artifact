@@ -1,4 +1,4 @@
-﻿// ReSharper disable All
+// ReSharper disable All
 module;
 
 #include <QJsonDocument>
@@ -187,7 +187,9 @@ void ArtifactAbstractComposition::Impl::removeLayer(const LayerID& id)
     if (position_ == position) {
         return;
     }
-    goToFrame(position.framePosition());
+    // Playback updates only need the composition's current frame state.
+    // Layer propagation is handled by goToFrame() for explicit timeline edits/seeks.
+    position_ = position;
  }
 
  const FramePosition ArtifactAbstractComposition::Impl::framePosition() const
@@ -401,6 +403,41 @@ bool ArtifactAbstractComposition::hasVideo() const
 bool ArtifactAbstractComposition::hasAudio() const
 {
   return impl_->hasAudio();
+}
+
+bool ArtifactAbstractComposition::getAudio(AudioSegment &outSegment, const FramePosition &start,
+                                            int frameCount, int sampleRate)
+{
+    bool hasAnyAudio = false;
+    
+    // Prepare output segment
+    if (outSegment.channelCount() < 2) {
+        outSegment.channelData.resize(2);
+    }
+    outSegment.sampleRate = sampleRate;
+    outSegment.setFrameCount(frameCount);
+    outSegment.zero();
+
+    AudioSegment layerSegment;
+    for (auto &layer : impl_->layerMultiIndex_) {
+        if (layer && layer->isActiveAt(start) && layer->hasAudio()) {
+            if (layer->getAudio(layerSegment, start, frameCount, sampleRate)) {
+                // Simple mix (Addition)
+                int chCount = std::min(outSegment.channelCount(), layerSegment.channelCount());
+                int fCount = std::min(outSegment.frameCount(), layerSegment.frameCount());
+                
+                for (int ch = 0; ch < chCount; ++ch) {
+                    float* outData = outSegment.channelData[ch].data();
+                    const float* layerData = layerSegment.channelData[ch].constData();
+                    for (int i = 0; i < fCount; ++i) {
+                        outData[i] += layerData[i];
+                    }
+                }
+                hasAnyAudio = true;
+            }
+        }
+    }
+    return hasAnyAudio;
 }
 
  QVector<Artifact::ArtifactAbstractLayerPtr> ArtifactAbstractComposition::allLayer()

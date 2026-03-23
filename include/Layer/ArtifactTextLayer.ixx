@@ -50,6 +50,7 @@ class ArtifactTextLayer : public ArtifactAbstractLayer {
 private:
     class Impl;
     Impl* impl_;
+    void markDirty();
 public:
     ArtifactTextLayer();
     ~ArtifactTextLayer();

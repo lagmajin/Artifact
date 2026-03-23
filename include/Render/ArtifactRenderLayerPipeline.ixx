@@ -1,16 +1,13 @@
-﻿module;
+module;
 #include <DiligentCore/Common/interface/RefCntAutoPtr.hpp>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/Texture.h>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/DeviceContext.h>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/RenderDevice.h>
-
-//#include <QVector>
 #include "../../../ArtifactCore/include/Define/DllExportMacro.hpp"
 
 export module Artifact.Render.Pipeline;
 
 import std;
-
 import Layer.Blend;
 import Artifact.Layer.Abstract;
 import Graphics.LayerBlendPipeline;
@@ -42,17 +39,22 @@ export namespace Artifact
    ITextureView* outputRTV
   );
 
-   ITextureView* accumSRV() const;
-   ITextureView* accumUAV() const;
-   ITextureView* tempSRV() const;
-   ITextureView* tempUAV() const;
-   ITextureView* tempRTV() const;
-   Uint32 width() const;
-   Uint32 height() const;
+  ITextureView* accumSRV() const;
+  ITextureView* accumUAV() const;
+  ITextureView* accumRTV() const;
+  ITextureView* tempSRV() const;
+  ITextureView* tempUAV() const;
+  ITextureView* tempRTV() const;
+  ITextureView* layerSRV() const;
+  ITextureView* layerUAV() const;
+  ITextureView* layerRTV() const;
+  Uint32 width() const;
+  Uint32 height() const;
 
-  private:
-  bool createTextures(IRenderDevice* device, Uint32 width, Uint32 height, TEXTURE_FORMAT format);
   void swapAccumAndTemp();
+
+ private:
+  bool createTextures(IRenderDevice* device, Uint32 width, Uint32 height, TEXTURE_FORMAT format);
 
   struct Impl;
   Impl* impl_;

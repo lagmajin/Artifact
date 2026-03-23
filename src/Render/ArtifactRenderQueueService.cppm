@@ -1757,4 +1757,65 @@ namespace Artifact
     void ArtifactRenderQueueService::setQueueReorderedCallback(std::function<void(int, int)> callback) {
         impl_->queueReordered = callback;
     }
+
+    QJsonArray ArtifactRenderQueueService::toJson() const {
+        QJsonArray arr;
+        const int count = impl_->queueManager.jobCount();
+        for (int i = 0; i < count; ++i) {
+            const auto job = impl_->queueManager.getJob(i);
+            QJsonObject obj;
+            obj["compositionId"] = job.compositionId.toString();
+            obj["compositionName"] = job.compositionName;
+            obj["outputPath"] = job.outputPath;
+            obj["outputFormat"] = job.outputFormat;
+            obj["codec"] = job.codec;
+            obj["encoderBackend"] = job.encoderBackend;
+            obj["resolutionWidth"] = job.resolutionWidth;
+            obj["resolutionHeight"] = job.resolutionHeight;
+            obj["frameRate"] = job.frameRate;
+            obj["bitrate"] = job.bitrate;
+            obj["startFrame"] = job.startFrame;
+            obj["endFrame"] = job.endFrame;
+            obj["overlayOffsetX"] = static_cast<double>(job.overlayOffsetX);
+            obj["overlayOffsetY"] = static_cast<double>(job.overlayOffsetY);
+            obj["overlayScale"] = static_cast<double>(job.overlayScale);
+            obj["overlayRotationDeg"] = static_cast<double>(job.overlayRotationDeg);
+            arr.append(obj);
+        }
+        return arr;
+    }
+
+    void ArtifactRenderQueueService::fromJson(const QJsonArray& arr) {
+        impl_->queueManager.removeAllJobs();
+        for (const auto& val : arr) {
+            if (!val.isObject()) continue;
+            const QJsonObject obj = val.toObject();
+
+            ArtifactRenderJob job;
+            job.compositionId = ArtifactCore::CompositionID(obj["compositionId"].toString());
+            job.compositionName = obj["compositionName"].toString();
+            job.outputPath = obj["outputPath"].toString();
+            job.outputFormat = obj["outputFormat"].toString();
+            job.codec = obj["codec"].toString();
+            job.encoderBackend = obj["encoderBackend"].toString("auto");
+            job.resolutionWidth = obj["resolutionWidth"].toInt(1920);
+            job.resolutionHeight = obj["resolutionHeight"].toInt(1080);
+            job.frameRate = obj["frameRate"].toDouble(30.0);
+            job.bitrate = obj["bitrate"].toInt(8000);
+            job.startFrame = obj["startFrame"].toInt(0);
+            job.endFrame = obj["endFrame"].toInt(100);
+            job.overlayOffsetX = static_cast<float>(obj["overlayOffsetX"].toDouble(0.0));
+            job.overlayOffsetY = static_cast<float>(obj["overlayOffsetY"].toDouble(0.0));
+            job.overlayScale = static_cast<float>(obj["overlayScale"].toDouble(1.0));
+            job.overlayRotationDeg = static_cast<float>(obj["overlayRotationDeg"].toDouble(0.0));
+            job.status = ArtifactRenderJob::Status::Pending;
+            job.progress = 0;
+
+            impl_->queueManager.addJob(job);
+        }
+    }
+
+    void ArtifactRenderQueueService::clearQueueForLoad() {
+        impl_->queueManager.removeAllJobs();
+    }
 };

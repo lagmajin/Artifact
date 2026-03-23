@@ -2037,7 +2037,12 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
     addTrackedNewAction(newMenu, QStringLiteral("new_composition"), QStringLiteral("Composition..."), [this]() {
          auto dialog = new CreateCompositionDialog(this);
          if (dialog->exec()) {
-             // Handled internally by dialog
+             const ArtifactCompositionInitParams params = dialog->acceptedInitParams();
+             QTimer::singleShot(0, this, [params]() {
+                 if (auto* svc = ArtifactProjectService::instance()) {
+                     svc->createComposition(params);
+                 }
+             });
          }
          dialog->deleteLater();
     }, loadProjectViewIcon(QStringLiteral("MaterialVS/blue/movie.svg")));
@@ -2774,7 +2779,12 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     connect(impl_->toolBox, &ArtifactProjectManagerToolBox::newCompositionRequested, [this]() {
          auto dialog = new CreateCompositionDialog(this);
          if (dialog->exec()) {
-             // The dialog itself handles creating the composition via ArtifactProjectService
+             const ArtifactCompositionInitParams params = dialog->acceptedInitParams();
+             QTimer::singleShot(0, this, [params]() {
+                 if (auto* svc = ArtifactProjectService::instance()) {
+                     svc->createComposition(params);
+                 }
+             });
          }
          dialog->deleteLater();
     });

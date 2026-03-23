@@ -31,6 +31,8 @@ namespace Artifact
    return QStringLiteral("Drops: -");
   case ArtifactStatusBar::Item::TimelineDebug:
    return QStringLiteral("[Timeline: Ready]");
+  case ArtifactStatusBar::Item::Console:
+   return QStringLiteral("Logs: 0E 0W");
   }
   return QString();
  }
@@ -49,9 +51,11 @@ namespace Artifact
   labels_[itemIndex(Item::FPS)] = new QLabel(defaultTextForItem(Item::FPS), this);
   labels_[itemIndex(Item::Memory)] = new QLabel(defaultTextForItem(Item::Memory), this);
   labels_[itemIndex(Item::Drops)] = new QLabel(defaultTextForItem(Item::Drops), this);
+  labels_[itemIndex(Item::Console)] = new QLabel(defaultTextForItem(Item::Console), this);
 
   addWidget(labels_[itemIndex(Item::TimelineDebug)]);
   addWidget(labels_[itemIndex(Item::Project)], 1);
+  addPermanentWidget(labels_[itemIndex(Item::Console)]);
   addPermanentWidget(labels_[itemIndex(Item::Coordinates)]);
   addPermanentWidget(labels_[itemIndex(Item::Frame)]);
   addPermanentWidget(labels_[itemIndex(Item::Zoom)]);
@@ -126,6 +130,14 @@ namespace Artifact
   }
  }
 
+ void ArtifactStatusBar::setConsoleSummary(const int errors, const int warnings)
+ {
+  if (auto* label = itemLabel(Item::Console))
+  {
+   label->setText(QStringLiteral("Logs: %1E %2W").arg(errors).arg(warnings));
+  }
+ }
+
  void ArtifactStatusBar::setItemVisible(const Item item, const bool visible)
  {
   if (auto* label = itemLabel(item))
@@ -145,7 +157,7 @@ namespace Artifact
 
  void ArtifactStatusBar::setAllItemsVisible(const bool visible)
  {
-  for (const auto item : { Item::Zoom, Item::Coordinates, Item::Frame, Item::FPS, Item::Memory, Item::Project, Item::Drops, Item::TimelineDebug })
+  for (const auto item : { Item::Zoom, Item::Coordinates, Item::Frame, Item::FPS, Item::Memory, Item::Project, Item::Drops, Item::TimelineDebug, Item::Console })
   {
    setItemVisible(item, visible);
   }
@@ -185,6 +197,7 @@ namespace Artifact
   case Item::Project: return 5;
   case Item::Drops: return 6;
   case Item::TimelineDebug: return 7;
+  case Item::Console: return 8;
   }
   return -1;
  }
@@ -201,13 +214,14 @@ namespace Artifact
   case Item::Project: return QStringLiteral("Project");
   case Item::Drops: return QStringLiteral("Drops");
   case Item::TimelineDebug: return QStringLiteral("Timeline Debug");
+  case Item::Console: return QStringLiteral("Console");
   }
   return QStringLiteral("Unknown");
  }
 
  void ArtifactStatusBar::rebuildVisibilityMenu(QMenu& menu)
  {
-  for (const auto item : { Item::Project, Item::Coordinates, Item::Frame, Item::Zoom, Item::FPS, Item::Memory, Item::Drops, Item::TimelineDebug })
+  for (const auto item : { Item::Project, Item::Coordinates, Item::Frame, Item::Zoom, Item::FPS, Item::Memory, Item::Drops, Item::TimelineDebug, Item::Console })
   {
    QAction* action = menu.addAction(itemTitle(item));
    action->setCheckable(true);

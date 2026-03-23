@@ -7,6 +7,7 @@ module;
 #include <QDir>
 #include <QFileInfo>
 #include <QVariant>
+#include <QLoggingCategory>
 #include <opencv2/opencv.hpp>
 #include <opencv2/videoio.hpp>
 #include <mutex>
@@ -52,13 +53,16 @@ module Artifact.Layer.Video;
 
 
 import Artifact.Layer.Video;
+import Artifact.Project.Manager;
 import Utils.String.UniString;
 import Utils.Id;
-import Property.Abstract;
 import Property.Group;
+import Property;
 import MediaPlaybackController;
 
 namespace Artifact {
+
+Q_LOGGING_CATEGORY(videoLayerLog, "artifact.layer.video")
 
 // ============================================================================
 // FrameCache - LRU cache for decoded frames
@@ -131,10 +135,13 @@ public:
     FrameCache frameCache_;
     VideoStreamInfo streamInfo_;
     
+    // Audio buffering
+    std::deque<float> audioBufferL_;
+    std::deque<float> audioBufferR_;
+    std::mutex audioMutex_;
+    
     QString sourcePath_;
     bool isLoaded_ = false;
-    std::atomic<bool> isDecoding_{false};
-    std::atomic<int64_t> decodingFrame_{-1};
     
     double playbackSpeed_ = 1.0;
     bool loopEnabled_ = true;
@@ -147,7 +154,37 @@ public:
     bool videoEnabled_ = true;
     
     QImage currentQImage_;
+    int64_t lastDecodedFrame_ = -1;
+    bool debugFrameSaved_ = false;
     
+    void saveDebugFrame(const QImage& frame, int64_t frameNumber) {
+        if (frameNumber != 0 || debugFrameSaved_ || frame.isNull()) {
+            return;
+        }
+        debugFrameSaved_ = true;
+        QString assetsPath = ArtifactProjectManager::getInstance().currentProjectAssetsPath();
+        
+        // Fallback if no project assets path is available
+        if (assetsPath.isEmpty()) {
+            assetsPath = QDir::currentPath();
+            qDebug() << "[VideoLayer] currentProjectAssetsPath is empty, falling back to current path:" << assetsPath;
+        }
+
+        QDir assetsDir(assetsPath);
+        if (!assetsDir.exists()) {
+            assetsDir.mkpath(QStringLiteral("."));
+        }
+        
+        // If we are at the root or current path, we might want to ensure an Assets folder exists
+        // but let's just save it to whatever assetsDir is for now to be sure it saves somewhere.
+        const QString savePath = assetsDir.filePath(QStringLiteral("debug_decode_frame_0.png"));
+        if (frame.save(savePath, "PNG")) {
+            qDebug() << "[VideoLayer] Debug frame 0 SUCCESS saved to:" << savePath;
+        } else {
+            qWarning() << "[VideoLayer] Debug frame 0 FAILED to save to:" << savePath;
+        }
+    }
+
     Impl() : playbackController_(std::make_unique<ArtifactCore::MediaPlaybackController>()), frameCache_(30) {}
     ~Impl() = default;
 };
@@ -195,8 +232,10 @@ void ArtifactVideoLayer::setHasVideo(bool hasVideo)
 bool ArtifactVideoLayer::loadFromPath(const QString& path)
 {
     const QString normalizedPath = QFileInfo(path).absoluteFilePath();
+    qDebug() << "[VideoLayer] loadFromPath:" << normalizedPath;
+
     if (!impl_->playbackController_->openMediaFile(normalizedPath)) {
-        qWarning() << "[VideoLayer] Failed to load video:" << path;
+        qWarning() << "[VideoLayer] Failed to openMediaFile:" << path;
         impl_->isLoaded_ = false;
         return false;
     }
@@ -233,10 +272,11 @@ bool ArtifactVideoLayer::loadFromPath(const QString& path)
     
     impl_->frameCache_.clear();
 
-    const QImage firstFrame = impl_->playbackController_->getVideoFrameAtFrame(0);
+    const QImage firstFrame = impl_->playbackController_->getVideoFrameAtFrameDirect(0);
     impl_->currentQImage_ = firstFrame;
     if (!firstFrame.isNull()) {
         impl_->frameCache_.put(0, firstFrame);
+        impl_->saveDebugFrame(firstFrame, 0); // Save debug frame here
         if (impl_->streamInfo_.width <= 0 || impl_->streamInfo_.height <= 0) {
             impl_->streamInfo_.width = firstFrame.width();
             impl_->streamInfo_.height = firstFrame.height();
@@ -272,13 +312,27 @@ const VideoStreamInfo& ArtifactVideoLayer::streamInfo() const
 void ArtifactVideoLayer::seekToFrame(int64_t frame)
 {
     if (!impl_->isLoaded_) return;
-    const int64_t startFrame = inPoint();
-    const int64_t endFrame = outPoint();
-    frame = std::max(startFrame, std::min(frame, endFrame - 1));
+    
+    // Convert global timeline frame to source frame
+    // Timeline Position at inPoint() corresponds to source frame startTime()
+    const int64_t startFrameOnTimeline = inPoint();
+    const int64_t endFrameOnTimeline = outPoint();
+    frame = std::max(startFrameOnTimeline, std::min(frame, endFrameOnTimeline - 1));
     
     ArtifactAbstractLayer::goToFrame(frame);
-    impl_->playbackController_->seekToFrame(frame);
-    decodeCurrentFrame();
+    
+    {
+        std::lock_guard<std::mutex> lock(impl_->audioMutex_);
+        impl_->audioBufferL_.clear();
+        impl_->audioBufferR_.clear();
+    }
+    
+    const int64_t sourceFrame = currentFrame();
+    const bool hasKnownFrameCount = impl_->streamInfo_.frameCount > 0;
+    if (sourceFrame >= 0 && (!hasKnownFrameCount || sourceFrame < impl_->streamInfo_.frameCount)) {
+        impl_->playbackController_->seekToFrame(sourceFrame);
+        decodeCurrentFrame();
+    }
 }
 
 void ArtifactVideoLayer::seekToTime(double time)
@@ -318,19 +372,21 @@ VideoFrameInfo ArtifactVideoLayer::currentFrameInfo() const
 // === Frame Decoding ===
 void ArtifactVideoLayer::decodeCurrentFrame()
 {
-    if (!impl_->isLoaded_) return;
-    
+    if (!impl_->isLoaded_) {
+        qCDebug(videoLayerLog) << "[VideoLayer] decodeCurrentFrame: not loaded, skipping";
+        return;
+    }
+
     const int64_t targetFrame = currentFrame();
     
-    // Debug: Trace the mapping from Timeline -> Source
-    // globalFrame (frameNumber) -> currentFrame_ (relative)
-    qDebug() << "[VideoLayer::decodeCurrentFrame] LayerID:" << id().toString()
-             << "Target Source Frame:" << targetFrame
-             << "InPoint:" << inPoint()
-             << "StartTime:" << startTime().framePosition();
+    // Check if we've already decoded this frame to avoid redundant work/logs
+    if (targetFrame == impl_->lastDecodedFrame_ && !impl_->currentQImage_.isNull()) {
+        return;
+    }
 
-    if (targetFrame < 0 || targetFrame >= impl_->streamInfo_.frameCount) {
-        qWarning() << "[VideoLayer] Target frame out of bounds:" << targetFrame;
+    if (targetFrame < 0 || (impl_->streamInfo_.frameCount > 0 && targetFrame >= impl_->streamInfo_.frameCount)) {
+        impl_->currentQImage_ = QImage();
+        impl_->lastDecodedFrame_ = targetFrame;
         return;
     }
     
@@ -338,44 +394,25 @@ void ArtifactVideoLayer::decodeCurrentFrame()
     QImage cachedFrame;
     if (impl_->frameCache_.get(targetFrame, cachedFrame)) {
         impl_->currentQImage_ = cachedFrame;
+        impl_->lastDecodedFrame_ = targetFrame;
+        impl_->saveDebugFrame(cachedFrame, targetFrame);
         return;
     }
-    
-    // Prevent thread pool exhaustion and infinite loops
-    if (impl_->isDecoding_) {
-        return;
+
+    // Decode directly through FFmpeg-backed controller path.
+    QImage decoded = impl_->playbackController_->getVideoFrameAtFrameDirect(targetFrame);
+
+    if (!decoded.isNull()) {
+        impl_->currentQImage_ = decoded;
+        impl_->lastDecodedFrame_ = targetFrame;
+        impl_->frameCache_.put(targetFrame, decoded);
+        impl_->saveDebugFrame(decoded, targetFrame);
+        qDebug() << "[VideoLayer] decoded frame" << targetFrame << "size=" << decoded.width() << "x" << decoded.height();
+    } else {
+        qWarning() << "[VideoLayer] DECODE FAILED for frame" << targetFrame;
+        impl_->currentQImage_ = QImage();
+        impl_->lastDecodedFrame_ = targetFrame; // Mark as attempted to avoid immediate retry spam
     }
-    
-    impl_->isDecoding_ = true;
-    impl_->decodingFrame_ = targetFrame;
-    
-    QPointer<ArtifactVideoLayer> self(this);
-    QtConcurrent::run([this, self, targetFrame]() {
-        if (!self) return;
-        
-        QImage decoded;
-        int64_t currentDecodedFrame = impl_->playbackController_->getCurrentFrame();
-        
-        // Optimize: If we just need the next sequential frame, don't seek!
-        if (targetFrame == currentDecodedFrame || targetFrame == currentDecodedFrame + 1) {
-            decoded = impl_->playbackController_->getNextVideoFrame();
-        } else {
-            decoded = impl_->playbackController_->getVideoFrameAtFrame(targetFrame);
-        }
-        
-        QMetaObject::invokeMethod(this, [this, self, targetFrame, decoded]() {
-            if (!self) return;
-            impl_->isDecoding_ = false;
-            
-            if (!decoded.isNull()) {
-                impl_->frameCache_.put(targetFrame, decoded);
-                if (currentFrame() == targetFrame) {
-                    impl_->currentQImage_ = decoded;
-                    Q_EMIT changed();
-                }
-            }
-        }, Qt::QueuedConnection);
-    });
 }
 
 QImage ArtifactVideoLayer::currentFrameToQImage() const
@@ -411,9 +448,10 @@ void ArtifactVideoLayer::preloadFrames(int64_t startFrame, int count)
 
     for (int i = 0; i < count; ++i) {
         int64_t frame = startFrame + i;
-        if (frame >= startIdx && (endIdx < 0 || frame < endIdx)) {
+        const bool hasKnownFrameCount = impl_->streamInfo_.frameCount > 0;
+        if (frame >= startIdx && (endIdx < 0 || frame < endIdx) && (!hasKnownFrameCount || frame < impl_->streamInfo_.frameCount)) {
             if (!impl_->frameCache_.contains(frame)) {
-                const QImage frameData = impl_->playbackController_->getVideoFrameAtFrame(frame);
+                const QImage frameData = impl_->playbackController_->getVideoFrameAtFrameDirect(frame);
                 if (!frameData.isNull()) {
                     impl_->frameCache_.put(frame, frameData);
                 }
@@ -643,26 +681,72 @@ void ArtifactVideoLayer::draw(ArtifactIRenderer* renderer)
 {
     if (!impl_->videoEnabled_ || !impl_->isLoaded_) return;
     
-    const int64_t currentTarget = currentFrame();
-    
-    // Check if we need to request a new frame
-    if (!impl_->frameCache_.contains(currentTarget) && impl_->decodingFrame_ != currentTarget) {
+    // Decode current frame if needed
+    if (impl_->currentQImage_.isNull()) {
         decodeCurrentFrame();
-    } else if (impl_->frameCache_.contains(currentTarget)) {
-        // If it's cached, ensure currentQImage_ is up to date
-        impl_->frameCache_.get(currentTarget, impl_->currentQImage_);
     }
     
     if (impl_->currentQImage_.isNull()) return;
     
     auto size = sourceSize();
-    renderer->drawSpriteTransformed(0.0f, 0.0f, (float)size.width, (float)size.height, getGlobalTransform(), impl_->currentQImage_, this->opacity());
+    // Use drawSprite with identity transform or drawSpriteTransformed with global transform
+    // Note: drawLayerForCompositionView usually handles the transform, but 
+    // if drawn directly this ensures it still honors its position.
+    renderer->drawSpriteTransformed(0.0f, 0.0f, (float)size.width, (float)size.height, 
+                                     getGlobalTransform(), impl_->currentQImage_, this->opacity());
 }
 
 void ArtifactVideoLayer::goToFrame(int64_t frameNumber)
 {
     ArtifactAbstractLayer::goToFrame(frameNumber);
     decodeCurrentFrame();
+}
+
+bool ArtifactVideoLayer::getAudio(ArtifactCore::AudioSegment &outSegment, const FramePosition &start,
+                                    int frameCount, int sampleRate)
+{
+    if (!hasAudio() || !impl_->isLoaded_) return false;
+
+    std::lock_guard<std::mutex> lock(impl_->audioMutex_);
+
+    // Check if we need to fetch more data
+    while (impl_->audioBufferL_.size() < (size_t)frameCount) {
+        QByteArray rawAudio = impl_->playbackController_->getNextAudioFrame();
+        if (rawAudio.isEmpty()) break;
+
+        // Convert raw audio (S16 Stereo 44100Hz assumed for now) to float and push to buffer
+        // TODO: Use actual format from MediaAudioDecoder
+        const int16_t* samples = reinterpret_cast<const int16_t*>(rawAudio.constData());
+        int sampleCount = rawAudio.size() / sizeof(int16_t);
+        
+        for (int i = 0; i < sampleCount; i += 2) {
+            impl_->audioBufferL_.push_back(samples[i] / 32768.0f);
+            if (i + 1 < sampleCount) {
+                impl_->audioBufferR_.push_back(samples[i + 1] / 32768.0f);
+            } else {
+                impl_->audioBufferR_.push_back(samples[i] / 32768.0f);
+            }
+        }
+    }
+
+    if (impl_->audioBufferL_.empty()) return false;
+
+    // Fill outSegment
+    int actualFrames = std::min((int)impl_->audioBufferL_.size(), frameCount);
+    outSegment.sampleRate = sampleRate;
+    outSegment.layout = ArtifactCore::AudioChannelLayout::Stereo;
+    outSegment.channelData.resize(2);
+    outSegment.channelData[0].resize(actualFrames);
+    outSegment.channelData[1].resize(actualFrames);
+
+    for (int i = 0; i < actualFrames; ++i) {
+        outSegment.channelData[0][i] = impl_->audioBufferL_.front() * (float)impl_->audioVolume_;
+        outSegment.channelData[1][i] = impl_->audioBufferR_.front() * (float)impl_->audioVolume_;
+        impl_->audioBufferL_.pop_front();
+        impl_->audioBufferR_.pop_front();
+    }
+
+    return true;
 }
 
 bool ArtifactVideoLayer::hasVideo() const
@@ -675,36 +759,29 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactVideoLayer::getLayerPropertyGro
     auto groups = ArtifactAbstractLayer::getLayerPropertyGroups();
     ArtifactCore::PropertyGroup videoGroup(QStringLiteral("Video"));
 
-    auto makeProp = [](const QString& name, ArtifactCore::PropertyType type, const QVariant& value, int priority = 0) {
-        auto p = std::make_shared<ArtifactCore::AbstractProperty>();
-        p->setName(name);
-        p->setType(type);
-        p->setValue(value);
-        p->setDisplayPriority(priority);
-        return p;
-    };
-
-    videoGroup.addProperty(makeProp(QStringLiteral("video.sourcePath"), ArtifactCore::PropertyType::String, sourcePath(), -120));
-    auto speedProp = makeProp(QStringLiteral("video.playbackSpeed"), ArtifactCore::PropertyType::Float, playbackSpeed(), -110);
-    speedProp->setHardRange(0.1, 8.0);
-    speedProp->setSoftRange(0.25, 2.0);
-    speedProp->setStep(0.05);
-    speedProp->setUnit(QStringLiteral("x"));
-    videoGroup.addProperty(speedProp);
-    videoGroup.addProperty(makeProp(QStringLiteral("video.loopEnabled"), ArtifactCore::PropertyType::Boolean, isLoopEnabled(), -100));
-    auto volumeProp = makeProp(QStringLiteral("video.audioVolume"), ArtifactCore::PropertyType::Float, audioVolume(), -90);
-    volumeProp->setHardRange(0.0, 1.0);
-    volumeProp->setSoftRange(0.0, 1.0);
-    volumeProp->setStep(0.01);
-    volumeProp->setUnit(QStringLiteral("linear"));
-    videoGroup.addProperty(volumeProp);
-    videoGroup.addProperty(makeProp(QStringLiteral("video.audioMuted"), ArtifactCore::PropertyType::Boolean, isAudioMuted(), -80));
-    videoGroup.addProperty(makeProp(QStringLiteral("video.audioEnabled"), ArtifactCore::PropertyType::Boolean, hasAudio(), -70));
-    videoGroup.addProperty(makeProp(QStringLiteral("video.videoEnabled"), ArtifactCore::PropertyType::Boolean, hasVideo(), -60));
-    auto proxyProp = makeProp(QStringLiteral("video.proxyQuality"), ArtifactCore::PropertyType::Integer, static_cast<int>(proxyQuality()), -50);
-    proxyProp->setHardRange(0, 3);
-    proxyProp->setTooltip(QStringLiteral("0=None, 1=Quarter, 2=Half, 3=Full"));
-    videoGroup.addProperty(proxyProp);
+    videoGroup.addProperty(ArtifactCore::Property(QStringLiteral("video.sourcePath"), sourcePath()));
+    
+    videoGroup.addProperty(ArtifactCore::Property(QStringLiteral("video.playbackSpeed"), (float)playbackSpeed())
+        .setHardRange(0.1, 8.0)
+        .setSoftRange(0.25, 2.0)
+        .setStep(0.05)
+        .setUnit(QStringLiteral("x")));
+        
+    videoGroup.addProperty(ArtifactCore::Property(QStringLiteral("video.loopEnabled"), isLoopEnabled()));
+    
+    videoGroup.addProperty(ArtifactCore::Property(QStringLiteral("video.audioVolume"), (float)audioVolume())
+        .setHardRange(0.0, 1.0)
+        .setSoftRange(0.0, 1.0)
+        .setStep(0.01)
+        .setUnit(QStringLiteral("linear")));
+        
+    videoGroup.addProperty(ArtifactCore::Property(QStringLiteral("video.audioMuted"), isAudioMuted()));
+    videoGroup.addProperty(ArtifactCore::Property(QStringLiteral("video.audioEnabled"), hasAudio()));
+    videoGroup.addProperty(ArtifactCore::Property(QStringLiteral("video.videoEnabled"), hasVideo()));
+    
+    videoGroup.addProperty(ArtifactCore::Property(QStringLiteral("video.proxyQuality"), (int)proxyQuality())
+        .setHardRange(0, 3)
+        .setTooltip(QStringLiteral("0=None, 1=Quarter, 2=Half, 3=Full")));
 
     groups.push_back(videoGroup);
     return groups;

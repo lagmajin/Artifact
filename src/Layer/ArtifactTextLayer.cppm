@@ -10,6 +10,12 @@
 #include <QSize>
 #include <QVariant>
 #include <QTextOption>
+#include <QTextDocument>
+#include <QAbstractTextDocumentLayout>
+#include <QTextBlock>
+#include <QTextLayout>
+#include <QTextFrame>
+#include <QTextFragment>
 #include <opencv2/opencv.hpp>
 #include <opencv2/imgproc.hpp>
 
@@ -72,6 +78,18 @@ public:
     TextStyle textStyle_;
     ParagraphStyle paragraphStyle_;
     QImage renderedImage_;
+    bool isDirty_ = true;
+    
+    // Cache key to detect if we actually need to re-render
+    struct CacheKey {
+        UniString text;
+        TextStyle style;
+        ParagraphStyle paragraph;
+        bool operator==(const CacheKey& o) const {
+            return text == o.text && style == o.style && paragraph == o.paragraph;
+        }
+    };
+    std::optional<CacheKey> lastCacheKey_;
 
     Impl();
 };
@@ -89,7 +107,11 @@ ArtifactTextLayer::ArtifactTextLayer()
     : ArtifactAbstractLayer()
     , impl_(new Impl())
 {
-    updateImage();
+    // Defer expensive text rasterization until the layer is actually drawn.
+    impl_->renderedImage_ = QImage(1, 1, QImage::Format_ARGB32_Premultiplied);
+    impl_->renderedImage_.fill(Qt::transparent);
+    impl_->isDirty_ = true;
+    setSourceSize(Size_2D(1, 1));
 }
 
 ArtifactTextLayer::~ArtifactTextLayer()
@@ -97,10 +119,17 @@ ArtifactTextLayer::~ArtifactTextLayer()
     delete impl_;
 }
 
+void ArtifactTextLayer::markDirty()
+{
+    if (impl_) {
+        impl_->isDirty_ = true;
+    }
+}
+
 void ArtifactTextLayer::setText(const UniString& text)
 {
     impl_->text_ = text;
-    updateImage();
+    markDirty();
 }
 
 UniString ArtifactTextLayer::text() const
@@ -112,7 +141,7 @@ void ArtifactTextLayer::setFontSize(float size)
 {
     if (size <= 0.0f) size = 1.0f;
     impl_->textStyle_.fontSize = size;
-    updateImage();
+    markDirty();
 }
 
 float ArtifactTextLayer::fontSize() const
@@ -123,7 +152,7 @@ float ArtifactTextLayer::fontSize() const
 void ArtifactTextLayer::setFontFamily(const UniString& family)
 {
     impl_->textStyle_.fontFamily = family;
-    updateImage();
+    markDirty();
 }
 
 UniString ArtifactTextLayer::fontFamily() const
@@ -134,7 +163,7 @@ UniString ArtifactTextLayer::fontFamily() const
 void ArtifactTextLayer::setTextColor(const FloatRGBA& color)
 {
     impl_->textStyle_.fillColor = color;
-    updateImage();
+    markDirty();
 }
 
 FloatRGBA ArtifactTextLayer::textColor() const
@@ -145,7 +174,7 @@ FloatRGBA ArtifactTextLayer::textColor() const
 void ArtifactTextLayer::setStrokeEnabled(bool enabled)
 {
     impl_->textStyle_.strokeEnabled = enabled;
-    updateImage();
+    markDirty();
 }
 
 bool ArtifactTextLayer::isStrokeEnabled() const
@@ -156,7 +185,7 @@ bool ArtifactTextLayer::isStrokeEnabled() const
 void ArtifactTextLayer::setStrokeColor(const FloatRGBA& color)
 {
     impl_->textStyle_.strokeColor = color;
-    updateImage();
+    markDirty();
 }
 
 FloatRGBA ArtifactTextLayer::strokeColor() const
@@ -167,7 +196,7 @@ FloatRGBA ArtifactTextLayer::strokeColor() const
 void ArtifactTextLayer::setStrokeWidth(float width)
 {
     impl_->textStyle_.strokeWidth = width;
-    updateImage();
+    markDirty();
 }
 
 float ArtifactTextLayer::strokeWidth() const
@@ -178,7 +207,7 @@ float ArtifactTextLayer::strokeWidth() const
 void ArtifactTextLayer::setShadowEnabled(bool enabled)
 {
     impl_->textStyle_.shadowEnabled = enabled;
-    updateImage();
+    markDirty();
 }
 
 bool ArtifactTextLayer::isShadowEnabled() const
@@ -189,7 +218,7 @@ bool ArtifactTextLayer::isShadowEnabled() const
 void ArtifactTextLayer::setShadowColor(const FloatRGBA& color)
 {
     impl_->textStyle_.shadowColor = color;
-    updateImage();
+    markDirty();
 }
 
 FloatRGBA ArtifactTextLayer::shadowColor() const
@@ -201,7 +230,7 @@ void ArtifactTextLayer::setShadowOffset(float x, float y)
 {
     impl_->textStyle_.shadowOffsetX = x;
     impl_->textStyle_.shadowOffsetY = y;
-    updateImage();
+    markDirty();
 }
 
 float ArtifactTextLayer::shadowOffsetX() const
@@ -217,7 +246,7 @@ float ArtifactTextLayer::shadowOffsetY() const
 void ArtifactTextLayer::setShadowBlur(float blur)
 {
     impl_->textStyle_.shadowBlur = blur;
-    updateImage();
+    markDirty();
 }
 
 float ArtifactTextLayer::shadowBlur() const
@@ -228,7 +257,7 @@ float ArtifactTextLayer::shadowBlur() const
 void ArtifactTextLayer::setTracking(float tracking)
 {
     impl_->textStyle_.tracking = tracking;
-    updateImage();
+    markDirty();
 }
 
 float ArtifactTextLayer::tracking() const
@@ -239,7 +268,7 @@ float ArtifactTextLayer::tracking() const
 void ArtifactTextLayer::setLeading(float leading)
 {
     impl_->textStyle_.leading = leading;
-    updateImage();
+    markDirty();
 }
 
 float ArtifactTextLayer::leading() const
@@ -250,7 +279,7 @@ float ArtifactTextLayer::leading() const
 void ArtifactTextLayer::setBold(bool enabled)
 {
     impl_->textStyle_.bold = enabled;
-    updateImage();
+    markDirty();
 }
 
 bool ArtifactTextLayer::isBold() const
@@ -261,7 +290,7 @@ bool ArtifactTextLayer::isBold() const
 void ArtifactTextLayer::setItalic(bool enabled)
 {
     impl_->textStyle_.italic = enabled;
-    updateImage();
+    markDirty();
 }
 
 bool ArtifactTextLayer::isItalic() const
@@ -272,7 +301,7 @@ bool ArtifactTextLayer::isItalic() const
 void ArtifactTextLayer::setAllCaps(bool enabled)
 {
     impl_->textStyle_.allCaps = enabled;
-    updateImage();
+    markDirty();
 }
 
 bool ArtifactTextLayer::isAllCaps() const
@@ -283,7 +312,7 @@ bool ArtifactTextLayer::isAllCaps() const
 void ArtifactTextLayer::setHorizontalAlignment(TextHorizontalAlignment alignment)
 {
     impl_->paragraphStyle_.horizontalAlignment = alignment;
-    updateImage();
+    markDirty();
 }
 
 TextHorizontalAlignment ArtifactTextLayer::horizontalAlignment() const
@@ -293,6 +322,9 @@ TextHorizontalAlignment ArtifactTextLayer::horizontalAlignment() const
 
 QImage ArtifactTextLayer::toQImage() const
 {
+    if (impl_->isDirty_ || impl_->renderedImage_.isNull()) {
+        const_cast<ArtifactTextLayer*>(this)->updateImage();
+    }
     return impl_->renderedImage_;
 }
 
@@ -301,7 +333,7 @@ void ArtifactTextLayer::draw(ArtifactIRenderer* renderer)
     if (!renderer) {
         return;
     }
-    if (impl_->renderedImage_.isNull()) {
+    if (impl_->isDirty_ || impl_->renderedImage_.isNull()) {
         updateImage();
     }
     const auto size = sourceSize();
@@ -480,6 +512,13 @@ bool ArtifactTextLayer::setLayerPropertyValue(const QString& propertyPath, const
 }
 
 void ArtifactTextLayer::updateImage() {
+    // Cache check
+    Impl::CacheKey currentKey{impl_->text_, impl_->textStyle_, impl_->paragraphStyle_};
+    if (!impl_->isDirty_ && impl_->lastCacheKey_ && *impl_->lastCacheKey_ == currentKey && !impl_->renderedImage_.isNull()) {
+        return;
+    }
+    impl_->lastCacheKey_ = currentKey;
+
     QString displayText = impl_->text_.toQString();
     if (impl_->textStyle_.allCaps) {
         displayText = displayText.toUpper();
@@ -488,29 +527,42 @@ void ArtifactTextLayer::updateImage() {
         displayText = QStringLiteral(" ");
     }
 
-    QFont font = FontManager::makeFont(impl_->textStyle_);
-    QFontMetricsF metrics(font);
-    const QStringList lines = displayText.split('\n');
+    // Set up QTextDocument for rich text support
+    QTextDocument doc;
+    doc.setUndoRedoEnabled(false);
     
-    // Calculate content size
-    qreal maxWidth = 0.0;
-    for (const QString& line : lines) {
-        maxWidth = std::max(maxWidth, metrics.horizontalAdvance(line.isEmpty() ? QStringLiteral(" ") : line));
+    // Set default font
+    QFont defaultFont = FontManager::makeFont(impl_->textStyle_);
+    doc.setDefaultFont(defaultFont);
+
+    // Apply basic styles to the whole document
+    QTextOption option = doc.defaultTextOption();
+    switch (impl_->paragraphStyle_.horizontalAlignment) {
+        case TextHorizontalAlignment::Center: option.setAlignment(Qt::AlignCenter); break;
+        case TextHorizontalAlignment::Right:  option.setAlignment(Qt::AlignRight); break;
+        case TextHorizontalAlignment::Justify: option.setAlignment(Qt::AlignJustify); break;
+        default: option.setAlignment(Qt::AlignLeft); break;
+    }
+    doc.setDefaultTextOption(option);
+
+    // Set content - handles HTML or Plain Text
+    if (Qt::mightBeRichText(displayText)) {
+        doc.setHtml(displayText);
+    } else {
+        doc.setPlainText(displayText);
     }
 
-    const qreal lineAdvance = impl_->textStyle_.leading > 0.0f ? impl_->textStyle_.leading : metrics.lineSpacing();
-    const qreal paragraphSpacing = impl_->paragraphStyle_.paragraphSpacing;
-    const qreal lineCount = static_cast<qreal>(lines.size());
-    const qreal contentHeight = std::max<qreal>(
-        lineAdvance,
-        lineCount * lineAdvance + std::max<qreal>(0.0, (lineCount - 1.0) * paragraphSpacing));
+    // Calculate size
+    doc.adjustSize();
+    qreal docWidth = doc.size().width();
+    qreal docHeight = doc.size().height();
 
     // Padding for stroke and shadow blur
     const qreal margin = 24.0 + (impl_->textStyle_.strokeEnabled ? impl_->textStyle_.strokeWidth : 0.0) 
                               + (impl_->textStyle_.shadowEnabled ? impl_->textStyle_.shadowBlur * 2.0 : 0.0);
     
-    const int width = std::max(1, static_cast<int>(std::ceil(maxWidth + margin * 2.0)));
-    const int height = std::max(1, static_cast<int>(std::ceil(contentHeight + margin * 2.0)));
+    const int width = std::max(1, static_cast<int>(std::ceil(docWidth + margin * 2.0)));
+    const int height = std::max(1, static_cast<int>(std::ceil(docHeight + margin * 2.0)));
 
     impl_->renderedImage_ = QImage(width, height, QImage::Format_ARGB32_Premultiplied);
     impl_->renderedImage_.fill(Qt::transparent);
@@ -518,36 +570,62 @@ void ArtifactTextLayer::updateImage() {
     QPainter painter(&impl_->renderedImage_);
     painter.setRenderHint(QPainter::Antialiasing);
     painter.setRenderHint(QPainter::TextAntialiasing);
+    painter.setRenderHint(QPainter::SmoothPixmapTransform);
 
-    // Helper to draw the text path
-    auto drawTextPath = [&](QPainter& p, const QColor& fill, bool drawStroke, const QColor& stroke, qreal sw) {
-        qreal currentY = margin + metrics.ascent();
-        for (const QString& line : lines) {
-            const QString actualLine = line.isEmpty() ? QStringLiteral(" ") : line;
-            const qreal lineWidth = metrics.horizontalAdvance(actualLine);
-            qreal currentX = margin;
-            
-            switch (impl_->paragraphStyle_.horizontalAlignment) {
-            case TextHorizontalAlignment::Center:
-                currentX = (static_cast<qreal>(width) - lineWidth) * 0.5;
-                break;
-            case TextHorizontalAlignment::Right:
-                currentX = static_cast<qreal>(width) - lineWidth - margin;
-                break;
-            default:
-                break;
+    // Offset for margins
+    painter.translate(margin, margin);
+
+    // Helper to draw document layout as paths (for stroke support)
+    auto drawDocAsPath = [&](QPainter& p, bool drawFill, bool drawStroke) {
+        QAbstractTextDocumentLayout* layout = doc.documentLayout();
+        QTextBlock block = doc.begin();
+        while (block.isValid()) {
+            QRectF blockRect = layout->blockBoundingRect(block);
+            for (auto it = block.begin(); !it.atEnd(); ++it) {
+                QTextFragment fragment = it.fragment();
+                if (fragment.isValid()) {
+                    QFont f = fragment.charFormat().font();
+                    QTextLayout* blockLayout = block.layout();
+                    int relativePos = fragment.position() - block.position();
+                    
+                    // We iterate through lines to handle wrapping and alignment
+                    for (int i = 0; i < blockLayout->lineCount(); ++i) {
+                        QTextLine line = blockLayout->lineAt(i);
+                        if (relativePos >= line.textStart() && relativePos < (line.textStart() + line.textLength())) {
+                            QPointF linePos = line.position();
+                            qreal x = line.cursorToX(relativePos);
+                            
+                            QPainterPath path;
+                            path.addText(blockRect.topLeft() + linePos + QPointF(x, line.ascent()), f, fragment.text());
+                            
+                            if (drawStroke && impl_->textStyle_.strokeEnabled) {
+                                QColor strokeCol = QColor::fromRgbF(
+                                    impl_->textStyle_.strokeColor.r(),
+                                    impl_->textStyle_.strokeColor.g(),
+                                    impl_->textStyle_.strokeColor.b(),
+                                    impl_->textStyle_.strokeColor.a());
+                                QPen pen(strokeCol, impl_->textStyle_.strokeWidth, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
+                                p.strokePath(path, pen);
+                            }
+                            
+                            if (drawFill) {
+                                QColor fillCol;
+                                if (fragment.charFormat().foreground().style() != Qt::NoBrush) {
+                                    fillCol = fragment.charFormat().foreground().color();
+                                } else {
+                                    fillCol = QColor::fromRgbF(
+                                        impl_->textStyle_.fillColor.r(),
+                                        impl_->textStyle_.fillColor.g(),
+                                        impl_->textStyle_.fillColor.b(),
+                                        impl_->textStyle_.fillColor.a());
+                                }
+                                p.fillPath(path, fillCol);
+                            }
+                        }
+                    }
+                }
             }
-
-            QPainterPath path;
-            path.addText(QPointF(currentX, currentY), font, actualLine);
-
-            if (drawStroke && sw > 0.0) {
-                QPen pen(stroke, sw, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
-                p.strokePath(path, pen);
-            }
-            
-            p.fillPath(path, fill);
-            currentY += lineAdvance + paragraphSpacing;
+            block = block.next();
         }
     };
 
@@ -557,20 +635,14 @@ void ArtifactTextLayer::updateImage() {
         shadowImg.fill(Qt::transparent);
         QPainter shadowPainter(&shadowImg);
         shadowPainter.setRenderHint(QPainter::Antialiasing);
+        shadowPainter.translate(margin, margin);
         
-        QColor shColor = QColor::fromRgbF(
-            impl_->textStyle_.shadowColor.r(),
-            impl_->textStyle_.shadowColor.g(),
-            impl_->textStyle_.shadowColor.b(),
-            impl_->textStyle_.shadowColor.a());
-            
-        drawTextPath(shadowPainter, shColor, false, Qt::black, 0.0);
+        // Shadow is simplified as a single color fill path
+        drawDocAsPath(shadowPainter, true, false); 
         shadowPainter.end();
 
-        // High quality blur using OpenCV
         if (impl_->textStyle_.shadowBlur > 0.1f) {
             cv::Mat mat(shadowImg.height(), shadowImg.width(), CV_8UC4, const_cast<uchar*>(shadowImg.bits()), shadowImg.bytesPerLine());
-            // OpenCV uses BGRA by default for CV_8UC4 from QImage::Format_ARGB32
             int ksize = static_cast<int>(impl_->textStyle_.shadowBlur * 3.0f);
             if (ksize % 2 == 0) ksize++;
             if (ksize >= 3) {
@@ -579,28 +651,17 @@ void ArtifactTextLayer::updateImage() {
         }
 
         painter.save();
-        painter.translate(impl_->textStyle_.shadowOffsetX, impl_->textStyle_.shadowOffsetY);
+        painter.translate(-margin + impl_->textStyle_.shadowOffsetX, -margin + impl_->textStyle_.shadowOffsetY);
         painter.drawImage(0, 0, shadowImg);
         painter.restore();
     }
 
-    // 2. Draw Main Text (Fill + Stroke)
-    QColor fillCol = QColor::fromRgbF(
-        impl_->textStyle_.fillColor.r(),
-        impl_->textStyle_.fillColor.g(),
-        impl_->textStyle_.fillColor.b(),
-        impl_->textStyle_.fillColor.a());
-        
-    QColor strokeCol = QColor::fromRgbF(
-        impl_->textStyle_.strokeColor.r(),
-        impl_->textStyle_.strokeColor.g(),
-        impl_->textStyle_.strokeColor.b(),
-        impl_->textStyle_.strokeColor.a());
-
-    drawTextPath(painter, fillCol, impl_->textStyle_.strokeEnabled, strokeCol, impl_->textStyle_.strokeWidth);
+    // 2. Draw Main Content (Stroke then Fill)
+    drawDocAsPath(painter, true, true);
 
     painter.end();
     setSourceSize(Size_2D(width, height));
+    impl_->isDirty_ = false;
 }
 
 } // namespace Artifact

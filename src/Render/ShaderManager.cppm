@@ -320,6 +320,7 @@ void ShaderManager::Impl::createPSOs()
     drawSolidRectTransformPSOCreateInfo.PSODesc.Name = "DrawSolidRectTransform PSO";
     drawSolidRectTransformPSOCreateInfo.pVS = solidRectTransformShaders_.VS;
     drawSolidRectTransformPSOCreateInfo.pPS = solidRectTransformShaders_.PS;
+    drawSolidRectTransformPSOCreateInfo.GraphicsPipeline.PrimitiveTopology = PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
     device_->CreateGraphicsPipelineState(drawSolidRectTransformPSOCreateInfo, &solidRectTransformPsoAndSrb_.pPSO);
     if (solidRectTransformPsoAndSrb_.pPSO)
     {
@@ -371,6 +372,7 @@ void ShaderManager::Impl::createPSOs()
     drawSpriteTransformPSOCreateInfo.PSODesc.Name = "DrawSpriteTransform PSO";
     drawSpriteTransformPSOCreateInfo.pVS = spriteTransformShaders_.VS;
     drawSpriteTransformPSOCreateInfo.pPS = spriteTransformShaders_.PS;
+    drawSpriteTransformPSOCreateInfo.GraphicsPipeline.PrimitiveTopology = PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
     device_->CreateGraphicsPipelineState(drawSpriteTransformPSOCreateInfo, &spriteTransformPsoAndSrb_.pPSO);
     if (spriteTransformPsoAndSrb_.pPSO)
     {

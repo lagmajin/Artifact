@@ -312,14 +312,14 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent* event)
 
   const bool isHovered = (i == impl_->hoverClipIndex_);
   const QColor fill = clip.selected
-   ? clip.fillColor.lighter(130)
+   ? QColor(180, 110, 45) // Modo Amber
    : (isHovered ? clip.fillColor.lighter(115) : clip.fillColor);
-  p.setPen(QPen(clip.selected ? QColor(230, 235, 255) : QColor(17, 17, 20), clip.selected ? 2 : 1));
+  p.setPen(QPen(clip.selected ? QColor(255, 180, 100) : QColor(17, 17, 20), clip.selected ? 2 : 1));
   p.setBrush(fill);
   p.drawRoundedRect(clipRect, kClipCorner, kClipCorner);
 
   if (!clip.title.isEmpty() && clipRect.width() > 28.0) {
-   p.setPen(QColor(235, 239, 247));
+   p.setPen(clip.selected ? Qt::black : QColor(235, 239, 247));
    const QString text = QFontMetrics(p.font()).elidedText(clip.title, Qt::ElideRight, static_cast<int>(clipRect.width()) - (kClipPadding * 2));
    p.drawText(clipRect.adjusted(kClipPadding, 0, -kClipPadding, 0), Qt::AlignVCenter | Qt::AlignLeft, text);
   }

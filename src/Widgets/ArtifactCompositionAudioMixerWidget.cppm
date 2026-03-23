@@ -20,6 +20,7 @@ import Artifact.Widgets.CompositionAudioMixer;
 import Artifact.Audio.Mixer;
 import Artifact.Composition.Abstract;
 import Artifact.Service.Project;
+import Artifact.Service.Playback;
 import std;
 
 namespace Artifact
@@ -547,6 +548,21 @@ ArtifactCompositionAudioMixerWidget::ArtifactCompositionAudioMixerWidget(QWidget
     setStyleSheet(QStringLiteral("background: #15191d;"));
 
     impl_->mixer_ = new AudioMixer(this);
+
+    if (auto* playbackService = ArtifactPlaybackService::instance()) {
+        if (auto* masterBus = impl_->mixer_->masterBus()) {
+            QObject::connect(masterBus, &AudioMixerMasterBus::volumeChanged, this,
+                [playbackService](const float volume) {
+                    playbackService->setAudioMasterVolume(volume);
+                });
+            QObject::connect(masterBus, &AudioMixerMasterBus::muteChanged, this,
+                [playbackService](const bool muted) {
+                    playbackService->setAudioMasterMuted(muted);
+                });
+            playbackService->setAudioMasterVolume(masterBus->volume());
+            playbackService->setAudioMasterMuted(masterBus->isMuted());
+        }
+    }
 
     auto* rootLayout = new QVBoxLayout(this);
     rootLayout->setContentsMargins(0, 0, 0, 0);

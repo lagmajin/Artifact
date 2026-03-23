@@ -105,19 +105,25 @@ void TransformGizmo::setLayer(ArtifactAbstractLayerPtr layer) {
  }
 }
 
+static constexpr double HANDLE_SIZE = 8.0;
+static constexpr double ROTATE_HANDLE_DISTANCE = 25.0;
+static constexpr double GIZMO_OFFSET = 4.0;
+
 void TransformGizmo::draw(ArtifactIRenderer* renderer) {
- if (!layer_ || !renderer) return;
+if (!layer_ || !renderer) return;
 
- const float zoom = renderer->getZoom();
- const float invZoom = zoom > 0.0001f ? 1.0f / zoom : 1.0f;
- const float lineThickness = 1.5f * invZoom;
- const float handleSize = HANDLE_SIZE * invZoom;
- 
- const QRectF localRect = layer_->localBounds();
- if (localRect.isNull()) return;
+const float zoom = renderer->getZoom();
+const float invZoom = zoom > 0.0001f ? 1.0f / zoom : 1.0f;
+const float lineThickness = 1.5f * invZoom;
+const float handleSize = HANDLE_SIZE * invZoom;
 
- const QTransform globalTransform = layer_->getGlobalTransform();
- 
+QRectF localRect = layer_->localBounds();
+if (localRect.isNull()) return;
+
+// Apply visual offset
+localRect.adjust(-GIZMO_OFFSET, -GIZMO_OFFSET, GIZMO_OFFSET, GIZMO_OFFSET);
+
+const QTransform globalTransform = layer_->getGlobalTransform(); 
  FloatColor gizmoColor{0.0f, 0.5f, 1.0f, 1.0f}; // Cyan-ish blue
  if (isDragging_) gizmoColor = {1.0f, 1.0f, 0.0f, 1.0f}; // Yellow while dragging
 
@@ -158,59 +164,68 @@ void TransformGizmo::draw(ArtifactIRenderer* renderer) {
  renderer->drawCircle(rotateTip.x, rotateTip.y, handleSize * 0.6f, gizmoColor, lineThickness, false);
  renderer->drawCircle(rotateTip.x, rotateTip.y, handleSize * 0.2f, gizmoColor, 0.0f, true);
 
- // Anchor point: small crosshair at anchor position
+ // Anchor point: crosshair at anchor position
  const auto& t3d = layer_->transform3D();
- const float anchorX = t3d.anchorX();
- const float anchorY = t3d.anchorY();
- const float anchorSize = ANCHOR_HANDLE_SIZE * invZoom;
- const FloatColor anchorColor{1.0f, 0.5f, 0.0f, 1.0f}; // Orange
- renderer->drawSolidLine({anchorX - anchorSize, anchorY}, {anchorX + anchorSize, anchorY}, anchorColor, lineThickness);
- renderer->drawSolidLine({anchorX, anchorY - anchorSize}, {anchorX, anchorY + anchorSize}, anchorColor, lineThickness);
+ const QPointF anchorWorld = globalTransform.map(QPointF(t3d.anchorX(), t3d.anchorY()));
+ renderer->drawCrosshair((float)anchorWorld.x(), (float)anchorWorld.y(), handleSize * 1.5f, {1.0f, 0.5f, 0.0f, 1.0f});
 }
 
 TransformGizmo::HandleType TransformGizmo::hitTest(const QPointF& viewportPos, ArtifactIRenderer* renderer) const {
  if (!layer_ || !renderer) return HandleType::None;
 
- QRectF bbox = expandedCanvasBounds(layer_->transformedBoundingBox(), renderer->getZoom());
- if (bbox.isNull()) return HandleType::None;
+ QRectF localRect = layer_->localBounds();
+ if (localRect.isNull()) return HandleType::None;
 
- auto checkHandle = [&](float x, float y) {
-  auto vPos = renderer->canvasToViewport({x, y});
+ // Apply visual offset to match draw()
+ localRect.adjust(-GIZMO_OFFSET, -GIZMO_OFFSET, GIZMO_OFFSET, GIZMO_OFFSET);
+
+ const QTransform globalTransform = layer_->getGlobalTransform();
+ const float zoom = renderer->getZoom();
+ 
+ // 1. Check handles first (they should have priority over the body)
+ auto checkLocalPoint = [&](const QPointF& localPoint) {
+  QPointF worldPoint = globalTransform.map(localPoint);
+  auto vPos = renderer->canvasToViewport({(float)worldPoint.x(), (float)worldPoint.y()});
   QRectF handleRect = handleRectForViewport({vPos.x, vPos.y}, HANDLE_SIZE);
   return handleRect.contains(viewportPos);
  };
 
- if (checkHandle((float)bbox.left(), (float)bbox.top())) return HandleType::Scale_TL;
- if (checkHandle((float)bbox.right(), (float)bbox.top())) return HandleType::Scale_TR;
- if (checkHandle((float)bbox.left(), (float)bbox.bottom())) return HandleType::Scale_BL;
- if (checkHandle((float)bbox.right(), (float)bbox.bottom())) return HandleType::Scale_BR;
- if (checkHandle((float)bbox.center().x(), (float)bbox.top())) return HandleType::Scale_T;
- if (checkHandle((float)bbox.center().x(), (float)bbox.bottom())) return HandleType::Scale_B;
- if (checkHandle((float)bbox.left(), (float)bbox.center().y())) return HandleType::Scale_L;
- if (checkHandle((float)bbox.right(), (float)bbox.center().y())) return HandleType::Scale_R;
+ if (checkLocalPoint(localRect.topLeft())) return HandleType::Scale_TL;
+ if (checkLocalPoint(localRect.topRight())) return HandleType::Scale_TR;
+ if (checkLocalPoint(localRect.bottomLeft())) return HandleType::Scale_BL;
+ if (checkLocalPoint(localRect.bottomRight())) return HandleType::Scale_BR;
+ if (checkLocalPoint(QPointF(localRect.center().x(), localRect.top()))) return HandleType::Scale_T;
+ if (checkLocalPoint(QPointF(localRect.center().x(), localRect.bottom()))) return HandleType::Scale_B;
+ if (checkLocalPoint(QPointF(localRect.left(), localRect.center().y()))) return HandleType::Scale_L;
+ if (checkLocalPoint(QPointF(localRect.right(), localRect.center().y()))) return HandleType::Scale_R;
 
- // Rotation handle: above top-center
- const float zoom = renderer->getZoom();
- const float rotDist = ROTATE_HANDLE_DISTANCE * (zoom > 0.0001f ? 1.0f / zoom : 1.0f);
- const float rotTipX = (float)bbox.center().x();
- const float rotTipY = (float)bbox.top() - rotDist;
- auto rotVPos = renderer->canvasToViewport({rotTipX, rotTipY});
- const float rotHitR = ROTATE_HANDLE_RADIUS + 4.0f;
- QRectF rotRect(rotVPos.x - rotHitR, rotVPos.y - rotHitR, rotHitR * 2, rotHitR * 2);
+ // 2. Rotation handle: above top-center
+ const QPointF localRotTip(localRect.center().x(), localRect.top() - ROTATE_HANDLE_DISTANCE);
+ QPointF worldRotTip = globalTransform.map(localRotTip);
+ auto vRotTip = renderer->canvasToViewport({(float)worldRotTip.x(), (float)worldRotTip.y()});
+ const float rotHitR = ROTATE_HANDLE_RADIUS + 6.0f;
+ QRectF rotRect(vRotTip.x - rotHitR, vRotTip.y - rotHitR, rotHitR * 2, rotHitR * 2);
  if (rotRect.contains(viewportPos)) return HandleType::Rotate;
 
- // Anchor point handle
- if (layer_) {
-  const auto& t3d = layer_->transform3D();
-  auto anchorVP = renderer->canvasToViewport({(float)t3d.anchorX(), (float)t3d.anchorY()});
-  const float anchorHit = ANCHOR_HANDLE_SIZE + 4.0f;
-  QRectF anchorRect(anchorVP.x - anchorHit, anchorVP.y - anchorHit, anchorHit * 2, anchorHit * 2);
-  if (anchorRect.contains(viewportPos)) return HandleType::Move;
- }
+ // 3. Anchor point handle
+ const auto& t3d = layer_->transform3D();
+ // In current implementation anchor is in local coords (usually 0,0)
+ QPointF worldAnchor = globalTransform.map(QPointF(t3d.anchorX(), t3d.anchorY()));
+ auto anchorVP = renderer->canvasToViewport({(float)worldAnchor.x(), (float)worldAnchor.y()});
+ const float anchorHit = ANCHOR_HANDLE_SIZE + 4.0f;
+ QRectF anchorRect(anchorVP.x - anchorHit, anchorVP.y - anchorHit, anchorHit * 2, anchorHit * 2);
+ // Note: Clicking the anchor usually selects it for moving the anchor itself.
+ // For now we'll just treat it as part of the body or implement AnchorMove later.
 
- auto canvasPos = renderer->viewportToCanvas({(float)viewportPos.x(), (float)viewportPos.y()});
- if (bbox.contains(canvasPos.x, canvasPos.y)) {
-  return HandleType::Move;
+ // 4. Body hit test (Move) using inverse transform
+ auto canvasMouse = renderer->viewportToCanvas({(float)viewportPos.x(), (float)viewportPos.y()});
+ bool invertible = false;
+ const QTransform invTransform = globalTransform.inverted(&invertible);
+ if (invertible) {
+  QPointF localMouse = invTransform.map(QPointF(canvasMouse.x, canvasMouse.y));
+  if (localRect.contains(localMouse)) {
+   return HandleType::Move;
+  }
  }
 
  return HandleType::None;
@@ -279,16 +294,19 @@ bool TransformGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRender
    layer_->setDirty(LayerDirtyFlag::Transform);
    Q_EMIT layer_->changed();
   } else if (activeHandle_ == HandleType::Rotate) {
-   const auto& t3dStart = layer_->transform3D();
-   float anchorX = t3dStart.anchorX();
-   float anchorY = t3dStart.anchorY();
+   // The anchor point in world space is exactly the layer's position property
+   // because position is where the anchor is "pinned" on the canvas.
+   const float anchorWorldX = dragStartLayerPos_.x();
+   const float anchorWorldY = dragStartLayerPos_.y();
+
    // Angle from anchor to start mouse position
-   float startAngle = std::atan2(dragStartCanvasPos_.y() - anchorY,
-                                  dragStartCanvasPos_.x() - anchorX);
+   const double startAngle = std::atan2(dragStartCanvasPos_.y() - anchorWorldY,
+                                        dragStartCanvasPos_.x() - anchorWorldX);
    // Angle from anchor to current mouse position
-   float currentAngle = std::atan2(currentCanvasPos.y() - anchorY,
-                                    currentCanvasPos.x() - anchorX);
-   float deltaAngle = (currentAngle - startAngle) * 180.0f / kPi;
+   const double currentAngle = std::atan2(currentCanvasPos.y() - anchorWorldY,
+                                          currentCanvasPos.x() - anchorWorldX);
+   
+   const float deltaAngle = static_cast<float>((currentAngle - startAngle) * 180.0 / 3.14159265358979323846);
    t3d.setRotation(time, dragStartRotation_ + deltaAngle);
    layer_->setDirty(LayerDirtyFlag::Transform);
    Q_EMIT layer_->changed();

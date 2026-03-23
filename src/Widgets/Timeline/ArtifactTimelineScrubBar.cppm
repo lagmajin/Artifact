@@ -236,7 +236,7 @@ namespace Artifact
   const QColor bgBottom(24, 24, 27);
   const QColor railColor(62, 62, 68);
   const QColor railBorder(78, 78, 86);
-  const QColor accent(104, 171, 234);
+  const QColor accent(180, 110, 45); // Modo Amber
   const QColor accentStrong = impl_->dragging_ ? accent.lighter(120) : (impl_->hover_ ? accent.lighter(110) : accent);
 
   QLinearGradient bgGrad(r.topLeft(), r.bottomLeft());

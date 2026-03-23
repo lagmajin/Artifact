@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <QHash>
 #include <QImage>
 #include <QJsonObject>
@@ -6,6 +6,7 @@
 #include <QRectF>
 #include <QString>
 #include <QTransform>
+#include <QMatrix4x4>
 #include <qtypes.h>
 #include <wobjectdefs.h>
 
@@ -24,6 +25,7 @@ import Animation.Transform3D;
 import Artifact.Effect.Abstract;
 import Artifact.Mask.LayerMask;
 import Frame.Position;
+import Audio.Segment;
 export import Property.Group;
 
 import Artifact.Render.IRenderer;
@@ -45,6 +47,9 @@ enum class LayerType {
   Audio,      // 音声レイヤー
   Video,      // 映像・音声フッテージ
   Camera,
+  Light,
+  Group,
+  Folder
 };
 
 enum class LayerDirtyFlag : uint32_t {
@@ -108,7 +113,7 @@ public:
 
   std::type_index type_index() const;
   void *QueryInterface(const std::type_index &ti);
-  UniString className() const;
+  virtual UniString className() const;
 
   /*Transform*/
   Size_2D sourceSize() const;
@@ -122,6 +127,8 @@ public:
   void setTransform();
   QTransform getGlobalTransform() const;
   QTransform getLocalTransform() const;
+  QMatrix4x4 getGlobalTransform4x4() const;
+  QMatrix4x4 getLocalTransform4x4() const;
   ArtifactAbstractLayerPtr parentLayer() const;
   bool isTimeRemapEnabled() const;
   void setTimeRemapEnabled(bool);
@@ -162,6 +169,17 @@ public:
 
   virtual bool hasAudio() const;
   virtual bool hasVideo() const;
+
+  /**
+   * @brief Get audio data for a specific time range.
+   * @param outSegment The segment to fill with audio data. It should be pre-allocated or will be resized.
+   * @param start Starting frame position in the composition timeline.
+   * @param frameCount Number of audio samples to retrieve.
+   * @param sampleRate The requested sample rate (e.g. 48000).
+   * @return true if any audio was provided, false otherwise.
+   */
+  virtual bool getAudio(AudioSegment &outSegment, const FramePosition &start,
+                       int frameCount, int sampleRate);
 
   bool isClicked() const;
   bool preciseHit() const;

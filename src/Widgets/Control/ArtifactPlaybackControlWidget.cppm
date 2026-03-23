@@ -13,6 +13,7 @@ module;
 #include <QStyleOption>
 #include <QIcon>
 #include <QKeySequence>
+#include <QStringList>
 
 #include <iostream>
 #include <vector>
@@ -66,6 +67,17 @@ QIcon loadIconWithFallback(const QString& fileName)
     return icon;
   }
   return QIcon(ArtifactCore::resolveIconPath(fileName));
+}
+
+QIcon loadIconWithFallback(const QStringList& fileNames)
+{
+  for (const auto& fileName : fileNames) {
+    const QIcon icon = loadIconWithFallback(fileName);
+    if (!icon.isNull()) {
+      return icon;
+    }
+  }
+  return QIcon();
 }
 }
 
@@ -122,9 +134,18 @@ public:
         playLayout->setSpacing(2);
         
         // 再生/停止/一時停止
-        playButton_ = createToolButton("PlayArrow.png", "再生 (Space)", Qt::Key_Space);
-        pauseButton_ = createToolButton("Png/pause.png", "一時停止", 0);
-        stopButton_ = createToolButton("Png/stop.png", "停止", 0);
+        playButton_ = createToolButton(QStringList{
+            QStringLiteral("MaterialVS/colored/E3E3E3/play_arrow.svg"),
+            QStringLiteral("MaterialVS/neutral/play_arrow.svg")
+        }, "再生 (Space)", Qt::Key_Space);
+        pauseButton_ = createToolButton(QStringList{
+            QStringLiteral("MaterialVS/colored/E3E3E3/pause.svg"),
+            QStringLiteral("MaterialVS/neutral/pause.svg")
+        }, "一時停止", 0);
+        stopButton_ = createToolButton(QStringList{
+            QStringLiteral("MaterialVS/colored/E3E3E3/stop.svg"),
+            QStringLiteral("MaterialVS/neutral/stop.svg")
+        }, "停止", 0);
         
         playLayout->addWidget(playButton_);
         playLayout->addWidget(pauseButton_);
@@ -134,10 +155,22 @@ public:
         auto* seekLayout = new QHBoxLayout();
         seekLayout->setSpacing(2);
         
-        seekStartButton_ = createToolButton("Png/seek_start.png", "先頭へ (Home)", Qt::Key_Home);
-        seekPreviousButton_ = createToolButton("Png/step_backward.png", "前へ (PageUp)", Qt::Key_PageUp);
-        seekNextButton_ = createToolButton("Png/step_forward.png", "次へ (PageDown)", Qt::Key_PageDown);
-        seekEndButton_ = createToolButton("Png/seek_end.png", "末尾へ (End)", Qt::Key_End);
+        seekStartButton_ = createToolButton(QStringList{
+            QStringLiteral("MaterialVS/colored/E3E3E3/seek_start.svg"),
+            QStringLiteral("MaterialVS/colored/E3E3E3/start.svg")
+        }, "先頭へ (Home)", Qt::Key_Home);
+        seekPreviousButton_ = createToolButton(QStringList{
+            QStringLiteral("MaterialVS/colored/E3E3E3/fast_rewind.svg"),
+            QStringLiteral("MaterialVS/neutral/skip_previous.svg")
+        }, "前へ (PageUp)", Qt::Key_PageUp);
+        seekNextButton_ = createToolButton(QStringList{
+            QStringLiteral("MaterialVS/colored/E3E3E3/fast_forward.svg"),
+            QStringLiteral("MaterialVS/neutral/skip_next.svg")
+        }, "次へ (PageDown)", Qt::Key_PageDown);
+        seekEndButton_ = createToolButton(QStringList{
+            QStringLiteral("MaterialVS/colored/E3E3E3/seek_end.svg"),
+            QStringLiteral("MaterialVS/colored/E3E3E3/start.svg")
+        }, "末尾へ (End)", Qt::Key_End);
         
         seekLayout->addWidget(seekStartButton_);
         seekLayout->addWidget(seekPreviousButton_);
@@ -148,8 +181,16 @@ public:
         auto* stepLayout = new QHBoxLayout();
         stepLayout->setSpacing(2);
         
-        stepBackwardButton_ = createToolButton("Png/step_backward.png", "1 フレーム戻る (←)", Qt::Key_Left);
-        stepForwardButton_ = createToolButton("Png/step_forward.png", "1 フレーム進む (→)", Qt::Key_Right);
+        stepBackwardButton_ = createToolButton(QStringList{
+            QStringLiteral("MaterialVS/colored/E3E3E3/skip_previous.svg"),
+            QStringLiteral("MaterialVS/neutral/skip_previous.svg"),
+            QStringLiteral("MaterialVS/colored/E3E3E3/fast_rewind.svg")
+        }, "1 フレーム戻る (←)", Qt::Key_Left);
+        stepForwardButton_ = createToolButton(QStringList{
+            QStringLiteral("MaterialVS/colored/E3E3E3/skip_next.svg"),
+            QStringLiteral("MaterialVS/neutral/skip_next.svg"),
+            QStringLiteral("MaterialVS/colored/E3E3E3/fast_forward.svg")
+        }, "1 フレーム進む (→)", Qt::Key_Right);
         
         stepLayout->addWidget(stepBackwardButton_);
         stepLayout->addWidget(stepForwardButton_);
@@ -158,13 +199,27 @@ public:
         auto* optionLayout = new QHBoxLayout();
         optionLayout->setSpacing(2);
         
-        loopButton_ = createToolButton("Png/loop.png", "ループ再生 (L)", Qt::Key_L);
+        loopButton_ = createToolButton(QStringList{
+            QStringLiteral("MaterialVS/colored/E3E3E3/loop.svg"),
+            QStringLiteral("MaterialVS/neutral/loop.svg"),
+            QStringLiteral("MaterialVS/neutral/replay.svg")
+        }, "ループ再生 (L)", Qt::Key_L);
         loopButton_->setCheckable(true);
         loopButton_->setChecked(false);
         
-        inButton_ = createToolButton("Png/in_point.png", "In 点設定 (I)", Qt::Key_I);
-        outButton_ = createToolButton("Png/out_point.png", "Out 点設定 (O)", Qt::Key_O);
-        clearInOutButton_ = createToolButton("Png/clear.png", "In/Out クリア", 0);
+        inButton_ = createToolButton(QStringList{
+            QStringLiteral("MaterialVS/colored/E3E3E3/start.svg"),
+            QStringLiteral("MaterialVS/neutral/push_pin.svg")
+        }, "In 点設定 (I)", Qt::Key_I);
+        outButton_ = createToolButton(QStringList{
+            QStringLiteral("MaterialVS/colored/E3E3E3/stop.svg"),
+            QStringLiteral("MaterialVS/neutral/remove_circle.svg")
+        }, "Out 点設定 (O)", Qt::Key_O);
+        clearInOutButton_ = createToolButton(QStringList{
+            QStringLiteral("MaterialVS/colored/E3E3E3/clear.svg"),
+            QStringLiteral("MaterialVS/neutral/remove.svg"),
+            QStringLiteral("MaterialVS/neutral/remove_circle.svg")
+        }, "In/Out クリア", 0);
         
         optionLayout->addWidget(loopButton_);
         optionLayout->addWidget(inButton_);
@@ -185,10 +240,10 @@ public:
         connectSignals();
     }
     
-    QToolButton* createToolButton(const QString& iconName, const QString& tooltip, int shortcut)
+    QToolButton* createToolButton(const QStringList& iconNames, const QString& tooltip, int shortcut)
     {
         auto* button = new QToolButton();
-        button->setIcon(loadIconWithFallback(iconName));
+        button->setIcon(loadIconWithFallback(iconNames));
         button->setIconSize(QSize(24, 24));
         button->setToolTip(tooltip);
         button->setAutoRaise(true);

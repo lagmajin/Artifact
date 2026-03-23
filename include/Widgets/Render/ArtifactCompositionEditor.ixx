@@ -23,13 +23,16 @@ public:
  void setClearColor(const FloatColor& color);
 
 public /*slots*/:
- void play(); W_SLOT(play);
- void stop(); W_SLOT(stop);
- void resetView(); W_SLOT(resetView);
- void zoomIn(); W_SLOT(zoomIn);
- void zoomOut(); W_SLOT(zoomOut);
- void zoomFit(); W_SLOT(zoomFit);
- void zoom100(); W_SLOT(zoom100);
-};
+  void play(); W_SLOT(play);
+  void stop(); W_SLOT(stop);
+  void resetView(); W_SLOT(resetView);
+  void zoomIn(); W_SLOT(zoomIn);
+  void zoomOut(); W_SLOT(zoomOut);
+  void zoomFit(); W_SLOT(zoomFit);
+  void zoom100(); W_SLOT(zoom100);
+
+signals:
+  void videoDebugMessage(const QString& msg) W_SIGNAL(videoDebugMessage, msg);
+ };
 
 }

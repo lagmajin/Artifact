@@ -41,6 +41,7 @@ public:
     HWND renderHwnd() const;
 
     bool isInitialized() const;
+    bool isRayTracingSupported() const;
 
 private:
     class Impl;

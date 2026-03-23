@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <wobjectdefs.h>
 
 #include <QObject>
@@ -23,6 +23,7 @@ import Artifact.Layer.Abstract;
 import Artifact.Composition.Result;
 import Artifact.Composition.InitParams;
 import Composition.Settings;
+import Audio.Segment;
 //import Artifact.Layer.Abstract;
 //import Artifact.Preview.Controller;
 
@@ -90,11 +91,14 @@ export namespace Artifact {
   void setWorkAreaRange(const FrameRange& range);
   FrameRate frameRate() const;
   void setFrameRate(const FrameRate& rate);
- 	
+  	
   bool hasVideo() const;
   bool hasAudio() const;
   bool isAudioOnly() const;
   bool isVisual() const;
+
+  bool getAudio(ArtifactCore::AudioSegment &outSegment, const FramePosition &start,
+                int frameCount, int sampleRate);
 
   QJsonDocument toJson() const;
   static std::shared_ptr<ArtifactAbstractComposition> fromJson(const QJsonDocument& doc);

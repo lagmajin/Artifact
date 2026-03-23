@@ -69,5 +69,8 @@ class TransformGizmo* gizmo() const;
 public /*slots*/:
 
   void renderOneFrame();
+
+signals:
+  void videoDebugMessage(const QString& msg) W_SIGNAL(videoDebugMessage, msg);
  };
 }

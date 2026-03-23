@@ -1,6 +1,7 @@
 ﻿module;
 #include <QImage>
 #include <QTransform>
+#include <QMatrix4x4>
 #include <RenderDevice.h>
 #include <DeviceContext.h>
 #include <SwapChain.h>
@@ -40,12 +41,16 @@ public:
     void panBy(float dx, float dy);
     void resetView();
     void fitToViewport(float margin);
+    void setViewMatrix(const QMatrix4x4& view);
+    void setProjectionMatrix(const QMatrix4x4& proj);
+    void setUseExternalMatrices(bool use);
     void zoomAroundViewportPoint(float2 viewportPos, float newZoom);
     float2 canvasToViewport(float2 pos) const;
     float2 viewportToCanvas(float2 pos) const;
 
     void drawRectLocal(float x, float y, float w, float h, const FloatColor& color, float opacity = 1.0f);
     void drawSolidRectTransformed(float x, float y, float w, float h, const QTransform& transform, const FloatColor& color, float opacity = 1.0f);
+    void drawSolidRectTransformed(float x, float y, float w, float h, const QMatrix4x4& transform, const FloatColor& color, float opacity = 1.0f);
     void drawRectOutlineLocal(float x, float y, float w, float h, const FloatColor& color);
     void drawLineLocal(float2 p1, float2 p2, const FloatColor& c1, const FloatColor& c2);
     void drawThickLineLocal(float2 p1, float2 p2, float thickness, const FloatColor& color);
@@ -61,6 +66,8 @@ public:
     void drawGrid(float x, float y, float w, float h, float spacing, float thickness, const FloatColor& color);
     void drawSpriteLocal(float x, float y, float w, float h, const QImage& image, float opacity = 1.0f);
     void drawSpriteTransformed(float x, float y, float w, float h, const QTransform& transform, const QImage& image, float opacity = 1.0f);
+    void drawSpriteTransformed(float x, float y, float w, float h, const QMatrix4x4& transform, const QImage& image, float opacity = 1.0f);
+    void drawTextureLocal(float x, float y, float w, float h, ITextureView* pSRV, float opacity = 1.0f);
 
 private:
     class Impl;

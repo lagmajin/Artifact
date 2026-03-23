@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <QWidget>
 #include <QDebug>
 #include <atomic>
@@ -12,6 +12,8 @@
 #include <windows.h>
 
 module Artifact.Render.DiligentDeviceManager;
+
+import Artifact.Render.Config;
 
 namespace Artifact {
 
@@ -142,9 +144,20 @@ namespace {
         EngineD3D12CreateInfo creationAttribs = {};
         creationAttribs.EnableValidation = true;
         creationAttribs.SetValidationLevel(Diligent::VALIDATION_LEVEL_2);
-        pFactory->CreateDeviceAndContextsD3D12(creationAttribs,
-                                               &outDevice,
-                                               &outImmediateContext);
+        
+        // 1. Try with Ray Tracing enabled
+        creationAttribs.Features.RayTracing = DEVICE_FEATURE_STATE_ENABLED;
+        pFactory->CreateDeviceAndContextsD3D12(creationAttribs, &outDevice, &outImmediateContext);
+        
+        if (!outDevice) {
+            // 2. Fallback: Ray Tracing disabled
+            qDebug() << "[DiligentDeviceManager] D3D12: Ray Tracing not supported, falling back.";
+            creationAttribs.Features.RayTracing = DEVICE_FEATURE_STATE_DISABLED;
+            pFactory->CreateDeviceAndContextsD3D12(creationAttribs, &outDevice, &outImmediateContext);
+        } else {
+            qDebug() << "[DiligentDeviceManager] D3D12: Ray Tracing ENABLED.";
+        }
+
         return outDevice && outImmediateContext;
     }
 
@@ -163,9 +176,20 @@ namespace {
         EngineVkCreateInfo creationAttribs = {};
         creationAttribs.EnableValidation = true;
         creationAttribs.SetValidationLevel(Diligent::VALIDATION_LEVEL_2);
-        pFactory->CreateDeviceAndContextsVk(creationAttribs,
-                                            &outDevice,
-                                            &outImmediateContext);
+
+        // 1. Try with Ray Tracing enabled
+        creationAttribs.Features.RayTracing = DEVICE_FEATURE_STATE_ENABLED;
+        pFactory->CreateDeviceAndContextsVk(creationAttribs, &outDevice, &outImmediateContext);
+
+        if (!outDevice) {
+            // 2. Fallback: Ray Tracing disabled
+            qDebug() << "[DiligentDeviceManager] Vulkan: Ray Tracing not supported, falling back.";
+            creationAttribs.Features.RayTracing = DEVICE_FEATURE_STATE_DISABLED;
+            pFactory->CreateDeviceAndContextsVk(creationAttribs, &outDevice, &outImmediateContext);
+        } else {
+            qDebug() << "[DiligentDeviceManager] Vulkan: Ray Tracing ENABLED.";
+        }
+
         return outDevice && outImmediateContext;
     }
 }
@@ -270,7 +294,7 @@ public:
     int currentPhysicalWidth_ = 0;
     int currentPhysicalHeight_ = 0;
     qreal currentDevicePixelRatio_ = 1.0;
-    const TEXTURE_FORMAT MAIN_RTV_FORMAT = TEX_FORMAT_RGBA8_UNORM_SRGB;
+    bool rtSupported_ = false;
 
     Impl() = default;
 
@@ -279,6 +303,7 @@ public:
     {
         if (device_ && immediateContext_) {
             device_->CreateDeferredContext(&deferredContext_);
+            rtSupported_ = device_->GetDeviceInfo().Features.RayTracing != DEVICE_FEATURE_STATE_DISABLED;
         }
     }
 
@@ -316,6 +341,7 @@ void DiligentDeviceManager::Impl::initialize(QWidget* widget)
              << deviceTypeName(device_->GetDeviceInfo().Type);
 
     device_->CreateDeferredContext(&deferredContext_);
+    rtSupported_ = device_->GetDeviceInfo().Features.RayTracing != DEVICE_FEATURE_STATE_DISABLED;
 
     currentPhysicalWidth_ = static_cast<int>(widget_->width() * widget_->devicePixelRatio());
     currentPhysicalHeight_ = static_cast<int>(widget_->height() * widget_->devicePixelRatio());
@@ -468,7 +494,7 @@ bool DiligentDeviceManager::Impl::createSwapChainForBackend(HWND hwnd, int width
     SwapChainDesc SCDesc;
     SCDesc.Width = width;
     SCDesc.Height = height;
-    SCDesc.ColorBufferFormat = MAIN_RTV_FORMAT;
+    SCDesc.ColorBufferFormat = RenderConfig::MainRTVFormat;
     SCDesc.DepthBufferFormat = TEX_FORMAT_UNKNOWN;
     SCDesc.BufferCount = 2;
     SCDesc.Usage = SWAP_CHAIN_USAGE_RENDER_TARGET;
@@ -574,7 +600,7 @@ bool DiligentDeviceManager::createSwapChainForCurrentBackend(QWidget* widget, HW
     SwapChainDesc SCDesc;
     SCDesc.Width = width;
     SCDesc.Height = height;
-    SCDesc.ColorBufferFormat = impl_->MAIN_RTV_FORMAT;
+    SCDesc.ColorBufferFormat = RenderConfig::MainRTVFormat;
     SCDesc.DepthBufferFormat = TEX_FORMAT_UNKNOWN;
     SCDesc.BufferCount = 2;
     SCDesc.Usage = SWAP_CHAIN_USAGE_RENDER_TARGET;
@@ -631,6 +657,11 @@ HWND DiligentDeviceManager::renderHwnd() const
 bool DiligentDeviceManager::isInitialized() const
 {
     return impl_->initialized_;
+}
+
+bool DiligentDeviceManager::isRayTracingSupported() const
+{
+    return impl_->rtSupported_;
 }
 
 }

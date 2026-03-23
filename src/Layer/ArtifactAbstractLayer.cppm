@@ -1,4 +1,4 @@
-﻿module;
+module;
 
 #include <QDebug>
 #include <QPointF>
@@ -21,6 +21,8 @@ import Layer.State;
 import Animation.Transform2D;
 import Frame.Position;
 import Time.Rational;
+import Frame.Rate;
+
 import Artifact.Layer.Settings;
 import Artifact.Composition.Abstract;
 import Artifact.Effect.Abstract;
@@ -343,6 +345,32 @@ QTransform ArtifactAbstractLayer::getGlobalTransform() const {
   return local;
 }
 
+QMatrix4x4 ArtifactAbstractLayer::getLocalTransform4x4() const {
+  const auto &t = transform3D();
+  QMatrix4x4 result;
+
+  // AE-like transform order: Translate(Pos) * Rotate(Z) * Rotate(Y) * Rotate(X) * Scale(Scale) * Translate(-Anchor)
+  // Qt's translate/rotate/scale multiply from the right: Result = I * T * R * S * Tinv
+  result.translate(t.positionX(), t.positionY(), t.positionZ());
+  result.rotate(t.rotation(), 0, 0, 1); // Z-rotation
+  // result.rotate(t.rotationY(), 0, 1, 0); // Placeholder for Y
+  // result.rotate(t.rotationX(), 1, 0, 0); // Placeholder for X
+  result.scale(t.scaleX(), t.scaleY(), 1.0f);
+  result.translate(-t.anchorX(), -t.anchorY(), -t.anchorZ());
+
+  return result;
+}
+
+QMatrix4x4 ArtifactAbstractLayer::getGlobalTransform4x4() const {
+  QMatrix4x4 local = getLocalTransform4x4();
+  auto parent = parentLayer();
+  if (parent) {
+    // Parent * Local
+    return parent->getGlobalTransform4x4() * local;
+  }
+  return local;
+}
+
 bool ArtifactAbstractLayer::isAdjustmentLayer() const { return false; }
 void ArtifactAbstractLayer::setAdjustmentLayer(bool isAdjustment) {
   // adjustmentLayer = isAdjustment;
@@ -423,7 +451,7 @@ bool ArtifactAbstractLayer::isTimeRemapEnabled() const { return false; }
 
 bool ArtifactAbstractLayer::isNullLayer() const { return false; }
 
-bool ArtifactAbstractLayer::hasAudio() const { return true; }
+bool ArtifactAbstractLayer::hasAudio() const { return false; }
 
 bool ArtifactAbstractLayer::hasVideo() const { return true; }
 
@@ -450,6 +478,17 @@ QRectF ArtifactAbstractLayer::localBounds() const {
     return QRectF();
   }
   return QRectF(0.0, 0.0, static_cast<qreal>(size.width), static_cast<qreal>(size.height));
+}
+
+bool ArtifactAbstractLayer::getAudio(AudioSegment &outSegment, const FramePosition &start,
+                                    int frameCount, int sampleRate)
+{
+  // Default implementation: no audio
+  Q_UNUSED(outSegment);
+  Q_UNUSED(start);
+  Q_UNUSED(frameCount);
+  Q_UNUSED(sampleRate);
+  return false;
 }
 
 QRectF ArtifactAbstractLayer::transformedBoundingBox() const {

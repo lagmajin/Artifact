@@ -32,6 +32,7 @@ module Artifact.MainWindow;
 import Artifact.MainWindow;
 import Artifact.Widgets.ProjectManagerWidget;
 import Menu.MenuBar;
+import Artifact.Menu.View;
 import Widgets.ToolBar;
 import Widgets.Dock.StyleManager;
 import Artifact.Widgets.AppDialogs;
@@ -220,15 +221,23 @@ ArtifactMainWindow::ArtifactMainWindow(QWidget* parent)
  : QMainWindow(parent), impl_(new Impl())
 {
  CDockManager::setConfigFlags(CDockManager::DefaultOpaqueConfig);
+ CDockManager::setConfigFlag(CDockManager::UseNativeWindows, true);
  //CDockManager::setConfigFlag(CDockManager::RetainTabSizeWhenCloseButtonHidden, true);
  CDockManager::setConfigFlag(CDockManager::FocusHighlighting, true);
+ CDockManager::setConfigFlag(CDockManager::AllTabsHaveCloseButton, true);
 
- QTimer::singleShot(0, this, [this]() {
-  if (!impl_ || impl_->menuBarInitialized) return;
-  auto* menuBar = new ArtifactMenuBar(this, this);
-  setMenuBar(menuBar);
-  impl_->menuBarInitialized = true;
- });
+  QTimer::singleShot(0, this, [this]() {
+   if (!impl_ || impl_->menuBarInitialized) return;
+   auto* menuBar = new ArtifactMenuBar(this, this);
+   setMenuBar(menuBar);
+
+   // Pass main window reference to view menu for dynamic panel listing
+   if (auto* viewMenu = menuBar->findChild<ArtifactViewMenu*>()) {
+    viewMenu->setMainWindow(this);
+   }
+
+   impl_->menuBarInitialized = true;
+  });
 
  auto* toolBar = new ArtifactToolBar(this);
  addToolBar(toolBar);
@@ -673,6 +682,34 @@ void ArtifactMainWindow::togglePanelsVisible(bool visible)
  for (auto* dock : impl_->dockWidgets) {
   if (dock) dock->setVisible(visible);
  }
+}
+
+QStringList ArtifactMainWindow::dockTitles() const
+{
+ QStringList titles;
+ if (!impl_) return titles;
+ for (auto* dock : impl_->dockWidgets) {
+  if (dock) {
+   const QString name = dock->objectName();
+   const QString title = dock->windowTitle();
+   titles.append(title.isEmpty() ? name : title);
+  }
+ }
+ return titles;
+}
+
+bool ArtifactMainWindow::isDockVisible(const QString& title) const
+{
+ if (!impl_) return false;
+ for (auto* dock : impl_->dockWidgets) {
+  if (!dock) continue;
+  const QString name = dock->objectName();
+  const QString dockTitle = dock->windowTitle();
+  if (name == title || dockTitle == title) {
+   return dock->isVisible();
+  }
+ }
+ return false;
 }
 
 void ArtifactMainWindow::setStatusZoomLevel(float zoomPercent)

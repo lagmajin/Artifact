@@ -91,6 +91,10 @@ public:
 
     ViewportTransformer viewport_;
 
+    QMatrix4x4 externalViewMatrix_;
+    QMatrix4x4 externalProjMatrix_;
+    bool useExternalMatrices_ = false;
+
     ITextureView* m_overrideRTV = nullptr;
     ITextureView* getCurrentRTV() const {
         if (m_overrideRTV) return m_overrideRTV;
@@ -314,6 +318,10 @@ void PrimitiveRenderer2D::panBy(float dx, float dy)          { impl_->viewport_.
 void PrimitiveRenderer2D::resetView()                        { impl_->viewport_.ResetView(); }
 void PrimitiveRenderer2D::fitToViewport(float margin)        { impl_->viewport_.FitCanvasToViewport(margin); }
 
+void PrimitiveRenderer2D::setViewMatrix(const QMatrix4x4& view) { impl_->externalViewMatrix_ = view; }
+void PrimitiveRenderer2D::setProjectionMatrix(const QMatrix4x4& proj) { impl_->externalProjMatrix_ = proj; }
+void PrimitiveRenderer2D::setUseExternalMatrices(bool use) { impl_->useExternalMatrices_ = use; }
+
 void PrimitiveRenderer2D::zoomAroundViewportPoint(float2 viewportPos, float newZoom)
 {
     impl_->viewport_.ZoomAroundViewportPoint(viewportPos, newZoom);
@@ -409,6 +417,7 @@ void PrimitiveRenderer2D::drawSolidRectTransformed(float x, float y, float w, fl
     if (!impl_->hasRenderTarget() || !impl_->m_draw_solid_rect_transform_pso_and_srb.pPSO) return;
 
     float alpha = color.a() * opacity;
+    // Transformed API expects vertex input in 0..1 range (unit quad)
     RectVertex vertices[4] = {
         {{0.0f, 0.0f}, {color.r(), color.g(), color.b(), alpha}},
         {{1.0f, 0.0f}, {color.r(), color.g(), color.b(), alpha}},
@@ -427,6 +436,14 @@ void PrimitiveRenderer2D::drawSolidRectTransformed(float x, float y, float w, fl
     }
 
     {
+        CBSolidColor cb = { {color.r(), color.g(), color.b(), alpha} };
+        void* pData = nullptr;
+        impl_->pCtx_->MapBuffer(impl_->m_draw_solid_rect_cb, MAP_WRITE, MAP_FLAG_DISCARD, pData);
+        std::memcpy(pData, &cb, sizeof(cb));
+        impl_->pCtx_->UnmapBuffer(impl_->m_draw_solid_rect_cb, MAP_WRITE);
+    }
+
+    {
         auto viewportCB = impl_->viewport_.GetViewportCB();
         const float screenW = std::max(viewportCB.screenSize.x, 0.001f);
         const float screenH = std::max(viewportCB.screenSize.y, 0.001f);
@@ -434,12 +451,12 @@ void PrimitiveRenderer2D::drawSolidRectTransformed(float x, float y, float w, fl
         const float panX = viewportCB.offset.x;
         const float panY = viewportCB.offset.y;
 
-        const float a  = transform.m11();
-        const float b  = transform.m12();
-        const float c  = transform.m21();
-        const float d  = transform.m22();
-        const float tx = transform.dx();
-        const float ty = transform.dy();
+        const float a  = (float)transform.m11();
+        const float b  = (float)transform.m12();
+        const float c  = (float)transform.m21();
+        const float d  = (float)transform.m22();
+        const float tx = (float)transform.dx();
+        const float ty = (float)transform.dy();
         
         const float localX = a * x + c * y + tx;
         const float localY = b * x + d * y + ty;
@@ -459,6 +476,97 @@ void PrimitiveRenderer2D::drawSolidRectTransformed(float x, float y, float w, fl
         };
         cbTransform.row2 = { 0.0f, 0.0f, 0.0f, 0.0f };
         cbTransform.row3 = { 0.0f, 0.0f, 0.0f, 1.0f };
+
+        void* pData = nullptr;
+        impl_->pCtx_->MapBuffer(impl_->m_draw_solid_rect_transform_matrix_cb, MAP_WRITE, MAP_FLAG_DISCARD, pData);
+        std::memcpy(pData, &cbTransform, sizeof(cbTransform));
+        impl_->pCtx_->UnmapBuffer(impl_->m_draw_solid_rect_transform_matrix_cb, MAP_WRITE);
+    }
+
+    impl_->pCtx_->SetPipelineState(impl_->m_draw_solid_rect_transform_pso_and_srb.pPSO);
+
+    IBuffer* pBuffers[] = { impl_->m_draw_solid_rect_vertex_buffer };
+    Uint64 offsets[] = { 0 };
+    impl_->pCtx_->SetVertexBuffers(0, 1, pBuffers, offsets,
+        RESOURCE_STATE_TRANSITION_MODE_TRANSITION, SET_VERTEX_BUFFERS_FLAG_RESET);
+    impl_->pCtx_->SetIndexBuffer(impl_->m_draw_solid_rect_index_buffer, 0,
+        RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+
+    impl_->m_draw_solid_rect_transform_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_VERTEX, "TransformCB")->Set(impl_->m_draw_solid_rect_transform_matrix_cb);
+    impl_->m_draw_solid_rect_transform_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_PIXEL, "ColorBuffer")->Set(impl_->m_draw_solid_rect_cb);
+    impl_->pCtx_->CommitShaderResources(impl_->m_draw_solid_rect_transform_pso_and_srb.pSRB,
+        RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+
+    DrawIndexedAttribs drawAttrs(6, VT_UINT32, DRAW_FLAG_VERIFY_ALL);
+    impl_->pCtx_->DrawIndexed(drawAttrs);
+}
+
+void PrimitiveRenderer2D::drawSolidRectTransformed(float x, float y, float w, float h, const QMatrix4x4& transform, const FloatColor& color, float opacity)
+{
+    if (!impl_->hasRenderTarget() || !impl_->m_draw_solid_rect_transform_pso_and_srb.pPSO) return;
+
+    float alpha = color.a() * opacity;
+    RectVertex vertices[4] = {
+        {{0.0f, 0.0f}, {color.r(), color.g(), color.b(), alpha}},
+        {{1.0f, 0.0f}, {color.r(), color.g(), color.b(), alpha}},
+        {{0.0f, 1.0f}, {color.r(), color.g(), color.b(), alpha}},
+        {{1.0f, 1.0f}, {color.r(), color.g(), color.b(), alpha}},
+    };
+
+    auto* pRTV = impl_->getCurrentRTV();
+    impl_->pCtx_->SetRenderTargets(1, &pRTV, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+
+    {
+        void* pData = nullptr;
+        impl_->pCtx_->MapBuffer(impl_->m_draw_solid_rect_vertex_buffer, MAP_WRITE, MAP_FLAG_DISCARD, pData);
+        std::memcpy(pData, vertices, sizeof(vertices));
+        impl_->pCtx_->UnmapBuffer(impl_->m_draw_solid_rect_vertex_buffer, MAP_WRITE);
+    }
+
+    {
+        CBSolidColor cb = { {color.r(), color.g(), color.b(), alpha} };
+        void* pData = nullptr;
+        impl_->pCtx_->MapBuffer(impl_->m_draw_solid_rect_cb, MAP_WRITE, MAP_FLAG_DISCARD, pData);
+        std::memcpy(pData, &cb, sizeof(cb));
+        impl_->pCtx_->UnmapBuffer(impl_->m_draw_solid_rect_cb, MAP_WRITE);
+    }
+
+    {
+        auto viewportCB = impl_->viewport_.GetViewportCB();
+        const float screenW = std::max(viewportCB.screenSize.x, 0.001f);
+        const float screenH = std::max(viewportCB.screenSize.y, 0.001f);
+        const float zoom = std::max(viewportCB.zoom, 0.001f);
+        const float panX = viewportCB.offset.x;
+        const float panY = viewportCB.offset.y;
+
+        QMatrix4x4 finalMat;
+        if (impl_->useExternalMatrices_) {
+            // 3D Path: Final = Projection * View * Model
+            QMatrix4x4 model;
+            model = transform;
+            model.translate(x, y, 0);
+            model.scale(w, h, 1.0f);
+            finalMat = impl_->externalProjMatrix_ * impl_->externalViewMatrix_ * model;
+        } else {
+            // 2D Path (Default): Apply Zoom/Pan
+            QMatrix4x4 combined = transform;
+            combined.translate(x, y, 0);
+            combined.scale(w, h, 1.0f);
+
+            QMatrix4x4 canvasToNdc;
+            canvasToNdc.setToIdentity();
+            canvasToNdc.translate(-1.0f, 1.0f, 0.0f);
+            canvasToNdc.scale(2.0f / screenW, -2.0f / screenH, 1.0f);
+            canvasToNdc.scale(zoom, zoom, 1.0f);
+            canvasToNdc.translate(panX / zoom, panY / zoom, 0.0f);
+            finalMat = canvasToNdc * combined;
+        }
+
+        CBSolidRectTransform2D cbTransform;
+        cbTransform.row0 = { finalMat.row(0).x(), finalMat.row(0).y(), finalMat.row(0).z(), finalMat.row(0).w() };
+        cbTransform.row1 = { finalMat.row(1).x(), finalMat.row(1).y(), finalMat.row(1).z(), finalMat.row(1).w() };
+        cbTransform.row2 = { finalMat.row(2).x(), finalMat.row(2).y(), finalMat.row(2).z(), finalMat.row(2).w() };
+        cbTransform.row3 = { finalMat.row(3).x(), finalMat.row(3).y(), finalMat.row(3).z(), finalMat.row(3).w() };
 
         void* pData = nullptr;
         impl_->pCtx_->MapBuffer(impl_->m_draw_solid_rect_transform_matrix_cb, MAP_WRITE, MAP_FLAG_DISCARD, pData);
@@ -777,8 +885,14 @@ void PrimitiveRenderer2D::drawCircle(float x, float y, float radius, const Float
 void PrimitiveRenderer2D::drawCrosshair(float x, float y, float size, const FloatColor& color)
 {
     const float half = size * 0.5f;
-    drawThickLineLocal({x - half, y}, {x + half, y}, 1.5f, color);
-    drawThickLineLocal({x, y - half}, {x, y + half}, 1.5f, color);
+    // 1. 背景用の太い黒線（シャドウ効果）
+    FloatColor shadow = {0.0f, 0.0f, 0.0f, 0.6f};
+    drawThickLineLocal({x - half, y}, {x + half, y}, 3.0f, shadow);
+    drawThickLineLocal({x, y - half}, {x, y + half}, 3.0f, shadow);
+    
+    // 2. メインのカラー線
+    drawThickLineLocal({x - half, y}, {x + half, y}, 1.0f, color);
+    drawThickLineLocal({x, y - half}, {x, y + half}, 1.0f, color);
 }
 
 void PrimitiveRenderer2D::drawPoint(float x, float y, float size, const FloatColor& color)
@@ -1053,6 +1167,70 @@ void PrimitiveRenderer2D::drawSpriteLocal(float x, float y, float w, float h, co
     impl_->pCtx_->Draw(drawAttrs);
 }
 
+void PrimitiveRenderer2D::drawTextureLocal(float x, float y, float w, float h, ITextureView* pSRV, float opacity)
+{
+    if (!impl_->hasRenderTarget() || !impl_->m_draw_sprite_pso_and_srb.pPSO || !pSRV) return;
+    if (!impl_->pCtx_) return;
+
+    auto* pRTV = impl_->getCurrentRTV();
+    if (!pRTV) return;
+
+    SpriteVertex vertices[4] = {
+        { {0.0f, 0.0f}, {0.0f, 0.0f}, {1.0f, 1.0f, 1.0f, opacity} },
+        { {1.0f, 0.0f}, {1.0f, 0.0f}, {1.0f, 1.0f, 1.0f, opacity} },
+        { {0.0f, 1.0f}, {0.0f, 1.0f}, {1.0f, 1.0f, 1.0f, opacity} },
+        { {1.0f, 1.0f}, {1.0f, 1.0f}, {1.0f, 1.0f, 1.0f, opacity} },
+    };
+    impl_->pCtx_->SetRenderTargets(1, &pRTV, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+
+    {
+        void* pData = nullptr;
+        impl_->pCtx_->MapBuffer(impl_->m_draw_sprite_vertex_buffer, MAP_WRITE, MAP_FLAG_DISCARD, pData);
+        std::memcpy(pData, vertices, sizeof(vertices));
+        impl_->pCtx_->UnmapBuffer(impl_->m_draw_sprite_vertex_buffer, MAP_WRITE);
+    }
+
+    {
+        auto viewportCB = impl_->viewport_.GetViewportCB();
+        const float zoom = std::max(viewportCB.zoom, 0.001f);
+        CBSolidTransform2D cbTransform;
+        cbTransform.offset     = { x * zoom + viewportCB.offset.x, y * zoom + viewportCB.offset.y };
+        cbTransform.scale      = { w * zoom, h * zoom };
+        cbTransform.screenSize = viewportCB.screenSize;
+        void* pData = nullptr;
+        impl_->pCtx_->MapBuffer(impl_->m_draw_sprite_cb, MAP_WRITE, MAP_FLAG_DISCARD, pData);
+        std::memcpy(pData, &cbTransform, sizeof(cbTransform));
+        impl_->pCtx_->UnmapBuffer(impl_->m_draw_sprite_cb, MAP_WRITE);
+    }
+
+    impl_->pCtx_->SetPipelineState(impl_->m_draw_sprite_pso_and_srb.pPSO);
+
+    auto* texVar = impl_->m_draw_sprite_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_PIXEL, "g_texture");
+    if (texVar) texVar->Set(pSRV);
+
+    if (impl_->m_sprite_sampler) {
+        auto* sampVar = impl_->m_draw_sprite_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_PIXEL, "g_sampler");
+        if (sampVar) sampVar->Set(impl_->m_sprite_sampler);
+    }
+
+    if (auto* transformVar = impl_->m_draw_sprite_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_VERTEX, "TransformCB")) {
+        transformVar->Set(impl_->m_draw_sprite_cb);
+    }
+
+    impl_->pCtx_->CommitShaderResources(impl_->m_draw_sprite_pso_and_srb.pSRB,
+        RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+
+    IBuffer* pBuffers[] = { impl_->m_draw_sprite_vertex_buffer };
+    Uint64 offsets[] = { 0 };
+    impl_->pCtx_->SetVertexBuffers(0, 1, pBuffers, offsets,
+        RESOURCE_STATE_TRANSITION_MODE_TRANSITION, SET_VERTEX_BUFFERS_FLAG_RESET);
+
+    DrawAttribs drawAttrs;
+    drawAttrs.NumVertices = 4;
+    drawAttrs.Flags       = DRAW_FLAG_VERIFY_ALL;
+    impl_->pCtx_->Draw(drawAttrs);
+}
+
 void PrimitiveRenderer2D::drawSpriteTransformed(float x, float y, float w, float h, const QTransform& transform, const QImage& image, float opacity)
 {
     if (!impl_->hasRenderTarget() || !impl_->m_draw_sprite_transform_pso_and_srb.pPSO) return;
@@ -1106,6 +1284,7 @@ void PrimitiveRenderer2D::drawSpriteTransformed(float x, float y, float w, float
     auto* pRTV = impl_->getCurrentRTV();
     if (!pRTV) return;
 
+    // Transformed API expects vertex input in 0..1 range (unit quad)
     SpriteVertex vertices[4] = {
         { {0.0f, 0.0f}, {0.0f, 0.0f}, {1.0f, 1.0f, 1.0f, opacity} },
         { {1.0f, 0.0f}, {1.0f, 0.0f}, {1.0f, 1.0f, 1.0f, opacity} },
@@ -1129,12 +1308,12 @@ void PrimitiveRenderer2D::drawSpriteTransformed(float x, float y, float w, float
         const float panX = viewportCB.offset.x;
         const float panY = viewportCB.offset.y;
 
-        const float a  = transform.m11();
-        const float b  = transform.m12();
-        const float c  = transform.m21();
-        const float d  = transform.m22();
-        const float tx = transform.dx();
-        const float ty = transform.dy();
+        const float a  = (float)transform.m11();
+        const float b  = (float)transform.m12();
+        const float c  = (float)transform.m21();
+        const float d  = (float)transform.m22();
+        const float tx = (float)transform.dx();
+        const float ty = (float)transform.dy();
         
         const float localX = a * x + c * y + tx;
         const float localY = b * x + d * y + ty;
@@ -1154,6 +1333,134 @@ void PrimitiveRenderer2D::drawSpriteTransformed(float x, float y, float w, float
         };
         cbTransform.row2 = { 0.0f, 0.0f, 0.0f, 0.0f };
         cbTransform.row3 = { 0.0f, 0.0f, 0.0f, 1.0f };
+
+        void* pData = nullptr;
+        impl_->pCtx_->MapBuffer(impl_->m_draw_sprite_transform_matrix_cb, MAP_WRITE, MAP_FLAG_DISCARD, pData);
+        std::memcpy(pData, &cbTransform, sizeof(cbTransform));
+        impl_->pCtx_->UnmapBuffer(impl_->m_draw_sprite_transform_matrix_cb, MAP_WRITE);
+    }
+
+    impl_->pCtx_->SetPipelineState(impl_->m_draw_sprite_transform_pso_and_srb.pPSO);
+
+    auto* texVar = impl_->m_draw_sprite_transform_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_PIXEL, "g_texture");
+    if (texVar) texVar->Set(pSRV);
+
+    if (impl_->m_sprite_sampler) {
+        auto* sampVar = impl_->m_draw_sprite_transform_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_PIXEL, "g_sampler");
+        if (sampVar) sampVar->Set(impl_->m_sprite_sampler);
+    }
+
+    if (auto* transformVar = impl_->m_draw_sprite_transform_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_VERTEX, "TransformCB")) {
+        transformVar->Set(impl_->m_draw_sprite_transform_matrix_cb);
+    }
+
+    impl_->pCtx_->CommitShaderResources(impl_->m_draw_sprite_transform_pso_and_srb.pSRB,
+        RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+
+    IBuffer* pBuffers[] = { impl_->m_draw_sprite_vertex_buffer };
+    Uint64 offsets[] = { 0 };
+    impl_->pCtx_->SetVertexBuffers(0, 1, pBuffers, offsets,
+        RESOURCE_STATE_TRANSITION_MODE_TRANSITION, SET_VERTEX_BUFFERS_FLAG_RESET);
+    impl_->pCtx_->SetIndexBuffer(impl_->m_draw_solid_rect_index_buffer, 0,
+        RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+
+    DrawIndexedAttribs drawAttrs(6, VT_UINT32, DRAW_FLAG_VERIFY_ALL);
+    impl_->pCtx_->DrawIndexed(drawAttrs);
+}
+
+void PrimitiveRenderer2D::drawSpriteTransformed(float x, float y, float w, float h, const QMatrix4x4& transform, const QImage& image, float opacity)
+{
+    if (!impl_->hasRenderTarget() || !impl_->m_draw_sprite_transform_pso_and_srb.pPSO) return;
+    if (image.isNull()) return;
+    if (!impl_->pDevice_ || !impl_->pCtx_) return;
+
+    // (Texture caching logic same as QTransform version)
+    if (image.cacheKey() != impl_->m_spriteCacheKey || !impl_->m_spriteTexCache) {
+        const QImage rgba = image.convertToFormat(QImage::Format_RGBA8888);
+        const int imgW = rgba.width();
+        const int imgH = rgba.height();
+        if (imgW <= 0 || imgH <= 0) return;
+
+        RefCntAutoPtr<ITexture> newTex;
+        TextureDesc texDesc;
+        texDesc.Type             = RESOURCE_DIM_TEX_2D;
+        texDesc.Width            = static_cast<Uint32>(imgW);
+        texDesc.Height           = static_cast<Uint32>(imgH);
+        texDesc.Format           = TEX_FORMAT_RGBA8_UNORM_SRGB;
+        texDesc.MipLevels        = 1;
+        texDesc.Usage            = USAGE_IMMUTABLE;
+        texDesc.BindFlags        = BIND_SHADER_RESOURCE;
+        texDesc.CPUAccessFlags   = CPU_ACCESS_NONE;
+
+        TextureSubResData subData;
+        subData.pData  = rgba.constBits();
+        subData.Stride = static_cast<Uint64>(rgba.bytesPerLine());
+        TextureData initData;
+        initData.pSubResources   = &subData;
+        initData.NumSubresources = 1;
+
+        impl_->pDevice_->CreateTexture(texDesc, &initData, &newTex);
+        if (!newTex) return;
+
+        impl_->m_spriteTexCache = newTex;
+        impl_->m_spriteCacheKey = image.cacheKey();
+    }
+
+    auto* pSRV = impl_->m_spriteTexCache->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE);
+    if (!pSRV) return;
+
+    auto* pRTV = impl_->getCurrentRTV();
+    if (!pRTV) return;
+
+    SpriteVertex vertices[4] = {
+        { {0.0f, 0.0f}, {0.0f, 0.0f}, {1.0f, 1.0f, 1.0f, opacity} },
+        { {1.0f, 0.0f}, {1.0f, 0.0f}, {1.0f, 1.0f, 1.0f, opacity} },
+        { {0.0f, 1.0f}, {0.0f, 1.0f}, {1.0f, 1.0f, 1.0f, opacity} },
+        { {1.0f, 1.0f}, {1.0f, 1.0f}, {1.0f, 1.0f, 1.0f, opacity} },
+    };
+    impl_->pCtx_->SetRenderTargets(1, &pRTV, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+
+    {
+        void* pData = nullptr;
+        impl_->pCtx_->MapBuffer(impl_->m_draw_sprite_vertex_buffer, MAP_WRITE, MAP_FLAG_DISCARD, pData);
+        std::memcpy(pData, vertices, sizeof(vertices));
+        impl_->pCtx_->UnmapBuffer(impl_->m_draw_sprite_vertex_buffer, MAP_WRITE);
+    }
+
+    {
+        auto viewportCB = impl_->viewport_.GetViewportCB();
+        const float screenW = std::max(viewportCB.screenSize.x, 0.001f);
+        const float screenH = std::max(viewportCB.screenSize.y, 0.001f);
+        const float zoom = std::max(viewportCB.zoom, 0.001f);
+        const float panX = viewportCB.offset.x;
+        const float panY = viewportCB.offset.y;
+
+        QMatrix4x4 finalMat;
+        if (impl_->useExternalMatrices_) {
+            QMatrix4x4 model;
+            model = transform;
+            model.translate(x, y, 0);
+            model.scale(w, h, 1.0f);
+            finalMat = impl_->externalProjMatrix_ * impl_->externalViewMatrix_ * model;
+        } else {
+            QMatrix4x4 combined = transform;
+            combined.translate(x, y, 0);
+            combined.scale(w, h, 1.0f);
+
+            QMatrix4x4 canvasToNdc;
+            canvasToNdc.setToIdentity();
+            canvasToNdc.translate(-1.0f, 1.0f, 0.0f);
+            canvasToNdc.scale(2.0f / screenW, -2.0f / screenH, 1.0f);
+            canvasToNdc.scale(zoom, zoom, 1.0f);
+            canvasToNdc.translate(panX / zoom, panY / zoom, 0.0f);
+            finalMat = canvasToNdc * combined;
+        }
+
+        CBSolidRectTransform2D cbTransform;
+        cbTransform.row0 = { finalMat.row(0).x(), finalMat.row(0).y(), finalMat.row(0).z(), finalMat.row(0).w() };
+        cbTransform.row1 = { finalMat.row(1).x(), finalMat.row(1).y(), finalMat.row(1).z(), finalMat.row(1).w() };
+        cbTransform.row2 = { finalMat.row(2).x(), finalMat.row(2).y(), finalMat.row(2).z(), finalMat.row(2).w() };
+        cbTransform.row3 = { finalMat.row(3).x(), finalMat.row(3).y(), finalMat.row(3).z(), finalMat.row(3).w() };
 
         void* pData = nullptr;
         impl_->pCtx_->MapBuffer(impl_->m_draw_sprite_transform_matrix_cb, MAP_WRITE, MAP_FLAG_DISCARD, pData);

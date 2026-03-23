@@ -243,6 +243,7 @@ namespace Artifact {
  ArtifactCompositionRenderWidget::ArtifactCompositionRenderWidget(QWidget* parent)
   : QWidget(parent), impl_(new Impl()) {
   setAttribute(Qt::WA_NativeWindow);
+  setAttribute(Qt::WA_DontCreateNativeAncestors);
   setAttribute(Qt::WA_PaintOnScreen);
   setAttribute(Qt::WA_NoSystemBackground);
   setMouseTracking(true);

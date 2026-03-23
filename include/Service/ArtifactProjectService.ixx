@@ -61,6 +61,8 @@ export namespace Artifact {
 
   void addAssetFromPath(const UniString& path);
   QStringList importAssetsFromPaths(const QStringList& sourcePaths);
+  void importAssetsFromPathsAsync(const QStringList& sourcePaths,
+                                 std::function<void(QStringList)> onFinished);
   void removeAllAssets();
   void setPreviewQualityPreset(PreviewQualityPreset preset);
   PreviewQualityPreset previewQualityPreset() const;

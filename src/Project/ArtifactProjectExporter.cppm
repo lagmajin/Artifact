@@ -7,6 +7,8 @@
 #include <QSaveFile>
 module Artifact.Project.Exporter;
 
+import Artifact.Render.Queue.Service;
+
 namespace Artifact
 {
  class ArtifactProjectExporter::Impl {
@@ -90,6 +92,14 @@ namespace Artifact
   aiMetadata["ai_instructions"] = aiInstructions;
 
   obj["_ai_metadata"] = aiMetadata;
+
+  // Render queue persistence
+  if (auto* rqService = ArtifactRenderQueueService::instance()) {
+   const QJsonArray renderQueue = rqService->toJson();
+   if (!renderQueue.isEmpty()) {
+    obj["renderQueue"] = renderQueue;
+   }
+  }
 
   QJsonDocument doc(obj);
   QByteArray jsonData = doc.toJson(QJsonDocument::Indented);
