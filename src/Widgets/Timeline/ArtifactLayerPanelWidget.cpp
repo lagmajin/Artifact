@@ -34,6 +34,8 @@
 #include <QFileDialog>
 #include <QTimer>
 #include <QDrag>
+#include <QtConcurrent>
+#include <QFuture>
 module Artifact.Widgets.LayerPanelWidget;
 
 import std;
@@ -349,14 +351,8 @@ namespace {
   QPixmap soundIcon;
   QPixmap shyIcon;
   
-  QPushButton* visibilityButton = nullptr;
-  QPushButton* lockButton = nullptr;
-  QPushButton* soloButton = nullptr;
-  QPushButton* soundButton = nullptr;
-  QPushButton* layerNameButton = nullptr;
-  QPushButton* shyButton = nullptr;
-  QPushButton* parentHeaderButton = nullptr;
-  QPushButton* blendHeaderButton = nullptr;
+  int hoveredColumn = -1;
+  bool shyActive = false;
  };
 
  W_OBJECT_IMPL(ArtifactLayerPanelHeaderWidget)
@@ -364,69 +360,177 @@ namespace {
  ArtifactLayerPanelHeaderWidget::ArtifactLayerPanelHeaderWidget(QWidget* parent)
   : QWidget(parent), impl_(new Impl())
  {
-  auto visButton = impl_->visibilityButton = new QPushButton();
-  visButton->setFixedSize(QSize(kLayerColumnWidth, kLayerHeaderButtonSize));
-  visButton->setIcon(impl_->visibilityIcon);
-  visButton->setStyleSheet("background-color: #2D2D30; border: none; border-right: 1px solid #1a1a1a;");
-  visButton->setFlat(true);
-
-  auto lockButton = impl_->lockButton = new QPushButton();
-  lockButton->setFixedSize(QSize(kLayerColumnWidth, kLayerHeaderButtonSize));
-  if (!impl_->lockIcon.isNull()) lockButton->setIcon(impl_->lockIcon);
-  lockButton->setStyleSheet("background-color: #2D2D30; border: none; border-right: 1px solid #1a1a1a;");
-
-  auto soloButton = impl_->soloButton = new QPushButton();
-  soloButton->setFixedSize(QSize(kLayerColumnWidth, kLayerHeaderButtonSize));
-  if (!impl_->soloIcon.isNull()) soloButton->setIcon(impl_->soloIcon);
-  soloButton->setStyleSheet("background-color: #2D2D30; border: none; border-right: 1px solid #1a1a1a;");
-
-  auto soundButton = impl_->soundButton = new QPushButton();
-  soundButton->setFixedSize(QSize(kLayerColumnWidth, kLayerHeaderButtonSize));
-  if (!impl_->soundIcon.isNull()) soundButton->setIcon(impl_->soundIcon);
-  soundButton->setStyleSheet("background-color: #2D2D30; border: none; border-right: 1px solid #1a1a1a;");
-
-  auto shyButton = impl_->shyButton = new QPushButton;
-  shyButton->setFixedSize(QSize(kLayerColumnWidth, kLayerHeaderButtonSize));
-  shyButton->setCheckable(true);
-  if (!impl_->shyIcon.isNull()) shyButton->setIcon(impl_->shyIcon);
-  shyButton->setToolTip("Master Shy Switch");
-  shyButton->setStyleSheet("QPushButton { background-color: #2D2D30; border: none; border-right: 1px solid #1a1a1a; } QPushButton:checked { background-color: #3b3bef; }");
-
-  auto layerNameButton = impl_->layerNameButton = new QPushButton("Layer Name");
-  QString btnStyle = "QPushButton { background-color: #2D2D30; color: #CCC; border: none; border-right: 1px solid #1a1a1a; font-size: 11px; text-align: left; padding-left: 5px; }";
-  layerNameButton->setStyleSheet(btnStyle);
-  auto parentHeader = impl_->parentHeaderButton = new QPushButton("Parent");
-  parentHeader->setFixedWidth(kInlineParentWidth);
-  parentHeader->setStyleSheet(btnStyle);
-  auto blendHeader = impl_->blendHeaderButton = new QPushButton("Blend");
-  blendHeader->setFixedWidth(kInlineBlendWidth);
-  blendHeader->setStyleSheet(btnStyle);
-  parentHeader->setEnabled(false);
-  blendHeader->setEnabled(false);
-
-  auto* layout = new QHBoxLayout(this);
-  layout->setContentsMargins(0, 0, 0, 0);
-  layout->setSpacing(0);
-  layout->addWidget(visButton);
-  layout->addWidget(lockButton);
-  layout->addWidget(soloButton);
-  layout->addWidget(soundButton);
-  layout->addWidget(shyButton);
-  layout->addWidget(layerNameButton, 1);
-  layout->addWidget(parentHeader);
-  layout->addWidget(blendHeader);
-
-  QObject::connect(shyButton, &QPushButton::toggled, this, [this](bool checked) {
-    Q_EMIT shyToggled(checked);
-  });
-
-  setStyleSheet("background-color: #2D2D30; border-bottom: 1px solid #1a1a1a;");
+  setMouseTracking(true);
   setFixedHeight(kLayerHeaderHeight);
-}
+  setStyleSheet("background-color: #2D2D30;");
+ }
 
  ArtifactLayerPanelHeaderWidget::~ArtifactLayerPanelHeaderWidget()
  {
   delete impl_;
+ }
+
+ void ArtifactLayerPanelHeaderWidget::paintEvent(QPaintEvent* event)
+ {
+     Q_UNUSED(event);
+     QPainter painter(this);
+     const int w = width();
+     const int h = height();
+     const int colW = kLayerColumnWidth;
+
+     // 1. Background
+     painter.fillRect(rect(), QColor(45, 45, 48));
+
+     auto drawHeaderColumn = [&](int index, const QPixmap& icon, const QString& tooltip = QString()) {
+         QRect colRect(index * colW, 0, colW, h);
+         
+         // Hover highlight
+         if (impl_->hoveredColumn == index) {
+             painter.fillRect(colRect, QColor(60, 60, 63));
+         }
+
+         // Icon
+         if (!icon.isNull()) {
+             const int iconSize = 14;
+             QRect iconRect(colRect.x() + (colW - iconSize) / 2, (h - iconSize) / 2, iconSize, iconSize);
+             painter.drawPixmap(iconRect, icon);
+         }
+
+         // Right separator
+         painter.setPen(QColor(26, 26, 26));
+         painter.drawLine(colRect.topRight(), colRect.bottomRight());
+     };
+
+     // Draw switch columns (5 columns * 28px = 140px)
+     drawHeaderColumn(0, impl_->visibilityIcon, "Visibility");
+     drawHeaderColumn(1, impl_->lockIcon, "Lock");
+     drawHeaderColumn(2, impl_->soloIcon, "Solo");
+     drawHeaderColumn(3, impl_->soundIcon, "Audio");
+     
+     // Shy column
+     {
+         QRect shyRect(4 * colW, 0, colW, h);
+         if (impl_->shyActive) {
+             painter.fillRect(shyRect, QColor(59, 59, 239));
+         } else if (impl_->hoveredColumn == 4) {
+             painter.fillRect(shyRect, QColor(60, 60, 63));
+         }
+         if (!impl_->shyIcon.isNull()) {
+             const int iconSize = 14;
+             QRect iconRect(shyRect.x() + (colW - iconSize) / 2, (h - iconSize) / 2, iconSize, iconSize);
+             painter.drawPixmap(iconRect, impl_->shyIcon);
+         }
+         painter.setPen(QColor(26, 26, 26));
+         painter.drawLine(shyRect.topRight(), shyRect.bottomRight());
+     }
+
+     // 5. Label Color Column (20px) - Consistent with list
+     const int labelColW = 20;
+     const int labelStartX = colW * 5;
+     QRect labelRect(labelStartX, 0, labelColW, h);
+     if (impl_->hoveredColumn == 10) { // Special index for label
+         painter.fillRect(labelRect, QColor(60, 60, 63));
+     }
+     painter.setPen(QColor(26, 26, 26));
+     painter.drawLine(labelRect.topRight(), labelRect.bottomRight());
+
+     // 6. Layer Name Column (Flexible)
+     const int nameStartX = labelStartX + labelColW; // 140 + 20 = 160px
+     const bool showInlineCombos = w >= (kLayerColumnWidth * kLayerPropertyColumnCount + kInlineComboReserve + kLayerNameMinWidth);
+     
+     int nameWidth = w - nameStartX;
+     if (showInlineCombos) {
+         nameWidth = w - nameStartX - kInlineComboReserve;
+     }
+
+     QRect nameRect(nameStartX, 0, nameWidth, h);
+     if (impl_->hoveredColumn == 5) {
+         painter.fillRect(nameRect, QColor(60, 60, 63));
+     }
+     painter.setPen(QColor(204, 204, 204));
+     painter.setFont(QFont("Segoe UI", 8));
+     painter.drawText(nameRect.adjusted(5, 0, 0, 0), Qt::AlignLeft | Qt::AlignVCenter, "Layer Name");
+     painter.setPen(QColor(26, 26, 26));
+     painter.drawLine(nameRect.topRight(), nameRect.bottomRight());
+
+     // 7. Right Side Columns (Parent, Mode, Matte) - Only if enough space
+     if (showInlineCombos) {
+         const int rightAreaStartX = w - kInlineComboReserve;
+         
+         // Parent
+         QRect parentRect(rightAreaStartX, 0, kInlineParentWidth, h);
+         painter.setPen(QColor(150, 150, 150));
+         painter.drawText(parentRect, Qt::AlignCenter, "Parent");
+         painter.setPen(QColor(26, 26, 26));
+         painter.drawLine(parentRect.topRight(), parentRect.bottomRight());
+
+         // Mode (Blend)
+         QRect blendRect(parentRect.right() + kInlineComboGap, 0, kInlineBlendWidth, h);
+         painter.drawText(blendRect, Qt::AlignCenter, "Mode");
+         painter.setPen(QColor(26, 26, 26));
+         painter.drawLine(blendRect.topRight(), blendRect.bottomRight());
+
+         // Matte
+         QRect matteRect(blendRect.right() + kInlineComboGap, 0, kInlineMatteWidth, h);
+         painter.drawText(matteRect, Qt::AlignCenter, "Matte");
+     }
+
+     // Bottom border
+     painter.setPen(QColor(26, 26, 26));
+     painter.drawLine(0, h - 1, w, h - 1);
+ }
+
+ void ArtifactLayerPanelHeaderWidget::mousePressEvent(QMouseEvent* event)
+ {
+     const int x = event->pos().x();
+     const int colW = kLayerColumnWidth;
+     
+     if (x >= 4 * colW && x < 5 * colW) {
+         impl_->shyActive = !impl_->shyActive;
+         Q_EMIT shyToggled(impl_->shyActive);
+         update();
+     }
+ }
+
+ void ArtifactLayerPanelHeaderWidget::mouseMoveEvent(QMouseEvent* event)
+ {
+     const int x = event->pos().x();
+     const int w = width();
+     const int colW = kLayerColumnWidth;
+     const int labelStartX = colW * 5;
+     const int labelColW = 20;
+     const int nameStartX = labelStartX + labelColW;
+     
+     int newHover = -1;
+
+     if (x < labelStartX) {
+         newHover = x / colW;
+     } else if (x < nameStartX) {
+         newHover = 10; // Label col
+     } else {
+         const bool showInlineCombos = w >= (kLayerColumnWidth * kLayerPropertyColumnCount + kInlineComboReserve + kLayerNameMinWidth);
+         int nameWidth = w - nameStartX;
+         if (showInlineCombos) nameWidth = w - nameStartX - kInlineComboReserve;
+
+         if (x < nameStartX + nameWidth) newHover = 5;
+         else if (showInlineCombos) {
+             if (x < w - kInlineComboReserve + kInlineParentWidth) newHover = 6;
+             else if (x < w - kInlineMatteWidth - kInlineComboGap) newHover = 7;
+             else newHover = 8;
+         }
+     }
+
+     if (newHover != impl_->hoveredColumn) {
+         impl_->hoveredColumn = newHover;
+         update();
+     }
+ }
+
+ void ArtifactLayerPanelHeaderWidget::leaveEvent(QEvent* event)
+ {
+     Q_UNUSED(event);
+     impl_->hoveredColumn = -1;
+     update();
  }
 
 int ArtifactLayerPanelHeaderWidget::buttonSize() const { return kLayerHeaderButtonSize; }
