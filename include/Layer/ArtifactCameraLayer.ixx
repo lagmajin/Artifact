@@ -1,66 +1,53 @@
-﻿module ;
-#include <QVector3D>
-#include <QQuaternion>
+module ;
 #include <QMatrix4x4>
-#include <QSizeF>
 #include <QString>
 #include <memory>
+#include <wobjectdefs.h>
 
 export module Artifact.Layer.Camera;
 
-import Core.Camera;
+import Artifact.Layer.Abstract;
+import Property.Group;
 
-export namespace ArtifactCore {
+export namespace Artifact {
 
- struct CameraTransform {
-  QVector3D position{0.0f, 0.0f, 0.0f};
-  QQuaternion rotation{0.0f, 0.0f, 0.0f, 1.0f};
-  QVector3D scale{1.0f, 1.0f, 1.0f};
-
-  QMatrix4x4 toMatrix() const {
-    QMatrix4x4 m;
-    m.translate(position);
-    m.rotate(rotation);
-    m.scale(scale);
-    return m;
-  }
- };
-
- // AfterEffects 風のカメラレイヤー API（最小限）
- class ArtifactCameraLayer {
+ // AfterEffects compatible Camera Layer
+ class ArtifactCameraLayer : public ArtifactAbstractLayer {
+  W_OBJECT(ArtifactCameraLayer)
  public:
   ArtifactCameraLayer();
-  ~ArtifactCameraLayer();
+  virtual ~ArtifactCameraLayer();
 
-  // identity
-  void setName(const QString& name);
-  QString name() const;
+  // ArtifactAbstractLayer overrides
+  void draw(ArtifactIRenderer* renderer) override;
+  UniString className() const override { return "ArtifactCameraLayer"; }
 
-  // enable/visibility
-  void setEnabled(bool e);
-  bool isEnabled() const;
+  // Camera specific properties (AE standard)
+  float zoom() const;
+  void setZoom(float zoom);
 
-  // transform
-  void setTransform(const CameraTransform& t);
-  CameraTransform transform() const;
+  float focusDistance() const;
+  void setFocusDistance(float distance);
 
-  // camera settings (use core Camera)
-  void setCamera(const Camera& c);
-  Camera camera() const;
+  float aperture() const;
+  void setAperture(float aperture);
 
-  // matrices (world -> view, projection)
-  QMatrix4x4 viewMatrix() const;         // camera world -> view
-  QMatrix4x4 projectionMatrix() const;   // projection for current settings
-  QMatrix4x4 viewProjectionMatrix() const;
+  bool depthOfField() const;
+  void setDepthOfField(bool enabled);
 
-  // evaluate at time (placeholder for animated parameters)
-  void evaluateAtTime(double timeSeconds);
+  // Projection / View
+  QMatrix4x4 viewMatrix() const;
+  QMatrix4x4 projectionMatrix(float aspect) const;
+
+  // Generic properties for Inspector
+  std::vector<ArtifactCore::PropertyGroup> getLayerPropertyGroups() const override;
+  bool setLayerPropertyValue(const QString& propertyPath, const QVariant& value) override;
 
  private:
   struct Impl;
-  std::unique_ptr<Impl> impl_;
+  Impl* camImpl_;
  };
 
  using ArtifactCameraLayerPtr = std::shared_ptr<ArtifactCameraLayer>;
 
-}
+} // namespace Artifact

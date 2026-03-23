@@ -236,6 +236,8 @@ public:
     void draw(ArtifactIRenderer* renderer) override;
     void goToFrame(int64_t frameNumber) override;
     bool hasVideo() const override;
+    bool getAudio(ArtifactCore::AudioSegment &outSegment, const FramePosition &start,
+                 int frameCount, int sampleRate) override;
     std::vector<ArtifactCore::PropertyGroup> getLayerPropertyGroups() const override;
     bool setLayerPropertyValue(const QString& propertyPath, const QVariant& value) override;
 

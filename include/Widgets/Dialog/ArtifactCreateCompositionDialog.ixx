@@ -67,6 +67,7 @@ export namespace Artifact {
   void setDefaultFocus();
   void setCompositionName(const QString& compositionName);
   QString compositionName() const;
+  ArtifactCompositionInitParams acceptedInitParams() const;
   void showAnimated();
 
   

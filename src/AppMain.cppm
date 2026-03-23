@@ -1,4 +1,4 @@
-﻿
+
 module;
 #include <QtCore/QtGlobal>
 #include <QApplication>
@@ -57,6 +57,7 @@ module Artifact.AppMain;
 
 
 
+import Artifact.Widgets.PlaybackControlWidget;
 import Transform;
 import Draw;
 import Glow;
@@ -96,9 +97,8 @@ import Artifact.Widgets.CompositionEditor;
 import Artifact.Widgets.RenderLayerEditor;
 import Artifact.Widgets.SoftwareRenderInspectors;
 import Artifact.Widgets.Render.QueueManager;
-import Artifact.Widgets.Alignment;
 import Widgets.Inspector;
-import Application.AppSettings;
+import Widgets.AssetBrowser;
 import Artifact.Widgets.ArtifactPropertyWidget;
 import Artifact.MainWindow;
 import Artifact.Project.Manager;
@@ -106,12 +106,15 @@ import Artifact.Project.AutoSaveManager;
 import Artifact.Script.Hooks;
 import Artifact.Widgets.Test.ScrollPoC;
 
+import Diagnostics.Logger;
+import Artifact.Widgets.ConsoleWidget;
+
 using namespace Artifact;
 using namespace ArtifactCore;
 
 namespace
 {
- constexpr int kMainWindowLayoutVersion = 5;
+ constexpr int kMainWindowLayoutVersion = 6;
 
  quint64 processWorkingSetMB()
  {
@@ -165,9 +168,9 @@ void bootstrapPythonScripts()
  {
   const QString appDir = QCoreApplication::applicationDirPath();
   const QStringList candidates = {
-   appDir, // Search for plugins in the application directory (e.g. appDir/imageformats)
    QDir(appDir).filePath(QStringLiteral("plugins")),
-   QDir(appDir).filePath(QStringLiteral("../vcpkg_installed/x64-windows/Qt6/plugins")),   QDir(appDir).filePath(QStringLiteral("../vcpkg_installed/x64-windows/debug/Qt6/plugins")),
+   QDir(appDir).filePath(QStringLiteral("../vcpkg_installed/x64-windows/Qt6/plugins")),
+   QDir(appDir).filePath(QStringLiteral("../vcpkg_installed/x64-windows/debug/Qt6/plugins")),
    QDir(appDir).filePath(QStringLiteral("../vcpkg_installed/x64-windows/Qt6/plugins")),
    QDir(appDir).filePath(QStringLiteral("../vcpkg_installed/x64-windows/debug/Qt6/plugins"))
   };
@@ -626,6 +629,9 @@ void test()
 int main(int argc, char* argv[])
 {
  ArtifactCore::CrashHandler::install();
+ ArtifactCore::Logger::instance()->install();
+
+ qDebug() << "Artifact Debug Console Initialized. Hello ArtifactStudio!";
 
  tbb::global_control c(tbb::global_control::max_allowed_parallelism, std::thread::hardware_concurrency());
 
@@ -648,29 +654,6 @@ int main(int argc, char* argv[])
 	
  QApplication a(argc, argv);
   configureQtPluginPaths();
-
-  // --- Safe Mode Detection ---
-  auto* appSettings = ArtifactCore::ArtifactAppSettings::instance();
-  bool safeModeRequested = false;
-
-  QCommandLineParser parser;
-  parser.setApplicationDescription("Artifact Studio");
-  parser.addHelpOption();
-  parser.addVersionOption();
-  QCommandLineOption safeModeOption("safe-mode", "Start in safe mode (disables plugins and auto-load)");
-  parser.addOption(safeModeOption);
-  parser.process(a);
-
-  if (parser.isSet(safeModeOption) || 
-      QGuiApplication::queryKeyboardModifiers().testFlag(Qt::ShiftModifier)) {
-      safeModeRequested = true;
-  }
-
-  if (safeModeRequested) {
-      appSettings->setSafeMode(true);
-      qWarning() << "!!! STARTING IN SAFE MODE !!!";
-      qWarning() << "Plugins and auto-loading are disabled.";
-  }
 
   // Initialize translations
   {
@@ -697,6 +680,7 @@ int main(int argc, char* argv[])
     const bool hadUncleanExit = markSessionStartAndDetectUncleanExit();
     const QIcon appIcon = buildTemporaryAppIcon();
     QApplication::setWindowIcon(appIcon);
+    using namespace Artifact;
     auto* mw = new ArtifactMainWindow();
     mw->setObjectName("ArtifactMainWindow");
     mw->setWindowTitle("Artifact");
@@ -705,8 +689,40 @@ int main(int argc, char* argv[])
     mw->setStatusBar(status);
     status->showReadyMessage();
     status->setProjectText("Loaded");
+    auto* playbackControl = new ArtifactPlaybackControlWidget(mw);
+    mw->addDockedWidgetFloating(
+        QStringLiteral("Playback Control"),
+        QStringLiteral("PlaybackControl"),
+        playbackControl,
+        QRect(120, 840, 600, 56));
+    auto* consoleWidget = new ArtifactConsoleWidget(mw);
+    mw->addDockedWidgetFloating(
+        QStringLiteral("Console"),
+        QStringLiteral("Console"),
+        consoleWidget,
+        QRect(200, 200, 800, 400));
     auto* compositionEditor = new ArtifactCompositionEditor(mw);
     mw->addDockedWidget(QStringLiteral("Composition Viewer"), ads::CenterDockWidgetArea, compositionEditor);
+
+    QObject::connect(compositionEditor, &ArtifactCompositionEditor::videoDebugMessage,
+                     status, &ArtifactStatusBar::setTimelineDebugText);
+
+    // Update StatusBar console summary
+    auto updateStatusConsole = [status, mw]() {
+        if (!status) return;
+        auto logs = Logger::instance()->getLogs();
+        int errors = 0;
+        int warnings = 0;
+        for (const auto& log : logs) {
+            if (log.level == LogLevel::Warning) warnings++;
+            else if (log.level == LogLevel::Error || log.level == LogLevel::Fatal) errors++;
+        }
+        // status->setConsoleSummary(errors, warnings); // We can use this if the previous edit definitely worked
+        // If setConsoleSummary failed to compile, we can manually set text for now to avoid block
+        status->setProjectText(QString("Logs: %1E %2W").arg(errors).arg(warnings)); 
+    };
+    QObject::connect(Logger::instance(), &Logger::logAdded, mw, updateStatusConsole);
+    QObject::connect(Logger::instance(), &Logger::logsCleared, mw, updateStatusConsole);
     auto* softwareCompositionView = new ArtifactSoftwareCompositionTestWidget(mw);
     mw->addDockedWidgetTabbed(
         QStringLiteral("Composition View (Software)"),
@@ -726,11 +742,10 @@ int main(int argc, char* argv[])
         softwareLayerView,
         QStringLiteral("Layer View (Diligent)"));
     mw->addDockedWidget(QStringLiteral("Project"), ads::LeftDockWidgetArea, new ArtifactProjectManagerWidget(mw));
+    mw->addDockedWidget(QStringLiteral("Asset Browser"), ads::LeftDockWidgetArea, new ArtifactAssetBrowser(mw));
     mw->addDockedWidget(QStringLiteral("Inspector"), ads::RightDockWidgetArea, new ArtifactInspectorWidget(mw));
     auto* propertyPanel = new ArtifactPropertyWidget(mw);
     mw->addDockedWidgetTabbed(QStringLiteral("Properties"), ads::RightDockWidgetArea, propertyPanel, QStringLiteral("Inspector"));
-    auto* alignmentPanel = new AlignmentWidget(mw);
-    mw->addDockedWidgetTabbed(QStringLiteral("Alignment"), ads::RightDockWidgetArea, alignmentPanel, QStringLiteral("Inspector"));
     mw->addDockedWidget(QStringLiteral("Audio Mixer"), ads::RightDockWidgetArea, new ArtifactCompositionAudioMixerWidget(mw));
     mw->setDockVisible(QStringLiteral("Audio Mixer"), false);
     mw->setDockVisible(QStringLiteral("Render Manager"), true);

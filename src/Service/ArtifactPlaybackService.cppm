@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <QTimer>
 #include <QElapsedTimer>
 #include <wobjectimpl.h>
@@ -69,6 +69,8 @@ public:
     bool audioRunning_ = false;
     std::function<double()> externalAudioClockProvider_;
     std::function<double()> playbackClockProvider_;
+    float audioMasterVolume_ = 1.0f;
+    bool audioMasterMuted_ = false;
 
     explicit Impl(ArtifactPlaybackService* owner)
         : owner_(owner) {
@@ -160,6 +162,9 @@ public:
             }
             return seconds;
         });
+
+        engine_->setAudioMasterVolume(audioMasterVolume_);
+        engine_->setAudioMasterMuted(audioMasterMuted_);
     }
 
     ~Impl() {
@@ -207,31 +212,40 @@ ArtifactPlaybackService* ArtifactPlaybackService::instance() {
 }
 
 void ArtifactPlaybackService::play() {
+    impl_->startAudioClock();
     // 新しいエンジンを使用
     if (impl_->engine_) {
         impl_->engine_->play();
     }
+    /*
     if (impl_->controller_) {
         impl_->controller_->play();
     }
+    */
 }
 
 void ArtifactPlaybackService::pause() {
+    impl_->pauseAudioClock();
     if (impl_->engine_) {
         impl_->engine_->pause();
     }
+    /*
     if (impl_->controller_) {
         impl_->controller_->pause();
     }
+    */
 }
 
 void ArtifactPlaybackService::stop() {
+    impl_->stopAudioClock();
     if (impl_->engine_) {
         impl_->engine_->stop();
     }
+    /*
     if (impl_->controller_) {
         impl_->controller_->stop();
     }
+    */
 }
 
 void ArtifactPlaybackService::togglePlayPause() {
@@ -393,6 +407,22 @@ void ArtifactPlaybackService::setAudioClockProvider(const std::function<double()
     impl_->setExternalAudioClockProvider(provider);
     if (impl_->controller_) {
         impl_->controller_->setAudioClockProvider(provider);
+    }
+}
+
+void ArtifactPlaybackService::setAudioMasterVolume(float volume) {
+    if (!impl_) return;
+    impl_->audioMasterVolume_ = std::clamp(volume, 0.0f, 2.0f);
+    if (impl_->engine_) {
+        impl_->engine_->setAudioMasterVolume(impl_->audioMasterVolume_);
+    }
+}
+
+void ArtifactPlaybackService::setAudioMasterMuted(bool muted) {
+    if (!impl_) return;
+    impl_->audioMasterMuted_ = muted;
+    if (impl_->engine_) {
+        impl_->engine_->setAudioMasterMuted(muted);
     }
 }
 

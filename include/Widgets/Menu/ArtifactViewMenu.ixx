@@ -3,16 +3,10 @@
 #include <wobjectimpl.h>
 
 export module Artifact.Menu.View;
-//#pragma once
-
-//#include <QtWidgets/QMenu>
-
-
-
 
 export namespace Artifact {
 
-
+ class ArtifactMainWindow;
 
  class ArtifactViewMenu :public QMenu{
   W_OBJECT(ArtifactViewMenu)
@@ -22,18 +16,11 @@ export namespace Artifact {
  public:
   explicit ArtifactViewMenu(QWidget*parent=nullptr);
   ~ArtifactViewMenu();
- /*signals:*/
-  
- private /*slots*/:
+
+  void setMainWindow(ArtifactMainWindow* mw);
 
  public /*slots*/:
   void registerView(const QString& name, QWidget* view);
- };
+  };
 
-
-
-
-
-
-
-};
+}

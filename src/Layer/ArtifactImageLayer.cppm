@@ -26,7 +26,7 @@ public:
     int width_ = 0;
     int height_ = 0;
     QString sourcePath_;
-    std::shared_ptr<QImage> cache_;
+    mutable std::shared_ptr<QImage> cache_;
 };
 
 W_OBJECT_IMPL(ArtifactImageLayer)
@@ -42,8 +42,7 @@ bool ArtifactImageLayer::loadFromPath(const QString& path)
 {
     QImageReader reader(path);
     reader.setAutoTransform(true);
-    QImage image = reader.read();
-    if (image.isNull()) {
+    if (!reader.canRead()) {
         qWarning() << "[ArtifactImageLayer] Failed to load image from:" << path
                    << "format=" << reader.format()
                    << "error=" << reader.errorString()
@@ -51,13 +50,19 @@ bool ArtifactImageLayer::loadFromPath(const QString& path)
         return false;
     }
 
+    const QSize size = reader.size();
     impl_->sourcePath_ = path;
+    impl_->cache_.reset();
+    impl_->hasImage_ = true;
+    if (size.isValid()) {
+        impl_->width_ = size.width();
+        impl_->height_ = size.height();
+        setSourceSize(Size_2D(size.width(), size.height()));
+    }
     qDebug() << "[ArtifactImageLayer] Loaded image:" << path
              << "format=" << reader.format()
-             << "size=" << image.size()
-             << "depth=" << image.depth()
-             << "bytesPerLine=" << image.bytesPerLine();
-    setFromQImage(image);
+             << "sizeHint=" << size
+             << "lazyLoad=enabled";
     return true;
 }
 
@@ -130,9 +135,30 @@ void ArtifactImageLayer::draw(ArtifactIRenderer* renderer)
 
 QImage ArtifactImageLayer::toQImage() const
 {
-    if (!impl_->hasImage_ || !impl_->cache_) {
+    if (!impl_->hasImage_) {
         qDebug() << "[ArtifactImageLayer::toQImage] No cache: hasImage=" << impl_->hasImage_
                  << "cache=" << (impl_->cache_ ? "valid" : "null");
+        return QImage();
+    }
+
+    if (!impl_->cache_ && !impl_->sourcePath_.isEmpty()) {
+        QImageReader reader(impl_->sourcePath_);
+        reader.setAutoTransform(true);
+        QImage loaded = reader.read();
+        if (!loaded.isNull()) {
+            impl_->cache_ = std::make_shared<QImage>(loaded);
+            if (impl_->width_ <= 0 || impl_->height_ <= 0) {
+                impl_->width_ = loaded.width();
+                impl_->height_ = loaded.height();
+            }
+        } else {
+            qWarning() << "[ArtifactImageLayer::toQImage] Lazy load failed:" << impl_->sourcePath_
+                       << "error=" << reader.errorString();
+            return QImage();
+        }
+    }
+
+    if (!impl_->cache_) {
         return QImage();
     }
 

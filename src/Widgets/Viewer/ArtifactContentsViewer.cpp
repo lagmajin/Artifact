@@ -14,6 +14,7 @@ module;
 #include <QDebug>
 #include <QFileInfo>
 #include <QUrl>
+#include <QSignalBlocker>
 #include <QMediaPlayer>
 #include <QAudioOutput>
 #include <QVideoWidget>
@@ -74,6 +75,8 @@ namespace Artifact
    void clearPlaybackRange();
    void setPlaybackRange(int64_t startFrame, int64_t endFrame);
    void resetCurrentMode();
+   void attachMediaOutputs();
+   void detachMediaOutputs();
    void activateImage(const QString& filepath);
    void activateVideo(const QString& filepath);
    void activateModel(const QString& filepath);
@@ -135,6 +138,8 @@ namespace Artifact
    clearPlaybackRange();
 
    if (mediaPlayer) {
+    QSignalBlocker blocker(mediaPlayer);
+    detachMediaOutputs();
     mediaPlayer->stop();
     mediaPlayer->setSource(QUrl());
    }
@@ -178,6 +183,7 @@ namespace Artifact
    }
 
    clearPlaybackRange();
+   attachMediaOutputs();
    stackedWidget->setCurrentWidget(videoWidget);
    mediaPlayer->setSource(QUrl::fromLocalFile(info.absoluteFilePath()));
    mediaPlayer->play();
@@ -236,8 +242,7 @@ namespace Artifact
    mediaPlayer = new QMediaPlayer(parent);
    audioOutput = new QAudioOutput(parent);
    audioOutput->setVolume(1.0f);
-   mediaPlayer->setAudioOutput(audioOutput);
-   mediaPlayer->setVideoOutput(videoWidget);
+   attachMediaOutputs();
 
    QObject::connect(mediaPlayer, &QMediaPlayer::positionChanged, parent, [this](qint64 position) {
     if (!playbackRangeActive) return;
@@ -274,10 +279,34 @@ namespace Artifact
    parent->setLayout(layout);
   }
 
- ArtifactContentsViewer::Impl::~Impl()
+  ArtifactContentsViewer::Impl::~Impl()
  {
-  // Widgets are parented, will be deleted
+  if (mediaPlayer) {
+   QSignalBlocker blocker(mediaPlayer);
+   detachMediaOutputs();
+   mediaPlayer->stop();
+   mediaPlayer->setSource(QUrl());
+  }
+  // Widgets are parented, will be deleted by the QObject hierarchy.
  }
+
+  void ArtifactContentsViewer::Impl::attachMediaOutputs()
+  {
+   if (!mediaPlayer) {
+    return;
+   }
+   mediaPlayer->setAudioOutput(audioOutput);
+   mediaPlayer->setVideoOutput(videoWidget);
+  }
+
+  void ArtifactContentsViewer::Impl::detachMediaOutputs()
+  {
+   if (!mediaPlayer) {
+    return;
+   }
+   mediaPlayer->setAudioOutput(nullptr);
+   mediaPlayer->setVideoOutput(nullptr);
+  }
 	
 	W_OBJECT_IMPL(ArtifactContentsViewer)
 
@@ -380,6 +409,7 @@ void ArtifactContentsViewer::play()
   }
 
   if (impl_->currentFileType == ArtifactCore::FileType::Video) {
+   impl_->attachMediaOutputs();
    if (impl_->mediaPlayer->source().isEmpty() && !impl_->currentFilePath.isEmpty()) {
     impl_->mediaPlayer->setSource(QUrl::fromLocalFile(impl_->currentFilePath));
    }
@@ -397,6 +427,7 @@ void ArtifactContentsViewer::play()
 void ArtifactContentsViewer::pause()
 {
   if (impl_->currentFileType == ArtifactCore::FileType::Video) {
+   impl_->attachMediaOutputs();
    impl_->mediaPlayer->pause();
    return;
   }
@@ -413,6 +444,7 @@ void ArtifactContentsViewer::stop()
   }
 
   if (impl_->currentFileType == ArtifactCore::FileType::Video) {
+   impl_->attachMediaOutputs();
    impl_->mediaPlayer->stop();
    if (impl_->playbackRangeActive) {
     impl_->mediaPlayer->setPosition(impl_->playbackRangeStartMs);
@@ -429,6 +461,7 @@ void ArtifactContentsViewer::playRange(int64_t start, int64_t end)
 {
   if (impl_->currentFileType == ArtifactCore::FileType::Video) {
    impl_->setPlaybackRange(start, end);
+   impl_->attachMediaOutputs();
    if (impl_->mediaPlayer->source().isEmpty() && !impl_->currentFilePath.isEmpty()) {
     impl_->mediaPlayer->setSource(QUrl::fromLocalFile(impl_->currentFilePath));
    }

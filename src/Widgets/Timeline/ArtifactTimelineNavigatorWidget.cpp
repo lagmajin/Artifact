@@ -143,20 +143,20 @@ namespace Artifact
 
   const QRect rangeRect(clampedX1, trackRect.top(), std::max(1, clampedX2 - clampedX1), trackRect.height());
   QLinearGradient grad(rangeRect.topLeft(), rangeRect.bottomLeft());
-  grad.setColorAt(0.0, QColor(108, 168, 232, 215));
-  grad.setColorAt(1.0, QColor(67, 115, 186, 215));
-  p.setPen(QPen(QColor(170, 212, 255, 220), 1));
+  grad.setColorAt(0.0, QColor(180, 110, 45, 215)); // Modo Amber
+  grad.setColorAt(1.0, QColor(140, 80, 30, 215));
+  p.setPen(QPen(QColor(220, 140, 50, 220), 1));
   p.setBrush(grad);
   p.drawRoundedRect(rangeRect.adjusted(0, 0, -1, 0), 3, 3);
 
   const QRectF leftHandleRect(clampedX1 - kHandleHalfW, 2, kHandleW, height() - 4);
   const QRectF rightHandleRect(clampedX2 - kHandleHalfW, 2, kHandleW, height() - 4);
-  p.setBrush(QColor(214, 226, 240));
+  p.setBrush(QColor(240, 210, 180));
   p.setPen(QPen(QColor(22, 22, 26), 1));
   p.drawRoundedRect(leftHandleRect, 2, 2);
   p.drawRoundedRect(rightHandleRect, 2, 2);
 
-  p.setPen(QColor(70, 100, 136));
+  p.setPen(QColor(180, 110, 45));
   p.drawLine(rangeRect.left(), outer.bottom() - 1, rangeRect.right(), outer.bottom() - 1);
  }
 

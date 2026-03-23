@@ -23,7 +23,8 @@ export namespace Artifact
    Memory,
    Project,
    Drops,
-   TimelineDebug
+   TimelineDebug,
+   Console
   };
 
   explicit ArtifactStatusBar(QWidget* parent = nullptr);
@@ -37,6 +38,7 @@ export namespace Artifact
   void setProjectText(const QString& text);
   void setDropSummaryText(const QString& text);
   void setTimelineDebugText(const QString& text);
+  void setConsoleSummary(int errors, int warnings);
 
   void setItemVisible(Item item, bool visible);
   [[nodiscard]] bool isItemVisible(Item item) const;
@@ -48,7 +50,7 @@ export namespace Artifact
   void contextMenuEvent(QContextMenuEvent* event) override;
 
  private:
-  static constexpr int kItemCount = 8;
+  static constexpr int kItemCount = 9;
   static int itemIndex(Item item);
   QLabel* itemLabel(Item item) const;
   QString itemTitle(Item item) const;

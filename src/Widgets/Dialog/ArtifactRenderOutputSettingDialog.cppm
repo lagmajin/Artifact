@@ -64,12 +64,12 @@ namespace Artifact
 
  void ArtifactRenderOutputSettingDialog::Impl::handleBrowseClicked(ArtifactRenderOutputSettingDialog* dialog)
  {
-     QString filePath = QFileDialog::getSaveFileName(
-         dialog,
-         "Select Output File",
-         "",
-         "Render Outputs (*.mp4 *.mov *.avi *.png *.exr);;All Files (*.*)"
-     );
+      QString filePath = QFileDialog::getSaveFileName(
+          dialog,
+          "Select Output File",
+          "",
+          "Video (*.mp4 *.mov *.avi *.mkv *.webm);;Image Sequence (*.png *.jpg *.tiff *.bmp *.exr);;All Files (*.*)"
+      );
      if (!filePath.isEmpty()) {
          outputPathEdit->setText(filePath);
      }
@@ -159,22 +159,38 @@ namespace Artifact
    if (!preset) return;
    
    // Format
-   const int formatIndex = formatCombo->findText(preset->container);
-   if (formatIndex >= 0) {
-    formatCombo->setCurrentIndex(formatIndex);
-   } else {
-    formatCombo->addItem(preset->container);
-    formatCombo->setCurrentText(preset->container);
-   }
+    const QString presetContainer = preset->container.toLower();
+    QString formatText;
+    if (presetContainer == "png") formatText = "PNG Sequence";
+    else if (presetContainer == "jpg" || presetContainer == "jpeg") formatText = "JPEG Sequence";
+    else if (presetContainer == "tiff" || presetContainer == "tif") formatText = "TIFF Sequence";
+    else if (presetContainer == "bmp") formatText = "BMP Sequence";
+    else if (presetContainer == "exr") formatText = "EXR Sequence";
+    else formatText = preset->container.toUpper();
 
-   // Codec
-   const int codecIndex = codecCombo->findText(preset->codec);
-   if (codecIndex >= 0) {
-    codecCombo->setCurrentIndex(codecIndex);
-   } else {
-    codecCombo->addItem(preset->codec);
-    codecCombo->setCurrentText(preset->codec);
-   }
+    const int formatIndex = formatCombo->findText(formatText);
+    if (formatIndex >= 0) {
+     formatCombo->setCurrentIndex(formatIndex);
+    } else {
+     formatCombo->addItem(formatText);
+     formatCombo->setCurrentText(formatText);
+    }
+
+    // Codec
+    const QString presetCodec = preset->codec.toLower();
+    QString codecText;
+    if (presetCodec == "h264") codecText = "H.264";
+    else if (presetCodec == "h265") codecText = "H.265";
+    else if (presetCodec == "mjpeg" || presetCodec == "jpeg") codecText = "JPEG";
+    else codecText = preset->codec;
+
+    const int codecIndex = codecCombo->findText(codecText);
+    if (codecIndex >= 0) {
+     codecCombo->setCurrentIndex(codecIndex);
+    } else {
+     codecCombo->addItem(codecText);
+     codecCombo->setCurrentText(codecText);
+    }
 
    // 拡張子を自動更新
    if (outputPathEdit) {
@@ -235,13 +251,15 @@ namespace Artifact
     // Format selection
     impl_->formatCombo = new QComboBox();
     impl_->formatCombo->addItems(QStringList{
-      "MP4", "PNG Sequence", "EXR Sequence"
+      "MP4", "MOV", "AVI", "WebM", "MKV",
+      "PNG Sequence", "JPEG Sequence", "TIFF Sequence", "BMP Sequence", "EXR Sequence"
     });
     formLayout->addRow("Container:", impl_->formatCombo);
 
     impl_->codecCombo = new QComboBox();
     impl_->codecCombo->addItems(QStringList{
-      "H.264", "H.265", "ProRes", "PNG", "EXR"
+      "H.264", "H.265", "ProRes", "VP9", "DNxHD",
+      "PNG", "JPEG", "TIFF", "BMP", "EXR"
     });
     formLayout->addRow("Codec:", impl_->codecCombo);
 
@@ -336,7 +354,12 @@ namespace Artifact
         if (format == QStringLiteral("MP4")) ext = QStringLiteral("mp4");
         else if (format == QStringLiteral("MOV")) ext = QStringLiteral("mov");
         else if (format == QStringLiteral("AVI")) ext = QStringLiteral("avi");
+        else if (format == QStringLiteral("WebM")) ext = QStringLiteral("webm");
+        else if (format == QStringLiteral("MKV")) ext = QStringLiteral("mkv");
         else if (format == QStringLiteral("PNG Sequence")) ext = QStringLiteral("png");
+        else if (format == QStringLiteral("JPEG Sequence")) ext = QStringLiteral("jpg");
+        else if (format == QStringLiteral("TIFF Sequence")) ext = QStringLiteral("tiff");
+        else if (format == QStringLiteral("BMP Sequence")) ext = QStringLiteral("bmp");
         else if (format == QStringLiteral("EXR Sequence")) ext = QStringLiteral("exr");
         else ext = QStringLiteral("mp4");
 
@@ -354,7 +377,12 @@ namespace Artifact
 
         QString ext;
         if (codec == QStringLiteral("ProRes")) ext = QStringLiteral("mov");
+        else if (codec == QStringLiteral("VP9")) ext = QStringLiteral("webm");
+        else if (codec == QStringLiteral("DNxHD")) ext = QStringLiteral("mov");
         else if (codec == QStringLiteral("PNG")) ext = QStringLiteral("png");
+        else if (codec == QStringLiteral("JPEG")) ext = QStringLiteral("jpg");
+        else if (codec == QStringLiteral("TIFF")) ext = QStringLiteral("tiff");
+        else if (codec == QStringLiteral("BMP")) ext = QStringLiteral("bmp");
         else if (codec == QStringLiteral("EXR")) ext = QStringLiteral("exr");
         else return; // H.264/H.265 はフォーマットに依存するためスキップ
 

@@ -5,7 +5,11 @@
 #include <QDebug>
 #include <QDir>
 #include <QFileInfo>
+#include <QFile>
 #include <QImage>
+#include <QImageReader>
+#include <QFutureWatcher>
+#include <QtConcurrent>
 module Artifact.Service.Project;
 
 import std;
@@ -47,6 +51,7 @@ namespace Artifact
   void addLayerToCurrentComposition(const ArtifactLayerInitParams& params);
   void addAssetFromPath(const UniString& path);
   QStringList importAssetsFromPaths(const QStringList& sourcePaths);
+  void importAssetsFromPathsAsync(const QStringList& sourcePaths, std::function<void(QStringList)> onFinished);
   void setPreviewQualityPreset(PreviewQualityPreset preset);
   PreviewQualityPreset previewQualityPreset() const;
   UniString projectName() const;
@@ -83,9 +88,9 @@ namespace Artifact
   return ArtifactProjectManager::getInstance();
  }
 
- void ArtifactProjectService::Impl::addLayerToCurrentComposition(const ArtifactLayerInitParams& params)
- {
-  auto& manager = projectManager();
+void ArtifactProjectService::Impl::addLayerToCurrentComposition(const ArtifactLayerInitParams& params)
+{
+  auto& manager = ArtifactProjectService::Impl::projectManager();
   LayerID selectedLayerId;
   if (auto* app = ArtifactApplicationManager::instance()) {
    if (auto* selectionManager = app->layerSelectionManager()) {
@@ -156,14 +161,14 @@ namespace Artifact
     importAssetsFromPaths(input);
  }
 
- QStringList ArtifactProjectService::Impl::importAssetsFromPaths(const QStringList& sourcePaths)
- {
+QStringList ArtifactProjectService::Impl::importAssetsFromPaths(const QStringList& sourcePaths)
+{
   QStringList importedPaths;
   if (sourcePaths.isEmpty()) {
    return importedPaths;
   }
 
-  auto& manager = projectManager();
+  auto& manager = ArtifactProjectService::Impl::projectManager();
   QString assetsRoot = manager.currentProjectAssetsPath();
   QStringList toCopy;
   QStringList alreadyInProject;
@@ -193,6 +198,102 @@ namespace Artifact
   return importedPaths;
  }
 
+void ArtifactProjectService::Impl::importAssetsFromPathsAsync(
+  const QStringList& sourcePaths,
+  std::function<void(QStringList)> onFinished)
+{
+  auto* service = ArtifactProjectService::instance();
+  if (!service) {
+   if (onFinished) {
+    onFinished({});
+   }
+   return;
+  }
+
+  auto& manager = ArtifactProjectService::Impl::projectManager();
+  const QString assetsRoot = manager.currentProjectAssetsPath();
+  QSize compSize;
+  if (auto comp = this->currentComposition().lock()) {
+    compSize = comp->settings().compositionSize();
+  }
+
+  auto* watcher = new QFutureWatcher<QStringList>(service);
+  QObject::connect(watcher, &QFutureWatcher<QStringList>::finished, service,
+                   [watcher, onFinished = std::move(onFinished)]() mutable {
+    const QStringList importedPaths = watcher->result();
+    watcher->deleteLater();
+    if (onFinished) {
+     onFinished(importedPaths);
+    }
+   });
+
+  watcher->setFuture(QtConcurrent::run([sourcePaths, assetsRoot, compSize]() {
+   QStringList importedPaths;
+   if (sourcePaths.isEmpty()) {
+    return importedPaths;
+   }
+
+   auto makeUniqueAssetPath = [](const QString& directory, const QString& fileName) {
+    if (directory.isEmpty() || fileName.isEmpty()) {
+     return QString();
+    }
+
+    QDir dir(directory);
+    QFileInfo info(fileName);
+    QString baseName = info.completeBaseName();
+    QString extension = info.completeSuffix();
+    QString candidate = dir.filePath(info.fileName());
+    int counter = 1;
+
+    while (QFile::exists(candidate)) {
+     QString numbered = baseName;
+     if (counter > 1) {
+      numbered = QStringLiteral("%1_%2").arg(baseName).arg(counter);
+     }
+     candidate = dir.filePath(extension.isEmpty() ? numbered : QStringLiteral("%1.%2").arg(numbered).arg(extension));
+     ++counter;
+    }
+
+    return candidate;
+   };
+
+   ArtifactCore::FileTypeDetector detector;
+   for (const auto& src : sourcePaths) {
+    if (src.isEmpty()) continue;
+
+    QFileInfo info(src);
+    if (!info.exists() || !info.isFile()) continue;
+
+    const QString abs = info.absoluteFilePath();
+    if (!assetsRoot.isEmpty() && abs.startsWith(assetsRoot, Qt::CaseInsensitive)) {
+     importedPaths.append(abs);
+    } else {
+     if (assetsRoot.isEmpty()) continue;
+     const QString finalFile = makeUniqueAssetPath(assetsRoot, QFileInfo(abs).fileName());
+     if (finalFile.isEmpty()) continue;
+     if (!QFile::copy(abs, finalFile)) {
+      continue;
+     }
+     importedPaths.append(finalFile);
+    }
+
+    if (!importedPaths.isEmpty() && detector.detect(importedPaths.back()) == ArtifactCore::FileType::Image) {
+     QImageReader reader(importedPaths.back());
+     const QSize imageSize = reader.size();
+     if (imageSize.isValid() && compSize.isValid() &&
+         (imageSize.width() != compSize.width() || imageSize.height() != compSize.height())) {
+      qWarning() << "[CompatibilityGuard] Image resolution differs from composition. image="
+                 << imageSize.width() << "x" << imageSize.height()
+                 << " comp=" << compSize.width() << "x" << compSize.height()
+                 << " path=" << importedPaths.back();
+     }
+    }
+   }
+
+   return importedPaths;
+  }));
+ }
+
  void ArtifactProjectService::Impl::checkImportedAssetCompatibility(const QStringList& importedPaths)
  {
   if (importedPaths.isEmpty()) return;
@@ -213,15 +314,16 @@ namespace Artifact
    }
 
    if (type == ArtifactCore::FileType::Image) {
-    QImage img(path);
-    if (img.isNull()) {
-      qWarning() << "[CompatibilityGuard] Image decode failed:" << path;
+    QImageReader reader(path);
+    const QSize imageSize = reader.size();
+    if (!imageSize.isValid()) {
+      qWarning() << "[CompatibilityGuard] Image size unavailable:" << path;
       continue;
     }
     if (compSize.width() > 0 && compSize.height() > 0 &&
-        (img.width() != compSize.width() || img.height() != compSize.height())) {
+        (imageSize.width() != compSize.width() || imageSize.height() != compSize.height())) {
       qWarning() << "[CompatibilityGuard] Image resolution differs from composition. image="
-                 << img.width() << "x" << img.height()
+                 << imageSize.width() << "x" << imageSize.height()
                  << " comp=" << compSize.width() << "x" << compSize.height()
                  << " path=" << path;
     }
@@ -372,11 +474,16 @@ namespace Artifact
  void ArtifactProjectService::selectLayer(const LayerID& id)
  {
   if (auto* app = ArtifactApplicationManager::instance()) {
-   if (auto* selectionManager = app->layerSelectionManager()) {
-    selectionManager->setActiveComposition(currentComposition().lock());
-    if (id.isNil()) {
-     selectionManager->clearSelection();
-    } else if (auto comp = currentComposition().lock()) {
+    if (auto* selectionManager = app->layerSelectionManager()) {
+     const auto current = selectionManager->currentLayer();
+     if (current && current->id() == id) {
+      selectionManager->setActiveComposition(currentComposition().lock());
+      return;
+     }
+     selectionManager->setActiveComposition(currentComposition().lock());
+     if (id.isNil()) {
+      selectionManager->clearSelection();
+     } else if (auto comp = currentComposition().lock()) {
       selectionManager->selectLayer(comp->layerById(id));
     } else {
       selectionManager->clearSelection();
@@ -992,6 +1099,13 @@ QString ArtifactProjectService::projectItemRemovalConfirmationMessage(ProjectIte
  QStringList ArtifactProjectService::importAssetsFromPaths(const QStringList& sourcePaths)
  {
   return impl_->importAssetsFromPaths(sourcePaths);
+ }
+
+ void ArtifactProjectService::importAssetsFromPathsAsync(
+  const QStringList& sourcePaths,
+  std::function<void(QStringList)> onFinished)
+ {
+  impl_->importAssetsFromPathsAsync(sourcePaths, std::move(onFinished));
  }
 
  ArtifactCompositionWeakPtr ArtifactProjectService::currentComposition()

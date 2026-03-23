@@ -4,6 +4,7 @@
 #include <QBoxLayout>
 #include <QComboBox>
 #include <QToolButton>
+#include <QSize>
 #include <wobjectimpl.h>
 #include <QTimer>
 
@@ -88,10 +89,20 @@ namespace Artifact {
  ArtifactCompositionViewerFooter::Impl::Impl()
  {
   pSnapShotButton = new QToolButton();
-  pSnapShotButton->setIcon(loadIconWithFallback("Png/photo_camera.png"));
+  pSnapShotButton->setIcon(loadIconWithFallback("MaterialVS/neutral/camera_alt.svg"));
+  pSnapShotButton->setIconSize(QSize(20, 20));
+  pSnapShotButton->setAutoRaise(true);
+  pSnapShotButton->setToolTip("Take Snapshot");
   pShutterButton = new QToolButton();
+  pShutterButton->setIcon(loadIconWithFallback("MaterialVS/neutral/videocam.svg"));
+  pShutterButton->setIconSize(QSize(20, 20));
+  pShutterButton->setAutoRaise(true);
+  pShutterButton->setToolTip("Render Current Frame");
   pPlayPauseButton = new QToolButton();
-  pPlayPauseButton->setIcon(loadIconWithFallback("Png/play_arrow.png"));
+  pPlayPauseButton->setIcon(loadIconWithFallback("MaterialVS/green/play_arrow.svg"));
+  pPlayPauseButton->setIconSize(QSize(20, 20));
+  pPlayPauseButton->setAutoRaise(true);
+  pPlayPauseButton->setToolTip("Play/Pause");
   fpsLabel = new QLabel("FPS: N/A");
   memLabel = new QLabel("Mem: N/A");
   selectionLabel = new QLabel("");
@@ -149,6 +160,21 @@ namespace Artifact {
   layout->addWidget(impl_->memLabel);
 
   setLayout(layout);
+  setStyleSheet(R"(
+    QToolButton {
+      background: transparent;
+      border: 1px solid transparent;
+      border-radius: 4px;
+      padding: 2px;
+    }
+    QToolButton:hover {
+      background-color: rgba(255, 255, 255, 0.08);
+      border-color: rgba(255, 255, 255, 0.12);
+    }
+    QToolButton:pressed {
+      background-color: rgba(255, 255, 255, 0.16);
+    }
+  )");
 
   // Connections
   connect(impl_->pSnapShotButton, &QToolButton::clicked, this, &ArtifactCompositionViewerFooter::takeSnapShotRequested);
@@ -156,9 +182,9 @@ namespace Artifact {
     impl_->isPlaying_ = !impl_->isPlaying_;
     // update icon
     if (impl_->isPlaying_) {
-      impl_->pPlayPauseButton->setIcon(loadIconWithFallback("Png/pause.png"));
+      impl_->pPlayPauseButton->setIcon(loadIconWithFallback("MaterialVS/green/pause.svg"));
     } else {
-      impl_->pPlayPauseButton->setIcon(loadIconWithFallback("Png/play_arrow.png"));
+      impl_->pPlayPauseButton->setIcon(loadIconWithFallback("MaterialVS/green/play_arrow.svg"));
     }
     Q_EMIT playPauseToggled(impl_->isPlaying_);
   });

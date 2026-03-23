@@ -14,6 +14,8 @@ module Artifact.Menu.View;
 import std;
 
 import Artifact.Service.Project;
+import Artifact.MainWindow;
+import Widgets.AssetBrowser;
 import Utils.Path;
 
 namespace Artifact {
@@ -62,11 +64,12 @@ namespace Artifact {
    QAction* qualityPreviewAction = nullptr;
    QAction* qualityFinalAction = nullptr;
    QMenu* windowPanelsMenu = nullptr;
-   QAction* openProjectPanelAction = nullptr;
-   QAction* openInspectorPanelAction = nullptr;
+    ArtifactMainWindow* mainWindow = nullptr;
+    int newBrowserCount_ = 1;
 
-   void refreshEnabledState();
-  };
+    void refreshEnabledState();
+    void rebuildWindowPanelsMenu();
+   };
 
   ArtifactViewMenu::Impl::Impl(ArtifactViewMenu* menu)
   {
@@ -196,25 +199,27 @@ namespace Artifact {
    menu->addAction(snapToGuidesAction);
    menu->addAction(showRulersAction);
    menu->addSeparator();
-   windowPanelsMenu = menu->addMenu("ウィンドウパネル(&W)");
-   openProjectPanelAction = windowPanelsMenu->addAction(QIcon(resolveIconPath("Material/inventory.svg")), "プロジェクト");
-   openInspectorPanelAction = windowPanelsMenu->addAction(QIcon(resolveIconPath("Material/edit.svg")), "インスペクター");
+    windowPanelsMenu = menu->addMenu("ウィンドウパネル(&W)");
 
-   QObject::connect(openProjectPanelAction, &QAction::triggered, menu, []() {
-    if (QWidget* w = findWidgetByClassHint("ArtifactProjectManagerWidget")) {
-     w->show();
-     w->raise();
-     w->activateWindow();
-    }
-   });
-   QObject::connect(openInspectorPanelAction, &QAction::triggered, menu, []() {
-    if (QWidget* w = findWidgetByClassHint("ArtifactInspectorWidget")) {
-     w->show();
-     w->raise();
-     w->activateWindow();
-    }
-   });
-  }
+    // Dynamically rebuild the panels menu each time it opens
+    QObject::connect(windowPanelsMenu, &QMenu::aboutToShow, menu, [this]() {
+     rebuildWindowPanelsMenu();
+    });
+
+    menu->addSeparator();
+    auto* newBrowserAction = menu->addAction("新規アセットブラウザ(&A)");
+    QObject::connect(newBrowserAction, &QAction::triggered, menu, [this]() {
+     if (!mainWindow) return;
+     newBrowserCount_++;
+     auto* browser = new ArtifactAssetBrowser(mainWindow);
+     const QString title = QStringLiteral("Asset Browser (%1)").arg(newBrowserCount_);
+     mainWindow->addDockedWidgetFloating(
+      title,
+      QStringLiteral("asset_browser_%1").arg(newBrowserCount_),
+      browser,
+      QRect(100, 100, 800, 600));
+    });
+   }
 
  ArtifactViewMenu::Impl::~Impl()
  {
@@ -301,6 +306,37 @@ namespace Artifact {
   QObject::connect(action, &QAction::hovered, this, [syncAction]() mutable {
    syncAction();
   });
+ }
+
+ void ArtifactViewMenu::setMainWindow(ArtifactMainWindow* mw)
+ {
+  impl_->mainWindow = mw;
+ }
+
+ void ArtifactViewMenu::Impl::rebuildWindowPanelsMenu()
+ {
+  if (!windowPanelsMenu || !mainWindow) return;
+
+  windowPanelsMenu->clear();
+
+  const QStringList titles = mainWindow->dockTitles();
+  for (const QString& title : titles) {
+   QAction* action = windowPanelsMenu->addAction(title);
+   action->setCheckable(true);
+   action->setChecked(mainWindow->isDockVisible(title));
+
+   QObject::connect(action, &QAction::triggered, mainWindow, [mw = mainWindow, title](bool checked) {
+    mw->setDockVisible(title, checked);
+    if (checked) {
+     mw->activateDock(title);
+    }
+   });
+  }
+
+  if (titles.isEmpty()) {
+   QAction* none = windowPanelsMenu->addAction("(no panels)");
+   none->setEnabled(false);
+  }
  }
 
 };

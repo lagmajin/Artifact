@@ -1,147 +1,247 @@
-module;
+﻿module;
+#include <algorithm>
+#include <utility>
+
+#include <QDebug>
+
 #include <DiligentCore/Common/interface/RefCntAutoPtr.hpp>
-#include <DiligentCore/Graphics/GraphicsEngine/interface/Texture.h>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/DeviceContext.h>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/RenderDevice.h>
-#include <QDebug>
+#include <DiligentCore/Graphics/GraphicsEngine/interface/Texture.h>
+#include <DiligentCore/Graphics/GraphicsEngine/interface/TextureView.h>
+
+#include "../../../ArtifactCore/include/Define/DllExportMacro.hpp"
 
 module Artifact.Render.Pipeline;
 
+import std;
+import Layer.Blend;
 import Artifact.Layer.Abstract;
 import Graphics.LayerBlendPipeline;
+import Graphics.GPUcomputeContext;
 
-namespace Artifact {
+import Artifact.Render.Config;
 
-struct RenderPipeline::Impl {
- RefCntAutoPtr<IRenderDevice> device;
- RefCntAutoPtr<ITexture> accumTex;
- RefCntAutoPtr<ITexture> tempTex;
- TEXTURE_FORMAT format = TEX_FORMAT_RGBA8_UNORM_SRGB;
- Uint32 width = 0;
- Uint32 height = 0;
-};
-
-RenderPipeline::RenderPipeline() : impl_(new Impl()) {}
-RenderPipeline::~RenderPipeline() { delete impl_; }
-
-bool RenderPipeline::initialize(IRenderDevice* device, Uint32 width, Uint32 height, TEXTURE_FORMAT format)
+namespace Artifact
 {
- if (!device) return false;
- impl_->device = device;
- impl_->format = format;
- return createTextures(device, width, height, format);
-}
+ using namespace Diligent;
+ using ArtifactCore::BlendMode;
+ using ArtifactCore::GpuContext;
+ using ArtifactCore::LayerBlendPipeline;
 
-bool RenderPipeline::createTextures(IRenderDevice* device, Uint32 width, Uint32 height, TEXTURE_FORMAT format)
-{
- if (width == 0 || height == 0) return false;
+ namespace
+ {
+  struct TextureBundle
+  {
+   RefCntAutoPtr<ITexture> texture;
+   RefCntAutoPtr<ITextureView> srv;
+   RefCntAutoPtr<ITextureView> uav;
+   RefCntAutoPtr<ITextureView> rtv;
+  };
 
- impl_->width = width;
- impl_->height = height;
+  bool createTextureBundle(IRenderDevice* device,
+                           Uint32 width,
+                           Uint32 height,
+                           TEXTURE_FORMAT format,
+                           const char* name,
+                           TextureBundle& bundle)
+  {
+   if (!device || width == 0 || height == 0)
+   {
+    return false;
+   }
 
- TextureDesc texDesc;
- texDesc.Type      = RESOURCE_DIM_TEX_2D;
- texDesc.Width     = width;
- texDesc.Height    = height;
- texDesc.MipLevels = 1;
- texDesc.Format    = format;
- texDesc.Usage     = USAGE_DEFAULT;
- texDesc.BindFlags = BIND_RENDER_TARGET | BIND_SHADER_RESOURCE;
+   TextureDesc desc;
+   desc.Name = name;
+   desc.Type = RESOURCE_DIM_TEX_2D;
+   desc.Width = width;
+   desc.Height = height;
+   desc.Format = format;
+   desc.MipLevels = 1;
+   desc.ArraySize = 1;
+   desc.SampleCount = 1;
+   desc.Usage = USAGE_DEFAULT;
+   desc.BindFlags = BIND_RENDER_TARGET | BIND_SHADER_RESOURCE | BIND_UNORDERED_ACCESS;
 
- texDesc.Name = "Blend Accum";
- impl_->accumTex.Release();
- device->CreateTexture(texDesc, nullptr, &impl_->accumTex);
+   bundle = {};
+   device->CreateTexture(desc, nullptr, &bundle.texture);
+   if (!bundle.texture)
+   {
+    qWarning() << "[RenderPipeline] CreateTexture failed for" << name
+               << "size=" << width << "x" << height << "format=" << int(format);
+    return false;
+   }
 
- texDesc.Name = "Blend Temp";
- impl_->tempTex.Release();
- device->CreateTexture(texDesc, nullptr, &impl_->tempTex);
+   bundle.srv = bundle.texture->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE);
+   bundle.uav = bundle.texture->GetDefaultView(TEXTURE_VIEW_UNORDERED_ACCESS);
+   bundle.rtv = bundle.texture->GetDefaultView(TEXTURE_VIEW_RENDER_TARGET);
 
- if (!impl_->accumTex || !impl_->tempTex) {
-  qWarning() << "[RenderPipeline] Failed to create intermediate textures";
-  return false;
+   if (!bundle.srv || !bundle.uav || !bundle.rtv)
+   {
+    qWarning() << "[RenderPipeline] Missing default views for" << name;
+    bundle = {};
+    return false;
+   }
+
+   return true;
+  }
+ } // namespace
+
+ class RenderPipeline::Impl
+ {
+ public:
+  RefCntAutoPtr<IRenderDevice> device_;
+  TextureBundle accum_;
+  TextureBundle temp_;
+  TextureBundle layer_;
+  Uint32 width_ = 0;
+  Uint32 height_ = 0;
+  TEXTURE_FORMAT format_ = TEX_FORMAT_UNKNOWN;
+ };
+
+ RenderPipeline::RenderPipeline()
+     : impl_(new Impl())
+ {
  }
 
- return true;
-}
-
-void RenderPipeline::resize(Uint32 width, Uint32 height)
-{
- if (width == impl_->width && height == impl_->height) return;
- if (impl_->device) {
-  createTextures(impl_->device, width, height, impl_->format);
+ RenderPipeline::~RenderPipeline()
+ {
+  destroy();
+  delete impl_;
  }
-}
 
-void RenderPipeline::destroy()
-{
- impl_->accumTex.Release();
- impl_->tempTex.Release();
- impl_->width = 0;
- impl_->height = 0;
-}
+ bool RenderPipeline::initialize(IRenderDevice* device,
+                                 Uint32 width,
+                                 Uint32 height,
+                                 TEXTURE_FORMAT format)
+ {
+  if (!device || width == 0 || height == 0)
+  {
+   destroy();
+   return false;
+  }
 
-bool RenderPipeline::ready() const
-{
- return impl_->accumTex && impl_->tempTex;
-}
+  const TEXTURE_FORMAT resolvedFormat = format != TEX_FORMAT_UNKNOWN
+                                            ? format
+                                            : RenderConfig::PipelineFormat;
 
-ITextureView* RenderPipeline::accumSRV() const
-{
- return impl_->accumTex ? impl_->accumTex->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE) : nullptr;
-}
+  const bool sameSize = impl_->device_ == device &&
+                        impl_->width_ == width &&
+                        impl_->height_ == height &&
+                        impl_->format_ == resolvedFormat &&
+                        ready();
+  if (sameSize)
+  {
+   return true;
+  }
 
-ITextureView* RenderPipeline::accumUAV() const
-{
- return nullptr;
-}
+  destroy();
+  impl_->device_ = device;
+  impl_->width_ = width;
+  impl_->height_ = height;
+  impl_->format_ = resolvedFormat;
 
-ITextureView* RenderPipeline::tempSRV() const
-{
- return impl_->tempTex ? impl_->tempTex->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE) : nullptr;
-}
+  if (!createTextures(device, width, height, resolvedFormat))
+  {
+   destroy();
+   return false;
+  }
 
-ITextureView* RenderPipeline::tempUAV() const
-{
- return nullptr;
-}
+  return true;
+ }
 
-ITextureView* RenderPipeline::tempRTV() const
-{
- return impl_->tempTex ? impl_->tempTex->GetDefaultView(TEXTURE_VIEW_RENDER_TARGET) : nullptr;
-}
+ void RenderPipeline::resize(Uint32 width, Uint32 height)
+ {
+  if (!impl_->device_ || width == 0 || height == 0)
+  {
+   destroy();
+   return;
+  }
 
-Uint32 RenderPipeline::width() const { return impl_->width; }
-Uint32 RenderPipeline::height() const { return impl_->height; }
+  if (impl_->width_ == width && impl_->height_ == height && ready())
+  {
+   return;
+  }
 
-void RenderPipeline::swapAccumAndTemp()
-{
- std::swap(impl_->accumTex, impl_->tempTex);
-}
+  initialize(impl_->device_, width, height, impl_->format_);
+ }
 
-bool RenderPipeline::renderComposition(
- IDeviceContext* ctx,
- const std::vector<ArtifactAbstractLayerPtr>& layers,
- int64_t currentFrame,
- ITextureView* outputRTV
-)
-{
- if (!ctx || !outputRTV || !ready()) return false;
+ void RenderPipeline::destroy()
+ {
+  impl_->accum_ = {};
+  impl_->temp_ = {};
+  impl_->layer_ = {};
+  impl_->width_ = 0;
+  impl_->height_ = 0;
+  impl_->format_ = TEX_FORMAT_UNKNOWN;
+  impl_->device_ = nullptr;
+ }
 
- auto* accumRTV = impl_->accumTex->GetDefaultView(TEXTURE_VIEW_RENDER_TARGET);
- auto* accumSRV = impl_->accumTex->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE);
- auto* tempRTV  = impl_->tempTex->GetDefaultView(TEXTURE_VIEW_RENDER_TARGET);
- auto* tempSRV  = impl_->tempTex->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE);
+ bool RenderPipeline::ready() const
+ {
+  return impl_->device_ != nullptr && impl_->width_ > 0 && impl_->height_ > 0 &&
+         impl_->accum_.texture && impl_->temp_.texture && impl_->layer_.texture &&
+         impl_->accum_.srv && impl_->accum_.uav && impl_->accum_.rtv &&
+         impl_->temp_.srv && impl_->temp_.uav && impl_->temp_.rtv &&
+         impl_->layer_.srv && impl_->layer_.uav && impl_->layer_.rtv;
+ }
 
- if (!accumRTV || !accumSRV || !tempRTV || !tempSRV) return false;
+ bool RenderPipeline::renderComposition(
+  IDeviceContext* ctx,
+  const std::vector<ArtifactAbstractLayerPtr>& layers,
+  int64_t currentFrame,
+  ITextureView* outputRTV)
+ {
+  if (!ctx || !outputRTV || !ready())
+  {
+   return false;
+  }
 
- const float clearZero[] = {0.0f, 0.0f, 0.0f, 0.0f};
- ctx->ClearRenderTarget(accumRTV, clearZero, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+  // The controller currently owns the actual layer draw/blend loop.
+  // Keep this entry point available for future consolidation.
+  (void)layers;
+  (void)currentFrame;
+  const float clearColor[] = {0.0f, 0.0f, 0.0f, 0.0f};
+  ctx->SetRenderTargets(1, &outputRTV, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+  ctx->ClearRenderTarget(outputRTV, clearColor, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+  return true;
+ }
 
- // TODO: LayerBlendPipeline を使用した合成ループ
- // 現段階はレイヤーを painter's algorithm で合成
- // 将来的には各レイヤーを temp に描画 → blend(temp, accum) → accum に結果
+ ITextureView* RenderPipeline::accumSRV() const { return impl_->accum_.srv; }
+ ITextureView* RenderPipeline::accumUAV() const { return impl_->accum_.uav; }
+ ITextureView* RenderPipeline::accumRTV() const { return impl_->accum_.rtv; }
+ ITextureView* RenderPipeline::tempSRV() const { return impl_->temp_.srv; }
+ ITextureView* RenderPipeline::tempUAV() const { return impl_->temp_.uav; }
+ ITextureView* RenderPipeline::tempRTV() const { return impl_->temp_.rtv; }
+ ITextureView* RenderPipeline::layerSRV() const { return impl_->layer_.srv; }
+ ITextureView* RenderPipeline::layerUAV() const { return impl_->layer_.uav; }
+ ITextureView* RenderPipeline::layerRTV() const { return impl_->layer_.rtv; }
+ Uint32 RenderPipeline::width() const { return impl_->width_; }
+ Uint32 RenderPipeline::height() const { return impl_->height_; }
 
- return true;
-}
+ void RenderPipeline::swapAccumAndTemp()
+ {
+  std::swap(impl_->accum_, impl_->temp_);
+ }
 
+ bool RenderPipeline::createTextures(IRenderDevice* device,
+                                     Uint32 width,
+                                     Uint32 height,
+                                     TEXTURE_FORMAT format)
+ {
+  if (!createTextureBundle(device, width, height, format, "RenderPipeline.Accum", impl_->accum_))
+  {
+   return false;
+  }
+  if (!createTextureBundle(device, width, height, format, "RenderPipeline.Temp", impl_->temp_))
+  {
+   return false;
+  }
+  if (!createTextureBundle(device, width, height, format, "RenderPipeline.Layer", impl_->layer_))
+  {
+   return false;
+  }
+
+  return true;
+ }
 }

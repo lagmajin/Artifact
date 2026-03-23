@@ -3,6 +3,7 @@
 #include <QToolBar>
 #include <QActionGroup>
 #include <QString>
+#include <QStringList>
 #include <QSize>
 #include <QIcon>
 #include <wobjectimpl.h>
@@ -21,6 +22,17 @@ QIcon loadIconWithFallback(const QString& fileName)
     return icon;
   }
   return QIcon(ArtifactCore::resolveIconPath(fileName));
+}
+
+QIcon loadIconWithFallback(const QStringList& fileNames)
+{
+  for (const auto& fileName : fileNames) {
+    const QIcon icon = loadIconWithFallback(fileName);
+    if (!icon.isNull()) {
+      return icon;
+    }
+  }
+  return QIcon();
 }
 }
 
@@ -83,15 +95,16 @@ namespace Artifact
  ArtifactToolBar::ArtifactToolBar(QWidget* parent) : QToolBar(parent), impl_(new Impl())
  {
   setIconSize(QSize(32, 32));
+  setToolButtonStyle(Qt::ToolButtonIconOnly);
   setMovable(false);
   setFloatable(false);
   
   impl_->toolsGroup_ = new QActionGroup(this);
   impl_->toolsGroup_->setExclusive(true);
 
-  auto createTool = [this](QAction*& action, const QString& iconName, const QString& text, const QString& tooltip, const QKeySequence& shortcut) {
+  auto createTool = [this](QAction*& action, const QStringList& iconCandidates, const QString& text, const QString& tooltip, const QKeySequence& shortcut) {
     action = new QAction(this);
-    action->setIcon(loadIconWithFallback(QStringLiteral("Png/") + iconName + QStringLiteral(".png")));
+    action->setIcon(loadIconWithFallback(iconCandidates));
     action->setText(text);
     action->setToolTip(tooltip);
     action->setShortcut(shortcut);
@@ -102,28 +115,71 @@ namespace Artifact
 
   // Main tool actions
   impl_->homeAction_ = new QAction(this);
-  impl_->homeAction_->setIcon(loadIconWithFallback("Png/home.png"));
+  impl_->homeAction_->setIcon(loadIconWithFallback(QStringList{
+    QStringLiteral("MaterialVS/colored/E3E3E3/start.svg"),
+    QStringLiteral("MaterialVS/neutral/start.svg"),
+    QStringLiteral("Png/home.png")
+  }));
   impl_->homeAction_->setToolTip("ホーム");
   addAction(impl_->homeAction_);
   
   addSeparator();
 
-  createTool(impl_->selectTool_, "select", "選択", "選択ツール (V)", QKeySequence(Qt::Key_V));
-  createTool(impl_->handTool_, "hand", "手のひら", "手のひらツール (H)", QKeySequence(Qt::Key_H));
-  createTool(impl_->zoomTool_, "zoom", "ズーム", "ズームツール (Z)", QKeySequence(Qt::Key_Z));
-  createTool(impl_->rotationTool_, "rotation", "回転", "回転ツール (W)", QKeySequence(Qt::Key_W));
-  createTool(impl_->cameraTool_, "camera", "カメラ", "統合カメラーツール (C)", QKeySequence(Qt::Key_C));
-  createTool(impl_->panBehindTool_, "anchor", "アンカー", "アンカーポイントツール (Y)", QKeySequence(Qt::Key_Y));
+  createTool(impl_->selectTool_, QStringList{
+      QStringLiteral("MaterialVS/neutral/arrow_right.svg"),
+      QStringLiteral("Material/arrow_right.svg")
+    }, "選択", "選択ツール (V)", QKeySequence(Qt::Key_V));
+  createTool(impl_->handTool_, QStringList{
+      QStringLiteral("MaterialVS/neutral/pan_tool_alt.svg"),
+      QStringLiteral("Material/pan_tool_alt.svg")
+    }, "手のひら", "手のひらツール (H)", QKeySequence(Qt::Key_H));
+  createTool(impl_->zoomTool_, QStringList{
+      QStringLiteral("MaterialVS/neutral/zoom_in.svg"),
+      QStringLiteral("Material/zoom_in.svg")
+    }, "ズーム", "ズームツール (Z)", QKeySequence(Qt::Key_Z));
+  createTool(impl_->rotationTool_, QStringList{
+      QStringLiteral("MaterialVS/neutral/transform.svg"),
+      QStringLiteral("Material/transform.svg")
+    }, "回転", "回転ツール (W)", QKeySequence(Qt::Key_W));
+  createTool(impl_->cameraTool_, QStringList{
+      QStringLiteral("MaterialVS/neutral/camera_alt.svg"),
+      QStringLiteral("Material/camera_alt.svg")
+    }, "カメラ", "統合カメラーツール (C)", QKeySequence(Qt::Key_C));
+  createTool(impl_->panBehindTool_, QStringList{
+      QStringLiteral("MaterialVS/neutral/push_pin.svg"),
+      QStringLiteral("Material/push_pin.svg")
+    }, "アンカー", "アンカーポイントツール (Y)", QKeySequence(Qt::Key_Y));
   
   addSeparator();
   
-  createTool(impl_->shapeTool_, "path", "シェイプ", "シェイプツール (Q)", QKeySequence(Qt::Key_Q));
-  createTool(impl_->penTool_, "pen", "ペン", "ペンツール (G)", QKeySequence(Qt::Key_G));
-  createTool(impl_->textTool_, "text", "テキスト", "横書き文字ツール (Ctrl+T)", QKeySequence(Qt::CTRL | Qt::Key_T));
-  createTool(impl_->brushTool_, "brush", "ブラシ", "ブラシツール (Ctrl+B)", QKeySequence(Qt::CTRL | Qt::Key_B));
-  createTool(impl_->cloneStampTool_, "clone", "コピースタンプ", "コピースタンプツール (Ctrl+B)", QKeySequence());
-  createTool(impl_->eraserTool_, "eraser", "消しゴム", "消しゴムツール (Ctrl+B)", QKeySequence());
-  createTool(impl_->puppetTool_, "puppet", "パペット", "パペットピンツール (Ctrl+P)", QKeySequence(Qt::CTRL | Qt::Key_P));
+  createTool(impl_->shapeTool_, QStringList{
+      QStringLiteral("MaterialVS/neutral/crop.svg"),
+      QStringLiteral("Material/crop.svg")
+    }, "シェイプ", "シェイプツール (Q)", QKeySequence(Qt::Key_Q));
+  createTool(impl_->penTool_, QStringList{
+      QStringLiteral("MaterialVS/neutral/draw.svg"),
+      QStringLiteral("Material/draw.svg")
+    }, "ペン", "ペンツール (G)", QKeySequence(Qt::Key_G));
+  createTool(impl_->textTool_, QStringList{
+      QStringLiteral("MaterialVS/neutral/title.svg"),
+      QStringLiteral("Material/title.svg")
+    }, "テキスト", "横書き文字ツール (Ctrl+T)", QKeySequence(Qt::CTRL | Qt::Key_T));
+  createTool(impl_->brushTool_, QStringList{
+      QStringLiteral("MaterialVS/neutral/brush.svg"),
+      QStringLiteral("Material/brush.svg")
+    }, "ブラシ", "ブラシツール (Ctrl+B)", QKeySequence(Qt::CTRL | Qt::Key_B));
+  createTool(impl_->cloneStampTool_, QStringList{
+      QStringLiteral("MaterialVS/neutral/content_copy.svg"),
+      QStringLiteral("Material/content_copy.svg")
+    }, "コピースタンプ", "コピースタンプツール (Ctrl+B)", QKeySequence());
+  createTool(impl_->eraserTool_, QStringList{
+      QStringLiteral("MaterialVS/neutral/delete.svg"),
+      QStringLiteral("Material/delete.svg")
+    }, "消しゴム", "消しゴムツール (Ctrl+B)", QKeySequence());
+  createTool(impl_->puppetTool_, QStringList{
+      QStringLiteral("MaterialVS/neutral/push_pin.svg"),
+      QStringLiteral("Material/push_pin.svg")
+    }, "パペット", "パペットピンツール (Ctrl+P)", QKeySequence(Qt::CTRL | Qt::Key_P));
   
   // Set default tool
   impl_->selectTool_->setChecked(true);
@@ -257,12 +313,10 @@ namespace Artifact
 QToolButton {
     background: transparent;
     border: none;
-    padding: 6px;
+    padding: 2px;
     margin: 2px;
-    min-width: 24px;
-    min-height: 24px;
-    max-width: 24px;
-    max-height: 24px;
+    min-width: 28px;
+    min-height: 28px;
 }
 QToolButton:hover {
     background: #3a3a3a;

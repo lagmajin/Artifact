@@ -1,6 +1,8 @@
 module;
 #include <wobjectdefs.h>
 #include <QObject>
+#include <QJsonArray>
+#include <QJsonObject>
 
 #include <iostream>
 #include <vector>
@@ -136,9 +138,14 @@ public:
   void setJobProgressChangedCallback(std::function<void(int, int)> callback);
   void setAllJobsCompletedCallback(std::function<void()> callback);
   void setAllJobsRemovedCallback(std::function<void()> callback);
-  void setQueueReorderedCallback(std::function<void(int, int)> callback);
+   void setQueueReorderedCallback(std::function<void(int, int)> callback);
 
- };
+   // Serialization for project save/load
+   QJsonArray toJson() const;
+   void fromJson(const QJsonArray& arr);
+   void clearQueueForLoad();
+
+  };
 
 
 

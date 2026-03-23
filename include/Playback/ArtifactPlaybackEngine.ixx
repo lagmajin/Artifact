@@ -119,6 +119,11 @@ public:
     // オーディオクロック同期
     void setAudioClockProvider(const std::function<double()>& provider);
 
+    void setAudioMasterVolume(float volume);
+    float audioMasterVolume() const;
+    void setAudioMasterMuted(bool muted);
+    bool audioMasterMuted() const;
+
     // コンプポジション設定
     void setComposition(ArtifactCompositionPtr composition);
     ArtifactCompositionPtr composition() const;

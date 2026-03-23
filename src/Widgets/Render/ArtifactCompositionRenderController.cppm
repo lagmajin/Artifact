@@ -1,4 +1,4 @@
-module;
+﻿module;
 #define NOMINMAX
 #define QT_NO_KEYWORDS
 #include <opencv2/opencv.hpp>
@@ -20,15 +20,19 @@ module Artifact.Widgets.CompositionRenderController;
 
 import Artifact.Render.IRenderer;
 import Artifact.Render.CompositionRenderer;
+import Artifact.Render.Config;
 import Artifact.Preview.Pipeline;
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
+import Artifact.Layer.Camera;
+import Artifact.Layer.Light;
 import Artifact.Effect.Abstract;
 import Artifact.Layer.Image;
 import Artifact.Layer.Video;
 import Artifact.Layer.Solid2D;
 import Artifact.Layers.SolidImage;
 import Artifact.Layer.Text;
+import Frame.Position;
 import Artifact.Application.Manager;
 import Artifact.Layers.Selection.Manager;
 import Artifact.Widgets.TransformGizmo;
@@ -88,7 +92,9 @@ resolvePreferredComposition(ArtifactProjectService *service) {
 }
 
 void drawLayerForCompositionView(const ArtifactAbstractLayerPtr &layer,
-                                 ArtifactIRenderer *renderer) {
+                                 ArtifactIRenderer *renderer,
+                                 float opacityOverride = -1.0f,
+                                 QString* videoDebugOut = nullptr) {
   if (!layer || !renderer) {
     qCDebug(compositionViewLog) << "[CompositionView] drawLayerForCompositionView: invalid "
                 "layer/renderer";
@@ -104,6 +110,7 @@ void drawLayerForCompositionView(const ArtifactAbstractLayerPtr &layer,
   }
 
   const QTransform globalTransform = layer->getGlobalTransform();
+  const QMatrix4x4 globalTransform4x4 = layer->getGlobalTransform4x4();
 
   auto applyRasterizerEffectsAndMasksToSurface = [&](const ArtifactAbstractLayerPtr& targetLayer,
                                             QImage& surface) {
@@ -188,9 +195,9 @@ void drawLayerForCompositionView(const ArtifactAbstractLayerPtr &layer,
                          static_cast<float>(rect.y()),
                          static_cast<float>(rect.width()),
                          static_cast<float>(rect.height()), 
-                         globalTransform,
+                         globalTransform4x4,
                          surface,
-                         layer->opacity());
+                         (opacityOverride >= 0.0f ? opacityOverride : layer->opacity()));
     return true;
   };
 
@@ -209,8 +216,8 @@ void drawLayerForCompositionView(const ArtifactAbstractLayerPtr &layer,
                               static_cast<float>(localRect.y()),
                               static_cast<float>(localRect.width()),
                               static_cast<float>(localRect.height()),
-                              globalTransform,
-                              color, layer->opacity());
+                              globalTransform4x4,
+                              color, (opacityOverride >= 0.0f ? opacityOverride : layer->opacity()));
     }
     return;
   }
@@ -230,8 +237,8 @@ void drawLayerForCompositionView(const ArtifactAbstractLayerPtr &layer,
                               static_cast<float>(localRect.y()),
                               static_cast<float>(localRect.width()),
                               static_cast<float>(localRect.height()),
-                              globalTransform,
-                              color, layer->opacity());
+                              globalTransform4x4,
+                              color, (opacityOverride >= 0.0f ? opacityOverride : layer->opacity()));
     }
     return;
   }
@@ -248,6 +255,19 @@ void drawLayerForCompositionView(const ArtifactAbstractLayerPtr &layer,
   if (const auto videoLayer =
           std::dynamic_pointer_cast<ArtifactVideoLayer>(layer)) {
     const QImage frame = videoLayer->currentFrameToQImage();
+    const bool loaded = videoLayer->isLoaded();
+    const int64_t cf = layer->currentFrame();
+    const FramePosition ip = layer->inPoint();
+    const FramePosition op = layer->outPoint();
+    const bool active = layer->isActiveAt(FramePosition(static_cast<int>(cf)));
+    const QString dbg = QString("[Video] loaded=%1 frame.isNull=%2 size=%3x%4 active=%5 range=[%6,%7] curFrame=%8")
+      .arg(loaded)
+      .arg(frame.isNull())
+      .arg(frame.isNull() ? 0 : frame.width())
+      .arg(frame.isNull() ? 0 : frame.height())
+      .arg(active)
+      .arg(ip.framePosition()).arg(op.framePosition()).arg(cf);
+    if (videoDebugOut) *videoDebugOut = dbg;
     if (!frame.isNull()) {
       applySurfaceAndDraw(frame, localRect);
       return;
@@ -285,7 +305,12 @@ public:
   QTimer *renderTimer_ = nullptr;
   bool initialized_ = false;
   bool running_ = false;
+  bool renderScheduled_ = false;
+  bool renderInProgress_ = false;
+  bool renderRescheduleRequested_ = false;
   bool blendPipelineReady_ = false;
+  QString lastVideoDebug_;
+  QString lastEmittedVideoDebug_;
   QVector<QMetaObject::Connection> layerChangedConnections_;
   QMetaObject::Connection compositionChangedConnection_;
 
@@ -317,6 +342,10 @@ public:
   int draggingVertexIndex_ = -1;
   bool isDraggingVertex_ = false;
 
+  // Cyclic selection state
+  QPointF lastHitPosition_;
+  LayerID lastHitLayerId_;
+
   void applyCompositionState(const ArtifactCompositionPtr &composition) {
     if (!renderer_ || !composition) {
       return;
@@ -339,7 +368,7 @@ public:
     // レンダーパイプラインの中間テクスチャを初期化
     if (auto device = renderer_->device()) {
       renderPipeline_.initialize(device, static_cast<Uint32>(cw), static_cast<Uint32>(ch),
-                                 TEX_FORMAT_RGBA8_UNORM_SRGB);
+                                 RenderConfig::PipelineFormat);
     }
   }
 
@@ -360,6 +389,8 @@ public:
           owner->renderOneFrame();
         });
   }
+
+  void renderOneFrameImpl(CompositionRenderController *owner);
 };
 
 CompositionRenderController::CompositionRenderController(QObject *parent)
@@ -504,12 +535,13 @@ bool CompositionRenderController::isInitialized() const {
 }
 
 void CompositionRenderController::start() {
-  if (!impl_->initialized_ || impl_->running_ ||
-      impl_->renderTimer_ == nullptr) {
+  if (!impl_->initialized_ || impl_->running_) {
     return;
   }
   impl_->running_ = true;
-  impl_->renderTimer_->start(16);
+  // Continuous timer removed for performance. 
+  // Rendering is now event-driven (frameChanged, propertyChanged, etc.)
+  renderOneFrame(); 
 }
 
 void CompositionRenderController::stop() {
@@ -517,14 +549,10 @@ void CompositionRenderController::stop() {
     return;
   }
   impl_->running_ = false;
-  if (impl_->renderTimer_) {
-    impl_->renderTimer_->stop();
-  }
   if (impl_->renderer_) {
     impl_->renderer_->flushAndWait();
   }
 }
-
 bool CompositionRenderController::isRunning() const { return impl_->running_; }
 
 void CompositionRenderController::recreateSwapChain(QWidget *hostWidget) {
@@ -851,39 +879,67 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
       }
 
       ArtifactAbstractLayerPtr hitLayer = nullptr;
-      // allLayer() returns [backmost, ..., frontmost]
-      // Traverse from end to beginning to find the frontmost layer first
-      qCDebug(compositionViewLog) << "[HitTest] canvasPos=(" << cPos.x << "," << cPos.y << ")"
-               << "layers=" << layers.size();
+      QVector<ArtifactAbstractLayerPtr> hitLayers;
       
+      // Collect all layers at this position
       for (int i = (int)layers.size() - 1; i >= 0; --i) {
         auto& layer = layers[i];
         if (!layer || !layer->isVisible()) continue;
         if (!layer->isActiveAt(currentFrame)) continue;
 
-        // Accurate hit test using inverse transform
         const QTransform globalTransform = layer->getGlobalTransform();
         bool invertible = false;
         const QTransform invTransform = globalTransform.inverted(&invertible);
         
+        bool isHit = false;
         if (invertible) {
           const QPointF localPos = invTransform.map(QPointF(cPos.x, cPos.y));
           if (layer->localBounds().contains(localPos)) {
-            hitLayer = layer;
-            qCDebug(compositionViewLog) << "[HitTest] HIT (Accurate) index=" << i
-                     << "id=" << layer->id().toString();
-            break;
+            isHit = true;
           }
         } else {
-          // Fallback to bounding box if transform is not invertible (e.g. zero scale)
           auto bbox = layer->transformedBoundingBox();
           if (bbox.contains(cPos.x, cPos.y)) {
-            hitLayer = layer;
-            qCDebug(compositionViewLog) << "[HitTest] HIT (BBox Fallback) index=" << i
-                     << "id=" << layer->id().toString();
-            break;
+            isHit = true;
           }
         }
+
+        if (isHit) {
+            hitLayers.push_back(layer);
+        }
+      }
+
+      // Cyclic selection logic
+      if (!hitLayers.isEmpty()) {
+          const float posThreshold = 3.0f; // px
+          const bool sameSpot = QVector2D(viewportPos - impl_->lastHitPosition_).length() < posThreshold;
+          
+          if (sameSpot && !impl_->lastHitLayerId_.isNil()) {
+              // Find index of currently selected layer in hit list
+              int currentHitIdx = -1;
+              for (int i = 0; i < hitLayers.size(); ++i) {
+                  if (hitLayers[i]->id() == impl_->lastHitLayerId_) {
+                      currentHitIdx = i;
+                      break;
+                  }
+              }
+              
+              // Pick next layer in cycle
+              if (currentHitIdx != -1) {
+                  int nextIdx = (currentHitIdx + 1) % hitLayers.size();
+                  hitLayer = hitLayers[nextIdx];
+              } else {
+                  hitLayer = hitLayers[0];
+              }
+          } else {
+              // New click or first click at this spot
+              hitLayer = hitLayers[0];
+          }
+          
+          impl_->lastHitPosition_ = viewportPos;
+          impl_->lastHitLayerId_ = hitLayer->id();
+      } else {
+          impl_->lastHitLayerId_ = LayerID::Nil();
       }
 
       if (hitLayer) {
@@ -1016,12 +1072,46 @@ void CompositionRenderController::renderOneFrame() {
     return;
   }
 
-  auto comp = impl_->previewPipeline_.composition();
+  if (impl_->renderInProgress_) {
+    impl_->renderRescheduleRequested_ = true;
+    return;
+  }
+
+  if (impl_->renderScheduled_) {
+    return;
+  }
+
+  impl_->renderScheduled_ = true;
+  QTimer::singleShot(0, this, [this]() {
+    impl_->renderScheduled_ = false;
+    if (!impl_->initialized_ || !impl_->renderer_) {
+      return;
+    }
+    if (impl_->renderInProgress_) {
+      impl_->renderRescheduleRequested_ = true;
+      return;
+    }
+    impl_->renderInProgress_ = true;
+    impl_->renderOneFrameImpl(this);
+    impl_->renderInProgress_ = false;
+    if (impl_->renderRescheduleRequested_) {
+      impl_->renderRescheduleRequested_ = false;
+      renderOneFrame();
+    }
+  });
+}
+
+void CompositionRenderController::Impl::renderOneFrameImpl(CompositionRenderController *owner) {
+  if (!owner || !initialized_ || !renderer_) {
+    return;
+  }
+
+  auto comp = previewPipeline_.composition();
   if (auto *service = ArtifactProjectService::instance()) {
     const auto preferred = resolvePreferredComposition(service);
     if (preferred && preferred != comp) {
       comp = preferred;
-      impl_->previewPipeline_.setComposition(comp);
+      previewPipeline_.setComposition(comp);
       qCDebug(compositionViewLog)
           << "[CompositionView] renderOneFrame resynced preferred composition"
           << "id=" << comp->id().toString()
@@ -1029,55 +1119,28 @@ void CompositionRenderController::renderOneFrame() {
     }
   }
   if (!comp) {
-    impl_->renderer_->clear();
-    impl_->renderer_->flush();
-    impl_->renderer_->present();
+    renderer_->clear();
+    renderer_->flush();
+    renderer_->present();
     return;
   }
 
   auto size = comp->settings().compositionSize();
   const float cw = static_cast<float>(size.width() > 0 ? size.width() : 1920);
   const float ch = static_cast<float>(size.height() > 0 ? size.height() : 1080);
-  impl_->lastCanvasWidth_ = cw;
-  impl_->lastCanvasHeight_ = ch;
-  if (impl_->compositionRenderer_) {
-    impl_->compositionRenderer_->SetCompositionSize(cw, ch);
-    impl_->compositionRenderer_->ApplyCompositionSpace();
-    impl_->renderer_->setCanvasSize(cw, ch);
+  lastCanvasWidth_ = cw;
+  lastCanvasHeight_ = ch;
+  if (compositionRenderer_) {
+    compositionRenderer_->SetCompositionSize(cw, ch);
+    compositionRenderer_->ApplyCompositionSpace();
+    renderer_->setCanvasSize(cw, ch);
   } else {
-    impl_->renderer_->setCanvasSize(cw, ch);
+    renderer_->setCanvasSize(cw, ch);
   }
 
-  impl_->renderer_->clear();
+  renderer_->clear();
 
-  const FloatColor bgColor = comp->backgroundColor();
-  qCDebug(compositionViewLog) << "[CompositionView] frame begin"
-           << "compId=" << comp->id().toString() << "size=" << cw << "x" << ch
-           << "bg=(" << bgColor.r() << "," << bgColor.g() << ","
-           << bgColor.b() << "," << bgColor.a() << ")";
-  if (impl_->showCheckerboard_) {
-    qCDebug(compositionViewLog) << "[CompositionView] drawing checkerboard background";
-    impl_->renderer_->drawCheckerboard(0.0f, 0.0f, cw, ch, 16.0f,
-                                       {0.25f, 0.25f, 0.25f, 1.0f},
-                                       {0.35f, 0.35f, 0.35f, 1.0f});
-  } else if (impl_->compositionRenderer_) {
-    qCDebug(compositionViewLog) << "[CompositionView] drawing background via CompositionRenderer"
-             << "color=(" << bgColor.r() << "," << bgColor.g() << ","
-             << bgColor.b() << "," << bgColor.a() << ")";
-    impl_->compositionRenderer_->DrawCompositionBackground(bgColor);
-  } else {
-    qCDebug(compositionViewLog)
-        << "[CompositionView] drawing background via renderer_->drawRectLocal"
-        << "color=(" << bgColor.r() << "," << bgColor.g() << ","
-        << bgColor.b() << "," << bgColor.a() << ")";
-    impl_->renderer_->drawRectLocal(0.0f, 0.0f, cw, ch, bgColor, 1.0f);
-  }
-
-  if (impl_->showGrid_) {
-    impl_->renderer_->drawGrid(0, 0, cw, ch, 100.0f, 1.0f,
-                               {0.3f, 0.3f, 0.3f, 0.5f});
-  }
-
+  const auto layers = comp->allLayer();
   FramePosition currentFrame = comp->framePosition();
   if (auto *playback = ArtifactPlaybackService::instance()) {
     const auto playbackComp = playback->currentComposition();
@@ -1085,15 +1148,6 @@ void CompositionRenderController::renderOneFrame() {
       currentFrame = playback->currentFrame();
     }
   }
-  qCDebug(compositionViewLog) << "[CompositionView] frame source"
-           << "compFrame=" << comp->framePosition().framePosition()
-           << "renderFrame=" << currentFrame.framePosition()
-           << "playbackComp="
-           << (ArtifactPlaybackService::instance()
-                   ? (ArtifactPlaybackService::instance()->currentComposition() != nullptr)
-                   : false);
-
-  const auto layers = comp->allLayer();
   int64_t effectiveEndFrame = 0;
   for (const auto &l : layers) {
     if (l) {
@@ -1104,7 +1158,53 @@ void CompositionRenderController::renderOneFrame() {
   const bool frameOutOfRange =
       (framePos < 0 || (effectiveEndFrame > 0 && framePos >= effectiveEndFrame));
 
-  if (!frameOutOfRange) {
+  const bool pipelineEnabled = renderPipeline_.ready() && blendPipelineReady_;
+  static bool lastPipelineLog = false;
+  if (pipelineEnabled != lastPipelineLog) {
+      qDebug() << "[CompositionView] RenderPipeline enabled:" << pipelineEnabled 
+               << " (PipelineReady:" << renderPipeline_.ready() 
+               << " BlendReady:" << blendPipelineReady_ << ")";
+      lastPipelineLog = pipelineEnabled;
+  }
+
+  if (!frameOutOfRange) {    // 3D Camera Setup: Find active camera layer
+    std::shared_ptr<ArtifactCameraLayer> activeCamera = nullptr;
+    for (const auto& layer : layers) {
+        if (auto cam = std::dynamic_pointer_cast<ArtifactCameraLayer>(layer)) {
+            if (cam->isVisible() && cam->isActiveAt(currentFrame)) {
+                activeCamera = cam;
+                break;
+            }
+        }
+    }
+
+    if (activeCamera) {
+        const float aspect = (ch > 0.001f) ? (cw / ch) : 1.0f;
+        renderer_->setViewMatrix(activeCamera->viewMatrix());
+        renderer_->setProjectionMatrix(activeCamera->projectionMatrix(aspect));
+        renderer_->setUseExternalMatrices(true);
+    } else {
+        renderer_->setUseExternalMatrices(false);
+    }
+
+    // Ray Tracing Shadow Pass
+    if (auto* rtMgr = renderer_->rayTracingManager()) {
+        if (rtMgr->isSupported()) {
+            bool hasShadowLights = false;
+            for (const auto& layer : layers) {
+                if (auto light = std::dynamic_pointer_cast<ArtifactLightLayer>(layer)) {
+                    if (light->isVisible() && light->isActiveAt(currentFrame) && light->castsShadows()) {
+                        hasShadowLights = true;
+                        break;
+                    }
+                }
+            }
+            if (hasShadowLights) {
+                rtMgr->buildTLAS(renderer_->immediateContext());
+            }
+        }
+    }
+
     qCDebug(compositionViewLog) << "[CompositionView] layers total=" << layers.size()
              << "currentFrame=" << currentFrame.framePosition();
     const bool hasSoloLayer =
@@ -1113,108 +1213,91 @@ void CompositionRenderController::renderOneFrame() {
                       return layer && layer->isVisible() && layer->isSolo();
                     });
 
-    // ブレンドパイプライン使用判定: 非 Normal ブレンドモードのレイヤーが存在するか
-    const bool hasBlendModes = impl_->blendPipelineReady_ &&
-        std::any_of(layers.begin(), layers.end(),
-                    [](const ArtifactAbstractLayerPtr &layer) {
-                      return layer && layer->isVisible() &&
-                             layer->layerBlendType() != LAYER_BLEND_TYPE::BLEND_NORMAL;
-                    });
+    if (pipelineEnabled) {
+      auto ctx = renderer_->immediateContext();
+      auto accumRTV = renderPipeline_.accumRTV();
+      auto accumSRV = renderPipeline_.accumSRV();
+      auto tempUAV  = renderPipeline_.tempUAV();
+      auto layerRTV = renderPipeline_.layerRTV();
+      auto layerSRV = renderPipeline_.layerSRV();
 
-    if (hasBlendModes) {
-      // ブレンドパイプライン使用: レイヤー毎にオフスクリーン描画 → 合成
-      auto ctx = impl_->renderer_->immediateContext();
-      if (ctx && impl_->renderPipeline_.ready()) {
-        auto accumSRV = impl_->renderPipeline_.accumSRV();
-        bool isFirst = true;
+      const float clearZero[] = {0.0f, 0.0f, 0.0f, 0.0f};
+      ctx->ClearRenderTarget(accumRTV, clearZero, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
 
-        for (const auto &layer : layers) {
-          if (!layer || !layer->isVisible()) continue;
-          if (hasSoloLayer && !layer->isSolo()) continue;
-          if (!layer->isActiveAt(currentFrame)) continue;
-
-          layer->goToFrame(currentFrame.framePosition());
-
-          const auto blendMode = layer->layerBlendType();
-          const float opacity = layer->opacity();
-
-          // opacity 最適化
-          if (opacity <= 0.0f) continue;
-
-          // TODO: temp テクスチャにレイヤーを描画
-          // TODO: blendPipeline_->blend() で合成
-          // TODO: accum と temp をスワップ
-
-          isFirst = false;
-        }
+      // Draw Background into Accum
+      renderer_->setOverrideRTV(accumRTV);
+      const FloatColor bgColor = comp->backgroundColor();
+      if (showCheckerboard_) {
+        renderer_->drawCheckerboard(0.0f, 0.0f, cw, ch, 16.0f,
+                                           {0.25f, 0.25f, 0.25f, 1.0f},
+                                           {0.35f, 0.35f, 0.35f, 1.0f});
+      } else if (compositionRenderer_) {
+        compositionRenderer_->DrawCompositionBackground(bgColor);
       } else {
-        // フォールバック: painter's algorithm
-        for (const auto &layer : layers) {
-          if (!layer || !layer->isVisible()) continue;
-          if (hasSoloLayer && !layer->isSolo()) continue;
-          if (!layer->isActiveAt(currentFrame)) continue;
-          layer->goToFrame(currentFrame.framePosition());
-
-          qCDebug(compositionViewLog) << "[CompositionView] drawing layer"
-                   << "id=" << layer->id().toString()
-                   << "isActive=" << layer->isActiveAt(currentFrame)
-                   << "globalFrame=" << currentFrame.framePosition()
-                   << "inPoint=" << layer->inPoint().framePosition()
-                   << "outPoint=" << layer->outPoint().framePosition()
-                   << "layerCurrentFrame=" << layer->currentFrame();
-
-          drawLayerForCompositionView(layer, impl_->renderer_.get());        }
+        renderer_->drawRectLocal(0.0f, 0.0f, cw, ch, bgColor, 1.0f);
       }
-    } else {
-      // 通常描画: painter's algorithm
+      if (showGrid_) {
+        renderer_->drawGrid(0, 0, cw, ch, 100.0f, 1.0f, {0.3f, 0.3f, 0.3f, 0.5f});
+      }
+      renderer_->setOverrideRTV(nullptr);
+
       for (const auto &layer : layers) {
-        if (!layer || !layer->isVisible()) {
-          if (layer) {
-            qCDebug(compositionViewLog) << "[CompositionView] skip layer: invisible"
-                     << "id=" << layer->id().toString();
-          }
-          continue;
-        }
-        if (hasSoloLayer && !layer->isSolo()) {
-          qCDebug(compositionViewLog) << "[CompositionView] skip layer: solo filter"
-                   << "id=" << layer->id().toString();
-          continue;
-        }
-        if (!layer->isActiveAt(currentFrame)) {
-          qCDebug(compositionViewLog) << "[CompositionView] skip layer: inactive at frame"
-                   << "id=" << layer->id().toString()
-                   << "frame=" << currentFrame.framePosition()
-                   << "in=" << layer->inPoint().framePosition()
-                   << "out=" << layer->outPoint().framePosition()
-                   << "startTime=" << layer->startTime().framePosition();
-          continue;
-        }
+        if (!layer || !layer->isVisible()) continue;
+        if (hasSoloLayer && !layer->isSolo()) continue;
+        if (!layer->isActiveAt(currentFrame)) continue;
+
         layer->goToFrame(currentFrame.framePosition());
-        qCDebug(compositionViewLog) << "[CompositionView] draw layer"
-                 << "id=" << layer->id().toString()
-                 << "opacity=" << layer->opacity()
-                 << "blend=" << static_cast<int>(layer->layerBlendType())
-                 << "frame=" << currentFrame.framePosition()
-                 << "in=" << layer->inPoint().framePosition()
-                 << "out=" << layer->outPoint().framePosition()
-                 << "startTime=" << layer->startTime().framePosition();
-        drawLayerForCompositionView(layer, impl_->renderer_.get());
+        const auto blendMode = ArtifactCore::toBlendMode(layer->layerBlendType());
+        const float opacity = layer->opacity();
+        if (opacity <= 0.0f) continue;
+
+        ctx->ClearRenderTarget(layerRTV, clearZero, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+        renderer_->setOverrideRTV(layerRTV);
+        drawLayerForCompositionView(layer, renderer_.get(), 1.0f, &lastVideoDebug_);
+        renderer_->setOverrideRTV(nullptr);
+
+        blendPipeline_->blend(ctx, layerSRV, accumSRV, tempUAV, blendMode, opacity);
+        renderPipeline_.swapAccumAndTemp();
+        accumSRV = renderPipeline_.accumSRV();
+        tempUAV  = renderPipeline_.tempUAV();
+      }
+      renderer_->drawSprite(0, 0, cw, ch, renderPipeline_.accumSRV());
+    } else {
+      // Fallback path
+      const FloatColor bgColor = comp->backgroundColor();
+      if (showCheckerboard_) {
+        renderer_->drawCheckerboard(0.0f, 0.0f, cw, ch, 16.0f, {0.25f, 0.25f, 0.25f, 1.0f}, {0.35f, 0.35f, 0.35f, 1.0f});
+      } else if (compositionRenderer_) {
+        compositionRenderer_->DrawCompositionBackground(bgColor);
+      } else {
+        renderer_->drawRectLocal(0.0f, 0.0f, cw, ch, bgColor, 1.0f);
+      }
+      if (showGrid_) {
+        renderer_->drawGrid(0, 0, cw, ch, 100.0f, 1.0f, {0.3f, 0.3f, 0.3f, 0.5f});
+      }
+
+      for (const auto &layer : layers) {
+        if (!layer || !layer->isVisible()) continue;
+        if (hasSoloLayer && !layer->isSolo()) continue;
+        if (!layer->isActiveAt(currentFrame)) continue;
+        layer->goToFrame(currentFrame.framePosition());
+        drawLayerForCompositionView(layer, renderer_.get(), -1.0f, &lastVideoDebug_);
       }
     }
   }
 
-  if (impl_->gizmo_) {
-    auto selectedLayer = (!impl_->selectedLayerId_.isNil() && comp)
-                             ? comp->layerById(impl_->selectedLayerId_)
+  if (gizmo_) {
+    auto selectedLayer = (!selectedLayerId_.isNil() && comp)
+                             ? comp->layerById(selectedLayerId_)
                              : ArtifactAbstractLayerPtr{};
     if (selectedLayer && selectedLayer->isVisible() &&
         selectedLayer->isActiveAt(currentFrame)) {
-      impl_->gizmo_->setLayer(selectedLayer);
-      impl_->gizmo_->draw(impl_->renderer_.get());
+      gizmo_->setLayer(selectedLayer);
+      gizmo_->draw(renderer_.get());
 
       // Mask Overlay Drawing
       const int maskCount = selectedLayer->maskCount();
-      if (maskCount > 0 && impl_->renderer_) {
+      if (maskCount > 0 && renderer_) {
           const QTransform globalTransform = selectedLayer->getGlobalTransform();
           const FloatColor maskPointColor = {1.0f, 1.0f, 0.0f, 1.0f}; // Yellow
           const FloatColor maskLineColor = {0.0f, 1.0f, 1.0f, 0.8f}; // Cyan
@@ -1238,25 +1321,25 @@ void CompositionRenderController::renderOneFrame() {
 
                       // Draw line from previous vertex
                       if (v > 0) {
-                          impl_->renderer_->drawSolidLine(lastCanvasPos, currentCanvasPos, maskLineColor, 1.0f);
+                          renderer_->drawSolidLine(lastCanvasPos, currentCanvasPos, maskLineColor, 1.0f);
                       }
 
                       // Determine point color based on state
                       FloatColor currentColor = maskPointColor;
                       float currentPointSize = 6.0f;
                       
-                      if (impl_->isDraggingVertex_ && impl_->draggingMaskIndex_ == m && 
-                          impl_->draggingPathIndex_ == p && impl_->draggingVertexIndex_ == v) {
+                      if (isDraggingVertex_ && draggingMaskIndex_ == m && 
+                          draggingPathIndex_ == p && draggingVertexIndex_ == v) {
                           currentColor = dragColor;
                           currentPointSize = 8.0f;
-                      } else if (impl_->hoveredMaskIndex_ == m && impl_->hoveredPathIndex_ == p && 
-                                 impl_->hoveredVertexIndex_ == v) {
+                      } else if (hoveredMaskIndex_ == m && hoveredPathIndex_ == p && 
+                                 hoveredVertexIndex_ == v) {
                           currentColor = hoverColor;
                           currentPointSize = 8.0f;
                       }
 
                       // Draw vertex point
-                      impl_->renderer_->drawPoint(currentCanvasPos.x, currentCanvasPos.y, currentPointSize, currentColor);
+                      renderer_->drawPoint(currentCanvasPos.x, currentCanvasPos.y, currentPointSize, currentColor);
                       lastCanvasPos = currentCanvasPos;
                   }
 
@@ -1264,73 +1347,79 @@ void CompositionRenderController::renderOneFrame() {
                   if (path.isClosed() && vertexCount > 1) {
                       MaskVertex firstVertex = path.vertex(0);
                       QPointF firstCanvasPos = globalTransform.map(firstVertex.position);
-                      impl_->renderer_->drawSolidLine(lastCanvasPos, {(float)firstCanvasPos.x(), (float)firstCanvasPos.y()}, maskLineColor, 1.0f);
+                      renderer_->drawSolidLine(lastCanvasPos, {(float)firstCanvasPos.x(), (float)firstCanvasPos.y()}, maskLineColor, 1.0f);
                   }
               }
           }
       }
     } else {
-      impl_->gizmo_->setLayer(nullptr);
+      gizmo_->setLayer(nullptr);
     }
   }
 
-  if (impl_->showFrameInfo_ && impl_->renderer_) {
+  if (showFrameInfo_ && renderer_) {
     const float infoW = 60.0f;
     const float infoH = 14.0f;
     const float infoX = 4.0f;
-    const float infoY = impl_->lastCanvasHeight_ - infoH - 4.0f;
-    impl_->renderer_->drawSolidRect(infoX, infoY, infoW, infoH, {0.0f, 0.0f, 0.0f, 0.6f}, 0.8f);
+    const float infoY = lastCanvasHeight_ - infoH - 4.0f;
+    renderer_->drawSolidRect(infoX, infoY, infoW, infoH, {0.0f, 0.0f, 0.0f, 0.6f}, 0.8f);
     const int frame = currentFrame.framePosition();
     const float barRatio = (frame > 0) ? std::min(1.0f, static_cast<float>(frame) / 1000.0f) : 0.0f;
     const float barW = infoW * barRatio;
     if (barW > 1.0f) {
-      impl_->renderer_->drawSolidRect(infoX, infoY, barW, infoH, {0.2f, 0.6f, 1.0f, 0.5f}, 0.6f);
+      renderer_->drawSolidRect(infoX, infoY, barW, infoH, {0.2f, 0.6f, 1.0f, 0.5f}, 0.6f);
     }
   }
 
-  if (impl_->showSafeMargins_) {
+  if (showSafeMargins_) {
     const float actionSafeW = cw * 0.9f;
     const float actionSafeH = ch * 0.9f;
     const float titleSafeW = cw * 0.8f;
     const float titleSafeH = ch * 0.8f;
     const FloatColor marginColor = {0.5f, 0.5f, 0.5f, 0.6f};
 
-    impl_->renderer_->drawRectOutline((cw - actionSafeW) * 0.5f,
+    renderer_->drawRectOutline((cw - actionSafeW) * 0.5f,
                                       (ch - actionSafeH) * 0.5f, actionSafeW,
                                       actionSafeH, marginColor);
-    impl_->renderer_->drawRectOutline((cw - titleSafeW) * 0.5f,
+    renderer_->drawRectOutline((cw - titleSafeW) * 0.5f,
                                       (ch - titleSafeH) * 0.5f, titleSafeW,
                                       titleSafeH, marginColor);
 
     const float crossSize = 20.0f;
-    impl_->renderer_->drawSolidLine({cw * 0.5f - crossSize, ch * 0.5f},
+    renderer_->drawSolidLine({cw * 0.5f - crossSize, ch * 0.5f},
                                     {cw * 0.5f + crossSize, ch * 0.5f},
                                     marginColor, 1.0f);
-    impl_->renderer_->drawSolidLine({cw * 0.5f, ch * 0.5f - crossSize},
+    renderer_->drawSolidLine({cw * 0.5f, ch * 0.5f - crossSize},
                                     {cw * 0.5f, ch * 0.5f + crossSize},
                                     marginColor, 1.0f);
   }
 
-  if (impl_->showGuides_) {
+  if (showGuides_) {
     const FloatColor guideColor = {0.2f, 0.8f, 1.0f, 0.7f};
-    for (float x : impl_->guideVerticals_) {
+    for (float x : guideVerticals_) {
       if (x >= 0 && x <= cw) {
-        impl_->renderer_->drawSolidLine({x, 0}, {x, ch}, guideColor, 1.0f);
+        renderer_->drawSolidLine({x, 0}, {x, ch}, guideColor, 1.0f);
       }
     }
-    for (float y : impl_->guideHorizontals_) {
+    for (float y : guideHorizontals_) {
       if (y >= 0 && y <= ch) {
-        impl_->renderer_->drawSolidLine({0, y}, {cw, y}, guideColor, 1.0f);
+        renderer_->drawSolidLine({0, y}, {cw, y}, guideColor, 1.0f);
       }
     }
-    if (impl_->guideVerticals_.isEmpty() && impl_->guideHorizontals_.isEmpty()) {
-      impl_->renderer_->drawSolidLine({cw * 0.5f, 0}, {cw * 0.5f, ch}, guideColor, 1.0f);
-      impl_->renderer_->drawSolidLine({0, ch * 0.5f}, {cw, ch * 0.5f}, guideColor, 1.0f);
+    if (guideVerticals_.isEmpty() && guideHorizontals_.isEmpty()) {
+      renderer_->drawSolidLine({cw * 0.5f, 0}, {cw * 0.5f, ch}, guideColor, 1.0f);
+      renderer_->drawSolidLine({0, ch * 0.5f}, {cw, ch * 0.5f}, guideColor, 1.0f);
     }
   }
 
-  impl_->renderer_->flush();
-  impl_->renderer_->present();
+  renderer_->flush();
+
+  if (!lastVideoDebug_.isEmpty() && lastVideoDebug_ != lastEmittedVideoDebug_) {
+    lastEmittedVideoDebug_ = lastVideoDebug_;
+    Q_EMIT owner->videoDebugMessage(lastVideoDebug_);
+  }
+
+  renderer_->present();
 }
 
 } // namespace Artifact

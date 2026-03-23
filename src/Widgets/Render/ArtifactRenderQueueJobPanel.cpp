@@ -49,6 +49,7 @@ module Artifact.Widgets.RenderQueueJobPanel;
 import Widgets.Utils.CSS;
 import Widgets.EditableLabel;
 import Artifact.Render.Queue.Service;
+import Utils.Path;
 
 namespace ArtifactCore {}//;
 
@@ -56,6 +57,18 @@ namespace Artifact
 {
  using namespace ArtifactCore;
  using namespace ArtifactWidgets;
+
+ namespace {
+ QIcon loadIconWithFallback(const QString& fileName)
+ {
+   const QString resourcePath = ArtifactCore::resolveIconResourcePath(fileName);
+   QIcon icon(resourcePath);
+   if (!icon.isNull()) {
+     return icon;
+   }
+   return QIcon(ArtifactCore::resolveIconPath(fileName));
+ }
+ }
 
  class ColumnWidthManager::Impl
  {
@@ -192,7 +205,8 @@ namespace Artifact
   impl_->toggleButton = new QToolButton(this);
   impl_->toggleButton->setCheckable(true);
   impl_->toggleButton->setChecked(true);       // 初期状態: 開いてる
-  impl_->toggleButton->setText("▼");
+  impl_->toggleButton->setIcon(loadIconWithFallback("MaterialVS/neutral/arrow_drop_down.svg"));
+  impl_->toggleButton->setAutoRaise(true);
 
   impl_->compositionNameLabel = new EditableLabel();
   impl_->compositionNameLabel->setText("Comp1");
@@ -208,7 +222,8 @@ namespace Artifact
 
   QHBoxLayout* outputLayout = new QHBoxLayout();
   impl_->renderingStartButton = new QToolButton();
-  impl_->renderingStartButton->setText("▶");
+  impl_->renderingStartButton->setIcon(loadIconWithFallback("MaterialVS/green/play_arrow.svg"));
+  impl_->renderingStartButton->setAutoRaise(true);
   outputLayout->addWidget(impl_->renderingStartButton);
   outputLayout->addWidget(impl_->statusLabel);
   outputLayout->addWidget(impl_->jobProgressBar);
@@ -218,11 +233,11 @@ namespace Artifact
   connect(impl_->toggleButton, &QToolButton::toggled, this, [this](bool checked) {
    if (checked) {
     impl_->compositionNameLabel->show();
-    impl_->toggleButton->setText("▼"); // 開いている時のアイコン
+    impl_->toggleButton->setIcon(loadIconWithFallback("MaterialVS/neutral/arrow_drop_down.svg")); // 開いている時のアイコン
    }
    else {
     impl_->compositionNameLabel->hide();
-    impl_->toggleButton->setText("▶"); // 閉じている時のアイコン
+    impl_->toggleButton->setIcon(loadIconWithFallback("MaterialVS/neutral/arrow_right.svg")); // 閉じている時のアイコン
    }
    });
   setLayout(layout);

@@ -74,12 +74,23 @@ import Artifact.Widget.Dialog.RenderOutputSetting;
 import Artifact.Widgets.RenderQueuePresetSelector;
 import Core.FastSettingsStore;
 import Artifact.Widgets.AppDialogs;
-
+import Utils.Path;
 
 namespace Artifact
 {
  using namespace ArtifactCore;
 
+ namespace {
+ QIcon loadIconWithFallback(const QString& fileName)
+ {
+   const QString resourcePath = ArtifactCore::resolveIconResourcePath(fileName);
+   QIcon icon(resourcePath);
+   if (!icon.isNull()) {
+     return icon;
+   }
+   return QIcon(ArtifactCore::resolveIconPath(fileName));
+ }
+ }
 
 	W_OBJECT_IMPL(RenderQueueManagerWidget)
 
@@ -90,11 +101,12 @@ namespace Artifact
  Impl();
   ~Impl();
 
-  struct JobEntry {
-   QString name;
-   QString status;
-   int progress = 0;
-  };
+   struct JobEntry {
+    QString name;
+    QString status;
+    QString errorMessage;
+    int progress = 0;
+   };
 
   ArtifactRenderQueueService* service = nullptr;
   QList<JobEntry> jobs;
@@ -127,8 +139,9 @@ namespace Artifact
   QComboBox* progressLogStepCombo = nullptr;
   QLineEdit* outputPathEdit = nullptr;
   QPushButton* outputBrowseButton = nullptr;
-  QLabel* outputSettingsSummaryLabel = nullptr;
-  QPushButton* outputSettingsButton = nullptr;
+   QLabel* outputSettingsSummaryLabel = nullptr;
+   QPushButton* outputSettingsButton = nullptr;
+   QLabel* errorLabel = nullptr;
   QSpinBox* startFrameSpin = nullptr;
   QSpinBox* endFrameSpin = nullptr;
   QDoubleSpinBox* overlayXSpin = nullptr;
@@ -608,6 +621,7 @@ void RenderQueueManagerWidget::Impl::syncJobsFromService()
     }
     entry.name = name.isEmpty() ? QString("Render Job %1").arg(i + 1) : name;
     entry.status = normalizeStatus(service->jobStatusAt(i));
+    entry.errorMessage = service->jobErrorMessageAt(i).trimmed();
     entry.progress = std::clamp(service->jobProgressAt(i), 0, 100);
     jobs.push_back(entry);
   }
@@ -631,9 +645,9 @@ void RenderQueueManagerWidget::Impl::syncJobsFromService()
       } else if (currStatus == "Failed") {
         const QString err = service->jobErrorMessageAt(i).trimmed();
         if (!err.isEmpty()) {
-          addHistoryEntry(QString("Failed: %1 (%2)").arg(jobName, err));
+          addHistoryEntry(QString("Failed [%1]: %2").arg(jobName, err));
         } else {
-          addHistoryEntry(QString("Failed: %1").arg(jobName));
+          addHistoryEntry(QString("Failed: %1 (no details)").arg(jobName));
         }
       } else if (currStatus == "Canceled") {
         addHistoryEntry(QString("Canceled: %1").arg(jobName));
@@ -687,9 +701,22 @@ void RenderQueueManagerWidget::Impl::selectSourceIndex(int sourceIndex)
     auto* item = new QListWidgetItem(QString("#%1  %2    %3%")
       .arg(i + 1, 2, 10, QChar('0')).arg(job.name).arg(job.progress, 3));
     item->setData(Qt::UserRole, i);
-    item->setToolTip(QString("Status: %1\nProgress: %2%\nJob: %3")
-      .arg(status).arg(job.progress).arg(job.name));
-    item->setSizeHint(QSize(0, 28));
+
+    QString tooltipText = QString("Status: %1\nProgress: %2%\nJob: %3")
+      .arg(status).arg(job.progress).arg(job.name);
+    if (status == "Failed" && !job.errorMessage.isEmpty()) {
+      tooltipText += QString("\n\nError: %1").arg(job.errorMessage);
+    }
+    item->setToolTip(tooltipText);
+
+    if (status == "Failed" && !job.errorMessage.isEmpty()) {
+      item->setText(QString("#%1  %2    ERROR: %3")
+        .arg(i + 1, 2, 10, QChar('0')).arg(job.name).arg(job.errorMessage));
+    }
+    item->setSizeHint(QSize(0, 32));
+    QFont itemFont = item->font();
+    itemFont.setPointSize(itemFont.pointSize() + 1);
+    item->setFont(itemFont);
     if (status == "Rendering") {
       item->setForeground(QColor(255, 211, 94));
       item->setBackground(QColor(58, 49, 28));
@@ -848,6 +875,25 @@ void RenderQueueManagerWidget::Impl::updateJobDetailEditorsForSelection()
       endFrameSpin->setValue(endFrame);
     }
   }
+
+  // Show/hide error label
+  if (errorLabel) {
+    if (sourceIndex < jobs.size()) {
+      const QString status = normalizeStatus(jobs[sourceIndex].status);
+      const QString err = jobs[sourceIndex].errorMessage;
+      if (status == "Failed" && !err.isEmpty()) {
+        errorLabel->setText(QString("ERROR: %1").arg(err));
+        errorLabel->show();
+      } else {
+        errorLabel->clear();
+        errorLabel->hide();
+      }
+    } else {
+      errorLabel->clear();
+      errorLabel->hide();
+    }
+  }
+
   syncingJobDetails = false;
 }
 
@@ -913,26 +959,29 @@ void RenderQueueManagerWidget::Impl::updateTransformEditorsForSelection()
   syncJobsFromService();
  }
 
- void RenderQueueManagerWidget::Impl::handleJobUpdated(int index)
- {
-  if (service) {
-    const QString status = normalizeStatus(service->jobStatusAt(index));
-    if (status == "Completed") {
-      const QString path = service->jobOutputPathAt(index).trimmed();
-      if (!path.isEmpty() && statusLabel) {
-        logServiceEvent(QString("Completed: %1").arg(path), index, true);
-      }
-    } else if (status == "Failed") {
-      const QString error = service->jobErrorMessageAt(index).trimmed();
-      if (!error.isEmpty() && statusLabel) {
-        logServiceEvent(QString("Failed: %1").arg(error), index, true);
-      }
-    } else {
-      logServiceEvent(QStringLiteral("Job updated"), index, false);
-    }
+  void RenderQueueManagerWidget::Impl::handleJobUpdated(int index)
+  {
+   if (service) {
+     const QString status = normalizeStatus(service->jobStatusAt(index));
+     if (status == "Completed") {
+       const QString path = service->jobOutputPathAt(index).trimmed();
+       if (!path.isEmpty() && statusLabel) {
+         logServiceEvent(QString("Completed: %1").arg(path), index, true);
+       }
+     } else if (status == "Failed") {
+       const QString error = service->jobErrorMessageAt(index).trimmed();
+       const QString jobName = (index >= 0 && index < jobs.size()) ? jobs[index].name : QString("Job %1").arg(index + 1);
+       if (!error.isEmpty()) {
+         logServiceEvent(QString("Failed [%1]: %2").arg(jobName, error), index, true);
+       } else {
+         logServiceEvent(QString("Failed: %1 (no details)").arg(jobName), index, true);
+       }
+     } else {
+       logServiceEvent(QStringLiteral("Job updated"), index, false);
+     }
+   }
+   syncJobsFromService();
   }
-  syncJobsFromService();
- }
 
  void RenderQueueManagerWidget::Impl::handleJobStatusChanged(int index, int status)
  {
@@ -1036,9 +1085,10 @@ void RenderQueueManagerWidget::Impl::handleProjectClosed()
 
  auto* listActionsLayout = new QHBoxLayout();
  listActionsLayout->setSpacing(2);
- impl_->addButton = new QPushButton("+ Add", this);
+ impl_->addButton = new QPushButton(" Add", this);
+ impl_->addButton->setIcon(loadIconWithFallback("MaterialVS/green/add.svg"));
  impl_->duplicateButton = new QToolButton(this);
- impl_->duplicateButton->setText("❐");
+ impl_->duplicateButton->setIcon(loadIconWithFallback("MaterialVS/neutral/content_copy.svg"));
  impl_->duplicateButton->setToolTip("Duplicate Selected");
  impl_->moveUpButton = new QToolButton(this);
  impl_->moveUpButton->setText("▲");
@@ -1046,8 +1096,10 @@ void RenderQueueManagerWidget::Impl::handleProjectClosed()
  impl_->moveDownButton = new QToolButton(this);
  impl_->moveDownButton->setText("▼");
  impl_->moveDownButton->setToolTip("Move Down");
- impl_->removeButton = new QPushButton("- Remove", this);
- impl_->clearButton = new QPushButton("Clear All", this);
+ impl_->removeButton = new QPushButton(" Remove", this);
+ impl_->removeButton->setIcon(loadIconWithFallback("MaterialVS/red/remove.svg"));
+ impl_->clearButton = new QPushButton(" Clear All", this);
+ impl_->clearButton->setIcon(loadIconWithFallback("MaterialVS/red/delete.svg"));
 
  listActionsLayout->addWidget(impl_->addButton);
  listActionsLayout->addWidget(impl_->duplicateButton);
@@ -1092,9 +1144,18 @@ void RenderQueueManagerWidget::Impl::handleProjectClosed()
  settingsRow->addWidget(impl_->outputSettingsSummaryLabel, 1);
  settingsRow->addWidget(impl_->outputSettingsButton, 0);
  outputLayout->addRow("Format:", settingsRow);
- detailLayout->addWidget(outputGroup);
+  detailLayout->addWidget(outputGroup);
 
- // Group: Range
+  // Error message display (shown when a job has failed)
+  impl_->errorLabel = new QLabel(this);
+  impl_->errorLabel->setStyleSheet(
+    "color: #ff6666; background: #3a1a1a; border: 1px solid #662222; "
+    "border-radius: 3px; padding: 6px; font-size: 11px;");
+  impl_->errorLabel->setWordWrap(true);
+  impl_->errorLabel->hide();
+  detailLayout->addWidget(impl_->errorLabel);
+
+  // Group: Range
  auto* rangeGroup = new QGroupBox("Frame Range");
  auto* rangeLayout = new QFormLayout(rangeGroup);
  impl_->startFrameSpin = new QSpinBox(this);

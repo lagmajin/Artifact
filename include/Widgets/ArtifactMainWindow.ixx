@@ -50,6 +50,10 @@ export namespace Artifact {
   void showStatusMessage(const QString& message, int timeoutMs = 2000);
   void togglePanelsVisible(bool visible);
   
+  // Dock enumeration
+  QStringList dockTitles() const;
+  bool isDockVisible(const QString& title) const;
+  
   // Status bar update methods
   void setStatusZoomLevel(float zoomPercent);
   void setStatusCoordinates(int x, int y);

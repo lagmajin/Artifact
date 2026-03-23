@@ -188,9 +188,9 @@ void ResizeHandle::mouseReleaseEvent(QGraphicsSceneMouseEvent* event)
   double cornerRadius = 4.0;
   
   // Base colors with Glassmorphism feel
-  QColor baseColor = QColor(70, 120, 180, 200);
+  QColor baseColor = QColor(140, 90, 40, 200); // Modo Amber
   if (isSelected()) {
-   baseColor = QColor(100, 150, 220, 230);
+   baseColor = QColor(180, 110, 45, 230); // Lighter Modo Amber for selection
   }
   
   // Gradient for depth

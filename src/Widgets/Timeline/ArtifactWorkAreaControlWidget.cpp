@@ -75,12 +75,12 @@ namespace Artifact
   // Range strip
   QRect rangeRect(x1, 0, x2 - x1, height());
   QLinearGradient grad(rangeRect.topLeft(), rangeRect.bottomLeft());
-  grad.setColorAt(0, QColor(0, 120, 215, 120));
-  grad.setColorAt(1, QColor(0, 80, 180, 120));
+  grad.setColorAt(0, QColor(180, 110, 45, 120)); // Modo Amber
+  grad.setColorAt(1, QColor(140, 80, 30, 120));
   p.fillRect(rangeRect, grad);
 
   // Bottom border for work area
-  p.setPen(QPen(QColor(0, 150, 255), 2));
+  p.setPen(QPen(QColor(220, 140, 50), 2));
   p.drawLine(x1, height() - 1, x2, height() - 1);
 
   // Handles (Blue AE style) - highlight on hover
@@ -89,18 +89,18 @@ namespace Artifact
   
   // Left handle
   if (impl_->hoveringLeft || impl_->draggingLeft) {
-    p.setBrush(QColor(60, 160, 255));  // Brighter on hover
+    p.setBrush(QColor(240, 160, 60));  // Brighter on hover
   } else {
-    p.setBrush(QColor(0, 120, 215));
+    p.setBrush(QColor(180, 110, 45));
   }
   p.setPen(QPen(Qt::white, 1));
   p.drawRoundedRect(QRectF(x1 - handleHalfW, handleTopInset, handleW, handleHeight), 2, 2);
   
   // Right handle
   if (impl_->hoveringRight || impl_->draggingRight) {
-    p.setBrush(QColor(60, 160, 255));  // Brighter on hover
+    p.setBrush(QColor(240, 160, 60));  // Brighter on hover
   } else {
-    p.setBrush(QColor(0, 120, 215));
+    p.setBrush(QColor(180, 110, 45));
   }
   p.drawRoundedRect(QRectF(x2 - handleHalfW, handleTopInset, handleW, handleHeight), 2, 2);
  }

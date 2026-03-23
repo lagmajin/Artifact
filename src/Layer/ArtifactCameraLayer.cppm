@@ -1,98 +1,109 @@
 module;
-
-#include <iostream>
-#include <vector>
-#include <string>
-#include <map>
-#include <unordered_map>
-#include <set>
-#include <unordered_set>
-#include <memory>
-#include <algorithm>
 #include <cmath>
-#include <functional>
-#include <optional>
-#include <utility>
-#include <array>
-#include <mutex>
-#include <thread>
-#include <chrono>
-#include <filesystem>
-#include <fstream>
-#include <sstream>
-#include <stdexcept>
-#include <type_traits>
-#include <variant>
-#include <any>
-#include <atomic>
-#include <condition_variable>
-#include <queue>
-#include <deque>
-#include <list>
-#include <tuple>
-#include <numeric>
-#include <regex>
-#include <random>
+#include <QMatrix4x4>
+#include <QVariant>
+#include <wobjectimpl.h>
+
 module Artifact.Layer.Camera;
 
+import Artifact.Layer.Abstract;
+import Property.Group;
+import Property;
+import Animation.Transform3D;
 
+namespace Artifact {
 
-
-
-namespace ArtifactCore {
+W_OBJECT_IMPL(ArtifactCameraLayer)
 
 struct ArtifactCameraLayer::Impl {
-    QString name{"Camera"};
-    bool enabled{true};
-    CameraTransform transform;
-    Camera cameraCore;
-
-    QMatrix4x4 cachedView;
-    QMatrix4x4 cachedProj;
-    bool dirtyView{true};
-    bool dirtyProj{true};
+    float zoom_ = 1000.0f;
+    float focusDistance_ = 1000.0f;
+    float aperture_ = 50.0f;
+    bool depthOfField_ = false;
 };
 
-ArtifactCameraLayer::ArtifactCameraLayer(): impl_(new Impl()) {}
-ArtifactCameraLayer::~ArtifactCameraLayer() = default;
+ArtifactCameraLayer::ArtifactCameraLayer()
+    : camImpl_(new Impl())
+{
+    setLayerName("Camera 1");
+}
 
-void ArtifactCameraLayer::setName(const QString& name) { impl_->name = name; }
-QString ArtifactCameraLayer::name() const { return impl_->name; }
+ArtifactCameraLayer::~ArtifactCameraLayer()
+{
+    delete camImpl_;
+}
 
-void ArtifactCameraLayer::setEnabled(bool e) { impl_->enabled = e; }
-bool ArtifactCameraLayer::isEnabled() const { return impl_->enabled; }
+void ArtifactCameraLayer::draw(ArtifactIRenderer* /*renderer*/)
+{
+    // Camera is invisible in the final render
+}
 
-void ArtifactCameraLayer::setTransform(const CameraTransform& t) { impl_->transform = t; impl_->dirtyView = true; }
-CameraTransform ArtifactCameraLayer::transform() const { return impl_->transform; }
+float ArtifactCameraLayer::zoom() const { return camImpl_->zoom_; }
+void ArtifactCameraLayer::setZoom(float z) { camImpl_->zoom_ = z; changed(); }
 
-void ArtifactCameraLayer::setCamera(const Camera& c) { impl_->cameraCore = c; impl_->dirtyProj = true; }
-Camera ArtifactCameraLayer::camera() const { return impl_->cameraCore; }
+float ArtifactCameraLayer::focusDistance() const { return camImpl_->focusDistance_; }
+void ArtifactCameraLayer::setFocusDistance(float d) { camImpl_->focusDistance_ = d; changed(); }
 
-QMatrix4x4 ArtifactCameraLayer::viewMatrix() const {
-    if (impl_->dirtyView) {
-        impl_->cachedView = impl_->transform.toMatrix().inverted();
-        impl_->dirtyView = false;
+float ArtifactCameraLayer::aperture() const { return camImpl_->aperture_; }
+void ArtifactCameraLayer::setAperture(float a) { camImpl_->aperture_ = a; changed(); }
+
+bool ArtifactCameraLayer::depthOfField() const { return camImpl_->depthOfField_; }
+void ArtifactCameraLayer::setDepthOfField(bool e) { camImpl_->depthOfField_ = e; changed(); }
+
+QMatrix4x4 ArtifactCameraLayer::viewMatrix() const
+{
+    // In AE, camera looks along +Z, and -Z is towards the viewer.
+    // The view matrix is the inverse of the camera's global transform.
+    return getGlobalTransform4x4().inverted();
+}
+
+QMatrix4x4 ArtifactCameraLayer::projectionMatrix(float aspect) const
+{
+    // AE Zoom to FOV conversion:
+    // fovY = 2 * atan((height/2) / zoom)
+    // Since we use a generic canvas, we can assume a standard height or use the zoom directly.
+    // Standard AE behavior: Zoom is in pixels.
+    // If zoom = 1000 and canvas height = 1080:
+    // verticalFOV = 2 * atan(540 / 1000) = ~56.7 degrees.
+    
+    float vFov = static_cast<float>(2.0 * std::atan(540.0 / camImpl_->zoom_) * 180.0 / 3.14159265358979);
+    
+    QMatrix4x4 proj;
+    proj.perspective(vFov, aspect, 1.0f, 100000.0f);
+    return proj;
+}
+
+std::vector<ArtifactCore::PropertyGroup> ArtifactCameraLayer::getLayerPropertyGroups() const
+{
+    auto groups = ArtifactAbstractLayer::getLayerPropertyGroups();
+    
+    ArtifactCore::PropertyGroup cameraOptions("Camera Options");
+    cameraOptions.addProperty(ArtifactCore::Property("Zoom", camImpl_->zoom_, 10.0f, 10000.0f, "px"));
+    cameraOptions.addProperty(ArtifactCore::Property("Depth of Field", camImpl_->depthOfField_));
+    cameraOptions.addProperty(ArtifactCore::Property("Focus Distance", camImpl_->focusDistance_, 10.0f, 10000.0f, "px"));
+    cameraOptions.addProperty(ArtifactCore::Property("Aperture", camImpl_->aperture_, 0.0f, 1000.0f, "px"));
+    
+    groups.push_back(cameraOptions);
+    return groups;
+}
+
+bool ArtifactCameraLayer::setLayerPropertyValue(const QString& propertyPath, const QVariant& value)
+{
+    if (propertyPath == "Camera Options/Zoom") {
+        setZoom(value.toFloat());
+        return true;
+    } else if (propertyPath == "Camera Options/Depth of Field") {
+        setDepthOfField(value.toBool());
+        return true;
+    } else if (propertyPath == "Camera Options/Focus Distance") {
+        setFocusDistance(value.toFloat());
+        return true;
+    } else if (propertyPath == "Camera Options/Aperture") {
+        setAperture(value.toFloat());
+        return true;
     }
-    return impl_->cachedView;
+    
+    return ArtifactAbstractLayer::setLayerPropertyValue(propertyPath, value);
 }
 
-QMatrix4x4 ArtifactCameraLayer::projectionMatrix() const {
-    if (impl_->dirtyProj) {
-        QMatrix4x4 p;
-        // Build projection from core Camera
-        p.perspective(impl_->cameraCore.fovY(), impl_->cameraCore.aspect(), impl_->cameraCore.nearZ(), impl_->cameraCore.farZ());
-        impl_->cachedProj = p;
-        impl_->dirtyProj = false;
-    }
-    return impl_->cachedProj;
-}
-
-QMatrix4x4 ArtifactCameraLayer::viewProjectionMatrix() const {
-    return projectionMatrix() * viewMatrix();
-}
-
-void ArtifactCameraLayer::evaluateAtTime(double /*timeSeconds*/) {
-    // Placeholder: animations would update transform/settings per time
-}
-
-}
+} // namespace Artifact

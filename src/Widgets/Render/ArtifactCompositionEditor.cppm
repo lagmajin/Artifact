@@ -28,12 +28,23 @@ import Artifact.Composition.Abstract;
 import Artifact.Application.Manager;
 import Artifact.Service.Project;
 import Artifact.Service.Playback;
+import Utils.Path;
 
 namespace Artifact {
 
 W_OBJECT_IMPL(ArtifactCompositionEditor)
 
 namespace {
+QIcon loadIconWithFallback(const QString& fileName)
+{
+  const QString resourcePath = ArtifactCore::resolveIconResourcePath(fileName);
+  QIcon icon(resourcePath);
+  if (!icon.isNull()) {
+    return icon;
+  }
+  return QIcon(ArtifactCore::resolveIconPath(fileName));
+}
+
 ArtifactCompositionPtr resolvePreferredComposition() {
   if (auto *app = ArtifactApplicationManager::instance()) {
     if (auto *active = app->activeContextService()) {
@@ -63,6 +74,7 @@ public:
       : QWidget(parent), controller_(controller) {
     setMinimumSize(1, 1);
     setAttribute(Qt::WA_NativeWindow);
+    setAttribute(Qt::WA_DontCreateNativeAncestors);
     setAttribute(Qt::WA_PaintOnScreen);
     setAttribute(Qt::WA_NoSystemBackground);
     setMouseTracking(true);
@@ -329,6 +341,9 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
 
   impl_->renderController_ = new CompositionRenderController(this);
   impl_->renderController_->setClearColor({ 0.12f, 0.13f, 0.18f, 1.0f });
+
+  QObject::connect(impl_->renderController_, &CompositionRenderController::videoDebugMessage,
+                   this, &ArtifactCompositionEditor::videoDebugMessage);
   impl_->compositionView_ =
       new CompositionViewport(impl_->renderController_, this);
 

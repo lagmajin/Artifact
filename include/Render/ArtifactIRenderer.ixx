@@ -5,6 +5,7 @@
 // Extend backends carefully while preserving the current Diligent/D3D12 architecture.
 #include <QImage>
 #include <QTransform>
+#include <QMatrix4x4>
 #include <QWidget>
 #include <RenderDevice.h>
 #include <DeviceContext.h>
@@ -14,6 +15,7 @@
 export module Artifact.Render.IRenderer;
 
 import Color.Float;
+import Graphics.RayTracingManager;
 
 export namespace Artifact {
 using namespace ArtifactCore;
@@ -70,6 +72,9 @@ public:
  void panBy(float dx, float dy);
  void resetView();
  void fitToViewport(float margin = 50.0f);
+ void setViewMatrix(const QMatrix4x4& view);
+ void setProjectionMatrix(const QMatrix4x4& proj);
+ void setUseExternalMatrices(bool use);
  void zoomAroundViewportPoint(Detail::float2 viewportPos, float newZoom);
 
  Detail::float2 canvasToViewport(Detail::float2 pos) const;
@@ -84,11 +89,17 @@ public:
  void drawPoint(float x, float y, float size, const FloatColor& color);
  void drawSprite(float x, float y, float w, float h);
  void drawSprite(Detail::float2 pos, Detail::float2 size);
+ void drawSprite(float x, float y, float w, float h, Diligent::ITextureView* pSRV, float opacity = 1.0f);
  void drawSprite(float x, float y, float w, float h, const QImage& image, float opacity = 1.0f);
  void drawSpriteTransformed(float x, float y, float w, float h, const QTransform& transform, const QImage& image, float opacity = 1.0f);
+<<<<<<< Updated upstream
  void drawSpriteRotated(float x, float y, float w, float h, float angleDegrees, const QImage& image, float opacity = 1.0f);
+=======
+ void drawSpriteTransformed(float x, float y, float w, float h, const QMatrix4x4& transform, const QImage& image, float opacity = 1.0f);
+>>>>>>> Stashed changes
  void drawRectLocal(float x, float y, float w, float h, const FloatColor& color, float opacity = 1.0f);
  void drawSolidRectTransformed(float x, float y, float w, float h, const QTransform& transform, const FloatColor& color, float opacity = 1.0f);
+ void drawSolidRectTransformed(float x, float y, float w, float h, const QMatrix4x4& transform, const FloatColor& color, float opacity = 1.0f);
  void drawRectOutlineLocal(float x, float y, float w, float h, const FloatColor& color);
  void drawThickLineLocal(Detail::float2 p1, Detail::float2 p2, float thickness, const FloatColor& color);
  void drawDotLineLocal(Detail::float2 p1, Detail::float2 p2, float thickness, float spacing, const FloatColor& color);
@@ -107,6 +118,7 @@ public:
 
  Diligent::RefCntAutoPtr<Diligent::IRenderDevice> device() const;
  Diligent::RefCntAutoPtr<Diligent::IDeviceContext> immediateContext() const;
+ ArtifactCore::IRayTracingManager* rayTracingManager() const;
  void setOverrideRTV(Diligent::ITextureView* rtv);
 
 private:

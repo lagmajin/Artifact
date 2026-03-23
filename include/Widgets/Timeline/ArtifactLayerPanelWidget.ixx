@@ -71,6 +71,9 @@ export namespace Artifact
   int layerRowIndex(const LayerID& id) const;
   void editLayerName(const LayerID& id);
 
+ private:
+  void performUpdateLayout();
+
   public /*signals*/:
    void visibleRowsChanged() W_SIGNAL(visibleRowsChanged)
 

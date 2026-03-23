@@ -18,6 +18,7 @@
 #include <QPushButton>
 #include <QGuiApplication>
 #include <QScreen>
+#include <QTimer>
 #include <QDebug>
 
 module Dialog.Composition;
@@ -193,6 +194,8 @@ namespace Artifact {
   bool okCalled_ = false;
   QPropertyAnimation* m_showAnimation = nullptr;
   EditableLabel* compositionNameEdit_ = nullptr;
+  ArtifactCompositionInitParams acceptedParams_;
+  bool accepted_ = false;
 
   void ok(QDialog* dialog);
   void cancel(QDialog* dialog);
@@ -206,12 +209,10 @@ namespace Artifact {
   okCalled_ = true;
   if (compositionNameEdit_) compositionNameEdit_->finishEdit();
   QString name = compositionNameEdit_ ? compositionNameEdit_->text() : "Comp1";
-  ArtifactProjectManager::getInstance().suppressDefaultCreate(true);
   if (compositionSettingPage_) {
-    ArtifactCompositionInitParams params = compositionSettingPage_->getInitParams(name);
-    ArtifactProjectManager::getInstance().createComposition(params);
+    acceptedParams_ = compositionSettingPage_->getInitParams(name);
+    accepted_ = true;
   }
-  ArtifactProjectManager::getInstance().suppressDefaultCreate(false);
   dialog->accept();
  }
 
@@ -294,6 +295,10 @@ namespace Artifact {
 
  void CreateCompositionDialog::setCompositionName(const QString& name) { if (impl_->compositionNameEdit_) impl_->compositionNameEdit_->setText(name); }
  QString CreateCompositionDialog::compositionName() const { return impl_->compositionNameEdit_ ? impl_->compositionNameEdit_->text() : ""; }
+ ArtifactCompositionInitParams CreateCompositionDialog::acceptedInitParams() const
+ {
+  return impl_ ? impl_->acceptedParams_ : ArtifactCompositionInitParams();
+ }
 
  void CreateCompositionDialog::keyPressEvent(QKeyEvent* event)
  {

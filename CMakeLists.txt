@@ -16,7 +16,6 @@ set(_PROVIDED_MODULES "")
 
 foreach(file_path ${POTENTIAL_SOURCES})
     if(file_path MATCHES "\\.bak$" OR
-       file_path MATCHES "src/Render/ArtifactRenderLayerPipeline\\.cpp" OR
        file_path MATCHES "src/Audio/Effects/AudioEffectsInit\\.cpp" OR
        file_path MATCHES "src/Test/ArtifactTestRenderQueue\\.cppm" OR
        file_path MATCHES "src/Generator/CloneGenerator\\.ixx" OR
@@ -89,12 +88,6 @@ endif()
 target_sources(Artifact
     PRIVATE ${APP_IMPL}
     PUBLIC FILE_SET CXX_MODULES FILES ${APP_MODULES}
-)
-
-# Ensure the render pipeline implementation unit is always compiled even if the
-# source list cache is stale after a rename between .cpp and .cppm.
-target_sources(Artifact PRIVATE
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/ArtifactRenderLayerPipeline.cppm"
 )
 
 # Strict MSVC-cl only flags

@@ -350,7 +350,9 @@ bool ArtifactAssetBrowser::Impl::isMissingAssetPath(const QString& filePath) con
   // Generate thumbnail for image files
   if (isImageFile(fileInfo.fileName())) {
    QPixmap pixmap(filePath);
-   if (!pixmap.isNull()) {
+   if (pixmap.isNull()) {
+    qWarning() << "[AssetBrowser] Failed to load image thumbnail via QPixmap:" << filePath;
+   } else {
     QPixmap scaled = pixmap.scaled(thumbnailSize_, Qt::KeepAspectRatio, Qt::SmoothTransformation);
     QIcon icon(scaled);
     thumbnailCache_[filePath] = icon;
