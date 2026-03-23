@@ -303,6 +303,11 @@ public:
   float lastCanvasWidth_ = 1920.0f;
   float lastCanvasHeight_ = 1080.0f;
 
+  // Resolution scaling
+  int previewDownsample_ = 1;
+  float hostWidth_ = 0.0f;
+  float hostHeight_ = 0.0f;
+
   // Mask editing state
   int hoveredMaskIndex_ = -1;
   int hoveredPathIndex_ = -1;
@@ -418,6 +423,13 @@ CompositionRenderController::CompositionRenderController(QObject *parent)
               }
               renderOneFrame();
             });
+
+    // Handle resolution changes
+    connect(svc, &ArtifactProjectService::previewQualityPresetChanged, this,
+            &CompositionRenderController::setPreviewQualityPreset);
+    
+    // Initial sync
+    setPreviewQualityPreset(svc->previewQualityPreset());
   }
 }
 
@@ -526,7 +538,39 @@ void CompositionRenderController::setViewportSize(float width, float height) {
   if (!impl_->renderer_) {
     return;
   }
-  impl_->renderer_->setViewportSize(width, height);
+  impl_->hostWidth_ = width;
+  impl_->hostHeight_ = height;
+
+  float targetW = width / (float)impl_->previewDownsample_;
+  float targetH = height / (float)impl_->previewDownsample_;
+
+  impl_->renderer_->setViewportSize(targetW, targetH);
+}
+
+void CompositionRenderController::setPreviewQualityPreset(PreviewQualityPreset preset) {
+  int factor = 1;
+  switch (preset) {
+  case PreviewQualityPreset::Final:
+    factor = 1;
+    break;
+  case PreviewQualityPreset::Preview:
+    factor = 2;
+    break;
+  case PreviewQualityPreset::Draft:
+    factor = 4;
+    break;
+  default:
+    factor = 1;
+    break;
+  }
+
+  if (impl_->previewDownsample_ != factor) {
+    impl_->previewDownsample_ = factor;
+    if (impl_->hostWidth_ > 0 && impl_->hostHeight_ > 0) {
+      setViewportSize(impl_->hostWidth_, impl_->hostHeight_);
+    }
+    renderOneFrame();
+  }
 }
 
 void CompositionRenderController::panBy(const QPointF &viewportDelta) {
