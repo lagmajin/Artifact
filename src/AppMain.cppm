@@ -98,6 +98,7 @@ import Artifact.Widgets.SoftwareRenderInspectors;
 import Artifact.Widgets.Render.QueueManager;
 import Artifact.Widgets.Alignment;
 import Widgets.Inspector;
+import Application.AppSettings;
 import Artifact.Widgets.ArtifactPropertyWidget;
 import Artifact.MainWindow;
 import Artifact.Project.Manager;
@@ -647,6 +648,29 @@ int main(int argc, char* argv[])
 	
  QApplication a(argc, argv);
   configureQtPluginPaths();
+
+  // --- Safe Mode Detection ---
+  auto* appSettings = ArtifactCore::ArtifactAppSettings::instance();
+  bool safeModeRequested = false;
+
+  QCommandLineParser parser;
+  parser.setApplicationDescription("Artifact Studio");
+  parser.addHelpOption();
+  parser.addVersionOption();
+  QCommandLineOption safeModeOption("safe-mode", "Start in safe mode (disables plugins and auto-load)");
+  parser.addOption(safeModeOption);
+  parser.process(a);
+
+  if (parser.isSet(safeModeOption) || 
+      QGuiApplication::queryKeyboardModifiers().testFlag(Qt::ShiftModifier)) {
+      safeModeRequested = true;
+  }
+
+  if (safeModeRequested) {
+      appSettings->setSafeMode(true);
+      qWarning() << "!!! STARTING IN SAFE MODE !!!";
+      qWarning() << "Plugins and auto-loading are disabled.";
+  }
 
   // Initialize translations
   {
