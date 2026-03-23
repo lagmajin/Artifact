@@ -476,8 +476,8 @@ int ArtifactLayerPanelHeaderWidget::totalHeaderHeight() const
   QPixmap audioIcon;
   QPixmap shyIcon;
   bool shyHidden = false;
-  int hoveredLayerIndex = -1;
-  LayerID selectedLayerId;
+  QString filterText;
+  int hoveredLayerIndex = -1;  LayerID selectedLayerId;
   QVector<VisibleRow> visibleRows;
   QHash<QString, bool> expandedByLayerId;
   QPointer<QComboBox> inlineParentEditor;
@@ -655,6 +655,22 @@ int ArtifactLayerPanelHeaderWidget::totalHeaderHeight() const
    for (auto& l : comp->allLayer()) {
     if (!l) continue;
     if (shyHidden && l->isShy()) continue;
+
+    // Search filtering logic
+    if (!filterText.isEmpty()) {
+        bool match = l->layerName().contains(filterText, Qt::CaseInsensitive);
+        if (!match) {
+            // Check effects
+            for (const auto& effect : l->getEffects()) {
+                if (effect && effect->displayName().contains(filterText, Qt::CaseInsensitive)) {
+                    match = true;
+                    break;
+                }
+            }
+        }
+        if (!match) continue;
+    }
+
     layers.push_back(l);
    }
    if (layers.isEmpty()) {
@@ -806,8 +822,15 @@ void ArtifactLayerPanelWidget::setComposition(const CompositionID& id)
   updateLayout();
  }
 
-void ArtifactLayerPanelWidget::updateLayout()
-{
+ void ArtifactLayerPanelWidget::setFilterText(const QString& text)
+ {
+  if (impl_->filterText != text) {
+   impl_->filterText = text;
+   updateLayout();
+  }
+ }
+
+ void ArtifactLayerPanelWidget::updateLayout(){
   // 再帰呼び出しを防止
   if (impl_->updatingLayout) return;
   impl_->updatingLayout = true;
@@ -2091,6 +2114,13 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent*)
   {
    impl_->id = id;
    impl_->panel->setComposition(id);
+  }
+
+  void ArtifactLayerTimelinePanelWrapper::setFilterText(const QString& text)
+  {
+   if (impl_ && impl_->panel) {
+    impl_->panel->setFilterText(text);
+   }
   }
 
   void ArtifactLayerTimelinePanelWrapper::setLayerNameEditable(bool enabled)

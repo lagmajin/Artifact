@@ -63,6 +63,7 @@ export namespace Artifact
   // Set the composition to display layers for
   void setComposition(const CompositionID& id);
   void setShyHidden(bool hidden);
+  void setFilterText(const QString& text);
   void setLayerNameEditable(bool enabled);
   bool isLayerNameEditable() const;
   void updateLayout();
@@ -88,6 +89,7 @@ export namespace Artifact
   ArtifactLayerTimelinePanelWrapper(const CompositionID& id, QWidget* parent = nullptr);
   ~ArtifactLayerTimelinePanelWrapper();
   void setComposition(const CompositionID& id);
+  void setFilterText(const QString& text);
   class QScrollBar* verticalScrollBar() const;
   QVector<LayerID> visibleTimelineRows() const;
   void setLayerNameEditable(bool enabled);
