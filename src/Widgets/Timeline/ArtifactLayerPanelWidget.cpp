@@ -2231,23 +2231,28 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent*)
     return;
   }
 
-  auto imported = svc->importAssetsFromPaths(validPaths);
-
-  for (const auto& path : imported) {
-    LayerType type = inferLayerTypeFromFile(path);
-    
-    // 画像レイヤーの場合は ArtifactImageInitParams を使用してパスを設定
-    if (type == LayerType::Image) {
-      ArtifactImageInitParams params(QFileInfo(path).baseName());
-      params.setImagePath(path);
-      svc->addLayerToCurrentComposition(params);
-    } else {
-      ArtifactLayerInitParams params(QFileInfo(path).baseName(), type);
-      svc->addLayerToCurrentComposition(params);
-    }
-  }
-
   event->acceptProposedAction();
+
+  // Perform heavy import asynchronously
+  QtConcurrent::run([svc, validPaths]() {
+      auto imported = svc->importAssetsFromPaths(validPaths);
+
+      // Create layers on the main thread
+      QMetaObject::invokeMethod(svc, [svc, imported]() {
+          for (const auto& path : imported) {
+              LayerType type = inferLayerTypeFromFile(path);
+              
+              if (type == LayerType::Image) {
+                  ArtifactImageInitParams params(QFileInfo(path).baseName());
+                  params.setImagePath(path);
+                  svc->addLayerToCurrentComposition(params);
+              } else {
+                  ArtifactLayerInitParams params(QFileInfo(path).baseName(), type);
+                  svc->addLayerToCurrentComposition(params);
+              }
+          }
+      }, Qt::QueuedConnection);
+  });
  }
 
  // ============================================================================
