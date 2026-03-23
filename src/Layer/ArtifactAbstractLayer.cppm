@@ -77,6 +77,7 @@ public:
   bool isGuide_ = false;
   bool isSolo_ = false;
   bool isShy_ = false;
+  int labelColorIndex_ = 0;
   float opacity_ = 1.0f; // Opacity (0.0 - 1.0)
 
   uint32_t dirtyFlags_ = (uint32_t)LayerDirtyFlag::All;
@@ -274,6 +275,14 @@ void ArtifactAbstractLayer::setShy(bool shy) {
   }
   notifyLayerMutation(this, LayerDirtyFlag::All,
                       LayerDirtyReason::PropertyChanged);
+}
+
+int ArtifactAbstractLayer::labelColorIndex() const { return impl_->labelColorIndex_; }
+void ArtifactAbstractLayer::setLabelColorIndex(int index) {
+  if (impl_->labelColorIndex_ != index) {
+    impl_->labelColorIndex_ = index;
+    Q_EMIT changed();
+  }
 }
 
 void ArtifactAbstractLayer::setDirty(LayerDirtyFlag flag) {
@@ -487,6 +496,7 @@ QJsonObject ArtifactAbstractLayer::toJson() const {
   obj["isGuide"] = impl_->isGuide_;
   obj["isSolo"] = impl_->isSolo_;
   obj["isShy"] = impl_->isShy_;
+  obj["labelColorIndex"] = impl_->labelColorIndex_;
   obj["opacity"] = static_cast<double>(impl_->opacity_);
 
   // Transform
@@ -630,6 +640,8 @@ void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject &obj) {
     setSolo(obj["isSolo"].toBool());
   if (obj.contains("isShy"))
     setShy(obj["isShy"].toBool());
+  if (obj.contains("labelColorIndex"))
+    setLabelColorIndex(obj["labelColorIndex"].toInt(0));
   if (obj.contains("opacity"))
     setOpacity(static_cast<float>(obj["opacity"].toDouble(1.0)));
   if (obj.contains("blendMode")) {
@@ -766,6 +778,8 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
                                   PropertyType::Boolean, isSolo(), -160));
   layerGroup.addProperty(makeProp(QStringLiteral("layer.shy"),
                                   PropertyType::Boolean, isShy(), -150));
+  layerGroup.addProperty(makeProp(QStringLiteral("layer.labelColorIndex"),
+                                  PropertyType::Integer, labelColorIndex(), -145));
 
   auto opacityProp =
       makeProp(QStringLiteral("layer.opacity"), PropertyType::Float,
@@ -875,6 +889,10 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
   }
   if (propertyPath == QStringLiteral("layer.shy")) {
     setShy(value.toBool());
+    return true;
+  }
+  if (propertyPath == QStringLiteral("layer.labelColorIndex")) {
+    setLabelColorIndex(value.toInt());
     return true;
   }
   if (propertyPath == QStringLiteral("layer.opacity")) {

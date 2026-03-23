@@ -113,11 +113,26 @@ protected:
       return;
     }
 
-    if (event->angleDelta().y() > 0) {
-      controller_->zoomInAt(event->position());
-    } else if (event->angleDelta().y() < 0) {
-      controller_->zoomOutAt(event->position());
+    const auto modifiers = event->modifiers();
+    const QPointF angleDelta = event->angleDelta();
+
+    if (modifiers.testFlag(Qt::AltModifier) || modifiers.testFlag(Qt::ControlModifier)) {
+      // AE Style: Alt/Ctrl + Wheel = Zoom
+      if (angleDelta.y() > 0) {
+        controller_->zoomInAt(event->position());
+      } else if (angleDelta.y() < 0) {
+        controller_->zoomOutAt(event->position());
+      }
+    } else if (modifiers.testFlag(Qt::ShiftModifier)) {
+      // AE Style: Shift + Wheel = Horizontal Pan
+      float deltaX = angleDelta.y(); // Vertical wheel converted to horizontal
+      controller_->panBy(QPointF(deltaX, 0));
+    } else {
+      // AE Style: Wheel = Vertical Pan
+      float deltaY = angleDelta.y();
+      controller_->panBy(QPointF(0, deltaY));
     }
+    
     event->accept();
   }
 
@@ -129,7 +144,8 @@ protected:
   }
 
   void mousePressEvent(QMouseEvent *event) override {
-    if (event->button() == Qt::MiddleButton) {
+    if (event->button() == Qt::MiddleButton || 
+        (event->button() == Qt::LeftButton && spacePressed_)) {
       isPanning_ = true;
       lastMousePos_ = event->position();
       setCursor(Qt::ClosedHandCursor);
@@ -137,7 +153,7 @@ protected:
       return;
     }
 
-    if (controller_) {
+    if (controller_ && !spacePressed_) {
       controller_->handleMousePress(event);
       if (controller_->gizmo() && controller_->gizmo()->isDragging()) {
         const auto cursor = controller_->cursorShapeForViewportPos(event->position());
@@ -164,23 +180,33 @@ protected:
         event->accept();
         return;
       }
-      setCursor(controller_->cursorShapeForViewportPos(event->position()));
+      if (spacePressed_) {
+          setCursor(Qt::OpenHandCursor);
+      } else {
+          setCursor(controller_->cursorShapeForViewportPos(event->position()));
+      }
     }
 
     QWidget::mouseMoveEvent(event);
   }
 
   void mouseReleaseEvent(QMouseEvent *event) override {
-    if (event->button() == Qt::MiddleButton && isPanning_) {
+    if ((event->button() == Qt::MiddleButton || event->button() == Qt::LeftButton) && isPanning_) {
       isPanning_ = false;
-      unsetCursor();
+      if (spacePressed_) {
+          setCursor(Qt::OpenHandCursor);
+      } else {
+          unsetCursor();
+      }
       event->accept();
       return;
     }
 
     if (controller_) {
       controller_->handleMouseRelease();
-      setCursor(controller_->cursorShapeForViewportPos(event->position()));
+      if (!spacePressed_) {
+          setCursor(controller_->cursorShapeForViewportPos(event->position()));
+      }
     }
 
     QWidget::mouseReleaseEvent(event);
@@ -194,6 +220,12 @@ protected:
   }
 
   void keyPressEvent(QKeyEvent *event) override {
+    if (event->key() == Qt::Key_Space && !event->isAutoRepeat()) {
+      spacePressed_ = true;
+      setCursor(Qt::OpenHandCursor);
+      event->accept();
+      return;
+    }
     if (event->key() == Qt::Key_F12) {
       if (controller_) {
           saveCurrentFrame(controller_);
@@ -202,6 +234,20 @@ protected:
       return;
     }
     QWidget::keyPressEvent(event);
+  }
+
+  void keyReleaseEvent(QKeyEvent *event) override {
+    if (event->key() == Qt::Key_Space && !event->isAutoRepeat()) {
+      spacePressed_ = false;
+      isPanning_ = false;
+      unsetCursor();
+      if (controller_) {
+          setCursor(controller_->cursorShapeForViewportPos(mapFromGlobal(QCursor::pos())));
+      }
+      event->accept();
+      return;
+    }
+    QWidget::keyReleaseEvent(event);
   }
 
 private:
@@ -250,6 +296,7 @@ private:
 
   CompositionRenderController *controller_ = nullptr;
   bool isPanning_ = false;
+  bool spacePressed_ = false;
   QPointF lastMousePos_;
 };
 } // namespace
