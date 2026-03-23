@@ -36,6 +36,7 @@ export namespace Artifact {
 
   void recreateSwapChain(QWidget* hostWidget);
   void setViewportSize(float width, float height);
+  void setPreviewQualityPreset(PreviewQualityPreset preset);
   void panBy(const QPointF& viewportDelta);
 
   void setComposition(ArtifactCompositionPtr composition);
