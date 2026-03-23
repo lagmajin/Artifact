@@ -59,8 +59,25 @@ public:
     PSOAndSRB m_draw_sprite_transform_pso_and_srb;
     RefCntAutoPtr<ISampler> m_sprite_sampler;
     RefCntAutoPtr<IRenderDevice> pDevice_;
-    qint64 m_spriteCacheKey = 0;
-    RefCntAutoPtr<ITexture> m_spriteTexCache;
+
+    struct CachedTexture {
+        RefCntAutoPtr<ITexture> pTexture;
+        qint64 lastUsedFrame = 0;
+    };
+    std::unordered_map<qint64, CachedTexture> m_spriteTexCache;
+    qint64 m_frameCount = 0;
+
+    void pruneCache() {
+        if (m_spriteTexCache.size() > 50) {
+            for (auto it = m_spriteTexCache.begin(); it != m_spriteTexCache.end(); ) {
+                if (it->second.lastUsedFrame < m_frameCount - 60) {
+                    it = m_spriteTexCache.erase(it);
+                } else {
+                    ++it;
+                }
+            }
+        }
+    }
 
     PSOAndSRB m_draw_solid_rect_pso_and_srb;
     PSOAndSRB m_draw_solid_rect_transform_pso_and_srb;
@@ -933,13 +950,24 @@ void PrimitiveRenderer2D::drawSpriteLocal(float x, float y, float w, float h, co
     if (image.isNull()) return;
     if (!impl_->pDevice_ || !impl_->pCtx_) return;
 
-    if (image.cacheKey() != impl_->m_spriteCacheKey || !impl_->m_spriteTexCache) {
+    impl_->m_frameCount++;
+    if (impl_->m_frameCount % 60 == 0) {
+        impl_->pruneCache();
+    }
+
+    qint64 cacheKey = image.cacheKey();
+    RefCntAutoPtr<ITexture> pTexture;
+    
+    auto it = impl_->m_spriteTexCache.find(cacheKey);
+    if (it != impl_->m_spriteTexCache.end()) {
+        pTexture = it->second.pTexture;
+        it->second.lastUsedFrame = impl_->m_frameCount;
+    } else {
         const QImage rgba = image.convertToFormat(QImage::Format_RGBA8888);
         const int imgW = rgba.width();
         const int imgH = rgba.height();
         if (imgW <= 0 || imgH <= 0) return;
 
-        RefCntAutoPtr<ITexture> newTex;
         TextureDesc texDesc;
         texDesc.Type             = RESOURCE_DIM_TEX_2D;
         texDesc.Width            = static_cast<Uint32>(imgW);
@@ -957,14 +985,13 @@ void PrimitiveRenderer2D::drawSpriteLocal(float x, float y, float w, float h, co
         initData.pSubResources   = &subData;
         initData.NumSubresources = 1;
 
-        impl_->pDevice_->CreateTexture(texDesc, &initData, &newTex);
-        if (!newTex) return;
+        impl_->pDevice_->CreateTexture(texDesc, &initData, &pTexture);
+        if (!pTexture) return;
 
-        impl_->m_spriteTexCache = newTex;
-        impl_->m_spriteCacheKey = image.cacheKey();
+        impl_->m_spriteTexCache[cacheKey] = { pTexture, impl_->m_frameCount };
     }
 
-    auto* pSRV = impl_->m_spriteTexCache->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE);
+    auto* pSRV = pTexture->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE);
     if (!pSRV) return;
 
     auto* pRTV = impl_->getCurrentRTV();
