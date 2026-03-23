@@ -46,6 +46,7 @@ import Artifact.Service.Playback;
 import Artifact.Application.Manager;
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
+import Artifact.Effect.Abstract;
 import Frame.Position;
 
 namespace Artifact {
@@ -855,8 +856,8 @@ public:
   ArtifactTimelineNavigatorWidget *navigator_ = nullptr;
   CompositionID compositionId_;
   bool shyActive_ = false;
-  QVector<LayerID> trackLayerIds_;
-  bool syncingLayerSelection_ = false;
+  QString filterText_;
+  QVector<LayerID> trackLayerIds_;  bool syncingLayerSelection_ = false;
   QMetaObject::Connection compositionChangedConnection_;
 };
 
@@ -901,6 +902,9 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   auto leftHeader = new ArtifactTimeCodeWidget();             // Timecode
   auto searchBar = new ArtifactTimelineSearchBarWidget();     // Search
   auto globalSwitches = new ArtifactTimelineGlobalSwitches(); // AE Switches
+
+  QObject::connect(searchBar, &ArtifactTimelineSearchBarWidget::searchTextChanged,
+                   this, &ArtifactTimelineWidget::onSearchTextChanged);
   leftHeader->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
   searchBar->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
   searchBar->setMinimumWidth(96);
@@ -2758,5 +2762,15 @@ ArtifactTimelineIconView::ArtifactTimelineIconView(
 }
 
 ArtifactTimelineIconView::~ArtifactTimelineIconView() {}
+
+ void ArtifactTimelineWidget::onSearchTextChanged(const QString& text)
+ {
+  impl_->filterText_ = text;
+  if (impl_->layerTimelinePanel_) {
+   impl_->layerTimelinePanel_->setFilterText(text);
+  } else {
+   refreshTracks();
+  }
+ }
 
 }; // namespace Artifact

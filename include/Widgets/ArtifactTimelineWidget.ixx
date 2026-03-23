@@ -190,6 +190,7 @@ class TimelineTrackView :public QGraphicsView {
   void timelineDebugMessage(const QString& message) W_SIGNAL(timelineDebugMessage, message);
   
  public slots:
+  void onSearchTextChanged(const QString& text);
  };
 
  class ArtifactTimelineIconView :public QTreeView
