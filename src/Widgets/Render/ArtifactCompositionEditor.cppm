@@ -193,7 +193,61 @@ protected:
     QWidget::leaveEvent(event);
   }
 
+  void keyPressEvent(QKeyEvent *event) override {
+    if (event->key() == Qt::Key_F12) {
+      if (controller_) {
+          saveCurrentFrame(controller_);
+      }
+      event->accept();
+      return;
+    }
+    QWidget::keyPressEvent(event);
+  }
+
 private:
+  void saveCurrentFrame(CompositionRenderController* controller) {
+      auto comp = controller->composition();
+      if (!comp) return;
+
+      auto* svc = ArtifactProjectService::instance();
+      if (!svc) return;
+
+      // 選択されているレイヤーを取得（簡易的にコントローラーから）
+      // 実際には SelectionManager 経由が良いが、controller にもキャッシュがある
+      // ここでは CompositionRenderController の内部実装にアクセスできないため、
+      // 外部から見える情報を元にするか、controller にメソッドを追加する必要がある。
+      // 一旦、コンポジション全体のレンダリング結果（もし取れれば）か、
+      // ログ出力で生存確認する。
+
+      qDebug() << "Debug: F12 pressed. Attempting to save current frame...";
+      
+      // フォルダ作成
+      QDir dir(".");
+      if (!dir.exists("test")) {
+          dir.mkdir("test");
+      }
+
+      // TODO: 本来は controller->captureSelectedLayer() のようなものが必要
+      // ここではコンポジション内の「最初の動画レイヤー」を探して保存するデバッグコードを試みる
+      for (auto& layer : comp->allLayer()) {
+          if (auto video = std::dynamic_pointer_cast<ArtifactVideoLayer>(layer)) {
+              QImage img = video->currentFrameToQImage();
+              if (!img.isNull()) {
+                  QString path = QString("test/frame_%1_%2.png")
+                      .arg(layer->id().toString())
+                      .arg(comp->framePosition().framePosition());
+                  if (img.save(path)) {
+                      qDebug() << "Successfully saved debug frame to:" << path;
+                  } else {
+                      qWarning() << "Failed to save image to:" << path;
+                  }
+              } else {
+                  qWarning() << "Layer" << layer->id().toString() << "returned null image.";
+              }
+          }
+      }
+  }
+
   CompositionRenderController *controller_ = nullptr;
   bool isPanning_ = false;
   QPointF lastMousePos_;
