@@ -373,7 +373,7 @@ public:
             request.outputSize = canvasSize;
             request.blendMode = blendMode;
             request.overlayOpacity = control.layerPtr->opacity(); // Pass layer opacity
-            request.backend = SoftwareRender::CompositeBackend::QtPainter;
+            request.backend = SoftwareRender::CompositeBackend::OpenCV;
             request.useForeground = true;
             
             result = SoftwareRender::compose(request);

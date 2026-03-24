@@ -52,11 +52,6 @@ QString blendLabel(const ArtifactCore::BlendMode mode)
     return SoftwareRender::blendModeText(mode);
 }
 
-SoftwareRender::CompositeBackend backendFromIndex(const int index)
-{
-    return index == 1 ? SoftwareRender::CompositeBackend::OpenCV : SoftwareRender::CompositeBackend::QtPainter;
-}
-
 SoftwareRender::CvEffectMode effectFromIndex(const int index)
 {
     switch (index) {
@@ -75,9 +70,24 @@ QColor colorForKey(const QString& key)
 QPainter::CompositionMode compositionMode(ArtifactCore::BlendMode mode)
 {
     switch (mode) {
+    case ArtifactCore::BlendMode::Subtract:  return QPainter::CompositionMode_Difference;
     case ArtifactCore::BlendMode::Add:      return QPainter::CompositionMode_Plus;
     case ArtifactCore::BlendMode::Multiply: return QPainter::CompositionMode_Multiply;
     case ArtifactCore::BlendMode::Screen:   return QPainter::CompositionMode_Screen;
+    case ArtifactCore::BlendMode::Overlay:   return QPainter::CompositionMode_Overlay;
+    case ArtifactCore::BlendMode::Darken:    return QPainter::CompositionMode_Darken;
+    case ArtifactCore::BlendMode::Lighten:   return QPainter::CompositionMode_Lighten;
+    case ArtifactCore::BlendMode::ColorDodge:return QPainter::CompositionMode_ColorDodge;
+    case ArtifactCore::BlendMode::ColorBurn: return QPainter::CompositionMode_ColorBurn;
+    case ArtifactCore::BlendMode::HardLight: return QPainter::CompositionMode_HardLight;
+    case ArtifactCore::BlendMode::SoftLight: return QPainter::CompositionMode_SoftLight;
+    case ArtifactCore::BlendMode::Difference:return QPainter::CompositionMode_Difference;
+    case ArtifactCore::BlendMode::Exclusion: return QPainter::CompositionMode_Exclusion;
+    case ArtifactCore::BlendMode::Hue:
+    case ArtifactCore::BlendMode::Saturation:
+    case ArtifactCore::BlendMode::Color:
+    case ArtifactCore::BlendMode::Luminosity:
+        return QPainter::CompositionMode_SourceOver;
     case ArtifactCore::BlendMode::Normal:
     default:
         return QPainter::CompositionMode_SourceOver;
@@ -753,7 +763,6 @@ public:
     ArtifactProjectService* service_ = nullptr;
     QComboBox* compositionCombo_ = nullptr;
     QCheckBox* followCurrentCompositionCheck_ = nullptr;
-    QComboBox* backendCombo_ = nullptr;
     QComboBox* effectCombo_ = nullptr;
     QLabel* summaryLabel_ = nullptr;
     QLabel* previewLabel_ = nullptr;
@@ -822,7 +831,7 @@ public:
         request.foreground = fitCanvasImageToPreview(compositionCanvas, renderSize, nav_);
         request.overlay = renderCompositionOverlay(composition, renderSize, nav_);
         request.outputSize = renderSize;
-        request.backend = backendFromIndex(backendCombo_ ? backendCombo_->currentIndex() : 0);
+        request.backend = SoftwareRender::CompositeBackend::OpenCV;
         request.cvEffect = effectFromIndex(effectCombo_ ? effectCombo_->currentIndex() : 0);
         request.overlayOpacity = 0.9f;
         request.blendMode = ArtifactCore::BlendMode::Screen;
@@ -844,7 +853,6 @@ public:
     QComboBox* layerCombo_ = nullptr;
     QCheckBox* followCurrentCompositionCheck_ = nullptr;
     QCheckBox* followSelectionCheck_ = nullptr;
-    QComboBox* backendCombo_ = nullptr;
     QComboBox* effectCombo_ = nullptr;
     QLabel* infoLabel_ = nullptr;
     QLabel* previewLabel_ = nullptr;
@@ -985,7 +993,7 @@ void ArtifactSoftwareLayerTestWidget::Impl::refreshPreview()
     request.foreground = fitCanvasImageToPreview(contextCanvas, renderSize, nav_);
     request.overlay = overlayImage;
     request.outputSize = renderSize;
-    request.backend = backendFromIndex(backendCombo_ ? backendCombo_->currentIndex() : 0);
+        request.backend = SoftwareRender::CompositeBackend::OpenCV;
     request.cvEffect = effectFromIndex(effectCombo_ ? effectCombo_->currentIndex() : 0);
     request.blendMode = layer ? ArtifactCore::toBlendMode(layer->layerBlendType()) : ArtifactCore::BlendMode::Normal;
     request.overlayOpacity = 1.0f;
@@ -1013,21 +1021,15 @@ ArtifactSoftwareCompositionTestWidget::ArtifactSoftwareCompositionTestWidget(QWi
     impl_->compositionCombo_ = new QComboBox(this);
     impl_->followCurrentCompositionCheck_ = new QCheckBox(QStringLiteral("Follow current composition"), this);
     impl_->followCurrentCompositionCheck_->setChecked(true);
-    impl_->backendCombo_ = new QComboBox(this);
-    impl_->backendCombo_->addItems(QStringList{QStringLiteral("QImage/QPainter"), QStringLiteral("OpenCV")});
     impl_->effectCombo_ = new QComboBox(this);
     impl_->effectCombo_->addItems(QStringList{QStringLiteral("None"), QStringLiteral("GaussianBlur"), QStringLiteral("EdgeOverlay")});
-    auto* refreshButton = new QPushButton(QStringLiteral("Refresh"), this);
     auto* saveButton = new QPushButton(QStringLiteral("Save PNG"), this);
 
     controls->addWidget(new QLabel(QStringLiteral("Composition"), this), 0);
     controls->addWidget(impl_->compositionCombo_, 1);
     controls->addWidget(impl_->followCurrentCompositionCheck_, 0);
-    controls->addWidget(new QLabel(QStringLiteral("Backend"), this), 0);
-    controls->addWidget(impl_->backendCombo_, 0);
     controls->addWidget(new QLabel(QStringLiteral("Effect"), this), 0);
     controls->addWidget(impl_->effectCombo_, 0);
-    controls->addWidget(refreshButton, 0);
     controls->addWidget(saveButton, 0);
     root->addLayout(controls);
 
@@ -1046,14 +1048,7 @@ ArtifactSoftwareCompositionTestWidget::ArtifactSoftwareCompositionTestWidget(QWi
     connect(impl_->compositionCombo_, &QComboBox::currentTextChanged, this, [this](const QString&) {
         impl_->refreshPreview();
     });
-    connect(impl_->backendCombo_, &QComboBox::currentTextChanged, this, [this](const QString&) {
-        impl_->refreshPreview();
-    });
     connect(impl_->effectCombo_, &QComboBox::currentTextChanged, this, [this](const QString&) {
-        impl_->refreshPreview();
-    });
-    connect(refreshButton, &QPushButton::clicked, this, [this]() {
-        impl_->reloadCompositions();
         impl_->refreshPreview();
     });
     connect(saveButton, &QPushButton::clicked, this, [this]() {
@@ -1175,7 +1170,6 @@ ArtifactSoftwareLayerTestWidget::ArtifactSoftwareLayerTestWidget(QWidget* parent
     impl_->followCurrentCompositionCheck_->setChecked(true);
     impl_->followSelectionCheck_ = new QCheckBox(QStringLiteral("Follow layer selection"), this);
     impl_->followSelectionCheck_->setChecked(true);
-    auto* refreshButton = new QPushButton(QStringLiteral("Refresh"), this);
     auto* saveButton = new QPushButton(QStringLiteral("Save PNG"), this);
     topRow->addWidget(new QLabel(QStringLiteral("Composition"), this), 0);
     topRow->addWidget(impl_->compositionCombo_, 1);
@@ -1183,17 +1177,13 @@ ArtifactSoftwareLayerTestWidget::ArtifactSoftwareLayerTestWidget(QWidget* parent
     topRow->addWidget(new QLabel(QStringLiteral("Layer"), this), 0);
     topRow->addWidget(impl_->layerCombo_, 1);
     topRow->addWidget(impl_->followSelectionCheck_, 0);
-    topRow->addWidget(refreshButton, 0);
     topRow->addWidget(saveButton, 0);
     root->addLayout(topRow);
 
     auto* controlGrid = new QFormLayout();
-    impl_->backendCombo_ = new QComboBox(this);
-    impl_->backendCombo_->addItems(QStringList{QStringLiteral("QImage/QPainter"), QStringLiteral("OpenCV")});
     impl_->effectCombo_ = new QComboBox(this);
     impl_->effectCombo_->addItems(QStringList{QStringLiteral("None"), QStringLiteral("GaussianBlur"), QStringLiteral("EdgeOverlay")});
 
-    controlGrid->addRow(QStringLiteral("Backend"), impl_->backendCombo_);
     controlGrid->addRow(QStringLiteral("Effect"), impl_->effectCombo_);
     root->addLayout(controlGrid);
 
@@ -1217,18 +1207,13 @@ ArtifactSoftwareLayerTestWidget::ArtifactSoftwareLayerTestWidget(QWidget* parent
     connect(impl_->layerCombo_, &QComboBox::currentTextChanged, this, [this](const QString&) {
         impl_->refreshPreview();
     });
-    for (QObject* control : {static_cast<QObject*>(impl_->backendCombo_), static_cast<QObject*>(impl_->effectCombo_)}) {
+    for (QObject* control : {static_cast<QObject*>(impl_->effectCombo_)}) {
         if (auto* combo = qobject_cast<QComboBox*>(control)) {
             connect(combo, &QComboBox::currentTextChanged, this, [this](const QString&) {
                 impl_->refreshPreview();
             });
         }
     }
-    connect(refreshButton, &QPushButton::clicked, this, [this]() {
-        impl_->reloadCompositions();
-        impl_->reloadLayers();
-        impl_->refreshPreview();
-    });
     connect(saveButton, &QPushButton::clicked, this, [this]() {
         saveImagePreview(this, impl_->lastImage_, QStringLiteral("software_layer_test"));
     });

@@ -111,6 +111,7 @@ private:
 public:
  explicit ApplicationSettingDialog(QWidget* parent = nullptr);
  ~ApplicationSettingDialog();
+ void accept() override;
  void loadSettings();
  void saveSettings();
 };

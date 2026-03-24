@@ -689,6 +689,11 @@ int main(int argc, char* argv[])
     mw->setStatusBar(status);
     status->showReadyMessage();
     status->setProjectText("Loaded");
+    auto* projectService = ArtifactProjectService::instance();
+    auto* playbackService = ArtifactPlaybackService::instance();
+    auto* autoSaveManager = new ArtifactAutoSaveManager();
+    const QString recoveryDir = QDir(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)).filePath("Recovery");
+    QTimer::singleShot(0, mw, [=]() {
     auto* playbackControl = new ArtifactPlaybackControlWidget(mw);
     mw->addDockedWidgetFloating(
         QStringLiteral("Playback Control"),
@@ -753,10 +758,6 @@ int main(int argc, char* argv[])
     mw->setDockVisible(QStringLiteral("Layer View (Diligent)"), true);
     mw->setDockVisible(QStringLiteral("Layer View (Software)"), true);
 
-    auto* projectService = ArtifactProjectService::instance();
-    auto* playbackService = ArtifactPlaybackService::instance();
-    auto* autoSaveManager = new ArtifactAutoSaveManager();
-    const QString recoveryDir = QDir(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)).filePath("Recovery");
     autoSaveManager->initialize("ArtifactProject", recoveryDir);
     autoSaveManager->start();
     if (!isStartupDialogSuppressed()) {
@@ -1042,6 +1043,7 @@ QTimer::singleShot(0, mw, [mw]() {
         recordLayoutRestoreResult(hasGeometry || hasState, geometryRestored, stateRestored, resetApplied);
     }
     mw->setDockVisible(QStringLiteral("Layer View (Diligent)"), true);
+    });
 
     QObject::connect(&a, &QCoreApplication::aboutToQuit, [mw]() {
         const QString appDataDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);

@@ -8,6 +8,8 @@ module;
 #include <QFileInfo>
 #include <QVariant>
 #include <QLoggingCategory>
+#include <QFuture>
+#include <QtConcurrent>
 #include <opencv2/opencv.hpp>
 #include <opencv2/videoio.hpp>
 #include <mutex>
@@ -186,7 +188,15 @@ public:
     }
 
     Impl() : playbackController_(std::make_unique<ArtifactCore::MediaPlaybackController>()), frameCache_(30) {}
-    ~Impl() = default;
+    ~Impl() {
+        // バックグラウンドフューチャーが残っていても放置（デストラクタをブロックしない）
+        // QFuture はスコープ離脱後も自動キャンセルされない点に注意
+    }
+
+    // [Fix C] バックグラウンドデコード管理
+    mutable QFuture<QImage> decodeFuture_;
+    mutable std::atomic<bool> decoding_{ false };
+    mutable int64_t decodeTargetFrame_ = -1;
 };
 
 // ============================================================================
@@ -235,10 +245,16 @@ bool ArtifactVideoLayer::loadFromPath(const QString& path)
     qDebug() << "[VideoLayer] loadFromPath:" << normalizedPath;
 
     if (!impl_->playbackController_->openMediaFile(normalizedPath)) {
-        qWarning() << "[VideoLayer] Failed to openMediaFile:" << path;
+        qCritical() << "[VideoLayer] openMediaFile FAILED:" << normalizedPath
+                    << "lastError=" << impl_->playbackController_->getLastError();
         impl_->isLoaded_ = false;
         return false;
     }
+
+    // [Fix 6] 成功後にアクティブな backend をログ出力
+    const bool isMF = impl_->playbackController_->getDecoderBackend()
+                      == ArtifactCore::DecoderBackend::MediaFoundation;
+    qDebug() << "[VideoLayer] active backend:" << (isMF ? "MediaFoundation" : "FFmpeg");
 
     impl_->sourcePath_ = normalizedPath;
     impl_->streamInfo_ = VideoStreamInfo{};
@@ -272,16 +288,15 @@ bool ArtifactVideoLayer::loadFromPath(const QString& path)
     
     impl_->frameCache_.clear();
 
-    const QImage firstFrame = impl_->playbackController_->getVideoFrameAtFrameDirect(0);
-    impl_->currentQImage_ = firstFrame;
-    if (!firstFrame.isNull()) {
-        impl_->frameCache_.put(0, firstFrame);
-        impl_->saveDebugFrame(firstFrame, 0); // Save debug frame here
-        if (impl_->streamInfo_.width <= 0 || impl_->streamInfo_.height <= 0) {
-            impl_->streamInfo_.width = firstFrame.width();
-            impl_->streamInfo_.height = firstFrame.height();
-        }
-    }
+    // [Fix A] フレーム0 の取得をバックグラウンドで実行し、メインスレッドをブロックしない
+    impl_->decoding_ = true;
+    impl_->decodeTargetFrame_ = 0;
+    auto* ctrl = impl_->playbackController_.get();
+    impl_->decodeFuture_ = QtConcurrent::run([ctrl, this]() -> QImage {
+        QImage frame = ctrl->getVideoFrameAtFrameDirect(0);
+        impl_->decoding_ = false;
+        return frame;
+    });
     if (impl_->streamInfo_.width > 0 && impl_->streamInfo_.height > 0) {
         setSourceSize(Size_2D(impl_->streamInfo_.width, impl_->streamInfo_.height));
     }
@@ -372,15 +387,31 @@ VideoFrameInfo ArtifactVideoLayer::currentFrameInfo() const
 // === Frame Decoding ===
 void ArtifactVideoLayer::decodeCurrentFrame()
 {
+    // [Fix 3] isLoaded_ = false の間はサイレントリターン。
+    // レンダーループが毎フレーム呼び出すため大量のスパムログになるので抗黙する。
     if (!impl_->isLoaded_) {
-        qCDebug(videoLayerLog) << "[VideoLayer] decodeCurrentFrame: not loaded, skipping";
         return;
     }
 
     const int64_t targetFrame = currentFrame();
-    
-    // Check if we've already decoded this frame to avoid redundant work/logs
+
+    // [Fix C] 同じフレームでキャッシュ済みの場合はスキップ
     if (targetFrame == impl_->lastDecodedFrame_ && !impl_->currentQImage_.isNull()) {
+        return;
+    }
+
+    // [Fix C] バックグラウンドデコードが実行中の場合はスキップ（重複デコードを防止）
+    if (impl_->decoding_.load()) {
+        // 前回起動したデコードが完了していれば結果を取り込む
+        if (impl_->decodeFuture_.isFinished() && impl_->decodeTargetFrame_ == targetFrame) {
+            QImage loaded = impl_->decodeFuture_.result();
+            impl_->decoding_ = false;
+            if (!loaded.isNull()) {
+                impl_->currentQImage_ = loaded;
+                impl_->lastDecodedFrame_ = targetFrame;
+                impl_->frameCache_.put(targetFrame, loaded);
+            }
+        }
         return;
     }
 
@@ -389,30 +420,33 @@ void ArtifactVideoLayer::decodeCurrentFrame()
         impl_->lastDecodedFrame_ = targetFrame;
         return;
     }
-    
-    // Check cache first
+
+    // キャッシュに存在すれば即座に返す
     QImage cachedFrame;
     if (impl_->frameCache_.get(targetFrame, cachedFrame)) {
         impl_->currentQImage_ = cachedFrame;
         impl_->lastDecodedFrame_ = targetFrame;
-        impl_->saveDebugFrame(cachedFrame, targetFrame);
         return;
     }
 
-    // Decode directly through FFmpeg-backed controller path.
-    QImage decoded = impl_->playbackController_->getVideoFrameAtFrameDirect(targetFrame);
-
-    if (!decoded.isNull()) {
-        impl_->currentQImage_ = decoded;
-        impl_->lastDecodedFrame_ = targetFrame;
-        impl_->frameCache_.put(targetFrame, decoded);
-        impl_->saveDebugFrame(decoded, targetFrame);
-        qDebug() << "[VideoLayer] decoded frame" << targetFrame << "size=" << decoded.width() << "x" << decoded.height();
-    } else {
-        qWarning() << "[VideoLayer] DECODE FAILED for frame" << targetFrame;
-        impl_->currentQImage_ = QImage();
-        impl_->lastDecodedFrame_ = targetFrame; // Mark as attempted to avoid immediate retry spam
-    }
+    // [Fix B] バックグラウンドでデコードを開始し、メインスレッドをブロックしない
+    // 現在フレームは currentQImage_（前のフレーム）をそのまま表示し続ける
+    impl_->decoding_ = true;
+    impl_->decodeTargetFrame_ = targetFrame;
+    auto* ctrl = impl_->playbackController_.get();
+    impl_->decodeFuture_ = QtConcurrent::run([ctrl, targetFrame, this]() -> QImage {
+        QImage decoded = ctrl->getVideoFrameAtFrameDirect(targetFrame);
+        if (!decoded.isNull()) {
+            impl_->frameCache_.put(targetFrame, decoded);
+            impl_->saveDebugFrame(decoded, targetFrame);
+            qCDebug(videoLayerLog) << "[VideoLayer] bg decoded frame" << targetFrame
+                                   << "size=" << decoded.width() << "x" << decoded.height();
+        } else {
+            qWarning() << "[VideoLayer] DECODE FAILED for frame" << targetFrame;
+        }
+        impl_->decoding_ = false;
+        return decoded;
+    });
 }
 
 QImage ArtifactVideoLayer::currentFrameToQImage() const
@@ -680,26 +714,45 @@ std::shared_ptr<ArtifactVideoLayer> ArtifactVideoLayer::fromJson(const QJsonObje
 void ArtifactVideoLayer::draw(ArtifactIRenderer* renderer)
 {
     if (!impl_->videoEnabled_ || !impl_->isLoaded_) return;
-    
-    // Decode current frame if needed
-    if (impl_->currentQImage_.isNull()) {
+
+    // [Fix C] バックグラウンドデコードが完了していれば結果を取り込む
+    if (!impl_->decoding_.load() && impl_->decodeFuture_.isFinished()
+        && impl_->decodeTargetFrame_ >= 0) {
+        QImage loaded = impl_->decodeFuture_.result();
+        if (!loaded.isNull() && impl_->decodeTargetFrame_ != impl_->lastDecodedFrame_) {
+            impl_->currentQImage_ = loaded;
+            impl_->lastDecodedFrame_ = impl_->decodeTargetFrame_;
+            impl_->saveDebugFrame(loaded, impl_->decodeTargetFrame_);
+            if (impl_->streamInfo_.width <= 0 || impl_->streamInfo_.height <= 0) {
+                impl_->streamInfo_.width  = loaded.width();
+                impl_->streamInfo_.height = loaded.height();
+                setSourceSize(Size_2D(loaded.width(), loaded.height()));
+            }
+        }
+        impl_->decodeTargetFrame_ = -1; // 取り込み済みフラグ
+    }
+
+    // currentQImage_ が空かつデコード中でない場合のみフォールバック起動
+    if (impl_->currentQImage_.isNull() && !impl_->decoding_.load()) {
         decodeCurrentFrame();
     }
-    
+
     if (impl_->currentQImage_.isNull()) return;
-    
+
     auto size = sourceSize();
-    // Use drawSprite with identity transform or drawSpriteTransformed with global transform
-    // Note: drawLayerForCompositionView usually handles the transform, but 
-    // if drawn directly this ensures it still honors its position.
-    renderer->drawSpriteTransformed(0.0f, 0.0f, (float)size.width, (float)size.height, 
+    renderer->drawSpriteTransformed(0.0f, 0.0f, (float)size.width, (float)size.height,
                                      getGlobalTransform(), impl_->currentQImage_, this->opacity());
 }
 
 void ArtifactVideoLayer::goToFrame(int64_t frameNumber)
 {
     ArtifactAbstractLayer::goToFrame(frameNumber);
-    decodeCurrentFrame();
+    // [Fix B] 即時同期デコードを廃止。
+    // デコードは draw() の初回呼び出し時に非同期で起動する。
+    // これにより goToFrame() 自体はメインスレッドをブロックしない。
+    if (frameNumber != impl_->lastDecodedFrame_) {
+        decodeCurrentFrame(); // バックグラウンド非同期デコードを起動するだけ
+    }
 }
 
 bool ArtifactVideoLayer::getAudio(ArtifactCore::AudioSegment &outSegment, const FramePosition &start,

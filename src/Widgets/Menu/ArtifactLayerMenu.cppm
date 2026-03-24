@@ -5,6 +5,7 @@ module;
 #include <QLineEdit>
 #include <QMenu>
 #include <QMessageBox>
+#include <QTimer>
 #include <wobjectimpl.h>
 
 module Artifact.Menu.Layer;
@@ -263,12 +264,17 @@ void ArtifactLayerMenu::Impl::handleCreateSolid()
         QMessageBox::warning(menu_ ? menu_->window() : nullptr, "Layer", "コンポジションが選択されていません。");
         return;
     }
+    auto* const menu = menu_;
     QWidget* parentWindow = menu_ ? menu_->window() : nullptr;
     CreateSolidLayerSettingDialog dialog(parentWindow);
-    QObject::connect(&dialog, &CreateSolidLayerSettingDialog::submit, menu_, [service](const ArtifactSolidLayerInitParams& params) {
-        if (service) {
-            service->addLayerToCurrentComposition(params);
+    QObject::connect(&dialog, &CreateSolidLayerSettingDialog::submit, menu, [service, menu](const ArtifactSolidLayerInitParams& params) {
+        if (!service) {
+            return;
         }
+        QTimer::singleShot(0, menu, [service, params, menu]() {
+            Q_UNUSED(menu);
+            service->addLayerToCurrentComposition(params);
+        });
     });
     dialog.setModal(true);
     dialog.exec();

@@ -141,7 +141,6 @@ public:
     std::vector<LayerControls> layerControls;
     
     // 共通設定
-    QComboBox* backendCombo = nullptr;
     QPushButton* refreshButton = nullptr;
     QPushButton* animateButton = nullptr;
     QCheckBox* autoRefreshCheck = nullptr;
@@ -199,7 +198,7 @@ public:
             request.outputSize = canvasSize;
             request.blendMode = layerBlendModes[i];
             request.overlayOpacity = layerOpacities[i];
-            request.backend = SoftwareRender::CompositeBackend::QtPainter;
+            request.backend = SoftwareRender::CompositeBackend::OpenCV;
             request.useForeground = true;
             
             result = SoftwareRender::compose(request);
@@ -229,11 +228,6 @@ ArtifactLayerCompositeTestWidget::ArtifactLayerCompositeTestWidget(QWidget* pare
     // 共通設定
     auto* commonGroup = new QGroupBox("Common Settings");
     auto* commonLayout = new QFormLayout(commonGroup);
-    
-    impl_->backendCombo = new QComboBox();
-    impl_->backendCombo->addItem("Qt Painter");
-    impl_->backendCombo->addItem("OpenCV");
-    commonLayout->addRow("Backend:", impl_->backendCombo);
     
     impl_->autoRefreshCheck = new QCheckBox("Auto Refresh");
     impl_->autoRefreshCheck->setChecked(true);
