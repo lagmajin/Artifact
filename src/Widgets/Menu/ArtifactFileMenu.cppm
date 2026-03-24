@@ -12,6 +12,7 @@ module;
 #include <QFileInfo>
 #include <QSet>
 #include <QMessageBox>
+#include <QPushButton>
 #include <QProcess>
 #include <QCoreApplication>
 #include <QTimer>
@@ -93,13 +94,18 @@ QString supportedAssetFilter()
 
 bool confirmPotentiallyDestructiveAction(QWidget* parent, const QString& title, const QString& text)
 {
-    const auto answer = QMessageBox::question(
-        parent,
-        title,
-        text,
-        QMessageBox::Yes | QMessageBox::No,
-        QMessageBox::No);
-    return answer == QMessageBox::Yes;
+    QMessageBox box(parent);
+    box.setWindowTitle(title);
+    box.setIcon(QMessageBox::Warning);
+    box.setText(text);
+    box.setMinimumWidth(560);
+    box.setTextInteractionFlags(Qt::TextSelectableByMouse);
+
+    auto* yesButton = box.addButton(QStringLiteral("はい"), QMessageBox::AcceptRole);
+    auto* noButton = box.addButton(QStringLiteral("いいえ"), QMessageBox::RejectRole);
+    box.setDefaultButton(noButton);
+    box.exec();
+    return box.clickedButton() == yesButton;
 }
 }
 

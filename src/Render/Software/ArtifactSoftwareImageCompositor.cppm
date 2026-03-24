@@ -19,9 +19,24 @@ namespace {
 QPainter::CompositionMode toCompositionMode(const ArtifactCore::BlendMode mode)
 {
  switch (mode) {
+ case ArtifactCore::BlendMode::Subtract: return QPainter::CompositionMode_Difference;
  case ArtifactCore::BlendMode::Add: return QPainter::CompositionMode_Plus;
  case ArtifactCore::BlendMode::Multiply: return QPainter::CompositionMode_Multiply;
  case ArtifactCore::BlendMode::Screen: return QPainter::CompositionMode_Screen;
+ case ArtifactCore::BlendMode::Overlay: return QPainter::CompositionMode_Overlay;
+ case ArtifactCore::BlendMode::Darken: return QPainter::CompositionMode_Darken;
+ case ArtifactCore::BlendMode::Lighten: return QPainter::CompositionMode_Lighten;
+ case ArtifactCore::BlendMode::ColorDodge: return QPainter::CompositionMode_ColorDodge;
+ case ArtifactCore::BlendMode::ColorBurn: return QPainter::CompositionMode_ColorBurn;
+ case ArtifactCore::BlendMode::HardLight: return QPainter::CompositionMode_HardLight;
+ case ArtifactCore::BlendMode::SoftLight: return QPainter::CompositionMode_SoftLight;
+ case ArtifactCore::BlendMode::Difference: return QPainter::CompositionMode_Difference;
+ case ArtifactCore::BlendMode::Exclusion: return QPainter::CompositionMode_Exclusion;
+ case ArtifactCore::BlendMode::Hue:
+ case ArtifactCore::BlendMode::Saturation:
+ case ArtifactCore::BlendMode::Color:
+ case ArtifactCore::BlendMode::Luminosity:
+  return QPainter::CompositionMode_SourceOver;
  case ArtifactCore::BlendMode::Normal:
  default:
   return QPainter::CompositionMode_SourceOver;
@@ -77,10 +92,100 @@ QImage matRGBAToQImage(const cv::Mat& mat)
  return image.copy();
 }
 
+float blendChannel(const float dst, const float src, const ArtifactCore::BlendMode mode)
+{
+ const float d = std::clamp(dst, 0.0f, 1.0f);
+ const float s = std::clamp(src, 0.0f, 1.0f);
+ switch (mode) {
+ case ArtifactCore::BlendMode::Normal:
+  return s;
+ case ArtifactCore::BlendMode::Add:
+  return std::clamp(d + s, 0.0f, 1.0f);
+ case ArtifactCore::BlendMode::Subtract:
+  return std::clamp(d - s, 0.0f, 1.0f);
+ case ArtifactCore::BlendMode::Multiply:
+  return d * s;
+ case ArtifactCore::BlendMode::Screen:
+  return 1.0f - (1.0f - d) * (1.0f - s);
+ case ArtifactCore::BlendMode::Overlay:
+  return d <= 0.5f ? (2.0f * d * s) : (1.0f - 2.0f * (1.0f - d) * (1.0f - s));
+ case ArtifactCore::BlendMode::Darken:
+  return std::min(d, s);
+ case ArtifactCore::BlendMode::Lighten:
+  return std::max(d, s);
+ case ArtifactCore::BlendMode::ColorDodge:
+  return s >= 1.0f ? 1.0f : std::clamp(d / (1.0f - s), 0.0f, 1.0f);
+ case ArtifactCore::BlendMode::ColorBurn:
+  return s <= 0.0f ? 0.0f : std::clamp(1.0f - ((1.0f - d) / s), 0.0f, 1.0f);
+ case ArtifactCore::BlendMode::HardLight:
+  return s <= 0.5f ? (2.0f * d * s) : (1.0f - 2.0f * (1.0f - d) * (1.0f - s));
+ case ArtifactCore::BlendMode::SoftLight: {
+  const float g = d <= 0.25f
+   ? (((16.0f * d - 12.0f) * d + 4.0f) * d)
+   : std::sqrt(d);
+  const float result = s <= 0.5f
+   ? (d - (1.0f - 2.0f * s) * d * (1.0f - d))
+   : (d + (2.0f * s - 1.0f) * (g - d));
+  return std::clamp(result, 0.0f, 1.0f);
+ }
+ case ArtifactCore::BlendMode::Difference:
+  return std::abs(d - s);
+ case ArtifactCore::BlendMode::Exclusion:
+  return d + s - 2.0f * d * s;
+ case ArtifactCore::BlendMode::Hue:
+ case ArtifactCore::BlendMode::Saturation:
+ case ArtifactCore::BlendMode::Color:
+ case ArtifactCore::BlendMode::Luminosity:
+ default:
+  return s;
+ }
+}
+
+bool shouldUseQPainterFallback(const ArtifactCore::BlendMode mode)
+{
+ switch (mode) {
+ case ArtifactCore::BlendMode::Hue:
+ case ArtifactCore::BlendMode::Saturation:
+ case ArtifactCore::BlendMode::Color:
+ case ArtifactCore::BlendMode::Luminosity:
+  return true;
+ default:
+  return false;
+ }
+}
+
+void blendBgrWithQPainter(cv::Mat& dstBgr, const cv::Mat& srcBgr, const float opacity, const ArtifactCore::BlendMode mode)
+{
+ cv::Mat dstBgra;
+ cv::Mat srcBgra;
+ cv::cvtColor(dstBgr, dstBgra, cv::COLOR_BGR2BGRA);
+ cv::cvtColor(srcBgr, srcBgra, cv::COLOR_BGR2BGRA);
+
+ QImage dstImage(dstBgra.data, dstBgra.cols, dstBgra.rows, static_cast<int>(dstBgra.step), QImage::Format_ARGB32);
+ QImage srcImage(srcBgra.data, srcBgra.cols, srcBgra.rows, static_cast<int>(srcBgra.step), QImage::Format_ARGB32);
+ QImage dstCopy = dstImage.copy();
+ QImage srcCopy = srcImage.copy();
+
+ QPainter painter(&dstCopy);
+ painter.setOpacity(std::clamp(opacity, 0.0f, 1.0f));
+ painter.setCompositionMode(toCompositionMode(mode));
+ painter.drawImage(0, 0, srcCopy);
+ painter.end();
+
+ QImage dstRgba = dstCopy.convertToFormat(QImage::Format_RGBA8888);
+ cv::Mat rgbaView(dstRgba.height(), dstRgba.width(), CV_8UC4, const_cast<uchar*>(dstRgba.bits()), dstRgba.bytesPerLine());
+ cv::cvtColor(rgbaView, dstBgr, cv::COLOR_RGBA2BGR);
+}
+
 void blendBgrInPlace(cv::Mat& dstBgr, const cv::Mat& srcBgr, const float opacity, const ArtifactCore::BlendMode mode)
 {
  const float a = std::clamp(opacity, 0.0f, 1.0f);
  if (a <= 0.0f) {
+  return;
+ }
+
+ if (shouldUseQPainterFallback(mode)) {
+  blendBgrWithQPainter(dstBgr, srcBgr, a, mode);
   return;
  }
 
@@ -90,65 +195,21 @@ void blendBgrInPlace(cv::Mat& dstBgr, const cv::Mat& srcBgr, const float opacity
  srcBgr.convertTo(srcF, CV_32FC3, 1.0 / 255.0);
 
  cv::Mat blended = dstF.clone();
- switch (mode) {
- case ArtifactCore::BlendMode::Normal:
-  blended = srcF;
-  break;
- case ArtifactCore::BlendMode::Add:
-  cv::add(dstF, srcF, blended);
-  cv::min(blended, 1.0f, blended);
-  break;
- case ArtifactCore::BlendMode::Multiply:
-  cv::multiply(dstF, srcF, blended);
-  break;
- case ArtifactCore::BlendMode::Screen:
-  blended = 1.0f - (1.0f - dstF).mul(1.0f - srcF);
-  break;
+ for (int y = 0; y < dstF.rows; ++y) {
+  const cv::Vec3f* dstRow = dstF.ptr<cv::Vec3f>(y);
+  const cv::Vec3f* srcRow = srcF.ptr<cv::Vec3f>(y);
+  cv::Vec3f* outRow = blended.ptr<cv::Vec3f>(y);
+  for (int x = 0; x < dstF.cols; ++x) {
+   cv::Vec3f pixel;
+   for (int c = 0; c < 3; ++c) {
+    pixel[c] = blendChannel(dstRow[x][c], srcRow[x][c], mode);
+   }
+   outRow[x] = pixel;
+  }
  }
 
  cv::Mat mixed = dstF * (1.0f - a) + blended * a;
  mixed.convertTo(dstBgr, CV_8UC3, 255.0);
-}
-
-QImage composeQtPainter(const CompositeRequest& request)
-{
- const int w = std::max(1, request.outputSize.width());
- const int h = std::max(1, request.outputSize.height());
- QImage output(w, h, QImage::Format_ARGB32_Premultiplied);
- output.fill(QColor(22, 24, 28, 255));
-
- QPainter painter(&output);
- painter.setRenderHint(QPainter::SmoothPixmapTransform, true);
-
- if (!request.background.isNull()) {
-  const QImage bgScaled = request.background.scaled(
-   output.size(), Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation);
-  const int x = (output.width() - bgScaled.width()) / 2;
-  const int y = (output.height() - bgScaled.height()) / 2;
-  painter.setCompositionMode(QPainter::CompositionMode_SourceOver);
-  painter.setOpacity(1.0);
-  painter.drawImage(x, y, bgScaled);
- }
-
- if (request.useForeground && !request.foreground.isNull()) {
-  painter.setCompositionMode(QPainter::CompositionMode_SourceOver);
-  painter.setOpacity(1.0);
-  painter.drawImage(0, 0, request.foreground);
- }
-
- if (!request.overlay.isNull()) {
-  QImage ovScaled = request.overlay.scaled(
-   output.size(), Qt::KeepAspectRatio, Qt::SmoothTransformation);
-  CompositeRequest transformedReq = request;
-  transformedReq.overlay = ovScaled;
-  const QImage overlayCanvas = buildOverlayCanvas(transformedReq, output.size());
-  painter.setOpacity(std::clamp(request.overlayOpacity, 0.0f, 1.0f));
-  painter.setCompositionMode(toCompositionMode(request.blendMode));
-  painter.drawImage(0, 0, overlayCanvas);
-  painter.setOpacity(1.0);
- }
-
- return output;
 }
 
 QImage composeOpenCV(const CompositeRequest& request)
@@ -214,30 +275,19 @@ QImage composeOpenCV(const CompositeRequest& request)
 
 QImage compose(const CompositeRequest& request)
 {
- if (request.backend == CompositeBackend::OpenCV) {
-  return composeOpenCV(request);
- }
- return composeQtPainter(request);
+ Q_UNUSED(request);
+ return composeOpenCV(request);
 }
 
 QString backendText(const CompositeBackend backend)
 {
- switch (backend) {
- case CompositeBackend::QtPainter: return QStringLiteral("QImage/QPainter");
- case CompositeBackend::OpenCV: return QStringLiteral("OpenCV");
- default: return QStringLiteral("QImage/QPainter");
- }
+ Q_UNUSED(backend);
+ return QStringLiteral("OpenCV");
 }
 
 QString blendModeText(const ArtifactCore::BlendMode mode)
 {
- switch (mode) {
- case ArtifactCore::BlendMode::Normal: return QStringLiteral("Normal");
- case ArtifactCore::BlendMode::Add: return QStringLiteral("Add");
- case ArtifactCore::BlendMode::Multiply: return QStringLiteral("Multiply");
- case ArtifactCore::BlendMode::Screen: return QStringLiteral("Screen");
- default: return QStringLiteral("Normal");
- }
+ return ArtifactCore::BlendModeUtils::toString(mode);
 }
 
 QString cvEffectText(const CvEffectMode mode)

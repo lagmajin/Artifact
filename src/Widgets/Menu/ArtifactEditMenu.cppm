@@ -7,6 +7,7 @@ module;
 module Artifact.Menu.Edit;
 import std;
 
+import Artifact.Application.Manager;
 import Artifact.Project.Manager;
 import ApplicationSettingDialog;
 import Utils.Path;
@@ -18,6 +19,7 @@ namespace Artifact {
  private:
 
   bool projectCreated_ = false;
+  QWidget* parentWidget_ = nullptr;
  public:
   Impl(QMenu* menu);
   void rebuildMenu();
@@ -59,6 +61,7 @@ namespace Artifact {
 
  ArtifactEditMenu::Impl::Impl(QMenu* menu)
  {
+  parentWidget_ = menu ? menu->window() : nullptr;
   // Basic edit actions
   undoAction = new QAction("元に戻す (&U)");
   undoAction->setShortcut(QKeySequence::Undo);
@@ -175,7 +178,7 @@ namespace Artifact {
  void ArtifactEditMenu::Impl::handleSelectSameType() { qDebug() << "Select Same Type"; }
  void ArtifactEditMenu::Impl::handleFind() { qDebug() << "Find"; }
  void ArtifactEditMenu::Impl::handlePreferences() { 
-  auto* dialog = new ApplicationSettingDialog(ArtifactApplicationManager::instance()->projectManager()->mainWindow());
+  auto* dialog = new ApplicationSettingDialog(parentWidget_);
   dialog->setAttribute(Qt::WA_DeleteOnClose);
   dialog->show();
  }

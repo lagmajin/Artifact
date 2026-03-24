@@ -11,7 +11,6 @@ import Layer.Blend;
 export namespace Artifact::SoftwareRender {
 
 enum class CompositeBackend {
- QtPainter,
  OpenCV
 };
 
@@ -27,7 +26,7 @@ struct CompositeRequest {
  QImage overlay;
  QSize outputSize;
  ArtifactCore::BlendMode blendMode = ArtifactCore::BlendMode::Normal;
- CompositeBackend backend = CompositeBackend::QtPainter;
+ CompositeBackend backend = CompositeBackend::OpenCV;
  CvEffectMode cvEffect = CvEffectMode::None;
  float overlayOpacity = 1.0f;
  QPointF overlayOffset = QPointF(0.0, 0.0);

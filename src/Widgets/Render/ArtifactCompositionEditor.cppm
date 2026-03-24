@@ -28,6 +28,7 @@ import Artifact.Composition.Abstract;
 import Artifact.Application.Manager;
 import Artifact.Service.Project;
 import Artifact.Service.Playback;
+import Artifact.Layer.Video;
 import Utils.Path;
 
 namespace Artifact {

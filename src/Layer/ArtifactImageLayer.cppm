@@ -1,9 +1,11 @@
-﻿module;
+module;
 
 #include <QDebug>
 #include <QImage>
 #include <QImageReader>
 #include <QPainter>
+#include <QFutureWatcher>
+#include <QtConcurrent>
 #include <wobjectimpl.h>
 
 module Artifact.Layer.Image;
@@ -27,6 +29,9 @@ public:
     int height_ = 0;
     QString sourcePath_;
     mutable std::shared_ptr<QImage> cache_;
+    // [Fix 1] バックグラウンド先読み用
+    mutable QFuture<QImage> prefetchFuture_;
+    mutable bool prefetchDone_ = false;
 };
 
 W_OBJECT_IMPL(ArtifactImageLayer)
@@ -53,16 +58,29 @@ bool ArtifactImageLayer::loadFromPath(const QString& path)
     const QSize size = reader.size();
     impl_->sourcePath_ = path;
     impl_->cache_.reset();
+    impl_->prefetchDone_ = false;
     impl_->hasImage_ = true;
     if (size.isValid()) {
         impl_->width_ = size.width();
         impl_->height_ = size.height();
         setSourceSize(Size_2D(size.width(), size.height()));
     }
-    qDebug() << "[ArtifactImageLayer] Loaded image:" << path
-             << "format=" << reader.format()
-             << "sizeHint=" << size
-             << "lazyLoad=enabled";
+
+    // [Fix 1] バックグラウンドで画像を先読みし、初回 draw() 呼び出し時の
+    // メインスレッドブロックを排除する
+    impl_->prefetchFuture_ = QtConcurrent::run([path]() -> QImage {
+        QImageReader r(path);
+        r.setAutoTransform(true);
+        QImage img = r.read();
+        if (!img.isNull()) {
+            // GPU 転送用に RGBA8888 に変換も先側で実行しておく
+            return img.convertToFormat(QImage::Format_RGBA8888);
+        }
+        return img;
+    });
+
+    qDebug() << "[ArtifactImageLayer] Prefetch started:" << path
+             << "sizeHint=" << size;
     return true;
 }
 
@@ -136,48 +154,48 @@ void ArtifactImageLayer::draw(ArtifactIRenderer* renderer)
 QImage ArtifactImageLayer::toQImage() const
 {
     if (!impl_->hasImage_) {
-        qDebug() << "[ArtifactImageLayer::toQImage] No cache: hasImage=" << impl_->hasImage_
-                 << "cache=" << (impl_->cache_ ? "valid" : "null");
         return QImage();
     }
 
+    // [Fix 1] バックグラウンドプリフェッチが完了していればキャッシュに取り込む
+    if (!impl_->prefetchDone_ && impl_->prefetchFuture_.isFinished()) {
+        QImage loaded = impl_->prefetchFuture_.result();
+        if (!loaded.isNull()) {
+            impl_->cache_ = std::make_shared<QImage>(std::move(loaded));
+            impl_->width_  = impl_->cache_->width();
+            impl_->height_ = impl_->cache_->height();
+        }
+        impl_->prefetchDone_ = true;
+    }
+
+    // プリフェッチがまだ完了していない場合はフォールバック（同期読み込み）
     if (!impl_->cache_ && !impl_->sourcePath_.isEmpty()) {
+        if (!impl_->prefetchDone_ && impl_->prefetchFuture_.isRunning()) {
+            // まだ実行中: ブロックかけずに空画像を返し、次のフレームで再試行
+            return QImage();
+        }
+        // 非同期パスを通らなかった場合のフォールバック
         QImageReader reader(impl_->sourcePath_);
         reader.setAutoTransform(true);
         QImage loaded = reader.read();
         if (!loaded.isNull()) {
-            impl_->cache_ = std::make_shared<QImage>(loaded);
+            impl_->cache_ = std::make_shared<QImage>(loaded.convertToFormat(QImage::Format_RGBA8888));
             if (impl_->width_ <= 0 || impl_->height_ <= 0) {
-                impl_->width_ = loaded.width();
+                impl_->width_  = loaded.width();
                 impl_->height_ = loaded.height();
             }
         } else {
-            qWarning() << "[ArtifactImageLayer::toQImage] Lazy load failed:" << impl_->sourcePath_
-                       << "error=" << reader.errorString();
+            qWarning() << "[ArtifactImageLayer::toQImage] Sync fallback load failed:"
+                       << impl_->sourcePath_ << "error=" << reader.errorString();
             return QImage();
         }
+        impl_->prefetchDone_ = true;
     }
 
     if (!impl_->cache_) {
         return QImage();
     }
-
-    // キャッシュから QImage を生成
-    QImage qimg = *impl_->cache_;
-    if (!qimg.isNull()) {
-        return qimg;
-    }
-
-    // フォールバック：キャッシュが破損している場合
-    qDebug() << "[ArtifactImageLayer::toQImage] Cache returned null, using fallback:"
-             << "size=" << impl_->width_ << "x" << impl_->height_;
-    // 空の画像を返す代わりに、エラー画像を生成
-    QImage errorImg(impl_->width_, impl_->height_, QImage::Format_ARGB32_Premultiplied);
-    errorImg.fill(QColor(100, 50, 50));
-    QPainter p(&errorImg);
-    p.setPen(QColor(255, 100, 100));
-    p.drawText(errorImg.rect(), Qt::AlignCenter, QStringLiteral("Cache Error"));
-    return errorImg;
+    return *impl_->cache_;
 }
 
 void ArtifactImageLayer::setFromQImage(const QImage& image)

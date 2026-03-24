@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <wobjectimpl.h>
 #include <QApplication>
 #include <QPainter>
@@ -478,11 +478,28 @@ int ArtifactLayerPanelHeaderWidget::totalHeaderHeight() const
 
   Impl()
   {
-    visibilityIcon = loadLayerPanelPixmap(QStringLiteral("MaterialVS/neutral/visibility.svg"), QStringLiteral("eye.png"));
-    lockIcon = loadLayerPanelPixmap(QStringLiteral("MaterialVS/yellow/lock.svg"), QStringLiteral("lock.png"));
-    soloIcon = loadLayerPanelPixmap(QStringLiteral("MaterialVS/purple/group.svg"), QStringLiteral("solo.png"));
-    audioIcon = loadLayerPanelPixmap(QStringLiteral("MaterialVS/neutral/volume.svg"), QStringLiteral("volume.png"));
-    shyIcon = loadLayerPanelPixmap(QStringLiteral("MaterialVS/neutral/shy.svg"), QStringLiteral("shy.png"));
+    visibilityIcon    = loadLayerPanelPixmap(QStringLiteral("MaterialVS/neutral/visibility.svg"),     QStringLiteral("eye.png"));
+    lockIcon          = loadLayerPanelPixmap(QStringLiteral("MaterialVS/yellow/lock.svg"),            QStringLiteral("lock.png"));
+    soloIcon          = loadLayerPanelPixmap(QStringLiteral("MaterialVS/purple/group.svg"),           QStringLiteral("solo.png"));
+    audioIcon         = loadLayerPanelPixmap(QStringLiteral("MaterialVS/neutral/volume.svg"),         QStringLiteral("volume.png"));
+    shyIcon           = loadLayerPanelPixmap(QStringLiteral("MaterialVS/neutral/shy.svg"),            QStringLiteral("shy.png"));
+    // [Fix B] 右クリックメニュー用アイコンを構築時にキャッシュ（毎回 SVG パースを防ぐ）
+    iconRename        = loadLayerPanelIcon(QStringLiteral("MaterialVS/blue/edit.svg"));
+    iconCopy          = loadLayerPanelIcon(QStringLiteral("MaterialVS/neutral/content_copy.svg"));
+    iconDelete        = loadLayerPanelIcon(QStringLiteral("MaterialVS/red/delete.svg"));
+    iconFileOpen      = loadLayerPanelIcon(QStringLiteral("MaterialVS/blue/file_open.svg"));
+    iconVisOn         = loadLayerPanelIcon(QStringLiteral("MaterialVS/neutral/visibility.svg"));
+    iconVisOff        = loadLayerPanelIcon(QStringLiteral("MaterialVS/neutral/visibility_off.svg"));
+    iconLock          = loadLayerPanelIcon(QStringLiteral("MaterialVS/yellow/lock.svg"));
+    iconUnlock        = loadLayerPanelIcon(QStringLiteral("MaterialVS/yellow/lock_open.svg"));
+    iconSolo          = loadLayerPanelIcon(QStringLiteral("MaterialVS/purple/group.svg"));
+    iconShy           = loadLayerPanelIcon(QStringLiteral("MaterialVS/orange/visibility_off.svg"));
+    iconLink          = loadLayerPanelIcon(QStringLiteral("MaterialVS/neutral/link.svg"));
+    iconLinkOff       = loadLayerPanelIcon(QStringLiteral("MaterialVS/orange/link_off.svg"));
+    iconCreateSolid   = loadLayerPanelIcon(QStringLiteral("MaterialVS/green/format_shapes.svg"));
+    iconCreateNull    = loadLayerPanelIcon(QStringLiteral("MaterialVS/purple/group.svg"));
+    iconCreateAdjust  = loadLayerPanelIcon(QStringLiteral("MaterialVS/orange/warning.svg"));
+    iconCreateText    = loadLayerPanelIcon(QStringLiteral("MaterialVS/purple/title.svg"));
   }
   ~Impl() = default;
 
@@ -492,7 +509,13 @@ int ArtifactLayerPanelHeaderWidget::totalHeaderHeight() const
   QPixmap soloIcon;
   QPixmap audioIcon;
   QPixmap shyIcon;
+  // [Fix B] 右クリックメニュー用アイコンキャッシュ
+  QIcon iconRename, iconCopy, iconDelete, iconFileOpen;
+  QIcon iconVisOn, iconVisOff, iconLock, iconUnlock, iconSolo, iconShy;
+  QIcon iconLink, iconLinkOff;
+  QIcon iconCreateSolid, iconCreateNull, iconCreateAdjust, iconCreateText;
   bool shyHidden = false;
+  QString filterText;
   int hoveredLayerIndex = -1;
   LayerID selectedLayerId;
   QVector<VisibleRow> visibleRows;
@@ -592,14 +615,13 @@ int ArtifactLayerPanelHeaderWidget::totalHeaderHeight() const
     if (layerChangedConnections.contains(idStr)) {
       continue;
     }
+    // [Fix A] layer::changed は表示内容の再描画（update）のみ。
+    // updateLayout() を呼ぶとレイアウト全体の再構築が連鎖するため和止。
+    // レイアーの追加/削除による構造変化は layerCreated/Removed で別途処理する。
     layerChangedConnections.insert(
       idStr,
       QObject::connect(layer.get(), &ArtifactAbstractLayer::changed, owner, [owner]() {
-       QTimer::singleShot(0, owner, [owner]() {
-        if (owner) {
-         owner->updateLayout();
-        }
-       });
+       owner->update();
       }));
    }
 
@@ -663,11 +685,13 @@ int ArtifactLayerPanelHeaderWidget::totalHeaderHeight() const
    }
 
    QVector<ArtifactAbstractLayerPtr> layers;
-   for (auto& l : comp->allLayer()) {
-    if (!l) continue;
-    if (shyHidden && l->isShy()) continue;
-    layers.push_back(l);
-   }
+    const QString needle = filterText.trimmed();
+    for (auto& l : comp->allLayer()) {
+     if (!l) continue;
+     if (shyHidden && l->isShy()) continue;
+     if (!needle.isEmpty() && !l->layerName().contains(needle, Qt::CaseInsensitive)) continue;
+     layers.push_back(l);
+    }
    if (layers.isEmpty()) {
     return;
    }
@@ -750,7 +774,8 @@ int ArtifactLayerPanelHeaderWidget::totalHeaderHeight() const
 
   impl_->layoutDebounceTimer = new QTimer(this);
   impl_->layoutDebounceTimer->setSingleShot(true);
-  impl_->layoutDebounceTimer->setInterval(100);
+  // [Fix C] 100ms → 16ms（～60fps相当）。最小限の遅延でレイアウトの連続要求をまとめて 1 回に回す。
+  impl_->layoutDebounceTimer->setInterval(16);
   QObject::connect(impl_->layoutDebounceTimer, &QTimer::timeout, this, [this]() {
     this->performUpdateLayout();
   });
@@ -759,22 +784,21 @@ int ArtifactLayerPanelHeaderWidget::totalHeaderHeight() const
     QObject::connect(service, &ArtifactProjectService::layerCreated, this, [this](const CompositionID& compId, const LayerID& layerId) {
       if (impl_->compositionId == compId) {
         this->updateLayout();
-        
-        // Auto-focus Inspector
-        const auto widgets = QApplication::allWidgets();
-        for (QWidget* w : widgets) {
-         if (!w) continue;
-         const QString className = QString::fromLatin1(w->metaObject()->className());
-         if (className.contains("ArtifactInspectorWidget", Qt::CaseInsensitive)) {
-          w->show();
-          w->raise();
-          w->activateWindow();
-          break;
-         }
-        }
-        
-       // Start inline editing of the new layer on the next event loop tick
+        // Start follow-up UI work on the next event loop tick so layer creation
+        // itself stays responsive.
        QTimer::singleShot(0, this, [this, layerId]() {
+          const auto widgets = QApplication::allWidgets();
+          for (QWidget* w : widgets) {
+           if (!w) continue;
+           const QString className = QString::fromLatin1(w->metaObject()->className());
+           if (className.contains("ArtifactInspectorWidget", Qt::CaseInsensitive)) {
+            w->show();
+            w->raise();
+            w->activateWindow();
+            break;
+           }
+          }
+
           if (impl_->layerNameEditable) {
             this->editLayerName(layerId);
           }
@@ -818,11 +842,20 @@ void ArtifactLayerPanelWidget::setComposition(const CompositionID& id)
   updateLayout();
 }
 
- void ArtifactLayerPanelWidget::setShyHidden(bool hidden)
- {
+void ArtifactLayerPanelWidget::setShyHidden(bool hidden)
+{
   impl_->shyHidden = hidden;
   updateLayout();
- }
+}
+
+void ArtifactLayerPanelWidget::setFilterText(const QString& text)
+{
+  if (impl_->filterText == text) {
+    return;
+  }
+  impl_->filterText = text;
+  updateLayout();
+}
 
 void ArtifactLayerPanelWidget::updateLayout()
 {
@@ -1105,16 +1138,17 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
     QAction* collapseAct = nullptr;
     QAction* expandAllAct = nullptr;
     QAction* collapseAllAct = nullptr;
-    renameAct->setIcon(loadLayerPanelIcon(QStringLiteral("MaterialVS/blue/edit.svg")));
-    duplicateAct->setIcon(loadLayerPanelIcon(QStringLiteral("MaterialVS/neutral/content_copy.svg")));
-    deleteAct->setIcon(loadLayerPanelIcon(QStringLiteral("MaterialVS/red/delete.svg")));
+    // [Fix B] キャッシュ済みアイコンを使用（毎回 SVG パースを防止）
+    renameAct->setIcon(impl_->iconRename);
+    duplicateAct->setIcon(impl_->iconCopy);
+    deleteAct->setIcon(impl_->iconDelete);
 
     const bool supportsSourceReplacement =
       static_cast<bool>(std::dynamic_pointer_cast<ArtifactImageLayer>(layer)) ||
       static_cast<bool>(std::dynamic_pointer_cast<ArtifactVideoLayer>(layer));
     if (supportsSourceReplacement) {
       replaceSourceAct = menu.addAction("Replace Source...");
-      replaceSourceAct->setIcon(loadLayerPanelIcon(QStringLiteral("MaterialVS/blue/file_open.svg")));
+      replaceSourceAct->setIcon(impl_->iconFileOpen);
     }
 
     if (row.hasChildren) {
@@ -1127,38 +1161,34 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
     collapseAllAct = menu.addAction("Collapse All");
 
     menu.addSeparator();
-    QAction* visAct = menu.addAction(layer->isVisible() ? "Hide Layer" : "Show Layer");
-    QAction* lockAct = menu.addAction(layer->isLocked() ? "Unlock Layer" : "Lock Layer");
-    QAction* soloAct = menu.addAction(layer->isSolo() ? "Disable Solo" : "Enable Solo");
-    QAction* shyAct = menu.addAction(layer->isShy() ? "Disable Shy" : "Enable Shy");
-    visAct->setIcon(loadLayerPanelIcon(layer->isVisible()
-      ? QStringLiteral("MaterialVS/neutral/visibility_off.svg")
-      : QStringLiteral("MaterialVS/neutral/visibility.svg")));
-    lockAct->setIcon(loadLayerPanelIcon(layer->isLocked()
-      ? QStringLiteral("MaterialVS/yellow/lock_open.svg")
-      : QStringLiteral("MaterialVS/yellow/lock.svg")));
-    soloAct->setIcon(loadLayerPanelIcon(QStringLiteral("MaterialVS/purple/group.svg")));
-    shyAct->setIcon(loadLayerPanelIcon(QStringLiteral("MaterialVS/orange/visibility_off.svg")));
+    QAction* visAct  = menu.addAction(layer->isVisible() ? "Hide Layer"    : "Show Layer");
+    QAction* lockAct = menu.addAction(layer->isLocked()  ? "Unlock Layer"  : "Lock Layer");
+    QAction* soloAct = menu.addAction(layer->isSolo()    ? "Disable Solo"  : "Enable Solo");
+    QAction* shyAct  = menu.addAction(layer->isShy()     ? "Disable Shy"   : "Enable Shy");
+    visAct->setIcon( layer->isVisible()  ? impl_->iconVisOff  : impl_->iconVisOn);
+    lockAct->setIcon(layer->isLocked()   ? impl_->iconUnlock  : impl_->iconLock);
+    soloAct->setIcon(impl_->iconSolo);
+    shyAct->setIcon( impl_->iconShy);
 
     QMenu* parentMenu = menu.addMenu("Parent");
     QAction* selectParentAct = parentMenu->addAction("Select Parent");
-    QAction* clearParentAct = parentMenu->addAction("Clear Parent");
-    parentMenu->setIcon(loadLayerPanelIcon(QStringLiteral("MaterialVS/neutral/link.svg")));
-    selectParentAct->setIcon(loadLayerPanelIcon(QStringLiteral("MaterialVS/neutral/link.svg")));
-    clearParentAct->setIcon(loadLayerPanelIcon(QStringLiteral("MaterialVS/orange/link_off.svg")));
+    QAction* clearParentAct  = parentMenu->addAction("Clear Parent");
+    parentMenu->setIcon(impl_->iconLink);
+    selectParentAct->setIcon(impl_->iconLink);
+    clearParentAct->setIcon(impl_->iconLinkOff);
     selectParentAct->setEnabled(layer->hasParent());
     clearParentAct->setEnabled(layer->hasParent());
 
     QMenu* createMenu = menu.addMenu("Create Layer");
-    QAction* createSolidAct = createMenu->addAction("Solid Layer");
-    QAction* createNullAct = createMenu->addAction("Null Layer");
+    QAction* createSolidAct  = createMenu->addAction("Solid Layer");
+    QAction* createNullAct   = createMenu->addAction("Null Layer");
     QAction* createAdjustAct = createMenu->addAction("Adjustment Layer");
-    QAction* createTextAct = createMenu->addAction("Text Layer");
-    createMenu->setIcon(loadLayerPanelIcon(QStringLiteral("MaterialVS/green/format_shapes.svg")));
-    createSolidAct->setIcon(loadLayerPanelIcon(QStringLiteral("MaterialVS/green/format_shapes.svg")));
-    createNullAct->setIcon(loadLayerPanelIcon(QStringLiteral("MaterialVS/purple/group.svg")));
-    createAdjustAct->setIcon(loadLayerPanelIcon(QStringLiteral("MaterialVS/orange/warning.svg")));
-    createTextAct->setIcon(loadLayerPanelIcon(QStringLiteral("MaterialVS/purple/title.svg")));
+    QAction* createTextAct   = createMenu->addAction("Text Layer");
+    createMenu->setIcon(impl_->iconCreateSolid);
+    createSolidAct->setIcon(impl_->iconCreateSolid);
+    createNullAct->setIcon(impl_->iconCreateNull);
+    createAdjustAct->setIcon(impl_->iconCreateAdjust);
+    createTextAct->setIcon(impl_->iconCreateText);
 
     QAction* chosen = menu.exec(event->globalPosition().toPoint());
     auto comp = safeCompositionLookup(impl_->compositionId);
@@ -1606,11 +1636,9 @@ void ArtifactLayerPanelWidget::keyPressEvent(QKeyEvent* event)
           int newIndex = (currentIndex + dir + items.size()) % items.size();
           const auto newMode = items[newIndex].second;
           layer->setBlendMode(newMode);
-          if (service) {
-            if (auto project = service->getCurrentProjectSharedPtr()) {
-              project->projectChanged();
-            }
-          }
+          // [Fix 2] projectChanged() の代わりに layer->changed() を発火。
+          // projectChanged → updateLayout() 連鎖を避け、再描画のみに留める。
+          emit layer->changed();
           update();
           event->accept();
           return;
@@ -2118,10 +2146,17 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent*)
    impl_->panel->setComposition(id);
   }
 
-  void ArtifactLayerTimelinePanelWrapper::setLayerNameEditable(bool enabled)
+  void ArtifactLayerTimelinePanelWrapper::setFilterText(const QString& text)
   {
    if (impl_ && impl_->panel) {
-    impl_->panel->setLayerNameEditable(enabled);
+    impl_->panel->setFilterText(text);
+   }
+  }
+
+  void ArtifactLayerTimelinePanelWrapper::setLayerNameEditable(bool enabled)
+  {
+    if (impl_ && impl_->panel) {
+     impl_->panel->setLayerNameEditable(enabled);
    }
   }
 

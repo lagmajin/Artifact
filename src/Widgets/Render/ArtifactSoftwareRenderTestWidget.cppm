@@ -59,11 +59,6 @@ W_OBJECT_IMPL(ArtifactSoftwareRenderTestWidget)
 
 class ArtifactSoftwareRenderTestWidget::Impl {
 public:
-    enum class CompositeBackend {
-        QtPainter,
-        OpenCV
-    };
-
     enum class CvEffectMode {
         None,
         GaussianBlur,
@@ -75,7 +70,6 @@ public:
     float angleX = 0.35f;
     bool solid = true;
     bool showCube = true;
-    CompositeBackend backend = CompositeBackend::QtPainter;
     ArtifactCore::BlendMode blendMode = ArtifactCore::BlendMode::Normal;
     CvEffectMode cvEffect = CvEffectMode::None;
     float overlayOpacity = 0.75f;
@@ -197,15 +191,6 @@ public:
         case ArtifactCore::BlendMode::Multiply: return QStringLiteral("Multiply");
         case ArtifactCore::BlendMode::Screen:   return QStringLiteral("Screen");
         default:                  return QStringLiteral("Normal");
-        }
-    }
-
-    static QString backendText(CompositeBackend backend)
-    {
-        switch (backend) {
-        case CompositeBackend::QtPainter: return QStringLiteral("QImage/QPainter");
-        case CompositeBackend::OpenCV:    return QStringLiteral("OpenCV");
-        default:                          return QStringLiteral("QImage/QPainter");
         }
     }
 
@@ -464,9 +449,7 @@ public:
         request.useForeground = showCube;
 
         request.blendMode = blendMode;
-        request.backend = (backend == CompositeBackend::OpenCV)
-            ? SoftwareRender::CompositeBackend::OpenCV
-            : SoftwareRender::CompositeBackend::QtPainter;
+        request.backend = SoftwareRender::CompositeBackend::OpenCV;
         
         switch (cvEffect) {
         case CvEffectMode::None:         request.cvEffect = SoftwareRender::CvEffectMode::None; break;
@@ -519,8 +502,7 @@ void ArtifactSoftwareRenderTestWidget::paintEvent(QPaintEvent* event)
     painter.drawText(
         QRect(10, 34, w - 20, 44),
         Qt::AlignLeft | Qt::AlignTop,
-        QStringLiteral("V: Backend(%1)  E: Effect(%2)  M: Blend(%3)  [ / ]: Opacity(%4%)")
-            .arg(Impl::backendText(impl_->backend))
+        QStringLiteral("E: Effect(%1)  M: Blend(%2)  [ / ]: Opacity(%3%)")
             .arg(Impl::cvEffectText(impl_->cvEffect))
             .arg(Impl::blendModeText(impl_->blendMode))
             .arg(static_cast<int>(std::round(impl_->overlayOpacity * 100.0f))));
@@ -577,16 +559,6 @@ void ArtifactSoftwareRenderTestWidget::keyPressEvent(QKeyEvent* event)
         case ArtifactCore::BlendMode::Multiply: impl_->blendMode = ArtifactCore::BlendMode::Screen; break;
         case ArtifactCore::BlendMode::Screen: impl_->blendMode = ArtifactCore::BlendMode::Normal; break;
         default: impl_->blendMode = ArtifactCore::BlendMode::Normal; break;
-        }
-        update();
-        event->accept();
-        return;
-    }
-    if (event->key() == Qt::Key_V) {
-        if (impl_->backend == Impl::CompositeBackend::QtPainter) {
-            impl_->backend = Impl::CompositeBackend::OpenCV;
-        } else {
-            impl_->backend = Impl::CompositeBackend::QtPainter;
         }
         update();
         event->accept();

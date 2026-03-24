@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <QList>
 #include <wobjectimpl.h>
 #include <glm/ext/matrix_projection.hpp>
@@ -22,6 +22,7 @@ import Artifact.Composition.Abstract;
 import Artifact.Project.Items;
 import Artifact.Layer.Image;
 import Artifact.Layer.Video;
+import Image.PSDDocument;
 import File.TypeDetector;
 import Artifact.Layers.Selection.Manager;
 import Artifact.Application.Manager;
@@ -31,6 +32,26 @@ import Artifact.Render.Queue.Service;
 namespace Artifact
 {
  namespace {
+  QSize imageSizeForPath(const QString& path)
+  {
+   QImageReader reader(path);
+   const QSize size = reader.size();
+   if (size.isValid()) {
+    return size;
+   }
+
+   const QString suffix = QFileInfo(path).suffix().toLower();
+   if (suffix == QStringLiteral("psd") || suffix == QStringLiteral("psb")) {
+    ArtifactCore::PsdDocument doc;
+    if (doc.open(path)) {
+     const auto& header = doc.header();
+     return QSize(static_cast<int>(header.width), static_cast<int>(header.height));
+    }
+   }
+
+   return {};
+  }
+
   void notifyProjectMutation(ArtifactProjectManager& manager)
   {
    if (auto project = manager.getCurrentProjectSharedPtr()) {
@@ -192,7 +213,10 @@ QStringList ArtifactProjectService::Impl::importAssetsFromPaths(const QStringLis
 
   if (!importedPaths.isEmpty()) {
    manager.addAssetsFromFilePaths(importedPaths);
-   checkImportedAssetCompatibility(importedPaths);
+   // [Fix 2] importAssetsFromPathsAsync の非同期ブロック内で既に
+   // QImageReader::size() によるチェックが完了しているため、
+   // ここで同期実行すると同じファイルに対して 3 回 QImageReader が走る。
+   // checkImportedAssetCompatibility(importedPaths);
   }
 
   return importedPaths;
@@ -278,8 +302,7 @@ void ArtifactProjectService::Impl::importAssetsFromPathsAsync(
     }
 
     if (!importedPaths.isEmpty() && detector.detect(importedPaths.back()) == ArtifactCore::FileType::Image) {
-     QImageReader reader(importedPaths.back());
-     const QSize imageSize = reader.size();
+     const QSize imageSize = imageSizeForPath(importedPaths.back());
      if (imageSize.isValid() && compSize.isValid() &&
          (imageSize.width() != compSize.width() || imageSize.height() != compSize.height())) {
       qWarning() << "[CompatibilityGuard] Image resolution differs from composition. image="
@@ -314,11 +337,10 @@ void ArtifactProjectService::Impl::importAssetsFromPathsAsync(
    }
 
    if (type == ArtifactCore::FileType::Image) {
-    QImageReader reader(path);
-    const QSize imageSize = reader.size();
+    const QSize imageSize = imageSizeForPath(path);
     if (!imageSize.isValid()) {
-      qWarning() << "[CompatibilityGuard] Image size unavailable:" << path;
-      continue;
+     qWarning() << "[CompatibilityGuard] Image size unavailable:" << path;
+     continue;
     }
     if (compSize.width() > 0 && compSize.height() > 0 &&
         (imageSize.width() != compSize.width() || imageSize.height() != compSize.height())) {

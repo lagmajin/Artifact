@@ -10,6 +10,7 @@ export module Artifact.Widgets.CompositionRenderController;
 import Color.Float;
 import Artifact.Composition.Abstract;
 import Artifact.Render.IRenderer;
+import Artifact.Service.Project;
 import Artifact.Preview.Pipeline;
 import Utils.Id;
 

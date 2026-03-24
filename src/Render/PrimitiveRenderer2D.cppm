@@ -291,8 +291,7 @@ void PrimitiveRenderer2D::destroy()
     impl_->m_draw_sprite_pso_and_srb         = {};
     impl_->m_draw_sprite_transform_pso_and_srb = {};
     impl_->m_sprite_sampler                  = nullptr;
-    impl_->m_spriteCacheKey                  = 0;
-    impl_->m_spriteTexCache                  = nullptr;
+    impl_->m_spriteTexCache.clear();
     impl_->pDevice_                          = nullptr;
     impl_->m_draw_solid_rect_pso_and_srb     = {};
     impl_->m_draw_solid_rect_transform_pso_and_srb = {};
@@ -1374,9 +1373,27 @@ void PrimitiveRenderer2D::drawSpriteTransformed(float x, float y, float w, float
     if (image.isNull()) return;
     if (!impl_->pDevice_ || !impl_->pCtx_) return;
 
-    // (Texture caching logic same as QTransform version)
-    if (image.cacheKey() != impl_->m_spriteCacheKey || !impl_->m_spriteTexCache) {
-        const QImage rgba = image.convertToFormat(QImage::Format_RGBA8888);
+    // [Fix 3] QTransform 版と同じ map ベースキャッシュを使用する。
+    // 以前は m_spriteCacheKey (単一エントリ) なので複数レイヤー混在時に
+    // 毎フレーム GPU テクスチャを再作成していた。
+    impl_->m_frameCount++;
+    if (impl_->m_frameCount % 60 == 0) {
+        impl_->pruneCache();
+    }
+
+    const qint64 cacheKey = image.cacheKey();
+    RefCntAutoPtr<ITexture> pTexture;
+
+    auto it = impl_->m_spriteTexCache.find(cacheKey);
+    if (it != impl_->m_spriteTexCache.end()) {
+        pTexture = it->second.pTexture;
+        it->second.lastUsedFrame = impl_->m_frameCount;
+    } else {
+        // image は loadFromPath 内で既に RGBA8888 に変換済みのはず。
+        // 万が一別のフォーマットであない場合のガード。
+        const QImage rgba = (image.format() == QImage::Format_RGBA8888)
+                                ? image
+                                : image.convertToFormat(QImage::Format_RGBA8888);
         const int imgW = rgba.width();
         const int imgH = rgba.height();
         if (imgW <= 0 || imgH <= 0) return;
@@ -1402,11 +1419,11 @@ void PrimitiveRenderer2D::drawSpriteTransformed(float x, float y, float w, float
         impl_->pDevice_->CreateTexture(texDesc, &initData, &newTex);
         if (!newTex) return;
 
-        impl_->m_spriteTexCache = newTex;
-        impl_->m_spriteCacheKey = image.cacheKey();
+        impl_->m_spriteTexCache[cacheKey] = { newTex, impl_->m_frameCount };
+        pTexture = newTex;
     }
 
-    auto* pSRV = impl_->m_spriteTexCache->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE);
+    auto* pSRV = pTexture->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE);
     if (!pSRV) return;
 
     auto* pRTV = impl_->getCurrentRTV();

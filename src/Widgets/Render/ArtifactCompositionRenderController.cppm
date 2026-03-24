@@ -1,4 +1,4 @@
-﻿module;
+module;
 #define NOMINMAX
 #define QT_NO_KEYWORDS
 #include <opencv2/opencv.hpp>
@@ -6,6 +6,7 @@
 #include <QDebug>
 #include <QColor>
 #include <QImage>
+#include <QElapsedTimer>
 #include <QLoggingCategory>
 #include <QTransform>
 #include <QRectF>
@@ -61,6 +62,36 @@ Q_LOGGING_CATEGORY(compositionViewLog, "artifact.compositionview")
 QColor toQColor(const FloatColor& color)
 {
   return QColor::fromRgbF(color.r(), color.g(), color.b(), color.a());
+}
+
+bool layerHasCpuRasterizerWork(const ArtifactAbstractLayerPtr& layer)
+{
+  if (!layer) {
+    return false;
+  }
+  if (layer->hasMasks()) {
+    return true;
+  }
+  for (const auto& effect : layer->getEffects()) {
+    if (effect && effect->isEnabled() &&
+        effect->pipelineStage() == EffectPipelineStage::Rasterizer) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool layerUsesSurfaceUploadForCompositionView(const ArtifactAbstractLayerPtr& layer)
+{
+  if (!layer) {
+    return false;
+  }
+  if (layerHasCpuRasterizerWork(layer)) {
+    return true;
+  }
+  return std::dynamic_pointer_cast<ArtifactImageLayer>(layer) != nullptr ||
+         std::dynamic_pointer_cast<ArtifactVideoLayer>(layer) != nullptr ||
+         std::dynamic_pointer_cast<ArtifactTextLayer>(layer) != nullptr;
 }
 
 ArtifactCompositionPtr
@@ -255,19 +286,20 @@ void drawLayerForCompositionView(const ArtifactAbstractLayerPtr &layer,
   if (const auto videoLayer =
           std::dynamic_pointer_cast<ArtifactVideoLayer>(layer)) {
     const QImage frame = videoLayer->currentFrameToQImage();
-    const bool loaded = videoLayer->isLoaded();
-    const int64_t cf = layer->currentFrame();
-    const FramePosition ip = layer->inPoint();
-    const FramePosition op = layer->outPoint();
-    const bool active = layer->isActiveAt(FramePosition(static_cast<int>(cf)));
-    const QString dbg = QString("[Video] loaded=%1 frame.isNull=%2 size=%3x%4 active=%5 range=[%6,%7] curFrame=%8")
-      .arg(loaded)
-      .arg(frame.isNull())
-      .arg(frame.isNull() ? 0 : frame.width())
-      .arg(frame.isNull() ? 0 : frame.height())
-      .arg(active)
-      .arg(ip.framePosition()).arg(op.framePosition()).arg(cf);
-    if (videoDebugOut) *videoDebugOut = dbg;
+    // デバッグ文字列生成は デバッグカテゴリ有効時のみ実行（毎フレームのコスト削減）
+    if (videoDebugOut) {
+      const bool loaded = videoLayer->isLoaded();
+      const int64_t cf = layer->currentFrame();
+      const FramePosition ip = layer->inPoint();
+      const FramePosition op = layer->outPoint();
+      const bool active = layer->isActiveAt(FramePosition(static_cast<int>(cf)));
+      *videoDebugOut = QString("[Video] loaded=%1 frame.isNull=%2 size=%3x%4 active=%5 range=[%6,%7] curFrame=%8")
+        .arg(loaded).arg(frame.isNull())
+        .arg(frame.isNull() ? 0 : frame.width())
+        .arg(frame.isNull() ? 0 : frame.height())
+        .arg(active)
+        .arg(ip.framePosition()).arg(op.framePosition()).arg(cf);
+    }
     if (!frame.isNull()) {
       applySurfaceAndDraw(frame, localRect);
       return;
@@ -321,6 +353,9 @@ public:
   bool showSafeMargins_ = false;
   bool showFrameInfo_ = true;
   int currentFrameForOverlay_ = 0;
+  quint64 renderFrameCounter_ = 0;
+  int lastPipelineStateMask_ = -1;
+  QSize lastDispatchWarningSize_;
 
   // Guide positions (composition-space pixels)
   QVector<float> guideVerticals_;   // X positions
@@ -512,9 +547,19 @@ void CompositionRenderController::initialize(QWidget *hostWidget) {
       impl_->gpuContext_ = std::make_unique<ArtifactCore::GpuContext>(device, ctx);
       impl_->blendPipeline_ = std::make_unique<ArtifactCore::LayerBlendPipeline>(*impl_->gpuContext_);
       impl_->blendPipelineReady_ = impl_->blendPipeline_->initialize();
-      qCDebug(compositionViewLog) << "[CompositionView] blend pipeline"
-               << (impl_->blendPipelineReady_ ? "initialized" : "FAILED");
+      // [Fix D] qCDebug → qDebug/qWarning に升格（カテゴリ有効化不要）
+      if (impl_->blendPipelineReady_) {
+        qDebug() << "[CompositionView] LayerBlendPipeline initialized OK."
+                 << "executors ready for GPU blend path.";
+      } else {
+        qWarning() << "[CompositionView] LayerBlendPipeline FAILED to initialize."
+                   << "Will fall back to CPU compositing path.";
+      }
+    } else {
+      qWarning() << "[CompositionView] immediateContext() is null - blend pipeline skipped.";
     }
+  } else {
+    qWarning() << "[CompositionView] device() is null - blend pipeline skipped.";
   }
 
   impl_->initialized_ = true;
@@ -1106,6 +1151,16 @@ void CompositionRenderController::Impl::renderOneFrameImpl(CompositionRenderCont
     return;
   }
 
+  QElapsedTimer frameTimer;
+  frameTimer.start();
+  qint64 phaseNs = 0;
+  auto markPhaseMs = [&frameTimer, &phaseNs]() -> qint64 {
+    const qint64 nowNs = frameTimer.nsecsElapsed();
+    const qint64 phaseMs = (nowNs - phaseNs) / 1000000;
+    phaseNs = nowNs;
+    return phaseMs;
+  };
+
   auto comp = previewPipeline_.composition();
   if (auto *service = ArtifactProjectService::instance()) {
     const auto preferred = resolvePreferredComposition(service);
@@ -1126,10 +1181,11 @@ void CompositionRenderController::Impl::renderOneFrameImpl(CompositionRenderCont
   }
 
   auto size = comp->settings().compositionSize();
-  const float cw = static_cast<float>(size.width() > 0 ? size.width() : 1920);
+  const float cw = static_cast<float>(size.width()  > 0 ? size.width()  : 1920);
   const float ch = static_cast<float>(size.height() > 0 ? size.height() : 1080);
   lastCanvasWidth_ = cw;
   lastCanvasHeight_ = ch;
+
   if (compositionRenderer_) {
     compositionRenderer_->SetCompositionSize(cw, ch);
     compositionRenderer_->ApplyCompositionSpace();
@@ -1159,131 +1215,169 @@ void CompositionRenderController::Impl::renderOneFrameImpl(CompositionRenderCont
       (framePos < 0 || (effectiveEndFrame > 0 && framePos >= effectiveEndFrame));
 
   const bool pipelineEnabled = renderPipeline_.ready() && blendPipelineReady_;
-  static bool lastPipelineLog = false;
-  if (pipelineEnabled != lastPipelineLog) {
-      qDebug() << "[CompositionView] RenderPipeline enabled:" << pipelineEnabled 
-               << " (PipelineReady:" << renderPipeline_.ready() 
-               << " BlendReady:" << blendPipelineReady_ << ")";
-      lastPipelineLog = pipelineEnabled;
+  const int pipelineStateMask =
+      (renderPipeline_.ready() ? 0x1 : 0x0) |
+      (blendPipelineReady_ ? 0x2 : 0x0);
+  if (pipelineStateMask != lastPipelineStateMask_) {
+    lastPipelineStateMask_ = pipelineStateMask;
+    if (!pipelineEnabled) {
+      qWarning() << "[CompositionView] GPU blend path disabled"
+                 << "renderPipelineReady=" << renderPipeline_.ready()
+                 << "blendPipelineReady=" << blendPipelineReady_
+                 << "size=" << QSize(static_cast<int>(cw), static_cast<int>(ch));
+    } else {
+      qDebug() << "[CompositionView] GPU blend path enabled"
+               << "size=" << QSize(static_cast<int>(cw), static_cast<int>(ch));
+    }
+  }
+  if (pipelineEnabled) {
+    const QSize pipelineSize(static_cast<int>(renderPipeline_.width()),
+                             static_cast<int>(renderPipeline_.height()));
+    if (((pipelineSize.width() & 7) != 0 || (pipelineSize.height() & 7) != 0) &&
+        pipelineSize != lastDispatchWarningSize_) {
+      lastDispatchWarningSize_ = pipelineSize;
+      qWarning() << "[CompositionView] GPU blend path uses non-8-aligned render size;"
+                 << "current compute shaders have no explicit bounds guard."
+                 << "pipelineSize=" << pipelineSize;
+    }
   }
 
-  if (!frameOutOfRange) {    // 3D Camera Setup: Find active camera layer
-    std::shared_ptr<ArtifactCameraLayer> activeCamera = nullptr;
-    for (const auto& layer : layers) {
-        if (auto cam = std::dynamic_pointer_cast<ArtifactCameraLayer>(layer)) {
-            if (cam->isVisible() && cam->isActiveAt(currentFrame)) {
-                activeCamera = cam;
-                break;
-            }
-        }
-    }
+  int drawnLayerCount = 0;
+  int surfaceUploadLayerCount = 0;
+  int cpuRasterLayerCount = 0;
+  qint64 setupMs = markPhaseMs();
+  qint64 basePassMs = 0;
+  qint64 layerPassMs = 0;
+  qint64 overlayMs = 0;
+  qint64 flushMs = 0;
+  qint64 presentMs = 0;
 
-    if (activeCamera) {
-        const float aspect = (ch > 0.001f) ? (cw / ch) : 1.0f;
-        renderer_->setViewMatrix(activeCamera->viewMatrix());
-        renderer_->setProjectionMatrix(activeCamera->projectionMatrix(aspect));
-        renderer_->setUseExternalMatrices(true);
+  // hasSoloLayer: solo レイヤーの存在確認
+  const bool hasSoloLayer =
+      std::any_of(layers.begin(), layers.end(),
+                  [](const ArtifactAbstractLayerPtr& l) {
+                    return l && l->isVisible() && l->isSolo();
+                  });
+
+  // ============================================================
+  // GPU パイプライン: レイヤー 0 枚でも frameOutOfRange でも常に描画
+  // ============================================================
+  if (pipelineEnabled) {
+    auto ctx      = renderer_->immediateContext();
+    auto accumRTV = renderPipeline_.accumRTV();
+    auto accumSRV = renderPipeline_.accumSRV();
+    auto tempUAV  = renderPipeline_.tempUAV();
+    auto layerRTV = renderPipeline_.layerRTV();
+    auto layerSRV = renderPipeline_.layerSRV();
+
+    // -- 1: accum をクリアして背景描画 --
+    // setOverrideRTV → clear() の順序で SetRenderTargets+ClearRenderTarget を行う。
+    // clear() は内部で SetRenderTargets を呼びから ClearRenderTarget するので Warning も出ない。
+    renderer_->setOverrideRTV(accumRTV);
+    renderer_->setClearColor(FloatColor{0.0f, 0.0f, 0.0f, 0.0f});
+    renderer_->clear();
+    const FloatColor bgColor = comp->backgroundColor();
+    if (showCheckerboard_) {
+      renderer_->drawCheckerboard(0.0f, 0.0f, cw, ch, 16.0f,
+                                       {0.25f, 0.25f, 0.25f, 1.0f},
+                                       {0.35f, 0.35f, 0.35f, 1.0f});
+    } else if (compositionRenderer_) {
+      compositionRenderer_->DrawCompositionBackground(bgColor);
     } else {
-        renderer_->setUseExternalMatrices(false);
+      renderer_->drawRectLocal(0.0f, 0.0f, cw, ch, bgColor, 1.0f);
     }
-
-    // Ray Tracing Shadow Pass
-    if (auto* rtMgr = renderer_->rayTracingManager()) {
-        if (rtMgr->isSupported()) {
-            bool hasShadowLights = false;
-            for (const auto& layer : layers) {
-                if (auto light = std::dynamic_pointer_cast<ArtifactLightLayer>(layer)) {
-                    if (light->isVisible() && light->isActiveAt(currentFrame) && light->castsShadows()) {
-                        hasShadowLights = true;
-                        break;
-                    }
-                }
-            }
-            if (hasShadowLights) {
-                rtMgr->buildTLAS(renderer_->immediateContext());
-            }
-        }
+    if (showGrid_) {
+      renderer_->drawGrid(0, 0, cw, ch, 100.0f, 1.0f, {0.3f, 0.3f, 0.3f, 0.5f});
     }
+    renderer_->setOverrideRTV(nullptr);
+    basePassMs = markPhaseMs();
 
-    qCDebug(compositionViewLog) << "[CompositionView] layers total=" << layers.size()
-             << "currentFrame=" << currentFrame.framePosition();
-    const bool hasSoloLayer =
-        std::any_of(layers.begin(), layers.end(),
-                    [](const ArtifactAbstractLayerPtr &layer) {
-                      return layer && layer->isVisible() && layer->isSolo();
-                    });
-
-    if (pipelineEnabled) {
-      auto ctx = renderer_->immediateContext();
-      auto accumRTV = renderPipeline_.accumRTV();
-      auto accumSRV = renderPipeline_.accumSRV();
-      auto tempUAV  = renderPipeline_.tempUAV();
-      auto layerRTV = renderPipeline_.layerRTV();
-      auto layerSRV = renderPipeline_.layerSRV();
-
-      const float clearZero[] = {0.0f, 0.0f, 0.0f, 0.0f};
-      ctx->ClearRenderTarget(accumRTV, clearZero, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
-
-      // Draw Background into Accum
-      renderer_->setOverrideRTV(accumRTV);
-      const FloatColor bgColor = comp->backgroundColor();
-      if (showCheckerboard_) {
-        renderer_->drawCheckerboard(0.0f, 0.0f, cw, ch, 16.0f,
-                                           {0.25f, 0.25f, 0.25f, 1.0f},
-                                           {0.35f, 0.35f, 0.35f, 1.0f});
-      } else if (compositionRenderer_) {
-        compositionRenderer_->DrawCompositionBackground(bgColor);
-      } else {
-        renderer_->drawRectLocal(0.0f, 0.0f, cw, ch, bgColor, 1.0f);
-      }
-      if (showGrid_) {
-        renderer_->drawGrid(0, 0, cw, ch, 100.0f, 1.0f, {0.3f, 0.3f, 0.3f, 0.5f});
-      }
-      renderer_->setOverrideRTV(nullptr);
-
-      for (const auto &layer : layers) {
+    // -- 2: レイヤーブレンド（frameOutOfRange ならスキップ）--
+    if (!frameOutOfRange) {
+      for (const auto& layer : layers) {
         if (!layer || !layer->isVisible()) continue;
         if (hasSoloLayer && !layer->isSolo()) continue;
         if (!layer->isActiveAt(currentFrame)) continue;
 
+        ++drawnLayerCount;
+        if (layerUsesSurfaceUploadForCompositionView(layer)) {
+          ++surfaceUploadLayerCount;
+        }
+        if (layerHasCpuRasterizerWork(layer)) {
+          ++cpuRasterLayerCount;
+        }
+
         layer->goToFrame(currentFrame.framePosition());
-        const auto blendMode = ArtifactCore::toBlendMode(layer->layerBlendType());
-        const float opacity = layer->opacity();
+        const auto  blendMode = ArtifactCore::toBlendMode(layer->layerBlendType());
+        const float opacity   = layer->opacity();
+        // opacity = 0 は accum に影響しないので continue で安全
         if (opacity <= 0.0f) continue;
 
-        ctx->ClearRenderTarget(layerRTV, clearZero, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+        // setOverrideRTV → clear() → draw の順序で layerRTV に描画
         renderer_->setOverrideRTV(layerRTV);
-        drawLayerForCompositionView(layer, renderer_.get(), 1.0f, &lastVideoDebug_);
+        renderer_->setClearColor(FloatColor{0.0f, 0.0f, 0.0f, 0.0f});
+        renderer_->clear();
+        // GPU ブレンド時はレイヤーテクスチャを 1.0f(不透明)で書く。opacity は blend() 側で適用。
+        QString* dbgOut = QLoggingCategory::defaultCategory()->isDebugEnabled()
+                          ? &lastVideoDebug_ : nullptr;
+        drawLayerForCompositionView(layer, renderer_.get(), 1.0f, dbgOut);
         renderer_->setOverrideRTV(nullptr);
 
-        blendPipeline_->blend(ctx, layerSRV, accumSRV, tempUAV, blendMode, opacity);
+        const bool blendOk = blendPipeline_->blend(ctx, layerSRV, accumSRV, tempUAV, blendMode, opacity);
+        if (!blendOk) {
+          qWarning() << "[CompositionView] blend() failed for layer" << layer->id().toString()
+                     << "mode=" << static_cast<int>(blendMode)
+                     << "opacity=" << opacity;
+          // blend 失敗時は swap しない: accum が壊れるのを防ぐ
+          continue;
+        }
         renderPipeline_.swapAccumAndTemp();
-        accumSRV = renderPipeline_.accumSRV();
+        accumSRV = renderPipeline_.accumSRV();  // swap 後は必ず再取得
         tempUAV  = renderPipeline_.tempUAV();
       }
-      renderer_->drawSprite(0, 0, cw, ch, renderPipeline_.accumSRV());
-    } else {
-      // Fallback path
-      const FloatColor bgColor = comp->backgroundColor();
-      if (showCheckerboard_) {
-        renderer_->drawCheckerboard(0.0f, 0.0f, cw, ch, 16.0f, {0.25f, 0.25f, 0.25f, 1.0f}, {0.35f, 0.35f, 0.35f, 1.0f});
-      } else if (compositionRenderer_) {
-        compositionRenderer_->DrawCompositionBackground(bgColor);
-      } else {
-        renderer_->drawRectLocal(0.0f, 0.0f, cw, ch, bgColor, 1.0f);
-      }
-      if (showGrid_) {
-        renderer_->drawGrid(0, 0, cw, ch, 100.0f, 1.0f, {0.3f, 0.3f, 0.3f, 0.5f});
-      }
+    }
 
-      for (const auto &layer : layers) {
+    // -- 3: 最終結果を画面に表示 ---
+    renderer_->drawSprite(0, 0, cw, ch, renderPipeline_.accumSRV());
+    layerPassMs = markPhaseMs();
+
+  } else {
+    // === Fallback path (GPU パイプラインなし) ===
+    const FloatColor bgColor = comp->backgroundColor();
+    if (showCheckerboard_) {
+      renderer_->drawCheckerboard(0.0f, 0.0f, cw, ch, 16.0f,
+                                       {0.25f, 0.25f, 0.25f, 1.0f},
+                                       {0.35f, 0.35f, 0.35f, 1.0f});
+    } else if (compositionRenderer_) {
+      compositionRenderer_->DrawCompositionBackground(bgColor);
+    } else {
+      renderer_->drawRectLocal(0.0f, 0.0f, cw, ch, bgColor, 1.0f);
+    }
+    if (showGrid_) {
+      renderer_->drawGrid(0, 0, cw, ch, 100.0f, 1.0f, {0.3f, 0.3f, 0.3f, 0.5f});
+    }
+    basePassMs = markPhaseMs();
+
+    if (!frameOutOfRange) {
+      for (const auto& layer : layers) {
         if (!layer || !layer->isVisible()) continue;
         if (hasSoloLayer && !layer->isSolo()) continue;
         if (!layer->isActiveAt(currentFrame)) continue;
+        ++drawnLayerCount;
+        if (layerUsesSurfaceUploadForCompositionView(layer)) {
+          ++surfaceUploadLayerCount;
+        }
+        if (layerHasCpuRasterizerWork(layer)) {
+          ++cpuRasterLayerCount;
+        }
         layer->goToFrame(currentFrame.framePosition());
-        drawLayerForCompositionView(layer, renderer_.get(), -1.0f, &lastVideoDebug_);
+        const float opacity = layer->opacity();
+        QString* dbgOut = QLoggingCategory::defaultCategory()->isDebugEnabled()
+                          ? &lastVideoDebug_ : nullptr;
+        drawLayerForCompositionView(layer, renderer_.get(), opacity, dbgOut);
       }
     }
+    layerPassMs = markPhaseMs();
   }
 
   if (gizmo_) {
@@ -1411,8 +1505,10 @@ void CompositionRenderController::Impl::renderOneFrameImpl(CompositionRenderCont
       renderer_->drawSolidLine({0, ch * 0.5f}, {cw, ch * 0.5f}, guideColor, 1.0f);
     }
   }
+  overlayMs = markPhaseMs();
 
   renderer_->flush();
+  flushMs = markPhaseMs();
 
   if (!lastVideoDebug_.isEmpty() && lastVideoDebug_ != lastEmittedVideoDebug_) {
     lastEmittedVideoDebug_ = lastVideoDebug_;
@@ -1420,6 +1516,50 @@ void CompositionRenderController::Impl::renderOneFrameImpl(CompositionRenderCont
   }
 
   renderer_->present();
+  presentMs = markPhaseMs();
+
+  ++renderFrameCounter_;
+  const qint64 frameMs = frameTimer.elapsed();
+  if (frameMs >= 16) {
+    qInfo() << "[CompositionView][Perf]"
+            << "frameMs=" << frameMs
+            << "pipelineEnabled=" << pipelineEnabled
+            << "layersTotal=" << layers.size()
+            << "layersDrawn=" << drawnLayerCount
+            << "surfaceUploadLayers=" << surfaceUploadLayerCount
+            << "cpuRasterLayers=" << cpuRasterLayerCount
+            << "frameOutOfRange=" << frameOutOfRange
+            << "previewDownsample=" << previewDownsample_
+            << "compSize=" << QSize(static_cast<int>(cw), static_cast<int>(ch))
+            << "pipelineSize=" << QSize(static_cast<int>(renderPipeline_.width()),
+                                        static_cast<int>(renderPipeline_.height()))
+            << "hostSize=" << QSize(static_cast<int>(hostWidth_),
+                                    static_cast<int>(hostHeight_))
+            << "setupMs=" << setupMs
+            << "basePassMs=" << basePassMs
+            << "layerPassMs=" << layerPassMs
+            << "overlayMs=" << overlayMs
+            << "flushMs=" << flushMs
+            << "presentMs=" << presentMs;
+  } else if (compositionViewLog().isDebugEnabled() &&
+             (renderFrameCounter_ % 120u) == 0u) {
+    qCDebug(compositionViewLog) << "[CompositionView][Perf]"
+                                << "frameMs=" << frameMs
+                                << "pipelineEnabled=" << pipelineEnabled
+                                << "layersTotal=" << layers.size()
+                                << "layersDrawn=" << drawnLayerCount
+                                << "surfaceUploadLayers=" << surfaceUploadLayerCount
+                                << "cpuRasterLayers=" << cpuRasterLayerCount
+                                << "previewDownsample=" << previewDownsample_
+                                << "pipelineSize=" << QSize(static_cast<int>(renderPipeline_.width()),
+                                                            static_cast<int>(renderPipeline_.height()))
+                                << "setupMs=" << setupMs
+                                << "basePassMs=" << basePassMs
+                                << "layerPassMs=" << layerPassMs
+                                << "overlayMs=" << overlayMs
+                                << "flushMs=" << flushMs
+                                << "presentMs=" << presentMs;
+  }
 }
 
 } // namespace Artifact
