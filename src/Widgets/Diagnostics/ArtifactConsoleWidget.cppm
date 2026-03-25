@@ -5,12 +5,17 @@ module;
 #include <QLineEdit>
 #include <QCheckBox>
 #include <QLabel>
+#include <QPlainTextEdit>
 #include <QDateTime>
 #include <QIcon>
 #include <QString>
 #include <QPainter>
 #include <QMenu>
 #include <QAction>
+#include <QSplitter>
+#include <QFileDialog>
+#include <QFile>
+#include <QTextStream>
 #include <QClipboard>
 #include <QApplication>
 #include <wobjectimpl.h>
@@ -41,20 +46,46 @@ W_OBJECT_IMPL(ArtifactConsoleWidget)
 
 class ArtifactConsoleWidget::Impl {
 public:
+    struct DisplayLogEntry {
+        LogLevel level;
+        QString message;
+        QString context;
+        QDateTime timestamp;
+        int count = 1;
+    };
+
     ArtifactConsoleWidget* owner_;
     
     QToolButton* clearBtn_ = nullptr;
     QCheckBox* clearOnPlayCheck_ = nullptr;
+    QToolButton* pauseBtn_ = nullptr;
+    QToolButton* autoScrollBtn_ = nullptr;
+    QToolButton* collapseBtn_ = nullptr;
+    QToolButton* importantOnlyBtn_ = nullptr;
+    QToolButton* copySelectedBtn_ = nullptr;
+    QToolButton* copyVisibleBtn_ = nullptr;
+    QToolButton* saveVisibleBtn_ = nullptr;
     QLineEdit* searchEdit_ = nullptr;
     QToolButton* infoFilterBtn_ = nullptr;
     QToolButton* warningFilterBtn_ = nullptr;
     QToolButton* errorFilterBtn_ = nullptr;
     QListWidget* logList_ = nullptr;
+    QPlainTextEdit* detailView_ = nullptr;
+    QLabel* statusLabel_ = nullptr;
 
     bool showInfo_ = true;
     bool showWarning_ = true;
     bool showError_ = true;
+    bool paused_ = false;
+    bool autoScroll_ = true;
+    bool collapse_ = true;
+    bool importantOnly_ = false;
     QString searchFilter_;
+    int pendingWhilePaused_ = 0;
+    int totalInfoCount_ = 0;
+    int totalWarningCount_ = 0;
+    int totalErrorCount_ = 0;
+    std::vector<DisplayLogEntry> displayEntries_;
 
     Impl(ArtifactConsoleWidget* owner) : owner_(owner) {}
 
@@ -75,6 +106,28 @@ public:
         clearOnPlayCheck_->setStyleSheet("color: #bbbbbb; font-size: 11px;");
         toolbarLayout->addWidget(clearOnPlayCheck_);
 
+        pauseBtn_ = createToolButton("MaterialVS/colored/E3E3E3/pause.svg", "Pause incoming logs");
+        pauseBtn_->setCheckable(true);
+        pauseBtn_->setText(QStringLiteral("Pause"));
+        toolbarLayout->addWidget(pauseBtn_);
+
+        autoScrollBtn_ = createToolButton("MaterialVS/colored/E3E3E3/down.svg", "Auto scroll");
+        autoScrollBtn_->setCheckable(true);
+        autoScrollBtn_->setChecked(true);
+        autoScrollBtn_->setText(QStringLiteral("Follow"));
+        toolbarLayout->addWidget(autoScrollBtn_);
+
+        collapseBtn_ = createToolButton("MaterialVS/colored/E3E3E3/list.svg", "Collapse duplicate logs");
+        collapseBtn_->setCheckable(true);
+        collapseBtn_->setChecked(true);
+        collapseBtn_->setText(QStringLiteral("Collapse"));
+        toolbarLayout->addWidget(collapseBtn_);
+
+        importantOnlyBtn_ = createToolButton("MaterialVS/colored/E3E3E3/filter.svg", "Show warnings and errors only");
+        importantOnlyBtn_->setCheckable(true);
+        importantOnlyBtn_->setText(QStringLiteral("Important"));
+        toolbarLayout->addWidget(importantOnlyBtn_);
+
         toolbarLayout->addSpacing(8);
         searchEdit_ = new QLineEdit();
         searchEdit_->setPlaceholderText("Search...");
@@ -91,6 +144,18 @@ public:
         toolbarLayout->addWidget(searchEdit_);
 
         toolbarLayout->addStretch();
+
+        copySelectedBtn_ = createToolButton("MaterialVS/colored/E3E3E3/copy.svg", "Copy selected log");
+        copySelectedBtn_->setText(QStringLiteral("Copy Selected"));
+        toolbarLayout->addWidget(copySelectedBtn_);
+
+        copyVisibleBtn_ = createToolButton("MaterialVS/colored/E3E3E3/copy.svg", "Copy visible logs");
+        copyVisibleBtn_->setText(QStringLiteral("Copy Visible"));
+        toolbarLayout->addWidget(copyVisibleBtn_);
+
+        saveVisibleBtn_ = createToolButton("MaterialVS/colored/E3E3E3/save.svg", "Save visible logs to file");
+        saveVisibleBtn_->setText(QStringLiteral("Save Visible"));
+        toolbarLayout->addWidget(saveVisibleBtn_);
 
         infoFilterBtn_ = createToolButton("MaterialVS/colored/E3E3E3/info.svg", "Toggle Information");
         infoFilterBtn_->setCheckable(true);
@@ -109,7 +174,12 @@ public:
 
         layout->addLayout(toolbarLayout);
 
-        // List
+        statusLabel_ = new QLabel(owner_);
+        statusLabel_->setStyleSheet("color: #9a9a9a; font-size: 11px; padding: 2px 8px;");
+        layout->addWidget(statusLabel_);
+
+        auto* splitter = new QSplitter(Qt::Vertical, owner_);
+
         logList_ = new QListWidget();
         logList_->setAlternatingRowColors(true);
         logList_->setStyleSheet(R"(
@@ -132,11 +202,54 @@ public:
                 color: white;
             }
         )");
-        layout->addWidget(logList_);
+        splitter->addWidget(logList_);
+
+        detailView_ = new QPlainTextEdit(owner_);
+        detailView_->setReadOnly(true);
+        detailView_->setMinimumHeight(110);
+        detailView_->setStyleSheet(R"(
+            QPlainTextEdit {
+                background-color: #171717;
+                color: #d8d8d8;
+                border: none;
+                border-top: 1px solid #2d2d2d;
+                font-family: Consolas, monospace;
+                font-size: 11px;
+                padding: 6px;
+            }
+        )");
+        splitter->addWidget(detailView_);
+        splitter->setStretchFactor(0, 4);
+        splitter->setStretchFactor(1, 1);
+        layout->addWidget(splitter);
 
         // Connect Buttons
         QObject::connect(clearBtn_, &QToolButton::clicked, owner_, [this]() {
             Logger::instance()->clearLogs();
+        });
+
+        QObject::connect(pauseBtn_, &QToolButton::toggled, owner_, [this](bool checked) {
+            paused_ = checked;
+            if (!paused_ && pendingWhilePaused_ > 0) {
+                refreshList();
+                pendingWhilePaused_ = 0;
+            }
+            updateStatus();
+        });
+
+        QObject::connect(autoScrollBtn_, &QToolButton::toggled, owner_, [this](bool checked) {
+            autoScroll_ = checked;
+            updateStatus();
+        });
+
+        QObject::connect(collapseBtn_, &QToolButton::toggled, owner_, [this](bool checked) {
+            collapse_ = checked;
+            refreshList();
+        });
+
+        QObject::connect(importantOnlyBtn_, &QToolButton::toggled, owner_, [this](bool checked) {
+            importantOnly_ = checked;
+            refreshList();
         });
 
         QObject::connect(searchEdit_, &QLineEdit::textChanged, owner_, [this](const QString& text) {
@@ -157,6 +270,22 @@ public:
             refreshList();
         });
 
+        QObject::connect(logList_, &QListWidget::currentItemChanged, owner_, [this](QListWidgetItem* current) {
+            showItemDetails(current);
+        });
+
+        QObject::connect(copySelectedBtn_, &QToolButton::clicked, owner_, [this]() {
+            copySelectedToClipboard();
+        });
+
+        QObject::connect(copyVisibleBtn_, &QToolButton::clicked, owner_, [this]() {
+            QApplication::clipboard()->setText(visibleLogText());
+        });
+
+        QObject::connect(saveVisibleBtn_, &QToolButton::clicked, owner_, [this]() {
+            saveVisibleLogsToFile();
+        });
+
         // Context menu
         logList_->setContextMenuPolicy(Qt::CustomContextMenu);
         QObject::connect(logList_, &QListWidget::customContextMenuRequested, owner_, [this](const QPoint& pos) {
@@ -164,21 +293,19 @@ public:
 
             QAction* copyAction = menu.addAction("Copy");
             copyAction->setEnabled(!logList_->selectedItems().isEmpty());
-            QObject::connect(copyAction, &QAction::triggered, owner_, [this]() {
-                QStringList lines;
-                for (auto* item : logList_->selectedItems()) {
-                    lines.append(item->text());
-                }
-                QApplication::clipboard()->setText(lines.join("\n"));
-            });
+            QObject::connect(copyAction, &QAction::triggered, owner_, [this]() { copySelectedToClipboard(); });
 
             QAction* copyAllAction = menu.addAction("Copy All");
             QObject::connect(copyAllAction, &QAction::triggered, owner_, [this]() {
-                QStringList lines;
-                for (int i = 0; i < logList_->count(); ++i) {
-                    lines.append(logList_->item(i)->text());
+                QApplication::clipboard()->setText(visibleLogText());
+            });
+
+            QAction* copyDetailsAction = menu.addAction("Copy Details");
+            copyDetailsAction->setEnabled(logList_->currentItem() != nullptr);
+            QObject::connect(copyDetailsAction, &QAction::triggered, owner_, [this]() {
+                if (detailView_) {
+                    QApplication::clipboard()->setText(detailView_->toPlainText());
                 }
-                QApplication::clipboard()->setText(lines.join("\n"));
             });
 
             menu.addSeparator();
@@ -188,16 +315,30 @@ public:
                 Logger::instance()->clearLogs();
             });
 
+            QAction* saveVisibleAction = menu.addAction("Save Visible...");
+            QObject::connect(saveVisibleAction, &QAction::triggered, owner_, [this]() {
+                saveVisibleLogsToFile();
+            });
+
             menu.exec(logList_->viewport()->mapToGlobal(pos));
         });
 
         // Initialize Logger Signal
         QObject::connect(Logger::instance(), &Logger::logAdded, owner_, [this](int level, const QString& msg, const QString& context, const QDateTime& ts) {
-            appendLogItem(static_cast<LogLevel>(level), msg, context, ts);
+            onLogAdded(static_cast<LogLevel>(level), msg, context, ts);
         });
 
         QObject::connect(Logger::instance(), &Logger::logsCleared, owner_, [this]() {
             logList_->clear();
+            displayEntries_.clear();
+            if (detailView_) {
+                detailView_->clear();
+            }
+            pendingWhilePaused_ = 0;
+            totalInfoCount_ = 0;
+            totalWarningCount_ = 0;
+            totalErrorCount_ = 0;
+            updateStatus();
         });
 
         // Playback Service for "Clear on Play"
@@ -236,12 +377,15 @@ public:
         btn->setIcon(loadIcon(iconPath));
         btn->setIconSize(QSize(18, 18));
         btn->setToolTip(tooltip);
-        btn->setFixedSize(28, 28);
+        btn->setMinimumHeight(28);
         return btn;
     }
 
     bool shouldShowLog(LogLevel level, const QString& message) const {
         if (!searchFilter_.isEmpty() && !message.contains(searchFilter_, Qt::CaseInsensitive)) {
+            return false;
+        }
+        if (importantOnly_ && !(level == LogLevel::Warning || level == LogLevel::Error || level == LogLevel::Fatal)) {
             return false;
         }
         if (level == LogLevel::Debug || level == LogLevel::Info) return showInfo_;
@@ -250,43 +394,245 @@ public:
         return true;
     }
 
-    void refreshList() {
-        logList_->clear();
-        auto logs = Logger::instance()->getLogs();
+    std::vector<DisplayLogEntry> buildDisplayEntries() const {
+        const auto logs = Logger::instance()->getLogs();
+        std::vector<DisplayLogEntry> entries;
+        entries.reserve(logs.size());
         for (const auto& log : logs) {
-            appendLogItem(log.level, log.message, log.context, log.timestamp);
+            if (!shouldShowLog(log.level, log.message)) {
+                continue;
+            }
+            if (collapse_ && !entries.empty()) {
+                auto& last = entries.back();
+                if (last.level == log.level &&
+                    last.message == log.message &&
+                    last.context == log.context) {
+                    ++last.count;
+                    last.timestamp = log.timestamp;
+                    continue;
+                }
+            }
+            entries.push_back(DisplayLogEntry{log.level, log.message, log.context, log.timestamp, 1});
+        }
+        return entries;
+    }
+
+    void recountTotalsFromLogger() {
+        totalInfoCount_ = 0;
+        totalWarningCount_ = 0;
+        totalErrorCount_ = 0;
+        const auto logs = Logger::instance()->getLogs();
+        for (const auto& log : logs) {
+            if (log.level == LogLevel::Warning) {
+                ++totalWarningCount_;
+            } else if (log.level == LogLevel::Error || log.level == LogLevel::Fatal) {
+                ++totalErrorCount_;
+            } else {
+                ++totalInfoCount_;
+            }
         }
     }
 
-    void appendLogItem(LogLevel level, const QString& message, const QString& context, const QDateTime& ts) {
-        if (!shouldShowLog(level, message)) return;
+    void refreshList() {
+        recountTotalsFromLogger();
+        displayEntries_ = buildDisplayEntries();
+        const auto previousText = logList_->currentItem()
+            ? logList_->currentItem()->data(Qt::UserRole + 5).toString()
+            : QString();
+        logList_->clear();
+        for (const auto& entry : displayEntries_) {
+            appendLogItem(entry);
+        }
+        if (!previousText.isEmpty()) {
+            for (int i = 0; i < logList_->count(); ++i) {
+                auto* item = logList_->item(i);
+                if (item && item->data(Qt::UserRole + 5).toString() == previousText) {
+                    logList_->setCurrentItem(item);
+                    break;
+                }
+            }
+        }
+        if (!logList_->currentItem()) {
+            showItemDetails(nullptr);
+        }
+        updateStatus();
+    }
 
-        QListWidgetItem* item = new QListWidgetItem();
-        
-        QIcon icon;
+    void onLogAdded(LogLevel level, const QString& message, const QString& context, const QDateTime& ts) {
         if (level == LogLevel::Warning) {
-            icon = loadIcon("MaterialVS/colored/FFD700/warning_active.svg");
+            ++totalWarningCount_;
         } else if (level == LogLevel::Error || level == LogLevel::Fatal) {
+            ++totalErrorCount_;
+        } else {
+            ++totalInfoCount_;
+        }
+        if (paused_) {
+            ++pendingWhilePaused_;
+            updateStatus();
+            return;
+        }
+        if (!shouldShowLog(level, message)) {
+            updateStatus();
+            return;
+        }
+        DisplayLogEntry entry{level, message, context, ts, 1};
+        if (collapse_ && !displayEntries_.empty()) {
+            auto& last = displayEntries_.back();
+            if (last.level == entry.level &&
+                last.message == entry.message &&
+                last.context == entry.context) {
+                ++last.count;
+                last.timestamp = entry.timestamp;
+                if (logList_ && logList_->count() > 0) {
+                    if (auto* item = logList_->item(logList_->count() - 1)) {
+                        updateListItem(item, last);
+                        if (logList_->currentItem() == item) {
+                            showItemDetails(item);
+                        }
+                    }
+                }
+                updateStatus();
+                return;
+            }
+        }
+        displayEntries_.push_back(entry);
+        appendLogItem(entry);
+        updateStatus();
+    }
+
+    void appendLogItem(const DisplayLogEntry& entry) {
+        QListWidgetItem* item = new QListWidgetItem();
+        updateListItem(item, entry);
+        logList_->addItem(item);
+        if (autoScroll_) {
+            logList_->scrollToBottom();
+        }
+    }
+
+    void updateListItem(QListWidgetItem* item, const DisplayLogEntry& entry) {
+        if (!item) {
+            return;
+        }
+        QIcon icon;
+        if (entry.level == LogLevel::Warning) {
+            icon = loadIcon("MaterialVS/colored/FFD700/warning_active.svg");
+        } else if (entry.level == LogLevel::Error || entry.level == LogLevel::Fatal) {
             icon = loadIcon("MaterialVS/colored/FF4B4B/error_active.svg");
         } else {
             icon = loadIcon("MaterialVS/colored/4EA0FF/info_active.svg");
         }
         item->setIcon(icon);
         
-        QString text = QString("[%1] %2").arg(ts.toString("hh:mm:ss"), message);
-        if (!context.isEmpty()) {
-            item->setToolTip(context);
-        }
+        const QString repeatSuffix = entry.count > 1 ? QStringLiteral("  (x%1)").arg(entry.count) : QString();
+        QString text = QString("[%1] %2%3").arg(entry.timestamp.toString("hh:mm:ss"), entry.message, repeatSuffix);
+        item->setToolTip(entry.context);
         item->setText(text);
+        item->setData(Qt::UserRole, static_cast<int>(entry.level));
+        item->setData(Qt::UserRole + 1, entry.message);
+        item->setData(Qt::UserRole + 2, entry.context);
+        item->setData(Qt::UserRole + 3, entry.timestamp);
+        item->setData(Qt::UserRole + 4, entry.count);
+        item->setData(Qt::UserRole + 5, buildFullText(entry));
         
-        if (level == LogLevel::Warning) {
+        if (entry.level == LogLevel::Warning) {
             item->setForeground(QBrush(QColor(255, 215, 0))); // Gold
-        } else if (level == LogLevel::Error || level == LogLevel::Fatal) {
+        } else if (entry.level == LogLevel::Error || entry.level == LogLevel::Fatal) {
             item->setForeground(QBrush(QColor(255, 75, 75))); // Red
+        } else {
+            item->setForeground(QBrush(QColor(224, 224, 224)));
         }
+    }
 
-        logList_->addItem(item);
-        logList_->scrollToBottom();
+    QString buildFullText(const DisplayLogEntry& entry) const {
+        QStringList lines;
+        lines << QStringLiteral("[%1] %2").arg(entry.timestamp.toString(Qt::ISODateWithMs), entry.message);
+        lines << QStringLiteral("Level: %1").arg(levelText(entry.level));
+        if (entry.count > 1) {
+            lines << QStringLiteral("Count: %1").arg(entry.count);
+        }
+        if (!entry.context.isEmpty()) {
+            lines << QStringLiteral("Context: %1").arg(entry.context);
+        }
+        return lines.join('\n');
+    }
+
+    QString levelText(LogLevel level) const {
+        switch (level) {
+        case LogLevel::Debug: return QStringLiteral("Debug");
+        case LogLevel::Info: return QStringLiteral("Info");
+        case LogLevel::Warning: return QStringLiteral("Warning");
+        case LogLevel::Error: return QStringLiteral("Error");
+        case LogLevel::Fatal: return QStringLiteral("Fatal");
+        }
+        return QStringLiteral("Unknown");
+    }
+
+    void showItemDetails(QListWidgetItem* item) {
+        if (!detailView_) {
+            return;
+        }
+        if (!item) {
+            detailView_->clear();
+            return;
+        }
+        detailView_->setPlainText(item->data(Qt::UserRole + 5).toString());
+    }
+
+    void updateStatus() {
+        if (!statusLabel_) {
+            return;
+        }
+        const int totalCount = totalInfoCount_ + totalWarningCount_ + totalErrorCount_;
+        statusLabel_->setText(
+            QStringLiteral("Shown %1 / Total %2   Info %3   Warning %4   Error %5%6%7")
+                .arg(static_cast<int>(displayEntries_.size()))
+                .arg(totalCount)
+                .arg(totalInfoCount_)
+                .arg(totalWarningCount_)
+                .arg(totalErrorCount_)
+                .arg(paused_ ? QStringLiteral("   Paused") : QString())
+                .arg(pendingWhilePaused_ > 0 ? QStringLiteral(" (+%1 queued)").arg(pendingWhilePaused_) : QString()));
+    }
+
+    QString visibleLogText() const {
+        QStringList lines;
+        if (!logList_) {
+            return {};
+        }
+        for (int i = 0; i < logList_->count(); ++i) {
+            if (auto* item = logList_->item(i)) {
+                lines.append(item->data(Qt::UserRole + 5).toString());
+            }
+        }
+        return lines.join(QStringLiteral("\n\n"));
+    }
+
+    void copySelectedToClipboard() const {
+        if (!logList_) {
+            return;
+        }
+        QStringList lines;
+        for (auto* item : logList_->selectedItems()) {
+            lines.append(item->data(Qt::UserRole + 5).toString());
+        }
+        QApplication::clipboard()->setText(lines.join(QStringLiteral("\n\n")));
+    }
+
+    void saveVisibleLogsToFile() const {
+        const QString path = QFileDialog::getSaveFileName(
+            owner_,
+            QStringLiteral("Save Console Logs"),
+            QStringLiteral("artifact_console_logs.txt"),
+            QStringLiteral("Text Files (*.txt);;Log Files (*.log);;All Files (*.*)"));
+        if (path.isEmpty()) {
+            return;
+        }
+        QFile file(path);
+        if (!file.open(QIODevice::WriteOnly | QIODevice::Text | QIODevice::Truncate)) {
+            return;
+        }
+        QTextStream stream(&file);
+        stream << visibleLogText();
     }
 };
 

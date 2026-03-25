@@ -16,6 +16,7 @@ export module Artifact.Render.IRenderer;
 
 import Color.Float;
 import Graphics.RayTracingManager;
+import Graphics.ParticleData;
 
 export namespace Artifact {
 using namespace ArtifactCore;
@@ -64,9 +65,11 @@ public:
  QImage readbackToImage() const;
 
  void setClearColor(const FloatColor& color);
+ FloatColor getClearColor() const;
  void setViewportSize(float w, float h);
  void setCanvasSize(float w, float h);
  void setPan(float x, float y);
+ void getPan(float& x, float& y) const;
  void setZoom(float zoom);
  float getZoom() const;
  void panBy(float dx, float dy);
@@ -87,6 +90,7 @@ public:
  void drawSolidRect(float x, float y, float w, float h, const FloatColor& color, float opacity = 1.0f);
  void drawSolidRect(Detail::float2 pos, Detail::float2 size, const FloatColor& color, float opacity = 1.0f);
  void drawPoint(float x, float y, float size, const FloatColor& color);
+ void drawParticles(const ArtifactCore::ParticleRenderData& data);
  void drawSprite(float x, float y, float w, float h);
  void drawSprite(Detail::float2 pos, Detail::float2 size);
  void drawSprite(float x, float y, float w, float h, Diligent::ITextureView* pSRV, float opacity = 1.0f);
@@ -110,7 +114,6 @@ public:
 
  void drawCheckerboard(float x, float y, float w, float h, float tileSize, const FloatColor& c1, const FloatColor& c2);
  void drawGrid(float x, float y, float w, float h, float spacing, float thickness, const FloatColor& color);
- void drawParticles();
  void setUpscaleConfig(bool enable, float sharpness);
 
  Diligent::RefCntAutoPtr<Diligent::IRenderDevice> device() const;

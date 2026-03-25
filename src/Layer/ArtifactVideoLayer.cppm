@@ -812,29 +812,52 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactVideoLayer::getLayerPropertyGro
     auto groups = ArtifactAbstractLayer::getLayerPropertyGroups();
     ArtifactCore::PropertyGroup videoGroup(QStringLiteral("Video"));
 
-    videoGroup.addProperty(ArtifactCore::Property(QStringLiteral("video.sourcePath"), sourcePath()));
+    auto makeProp = [this](const QString& name, ArtifactCore::PropertyType type,
+                           const QVariant& value, int priority = 0) {
+        return persistentLayerProperty(name, type, value, priority);
+    };
+
+    videoGroup.addProperty(makeProp(QStringLiteral("video.sourcePath"),
+                                    ArtifactCore::PropertyType::String, sourcePath(), -150));
     
-    videoGroup.addProperty(ArtifactCore::Property(QStringLiteral("video.playbackSpeed"), (float)playbackSpeed())
-        .setHardRange(0.1, 8.0)
-        .setSoftRange(0.25, 2.0)
-        .setStep(0.05)
-        .setUnit(QStringLiteral("x")));
+    auto speedProp = makeProp(QStringLiteral("video.playbackSpeed"),
+                              ArtifactCore::PropertyType::Float,
+                              static_cast<double>(playbackSpeed()), -140);
+    speedProp->setHardRange(0.1, 8.0);
+    speedProp->setSoftRange(0.25, 2.0);
+    speedProp->setStep(0.05);
+    speedProp->setUnit(QStringLiteral("x"));
+    videoGroup.addProperty(speedProp);
         
-    videoGroup.addProperty(ArtifactCore::Property(QStringLiteral("video.loopEnabled"), isLoopEnabled()));
+    videoGroup.addProperty(makeProp(QStringLiteral("video.loopEnabled"),
+                                    ArtifactCore::PropertyType::Boolean,
+                                    isLoopEnabled(), -130));
     
-    videoGroup.addProperty(ArtifactCore::Property(QStringLiteral("video.audioVolume"), (float)audioVolume())
-        .setHardRange(0.0, 1.0)
-        .setSoftRange(0.0, 1.0)
-        .setStep(0.01)
-        .setUnit(QStringLiteral("linear")));
+    auto volumeProp = makeProp(QStringLiteral("video.audioVolume"),
+                               ArtifactCore::PropertyType::Float,
+                               static_cast<double>(audioVolume()), -120);
+    volumeProp->setHardRange(0.0, 1.0);
+    volumeProp->setSoftRange(0.0, 1.0);
+    volumeProp->setStep(0.01);
+    volumeProp->setUnit(QStringLiteral("linear"));
+    videoGroup.addProperty(volumeProp);
         
-    videoGroup.addProperty(ArtifactCore::Property(QStringLiteral("video.audioMuted"), isAudioMuted()));
-    videoGroup.addProperty(ArtifactCore::Property(QStringLiteral("video.audioEnabled"), hasAudio()));
-    videoGroup.addProperty(ArtifactCore::Property(QStringLiteral("video.videoEnabled"), hasVideo()));
+    videoGroup.addProperty(makeProp(QStringLiteral("video.audioMuted"),
+                                    ArtifactCore::PropertyType::Boolean,
+                                    isAudioMuted(), -110));
+    videoGroup.addProperty(makeProp(QStringLiteral("video.audioEnabled"),
+                                    ArtifactCore::PropertyType::Boolean,
+                                    hasAudio(), -100));
+    videoGroup.addProperty(makeProp(QStringLiteral("video.videoEnabled"),
+                                    ArtifactCore::PropertyType::Boolean,
+                                    hasVideo(), -90));
     
-    videoGroup.addProperty(ArtifactCore::Property(QStringLiteral("video.proxyQuality"), (int)proxyQuality())
-        .setHardRange(0, 3)
-        .setTooltip(QStringLiteral("0=None, 1=Quarter, 2=Half, 3=Full")));
+    auto proxyProp = makeProp(QStringLiteral("video.proxyQuality"),
+                              ArtifactCore::PropertyType::Integer,
+                              static_cast<qint64>(proxyQuality()), -80);
+    proxyProp->setHardRange(0, 3);
+    proxyProp->setTooltip(QStringLiteral("0=None, 1=Quarter, 2=Half, 3=Full"));
+    videoGroup.addProperty(proxyProp);
 
     groups.push_back(videoGroup);
     return groups;

@@ -993,7 +993,12 @@ void ArtifactInspectorWidget::Impl::handleRemoveEffectClicked(int rackIndex)
   delete impl_;
  }
 
- void ArtifactInspectorWidget::triggerUpdate()
+ QSize ArtifactInspectorWidget::sizeHint() const
+ {
+  return QSize(300, 600);
+ }
+
+ void ArtifactInspectorWidget::clear()
  {
   update();
  }

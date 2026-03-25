@@ -32,6 +32,7 @@ export namespace Artifact {
   void resizeEvent(QResizeEvent* event) override;
   void paintEvent(QPaintEvent* event) override;
   void showEvent(QShowEvent* event) override;
+  void hideEvent(QHideEvent* event) override;
   void closeEvent(QCloseEvent* event) override;
 
   void focusInEvent(QFocusEvent* event) override;

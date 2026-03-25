@@ -151,7 +151,7 @@ bool applyTimelineLayerRangeEdit(const CompositionID &compositionId,
   const int64_t oldStartTime = layer->startTime().framePosition();
   const int64_t oldDuration = std::max<int64_t>(1, oldOutPoint - oldInPoint);
   
-  const int64_t inPoint = std::max<int64_t>(0, static_cast<int64_t>(std::llround(startFrame)));
+  const int64_t inPoint = static_cast<int64_t>(std::llround(startFrame));
   const int64_t outPoint = preserveExistingDuration
       ? std::max<int64_t>(inPoint + 1, inPoint + oldDuration)
       : std::max<int64_t>(inPoint + 1,
@@ -183,7 +183,7 @@ bool applyTimelineLayerRangeEdit(const CompositionID &compositionId,
   // At the new inPoint, we want the source to play from `oldStartTime + 10`.
   // So `newStartTime = oldStartTime + (newInPoint - oldInPoint)`.
   if (!preserveExistingDuration && inPoint != oldInPoint) {
-      layer->setStartTime(FramePosition(std::max<int64_t>(0, oldStartTime + (inPoint - oldInPoint))));
+      layer->setStartTime(FramePosition(oldStartTime + (inPoint - oldInPoint)));
   }
   
   svc->projectChanged();
@@ -1595,7 +1595,9 @@ void ArtifactTimelineWidget::refreshTracks() {
     if (!comp)
       return;
 
-    for (auto &layer : comp->allLayer()) {
+    auto layers = comp->allLayer();
+    std::reverse(layers.begin(), layers.end());
+    for (auto &layer : layers) {
       if (!layer)
         continue;
       if (impl_->shyActive_ && layer->isShy())

@@ -26,6 +26,7 @@ import Artifact.Effect.Abstract;
 import Artifact.Mask.LayerMask;
 import Frame.Position;
 import Audio.Segment;
+export import Property.Abstract;
 export import Property.Group;
 
 import Artifact.Render.IRenderer;
@@ -43,13 +44,14 @@ enum class LayerType {
   Adjustment, // 調整レイヤー
   Text,       // テキストレイヤー
   Shape,      // シェイプレイヤー
-  Precomp,    // プリコンポジション
-  Audio,      // 音声レイヤー
-  Video,      // 映像・音声フッテージ
-  Camera,
-  Light,
-  Group,
-  Folder
+  Precomp = 8,    // プリコンポジション
+  Audio = 9,      // 音声レイヤー
+  Video = 10,     // 映像・音声フッテージ
+  Camera = 11,
+  Light = 12,
+  Group = 13,
+  Folder = 14,
+  Particle = 15   // パーティクルレイヤー
 };
 
 enum class LayerDirtyFlag : uint32_t {
@@ -86,12 +88,17 @@ private:
 
 protected:
   void setSourceSize(const Size_2D &size);
+  std::shared_ptr<ArtifactCore::AbstractProperty>
+  persistentLayerProperty(const QString &propertyPath,
+                          ArtifactCore::PropertyType type,
+                          const QVariant &value,
+                          int priority = 0) const;
 
 public:
   ArtifactAbstractLayer();
   virtual ~ArtifactAbstractLayer();
 
-  QJsonObject toJson() const;
+  virtual QJsonObject toJson() const;
   static ArtifactAbstractLayerPtr fromJson(const QJsonObject &obj);
 
   void Show();
@@ -152,7 +159,7 @@ public:
   virtual void goToFrame(int64_t frameNumber = 0);
   int64_t currentFrame() const;
   void applyPropertiesFromJson(const QJsonObject &obj);
-  void fromJsonProperties(const QJsonObject &obj);
+  virtual void fromJsonProperties(const QJsonObject &obj);
   /*Timeline*/
 
   void setParentById(const LayerID &id);
@@ -224,11 +231,11 @@ public:
   int effectCount() const;
   /*Effects*/
 
-  /*Generic Properties*/
   virtual std::vector<ArtifactCore::PropertyGroup>
   getLayerPropertyGroups() const;
   virtual bool setLayerPropertyValue(const QString &propertyPath,
                                      const QVariant &value);
+  std::shared_ptr<ArtifactCore::AbstractProperty> getProperty(const QString &name) const;
   /*Generic Properties*/
 
   /*Masks*/

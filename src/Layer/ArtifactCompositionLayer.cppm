@@ -75,11 +75,9 @@ namespace Artifact {
   auto groups = ArtifactAbstractLayer::getLayerPropertyGroups();
   ArtifactCore::PropertyGroup compGroup(QStringLiteral("Composition"));
 
-  auto idProp = std::make_shared<ArtifactCore::AbstractProperty>();
-  idProp->setName(QStringLiteral("composition.sourceId"));
-  idProp->setType(ArtifactCore::PropertyType::String);
-  idProp->setValue(sourceCompositionId().toString());
-  idProp->setDisplayPriority(-120);
+  auto idProp = persistentLayerProperty(QStringLiteral("composition.sourceId"),
+                                        ArtifactCore::PropertyType::String,
+                                        sourceCompositionId().toString(), -120);
   compGroup.addProperty(idProp);
 
   groups.push_back(compGroup);

@@ -10,10 +10,13 @@ import Utils.String.UniString;
 import Artifact.Layer.Result;
 import Artifact.Layer.Null;
 import Artifact.Layer.Image;
+import Artifact.Layer.Svg;
+import Artifact.Layer.Particle;
 import Artifact.Layer.Shape;
 import Artifact.Layers.SolidImage;
 import Artifact.Layer.AdjustableLayer;
 import Artifact.Layer.Video;
+import Artifact.Layer.Audio;
 import Artifact.Layer.Camera;
 import Artifact.Layer.Text;
 //import Artifact.Layer.Video;
@@ -87,10 +90,29 @@ namespace Artifact {
   case LayerType::Text:
    ptr = std::make_shared<ArtifactTextLayer>();
    break;
+  case LayerType::Shape: {
+   auto svgLayer = std::make_shared<ArtifactSvgLayer>();
+   if (auto* svgParams = dynamic_cast<ArtifactSvgInitParams*>(&params)) {
+    const QString path = svgParams->svgPath();
+    if (!path.isEmpty()) {
+     svgLayer->loadFromPath(path);
+    }
+   }
+   ptr = svgLayer;
+   break;
+  }
+  case LayerType::Particle:
+   ptr = createParticleLayer(QStringLiteral("fire"));
+   break;
   case LayerType::Audio: {
-   auto videoLayer = std::make_shared<ArtifactVideoLayer>();
-   videoLayer->setHasVideo(false);
-   ptr = videoLayer;
+   auto audioLayer = std::make_shared<ArtifactAudioLayer>();
+   if (auto* audioParams = dynamic_cast<ArtifactAudioInitParams*>(&params)) {
+    const QString path = audioParams->audioPath();
+    if (!path.isEmpty()) {
+     audioLayer->loadFromPath(path);
+    }
+   }
+   ptr = audioLayer;
    break;
   }
   case LayerType::Video:
@@ -99,8 +121,7 @@ namespace Artifact {
   case LayerType::Precomp:
    //ptr = std::make_shared<ArtifactCompositionLayer>();
   case LayerType::Camera:
-   //ptr = std::make_shared<ArtifactCameraLayer>();
-   break;
+   ptr = std::make_shared<ArtifactCameraLayer>();
    break;
   default:
    break;

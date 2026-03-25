@@ -1,4 +1,5 @@
 module;
+#include <DeviceContext.h>
 #define NOMINMAX
 #define QT_NO_KEYWORDS
 #include <opencv2/opencv.hpp>
@@ -10,8 +11,10 @@ module;
 #include <QLoggingCategory>
 #include <QTransform>
 #include <QRectF>
+#include <QPointer>
 #include <QTimer>
 #include <QVector>
+#include <QByteArray>
 #include <algorithm>
 #include <cmath>
 #include <memory>
@@ -29,6 +32,7 @@ import Artifact.Layer.Camera;
 import Artifact.Layer.Light;
 import Artifact.Effect.Abstract;
 import Artifact.Layer.Image;
+import Artifact.Layer.Svg;
 import Artifact.Layer.Video;
 import Artifact.Layer.Solid2D;
 import Artifact.Layers.SolidImage;
@@ -90,6 +94,7 @@ bool layerUsesSurfaceUploadForCompositionView(const ArtifactAbstractLayerPtr& la
     return true;
   }
   return std::dynamic_pointer_cast<ArtifactImageLayer>(layer) != nullptr ||
+         std::dynamic_pointer_cast<ArtifactSvgLayer>(layer) != nullptr ||
          std::dynamic_pointer_cast<ArtifactVideoLayer>(layer) != nullptr ||
          std::dynamic_pointer_cast<ArtifactTextLayer>(layer) != nullptr;
 }
@@ -120,6 +125,60 @@ resolvePreferredComposition(ArtifactProjectService *service) {
   }
 
   return ArtifactCompositionPtr();
+}
+
+FramePosition currentFrameForComposition(const ArtifactCompositionPtr& comp)
+{
+  if (!comp) {
+    return FramePosition(0);
+  }
+  FramePosition currentFrame = comp->framePosition();
+  if (auto* playback = ArtifactPlaybackService::instance()) {
+    const auto playbackComp = playback->currentComposition();
+    if (!playbackComp || playbackComp->id() == comp->id()) {
+      currentFrame = playback->currentFrame();
+    }
+  }
+  return currentFrame;
+}
+
+ArtifactAbstractLayerPtr hitTopmostLayerAtViewportPos(const ArtifactCompositionPtr& comp,
+                                                      ArtifactIRenderer* renderer,
+                                                      const QPointF& viewportPos)
+{
+  if (!comp || !renderer) {
+    return ArtifactAbstractLayerPtr();
+  }
+
+  const auto currentFrame = currentFrameForComposition(comp);
+  const auto canvasPos =
+      renderer->viewportToCanvas({static_cast<float>(viewportPos.x()),
+                                  static_cast<float>(viewportPos.y())});
+  const auto layers = comp->allLayer();
+  for (int i = static_cast<int>(layers.size()) - 1; i >= 0; --i) {
+    const auto& layer = layers[static_cast<size_t>(i)];
+    if (!layer || !layer->isVisible() || !layer->isActiveAt(currentFrame)) {
+      continue;
+    }
+
+    const QTransform globalTransform = layer->getGlobalTransform();
+    bool invertible = false;
+    const QTransform invTransform = globalTransform.inverted(&invertible);
+    if (invertible) {
+      const QPointF localPos = invTransform.map(QPointF(canvasPos.x, canvasPos.y));
+      if (layer->localBounds().contains(localPos)) {
+        return layer;
+      }
+      continue;
+    }
+
+    const QRectF bbox = layer->transformedBoundingBox();
+    if (bbox.contains(canvasPos.x, canvasPos.y)) {
+      return layer;
+    }
+  }
+
+  return ArtifactAbstractLayerPtr();
 }
 
 void drawLayerForCompositionView(const ArtifactAbstractLayerPtr &layer,
@@ -283,6 +342,14 @@ void drawLayerForCompositionView(const ArtifactAbstractLayerPtr &layer,
     }
   }
 
+  if (const auto svgLayer =
+          std::dynamic_pointer_cast<ArtifactSvgLayer>(layer)) {
+    if (svgLayer->isLoaded()) {
+      svgLayer->draw(renderer);
+      return;
+    }
+  }
+
   if (const auto videoLayer =
           std::dynamic_pointer_cast<ArtifactVideoLayer>(layer)) {
     const QImage frame = videoLayer->currentFrameToQImage();
@@ -341,6 +408,8 @@ public:
   bool renderInProgress_ = false;
   bool renderRescheduleRequested_ = false;
   bool blendPipelineReady_ = false;
+  bool gpuBlendEnabled_ =
+      !qEnvironmentVariableIsSet("ARTIFACT_COMPOSITION_DISABLE_GPU_BLEND");
   QString lastVideoDebug_;
   QString lastEmittedVideoDebug_;
   QVector<QMetaObject::Connection> layerChangedConnections_;
@@ -351,11 +420,12 @@ public:
   bool showCheckerboard_ = false;
   bool showGuides_ = false;
   bool showSafeMargins_ = false;
-  bool showFrameInfo_ = true;
+  bool showFrameInfo_ = false; // Changed to false by default
   int currentFrameForOverlay_ = 0;
   quint64 renderFrameCounter_ = 0;
   int lastPipelineStateMask_ = -1;
   QSize lastDispatchWarningSize_;
+  QByteArray lastFinalPresentKey_;
 
   // Guide positions (composition-space pixels)
   QVector<float> guideVerticals_;   // X positions
@@ -365,8 +435,12 @@ public:
 
   // Resolution scaling
   int previewDownsample_ = 1;
+  int interactivePreviewDownsampleFloor_ = 2;
   float hostWidth_ = 0.0f;
   float hostHeight_ = 0.0f;
+  QPointer<QWidget> hostWidget_;
+  bool viewportInteracting_ = false;
+  QTimer *viewportInteractionTimer_ = nullptr;
 
   // Mask editing state
   int hoveredMaskIndex_ = -1;
@@ -509,6 +583,7 @@ void CompositionRenderController::initialize(QWidget *hostWidget) {
     return;
   }
 
+  impl_->hostWidget_ = hostWidget;
   impl_->renderer_ = std::make_unique<ArtifactIRenderer>();
   impl_->renderer_->initialize(hostWidget);
 
@@ -521,6 +596,8 @@ void CompositionRenderController::initialize(QWidget *hostWidget) {
   }
   impl_->compositionRenderer_ =
       std::make_unique<CompositionRenderer>(*impl_->renderer_);
+  impl_->hostWidth_ = static_cast<float>(hostWidget->width());
+  impl_->hostHeight_ = static_cast<float>(hostWidget->height());
   impl_->renderer_->setViewportSize((float)hostWidget->width(),
                                     (float)hostWidget->height());
 
@@ -535,12 +612,23 @@ void CompositionRenderController::initialize(QWidget *hostWidget) {
   connect(impl_->renderTimer_, &QTimer::timeout, this,
           &CompositionRenderController::renderOneFrame);
 
+  impl_->viewportInteractionTimer_ = new QTimer(this);
+  impl_->viewportInteractionTimer_->setSingleShot(true);
+  connect(impl_->viewportInteractionTimer_, &QTimer::timeout, this,
+          &CompositionRenderController::finishViewportInteraction);
+
   // PlaybackService のフレーム変更に合わせて再描画
   if (auto *playback = ArtifactPlaybackService::instance()) {
     connect(playback, &ArtifactPlaybackService::frameChanged, this,
-            [this]() { renderOneFrame(); });
+            [this]() { 
+              // 1. 可視性チェック: 非表示（他タブの裏など）なら描画しない
+              if (auto* owner = qobject_cast<QWidget*>(parent())) {
+                  if (!owner->isVisible()) return;
+              }
+              // 2. 更新要求を集約（Coalescing）
+              renderOneFrame(); 
+            });
   }
-
   // ブレンドパイプライン初期化
   if (auto device = impl_->renderer_->device()) {
     if (auto ctx = impl_->renderer_->immediateContext()) {
@@ -604,6 +692,7 @@ void CompositionRenderController::recreateSwapChain(QWidget *hostWidget) {
   if (!impl_->initialized_ || !impl_->renderer_ || hostWidget == nullptr) {
     return;
   }
+  impl_->hostWidget_ = hostWidget;
   impl_->renderer_->recreateSwapChain(hostWidget);
 }
 
@@ -613,11 +702,7 @@ void CompositionRenderController::setViewportSize(float width, float height) {
   }
   impl_->hostWidth_ = width;
   impl_->hostHeight_ = height;
-
-  float targetW = width / (float)impl_->previewDownsample_;
-  float targetH = height / (float)impl_->previewDownsample_;
-
-  impl_->renderer_->setViewportSize(targetW, targetH);
+  impl_->renderer_->setViewportSize(width, height);
 }
 
 void CompositionRenderController::setPreviewQualityPreset(PreviewQualityPreset preset) {
@@ -651,6 +736,29 @@ void CompositionRenderController::panBy(const QPointF &viewportDelta) {
     return;
   }
   impl_->renderer_->panBy((float)viewportDelta.x(), (float)viewportDelta.y());
+  renderOneFrame();
+}
+
+void CompositionRenderController::notifyViewportInteractionActivity() {
+  const bool wasInteracting = impl_->viewportInteracting_;
+  impl_->viewportInteracting_ = true;
+  if (impl_->viewportInteractionTimer_) {
+    impl_->viewportInteractionTimer_->start(120);
+  }
+  if (!wasInteracting) {
+    renderOneFrame();
+  }
+}
+
+void CompositionRenderController::finishViewportInteraction() {
+  if (!impl_->viewportInteracting_) {
+    return;
+  }
+  impl_->viewportInteracting_ = false;
+  if (impl_->viewportInteractionTimer_) {
+    impl_->viewportInteractionTimer_->stop();
+  }
+  renderOneFrame();
 }
 
 void CompositionRenderController::setComposition(
@@ -767,6 +875,22 @@ bool CompositionRenderController::isShowSafeMargins() const {
   return impl_->showSafeMargins_;
 }
 
+void CompositionRenderController::setGpuBlendEnabled(bool enabled) {
+  if (impl_->gpuBlendEnabled_ == enabled) {
+    return;
+  }
+  impl_->gpuBlendEnabled_ = enabled;
+  qWarning() << "[CompositionView] GPU blend user toggle changed"
+             << "enabled=" << impl_->gpuBlendEnabled_
+             << "envDisable="
+             << qEnvironmentVariableIsSet("ARTIFACT_COMPOSITION_DISABLE_GPU_BLEND");
+  renderOneFrame();
+}
+
+bool CompositionRenderController::isGpuBlendEnabled() const {
+  return impl_->gpuBlendEnabled_;
+}
+
 void CompositionRenderController::resetView() {
   if (impl_->renderer_) {
     impl_->renderer_->resetView();
@@ -806,6 +930,51 @@ void CompositionRenderController::zoom100() {
     impl_->renderer_->setZoom(1.0f);
     renderOneFrame();
   }
+}
+
+void CompositionRenderController::focusSelectedLayer() {
+  if (!impl_->renderer_) {
+    return;
+  }
+
+  auto comp = impl_->previewPipeline_.composition();
+  if (!comp || impl_->selectedLayerId_.isNil()) {
+    zoomFit();
+    return;
+  }
+
+  const auto layer = comp->layerById(impl_->selectedLayerId_);
+  if (!layer) {
+    zoomFit();
+    return;
+  }
+
+  const QRectF bounds = layer->transformedBoundingBox();
+  if (!bounds.isValid() || bounds.width() <= 0.0 || bounds.height() <= 0.0) {
+    zoomFit();
+    return;
+  }
+
+  const float viewW = impl_->hostWidth_ > 0.0f ? impl_->hostWidth_ : 1.0f;
+  const float viewH = impl_->hostHeight_ > 0.0f ? impl_->hostHeight_ : 1.0f;
+  const float margin = 48.0f;
+  const float availableW = std::max(1.0f, viewW - margin * 2.0f);
+  const float availableH = std::max(1.0f, viewH - margin * 2.0f);
+  const float zoomX = availableW / static_cast<float>(bounds.width());
+  const float zoomY = availableH / static_cast<float>(bounds.height());
+  const float zoom = std::clamp(std::min(zoomX, zoomY), 0.02f, 64.0f);
+  const QPointF center = bounds.center();
+
+  impl_->renderer_->setZoom(zoom);
+  impl_->renderer_->setPan(viewW * 0.5f - static_cast<float>(center.x()) * zoom,
+                           viewH * 0.5f - static_cast<float>(center.y()) * zoom);
+  renderOneFrame();
+}
+
+LayerID CompositionRenderController::layerAtViewportPos(const QPointF& viewportPos) const {
+  auto comp = impl_->previewPipeline_.composition();
+  const auto layer = hitTopmostLayerAtViewportPos(comp, impl_->renderer_.get(), viewportPos);
+  return layer ? layer->id() : LayerID::Nil();
 }
 
 void CompositionRenderController::handleMousePress(QMouseEvent *event) {
@@ -1127,7 +1296,8 @@ void CompositionRenderController::renderOneFrame() {
   }
 
   impl_->renderScheduled_ = true;
-  QTimer::singleShot(0, this, [this]() {
+  const int scheduleDelayMs = impl_->viewportInteracting_ ? 16 : 0;
+  QTimer::singleShot(scheduleDelayMs, this, [this]() {
     impl_->renderScheduled_ = false;
     if (!impl_->initialized_ || !impl_->renderer_) {
       return;
@@ -1149,6 +1319,17 @@ void CompositionRenderController::renderOneFrame() {
 void CompositionRenderController::Impl::renderOneFrameImpl(CompositionRenderController *owner) {
   if (!owner || !initialized_ || !renderer_) {
     return;
+  }
+
+  // 強制的なサイズ同期: ホストウィジェットの物理サイズとスワップチェーンを一致させる
+  if (auto* host = hostWidget_.data()) {
+      const float curW = static_cast<float>(host->width());
+      const float curH = static_cast<float>(host->height());
+      if (std::abs(curW - hostWidth_) > 0.5f || std::abs(curH - hostHeight_) > 0.5f) {
+          qDebug() << "[CompositionView] Widget size changed, updating swapchain:" << curW << "x" << curH;
+          owner->setViewportSize(curW, curH);
+          owner->recreateSwapChain(host);
+      }
   }
 
   QElapsedTimer frameTimer;
@@ -1180,16 +1361,31 @@ void CompositionRenderController::Impl::renderOneFrameImpl(CompositionRenderCont
     return;
   }
 
-  auto size = comp->settings().compositionSize();
-  const float cw = static_cast<float>(size.width()  > 0 ? size.width()  : 1920);
-  const float ch = static_cast<float>(size.height() > 0 ? size.height() : 1080);
+  const QSize compSize = comp->settings().compositionSize();
+  const float cw = static_cast<float>(compSize.width()  > 0 ? compSize.width()  : 1920);
+  const float ch = static_cast<float>(compSize.height() > 0 ? compSize.height() : 1080);
   lastCanvasWidth_ = cw;
   lastCanvasHeight_ = ch;
 
+  // GPU path should represent the currently visible viewport, not only the
+  // composition rect. Otherwise layers that extend outside the comp get clipped
+  // at the intermediate RT stage.
+  const float viewportW = hostWidth_ > 0.0f ? hostWidth_ : cw;
+  const float viewportH = hostHeight_ > 0.0f ? hostHeight_ : ch;
+  const int effectivePreviewDownsample =
+      viewportInteracting_
+          ? std::max(previewDownsample_, interactivePreviewDownsampleFloor_)
+          : previewDownsample_;
+  const float rcw =
+      std::max(1.0f, viewportW / static_cast<float>(effectivePreviewDownsample));
+  const float rch =
+      std::max(1.0f, viewportH / static_cast<float>(effectivePreviewDownsample));
+
   if (compositionRenderer_) {
     compositionRenderer_->SetCompositionSize(cw, ch);
+    // Note: ApplyCompositionSpace sets renderer canvas size to FULL size.
+    // We override it below if pipeline is enabled.
     compositionRenderer_->ApplyCompositionSpace();
-    renderer_->setCanvasSize(cw, ch);
   } else {
     renderer_->setCanvasSize(cw, ch);
   }
@@ -1214,14 +1410,26 @@ void CompositionRenderController::Impl::renderOneFrameImpl(CompositionRenderCont
   const bool frameOutOfRange =
       (framePos < 0 || (effectiveEndFrame > 0 && framePos >= effectiveEndFrame));
 
-  const bool pipelineEnabled = renderPipeline_.ready() && blendPipelineReady_;
+  const bool gpuBlendRequested = gpuBlendEnabled_ && blendPipelineReady_;
+
+  // Avoid paying render-pipeline setup cost when GPU blending is disabled.
+  if (gpuBlendRequested) {
+    if (auto device = renderer_->device()) {
+    renderPipeline_.initialize(device, static_cast<Uint32>(rcw), static_cast<Uint32>(rch),
+                               RenderConfig::PipelineFormat);
+    }
+  }
+
+  const bool pipelineEnabled = gpuBlendRequested && renderPipeline_.ready();
   const int pipelineStateMask =
-      (renderPipeline_.ready() ? 0x1 : 0x0) |
-      (blendPipelineReady_ ? 0x2 : 0x0);
+      (gpuBlendEnabled_ ? 0x1 : 0x0) |
+      (renderPipeline_.ready() ? 0x2 : 0x0) |
+      (blendPipelineReady_ ? 0x4 : 0x0);
   if (pipelineStateMask != lastPipelineStateMask_) {
     lastPipelineStateMask_ = pipelineStateMask;
     if (!pipelineEnabled) {
       qWarning() << "[CompositionView] GPU blend path disabled"
+                 << "gpuBlendEnabled=" << gpuBlendEnabled_
                  << "renderPipelineReady=" << renderPipeline_.ready()
                  << "blendPipelineReady=" << blendPipelineReady_
                  << "size=" << QSize(static_cast<int>(cw), static_cast<int>(ch));
@@ -1233,18 +1441,23 @@ void CompositionRenderController::Impl::renderOneFrameImpl(CompositionRenderCont
   if (pipelineEnabled) {
     const QSize pipelineSize(static_cast<int>(renderPipeline_.width()),
                              static_cast<int>(renderPipeline_.height()));
+    // Compute shaders now have explicit bounds guards.
     if (((pipelineSize.width() & 7) != 0 || (pipelineSize.height() & 7) != 0) &&
         pipelineSize != lastDispatchWarningSize_) {
       lastDispatchWarningSize_ = pipelineSize;
-      qWarning() << "[CompositionView] GPU blend path uses non-8-aligned render size;"
-                 << "current compute shaders have no explicit bounds guard."
-                 << "pipelineSize=" << pipelineSize;
+      qCDebug(compositionViewLog) << "[CompositionView] GPU blend path uses non-8-aligned render size: " << pipelineSize;
     }
   }
 
   int drawnLayerCount = 0;
   int surfaceUploadLayerCount = 0;
   int cpuRasterLayerCount = 0;
+  const float targetViewportW = hostWidth_;
+  const float targetViewportH = hostHeight_;
+  const float legacyDownsampleViewportW =
+      hostWidth_ > 0.0f ? hostWidth_ / static_cast<float>(effectivePreviewDownsample) : 0.0f;
+  const float legacyDownsampleViewportH =
+      hostHeight_ > 0.0f ? hostHeight_ / static_cast<float>(effectivePreviewDownsample) : 0.0f;
   qint64 setupMs = markPhaseMs();
   qint64 basePassMs = 0;
   qint64 layerPassMs = 0;
@@ -1270,12 +1483,46 @@ void CompositionRenderController::Impl::renderOneFrameImpl(CompositionRenderCont
     auto layerRTV = renderPipeline_.layerRTV();
     auto layerSRV = renderPipeline_.layerSRV();
 
-    // -- 1: accum をクリアして背景描画 --
-    // setOverrideRTV → clear() の順序で SetRenderTargets+ClearRenderTarget を行う。
-    // clear() は内部で SetRenderTargets を呼びから ClearRenderTarget するので Warning も出ない。
+    // ==== オフスクリーン描画前の状態保存 ====
+    // GPU path は現在の viewer 表示結果を 1 枚の中間 RT に合成する。
+    // そのため offscreen 側でも「現在の zoom/pan を縮小した状態」を再現する。
+    const float origZoom  = renderer_->getZoom();
+    const FloatColor origClearColor = renderer_->getClearColor();
+    float       origPanX, origPanY;
+    renderer_->getPan(origPanX, origPanY);
+    const float origViewW = hostWidth_;
+    const float origViewH = hostHeight_;
+    const float offscreenScale =
+        (origViewW > 0.0f) ? (rcw / origViewW) : 1.0f;
+
+    // オフスクリーン描画用の座標系設定。
+    // viewport を縮小した RT へ落とすため zoom/pan も同倍率で縮小する。
+    renderer_->setViewportSize(rcw, rch);
+    renderer_->setZoom(origZoom * offscreenScale);
+    renderer_->setPan(origPanX * offscreenScale, origPanY * offscreenScale);
+    {
+      Diligent::Viewport offVP;
+      offVP.TopLeftX = 0.0f;
+      offVP.TopLeftY = 0.0f;
+      offVP.Width    = rcw;
+      offVP.Height   = rch;
+      offVP.MinDepth = 0.0f;
+      offVP.MaxDepth = 1.0f;
+      ctx->SetViewports(1, &offVP, static_cast<Diligent::Uint32>(rcw),
+                        static_cast<Diligent::Uint32>(rch));
+    }
+
+    // -- 1: accum を透明クリア、背景は layerRTV に Composition Space で描画して compute で積む --
     renderer_->setOverrideRTV(accumRTV);
     renderer_->setClearColor(FloatColor{0.0f, 0.0f, 0.0f, 0.0f});
     renderer_->clear();
+    renderer_->setOverrideRTV(nullptr);
+
+    renderer_->setOverrideRTV(layerRTV);
+    renderer_->setClearColor(FloatColor{0.0f, 0.0f, 0.0f, 0.0f});
+    renderer_->clear();
+    // 背景は Composition Space (0,0)-(cw,ch) で描いて、コンポジションエリアだけが塚まる。
+    // スクリーン全体が塗れるのはテーマクリアカラー（きっかけは renderer_->clear()）。
     const FloatColor bgColor = comp->backgroundColor();
     if (showCheckerboard_) {
       renderer_->drawCheckerboard(0.0f, 0.0f, cw, ch, 16.0f,
@@ -1290,6 +1537,18 @@ void CompositionRenderController::Impl::renderOneFrameImpl(CompositionRenderCont
       renderer_->drawGrid(0, 0, cw, ch, 100.0f, 1.0f, {0.3f, 0.3f, 0.3f, 0.5f});
     }
     renderer_->setOverrideRTV(nullptr);
+
+    // CS 実行前に RTV を完全解除してリソース遺留を防ぐ
+    ctx->SetRenderTargets(0, nullptr, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+
+    if (!blendPipeline_->blend(ctx, layerSRV, accumSRV, tempUAV,
+                               ArtifactCore::BlendMode::Normal, 1.0f)) {
+      qWarning() << "[CompositionView] background blend() failed";
+    } else {
+      renderPipeline_.swapAccumAndTemp();
+      accumSRV = renderPipeline_.accumSRV();
+      tempUAV = renderPipeline_.tempUAV();
+    }
     basePassMs = markPhaseMs();
 
     // -- 2: レイヤーブレンド（frameOutOfRange ならスキップ）--
@@ -1310,35 +1569,60 @@ void CompositionRenderController::Impl::renderOneFrameImpl(CompositionRenderCont
         layer->goToFrame(currentFrame.framePosition());
         const auto  blendMode = ArtifactCore::toBlendMode(layer->layerBlendType());
         const float opacity   = layer->opacity();
-        // opacity = 0 は accum に影響しないので continue で安全
         if (opacity <= 0.0f) continue;
 
-        // setOverrideRTV → clear() → draw の順序で layerRTV に描画
         renderer_->setOverrideRTV(layerRTV);
         renderer_->setClearColor(FloatColor{0.0f, 0.0f, 0.0f, 0.0f});
         renderer_->clear();
-        // GPU ブレンド時はレイヤーテクスチャを 1.0f(不透明)で書く。opacity は blend() 側で適用。
         QString* dbgOut = QLoggingCategory::defaultCategory()->isDebugEnabled()
                           ? &lastVideoDebug_ : nullptr;
         drawLayerForCompositionView(layer, renderer_.get(), 1.0f, dbgOut);
         renderer_->setOverrideRTV(nullptr);
 
+        // CS 実行前に RTV を解除
+        ctx->SetRenderTargets(0, nullptr, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+
         const bool blendOk = blendPipeline_->blend(ctx, layerSRV, accumSRV, tempUAV, blendMode, opacity);
         if (!blendOk) {
-          qWarning() << "[CompositionView] blend() failed for layer" << layer->id().toString()
-                     << "mode=" << static_cast<int>(blendMode)
-                     << "opacity=" << opacity;
-          // blend 失敗時は swap しない: accum が壊れるのを防ぐ
           continue;
         }
         renderPipeline_.swapAccumAndTemp();
-        accumSRV = renderPipeline_.accumSRV();  // swap 後は必ず再取得
+        accumSRV = renderPipeline_.accumSRV();
         tempUAV  = renderPipeline_.tempUAV();
       }
     }
 
-    // -- 3: 最終結果を画面に表示 ---
-    renderer_->drawSprite(0, 0, cw, ch, renderPipeline_.accumSRV());
+    // ==== オフスクリーン描画後: renderer の状態をホスト viewport に戻す ====
+    renderer_->setViewportSize(origViewW, origViewH);
+    renderer_->setZoom(origZoom);
+    renderer_->setPan(origPanX, origPanY);
+    renderer_->setClearColor(origClearColor);
+    {
+      Diligent::Viewport hostVP;
+      hostVP.TopLeftX = 0.0f;
+      hostVP.TopLeftY = 0.0f;
+      hostVP.Width    = origViewW;
+      hostVP.Height   = origViewH;
+      hostVP.MinDepth = 0.0f;
+      hostVP.MaxDepth = 1.0f;
+      ctx->SetViewports(1, &hostVP, static_cast<Diligent::Uint32>(origViewW),
+                        static_cast<Diligent::Uint32>(origViewH));
+    }
+
+    // -- 3: オフスクリーン RT は "viewer pixels" を表しているので、
+    // screen-space のフル viewport quad として貼り戻す。
+    renderer_->setCanvasSize(origViewW, origViewH);
+    renderer_->setZoom(1.0f);
+    renderer_->setPan(0.0f, 0.0f);
+    renderer_->drawSprite(0, 0, origViewW, origViewH, renderPipeline_.accumSRV());
+    if (compositionRenderer_) {
+      compositionRenderer_->SetCompositionSize(cw, ch);
+      compositionRenderer_->ApplyCompositionSpace();
+    } else {
+      renderer_->setCanvasSize(cw, ch);
+    }
+    renderer_->setZoom(origZoom);
+    renderer_->setPan(origPanX, origPanY);
     layerPassMs = markPhaseMs();
 
   } else {
@@ -1384,6 +1668,12 @@ void CompositionRenderController::Impl::renderOneFrameImpl(CompositionRenderCont
     auto selectedLayer = (!selectedLayerId_.isNil() && comp)
                              ? comp->layerById(selectedLayerId_)
                              : ArtifactAbstractLayerPtr{};
+    qCDebug(compositionViewLog) << "[CompositionView][Gizmo]"
+                                << "selectedLayerId=" << selectedLayerId_.toString()
+                                << "hasLayer=" << static_cast<bool>(selectedLayer)
+                                << "visible=" << (selectedLayer ? selectedLayer->isVisible() : false)
+                                << "active=" << (selectedLayer ? selectedLayer->isActiveAt(currentFrame) : false)
+                                << "frame=" << currentFrame.framePosition();
     if (selectedLayer && selectedLayer->isVisible() &&
         selectedLayer->isActiveAt(currentFrame)) {
       gizmo_->setLayer(selectedLayer);
@@ -1447,6 +1737,12 @@ void CompositionRenderController::Impl::renderOneFrameImpl(CompositionRenderCont
           }
       }
     } else {
+      qCDebug(compositionViewLog) << "[CompositionView][Gizmo] skip controller draw"
+                                  << "reason="
+                                  << (!selectedLayer ? "missing-layer"
+                                      : (!selectedLayer->isVisible() ? "invisible"
+                                         : (!selectedLayer->isActiveAt(currentFrame) ? "inactive-frame"
+                                            : "unknown")));
       gizmo_->setLayer(nullptr);
     }
   }
@@ -1530,6 +1826,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(CompositionRenderCont
             << "cpuRasterLayers=" << cpuRasterLayerCount
             << "frameOutOfRange=" << frameOutOfRange
             << "previewDownsample=" << previewDownsample_
+            << "effectivePreviewDownsample=" << effectivePreviewDownsample
+            << "viewportInteracting=" << viewportInteracting_
             << "compSize=" << QSize(static_cast<int>(cw), static_cast<int>(ch))
             << "pipelineSize=" << QSize(static_cast<int>(renderPipeline_.width()),
                                         static_cast<int>(renderPipeline_.height()))
@@ -1551,6 +1849,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(CompositionRenderCont
                                 << "surfaceUploadLayers=" << surfaceUploadLayerCount
                                 << "cpuRasterLayers=" << cpuRasterLayerCount
                                 << "previewDownsample=" << previewDownsample_
+                                << "effectivePreviewDownsample=" << effectivePreviewDownsample
+                                << "viewportInteracting=" << viewportInteracting_
                                 << "pipelineSize=" << QSize(static_cast<int>(renderPipeline_.width()),
                                                             static_cast<int>(renderPipeline_.height()))
                                 << "setupMs=" << setupMs

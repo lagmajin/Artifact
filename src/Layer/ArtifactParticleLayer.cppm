@@ -91,18 +91,77 @@ ArtifactParticleLayer::~ArtifactParticleLayer()
 
 void ArtifactParticleLayer::draw(ArtifactIRenderer* renderer)
 {
-    (void)renderer;
-    // Drawing is handled by renderFrame/renderToImage
-    // This is called by the composition renderer
+    if (!renderer || !impl_->particleSystem) {
+        return;
+    }
+
+    const int64_t frameNumber = currentFrame();
+    
+    // 1. 決定論的なシミュレーション状態の更新
+    // ※ goToFrame は内部で reset() と forward simulation を行う
+    float fps = 30.0f;
+    if (auto comp = static_cast<ArtifactAbstractComposition*>(composition())) {
+        fps = comp->settings().frameRate().framerate();
+    }
+    impl_->particleSystem->goToFrame(frameNumber, fps); 
+
+    // 2. GPU レンダリングパス (P3-4)
+    // レンダラーが GPU 直接描画をサポートしているか、およびパーティクルが有効な場合
+    if (renderer->isInitialized()) {
+        const auto sourceData = impl_->particleSystem->captureRenderData();
+        if (!sourceData.particles.empty()) {
+            // Core 側の ParticleRenderData に変換 (型不整合を避けるため明示的に)
+            ArtifactCore::ParticleRenderData renderData;
+            renderData.frameNumber = sourceData.frameNumber;
+            renderData.particles.reserve(sourceData.particles.size());
+            
+            for (const auto& src : sourceData.particles) {
+                ArtifactCore::ParticleVertex v;
+                v.px = src.px; v.py = src.py; v.pz = src.pz;
+                v.vx = src.vx; v.vy = src.vy; v.vz = src.vz;
+                v.r = src.r; v.g = src.g; v.b = src.b; v.a = src.a;
+                v.size = src.size;
+                v.rotation = src.rotation;
+                v.age = src.age;
+                v.lifetime = src.lifetime;
+                renderData.particles.push_back(v);
+            }
+            
+            renderer->drawParticles(renderData);
+            return; // GPU 描画に成功した場合はここで終了
+        }
+    }
+
+    // 3. ソフトウェアフォールバックパス (既存)
+    if (frameNumber != impl_->cachedFrameNumber || impl_->cachedFrame.isNull()) {
+        float fallbackFps = 30.0f;
+        if (auto comp = composition()) {
+            fallbackFps = comp->settings().frameRate().framerate();
+        }
+        const float time = static_cast<float>(frameNumber) / fallbackFps;
+        impl_->cachedFrame = renderFrame(std::max(1, impl_->width),
+                                         std::max(1, impl_->height),
+                                         time);
+        impl_->cachedFrameNumber = frameNumber;
+    }
+
+    if (impl_->cachedFrame.isNull()) {
+        return;
+    }
+
+    renderer->drawSprite(
+        0.0f,
+        0.0f,
+        static_cast<float>(impl_->cachedFrame.width()),
+        static_cast<float>(impl_->cachedFrame.height()),
+        impl_->cachedFrame,
+        opacity());
 }
 
 QJsonObject ArtifactParticleLayer::toJson() const
 {
-    QJsonObject json;
-    json["type"] = "ParticleLayer";
-    json["name"] = layerName();
-    json["visible"] = isVisible();
-    json["blendMode"] = static_cast<int>(layerBlendType());
+    QJsonObject json = ArtifactAbstractLayer::toJson();
+    json["type"] = static_cast<int>(LayerType::Particle);
     
     // Save render settings
     const auto& rs = renderSettings();
@@ -172,6 +231,7 @@ QJsonObject ArtifactParticleLayer::toJson() const
 ArtifactAbstractLayerPtr ArtifactParticleLayer::fromJson(const QJsonObject& obj)
 {
     auto layer = std::make_shared<ArtifactParticleLayer>();
+    layer->ArtifactAbstractLayer::fromJsonProperties(obj);
     layer->applyPropertiesFromJson(obj);
     return layer;
 }
@@ -344,6 +404,7 @@ const ParticleSystem* ArtifactParticleLayer::particleSystem() const
 void ArtifactParticleLayer::createParticleSystem()
 {
     impl_->particleSystem = std::make_unique<ParticleSystem>();
+    clearFrameCache();
     emit particleSystemChanged();
 }
 
@@ -352,12 +413,14 @@ void ArtifactParticleLayer::resetParticleSystem()
     if (impl_->particleSystem) {
         impl_->particleSystem->clear();
     }
+    clearFrameCache();
     impl_->cachedFrameNumber = -1;
 }
 
 ParticleEmitter* ArtifactParticleLayer::addEmitter()
 {
     auto* emitter = impl_->particleSystem->createEmitter();
+    clearFrameCache();
     emit emitterAdded(impl_->particleSystem->emitterCount() - 1);
     return emitter;
 }
@@ -374,12 +437,14 @@ ParticleEmitter* ArtifactParticleLayer::addEmitter(const EmitterParams& params)
 void ArtifactParticleLayer::removeEmitter(int index)
 {
     impl_->particleSystem->removeEmitter(index);
+    clearFrameCache();
     emit emitterRemoved(index);
 }
 
 void ArtifactParticleLayer::clearEmitters()
 {
     impl_->particleSystem->clearEmitters();
+    clearFrameCache();
 }
 
 int ArtifactParticleLayer::emitterCount() const
@@ -448,6 +513,7 @@ void ArtifactParticleLayer::clearEffectors()
     for (auto& emitter : const_cast<std::vector<std::unique_ptr<ParticleEmitter>>&>(impl_->particleSystem->emitters())) {
         emitter->clearEffectors();
     }
+    clearFrameCache();
 }
 
 ParticleRenderSettings& ArtifactParticleLayer::renderSettings()
@@ -463,11 +529,13 @@ const ParticleRenderSettings& ArtifactParticleLayer::renderSettings() const
 void ArtifactParticleLayer::setRenderSettings(const ParticleRenderSettings& settings)
 {
     impl_->particleSystem->setRenderSettings(settings);
+    clearFrameCache();
 }
 
 void ArtifactParticleLayer::setParticleBlendMode(ParticleBlendMode mode)
 {
     impl_->particleSystem->renderSettings().blendMode = mode;
+    clearFrameCache();
 }
 
 ParticleBlendMode ArtifactParticleLayer::particleBlendMode() const
@@ -479,14 +547,14 @@ void ArtifactParticleLayer::play()
 {
     impl_->playing = true;
     impl_->particleSystem->setPaused(false);
-    emit playbackStateChanged(true);
+    emit playbackStateChanged(PlaybackState::Playing);
 }
 
 void ArtifactParticleLayer::pause()
 {
     impl_->playing = false;
     impl_->particleSystem->setPaused(true);
-    emit playbackStateChanged(false);
+    emit playbackStateChanged(PlaybackState::Paused);
 }
 
 void ArtifactParticleLayer::stop()
@@ -494,12 +562,13 @@ void ArtifactParticleLayer::stop()
     impl_->playing = false;
     impl_->particleSystem->setPaused(true);
     reset();
-    emit playbackStateChanged(false);
+    emit playbackStateChanged(PlaybackState::Stopped);
 }
 
 void ArtifactParticleLayer::reset()
 {
     impl_->particleSystem->clear();
+    clearFrameCache();
     impl_->cachedFrameNumber = -1;
     impl_->lastTime = 0.0f;
 }
@@ -512,6 +581,7 @@ bool ArtifactParticleLayer::isPlaying() const
 void ArtifactParticleLayer::setTimeScale(float scale)
 {
     impl_->particleSystem->setTimeScale(scale);
+    clearFrameCache();
 }
 
 float ArtifactParticleLayer::timeScale() const
@@ -522,13 +592,17 @@ float ArtifactParticleLayer::timeScale() const
 void ArtifactParticleLayer::preWarm(float duration)
 {
     impl_->particleSystem->preWarm(duration);
+    clearFrameCache();
 }
 
 void ArtifactParticleLayer::goToFrame(int64_t frameNumber)
 {
     // Calculate time from frame
-    float frameRate = 30.0f;  // TODO: Get from composition
-    float time = frameNumber / frameRate;
+    float fps = 30.0f;
+    if (auto comp = static_cast<ArtifactAbstractComposition*>(composition())) {
+        fps = comp->settings().frameRate().framerate();
+    }
+    float time = frameNumber / fps;
     
     // Check cache
     if (frameNumber == impl_->cachedFrameNumber) {
@@ -556,6 +630,13 @@ QImage ArtifactParticleLayer::renderFrame(int width, int height, float time)
     QImage image(width, height, QImage::Format_ARGB32);
     image.fill(Qt::transparent);
     renderToImage(image, time);
+    impl_->cachedFrame = image;
+
+    float fps = 30.0f;
+    if (auto comp = static_cast<ArtifactAbstractComposition*>(composition())) {
+        fps = comp->settings().frameRate().framerate();
+    }
+    impl_->cachedFrameNumber = static_cast<int64_t>(time * fps);
     return image;
 }
 
@@ -572,16 +653,18 @@ void ArtifactParticleLayer::renderToImage(QImage& target, float time)
     target.fill(Qt::transparent);
     
     // Get transform from layer
-    QTransform transform;
-    const auto& t2d = transform2D();
-    // TODO: Apply transform from AnimatableTransform2D
-    
+    const QTransform transform = getLocalTransform();
+
     // Render particles
     QPainter painter(&target);
     painter.setRenderHint(QPainter::SmoothPixmapTransform);
     impl_->particleSystem->render(painter, transform);
     
-    emit frameRendered(static_cast<int64_t>(time * 30.0f));  // Assuming 30fps
+    float fps = 30.0f;
+    if (auto comp = static_cast<ArtifactAbstractComposition*>(composition())) {
+        fps = comp->settings().frameRate().framerate();
+    }
+    emit frameRendered(static_cast<int64_t>(time * fps));
 }
 
 bool ArtifactParticleLayer::getCachedFrame(int64_t frame, QImage& out)
@@ -685,13 +768,8 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactParticleLayer::getLayerProperty
     auto groups = ArtifactAbstractLayer::getLayerPropertyGroups();
     ArtifactCore::PropertyGroup particleGroup(QStringLiteral("Particle"));
 
-    auto makeProp = [](const QString& name, ArtifactCore::PropertyType type, const QVariant& value, int priority = 0) {
-        auto p = std::make_shared<ArtifactCore::AbstractProperty>();
-        p->setName(name);
-        p->setType(type);
-        p->setValue(value);
-        p->setDisplayPriority(priority);
-        return p;
+    auto makeProp = [this](const QString& name, ArtifactCore::PropertyType type, const QVariant& value, int priority = 0) {
+        return persistentLayerProperty(name, type, value, priority);
     };
 
     particleGroup.addProperty(makeProp(QStringLiteral("particle.playing"), ArtifactCore::PropertyType::Boolean, isPlaying(), -140));

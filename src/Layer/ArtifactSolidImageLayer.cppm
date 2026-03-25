@@ -1,6 +1,7 @@
 module;
 
 #include <QColor>
+#include <QLoggingCategory>
 #include <QVariant>
 
 module Artifact.Layers.SolidImage;
@@ -12,6 +13,10 @@ import Property.Group;
 import Animation.Value;
 
 namespace Artifact {
+namespace {
+Q_LOGGING_CATEGORY(solidImageLayerLog, "artifact.solidimagelayer")
+}
+
 ArtifactSolidImageLayerSettings::ArtifactSolidImageLayerSettings() = default;
 ArtifactSolidImageLayerSettings::~ArtifactSolidImageLayerSettings() = default;
 
@@ -60,13 +65,14 @@ ArtifactSolidImageLayer::getLayerPropertyGroups() const {
   auto groups = ArtifactAbstractLayer::getLayerPropertyGroups();
   ArtifactCore::PropertyGroup solidGroup(QStringLiteral("Solid"));
 
-  auto property = std::make_shared<ArtifactCore::AbstractProperty>();
-  property->setName(QStringLiteral("solid.color"));
-  property->setType(ArtifactCore::PropertyType::Color);
+  auto property =
+      persistentLayerProperty(QStringLiteral("solid.color"),
+                              ArtifactCore::PropertyType::Color,
+                              QVariant(),
+                              -120);
   const auto c = color();
   property->setColorValue(QColor::fromRgbF(c.r(), c.g(), c.b(), c.a()));
   property->setValue(property->getColorValue());
-  property->setDisplayPriority(-120);
   property->setAnimatable(true); // キーフレーム可能に設定
   solidGroup.addProperty(property);
 
@@ -90,12 +96,16 @@ void ArtifactSolidImageLayer::draw(ArtifactIRenderer *renderer) {
   // 現在のフレーム位置に基づく補間値を取得
   auto frame = FramePosition(currentFrame());
   auto color = impl_->color_.at(frame);
-  
-  qDebug() << "[ArtifactSolidImageLayer::draw] id:" << id().toString()
-           << "currentFrame:" << currentFrame() 
-           << "color: (" << color.r() << color.g() << color.b() << color.a() << ")"
-           << "size:" << size.width << "x" << size.height
-           << "opacity:" << opacity();
+
+  static int drawLogSamples = 0;
+  if (drawLogSamples < 5) {
+    ++drawLogSamples;
+    qCDebug(solidImageLayerLog) << "[ArtifactSolidImageLayer::draw] id:" << id().toString()
+                                << "currentFrame:" << currentFrame()
+                                << "color: (" << color.r() << color.g() << color.b() << color.a() << ")"
+                                << "size:" << size.width << "x" << size.height
+                                << "opacity:" << opacity();
+  }
 
   renderer->drawSolidRect(0.0f, 0.0f,
                           static_cast<float>(size.width),

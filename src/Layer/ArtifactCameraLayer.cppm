@@ -78,10 +78,36 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactCameraLayer::getLayerPropertyGr
     auto groups = ArtifactAbstractLayer::getLayerPropertyGroups();
     
     ArtifactCore::PropertyGroup cameraOptions("Camera Options");
-    cameraOptions.addProperty(ArtifactCore::Property("Zoom", camImpl_->zoom_, 10.0f, 10000.0f, "px"));
-    cameraOptions.addProperty(ArtifactCore::Property("Depth of Field", camImpl_->depthOfField_));
-    cameraOptions.addProperty(ArtifactCore::Property("Focus Distance", camImpl_->focusDistance_, 10.0f, 10000.0f, "px"));
-    cameraOptions.addProperty(ArtifactCore::Property("Aperture", camImpl_->aperture_, 0.0f, 1000.0f, "px"));
+    auto zoomProp = persistentLayerProperty(QStringLiteral("Camera Options/Zoom"),
+                                            ArtifactCore::PropertyType::Float,
+                                            static_cast<double>(camImpl_->zoom_), -140);
+    zoomProp->setHardRange(10.0, 10000.0);
+    zoomProp->setSoftRange(100.0, 5000.0);
+    zoomProp->setUnit(QStringLiteral("px"));
+    cameraOptions.addProperty(zoomProp);
+
+    cameraOptions.addProperty(persistentLayerProperty(
+        QStringLiteral("Camera Options/Depth of Field"),
+        ArtifactCore::PropertyType::Boolean,
+        camImpl_->depthOfField_, -130));
+
+    auto focusProp = persistentLayerProperty(
+        QStringLiteral("Camera Options/Focus Distance"),
+        ArtifactCore::PropertyType::Float,
+        static_cast<double>(camImpl_->focusDistance_), -120);
+    focusProp->setHardRange(10.0, 10000.0);
+    focusProp->setSoftRange(100.0, 5000.0);
+    focusProp->setUnit(QStringLiteral("px"));
+    cameraOptions.addProperty(focusProp);
+
+    auto apertureProp = persistentLayerProperty(
+        QStringLiteral("Camera Options/Aperture"),
+        ArtifactCore::PropertyType::Float,
+        static_cast<double>(camImpl_->aperture_), -110);
+    apertureProp->setHardRange(0.0, 1000.0);
+    apertureProp->setSoftRange(0.0, 250.0);
+    apertureProp->setUnit(QStringLiteral("px"));
+    cameraOptions.addProperty(apertureProp);
     
     groups.push_back(cameraOptions);
     return groups;

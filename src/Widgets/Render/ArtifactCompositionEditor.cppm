@@ -17,6 +17,7 @@
 #include <QVBoxLayout>
 #include <QWheelEvent>
 #include <wobjectimpl.h>
+#include "../../../../out/build/x64-Debug/vcpkg_installed/x64-windows/include/Qt6/QtCore/QTimer"
 
 
 module Artifact.Widgets.CompositionEditor;
@@ -82,6 +83,11 @@ public:
     setFocusPolicy(Qt::StrongFocus);
   }
 
+  void requestInitialFit() {
+    pendingInitialFit_ = true;
+    scheduleInitialFit();
+  }
+
 protected:
   void showEvent(QShowEvent *event) override {
     QWidget::showEvent(event);
@@ -94,8 +100,9 @@ protected:
     if (controller_) {
       controller_->setComposition(resolvePreferredComposition());
       if (needsInitialize) {
-        controller_->zoomFit();
+        pendingInitialFit_ = true;
       }
+      scheduleInitialFit();
       controller_->start();
     }
   }
@@ -117,6 +124,7 @@ protected:
     if (controller_ && controller_->isInitialized()) {
       controller_->recreateSwapChain(this);
       controller_->setViewportSize((float)width(), (float)height());
+      scheduleInitialFit();
       controller_->renderOneFrame();
     }
   }
@@ -125,6 +133,8 @@ protected:
     if (!controller_) {
       return;
     }
+
+    controller_->notifyViewportInteractionActivity();
 
     const auto modifiers = event->modifiers();
     const QPointF angleDelta = event->angleDelta();
@@ -150,7 +160,8 @@ protected:
   }
 
   void mouseDoubleClickEvent(QMouseEvent *event) override {
-    if (controller_) {
+    if (controller_ &&
+        controller_->layerAtViewportPos(event->position()).isNil()) {
       controller_->resetView();
     }
     event->accept();
@@ -161,6 +172,9 @@ protected:
         (event->button() == Qt::LeftButton && spacePressed_)) {
       isPanning_ = true;
       lastMousePos_ = event->position();
+      if (controller_) {
+        controller_->notifyViewportInteractionActivity();
+      }
       setCursor(Qt::ClosedHandCursor);
       event->accept();
       return;
@@ -169,6 +183,7 @@ protected:
     if (controller_ && !spacePressed_) {
       controller_->handleMousePress(event);
       if (controller_->gizmo() && controller_->gizmo()->isDragging()) {
+        grabMouse();
         const auto cursor = controller_->cursorShapeForViewportPos(event->position());
         setCursor(cursor == Qt::OpenHandCursor ? Qt::ClosedHandCursor : cursor);
         event->accept();
@@ -182,6 +197,7 @@ protected:
     if (isPanning_ && controller_) {
       const QPointF delta = event->position() - lastMousePos_;
       lastMousePos_ = event->position();
+      controller_->notifyViewportInteractionActivity();
       controller_->panBy(delta);
       event->accept();
       return;
@@ -206,6 +222,9 @@ protected:
   void mouseReleaseEvent(QMouseEvent *event) override {
     if ((event->button() == Qt::MiddleButton || event->button() == Qt::LeftButton) && isPanning_) {
       isPanning_ = false;
+      if (controller_) {
+        controller_->finishViewportInteraction();
+      }
       if (spacePressed_) {
           setCursor(Qt::OpenHandCursor);
       } else {
@@ -217,6 +236,7 @@ protected:
 
     if (controller_) {
       controller_->handleMouseRelease();
+      releaseMouse();
       if (!spacePressed_) {
           setCursor(controller_->cursorShapeForViewportPos(event->position()));
       }
@@ -226,6 +246,10 @@ protected:
   }
 
   void leaveEvent(QEvent *event) override {
+    if (controller_ && controller_->gizmo() && controller_->gizmo()->isDragging()) {
+      controller_->handleMouseRelease();
+      releaseMouse();
+    }
     if (!isPanning_) {
       unsetCursor();
     }
@@ -236,6 +260,13 @@ protected:
     if (event->key() == Qt::Key_Space && !event->isAutoRepeat()) {
       spacePressed_ = true;
       setCursor(Qt::OpenHandCursor);
+      event->accept();
+      return;
+    }
+    if (event->key() == Qt::Key_F && !event->isAutoRepeat()) {
+      if (controller_) {
+        controller_->focusSelectedLayer();
+      }
       event->accept();
       return;
     }
@@ -253,6 +284,9 @@ protected:
     if (event->key() == Qt::Key_Space && !event->isAutoRepeat()) {
       spacePressed_ = false;
       isPanning_ = false;
+      if (controller_) {
+        controller_->finishViewportInteraction();
+      }
       unsetCursor();
       if (controller_) {
           setCursor(controller_->cursorShapeForViewportPos(mapFromGlobal(QCursor::pos())));
@@ -264,6 +298,22 @@ protected:
   }
 
 private:
+  void scheduleInitialFit() {
+    if (!pendingInitialFit_) {
+      return;
+    }
+    QTimer::singleShot(0, this, [this]() {
+      if (!pendingInitialFit_ || !controller_ || !isVisible()) {
+        return;
+      }
+      if (width() <= 64 || height() <= 64) {
+        return;
+      }
+      controller_->zoomFit();
+      pendingInitialFit_ = false;
+    });
+  }
+
   void saveCurrentFrame(CompositionRenderController* controller) {
       auto comp = controller->composition();
       if (!comp) return;
@@ -310,6 +360,7 @@ private:
   CompositionRenderController *controller_ = nullptr;
   bool isPanning_ = false;
   bool spacePressed_ = false;
+  bool pendingInitialFit_ = true;
   QPointF lastMousePos_;
 };
 } // namespace
@@ -336,6 +387,8 @@ public:
 
 ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
     : QWidget(parent), impl_(new Impl()) {
+  setMinimumSize(960, 640);
+
   auto *mainLayout = new QVBoxLayout(this);
   mainLayout->setContentsMargins(0, 0, 0, 0);
   mainLayout->setSpacing(0);
@@ -435,10 +488,13 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   QAction *gridAct = displayMenu->addAction("Grid");
   QAction *guidesAct = displayMenu->addAction("Guides");
   QAction *safeMarginsAct = displayMenu->addAction("Safe Area");
+  displayMenu->addSeparator();
+  QAction *gpuBlendAct = displayMenu->addAction("GPU Blend (CS)");
   checkerboardAct->setCheckable(true);
   gridAct->setCheckable(true);
   guidesAct->setCheckable(true);
   safeMarginsAct->setCheckable(true);
+  gpuBlendAct->setCheckable(true);
   impl_->displayOptionsBtn_->setMenu(displayMenu);
 
   // Connect actions
@@ -459,6 +515,11 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
                      if (impl_->renderController_)
                        impl_->renderController_->setShowSafeMargins(checked);
                    });
+  QObject::connect(gpuBlendAct, &QAction::toggled, this, [this](bool checked) {
+    if (impl_->renderController_) {
+      impl_->renderController_->setGpuBlendEnabled(checked);
+    }
+  });
 
   // Initialize checked state
   if (impl_->renderController_) {
@@ -466,6 +527,7 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
     gridAct->setChecked(impl_->renderController_->isShowGrid());
     guidesAct->setChecked(impl_->renderController_->isShowGuides());
     safeMarginsAct->setChecked(impl_->renderController_->isShowSafeMargins());
+    gpuBlendAct->setChecked(impl_->renderController_->isGpuBlendEnabled());
   }
 
   bottomLayout->addWidget(impl_->resolutionCombo_);
@@ -543,10 +605,14 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
 
 ArtifactCompositionEditor::~ArtifactCompositionEditor() { delete impl_; }
 
-void ArtifactCompositionEditor::setComposition(
-    ArtifactCompositionPtr composition) {
+QSize ArtifactCompositionEditor::sizeHint() const { return QSize(1280, 820); }
+
+void ArtifactCompositionEditor::setComposition(ArtifactCompositionPtr composition) {
   if (impl_->renderController_) {
     impl_->renderController_->setComposition(composition);
+  }
+  if (impl_->compositionView_) {
+    impl_->compositionView_->requestInitialFit();
   }
 }
 

@@ -9,6 +9,8 @@ module;
 #include <QImage>
 #include <QImageReader>
 #include <QFutureWatcher>
+#include <QRectF>
+#include <QtSvg/QSvgRenderer>
 #include <QtConcurrent>
 module Artifact.Service.Project;
 
@@ -21,6 +23,8 @@ import Artifact.Layer.Result;
 import Artifact.Composition.Abstract;
 import Artifact.Project.Items;
 import Artifact.Layer.Image;
+import Artifact.Layer.Svg;
+import Artifact.Layer.Audio;
 import Artifact.Layer.Video;
 import Image.PSDDocument;
 import File.TypeDetector;
@@ -41,6 +45,20 @@ namespace Artifact
    }
 
    const QString suffix = QFileInfo(path).suffix().toLower();
+   if (suffix == QStringLiteral("svg")) {
+    QSvgRenderer renderer(path);
+    if (renderer.isValid()) {
+     const QSize svgSize = renderer.defaultSize();
+     if (svgSize.isValid() && !svgSize.isEmpty()) {
+      return svgSize;
+     }
+     const QRectF viewBox = renderer.viewBoxF();
+     if (viewBox.isValid() && viewBox.width() > 0.0 && viewBox.height() > 0.0) {
+      return viewBox.size().toSize();
+     }
+    }
+   }
+
    if (suffix == QStringLiteral("psd") || suffix == QStringLiteral("psb")) {
     ArtifactCore::PsdDocument doc;
     if (doc.open(path)) {
@@ -532,12 +550,12 @@ bool ArtifactProjectService::removeLayerFromComposition(const CompositionID& com
 {
     bool ok = impl_->projectManager().removeLayerFromComposition(compositionId, layerId);
     if (ok) {
+        // [Optimization] Only emit layerRemoved. notifyProjectMutation triggers global projectChanged 
+        // which causes heavy UI rebuilds. Most widgets handle layerRemoved specifically.
         layerRemoved(compositionId, layerId);
-        notifyProjectMutation(impl_->projectManager());
     }
     return ok;
 }
-
 bool ArtifactProjectService::moveLayerInCurrentComposition(const LayerID& layerId, int newIndex)
 {
     auto comp = currentComposition().lock();
@@ -609,6 +627,10 @@ bool ArtifactProjectService::replaceLayerSourceInCurrentComposition(const LayerI
     bool replaced = false;
     if (auto imageLayer = std::dynamic_pointer_cast<ArtifactImageLayer>(layer)) {
         replaced = imageLayer->loadFromPath(trimmed);
+    } else if (auto svgLayer = std::dynamic_pointer_cast<ArtifactSvgLayer>(layer)) {
+        replaced = svgLayer->loadFromPath(trimmed);
+    } else if (auto audioLayer = std::dynamic_pointer_cast<ArtifactAudioLayer>(layer)) {
+        replaced = audioLayer->loadFromPath(trimmed);
     } else if (auto videoLayer = std::dynamic_pointer_cast<ArtifactVideoLayer>(layer)) {
         replaced = videoLayer->loadFromPath(trimmed);
     }
@@ -672,7 +694,8 @@ bool ArtifactProjectService::setLayerVisibleInCurrentComposition(const LayerID& 
         return false;
     }
     layer->setVisible(visible);
-    notifyProjectMutation(impl_->projectManager());
+    // layer の表示属性変更では projectChanged() を呼ばない (updateLayout 全体再構築を避ける)
+    Q_EMIT layer->changed();
     return true;
 }
 
@@ -687,7 +710,7 @@ bool ArtifactProjectService::setLayerLockedInCurrentComposition(const LayerID& l
         return false;
     }
     layer->setLocked(locked);
-    notifyProjectMutation(impl_->projectManager());
+    Q_EMIT layer->changed();
     return true;
 }
 
@@ -702,7 +725,7 @@ bool ArtifactProjectService::setLayerSoloInCurrentComposition(const LayerID& lay
         return false;
     }
     layer->setSolo(solo);
-    notifyProjectMutation(impl_->projectManager());
+    Q_EMIT layer->changed();
     return true;
 }
 

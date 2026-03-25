@@ -311,8 +311,13 @@ void PrimitiveRenderer2D::destroy()
 void PrimitiveRenderer2D::setViewportSize(float w, float h)  { impl_->viewport_.SetViewportSize(w, h); }
 void PrimitiveRenderer2D::setCanvasSize(float w, float h)    { impl_->viewport_.SetCanvasSize(w, h); }
 void PrimitiveRenderer2D::setPan(float x, float y)           { impl_->viewport_.SetPan(x, y); }
-void PrimitiveRenderer2D::setZoom(float zoom)                { impl_->viewport_.SetZoom(zoom); }
-float PrimitiveRenderer2D::getZoom() const                   { return impl_->viewport_.GetZoom(); }
+void PrimitiveRenderer2D::getPan(float& x, float& y) const
+{
+ auto p = impl_->viewport_.GetPan();
+ x = p.x;
+ y = p.y;
+}
+void PrimitiveRenderer2D::setZoom(float zoom)                { impl_->viewport_.SetZoom(zoom); }float PrimitiveRenderer2D::getZoom() const                   { return impl_->viewport_.GetZoom(); }
 void PrimitiveRenderer2D::panBy(float dx, float dy)          { impl_->viewport_.PanBy(dx, dy); }
 void PrimitiveRenderer2D::resetView()                        { impl_->viewport_.ResetView(); }
 void PrimitiveRenderer2D::fitToViewport(float margin)        { impl_->viewport_.FitCanvasToViewport(margin); }
@@ -320,6 +325,9 @@ void PrimitiveRenderer2D::fitToViewport(float margin)        { impl_->viewport_.
 void PrimitiveRenderer2D::setViewMatrix(const QMatrix4x4& view) { impl_->externalViewMatrix_ = view; }
 void PrimitiveRenderer2D::setProjectionMatrix(const QMatrix4x4& proj) { impl_->externalProjMatrix_ = proj; }
 void PrimitiveRenderer2D::setUseExternalMatrices(bool use) { impl_->useExternalMatrices_ = use; }
+
+QMatrix4x4 PrimitiveRenderer2D::viewMatrix() const { return impl_->externalViewMatrix_; }
+QMatrix4x4 PrimitiveRenderer2D::projectionMatrix() const { return impl_->externalProjMatrix_; }
 
 void PrimitiveRenderer2D::zoomAroundViewportPoint(float2 viewportPos, float newZoom)
 {

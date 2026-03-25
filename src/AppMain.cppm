@@ -728,11 +728,13 @@ int main(int argc, char* argv[])
     };
     QObject::connect(Logger::instance(), &Logger::logAdded, mw, updateStatusConsole);
     QObject::connect(Logger::instance(), &Logger::logsCleared, mw, updateStatusConsole);
-    auto* softwareCompositionView = new ArtifactSoftwareCompositionTestWidget(mw);
-    mw->addDockedWidgetTabbed(
+    mw->addLazyDockedWidgetTabbedWithId(
+        QStringLiteral("Composition View (Software)"),
         QStringLiteral("Composition View (Software)"),
         ads::CenterDockWidgetArea,
-        softwareCompositionView,
+        [mw]() -> QWidget* {
+            return new ArtifactSoftwareCompositionTestWidget(mw);
+        },
         QStringLiteral("Composition Viewer"));
     auto* layerViewEditor = new ArtifactRenderLayerEditor(mw);
     mw->addDockedWidgetTabbed(
@@ -740,23 +742,26 @@ int main(int argc, char* argv[])
         ads::CenterDockWidgetArea,
         layerViewEditor,
         QStringLiteral("Composition Viewer"));
-    auto* softwareLayerView = new ArtifactSoftwareLayerTestWidget(mw);
-    mw->addDockedWidgetTabbed(
+    mw->addLazyDockedWidgetTabbedWithId(
+        QStringLiteral("Layer View (Software)"),
         QStringLiteral("Layer View (Software)"),
         ads::CenterDockWidgetArea,
-        softwareLayerView,
+        [mw]() -> QWidget* {
+            return new ArtifactSoftwareLayerTestWidget(mw);
+        },
         QStringLiteral("Layer View (Diligent)"));
-    mw->addDockedWidget(QStringLiteral("Project"), ads::LeftDockWidgetArea, new ArtifactProjectManagerWidget(mw));
-    mw->addDockedWidget(QStringLiteral("Asset Browser"), ads::LeftDockWidgetArea, new ArtifactAssetBrowser(mw));
+    auto* projectManagerWidget = new ArtifactProjectManagerWidget(mw);
+    mw->addDockedWidget(QStringLiteral("Project"), ads::LeftDockWidgetArea, projectManagerWidget);
+    mw->addDockedWidgetTabbed(QStringLiteral("Asset Browser"), ads::LeftDockWidgetArea, new ArtifactAssetBrowser(mw), QStringLiteral("Project"));
     mw->addDockedWidget(QStringLiteral("Inspector"), ads::RightDockWidgetArea, new ArtifactInspectorWidget(mw));
     auto* propertyPanel = new ArtifactPropertyWidget(mw);
     mw->addDockedWidgetTabbed(QStringLiteral("Properties"), ads::RightDockWidgetArea, propertyPanel, QStringLiteral("Inspector"));
     mw->addDockedWidget(QStringLiteral("Audio Mixer"), ads::RightDockWidgetArea, new ArtifactCompositionAudioMixerWidget(mw));
     mw->setDockVisible(QStringLiteral("Audio Mixer"), false);
     mw->setDockVisible(QStringLiteral("Render Manager"), true);
-    mw->setDockVisible(QStringLiteral("Composition View (Software)"), true);
-    mw->setDockVisible(QStringLiteral("Layer View (Diligent)"), true);
-    mw->setDockVisible(QStringLiteral("Layer View (Software)"), true);
+    mw->setDockVisible(QStringLiteral("Composition View (Software)"), false);
+    mw->setDockVisible(QStringLiteral("Layer View (Diligent)"), false);
+    mw->setDockVisible(QStringLiteral("Layer View (Software)"), false);
 
     autoSaveManager->initialize("ArtifactProject", recoveryDir);
     autoSaveManager->start();

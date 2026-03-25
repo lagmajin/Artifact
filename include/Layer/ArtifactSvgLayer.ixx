@@ -1,6 +1,9 @@
 module;
 
+#include <QJsonObject>
+#include <QImage>
 #include <QVariant>
+#include <wobjectimpl.h>
 
 #include <iostream>
 #include <vector>
@@ -35,41 +38,38 @@ module;
 #include <numeric>
 #include <regex>
 #include <random>
-export module Artifact.Layer.Audio;
+export module Artifact.Layer.Svg;
 
-import Audio.Volume;
-import Audio.Segment;
 import Artifact.Layer.Abstract;
 
-export namespace Artifact
-{
- using namespace ArtifactCore;
+export namespace Artifact {
+using namespace ArtifactCore;
 
- class ArtifactAudioLayer :public ArtifactAbstractLayer
- {
- private:
+class ArtifactSvgLayer : public ArtifactAbstractLayer {
+  W_OBJECT(ArtifactSvgLayer)
+private:
   class Impl;
   Impl* impl_;
- public:
-  ArtifactAudioLayer();
-  ~ArtifactAudioLayer();
 
-  void setVolume(float volume);
-  float volume() const;
-  bool isMuted() const;
-  void mute();
+public:
+  ArtifactSvgLayer();
+  ~ArtifactSvgLayer();
+
+  QImage toQImage() const;
   bool loadFromPath(const QString& path);
   QString sourcePath() const;
   bool isLoaded() const;
 
+  void setFitToLayer(bool fit);
+  bool fitToLayer() const;
+
+  QJsonObject toJson() const;
+  void fromJsonProperties(const QJsonObject& obj);
+
   std::vector<ArtifactCore::PropertyGroup> getLayerPropertyGroups() const override;
   bool setLayerPropertyValue(const QString& propertyPath, const QVariant& value) override;
-
   void draw(ArtifactIRenderer* renderer) override;
-  bool hasVideo() const override;
-  bool hasAudio() const override;
-  bool getAudio(ArtifactCore::AudioSegment &outSegment, const FramePosition &start,
-                int frameCount, int sampleRate) override;
- };
-
+  QRectF localBounds() const override;
 };
+
+}

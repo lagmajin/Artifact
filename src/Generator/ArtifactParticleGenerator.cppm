@@ -774,6 +774,67 @@ void ParticleSystem::update(float deltaTime)
     Q_EMIT updated(deltaTime);
 }
 
+void ParticleSystem::reset()
+{
+    time_ = 0.0f;
+    for (auto& emitter : emitters_) {
+        emitter->clear();
+    }
+}
+
+void ParticleSystem::goToFrame(int64_t frame, double fps)
+{
+    reset();
+    if (frame <= 0 || fps <= 0.0) return;
+
+    // 固定ステップでシミュレートしてターゲット時間に到達させる
+    const double targetTime = static_cast<double>(frame) / fps;
+    const float stepSize = 1.0f / 120.0f; // 決定論的な基本刻み
+    
+    float currentTime = 0.0f;
+    while (currentTime < targetTime) {
+        float dt = std::min(stepSize, static_cast<float>(targetTime - currentTime));
+        // Emitter 内の update ロジックをそのまま呼ぶ
+        for (auto& emitter : emitters_) {
+            emitter->update(dt);
+        }
+        currentTime += dt;
+    }
+    time_ = currentTime;
+}
+
+ParticleRenderData ParticleSystem::captureRenderData() const
+{
+    ParticleRenderData data;
+    data.particles.reserve(totalParticleCount());
+    
+    for (const auto& emitter : emitters_) {
+        if (!emitter) continue;
+        for (const auto& p : emitter->particles()) {
+            if (p.alive) {
+                ParticleRenderData::Vertex v;
+                v.px = p.position.x();
+                v.py = p.position.y();
+                v.pz = p.position.z();
+                v.vx = p.velocity.x();
+                v.vy = p.velocity.y();
+                v.vz = p.velocity.z();
+                v.r  = p.color.redF();
+                v.g  = p.color.greenF();
+                v.b  = p.color.blueF();
+                v.a  = p.color.alphaF() * p.opacity;
+                v.size = p.scale;
+                v.rotation = p.rotation;
+                v.age = p.age;
+                v.lifetime = p.maxLife;
+                data.particles.push_back(v);
+            }
+        }
+    }
+    
+    return data;
+}
+
 QImage ParticleSystem::updateAndRenderSoftwareFrame(float deltaTime, int width, int height, const QColor& clearColor)
 {
     if (width <= 0 || height <= 0) {

@@ -5,6 +5,8 @@
 #include <wobjectimpl.h>
 #include <QTimer>
 #include <QDebug>
+#include <QElapsedTimer>
+#include <QLoggingCategory>
 #include <QKeyEvent>
 #include <QDateTime>
 #include <QDir>
@@ -41,6 +43,10 @@ namespace Artifact {
 
 W_OBJECT_IMPL(ArtifactLayerEditorWidgetV2)
 
+namespace {
+Q_LOGGING_CATEGORY(layerViewPerfLog, "artifact.layerviewperf")
+}
+
  class ArtifactLayerEditorWidgetV2::Impl {
  private:
  public:
@@ -61,6 +67,8 @@ W_OBJECT_IMPL(ArtifactLayerEditorWidgetV2)
   std::atomic_bool running_{ false };
   QTimer* renderTimer_ = nullptr;
   std::mutex resizeMutex_;
+  quint64 renderTickCount_ = 0;
+  quint64 renderExecutedCount_ = 0;
   
   
  bool released = true;
@@ -340,6 +348,17 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
   impl_->renderTimer_ = new QTimer(this);
   impl_->renderTimer_->setInterval(16);
   QObject::connect(impl_->renderTimer_, &QTimer::timeout, this, [this]() {
+   ++impl_->renderTickCount_;
+   if ((impl_->renderTickCount_ % 120ull) == 1ull) {
+    qCDebug(layerViewPerfLog) << "[LayerView][Timer]"
+                              << "ticks=" << impl_->renderTickCount_
+                              << "executed=" << impl_->renderExecutedCount_
+                              << "visible=" << isVisible()
+                              << "hidden=" << isHidden()
+                              << "windowVisible=" << (window() ? window()->isVisible() : false)
+                              << "size=" << size()
+                              << "running=" << impl_->running_.load(std::memory_order_acquire);
+   }
    if (!impl_ || !impl_->initialized_ || !impl_->renderer_ || !impl_->running_.load(std::memory_order_acquire)) {
     return;
    }
@@ -347,7 +366,19 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
     return;
    }
    std::lock_guard<std::mutex> lock(impl_->resizeMutex_);
+   QElapsedTimer frameTimer;
+   frameTimer.start();
    impl_->renderOneFrame();
+    ++impl_->renderExecutedCount_;
+    const qint64 elapsedMs = frameTimer.elapsed();
+    if (elapsedMs >= 8 || (impl_->renderExecutedCount_ % 120ull) == 1ull) {
+     qCDebug(layerViewPerfLog) << "[LayerView][Frame]"
+                               << "ms=" << elapsedMs
+                               << "executed=" << impl_->renderExecutedCount_
+                               << "targetLayerNil=" << impl_->targetLayerId_.isNil()
+                               << "visible=" << isVisible()
+                               << "size=" << size();
+    }
   });
 
   if (auto* service = ArtifactProjectService::instance()) {
@@ -488,7 +519,11 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
 
  void ArtifactLayerEditorWidgetV2::showEvent(QShowEvent* event)
  {
-  QWidget::showEvent(event);
+ QWidget::showEvent(event);
+  qCDebug(layerViewPerfLog) << "[LayerView][Show]"
+                            << "initialized=" << impl_->initialized_
+                            << "visible=" << isVisible()
+                            << "size=" << size();
   if (!impl_->initialized_) {
    impl_->initialize(this);
    if (impl_->initialized_) {
@@ -502,6 +537,19 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
    setTargetLayer(impl_->targetLayerId_);
   }
  }
+
+ void ArtifactLayerEditorWidgetV2::hideEvent(QHideEvent* event)
+ {
+  qCDebug(layerViewPerfLog) << "[LayerView][Hide]"
+                            << "initialized=" << impl_->initialized_
+                            << "visible=" << isVisible()
+                            << "size=" << size();
+  if (impl_->initialized_) {
+   impl_->stopRenderLoop();
+  }
+  QWidget::hideEvent(event);
+ }
+
  void ArtifactLayerEditorWidgetV2::closeEvent(QCloseEvent* event)
  {
   impl_->destroy();

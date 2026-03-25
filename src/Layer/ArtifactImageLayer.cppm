@@ -17,7 +17,6 @@ import Image.ImageF32x4_RGBA;
 import Size;
 
 namespace Artifact {
-
 class ArtifactImageLayer::Impl {
 public:
     Impl() = default;
@@ -91,24 +90,33 @@ QString ArtifactImageLayer::sourcePath() const
 
 std::vector<ArtifactCore::PropertyGroup> ArtifactImageLayer::getLayerPropertyGroups() const
 {
-    std::vector<ArtifactCore::PropertyGroup> groups;
-    
-    ArtifactCore::PropertyGroup group("Image Layer");
-    // TODO: プロパティの追加
-    
-    groups.push_back(group);
-    
-    // Base class groups (Transform, etc.)
-    auto baseGroups = ArtifactAbstractLayer::getLayerPropertyGroups();
-    groups.insert(groups.end(), baseGroups.begin(), baseGroups.end());
-    
+    auto groups = ArtifactAbstractLayer::getLayerPropertyGroups();
+    ArtifactCore::PropertyGroup imageGroup(QStringLiteral("Image"));
+
+    auto makeProp = [this](const QString& name, ArtifactCore::PropertyType type,
+                           const QVariant& value, int priority = 0) {
+        return persistentLayerProperty(name, type, value, priority);
+    };
+
+    imageGroup.addProperty(makeProp(QStringLiteral("image.sourcePath"),
+                                    ArtifactCore::PropertyType::String,
+                                    sourcePath(), -150));
+    imageGroup.addProperty(makeProp(QStringLiteral("image.fitToLayer"),
+                                    ArtifactCore::PropertyType::Boolean,
+                                    impl_->fitToLayer_, -140));
+
+    groups.push_back(imageGroup);
     return groups;
 }
 
 bool ArtifactImageLayer::setLayerPropertyValue(const QString& propertyPath, const QVariant& value)
 {
-    if (propertyPath == "sourcePath") {
+    if (propertyPath == QStringLiteral("image.sourcePath") || propertyPath == QStringLiteral("sourcePath")) {
         return loadFromPath(value.toString());
+    }
+    if (propertyPath == QStringLiteral("image.fitToLayer")) {
+        setFitToLayer(value.toBool());
+        return true;
     }
     
     return ArtifactAbstractLayer::setLayerPropertyValue(propertyPath, value);

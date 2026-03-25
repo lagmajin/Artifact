@@ -59,6 +59,8 @@ public:
     explicit ArtifactPropertyWidget(QWidget* parent = nullptr);
     ~ArtifactPropertyWidget();
 
+    QSize sizeHint() const override;
+
     void setLayer(Artifact::ArtifactAbstractLayerPtr layer);
     void setFocusedEffectId(const QString& effectId);
     void clear();
@@ -70,6 +72,9 @@ public:
     bool sliderBeforeValue() const;
 
     void updateProperties();
+
+protected:
+    void showEvent(QShowEvent* event) override;
 };
 
 } // namespace Artifact

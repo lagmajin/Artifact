@@ -19,6 +19,8 @@
 #include <QWheelEvent>
 #include <QSignalBlocker>
 #include <QDateTime>
+#include <QElapsedTimer>
+#include <QLoggingCategory>
 #include <QPair>
 #include <QStringList>
 #include <QVector>
@@ -35,6 +37,7 @@ import Artifact.Project.Items;
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
 import Artifact.Layer.Image;
+import Artifact.Layer.Svg;
 import Artifact.Layer.Text;
 import Artifact.Layer.Video;
 import Artifact.Layers.SolidImage;
@@ -46,6 +49,7 @@ import Layer.Blend;
 namespace Artifact {
 
 namespace {
+Q_LOGGING_CATEGORY(softwareInspectorPerfLog, "artifact.softwareinspectorperf")
 
 QString blendLabel(const ArtifactCore::BlendMode mode)
 {
@@ -467,6 +471,22 @@ QImage renderLayerSurface(const ArtifactAbstractLayerPtr& layer)
         return placeholder;
     }
 
+    if (const auto svgLayer = std::dynamic_pointer_cast<ArtifactSvgLayer>(layer)) {
+        if (svgLayer->isLoaded()) {
+            QImage image = svgLayer->toQImage();
+            if (!image.isNull()) {
+                return image.convertToFormat(QImage::Format_ARGB32_Premultiplied);
+            }
+        }
+        QImage placeholder(layerSize, QImage::Format_ARGB32_Premultiplied);
+        placeholder.fill(QColor(60, 60, 60));
+        QPainter p(&placeholder);
+        p.setPen(QColor(200, 100, 100));
+        p.drawText(QRect(0, 0, layerSize.width(), layerSize.height()),
+                   Qt::AlignCenter, QStringLiteral("No SVG"));
+        return placeholder;
+    }
+
     if (const auto solidLayer = std::dynamic_pointer_cast<ArtifactSolidImageLayer>(layer)) {
         QImage image(layerSize, QImage::Format_ARGB32_Premultiplied);
         image.fill(toQColor(solidLayer->color()));
@@ -631,7 +651,8 @@ QString compositionSummaryText(const ArtifactCompositionPtr& composition)
         }
         if (std::dynamic_pointer_cast<ArtifactSolidImageLayer>(layer) || std::dynamic_pointer_cast<ArtifactSolid2DLayer>(layer)) {
             ++solidCount;
-        } else if (std::dynamic_pointer_cast<ArtifactImageLayer>(layer)) {
+        } else if (std::dynamic_pointer_cast<ArtifactImageLayer>(layer) ||
+                   std::dynamic_pointer_cast<ArtifactSvgLayer>(layer)) {
             ++imageCount;
         } else if (std::dynamic_pointer_cast<ArtifactTextLayer>(layer)) {
             ++textCount;
@@ -760,6 +781,7 @@ W_OBJECT_IMPL(ArtifactSoftwareLayerTestWidget)
 
 class ArtifactSoftwareCompositionTestWidget::Impl {
 public:
+    QWidget* owner_ = nullptr;
     ArtifactProjectService* service_ = nullptr;
     QComboBox* compositionCombo_ = nullptr;
     QCheckBox* followCurrentCompositionCheck_ = nullptr;
@@ -823,6 +845,12 @@ public:
 
     void refreshPreview()
     {
+        if (!owner_ || !owner_->isVisible() || owner_->isHidden() ||
+            !owner_->window() || !owner_->window()->isVisible()) {
+            return;
+        }
+        QElapsedTimer timer;
+        timer.start();
         const QSize renderSize = safePreviewSize(previewLabel_);
         const ArtifactCompositionPtr composition = selectedComposition();
         const QImage compositionCanvas = renderCompositionCanvas(composition);
@@ -843,11 +871,23 @@ public:
         if (summaryLabel_) {
             summaryLabel_->setText(compositionSummaryText(composition));
         }
+
+        const qint64 elapsedMs = timer.elapsed();
+        if (elapsedMs >= 8 || (owner_ && owner_->isVisible())) {
+            qCDebug(softwareInspectorPerfLog) << "[SoftwareCompositionView][Refresh]"
+                                              << "ms=" << elapsedMs
+                                              << "visible=" << (owner_ ? owner_->isVisible() : false)
+                                              << "hidden=" << (owner_ ? owner_->isHidden() : true)
+                                              << "windowVisible=" << (owner_ && owner_->window() ? owner_->window()->isVisible() : false)
+                                              << "renderSize=" << renderSize
+                                              << "hasComp=" << static_cast<bool>(composition);
+        }
     }
 };
 
 class ArtifactSoftwareLayerTestWidget::Impl {
 public:
+    QWidget* owner_ = nullptr;
     ArtifactProjectService* service_ = nullptr;
     QComboBox* compositionCombo_ = nullptr;
     QComboBox* layerCombo_ = nullptr;
@@ -974,6 +1014,12 @@ void ArtifactSoftwareLayerTestWidget::Impl::reloadLayers()
 
 void ArtifactSoftwareLayerTestWidget::Impl::refreshPreview()
 {
+    if (!owner_ || !owner_->isVisible() || owner_->isHidden() ||
+        !owner_->window() || !owner_->window()->isVisible()) {
+        return;
+    }
+    QElapsedTimer timer;
+    timer.start();
     const QSize renderSize = safePreviewSize(previewLabel_);
     const ArtifactAbstractLayerPtr layer = selectedLayer();
     const ArtifactCompositionPtr composition = selectedComposition();
@@ -1007,6 +1053,18 @@ void ArtifactSoftwareLayerTestWidget::Impl::refreshPreview()
     if (infoLabel_) {
         infoLabel_->setText(layerSummaryText(composition, layer));
     }
+
+    const qint64 elapsedMs = timer.elapsed();
+    if (elapsedMs >= 8 || (owner_ && owner_->isVisible())) {
+        qCDebug(softwareInspectorPerfLog) << "[SoftwareLayerView][Refresh]"
+                                          << "ms=" << elapsedMs
+                                          << "visible=" << (owner_ ? owner_->isVisible() : false)
+                                          << "hidden=" << (owner_ ? owner_->isHidden() : true)
+                                          << "windowVisible=" << (owner_ && owner_->window() ? owner_->window()->isVisible() : false)
+                                          << "renderSize=" << renderSize
+                                          << "hasComp=" << static_cast<bool>(composition)
+                                          << "hasLayer=" << static_cast<bool>(layer);
+    }
 }
 
 ArtifactSoftwareCompositionTestWidget::ArtifactSoftwareCompositionTestWidget(QWidget* parent)
@@ -1014,6 +1072,7 @@ ArtifactSoftwareCompositionTestWidget::ArtifactSoftwareCompositionTestWidget(QWi
 {
     setFocusPolicy(Qt::StrongFocus);
     setMouseTracking(true);
+    impl_->owner_ = this;
     impl_->service_ = ArtifactProjectService::instance();
 
     auto* root = new QVBoxLayout(this);
@@ -1159,6 +1218,7 @@ ArtifactSoftwareLayerTestWidget::ArtifactSoftwareLayerTestWidget(QWidget* parent
 {
     setFocusPolicy(Qt::StrongFocus);
     setMouseTracking(true);
+    impl_->owner_ = this;
     impl_->service_ = ArtifactProjectService::instance();
 
     auto* root = new QVBoxLayout(this);

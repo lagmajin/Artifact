@@ -163,6 +163,30 @@ void scheduleFloatingRefresh(ads::CFloatingDockContainer* floatingWidget)
  });
 }
 
+void scheduleQuitIfNoVisibleDocks(ArtifactMainWindow* window)
+{
+ if (!window) {
+  return;
+ }
+
+ QTimer::singleShot(0, window, [window]() {
+  if (!window) {
+   return;
+  }
+
+  const auto dockTitles = window->dockTitles();
+  for (const auto& title : dockTitles) {
+   if (window->isDockVisible(title)) {
+    return;
+   }
+  }
+
+  if (qApp) {
+   qApp->quit();
+  }
+ });
+}
+
 void prepareFloatingDockContainer(ads::CFloatingDockContainer* floatingWidget, QObject* eventFilterOwner);
 
 void wireDockWidgetSignals(ads::CDockWidget* dock, QObject* owner)
@@ -180,10 +204,13 @@ void wireDockWidgetSignals(ads::CDockWidget* dock, QObject* owner)
   }
  });
 
- QObject::connect(dock, &ads::CDockWidget::visibilityChanged, owner, [dock](bool) {
+ QObject::connect(dock, &ads::CDockWidget::visibilityChanged, owner, [dock, owner](bool) {
   refreshDockWidgetSurface(dock);
   if (auto* floatingWidget = findFloatingDockContainer(dock)) {
    scheduleFloatingRefresh(floatingWidget);
+  }
+  if (auto* window = qobject_cast<ArtifactMainWindow*>(owner)) {
+   scheduleQuitIfNoVisibleDocks(window);
   }
  });
 }
@@ -461,7 +488,7 @@ ads--CDockWidgetTab QPushButton#tabCloseButton:pressed {
  impl_->primaryCenterDock = centralDock; impl_->dockStyleManager->applyStyle();
 
  statusBar();
- resize(1600, 1000);
+ resize(1800, 1100);
 }
 
 ArtifactMainWindow::~ArtifactMainWindow()
@@ -554,6 +581,82 @@ void ArtifactMainWindow::addDockedWidgetTabbedWithId(const QString& title, const
  dock->setAsCurrentTab();
  dock->raise();
  wireDockWidgetSignals(dock, this);
+ impl_->dockStyleManager->applyStyle();
+}
+
+void ArtifactMainWindow::addLazyDockedWidgetTabbedWithId(
+ const QString& title,
+ const QString& dockId,
+ ads::DockWidgetArea area,
+ std::function<QWidget*()> factory,
+ const QString& tabGroupPrefix)
+{
+ if (!impl_ || !impl_->dockManager || !factory) {
+  return;
+ }
+
+ auto* dock = new CDockWidget(title, this);
+ dock->setObjectName(dockId.isEmpty() ? title : dockId);
+ auto* placeholder = new QWidget(dock);
+ dock->setWidget(placeholder);
+
+ ads::CDockAreaWidget* targetArea = nullptr;
+ if (!tabGroupPrefix.isEmpty()) {
+  for (auto it = impl_->dockWidgets.crbegin(); it != impl_->dockWidgets.crend(); ++it) {
+   auto* existingDock = *it;
+   if (!existingDock) continue;
+   const QString objectName = existingDock->objectName();
+   const QString windowTitle = existingDock->windowTitle();
+   if ((objectName == tabGroupPrefix || windowTitle == tabGroupPrefix) &&
+       existingDock->dockAreaWidget()) {
+    targetArea = existingDock->dockAreaWidget();
+    break;
+   }
+  }
+ }
+
+ if (!targetArea && !tabGroupPrefix.isEmpty()) {
+  for (auto it = impl_->dockWidgets.crbegin(); it != impl_->dockWidgets.crend(); ++it) {
+   auto* existingDock = *it;
+   if (!existingDock) continue;
+   const QString objectName = existingDock->objectName();
+   const QString windowTitle = existingDock->windowTitle();
+   if ((objectName.startsWith(tabGroupPrefix) || windowTitle.startsWith(tabGroupPrefix)) &&
+       existingDock->dockAreaWidget()) {
+    targetArea = existingDock->dockAreaWidget();
+    break;
+   }
+  }
+ }
+
+ if (targetArea) {
+  impl_->dockManager->addDockWidget(ads::CenterDockWidgetArea, dock, targetArea);
+ } else {
+  impl_->dockManager->addDockWidget(area, dock);
+ }
+
+ impl_->dockWidgets.push_back(dock);
+ wireDockWidgetSignals(dock, this);
+ dock->toggleView(false);
+
+ QObject::connect(dock, &ads::CDockWidget::visibilityChanged, this, [dock, placeholder, factory = std::move(factory)](bool visible) mutable {
+  if (!visible || dock->property("artifactLazyWidgetCreated").toBool()) {
+   return;
+  }
+
+  QWidget* widget = factory ? factory() : nullptr;
+  if (!widget) {
+   return;
+  }
+
+  dock->setProperty("artifactLazyWidgetCreated", true);
+  dock->setWidget(widget);
+  if (placeholder) {
+   placeholder->deleteLater();
+  }
+  refreshDockWidgetSurface(dock);
+ });
+
  impl_->dockStyleManager->applyStyle();
 }
 

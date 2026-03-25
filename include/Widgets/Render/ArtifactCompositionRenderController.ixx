@@ -37,8 +37,10 @@ export namespace Artifact {
 
   void recreateSwapChain(QWidget* hostWidget);
   void setViewportSize(float width, float height);
-  void setPreviewQualityPreset(PreviewQualityPreset preset);
-  void panBy(const QPointF& viewportDelta);
+void setPreviewQualityPreset(PreviewQualityPreset preset);
+void panBy(const QPointF& viewportDelta);
+void notifyViewportInteractionActivity();
+void finishViewportInteraction();
 
   void setComposition(ArtifactCompositionPtr composition);
   ArtifactCompositionPtr composition() const;
@@ -53,12 +55,16 @@ void setShowGuides(bool show);
 bool isShowGuides() const;
 void setShowSafeMargins(bool show);
 bool isShowSafeMargins() const;
+void setGpuBlendEnabled(bool enabled);
+bool isGpuBlendEnabled() const;
 
 void resetView();
 void zoomInAt(const QPointF& viewportPos);
 void zoomOutAt(const QPointF& viewportPos);
 void zoomFit();
 void zoom100();
+void focusSelectedLayer();
+LayerID layerAtViewportPos(const QPointF& viewportPos) const;
 
 void handleMousePress(QMouseEvent* event);
 void handleMouseMove(const QPointF& viewportPos);

@@ -351,13 +351,8 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactTextLayer::getLayerPropertyGrou
     auto groups = ArtifactAbstractLayer::getLayerPropertyGroups();
     ArtifactCore::PropertyGroup textGroup(QStringLiteral("Text"));
 
-    auto makeProp = [](const QString& name, ArtifactCore::PropertyType type, const QVariant& value, int priority = 0) {
-        auto p = std::make_shared<ArtifactCore::AbstractProperty>();
-        p->setName(name);
-        p->setType(type);
-        p->setValue(value);
-        p->setDisplayPriority(priority);
-        return p;
+    auto makeProp = [this](const QString& name, ArtifactCore::PropertyType type, const QVariant& value, int priority = 0) {
+        return persistentLayerProperty(name, type, value, priority);
     };
 
     textGroup.addProperty(makeProp(QStringLiteral("text.value"), ArtifactCore::PropertyType::String, text().toQString(), -120));
@@ -375,35 +370,35 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactTextLayer::getLayerPropertyGrou
     textGroup.addProperty(alignmentProp);
 
     const auto c = textColor();
-    auto colorProp = std::make_shared<ArtifactCore::AbstractProperty>();
-    colorProp->setName(QStringLiteral("text.color"));
-    colorProp->setType(ArtifactCore::PropertyType::Color);
+    auto colorProp = persistentLayerProperty(QStringLiteral("text.color"),
+        ArtifactCore::PropertyType::Color,
+        QVariant(),
+        -90);
     colorProp->setColorValue(QColor::fromRgbF(c.r(), c.g(), c.b(), c.a()));
     colorProp->setValue(colorProp->getColorValue());
-    colorProp->setDisplayPriority(-90);
     textGroup.addProperty(colorProp);
 
     // Stroke
     textGroup.addProperty(makeProp(QStringLiteral("text.strokeEnabled"), ArtifactCore::PropertyType::Boolean, isStrokeEnabled(), -85));
     const auto sc = strokeColor();
-    auto strokeColorProp = std::make_shared<ArtifactCore::AbstractProperty>();
-    strokeColorProp->setName(QStringLiteral("text.strokeColor"));
-    strokeColorProp->setType(ArtifactCore::PropertyType::Color);
+    auto strokeColorProp = persistentLayerProperty(QStringLiteral("text.strokeColor"),
+        ArtifactCore::PropertyType::Color,
+        QVariant(),
+        -84);
     strokeColorProp->setColorValue(QColor::fromRgbF(sc.r(), sc.g(), sc.b(), sc.a()));
     strokeColorProp->setValue(strokeColorProp->getColorValue());
-    strokeColorProp->setDisplayPriority(-84);
     textGroup.addProperty(strokeColorProp);
     textGroup.addProperty(makeProp(QStringLiteral("text.strokeWidth"), ArtifactCore::PropertyType::Float, strokeWidth(), -83));
 
     // Shadow
     textGroup.addProperty(makeProp(QStringLiteral("text.shadowEnabled"), ArtifactCore::PropertyType::Boolean, isShadowEnabled(), -80));
     const auto shc = shadowColor();
-    auto shadowColorProp = std::make_shared<ArtifactCore::AbstractProperty>();
-    shadowColorProp->setName(QStringLiteral("text.shadowColor"));
-    shadowColorProp->setType(ArtifactCore::PropertyType::Color);
+    auto shadowColorProp = persistentLayerProperty(QStringLiteral("text.shadowColor"),
+        ArtifactCore::PropertyType::Color,
+        QVariant(),
+        -79);
     shadowColorProp->setColorValue(QColor::fromRgbF(shc.r(), shc.g(), shc.b(), shc.a()));
     shadowColorProp->setValue(shadowColorProp->getColorValue());
-    shadowColorProp->setDisplayPriority(-79);
     textGroup.addProperty(shadowColorProp);
     textGroup.addProperty(makeProp(QStringLiteral("text.shadowOffsetX"), ArtifactCore::PropertyType::Float, shadowOffsetX(), -78));
     textGroup.addProperty(makeProp(QStringLiteral("text.shadowOffsetY"), ArtifactCore::PropertyType::Float, shadowOffsetY(), -77));

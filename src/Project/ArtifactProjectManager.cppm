@@ -569,9 +569,21 @@ QVector<ProjectItem*> ArtifactProjectManager::projectItems() const
   }
  }
 
- void ArtifactProjectManager::createComposition(const QString, const QSize& size)
+ void ArtifactProjectManager::createComposition(const QString name, const QSize& size)
  {
-
+  ArtifactCompositionInitParams params;
+  if (!name.isEmpty()) {
+    params.setCompositionName(UniString(name));
+  }
+  if (size.isValid() && size.width() > 0 && size.height() > 0) {
+    params.setResolution(size.width(), size.height());
+  }
+  auto result = createComposition(params);
+  if (!result.success) {
+    qDebug() << "ArtifactProjectManager::createComposition(name,size) failed"
+             << "name=" << name
+             << "size=" << QStringLiteral("%1x%2").arg(size.width()).arg(size.height());
+  }
  }
 
  CreateCompositionResult ArtifactProjectManager::createComposition(const ArtifactCompositionInitParams& params)

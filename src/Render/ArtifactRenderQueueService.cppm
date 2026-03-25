@@ -16,6 +16,7 @@
 #include <QPointF>
 #include <QRegularExpression>
 #include <QProcess>
+#include <QCoreApplication>
 #include <opencv2/opencv.hpp>
 #include <wobjectimpl.h>
 #include <mutex>
@@ -76,6 +77,7 @@ import Image.ExportOptions;
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
 import Artifact.Layer.Image;
+import Artifact.Layer.Svg;
 import Artifact.Layer.Text;
 import Artifact.Layer.Video;
 import Artifact.Layers.SolidImage;
@@ -85,6 +87,36 @@ import Color.Float;
 
 namespace Artifact
 {
+    namespace {
+        QString resolveFfmpegExePath()
+        {
+            const QString executableName = QStringLiteral("ffmpeg.exe");
+
+            const QString appDir = QCoreApplication::applicationDirPath();
+            const QStringList candidatePaths = {
+                QDir(appDir).filePath(executableName),
+                QDir(appDir).filePath(QStringLiteral("ffmpeg/") + executableName),
+                QDir(appDir).filePath(QStringLiteral("tools/") + executableName),
+                QDir(appDir).filePath(QStringLiteral("tools/ffmpeg/") + executableName),
+                QDir(appDir).filePath(QStringLiteral("bin/") + executableName),
+                QDir(appDir).filePath(QStringLiteral("../") + executableName),
+                QDir(appDir).filePath(QStringLiteral("../ffmpeg/") + executableName),
+                QDir(appDir).filePath(QStringLiteral("../tools/") + executableName),
+                QDir(appDir).filePath(QStringLiteral("../tools/ffmpeg/") + executableName),
+                QDir(appDir).filePath(QStringLiteral("../bin/") + executableName)
+            };
+
+            for (const QString& candidate : candidatePaths) {
+                const QFileInfo info(candidate);
+                if (info.exists() && info.isFile()) {
+                    return info.absoluteFilePath();
+                }
+            }
+
+            return executableName;
+        }
+    }
+
     // レンダリングジョブクラス
     class ArtifactRenderJob {
     public:
@@ -313,10 +345,11 @@ namespace Artifact
                  << QStringLiteral("-pix_fmt") << QStringLiteral("yuv420p")
                  << job.outputPath;
 
-            process_->start(QStringLiteral("ffmpeg.exe"), args);
+            const QString ffmpegPath = resolveFfmpegExePath();
+            process_->start(ffmpegPath, args);
             if (!process_->waitForStarted()) {
                 if (errorMessage) {
-                    *errorMessage = QStringLiteral("Failed to start ffmpeg.exe bridge");
+                    *errorMessage = QStringLiteral("Failed to start ffmpeg.exe bridge: %1").arg(ffmpegPath);
                 }
                 close();
                 return false;
@@ -1079,6 +1112,13 @@ namespace Artifact
             const QSize layerSize = safeLayerSize(layer);
             if (const auto imageLayer = std::dynamic_pointer_cast<ArtifactImageLayer>(layer)) {
                 const QImage image = imageLayer->toQImage();
+                if (!image.isNull()) {
+                    return image.convertToFormat(QImage::Format_ARGB32_Premultiplied);
+                }
+            }
+
+            if (const auto svgLayer = std::dynamic_pointer_cast<ArtifactSvgLayer>(layer)) {
+                const QImage image = svgLayer->toQImage();
                 if (!image.isNull()) {
                     return image.convertToFormat(QImage::Format_ARGB32_Premultiplied);
                 }

@@ -36,6 +36,7 @@ public:
     void setViewportSize(float w, float h);
     void setCanvasSize(float w, float h);
     void setPan(float x, float y);
+    void getPan(float& x, float& y) const;
     void setZoom(float zoom);
     float getZoom() const;
     void panBy(float dx, float dy);
@@ -44,6 +45,8 @@ public:
     void setViewMatrix(const QMatrix4x4& view);
     void setProjectionMatrix(const QMatrix4x4& proj);
     void setUseExternalMatrices(bool use);
+    QMatrix4x4 viewMatrix() const;
+    QMatrix4x4 projectionMatrix() const;
     void zoomAroundViewportPoint(float2 viewportPos, float newZoom);
     float2 canvasToViewport(float2 pos) const;
     float2 viewportToCanvas(float2 pos) const;

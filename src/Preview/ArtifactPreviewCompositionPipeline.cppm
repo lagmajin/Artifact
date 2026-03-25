@@ -40,6 +40,7 @@ module;
 #include <QRectF>
 #include <QTransform>
 #include <QDebug>
+#include <QLoggingCategory>
 module Artifact.Preview.Pipeline;
 
 
@@ -49,6 +50,7 @@ import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
 import Artifact.Effect.Abstract;
 import Artifact.Layer.Image;
+import Artifact.Layer.Svg;
 import Artifact.Layer.Solid2D;
 import Artifact.Layer.Text;
 import Artifact.Layer.Video;
@@ -61,6 +63,8 @@ namespace Artifact
 {
  namespace
  {
+  Q_LOGGING_CATEGORY(previewPipelineLog, "artifact.previewpipeline")
+
   QColor toQColor(const FloatColor& color)
   {
    return QColor::fromRgbF(color.r(), color.g(), color.b(), color.a());
@@ -147,6 +151,13 @@ namespace Artifact
     }
    }
 
+   if (const auto svgLayer = std::dynamic_pointer_cast<ArtifactSvgLayer>(layer)) {
+    if (svgLayer->isLoaded()) {
+     svgLayer->draw(renderer);
+     return;
+    }
+   }
+
    if (const auto videoLayer = std::dynamic_pointer_cast<ArtifactVideoLayer>(layer)) {
     const QImage frame = videoLayer->currentFrameToQImage();
     if (!frame.isNull()) {
@@ -224,18 +235,29 @@ namespace Artifact
    if (!selectedLayerId_.isNil())
    {
     auto layer = composition_->layerById(selectedLayerId_);
+    qCDebug(previewPipelineLog) << "[PreviewPipeline][Gizmo]"
+                                << "selectedLayerId=" << selectedLayerId_.toString()
+                                << "hasLayer=" << static_cast<bool>(layer)
+                                << "frame=" << currentFrame.framePosition()
+                                << "active=" << (layer ? layer->isActiveAt(currentFrame) : false);
     if (layer && layer->isActiveAt(currentFrame))
     {
      auto global = layer->getGlobalTransform();
      auto localBounds = layer->localBounds();
      if (!localBounds.isValid() || localBounds.width() <= 0.0 || localBounds.height() <= 0.0) {
-      qDebug() << "[PreviewPipeline] skip gizmo: invalid local bounds"
-               << "id=" << layer->id().toString()
-               << "bounds=(" << localBounds.left() << ","
-               << localBounds.top() << ","
-               << localBounds.width() << ","
-               << localBounds.height() << ")";
+      qCDebug(previewPipelineLog) << "[PreviewPipeline][Gizmo] skip draw: invalid local bounds"
+                                  << "id=" << layer->id().toString()
+                                  << "bounds=" << localBounds;
      } else {
+      qCDebug(previewPipelineLog) << "[PreviewPipeline][Gizmo] draw"
+                                  << "id=" << layer->id().toString()
+                                  << "bounds=" << localBounds
+                                  << "m11=" << global.m11()
+                                  << "m12=" << global.m12()
+                                  << "m21=" << global.m21()
+                                  << "m22=" << global.m22()
+                                  << "dx=" << global.dx()
+                                  << "dy=" << global.dy();
       float w = (float)localBounds.width();
       float h = (float)localBounds.height();
 
@@ -268,9 +290,9 @@ namespace Artifact
       }
     }
     } else if (layer) {
-     qDebug() << "[PreviewPipeline] skip gizmo: layer inactive at frame"
-              << "id=" << layer->id().toString()
-              << "frame=" << currentFrame.framePosition();
+     qCDebug(previewPipelineLog) << "[PreviewPipeline][Gizmo] skip draw: inactive frame"
+                                 << "id=" << layer->id().toString()
+                                 << "frame=" << currentFrame.framePosition();
     }
    }
 

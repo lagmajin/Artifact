@@ -256,48 +256,70 @@ QSize ArtifactTimelineTrackPainterView::minimumSizeHint() const
 
 void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent* event)
 {
- Q_UNUSED(event);
  QPainter p(this);
  p.setRenderHint(QPainter::Antialiasing, true);
- p.fillRect(rect(), QColor(28, 29, 33));
+ 
+ const QRect dirtyRect = event->rect();
+ p.fillRect(dirtyRect, QColor(28, 29, 33));
 
  const QRect fullRect = rect();
  const double ppf = impl_->pixelsPerFrame_;
  const double xOffset = impl_->horizontalOffset_;
 
- // Track rows.
- int y = 0;
+ // Track rows (Virtualization)
+ int currentY = 0;
  for (int i = 0; i < impl_->trackHeights_.size(); ++i) {
   const int rowH = impl_->trackHeights_[i];
-  const QColor rowColor = (i % 2 == 0) ? QColor(33, 34, 39) : QColor(37, 38, 43);
-  p.fillRect(QRect(0, y, fullRect.width(), rowH), rowColor);
-  p.setPen(QPen(QColor(18, 18, 20), 1));
-  p.drawLine(0, y + rowH, fullRect.width(), y + rowH);
-  y += rowH + kTrackSpacing;
+  
+  // 画面外（dirtyRect外）の行は描画をスキップ
+  if (currentY + rowH >= dirtyRect.top() && currentY <= dirtyRect.bottom()) {
+    const QColor rowColor = (i % 2 == 0) ? QColor(33, 34, 39) : QColor(37, 38, 43);
+    p.fillRect(QRect(0, currentY, fullRect.width(), rowH), rowColor);
+    p.setPen(QPen(QColor(18, 18, 20), 1));
+    p.drawLine(0, currentY + rowH, fullRect.width(), currentY + rowH);
+  }
+  
+  currentY += rowH + kTrackSpacing;
  }
 
  // Vertical frame grid (tick lines only, no labels).
  const int majorStep = 10;
  const int minorStep = 5;
- const int startFrame = std::max(0, static_cast<int>(std::floor(xOffset / ppf)));
- const int endFrame = static_cast<int>(std::ceil((xOffset + fullRect.width()) / ppf));
+ const int startFrame = std::max(0, static_cast<int>(std::floor((xOffset + dirtyRect.left()) / ppf)));
+ const int endFrame = static_cast<int>(std::ceil((xOffset + dirtyRect.right()) / ppf));
  for (int f = startFrame; f <= endFrame; ++f) {
   const double x = f * ppf - xOffset;
-  if (x < 0.0 || x > fullRect.width()) {
-   continue;
-  }
   const bool major = (f % majorStep) == 0;
   const bool minor = !major && (f % minorStep) == 0;
   if (!major && !minor) {
    continue;
   }
   p.setPen(QPen(major ? QColor(78, 79, 88) : QColor(54, 55, 62), 1));
-  p.drawLine(QPointF(x, 0.0), QPointF(x, fullRect.height()));
+  p.drawLine(QPointF(x, dirtyRect.top()), QPointF(x, dirtyRect.bottom()));
  }
 
  // Clips.
  for (int i = 0; i < impl_->clips_.size(); ++i) {
   const auto& clip = impl_->clips_[i];
+  
+  // クリップの描画範囲を計算
+  const double clipX = clip.startFrame * ppf - xOffset;
+  const double clipW = clip.durationFrame * ppf;
+  
+  // Y座標を特定するために再度ループ（キャッシュしておくと高速だが、まずは単純に）
+  int clipY = 0;
+  for (int t = 0; t < clip.trackIndex && t < impl_->trackHeights_.size(); ++t) {
+      clipY += impl_->trackHeights_[t] + kTrackSpacing;
+  }
+  const int clipH = (clip.trackIndex >= 0 && clip.trackIndex < impl_->trackHeights_.size()) 
+                    ? impl_->trackHeights_[clip.trackIndex] : kDefaultTrackHeight;
+
+  // 可視性チェック
+  if (clipX + clipW < dirtyRect.left() || clipX > dirtyRect.right() ||
+      clipY + clipH < dirtyRect.top() || clipY > dirtyRect.bottom()) {
+      continue;
+  }
+
   if (clip.trackIndex < 0 || clip.trackIndex >= impl_->trackHeights_.size()) {
    continue;
   }
@@ -375,11 +397,11 @@ void ArtifactTimelineTrackPainterView::mouseMoveEvent(QMouseEvent* event)
   auto& clip = impl_->clips_[impl_->dragClipIndex_];
   switch (impl_->dragMode_) {
   case DragMode::MoveBody:
-   clip.startFrame = std::max(0.0, impl_->dragOrigStartFrame_ + deltaFrames);
+   clip.startFrame = impl_->dragOrigStartFrame_ + deltaFrames;
    break;
   case DragMode::ResizeLeft: {
    const double end      = impl_->dragOrigStartFrame_ + impl_->dragOrigDuration_;
-   clip.startFrame       = std::clamp(impl_->dragOrigStartFrame_ + deltaFrames, 0.0, end - 1.0);
+   clip.startFrame       = std::min(impl_->dragOrigStartFrame_ + deltaFrames, end - 1.0);
    clip.durationFrame    = end - clip.startFrame;
    break;
   }

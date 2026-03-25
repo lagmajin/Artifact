@@ -30,6 +30,7 @@ import Artifact.Service.Project;
 import Utils.Path;
 import Artifact.Widgets.AppDialogs;
 import Artifact.Layer.Image;
+import Artifact.Layer.Svg;
 import Artifact.Layers.SolidImage;
 
 namespace Artifact {
@@ -349,6 +350,12 @@ void ArtifactFileMenu::Impl::handleExportCurrentFrame()
                 const auto size = layer->sourceSize();
                 painter.drawImage(QRectF(0, 0, size.width, size.height), img);
             }
+        } else if (auto svgLayer = std::dynamic_pointer_cast<ArtifactSvgLayer>(layer)) {
+            QImage img = svgLayer->toQImage();
+            if (!img.isNull()) {
+                const auto size = layer->sourceSize();
+                painter.drawImage(QRectF(0, 0, size.width, size.height), img);
+            }
         } else if (auto solidLayer = std::dynamic_pointer_cast<ArtifactSolidImageLayer>(layer)) {
             QImage img(compSize, QImage::Format_ARGB32_Premultiplied);
             const FloatColor solidColor = solidLayer->color();
@@ -434,6 +441,12 @@ void ArtifactFileMenu::Impl::handleExportWorkArea()
             // レイヤーサーフェスを取得して描画
             if (auto imageLayer = std::dynamic_pointer_cast<ArtifactImageLayer>(layer)) {
                 QImage img = imageLayer->toQImage();
+                if (!img.isNull()) {
+                    const auto size = layer->sourceSize();
+                    painter.drawImage(QRectF(0, 0, size.width, size.height), img);
+                }
+            } else if (auto svgLayer = std::dynamic_pointer_cast<ArtifactSvgLayer>(layer)) {
+                QImage img = svgLayer->toQImage();
                 if (!img.isNull()) {
                     const auto size = layer->sourceSize();
                     painter.drawImage(QRectF(0, 0, size.width, size.height), img);

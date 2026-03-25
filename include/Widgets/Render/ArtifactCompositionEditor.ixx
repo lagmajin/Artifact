@@ -22,6 +22,8 @@ public:
  void setComposition(ArtifactCompositionPtr composition);
  void setClearColor(const FloatColor& color);
 
+ QSize sizeHint() const override;
+
 public /*slots*/:
   void play(); W_SLOT(play);
   void stop(); W_SLOT(stop);

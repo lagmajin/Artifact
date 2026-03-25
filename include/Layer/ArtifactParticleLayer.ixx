@@ -45,6 +45,8 @@ export module Artifact.Layer.Particle;
 
 
 import Artifact.Layer.Abstract;
+import Artifact.Composition.Abstract;
+import Artifact.Composition.PlaybackController;
 import Artifact.Generator.Particle;
 import Animation.Transform2D;
 import Animation.Transform3D;
@@ -147,7 +149,7 @@ signals:
     void particleSystemChanged() W_SIGNAL(particleSystemChanged);
     void emitterAdded(int index) W_SIGNAL(emitterAdded, index);
     void emitterRemoved(int index) W_SIGNAL(emitterRemoved, index);
-    void playbackStateChanged(bool playing) W_SIGNAL(playbackStateChanged, playing);
+    void playbackStateChanged(PlaybackState state) W_SIGNAL(playbackStateChanged, state);
     void frameRendered(int64_t frame) W_SIGNAL(frameRendered, frame);
 };
 

@@ -40,6 +40,7 @@ export namespace Artifact {
   void addDockedWidget(const QString& title, ads::DockWidgetArea area,QWidget* widget);
   void addDockedWidgetTabbed(const QString& title, ads::DockWidgetArea area, QWidget* widget, const QString& tabGroupPrefix);
   void addDockedWidgetTabbedWithId(const QString& title, const QString& dockId, ads::DockWidgetArea area, QWidget* widget, const QString& tabGroupPrefix);
+  void addLazyDockedWidgetTabbedWithId(const QString& title, const QString& dockId, ads::DockWidgetArea area, std::function<QWidget*()> factory, const QString& tabGroupPrefix);
   void addDockedWidgetFloating(const QString& title, const QString& dockId, QWidget* widget, const QRect& floatingGeometry);
   void moveDockToTabGroup(const QString& title, const QString& tabGroupPrefix);
   void setDockVisible(const QString& title, bool visible);

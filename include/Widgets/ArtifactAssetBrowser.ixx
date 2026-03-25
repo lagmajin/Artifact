@@ -5,6 +5,7 @@
 #include <QTreeView>
 #include <QStringList>
 #include <QListView>
+#include <QSize>
 
 #include <iostream>
 #include <vector>
@@ -99,6 +100,8 @@ export namespace Artifact {
  public:
   explicit ArtifactAssetBrowser(QWidget* parent = nullptr);
    ~ArtifactAssetBrowser();
+
+   QSize sizeHint() const override;
 
    // Public methods for filtering
    void setSearchFilter(const QString& filter);

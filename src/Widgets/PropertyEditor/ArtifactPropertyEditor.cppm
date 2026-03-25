@@ -15,12 +15,16 @@
 #include <QMouseEvent>
 #include <QPushButton>
 #include <QSignalBlocker>
+#include <QPainter>
+#include <QIcon>
+#include <QtSVG/QSvgRenderer>
 #include <QSlider>
 #include <QSpinBox>
 
 module Artifact.Widgets.PropertyEditor;
 
 import std;
+import Utils.Path;
 import Font.FreeFont;
 import Artifact.Widgets.FontPicker;
 import Artifact.Widgets.ExpressionCopilotWidget;
@@ -254,6 +258,37 @@ ArtifactPropertyRowLayoutMode g_propertyRowLayoutMode =
 
 ArtifactNumericEditorLayoutMode g_numericEditorLayoutMode =
     ArtifactNumericEditorLayoutMode::ValueThenSlider;
+
+// --- Icon Loading Helpers ---
+
+QIcon loadSvgAsIcon(const QString& path, int size = 16)
+{
+    if (path.isEmpty()) return QIcon();
+    if (path.endsWith(QStringLiteral(".svg"), Qt::CaseInsensitive)) {
+        QSvgRenderer renderer(path);
+        if (renderer.isValid()) {
+            QPixmap pixmap(size, size);
+            pixmap.fill(Qt::transparent);
+            QPainter painter(&pixmap);
+            renderer.render(&painter);
+            painter.end();
+            if (!pixmap.isNull()) return QIcon(pixmap);
+        }
+        return QIcon();
+    }
+    return QIcon(path);
+}
+
+QIcon loadPropertyIcon(const QString& resourceRelativePath, const QString& fallbackFileName = {})
+{
+    using namespace ArtifactCore;
+    QIcon icon = loadSvgAsIcon(resolveIconResourcePath(resourceRelativePath));
+    if (!icon.isNull()) return icon;
+    if (!fallbackFileName.isEmpty()) {
+        icon = loadSvgAsIcon(resolveIconPath(fallbackFileName));
+    }
+    return icon;
+}
 
 // --- Relative Input Support ---
 
@@ -798,11 +833,11 @@ ArtifactPropertyEditorRowWidget::ArtifactPropertyEditorRowWidget(
     const QString &labelText, ArtifactAbstractPropertyEditor *editor,
     const QString &propertyName, QWidget *parent)
     : QWidget(parent), label_(new QLabel(labelText, this)), editor_(editor),
-      keyframeButton_(new QPushButton(QStringLiteral("K"), this)),
-      resetButton_(new QPushButton(QStringLiteral("R"), this)),
-      expressionButton_(new QPushButton(QStringLiteral("fx"), this)),
-      prevKeyBtn_(new QPushButton(QStringLiteral("<"), this)),
-      nextKeyBtn_(new QPushButton(QStringLiteral(">"), this)) {
+      keyframeButton_(new QPushButton(this)),
+      resetButton_(new QPushButton(this)),
+      expressionButton_(new QPushButton(this)),
+      prevKeyBtn_(new QPushButton(this)),
+      nextKeyBtn_(new QPushButton(this)) {
   setObjectName(QStringLiteral("propertyRow"));
   auto *layout = new QHBoxLayout(this);
   layout->setContentsMargins(4, 2, 4, 2);
@@ -815,6 +850,13 @@ ArtifactPropertyEditorRowWidget::ArtifactPropertyEditorRowWidget(
 
   editor_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
 
+  // Load Icons
+  QIcon keyIcon = loadPropertyIcon(QStringLiteral("MaterialVS/yellow/keyframe.svg"));
+  QIcon prevIcon = loadPropertyIcon(QStringLiteral("MaterialVS/neutral/arrow_left.svg"));
+  QIcon nextIcon = loadPropertyIcon(QStringLiteral("MaterialVS/neutral/arrow_right.svg"));
+  QIcon resIcon = loadPropertyIcon(QStringLiteral("MaterialVS/neutral/undo.svg"));
+  QIcon exprIcon = loadPropertyIcon(QStringLiteral("MaterialVS/blue/code.svg"));
+
   // Keyframe Controls
   auto *keyframeControlLayout = new QHBoxLayout();
   keyframeControlLayout->setSpacing(0);
@@ -823,25 +865,25 @@ ArtifactPropertyEditorRowWidget::ArtifactPropertyEditorRowWidget(
         QPushButton {
             background: #404040;
             border: 1px solid #454545;
-            color: #E0E0E0;
-            font-size: 10px;
             padding: 0;
             border-radius: 3px;
         }
         QPushButton:hover {
-            color: #FFFFFF;
             border-color: #606060;
             background: #4A4A4A;
         }
         QPushButton:disabled {
-            color: #606060;
             border-color: #353535;
             background: #353535;
         }
     )";
 
-  prevKeyBtn_->setFixedSize(12, 24);
-  nextKeyBtn_->setFixedSize(12, 24);
+  prevKeyBtn_->setFixedSize(14, 24);
+  nextKeyBtn_->setFixedSize(14, 24);
+  prevKeyBtn_->setIcon(prevIcon);
+  nextKeyBtn_->setIcon(nextIcon);
+  prevKeyBtn_->setIconSize(QSize(10, 10));
+  nextKeyBtn_->setIconSize(QSize(10, 10));
   prevKeyBtn_->setStyleSheet(navStyle);
   nextKeyBtn_->setStyleSheet(navStyle);
 
@@ -850,27 +892,23 @@ ArtifactPropertyEditorRowWidget::ArtifactPropertyEditorRowWidget(
       QStringLiteral("Toggle Keyframe: %1").arg(propertyName));
   keyframeButton_->setFixedSize(22, 24);
   keyframeButton_->setCheckable(true);
+  keyframeButton_->setIcon(keyIcon);
+  keyframeButton_->setIconSize(QSize(14, 14));
   keyframeButton_->setStyleSheet(R"(
         QPushButton#propertyKeyButton {
             background: #404040;
             border: 1px solid #454545;
-            color: #E0E0E0;
-            font-size: 11px;
-            font-weight: 700;
             border-radius: 3px;
         }
         QPushButton#propertyKeyButton:hover {
-            color: #FFFFFF;
             border-color: #606060;
             background: #4A4A4A;
         }
         QPushButton#propertyKeyButton:checked {
-            color: #FFFFFF;
             background: #F5933C;
             border-color: #F5933C;
         }
         QPushButton#propertyKeyButton:disabled {
-            color: #606060;
             border-color: #353535;
             background: #353535;
         }
@@ -883,15 +921,16 @@ ArtifactPropertyEditorRowWidget::ArtifactPropertyEditorRowWidget(
   resetButton_->setObjectName(QStringLiteral("propertyResetButton"));
   resetButton_->setToolTip(QStringLiteral("Reset: %1").arg(propertyName));
   resetButton_->setFixedSize(24, 24);
+  resetButton_->setIcon(resIcon);
+  resetButton_->setIconSize(QSize(14, 14));
   resetButton_->setStyleSheet(R"(
         QPushButton#propertyResetButton {
             background: transparent;
             border: none;
-            color: #888888;
-            font-size: 16px;
         }
         QPushButton#propertyResetButton:hover {
-            color: #BBBBBB;
+            background: #4A4A4A;
+            border-radius: 3px;
         }
     )");
 
@@ -899,16 +938,16 @@ ArtifactPropertyEditorRowWidget::ArtifactPropertyEditorRowWidget(
   expressionButton_->setToolTip(
       QStringLiteral("Expression: %1").arg(propertyName));
   expressionButton_->setFixedSize(26, 24);
+  expressionButton_->setIcon(exprIcon);
+  expressionButton_->setIconSize(QSize(14, 14));
   expressionButton_->setStyleSheet(R"(
         QPushButton#propertyExprButton {
             background: transparent;
             border: none;
-            color: #888888;
-            font-family: 'Consolas', monospace;
-            font-size: 13px;
         }
         QPushButton#propertyExprButton:hover {
-            color: #BBBBBB;
+            background: #4A4A4A;
+            border-radius: 3px;
         }
     )");
 

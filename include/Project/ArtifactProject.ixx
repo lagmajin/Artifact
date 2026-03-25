@@ -116,11 +116,24 @@ export namespace Artifact {
 
   void layerCreated(const CompositionID& compId, const LayerID& layerId)
    W_SIGNAL(layerCreated, compId, layerId);
-  void layerRemoved(const CompositionID& compId, const LayerID& id)
+ void layerRemoved(const CompositionID& compId, const LayerID& id)
    W_SIGNAL(layerRemoved, compId, id);
 
- 	
+	
  };
+
+ template <typename NameT, typename SizeT>
+  requires StringLike<NameT> && SizeLike<SizeT>
+inline void ArtifactProject::createComposition(NameT name, SizeT size)
+{
+  ArtifactCompositionInitParams params;
+  params.setCompositionName(UniString(ArtifactCore::toQString(name)));
+  const QSize qSize(size);
+  if (qSize.isValid() && qSize.width() > 0 && qSize.height() > 0) {
+    params.setResolution(qSize.width(), qSize.height());
+  }
+  createComposition(params);
+ }
 
 
  typedef std::shared_ptr<ArtifactProject> ArtifactProjectPtr;

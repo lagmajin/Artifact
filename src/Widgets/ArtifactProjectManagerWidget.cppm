@@ -2881,24 +2881,21 @@ void ArtifactProjectManagerWidget::resizeEvent(QResizeEvent* event)
 {
     QWidget::resizeEvent(event);
     if (impl_ && impl_->projectView_) {
-        impl_->projectView_->refreshVisibleContent();
-        impl_->projectView_->repaint();
-        this->repaint();
+        scheduleProjectViewRefresh(impl_->projectView_);
+        update();
     }
 }
 
 void ArtifactProjectManagerWidget::showEvent(QShowEvent* event)
 {
     QWidget::showEvent(event);
-    QTimer::singleShot(0, this, [this]() {
-        if (!impl_) {
-            return;
-        }
-        impl_->update();
-        if (impl_->projectView_) {
-            scheduleProjectViewRefresh(impl_->projectView_);
-        }
-    });
+    if (!impl_) {
+        return;
+    }
+    impl_->update();
+    if (impl_->projectView_) {
+        scheduleProjectViewRefresh(impl_->projectView_);
+    }
 }
 
 bool ArtifactProjectManagerWidget::event(QEvent* event)
@@ -2907,15 +2904,13 @@ bool ArtifactProjectManagerWidget::event(QEvent* event)
     if (event && (event->type() == QEvent::WindowActivate ||
                   event->type() == QEvent::ActivationChange ||
                   event->type() == QEvent::PolishRequest)) {
-        QTimer::singleShot(0, this, [this]() {
-            if (!impl_) {
-                return;
-            }
-            if (impl_->projectView_) {
-                scheduleProjectViewRefresh(impl_->projectView_);
-            }
-            update();
-        });
+        if (!impl_) {
+            return handled;
+        }
+        if (impl_->projectView_ && isVisible()) {
+            scheduleProjectViewRefresh(impl_->projectView_);
+        }
+        update();
     }
     return handled;
 }
@@ -2934,7 +2929,7 @@ void ArtifactProjectManagerWidget::setThumbnailEnabled(bool b) {
 void ArtifactProjectManagerWidget::dropEvent(QDropEvent* event) { /* Handled by child view but kept for API */ }
 void ArtifactProjectManagerWidget::dragEnterEvent(QDragEnterEvent* event) { /* Handled by child view but kept for API */ }
 void ArtifactProjectManagerWidget::contextMenuEvent(QContextMenuEvent* event) { /* Handled by child view but kept for API */ }
-QSize ArtifactProjectManagerWidget::sizeHint() const { return QSize(300, 600); }
+QSize ArtifactProjectManagerWidget::sizeHint() const { return QSize(250, 600); }
 
 // --- ToolBox Implementation ---
 ArtifactProjectManagerToolBox::ArtifactProjectManagerToolBox(QWidget* parent) : QWidget(parent) {

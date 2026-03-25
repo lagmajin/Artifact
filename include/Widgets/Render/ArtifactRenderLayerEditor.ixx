@@ -28,6 +28,8 @@ export namespace Artifact {
   void setTargetLayer(const LayerID& id);
   void resetView();
 
+  QSize sizeHint() const override;
+
  public/*slots*/:
   void play(); W_SLOT(play);
   void stop(); W_SLOT(stop);

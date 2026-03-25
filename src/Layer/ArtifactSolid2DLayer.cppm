@@ -67,13 +67,13 @@ namespace Artifact
   auto groups = ArtifactAbstractLayer::getLayerPropertyGroups();
   ArtifactCore::PropertyGroup solidGroup(QStringLiteral("Solid"));
 
-  auto p = std::make_shared<ArtifactCore::AbstractProperty>();
-  p->setName(QStringLiteral("solid.color"));
-  p->setType(ArtifactCore::PropertyType::Color);
   const auto c = color();
+  auto p = persistentLayerProperty(QStringLiteral("solid.color"),
+                                   ArtifactCore::PropertyType::Color,
+                                   QColor::fromRgbF(c.r(), c.g(), c.b(), c.a()),
+                                   -120);
   p->setColorValue(QColor::fromRgbF(c.r(), c.g(), c.b(), c.a()));
   p->setValue(p->getColorValue());
-  p->setDisplayPriority(-120);
   p->setAnimatable(true);
   solidGroup.addProperty(p);
 

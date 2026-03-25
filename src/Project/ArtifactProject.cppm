@@ -418,6 +418,8 @@ void ArtifactProject::Impl::createCompositions(const QStringList& names) {}
   if (typeName.find("null") != std::string::npos) return LayerType::Null;
   if (typeName.find("solid") != std::string::npos) return LayerType::Solid;
   if (typeName.find("image") != std::string::npos) return LayerType::Image;
+  if (typeName.find("svg") != std::string::npos) return LayerType::Shape;
+  if (typeName.find("particle") != std::string::npos) return LayerType::Particle;
   if (typeName.find("adjust") != std::string::npos) return LayerType::Adjustment;
   if (typeName.find("text") != std::string::npos) return LayerType::Text;
   if (typeName.find("camera") != std::string::npos) return LayerType::Camera;

@@ -46,10 +46,10 @@ public:
         auto createBtn = [&](const QString& tooltip, const QIcon& icon) {
             auto btn = new QPushButton();
             btn->setCheckable(true);
-            btn->setFixedSize(24, 24);
+            btn->setFixedSize(28, 28);
             btn->setToolTip(tooltip);
             btn->setIcon(icon);
-            btn->setIconSize(QSize(16, 16));
+            btn->setIconSize(QSize(19, 19));
             btn->setStyleSheet(R"(
                 QPushButton {
                     background-color: transparent;

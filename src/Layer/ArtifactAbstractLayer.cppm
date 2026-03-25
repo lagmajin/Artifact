@@ -10,6 +10,7 @@ module;
 #include <QColor>
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QHash>
 #include <QVariant>
 
 module Artifact.Layer.Abstract;
@@ -57,6 +58,19 @@ void notifyLayerMutation(ArtifactAbstractLayer *layer, LayerDirtyFlag flag,
   layer->addDirtyReason(reason);
   Q_EMIT layer->changed();
 }
+
+double effectiveLayerFrameRate(const ArtifactAbstractLayer *layer) {
+  if (!layer) {
+    return 30.0;
+  }
+  auto *composition =
+      static_cast<ArtifactAbstractComposition *>(layer->composition());
+  if (!composition) {
+    return 30.0;
+  }
+  const double fps = composition->frameRate().framerate();
+  return fps > 0.0 ? fps : 30.0;
+}
 } // namespace
 
 class ArtifactAbstractLayer::Impl {
@@ -91,6 +105,7 @@ public:
 
   // マスクコンテナ
   std::vector<LayerMask> masks_;
+  mutable QHash<QString, std::shared_ptr<AbstractProperty>> propertyCache_;
 
 public:
   Impl();
@@ -323,14 +338,43 @@ ArtifactAbstractLayerPtr ArtifactAbstractLayer::parentLayer() const {
 
 QTransform ArtifactAbstractLayer::getLocalTransform() const {
   const auto &t = transform3D();
+  const RationalTime time(currentFrame(), effectiveLayerFrameRate(this));
+  auto evaluateDouble = [this, &time](const QString &propertyPath,
+                                      double fallback) {
+    const auto it = impl_->propertyCache_.constFind(propertyPath);
+    if (it == impl_->propertyCache_.constEnd() || !it.value()) {
+      return fallback;
+    }
+    const auto &property = *it.value();
+    if (!property.isAnimatable() || property.getKeyFrames().empty()) {
+      return fallback;
+    }
+    const QVariant animatedValue = property.interpolateValue(time);
+    return animatedValue.isValid() ? animatedValue.toDouble() : fallback;
+  };
+
+  const double positionX =
+      evaluateDouble(QStringLiteral("transform.position.x"), t.positionX());
+  const double positionY =
+      evaluateDouble(QStringLiteral("transform.position.y"), t.positionY());
+  const double rotation =
+      evaluateDouble(QStringLiteral("transform.rotation"), t.rotation());
+  const double scaleX =
+      evaluateDouble(QStringLiteral("transform.scale.x"), t.scaleX());
+  const double scaleY =
+      evaluateDouble(QStringLiteral("transform.scale.y"), t.scaleY());
+  const double anchorX =
+      evaluateDouble(QStringLiteral("transform.anchor.x"), t.anchorX());
+  const double anchorY =
+      evaluateDouble(QStringLiteral("transform.anchor.y"), t.anchorY());
   QTransform result;
 
   // AE-like transform: Translate(Pos) * Rotate(Rot) * Scale(Scale) *
   // Translate(-Anchor)
-  result.translate(t.positionX(), t.positionY());
-  result.rotate(t.rotation());
-  result.scale(t.scaleX(), t.scaleY());
-  result.translate(-t.anchorX(), -t.anchorY());
+  result.translate(positionX, positionY);
+  result.rotate(rotation);
+  result.scale(scaleX, scaleY);
+  result.translate(-anchorX, -anchorY);
 
   return result;
 }
@@ -347,16 +391,46 @@ QTransform ArtifactAbstractLayer::getGlobalTransform() const {
 
 QMatrix4x4 ArtifactAbstractLayer::getLocalTransform4x4() const {
   const auto &t = transform3D();
+  const RationalTime time(currentFrame(), effectiveLayerFrameRate(this));
+  auto evaluateDouble = [this, &time](const QString &propertyPath,
+                                      double fallback) {
+    const auto it = impl_->propertyCache_.constFind(propertyPath);
+    if (it == impl_->propertyCache_.constEnd() || !it.value()) {
+      return fallback;
+    }
+    const auto &property = *it.value();
+    if (!property.isAnimatable() || property.getKeyFrames().empty()) {
+      return fallback;
+    }
+    const QVariant animatedValue = property.interpolateValue(time);
+    return animatedValue.isValid() ? animatedValue.toDouble() : fallback;
+  };
+  const double positionX =
+      evaluateDouble(QStringLiteral("transform.position.x"), t.positionX());
+  const double positionY =
+      evaluateDouble(QStringLiteral("transform.position.y"), t.positionY());
+  const double positionZ = t.positionZ();
+  const double rotation =
+      evaluateDouble(QStringLiteral("transform.rotation"), t.rotation());
+  const double scaleX =
+      evaluateDouble(QStringLiteral("transform.scale.x"), t.scaleX());
+  const double scaleY =
+      evaluateDouble(QStringLiteral("transform.scale.y"), t.scaleY());
+  const double anchorX =
+      evaluateDouble(QStringLiteral("transform.anchor.x"), t.anchorX());
+  const double anchorY =
+      evaluateDouble(QStringLiteral("transform.anchor.y"), t.anchorY());
+  const double anchorZ = t.anchorZ();
   QMatrix4x4 result;
 
   // AE-like transform order: Translate(Pos) * Rotate(Z) * Rotate(Y) * Rotate(X) * Scale(Scale) * Translate(-Anchor)
   // Qt's translate/rotate/scale multiply from the right: Result = I * T * R * S * Tinv
-  result.translate(t.positionX(), t.positionY(), t.positionZ());
-  result.rotate(t.rotation(), 0, 0, 1); // Z-rotation
+  result.translate(positionX, positionY, positionZ);
+  result.rotate(rotation, 0, 0, 1); // Z-rotation
   // result.rotate(t.rotationY(), 0, 1, 0); // Placeholder for Y
   // result.rotate(t.rotationX(), 1, 0, 0); // Placeholder for X
-  result.scale(t.scaleX(), t.scaleY(), 1.0f);
-  result.translate(-t.anchorX(), -t.anchorY(), -t.anchorZ());
+  result.scale(scaleX, scaleY, 1.0f);
+  result.translate(-anchorX, -anchorY, -anchorZ);
 
   return result;
 }
@@ -792,17 +866,9 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
   using namespace ArtifactCore;
   PropertyGroup layerGroup(QStringLiteral("Layer"));
 
-  auto makeProp = [](const QString &name, PropertyType type,
-                     const QVariant &value, int priority = 0) {
-    auto p = std::make_shared<AbstractProperty>();
-    p->setName(name);
-    p->setType(type);
-    p->setValue(value);
-    p->setDisplayPriority(priority);
-    if (type == PropertyType::Integer) {
-      p->setStep(1);
-    }
-    return p;
+  auto makeProp = [this](const QString &name, PropertyType type,
+                         const QVariant &value, int priority = 0) {
+    return persistentLayerProperty(name, type, value, priority);
   };
 
   layerGroup.addProperty(makeProp(QStringLiteral("layer.name"),
@@ -902,6 +968,37 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
                                   PropertyType::Integer, sz.height, -30));
 
   return {transformGroup, layerGroup};
+}
+
+std::shared_ptr<ArtifactCore::AbstractProperty>
+ArtifactAbstractLayer::getProperty(const QString &name) const {
+  auto &cache = impl_->propertyCache_;
+  auto it = cache.find(name);
+  if (it != cache.end()) {
+    return it.value();
+  }
+  return nullptr;
+}
+
+std::shared_ptr<ArtifactCore::AbstractProperty>
+ArtifactAbstractLayer::persistentLayerProperty(const QString &propertyPath,
+                                               PropertyType type,
+                                               const QVariant &value,
+                                               int priority) const {
+  auto &cache = impl_->propertyCache_;
+  auto it = cache.find(propertyPath);
+  if (it == cache.end() || !it.value()) {
+    it = cache.insert(propertyPath, std::make_shared<AbstractProperty>());
+  }
+  auto property = it.value();
+  property->setName(propertyPath);
+  property->setType(type);
+  property->setValue(value);
+  property->setDisplayPriority(priority);
+  if (type == PropertyType::Integer) {
+    property->setStep(1);
+  }
+  return property;
 }
 
 bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
@@ -1089,7 +1186,20 @@ void ArtifactAbstractLayer::clearMasks() { impl_->clearMasks(); }
 bool ArtifactAbstractLayer::hasMasks() const { return impl_->maskCount() > 0; }
 
 // Opacity
-float ArtifactAbstractLayer::opacity() const { return impl_->opacity_; }
+float ArtifactAbstractLayer::opacity() const {
+  const auto it = impl_->propertyCache_.constFind(QStringLiteral("layer.opacity"));
+  if (it == impl_->propertyCache_.constEnd() || !it.value()) {
+    return impl_->opacity_;
+  }
+  const auto &property = *it.value();
+  if (!property.isAnimatable() || property.getKeyFrames().empty()) {
+    return impl_->opacity_;
+  }
+  const RationalTime time(currentFrame(), effectiveLayerFrameRate(this));
+  const QVariant animatedValue = property.interpolateValue(time);
+  return animatedValue.isValid() ? static_cast<float>(animatedValue.toDouble())
+                                 : impl_->opacity_;
+}
 
 void ArtifactAbstractLayer::setOpacity(float value) {
   const float clamped = std::clamp(value, 0.0f, 1.0f);

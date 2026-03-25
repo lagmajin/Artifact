@@ -259,8 +259,7 @@ void ArtifactPlaybackService::togglePlayPause() {
 void ArtifactPlaybackService::goToFrame(const FramePosition& position) {
     if (impl_->engine_) {
         impl_->engine_->goToFrame(position);
-    }
-    if (impl_->controller_) {
+    } else if (impl_->controller_) {
         impl_->controller_->goToFrame(position);
     }
 }
@@ -268,8 +267,7 @@ void ArtifactPlaybackService::goToFrame(const FramePosition& position) {
 void ArtifactPlaybackService::goToNextFrame() {
     if (impl_->engine_) {
         impl_->engine_->goToNextFrame();
-    }
-    if (impl_->controller_) {
+    } else if (impl_->controller_) {
         impl_->controller_->goToNextFrame();
     }
 }
@@ -277,8 +275,7 @@ void ArtifactPlaybackService::goToNextFrame() {
 void ArtifactPlaybackService::goToPreviousFrame() {
     if (impl_->engine_) {
         impl_->engine_->goToPreviousFrame();
-    }
-    if (impl_->controller_) {
+    } else if (impl_->controller_) {
         impl_->controller_->goToPreviousFrame();
     }
 }
@@ -286,8 +283,7 @@ void ArtifactPlaybackService::goToPreviousFrame() {
 void ArtifactPlaybackService::goToStartFrame() {
     if (impl_->engine_) {
         impl_->engine_->goToStartFrame();
-    }
-    if (impl_->controller_) {
+    } else if (impl_->controller_) {
         impl_->controller_->goToStartFrame();
     }
 }
@@ -295,8 +291,7 @@ void ArtifactPlaybackService::goToStartFrame() {
 void ArtifactPlaybackService::goToEndFrame() {
     if (impl_->engine_) {
         impl_->engine_->goToEndFrame();
-    }
-    if (impl_->controller_) {
+    } else if (impl_->controller_) {
         impl_->controller_->goToEndFrame();
     }
 }
@@ -330,8 +325,7 @@ FramePosition ArtifactPlaybackService::currentFrame() const {
 void ArtifactPlaybackService::setCurrentFrame(const FramePosition& position) {
     if (impl_->engine_) {
         impl_->engine_->setCurrentFrame(position);
-    }
-    if (impl_->controller_) {
+    } else if (impl_->controller_) {
         impl_->controller_->setCurrentFrame(position);
     }
 }
@@ -458,8 +452,7 @@ ArtifactCompositionPtr ArtifactPlaybackService::currentComposition() const {
 void ArtifactPlaybackService::setInOutPoints(ArtifactInOutPoints* inOutPoints) {
     if (impl_ && impl_->engine_) {
         impl_->engine_->setInOutPoints(inOutPoints);
-    }
-    if (impl_ && impl_->controller_) {
+    } else if (impl_ && impl_->controller_) {
         impl_->controller_->setInOutPoints(inOutPoints);
     }
 }
@@ -474,8 +467,7 @@ ArtifactInOutPoints* ArtifactPlaybackService::inOutPoints() const {
 void ArtifactPlaybackService::goToNextMarker() {
     if (impl_ && impl_->engine_) {
         impl_->engine_->goToNextMarker();
-    }
-    if (impl_ && impl_->controller_) {
+    } else if (impl_ && impl_->controller_) {
         impl_->controller_->goToNextMarker();
     }
 }
@@ -483,8 +475,7 @@ void ArtifactPlaybackService::goToNextMarker() {
 void ArtifactPlaybackService::goToPreviousMarker() {
     if (impl_ && impl_->engine_) {
         impl_->engine_->goToPreviousMarker();
-    }
-    if (impl_ && impl_->controller_) {
+    } else if (impl_ && impl_->controller_) {
         impl_->controller_->goToPreviousMarker();
     }
 }
@@ -492,8 +483,7 @@ void ArtifactPlaybackService::goToPreviousMarker() {
 void ArtifactPlaybackService::goToNextChapter() {
     if (impl_ && impl_->engine_) {
         impl_->engine_->goToNextChapter();
-    }
-    if (impl_ && impl_->controller_) {
+    } else if (impl_ && impl_->controller_) {
         impl_->controller_->goToNextChapter();
     }
 }
@@ -501,8 +491,7 @@ void ArtifactPlaybackService::goToNextChapter() {
 void ArtifactPlaybackService::goToPreviousChapter() {
     if (impl_ && impl_->engine_) {
         impl_->engine_->goToPreviousChapter();
-    }
-    if (impl_ && impl_->controller_) {
+    } else if (impl_ && impl_->controller_) {
         impl_->controller_->goToPreviousChapter();
     }
 }

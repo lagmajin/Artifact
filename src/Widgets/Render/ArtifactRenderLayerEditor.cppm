@@ -84,6 +84,11 @@ namespace Artifact {
   delete impl_;
  }
 
+ QSize ArtifactRenderLayerEditor::sizeHint() const
+ {
+  return QSize(800, 600);
+ }
+
  ArtifactLayerEditorWidgetV2* ArtifactRenderLayerEditor::view() const
  {
   return impl_->view;
