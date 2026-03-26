@@ -500,6 +500,7 @@ int ArtifactLayerPanelHeaderWidget::totalHeaderHeight() const
     iconCreateNull    = loadLayerPanelIcon(QStringLiteral("MaterialVS/purple/group.svg"));
     iconCreateAdjust  = loadLayerPanelIcon(QStringLiteral("MaterialVS/orange/warning.svg"));
     iconCreateText    = loadLayerPanelIcon(QStringLiteral("MaterialVS/purple/title.svg"));
+    iconCreateLight   = loadLayerPanelIcon(QStringLiteral("Material/wb_sunny.svg"));
   }
   ~Impl() = default;
 
@@ -513,7 +514,7 @@ int ArtifactLayerPanelHeaderWidget::totalHeaderHeight() const
   QIcon iconRename, iconCopy, iconDelete, iconFileOpen;
   QIcon iconVisOn, iconVisOff, iconLock, iconUnlock, iconSolo, iconShy;
   QIcon iconLink, iconLinkOff;
-  QIcon iconCreateSolid, iconCreateNull, iconCreateAdjust, iconCreateText;
+  QIcon iconCreateSolid, iconCreateNull, iconCreateAdjust, iconCreateText, iconCreateLight;
   bool shyHidden = false;
   QString filterText;
   int hoveredLayerIndex = -1;
@@ -1184,11 +1185,13 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
     QAction* createNullAct   = createMenu->addAction("Null Layer");
     QAction* createAdjustAct = createMenu->addAction("Adjustment Layer");
     QAction* createTextAct   = createMenu->addAction("Text Layer");
+    QAction* createLightAct  = createMenu->addAction("Light Layer");
     createMenu->setIcon(impl_->iconCreateSolid);
     createSolidAct->setIcon(impl_->iconCreateSolid);
     createNullAct->setIcon(impl_->iconCreateNull);
     createAdjustAct->setIcon(impl_->iconCreateAdjust);
     createTextAct->setIcon(impl_->iconCreateText);
+    createLightAct->setIcon(impl_->iconCreateLight);
 
     QAction* chosen = menu.exec(event->globalPosition().toPoint());
     auto comp = safeCompositionLookup(impl_->compositionId);
@@ -1312,6 +1315,11 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
       }
     } else if (chosen == createTextAct) {
       ArtifactTextLayerInitParams params(QStringLiteral("Text"));
+      if (service) {
+       service->addLayerToCurrentComposition(params);
+      }
+    } else if (chosen == createLightAct) {
+      ArtifactLayerInitParams params(QStringLiteral("Light"), LayerType::Light);
       if (service) {
        service->addLayerToCurrentComposition(params);
       }
