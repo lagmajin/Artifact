@@ -3,7 +3,6 @@
 #include <QApplication>
 #include <QColor>
 #include <QEvent>
-#include <QLabel>
 #include <QPointer>
 #include <QStyle>
 #include <QTimer>
@@ -95,25 +94,24 @@ ads::CDockWidget* resolveActiveDock(ads::CDockManager* dockManager, ads::CDockWi
     return dockManager->focusedDockWidget();
 }
 
-QString tabTextColor(const bool isActiveDock, const bool /*isFloatingTab*/, const bool /*isCurrentTab*/)
-{
-    if (isActiveDock) {
-        return QStringLiteral("#ffffff");
-    }
-    return QStringLiteral("#BBBBBB");
-}
-
-void applyTabLabelColors(ads::CDockWidgetTab* tab, const QString& color, const bool emphasize)
+void repolishTabTextWidgets(ads::CDockWidgetTab* tab)
 {
     if (!tab) {
         return;
     }
 
-    const QString labelStyle = QStringLiteral("color: %1; background: transparent; font-weight: %2;")
-        .arg(color, emphasize ? QStringLiteral("600") : QStringLiteral("500"));
-    for (auto* label : tab->findChildren<QLabel*>()) {
-        if (label) {
-            label->setStyleSheet(labelStyle);
+    // Tab title widgets are styled through the main window stylesheet.
+    // Repolish the label-like children so state changes on the parent tab
+    // are reflected without forcing inline styles that would override hover
+    // and floating-state selectors.
+    for (auto* child : tab->findChildren<QWidget*>()) {
+        if (!child) {
+            continue;
+        }
+
+        const QString className = QString::fromLatin1(child->metaObject()->className());
+        if (className.contains(QStringLiteral("Label"), Qt::CaseInsensitive)) {
+            repolishWidget(child);
         }
     }
 }
@@ -284,8 +282,8 @@ void DockStyleManager::refreshDockDecorations() {
             tab->setProperty("artifactActiveTab", isActiveTab);
             tab->setProperty("artifactFloatingTab", isFloating);
             tab->setProperty("artifactCurrentTab", isCurrentTab);
-            applyTabLabelColors(tab, tabTextColor(isActiveTab, isFloating, isCurrentTab), isActiveTab);
             repolishWidget(tab);
+            repolishTabTextWidgets(tab);
             anyChanged = true;
         }
     }
