@@ -102,6 +102,18 @@ QRectF adjustedResizeBox(const QRectF& startBox, const QPointF& delta, Transform
 TransformGizmo::TransformGizmo() {}
 TransformGizmo::~TransformGizmo() {}
 
+void TransformGizmo::setMode(Mode mode) {
+ mode_ = mode;
+ if (!allowsHandle(activeHandle_)) {
+  activeHandle_ = HandleType::None;
+  isDragging_ = false;
+ }
+}
+
+TransformGizmo::Mode TransformGizmo::mode() const {
+ return mode_;
+}
+
 void TransformGizmo::setLayer(ArtifactAbstractLayerPtr layer) {
  layer_ = layer;
  if (!isDragging_) {
@@ -136,16 +148,22 @@ const QTransform globalTransform = layer_->getGlobalTransform();
  FloatColor gizmoColor{0.0f, 0.5f, 1.0f, 1.0f}; // Cyan-ish blue
  if (isDragging_) gizmoColor = {1.0f, 1.0f, 0.0f, 1.0f}; // Yellow while dragging
 
- // Transformed points for bounding box
+const bool showMove = mode_ == Mode::All || mode_ == Mode::Move;
+const bool showScale = mode_ == Mode::All || mode_ == Mode::Scale;
+const bool showRotate = mode_ == Mode::All || mode_ == Mode::Rotate;
+
+// Transformed points for bounding box
  const Detail::float2 tl_c((float)globalTransform.map(localRect.topLeft()).x(), (float)globalTransform.map(localRect.topLeft()).y());
  const Detail::float2 tr_c((float)globalTransform.map(localRect.topRight()).x(), (float)globalTransform.map(localRect.topRight()).y());
  const Detail::float2 bl_c((float)globalTransform.map(localRect.bottomLeft()).x(), (float)globalTransform.map(localRect.bottomLeft()).y());
  const Detail::float2 br_c((float)globalTransform.map(localRect.bottomRight()).x(), (float)globalTransform.map(localRect.bottomRight()).y());
 
- renderer->drawSolidLine(tl_c, tr_c, gizmoColor, lineThickness);
- renderer->drawSolidLine(tr_c, br_c, gizmoColor, lineThickness);
- renderer->drawSolidLine(br_c, bl_c, gizmoColor, lineThickness);
- renderer->drawSolidLine(bl_c, tl_c, gizmoColor, lineThickness);
+ if (showMove || showScale || showRotate) {
+  renderer->drawSolidLine(tl_c, tr_c, gizmoColor, lineThickness);
+  renderer->drawSolidLine(tr_c, br_c, gizmoColor, lineThickness);
+  renderer->drawSolidLine(br_c, bl_c, gizmoColor, lineThickness);
+  renderer->drawSolidLine(bl_c, tl_c, gizmoColor, lineThickness);
+ }
 
  // Center points for handles
  const Detail::float2 tc_c((float)globalTransform.map(QPointF(localRect.center().x(), localRect.top())).x(), (float)globalTransform.map(QPointF(localRect.center().x(), localRect.top())).y());
@@ -162,16 +180,20 @@ const QTransform globalTransform = layer_->getGlobalTransform();
                             {0,0,0,1});
  };
 
- drawHandle(tl_c); drawHandle(tr_c); drawHandle(bl_c); drawHandle(br_c);
- drawHandle(tc_c); drawHandle(bc_c); drawHandle(lc_c); drawHandle(rc_c);
+ if (showScale) {
+  drawHandle(tl_c); drawHandle(tr_c); drawHandle(bl_c); drawHandle(br_c);
+  drawHandle(tc_c); drawHandle(bc_c); drawHandle(lc_c); drawHandle(rc_c);
+ }
 
  // Rotation handle: line from top-center upward with circle
  const Detail::float2 rotateTip((float)globalTransform.map(QPointF(localRect.center().x(), localRect.top() - ROTATE_HANDLE_DISTANCE)).x(), 
                                 (float)globalTransform.map(QPointF(localRect.center().x(), localRect.top() - ROTATE_HANDLE_DISTANCE)).y());
 
- renderer->drawSolidLine(tc_c, rotateTip, gizmoColor, lineThickness);
- renderer->drawCircle(rotateTip.x, rotateTip.y, handleSize * 0.6f, gizmoColor, lineThickness, false);
- renderer->drawCircle(rotateTip.x, rotateTip.y, handleSize * 0.2f, gizmoColor, 0.0f, true);
+ if (showRotate) {
+  renderer->drawSolidLine(tc_c, rotateTip, gizmoColor, lineThickness);
+  renderer->drawCircle(rotateTip.x, rotateTip.y, handleSize * 0.6f, gizmoColor, lineThickness, false);
+  renderer->drawCircle(rotateTip.x, rotateTip.y, handleSize * 0.2f, gizmoColor, 0.0f, true);
+ }
 
  // Anchor point: crosshair at anchor position
  const auto& t3d = layer_->transform3D();
@@ -200,14 +222,14 @@ TransformGizmo::HandleType TransformGizmo::hitTest(const QPointF& viewportPos, A
   return handleRect.contains(viewportPos);
  };
 
- if (checkLocalPoint(localRect.topLeft())) return HandleType::Scale_TL;
- if (checkLocalPoint(localRect.topRight())) return HandleType::Scale_TR;
- if (checkLocalPoint(localRect.bottomLeft())) return HandleType::Scale_BL;
- if (checkLocalPoint(localRect.bottomRight())) return HandleType::Scale_BR;
- if (checkLocalPoint(QPointF(localRect.center().x(), localRect.top()))) return HandleType::Scale_T;
- if (checkLocalPoint(QPointF(localRect.center().x(), localRect.bottom()))) return HandleType::Scale_B;
- if (checkLocalPoint(QPointF(localRect.left(), localRect.center().y()))) return HandleType::Scale_L;
- if (checkLocalPoint(QPointF(localRect.right(), localRect.center().y()))) return HandleType::Scale_R;
+ if (allowsHandle(HandleType::Scale_TL) && checkLocalPoint(localRect.topLeft())) return HandleType::Scale_TL;
+ if (allowsHandle(HandleType::Scale_TR) && checkLocalPoint(localRect.topRight())) return HandleType::Scale_TR;
+ if (allowsHandle(HandleType::Scale_BL) && checkLocalPoint(localRect.bottomLeft())) return HandleType::Scale_BL;
+ if (allowsHandle(HandleType::Scale_BR) && checkLocalPoint(localRect.bottomRight())) return HandleType::Scale_BR;
+ if (allowsHandle(HandleType::Scale_T) && checkLocalPoint(QPointF(localRect.center().x(), localRect.top()))) return HandleType::Scale_T;
+ if (allowsHandle(HandleType::Scale_B) && checkLocalPoint(QPointF(localRect.center().x(), localRect.bottom()))) return HandleType::Scale_B;
+ if (allowsHandle(HandleType::Scale_L) && checkLocalPoint(QPointF(localRect.left(), localRect.center().y()))) return HandleType::Scale_L;
+ if (allowsHandle(HandleType::Scale_R) && checkLocalPoint(QPointF(localRect.right(), localRect.center().y()))) return HandleType::Scale_R;
 
  // 2. Rotation handle: above top-center
  const QPointF localRotTip(localRect.center().x(), localRect.top() - ROTATE_HANDLE_DISTANCE);
@@ -215,7 +237,7 @@ TransformGizmo::HandleType TransformGizmo::hitTest(const QPointF& viewportPos, A
  auto vRotTip = renderer->canvasToViewport({(float)worldRotTip.x(), (float)worldRotTip.y()});
  const float rotHitR = ROTATE_HANDLE_RADIUS + 6.0f;
  QRectF rotRect(vRotTip.x - rotHitR, vRotTip.y - rotHitR, rotHitR * 2, rotHitR * 2);
- if (rotRect.contains(viewportPos)) return HandleType::Rotate;
+ if (allowsHandle(HandleType::Rotate) && rotRect.contains(viewportPos)) return HandleType::Rotate;
 
  // 3. Anchor point handle
  const auto& t3d = layer_->transform3D();
@@ -231,7 +253,7 @@ TransformGizmo::HandleType TransformGizmo::hitTest(const QPointF& viewportPos, A
  auto canvasMouse = renderer->viewportToCanvas({(float)viewportPos.x(), (float)viewportPos.y()});
  bool invertible = false;
  const QTransform invTransform = globalTransform.inverted(&invertible);
- if (invertible) {
+ if (invertible && allowsHandle(HandleType::Move)) {
   QPointF localMouse = invTransform.map(QPointF(canvasMouse.x, canvasMouse.y));
   if (localRect.contains(localMouse)) {
    return HandleType::Move;
@@ -284,6 +306,23 @@ bool TransformGizmo::handleMousePress(const QPointF& viewportPos, ArtifactIRende
   dragStartLocalBounds_ = layer_->localBounds();
   dragStartAnchor_ = QPointF(t3d.anchorX(), t3d.anchorY());
   return true;
+ }
+ return false;
+}
+
+bool TransformGizmo::allowsHandle(HandleType handle) const {
+ switch (mode_) {
+ case Mode::All:
+  return handle != HandleType::None;
+ case Mode::Move:
+  return handle == HandleType::Move;
+ case Mode::Rotate:
+  return handle == HandleType::Rotate;
+ case Mode::Scale:
+  return handle == HandleType::Scale_TL || handle == HandleType::Scale_TR ||
+         handle == HandleType::Scale_BL || handle == HandleType::Scale_BR ||
+         handle == HandleType::Scale_T || handle == HandleType::Scale_B ||
+         handle == HandleType::Scale_L || handle == HandleType::Scale_R;
  }
  return false;
 }

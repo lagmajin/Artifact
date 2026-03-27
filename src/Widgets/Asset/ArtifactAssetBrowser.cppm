@@ -15,6 +15,7 @@
 #include <QMimeData>
 #include <QSortFilterProxyModel>
 #include <QDrag>
+#include <QQueue>
 #include <QButtonGroup>
 #include <QPixmap>
 #include <QIcon>
@@ -30,10 +31,15 @@
 #include <QImage>
 #include <QImageReader>
 #include <QPainter>
+#include <QPaintEvent>
+#include <algorithm>
+#include <cmath>
+#include <QFontMetrics>
 #include <QSlider>
 #include <QGroupBox>
 #include <QGridLayout>
 #include <QElapsedTimer>
+#include <QTimer>
 #include <opencv2/opencv.hpp>
 #include <opencv2/videoio.hpp>
 #include <opencv2/imgproc.hpp>
@@ -56,7 +62,7 @@ namespace Artifact {
 
  using namespace ArtifactCore;
 
- class AssetFileListView final : public QListView
+class AssetFileListView final : public QListView
  {
  public:
   explicit AssetFileListView(QWidget* parent = nullptr) : QListView(parent) {}
@@ -100,7 +106,121 @@ namespace Artifact {
    qDebug() << "[AssetBrowser][Drag]" << "mimeMs=" << dragTimer.elapsed()
             << "items=" << indexes.size();
    drag->exec(supportedActions, Qt::CopyAction);
+ }
+ };
+
+ class AssetInfoPanelWidget final : public QWidget
+ {
+ public:
+  explicit AssetInfoPanelWidget(QWidget* parent = nullptr) : QWidget(parent) {}
+
+  void setAsset(const QString& filePath,
+                const QString& title,
+                const QPixmap& preview,
+                const QStringList& lines,
+                const QColor& accent,
+                const QStringList& badges)
+  {
+   filePath_ = filePath;
+   title_ = title;
+   preview_ = preview;
+   lines_ = lines;
+   accent_ = accent;
+   badges_ = badges;
+   update();
   }
+
+  void clearAsset()
+  {
+   filePath_.clear();
+   title_.clear();
+   preview_ = QPixmap();
+   lines_.clear();
+   badges_.clear();
+   update();
+  }
+
+protected:
+  void paintEvent(QPaintEvent*) override
+  {
+   QPainter p(this);
+   p.setRenderHint(QPainter::Antialiasing, true);
+   p.fillRect(rect(), QColor(28, 29, 33));
+
+   const QRect content = rect().adjusted(12, 12, -12, -12);
+   p.setPen(QPen(QColor(64, 67, 75), 1));
+   p.setBrush(QColor(18, 19, 23));
+   p.drawRoundedRect(content, 10, 10);
+
+   QRect previewRect = content.adjusted(14, 14, -14, -content.height() / 2);
+   previewRect.setWidth(std::min(180, content.width() / 2));
+   previewRect.setHeight(std::min(120, content.height() / 3));
+
+   p.setPen(QPen(accent_.isValid() ? accent_ : QColor(96, 96, 96), 2));
+   p.setBrush(QColor(12, 13, 16));
+   p.drawRoundedRect(previewRect, 8, 8);
+
+   if (!preview_.isNull()) {
+    const QRect target = previewRect.adjusted(8, 8, -8, -8);
+    const QPixmap fitted = preview_.scaled(target.size(), Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    const QPoint topLeft(target.center().x() - fitted.width() / 2,
+                         target.center().y() - fitted.height() / 2);
+    p.drawPixmap(topLeft, fitted);
+   }
+
+   QRect textRect = content.adjusted(previewRect.width() + 24, 16, -16, -16);
+   if (textRect.width() < 120) {
+    textRect = content.adjusted(16, previewRect.bottom() + 16, -16, -16);
+   }
+
+   p.setPen(QColor(241, 243, 247));
+   QFont titleFont = p.font();
+   titleFont.setPointSizeF(titleFont.pointSizeF() > 0 ? titleFont.pointSizeF() + 2.0 : 11.0);
+   titleFont.setBold(true);
+   p.setFont(titleFont);
+   p.drawText(textRect, Qt::AlignLeft | Qt::AlignTop | Qt::TextWordWrap,
+              title_.isEmpty() ? QStringLiteral("No file selected") : title_);
+
+   int y = textRect.top() + 34;
+   QFont bodyFont = p.font();
+   bodyFont.setPointSizeF(std::max(8.0, bodyFont.pointSizeF() - 2.0));
+   bodyFont.setBold(false);
+   p.setFont(bodyFont);
+   p.setPen(QColor(180, 186, 196));
+
+   const int lineHeight = QFontMetrics(bodyFont).height() + 3;
+   for (const auto& line : lines_) {
+    if (y + lineHeight > textRect.bottom()) {
+     break;
+    }
+    p.drawText(QRect(textRect.left(), y, textRect.width(), lineHeight),
+               Qt::AlignLeft | Qt::AlignVCenter | Qt::TextSingleLine, line);
+    y += lineHeight;
+   }
+
+   if (!badges_.isEmpty()) {
+    int badgeX = textRect.left();
+    int badgeY = content.bottom() - 32;
+    for (const auto& badge : badges_) {
+     const QSize badgeSize(QFontMetrics(bodyFont).horizontalAdvance(badge) + 18, 22);
+     QRect badgeRect(badgeX, badgeY, badgeSize.width(), badgeSize.height());
+     p.setPen(Qt::NoPen);
+     p.setBrush(QColor(42, 44, 50));
+     p.drawRoundedRect(badgeRect, 10, 10);
+     p.setPen(accent_.isValid() ? accent_ : QColor(214, 218, 226));
+     p.drawText(badgeRect, Qt::AlignCenter, badge);
+     badgeX += badgeSize.width() + 8;
+    }
+   }
+  }
+
+ private:
+  QString filePath_;
+  QString title_;
+  QPixmap preview_;
+  QStringList lines_;
+  QStringList badges_;
+  QColor accent_;
  };
 
 
@@ -175,8 +295,11 @@ namespace Artifact {
   QButtonGroup* filterButtonGroup_ = nullptr;
   QLabel* currentPathLabel_ = nullptr;
   QLabel* browserStatusLabel_ = nullptr;
-  QLabel* fileInfoLabel_ = nullptr;  // File details display
+  AssetInfoPanelWidget* fileInfoPanel_ = nullptr;  // File details display
   QSlider* thumbnailSizeSlider_ = nullptr;  // Thumbnail size adjustment
+  QTimer* thumbnailWarmupTimer_ = nullptr;
+  QQueue<QString> thumbnailWarmupQueue_;
+  QSet<QString> thumbnailWarmupPending_;
   bool listViewMode_ = false;
    QString currentSortMode_ = "name";
    QString currentDirectoryPath_;
@@ -191,6 +314,9 @@ namespace Artifact {
   bool matchesFileTypeFilter(const QString& fileName) const;
   bool matchesSearchFilter(const QString& fileName) const;
   QIcon generateThumbnail(const QString& filePath);
+  QIcon placeholderIconFor(const QString& fileName, bool isDir) const;
+  void queueThumbnailWarmup(const QString& filePath);
+  void processThumbnailWarmupBatch();
   QIcon getFileIcon(const QString& fileName, const QString& filePath);
   void clearThumbnailCache();
    bool isImageFile(const QString& fileName) const;
@@ -429,8 +555,8 @@ bool ArtifactAssetBrowser::Impl::isMissingAssetPath(const QString& filePath) con
   return !QFileInfo::exists(filePath);
 }
 
- QIcon ArtifactAssetBrowser::Impl::generateThumbnail(const QString& filePath)
- {
+QIcon ArtifactAssetBrowser::Impl::generateThumbnail(const QString& filePath)
+{
   // Check cache first
   if (thumbnailCache_.contains(filePath)) {
    return thumbnailCache_[filePath];
@@ -498,15 +624,76 @@ bool ArtifactAssetBrowser::Impl::isMissingAssetPath(const QString& filePath) con
   return defaultFileIcon_;
  }
 
+ QIcon ArtifactAssetBrowser::Impl::placeholderIconFor(const QString& fileName, const bool isDir) const
+ {
+  if (isDir) {
+   return defaultFileIcon_;
+  }
+  if (isImageFile(fileName)) {
+   return defaultImageIcon_;
+  }
+  if (isVideoFile(fileName)) {
+   return defaultVideoIcon_;
+  }
+  if (isAudioFile(fileName)) {
+   return defaultAudioIcon_;
+  }
+  if (isFontFile(fileName)) {
+   return defaultFontIcon_;
+  }
+  return defaultFileIcon_;
+ }
+
+ void ArtifactAssetBrowser::Impl::queueThumbnailWarmup(const QString& filePath)
+ {
+  if (filePath.isEmpty() || thumbnailWarmupPending_.contains(filePath)) {
+   return;
+  }
+  thumbnailWarmupPending_.insert(filePath);
+  thumbnailWarmupQueue_.enqueue(filePath);
+  if (thumbnailWarmupTimer_ && !thumbnailWarmupTimer_->isActive()) {
+   thumbnailWarmupTimer_->start();
+  }
+ }
+
+ void ArtifactAssetBrowser::Impl::processThumbnailWarmupBatch()
+ {
+  if (!assetModel_) {
+   thumbnailWarmupQueue_.clear();
+   thumbnailWarmupPending_.clear();
+   return;
+  }
+
+  int processed = 0;
+  while (!thumbnailWarmupQueue_.isEmpty() && processed < 4) {
+   const QString path = thumbnailWarmupQueue_.dequeue();
+   thumbnailWarmupPending_.remove(path);
+   const QIcon icon = generateThumbnail(path);
+   if (!icon.isNull()) {
+    assetModel_->updateItemIconByPath(path, icon);
+   }
+   ++processed;
+  }
+
+  if (thumbnailWarmupQueue_.isEmpty() && thumbnailWarmupTimer_) {
+   thumbnailWarmupTimer_->stop();
+  }
+ }
+
  QIcon ArtifactAssetBrowser::Impl::getFileIcon(const QString& fileName, const QString& filePath)
  {
   return generateThumbnail(filePath);
  }
 
- void ArtifactAssetBrowser::Impl::clearThumbnailCache()
- {
+void ArtifactAssetBrowser::Impl::clearThumbnailCache()
+{
   thumbnailCache_.clear();
- }
+  thumbnailWarmupQueue_.clear();
+  thumbnailWarmupPending_.clear();
+  if (thumbnailWarmupTimer_) {
+   thumbnailWarmupTimer_->stop();
+  }
+}
 
 void ArtifactAssetBrowser::Impl::syncProjectAssetRoot()
 {
@@ -667,8 +854,10 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
    item.type = UniString::fromQString(itemType);
    item.isFolder = isDir;
 
-   // Generate thumbnail/icon for display
-   item.icon = generateThumbnail(fullPath);
+   item.icon = placeholderIconFor(entry, isDir);
+   if (!isDir && (isImageFile(entry) || isVideoFile(entry))) {
+    queueThumbnailWarmup(fullPath);
+   }
 
    items.append(item);
   }
@@ -686,6 +875,13 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
 
   // Enable drag and drop
   setAcceptDrops(true);
+
+  impl_->thumbnailWarmupTimer_ = new QTimer(this);
+  impl_->thumbnailWarmupTimer_->setInterval(16);
+  impl_->thumbnailWarmupTimer_->setSingleShot(false);
+  QObject::connect(impl_->thumbnailWarmupTimer_, &QTimer::timeout, this, [this]() {
+   impl_->processThumbnailWarmupBatch();
+  });
 
   auto assetToolBar = new ArtifactAssetBrowserToolBar();
   impl_->searchEdit_ = assetToolBar->findChild<QLineEdit*>();
@@ -998,8 +1194,8 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
     if (!selectedFiles.isEmpty()) {
      updateFileInfo(selectedFiles.first());
     }
-   } else if (impl_->fileInfoLabel_) {
-    impl_->fileInfoLabel_->setText(QStringLiteral("No file selected"));
+   } else if (impl_->fileInfoPanel_) {
+    impl_->fileInfoPanel_->clearAsset();
    }
    impl_->updateBrowserStatus();
    selectionChanged(selectedFiles);
@@ -1034,15 +1230,11 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
   // Create file info panel
   auto fileInfoGroup = new QGroupBox("File Details");
   auto fileInfoLayout = new QVBoxLayout();
-
-  auto fileInfoLabel = impl_->fileInfoLabel_ = new QLabel("No file selected");
-  fileInfoLabel->setWordWrap(true);
-  fileInfoLabel->setAlignment(Qt::AlignTop | Qt::AlignLeft);
-  fileInfoLabel->setStyleSheet("color: gray; font-size: 9pt;");
-
-  fileInfoLayout->addWidget(fileInfoLabel);
+  impl_->fileInfoPanel_ = new AssetInfoPanelWidget();
+  impl_->fileInfoPanel_->setMinimumHeight(180);
+  fileInfoLayout->addWidget(impl_->fileInfoPanel_);
   fileInfoGroup->setLayout(fileInfoLayout);
-  fileInfoGroup->setMaximumHeight(150);
+  fileInfoGroup->setMinimumHeight(220);
 
   // Initial load
   impl_->applyFilters();
@@ -1253,40 +1445,55 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
 
  void ArtifactAssetBrowser::updateFileInfo(const QString& filePath)
  {
-  if (filePath.isEmpty() || !impl_->fileInfoLabel_) return;
+  if (filePath.isEmpty() || !impl_->fileInfoPanel_) return;
 
   QFileInfo fileInfo(filePath);
 
   if (!fileInfo.exists()) {
-   impl_->fileInfoLabel_->setText("File not found");
+   impl_->fileInfoPanel_->setAsset(filePath,
+                                   QStringLiteral("File not found"),
+                                   QPixmap(),
+                                   {QStringLiteral("Path: %1").arg(filePath)},
+                                   QColor(150, 74, 74),
+                                   {QStringLiteral("Missing")});
    return;
   }
 
-  // Build information string
-  QString info;
-  info += QString("<b>%1</b><br>").arg(fileInfo.fileName());
+  QStringList lines;
+  QStringList badges;
+  QColor accent = QColor(96, 96, 96);
+  const bool imported = impl_->isImportedAssetPath(filePath);
+  const bool unused = impl_->isUnusedAssetPath(filePath);
+  const bool missing = impl_->isMissingAssetPath(filePath);
+  const QString fileName = fileInfo.fileName();
 
   // Check if it's a folder
   if (fileInfo.isDir()) {
-   info += "Type: Folder<br>";
-   info += QString("Entries: %1<br>").arg(QDir(filePath).entryList(QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot).size());
-   info += QString("Project: %1<br>").arg(impl_->isImportedAssetPath(filePath) ? QStringLiteral("Imported") : QStringLiteral("Not Imported"));
-   info += QString("Usage: %1<br>").arg(impl_->isUnusedAssetPath(filePath) ? QStringLiteral("Unused") : QStringLiteral("In Use / N.A."));
-   info += QString("Status: %1<br>").arg(impl_->isMissingAssetPath(filePath) ? QStringLiteral("Missing") : QStringLiteral("OK"));
-   impl_->fileInfoLabel_->setText(info);
+   badges << QStringLiteral("Folder");
+   accent = QColor(176, 138, 46);
+   lines << QStringLiteral("Entries: %1").arg(QDir(filePath).entryList(QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot).size());
+   lines << QStringLiteral("Project: %1").arg(imported ? QStringLiteral("Imported") : QStringLiteral("Not Imported"));
+   lines << QStringLiteral("Usage: %1").arg(unused ? QStringLiteral("Unused") : QStringLiteral("In Use / N.A."));
+   lines << QStringLiteral("Status: %1").arg(missing ? QStringLiteral("Missing") : QStringLiteral("OK"));
+   const QPixmap preview = impl_->generateThumbnail(filePath).pixmap(160, 120);
+   impl_->fileInfoPanel_->setAsset(filePath, fileName, preview, lines, accent, badges);
    return;
   }
 
-  info += QString("Size: %1 KB<br>").arg(fileInfo.size() / 1024);
-  info += QString("Type: %1<br>").arg(fileInfo.suffix().toUpper());
-  info += QString("Modified: %1<br>").arg(fileInfo.lastModified().toString("yyyy-MM-dd hh:mm"));
-  info += QString("Project: %1<br>").arg(impl_->isImportedAssetPath(filePath) ? QStringLiteral("Imported") : QStringLiteral("Not Imported"));
-  info += QString("Usage: %1<br>").arg(impl_->isUnusedAssetPath(filePath) ? QStringLiteral("Unused") : QStringLiteral("In Use"));
-  info += QString("Status: %1<br>").arg(impl_->isMissingAssetPath(filePath) ? QStringLiteral("Missing") : QStringLiteral("OK"));
+  lines << QStringLiteral("Size: %1 KB").arg(fileInfo.size() / 1024);
+  lines << QStringLiteral("Type: %1").arg(fileInfo.suffix().toUpper());
+  lines << QStringLiteral("Modified: %1").arg(fileInfo.lastModified().toString("yyyy-MM-dd hh:mm"));
+  lines << QStringLiteral("Project: %1").arg(imported ? QStringLiteral("Imported") : QStringLiteral("Not Imported"));
+  lines << QStringLiteral("Usage: %1").arg(unused ? QStringLiteral("Unused") : QStringLiteral("In Use"));
+  lines << QStringLiteral("Status: %1").arg(missing ? QStringLiteral("Missing") : QStringLiteral("OK"));
+  badges << (impl_->isImageFile(fileName) ? QStringLiteral("Image")
+                : impl_->isVideoFile(fileName) ? QStringLiteral("Video")
+                : impl_->isAudioFile(fileName) ? QStringLiteral("Audio")
+                : impl_->isFontFile(fileName) ? QStringLiteral("Font")
+                : QStringLiteral("File"));
 
   // Get image resolution for image files
-  QString fileName = fileInfo.fileName();
-  QString lowerName = fileName.toLower();
+  const QString lowerName = fileName.toLower();
 
   if (lowerName.endsWith(".png") || lowerName.endsWith(".jpg") ||
       lowerName.endsWith(".jpeg") || lowerName.endsWith(".bmp") ||
@@ -1295,12 +1502,13 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
    QImageReader imageReader(filePath);
    const QSize imageSize = imageReader.size();
    if (imageSize.isValid()) {
-    info += QString("Resolution: %1 x %2 px<br>").arg(imageSize.width()).arg(imageSize.height());
+    lines << QStringLiteral("Resolution: %1 x %2 px").arg(imageSize.width()).arg(imageSize.height());
     const QByteArray imageFormat = imageReader.format();
     if (!imageFormat.isEmpty()) {
-     info += QString("Format: %1").arg(QString::fromLatin1(imageFormat).toUpper());
+     lines << QStringLiteral("Format: %1").arg(QString::fromLatin1(imageFormat).toUpper());
     }
    }
+   accent = QColor(66, 148, 98);
   }
   else if (impl_->isVideoFile(fileName)) {
    cv::VideoCapture cap(filePath.toLocal8Bit().constData());
@@ -1310,24 +1518,45 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
     const double fps = cap.get(cv::CAP_PROP_FPS);
     const double frameCount = cap.get(cv::CAP_PROP_FRAME_COUNT);
     if (width > 0.0 && height > 0.0) {
-     info += QString("Resolution: %1 x %2 px<br>").arg(static_cast<int>(width)).arg(static_cast<int>(height));
+     lines << QStringLiteral("Resolution: %1 x %2 px").arg(static_cast<int>(width)).arg(static_cast<int>(height));
     }
     if (fps > 0.0) {
-     info += QString("FPS: %1<br>").arg(QString::number(fps, 'f', fps == std::floor(fps) ? 0 : 2));
+     lines << QStringLiteral("FPS: %1").arg(QString::number(fps, 'f', fps == std::floor(fps) ? 0 : 2));
     }
     if (fps > 0.0 && frameCount > 0.0) {
-     info += QString("Duration: %1 s<br>").arg(QString::number(frameCount / fps, 'f', 2));
+     lines << QStringLiteral("Duration: %1 s").arg(QString::number(frameCount / fps, 'f', 2));
     }
    }
+   accent = QColor(74, 128, 191);
   }
   else if (impl_->isAudioFile(fileName)) {
-   info += QString("Kind: Audio<br>");
+   lines << QStringLiteral("Kind: Audio");
+   accent = QColor(170, 90, 48);
   }
   else if (impl_->isFontFile(fileName)) {
-   info += QString("Kind: Font<br>");
+   lines << QStringLiteral("Kind: Font");
+   accent = QColor(121, 82, 168);
+  } else {
+   accent = QColor(96, 96, 96);
   }
 
-  impl_->fileInfoLabel_->setText(info);
+  if (imported) {
+   badges << QStringLiteral("Imported");
+  } else {
+   badges << QStringLiteral("Not Imported");
+  }
+  if (unused) {
+   badges << QStringLiteral("Unused");
+  }
+  if (missing) {
+   badges << QStringLiteral("Missing");
+   accent = QColor(150, 74, 74);
+  } else {
+   badges << QStringLiteral("OK");
+  }
+
+  const QPixmap preview = impl_->generateThumbnail(filePath).pixmap(160, 120);
+  impl_->fileInfoPanel_->setAsset(filePath, fileName, preview, lines, accent, badges);
 }
 
  void ArtifactAssetBrowser::showContextMenu(const QPoint& pos)

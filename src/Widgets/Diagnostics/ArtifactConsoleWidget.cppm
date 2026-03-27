@@ -6,6 +6,10 @@ module;
 #include <QCheckBox>
 #include <QLabel>
 #include <QPlainTextEdit>
+#include <QSpinBox>
+#include <QSettings>
+#include <QFont>
+#include <QSignalBlocker>
 #include <QDateTime>
 #include <QIcon>
 #include <QString>
@@ -18,6 +22,7 @@ module;
 #include <QTextStream>
 #include <QClipboard>
 #include <QApplication>
+#include <algorithm>
 #include <wobjectimpl.h>
 
 module Artifact.Widgets.ConsoleWidget;
@@ -66,6 +71,8 @@ public:
     QToolButton* copyVisibleBtn_ = nullptr;
     QToolButton* saveVisibleBtn_ = nullptr;
     QLineEdit* searchEdit_ = nullptr;
+    QLabel* fontSizeLabel_ = nullptr;
+    QSpinBox* fontSizeSpin_ = nullptr;
     QToolButton* infoFilterBtn_ = nullptr;
     QToolButton* warningFilterBtn_ = nullptr;
     QToolButton* errorFilterBtn_ = nullptr;
@@ -81,13 +88,18 @@ public:
     bool collapse_ = true;
     bool importantOnly_ = false;
     QString searchFilter_;
+    int consoleFontPointSize_ = 12;
     int pendingWhilePaused_ = 0;
     int totalInfoCount_ = 0;
     int totalWarningCount_ = 0;
     int totalErrorCount_ = 0;
     std::vector<DisplayLogEntry> displayEntries_;
 
-    Impl(ArtifactConsoleWidget* owner) : owner_(owner) {}
+    Impl(ArtifactConsoleWidget* owner) : owner_(owner) {
+        loadSettings();
+    }
+
+    static constexpr const char* kFontPointSizeKey = "ui/console/fontPointSize";
 
     void setupUI() {
         auto* layout = new QVBoxLayout(owner_);
@@ -103,7 +115,7 @@ public:
         toolbarLayout->addWidget(clearBtn_);
 
         clearOnPlayCheck_ = new QCheckBox("Clear on Play");
-        clearOnPlayCheck_->setStyleSheet("color: #bbbbbb; font-size: 11px;");
+        clearOnPlayCheck_->setStyleSheet("color: #bbbbbb;");
         toolbarLayout->addWidget(clearOnPlayCheck_);
 
         pauseBtn_ = createToolButton("MaterialVS/colored/E3E3E3/pause.svg", "Pause incoming logs");
@@ -157,6 +169,17 @@ public:
         saveVisibleBtn_->setText(QStringLiteral("Save Visible"));
         toolbarLayout->addWidget(saveVisibleBtn_);
 
+        toolbarLayout->addSpacing(8);
+        fontSizeLabel_ = new QLabel(QStringLiteral("Font"));
+        toolbarLayout->addWidget(fontSizeLabel_);
+
+        fontSizeSpin_ = new QSpinBox();
+        fontSizeSpin_->setRange(8, 24);
+        fontSizeSpin_->setSuffix(QStringLiteral(" pt"));
+        fontSizeSpin_->setFixedWidth(84);
+        fontSizeSpin_->setToolTip(QStringLiteral("Console font size"));
+        toolbarLayout->addWidget(fontSizeSpin_);
+
         infoFilterBtn_ = createToolButton("MaterialVS/colored/E3E3E3/info.svg", "Toggle Information");
         infoFilterBtn_->setCheckable(true);
         infoFilterBtn_->setChecked(true);
@@ -175,7 +198,7 @@ public:
         layout->addLayout(toolbarLayout);
 
         statusLabel_ = new QLabel(owner_);
-        statusLabel_->setStyleSheet("color: #9a9a9a; font-size: 11px; padding: 2px 8px;");
+        statusLabel_->setStyleSheet("color: #9a9a9a; padding: 2px 8px;");
         layout->addWidget(statusLabel_);
 
         auto* splitter = new QSplitter(Qt::Vertical, owner_);
@@ -188,7 +211,6 @@ public:
                 color: #e0e0e0;
                 border: none;
                 font-family: Consolas, monospace;
-                font-size: 11px;
             }
             QListWidget::item {
                 padding: 2px 4px;
@@ -214,7 +236,6 @@ public:
                 border: none;
                 border-top: 1px solid #2d2d2d;
                 font-family: Consolas, monospace;
-                font-size: 11px;
                 padding: 6px;
             }
         )");
@@ -369,6 +390,8 @@ public:
             }
         )");
 
+        connectFontControls();
+        applyFontPointSize(consoleFontPointSize_, false);
         refreshList();
     }
 
@@ -379,6 +402,80 @@ public:
         btn->setToolTip(tooltip);
         btn->setMinimumHeight(28);
         return btn;
+    }
+
+    QFont uiFont() const {
+        QFont font = owner_ ? owner_->font() : QFont();
+        font.setPointSize(consoleFontPointSize_);
+        return font;
+    }
+
+    QFont monoFont() const {
+        QFont font(QStringLiteral("Consolas"));
+        font.setStyleHint(QFont::Monospace);
+        font.setPointSize(consoleFontPointSize_);
+        return font;
+    }
+
+    void loadSettings() {
+        QSettings settings;
+        const int stored = settings.value(QString::fromLatin1(kFontPointSizeKey), 12).toInt();
+        consoleFontPointSize_ = std::clamp(stored, 8, 24);
+    }
+
+    void saveSettings() const {
+        QSettings settings;
+        settings.setValue(QString::fromLatin1(kFontPointSizeKey), consoleFontPointSize_);
+    }
+
+    int fontPointSize() const {
+        return consoleFontPointSize_;
+    }
+
+    void connectFontControls() {
+        if (!fontSizeSpin_) {
+            return;
+        }
+        fontSizeSpin_->setValue(consoleFontPointSize_);
+        QObject::connect(fontSizeSpin_, QOverload<int>::of(&QSpinBox::valueChanged), owner_, [this](int value) {
+            applyFontPointSize(value, true);
+        });
+    }
+
+    void applyFontPointSize(int pointSize, bool persist) {
+        consoleFontPointSize_ = std::clamp(pointSize, 8, 24);
+
+        if (fontSizeSpin_) {
+            const QSignalBlocker blocker(fontSizeSpin_);
+            fontSizeSpin_->setValue(consoleFontPointSize_);
+        }
+
+        const QFont textFont = uiFont();
+        if (owner_) owner_->setFont(textFont);
+        if (clearOnPlayCheck_) clearOnPlayCheck_->setFont(textFont);
+        if (pauseBtn_) pauseBtn_->setFont(textFont);
+        if (autoScrollBtn_) autoScrollBtn_->setFont(textFont);
+        if (collapseBtn_) collapseBtn_->setFont(textFont);
+        if (importantOnlyBtn_) importantOnlyBtn_->setFont(textFont);
+        if (copySelectedBtn_) copySelectedBtn_->setFont(textFont);
+        if (copyVisibleBtn_) copyVisibleBtn_->setFont(textFont);
+        if (saveVisibleBtn_) saveVisibleBtn_->setFont(textFont);
+        if (searchEdit_) searchEdit_->setFont(textFont);
+        if (fontSizeLabel_) fontSizeLabel_->setFont(textFont);
+        if (fontSizeSpin_) fontSizeSpin_->setFont(textFont);
+        if (infoFilterBtn_) infoFilterBtn_->setFont(textFont);
+        if (warningFilterBtn_) warningFilterBtn_->setFont(textFont);
+        if (errorFilterBtn_) errorFilterBtn_->setFont(textFont);
+        if (statusLabel_) statusLabel_->setFont(textFont);
+
+        const QFont monospaceFont = monoFont();
+        if (logList_) logList_->setFont(monospaceFont);
+        if (detailView_) detailView_->setFont(monospaceFont);
+
+        if (persist) {
+            saveSettings();
+        }
+        updateStatus();
     }
 
     bool shouldShowLog(LogLevel level, const QString& message) const {
@@ -643,6 +740,17 @@ ArtifactConsoleWidget::ArtifactConsoleWidget(QWidget* parent)
 
 ArtifactConsoleWidget::~ArtifactConsoleWidget() {
     delete impl_;
+}
+
+int ArtifactConsoleWidget::consoleFontPointSize() const {
+    return impl_ ? impl_->fontPointSize() : 12;
+}
+
+void ArtifactConsoleWidget::setConsoleFontPointSize(int pointSize) {
+    if (!impl_) {
+        return;
+    }
+    impl_->applyFontPointSize(pointSize, true);
 }
 
 } // namespace Artifact

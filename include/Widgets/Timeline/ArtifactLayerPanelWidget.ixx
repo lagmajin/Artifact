@@ -11,6 +11,13 @@ import Utils.Id;
 export namespace Artifact
 {
  using namespace ArtifactCore;
+
+ enum class SearchMatchMode
+ {
+  AllVisible,
+  HighlightOnly,
+  FilterOnly
+ };
 	
    class ArtifactLayerPanelHeaderWidget :public QWidget
    {
@@ -64,9 +71,12 @@ export namespace Artifact
   void setComposition(const CompositionID& id);
   void setShyHidden(bool hidden);
   void setFilterText(const QString& text);
+  void setSearchMatchMode(SearchMatchMode mode);
+  SearchMatchMode searchMatchMode() const;
   void setLayerNameEditable(bool enabled);
   bool isLayerNameEditable() const;
   void updateLayout();
+  QVector<LayerID> matchingTimelineRows() const;
   QVector<LayerID> visibleTimelineRows() const;
   int layerRowIndex(const LayerID& id) const;
   void editLayerName(const LayerID& id);
@@ -93,7 +103,10 @@ export namespace Artifact
   ~ArtifactLayerTimelinePanelWrapper();
   void setComposition(const CompositionID& id);
   void setFilterText(const QString& text);
+  void setSearchMatchMode(SearchMatchMode mode);
+  SearchMatchMode searchMatchMode() const;
   class QScrollBar* verticalScrollBar() const;
+  QVector<LayerID> matchingTimelineRows() const;
   QVector<LayerID> visibleTimelineRows() const;
   void setLayerNameEditable(bool enabled);
   bool isLayerNameEditable() const;

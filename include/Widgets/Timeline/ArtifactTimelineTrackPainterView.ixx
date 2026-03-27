@@ -2,6 +2,7 @@
 #include <QColor>
 #include <QMouseEvent>
 #include <QPaintEvent>
+#include <QSet>
 #include <QVector>
 #include <QWidget>
 #include <QString>
@@ -22,6 +23,14 @@ export namespace Artifact
   W_OBJECT(ArtifactTimelineTrackPainterView)
 
  public:
+  struct KeyframeMarkerVisual {
+   LayerID layerId;
+   int trackIndex = -1;
+   double frame = 0.0;
+   QColor color = QColor(247, 204, 83);
+   QString label;
+  };
+
   struct TrackClipVisual {
    QString clipId;
    LayerID layerId;
@@ -68,6 +77,8 @@ export namespace Artifact
 
   void clearClips();
   void setClips(const QVector<TrackClipVisual>& clips);
+  void setKeyframeMarkers(const QVector<KeyframeMarkerVisual>& markers);
+  void setSelectedLayerIds(const QSet<LayerID>& layerIds);
   QVector<TrackClipVisual> clips() const;
 
  public /*signals*/:

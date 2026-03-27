@@ -6,6 +6,7 @@
 #include <QLineEdit>
 #include <QHBoxLayout>
 #include <QPushButton>
+#include <QKeyEvent>
 #include <wobjectimpl.h>
 
 module Artifact.Timeline.TimeCodeWidget;
@@ -114,11 +115,11 @@ namespace Artifact
   QLineEdit* searchLineEdit_ = nullptr;
  };
 
- ArtifactTimelineSearchBarWidget::Impl::Impl()
- {
-  searchLineEdit_ = new QLineEdit();
-  searchLineEdit_->setPlaceholderText("検索");
- }
+ArtifactTimelineSearchBarWidget::Impl::Impl()
+{
+ searchLineEdit_ = new QLineEdit();
+ searchLineEdit_->setPlaceholderText("検索 (type:text fx:blur tag:bg parent:none visible:false)");
+}
 
 ArtifactTimelineSearchBarWidget::ArtifactTimelineSearchBarWidget(QWidget* parent)
   : QWidget(parent), impl_(new Impl())
@@ -133,6 +134,7 @@ ArtifactTimelineSearchBarWidget::ArtifactTimelineSearchBarWidget(QWidget* parent
   impl_->searchLineEdit_->setClearButtonEnabled(true);
   impl_->searchLineEdit_->setMinimumHeight(26);
   setFixedHeight(34);
+  impl_->searchLineEdit_->installEventFilter(this);
 
   layout->addWidget(impl_->searchLineEdit_);
 
@@ -158,6 +160,29 @@ ArtifactTimelineSearchBarWidget::ArtifactTimelineSearchBarWidget(QWidget* parent
   QObject::connect(impl_->searchLineEdit_, &QLineEdit::textChanged, this, [this](const QString& text) {
    searchTextChanged(text);
   });
+ }
+
+ bool ArtifactTimelineSearchBarWidget::eventFilter(QObject* watched, QEvent* event)
+ {
+  if (watched == impl_->searchLineEdit_ && event && event->type() == QEvent::KeyPress) {
+   auto* keyEvent = static_cast<QKeyEvent*>(event);
+   if (keyEvent->key() == Qt::Key_Return || keyEvent->key() == Qt::Key_Enter) {
+    if (keyEvent->modifiers() & Qt::ShiftModifier) {
+     searchPrevRequested();
+    } else {
+     searchNextRequested();
+    }
+    return true;
+   }
+   if (keyEvent->key() == Qt::Key_Escape) {
+    if (impl_->searchLineEdit_ && !impl_->searchLineEdit_->text().isEmpty()) {
+     impl_->searchLineEdit_->clear();
+     searchCleared();
+     return true;
+    }
+   }
+  }
+  return QWidget::eventFilter(watched, event);
  }
 
  ArtifactTimelineSearchBarWidget::~ArtifactTimelineSearchBarWidget()

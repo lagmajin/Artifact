@@ -101,7 +101,11 @@ void ArtifactPropertyWidget::showEvent(QShowEvent* event) {
     QScrollArea::showEvent(event);
     if (impl_->needsRebuildWhenVisible) {
         impl_->needsRebuildWhenVisible = false;
-        impl_->rebuildUI();
+        QTimer::singleShot(0, this, [this]() {
+            if (impl_) {
+                impl_->rebuildUI();
+            }
+        });
     } else {
         impl_->updatePropertyValues();
     }
@@ -222,13 +226,15 @@ ArtifactPropertyEditorRowWidget* createPropertyRow(
     const auto meta = property.metadata();
     const QString labelText = meta.displayLabel.isEmpty() ? humanizePropertyLabel(property.getName()) : meta.displayLabel;
     auto* row = new ArtifactPropertyEditorRowWidget(labelText, editor, property.getName(), parent);
-    
-    editor->setCommitHandler([applyValue, propertyPtr, propertyName = property.getName()](const QVariant& value) {
+
+    const auto applyPropertyValue = [applyValue, propertyPtr, propertyName = property.getName()](const QVariant& value) {
         if (propertyPtr) {
             propertyPtr->setValue(value);
         }
         applyValue(propertyName, value);
-    });
+    };
+    editor->setPreviewHandler(applyPropertyValue);
+    editor->setCommitHandler(applyPropertyValue);
 
     if (!meta.tooltip.isEmpty()) {
         row->setEditorToolTip(meta.tooltip);
@@ -237,8 +243,11 @@ ArtifactPropertyEditorRowWidget* createPropertyRow(
     const QVariant defaultValue = property.getDefaultValue();
     row->setShowResetButton(defaultValue.isValid());
     if (defaultValue.isValid()) {
-        row->setResetHandler([editor, applyValue, propertyName = property.getName(), defaultValue]() {
+        row->setResetHandler([editor, propertyPtr, applyValue, propertyName = property.getName(), defaultValue]() {
             editor->setValueFromVariant(defaultValue);
+            if (propertyPtr) {
+                propertyPtr->setValue(defaultValue);
+            }
             applyValue(propertyName, defaultValue);
         });
     }
@@ -491,6 +500,18 @@ QLabel#propertyRowLabel {
  color: #E0E0E0;
  font-weight: 500;
  padding-left: 4px;
+}
+QLabel#propertyScrubHandle {
+ color: #8E8E8E;
+ background: #333333;
+ border: 1px solid #454545;
+ border-radius: 4px;
+ font-family: Consolas;
+ font-size: 10px;
+}
+QLabel#propertyScrubHandle:hover {
+ color: #D0D0D0;
+ border-color: #F5933C;
 }
 QSpinBox, QDoubleSpinBox, QComboBox, QFontComboBox {
  min-height: 26px;

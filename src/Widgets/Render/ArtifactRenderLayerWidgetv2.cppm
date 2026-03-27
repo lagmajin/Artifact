@@ -36,6 +36,8 @@ import Artifact.Service.Playback;
 import Artifact.Service.ActiveContext;
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
+import Artifact.Mask.LayerMask;
+import Artifact.Mask.Path;
 import Property.Abstract;
 
 import Artifact.Render.IRenderer;
@@ -97,6 +99,12 @@ enum class ViewSurfaceMode {
   QPointF panOffset_{ 0.0, 0.0 };
   QString debugText_;
   QString layerInfoText_;
+  int hoveredMaskIndex_ = -1;
+  int hoveredPathIndex_ = -1;
+  int hoveredVertexIndex_ = -1;
+  int draggingMaskIndex_ = -1;
+  int draggingPathIndex_ = -1;
+  int draggingVertexIndex_ = -1;
   
   void defaultHandleKeyPressEvent(QKeyEvent* event);
   bool isSolidLayerForPreview(const ArtifactAbstractLayerPtr& layer);
@@ -165,6 +173,36 @@ enum class ViewSurfaceMode {
  {
   if (!event || !renderer_ || !widget_) {
    return;
+  }
+
+  if (editMode_ == EditMode::Mask && !targetLayerId_.isNil() &&
+      (event->key() == Qt::Key_Delete || event->key() == Qt::Key_Backspace)) {
+   if (auto* service = ArtifactProjectService::instance()) {
+    if (auto composition = service->currentComposition().lock()) {
+     if (auto layer = composition->layerById(targetLayerId_)) {
+      const int maskIndex = draggingMaskIndex_ >= 0 ? draggingMaskIndex_ : hoveredMaskIndex_;
+      const int pathIndex = draggingPathIndex_ >= 0 ? draggingPathIndex_ : hoveredPathIndex_;
+      const int vertexIndex = draggingVertexIndex_ >= 0 ? draggingVertexIndex_ : hoveredVertexIndex_;
+      if (maskIndex >= 0 && pathIndex >= 0 && vertexIndex >= 0 && maskIndex < layer->maskCount()) {
+       LayerMask mask = layer->mask(maskIndex);
+       if (pathIndex < mask.maskPathCount()) {
+        MaskPath path = mask.maskPath(pathIndex);
+        if (vertexIndex < path.vertexCount()) {
+         path.removeVertex(vertexIndex);
+         mask.setMaskPath(pathIndex, path);
+         layer->setMask(maskIndex, mask);
+         hoveredMaskIndex_ = hoveredPathIndex_ = hoveredVertexIndex_ = -1;
+         draggingMaskIndex_ = draggingPathIndex_ = draggingVertexIndex_ = -1;
+         layer->changed();
+         widget_->update();
+         event->accept();
+         return;
+        }
+       }
+      }
+     }
+    }
+   }
   }
 
   const QPointF center(widget_->width() * 0.5, widget_->height() * 0.5);
@@ -316,19 +354,38 @@ enum class ViewSurfaceMode {
                               ? QStringLiteral("Source")
                               : QStringLiteral("BeforeAfter"));
 
-  if (renderer_) {
-   parts << QStringLiteral("Zoom=%1").arg(renderer_->getZoom(), 0, 'f', 2);
-   float panX = 0.0f;
-   float panY = 0.0f;
-   renderer_->getPan(panX, panY);
-   panOffset_ = QPointF(panX, panY);
-   parts << QStringLiteral("Pan=%1,%2")
+ if (renderer_) {
+  parts << QStringLiteral("Zoom=%1").arg(renderer_->getZoom(), 0, 'f', 2);
+  float panX = 0.0f;
+  float panY = 0.0f;
+  renderer_->getPan(panX, panY);
+  panOffset_ = QPointF(panX, panY);
+  parts << QStringLiteral("Pan=%1,%2")
                 .arg(panOffset_.x(), 0, 'f', 1)
                 .arg(panOffset_.y(), 0, 'f', 1);
+ }
+
+  if (auto* playback = ArtifactPlaybackService::instance()) {
+   const auto playbackState = playback->state();
+   parts << QStringLiteral("Playback=%1")
+                .arg(playbackState == PlaybackState::Playing
+                         ? QStringLiteral("Playing")
+                         : playbackState == PlaybackState::Paused
+                               ? QStringLiteral("Paused")
+                               : QStringLiteral("Stopped"));
+   parts << QStringLiteral("Frame=%1").arg(playback->currentFrame().framePosition());
   }
 
   if (!targetLayerId_.isNil()) {
    parts << QStringLiteral("Layer=%1").arg(targetLayerId_.toString());
+  }
+  if (editMode_ == EditMode::Mask) {
+   parts << QStringLiteral("MaskEdit=%1")
+                .arg(draggingVertexIndex_ >= 0
+                         ? QStringLiteral("Dragging")
+                         : hoveredVertexIndex_ >= 0
+                               ? QStringLiteral("Hover")
+                               : QStringLiteral("Idle"));
   }
   debugText_ = parts.join(QStringLiteral(" | "));
 }
@@ -550,13 +607,19 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
   }
  }
 
- void ArtifactLayerEditorWidgetV2::clearTargetLayer()
- {
-  std::lock_guard<std::mutex> lock(impl_->resizeMutex_);
-  impl_->targetLayerId_ = LayerID();
-  impl_->requestRender();
-  if (impl_->renderer_) {
-   impl_->renderer_->clear();
+void ArtifactLayerEditorWidgetV2::clearTargetLayer()
+{
+ std::lock_guard<std::mutex> lock(impl_->resizeMutex_);
+ impl_->targetLayerId_ = LayerID();
+ impl_->hoveredMaskIndex_ = -1;
+ impl_->hoveredPathIndex_ = -1;
+ impl_->hoveredVertexIndex_ = -1;
+ impl_->draggingMaskIndex_ = -1;
+ impl_->draggingPathIndex_ = -1;
+ impl_->draggingVertexIndex_ = -1;
+ impl_->requestRender();
+ if (impl_->renderer_) {
+  impl_->renderer_->clear();
    impl_->renderer_->flush();
    impl_->renderer_->present();
   }
@@ -582,6 +645,98 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
 
  void ArtifactLayerEditorWidgetV2::mousePressEvent(QMouseEvent* event)
  {
+  if (event->button() == Qt::LeftButton && impl_->editMode_ == EditMode::Mask && !impl_->targetLayerId_.isNil()) {
+   if (auto* service = ArtifactProjectService::instance()) {
+    if (auto composition = service->currentComposition().lock()) {
+     if (auto layer = composition->layerById(impl_->targetLayerId_)) {
+      const auto canvasPos = impl_->renderer_
+                                 ? impl_->renderer_->viewportToCanvas(
+                                       {(float)event->position().x(), (float)event->position().y()})
+                                 : Detail::float2{(float)event->position().x(),
+                                                  (float)event->position().y()};
+      const QTransform globalTransform = layer->getGlobalTransform();
+      bool invertible = false;
+      const QTransform invTransform = globalTransform.inverted(&invertible);
+      if (invertible) {
+       const QPointF localPos = invTransform.map(QPointF(canvasPos.x, canvasPos.y));
+       const float zoom = impl_->renderer_ ? std::max(0.001f, impl_->renderer_->getZoom()) : 1.0f;
+       const float threshold = 8.0f / zoom;
+       impl_->hoveredMaskIndex_ = -1;
+       impl_->hoveredPathIndex_ = -1;
+       impl_->hoveredVertexIndex_ = -1;
+
+       for (int m = 0; m < layer->maskCount(); ++m) {
+        LayerMask mask = layer->mask(m);
+        for (int p = 0; p < mask.maskPathCount(); ++p) {
+         MaskPath path = mask.maskPath(p);
+         for (int v = 0; v < path.vertexCount(); ++v) {
+          const MaskVertex vertex = path.vertex(v);
+          if (std::hypot(vertex.position.x() - localPos.x(),
+                         vertex.position.y() - localPos.y()) <= threshold) {
+           if (v == 0 && !path.isClosed() && path.vertexCount() > 2) {
+            path.setClosed(true);
+            mask.setMaskPath(p, path);
+            layer->setMask(m, mask);
+            layer->changed();
+            impl_->requestRender();
+            event->accept();
+            return;
+           }
+           impl_->draggingMaskIndex_ = m;
+           impl_->draggingPathIndex_ = p;
+           impl_->draggingVertexIndex_ = v;
+           impl_->hoveredMaskIndex_ = m;
+           impl_->hoveredPathIndex_ = p;
+           impl_->hoveredVertexIndex_ = v;
+           impl_->requestRender();
+           event->accept();
+           return;
+          }
+         }
+        }
+       }
+
+       if (layer->maskCount() == 0) {
+        layer->addMask(LayerMask());
+       }
+
+       LayerMask mask = layer->mask(0);
+       if (mask.maskPathCount() == 0) {
+        MaskPath path;
+        path.setClosed(false);
+        mask.addMaskPath(path);
+       }
+
+       MaskPath path = mask.maskPath(0);
+       if (path.isClosed() && path.vertexCount() > 0) {
+        MaskPath newPath;
+        newPath.setClosed(false);
+        mask.addMaskPath(newPath);
+        path = mask.maskPath(mask.maskPathCount() - 1);
+       } else if (path.vertexCount() == 0) {
+        path.setClosed(false);
+       }
+
+       MaskVertex vertex;
+       vertex.position = localPos;
+       vertex.inTangent = QPointF(0, 0);
+       vertex.outTangent = QPointF(0, 0);
+       path.addVertex(vertex);
+       mask.setMaskPath(0, path);
+       layer->setMask(0, mask);
+       impl_->hoveredMaskIndex_ = 0;
+       impl_->hoveredPathIndex_ = 0;
+       impl_->hoveredVertexIndex_ = path.vertexCount() - 1;
+       layer->changed();
+       impl_->requestRender();
+       event->accept();
+       return;
+      }
+     }
+    }
+   }
+  }
+
   if (event->button() == Qt::MiddleButton ||
    (event->button() == Qt::RightButton && event->modifiers() & Qt::AltModifier))
   {
@@ -606,6 +761,16 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
 
  void ArtifactLayerEditorWidgetV2::mouseReleaseEvent(QMouseEvent* event)
  {
+ if (impl_->editMode_ == EditMode::Mask && event->button() == Qt::LeftButton &&
+     impl_->draggingVertexIndex_ >= 0) {
+   impl_->draggingMaskIndex_ = -1;
+   impl_->draggingPathIndex_ = -1;
+   impl_->draggingVertexIndex_ = -1;
+   impl_->requestRender();
+   event->accept();
+   return;
+ }
+
  if (event->button() == Qt::MiddleButton ||
       event->button() == Qt::RightButton) {
    impl_->isPanning_ = false;
@@ -619,11 +784,99 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
 
  void ArtifactLayerEditorWidgetV2::mouseDoubleClickEvent(QMouseEvent* event)
  {
-
+ if (event->button() == Qt::LeftButton && impl_->editMode_ == EditMode::Mask && !impl_->targetLayerId_.isNil()) {
+  if (auto* service = ArtifactProjectService::instance()) {
+   if (auto composition = service->currentComposition().lock()) {
+    if (auto layer = composition->layerById(impl_->targetLayerId_)) {
+     if (impl_->draggingMaskIndex_ >= 0 && impl_->draggingPathIndex_ >= 0) {
+      LayerMask mask = layer->mask(impl_->draggingMaskIndex_);
+      MaskPath path = mask.maskPath(impl_->draggingPathIndex_);
+      if (path.vertexCount() > 2) {
+       path.setClosed(true);
+       mask.setMaskPath(impl_->draggingPathIndex_, path);
+       layer->setMask(impl_->draggingMaskIndex_, mask);
+       layer->changed();
+       impl_->requestRender();
+       event->accept();
+       return;
+      }
+     }
+    }
+   }
+  }
  }
+
+}
 
  void ArtifactLayerEditorWidgetV2::mouseMoveEvent(QMouseEvent* event)
  {
+  if (impl_->editMode_ == EditMode::Mask && !impl_->targetLayerId_.isNil()) {
+   if (auto* service = ArtifactProjectService::instance()) {
+    if (auto composition = service->currentComposition().lock()) {
+     if (auto layer = composition->layerById(impl_->targetLayerId_)) {
+      const auto canvasPos = impl_->renderer_
+                                 ? impl_->renderer_->viewportToCanvas(
+                                       {(float)event->position().x(), (float)event->position().y()})
+                                 : Detail::float2{(float)event->position().x(),
+                                                  (float)event->position().y()};
+      const QTransform globalTransform = layer->getGlobalTransform();
+      bool invertible = false;
+      const QTransform invTransform = globalTransform.inverted(&invertible);
+      if (invertible) {
+       const QPointF localPos = invTransform.map(QPointF(canvasPos.x, canvasPos.y));
+       const float zoom = impl_->renderer_ ? std::max(0.001f, impl_->renderer_->getZoom()) : 1.0f;
+       const float threshold = 8.0f / zoom;
+       if (impl_->draggingVertexIndex_ >= 0 && impl_->draggingMaskIndex_ >= 0 && impl_->draggingPathIndex_ >= 0) {
+        LayerMask mask = layer->mask(impl_->draggingMaskIndex_);
+        MaskPath path = mask.maskPath(impl_->draggingPathIndex_);
+        MaskVertex vertex = path.vertex(impl_->draggingVertexIndex_);
+        vertex.position = localPos;
+        path.setVertex(impl_->draggingVertexIndex_, vertex);
+        mask.setMaskPath(impl_->draggingPathIndex_, path);
+        layer->setMask(impl_->draggingMaskIndex_, mask);
+        layer->changed();
+        impl_->requestRender();
+        event->accept();
+        return;
+       }
+
+       int bestMask = -1;
+       int bestPath = -1;
+       int bestVertex = -1;
+       for (int m = 0; m < layer->maskCount(); ++m) {
+        LayerMask mask = layer->mask(m);
+        for (int p = 0; p < mask.maskPathCount(); ++p) {
+         MaskPath path = mask.maskPath(p);
+         for (int v = 0; v < path.vertexCount(); ++v) {
+          const MaskVertex vertex = path.vertex(v);
+          if (std::hypot(vertex.position.x() - localPos.x(),
+                         vertex.position.y() - localPos.y()) <= threshold) {
+           bestMask = m;
+           bestPath = p;
+           bestVertex = v;
+           break;
+          }
+         }
+         if (bestVertex >= 0) break;
+        }
+        if (bestVertex >= 0) break;
+       }
+       const bool changed =
+           bestMask != impl_->hoveredMaskIndex_ ||
+           bestPath != impl_->hoveredPathIndex_ ||
+           bestVertex != impl_->hoveredVertexIndex_;
+       impl_->hoveredMaskIndex_ = bestMask;
+       impl_->hoveredPathIndex_ = bestPath;
+       impl_->hoveredVertexIndex_ = bestVertex;
+       if (changed) {
+        impl_->requestRender();
+       }
+      }
+     }
+    }
+   }
+  }
+
   if (impl_->isPanning_) {
    const QPointF currentPos = event->position();
    const QPointF delta = currentPos - impl_->lastMousePos_;
@@ -721,6 +974,76 @@ void ArtifactLayerEditorWidgetV2::paintEvent(QPaintEvent* event)
  painter.setPen(QColor(205, 214, 226));
  painter.drawText(textX, textY, impl_->layerInfoText_.isEmpty() ? QStringLiteral("Inspect: -") : impl_->layerInfoText_);
 
+ if (impl_->editMode_ == EditMode::Mask && impl_->renderer_ && !impl_->targetLayerId_.isNil()) {
+  if (auto* service = ArtifactProjectService::instance()) {
+   if (auto composition = service->currentComposition().lock()) {
+    if (auto layer = composition->layerById(impl_->targetLayerId_)) {
+     const float zoom = std::max(0.001f, impl_->renderer_->getZoom());
+     const float hitRadius = std::max(4.0f, 7.0f / zoom);
+     const QTransform globalTransform = layer->getGlobalTransform();
+     auto toViewport = [&](const QPointF& localPos) -> QPointF {
+      const QPointF canvasPos = globalTransform.map(localPos);
+      const auto vp = impl_->renderer_->canvasToViewport({static_cast<float>(canvasPos.x()),
+                                                          static_cast<float>(canvasPos.y())});
+      return QPointF(vp.x, vp.y);
+     };
+
+     painter.save();
+     painter.setBrush(Qt::NoBrush);
+     for (int m = 0; m < layer->maskCount(); ++m) {
+      const LayerMask mask = layer->mask(m);
+      for (int p = 0; p < mask.maskPathCount(); ++p) {
+       const MaskPath path = mask.maskPath(p);
+       const int vertexCount = path.vertexCount();
+       if (vertexCount <= 0) {
+        continue;
+       }
+
+       QPen pathPen(QColor(84, 160, 255, 210), 2.0, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
+       if (m == impl_->draggingMaskIndex_ && p == impl_->draggingPathIndex_) {
+        pathPen.setColor(QColor(255, 191, 92, 220));
+       }
+       painter.setPen(pathPen);
+
+       QPointF prev = toViewport(path.vertex(0).position);
+       for (int v = 1; v < vertexCount; ++v) {
+        const QPointF cur = toViewport(path.vertex(v).position);
+        painter.drawLine(prev, cur);
+        prev = cur;
+       }
+       if (path.isClosed() && vertexCount > 1) {
+        painter.drawLine(prev, toViewport(path.vertex(0).position));
+       }
+
+       for (int v = 0; v < vertexCount; ++v) {
+        const MaskVertex vertex = path.vertex(v);
+        const QPointF pos = toViewport(vertex.position);
+        const bool selectedVertex =
+            (m == impl_->draggingMaskIndex_ && p == impl_->draggingPathIndex_ &&
+             v == impl_->draggingVertexIndex_) ||
+            (m == impl_->hoveredMaskIndex_ && p == impl_->hoveredPathIndex_ &&
+             v == impl_->hoveredVertexIndex_);
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(selectedVertex ? QColor(255, 191, 92, 245) : QColor(255, 255, 255, 220));
+        painter.drawEllipse(pos, hitRadius, hitRadius);
+
+        const QPointF inPos = toViewport(vertex.position + vertex.inTangent);
+        const QPointF outPos = toViewport(vertex.position + vertex.outTangent);
+        painter.setPen(QPen(QColor(160, 160, 160, 180), 1.0, Qt::DashLine));
+        painter.drawLine(pos, inPos);
+        painter.drawLine(pos, outPos);
+        painter.setBrush(QColor(120, 120, 120, 180));
+        painter.drawEllipse(inPos, hitRadius * 0.6, hitRadius * 0.6);
+        painter.drawEllipse(outPos, hitRadius * 0.6, hitRadius * 0.6);
+       }
+      }
+     }
+     painter.restore();
+    }
+   }
+  }
+ }
+
  if (impl_->viewSurfaceMode_ != ViewSurfaceMode::Final && !impl_->lastRenderedFrame_.isNull()) {
   const QSize thumbSize(std::min(180, width() / 4), std::min(100, height() / 5));
   const QRect thumbRect(width() - thumbSize.width() - 12, 12, thumbSize.width(), thumbSize.height());
@@ -793,6 +1116,12 @@ void ArtifactLayerEditorWidgetV2::setTargetLayer(const LayerID& id)
 {
  std::lock_guard<std::mutex> lock(impl_->resizeMutex_);
  impl_->targetLayerId_ = id;
+ impl_->hoveredMaskIndex_ = -1;
+ impl_->hoveredPathIndex_ = -1;
+ impl_->hoveredVertexIndex_ = -1;
+ impl_->draggingMaskIndex_ = -1;
+ impl_->draggingPathIndex_ = -1;
+ impl_->draggingVertexIndex_ = -1;
  impl_->requestRender();
  const uint seed = qHash(id.toString());
  const auto channel = [seed](int shift) -> float {
@@ -888,12 +1217,20 @@ void ArtifactLayerEditorWidgetV2::zoomAroundPoint(const QPointF& viewportPos, fl
   update();
 }
 
- void ArtifactLayerEditorWidgetV2::setEditMode(EditMode mode)
- {
+void ArtifactLayerEditorWidgetV2::setEditMode(EditMode mode)
+{
   if (impl_->editMode_ == mode) {
    return;
   }
   impl_->editMode_ = mode;
+  if (mode != EditMode::Mask) {
+   impl_->hoveredMaskIndex_ = -1;
+   impl_->hoveredPathIndex_ = -1;
+   impl_->hoveredVertexIndex_ = -1;
+   impl_->draggingMaskIndex_ = -1;
+   impl_->draggingPathIndex_ = -1;
+   impl_->draggingVertexIndex_ = -1;
+  }
   impl_->updateDebugText();
   impl_->requestRender();
   update();

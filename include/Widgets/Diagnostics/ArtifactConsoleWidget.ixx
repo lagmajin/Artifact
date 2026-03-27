@@ -11,6 +11,8 @@ class ArtifactConsoleWidget : public QWidget {
 public:
     explicit ArtifactConsoleWidget(QWidget* parent = nullptr);
     ~ArtifactConsoleWidget() override;
+    int consoleFontPointSize() const;
+    void setConsoleFontPointSize(int pointSize);
 
 private:
     class Impl;

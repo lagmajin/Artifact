@@ -83,6 +83,7 @@ export namespace Artifact
 
   void setItems(const QList<AssetMenuItem>& items);
   void addItem(const AssetMenuItem& item);
+  bool updateItemIconByPath(const QString& path, const QIcon& icon);
   void clear();
   AssetMenuItem itemAt(int row) const;
  };

@@ -16,6 +16,13 @@ export namespace Artifact {
 
  class TransformGizmo {
  public:
+  enum class Mode {
+   All,
+   Move,
+   Rotate,
+   Scale
+  };
+
   enum class HandleType {
    None,
    Move,
@@ -26,6 +33,9 @@ export namespace Artifact {
 
   TransformGizmo();
   ~TransformGizmo();
+
+  void setMode(Mode mode);
+  Mode mode() const;
 
   void setLayer(ArtifactAbstractLayerPtr layer);
   void draw(ArtifactIRenderer* renderer);
@@ -39,8 +49,10 @@ export namespace Artifact {
 
  private:
   HandleType hitTest(const QPointF& viewportPos, ArtifactIRenderer* renderer) const;
+  bool allowsHandle(HandleType handle) const;
   
   ArtifactAbstractLayerPtr layer_;
+  Mode mode_ = Mode::All;
   HandleType activeHandle_ = HandleType::None;
   bool isDragging_ = false;
   QPointF dragStartCanvasPos_;

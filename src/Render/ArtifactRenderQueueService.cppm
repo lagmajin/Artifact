@@ -91,22 +91,54 @@ namespace Artifact
         QString resolveFfmpegExePath()
         {
             const QString executableName = QStringLiteral("ffmpeg.exe");
+            const QString executableStem = QStringLiteral("ffmpeg");
 
             const QString appDir = QCoreApplication::applicationDirPath();
+            const QString currentDir = QDir::currentPath();
+
             const QStringList candidatePaths = {
                 QDir(appDir).filePath(executableName),
+                QDir(appDir).filePath(executableStem),
                 QDir(appDir).filePath(QStringLiteral("ffmpeg/") + executableName),
+                QDir(appDir).filePath(QStringLiteral("ffmpeg/") + executableStem),
                 QDir(appDir).filePath(QStringLiteral("tools/") + executableName),
+                QDir(appDir).filePath(QStringLiteral("tools/") + executableStem),
                 QDir(appDir).filePath(QStringLiteral("tools/ffmpeg/") + executableName),
+                QDir(appDir).filePath(QStringLiteral("tools/ffmpeg/") + executableStem),
                 QDir(appDir).filePath(QStringLiteral("bin/") + executableName),
+                QDir(appDir).filePath(QStringLiteral("bin/") + executableStem),
                 QDir(appDir).filePath(QStringLiteral("../") + executableName),
+                QDir(appDir).filePath(QStringLiteral("../") + executableStem),
                 QDir(appDir).filePath(QStringLiteral("../ffmpeg/") + executableName),
+                QDir(appDir).filePath(QStringLiteral("../ffmpeg/") + executableStem),
                 QDir(appDir).filePath(QStringLiteral("../tools/") + executableName),
+                QDir(appDir).filePath(QStringLiteral("../tools/") + executableStem),
                 QDir(appDir).filePath(QStringLiteral("../tools/ffmpeg/") + executableName),
-                QDir(appDir).filePath(QStringLiteral("../bin/") + executableName)
+                QDir(appDir).filePath(QStringLiteral("../tools/ffmpeg/") + executableStem),
+                QDir(appDir).filePath(QStringLiteral("../bin/") + executableName),
+                QDir(appDir).filePath(QStringLiteral("../bin/") + executableStem),
+                QDir(currentDir).filePath(executableName),
+                QDir(currentDir).filePath(executableStem),
+                QDir(currentDir).filePath(QStringLiteral("ffmpeg/") + executableName),
+                QDir(currentDir).filePath(QStringLiteral("ffmpeg/") + executableStem),
+                QDir(currentDir).filePath(QStringLiteral("tools/") + executableName),
+                QDir(currentDir).filePath(QStringLiteral("tools/") + executableStem),
+                QDir(currentDir).filePath(QStringLiteral("bin/") + executableName),
+                QDir(currentDir).filePath(QStringLiteral("bin/") + executableStem)
             };
 
             for (const QString& candidate : candidatePaths) {
+                const QFileInfo info(candidate);
+                if (info.exists() && info.isFile()) {
+                    return info.absoluteFilePath();
+                }
+            }
+
+            const QStringList envPath = QProcessEnvironment::systemEnvironment()
+                                            .value(QStringLiteral("PATH"))
+                                            .split(QDir::listSeparator(), Qt::SkipEmptyParts);
+            for (const QString& pathEntry : envPath) {
+                const QString candidate = QDir(pathEntry).filePath(executableName);
                 const QFileInfo info(candidate);
                 if (info.exists() && info.isFile()) {
                     return info.absoluteFilePath();
@@ -225,6 +257,15 @@ namespace Artifact
         if (fmt.contains(QStringLiteral("wmv"))) {
             return QStringLiteral("wmv");
         }
+        if (fmt.contains(QStringLiteral("gif"))) {
+            return QStringLiteral("gif");
+        }
+        if (fmt.contains(QStringLiteral("apng"))) {
+            return QStringLiteral("apng");
+        }
+        if (fmt.contains(QStringLiteral("webp"))) {
+            return QStringLiteral("webp");
+        }
         if (fmt.contains(QStringLiteral("h.264")) || fmt.contains(QStringLiteral("h264")) ||
             fmt.contains(QStringLiteral("avc")) || fmt.contains(QStringLiteral("mpeg4"))) {
             return QStringLiteral("mp4");
@@ -275,7 +316,10 @@ namespace Artifact
                value == QStringLiteral("avi") ||
                value == QStringLiteral("mkv") ||
                value == QStringLiteral("webm") ||
-               value == QStringLiteral("wmv");
+               value == QStringLiteral("wmv") ||
+               value == QStringLiteral("gif") ||
+               value == QStringLiteral("apng") ||
+               value == QStringLiteral("webp");
     }
 
     static QString normalizeCodecName(const QString& codec)
@@ -298,6 +342,15 @@ namespace Artifact
         if (value == QStringLiteral("png")) {
             return QStringLiteral("png");
         }
+        if (value == QStringLiteral("gif")) {
+            return QStringLiteral("gif");
+        }
+        if (value == QStringLiteral("apng")) {
+            return QStringLiteral("apng");
+        }
+        if (value == QStringLiteral("webp")) {
+            return QStringLiteral("webp");
+        }
         if (value == QStringLiteral("vp9") || value == QStringLiteral("libvpx-vp9")) {
             return QStringLiteral("vp9");
         }
@@ -312,6 +365,9 @@ namespace Artifact
         if (value == QStringLiteral("prores")) return QStringLiteral("prores_ks");
         if (value == QStringLiteral("mjpeg")) return QStringLiteral("mjpeg");
         if (value == QStringLiteral("png")) return QStringLiteral("png");
+        if (value == QStringLiteral("gif")) return QStringLiteral("gif");
+        if (value == QStringLiteral("apng")) return QStringLiteral("apng");
+        if (value == QStringLiteral("webp")) return QStringLiteral("libwebp_anim");
         if (value == QStringLiteral("vp9")) return QStringLiteral("libvpx-vp9");
         return QStringLiteral("libx264");
     }
@@ -353,6 +409,9 @@ namespace Artifact
         }
         if (value == QStringLiteral("mjpeg")) return QStringLiteral("yuvj420p");
         if (value == QStringLiteral("png")) return QStringLiteral("rgba");
+        if (value == QStringLiteral("gif")) return QStringLiteral("pal8");
+        if (value == QStringLiteral("apng")) return QStringLiteral("rgba");
+        if (value == QStringLiteral("webp")) return QStringLiteral("rgba");
         return QStringLiteral("yuv420p");
     }
 
@@ -379,6 +438,18 @@ namespace Artifact
         }
         if (value == QStringLiteral("mjpeg")) {
             args << QStringLiteral("-q:v") << QStringLiteral("2");
+            return args;
+        }
+        if (value == QStringLiteral("gif")) {
+            args << QStringLiteral("-loop") << QStringLiteral("0");
+            return args;
+        }
+        if (value == QStringLiteral("apng")) {
+            args << QStringLiteral("-plays") << QStringLiteral("0");
+            return args;
+        }
+        if (value == QStringLiteral("webp")) {
+            args << QStringLiteral("-loop") << QStringLiteral("0");
             return args;
         }
         return args;
@@ -417,6 +488,21 @@ namespace Artifact
             settings.zerolatency = false;
         } else if (codec == QStringLiteral("png")) {
             settings.videoCodec = QStringLiteral("png");
+            settings.preset = QStringLiteral("slow");
+            settings.zerolatency = false;
+        } else if (codec == QStringLiteral("gif")) {
+            settings.videoCodec = QStringLiteral("gif");
+            settings.container = QStringLiteral("gif");
+            settings.preset = QStringLiteral("slow");
+            settings.zerolatency = false;
+        } else if (codec == QStringLiteral("apng")) {
+            settings.videoCodec = QStringLiteral("apng");
+            settings.container = QStringLiteral("apng");
+            settings.preset = QStringLiteral("slow");
+            settings.zerolatency = false;
+        } else if (codec == QStringLiteral("webp")) {
+            settings.videoCodec = QStringLiteral("webp");
+            settings.container = QStringLiteral("webp");
             settings.preset = QStringLiteral("slow");
             settings.zerolatency = false;
         } else if (codec == QStringLiteral("vp9")) {
@@ -1645,6 +1731,11 @@ namespace Artifact
             job.codecProfile = preset->codecProfile;
             if (preset->isImageSequence) {
                 job.outputPath = QDir::homePath() + "/Desktop/output_sequence";
+            } else if (preset->isAnimatedImage) {
+                const QString suffix = preset->container.trimmed().isEmpty()
+                    ? QStringLiteral("gif")
+                    : preset->container.trimmed();
+                job.outputPath = QDir::homePath() + "/Desktop/output." + suffix;
             }
         }
 
@@ -1971,7 +2062,9 @@ namespace Artifact
                     (isVideoContainer(format) ||
                      ext == QStringLiteral("mp4") || ext == QStringLiteral("mov") ||
                      ext == QStringLiteral("avi") || ext == QStringLiteral("mkv") ||
-                     ext == QStringLiteral("webm") || ext == QStringLiteral("wmv"));
+                     ext == QStringLiteral("webm") || ext == QStringLiteral("wmv") ||
+                     ext == QStringLiteral("gif") || ext == QStringLiteral("apng") ||
+                     ext == QStringLiteral("webp"));
 
                 const int startF = job.startFrame;
                 const int endF = job.endFrame;

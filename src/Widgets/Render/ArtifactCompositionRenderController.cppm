@@ -747,13 +747,7 @@ public:
       return;
     }
     const QString ownerId = layer->id().toString();
-    for (auto it = surfaceCache_.begin(); it != surfaceCache_.end(); ) {
-      if (it->ownerId == ownerId) {
-        it = surfaceCache_.erase(it);
-      } else {
-        ++it;
-      }
-    }
+    surfaceCache_.remove(ownerId);
     if (gpuTextureCacheManager_) {
       gpuTextureCacheManager_->invalidateOwner(ownerId);
     }

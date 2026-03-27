@@ -1,5 +1,6 @@
 ﻿module;
 #include <QWidget>
+#include <QElapsedTimer>
 #include <memory>
 #include <string>
 #include <wobjectdefs.h>
@@ -50,6 +51,9 @@ private:
     std::shared_ptr<ArtifactCore::AudioBus> bus_;
     SpectrumAnalyzerWidget* analyzerWidget_;
     std::unique_ptr<ArtifactCore::AudioAnalyzer> analyzer_;
+    QElapsedTimer clipTimer_;
+    qint64 clipLatchedUntilMs_ = 0;
+    float clipPeak_ = 0.0f;
 };
 
 /**

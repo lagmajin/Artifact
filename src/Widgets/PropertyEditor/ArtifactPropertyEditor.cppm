@@ -11,6 +11,7 @@
 #include <QFontComboBox>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QKeyEvent>
 #include <QLineEdit>
 #include <QMouseEvent>
 #include <QPushButton>
@@ -45,18 +46,41 @@ void ArtifactAbstractPropertyEditor::setCommitHandler(CommitHandler handler) {
   commitHandler_ = std::move(handler);
 }
 
+void ArtifactAbstractPropertyEditor::setPreviewHandler(PreviewHandler handler) {
+  previewHandler_ = std::move(handler);
+}
+
+void ArtifactAbstractPropertyEditor::previewCurrentValue() const {
+  previewValue(value());
+}
+
+void ArtifactAbstractPropertyEditor::previewValueFromVariant(
+    const QVariant &value) const {
+  previewValue(value);
+}
+
+void ArtifactAbstractPropertyEditor::commitCurrentValue() const {
+  commitValue(value());
+}
+
 void ArtifactAbstractPropertyEditor::commitValue(const QVariant &value) const {
   if (commitHandler_) {
     commitHandler_(value);
   }
 }
 
+void ArtifactAbstractPropertyEditor::previewValue(const QVariant &value) const {
+  if (previewHandler_) {
+    previewHandler_(value);
+  }
+}
+
 bool ArtifactAbstractPropertyEditor::supportsScrub() const { return false; }
 
 void ArtifactAbstractPropertyEditor::scrubByPixels(int deltaPixels,
-                                                   bool fineAdjust) {
+                                                   Qt::KeyboardModifiers modifiers) {
   Q_UNUSED(deltaPixels);
-  Q_UNUSED(fineAdjust);
+  Q_UNUSED(modifiers);
 }
 
 namespace {
@@ -90,6 +114,29 @@ double sliderPositionToFloat(const int sliderValue, const double minValue,
   }
   const double normalized = static_cast<double>(sliderValue) / 10000.0;
   return minValue + (maxValue - minValue) * normalized;
+}
+
+int intToSliderPosition(const int value, const int minValue,
+                        const int maxValue) {
+  if (maxValue <= minValue) {
+    return 0;
+  }
+  const double normalized =
+      std::clamp(static_cast<double>(value - minValue) /
+                     static_cast<double>(maxValue - minValue),
+                 0.0, 1.0);
+  return static_cast<int>(std::lround(normalized * 10000.0));
+}
+
+int sliderPositionToInt(const int sliderValue, const int minValue,
+                        const int maxValue) {
+  if (maxValue <= minValue) {
+    return minValue;
+  }
+  const double normalized = static_cast<double>(sliderValue) / 10000.0;
+  return static_cast<int>(std::lround(
+      static_cast<double>(minValue) +
+      static_cast<double>(maxValue - minValue) * normalized));
 }
 
 QString fileDialogFilterForProperty(const QString &propertyName) {
@@ -481,20 +528,35 @@ ArtifactFloatPropertyEditor::ArtifactFloatPropertyEditor(
                      const QSignalBlocker blocker(slider_);
                      slider_->setValue(
                          floatToSliderPosition(nextValue, softMin_, softMax_));
+                     if (spinBox_->hasFocus() && !sliderInteracting_) {
+                       previewValue(nextValue);
+                     }
                    });
   QObject::connect(spinBox_, &QDoubleSpinBox::editingFinished, this,
                    [this]() { commitValue(spinBox_->value()); });
 
-  // valueChanged ではなく sliderMoved と actionTriggered を組み合わせるか、
-  // あるいは単純に高精度化した valueChanged を使用する
+  QObject::connect(slider_, &QSlider::sliderPressed, this, [this]() {
+    sliderInteracting_ = true;
+    previewCurrentValue();
+  });
+
   QObject::connect(
       slider_, &QSlider::valueChanged, this, [this](const int sliderValue) {
         const double nextValue =
             this->sliderPositionToFloat(sliderValue, softMin_, softMax_);
         const QSignalBlocker blocker(spinBox_);
         spinBox_->setValue(nextValue);
-        commitValue(nextValue);
+        if (sliderInteracting_) {
+          previewValue(nextValue);
+        }
       });
+  QObject::connect(slider_, &QSlider::sliderReleased, this, [this]() {
+    if (!sliderInteracting_) {
+      return;
+    }
+    sliderInteracting_ = false;
+    commitCurrentValue();
+  });
 
   // クリックでジャンプする挙動を追加
   slider_->installEventFilter(this);
@@ -504,11 +566,12 @@ bool ArtifactFloatPropertyEditor::eventFilter(QObject *watched, QEvent *event) {
   if (watched == slider_ && event->type() == QEvent::MouseButtonPress) {
     auto *mouseEvent = static_cast<QMouseEvent *>(event);
     if (mouseEvent->button() == Qt::LeftButton) {
-      // クリックした位置にジャンプ
       double ratio = static_cast<double>(mouseEvent->pos().x()) /
-                     static_cast<double>(slider_->width());
+                     static_cast<double>(std::max(1, slider_->width()));
       int newValue = static_cast<int>(std::clamp(ratio, 0.0, 1.0) * 10000.0);
       slider_->setValue(newValue);
+      previewCurrentValue();
+      commitCurrentValue();
       return true;
     }
   }
@@ -549,26 +612,26 @@ void ArtifactFloatPropertyEditor::setValueFromVariant(const QVariant &value) {
 bool ArtifactFloatPropertyEditor::supportsScrub() const { return true; }
 
 void ArtifactFloatPropertyEditor::scrubByPixels(const int deltaPixels,
-                                                const bool fineAdjust) {
+                                                const Qt::KeyboardModifiers modifiers) {
   if (!spinBox_) {
     return;
   }
 
-  // DCCツール風の感度計算:
-  // softMax - softMin の範囲の 1/500 を 1ピクセルあたりの基本移動量とする
   double range = std::abs(softMax_ - softMin_);
   if (range < 1e-5)
-    range = 100.0; // フォールバック
+    range = 100.0;
 
   double sensitivity = range / 500.0;
-  if (fineAdjust) {
-    sensitivity *= 0.1; // Ctrlキー等での微調整
+  if (modifiers.testFlag(Qt::ShiftModifier)) {
+    sensitivity *= 0.1;
+  }
+  if (modifiers.testFlag(Qt::ControlModifier)) {
+    sensitivity *= 5.0;
   }
 
   const double nextValue =
       spinBox_->value() + static_cast<double>(deltaPixels) * sensitivity;
   spinBox_->setValue(nextValue);
-  commitValue(spinBox_->value());
 }
 
 ArtifactIntPropertyEditor::ArtifactIntPropertyEditor(
@@ -615,22 +678,42 @@ ArtifactIntPropertyEditor::ArtifactIntPropertyEditor(
 
   slider_->setRange(0, 10000); // 精度を向上
   slider_->setMinimumHeight(16);
+  slider_->setTracking(true);
   slider_->setValue(
-      std::clamp(property.getValue().toInt(), softMin_, softMax_));
+      intToSliderPosition(property.getValue().toInt(), softMin_, softMax_));
 
   QObject::connect(
       spinBox_, &QSpinBox::valueChanged, this, [this](const int nextValue) {
         const QSignalBlocker blocker(slider_);
-        slider_->setValue(std::clamp(nextValue, softMin_, softMax_));
+        slider_->setValue(intToSliderPosition(nextValue, softMin_, softMax_));
+        if (spinBox_->hasFocus() && !sliderInteracting_) {
+          previewValue(nextValue);
+        }
       });
   QObject::connect(spinBox_, &QSpinBox::editingFinished, this,
                    [this]() { commitValue(spinBox_->value()); });
+  QObject::connect(slider_, &QSlider::sliderPressed, this, [this]() {
+    sliderInteracting_ = true;
+    previewCurrentValue();
+  });
   QObject::connect(slider_, &QSlider::valueChanged, this,
                    [this](const int sliderValue) {
+                     const int nextValue =
+                         sliderPositionToInt(sliderValue, softMin_, softMax_);
                      const QSignalBlocker blocker(spinBox_);
-                     spinBox_->setValue(sliderValue);
-                     commitValue(sliderValue);
+                     spinBox_->setValue(nextValue);
+                     if (sliderInteracting_) {
+                       previewValue(nextValue);
+                     }
                    });
+  QObject::connect(slider_, &QSlider::sliderReleased, this, [this]() {
+    if (!sliderInteracting_) {
+      return;
+    }
+    sliderInteracting_ = false;
+    commitCurrentValue();
+  });
+  slider_->installEventFilter(this);
 }
 
 QVariant ArtifactIntPropertyEditor::value() const {
@@ -647,24 +730,55 @@ void ArtifactIntPropertyEditor::setValueFromVariant(const QVariant &value) {
     spinBox_->setValue(nextValue);
   }
   const QSignalBlocker sliderBlocker(slider_);
-  slider_->setValue(std::clamp(nextValue, softMin_, softMax_));
+  slider_->setValue(intToSliderPosition(nextValue, softMin_, softMax_));
 }
 
 bool ArtifactIntPropertyEditor::supportsScrub() const { return true; }
 
+bool ArtifactIntPropertyEditor::eventFilter(QObject *watched, QEvent *event) {
+  if (watched == slider_ && event->type() == QEvent::MouseButtonPress) {
+    auto *mouseEvent = static_cast<QMouseEvent *>(event);
+    if (mouseEvent->button() == Qt::LeftButton) {
+      const double ratio = static_cast<double>(mouseEvent->pos().x()) /
+                           static_cast<double>(std::max(1, slider_->width()));
+      const int newValue =
+          static_cast<int>(std::clamp(ratio, 0.0, 1.0) * 10000.0);
+      slider_->setValue(newValue);
+      previewCurrentValue();
+      commitCurrentValue();
+      return true;
+    }
+  }
+  return ArtifactAbstractPropertyEditor::eventFilter(watched, event);
+}
+
+int ArtifactIntPropertyEditor::intToSliderPosition(int value, int min,
+                                                   int max) const {
+  return ::Artifact::intToSliderPosition(value, min, max);
+}
+
+int ArtifactIntPropertyEditor::sliderPositionToInt(int pos, int min,
+                                                   int max) const {
+  return ::Artifact::sliderPositionToInt(pos, min, max);
+}
+
 void ArtifactIntPropertyEditor::scrubByPixels(const int deltaPixels,
-                                              const bool fineAdjust) {
+                                              const Qt::KeyboardModifiers modifiers) {
   if (!spinBox_) {
     return;
   }
   const int baseStep = std::max(1, spinBox_->singleStep());
-  const double scaledStep =
-      static_cast<double>(baseStep) * (fineAdjust ? 0.25 : 1.0);
+  double scaledStep = static_cast<double>(baseStep);
+  if (modifiers.testFlag(Qt::ShiftModifier)) {
+    scaledStep *= 0.25;
+  }
+  if (modifiers.testFlag(Qt::ControlModifier)) {
+    scaledStep *= 5.0;
+  }
   const int nextValue = static_cast<int>(
       std::llround(static_cast<double>(spinBox_->value()) +
                    static_cast<double>(deltaPixels) * scaledStep));
   spinBox_->setValue(nextValue);
-  commitValue(spinBox_->value());
 }
 
 ArtifactBoolPropertyEditor::ArtifactBoolPropertyEditor(
@@ -906,13 +1020,15 @@ void ArtifactColorPropertyEditor::applyColor(const QColor &color) {
 ArtifactPropertyEditorRowWidget::ArtifactPropertyEditorRowWidget(
     const QString &labelText, ArtifactAbstractPropertyEditor *editor,
     const QString &propertyName, QWidget *parent)
-    : QWidget(parent), label_(new QLabel(labelText, this)), editor_(editor),
+    : QWidget(parent), label_(new QLabel(labelText, this)),
+      scrubHandle_(new QLabel(QStringLiteral("::"), this)), editor_(editor),
       keyframeButton_(new QPushButton(this)),
       resetButton_(new QPushButton(this)),
       expressionButton_(new QPushButton(this)),
       prevKeyBtn_(new QPushButton(this)),
       nextKeyBtn_(new QPushButton(this)) {
   setObjectName(QStringLiteral("propertyRow"));
+  setFocusPolicy(Qt::StrongFocus);
   auto *layout = new QHBoxLayout(this);
   layout->setContentsMargins(4, 2, 4, 2);
   layout->setSpacing(4);
@@ -921,6 +1037,12 @@ ArtifactPropertyEditorRowWidget::ArtifactPropertyEditorRowWidget(
   label_->setMinimumWidth(120);
   label_->setMaximumWidth(160);
   label_->setMinimumHeight(24);
+  scrubHandle_->setObjectName(QStringLiteral("propertyScrubHandle"));
+  scrubHandle_->setAlignment(Qt::AlignCenter);
+  scrubHandle_->setFixedWidth(16);
+  scrubHandle_->setMinimumHeight(24);
+  scrubHandle_->setToolTip(
+      QStringLiteral("Drag to scrub. Shift=fine, Ctrl=coarse, Esc=cancel."));
 
   editor_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
 
@@ -1025,16 +1147,20 @@ ArtifactPropertyEditorRowWidget::ArtifactPropertyEditorRowWidget(
         }
     )");
 
-  label_->installEventFilter(this);
-  label_->setCursor(editor_->supportsScrub() ? Qt::SizeHorCursor
-                                             : Qt::ArrowCursor);
+  scrubHandle_->installEventFilter(this);
+  label_->setCursor(Qt::ArrowCursor);
+  scrubHandle_->setVisible(editor_->supportsScrub());
+  scrubHandle_->setCursor(editor_->supportsScrub() ? Qt::SizeHorCursor
+                                                   : Qt::ArrowCursor);
 
   if (g_propertyRowLayoutMode ==
       ArtifactPropertyRowLayoutMode::EditorThenLabel) {
     layout->addWidget(editor_, 1);
     layout->addWidget(label_);
+    layout->addWidget(scrubHandle_);
   } else {
     layout->addWidget(label_);
+    layout->addWidget(scrubHandle_);
     layout->addWidget(editor_, 1);
   }
   layout->addLayout(keyframeControlLayout);
@@ -1120,6 +1246,7 @@ void ArtifactPropertyEditorRowWidget::setNavigationHandler(
 
 void ArtifactPropertyEditorRowWidget::setEditorToolTip(const QString &tooltip) {
   label_->setToolTip(tooltip);
+  scrubHandle_->setToolTip(tooltip + QStringLiteral("\nDrag to scrub. Shift=fine, Ctrl=coarse, Esc=cancel."));
   editor_->setToolTip(tooltip);
   keyframeButton_->setToolTip(tooltip);
   prevKeyBtn_->setToolTip(tooltip);
@@ -1140,8 +1267,8 @@ void ArtifactPropertyEditorRowWidget::setShowResetButton(const bool visible) {
 void ArtifactPropertyEditorRowWidget::setShowKeyframeButton(
     const bool visible) {
   keyframeButton_->setVisible(visible);
-  prevKeyBtn_->setVisible(visible);
-  nextKeyBtn_->setVisible(visible);
+  prevKeyBtn_->setVisible(visible && prevKeyBtn_->isEnabled());
+  nextKeyBtn_->setVisible(visible && nextKeyBtn_->isEnabled());
 }
 
 void ArtifactPropertyEditorRowWidget::setKeyframeChecked(const bool checked) {
@@ -1156,11 +1283,13 @@ void ArtifactPropertyEditorRowWidget::setKeyframeEnabled(const bool enabled) {
 void ArtifactPropertyEditorRowWidget::setNavigationEnabled(const bool enabled) {
   prevKeyBtn_->setEnabled(enabled);
   nextKeyBtn_->setEnabled(enabled);
+  prevKeyBtn_->setVisible(enabled && keyframeButton_->isVisible());
+  nextKeyBtn_->setVisible(enabled && keyframeButton_->isVisible());
 }
 
 bool ArtifactPropertyEditorRowWidget::eventFilter(QObject *watched,
                                                   QEvent *event) {
-  if (watched != label_ || !editor_ || !editor_->supportsScrub()) {
+  if (watched != scrubHandle_ || !editor_ || !editor_->supportsScrub()) {
     return QWidget::eventFilter(watched, event);
   }
 
@@ -1171,10 +1300,13 @@ bool ArtifactPropertyEditorRowWidget::eventFilter(QObject *watched,
       break;
     }
     scrubbing_ = true;
+    scrubStarted_ = false;
     scrubStartX_ = mouseEvent->globalPosition().toPoint().x();
     scrubStartValue_ = editor_->value();
-    label_->grabMouse();
-    label_->setCursor(Qt::SizeHorCursor);
+    scrubHandle_->grabMouse();
+    grabKeyboard();
+    setFocus(Qt::MouseFocusReason);
+    scrubHandle_->setCursor(Qt::SizeHorCursor);
     return true;
   }
   case QEvent::MouseMove: {
@@ -1184,17 +1316,19 @@ bool ArtifactPropertyEditorRowWidget::eventFilter(QObject *watched,
     auto *mouseEvent = static_cast<QMouseEvent *>(event);
     const int currentX = mouseEvent->globalPosition().toPoint().x();
     const int deltaPixels = currentX - scrubStartX_;
+    if (!scrubStarted_ && std::abs(deltaPixels) < scrubThreshold_) {
+      return true;
+    }
+    scrubStarted_ = true;
     editor_->setValueFromVariant(scrubStartValue_);
-    editor_->scrubByPixels(deltaPixels,
-                           mouseEvent->modifiers().testFlag(Qt::ShiftModifier));
+    editor_->scrubByPixels(deltaPixels, mouseEvent->modifiers());
+    editor_->previewCurrentValue();
     return true;
   }
   case QEvent::MouseButtonRelease: {
     auto *mouseEvent = static_cast<QMouseEvent *>(event);
     if (scrubbing_ && mouseEvent->button() == Qt::LeftButton) {
-      scrubbing_ = false;
-      label_->releaseMouse();
-      label_->setCursor(Qt::SizeHorCursor);
+      finishScrub(scrubStarted_);
       return true;
     }
     break;
@@ -1204,6 +1338,40 @@ bool ArtifactPropertyEditorRowWidget::eventFilter(QObject *watched,
   }
 
   return QWidget::eventFilter(watched, event);
+}
+
+void ArtifactPropertyEditorRowWidget::keyPressEvent(QKeyEvent *event) {
+  if (scrubbing_ && event->key() == Qt::Key_Escape) {
+    finishScrub(false);
+    event->accept();
+    return;
+  }
+  QWidget::keyPressEvent(event);
+}
+
+void ArtifactPropertyEditorRowWidget::finishScrub(const bool commitChanges) {
+  if (!scrubbing_) {
+    return;
+  }
+  scrubbing_ = false;
+  scrubHandle_->releaseMouse();
+  releaseKeyboard();
+  scrubHandle_->setCursor(editor_ && editor_->supportsScrub()
+                              ? Qt::SizeHorCursor
+                              : Qt::ArrowCursor);
+
+  if (!editor_) {
+    scrubStarted_ = false;
+    return;
+  }
+
+  if (commitChanges) {
+    editor_->commitCurrentValue();
+  } else {
+    editor_->setValueFromVariant(scrubStartValue_);
+    editor_->previewValueFromVariant(scrubStartValue_);
+  }
+  scrubStarted_ = false;
 }
 
 ArtifactAbstractPropertyEditor *

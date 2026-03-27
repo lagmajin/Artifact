@@ -9,6 +9,7 @@
 #include <QIcon>
 #include <QHBoxLayout>
 #include <QEvent>
+#include <QContextMenuEvent>
 #include <QHideEvent>
 #include <QHash>
 #include <QFocusEvent>
@@ -284,6 +285,39 @@ protected:
     event->accept();
   }
 
+  void contextMenuEvent(QContextMenuEvent* event) override {
+    const auto layerId = controller_ ? controller_->layerAtViewportPos(event->pos()) : LayerID::Nil();
+    if (layerId.isNil()) {
+      QWidget::contextMenuEvent(event);
+      return;
+    }
+
+    const auto comp = currentComposition();
+    const auto layer = comp ? comp->layerById(layerId) : ArtifactAbstractLayerPtr{};
+    if (!layer || !std::dynamic_pointer_cast<ArtifactTextLayer>(layer)) {
+      QWidget::contextMenuEvent(event);
+      return;
+    }
+
+    QMenu menu(this);
+    auto* editAction = menu.addAction(QStringLiteral("Edit Text"));
+    editAction->setEnabled(true);
+    connect(editAction, &QAction::triggered, this, [this, layer]() {
+      if (editTextLayerInline(this, layer) && controller_) {
+        controller_->renderOneFrame();
+      }
+    });
+
+    menu.addSeparator();
+    menu.addAction(QStringLiteral("Reset View"), this, [this]() {
+      if (controller_) {
+        controller_->resetView();
+      }
+    });
+    menu.exec(event->globalPos());
+    event->accept();
+  }
+
   void mousePressEvent(QMouseEvent *event) override {
     if (pieMenu_ && pieMenu_->isVisible()) return;
 
@@ -419,6 +453,15 @@ protected:
     }
     if (!event->isAutoRepeat() && event->key() == Qt::Key_P) {
       beginTemporaryPlayback();
+      event->accept();
+      return;
+    }
+    if (!event->isAutoRepeat() && event->key() == Qt::Key_M) {
+      if (auto* toolManager = ArtifactApplicationManager::instance()
+                                  ? ArtifactApplicationManager::instance()->toolManager()
+                                  : nullptr) {
+        toolManager->setActiveTool(ToolType::Pen);
+      }
       event->accept();
       return;
     }
@@ -689,6 +732,14 @@ private:
           [toolManager]() { if(toolManager) toolManager->setActiveTool(ToolType::Hand); }
       });
 
+      // Mask Tool
+      model.items.push_back({
+          "Mask",
+          loadIconWithFallback("MaterialVS/neutral/draw.svg"),
+          "tool.mask", true, false,
+          [toolManager]() { if (toolManager) toolManager->setActiveTool(ToolType::Pen); }
+      });
+
       // Zoom Fit
       model.items.push_back({
           "Fit", 
@@ -821,6 +872,9 @@ public:
   QAction *zoomOutAction_ = nullptr;
   QAction *zoomFitAction_ = nullptr;
   QAction *zoom100Action_ = nullptr;
+  QAction *editTextAction_ = nullptr;
+  QToolButton *toolModeButton_ = nullptr;
+  QToolButton *gizmoModeButton_ = nullptr;
 
   // Bottom Viewer Controls
   QWidget *bottomBar_ = nullptr;
@@ -863,6 +917,62 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   impl_->zoomOutAction_ = impl_->topToolbar_->addAction("Zoom-");
   impl_->zoomFitAction_ = impl_->topToolbar_->addAction("Fit");
   impl_->zoom100Action_ = impl_->topToolbar_->addAction("100%");
+  impl_->editTextAction_ = impl_->topToolbar_->addAction("Edit Text");
+  impl_->editTextAction_->setToolTip(QStringLiteral("Edit current text layer"));
+  impl_->editTextAction_->setShortcut(QKeySequence(Qt::Key_F2));
+
+  auto* toolMenu = new QMenu(impl_->topToolbar_);
+  auto* toolGroup = new QActionGroup(this);
+  toolGroup->setExclusive(true);
+  const auto addToolAction = [&](const QString& text, const QString& iconName, ToolType toolType, bool checked) {
+    QAction* action = toolMenu->addAction(loadIconWithFallback(iconName), text);
+    action->setCheckable(true);
+    action->setChecked(checked);
+    toolGroup->addAction(action);
+    connect(action, &QAction::triggered, this, [this, toolType, text]() {
+      if (auto* toolManager = ArtifactApplicationManager::instance()
+                                  ? ArtifactApplicationManager::instance()->toolManager()
+                                  : nullptr) {
+        toolManager->setActiveTool(toolType);
+      }
+      if (impl_->toolModeButton_) {
+        impl_->toolModeButton_->setText(text);
+      }
+    });
+  };
+  addToolAction(QStringLiteral("Select"), QStringLiteral("MaterialVS/neutral/select.svg"), ToolType::Selection, true);
+  addToolAction(QStringLiteral("Hand"), QStringLiteral("MaterialVS/neutral/hand.svg"), ToolType::Hand, false);
+  addToolAction(QStringLiteral("Mask"), QStringLiteral("MaterialVS/neutral/draw.svg"), ToolType::Pen, false);
+  impl_->toolModeButton_ = new QToolButton(this);
+  impl_->toolModeButton_->setText(QStringLiteral("Select"));
+  impl_->toolModeButton_->setMenu(toolMenu);
+  impl_->toolModeButton_->setPopupMode(QToolButton::InstantPopup);
+  impl_->topToolbar_->addWidget(impl_->toolModeButton_);
+
+  auto* gizmoMenu = new QMenu(impl_->topToolbar_);
+  auto* gizmoGroup = new QActionGroup(this);
+  gizmoGroup->setExclusive(true);
+  const auto addGizmoAction = [&](const QString& text, TransformGizmo::Mode mode, bool checked) {
+    QAction* action = gizmoMenu->addAction(text);
+    action->setCheckable(true);
+    action->setChecked(checked);
+    gizmoGroup->addAction(action);
+    connect(action, &QAction::triggered, this, [this, mode]() {
+      if (auto* gizmo = impl_->renderController_ ? impl_->renderController_->gizmo() : nullptr) {
+        gizmo->setMode(mode);
+        impl_->renderController_->renderOneFrame();
+      }
+    });
+  };
+  addGizmoAction(QStringLiteral("Gizmo: All"), TransformGizmo::Mode::All, true);
+  addGizmoAction(QStringLiteral("Gizmo: Move"), TransformGizmo::Mode::Move, false);
+  addGizmoAction(QStringLiteral("Gizmo: Rotate"), TransformGizmo::Mode::Rotate, false);
+  addGizmoAction(QStringLiteral("Gizmo: Scale"), TransformGizmo::Mode::Scale, false);
+  impl_->gizmoModeButton_ = new QToolButton(this);
+  impl_->gizmoModeButton_->setText(QStringLiteral("Gizmo"));
+  impl_->gizmoModeButton_->setMenu(gizmoMenu);
+  impl_->gizmoModeButton_->setPopupMode(QToolButton::InstantPopup);
+  impl_->topToolbar_->addWidget(impl_->gizmoModeButton_);
 
   // Bottom Bar (Viewer Controls)
   impl_->bottomBar_ = new QWidget(this);
@@ -999,6 +1109,19 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
                    &ArtifactCompositionEditor::zoomFit);
   QObject::connect(impl_->zoom100Action_, &QAction::triggered, this,
                    &ArtifactCompositionEditor::zoom100);
+  QObject::connect(impl_->editTextAction_, &QAction::triggered, this,
+                   [this]() {
+                     auto* app = ArtifactApplicationManager::instance();
+                     auto* selection = app ? app->layerSelectionManager() : nullptr;
+                     const auto layer = selection ? selection->currentLayer() : ArtifactAbstractLayerPtr{};
+                     if (!layer || !std::dynamic_pointer_cast<ArtifactTextLayer>(layer)) {
+                       return;
+                     }
+                     if (editTextLayerInline(impl_->compositionView_, layer) &&
+                         impl_->renderController_) {
+                       impl_->renderController_->renderOneFrame();
+                     }
+                   });
 
   // Resolution dropdown connection
   QObject::connect(impl_->resolutionCombo_,
@@ -1040,6 +1163,28 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
                          setComposition(composition);
                        });
     }
+    if (auto *toolManager = app->toolManager()) {
+      QObject::connect(toolManager, &ArtifactToolManager::toolChanged, this,
+                       [this](ToolType type) {
+                         if (!impl_ || !impl_->toolModeButton_) {
+                           return;
+                         }
+                         switch (type) {
+                           case ToolType::Selection:
+                             impl_->toolModeButton_->setText(QStringLiteral("Select"));
+                             break;
+                           case ToolType::Hand:
+                             impl_->toolModeButton_->setText(QStringLiteral("Hand"));
+                             break;
+                           case ToolType::Pen:
+                             impl_->toolModeButton_->setText(QStringLiteral("Mask"));
+                             break;
+                           default:
+                             impl_->toolModeButton_->setText(QStringLiteral("Tool"));
+                             break;
+                         }
+                       });
+    }
     if (auto *selection = app->layerSelectionManager()) {
       QObject::connect(selection, &ArtifactLayerSelectionManager::selectionChanged,
                        this, [this, selection]() {
@@ -1049,7 +1194,16 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
                          const auto current = selection ? selection->currentLayer() : ArtifactAbstractLayerPtr{};
                          impl_->renderController_->setSelectedLayerId(
                              current ? current->id() : ArtifactCore::LayerID::Nil());
+                         if (impl_->editTextAction_) {
+                           impl_->editTextAction_->setEnabled(
+                               current && std::dynamic_pointer_cast<ArtifactTextLayer>(current));
+                         }
                        });
+      if (impl_->editTextAction_) {
+        const auto current = selection->currentLayer();
+        impl_->editTextAction_->setEnabled(
+            current && std::dynamic_pointer_cast<ArtifactTextLayer>(current));
+      }
     }
   }
 

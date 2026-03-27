@@ -183,6 +183,24 @@ namespace Artifact
   endInsertRows();
  }
 
+ bool AssetMenuModel::updateItemIconByPath(const QString& path, const QIcon& icon)
+ {
+  if (path.isEmpty() || icon.isNull()) {
+   return false;
+  }
+
+  for (int row = 0; row < impl_->items_.size(); ++row) {
+   auto& item = impl_->items_[row];
+   if (item.path.toQString() == path) {
+    item.icon = icon;
+    const QModelIndex index = createIndex(row, 0);
+    Q_EMIT dataChanged(index, index, {Qt::DecorationRole});
+    return true;
+   }
+  }
+  return false;
+ }
+
  void AssetMenuModel::clear()
  {
   beginResetModel();

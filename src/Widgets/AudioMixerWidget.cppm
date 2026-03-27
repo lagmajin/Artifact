@@ -103,6 +103,7 @@ AudioChannelStripWidget::AudioChannelStripWidget(std::shared_ptr<ArtifactCore::A
     : QWidget(parent), bus_(bus) {
     
     analyzer_ = std::make_unique<ArtifactCore::AudioAnalyzer>(1024);
+    clipTimer_.start();
     
     setFixedWidth(80);
     setMinimumHeight(350);
@@ -202,6 +203,14 @@ void AudioChannelStripWidget::updateMeters() {
         auto result = analyzer_->analyze(bus_->getOutputBuffer());
         analyzerWidget_->setSpectrum(result.spectrum);
     }
+
+    if (bus_) {
+        const float peak = std::max(bus_->getPeakLevel(0), bus_->getPeakLevel(1));
+        clipPeak_ = peak;
+        if (peak >= 1.0f) {
+            clipLatchedUntilMs_ = clipTimer_.elapsed() + 1200;
+        }
+    }
     
     update(); // 強制再描画
 }
@@ -225,6 +234,7 @@ void AudioChannelStripWidget::paintEvent(QPaintEvent* event) {
     // Get levels (L/R 平均または最大)
     float peak = std::max(bus_->getPeakLevel(0), bus_->getPeakLevel(1));
     float rms = std::max(bus_->getRMSLevel(0), bus_->getRMSLevel(1));
+    const bool clipped = clipPeak_ >= 1.0f || clipTimer_.elapsed() < clipLatchedUntilMs_;
 
     // Convert to 0-1 range for display (Logarithmic)
     auto toDbfs = [](float val) {
@@ -243,6 +253,18 @@ void AudioChannelStripWidget::paintEvent(QPaintEvent* event) {
 
     int fillH = static_cast<int>(peakNorm * meterH);
     painter.fillRect(meterX, meterY + meterH - fillH, meterW, fillH, grad);
+
+    if (clipped) {
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(QColor(232, 54, 54));
+        painter.drawRoundedRect(QRect(meterX - 34, meterY - 24, 42, 18), 6, 6);
+        painter.setPen(QColor(255, 245, 245));
+        QFont clipFont = painter.font();
+        clipFont.setBold(true);
+        clipFont.setPixelSize(9);
+        painter.setFont(clipFont);
+        painter.drawText(QRect(meterX - 34, meterY - 24, 42, 18), Qt::AlignCenter, QStringLiteral("CLIP"));
+    }
 
     // 目盛り (dBFS scale)
     static const struct { float db; bool showLabel; } kMarks[] = {

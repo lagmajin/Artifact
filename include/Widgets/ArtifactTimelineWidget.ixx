@@ -157,11 +157,13 @@ class TimelineTrackView :public QGraphicsView {
  };
 
 
- class ArtifactTimelineWidget :public QWidget {
+class ArtifactTimelineWidget :public QWidget {
   W_OBJECT(ArtifactTimelineWidget)
  private:
   class Impl;
   Impl* impl_;
+  void updateSearchState();
+  void jumpToSearchHit(int step);
  protected:
   void paintEvent(QPaintEvent* event) override;
   void mousePressEvent(QMouseEvent* event) override;

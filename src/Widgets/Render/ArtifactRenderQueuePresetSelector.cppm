@@ -43,6 +43,8 @@ public:
             // アイコン（簡易）
             if (preset.isImageSequence) {
                 item->setIcon(QIcon::fromTheme("image-x-generic"));
+            } else if (preset.isAnimatedImage) {
+                item->setIcon(QIcon::fromTheme("video-x-generic"));
             } else {
                 item->setIcon(QIcon::fromTheme("video-x-generic"));
             }
@@ -110,6 +112,7 @@ ArtifactRenderQueuePresetSelector::ArtifactRenderQueuePresetSelector(QWidget* pa
     
     impl_->categoryCombo = new QComboBox(this);
     impl_->categoryCombo->addItem(QStringLiteral("ビデオ形式"), static_cast<int>(ArtifactRenderFormatCategory::Video));
+    impl_->categoryCombo->addItem(QStringLiteral("アニメ画像"), static_cast<int>(ArtifactRenderFormatCategory::AnimatedImage));
     impl_->categoryCombo->addItem(QStringLiteral("連番画像"), static_cast<int>(ArtifactRenderFormatCategory::ImageSequence));
     categoryRow->addWidget(impl_->categoryCombo, 1);
     

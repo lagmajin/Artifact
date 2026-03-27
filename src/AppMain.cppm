@@ -30,6 +30,7 @@ module;
 #include <QMetaType>
 #include <QDesktopServices>
 #include <QUrl>
+#include <QSortFilterProxyModel>
 #include <qthreadpool.h>
 #include <QFileInfoList>
 #include <QStyleFactory>
@@ -88,6 +89,7 @@ import Diagnostics.CrashHandler;
 import Translation.Manager;
 import Artifact.Service.Playback;
 import Artifact.Service.Project;
+import Artifact.Project.Roles;
 import Artifact.Widgets.UndoHistoryWidget;
 import Artifact.Widgets.PythonHookManagerWidget;
 import Artifact.Widgets.ProjectManagerWidget;
@@ -97,6 +99,7 @@ import Artifact.Widgets.CompositionEditor;
 import Artifact.Widgets.RenderLayerEditor;
 import Artifact.Widgets.SoftwareRenderInspectors;
 import Artifact.Widgets.Render.QueueManager;
+import Artifact.Contents.Viewer;
 import Widgets.Inspector;
 import Widgets.AssetBrowser;
 import Artifact.Widgets.ArtifactPropertyWidget;
@@ -114,7 +117,7 @@ using namespace ArtifactCore;
 
 namespace
 {
- constexpr int kMainWindowLayoutVersion = 6;
+ constexpr int kMainWindowLayoutVersion = 7;
 
  quint64 processWorkingSetMB()
  {
@@ -756,7 +759,45 @@ int main(int argc, char* argv[])
         QStringLiteral("Layer View (Diligent)"));
     auto* projectManagerWidget = new ArtifactProjectManagerWidget(mw);
     mw->addDockedWidget(QStringLiteral("Project"), ads::LeftDockWidgetArea, projectManagerWidget);
-    mw->addDockedWidgetTabbed(QStringLiteral("Asset Browser"), ads::LeftDockWidgetArea, new ArtifactAssetBrowser(mw), QStringLiteral("Project"));
+    auto* assetBrowser = new ArtifactAssetBrowser(mw);
+    mw->addDockedWidgetTabbed(QStringLiteral("Asset Browser"), ads::LeftDockWidgetArea, assetBrowser, QStringLiteral("Project"));
+    auto* contentsViewer = new ArtifactContentsViewer(mw);
+    mw->addDockedWidgetTabbed(QStringLiteral("Contents Viewer"), ads::LeftDockWidgetArea, contentsViewer, QStringLiteral("Asset Browser"));
+    mw->setDockVisible(QStringLiteral("Contents Viewer"), false);
+    QObject::connect(assetBrowser, &ArtifactAssetBrowser::itemDoubleClicked, mw, [mw, contentsViewer](const QString& itemPath) {
+        if (!contentsViewer || itemPath.isEmpty()) {
+            return;
+        }
+        if (!QFileInfo(itemPath).isFile()) {
+            return;
+        }
+        contentsViewer->setFilePath(itemPath);
+        mw->setDockVisible(QStringLiteral("Contents Viewer"), true);
+        mw->activateDock(QStringLiteral("Contents Viewer"));
+    });
+    QObject::connect(projectManagerWidget, &ArtifactProjectManagerWidget::itemDoubleClicked, mw,
+        [mw, contentsViewer](const QModelIndex& index) {
+            if (!contentsViewer || !index.isValid()) {
+                return;
+            }
+            QModelIndex sourceIdx = index;
+            if (auto proxy = qobject_cast<const QSortFilterProxyModel*>(index.model())) {
+                sourceIdx = proxy->mapToSource(index);
+            }
+            const QVariant typeVar = sourceIdx.data(Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::ProjectItemType));
+            const QVariant ptrVar = sourceIdx.data(Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::ProjectItemPtr));
+            if (!typeVar.isValid() || typeVar.toInt() != static_cast<int>(eProjectItemType::Footage) || !ptrVar.isValid()) {
+                return;
+            }
+            ProjectItem* item = reinterpret_cast<ProjectItem*>(ptrVar.value<quintptr>());
+            auto* footage = item && item->type() == eProjectItemType::Footage ? static_cast<FootageItem*>(item) : nullptr;
+            if (!footage || footage->filePath.isEmpty() || !QFileInfo(footage->filePath).isFile()) {
+                return;
+            }
+            contentsViewer->setFilePath(footage->filePath);
+            mw->setDockVisible(QStringLiteral("Contents Viewer"), true);
+            mw->activateDock(QStringLiteral("Contents Viewer"));
+        });
     mw->addDockedWidget(QStringLiteral("Inspector"), ads::RightDockWidgetArea, new ArtifactInspectorWidget(mw));
     auto* propertyPanel = new ArtifactPropertyWidget(mw);
     mw->addDockedWidgetTabbed(QStringLiteral("Properties"), ads::RightDockWidgetArea, propertyPanel, QStringLiteral("Inspector"));

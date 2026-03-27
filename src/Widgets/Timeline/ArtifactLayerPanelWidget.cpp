@@ -22,24 +22,29 @@ module;
 #include <QFileInfo>
 #include <QHash>
 #include <QSet>
+#include <QRegularExpression>
 #include <QPolygon>
 #include <QIcon>
 #include <QtSVG/QSvgRenderer>
 #include <QComboBox>
 #include <QPointer>
 #include <QLineEdit>
+#include <QStyledItemDelegate>
+#include <QListView>
 #include <QKeyEvent>
 #include <QWheelEvent>
 #include <QInputDialog>
 #include <QFileDialog>
 #include <QTimer>
 #include <QDrag>
+#include <optional>
 module Artifact.Widgets.LayerPanelWidget;
 
 import std;
 
 import Utils.Path;
 import Artifact.Service.Project;
+import Artifact.Service.Playback;
 import Artifact.Project.Manager;
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
@@ -140,6 +145,20 @@ namespace {
   return QColor(128, 128, 128);  // Gray - その他
  }
 
+ bool layerCanOutputAudio(const ArtifactAbstractLayerPtr& layer)
+ {
+  if (!layer || !layer->hasAudio()) {
+   return false;
+  }
+  if (auto audio = std::dynamic_pointer_cast<ArtifactAudioLayer>(layer)) {
+   return !audio->isMuted() && audio->volume() > 0.001f;
+  }
+  if (auto video = std::dynamic_pointer_cast<ArtifactVideoLayer>(layer)) {
+   return !video->isAudioMuted() && video->audioVolume() > 0.001;
+  }
+  return false;
+ }
+
  QPixmap loadLayerPanelPixmap(const QString& resourceRelativePath, const QString& fallbackFileName = {})
  {
   QIcon icon = loadLayerPanelIcon(resourceRelativePath, fallbackFileName);
@@ -152,6 +171,314 @@ namespace {
    pix = icon.pixmap(48, 48);
   }
   return pix;
+ }
+
+ struct LayerSearchQuery
+ {
+  QString rawText;
+  QStringList freeTerms;
+  QStringList typeTerms;
+  QStringList fxTerms;
+  QStringList tagTerms;
+  QStringList parentTerms;
+  QStringList sourceTerms;
+  std::optional<bool> visible;
+  std::optional<bool> locked;
+  std::optional<bool> solo;
+  std::optional<bool> shy;
+
+  bool isEmpty() const
+  {
+   return rawText.trimmed().isEmpty();
+  }
+ };
+
+ QString normalizeTokenValue(QString value)
+ {
+  value = value.trimmed();
+  if (value.startsWith('"') && value.endsWith('"') && value.size() >= 2) {
+   value = value.mid(1, value.size() - 2);
+  }
+  return value.trimmed();
+ }
+
+ std::optional<bool> parseBoolToken(const QString& value)
+ {
+  const QString lower = value.trimmed().toLower();
+  if (lower.isEmpty()) {
+   return std::nullopt;
+  }
+  if (lower == QStringLiteral("1") || lower == QStringLiteral("true") ||
+      lower == QStringLiteral("yes") || lower == QStringLiteral("on")) {
+   return true;
+  }
+  if (lower == QStringLiteral("0") || lower == QStringLiteral("false") ||
+      lower == QStringLiteral("no") || lower == QStringLiteral("off")) {
+   return false;
+  }
+  return std::nullopt;
+ }
+
+ bool containsInsensitive(const QString& haystack, const QString& needle)
+ {
+  return needle.isEmpty() || haystack.contains(needle, Qt::CaseInsensitive);
+ }
+
+ QString layerTypeName(const ArtifactAbstractLayerPtr& layer)
+ {
+  if (!layer) {
+   return {};
+  }
+  if (layer->isNullLayer()) {
+   return QStringLiteral("null");
+  }
+  if (layer->isAdjustmentLayer()) {
+   return QStringLiteral("adjustment");
+  }
+  if (std::dynamic_pointer_cast<ArtifactTextLayer>(layer)) {
+   return QStringLiteral("text");
+  }
+  if (std::dynamic_pointer_cast<ArtifactImageLayer>(layer)) {
+   return QStringLiteral("image");
+  }
+  if (std::dynamic_pointer_cast<ArtifactSvgLayer>(layer)) {
+   return QStringLiteral("shape");
+  }
+  if (std::dynamic_pointer_cast<ArtifactVideoLayer>(layer)) {
+   return QStringLiteral("video");
+  }
+  if (std::dynamic_pointer_cast<ArtifactAudioLayer>(layer)) {
+   return QStringLiteral("audio");
+  }
+  if (std::dynamic_pointer_cast<ArtifactCameraLayer>(layer)) {
+   return QStringLiteral("camera");
+  }
+  if (std::dynamic_pointer_cast<ArtifactParticleLayer>(layer)) {
+   return QStringLiteral("particle");
+  }
+  if (std::dynamic_pointer_cast<ArtifactSolid2DLayer>(layer)) {
+   return QStringLiteral("solid");
+  }
+  return QStringLiteral("layer");
+ }
+
+ QString sourceAssetName(const ArtifactAbstractLayerPtr& layer)
+ {
+  if (!layer) {
+   return {};
+  }
+  if (auto image = std::dynamic_pointer_cast<ArtifactImageLayer>(layer)) {
+   return QFileInfo(image->sourcePath()).fileName();
+  }
+  if (auto video = std::dynamic_pointer_cast<ArtifactVideoLayer>(layer)) {
+   return QFileInfo(video->sourcePath()).fileName();
+  }
+  if (auto audio = std::dynamic_pointer_cast<ArtifactAudioLayer>(layer)) {
+   return QFileInfo(audio->sourcePath()).fileName();
+  }
+  if (auto svg = std::dynamic_pointer_cast<ArtifactSvgLayer>(layer)) {
+   return QFileInfo(svg->sourcePath()).fileName();
+  }
+  return {};
+ }
+
+ QString parentLayerName(const ArtifactAbstractLayerPtr& layer, const ArtifactCompositionPtr& comp)
+ {
+  if (!layer || !comp || !layer->hasParent()) {
+   return {};
+  }
+  const auto parent = comp->layerById(layer->parentLayerId());
+  return parent ? parent->layerName() : QString();
+ }
+
+ bool matchesSearchToken(const ArtifactAbstractLayerPtr& layer,
+                         const ArtifactCompositionPtr& comp,
+                         const QString& token,
+                         const QString& tokenLower)
+ {
+  Q_UNUSED(token);
+  if (!layer) {
+   return false;
+  }
+
+  const QString name = layer->layerName();
+  const QString type = layerTypeName(layer);
+  const QString fxName = [&layer]() {
+   QStringList names;
+   for (const auto& effect : layer->getEffects()) {
+    if (effect) {
+     names << effect->displayName().toQString();
+    }
+   }
+   return names.join(u' ');
+  }();
+  const QString tagBlob = [&layer]() {
+   QStringList tags;
+   for (const auto& group : layer->getLayerPropertyGroups()) {
+    const QString groupName = group.name().trimmed();
+    if (!groupName.isEmpty()) {
+     tags << groupName;
+    }
+    for (const auto& property : group.sortedProperties()) {
+     if (property) {
+      const QString propName = property->getName().trimmed();
+      if (!propName.isEmpty()) {
+       tags << propName;
+      }
+     }
+    }
+   }
+   return tags.join(u' ');
+  }();
+  const QString parentName = parentLayerName(layer, comp);
+  const QString sourceName = sourceAssetName(layer);
+  const QString stateBlob = QStringLiteral("%1 %2 %3 %4")
+                               .arg(layer->isVisible() ? QStringLiteral("visible") : QStringLiteral("hidden"))
+                               .arg(layer->isLocked() ? QStringLiteral("locked") : QStringLiteral("unlocked"))
+                               .arg(layer->isSolo() ? QStringLiteral("solo") : QStringLiteral("normal"))
+                               .arg(layer->isShy() ? QStringLiteral("shy") : QStringLiteral("notshy"));
+
+  return containsInsensitive(name, token) ||
+         containsInsensitive(type, tokenLower) ||
+         containsInsensitive(fxName, tokenLower) ||
+         containsInsensitive(tagBlob, tokenLower) ||
+         containsInsensitive(parentName, tokenLower) ||
+         containsInsensitive(sourceName, tokenLower) ||
+         containsInsensitive(stateBlob, tokenLower);
+ }
+
+ LayerSearchQuery parseLayerSearchQuery(const QString& text)
+ {
+  LayerSearchQuery query;
+  query.rawText = text;
+  const QStringList tokens = text.split(QRegularExpression(QStringLiteral("\\s+")), Qt::SkipEmptyParts);
+  for (const QString& rawToken : tokens) {
+   const QString token = normalizeTokenValue(rawToken);
+   if (token.isEmpty()) {
+    continue;
+   }
+
+   const int colon = token.indexOf(u':');
+   if (colon <= 0) {
+    query.freeTerms.push_back(token);
+    continue;
+   }
+
+   const QString key = token.left(colon).trimmed().toLower();
+   const QString value = normalizeTokenValue(token.mid(colon + 1));
+   if (key == QStringLiteral("type")) {
+    query.typeTerms.push_back(value);
+   } else if (key == QStringLiteral("fx") || key == QStringLiteral("effect")) {
+    query.fxTerms.push_back(value);
+   } else if (key == QStringLiteral("tag")) {
+    query.tagTerms.push_back(value);
+   } else if (key == QStringLiteral("parent")) {
+    query.parentTerms.push_back(value);
+   } else if (key == QStringLiteral("source")) {
+    query.sourceTerms.push_back(value);
+   } else if (key == QStringLiteral("visible")) {
+    query.visible = parseBoolToken(value);
+   } else if (key == QStringLiteral("locked") || key == QStringLiteral("lock")) {
+    query.locked = parseBoolToken(value);
+   } else if (key == QStringLiteral("solo")) {
+    query.solo = parseBoolToken(value);
+   } else if (key == QStringLiteral("shy")) {
+    query.shy = parseBoolToken(value);
+   } else {
+    query.freeTerms.push_back(token);
+   }
+  }
+  return query;
+ }
+
+ bool matchesLayerSearchQuery(const ArtifactAbstractLayerPtr& layer,
+                              const ArtifactCompositionPtr& comp,
+                              const LayerSearchQuery& query)
+ {
+  if (!layer) {
+   return false;
+  }
+
+  if (query.visible.has_value() && layer->isVisible() != query.visible.value()) {
+   return false;
+  }
+  if (query.locked.has_value() && layer->isLocked() != query.locked.value()) {
+   return false;
+  }
+  if (query.solo.has_value() && layer->isSolo() != query.solo.value()) {
+   return false;
+  }
+  if (query.shy.has_value() && layer->isShy() != query.shy.value()) {
+   return false;
+  }
+
+  const QString name = layer->layerName();
+  const QString type = layerTypeName(layer);
+  const QString parentName = parentLayerName(layer, comp);
+  const QString sourceName = sourceAssetName(layer);
+
+  for (const QString& term : query.freeTerms) {
+   if (!matchesSearchToken(layer, comp, term, term.toLower())) {
+    return false;
+   }
+  }
+  for (const QString& term : query.typeTerms) {
+   if (!containsInsensitive(type, term)) {
+    return false;
+   }
+  }
+  for (const QString& term : query.fxTerms) {
+   bool matched = false;
+   for (const auto& effect : layer->getEffects()) {
+    if (effect && containsInsensitive(effect->displayName().toQString(), term)) {
+     matched = true;
+     break;
+    }
+   }
+   if (!matched) {
+    return false;
+   }
+  }
+  for (const QString& term : query.tagTerms) {
+   bool matched = false;
+   for (const auto& group : layer->getLayerPropertyGroups()) {
+    if (containsInsensitive(group.name(), term)) {
+     matched = true;
+     break;
+    }
+    for (const auto& property : group.sortedProperties()) {
+     if (property && containsInsensitive(property->getName(), term)) {
+      matched = true;
+      break;
+     }
+    }
+    if (matched) {
+     break;
+    }
+   }
+   if (!matched) {
+    return false;
+   }
+  }
+  for (const QString& term : query.parentTerms) {
+   if (term.compare(QStringLiteral("none"), Qt::CaseInsensitive) == 0 ||
+       term.compare(QStringLiteral("null"), Qt::CaseInsensitive) == 0) {
+    if (layer->hasParent()) {
+     return false;
+    }
+    continue;
+   }
+   if (!containsInsensitive(parentName, term)) {
+    return false;
+   }
+  }
+  for (const QString& term : query.sourceTerms) {
+   if (!containsInsensitive(sourceName, term)) {
+    return false;
+   }
+  }
+
+  return true;
  }
  }
 
@@ -347,6 +674,61 @@ namespace {
     };
   }
 
+  QColor blendModePopupTint(const LAYER_BLEND_TYPE mode)
+  {
+    switch (mode) {
+    case LAYER_BLEND_TYPE::BLEND_ADD:
+    case LAYER_BLEND_TYPE::BLEND_SCREEN:
+    case LAYER_BLEND_TYPE::BLEND_LIGHTEN:
+    case LAYER_BLEND_TYPE::BLEND_COLOR_DODGE:
+    case LAYER_BLEND_TYPE::BLEND_HARD_LIGHT:
+      return QColor(76, 100, 66, 86);
+    case LAYER_BLEND_TYPE::BLEND_MULTIPLY:
+    case LAYER_BLEND_TYPE::BLEND_DARKEN:
+    case LAYER_BLEND_TYPE::BLEND_COLOR_BURN:
+    case LAYER_BLEND_TYPE::BLEND_SOFT_LIGHT:
+      return QColor(44, 48, 58, 112);
+    case LAYER_BLEND_TYPE::BLEND_OVERLAY:
+    case LAYER_BLEND_TYPE::BLEND_DIFFERENCE:
+    case LAYER_BLEND_TYPE::BLEND_EXCLUSION:
+      return QColor(60, 56, 78, 90);
+    default:
+      return QColor(48, 48, 52, 92);
+    }
+  }
+
+  class BlendModePopupDelegate final : public QStyledItemDelegate
+  {
+  public:
+    explicit BlendModePopupDelegate(QObject* parent = nullptr) : QStyledItemDelegate(parent) {}
+
+    void paint(QPainter* painter, const QStyleOptionViewItem& option, const QModelIndex& index) const override
+    {
+      QStyleOptionViewItem opt = option;
+      initStyleOption(&opt, index);
+      const auto mode = static_cast<LAYER_BLEND_TYPE>(index.data(Qt::UserRole).toInt());
+      const QColor tint = blendModePopupTint(mode);
+
+      painter->save();
+      painter->setRenderHint(QPainter::Antialiasing, true);
+
+      if (opt.state & QStyle::State_Selected) {
+        painter->fillRect(opt.rect, QColor(74, 114, 82, 176));
+      } else if (opt.state & QStyle::State_MouseOver) {
+        painter->fillRect(opt.rect, tint.lighter(120));
+      } else {
+        painter->fillRect(opt.rect, tint);
+      }
+
+      painter->setPen(QPen(QColor(0, 0, 0, 45), 1));
+      painter->drawLine(opt.rect.topLeft(), opt.rect.topRight());
+      painter->drawLine(opt.rect.bottomLeft(), opt.rect.bottomRight());
+
+      QStyledItemDelegate::paint(painter, opt, index);
+      painter->restore();
+    }
+  };
+
   QVector<QString> layerPanelGroupLabels(const ArtifactAbstractLayerPtr& layer)
   {
    QVector<QString> labels;
@@ -532,6 +914,7 @@ int ArtifactLayerPanelHeaderWidget::totalHeaderHeight() const
    bool expanded = true;
    RowKind kind = RowKind::Layer;
    QString label;
+   bool searchMatched = false;
   };
 
   Impl()
@@ -574,6 +957,7 @@ int ArtifactLayerPanelHeaderWidget::totalHeaderHeight() const
   QIcon iconCreateSolid, iconCreateNull, iconCreateAdjust, iconCreateText;
   bool shyHidden = false;
   QString filterText;
+  SearchMatchMode searchMatchMode = SearchMatchMode::FilterOnly;
   int hoveredLayerIndex = -1;
   LayerID selectedLayerId;
   QVector<VisibleRow> visibleRows;
@@ -590,6 +974,8 @@ int ArtifactLayerPanelHeaderWidget::totalHeaderHeight() const
   bool dragStarted_ = false;
   bool updatingLayout = false;  // 再帰呼び出し防止フラグ
   QTimer* layoutDebounceTimer = nullptr;
+  QTimer* audioPulseTimer = nullptr;
+  bool audioPulseVisible = false;
   QHash<QString, QMetaObject::Connection> layerChangedConnections;
   int lastContentHeight = -1;
   
@@ -632,6 +1018,17 @@ int ArtifactLayerPanelHeaderWidget::totalHeaderHeight() const
     if (owner) {
      owner->update();
     }
+   }
+  }
+
+  void setSearchMatchMode(SearchMatchMode mode, ArtifactLayerPanelWidget* owner)
+  {
+   if (searchMatchMode == mode) {
+    return;
+   }
+   searchMatchMode = mode;
+   if (owner) {
+    owner->updateLayout();
    }
   }
 
@@ -743,11 +1140,13 @@ int ArtifactLayerPanelHeaderWidget::totalHeaderHeight() const
    }
 
    QVector<ArtifactAbstractLayerPtr> layers;
-    const QString needle = filterText.trimmed();
+   const LayerSearchQuery query = parseLayerSearchQuery(filterText);
+   const bool hasQuery = !query.isEmpty();
    for (auto& l : comp->allLayer()) {
      if (!l) continue;
      if (shyHidden && l->isShy()) continue;
-     if (!needle.isEmpty() && !l->layerName().contains(needle, Qt::CaseInsensitive)) continue;
+     const bool matches = !hasQuery || matchesLayerSearchQuery(l, comp, query);
+     if (hasQuery && searchMatchMode == SearchMatchMode::FilterOnly && !matches) continue;
      layers.push_back(l);
     }
    std::reverse(layers.begin(), layers.end());
@@ -783,7 +1182,8 @@ int ArtifactLayerPanelHeaderWidget::totalHeaderHeight() const
      const auto panelGroups = layerPanelGroupLabels(node);
      const bool hasChildren = !nodeChildren.isEmpty() || !panelGroups.isEmpty();
      const bool expanded = expandedByLayerId.value(nodeId, true);
-     visibleRows.push_back(VisibleRow{ node, depth, hasChildren, expanded, RowKind::Layer, QString() });
+     const bool nodeMatched = hasQuery && matchesLayerSearchQuery(node, comp, query);
+     visibleRows.push_back(VisibleRow{ node, depth, hasChildren, expanded, RowKind::Layer, QString(), nodeMatched });
      emitted.insert(nodeId);
 
      if (!hasChildren || !expanded) return;
@@ -795,7 +1195,8 @@ int ArtifactLayerPanelHeaderWidget::totalHeaderHeight() const
        false,
        false,
        RowKind::Group,
-       groupLabel
+       groupLabel,
+       nodeMatched
       });
      }
 
@@ -838,6 +1239,35 @@ int ArtifactLayerPanelHeaderWidget::totalHeaderHeight() const
   QObject::connect(impl_->layoutDebounceTimer, &QTimer::timeout, this, [this]() {
     this->performUpdateLayout();
   });
+
+  impl_->audioPulseTimer = new QTimer(this);
+  impl_->audioPulseTimer->setInterval(250);
+  impl_->audioPulseTimer->setSingleShot(false);
+  QObject::connect(impl_->audioPulseTimer, &QTimer::timeout, this, [this]() {
+    impl_->audioPulseVisible = !impl_->audioPulseVisible;
+    this->update();
+  });
+
+  if (auto* playback = ArtifactPlaybackService::instance()) {
+    QObject::connect(playback, &ArtifactPlaybackService::playbackStateChanged, this,
+                     [this](PlaybackState state) {
+      const bool shouldBlink = (state == PlaybackState::Playing);
+      if (shouldBlink) {
+        if (!impl_->audioPulseTimer->isActive()) {
+          impl_->audioPulseVisible = true;
+          impl_->audioPulseTimer->start();
+        }
+      } else {
+        impl_->audioPulseTimer->stop();
+        impl_->audioPulseVisible = false;
+        this->update();
+      }
+    });
+    if (playback->isPlaying()) {
+      impl_->audioPulseVisible = true;
+      impl_->audioPulseTimer->start();
+    }
+  }
 
   if (auto* service = ArtifactProjectService::instance()) {
     QObject::connect(service, &ArtifactProjectService::layerCreated, this, [this](const CompositionID& compId, const LayerID& layerId) {
@@ -914,6 +1344,31 @@ void ArtifactLayerPanelWidget::setFilterText(const QString& text)
   }
   impl_->filterText = text;
   updateLayout();
+}
+
+void ArtifactLayerPanelWidget::setSearchMatchMode(SearchMatchMode mode)
+{
+  impl_->setSearchMatchMode(mode, this);
+}
+
+SearchMatchMode ArtifactLayerPanelWidget::searchMatchMode() const
+{
+  return impl_->searchMatchMode;
+}
+
+QVector<LayerID> ArtifactLayerPanelWidget::matchingTimelineRows() const
+{
+  QVector<LayerID> rows;
+  if (!impl_) {
+   return rows;
+  }
+  rows.reserve(impl_->visibleRows.size());
+  for (const auto& row : impl_->visibleRows) {
+   if (row.kind == Impl::RowKind::Layer && row.layer && row.searchMatched) {
+    rows.append(row.layer->id());
+   }
+  }
+  return rows;
 }
 
 void ArtifactLayerPanelWidget::updateLayout()
@@ -1160,6 +1615,11 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
       const auto items = blendModeItems();
       for (const auto& [name, mode] : items) {
         combo->addItem(name, static_cast<int>(mode));
+      }
+      if (auto* popupView = qobject_cast<QListView*>(combo->view())) {
+        popupView->setItemDelegate(new BlendModePopupDelegate(popupView));
+        popupView->setMouseTracking(true);
+        popupView->setAlternatingRowColors(false);
       }
       const int currentMode = static_cast<int>(layer->layerBlendType());
       for (int i = 0; i < combo->count(); ++i) {
@@ -1849,9 +2309,24 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
     // 左端にタイプカラーバーを描画（4px）
     p.fillRect(0, y, 4, rowH, layerTypeColor);
 
+    if (impl_->audioPulseVisible && layerCanOutputAudio(l)) {
+      const QColor pulseColor(42, 232, 112, 235);
+      p.setPen(Qt::NoPen);
+      p.setBrush(pulseColor);
+      p.drawRoundedRect(QRect(0, y + 5, 4, rowH - 10), 2, 2);
+      p.setBrush(QColor(230, 255, 240, 160));
+      p.drawRoundedRect(QRect(1, y + 9, 2, rowH - 18), 1, 1);
+    }
+
     if (sel && !isGroupRow) p.fillRect(4, y, width() - 4, rowH, QColor(180, 110, 45)); // Modo-like Amber selection
     else if (i == impl_->hoveredLayerIndex) p.fillRect(4, y, width() - 4, rowH, QColor(60, 60, 60)); // Subtle grey hover
     else p.fillRect(4, y, width() - 4, rowH, (i % 2 == 0) ? QColor(42, 42, 42) : QColor(45, 45, 45));
+
+    if (!impl_->filterText.trimmed().isEmpty() && row.searchMatched && impl_->searchMatchMode == SearchMatchMode::HighlightOnly) {
+      p.fillRect(4, y, width() - 4, rowH, QColor(74, 120, 90, 64));
+      p.setPen(QColor(120, 220, 160, 180));
+      p.drawLine(4, y + rowH - 1, width(), y + rowH - 1);
+    }
 
     p.setPen(QColor(60, 60, 60));
     p.drawLine(0, y + rowH, width(), y + rowH);
@@ -1965,11 +2440,30 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
 
     if (showInlineCombos) {
       drawInlineCombo(parentRect, QStringLiteral("Parent: %1").arg(parentName));
-      drawInlineCombo(blendRect, QStringLiteral("Blend: %1").arg(blendModeToText(l->layerBlendType())));
+      if (!std::dynamic_pointer_cast<ArtifactAudioLayer>(l)) {
+        drawInlineCombo(blendRect, QStringLiteral("Blend: %1").arg(blendModeToText(l->layerBlendType())));
+      }
     }
     p.setPen(Qt::white);
     const int textWidth = showInlineCombos ? std::max(20, parentRect.left() - textX - 8) : std::max(20, width() - textX - 8);
     p.drawText(textX + 4, y, textWidth, rowH, Qt::AlignVCenter | Qt::AlignLeft, l->layerName());
+
+    if (auto audio = std::dynamic_pointer_cast<ArtifactAudioLayer>(l)) {
+      QString audioState = audio->isMuted()
+        ? QStringLiteral("Muted")
+        : QStringLiteral("Vol %1%").arg(std::lround(audio->volume() * 100.0));
+      const int badgePaddingX = 8;
+      const int badgeWidth = std::min(120, p.fontMetrics().horizontalAdvance(audioState) + badgePaddingX * 2);
+      int badgeX = showInlineCombos ? (parentRect.left() - badgeWidth - 8) : (width() - badgeWidth - 8);
+      if (badgeX > textX + 24) {
+        const QRect badgeRect(badgeX, y + kInlineComboMarginY, badgeWidth, kInlineComboHeight);
+        p.setPen(QColor(85, 85, 90));
+        p.setBrush(QColor(42, 42, 48));
+        p.drawRoundedRect(badgeRect, 4, 4);
+        p.setPen(QColor(230, 220, 120));
+        p.drawText(badgeRect.adjusted(badgePaddingX, 0, -badgePaddingX, 0), Qt::AlignVCenter | Qt::AlignLeft, audioState);
+      }
+    }
   }
 
   if (!impl_->draggedLayerId.isNil() && impl_->dragInsertVisibleRow >= 0) {
@@ -2263,6 +2757,23 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
    if (impl_ && impl_->panel) {
     impl_->panel->setFilterText(text);
    }
+  }
+
+  void ArtifactLayerTimelinePanelWrapper::setSearchMatchMode(SearchMatchMode mode)
+  {
+   if (impl_ && impl_->panel) {
+    impl_->panel->setSearchMatchMode(mode);
+   }
+  }
+
+  SearchMatchMode ArtifactLayerTimelinePanelWrapper::searchMatchMode() const
+  {
+   return impl_ && impl_->panel ? impl_->panel->searchMatchMode() : SearchMatchMode::FilterOnly;
+  }
+
+  QVector<LayerID> ArtifactLayerTimelinePanelWrapper::matchingTimelineRows() const
+  {
+   return impl_ && impl_->panel ? impl_->panel->matchingTimelineRows() : QVector<LayerID>();
   }
 
   void ArtifactLayerTimelinePanelWrapper::setLayerNameEditable(bool enabled)

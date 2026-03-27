@@ -1484,10 +1484,7 @@ void ArtifactProjectView::handleItemDoubleClicked(const QModelIndex& index) {
             QVariant ptrVar = actualIdx.data(Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::ProjectItemPtr));
             ProjectItem* item = ptrVar.isValid() ? reinterpret_cast<ProjectItem*>(ptrVar.value<quintptr>()) : nullptr;
             if (item && item->type() == eProjectItemType::Footage) {
-                const QString path = static_cast<FootageItem*>(item)->filePath;
-                if (!path.isEmpty()) {
-                    QDesktopServices::openUrl(QUrl::fromLocalFile(QFileInfo(path).absolutePath()));
-                }
+                Q_UNUSED(item);
             }
         }
     }
@@ -1496,6 +1493,7 @@ void ArtifactProjectView::handleItemDoubleClicked(const QModelIndex& index) {
 void ArtifactProjectView::mouseDoubleClickEvent(QMouseEvent* event) {
     const QModelIndex idx = indexAt(event->position().toPoint());
     if (idx.isValid()) {
+        itemDoubleClicked(idx);
         handleItemDoubleClicked(idx);
         event->accept();
         return;
@@ -1791,7 +1789,7 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
                 if (idVar.isValid()) {
                     ArtifactProjectService::instance()->changeCurrentComposition(CompositionID(idVar.toString()));
                 }
-            }, loadProjectViewIcon(QStringLiteral("MaterialVS/blue/movie.svg")));
+            }, loadProjectViewIcon(QStringLiteral("MaterialVS/blue/movie_creation.svg")));
 
             addTrackedAction(QStringLiteral("composition_settings"), QStringLiteral("Composition Settings..."), [this, sourceIdx]() {
                 auto* svc = ArtifactProjectService::instance();
@@ -2045,7 +2043,7 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
              });
          }
          dialog->deleteLater();
-    }, loadProjectViewIcon(QStringLiteral("MaterialVS/blue/movie.svg")));
+    }, loadProjectViewIcon(QStringLiteral("MaterialVS/blue/movie_creation.svg")));
     addTrackedNewAction(newMenu, QStringLiteral("new_solid"), QStringLiteral("Solid..."), [this, svc]() {
         if (!svc) return;
         if (!svc->currentComposition().lock()) {
@@ -2776,6 +2774,9 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     connect(impl_->projectView_, &ArtifactProjectView::itemSelected, [this](const QModelIndex& idx) {
         if (impl_->proxyModel_) impl_->infoPanel_->updateInfo(impl_->proxyModel_->mapToSource(idx));
     });
+    connect(impl_->projectView_, &ArtifactProjectView::itemDoubleClicked, [this](const QModelIndex& idx) {
+        itemDoubleClicked(idx);
+    });
     connect(impl_->toolBox, &ArtifactProjectManagerToolBox::newCompositionRequested, [this]() {
          auto dialog = new CreateCompositionDialog(this);
          if (dialog->exec()) {
@@ -2961,7 +2962,7 @@ ArtifactProjectManagerToolBox::ArtifactProjectManagerToolBox(QWidget* parent) : 
         return b;
     };
 
-    auto btnNew = createBtn("New Composition", QStringLiteral("MaterialVS/blue/movie.svg"), QStyle::SP_FileDialogNewFolder, QStringLiteral("N"));
+    auto btnNew = createBtn("New Composition", QStringLiteral("MaterialVS/blue/movie_creation.svg"), QStyle::SP_FileDialogNewFolder, QStringLiteral("N"));
     auto btnFolder = createBtn("New Folder", QStringLiteral("MaterialVS/yellow/folder.svg"), QStyle::SP_DirIcon, QStringLiteral("F"));
     auto btnProxy = createBtn("Generate Proxies", QStringLiteral("MaterialVS/green/replay.svg"), QStyle::SP_BrowserReload, QStringLiteral("P"));
     auto btnDel = createBtn("Delete", QStringLiteral("MaterialVS/red/delete.svg"), QStyle::SP_TrashIcon, QStringLiteral("D"));

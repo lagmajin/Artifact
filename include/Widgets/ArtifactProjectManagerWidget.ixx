@@ -193,6 +193,7 @@ public:
   void setThumbnailEnabled(bool b = true);
  public /*signals*/:
   void onFileDropped(const QStringList& list) W_SIGNAL(onFileDropped, list);
+  void itemDoubleClicked(const QModelIndex& index) W_SIGNAL(itemDoubleClicked, index);
    
  public/*Slots*/:
   void updateRequested();

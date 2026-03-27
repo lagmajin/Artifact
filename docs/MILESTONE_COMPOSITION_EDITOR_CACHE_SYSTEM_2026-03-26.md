@@ -34,6 +34,7 @@
 - `image` / `video` / `text` の加工済み surface を layer 単位で再利用
 - `mask` / `Rasterizer effect` のあるレイヤーだけ対象にする
 - `layer changed` で該当レイヤー cache を invalidate
+- 2026-03-27 時点で、layer changed に対する surface cache invalidation を ownerId 直指定で行うようにし、不要な全件走査を外した
 
 完了条件:
 
