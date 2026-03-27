@@ -11,6 +11,7 @@ module;
 #include <DeviceContext.h>
 #include <SwapChain.h>
 #include <RefCntAutoPtr.hpp>
+#include <QElapsedTimer>
 #include <DiligentCore/Graphics/GraphicsEngineD3D12/interface/EngineFactoryD3D12.h>
 #include <DiligentCore/Graphics/GraphicsEngineVulkan/interface/EngineFactoryVk.h>
 #include <windows.h>
@@ -398,6 +399,8 @@ void DiligentDeviceManager::Impl::initialize(QWidget* widget)
     }
 
     widget_ = widget;
+    QElapsedTimer timer;
+    timer.start();
     const auto backendPreference = getBackendPreferenceFromEnv();
     qDebug() << "[DiligentDeviceManager] initialize requested backend="
              << backendPreferenceName(backendPreference);
@@ -407,6 +410,7 @@ void DiligentDeviceManager::Impl::initialize(QWidget* widget)
         qWarning() << "Failed to create Diligent Engine device and contexts.";
         return;
     }
+    qInfo() << "[DiligentDeviceManager][Init] acquire device ms=" << timer.elapsed();
     usingSharedDevice_ = true;
 
     qDebug() << "[DiligentDeviceManager] device created type="
@@ -420,6 +424,7 @@ void DiligentDeviceManager::Impl::initialize(QWidget* widget)
     currentDevicePixelRatio_ = widget_->devicePixelRatio();
 
     HWND parentHwnd = reinterpret_cast<HWND>(widget_->winId());
+    timer.restart();
     renderHwnd_ = CreateWindowEx(
         0, L"STATIC", nullptr,
         WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS,
@@ -430,6 +435,7 @@ void DiligentDeviceManager::Impl::initialize(QWidget* widget)
         qWarning() << "Failed to create swap chain for the current backend.";
         return;
     }
+    qInfo() << "[DiligentDeviceManager][Init] create swapchain ms=" << timer.elapsed();
 
     Diligent::Viewport VP;
     VP.Width = static_cast<float>(currentPhysicalWidth_);
@@ -439,6 +445,7 @@ void DiligentDeviceManager::Impl::initialize(QWidget* widget)
     VP.TopLeftX = 0.0f;
     VP.TopLeftY = 0.0f;
     immediateContext_->SetViewports(1, &VP, currentPhysicalWidth_, currentPhysicalHeight_);
+    qInfo() << "[DiligentDeviceManager][Init] final viewport ms=" << timer.elapsed();
 
     initialized_ = true;
 }

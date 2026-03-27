@@ -1,8 +1,10 @@
-module;
+﻿module;
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstring>
 #include <unordered_map>
+#include <vector>
 #include <QImage>
 #include <QMatrix4x4>
 #include <QVector2D>
@@ -20,6 +22,8 @@ module;
 #include <DiligentCore/Common/interface/RefCntAutoPtr.hpp>
 
 module Artifact.Render.PrimitiveRenderer3D;
+
+import Artifact.Render.ShaderManager;
 
 namespace Artifact {
 
@@ -112,6 +116,34 @@ struct BillboardConstants
     float sizeAndOpacity[4];
     float tint[4];
 };
+
+struct GizmoLineVertex
+{
+    float position[3];
+    float color[4];
+};
+
+struct GizmoLineConstants
+{
+    float worldViewProj[16];
+};
+
+static GizmoLineVertex makeGizmoLineVertex(const QVector3D& position, const FloatColor& color)
+{
+    return GizmoLineVertex{
+        { position.x(), position.y(), position.z() },
+        { color.r(), color.g(), color.b(), color.a() }
+    };
+}
+
+static QVector3D normalizeOrFallback(const QVector3D& value, const QVector3D& fallback)
+{
+    const float lenSq = QVector3D::dotProduct(value, value);
+    if (lenSq <= 1e-12f) {
+        return fallback;
+    }
+    return value / std::sqrt(lenSq);
+}
 } // namespace
 
 class PrimitiveRenderer3D::Impl {
@@ -130,10 +162,16 @@ public:
     RefCntAutoPtr<ITexture> defaultTexture_;
     RefCntAutoPtr<ITextureView> defaultTextureSRV_;
 
+    PSOAndSRB gizmo3DPsoAndSrb_;
+    RefCntAutoPtr<IBuffer> gizmoLineConstantBuffer_;
+    RefCntAutoPtr<IBuffer> gizmoLineVertexBuffer_;
+    Uint32 gizmoLineVertexCapacity_ = 0;
+
     QMatrix4x4 viewMatrix_;
     QMatrix4x4 projMatrix_;
 
     BillboardConstants constants_{};
+    GizmoLineConstants gizmoLineConstants_{};
 
     struct CachedTexture {
         RefCntAutoPtr<ITexture> texture;
@@ -258,6 +296,25 @@ public:
         samplerDesc.ComparisonFunc = COMPARISON_FUNC_ALWAYS;
         samplerDesc.MaxAnisotropy = 1;
         device_->CreateSampler(samplerDesc, &sampler_);
+
+        BufferDesc lineVbDesc;
+        lineVbDesc.Name = "PrimitiveRenderer3D GizmoLine VB";
+        lineVbDesc.Usage = USAGE_DYNAMIC;
+        lineVbDesc.BindFlags = BIND_VERTEX_BUFFER;
+        lineVbDesc.CPUAccessFlags = CPU_ACCESS_WRITE;
+        lineVbDesc.Size = sizeof(GizmoLineVertex) * 256;
+        device_->CreateBuffer(lineVbDesc, nullptr, &gizmoLineVertexBuffer_);
+        if (gizmoLineVertexBuffer_) {
+            gizmoLineVertexCapacity_ = 256;
+        }
+
+        BufferDesc lineCbDesc;
+        lineCbDesc.Name = "PrimitiveRenderer3D GizmoLine CB";
+        lineCbDesc.Usage = USAGE_DYNAMIC;
+        lineCbDesc.BindFlags = BIND_UNIFORM_BUFFER;
+        lineCbDesc.CPUAccessFlags = CPU_ACCESS_WRITE;
+        lineCbDesc.Size = sizeof(GizmoLineConstants);
+        device_->CreateBuffer(lineCbDesc, nullptr, &gizmoLineConstantBuffer_);
     }
 
     void createPSO()
@@ -387,6 +444,156 @@ public:
         constants_.tint[3] = tint.a();
     }
 
+    void updateGizmoLineConstants()
+    {
+        // HLSL uses mul(pos, M) with default column_major cbuffer layout.
+        // For correct clip-space: M = transpose(Proj * View).
+        const QMatrix4x4 worldViewProj = (projMatrix_ * viewMatrix_).transposed();
+        std::memcpy(gizmoLineConstants_.worldViewProj, worldViewProj.constData(), sizeof(float) * 16);
+    }
+
+    void ensureGizmoLineCapacity(Uint32 requiredVertices)
+    {
+        if (requiredVertices <= gizmoLineVertexCapacity_ || !device_) {
+            return;
+        }
+
+        const Uint32 newCapacity = std::max(requiredVertices, std::max<Uint32>(gizmoLineVertexCapacity_ * 2, 256));
+        BufferDesc lineVbDesc;
+        lineVbDesc.Name = "PrimitiveRenderer3D GizmoLine VB";
+        lineVbDesc.Usage = USAGE_DYNAMIC;
+        lineVbDesc.BindFlags = BIND_VERTEX_BUFFER;
+        lineVbDesc.CPUAccessFlags = CPU_ACCESS_WRITE;
+        lineVbDesc.Size = sizeof(GizmoLineVertex) * newCapacity;
+        device_->CreateBuffer(lineVbDesc, nullptr, &gizmoLineVertexBuffer_);
+        if (gizmoLineVertexBuffer_) {
+            gizmoLineVertexCapacity_ = newCapacity;
+        }
+    }
+
+    void drawGizmoLineGeometry(const GizmoLineVertex* vertices, Uint32 vertexCount)
+    {
+        if (!hasRenderTarget() || !ctx_ || !gizmo3DPsoAndSrb_.pPSO || !gizmo3DPsoAndSrb_.pSRB ||
+            !gizmoLineVertexBuffer_ || !gizmoLineConstantBuffer_ || vertexCount < 2) {
+            return;
+        }
+
+        ensureGizmoLineCapacity(vertexCount);
+        if (!gizmoLineVertexBuffer_) {
+            return;
+        }
+
+        void* mapped = nullptr;
+        ctx_->MapBuffer(gizmoLineVertexBuffer_, MAP_WRITE, MAP_FLAG_DISCARD, mapped);
+        if (!mapped) {
+            return;
+        }
+        std::memcpy(mapped, vertices, sizeof(GizmoLineVertex) * vertexCount);
+        ctx_->UnmapBuffer(gizmoLineVertexBuffer_, MAP_WRITE);
+
+        updateGizmoLineConstants();
+        mapped = nullptr;
+        ctx_->MapBuffer(gizmoLineConstantBuffer_, MAP_WRITE, MAP_FLAG_DISCARD, mapped);
+        if (!mapped) {
+            return;
+        }
+        std::memcpy(mapped, &gizmoLineConstants_, sizeof(GizmoLineConstants));
+        ctx_->UnmapBuffer(gizmoLineConstantBuffer_, MAP_WRITE);
+
+        auto* rtv = currentRTV();
+        ctx_->SetRenderTargets(1, &rtv, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+        ctx_->SetPipelineState(gizmo3DPsoAndSrb_.pPSO);
+
+        IBuffer* buffers[] = { gizmoLineVertexBuffer_ };
+        Uint64 offsets[] = { 0 };
+        ctx_->SetVertexBuffers(0, 1, buffers, offsets, RESOURCE_STATE_TRANSITION_MODE_TRANSITION,
+                               SET_VERTEX_BUFFERS_FLAG_RESET);
+
+        if (auto* cbVar = gizmo3DPsoAndSrb_.pSRB->GetVariableByName(SHADER_TYPE_VERTEX, "TransformCB")) {
+            cbVar->Set(gizmoLineConstantBuffer_);
+        }
+        ctx_->CommitShaderResources(gizmo3DPsoAndSrb_.pSRB, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+
+        DrawAttribs drawAttrs;
+        drawAttrs.NumVertices = vertexCount;
+        drawAttrs.Flags = DRAW_FLAG_VERIFY_ALL;
+        ctx_->Draw(drawAttrs);
+    }
+
+    void drawGizmoLine(const QVector3D& start, const QVector3D& end, const FloatColor& color)
+    {
+        const GizmoLineVertex vertices[] = {
+            makeGizmoLineVertex(start, color),
+            makeGizmoLineVertex(end, color)
+        };
+        drawGizmoLineGeometry(vertices, 2);
+    }
+
+    void drawGizmoArrow(const QVector3D& start, const QVector3D& end, const FloatColor& color, float size)
+    {
+        const QVector3D delta = end - start;
+        const float length = delta.length();
+        if (length <= 1e-5f) {
+            drawGizmoLine(start, end, color);
+            return;
+        }
+
+        const QVector3D direction = delta / length;
+        QVector3D side = normalizeOrFallback(QVector3D::crossProduct(direction, QVector3D(0.0f, 0.0f, 1.0f)),
+                                             QVector3D::crossProduct(direction, QVector3D(0.0f, 1.0f, 0.0f)));
+        side = normalizeOrFallback(side, QVector3D(1.0f, 0.0f, 0.0f));
+
+        const float headLength = std::min(std::max(size * 0.35f, length * 0.15f), length * 0.45f);
+        const float headWidth = std::max(size * 0.25f, headLength * 0.6f);
+        const QVector3D headBase = end - direction * headLength;
+        const QVector3D headLeft = headBase + side * headWidth;
+        const QVector3D headRight = headBase - side * headWidth;
+
+        std::vector<GizmoLineVertex> vertices;
+        vertices.reserve(8);
+        vertices.push_back(makeGizmoLineVertex(start, color));
+        vertices.push_back(makeGizmoLineVertex(headBase, color));
+        vertices.push_back(makeGizmoLineVertex(headBase, color));
+        vertices.push_back(makeGizmoLineVertex(end, color));
+        vertices.push_back(makeGizmoLineVertex(headLeft, color));
+        vertices.push_back(makeGizmoLineVertex(end, color));
+        vertices.push_back(makeGizmoLineVertex(headRight, color));
+        vertices.push_back(makeGizmoLineVertex(end, color));
+        drawGizmoLineGeometry(vertices.data(), static_cast<Uint32>(vertices.size()));
+    }
+
+    void drawGizmoRing(const QVector3D& center, const QVector3D& normal, float radius,
+                       const FloatColor& color)
+    {
+        const float clampedRadius = std::max(radius, 0.0f);
+        if (clampedRadius <= 1e-5f) {
+            return;
+        }
+
+        QVector3D n = normalizeOrFallback(normal, QVector3D(0.0f, 0.0f, 1.0f));
+        QVector3D axis = (std::abs(n.z()) < 0.95f) ? QVector3D(0.0f, 0.0f, 1.0f)
+                                                   : QVector3D(0.0f, 1.0f, 0.0f);
+        QVector3D u = QVector3D::crossProduct(n, axis);
+        u = normalizeOrFallback(u, QVector3D(1.0f, 0.0f, 0.0f));
+        QVector3D v = QVector3D::crossProduct(n, u);
+        v = normalizeOrFallback(v, QVector3D(0.0f, 1.0f, 0.0f));
+
+        constexpr int kSegments = 48;
+        std::vector<GizmoLineVertex> vertices;
+        vertices.reserve(kSegments * 2);
+
+        for (int i = 0; i < kSegments; ++i) {
+            const float angle0 = (static_cast<float>(i) / kSegments) * 6.2831853071795864769f;
+            const float angle1 = (static_cast<float>(i + 1) / kSegments) * 6.2831853071795864769f;
+            const QVector3D p0 = center + (u * std::cos(angle0) + v * std::sin(angle0)) * clampedRadius;
+            const QVector3D p1 = center + (u * std::cos(angle1) + v * std::sin(angle1)) * clampedRadius;
+            vertices.push_back(makeGizmoLineVertex(p0, color));
+            vertices.push_back(makeGizmoLineVertex(p1, color));
+        }
+
+        drawGizmoLineGeometry(vertices.data(), static_cast<Uint32>(vertices.size()));
+    }
+
     void drawBillboard(const QVector3D& center, const QVector2D& size,
                        ITextureView* textureView, const FloatColor& tint,
                        float opacity, float rollDegrees)
@@ -451,6 +658,11 @@ PrimitiveRenderer3D::~PrimitiveRenderer3D()
     delete impl_;
 }
 
+void PrimitiveRenderer3D::createBuffers(RefCntAutoPtr<IRenderDevice> device)
+{
+    createBuffers(device, TEX_FORMAT_RGBA8_UNORM_SRGB);
+}
+
 void PrimitiveRenderer3D::createBuffers(RefCntAutoPtr<IRenderDevice> device, TEXTURE_FORMAT rtvFormat)
 {
     impl_->device_ = device;
@@ -459,6 +671,16 @@ void PrimitiveRenderer3D::createBuffers(RefCntAutoPtr<IRenderDevice> device, TEX
     impl_->createDefaultTexture();
     impl_->compileShaders();
     impl_->createPSO();
+}
+
+void PrimitiveRenderer3D::setPSOs(ShaderManager& shaderManager)
+{
+    impl_->gizmo3DPsoAndSrb_ = shaderManager.gizmo3DPsoAndSrb();
+}
+
+void PrimitiveRenderer3D::setContext(IDeviceContext* ctx)
+{
+    setContext(ctx, nullptr);
 }
 
 void PrimitiveRenderer3D::setContext(IDeviceContext* ctx, ISwapChain* swapChain)
@@ -479,10 +701,15 @@ void PrimitiveRenderer3D::destroy()
     impl_->defaultTexture_ = nullptr;
     impl_->sampler_ = nullptr;
     impl_->constantBuffer_ = nullptr;
+    impl_->gizmoLineConstantBuffer_ = nullptr;
+    impl_->gizmoLineVertexBuffer_ = nullptr;
+    impl_->gizmoLineVertexCapacity_ = 0;
     impl_->srb_ = nullptr;
     impl_->pso_ = nullptr;
     impl_->ps_ = nullptr;
     impl_->vs_ = nullptr;
+    impl_->gizmo3DPsoAndSrb_.pPSO = nullptr;
+    impl_->gizmo3DPsoAndSrb_.pSRB = nullptr;
     impl_->ctx_ = nullptr;
     impl_->swapChain_ = nullptr;
     impl_->overrideRTV_ = nullptr;
@@ -532,6 +759,26 @@ void PrimitiveRenderer3D::drawBillboardQuad(const QVector3D& center, const QVect
     impl_->drawBillboard(center, size, texture ? texture->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE)
                                                : impl_->defaultTextureSRV_.RawPtr(),
                          tint, opacity, rollDegrees);
+}
+
+void PrimitiveRenderer3D::draw3DLine(const QVector3D& start, const QVector3D& end,
+                                     const FloatColor& color, float thickness)
+{
+    (void)thickness;
+    impl_->drawGizmoLine(start, end, color);
+}
+
+void PrimitiveRenderer3D::draw3DArrow(const QVector3D& start, const QVector3D& end,
+                                      const FloatColor& color, float size)
+{
+    impl_->drawGizmoArrow(start, end, color, size);
+}
+
+void PrimitiveRenderer3D::draw3DCircle(const QVector3D& center, const QVector3D& normal,
+                                       float radius, const FloatColor& color, float thickness)
+{
+    (void)thickness;
+    impl_->drawGizmoRing(center, normal, radius, color);
 }
 
 } // namespace Artifact

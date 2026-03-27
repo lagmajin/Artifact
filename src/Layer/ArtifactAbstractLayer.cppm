@@ -591,6 +591,31 @@ const AnimatableTransform3D &ArtifactAbstractLayer::transform3D() const {
   return impl_->transform_;
 }
 
+QVector3D ArtifactAbstractLayer::position3D() const {
+  const auto time = RationalTime(currentFrame(), 30); // Use composition FPS if possible
+  return QVector3D(impl_->transform_.positionXAt(time),
+                   impl_->transform_.positionYAt(time),
+                   impl_->transform_.positionZAt(time));
+}
+
+void ArtifactAbstractLayer::setPosition3D(const QVector3D &pos) {
+  const auto time = RationalTime(currentFrame(), 30);
+  impl_->transform_.setPosition(time, pos.x(), pos.y());
+  impl_->transform_.setPositionZ(time, pos.z());
+  changed();
+}
+
+QVector3D ArtifactAbstractLayer::rotation3D() const {
+  const auto time = RationalTime(currentFrame(), 30);
+  return QVector3D(impl_->transform_.rotationAt(time), 0, 0); // Only X rotation for now
+}
+
+void ArtifactAbstractLayer::setRotation3D(const QVector3D &rot) {
+  const auto time = RationalTime(currentFrame(), 30);
+  impl_->transform_.setRotation(time, rot.x());
+  changed();
+}
+
 QJsonObject ArtifactAbstractLayer::toJson() const {
 
   QJsonObject obj;

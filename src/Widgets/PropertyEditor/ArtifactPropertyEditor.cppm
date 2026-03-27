@@ -2,8 +2,8 @@
 
 #include <QCheckBox>
 #include <QColor>
-#include <QColorDialog>
 #include <QComboBox>
+#include <QDialog>
 #include <QCursor>
 #include <QDoubleSpinBox>
 #include <QEvent>
@@ -25,12 +25,14 @@ module Artifact.Widgets.PropertyEditor;
 
 import std;
 import Utils.Path;
+import Color.Float;
 import Font.FreeFont;
 import Artifact.Widgets.FontPicker;
 import Artifact.Widgets.ExpressionCopilotWidget;
 import Artifact.Service.Playback;
 import Artifact.Service.Project;
 import Time.Rational;
+import FloatColorPickerDialog;
 
 namespace Artifact {
 
@@ -787,14 +789,18 @@ ArtifactColorPropertyEditor::ArtifactColorPropertyEditor(
   currentColor_ = propertyColor(property);
   applyColor(currentColor_);
   QObject::connect(button_, &QPushButton::clicked, this, [this]() {
-    QColorDialog dialog(button_);
-    dialog.setStyleSheet("");
-    dialog.setCurrentColor(currentColor_);
-    dialog.setWindowTitle(QStringLiteral("Select Color"));
-    if (dialog.exec() != QDialog::Accepted) {
+    ArtifactWidgets::FloatColorPicker picker(button_);
+    picker.setWindowTitle(QStringLiteral("Select Color"));
+    picker.setColor(ArtifactCore::FloatColor(currentColor_.redF(),
+                                            currentColor_.greenF(),
+                                            currentColor_.blueF(),
+                                            currentColor_.alphaF()));
+    if (picker.exec() != QDialog::Accepted) {
       return;
     }
-    const QColor nextColor = dialog.currentColor();
+    const ArtifactCore::FloatColor picked = picker.getColor();
+    const QColor nextColor = QColor::fromRgbF(picked.r(), picked.g(),
+                                              picked.b(), picked.a());
     if (!nextColor.isValid()) {
       return;
     }

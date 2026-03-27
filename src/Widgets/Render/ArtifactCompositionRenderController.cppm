@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <DeviceContext.h>
 #define NOMINMAX
 #define QT_NO_KEYWORDS
@@ -13,16 +13,20 @@ module;
 #include <QRectF>
 #include <QPointer>
 #include <QTimer>
+#include <QHash>
 #include <QVector>
 #include <QByteArray>
+#include <limits>
 #include <algorithm>
 #include <cmath>
 #include <memory>
+#include <utility>
 #include <wobjectimpl.h>
 
 module Artifact.Widgets.CompositionRenderController;
 
 import Artifact.Render.IRenderer;
+import Artifact.Render.GPUTextureCacheManager;
 import Artifact.Render.CompositionRenderer;
 import Artifact.Render.Config;
 import Artifact.Preview.Pipeline;
@@ -41,6 +45,7 @@ import Frame.Position;
 import Artifact.Application.Manager;
 import Artifact.Layers.Selection.Manager;
 import Artifact.Widgets.TransformGizmo;
+import Artifact.Widgets.Gizmo3D;
 import Artifact.Tool.Manager;
 import Artifact.Mask.LayerMask;
 import Artifact.Mask.Path;
@@ -63,9 +68,103 @@ W_OBJECT_IMPL(CompositionRenderController)
 namespace {
 Q_LOGGING_CATEGORY(compositionViewLog, "artifact.compositionview")
 
+struct LayerSurfaceCacheEntry
+{
+  QString ownerId;
+  QString cacheSignature;
+  QImage processedSurface;
+  GPUTextureCacheHandle gpuTextureHandle;
+  int64_t frameNumber = std::numeric_limits<int64_t>::min();
+};
+
 QColor toQColor(const FloatColor& color)
 {
   return QColor::fromRgbF(color.r(), color.g(), color.b(), color.a());
+}
+
+template <typename ColorT>
+QString colorKey(const ColorT& color)
+{
+  return QStringLiteral("%1,%2,%3,%4")
+      .arg(color.r(), 0, 'f', 4)
+      .arg(color.g(), 0, 'f', 4)
+      .arg(color.b(), 0, 'f', 4)
+      .arg(color.a(), 0, 'f', 4);
+}
+
+QString buildLayerSurfaceCacheKey(const ArtifactAbstractLayerPtr& layer,
+                                  const QImage& surface,
+                                  int64_t frameNumber)
+{
+  if (!layer) {
+    return QString();
+  }
+
+  QString key = layer->id().toString();
+  key += QStringLiteral("|size=%1x%2")
+             .arg(surface.width())
+             .arg(surface.height());
+
+  if (const auto solid2D = std::dynamic_pointer_cast<ArtifactSolid2DLayer>(layer)) {
+    const QRectF bounds = solid2D->localBounds();
+    key += QStringLiteral("|solid2D|color=%1|bounds=%2x%3")
+               .arg(colorKey(solid2D->color()))
+               .arg(bounds.width(), 0, 'f', 2)
+               .arg(bounds.height(), 0, 'f', 2);
+    return key;
+  }
+
+  if (const auto solidImage = std::dynamic_pointer_cast<ArtifactSolidImageLayer>(layer)) {
+    const QRectF bounds = solidImage->localBounds();
+    key += QStringLiteral("|solidImage|color=%1|bounds=%2x%3")
+               .arg(colorKey(solidImage->color()))
+               .arg(bounds.width(), 0, 'f', 2)
+               .arg(bounds.height(), 0, 'f', 2);
+    return key;
+  }
+
+  if (const auto imageLayer = std::dynamic_pointer_cast<ArtifactImageLayer>(layer)) {
+    key += QStringLiteral("|image|src=%1|fit=%2|size=%3x%4")
+               .arg(imageLayer->sourcePath())
+               .arg(imageLayer->fitToLayer() ? 1 : 0)
+               .arg(surface.width())
+               .arg(surface.height());
+    return key;
+  }
+
+  if (const auto svgLayer = std::dynamic_pointer_cast<ArtifactSvgLayer>(layer)) {
+    key += QStringLiteral("|svg|src=%1|fit=%2|size=%3x%4")
+               .arg(svgLayer->sourcePath())
+               .arg(svgLayer->fitToLayer() ? 1 : 0)
+               .arg(surface.width())
+               .arg(surface.height());
+    return key;
+  }
+
+  if (const auto videoLayer = std::dynamic_pointer_cast<ArtifactVideoLayer>(layer)) {
+    key += QStringLiteral("|video|src=%1|frame=%2|proxy=%3|size=%4x%5")
+               .arg(videoLayer->sourcePath())
+               .arg(frameNumber)
+               .arg(static_cast<int>(videoLayer->proxyQuality()))
+               .arg(surface.width())
+               .arg(surface.height());
+    return key;
+  }
+
+  if (const auto textLayer = std::dynamic_pointer_cast<ArtifactTextLayer>(layer)) {
+    key += QStringLiteral("|text|value=%1|font=%2|size=%3|tc=%4|stroke=%5|shadow=%6|surface=%7x%8")
+               .arg(textLayer->text().toQString())
+               .arg(textLayer->fontFamily().toQString())
+               .arg(textLayer->fontSize(), 0, 'f', 2)
+               .arg(colorKey(textLayer->textColor()))
+               .arg(colorKey(textLayer->strokeColor()))
+               .arg(colorKey(textLayer->shadowColor()))
+               .arg(surface.width())
+               .arg(surface.height());
+    return key;
+  }
+
+  return QString();
 }
 
 bool layerHasCpuRasterizerWork(const ArtifactAbstractLayerPtr& layer)
@@ -184,7 +283,10 @@ ArtifactAbstractLayerPtr hitTopmostLayerAtViewportPos(const ArtifactCompositionP
 void drawLayerForCompositionView(const ArtifactAbstractLayerPtr &layer,
                                  ArtifactIRenderer *renderer,
                                  float opacityOverride = -1.0f,
-                                 QString* videoDebugOut = nullptr) {
+                                 QString* videoDebugOut = nullptr,
+                                 QHash<QString, LayerSurfaceCacheEntry>* surfaceCache = nullptr,
+                                 GPUTextureCacheManager* gpuTextureCacheManager = nullptr,
+                                 int64_t cacheFrameNumber = std::numeric_limits<int64_t>::min()) {
   if (!layer || !renderer) {
     qCDebug(compositionViewLog) << "[CompositionView] drawLayerForCompositionView: invalid "
                 "layer/renderer";
@@ -276,15 +378,66 @@ void drawLayerForCompositionView(const ArtifactAbstractLayerPtr &layer,
     return false;
   };
 
-  auto applySurfaceAndDraw = [&](QImage surface, const QRectF& rect) {
+  auto applySurfaceAndDraw = [&](QImage surface, const QRectF& rect, bool allowSurfaceCache) {
     if (surface.isNull()) {
       return false;
     }
-    applyRasterizerEffectsAndMasksToSurface(layer, surface);
+
+    const QString ownerId = layer->id().toString();
+    const QString cacheSignature = buildLayerSurfaceCacheKey(layer, surface, cacheFrameNumber);
+    LayerSurfaceCacheEntry* cacheEntry = nullptr;
+
+    if (surfaceCache && !cacheSignature.isEmpty()) {
+      auto cacheIt = surfaceCache->find(ownerId);
+      if (cacheIt != surfaceCache->end() &&
+          cacheIt->ownerId == ownerId &&
+          cacheIt->cacheSignature == cacheSignature &&
+          !cacheIt->processedSurface.isNull()) {
+        cacheEntry = &(*cacheIt);
+        surface = cacheIt->processedSurface;
+      } else {
+        if (allowSurfaceCache) {
+          applyRasterizerEffectsAndMasksToSurface(layer, surface);
+        }
+
+        LayerSurfaceCacheEntry entry;
+        entry.ownerId = ownerId;
+        entry.cacheSignature = cacheSignature;
+        entry.processedSurface = surface;
+        entry.frameNumber = cacheFrameNumber;
+        if (gpuTextureCacheManager) {
+          entry.gpuTextureHandle = gpuTextureCacheManager->acquireOrCreate(ownerId, cacheSignature, surface);
+        }
+        (*surfaceCache)[ownerId] = entry;
+        cacheEntry = &(*surfaceCache)[ownerId];
+      }
+    } else if (allowSurfaceCache) {
+      applyRasterizerEffectsAndMasksToSurface(layer, surface);
+    }
+
+    if (gpuTextureCacheManager && cacheEntry) {
+      if (!gpuTextureCacheManager->isValid(cacheEntry->gpuTextureHandle)) {
+        const QImage& uploadSurface =
+            cacheEntry->processedSurface.isNull() ? surface : cacheEntry->processedSurface;
+        cacheEntry->gpuTextureHandle =
+            gpuTextureCacheManager->acquireOrCreate(layer->id().toString(), cacheSignature, uploadSurface);
+      }
+      if (auto* srv = gpuTextureCacheManager->textureView(cacheEntry->gpuTextureHandle)) {
+        renderer->drawSpriteTransformed(static_cast<float>(rect.x()),
+                             static_cast<float>(rect.y()),
+                             static_cast<float>(rect.width()),
+                             static_cast<float>(rect.height()),
+                             globalTransform4x4,
+                             srv,
+                             (opacityOverride >= 0.0f ? opacityOverride : layer->opacity()));
+        return true;
+      }
+    }
+
     renderer->drawSpriteTransformed(static_cast<float>(rect.x()),
                          static_cast<float>(rect.y()),
                          static_cast<float>(rect.width()),
-                         static_cast<float>(rect.height()), 
+                         static_cast<float>(rect.height()),
                          globalTransform4x4,
                          surface,
                          (opacityOverride >= 0.0f ? opacityOverride : layer->opacity()));
@@ -300,7 +453,7 @@ void drawLayerForCompositionView(const ArtifactAbstractLayerPtr &layer,
           std::max(1, static_cast<int>(std::ceil(localRect.height()))));
       QImage surface(surfaceSize, QImage::Format_ARGB32_Premultiplied);
       surface.fill(toQColor(color));
-      applySurfaceAndDraw(surface, localRect);
+      applySurfaceAndDraw(surface, localRect, false);
     } else {
       renderer->drawSolidRectTransformed(static_cast<float>(localRect.x()),
                               static_cast<float>(localRect.y()),
@@ -321,7 +474,7 @@ void drawLayerForCompositionView(const ArtifactAbstractLayerPtr &layer,
           std::max(1, static_cast<int>(std::ceil(localRect.height()))));
       QImage surface(surfaceSize, QImage::Format_ARGB32_Premultiplied);
       surface.fill(toQColor(color));
-      applySurfaceAndDraw(surface, localRect);
+      applySurfaceAndDraw(surface, localRect, false);
     } else {
       renderer->drawSolidRectTransformed(static_cast<float>(localRect.x()),
                               static_cast<float>(localRect.y()),
@@ -337,7 +490,7 @@ void drawLayerForCompositionView(const ArtifactAbstractLayerPtr &layer,
           std::dynamic_pointer_cast<ArtifactImageLayer>(layer)) {
     const QImage img = imageLayer->toQImage();
     if (!img.isNull()) {
-      applySurfaceAndDraw(img, localRect);
+      applySurfaceAndDraw(img, localRect, hasRasterizerEffectsOrMasks(layer));
       return;
     }
   }
@@ -345,7 +498,12 @@ void drawLayerForCompositionView(const ArtifactAbstractLayerPtr &layer,
   if (const auto svgLayer =
           std::dynamic_pointer_cast<ArtifactSvgLayer>(layer)) {
     if (svgLayer->isLoaded()) {
-      svgLayer->draw(renderer);
+      const QImage svgImage = svgLayer->toQImage();
+      if (!svgImage.isNull()) {
+        applySurfaceAndDraw(svgImage, localRect, hasRasterizerEffectsOrMasks(layer));
+      } else {
+        svgLayer->draw(renderer);
+      }
       return;
     }
   }
@@ -368,7 +526,7 @@ void drawLayerForCompositionView(const ArtifactAbstractLayerPtr &layer,
         .arg(ip.framePosition()).arg(op.framePosition()).arg(cf);
     }
     if (!frame.isNull()) {
-      applySurfaceAndDraw(frame, localRect);
+      applySurfaceAndDraw(frame, localRect, hasRasterizerEffectsOrMasks(layer));
       return;
     }
   }
@@ -377,7 +535,7 @@ void drawLayerForCompositionView(const ArtifactAbstractLayerPtr &layer,
           std::dynamic_pointer_cast<ArtifactTextLayer>(layer)) {
     const QImage textImage = textLayer->toQImage();
     if (!textImage.isNull()) {
-      applySurfaceAndDraw(textImage, localRect);
+      applySurfaceAndDraw(textImage, localRect, hasRasterizerEffectsOrMasks(layer));
       return;
     }
     return;
@@ -398,6 +556,7 @@ public:
   std::unique_ptr<CompositionRenderer> compositionRenderer_;
   ArtifactPreviewCompositionPipeline previewPipeline_;
   std::unique_ptr<TransformGizmo> gizmo_;
+  std::unique_ptr<Artifact3DGizmo> gizmo3D_;
   std::unique_ptr<ArtifactCore::GpuContext> gpuContext_;
   std::unique_ptr<ArtifactCore::LayerBlendPipeline> blendPipeline_;
   RenderPipeline renderPipeline_;
@@ -426,6 +585,11 @@ public:
   int lastPipelineStateMask_ = -1;
   QSize lastDispatchWarningSize_;
   QByteArray lastFinalPresentKey_;
+  quint64 baseInvalidationSerial_ = 1;
+  quint64 overlayInvalidationSerial_ = 1;
+  FloatColor clearColor_ = {0.12f, 0.13f, 0.18f, 1.0f};
+  QHash<QString, LayerSurfaceCacheEntry> surfaceCache_;
+  std::unique_ptr<GPUTextureCacheManager> gpuTextureCacheManager_;
 
   // Guide positions (composition-space pixels)
   QVector<float> guideVerticals_;   // X positions
@@ -454,6 +618,54 @@ public:
   // Cyclic selection state
   QPointF lastHitPosition_;
   LayerID lastHitLayerId_;
+
+  void syncSelectedLayerOverlayState(const ArtifactCompositionPtr& composition) {
+    ArtifactAbstractLayerPtr layer;
+    if (composition && !selectedLayerId_.isNil()) {
+      layer = composition->layerById(selectedLayerId_);
+    }
+
+    if (gizmo_) {
+      gizmo_->setLayer(layer);
+    }
+
+    if (gizmo3D_ && layer) {
+      syncGizmo3DFromLayer(layer);
+    }
+  }
+
+  void syncGizmo3DFromLayer(const ArtifactAbstractLayerPtr& layer) {
+    if (!gizmo3D_ || !layer) {
+      return;
+    }
+
+    if (layer->is3D()) {
+      const auto& t3 = layer->transform3D();
+      gizmo3D_->setDepthEnabled(true);
+      gizmo3D_->setTransform(layer->position3D(), layer->rotation3D());
+      gizmo3D_->setScale(QVector3D(t3.scaleX(), t3.scaleY(), 1.0f));
+      return;
+    }
+
+    const QRectF localRect = layer->localBounds();
+    const QTransform globalTransform = layer->getGlobalTransform();
+    const QPointF center =
+        localRect.isValid() ? globalTransform.map(localRect.center())
+                            : QPointF(globalTransform.dx(), globalTransform.dy());
+    const float scaleX = std::max<float>(0.01f,
+                                         static_cast<float>(std::hypot(globalTransform.m11(), globalTransform.m12())));
+    const float scaleY = std::max<float>(0.01f,
+                                         static_cast<float>(std::hypot(globalTransform.m21(), globalTransform.m22())));
+    const float rotationZ =
+        std::atan2(globalTransform.m12(), globalTransform.m11()) * (180.0f / 3.14159265358979323846f);
+
+    gizmo3D_->setDepthEnabled(false);
+    gizmo3D_->setTransform(QVector3D(static_cast<float>(center.x()),
+                                     static_cast<float>(center.y()),
+                                     0.0f),
+                           QVector3D(0.0f, 0.0f, rotationZ));
+    gizmo3D_->setScale(QVector3D(scaleX, scaleY, 1.0f));
+  }
 
   void applyCompositionState(const ArtifactCompositionPtr &composition) {
     if (!renderer_ || !composition) {
@@ -494,9 +706,41 @@ public:
     compositionChangedConnection_ = QObject::connect(
         composition.get(), &ArtifactAbstractComposition::changed, owner,
         [this, owner, composition]() {
+          surfaceCache_.clear();
+          if (gpuTextureCacheManager_) {
+            gpuTextureCacheManager_->clear();
+          }
+          invalidateBaseComposite();
           applyCompositionState(composition);
           owner->renderOneFrame();
         });
+  }
+
+  void invalidateLayerSurfaceCache(const ArtifactAbstractLayerPtr& layer) {
+    if (!layer) {
+      return;
+    }
+    const QString ownerId = layer->id().toString();
+    for (auto it = surfaceCache_.begin(); it != surfaceCache_.end(); ) {
+      if (it->ownerId == ownerId) {
+        it = surfaceCache_.erase(it);
+      } else {
+        ++it;
+      }
+    }
+    if (gpuTextureCacheManager_) {
+      gpuTextureCacheManager_->invalidateOwner(ownerId);
+    }
+  }
+
+  void invalidateBaseComposite() {
+    ++baseInvalidationSerial_;
+    lastFinalPresentKey_.clear();
+  }
+
+  void invalidateOverlayComposite() {
+    ++overlayInvalidationSerial_;
+    lastFinalPresentKey_.clear();
   }
 
   void renderOneFrameImpl(CompositionRenderController *owner);
@@ -505,19 +749,13 @@ public:
 CompositionRenderController::CompositionRenderController(QObject *parent)
     : QObject(parent), impl_(new Impl()) {
   impl_->gizmo_ = std::make_unique<TransformGizmo>();
+  impl_->gizmo3D_ = std::make_unique<Artifact3DGizmo>(this);
 
   // Connect to project service to track layer selection
   if (auto *svc = ArtifactProjectService::instance()) {
     connect(svc, &ArtifactProjectService::layerSelected, this,
             [this](const LayerID &id) {
               setSelectedLayerId(id);
-              auto comp = impl_->previewPipeline_.composition();
-              if (comp) {
-                impl_->gizmo_->setLayer(comp->layerById(id));
-              } else {
-                impl_->gizmo_->setLayer(nullptr);
-              }
-              renderOneFrame();
             });
 
     // Always follow the active composition even if upstream wiring misses one
@@ -545,7 +783,7 @@ CompositionRenderController::CompositionRenderController(QObject *parent)
       if (latest != current) {
         setComposition(latest);
       } else {
-        renderOneFrame();
+        impl_->invalidateBaseComposite();
       }
     });
 
@@ -559,9 +797,13 @@ CompositionRenderController::CompositionRenderController(QObject *parent)
               if (auto layer = comp->layerById(layerId)) {
                 impl_->layerChangedConnections_.push_back(
                     connect(layer.get(), &ArtifactAbstractLayer::changed, this,
-                            [this]() { renderOneFrame(); }));
+                            [this, layer]() {
+                              impl_->invalidateLayerSurfaceCache(layer);
+                              impl_->invalidateBaseComposite();
+                              impl_->syncSelectedLayerOverlayState(impl_->previewPipeline_.composition());
+                              renderOneFrame();
+                            }));
               }
-              renderOneFrame();
             });
 
     // Handle resolution changes
@@ -596,6 +838,7 @@ void CompositionRenderController::initialize(QWidget *hostWidget) {
   }
   impl_->compositionRenderer_ =
       std::make_unique<CompositionRenderer>(*impl_->renderer_);
+  impl_->renderer_->setClearColor(impl_->clearColor_);
   impl_->hostWidth_ = static_cast<float>(hostWidget->width());
   impl_->hostHeight_ = static_cast<float>(hostWidget->height());
   impl_->renderer_->setViewportSize((float)hostWidget->width(),
@@ -650,6 +893,15 @@ void CompositionRenderController::initialize(QWidget *hostWidget) {
     qWarning() << "[CompositionView] device() is null - blend pipeline skipped.";
   }
 
+  if (!impl_->gpuTextureCacheManager_) {
+    impl_->gpuTextureCacheManager_ = std::make_unique<GPUTextureCacheManager>();
+  }
+  if (auto device = impl_->renderer_->device()) {
+    impl_->gpuTextureCacheManager_->setDevice(device);
+    impl_->gpuTextureCacheManager_->setBudgetBytes(512ull * 1024ull * 1024ull);
+    impl_->gpuTextureCacheManager_->setMaxEntries(256);
+  }
+
   impl_->initialized_ = true;
 }
 
@@ -660,6 +912,11 @@ void CompositionRenderController::destroy() {
     impl_->renderer_.reset();
   }
   impl_->compositionRenderer_.reset();
+  impl_->surfaceCache_.clear();
+  if (impl_->gpuTextureCacheManager_) {
+    impl_->gpuTextureCacheManager_->clear();
+  }
+  impl_->invalidateBaseComposite();
   impl_->initialized_ = false;
 }
 
@@ -672,6 +929,7 @@ void CompositionRenderController::start() {
     return;
   }
   impl_->running_ = true;
+  impl_->invalidateBaseComposite();
   // Continuous timer removed for performance. 
   // Rendering is now event-driven (frameChanged, propertyChanged, etc.)
   renderOneFrame(); 
@@ -694,6 +952,7 @@ void CompositionRenderController::recreateSwapChain(QWidget *hostWidget) {
   }
   impl_->hostWidget_ = hostWidget;
   impl_->renderer_->recreateSwapChain(hostWidget);
+  impl_->invalidateBaseComposite();
 }
 
 void CompositionRenderController::setViewportSize(float width, float height) {
@@ -703,6 +962,7 @@ void CompositionRenderController::setViewportSize(float width, float height) {
   impl_->hostWidth_ = width;
   impl_->hostHeight_ = height;
   impl_->renderer_->setViewportSize(width, height);
+  impl_->invalidateBaseComposite();
 }
 
 void CompositionRenderController::setPreviewQualityPreset(PreviewQualityPreset preset) {
@@ -724,6 +984,7 @@ void CompositionRenderController::setPreviewQualityPreset(PreviewQualityPreset p
 
   if (impl_->previewDownsample_ != factor) {
     impl_->previewDownsample_ = factor;
+    impl_->invalidateBaseComposite();
     if (impl_->hostWidth_ > 0 && impl_->hostHeight_ > 0) {
       setViewportSize(impl_->hostWidth_, impl_->hostHeight_);
     }
@@ -736,6 +997,7 @@ void CompositionRenderController::panBy(const QPointF &viewportDelta) {
     return;
   }
   impl_->renderer_->panBy((float)viewportDelta.x(), (float)viewportDelta.y());
+  impl_->invalidateBaseComposite();
   renderOneFrame();
 }
 
@@ -746,7 +1008,7 @@ void CompositionRenderController::notifyViewportInteractionActivity() {
     impl_->viewportInteractionTimer_->start(120);
   }
   if (!wasInteracting) {
-    renderOneFrame();
+    impl_->invalidateBaseComposite();
   }
 }
 
@@ -758,6 +1020,7 @@ void CompositionRenderController::finishViewportInteraction() {
   if (impl_->viewportInteractionTimer_) {
     impl_->viewportInteractionTimer_->stop();
   }
+  impl_->invalidateBaseComposite();
   renderOneFrame();
 }
 
@@ -795,6 +1058,11 @@ void CompositionRenderController::setComposition(
     disconnect(impl_->compositionChangedConnection_);
     impl_->compositionChangedConnection_ = {};
   }
+  impl_->surfaceCache_.clear();
+  if (impl_->gpuTextureCacheManager_) {
+    impl_->gpuTextureCacheManager_->clear();
+  }
+  impl_->invalidateBaseComposite();
 
   impl_->previewPipeline_.setComposition(composition);
   impl_->bindCompositionChanged(this, composition);
@@ -812,22 +1080,23 @@ void CompositionRenderController::setComposition(
     // 各レイヤーの変更を監視
     for (auto &layer : composition->allLayer()) {
       if (layer) {
-        impl_->layerChangedConnections_.push_back(
-            connect(layer.get(), &ArtifactAbstractLayer::changed, this,
-                    [this]() { renderOneFrame(); }));
+                impl_->layerChangedConnections_.push_back(
+                    connect(layer.get(), &ArtifactAbstractLayer::changed, this,
+                            [this, layer]() {
+                              impl_->invalidateLayerSurfaceCache(layer);
+                              impl_->invalidateBaseComposite();
+                              impl_->syncSelectedLayerOverlayState(impl_->previewPipeline_.composition());
+                              renderOneFrame();
+                            }));
       }
     }
 
-    if (!impl_->selectedLayerId_.isNil()) {
-      impl_->gizmo_->setLayer(composition->layerById(impl_->selectedLayerId_));
-    } else {
-      impl_->gizmo_->setLayer(nullptr);
-    }
+    impl_->syncSelectedLayerOverlayState(composition);
 
     // コンポジションがセットされた瞬間に1フレーム描画
     renderOneFrame();
   } else if (!composition) {
-    impl_->gizmo_->setLayer(nullptr);
+    impl_->syncSelectedLayerOverlayState(composition);
     renderOneFrame();
   }
 }
@@ -837,17 +1106,27 @@ ArtifactCompositionPtr CompositionRenderController::composition() const {
 }
 
 void CompositionRenderController::setSelectedLayerId(const LayerID &id) {
+  if (impl_->selectedLayerId_ == id) {
+    return;
+  }
   impl_->selectedLayerId_ = id;
+  impl_->invalidateOverlayComposite();
+  impl_->syncSelectedLayerOverlayState(impl_->previewPipeline_.composition());
+  renderOneFrame();
 }
 
 void CompositionRenderController::setClearColor(const FloatColor &color) {
+  impl_->clearColor_ = color;
   if (impl_->renderer_) {
     impl_->renderer_->setClearColor(color);
   }
+  impl_->invalidateBaseComposite();
+  renderOneFrame();
 }
 
 void CompositionRenderController::setShowGrid(bool show) {
   impl_->showGrid_ = show;
+  impl_->invalidateOverlayComposite();
   renderOneFrame();
 }
 bool CompositionRenderController::isShowGrid() const {
@@ -855,6 +1134,7 @@ bool CompositionRenderController::isShowGrid() const {
 }
 void CompositionRenderController::setShowCheckerboard(bool show) {
   impl_->showCheckerboard_ = show;
+  impl_->invalidateBaseComposite();
   renderOneFrame();
 }
 bool CompositionRenderController::isShowCheckerboard() const {
@@ -862,6 +1142,7 @@ bool CompositionRenderController::isShowCheckerboard() const {
 }
 void CompositionRenderController::setShowGuides(bool show) {
   impl_->showGuides_ = show;
+  impl_->invalidateOverlayComposite();
   renderOneFrame();
 }
 bool CompositionRenderController::isShowGuides() const {
@@ -869,6 +1150,7 @@ bool CompositionRenderController::isShowGuides() const {
 }
 void CompositionRenderController::setShowSafeMargins(bool show) {
   impl_->showSafeMargins_ = show;
+  impl_->invalidateOverlayComposite();
   renderOneFrame();
 }
 bool CompositionRenderController::isShowSafeMargins() const {
@@ -880,6 +1162,7 @@ void CompositionRenderController::setGpuBlendEnabled(bool enabled) {
     return;
   }
   impl_->gpuBlendEnabled_ = enabled;
+  impl_->invalidateBaseComposite();
   qWarning() << "[CompositionView] GPU blend user toggle changed"
              << "enabled=" << impl_->gpuBlendEnabled_
              << "envDisable="
@@ -894,26 +1177,31 @@ bool CompositionRenderController::isGpuBlendEnabled() const {
 void CompositionRenderController::resetView() {
   if (impl_->renderer_) {
     impl_->renderer_->resetView();
+    impl_->invalidateBaseComposite();
     renderOneFrame();
   }
 }
 
 void CompositionRenderController::zoomInAt(const QPointF &viewportPos) {
   if (impl_->renderer_) {
+    notifyViewportInteractionActivity();
     const float currentZoom = impl_->renderer_->getZoom();
     const float newZoom = std::clamp(currentZoom * 1.1f, 0.05f, 64.0f);
     impl_->renderer_->zoomAroundViewportPoint(
         {(float)viewportPos.x(), (float)viewportPos.y()}, newZoom);
+    impl_->invalidateBaseComposite();
     renderOneFrame();
   }
 }
 
 void CompositionRenderController::zoomOutAt(const QPointF &viewportPos) {
   if (impl_->renderer_) {
+    notifyViewportInteractionActivity();
     const float currentZoom = impl_->renderer_->getZoom();
     const float newZoom = std::clamp(currentZoom / 1.1f, 0.05f, 64.0f);
     impl_->renderer_->zoomAroundViewportPoint(
         {(float)viewportPos.x(), (float)viewportPos.y()}, newZoom);
+    impl_->invalidateBaseComposite();
     renderOneFrame();
   }
 }
@@ -921,6 +1209,7 @@ void CompositionRenderController::zoomOutAt(const QPointF &viewportPos) {
 void CompositionRenderController::zoomFit() {
   if (impl_->renderer_) {
     impl_->renderer_->fitToViewport();
+    impl_->invalidateBaseComposite();
     renderOneFrame();
   }
 }
@@ -928,6 +1217,7 @@ void CompositionRenderController::zoomFit() {
 void CompositionRenderController::zoom100() {
   if (impl_->renderer_) {
     impl_->renderer_->setZoom(1.0f);
+    impl_->invalidateBaseComposite();
     renderOneFrame();
   }
 }
@@ -968,6 +1258,7 @@ void CompositionRenderController::focusSelectedLayer() {
   impl_->renderer_->setZoom(zoom);
   impl_->renderer_->setPan(viewW * 0.5f - static_cast<float>(center.x()) * zoom,
                            viewH * 0.5f - static_cast<float>(center.y()) * zoom);
+  impl_->invalidateBaseComposite();
   renderOneFrame();
 }
 
@@ -977,12 +1268,42 @@ LayerID CompositionRenderController::layerAtViewportPos(const QPointF& viewportP
   return layer ? layer->id() : LayerID::Nil();
 }
 
+Ray CompositionRenderController::createPickingRay(const QPointF& viewportPos) const {
+  if (!impl_->renderer_) return {};
+  
+  QMatrix4x4 view = impl_->renderer_->getViewMatrix();
+  QMatrix4x4 proj = impl_->renderer_->getProjectionMatrix();
+  QRect viewport(0, 0, (int)impl_->hostWidth_, (int)impl_->hostHeight_);
+  
+  QVector3D nearPos = QVector3D(viewportPos.x(), viewportPos.y(), 0.0f).unproject(view, proj, viewport);
+  QVector3D farPos = QVector3D(viewportPos.x(), viewportPos.y(), 1.0f).unproject(view, proj, viewport);
+  
+  return { nearPos, (farPos - nearPos).normalized() };
+}
+
 void CompositionRenderController::handleMousePress(QMouseEvent *event) {
   if (!event || !impl_->renderer_) return;
 
   const QPointF viewportPos = event->position();
 
-  // Gizmo hit test first
+  // 3D Gizmo hit test (GIZ-2)
+  auto comp = impl_->previewPipeline_.composition();
+  auto selectedLayer = (!impl_->selectedLayerId_.isNil() && comp)
+                           ? comp->layerById(impl_->selectedLayerId_)
+                           : ArtifactAbstractLayerPtr{};
+  if (selectedLayer && impl_->gizmo3D_) {
+      impl_->gizmo3D_->setDepthEnabled(selectedLayer->is3D());
+      Ray ray = createPickingRay(viewportPos);
+      GizmoAxis axis = impl_->gizmo3D_->hitTest(ray, impl_->renderer_->getViewMatrix(), impl_->renderer_->getProjectionMatrix());
+      if (axis != GizmoAxis::None) {
+          impl_->gizmo3D_->beginDrag(axis, ray);
+          impl_->invalidateOverlayComposite();
+          renderOneFrame();
+          return;
+      }
+  }
+
+  // Gizmo hit test first (2D)
   if (impl_->gizmo_) {
     impl_->gizmo_->handleMousePress(viewportPos, impl_->renderer_.get());
     if (impl_->gizmo_->isDragging()) {
@@ -1029,7 +1350,6 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
                                   selectedLayer->setMask(m, mask);
                                   qDebug() << "[PenTool] Closed path" << p;
                                   selectedLayer->changed();
-                                  renderOneFrame();
                                   return;
                               }
                               
@@ -1076,7 +1396,6 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
               
               qDebug() << "[PenTool] Added vertex at local:" << localPos << "layer:" << selectedLayer->id().toString();
               selectedLayer->changed();
-              renderOneFrame();
               return; // Handled
           }
       }
@@ -1162,12 +1481,15 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
         } else {
           ArtifactApplicationManager::instance()->layerSelectionManager()->selectLayer(hitLayer);
         }
-        impl_->selectedLayerId_ = hitLayer->id();
+        setSelectedLayerId(hitLayer->id());
         impl_->gizmo_->setLayer(hitLayer);
+        if (impl_->gizmo3D_) {
+          impl_->syncGizmo3DFromLayer(hitLayer);
+        }
       } else {
         if (!(event->modifiers() & Qt::ShiftModifier)) {
           ArtifactApplicationManager::instance()->layerSelectionManager()->clearSelection();
-          impl_->selectedLayerId_ = LayerID::Nil();
+          setSelectedLayerId(LayerID::Nil());
           impl_->gizmo_->setLayer(nullptr);
         }
       }
@@ -1202,7 +1524,6 @@ void CompositionRenderController::handleMouseMove(const QPointF &viewportPos) {
                   selectedLayer->setMask(impl_->draggingMaskIndex_, mask);
                   
                   selectedLayer->changed();
-                  renderOneFrame();
                   return;
               }
           }
@@ -1211,6 +1532,9 @@ void CompositionRenderController::handleMouseMove(const QPointF &viewportPos) {
 
   // Hover detection for Pen tool
   if (activeTool == ToolType::Pen) {
+      const int prevHoveredMaskIndex = impl_->hoveredMaskIndex_;
+      const int prevHoveredPathIndex = impl_->hoveredPathIndex_;
+      const int prevHoveredVertexIndex = impl_->hoveredVertexIndex_;
       impl_->hoveredMaskIndex_ = -1;
       impl_->hoveredPathIndex_ = -1;
       impl_->hoveredVertexIndex_ = -1;
@@ -1239,7 +1563,6 @@ void CompositionRenderController::handleMouseMove(const QPointF &viewportPos) {
                                   impl_->hoveredMaskIndex_ = m;
                                   impl_->hoveredPathIndex_ = p;
                                   impl_->hoveredVertexIndex_ = v;
-                                  renderOneFrame();
                                   break;
                               }
                           }
@@ -1248,6 +1571,52 @@ void CompositionRenderController::handleMouseMove(const QPointF &viewportPos) {
                       if (impl_->hoveredVertexIndex_ != -1) break;
                   }
               }
+          }
+      }
+      if (prevHoveredMaskIndex != impl_->hoveredMaskIndex_ ||
+          prevHoveredPathIndex != impl_->hoveredPathIndex_ ||
+          prevHoveredVertexIndex != impl_->hoveredVertexIndex_) {
+          impl_->invalidateOverlayComposite();
+          renderOneFrame();
+      }
+  }
+
+  // 3D Gizmo interaction (GIZ-2, GIZ-3)
+  if (impl_->gizmo3D_) {
+      Ray ray = createPickingRay(viewportPos);
+      if (impl_->gizmo3D_->isDragging()) {
+          impl_->gizmo3D_->updateDrag(ray);
+          
+          // Update layer transform from gizmo
+          auto comp = impl_->previewPipeline_.composition();
+          if (comp && !impl_->selectedLayerId_.isNil()) {
+              if (auto layer = comp->layerById(impl_->selectedLayerId_)) {
+                  if (impl_->gizmo3D_->mode() == GizmoMode::Scale) {
+                      auto &t3 = layer->transform3D();
+                      const ArtifactCore::RationalTime time(layer->currentFrame(), 30);
+                      const QVector3D scale = impl_->gizmo3D_->scale();
+                      t3.setScale(time, scale.x(), scale.y());
+                  } else {
+                      const QVector3D currentPos = layer->position3D();
+                      const QVector3D gizmoPos = impl_->gizmo3D_->position();
+                      if (impl_->gizmo3D_->depthEnabled()) {
+                          layer->setPosition3D(gizmoPos);
+                      } else {
+                          layer->setPosition3D(QVector3D(gizmoPos.x(), gizmoPos.y(), currentPos.z()));
+                      }
+                      layer->setRotation3D(impl_->gizmo3D_->rotation());
+                  }
+                  layer->changed();
+              }
+          }
+          return;
+      } else {
+          // Hover highlighting
+          const auto prevHoverAxis = impl_->gizmo3D_->hoverAxis();
+          impl_->gizmo3D_->hitTest(ray, impl_->renderer_->getViewMatrix(), impl_->renderer_->getProjectionMatrix());
+          if (prevHoverAxis != impl_->gizmo3D_->hoverAxis()) {
+              impl_->invalidateOverlayComposite();
+              renderOneFrame();
           }
       }
   }
@@ -1263,6 +1632,12 @@ void CompositionRenderController::handleMouseRelease() {
   impl_->draggingPathIndex_ = -1;
   impl_->draggingVertexIndex_ = -1;
 
+  if (impl_->gizmo3D_) {
+      impl_->gizmo3D_->endDrag();
+      impl_->invalidateOverlayComposite();
+      renderOneFrame();
+  }
+
   if (impl_->gizmo_) {
     impl_->gizmo_->handleMouseRelease();
   }
@@ -1270,6 +1645,10 @@ void CompositionRenderController::handleMouseRelease() {
 
 TransformGizmo *CompositionRenderController::gizmo() const {
   return impl_->gizmo_.get();
+}
+
+Artifact3DGizmo *CompositionRenderController::gizmo3D() const {
+  return impl_->gizmo3D_.get();
 }
 
 Qt::CursorShape CompositionRenderController::cursorShapeForViewportPos(const QPointF& viewportPos) const
@@ -1285,6 +1664,16 @@ void CompositionRenderController::renderOneFrame() {
     qCDebug(compositionViewLog) << "[CompositionView] renderOneFrame skipped: not initialized";
     return;
   }
+  if (!impl_->running_) {
+    qCDebug(compositionViewLog) << "[CompositionView] renderOneFrame skipped: controller stopped";
+    return;
+  }
+  if (auto *host = impl_->hostWidget_.data()) {
+    if (!host->isVisible()) {
+      qCDebug(compositionViewLog) << "[CompositionView] renderOneFrame skipped: host hidden";
+      return;
+    }
+  }
 
   if (impl_->renderInProgress_) {
     impl_->renderRescheduleRequested_ = true;
@@ -1299,8 +1688,13 @@ void CompositionRenderController::renderOneFrame() {
   const int scheduleDelayMs = impl_->viewportInteracting_ ? 16 : 0;
   QTimer::singleShot(scheduleDelayMs, this, [this]() {
     impl_->renderScheduled_ = false;
-    if (!impl_->initialized_ || !impl_->renderer_) {
+    if (!impl_->initialized_ || !impl_->renderer_ || !impl_->running_) {
       return;
+    }
+    if (auto *host = impl_->hostWidget_.data()) {
+      if (!host->isVisible()) {
+        return;
+      }
     }
     if (impl_->renderInProgress_) {
       impl_->renderRescheduleRequested_ = true;
@@ -1317,8 +1711,13 @@ void CompositionRenderController::renderOneFrame() {
 }
 
 void CompositionRenderController::Impl::renderOneFrameImpl(CompositionRenderController *owner) {
-  if (!owner || !initialized_ || !renderer_) {
+  if (!owner || !initialized_ || !renderer_ || !running_) {
     return;
+  }
+  if (auto *host = hostWidget_.data()) {
+    if (!host->isVisible()) {
+      return;
+    }
   }
 
   // 強制的なサイズ同期: ホストウィジェットの物理サイズとスワップチェーンを一致させる
@@ -1356,7 +1755,6 @@ void CompositionRenderController::Impl::renderOneFrameImpl(CompositionRenderCont
   }
   if (!comp) {
     renderer_->clear();
-    renderer_->flush();
     renderer_->present();
     return;
   }
@@ -1375,7 +1773,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(CompositionRenderCont
   const int effectivePreviewDownsample =
       viewportInteracting_
           ? std::max(previewDownsample_, interactivePreviewDownsampleFloor_)
-          : previewDownsample_;
+          : (gpuBlendEnabled_ ? std::max(previewDownsample_, 2) : previewDownsample_);
   const float rcw =
       std::max(1.0f, viewportW / static_cast<float>(effectivePreviewDownsample));
   const float rch =
@@ -1409,18 +1807,85 @@ void CompositionRenderController::Impl::renderOneFrameImpl(CompositionRenderCont
   const int64_t framePos = currentFrame.framePosition();
   const bool frameOutOfRange =
       (framePos < 0 || (effectiveEndFrame > 0 && framePos >= effectiveEndFrame));
-
-  const bool gpuBlendRequested = gpuBlendEnabled_ && blendPipelineReady_;
-
-  // Avoid paying render-pipeline setup cost when GPU blending is disabled.
-  if (gpuBlendRequested) {
-    if (auto device = renderer_->device()) {
-    renderPipeline_.initialize(device, static_cast<Uint32>(rcw), static_cast<Uint32>(rch),
-                               RenderConfig::PipelineFormat);
-    }
+  float panX = 0.0f;
+  float panY = 0.0f;
+  renderer_->getPan(panX, panY);
+  const float zoom = renderer_->getZoom();
+  const QString backgroundKey = QStringLiteral("%1,%2,%3,%4")
+      .arg(comp->backgroundColor().r(), 0, 'f', 4)
+      .arg(comp->backgroundColor().g(), 0, 'f', 4)
+      .arg(comp->backgroundColor().b(), 0, 'f', 4)
+      .arg(comp->backgroundColor().a(), 0, 'f', 4);
+  const QByteArray baseRenderKey =
+      QByteArray("comp=") + comp->id().toString().toUtf8() +
+      "|baseSerial=" + QByteArray::number(baseInvalidationSerial_) +
+      "|frame=" + QByteArray::number(framePos) +
+      "|size=" + QByteArray::number(static_cast<int>(viewportW)) + "x" +
+      QByteArray::number(static_cast<int>(viewportH)) +
+      "|downsample=" + QByteArray::number(effectivePreviewDownsample) +
+      "|zoom=" + QByteArray::number(zoom, 'f', 4) +
+      "|pan=" + QByteArray::number(panX, 'f', 2) + "," +
+      QByteArray::number(panY, 'f', 2) +
+      "|clear=" + backgroundKey.toUtf8() +
+      "|checker=" + QByteArray::number(showCheckerboard_ ? 1 : 0) +
+      "|gpuBlend=" + QByteArray::number(gpuBlendEnabled_ ? 1 : 0);
+  const QByteArray renderKey =
+      baseRenderKey +
+      "|overlaySerial=" + QByteArray::number(overlayInvalidationSerial_) +
+      "|selected=" + selectedLayerId_.toString().toUtf8() +
+      "|gizmoMode=" + QByteArray::number(
+          gizmo3D_ ? static_cast<int>(gizmo3D_->mode()) : -1) +
+      "|gizmoHover=" + QByteArray::number(
+          gizmo3D_ ? static_cast<int>(gizmo3D_->hoverAxis()) : -1) +
+      "|gizmoActive=" + QByteArray::number(
+          gizmo3D_ ? static_cast<int>(gizmo3D_->activeAxis()) : -1) +
+      "|flags=" + QByteArray::number(showGrid_ ? 1 : 0) +
+      QByteArray::number(showGuides_ ? 1 : 0) +
+      QByteArray::number(showSafeMargins_ ? 1 : 0) +
+      QByteArray::number(viewportInteracting_ ? 1 : 0);
+  if (!lastFinalPresentKey_.isEmpty() && lastFinalPresentKey_ == renderKey) {
+    qCDebug(compositionViewLog)
+        << "[CompositionView] skipped redundant composite frame"
+        << "frame=" << framePos
+        << "zoom=" << zoom
+        << "pan=" << QPointF(panX, panY);
+    return;
   }
 
-  const bool pipelineEnabled = gpuBlendRequested && renderPipeline_.ready();
+  {
+
+  const bool gpuBlendRequested = gpuBlendEnabled_ && blendPipelineReady_;
+  const bool hasGpuBlendJustification =
+      std::any_of(layers.begin(), layers.end(),
+                  [&](const ArtifactAbstractLayerPtr &layer) {
+                    if (!layer || !layer->isVisible() || !layer->isActiveAt(currentFrame)) {
+                      return false;
+                    }
+                    if (layer->layerBlendType() != ArtifactCore::LAYER_BLEND_TYPE::BLEND_NORMAL) {
+                      return true;
+                    }
+                    if (layer->maskCount() > 0) {
+                      return true;
+                    }
+                    return layerHasCpuRasterizerWork(layer);
+                  });
+  const bool gpuBlendPathRequested = gpuBlendRequested && hasGpuBlendJustification;
+
+  // Avoid paying render-pipeline setup cost when GPU blending is disabled.
+  if (gpuBlendPathRequested) {
+    if (auto device = renderer_->device()) {
+      renderPipeline_.initialize(device, static_cast<Uint32>(rcw),
+                                 static_cast<Uint32>(rch),
+                                 RenderConfig::PipelineFormat);
+    }
+  } else if (gpuBlendRequested && lastPipelineStateMask_ != -1) {
+    qCDebug(compositionViewLog)
+        << "[CompositionView] GPU blend bypassed for simple layers"
+        << "layers=" << layers.size()
+        << "frameOutOfRange=" << frameOutOfRange;
+  }
+
+  const bool pipelineEnabled = gpuBlendPathRequested && renderPipeline_.ready();
   const int pipelineStateMask =
       (gpuBlendEnabled_ ? 0x1 : 0x0) |
       (renderPipeline_.ready() ? 0x2 : 0x0) |
@@ -1576,7 +2041,9 @@ void CompositionRenderController::Impl::renderOneFrameImpl(CompositionRenderCont
         renderer_->clear();
         QString* dbgOut = QLoggingCategory::defaultCategory()->isDebugEnabled()
                           ? &lastVideoDebug_ : nullptr;
-        drawLayerForCompositionView(layer, renderer_.get(), 1.0f, dbgOut);
+        drawLayerForCompositionView(layer, renderer_.get(), 1.0f, dbgOut,
+                                    &surfaceCache_, gpuTextureCacheManager_.get(),
+                                    currentFrame.framePosition());
         renderer_->setOverrideRTV(nullptr);
 
         // CS 実行前に RTV を解除
@@ -1624,7 +2091,6 @@ void CompositionRenderController::Impl::renderOneFrameImpl(CompositionRenderCont
     renderer_->setZoom(origZoom);
     renderer_->setPan(origPanX, origPanY);
     layerPassMs = markPhaseMs();
-
   } else {
     // === Fallback path (GPU パイプラインなし) ===
     const FloatColor bgColor = comp->backgroundColor();
@@ -1658,7 +2124,9 @@ void CompositionRenderController::Impl::renderOneFrameImpl(CompositionRenderCont
         const float opacity = layer->opacity();
         QString* dbgOut = QLoggingCategory::defaultCategory()->isDebugEnabled()
                           ? &lastVideoDebug_ : nullptr;
-        drawLayerForCompositionView(layer, renderer_.get(), opacity, dbgOut);
+        drawLayerForCompositionView(layer, renderer_.get(), opacity, dbgOut,
+                                    &surfaceCache_, gpuTextureCacheManager_.get(),
+                                    currentFrame.framePosition());
       }
     }
     layerPassMs = markPhaseMs();
@@ -1668,20 +2136,37 @@ void CompositionRenderController::Impl::renderOneFrameImpl(CompositionRenderCont
     auto selectedLayer = (!selectedLayerId_.isNil() && comp)
                              ? comp->layerById(selectedLayerId_)
                              : ArtifactAbstractLayerPtr{};
-    qCDebug(compositionViewLog) << "[CompositionView][Gizmo]"
-                                << "selectedLayerId=" << selectedLayerId_.toString()
-                                << "hasLayer=" << static_cast<bool>(selectedLayer)
-                                << "visible=" << (selectedLayer ? selectedLayer->isVisible() : false)
-                                << "active=" << (selectedLayer ? selectedLayer->isActiveAt(currentFrame) : false)
-                                << "frame=" << currentFrame.framePosition();
-    if (selectedLayer && selectedLayer->isVisible() &&
-        selectedLayer->isActiveAt(currentFrame)) {
+    if (selectedLayer && selectedLayer->isVisible()) {
       gizmo_->setLayer(selectedLayer);
       gizmo_->draw(renderer_.get());
 
+      if (gizmo3D_) {
+          syncGizmo3DFromLayer(selectedLayer);
+          const float viewportW = hostWidth_ > 0.0f ? hostWidth_ : lastCanvasWidth_;
+          const float viewportH = hostHeight_ > 0.0f ? hostHeight_ : lastCanvasHeight_;
+          if (viewportW > 0.0f && viewportH > 0.0f) {
+              float panX = 0.0f;
+              float panY = 0.0f;
+              float zoom = 1.0f;
+              renderer_->getPan(panX, panY);
+              zoom = std::max(0.001f, renderer_->getZoom());
+
+              QMatrix4x4 view;
+              view.translate(panX, panY, 0.0f);
+              view.scale(zoom, zoom, 1.0f);
+
+              QMatrix4x4 proj;
+              proj.ortho(0.0f, viewportW, viewportH, 0.0f, -1000.0f, 1000.0f);
+
+              gizmo3D_->draw(renderer_.get(), view, proj);
+          } else {
+              gizmo3D_->draw(renderer_.get(), renderer_->getViewMatrix(), renderer_->getProjectionMatrix());
+          }
+      }
+
       // Mask Overlay Drawing
       const int maskCount = selectedLayer->maskCount();
-      if (maskCount > 0 && renderer_) {
+      if (maskCount > 0 && renderer_ && selectedLayer->isActiveAt(currentFrame)) {
           const QTransform globalTransform = selectedLayer->getGlobalTransform();
           const FloatColor maskPointColor = {1.0f, 1.0f, 0.0f, 1.0f}; // Yellow
           const FloatColor maskLineColor = {0.0f, 1.0f, 1.0f, 0.8f}; // Cyan
@@ -1737,12 +2222,6 @@ void CompositionRenderController::Impl::renderOneFrameImpl(CompositionRenderCont
           }
       }
     } else {
-      qCDebug(compositionViewLog) << "[CompositionView][Gizmo] skip controller draw"
-                                  << "reason="
-                                  << (!selectedLayer ? "missing-layer"
-                                      : (!selectedLayer->isVisible() ? "invisible"
-                                         : (!selectedLayer->isActiveAt(currentFrame) ? "inactive-frame"
-                                            : "unknown")));
       gizmo_->setLayer(nullptr);
     }
   }
@@ -1803,8 +2282,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(CompositionRenderCont
   }
   overlayMs = markPhaseMs();
 
-  renderer_->flush();
-  flushMs = markPhaseMs();
+  flushMs = 0;
 
   if (!lastVideoDebug_.isEmpty() && lastVideoDebug_ != lastEmittedVideoDebug_) {
     lastEmittedVideoDebug_ = lastVideoDebug_;
@@ -1813,6 +2291,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(CompositionRenderCont
 
   renderer_->present();
   presentMs = markPhaseMs();
+  lastFinalPresentKey_ = renderKey;
 
   ++renderFrameCounter_;
   const qint64 frameMs = frameTimer.elapsed();
@@ -1860,6 +2339,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(CompositionRenderCont
                                 << "flushMs=" << flushMs
                                 << "presentMs=" << presentMs;
   }
+}
 }
 
 } // namespace Artifact

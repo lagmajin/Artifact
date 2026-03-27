@@ -110,45 +110,29 @@ void TransformGizmo::setLayer(ArtifactAbstractLayerPtr layer) {
 }
 
 static constexpr double HANDLE_SIZE = 8.0;
-static constexpr double ROTATE_HANDLE_DISTANCE = 22.0;
-static constexpr double GIZMO_OFFSET = 4.0;
+static constexpr double ROTATE_HANDLE_DISTANCE = 28.0;
+static constexpr double GIZMO_OFFSET = 8.0;
 static constexpr int TRANSFORM_KEYFRAME_SCALE = 24;
 
 void TransformGizmo::draw(ArtifactIRenderer* renderer) {
 if (!layer_ || !renderer) {
- qCDebug(transformGizmoLog) << "[Gizmo] skip draw: missing layer or renderer"
-                            << "hasLayer=" << static_cast<bool>(layer_)
-                            << "hasRenderer=" << static_cast<bool>(renderer);
  return;
 }
 
 const float zoom = renderer->getZoom();
 const float invZoom = zoom > 0.0001f ? 1.0f / zoom : 1.0f;
-const float lineThickness = std::clamp(1.25f * invZoom, 1.0f, 4.0f);
-const float handleSize = std::clamp(HANDLE_SIZE * invZoom, 5.0f, 12.0f);
+const float lineThickness = std::clamp(2.0f * invZoom, 1.5f, 5.0f);
+const float handleSize = std::clamp(HANDLE_SIZE * invZoom, 6.0f, 13.0f);
 
 QRectF localRect = layer_->localBounds();
 if (!localRect.isValid() || localRect.width() <= 0.0 || localRect.height() <= 0.0) {
- qCDebug(transformGizmoLog) << "[Gizmo] skip draw: invalid local bounds"
-                            << "id=" << layer_->id().toString()
-                            << "rect=" << localRect;
  return;
 }
 
 // Apply visual offset
 localRect.adjust(-GIZMO_OFFSET, -GIZMO_OFFSET, GIZMO_OFFSET, GIZMO_OFFSET);
 
-const QTransform globalTransform = layer_->getGlobalTransform(); 
- qCDebug(transformGizmoLog) << "[Gizmo] draw"
-                            << "id=" << layer_->id().toString()
-                            << "zoom=" << zoom
-                            << "localRect=" << localRect
-                            << "m11=" << globalTransform.m11()
-                            << "m12=" << globalTransform.m12()
-                            << "m21=" << globalTransform.m21()
-                            << "m22=" << globalTransform.m22()
-                            << "dx=" << globalTransform.dx()
-                            << "dy=" << globalTransform.dy();
+const QTransform globalTransform = layer_->getGlobalTransform();
  FloatColor gizmoColor{0.0f, 0.5f, 1.0f, 1.0f}; // Cyan-ish blue
  if (isDragging_) gizmoColor = {1.0f, 1.0f, 0.0f, 1.0f}; // Yellow while dragging
 

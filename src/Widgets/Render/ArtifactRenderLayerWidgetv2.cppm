@@ -45,6 +45,11 @@ W_OBJECT_IMPL(ArtifactLayerEditorWidgetV2)
 
 namespace {
 Q_LOGGING_CATEGORY(layerViewPerfLog, "artifact.layerviewperf")
+enum class ViewSurfaceMode {
+ Final,
+ Source,
+ BeforeAfter
+};
 }
 
  class ArtifactLayerEditorWidgetV2::Impl {
@@ -64,6 +69,7 @@ Q_LOGGING_CATEGORY(layerViewPerfLog, "artifact.layerviewperf")
   QWidget* widget_;
   //bool isPanning_ = false;
   bool isPlay_ = false;
+  bool needsRender_ = true;
   std::atomic_bool running_{ false };
   QTimer* renderTimer_ = nullptr;
   std::mutex resizeMutex_;
@@ -73,18 +79,22 @@ Q_LOGGING_CATEGORY(layerViewPerfLog, "artifact.layerviewperf")
   
  bool released = true;
  bool m_initialized;
- RefCntAutoPtr<ITexture> m_layerRT;
- RefCntAutoPtr<IFence> m_layer_fence;
+  RefCntAutoPtr<ITexture> m_layerRT;
+  RefCntAutoPtr<IFence> m_layer_fence;
   LayerID targetLayerId_{};
   FloatColor targetLayerTint_{ 1.0f, 0.5f, 0.5f, 1.0f };
   FloatColor clearColor_{ 0.10f, 0.10f, 0.10f, 1.0f };
+  ViewSurfaceMode viewSurfaceMode_ = ViewSurfaceMode::Final;
+  QImage lastRenderedFrame_;
   
   void defaultHandleKeyPressEvent(QKeyEvent* event);
   bool isSolidLayerForPreview(const ArtifactAbstractLayerPtr& layer);
   bool tryGetSolidPreviewColor(const ArtifactAbstractLayerPtr& layer, FloatColor& outColor);
+  void updateDebugText();
   void defaultHandleKeyReleaseEvent(QKeyEvent* event);
   void recreateSwapChain(QWidget* window);
   void recreateSwapChainInternal(QWidget* window);
+  void requestRender();
   
   void startRenderLoop();
   void stopRenderLoop();
@@ -118,6 +128,7 @@ Q_LOGGING_CATEGORY(layerViewPerfLog, "artifact.layerviewperf")
 
   compositionRenderer_ = std::make_unique<CompositionRenderer>(*renderer_);
   initialized_ = true;
+  needsRender_ = true;
  }
 
  void ArtifactLayerEditorWidgetV2::Impl::initializeSwapChain(QWidget* window)
@@ -150,46 +161,55 @@ Q_LOGGING_CATEGORY(layerViewPerfLog, "artifact.layerviewperf")
    case Qt::Key_F:
     renderer_->fitToViewport();
     zoomLevel_ = renderer_->getZoom();
-   event->accept();
-   return;
-  case Qt::Key_R:
-   renderer_->resetView();
-   zoomLevel_ = 1.0f;
-   event->accept();
-   return;
-  case Qt::Key_1:
-   zoomLevel_ = 1.0f;
-   renderer_->zoomAroundViewportPoint({ static_cast<float>(center.x()), static_cast<float>(center.y()) }, zoomLevel_);
-   event->accept();
-   return;
-  case Qt::Key_Plus:
-  case Qt::Key_Equal:
-   zoomLevel_ = std::clamp(zoomLevel_ * 1.1f, 0.05f, 32.0f);
-   renderer_->zoomAroundViewportPoint({ static_cast<float>(center.x()), static_cast<float>(center.y()) }, zoomLevel_);
-   event->accept();
-   return;
-  case Qt::Key_Minus:
-  case Qt::Key_Underscore:
-   zoomLevel_ = std::clamp(zoomLevel_ / 1.1f, 0.05f, 32.0f);
-   renderer_->zoomAroundViewportPoint({ static_cast<float>(center.x()), static_cast<float>(center.y()) }, zoomLevel_);
-   event->accept();
-   return;
-  case Qt::Key_Left:
-   renderer_->panBy(24.0f, 0.0f);
-   event->accept();
-   return;
-  case Qt::Key_Right:
-   renderer_->panBy(-24.0f, 0.0f);
-   event->accept();
-   return;
-  case Qt::Key_Up:
-   renderer_->panBy(0.0f, 24.0f);
-   event->accept();
-   return;
-  case Qt::Key_Down:
-   renderer_->panBy(0.0f, -24.0f);
-   event->accept();
-   return;
+    widget_->update();
+    event->accept();
+    return;
+   case Qt::Key_R:
+    renderer_->resetView();
+    zoomLevel_ = 1.0f;
+    widget_->update();
+    event->accept();
+    return;
+   case Qt::Key_1:
+    zoomLevel_ = 1.0f;
+    renderer_->zoomAroundViewportPoint({ static_cast<float>(center.x()), static_cast<float>(center.y()) }, zoomLevel_);
+    widget_->update();
+    event->accept();
+    return;
+   case Qt::Key_Plus:
+   case Qt::Key_Equal:
+    zoomLevel_ = std::clamp(zoomLevel_ * 1.1f, 0.05f, 32.0f);
+    renderer_->zoomAroundViewportPoint({ static_cast<float>(center.x()), static_cast<float>(center.y()) }, zoomLevel_);
+    widget_->update();
+    event->accept();
+    return;
+   case Qt::Key_Minus:
+   case Qt::Key_Underscore:
+    zoomLevel_ = std::clamp(zoomLevel_ / 1.1f, 0.05f, 32.0f);
+    renderer_->zoomAroundViewportPoint({ static_cast<float>(center.x()), static_cast<float>(center.y()) }, zoomLevel_);
+    widget_->update();
+    event->accept();
+    return;
+   case Qt::Key_Left:
+    renderer_->panBy(24.0f, 0.0f);
+    widget_->update();
+    event->accept();
+    return;
+   case Qt::Key_Right:
+    renderer_->panBy(-24.0f, 0.0f);
+    widget_->update();
+    event->accept();
+    return;
+   case Qt::Key_Up:
+    renderer_->panBy(0.0f, 24.0f);
+    widget_->update();
+    event->accept();
+    return;
+   case Qt::Key_Down:
+    renderer_->panBy(0.0f, -24.0f);
+    widget_->update();
+    event->accept();
+    return;
   default:
    break;
   }
@@ -241,6 +261,10 @@ Q_LOGGING_CATEGORY(layerViewPerfLog, "artifact.layerviewperf")
    }
   }
   return false;
+ }
+
+ void ArtifactLayerEditorWidgetV2::Impl::updateDebugText()
+ {
  }
 
  void ArtifactLayerEditorWidgetV2::Impl::recreateSwapChainInternal(QWidget* window)
@@ -319,6 +343,19 @@ Q_LOGGING_CATEGORY(layerViewPerfLog, "artifact.layerviewperf")
   }
   renderer_->flush();
   renderer_->present();
+  if (viewSurfaceMode_ == ViewSurfaceMode::Source || viewSurfaceMode_ == ViewSurfaceMode::BeforeAfter) {
+   lastRenderedFrame_ = renderer_->readbackToImage();
+  } else {
+   lastRenderedFrame_ = QImage();
+  }
+  updateDebugText();
+  widget_->update();
+  needsRender_ = false;
+ }
+
+void ArtifactLayerEditorWidgetV2::Impl::requestRender()
+{
+ needsRender_ = true;
 }
 
 void ArtifactLayerEditorWidgetV2::Impl::recreateSwapChain(QWidget* window)
@@ -363,6 +400,9 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
     return;
    }
    if (!isVisible() || width() <= 0 || height() <= 0) {
+    return;
+   }
+   if (!impl_->isPlay_ && !impl_->needsRender_) {
     return;
    }
    std::lock_guard<std::mutex> lock(impl_->resizeMutex_);
@@ -412,6 +452,7 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
  {
   std::lock_guard<std::mutex> lock(impl_->resizeMutex_);
   impl_->targetLayerId_ = LayerID();
+  impl_->requestRender();
   if (impl_->renderer_) {
    impl_->renderer_->clear();
    impl_->renderer_->flush();
@@ -429,6 +470,7 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
  void ArtifactLayerEditorWidgetV2::keyPressEvent(QKeyEvent* event)
  {
   impl_->defaultHandleKeyPressEvent(event);
+  impl_->requestRender();
  }
 
  void ArtifactLayerEditorWidgetV2::keyReleaseEvent(QKeyEvent* event)
@@ -438,12 +480,13 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
 
  void ArtifactLayerEditorWidgetV2::mousePressEvent(QMouseEvent* event)
  {
- if (event->button() == Qt::MiddleButton ||
+  if (event->button() == Qt::MiddleButton ||
    (event->button() == Qt::RightButton && event->modifiers() & Qt::AltModifier))
   {
    impl_->isPanning_ = true;
    impl_->lastMousePos_ = event->position(); // 前回位置を保存
    setCursor(Qt::ClosedHandCursor);
+   impl_->requestRender();
    event->accept();
    return;
   }
@@ -457,6 +500,7 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
       event->button() == Qt::RightButton) {
    impl_->isPanning_ = false;
    unsetCursor();
+   impl_->requestRender();
    event->accept();
    return;
   }
@@ -475,6 +519,7 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
    const QPointF delta = currentPos - impl_->lastMousePos_;
    impl_->lastMousePos_ = currentPos;
    panBy(delta);
+   impl_->requestRender();
    event->accept();
    return;
   }
@@ -499,6 +544,7 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
   const float zoomFactor = std::pow(1.1f, steps);
   impl_->zoomLevel_ = std::clamp(currentZoom * zoomFactor, 0.05f, 32.0f);
   zoomAroundPoint(event->position(), impl_->zoomLevel_);
+  impl_->requestRender();
   event->accept();
  }
 
@@ -509,6 +555,7 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
    return;
   }
   impl_->recreateSwapChain(this);
+  impl_->requestRender();
   update();
  }
 
@@ -525,13 +572,19 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
                             << "visible=" << isVisible()
                             << "size=" << size();
   if (!impl_->initialized_) {
-   impl_->initialize(this);
-   if (impl_->initialized_) {
-    impl_->initializeSwapChain(this);
-    impl_->renderer_->fitToViewport();
-    impl_->zoomLevel_ = impl_->renderer_->getZoom();
-    impl_->startRenderLoop();
-   }
+   QTimer::singleShot(0, this, [this]() {
+    if (!impl_ || impl_->initialized_ || !isVisible()) {
+     return;
+    }
+    impl_->initialize(this);
+    if (impl_->initialized_) {
+     impl_->initializeSwapChain(this);
+     impl_->renderer_->fitToViewport();
+     impl_->zoomLevel_ = impl_->renderer_->getZoom();
+     impl_->requestRender();
+     impl_->startRenderLoop();
+    }
+   });
   }
   if (impl_->initialized_ && !impl_->targetLayerId_.isNil()) {
    setTargetLayer(impl_->targetLayerId_);
@@ -565,12 +618,14 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
  {
   std::lock_guard<std::mutex> lock(impl_->resizeMutex_);
   impl_->clearColor_ = color;
+  impl_->requestRender();
  }
 
 void ArtifactLayerEditorWidgetV2::setTargetLayer(const LayerID& id)
 {
  std::lock_guard<std::mutex> lock(impl_->resizeMutex_);
  impl_->targetLayerId_ = id;
+ impl_->requestRender();
  const uint seed = qHash(id.toString());
  const auto channel = [seed](int shift) -> float {
   const int value = static_cast<int>((seed >> shift) & 0xFFu);
@@ -594,37 +649,49 @@ void ArtifactLayerEditorWidgetV2::setTargetLayer(const LayerID& id)
      }
       impl_->renderer_->fitToViewport();
       impl_->zoomLevel_ = impl_->renderer_->getZoom();
+      impl_->requestRender();
       return;
     }
    }
   }
   impl_->renderer_->resetView();
+  impl_->updateDebugText();
+  impl_->requestRender();
+  update();
+  }
  }
-}
 
  void ArtifactLayerEditorWidgetV2::resetView()
  {
   impl_->zoomLevel_ = 1.0f;
-  if (impl_->renderer_) impl_->renderer_->resetView();
+  if (impl_->renderer_) {
+   impl_->renderer_->resetView();
+   impl_->requestRender();
+  }
  }
  
-  void ArtifactLayerEditorWidgetV2::fitToViewport()
+ void ArtifactLayerEditorWidgetV2::fitToViewport()
   {
    if (impl_->renderer_) {
     impl_->renderer_->fitToViewport();
     impl_->zoomLevel_ = impl_->renderer_->getZoom();
+    impl_->requestRender();
    }
   }
  
  void ArtifactLayerEditorWidgetV2::panBy(const QPointF& delta)
  {
-  if (impl_->renderer_) impl_->renderer_->panBy((float)delta.x(), (float)delta.y());
+  if (impl_->renderer_) {
+   impl_->renderer_->panBy((float)delta.x(), (float)delta.y());
+   impl_->requestRender();
+  }
  }
 
  void ArtifactLayerEditorWidgetV2::zoomAroundPoint(const QPointF& viewportPos, float newZoom)
  {
   if (impl_->renderer_) {
       impl_->renderer_->zoomAroundViewportPoint({(float)viewportPos.x(), (float)viewportPos.y()}, newZoom);
+      impl_->requestRender();
   }
  }
 
@@ -664,12 +731,14 @@ void ArtifactLayerEditorWidgetV2::setTargetLayer(const LayerID& id)
    return;
   }
   impl_->isPlay_ = true;
+  impl_->requestRender();
   impl_->startRenderLoop();
  }
 
  void ArtifactLayerEditorWidgetV2::stop()
  {
   impl_->isPlay_ = false;
+  impl_->requestRender();
   impl_->stopRenderLoop();
  }
 

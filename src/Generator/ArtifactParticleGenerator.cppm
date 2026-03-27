@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <QObject>
 #include <QVector2D>
 #include <QVector3D>
@@ -785,7 +785,7 @@ void ParticleSystem::reset()
 void ParticleSystem::goToFrame(int64_t frame, double fps)
 {
     reset();
-    if (frame <= 0 || fps <= 0.0) return;
+    if (frame < 0 || fps <= 0.0) return;
 
     // 固定ステップでシミュレートしてターゲット時間に到達させる
     const double targetTime = static_cast<double>(frame) / fps;

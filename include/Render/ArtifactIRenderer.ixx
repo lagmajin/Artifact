@@ -38,6 +38,14 @@ export namespace Detail {
   float2() = default;
   float2(float x_, float y_) : x(x_), y(y_) {}
  };
+
+ export struct float3 {
+  float x = 0.0f;
+  float y = 0.0f;
+  float z = 0.0f;
+  float3() = default;
+  float3(float x_, float y_, float z_) : x(x_), y(y_), z(z_) {}
+ };
 }
 
 export class ArtifactIRenderer {
@@ -78,6 +86,12 @@ public:
  void setViewMatrix(const QMatrix4x4& view);
  void setProjectionMatrix(const QMatrix4x4& proj);
  void setUseExternalMatrices(bool use);
+ void setGizmoCameraMatrices(const QMatrix4x4& view, const QMatrix4x4& proj);
+ void resetGizmoCameraMatrices();
+ void set3DCameraMatrices(const QMatrix4x4& view, const QMatrix4x4& proj);
+ void reset3DCameraMatrices();
+ QMatrix4x4 getViewMatrix() const;
+ QMatrix4x4 getProjectionMatrix() const;
  void zoomAroundViewportPoint(Detail::float2 viewportPos, float newZoom);
 
  Detail::float2 canvasToViewport(Detail::float2 pos) const;
@@ -98,6 +112,7 @@ public:
  void drawSpriteTransformed(float x, float y, float w, float h, const QTransform& transform, const QImage& image, float opacity = 1.0f);
  void drawSpriteRotated(float x, float y, float w, float h, float angleDegrees, const QImage& image, float opacity = 1.0f);
  void drawSpriteTransformed(float x, float y, float w, float h, const QMatrix4x4& transform, const QImage& image, float opacity = 1.0f);
+ void drawSpriteTransformed(float x, float y, float w, float h, const QMatrix4x4& transform, Diligent::ITextureView* texture, float opacity = 1.0f);
  void drawRectLocal(float x, float y, float w, float h, const FloatColor& color, float opacity = 1.0f);
  void drawSolidRectTransformed(float x, float y, float w, float h, const QTransform& transform, const FloatColor& color, float opacity = 1.0f);
  void drawSolidRectTransformed(float x, float y, float w, float h, const QMatrix4x4& transform, const FloatColor& color, float opacity = 1.0f);
@@ -111,6 +126,15 @@ public:
  // Gizmo specialized APIs
  void drawCircle(float x, float y, float radius, const FloatColor& color, float thickness = 1.0f, bool fill = false);
  void drawCrosshair(float x, float y, float size, const FloatColor& color);
+
+ // 3D Gizmo APIs
+ // These are viewport-manipulator primitives, not literal 3D mesh lines.
+ void drawGizmoLine(Detail::float3 start, Detail::float3 end, const FloatColor& color, float thickness = 1.0f);
+ void drawGizmoArrow(Detail::float3 start, Detail::float3 end, const FloatColor& color, float size = 1.0f);
+ void drawGizmoRing(Detail::float3 center, Detail::float3 normal, float radius, const FloatColor& color, float thickness = 1.0f);
+ void draw3DLine(Detail::float3 start, Detail::float3 end, const FloatColor& color, float thickness = 1.0f);
+ void draw3DArrow(Detail::float3 start, Detail::float3 end, const FloatColor& color, float size = 1.0f);
+ void draw3DCircle(Detail::float3 center, Detail::float3 normal, float radius, const FloatColor& color, float thickness = 1.0f);
 
  void drawCheckerboard(float x, float y, float w, float h, float tileSize, const FloatColor& c1, const FloatColor& c2);
  void drawGrid(float x, float y, float w, float h, float spacing, float thickness, const FloatColor& color);

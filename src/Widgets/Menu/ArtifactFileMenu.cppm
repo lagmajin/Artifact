@@ -99,8 +99,9 @@ bool confirmPotentiallyDestructiveAction(QWidget* parent, const QString& title, 
     box.setWindowTitle(title);
     box.setIcon(QMessageBox::Warning);
     box.setText(text);
-    box.setMinimumWidth(560);
+    box.setMinimumWidth(760);
     box.setTextInteractionFlags(Qt::TextSelectableByMouse);
+    box.setStyleSheet(QStringLiteral("QLabel { min-width: 680px; }"));
 
     auto* yesButton = box.addButton(QStringLiteral("はい"), QMessageBox::AcceptRole);
     auto* noButton = box.addButton(QStringLiteral("いいえ"), QMessageBox::RejectRole);

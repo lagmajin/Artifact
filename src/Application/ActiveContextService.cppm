@@ -43,6 +43,7 @@ module Artifact.Service.ActiveContext;
 
 import Artifact.Application.Manager;
 import Artifact.Layers.Selection.Manager;
+import Artifact.Service.Playback;
 
 namespace Artifact
 {
@@ -72,6 +73,9 @@ namespace Artifact
  void ArtifactActiveContextService::setActiveComposition(ArtifactCompositionPtr comp) {
   if (impl_->activeComp_ == comp) return;
   impl_->activeComp_ = comp;
+  if (auto* playback = ArtifactPlaybackService::instance()) {
+   playback->setCurrentComposition(comp);
+  }
   activeCompositionChanged(comp);
  }
 
@@ -82,46 +86,55 @@ namespace Artifact
  // --- Playback Actions ---
  void ArtifactActiveContextService::play() {
   if (impl_->handler_) QMetaObject::invokeMethod(impl_->handler_, "play");
+  else if (auto* playback = ArtifactPlaybackService::instance()) playback->play();
   else if (impl_->activeComp_) impl_->activeComp_->play();
  }
 
  void ArtifactActiveContextService::pause() {
   if (impl_->handler_) QMetaObject::invokeMethod(impl_->handler_, "pause");
+  else if (auto* playback = ArtifactPlaybackService::instance()) playback->pause();
   else if (impl_->activeComp_) impl_->activeComp_->pause();
  }
 
  void ArtifactActiveContextService::togglePlayPause() {
   if (impl_->handler_) QMetaObject::invokeMethod(impl_->handler_, "togglePlayPause");
+  else if (auto* playback = ArtifactPlaybackService::instance()) playback->togglePlayPause();
   else if (impl_->activeComp_) impl_->activeComp_->togglePlayPause();
  }
 
  void ArtifactActiveContextService::stop() {
   if (impl_->handler_) QMetaObject::invokeMethod(impl_->handler_, "stop");
+  else if (auto* playback = ArtifactPlaybackService::instance()) playback->stop();
   else if (impl_->activeComp_) impl_->activeComp_->stop();
  }
 
  void ArtifactActiveContextService::nextFrame() {
   if (impl_->handler_) QMetaObject::invokeMethod(impl_->handler_, "nextFrame");
+  else if (auto* playback = ArtifactPlaybackService::instance()) playback->goToNextFrame();
   else if (impl_->activeComp_) impl_->activeComp_->goToFrame(impl_->activeComp_->framePosition().framePosition() + 1);
  }
 
  void ArtifactActiveContextService::prevFrame() {
   if (impl_->handler_) QMetaObject::invokeMethod(impl_->handler_, "prevFrame");
+  else if (auto* playback = ArtifactPlaybackService::instance()) playback->goToPreviousFrame();
   else if (impl_->activeComp_) impl_->activeComp_->goToFrame(impl_->activeComp_->framePosition().framePosition() - 1);
  }
 
  void ArtifactActiveContextService::goToStart() {
   if (impl_->handler_) QMetaObject::invokeMethod(impl_->handler_, "goToStart");
+  else if (auto* playback = ArtifactPlaybackService::instance()) playback->goToStartFrame();
   else if (impl_->activeComp_) impl_->activeComp_->goToStartFrame();
  }
 
  void ArtifactActiveContextService::goToEnd() {
   if (impl_->handler_) QMetaObject::invokeMethod(impl_->handler_, "goToEnd");
+  else if (auto* playback = ArtifactPlaybackService::instance()) playback->goToEndFrame();
   else if (impl_->activeComp_) impl_->activeComp_->goToEndFrame();
  }
 
  void ArtifactActiveContextService::seekToFrame(int64_t frame) {
   if (impl_->handler_) QMetaObject::invokeMethod(impl_->handler_, "seekToFrame", Q_ARG(int64_t, frame));
+  else if (auto* playback = ArtifactPlaybackService::instance()) playback->goToFrame(FramePosition(static_cast<int>(frame)));
   else if (impl_->activeComp_) impl_->activeComp_->goToFrame(frame);
  }
 

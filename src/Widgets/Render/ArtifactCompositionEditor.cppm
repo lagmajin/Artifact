@@ -4,6 +4,7 @@
 #include <QCloseEvent>
 #include <QComboBox>
 #include <QDebug>
+#include <QIcon>
 #include <QHBoxLayout>
 #include <QEvent>
 #include <QHideEvent>
@@ -12,6 +13,8 @@
 #include <QPaintEvent>
 #include <QResizeEvent>
 #include <QShowEvent>
+#include <QElapsedTimer>
+#include <QTimer>
 #include <QToolBar>
 #include <QToolButton>
 #include <QVBoxLayout>
@@ -24,12 +27,15 @@ module Artifact.Widgets.CompositionEditor;
 
 import Artifact.Widgets.CompositionRenderController;
 import Artifact.Widgets.TransformGizmo;
+import Artifact.Widgets.Gizmo3D;
+import Artifact.Widgets.PieMenu;
 import Color.Float;
 import Artifact.Composition.Abstract;
 import Artifact.Application.Manager;
 import Artifact.Service.Project;
 import Artifact.Service.Playback;
 import Artifact.Layer.Video;
+import Artifact.Tool.Manager;
 import Utils.Path;
 
 namespace Artifact {
@@ -81,6 +87,21 @@ public:
     setAttribute(Qt::WA_NoSystemBackground);
     setMouseTracking(true);
     setFocusPolicy(Qt::StrongFocus);
+
+    resizeDebounceTimer_ = new QTimer(this);
+    resizeDebounceTimer_->setSingleShot(true);
+    QObject::connect(resizeDebounceTimer_, &QTimer::timeout, this, [this]() {
+      if (!controller_ || !controller_->isInitialized()) {
+        resizePending_ = false;
+        return;
+      }
+      const QSize pendingSize = pendingResizeSize_.isValid() ? pendingResizeSize_ : size();
+      controller_->recreateSwapChain(this);
+      controller_->setViewportSize(static_cast<float>(pendingSize.width()),
+                                   static_cast<float>(pendingSize.height()));
+      controller_->renderOneFrame();
+      resizePending_ = false;
+    });
   }
 
   void requestInitialFit() {
@@ -88,22 +109,36 @@ public:
     scheduleInitialFit();
   }
 
+  void setPieMenu(ArtifactPieMenuWidget* pieMenu) { pieMenu_ = pieMenu; }
+
 protected:
   void showEvent(QShowEvent *event) override {
     QWidget::showEvent(event);
-    const bool needsInitialize = controller_ && !controller_->isInitialized();
-    if (needsInitialize) {
-      controller_->initialize(this);
-      controller_->recreateSwapChain(this);
-      controller_->setViewportSize((float)width(), (float)height());
-    }
     if (controller_) {
-      controller_->setComposition(resolvePreferredComposition());
+      const bool needsInitialize = !controller_->isInitialized();
       if (needsInitialize) {
-        pendingInitialFit_ = true;
+        QTimer::singleShot(0, this, [this]() {
+          if (!controller_ || !isVisible() || controller_->isInitialized()) {
+            return;
+          }
+          QElapsedTimer timer;
+          timer.start();
+          controller_->initialize(this);
+          qInfo() << "[CompositionEditor][Startup] controller initialize ms=" << timer.elapsed();
+          timer.restart();
+          controller_->recreateSwapChain(this);
+          qInfo() << "[CompositionEditor][Startup] recreateSwapChain ms=" << timer.elapsed();
+          controller_->setViewportSize((float)width(), (float)height());
+          controller_->setComposition(resolvePreferredComposition());
+          pendingInitialFit_ = true;
+          scheduleInitialFit();
+          controller_->start();
+        });
+      } else {
+        controller_->setComposition(resolvePreferredComposition());
+        scheduleInitialFit();
+        controller_->start();
       }
-      scheduleInitialFit();
-      controller_->start();
     }
   }
 
@@ -122,14 +157,19 @@ protected:
   void resizeEvent(QResizeEvent *event) override {
     QWidget::resizeEvent(event);
     if (controller_ && controller_->isInitialized()) {
-      controller_->recreateSwapChain(this);
-      controller_->setViewportSize((float)width(), (float)height());
       scheduleInitialFit();
-      controller_->renderOneFrame();
+      pendingResizeSize_ = event->size();
+      resizePending_ = true;
+      if (resizeDebounceTimer_) {
+        resizeDebounceTimer_->stop();
+        resizeDebounceTimer_->start(80);
+      }
     }
   }
 
   void wheelEvent(QWheelEvent *event) override {
+    if (pieMenu_ && pieMenu_->isVisible()) return; // Block while menu open
+
     if (!controller_) {
       return;
     }
@@ -168,6 +208,8 @@ protected:
   }
 
   void mousePressEvent(QMouseEvent *event) override {
+    if (pieMenu_ && pieMenu_->isVisible()) return;
+
     if (event->button() == Qt::MiddleButton || 
         (event->button() == Qt::LeftButton && spacePressed_)) {
       isPanning_ = true;
@@ -194,6 +236,12 @@ protected:
   }
 
   void mouseMoveEvent(QMouseEvent *event) override {
+    if (pieMenu_ && pieMenu_->isVisible()) {
+        pieMenu_->updateMousePos(event->globalPosition().toPoint());
+        event->accept();
+        return;
+    }
+
     if (isPanning_ && controller_) {
       const QPointF delta = event->position() - lastMousePos_;
       lastMousePos_ = event->position();
@@ -220,6 +268,15 @@ protected:
   }
 
   void mouseReleaseEvent(QMouseEvent *event) override {
+    if (pieMenu_ && pieMenu_->isVisible()) {
+        // Confirmation happens on KeyRelease (Tab), but we can also allow click to confirm
+        if (event->button() == Qt::LeftButton) {
+            pieMenu_->confirmSelection();
+        }
+        event->accept();
+        return;
+    }
+
     if ((event->button() == Qt::MiddleButton || event->button() == Qt::LeftButton) && isPanning_) {
       isPanning_ = false;
       if (controller_) {
@@ -257,6 +314,12 @@ protected:
   }
 
   void keyPressEvent(QKeyEvent *event) override {
+    if (event->key() == Qt::Key_Tab && !event->isAutoRepeat()) {
+        showPieMenu();
+        event->accept();
+        return;
+    }
+
     if (event->key() == Qt::Key_Space && !event->isAutoRepeat()) {
       spacePressed_ = true;
       setCursor(Qt::OpenHandCursor);
@@ -281,6 +344,14 @@ protected:
   }
 
   void keyReleaseEvent(QKeyEvent *event) override {
+    if (event->key() == Qt::Key_Tab && !event->isAutoRepeat()) {
+        if (pieMenu_ && pieMenu_->isVisible()) {
+            pieMenu_->confirmSelection();
+        }
+        event->accept();
+        return;
+    }
+
     if (event->key() == Qt::Key_Space && !event->isAutoRepeat()) {
       spacePressed_ = false;
       isPanning_ = false;
@@ -307,11 +378,104 @@ private:
         return;
       }
       if (width() <= 64 || height() <= 64) {
+        QTimer::singleShot(50, this, [this]() { scheduleInitialFit(); });
         return;
       }
       controller_->zoomFit();
       pendingInitialFit_ = false;
     });
+  }
+
+  ArtifactPieMenuWidget *pieMenu_ = nullptr;
+  void showPieMenu() {
+      if (!pieMenu_ || !controller_) return;
+
+      PieMenuModel model;
+      model.title = "View Controls";
+
+      auto* toolManager = ArtifactApplicationManager::instance()
+                              ? ArtifactApplicationManager::instance()->toolManager()
+                              : nullptr;
+
+      // Selection Tool
+      model.items.push_back({
+          "Select", 
+          loadIconWithFallback("MaterialVS/neutral/select.svg"), 
+          "tool.select", true, false, 
+          [toolManager]() { if(toolManager) toolManager->setActiveTool(ToolType::Selection); }
+      });
+
+      // Hand Tool
+      model.items.push_back({
+          "Hand", 
+          loadIconWithFallback("MaterialVS/neutral/hand.svg"), 
+          "tool.hand", true, false, 
+          [toolManager]() { if(toolManager) toolManager->setActiveTool(ToolType::Hand); }
+      });
+
+      // Zoom Fit
+      model.items.push_back({
+          "Fit", 
+          loadIconWithFallback("MaterialVS/neutral/fit.svg"), 
+          "view.fit", true, false, 
+          [this]() { controller_->zoomFit(); }
+      });
+
+      // Zoom 100%
+      model.items.push_back({
+          "100%", 
+          loadIconWithFallback("MaterialVS/neutral/zoom_100.svg"), 
+          "view.100", true, false, 
+          [this]() { controller_->zoom100(); }
+      });
+
+      // Reset View
+      model.items.push_back({
+          "Reset", 
+          loadIconWithFallback("MaterialVS/neutral/reset.svg"), 
+          "view.reset", true, false, 
+          [this]() { controller_->resetView(); }
+      });
+
+      if (auto* gizmo3D = controller_->gizmo3D()) {
+          model.items.push_back({
+              "3D Move",
+              QIcon(),
+              "gizmo3d.move", true, gizmo3D->mode() == GizmoMode::Move,
+              [this, gizmo3D]() { gizmo3D->setMode(GizmoMode::Move); controller_->renderOneFrame(); }
+          });
+          model.items.push_back({
+              "3D Rotate",
+              QIcon(),
+              "gizmo3d.rotate", true, gizmo3D->mode() == GizmoMode::Rotate,
+              [this, gizmo3D]() { gizmo3D->setMode(GizmoMode::Rotate); controller_->renderOneFrame(); }
+          });
+          model.items.push_back({
+              "3D Scale",
+              QIcon(),
+              "gizmo3d.scale", true, gizmo3D->mode() == GizmoMode::Scale,
+              [this, gizmo3D]() { gizmo3D->setMode(GizmoMode::Scale); controller_->renderOneFrame(); }
+          });
+      }
+
+      // Grid Toggle
+      model.items.push_back({
+          "Grid", 
+          loadIconWithFallback("MaterialVS/neutral/grid.svg"), 
+          "display.grid", true, controller_->isShowGrid(), 
+          [this]() { controller_->setShowGrid(!controller_->isShowGrid()); }
+      });
+
+      // Safe Area Toggle
+      model.items.push_back({
+          "Safe Area", 
+          loadIconWithFallback("MaterialVS/neutral/safe_area.svg"), 
+          "display.safeArea", true, controller_->isShowSafeMargins(), 
+          [this]() { controller_->setShowSafeMargins(!controller_->isShowSafeMargins()); }
+      });
+
+      pieMenu_->setModel(model);
+      pieMenu_->showAt(QCursor::pos());
   }
 
   void saveCurrentFrame(CompositionRenderController* controller) {
@@ -361,6 +525,9 @@ private:
   bool isPanning_ = false;
   bool spacePressed_ = false;
   bool pendingInitialFit_ = true;
+  QTimer *resizeDebounceTimer_ = nullptr;
+  QSize pendingResizeSize_;
+  bool resizePending_ = false;
   QPointF lastMousePos_;
 };
 } // namespace
@@ -369,6 +536,7 @@ class ArtifactCompositionEditor::Impl {
 public:
   CompositionViewport *compositionView_ = nullptr;
   CompositionRenderController *renderController_ = nullptr;
+  ArtifactPieMenuWidget *pieMenu_ = nullptr;
 
   // Top Toolbar (Zoom/View controls)
   QToolBar *topToolbar_ = nullptr;
@@ -400,6 +568,9 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
                    this, &ArtifactCompositionEditor::videoDebugMessage);
   impl_->compositionView_ =
       new CompositionViewport(impl_->renderController_, this);
+
+  impl_->pieMenu_ = new ArtifactPieMenuWidget(this);
+  impl_->compositionView_->setPieMenu(impl_->pieMenu_);
 
   // Top Toolbar
   impl_->topToolbar_ = new QToolBar(this);
@@ -611,6 +782,9 @@ void ArtifactCompositionEditor::setComposition(ArtifactCompositionPtr compositio
   if (impl_->renderController_) {
     impl_->renderController_->setComposition(composition);
   }
+  if (auto* playback = ArtifactPlaybackService::instance()) {
+    playback->setCurrentComposition(composition);
+  }
   if (impl_->compositionView_) {
     impl_->compositionView_->requestInitialFit();
   }
@@ -623,12 +797,18 @@ void ArtifactCompositionEditor::setClearColor(const FloatColor &color) {
 }
 
 void ArtifactCompositionEditor::play() {
+  if (auto* playback = ArtifactPlaybackService::instance()) {
+    playback->play();
+  }
   if (impl_->renderController_) {
     impl_->renderController_->start();
   }
 }
 
 void ArtifactCompositionEditor::stop() {
+  if (auto* playback = ArtifactPlaybackService::instance()) {
+    playback->stop();
+  }
   if (impl_->renderController_) {
     impl_->renderController_->stop();
   }

@@ -143,7 +143,6 @@ void ArtifactTimelineTrackPainterView::setCurrentFrame(const double frame)
   return;
  }
  impl_->currentFrame_ = sanitized;
- update();
 }
 
 double ArtifactTimelineTrackPainterView::currentFrame() const

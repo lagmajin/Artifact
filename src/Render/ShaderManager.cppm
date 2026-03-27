@@ -38,6 +38,7 @@ public:
     RenderShaderPair checkerboardShaders_;
     RenderShaderPair gridShaders_;
     RenderShaderPair spriteTransformShaders_;
+    RenderShaderPair gizmo3DShaders_;
 
     PSOAndSRB linePsoAndSrb_;
     PSOAndSRB outlinePsoAndSrb_;
@@ -50,6 +51,7 @@ public:
     PSOAndSRB checkerboardPsoAndSrb_;
     PSOAndSRB gridPsoAndSrb_;
     PSOAndSRB spriteTransformPsoAndSrb_;
+    PSOAndSRB gizmo3DPsoAndSrb_;
 
     RefCntAutoPtr<ISampler> spriteSampler_;
 
@@ -225,6 +227,35 @@ void ShaderManager::Impl::createShaders()
 
         device_->CreateShader(dotLineVsInfo, &dotLineShaders_.VS);
         device_->CreateShader(dotLinePsInfo, &dotLineShaders_.PS);
+    }
+
+    {
+        // Gizmo 3D Shader (Simple 3D transformation)
+        const char* gizmo3DVS = R"(
+            cbuffer TransformCB {
+                float4x4 g_WorldViewProj;
+            };
+            struct VSInput {
+                float3 Pos   : ATTRIB0;
+                float4 Color : ATTRIB1;
+            };
+            struct PSInput {
+                float4 Pos   : SV_POSITION;
+                float4 Color : COLOR;
+            };
+            void main(in VSInput VSIn, out PSInput PSIn) {
+                PSIn.Pos   = mul(float4(VSIn.Pos, 1.0), g_WorldViewProj);
+                PSIn.Color = VSIn.Color;
+            }
+        )";
+        ShaderCreateInfo vsInfo;
+        vsInfo.SourceLanguage = SHADER_SOURCE_LANGUAGE_HLSL;
+        vsInfo.Desc.ShaderType = SHADER_TYPE_VERTEX;
+        vsInfo.Desc.Name = "Gizmo3D VS";
+        vsInfo.Source = gizmo3DVS;
+        
+        device_->CreateShader(vsInfo, &gizmo3DShaders_.VS);
+        gizmo3DShaders_.PS = lineShaders_.PS; // Reuse simple color pixel shader
     }
 }
 
@@ -503,6 +534,48 @@ void ShaderManager::Impl::createPSOs()
         if (gridPsoAndSrb_.pPSO)
             gridPsoAndSrb_.pPSO->CreateShaderResourceBinding(&gridPsoAndSrb_.pSRB, true);
     }
+
+    {
+        // Gizmo 3D PSO
+        GraphicsPipelineStateCreateInfo PSOCreateInfo;
+        PSOCreateInfo.PSODesc.Name = "Gizmo3D PSO";
+        PSOCreateInfo.PSODesc.PipelineType = PIPELINE_TYPE_GRAPHICS;
+
+        LayoutElement layoutElems[] = {
+            LayoutElement{0, 0, 3, VT_FLOAT32, false}, // Pos (float3)
+            LayoutElement{1, 0, 4, VT_FLOAT32, false}  // Color (float4)
+        };
+
+        auto& GP = PSOCreateInfo.GraphicsPipeline;
+        GP.NumRenderTargets = 1;
+        GP.RTVFormats[0] = rtvFormat_;
+        GP.PrimitiveTopology = PRIMITIVE_TOPOLOGY_LINE_LIST;
+        GP.RasterizerDesc.CullMode = CULL_MODE_NONE;
+        
+        // Depth: Always show on top
+        GP.DepthStencilDesc.DepthEnable = True;
+        GP.DepthStencilDesc.DepthFunc = COMPARISON_FUNC_ALWAYS;
+        
+        GP.BlendDesc.RenderTargets[0].BlendEnable = True;
+        GP.BlendDesc.RenderTargets[0].SrcBlend = BLEND_FACTOR_SRC_ALPHA;
+        GP.BlendDesc.RenderTargets[0].DestBlend = BLEND_FACTOR_INV_SRC_ALPHA;
+
+        GP.InputLayout.LayoutElements = layoutElems;
+        GP.InputLayout.NumElements = 2;
+
+        ShaderResourceVariableDesc vars[] = {
+            { SHADER_TYPE_VERTEX, "TransformCB", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC }
+        };
+        PSOCreateInfo.PSODesc.ResourceLayout.Variables = vars;
+        PSOCreateInfo.PSODesc.ResourceLayout.NumVariables = 1;
+
+        PSOCreateInfo.pVS = gizmo3DShaders_.VS;
+        PSOCreateInfo.pPS = gizmo3DShaders_.PS;
+
+        device_->CreateGraphicsPipelineState(PSOCreateInfo, &gizmo3DPsoAndSrb_.pPSO);
+        if (gizmo3DPsoAndSrb_.pPSO)
+            gizmo3DPsoAndSrb_.pPSO->CreateShaderResourceBinding(&gizmo3DPsoAndSrb_.pSRB, true);
+    }
 }
 
 void ShaderManager::Impl::destroy()
@@ -527,6 +600,8 @@ void ShaderManager::Impl::destroy()
     checkerboardPsoAndSrb_.pSRB.Release();
     gridPsoAndSrb_.pPSO.Release();
     gridPsoAndSrb_.pSRB.Release();
+    gizmo3DPsoAndSrb_.pPSO.Release();
+    gizmo3DPsoAndSrb_.pSRB.Release();
 
     lineShaders_.VS.Release();
     lineShaders_.PS.Release();
@@ -546,6 +621,8 @@ void ShaderManager::Impl::destroy()
     checkerboardShaders_.PS.Release();
     gridShaders_.VS.Release();
     gridShaders_.PS.Release();
+    gizmo3DShaders_.VS.Release();
+    gizmo3DShaders_.PS.Release();
 
     spriteSampler_.Release();
 
@@ -687,6 +764,11 @@ PSOAndSRB ShaderManager::gridPsoAndSrb() const
 PSOAndSRB ShaderManager::spriteTransformPsoAndSrb() const
 {
     return impl_->spriteTransformPsoAndSrb_;
+}
+
+PSOAndSRB ShaderManager::gizmo3DPsoAndSrb() const
+{
+    return impl_->gizmo3DPsoAndSrb_;
 }
 
 RefCntAutoPtr<ISampler> ShaderManager::spriteSampler() const

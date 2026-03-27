@@ -8,8 +8,10 @@
 #include <cstdint>
 #include <mutex>
 #include <QImage>
+#include <QElapsedTimer>
 #include <QDebug>
 #include <QTransform>
+#include <QMatrix4x4>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/RenderDevice.h>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/DeviceContext.h>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/Query.h>
@@ -32,6 +34,7 @@ import Core.Scale.Zoom;
 import Artifact.Render.DiligentDeviceManager;
 import Artifact.Render.ShaderManager;
 import Artifact.Render.PrimitiveRenderer2D;
+import Artifact.Render.PrimitiveRenderer3D;
 import Artifact.Render.Config;
 import Graphics.ParticleRenderer;
 import Graphics.GPUcomputeContext;
@@ -56,6 +59,7 @@ namespace Artifact
   DiligentDeviceManager deviceManager_;
   ShaderManager shaderManager_;
   PrimitiveRenderer2D primitiveRenderer_;
+  PrimitiveRenderer3D primitiveRenderer3D_;
   std::unique_ptr<ArtifactCore::IRayTracingManager> rayTracingManager_;
   std::unique_ptr<ArtifactCore::GpuContext> gpuContext_;
   std::unique_ptr<ArtifactCore::ParticleRenderer> particleRenderer_;
@@ -77,6 +81,8 @@ namespace Artifact
   std::array<RefCntAutoPtr<IQuery>, FrameQueryCount> m_frameQueries;
   int m_offlineWidth  = 0;
   int m_offlineHeight = 0;
+  float m_viewportWidth  = 0.0f;
+  float m_viewportHeight = 0.0f;
 
   FloatColor clearColor_{ 0.10f, 0.10f, 0.10f, 1.0f };
 
@@ -108,7 +114,7 @@ namespace Artifact
   void destroy();
 
   // Viewport
-  void setViewportSize(float w, float h) { primitiveRenderer_.setViewportSize(w, h); }
+  void setViewportSize(float w, float h) { primitiveRenderer_.setViewportSize(w, h); m_viewportWidth = w; m_viewportHeight = h; }
   void setCanvasSize(float w, float h)   { primitiveRenderer_.setCanvasSize(w, h); }
   void setPan(float x, float y)          { primitiveRenderer_.setPan(x, y); }
   void getPan(float& x, float& y) const  { primitiveRenderer_.getPan(x, y); }
@@ -117,9 +123,13 @@ namespace Artifact
   void panBy(float dx, float dy)         { primitiveRenderer_.panBy(dx, dy); }
   void resetView()                       { primitiveRenderer_.resetView(); }
   void fitToViewport(float margin)       { primitiveRenderer_.fitToViewport(margin); }
-  void setViewMatrix(const QMatrix4x4& view) { primitiveRenderer_.setViewMatrix(view); }
-  void setProjectionMatrix(const QMatrix4x4& proj) { primitiveRenderer_.setProjectionMatrix(proj); }
+  void setViewMatrix(const QMatrix4x4& view) { primitiveRenderer_.setViewMatrix(view); primitiveRenderer3D_.setViewMatrix(view); }
+  void setProjectionMatrix(const QMatrix4x4& proj) { primitiveRenderer_.setProjectionMatrix(proj); primitiveRenderer3D_.setProjectionMatrix(proj); }
   void setUseExternalMatrices(bool use)  { primitiveRenderer_.setUseExternalMatrices(use); }
+  void setGizmoCameraMatrices(const QMatrix4x4& view, const QMatrix4x4& proj) { primitiveRenderer3D_.setCameraMatrices(view, proj); }
+  void resetGizmoCameraMatrices() { primitiveRenderer3D_.resetMatrices(); }
+  void set3DCameraMatrices(const QMatrix4x4& view, const QMatrix4x4& proj) { primitiveRenderer3D_.setCameraMatrices(view, proj); }
+  void reset3DCameraMatrices() { primitiveRenderer3D_.resetMatrices(); }
   void zoomAroundViewportPoint(Detail::float2 pos, float newZoom)
   {
    primitiveRenderer_.zoomAroundViewportPoint(toDiligentFloat2(pos), newZoom);
@@ -190,9 +200,35 @@ namespace Artifact
     auto ctx = deviceManager_.immediateContext();
     if (!ctx) return;
 
-    // Set matrices from current renderer state
-    particleRenderer_->setViewMatrix(primitiveRenderer_.viewMatrix().constData());
-    particleRenderer_->setProjectionMatrix(primitiveRenderer_.projectionMatrix().constData());
+    if (m_viewportWidth <= 0.0f || m_viewportHeight <= 0.0f) return;
+
+    // Build an orthographic View + Projection that replicates PrimitiveRenderer2D's
+    // internal pan/zoom/viewport transform.
+    //
+    // The particle VS uses  mul(pos, ViewMatrix)  and  mul(viewPos, ProjMatrix),
+    // which is the HLSL row-vector convention with a column_major cbuffer.
+    // QMatrix4x4 stores data in column-major (column-vector convention), so
+    // passing constData() directly means the HLSL matrix equals M_qt, and
+    //   mul(v, M_qt)  ≡  v * M_qt  ≠  M_qt * v
+    // Every matrix must therefore be transposed before upload.
+    float panX = 0.0f, panY = 0.0f;
+    primitiveRenderer_.getPan(panX, panY);
+    const float zoom = primitiveRenderer_.getZoom();
+
+    // View: canvas space → viewport pixel space  (translate then scale)
+    QMatrix4x4 view;
+    view.translate(panX, panY, 0.0f);
+    view.scale(zoom, zoom, 1.0f);
+
+    // Proj: orthographic, viewport pixels → NDC, Y-axis flipped (screen Y-down)
+    QMatrix4x4 proj;
+    proj.ortho(0.0f, m_viewportWidth, m_viewportHeight, 0.0f, -1.0f, 1.0f);
+
+    // Transpose for HLSL  mul(vector, matrix)  row-vector convention
+    const QMatrix4x4 viewT = view.transposed();
+    const QMatrix4x4 projT = proj.transposed();
+    particleRenderer_->setViewMatrix(viewT.constData());
+    particleRenderer_->setProjectionMatrix(projT.constData());
 
     particleRenderer_->updateBuffer(data);
     particleRenderer_->prepare(ctx);
@@ -225,7 +261,10 @@ namespace Artifact
   void ArtifactIRenderer::Impl::initialize(QWidget* widget)
   {
    widget_ = widget;
+   QElapsedTimer timer;
+   timer.start();
    deviceManager_.initialize(widget);
+   qInfo() << "[ArtifactIRenderer][Init] deviceManager.initialize ms=" << timer.elapsed();
 
    if (!deviceManager_.isInitialized()) {
     qWarning() << "[ArtifactIRenderer] initialize() failed: deviceManager not initialized"
@@ -233,17 +272,31 @@ namespace Artifact
     return;
    }
 
+  timer.restart();
   shaderManager_.initialize(deviceManager_.device(), RenderConfig::MainRTVFormat);
   shaderManager_.createShaders();
   shaderManager_.createPSOs();
+  qInfo() << "[ArtifactIRenderer][Init] shaders+psos ms=" << timer.elapsed();
 
+  timer.restart();
   rayTracingManager_ = ArtifactCore::createRayTracingManager();
   rayTracingManager_->initialize(deviceManager_.device());
+  qInfo() << "[ArtifactIRenderer][Init] rayTracingManager ms=" << timer.elapsed();
 
+  timer.restart();
   primitiveRenderer_.createBuffers(deviceManager_.device(), RenderConfig::MainRTVFormat);
   primitiveRenderer_.setPSOs(shaderManager_);
   primitiveRenderer_.setContext(deviceManager_.immediateContext(),
                                 deviceManager_.swapChain());
+  qInfo() << "[ArtifactIRenderer][Init] primitiveRenderer2D ms=" << timer.elapsed();
+
+  timer.restart();
+  primitiveRenderer3D_.createBuffers(deviceManager_.device());
+  primitiveRenderer3D_.setPSOs(shaderManager_);
+  primitiveRenderer3D_.setContext(deviceManager_.immediateContext(),
+                                  deviceManager_.swapChain());
+  qInfo() << "[ArtifactIRenderer][Init] primitiveRenderer3D ms=" << timer.elapsed();
+
   m_initialized = true;
  }
 
@@ -265,6 +318,9 @@ namespace Artifact
   primitiveRenderer_.createBuffers(deviceManager_.device(), RenderConfig::MainRTVFormat);
   primitiveRenderer_.setPSOs(shaderManager_);
 
+  primitiveRenderer3D_.createBuffers(deviceManager_.device());
+  primitiveRenderer3D_.setPSOs(shaderManager_);
+
   TextureDesc TexDesc;
   TexDesc.Name      = "OfflineRenderTarget";
   TexDesc.Type      = RESOURCE_DIM_TEX_2D;
@@ -277,8 +333,12 @@ namespace Artifact
 
   auto* rtv = m_layerRT ? m_layerRT->GetDefaultView(TEXTURE_VIEW_RENDER_TARGET) : nullptr;
   primitiveRenderer_.setOverrideRTV(rtv);
+  primitiveRenderer3D_.setOverrideRTV(rtv);
   primitiveRenderer_.setContext(deviceManager_.immediateContext(), nullptr);
+  primitiveRenderer3D_.setContext(deviceManager_.immediateContext());
   primitiveRenderer_.setViewportSize(float(width), float(height));
+  m_viewportWidth  = float(width);
+  m_viewportHeight = float(height);
   primitiveRenderer_.setCanvasSize(float(width), float(height));
   primitiveRenderer_.resetView();
 
@@ -425,11 +485,15 @@ namespace Artifact
    shaderManager_.createPSOs();
    primitiveRenderer_.createBuffers(deviceManager_.device(), RenderConfig::MainRTVFormat);
    primitiveRenderer_.setPSOs(shaderManager_);
+   primitiveRenderer3D_.createBuffers(deviceManager_.device());
+   primitiveRenderer3D_.setPSOs(shaderManager_);
    m_initialized = true;
   }
 
   primitiveRenderer_.setContext(deviceManager_.immediateContext(),
-                                deviceManager_.swapChain());
+                                 deviceManager_.swapChain());
+  primitiveRenderer3D_.setContext(deviceManager_.immediateContext(),
+                                  deviceManager_.swapChain());
   createLayerRT(window);
  }
 
@@ -443,7 +507,9 @@ namespace Artifact
 
   deviceManager_.recreateSwapChain(widget);
   primitiveRenderer_.setContext(deviceManager_.immediateContext(),
-                                deviceManager_.swapChain());
+                                 deviceManager_.swapChain());
+  primitiveRenderer3D_.setContext(deviceManager_.immediateContext(),
+                                  deviceManager_.swapChain());
   createLayerRT(widget);
  }
 
@@ -540,6 +606,7 @@ namespace Artifact
   m_layerRT = nullptr;
   for (auto& query : m_frameQueries) query = nullptr;
   primitiveRenderer_.destroy();
+  primitiveRenderer3D_.destroy();
   shaderManager_.destroy();
   deviceManager_.destroy();
   widget_                = nullptr;
@@ -631,10 +698,21 @@ namespace Artifact
  void ArtifactIRenderer::fitToViewport(float margin)            { impl_->fitToViewport(margin); }
  void ArtifactIRenderer::setViewMatrix(const QMatrix4x4& view)  { impl_->setViewMatrix(view); }
  void ArtifactIRenderer::setProjectionMatrix(const QMatrix4x4& proj) { impl_->setProjectionMatrix(proj); }
- void ArtifactIRenderer::setUseExternalMatrices(bool use)       { impl_->setUseExternalMatrices(use); }
+ void ArtifactIRenderer::setUseExternalMatrices(bool use)  { impl_->setUseExternalMatrices(use); }
+void ArtifactIRenderer::setGizmoCameraMatrices(const QMatrix4x4& view, const QMatrix4x4& proj)
+{ impl_->setGizmoCameraMatrices(view, proj); }
+void ArtifactIRenderer::resetGizmoCameraMatrices()
+{ impl_->resetGizmoCameraMatrices(); }
+ void ArtifactIRenderer::set3DCameraMatrices(const QMatrix4x4& view, const QMatrix4x4& proj)
+ { impl_->set3DCameraMatrices(view, proj); }
+ void ArtifactIRenderer::reset3DCameraMatrices()
+ { impl_->reset3DCameraMatrices(); }
 
- void ArtifactIRenderer::zoomAroundViewportPoint(Detail::float2 viewportPos, float newZoom)
- { impl_->zoomAroundViewportPoint(viewportPos, newZoom); }
+ QMatrix4x4 ArtifactIRenderer::getViewMatrix() const { return impl_->primitiveRenderer_.getViewMatrix(); }
+ QMatrix4x4 ArtifactIRenderer::getProjectionMatrix() const { return impl_->primitiveRenderer_.getProjectionMatrix(); }
+
+ void ArtifactIRenderer::zoomAroundViewportPoint(Detail::float2 pos, float newZoom)
+ { impl_->zoomAroundViewportPoint(pos, newZoom); }
  Detail::float2 ArtifactIRenderer::canvasToViewport(Detail::float2 pos) const
  { return impl_->canvasToViewport(pos); }
  Detail::float2 ArtifactIRenderer::viewportToCanvas(Detail::float2 pos) const
@@ -673,6 +751,10 @@ namespace Artifact
  {
   impl_->primitiveRenderer_.drawSpriteTransformed(x, y, w, h, transform, image, opacity);
  }
+ void ArtifactIRenderer::drawSpriteTransformed(float x, float y, float w, float h, const QMatrix4x4& transform, Diligent::ITextureView* texture, float opacity)
+ {
+  impl_->primitiveRenderer_.drawSpriteTransformed(x, y, w, h, transform, texture, opacity);
+ }
  void ArtifactIRenderer::drawRectLocal(float x, float y, float w, float h, const FloatColor& color, float opacity)
  { impl_->drawRectLocal(x, y, w, h, color, opacity); }
  void ArtifactIRenderer::drawSolidRectTransformed(float x, float y, float w, float h, const QTransform& transform, const FloatColor& color, float opacity)
@@ -704,14 +786,26 @@ namespace Artifact
  { impl_->primitiveRenderer_.drawCircle(x, y, radius, color, thickness, fill); }
  void ArtifactIRenderer::drawCrosshair(float x, float y, float size, const FloatColor& color)
  { impl_->primitiveRenderer_.drawCrosshair(x, y, size, color); }
- void ArtifactIRenderer::drawCheckerboard(float x, float y, float w, float h,
-                                          float tileSize, const FloatColor& c1, const FloatColor& c2)
- { impl_->drawCheckerboard(x, y, w, h, tileSize, c1, c2); }
- void ArtifactIRenderer::drawGrid(float x, float y, float w, float h,
-                                  float spacing, float thickness, const FloatColor& color)
- { impl_->drawGrid(x, y, w, h, spacing, thickness, color); }
- void ArtifactIRenderer::drawParticles(const Artifact::ParticleRenderData& data) { impl_->drawParticles(data); }
- void ArtifactIRenderer::setUpscaleConfig(bool, float)    {}
+void ArtifactIRenderer::drawCheckerboard(float x, float y, float w, float h,
+                                         float tileSize, const FloatColor& c1, const FloatColor& c2)
+{ impl_->drawCheckerboard(x, y, w, h, tileSize, c1, c2); }
+void ArtifactIRenderer::drawGrid(float x, float y, float w, float h,
+                                 float spacing, float thickness, const FloatColor& color)
+{ impl_->drawGrid(x, y, w, h, spacing, thickness, color); }
+void ArtifactIRenderer::drawParticles(const Artifact::ParticleRenderData& data) { impl_->drawParticles(data); }
+void ArtifactIRenderer::drawGizmoLine(Detail::float3 start, Detail::float3 end, const FloatColor& color, float thickness)
+{ impl_->primitiveRenderer3D_.draw3DLine({start.x, start.y, start.z}, {end.x, end.y, end.z}, color, thickness); }
+void ArtifactIRenderer::drawGizmoArrow(Detail::float3 start, Detail::float3 end, const FloatColor& color, float size)
+{ impl_->primitiveRenderer3D_.draw3DArrow({start.x, start.y, start.z}, {end.x, end.y, end.z}, color, size); }
+void ArtifactIRenderer::drawGizmoRing(Detail::float3 center, Detail::float3 normal, float radius, const FloatColor& color, float thickness)
+{ impl_->primitiveRenderer3D_.draw3DCircle({center.x, center.y, center.z}, {normal.x, normal.y, normal.z}, radius, color, thickness); }
+void ArtifactIRenderer::draw3DLine(Detail::float3 start, Detail::float3 end, const FloatColor& color, float thickness)
+{ drawGizmoLine(start, end, color, thickness); }
+void ArtifactIRenderer::draw3DArrow(Detail::float3 start, Detail::float3 end, const FloatColor& color, float size)
+{ drawGizmoArrow(start, end, color, size); }
+void ArtifactIRenderer::draw3DCircle(Detail::float3 center, Detail::float3 normal, float radius, const FloatColor& color, float thickness)
+{ drawGizmoRing(center, normal, radius, color, thickness); }
+void ArtifactIRenderer::setUpscaleConfig(bool, float)    {}
  Diligent::RefCntAutoPtr<Diligent::IRenderDevice> ArtifactIRenderer::device() const
  { return impl_->deviceManager_.device(); }
  Diligent::RefCntAutoPtr<Diligent::IDeviceContext> ArtifactIRenderer::immediateContext() const
@@ -719,6 +813,9 @@ namespace Artifact
  ArtifactCore::IRayTracingManager* ArtifactIRenderer::rayTracingManager() const
  { return impl_->rayTracingManager_.get(); }
  void ArtifactIRenderer::setOverrideRTV(Diligent::ITextureView* rtv)
- { impl_->primitiveRenderer_.setOverrideRTV(rtv); }
+ {
+  impl_->primitiveRenderer_.setOverrideRTV(rtv);
+  impl_->primitiveRenderer3D_.setOverrideRTV(rtv);
+ }
 
 } // namespace Artifact

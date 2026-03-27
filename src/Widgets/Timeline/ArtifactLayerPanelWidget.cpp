@@ -2051,30 +2051,12 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
           impl_->layerCountBeforeVisibleRowExcluding(impl_->dragInsertVisibleRow, dragLayerId),
           0,
           static_cast<int>(remainingVisibleLayerIds.size()));
-
-        int newIndex = oldIndex;
-        if (targetVisibleIndex >= static_cast<int>(remainingVisibleLayerIds.size())) {
-          // 末尾に挿入
-          newIndex = static_cast<int>(allLayers.size()) - 1;
-        } else {
-          // remainingVisibleLayerIds からターゲットレイヤーを取得し、allLayers でのインデックスを求める
-          const LayerID targetLayerId = remainingVisibleLayerIds[targetVisibleIndex];
-          int targetIndex = -1;
-          for (int i = 0; i < allLayers.size(); ++i) {
-            if (allLayers[i] && allLayers[i]->id() == targetLayerId) {
-              targetIndex = i;
-              break;
-            }
-          }
-          if (targetIndex >= 0) {
-            if (oldIndex < targetIndex) {
-              --targetIndex;
-            }
-            newIndex = targetIndex;
-          }
-        }
-
-        newIndex = std::clamp(newIndex, 0, std::max(0, static_cast<int>(allLayers.size()) - 1));
+        // visibleRows は allLayer() の逆順で描画されるため、
+        // 「先頭から targetVisibleIndex 個だけ前にある visible row」の位置を
+        // そのまま storage index に落とし込む。
+        const int remainingVisibleCount = static_cast<int>(remainingVisibleLayerIds.size());
+        const int lastIndex = std::max(0, static_cast<int>(allLayers.size()) - 1);
+        const int newIndex = std::clamp(remainingVisibleCount - targetVisibleIndex, 0, lastIndex);
         if (newIndex != oldIndex) {
           svc->moveLayerInCurrentComposition(dragLayerId, newIndex);
           updateLayout();

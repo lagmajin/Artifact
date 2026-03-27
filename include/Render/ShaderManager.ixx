@@ -47,6 +47,7 @@ public:
     PSOAndSRB checkerboardPsoAndSrb() const;
     PSOAndSRB gridPsoAndSrb() const;
     PSOAndSRB spriteTransformPsoAndSrb() const;
+    PSOAndSRB gizmo3DPsoAndSrb() const;
 
     RefCntAutoPtr<ISampler> spriteSampler() const;
 

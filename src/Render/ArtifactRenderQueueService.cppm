@@ -308,8 +308,11 @@ namespace Artifact
     static ArtifactCore::ImageF32x4_RGBA qImageToImageF32x4RGBA(const QImage& source)
     {
         const QImage rgba = source.convertToFormat(QImage::Format_RGBA8888);
+        cv::Mat mat(rgba.height(), rgba.width(), CV_8UC4,
+                    const_cast<uchar*>(rgba.constBits()),
+                    rgba.bytesPerLine());
         ArtifactCore::ImageF32x4_RGBA out;
-        out.setFromCVMat(ArtifactCore::CvUtils::qImageToCvMat(rgba, true));
+        out.setFromCVMat(mat);
         return out;
     }
 

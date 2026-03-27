@@ -1674,12 +1674,7 @@ void ArtifactTimelineWidget::refreshTracks() {
     impl_->painterTrackView_->setClips(painterClips);
   }
 
-  if (auto *scene = impl_->trackView_->timelineScene()) {
-    scene->invalidate(scene->sceneRect(), QGraphicsScene::AllLayers);
-    scene->update(scene->sceneRect());
-  }
   impl_->trackView_->viewport()->update();
-  impl_->trackView_->update();
   if (impl_->playheadSync_) {
     impl_->playheadSync_->sync();
   }

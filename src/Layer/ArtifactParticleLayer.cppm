@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <QObject>
 #include <QImage>
 #include <QJsonObject>
@@ -101,12 +101,13 @@ void ArtifactParticleLayer::draw(ArtifactIRenderer* renderer)
     // ※ goToFrame は内部で reset() と forward simulation を行う
     float fps = 30.0f;
     if (auto comp = static_cast<ArtifactAbstractComposition*>(composition())) {
-        fps = comp->settings().frameRate().framerate();
+        fps = comp->frameRate().framerate();
     }
-    impl_->particleSystem->goToFrame(frameNumber, fps); 
+    // フレーム0でも最低1フレーム分のシミュレーションを走らせて初期パーティクルを生成する
+    impl_->particleSystem->goToFrame(std::max(int64_t{1}, frameNumber), fps);
 
-    // 2. GPU レンダリングパス (P3-4)
-    // レンダラーが GPU 直接描画をサポートしているか、およびパーティクルが有効な場合
+    // 2. GPU レンダリングパス
+    // Diligent 経路が使える場合は billboard 描画を優先し、ここではソフト描画へ落とさない
     if (renderer->isInitialized()) {
         const auto sourceData = impl_->particleSystem->captureRenderData();
         if (!sourceData.particles.empty()) {
@@ -128,15 +129,16 @@ void ArtifactParticleLayer::draw(ArtifactIRenderer* renderer)
             }
             
             renderer->drawParticles(renderData);
-            return; // GPU 描画に成功した場合はここで終了
         }
+        return;
     }
 
-    // 3. ソフトウェアフォールバックパス (既存)
+    // 3. ソフトウェアフォールバックパス
+    // renderer が未初期化のときだけ従来の QPainter 描画を使う
     if (frameNumber != impl_->cachedFrameNumber || impl_->cachedFrame.isNull()) {
         float fallbackFps = 30.0f;
-        if (auto comp = composition()) {
-            fallbackFps = comp->settings().frameRate().framerate();
+        if (auto comp = static_cast<ArtifactAbstractComposition*>(composition())) {
+            fallbackFps = comp->frameRate().framerate();
         }
         const float time = static_cast<float>(frameNumber) / fallbackFps;
         impl_->cachedFrame = renderFrame(std::max(1, impl_->width),
@@ -404,6 +406,16 @@ const ParticleSystem* ArtifactParticleLayer::particleSystem() const
 void ArtifactParticleLayer::createParticleSystem()
 {
     impl_->particleSystem = std::make_unique<ParticleSystem>();
+    // デフォルトエミッターをキャンバス中心に配置して即座に描画確認できるようにする
+    if (auto* emitter = impl_->particleSystem->createEmitter()) {
+        EmitterParams params;
+        params.position = QVector3D(
+            static_cast<float>(impl_->width) / 2.0f,
+            static_cast<float>(impl_->height) / 2.0f,
+            0.0f);
+        params.rate = 30.0f;
+        emitter->setParams(params);
+    }
     clearFrameCache();
     emit particleSystemChanged();
 }
@@ -600,7 +612,7 @@ void ArtifactParticleLayer::goToFrame(int64_t frameNumber)
     // Calculate time from frame
     float fps = 30.0f;
     if (auto comp = static_cast<ArtifactAbstractComposition*>(composition())) {
-        fps = comp->settings().frameRate().framerate();
+        fps = comp->frameRate().framerate();
     }
     float time = frameNumber / fps;
     
@@ -634,7 +646,7 @@ QImage ArtifactParticleLayer::renderFrame(int width, int height, float time)
 
     float fps = 30.0f;
     if (auto comp = static_cast<ArtifactAbstractComposition*>(composition())) {
-        fps = comp->settings().frameRate().framerate();
+        fps = comp->frameRate().framerate();
     }
     impl_->cachedFrameNumber = static_cast<int64_t>(time * fps);
     return image;
@@ -662,7 +674,7 @@ void ArtifactParticleLayer::renderToImage(QImage& target, float time)
     
     float fps = 30.0f;
     if (auto comp = static_cast<ArtifactAbstractComposition*>(composition())) {
-        fps = comp->settings().frameRate().framerate();
+        fps = comp->frameRate().framerate();
     }
     emit frameRendered(static_cast<int64_t>(time * fps));
 }

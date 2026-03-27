@@ -131,6 +131,12 @@ public:
   const AnimatableTransform2D &transform2D() const;
   AnimatableTransform3D &transform3D();
   const AnimatableTransform3D &transform3D() const;
+  
+  QVector3D position3D() const;
+  void setPosition3D(const QVector3D &pos);
+  QVector3D rotation3D() const;
+  void setRotation3D(const QVector3D &rot);
+
   void setTransform();
   QTransform getGlobalTransform() const;
   QTransform getLocalTransform() const;

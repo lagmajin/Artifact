@@ -14,7 +14,6 @@
 #include <QFormLayout>
 #include <QLabel>
 #include <QComboBox>
-#include <QColorDialog>
 #include <QPushButton>
 #include <QGuiApplication>
 #include <QScreen>
@@ -26,8 +25,10 @@ module Dialog.Composition;
 import Widgets.Utils.CSS;
 import Widgets.EditableLabel;
 import DragSpinBox;
+import Color.Float;
 import Artifact.Project.Manager;
 import Utils.String.UniString;
+import FloatColorPickerDialog;
 
 namespace Artifact {
 
@@ -151,7 +152,18 @@ namespace Artifact {
   QObject::connect(impl_->heightSpinBox, QOverload<int>::of(&QSpinBox::valueChanged), this, forceCustom);
 
   QObject::connect(impl_->bgColorButton, &QPushButton::clicked, this, [this]() {
-      QColor c = QColorDialog::getColor(impl_->bgColor, this, "Background Color");
+      ArtifactWidgets::FloatColorPicker picker(this);
+      picker.setWindowTitle(QStringLiteral("Background Color"));
+      picker.setColor(FloatColor(impl_->bgColor.redF(),
+                                 impl_->bgColor.greenF(),
+                                 impl_->bgColor.blueF(),
+                                 impl_->bgColor.alphaF()));
+      if (picker.exec() != QDialog::Accepted) {
+          return;
+      }
+
+      const FloatColor picked = picker.getColor();
+      QColor c = QColor::fromRgbF(picked.r(), picked.g(), picked.b(), picked.a());
       if (c.isValid()) {
           impl_->bgColor = c;
           impl_->bgColorButton->setStyleSheet(QString("background-color: %1; border: 1px solid #555; border-radius: 4px; color: %2;")

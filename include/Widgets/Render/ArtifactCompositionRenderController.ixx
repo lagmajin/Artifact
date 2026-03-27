@@ -12,6 +12,7 @@ import Artifact.Composition.Abstract;
 import Artifact.Render.IRenderer;
 import Artifact.Service.Project;
 import Artifact.Preview.Pipeline;
+import Artifact.Widgets.Gizmo3D;
 import Utils.Id;
 
 export namespace Artifact {
@@ -71,6 +72,8 @@ void handleMouseMove(const QPointF& viewportPos);
   void handleMouseRelease();
 
 class TransformGizmo* gizmo() const;
+class Artifact3DGizmo* gizmo3D() const;
+ Ray createPickingRay(const QPointF& viewportPos) const;
  Qt::CursorShape cursorShapeForViewportPos(const QPointF& viewportPos) const;
 
 public /*slots*/:

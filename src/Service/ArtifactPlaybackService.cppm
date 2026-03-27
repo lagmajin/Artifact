@@ -79,11 +79,7 @@ public:
         
         // エンジンのシグナルをサービスに転送
         QObject::connect(engine_, &ArtifactPlaybackEngine::playbackStateChanged,
-                         owner_, [this](bool playing, bool paused, bool stopped) {
-            PlaybackState state = PlaybackState::Stopped;
-            if (playing) state = PlaybackState::Playing;
-            else if (paused) state = PlaybackState::Paused;
-            else if (stopped) state = PlaybackState::Stopped;
+                         owner_, [this](PlaybackState state) {
             Q_EMIT owner_->playbackStateChanged(state);
         }, Qt::DirectConnection);
         
