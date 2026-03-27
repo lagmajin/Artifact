@@ -2,15 +2,22 @@
 #include <QAction>
 #include <QActionGroup>
 #include <QCloseEvent>
+#include <QDialog>
+#include <QDialogButtonBox>
 #include <QComboBox>
 #include <QDebug>
 #include <QIcon>
 #include <QHBoxLayout>
 #include <QEvent>
 #include <QHideEvent>
+#include <QHash>
+#include <QFocusEvent>
 #include <QMenu>
 #include <QMouseEvent>
 #include <QPaintEvent>
+#include <QKeySequence>
+#include <QPlainTextEdit>
+#include <QShortcut>
 #include <QResizeEvent>
 #include <QShowEvent>
 #include <QElapsedTimer>
@@ -19,6 +26,7 @@
 #include <QToolButton>
 #include <QVBoxLayout>
 #include <QWheelEvent>
+#include <QVector>
 #include <wobjectimpl.h>
 #include "../../../../out/build/x64-Debug/vcpkg_installed/x64-windows/include/Qt6/QtCore/QTimer"
 
@@ -31,7 +39,10 @@ import Artifact.Widgets.Gizmo3D;
 import Artifact.Widgets.PieMenu;
 import Color.Float;
 import Artifact.Composition.Abstract;
+import Artifact.Layer.Abstract;
+import Artifact.Layer.Text;
 import Artifact.Application.Manager;
+import Artifact.Layers.Selection.Manager;
 import Artifact.Service.Project;
 import Artifact.Service.Playback;
 import Artifact.Layer.Video;
@@ -75,12 +86,56 @@ ArtifactCompositionPtr resolvePreferredComposition() {
   return {};
 }
 
+bool editTextLayerInline(QWidget* parent, const ArtifactAbstractLayerPtr& layer)
+{
+  const auto textLayer = std::dynamic_pointer_cast<ArtifactTextLayer>(layer);
+  if (!textLayer) {
+    return false;
+  }
+
+  QDialog dialog(parent);
+  dialog.setWindowTitle(QStringLiteral("Edit Text Layer"));
+  dialog.setModal(true);
+  dialog.resize(640, 360);
+
+  auto *layout = new QVBoxLayout(&dialog);
+  auto *editor = new QPlainTextEdit(&dialog);
+  editor->setPlainText(textLayer->text().toQString());
+  editor->setPlaceholderText(QStringLiteral("Enter text..."));
+  editor->selectAll();
+  editor->setFocus();
+  layout->addWidget(editor, 1);
+
+  auto* commitShortcut = new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_Return), &dialog);
+  QObject::connect(commitShortcut, &QShortcut::activated, &dialog, &QDialog::accept);
+  auto* commitShortcutAlt = new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_Enter), &dialog);
+  QObject::connect(commitShortcutAlt, &QShortcut::activated, &dialog, &QDialog::accept);
+  auto* cancelShortcut = new QShortcut(QKeySequence::Cancel, &dialog);
+  QObject::connect(cancelShortcut, &QShortcut::activated, &dialog, &QDialog::reject);
+
+  auto *buttons = new QDialogButtonBox(
+      QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+  layout->addWidget(buttons);
+
+  QObject::connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+  QObject::connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+
+  if (dialog.exec() != QDialog::Accepted) {
+    return false;
+  }
+
+  textLayer->setText(ArtifactCore::UniString::fromQString(editor->toPlainText()));
+  Q_EMIT textLayer->changed();
+  return true;
+}
+
 class CompositionViewport final : public QWidget {
 public:
   explicit CompositionViewport(CompositionRenderController *controller,
                                QWidget *parent = nullptr)
       : QWidget(parent), controller_(controller) {
     setMinimumSize(1, 1);
+    setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     setAttribute(Qt::WA_NativeWindow);
     setAttribute(Qt::WA_DontCreateNativeAncestors);
     setAttribute(Qt::WA_PaintOnScreen);
@@ -148,10 +203,18 @@ protected:
   }
 
   void hideEvent(QHideEvent *event) override {
+    restoreTemporarySolo();
+    restoreTemporaryPlayback();
     if (controller_) {
       controller_->stop();
     }
     QWidget::hideEvent(event);
+  }
+
+  void focusOutEvent(QFocusEvent* event) override {
+    restoreTemporarySolo();
+    restoreTemporaryPlayback();
+    QWidget::focusOutEvent(event);
   }
 
   void resizeEvent(QResizeEvent *event) override {
@@ -200,9 +263,23 @@ protected:
   }
 
   void mouseDoubleClickEvent(QMouseEvent *event) override {
-    if (controller_ &&
-        controller_->layerAtViewportPos(event->position()).isNil()) {
-      controller_->resetView();
+    if (controller_) {
+      const auto layerId = controller_->layerAtViewportPos(event->position());
+      if (!layerId.isNil()) {
+        if (const auto comp = currentComposition()) {
+          if (auto layer = comp->layerById(layerId)) {
+            if (editTextLayerInline(this, layer)) {
+              controller_->renderOneFrame();
+              event->accept();
+              return;
+            }
+          }
+        }
+      } else {
+        controller_->resetView();
+        event->accept();
+        return;
+      }
     }
     event->accept();
   }
@@ -340,6 +417,54 @@ protected:
       event->accept();
       return;
     }
+    if (!event->isAutoRepeat() && event->key() == Qt::Key_P) {
+      beginTemporaryPlayback();
+      event->accept();
+      return;
+    }
+    if (!event->isAutoRepeat() &&
+        (event->key() == Qt::Key_QuoteLeft || event->key() == Qt::Key_AsciiTilde)) {
+      beginTemporarySolo();
+      event->accept();
+      return;
+    }
+    if (!event->isAutoRepeat() && event->key() == Qt::Key_H) {
+      if (event->modifiers().testFlag(Qt::ShiftModifier)) {
+        soloCurrentLayer();
+      } else {
+        toggleCurrentLayerVisibility();
+      }
+      event->accept();
+      return;
+    }
+    if (!event->isAutoRepeat() &&
+        event->key() == Qt::Key_S &&
+        event->modifiers().testFlag(Qt::ShiftModifier)) {
+      soloCurrentLayer();
+      event->accept();
+      return;
+    }
+    if (!event->isAutoRepeat() &&
+        event->key() == Qt::Key_C &&
+        event->modifiers().testFlag(Qt::ControlModifier) &&
+        event->modifiers().testFlag(Qt::AltModifier)) {
+      centerCurrentLayer();
+      event->accept();
+      return;
+    }
+    if (event->key() == Qt::Key_Backspace && !event->isAutoRepeat()) {
+      auto* app = ArtifactApplicationManager::instance();
+      auto* svc = ArtifactProjectService::instance();
+      auto* active = app ? app->activeContextService() : nullptr;
+      auto* selection = app ? app->layerSelectionManager() : nullptr;
+      const auto currentLayer = selection ? selection->currentLayer() : ArtifactAbstractLayerPtr{};
+      const auto currentComp = active ? active->activeComposition() : ArtifactCompositionPtr{};
+      if (svc && currentLayer && currentComp) {
+        svc->removeLayerFromComposition(currentComp->id(), currentLayer->id());
+        event->accept();
+        return;
+      }
+    }
     QWidget::keyPressEvent(event);
   }
 
@@ -365,10 +490,161 @@ protected:
       event->accept();
       return;
     }
+    if (!event->isAutoRepeat() &&
+        (event->key() == Qt::Key_QuoteLeft || event->key() == Qt::Key_AsciiTilde)) {
+      restoreTemporarySolo();
+      event->accept();
+      return;
+    }
+    if (!event->isAutoRepeat() && event->key() == Qt::Key_P) {
+      restoreTemporaryPlayback();
+      event->accept();
+      return;
+    }
     QWidget::keyReleaseEvent(event);
   }
 
 private:
+  struct TemporarySoloState {
+    LayerID layerId;
+    bool solo = false;
+  };
+
+  ArtifactAbstractLayerPtr currentLayer() const {
+    auto* app = ArtifactApplicationManager::instance();
+    auto* selection = app ? app->layerSelectionManager() : nullptr;
+    return selection ? selection->currentLayer() : ArtifactAbstractLayerPtr{};
+  }
+
+  ArtifactCompositionPtr currentComposition() const {
+    auto* active = ArtifactApplicationManager::instance()
+                       ? ArtifactApplicationManager::instance()->activeContextService()
+                       : nullptr;
+    return active ? active->activeComposition() : ArtifactCompositionPtr{};
+  }
+
+  void beginTemporarySolo() {
+    if (temporarySoloActive_) {
+      return;
+    }
+    auto* svc = ArtifactProjectService::instance();
+    const auto comp = currentComposition();
+    const auto layer = currentLayer();
+    if (!svc || !comp || !layer) {
+      return;
+    }
+
+    temporarySoloStates_.clear();
+    const auto layers = comp->allLayer();
+    temporarySoloStates_.reserve(layers.size());
+    for (const auto& candidate : layers) {
+      if (!candidate) {
+        continue;
+      }
+      temporarySoloStates_.push_back({candidate->id(), candidate->isSolo()});
+    }
+
+    temporarySoloActive_ = true;
+    svc->soloOnlyLayerInCurrentComposition(layer->id());
+  }
+
+  void beginTemporaryPlayback() {
+    if (temporaryPlaybackActive_) {
+      return;
+    }
+    auto* playback = ArtifactPlaybackService::instance();
+    if (!playback || playback->isPlaying()) {
+      return;
+    }
+    temporaryPlaybackActive_ = true;
+    playback->play();
+    if (controller_) {
+      controller_->start();
+    }
+  }
+
+  void restoreTemporarySolo() {
+    if (!temporarySoloActive_) {
+      return;
+    }
+    auto* svc = ArtifactProjectService::instance();
+    const auto comp = currentComposition();
+    if (!svc || !comp) {
+      temporarySoloActive_ = false;
+      temporarySoloStates_.clear();
+      return;
+    }
+
+    for (const auto& state : temporarySoloStates_) {
+      if (state.layerId.isNil()) {
+        continue;
+      }
+      svc->setLayerSoloInCurrentComposition(state.layerId, state.solo);
+    }
+    temporarySoloActive_ = false;
+    temporarySoloStates_.clear();
+  }
+
+  void restoreTemporaryPlayback() {
+    if (!temporaryPlaybackActive_) {
+      return;
+    }
+    auto* playback = ArtifactPlaybackService::instance();
+    if (playback && playback->isPlaying()) {
+      playback->stop();
+    }
+    if (controller_) {
+      controller_->stop();
+    }
+    temporaryPlaybackActive_ = false;
+  }
+
+  void toggleCurrentLayerVisibility() {
+    auto* svc = ArtifactProjectService::instance();
+    const auto layer = currentLayer();
+    if (!svc || !layer) {
+      return;
+    }
+    const bool current = svc->isLayerVisibleInCurrentComposition(layer->id());
+    svc->setLayerVisibleInCurrentComposition(layer->id(), !current);
+  }
+
+  void soloCurrentLayer() {
+    auto* svc = ArtifactProjectService::instance();
+    const auto layer = currentLayer();
+    if (!svc || !layer) {
+      return;
+    }
+    svc->soloOnlyLayerInCurrentComposition(layer->id());
+  }
+
+  void centerCurrentLayer() {
+    auto* svc = ArtifactProjectService::instance();
+    const auto comp = currentComposition();
+    const auto layer = currentLayer();
+    if (!svc || !comp || !layer) {
+      return;
+    }
+
+    const QSize compSize = comp->settings().compositionSize();
+    const float compCenterX = static_cast<float>(compSize.width() > 0 ? compSize.width() : 1920) * 0.5f;
+    const float compCenterY = static_cast<float>(compSize.height() > 0 ? compSize.height() : 1080) * 0.5f;
+
+    if (layer->is3D()) {
+      const QVector3D current = layer->position3D();
+      const QVector3D centeredPos(compCenterX, compCenterY, current.z());
+      layer->setPosition3D(centeredPos);
+    } else {
+      const QVector3D current = layer->position3D();
+      const QVector3D centeredPos(compCenterX, compCenterY, current.z());
+      layer->setPosition3D(centeredPos);
+    }
+    layer->changed();
+  }
+
+  QVector<TemporarySoloState> temporarySoloStates_;
+  bool temporarySoloActive_ = false;
+  bool temporaryPlaybackActive_ = false;
   void scheduleInitialFit() {
     if (!pendingInitialFit_) {
       return;
@@ -556,6 +832,7 @@ public:
 ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
     : QWidget(parent), impl_(new Impl()) {
   setMinimumSize(960, 640);
+  setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
 
   auto *mainLayout = new QVBoxLayout(this);
   mainLayout->setContentsMargins(0, 0, 0, 0);
@@ -761,6 +1038,17 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
                        &ArtifactActiveContextService::activeCompositionChanged,
                        this, [this](ArtifactCompositionPtr composition) {
                          setComposition(composition);
+                       });
+    }
+    if (auto *selection = app->layerSelectionManager()) {
+      QObject::connect(selection, &ArtifactLayerSelectionManager::selectionChanged,
+                       this, [this, selection]() {
+                         if (!impl_ || !impl_->renderController_) {
+                           return;
+                         }
+                         const auto current = selection ? selection->currentLayer() : ArtifactAbstractLayerPtr{};
+                         impl_->renderController_->setSelectedLayerId(
+                             current ? current->id() : ArtifactCore::LayerID::Nil());
                        });
     }
   }

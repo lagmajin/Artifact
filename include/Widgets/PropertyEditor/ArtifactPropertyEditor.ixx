@@ -1,11 +1,11 @@
 module;
 
 #include <QWidget>
+#include <QAbstractButton>
 #include <QLabel>
 #include <QPushButton>
 #include <QVariant>
 #include <QColor>
-#include <QCheckBox>
 #include <QComboBox>
 #include <QDoubleSpinBox>
 #include <QFontComboBox>
@@ -99,7 +99,7 @@ public:
     void setValueFromVariant(const QVariant& value) override;
 
 private:
-    QCheckBox* checkBox_ = nullptr;
+    QAbstractButton* toggleSwitch_ = nullptr;
 };
 
 class ArtifactStringPropertyEditor final : public ArtifactAbstractPropertyEditor {

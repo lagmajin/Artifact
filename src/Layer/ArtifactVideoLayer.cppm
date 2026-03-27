@@ -1,5 +1,6 @@
 module;
 #include <QImage>
+#include <QMatrix4x4>
 #include <QString>
 #include <QJsonObject>
 #include <QDebug>
@@ -49,6 +50,7 @@ module;
 #include <numeric>
 #include <regex>
 #include <random>
+#include <Layer/ArtifactCloneEffectSupport.hpp>
 module Artifact.Layer.Video;
 
 
@@ -740,8 +742,14 @@ void ArtifactVideoLayer::draw(ArtifactIRenderer* renderer)
     if (impl_->currentQImage_.isNull()) return;
 
     auto size = sourceSize();
-    renderer->drawSpriteTransformed(0.0f, 0.0f, (float)size.width, (float)size.height,
-                                     getGlobalTransform(), impl_->currentQImage_, this->opacity());
+    const QMatrix4x4 baseTransform = getGlobalTransform4x4();
+    drawWithClonerEffect(this, baseTransform, [renderer, size, this](const QMatrix4x4& transform, float weight) {
+        renderer->drawSpriteTransformed(0.0f, 0.0f,
+                                        static_cast<float>(size.width),
+                                        static_cast<float>(size.height),
+                                        transform, impl_->currentQImage_,
+                                        this->opacity() * weight);
+    });
 }
 
 void ArtifactVideoLayer::goToFrame(int64_t frameNumber)

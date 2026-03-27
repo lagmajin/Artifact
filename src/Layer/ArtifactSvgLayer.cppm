@@ -3,10 +3,12 @@ module;
 #include <QDebug>
 #include <QPainter>
 #include <QRectF>
+#include <QMatrix4x4>
 #include <QSvgRenderer>
 #include <QFuture>
 #include <QtConcurrent>
 #include <wobjectimpl.h>
+#include <Layer/ArtifactCloneEffectSupport.hpp>
 
 module Artifact.Layer.Svg;
 
@@ -261,10 +263,13 @@ void ArtifactSvgLayer::draw(ArtifactIRenderer* renderer)
         size = Size_2D(impl_->width_, impl_->height_);
     }
 
-    renderer->drawSpriteTransformed(0.0f, 0.0f,
-                                    static_cast<float>(size.width),
-                                    static_cast<float>(size.height),
-                                    getGlobalTransform(), img, opacity());
+    const QMatrix4x4 baseTransform = getGlobalTransform4x4();
+    drawWithClonerEffect(this, baseTransform, [renderer, img, size, this](const QMatrix4x4& transform, float weight) {
+        renderer->drawSpriteTransformed(0.0f, 0.0f,
+                                        static_cast<float>(size.width),
+                                        static_cast<float>(size.height),
+                                        transform, img, this->opacity() * weight);
+    });
 }
 
 QRectF ArtifactSvgLayer::localBounds() const

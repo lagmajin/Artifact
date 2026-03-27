@@ -46,6 +46,11 @@ import Artifact.Layer.Abstract;
 import Artifact.Layer.Image;
 import Artifact.Layer.Svg;
 import Artifact.Layer.Video;
+import Artifact.Layer.Text;
+import Artifact.Layer.Solid2D;
+import Artifact.Layer.Audio;
+import Artifact.Layer.Camera;
+import Artifact.Layer.Particle;
 import Layer.Blend;
 import Artifact.Layer.InitParams;
 import File.TypeDetector;
@@ -100,6 +105,39 @@ namespace {
    icon = loadSvgAsIcon(resolveIconPath(fallbackFileName));
   }
   return icon;
+ }
+
+ // レイヤータイプ別の色を取得
+ QColor getLayerTypeColor(const ArtifactAbstractLayerPtr& layer)
+ {
+  if (!layer) return QColor(128, 128, 128);  // Gray - null
+  
+  if (auto img = std::dynamic_pointer_cast<ArtifactImageLayer>(layer)) {
+   return QColor(100, 149, 237);  // CornflowerBlue - 画像
+  }
+  if (auto video = std::dynamic_pointer_cast<ArtifactVideoLayer>(layer)) {
+   return QColor(255, 165, 0);    // Orange - 動画
+  }
+  if (auto text = std::dynamic_pointer_cast<ArtifactTextLayer>(layer)) {
+   return QColor(50, 205, 50);    // LimeGreen - テキスト
+  }
+  if (auto solid = std::dynamic_pointer_cast<ArtifactSolid2DLayer>(layer)) {
+   return QColor(219, 112, 147);  // PaleVioletRed - ソリッド
+  }
+  if (auto svg = std::dynamic_pointer_cast<ArtifactSvgLayer>(layer)) {
+   return QColor(147, 112, 219);  // MediumPurple - SVG
+  }
+  if (auto audio = std::dynamic_pointer_cast<ArtifactAudioLayer>(layer)) {
+   return QColor(255, 215, 0);    // Gold - オーディオ
+  }
+  if (auto camera = std::dynamic_pointer_cast<ArtifactCameraLayer>(layer)) {
+   return QColor(0, 255, 255);    // Cyan - カメラ
+  }
+  if (auto particle = std::dynamic_pointer_cast<ArtifactParticleLayer>(layer)) {
+   return QColor(255, 105, 180);  // HotPink - パーティクル
+  }
+  
+  return QColor(128, 128, 128);  // Gray - その他
  }
 
  QPixmap loadLayerPanelPixmap(const QString& resourceRelativePath, const QString& fallbackFileName = {})
@@ -1805,9 +1843,15 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
     const bool isGroupRow = (row.kind == Impl::RowKind::Group);
     bool sel = (l->id() == impl_->selectedLayerId);
 
-    if (sel && !isGroupRow) p.fillRect(0, y, width(), rowH, QColor(180, 110, 45)); // Modo-like Amber selection
-    else if (i == impl_->hoveredLayerIndex) p.fillRect(0, y, width(), rowH, QColor(60, 60, 60)); // Subtle grey hover
-    else p.fillRect(0, y, width(), rowH, (i % 2 == 0) ? QColor(42, 42, 42) : QColor(45, 45, 45));
+    // レイヤータイプ別の色を取得
+    QColor layerTypeColor = getLayerTypeColor(l);
+    
+    // 左端にタイプカラーバーを描画（4px）
+    p.fillRect(0, y, 4, rowH, layerTypeColor);
+
+    if (sel && !isGroupRow) p.fillRect(4, y, width() - 4, rowH, QColor(180, 110, 45)); // Modo-like Amber selection
+    else if (i == impl_->hoveredLayerIndex) p.fillRect(4, y, width() - 4, rowH, QColor(60, 60, 60)); // Subtle grey hover
+    else p.fillRect(4, y, width() - 4, rowH, (i % 2 == 0) ? QColor(42, 42, 42) : QColor(45, 45, 45));
 
     p.setPen(QColor(60, 60, 60));
     p.drawLine(0, y + rowH, width(), y + rowH);

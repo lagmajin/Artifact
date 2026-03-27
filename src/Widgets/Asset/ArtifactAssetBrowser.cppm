@@ -3,6 +3,7 @@
 #include <QDir>
 #include <QLabel>
 #include <QLineEdit>
+#include <QActionGroup>
 #include <QStandardPaths>
 #include <QVBoxLayout>
 #include <QWidget>
@@ -173,8 +174,11 @@ namespace Artifact {
   QFileSystemModel* fileModel_ = nullptr;
   QButtonGroup* filterButtonGroup_ = nullptr;
   QLabel* currentPathLabel_ = nullptr;
+  QLabel* browserStatusLabel_ = nullptr;
   QLabel* fileInfoLabel_ = nullptr;  // File details display
   QSlider* thumbnailSizeSlider_ = nullptr;  // Thumbnail size adjustment
+  bool listViewMode_ = false;
+   QString currentSortMode_ = "name";
    QString currentDirectoryPath_;
    QString currentFileTypeFilter_ = "all";
    QString currentStatusFilter_ = "all";
@@ -198,9 +202,11 @@ namespace Artifact {
   bool isUnusedAssetPath(const QString& filePath) const;
   bool isMissingAssetPath(const QString& filePath) const;
   QStringList selectedAssetPaths() const;
+  void updateBrowserStatus();
   void syncProjectAssetRoot();
   void syncDirectorySelection();
   void refreshUnusedAssetCache();
+  void sortItems(QList<AssetMenuItem>& items) const;
  };
 
  ArtifactAssetBrowser::Impl::Impl()
@@ -359,6 +365,51 @@ QStringList ArtifactAssetBrowser::Impl::selectedAssetPaths() const
   }
   paths.removeDuplicates();
   return paths;
+}
+
+void ArtifactAssetBrowser::Impl::updateBrowserStatus()
+{
+  if (!browserStatusLabel_) {
+    return;
+  }
+
+  const QString selectedText = QStringLiteral("Selected: %1").arg(selectedAssetPaths().size());
+  const QString typeText = QStringLiteral("Type: %1").arg(currentFileTypeFilter_);
+  const QString statusText = QStringLiteral("Status: %1").arg(currentStatusFilter_);
+  const QString sortText = QStringLiteral("Sort: %1").arg(currentSortMode_);
+  const QString searchText = currentSearchFilter_.isEmpty()
+      ? QStringLiteral("Search: -")
+      : QStringLiteral("Search: %1").arg(currentSearchFilter_);
+  browserStatusLabel_->setText(
+      QStringLiteral("%1 | %2 | %3 | %4 | %5").arg(selectedText, typeText, statusText, sortText, searchText));
+}
+
+void ArtifactAssetBrowser::Impl::sortItems(QList<AssetMenuItem>& items) const
+{
+  std::sort(items.begin(), items.end(), [this](const AssetMenuItem& lhs, const AssetMenuItem& rhs) {
+    if (lhs.isFolder != rhs.isFolder) {
+      return lhs.isFolder;
+    }
+
+    const QString lhsName = lhs.name.toQString();
+    const QString rhsName = rhs.name.toQString();
+    const QString lhsType = lhs.type.toQString();
+    const QString rhsType = rhs.type.toQString();
+
+    if (currentSortMode_ == "type") {
+      const int typeCompare = QString::localeAwareCompare(lhsType, rhsType);
+      if (typeCompare != 0) {
+        return typeCompare < 0;
+      }
+      return QString::localeAwareCompare(lhsName, rhsName) < 0;
+    }
+
+    const int nameCompare = QString::localeAwareCompare(lhsName, rhsName);
+    if (nameCompare != 0) {
+      return nameCompare < 0;
+    }
+    return QString::localeAwareCompare(lhsType, rhsType) < 0;
+  });
 }
 
 bool ArtifactAssetBrowser::Impl::isUnusedAssetPath(const QString& filePath) const
@@ -555,6 +606,7 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
   if (currentPathLabel_) {
    currentPathLabel_->setText(currentDirectoryPath_);
   }
+  updateBrowserStatus();
 
   // Get both files and directories, excluding . and ..
   QStringList entries = dir.entryList(QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot);
@@ -621,6 +673,7 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
    items.append(item);
   }
 
+  sortItems(items);
   assetModel_->setItems(items);
  }
 
@@ -638,6 +691,29 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
   impl_->searchEdit_ = assetToolBar->findChild<QLineEdit*>();
   impl_->upButton_ = assetToolBar->findChild<QToolButton*>(QStringLiteral("assetBrowserUpButton"));
   impl_->refreshButton_ = assetToolBar->findChild<QToolButton*>(QStringLiteral("assetBrowserRefreshButton"));
+  auto viewModeButton = new QToolButton();
+  viewModeButton->setObjectName(QStringLiteral("assetBrowserViewModeButton"));
+  viewModeButton->setCheckable(true);
+  viewModeButton->setChecked(false);
+  viewModeButton->setText(QStringLiteral("List"));
+  viewModeButton->setToolTip(QStringLiteral("Toggle asset view mode"));
+
+  auto sortModeButton = new QToolButton();
+  sortModeButton->setObjectName(QStringLiteral("assetBrowserSortModeButton"));
+  sortModeButton->setPopupMode(QToolButton::InstantPopup);
+  sortModeButton->setText(QStringLiteral("Sort: Name"));
+  sortModeButton->setToolTip(QStringLiteral("Sort assets"));
+  auto* sortMenu = new QMenu(sortModeButton);
+  auto* sortGroup = new QActionGroup(sortModeButton);
+  sortGroup->setExclusive(true);
+  auto* sortByNameAction = sortMenu->addAction(QStringLiteral("Name"));
+  sortByNameAction->setCheckable(true);
+  sortByNameAction->setChecked(true);
+  auto* sortByTypeAction = sortMenu->addAction(QStringLiteral("Type"));
+  sortByTypeAction->setCheckable(true);
+  sortGroup->addAction(sortByNameAction);
+  sortGroup->addAction(sortByTypeAction);
+  sortModeButton->setMenu(sortMenu);
 
   // File type filter buttons
   auto filterButtonsLayout = new QHBoxLayout();
@@ -758,19 +834,40 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
   filePathLabel->setStyleSheet("color: gray; font-size: 10pt;");
   filePathLabel->setWordWrap(true);
 
+  auto browserStatusLabel = impl_->browserStatusLabel_ = new QLabel(
+      QStringLiteral("Selected: 0 | Type: all | Status: all | Sort: name | Search: -"));
+  browserStatusLabel->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+  browserStatusLabel->setStyleSheet("color: #98a2b3; font-size: 9pt;");
+  browserStatusLabel->setWordWrap(true);
+
   auto assetModel = impl_->assetModel_ = new AssetMenuModel(this);
   auto fileView = impl_->fileView_ = new AssetFileListView();
   fileView->setModel(assetModel);
   impl_->currentDirectoryPath_ = desktopPath;  // Set initial directory
-  fileView->setViewMode(QListView::IconMode);
-  fileView->setIconSize(QSize(64, 64));
-  fileView->setGridSize(QSize(100, 100));  // Fixed grid size for uniform spacing
-  fileView->setResizeMode(QListView::Adjust);
-  fileView->setFlow(QListView::LeftToRight);
+  auto applyViewMode = [fileView, viewModeButton, this](bool listMode) {
+   impl_->listViewMode_ = listMode;
+   fileView->setViewMode(listMode ? QListView::ListMode : QListView::IconMode);
+   fileView->setFlow(listMode ? QListView::TopToBottom : QListView::LeftToRight);
+   fileView->setWrapping(!listMode);
+   fileView->setResizeMode(QListView::Adjust);
+   fileView->setSelectionMode(QAbstractItemView::ExtendedSelection);
+   fileView->setWordWrap(!listMode);
+   fileView->setUniformItemSizes(true);
+   if (listMode) {
+    fileView->setIconSize(QSize(28, 28));
+    fileView->setGridSize(QSize(260, 40));
+    fileView->setSpacing(2);
+    viewModeButton->setText(QStringLiteral("Icon"));
+   } else {
+    fileView->setIconSize(QSize(64, 64));
+    fileView->setGridSize(QSize(100, 100));
+    fileView->setSpacing(5);
+    viewModeButton->setText(QStringLiteral("List"));
+   }
+  };
+  applyViewMode(false);
   fileView->setTextElideMode(Qt::ElideMiddle);  // Show "longfile...name.png"
   fileView->setWordWrap(true);
-  fileView->setSpacing(5);  // Uniform spacing between items
-  fileView->setUniformItemSizes(true);  // Optimize rendering with uniform sizes
   fileView->setDragEnabled(true);
   fileView->setAcceptDrops(true);
   fileView->setDropIndicatorShown(true);
@@ -778,6 +875,24 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
   fileView->setDefaultDropAction(Qt::CopyAction);
   fileView->setSelectionMode(QAbstractItemView::ExtendedSelection);
   fileView->setContextMenuPolicy(Qt::CustomContextMenu);  // Enable custom context menu
+
+  connect(viewModeButton, &QToolButton::toggled, this, [applyViewMode](bool checked) {
+   applyViewMode(checked);
+  });
+
+  connect(sortGroup, &QActionGroup::triggered, this, [this, sortModeButton](QAction* action) {
+   if (!action) {
+    return;
+   }
+   if (action->text() == QStringLiteral("Type")) {
+    impl_->currentSortMode_ = "type";
+    sortModeButton->setText(QStringLiteral("Sort: Type"));
+   } else {
+    impl_->currentSortMode_ = "name";
+    sortModeButton->setText(QStringLiteral("Sort: Name"));
+   }
+   impl_->applyFilters();
+  });
 
   // Connect search filter
   if (impl_->searchEdit_) {
@@ -886,6 +1001,7 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
    } else if (impl_->fileInfoLabel_) {
     impl_->fileInfoLabel_->setText(QStringLiteral("No file selected"));
    }
+   impl_->updateBrowserStatus();
    selectionChanged(selectedFiles);
   });
 
@@ -941,14 +1057,21 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
    });
   }
 
+  auto toolbarRow = new QHBoxLayout();
+  toolbarRow->setContentsMargins(0, 0, 0, 0);
+  toolbarRow->addWidget(assetToolBar, 1);
+  toolbarRow->addWidget(sortModeButton, 0);
+  toolbarRow->addWidget(viewModeButton, 0);
+
   auto VBoxLayout = new  QVBoxLayout();
   VBoxLayout->addWidget(assetPathLabel);
   VBoxLayout->addWidget(filePathLabel);
+  VBoxLayout->addWidget(browserStatusLabel);
   VBoxLayout->addWidget(thumbnailControlGroup);
   VBoxLayout->addWidget(fileView);
   VBoxLayout->addWidget(fileInfoGroup);
 
-  vLayout->addWidget(assetToolBar);
+  vLayout->addLayout(toolbarRow);
   vLayout->addLayout(filterButtonsLayout);
   layout->addWidget(directoryView, 1);
   layout->addLayout(VBoxLayout, 3);

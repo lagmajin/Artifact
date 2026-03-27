@@ -655,25 +655,16 @@ void PrimitiveRenderer2D::drawLineLocal(float2 p1, float2 p2, const FloatColor& 
     impl_->pCtx_->Draw(drawAttrs);
 }
 
-void PrimitiveRenderer2D::drawThickLineLocal(float2 p1, float2 p2, float thickness, const FloatColor& color)
+void PrimitiveRenderer2D::drawQuadLocal(float2 p0, float2 p1, float2 p2, float2 p3, const FloatColor& color)
 {
     if (!impl_->hasRenderTarget() || !impl_->m_draw_thick_line_pso_and_srb.pPSO) return;
-    if (thickness <= 0.0f) return;
-
-    float2 d   = { p2.x - p1.x, p2.y - p1.y };
-    float  len = std::sqrt(d.x * d.x + d.y * d.y);
-    if (len < 1e-5f) return;
-
-    float2 nd   = { d.x / len, d.y / len };
-    float  half = thickness * 0.5f;
-    float2 n    = { -nd.y * half, nd.x * half };
 
     float4 c = { color.r(), color.g(), color.b(), color.a() };
     RectVertex vertices[4] = {
-        { { p1.x + n.x, p1.y + n.y }, c },
-        { { p1.x - n.x, p1.y - n.y }, c },
-        { { p2.x + n.x, p2.y + n.y }, c },
-        { { p2.x - n.x, p2.y - n.y }, c },
+        { { p0.x, p0.y }, c },
+        { { p1.x, p1.y }, c },
+        { { p2.x, p2.y }, c },
+        { { p3.x, p3.y }, c },
     };
 
     auto* pRTV = impl_->getCurrentRTV();
@@ -714,6 +705,25 @@ void PrimitiveRenderer2D::drawThickLineLocal(float2 p1, float2 p2, float thickne
     drawAttrs.NumVertices = 4;
     drawAttrs.Flags       = DRAW_FLAG_VERIFY_ALL;
     impl_->pCtx_->Draw(drawAttrs);
+}
+
+void PrimitiveRenderer2D::drawThickLineLocal(float2 p1, float2 p2, float thickness, const FloatColor& color)
+{
+    if (thickness <= 0.0f) return;
+
+    float2 d   = { p2.x - p1.x, p2.y - p1.y };
+    float  len = std::sqrt(d.x * d.x + d.y * d.y);
+    if (len < 1e-5f) return;
+
+    float2 nd   = { d.x / len, d.y / len };
+    float  half = thickness * 0.5f;
+    float2 n    = { -nd.y * half, nd.x * half };
+
+    drawQuadLocal({ p1.x + n.x, p1.y + n.y },
+                  { p1.x - n.x, p1.y - n.y },
+                  { p2.x + n.x, p2.y + n.y },
+                  { p2.x - n.x, p2.y - n.y },
+                  color);
 }
 
 void PrimitiveRenderer2D::drawDotLineLocal(float2 p1, float2 p2, float thickness, float spacing, const FloatColor& color)

@@ -11,6 +11,8 @@ export module Artifact.Timeline.TrackPainterView;
 
 import Utils.Id;
 
+W_REGISTER_ARGTYPE(ArtifactCore::LayerID)
+
 export namespace Artifact
 {
  using namespace ArtifactCore;
@@ -70,6 +72,8 @@ export namespace Artifact
 
  public /*signals*/:
   void seekRequested(double frame) W_SIGNAL(seekRequested, frame);
+  void clipSelected(const QString& clipId, const LayerID& layerId) W_SIGNAL(clipSelected, clipId, layerId);
+  void clipDeselected() W_SIGNAL(clipDeselected);
   void clipMoved(const QString& clipId, double startFrame) W_SIGNAL(clipMoved, clipId, startFrame);
   void clipResized(const QString& clipId, double startFrame, double durationFrame) W_SIGNAL(clipResized, clipId, startFrame, durationFrame);
   void timelineDebugMessage(const QString& message) W_SIGNAL(timelineDebugMessage, message);

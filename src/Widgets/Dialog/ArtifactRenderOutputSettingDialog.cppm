@@ -35,6 +35,7 @@ namespace Artifact
   QComboBox* presetCombo = nullptr;  // フォーマットプリセット選択
   QComboBox* formatCombo = nullptr;
   QComboBox* codecCombo = nullptr;
+  QString codecProfile;
   QComboBox* backendCombo = nullptr;
   QComboBox* resolutionCombo = nullptr;
   QSpinBox* widthSpin = nullptr;
@@ -181,8 +182,10 @@ namespace Artifact
     QString codecText;
     if (presetCodec == "h264") codecText = "H.264";
     else if (presetCodec == "h265") codecText = "H.265";
+    else if (presetCodec == "prores") codecText = "ProRes";
     else if (presetCodec == "mjpeg" || presetCodec == "jpeg") codecText = "JPEG";
     else codecText = preset->codec;
+    codecProfile = preset->codecProfile;
 
     const int codecIndex = codecCombo->findText(codecText);
     if (codecIndex >= 0) {
@@ -199,10 +202,10 @@ namespace Artifact
      QString ext;
      if (preset->isImageSequence) {
       ext = preset->container.toLower();
-     } else if (preset->codec == QStringLiteral("ProRes")) {
-      ext = QStringLiteral("mov");
-     } else {
-      ext = preset->container.toLower();
+      } else if (preset->codec.toLower() == QStringLiteral("prores")) {
+       ext = QStringLiteral("mov");
+      } else {
+       ext = preset->container.toLower();
      }
      QFileInfo info(path);
      QString newPath = info.absolutePath() + "/" + info.completeBaseName() + "." + ext;
@@ -371,6 +374,14 @@ namespace Artifact
 
     // コーデック変更時も拡張子を更新（ProRes → .mov など）
     QObject::connect(impl_->codecCombo, &QComboBox::currentTextChanged, [this](const QString& codec) {
+        const QString normalizedCodec = codec.trimmed().toLower();
+        if (normalizedCodec == QStringLiteral("prores")) {
+            if (impl_->codecProfile.trimmed().isEmpty()) {
+                impl_->codecProfile = QStringLiteral("hq");
+            }
+        } else {
+            impl_->codecProfile.clear();
+        }
         if (!impl_->outputPathEdit) return;
         QString path = impl_->outputPathEdit->text().trimmed();
         if (path.isEmpty()) return;
@@ -427,16 +438,42 @@ namespace Artifact
 
  void ArtifactRenderOutputSettingDialog::setCodec(const QString& codec)
  {
-   Impl::ensureComboContains(impl_->codecCombo, codec);
+   QString normalizedCodec = codec.trimmed();
+   const QString lower = normalizedCodec.toLower();
+   if (lower == QStringLiteral("prores")) {
+    normalizedCodec = QStringLiteral("ProRes");
+   } else if (lower == QStringLiteral("h264")) {
+    normalizedCodec = QStringLiteral("H.264");
+   } else if (lower == QStringLiteral("h265")) {
+    normalizedCodec = QStringLiteral("H.265");
+   } else if (lower == QStringLiteral("mjpeg")) {
+    normalizedCodec = QStringLiteral("JPEG");
+   }
+   Impl::ensureComboContains(impl_->codecCombo, normalizedCodec);
    if (!impl_->codecCombo) {
      return;
    }
-   impl_->codecCombo->setCurrentIndex(std::max(0, impl_->codecCombo->findText(codec)));
+   impl_->codecCombo->setCurrentIndex(std::max(0, impl_->codecCombo->findText(normalizedCodec)));
+   if (lower == QStringLiteral("prores") && impl_->codecProfile.trimmed().isEmpty()) {
+    impl_->codecProfile = QStringLiteral("hq");
+   }
  }
 
  QString ArtifactRenderOutputSettingDialog::codec() const
  {
    return impl_->codecCombo ? impl_->codecCombo->currentText() : QStringLiteral("H.264");
+ }
+
+ void ArtifactRenderOutputSettingDialog::setCodecProfile(const QString& profile)
+ {
+   if (impl_) {
+    impl_->codecProfile = profile.trimmed();
+   }
+ }
+
+ QString ArtifactRenderOutputSettingDialog::codecProfile() const
+ {
+   return impl_ ? impl_->codecProfile : QString();
  }
 
  void ArtifactRenderOutputSettingDialog::setEncoderBackend(const QString& backend)

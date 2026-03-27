@@ -6,10 +6,13 @@
 #include <QStringList>
 #include <QSize>
 #include <QIcon>
+#include <QFileInfo>
+#include <QDebug>
 #include <wobjectimpl.h>
 
 module Widgets.ToolBar;
 import Utils;
+import Icon.SvgToIcon;
 import Artifact.Tool.Manager;
 import Artifact.Service.Application;
 
@@ -17,11 +20,27 @@ namespace {
 QIcon loadIconWithFallback(const QString& fileName)
 {
   const QString resourcePath = ArtifactCore::resolveIconResourcePath(fileName);
-  QIcon icon(resourcePath);
-  if (!icon.isNull()) {
-    return icon;
+  {
+    const QIcon icon = ArtifactCore::svgToQIcon(resourcePath, QSize(32, 32));
+    if (!icon.isNull()) {
+      return icon;
+    }
   }
-  return QIcon(ArtifactCore::resolveIconPath(fileName));
+
+  const QString filePath = ArtifactCore::resolveIconPath(fileName);
+  {
+    const QIcon fileIcon = ArtifactCore::svgToQIcon(filePath, QSize(32, 32));
+    if (!fileIcon.isNull()) {
+      return fileIcon;
+    }
+  }
+
+  qWarning().noquote() << "[ArtifactToolBar] icon load failed:"
+                       << "resource=" << resourcePath
+                       << "exists=" << QFileInfo::exists(resourcePath)
+                       << "file=" << filePath
+                       << "exists=" << QFileInfo::exists(filePath);
+  return QIcon();
 }
 
 QIcon loadIconWithFallback(const QStringList& fileNames)

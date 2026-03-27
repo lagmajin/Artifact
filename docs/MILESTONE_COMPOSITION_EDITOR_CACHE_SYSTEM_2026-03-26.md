@@ -79,6 +79,11 @@
 
 - static image / text / cached frame の再 upload がさらに減る
 
+状態:
+
+- 2026-03-27 時点で、video layer を GPU texture cache から除外し、毎フレーム churn しやすい経路を外した
+- 静止系 layer の再 upload に cache を集中させる方向へ寄せた
+
 ### 4. CS Blend Fast Path
 
 対象:

@@ -8,6 +8,12 @@
 #include <QElapsedTimer>
 #include <QLoggingCategory>
 #include <QKeyEvent>
+#include <QPainter>
+#include <QPen>
+#include <QBrush>
+#include <QFontMetrics>
+#include <QColor>
+#include <QStringList>
 #include <QDateTime>
 #include <QDir>
 #include <QFileDialog>
@@ -84,8 +90,13 @@ enum class ViewSurfaceMode {
   LayerID targetLayerId_{};
   FloatColor targetLayerTint_{ 1.0f, 0.5f, 0.5f, 1.0f };
   FloatColor clearColor_{ 0.10f, 0.10f, 0.10f, 1.0f };
+  EditMode editMode_ = EditMode::View;
+  DisplayMode displayMode_ = DisplayMode::Color;
   ViewSurfaceMode viewSurfaceMode_ = ViewSurfaceMode::Final;
   QImage lastRenderedFrame_;
+  QPointF panOffset_{ 0.0, 0.0 };
+  QString debugText_;
+  QString layerInfoText_;
   
   void defaultHandleKeyPressEvent(QKeyEvent* event);
   bool isSolidLayerForPreview(const ArtifactAbstractLayerPtr& layer);
@@ -210,8 +221,25 @@ enum class ViewSurfaceMode {
     widget_->update();
     event->accept();
     return;
-  default:
-   break;
+   case Qt::Key_Delete:
+   case Qt::Key_Backspace:
+    // レイヤー削除ショートカット
+    if (event->modifiers() & Qt::ControlModifier) {
+     if (!targetLayerId_.isNil()) {
+      if (auto* service = ArtifactProjectService::instance()) {
+       if (auto comp = service->currentComposition().lock()) {
+        comp->removeLayer(targetLayerId_);
+        targetLayerId_ = LayerID();  // クリア
+        widget_->update();
+        event->accept();
+        return;
+       }
+      }
+     }
+    }
+    break;
+   default:
+    break;
   }
 
  }
@@ -265,7 +293,45 @@ enum class ViewSurfaceMode {
 
  void ArtifactLayerEditorWidgetV2::Impl::updateDebugText()
  {
- }
+  QStringList parts;
+  parts << QStringLiteral("Edit=%1")
+               .arg(editMode_ == EditMode::View
+                        ? QStringLiteral("View")
+                        : editMode_ == EditMode::Transform
+                              ? QStringLiteral("Transform")
+                              : editMode_ == EditMode::Mask ? QStringLiteral("Mask")
+                                                            : QStringLiteral("Paint"));
+  parts << QStringLiteral("Display=%1")
+               .arg(displayMode_ == DisplayMode::Color
+                        ? QStringLiteral("Color")
+                        : displayMode_ == DisplayMode::Alpha
+                              ? QStringLiteral("Alpha")
+                              : displayMode_ == DisplayMode::Mask
+                                    ? QStringLiteral("Mask")
+                                    : QStringLiteral("Wireframe"));
+  parts << QStringLiteral("View=%1")
+               .arg(viewSurfaceMode_ == ViewSurfaceMode::Final
+                        ? QStringLiteral("Final")
+                        : viewSurfaceMode_ == ViewSurfaceMode::Source
+                              ? QStringLiteral("Source")
+                              : QStringLiteral("BeforeAfter"));
+
+  if (renderer_) {
+   parts << QStringLiteral("Zoom=%1").arg(renderer_->getZoom(), 0, 'f', 2);
+   float panX = 0.0f;
+   float panY = 0.0f;
+   renderer_->getPan(panX, panY);
+   panOffset_ = QPointF(panX, panY);
+   parts << QStringLiteral("Pan=%1,%2")
+                .arg(panOffset_.x(), 0, 'f', 1)
+                .arg(panOffset_.y(), 0, 'f', 1);
+  }
+
+  if (!targetLayerId_.isNil()) {
+   parts << QStringLiteral("Layer=%1").arg(targetLayerId_.toString());
+  }
+  debugText_ = parts.join(QStringLiteral(" | "));
+}
 
  void ArtifactLayerEditorWidgetV2::Impl::recreateSwapChainInternal(QWidget* window)
  {
@@ -299,19 +365,22 @@ enum class ViewSurfaceMode {
  if (!initialized_ || !renderer_)
   return;
  renderer_->clear();
-  if (compositionRenderer_) {
-   if (auto* service = ArtifactProjectService::instance()) {
-    if (auto composition = service->currentComposition().lock()) {
-     const auto compSize = composition->settings().compositionSize();
-     compositionRenderer_->SetCompositionSize(static_cast<float>(compSize.width()), static_cast<float>(compSize.height()));
+   if (compositionRenderer_) {
+    if (auto* service = ArtifactProjectService::instance()) {
+     if (auto composition = service->currentComposition().lock()) {
+      const auto compSize = composition->settings().compositionSize();
+      compositionRenderer_->SetCompositionSize(static_cast<float>(compSize.width()), static_cast<float>(compSize.height()));
+     }
     }
+    compositionRenderer_->ApplyCompositionSpace();
+    if (viewSurfaceMode_ == ViewSurfaceMode::Final || viewSurfaceMode_ == ViewSurfaceMode::BeforeAfter) {
+     compositionRenderer_->DrawCompositionBackground(clearColor_);
+    }
+   } else {
+    renderer_->drawRectLocal(-8192, -8192, 16384, 16384, clearColor_);
    }
-   compositionRenderer_->ApplyCompositionSpace();
-   compositionRenderer_->DrawCompositionBackground(clearColor_);
-  } else {
-   renderer_->drawRectLocal(-8192, -8192, 16384, 16384, clearColor_);
-  }
-  if (!targetLayerId_.isNil()) {
+ if (!targetLayerId_.isNil()) {
+   layerInfoText_.clear();
    if (auto* service = ArtifactProjectService::instance()) {
     if (auto composition = service->currentComposition().lock()) {
      // コンポジションサイズを設定
@@ -325,21 +394,54 @@ enum class ViewSurfaceMode {
           ? ArtifactPlaybackService::instance()->currentFrame()
           : composition->framePosition();
       layer->goToFrame(currentFrame.framePosition());
+      const auto localBounds = layer->localBounds();
+      const auto globalBounds = layer->transformedBoundingBox();
       const auto source = layer->sourceSize();
+      const bool isVisible = layer->isVisible();
+      const bool isLocked = layer->isLocked();
+      const bool isSolo = layer->isSolo();
+      const bool isActive = layer->isActiveAt(currentFrame);
+      const QString stateLabel =
+          !isVisible
+              ? QStringLiteral("Hidden")
+              : !isActive
+                    ? QStringLiteral("OutOfRange")
+                    : layer->opacity() <= 0.0f
+                          ? QStringLiteral("Transparent")
+                          : QStringLiteral("Ready");
+      layerInfoText_ = QStringLiteral("%1 | %2 | Op=%3 | Src=%4x%5 | Local=%6x%7 | Global=%8x%9")
+          .arg(layer->layerName().isEmpty() ? QStringLiteral("(Unnamed)") : layer->layerName())
+          .arg(layer->is3D() ? QStringLiteral("3D") : QStringLiteral("2D"))
+          .arg(layer->opacity(), 0, 'f', 2)
+          .arg(source.width)
+          .arg(source.height)
+          .arg(localBounds.width(), 0, 'f', 1)
+          .arg(localBounds.height(), 0, 'f', 1)
+          .arg(globalBounds.width(), 0, 'f', 1)
+          .arg(globalBounds.height(), 0, 'f', 1);
+      layerInfoText_ += QStringLiteral(" | Vis=%1 Lock=%2 Solo=%3 Active=%4 State=%5")
+          .arg(isVisible ? QStringLiteral("Y") : QStringLiteral("N"))
+          .arg(isLocked ? QStringLiteral("Y") : QStringLiteral("N"))
+          .arg(isSolo ? QStringLiteral("Y") : QStringLiteral("N"))
+          .arg(isActive ? QStringLiteral("Y") : QStringLiteral("N"))
+          .arg(stateLabel);
       if (source.width > 0 && source.height > 0) {
        // レイヤーサイズも設定（コンポジションサイズを上書きしないためコメントアウト）
        // renderer_->setCanvasSize(static_cast<float>(source.width), static_cast<float>(source.height));
       }
-      
-      const bool isVisible = layer->isVisible();
-      const bool isActive = layer->isActiveAt(currentFrame);
       if (!isVisible || !isActive || layer->opacity() <= 0.0f) {
       } else {
        layer->draw(renderer_.get());
       }
      }
+     if (layerInfoText_.isEmpty()) {
+      layerInfoText_ = QStringLiteral("No inspect data");
+     }
     }
    }
+  }
+  if (targetLayerId_.isNil()) {
+   layerInfoText_.clear();
   }
   renderer_->flush();
   renderer_->present();
@@ -490,6 +592,14 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
    event->accept();
    return;
   }
+  
+  // Left button click - select layer or manipulate gizmo
+  if (event->button() == Qt::LeftButton) {
+   impl_->lastMousePos_ = event->position();
+   impl_->requestRender();
+   event->accept();
+   return;
+  }
 
   QWidget::mousePressEvent(event);
  }
@@ -523,7 +633,12 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
    event->accept();
    return;
   }
-  QWidget::mouseMoveEvent(event);
+  
+  // パニング中でなくてもマウスイベントは常に処理する
+  // ギズモのホバー判定やカーソル変化のために必要
+  impl_->lastMousePos_ = event->position();
+  impl_->requestRender();
+  event->accept();
  }
 
 
@@ -559,10 +674,62 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
   update();
  }
 
- void ArtifactLayerEditorWidgetV2::paintEvent(QPaintEvent* event)
- {
+void ArtifactLayerEditorWidgetV2::paintEvent(QPaintEvent* event)
+{
+ Q_UNUSED(event);
+ QPainter painter(this);
+ painter.setRenderHint(QPainter::Antialiasing, true);
+ painter.setRenderHint(QPainter::TextAntialiasing, true);
 
+ const QRect overlayRect(12, 12, std::max(240, std::min(width() - 24, 560)), 96);
+ painter.setPen(Qt::NoPen);
+ painter.setBrush(QColor(16, 18, 22, 185));
+ painter.drawRoundedRect(overlayRect, 10, 10);
+ painter.setPen(QColor(240, 240, 240));
+ QFont font = painter.font();
+ font.setPointSizeF(std::max(9.0, font.pointSizeF()));
+ font.setBold(true);
+ painter.setFont(font);
+
+ const QString modeLabel =
+     impl_->viewSurfaceMode_ == ViewSurfaceMode::Final
+         ? QStringLiteral("FINAL")
+         : impl_->viewSurfaceMode_ == ViewSurfaceMode::Source
+               ? QStringLiteral("SOURCE")
+               : QStringLiteral("COMPARE");
+ const QColor modeColor =
+     impl_->viewSurfaceMode_ == ViewSurfaceMode::Final
+         ? QColor(84, 160, 255)
+         : impl_->viewSurfaceMode_ == ViewSurfaceMode::Source
+               ? QColor(255, 173, 76)
+               : QColor(156, 102, 255);
+ const QRect modeRect(width() - 118, 12, 106, 28);
+ painter.setPen(Qt::NoPen);
+ painter.setBrush(QColor(modeColor.red(), modeColor.green(), modeColor.blue(), 210));
+ painter.drawRoundedRect(modeRect, 9, 9);
+ painter.setPen(Qt::white);
+ painter.drawText(modeRect, Qt::AlignCenter, modeLabel);
+
+ const int textX = overlayRect.x() + 14;
+ int textY = overlayRect.y() + 22;
+ painter.drawText(textX, textY, QStringLiteral("Layer Solo View"));
+ font.setBold(false);
+ painter.setFont(font);
+ textY += 20;
+ painter.drawText(textX, textY, impl_->debugText_.isEmpty() ? QStringLiteral("No layer selected") : impl_->debugText_);
+ textY += 18;
+ painter.setPen(QColor(205, 214, 226));
+ painter.drawText(textX, textY, impl_->layerInfoText_.isEmpty() ? QStringLiteral("Inspect: -") : impl_->layerInfoText_);
+
+ if (impl_->viewSurfaceMode_ != ViewSurfaceMode::Final && !impl_->lastRenderedFrame_.isNull()) {
+  const QSize thumbSize(std::min(180, width() / 4), std::min(100, height() / 5));
+  const QRect thumbRect(width() - thumbSize.width() - 12, 12, thumbSize.width(), thumbSize.height());
+  painter.setPen(QColor(240, 240, 240, 160));
+  painter.setBrush(QColor(0, 0, 0, 140));
+  painter.drawRoundedRect(thumbRect.adjusted(0, 0, -1, -1), 8, 8);
+  painter.drawImage(thumbRect, impl_->lastRenderedFrame_.scaled(thumbRect.size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
  }
+}
 
  void ArtifactLayerEditorWidgetV2::showEvent(QShowEvent* event)
  {
@@ -614,12 +781,13 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
 
  }
 
- void ArtifactLayerEditorWidgetV2::setClearColor(const FloatColor& color)
- {
+void ArtifactLayerEditorWidgetV2::setClearColor(const FloatColor& color)
+{
   std::lock_guard<std::mutex> lock(impl_->resizeMutex_);
   impl_->clearColor_ = color;
   impl_->requestRender();
- }
+  update();
+}
 
 void ArtifactLayerEditorWidgetV2::setTargetLayer(const LayerID& id)
 {
@@ -661,53 +829,106 @@ void ArtifactLayerEditorWidgetV2::setTargetLayer(const LayerID& id)
   }
  }
 
- void ArtifactLayerEditorWidgetV2::resetView()
- {
+void ArtifactLayerEditorWidgetV2::resetView()
+{
   impl_->zoomLevel_ = 1.0f;
   if (impl_->renderer_) {
    impl_->renderer_->resetView();
+   float panX = 0.0f;
+   float panY = 0.0f;
+   impl_->renderer_->getPan(panX, panY);
+   impl_->panOffset_ = QPointF(panX, panY);
+   impl_->updateDebugText();
    impl_->requestRender();
   }
- }
+  update();
+}
  
- void ArtifactLayerEditorWidgetV2::fitToViewport()
+void ArtifactLayerEditorWidgetV2::fitToViewport()
   {
    if (impl_->renderer_) {
     impl_->renderer_->fitToViewport();
     impl_->zoomLevel_ = impl_->renderer_->getZoom();
+    float panX = 0.0f;
+    float panY = 0.0f;
+    impl_->renderer_->getPan(panX, panY);
+    impl_->panOffset_ = QPointF(panX, panY);
+    impl_->updateDebugText();
     impl_->requestRender();
    }
+   update();
   }
  
- void ArtifactLayerEditorWidgetV2::panBy(const QPointF& delta)
- {
+void ArtifactLayerEditorWidgetV2::panBy(const QPointF& delta)
+{
   if (impl_->renderer_) {
    impl_->renderer_->panBy((float)delta.x(), (float)delta.y());
+   float panX = 0.0f;
+   float panY = 0.0f;
+   impl_->renderer_->getPan(panX, panY);
+   impl_->panOffset_ = QPointF(panX, panY);
+   impl_->updateDebugText();
    impl_->requestRender();
   }
- }
+  update();
+}
 
- void ArtifactLayerEditorWidgetV2::zoomAroundPoint(const QPointF& viewportPos, float newZoom)
- {
+void ArtifactLayerEditorWidgetV2::zoomAroundPoint(const QPointF& viewportPos, float newZoom)
+{
   if (impl_->renderer_) {
       impl_->renderer_->zoomAroundViewportPoint({(float)viewportPos.x(), (float)viewportPos.y()}, newZoom);
+      float panX = 0.0f;
+      float panY = 0.0f;
+      impl_->renderer_->getPan(panX, panY);
+      impl_->panOffset_ = QPointF(panX, panY);
+      impl_->zoomLevel_ = impl_->renderer_->getZoom();
+      impl_->updateDebugText();
       impl_->requestRender();
   }
- }
+  update();
+}
 
  void ArtifactLayerEditorWidgetV2::setEditMode(EditMode mode)
  {
-
+  if (impl_->editMode_ == mode) {
+   return;
+  }
+  impl_->editMode_ = mode;
+  impl_->updateDebugText();
+  impl_->requestRender();
+  update();
  }
 
  void ArtifactLayerEditorWidgetV2::setDisplayMode(DisplayMode mode)
  {
-
+  if (impl_->displayMode_ == mode) {
+   return;
+  }
+  impl_->displayMode_ = mode;
+  switch (mode) {
+  case DisplayMode::Color:
+   impl_->viewSurfaceMode_ = ViewSurfaceMode::Final;
+   break;
+  case DisplayMode::Alpha:
+  case DisplayMode::Mask:
+  case DisplayMode::Wireframe:
+   impl_->viewSurfaceMode_ = ViewSurfaceMode::Source;
+   break;
+  }
+  impl_->updateDebugText();
+  impl_->requestRender();
+  update();
  }
 
  void ArtifactLayerEditorWidgetV2::setPan(const QPointF& offset)
  {
-
+  impl_->panOffset_ = offset;
+  if (impl_->renderer_) {
+   impl_->renderer_->setPan((float)offset.x(), (float)offset.y());
+  }
+  impl_->updateDebugText();
+  impl_->requestRender();
+  update();
  }
 
  float ArtifactLayerEditorWidgetV2::zoom() const

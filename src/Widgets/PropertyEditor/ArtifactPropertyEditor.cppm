@@ -1,6 +1,6 @@
 ﻿module;
 
-#include <QCheckBox>
+#include <QAbstractButton>
 #include <QColor>
 #include <QComboBox>
 #include <QDialog>
@@ -284,11 +284,16 @@ QIcon loadSvgAsIcon(const QString& path, int size = 16)
 QIcon loadPropertyIcon(const QString& resourceRelativePath, const QString& fallbackFileName = {})
 {
     using namespace ArtifactCore;
+    static QHash<QString, QIcon> iconCache;
+    const QString cacheKey = resourceRelativePath + QStringLiteral("|") + fallbackFileName;
+    auto it = iconCache.constFind(cacheKey);
+    if (it != iconCache.constEnd()) return it.value();
     QIcon icon = loadSvgAsIcon(resolveIconResourcePath(resourceRelativePath));
-    if (!icon.isNull()) return icon;
+    if (!icon.isNull()) { iconCache.insert(cacheKey, icon); return icon; }
     if (!fallbackFileName.isEmpty()) {
         icon = loadSvgAsIcon(resolveIconPath(fallbackFileName));
     }
+    iconCache.insert(cacheKey, icon);
     return icon;
 }
 
@@ -354,6 +359,69 @@ public:
             if (first == '/') return (std::abs(delta) > 1e-9) ? static_cast<int>(value() / delta) : value();
         }
         return QSpinBox::valueFromText(text);
+    }
+};
+
+class ArtifactToggleSwitch final : public QAbstractButton {
+public:
+    explicit ArtifactToggleSwitch(QWidget *parent = nullptr)
+        : QAbstractButton(parent) {
+        setCheckable(true);
+        setCursor(Qt::PointingHandCursor);
+        setFocusPolicy(Qt::StrongFocus);
+        setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+    }
+
+    QSize sizeHint() const override { return {48, 26}; }
+    QSize minimumSizeHint() const override { return {42, 24}; }
+
+protected:
+    bool hitButton(const QPoint &pos) const override {
+        return rect().contains(pos);
+    }
+
+    void paintEvent(QPaintEvent *) override {
+        QPainter painter(this);
+        painter.setRenderHint(QPainter::Antialiasing, true);
+
+        const QRectF trackRect = rect().adjusted(1, 1, -1, -1);
+        const qreal radius = trackRect.height() * 0.5;
+
+        QColor trackColor = isChecked() ? QColor(QStringLiteral("#4CAF50"))
+                                        : QColor(QStringLiteral("#4B4B4B"));
+        QColor borderColor = isChecked() ? QColor(QStringLiteral("#69D26B"))
+                                         : QColor(QStringLiteral("#5B5B5B"));
+        QColor knobColor = QColor(QStringLiteral("#F5F5F5"));
+        if (!isEnabled()) {
+            trackColor = trackColor.darker(135);
+            borderColor = borderColor.darker(135);
+            knobColor = knobColor.darker(120);
+        }
+
+        painter.setPen(QPen(borderColor, 1.0));
+        painter.setBrush(trackColor);
+        painter.drawRoundedRect(trackRect, radius, radius);
+
+        const qreal knobMargin = 2.0;
+        const qreal knobDiameter = trackRect.height() - knobMargin * 2.0;
+        const qreal knobX = isChecked()
+                                ? trackRect.right() - knobMargin - knobDiameter
+                                : trackRect.left() + knobMargin;
+        const QRectF knobRect(knobX, trackRect.top() + knobMargin, knobDiameter,
+                              knobDiameter);
+
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(knobColor);
+        painter.drawEllipse(knobRect);
+
+        if (hasFocus()) {
+            QPen focusPen(palette().highlight().color().lighter(130), 1.0);
+            focusPen.setStyle(Qt::DashLine);
+            painter.setPen(focusPen);
+            painter.setBrush(Qt::NoBrush);
+            painter.drawRoundedRect(trackRect.adjusted(1, 1, -1, -1), radius,
+                                    radius);
+        }
     }
 };
 
@@ -603,27 +671,27 @@ ArtifactBoolPropertyEditor::ArtifactBoolPropertyEditor(
     const ArtifactCore::AbstractProperty &property, QWidget *parent)
     : ArtifactAbstractPropertyEditor(parent) {
   setObjectName(QStringLiteral("propertyBoolEditor"));
-  checkBox_ = new QCheckBox(this);
+  toggleSwitch_ = new ArtifactToggleSwitch(this);
   auto *layout = new QHBoxLayout(this);
   layout->setContentsMargins(0, 0, 0, 0);
-  layout->addWidget(checkBox_);
+  layout->addWidget(toggleSwitch_, 0, Qt::AlignLeft | Qt::AlignVCenter);
   layout->addStretch();
 
-  checkBox_->setChecked(property.getValue().toBool());
-  QObject::connect(checkBox_, &QCheckBox::toggled, this,
+  toggleSwitch_->setChecked(property.getValue().toBool());
+  QObject::connect(toggleSwitch_, &QAbstractButton::toggled, this,
                    [this](const bool checked) { commitValue(checked); });
 }
 
 QVariant ArtifactBoolPropertyEditor::value() const {
-  return checkBox_ ? QVariant(checkBox_->isChecked()) : QVariant();
+  return toggleSwitch_ ? QVariant(toggleSwitch_->isChecked()) : QVariant();
 }
 
 void ArtifactBoolPropertyEditor::setValueFromVariant(const QVariant &value) {
-  if (!checkBox_) {
+  if (!toggleSwitch_) {
     return;
   }
-  const QSignalBlocker blocker(checkBox_);
-  checkBox_->setChecked(value.toBool());
+  const QSignalBlocker blocker(toggleSwitch_);
+  toggleSwitch_->setChecked(value.toBool());
 }
 
 ArtifactStringPropertyEditor::ArtifactStringPropertyEditor(

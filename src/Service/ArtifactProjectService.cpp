@@ -694,8 +694,6 @@ bool ArtifactProjectService::setLayerVisibleInCurrentComposition(const LayerID& 
         return false;
     }
     layer->setVisible(visible);
-    // layer の表示属性変更では projectChanged() を呼ばない (updateLayout 全体再構築を避ける)
-    Q_EMIT layer->changed();
     return true;
 }
 
@@ -710,7 +708,6 @@ bool ArtifactProjectService::setLayerLockedInCurrentComposition(const LayerID& l
         return false;
     }
     layer->setLocked(locked);
-    Q_EMIT layer->changed();
     return true;
 }
 
@@ -725,7 +722,6 @@ bool ArtifactProjectService::setLayerSoloInCurrentComposition(const LayerID& lay
         return false;
     }
     layer->setSolo(solo);
-    Q_EMIT layer->changed();
     return true;
 }
 
@@ -845,6 +841,8 @@ bool ArtifactProjectService::addEffectToLayerInCurrentComposition(const LayerID&
         return false;
     }
     layer->addEffect(effect);
+    Q_EMIT layer->changed();
+    Q_EMIT projectChanged();
     return true;
 }
 
@@ -862,6 +860,8 @@ bool ArtifactProjectService::removeEffectFromLayerInCurrentComposition(const Lay
         return false;
     }
     layer->removeEffect(UniString(effectId.toStdString()));
+    Q_EMIT layer->changed();
+    Q_EMIT projectChanged();
     return true;
 }
 
@@ -882,6 +882,8 @@ bool ArtifactProjectService::setEffectEnabledInLayerInCurrentComposition(const L
     for (const auto& effect : layer->getEffects()) {
         if (effect && effect->effectID().toQString() == effectId) {
             effect->setEnabled(enabled);
+            Q_EMIT layer->changed();
+            Q_EMIT projectChanged();
             return true;
         }
     }
@@ -949,6 +951,8 @@ bool ArtifactProjectService::moveEffectInLayerInCurrentComposition(const LayerID
             layer->addEffect(effect);
         }
     }
+    Q_EMIT layer->changed();
+    Q_EMIT projectChanged();
     return true;
 }
 

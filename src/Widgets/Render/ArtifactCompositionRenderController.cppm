@@ -7,6 +7,7 @@
 #include <QDebug>
 #include <QColor>
 #include <QImage>
+#include <QMatrix4x4>
 #include <QElapsedTimer>
 #include <QLoggingCategory>
 #include <QTransform>
@@ -22,6 +23,7 @@
 #include <memory>
 #include <utility>
 #include <wobjectimpl.h>
+#include <Layer/ArtifactCloneEffectSupport.hpp>
 
 module Artifact.Widgets.CompositionRenderController;
 
@@ -196,6 +198,24 @@ bool layerUsesSurfaceUploadForCompositionView(const ArtifactAbstractLayerPtr& la
          std::dynamic_pointer_cast<ArtifactSvgLayer>(layer) != nullptr ||
          std::dynamic_pointer_cast<ArtifactVideoLayer>(layer) != nullptr ||
          std::dynamic_pointer_cast<ArtifactTextLayer>(layer) != nullptr;
+}
+
+bool layerUsesGpuTextureCacheForCompositionView(const ArtifactAbstractLayerPtr& layer)
+{
+  if (!layer) {
+    return false;
+  }
+
+  // 動画は毎フレーム別内容になりやすく、GPU texture cache を汚しやすいので除外する。
+  if (std::dynamic_pointer_cast<ArtifactVideoLayer>(layer)) {
+    return false;
+  }
+
+  return std::dynamic_pointer_cast<ArtifactImageLayer>(layer) != nullptr ||
+         std::dynamic_pointer_cast<ArtifactSvgLayer>(layer) != nullptr ||
+         std::dynamic_pointer_cast<ArtifactTextLayer>(layer) != nullptr ||
+         std::dynamic_pointer_cast<ArtifactSolid2DLayer>(layer) != nullptr ||
+         std::dynamic_pointer_cast<ArtifactSolidImageLayer>(layer) != nullptr;
 }
 
 ArtifactCompositionPtr
@@ -405,7 +425,7 @@ void drawLayerForCompositionView(const ArtifactAbstractLayerPtr &layer,
         entry.cacheSignature = cacheSignature;
         entry.processedSurface = surface;
         entry.frameNumber = cacheFrameNumber;
-        if (gpuTextureCacheManager) {
+        if (gpuTextureCacheManager && layerUsesGpuTextureCacheForCompositionView(layer)) {
           entry.gpuTextureHandle = gpuTextureCacheManager->acquireOrCreate(ownerId, cacheSignature, surface);
         }
         (*surfaceCache)[ownerId] = entry;
@@ -415,32 +435,38 @@ void drawLayerForCompositionView(const ArtifactAbstractLayerPtr &layer,
       applyRasterizerEffectsAndMasksToSurface(layer, surface);
     }
 
-    if (gpuTextureCacheManager && cacheEntry) {
-      if (!gpuTextureCacheManager->isValid(cacheEntry->gpuTextureHandle)) {
-        const QImage& uploadSurface =
-            cacheEntry->processedSurface.isNull() ? surface : cacheEntry->processedSurface;
-        cacheEntry->gpuTextureHandle =
-            gpuTextureCacheManager->acquireOrCreate(layer->id().toString(), cacheSignature, uploadSurface);
-      }
-      if (auto* srv = gpuTextureCacheManager->textureView(cacheEntry->gpuTextureHandle)) {
+    const float baseOpacity = (opacityOverride >= 0.0f ? opacityOverride : layer->opacity());
+    drawWithClonerEffect(layer, globalTransform4x4,
+      [&](const QMatrix4x4& instanceTransform, float instanceWeight) {
+        const float finalOpacity = baseOpacity * instanceWeight;
+
+        if (gpuTextureCacheManager && cacheEntry && layerUsesGpuTextureCacheForCompositionView(layer)) {
+          if (!gpuTextureCacheManager->isValid(cacheEntry->gpuTextureHandle)) {
+            const QImage& uploadSurface =
+                cacheEntry->processedSurface.isNull() ? surface : cacheEntry->processedSurface;
+            cacheEntry->gpuTextureHandle =
+                gpuTextureCacheManager->acquireOrCreate(layer->id().toString(), cacheSignature, uploadSurface);
+          }
+          if (auto* srv = gpuTextureCacheManager->textureView(cacheEntry->gpuTextureHandle)) {
+            renderer->drawSpriteTransformed(static_cast<float>(rect.x()),
+                                 static_cast<float>(rect.y()),
+                                 static_cast<float>(rect.width()),
+                                 static_cast<float>(rect.height()),
+                                 instanceTransform,
+                                 srv,
+                                 finalOpacity);
+            return;
+          }
+        }
+
         renderer->drawSpriteTransformed(static_cast<float>(rect.x()),
                              static_cast<float>(rect.y()),
                              static_cast<float>(rect.width()),
                              static_cast<float>(rect.height()),
-                             globalTransform4x4,
-                             srv,
-                             (opacityOverride >= 0.0f ? opacityOverride : layer->opacity()));
-        return true;
-      }
-    }
-
-    renderer->drawSpriteTransformed(static_cast<float>(rect.x()),
-                         static_cast<float>(rect.y()),
-                         static_cast<float>(rect.width()),
-                         static_cast<float>(rect.height()),
-                         globalTransform4x4,
-                         surface,
-                         (opacityOverride >= 0.0f ? opacityOverride : layer->opacity()));
+                             instanceTransform,
+                             surface,
+                             finalOpacity);
+      });
     return true;
   };
 
@@ -1413,11 +1439,14 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
 
       ArtifactAbstractLayerPtr hitLayer = nullptr;
       QVector<ArtifactAbstractLayerPtr> hitLayers;
+      const bool ignoreLocked = event->modifiers().testFlag(Qt::AltModifier);
+      const bool backPick = event->modifiers().testFlag(Qt::ControlModifier);
       
       // Collect all layers at this position
       for (int i = (int)layers.size() - 1; i >= 0; --i) {
         auto& layer = layers[i];
         if (!layer || !layer->isVisible()) continue;
+        if (layer->isLocked() && !ignoreLocked) continue;
         if (!layer->isActiveAt(currentFrame)) continue;
 
         const QTransform globalTransform = layer->getGlobalTransform();
@@ -1444,29 +1473,30 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
 
       // Cyclic selection logic
       if (!hitLayers.isEmpty()) {
-          const float posThreshold = 3.0f; // px
-          const bool sameSpot = QVector2D(viewportPos - impl_->lastHitPosition_).length() < posThreshold;
-          
-          if (sameSpot && !impl_->lastHitLayerId_.isNil()) {
-              // Find index of currently selected layer in hit list
-              int currentHitIdx = -1;
-              for (int i = 0; i < hitLayers.size(); ++i) {
-                  if (hitLayers[i]->id() == impl_->lastHitLayerId_) {
-                      currentHitIdx = i;
-                      break;
+          if (backPick && hitLayers.size() > 1) {
+              hitLayer = hitLayers[1];
+          } else {
+              const float posThreshold = 3.0f; // px
+              const bool sameSpot = QVector2D(viewportPos - impl_->lastHitPosition_).length() < posThreshold;
+
+              if (sameSpot && !impl_->lastHitLayerId_.isNil()) {
+                  int currentHitIdx = -1;
+                  for (int i = 0; i < hitLayers.size(); ++i) {
+                      if (hitLayers[i]->id() == impl_->lastHitLayerId_) {
+                          currentHitIdx = i;
+                          break;
+                      }
                   }
-              }
-              
-              // Pick next layer in cycle
-              if (currentHitIdx != -1) {
-                  int nextIdx = (currentHitIdx + 1) % hitLayers.size();
-                  hitLayer = hitLayers[nextIdx];
+
+                  if (currentHitIdx != -1) {
+                      int nextIdx = (currentHitIdx + 1) % hitLayers.size();
+                      hitLayer = hitLayers[nextIdx];
+                  } else {
+                      hitLayer = hitLayers[0];
+                  }
               } else {
                   hitLayer = hitLayers[0];
               }
-          } else {
-              // New click or first click at this spot
-              hitLayer = hitLayers[0];
           }
           
           impl_->lastHitPosition_ = viewportPos;
@@ -1500,6 +1530,7 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
 void CompositionRenderController::handleMouseMove(const QPointF &viewportPos) {
   auto toolManager = ArtifactApplicationManager::instance()->toolManager();
   auto activeTool = toolManager ? toolManager->activeTool() : ToolType::Selection;
+  bool needsRender = false;
 
   if (activeTool == ToolType::Pen && impl_->isDraggingVertex_) {
       auto comp = impl_->previewPipeline_.composition();
@@ -1577,7 +1608,7 @@ void CompositionRenderController::handleMouseMove(const QPointF &viewportPos) {
           prevHoveredPathIndex != impl_->hoveredPathIndex_ ||
           prevHoveredVertexIndex != impl_->hoveredVertexIndex_) {
           impl_->invalidateOverlayComposite();
-          renderOneFrame();
+          needsRender = true;
       }
   }
 
@@ -1616,13 +1647,17 @@ void CompositionRenderController::handleMouseMove(const QPointF &viewportPos) {
           impl_->gizmo3D_->hitTest(ray, impl_->renderer_->getViewMatrix(), impl_->renderer_->getProjectionMatrix());
           if (prevHoverAxis != impl_->gizmo3D_->hoverAxis()) {
               impl_->invalidateOverlayComposite();
-              renderOneFrame();
+              needsRender = true;
           }
       }
   }
 
   if (impl_->gizmo_) {
     impl_->gizmo_->handleMouseMove(viewportPos, impl_->renderer_.get());
+  }
+
+  if (needsRender) {
+    renderOneFrame();
   }
 }
 
@@ -1936,6 +1971,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(CompositionRenderCont
                   [](const ArtifactAbstractLayerPtr& l) {
                     return l && l->isVisible() && l->isSolo();
                   });
+  const bool hasSelection = !selectedLayerId_.isNil();
+  constexpr float kGhostOpacityScale = 0.22f;
 
   // ============================================================
   // GPU パイプライン: レイヤー 0 枚でも frameOutOfRange でも常に描画
@@ -2033,7 +2070,10 @@ void CompositionRenderController::Impl::renderOneFrameImpl(CompositionRenderCont
 
         layer->goToFrame(currentFrame.framePosition());
         const auto  blendMode = ArtifactCore::toBlendMode(layer->layerBlendType());
-        const float opacity   = layer->opacity();
+        const float opacity   = layer->opacity() *
+                                ((hasSelection && layer->id() != selectedLayerId_)
+                                     ? kGhostOpacityScale
+                                     : 1.0f);
         if (opacity <= 0.0f) continue;
 
         renderer_->setOverrideRTV(layerRTV);
@@ -2121,7 +2161,10 @@ void CompositionRenderController::Impl::renderOneFrameImpl(CompositionRenderCont
           ++cpuRasterLayerCount;
         }
         layer->goToFrame(currentFrame.framePosition());
-        const float opacity = layer->opacity();
+        const float opacity = layer->opacity() *
+                              ((hasSelection && layer->id() != selectedLayerId_)
+                                   ? kGhostOpacityScale
+                                   : 1.0f);
         QString* dbgOut = QLoggingCategory::defaultCategory()->isDebugEnabled()
                           ? &lastVideoDebug_ : nullptr;
         drawLayerForCompositionView(layer, renderer_.get(), opacity, dbgOut,

@@ -58,6 +58,8 @@ public:
     void drawSolidRectTransformed(float x, float y, float w, float h, const QMatrix4x4& transform, const FloatColor& color, float opacity = 1.0f);
     void drawRectOutlineLocal(float x, float y, float w, float h, const FloatColor& color);
     void drawLineLocal(float2 p1, float2 p2, const FloatColor& c1, const FloatColor& c2);
+    // Quad vertices are expected in triangle-strip order.
+    void drawQuadLocal(float2 p0, float2 p1, float2 p2, float2 p3, const FloatColor& color);
     void drawThickLineLocal(float2 p1, float2 p2, float thickness, const FloatColor& color);
     void drawDotLineLocal(float2 p1, float2 p2, float thickness, float spacing, const FloatColor& color);
     void drawBezierLocal(float2 p0, float2 p1, float2 p2, float thickness, const FloatColor& color);

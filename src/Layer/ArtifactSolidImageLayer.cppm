@@ -2,7 +2,9 @@ module;
 
 #include <QColor>
 #include <QLoggingCategory>
+#include <QMatrix4x4>
 #include <QVariant>
+#include <Layer/ArtifactCloneEffectSupport.hpp>
 
 module Artifact.Layers.SolidImage;
 
@@ -107,10 +109,15 @@ void ArtifactSolidImageLayer::draw(ArtifactIRenderer *renderer) {
                                 << "opacity:" << opacity();
   }
 
-  renderer->drawSolidRect(0.0f, 0.0f,
-                          static_cast<float>(size.width),
-                          static_cast<float>(size.height),
-                          color,
-                          this->opacity());
+  const QMatrix4x4 baseTransform = getGlobalTransform4x4();
+  drawWithClonerEffect(this, baseTransform, [renderer, size, color, this](const QMatrix4x4& transform, float weight) {
+    const FloatColor cloneColor(color.r(), color.g(), color.b(), color.a() * this->opacity() * weight);
+    renderer->drawSolidRectTransformed(0.0f, 0.0f,
+                                       static_cast<float>(size.width),
+                                       static_cast<float>(size.height),
+                                       transform,
+                                       cloneColor,
+                                       1.0f);
+  });
 }
 } // namespace Artifact

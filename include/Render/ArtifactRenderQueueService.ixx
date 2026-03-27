@@ -87,10 +87,28 @@ export namespace Artifact
     int index,
     QString* outputFormat,
     QString* codec,
+    QString* codecProfile,
     int* width,
     int* height,
     double* fps,
     int* bitrateKbps) const;
+  bool jobOutputSettingsAt(
+    int index,
+    QString* outputFormat,
+    QString* codec,
+    int* width,
+    int* height,
+    double* fps,
+    int* bitrateKbps) const;
+  void setJobOutputSettingsAt(
+    int index,
+    const QString& outputFormat,
+    const QString& codec,
+    const QString& codecProfile,
+    int width,
+    int height,
+    double fps,
+    int bitrateKbps);
   void setJobOutputSettingsAt(
     int index,
     const QString& outputFormat,
@@ -106,6 +124,16 @@ export namespace Artifact
   void setJobOverlayTransform(int index, float offsetX, float offsetY, float scale, float rotationDeg);
   void resetJobForRerun(int index);
   int resetCompletedAndFailedJobsForRerun();
+
+  // Render Recovery: 失敗フレーム検出
+  struct FailedFrameInfo {
+    int jobId;
+    int frameNumber;
+    QString errorMessage;
+    qint64 timestamp;
+  };
+  QList<FailedFrameInfo> detectFailedFrames(int jobIndex) const;
+  int rerenderFailedFrames(int jobIndex, const QList<int>& frameNumbers);
 
   void startRenderQueue();
   void startAllRenderQueues();

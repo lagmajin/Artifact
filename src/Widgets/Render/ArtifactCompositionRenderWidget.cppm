@@ -398,8 +398,9 @@ namespace Artifact {
     impl_->renderer_->setViewportSize((float)width(), (float)height());
 
     connect(ArtifactApplicationManager::instance()->layerSelectionManager(), &ArtifactLayerSelectionManager::selectionChanged, this, [this]() {
-     auto selected = ArtifactApplicationManager::instance()->layerSelectionManager()->selectedLayers();
-     if (!selected.isEmpty()) impl_->selectedLayerId_ = (*selected.begin())->id();
+     auto* selection = ArtifactApplicationManager::instance()->layerSelectionManager();
+     auto current = selection ? selection->currentLayer() : ArtifactAbstractLayerPtr{};
+     if (current) impl_->selectedLayerId_ = current->id();
      else impl_->selectedLayerId_ = ArtifactCore::LayerID::Nil();
      impl_->previewPipeline_.setSelectedLayerId(impl_->selectedLayerId_);
      impl_->requestRender();

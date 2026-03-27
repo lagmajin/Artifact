@@ -154,6 +154,8 @@ namespace Artifact
   { primitiveRenderer_.drawRectOutlineLocal(pos.x, pos.y, size.x, size.y, color); }
   void drawSolidLine(float2 start, float2 end, const FloatColor& color, float thickness)
   { primitiveRenderer_.drawThickLineLocal(start, end, thickness, color); }
+  void drawQuadLocal(float2 p0, float2 p1, float2 p2, float2 p3, const FloatColor& color)
+  { primitiveRenderer_.drawQuadLocal(p0, p1, p2, p3, color); }
   void drawSolidRect(float2 pos, float2 size, const FloatColor& color, float opacity)
   { primitiveRenderer_.drawRectLocal(pos.x, pos.y, size.x, size.y, color, opacity); }
   void drawSolidRect(float x, float y, float w, float h, const FloatColor& color, float opacity)
@@ -763,12 +765,16 @@ void ArtifactIRenderer::resetGizmoCameraMatrices()
  { impl_->primitiveRenderer_.drawSolidRectTransformed(x, y, w, h, transform, color, opacity); }
  void ArtifactIRenderer::drawRectOutlineLocal(float x, float y, float w, float h, const FloatColor& color)
  { impl_->drawRectOutlineLocal(x, y, w, h, color); }
- void ArtifactIRenderer::drawThickLineLocal(Detail::float2 p1, Detail::float2 p2,
-                                            float thickness, const FloatColor& color)
- { impl_->drawThickLineLocal(toDiligentFloat2(p1), toDiligentFloat2(p2), thickness, color); }
- void ArtifactIRenderer::drawDotLineLocal(Detail::float2 p1, Detail::float2 p2,
+void ArtifactIRenderer::drawThickLineLocal(Detail::float2 p1, Detail::float2 p2,
+                                           float thickness, const FloatColor& color)
+{ impl_->drawThickLineLocal(toDiligentFloat2(p1), toDiligentFloat2(p2), thickness, color); }
+void ArtifactIRenderer::drawQuadLocal(Detail::float2 p0, Detail::float2 p1,
+                                      Detail::float2 p2, Detail::float2 p3,
+                                      const FloatColor& color)
+{ impl_->primitiveRenderer_.drawQuadLocal(toDiligentFloat2(p0), toDiligentFloat2(p1), toDiligentFloat2(p2), toDiligentFloat2(p3), color); }
+void ArtifactIRenderer::drawDotLineLocal(Detail::float2 p1, Detail::float2 p2,
                                           float thickness, float spacing, const FloatColor& color)
- { impl_->drawDotLineLocal(toDiligentFloat2(p1), toDiligentFloat2(p2), thickness, spacing, color); }
+{ impl_->drawDotLineLocal(toDiligentFloat2(p1), toDiligentFloat2(p2), thickness, spacing, color); }
  void ArtifactIRenderer::drawBezierLocal(Detail::float2 p0, Detail::float2 p1,
                                          Detail::float2 p2, float thickness, const FloatColor& color)
  { impl_->drawBezierLocal(toDiligentFloat2(p0), toDiligentFloat2(p1),

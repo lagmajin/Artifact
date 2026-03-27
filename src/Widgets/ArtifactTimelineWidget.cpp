@@ -1133,6 +1133,27 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
           impl_->playheadSync_->sync();
         }
       });
+  QObject::connect(
+      painterTrackView, &ArtifactTimelineTrackPainterView::clipSelected, this,
+      [this](const QString& clipId, const ArtifactCore::LayerID& layerId) {
+        Q_UNUSED(clipId);
+        if (impl_->syncingLayerSelection_) {
+          return;
+        }
+        if (auto* svc = ArtifactProjectService::instance()) {
+          svc->selectLayer(layerId);
+        }
+      });
+  QObject::connect(
+      painterTrackView, &ArtifactTimelineTrackPainterView::clipDeselected, this,
+      [this]() {
+        if (impl_->syncingLayerSelection_) {
+          return;
+        }
+        if (auto* svc = ArtifactProjectService::instance()) {
+          svc->selectLayer(LayerID());
+        }
+      });
   QObject::connect(timelineTrackView, &TimelineTrackView::seekPositionChanged,
                    this, [timelineTrackView, scrubBar](double ratio) {
                      const double frameMax = std::max(
@@ -1412,6 +1433,26 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
                        impl_->trackView_->selectClipForLayer(layerId);
                        impl_->syncingLayerSelection_ = false;
                      });
+    if (auto *app = ArtifactApplicationManager::instance()) {
+      if (auto *selection = app->layerSelectionManager()) {
+        QObject::connect(
+            selection, &ArtifactLayerSelectionManager::selectionChanged, this,
+            [this]() {
+              if (!impl_) {
+                return;
+              }
+              QMetaObject::invokeMethod(
+                  this,
+                  [this]() {
+                    if (!impl_ || !impl_->painterTrackView_) {
+                      return;
+                    }
+                    refreshTracks();
+                  },
+                  Qt::QueuedConnection);
+            });
+      }
+    }
     QObject::connect(svc, &ArtifactProjectService::projectChanged, this,
                      [this]() {
                        QMetaObject::invokeMethod(
@@ -1627,6 +1668,10 @@ void ArtifactTimelineWidget::refreshTracks() {
   const auto composition = safeCompositionLookup(impl_->compositionId_);
   QVector<ArtifactTimelineTrackPainterView::TrackClipVisual> painterClips;
   painterClips.reserve(timelineRows.size());
+  ArtifactLayerSelectionManager *selectionManager = nullptr;
+  if (auto *app = ArtifactApplicationManager::instance()) {
+    selectionManager = app->layerSelectionManager();
+  }
   if (impl_->painterTrackView_) {
     impl_->painterTrackView_->setTrackCount(
         std::max(1, static_cast<int>(timelineRows.size())));
@@ -1664,6 +1709,9 @@ void ArtifactTimelineWidget::refreshTracks() {
       visual.startFrame = clipStart;
       visual.durationFrame = clipDuration;
       visual.title = layer->layerName();
+      if (selectionManager) {
+        visual.selected = selectionManager->isSelected(layer);
+      }
       painterClips.push_back(std::move(visual));
     }
   }

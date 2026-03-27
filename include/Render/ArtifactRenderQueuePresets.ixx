@@ -18,6 +18,7 @@ struct ArtifactRenderFormatPreset {
     QString name;         // 表示名（例："H.264 MP4"）
     QString container;    // コンテナ形式（例："mp4", "mov", "avi"）
     QString codec;        // コーデック（例："h264", "prores", "png"）
+    QString codecProfile; // コーデックプロファイル（例："hq", "4444"）
     QString description;  // 説明
     bool isImageSequence; // 連番画像出力かどうか
     QIcon icon;           // アイコン（オプション）

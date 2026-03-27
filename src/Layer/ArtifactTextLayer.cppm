@@ -1,4 +1,5 @@
 ﻿module;
+#include <QMatrix4x4>
 #include <QImage>
 #include <QPainter>
 #include <QPainterPath>
@@ -52,6 +53,7 @@
 #include <numeric>
 #include <regex>
 #include <random>
+#include <Layer/ArtifactCloneEffectSupport.hpp>
 module Artifact.Layer.Text;
 
 
@@ -342,8 +344,14 @@ void ArtifactTextLayer::draw(ArtifactIRenderer* renderer)
     }
     
     // Use drawSpriteTransformed to support rotation/scaling in Diligent
-    renderer->drawSpriteTransformed(0.0f, 0.0f, static_cast<float>(size.width), static_cast<float>(size.height), 
-                                    getGlobalTransform(), impl_->renderedImage_, this->opacity());
+    const QMatrix4x4 baseTransform = getGlobalTransform4x4();
+    drawWithClonerEffect(this, baseTransform, [renderer, size, this](const QMatrix4x4& transform, float weight) {
+        renderer->drawSpriteTransformed(0.0f, 0.0f,
+                                        static_cast<float>(size.width),
+                                        static_cast<float>(size.height),
+                                        transform, impl_->renderedImage_,
+                                        this->opacity() * weight);
+    });
 }
 
 std::vector<ArtifactCore::PropertyGroup> ArtifactTextLayer::getLayerPropertyGroups() const

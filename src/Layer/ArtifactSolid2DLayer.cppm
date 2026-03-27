@@ -1,7 +1,9 @@
 module;
 #include <QList>
 #include <QColor>
+#include <QMatrix4x4>
 #include <QVariant>
+#include <Layer/ArtifactCloneEffectSupport.hpp>
 
 module Artifact.Layer.Solid2D;
 
@@ -96,11 +98,17 @@ void ArtifactSolid2DLayer::draw(ArtifactIRenderer* renderer)
 {
  if (!renderer) return;
  auto size = this->sourceSize();
- renderer->drawSolidRect(0.0f, 0.0f,
-                         static_cast<float>(size.width),
-                         static_cast<float>(size.height),
-                         impl_->color(),
-                         this->opacity());
+ const QMatrix4x4 baseTransform = getGlobalTransform4x4();
+ drawWithClonerEffect(this, baseTransform, [renderer, size, this](const QMatrix4x4& transform, float weight) {
+  const FloatColor src = impl_->color();
+  const FloatColor color(src.r(), src.g(), src.b(), src.a() * this->opacity() * weight);
+  renderer->drawSolidRectTransformed(0.0f, 0.0f,
+                                     static_cast<float>(size.width),
+                                     static_cast<float>(size.height),
+                                     transform,
+                                     color,
+                                     1.0f);
+ });
 }
 
 }

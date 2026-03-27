@@ -48,6 +48,7 @@ namespace Artifact {
  class ArtifactLayerSelectionManager::Impl {
  public:
   QSet<ArtifactAbstractLayerPtr> selectedLayers_;
+  ArtifactAbstractLayerPtr currentLayer_;
   ArtifactCompositionPtr activeComp_;
  };
 
@@ -63,28 +64,55 @@ namespace Artifact {
  }
 
  void ArtifactLayerSelectionManager::selectLayer(const ArtifactAbstractLayerPtr& layer) {
-  if (impl_->selectedLayers_.size() == 1 && impl_->selectedLayers_.contains(layer)) return;
-  impl_->selectedLayers_.clear();
-  if (layer) impl_->selectedLayers_.insert(layer);
-  selectionChanged();
+  const bool sameSingleSelection =
+      impl_->selectedLayers_.size() == 1 && impl_->selectedLayers_.contains(layer);
+  if (!sameSingleSelection) {
+   impl_->selectedLayers_.clear();
+   if (layer) {
+    impl_->selectedLayers_.insert(layer);
+   }
+  }
+  const bool currentChanged = impl_->currentLayer_ != layer;
+  if (layer) {
+   impl_->currentLayer_ = layer;
+  } else {
+   impl_->currentLayer_.reset();
+  }
+  if (!sameSingleSelection || currentChanged) {
+   selectionChanged();
+  }
  }
 
  void ArtifactLayerSelectionManager::addToSelection(const ArtifactAbstractLayerPtr& layer) {
   if (!layer) return;
+  const bool currentChanged = impl_->currentLayer_ != layer;
+  bool changed = false;
   if (!impl_->selectedLayers_.contains(layer)) {
    impl_->selectedLayers_.insert(layer);
+   changed = true;
+  }
+  impl_->currentLayer_ = layer;
+  if (changed || currentChanged) {
    selectionChanged();
   }
  }
 
  void ArtifactLayerSelectionManager::removeFromSelection(const ArtifactAbstractLayerPtr& layer) {
   if (!layer) return;
-  if (impl_->selectedLayers_.remove(layer)) selectionChanged();
+  if (impl_->selectedLayers_.remove(layer)) {
+   if (impl_->currentLayer_ == layer) {
+    impl_->currentLayer_ = impl_->selectedLayers_.isEmpty()
+                               ? ArtifactAbstractLayerPtr{}
+                               : *impl_->selectedLayers_.begin();
+   }
+   selectionChanged();
+  }
  }
 
  void ArtifactLayerSelectionManager::clearSelection() {
   if (!impl_->selectedLayers_.isEmpty()) {
    impl_->selectedLayers_.clear();
+   impl_->currentLayer_.reset();
    selectionChanged();
   }
  }
@@ -98,8 +126,10 @@ namespace Artifact {
  }
 
  ArtifactAbstractLayerPtr ArtifactLayerSelectionManager::currentLayer() const {
-  if (impl_->selectedLayers_.isEmpty()) return nullptr;
-  return *impl_->selectedLayers_.begin();
+  return impl_->currentLayer_ ? impl_->currentLayer_
+                              : (impl_->selectedLayers_.isEmpty()
+                                     ? ArtifactAbstractLayerPtr{}
+                                     : *impl_->selectedLayers_.begin());
  }
 
  void ArtifactLayerSelectionManager::setActiveComposition(const ArtifactCompositionPtr& comp) {

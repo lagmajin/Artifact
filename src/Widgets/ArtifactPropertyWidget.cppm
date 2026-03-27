@@ -94,6 +94,7 @@ public:
 
     void rebuildUI();
     void updatePropertyValues();
+    void applyLockState();
 };
 
 void ArtifactPropertyWidget::showEvent(QShowEvent* event) {
@@ -439,7 +440,7 @@ ArtifactPropertyWidget::ArtifactPropertyWidget(QWidget* parent)
     if (auto* projectService = ArtifactProjectService::instance()) {
         QObject::connect(projectService, &ArtifactProjectService::projectChanged, this, [this]() {
             if (impl_->currentLayer) {
-                impl_->scheduleRebuild(0);
+                impl_->scheduleRebuild();
             }
         });
     }
@@ -681,6 +682,25 @@ void ArtifactPropertyWidget::Impl::updatePropertyValues() {
         // キーフレーム状態（◆ボタン）の更新
         row->setKeyframeChecked(propertyPtr->hasKeyFrameAt(now));
         row->setNavigationEnabled(!propertyPtr->getKeyFrames().empty());
+    }
+
+    applyLockState();
+}
+
+void ArtifactPropertyWidget::Impl::applyLockState() {
+    if (!currentLayer) {
+        return;
+    }
+
+    const bool locked = currentLayer->isLocked();
+    for (auto it = propertyEditors.begin(); it != propertyEditors.end(); ++it) {
+        auto* row = it.value();
+        if (!row) {
+            continue;
+        }
+        const bool isLockRow =
+            it.key().compare(QStringLiteral("layer.locked"), Qt::CaseInsensitive) == 0;
+        row->setEnabled(!locked || isLockRow);
     }
 }
 
@@ -942,6 +962,7 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
     }
 
     mainLayout->addStretch();
+    applyLockState();
     rebuilding = false;
 }
 

@@ -12,6 +12,8 @@ module;
 #include <QStyle>
 #include <QStyleOption>
 #include <QIcon>
+#include <QFileInfo>
+#include <QDebug>
 #include <QKeySequence>
 #include <QStringList>
 
@@ -52,6 +54,7 @@ module;
 module Artifact.Widgets.PlaybackControlWidget;
 
 import Utils;
+import Icon.SvgToIcon;
 import Widgets.Utils.CSS;
 import Artifact.Application.Manager;
 import Artifact.Service.Playback;
@@ -62,11 +65,27 @@ namespace {
 QIcon loadIconWithFallback(const QString& fileName)
 {
   const QString resourcePath = ArtifactCore::resolveIconResourcePath(fileName);
-  QIcon icon(resourcePath);
-  if (!icon.isNull()) {
-    return icon;
+  {
+    const QIcon icon = ArtifactCore::svgToQIcon(resourcePath, QSize(24, 24));
+    if (!icon.isNull()) {
+      return icon;
+    }
   }
-  return QIcon(ArtifactCore::resolveIconPath(fileName));
+
+  const QString filePath = ArtifactCore::resolveIconPath(fileName);
+  {
+    const QIcon fileIcon = ArtifactCore::svgToQIcon(filePath, QSize(24, 24));
+    if (!fileIcon.isNull()) {
+      return fileIcon;
+    }
+  }
+
+  qWarning().noquote() << "[ArtifactPlaybackControlWidget] icon load failed:"
+                       << "resource=" << resourcePath
+                       << "exists=" << QFileInfo::exists(resourcePath)
+                       << "file=" << filePath
+                       << "exists=" << QFileInfo::exists(filePath);
+  return QIcon();
 }
 
 QIcon loadIconWithFallback(const QStringList& fileNames)

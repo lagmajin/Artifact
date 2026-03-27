@@ -707,6 +707,8 @@ int main(int argc, char* argv[])
         consoleWidget,
         QRect(200, 200, 800, 400));
     auto* compositionEditor = new ArtifactCompositionEditor(mw);
+    compositionEditor->setMinimumWidth(1440);
+    compositionEditor->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     mw->addDockedWidget(QStringLiteral("Composition Viewer"), ads::CenterDockWidgetArea, compositionEditor);
 
     QObject::connect(compositionEditor, &ArtifactCompositionEditor::videoDebugMessage,
@@ -737,6 +739,8 @@ int main(int argc, char* argv[])
         },
         QStringLiteral("Composition Viewer"));
     auto* layerViewEditor = new ArtifactRenderLayerEditor(mw);
+    layerViewEditor->setMinimumWidth(1440);
+    layerViewEditor->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     mw->addDockedWidgetTabbed(
         QStringLiteral("Layer View (Diligent)"),
         ads::CenterDockWidgetArea,

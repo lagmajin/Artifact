@@ -2,11 +2,13 @@ module;
 
 #include <QDebug>
 #include <QImage>
+#include <QMatrix4x4>
 #include <QImageReader>
 #include <QPainter>
 #include <QFutureWatcher>
 #include <QtConcurrent>
 #include <wobjectimpl.h>
+#include <Layer/ArtifactCloneEffectSupport.hpp>
 
 module Artifact.Layer.Image;
 
@@ -152,11 +154,14 @@ void ArtifactImageLayer::draw(ArtifactIRenderer* renderer)
         size = Size_2D(impl_->width_, impl_->height_);
     }
 
-    // Diligent レンデラーで drawSprite を呼び出し
-    // 他のレンデラータイプの場合は動的に処理されるべき
-    if (renderer != nullptr) {
-        renderer->drawSpriteTransformed(0.0f, 0.0f, (float)size.width, (float)size.height, getGlobalTransform(), img, this->opacity());
-    }
+    const QMatrix4x4 baseTransform = getGlobalTransform4x4();
+    drawWithClonerEffect(this, baseTransform, [renderer, &img, size, this](const QMatrix4x4& transform, float weight) {
+        renderer->drawSpriteTransformed(0.0f, 0.0f,
+                                        static_cast<float>(size.width),
+                                        static_cast<float>(size.height),
+                                        transform, img,
+                                        this->opacity() * weight);
+    });
 }
 
 QImage ArtifactImageLayer::toQImage() const

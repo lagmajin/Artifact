@@ -100,6 +100,7 @@ public:
  void drawRectOutline(float x, float y, float w, float h, const FloatColor& color);
  void drawRectOutline(Detail::float2 pos, Detail::float2 size, const FloatColor& color);
  void drawSolidLine(Detail::float2 start, Detail::float2 end, const FloatColor& color, float thickness);
+ void drawQuadLocal(Detail::float2 p0, Detail::float2 p1, Detail::float2 p2, Detail::float2 p3, const FloatColor& color);
  void drawSolidRect(float x, float y, float w, float h);
  void drawSolidRect(float x, float y, float w, float h, const FloatColor& color, float opacity = 1.0f);
  void drawSolidRect(Detail::float2 pos, Detail::float2 size, const FloatColor& color, float opacity = 1.0f);

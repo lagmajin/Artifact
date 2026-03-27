@@ -121,8 +121,8 @@ if (!layer_ || !renderer) {
 
 const float zoom = renderer->getZoom();
 const float invZoom = zoom > 0.0001f ? 1.0f / zoom : 1.0f;
-const float lineThickness = std::clamp(2.0f * invZoom, 1.5f, 5.0f);
-const float handleSize = std::clamp(HANDLE_SIZE * invZoom, 6.0f, 13.0f);
+const float lineThickness = std::clamp(3.0f * invZoom, 2.0f, 7.0f);
+const float handleSize = std::clamp(HANDLE_SIZE * 1.15f * invZoom, 8.0f, 16.0f);
 
 QRectF localRect = layer_->localBounds();
 if (!localRect.isValid() || localRect.width() <= 0.0 || localRect.height() <= 0.0) {
@@ -176,7 +176,8 @@ const QTransform globalTransform = layer_->getGlobalTransform();
  // Anchor point: crosshair at anchor position
  const auto& t3d = layer_->transform3D();
  const QPointF anchorWorld = globalTransform.map(QPointF(t3d.anchorX(), t3d.anchorY()));
- renderer->drawCrosshair((float)anchorWorld.x(), (float)anchorWorld.y(), handleSize * 1.5f, {1.0f, 0.5f, 0.0f, 1.0f});
+ renderer->drawCrosshair((float)anchorWorld.x(), (float)anchorWorld.y(), handleSize * 2.1f, {0.0f, 0.0f, 0.0f, 1.0f});
+ renderer->drawCrosshair((float)anchorWorld.x(), (float)anchorWorld.y(), handleSize * 1.45f, {1.0f, 0.82f, 0.18f, 1.0f});
 }
 
 TransformGizmo::HandleType TransformGizmo::hitTest(const QPointF& viewportPos, ArtifactIRenderer* renderer) const {

@@ -3,6 +3,7 @@
 #include <QPainter>
 #include <QPen>
 #include <QRectF>
+#include <QPolygonF>
 #include <QSize>
 #include <QtGlobal>
 #include <QCursor>
@@ -355,6 +356,44 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent* event)
   }
  }
 
+ // Current frame marker.
+ const double playheadX = impl_->currentFrame_ * ppf - xOffset;
+ if (playheadX >= dirtyRect.left() - 4.0 && playheadX <= dirtyRect.right() + 4.0) {
+  p.setPen(QPen(QColor(238, 74, 88, 220), 2));
+  p.drawLine(QPointF(playheadX, dirtyRect.top()), QPointF(playheadX, dirtyRect.bottom()));
+  p.setBrush(QColor(238, 74, 88, 220));
+  p.setPen(Qt::NoPen);
+  const QPointF tip(playheadX, dirtyRect.top() + 2.0);
+  const QPolygonF head({
+      tip + QPointF(-6.0, 0.0),
+      tip + QPointF(6.0, 0.0),
+      tip + QPointF(0.0, 9.0),
+  });
+  p.drawPolygon(head);
+ }
+
+ // Small HUD for track state.
+ const QRect hudRect(10, 10, 180, 44);
+ p.setPen(Qt::NoPen);
+ p.setBrush(QColor(15, 16, 20, 185));
+ p.drawRoundedRect(hudRect, 8, 8);
+ p.setPen(QColor(236, 239, 244));
+ const int selectedCount = std::count_if(
+     impl_->clips_.cbegin(), impl_->clips_.cend(),
+     [](const auto& clip) { return clip.selected; });
+ const QString hoveredText = (impl_->hoverClipIndex_ >= 0 && impl_->hoverClipIndex_ < impl_->clips_.size())
+     ? (impl_->clips_[impl_->hoverClipIndex_].title.isEmpty()
+            ? impl_->clips_[impl_->hoverClipIndex_].clipId
+            : impl_->clips_[impl_->hoverClipIndex_].title)
+     : QStringLiteral("-");
+ const QString hudText = QStringLiteral("F%1 | R%2")
+                             .arg(static_cast<int>(std::round(impl_->currentFrame_)))
+                             .arg(impl_->trackHeights_.size());
+ p.drawText(hudRect.adjusted(10, 4, -10, -18), Qt::AlignLeft | Qt::AlignVCenter, hudText);
+ p.setPen(QColor(190, 197, 207));
+ p.drawText(hudRect.adjusted(10, 20, -10, -4), Qt::AlignLeft | Qt::AlignVCenter,
+            QStringLiteral("Sel:%1  Hov:%2").arg(selectedCount).arg(hoveredText));
+
  }
 
 void ArtifactTimelineTrackPainterView::mousePressEvent(QMouseEvent* event)
@@ -371,10 +410,13 @@ void ArtifactTimelineTrackPainterView::mousePressEvent(QMouseEvent* event)
    impl_->dragStartX_         = mouseX;
    impl_->dragOrigStartFrame_ = impl_->clips_[hit.clipIndex].startFrame;
    impl_->dragOrigDuration_   = impl_->clips_[hit.clipIndex].durationFrame;
+   const auto& clip = impl_->clips_[hit.clipIndex];
+   clipSelected(clip.clipId, clip.layerId);
    if (hit.mode == DragMode::MoveBody) setCursor(Qt::ClosedHandCursor);
    event->accept();
    return;
   }
+  clipDeselected();
   const double clickedFrame = (mouseX + impl_->horizontalOffset_) / std::max(0.001, impl_->pixelsPerFrame_);
   const double clamped = std::clamp(clickedFrame, 0.0, impl_->durationFrames_);
   seekRequested(clamped);

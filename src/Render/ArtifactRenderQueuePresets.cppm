@@ -62,6 +62,7 @@ public:
             .name = "ProRes 422 MOV",
             .container = "mov",
             .codec = "prores",
+            .codecProfile = "hq",
             .description = "Apple ProRes 422 MOV 形式（編集向け）",
             .isImageSequence = false
         });
@@ -72,6 +73,7 @@ public:
             .name = "ProRes 4444 MOV",
             .container = "mov",
             .codec = "prores",
+            .codecProfile = "4444",
             .description = "Apple ProRes 4444 MOV 形式（アルファチャンネル対応）",
             .isImageSequence = false
         });

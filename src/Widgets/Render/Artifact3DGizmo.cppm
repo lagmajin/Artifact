@@ -317,7 +317,7 @@ void Artifact3DGizmo::draw(ArtifactIRenderer* renderer, const QMatrix4x4& view, 
 
     QVector4D viewPos = view * QVector4D(impl_->position, 1.0f);
     float distance = std::abs(viewPos.z());
-    impl_->currentScale = std::max(distance * 0.22f, 40.0f);
+    impl_->currentScale = std::max(distance * 0.28f, 52.0f);
 
     Detail::float3 center = { impl_->position.x(), impl_->position.y(), impl_->position.z() };
     float s = impl_->currentScale;
@@ -335,8 +335,8 @@ void Artifact3DGizmo::draw(ArtifactIRenderer* renderer, const QMatrix4x4& view, 
         return baseColor;
     };
 
-    const float anchorRadius = std::max(s * 0.16f, 5.0f);
-    const float anchorArm = std::max(s * 0.10f, 3.0f);
+    const float anchorRadius = std::max(s * 0.18f, 6.0f);
+    const float anchorArm = std::max(s * 0.12f, 4.0f);
     const FloatColor anchorShadow{0.0f, 0.0f, 0.0f, 0.88f};
     const FloatColor anchorCore{1.0f, 1.0f, 1.0f, 1.0f};
 
@@ -363,10 +363,10 @@ void Artifact3DGizmo::draw(ArtifactIRenderer* renderer, const QMatrix4x4& view, 
                             anchorCore);
 
     if (mode_ == GizmoMode::Move) {
-        renderer->drawGizmoArrow(center, {impl_->position.x() + s, impl_->position.y(), impl_->position.z()}, getAxisColor(GizmoAxis::X, {1,0,0,1}), s*0.15f);
-        renderer->drawGizmoArrow(center, {impl_->position.x(), impl_->position.y() + s, impl_->position.z()}, getAxisColor(GizmoAxis::Y, {0,1,0,1}), s*0.15f);
+        renderer->drawGizmoArrow(center, {impl_->position.x() + s, impl_->position.y(), impl_->position.z()}, getAxisColor(GizmoAxis::X, {1,0,0,1}), s*0.19f);
+        renderer->drawGizmoArrow(center, {impl_->position.x(), impl_->position.y() + s, impl_->position.z()}, getAxisColor(GizmoAxis::Y, {0,1,0,1}), s*0.19f);
         renderer->drawGizmoArrow(center, {impl_->position.x(), impl_->position.y(), impl_->position.z() + s},
-                              getAxisColor(GizmoAxis::Z, depthEnabled_ ? FloatColor{0,0,1,1} : FloatColor{0.45f,0.45f,0.45f,0.7f}), s*0.15f);
+                              getAxisColor(GizmoAxis::Z, depthEnabled_ ? FloatColor{0,0,1,1} : FloatColor{0.45f,0.45f,0.45f,0.7f}), s*0.19f);
     } 
     else if (mode_ == GizmoMode::Rotate) {
         renderer->drawGizmoRing(center, {1,0,0}, s, getAxisColor(GizmoAxis::X, {1,0,0,1}));
@@ -374,11 +374,11 @@ void Artifact3DGizmo::draw(ArtifactIRenderer* renderer, const QMatrix4x4& view, 
         renderer->drawGizmoRing(center, {0,0,1}, s,
                               getAxisColor(GizmoAxis::Z, depthEnabled_ ? FloatColor{0,0,1,1} : FloatColor{0.45f,0.45f,0.45f,0.7f}));
     } else if (mode_ == GizmoMode::Scale) {
-        renderer->drawGizmoArrow(center, {impl_->position.x() + s, impl_->position.y(), impl_->position.z()}, getAxisColor(GizmoAxis::X, {1,0.7f,0.2f,1}), s*0.12f);
-        renderer->drawGizmoArrow(center, {impl_->position.x(), impl_->position.y() + s, impl_->position.z()}, getAxisColor(GizmoAxis::Y, {0.2f,1,0.7f,1}), s*0.12f);
+        renderer->drawGizmoArrow(center, {impl_->position.x() + s, impl_->position.y(), impl_->position.z()}, getAxisColor(GizmoAxis::X, {1,0.7f,0.2f,1}), s*0.16f);
+        renderer->drawGizmoArrow(center, {impl_->position.x(), impl_->position.y() + s, impl_->position.z()}, getAxisColor(GizmoAxis::Y, {0.2f,1,0.7f,1}), s*0.16f);
         renderer->drawGizmoArrow(center, {impl_->position.x(), impl_->position.y(), impl_->position.z() + s},
-                              getAxisColor(GizmoAxis::Z, depthEnabled_ ? FloatColor{0.7f,0.2f,1,1} : FloatColor{0.45f,0.45f,0.45f,0.7f}), s*0.12f);
-        renderer->drawGizmoRing(center, {0,0,1}, s * 0.48f, getAxisColor(GizmoAxis::Screen, {1,1,1,1}));
+                              getAxisColor(GizmoAxis::Z, depthEnabled_ ? FloatColor{0.7f,0.2f,1,1} : FloatColor{0.45f,0.45f,0.45f,0.7f}), s*0.16f);
+        renderer->drawGizmoRing(center, {0,0,1}, s * 0.52f, getAxisColor(GizmoAxis::Screen, {1,1,1,1}));
     }
 
     renderer->setUseExternalMatrices(false);
