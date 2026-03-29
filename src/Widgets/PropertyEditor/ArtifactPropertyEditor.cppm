@@ -21,6 +21,7 @@
 #include <QtSVG/QSvgRenderer>
 #include <QSlider>
 #include <QSpinBox>
+#include <QTextEdit>
 
 module Artifact.Widgets.PropertyEditor;
 
@@ -178,6 +179,14 @@ bool isFontFamilyProperty(const ArtifactCore::AbstractProperty &property) {
              0 ||
          name.endsWith(QStringLiteral(".fontFamily"), Qt::CaseInsensitive) ||
          name.compare(QStringLiteral("fontFamily"), Qt::CaseInsensitive) == 0;
+}
+
+bool isMultilineTextProperty(const ArtifactCore::AbstractProperty &property) {
+  if (property.getType() != ArtifactCore::PropertyType::String) {
+    return false;
+  }
+  const QString name = property.getName();
+  return name.compare(QStringLiteral("text.value"), Qt::CaseInsensitive) == 0;
 }
 
 std::optional<ArtifactEnumPropertyEditor::OptionList>
@@ -505,9 +514,31 @@ ArtifactFloatPropertyEditor::ArtifactFloatPropertyEditor(
     softMax_ = hardMax;
   }
 
+  const QString numericStyle = R"(
+    QDoubleSpinBox, QSpinBox {
+        background: transparent;
+        border: none;
+        color: #5BC0EB;
+        font-family: 'Segoe UI', sans-serif;
+        font-weight: 600;
+        font-size: 11px;
+        padding-right: 2px;
+    }
+    QDoubleSpinBox:hover, QSpinBox:hover {
+        background: rgba(91, 192, 235, 0.1);
+        border-radius: 2px;
+    }
+    QDoubleSpinBox:focus, QSpinBox:focus {
+        background: #222;
+        border: 1px solid #5BC0EB;
+        color: #FFF;
+    }
+  )";
+
   spinBox_->setRange(meta.hardMin.isValid() ? meta.hardMin.toDouble() : -1e6,
                      meta.hardMax.isValid() ? meta.hardMax.toDouble() : 1e6);
   spinBox_->setValue(property.getValue().toDouble());
+  spinBox_->setStyleSheet(numericStyle);
   if (meta.step.isValid()) {
     spinBox_->setSingleStep(meta.step.toDouble());
   }
@@ -522,6 +553,20 @@ ArtifactFloatPropertyEditor::ArtifactFloatPropertyEditor(
   slider_->setTracking(true); // ドラッグ中の追従を有効化
   slider_->setValue(floatToSliderPosition(property.getValue().toDouble(),
                                           softMin_, softMax_));
+  slider_->setStyleSheet(R"(
+      QSlider::groove:horizontal {
+          background: #333;
+          height: 2px;
+          border-radius: 1px;
+      }
+      QSlider::handle:horizontal {
+          background: #5BC0EB;
+          width: 8px;
+          height: 8px;
+          margin: -3px 0;
+          border-radius: 4px;
+      }
+  )");
 
   QObject::connect(spinBox_, &QDoubleSpinBox::valueChanged, this,
                    [this](const double nextValue) {
@@ -664,9 +709,31 @@ ArtifactIntPropertyEditor::ArtifactIntPropertyEditor(
     softMax_ = hardMax;
   }
 
+  const QString numericStyle = R"(
+    QSpinBox {
+        background: transparent;
+        border: none;
+        color: #5BC0EB;
+        font-family: 'Segoe UI', sans-serif;
+        font-weight: 600;
+        font-size: 11px;
+        padding-right: 2px;
+    }
+    QSpinBox:hover {
+        background: rgba(91, 192, 235, 0.1);
+        border-radius: 2px;
+    }
+    QSpinBox:focus {
+        background: #222;
+        border: 1px solid #5BC0EB;
+        color: #FFF;
+    }
+  )";
+
   spinBox_->setRange(meta.hardMin.isValid() ? meta.hardMin.toInt() : -1000000,
                      meta.hardMax.isValid() ? meta.hardMax.toInt() : 1000000);
   spinBox_->setValue(property.getValue().toInt());
+  spinBox_->setStyleSheet(numericStyle);
   if (meta.step.isValid()) {
     spinBox_->setSingleStep(meta.step.toInt());
   }
@@ -681,6 +748,20 @@ ArtifactIntPropertyEditor::ArtifactIntPropertyEditor(
   slider_->setTracking(true);
   slider_->setValue(
       intToSliderPosition(property.getValue().toInt(), softMin_, softMax_));
+  slider_->setStyleSheet(R"(
+      QSlider::groove:horizontal {
+          background: #333;
+          height: 2px;
+          border-radius: 1px;
+      }
+      QSlider::handle:horizontal {
+          background: #5BC0EB;
+          width: 8px;
+          height: 8px;
+          margin: -3px 0;
+          border-radius: 4px;
+      }
+  )");
 
   QObject::connect(
       spinBox_, &QSpinBox::valueChanged, this, [this](const int nextValue) {
@@ -834,6 +915,47 @@ void ArtifactStringPropertyEditor::setValueFromVariant(const QVariant &value) {
   lineEdit_->setText(value.toString());
 }
 
+ArtifactMultilineStringPropertyEditor::ArtifactMultilineStringPropertyEditor(
+    const ArtifactCore::AbstractProperty &property, QWidget *parent)
+    : ArtifactAbstractPropertyEditor(parent) {
+  setObjectName(QStringLiteral("propertyMultilineStringEditor"));
+  textEdit_ = new QTextEdit(this);
+  textEdit_->setAcceptRichText(false);
+  textEdit_->setMinimumHeight(72);
+  textEdit_->setTabChangesFocus(true);
+  textEdit_->setLineWrapMode(QTextEdit::WidgetWidth);
+  auto *layout = new QHBoxLayout(this);
+  layout->setContentsMargins(0, 0, 0, 0);
+  layout->addWidget(textEdit_);
+
+  setValueFromVariant(property.getValue());
+
+  QObject::connect(textEdit_, &QTextEdit::textChanged, this,
+                   [this]() { previewValue(textEdit_->toPlainText()); });
+  textEdit_->installEventFilter(this);
+}
+
+QVariant ArtifactMultilineStringPropertyEditor::value() const {
+  return textEdit_ ? QVariant(textEdit_->toPlainText()) : QVariant();
+}
+
+void ArtifactMultilineStringPropertyEditor::setValueFromVariant(
+    const QVariant &value) {
+  if (!textEdit_) {
+    return;
+  }
+  const QSignalBlocker blocker(textEdit_);
+  textEdit_->setPlainText(value.toString());
+}
+
+bool ArtifactMultilineStringPropertyEditor::eventFilter(QObject *watched,
+                                                       QEvent *event) {
+  if (watched == textEdit_ && event->type() == QEvent::FocusOut) {
+    commitCurrentValue();
+  }
+  return ArtifactAbstractPropertyEditor::eventFilter(watched, event);
+}
+
 ArtifactFontFamilyPropertyEditor::ArtifactFontFamilyPropertyEditor(
     const ArtifactCore::AbstractProperty &property, QWidget *parent)
     : ArtifactAbstractPropertyEditor(parent) {
@@ -973,7 +1095,7 @@ ArtifactColorPropertyEditor::ArtifactColorPropertyEditor(
   QObject::connect(button_, &QPushButton::clicked, this, [this]() {
     ArtifactWidgets::FloatColorPicker picker(button_);
     picker.setWindowTitle(QStringLiteral("Select Color"));
-    picker.setColor(ArtifactCore::FloatColor(currentColor_.redF(),
+    picker.setInitialColor(ArtifactCore::FloatColor(currentColor_.redF(),
                                             currentColor_.greenF(),
                                             currentColor_.blueF(),
                                             currentColor_.alphaF()));
@@ -1029,18 +1151,28 @@ ArtifactPropertyEditorRowWidget::ArtifactPropertyEditorRowWidget(
       nextKeyBtn_(new QPushButton(this)) {
   setObjectName(QStringLiteral("propertyRow"));
   setFocusPolicy(Qt::StrongFocus);
-  auto *layout = new QHBoxLayout(this);
-  layout->setContentsMargins(4, 2, 4, 2);
-  layout->setSpacing(4);
+  setStyleSheet(R"(
+      QWidget#propertyRow {
+          background: transparent;
+          border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+      }
+      QWidget#propertyRow:hover {
+          background: rgba(255, 255, 255, 0.02);
+      }
+      QLabel#propertyRowLabel {
+          color: #AAA;
+          font-size: 10px;
+          font-weight: 500;
+      }
+      QLabel#propertyScrubHandle {
+          color: #444;
+          font-size: 10px;
+      }
+  )");
 
-  label_->setObjectName(QStringLiteral("propertyRowLabel"));
-  label_->setMinimumWidth(120);
-  label_->setMaximumWidth(160);
-  label_->setMinimumHeight(24);
-  scrubHandle_->setObjectName(QStringLiteral("propertyScrubHandle"));
-  scrubHandle_->setAlignment(Qt::AlignCenter);
-  scrubHandle_->setFixedWidth(16);
-  scrubHandle_->setMinimumHeight(24);
+  auto *layout = new QHBoxLayout(this);
+  layout->setContentsMargins(8, 4, 8, 4);
+  layout->setSpacing(6);
   scrubHandle_->setToolTip(
       QStringLiteral("Drag to scrub. Shift=fine, Ctrl=coarse, Esc=cancel."));
 
@@ -1059,23 +1191,24 @@ ArtifactPropertyEditorRowWidget::ArtifactPropertyEditorRowWidget(
 
   const QString navStyle = R"(
         QPushButton {
-            background: #404040;
-            border: 1px solid #454545;
+            background: transparent;
+            border: none;
             padding: 0;
-            border-radius: 3px;
+            border-radius: 2px;
         }
         QPushButton:hover {
-            border-color: #606060;
-            background: #4A4A4A;
+            background: rgba(255, 255, 255, 0.1);
+        }
+        QPushButton:pressed {
+            background: rgba(255, 255, 255, 0.05);
         }
         QPushButton:disabled {
-            border-color: #353535;
-            background: #353535;
+            opacity: 0.3;
         }
     )";
 
-  prevKeyBtn_->setFixedSize(14, 24);
-  nextKeyBtn_->setFixedSize(14, 24);
+  prevKeyBtn_->setFixedSize(14, 22);
+  nextKeyBtn_->setFixedSize(14, 22);
   prevKeyBtn_->setIcon(prevIcon);
   nextKeyBtn_->setIcon(nextIcon);
   prevKeyBtn_->setIconSize(QSize(10, 10));
@@ -1086,27 +1219,25 @@ ArtifactPropertyEditorRowWidget::ArtifactPropertyEditorRowWidget(
   keyframeButton_->setObjectName(QStringLiteral("propertyKeyButton"));
   keyframeButton_->setToolTip(
       QStringLiteral("Toggle Keyframe: %1").arg(propertyName));
-  keyframeButton_->setFixedSize(22, 24);
+  keyframeButton_->setFixedSize(22, 22);
   keyframeButton_->setCheckable(true);
   keyframeButton_->setIcon(keyIcon);
   keyframeButton_->setIconSize(QSize(14, 14));
   keyframeButton_->setStyleSheet(R"(
         QPushButton#propertyKeyButton {
-            background: #404040;
-            border: 1px solid #454545;
-            border-radius: 3px;
+            background: transparent;
+            border: none;
+            border-radius: 2px;
         }
         QPushButton#propertyKeyButton:hover {
-            border-color: #606060;
-            background: #4A4A4A;
+            background: rgba(255, 255, 255, 0.1);
         }
         QPushButton#propertyKeyButton:checked {
-            background: #F5933C;
-            border-color: #F5933C;
+            background: rgba(212, 125, 50, 0.2);
+            border: 1px solid rgba(212, 125, 50, 0.5);
         }
         QPushButton#propertyKeyButton:disabled {
-            border-color: #353535;
-            background: #353535;
+            opacity: 0.3;
         }
     )");
 
@@ -1377,6 +1508,9 @@ void ArtifactPropertyEditorRowWidget::finishScrub(const bool commitChanges) {
 ArtifactAbstractPropertyEditor *
 createPropertyEditorWidget(const ArtifactCore::AbstractProperty &property,
                            QWidget *parent) {
+  if (isMultilineTextProperty(property)) {
+    return new ArtifactMultilineStringPropertyEditor(property, parent);
+  }
   if (isFontFamilyProperty(property)) {
     return new ArtifactFontFamilyPropertyEditor(property, parent);
   }

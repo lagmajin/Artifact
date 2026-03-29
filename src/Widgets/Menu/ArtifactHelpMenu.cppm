@@ -23,6 +23,7 @@ import std;
 
 import Core.FastSettingsStore;
 import Utils.Path;
+import Artifact.Service.Application;
 
 namespace Artifact {
  using namespace ArtifactCore;
@@ -83,7 +84,8 @@ namespace Artifact {
 
   // connections
   connect(impl_->versionInfoAction_, &QAction::triggered, this, [this]() {
-    QMessageBox::information(this, tr("Version"), tr("Artifact Version: %1").arg("1.0.0"));
+    const QString ver = ApplicationService::instance()->applicationVersion();
+    QMessageBox::information(this, tr("Version"), tr("Artifact Version: %1").arg(ver));
   });
 
   connect(impl_->aboutAction_, &QAction::triggered, this, [this]() {

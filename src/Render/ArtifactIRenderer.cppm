@@ -65,6 +65,8 @@ namespace Artifact
   std::unique_ptr<ArtifactCore::ParticleRenderer> particleRenderer_;
 
   RefCntAutoPtr<ITexture> m_layerRT;
+  Uint32 m_layerRTWidth = 0;
+  Uint32 m_layerRTHeight = 0;
   mutable RefCntAutoPtr<ITexture> m_readbackStagingTex;
   mutable RefCntAutoPtr<IFence> m_readbackFence;
   mutable Uint32 m_readbackStagingWidth = 0;
@@ -461,17 +463,26 @@ namespace Artifact
  void ArtifactIRenderer::Impl::createLayerRT(QWidget* window)
  {
   if (!window || !deviceManager_.device()) return;
+
+  const Uint32 newWidth = static_cast<Uint32>(window->width() * window->devicePixelRatio());
+  const Uint32 newHeight = static_cast<Uint32>(window->height() * window->devicePixelRatio());
+  if (m_layerRT && m_layerRTWidth == newWidth && m_layerRTHeight == newHeight) {
+    return;
+  }
+
   if (m_layerRT) m_layerRT.Release();
 
   TextureDesc TexDesc;
   TexDesc.Name      = "LayerRenderTarget";
   TexDesc.Type      = RESOURCE_DIM_TEX_2D;
-  TexDesc.Width     = static_cast<Uint32>(window->width()  * window->devicePixelRatio());
-  TexDesc.Height    = static_cast<Uint32>(window->height() * window->devicePixelRatio());
+  TexDesc.Width     = newWidth;
+  TexDesc.Height    = newHeight;
   TexDesc.MipLevels = 1;
   TexDesc.Format    = TEX_FORMAT_RGBA8_UNORM_SRGB;
   TexDesc.BindFlags = BIND_RENDER_TARGET | BIND_SHADER_RESOURCE;
   deviceManager_.device()->CreateTexture(TexDesc, nullptr, &m_layerRT);
+  m_layerRTWidth = newWidth;
+  m_layerRTHeight = newHeight;
  }
 
  void ArtifactIRenderer::Impl::createSwapChain(QWidget* window)
@@ -757,6 +768,10 @@ void ArtifactIRenderer::resetGizmoCameraMatrices()
  {
   impl_->primitiveRenderer_.drawSpriteTransformed(x, y, w, h, transform, texture, opacity);
  }
+ void ArtifactIRenderer::drawMaskedTextureLocal(float x, float y, float w, float h, Diligent::ITextureView* sceneTexture, const QImage& maskImage, float opacity)
+ {
+  impl_->primitiveRenderer_.drawMaskedTextureLocal(x, y, w, h, sceneTexture, maskImage, opacity);
+ }
  void ArtifactIRenderer::drawRectLocal(float x, float y, float w, float h, const FloatColor& color, float opacity)
  { impl_->drawRectLocal(x, y, w, h, color, opacity); }
  void ArtifactIRenderer::drawSolidRectTransformed(float x, float y, float w, float h, const QTransform& transform, const FloatColor& color, float opacity)
@@ -775,6 +790,9 @@ void ArtifactIRenderer::drawQuadLocal(Detail::float2 p0, Detail::float2 p1,
 void ArtifactIRenderer::drawDotLineLocal(Detail::float2 p1, Detail::float2 p2,
                                           float thickness, float spacing, const FloatColor& color)
 { impl_->drawDotLineLocal(toDiligentFloat2(p1), toDiligentFloat2(p2), thickness, spacing, color); }
+void ArtifactIRenderer::drawDashedLineLocal(Detail::float2 p1, Detail::float2 p2,
+                                            float thickness, float dashLength, float gapLength, const FloatColor& color)
+{ impl_->primitiveRenderer_.drawDashedLineLocal(toDiligentFloat2(p1), toDiligentFloat2(p2), thickness, dashLength, gapLength, color); }
  void ArtifactIRenderer::drawBezierLocal(Detail::float2 p0, Detail::float2 p1,
                                          Detail::float2 p2, float thickness, const FloatColor& color)
  { impl_->drawBezierLocal(toDiligentFloat2(p0), toDiligentFloat2(p1),
@@ -816,6 +834,10 @@ void ArtifactIRenderer::setUpscaleConfig(bool, float)    {}
  { return impl_->deviceManager_.device(); }
  Diligent::RefCntAutoPtr<Diligent::IDeviceContext> ArtifactIRenderer::immediateContext() const
  { return impl_->deviceManager_.immediateContext(); }
+ Diligent::ITextureView* ArtifactIRenderer::layerTextureView() const
+ { return impl_->m_layerRT ? impl_->m_layerRT->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE) : nullptr; }
+ Diligent::ITextureView* ArtifactIRenderer::layerRenderTargetView() const
+ { return impl_->m_layerRT ? impl_->m_layerRT->GetDefaultView(Diligent::TEXTURE_VIEW_RENDER_TARGET) : nullptr; }
  ArtifactCore::IRayTracingManager* ArtifactIRenderer::rayTracingManager() const
  { return impl_->rayTracingManager_.get(); }
  void ArtifactIRenderer::setOverrideRTV(Diligent::ITextureView* rtv)

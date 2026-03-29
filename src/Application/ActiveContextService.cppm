@@ -160,11 +160,49 @@ namespace Artifact
    auto now = impl_->activeComp_->framePosition();
    l->setInPoint(now);
    l->setStartTime(now);
+   qDebug() << "[ActiveContext] Trim In for" << l->layerName() << "to" << now.framePosition();
   }
  }
 
  void ArtifactActiveContextService::trimLayerOutAtCurrentTime() {
-  // Trim Out logic
+  auto l = ArtifactApplicationManager::instance()->layerSelectionManager()->currentLayer();
+  if (l && impl_->activeComp_) {
+   auto now = impl_->activeComp_->framePosition();
+   l->setOutPoint(now);
+   qDebug() << "[ActiveContext] Trim Out for" << l->layerName() << "to" << now.framePosition();
+  }
+ }
+
+ void ArtifactActiveContextService::splitLayerAtCurrentTime() {
+  auto l = ArtifactApplicationManager::instance()->layerSelectionManager()->currentLayer();
+  auto comp = impl_->activeComp_;
+  if (l && comp) {
+   auto now = comp->framePosition();
+   if (now.framePosition() <= l->inPoint().framePosition() || 
+       now.framePosition() >= l->outPoint().framePosition()) {
+    return; // 再生ヘッドがレイヤーの範囲外なら何もしない
+   }
+
+   // 1. 元のレイヤーのアウトポイントを現在時間に設定
+   auto oldOut = l->outPoint();
+   l->setOutPoint(now);
+
+   // 2. レイヤーを複製（同じコンポジションに追加）
+   // 実際には ArtifactProjectService を通じて複製するのが確実
+   if (auto* svc = ArtifactProjectService::instance()) {
+    if (auto project = svc->getCurrentProjectSharedPtr()) {
+     auto result = project->duplicateLayerInComposition(comp->id(), l->id());
+     if (result.success && result.layer) {
+      auto newLayer = result.layer;
+      // 3. 複製されたレイヤーのインポイントを現在時間に設定
+      newLayer->setInPoint(now);
+      newLayer->setOutPoint(oldOut);
+      // 名前を AE 風に "Layer Name 2" とかにしてもいいが、現状はそのまま
+      qDebug() << "[ActiveContext] Split layer" << l->layerName() << "at" << now.framePosition();
+     }
+    }
+   }
+  }
  }
 
 };

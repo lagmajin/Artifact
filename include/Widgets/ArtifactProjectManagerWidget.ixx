@@ -45,11 +45,6 @@ module;
 #include <regex>
 #include <random>
 export module Artifact.Widgets.ProjectManagerWidget;
-
-
-
-
-
 import Artifact.Project;
 
 W_REGISTER_ARGTYPE(QStringList)
@@ -188,10 +183,11 @@ public:
  public:
   explicit ArtifactProjectManagerWidget(QWidget* parent = nullptr);
   ~ArtifactProjectManagerWidget();
+  ArtifactProjectView* projectView() const;
   void setFilter();
   void triggerUpdate();
   void setThumbnailEnabled(bool b = true);
- public /*signals*/:
+  public /*signals*/:
   void onFileDropped(const QStringList& list) W_SIGNAL(onFileDropped, list);
   void itemDoubleClicked(const QModelIndex& index) W_SIGNAL(itemDoubleClicked, index);
    

@@ -385,29 +385,11 @@ QSize safeLayerSize(const ArtifactAbstractLayerPtr& layer, const QSize& fallback
 
 QImage renderTextLayerSurface(const std::shared_ptr<ArtifactTextLayer>& textLayer, const QSize& size)
 {
-    QImage image(size, QImage::Format_ARGB32_Premultiplied);
-    image.fill(Qt::transparent);
     if (!textLayer) {
-        return image;
+        return {};
     }
-
-    QPainter painter(&image);
-    painter.setRenderHint(QPainter::Antialiasing, true);
-    QFont font(textLayer->fontFamily().toQString());
-    font.setPointSizeF(std::max(6.0f, textLayer->fontSize()));
-    font.setBold(textLayer->isBold());
-    font.setItalic(textLayer->isItalic());
-    painter.setFont(font);
-    painter.setPen(QColor::fromRgbF(
-        textLayer->textColor().r(),
-        textLayer->textColor().g(),
-        textLayer->textColor().b(),
-        textLayer->textColor().a()));
-    QTextOption option;
-    option.setWrapMode(QTextOption::WordWrap);
-    option.setAlignment(Qt::AlignLeft | Qt::AlignTop);
-    painter.drawText(QRectF(0.0, 0.0, size.width(), size.height()), textLayer->text().toQString(), option);
-    return image;
+    (void)size;
+    return textLayer->toQImage().convertToFormat(QImage::Format_ARGB32_Premultiplied);
 }
 
 QImage renderVideoLayerSurface(const std::shared_ptr<ArtifactVideoLayer>& videoLayer, const QSize& size)

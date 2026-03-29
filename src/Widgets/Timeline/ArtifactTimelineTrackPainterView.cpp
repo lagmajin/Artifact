@@ -95,6 +95,19 @@ QPointF markerCenterFor(
  return QPointF(marker.frame * ppf - xOffset, trackTop + trackH * 0.5);
 }
 
+QRectF markerHitRectFor(
+ const ArtifactTimelineTrackPainterView::KeyframeMarkerVisual& marker,
+ const QVector<int>& heights,
+ const double ppf,
+ const double xOffset)
+{
+ const QPointF center = markerCenterFor(marker, heights, ppf, xOffset);
+ if (center.isNull()) {
+  return {};
+ }
+ return QRectF(center.x() - 8.0, center.y() - 8.0, 16.0, 16.0);
+}
+
 QRectF clipRectFor(
  const ArtifactTimelineTrackPainterView::TrackClipVisual& clip,
  const QVector<int>& heights,
@@ -157,6 +170,7 @@ public:
  double dragOrigDuration_ = 0.0;
  int hoverClipIndex_ = -1;
  DragMode hoverEdge_ = DragMode::None;
+ int hoverMarkerIndex_ = -1;
  QVector<ArtifactTimelineTrackPainterView::KeyframeMarkerVisual> keyframeMarkers_;
 };
 
@@ -173,6 +187,9 @@ ArtifactTimelineTrackPainterView::ArtifactTimelineTrackPainterView(QWidget* pare
 {
  setMouseTracking(true);
  setAutoFillBackground(false);
+ setAttribute(Qt::WA_OpaquePaintEvent, true);
+ setAttribute(Qt::WA_StaticContents, true);
+ setAttribute(Qt::WA_NoSystemBackground, true);
  setFocusPolicy(Qt::StrongFocus);
 }
 
@@ -202,7 +219,16 @@ void ArtifactTimelineTrackPainterView::setCurrentFrame(const double frame)
  if (std::abs(impl_->currentFrame_ - sanitized) < 0.0001) {
   return;
  }
+ const double oldFrame = impl_->currentFrame_;
  impl_->currentFrame_ = sanitized;
+ const double oldX = oldFrame * impl_->pixelsPerFrame_ - impl_->horizontalOffset_;
+ const double newX = impl_->currentFrame_ * impl_->pixelsPerFrame_ - impl_->horizontalOffset_;
+ const QRect dirtyRect = QRect(
+     static_cast<int>(std::floor(std::min(oldX, newX))) - 4,
+     0,
+     static_cast<int>(std::ceil(std::abs(newX - oldX))) + 8,
+     height());
+ update(dirtyRect);
 }
 
 double ArtifactTimelineTrackPainterView::currentFrame() const
@@ -361,7 +387,7 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent* event)
   
   // 画面外（dirtyRect外）の行は描画をスキップ
   if (currentY + rowH >= dirtyRect.top() && currentY <= dirtyRect.bottom()) {
-    const QColor rowColor = (i % 2 == 0) ? QColor(33, 34, 39) : QColor(37, 38, 43);
+    const QColor rowColor = (i % 2 == 0) ? QColor(34, 35, 41) : QColor(38, 39, 46);
     p.fillRect(QRect(0, currentY, fullRect.width(), rowH), rowColor);
     p.setPen(QPen(QColor(18, 18, 20), 1));
     p.drawLine(0, currentY + rowH, fullRect.width(), currentY + rowH);
@@ -421,12 +447,22 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent* event)
   }
 
   const bool isHovered = (i == impl_->hoverClipIndex_);
+  const bool isSelected = clip.selected;
   const QColor fill = clip.selected
    ? QColor(180, 110, 45) // Modo Amber
    : (isHovered ? clip.fillColor.lighter(115) : clip.fillColor);
-  p.setPen(QPen(clip.selected ? QColor(255, 180, 100) : QColor(17, 17, 20), clip.selected ? 2 : 1));
+  p.setPen(QPen(clip.selected ? QColor(255, 194, 118) : QColor(17, 17, 20), clip.selected ? 2 : 1));
   p.setBrush(fill);
   p.drawRoundedRect(clipRect, kClipCorner, kClipCorner);
+
+  if (isSelected || isHovered) {
+   const QColor rim = isSelected
+       ? QColor(255, 214, 154, 220)
+       : QColor(255, 255, 255, 90);
+   p.setBrush(Qt::NoBrush);
+   p.setPen(QPen(rim, isSelected ? 2.0 : 1.0));
+   p.drawRoundedRect(clipRect.adjusted(1.0, 1.0, -1.0, -1.0), kClipCorner, kClipCorner);
+  }
 
   if (!clip.title.isEmpty() && clipRect.width() > 28.0) {
    p.setPen(clip.selected ? Qt::black : QColor(235, 239, 247));
@@ -445,7 +481,8 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent* event)
  }
 
  // Keyframe markers.
- for (const auto& marker : impl_->keyframeMarkers_) {
+ for (int markerIndex = 0; markerIndex < impl_->keyframeMarkers_.size(); ++markerIndex) {
+  const auto& marker = impl_->keyframeMarkers_[markerIndex];
   if (marker.trackIndex < 0 || marker.trackIndex >= impl_->trackHeights_.size()) {
    continue;
   }
@@ -453,7 +490,8 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent* event)
   if (!dirtyRect.adjusted(-8, -8, 8, 8).contains(center.toPoint())) {
    continue;
   }
-  const int size = 5;
+  const bool isHovered = markerIndex == impl_->hoverMarkerIndex_;
+  const int size = isHovered ? 6 : 5;
   const QRectF diamondRect(center.x() - size, center.y() - size,
                            size * 2.0, size * 2.0);
   QPolygonF diamond;
@@ -462,10 +500,10 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent* event)
           << QPointF(diamondRect.center().x(), diamondRect.bottom())
           << QPointF(diamondRect.left(), diamondRect.center().y());
   p.setPen(QPen(QColor(20, 20, 24), 1));
-  p.setBrush(marker.color);
+  p.setBrush(isHovered ? marker.color.lighter(125) : marker.color);
   p.drawPolygon(diamond);
   if (!marker.label.isEmpty()) {
-   p.setPen(QColor(240, 240, 244));
+   p.setPen(isHovered ? QColor(255, 248, 220) : QColor(240, 240, 244));
    p.drawText(QRectF(center.x() + 8.0, center.y() - 8.0, 120.0, 16.0),
               Qt::AlignLeft | Qt::AlignVCenter,
               marker.label);
@@ -559,6 +597,8 @@ void ArtifactTimelineTrackPainterView::mouseMoveEvent(QMouseEvent* event)
  const double mouseX = event->position().x();
  const double mouseY = event->position().y();
  const double ppf    = impl_->pixelsPerFrame_;
+ const auto markerHit = hitTestMarkers(impl_->keyframeMarkers_, impl_->trackHeights_,
+                                       mouseX, mouseY, ppf, impl_->horizontalOffset_);
 
  if (impl_->dragMode_ != DragMode::None && impl_->dragClipIndex_ >= 0) {
   const auto oldClip = impl_->clips_[impl_->dragClipIndex_];
@@ -600,14 +640,20 @@ void ArtifactTimelineTrackPainterView::mouseMoveEvent(QMouseEvent* event)
  const bool changed = (hit.clipIndex != impl_->hoverClipIndex_ || hit.mode != impl_->hoverEdge_);
  const auto oldHoverClipIndex = impl_->hoverClipIndex_;
  const auto oldHoverEdge = impl_->hoverEdge_;
+ const int oldHoverMarkerIndex = impl_->hoverMarkerIndex_;
  impl_->hoverClipIndex_ = hit.clipIndex;
  impl_->hoverEdge_      = hit.mode;
+ impl_->hoverMarkerIndex_ = markerHit.markerIndex;
 
- switch (hit.mode) {
- case DragMode::ResizeLeft:
- case DragMode::ResizeRight: setCursor(Qt::SizeHorCursor);  break;
- case DragMode::MoveBody:    setCursor(Qt::OpenHandCursor); break;
- default:                    setCursor(Qt::ArrowCursor);    break;
+ if (impl_->hoverMarkerIndex_ >= 0) {
+  setCursor(Qt::PointingHandCursor);
+ } else {
+  switch (hit.mode) {
+  case DragMode::ResizeLeft:
+  case DragMode::ResizeRight: setCursor(Qt::SizeHorCursor);  break;
+  case DragMode::MoveBody:    setCursor(Qt::OpenHandCursor); break;
+  default:                    setCursor(Qt::ArrowCursor);    break;
+  }
  }
 
  if (changed) {
@@ -625,6 +671,21 @@ void ArtifactTimelineTrackPainterView::mouseMoveEvent(QMouseEvent* event)
    dirtyRect = QRectF(0.0, 0.0, width(), height());
   }
   update(dirtyRect.adjusted(-2.0, -2.0, 2.0, 2.0).toAlignedRect());
+ }
+ if (oldHoverMarkerIndex != impl_->hoverMarkerIndex_) {
+  QRectF dirtyRect;
+  if (oldHoverMarkerIndex >= 0 && oldHoverMarkerIndex < impl_->keyframeMarkers_.size()) {
+   dirtyRect = markerHitRectFor(impl_->keyframeMarkers_[oldHoverMarkerIndex],
+                                impl_->trackHeights_, ppf, impl_->horizontalOffset_);
+  }
+  if (impl_->hoverMarkerIndex_ >= 0 && impl_->hoverMarkerIndex_ < impl_->keyframeMarkers_.size()) {
+   const QRectF rect = markerHitRectFor(impl_->keyframeMarkers_[impl_->hoverMarkerIndex_],
+                                        impl_->trackHeights_, ppf, impl_->horizontalOffset_);
+   dirtyRect = dirtyRect.isValid() ? dirtyRect.united(rect) : rect;
+  }
+  update((dirtyRect.isValid() ? dirtyRect : QRectF(0.0, 0.0, width(), height()))
+             .adjusted(-2.0, -2.0, 2.0, 2.0)
+             .toAlignedRect());
  }
  QWidget::mouseMoveEvent(event);
 }
@@ -652,6 +713,26 @@ void ArtifactTimelineTrackPainterView::mouseReleaseEvent(QMouseEvent* event)
   return;
  }
  QWidget::mouseReleaseEvent(event);
+}
+
+void ArtifactTimelineTrackPainterView::leaveEvent(QEvent* event)
+{
+ QWidget::leaveEvent(event);
+
+ const bool hadHover = impl_->hoverClipIndex_ >= 0 || impl_->hoverEdge_ != DragMode::None;
+ const bool hadMarkerHover = impl_->hoverMarkerIndex_ >= 0;
+ impl_->hoverClipIndex_ = -1;
+ impl_->hoverEdge_ = DragMode::None;
+ impl_->hoverMarkerIndex_ = -1;
+
+ if (impl_->dragMode_ == DragMode::None) {
+  setCursor(Qt::ArrowCursor);
+ }
+
+ if (hadHover || hadMarkerHover) {
+  update();
+ }
+ Q_UNUSED(event);
 }
 
 } // namespace Artifact

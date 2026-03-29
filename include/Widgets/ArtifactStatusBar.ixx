@@ -22,6 +22,7 @@ export namespace Artifact
    FPS,
    Memory,
    Project,
+   Layer,
    Drops,
    TimelineDebug,
    Console
@@ -36,6 +37,7 @@ export namespace Artifact
   void setFrame(int64_t frame);
   void setMemoryMB(quint64 memoryMB);
   void setProjectText(const QString& text);
+  void setLayerText(const QString& text);
   void setDropSummaryText(const QString& text);
   void setTimelineDebugText(const QString& text);
   void setConsoleSummary(int errors, int warnings);
@@ -50,7 +52,7 @@ export namespace Artifact
   void contextMenuEvent(QContextMenuEvent* event) override;
 
  private:
-  static constexpr int kItemCount = 9;
+  static constexpr int kItemCount = 10;
   static int itemIndex(Item item);
   QLabel* itemLabel(Item item) const;
   QString itemTitle(Item item) const;

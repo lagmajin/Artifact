@@ -114,12 +114,14 @@ public:
  void drawSpriteRotated(float x, float y, float w, float h, float angleDegrees, const QImage& image, float opacity = 1.0f);
  void drawSpriteTransformed(float x, float y, float w, float h, const QMatrix4x4& transform, const QImage& image, float opacity = 1.0f);
  void drawSpriteTransformed(float x, float y, float w, float h, const QMatrix4x4& transform, Diligent::ITextureView* texture, float opacity = 1.0f);
+ void drawMaskedTextureLocal(float x, float y, float w, float h, Diligent::ITextureView* sceneTexture, const QImage& maskImage, float opacity = 1.0f);
  void drawRectLocal(float x, float y, float w, float h, const FloatColor& color, float opacity = 1.0f);
  void drawSolidRectTransformed(float x, float y, float w, float h, const QTransform& transform, const FloatColor& color, float opacity = 1.0f);
  void drawSolidRectTransformed(float x, float y, float w, float h, const QMatrix4x4& transform, const FloatColor& color, float opacity = 1.0f);
  void drawRectOutlineLocal(float x, float y, float w, float h, const FloatColor& color);
  void drawThickLineLocal(Detail::float2 p1, Detail::float2 p2, float thickness, const FloatColor& color);
  void drawDotLineLocal(Detail::float2 p1, Detail::float2 p2, float thickness, float spacing, const FloatColor& color);
+ void drawDashedLineLocal(Detail::float2 p1, Detail::float2 p2, float thickness, float dashLength, float gapLength, const FloatColor& color);
  void drawBezierLocal(Detail::float2 p0, Detail::float2 p1, Detail::float2 p2, float thickness, const FloatColor& color);
  void drawBezierLocal(Detail::float2 p0, Detail::float2 p1, Detail::float2 p2, Detail::float2 p3, float thickness, const FloatColor& color);
  void drawSolidTriangleLocal(Detail::float2 p0, Detail::float2 p1, Detail::float2 p2, const FloatColor& color);
@@ -143,6 +145,8 @@ public:
 
  Diligent::RefCntAutoPtr<Diligent::IRenderDevice> device() const;
  Diligent::RefCntAutoPtr<Diligent::IDeviceContext> immediateContext() const;
+ Diligent::ITextureView* layerTextureView() const;
+ Diligent::ITextureView* layerRenderTargetView() const;
  ArtifactCore::IRayTracingManager* rayTracingManager() const;
  void setOverrideRTV(Diligent::ITextureView* rtv);
 

@@ -316,8 +316,8 @@ void Artifact3DGizmo::draw(ArtifactIRenderer* renderer, const QMatrix4x4& view, 
     if (!renderer) return;
 
     QVector4D viewPos = view * QVector4D(impl_->position, 1.0f);
-    float distance = std::abs(viewPos.z());
-    impl_->currentScale = std::max(distance * 0.28f, 52.0f);
+    const float distance = std::abs(viewPos.z());
+    impl_->currentScale = std::max(distance * 0.63f, 126.0f);
 
     Detail::float3 center = { impl_->position.x(), impl_->position.y(), impl_->position.z() };
     float s = impl_->currentScale;
@@ -327,16 +327,45 @@ void Artifact3DGizmo::draw(ArtifactIRenderer* renderer, const QMatrix4x4& view, 
     renderer->setProjectionMatrix(proj);
     renderer->setGizmoCameraMatrices(view, proj);
 
-    auto getAxisColor = [&](GizmoAxis axis, const FloatColor& baseColor) {
-        if (activeAxis_ == axis) return FloatColor{ 1.0f, 1.0f, 0.0f, 1.0f };
-        if (hoverAxis_ == axis) return FloatColor{ std::min(1.0f, baseColor.r() + 0.3f), 
-                                                   std::min(1.0f, baseColor.g() + 0.3f), 
-                                                   std::min(1.0f, baseColor.b() + 0.3f), 1.0f };
-        return baseColor;
+    auto clamp01 = [](float v) {
+        return std::clamp(v, 0.0f, 1.0f);
+    };
+    auto tintColor = [&](const FloatColor& baseColor, float boost, float alpha) {
+        return FloatColor{
+            clamp01(baseColor.r() * boost + 0.08f),
+            clamp01(baseColor.g() * boost + 0.08f),
+            clamp01(baseColor.b() * boost + 0.08f),
+            clamp01(alpha)
+        };
+    };
+    auto getAxisCoreColor = [&](GizmoAxis axis, const FloatColor& baseColor) {
+        if (activeAxis_ == axis) {
+            return tintColor(baseColor, 1.18f, 1.0f);
+        }
+        if (hoverAxis_ == axis) {
+            return tintColor(baseColor, 1.12f, 1.0f);
+        }
+        if (activeAxis_ != GizmoAxis::None) {
+            return tintColor(baseColor, 0.68f, 0.48f);
+        }
+        return tintColor(baseColor, 0.95f, 0.90f);
+    };
+    auto getAxisShadowColor = [&](GizmoAxis axis, const FloatColor& baseColor) {
+        if (activeAxis_ == axis) {
+            return FloatColor{0.0f, 0.0f, 0.0f, 0.56f};
+        }
+        if (hoverAxis_ == axis) {
+            return FloatColor{0.0f, 0.0f, 0.0f, 0.42f};
+        }
+        if (activeAxis_ != GizmoAxis::None) {
+            return FloatColor{0.0f, 0.0f, 0.0f, 0.24f};
+        }
+        (void)baseColor;
+        return FloatColor{0.0f, 0.0f, 0.0f, 0.34f};
     };
 
-    const float anchorRadius = std::max(s * 0.18f, 6.0f);
-    const float anchorArm = std::max(s * 0.12f, 4.0f);
+    const float anchorRadius = std::max(s * 0.22f, 8.0f);
+    const float anchorArm = std::max(s * 0.15f, 6.0f);
     const FloatColor anchorShadow{0.0f, 0.0f, 0.0f, 0.88f};
     const FloatColor anchorCore{1.0f, 1.0f, 1.0f, 1.0f};
 
@@ -362,23 +391,70 @@ void Artifact3DGizmo::draw(ArtifactIRenderer* renderer, const QMatrix4x4& view, 
                             {center.x, center.y, center.z + anchorArm},
                             anchorCore);
 
+    auto drawAxisArrow = [&](GizmoAxis axis,
+                             const Detail::float3& start,
+                             const Detail::float3& end,
+                             const FloatColor& baseColor,
+                             float size) {
+        const FloatColor shadowColor = getAxisShadowColor(axis, baseColor);
+        const FloatColor coreColor = getAxisCoreColor(axis, baseColor);
+        renderer->drawGizmoArrow(start, end, shadowColor, size * 1.14f);
+        renderer->drawGizmoArrow(start, end, coreColor, size);
+    };
+    auto drawAxisRing = [&](GizmoAxis axis,
+                            const Detail::float3& centerPos,
+                            const Detail::float3& normal,
+                            float radius,
+                            const FloatColor& baseColor,
+                            float thickness = 1.0f) {
+        const FloatColor shadowColor = getAxisShadowColor(axis, baseColor);
+        const FloatColor coreColor = getAxisCoreColor(axis, baseColor);
+        renderer->drawGizmoRing(centerPos, normal, radius * 1.02f, shadowColor, thickness * 1.30f);
+        renderer->drawGizmoRing(centerPos, normal, radius, coreColor, thickness);
+    };
+
     if (mode_ == GizmoMode::Move) {
-        renderer->drawGizmoArrow(center, {impl_->position.x() + s, impl_->position.y(), impl_->position.z()}, getAxisColor(GizmoAxis::X, {1,0,0,1}), s*0.19f);
-        renderer->drawGizmoArrow(center, {impl_->position.x(), impl_->position.y() + s, impl_->position.z()}, getAxisColor(GizmoAxis::Y, {0,1,0,1}), s*0.19f);
-        renderer->drawGizmoArrow(center, {impl_->position.x(), impl_->position.y(), impl_->position.z() + s},
-                              getAxisColor(GizmoAxis::Z, depthEnabled_ ? FloatColor{0,0,1,1} : FloatColor{0.45f,0.45f,0.45f,0.7f}), s*0.19f);
+        drawAxisArrow(GizmoAxis::X,
+                      center,
+                      {impl_->position.x() + s * 1.08f, impl_->position.y(), impl_->position.z()},
+                      {1.0f, 0.22f, 0.18f, 1.0f},
+                      s * 0.30f);
+        drawAxisArrow(GizmoAxis::Y,
+                      center,
+                      {impl_->position.x(), impl_->position.y() - s * 1.08f, impl_->position.z()},
+                      {0.20f, 1.0f, 0.28f, 1.0f},
+                      s * 0.30f);
+        drawAxisArrow(GizmoAxis::Z,
+                      center,
+                      {impl_->position.x(), impl_->position.y(), impl_->position.z() + s},
+                      depthEnabled_ ? FloatColor{0.28f, 0.58f, 1.0f, 1.0f} : FloatColor{0.45f, 0.45f, 0.45f, 0.7f},
+                      s * 0.30f);
     } 
     else if (mode_ == GizmoMode::Rotate) {
-        renderer->drawGizmoRing(center, {1,0,0}, s, getAxisColor(GizmoAxis::X, {1,0,0,1}));
-        renderer->drawGizmoRing(center, {0,1,0}, s, getAxisColor(GizmoAxis::Y, {0,1,0,1}));
-        renderer->drawGizmoRing(center, {0,0,1}, s,
-                              getAxisColor(GizmoAxis::Z, depthEnabled_ ? FloatColor{0,0,1,1} : FloatColor{0.45f,0.45f,0.45f,0.7f}));
+        drawAxisRing(GizmoAxis::X, center, {1, 0, 0}, s * 1.04f, {1.0f, 0.22f, 0.18f, 1.0f}, 1.1f);
+        drawAxisRing(GizmoAxis::Y, center, {0, 1, 0}, s * 1.04f, {0.20f, 1.0f, 0.28f, 1.0f}, 1.1f);
+        drawAxisRing(GizmoAxis::Z, center, {0, 0, 1}, s * 1.04f,
+                     depthEnabled_ ? FloatColor{0.28f, 0.58f, 1.0f, 1.0f} : FloatColor{0.45f, 0.45f, 0.45f, 0.7f},
+                     1.1f);
+        renderer->drawGizmoRing(center, {0,0,1}, s * 0.98f, FloatColor{1.0f, 1.0f, 1.0f, 0.20f}, 1.0f);
     } else if (mode_ == GizmoMode::Scale) {
-        renderer->drawGizmoArrow(center, {impl_->position.x() + s, impl_->position.y(), impl_->position.z()}, getAxisColor(GizmoAxis::X, {1,0.7f,0.2f,1}), s*0.16f);
-        renderer->drawGizmoArrow(center, {impl_->position.x(), impl_->position.y() + s, impl_->position.z()}, getAxisColor(GizmoAxis::Y, {0.2f,1,0.7f,1}), s*0.16f);
-        renderer->drawGizmoArrow(center, {impl_->position.x(), impl_->position.y(), impl_->position.z() + s},
-                              getAxisColor(GizmoAxis::Z, depthEnabled_ ? FloatColor{0.7f,0.2f,1,1} : FloatColor{0.45f,0.45f,0.45f,0.7f}), s*0.16f);
-        renderer->drawGizmoRing(center, {0,0,1}, s * 0.52f, getAxisColor(GizmoAxis::Screen, {1,1,1,1}));
+        drawAxisArrow(GizmoAxis::X,
+                      center,
+                      {impl_->position.x() + s * 0.92f, impl_->position.y(), impl_->position.z()},
+                      {1.0f, 0.38f, 0.18f, 1.0f},
+                      s * 0.22f);
+        drawAxisArrow(GizmoAxis::Y,
+                      center,
+                      {impl_->position.x(), impl_->position.y() - s * 0.92f, impl_->position.z()},
+                      {0.22f, 1.0f, 0.55f, 1.0f},
+                      s * 0.22f);
+        drawAxisArrow(GizmoAxis::Z,
+                      center,
+                      {impl_->position.x(), impl_->position.y(), impl_->position.z() + s},
+                      depthEnabled_ ? FloatColor{0.72f, 0.28f, 1.0f, 1.0f} : FloatColor{0.45f, 0.45f, 0.45f, 0.7f},
+                      s * 0.22f);
+        drawAxisRing(GizmoAxis::Screen, center, {0,0,1}, s * 0.60f, {1.0f, 1.0f, 1.0f, 1.0f}, 1.0f);
+        renderer->drawGizmoRing(center, {0,0,1}, s * 0.18f, FloatColor{1.0f, 1.0f, 1.0f, 0.30f}, 1.0f);
     }
 
     renderer->setUseExternalMatrices(false);

@@ -12,6 +12,7 @@ module;
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
+#include <QDebug>
 module Artifact.Composition.Abstract;
 
 import std;
@@ -409,6 +410,8 @@ bool ArtifactAbstractComposition::getAudio(AudioSegment &outSegment, const Frame
                                             int frameCount, int sampleRate)
 {
     bool hasAnyAudio = false;
+    int activeAudioLayerCount = 0;
+    int producedAudioLayerCount = 0;
     
     // Prepare output segment
     if (outSegment.channelCount() < 2) {
@@ -421,6 +424,7 @@ bool ArtifactAbstractComposition::getAudio(AudioSegment &outSegment, const Frame
     AudioSegment layerSegment;
     for (auto &layer : impl_->layerMultiIndex_) {
         if (layer && layer->isActiveAt(start) && layer->hasAudio()) {
+            ++activeAudioLayerCount;
             if (layer->getAudio(layerSegment, start, frameCount, sampleRate)) {
                 // Simple mix (Addition)
                 int chCount = std::min(outSegment.channelCount(), layerSegment.channelCount());
@@ -433,9 +437,18 @@ bool ArtifactAbstractComposition::getAudio(AudioSegment &outSegment, const Frame
                         outData[i] += layerData[i];
                     }
                 }
+                ++producedAudioLayerCount;
                 hasAnyAudio = true;
             }
         }
+    }
+    if (activeAudioLayerCount > 0 && !hasAnyAudio) {
+        qWarning() << "[Composition][Audio] active layers produced no audio"
+                   << "startFrame=" << start.framePosition()
+                   << "frameCount=" << frameCount
+                   << "sampleRate=" << sampleRate
+                   << "activeAudioLayers=" << activeAudioLayerCount
+                   << "producedAudioLayers=" << producedAudioLayerCount;
     }
     return hasAnyAudio;
 }

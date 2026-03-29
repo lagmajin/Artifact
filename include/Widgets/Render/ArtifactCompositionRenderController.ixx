@@ -58,6 +58,8 @@ void setShowSafeMargins(bool show);
 bool isShowSafeMargins() const;
 void setGpuBlendEnabled(bool enabled);
 bool isGpuBlendEnabled() const;
+void setShowMotionPathOverlay(bool show);
+bool isShowMotionPathOverlay() const;
 
 void resetView();
 void zoomInAt(const QPointF& viewportPos);
@@ -70,6 +72,7 @@ LayerID layerAtViewportPos(const QPointF& viewportPos) const;
 void handleMousePress(QMouseEvent* event);
 void handleMouseMove(const QPointF& viewportPos);
   void handleMouseRelease();
+  bool hasPendingMaskEdit() const;
 
 class TransformGizmo* gizmo() const;
 class Artifact3DGizmo* gizmo3D() const;

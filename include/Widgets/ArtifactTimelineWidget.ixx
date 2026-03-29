@@ -132,6 +132,8 @@ class TimelineTrackView :public QGraphicsView {
   void setZoomLevel(double pixelsPerFrame);
   double visibleStartFrame() const;
   double visibleEndFrame() const;
+  void setLegacyPaintSuppressed(bool suppressed);
+  bool legacyPaintSuppressed() const;
 
   // Track and clip management
   TimelineScene* timelineScene() const;
@@ -153,6 +155,7 @@ class TimelineTrackView :public QGraphicsView {
    W_SIGNAL(layerClipMoved, layerId, trackIndex, start);
   void layerClipTrimmed(LayerID layerId, int trackIndex, double start, double duration)
    W_SIGNAL(layerClipTrimmed, layerId, trackIndex, start, duration);
+  void tracksRefreshRequested() W_SIGNAL(tracksRefreshRequested);
   void timelineDebugMessage(const QString& message) W_SIGNAL(timelineDebugMessage, message);
  };
 
@@ -162,6 +165,7 @@ class ArtifactTimelineWidget :public QWidget {
  private:
   class Impl;
   Impl* impl_;
+  void syncWorkAreaFromCurrentComposition();
   void updateSearchState();
   void jumpToSearchHit(int step);
  protected:

@@ -73,7 +73,9 @@ public:
     ArtifactAbstractLayerPtr currentLayer;
     QMetaObject::Connection currentLayerChangedConnection;
     QTimer* rebuildTimer = nullptr;
+    QTimer* updateValuesTimer = nullptr;
     int rebuildDebounceMs = 80;
+    int updateValuesDebounceMs = 16;
     QString filterText;
     QString focusedEffectId;
     bool rebuilding = false;
@@ -88,8 +90,23 @@ public:
         if (!rebuildTimer) {
             return;
         }
+        if (updateValuesTimer) {
+            updateValuesTimer->stop();
+        }
         const int delay = (delayMs < 0) ? rebuildDebounceMs : delayMs;
         rebuildTimer->start(std::max(0, delay));
+    }
+
+    void scheduleUpdateValues()
+    {
+        if (!updateValuesTimer || rebuilding) {
+            return;
+        }
+        // If a full rebuild is already scheduled, don't bother with partial update
+        if (rebuildTimer && rebuildTimer->isActive()) {
+            return;
+        }
+        updateValuesTimer->start(updateValuesDebounceMs);
     }
 
     void rebuildUI();
@@ -416,6 +433,12 @@ ArtifactPropertyWidget::ArtifactPropertyWidget(QWidget* parent)
     QObject::connect(impl_->rebuildTimer, &QTimer::timeout, this, [this]() {
         impl_->rebuildUI();
     });
+
+    impl_->updateValuesTimer = new QTimer(this);
+    impl_->updateValuesTimer->setSingleShot(true);
+    QObject::connect(impl_->updateValuesTimer, &QTimer::timeout, this, [this]() {
+        impl_->updatePropertyValues();
+    });
     QObject::connect(this, &QWidget::customContextMenuRequested, this,
                      [this](const QPoint& pos) {
         QMenu menu(this);
@@ -608,7 +631,7 @@ void ArtifactPropertyWidget::setLayer(ArtifactAbstractLayerPtr layer) {    if (i
                 if (impl_->localPropertyEditDepth > 0) {
                     return;
                 }
-                impl_->scheduleRebuild();
+                impl_->scheduleUpdateValues();
             });
     }
 
@@ -897,6 +920,28 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
         auto* groupLayout = new QVBoxLayout(group);
         groupLayout->setContentsMargins(8, 8, 8, 8);
         groupLayout->setSpacing(4);
+    
+    group->setStyleSheet(R"(
+        QGroupBox {
+            background: transparent;
+            border: none;
+            border-top: 1px solid #333;
+            margin-top: 24px;
+            padding-top: 2px;
+            font-weight: 700;
+            font-size: 10px;
+            color: #AAA;
+        }
+        QGroupBox::title {
+            subcontrol-origin: margin;
+            subcontrol-position: top left;
+            padding: 4px 10px;
+            background: #252525;
+            color: #DDD;
+            letter-spacing: 1px;
+            width: 100%;
+        }
+    )");
 
         auto sortedProps = groupDef.sortedProperties();
         bool addedGroupProperties = false;
@@ -948,6 +993,28 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
         auto* groupLayout = new QVBoxLayout(group);
         groupLayout->setContentsMargins(8, 8, 8, 8);
         groupLayout->setSpacing(4);
+    
+    group->setStyleSheet(R"(
+        QGroupBox {
+            background: transparent;
+            border: none;
+            border-top: 1px solid #333;
+            margin-top: 24px;
+            padding-top: 2px;
+            font-weight: 700;
+            font-size: 10px;
+            color: #AAA;
+        }
+        QGroupBox::title {
+            subcontrol-origin: margin;
+            subcontrol-position: top left;
+            padding: 4px 10px;
+            background: #252525;
+            color: #DDD;
+            letter-spacing: 1px;
+            width: 100%;
+        }
+    )");
 
         ArtifactCore::PropertyGroup propGroup(effect->displayName().toQString());
         for (const auto& p : effect->getProperties()) {

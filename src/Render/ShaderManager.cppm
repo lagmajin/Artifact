@@ -38,6 +38,7 @@ public:
     RenderShaderPair checkerboardShaders_;
     RenderShaderPair gridShaders_;
     RenderShaderPair spriteTransformShaders_;
+    RenderShaderPair maskedSpriteShaders_;
     RenderShaderPair gizmo3DShaders_;
 
     PSOAndSRB linePsoAndSrb_;
@@ -51,6 +52,7 @@ public:
     PSOAndSRB checkerboardPsoAndSrb_;
     PSOAndSRB gridPsoAndSrb_;
     PSOAndSRB spriteTransformPsoAndSrb_;
+    PSOAndSRB maskedSpritePsoAndSrb_;
     PSOAndSRB gizmo3DPsoAndSrb_;
 
     RefCntAutoPtr<ISampler> spriteSampler_;
@@ -153,6 +155,34 @@ void ShaderManager::Impl::createShaders()
     spriteTransformVsInfo.Source = ArtifactCore::drawSpriteTransformVSSource.constData();
     spriteTransformVsInfo.SourceLength = ArtifactCore::drawSpriteTransformVSSource.length();
 
+    const QByteArray maskedSpritePsSource = R"(
+struct PS_INPUT
+{
+    float4 Position : SV_POSITION;
+    float2 TexCoord : TEXCOORD0;
+    float4 Color    : COLOR0;
+};
+
+Texture2D g_scene : register(t0);
+Texture2D g_mask  : register(t1);
+SamplerState g_sampler : register(s0);
+
+float4 main(PS_INPUT input) : SV_TARGET
+{
+    float4 scene = g_scene.Sample(g_sampler, input.TexCoord);
+    float maskAlpha = g_mask.Sample(g_sampler, input.TexCoord).a;
+    float4 color = scene * input.Color;
+    color.a *= maskAlpha;
+    return color;
+}
+)";
+    ShaderCreateInfo maskedSpritePsInfo;
+    maskedSpritePsInfo.SourceLanguage = Diligent::SHADER_SOURCE_LANGUAGE_HLSL;
+    maskedSpritePsInfo.Desc.ShaderType = Diligent::SHADER_TYPE_PIXEL;
+    maskedSpritePsInfo.Desc.Name = "MaskedSpritePixelShader";
+    maskedSpritePsInfo.Source = maskedSpritePsSource.constData();
+    maskedSpritePsInfo.SourceLength = maskedSpritePsSource.length();
+
     ShaderCreateInfo solidRectPsInfo2;
     solidRectPsInfo2.SourceLanguage = Diligent::SHADER_SOURCE_LANGUAGE_HLSL;
     solidRectPsInfo2.Desc.ShaderType = Diligent::SHADER_TYPE_PIXEL;
@@ -185,6 +215,8 @@ void ShaderManager::Impl::createShaders()
     device_->CreateShader(solidRectPsInfo2, &solidRectTransformShaders_.PS);
     device_->CreateShader(spriteTransformVsInfo, &spriteTransformShaders_.VS);
     spriteTransformShaders_.PS = spriteShaders_.PS;
+    device_->CreateShader(spriteTransformVsInfo, &maskedSpriteShaders_.VS);
+    device_->CreateShader(maskedSpritePsInfo, &maskedSpriteShaders_.PS);
 
     device_->CreateShader(checkerboardPsInfo, &checkerboardShaders_.PS);
     device_->CreateShader(gridPsInfo, &gridShaders_.PS);
@@ -410,6 +442,23 @@ void ShaderManager::Impl::createPSOs()
         spriteTransformPsoAndSrb_.pPSO->CreateShaderResourceBinding(&spriteTransformPsoAndSrb_.pSRB, true);
     }
 
+    GraphicsPipelineStateCreateInfo maskedSpritePSOCreateInfo = spritePSOCreateInfo;
+    maskedSpritePSOCreateInfo.PSODesc.Name = "DrawMaskedSprite PSO";
+    maskedSpritePSOCreateInfo.pVS = maskedSpriteShaders_.VS;
+    maskedSpritePSOCreateInfo.pPS = maskedSpriteShaders_.PS;
+    ShaderResourceVariableDesc maskedSpriteVars[] = {
+        { SHADER_TYPE_PIXEL, "g_scene", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC },
+        { SHADER_TYPE_PIXEL, "g_mask", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC },
+        { SHADER_TYPE_PIXEL, "g_sampler", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC },
+    };
+    maskedSpritePSOCreateInfo.PSODesc.ResourceLayout.Variables = maskedSpriteVars;
+    maskedSpritePSOCreateInfo.PSODesc.ResourceLayout.NumVariables = _countof(maskedSpriteVars);
+    device_->CreateGraphicsPipelineState(maskedSpritePSOCreateInfo, &maskedSpritePsoAndSrb_.pPSO);
+    if (maskedSpritePsoAndSrb_.pPSO)
+    {
+        maskedSpritePsoAndSrb_.pPSO->CreateShaderResourceBinding(&maskedSpritePsoAndSrb_.pSRB, true);
+    }
+
     GraphicsPipelineStateCreateInfo drawSolidTrianglePSOCreateInfo = drawSolidRectPSOCreateInfo;
     drawSolidTrianglePSOCreateInfo.PSODesc.Name = "DrawSolidTriangle PSO";
     drawSolidTrianglePSOCreateInfo.GraphicsPipeline.PrimitiveTopology = PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
@@ -590,6 +639,8 @@ void ShaderManager::Impl::destroy()
     solidRectTransformPsoAndSrb_.pSRB.Release();
     spritePsoAndSrb_.pPSO.Release();
     spritePsoAndSrb_.pSRB.Release();
+    maskedSpritePsoAndSrb_.pPSO.Release();
+    maskedSpritePsoAndSrb_.pSRB.Release();
     thickLinePsoAndSrb_.pPSO.Release();
     thickLinePsoAndSrb_.pSRB.Release();
     dotLinePsoAndSrb_.pPSO.Release();
@@ -613,6 +664,8 @@ void ShaderManager::Impl::destroy()
     solidRectTransformShaders_.PS.Release();
     spriteShaders_.VS.Release();
     spriteShaders_.PS.Release();
+    maskedSpriteShaders_.VS.Release();
+    maskedSpriteShaders_.PS.Release();
     thickLineShaders_.VS.Release();
     thickLineShaders_.PS.Release();
     dotLineShaders_.VS.Release();
@@ -711,6 +764,11 @@ RenderShaderPair ShaderManager::gridShaders() const
     return impl_->gridShaders_;
 }
 
+RenderShaderPair ShaderManager::maskedSpriteShaders() const
+{
+    return impl_->maskedSpriteShaders_;
+}
+
 PSOAndSRB ShaderManager::linePsoAndSrb() const
 {
     return impl_->linePsoAndSrb_;
@@ -764,6 +822,11 @@ PSOAndSRB ShaderManager::gridPsoAndSrb() const
 PSOAndSRB ShaderManager::spriteTransformPsoAndSrb() const
 {
     return impl_->spriteTransformPsoAndSrb_;
+}
+
+PSOAndSRB ShaderManager::maskedSpritePsoAndSrb() const
+{
+    return impl_->maskedSpritePsoAndSrb_;
 }
 
 PSOAndSRB ShaderManager::gizmo3DPsoAndSrb() const

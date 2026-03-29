@@ -23,8 +23,10 @@ import Animation.Transform2D;
 import Frame.Position;
 import Time.Rational;
 import Frame.Rate;
+import Animation.Value;
 
 import Artifact.Layer.Settings;
+import Artifact.Layer.Physics;
 import Artifact.Composition.Abstract;
 import Artifact.Effect.Abstract;
 import Artifact.Effect.ImplBase;
@@ -95,6 +97,17 @@ public:
   bool isShy_ = false;
   int labelColorIndex_ = 0;
   float opacity_ = 1.0f; // Opacity (0.0 - 1.0)
+
+  // Physics components
+  LayerPhysicsSettings physics_;
+  
+  // Runtime Physics State
+  mutable ArtifactCore::SpringState springX_;
+  mutable ArtifactCore::SpringState springY_;
+  mutable ArtifactCore::SpringState springRot_;
+  mutable ArtifactCore::SpringState springSX_;
+  mutable ArtifactCore::SpringState springSY_;
+  mutable int64_t lastPhysicsFrame_ = -1;
 
   uint32_t dirtyFlags_ = (uint32_t)LayerDirtyFlag::All;
   uint64_t dirtyReasonMask_ =
@@ -353,12 +366,90 @@ QTransform ArtifactAbstractLayer::getLocalTransform() const {
     return animatedValue.isValid() ? animatedValue.toDouble() : fallback;
   };
 
-  const double positionX =
+  double positionX =
       evaluateDouble(QStringLiteral("transform.position.x"), t.positionX());
-  const double positionY =
+  double positionY =
       evaluateDouble(QStringLiteral("transform.position.y"), t.positionY());
-  const double rotation =
+  double rotation =
       evaluateDouble(QStringLiteral("transform.rotation"), t.rotation());
+
+  // 物理演算オフセットの適用
+  if (impl_->physics_.enabled) {
+      const double fps = effectiveLayerFrameRate(this);
+      const float dt = 1.0f / static_cast<float>(fps);
+      const int64_t curFrame = currentFrame();
+
+      // スクラブや逆再生、初回起動時のリセット
+      if (impl_->lastPhysicsFrame_ == -1 || curFrame <= impl_->lastPhysicsFrame_ || (curFrame - impl_->lastPhysicsFrame_) > 10) {
+          impl_->springX_.currentValue = 0.0f;
+          impl_->springX_.velocity = 0.0f;
+          impl_->springY_.currentValue = 0.0f;
+          impl_->springY_.velocity = 0.0f;
+          impl_->springRot_.currentValue = 0.0f;
+          impl_->springRot_.velocity = 0.0f;
+          impl_->springX_.initialized = true;
+          impl_->springY_.initialized = true;
+          impl_->springRot_.initialized = true;
+      } else {
+          // 前のフレームのベース位置を評価
+          const RationalTime prevTime(impl_->lastPhysicsFrame_, fps);
+          auto evalAt = [this, &prevTime, &t](const QString& path, double fallback) {
+              const auto it = impl_->propertyCache_.constFind(path);
+              if (it == impl_->propertyCache_.constEnd() || !it.value()) return fallback;
+              const QVariant v = it.value()->interpolateValue(prevTime);
+              return v.isValid() ? v.toDouble() : fallback;
+          };
+
+          const double prevBaseX = evalAt(QStringLiteral("transform.position.x"), t.positionX());
+          const double prevBaseY = evalAt(QStringLiteral("transform.position.y"), t.positionY());
+          const double prevBaseRot = evalAt(QStringLiteral("transform.rotation"), t.rotation());
+
+          // 1フレーム分の移動量（速度）を外力としてバネに注入する
+          const float velocityX = static_cast<float>(positionX - prevBaseX) / dt;
+          const float velocityY = static_cast<float>(positionY - prevBaseY) / dt;
+          const float velocityRot = static_cast<float>(rotation - prevBaseRot) / dt;
+
+          const int64_t steps = curFrame - impl_->lastPhysicsFrame_;
+          const float currentSec = static_cast<float>(time.toDouble());
+
+          for (int64_t i = 0; i < steps; ++i) {
+              const float stepTime = currentSec + (i * dt);
+              
+              auto updateChannel = [&](ArtifactCore::SpringState& state, float baseVelocity, float channelIndex) {
+                  state.stiffness = impl_->physics_.stiffness;
+                  state.damping = impl_->physics_.damping;
+                  
+                  // 1. Follow Through: キーフレームの速度による反動
+                  state.velocity -= baseVelocity * impl_->physics_.followThroughGain;
+
+                  // 2. Wiggle: 自律的な揺れ（複数の正弦波で不規則さをシミュレート）
+                  float wiggleForce = 0.0f;
+                  if (impl_->physics_.wiggleFreq > 0.01f && impl_->physics_.wiggleAmp > 0.01f) {
+                      // 決定論的なノイズ（位相をチャンネルごとにずらす）
+                      float phase = channelIndex * 1.57f; 
+                      float noise = std::sin(stepTime * impl_->physics_.wiggleFreq * 6.28f + phase) +
+                                    std::sin(stepTime * impl_->physics_.wiggleFreq * 1.33f * 6.28f + phase * 0.5f) * 0.5f;
+                      wiggleForce = noise * impl_->physics_.wiggleAmp * state.stiffness * 0.1f;
+                  }
+
+                  // ターゲット(0)への復元力 + Wiggleの外力
+                  float force = -state.stiffness * state.currentValue - state.damping * state.velocity + wiggleForce;
+                  state.velocity += force * dt;
+                  state.currentValue += state.velocity * dt;
+              };
+
+              updateChannel(impl_->springX_, velocityX, 0.0f);
+              updateChannel(impl_->springY_, velocityY, 1.0f);
+              updateChannel(impl_->springRot_, velocityRot, 2.0f);
+          }
+      }
+      impl_->lastPhysicsFrame_ = curFrame;
+
+      positionX += impl_->springX_.currentValue;
+      positionY += impl_->springY_.currentValue;
+      rotation += impl_->springRot_.currentValue;
+  }
+
   const double scaleX =
       evaluateDouble(QStringLiteral("transform.scale.x"), t.scaleX());
   const double scaleY =
@@ -992,7 +1083,46 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
   layerGroup.addProperty(makeProp(QStringLiteral("source.height"),
                                   PropertyType::Integer, sz.height, -30));
 
-  return {transformGroup, layerGroup};
+  // 物理演算プロパティグループ
+  PropertyGroup physicsGroup(QStringLiteral("Physics"));
+  
+  auto physicsEnabledProp = makeProp(QStringLiteral("physics.enabled"),
+                                     PropertyType::Boolean, impl_->physics_.enabled, -100);
+  physicsGroup.addProperty(physicsEnabledProp);
+
+  auto stiffnessProp = makeProp(QStringLiteral("physics.stiffness"),
+                                PropertyType::Float, static_cast<double>(impl_->physics_.stiffness), -99);
+  stiffnessProp->setHardRange(0.0, 1000.0);
+  stiffnessProp->setSoftRange(0.0, 500.0);
+  stiffnessProp->setStep(1.0);
+  physicsGroup.addProperty(stiffnessProp);
+
+  auto dampingProp = makeProp(QStringLiteral("physics.damping"),
+                              PropertyType::Float, static_cast<double>(impl_->physics_.damping), -98);
+  dampingProp->setHardRange(0.0, 100.0);
+  dampingProp->setSoftRange(0.0, 50.0);
+  dampingProp->setStep(0.1);
+  physicsGroup.addProperty(dampingProp);
+
+  auto followThroughProp = makeProp(QStringLiteral("physics.followThroughGain"),
+                                    PropertyType::Float, static_cast<double>(impl_->physics_.followThroughGain), -97);
+  followThroughProp->setHardRange(0.0, 2.0);
+  followThroughProp->setSoftRange(0.0, 1.0);
+  followThroughProp->setStep(0.01);
+  physicsGroup.addProperty(followThroughProp);
+
+  auto wiggleFreqProp = makeProp(QStringLiteral("physics.wiggleFreq"),
+                                 PropertyType::Float, static_cast<double>(impl_->physics_.wiggleFreq), -96);
+  wiggleFreqProp->setUnit(QStringLiteral("Hz"));
+  wiggleFreqProp->setSoftRange(0.0, 10.0);
+  physicsGroup.addProperty(wiggleFreqProp);
+
+  auto wiggleAmpProp = makeProp(QStringLiteral("physics.wiggleAmp"),
+                                PropertyType::Float, static_cast<double>(impl_->physics_.wiggleAmp), -95);
+  wiggleAmpProp->setSoftRange(0.0, 100.0);
+  physicsGroup.addProperty(wiggleAmpProp);
+
+  return {transformGroup, physicsGroup, layerGroup};
 }
 
 std::shared_ptr<ArtifactCore::AbstractProperty>
@@ -1058,6 +1188,36 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
   }
   if (propertyPath == QStringLiteral("layer.opacity")) {
     setOpacity(static_cast<float>(value.toDouble()));
+    return true;
+  }
+
+  // Physics properties
+  if (propertyPath == QStringLiteral("physics.enabled")) {
+    impl_->physics_.enabled = value.toBool();
+    if (!impl_->physics_.enabled) {
+        impl_->lastPhysicsFrame_ = -1; // Reset state when disabled
+    }
+    Q_EMIT changed();
+    return true;
+  }
+  if (propertyPath == QStringLiteral("physics.stiffness")) {
+    impl_->physics_.stiffness = static_cast<float>(value.toDouble());
+    return true;
+  }
+  if (propertyPath == QStringLiteral("physics.damping")) {
+    impl_->physics_.damping = static_cast<float>(value.toDouble());
+    return true;
+  }
+  if (propertyPath == QStringLiteral("physics.followThroughGain")) {
+    impl_->physics_.followThroughGain = static_cast<float>(value.toDouble());
+    return true;
+  }
+  if (propertyPath == QStringLiteral("physics.wiggleFreq")) {
+    impl_->physics_.wiggleFreq = static_cast<float>(value.toDouble());
+    return true;
+  }
+  if (propertyPath == QStringLiteral("physics.wiggleAmp")) {
+    impl_->physics_.wiggleAmp = static_cast<float>(value.toDouble());
     return true;
   }
 
@@ -1234,4 +1394,4 @@ void ArtifactAbstractLayer::setOpacity(float value) {
                         LayerDirtyReason::PropertyChanged);
   }
 }
-}; // namespace Artifact
+} // namespace Artifact

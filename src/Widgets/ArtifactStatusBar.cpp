@@ -16,23 +16,25 @@ namespace Artifact
    switch (item)
    {
    case ArtifactStatusBar::Item::Zoom:
-    return QStringLiteral("Zoom: 100%");
+    return QStringLiteral("ZOOM: 100%");
    case ArtifactStatusBar::Item::Coordinates:
-    return QStringLiteral("Pos: -, -");
+    return QStringLiteral("X: - | Y: -");
    case ArtifactStatusBar::Item::Frame:
-    return QStringLiteral("Frame: -");
+    return QStringLiteral("FRM: -");
    case ArtifactStatusBar::Item::FPS:
     return QStringLiteral("FPS: -");
    case ArtifactStatusBar::Item::Memory:
-   return QStringLiteral("RAM: - MB");
+   return QStringLiteral("MEM: - MB");
   case ArtifactStatusBar::Item::Project:
-   return QStringLiteral("Project: Ready");
+   return QStringLiteral("PROJECT: READY");
+  case ArtifactStatusBar::Item::Layer:
+   return QStringLiteral("LAYER: -");
   case ArtifactStatusBar::Item::Drops:
-   return QStringLiteral("Drops: -");
+   return QStringLiteral("DROP: -");
   case ArtifactStatusBar::Item::TimelineDebug:
-   return QStringLiteral("[Timeline: Ready]");
+   return QStringLiteral("READY");
   case ArtifactStatusBar::Item::Console:
-   return QStringLiteral("Logs: 0E 0W");
+   return QStringLiteral("LOGS: 0E 0W");
   }
   return QString();
  }
@@ -42,19 +44,40 @@ namespace Artifact
   : QStatusBar(parent)
  {
   setSizeGripEnabled(true);
+  setStyleSheet(R"(
+      QStatusBar {
+          background: #181818;
+          border-top: 1px solid #2d2d2d;
+          min-height: 26px;
+          color: #888;
+      }
+      QStatusBar::item { border: none; }
+      QLabel {
+          color: #888;
+          font-size: 10px;
+          font-family: 'Segoe UI', 'Meiryo', sans-serif;
+          padding: 0 10px;
+          border-left: 1px solid #2d2d2d;
+      }
+  )");
 
-  labels_[itemIndex(Item::TimelineDebug)] = new QLabel(defaultTextForItem(Item::TimelineDebug), this);
-  labels_[itemIndex(Item::Project)] = new QLabel(defaultTextForItem(Item::Project), this);
-  labels_[itemIndex(Item::Coordinates)] = new QLabel(defaultTextForItem(Item::Coordinates), this);
-  labels_[itemIndex(Item::Frame)] = new QLabel(defaultTextForItem(Item::Frame), this);
-  labels_[itemIndex(Item::Zoom)] = new QLabel(defaultTextForItem(Item::Zoom), this);
-  labels_[itemIndex(Item::FPS)] = new QLabel(defaultTextForItem(Item::FPS), this);
-  labels_[itemIndex(Item::Memory)] = new QLabel(defaultTextForItem(Item::Memory), this);
-  labels_[itemIndex(Item::Drops)] = new QLabel(defaultTextForItem(Item::Drops), this);
-  labels_[itemIndex(Item::Console)] = new QLabel(defaultTextForItem(Item::Console), this);
+  for (int i = 0; i < kItemCount; ++i) {
+      labels_[i] = new QLabel(defaultTextForItem(static_cast<Item>(i)), this);
+      labels_[i]->setAlignment(Qt::AlignCenter);
+  }
+
+  // Set specific styles/widths for certain labels
+  labels_[itemIndex(Item::TimelineDebug)]->setStyleSheet("color: #4CAF50; font-weight: bold; border-left: none; padding-left: 12px;");
+  labels_[itemIndex(Item::Memory)]->setMinimumWidth(100);
+  labels_[itemIndex(Item::FPS)]->setMinimumWidth(80);
+  labels_[itemIndex(Item::Zoom)]->setMinimumWidth(80);
+  labels_[itemIndex(Item::Coordinates)]->setMinimumWidth(110);
+  labels_[itemIndex(Item::Console)]->setStyleSheet("color: #E91E63; font-weight: bold;");
 
   addWidget(labels_[itemIndex(Item::TimelineDebug)]);
   addWidget(labels_[itemIndex(Item::Project)], 1);
+  addWidget(labels_[itemIndex(Item::Layer)], 1);
+  
   addPermanentWidget(labels_[itemIndex(Item::Console)]);
   addPermanentWidget(labels_[itemIndex(Item::Coordinates)]);
   addPermanentWidget(labels_[itemIndex(Item::Frame)]);
@@ -70,7 +93,7 @@ namespace Artifact
  {
   if (auto* label = itemLabel(Item::Zoom))
   {
-   label->setText(QStringLiteral("Zoom: %1%").arg(QString::number(zoomPercent, 'f', 1)));
+   label->setText(QStringLiteral("ZOOM: %1%").arg(static_cast<int>(zoomPercent)));
   }
  }
 
@@ -78,7 +101,7 @@ namespace Artifact
  {
   if (auto* label = itemLabel(Item::Coordinates))
   {
-   label->setText(QStringLiteral("Pos: %1, %2").arg(x).arg(y));
+   label->setText(QStringLiteral("X: %1 | Y: %2").arg(x).arg(y));
   }
  }
 
@@ -86,7 +109,7 @@ namespace Artifact
  {
   if (auto* label = itemLabel(Item::Frame))
   {
-   label->setText(QStringLiteral("Frame: %1").arg(frame));
+   label->setText(QStringLiteral("FRM: %1").arg(frame));
   }
  }
 
@@ -102,7 +125,7 @@ namespace Artifact
  {
   if (auto* label = itemLabel(Item::Memory))
   {
-   label->setText(QStringLiteral("RAM: %1 MB").arg(memoryMB));
+   label->setText(QStringLiteral("MEM: %1 MB").arg(memoryMB));
   }
  }
 
@@ -110,7 +133,15 @@ namespace Artifact
  {
   if (auto* label = itemLabel(Item::Project))
   {
-   label->setText(QStringLiteral("Project: %1").arg(text));
+   label->setText(QStringLiteral("PROJECT: %1").arg(text.toUpper()));
+  }
+ }
+
+ void ArtifactStatusBar::setLayerText(const QString& text)
+ {
+  if (auto* label = itemLabel(Item::Layer))
+  {
+   label->setText(QStringLiteral("LAYER: %1").arg(text.isEmpty() ? "-" : text.toUpper()));
   }
  }
 
@@ -118,7 +149,7 @@ namespace Artifact
  {
   if (auto* label = itemLabel(Item::Drops))
   {
-   label->setText(QStringLiteral("Drops: %1").arg(text));
+   label->setText(QStringLiteral("DROP: %1").arg(text.toUpper()));
   }
  }
 
@@ -126,7 +157,7 @@ namespace Artifact
  {
   if (auto* label = itemLabel(Item::TimelineDebug))
   {
-   label->setText(QStringLiteral("[Timeline: %1]").arg(text));
+   label->setText(text.toUpper());
   }
  }
 
@@ -134,7 +165,7 @@ namespace Artifact
  {
   if (auto* label = itemLabel(Item::Console))
   {
-   label->setText(QStringLiteral("Logs: %1E %2W").arg(errors).arg(warnings));
+   label->setText(QStringLiteral("LOGS: %1E %2W").arg(errors).arg(warnings));
   }
  }
 
@@ -157,7 +188,7 @@ namespace Artifact
 
  void ArtifactStatusBar::setAllItemsVisible(const bool visible)
  {
-  for (const auto item : { Item::Zoom, Item::Coordinates, Item::Frame, Item::FPS, Item::Memory, Item::Project, Item::Drops, Item::TimelineDebug, Item::Console })
+  for (const auto item : { Item::Zoom, Item::Coordinates, Item::Frame, Item::FPS, Item::Memory, Item::Project, Item::Layer, Item::Drops, Item::TimelineDebug, Item::Console })
   {
    setItemVisible(item, visible);
   }
@@ -165,7 +196,7 @@ namespace Artifact
 
  void ArtifactStatusBar::showReadyMessage()
  {
-  showMessage(QStringLiteral("Ready"), 1500);
+  showMessage(QStringLiteral("READY"), 1500);
  }
 
  void ArtifactStatusBar::contextMenuEvent(QContextMenuEvent* event)
@@ -195,9 +226,10 @@ namespace Artifact
   case Item::FPS: return 3;
   case Item::Memory: return 4;
   case Item::Project: return 5;
-  case Item::Drops: return 6;
-  case Item::TimelineDebug: return 7;
-  case Item::Console: return 8;
+  case Item::Layer: return 6;
+  case Item::Drops: return 7;
+  case Item::TimelineDebug: return 8;
+  case Item::Console: return 9;
   }
   return -1;
  }
@@ -212,6 +244,7 @@ namespace Artifact
   case Item::FPS: return QStringLiteral("FPS");
   case Item::Memory: return QStringLiteral("Memory");
   case Item::Project: return QStringLiteral("Project");
+  case Item::Layer: return QStringLiteral("Layer");
   case Item::Drops: return QStringLiteral("Drops");
   case Item::TimelineDebug: return QStringLiteral("Timeline Debug");
   case Item::Console: return QStringLiteral("Console");
@@ -221,7 +254,7 @@ namespace Artifact
 
  void ArtifactStatusBar::rebuildVisibilityMenu(QMenu& menu)
  {
-  for (const auto item : { Item::Project, Item::Coordinates, Item::Frame, Item::Zoom, Item::FPS, Item::Memory, Item::Drops, Item::TimelineDebug, Item::Console })
+  for (const auto item : { Item::Project, Item::Layer, Item::Coordinates, Item::Frame, Item::Zoom, Item::FPS, Item::Memory, Item::Drops, Item::TimelineDebug, Item::Console })
   {
    QAction* action = menu.addAction(itemTitle(item));
    action->setCheckable(true);

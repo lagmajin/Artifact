@@ -45,6 +45,7 @@ export module Undo.UndoManager;
 import Utils.String.UniString;
 import Artifact.Effect.Abstract;
 import Artifact.Layer.Abstract;
+import Artifact.Mask.LayerMask;
 import Artifact.Composition.Abstract;
 
 export namespace Artifact {
@@ -106,6 +107,20 @@ private:
     ArtifactCompositionWeakPtr comp_;
     ArtifactAbstractLayerPtr layer_;
     int originalIndex_ = -1;
+};
+
+class MaskEditCommand : public UndoCommand {
+public:
+    MaskEditCommand(ArtifactAbstractLayerPtr layer,
+                    std::vector<LayerMask> beforeMasks,
+                    std::vector<LayerMask> afterMasks);
+    void undo() override;
+    void redo() override;
+    QString label() const override;
+private:
+    ArtifactAbstractLayerWeak layer_;
+    std::vector<LayerMask> beforeMasks_;
+    std::vector<LayerMask> afterMasks_;
 };
 
 class UndoManager : public QObject {

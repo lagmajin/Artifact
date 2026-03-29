@@ -13,6 +13,7 @@ module;
 #include <QLineEdit>
 #include <QSlider>
 #include <QSpinBox>
+#include <QTextEdit>
 
 export module Artifact.Widgets.PropertyEditor;
 
@@ -127,6 +128,19 @@ public:
 
 private:
     QLineEdit* lineEdit_ = nullptr;
+};
+
+class ArtifactMultilineStringPropertyEditor final : public ArtifactAbstractPropertyEditor {
+public:
+    explicit ArtifactMultilineStringPropertyEditor(const ArtifactCore::AbstractProperty& property, QWidget* parent = nullptr);
+    QVariant value() const override;
+    void setValueFromVariant(const QVariant& value) override;
+
+protected:
+    bool eventFilter(QObject* watched, QEvent* event) override;
+
+private:
+    QTextEdit* textEdit_ = nullptr;
 };
 
 class ArtifactFontFamilyPropertyEditor final : public ArtifactAbstractPropertyEditor {

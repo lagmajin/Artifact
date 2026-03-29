@@ -534,6 +534,11 @@ void DiligentDeviceManager::Impl::recreateSwapChain(QWidget* widget)
     }
 
     const qreal newDevicePixelRatio = widget->devicePixelRatio();
+    if (newWidth == currentPhysicalWidth_ &&
+        newHeight == currentPhysicalHeight_ &&
+        qFuzzyCompare(newDevicePixelRatio, currentDevicePixelRatio_)) {
+        return;
+    }
     currentPhysicalWidth_ = newWidth;
     currentPhysicalHeight_ = newHeight;
     currentDevicePixelRatio_ = newDevicePixelRatio;

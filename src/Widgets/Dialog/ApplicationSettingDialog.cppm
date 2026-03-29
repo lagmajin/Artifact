@@ -1,5 +1,6 @@
 ﻿module;
 #include <QString>
+#include <QVector>
 #include <QCoreApplication>
 #include <QListWidget>
 #include <QStackedWidget>
@@ -13,13 +14,22 @@
 #include <QDialogButtonBox>
 #include <QComboBox>
 #include <QLineEdit>
+#include <QDialog>
+#include <QAbstractButton>
+#include <QApplication>
 #include <QSlider>
 #include <QProgressBar>
 #include <QTimer>
 #include <QMessageBox>
+#include <QSettings>
+#include <QClipboard>
 #include <QThread>
 #include <QTableWidget>
 #include <QHeaderView>
+#include <QAbstractItemView>
+#include <QFormLayout>
+#include <QKeySequence>
+#include <QKeySequenceEdit>
 #include <QFileDialog>
 #include <QDir>
 #include <QFile>
@@ -29,6 +39,10 @@
 #include <QDesktopServices>
 #include <QStandardPaths>
 #include <QUrl>
+#include <algorithm>
+#include <map>
+#include <set>
+#include <vector>
 #ifdef Q_OS_WIN
 #include <windows.h>
 #include <psapi.h>
@@ -41,6 +55,8 @@
 
 import Artifact.Service.Application;
 import Artifact.Widgets.AppDialogs;
+import Input.Operator;
+import InputEvent;
 import Application.AppSettings;
 
 namespace ArtifactCore {
@@ -104,9 +120,10 @@ namespace ArtifactCore {
  void GeneralSettingPage::loadSettings()
  {
   auto* settings = ArtifactAppSettings::instance();
-  impl_->autoSaveIntervalSpinBox_->setValue(settings->autoSaveIntervalMinutes());
-  impl_->showStartupDialogCheckBox_->setChecked(settings->loadLastProjectOnStartup());
-  // autoSaveEnabled の項目が AppSettings にまだないので、将来的に追加が必要
+ impl_->autoSaveIntervalSpinBox_->setValue(settings->autoSaveIntervalMinutes());
+ impl_->showStartupDialogCheckBox_->setChecked(settings->loadLastProjectOnStartup());
+  QSettings qsettings;
+  impl_->autoSaveCheckBox_->setChecked(qsettings.value(QStringLiteral("Settings/General/AutoSaveEnabled"), true).toBool());
  }
 
  void GeneralSettingPage::saveSettings()
@@ -114,6 +131,8 @@ namespace ArtifactCore {
   auto* settings = ArtifactAppSettings::instance();
   settings->setAutoSaveIntervalMinutes(impl_->autoSaveIntervalSpinBox_->value());
   settings->setLoadLastProjectOnStartup(impl_->showStartupDialogCheckBox_->isChecked());
+  QSettings qsettings;
+  qsettings.setValue(QStringLiteral("Settings/General/AutoSaveEnabled"), impl_->autoSaveCheckBox_->isChecked());
  }
 
  GeneralSettingPage::~GeneralSettingPage()
@@ -242,6 +261,41 @@ namespace ArtifactCore {
  ImportSettingPage::~ImportSettingPage()
  {
   delete impl_;
+ }
+
+ void ImportSettingPage::loadSettings()
+ {
+  QSettings settings;
+  const QString frameRate = settings.value(QStringLiteral("Settings/Import/DefaultFrameRate"), QStringLiteral("30 fps")).toString();
+  const QString colorSpace = settings.value(QStringLiteral("Settings/Import/ColorSpace"), QStringLiteral("sRGB")).toString();
+  const QString audioRate = settings.value(QStringLiteral("Settings/Import/AudioSampleRate"), QStringLiteral("48000 Hz")).toString();
+  const bool autoDetectAlpha = settings.value(QStringLiteral("Settings/Import/AutoDetectAlpha"), true).toBool();
+  const bool interpretFootage = settings.value(QStringLiteral("Settings/Import/InterpretFootage"), true).toBool();
+  const QString fieldOrder = settings.value(QStringLiteral("Settings/Import/FieldOrder"), QStringLiteral("Progressive")).toString();
+  const int stillDuration = settings.value(QStringLiteral("Settings/Import/StillDuration"), 5).toInt();
+  const bool createComposition = settings.value(QStringLiteral("Settings/Import/CreateComposition"), true).toBool();
+
+  impl_->defaultFrameRateCombo_->setCurrentText(frameRate);
+  impl_->colorSpaceCombo_->setCurrentText(colorSpace);
+  impl_->audioSampleRateCombo_->setCurrentText(audioRate);
+  impl_->autoDetectAlphaCheckBox_->setChecked(autoDetectAlpha);
+  impl_->interpretFootageCheckBox_->setChecked(interpretFootage);
+  impl_->fieldOrderCombo_->setCurrentText(fieldOrder);
+  impl_->stillDurationSpinBox_->setValue(stillDuration);
+  impl_->createCompositionCheckBox_->setChecked(createComposition);
+ }
+
+ void ImportSettingPage::saveSettings()
+ {
+  QSettings settings;
+  settings.setValue(QStringLiteral("Settings/Import/DefaultFrameRate"), impl_->defaultFrameRateCombo_->currentText());
+  settings.setValue(QStringLiteral("Settings/Import/ColorSpace"), impl_->colorSpaceCombo_->currentText());
+  settings.setValue(QStringLiteral("Settings/Import/AudioSampleRate"), impl_->audioSampleRateCombo_->currentText());
+  settings.setValue(QStringLiteral("Settings/Import/AutoDetectAlpha"), impl_->autoDetectAlphaCheckBox_->isChecked());
+  settings.setValue(QStringLiteral("Settings/Import/InterpretFootage"), impl_->interpretFootageCheckBox_->isChecked());
+  settings.setValue(QStringLiteral("Settings/Import/FieldOrder"), impl_->fieldOrderCombo_->currentText());
+  settings.setValue(QStringLiteral("Settings/Import/StillDuration"), impl_->stillDurationSpinBox_->value());
+  settings.setValue(QStringLiteral("Settings/Import/CreateComposition"), impl_->createCompositionCheckBox_->isChecked());
  }
 
  // PreviewSettingPage Implementation
@@ -390,6 +444,34 @@ namespace ArtifactCore {
   delete impl_;
  }
 
+ void PreviewSettingPage::loadSettings()
+ {
+  QSettings settings;
+  impl_->previewQualityCombo_->setCurrentText(settings.value(QStringLiteral("Settings/Preview/QualityPreset"), QStringLiteral("Adaptive")).toString());
+  impl_->previewResolutionSlider_->setValue(settings.value(QStringLiteral("Settings/Preview/Resolution"), 50).toInt());
+  impl_->enableCacheCheckBox_->setChecked(settings.value(QStringLiteral("Settings/Preview/EnableRAMCache"), true).toBool());
+  impl_->cacheSizeSpinBox_->setValue(settings.value(QStringLiteral("Settings/Preview/CacheSizeMB"), 4096).toInt());
+  impl_->enableDiskCacheCheckBox_->setChecked(settings.value(QStringLiteral("Settings/Preview/EnableDiskCache"), false).toBool());
+  impl_->generateThumbnailsCheckBox_->setChecked(settings.value(QStringLiteral("Settings/Preview/GenerateThumbnails"), true).toBool());
+  impl_->thumbnailQualityCombo_->setCurrentText(settings.value(QStringLiteral("Settings/Preview/ThumbnailQuality"), QStringLiteral("Medium")).toString());
+  impl_->enableGPUCheckBox_->setChecked(settings.value(QStringLiteral("Settings/Preview/EnableGPU"), true).toBool());
+  impl_->gpuDeviceCombo_->setCurrentText(settings.value(QStringLiteral("Settings/Preview/GPUDevice"), QStringLiteral("Auto (Best Available)")).toString());
+ }
+
+ void PreviewSettingPage::saveSettings()
+ {
+  QSettings settings;
+  settings.setValue(QStringLiteral("Settings/Preview/QualityPreset"), impl_->previewQualityCombo_->currentText());
+  settings.setValue(QStringLiteral("Settings/Preview/Resolution"), impl_->previewResolutionSlider_->value());
+  settings.setValue(QStringLiteral("Settings/Preview/EnableRAMCache"), impl_->enableCacheCheckBox_->isChecked());
+  settings.setValue(QStringLiteral("Settings/Preview/CacheSizeMB"), impl_->cacheSizeSpinBox_->value());
+  settings.setValue(QStringLiteral("Settings/Preview/EnableDiskCache"), impl_->enableDiskCacheCheckBox_->isChecked());
+  settings.setValue(QStringLiteral("Settings/Preview/GenerateThumbnails"), impl_->generateThumbnailsCheckBox_->isChecked());
+  settings.setValue(QStringLiteral("Settings/Preview/ThumbnailQuality"), impl_->thumbnailQualityCombo_->currentText());
+  settings.setValue(QStringLiteral("Settings/Preview/EnableGPU"), impl_->enableGPUCheckBox_->isChecked());
+  settings.setValue(QStringLiteral("Settings/Preview/GPUDevice"), impl_->gpuDeviceCombo_->currentText());
+ }
+
 
 
 LabelColorSettingWidget::LabelColorSettingWidget(const QString& labelname, const QColor& color, QWidget* parent /*= NULL*/)
@@ -398,6 +480,491 @@ LabelColorSettingWidget::LabelColorSettingWidget(const QString& labelname, const
 
 LabelColorSettingWidget::~LabelColorSettingWidget()
 {
+}
+
+// ShortcutSettingPage Implementation
+class ShortcutSettingPage::Impl {
+public:
+    Impl() = default;
+    ~Impl() = default;
+
+    QLineEdit* filterEdit_ = nullptr;
+    QLabel* summaryLabel_ = nullptr;
+    QTableWidget* shortcutTable_ = nullptr;
+    QPushButton* refreshButton_ = nullptr;
+    QPushButton* copySelectionButton_ = nullptr;
+    QPushButton* editButton_ = nullptr;
+    QPushButton* clearButton_ = nullptr;
+
+    struct ShortcutRow {
+        QString keyMapName;
+        QString context;
+        QString actionId;
+        QString actionName;
+        QString shortcut;
+        QString category;
+        QString description;
+        int keyCode = 0;
+        int modifierMask = 0;
+        bool editable = false;
+    };
+
+    static bool rowMatchesFilter(const ShortcutRow& row, const QString& needle)
+    {
+        if (needle.isEmpty()) {
+            return true;
+        }
+        return row.context.contains(needle, Qt::CaseInsensitive) ||
+               row.actionId.contains(needle, Qt::CaseInsensitive) ||
+               row.actionName.contains(needle, Qt::CaseInsensitive) ||
+               row.shortcut.contains(needle, Qt::CaseInsensitive) ||
+               row.category.contains(needle, Qt::CaseInsensitive) ||
+               row.description.contains(needle, Qt::CaseInsensitive);
+    }
+
+    static InputEvent::Modifiers modifiersFromQt(int modifierBits)
+    {
+        InputEvent::Modifiers mods;
+        if (modifierBits & Qt::ControlModifier) {
+            mods |= InputEvent::ModifierKey::LCtrl;
+        }
+        if (modifierBits & Qt::ShiftModifier) {
+            mods |= InputEvent::ModifierKey::LShift;
+        }
+        if (modifierBits & Qt::AltModifier) {
+            mods |= InputEvent::ModifierKey::LAlt;
+        }
+        if (modifierBits & Qt::MetaModifier) {
+            mods |= InputEvent::ModifierKey::LMeta;
+        }
+        return mods;
+    }
+
+    static bool decodeShortcut(const QKeySequence& sequence, int* keyCode, InputEvent::Modifiers* modifiers)
+    {
+        if (!keyCode || !modifiers || sequence.isEmpty()) {
+            return false;
+        }
+
+        const int combined = sequence[0];
+        if (combined == 0) {
+            return false;
+        }
+
+        const int modifierMask = static_cast<int>(Qt::KeyboardModifierMask);
+        const int modifierBits = combined & modifierMask;
+        const int key = combined & ~modifierMask;
+        if (key == 0) {
+            return false;
+        }
+
+        *keyCode = key;
+        *modifiers = modifiersFromQt(modifierBits);
+        return true;
+    }
+
+    static QString settingsGroup()
+    {
+        return QStringLiteral("Settings/Shortcuts/KeyMaps");
+    }
+
+    std::vector<ShortcutRow> collectRows() const
+    {
+        std::vector<ShortcutRow> rows;
+        auto* am = ArtifactCore::ActionManager::instance();
+        auto* input = ArtifactCore::InputOperator::instance();
+        if (!am) {
+            return rows;
+        }
+
+        std::set<QString> boundActionIds;
+        if (input) {
+            const auto keyMaps = input->allKeyMaps();
+            for (auto* keyMap : keyMaps) {
+                if (!keyMap) {
+                    continue;
+                }
+                const QString context = keyMap->context().isEmpty() ? keyMap->name() : keyMap->context();
+                for (auto* binding : keyMap->allBindings()) {
+                    if (!binding) {
+                        continue;
+                    }
+                    ShortcutRow row;
+                    row.keyMapName = keyMap->name();
+                    row.context = context;
+                    row.actionId = binding->actionId();
+                    row.shortcut = binding->toString();
+                    row.description = binding->description();
+                    row.keyCode = binding->keyCode();
+                    row.modifierMask = static_cast<int>(binding->modifiers());
+                    row.editable = true;
+                    if (auto* action = am->getAction(binding->actionId())) {
+                        row.actionName = action->label();
+                        row.category = action->category();
+                        if (row.description.isEmpty()) {
+                            row.description = action->description();
+                        }
+                    } else {
+                        row.category = QStringLiteral("KeyMap");
+                        row.actionName = binding->name().isEmpty() ? binding->actionId() : binding->name();
+                    }
+                    if (!row.actionId.isEmpty()) {
+                        boundActionIds.insert(row.actionId);
+                    }
+                    rows.push_back(row);
+                }
+            }
+        }
+
+        const auto actions = am->allActions();
+        for (auto* action : actions) {
+            if (!action) {
+                continue;
+            }
+            if (boundActionIds.contains(action->id())) {
+                continue;
+            }
+            ShortcutRow row;
+            row.actionId = action->id();
+            row.actionName = action->label();
+            row.category = action->category();
+            row.description = action->description();
+            row.context = QStringLiteral("Unassigned");
+            row.shortcut = QStringLiteral("Unassigned");
+            rows.push_back(row);
+        }
+
+        std::sort(rows.begin(), rows.end(), [](const ShortcutRow& lhs, const ShortcutRow& rhs) {
+            if (lhs.context != rhs.context) {
+                return lhs.context < rhs.context;
+            }
+            if (lhs.actionName != rhs.actionName) {
+                return lhs.actionName < rhs.actionName;
+            }
+            return lhs.shortcut < rhs.shortcut;
+        });
+        return rows;
+    }
+
+    void restoreFromSettings()
+    {
+        auto* input = ArtifactCore::InputOperator::instance();
+        if (!input) {
+            return;
+        }
+
+        QSettings settings;
+        settings.beginGroup(settingsGroup());
+        const auto keyMaps = input->allKeyMaps();
+        for (auto* keyMap : keyMaps) {
+            if (!keyMap) {
+                continue;
+            }
+            const QString json = settings.value(keyMap->name()).toString();
+            if (!json.trimmed().isEmpty()) {
+                keyMap->fromJSON(json);
+            }
+        }
+        settings.endGroup();
+    }
+
+    void saveToSettings() const
+    {
+        auto* input = ArtifactCore::InputOperator::instance();
+        if (!input) {
+            return;
+        }
+
+        QSettings settings;
+        settings.beginGroup(settingsGroup());
+        const auto keyMaps = input->allKeyMaps();
+        for (auto* keyMap : keyMaps) {
+            if (!keyMap) {
+                continue;
+            }
+            settings.setValue(keyMap->name(), keyMap->toJSON());
+        }
+        settings.endGroup();
+    }
+
+    bool applyShortcutToRow(ShortcutSettingPage* page, int row, const QKeySequence& sequence)
+    {
+        if (!shortcutTable_ || row < 0 || row >= shortcutTable_->rowCount()) {
+            return false;
+        }
+
+        auto* shortcutItem = shortcutTable_->item(row, 2);
+        if (!shortcutItem) {
+            return false;
+        }
+
+        const QVariantMap meta = shortcutItem->data(Qt::UserRole).toMap();
+        const QString keyMapName = meta.value(QStringLiteral("keyMapName")).toString();
+        const QString actionId = meta.value(QStringLiteral("actionId")).toString();
+        const QString actionName = meta.value(QStringLiteral("actionName")).toString();
+        const QString description = meta.value(QStringLiteral("description")).toString();
+
+        auto* input = ArtifactCore::InputOperator::instance();
+        auto* am = ArtifactCore::ActionManager::instance();
+        if (!input || !am) {
+            return false;
+        }
+
+        auto* keyMap = input->getKeyMap(keyMapName);
+        auto* action = am->getAction(actionId);
+        if (!keyMap || !action) {
+            return false;
+        }
+
+        if (sequence.isEmpty()) {
+            keyMap->removeBinding(actionId);
+            saveToSettings();
+            refreshTable(page);
+            return true;
+        }
+
+        int keyCode = 0;
+        InputEvent::Modifiers modifiers;
+        if (!decodeShortcut(sequence, &keyCode, &modifiers)) {
+            QMessageBox::warning(page, QStringLiteral("Edit Shortcut"),
+                                 QStringLiteral("Only single-step shortcuts are supported."));
+            return false;
+        }
+
+        if (auto* existing = keyMap->findBinding(keyCode, modifiers)) {
+            if (existing->actionId() != actionId) {
+                keyMap->removeBinding(existing);
+            }
+        }
+
+        keyMap->removeBinding(actionId);
+        keyMap->addBinding(keyCode, modifiers, action, description);
+        Q_UNUSED(actionName);
+        saveToSettings();
+        refreshTable(page);
+        return true;
+    }
+
+    void editSelectedShortcut(ShortcutSettingPage* page, bool clearOnly = false)
+    {
+        if (!shortcutTable_) {
+            return;
+        }
+
+        const auto selected = shortcutTable_->selectionModel() ? shortcutTable_->selectionModel()->selectedRows() : QModelIndexList();
+        if (selected.isEmpty()) {
+            QMessageBox::information(page, QStringLiteral("Shortcut"), QStringLiteral("Select a shortcut row first."));
+            return;
+        }
+
+        const int row = selected.first().row();
+        auto* shortcutItem = shortcutTable_->item(row, 2);
+        if (!shortcutItem) {
+            return;
+        }
+
+        const QVariantMap meta = shortcutItem->data(Qt::UserRole).toMap();
+        if (!meta.value(QStringLiteral("editable")).toBool()) {
+            QMessageBox::information(page, QStringLiteral("Shortcut"), QStringLiteral("This row is not editable."));
+            return;
+        }
+
+        if (clearOnly) {
+            applyShortcutToRow(page, row, QKeySequence());
+            return;
+        }
+
+        QDialog dialog(page);
+        dialog.setWindowTitle(QStringLiteral("Edit Shortcut"));
+        auto* layout = new QVBoxLayout(&dialog);
+        auto* form = new QFormLayout();
+        auto* actionLabel = new QLabel(meta.value(QStringLiteral("actionName")).toString(), &dialog);
+        auto* mapLabel = new QLabel(meta.value(QStringLiteral("context")).toString(), &dialog);
+        auto* sequenceEdit = new QKeySequenceEdit(&dialog);
+        sequenceEdit->setKeySequence(QKeySequence(shortcutItem->text()));
+        form->addRow(QStringLiteral("Action"), actionLabel);
+        form->addRow(QStringLiteral("Context"), mapLabel);
+        form->addRow(QStringLiteral("Shortcut"), sequenceEdit);
+        layout->addLayout(form);
+
+        auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+        auto* clearButton = buttons->addButton(QStringLiteral("Clear"), QDialogButtonBox::ActionRole);
+        layout->addWidget(buttons);
+
+        QObject::connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+        QObject::connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+        QObject::connect(clearButton, &QAbstractButton::clicked, &dialog, [&dialog](bool) {
+            dialog.done(QDialog::Accepted + 1);
+        });
+
+        const int result = dialog.exec();
+        if (result == QDialog::Rejected) {
+            return;
+        }
+        if (result == QDialog::Accepted + 1) {
+            applyShortcutToRow(page, row, QKeySequence());
+            return;
+        }
+        applyShortcutToRow(page, row, sequenceEdit->keySequence());
+    }
+
+    void refreshTable(ShortcutSettingPage* page)
+    {
+        if (!shortcutTable_) {
+            return;
+        }
+        const QString needle = filterEdit_ ? filterEdit_->text().trimmed() : QString();
+        const auto rows = collectRows();
+        shortcutTable_->setRowCount(0);
+        int visibleCount = 0;
+        for (const auto& row : rows) {
+            if (!rowMatchesFilter(row, needle)) {
+                continue;
+            }
+            const int currentRow = shortcutTable_->rowCount();
+            shortcutTable_->insertRow(currentRow);
+            auto* contextItem = new QTableWidgetItem(row.context);
+            auto* actionItem = new QTableWidgetItem(row.actionName);
+            auto* shortcutItem = new QTableWidgetItem(row.shortcut);
+            auto* categoryItem = new QTableWidgetItem(row.category);
+            auto* descriptionItem = new QTableWidgetItem(row.description);
+            if (!row.editable) {
+                shortcutItem->setFlags(shortcutItem->flags() & ~Qt::ItemIsEditable);
+            }
+            QVariantMap meta;
+            meta.insert(QStringLiteral("keyMapName"), row.keyMapName);
+            meta.insert(QStringLiteral("context"), row.context);
+            meta.insert(QStringLiteral("actionId"), row.actionId);
+            meta.insert(QStringLiteral("actionName"), row.actionName);
+            meta.insert(QStringLiteral("shortcut"), row.shortcut);
+            meta.insert(QStringLiteral("category"), row.category);
+            meta.insert(QStringLiteral("description"), row.description);
+            meta.insert(QStringLiteral("keyCode"), row.keyCode);
+            meta.insert(QStringLiteral("modifierMask"), row.modifierMask);
+            meta.insert(QStringLiteral("editable"), row.editable);
+            shortcutItem->setData(Qt::UserRole, meta);
+            contextItem->setData(Qt::UserRole, row.actionId);
+            shortcutTable_->setItem(currentRow, 0, contextItem);
+            shortcutTable_->setItem(currentRow, 1, actionItem);
+            shortcutTable_->setItem(currentRow, 2, shortcutItem);
+            shortcutTable_->setItem(currentRow, 3, categoryItem);
+            shortcutTable_->setItem(currentRow, 4, descriptionItem);
+            ++visibleCount;
+        }
+        if (summaryLabel_) {
+            summaryLabel_->setText(QStringLiteral("%1 shortcut entries").arg(visibleCount));
+        }
+        shortcutTable_->resizeColumnsToContents();
+        shortcutTable_->horizontalHeader()->setStretchLastSection(true);
+        Q_UNUSED(page);
+    }
+};
+
+ShortcutSettingPage::ShortcutSettingPage(QWidget* parent)
+  : QWidget(parent), impl_(new Impl())
+{
+  auto* mainLayout = new QVBoxLayout(this);
+  auto* headerLayout = new QHBoxLayout();
+  headerLayout->addWidget(new QLabel(QStringLiteral("Search:"), this));
+  impl_->filterEdit_ = new QLineEdit(this);
+  impl_->filterEdit_->setPlaceholderText(QStringLiteral("Filter by action, shortcut, context, or description"));
+  headerLayout->addWidget(impl_->filterEdit_, 1);
+  impl_->refreshButton_ = new QPushButton(QStringLiteral("Refresh"), this);
+  headerLayout->addWidget(impl_->refreshButton_);
+  impl_->editButton_ = new QPushButton(QStringLiteral("Edit Shortcut"), this);
+  headerLayout->addWidget(impl_->editButton_);
+  impl_->clearButton_ = new QPushButton(QStringLiteral("Clear"), this);
+  headerLayout->addWidget(impl_->clearButton_);
+  impl_->copySelectionButton_ = new QPushButton(QStringLiteral("Copy Selection"), this);
+  headerLayout->addWidget(impl_->copySelectionButton_);
+  mainLayout->addLayout(headerLayout);
+
+  impl_->summaryLabel_ = new QLabel(this);
+  impl_->summaryLabel_->setStyleSheet(QStringLiteral("color: #8a93a2;"));
+  mainLayout->addWidget(impl_->summaryLabel_);
+
+  impl_->shortcutTable_ = new QTableWidget(this);
+  impl_->shortcutTable_->setColumnCount(5);
+  impl_->shortcutTable_->setHorizontalHeaderLabels(
+      {QStringLiteral("Context"), QStringLiteral("Action"), QStringLiteral("Shortcut"), QStringLiteral("Category"), QStringLiteral("Description")});
+  impl_->shortcutTable_->setSelectionBehavior(QAbstractItemView::SelectRows);
+  impl_->shortcutTable_->setSelectionMode(QAbstractItemView::ExtendedSelection);
+  impl_->shortcutTable_->setEditTriggers(QAbstractItemView::NoEditTriggers);
+  impl_->shortcutTable_->horizontalHeader()->setStretchLastSection(true);
+  impl_->shortcutTable_->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
+  mainLayout->addWidget(impl_->shortcutTable_, 1);
+
+  connect(impl_->filterEdit_, &QLineEdit::textChanged, this, [this]() {
+    impl_->refreshTable(this);
+  });
+  connect(impl_->refreshButton_, &QPushButton::clicked, this, [this]() {
+    impl_->refreshTable(this);
+  });
+  connect(impl_->editButton_, &QPushButton::clicked, this, [this]() {
+    impl_->editSelectedShortcut(this, false);
+  });
+  connect(impl_->clearButton_, &QPushButton::clicked, this, [this]() {
+    impl_->editSelectedShortcut(this, true);
+  });
+  connect(impl_->shortcutTable_, &QTableWidget::cellDoubleClicked, this, [this](int row, int column) {
+    if (column == 2) {
+      impl_->editSelectedShortcut(this, false);
+    } else if (row >= 0 && row < impl_->shortcutTable_->rowCount()) {
+      impl_->shortcutTable_->selectRow(row);
+    }
+  });
+  connect(impl_->copySelectionButton_, &QPushButton::clicked, this, [this]() {
+    if (!impl_->shortcutTable_) {
+      return;
+    }
+    QStringList lines;
+    const auto selected = impl_->shortcutTable_->selectionModel() ? impl_->shortcutTable_->selectionModel()->selectedRows() : QModelIndexList();
+    for (const QModelIndex& index : selected) {
+      const QString context = impl_->shortcutTable_->item(index.row(), 0)->text();
+      const QString action = impl_->shortcutTable_->item(index.row(), 1)->text();
+      const QString shortcut = impl_->shortcutTable_->item(index.row(), 2)->text();
+      lines << QStringLiteral("%1 | %2 | %3").arg(context, action, shortcut);
+    }
+    if (lines.isEmpty()) {
+      QMessageBox::information(this, QStringLiteral("Copy Selection"), QStringLiteral("Select one or more shortcut rows first."));
+      return;
+    }
+    QApplication::clipboard()->setText(lines.join(QStringLiteral("\n")));
+  });
+
+  loadSettings();
+}
+
+ShortcutSettingPage::~ShortcutSettingPage()
+{
+  delete impl_;
+}
+
+QVector<QWidget*> ShortcutSettingPage::settingWidgets() const
+{
+  QVector<QWidget*> widgets;
+  widgets.push_back(impl_->filterEdit_);
+  widgets.push_back(impl_->shortcutTable_);
+  return widgets;
+}
+
+void ShortcutSettingPage::loadSettings()
+{
+  QSettings settings;
+  if (impl_->filterEdit_) {
+    impl_->filterEdit_->setText(settings.value(QStringLiteral("Settings/Shortcuts/Filter"), QString()).toString());
+  }
+  impl_->restoreFromSettings();
+  impl_->refreshTable(this);
+}
+
+void ShortcutSettingPage::saveSettings()
+{
+  QSettings settings;
+  if (impl_->filterEdit_) {
+    settings.setValue(QStringLiteral("Settings/Shortcuts/Filter"), impl_->filterEdit_->text());
+  }
+  impl_->saveToSettings();
 }
 	
 // MemoryAndCpuSettingPage Implementation
@@ -668,13 +1235,20 @@ MemoryAndCpuSettingPage::~MemoryAndCpuSettingPage()
     }
 }
 
-// Add loadSettings/saveSettings stubs for other pages if not yet implemented
-void ImportSettingPage::loadSettings() {}
-void ImportSettingPage::saveSettings() {}
-void PreviewSettingPage::loadSettings() {}
-void PreviewSettingPage::saveSettings() {}
-void ShortcutSettingPage::loadSettings() {}
-void ShortcutSettingPage::saveSettings() {}
+int MemoryAndCpuSettingPage::cpuCount() const
+{
+    return impl_ ? qMax(1, impl_->processorCount_) : 1;
+}
+
+void MemoryAndCpuSettingPage::resetSetting()
+{
+    if (!impl_) {
+        return;
+    }
+    impl_->workerThreadsSpinBox_->setValue(qMax(1, impl_->processorCount_ - 1));
+    impl_->autoTuneButton_->setEnabled(true);
+    impl_->clearCacheButton_->setEnabled(true);
+}
 
  class ApplicationSettingDialog::Impl
  {
@@ -687,9 +1261,10 @@ void ShortcutSettingPage::saveSettings() {}
   QStackedWidget* settingPages_;
   QDialogButtonBox* buttonBox_;
   
-  GeneralSettingPage* generalPage_;
-  ImportSettingPage* importPage_;
-  PreviewSettingPage* previewPage_;
+ GeneralSettingPage* generalPage_;
+ ImportSettingPage* importPage_;
+ PreviewSettingPage* previewPage_;
+  ShortcutSettingPage* shortcutPage_;
   MemoryAndCpuSettingPage* memoryPage_;
   PluginSettingPage* pluginPage_;
   
@@ -704,6 +1279,7 @@ void ShortcutSettingPage::saveSettings() {}
   , generalPage_(nullptr)
   , importPage_(nullptr)
   , previewPage_(nullptr)
+  , shortcutPage_(nullptr)
   , memoryPage_(nullptr)
   , pluginPage_(nullptr)
  {
@@ -748,7 +1324,8 @@ void ShortcutSettingPage::saveSettings() {}
   settingPages_->addWidget(importPage_);
   settingPages_->addWidget(previewPage_);
   settingPages_->addWidget(memoryPage_);
-  settingPages_->addWidget(new QWidget(dialog)); // Shortcuts placeholder
+  shortcutPage_ = new ShortcutSettingPage(dialog);
+  settingPages_->addWidget(shortcutPage_);
   settingPages_->addWidget(pluginPage_ = new PluginSettingPage(dialog));
   
   contentLayout->addWidget(settingPages_, 1);
@@ -789,21 +1366,23 @@ void ShortcutSettingPage::saveSettings() {}
 
  void ApplicationSettingDialog::loadSettings()
  {
-     impl_->generalPage_->loadSettings();
-     impl_->importPage_->loadSettings();
-     impl_->previewPage_->loadSettings();
-     impl_->memoryPage_->loadSettings();
- }
+ impl_->generalPage_->loadSettings();
+ impl_->importPage_->loadSettings();
+ impl_->previewPage_->loadSettings();
+  impl_->shortcutPage_->loadSettings();
+ impl_->memoryPage_->loadSettings();
+}
 
  void ApplicationSettingDialog::saveSettings()
  {
-     impl_->generalPage_->saveSettings();
-     impl_->importPage_->saveSettings();
-     impl_->previewPage_->saveSettings();
-     impl_->memoryPage_->saveSettings();
-     
-     ArtifactAppSettings::instance()->sync();
- }
+ impl_->generalPage_->saveSettings();
+ impl_->importPage_->saveSettings();
+ impl_->previewPage_->saveSettings();
+  impl_->shortcutPage_->saveSettings();
+ impl_->memoryPage_->saveSettings();
+ 
+ ArtifactAppSettings::instance()->sync();
+}
 
  void ApplicationSettingDialog::accept()
  {

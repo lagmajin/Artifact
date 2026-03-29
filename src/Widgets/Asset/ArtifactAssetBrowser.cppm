@@ -28,12 +28,16 @@
 #include <QUrl>
 #include <QClipboard>
 #include <QApplication>
+#include <QFileDialog>
 #include <QImage>
 #include <QImageReader>
 #include <QPainter>
 #include <QPaintEvent>
+#include <QMouseEvent>
+#include <QMessageBox>
 #include <algorithm>
 #include <cmath>
+#include <set>
 #include <QFontMetrics>
 #include <QSlider>
 #include <QGroupBox>
@@ -45,6 +49,9 @@
 #include <opencv2/imgproc.hpp>
 #include <QHBoxLayout>
 #include <QAbstractItemView>
+#include <QStyledItemDelegate>
+#include <QStyleOptionViewItem>
+#include <QSignalBlocker>
 #include <wobjectimpl.h>
 
 module Widgets.AssetBrowser;
@@ -52,6 +59,7 @@ module Widgets.AssetBrowser;
 import Widgets.Utils.CSS;
 import Artifact.Service.Project;
 import Artifact.Project.Manager;
+import Artifact.Project.Items;
 import Artifact.Project.Cleanup;
 import AssetMenuModel;
 import AssetDirectoryModel;
@@ -106,8 +114,148 @@ class AssetFileListView final : public QListView
    qDebug() << "[AssetBrowser][Drag]" << "mimeMs=" << dragTimer.elapsed()
             << "items=" << indexes.size();
    drag->exec(supportedActions, Qt::CopyAction);
- }
+  }
  };
+
+class AssetDirectoryItemDelegate final : public QStyledItemDelegate
+{
+public:
+  explicit AssetDirectoryItemDelegate(QObject* parent = nullptr)
+      : QStyledItemDelegate(parent) {}
+
+  static QString nodeBadge(const QModelIndex& index)
+  {
+    if (!index.isValid()) {
+      return {};
+    }
+
+    const auto* model = qobject_cast<const AssetDirectoryModel*>(index.model());
+    if (!model) {
+      return {};
+    }
+
+    if (model->isVirtualNode(index)) {
+      const QString name = model->nameFromIndex(index);
+      return name.isEmpty() ? QStringLiteral("ROOT") : name.toUpper();
+    }
+
+    if (!model->isFolderNode(index)) {
+      return QStringLiteral("FILE");
+    }
+
+    const QString path = model->pathFromIndex(index);
+    if (path.isEmpty()) {
+      return QStringLiteral("DIR");
+    }
+
+    if (path.contains(QStringLiteral("/Packages/"), Qt::CaseInsensitive) ||
+        path.endsWith(QStringLiteral("/Packages"), Qt::CaseInsensitive)) {
+      return QStringLiteral("PACKAGE");
+    }
+
+    if (path.contains(QStringLiteral("/Assets/"), Qt::CaseInsensitive) ||
+        path.endsWith(QStringLiteral("/Assets"), Qt::CaseInsensitive)) {
+      return QStringLiteral("ASSET");
+    }
+
+    return QStringLiteral("DIR");
+  }
+
+  void paint(QPainter* painter, const QStyleOptionViewItem& option,
+             const QModelIndex& index) const override
+  {
+    if (!painter || !index.isValid()) {
+      return;
+    }
+
+    QStyleOptionViewItem opt(option);
+    initStyleOption(&opt, index);
+
+    painter->save();
+    painter->setRenderHint(QPainter::Antialiasing, true);
+
+    const QRect rowRect = opt.rect.adjusted(4, 3, -4, -3);
+    const bool selected = opt.state.testFlag(QStyle::State_Selected);
+    const bool hovered = opt.state.testFlag(QStyle::State_MouseOver);
+    const bool hasFocus = opt.state.testFlag(QStyle::State_HasFocus);
+
+    QColor fill = selected ? QColor(56, 66, 82)
+                           : hovered ? QColor(40, 43, 50)
+                                     : QColor(28, 29, 33);
+    QColor border = selected ? QColor(96, 126, 170)
+                             : hovered ? QColor(70, 76, 88)
+                                       : QColor(48, 50, 58);
+    if (hasFocus && selected) {
+      border = QColor(138, 181, 235);
+    }
+
+    painter->setPen(QPen(border, 1));
+    painter->setBrush(fill);
+    painter->drawRoundedRect(rowRect, 8, 8);
+
+    const QIcon icon = qvariant_cast<QIcon>(index.data(Qt::DecorationRole));
+    const QString title = index.data(Qt::DisplayRole).toString();
+    const QString subtitle = index.data(Qt::ToolTipRole).toString();
+    const QString badge = nodeBadge(index);
+
+    const QRect iconRect(rowRect.left() + 10, rowRect.top() + 8, 20, 20);
+    if (!icon.isNull()) {
+      icon.paint(painter, iconRect, Qt::AlignCenter,
+                 selected ? QIcon::Selected : QIcon::Normal,
+                 QIcon::On);
+    }
+
+    const int textLeft = iconRect.right() + 10;
+    const int rightPad = badge.isEmpty() ? 12 : 78;
+    QRect titleRect(textLeft, rowRect.top() + 6,
+                    rowRect.width() - (textLeft - rowRect.left()) - rightPad, 18);
+    QRect subtitleRect(textLeft, rowRect.top() + 22,
+                       rowRect.width() - (textLeft - rowRect.left()) - rightPad, 16);
+
+    painter->setPen(selected ? QColor(250, 251, 255) : QColor(232, 235, 240));
+    QFont titleFont = painter->font();
+    titleFont.setBold(true);
+    painter->setFont(titleFont);
+    painter->drawText(titleRect, Qt::AlignVCenter | Qt::AlignLeft,
+                      painter->fontMetrics().elidedText(title, Qt::ElideRight, titleRect.width()));
+
+    if (!subtitle.isEmpty()) {
+      QFont bodyFont = painter->font();
+      bodyFont.setBold(false);
+      bodyFont.setPointSizeF(std::max(8.0, bodyFont.pointSizeF() - 2.0));
+      painter->setFont(bodyFont);
+      painter->setPen(QColor(158, 165, 178));
+      painter->drawText(subtitleRect, Qt::AlignVCenter | Qt::AlignLeft,
+                        painter->fontMetrics().elidedText(subtitle, Qt::ElideMiddle, subtitleRect.width()));
+    }
+
+    if (!badge.isEmpty()) {
+      QFont badgeFont = painter->font();
+      badgeFont.setBold(true);
+      badgeFont.setPointSizeF(std::max(7.0, badgeFont.pointSizeF() - 3.0));
+      painter->setFont(badgeFont);
+
+      const int badgeWidth = std::max(48, painter->fontMetrics().horizontalAdvance(badge) + 16);
+      const QRect badgeRect(rowRect.right() - badgeWidth - 10, rowRect.top() + 9,
+                            badgeWidth, 18);
+      painter->setPen(Qt::NoPen);
+      painter->setBrush(selected ? QColor(84, 105, 136) : QColor(45, 47, 54));
+      painter->drawRoundedRect(badgeRect, 9, 9);
+      painter->setPen(selected ? QColor(235, 241, 252) : QColor(181, 189, 200));
+      painter->drawText(badgeRect, Qt::AlignCenter, badge);
+    }
+
+    painter->restore();
+  }
+
+  QSize sizeHint(const QStyleOptionViewItem& option,
+                 const QModelIndex& index) const override
+  {
+    Q_UNUSED(option);
+    Q_UNUSED(index);
+    return QSize(220, 42);
+  }
+};
 
  class AssetInfoPanelWidget final : public QWidget
  {
@@ -308,7 +456,7 @@ protected:
    QString currentSearchFilter_;
 
   void handleDirectryChanged();
-  void handleDoubleClicked();
+  void handleDoubleClicked(ArtifactAssetBrowser* owner);
   void defaultHandleMousePressEvent(QMouseEvent* event);
   void applyFilters();
   bool matchesFileTypeFilter(const QString& fileName) const;
@@ -328,6 +476,10 @@ protected:
   bool isUnusedAssetPath(const QString& filePath) const;
   bool isMissingAssetPath(const QString& filePath) const;
   QStringList selectedAssetPaths() const;
+  int rowForPath(const QString& filePath) const;
+   std::vector<Artifact::FootageItem*> footageItemsForPaths(const QStringList& filePaths) const;
+  bool removeProjectItemsForPaths(const QStringList& filePaths, QWidget* parent);
+  bool relinkProjectItemsForPath(const QString& oldPath, QWidget* parent);
   void updateBrowserStatus();
   void syncProjectAssetRoot();
   void syncDirectorySelection();
@@ -352,13 +504,53 @@ protected:
  {
  }
 
- void ArtifactAssetBrowser::Impl::handleDoubleClicked()
- {
- }
+void ArtifactAssetBrowser::Impl::handleDoubleClicked(ArtifactAssetBrowser* owner)
+{
+  if (!fileView_ || !assetModel_ || !fileView_->selectionModel()) {
+   return;
+  }
 
- void ArtifactAssetBrowser::Impl::defaultHandleMousePressEvent(QMouseEvent* event)
- {
- }
+  const QModelIndex currentIndex = fileView_->selectionModel()->currentIndex();
+  if (!currentIndex.isValid()) {
+   return;
+  }
+
+  const AssetMenuItem item = assetModel_->itemAt(currentIndex.row());
+  const QString filePath = item.path.toQString();
+  if (filePath.isEmpty()) {
+   return;
+  }
+  if (owner) {
+   owner->itemDoubleClicked(filePath);
+  }
+
+  if (item.isFolder) {
+   currentDirectoryPath_ = filePath;
+   clearThumbnailCache();
+   applyFilters();
+   syncDirectorySelection();
+    if (owner) {
+     owner->folderChanged(filePath);
+    }
+     return;
+  }
+
+  auto* svc = ArtifactProjectService::instance();
+  if (!svc) {
+   return;
+  }
+  svc->importAssetsFromPaths(QStringList() << filePath);
+}
+
+void ArtifactAssetBrowser::Impl::defaultHandleMousePressEvent(QMouseEvent* event)
+{
+  if (fileView_) {
+   fileView_->setFocus(Qt::MouseFocusReason);
+  }
+  if (event) {
+   event->accept();
+  }
+}
 
  bool ArtifactAssetBrowser::Impl::matchesFileTypeFilter(const QString& fileName) const
  {
@@ -446,7 +638,7 @@ protected:
     return false;
    }
    if (item->type() == eProjectItemType::Footage) {
-    const QString candidatePath = static_cast<FootageItem*>(item)->filePath;
+    const QString candidatePath = static_cast<Artifact::FootageItem*>(item)->filePath;
     const QString canonicalCandidate = QFileInfo(candidatePath).canonicalFilePath().isEmpty()
       ? QFileInfo(candidatePath).absoluteFilePath()
       : QFileInfo(candidatePath).canonicalFilePath();
@@ -491,6 +683,22 @@ QStringList ArtifactAssetBrowser::Impl::selectedAssetPaths() const
   }
   paths.removeDuplicates();
   return paths;
+}
+
+int ArtifactAssetBrowser::Impl::rowForPath(const QString& filePath) const
+{
+  if (!assetModel_ || filePath.isEmpty()) {
+    return -1;
+  }
+
+  const QString normalized = QDir::cleanPath(filePath);
+  for (int row = 0; row < assetModel_->rowCount(); ++row) {
+    const AssetMenuItem item = assetModel_->itemAt(row);
+    if (QDir::cleanPath(item.path.toQString()) == normalized) {
+      return row;
+    }
+  }
+  return -1;
 }
 
 void ArtifactAssetBrowser::Impl::updateBrowserStatus()
@@ -553,6 +761,142 @@ bool ArtifactAssetBrowser::Impl::isMissingAssetPath(const QString& filePath) con
    return false;
   }
   return !QFileInfo::exists(filePath);
+}
+
+std::vector<Artifact::FootageItem*> ArtifactAssetBrowser::Impl::footageItemsForPaths(const QStringList& filePaths) const
+{
+  std::vector<Artifact::FootageItem*> matches;
+  if (filePaths.isEmpty()) {
+    return matches;
+  }
+
+  auto* svc = ArtifactProjectService::instance();
+  if (!svc) {
+    return matches;
+  }
+
+  std::set<Artifact::FootageItem*> seen;
+  const auto roots = svc->projectItems();
+  const auto normalize = [](const QString& path) {
+    QFileInfo info(path);
+    const QString canonical = info.canonicalFilePath();
+    return (canonical.isEmpty() ? QDir::cleanPath(info.absoluteFilePath()) : QDir::cleanPath(canonical)).toCaseFolded();
+  };
+
+  const QStringList normalizedTargets = [&]() {
+    QStringList normalized;
+    normalized.reserve(filePaths.size());
+    for (const QString& path : filePaths) {
+      if (!path.isEmpty()) {
+        normalized.append(normalize(path));
+      }
+    }
+    normalized.removeDuplicates();
+    return normalized;
+  }();
+
+  if (normalizedTargets.isEmpty()) {
+    return matches;
+  }
+
+  std::function<void(ProjectItem*)> visit = [&](ProjectItem* item) {
+    if (!item) {
+      return;
+    }
+    if (item->type() == eProjectItemType::Footage) {
+      auto* footage = static_cast<Artifact::FootageItem*>(item);
+      const QString candidate = normalize(footage->filePath);
+      if (normalizedTargets.contains(candidate) && !seen.contains(footage)) {
+        seen.insert(footage);
+        matches.push_back(footage);
+      }
+    }
+    for (auto* child : item->children) {
+      visit(child);
+    }
+  };
+
+  for (auto* root : roots) {
+    visit(root);
+  }
+
+  return matches;
+}
+
+bool ArtifactAssetBrowser::Impl::removeProjectItemsForPaths(const QStringList& filePaths, QWidget* parent)
+{
+  auto* svc = ArtifactProjectService::instance();
+  if (!svc) {
+    return false;
+  }
+
+  const auto targets = footageItemsForPaths(filePaths);
+  if (targets.empty()) {
+    return false;
+  }
+
+  QString message;
+  if (targets.size() == 1) {
+    message = svc->projectItemRemovalConfirmationMessage(targets.front());
+  } else {
+    message = QStringLiteral("%1 project item(s) linked to the selected file(s) will be removed from the project.\nContinue?")
+                  .arg(static_cast<int>(targets.size()));
+  }
+
+  const auto response = QMessageBox::question(
+      parent,
+      QStringLiteral("Remove from Project"),
+      message,
+      QMessageBox::Yes | QMessageBox::No,
+      QMessageBox::No);
+  if (response != QMessageBox::Yes) {
+    return false;
+  }
+
+  bool removedAny = false;
+  for (auto* item : targets) {
+    if (!item) {
+      continue;
+    }
+    removedAny |= svc->removeProjectItem(item);
+  }
+
+  if (removedAny) {
+    svc->projectChanged();
+  }
+  return removedAny;
+}
+
+bool ArtifactAssetBrowser::Impl::relinkProjectItemsForPath(const QString& oldPath, QWidget* parent)
+{
+  auto* svc = ArtifactProjectService::instance();
+  if (!svc || oldPath.trimmed().isEmpty()) {
+    return false;
+  }
+
+  const auto targets = footageItemsForPaths(QStringList{oldPath});
+  if (targets.empty()) {
+    return false;
+  }
+
+  const QString suggestedDir = QFileInfo(oldPath).absolutePath();
+  const QString replacement = QFileDialog::getOpenFileName(
+      parent,
+      QStringLiteral("Relink Asset"),
+      suggestedDir,
+      QStringLiteral("All Files (*.*)"));
+  if (replacement.isEmpty()) {
+    return false;
+  }
+
+  const QString canonicalReplacement = QFileInfo(replacement).absoluteFilePath();
+  for (auto* footage : targets) {
+    if (footage) {
+      footage->filePath = canonicalReplacement;
+    }
+  }
+  svc->projectChanged();
+  return true;
 }
 
 QIcon ArtifactAssetBrowser::Impl::generateThumbnail(const QString& filePath)
@@ -1011,13 +1355,23 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
   directoryModel->setPackageRootPath(packagesPath);
 
   directoryView->setModel(directoryModel);
+  directoryView->setItemDelegate(new AssetDirectoryItemDelegate(directoryView));
   directoryView->setHeaderHidden(true);
+  directoryView->setSelectionBehavior(QAbstractItemView::SelectRows);
+  directoryView->setSelectionMode(QAbstractItemView::SingleSelection);
   directoryView->setIndentation(15);
   directoryView->setExpandsOnDoubleClick(true);
-   directoryView->setAnimated(true);
-   directoryView->setAcceptDrops(true);
-   directoryView->setDropIndicatorShown(true);
-   directoryView->setDragDropMode(QAbstractItemView::DropOnly);
+  directoryView->setAnimated(true);
+  directoryView->setUniformRowHeights(true);
+  directoryView->setAllColumnsShowFocus(true);
+  directoryView->setMouseTracking(true);
+  directoryView->setAcceptDrops(true);
+  directoryView->setDropIndicatorShown(true);
+  directoryView->setDragDropMode(QAbstractItemView::DropOnly);
+  directoryView->setStyleSheet(QStringLiteral(
+      "QTreeView { background: #1c1d21; border: 1px solid #2c2f36; }"
+      "QTreeView::item { height: 42px; }"
+      "QTreeView::branch { background: transparent; }"));
 
   QString desktopPath = assetsPath;
 
@@ -1165,7 +1519,7 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
     impl_->clearThumbnailCache();
     impl_->applyFilters();
     impl_->syncDirectorySelection();
-    folderChanged(filePath);
+    this->folderChanged(filePath);
     return;
    }
 
@@ -1333,11 +1687,11 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
   if (event->key() == Qt::Key_Delete || event->key() == Qt::Key_Backspace) {
    QStringList paths = impl_->selectedAssetPaths();
    if (!paths.isEmpty()) {
-    auto* svc = ArtifactProjectService::instance();
-    if (svc) {
-     // 個別削除APIが未実装のため、removeAllAssets() は呼ばない
-     // TODO: removeAssetFromProject(path) API 追加後に差し替え
-     qWarning() << "[AssetBrowser] Delete requested for" << paths.size() << "items (individual removal not yet implemented)";
+    if (!impl_->removeProjectItemsForPaths(paths, this)) {
+     qWarning() << "[AssetBrowser] Delete requested, but no imported project items matched the selected files.";
+    } else {
+     impl_->refreshUnusedAssetCache();
+     impl_->applyFilters();
     }
    }
    event->accept();
@@ -1349,7 +1703,7 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
    if (sel && sel->hasSelection()) {
     QModelIndex idx = sel->currentIndex();
     if (idx.isValid()) {
-     impl_->handleDoubleClicked();
+     impl_->handleDoubleClicked(this);
     }
    }
    event->accept();
@@ -1440,7 +1794,53 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
    impl_->clearThumbnailCache();
    impl_->applyFilters();
    impl_->syncDirectorySelection();
-   folderChanged(folderPath);
+    this->folderChanged(folderPath);
+  }
+
+  void ArtifactAssetBrowser::selectAssetPaths(const QStringList& filePaths)
+  {
+   if (!impl_ || !impl_->fileView_ || !impl_->assetModel_ || filePaths.isEmpty()) {
+    return;
+   }
+
+   const QString firstPath = filePaths.first().trimmed();
+   if (firstPath.isEmpty()) {
+    return;
+   }
+
+   const QFileInfo info(firstPath);
+   if (info.exists() && info.isDir()) {
+    navigateToFolder(info.absoluteFilePath());
+    return;
+   }
+
+   const QString targetFolder = info.dir().absolutePath();
+   if (!targetFolder.isEmpty() && QDir(targetFolder).exists() &&
+       QDir::cleanPath(targetFolder) != QDir::cleanPath(impl_->currentDirectoryPath_)) {
+    impl_->currentDirectoryPath_ = targetFolder;
+    impl_->clearThumbnailCache();
+    impl_->applyFilters();
+    impl_->syncDirectorySelection();
+   }
+
+   const int row = impl_->rowForPath(firstPath);
+   if (row < 0) {
+    return;
+   }
+
+   const QModelIndex index = impl_->assetModel_->index(row, 0);
+   if (!index.isValid()) {
+    return;
+   }
+
+   if (auto* sel = impl_->fileView_->selectionModel()) {
+    QSignalBlocker blocker(sel);
+    sel->clearSelection();
+    sel->setCurrentIndex(index, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+   }
+   impl_->fileView_->scrollTo(index, QAbstractItemView::PositionAtCenter);
+   updateFileInfo(firstPath);
+   impl_->updateBrowserStatus();
   }
 
  void ArtifactAssetBrowser::updateFileInfo(const QString& filePath)
@@ -1600,7 +2000,7 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
     impl_->clearThumbnailCache();
     impl_->applyFilters();
     impl_->syncDirectorySelection();
-    folderChanged(filePath);
+     this->folderChanged(filePath);
    });
    contextMenu.addSeparator();
   }
@@ -1619,18 +2019,39 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
    QApplication::clipboard()->setText(filePath);
   });
 
+  const auto removeTargets = selectedAssetPaths.isEmpty() ? QStringList{filePath} : selectedAssetPaths;
+  const auto removableItems = impl_->footageItemsForPaths(removeTargets);
+  if (!removableItems.empty()) {
+   QAction* removeFromProjectAction = contextMenu.addAction("Remove from Project");
+   connect(removeFromProjectAction, &QAction::triggered, this, [this, removeTargets]() {
+    impl_->removeProjectItemsForPaths(removeTargets, this);
+    impl_->refreshUnusedAssetCache();
+    impl_->applyFilters();
+   });
+  }
+
+  if (!item.isFolder && impl_->isMissingAssetPath(filePath) && !impl_->footageItemsForPaths(QStringList{filePath}).empty()) {
+   QAction* relinkAction = contextMenu.addAction("Relink Missing...");
+   connect(relinkAction, &QAction::triggered, this, [this, filePath]() {
+    if (impl_->relinkProjectItemsForPath(filePath, this)) {
+     impl_->refreshUnusedAssetCache();
+     impl_->applyFilters();
+    }
+   });
+  }
+
   contextMenu.addSeparator();
 
   // Show file properties action
   QAction* showPropertiesAction = contextMenu.addAction("Properties");
-  connect(showPropertiesAction, &QAction::triggered, this, [filePath]() {
+  connect(showPropertiesAction, &QAction::triggered, this, [this, filePath]() {
    QFileInfo fileInfo(filePath);
    QString info = QString("Name: %1\nSize: %2 bytes\nType: %3\nPath: %4")
      .arg(fileInfo.fileName())
      .arg(fileInfo.size())
      .arg(fileInfo.suffix())
      .arg(filePath);
-   // TODO: Show in a dialog or status bar
+   QMessageBox::information(this, QStringLiteral("Asset Properties"), info);
   });
 
   // Show menu at cursor position

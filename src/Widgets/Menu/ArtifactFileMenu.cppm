@@ -224,6 +224,13 @@ void ArtifactFileMenu::Impl::handleCreateProject()
     auto result = manager.createProject(UniString(name), true);
     if (!result.isSuccess) {
         qWarning() << "Create project failed";
+    } else {
+        // プロジェクト作成に成功したら履歴に追加
+        // manager.currentProjectPath() はディレクトリパスまたはファイルパスを返す可能性がある
+        QString projectPath = manager.currentProjectPath();
+        if (!projectPath.isEmpty()) {
+            addRecentProject(projectPath);
+        }
     }
 }
 

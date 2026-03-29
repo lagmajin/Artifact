@@ -80,6 +80,15 @@ namespace Artifact {
   impl_->resolutionCombobox_->addItem("HD 1080p (1920x1080)", QVariant::fromValue(QSize(1920, 1080)));
   impl_->resolutionCombobox_->addItem("HD 720p (1280x720)", QVariant::fromValue(QSize(1280, 720)));
   impl_->resolutionCombobox_->addItem("4K UHD (3840x2160)", QVariant::fromValue(QSize(3840, 2160)));
+  impl_->resolutionCombobox_->addItem("4K DCI (4096x2160)", QVariant::fromValue(QSize(4096, 2160)));
+  impl_->resolutionCombobox_->addItem("2K DCI (2048x1080)", QVariant::fromValue(QSize(2048, 1080)));
+  impl_->resolutionCombobox_->insertSeparator(impl_->resolutionCombobox_->count());
+  impl_->resolutionCombobox_->addItem("Instagram/TikTok (1080x1920)", QVariant::fromValue(QSize(1080, 1920)));
+  impl_->resolutionCombobox_->addItem("Instagram Square (1080x1080)", QVariant::fromValue(QSize(1080, 1080)));
+  impl_->resolutionCombobox_->insertSeparator(impl_->resolutionCombobox_->count());
+  impl_->resolutionCombobox_->addItem("SD PAL (720x576)", QVariant::fromValue(QSize(720, 576)));
+  impl_->resolutionCombobox_->addItem("SD NTSC (720x480)", QVariant::fromValue(QSize(720, 480)));
+  impl_->resolutionCombobox_->insertSeparator(impl_->resolutionCombobox_->count());
   impl_->resolutionCombobox_->addItem("Custom...", QVariant::fromValue(QSize(-1, -1)));
 
   const QSize initialResolution = impl_->resolutionCombobox_->currentData().toSize();

@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <array>
 #include <cmath>
 #include <cstring>
@@ -57,6 +57,7 @@ public:
 
     PSOAndSRB m_draw_sprite_pso_and_srb;
     PSOAndSRB m_draw_sprite_transform_pso_and_srb;
+    PSOAndSRB m_draw_masked_sprite_pso_and_srb;
     RefCntAutoPtr<ISampler> m_sprite_sampler;
     RefCntAutoPtr<IRenderDevice> pDevice_;
 
@@ -77,6 +78,15 @@ public:
                 }
             }
         }
+        if (m_maskTexCache.size() > 50) {
+            for (auto it = m_maskTexCache.begin(); it != m_maskTexCache.end(); ) {
+                if (it->second.lastUsedFrame < m_frameCount - 60) {
+                    it = m_maskTexCache.erase(it);
+                } else {
+                    ++it;
+                }
+            }
+        }
     }
 
     PSOAndSRB m_draw_solid_rect_pso_and_srb;
@@ -88,6 +98,7 @@ public:
     PSOAndSRB m_draw_checkerboard_pso_and_srb;
     PSOAndSRB m_draw_grid_pso_and_srb;
     PSOAndSRB m_draw_rect_outline_pso_and_srb;
+    std::unordered_map<qint64, CachedTexture> m_maskTexCache;
 
     ViewportTransformer viewport_;
 
@@ -123,6 +134,7 @@ void PrimitiveRenderer2D::setPSOs(ShaderManager& shaderManager)
 {
     impl_->m_draw_sprite_pso_and_srb           = shaderManager.spritePsoAndSrb();
     impl_->m_draw_sprite_transform_pso_and_srb = shaderManager.spriteTransformPsoAndSrb();
+    impl_->m_draw_masked_sprite_pso_and_srb    = shaderManager.maskedSpritePsoAndSrb();
     impl_->m_sprite_sampler                    = shaderManager.spriteSampler();
     impl_->m_draw_solid_rect_pso_and_srb       = shaderManager.solidRectPsoAndSrb();
     impl_->m_draw_solid_rect_transform_pso_and_srb = shaderManager.solidRectTransformPsoAndSrb();
@@ -797,6 +809,38 @@ void PrimitiveRenderer2D::drawDotLineLocal(float2 p1, float2 p2, float thickness
     impl_->pCtx_->Draw(drawAttrs);
 }
 
+void PrimitiveRenderer2D::drawDashedLineLocal(float2 p1, float2 p2, float thickness, float dashLength, float gapLength, const FloatColor& color)
+{
+    if (thickness <= 0.0f) {
+        return;
+    }
+    if (dashLength <= 0.0f) {
+        dashLength = thickness * 2.0f;
+    }
+    if (gapLength < 0.0f) {
+        gapLength = 0.0f;
+    }
+
+    const float2 d = { p2.x - p1.x, p2.y - p1.y };
+    const float len = std::sqrt(d.x * d.x + d.y * d.y);
+    if (len < 1e-5f) {
+        return;
+    }
+
+    const float2 nd = { d.x / len, d.y / len };
+    const float step = std::max(1e-3f, dashLength + gapLength);
+
+    for (float cur = 0.0f; cur < len; cur += step) {
+        const float dashEnd = std::min(cur + dashLength, len);
+        if (dashEnd <= cur + 1e-4f) {
+            continue;
+        }
+        const float2 a = { p1.x + nd.x * cur, p1.y + nd.y * cur };
+        const float2 b = { p1.x + nd.x * dashEnd, p1.y + nd.y * dashEnd };
+        drawThickLineLocal(a, b, thickness, color);
+    }
+}
+
 void PrimitiveRenderer2D::drawBezierLocal(float2 p0, float2 p1, float2 p2, float thickness, const FloatColor& color)
 {
     const int segments = 24;
@@ -857,6 +901,14 @@ void PrimitiveRenderer2D::drawSolidTriangleLocal(float2 p0, float2 p1, float2 p2
         impl_->pCtx_->UnmapBuffer(impl_->m_draw_solid_rect_trnsform_cb, MAP_WRITE);
     }
 
+    {
+        CBSolidColor cb = { {color.r(), color.g(), color.b(), color.a()} };
+        void* pData = nullptr;
+        impl_->pCtx_->MapBuffer(impl_->m_draw_solid_rect_cb, MAP_WRITE, MAP_FLAG_DISCARD, pData);
+        std::memcpy(pData, &cb, sizeof(cb));
+        impl_->pCtx_->UnmapBuffer(impl_->m_draw_solid_rect_cb, MAP_WRITE);
+    }
+
     impl_->pCtx_->SetPipelineState(impl_->m_draw_solid_triangle_pso_and_srb.pPSO);
 
     IBuffer* pBuffers[] = { impl_->m_draw_solid_triangle_vertex_buffer };
@@ -865,6 +917,7 @@ void PrimitiveRenderer2D::drawSolidTriangleLocal(float2 p0, float2 p1, float2 p2
         RESOURCE_STATE_TRANSITION_MODE_TRANSITION, SET_VERTEX_BUFFERS_FLAG_RESET);
 
     impl_->m_draw_solid_triangle_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_VERTEX, "TransformCB")->Set(impl_->m_draw_solid_rect_trnsform_cb);
+    impl_->m_draw_solid_triangle_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_PIXEL, "ColorBuffer")->Set(impl_->m_draw_solid_rect_cb);
     impl_->pCtx_->CommitShaderResources(impl_->m_draw_solid_triangle_pso_and_srb.pSRB,
         RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
 
@@ -879,17 +932,15 @@ void PrimitiveRenderer2D::drawCircle(float x, float y, float radius, const Float
     if (radius <= 0.0f) return;
 
     if (fill) {
-        // Simple approximation: draw many circles to fill
-        for (float r = 0.5f; r <= radius; r += 1.0f) {
-            drawCircle(x, y, r, color, 1.5f, false);
-        }
+        // 最適化：ファン状の三角形で 1 回の描画
+        drawSolidCircle(x, y, radius, color);
         return;
     }
 
     // Draw circle using 4 cubic bezier segments
     const float k = 0.552284749831f; // control point offset
     const float r = radius;
-    
+
     float2 p0 = {x, y - r};
     float2 p1 = {x + r, y};
     float2 p2 = {x, y + r};
@@ -899,6 +950,76 @@ void PrimitiveRenderer2D::drawCircle(float x, float y, float radius, const Float
     drawBezierLocal(p1, {x + r, y + r * k}, {x + r * k, y + r}, p2, thickness, color);
     drawBezierLocal(p2, {x - r * k, y + r}, {x - r, y + r * k}, p3, thickness, color);
     drawBezierLocal(p3, {x - r, y - r * k}, {x - r * k, y - r}, p0, thickness, color);
+}
+
+void PrimitiveRenderer2D::drawSolidCircle(float cx, float cy, float radius, const FloatColor& color)
+{
+    if (radius <= 0.0f) return;
+    
+    // ファン状の三角形で円を描画（32 セグメント）
+    constexpr int segments = 32;
+    const int vertexCount = segments * 3;
+    
+    // 頂点バッファを確保
+    std::vector<RectVertex> vertices(vertexCount);
+    
+    const float4 c = { color.r(), color.g(), color.b(), color.a() };
+    const float centerX = cx;
+    const float centerY = cy;
+    
+    for (int i = 0; i < segments; ++i) {
+        const float a0 = 2.0f * M_PI * i / segments;
+        const float a1 = 2.0f * M_PI * (i + 1) / segments;
+        
+        // 中心点
+        vertices[i * 3 + 0] = {{centerX, centerY}, c};
+        // 外周の点 1
+        vertices[i * 3 + 1] = {{centerX + radius * std::cos(a0), centerY + radius * std::sin(a0)}, c};
+        // 外周の点 2
+        vertices[i * 3 + 2] = {{centerX + radius * std::cos(a1), centerY + radius * std::sin(a1)}, c};
+    }
+    
+    auto* pRTV = impl_->getCurrentRTV();
+    impl_->pCtx_->SetRenderTargets(1, &pRTV, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+    
+    // 頂点データを書き込み
+    {
+        void* pData = nullptr;
+        impl_->pCtx_->MapBuffer(impl_->m_draw_solid_rect_vertex_buffer, MAP_WRITE, MAP_FLAG_DISCARD, pData);
+        std::memcpy(pData, vertices.data(), sizeof(RectVertex) * vertexCount);
+        impl_->pCtx_->UnmapBuffer(impl_->m_draw_solid_rect_vertex_buffer, MAP_WRITE);
+    }
+    
+    // 定数バッファを設定
+    {
+        auto viewportCB = impl_->viewport_.GetViewportCB();
+        const float zoom = std::max(viewportCB.zoom, 0.001f);
+        CBSolidTransform2D cbTransform;
+        cbTransform.offset     = viewportCB.offset;
+        cbTransform.scale      = { zoom, zoom };
+        cbTransform.screenSize = viewportCB.screenSize;
+        void* pData = nullptr;
+        impl_->pCtx_->MapBuffer(impl_->m_draw_solid_rect_trnsform_cb, MAP_WRITE, MAP_FLAG_DISCARD, pData);
+        std::memcpy(pData, &cbTransform, sizeof(cbTransform));
+        impl_->pCtx_->UnmapBuffer(impl_->m_draw_solid_rect_trnsform_cb, MAP_WRITE);
+    }
+    
+    impl_->pCtx_->SetPipelineState(impl_->m_draw_solid_triangle_pso_and_srb.pPSO);
+    
+    IBuffer* pBuffers[] = { impl_->m_draw_solid_rect_vertex_buffer };
+    Uint64 offsets[] = { 0 };
+    impl_->pCtx_->SetVertexBuffers(0, 1, pBuffers, offsets,
+        RESOURCE_STATE_TRANSITION_MODE_TRANSITION, SET_VERTEX_BUFFERS_FLAG_RESET);
+    
+    impl_->m_draw_solid_triangle_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_VERTEX, "TransformCB")->Set(impl_->m_draw_solid_rect_trnsform_cb);
+    impl_->m_draw_solid_triangle_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_PIXEL, "ColorBuffer")->Set(impl_->m_draw_solid_rect_cb);
+    impl_->pCtx_->CommitShaderResources(impl_->m_draw_solid_triangle_pso_and_srb.pSRB,
+        RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+    
+    DrawAttribs drawAttrs;
+    drawAttrs.NumVertices = vertexCount;
+    drawAttrs.Flags       = DRAW_FLAG_VERIFY_ALL;
+    impl_->pCtx_->Draw(drawAttrs);
 }
 
 void PrimitiveRenderer2D::drawCrosshair(float x, float y, float size, const FloatColor& color)
@@ -1237,6 +1358,113 @@ void PrimitiveRenderer2D::drawTextureLocal(float x, float y, float w, float h, I
     }
 
     impl_->pCtx_->CommitShaderResources(impl_->m_draw_sprite_pso_and_srb.pSRB,
+        RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+
+    IBuffer* pBuffers[] = { impl_->m_draw_sprite_vertex_buffer };
+    Uint64 offsets[] = { 0 };
+    impl_->pCtx_->SetVertexBuffers(0, 1, pBuffers, offsets,
+        RESOURCE_STATE_TRANSITION_MODE_TRANSITION, SET_VERTEX_BUFFERS_FLAG_RESET);
+
+    DrawAttribs drawAttrs;
+    drawAttrs.NumVertices = 4;
+    drawAttrs.Flags       = DRAW_FLAG_VERIFY_ALL;
+    impl_->pCtx_->Draw(drawAttrs);
+}
+
+void PrimitiveRenderer2D::drawMaskedTextureLocal(float x, float y, float w, float h, ITextureView* sceneSRV, const QImage& maskImage, float opacity)
+{
+    if (!impl_->hasRenderTarget() || !impl_->m_draw_masked_sprite_pso_and_srb.pPSO) return;
+    if (!sceneSRV || maskImage.isNull()) return;
+    if (!impl_->pDevice_ || !impl_->pCtx_) return;
+
+    impl_->m_frameCount++;
+    if (impl_->m_frameCount % 60 == 0) {
+        impl_->pruneCache();
+    }
+
+    qint64 cacheKey = maskImage.cacheKey();
+    RefCntAutoPtr<ITexture> pMaskTexture;
+
+    auto it = impl_->m_maskTexCache.find(cacheKey);
+    if (it != impl_->m_maskTexCache.end()) {
+        pMaskTexture = it->second.pTexture;
+        it->second.lastUsedFrame = impl_->m_frameCount;
+    } else {
+        const QImage rgba = maskImage.convertToFormat(QImage::Format_RGBA8888);
+        const int imgW = rgba.width();
+        const int imgH = rgba.height();
+        if (imgW <= 0 || imgH <= 0) return;
+
+        TextureDesc texDesc;
+        texDesc.Type           = RESOURCE_DIM_TEX_2D;
+        texDesc.Width          = static_cast<Uint32>(imgW);
+        texDesc.Height         = static_cast<Uint32>(imgH);
+        texDesc.Format         = TEX_FORMAT_RGBA8_UNORM_SRGB;
+        texDesc.MipLevels      = 1;
+        texDesc.Usage          = USAGE_IMMUTABLE;
+        texDesc.BindFlags      = BIND_SHADER_RESOURCE;
+        texDesc.CPUAccessFlags  = CPU_ACCESS_NONE;
+
+        TextureSubResData subData;
+        subData.pData  = rgba.constBits();
+        subData.Stride = static_cast<Uint64>(rgba.bytesPerLine());
+        TextureData initData;
+        initData.pSubResources   = &subData;
+        initData.NumSubresources = 1;
+
+        impl_->pDevice_->CreateTexture(texDesc, &initData, &pMaskTexture);
+        if (!pMaskTexture) return;
+
+        impl_->m_maskTexCache[cacheKey] = { pMaskTexture, impl_->m_frameCount };
+    }
+
+    auto* maskSRV = pMaskTexture->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE);
+    if (!maskSRV) return;
+
+    auto* pRTV = impl_->getCurrentRTV();
+    if (!pRTV) return;
+
+    SpriteVertex vertices[4] = {
+        { {0.0f, 0.0f}, {0.0f, 0.0f}, {1.0f, 1.0f, 1.0f, opacity} },
+        { {1.0f, 0.0f}, {1.0f, 0.0f}, {1.0f, 1.0f, 1.0f, opacity} },
+        { {0.0f, 1.0f}, {0.0f, 1.0f}, {1.0f, 1.0f, 1.0f, opacity} },
+        { {1.0f, 1.0f}, {1.0f, 1.0f}, {1.0f, 1.0f, 1.0f, opacity} },
+    };
+    impl_->pCtx_->SetRenderTargets(1, &pRTV, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+
+    {
+        void* pData = nullptr;
+        impl_->pCtx_->MapBuffer(impl_->m_draw_sprite_vertex_buffer, MAP_WRITE, MAP_FLAG_DISCARD, pData);
+        std::memcpy(pData, vertices, sizeof(vertices));
+        impl_->pCtx_->UnmapBuffer(impl_->m_draw_sprite_vertex_buffer, MAP_WRITE);
+    }
+
+    {
+        auto viewportCB = impl_->viewport_.GetViewportCB();
+        const float zoom = std::max(viewportCB.zoom, 0.001f);
+        CBSolidTransform2D cbTransform;
+        cbTransform.offset     = { x * zoom + viewportCB.offset.x, y * zoom + viewportCB.offset.y };
+        cbTransform.scale      = { w * zoom, h * zoom };
+        cbTransform.screenSize = viewportCB.screenSize;
+        void* pData = nullptr;
+        impl_->pCtx_->MapBuffer(impl_->m_draw_sprite_cb, MAP_WRITE, MAP_FLAG_DISCARD, pData);
+        std::memcpy(pData, &cbTransform, sizeof(cbTransform));
+        impl_->pCtx_->UnmapBuffer(impl_->m_draw_sprite_cb, MAP_WRITE);
+    }
+
+    impl_->pCtx_->SetPipelineState(impl_->m_draw_masked_sprite_pso_and_srb.pPSO);
+
+    auto* sceneVar = impl_->m_draw_masked_sprite_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_PIXEL, "g_scene");
+    if (sceneVar) sceneVar->Set(sceneSRV);
+    auto* maskVar = impl_->m_draw_masked_sprite_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_PIXEL, "g_mask");
+    if (maskVar) maskVar->Set(maskSRV);
+    auto* sampVar = impl_->m_draw_masked_sprite_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_PIXEL, "g_sampler");
+    if (sampVar) sampVar->Set(impl_->m_sprite_sampler);
+    if (auto* transformVar = impl_->m_draw_masked_sprite_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_VERTEX, "TransformCB")) {
+        transformVar->Set(impl_->m_draw_sprite_cb);
+    }
+
+    impl_->pCtx_->CommitShaderResources(impl_->m_draw_masked_sprite_pso_and_srb.pSRB,
         RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
 
     IBuffer* pBuffers[] = { impl_->m_draw_sprite_vertex_buffer };

@@ -114,6 +114,10 @@ class ArtifactPlaybackControlWidget::Impl {
 public:
     ArtifactPlaybackControlWidget* owner_;
     
+    // Display
+    QLabel* timecodeLabel_ = nullptr;
+    QLabel* statusLabel_ = nullptr;
+    
     // Buttons
     QToolButton* playButton_ = nullptr;
     QToolButton* pauseButton_ = nullptr;
@@ -135,6 +139,8 @@ public:
     bool isStopped_ = true;
     bool isLooping_ = false;
     float playbackSpeed_ = 1.0f;
+    int64_t currentFrame_ = 0;
+    double frameRate_ = 30.0;
     
     Impl(ArtifactPlaybackControlWidget* owner)
         : owner_(owner)
@@ -145,117 +151,94 @@ public:
     void setupUI()
     {
         auto* mainLayout = new QHBoxLayout(owner_);
-        mainLayout->setSpacing(4);
-        mainLayout->setContentsMargins(8, 4, 8, 4);
+        mainLayout->setSpacing(6);
+        mainLayout->setContentsMargins(10, 2, 10, 2);
         
-        // 再生コントロールグループ
+        // 1. タイムコードディスプレイ (Pro Look)
+        timecodeLabel_ = new QLabel("00:00:00:00");
+        timecodeLabel_->setObjectName("playbackTimecode");
+        timecodeLabel_->setAlignment(Qt::AlignCenter);
+        timecodeLabel_->setFixedWidth(120);
+        timecodeLabel_->setStyleSheet(R"(
+            QLabel#playbackTimecode {
+                background-color: #000000;
+                color: #00FFCC;
+                font-family: 'Consolas', 'Courier New', monospace;
+                font-size: 16px;
+                font-weight: bold;
+                border: 1px solid #333;
+                border-radius: 3px;
+                padding: 2px 6px;
+            }
+        )");
+        mainLayout->addWidget(timecodeLabel_);
+        
+        mainLayout->addSpacing(10);
+
+        // 2. 再生コントロールグループ
         auto* playLayout = new QHBoxLayout();
         playLayout->setSpacing(2);
         
-        // 再生/停止/一時停止
-        playButton_ = createToolButton(QStringList{
-            QStringLiteral("MaterialVS/colored/E3E3E3/play_arrow.svg"),
-            QStringLiteral("MaterialVS/neutral/play_arrow.svg")
-        }, "再生 (Space)", Qt::Key_Space);
-        pauseButton_ = createToolButton(QStringList{
-            QStringLiteral("MaterialVS/colored/E3E3E3/pause.svg"),
-            QStringLiteral("MaterialVS/neutral/pause.svg")
-        }, "一時停止", 0);
-        stopButton_ = createToolButton(QStringList{
-            QStringLiteral("MaterialVS/colored/E3E3E3/stop.svg"),
-            QStringLiteral("MaterialVS/neutral/stop.svg")
-        }, "停止", 0);
-        
-        playLayout->addWidget(playButton_);
-        playLayout->addWidget(pauseButton_);
-        playLayout->addWidget(stopButton_);
-        
-        // シークコントロール
-        auto* seekLayout = new QHBoxLayout();
-        seekLayout->setSpacing(2);
-        
         seekStartButton_ = createToolButton(QStringList{
-            QStringLiteral("MaterialVS/colored/E3E3E3/seek_start.svg"),
-            QStringLiteral("MaterialVS/colored/E3E3E3/start.svg")
+            QStringLiteral("MaterialVS/colored/E3E3E3/seek_start.svg")
         }, "先頭へ (Home)", Qt::Key_Home);
-        seekPreviousButton_ = createToolButton(QStringList{
-            QStringLiteral("MaterialVS/colored/E3E3E3/fast_rewind.svg"),
-            QStringLiteral("MaterialVS/neutral/skip_previous.svg")
-        }, "前へ (PageUp)", Qt::Key_PageUp);
-        seekNextButton_ = createToolButton(QStringList{
-            QStringLiteral("MaterialVS/colored/E3E3E3/fast_forward.svg"),
-            QStringLiteral("MaterialVS/neutral/skip_next.svg")
-        }, "次へ (PageDown)", Qt::Key_PageDown);
-        seekEndButton_ = createToolButton(QStringList{
-            QStringLiteral("MaterialVS/colored/E3E3E3/seek_end.svg"),
-            QStringLiteral("MaterialVS/colored/E3E3E3/start.svg")
-        }, "末尾へ (End)", Qt::Key_End);
-        
-        seekLayout->addWidget(seekStartButton_);
-        seekLayout->addWidget(seekPreviousButton_);
-        seekLayout->addWidget(seekNextButton_);
-        seekLayout->addWidget(seekEndButton_);
-        
-        // フレーム操作
-        auto* stepLayout = new QHBoxLayout();
-        stepLayout->setSpacing(2);
         
         stepBackwardButton_ = createToolButton(QStringList{
-            QStringLiteral("MaterialVS/colored/E3E3E3/skip_previous.svg"),
-            QStringLiteral("MaterialVS/neutral/skip_previous.svg"),
-            QStringLiteral("MaterialVS/colored/E3E3E3/fast_rewind.svg")
-        }, "1 フレーム戻る (←)", Qt::Key_Left);
+            QStringLiteral("MaterialVS/neutral/skip_previous.svg")
+        }, "1フレーム戻る (←)", Qt::Key_Left);
+
+        playButton_ = createToolButton(QStringList{
+            QStringLiteral("MaterialVS/colored/E3E3E3/play_arrow.svg")
+        }, "再生/一時停止 (Space)", Qt::Key_Space);
+        playButton_->setFixedSize(44, 36); // Play is special
+        playButton_->setIconSize(QSize(28, 28));
+        
         stepForwardButton_ = createToolButton(QStringList{
-            QStringLiteral("MaterialVS/colored/E3E3E3/skip_next.svg"),
-            QStringLiteral("MaterialVS/neutral/skip_next.svg"),
-            QStringLiteral("MaterialVS/colored/E3E3E3/fast_forward.svg")
-        }, "1 フレーム進む (→)", Qt::Key_Right);
+            QStringLiteral("MaterialVS/neutral/skip_next.svg")
+        }, "1フレーム進む (→)", Qt::Key_Right);
+
+        seekEndButton_ = createToolButton(QStringList{
+            QStringLiteral("MaterialVS/colored/E3E3E3/seek_end.svg")
+        }, "末尾へ (End)", Qt::Key_End);
         
-        stepLayout->addWidget(stepBackwardButton_);
-        stepLayout->addWidget(stepForwardButton_);
+        playLayout->addWidget(seekStartButton_);
+        playLayout->addWidget(stepBackwardButton_);
+        playLayout->addWidget(playButton_);
+        playLayout->addWidget(stepForwardButton_);
+        playLayout->addWidget(seekEndButton_);
         
-        // ループ・In/Out
+        mainLayout->addLayout(playLayout);
+        mainLayout->addSpacing(12);
+        
+        // 3. 編集・オプショングループ (In/Out/Loop)
         auto* optionLayout = new QHBoxLayout();
         optionLayout->setSpacing(2);
         
-        loopButton_ = createToolButton(QStringList{
-            QStringLiteral("MaterialVS/colored/E3E3E3/loop.svg"),
-            QStringLiteral("MaterialVS/neutral/loop.svg"),
-            QStringLiteral("MaterialVS/neutral/replay.svg")
-        }, "ループ再生 (L)", Qt::Key_L);
-        loopButton_->setCheckable(true);
-        loopButton_->setChecked(false);
-        
         inButton_ = createToolButton(QStringList{
-            QStringLiteral("MaterialVS/colored/E3E3E3/start.svg"),
             QStringLiteral("MaterialVS/neutral/push_pin.svg")
         }, "In 点設定 (I)", Qt::Key_I);
+        
         outButton_ = createToolButton(QStringList{
-            QStringLiteral("MaterialVS/colored/E3E3E3/stop.svg"),
             QStringLiteral("MaterialVS/neutral/remove_circle.svg")
         }, "Out 点設定 (O)", Qt::Key_O);
-        clearInOutButton_ = createToolButton(QStringList{
-            QStringLiteral("MaterialVS/colored/E3E3E3/clear.svg"),
-            QStringLiteral("MaterialVS/neutral/remove.svg"),
-            QStringLiteral("MaterialVS/neutral/remove_circle.svg")
-        }, "In/Out クリア", 0);
         
-        optionLayout->addWidget(loopButton_);
+        loopButton_ = createToolButton(QStringList{
+            QStringLiteral("MaterialVS/colored/E3E3E3/loop.svg")
+        }, "ループ再生 (L)", Qt::Key_L);
+        loopButton_->setCheckable(true);
+        
         optionLayout->addWidget(inButton_);
         optionLayout->addWidget(outButton_);
-        optionLayout->addWidget(clearInOutButton_);
+        optionLayout->addWidget(loopButton_);
         
-        // メインレイアウトに追加
-        mainLayout->addLayout(playLayout);
-        mainLayout->addSpacing(12);
-        mainLayout->addLayout(seekLayout);
-        mainLayout->addSpacing(12);
-        mainLayout->addLayout(stepLayout);
-        mainLayout->addSpacing(12);
         mainLayout->addLayout(optionLayout);
         mainLayout->addStretch();
         
-        // シグナル接続
+        // ステータス表示（FPS等）
+        statusLabel_ = new QLabel("30.00 fps");
+        statusLabel_->setStyleSheet("color: #666; font-size: 10px; font-family: 'Consolas';");
+        mainLayout->addWidget(statusLabel_);
+        
         connectSignals();
     }
     
@@ -263,16 +246,56 @@ public:
     {
         auto* button = new QToolButton();
         button->setIcon(loadIconWithFallback(iconNames));
-        button->setIconSize(QSize(24, 24));
+        button->setIconSize(QSize(20, 20));
         button->setToolTip(tooltip);
         button->setAutoRaise(true);
-        button->setFixedSize(36, 36);
+        button->setFixedSize(32, 32);
+        button->setStyleSheet(R"(
+            QToolButton {
+                background: transparent;
+                border: 1px solid transparent;
+                border-radius: 3px;
+            }
+            QToolButton:hover {
+                background: rgba(255, 255, 255, 0.1);
+                border-color: #444;
+            }
+            QToolButton:pressed {
+                background: rgba(255, 255, 255, 0.05);
+            }
+            QToolButton:checked {
+                background: rgba(0, 255, 204, 0.15);
+                border-color: rgba(0, 255, 204, 0.3);
+            }
+        )");
         
         if (shortcut != 0) {
             button->setShortcut(QKeySequence(shortcut));
         }
         
         return button;
+    }
+    
+    void updateTimecodeDisplay()
+    {
+        if (!timecodeLabel_) return;
+        
+        int64_t f = currentFrame_;
+        int64_t fps = static_cast<int64_t>(std::round(frameRate_));
+        if (fps <= 0) fps = 30;
+        
+        int64_t frames = f % fps;
+        int64_t totalSeconds = f / fps;
+        int64_t seconds = totalSeconds % 60;
+        int64_t totalMinutes = totalSeconds / 60;
+        int64_t minutes = totalMinutes % 60;
+        int64_t hours = totalMinutes / 60;
+        
+        timecodeLabel_->setText(QString("%1:%2:%3:%4")
+            .arg(hours, 2, 10, QChar('0'))
+            .arg(minutes, 2, 10, QChar('0'))
+            .arg(seconds, 2, 10, QChar('0'))
+            .arg(frames, 2, 10, QChar('0')));
     }
     
     void connectSignals()
@@ -282,14 +305,6 @@ public:
             handlePlayButtonClicked();
         });
         
-        QObject::connect(pauseButton_, &QToolButton::clicked, owner_, [this]() {
-            handlePauseButtonClicked();
-        });
-        
-        QObject::connect(stopButton_, &QToolButton::clicked, owner_, [this]() {
-            handleStopButtonClicked();
-        });
-        
         // シーク操作
         QObject::connect(seekStartButton_, &QToolButton::clicked, owner_, [this]() {
             handleSeekStartClicked();
@@ -297,14 +312,6 @@ public:
         
         QObject::connect(seekEndButton_, &QToolButton::clicked, owner_, [this]() {
             handleSeekEndClicked();
-        });
-        
-        QObject::connect(seekPreviousButton_, &QToolButton::clicked, owner_, [this]() {
-            handleSeekPreviousClicked();
-        });
-        
-        QObject::connect(seekNextButton_, &QToolButton::clicked, owner_, [this]() {
-            handleSeekNextClicked();
         });
         
         // フレーム操作
@@ -329,15 +336,17 @@ public:
             handleOutButtonClicked();
         });
         
-        QObject::connect(clearInOutButton_, &QToolButton::clicked, owner_, [this]() {
-            handleClearInOutClicked();
-        });
-        
         // サービスからの状態更新を監視
         if (auto* service = ArtifactPlaybackService::instance()) {
             QObject::connect(service, &ArtifactPlaybackService::playbackStateChanged,
                 owner_, [this](::Artifact::PlaybackState state) {
                     this->updatePlaybackState(state);
+                });
+            
+            QObject::connect(service, &ArtifactPlaybackService::frameChanged,
+                owner_, [this](const ArtifactCore::FramePosition& position) {
+                    currentFrame_ = position.framePosition();
+                    updateTimecodeDisplay();
                 });
             
             QObject::connect(service, &ArtifactPlaybackService::loopingChanged,
@@ -348,13 +357,6 @@ public:
                         loopButton_->setChecked(loop);
                         loopButton_->blockSignals(false);
                     }
-                    Q_EMIT owner_->loopToggled(loop);
-                });
-            
-            QObject::connect(service, &ArtifactPlaybackService::playbackSpeedChanged,
-                owner_, [this](float speed) {
-                    playbackSpeed_ = speed;
-                    Q_EMIT owner_->playbackSpeedChanged(speed);
                 });
         }
     }

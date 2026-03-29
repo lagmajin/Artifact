@@ -1,4 +1,4 @@
-module;
+﻿module;
 
 #include <algorithm>
 #include <cmath>
@@ -204,23 +204,37 @@ namespace Artifact
 
   int producedFrames = 0;
   for (int i = 0; i < frameCount; ++i) {
-   const qint64 srcFrame = startSample + static_cast<qint64>(
-       std::floor((static_cast<double>(i) * impl_->sourceSampleRate_) / sampleRate));
-   if (srcFrame < 0 || srcFrame >= sourceFrameCount) {
-     continue;
-   }
+   // Compute the exact fractional source position for this output sample.
+   const double srcPos = static_cast<double>(startSample) +
+       (static_cast<double>(i) * impl_->sourceSampleRate_) / sampleRate;
+   const qint64 srcFrame0 = static_cast<qint64>(std::floor(srcPos));
 
-   float left = 0.0f;
-   float right = 0.0f;
-   const int base = static_cast<int>(srcFrame * impl_->sourceChannelCount_);
+   if (srcFrame0 < 0) continue;
+   if (srcFrame0 >= sourceFrameCount) break; // monotonically increasing — no more frames
+
+   const qint64 srcFrame1 = srcFrame0 + 1;
+   const float t = static_cast<float>(srcPos - static_cast<double>(srcFrame0));
+
+   const int base0 = static_cast<int>(srcFrame0) * impl_->sourceChannelCount_;
+   float left, right;
    if (impl_->sourceChannelCount_ == 1) {
-    left = right = impl_->interleavedPcm_[base];
+    const float s0 = impl_->interleavedPcm_[base0];
+    const float s1 = (srcFrame1 < sourceFrameCount)
+        ? impl_->interleavedPcm_[static_cast<int>(srcFrame1) * impl_->sourceChannelCount_]
+        : 0.0f;
+    left = right = s0 + t * (s1 - s0);
    } else {
-    left = impl_->interleavedPcm_[base];
-    right = impl_->interleavedPcm_[base + 1];
+    const int base1 = (srcFrame1 < sourceFrameCount)
+        ? static_cast<int>(srcFrame1) * impl_->sourceChannelCount_ : base0;
+    const float l0 = impl_->interleavedPcm_[base0];
+    const float r0 = impl_->interleavedPcm_[base0 + 1];
+    const float l1 = (srcFrame1 < sourceFrameCount) ? impl_->interleavedPcm_[base1]     : 0.0f;
+    const float r1 = (srcFrame1 < sourceFrameCount) ? impl_->interleavedPcm_[base1 + 1] : 0.0f;
+    left  = l0 + t * (l1 - l0);
+    right = r0 + t * (r1 - r0);
    }
 
-   outSegment.channelData[0][i] = left * impl_->volume_;
+   outSegment.channelData[0][i] = left  * impl_->volume_;
    outSegment.channelData[1][i] = right * impl_->volume_;
    producedFrames = i + 1;
   }

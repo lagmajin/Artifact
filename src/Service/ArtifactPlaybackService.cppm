@@ -1,6 +1,7 @@
 module;
 #include <QTimer>
 #include <QElapsedTimer>
+#include <QThread>
 #include <wobjectimpl.h>
 
 #include <iostream>
@@ -71,6 +72,8 @@ public:
     std::function<double()> playbackClockProvider_;
     float audioMasterVolume_ = 1.0f;
     bool audioMasterMuted_ = false;
+    std::atomic<int64_t> pendingCompositionFrame_{0};
+    std::atomic_bool compositionFrameSyncQueued_{false};
 
     explicit Impl(ArtifactPlaybackService* owner)
         : owner_(owner) {
@@ -80,14 +83,17 @@ public:
         // エンジンのシグナルをサービスに転送
         QObject::connect(engine_, &ArtifactPlaybackEngine::playbackStateChanged,
                          owner_, [this](PlaybackState state) {
+            if (state == PlaybackState::Paused) {
+                pauseAudioClock();
+            } else if (state == PlaybackState::Stopped) {
+                stopAudioClock();
+            }
             Q_EMIT owner_->playbackStateChanged(state);
         }, Qt::DirectConnection);
         
         QObject::connect(engine_, &ArtifactPlaybackEngine::frameChanged,
                          owner_, [this](const FramePosition& position, const QImage&) {
-            if (currentComposition_) {
-                currentComposition_->setFramePosition(position);
-            }
+            syncCurrentCompositionFrame(position);
             Q_EMIT owner_->frameChanged(position);
         }, Qt::DirectConnection);
         
@@ -115,9 +121,7 @@ public:
 
         QObject::connect(controller_, &ArtifactCompositionPlaybackController::frameChanged,
                          owner_, [this](const FramePosition& position) {
-            if (currentComposition_) {
-                currentComposition_->setFramePosition(position);
-            }
+            syncCurrentCompositionFrame(position);
             Q_EMIT owner_->frameChanged(position);
         }, Qt::DirectConnection);
 
@@ -151,12 +155,7 @@ public:
             if (externalAudioClockProvider_) {
                 return externalAudioClockProvider_();
             }
-
-            double seconds = audioOffsetSeconds_;
-            if (audioRunning_) {
-                seconds += static_cast<double>(audioTimer_.elapsed()) / 1000.0;
-            }
-            return seconds;
+            return 0.0;
         });
 
         engine_->setAudioMasterVolume(audioMasterVolume_);
@@ -170,6 +169,8 @@ public:
     
     void startAudioClock() {
         if (!audioRunning_) {
+            qDebug() << "[PlaybackService][AudioClock] start"
+                     << "offsetSeconds=" << audioOffsetSeconds_;
             audioTimer_.start();
             audioRunning_ = true;
         }
@@ -177,10 +178,14 @@ public:
     void pauseAudioClock() {
         if (audioRunning_) {
             audioOffsetSeconds_ += static_cast<double>(audioTimer_.elapsed()) / 1000.0;
+            qDebug() << "[PlaybackService][AudioClock] pause"
+                     << "offsetSeconds=" << audioOffsetSeconds_;
             audioRunning_ = false;
         }
     }
     void stopAudioClock() {
+        qDebug() << "[PlaybackService][AudioClock] stop"
+                 << "previousOffsetSeconds=" << audioOffsetSeconds_;
         audioOffsetSeconds_ = 0.0;
         audioRunning_ = false;
     }
@@ -189,6 +194,36 @@ public:
     }
     void setPlaybackClockProvider(const std::function<double()>& provider) {
         setExternalAudioClockProvider(provider);
+    }
+
+    void syncCurrentCompositionFrame(const FramePosition& position) {
+        if (!currentComposition_) {
+            return;
+        }
+
+        const auto composition = currentComposition_;
+        pendingCompositionFrame_.store(position.framePosition(), std::memory_order_relaxed);
+
+        if (composition->thread() == QThread::currentThread()) {
+            composition->goToFrame(position.framePosition());
+            return;
+        }
+
+        if (compositionFrameSyncQueued_.exchange(true, std::memory_order_acq_rel)) {
+            return;
+        }
+
+        QMetaObject::invokeMethod(
+            composition.get(),
+            [this, composition]() {
+                const int64_t latestFrame =
+                    pendingCompositionFrame_.load(std::memory_order_relaxed);
+                compositionFrameSyncQueued_.store(false, std::memory_order_release);
+                if (composition) {
+                    composition->goToFrame(latestFrame);
+                }
+            },
+            Qt::QueuedConnection);
     }
 };
 

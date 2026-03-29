@@ -57,7 +57,6 @@ module;
 module Artifact.AppMain;
 
 
-
 import Artifact.Widgets.PlaybackControlWidget;
 import Transform;
 import Draw;
@@ -83,10 +82,12 @@ import Widgets.Render.Queue;
 import Widgets.Utils.CSS;
 import IO.ImageExporter;
 import ArtifactStatusBar;
+import Artifact.Application.Manager;
 import Artifact.PythonAPI;
 import Script.Python.Engine;
 import Diagnostics.CrashHandler;
 import Translation.Manager;
+import Artifact.Layers.Selection.Manager;
 import Artifact.Service.Playback;
 import Artifact.Service.Project;
 import Artifact.Project.Roles;
@@ -99,6 +100,7 @@ import Artifact.Widgets.CompositionEditor;
 import Artifact.Widgets.RenderLayerEditor;
 import Artifact.Widgets.SoftwareRenderInspectors;
 import Artifact.Widgets.Render.QueueManager;
+import Artifact.Widgets.RenderCenterWindow;
 import Artifact.Contents.Viewer;
 import Widgets.Inspector;
 import Widgets.AssetBrowser;
@@ -670,7 +672,9 @@ int main(int argc, char* argv[])
    }
   }
 
-  QLoggingCategory::setFilterRules(QStringLiteral("artifact.compositionview.debug=false"));
+  QLoggingCategory::setFilterRules(QStringLiteral(
+      "artifact.compositionview.debug=false\n"
+      "artifact.layer.video.debug=true"));
   a.setStyle(QStyleFactory::create(QStringLiteral("Fusion")));
 	 auto modoTheme = ArtifactCore::getDCCTheme(DccStylePreset::ModoStyle);
 	 a.setStyleSheet(ArtifactCore::buildDCCStyleSheet(modoTheme));
@@ -695,8 +699,9 @@ int main(int argc, char* argv[])
     auto* projectService = ArtifactProjectService::instance();
     auto* playbackService = ArtifactPlaybackService::instance();
     auto* autoSaveManager = new ArtifactAutoSaveManager();
+    QPointer<ArtifactRenderCenterWindow> renderCenterWindow;
     const QString recoveryDir = QDir(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)).filePath("Recovery");
-    QTimer::singleShot(0, mw, [=]() {
+    QTimer::singleShot(0, mw, [=, &renderCenterWindow]() {
     auto* playbackControl = new ArtifactPlaybackControlWidget(mw);
     mw->addDockedWidgetFloating(
         QStringLiteral("Playback Control"),
@@ -775,9 +780,52 @@ int main(int argc, char* argv[])
         mw->setDockVisible(QStringLiteral("Contents Viewer"), true);
         mw->activateDock(QStringLiteral("Contents Viewer"));
     });
+    if (auto* projectView = projectManagerWidget ? projectManagerWidget->projectView() : nullptr) {
+        QObject::connect(projectView, &ArtifactProjectView::itemSelected, mw,
+            [mw, assetBrowser, contentsViewer](const QModelIndex& index) {
+                if (!index.isValid()) {
+                    return;
+                }
+                QModelIndex sourceIdx = index;
+                if (auto proxy = qobject_cast<const QSortFilterProxyModel*>(index.model())) {
+                    sourceIdx = proxy->mapToSource(index);
+                }
+                const QVariant typeVar = sourceIdx.data(Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::ProjectItemType));
+                const QVariant ptrVar = sourceIdx.data(Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::ProjectItemPtr));
+                if (!typeVar.isValid()) {
+                    return;
+                }
+
+                if (typeVar.toInt() == static_cast<int>(eProjectItemType::Composition)) {
+                    const QVariant idVar = sourceIdx.data(Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::CompositionId));
+                    if (!idVar.isValid()) {
+                        return;
+                    }
+                    if (auto* service = ArtifactProjectService::instance()) {
+                        service->changeCurrentComposition(CompositionID(idVar.toString()));
+                    }
+                    return;
+                }
+
+                if (typeVar.toInt() != static_cast<int>(eProjectItemType::Footage) || !ptrVar.isValid() || !contentsViewer) {
+                    return;
+                }
+                ProjectItem* item = reinterpret_cast<ProjectItem*>(ptrVar.value<quintptr>());
+                auto* footage = item && item->type() == eProjectItemType::Footage ? static_cast<FootageItem*>(item) : nullptr;
+                if (!footage || footage->filePath.isEmpty() || !QFileInfo(footage->filePath).isFile()) {
+                    return;
+                }
+                contentsViewer->setFilePath(footage->filePath);
+                mw->setDockVisible(QStringLiteral("Contents Viewer"), true);
+                mw->activateDock(QStringLiteral("Contents Viewer"));
+                if (assetBrowser) {
+                    assetBrowser->selectAssetPaths(QStringList{footage->filePath});
+                }
+            });
+    }
     QObject::connect(projectManagerWidget, &ArtifactProjectManagerWidget::itemDoubleClicked, mw,
         [mw, contentsViewer](const QModelIndex& index) {
-            if (!contentsViewer || !index.isValid()) {
+            if (!index.isValid()) {
                 return;
             }
             QModelIndex sourceIdx = index;
@@ -786,7 +834,23 @@ int main(int argc, char* argv[])
             }
             const QVariant typeVar = sourceIdx.data(Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::ProjectItemType));
             const QVariant ptrVar = sourceIdx.data(Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::ProjectItemPtr));
-            if (!typeVar.isValid() || typeVar.toInt() != static_cast<int>(eProjectItemType::Footage) || !ptrVar.isValid()) {
+            if (!typeVar.isValid()) {
+                return;
+            }
+            if (typeVar.toInt() == static_cast<int>(eProjectItemType::Composition)) {
+                const QVariant idVar = sourceIdx.data(Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::CompositionId));
+                if (!idVar.isValid()) {
+                    return;
+                }
+                const CompositionID compId(idVar.toString());
+                if (auto* service = ArtifactProjectService::instance()) {
+                    service->changeCurrentComposition(compId);
+                }
+                mw->setDockVisible(QStringLiteral("Composition View (Software)"), true);
+                mw->activateDock(QStringLiteral("Composition View (Software)"));
+                return;
+            }
+            if (typeVar.toInt() != static_cast<int>(eProjectItemType::Footage) || !ptrVar.isValid() || !contentsViewer) {
                 return;
             }
             ProjectItem* item = reinterpret_cast<ProjectItem*>(ptrVar.value<quintptr>());
@@ -797,13 +861,58 @@ int main(int argc, char* argv[])
             contentsViewer->setFilePath(footage->filePath);
             mw->setDockVisible(QStringLiteral("Contents Viewer"), true);
             mw->activateDock(QStringLiteral("Contents Viewer"));
+    });
+    QObject::connect(projectService, &ArtifactProjectService::currentCompositionChanged, mw,
+        [projectManagerWidget](const CompositionID& compId) {
+            auto* projectView = projectManagerWidget ? projectManagerWidget->projectView() : nullptr;
+            if (!projectView || compId.isNil() || !projectView->model()) {
+                return;
+            }
+            auto* model = projectView->model();
+            const int rowCount = model->rowCount();
+            for (int row = 0; row < rowCount; ++row) {
+                const QModelIndex index = model->index(row, 0);
+                if (!index.isValid()) {
+                    continue;
+                }
+                const QModelIndex sourceIdx = qobject_cast<const QSortFilterProxyModel*>(index.model())
+                    ? qobject_cast<const QSortFilterProxyModel*>(index.model())->mapToSource(index)
+                    : index;
+                const QVariant typeVar = sourceIdx.data(Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::ProjectItemType));
+                if (!typeVar.isValid() ||
+                    typeVar.toInt() != static_cast<int>(eProjectItemType::Composition)) {
+                    continue;
+                }
+                const QVariant idVar = sourceIdx.data(Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::CompositionId));
+                if (!idVar.isValid()) {
+                    continue;
+                }
+                if (CompositionID(idVar.toString()) == compId) {
+                    projectView->setCurrentIndex(index);
+                    projectView->ensureIndexVisible(index);
+                    return;
+                }
+            }
+        });
+    QObject::connect(assetBrowser, &ArtifactAssetBrowser::selectionChanged, mw,
+        [mw, contentsViewer](const QStringList& selectedFiles) {
+            if (!contentsViewer || selectedFiles.size() != 1) {
+                return;
+            }
+            const QString filePath = selectedFiles.first().trimmed();
+            if (filePath.isEmpty() || !QFileInfo(filePath).isFile()) {
+                return;
+            }
+            contentsViewer->setFilePath(filePath);
+            mw->setDockVisible(QStringLiteral("Contents Viewer"), true);
+            mw->activateDock(QStringLiteral("Contents Viewer"));
         });
     mw->addDockedWidget(QStringLiteral("Inspector"), ads::RightDockWidgetArea, new ArtifactInspectorWidget(mw));
     auto* propertyPanel = new ArtifactPropertyWidget(mw);
     mw->addDockedWidgetTabbed(QStringLiteral("Properties"), ads::RightDockWidgetArea, propertyPanel, QStringLiteral("Inspector"));
     mw->addDockedWidget(QStringLiteral("Audio Mixer"), ads::RightDockWidgetArea, new ArtifactCompositionAudioMixerWidget(mw));
+    renderCenterWindow = new ArtifactRenderCenterWindow();
     mw->setDockVisible(QStringLiteral("Audio Mixer"), false);
-    mw->setDockVisible(QStringLiteral("Render Manager"), true);
     mw->setDockVisible(QStringLiteral("Composition View (Software)"), false);
     mw->setDockVisible(QStringLiteral("Layer View (Diligent)"), false);
     mw->setDockVisible(QStringLiteral("Layer View (Software)"), false);
@@ -820,6 +929,18 @@ int main(int argc, char* argv[])
     }
 
     if (projectService) {
+        if (auto* selectionManager = ArtifactApplicationManager::instance()
+                                         ? ArtifactApplicationManager::instance()->layerSelectionManager()
+                                         : nullptr) {
+            QObject::connect(selectionManager, &ArtifactLayerSelectionManager::selectionChanged, mw,
+                [projectService, selectionManager]() {
+                    if (!projectService || !selectionManager) {
+                        return;
+                    }
+                    const ArtifactAbstractLayerPtr current = selectionManager->currentLayer();
+                    projectService->selectLayer(current ? current->id() : LayerID::Nil());
+                });
+        }
         QObject::connect(projectService, &ArtifactProjectService::projectChanged, mw, [status]() {
             status->setProjectText("Modified");
         });
@@ -857,6 +978,23 @@ int main(int argc, char* argv[])
                 }
             }
         });
+        QObject::connect(projectService, &ArtifactProjectService::layerSelected, mw, [status, projectService](const LayerID& layerId) {
+            if (!status) {
+                return;
+            }
+            if (layerId.isNil()) {
+                status->setLayerText("None");
+                return;
+            }
+            if (auto comp = projectService->currentComposition().lock()) {
+                if (auto layer = comp->layerById(layerId)) {
+                    const QString name = layer->layerName().trimmed();
+                    status->setLayerText(name.isEmpty() ? layerId.toString() : name);
+                    return;
+                }
+            }
+            status->setLayerText(layerId.toString());
+        });
         QObject::connect(projectService, &ArtifactProjectService::currentCompositionChanged, mw, [compositionEditor, projectService](const CompositionID& compId) {
             if (!compositionEditor || !projectService) {
                 return;
@@ -872,6 +1010,29 @@ int main(int argc, char* argv[])
                     // compositionEditor のウィンドウタイトルを更新（タブに表示）
                     compositionEditor->setWindowTitle(compName);
                 }
+            }
+        });
+        QObject::connect(projectService, &ArtifactProjectService::currentCompositionChanged, mw,
+            [projectService]() {
+                if (!projectService) {
+                    return;
+                }
+                if (auto* selectionManager = ArtifactApplicationManager::instance()
+                                                 ? ArtifactApplicationManager::instance()->layerSelectionManager()
+                                                 : nullptr) {
+                    selectionManager->setActiveComposition(projectService->currentComposition().lock());
+                }
+            });
+        QObject::connect(projectService, &ArtifactProjectService::currentCompositionChanged, mw, [status, projectService](const CompositionID& compId) {
+            if (!status) {
+                return;
+            }
+            if (compId.isNil()) {
+                status->setLayerText("None");
+                return;
+            }
+            if (auto comp = projectService->currentComposition().lock()) {
+                status->setLayerText(comp->allLayer().isEmpty() ? "None" : QStringLiteral("(composition active)"));
             }
         });
         QObject::connect(projectService, &ArtifactProjectService::currentCompositionChanged, mw, [layerViewEditor]() {
@@ -950,10 +1111,6 @@ int main(int argc, char* argv[])
                 QTimer::singleShot(0, mw, [mw, dockId]() {
                     mw->activateDock(dockId);
                 });
-                QTimer::singleShot(0, mw, [mw]() {
-                    mw->moveDockToTabGroup(QStringLiteral("Render Manager"),
-                                           QStringLiteral("timeline::"));
-                });
                 QTimer::singleShot(0, mw, [mw, dockId, panel]() {
                     if (panel) {
                         panel->setFocus(Qt::OtherFocusReason);
@@ -962,19 +1119,6 @@ int main(int argc, char* argv[])
                 });
             });
         });
-// Add Render Queue Manager widget to timeline area (bottom tab group)
-auto* renderQueueWidget = new Artifact::RenderQueueManagerWidget(mw);
-mw->addDockedWidgetTabbedWithId(
-    QStringLiteral("Render Manager"),
-    QStringLiteral("render_manager_dock"),
-    ads::BottomDockWidgetArea,
-    renderQueueWidget,
-    QStringLiteral("timeline::")
-);
-QTimer::singleShot(0, mw, [mw]() {
-    mw->moveDockToTabGroup(QStringLiteral("Render Manager"),
-                           QStringLiteral("timeline::"));
-});
         QObject::connect(projectService, &ArtifactProjectService::compositionRemoved, mw, [mw, timelineDockObjectId](const CompositionID& compId) {
             mw->closeDock(timelineDockObjectId(compId));
         });
@@ -1093,6 +1237,7 @@ QTimer::singleShot(0, mw, [mw]() {
         recordLayoutRestoreResult(hasGeometry || hasState, geometryRestored, stateRestored, resetApplied);
     }
     mw->setDockVisible(QStringLiteral("Layer View (Diligent)"), true);
+    mw->activateDock(QStringLiteral("Layer View (Diligent)"));
     });
 
     QObject::connect(&a, &QCoreApplication::aboutToQuit, [mw]() {
@@ -1108,6 +1253,11 @@ QTimer::singleShot(0, mw, [mw]() {
         layoutState.state = mw->saveState();
         layoutState.saveToStore(layoutStore, "MainWindow");
         layoutStore.sync();
+    });
+    QObject::connect(&a, &QCoreApplication::aboutToQuit, [&renderCenterWindow]() {
+        if (renderCenterWindow) {
+            renderCenterWindow->deleteLater();
+        }
     });
     QObject::connect(&a, &QCoreApplication::aboutToQuit, mw, &QObject::deleteLater);
     QObject::connect(&a, &QCoreApplication::aboutToQuit, [&]() {

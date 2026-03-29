@@ -72,6 +72,7 @@ import Utils.Id;
 import Artifact.Render.SoftwareCompositor;
 import Artifact.Render.IRenderer;
 import Encoder.FFmpegEncoder;
+import Media.Encoder.FFmpegAudioEncoder;
 import IO.ImageExporter;
 import Image.ExportOptions;
 import Artifact.Composition.Abstract;
@@ -147,6 +148,16 @@ namespace Artifact
 
             return executableName;
         }
+
+        QString deriveIntegratedVideoTempPath(const QString& finalOutputPath)
+        {
+            const QFileInfo info(finalOutputPath);
+            const QString suffix = info.suffix().isEmpty() ? QStringLiteral("mp4") : info.suffix();
+            const QString baseName = info.completeBaseName().isEmpty()
+                ? QStringLiteral("render")
+                : info.completeBaseName();
+            return info.dir().filePath(QStringLiteral("%1.__video_tmp__.%2").arg(baseName, suffix));
+        }
     }
 
     // レンダリングジョブクラス
@@ -167,6 +178,10 @@ namespace Artifact
         QString codec;                // コーデック
         QString codecProfile;         // コーデックプロファイル (ProRes 422 / 4444 等)
         QString encoderBackend;       // "auto", "pipe", "native"
+        bool integratedRenderEnabled;  // audio mux を含めるか
+        QString audioSourcePath;       // mux 用の音声ソースパス
+        QString audioCodec;            // "aac", "mp3", ...
+        int audioBitrateKbps;          // 音声ビットレート
         int resolutionWidth;          // 解像度幅
         int resolutionHeight;         // 解像度高さ
         double frameRate;             // フレームレート
@@ -190,6 +205,10 @@ namespace Artifact
             , endFrame(100)
             , codecProfile()
             , encoderBackend(QStringLiteral("auto"))
+            , integratedRenderEnabled(false)
+            , audioSourcePath()
+            , audioCodec(QStringLiteral("aac"))
+            , audioBitrateKbps(128)
             , status(Status::Pending)
             , progress(0)
             , overlayOffsetX(0.0f)
@@ -952,6 +971,58 @@ namespace Artifact
             if (jobUpdated) jobUpdated(index);
         }
 
+        bool jobIntegratedRenderEnabledAt(int index) const {
+            if (index < 0 || index >= jobs.size()) {
+                return false;
+            }
+            return jobs[index].integratedRenderEnabled;
+        }
+
+        void setJobIntegratedRenderEnabled(int index, bool enabled) {
+            if (index < 0 || index >= jobs.size()) return;
+            jobs[index].integratedRenderEnabled = enabled;
+            if (jobUpdated) jobUpdated(index);
+        }
+
+        QString jobAudioSourcePathAt(int index) const {
+            if (index < 0 || index >= jobs.size()) {
+                return {};
+            }
+            return jobs[index].audioSourcePath;
+        }
+
+        void setJobAudioSourcePath(int index, const QString& path) {
+            if (index < 0 || index >= jobs.size()) return;
+            jobs[index].audioSourcePath = path.trimmed();
+            if (jobUpdated) jobUpdated(index);
+        }
+
+        QString jobAudioCodecAt(int index) const {
+            if (index < 0 || index >= jobs.size()) {
+                return QStringLiteral("aac");
+            }
+            return jobs[index].audioCodec;
+        }
+
+        void setJobAudioCodec(int index, const QString& codec) {
+            if (index < 0 || index >= jobs.size()) return;
+            jobs[index].audioCodec = codec.trimmed().isEmpty() ? QStringLiteral("aac") : codec.trimmed();
+            if (jobUpdated) jobUpdated(index);
+        }
+
+        int jobAudioBitrateKbpsAt(int index) const {
+            if (index < 0 || index >= jobs.size()) {
+                return 128;
+            }
+            return jobs[index].audioBitrateKbps;
+        }
+
+        void setJobAudioBitrateKbps(int index, int bitrateKbps) {
+            if (index < 0 || index >= jobs.size()) return;
+            jobs[index].audioBitrateKbps = std::clamp(bitrateKbps, 32, 1024);
+            if (jobUpdated) jobUpdated(index);
+        }
+
         void updateJob(int index, const ArtifactRenderJob& job) {
             if (index < 0 || index >= jobs.size()) return;
             jobs[index] = job;
@@ -1374,30 +1445,11 @@ namespace Artifact
 
         QImage renderTextLayerSurface(const std::shared_ptr<ArtifactTextLayer>& textLayer, const QSize& size) const
         {
-            QImage image(size, QImage::Format_ARGB32_Premultiplied);
-            image.fill(Qt::transparent);
             if (!textLayer) {
-                return image;
+                return {};
             }
-
-            QPainter painter(&image);
-            painter.setRenderHint(QPainter::Antialiasing, true);
-            QFont font(textLayer->fontFamily().toQString());
-            font.setPointSizeF(std::max(6.0f, textLayer->fontSize()));
-            font.setBold(textLayer->isBold());
-            font.setItalic(textLayer->isItalic());
-            painter.setFont(font);
-            painter.setPen(QColor::fromRgbF(
-                textLayer->textColor().r(),
-                textLayer->textColor().g(),
-                textLayer->textColor().b(),
-                textLayer->textColor().a()));
-
-            QTextOption option;
-            option.setWrapMode(QTextOption::WordWrap);
-            option.setAlignment(Qt::AlignLeft | Qt::AlignTop);
-            painter.drawText(QRectF(0.0, 0.0, size.width(), size.height()), textLayer->text().toQString(), option);
-            return image;
+            (void)size;
+            return textLayer->toQImage().convertToFormat(QImage::Format_ARGB32_Premultiplied);
         }
 
         QImage renderVideoLayerSurface(const std::shared_ptr<ArtifactVideoLayer>& videoLayer, const QSize& size) const
@@ -1477,6 +1529,15 @@ namespace Artifact
                 return {};
             }
             return found.ptr.lock();
+        }
+
+        ArtifactCompositionPtr cloneCompositionSnapshot(const ArtifactCompositionPtr& composition) const
+        {
+            if (!composition) {
+                return {};
+            }
+            const QJsonDocument snapshotDoc = composition->toJson();
+            return ArtifactAbstractComposition::fromJson(snapshotDoc);
         }
 
         QImage renderSingleFrameComposition(const ArtifactRenderJob& job, const ArtifactCompositionPtr& composition, int frameNumber) const
@@ -1873,6 +1934,50 @@ namespace Artifact
         impl_->syncCoreQueueModel();
     }
 
+    bool ArtifactRenderQueueService::jobIntegratedRenderEnabledAt(int index) const
+    {
+        return impl_->queueManager.jobIntegratedRenderEnabledAt(index);
+    }
+
+    void ArtifactRenderQueueService::setJobIntegratedRenderEnabledAt(int index, bool enabled)
+    {
+        impl_->queueManager.setJobIntegratedRenderEnabled(index, enabled);
+        impl_->syncCoreQueueModel();
+    }
+
+    QString ArtifactRenderQueueService::jobAudioSourcePathAt(int index) const
+    {
+        return impl_->queueManager.jobAudioSourcePathAt(index);
+    }
+
+    void ArtifactRenderQueueService::setJobAudioSourcePathAt(int index, const QString& path)
+    {
+        impl_->queueManager.setJobAudioSourcePath(index, path);
+        impl_->syncCoreQueueModel();
+    }
+
+    QString ArtifactRenderQueueService::jobAudioCodecAt(int index) const
+    {
+        return impl_->queueManager.jobAudioCodecAt(index);
+    }
+
+    void ArtifactRenderQueueService::setJobAudioCodecAt(int index, const QString& codec)
+    {
+        impl_->queueManager.setJobAudioCodec(index, codec);
+        impl_->syncCoreQueueModel();
+    }
+
+    int ArtifactRenderQueueService::jobAudioBitrateKbpsAt(int index) const
+    {
+        return impl_->queueManager.jobAudioBitrateKbpsAt(index);
+    }
+
+    void ArtifactRenderQueueService::setJobAudioBitrateKbpsAt(int index, int bitrateKbps)
+    {
+        impl_->queueManager.setJobAudioBitrateKbps(index, bitrateKbps);
+        impl_->syncCoreQueueModel();
+    }
+
     bool ArtifactRenderQueueService::jobFrameRangeAt(int index, int* startFrame, int* endFrame) const
     {
         return impl_->queueManager.jobFrameRangeAt(index, startFrame, endFrame);
@@ -2037,6 +2142,7 @@ namespace Artifact
         impl_->workerThread_ = std::thread([this]() {
             try {
             const int count = impl_->queueManager.jobCount();
+            auto anyFailure = std::make_shared<std::atomic_bool>(false);
             for (int i = 0; i < count; ++i) {
                 if (impl_->shutdownRequested_.load(std::memory_order_acquire)) break;
 
@@ -2055,6 +2161,11 @@ namespace Artifact
                 const QFileInfo outInfo(outputPath);
                 QDir outDir = outInfo.dir();
                 if (!outDir.exists()) outDir.mkpath(".");
+                const bool hasAudioSource = QFileInfo(job.audioSourcePath.trimmed()).isFile();
+                const bool wantsIntegratedRender = job.integratedRenderEnabled && hasAudioSource;
+                const QString videoRenderPath = wantsIntegratedRender
+                    ? deriveIntegratedVideoTempPath(outputPath)
+                    : outputPath;
 
                 const QString ext = outInfo.suffix().toLower();
                 const QString format = deriveContainerFromJob(job);
@@ -2076,7 +2187,9 @@ namespace Artifact
                 std::unique_ptr<IVideoEncodeBackend> videoBackend;
                 if (isVideo) {
                     QString backendName;
-                    videoBackend = createVideoEncodeBackend(job, &backendName, &failureReason);
+                    ArtifactRenderJob backendJob = job;
+                    backendJob.outputPath = videoRenderPath;
+                    videoBackend = createVideoEncodeBackend(backendJob, &backendName, &failureReason);
                     if (!videoBackend) {
                         qWarning() << "[RenderService] Failed to initialize video backend"
                                    << "job=" << i
@@ -2087,6 +2200,13 @@ namespace Artifact
                 }
 
                 const ArtifactCompositionPtr composition = impl_->resolveComposition(job);
+                const ArtifactCompositionPtr renderComposition = impl_->cloneCompositionSnapshot(composition);
+                const ArtifactCompositionPtr* compositionForRender =
+                    renderComposition ? &renderComposition : &composition;
+                if (!(*compositionForRender)) {
+                    success.store(false, std::memory_order_relaxed);
+                    failureReason = QStringLiteral("Failed to build render snapshot");
+                }
                 for (int f = startF; f <= endF; ++f) {
                     if (!success.load(std::memory_order_relaxed)) {
                         break;
@@ -2104,7 +2224,7 @@ namespace Artifact
                         break;
                     }
 
-                    QImage qimg = impl_->renderSingleFrameComposition(job, composition, f);
+                    QImage qimg = impl_->renderSingleFrameComposition(job, *compositionForRender, f);
                     if (qimg.isNull()) {
                         success.store(false, std::memory_order_relaxed);
                         failureReason = QStringLiteral("Rendered frame is null");
@@ -2144,7 +2264,26 @@ namespace Artifact
                     videoBackend->close();
                 }
 
-                QMetaObject::invokeMethod(this, [this, i, success_val = success.load(), failureReason]() {
+                if (success.load(std::memory_order_relaxed) && wantsIntegratedRender) {
+                    const QString audioSourcePath = job.audioSourcePath.trimmed();
+                    const QString audioCodec = job.audioCodec.trimmed().isEmpty()
+                        ? QStringLiteral("aac")
+                        : job.audioCodec.trimmed();
+                    const int audioBitrate = std::max(32, job.audioBitrateKbps) * 1000;
+                    if (!ArtifactCore::FFmpegAudioEncoder::muxAudioWithVideo(
+                            videoRenderPath,
+                            audioSourcePath,
+                            outputPath,
+                            audioCodec,
+                            audioBitrate)) {
+                        success.store(false, std::memory_order_relaxed);
+                        failureReason = QStringLiteral("Audio mux failed");
+                    } else {
+                        QFile::remove(videoRenderPath);
+                    }
+                }
+
+                QMetaObject::invokeMethod(this, [this, i, success_val = success.load(), failureReason, anyFailure]() {
                     if (success_val) {
                         impl_->queueManager.setJobProgress(i, 100);
                         impl_->queueManager.setJobCompleted(i);
@@ -2152,16 +2291,15 @@ namespace Artifact
                         const QString reason = failureReason.trimmed().isEmpty()
                             ? QStringLiteral("Render interrupted or failed")
                             : failureReason;
+                        anyFailure->store(true, std::memory_order_release);
                         impl_->queueManager.setJobFailed(i, reason);
                     }
                 }, Qt::QueuedConnection);
             }
 
-            QMetaObject::invokeMethod(this, [this]() {
+            QMetaObject::invokeMethod(this, [this, anyFailure]() {
                 impl_->isRendering_.store(false, std::memory_order_release);
-                if (impl_->allJobsCompleted) {
-                    impl_->allJobsCompleted();
-                }
+                if (impl_->allJobsCompleted) impl_->allJobsCompleted();
                 Q_EMIT allJobsCompleted();
             }, Qt::QueuedConnection);
 
@@ -2245,6 +2383,10 @@ namespace Artifact
             obj["codec"] = job.codec;
             obj["codecProfile"] = job.codecProfile;
             obj["encoderBackend"] = job.encoderBackend;
+            obj["integratedRenderEnabled"] = job.integratedRenderEnabled;
+            obj["audioSourcePath"] = job.audioSourcePath;
+            obj["audioCodec"] = job.audioCodec;
+            obj["audioBitrateKbps"] = job.audioBitrateKbps;
             obj["resolutionWidth"] = job.resolutionWidth;
             obj["resolutionHeight"] = job.resolutionHeight;
             obj["frameRate"] = job.frameRate;
@@ -2274,6 +2416,10 @@ namespace Artifact
             job.codec = obj["codec"].toString();
             job.codecProfile = obj["codecProfile"].toString();
             job.encoderBackend = obj["encoderBackend"].toString("auto");
+            job.integratedRenderEnabled = obj["integratedRenderEnabled"].toBool(false);
+            job.audioSourcePath = obj["audioSourcePath"].toString();
+            job.audioCodec = obj["audioCodec"].toString("aac");
+            job.audioBitrateKbps = obj["audioBitrateKbps"].toInt(128);
             job.resolutionWidth = obj["resolutionWidth"].toInt(1920);
             job.resolutionHeight = obj["resolutionHeight"].toInt(1080);
             job.frameRate = obj["frameRate"].toDouble(30.0);
@@ -2294,4 +2440,93 @@ namespace Artifact
     void ArtifactRenderQueueService::clearQueueForLoad() {
         impl_->queueManager.removeAllJobs();
     }
+
+    int ArtifactRenderQueueService::addAllCompositions()
+    {
+        auto& pm = ArtifactProjectManager::getInstance();
+        const auto items = pm.projectItems();
+        int added = 0;
+        const QString desktop = QDir::homePath() + QStringLiteral("/Desktop");
+        const QString timestamp = QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd_HHmmss"));
+
+        for (const auto* item : items) {
+            if (!item || item->type() != eProjectItemType::Composition) continue;
+            const auto* compItem = static_cast<const CompositionItem*>(item);
+            if (compItem->compositionId == ArtifactCore::CompositionID::Nil()) continue;
+
+            const auto found = pm.findComposition(compItem->compositionId);
+            if (!found.success) continue;
+            auto comp = found.ptr.lock();
+            if (!comp) continue;
+
+            const auto& settings = comp->settings();
+            ArtifactRenderJob job;
+            job.compositionId = compItem->compositionId;
+            job.compositionName = item->name.toQString();
+            job.outputFormat = QStringLiteral("MP4");
+            job.codec = QStringLiteral("H.264");
+            job.codecProfile = QStringLiteral("high");
+            job.encoderBackend = QStringLiteral("auto");
+            job.resolutionWidth = settings.compositionSize().width();
+            job.resolutionHeight = settings.compositionSize().height();
+            job.frameRate = comp->frameRate().framerate();
+            job.bitrate = 8000;
+            job.startFrame = 0;
+            const auto frameRange = comp->frameRange();
+            job.endFrame = frameRange.isValid() ? static_cast<int>(std::max<int64_t>(frameRange.start(), frameRange.end())) : 100;
+
+            const QString safeName = item->name.toQString().trimmed().isEmpty()
+                ? QStringLiteral("Composition_%1").arg(added + 1)
+                : item->name.toQString().trimmed();
+            job.outputPath = QDir(desktop).filePath(
+                QStringLiteral("%1_%2.mp4").arg(safeName, timestamp));
+
+            impl_->queueManager.addJob(job);
+            ++added;
+        }
+        return added;
+    }
+
+    int ArtifactRenderQueueService::addCompositions(const QList<ArtifactCore::CompositionID>& compIds)
+    {
+        auto& pm = ArtifactProjectManager::getInstance();
+        int added = 0;
+        const QString desktop = QDir::homePath() + QStringLiteral("/Desktop");
+        const QString timestamp = QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd_HHmmss"));
+
+        for (const auto& compId : compIds) {
+            if (compId == ArtifactCore::CompositionID::Nil()) continue;
+            const auto found = pm.findComposition(compId);
+            if (!found.success) continue;
+            auto comp = found.ptr.lock();
+            if (!comp) continue;
+
+            const auto& settings = comp->settings();
+            ArtifactRenderJob job;
+            job.compositionId = compId;
+            job.compositionName = comp->settings().compositionName().toQString();
+            job.outputFormat = QStringLiteral("MP4");
+            job.codec = QStringLiteral("H.264");
+            job.codecProfile = QStringLiteral("high");
+            job.encoderBackend = QStringLiteral("auto");
+            job.resolutionWidth = settings.compositionSize().width();
+            job.resolutionHeight = settings.compositionSize().height();
+            job.frameRate = comp->frameRate().framerate();
+            job.bitrate = 8000;
+            job.startFrame = 0;
+            const auto frameRange = comp->frameRange();
+            job.endFrame = frameRange.isValid() ? static_cast<int>(std::max<int64_t>(frameRange.start(), frameRange.end())) : 100;
+
+            const QString safeName = job.compositionName.trimmed().isEmpty()
+                ? QStringLiteral("Composition_%1").arg(added + 1)
+                : job.compositionName.trimmed();
+            job.outputPath = QDir(desktop).filePath(
+                QStringLiteral("%1_%2.mp4").arg(safeName, timestamp));
+
+            impl_->queueManager.addJob(job);
+            ++added;
+        }
+        return added;
+    }
+
 };

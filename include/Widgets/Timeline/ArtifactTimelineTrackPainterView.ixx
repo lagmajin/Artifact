@@ -47,11 +47,12 @@ export namespace Artifact
   Impl* impl_ = nullptr;
 
  protected:
-  void paintEvent(QPaintEvent* event) override;
-  void mousePressEvent(QMouseEvent* event) override;
-  void mouseMoveEvent(QMouseEvent* event) override;
-  void mouseReleaseEvent(QMouseEvent* event) override;
-  QSize minimumSizeHint() const override;
+ void paintEvent(QPaintEvent* event) override;
+ void mousePressEvent(QMouseEvent* event) override;
+ void mouseMoveEvent(QMouseEvent* event) override;
+ void mouseReleaseEvent(QMouseEvent* event) override;
+ void leaveEvent(QEvent* event) override;
+ QSize minimumSizeHint() const override;
 
  public:
   explicit ArtifactTimelineTrackPainterView(QWidget* parent = nullptr);

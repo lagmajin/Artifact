@@ -36,6 +36,7 @@ export namespace Artifact {
   void closeEvent(QCloseEvent* event) override;
 
   void focusInEvent(QFocusEvent* event) override;
+  void focusOutEvent(QFocusEvent* event) override;
 
  public:
   explicit ArtifactLayerEditorWidgetV2(QWidget* parent = nullptr);

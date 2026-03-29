@@ -9,6 +9,12 @@ export module Artifact.Contents.Viewer;
 
 export namespace Artifact
 {
+ enum class ContentsViewerMode {
+  Source,
+  Final,
+  Compare
+ };
+
  class ArtifactContentsViewer :public QWidget
  {
  	W_OBJECT(ArtifactContentsViewer)
@@ -19,6 +25,7 @@ export namespace Artifact
   explicit ArtifactContentsViewer(QWidget* parent = nullptr);
   ~ArtifactContentsViewer();
   void setFilePath(const QString& filepath);
+  void setViewerMode(ContentsViewerMode mode);
  public/*slots*/:
   void play(); W_SLOT(play);
   void pause(); W_SLOT(pause);

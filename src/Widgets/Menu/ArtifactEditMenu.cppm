@@ -9,6 +9,9 @@ import std;
 
 import Artifact.Application.Manager;
 import Artifact.Project.Manager;
+import Artifact.Service.ActiveContext;
+import Artifact.Layers.Selection.Manager;
+import Undo.UndoManager;
 import ApplicationSettingDialog;
 import Utils.Path;
 
@@ -57,6 +60,8 @@ namespace Artifact {
   void handleSelectSameType();
   void handleFind();
   void handlePreferences();
+
+  ArtifactActiveContextService* getActiveContext();
  };
 
  ArtifactEditMenu::Impl::Impl(QMenu* menu)
@@ -160,18 +165,44 @@ namespace Artifact {
   QObject::connect(selectSameTypeAction, &QAction::triggered, menu, [this]() { handleSelectSameType(); });
   QObject::connect(findAction, &QAction::triggered, menu, [this]() { handleFind(); });
   QObject::connect(preferencesAction, &QAction::triggered, menu, [this]() { handlePreferences(); });
+
+  QObject::connect(menu, &QMenu::aboutToShow, menu, [this]() { rebuildMenu(); });
  }
 
- void ArtifactEditMenu::Impl::handleUndo() { qDebug() << "Undo"; }
- void ArtifactEditMenu::Impl::handleRedo() { qDebug() << "Redo"; }
+ ArtifactActiveContextService* ArtifactEditMenu::Impl::getActiveContext() {
+  return ArtifactApplicationManager::instance()->activeContextService();
+ }
+
+ void ArtifactEditMenu::Impl::handleUndo() { 
+  if (auto mgr = UndoManager::instance()) {
+   mgr->undo();
+  }
+ }
+ void ArtifactEditMenu::Impl::handleRedo() { 
+  if (auto mgr = UndoManager::instance()) {
+   mgr->redo();
+  }
+ }
  void ArtifactEditMenu::Impl::handleCopyAction() { qDebug() << "Copy"; }
  void ArtifactEditMenu::Impl::handleCutAction() { qDebug() << "Cut"; }
  void ArtifactEditMenu::Impl::handlePasteAction() { qDebug() << "Paste"; }
  void ArtifactEditMenu::Impl::handleDelete() { qDebug() << "Delete"; }
  void ArtifactEditMenu::Impl::handleDuplicate() { qDebug() << "Duplicate"; }
- void ArtifactEditMenu::Impl::handleSplit() { qDebug() << "Split"; }
- void ArtifactEditMenu::Impl::handleTrimIn() { qDebug() << "Trim In"; }
- void ArtifactEditMenu::Impl::handleTrimOut() { qDebug() << "Trim Out"; }
+ void ArtifactEditMenu::Impl::handleSplit() { 
+  if (auto* ctx = getActiveContext()) {
+   ctx->splitLayerAtCurrentTime();
+  }
+ }
+ void ArtifactEditMenu::Impl::handleTrimIn() { 
+  if (auto* ctx = getActiveContext()) {
+   ctx->trimLayerInAtCurrentTime();
+  }
+ }
+ void ArtifactEditMenu::Impl::handleTrimOut() { 
+  if (auto* ctx = getActiveContext()) {
+   ctx->trimLayerOutAtCurrentTime();
+  }
+ }
  void ArtifactEditMenu::Impl::handleSelectAll() { qDebug() << "Select All"; }
  void ArtifactEditMenu::Impl::handleSelectNone() { qDebug() << "Select None"; }
  void ArtifactEditMenu::Impl::handleInvertSelection() { qDebug() << "Invert Selection"; }
@@ -182,7 +213,42 @@ namespace Artifact {
   dialog->setAttribute(Qt::WA_DeleteOnClose);
   dialog->show();
  }
- void ArtifactEditMenu::Impl::rebuildMenu() { /* No-op for now */ }
+ void ArtifactEditMenu::Impl::rebuildMenu() { 
+  bool hasProject = ArtifactProjectManager::getInstance().isProjectCreated();
+  auto mgr = UndoManager::instance();
+  
+  undoAction->setEnabled(hasProject && mgr && mgr->canUndo());
+  redoAction->setEnabled(hasProject && mgr && mgr->canRedo());
+  
+  if (mgr && mgr->canUndo()) {
+   undoAction->setText(QString("元に戻す: %1 (&U)").arg(mgr->undoDescription()));
+  } else {
+   undoAction->setText("元に戻す (&U)");
+  }
+
+  if (mgr && mgr->canRedo()) {
+   redoAction->setText(QString("やり直し: %1 (&R)").arg(mgr->redoDescription()));
+  } else {
+   redoAction->setText("やり直し (&R)");
+  }
+
+  bool hasSelection = false;
+  if (auto* sel = ArtifactApplicationManager::instance()->layerSelectionManager()) {
+   hasSelection = !sel->selectedLayers().isEmpty();
+  }
+
+  copyAction_->setEnabled(hasProject && hasSelection);
+  cutAction_->setEnabled(hasProject && hasSelection);
+  pasteAction_->setEnabled(hasProject);
+  deleteAction_->setEnabled(hasProject && hasSelection);
+  duplicateAction->setEnabled(hasProject && hasSelection);
+  splitAction->setEnabled(hasProject && hasSelection);
+  trimInAction->setEnabled(hasProject && hasSelection);
+  trimOutAction->setEnabled(hasProject && hasSelection);
+  selectAllAction->setEnabled(hasProject);
+  selectNoneAction->setEnabled(hasProject && hasSelection);
+  findAction->setEnabled(hasProject);
+ }
 
  W_OBJECT_IMPL(ArtifactEditMenu)
 

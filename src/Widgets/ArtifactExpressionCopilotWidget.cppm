@@ -7,6 +7,8 @@ module;
 #include <QPushButton>
 #include <QLabel>
 #include <QTimer>
+#include <QApplication>
+#include <QClipboard>
 module Artifact.Widgets.ExpressionCopilotWidget;
 
 namespace Artifact {
@@ -18,6 +20,11 @@ namespace Artifact {
         QTextEdit* codeOutput;
         QPushButton* generateBtn;
         QPushButton* applyBtn;
+        QPushButton* copyBtn;
+        QPushButton* clearBtn;
+        QPushButton* wiggleBtn;
+        QPushButton* loopBtn;
+        QPushButton* driftBtn;
 
         void setupUi(QWidget* parent) {
             auto layout = new QVBoxLayout(parent);
@@ -37,6 +44,16 @@ namespace Artifact {
             promptInput->setPlaceholderText("Describe the motion you want... (e.g. wiggle 3 times a second)");
             layout->addWidget(promptInput);
 
+            auto examplesLayout = new QHBoxLayout();
+            wiggleBtn = new QPushButton("Wiggle");
+            loopBtn = new QPushButton("Loop");
+            driftBtn = new QPushButton("Drift");
+            examplesLayout->addWidget(wiggleBtn);
+            examplesLayout->addWidget(loopBtn);
+            examplesLayout->addWidget(driftBtn);
+            examplesLayout->addStretch();
+            layout->addLayout(examplesLayout);
+
             codeOutput = new QTextEdit();
             codeOutput->setPlaceholderText("// Generated expression will appear here...");
             codeOutput->setMaximumHeight(150);
@@ -45,9 +62,13 @@ namespace Artifact {
             auto btnLayout = new QHBoxLayout();
             generateBtn = new QPushButton("Generate");
             applyBtn = new QPushButton("Apply");
+            copyBtn = new QPushButton("Copy");
+            clearBtn = new QPushButton("Clear");
             btnLayout->addStretch();
             btnLayout->addWidget(generateBtn);
             btnLayout->addWidget(applyBtn);
+            btnLayout->addWidget(copyBtn);
+            btnLayout->addWidget(clearBtn);
             layout->addLayout(btnLayout);
         }
     };
@@ -55,6 +76,16 @@ namespace Artifact {
     ArtifactExpressionCopilotWidget::ArtifactExpressionCopilotWidget(QWidget* parent)
         : QWidget(parent), impl_(new Impl()) {
         impl_->setupUi(this);
+
+        connect(impl_->wiggleBtn, &QPushButton::clicked, this, [this]() {
+            impl_->promptInput->setText(QStringLiteral("wiggle 3 times a second"));
+        });
+        connect(impl_->loopBtn, &QPushButton::clicked, this, [this]() {
+            impl_->promptInput->setText(QStringLiteral("make it loop"));
+        });
+        connect(impl_->driftBtn, &QPushButton::clicked, this, [this]() {
+            impl_->promptInput->setText(QStringLiteral("slow drifting motion"));
+        });
 
         connect(impl_->generateBtn, &QPushButton::clicked, this, [this]() {
             QString prompt = impl_->promptInput->text();
@@ -73,6 +104,27 @@ namespace Artifact {
                 }
                 impl_->codeOutput->setText(result);
             });
+        });
+
+        connect(impl_->copyBtn, &QPushButton::clicked, this, [this]() {
+            const QString text = impl_->codeOutput->toPlainText().trimmed();
+            if (text.isEmpty()) {
+                return;
+            }
+            QApplication::clipboard()->setText(text);
+        });
+
+        connect(impl_->applyBtn, &QPushButton::clicked, this, [this]() {
+            const QString text = impl_->codeOutput->toPlainText().trimmed();
+            if (text.isEmpty()) {
+                return;
+            }
+            QApplication::clipboard()->setText(text);
+        });
+
+        connect(impl_->clearBtn, &QPushButton::clicked, this, [this]() {
+            impl_->promptInput->clear();
+            impl_->codeOutput->clear();
         });
     }
 

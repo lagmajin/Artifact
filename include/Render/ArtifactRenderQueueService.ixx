@@ -117,6 +117,14 @@ export namespace Artifact
     int height,
     double fps,
     int bitrateKbps);
+  bool jobIntegratedRenderEnabledAt(int index) const;
+  void setJobIntegratedRenderEnabledAt(int index, bool enabled);
+  QString jobAudioSourcePathAt(int index) const;
+  void setJobAudioSourcePathAt(int index, const QString& path);
+  QString jobAudioCodecAt(int index) const;
+  void setJobAudioCodecAt(int index, const QString& codec);
+  int jobAudioBitrateKbpsAt(int index) const;
+  void setJobAudioBitrateKbpsAt(int index, int bitrateKbps);
   QString jobEncoderBackendAt(int index) const;
   void setJobEncoderBackendAt(int index, const QString& backend);
   QString jobErrorMessageAt(int index) const;
@@ -168,12 +176,15 @@ public:
   void setAllJobsRemovedCallback(std::function<void()> callback);
    void setQueueReorderedCallback(std::function<void(int, int)> callback);
 
-   // Serialization for project save/load
-   QJsonArray toJson() const;
-   void fromJson(const QJsonArray& arr);
-   void clearQueueForLoad();
+    // Serialization for project save/load
+    QJsonArray toJson() const;
+    void fromJson(const QJsonArray& arr);
+    void clearQueueForLoad();
 
-  };
+    // Batch rendering
+    int addAllCompositions();
+    int addCompositions(const QList<ArtifactCore::CompositionID>& compIds);
+   };
 
 
 

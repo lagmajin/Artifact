@@ -480,8 +480,16 @@ void ArtifactInspectorWidget::Impl::setEffectsStateText(const QString& text, boo
   }
   layerTypeLabel->setText(QString("Type: %1").arg(layerType));
 
-  statusLabel->setText(QString("Status: Layer selected - ID: %1").arg(currentLayerId_.toString()));
-  setEffectsStateText(QString(), false);
+  const int maskCount = layer->maskCount();
+  const QString maskText = maskCount > 0
+      ? QStringLiteral("Masks: %1").arg(maskCount)
+      : QStringLiteral("Masks: none");
+  statusLabel->setText(QString("Status: Layer selected - ID: %1 | %2")
+                           .arg(currentLayerId_.toString(), maskText));
+  setEffectsStateText(maskCount > 0
+                          ? QStringLiteral("Mask / roto editing is available for this layer.")
+                          : QStringLiteral("No masks on this layer. Use Mask tool to create one."),
+                      true);
 
   qDebug() << "[Inspector] Updated layer info:" << layerName << "Type:" << layerType;
  }

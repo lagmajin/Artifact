@@ -84,11 +84,13 @@ namespace Artifact
    void updateHeader();
    void updatePlaybackState();
    void updateActionAvailability();
+   void updateModeButtons();
    void clearPlaybackRange();
    void setPlaybackRange(int64_t startFrame, int64_t endFrame);
    void resetCurrentMode();
    void ensureVideoWidgets();
    void ensureModelViewer();
+   void syncModelViewerMode();
    void attachMediaOutputs();
    void detachMediaOutputs();
    void activateImage(const QString& filepath);
@@ -113,6 +115,9 @@ namespace Artifact
    QToolButton* stopButton = nullptr;
    QToolButton* copyPathButton = nullptr;
    QToolButton* revealButton = nullptr;
+   QToolButton* sourceButton = nullptr;
+   QToolButton* finalButton = nullptr;
+   QToolButton* compareButton = nullptr;
    QSlider* seekSlider = nullptr;
    QStackedWidget* stackedWidget = nullptr;
    QScrollArea* imageScrollArea = nullptr;
@@ -126,6 +131,7 @@ namespace Artifact
    bool modelViewerReady = false;
    QString currentFilePath;
    ArtifactCore::FileType currentFileType = ArtifactCore::FileType::Unknown;
+   ContentsViewerMode currentMode = ContentsViewerMode::Source;
    double zoomLevel = 1.0;
    double rotationDegrees = 0.0;
    QPixmap originalImage;
@@ -194,6 +200,7 @@ namespace Artifact
    if (stateLabel) {
     stateLabel->setText(QStringLiteral("State: Idle"));
    }
+   updateModeButtons();
   }
 
   void ArtifactContentsViewer::Impl::clearPlaybackRange()
@@ -218,6 +225,7 @@ namespace Artifact
   void ArtifactContentsViewer::Impl::resetCurrentMode()
   {
    clearPlaybackRange();
+   currentMode = ContentsViewerMode::Source;
 
    if (mediaPlayer) {
     QSignalBlocker blocker(mediaPlayer);
@@ -241,6 +249,7 @@ namespace Artifact
    updateHeader();
    updatePlaybackState();
    updateActionAvailability();
+   updateModeButtons();
   }
 
   void ArtifactContentsViewer::Impl::ensureVideoWidgets()
@@ -322,6 +331,7 @@ namespace Artifact
    updateHeader();
    updatePlaybackState();
    updateActionAvailability();
+   updateModeButtons();
   }
 
   void ArtifactContentsViewer::Impl::activateVideo(const QString& filepath)
@@ -341,16 +351,39 @@ namespace Artifact
    updateHeader();
    updatePlaybackState();
    updateActionAvailability();
+   updateModeButtons();
   }
 
   void ArtifactContentsViewer::Impl::activateModel(const QString& filepath)
   {
    ensureModelViewer();
    modelViewer->loadModel(ArtifactCore::UniString(filepath.toStdString()));
+   syncModelViewerMode();
    stackedWidget->setCurrentWidget(modelViewer);
    updateHeader();
    updatePlaybackState();
    updateActionAvailability();
+   updateModeButtons();
+  }
+
+  void ArtifactContentsViewer::Impl::syncModelViewerMode()
+  {
+   if (!modelViewer) {
+    return;
+   }
+
+   switch (currentMode) {
+   case ContentsViewerMode::Final:
+    modelViewer->setDisplayMode(Artifact3DModelViewer::DisplayMode::Solid);
+    break;
+   case ContentsViewerMode::Compare:
+    modelViewer->setDisplayMode(Artifact3DModelViewer::DisplayMode::SolidWithWire);
+    break;
+   case ContentsViewerMode::Source:
+   default:
+    modelViewer->setDisplayMode(Artifact3DModelViewer::DisplayMode::Wireframe);
+    break;
+   }
   }
 
   void ArtifactContentsViewer::Impl::updateHeader()
@@ -377,6 +410,13 @@ namespace Artifact
     typeBadgeLabel->setText(QStringLiteral("Unknown"));
     break;
    }
+   if (currentMode == ContentsViewerMode::Source) {
+    typeBadgeLabel->setText(typeBadgeLabel->text() + QStringLiteral(" / Source"));
+   } else if (currentMode == ContentsViewerMode::Final) {
+    typeBadgeLabel->setText(typeBadgeLabel->text() + QStringLiteral(" / Final"));
+   } else if (currentMode == ContentsViewerMode::Compare) {
+    typeBadgeLabel->setText(typeBadgeLabel->text() + QStringLiteral(" / Compare"));
+   }
 
    QStringList metaParts;
    if (info.exists()) {
@@ -399,7 +439,19 @@ namespace Artifact
      metaParts.prepend(QStringLiteral("Duration %1").arg(formatDurationMs(duration)));
     }
    } else if (currentFileType == ArtifactCore::FileType::Model3D) {
-    metaParts.prepend(QStringLiteral("3D viewer"));
+    const QString suffix = info.suffix().toUpper();
+    if (!suffix.isEmpty()) {
+     metaParts.prepend(QStringLiteral("%1 model").arg(suffix));
+    } else {
+     metaParts.prepend(QStringLiteral("3D viewer"));
+    }
+    if (modelViewer && modelViewer->displayMode() == Artifact3DModelViewer::DisplayMode::Wireframe) {
+     metaParts.prepend(QStringLiteral("Wireframe"));
+    } else if (modelViewer && modelViewer->displayMode() == Artifact3DModelViewer::DisplayMode::SolidWithWire) {
+     metaParts.prepend(QStringLiteral("Solid+Wire"));
+    } else if (modelViewer) {
+     metaParts.prepend(QStringLiteral("Solid"));
+    }
    }
 
    metaLabel->setText(metaParts.join(QStringLiteral(" | ")));
@@ -441,6 +493,27 @@ namespace Artifact
     }
    } else if (currentFileType == ArtifactCore::FileType::Model3D) {
     stateText = QStringLiteral("3D model inspect");
+    if (modelViewer) {
+     switch (modelViewer->displayMode()) {
+     case Artifact3DModelViewer::DisplayMode::Wireframe:
+      stateText += QStringLiteral(" | Wireframe");
+      break;
+     case Artifact3DModelViewer::DisplayMode::SolidWithWire:
+      stateText += QStringLiteral(" | Solid+Wire");
+      break;
+     case Artifact3DModelViewer::DisplayMode::Solid:
+     default:
+      stateText += QStringLiteral(" | Solid");
+      break;
+     }
+    }
+   }
+   if (currentMode == ContentsViewerMode::Source) {
+    stateText += QStringLiteral(" | Source");
+   } else if (currentMode == ContentsViewerMode::Final) {
+    stateText += QStringLiteral(" | Final");
+   } else if (currentMode == ContentsViewerMode::Compare) {
+    stateText += QStringLiteral(" | Compare");
    }
 
    stateLabel->setText(QStringLiteral("State: %1").arg(stateText));
@@ -488,7 +561,22 @@ namespace Artifact
 
   void ArtifactContentsViewer::Impl::updateActionAvailability()
   {
+   const bool isModel = currentFileType == ArtifactCore::FileType::Model3D;
+   if (sourceButton) sourceButton->setVisible(!isModel);
+   if (finalButton) finalButton->setVisible(!isModel);
+   if (compareButton) compareButton->setVisible(!isModel);
+   if (fitButton) fitButton->setVisible(isModel || currentFileType == ArtifactCore::FileType::Image);
+   if (rotateLeftButton) rotateLeftButton->setVisible(currentFileType == ArtifactCore::FileType::Image);
+   if (rotateRightButton) rotateRightButton->setVisible(currentFileType == ArtifactCore::FileType::Image);
    updatePlaybackState();
+  }
+
+  void ArtifactContentsViewer::Impl::updateModeButtons()
+  {
+   if (sourceButton) sourceButton->setChecked(currentMode == ContentsViewerMode::Source);
+   if (finalButton) finalButton->setChecked(currentMode == ContentsViewerMode::Final);
+   if (compareButton) compareButton->setChecked(currentMode == ContentsViewerMode::Compare);
+   syncModelViewerMode();
   }
 
   ArtifactContentsViewer::Impl::Impl(ArtifactContentsViewer* parent)
@@ -554,6 +642,12 @@ namespace Artifact
    stopButton = createButton(QStringLiteral("Stop"), QStringLiteral("Stop video"));
    copyPathButton = createButton(QStringLiteral("Copy"), QStringLiteral("Copy file path"));
    revealButton = createButton(QStringLiteral("Open"), QStringLiteral("Open containing folder"));
+   sourceButton = createButton(QStringLiteral("Source"), QStringLiteral("Show source view"));
+   finalButton = createButton(QStringLiteral("Final"), QStringLiteral("Show final output view"));
+   compareButton = createButton(QStringLiteral("Compare"), QStringLiteral("Show compare view"));
+   sourceButton->setCheckable(true);
+   finalButton->setCheckable(true);
+   compareButton->setCheckable(true);
    seekSlider = new QSlider(Qt::Horizontal, parent);
    seekSlider->setRange(0, 0);
    seekSlider->setSingleStep(1000);
@@ -590,6 +684,10 @@ namespace Artifact
    buttonRow->addSpacing(8);
    buttonRow->addWidget(copyPathButton);
    buttonRow->addWidget(revealButton);
+   buttonRow->addSpacing(8);
+   buttonRow->addWidget(sourceButton);
+   buttonRow->addWidget(finalButton);
+   buttonRow->addWidget(compareButton);
 
    headerLayout->addLayout(textColumn, 1);
    headerLayout->addLayout(badgeColumn, 0);
@@ -707,6 +805,28 @@ namespace Artifact
     const QString folder = QFileInfo(target).absolutePath();
     QDesktopServices::openUrl(QUrl::fromLocalFile(folder));
     updateActionAvailability();
+   });
+
+   QObject::connect(sourceButton, &QToolButton::clicked, parent, [this]() {
+    currentMode = ContentsViewerMode::Source;
+    updateHeader();
+    updatePlaybackState();
+    updateModeButtons();
+    syncModelViewerMode();
+   });
+   QObject::connect(finalButton, &QToolButton::clicked, parent, [this]() {
+    currentMode = ContentsViewerMode::Final;
+    updateHeader();
+    updatePlaybackState();
+    updateModeButtons();
+    syncModelViewerMode();
+   });
+   QObject::connect(compareButton, &QToolButton::clicked, parent, [this]() {
+    currentMode = ContentsViewerMode::Compare;
+    updateHeader();
+    updatePlaybackState();
+    updateModeButtons();
+    syncModelViewerMode();
    });
 
    QObject::connect(seekSlider, &QSlider::sliderMoved, parent, [this](int value) {
@@ -841,6 +961,19 @@ namespace Artifact
    impl_->updateHeader();
    impl_->updatePlaybackState();
    impl_->updateActionAvailability();
+  }
+
+  void ArtifactContentsViewer::setViewerMode(ContentsViewerMode mode)
+  {
+   if (!impl_) {
+    return;
+   }
+   impl_->currentMode = mode;
+   impl_->syncModelViewerMode();
+   impl_->updateHeader();
+   impl_->updatePlaybackState();
+   impl_->updateActionAvailability();
+   impl_->updateModeButtons();
   }
 
   void ArtifactContentsViewer::wheelEvent(QWheelEvent* event)

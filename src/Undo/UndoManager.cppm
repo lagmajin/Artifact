@@ -47,6 +47,7 @@ import Undo.UndoManager;
 import Utils.String.UniString;
 import Artifact.Effect.Abstract;
 import Artifact.Layer.Abstract;
+import Artifact.Mask.LayerMask;
 import Artifact.Composition.Abstract;
 import Animation.Transform3D;
 import Time.Rational;
@@ -188,6 +189,44 @@ QString RemoveLayerCommand::label() const {
         return QStringLiteral("Remove Layer: %1").arg(layer_->id().toString());
     }
     return QStringLiteral("Remove Layer");
+}
+
+namespace {
+void applyMaskSnapshot(const ArtifactAbstractLayerPtr& layer, const std::vector<LayerMask>& masks) {
+    if (!layer) {
+        return;
+    }
+
+    layer->clearMasks();
+    for (const auto& mask : masks) {
+        layer->addMask(mask);
+    }
+    layer->changed();
+}
+} // namespace
+
+// --- MaskEditCommand ---
+MaskEditCommand::MaskEditCommand(ArtifactAbstractLayerPtr layer,
+                                 std::vector<LayerMask> beforeMasks,
+                                 std::vector<LayerMask> afterMasks)
+    : layer_(layer), beforeMasks_(std::move(beforeMasks)), afterMasks_(std::move(afterMasks)) {}
+
+void MaskEditCommand::undo() {
+    applyMaskSnapshot(layer_.lock(), beforeMasks_);
+    if (auto mgr = UndoManager::instance()) {
+        mgr->notifyAnythingChanged();
+    }
+}
+
+void MaskEditCommand::redo() {
+    applyMaskSnapshot(layer_.lock(), afterMasks_);
+    if (auto mgr = UndoManager::instance()) {
+        mgr->notifyAnythingChanged();
+    }
+}
+
+QString MaskEditCommand::label() const {
+    return QStringLiteral("Edit Mask");
 }
 
 

@@ -92,6 +92,7 @@
 #include <random>
 module Artifact.Widgets.ProjectManagerWidget;
 
+import std;
 import Artifact.Widgets.SoftwareRenderInspectors;
 
 
@@ -337,6 +338,37 @@ QIcon loadProjectViewIcon(const QString& resourceRelativePath, const QString& fa
         return appStyle->standardIcon(QStyle::SP_FileIcon);
     }
     return icon;
+}
+
+constexpr int kHeaderResizeHitRadius = 7;
+constexpr int kHeaderGripWidth = 9;
+constexpr int kHeaderGripHeight = 11;
+
+struct HeaderResizeHit {
+    int column = -1;
+    int boundaryX = 0;
+};
+
+HeaderResizeHit headerResizeHit(const QVector<int>& columnWidths, const QPoint& mousePos, const int headerHeight)
+{
+    if (mousePos.y() < 0 || mousePos.y() >= headerHeight) {
+        return {};
+    }
+
+    int x = 0;
+    for (int i = 0; i < columnWidths.size(); ++i) {
+        const int width = columnWidths[i];
+        const int left = x;
+        const int right = x + width;
+        if (std::abs(mousePos.x() - right) <= kHeaderResizeHitRadius) {
+            return {i, right};
+        }
+        if (i > 0 && std::abs(mousePos.x() - left) <= kHeaderResizeHitRadius) {
+            return {i - 1, left};
+        }
+        x += width;
+    }
+    return {};
 }
 
 } // namespace
@@ -1028,6 +1060,8 @@ ArtifactProjectView::ArtifactProjectView(QWidget* parent) : QWidget(parent), imp
     setAutoFillBackground(false);
     setAttribute(Qt::WA_OpaquePaintEvent, true);
     setFocusPolicy(Qt::StrongFocus);
+    impl_->hoverTimer = new QTimer(this);
+    impl_->hoverTimer->setSingleShot(true);
     
     verticalScrollBar_ = new QScrollBar(Qt::Vertical, this);
     scrollY_ = 0;
@@ -1458,6 +1492,21 @@ void ArtifactProjectView::paintEvent(QPaintEvent* event)
 
             painter.setPen(Impl::Colors::HeaderSeparator);
             painter.drawLine(headerRect.topRight() + QPoint(0, 4), headerRect.bottomRight() - QPoint(0, 4));
+
+            if (column + 1 < columnCount) {
+                const bool isResizeHot = (impl_->hoverHeaderColumn == column || impl_->resizingColumn == column);
+                const QColor gripColor = isResizeHot
+                    ? QColor(214, 222, 231, 210)
+                    : QColor(143, 153, 166, 150);
+                painter.setPen(QPen(gripColor, 1.4, Qt::SolidLine, Qt::RoundCap));
+                const int gripX = headerRect.right() - (kHeaderGripWidth / 2);
+                const int centerY = headerRect.center().y();
+                const int startY = centerY - (kHeaderGripHeight / 2);
+                for (int i = 0; i < 3; ++i) {
+                    const int y = startY + i * 3;
+                    painter.drawLine(QPointF(gripX - 1.5, y), QPointF(gripX + 1.5, y));
+                }
+            }
         }
         headerX += width;
     }
@@ -1480,6 +1529,10 @@ void ArtifactProjectView::handleItemDoubleClicked(const QModelIndex& index) {
                  CompositionID cid(idVar.toString());
                  ArtifactProjectService::instance()->changeCurrentComposition(cid);
              }
+        } else if (typeVar.toInt() == static_cast<int>(eProjectItemType::Folder)) {
+            if (impl_->hasChildren(actualIdx)) {
+                setExpanded(actualIdx, !impl_->isExpanded(actualIdx));
+            }
         } else if (typeVar.toInt() == static_cast<int>(eProjectItemType::Footage)) {
             QVariant ptrVar = actualIdx.data(Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::ProjectItemPtr));
             ProjectItem* item = ptrVar.isValid() ? reinterpret_cast<ProjectItem*>(ptrVar.value<quintptr>()) : nullptr;
@@ -1491,7 +1544,38 @@ void ArtifactProjectView::handleItemDoubleClicked(const QModelIndex& index) {
 }
 
 void ArtifactProjectView::mouseDoubleClickEvent(QMouseEvent* event) {
-    const QModelIndex idx = indexAt(event->position().toPoint());
+    const QPoint mousePos = event->position().toPoint();
+    if (mousePos.y() < impl_->headerHeight) {
+        const HeaderResizeHit resizeHit = headerResizeHit(impl_->columnWidths, mousePos, impl_->headerHeight);
+        if (resizeHit.column >= 0 && std::abs(mousePos.x() - resizeHit.boundaryX) <= kHeaderResizeHitRadius) {
+            const QFontMetrics fm(font());
+            int widest = fm.horizontalAdvance(impl_->model
+                ? impl_->model->headerData(resizeHit.column, Qt::Horizontal, Qt::DisplayRole).toString()
+                : QString());
+            for (const auto& row : impl_->visibleRows) {
+                if (!row.index0.isValid()) {
+                    continue;
+                }
+                const QModelIndex cellIndex = row.index0.siblingAtColumn(resizeHit.column);
+                if (!cellIndex.isValid()) {
+                    continue;
+                }
+                int width = fm.horizontalAdvance(cellIndex.data(Qt::DisplayRole).toString());
+                if (resizeHit.column == 0) {
+                    width += 36;
+                } else {
+                    width += 20;
+                }
+                widest = std::max(widest, width);
+            }
+            setColumnWidth(resizeHit.column, std::clamp(widest + 24, 56, 420));
+            refreshVisibleContent();
+            event->accept();
+            return;
+        }
+    }
+
+    const QModelIndex idx = indexAt(mousePos);
     if (idx.isValid()) {
         itemDoubleClicked(idx);
         handleItemDoubleClicked(idx);
@@ -1535,6 +1619,10 @@ void ArtifactProjectView::editIndex(const QModelIndex& index) {
 }
 
 void ArtifactProjectView::mouseMoveEvent(QMouseEvent* event) {
+    if (!impl_) {
+        QWidget::mouseMoveEvent(event);
+        return;
+    }
     const QPoint mousePos = event->position().toPoint();
 
     if (impl_->resizingColumn != -1) {
@@ -1549,18 +1637,16 @@ void ArtifactProjectView::mouseMoveEvent(QMouseEvent* event) {
     if (mousePos.y() < impl_->headerHeight) {
         int x = 0;
         int hoveredCol = -1;
-        bool nearEdge = false;
         for (int i = 0; i < impl_->columnWidths.size(); ++i) {
             const int width = impl_->columnWidths[i];
             if (mousePos.x() >= x && mousePos.x() < x + width) {
                 hoveredCol = i;
-                if (std::abs(mousePos.x() - (x + width)) < 5) nearEdge = true;
-                if (i > 0 && std::abs(mousePos.x() - x) < 5) { hoveredCol = i - 1; nearEdge = true; }
                 break;
             }
             x += width;
         }
-        setCursor(nearEdge ? Qt::SplitHCursor : Qt::ArrowCursor);
+        const HeaderResizeHit resizeHit = headerResizeHit(impl_->columnWidths, mousePos, impl_->headerHeight);
+        setCursor(resizeHit.column >= 0 ? Qt::SplitHCursor : Qt::ArrowCursor);
         if (hoveredCol != impl_->hoverHeaderColumn) { impl_->hoverHeaderColumn = hoveredCol; update(); }
     } else {
         setCursor(Qt::ArrowCursor);
@@ -1667,19 +1753,21 @@ void ArtifactProjectView::wheelEvent(QWheelEvent* event)
 }
 
 void ArtifactProjectView::leaveEvent(QEvent* event) {
-    if (impl_) {
-        if (impl_->hoverTimer) {
-            impl_->hoverTimer->stop();
-        }
-        if (impl_->hoverPopup) {
-            impl_->hoverPopup->hide();
-        }
-        impl_->hoverIndex = QModelIndex();
-        impl_->hoverHeaderColumn = -1;
-        impl_->hoverBranchIndex = QModelIndex();
-        unsetCursor();
-        update();
+    if (!impl_) {
+        QWidget::leaveEvent(event);
+        return;
     }
+    if (impl_->hoverTimer) {
+        impl_->hoverTimer->stop();
+    }
+    if (impl_->hoverPopup) {
+        impl_->hoverPopup->hide();
+    }
+    impl_->hoverIndex = QModelIndex();
+    impl_->hoverHeaderColumn = -1;
+    impl_->hoverBranchIndex = QModelIndex();
+    unsetCursor();
+    update();
     QWidget::leaveEvent(event);
 }
 
@@ -2278,20 +2366,31 @@ void ArtifactProjectView::dragMoveEvent(QDragMoveEvent* event) {
 }
 
 void ArtifactProjectView::mousePressEvent(QMouseEvent* event) {
-    if (impl_) {
-        impl_->hoverTimer->stop();
-        if (impl_->hoverPopup) impl_->hoverPopup->hide();
-        if (impl_->nameEditor && impl_->nameEditor->isVisible()) { impl_->nameEditor->hide(); impl_->editingIndex = QModelIndex(); update(); }
+    if (!impl_) {
+        QWidget::mousePressEvent(event);
+        return;
     }
+    if (impl_->hoverTimer) {
+        impl_->hoverTimer->stop();
+    }
+    if (impl_->hoverPopup) impl_->hoverPopup->hide();
+    if (impl_->nameEditor && impl_->nameEditor->isVisible()) { impl_->nameEditor->hide(); impl_->editingIndex = QModelIndex(); update(); }
     const QPoint mousePos = event->position().toPoint();
     if (mousePos.y() < impl_->headerHeight) {
+        const HeaderResizeHit resizeHit = headerResizeHit(impl_->columnWidths, mousePos, impl_->headerHeight);
+        if (resizeHit.column >= 0) {
+            impl_->resizingColumn = resizeHit.column;
+            impl_->resizeStartX = resizeHit.boundaryX;
+            setCursor(Qt::SplitHCursor);
+            event->accept();
+            return;
+        }
+
         int x = 0;
         for (int i = 0; i < impl_->columnWidths.size(); ++i) {
             const int width = impl_->columnWidths[i];
             const QRect hr(x, 0, width, impl_->headerHeight);
             if (hr.contains(mousePos)) {
-                if (std::abs(mousePos.x() - hr.right()) < 5) { impl_->resizingColumn = i; impl_->resizeStartX = mousePos.x(); return; }
-                if (i > 0 && std::abs(mousePos.x() - hr.left()) < 5) { impl_->resizingColumn = i - 1; impl_->resizeStartX = mousePos.x(); return; }
                 if (impl_->sortingEnabled) { impl_->sortOrder = (impl_->sortColumn == i && impl_->sortOrder == Qt::AscendingOrder) ? Qt::DescendingOrder : Qt::AscendingOrder; impl_->sortColumn = i; sortByColumn(i, impl_->sortOrder); }
                 return;
             }
@@ -2386,6 +2485,14 @@ public:
     QProgressBar* proxyQueueProgress = nullptr;
     ArtifactProjectManagerToolBox* toolBox = nullptr;
     QLabel* projectNameLabel = nullptr;
+    QLabel* selectionSummaryLabel = nullptr;
+    QLabel* selectionDetailLabel = nullptr;
+    QPushButton* openSelectionButton = nullptr;
+    QPushButton* revealSelectionButton = nullptr;
+    QPushButton* renameSelectionButton = nullptr;
+    QPushButton* deleteSelectionButton = nullptr;
+    QPushButton* relinkSelectionButton = nullptr;
+    QPushButton* copyPathButton = nullptr;
     bool thumbnailEnabled = true;
     QSet<QString> unusedAssetPaths_;
     struct ProxyJob {
@@ -2397,19 +2504,56 @@ public:
     QMetaObject::Connection currentRowChangedConnection_;
     bool headerLayoutInitialized_ = false;
 
-    QModelIndex currentSourceIndexFromSelection() const {
+    QModelIndex currentSelectionIndex0() const {
         if (!projectView_ || !projectView_->selectionModel()) {
             return {};
         }
-        const auto selectedRows = projectView_->selectionModel()->selectedRows(0);
-        if (selectedRows.isEmpty()) {
+        const auto rows = projectView_->selectionModel()->selectedRows(0);
+        if (rows.isEmpty()) {
             return {};
         }
-        QModelIndex current = selectedRows.first();
-        if (auto proxy = qobject_cast<const QSortFilterProxyModel*>(current.model())) {
-            current = proxy->mapToSource(current).siblingAtColumn(0);
+        QModelIndex index = rows.first();
+        if (auto proxy = qobject_cast<const QSortFilterProxyModel*>(index.model())) {
+            index = proxy->mapToSource(index).siblingAtColumn(0);
         }
-        return current;
+        return index.siblingAtColumn(0);
+    }
+
+    static int relinkMissingFootage(const QString& rootDir, const QVector<FootageItem*>& targets) {
+        auto findByFileName = [](const QString& searchRoot, const QString& fileName) -> QString {
+            if (searchRoot.isEmpty() || fileName.isEmpty()) {
+                return QString();
+            }
+            QDirIterator it(searchRoot, QDir::Files, QDirIterator::Subdirectories);
+            while (it.hasNext()) {
+                const QString candidate = it.next();
+                if (QFileInfo(candidate).fileName().compare(fileName, Qt::CaseInsensitive) == 0) {
+                    return candidate;
+                }
+            }
+            return QString();
+        };
+
+        int relinked = 0;
+        for (auto* footage : targets) {
+            if (!footage) {
+                continue;
+            }
+            const QFileInfo currentInfo(footage->filePath);
+            if (currentInfo.exists()) {
+                continue;
+            }
+            const QString replacement = findByFileName(rootDir, currentInfo.fileName());
+            if (!replacement.isEmpty()) {
+                footage->filePath = QFileInfo(replacement).absoluteFilePath();
+                ++relinked;
+            }
+        }
+        return relinked;
+    }
+
+    QModelIndex currentSourceIndexFromSelection() const {
+        return currentSelectionIndex0();
     }
 
     ProjectItem* currentSelectedItem() const {
@@ -2475,6 +2619,129 @@ public:
             return false;
         }
         return svc->removeProjectItem(item);
+    }
+
+    QString selectedItemPath() const {
+        ProjectItem* item = currentSelectedItem();
+        if (!item) {
+            return QString();
+        }
+        if (item->type() == eProjectItemType::Footage) {
+            return static_cast<FootageItem*>(item)->filePath;
+        }
+        if (item->type() == eProjectItemType::Folder) {
+            return folderDisplayPath(static_cast<FolderItem*>(item));
+        }
+        if (item->type() == eProjectItemType::Composition) {
+            return static_cast<CompositionItem*>(item)->compositionId.toString();
+        }
+        return item->name.toQString();
+    }
+
+    QString selectionSummaryText() const {
+        const int selectedCount = projectView_ && projectView_->selectionModel()
+            ? projectView_->selectionModel()->selectedRows(0).size()
+            : 0;
+        const QString searchText = searchBar ? searchBar->text().trimmed() : QString();
+        const QString typeText = typeFilterBox ? typeFilterBox->currentText() : QStringLiteral("All");
+        const QString unusedText = unusedOnlyCheck && unusedOnlyCheck->isChecked()
+            ? QStringLiteral("Unused only")
+            : QStringLiteral("All items");
+        return QStringLiteral("Selected: %1 | Filter: %2 | Type: %3 | %4")
+            .arg(selectedCount)
+            .arg(searchText.isEmpty() ? QStringLiteral("-") : searchText)
+            .arg(typeText)
+            .arg(unusedText);
+    }
+
+    void refreshSelectionChrome() {
+        if (selectionSummaryLabel) {
+            selectionSummaryLabel->setText(selectionSummaryText());
+        }
+        ProjectItem* item = currentSelectedItem();
+        const bool hasItem = item != nullptr;
+        const bool isFootage = item && item->type() == eProjectItemType::Footage;
+        const bool isFolder = item && item->type() == eProjectItemType::Folder;
+        const bool isComposition = item && item->type() == eProjectItemType::Composition;
+        const QString pathText = selectedItemPath();
+        const QString statusText = !item ? QStringLiteral("No selection")
+            : isFootage ? (QFileInfo(static_cast<FootageItem*>(item)->filePath).exists() ? QStringLiteral("Available") : QStringLiteral("Missing"))
+            : isFolder ? QStringLiteral("Folder")
+            : isComposition ? QStringLiteral("Composition")
+            : QStringLiteral("Item");
+        if (selectionDetailLabel) {
+            if (!hasItem) {
+                selectionDetailLabel->setText(QStringLiteral("Use the search bar or click an item to inspect it."));
+            } else {
+                selectionDetailLabel->setText(QStringLiteral("%1 | %2").arg(statusText, pathText.isEmpty() ? QStringLiteral("-") : pathText));
+            }
+        }
+        if (openSelectionButton) openSelectionButton->setEnabled(hasItem);
+        if (revealSelectionButton) revealSelectionButton->setEnabled(isFootage);
+        if (renameSelectionButton) renameSelectionButton->setEnabled(hasItem);
+        if (deleteSelectionButton) deleteSelectionButton->setEnabled(hasItem);
+        if (copyPathButton) copyPathButton->setEnabled(isFootage);
+        if (relinkSelectionButton) {
+            relinkSelectionButton->setEnabled(isFootage && !QFileInfo(static_cast<FootageItem*>(item)->filePath).exists());
+        }
+    }
+
+    void openSelectedItem(QWidget* parent) {
+        Q_UNUSED(parent);
+        const QModelIndex idx = currentSelectionIndex0();
+        if (!idx.isValid()) {
+            return;
+        }
+        if (projectView_) {
+            ProjectItem* item = currentSelectedItem();
+            if (item && item->type() == eProjectItemType::Folder) {
+                projectView_->handleItemDoubleClicked(idx);
+            } else {
+                projectView_->itemDoubleClicked(idx);
+                projectView_->handleItemDoubleClicked(idx);
+            }
+        }
+    }
+
+    void revealSelectedItem(QWidget* parent) {
+        Q_UNUSED(parent);
+        ProjectItem* item = currentSelectedItem();
+        if (!item) {
+            return;
+        }
+        if (item->type() == eProjectItemType::Footage) {
+            const QString path = static_cast<FootageItem*>(item)->filePath;
+            if (!path.isEmpty()) {
+                QDesktopServices::openUrl(QUrl::fromLocalFile(QFileInfo(path).absolutePath()));
+            }
+        }
+    }
+
+    void copySelectedPathToClipboard() {
+        const QString path = selectedItemPath();
+        if (!path.isEmpty()) {
+            QApplication::clipboard()->setText(path);
+        }
+    }
+
+    void relinkSelectedItem(QWidget* parent) {
+        auto* svc = ArtifactProjectService::instance();
+        ProjectItem* item = currentSelectedItem();
+        if (!svc || !item || item->type() != eProjectItemType::Footage) {
+            return;
+        }
+        const QString root = QFileDialog::getExistingDirectory(parent, QStringLiteral("Relink Selected Footage - Search Root"));
+        if (root.isEmpty()) {
+            return;
+        }
+        QVector<FootageItem*> targets;
+        targets.append(static_cast<FootageItem*>(item));
+        const int relinked = Impl::relinkMissingFootage(root, targets);
+        if (relinked > 0) {
+            svc->projectChanged();
+        }
+        QMessageBox::information(parent, QStringLiteral("Relink Result"),
+                                 QStringLiteral("Relinked %1 file(s).").arg(relinked));
     }
 
     void syncSelectionToCurrentComposition() {
@@ -2640,11 +2907,14 @@ public:
                     QObject::connect(projectView_->selectionModel(), &QItemSelectionModel::currentRowChanged, projectView_,
                     [this](const QModelIndex& current, const QModelIndex&) {
                         if (!current.isValid() || !proxyModel_ || !infoPanel_) {
+                            refreshSelectionChrome();
                             return;
                         }
                         infoPanel_->updateInfo(proxyModel_->mapToSource(current));
+                        refreshSelectionChrome();
                     });
             }
+            refreshSelectionChrome();
         }
         refreshUnusedAssetCache();
         if (proxyModel_) {
@@ -2667,6 +2937,7 @@ public:
             typeFilterBox ? typeFilterBox->currentText() : QString(),
             unusedOnlyCheck ? unusedOnlyCheck->isChecked() : false);
         if (!trimmed.isEmpty() && projectView_) projectView_->expandAll();
+        refreshSelectionChrome();
     }
 };
 
@@ -2720,6 +2991,37 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     impl_->projectNameLabel->setObjectName(QStringLiteral("projectManagerSectionLabel"));
     chromeLayout->addWidget(impl_->projectNameLabel);
 
+    auto* selectionChrome = new QWidget(chromePanel);
+    auto* selectionChromeLayout = new QVBoxLayout(selectionChrome);
+    selectionChromeLayout->setContentsMargins(10, 0, 10, 8);
+    selectionChromeLayout->setSpacing(4);
+    impl_->selectionSummaryLabel = new QLabel(QStringLiteral("Selected: 0 | Filter: - | Type: All | All items"), selectionChrome);
+    impl_->selectionSummaryLabel->setStyleSheet("color: #9aa7b4; font-size: 10px;");
+    impl_->selectionSummaryLabel->setWordWrap(true);
+    selectionChromeLayout->addWidget(impl_->selectionSummaryLabel);
+    impl_->selectionDetailLabel = new QLabel(QStringLiteral("Use the search bar or click an item to inspect it."), selectionChrome);
+    impl_->selectionDetailLabel->setStyleSheet("color: #c7ccd4; font-size: 11px;");
+    impl_->selectionDetailLabel->setWordWrap(true);
+    selectionChromeLayout->addWidget(impl_->selectionDetailLabel);
+
+    auto* selectionButtons = new QHBoxLayout();
+    selectionButtons->setSpacing(6);
+    impl_->openSelectionButton = new QPushButton(QStringLiteral("Open"), selectionChrome);
+    impl_->revealSelectionButton = new QPushButton(QStringLiteral("Reveal"), selectionChrome);
+    impl_->renameSelectionButton = new QPushButton(QStringLiteral("Rename"), selectionChrome);
+    impl_->deleteSelectionButton = new QPushButton(QStringLiteral("Delete"), selectionChrome);
+    impl_->relinkSelectionButton = new QPushButton(QStringLiteral("Relink"), selectionChrome);
+    impl_->copyPathButton = new QPushButton(QStringLiteral("Copy Path"), selectionChrome);
+    selectionButtons->addWidget(impl_->openSelectionButton);
+    selectionButtons->addWidget(impl_->revealSelectionButton);
+    selectionButtons->addWidget(impl_->renameSelectionButton);
+    selectionButtons->addWidget(impl_->deleteSelectionButton);
+    selectionButtons->addWidget(impl_->relinkSelectionButton);
+    selectionButtons->addWidget(impl_->copyPathButton);
+    selectionButtons->addStretch();
+    selectionChromeLayout->addLayout(selectionButtons);
+    chromeLayout->addWidget(selectionChrome);
+
     impl_->searchBar = new QLineEdit(chromePanel);
     impl_->searchBar->setPlaceholderText("Search (type:footage tag:png regex:shot_.* unused:true)...");
     impl_->searchBar->setStyleSheet(R"(
@@ -2771,8 +3073,31 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     connect(impl_->unusedOnlyCheck, &QCheckBox::toggled, [this](bool) {
         impl_->handleSearch(impl_->searchBar ? impl_->searchBar->text() : QString());
     });
+    connect(impl_->openSelectionButton, &QPushButton::clicked, this, [this]() {
+        impl_->openSelectedItem(this);
+    });
+    connect(impl_->revealSelectionButton, &QPushButton::clicked, this, [this]() {
+        impl_->revealSelectedItem(this);
+    });
+    connect(impl_->renameSelectionButton, &QPushButton::clicked, this, [this]() {
+        if (!impl_->renameSelectedItem(this)) {
+            QMessageBox::information(this, QStringLiteral("Rename"), QStringLiteral("Select an item to rename."));
+        }
+    });
+    connect(impl_->deleteSelectionButton, &QPushButton::clicked, this, [this]() {
+        if (!impl_->deleteSelectedItem(this)) {
+            QMessageBox::information(this, QStringLiteral("Delete"), QStringLiteral("Select an item to delete."));
+        }
+    });
+    connect(impl_->relinkSelectionButton, &QPushButton::clicked, this, [this]() {
+        impl_->relinkSelectedItem(this);
+    });
+    connect(impl_->copyPathButton, &QPushButton::clicked, this, [this]() {
+        impl_->copySelectedPathToClipboard();
+    });
     connect(impl_->projectView_, &ArtifactProjectView::itemSelected, [this](const QModelIndex& idx) {
-        if (impl_->proxyModel_) impl_->infoPanel_->updateInfo(impl_->proxyModel_->mapToSource(idx));
+        if (impl_->proxyModel_ && impl_->infoPanel_) impl_->infoPanel_->updateInfo(impl_->proxyModel_->mapToSource(idx));
+        if (impl_) impl_->refreshSelectionChrome();
     });
     connect(impl_->projectView_, &ArtifactProjectView::itemDoubleClicked, [this](const QModelIndex& idx) {
         itemDoubleClicked(idx);
@@ -2806,27 +3131,15 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
          impl_->queueProxyGeneration(footage);
     });
     connect(impl_->toolBox, &ArtifactProjectManagerToolBox::deleteRequested, [this]() {
-         if (!impl_->projectView_ || !impl_->projectView_->selectionModel()) return;
-         auto selection = impl_->projectView_->selectionModel()->selectedIndexes();
-         if (!selection.isEmpty()) {
-             QModelIndex idx = selection.first();
-             QModelIndex sourceIdx = idx;
-             if (auto proxy = qobject_cast<const QSortFilterProxyModel*>(idx.model())) {
-                 sourceIdx = proxy->mapToSource(idx).siblingAtColumn(0);
-             }
-             QVariant ptrVar = sourceIdx.data(Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::ProjectItemPtr));
-             ProjectItem* item = ptrVar.isValid() ? reinterpret_cast<ProjectItem*>(ptrVar.value<quintptr>()) : nullptr;
-             
-             auto* svc = ArtifactProjectService::instance();
-             if (!svc) return;
-             auto project = svc->getCurrentProjectSharedPtr();
-             if (project && item) project->removeItem(item);
+         if (!impl_->deleteSelectedItem(this)) {
+             QMessageBox::information(this, QStringLiteral("Delete"), QStringLiteral("Select an item to delete."));
          }
     });
 
     auto svc = ArtifactProjectService::instance();
     connect(svc, &ArtifactProjectService::projectChanged, this, [this]() { updateRequested(); });
     connect(svc, &ArtifactProjectService::projectCreated, this, [this]() { updateRequested(); });
+    impl_->refreshSelectionChrome();
 
     auto* focusSearchShortcut = new QShortcut(QKeySequence::Find, this);
     connect(focusSearchShortcut, &QShortcut::activated, this, [this]() {
@@ -2866,6 +3179,11 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
 
 ArtifactProjectManagerWidget::~ArtifactProjectManagerWidget() { delete impl_; }
 
+ArtifactProjectView* ArtifactProjectManagerWidget::projectView() const
+{
+    return impl_ ? impl_->projectView_ : nullptr;
+}
+
 void ArtifactProjectManagerWidget::paintEvent(QPaintEvent* event)
 {
     QPainter painter(this);
@@ -2875,6 +3193,9 @@ void ArtifactProjectManagerWidget::paintEvent(QPaintEvent* event)
 
 void ArtifactProjectManagerWidget::updateRequested() {
     impl_->update();
+    if (impl_) {
+        impl_->refreshSelectionChrome();
+    }
     setEnabled(true);
 }
 

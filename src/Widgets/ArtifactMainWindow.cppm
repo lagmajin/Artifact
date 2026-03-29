@@ -41,8 +41,6 @@ namespace Artifact {
 
 using namespace ads;
 
-namespace
-{
 #if defined(_WIN32)
 using DwmSetWindowAttributeFn = HRESULT(WINAPI*)(HWND, DWORD, LPCVOID, DWORD);
 
@@ -89,6 +87,8 @@ void applyDarkNativeTitleBar(QWidget* widget)
 void applyDarkNativeTitleBar(QWidget*) {}
 #endif
 
+namespace
+{
 void refreshFloatingWidgetTree(QWidget* widget)
 {
  if (!widget) {

@@ -43,8 +43,10 @@ module Artifact.Widgets.LayerPanelWidget;
 import std;
 
 import Utils.Path;
+import Artifact.Application.Manager;
 import Artifact.Service.Project;
 import Artifact.Service.Playback;
+import Artifact.Layers.Selection.Manager;
 import Artifact.Project.Manager;
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
@@ -546,6 +548,19 @@ namespace {
 
     // ビューポート上のドラッグイベントをターゲットパネルに転送
     switch (event->type()) {
+     case QEvent::MouseButtonPress:
+     case QEvent::MouseMove:
+     case QEvent::MouseButtonRelease: {
+      auto* mouseEvent = static_cast<QMouseEvent*>(event);
+      QMouseEvent forwardedEvent(
+          event->type(),
+          target_->mapFromGlobal(sourceWidget->mapToGlobal(mouseEvent->position().toPoint())),
+          mouseEvent->button(),
+          mouseEvent->buttons(),
+          mouseEvent->modifiers());
+      QCoreApplication::sendEvent(target_, &forwardedEvent);
+      return forwardedEvent.isAccepted();
+     }
      case QEvent::DragEnter: {
       auto* dragEvent = static_cast<QDragEnterEvent*>(event);
       QDragEnterEvent forwardedEvent(
@@ -1305,6 +1320,19 @@ int ArtifactLayerPanelHeaderWidget::totalHeaderHeight() const
         update();
       }
     });
+    if (auto* app = ArtifactApplicationManager::instance()) {
+      if (auto* selection = app->layerSelectionManager()) {
+        QObject::connect(selection, &ArtifactLayerSelectionManager::selectionChanged, this,
+                         [this, selection]() {
+          const auto current = selection ? selection->currentLayer() : ArtifactAbstractLayerPtr{};
+          const LayerID nextId = current ? current->id() : LayerID();
+          if (impl_->selectedLayerId != nextId) {
+            impl_->selectedLayerId = nextId;
+          }
+          update();
+        });
+      }
+    }
     QObject::connect(service, &ArtifactProjectService::compositionCreated, this, [this](const CompositionID& compId) {
       if (impl_->compositionId.isNil()) {
         impl_->compositionId = compId;
@@ -1666,12 +1694,40 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
         return;
       }
     }
-    // 名前エリアまたはスイッチ列でドラッグを開始可能に
-    if (service) {
+    // 名前エリアまたはスイッチ列での選択操作
+    if (auto* app = ArtifactApplicationManager::instance()) {
+      if (auto* selection = app->layerSelectionManager()) {
+        auto comp = safeCompositionLookup(impl_->compositionId);
+        if (comp) {
+          selection->setActiveComposition(comp);
+          const bool ctrl = event->modifiers() & Qt::ControlModifier;
+          const bool shift = event->modifiers() & Qt::ShiftModifier;
+          if (ctrl) {
+            if (selection->isSelected(layer)) {
+              selection->removeFromSelection(layer);
+            } else {
+              selection->addToSelection(layer);
+            }
+          } else if (shift) {
+            selection->addToSelection(layer);
+          } else if (service) {
+            service->selectLayer(layer->id());
+          } else {
+            selection->selectLayer(layer);
+          }
+          const auto current = selection->currentLayer();
+          impl_->selectedLayerId = current ? current->id() : layer->id();
+        } else if (service) {
+          service->selectLayer(layer->id());
+        }
+      } else if (service) {
+        service->selectLayer(layer->id());
+      }
+    } else if (service) {
       service->selectLayer(layer->id());
-      impl_->dragStartPos = event->pos();
-      impl_->dragCandidateLayerId = layer->id();
     }
+    impl_->dragStartPos = event->pos();
+    impl_->dragCandidateLayerId = layer->id();
     update();
   } else if (event->button() == Qt::RightButton) {
     if (service) {
@@ -2037,15 +2093,27 @@ void ArtifactLayerPanelWidget::mouseDoubleClickEvent(QMouseEvent* event)
 void ArtifactLayerPanelWidget::keyPressEvent(QKeyEvent* event)
 {
   if (event->key() == Qt::Key_Delete || event->key() == Qt::Key_Backspace) {
-    if (!impl_->selectedLayerId.isNil()) {
-      if (auto* service = ArtifactProjectService::instance()) {
-        auto comp = safeCompositionLookup(impl_->compositionId);
-        const CompositionID compId = comp ? comp->id() : impl_->compositionId;
-        if (!compId.isNil()) {
-          service->removeLayerFromComposition(compId, impl_->selectedLayerId);
-          event->accept();
-          return;
+    auto comp = safeCompositionLookup(impl_->compositionId);
+    const CompositionID compId = comp ? comp->id() : impl_->compositionId;
+    auto* service = ArtifactProjectService::instance();
+    auto* selection = ArtifactApplicationManager::instance()
+                          ? ArtifactApplicationManager::instance()->layerSelectionManager()
+                          : nullptr;
+    const auto selectedLayers = selection ? selection->selectedLayers() : QSet<ArtifactAbstractLayerPtr>{};
+    if (service && !compId.isNil()) {
+      if (selectedLayers.size() > 1) {
+        for (const auto& layer : selectedLayers) {
+          if (layer) {
+            service->removeLayerFromComposition(compId, layer->id());
+          }
         }
+        event->accept();
+        return;
+      }
+      if (!impl_->selectedLayerId.isNil()) {
+        service->removeLayerFromComposition(compId, impl_->selectedLayerId);
+        event->accept();
+        return;
       }
     }
   }
@@ -2301,7 +2369,11 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
     auto l = row.layer;
     if (!l) continue;
     const bool isGroupRow = (row.kind == Impl::RowKind::Group);
-    bool sel = (l->id() == impl_->selectedLayerId);
+    const auto selection = ArtifactApplicationManager::instance()
+        ? ArtifactApplicationManager::instance()->layerSelectionManager()
+        : nullptr;
+    const bool sel = (l->id() == impl_->selectedLayerId) ||
+                     (selection && selection->isSelected(l));
 
     // レイヤータイプ別の色を取得
     QColor layerTypeColor = getLayerTypeColor(l);
@@ -2668,6 +2740,20 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
         ArtifactAudioInitParams params(QFileInfo(path).baseName());
         params.setAudioPath(path);
         svc->addLayerToCurrentComposition(params);
+      } else if (type == LayerType::Video) {
+        ArtifactLayerInitParams params(QFileInfo(path).baseName(), type);
+        svc->addLayerToCurrentComposition(params);
+
+        if (auto* app = ArtifactApplicationManager::instance()) {
+          if (auto* selectionManager = app->layerSelectionManager()) {
+            if (auto currentLayer = selectionManager->currentLayer()) {
+              if (!svc->replaceLayerSourceInCurrentComposition(currentLayer->id(), path)) {
+                qWarning() << "[LayerPanel] Failed to bind video source to new layer"
+                           << currentLayer->id().toString() << path;
+              }
+            }
+          }
+        }
       } else {
         ArtifactLayerInitParams params(QFileInfo(path).baseName(), type);
         svc->addLayerToCurrentComposition(params);
@@ -2709,7 +2795,8 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
    impl_->scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
    impl_->scroll->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
    impl_->scroll->setFrameShape(QFrame::NoFrame);
-   impl_->scroll->viewport()->setAcceptDrops(true);
+  impl_->scroll->viewport()->setAcceptDrops(true);
+  impl_->scroll->viewport()->setMouseTracking(true);
    impl_->panel->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
 
    auto* wheelFilter = new LayerPanelWheelFilter(impl_->scroll, this);

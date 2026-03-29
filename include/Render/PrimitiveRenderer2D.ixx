@@ -62,10 +62,12 @@ public:
     void drawQuadLocal(float2 p0, float2 p1, float2 p2, float2 p3, const FloatColor& color);
     void drawThickLineLocal(float2 p1, float2 p2, float thickness, const FloatColor& color);
     void drawDotLineLocal(float2 p1, float2 p2, float thickness, float spacing, const FloatColor& color);
+    void drawDashedLineLocal(float2 p1, float2 p2, float thickness, float dashLength, float gapLength, const FloatColor& color);
     void drawBezierLocal(float2 p0, float2 p1, float2 p2, float thickness, const FloatColor& color);
     void drawBezierLocal(float2 p0, float2 p1, float2 p2, float2 p3, float thickness, const FloatColor& color);
     void drawSolidTriangleLocal(float2 p0, float2 p1, float2 p2, const FloatColor& color);
     void drawCircle(float x, float y, float radius, const FloatColor& color, float thickness = 1.0f, bool fill = false);
+    void drawSolidCircle(float x, float y, float radius, const FloatColor& color);  // 最適化：塗り円
     void drawCrosshair(float x, float y, float size, const FloatColor& color);
 
     void drawSolidRect(float x, float y, float w, float h, const FloatColor& color, float opacity = 1.0f);
@@ -77,6 +79,7 @@ public:
     void drawSpriteTransformed(float x, float y, float w, float h, const QMatrix4x4& transform, const QImage& image, float opacity = 1.0f);
     void drawSpriteTransformed(float x, float y, float w, float h, const QMatrix4x4& transform, ITextureView* texture, float opacity = 1.0f);
     void drawTextureLocal(float x, float y, float w, float h, ITextureView* pSRV, float opacity = 1.0f);
+    void drawMaskedTextureLocal(float x, float y, float w, float h, ITextureView* sceneSRV, const QImage& maskImage, float opacity = 1.0f);
 
 private:
     class Impl;

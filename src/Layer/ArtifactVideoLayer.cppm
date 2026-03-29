@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <QImage>
 #include <QMatrix4x4>
 #include <QString>
@@ -9,6 +9,7 @@ module;
 #include <QFileInfo>
 #include <QVariant>
 #include <QLoggingCategory>
+#include <QThread>
 #include <QFuture>
 #include <QtConcurrent>
 #include <opencv2/opencv.hpp>
@@ -84,6 +85,27 @@ int64_t sourceFrameToTimelineFrame(const ArtifactVideoLayer* layer, int64_t sour
         return sourceFrame;
     }
     return sourceFrame + layer->inPoint() - layer->startTime().framePosition();
+}
+
+QString decoderBackendName(const ArtifactCore::MediaPlaybackController* controller)
+{
+    if (!controller) {
+        return QStringLiteral("Unknown");
+    }
+    return controller->getDecoderBackend() == ArtifactCore::DecoderBackend::MediaFoundation
+        ? QStringLiteral("MediaFoundation")
+        : QStringLiteral("FFmpeg");
+}
+
+int64_t currentSourceFrame(const ArtifactVideoLayer* layer)
+{
+    return layer ? layer->currentFrame() : 0;
+}
+
+QString threadIdTag()
+{
+    return QStringLiteral("thread=%1")
+        .arg(reinterpret_cast<quintptr>(QThread::currentThreadId()));
 }
 
 }
@@ -163,6 +185,7 @@ public:
     std::deque<float> audioBufferL_;
     std::deque<float> audioBufferR_;
     std::mutex audioMutex_;
+    int64_t lastAudioRequestTimelineFrame_ = std::numeric_limits<int64_t>::min();
     
     QString sourcePath_;
     bool isLoaded_ = false;
@@ -264,7 +287,7 @@ void ArtifactVideoLayer::setHasVideo(bool hasVideo)
 bool ArtifactVideoLayer::loadFromPath(const QString& path)
 {
     const QString normalizedPath = QFileInfo(path).absoluteFilePath();
-    qDebug() << "[VideoLayer] loadFromPath:" << normalizedPath;
+    qDebug() << "[VideoLayer] loadFromPath:" << normalizedPath << threadIdTag();
 
     if (!impl_->playbackController_->openMediaFile(normalizedPath)) {
         qCritical() << "[VideoLayer] openMediaFile FAILED:" << normalizedPath
@@ -274,9 +297,9 @@ bool ArtifactVideoLayer::loadFromPath(const QString& path)
     }
 
     // [Fix 6] 成功後にアクティブな backend をログ出力
-    const bool isMF = impl_->playbackController_->getDecoderBackend()
-                      == ArtifactCore::DecoderBackend::MediaFoundation;
-    qDebug() << "[VideoLayer] active backend:" << (isMF ? "MediaFoundation" : "FFmpeg");
+    qCInfo(videoLayerLog) << "[VideoLayer] active backend:"
+                          << decoderBackendName(impl_->playbackController_.get())
+                          << threadIdTag();
 
     impl_->sourcePath_ = normalizedPath;
     impl_->streamInfo_ = VideoStreamInfo{};
@@ -284,6 +307,7 @@ bool ArtifactVideoLayer::loadFromPath(const QString& path)
     impl_->lastDecodedFrame_ = -1;
     impl_->decodeTargetFrame_ = -1;
     impl_->decoding_ = false;
+    impl_->lastAudioRequestTimelineFrame_ = std::numeric_limits<int64_t>::min();
 
     const auto playbackInfo = impl_->playbackController_->getPlaybackInfo();
     const auto metadata = impl_->playbackController_->getMetadata();
@@ -319,7 +343,8 @@ bool ArtifactVideoLayer::loadFromPath(const QString& path)
                           << "fps=" << impl_->streamInfo_.frameRate
                           << "frames=" << impl_->streamInfo_.frameCount
                           << "duration=" << impl_->streamInfo_.duration
-                          << "hasAudio=" << impl_->streamInfo_.hasAudio;
+                          << "hasAudio=" << impl_->streamInfo_.hasAudio
+                          << threadIdTag();
 
     // [Fix A] フレーム0 の取得をバックグラウンドで実行し、メインスレッドをブロックしない
     impl_->decoding_ = true;
@@ -369,24 +394,26 @@ void ArtifactVideoLayer::seekToFrame(int64_t frame)
     
     ArtifactAbstractLayer::goToFrame(frame);
     
+    bool shouldDecode = false;
     {
         std::lock_guard<std::mutex> lock(impl_->audioMutex_);
         impl_->audioBufferL_.clear();
         impl_->audioBufferR_.clear();
+        impl_->lastAudioRequestTimelineFrame_ = std::numeric_limits<int64_t>::min();
     }
     
     const int64_t timelineFrame = frame;
     const int64_t sourceFrame = currentFrame();
     const bool hasKnownFrameCount = impl_->streamInfo_.frameCount > 0;
     if (sourceFrame >= 0 && (!hasKnownFrameCount || sourceFrame < impl_->streamInfo_.frameCount)) {
+        shouldDecode = true;
         qCDebug(videoLayerLog) << "[VideoLayer] seekToFrame"
                                << "timeline=" << timelineFrame
                                << "source=" << sourceFrame
                                << "in=" << inPoint()
                                << "out=" << outPoint()
-                               << "start=" << startTime().framePosition();
-        impl_->playbackController_->seekToFrame(sourceFrame);
-        decodeCurrentFrame();
+                               << "start=" << startTime().framePosition()
+                               << threadIdTag();
     } else {
         qWarning() << "[VideoLayer] seekToFrame rejected"
                    << "timeline=" << timelineFrame
@@ -395,6 +422,11 @@ void ArtifactVideoLayer::seekToFrame(int64_t frame)
                    << "in=" << inPoint()
                    << "out=" << outPoint()
                    << "start=" << startTime().framePosition();
+    }
+
+    if (shouldDecode && impl_->playbackController_) {
+        impl_->playbackController_->seekToFrame(sourceFrame);
+        decodeCurrentFrame();
     }
 }
 
@@ -441,69 +473,66 @@ void ArtifactVideoLayer::decodeCurrentFrame()
         return;
     }
 
-    const int64_t sourceFrame = currentFrame();
-    const int64_t targetFrame = sourceFrameToTimelineFrame(this, sourceFrame);
+    const int64_t sourceFrame = currentSourceFrame(this);
+    const int64_t timelineFrame = sourceFrameToTimelineFrame(this, sourceFrame);
 
-    // [Fix C] 同じフレームでキャッシュ済みの場合はスキップ
-    if (targetFrame == impl_->lastDecodedFrame_ && !impl_->currentQImage_.isNull()) {
+    // 同じフレームでキャッシュ済みの場合はスキップ
+    if (sourceFrame == impl_->lastDecodedFrame_ && !impl_->currentQImage_.isNull()) {
         return;
     }
 
-    // [Fix C] バックグラウンドデコードが実行中の場合はスキップ（重複デコードを防止）
-    if (impl_->decoding_.load()) {
-        // 前回起動したデコードが完了していれば結果を取り込む
-        if (impl_->decodeFuture_.isFinished() && impl_->decodeTargetFrame_ == targetFrame) {
-            QImage loaded = impl_->decodeFuture_.result();
-            impl_->decoding_ = false;
-            if (!loaded.isNull()) {
-                impl_->currentQImage_ = loaded;
-                impl_->lastDecodedFrame_ = targetFrame;
-                impl_->frameCache_.put(targetFrame, loaded);
-            }
-        }
+    // decoding_ は lambda 内の return 直前にクリアされるため isFinished() も合わせて確認する
+    const bool inFlight = impl_->decoding_.load()
+        || (impl_->decodeTargetFrame_ >= 0 && !impl_->decodeFuture_.isFinished());
+    if (inFlight) {
         return;
     }
 
-    if (targetFrame < inPoint() || targetFrame >= outPoint() ||
+    if (timelineFrame < inPoint() || timelineFrame >= outPoint() ||
         sourceFrame < 0 ||
         (impl_->streamInfo_.frameCount > 0 && sourceFrame >= impl_->streamInfo_.frameCount)) {
         qWarning() << "[VideoLayer] decodeCurrentFrame rejected"
-                   << "timeline=" << targetFrame
+                   << "timeline=" << timelineFrame
                    << "source=" << sourceFrame
                    << "in=" << inPoint()
                    << "out=" << outPoint()
                    << "start=" << startTime().framePosition()
+                   << threadIdTag()
                    << "streamFrames=" << impl_->streamInfo_.frameCount;
-        impl_->currentQImage_ = QImage();
-        impl_->lastDecodedFrame_ = targetFrame;
         return;
     }
 
     // キャッシュに存在すれば即座に返す
     QImage cachedFrame;
-    if (impl_->frameCache_.get(targetFrame, cachedFrame)) {
+    if (impl_->frameCache_.get(sourceFrame, cachedFrame)) {
         impl_->currentQImage_ = cachedFrame;
-        impl_->lastDecodedFrame_ = targetFrame;
+        impl_->lastDecodedFrame_ = sourceFrame;
         return;
     }
 
-    // [Fix B] バックグラウンドでデコードを開始し、メインスレッドをブロックしない
+    // バックグラウンドでデコードを開始し、メインスレッドをブロックしない
     // 現在フレームは currentQImage_（前のフレーム）をそのまま表示し続ける
     impl_->decoding_ = true;
-    impl_->decodeTargetFrame_ = targetFrame;
+    impl_->decodeTargetFrame_ = sourceFrame;
     auto* ctrl = impl_->playbackController_.get();
-    impl_->decodeFuture_ = QtConcurrent::run([ctrl, targetFrame, sourceFrame, this]() -> QImage {
+    const QString backendName = decoderBackendName(ctrl);
+    impl_->decodeFuture_ = QtConcurrent::run([ctrl, timelineFrame, sourceFrame, backendName, this]() -> QImage {
         QImage decoded = ctrl->getVideoFrameAtFrameDirect(sourceFrame);
         if (!decoded.isNull()) {
-            impl_->frameCache_.put(targetFrame, decoded);
-            impl_->saveDebugFrame(decoded, targetFrame);
-            qCDebug(videoLayerLog) << "[VideoLayer] bg decoded frame" << targetFrame
-                                   << "(source" << sourceFrame << ")"
-                                   << "size=" << decoded.width() << "x" << decoded.height();
+            impl_->frameCache_.put(sourceFrame, decoded);
+            impl_->saveDebugFrame(decoded, sourceFrame);
+            qCDebug(videoLayerLog) << "[VideoLayer] bg decoded frame"
+                                   << "timeline=" << timelineFrame
+                                   << "source=" << sourceFrame
+                                   << "size=" << decoded.width() << "x" << decoded.height()
+                                   << threadIdTag();
         } else {
-            qWarning() << "[VideoLayer] DECODE FAILED for frame" << targetFrame
-                       << "(source" << sourceFrame << ")"
-                       << "backendLastError=" << ctrl->getLastError();
+            qWarning() << "[VideoLayer] DECODE FAILED"
+                       << "timeline=" << timelineFrame
+                       << "source=" << sourceFrame
+                       << "backend=" << backendName
+                       << "backendLastError=" << ctrl->getLastError()
+                       << threadIdTag();
         }
         impl_->decoding_ = false;
         return decoded;
@@ -512,17 +541,47 @@ void ArtifactVideoLayer::decodeCurrentFrame()
 
 QImage ArtifactVideoLayer::currentFrameToQImage() const
 {
+    const int64_t sourceFrame = currentSourceFrame(this);
+
+    // decoding_ は lambda 内の return 直前にクリアされるため isFinished() も合わせて確認する
+    const bool inFlight = impl_->decoding_.load()
+        || (impl_->decodeTargetFrame_ >= 0 && !impl_->decodeFuture_.isFinished());
+
+    // 完了したバックグラウンドデコード結果を取り込む
+    if (!inFlight && impl_->decodeTargetFrame_ >= 0) {
+        QImage loaded = impl_->decodeFuture_.result();
+        if (!loaded.isNull()) {
+            if (impl_->decodeTargetFrame_ != impl_->lastDecodedFrame_) {
+                impl_->currentQImage_ = loaded;
+                impl_->lastDecodedFrame_ = impl_->decodeTargetFrame_;
+                if (impl_->streamInfo_.width <= 0 || impl_->streamInfo_.height <= 0) {
+                    impl_->streamInfo_.width  = loaded.width();
+                    impl_->streamInfo_.height = loaded.height();
+                    const_cast<ArtifactVideoLayer*>(this)->setSourceSize(
+                        Size_2D(loaded.width(), loaded.height()));
+                }
+            }
+        } else {
+            qWarning() << "[VideoLayer] async decode null frame"
+                       << "timeline=" << sourceFrameToTimelineFrame(this, impl_->decodeTargetFrame_)
+                       << "source=" << impl_->decodeTargetFrame_
+                       << "backend=" << decoderBackendName(impl_->playbackController_.get())
+                       << "backendLastError=" << impl_->playbackController_->getLastError();
+        }
+        impl_->decodeTargetFrame_ = -1;
+    }
+
+    // 現在フレームがまだデコードされていなければ非同期デコードを起動する
+    if (!inFlight && sourceFrame != impl_->lastDecodedFrame_) {
+        const_cast<ArtifactVideoLayer*>(this)->decodeCurrentFrame();
+    }
+
     return impl_->currentQImage_;
 }
 
 QImage ArtifactVideoLayer::decodeFrameToQImage(int64_t frameNumber) const
 {
     if (!impl_->isLoaded_) return QImage();
-    
-    QImage frame;
-    if (impl_->frameCache_.get(frameNumber, frame)) {
-        return frame;
-    }
 
     if (!impl_->playbackController_ || !impl_->playbackController_->isMediaOpen()) {
         return QImage();
@@ -530,19 +589,31 @@ QImage ArtifactVideoLayer::decodeFrameToQImage(int64_t frameNumber) const
 
     const int64_t startFrameOnTimeline = inPoint();
     const int64_t endFrameOnTimeline = outPoint();
-    const int64_t clampedFrame = std::max(startFrameOnTimeline, std::min(frameNumber, endFrameOnTimeline - 1));
-    const int64_t sourceFrame = timelineFrameToSourceFrame(this, clampedFrame);
+    const int64_t clampedTimelineFrame =
+        std::max(startFrameOnTimeline, std::min(frameNumber, endFrameOnTimeline - 1));
+    const int64_t sourceFrame = timelineFrameToSourceFrame(this, clampedTimelineFrame);
+
+    QImage frame;
+    if (impl_->frameCache_.get(sourceFrame, frame)) {
+        return frame;
+    }
 
     const QImage decoded = impl_->playbackController_->getVideoFrameAtFrameDirect(sourceFrame);
     if (!decoded.isNull()) {
-        impl_->frameCache_.put(clampedFrame, decoded);
+        impl_->frameCache_.put(sourceFrame, decoded);
+    } else {
+        qWarning() << "[VideoLayer] decodeFrameToQImage failed"
+                   << "timeline=" << clampedTimelineFrame
+                   << "source=" << sourceFrame
+                   << "backend=" << decoderBackendName(impl_->playbackController_.get())
+                   << "backendLastError=" << impl_->playbackController_->getLastError();
     }
     return decoded;
 }
 
 bool ArtifactVideoLayer::isFrameCached(int64_t frameNumber) const
 {
-    return impl_->frameCache_.contains(frameNumber);
+    return impl_->frameCache_.contains(timelineFrameToSourceFrame(this, frameNumber));
 }
 
 void ArtifactVideoLayer::preloadFrames(int64_t startFrame, int count)
@@ -559,10 +630,10 @@ void ArtifactVideoLayer::preloadFrames(int64_t startFrame, int count)
         if (frame >= startIdx && (endIdx < 0 || frame < endIdx) &&
             sourceFrame >= 0 &&
             (!hasKnownFrameCount || sourceFrame < impl_->streamInfo_.frameCount)) {
-            if (!impl_->frameCache_.contains(frame)) {
+            if (!impl_->frameCache_.contains(sourceFrame)) {
                 const QImage frameData = impl_->playbackController_->getVideoFrameAtFrameDirect(sourceFrame);
                 if (!frameData.isNull()) {
-                    impl_->frameCache_.put(frame, frameData);
+                    impl_->frameCache_.put(sourceFrame, frameData);
                 }
             }
         }
@@ -789,43 +860,19 @@ std::shared_ptr<ArtifactVideoLayer> ArtifactVideoLayer::fromJson(const QJsonObje
 void ArtifactVideoLayer::draw(ArtifactIRenderer* renderer)
 {
     if (!impl_->videoEnabled_ || !impl_->isLoaded_) return;
-    const int64_t sourceFrame = currentFrame();
+    const int64_t sourceFrame = currentSourceFrame(this);
     const int64_t timelineFrame = sourceFrameToTimelineFrame(this, sourceFrame);
 
-    // [Fix C] バックグラウンドデコードが完了していれば結果を取り込む
-    if (!impl_->decoding_.load() && impl_->decodeFuture_.isFinished()
-        && impl_->decodeTargetFrame_ >= 0) {
-        QImage loaded = impl_->decodeFuture_.result();
-        if (!loaded.isNull() && impl_->decodeTargetFrame_ != impl_->lastDecodedFrame_) {
-            impl_->currentQImage_ = loaded;
-            impl_->lastDecodedFrame_ = impl_->decodeTargetFrame_;
-            impl_->saveDebugFrame(loaded, impl_->decodeTargetFrame_);
-            qCDebug(videoLayerLog) << "[VideoLayer] adopted async decode"
-                                   << "timeline=" << impl_->decodeTargetFrame_
-                                   << "currentTimeline=" << timelineFrame
-                                   << "currentSource=" << sourceFrame
-                                   << "size=" << loaded.width() << "x" << loaded.height();
-            if (impl_->streamInfo_.width <= 0 || impl_->streamInfo_.height <= 0) {
-                impl_->streamInfo_.width  = loaded.width();
-                impl_->streamInfo_.height = loaded.height();
-                setSourceSize(Size_2D(loaded.width(), loaded.height()));
-            }
-        } else if (loaded.isNull()) {
-            qWarning() << "[VideoLayer] async decode completed with null frame"
-                       << "timeline=" << impl_->decodeTargetFrame_
-                       << "currentTimeline=" << timelineFrame
-                       << "currentSource=" << sourceFrame
-                       << "backendLastError=" << impl_->playbackController_->getLastError();
-        }
-        impl_->decodeTargetFrame_ = -1; // 取り込み済みフラグ
-    }
-
-    // currentQImage_ が空かつデコード中でない場合のみフォールバック起動
-    if (impl_->currentQImage_.isNull() && !impl_->decoding_.load()) {
-        qCDebug(videoLayerLog) << "[VideoLayer] draw requested decode"
+    // currentFrameToQImage() が取り込みとデコード起動を担うが、
+    // draw() が直接呼ばれる経路に備えてフォールバックを残す
+    if (impl_->currentQImage_.isNull() && !impl_->decoding_.load()
+        && impl_->decodeFuture_.isFinished()) {
+        qCDebug(videoLayerLog) << "[VideoLayer] draw fallback decode"
                                << "timeline=" << timelineFrame
                                << "source=" << sourceFrame
-                               << "lastDecoded=" << impl_->lastDecodedFrame_;
+                               << "lastDecodedSource=" << impl_->lastDecodedFrame_
+                               << "lastDecodedTimeline=" << sourceFrameToTimelineFrame(this, impl_->lastDecodedFrame_)
+                               << threadIdTag();
         decodeCurrentFrame();
     }
 
@@ -845,41 +892,71 @@ void ArtifactVideoLayer::draw(ArtifactIRenderer* renderer)
 void ArtifactVideoLayer::goToFrame(int64_t frameNumber)
 {
     ArtifactAbstractLayer::goToFrame(frameNumber);
-    // [Fix B] 即時同期デコードを廃止。
-    // デコードは draw() の初回呼び出し時に非同期で起動する。
-    // これにより goToFrame() 自体はメインスレッドをブロックしない。
-    if (sourceFrameToTimelineFrame(this, currentFrame()) != impl_->lastDecodedFrame_) {
-        decodeCurrentFrame(); // バックグラウンド非同期デコードを起動するだけ
+    // 先読みデコード：次の render tick より先にバックグラウンドデコードを起動しておく
+    if (currentFrame() != impl_->lastDecodedFrame_) {
+        decodeCurrentFrame();
     }
 }
 
 bool ArtifactVideoLayer::getAudio(ArtifactCore::AudioSegment &outSegment, const FramePosition &start,
                                     int frameCount, int sampleRate)
 {
-    if (!hasAudio() || !impl_->isLoaded_) return false;
+    if (!hasAudio() || !impl_->isLoaded_ || frameCount <= 0 || sampleRate <= 0) return false;
 
-    std::lock_guard<std::mutex> lock(impl_->audioMutex_);
+    const int64_t requestedTimelineFrame = start.framePosition();
+    const int64_t requestedSourceFrame = timelineFrameToSourceFrame(this, requestedTimelineFrame);
+    if (requestedSourceFrame < 0) {
+        return false;
+    }
 
-    // Check if we need to fetch more data
-    while (impl_->audioBufferL_.size() < (size_t)frameCount) {
-        QByteArray rawAudio = impl_->playbackController_->getNextAudioFrame();
-        if (rawAudio.isEmpty()) break;
+    bool shouldSeek = false;
+    {
+        std::lock_guard<std::mutex> lock(impl_->audioMutex_);
+        if (impl_->lastAudioRequestTimelineFrame_ == std::numeric_limits<int64_t>::min() ||
+            requestedTimelineFrame != impl_->lastAudioRequestTimelineFrame_) {
+            impl_->audioBufferL_.clear();
+            impl_->audioBufferR_.clear();
+            impl_->lastAudioRequestTimelineFrame_ = requestedTimelineFrame;
+            shouldSeek = true;
+        }
+    }
 
-        // Convert raw audio (S16 Stereo 44100Hz assumed for now) to float and push to buffer
-        // TODO: Use actual format from MediaAudioDecoder
-        const int16_t* samples = reinterpret_cast<const int16_t*>(rawAudio.constData());
-        int sampleCount = rawAudio.size() / sizeof(int16_t);
-        
-        for (int i = 0; i < sampleCount; i += 2) {
-            impl_->audioBufferL_.push_back(samples[i] / 32768.0f);
-            if (i + 1 < sampleCount) {
-                impl_->audioBufferR_.push_back(samples[i + 1] / 32768.0f);
-            } else {
-                impl_->audioBufferR_.push_back(samples[i] / 32768.0f);
+    if (shouldSeek && impl_->playbackController_) {
+        impl_->playbackController_->seekToFrame(requestedSourceFrame);
+    }
+
+    if (impl_->playbackController_) {
+        while (true) {
+            size_t bufferedFrames = 0;
+            {
+                std::lock_guard<std::mutex> lock(impl_->audioMutex_);
+                bufferedFrames = impl_->audioBufferL_.size();
+                if (bufferedFrames >= static_cast<size_t>(frameCount)) {
+                    break;
+                }
+            }
+
+            QByteArray rawAudio = impl_->playbackController_->getNextAudioFrame();
+            if (rawAudio.isEmpty()) {
+                break;
+            }
+
+            const int16_t* samples = reinterpret_cast<const int16_t*>(rawAudio.constData());
+            const int sampleCount = rawAudio.size() / sizeof(int16_t);
+
+            std::lock_guard<std::mutex> lock(impl_->audioMutex_);
+            for (int i = 0; i < sampleCount; i += 2) {
+                impl_->audioBufferL_.push_back(samples[i] / 32768.0f);
+                if (i + 1 < sampleCount) {
+                    impl_->audioBufferR_.push_back(samples[i + 1] / 32768.0f);
+                } else {
+                    impl_->audioBufferR_.push_back(samples[i] / 32768.0f);
+                }
             }
         }
     }
 
+    std::lock_guard<std::mutex> lock(impl_->audioMutex_);
     if (impl_->audioBufferL_.empty()) return false;
 
     // Fill outSegment
@@ -896,6 +973,8 @@ bool ArtifactVideoLayer::getAudio(ArtifactCore::AudioSegment &outSegment, const 
         impl_->audioBufferL_.pop_front();
         impl_->audioBufferR_.pop_front();
     }
+
+    impl_->lastAudioRequestTimelineFrame_ = requestedTimelineFrame + 1;
 
     return true;
 }

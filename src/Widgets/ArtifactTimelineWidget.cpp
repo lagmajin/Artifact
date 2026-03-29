@@ -39,6 +39,7 @@ import Artifact.Widgets.Timeline.Label;
 import Artifact.Timeline.NavigatorWidget;
 import Artifact.Timeline.TrackPainterView;
 import Artifact.Timeline.TimeCodeWidget;
+import Artifact.Layers.Selection.Manager;
 import Panel.DraggableSplitter;
 import Artifact.Timeline.Objects;
 import Artifact.Widgets.Timeline.GlobalSwitches;
@@ -236,7 +237,8 @@ collectKeyframeMarkers(const ArtifactCompositionPtr& composition,
     return markers;
   }
 
-  const double fps = std::max(1.0, composition->frameRate().framerate());
+  const double fps = std::max(
+      1.0, static_cast<double>(composition->frameRate().framerate()));
   for (const auto& layer : selectedLayers) {
     if (!layer) {
       continue;
@@ -256,9 +258,10 @@ collectKeyframeMarkers(const ArtifactCompositionPtr& composition,
         const auto keyframes = property->getKeyFrames();
         for (const auto& keyframe : keyframes) {
           const qint64 frame = keyframe.time.rescaledTo(static_cast<int64_t>(std::round(fps)));
-          if (!seenFrames.insert(frame).second) {
+          if (seenFrames.contains(frame)) {
             continue;
           }
+          seenFrames.insert(frame);
           ArtifactTimelineTrackPainterView::KeyframeMarkerVisual marker;
           marker.layerId = layer->id();
           marker.trackIndex = trackIndex;
@@ -298,7 +301,8 @@ bool applyKeyframeEditAtPlayhead(const ArtifactCompositionPtr& composition,
     return false;
   }
 
-  const double fps = std::max(1.0, composition->frameRate().framerate());
+  const double fps = std::max(
+      1.0, static_cast<double>(composition->frameRate().framerate()));
   const RationalTime nowTime(static_cast<int64_t>(std::llround(
                                 std::max<int64_t>(0, composition->framePosition().framePosition()))),
                              static_cast<int64_t>(std::llround(fps)));
@@ -1127,6 +1131,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   auto timelineTrackView = impl_->trackView_ = new TimelineTrackView();
   auto painterTrackView = impl_->painterTrackView_ =
       new ArtifactTimelineTrackPainterView();
+  timelineTrackView->setLegacyPaintSuppressed(true);
   timelineTrackView->setDuration(kDefaultTimelineFrames);
   painterTrackView->setDurationFrames(kDefaultTimelineFrames);
   painterTrackView->setTrackCount(1);
@@ -1188,27 +1193,32 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
     }
   };
 
-  auto syncWorkAreaFromComposition = [this, workAreaWidget]() {
-    if (!workAreaWidget) {
+  auto syncPainterSelectionState = [this]() {
+    if (!impl_ || !impl_->painterTrackView_) {
       return;
     }
-    const auto comp = safeCompositionLookup(impl_->compositionId_);
-    const double totalFrames =
-        comp ? std::max(1.0, static_cast<double>(comp->frameRange().duration()))
-             : static_cast<double>(kDefaultTimelineFrames);
-    const FrameRange workArea =
-        comp ? comp->workAreaRange()
-             : FrameRange(0, static_cast<int64_t>(totalFrames));
-    const double startNorm = std::clamp(
-        static_cast<double>(workArea.start()) / totalFrames, 0.0, 1.0);
-    const double endNorm = std::clamp(
-        static_cast<double>(workArea.end()) / totalFrames, startNorm, 1.0);
-    QSignalBlocker blocker(workAreaWidget);
-    workAreaWidget->setStart(static_cast<float>(startNorm));
-    workAreaWidget->setEnd(static_cast<float>(endNorm));
+
+    QSet<LayerID> selectedLayerIds;
+    QVector<ArtifactTimelineTrackPainterView::KeyframeMarkerVisual> markers;
+    if (auto *app = ArtifactApplicationManager::instance()) {
+      if (auto *selection = app->layerSelectionManager()) {
+        const auto layers = selection->selectedLayers();
+        selectedLayerIds.reserve(layers.size());
+        for (const auto &layer : layers) {
+          if (layer) {
+            selectedLayerIds.insert(layer->id());
+          }
+        }
+        const auto composition = safeCompositionLookup(impl_->compositionId_);
+        markers = collectKeyframeMarkers(
+            composition, selection, buildTrackIndexByLayerId(impl_->trackLayerIds_));
+      }
+    }
+    impl_->painterTrackView_->setSelectedLayerIds(selectedLayerIds);
+    impl_->painterTrackView_->setKeyframeMarkers(markers);
   };
 
-  syncWorkAreaFromComposition();
+  syncWorkAreaFromCurrentComposition();
 
   QObject::connect(timeNavigatorWidget,
                    &ArtifactTimelineNavigatorWidget::startChanged, this,
@@ -1263,10 +1273,11 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
                      if (auto *app = ArtifactApplicationManager::instance()) {
                        if (auto *ctx = app->activeContextService()) {
                          ctx->seekToFrame(frame.framePosition());
+                         return;
                        }
                      }
                      if (auto *playback = ArtifactPlaybackService::instance()) {
-                         playback->goToFrame(frame);
+                       playback->goToFrame(frame);
                      }
                    });
   QObject::connect(scrubBar, &ArtifactTimelineScrubBar::frameChanged, this,
@@ -1276,15 +1287,11 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
                    });
   QObject::connect(
       painterTrackView, &ArtifactTimelineTrackPainterView::seekRequested, this,
-      [this, scrubBar, timelineTrackView](double frame) {
+      [this, scrubBar](double frame) {
         const int clampedFrame =
             std::clamp(static_cast<int>(std::llround(frame)), 0,
                        std::max(0, scrubBar->totalFrames() - 1));
-        timelineTrackView->setPosition(static_cast<double>(clampedFrame));
         scrubBar->setCurrentFrame(FramePosition(clampedFrame));
-        if (impl_->playheadSync_) {
-          impl_->playheadSync_->sync();
-        }
       });
   QObject::connect(
       painterTrackView, &ArtifactTimelineTrackPainterView::clipSelected, this,
@@ -1403,7 +1410,11 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   QObject::connect(painterTrackView, &ArtifactTimelineTrackPainterView::timelineDebugMessage, this, &ArtifactTimelineWidget::timelineDebugMessage);
   QObject::connect(timelineTrackView, &TimelineTrackView::timelineDebugMessage, this, &ArtifactTimelineWidget::timelineDebugMessage);
 
-  impl_->trackView_ = timelineTrackView; // Store reference for layer creation
+  impl_->trackView_ =
+      timelineTrackView; // Legacy compatibility layer for scene-backed APIs.
+  QObject::connect(impl_->trackView_,
+                   &TimelineTrackView::tracksRefreshRequested, this,
+                   &ArtifactTimelineWidget::refreshTracks);
   // auto layerTimelinePanel = new ArtifactLayerTimelinePanelWrapper();
   // layerTimelinePanel->setMinimumWidth(220);
   // layerTimelinePanel->setMaximumWidth(320);
@@ -1490,6 +1501,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
             impl_->painterTrackView_->setCurrentFrame(
                 static_cast<double>(frame.framePosition()));
           }
+          const QSignalBlocker blocker(scrubBar);
           scrubBar->setCurrentFrame(frame);
           if (impl_->playheadSync_) {
             impl_->playheadSync_->sync();
@@ -1590,36 +1602,13 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
       if (auto *selection = app->layerSelectionManager()) {
         QObject::connect(
             selection, &ArtifactLayerSelectionManager::selectionChanged, this,
-            [this]() {
+            [this, syncPainterSelectionState]() {
               if (!impl_) {
                 return;
               }
               QMetaObject::invokeMethod(
                   this,
-                    [this]() {
-                      if (!impl_ || !impl_->painterTrackView_) {
-                        return;
-                      }
-                      QSet<LayerID> selectedLayerIds;
-                      QVector<ArtifactTimelineTrackPainterView::KeyframeMarkerVisual> markers;
-                      if (auto *app = ArtifactApplicationManager::instance()) {
-                        if (auto *selection = app->layerSelectionManager()) {
-                          const auto layers = selection->selectedLayers();
-                          selectedLayerIds.reserve(layers.size());
-                          for (const auto& layer : layers) {
-                            if (layer) {
-                              selectedLayerIds.insert(layer->id());
-                            }
-                          }
-                          const auto composition = safeCompositionLookup(impl_->compositionId_);
-                          markers = collectKeyframeMarkers(
-                              composition, selection,
-                              buildTrackIndexByLayerId(impl_->trackLayerIds_));
-                        }
-                      }
-                      impl_->painterTrackView_->setSelectedLayerIds(selectedLayerIds);
-                      impl_->painterTrackView_->setKeyframeMarkers(markers);
-                    },
+                  [syncPainterSelectionState]() { syncPainterSelectionState(); },
                   Qt::QueuedConnection);
             });
       }
@@ -1666,7 +1655,13 @@ void ArtifactTimelineWidget::setComposition(const CompositionID &id) {
           disconnect(impl_->compositionChangedConnection_);
         }
         impl_->compositionChangedConnection_ = connect(comp.get(), &ArtifactAbstractComposition::changed, this, [this]() {
-          QMetaObject::invokeMethod(this, [this]() { refreshTracks(); }, Qt::QueuedConnection);
+          QMetaObject::invokeMethod(this, [this]() {
+            if (!impl_) {
+              return;
+            }
+            syncWorkAreaFromCurrentComposition();
+            refreshTracks();
+          }, Qt::QueuedConnection);
         });
 
         const QString compositionLabel =
@@ -1694,20 +1689,7 @@ void ArtifactTimelineWidget::setComposition(const CompositionID &id) {
           impl_->painterTrackView_->setDurationFrames(
               static_cast<double>(totalFrames));
         }
-        if (impl_->workArea_) {
-          const FrameRange workArea = comp->workAreaRange();
-          const double startNorm =
-              std::clamp(static_cast<double>(workArea.start()) /
-                             static_cast<double>(totalFrames),
-                         0.0, 1.0);
-          const double endNorm =
-              std::clamp(static_cast<double>(workArea.end()) /
-                             static_cast<double>(totalFrames),
-                         startNorm, 1.0);
-          const QSignalBlocker blocker(impl_->workArea_);
-          impl_->workArea_->setStart(static_cast<float>(startNorm));
-          impl_->workArea_->setEnd(static_cast<float>(endNorm));
-        }
+        syncWorkAreaFromCurrentComposition();
         if (impl_->scrubBar_) {
           impl_->scrubBar_->setTotalFrames(std::max(1, totalFrames));
           impl_->scrubBar_->setCurrentFrame(FramePosition(0));
@@ -1900,7 +1882,10 @@ void ArtifactTimelineWidget::refreshTracks() {
         collectKeyframeMarkers(composition, selectionManager, trackIndexByLayerId));
   }
 
-  impl_->trackView_->viewport()->update();
+  if (impl_->trackView_ && !impl_->trackView_->legacyPaintSuppressed() &&
+      impl_->trackView_->viewport()) {
+    impl_->trackView_->viewport()->update();
+  }
   if (impl_->playheadSync_) {
     impl_->playheadSync_->sync();
   }
@@ -1918,9 +1903,17 @@ bool ArtifactTimelineWidget::isLayerNameEditable() const {
 
 void ArtifactTimelineWidget::paintEvent(QPaintEvent *event) {}
 
-void ArtifactTimelineWidget::mousePressEvent(QMouseEvent *event) {}
+void ArtifactTimelineWidget::mousePressEvent(QMouseEvent *event) {
+  if (impl_ && impl_->trackView_ && event &&
+      event->button() == Qt::LeftButton) {
+    impl_->trackView_->setFocus(Qt::MouseFocusReason);
+  }
+  QWidget::mousePressEvent(event);
+}
 
-void ArtifactTimelineWidget::mouseMoveEvent(QMouseEvent *event) {}
+void ArtifactTimelineWidget::mouseMoveEvent(QMouseEvent *event) {
+  QWidget::mouseMoveEvent(event);
+}
 
 void ArtifactTimelineWidget::wheelEvent(QWheelEvent *event) {
   // ホイールでシーク (Ctrl+ホイールで ±10)
@@ -1934,9 +1927,32 @@ void ArtifactTimelineWidget::wheelEvent(QWheelEvent *event) {
   if (impl_ && impl_->trackView_) {
     double newPos = impl_->trackView_->position() + frameDelta;
     impl_->trackView_->setPosition(std::max(0.0, newPos));
-    impl_->trackView_->seekPositionChanged(newPos / std::max(1.0, impl_->trackView_->position()));
+    const double frameMax = std::max(1.0, impl_->trackView_->duration());
+    impl_->trackView_->seekPositionChanged(
+        std::clamp(newPos / frameMax, 0.0, 1.0));
   }
   event->accept();
+}
+
+void ArtifactTimelineWidget::syncWorkAreaFromCurrentComposition() {
+  if (!impl_ || !impl_->workArea_) {
+    return;
+  }
+
+  const auto comp = safeCompositionLookup(impl_->compositionId_);
+  const double totalFrames =
+      comp ? std::max(1.0, static_cast<double>(comp->frameRange().duration()))
+           : static_cast<double>(kDefaultTimelineFrames);
+  const FrameRange workArea =
+      comp ? comp->workAreaRange()
+           : FrameRange(0, static_cast<int64_t>(totalFrames));
+  const double startNorm =
+      std::clamp(static_cast<double>(workArea.start()) / totalFrames, 0.0, 1.0);
+  const double endNorm =
+      std::clamp(static_cast<double>(workArea.end()) / totalFrames, startNorm, 1.0);
+  QSignalBlocker blocker(impl_->workArea_);
+  impl_->workArea_->setStart(static_cast<float>(startNorm));
+  impl_->workArea_->setEnd(static_cast<float>(endNorm));
 }
 
 void ArtifactTimelineWidget::keyPressEvent(QKeyEvent *event) {
@@ -2064,7 +2080,22 @@ void ArtifactTimelineWidget::keyPressEvent(QKeyEvent *event) {
   QWidget::keyPressEvent(event);
 }
 
-void ArtifactTimelineWidget::keyReleaseEvent(QKeyEvent *event) {}
+void ArtifactTimelineWidget::keyReleaseEvent(QKeyEvent *event) {
+  if (!event || event->isAutoRepeat()) {
+    return;
+  }
+
+  if (event->key() == Qt::Key_J || event->key() == Qt::Key_L) {
+    if (auto *svc = ArtifactPlaybackService::instance()) {
+      svc->setPlaybackSpeed(0.0f);
+      svc->stop();
+    }
+    event->accept();
+    return;
+  }
+
+  QWidget::keyReleaseEvent(event);
+}
 
 // ===== TimelineTrackView Implementation =====
 
@@ -2081,6 +2112,7 @@ public:
   double minZoomLevel_ = 0.1;
   double maxZoomLevel_ = 10.0;
   bool isPanning_ = false;
+  bool suppressPaint_ = false;
   QPoint lastPanPoint_;
   TimelineScene *scene_ = nullptr;
   ClipItem *draggedClip_ = nullptr;
@@ -2115,7 +2147,9 @@ double TimelineTrackView::position() const { return impl_->position_; }
 
 void TimelineTrackView::setPosition(double position) {
   impl_->position_ = qBound(0.0, position, timelineFrameMax(impl_->duration_));
-  viewport()->update();
+  if (!impl_->suppressPaint_ && viewport()) {
+    viewport()->update();
+  }
 }
 
 double TimelineTrackView::duration() const { return impl_->duration_; }
@@ -2128,7 +2162,9 @@ void TimelineTrackView::setDuration(double duration) {
         timelineSceneWidth(impl_->duration_, this, impl_->zoomLevel_));
     impl_->scene_->setSceneRect(rect);
   }
-  viewport()->update();
+  if (!impl_->suppressPaint_ && viewport()) {
+    viewport()->update();
+  }
 }
 
 double TimelineTrackView::visibleStartFrame() const {
@@ -2179,14 +2215,18 @@ int TimelineTrackView::addTrack(double height) {
 void TimelineTrackView::removeTrack(int trackIndex) {
   if (impl_->scene_) {
     impl_->scene_->removeTrack(trackIndex);
-    viewport()->update();
+    if (!impl_->suppressPaint_ && viewport()) {
+      viewport()->update();
+    }
   }
 }
 
 void TimelineTrackView::clearTracks() {
   if (impl_->scene_) {
     impl_->scene_->clearTracks();
-    viewport()->update();
+    if (!impl_->suppressPaint_ && viewport()) {
+      viewport()->update();
+    }
   }
 }
 
@@ -2241,7 +2281,9 @@ ClipItem *TimelineTrackView::addClip(int trackIndex, double start,
 void TimelineTrackView::removeClip(ClipItem *clip) {
   if (impl_->scene_ && clip) {
     impl_->scene_->removeClip(clip);
-    viewport()->update();
+    if (!impl_->suppressPaint_ && viewport()) {
+      viewport()->update();
+    }
   }
 }
 
@@ -2249,7 +2291,9 @@ void TimelineTrackView::clearSelection() {
   if (impl_->scene_) {
     impl_->scene_->clearSelection();
     impl_->lastSelectedClip_ = nullptr;
-    viewport()->update();
+    if (!impl_->suppressPaint_ && viewport()) {
+      viewport()->update();
+    }
   }
 }
 
@@ -2262,7 +2306,9 @@ void TimelineTrackView::selectClipForLayer(const LayerID &layerId) {
   impl_->lastSelectedClip_ = nullptr;
 
   if (layerId.isNil()) {
-    viewport()->update();
+    if (!impl_->suppressPaint_ && viewport()) {
+      viewport()->update();
+    }
     return;
   }
 
@@ -2277,7 +2323,9 @@ void TimelineTrackView::selectClipForLayer(const LayerID &layerId) {
       break;
     }
   }
-  viewport()->update();
+  if (!impl_->suppressPaint_ && viewport()) {
+    viewport()->update();
+  }
 }
 
 namespace {
@@ -2327,10 +2375,17 @@ void TimelineTrackView::setZoomLevel(double pixelsPerFrame) {
     impl_->scene_->setSceneRect(rect);
   }
   centerOn(center);
-  viewport()->update();
+  if (!impl_->suppressPaint_ && viewport()) {
+    viewport()->update();
+  }
 }
 
 void TimelineTrackView::drawBackground(QPainter *painter, const QRectF &rect) {
+  if (impl_->suppressPaint_) {
+    Q_UNUSED(painter);
+    Q_UNUSED(rect);
+    return;
+  }
   painter->save();
   painter->setWorldTransform(QTransform());
   painter->fillRect(viewport()->rect(), QColor(30, 30, 30));
@@ -2392,6 +2447,11 @@ void TimelineTrackView::drawBackground(QPainter *painter, const QRectF &rect) {
 }
 
 void TimelineTrackView::drawForeground(QPainter *painter, const QRectF &rect) {
+  if (impl_->suppressPaint_) {
+    Q_UNUSED(painter);
+    Q_UNUSED(rect);
+    return;
+  }
   Q_UNUSED(rect);
   painter->save();
   painter->setWorldTransform(QTransform());
@@ -2558,7 +2618,10 @@ void TimelineTrackView::mousePressEvent(QMouseEvent *event) {
       }
     }
 
-    const auto currentComposition = safeCompositionLookup(impl_->compositionId_);
+    ArtifactCompositionPtr currentComposition;
+    if (auto *svc = ArtifactProjectService::instance()) {
+      currentComposition = svc->currentComposition().lock();
+    }
 
     if (clickedClip && impl_->scene_) {
       deleteClipAction = menu.addAction("Delete Clip");
@@ -2720,12 +2783,12 @@ void TimelineTrackView::mousePressEvent(QMouseEvent *event) {
       } else if (chosen == addKeyframesAction && currentComposition &&
                  !targetLayerId.isNil()) {
         if (applyKeyframeEditAtPlayhead(currentComposition, targetLayerId, false)) {
-          QMetaObject::invokeMethod(this, [this]() { refreshTracks(); }, Qt::QueuedConnection);
+          emit tracksRefreshRequested();
         }
       } else if (chosen == removeKeyframesAction && currentComposition &&
                  !targetLayerId.isNil()) {
         if (applyKeyframeEditAtPlayhead(currentComposition, targetLayerId, true)) {
-          QMetaObject::invokeMethod(this, [this]() { refreshTracks(); }, Qt::QueuedConnection);
+          emit tracksRefreshRequested();
         }
       }
 
@@ -2817,7 +2880,9 @@ void TimelineTrackView::keyPressEvent(QKeyEvent *event) {
           impl_->scene_->removeClip(clip);
         }
       }
-      viewport()->update();
+      if (!impl_->suppressPaint_ && viewport()) {
+        viewport()->update();
+      }
       event->accept();
       return;
     }
@@ -2847,7 +2912,9 @@ void TimelineTrackView::keyPressEvent(QKeyEvent *event) {
       return;
     }
     clearSelection();
-    viewport()->update();
+    if (!impl_->suppressPaint_ && viewport()) {
+      viewport()->update();
+    }
     event->accept();
     return;
   }
@@ -2864,7 +2931,9 @@ void TimelineTrackView::keyPressEvent(QKeyEvent *event) {
         clip->setSelected(true);
       }
     }
-    viewport()->update();
+    if (!impl_->suppressPaint_ && viewport()) {
+      viewport()->update();
+    }
     event->accept();
     return;
   }
@@ -2986,6 +3055,20 @@ void TimelineTrackView::resizeEvent(QResizeEvent *event) {
         timelineSceneWidth(impl_->duration_, this, impl_->zoomLevel_));
     impl_->scene_->setSceneRect(rect);
   }
+}
+
+void TimelineTrackView::setLegacyPaintSuppressed(bool suppressed) {
+  if (impl_->suppressPaint_ == suppressed) {
+    return;
+  }
+  impl_->suppressPaint_ = suppressed;
+  if (viewport()) {
+    viewport()->update();
+  }
+}
+
+bool TimelineTrackView::legacyPaintSuppressed() const {
+  return impl_->suppressPaint_;
 }
 
 class ArtifactTimelineIconView::Impl {

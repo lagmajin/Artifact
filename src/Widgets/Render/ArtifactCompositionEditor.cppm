@@ -23,6 +23,8 @@
 #include <QShowEvent>
 #include <QElapsedTimer>
 #include <QTimer>
+#include <QSignalBlocker>
+#include <QSet>
 #include <QToolBar>
 #include <QToolButton>
 #include <QVBoxLayout>
@@ -221,6 +223,8 @@ protected:
   void resizeEvent(QResizeEvent *event) override {
     QWidget::resizeEvent(event);
     if (controller_ && controller_->isInitialized()) {
+      controller_->setViewportSize(static_cast<float>(event->size().width()),
+                                   static_cast<float>(event->size().height()));
       scheduleInitialFit();
       pendingResizeSize_ = event->size();
       resizePending_ = true;
@@ -414,9 +418,15 @@ protected:
   }
 
   void leaveEvent(QEvent *event) override {
-    if (controller_ && controller_->gizmo() && controller_->gizmo()->isDragging()) {
-      controller_->handleMouseRelease();
-      releaseMouse();
+    if (controller_) {
+      const bool gizmoDragging = controller_->gizmo() && controller_->gizmo()->isDragging();
+      const bool maskEditing = controller_->hasPendingMaskEdit();
+      if (gizmoDragging || maskEditing) {
+        controller_->handleMouseRelease();
+        if (gizmoDragging) {
+          releaseMouse();
+        }
+      }
     }
     if (!isPanning_) {
       unsetCursor();
@@ -495,15 +505,23 @@ protected:
       event->accept();
       return;
     }
-    if (event->key() == Qt::Key_Backspace && !event->isAutoRepeat()) {
+    if ((event->key() == Qt::Key_Backspace || event->key() == Qt::Key_Delete) && !event->isAutoRepeat()) {
       auto* app = ArtifactApplicationManager::instance();
       auto* svc = ArtifactProjectService::instance();
       auto* active = app ? app->activeContextService() : nullptr;
       auto* selection = app ? app->layerSelectionManager() : nullptr;
-      const auto currentLayer = selection ? selection->currentLayer() : ArtifactAbstractLayerPtr{};
+      const auto selectedLayers = selection ? selection->selectedLayers() : QSet<ArtifactAbstractLayerPtr>{};
       const auto currentComp = active ? active->activeComposition() : ArtifactCompositionPtr{};
-      if (svc && currentLayer && currentComp) {
-        svc->removeLayerFromComposition(currentComp->id(), currentLayer->id());
+      if (svc && currentComp && !selectedLayers.isEmpty()) {
+        if (selectedLayers.size() > 1) {
+          for (const auto& layer : selectedLayers) {
+            if (layer) {
+              svc->removeLayerFromComposition(currentComp->id(), layer->id());
+            }
+          }
+        } else if (const auto currentLayer = selection ? selection->currentLayer() : ArtifactAbstractLayerPtr{}; currentLayer) {
+          svc->removeLayerFromComposition(currentComp->id(), currentLayer->id());
+        }
         event->accept();
         return;
       }
@@ -693,7 +711,10 @@ private:
       return;
     }
     QTimer::singleShot(0, this, [this]() {
-      if (!pendingInitialFit_ || !controller_ || !isVisible()) {
+      if (!pendingInitialFit_ || !controller_ || !isVisible() || !controller_->isInitialized()) {
+        if (pendingInitialFit_) {
+          QTimer::singleShot(50, this, [this]() { scheduleInitialFit(); });
+        }
         return;
       }
       if (width() <= 64 || height() <= 64) {
@@ -873,6 +894,7 @@ public:
   QAction *zoomFitAction_ = nullptr;
   QAction *zoom100Action_ = nullptr;
   QAction *editTextAction_ = nullptr;
+  QAction *motionPathAction_ = nullptr;
   QToolButton *toolModeButton_ = nullptr;
   QToolButton *gizmoModeButton_ = nullptr;
 
@@ -920,6 +942,10 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   impl_->editTextAction_ = impl_->topToolbar_->addAction("Edit Text");
   impl_->editTextAction_->setToolTip(QStringLiteral("Edit current text layer"));
   impl_->editTextAction_->setShortcut(QKeySequence(Qt::Key_F2));
+  impl_->motionPathAction_ = impl_->topToolbar_->addAction("Motion Path");
+  impl_->motionPathAction_->setCheckable(true);
+  impl_->motionPathAction_->setChecked(true);
+  impl_->motionPathAction_->setToolTip(QStringLiteral("Show motion path overlay for the selected layer"));
 
   auto* toolMenu = new QMenu(impl_->topToolbar_);
   auto* toolGroup = new QActionGroup(this);
@@ -1122,6 +1148,12 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
                        impl_->renderController_->renderOneFrame();
                      }
                    });
+  QObject::connect(impl_->motionPathAction_, &QAction::toggled, this,
+                   [this](bool checked) {
+                     if (impl_->renderController_) {
+                       impl_->renderController_->setShowMotionPathOverlay(checked);
+                     }
+                   });
 
   // Resolution dropdown connection
   QObject::connect(impl_->resolutionCombo_,
@@ -1135,6 +1167,19 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
                    });
 
   if (auto *service = ArtifactProjectService::instance()) {
+    const auto syncResolutionCombo = [this](PreviewQualityPreset preset) {
+      if (!impl_ || !impl_->resolutionCombo_) {
+        return;
+      }
+      const int targetIndex = std::clamp(
+          impl_->resolutionCombo_->findData(QVariant::fromValue(static_cast<int>(preset))),
+          0, std::max(0, impl_->resolutionCombo_->count() - 1));
+      QSignalBlocker blocker(impl_->resolutionCombo_);
+      impl_->resolutionCombo_->setCurrentIndex(targetIndex);
+    };
+    syncResolutionCombo(service->previewQualityPreset());
+    QObject::connect(service, &ArtifactProjectService::previewQualityPresetChanged,
+                     this, syncResolutionCombo);
     QObject::connect(
         service, &ArtifactProjectService::currentCompositionChanged, this,
         [this](const ArtifactCore::CompositionID &id) {
@@ -1192,16 +1237,19 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
                            return;
                          }
                          const auto current = selection ? selection->currentLayer() : ArtifactAbstractLayerPtr{};
+                         const int selectedCount = selection ? selection->selectedLayers().size() : 0;
                          impl_->renderController_->setSelectedLayerId(
                              current ? current->id() : ArtifactCore::LayerID::Nil());
                          if (impl_->editTextAction_) {
-                           impl_->editTextAction_->setEnabled(
+                            impl_->editTextAction_->setEnabled(
+                               selectedCount == 1 &&
                                current && std::dynamic_pointer_cast<ArtifactTextLayer>(current));
                          }
                        });
       if (impl_->editTextAction_) {
         const auto current = selection->currentLayer();
         impl_->editTextAction_->setEnabled(
+            selection->selectedLayers().size() == 1 &&
             current && std::dynamic_pointer_cast<ArtifactTextLayer>(current));
       }
     }
