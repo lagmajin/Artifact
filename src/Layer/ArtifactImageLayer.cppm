@@ -32,12 +32,28 @@ public:
     mutable std::shared_ptr<QImage> cache_;
     // [Fix 1] バックグラウンド先読み用
     mutable QFuture<QImage> prefetchFuture_;
+    mutable QFutureWatcher<QImage> prefetchWatcher_;
     mutable bool prefetchDone_ = false;
 };
 
 W_OBJECT_IMPL(ArtifactImageLayer)
 
 ArtifactImageLayer::ArtifactImageLayer() : impl_(new Impl()) {
+    QObject::connect(&impl_->prefetchWatcher_, &QFutureWatcher<QImage>::finished, this, [this]() {
+        if (!impl_) {
+            return;
+        }
+
+        QImage loaded = impl_->prefetchWatcher_.result();
+        if (!loaded.isNull()) {
+            impl_->cache_ = std::make_shared<QImage>(std::move(loaded));
+            impl_->width_ = impl_->cache_->width();
+            impl_->height_ = impl_->cache_->height();
+            setSourceSize(Size_2D(impl_->width_, impl_->height_));
+        }
+        impl_->prefetchDone_ = true;
+        Q_EMIT changed();
+    });
 }
 
 ArtifactImageLayer::~ArtifactImageLayer() {
@@ -79,6 +95,7 @@ bool ArtifactImageLayer::loadFromPath(const QString& path)
         }
         return img;
     });
+    impl_->prefetchWatcher_.setFuture(impl_->prefetchFuture_);
 
     qDebug() << "[ArtifactImageLayer] Prefetch started:" << path
              << "sizeHint=" << size;

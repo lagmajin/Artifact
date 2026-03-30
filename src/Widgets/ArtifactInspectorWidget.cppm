@@ -162,6 +162,7 @@ namespace Artifact {
    void handleProjectCreated();
    void handleProjectClosed();
    void handleCompositionCreated(const CompositionID& id);
+   void handleCompositionChanged(const CompositionID& id);
    void handleLayerSelected(const LayerID& id);
    void updateLayerInfo();
    void updateEffectsList();
@@ -412,9 +413,23 @@ void ArtifactInspectorWidget::Impl::setEffectsStateText(const QString& text, boo
   setEffectsStateText("Add and select a layer to manage effects.", true);
  }
 
+ void ArtifactInspectorWidget::Impl::handleCompositionChanged(const CompositionID& id)
+ {
+  qDebug() << "[Inspector] Composition changed:" << id.toString();
+  currentCompositionId_ = id;
+
+  if (currentLayerId_.isNil()) {
+   setNoLayerState();
+   return;
+  }
+
+  updateLayerInfo();
+  updateEffectsList();
+ }
+
  void ArtifactInspectorWidget::Impl::handleLayerSelected(const LayerID& id)
  {
- qDebug() << "[Inspector] Layer selected:" << id.toString();
+  qDebug() << "[Inspector] Layer selected:" << id.toString();
   currentLayerId_ = id;
   updateLayerInfo();
   updateEffectsList();
@@ -979,6 +994,10 @@ void ArtifactInspectorWidget::Impl::handleRemoveEffectClicked(int rackIndex)
    // コンポジション作成シグナルに接続
    QObject::connect(projectService, &ArtifactProjectService::compositionCreated, this, [this](const CompositionID& id) {
     impl_->handleCompositionCreated(id);
+   });
+
+   QObject::connect(projectService, &ArtifactProjectService::currentCompositionChanged, this, [this](const CompositionID& id) {
+    impl_->handleCompositionChanged(id);
    });
 
    // レイヤー作成シグナルに接続（作成されたレイヤーを自動選択）
