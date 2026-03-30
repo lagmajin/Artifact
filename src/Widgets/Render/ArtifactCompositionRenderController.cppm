@@ -2920,7 +2920,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(CompositionRenderCont
     Q_EMIT owner->videoDebugMessage(lastVideoDebug_);
   }
 
-  renderer_->flushAndWait();
+  // renderer_->flushAndWait(); // 毎フレーム同期を削除し、性能改善を試す
   renderer_->present();
   presentMs = markPhaseMs();
   lastFinalPresentKey_ = renderKey;
