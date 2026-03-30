@@ -1107,7 +1107,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   setBaseSize(1200, 500);
   setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
 
-  auto style = getDCCStyleSheetPreset(DccStylePreset::ModoStyle);
+  auto style = getDCCStyleSheetPreset(DccStylePreset::StudioStyle);
 
   setStyleSheet(style);
 

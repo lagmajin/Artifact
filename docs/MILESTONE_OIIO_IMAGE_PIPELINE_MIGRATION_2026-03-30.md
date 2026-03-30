@@ -18,6 +18,7 @@ This milestone defines a staged migration so we can:
 - preserve image metadata earlier in the flow,
 - move internal processing toward a linear working space,
 - and only then finish with full color management integration.
+- keep `RawImage` as a thin I/O boundary, but not as the final render-path model.
 
 ## Scope
 
@@ -50,10 +51,14 @@ This milestone defines a staged migration so we can:
   - UI-facing compatibility format
   - legacy fallback
   - preview boundary when needed
+- `RawImage`
+  - file I/O / importer boundary
+  - metadata-carrying source snapshot
+  - not the compositor's final in-memory format
 - `OIIO::ImageBuf` or a project-owned buffer abstraction
   - canonical file decode / encode path
   - metadata-rich intermediate representation
-- Linear internal buffer
+- Linear internal buffer (`ImageF32x4_RGBA` / `ImageF32xN` or a sibling typed buffer)
   - compositor / effect / GPU upload source
   - working space representation
 - Color management service
@@ -104,13 +109,13 @@ Introduce a bridge layer so internal code can consume either path.
 
 Requirements:
 
-- one conversion point from `OIIO` or `QImage` into the internal buffer
+- one conversion point from `OIIO` or `RawImage` or `QImage` into the internal buffer
 - one conversion point back to `QImage` when the UI needs it
 - no duplicate ad hoc conversions in render code
 
 Deliverables:
 
-- a shared image buffer abstraction
+- a shared linear image buffer abstraction
 - reduced `convertToFormat()` scatter
 - explicit channel / format handling
 
@@ -166,6 +171,7 @@ Deliverables:
 
 This milestone intentionally does not force a big-bang replacement of `QImage`.
 The goal is to use `OIIO` to make image metadata and color handling explicit first, then migrate the compositor and GPU-facing paths once the behavior is stable.
+`RawImage` is treated as a compatibility and ingest boundary, not the final render-path image model.
 
 The practical success condition is:
 

@@ -1,6 +1,7 @@
 module;
 #include <QList>
 #include <QColor>
+#include <QJsonObject>
 #include <QMatrix4x4>
 #include <QVariant>
 #include <Layer/ArtifactCloneEffectSupport.hpp>
@@ -62,6 +63,39 @@ namespace Artifact
  void ArtifactSolid2DLayer::setSize(int width, int height)
  {
   setSourceSize(Size_2D(width, height));
+ }
+
+ QJsonObject ArtifactSolid2DLayer::toJson() const
+ {
+  QJsonObject obj = ArtifactAbstractLayer::toJson();
+  obj["type"] = static_cast<int>(LayerType::Solid);
+  obj["solidWidth"] = sourceSize().width;
+  obj["solidHeight"] = sourceSize().height;
+  QJsonObject colorObj;
+  const auto c = color();
+  colorObj["r"] = c.r();
+  colorObj["g"] = c.g();
+  colorObj["b"] = c.b();
+  colorObj["a"] = c.a();
+  obj["solidColor"] = colorObj;
+  return obj;
+ }
+
+ void ArtifactSolid2DLayer::fromJsonProperties(const QJsonObject& obj)
+ {
+  ArtifactAbstractLayer::fromJsonProperties(obj);
+  if (obj.contains("solidWidth") || obj.contains("solidHeight")) {
+   const int width = obj.value("solidWidth").toInt(sourceSize().width);
+   const int height = obj.value("solidHeight").toInt(sourceSize().height);
+   setSize(width, height);
+  }
+  if (obj.contains("solidColor") && obj["solidColor"].isObject()) {
+   const auto colorObj = obj["solidColor"].toObject();
+   setColor(FloatColor(static_cast<float>(colorObj.value("r").toDouble(1.0)),
+                       static_cast<float>(colorObj.value("g").toDouble(1.0)),
+                       static_cast<float>(colorObj.value("b").toDouble(1.0)),
+                       static_cast<float>(colorObj.value("a").toDouble(1.0))));
+  }
  }
 
  std::vector<ArtifactCore::PropertyGroup> ArtifactSolid2DLayer::getLayerPropertyGroups() const

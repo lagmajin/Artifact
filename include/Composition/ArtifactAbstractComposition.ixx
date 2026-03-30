@@ -54,6 +54,8 @@ export namespace Artifact {
   const CompositionContext& compositionContext() const;
   void setCompositionContext(const CompositionContext& context);
   void setCompositionName(const UniString& name);
+  QString compositionNote() const;
+  void setCompositionNote(const QString& note);
   void setCompositionSize(const QSize& size);
 
   ArtifactAbstractLayerPtr layerById(const LayerID& id);
@@ -67,7 +69,9 @@ export namespace Artifact {
 
    void setBackGroundColor(const FloatColor& color);
    FloatColor backgroundColor() const;
-   void changed() W_SIGNAL(changed);
+  void changed() W_SIGNAL(changed);
+  void compositionNoteChanged(QString note)
+    W_SIGNAL(compositionNoteChanged, note);
   FramePosition framePosition() const;
   void setFramePosition(const FramePosition& position);
   void setTimeCode();

@@ -665,12 +665,20 @@ int main(int argc, char *argv[]) {
   // 設定からテーマを取得
   auto *settings = ArtifactCore::ArtifactAppSettings::instance();
   QString themeName = settings->themeName();
-  DccStylePreset preset = DccStylePreset::ModoStyle; // デフォルト
+  DccStylePreset preset = DccStylePreset::StudioStyle; // デフォルト
 
   if (themeName == "HighContrast") {
     preset = DccStylePreset::HighContrast;
   } else if (themeName == "Maya") {
     preset = DccStylePreset::MayaStyle;
+  } else if (themeName == "Modo") {
+    preset = DccStylePreset::ModoStyle;
+  } else if (themeName == "Studio" || themeName == "Dark") {
+    preset = DccStylePreset::StudioStyle;
+  } else if (themeName == "Blender") {
+    preset = DccStylePreset::BlenderStyle;
+  } else if (themeName == "DaVinci" || themeName == "Resolve") {
+    preset = DccStylePreset::DaVinciStyle;
   } else if (themeName == "3dsMax") {
     preset = DccStylePreset::_3dsMaxStyle;
   } else if (themeName == "Nuke") {
@@ -678,9 +686,9 @@ int main(int argc, char *argv[]) {
   } else if (themeName == "Light") {
     preset = DccStylePreset::DefaultQt;
   }
-  // "Dark" やその他は ModoStyle (既存のダークテーマ)
 
   auto selectedTheme = ArtifactCore::getDCCTheme(preset);
+  a.setPalette(ArtifactCore::buildDCCPalette(selectedTheme));
   a.setStyleSheet(ArtifactCore::buildDCCStyleSheet(selectedTheme));
   auto pool = QThreadPool::globalInstance();
 

@@ -18,6 +18,7 @@ module;
 #include <QSet>
 #include <QVector>
 #include <QByteArray>
+#include <QMutex>
 #include <limits>
 #include <algorithm>
 #include <cmath>
@@ -31,6 +32,7 @@ module Artifact.Widgets.CompositionRenderController;
 
 import Artifact.Render.IRenderer;
 import Artifact.Render.GPUTextureCacheManager;
+import Artifact.Render.CompositionViewDrawing;
 import Artifact.Render.CompositionRenderer;
 import Artifact.Render.Config;
 import Artifact.Render.ROI;
@@ -58,6 +60,7 @@ import Artifact.Tool.Manager;
 import Artifact.Mask.LayerMask;
 import Artifact.Mask.Path;
 import Utils.Id;
+import Time.Rational;
 import Artifact.Render.Pipeline;
 import Graphics.LayerBlendPipeline;
 import Graphics.GPUcomputeContext;
@@ -92,171 +95,9 @@ enum class LayerDragMode {
   ScaleBR
 };
 
-struct LayerSurfaceCacheEntry
-{
-  QString ownerId;
-  QString cacheSignature;
-  QImage processedSurface;
-  GPUTextureCacheHandle gpuTextureHandle;
-  int64_t frameNumber = std::numeric_limits<int64_t>::min();
-};
-
 QColor toQColor(const FloatColor& color)
 {
   return QColor::fromRgbF(color.r(), color.g(), color.b(), color.a());
-}
-
-template <typename ColorT>
-QString colorKey(const ColorT& color)
-{
-  return QStringLiteral("%1,%2,%3,%4")
-      .arg(color.r(), 0, 'f', 4)
-      .arg(color.g(), 0, 'f', 4)
-      .arg(color.b(), 0, 'f', 4)
-      .arg(color.a(), 0, 'f', 4);
-}
-
-QString buildLayerSurfaceCacheKey(const ArtifactAbstractLayerPtr& layer,
-                                  const QImage& surface,
-                                  int64_t frameNumber)
-{
-  if (!layer) {
-    return QString();
-  }
-
-  QString key = layer->id().toString();
-  key += QStringLiteral("|size=%1x%2")
-             .arg(surface.width())
-             .arg(surface.height());
-
-  if (const auto solid2D = std::dynamic_pointer_cast<ArtifactSolid2DLayer>(layer)) {
-    const QRectF bounds = solid2D->localBounds();
-    key += QStringLiteral("|solid2D|color=%1|bounds=%2x%3")
-               .arg(colorKey(solid2D->color()))
-               .arg(bounds.width(), 0, 'f', 2)
-               .arg(bounds.height(), 0, 'f', 2);
-    return key;
-  }
-
-  if (const auto solidImage = std::dynamic_pointer_cast<ArtifactSolidImageLayer>(layer)) {
-    const QRectF bounds = solidImage->localBounds();
-    key += QStringLiteral("|solidImage|color=%1|bounds=%2x%3")
-               .arg(colorKey(solidImage->color()))
-               .arg(bounds.width(), 0, 'f', 2)
-               .arg(bounds.height(), 0, 'f', 2);
-    return key;
-  }
-
-  if (const auto imageLayer = std::dynamic_pointer_cast<ArtifactImageLayer>(layer)) {
-    key += QStringLiteral("|image|src=%1|fit=%2|size=%3x%4")
-               .arg(imageLayer->sourcePath())
-               .arg(imageLayer->fitToLayer() ? 1 : 0)
-               .arg(surface.width())
-               .arg(surface.height());
-    return key;
-  }
-
-  if (const auto svgLayer = std::dynamic_pointer_cast<ArtifactSvgLayer>(layer)) {
-    key += QStringLiteral("|svg|src=%1|fit=%2|size=%3x%4")
-               .arg(svgLayer->sourcePath())
-               .arg(svgLayer->fitToLayer() ? 1 : 0)
-               .arg(surface.width())
-               .arg(surface.height());
-    return key;
-  }
-
-  if (const auto videoLayer = std::dynamic_pointer_cast<ArtifactVideoLayer>(layer)) {
-    key += QStringLiteral("|video|src=%1|frame=%2|proxy=%3|size=%4x%5")
-               .arg(videoLayer->sourcePath())
-               .arg(frameNumber)
-               .arg(static_cast<int>(videoLayer->proxyQuality()))
-               .arg(surface.width())
-               .arg(surface.height());
-    return key;
-  }
-
-  if (const auto textLayer = std::dynamic_pointer_cast<ArtifactTextLayer>(layer)) {
-    key += QStringLiteral("|text|value=%1|font=%2|size=%3|bold=%4|italic=%5|allCaps=%6|underline=%7|strike=%8|fill=%9|strokeEnabled=%10|strokeColor=%11|strokeWidth=%12|shadowEnabled=%13|shadowColor=%14|shadowOffset=%15,%16|shadowBlur=%17|tracking=%18|leading=%19|wrap=%20|mw=%21|bh=%22|va=%23|ha=%24|ps=%25|surface=%26x%27")
-               .arg(textLayer->text().toQString())
-               .arg(textLayer->fontFamily().toQString())
-               .arg(textLayer->fontSize(), 0, 'f', 2)
-               .arg(textLayer->isBold() ? 1 : 0)
-               .arg(textLayer->isItalic() ? 1 : 0)
-               .arg(textLayer->isAllCaps() ? 1 : 0)
-               .arg(textLayer->isUnderline() ? 1 : 0)
-               .arg(textLayer->isStrikethrough() ? 1 : 0)
-               .arg(colorKey(textLayer->textColor()))
-               .arg(textLayer->isStrokeEnabled() ? 1 : 0)
-               .arg(colorKey(textLayer->strokeColor()))
-               .arg(textLayer->strokeWidth(), 0, 'f', 2)
-               .arg(textLayer->isShadowEnabled() ? 1 : 0)
-               .arg(colorKey(textLayer->shadowColor()))
-               .arg(textLayer->shadowOffsetX(), 0, 'f', 2)
-               .arg(textLayer->shadowOffsetY(), 0, 'f', 2)
-               .arg(textLayer->shadowBlur(), 0, 'f', 2)
-               .arg(textLayer->tracking(), 0, 'f', 2)
-               .arg(textLayer->leading(), 0, 'f', 2)
-               .arg(static_cast<int>(textLayer->wrapMode()))
-               .arg(textLayer->maxWidth(), 0, 'f', 2)
-               .arg(textLayer->boxHeight(), 0, 'f', 2)
-               .arg(static_cast<int>(textLayer->verticalAlignment()))
-               .arg(static_cast<int>(textLayer->horizontalAlignment()))
-               .arg(textLayer->paragraphSpacing(), 0, 'f', 2)
-               .arg(surface.width())
-               .arg(surface.height());
-    return key;
-  }
-
-  return QString();
-}
-
-bool layerHasCpuRasterizerWork(const ArtifactAbstractLayerPtr& layer)
-{
-  if (!layer) {
-    return false;
-  }
-  if (layer->hasMasks()) {
-    return true;
-  }
-  for (const auto& effect : layer->getEffects()) {
-    if (effect && effect->isEnabled() &&
-        effect->pipelineStage() == EffectPipelineStage::Rasterizer) {
-      return true;
-    }
-  }
-  return false;
-}
-
-bool layerUsesSurfaceUploadForCompositionView(const ArtifactAbstractLayerPtr& layer)
-{
-  if (!layer) {
-    return false;
-  }
-  if (layerHasCpuRasterizerWork(layer)) {
-    return true;
-  }
-  return std::dynamic_pointer_cast<ArtifactImageLayer>(layer) != nullptr ||
-         std::dynamic_pointer_cast<ArtifactSvgLayer>(layer) != nullptr ||
-         std::dynamic_pointer_cast<ArtifactVideoLayer>(layer) != nullptr ||
-         std::dynamic_pointer_cast<ArtifactTextLayer>(layer) != nullptr;
-}
-
-bool layerUsesGpuTextureCacheForCompositionView(const ArtifactAbstractLayerPtr& layer)
-{
-  if (!layer) {
-    return false;
-  }
-
-  // 動画は毎フレーム別内容になりやすく、GPU texture cache を汚しやすいので除外する。
-  if (std::dynamic_pointer_cast<ArtifactVideoLayer>(layer)) {
-    return false;
-  }
-
-  return std::dynamic_pointer_cast<ArtifactImageLayer>(layer) != nullptr ||
-         std::dynamic_pointer_cast<ArtifactSvgLayer>(layer) != nullptr ||
-         std::dynamic_pointer_cast<ArtifactTextLayer>(layer) != nullptr ||
-         std::dynamic_pointer_cast<ArtifactSolid2DLayer>(layer) != nullptr ||
-         std::dynamic_pointer_cast<ArtifactSolidImageLayer>(layer) != nullptr;
 }
 
 QRectF viewportRectToCanvasRect(ArtifactIRenderer* renderer,
@@ -273,6 +114,17 @@ QRectF viewportRectToCanvasRect(ArtifactIRenderer* renderer,
       {static_cast<float>(endViewportPos.x()), static_cast<float>(endViewportPos.y())});
   return QRectF(QPointF(std::min(a.x, b.x), std::min(a.y, b.y)),
                 QPointF(std::max(a.x, b.x), std::max(a.y, b.y)));
+}
+
+DetailLevel detailLevelFromZoom(float zoom)
+{
+  if (zoom < 0.50f) {
+    return DetailLevel::Low;
+  }
+  if (zoom < 0.90f) {
+    return DetailLevel::Medium;
+  }
+  return DetailLevel::High;
 }
 
 SelectionMode selectionModeFromModifiers(Qt::KeyboardModifiers modifiers)
@@ -317,10 +169,32 @@ bool isLayerSelected(const QStringList& selectedIds, const ArtifactAbstractLayer
   return false;
 }
 
+enum class MotionPathSampleKind {
+  Keyframe,
+  Current
+};
+
 struct MotionPathSample {
   QPointF position;
-  bool keyframe = false;
+  MotionPathSampleKind kind = MotionPathSampleKind::Keyframe;
+  int64_t framePosition = -1;
 };
+
+QPointF motionPathAnchorPositionAt(const ArtifactAbstractLayerPtr& layer, const RationalTime& time)
+{
+  if (!layer) {
+    return {};
+  }
+
+  const auto& transform = layer->transform3D();
+  const float anchorX = transform.anchorXAt(time);
+  const float anchorY = transform.anchorYAt(time);
+  const float anchorZ = transform.anchorZAt(time);
+  const auto local = transform.getAllMatrixAt(time);
+  return QPointF(
+      anchorX * local.m00 + anchorY * local.m10 + anchorZ * local.m20 + local.m30,
+      anchorX * local.m01 + anchorY * local.m11 + anchorZ * local.m21 + local.m31);
+}
 
 // Forward declaration
 FramePosition currentFrameForComposition(const ArtifactCompositionPtr& comp);
@@ -343,18 +217,18 @@ QVector<MotionPathSample> buildMotionPathSamples(const ArtifactAbstractLayerPtr&
 
   for (const auto& time : keyTimes) {
     samples.push_back({
-      QPointF(layer->transform3D().positionXAt(time),
-              layer->transform3D().positionYAt(time)),
-      true
+      motionPathAnchorPositionAt(layer, time),
+      MotionPathSampleKind::Keyframe,
+      time.value()
     });
   }
 
   const FramePosition currentFrame = currentFrameForComposition(comp);
   const RationalTime currentTime(currentFrame.framePosition(), fps);
   samples.push_back({
-    QPointF(layer->transform3D().positionXAt(currentTime),
-            layer->transform3D().positionYAt(currentTime)),
-    false
+    motionPathAnchorPositionAt(layer, currentTime),
+    MotionPathSampleKind::Current,
+    currentFrame.framePosition()
   });
 
   return samples;
@@ -492,9 +366,10 @@ ArtifactAbstractLayerPtr hitTopmostLayerAtViewportPos(const ArtifactCompositionP
     }
   }
 
-  return ArtifactAbstractLayerPtr();
+return ArtifactAbstractLayerPtr();
 }
 
+#if 0
 void drawLayerForCompositionView(const ArtifactAbstractLayerPtr &layer,
                                  ArtifactIRenderer *renderer,
                                  float opacityOverride = -1.0f,
@@ -779,8 +654,57 @@ void drawLayerForCompositionView(const ArtifactAbstractLayerPtr &layer,
            << "type=" << layer->type_index().name();
   layer->draw(renderer);
 }
+#endif
 
 } // namespace
+
+// CompositionChangeDetector - 差分レンダリング用の変更検出器
+class CompositionChangeDetector {
+private:
+    QSet<QString> changedLayers_;
+    bool compositionSettingsChanged_ = false;
+    mutable QMutex mutex_;  // スレッドセーフ
+
+public:
+    // レイヤー変更をマーク
+    void markLayerChanged(const QString& layerId) {
+        QMutexLocker locker(&mutex_);
+        changedLayers_.insert(layerId);
+    }
+
+    // Composition設定変更をマーク
+    void markCompositionChanged() {
+        QMutexLocker locker(&mutex_);
+        compositionSettingsChanged_ = true;
+    }
+
+    // 全再描画が必要か判定
+    bool needsFullRedraw() const {
+        QMutexLocker locker(&mutex_);
+        return compositionSettingsChanged_ || changedLayers_.size() > 2;
+    }
+
+    // 変更されたレイヤー一覧を取得
+    QSet<QString> getChangedLayers() const {
+        QMutexLocker locker(&mutex_);
+        return changedLayers_;
+    }
+
+    // 変更状態をリセット
+    void reset() {
+        QMutexLocker locker(&mutex_);
+        changedLayers_.clear();
+        compositionSettingsChanged_ = false;
+    }
+
+    // デバッグ情報
+    QString debugInfo() const {
+        QMutexLocker locker(&mutex_);
+        return QString("ChangedLayers: %1, CompositionChanged: %2")
+               .arg(changedLayers_.size())
+               .arg(compositionSettingsChanged_);
+    }
+};
 
 class CompositionRenderController::Impl {
 public:
@@ -805,7 +729,10 @@ public:
   QString lastEmittedVideoDebug_;
   QVector<QMetaObject::Connection> layerChangedConnections_;
   QMetaObject::Connection compositionChangedConnection_;
-  
+
+  // 変更検出器 (差分レンダリング用)
+  CompositionChangeDetector changeDetector_;
+
   // LOD (Level of Detail)
   std::unique_ptr<LODManager> lodManager_;
   bool lodEnabled_ = true;
@@ -1062,6 +989,15 @@ public:
     lastFinalPresentKey_.clear();
   }
 
+  // 変更検出器へのアクセス (デバッグ用)
+  const CompositionChangeDetector& changeDetector() const {
+    return changeDetector_;
+  }
+
+  CompositionChangeDetector& changeDetector() {
+    return changeDetector_;
+  }
+
   void renderOneFrameImpl(CompositionRenderController *owner);
 };
 
@@ -1120,6 +1056,10 @@ CompositionRenderController::CompositionRenderController(QObject *parent)
                               impl_->invalidateLayerSurfaceCache(layer);
                               impl_->invalidateBaseComposite();
                               impl_->syncSelectedLayerOverlayState(impl_->previewPipeline_.composition());
+
+                              // 変更検出器にマーク (実装のみ、レンダー接続なし)
+                              impl_->changeDetector_.markLayerChanged(layer->id().toString());
+
                               renderOneFrame();
                             }));
               }
@@ -2229,6 +2169,12 @@ void CompositionRenderController::Impl::renderOneFrameImpl(CompositionRenderCont
   if (!owner || !initialized_ || !renderer_ || !running_) {
     return;
   }
+
+  // 変更検出器のデバッグログ (実装確認用)
+  static int renderCount = 0;
+  if (renderCount++ % 60 == 0) {  // 2秒に1回
+    qDebug() << "[CompositionChangeDetector]" << changeDetector_.debugInfo();
+  }
   if (auto *host = hostWidget_.data()) {
     if (!host->isVisible()) {
       return;
@@ -2530,6 +2476,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(CompositionRenderCont
 
     // -- 2: レイヤーブレンド（frameOutOfRange ならスキップ）--
     if (!frameOutOfRange) {
+      const DetailLevel lod = detailLevelFromZoom(renderer_->getZoom());
       for (const auto& layer : layers) {
         if (!layer || !layer->isVisible()) continue;
         if (hasSoloLayer && !layer->isSolo()) continue;
@@ -2558,7 +2505,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(CompositionRenderCont
                           ? &lastVideoDebug_ : nullptr;
         drawLayerForCompositionView(layer, renderer_.get(), 1.0f, dbgOut,
                                     &surfaceCache_, gpuTextureCacheManager_.get(),
-                                    currentFrame.framePosition());
+                                    currentFrame.framePosition(), false, lod);
         renderer_->setOverrideRTV(nullptr);
 
         // CS 実行前に RTV を解除
@@ -2626,6 +2573,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(CompositionRenderCont
     if (!frameOutOfRange) {
       // ROI 計算用のビューポート矩形
       const QRectF viewportRect(0.0f, 0.0f, cw, ch);
+      const DetailLevel lod = detailLevelFromZoom(renderer_->getZoom());
       
       for (const auto& layer : layers) {
         if (!layer || !layer->isVisible()) continue;
@@ -2657,7 +2605,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(CompositionRenderCont
                           ? &lastVideoDebug_ : nullptr;
         drawLayerForCompositionView(layer, renderer_.get(), opacity, dbgOut,
                                     &surfaceCache_, gpuTextureCacheManager_.get(),
-                                    currentFrame.framePosition());
+                                    currentFrame.framePosition(), false, lod);
         
         // === 段階 7: ROI デバッグ表示 ===
         if (debugMode_) {
@@ -2676,24 +2624,51 @@ void CompositionRenderController::Impl::renderOneFrameImpl(CompositionRenderCont
   if (renderer_ && showMotionPathOverlay_ && comp && !selectedLayerId_.isNil()) {
     if (auto selectedLayer = comp->layerById(selectedLayerId_)) {
       const auto motionPath = buildMotionPathSamples(selectedLayer, comp);
-      if (motionPath.size() >= 2) {
+      QVector<MotionPathSample> keyframes;
+      keyframes.reserve(motionPath.size());
+      const MotionPathSample* currentSample = nullptr;
+      for (const auto& sample : motionPath) {
+        if (sample.kind == MotionPathSampleKind::Current) {
+          currentSample = &sample;
+        } else {
+          keyframes.push_back(sample);
+        }
+      }
+
+      auto samePoint = [](const QPointF& a, const QPointF& b) {
+        return qFuzzyCompare(a.x(), b.x()) && qFuzzyCompare(a.y(), b.y());
+      };
+
+      const bool currentMatchesKeyframe = currentSample && std::any_of(
+          keyframes.begin(), keyframes.end(),
+          [&](const MotionPathSample& sample) {
+            return samePoint(sample.position, currentSample->position);
+          });
+
+      const bool hasMotion = keyframes.size() >= 2 ||
+                             (currentSample != nullptr && !keyframes.isEmpty() && !currentMatchesKeyframe);
+
+      if (hasMotion) {
         const FloatColor pathColor{0.95f, 0.65f, 0.22f, 0.85f};
         const FloatColor keyColor{1.0f, 0.92f, 0.28f, 1.0f};
         const FloatColor currentColor{0.28f, 0.9f, 1.0f, 1.0f};
-        QPointF prev = motionPath[0].position;
-        for (int i = 1; i < motionPath.size(); ++i) {
-          const QPointF cur = motionPath[i].position;
+        QPointF prev = keyframes[0].position;
+        for (int i = 1; i < keyframes.size(); ++i) {
+          const QPointF cur = keyframes[i].position;
           renderer_->drawSolidLine({static_cast<float>(prev.x()), static_cast<float>(prev.y())},
                                    {static_cast<float>(cur.x()), static_cast<float>(cur.y())},
                                    pathColor, 1.2f);
           prev = cur;
         }
-        for (const auto& sample : motionPath) {
-          const float size = sample.keyframe ? 6.0f : 4.0f;
-          const FloatColor color = sample.keyframe ? keyColor : currentColor;
+        for (const auto& sample : keyframes) {
           renderer_->drawPoint(static_cast<float>(sample.position.x()),
                                static_cast<float>(sample.position.y()),
-                               size, color);
+                               6.0f, keyColor);
+        }
+        if (currentSample && !currentMatchesKeyframe) {
+          renderer_->drawPoint(static_cast<float>(currentSample->position.x()),
+                               static_cast<float>(currentSample->position.y()),
+                               4.0f, currentColor);
         }
       }
     }

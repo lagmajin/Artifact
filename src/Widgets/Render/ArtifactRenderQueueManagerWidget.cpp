@@ -31,6 +31,7 @@ module;
 #include <QDesktopServices>
 #include <QUrl>
 #include <QToolButton>
+#include <QDialog>
 #ifdef _WIN32
 #define NOMINMAX
 #include <windows.h>
@@ -202,6 +203,7 @@ namespace Artifact
 
   void syncJobsFromService() {
     if (!service) return;
+    const int selectedSource = selectedSourceIndex();
     jobs.clear();
     for (int i = 0; i < service->jobCount(); ++i) {
       JobEntry e;
@@ -212,6 +214,9 @@ namespace Artifact
       jobs.append(e);
     }
     updateJobList();
+    if (jobListWidget && selectedSource >= 0 && selectedSource < jobListWidget->count()) {
+      jobListWidget->setCurrentRow(selectedSource);
+    }
   }
 
   void updateJobList() {
@@ -251,12 +256,18 @@ namespace Artifact
   void updateSummary() {
     if (!summaryLabel) return;
     int done = 0, running = 0;
+    int totalProgress = 0;
     for (const auto& j : jobs) {
         QString s = normalizeStatus(j.status);
         if (s == "Completed") done++;
         else if (s == "Rendering") running++;
+        totalProgress += std::clamp(j.progress, 0, 100);
     }
     summaryLabel->setText(QString("Jobs: %1 | Running: %2 | Done: %3").arg(jobs.size()).arg(running).arg(done));
+    if (totalProgressBar) {
+      totalProgressBar->setRange(0, 100);
+      totalProgressBar->setValue(jobs.isEmpty() ? 0 : totalProgress / jobs.size());
+    }
     if (startButton) startButton->setEnabled(!jobs.isEmpty());
   }
 
@@ -264,6 +275,41 @@ namespace Artifact
     bool has = selectedSourceIndex() >= 0;
     if (removeButton) removeButton->setEnabled(has);
     if (duplicateButton) duplicateButton->setEnabled(has);
+    if (outputSettingsButton) outputSettingsButton->setEnabled(has);
+  }
+
+  void syncDetailEditorsFromJob(int index) {
+    if (!service || index < 0 || index >= service->jobCount()) {
+      return;
+    }
+
+    const QSignalBlocker blockPath(outputPathEdit);
+    const QSignalBlocker blockStart(startFrameSpin);
+    const QSignalBlocker blockEnd(endFrameSpin);
+    const QSignalBlocker blockX(overlayXSpin);
+    const QSignalBlocker blockY(overlayYSpin);
+    const QSignalBlocker blockScale(overlayScaleSpin);
+    const QSignalBlocker blockRotation(overlayRotationSpin);
+
+    if (outputPathEdit) outputPathEdit->setText(service->jobOutputPathAt(index));
+
+    int startFrame = 0;
+    int endFrame = 0;
+    if (service->jobFrameRangeAt(index, &startFrame, &endFrame)) {
+      if (startFrameSpin) startFrameSpin->setValue(startFrame);
+      if (endFrameSpin) endFrameSpin->setValue(endFrame);
+    }
+
+    float offsetX = 0.0f;
+    float offsetY = 0.0f;
+    float scale = 1.0f;
+    float rotationDeg = 0.0f;
+    if (service->jobOverlayTransformAt(index, &offsetX, &offsetY, &scale, &rotationDeg)) {
+      if (overlayXSpin) overlayXSpin->setValue(offsetX);
+      if (overlayYSpin) overlayYSpin->setValue(offsetY);
+      if (overlayScaleSpin) overlayScaleSpin->setValue(scale);
+      if (overlayRotationSpin) overlayRotationSpin->setValue(rotationDeg);
+    }
   }
  };
 
@@ -285,11 +331,13 @@ namespace Artifact
 
   // Main Splitter
   auto* splitter = new QSplitter(Qt::Horizontal);
+  splitter->setChildrenCollapsible(false);
   impl_->jobListWidget = new QListWidget();
   impl_->jobListWidget->setObjectName("renderQueueList");
   impl_->jobListWidget->setContextMenuPolicy(Qt::CustomContextMenu);
   
   auto* leftSide = new QWidget();
+  leftSide->setMinimumWidth(360);
   auto* leftLayout = new QVBoxLayout(leftSide);
   leftLayout->addWidget(impl_->jobListWidget);
   
@@ -308,9 +356,11 @@ namespace Artifact
   
   // Right Pane: Job Details (Scrollable)
   auto* detailScroll = new QScrollArea();
+  detailScroll->setMinimumWidth(340);
   detailScroll->setWidgetResizable(true);
   detailScroll->setObjectName("renderQueueDetailScroll");
   auto* detailWidget = new QWidget();
+  detailWidget->setMinimumWidth(320);
   auto* detailLayout = new QVBoxLayout(detailWidget);
   detailLayout->setContentsMargins(8, 0, 8, 0);
   detailLayout->setSpacing(12);
@@ -342,9 +392,11 @@ namespace Artifact
   impl_->overlayYSpin = new QDoubleSpinBox();
   impl_->overlayScaleSpin = new QDoubleSpinBox();
   impl_->overlayScaleSpin->setValue(1.0);
+  impl_->overlayRotationSpin = new QDoubleSpinBox();
   overlayLayout->addRow("X Offset:", impl_->overlayXSpin);
   overlayLayout->addRow("Y Offset:", impl_->overlayYSpin);
   overlayLayout->addRow("Scale:", impl_->overlayScaleSpin);
+  overlayLayout->addRow("Rotation:", impl_->overlayRotationSpin);
   detailLayout->addWidget(overlayGroup);
 
   detailLayout->addStretch();
@@ -352,6 +404,7 @@ namespace Artifact
   splitter->addWidget(detailScroll);
   splitter->setStretchFactor(0, 3);
   splitter->setStretchFactor(1, 2);
+  splitter->setSizes({560, 380});
   layout->addWidget(splitter, 1);
 
   // Live preview
@@ -387,6 +440,58 @@ namespace Artifact
     else if (act == open) QDesktopServices::openUrl(QUrl::fromLocalFile(path));
   });
 
+  connect(impl_->jobListWidget, &QListWidget::currentRowChanged, this, [this](int row) {
+    impl_->handleJobSelected();
+    const int sourceIndex = (row >= 0 && row < impl_->visibleToSource.size())
+        ? impl_->visibleToSource[row]
+        : impl_->selectedSourceIndex();
+    impl_->syncDetailEditorsFromJob(sourceIndex);
+  });
+
+  connect(impl_->outputSettingsButton, &QPushButton::clicked, this, [this]() {
+    if (!impl_->service) {
+      return;
+    }
+    const int index = impl_->selectedSourceIndex();
+    if (index < 0 || index >= impl_->service->jobCount()) {
+      return;
+    }
+
+    ArtifactRenderOutputSettingDialog dialog(this);
+    QString outputFormat;
+    QString codec;
+    QString codecProfile;
+    int width = 0;
+    int height = 0;
+    double fps = 0.0;
+    int bitrateKbps = 0;
+    impl_->service->jobOutputSettingsAt(index, &outputFormat, &codec, &codecProfile, &width, &height, &fps, &bitrateKbps);
+    dialog.setOutputPath(impl_->service->jobOutputPathAt(index));
+    dialog.setOutputFormat(outputFormat);
+    dialog.setCodec(codec);
+    dialog.setCodecProfile(codecProfile);
+    dialog.setEncoderBackend(impl_->service->jobEncoderBackendAt(index));
+    dialog.setResolution(width, height);
+    dialog.setFrameRate(fps);
+    dialog.setBitrateKbps(bitrateKbps);
+
+    if (dialog.exec() == QDialog::Accepted) {
+      impl_->service->setJobOutputPathAt(index, dialog.outputPath());
+      impl_->service->setJobOutputSettingsAt(
+          index,
+          dialog.outputFormat(),
+          dialog.codec(),
+          dialog.codecProfile(),
+          dialog.outputWidth(),
+          dialog.outputHeight(),
+          dialog.frameRate(),
+          dialog.bitrateKbps());
+      impl_->service->setJobEncoderBackendAt(index, dialog.encoderBackend());
+      impl_->syncJobsFromService();
+      impl_->syncDetailEditorsFromJob(index);
+    }
+  });
+
   // Services
   if (impl_->service) {
     connect(impl_->service, &ArtifactRenderQueueService::jobProgressChanged, this, [this](int i, int p) {
@@ -409,11 +514,39 @@ namespace Artifact
     });
   }
 
+  connect(impl_->addButton, &QPushButton::clicked, this, [this]() {
+    if (impl_->service) {
+      impl_->service->addRenderQueue();
+      impl_->syncJobsFromService();
+    }
+  });
+
+  connect(impl_->removeButton, &QPushButton::clicked, this, [this]() {
+    if (impl_->service) {
+      const int index = impl_->selectedSourceIndex();
+      if (index >= 0) {
+        impl_->service->removeRenderQueueAt(index);
+        impl_->syncJobsFromService();
+      }
+    }
+  });
+
+  connect(impl_->duplicateButton, &QToolButton::clicked, this, [this]() {
+    if (impl_->service) {
+      const int index = impl_->selectedSourceIndex();
+      if (index >= 0) {
+        impl_->service->duplicateRenderQueueAt(index);
+        impl_->syncJobsFromService();
+      }
+    }
+  });
+
   connect(impl_->startButton, &QPushButton::clicked, this, [this]() {
     if (impl_->service) impl_->service->startAllJobs();
   });
 
   impl_->syncJobsFromService();
+  impl_->handleJobSelected();
  }
 
  RenderQueueManagerWidget::~RenderQueueManagerWidget() { delete impl_; }

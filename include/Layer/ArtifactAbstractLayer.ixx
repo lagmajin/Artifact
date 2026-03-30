@@ -102,8 +102,11 @@ protected:
                           int priority = 0) const;
 
 public:
-  ArtifactAbstractLayer();
-  virtual ~ArtifactAbstractLayer();
+    ArtifactAbstractLayer();
+    virtual ~ArtifactAbstractLayer();
+
+protected:
+    void setIs3D(bool value);
 
   virtual QJsonObject toJson() const;
   static ArtifactAbstractLayerPtr fromJson(const QJsonObject &obj);
@@ -114,6 +117,8 @@ public:
   void setVisible(bool visible = true);
   QString layerName() const;
   void setLayerName(const QString &name);
+  QString layerNote() const;
+  void setLayerNote(const QString& note);
 
   void setComposition(void *comp);
   void *composition() const;
@@ -265,6 +270,8 @@ public:
   virtual void drawLOD(ArtifactIRenderer* renderer, DetailLevel lod);
 
   void changed() W_SIGNAL(changed);
+  void layerNoteChanged(QString note)
+    W_SIGNAL(layerNoteChanged, note);
 
 public:
 };

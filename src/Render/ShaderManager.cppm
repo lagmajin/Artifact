@@ -7,6 +7,7 @@ module;
 #include <tbb/task_group.h>
 #include <BasicMath.hpp>
 #include <QByteArray>
+#include <QDebug>
 #include <cmath>
 
 module Artifact.Render.ShaderManager;
@@ -428,12 +429,21 @@ void ShaderManager::Impl::createSpriteFamilyPSOs()
     spriteGP.InputLayout.NumElements = _countof(spriteLayoutElems);
     spriteInfo.PSODesc.ResourceLayout.Variables = spriteVars;
     spriteInfo.PSODesc.ResourceLayout.NumVariables = _countof(spriteVars);
-    if (device_->GetAdapterInfo().ShadingRate.CapFlags & SHADING_RATE_CAP_FLAG_PER_PRIMITIVE) {
+    const bool vrsEnabled = device_->GetDeviceInfo().Features.VariableRateShading != DEVICE_FEATURE_STATE_DISABLED;
+    if (vrsEnabled && (device_->GetAdapterInfo().ShadingRate.CapFlags & SHADING_RATE_CAP_FLAG_PER_PRIMITIVE)) {
         spriteInfo.GraphicsPipeline.ShadingRateFlags = PIPELINE_SHADING_RATE_FLAG_PER_PRIMITIVE;
+    } else {
+        spriteInfo.GraphicsPipeline.ShadingRateFlags = PIPELINE_SHADING_RATE_FLAG_NONE;
+        if (device_->GetAdapterInfo().ShadingRate.CapFlags & SHADING_RATE_CAP_FLAG_PER_PRIMITIVE) {
+            qWarning() << "[ShaderManager] Per-primitive shading rate is supported by the adapter,"
+                       << "but VariableRateShading is disabled for this device. PSOs will be created without ShadingRateFlags.";
+        }
     }
     device_->CreateGraphicsPipelineState(spriteInfo, &spritePsoAndSrb_.pPSO);
     if (spritePsoAndSrb_.pPSO) {
         spritePsoAndSrb_.pPSO->CreateShaderResourceBinding(&spritePsoAndSrb_.pSRB, true);
+    } else {
+        qWarning() << "[ShaderManager] Failed to create PSO:" << "DrawSprite PSO";
     }
 
     GraphicsPipelineStateCreateInfo spriteTransformInfo = spriteInfo;
@@ -444,9 +454,12 @@ void ShaderManager::Impl::createSpriteFamilyPSOs()
     device_->CreateGraphicsPipelineState(spriteTransformInfo, &spriteTransformPsoAndSrb_.pPSO);
     if (spriteTransformPsoAndSrb_.pPSO) {
         spriteTransformPsoAndSrb_.pPSO->CreateShaderResourceBinding(&spriteTransformPsoAndSrb_.pSRB, true);
+    } else {
+        qWarning() << "[ShaderManager] Failed to create PSO:" << "DrawSpriteTransform PSO";
     }
 
     static const ShaderResourceVariableDesc maskedSpriteVars[] = {
+        { SHADER_TYPE_VERTEX, "TransformCB", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC },
         { SHADER_TYPE_PIXEL, "g_scene", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC },
         { SHADER_TYPE_PIXEL, "g_mask", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC },
         { SHADER_TYPE_PIXEL, "g_sampler", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC },
@@ -461,6 +474,8 @@ void ShaderManager::Impl::createSpriteFamilyPSOs()
     device_->CreateGraphicsPipelineState(maskedSpriteInfo, &maskedSpritePsoAndSrb_.pPSO);
     if (maskedSpritePsoAndSrb_.pPSO) {
         maskedSpritePsoAndSrb_.pPSO->CreateShaderResourceBinding(&maskedSpritePsoAndSrb_.pSRB, true);
+    } else {
+        qWarning() << "[ShaderManager] Failed to create PSO:" << "DrawMaskedSprite PSO";
     }
 }
 
@@ -532,6 +547,10 @@ void ShaderManager::Impl::createUtilityFamilyPSOs()
         { SHADER_TYPE_VERTEX, "TransformCB", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC },
         { SHADER_TYPE_PIXEL,  "ViewerHelperCB", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC }
     };
+    static const LayoutElement checkerLayoutElems[] = {
+        LayoutElement{0, 0, 2, VT_FLOAT32, false},
+        LayoutElement{1, 0, 4, VT_FLOAT32, false}
+    };
 
     GraphicsPipelineStateCreateInfo checkerInfo;
     checkerInfo.PSODesc.Name = "Checkerboard PSO";
@@ -544,6 +563,8 @@ void ShaderManager::Impl::createUtilityFamilyPSOs()
     checkerGP.PrimitiveTopology = PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP;
     checkerGP.RasterizerDesc.CullMode = CULL_MODE_NONE;
     checkerGP.DepthStencilDesc.DepthEnable = False;
+    checkerGP.InputLayout.LayoutElements = checkerLayoutElems;
+    checkerGP.InputLayout.NumElements = _countof(checkerLayoutElems);
     checkerInfo.PSODesc.ResourceLayout.Variables = checkerVars;
     checkerInfo.PSODesc.ResourceLayout.NumVariables = _countof(checkerVars);
     device_->CreateGraphicsPipelineState(checkerInfo, &checkerboardPsoAndSrb_.pPSO);

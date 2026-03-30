@@ -117,7 +117,7 @@ namespace Artifact
  RenderQueueManagerJobDetailWidget::RenderQueueManagerJobDetailWidget(QWidget* parent /*= nullptr*/) : QWidget(parent)
   , impl_(new Impl(this))
  {
-  auto style = getDCCStyleSheetPreset(DccStylePreset::ModoStyle);
+  auto style = getDCCStyleSheetPreset(DccStylePreset::StudioStyle);
 
   setStyleSheet(style);
  }
@@ -196,7 +196,7 @@ namespace Artifact
 
  RenderQueueJobWidget::RenderQueueJobWidget(QWidget* parent /*= nullptr*/) :QWidget(parent), impl_(new Impl())
  {
-  auto style = getDCCStyleSheetPreset(DccStylePreset::ModoStyle);
+  auto style = getDCCStyleSheetPreset(DccStylePreset::StudioStyle);
 
   setStyleSheet(style);
 

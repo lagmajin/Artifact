@@ -30,6 +30,8 @@ export namespace Artifact
   FloatColor color() const;
   void setColor(const FloatColor& color);
   void setSize(int width, int height);
+  QJsonObject toJson() const override;
+  void fromJsonProperties(const QJsonObject& obj) override;
   std::vector<ArtifactCore::PropertyGroup> getLayerPropertyGroups() const override;
   bool setLayerPropertyValue(const QString& propertyPath, const QVariant& value) override;
   void draw(ArtifactIRenderer* renderer) override;

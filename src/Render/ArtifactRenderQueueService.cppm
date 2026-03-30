@@ -9,6 +9,8 @@
 #include <QImage>
 #include <QPainter>
 #include <QFont>
+#include <QFile>
+#include <QDataStream>
 #include <QTextOption>
 #include <QDateTime>
 #include <QFileInfo>
@@ -69,9 +71,12 @@ import Artifact.Service.Project;
 import Core.Defaults;
 import Image.ImageF32x4_RGBA;
 import CvUtils;
+import Audio.Segment;
 import Utils.Id;
 import Artifact.Render.SoftwareCompositor;
 import Artifact.Render.IRenderer;
+import Artifact.Render.CompositionViewDrawing;
+import Artifact.Render.GPUTextureCacheManager;
 import Encoder.FFmpegEncoder;
 import Media.Encoder.FFmpegAudioEncoder;
 import IO.ImageExporter;
@@ -158,6 +163,111 @@ namespace Artifact
                 ? QStringLiteral("render")
                 : info.completeBaseName();
             return info.dir().filePath(QStringLiteral("%1.__video_tmp__.%2").arg(baseName, suffix));
+        }
+
+        QString deriveIntegratedAudioTempPath(const QString& finalOutputPath)
+        {
+            const QFileInfo info(finalOutputPath);
+            const QString baseName = info.completeBaseName().isEmpty()
+                ? QStringLiteral("render")
+                : info.completeBaseName();
+            return info.dir().filePath(QStringLiteral("%1.__audio_tmp__.wav").arg(baseName));
+        }
+
+        bool writeAudioSegmentAsWav(const QString& filePath,
+                                    const ArtifactCore::AudioSegment& segment,
+                                    QString* errorMessage)
+        {
+            const int channels = std::max(1, segment.channelCount());
+            const int frameCount = segment.frameCount();
+            const int sampleRate = std::max(1, segment.sampleRate);
+            if (frameCount <= 0 || sampleRate <= 0 || segment.channelData.isEmpty()) {
+                if (errorMessage) *errorMessage = QStringLiteral("Audio segment is empty");
+                return false;
+            }
+
+            QFile file(filePath);
+            if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+                if (errorMessage) *errorMessage = QStringLiteral("Failed to open audio temp file: %1").arg(filePath);
+                return false;
+            }
+
+            const quint32 bytesPerSample = 2;
+            const quint32 dataBytes = static_cast<quint32>(frameCount) * static_cast<quint32>(channels) * bytesPerSample;
+            const quint32 riffSize = 36u + dataBytes;
+
+            QDataStream out(&file);
+            out.setByteOrder(QDataStream::LittleEndian);
+
+            auto writeTag = [&](const char* tag) {
+                if (out.writeRawData(tag, 4) != 4) {
+                    return false;
+                }
+                return true;
+            };
+
+            if (!writeTag("RIFF")) return false;
+            out << riffSize;
+            if (!writeTag("WAVE")) return false;
+            if (!writeTag("fmt ")) return false;
+            out << quint32(16);
+            out << quint16(1);
+            out << quint16(channels);
+            out << quint32(sampleRate);
+            out << quint32(sampleRate * channels * bytesPerSample);
+            out << quint16(channels * bytesPerSample);
+            out << quint16(16);
+            if (!writeTag("data")) return false;
+            out << dataBytes;
+
+            for (int i = 0; i < frameCount; ++i) {
+                for (int ch = 0; ch < channels; ++ch) {
+                    const float sample = (ch < segment.channelData.size() && i < segment.channelData[ch].size())
+                        ? segment.channelData[ch][i]
+                        : 0.0f;
+                    const float clamped = std::clamp(sample, -1.0f, 1.0f);
+                    const qint16 pcm = static_cast<qint16>(std::lround(clamped * 32767.0f));
+                    out << pcm;
+                }
+            }
+
+            return out.status() == QDataStream::Ok;
+        }
+
+        bool exportCompositionAudioToWav(const ArtifactCompositionPtr& composition,
+                                         int startFrame,
+                                         int endFrame,
+                                         const QString& wavPath,
+                                         QString* errorMessage)
+        {
+            if (!composition) {
+                if (errorMessage) *errorMessage = QStringLiteral("Composition is null");
+                return false;
+            }
+            if (!composition->hasAudio()) {
+                if (errorMessage) *errorMessage = QStringLiteral("Composition has no audio");
+                return false;
+            }
+
+            const double fps = composition->frameRate().framerate() > 0.0
+                ? composition->frameRate().framerate()
+                : 30.0;
+            const int frameCount = std::max(1, endFrame - startFrame + 1);
+            const int sampleRate = 48000;
+            const int sampleCount = std::max(1, static_cast<int>(std::ceil((static_cast<double>(frameCount) / fps) * sampleRate)));
+
+            ArtifactCore::AudioSegment segment;
+            if (!composition->getAudio(segment, ArtifactCore::FramePosition(startFrame), sampleCount, sampleRate)) {
+                if (errorMessage) *errorMessage = QStringLiteral("Composition audio extraction failed");
+                return false;
+            }
+
+            if (segment.channelCount() == 0) {
+                if (errorMessage) *errorMessage = QStringLiteral("Composition audio segment is empty");
+                return false;
+            }
+
+            return writeAudioSegmentAsWav(wavPath, segment, errorMessage);
         }
     }
 
@@ -1306,6 +1416,9 @@ namespace Artifact
             if (workerThread_.joinable()) {
                 workerThread_.join();
             }
+            if (gpuRenderer_ && gpuRenderer_->isInitialized()) {
+                gpuRenderer_->destroy();
+            }
         }
 
         ArtifactRenderQueueManager queueManager;
@@ -1324,9 +1437,13 @@ namespace Artifact
         int lastPreviewJobIndex_ = -1;
         std::mutex previewMutex_;
 
+        std::unique_ptr<ArtifactIRenderer> gpuRenderer_;
+        int gpuRendererWidth_ = 0;
+        int gpuRendererHeight_ = 0;
+
         // Render backend selection
         enum class RenderBackend { QPainter, GPU };
-        RenderBackend renderBackend_ = RenderBackend::QPainter;
+        RenderBackend renderBackend_ = RenderBackend::GPU;
 
         QString resolveDummyOutputPath(const ArtifactRenderJob& job, int index) const {
             QString target = job.outputPath.trimmed();
@@ -1619,30 +1736,62 @@ namespace Artifact
                 return false;
             }
 
-            // Headless Diligent レンダラー初期化
-            ArtifactIRenderer renderer;
-            renderer.initializeHeadless(width, height);
+            if (!gpuRenderer_) {
+                gpuRenderer_ = std::make_unique<ArtifactIRenderer>();
+            }
+            if (!gpuRenderer_->isInitialized() ||
+                gpuRendererWidth_ != width ||
+                gpuRendererHeight_ != height) {
+                if (gpuRenderer_->isInitialized()) {
+                    gpuRenderer_->destroy();
+                }
+                gpuRenderer_->initializeHeadless(width, height);
+                if (!gpuRenderer_->isInitialized()) {
+                    if (errorMessage) {
+                        *errorMessage = QStringLiteral("Failed to initialize GPU renderer");
+                    }
+                    return false;
+                }
+                gpuRendererWidth_ = width;
+                gpuRendererHeight_ = height;
+            }
 
             // コンポジションのフレームを設定
             comp->goToFrame(job.startFrame);
 
-            // 全レイヤーをレンダリング
-            renderer.clear();
+            const auto compSize = comp->settings().compositionSize();
+            const FloatColor bgColor{
+                comp->backgroundColor().r(),
+                comp->backgroundColor().g(),
+                comp->backgroundColor().b(),
+                1.0f
+            };
+            QHash<QString, LayerSurfaceCacheEntry> surfaceCache;
+            GPUTextureCacheManager gpuTextureCacheManager;
+            gpuTextureCacheManager.setDevice(gpuRenderer_->device());
+
+            gpuRenderer_->setClearColor(bgColor);
+            gpuRenderer_->clear();
+            gpuRenderer_->drawRectLocal(0.0f, 0.0f,
+                                        static_cast<float>(std::max(1, compSize.width())),
+                                        static_cast<float>(std::max(1, compSize.height())),
+                                        bgColor, 1.0f);
             const auto layers = comp->allLayer();
             const ArtifactCore::FramePosition currentPos(job.startFrame);
 
-            for (const auto& layer : layers) {
-                if (!layer || !layer->isVisible() || !layer->isActiveAt(currentPos)) {
-                    continue;
+                for (const auto& layer : layers) {
+                    if (!layer || !layer->isVisible() || !layer->isActiveAt(currentPos)) {
+                        continue;
+                    }
+                    layer->goToFrame(job.startFrame);
+                    drawLayerForCompositionView(layer, gpuRenderer_.get(), 1.0f, nullptr,
+                                            &surfaceCache, &gpuTextureCacheManager,
+                                            job.startFrame, true);
                 }
-                layer->goToFrame(job.startFrame);
-                layer->draw(&renderer);
-            }
-            renderer.flush();
+            gpuRenderer_->flush();
 
             // GPU から RGBA8888 で readback
-            QImage frame = renderer.readbackToImage();
-            renderer.destroy();
+            QImage frame = gpuRenderer_->readbackToImage();
 
             if (frame.isNull()) {
                 if (errorMessage) *errorMessage = QStringLiteral("GPU readback failed");
@@ -2212,11 +2361,6 @@ namespace Artifact
                 const QFileInfo outInfo(outputPath);
                 QDir outDir = outInfo.dir();
                 if (!outDir.exists()) outDir.mkpath(".");
-                const bool hasAudioSource = QFileInfo(job.audioSourcePath.trimmed()).isFile();
-                const bool wantsIntegratedRender = job.integratedRenderEnabled && hasAudioSource;
-                const QString videoRenderPath = wantsIntegratedRender
-                    ? deriveIntegratedVideoTempPath(outputPath)
-                    : outputPath;
 
                 const QString ext = outInfo.suffix().toLower();
                 const QString format = deriveContainerFromJob(job);
@@ -2235,20 +2379,6 @@ namespace Artifact
                 std::atomic<bool> success = true;
                 std::atomic<int> framesRendered = 0;
                 QString failureReason;
-                std::unique_ptr<IVideoEncodeBackend> videoBackend;
-                if (isVideo) {
-                    QString backendName;
-                    ArtifactRenderJob backendJob = job;
-                    backendJob.outputPath = videoRenderPath;
-                    videoBackend = createVideoEncodeBackend(backendJob, &backendName, &failureReason);
-                    if (!videoBackend) {
-                        qWarning() << "[RenderService] Failed to initialize video backend"
-                                   << "job=" << i
-                                   << "backend=" << backendName
-                                   << "error=" << failureReason;
-                        success.store(false, std::memory_order_relaxed);
-                    }
-                }
 
                 const ArtifactCompositionPtr composition = impl_->resolveComposition(job);
                 const ArtifactCompositionPtr renderComposition = impl_->cloneCompositionSnapshot(composition);
@@ -2258,6 +2388,80 @@ namespace Artifact
                     success.store(false, std::memory_order_relaxed);
                     failureReason = QStringLiteral("Failed to build render snapshot");
                 }
+                const bool hasCompositionAudio = (*compositionForRender) && (*compositionForRender)->hasAudio();
+                const bool hasExternalAudioSource = QFileInfo(job.audioSourcePath.trimmed()).isFile();
+                const bool wantsIntegratedRender = job.integratedRenderEnabled && (hasCompositionAudio || hasExternalAudioSource);
+                const QString videoRenderPath = wantsIntegratedRender
+                    ? deriveIntegratedVideoTempPath(outputPath)
+                    : outputPath;
+                const QString audioTempPath = hasCompositionAudio
+                    ? deriveIntegratedAudioTempPath(outputPath)
+                    : QString();
+                QString audioSourcePathForMux;
+                bool removeAudioTempFile = false;
+                std::unique_ptr<IVideoEncodeBackend> videoBackend;
+                if (isVideo) {
+                    QString backendName;
+                    ArtifactRenderJob backendJob = job;
+                    backendJob.outputPath = videoRenderPath;
+                    videoBackend = createVideoEncodeBackend(backendJob, &backendName, &failureReason);
+                    if (!videoBackend) {
+                        qWarning() << "[RenderService] Failed to initialize video backend"
+                                   << "job=" << i
+                       << "backend=" << backendName
+                       << "error=" << failureReason;
+                        success.store(false, std::memory_order_relaxed);
+                    }
+                }
+
+                if (impl_->renderBackend_ == Impl::RenderBackend::GPU && success.load(std::memory_order_relaxed)) {
+                    const int rw = std::max(16, job.resolutionWidth);
+                    const int rh = std::max(16, job.resolutionHeight);
+                    if (!impl_->gpuRenderer_) {
+                        impl_->gpuRenderer_ = std::make_unique<ArtifactIRenderer>();
+                    }
+                    if (!impl_->gpuRenderer_->isInitialized() ||
+                        impl_->gpuRendererWidth_ != rw ||
+                        impl_->gpuRendererHeight_ != rh) {
+                        if (impl_->gpuRenderer_->isInitialized()) {
+                            impl_->gpuRenderer_->destroy();
+                        }
+                        impl_->gpuRenderer_->initializeHeadless(rw, rh);
+                        if (!impl_->gpuRenderer_->isInitialized()) {
+                            success.store(false, std::memory_order_relaxed);
+                            failureReason = QStringLiteral("Failed to initialize GPU renderer");
+                        } else {
+                            impl_->gpuRendererWidth_ = rw;
+                            impl_->gpuRendererHeight_ = rh;
+                        }
+                    }
+                }
+
+                QHash<QString, LayerSurfaceCacheEntry> gpuSurfaceCache;
+                std::unique_ptr<GPUTextureCacheManager> gpuTextureCacheManager;
+                if (impl_->renderBackend_ == Impl::RenderBackend::GPU && success.load(std::memory_order_relaxed)) {
+                    gpuTextureCacheManager = std::make_unique<GPUTextureCacheManager>();
+                    gpuTextureCacheManager->setDevice(impl_->gpuRenderer_->device());
+                }
+
+                if (wantsIntegratedRender && hasCompositionAudio) {
+                    QString audioError;
+                    if (!exportCompositionAudioToWav(*compositionForRender, startF, endF, audioTempPath, &audioError)) {
+                        qWarning() << "[RenderQueue] Failed to export composition audio:" << audioError;
+                        if (hasExternalAudioSource) {
+                            audioSourcePathForMux = job.audioSourcePath.trimmed();
+                        } else {
+                            success.store(false, std::memory_order_relaxed);
+                            failureReason = audioError;
+                        }
+                    } else {
+                        audioSourcePathForMux = audioTempPath;
+                        removeAudioTempFile = true;
+                    }
+                } else if (wantsIntegratedRender && hasExternalAudioSource) {
+                    audioSourcePathForMux = job.audioSourcePath.trimmed();
+                }
+
                 for (int f = startF; f <= endF; ++f) {
                     if (!success.load(std::memory_order_relaxed)) {
                         break;
@@ -2280,11 +2484,19 @@ namespace Artifact
                     if (impl_->renderBackend_ == Impl::RenderBackend::GPU) {
                         // 経路B: GPU Diligent レンダリング
                         // ヘッドレスレンダラーで1フレームレンダリング → readback
-                        ArtifactIRenderer gpuRenderer;
-                        const int rw = std::max(16, job.resolutionWidth);
-                        const int rh = std::max(16, job.resolutionHeight);
-                        gpuRenderer.initializeHeadless(rw, rh);
-                        gpuRenderer.clear();
+                        const auto compSize = (*compositionForRender)->settings().compositionSize();
+                        const FloatColor bgColor{
+                            (*compositionForRender)->backgroundColor().r(),
+                            (*compositionForRender)->backgroundColor().g(),
+                            (*compositionForRender)->backgroundColor().b(),
+                            1.0f
+                        };
+                        impl_->gpuRenderer_->setClearColor(bgColor);
+                        impl_->gpuRenderer_->clear();
+                        impl_->gpuRenderer_->drawRectLocal(0.0f, 0.0f,
+                                                           static_cast<float>(std::max(1, compSize.width())),
+                                                           static_cast<float>(std::max(1, compSize.height())),
+                                                           bgColor, 1.0f);
 
                         (*compositionForRender)->goToFrame(f);
                         const auto gpuLayers = (*compositionForRender)->allLayer();
@@ -2292,11 +2504,26 @@ namespace Artifact
                         for (const auto& layer : gpuLayers) {
                             if (!layer || !layer->isVisible() || !layer->isActiveAt(gpuPos)) continue;
                             layer->goToFrame(f);
-                            layer->draw(&gpuRenderer);
+                            drawLayerForCompositionView(layer, impl_->gpuRenderer_.get(), 1.0f, nullptr,
+                                                        &gpuSurfaceCache, gpuTextureCacheManager.get(), f, true);
                         }
-                        gpuRenderer.flush();
-                        qimg = gpuRenderer.readbackToImage();
-                        gpuRenderer.destroy();
+                        impl_->gpuRenderer_->flush();
+                        qimg = impl_->gpuRenderer_->readbackToImage();
+                        if (!qimg.isNull()) {
+                            const QColor topLeft = qimg.pixelColor(0, 0);
+                            const QColor center = qimg.pixelColor(
+                                std::clamp(qimg.width() / 2, 0, std::max(0, qimg.width() - 1)),
+                                std::clamp(qimg.height() / 2, 0, std::max(0, qimg.height() - 1)));
+                            qInfo().nospace()
+                                << "[RenderQueue][GPU] frame=" << f
+                                << " expectedBg=("
+                                << bgColor.r() << "," << bgColor.g() << "," << bgColor.b() << "," << bgColor.a()
+                                << ") topLeft=("
+                                << topLeft.red() << "," << topLeft.green() << "," << topLeft.blue() << "," << topLeft.alpha()
+                                << ") center=("
+                                << center.red() << "," << center.green() << "," << center.blue() << "," << center.alpha()
+                                << ") size=" << qimg.width() << "x" << qimg.height();
+                        }
                     } else {
                         // 経路A: QPainter ソフトウェアコンポジット
                         qimg = impl_->renderSingleFrameComposition(job, *compositionForRender, f);
@@ -2352,15 +2579,14 @@ namespace Artifact
                     videoBackend->close();
                 }
 
-                if (success.load(std::memory_order_relaxed) && wantsIntegratedRender) {
-                    const QString audioSourcePath = job.audioSourcePath.trimmed();
+                if (success.load(std::memory_order_relaxed) && wantsIntegratedRender && !audioSourcePathForMux.isEmpty()) {
                     const QString audioCodec = job.audioCodec.trimmed().isEmpty()
                         ? QStringLiteral("aac")
                         : job.audioCodec.trimmed();
                     const int audioBitrate = std::max(32, job.audioBitrateKbps) * 1000;
                     if (!ArtifactCore::FFmpegAudioEncoder::muxAudioWithVideo(
                             videoRenderPath,
-                            audioSourcePath,
+                            audioSourcePathForMux,
                             outputPath,
                             audioCodec,
                             audioBitrate)) {
@@ -2369,6 +2595,10 @@ namespace Artifact
                     } else {
                         QFile::remove(videoRenderPath);
                     }
+                }
+
+                if (removeAudioTempFile) {
+                    QFile::remove(audioTempPath);
                 }
 
                 QMetaObject::invokeMethod(this, [this, i, success_val = success.load(), failureReason, anyFailure]() {

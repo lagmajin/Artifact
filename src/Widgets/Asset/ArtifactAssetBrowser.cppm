@@ -1220,7 +1220,7 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
  {
   setWindowTitle("AssetBrowser");
 
-  auto style = getDCCStyleSheetPreset(DccStylePreset::ModoStyle);
+  auto style = getDCCStyleSheetPreset(DccStylePreset::StudioStyle);
   setStyleSheet(style);
 
   // Enable drag and drop

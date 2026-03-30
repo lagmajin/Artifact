@@ -388,7 +388,7 @@ void CreateSolidLayerSettingDialog::showAnimated()
   layout->addWidget(settingPage);
   layout->addWidget(dialogButtonBox, 0, Qt::AlignRight);
   setLayout(layout);
-  auto style = getDCCStyleSheetPreset(DccStylePreset::ModoStyle);
+  auto style = getDCCStyleSheetPreset(DccStylePreset::StudioStyle);
   setStyleSheet(style);
   
   QObject::connect(dialogButtonBox, &QDialogButtonBox::accepted, this, [this]() {

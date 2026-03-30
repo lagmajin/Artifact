@@ -78,10 +78,11 @@ double effectiveLayerFrameRate(const ArtifactAbstractLayer *layer) {
 
 class ArtifactAbstractLayer::Impl {
 public:
-  bool is3D_ = true;
+   bool is3D_ = false;
   bool isVisible_ = true;
   Id id;
   QString name_;
+  QString layerNote_;
   ArtifactAbstractComposition *composition_ = nullptr;
   LayerID parentLayerId_;
   LAYER_BLEND_TYPE blendMode_ = LAYER_BLEND_TYPE::BLEND_NORMAL;
@@ -217,6 +218,17 @@ void ArtifactAbstractLayer::setLayerName(const QString &name) {
   if (!assignIfChanged(impl_->name_, name)) {
     return;
   }
+  notifyLayerMutation(this, LayerDirtyFlag::All,
+                      LayerDirtyReason::PropertyChanged);
+}
+
+QString ArtifactAbstractLayer::layerNote() const { return impl_->layerNote_; }
+
+void ArtifactAbstractLayer::setLayerNote(const QString &note) {
+  if (!assignIfChanged(impl_->layerNote_, note)) {
+    return;
+  }
+  Q_EMIT layerNoteChanged(note);
   notifyLayerMutation(this, LayerDirtyFlag::All,
                       LayerDirtyReason::PropertyChanged);
 }
@@ -633,7 +645,11 @@ bool ArtifactAbstractLayer::hasParent() const {
   return !impl_->parentLayerId_.isNil();
 }
 
-bool ArtifactAbstractLayer::is3D() const { return false; }
+bool ArtifactAbstractLayer::is3D() const { return impl_->is3D_; }
+
+void ArtifactAbstractLayer::setIs3D(bool value) {
+    impl_->is3D_ = value;
+}
 
 void ArtifactAbstractLayer::setTimeRemapEnabled(bool) {}
 
@@ -745,6 +761,7 @@ QJsonObject ArtifactAbstractLayer::toJson() const {
   // Basic metadata
   obj["id"] = id().toString();
   obj["name"] = layerName();
+  obj["layerNote"] = impl_->layerNote_;
   obj["type"] = static_cast<int>(LayerType::Unknown);
   obj["parentId"] = parentLayerId().toString();
   obj["inPoint"] = (qint64)impl_->inPoint_.framePosition();
@@ -897,6 +914,8 @@ void ArtifactAbstractLayer::applyPropertiesFromJson(const QJsonObject &obj) {
 void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject &obj) {
   if (obj.contains("name"))
     setLayerName(obj["name"].toString());
+  if (obj.contains("layerNote"))
+    setLayerNote(obj["layerNote"].toString());
   if (obj.contains("inPoint"))
     setInPoint(FramePosition(obj["inPoint"].toVariant().toLongLong()));
   if (obj.contains("outPoint"))

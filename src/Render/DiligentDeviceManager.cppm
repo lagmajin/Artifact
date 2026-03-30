@@ -259,6 +259,7 @@ namespace {
         EngineVkCreateInfo creationAttribs = {};
         creationAttribs.EnableValidation = true;
         creationAttribs.SetValidationLevel(Diligent::VALIDATION_LEVEL_2);
+        creationAttribs.Features.VariableRateShading = Diligent::DEVICE_FEATURE_STATE_ENABLED;
 
         // 1. Try with Ray Tracing enabled
         creationAttribs.Features.RayTracing = DEVICE_FEATURE_STATE_ENABLED;
@@ -463,29 +464,12 @@ void DiligentDeviceManager::Impl::initialize(QWidget* widget)
 
 void DiligentDeviceManager::Impl::initializeHeadless()
 {
-    const auto backendPreference = getBackendPreferenceFromEnv();
-
-    bool ok = false;
-    switch (backendPreference) {
-        case RenderBackendPreference::Vulkan:
-            ok = tryCreateVulkanDevice(device_, immediateContext_) ||
-                 tryCreateD3D12Device(device_, immediateContext_);
-            break;
-        case RenderBackendPreference::D3D12:
-            ok = tryCreateD3D12Device(device_, immediateContext_);
-            break;
-        case RenderBackendPreference::Auto:
-        default:
-            ok = tryCreateD3D12Device(device_, immediateContext_) ||
-                 tryCreateVulkanDevice(device_, immediateContext_);
-            break;
-    }
-
-    if (!ok) {
+    if (!acquireSharedRenderDeviceForCurrentBackend(device_, immediateContext_) || !device_ || !immediateContext_) {
         qWarning() << "DiligentDeviceManager::initializeHeadless: failed to create device.";
         return;
     }
 
+    usingSharedDevice_ = true;
     device_->CreateDeferredContext(&deferredContext_);
     qDebug() << "[DiligentDeviceManager] headless device created type="
              << deviceTypeName(device_->GetDeviceInfo().Type);

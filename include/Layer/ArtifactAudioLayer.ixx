@@ -1,5 +1,6 @@
 module;
 
+#include <QJsonObject>
 #include <QVariant>
 
 #include <iostream>
@@ -47,9 +48,10 @@ export namespace Artifact
 
  class ArtifactAudioLayer :public ArtifactAbstractLayer
  {
- private:
-  class Impl;
-  Impl* impl_;
+  private:
+   class Impl;
+   Impl* impl_;
+   bool decodeFrameToCache(qint64 frameNumber);
  public:
   ArtifactAudioLayer();
   ~ArtifactAudioLayer();
@@ -61,6 +63,18 @@ export namespace Artifact
   bool loadFromPath(const QString& path);
   QString sourcePath() const;
   bool isLoaded() const;
+
+  // Audio metadata
+  double duration() const;
+  int sampleRate() const;
+  int channelCount() const;
+  qint64 totalFrames() const;
+
+  // Cache information
+  size_t getCacheSize() const;
+  size_t getCacheMemoryUsage() const;
+  QJsonObject toJson() const override;
+  void fromJsonProperties(const QJsonObject& obj) override;
 
   std::vector<ArtifactCore::PropertyGroup> getLayerPropertyGroups() const override;
   bool setLayerPropertyValue(const QString& propertyPath, const QVariant& value) override;

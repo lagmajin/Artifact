@@ -53,6 +53,7 @@ namespace Artifact {
   bool looping_ = false;
   float playbackSpeed_ = 1.0f;
   CompositionID id_;
+  QString compositionNote_;
   FloatColor backgroundColor_ = { 0.1f, 0.1f, 0.1f, 1.0f };
   //PlaybackClock playbackClock_;  // 高精度再生クロック
   
@@ -563,6 +564,21 @@ void ArtifactAbstractComposition::setCompositionName(const UniString& name)
     impl_->settings_.setCompositionName(name);
 }
 
+QString ArtifactAbstractComposition::compositionNote() const
+{
+    return impl_->compositionNote_;
+}
+
+void ArtifactAbstractComposition::setCompositionNote(const QString& note)
+{
+    if (impl_->compositionNote_ == note) {
+        return;
+    }
+    impl_->compositionNote_ = note;
+    Q_EMIT compositionNoteChanged(note);
+    Q_EMIT changed();
+}
+
 void ArtifactAbstractComposition::setCompositionSize(const QSize& size)
 {
     impl_->settings_.setCompositionSize(size);
@@ -655,6 +671,15 @@ QJsonDocument ArtifactAbstractComposition::toJson() const{
     obj["frameRange"] = impl_->frameRange_.toJson();
     obj["workAreaRange"] = impl_->workAreaRange_.toJson();
     obj["name"] = impl_->settings_.compositionName().toQString();
+    obj["compositionNote"] = impl_->compositionNote_;
+    obj["width"] = impl_->settings_.compositionSize().width();
+    obj["height"] = impl_->settings_.compositionSize().height();
+    QJsonObject backgroundColorObj;
+    backgroundColorObj["r"] = impl_->backgroundColor_.r();
+    backgroundColorObj["g"] = impl_->backgroundColor_.g();
+    backgroundColorObj["b"] = impl_->backgroundColor_.b();
+    backgroundColorObj["a"] = impl_->backgroundColor_.a();
+    obj["backgroundColor"] = backgroundColorObj;
     QJsonArray layersArray;
     for (const auto& layer : impl_->layerMultiIndex_.all()) {
         if (layer) {
@@ -684,12 +709,27 @@ std::shared_ptr<ArtifactAbstractComposition> ArtifactAbstractComposition::fromJs
     if (obj.contains("name")) {
         params.setCompositionName(obj["name"].toString());
     }
+    if (obj.contains("width") && obj.contains("height")) {
+        params.setResolution(obj["width"].toInt(), obj["height"].toInt());
+    }
+    if (obj.contains("backgroundColor") && obj["backgroundColor"].isObject()) {
+        const QJsonObject backgroundColorObj = obj["backgroundColor"].toObject();
+        params.setBackgroundColor(FloatColor{
+            static_cast<float>(backgroundColorObj["r"].toDouble()),
+            static_cast<float>(backgroundColorObj["g"].toDouble()),
+            static_cast<float>(backgroundColorObj["b"].toDouble()),
+            static_cast<float>(backgroundColorObj["a"].toDouble(1.0))
+        });
+    }
     auto comp = std::make_shared<ArtifactAbstractComposition>(compId, params);
     if (obj.contains("frameRange") && obj["frameRange"].isObject()) {
         comp->setFrameRange(FrameRange::fromJson(obj["frameRange"].toObject()));
     }
     if (obj.contains("workAreaRange") && obj["workAreaRange"].isObject()) {
         comp->setWorkAreaRange(FrameRange::fromJson(obj["workAreaRange"].toObject()));
+    }
+    if (obj.contains("compositionNote")) {
+        comp->setCompositionNote(obj["compositionNote"].toString());
     }
     
     if (obj.contains("layers") && obj["layers"].isArray()) {

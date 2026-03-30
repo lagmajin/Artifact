@@ -6,6 +6,8 @@
 #include <array>
 #include <cstring>
 #include <cstdint>
+#include <cmath>
+#include <algorithm>
 #include <mutex>
 #include <QImage>
 #include <QElapsedTimer>
@@ -19,6 +21,7 @@
 #include <DiligentCore/Graphics/GraphicsEngine/interface/Texture.h>
 #include <DiligentCore/Graphics/GraphicsEngineD3D12/interface/EngineFactoryD3D12.h>
 #include <DiligentCore/Graphics/GraphicsEngineVulkan/interface/EngineFactoryVk.h>
+#include <DiligentCore/Common/interface/Float16.hpp>
 #include <DiligentCore/Common/interface/RefCntAutoPtr.hpp>
 #include <DiligentCore/Common/interface/BasicMath.hpp>
 #include <windows.h>
@@ -407,7 +410,7 @@ namespace Artifact
    stagDesc.Width          = srcWidth;
    stagDesc.Height         = srcHeight;
    stagDesc.MipLevels      = 1;
-   stagDesc.Format         = TEX_FORMAT_RGBA8_UNORM;
+   stagDesc.Format         = TEX_FORMAT_RGBA16_FLOAT;
    stagDesc.Usage          = USAGE_STAGING;
    stagDesc.CPUAccessFlags = CPU_ACCESS_READ;
    stagDesc.BindFlags      = BIND_NONE;
@@ -427,6 +430,10 @@ namespace Artifact
   }
 
   // Transition both textures to the required states and issue the copy.
+  // Unbind the render target first so Vulkan doesn't complain about copying
+  // from a texture that is still attached as an RTV.
+  ctx->SetRenderTargets(0, nullptr, nullptr, RESOURCE_STATE_TRANSITION_MODE_NONE);
+
   CopyTextureAttribs copyAttribs;
   copyAttribs.pSrcTexture              = srcTex;
   copyAttribs.SrcTextureTransitionMode = RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
@@ -440,17 +447,29 @@ namespace Artifact
   ctx->Flush();
   m_readbackFence->Wait(waitValue);
 
-  // Map the staging texture. MAP_FLAG_NONE (0) is safe here because the
-  // fence->Wait(1) above guarantees the GPU copy has finished.
+  // Map the staging texture. The fence wait above guarantees the GPU copy has
+  // finished, so DO_NOT_WAIT is safe and avoids Vulkan backend warnings.
   MappedTextureSubresource mapped = {};
-  ctx->MapTextureSubresource(m_readbackStagingTex, 0, 0, MAP_READ, MAP_FLAG_NONE, nullptr, mapped);
+  ctx->MapTextureSubresource(m_readbackStagingTex, 0, 0, MAP_READ, MAP_FLAG_DO_NOT_WAIT, nullptr, mapped);
   if (!mapped.pData) return {};
 
   QImage result(static_cast<int>(srcWidth), static_cast<int>(srcHeight), QImage::Format_RGBA8888);
-  const auto* srcRow = static_cast<const uint8_t*>(mapped.pData);
+  const auto* srcRow = static_cast<const uint16_t*>(mapped.pData);
   for (Uint32 row = 0; row < srcHeight; ++row) {
-   std::memcpy(result.scanLine(static_cast<int>(row)), srcRow, static_cast<size_t>(srcWidth) * 4u);
-   srcRow += mapped.Stride;
+   auto* dst = result.scanLine(static_cast<int>(row));
+   const auto* srcHalf = srcRow;
+   for (Uint32 x = 0; x < srcWidth; ++x) {
+    // float16/32 → uint8 with sRGB gamma encoding
+    const float r = std::clamp(Float16::HalfBitsToFloat(srcHalf[x * 4 + 0]), 0.0f, 1.0f);
+    const float g = std::clamp(Float16::HalfBitsToFloat(srcHalf[x * 4 + 1]), 0.0f, 1.0f);
+    const float b = std::clamp(Float16::HalfBitsToFloat(srcHalf[x * 4 + 2]), 0.0f, 1.0f);
+    const float a = std::clamp(Float16::HalfBitsToFloat(srcHalf[x * 4 + 3]), 0.0f, 1.0f);
+    dst[x * 4 + 0] = static_cast<uint8_t>(std::pow(r, 1.0f / 2.2f) * 255.0f + 0.5f);
+    dst[x * 4 + 1] = static_cast<uint8_t>(std::pow(g, 1.0f / 2.2f) * 255.0f + 0.5f);
+    dst[x * 4 + 2] = static_cast<uint8_t>(std::pow(b, 1.0f / 2.2f) * 255.0f + 0.5f);
+    dst[x * 4 + 3] = static_cast<uint8_t>(a * 255.0f + 0.5f);
+   }
+   srcRow = reinterpret_cast<const uint16_t*>(reinterpret_cast<const uint8_t*>(srcRow) + mapped.Stride);
   }
   ctx->UnmapTextureSubresource(m_readbackStagingTex, 0, 0);
   return result;
