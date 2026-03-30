@@ -1,65 +1,63 @@
 ﻿module;
-#include <QMatrix4x4>
-#include <QImage>
-#include <QPainter>
-#include <QPainterPath>
+#include <QAbstractTextDocumentLayout>
+#include <QColor>
 #include <QFont>
 #include <QFontMetrics>
-#include <QColor>
-#include <QString>
+#include <QImage>
+#include <QMatrix4x4>
+#include <QPainter>
+#include <QPainterPath>
 #include <QRect>
 #include <QSize>
-#include <QVariant>
-#include <QTextOption>
-#include <QTextDocument>
-#include <QAbstractTextDocumentLayout>
+#include <QString>
 #include <QTextBlock>
 #include <QTextBlockFormat>
 #include <QTextCursor>
-#include <QTextLayout>
-#include <QTextFrame>
+#include <QTextDocument>
 #include <QTextFragment>
-#include <opencv2/opencv.hpp>
+#include <QTextFrame>
+#include <QTextLayout>
+#include <QTextOption>
+#include <QVariant>
 #include <opencv2/imgproc.hpp>
+#include <opencv2/opencv.hpp>
 
-#include <iostream>
-#include <vector>
-#include <string>
-#include <map>
-#include <unordered_map>
-#include <set>
-#include <unordered_set>
-#include <memory>
+#include <Layer/ArtifactCloneEffectSupport.hpp>
 #include <algorithm>
-#include <cmath>
-#include <functional>
-#include <optional>
-#include <utility>
+#include <any>
 #include <array>
-#include <mutex>
-#include <thread>
+#include <atomic>
 #include <chrono>
+#include <cmath>
+#include <condition_variable>
+#include <deque>
 #include <filesystem>
 #include <fstream>
+#include <functional>
+#include <iostream>
+#include <list>
+#include <map>
+#include <memory>
+#include <mutex>
+#include <numeric>
+#include <optional>
+#include <queue>
+#include <random>
+#include <regex>
+#include <set>
 #include <sstream>
 #include <stdexcept>
-#include <type_traits>
-#include <variant>
-#include <any>
-#include <atomic>
-#include <condition_variable>
-#include <queue>
-#include <deque>
-#include <list>
+#include <string>
+#include <thread>
 #include <tuple>
-#include <numeric>
-#include <regex>
-#include <random>
-#include <Layer/ArtifactCloneEffectSupport.hpp>
+#include <type_traits>
+#include <unordered_map>
+#include <unordered_set>
+#include <utility>
+#include <variant>
+#include <vector>
+
 module Artifact.Layer.Text;
-
-
-
 
 import Artifact.Layer.Abstract;
 import Utils.String.UniString;
@@ -70,821 +68,863 @@ import Property.Abstract;
 import Property.Group;
 import Font.FreeFont;
 import Text.Style;
+import Text.GlyphLayout;
+import Text.Animator;
 
-namespace Artifact
-{
+namespace Artifact {
 using namespace ArtifactCore;
 
-class ArtifactTextLayer::Impl
-{
+class ArtifactTextLayer::Impl {
 public:
-    UniString text_;
-    TextStyle textStyle_;
-    ParagraphStyle paragraphStyle_;
-    QImage renderedImage_;
-    bool isDirty_ = true;
-    
-    // Cache key to detect if we actually need to re-render
-    struct CacheKey {
-        UniString text;
-        TextStyle style;
-        ParagraphStyle paragraph;
-        bool operator==(const CacheKey& o) const {
-            return text == o.text && style == o.style && paragraph == o.paragraph;
-        }
-    };
-    std::optional<CacheKey> lastCacheKey_;
+  UniString text_;
+  TextStyle textStyle_;
+  ParagraphStyle paragraphStyle_;
+  QImage renderedImage_;
+  bool isDirty_ = true;
 
-    Impl();
+  // Text Animator support
+  std::vector<GlyphItem> glyphs_;
+  std::vector<TextAnimatorEngine> animators_;
+  bool perGlyphMode_ = false;
+  // Cache key to detect if we actually need to re-render
+  struct CacheKey {
+    UniString text;
+    TextStyle style;
+    ParagraphStyle paragraph;
+    bool operator==(const CacheKey &o) const {
+      return text == o.text && style == o.style && paragraph == o.paragraph;
+    }
+  };
+  std::optional<CacheKey> lastCacheKey_;
+
+  Impl();
 };
 
-ArtifactTextLayer::Impl::Impl()
-    : text_(QString("New Text Layer"))
-{
-    textStyle_.fontFamily = UniString(QStringLiteral("Arial"));
-    textStyle_.fontSize = 60.0f;
-    textStyle_.fillColor = FloatRGBA(1.0f, 1.0f, 1.0f, 1.0f);
-    paragraphStyle_.horizontalAlignment = TextHorizontalAlignment::Left;
-    paragraphStyle_.verticalAlignment = TextVerticalAlignment::Top;
-    paragraphStyle_.wrapMode = TextWrapMode::WordWrap;
+ArtifactTextLayer::Impl::Impl() : text_(QString("New Text Layer")) {
+  textStyle_.fontFamily = UniString(QStringLiteral("Arial"));
+  textStyle_.fontSize = 60.0f;
+  textStyle_.fillColor = FloatRGBA(1.0f, 1.0f, 1.0f, 1.0f);
+  paragraphStyle_.horizontalAlignment = TextHorizontalAlignment::Left;
+  paragraphStyle_.verticalAlignment = TextVerticalAlignment::Top;
+  paragraphStyle_.wrapMode = TextWrapMode::WordWrap;
 }
 
-ArtifactTextLayer::ArtifactTextLayer() 
-    : ArtifactAbstractLayer()
-    , impl_(new Impl())
-{
-    // Defer expensive text rasterization until the layer is actually drawn.
-    impl_->renderedImage_ = QImage(1, 1, QImage::Format_ARGB32_Premultiplied);
-    impl_->renderedImage_.fill(Qt::transparent);
+ArtifactTextLayer::ArtifactTextLayer()
+    : ArtifactAbstractLayer(), impl_(new Impl()) {
+  // Defer expensive text rasterization until the layer is actually drawn.
+  impl_->renderedImage_ = QImage(1, 1, QImage::Format_ARGB32_Premultiplied);
+  impl_->renderedImage_.fill(Qt::transparent);
+  impl_->isDirty_ = true;
+  setSourceSize(Size_2D(1, 1));
+}
+
+ArtifactTextLayer::~ArtifactTextLayer() { delete impl_; }
+
+void ArtifactTextLayer::markDirty() {
+  if (impl_) {
     impl_->isDirty_ = true;
-    setSourceSize(Size_2D(1, 1));
+  }
 }
 
-ArtifactTextLayer::~ArtifactTextLayer()
-{
-    delete impl_;
+void ArtifactTextLayer::setText(const UniString &text) {
+  impl_->text_ = text;
+  markDirty();
 }
 
-void ArtifactTextLayer::markDirty()
-{
-    if (impl_) {
-        impl_->isDirty_ = true;
-    }
+UniString ArtifactTextLayer::text() const { return impl_->text_; }
+
+void ArtifactTextLayer::setFontSize(float size) {
+  if (size <= 0.0f)
+    size = 1.0f;
+  impl_->textStyle_.fontSize = size;
+  markDirty();
 }
 
-void ArtifactTextLayer::setText(const UniString& text)
-{
-    impl_->text_ = text;
-    markDirty();
+float ArtifactTextLayer::fontSize() const { return impl_->textStyle_.fontSize; }
+
+void ArtifactTextLayer::setFontFamily(const UniString &family) {
+  impl_->textStyle_.fontFamily = family;
+  markDirty();
 }
 
-UniString ArtifactTextLayer::text() const
-{
-    return impl_->text_;
+UniString ArtifactTextLayer::fontFamily() const {
+  return impl_->textStyle_.fontFamily;
 }
 
-void ArtifactTextLayer::setFontSize(float size)
-{
-    if (size <= 0.0f) size = 1.0f;
-    impl_->textStyle_.fontSize = size;
-    markDirty();
+void ArtifactTextLayer::setTextColor(const FloatRGBA &color) {
+  impl_->textStyle_.fillColor = color;
+  markDirty();
 }
 
-float ArtifactTextLayer::fontSize() const
-{
-    return impl_->textStyle_.fontSize;
+FloatRGBA ArtifactTextLayer::textColor() const {
+  return impl_->textStyle_.fillColor;
 }
 
-void ArtifactTextLayer::setFontFamily(const UniString& family)
-{
-    impl_->textStyle_.fontFamily = family;
-    markDirty();
+void ArtifactTextLayer::setStrokeEnabled(bool enabled) {
+  impl_->textStyle_.strokeEnabled = enabled;
+  markDirty();
 }
 
-UniString ArtifactTextLayer::fontFamily() const
-{
-    return impl_->textStyle_.fontFamily;
+bool ArtifactTextLayer::isStrokeEnabled() const {
+  return impl_->textStyle_.strokeEnabled;
 }
 
-void ArtifactTextLayer::setTextColor(const FloatRGBA& color)
-{
-    impl_->textStyle_.fillColor = color;
-    markDirty();
+void ArtifactTextLayer::setStrokeColor(const FloatRGBA &color) {
+  impl_->textStyle_.strokeColor = color;
+  markDirty();
 }
 
-FloatRGBA ArtifactTextLayer::textColor() const
-{
-    return impl_->textStyle_.fillColor;
+FloatRGBA ArtifactTextLayer::strokeColor() const {
+  return impl_->textStyle_.strokeColor;
 }
 
-void ArtifactTextLayer::setStrokeEnabled(bool enabled)
-{
-    impl_->textStyle_.strokeEnabled = enabled;
-    markDirty();
+void ArtifactTextLayer::setStrokeWidth(float width) {
+  impl_->textStyle_.strokeWidth = width;
+  markDirty();
 }
 
-bool ArtifactTextLayer::isStrokeEnabled() const
-{
-    return impl_->textStyle_.strokeEnabled;
+float ArtifactTextLayer::strokeWidth() const {
+  return impl_->textStyle_.strokeWidth;
 }
 
-void ArtifactTextLayer::setStrokeColor(const FloatRGBA& color)
-{
-    impl_->textStyle_.strokeColor = color;
-    markDirty();
+void ArtifactTextLayer::setShadowEnabled(bool enabled) {
+  impl_->textStyle_.shadowEnabled = enabled;
+  markDirty();
 }
 
-FloatRGBA ArtifactTextLayer::strokeColor() const
-{
-    return impl_->textStyle_.strokeColor;
+bool ArtifactTextLayer::isShadowEnabled() const {
+  return impl_->textStyle_.shadowEnabled;
 }
 
-void ArtifactTextLayer::setStrokeWidth(float width)
-{
-    impl_->textStyle_.strokeWidth = width;
-    markDirty();
+void ArtifactTextLayer::setShadowColor(const FloatRGBA &color) {
+  impl_->textStyle_.shadowColor = color;
+  markDirty();
 }
 
-float ArtifactTextLayer::strokeWidth() const
-{
-    return impl_->textStyle_.strokeWidth;
+FloatRGBA ArtifactTextLayer::shadowColor() const {
+  return impl_->textStyle_.shadowColor;
 }
 
-void ArtifactTextLayer::setShadowEnabled(bool enabled)
-{
-    impl_->textStyle_.shadowEnabled = enabled;
-    markDirty();
+void ArtifactTextLayer::setShadowOffset(float x, float y) {
+  impl_->textStyle_.shadowOffsetX = x;
+  impl_->textStyle_.shadowOffsetY = y;
+  markDirty();
 }
 
-bool ArtifactTextLayer::isShadowEnabled() const
-{
-    return impl_->textStyle_.shadowEnabled;
+float ArtifactTextLayer::shadowOffsetX() const {
+  return impl_->textStyle_.shadowOffsetX;
 }
 
-void ArtifactTextLayer::setShadowColor(const FloatRGBA& color)
-{
-    impl_->textStyle_.shadowColor = color;
-    markDirty();
+float ArtifactTextLayer::shadowOffsetY() const {
+  return impl_->textStyle_.shadowOffsetY;
 }
 
-FloatRGBA ArtifactTextLayer::shadowColor() const
-{
-    return impl_->textStyle_.shadowColor;
+void ArtifactTextLayer::setShadowBlur(float blur) {
+  impl_->textStyle_.shadowBlur = blur;
+  markDirty();
 }
 
-void ArtifactTextLayer::setShadowOffset(float x, float y)
-{
-    impl_->textStyle_.shadowOffsetX = x;
-    impl_->textStyle_.shadowOffsetY = y;
-    markDirty();
+float ArtifactTextLayer::shadowBlur() const {
+  return impl_->textStyle_.shadowBlur;
 }
 
-float ArtifactTextLayer::shadowOffsetX() const
-{
-    return impl_->textStyle_.shadowOffsetX;
+void ArtifactTextLayer::setTracking(float tracking) {
+  impl_->textStyle_.tracking = tracking;
+  markDirty();
 }
 
-float ArtifactTextLayer::shadowOffsetY() const
-{
-    return impl_->textStyle_.shadowOffsetY;
+float ArtifactTextLayer::tracking() const { return impl_->textStyle_.tracking; }
+
+void ArtifactTextLayer::setLeading(float leading) {
+  impl_->textStyle_.leading = leading;
+  markDirty();
 }
 
-void ArtifactTextLayer::setShadowBlur(float blur)
-{
-    impl_->textStyle_.shadowBlur = blur;
-    markDirty();
+float ArtifactTextLayer::leading() const { return impl_->textStyle_.leading; }
+
+void ArtifactTextLayer::setBold(bool enabled) {
+  impl_->textStyle_.fontWeight =
+      enabled ? FontWeight::Bold : FontWeight::Normal;
+  markDirty();
 }
 
-float ArtifactTextLayer::shadowBlur() const
-{
-    return impl_->textStyle_.shadowBlur;
+bool ArtifactTextLayer::isBold() const {
+  return impl_->textStyle_.fontWeight == FontWeight::Bold;
 }
 
-void ArtifactTextLayer::setTracking(float tracking)
-{
-    impl_->textStyle_.tracking = tracking;
-    markDirty();
+void ArtifactTextLayer::setItalic(bool enabled) {
+  impl_->textStyle_.fontStyle = enabled ? FontStyle::Italic : FontStyle::Normal;
+  markDirty();
 }
 
-float ArtifactTextLayer::tracking() const
-{
-    return impl_->textStyle_.tracking;
+bool ArtifactTextLayer::isItalic() const {
+  return impl_->textStyle_.fontStyle == FontStyle::Italic;
 }
 
-void ArtifactTextLayer::setLeading(float leading)
-{
-    impl_->textStyle_.leading = leading;
-    markDirty();
+void ArtifactTextLayer::setAllCaps(bool enabled) {
+  impl_->textStyle_.allCaps = enabled;
+  markDirty();
 }
 
-float ArtifactTextLayer::leading() const
-{
-    return impl_->textStyle_.leading;
+bool ArtifactTextLayer::isAllCaps() const { return impl_->textStyle_.allCaps; }
+
+void ArtifactTextLayer::setUnderline(bool enabled) {
+  impl_->textStyle_.underline = enabled;
+  markDirty();
 }
 
-void ArtifactTextLayer::setBold(bool enabled)
-{
-    impl_->textStyle_.bold = enabled;
-    markDirty();
+bool ArtifactTextLayer::isUnderline() const {
+  return impl_->textStyle_.underline;
 }
 
-bool ArtifactTextLayer::isBold() const
-{
-    return impl_->textStyle_.bold;
+void ArtifactTextLayer::setStrikethrough(bool enabled) {
+  impl_->textStyle_.strikethrough = enabled;
+  markDirty();
 }
 
-void ArtifactTextLayer::setItalic(bool enabled)
-{
-    impl_->textStyle_.italic = enabled;
-    markDirty();
+bool ArtifactTextLayer::isStrikethrough() const {
+  return impl_->textStyle_.strikethrough;
 }
 
-bool ArtifactTextLayer::isItalic() const
-{
-    return impl_->textStyle_.italic;
+void ArtifactTextLayer::setHorizontalAlignment(
+    TextHorizontalAlignment alignment) {
+  impl_->paragraphStyle_.horizontalAlignment = alignment;
+  markDirty();
 }
 
-void ArtifactTextLayer::setAllCaps(bool enabled)
-{
-    impl_->textStyle_.allCaps = enabled;
-    markDirty();
+TextHorizontalAlignment ArtifactTextLayer::horizontalAlignment() const {
+  return impl_->paragraphStyle_.horizontalAlignment;
 }
 
-bool ArtifactTextLayer::isAllCaps() const
-{
-    return impl_->textStyle_.allCaps;
+void ArtifactTextLayer::setVerticalAlignment(TextVerticalAlignment alignment) {
+  impl_->paragraphStyle_.verticalAlignment = alignment;
+  markDirty();
 }
 
-void ArtifactTextLayer::setUnderline(bool enabled)
-{
-    impl_->textStyle_.underline = enabled;
-    markDirty();
+TextVerticalAlignment ArtifactTextLayer::verticalAlignment() const {
+  return impl_->paragraphStyle_.verticalAlignment;
 }
 
-bool ArtifactTextLayer::isUnderline() const
-{
-    return impl_->textStyle_.underline;
+void ArtifactTextLayer::setWrapMode(TextWrapMode wrapMode) {
+  impl_->paragraphStyle_.wrapMode = wrapMode;
+  markDirty();
 }
 
-void ArtifactTextLayer::setStrikethrough(bool enabled)
-{
-    impl_->textStyle_.strikethrough = enabled;
-    markDirty();
+TextWrapMode ArtifactTextLayer::wrapMode() const {
+  return impl_->paragraphStyle_.wrapMode;
 }
 
-bool ArtifactTextLayer::isStrikethrough() const
-{
-    return impl_->textStyle_.strikethrough;
+void ArtifactTextLayer::setMaxWidth(float width) {
+  impl_->paragraphStyle_.boxWidth = (width <= 0.0f) ? 0.0f : width;
+  markDirty();
 }
 
-void ArtifactTextLayer::setHorizontalAlignment(TextHorizontalAlignment alignment)
-{
-    impl_->paragraphStyle_.horizontalAlignment = alignment;
-    markDirty();
+float ArtifactTextLayer::maxWidth() const {
+  return impl_->paragraphStyle_.boxWidth;
 }
 
-TextHorizontalAlignment ArtifactTextLayer::horizontalAlignment() const
-{
-    return impl_->paragraphStyle_.horizontalAlignment;
+void ArtifactTextLayer::setBoxHeight(float height) {
+  impl_->paragraphStyle_.boxHeight = (height <= 0.0f) ? 0.0f : height;
+  markDirty();
 }
 
-void ArtifactTextLayer::setVerticalAlignment(TextVerticalAlignment alignment)
-{
-    impl_->paragraphStyle_.verticalAlignment = alignment;
-    markDirty();
+float ArtifactTextLayer::boxHeight() const {
+  return impl_->paragraphStyle_.boxHeight;
 }
 
-TextVerticalAlignment ArtifactTextLayer::verticalAlignment() const
-{
-    return impl_->paragraphStyle_.verticalAlignment;
+void ArtifactTextLayer::setParagraphSpacing(float spacing) {
+  impl_->paragraphStyle_.paragraphSpacing = std::max(0.0f, spacing);
+  markDirty();
 }
 
-void ArtifactTextLayer::setWrapMode(TextWrapMode wrapMode)
-{
-    impl_->paragraphStyle_.wrapMode = wrapMode;
-    markDirty();
+float ArtifactTextLayer::paragraphSpacing() const {
+  return impl_->paragraphStyle_.paragraphSpacing;
 }
 
-TextWrapMode ArtifactTextLayer::wrapMode() const
-{
-    return impl_->paragraphStyle_.wrapMode;
+QImage ArtifactTextLayer::toQImage() const {
+  if (impl_->isDirty_ || impl_->renderedImage_.isNull()) {
+    const_cast<ArtifactTextLayer *>(this)->updateImage();
+  }
+  return impl_->renderedImage_;
 }
 
-void ArtifactTextLayer::setMaxWidth(float width)
-{
-    impl_->paragraphStyle_.boxWidth = (width <= 0.0f) ? 0.0f : width;
-    markDirty();
+void ArtifactTextLayer::draw(ArtifactIRenderer *renderer) {
+  if (!renderer) {
+    return;
+  }
+  if (impl_->isDirty_ || impl_->renderedImage_.isNull()) {
+    updateImage();
+  }
+  const auto size = sourceSize();
+  if (impl_->renderedImage_.isNull() || size.width <= 0 || size.height <= 0) {
+    return;
+  }
+
+  // Use drawSpriteTransformed to support rotation/scaling in Diligent
+  const QMatrix4x4 baseTransform = getGlobalTransform4x4();
+  drawWithClonerEffect(
+      this, baseTransform,
+      [renderer, size, this](const QMatrix4x4 &transform, float weight) {
+        renderer->drawSpriteTransformed(
+            0.0f, 0.0f, static_cast<float>(size.width),
+            static_cast<float>(size.height), transform, impl_->renderedImage_,
+            this->opacity() * weight);
+      });
 }
 
-float ArtifactTextLayer::maxWidth() const
-{
-    return impl_->paragraphStyle_.boxWidth;
+std::vector<ArtifactCore::PropertyGroup>
+ArtifactTextLayer::getLayerPropertyGroups() const {
+  auto groups = ArtifactAbstractLayer::getLayerPropertyGroups();
+  ArtifactCore::PropertyGroup textGroup(QStringLiteral("Text"));
+
+  auto makeProp = [this](const QString &name, ArtifactCore::PropertyType type,
+                         const QVariant &value, int priority = 0) {
+    return persistentLayerProperty(name, type, value, priority);
+  };
+
+  textGroup.addProperty(makeProp(QStringLiteral("text.value"),
+                                 ArtifactCore::PropertyType::String,
+                                 text().toQString(), -120));
+  textGroup.addProperty(makeProp(QStringLiteral("text.fontFamily"),
+                                 ArtifactCore::PropertyType::String,
+                                 fontFamily().toQString(), -110));
+  textGroup.addProperty(makeProp(QStringLiteral("text.fontSize"),
+                                 ArtifactCore::PropertyType::Float, fontSize(),
+                                 -100));
+  textGroup.addProperty(makeProp(QStringLiteral("text.tracking"),
+                                 ArtifactCore::PropertyType::Float, tracking(),
+                                 -95));
+  textGroup.addProperty(makeProp(QStringLiteral("text.leading"),
+                                 ArtifactCore::PropertyType::Float, leading(),
+                                 -94));
+  textGroup.addProperty(makeProp(QStringLiteral("text.bold"),
+                                 ArtifactCore::PropertyType::Boolean, isBold(),
+                                 -93));
+  textGroup.addProperty(makeProp(QStringLiteral("text.italic"),
+                                 ArtifactCore::PropertyType::Boolean,
+                                 isItalic(), -92));
+  textGroup.addProperty(makeProp(QStringLiteral("text.allCaps"),
+                                 ArtifactCore::PropertyType::Boolean,
+                                 isAllCaps(), -91));
+  textGroup.addProperty(makeProp(QStringLiteral("text.underline"),
+                                 ArtifactCore::PropertyType::Boolean,
+                                 isUnderline(), -90));
+  textGroup.addProperty(makeProp(QStringLiteral("text.strikethrough"),
+                                 ArtifactCore::PropertyType::Boolean,
+                                 isStrikethrough(), -89));
+
+  auto alignmentProp = makeProp(QStringLiteral("text.alignment"),
+                                ArtifactCore::PropertyType::Integer,
+                                static_cast<int>(horizontalAlignment()), -88);
+  alignmentProp->setTooltip(
+      QStringLiteral("0=Left, 1=Center, 2=Right, 3=Justify"));
+  textGroup.addProperty(alignmentProp);
+
+  auto verticalAlignmentProp =
+      makeProp(QStringLiteral("text.verticalAlignment"),
+               ArtifactCore::PropertyType::Integer,
+               static_cast<int>(verticalAlignment()), -87);
+  verticalAlignmentProp->setTooltip(
+      QStringLiteral("0=Top, 1=Middle, 2=Bottom"));
+  textGroup.addProperty(verticalAlignmentProp);
+
+  auto wrapModeProp = makeProp(QStringLiteral("text.wrapMode"),
+                               ArtifactCore::PropertyType::Integer,
+                               static_cast<int>(wrapMode()), -86);
+  wrapModeProp->setTooltip(
+      QStringLiteral("0=NoWrap, 1=WordWrap, 2=WrapAnywhere, 3=ManualWrap"));
+  textGroup.addProperty(wrapModeProp);
+
+  auto maxWidthProp =
+      makeProp(QStringLiteral("text.maxWidth"),
+               ArtifactCore::PropertyType::Float, maxWidth(), -85);
+  maxWidthProp->setHardRange(0.0, 100000.0);
+  maxWidthProp->setSoftRange(0.0, 1920.0);
+  maxWidthProp->setStep(1.0);
+  maxWidthProp->setTooltip(
+      QStringLiteral("0 = Auto width, > 0 = fixed wrap width"));
+  textGroup.addProperty(maxWidthProp);
+
+  auto boxHeightProp =
+      makeProp(QStringLiteral("text.boxHeight"),
+               ArtifactCore::PropertyType::Float, boxHeight(), -84);
+  boxHeightProp->setHardRange(0.0, 100000.0);
+  boxHeightProp->setSoftRange(0.0, 1080.0);
+  boxHeightProp->setStep(1.0);
+  boxHeightProp->setTooltip(
+      QStringLiteral("0 = Auto height, > 0 = fixed box height"));
+  textGroup.addProperty(boxHeightProp);
+
+  auto paragraphSpacingProp =
+      makeProp(QStringLiteral("text.paragraphSpacing"),
+               ArtifactCore::PropertyType::Float, paragraphSpacing(), -83);
+  paragraphSpacingProp->setHardRange(0.0, 1000.0);
+  paragraphSpacingProp->setSoftRange(0.0, 80.0);
+  paragraphSpacingProp->setStep(0.5);
+  textGroup.addProperty(paragraphSpacingProp);
+
+  const auto c = textColor();
+  auto colorProp = persistentLayerProperty(QStringLiteral("text.color"),
+                                           ArtifactCore::PropertyType::Color,
+                                           QVariant(), -82);
+  colorProp->setColorValue(QColor::fromRgbF(c.r(), c.g(), c.b(), c.a()));
+  colorProp->setValue(colorProp->getColorValue());
+  textGroup.addProperty(colorProp);
+
+  // Stroke
+  textGroup.addProperty(makeProp(QStringLiteral("text.strokeEnabled"),
+                                 ArtifactCore::PropertyType::Boolean,
+                                 isStrokeEnabled(), -81));
+  const auto sc = strokeColor();
+  auto strokeColorProp = persistentLayerProperty(
+      QStringLiteral("text.strokeColor"), ArtifactCore::PropertyType::Color,
+      QVariant(), -80);
+  strokeColorProp->setColorValue(
+      QColor::fromRgbF(sc.r(), sc.g(), sc.b(), sc.a()));
+  strokeColorProp->setValue(strokeColorProp->getColorValue());
+  textGroup.addProperty(strokeColorProp);
+  textGroup.addProperty(makeProp(QStringLiteral("text.strokeWidth"),
+                                 ArtifactCore::PropertyType::Float,
+                                 strokeWidth(), -79));
+
+  // Shadow
+  textGroup.addProperty(makeProp(QStringLiteral("text.shadowEnabled"),
+                                 ArtifactCore::PropertyType::Boolean,
+                                 isShadowEnabled(), -78));
+  const auto shc = shadowColor();
+  auto shadowColorProp = persistentLayerProperty(
+      QStringLiteral("text.shadowColor"), ArtifactCore::PropertyType::Color,
+      QVariant(), -77);
+  shadowColorProp->setColorValue(
+      QColor::fromRgbF(shc.r(), shc.g(), shc.b(), shc.a()));
+  shadowColorProp->setValue(shadowColorProp->getColorValue());
+  textGroup.addProperty(shadowColorProp);
+  textGroup.addProperty(makeProp(QStringLiteral("text.shadowOffsetX"),
+                                 ArtifactCore::PropertyType::Float,
+                                 shadowOffsetX(), -76));
+  textGroup.addProperty(makeProp(QStringLiteral("text.shadowOffsetY"),
+                                 ArtifactCore::PropertyType::Float,
+                                 shadowOffsetY(), -75));
+  textGroup.addProperty(makeProp(QStringLiteral("text.shadowBlur"),
+                                 ArtifactCore::PropertyType::Float,
+                                 shadowBlur(), -74));
+
+  groups.push_back(textGroup);
+  return groups;
 }
 
-void ArtifactTextLayer::setBoxHeight(float height)
-{
-    impl_->paragraphStyle_.boxHeight = (height <= 0.0f) ? 0.0f : height;
-    markDirty();
-}
-
-float ArtifactTextLayer::boxHeight() const
-{
-    return impl_->paragraphStyle_.boxHeight;
-}
-
-void ArtifactTextLayer::setParagraphSpacing(float spacing)
-{
-    impl_->paragraphStyle_.paragraphSpacing = std::max(0.0f, spacing);
-    markDirty();
-}
-
-float ArtifactTextLayer::paragraphSpacing() const
-{
-    return impl_->paragraphStyle_.paragraphSpacing;
-}
-
-QImage ArtifactTextLayer::toQImage() const
-{
-    if (impl_->isDirty_ || impl_->renderedImage_.isNull()) {
-        const_cast<ArtifactTextLayer*>(this)->updateImage();
-    }
-    return impl_->renderedImage_;
-}
-
-void ArtifactTextLayer::draw(ArtifactIRenderer* renderer)
-{
-    if (!renderer) {
-        return;
-    }
-    if (impl_->isDirty_ || impl_->renderedImage_.isNull()) {
-        updateImage();
-    }
-    const auto size = sourceSize();
-    if (impl_->renderedImage_.isNull() || size.width <= 0 || size.height <= 0) {
-        return;
-    }
-    
-    // Use drawSpriteTransformed to support rotation/scaling in Diligent
-    const QMatrix4x4 baseTransform = getGlobalTransform4x4();
-    drawWithClonerEffect(this, baseTransform, [renderer, size, this](const QMatrix4x4& transform, float weight) {
-        renderer->drawSpriteTransformed(0.0f, 0.0f,
-                                        static_cast<float>(size.width),
-                                        static_cast<float>(size.height),
-                                        transform, impl_->renderedImage_,
-                                        this->opacity() * weight);
-    });
-}
-
-std::vector<ArtifactCore::PropertyGroup> ArtifactTextLayer::getLayerPropertyGroups() const
-{
-    auto groups = ArtifactAbstractLayer::getLayerPropertyGroups();
-    ArtifactCore::PropertyGroup textGroup(QStringLiteral("Text"));
-
-    auto makeProp = [this](const QString& name, ArtifactCore::PropertyType type, const QVariant& value, int priority = 0) {
-        return persistentLayerProperty(name, type, value, priority);
-    };
-
-    textGroup.addProperty(makeProp(QStringLiteral("text.value"), ArtifactCore::PropertyType::String, text().toQString(), -120));
-    textGroup.addProperty(makeProp(QStringLiteral("text.fontFamily"), ArtifactCore::PropertyType::String, fontFamily().toQString(), -110));
-    textGroup.addProperty(makeProp(QStringLiteral("text.fontSize"), ArtifactCore::PropertyType::Float, fontSize(), -100));
-    textGroup.addProperty(makeProp(QStringLiteral("text.tracking"), ArtifactCore::PropertyType::Float, tracking(), -95));
-    textGroup.addProperty(makeProp(QStringLiteral("text.leading"), ArtifactCore::PropertyType::Float, leading(), -94));
-    textGroup.addProperty(makeProp(QStringLiteral("text.bold"), ArtifactCore::PropertyType::Boolean, isBold(), -93));
-    textGroup.addProperty(makeProp(QStringLiteral("text.italic"), ArtifactCore::PropertyType::Boolean, isItalic(), -92));
-    textGroup.addProperty(makeProp(QStringLiteral("text.allCaps"), ArtifactCore::PropertyType::Boolean, isAllCaps(), -91));
-    textGroup.addProperty(makeProp(QStringLiteral("text.underline"), ArtifactCore::PropertyType::Boolean, isUnderline(), -90));
-    textGroup.addProperty(makeProp(QStringLiteral("text.strikethrough"), ArtifactCore::PropertyType::Boolean, isStrikethrough(), -89));
-
-    auto alignmentProp = makeProp(QStringLiteral("text.alignment"), ArtifactCore::PropertyType::Integer,
-        static_cast<int>(horizontalAlignment()), -88);
-    alignmentProp->setTooltip(QStringLiteral("0=Left, 1=Center, 2=Right, 3=Justify"));
-    textGroup.addProperty(alignmentProp);
-
-    auto verticalAlignmentProp = makeProp(QStringLiteral("text.verticalAlignment"), ArtifactCore::PropertyType::Integer,
-        static_cast<int>(verticalAlignment()), -87);
-    verticalAlignmentProp->setTooltip(QStringLiteral("0=Top, 1=Middle, 2=Bottom"));
-    textGroup.addProperty(verticalAlignmentProp);
-
-    auto wrapModeProp = makeProp(QStringLiteral("text.wrapMode"), ArtifactCore::PropertyType::Integer,
-        static_cast<int>(wrapMode()), -86);
-    wrapModeProp->setTooltip(QStringLiteral("0=NoWrap, 1=WordWrap, 2=WrapAnywhere, 3=ManualWrap"));
-    textGroup.addProperty(wrapModeProp);
-
-    auto maxWidthProp = makeProp(QStringLiteral("text.maxWidth"), ArtifactCore::PropertyType::Float, maxWidth(), -85);
-    maxWidthProp->setHardRange(0.0, 100000.0);
-    maxWidthProp->setSoftRange(0.0, 1920.0);
-    maxWidthProp->setStep(1.0);
-    maxWidthProp->setTooltip(QStringLiteral("0 = Auto width, > 0 = fixed wrap width"));
-    textGroup.addProperty(maxWidthProp);
-
-    auto boxHeightProp = makeProp(QStringLiteral("text.boxHeight"), ArtifactCore::PropertyType::Float, boxHeight(), -84);
-    boxHeightProp->setHardRange(0.0, 100000.0);
-    boxHeightProp->setSoftRange(0.0, 1080.0);
-    boxHeightProp->setStep(1.0);
-    boxHeightProp->setTooltip(QStringLiteral("0 = Auto height, > 0 = fixed box height"));
-    textGroup.addProperty(boxHeightProp);
-
-    auto paragraphSpacingProp = makeProp(QStringLiteral("text.paragraphSpacing"), ArtifactCore::PropertyType::Float, paragraphSpacing(), -83);
-    paragraphSpacingProp->setHardRange(0.0, 1000.0);
-    paragraphSpacingProp->setSoftRange(0.0, 80.0);
-    paragraphSpacingProp->setStep(0.5);
-    textGroup.addProperty(paragraphSpacingProp);
-
-    const auto c = textColor();
-    auto colorProp = persistentLayerProperty(QStringLiteral("text.color"),
-        ArtifactCore::PropertyType::Color,
-        QVariant(),
-        -82);
-    colorProp->setColorValue(QColor::fromRgbF(c.r(), c.g(), c.b(), c.a()));
-    colorProp->setValue(colorProp->getColorValue());
-    textGroup.addProperty(colorProp);
-
-    // Stroke
-    textGroup.addProperty(makeProp(QStringLiteral("text.strokeEnabled"), ArtifactCore::PropertyType::Boolean, isStrokeEnabled(), -81));
-    const auto sc = strokeColor();
-    auto strokeColorProp = persistentLayerProperty(QStringLiteral("text.strokeColor"),
-        ArtifactCore::PropertyType::Color,
-        QVariant(),
-        -80);
-    strokeColorProp->setColorValue(QColor::fromRgbF(sc.r(), sc.g(), sc.b(), sc.a()));
-    strokeColorProp->setValue(strokeColorProp->getColorValue());
-    textGroup.addProperty(strokeColorProp);
-    textGroup.addProperty(makeProp(QStringLiteral("text.strokeWidth"), ArtifactCore::PropertyType::Float, strokeWidth(), -79));
-
-    // Shadow
-    textGroup.addProperty(makeProp(QStringLiteral("text.shadowEnabled"), ArtifactCore::PropertyType::Boolean, isShadowEnabled(), -78));
-    const auto shc = shadowColor();
-    auto shadowColorProp = persistentLayerProperty(QStringLiteral("text.shadowColor"),
-        ArtifactCore::PropertyType::Color,
-        QVariant(),
-        -77);
-    shadowColorProp->setColorValue(QColor::fromRgbF(shc.r(), shc.g(), shc.b(), shc.a()));
-    shadowColorProp->setValue(shadowColorProp->getColorValue());
-    textGroup.addProperty(shadowColorProp);
-    textGroup.addProperty(makeProp(QStringLiteral("text.shadowOffsetX"), ArtifactCore::PropertyType::Float, shadowOffsetX(), -76));
-    textGroup.addProperty(makeProp(QStringLiteral("text.shadowOffsetY"), ArtifactCore::PropertyType::Float, shadowOffsetY(), -75));
-    textGroup.addProperty(makeProp(QStringLiteral("text.shadowBlur"), ArtifactCore::PropertyType::Float, shadowBlur(), -74));
-
-    groups.push_back(textGroup);
-    return groups;
-}
-
-bool ArtifactTextLayer::setLayerPropertyValue(const QString& propertyPath, const QVariant& value)
-{
-    if (propertyPath == QStringLiteral("text.value")) {
-        setText(UniString(value.toString()));
-        Q_EMIT changed();
-        return true;
-    }
-    if (propertyPath == QStringLiteral("text.fontFamily")) {
-        setFontFamily(UniString(value.toString()));
-        Q_EMIT changed();
-        return true;
-    }
-    if (propertyPath == QStringLiteral("text.fontSize")) {
-        setFontSize(static_cast<float>(value.toDouble()));
-        Q_EMIT changed();
-        return true;
-    }
-    if (propertyPath == QStringLiteral("text.tracking")) {
-        setTracking(static_cast<float>(value.toDouble()));
-        Q_EMIT changed();
-        return true;
-    }
-    if (propertyPath == QStringLiteral("text.leading")) {
-        setLeading(static_cast<float>(value.toDouble()));
-        Q_EMIT changed();
-        return true;
-    }
-    if (propertyPath == QStringLiteral("text.bold")) {
-        setBold(value.toBool());
-        Q_EMIT changed();
-        return true;
-    }
-    if (propertyPath == QStringLiteral("text.italic")) {
-        setItalic(value.toBool());
-        Q_EMIT changed();
-        return true;
-    }
-    if (propertyPath == QStringLiteral("text.allCaps")) {
-        setAllCaps(value.toBool());
-        Q_EMIT changed();
-        return true;
-    }
-    if (propertyPath == QStringLiteral("text.underline")) {
-        setUnderline(value.toBool());
-        Q_EMIT changed();
-        return true;
-    }
-    if (propertyPath == QStringLiteral("text.strikethrough")) {
-        setStrikethrough(value.toBool());
-        Q_EMIT changed();
-        return true;
-    }
-    if (propertyPath == QStringLiteral("text.alignment")) {
-        setHorizontalAlignment(static_cast<TextHorizontalAlignment>(value.toInt()));
-        Q_EMIT changed();
-        return true;
-    }
-    if (propertyPath == QStringLiteral("text.verticalAlignment")) {
-        setVerticalAlignment(static_cast<TextVerticalAlignment>(value.toInt()));
-        Q_EMIT changed();
-        return true;
-    }
-    if (propertyPath == QStringLiteral("text.wrapMode")) {
-        setWrapMode(static_cast<TextWrapMode>(value.toInt()));
-        Q_EMIT changed();
-        return true;
-    }
-    if (propertyPath == QStringLiteral("text.maxWidth")) {
-        setMaxWidth(static_cast<float>(value.toDouble()));
-        Q_EMIT changed();
-        return true;
-    }
-    if (propertyPath == QStringLiteral("text.boxHeight")) {
-        setBoxHeight(static_cast<float>(value.toDouble()));
-        Q_EMIT changed();
-        return true;
-    }
-    if (propertyPath == QStringLiteral("text.paragraphSpacing")) {
-        setParagraphSpacing(static_cast<float>(value.toDouble()));
-        Q_EMIT changed();
-        return true;
-    }
-    if (propertyPath == QStringLiteral("text.color")) {
-        const auto c = value.value<QColor>();
-        setTextColor(FloatRGBA(c.redF(), c.greenF(), c.blueF(), c.alphaF()));
-        Q_EMIT changed();
-        return true;
-    }
-    if (propertyPath == QStringLiteral("text.strokeEnabled")) {
-        setStrokeEnabled(value.toBool());
-        Q_EMIT changed();
-        return true;
-    }
-    if (propertyPath == QStringLiteral("text.strokeColor")) {
-        const auto c = value.value<QColor>();
-        setStrokeColor(FloatRGBA(c.redF(), c.greenF(), c.blueF(), c.alphaF()));
-        Q_EMIT changed();
-        return true;
-    }
-    if (propertyPath == QStringLiteral("text.strokeWidth")) {
-        setStrokeWidth(static_cast<float>(value.toDouble()));
-        Q_EMIT changed();
-        return true;
-    }
-    if (propertyPath == QStringLiteral("text.shadowEnabled")) {
-        setShadowEnabled(value.toBool());
-        Q_EMIT changed();
-        return true;
-    }
-    if (propertyPath == QStringLiteral("text.shadowColor")) {
-        const auto c = value.value<QColor>();
-        setShadowColor(FloatRGBA(c.redF(), c.greenF(), c.blueF(), c.alphaF()));
-        Q_EMIT changed();
-        return true;
-    }
-    if (propertyPath == QStringLiteral("text.shadowOffsetX")) {
-        setShadowOffset(static_cast<float>(value.toDouble()), shadowOffsetY());
-        Q_EMIT changed();
-        return true;
-    }
-    if (propertyPath == QStringLiteral("text.shadowOffsetY")) {
-        setShadowOffset(shadowOffsetX(), static_cast<float>(value.toDouble()));
-        Q_EMIT changed();
-        return true;
-    }
-    if (propertyPath == QStringLiteral("text.shadowBlur")) {
-        setShadowBlur(static_cast<float>(value.toDouble()));
-        Q_EMIT changed();
-        return true;
-    }
-    return ArtifactAbstractLayer::setLayerPropertyValue(propertyPath, value);
+bool ArtifactTextLayer::setLayerPropertyValue(const QString &propertyPath,
+                                              const QVariant &value) {
+  if (propertyPath == QStringLiteral("text.value")) {
+    setText(UniString(value.toString()));
+    Q_EMIT changed();
+    return true;
+  }
+  if (propertyPath == QStringLiteral("text.fontFamily")) {
+    setFontFamily(UniString(value.toString()));
+    Q_EMIT changed();
+    return true;
+  }
+  if (propertyPath == QStringLiteral("text.fontSize")) {
+    setFontSize(static_cast<float>(value.toDouble()));
+    Q_EMIT changed();
+    return true;
+  }
+  if (propertyPath == QStringLiteral("text.tracking")) {
+    setTracking(static_cast<float>(value.toDouble()));
+    Q_EMIT changed();
+    return true;
+  }
+  if (propertyPath == QStringLiteral("text.leading")) {
+    setLeading(static_cast<float>(value.toDouble()));
+    Q_EMIT changed();
+    return true;
+  }
+  if (propertyPath == QStringLiteral("text.bold")) {
+    setBold(value.toBool());
+    Q_EMIT changed();
+    return true;
+  }
+  if (propertyPath == QStringLiteral("text.italic")) {
+    setItalic(value.toBool());
+    Q_EMIT changed();
+    return true;
+  }
+  if (propertyPath == QStringLiteral("text.allCaps")) {
+    setAllCaps(value.toBool());
+    Q_EMIT changed();
+    return true;
+  }
+  if (propertyPath == QStringLiteral("text.underline")) {
+    setUnderline(value.toBool());
+    Q_EMIT changed();
+    return true;
+  }
+  if (propertyPath == QStringLiteral("text.strikethrough")) {
+    setStrikethrough(value.toBool());
+    Q_EMIT changed();
+    return true;
+  }
+  if (propertyPath == QStringLiteral("text.alignment")) {
+    setHorizontalAlignment(static_cast<TextHorizontalAlignment>(value.toInt()));
+    Q_EMIT changed();
+    return true;
+  }
+  if (propertyPath == QStringLiteral("text.verticalAlignment")) {
+    setVerticalAlignment(static_cast<TextVerticalAlignment>(value.toInt()));
+    Q_EMIT changed();
+    return true;
+  }
+  if (propertyPath == QStringLiteral("text.wrapMode")) {
+    setWrapMode(static_cast<TextWrapMode>(value.toInt()));
+    Q_EMIT changed();
+    return true;
+  }
+  if (propertyPath == QStringLiteral("text.maxWidth")) {
+    setMaxWidth(static_cast<float>(value.toDouble()));
+    Q_EMIT changed();
+    return true;
+  }
+  if (propertyPath == QStringLiteral("text.boxHeight")) {
+    setBoxHeight(static_cast<float>(value.toDouble()));
+    Q_EMIT changed();
+    return true;
+  }
+  if (propertyPath == QStringLiteral("text.paragraphSpacing")) {
+    setParagraphSpacing(static_cast<float>(value.toDouble()));
+    Q_EMIT changed();
+    return true;
+  }
+  if (propertyPath == QStringLiteral("text.color")) {
+    const auto c = value.value<QColor>();
+    setTextColor(FloatRGBA(c.redF(), c.greenF(), c.blueF(), c.alphaF()));
+    Q_EMIT changed();
+    return true;
+  }
+  if (propertyPath == QStringLiteral("text.strokeEnabled")) {
+    setStrokeEnabled(value.toBool());
+    Q_EMIT changed();
+    return true;
+  }
+  if (propertyPath == QStringLiteral("text.strokeColor")) {
+    const auto c = value.value<QColor>();
+    setStrokeColor(FloatRGBA(c.redF(), c.greenF(), c.blueF(), c.alphaF()));
+    Q_EMIT changed();
+    return true;
+  }
+  if (propertyPath == QStringLiteral("text.strokeWidth")) {
+    setStrokeWidth(static_cast<float>(value.toDouble()));
+    Q_EMIT changed();
+    return true;
+  }
+  if (propertyPath == QStringLiteral("text.shadowEnabled")) {
+    setShadowEnabled(value.toBool());
+    Q_EMIT changed();
+    return true;
+  }
+  if (propertyPath == QStringLiteral("text.shadowColor")) {
+    const auto c = value.value<QColor>();
+    setShadowColor(FloatRGBA(c.redF(), c.greenF(), c.blueF(), c.alphaF()));
+    Q_EMIT changed();
+    return true;
+  }
+  if (propertyPath == QStringLiteral("text.shadowOffsetX")) {
+    setShadowOffset(static_cast<float>(value.toDouble()), shadowOffsetY());
+    Q_EMIT changed();
+    return true;
+  }
+  if (propertyPath == QStringLiteral("text.shadowOffsetY")) {
+    setShadowOffset(shadowOffsetX(), static_cast<float>(value.toDouble()));
+    Q_EMIT changed();
+    return true;
+  }
+  if (propertyPath == QStringLiteral("text.shadowBlur")) {
+    setShadowBlur(static_cast<float>(value.toDouble()));
+    Q_EMIT changed();
+    return true;
+  }
+  return ArtifactAbstractLayer::setLayerPropertyValue(propertyPath, value);
 }
 
 void ArtifactTextLayer::updateImage() {
-    // Cache check
-    Impl::CacheKey currentKey{impl_->text_, impl_->textStyle_, impl_->paragraphStyle_};
-    if (!impl_->isDirty_ && impl_->lastCacheKey_ && *impl_->lastCacheKey_ == currentKey && !impl_->renderedImage_.isNull()) {
-        return;
+  // Cache check
+  Impl::CacheKey currentKey{impl_->text_, impl_->textStyle_,
+                            impl_->paragraphStyle_};
+  if (!impl_->isDirty_ && impl_->lastCacheKey_ &&
+      *impl_->lastCacheKey_ == currentKey && !impl_->renderedImage_.isNull()) {
+    return;
+  }
+  impl_->lastCacheKey_ = currentKey;
+
+  QString displayText = impl_->text_.toQString();
+
+  // Update glyph layout for text animation
+  impl_->glyphs_ = TextLayoutEngine::layout(impl_->text_, impl_->textStyle_,
+                                            impl_->paragraphStyle_);
+  impl_->perGlyphMode_ = !impl_->animators_.empty();
+
+  // Apply text animators to glyphs
+  if (impl_->perGlyphMode_) {
+    TextAnimatorEngine::applyAnimator(impl_->glyphs_, RangeSelector{}, WigglySelector{},
+                                       AnimatorProperties{}, 0.0f);
+  }
+
+  const bool isRichText = Qt::mightBeRichText(displayText);
+  if (impl_->textStyle_.allCaps && !isRichText) {
+    displayText = displayText.toUpper();
+  }
+  if (displayText.isEmpty()) {
+    displayText = QStringLiteral(" ");
+  }
+
+  // Set up QTextDocument for rich text support
+  QTextDocument doc;
+  doc.setUndoRedoEnabled(false);
+
+  // Set default font
+  QFont defaultFont = FontManager::makeFont(impl_->textStyle_);
+  doc.setDefaultFont(defaultFont);
+
+  // Apply basic styles to the whole document
+  QTextOption option = doc.defaultTextOption();
+  switch (impl_->paragraphStyle_.wrapMode) {
+  case TextWrapMode::NoWrap:
+    option.setWrapMode(QTextOption::NoWrap);
+    break;
+  case TextWrapMode::WrapAnywhere:
+    option.setWrapMode(QTextOption::WrapAnywhere);
+    break;
+  case TextWrapMode::ManualWrap:
+    option.setWrapMode(QTextOption::ManualWrap);
+    break;
+  case TextWrapMode::WordWrap:
+  default:
+    option.setWrapMode(QTextOption::WordWrap);
+    break;
+  }
+  switch (impl_->paragraphStyle_.horizontalAlignment) {
+  case TextHorizontalAlignment::Center:
+    option.setAlignment(Qt::AlignCenter);
+    break;
+  case TextHorizontalAlignment::Right:
+    option.setAlignment(Qt::AlignRight);
+    break;
+  case TextHorizontalAlignment::Justify:
+    option.setAlignment(Qt::AlignJustify);
+    break;
+  default:
+    option.setAlignment(Qt::AlignLeft);
+    break;
+  }
+  doc.setDefaultTextOption(option);
+
+  // Set content - handles HTML or Plain Text
+  if (isRichText) {
+    doc.setHtml(displayText);
+  } else {
+    doc.setPlainText(displayText);
+  }
+
+  if (impl_->paragraphStyle_.paragraphSpacing > 0.0f ||
+      impl_->textStyle_.leading > 0.0f) {
+    for (QTextBlock block = doc.begin(); block.isValid();
+         block = block.next()) {
+      QTextCursor cursor(block);
+      QTextBlockFormat format = block.blockFormat();
+      if (impl_->paragraphStyle_.paragraphSpacing > 0.0f) {
+        format.setBottomMargin(impl_->paragraphStyle_.paragraphSpacing);
+      }
+      if (impl_->textStyle_.leading > 0.0f) {
+        format.setLineHeight(impl_->textStyle_.leading * 100.0f,
+                             QTextBlockFormat::ProportionalHeight);
+      }
+      cursor.setBlockFormat(format);
     }
-    impl_->lastCacheKey_ = currentKey;
+  }
 
-    QString displayText = impl_->text_.toQString();
-    const bool isRichText = Qt::mightBeRichText(displayText);
-    if (impl_->textStyle_.allCaps && !isRichText) {
-        displayText = displayText.toUpper();
+  if (impl_->paragraphStyle_.boxWidth > 0.0f) {
+    doc.setTextWidth(impl_->paragraphStyle_.boxWidth);
+  }
+
+  // Calculate size
+  doc.adjustSize();
+  qreal docWidth = doc.size().width();
+  qreal docHeight = doc.size().height();
+
+  const qreal boxWidth = impl_->paragraphStyle_.boxWidth > 0.0f
+                             ? impl_->paragraphStyle_.boxWidth
+                             : docWidth;
+  const qreal boxHeight = impl_->paragraphStyle_.boxHeight > 0.0f
+                              ? impl_->paragraphStyle_.boxHeight
+                              : docHeight;
+
+  // Padding for stroke and shadow blur
+  const qreal margin =
+      24.0 +
+      (impl_->textStyle_.strokeEnabled ? impl_->textStyle_.strokeWidth : 0.0) +
+      (impl_->textStyle_.shadowEnabled ? impl_->textStyle_.shadowBlur * 2.0
+                                       : 0.0);
+
+  const int width =
+      std::max(1, static_cast<int>(std::ceil(boxWidth + margin * 2.0)));
+  const int height =
+      std::max(1, static_cast<int>(std::ceil(boxHeight + margin * 2.0)));
+
+  impl_->renderedImage_ =
+      QImage(width, height, QImage::Format_ARGB32_Premultiplied);
+  impl_->renderedImage_.fill(Qt::transparent);
+
+  QPainter painter(&impl_->renderedImage_);
+  painter.setRenderHint(QPainter::Antialiasing);
+  painter.setRenderHint(QPainter::TextAntialiasing);
+  painter.setRenderHint(QPainter::SmoothPixmapTransform);
+
+  qreal verticalOffset = 0.0;
+  if (boxHeight > docHeight) {
+    switch (impl_->paragraphStyle_.verticalAlignment) {
+    case TextVerticalAlignment::Middle:
+      verticalOffset = (boxHeight - docHeight) * 0.5;
+      break;
+    case TextVerticalAlignment::Bottom:
+      verticalOffset = boxHeight - docHeight;
+      break;
+    case TextVerticalAlignment::Top:
+    default:
+      verticalOffset = 0.0;
+      break;
     }
-    if (displayText.isEmpty()) {
-        displayText = QStringLiteral(" ");
-    }
+  }
 
-    // Set up QTextDocument for rich text support
-    QTextDocument doc;
-    doc.setUndoRedoEnabled(false);
-    
-    // Set default font
-    QFont defaultFont = FontManager::makeFont(impl_->textStyle_);
-    doc.setDefaultFont(defaultFont);
+  // Offset for margins
+  painter.translate(margin, margin + verticalOffset);
 
-    // Apply basic styles to the whole document
-    QTextOption option = doc.defaultTextOption();
-    switch (impl_->paragraphStyle_.wrapMode) {
-        case TextWrapMode::NoWrap: option.setWrapMode(QTextOption::NoWrap); break;
-        case TextWrapMode::WrapAnywhere: option.setWrapMode(QTextOption::WrapAnywhere); break;
-        case TextWrapMode::ManualWrap: option.setWrapMode(QTextOption::ManualWrap); break;
-        case TextWrapMode::WordWrap:
-        default: option.setWrapMode(QTextOption::WordWrap); break;
-    }
-    switch (impl_->paragraphStyle_.horizontalAlignment) {
-        case TextHorizontalAlignment::Center: option.setAlignment(Qt::AlignCenter); break;
-        case TextHorizontalAlignment::Right:  option.setAlignment(Qt::AlignRight); break;
-        case TextHorizontalAlignment::Justify: option.setAlignment(Qt::AlignJustify); break;
-        default: option.setAlignment(Qt::AlignLeft); break;
-    }
-    doc.setDefaultTextOption(option);
+  // Helper to draw document layout as paths (for stroke support)
+  auto drawDocAsPath = [&](QPainter &p, bool drawFill, bool drawStroke,
+                           const QColor &fillOverride = QColor()) {
+    QAbstractTextDocumentLayout *layout = doc.documentLayout();
+    QTextBlock block = doc.begin();
+    while (block.isValid()) {
+      QRectF blockRect = layout->blockBoundingRect(block);
+      for (auto it = block.begin(); !it.atEnd(); ++it) {
+        QTextFragment fragment = it.fragment();
+        if (fragment.isValid()) {
+          QFont f = fragment.charFormat().font();
+          QTextLayout *blockLayout = block.layout();
+          int relativePos = fragment.position() - block.position();
 
-    // Set content - handles HTML or Plain Text
-    if (isRichText) {
-        doc.setHtml(displayText);
-    } else {
-        doc.setPlainText(displayText);
-    }
+          // We iterate through lines to handle wrapping and alignment
+          for (int i = 0; i < blockLayout->lineCount(); ++i) {
+            QTextLine line = blockLayout->lineAt(i);
+            if (relativePos >= line.textStart() &&
+                relativePos < (line.textStart() + line.textLength())) {
+              QPointF linePos = line.position();
+              qreal x = line.cursorToX(relativePos);
 
-    if (impl_->paragraphStyle_.paragraphSpacing > 0.0f || impl_->textStyle_.leading > 0.0f) {
-        for (QTextBlock block = doc.begin(); block.isValid(); block = block.next()) {
-            QTextCursor cursor(block);
-            QTextBlockFormat format = block.blockFormat();
-            if (impl_->paragraphStyle_.paragraphSpacing > 0.0f) {
-                format.setBottomMargin(impl_->paragraphStyle_.paragraphSpacing);
-            }
-            if (impl_->textStyle_.leading > 0.0f) {
-                format.setLineHeight(impl_->textStyle_.leading * 100.0f, QTextBlockFormat::ProportionalHeight);
-            }
-            cursor.setBlockFormat(format);
-        }
-    }
+              QPainterPath path;
+              path.addText(blockRect.topLeft() + linePos +
+                               QPointF(x, line.ascent()),
+                           f, fragment.text());
 
-    if (impl_->paragraphStyle_.boxWidth > 0.0f) {
-        doc.setTextWidth(impl_->paragraphStyle_.boxWidth);
-    }
+              if (drawStroke && impl_->textStyle_.strokeEnabled) {
+                QColor strokeCol =
+                    QColor::fromRgbF(impl_->textStyle_.strokeColor.r(),
+                                     impl_->textStyle_.strokeColor.g(),
+                                     impl_->textStyle_.strokeColor.b(),
+                                     impl_->textStyle_.strokeColor.a());
+                QPen pen(strokeCol, impl_->textStyle_.strokeWidth,
+                         Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
+                p.strokePath(path, pen);
+              }
 
-    // Calculate size
-    doc.adjustSize();
-    qreal docWidth = doc.size().width();
-    qreal docHeight = doc.size().height();
-
-    const qreal boxWidth = impl_->paragraphStyle_.boxWidth > 0.0f ? impl_->paragraphStyle_.boxWidth : docWidth;
-    const qreal boxHeight = impl_->paragraphStyle_.boxHeight > 0.0f ? impl_->paragraphStyle_.boxHeight : docHeight;
-
-    // Padding for stroke and shadow blur
-    const qreal margin = 24.0 + (impl_->textStyle_.strokeEnabled ? impl_->textStyle_.strokeWidth : 0.0) 
-                              + (impl_->textStyle_.shadowEnabled ? impl_->textStyle_.shadowBlur * 2.0 : 0.0);
-    
-    const int width = std::max(1, static_cast<int>(std::ceil(boxWidth + margin * 2.0)));
-    const int height = std::max(1, static_cast<int>(std::ceil(boxHeight + margin * 2.0)));
-
-    impl_->renderedImage_ = QImage(width, height, QImage::Format_ARGB32_Premultiplied);
-    impl_->renderedImage_.fill(Qt::transparent);
-
-    QPainter painter(&impl_->renderedImage_);
-    painter.setRenderHint(QPainter::Antialiasing);
-    painter.setRenderHint(QPainter::TextAntialiasing);
-    painter.setRenderHint(QPainter::SmoothPixmapTransform);
-
-    qreal verticalOffset = 0.0;
-    if (boxHeight > docHeight) {
-        switch (impl_->paragraphStyle_.verticalAlignment) {
-            case TextVerticalAlignment::Middle:
-                verticalOffset = (boxHeight - docHeight) * 0.5;
-                break;
-            case TextVerticalAlignment::Bottom:
-                verticalOffset = boxHeight - docHeight;
-                break;
-            case TextVerticalAlignment::Top:
-            default:
-                verticalOffset = 0.0;
-                break;
-        }
-    }
-
-    // Offset for margins
-    painter.translate(margin, margin + verticalOffset);
-
-    // Helper to draw document layout as paths (for stroke support)
-    auto drawDocAsPath = [&](QPainter& p, bool drawFill, bool drawStroke, const QColor& fillOverride = QColor()) {
-        QAbstractTextDocumentLayout* layout = doc.documentLayout();
-        QTextBlock block = doc.begin();
-        while (block.isValid()) {
-            QRectF blockRect = layout->blockBoundingRect(block);
-            for (auto it = block.begin(); !it.atEnd(); ++it) {
-                QTextFragment fragment = it.fragment();
-                if (fragment.isValid()) {
-                    QFont f = fragment.charFormat().font();
-                    QTextLayout* blockLayout = block.layout();
-                    int relativePos = fragment.position() - block.position();
-                    
-                    // We iterate through lines to handle wrapping and alignment
-                    for (int i = 0; i < blockLayout->lineCount(); ++i) {
-                        QTextLine line = blockLayout->lineAt(i);
-                        if (relativePos >= line.textStart() && relativePos < (line.textStart() + line.textLength())) {
-                            QPointF linePos = line.position();
-                            qreal x = line.cursorToX(relativePos);
-                            
-                            QPainterPath path;
-                            path.addText(blockRect.topLeft() + linePos + QPointF(x, line.ascent()), f, fragment.text());
-                            
-                            if (drawStroke && impl_->textStyle_.strokeEnabled) {
-                                QColor strokeCol = QColor::fromRgbF(
-                                    impl_->textStyle_.strokeColor.r(),
-                                    impl_->textStyle_.strokeColor.g(),
-                                    impl_->textStyle_.strokeColor.b(),
-                                    impl_->textStyle_.strokeColor.a());
-                                QPen pen(strokeCol, impl_->textStyle_.strokeWidth, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
-                                p.strokePath(path, pen);
-                            }
-                            
-                            if (drawFill) {
-                                QColor fillCol;
-                                if (fragment.charFormat().foreground().style() != Qt::NoBrush) {
-                                    fillCol = fragment.charFormat().foreground().color();
-                                } else if (fillOverride.isValid()) {
-                                    fillCol = fillOverride;
-                                } else {
-                                    fillCol = QColor::fromRgbF(
-                                        impl_->textStyle_.fillColor.r(),
-                                        impl_->textStyle_.fillColor.g(),
-                                        impl_->textStyle_.fillColor.b(),
-                                        impl_->textStyle_.fillColor.a());
-                                }
-                                p.fillPath(path, fillCol);
-
-                                if (impl_->textStyle_.underline || impl_->textStyle_.strikethrough) {
-                                    const QFontMetricsF metrics(f);
-                                    const QPointF origin = blockRect.topLeft() + linePos + QPointF(x, line.ascent());
-                                    const qreal fragmentWidth = std::max<qreal>(0.0, metrics.horizontalAdvance(fragment.text()));
-                                    const qreal decoWidth = std::max<qreal>(1.0, std::max<qreal>(impl_->textStyle_.strokeWidth, 1.2));
-                                    QPen decoPen(fillCol, decoWidth, Qt::SolidLine, Qt::SquareCap, Qt::MiterJoin);
-                                    p.setPen(decoPen);
-                                    if (impl_->textStyle_.underline) {
-                                        const qreal underlineY = origin.y() + metrics.underlinePos();
-                                        p.drawLine(QPointF(origin.x(), underlineY), QPointF(origin.x() + fragmentWidth, underlineY));
-                                    }
-                                    if (impl_->textStyle_.strikethrough) {
-                                        const qreal strikeY = origin.y() + metrics.strikeOutPos();
-                                        p.drawLine(QPointF(origin.x(), strikeY), QPointF(origin.x() + fragmentWidth, strikeY));
-                                    }
-                                }
-                            }
-                        }
-                    }
+              if (drawFill) {
+                QColor fillCol;
+                if (fragment.charFormat().foreground().style() != Qt::NoBrush) {
+                  fillCol = fragment.charFormat().foreground().color();
+                } else if (fillOverride.isValid()) {
+                  fillCol = fillOverride;
+                } else {
+                  fillCol = QColor::fromRgbF(impl_->textStyle_.fillColor.r(),
+                                             impl_->textStyle_.fillColor.g(),
+                                             impl_->textStyle_.fillColor.b(),
+                                             impl_->textStyle_.fillColor.a());
                 }
+                p.fillPath(path, fillCol);
+
+                if (impl_->textStyle_.underline ||
+                    impl_->textStyle_.strikethrough) {
+                  const QFontMetricsF metrics(f);
+                  const QPointF origin =
+                      blockRect.topLeft() + linePos + QPointF(x, line.ascent());
+                  const qreal fragmentWidth = std::max<qreal>(
+                      0.0, metrics.horizontalAdvance(fragment.text()));
+                  const qreal decoWidth = std::max<qreal>(
+                      1.0, std::max<qreal>(impl_->textStyle_.strokeWidth, 1.2));
+                  QPen decoPen(fillCol, decoWidth, Qt::SolidLine, Qt::SquareCap,
+                               Qt::MiterJoin);
+                  p.setPen(decoPen);
+                  if (impl_->textStyle_.underline) {
+                    const qreal underlineY =
+                        origin.y() + metrics.underlinePos();
+                    p.drawLine(QPointF(origin.x(), underlineY),
+                               QPointF(origin.x() + fragmentWidth, underlineY));
+                  }
+                  if (impl_->textStyle_.strikethrough) {
+                    const qreal strikeY = origin.y() + metrics.strikeOutPos();
+                    p.drawLine(QPointF(origin.x(), strikeY),
+                               QPointF(origin.x() + fragmentWidth, strikeY));
+                  }
+                }
+              }
             }
-            block = block.next();
+          }
         }
-    };
+      }
+      block = block.next();
+    }
+  };
 
-    // 1. Draw Shadow
-    if (impl_->textStyle_.shadowEnabled) {
-        QImage shadowImg(width, height, QImage::Format_ARGB32_Premultiplied);
-        shadowImg.fill(Qt::transparent);
-        QPainter shadowPainter(&shadowImg);
-        shadowPainter.setRenderHint(QPainter::Antialiasing);
-        shadowPainter.translate(margin, margin + verticalOffset);
-        
-        // Shadow is simplified as a single color fill path
-        drawDocAsPath(
-            shadowPainter,
-            true,
-            false,
-            QColor::fromRgbF(
-                impl_->textStyle_.shadowColor.r(),
-                impl_->textStyle_.shadowColor.g(),
-                impl_->textStyle_.shadowColor.b(),
-                impl_->textStyle_.shadowColor.a()));
-        shadowPainter.end();
+  // 1. Draw Shadow
+  if (impl_->textStyle_.shadowEnabled) {
+    QImage shadowImg(width, height, QImage::Format_ARGB32_Premultiplied);
+    shadowImg.fill(Qt::transparent);
+    QPainter shadowPainter(&shadowImg);
+    shadowPainter.setRenderHint(QPainter::Antialiasing);
+    shadowPainter.translate(margin, margin + verticalOffset);
 
-        if (impl_->textStyle_.shadowBlur > 0.1f) {
-            cv::Mat mat(shadowImg.height(), shadowImg.width(), CV_8UC4, const_cast<uchar*>(shadowImg.bits()), shadowImg.bytesPerLine());
-            int ksize = static_cast<int>(impl_->textStyle_.shadowBlur * 3.0f);
-            if (ksize % 2 == 0) ksize++;
-            if (ksize >= 3) {
-                cv::GaussianBlur(mat, mat, cv::Size(ksize, ksize), impl_->textStyle_.shadowBlur);
-            }
-        }
+    // Shadow is simplified as a single color fill path
+    drawDocAsPath(shadowPainter, true, false,
+                  QColor::fromRgbF(impl_->textStyle_.shadowColor.r(),
+                                   impl_->textStyle_.shadowColor.g(),
+                                   impl_->textStyle_.shadowColor.b(),
+                                   impl_->textStyle_.shadowColor.a()));
+    shadowPainter.end();
 
-        painter.save();
-        painter.translate(-margin + impl_->textStyle_.shadowOffsetX, -margin + impl_->textStyle_.shadowOffsetY);
-        painter.drawImage(0, 0, shadowImg);
-        painter.restore();
+    if (impl_->textStyle_.shadowBlur > 0.1f) {
+      cv::Mat mat(shadowImg.height(), shadowImg.width(), CV_8UC4,
+                  const_cast<uchar *>(shadowImg.bits()),
+                  shadowImg.bytesPerLine());
+      int ksize = static_cast<int>(impl_->textStyle_.shadowBlur * 3.0f);
+      if (ksize % 2 == 0)
+        ksize++;
+      if (ksize >= 3) {
+        cv::GaussianBlur(mat, mat, cv::Size(ksize, ksize),
+                         impl_->textStyle_.shadowBlur);
+      }
     }
 
-    // 2. Draw Main Content (Stroke then Fill)
-    drawDocAsPath(painter, true, true);
+    painter.save();
+    painter.translate(-margin + impl_->textStyle_.shadowOffsetX,
+                      -margin + impl_->textStyle_.shadowOffsetY);
+    painter.drawImage(0, 0, shadowImg);
+    painter.restore();
+  }
 
-    painter.end();
-    setSourceSize(Size_2D(width, height));
-    impl_->isDirty_ = false;
+  // 2. Draw Main Content (Stroke then Fill)
+  drawDocAsPath(painter, true, true);
+
+  painter.end();
+  setSourceSize(Size_2D(width, height));
+  impl_->isDirty_ = false;
 }
 
 } // namespace Artifact

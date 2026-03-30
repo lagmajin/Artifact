@@ -165,6 +165,7 @@ public:
   void allJobsCompleted() W_SIGNAL(allJobsCompleted)
   void allJobsRemoved() W_SIGNAL(allJobsRemoved)
   void queueReordered(int fromIndex, int toIndex) W_SIGNAL(queueReordered, fromIndex, toIndex)
+  void previewFrameReady(int jobIndex, int frameNumber) W_SIGNAL(previewFrameReady, jobIndex, frameNumber)
 
   // Callback setters (Deprecated, use signals)
   void setJobAddedCallback(std::function<void(int)> callback);
@@ -184,6 +185,16 @@ public:
     // Batch rendering
     int addAllCompositions();
     int addCompositions(const QList<ArtifactCore::CompositionID>& compIds);
+
+    // Live preview
+    QImage lastRenderedFrame() const;
+    int lastRenderedFrameNumber() const;
+    int lastRenderedJobIndex() const;
+
+    // Render backend (QPainter or GPU)
+    enum class RenderBackend { QPainter, GPU };
+    void setRenderBackend(RenderBackend backend);
+    RenderBackend renderBackend() const;
    };
 
 

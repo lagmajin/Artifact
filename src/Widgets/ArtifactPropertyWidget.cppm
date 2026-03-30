@@ -758,15 +758,15 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
     }
 
     rebuilding = true;
-    propertyEditors.clear();
 
-    // 古いウィジェットをクリア
-    QLayoutItem* child;
-    while ((child = mainLayout->takeAt(0)) != nullptr) {
-        if (child->widget()) {
-            child->widget()->deleteLater();
+    // 既存ウィジェットを全て非表示にする（破棄しない）
+    QSet<QString> reusedKeys;
+    for (auto it = propertyEditors.begin(); it != propertyEditors.end(); ++it) {
+        if (it.value()) {
+            it.value()->hide();
+            // レイアウトから一時的に取り除く
+            mainLayout->removeWidget(it.value());
         }
-        delete child;
     }
 
     if (!currentLayer) {
@@ -777,6 +777,22 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
         rebuilding = false;
         return;
     }
+
+    // ウィジェット再利用ヘルパー
+    auto getOrCreateRow = [this, &reusedKeys](const QString& key, auto createFn) -> ArtifactPropertyEditorRowWidget* {
+        auto it = propertyEditors.find(key);
+        if (it != propertyEditors.end() && it.value()) {
+            reusedKeys.insert(key);
+            it.value()->show();
+            return it.value();
+        }
+        auto* row = createFn();
+        if (row) {
+            propertyEditors.insert(key, row);
+            reusedKeys.insert(key);
+        }
+        return row;
+    };
 
     auto* searchEdit = new QLineEdit();
     searchEdit->setObjectName(QStringLiteral("propertyFilterEdit"));
@@ -1051,6 +1067,21 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
 
     mainLayout->addStretch();
     applyLockState();
+
+    // 再利用されなかったウィジェットを削除
+    QStringList toRemove;
+    for (auto it = propertyEditors.begin(); it != propertyEditors.end(); ++it) {
+        if (!reusedKeys.contains(it.key())) {
+            if (it.value()) {
+                it.value()->deleteLater();
+            }
+            toRemove.append(it.key());
+        }
+    }
+    for (const auto& key : toRemove) {
+        propertyEditors.remove(key);
+    }
+
     rebuilding = false;
 }
 

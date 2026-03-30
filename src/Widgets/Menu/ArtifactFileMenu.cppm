@@ -9,6 +9,7 @@ module;
 #include <QUrl>
 #include <QInputDialog>
 #include <QLineEdit>
+#include <QRegularExpression>
 #include <QFileInfo>
 #include <QSet>
 #include <QMessageBox>
@@ -274,9 +275,36 @@ void ArtifactFileMenu::Impl::handleSaveProjectAs()
 void ArtifactFileMenu::Impl::handleNewComposition()
 {
     if (!menu_) return;
+
+    // Preset selection
+    QStringList presets;
+    presets << "1920 x 1080  @ 30fps (Full HD)"
+            << "1920 x 1080  @ 24fps (Cinema)"
+            << "3840 x 2160  @ 30fps (4K UHD)"
+            << "1280 x 720   @ 30fps (HD)"
+            << "1080 x 1920  @ 30fps (Vertical HD)"
+            << "1080 x 1920  @ 60fps (Vertical 60)"
+            << "1080 x 1080  @ 30fps (Square)"
+            << "1920 x 1080  @ 60fps (Full HD 60)";
+
     bool ok = false;
-    const QString name = QInputDialog::getText(menu_, "新規コンポジション", "名前:", QLineEdit::Normal, "Composition", &ok);
+    const QString preset = QInputDialog::getItem(menu_, "新規コンポジション", "プリセット:", presets, 0, false, &ok);
+    if (!ok) return;
+
+    // Parse preset: "WxH @ fps (name)"
+    int w = 1920, h = 1080;
+    double fps = 30.0;
+    QRegularExpression re(R"((\d+)\s*x\s*(\d+)\s*@\s*(\d+)fps)");
+    auto match = re.match(preset);
+    if (match.hasMatch()) {
+        w = match.captured(1).toInt();
+        h = match.captured(2).toInt();
+        fps = match.captured(3).toDouble();
+    }
+
+    const QString name = QInputDialog::getText(menu_, "コンポジション名", "名前:", QLineEdit::Normal, "Composition", &ok);
     if (!ok || name.trimmed().isEmpty()) return;
+
     if (auto* svc = ArtifactProjectService::instance()) {
         svc->createComposition(UniString(name.trimmed()));
     }

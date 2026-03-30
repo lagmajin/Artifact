@@ -31,6 +31,8 @@ foreach(file_path ${POTENTIAL_SOURCES})
        file_path MATCHES "src/Effect/ArtifactStabilizer\\.cppm" OR
        file_path MATCHES "include/Render/ArtifactFrameCache\\.ixx" OR
        file_path MATCHES "src/Render/ArtifactFrameCache\\.cppm" OR
+       file_path MATCHES "include/Layer/ArtifactLayerGroup\\.ixx" OR
+       file_path MATCHES "src/Layer/ArtifactLayerGroup\\.cppm" OR
        file_path MATCHES "include/Color/ArtifactColorWheels\\.ixx" OR
        file_path MATCHES "src/Color/ArtifactColorWheels\\.cppm" OR
        file_path MATCHES "include/Preview/ArtifactTimelineClock\\.ixx" OR

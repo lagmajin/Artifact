@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <QJsonObject>
 #include <QList>
 #include <QObject>
@@ -19,6 +19,7 @@ import Artifact.Layer.Video;
 import Artifact.Layer.Audio;
 import Artifact.Layer.Camera;
 import Artifact.Layer.Text;
+import Artifact.Layer.Group;
 //import Artifact.Layer.Video;
 
 namespace Artifact {
@@ -122,6 +123,9 @@ namespace Artifact {
    //ptr = std::make_shared<ArtifactCompositionLayer>();
   case LayerType::Camera:
    ptr = std::make_shared<ArtifactCameraLayer>();
+   break;
+  case LayerType::Group:
+   ptr = std::make_shared<ArtifactGroupLayer>();
    break;
   default:
    break;

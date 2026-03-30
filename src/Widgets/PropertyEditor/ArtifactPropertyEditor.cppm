@@ -6,6 +6,7 @@
 #include <QDialog>
 #include <QCursor>
 #include <QDoubleSpinBox>
+#include <QEnterEvent>
 #include <QEvent>
 #include <QFileDialog>
 #include <QFontComboBox>
@@ -1215,6 +1216,8 @@ ArtifactPropertyEditorRowWidget::ArtifactPropertyEditorRowWidget(
   nextKeyBtn_->setIconSize(QSize(10, 10));
   prevKeyBtn_->setStyleSheet(navStyle);
   nextKeyBtn_->setStyleSheet(navStyle);
+  prevKeyBtn_->setVisible(false);
+  nextKeyBtn_->setVisible(false);
 
   keyframeButton_->setObjectName(QStringLiteral("propertyKeyButton"));
   keyframeButton_->setToolTip(
@@ -1260,6 +1263,7 @@ ArtifactPropertyEditorRowWidget::ArtifactPropertyEditorRowWidget(
             border-radius: 3px;
         }
     )");
+  resetButton_->setVisible(false);
 
   expressionButton_->setObjectName(QStringLiteral("propertyExprButton"));
   expressionButton_->setToolTip(
@@ -1277,6 +1281,7 @@ ArtifactPropertyEditorRowWidget::ArtifactPropertyEditorRowWidget(
             border-radius: 3px;
         }
     )");
+  expressionButton_->setVisible(false);
 
   scrubHandle_->installEventFilter(this);
   label_->setCursor(Qt::ArrowCursor);
@@ -1388,18 +1393,19 @@ void ArtifactPropertyEditorRowWidget::setEditorToolTip(const QString &tooltip) {
 
 void ArtifactPropertyEditorRowWidget::setShowExpressionButton(
     const bool visible) {
-  expressionButton_->setVisible(visible);
+  expressionButton_->setProperty("baseVisible", visible);
+  updateAuxControlVisibility();
 }
 
 void ArtifactPropertyEditorRowWidget::setShowResetButton(const bool visible) {
-  resetButton_->setVisible(visible);
+  resetButton_->setProperty("baseVisible", visible);
+  updateAuxControlVisibility();
 }
 
 void ArtifactPropertyEditorRowWidget::setShowKeyframeButton(
     const bool visible) {
   keyframeButton_->setVisible(visible);
-  prevKeyBtn_->setVisible(visible && prevKeyBtn_->isEnabled());
-  nextKeyBtn_->setVisible(visible && nextKeyBtn_->isEnabled());
+  updateAuxControlVisibility();
 }
 
 void ArtifactPropertyEditorRowWidget::setKeyframeChecked(const bool checked) {
@@ -1414,8 +1420,30 @@ void ArtifactPropertyEditorRowWidget::setKeyframeEnabled(const bool enabled) {
 void ArtifactPropertyEditorRowWidget::setNavigationEnabled(const bool enabled) {
   prevKeyBtn_->setEnabled(enabled);
   nextKeyBtn_->setEnabled(enabled);
-  prevKeyBtn_->setVisible(enabled && keyframeButton_->isVisible());
-  nextKeyBtn_->setVisible(enabled && keyframeButton_->isVisible());
+  updateAuxControlVisibility();
+}
+
+void ArtifactPropertyEditorRowWidget::updateAuxControlVisibility() {
+  const bool hover = underMouse();
+  const bool keyVisible = keyframeButton_->isVisible();
+  const bool resetVisible = resetButton_->property("baseVisible").toBool();
+  const bool exprVisible = expressionButton_->property("baseVisible").toBool();
+  const bool navVisible = prevKeyBtn_->isEnabled() && nextKeyBtn_->isEnabled();
+
+  resetButton_->setVisible(resetVisible && hover);
+  expressionButton_->setVisible(exprVisible && hover);
+  prevKeyBtn_->setVisible(keyVisible && navVisible && hover);
+  nextKeyBtn_->setVisible(keyVisible && navVisible && hover);
+}
+
+void ArtifactPropertyEditorRowWidget::enterEvent(QEnterEvent *event) {
+  QWidget::enterEvent(event);
+  updateAuxControlVisibility();
+}
+
+void ArtifactPropertyEditorRowWidget::leaveEvent(QEvent *event) {
+  QWidget::leaveEvent(event);
+  updateAuxControlVisibility();
 }
 
 bool ArtifactPropertyEditorRowWidget::eventFilter(QObject *watched,

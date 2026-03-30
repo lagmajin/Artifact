@@ -16,6 +16,7 @@ import std;
 import Artifact.Service.Project;
 import Artifact.MainWindow;
 import Widgets.AssetBrowser;
+import Artifact.Widgets.ReactiveEventEditorWindow;
 import Utils.Path;
 
 namespace Artifact {
@@ -65,7 +66,9 @@ namespace Artifact {
    QAction* qualityFinalAction = nullptr;
    QMenu* windowPanelsMenu = nullptr;
     ArtifactMainWindow* mainWindow = nullptr;
+    QPointer<ArtifactReactiveEventEditorWindow> reactiveEventEditorWindow;
     int newBrowserCount_ = 1;
+    QAction* openReactiveEventEditorAction = nullptr;
 
     void refreshEnabledState();
     void rebuildWindowPanelsMenu();
@@ -202,8 +205,19 @@ namespace Artifact {
     windowPanelsMenu = menu->addMenu("ウィンドウパネル(&W)");
 
     // Dynamically rebuild the panels menu each time it opens
-    QObject::connect(windowPanelsMenu, &QMenu::aboutToShow, menu, [this]() {
+   QObject::connect(windowPanelsMenu, &QMenu::aboutToShow, menu, [this]() {
      rebuildWindowPanelsMenu();
+    });
+
+    menu->addSeparator();
+    openReactiveEventEditorAction = menu->addAction("リアクティブイベントエディタ(&E)...");
+    QObject::connect(openReactiveEventEditorAction, &QAction::triggered, menu, [this]() {
+     if (!mainWindow) return;
+     if (!reactiveEventEditorWindow) {
+      reactiveEventEditorWindow = new ArtifactReactiveEventEditorWindow(mainWindow);
+      reactiveEventEditorWindow->setAttribute(Qt::WA_DeleteOnClose, true);
+     }
+     reactiveEventEditorWindow->present();
     });
 
     menu->addSeparator();
@@ -246,6 +260,9 @@ namespace Artifact {
   snapToGuidesAction->setEnabled(hasComp);
   showRulersAction->setEnabled(hasComp);
   useDisplayColorManagementAction->setEnabled(hasComp);
+  if (openReactiveEventEditorAction) {
+   openReactiveEventEditorAction->setEnabled(true);
+  }
  }
 
  W_OBJECT_IMPL(ArtifactViewMenu)

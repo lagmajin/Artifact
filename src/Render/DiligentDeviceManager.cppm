@@ -217,17 +217,28 @@ namespace {
         creationAttribs.EnableValidation = true;
         creationAttribs.SetValidationLevel(Diligent::VALIDATION_LEVEL_2);
         
-        // 1. Try with Ray Tracing enabled
+        // 1. Try with Ray Tracing and VRS enabled
         creationAttribs.Features.RayTracing = DEVICE_FEATURE_STATE_ENABLED;
+        creationAttribs.Features.VariableRateShading = DEVICE_FEATURE_STATE_ENABLED;
         pFactory->CreateDeviceAndContextsD3D12(creationAttribs, &outDevice, &outImmediateContext);
         
         if (!outDevice) {
-            // 2. Fallback: Ray Tracing disabled
+            // 2. Fallback: VRS disabled
+            qDebug() << "[DiligentDeviceManager] D3D12: VRS not supported, retrying without.";
+            creationAttribs.Features.VariableRateShading = DEVICE_FEATURE_STATE_DISABLED;
+            pFactory->CreateDeviceAndContextsD3D12(creationAttribs, &outDevice, &outImmediateContext);
+        }
+        
+        if (!outDevice) {
+            // 3. Fallback: Ray Tracing disabled
             qDebug() << "[DiligentDeviceManager] D3D12: Ray Tracing not supported, falling back.";
             creationAttribs.Features.RayTracing = DEVICE_FEATURE_STATE_DISABLED;
             pFactory->CreateDeviceAndContextsD3D12(creationAttribs, &outDevice, &outImmediateContext);
         } else {
             qDebug() << "[DiligentDeviceManager] D3D12: Ray Tracing ENABLED.";
+            if (creationAttribs.Features.VariableRateShading != DEVICE_FEATURE_STATE_DISABLED) {
+                qDebug() << "[DiligentDeviceManager] D3D12: VRS ENABLED.";
+            }
         }
 
         return outDevice && outImmediateContext;

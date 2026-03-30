@@ -262,6 +262,11 @@ private:
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
     void keyPressEvent(QKeyEvent* event) override;
+    void enterEvent(QEnterEvent* event) override;
+    void leaveEvent(QEvent* event) override;
+
+private:
+    void updateAuxControlVisibility();
 };
 
 ArtifactAbstractPropertyEditor* createPropertyEditorWidget(

@@ -66,6 +66,7 @@ import Render.Queue.Manager;
 import Artifact.Project.Manager;
 import Artifact.Project.Items;
 import Artifact.Service.Project;
+import Core.Defaults;
 import Image.ImageF32x4_RGBA;
 import CvUtils;
 import Utils.Id;
@@ -543,7 +544,10 @@ namespace Artifact
 
     static ArtifactCore::ImageF32x4_RGBA qImageToImageF32x4RGBA(const QImage& source)
     {
-        const QImage rgba = source.convertToFormat(QImage::Format_RGBA8888);
+        // 既に RGBA8888 の場合は変換不要
+        const QImage& rgba = (source.format() == QImage::Format_RGBA8888)
+            ? source
+            : source.convertToFormat(QImage::Format_RGBA8888);
         cv::Mat mat(rgba.height(), rgba.width(), CV_8UC4,
                     const_cast<uchar*>(rgba.constBits()),
                     rgba.bytesPerLine());
@@ -613,7 +617,10 @@ namespace Artifact
                 return false;
             }
 
-            const QImage rgba = frame.convertToFormat(QImage::Format_RGBA8888);
+            // canvas は既に Format_RGBA8888 のため変換不要
+            const QImage& rgba = (frame.format() == QImage::Format_RGBA8888)
+                ? frame
+                : frame.convertToFormat(QImage::Format_RGBA8888);
             const qint64 expectedBytes = static_cast<qint64>(rgba.width()) * rgba.height() * 4;
             const qint64 written = process_->write(reinterpret_cast<const char*>(rgba.constBits()), expectedBytes);
             if (written != expectedBytes) {
@@ -1311,6 +1318,16 @@ namespace Artifact
         std::atomic<bool> shutdownRequested_{false};
         std::thread workerThread_;
 
+        // Live preview
+        QImage lastPreviewFrame_;
+        int lastPreviewFrameNumber_ = 0;
+        int lastPreviewJobIndex_ = -1;
+        std::mutex previewMutex_;
+
+        // Render backend selection
+        enum class RenderBackend { QPainter, GPU };
+        RenderBackend renderBackend_ = RenderBackend::QPainter;
+
         QString resolveDummyOutputPath(const ArtifactRenderJob& job, int index) const {
             QString target = job.outputPath.trimmed();
             const QString safeName = job.compositionName.trimmed().isEmpty()
@@ -1550,8 +1567,10 @@ namespace Artifact
             const QSize compSize = composition->settings().compositionSize();
             const int compW = std::max(16, compSize.width());
             const int compH = std::max(16, compSize.height());
-            QImage canvas(QSize(compW, compH), QImage::Format_ARGB32_Premultiplied);
-            canvas.fill(toQColor(composition->backgroundColor()));
+            // RGBA8888 で直接作成（ARGB→RGBA 変換の問題を回避）
+            QImage canvas(QSize(compW, compH), QImage::Format_RGBA8888);
+            const QColor bgColor = toQColor(composition->backgroundColor());
+            canvas.fill(QColor(bgColor.red(), bgColor.green(), bgColor.blue(), 255));
 
             QPainter painter(&canvas);
             painter.setRenderHint(QPainter::Antialiasing, true);
@@ -1594,11 +1613,34 @@ namespace Artifact
             const int width  = std::max(16, job.resolutionWidth);
             const int height = std::max(16, job.resolutionHeight);
 
+            const auto comp = resolveComposition(job);
+            if (!comp) {
+                if (errorMessage) *errorMessage = QStringLiteral("Composition not found for GPU rendering");
+                return false;
+            }
+
+            // Headless Diligent レンダラー初期化
             ArtifactIRenderer renderer;
             renderer.initializeHeadless(width, height);
+
+            // コンポジションのフレームを設定
+            comp->goToFrame(job.startFrame);
+
+            // 全レイヤーをレンダリング
             renderer.clear();
+            const auto layers = comp->allLayer();
+            const ArtifactCore::FramePosition currentPos(job.startFrame);
+
+            for (const auto& layer : layers) {
+                if (!layer || !layer->isVisible() || !layer->isActiveAt(currentPos)) {
+                    continue;
+                }
+                layer->goToFrame(job.startFrame);
+                layer->draw(&renderer);
+            }
             renderer.flush();
 
+            // GPU から RGBA8888 で readback
             QImage frame = renderer.readbackToImage();
             renderer.destroy();
 
@@ -1607,6 +1649,14 @@ namespace Artifact
                 return false;
             }
 
+            // QImage → ImageF32x4_RGBA (float 変換)
+            auto floatImage = qImageToImageF32x4RGBA(frame);
+            if (floatImage.isEmpty()) {
+                if (errorMessage) *errorMessage = QStringLiteral("Failed to convert GPU readback to float image");
+                return false;
+            }
+
+            // 出力パス決定
             const QString outPath = resolveDummyOutputPath(job, index);
             if (outputPath) *outputPath = outPath;
 
@@ -1616,8 +1666,9 @@ namespace Artifact
                 return false;
             }
 
-            if (!frame.save(outPath, "PNG")) {
-                if (errorMessage) *errorMessage = QStringLiteral("Failed to save image: %1").arg(outPath);
+            // 保存
+            if (!floatImage.save(outPath)) {
+                if (errorMessage) *errorMessage = QStringLiteral("Failed to save GPU rendered image: %1").arg(outPath);
                 return false;
             }
             return true;
@@ -1712,10 +1763,10 @@ namespace Artifact
         job.outputFormat = "MP4";
         job.codec = "H.264";
         job.codecProfile.clear();
-        job.resolutionWidth = 1920;
-        job.resolutionHeight = 1080;
-        job.frameRate = 30.0;
-        job.bitrate = 8000;
+        job.resolutionWidth = kDefaultWidth;
+        job.resolutionHeight = kDefaultHeight;
+        job.frameRate = kDefaultFrameRate;
+        job.bitrate = kDefaultBitrate;
         job.startFrame = 0;
         job.endFrame = 100;
 
@@ -1733,9 +1784,9 @@ namespace Artifact
         job.outputFormat = "MP4";
         job.codec = "H.264";
         job.codecProfile.clear();
-        job.resolutionWidth = 1920;
-        job.resolutionHeight = 1080;
-        job.frameRate = 30.0;
+        job.resolutionWidth = kDefaultWidth;
+        job.resolutionHeight = kDefaultHeight;
+        job.frameRate = kDefaultFrameRate;
         job.bitrate = 8000;
         job.startFrame = 0;
         job.endFrame = 100;
@@ -1777,10 +1828,10 @@ namespace Artifact
         job.outputFormat = "MP4";
         job.codec = "H.264";
         job.codecProfile.clear();
-        job.resolutionWidth = 1920;
-        job.resolutionHeight = 1080;
-        job.frameRate = 30.0;
-        job.bitrate = 8000;
+        job.resolutionWidth = kDefaultWidth;
+        job.resolutionHeight = kDefaultHeight;
+        job.frameRate = kDefaultFrameRate;
+        job.bitrate = kDefaultBitrate;
         job.startFrame = 0;
         job.endFrame = 100;
 
@@ -2224,12 +2275,49 @@ namespace Artifact
                         break;
                     }
 
-                    QImage qimg = impl_->renderSingleFrameComposition(job, *compositionForRender, f);
+                    QImage qimg;
+
+                    if (impl_->renderBackend_ == Impl::RenderBackend::GPU) {
+                        // 経路B: GPU Diligent レンダリング
+                        // ヘッドレスレンダラーで1フレームレンダリング → readback
+                        ArtifactIRenderer gpuRenderer;
+                        const int rw = std::max(16, job.resolutionWidth);
+                        const int rh = std::max(16, job.resolutionHeight);
+                        gpuRenderer.initializeHeadless(rw, rh);
+                        gpuRenderer.clear();
+
+                        (*compositionForRender)->goToFrame(f);
+                        const auto gpuLayers = (*compositionForRender)->allLayer();
+                        const ArtifactCore::FramePosition gpuPos(f);
+                        for (const auto& layer : gpuLayers) {
+                            if (!layer || !layer->isVisible() || !layer->isActiveAt(gpuPos)) continue;
+                            layer->goToFrame(f);
+                            layer->draw(&gpuRenderer);
+                        }
+                        gpuRenderer.flush();
+                        qimg = gpuRenderer.readbackToImage();
+                        gpuRenderer.destroy();
+                    } else {
+                        // 経路A: QPainter ソフトウェアコンポジット
+                        qimg = impl_->renderSingleFrameComposition(job, *compositionForRender, f);
+                    }
+
                     if (qimg.isNull()) {
                         success.store(false, std::memory_order_relaxed);
                         failureReason = QStringLiteral("Rendered frame is null");
                         break;
                     }
+
+                    // Live preview update
+                    {
+                        std::lock_guard<std::mutex> lock(impl_->previewMutex_);
+                        impl_->lastPreviewFrame_ = qimg.scaled(320, 180, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+                        impl_->lastPreviewFrameNumber_ = f;
+                        impl_->lastPreviewJobIndex_ = i;
+                    }
+                    QMetaObject::invokeMethod(this, [this, i, f]() {
+                        Q_EMIT previewFrameReady(i, f);
+                    }, Qt::QueuedConnection);
 
                     if (isVideo) {
                         if (!videoBackend->addFrame(qimg, f, &failureReason)) {
@@ -2527,6 +2615,29 @@ namespace Artifact
             ++added;
         }
         return added;
+    }
+
+    QImage ArtifactRenderQueueService::lastRenderedFrame() const {
+        std::lock_guard<std::mutex> lock(impl_->previewMutex_);
+        return impl_->lastPreviewFrame_;
+    }
+
+    int ArtifactRenderQueueService::lastRenderedFrameNumber() const {
+        std::lock_guard<std::mutex> lock(impl_->previewMutex_);
+        return impl_->lastPreviewFrameNumber_;
+    }
+
+    int ArtifactRenderQueueService::lastRenderedJobIndex() const {
+        std::lock_guard<std::mutex> lock(impl_->previewMutex_);
+        return impl_->lastPreviewJobIndex_;
+    }
+
+    void ArtifactRenderQueueService::setRenderBackend(RenderBackend backend) {
+        impl_->renderBackend_ = static_cast<Impl::RenderBackend>(backend);
+    }
+
+    ArtifactRenderQueueService::RenderBackend ArtifactRenderQueueService::renderBackend() const {
+        return static_cast<RenderBackend>(impl_->renderBackend_);
     }
 
 };

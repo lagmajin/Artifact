@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <QSet>
 #include <wobjectimpl.h>
 #include <iostream>
@@ -57,6 +57,11 @@ namespace Artifact {
  ArtifactLayerSelectionManager::ArtifactLayerSelectionManager(QObject* parent) 
   : QObject(parent), impl_(new Impl())
  {
+ }
+
+ ArtifactLayerSelectionManager* ArtifactLayerSelectionManager::instance() {
+  static ArtifactLayerSelectionManager manager;
+  return &manager;
  }
 
  ArtifactLayerSelectionManager::~ArtifactLayerSelectionManager() {

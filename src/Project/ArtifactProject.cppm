@@ -349,8 +349,9 @@ void ArtifactProject::Impl::createCompositions(const QStringList& names) {}
 
  void ArtifactProject::Impl::setDirty(bool dirty)
  {
-  isDirty_ = dirty;
-  // TODO: ダーティ状態が変更されたときの通知を実装する
+  if (isDirty_ != dirty) {
+   isDirty_ = dirty;
+  }
  }
 
  void ArtifactProject::Impl::setAIDescription(const QString& description)

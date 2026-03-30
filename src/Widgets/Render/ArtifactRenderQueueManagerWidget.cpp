@@ -111,7 +111,8 @@ namespace Artifact
   QLabel* statusLabel = nullptr;
   QListWidget* historyListWidget = nullptr;
   QPushButton* clearHistoryButton = nullptr;
-  QPushButton* exportHistoryButton = nullptr;
+   QPushButton* exportHistoryButton = nullptr;
+   QLabel* previewLabel = nullptr;
   QComboBox* progressLogStepCombo = nullptr;
   QLineEdit* outputPathEdit = nullptr;
   QPushButton* outputBrowseButton = nullptr;
@@ -353,6 +354,14 @@ namespace Artifact
   splitter->setStretchFactor(1, 2);
   layout->addWidget(splitter, 1);
 
+  // Live preview
+  impl_->previewLabel = new QLabel("No preview");
+  impl_->previewLabel->setFixedSize(320, 180);
+  impl_->previewLabel->setStyleSheet("QLabel { background: #1a1a1a; border: 1px solid #333; }");
+  impl_->previewLabel->setAlignment(Qt::AlignCenter);
+  impl_->previewLabel->setScaledContents(false);
+  layout->addWidget(impl_->previewLabel);
+
   // Bottom
   impl_->totalProgressBar = new QProgressBar();
   impl_->summaryLabel = new QLabel("Ready");
@@ -390,6 +399,13 @@ namespace Artifact
         QApplication::beep();
 #endif
         impl_->logUiEvent("All jobs completed");
+    });
+    connect(impl_->service, &ArtifactRenderQueueService::previewFrameReady, this, [this](int jobIndex, int frameNumber) {
+        QImage frame = impl_->service->lastRenderedFrame();
+        if (!frame.isNull() && impl_->previewLabel) {
+            impl_->previewLabel->setPixmap(QPixmap::fromImage(frame));
+            impl_->previewLabel->setToolTip(QString("Job %1 | Frame %2").arg(jobIndex + 1).arg(frameNumber));
+        }
     });
   }
 

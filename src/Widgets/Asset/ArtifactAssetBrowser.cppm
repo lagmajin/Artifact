@@ -53,6 +53,12 @@
 #include <QStyleOptionViewItem>
 #include <QSignalBlocker>
 #include <wobjectimpl.h>
+#ifdef emit
+#undef emit
+#endif
+#include <tbb/parallel_for.h>
+#include <tbb/blocked_range.h>
+#include <mutex>
 
 module Widgets.AssetBrowser;
 

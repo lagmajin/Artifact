@@ -1,63 +1,76 @@
-﻿module ;
-#include <iostream>
-#include <vector>
-#include <string>
-#include <map>
-#include <unordered_map>
-#include <set>
-#include <unordered_set>
-#include <memory>
+module;
 #include <algorithm>
 #include <cmath>
-#include <functional>
-#include <optional>
-#include <utility>
-#include <array>
-#include <mutex>
-#include <thread>
-#include <chrono>
-#include <filesystem>
-#include <fstream>
-#include <sstream>
-#include <stdexcept>
-#include <type_traits>
-#include <variant>
-#include <any>
-#include <atomic>
-#include <condition_variable>
-#include <queue>
-#include <deque>
-#include <list>
-#include <tuple>
-#include <numeric>
-#include <regex>
-#include <random>
+#include <memory>
+#include <vector>
+
 export module Artifact.Layer.Shape;
 
+import Color.Float;
+import Artifact.Layer.Abstract;
+import Artifact.Render.IRenderer;
 
+export namespace Artifact {
+using namespace ArtifactCore;
 
+enum class ShapeType { Rect = 0, Ellipse = 1, Star = 2, Polygon = 3, Line = 4 };
 
-
-export namespace Artifact
-{
- class ArtifactShapeLayer
- {
- private:
+class ArtifactShapeLayer : public ArtifactAbstractLayer {
+private:
   class Impl;
-  Impl* impl_;
- public:
+  Impl *impl_;
+
+public:
   ArtifactShapeLayer();
   ~ArtifactShapeLayer();
+
   void addShape();
   bool isShapeLayer() const;
- };
 
+  // Shape type
+  void setShapeType(ShapeType type);
+  ShapeType shapeType() const;
 
+  // Size
+  void setSize(int width, int height);
+  int shapeWidth() const;
+  int shapeHeight() const;
 
+  // Style
+  void setFillColor(const FloatColor &color);
+  FloatColor fillColor() const;
+  void setStrokeColor(const FloatColor &color);
+  FloatColor strokeColor() const;
+  void setStrokeWidth(float width);
+  float strokeWidth() const;
+  void setFillEnabled(bool enabled);
+  bool fillEnabled() const;
+  void setStrokeEnabled(bool enabled);
+  bool strokeEnabled() const;
 
+  // Corner radius (Rect)
+  void setCornerRadius(float radius);
+  float cornerRadius() const;
 
+  // Star params
+  void setStarPoints(int points);
+  int starPoints() const;
+  void setStarInnerRadius(float ratio);
+  float starInnerRadius() const;
 
+  // Polygon params
+  void setPolygonSides(int sides);
+  int polygonSides() const;
 
-
-
+  // Layer interface
+  std::vector<ArtifactCore::PropertyGroup>
+  getLayerPropertyGroups() const override;
+  bool setLayerPropertyValue(const QString &propertyPath,
+                              const QVariant &value) override;
+  void draw(ArtifactIRenderer *renderer) override;
+  QImage toQImage() const;
+  QJsonObject toJson() const override;
+  static std::shared_ptr<ArtifactShapeLayer> fromJson(const QJsonObject &obj);
 };
+
+} // namespace Artifact

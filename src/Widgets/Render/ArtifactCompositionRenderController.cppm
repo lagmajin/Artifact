@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <DeviceContext.h>
 #define NOMINMAX
 #define QT_NO_KEYWORDS
@@ -33,6 +33,8 @@ import Artifact.Render.IRenderer;
 import Artifact.Render.GPUTextureCacheManager;
 import Artifact.Render.CompositionRenderer;
 import Artifact.Render.Config;
+import Artifact.Render.ROI;
+import Artifact.Render.Context;
 import Artifact.Preview.Pipeline;
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
@@ -45,6 +47,8 @@ import Artifact.Layer.Video;
 import Artifact.Layer.Solid2D;
 import Artifact.Layers.SolidImage;
 import Artifact.Layer.Text;
+import Artifact.Layer.Composition;
+import Artifact.Render.Offscreen;
 import Frame.Position;
 import Artifact.Application.Manager;
 import Artifact.Layers.Selection.Manager;
@@ -751,9 +755,20 @@ void drawLayerForCompositionView(const ArtifactAbstractLayerPtr &layer,
   if (const auto textLayer =
           std::dynamic_pointer_cast<ArtifactTextLayer>(layer)) {
     const QImage textImage = textLayer->toQImage();
-    if (!textImage.isNull()) {
-      applySurfaceAndDraw(textImage, localRect, hasRasterizerEffectsOrMasks(layer));
-      return;
+    return;
+  }
+  
+  if (const auto compLayer =
+          std::dynamic_pointer_cast<ArtifactCompositionLayer>(layer)) {
+    if (auto childComp = compLayer->sourceComposition()) {
+        const QSize childSize = childComp->settings().compositionSize();
+        const int64_t childFrame = layer->currentFrame() - layer->inPoint().framePosition();
+        childComp->goToFrame(childFrame);
+        QImage childImage = childComp->getThumbnail(childSize.width(), childSize.height());
+        
+        if (!childImage.isNull()) {
+            applySurfaceAndDraw(childImage, localRect, hasRasterizerEffectsOrMasks(layer));
+        }
     }
     return;
   }
@@ -790,6 +805,10 @@ public:
   QString lastEmittedVideoDebug_;
   QVector<QMetaObject::Connection> layerChangedConnections_;
   QMetaObject::Connection compositionChangedConnection_;
+  
+  // LOD (Level of Detail)
+  std::unique_ptr<LODManager> lodManager_;
+  bool lodEnabled_ = true;
 
   LayerID selectedLayerId_;
   bool isDraggingLayer_ = false;
@@ -858,6 +877,9 @@ public:
   // Cyclic selection state
   QPointF lastHitPosition_;
   LayerID lastHitLayerId_;
+  
+  // ROI debug state
+  bool debugMode_ = false;  // ROI デバッグ表示フラグ
 
   void beginMaskEditTransaction(const ArtifactAbstractLayerPtr& layer) {
     if (!layer) {
@@ -2135,6 +2157,15 @@ Artifact3DGizmo *CompositionRenderController::gizmo3D() const {
   return impl_->gizmo3D_.get();
 }
 
+// ROI Debug
+void CompositionRenderController::setDebugMode(bool enabled) {
+  impl_->debugMode_ = enabled;
+}
+
+bool CompositionRenderController::isDebugMode() const {
+  return impl_->debugMode_;
+}
+
 Qt::CursorShape CompositionRenderController::cursorShapeForViewportPos(const QPointF& viewportPos) const
 {
   if (!impl_->gizmo_ || !impl_->renderer_) {
@@ -2275,8 +2306,6 @@ void CompositionRenderController::Impl::renderOneFrameImpl(CompositionRenderCont
     renderer_->setCanvasSize(cw, ch);
   }
 
-  renderer_->clear();
-
   const auto layers = comp->allLayer();
   FramePosition currentFrame = comp->framePosition();
   if (auto *playback = ArtifactPlaybackService::instance()) {
@@ -2330,14 +2359,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(CompositionRenderCont
       QByteArray::number(showGuides_ ? 1 : 0) +
       QByteArray::number(showSafeMargins_ ? 1 : 0) +
       QByteArray::number(viewportInteracting_ ? 1 : 0);
-  if (!lastFinalPresentKey_.isEmpty() && lastFinalPresentKey_ == renderKey) {
-    qCDebug(compositionViewLog)
-        << "[CompositionView] skipped redundant composite frame"
-        << "frame=" << framePos
-        << "zoom=" << zoom
-        << "pan=" << QPointF(panX, panY);
-    return;
-  }
+  renderer_->clear();
 
   {
 
@@ -2602,10 +2624,23 @@ void CompositionRenderController::Impl::renderOneFrameImpl(CompositionRenderCont
     basePassMs = markPhaseMs();
 
     if (!frameOutOfRange) {
+      // ROI 計算用のビューポート矩形
+      const QRectF viewportRect(0.0f, 0.0f, cw, ch);
+      
       for (const auto& layer : layers) {
         if (!layer || !layer->isVisible()) continue;
         if (hasSoloLayer && !layer->isSolo()) continue;
         if (!layer->isActiveAt(currentFrame)) continue;
+        
+        // === 段階 2: ROI 計算 ===
+        const QRectF layerBounds = layer->transformedBoundingBox();
+        const QRectF intersected = layerBounds.intersected(viewportRect);
+        
+        // === 段階 3: 空 ROI スキップ ===
+        if (intersected.isEmpty()) {
+          continue; // 画面外レイヤーをスキップ
+        }
+        
         ++drawnLayerCount;
         if (layerUsesSurfaceUploadForCompositionView(layer)) {
           ++surfaceUploadLayerCount;
@@ -2623,6 +2658,16 @@ void CompositionRenderController::Impl::renderOneFrameImpl(CompositionRenderCont
         drawLayerForCompositionView(layer, renderer_.get(), opacity, dbgOut,
                                     &surfaceCache_, gpuTextureCacheManager_.get(),
                                     currentFrame.framePosition());
+        
+        // === 段階 7: ROI デバッグ表示 ===
+        if (debugMode_) {
+          // ROI を赤い枠で表示
+          renderer_->drawRectOutline(
+            intersected.x(), intersected.y(),
+            intersected.width(), intersected.height(),
+            FloatColor{1.0f, 0.0f, 0.0f, 1.0f}
+          );
+        }
       }
     }
     layerPassMs = markPhaseMs();

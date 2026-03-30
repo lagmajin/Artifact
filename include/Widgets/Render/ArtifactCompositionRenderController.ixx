@@ -14,6 +14,7 @@ import Artifact.Service.Project;
 import Artifact.Preview.Pipeline;
 import Artifact.Widgets.Gizmo3D;
 import Utils.Id;
+import Artifact.LOD.Manager;
 
 export namespace Artifact {
  using namespace ArtifactCore;
@@ -60,6 +61,15 @@ void setGpuBlendEnabled(bool enabled);
 bool isGpuBlendEnabled() const;
 void setShowMotionPathOverlay(bool show);
 bool isShowMotionPathOverlay() const;
+
+// LOD (Level of Detail)
+LODManager* lodManager() const;
+void setLODEnabled(bool enabled);
+bool isLODEnabled() const;
+
+// ROI Debug
+void setDebugMode(bool enabled);
+bool isDebugMode() const;
 
 void resetView();
 void zoomInAt(const QPointF& viewportPos);

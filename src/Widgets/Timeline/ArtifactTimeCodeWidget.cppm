@@ -49,28 +49,29 @@ namespace Artifact
   layout->addStretch();
 
   setLayout(layout);
-  setFixedHeight(34);
+  setFixedHeight(42);
 
   setAttribute(Qt::WA_StyledBackground, true);
 
-  setStyleSheet(
-   "ArtifactTimeCodeWidget {"
-   "  background-color: #1C222E;"
-   "  border-bottom: 1px solid #27323F;"
-   "}"
-   "QLabel#timeLabel {"
-   "  font-family: 'Consolas', 'Courier New', monospace;"
-   "  font-size: 15px;"
-   "  font-weight: bold;"
-   "  color: #C4D4E2;"
-   "}"
-   "QLabel#frameLabel {"
-   "  font-family: 'Consolas', 'Courier New', monospace;"
-   "  font-size: 11px;"
-   "  color: #4E6475;"
-   "  padding-top: 2px;"
-   "}"
-  );
+   setStyleSheet(
+    "ArtifactTimeCodeWidget {"
+    "  background-color: #1C222E;"
+    "  border-bottom: 1px solid #27323F;"
+    "}"
+    "QLabel#timeLabel {"
+    "  font-family: 'Consolas', 'Courier New', monospace;"
+    "  font-size: 18px;"
+    "  font-weight: bold;"
+    "  color: #C4D4E2;"
+    "}"
+    "QLabel#frameLabel {"
+    "  font-family: 'Consolas', 'Courier New', monospace;"
+    "  font-size: 16px;"
+    "  font-weight: bold;"
+    "  color: #A0B4C8;"
+    "  padding-top: 1px;"
+    "}"
+   );
  }
 
  ArtifactTimeCodeWidget::~ArtifactTimeCodeWidget()

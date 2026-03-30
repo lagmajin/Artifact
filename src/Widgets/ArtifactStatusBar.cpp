@@ -169,6 +169,19 @@ namespace Artifact
   }
  }
 
+ void ArtifactStatusBar::setCompositionInfo(const QString& name, const int width, const int height, const double fps)
+ {
+  if (auto* label = itemLabel(Item::Project))
+  {
+   // フォーマット：名前 (解像度，fps)
+   label->setText(QStringLiteral("PROJECT: %1 (%2x%3, %4fps)")
+    .arg(name.isEmpty() ? QStringLiteral("NO NAME") : name)
+    .arg(width)
+    .arg(height)
+    .arg(fps, 0, 'f', 0));
+  }
+ }
+
  void ArtifactStatusBar::setItemVisible(const Item item, const bool visible)
  {
   if (auto* label = itemLabel(item))

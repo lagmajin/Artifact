@@ -123,6 +123,46 @@ private:
     std::vector<LayerMask> afterMasks_;
 };
 
+// 新規コマンド：レイヤー移動（インデックス変更）
+class MoveLayerIndexCommand : public UndoCommand {
+public:
+    MoveLayerIndexCommand(ArtifactCompositionPtr comp, ArtifactAbstractLayerPtr layer, int oldIndex, int newIndex);
+    void undo() override;
+    void redo() override;
+    QString label() const override;
+private:
+    ArtifactCompositionWeakPtr comp_;
+    ArtifactAbstractLayerWeak layer_;
+    int oldIndex_;
+    int newIndex_;
+};
+
+// 新規コマンド：レイヤー名変更
+class RenameLayerCommand : public UndoCommand {
+public:
+    RenameLayerCommand(ArtifactAbstractLayerPtr layer, const QString& oldName, const QString& newName);
+    void undo() override;
+    void redo() override;
+    QString label() const override;
+private:
+    ArtifactAbstractLayerWeak layer_;
+    QString oldName_;
+    QString newName_;
+};
+
+// 新規コマンド：レイヤー不透明度変更
+class ChangeLayerOpacityCommand : public UndoCommand {
+public:
+    ChangeLayerOpacityCommand(ArtifactAbstractLayerPtr layer, float oldOpacity, float newOpacity);
+    void undo() override;
+    void redo() override;
+    QString label() const override;
+private:
+    ArtifactAbstractLayerWeak layer_;
+    float oldOpacity_;
+    float newOpacity_;
+};
+
 class UndoManager : public QObject {
     W_OBJECT(UndoManager)
 public:

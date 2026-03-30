@@ -71,7 +71,9 @@ namespace Artifact
   QAction* selectTool_ = nullptr;
   QAction* handTool_ = nullptr;
   QAction* zoomTool_ = nullptr;
+  QAction* moveTool_ = nullptr;
   QAction* rotationTool_ = nullptr;
+  QAction* scaleTool_ = nullptr;
   QAction* cameraTool_ = nullptr;
   QAction* panBehindTool_ = nullptr;
   QAction* shapeTool_ = nullptr;
@@ -156,10 +158,18 @@ namespace Artifact
       QStringLiteral("MaterialVS/neutral/zoom_in.svg"),
       QStringLiteral("Material/zoom_in.svg")
     }, "ズーム", "ズームツール (Z)", QKeySequence(Qt::Key_Z));
+  createTool(impl_->moveTool_, QStringList{
+      QStringLiteral("MaterialVS/neutral/arrow_right.svg"),
+      QStringLiteral("Material/arrow_right.svg")
+    }, "移動", "移動ツール (W)", QKeySequence(Qt::Key_W));
   createTool(impl_->rotationTool_, QStringList{
       QStringLiteral("MaterialVS/neutral/transform.svg"),
       QStringLiteral("Material/transform.svg")
-    }, "回転", "回転ツール (W)", QKeySequence(Qt::Key_W));
+    }, "回転", "回転ツール (E)", QKeySequence(Qt::Key_E));
+  createTool(impl_->scaleTool_, QStringList{
+      QStringLiteral("MaterialVS/neutral/zoom_in.svg"),
+      QStringLiteral("Material/zoom_in.svg")
+    }, "スケール", "スケールツール (R)", QKeySequence(Qt::Key_R));
   createTool(impl_->cameraTool_, QStringList{
       QStringLiteral("MaterialVS/neutral/camera_alt.svg"),
       QStringLiteral("Material/camera_alt.svg")
@@ -291,7 +301,9 @@ namespace Artifact
   QObject::connect(impl_->selectTool_, &QAction::triggered, this, [this]() { selectToolRequested(); });
   QObject::connect(impl_->handTool_, &QAction::triggered, this, [this]() { handToolRequested(); });
   QObject::connect(impl_->zoomTool_, &QAction::triggered, this, [this]() { zoomToolRequested(); });
+  QObject::connect(impl_->moveTool_, &QAction::triggered, this, [this]() { moveToolRequested(); });
   QObject::connect(impl_->rotationTool_, &QAction::triggered, this, [this]() { rotationToolRequested(); });
+  QObject::connect(impl_->scaleTool_, &QAction::triggered, this, [this]() { scaleToolRequested(); });
   QObject::connect(impl_->cameraTool_, &QAction::triggered, this, [this]() { cameraToolRequested(); });
   QObject::connect(impl_->panBehindTool_, &QAction::triggered, this, [this]() { panBehindToolRequested(); });
   QObject::connect(impl_->shapeTool_, &QAction::triggered, this, [this]() { shapeToolRequested(); });

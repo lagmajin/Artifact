@@ -7,6 +7,13 @@
 #include <QDebug>
 #include <QElapsedTimer>
 #include <QLoggingCategory>
+#include <QDialog>
+#include <QAbstractItemView>
+#include <QLineEdit>
+#include <QListWidget>
+#include <QVBoxLayout>
+#include <QHBoxLayout>
+#include <QShortcut>
 #include <QKeyEvent>
 #include <QPainter>
 #include <QPen>
@@ -22,6 +29,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <functional>
 #include <vector>
 
 module Artifact.Widgets.RenderLayerWidgetv2;
@@ -63,6 +71,13 @@ enum class ViewSurfaceMode {
  Source,
  BeforeAfter
 };
+
+struct LayerSoloCommandEntry {
+ QString key;
+ QString description;
+ QStringList aliases;
+ std::function<void()> action;
+};
 }
 
  class ArtifactLayerEditorWidgetV2::Impl {
@@ -86,6 +101,10 @@ enum class ViewSurfaceMode {
   std::atomic_bool running_{ false };
   QTimer* renderTimer_ = nullptr;
   QTimer* resizeDebounceTimer_ = nullptr;
+  QDialog* commandPalette_ = nullptr;
+  QLineEdit* commandEdit_ = nullptr;
+  QListWidget* commandList_ = nullptr;
+  std::vector<LayerSoloCommandEntry> commandEntries_;
   std::mutex resizeMutex_;
   quint64 renderTickCount_ = 0;
   quint64 renderExecutedCount_ = 0;
@@ -136,6 +155,11 @@ enum class ViewSurfaceMode {
   void recreateSwapChainInternal(QWidget* window);
   bool ensureMaskPreviewRT(int width, int height);
   void requestRender();
+  void showCommandPalette();
+  void hideCommandPalette();
+  bool isCommandPaletteVisible() const;
+  void rebuildCommandPalette(const QString& text = QString());
+  bool executeCommandText(const QString& text);
   
   void startRenderLoop();
   void stopRenderLoop();
@@ -169,10 +193,223 @@ enum class ViewSurfaceMode {
 
  }
 
- ArtifactLayerEditorWidgetV2::Impl::~Impl()
- {
+ArtifactLayerEditorWidgetV2::Impl::~Impl()
+{
 
+}
+
+void ArtifactLayerEditorWidgetV2::Impl::showCommandPalette()
+{
+ if (!widget_) {
+  return;
  }
+
+ if (!commandPalette_) {
+  commandPalette_ = new QDialog(widget_);
+  commandPalette_->setObjectName(QStringLiteral("layerSoloCommandPalette"));
+  commandPalette_->setWindowFlags(Qt::Tool | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint);
+  commandPalette_->setModal(false);
+  commandPalette_->setAttribute(Qt::WA_DeleteOnClose, false);
+
+  auto* layout = new QVBoxLayout(commandPalette_);
+  layout->setContentsMargins(10, 10, 10, 10);
+  layout->setSpacing(8);
+
+  commandEdit_ = new QLineEdit(commandPalette_);
+  commandEdit_->setPlaceholderText(QStringLiteral("Command search: fit, reset, source, final, compare, mask, view"));
+  commandEdit_->setClearButtonEnabled(true);
+  commandEdit_->setObjectName(QStringLiteral("layerSoloCommandSearch"));
+
+  commandList_ = new QListWidget(commandPalette_);
+  commandList_->setObjectName(QStringLiteral("layerSoloCommandList"));
+  commandList_->setSelectionMode(QAbstractItemView::SingleSelection);
+  commandList_->setUniformItemSizes(true);
+  commandList_->setAlternatingRowColors(true);
+  commandList_->setFocusPolicy(Qt::NoFocus);
+
+  layout->addWidget(commandEdit_);
+  layout->addWidget(commandList_);
+
+  commandPalette_->setStyleSheet(R"(
+    QDialog#layerSoloCommandPalette {
+      background: #252525;
+      border: 1px solid #4A4A4A;
+      border-radius: 10px;
+    }
+    QLineEdit#layerSoloCommandSearch {
+      background: #1F1F1F;
+      color: #F0F0F0;
+      border: 1px solid #444;
+      border-radius: 8px;
+      padding: 6px 10px;
+      font-size: 11px;
+    }
+    QListWidget#layerSoloCommandList {
+      background: #202020;
+      color: #E8E8E8;
+      border: 1px solid #3A3A3A;
+      border-radius: 8px;
+    }
+    QListWidget#layerSoloCommandList::item {
+      padding: 6px 8px;
+    }
+    QListWidget#layerSoloCommandList::item:selected {
+      background: #4A6FA5;
+      color: white;
+    }
+  )");
+
+  QObject::connect(commandEdit_, &QLineEdit::textChanged, widget_, [this](const QString& text) {
+    rebuildCommandPalette(text);
+  });
+  QObject::connect(commandEdit_, &QLineEdit::returnPressed, widget_, [this]() {
+    if (!commandEdit_) {
+      return;
+    }
+    const QString text = commandEdit_->text().trimmed();
+    if (executeCommandText(text)) {
+      hideCommandPalette();
+    }
+  });
+  QObject::connect(commandList_, &QListWidget::itemActivated, widget_, [this](QListWidgetItem* item) {
+    if (!item) {
+      return;
+    }
+    const QString key = item->data(Qt::UserRole).toString();
+    if (executeCommandText(key)) {
+      hideCommandPalette();
+    }
+  });
+  QObject::connect(commandList_, &QListWidget::itemDoubleClicked, widget_, [this](QListWidgetItem* item) {
+    if (!item) {
+      return;
+    }
+    const QString key = item->data(Qt::UserRole).toString();
+    if (executeCommandText(key)) {
+      hideCommandPalette();
+    }
+  });
+
+  auto* cancelShortcut = new QShortcut(QKeySequence::Cancel, commandPalette_);
+  QObject::connect(cancelShortcut, &QShortcut::activated, widget_, [this]() {
+    hideCommandPalette();
+  });
+ }
+
+ const int paletteWidth = std::clamp(widget_->width() - 40, 320, 520);
+ commandPalette_->resize(paletteWidth, 320);
+ const QPoint topLeft = widget_->mapToGlobal(QPoint((widget_->width() - commandPalette_->width()) / 2,
+                                                    std::max(24, widget_->height() / 4)));
+ commandPalette_->move(topLeft);
+ rebuildCommandPalette(commandEdit_ ? commandEdit_->text() : QString());
+ commandPalette_->show();
+ commandPalette_->raise();
+ commandPalette_->activateWindow();
+ if (commandEdit_) {
+  commandEdit_->setFocus(Qt::ShortcutFocusReason);
+  commandEdit_->selectAll();
+ }
+}
+
+void ArtifactLayerEditorWidgetV2::Impl::hideCommandPalette()
+{
+ if (commandPalette_) {
+  commandPalette_->hide();
+ }
+}
+
+bool ArtifactLayerEditorWidgetV2::Impl::isCommandPaletteVisible() const
+{
+ return commandPalette_ && commandPalette_->isVisible();
+}
+
+void ArtifactLayerEditorWidgetV2::Impl::rebuildCommandPalette(const QString& text)
+{
+ if (!commandList_) {
+  return;
+ }
+
+ commandEntries_.clear();
+ commandEntries_.push_back({QStringLiteral("fit"), QStringLiteral("Fit viewport to layer"), {QStringLiteral("fit viewport"), QStringLiteral("frame"), QStringLiteral("f")}, [this]() {
+  if (!renderer_) return;
+  renderer_->fitToViewport();
+  zoomLevel_ = renderer_->getZoom();
+  requestRender();
+ }});
+ commandEntries_.push_back({QStringLiteral("reset"), QStringLiteral("Reset pan and zoom"), {QStringLiteral("reset view"), QStringLiteral("r")}, [this]() {
+  if (!renderer_) return;
+  renderer_->resetView();
+  zoomLevel_ = 1.0f;
+  requestRender();
+ }});
+ commandEntries_.push_back({QStringLiteral("1:1"), QStringLiteral("Zoom to 100%"), {QStringLiteral("actual size"), QStringLiteral("100%")}, [this]() {
+  if (!renderer_ || !widget_) return;
+  zoomLevel_ = 1.0f;
+  renderer_->zoomAroundViewportPoint({ static_cast<float>(widget_->width() * 0.5), static_cast<float>(widget_->height() * 0.5) }, zoomLevel_);
+  requestRender();
+ }});
+ commandEntries_.push_back({QStringLiteral("final"), QStringLiteral("View final output"), {QStringLiteral("color"), QStringLiteral("display final")}, [this]() {
+  if (!widget_) return;
+  static_cast<ArtifactLayerEditorWidgetV2*>(widget_)->setDisplayMode(DisplayMode::Color);
+ }});
+ commandEntries_.push_back({QStringLiteral("source"), QStringLiteral("View source / overlay output"), {QStringLiteral("wireframe"), QStringLiteral("alpha")}, [this]() {
+  if (!widget_) return;
+  static_cast<ArtifactLayerEditorWidgetV2*>(widget_)->setDisplayMode(DisplayMode::Wireframe);
+ }});
+ commandEntries_.push_back({QStringLiteral("view"), QStringLiteral("Return to normal view mode"), {QStringLiteral("normal"), QStringLiteral("view mode")}, [this]() {
+  if (!widget_) return;
+  static_cast<ArtifactLayerEditorWidgetV2*>(widget_)->setEditMode(EditMode::View);
+ }});
+ commandEntries_.push_back({QStringLiteral("mask"), QStringLiteral("Enter mask edit mode"), {QStringLiteral("mask mode"), QStringLiteral("roto")}, [this]() {
+  if (!widget_) return;
+  static_cast<ArtifactLayerEditorWidgetV2*>(widget_)->setEditMode(EditMode::Mask);
+ }});
+
+ commandList_->clear();
+ const QString needle = text.trimmed().toLower();
+ for (const auto& entry : commandEntries_) {
+  const QString haystack = (entry.key + QStringLiteral(" ") + entry.description + QStringLiteral(" ") + entry.aliases.join(QStringLiteral(" "))).toLower();
+  if (!needle.isEmpty() && !haystack.contains(needle)) {
+   continue;
+  }
+  auto* item = new QListWidgetItem(QStringLiteral("%1  -  %2").arg(entry.key, entry.description), commandList_);
+  item->setData(Qt::UserRole, entry.key);
+ }
+ if (commandList_->count() > 0) {
+  commandList_->setCurrentRow(0);
+ } else {
+  auto* item = new QListWidgetItem(QStringLiteral("No matching commands"), commandList_);
+  item->setFlags(item->flags() & ~Qt::ItemIsSelectable & ~Qt::ItemIsEnabled);
+ }
+}
+
+bool ArtifactLayerEditorWidgetV2::Impl::executeCommandText(const QString& text)
+{
+ const QString needle = text.trimmed().toLower();
+ if (needle.isEmpty()) {
+  return false;
+ }
+ for (const auto& entry : commandEntries_) {
+  if (entry.key.compare(needle, Qt::CaseInsensitive) == 0 ||
+      entry.aliases.contains(needle, Qt::CaseInsensitive) ||
+      entry.description.compare(needle, Qt::CaseInsensitive) == 0) {
+   if (entry.action) {
+    entry.action();
+    return true;
+   }
+  }
+ }
+ for (const auto& entry : commandEntries_) {
+  const QString haystack = (entry.key + QStringLiteral(" ") + entry.description + QStringLiteral(" ") + entry.aliases.join(QStringLiteral(" "))).toLower();
+  if (haystack.contains(needle)) {
+   if (entry.action) {
+    entry.action();
+    return true;
+   }
+  }
+ }
+ return false;
+}
 
  void ArtifactLayerEditorWidgetV2::Impl::initialize(QWidget* window)
  {
@@ -578,7 +815,10 @@ enum class ViewSurfaceMode {
     if (auto* service = ArtifactProjectService::instance()) {
      if (auto composition = service->currentComposition().lock()) {
       const auto compSize = composition->settings().compositionSize();
-      compositionRenderer_->SetCompositionSize(static_cast<float>(compSize.width()), static_cast<float>(compSize.height()));
+      if (compSize.width() > 0 && compSize.height() > 0) {
+       renderer_->setCanvasSize(static_cast<float>(compSize.width()), static_cast<float>(compSize.height()));
+       compositionRenderer_->SetCompositionSize(static_cast<float>(compSize.width()), static_cast<float>(compSize.height()));
+      }
      }
     }
     compositionRenderer_->ApplyCompositionSpace();
@@ -916,11 +1156,21 @@ void ArtifactLayerEditorWidgetV2::clearTargetLayer()
   impl_ = nullptr;
  }
 
- void ArtifactLayerEditorWidgetV2::keyPressEvent(QKeyEvent* event)
- {
-  impl_->defaultHandleKeyPressEvent(event);
-  impl_->requestRender();
+void ArtifactLayerEditorWidgetV2::keyPressEvent(QKeyEvent* event)
+{
+ if (event && event->key() == Qt::Key_F && (event->modifiers() & Qt::ControlModifier)) {
+  impl_->showCommandPalette();
+  event->accept();
+  return;
  }
+ if (impl_ && impl_->isCommandPaletteVisible() && event && event->key() == Qt::Key_Escape) {
+  impl_->hideCommandPalette();
+  event->accept();
+  return;
+ }
+ impl_->defaultHandleKeyPressEvent(event);
+ impl_->requestRender();
+}
 
  void ArtifactLayerEditorWidgetV2::keyReleaseEvent(QKeyEvent* event)
  {

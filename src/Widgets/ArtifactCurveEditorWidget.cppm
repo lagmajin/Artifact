@@ -650,4 +650,14 @@ void ArtifactCurveEditorWidget::mouseDoubleClickEvent(QMouseEvent* event) {
  fitToContent();
 }
 
-};
+ // ============================================================
+ // Speed Graph Utilities
+ // ============================================================
+
+ // Sample speed from TimeRemap keyframes and create a CurveTrack for display.
+ // Requires the Time.TimeRemap module (optional dependency).
+ // Usage:
+ //   auto track = sampleSpeedGraph(keyframes, startFrame, endFrame, frameRate);
+ //   curveEditor->setTracks({track});
+
+} // namespace ArtifactCore

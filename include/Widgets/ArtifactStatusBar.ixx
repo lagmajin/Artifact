@@ -41,6 +41,7 @@ export namespace Artifact
   void setDropSummaryText(const QString& text);
   void setTimelineDebugText(const QString& text);
   void setConsoleSummary(int errors, int warnings);
+  void setCompositionInfo(const QString& name, int width, int height, double fps);
 
   void setItemVisible(Item item, bool visible);
   [[nodiscard]] bool isItemVisible(Item item) const;

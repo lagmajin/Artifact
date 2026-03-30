@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <QAction>
 #include <QActionGroup>
 #include <QCloseEvent>
@@ -89,46 +89,78 @@ ArtifactCompositionPtr resolvePreferredComposition() {
   return {};
 }
 
-bool editTextLayerInline(QWidget* parent, const ArtifactAbstractLayerPtr& layer)
+class TextOverlayFilter : public QObject {
+public:
+  TextOverlayFilter(QPlainTextEdit* editor, std::shared_ptr<ArtifactTextLayer> layer, CompositionRenderController* ctrl)
+      : QObject(editor), editor_(editor), layer_(layer), ctrl_(ctrl) {}
+
+  bool eventFilter(QObject* obj, QEvent* event) override {
+    if (event->type() == QEvent::KeyPress) {
+      auto* ke = static_cast<QKeyEvent*>(event);
+      if (ke->key() == Qt::Key_Escape || 
+         (ke->key() == Qt::Key_Return && (ke->modifiers() & Qt::ControlModifier)) || 
+         (ke->key() == Qt::Key_Enter && (ke->modifiers() & Qt::ControlModifier))) {
+        commit();
+        return true;
+      }
+    } else if (event->type() == QEvent::FocusOut) {
+      commit();
+      return false;
+    }
+    return QObject::eventFilter(obj, event);
+  }
+
+private:
+  void commit() {
+    if (!editor_) return;
+    if (layer_->text().toQString() != editor_->toPlainText()) {
+      layer_->setText(ArtifactCore::UniString::fromQString(editor_->toPlainText()));
+      Q_EMIT layer_->changed();
+      if (ctrl_) ctrl_->renderOneFrame();
+    }
+    editor_->hide();
+    editor_->deleteLater();
+    editor_ = nullptr;
+  }
+  QPlainTextEdit* editor_;
+  std::shared_ptr<ArtifactTextLayer> layer_;
+  CompositionRenderController* ctrl_;
+};
+
+bool editTextLayerInline(QWidget* parent, const ArtifactAbstractLayerPtr& layer, CompositionRenderController* controller)
 {
   const auto textLayer = std::dynamic_pointer_cast<ArtifactTextLayer>(layer);
-  if (!textLayer) {
+  if (!textLayer || !parent) {
     return false;
   }
 
-  QDialog dialog(parent);
-  dialog.setWindowTitle(QStringLiteral("Edit Text Layer"));
-  dialog.setModal(true);
-  dialog.resize(640, 360);
-
-  auto *layout = new QVBoxLayout(&dialog);
-  auto *editor = new QPlainTextEdit(&dialog);
+  auto *editor = new QPlainTextEdit(parent);
   editor->setPlainText(textLayer->text().toQString());
   editor->setPlaceholderText(QStringLiteral("Enter text..."));
   editor->selectAll();
+  
+  const float size = std::max(10.0f, textLayer->fontSize());
+  const int pointSize = static_cast<int>(size * 0.75f);
+  
+  editor->setStyleSheet(QStringLiteral(R"(
+    QPlainTextEdit {
+      background-color: rgba(30, 30, 30, 180);
+      color: white;
+      border: 1px dashed #d47d32;
+      font-family: "%1";
+      font-size: %2pt;
+    }
+  )").arg(textLayer->fontFamily().toQString()).arg(pointSize));
+
+  const QPointF centerPos(parent->width() / 2.0, parent->height() / 2.0);
+
+  int w = std::max(200, static_cast<int>(parent->width() * 0.4));
+  int h = std::max(60, pointSize * 3);
+  editor->setGeometry(static_cast<int>(centerPos.x() - w/2), static_cast<int>(centerPos.y() - h/2), w, h);
+
+  editor->installEventFilter(new TextOverlayFilter(editor, textLayer, controller));
+  editor->show();
   editor->setFocus();
-  layout->addWidget(editor, 1);
-
-  auto* commitShortcut = new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_Return), &dialog);
-  QObject::connect(commitShortcut, &QShortcut::activated, &dialog, &QDialog::accept);
-  auto* commitShortcutAlt = new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_Enter), &dialog);
-  QObject::connect(commitShortcutAlt, &QShortcut::activated, &dialog, &QDialog::accept);
-  auto* cancelShortcut = new QShortcut(QKeySequence::Cancel, &dialog);
-  QObject::connect(cancelShortcut, &QShortcut::activated, &dialog, &QDialog::reject);
-
-  auto *buttons = new QDialogButtonBox(
-      QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
-  layout->addWidget(buttons);
-
-  QObject::connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
-  QObject::connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
-
-  if (dialog.exec() != QDialog::Accepted) {
-    return false;
-  }
-
-  textLayer->setText(ArtifactCore::UniString::fromQString(editor->toPlainText()));
-  Q_EMIT textLayer->changed();
   return true;
 }
 
@@ -273,11 +305,9 @@ protected:
       if (!layerId.isNil()) {
         if (const auto comp = currentComposition()) {
           if (auto layer = comp->layerById(layerId)) {
-            if (editTextLayerInline(this, layer)) {
-              controller_->renderOneFrame();
-              event->accept();
-              return;
-            }
+            editTextLayerInline(this, layer, controller_);
+            event->accept();
+            return;
           }
         }
       } else {
@@ -307,9 +337,7 @@ protected:
     auto* editAction = menu.addAction(QStringLiteral("Edit Text"));
     editAction->setEnabled(true);
     connect(editAction, &QAction::triggered, this, [this, layer]() {
-      if (editTextLayerInline(this, layer) && controller_) {
-        controller_->renderOneFrame();
-      }
+      editTextLayerInline(this, layer, controller_);
     });
 
     menu.addSeparator();
@@ -1143,7 +1171,7 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
                      if (!layer || !std::dynamic_pointer_cast<ArtifactTextLayer>(layer)) {
                        return;
                      }
-                     if (editTextLayerInline(impl_->compositionView_, layer) &&
+                     if (editTextLayerInline(impl_->compositionView_, layer, impl_->renderController_) &&
                          impl_->renderController_) {
                        impl_->renderController_->renderOneFrame();
                      }

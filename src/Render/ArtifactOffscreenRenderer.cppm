@@ -43,6 +43,9 @@ namespace Artifact
         // レンダラーへのアクセス
         ArtifactIRenderer* renderer() { return renderer_.get(); }
 
+        // QImageとして取得
+        QImage renderToQImage(const FramePosition& position, ArtifactAbstractComposition* composition);
+
     private:
         RefCntAutoPtr<IRenderDevice> pDevice_;
         RefCntAutoPtr<IDeviceContext> pContext_;
@@ -160,6 +163,12 @@ namespace Artifact
 
         pContext_->UnmapTextureSubresource(pStagingTex, 0, 0);
         return image;
+    }
+
+    QImage OffscreenCompositionRenderer::renderToQImage(const FramePosition& position, ArtifactAbstractComposition* composition)
+    {
+        renderFrame(position, composition);
+        return renderer_->readbackToImage();
     }
 
     bool OffscreenCompositionRenderer::saveFrame(const QString& path)

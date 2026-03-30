@@ -119,7 +119,10 @@ export namespace Artifact {
  void layerRemoved(const CompositionID& compId, const LayerID& id)
    W_SIGNAL(layerRemoved, compId, id);
 
-	
+  void projectDirtyChanged(bool dirty)
+   W_SIGNAL(projectDirtyChanged, dirty);
+
+
  };
 
  template <typename NameT, typename SizeT>

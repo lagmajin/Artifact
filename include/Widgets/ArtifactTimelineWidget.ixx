@@ -155,6 +155,7 @@ class TimelineTrackView :public QGraphicsView {
    W_SIGNAL(layerClipMoved, layerId, trackIndex, start);
   void layerClipTrimmed(LayerID layerId, int trackIndex, double start, double duration)
    W_SIGNAL(layerClipTrimmed, layerId, trackIndex, start, duration);
+  void keyframeNavigationRequested(int step) W_SIGNAL(keyframeNavigationRequested, step);
   void tracksRefreshRequested() W_SIGNAL(tracksRefreshRequested);
   void timelineDebugMessage(const QString& message) W_SIGNAL(timelineDebugMessage, message);
  };
@@ -167,7 +168,7 @@ class ArtifactTimelineWidget :public QWidget {
   Impl* impl_;
   void syncWorkAreaFromCurrentComposition();
   void updateSearchState();
-  void jumpToSearchHit(int step);
+  void updateKeyframeState();
  protected:
   void paintEvent(QPaintEvent* event) override;
   void mousePressEvent(QMouseEvent* event) override;
@@ -180,7 +181,7 @@ class ArtifactTimelineWidget :public QWidget {
   explicit ArtifactTimelineWidget(QWidget* parent = nullptr);
   ~ArtifactTimelineWidget();
   void update();
-  void setComposition(const CompositionID& id);
+ void setComposition(const CompositionID& id);
 
   // Layer management
   void onLayerCreated(const CompositionID& compId, const LayerID& layerId);
@@ -189,6 +190,8 @@ class ArtifactTimelineWidget :public QWidget {
   void refreshTracks();
   void setLayerNameEditable(bool enabled);
   bool isLayerNameEditable() const;
+  void jumpToSearchHit(int step);
+  void jumpToKeyframeHit(int step);
 
   /*signals:*/
  public:

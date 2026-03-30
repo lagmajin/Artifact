@@ -70,6 +70,8 @@ public:
     std::shared_ptr<ArtifactCore::Mesh> currentMesh = nullptr;
     bool modelLoaded = false;
     DisplayMode mode = DisplayMode::Solid;
+    ArtifactCore::MeshImporter::Backend lastBackend = ArtifactCore::MeshImporter::Backend::None;
+    QString lastErrorText;
 
     ArtifactDiligentEngineRenderWindow* renderWindow = nullptr;
     QWidget* renderContainer = nullptr;
@@ -101,13 +103,30 @@ public:
         }
 
         if (modelLoaded && currentMesh) {
+            QString backendText = QStringLiteral("unknown");
+            switch (lastBackend) {
+                case ArtifactCore::MeshImporter::Backend::Ufbx:
+                    backendText = QStringLiteral("ufbx");
+                    break;
+                case ArtifactCore::MeshImporter::Backend::TinyObj:
+                    backendText = QStringLiteral("tinyobj");
+                    break;
+                case ArtifactCore::MeshImporter::Backend::None:
+                default:
+                    backendText = QStringLiteral("none");
+                    break;
+            }
             statusLabel->setText(
-                QString("Model: %1 | Vertices: %2 | Polygons: %3")
+                QString("Model: %1 | Vertices: %2 | Polygons: %3 | Backend: %4")
                     .arg(currentModelPath.toQString())
                     .arg(currentMesh->vertexCount())
-                    .arg(currentMesh->polygonCount()));
+                    .arg(currentMesh->polygonCount())
+                    .arg(backendText));
         } else {
-            statusLabel->setText("3D Model Viewer: no model loaded");
+            const QString reason = lastErrorText.isEmpty()
+                ? QStringLiteral("3D Model Viewer: no model loaded")
+                : QStringLiteral("3D Model Viewer: %1").arg(lastErrorText);
+            statusLabel->setText(reason);
         }
     }
 };
@@ -180,6 +199,8 @@ void Artifact3DModelViewer::loadModel(const ArtifactCore::UniString& filePath)
 
     ArtifactCore::MeshImporter importer;
     impl_->currentMesh = importer.importMeshFromFile(filePath);
+    impl_->lastBackend = importer.lastBackend();
+    impl_->lastErrorText = importer.lastError();
 
     if (impl_->currentMesh && impl_->currentMesh->isValid()) {
         impl_->modelLoaded = true;
@@ -187,9 +208,13 @@ void Artifact3DModelViewer::loadModel(const ArtifactCore::UniString& filePath)
         if (impl_->renderWindow) {
             impl_->renderWindow->setMesh(impl_->currentMesh);
         }
+        resetView();
     } else {
         impl_->modelLoaded = false;
-        qDebug() << "Failed to load model:" << filePath.toQString();
+        if (impl_->lastErrorText.isEmpty()) {
+            impl_->lastErrorText = QStringLiteral("failed to load model");
+        }
+        qDebug() << "Failed to load model:" << filePath.toQString() << "-" << impl_->lastErrorText;
         if (impl_->renderWindow) {
             impl_->renderWindow->clearMesh();
         }
@@ -204,6 +229,8 @@ void Artifact3DModelViewer::clearModel()
     impl_->currentModelPath = ArtifactCore::UniString();
     impl_->modelLoaded = false;
     impl_->currentMesh = nullptr;
+    impl_->lastBackend = ArtifactCore::MeshImporter::Backend::None;
+    impl_->lastErrorText.clear();
     if (impl_->renderWindow) {
         impl_->renderWindow->clearMesh();
     }

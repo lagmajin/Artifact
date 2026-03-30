@@ -1785,6 +1785,29 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
     selectParentAct->setEnabled(layer->hasParent());
     clearParentAct->setEnabled(layer->hasParent());
 
+    // Label color submenu
+    QMenu* labelColorMenu = menu.addMenu("Label Color");
+    static const struct { const char* name; QColor color; } labelColors[] = {
+        {"None",   QColor(100, 100, 100)},
+        {"Red",    QColor(200, 80, 80)},
+        {"Orange", QColor(220, 160, 50)},
+        {"Yellow", QColor(210, 200, 60)},
+        {"Green",  QColor(80, 180, 80)},
+        {"Cyan",   QColor(60, 160, 200)},
+        {"Blue",   QColor(80, 120, 220)},
+        {"Purple", QColor(180, 80, 200)},
+        {"Pink",   QColor(200, 120, 160)},
+    };
+    const int currentColorIndex = layer->labelColorIndex();
+    for (int ci = 0; ci < 9; ++ci) {
+        QPixmap colorIcon(16, 16);
+        colorIcon.fill(labelColors[ci].color);
+        QAction* colorAct = labelColorMenu->addAction(QIcon(colorIcon), labelColors[ci].name);
+        colorAct->setCheckable(true);
+        colorAct->setChecked(ci == currentColorIndex);
+        colorAct->setData(ci);
+    }
+
     QMenu* createMenu = menu.addMenu("Create Layer");
     QAction* createSolidAct  = createMenu->addAction("Solid Layer");
     QAction* createNullAct   = createMenu->addAction("Null Layer");
@@ -1799,8 +1822,41 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
     createTextAct->setIcon(impl_->iconCreateText);
     createCameraAct->setIcon(impl_->iconCreateText);
 
-    QAction* chosen = menu.exec(event->globalPosition().toPoint());
+    menu.addSeparator();
+    QAction* swapWithNextAct = menu.addAction("Swap with Layer Below");
+    QAction* swapWithPrevAct = menu.addAction("Swap with Layer Above");
+    QAction* moveToZeroAct = menu.addAction("Move Start to Frame 0");
+
+    // Align submenu (requires 2+ selected layers)
+    auto* selMgr = ArtifactLayerSelectionManager::instance();
+    const int selCount = selMgr ? selMgr->selectedLayers().size() : 0;
+    QMenu* alignMenu = menu.addMenu("Align");
+    alignMenu->setEnabled(selCount >= 2);
+    QAction* alignLeftAct   = alignMenu->addAction("Align Left");
+    QAction* alignCenterAct = alignMenu->addAction("Align Center Horizontally");
+    QAction* alignRightAct  = alignMenu->addAction("Align Right");
+    QAction* alignTopAct    = alignMenu->addAction("Align Top");
+    QAction* alignMiddleAct = alignMenu->addAction("Align Middle Vertically");
+    QAction* alignBottomAct = alignMenu->addAction("Align Bottom");
+    alignMenu->addSeparator();
+    QAction* distHorizAct   = alignMenu->addAction("Distribute Horizontally");
+    QAction* distVertAct    = alignMenu->addAction("Distribute Vertically");
+
+    // Disable if at edge
     auto comp = safeCompositionLookup(impl_->compositionId);
+    const int layerCount = comp ? comp->layerCount() : 0;
+    swapWithPrevAct->setEnabled(idx > 0);
+    swapWithNextAct->setEnabled(idx < layerCount - 1);
+
+    QAction* chosen = menu.exec(event->globalPosition().toPoint());
+
+    // Label color handling
+    if (chosen && chosen->parentWidget() == labelColorMenu) {
+        int colorIndex = chosen->data().toInt();
+        layer->setLabelColorIndex(colorIndex);
+        update();
+        return;
+    }
 
     if (chosen == renameAct) {
       bool ok = false;
@@ -1848,6 +1904,117 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
       if (auto* service = ArtifactProjectService::instance()) {
        const CompositionID compId = comp ? comp->id() : impl_->compositionId;
        service->removeLayerFromComposition(compId, layer->id());
+      }
+    } else if (chosen == swapWithPrevAct || chosen == swapWithNextAct) {
+      if (auto* service = ArtifactProjectService::instance()) {
+       const int direction = (chosen == swapWithNextAct) ? 1 : -1;
+       service->moveLayerInCurrentComposition(layer->id(), idx + direction);
+      }
+    } else if (chosen == moveToZeroAct) {
+      // Move layer start to frame 0 by adjusting inPoint
+      const auto currentInPoint = layer->inPoint();
+      if (currentInPoint.framePosition() > 0) {
+       const auto currentOutPoint = layer->outPoint();
+       layer->setInPoint(FramePosition(0));
+       layer->setOutPoint(FramePosition(currentOutPoint.framePosition() - currentInPoint.framePosition()));
+       qDebug() << "[LayerPanel] Moved layer" << layer->layerName()
+                << "start to frame 0 (offset was" << currentInPoint.framePosition() << ")";
+       update();
+      }
+    } else if (chosen == alignLeftAct || chosen == alignCenterAct || chosen == alignRightAct ||
+               chosen == alignTopAct || chosen == alignMiddleAct || chosen == alignBottomAct ||
+               chosen == distHorizAct || chosen == distVertAct) {
+      // Align / Distribute selected layers
+      if (selMgr && comp) {
+        const auto selected = selMgr->selectedLayers();
+        if (selected.size() >= 2) {
+          const float compW = static_cast<float>(comp->settings().compositionSize().width());
+          const float compH = static_cast<float>(comp->settings().compositionSize().height());
+
+          // Collect positions
+          struct LayerPos { ArtifactAbstractLayerPtr layer; float x, y, w, h; };
+          QVector<LayerPos> positions;
+          for (const auto& l : selected) {
+            if (!l) continue;
+            auto bb = l->transformedBoundingBox();
+            positions.append({l, static_cast<float>(bb.x()), static_cast<float>(bb.y()),
+                              static_cast<float>(bb.width()), static_cast<float>(bb.height())});
+          }
+
+          if (chosen == alignLeftAct) {
+            float minX = positions[0].x;
+            for (const auto& p : positions) minX = std::min(minX, p.x);
+            for (auto& p : positions) {
+              float dx = minX - p.x;
+              auto pos = p.layer->position3D();
+              p.layer->setPosition3D(QVector3D(pos.x() + dx, pos.y(), pos.z()));
+            }
+          } else if (chosen == alignCenterAct) {
+            float sumCenterX = 0;
+            for (const auto& p : positions) sumCenterX += p.x + p.w * 0.5f;
+            float avgCenterX = sumCenterX / positions.size();
+            for (auto& p : positions) {
+              float dx = avgCenterX - (p.x + p.w * 0.5f);
+              auto pos = p.layer->position3D();
+              p.layer->setPosition3D(QVector3D(pos.x() + dx, pos.y(), pos.z()));
+            }
+          } else if (chosen == alignRightAct) {
+            float maxX = positions[0].x + positions[0].w;
+            for (const auto& p : positions) maxX = std::max(maxX, p.x + p.w);
+            for (auto& p : positions) {
+              float dx = maxX - (p.x + p.w);
+              auto pos = p.layer->position3D();
+              p.layer->setPosition3D(QVector3D(pos.x() + dx, pos.y(), pos.z()));
+            }
+          } else if (chosen == alignTopAct) {
+            float minY = positions[0].y;
+            for (const auto& p : positions) minY = std::min(minY, p.y);
+            for (auto& p : positions) {
+              float dy = minY - p.y;
+              auto pos = p.layer->position3D();
+              p.layer->setPosition3D(QVector3D(pos.x(), pos.y() + dy, pos.z()));
+            }
+          } else if (chosen == alignMiddleAct) {
+            float sumCenterY = 0;
+            for (const auto& p : positions) sumCenterY += p.y + p.h * 0.5f;
+            float avgCenterY = sumCenterY / positions.size();
+            for (auto& p : positions) {
+              float dy = avgCenterY - (p.y + p.h * 0.5f);
+              auto pos = p.layer->position3D();
+              p.layer->setPosition3D(QVector3D(pos.x(), pos.y() + dy, pos.z()));
+            }
+          } else if (chosen == alignBottomAct) {
+            float maxY = positions[0].y + positions[0].h;
+            for (const auto& p : positions) maxY = std::max(maxY, p.y + p.h);
+            for (auto& p : positions) {
+              float dy = maxY - (p.y + p.h);
+              auto pos = p.layer->position3D();
+              p.layer->setPosition3D(QVector3D(pos.x(), pos.y() + dy, pos.z()));
+            }
+          } else if (chosen == distHorizAct && positions.size() >= 3) {
+            // Sort by X position
+            std::sort(positions.begin(), positions.end(), [](const LayerPos& a, const LayerPos& b) { return a.x < b.x; });
+            float totalSpace = positions.last().x - positions.first().x;
+            float step = totalSpace / (positions.size() - 1);
+            for (int i = 1; i < positions.size() - 1; ++i) {
+              float targetX = positions.first().x + step * i;
+              float dx = targetX - positions[i].x;
+              auto pos = positions[i].layer->position3D();
+              positions[i].layer->setPosition3D(QVector3D(pos.x() + dx, pos.y(), pos.z()));
+            }
+          } else if (chosen == distVertAct && positions.size() >= 3) {
+            std::sort(positions.begin(), positions.end(), [](const LayerPos& a, const LayerPos& b) { return a.y < b.y; });
+            float totalSpace = positions.last().y - positions.first().y;
+            float step = totalSpace / (positions.size() - 1);
+            for (int i = 1; i < positions.size() - 1; ++i) {
+              float targetY = positions.first().y + step * i;
+              float dy = targetY - positions[i].y;
+              auto pos = positions[i].layer->position3D();
+              positions[i].layer->setPosition3D(QVector3D(pos.x(), pos.y() + dy, pos.z()));
+            }
+          }
+          update();
+        }
       }
     } else if (chosen == expandAct && row.hasChildren) {
       impl_->expandedByLayerId[layer->id().toString()] = true;
@@ -2030,6 +2197,7 @@ void ArtifactLayerPanelWidget::mouseDoubleClickEvent(QMouseEvent* event)
     if (impl_->draggedLayerId.isNil() && !impl_->dragStarted_ && dragDistance >= QApplication::startDragDistance()) {
       impl_->dragStarted_ = true;
       impl_->draggedLayerId = impl_->dragCandidateLayerId;
+      qDebug() << "[LayerPanel] Drag starting:" << impl_->draggedLayerId.toString();
       auto* mime = new QMimeData();
       mime->setData(kLayerReorderMimeType, impl_->draggedLayerId.toString().toUtf8());
       mime->setText(impl_->draggedLayerId.toString());
@@ -2038,8 +2206,8 @@ void ArtifactLayerPanelWidget::mouseDoubleClickEvent(QMouseEvent* event)
       drag.setMimeData(mime);
       drag.setHotSpot(event->pos() - impl_->dragStartPos);
       
-      // Note: exec() blocks until drop completes.
       const Qt::DropAction dropResult = drag.exec(Qt::MoveAction);
+      qDebug() << "[LayerPanel] Drag result:" << dropResult;
       
       impl_->clearDragState();
       unsetCursor();
@@ -2204,6 +2372,70 @@ void ArtifactLayerPanelWidget::keyPressEvent(QKeyEvent* event)
      return;
     }
    }
+  }
+
+  // Home キー - 最初のレイヤーへ選択
+  if (event->key() == Qt::Key_Home && !impl_->inlineNameEditor) {
+    if (!impl_->visibleRows.isEmpty()) {
+      for (int i = 0; i < impl_->visibleRows.size(); ++i) {
+        if (impl_->visibleRows[i].layer && impl_->visibleRows[i].kind == Impl::RowKind::Layer) {
+          impl_->selectedLayerId = impl_->visibleRows[i].layer->id();
+          update();
+          if (auto* svc = ArtifactProjectService::instance()) {
+            svc->selectLayer(impl_->selectedLayerId);
+          }
+          event->accept();
+          return;
+        }
+      }
+    }
+  }
+  
+  // End キー - 最後のレイヤーへ選択
+  if (event->key() == Qt::Key_End && !impl_->inlineNameEditor) {
+    if (!impl_->visibleRows.isEmpty()) {
+      for (int i = impl_->visibleRows.size() - 1; i >= 0; --i) {
+        if (impl_->visibleRows[i].layer && impl_->visibleRows[i].kind == Impl::RowKind::Layer) {
+          impl_->selectedLayerId = impl_->visibleRows[i].layer->id();
+          update();
+          if (auto* svc = ArtifactProjectService::instance()) {
+            svc->selectLayer(impl_->selectedLayerId);
+          }
+          event->accept();
+          return;
+        }
+      }
+    }
+  }
+  
+  // Ctrl+A - 全選択
+  if (event->key() == Qt::Key_A && event->modifiers() & Qt::ControlModifier && !impl_->inlineNameEditor) {
+    auto* selection = ArtifactApplicationManager::instance()
+                          ? ArtifactApplicationManager::instance()->layerSelectionManager()
+                          : nullptr;
+    if (selection) {
+      selection->clearSelection();
+      for (const auto& row : impl_->visibleRows) {
+        if (row.layer && row.kind == Impl::RowKind::Layer) {
+          selection->addToSelection(row.layer);
+        }
+      }
+      update();
+      event->accept();
+      return;
+    }
+  }
+  
+  // Ctrl+D - レイヤー複製
+  if (event->key() == Qt::Key_D && event->modifiers() & Qt::ControlModifier && !impl_->inlineNameEditor) {
+    if (!impl_->selectedLayerId.isNil()) {
+      auto* svc = ArtifactProjectService::instance();
+      if (svc) {
+        svc->duplicateLayerInCurrentComposition(impl_->selectedLayerId);
+        event->accept();
+        return;
+      }
+    }
   }
 
   if (impl_->layerNameEditable && event->key() == Qt::Key_F2 && !impl_->inlineNameEditor) {
@@ -2411,6 +2643,24 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
     }
 
     int curX = 0;
+
+    // Label color bar (left edge)
+    static const QColor labelColors[] = {
+        QColor(100, 100, 100),  // 0: None
+        QColor(200, 80, 80),    // 1: Red
+        QColor(220, 160, 50),   // 2: Orange
+        QColor(210, 200, 60),   // 3: Yellow
+        QColor(80, 180, 80),    // 4: Green
+        QColor(60, 160, 200),   // 5: Cyan
+        QColor(80, 120, 220),   // 6: Blue
+        QColor(180, 80, 200),   // 7: Purple
+        QColor(200, 120, 160),  // 8: Pink
+    };
+    p.setPen(Qt::NoPen);
+    p.setBrush(labelColors[l->labelColorIndex() % 9]);
+    p.drawRect(0, y, 4, rowH);
+    curX = 4;
+
     // Visibility
     p.setOpacity(l->isVisible() ? 1.0 : 0.3);
     if (!impl_->visibilityIcon.isNull()) {
@@ -2556,6 +2806,7 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
  void ArtifactLayerPanelWidget::dragEnterEvent(QDragEnterEvent* e)
  {
   const QMimeData* mime = e->mimeData();
+  qDebug() << "[LayerPanel] dragEnterEvent called, has reorder MIME:" << (mime && mime->hasFormat(kLayerReorderMimeType));
   if (mime && mime->hasFormat(kLayerReorderMimeType)) {
     e->acceptProposedAction();
     update();
@@ -2617,6 +2868,7 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
  void ArtifactLayerPanelWidget::dropEvent(QDropEvent* event)
  {
   const QMimeData* mime = event->mimeData();
+  qDebug() << "[LayerPanel] dropEvent called, has reorder MIME:" << (mime && mime->hasFormat(kLayerReorderMimeType));
   if (!mime) {
     event->ignore();
     return;
@@ -2628,6 +2880,7 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
 
     // MIME からドラッグ中のレイヤーIDを取得（impl_->draggedLayerId は別インスタンスでは無効）
     const LayerID dragLayerId = LayerID(QString::fromUtf8(mime->data(kLayerReorderMimeType)));
+    qDebug() << "[LayerPanel] Drop layer:" << dragLayerId.toString() << "at row:" << impl_->dragInsertVisibleRow;
     if (svc && comp && !dragLayerId.isNil()) {
       QVector<LayerID> visibleLayerIds;
       visibleLayerIds.reserve(impl_->visibleRows.size());

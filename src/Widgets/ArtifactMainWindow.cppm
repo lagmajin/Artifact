@@ -269,6 +269,17 @@ ArtifactMainWindow::ArtifactMainWindow(QWidget* parent)
  auto* toolBar = new ArtifactToolBar(this);
  addToolBar(toolBar);
 
+ // Tool signal routing
+ QObject::connect(toolBar, &ArtifactToolBar::moveToolRequested, this, [this]() {
+  qDebug() << "[MainWindow] Move tool selected (W)";
+ });
+ QObject::connect(toolBar, &ArtifactToolBar::rotationToolRequested, this, [this]() {
+  qDebug() << "[MainWindow] Rotate tool selected (E)";
+ });
+ QObject::connect(toolBar, &ArtifactToolBar::scaleToolRequested, this, [this]() {
+  qDebug() << "[MainWindow] Scale tool selected (R)";
+ });
+
  impl_->dockManager = new CDockManager(this);
  impl_->dockStyleManager = new DockStyleManager(impl_->dockManager, this);
  if (qApp) {

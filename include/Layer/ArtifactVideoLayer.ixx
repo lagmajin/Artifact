@@ -165,12 +165,16 @@ public:
     /// Check if proxy is available
     bool hasProxy() const;
     
-    /// Generate proxy files
-    /// @param quality Target quality level
-    /// @return true if successful
+    /// Set proxy file path (called by ProxyManager after generation)
+    void setProxyPath(const QString& path);
+    
+    /// Get proxy file path
+    QString proxyPath() const;
+    
+    /// Generate proxy files (deprecated — use ArtifactProxyManager instead)
     bool generateProxy(ProxyQuality quality);
     
-    /// Clear proxy files
+    /// Clear proxy metadata (does not delete file — use ArtifactProxyManager::clearProxy)
     void clearProxy();
 
     // === In-Point / Out-Point ===

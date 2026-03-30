@@ -75,6 +75,13 @@ enum class LayerDirtyReason : uint64_t {
   UserEdit = 1ull << 7
 };
 
+// LOD (Level of Detail) system
+enum class DetailLevel {
+  Low,    // 簡略化された描画（ズーム 0-25%）
+  Medium, // 標準的な描画（ズーム 25-75%）
+  High    // 高詳細な描画（ズーム 75-100%）
+};
+
 class ArtifactAbstractLayer;
 
 using ArtifactAbstractLayerPtr = std::shared_ptr<ArtifactAbstractLayer>;
@@ -253,6 +260,9 @@ public:
   void clearMasks();
   bool hasMasks() const;
   /*Masks*/
+
+  // LOD (Level of Detail) rendering
+  virtual void drawLOD(ArtifactIRenderer* renderer, DetailLevel lod);
 
   void changed() W_SIGNAL(changed);
 

@@ -5,6 +5,8 @@
 
 export module Widget.CurveEditor;
 
+import std;
+
 export namespace ArtifactCore {
 
  struct CurveKey {

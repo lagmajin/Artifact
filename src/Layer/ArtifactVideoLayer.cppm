@@ -643,18 +643,12 @@ void ArtifactVideoLayer::preloadFrames(int64_t startFrame, int count)
              << "Cache size:" << impl_->frameCache_.size();
 }
 
-// === Proxy Workflow ===
+// === Proxy Workflow (Metadata Only) ===
+// プロキシ生成は ProxyManager サービスの責務。レイヤーはメタデータのみ保持。
+
 void ArtifactVideoLayer::setProxyQuality(ProxyQuality quality)
 {
     impl_->proxyQuality_ = quality;
-    
-    // Check if proxy file exists
-    if (quality != ProxyQuality::None && !impl_->proxyPath_.isEmpty()) {
-        if (QFile::exists(impl_->proxyPath_)) {
-            // Load proxy instead
-            qDebug() << "[VideoLayer] Switching to proxy:" << impl_->proxyPath_;
-        }
-    }
 }
 
 ProxyQuality ArtifactVideoLayer::proxyQuality() const
@@ -667,44 +661,28 @@ bool ArtifactVideoLayer::hasProxy() const
     return !impl_->proxyPath_.isEmpty() && QFile::exists(impl_->proxyPath_);
 }
 
+QString ArtifactVideoLayer::proxyPath() const
+{
+    return impl_->proxyPath_;
+}
+
 bool ArtifactVideoLayer::generateProxy(ProxyQuality quality)
 {
-    if (!impl_->isLoaded_) return false;
-    
-    // Calculate proxy dimensions
-    double scale = 1.0;
-    switch (quality) {
-        case ProxyQuality::Quarter: scale = 0.25; break;
-        case ProxyQuality::Half: scale = 0.5; break;
-        default: return false;
-    }
-    
-    int proxyWidth = static_cast<int>(impl_->streamInfo_.width * scale);
-    int proxyHeight = static_cast<int>(impl_->streamInfo_.height * scale);
-    
-    // Generate proxy path
-    QFileInfo srcInfo(impl_->sourcePath_);
-    QString proxyDir = srcInfo.absolutePath() + "/.proxy";
-    QDir().mkpath(proxyDir);
-    QString proxyName = QString("%1_proxy_%2.mp4").arg(srcInfo.baseName()).arg(static_cast<int>(quality));
-    impl_->proxyPath_ = proxyDir + "/" + proxyName;
-    
-    // Use FFmpeg to transcode (this is a placeholder - would need actual FFmpeg integration)
-    qDebug() << "[VideoLayer] Generating proxy:" << impl_->proxyPath_
-             << "Scale:" << scale << "Size:" << proxyWidth << "x" << proxyHeight;
-    
-    // TODO: Implement actual proxy generation using FFmpeg or OpenCV
-    // For now, just return false to indicate it's not implemented
+    // プロキシ生成は ProxyManager サービスに委譲
+    qWarning() << "[VideoLayer] generateProxy() is deprecated. Use ArtifactProxyManager::instance()->generateProxy() instead.";
     return false;
+}
+
+void ArtifactVideoLayer::setProxyPath(const QString& path)
+{
+    impl_->proxyPath_ = path;
 }
 
 void ArtifactVideoLayer::clearProxy()
 {
-    if (!impl_->proxyPath_.isEmpty()) {
-        QFile::remove(impl_->proxyPath_);
-        impl_->proxyPath_.clear();
-        qDebug() << "[VideoLayer] Cleared proxy";
-    }
+    impl_->proxyPath_.clear();
+    impl_->proxyQuality_ = ProxyQuality::None;
+    qDebug() << "[VideoLayer] Proxy cleared";
 }
 
 // === In-Point / Out-Point ===

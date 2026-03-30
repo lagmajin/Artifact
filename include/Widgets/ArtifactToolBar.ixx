@@ -31,7 +31,9 @@ export namespace Artifact {
   void selectToolRequested() W_SIGNAL(selectToolRequested);
   void handToolRequested() W_SIGNAL(handToolRequested);
   void zoomToolRequested() W_SIGNAL(zoomToolRequested);
+  void moveToolRequested() W_SIGNAL(moveToolRequested);
   void rotationToolRequested() W_SIGNAL(rotationToolRequested);
+  void scaleToolRequested() W_SIGNAL(scaleToolRequested);
   void cameraToolRequested() W_SIGNAL(cameraToolRequested);
   void panBehindToolRequested() W_SIGNAL(panBehindToolRequested);
   void shapeToolRequested() W_SIGNAL(shapeToolRequested);

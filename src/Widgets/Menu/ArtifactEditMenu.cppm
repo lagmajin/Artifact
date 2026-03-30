@@ -1,9 +1,15 @@
-module;
+﻿module;
 #include <QMenu>
 #include <wobjectimpl.h>
 #include <QAction>
 #include <QKeySequence>
 #include <QDebug>
+#include <QStatusBar>
+#include <QClipboard>
+#include <QApplication>
+#include <QJsonDocument>
+#include <QJsonArray>
+#include <QJsonObject>
 module Artifact.Menu.Edit;
 import std;
 
@@ -11,8 +17,11 @@ import Artifact.Application.Manager;
 import Artifact.Project.Manager;
 import Artifact.Service.ActiveContext;
 import Artifact.Layers.Selection.Manager;
+import Artifact.Layer.Abstract;
+import Artifact.Composition.Abstract;
 import Undo.UndoManager;
 import ApplicationSettingDialog;
+import Artifact.Service.Project;
 import Utils.Path;
 
 namespace Artifact {
@@ -26,6 +35,7 @@ namespace Artifact {
  public:
   Impl(QMenu* menu);
   void rebuildMenu();
+  void syncUIState();  // UI 状態を同期
   QAction* undoAction = nullptr;
   QAction* redoAction = nullptr;
   QAction* duplicateAction = nullptr;
@@ -173,21 +183,171 @@ namespace Artifact {
   return ArtifactApplicationManager::instance()->activeContextService();
  }
 
- void ArtifactEditMenu::Impl::handleUndo() { 
+ void ArtifactEditMenu::Impl::handleUndo() {
   if (auto mgr = UndoManager::instance()) {
+   const QString desc = mgr->undoDescription();
    mgr->undo();
+   qDebug().noquote() << "[Undo]" << desc;
+   if (auto* sb = parentWidget_ ? parentWidget_->findChild<QStatusBar*>() : nullptr) {
+    sb->showMessage(QString("Undo: %1").arg(desc), 3000);
+   }
+   // UI 状態を同期
+   syncUIState();
   }
  }
- void ArtifactEditMenu::Impl::handleRedo() { 
+ void ArtifactEditMenu::Impl::handleRedo() {
   if (auto mgr = UndoManager::instance()) {
+   const QString desc = mgr->redoDescription();
    mgr->redo();
+   qDebug().noquote() << "[Redo]" << desc;
+   if (auto* sb = parentWidget_ ? parentWidget_->findChild<QStatusBar*>() : nullptr) {
+    sb->showMessage(QString("Redo: %1").arg(desc), 3000);
+   }
+   // UI 状態を同期
+   syncUIState();
   }
  }
- void ArtifactEditMenu::Impl::handleCopyAction() { qDebug() << "Copy"; }
- void ArtifactEditMenu::Impl::handleCutAction() { qDebug() << "Cut"; }
- void ArtifactEditMenu::Impl::handlePasteAction() { qDebug() << "Paste"; }
- void ArtifactEditMenu::Impl::handleDelete() { qDebug() << "Delete"; }
- void ArtifactEditMenu::Impl::handleDuplicate() { qDebug() << "Duplicate"; }
+ 
+ void ArtifactEditMenu::Impl::syncUIState() {
+  // Undo/Redo 後に UI 状態を同期
+  if (auto* svc = ArtifactProjectService::instance()) {
+    auto currentComp = svc->currentComposition();
+    if (auto comp = currentComp.lock()) {
+     emit svc->currentCompositionChanged(comp->id());
+    }
+  }
+  if (auto* selMgr = ArtifactApplicationManager::instance()
+                          ? ArtifactApplicationManager::instance()->layerSelectionManager()
+                          : nullptr) {
+   emit selMgr->activeCompositionChanged(selMgr->activeComposition());
+  }
+ }
+ void ArtifactEditMenu::Impl::handleCopyAction()
+ {
+  auto* selMgr = ArtifactApplicationManager::instance()
+                     ? ArtifactApplicationManager::instance()->layerSelectionManager()
+                     : nullptr;
+  if (!selMgr) return;
+
+  const auto selected = selMgr->selectedLayers();
+  if (selected.isEmpty()) return;
+
+  // Serialize selected layers to JSON
+  QJsonArray layersArray;
+  for (const auto& layer : selected) {
+   if (layer) {
+    layersArray.append(layer->toJson());
+   }
+  }
+
+  QJsonObject clipObj;
+  clipObj["artifact_clipboard"] = QStringLiteral("layer");
+  clipObj["layers"] = layersArray;
+
+  QClipboard* clipboard = QApplication::clipboard();
+  clipboard->setText(QJsonDocument(clipObj).toJson(QJsonDocument::Compact));
+  qDebug() << "[Edit] Copied" << selected.size() << "layer(s)";
+ }
+
+ void ArtifactEditMenu::Impl::handleCutAction()
+ {
+  handleCopyAction();
+  handleDelete();
+ }
+
+ void ArtifactEditMenu::Impl::handlePasteAction()
+ {
+  QClipboard* clipboard = QApplication::clipboard();
+  const QString text = clipboard->text();
+  if (text.isEmpty()) return;
+
+  QJsonDocument doc = QJsonDocument::fromJson(text.toUtf8());
+  if (!doc.isObject()) return;
+
+  QJsonObject clipObj = doc.object();
+  if (clipObj["artifact_clipboard"].toString() != QStringLiteral("layer")) {
+   qWarning() << "[Edit] Paste: clipboard does not contain artifact layer data";
+   return;
+  }
+
+  QJsonArray layersArray = clipObj["layers"].toArray();
+  if (layersArray.isEmpty()) return;
+
+  auto* svc = ArtifactProjectService::instance();
+  if (!svc) return;
+
+  auto comp = svc->currentComposition().lock();
+  if (!comp) return;
+
+  auto* selMgr = ArtifactApplicationManager::instance()
+                     ? ArtifactApplicationManager::instance()->layerSelectionManager()
+                     : nullptr;
+  if (selMgr) selMgr->clearSelection();
+
+  auto& pm = ArtifactProjectManager::getInstance();
+  int pasted = 0;
+
+  for (const auto& val : layersArray) {
+   if (!val.isObject()) continue;
+   auto layer = ArtifactAbstractLayer::fromJson(val.toObject());
+   if (!layer) continue;
+
+   layer->setLayerName(layer->layerName() + " (Copy)");
+
+   auto result = comp->appendLayerTop(layer);
+   if (result.success) {
+    if (selMgr) selMgr->addToSelection(layer);
+    ++pasted;
+   }
+  }
+
+  if (pasted > 0) {
+   qDebug().noquote() << "[Edit] Pasted" << pasted << "layer(s)";
+   if (auto* sb = parentWidget_ ? parentWidget_->findChild<QStatusBar*>() : nullptr) {
+    sb->showMessage(QString("Pasted %1 layer(s)").arg(pasted), 3000);
+   }
+  }
+ }
+ void ArtifactEditMenu::Impl::handleDelete()
+ {
+  auto* selMgr = ArtifactApplicationManager::instance()
+                     ? ArtifactApplicationManager::instance()->layerSelectionManager()
+                     : nullptr;
+  auto* svc = ArtifactProjectService::instance();
+  if (!selMgr || !svc) return;
+
+  const auto selected = selMgr->selectedLayers();
+  if (selected.isEmpty()) return;
+
+  auto comp = svc->currentComposition().lock();
+  if (!comp) return;
+
+  for (const auto& layer : selected) {
+   if (layer) {
+    svc->removeLayerFromComposition(comp->id(), layer->id());
+   }
+  }
+  selMgr->clearSelection();
+ }
+
+ void ArtifactEditMenu::Impl::handleDuplicate()
+ {
+  auto* selMgr = ArtifactApplicationManager::instance()
+                     ? ArtifactApplicationManager::instance()->layerSelectionManager()
+                     : nullptr;
+  auto* svc = ArtifactProjectService::instance();
+  if (!selMgr || !svc) return;
+
+  const auto selected = selMgr->selectedLayers();
+  if (selected.isEmpty()) return;
+
+  selMgr->clearSelection();
+  for (const auto& layer : selected) {
+   if (layer) {
+    svc->duplicateLayerInCurrentComposition(layer->id());
+   }
+  }
+ }
  void ArtifactEditMenu::Impl::handleSplit() { 
   if (auto* ctx = getActiveContext()) {
    ctx->splitLayerAtCurrentTime();
@@ -203,11 +363,11 @@ namespace Artifact {
    ctx->trimLayerOutAtCurrentTime();
   }
  }
- void ArtifactEditMenu::Impl::handleSelectAll() { qDebug() << "Select All"; }
- void ArtifactEditMenu::Impl::handleSelectNone() { qDebug() << "Select None"; }
- void ArtifactEditMenu::Impl::handleInvertSelection() { qDebug() << "Invert Selection"; }
- void ArtifactEditMenu::Impl::handleSelectSameType() { qDebug() << "Select Same Type"; }
- void ArtifactEditMenu::Impl::handleFind() { qDebug() << "Find"; }
+ void ArtifactEditMenu::Impl::handleSelectAll() { qWarning() << "[Edit] Select All not yet implemented"; }
+ void ArtifactEditMenu::Impl::handleSelectNone() { qWarning() << "[Edit] Select None not yet implemented"; }
+ void ArtifactEditMenu::Impl::handleInvertSelection() { qWarning() << "[Edit] Invert Selection not yet implemented"; }
+ void ArtifactEditMenu::Impl::handleSelectSameType() { qWarning() << "[Edit] Select Same Type not yet implemented"; }
+ void ArtifactEditMenu::Impl::handleFind() { qWarning() << "[Edit] Find not yet implemented"; }
  void ArtifactEditMenu::Impl::handlePreferences() { 
   auto* dialog = new ApplicationSettingDialog(parentWidget_);
   dialog->setAttribute(Qt::WA_DeleteOnClose);
