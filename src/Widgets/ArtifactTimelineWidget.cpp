@@ -507,7 +507,7 @@ private:
 class PlayheadSyncFilter final : public QObject {
 public:
   PlayheadSyncFilter(QWidget *activeRegionWidget, QWidget *overlayHostWidget,
-                     TimelineTrackView *trackView,
+                     ArtifactTimelineTrackPainterView *trackView,
                      TimelinePlayheadOverlay *overlay,
                      QObject *parent = nullptr)
       : QObject(parent), activeRegionWidget_(activeRegionWidget),
@@ -516,12 +516,12 @@ public:
 
   void sync() {
     if (!activeRegionWidget_ || !overlayHostWidget_ || !trackView_ ||
-        !overlay_ || !trackView_->viewport()) {
+        !overlay_) {
       return;
     }
 
     if (!activeRegionWidget_->isVisible() || !overlayHostWidget_->isVisible() ||
-        !trackView_->isVisible() || !trackView_->viewport()->isVisible()) {
+        !trackView_->isVisible()) {
       overlay_->hide();
       return;
     }
@@ -534,27 +534,14 @@ public:
     const QRect activeRect(
         activeRegionWidget_->mapTo(overlayHostWidget_, QPoint(0, 0)),
         activeRegionWidget_->size());
-    const QPoint viewportPos =
-        trackView_->mapFromScene(QPointF(trackView_->position(), 0.0));
-    int xInOverlay =
-        trackView_->viewport()->mapTo(overlayHostWidget_, viewportPos).x();
-    // フレーム0のスクリーン位置を計算し、プレイヘッドがそれより左に表示されないよう制限する
-    const QPoint frame0ViewportPos =
-        trackView_->mapFromScene(QPointF(0.0, 0.0));
-    const int frame0InOverlay =
-        trackView_->viewport()
-            ->mapTo(overlayHostWidget_, frame0ViewportPos)
-            .x();
-    xInOverlay = std::max(xInOverlay, frame0InOverlay);
-    // 上限クランプ: 最終フレームのスクリーン位置を超えないようにする
-    const double frameMax = std::max(0.0, trackView_->duration() - 1.0);
-    const QPoint frameMaxViewportPos =
-        trackView_->mapFromScene(QPointF(frameMax, 0.0));
-    const int frameMaxInOverlay =
-        trackView_->viewport()
-            ->mapTo(overlayHostWidget_, frameMaxViewportPos)
-            .x();
-    xInOverlay = std::min(xInOverlay, frameMaxInOverlay);
+    const double playheadX =
+        trackView_->currentFrame() * trackView_->pixelsPerFrame() -
+        trackView_->horizontalOffset();
+    const QPoint playheadLocal(
+        static_cast<int>(std::round(playheadX)),
+        std::max(0, trackView_->height() / 2));
+    const int xInOverlay =
+        trackView_->mapTo(overlayHostWidget_, playheadLocal).x();
     overlay_->setPlayheadLine(activeRect, xInOverlay);
     overlay_->show();
     overlay_->raise();
@@ -582,13 +569,13 @@ protected:
 private:
   QWidget *activeRegionWidget_ = nullptr;
   QWidget *overlayHostWidget_ = nullptr;
-  TimelineTrackView *trackView_ = nullptr;
+  ArtifactTimelineTrackPainterView *trackView_ = nullptr;
   TimelinePlayheadOverlay *overlay_ = nullptr;
 };
 
 class HeaderSeekFilter final : public QObject {
 public:
-  HeaderSeekFilter(TimelineTrackView *trackView,
+  HeaderSeekFilter(ArtifactTimelineTrackPainterView *trackView,
                    ArtifactTimelineScrubBar *scrubBar,
                    QObject *parent = nullptr)
       : QObject(parent), trackView_(trackView), scrubBar_(scrubBar) {}
@@ -629,28 +616,26 @@ protected:
       return QObject::eventFilter(watched, event);
     }
 
-    if (!trackView_->viewport()) {
+    if (!trackView_ || !scrubBar_) {
       return QObject::eventFilter(watched, event);
     }
 
     const double frameMax =
-        std::max(1.0, timelineFrameMax(trackView_->duration()));
+        std::max(1.0, timelineFrameMax(trackView_->durationFrames()));
     const auto seekFromHeaderWidget = [&](QWidget *widget,
                                           const QPoint &pos) -> double {
-      const QRect viewportRect = trackView_->viewport()->rect();
-      if (viewportRect.isEmpty()) {
+      const QRect widgetRect = widget->rect();
+      if (widgetRect.isEmpty()) {
         return 0.0;
       }
 
-      const QPoint globalPos = widget->mapToGlobal(pos);
-      int viewportX = trackView_->viewport()->mapFromGlobal(globalPos).x();
-      viewportX =
-          std::clamp(viewportX, viewportRect.left(), viewportRect.right());
-      const int viewportY = std::clamp(
-          kTopSeekHotZonePx / 2, viewportRect.top(), viewportRect.bottom());
-      const QPointF scenePos =
-          trackView_->mapToScene(QPoint(viewportX, viewportY));
-      return std::clamp(scenePos.x(), 0.0, frameMax);
+      const int localX = std::clamp(pos.x(), widgetRect.left(), widgetRect.right());
+      const double normalized =
+          static_cast<double>(localX - widgetRect.left()) /
+          std::max(1.0, static_cast<double>(widgetRect.width() - 1));
+      const double frame =
+          normalized * std::max(0.0, trackView_->durationFrames());
+      return std::clamp(frame, 0.0, frameMax);
     };
 
     if (event->type() == QEvent::MouseButtonRelease) {
@@ -675,7 +660,7 @@ protected:
         const double clamped =
             seekFromHeaderWidget(sourceWidget, mouseEvent->pos());
         const int frame = static_cast<int>(std::round(clamped));
-        trackView_->setPosition(clamped);
+        trackView_->setCurrentFrame(clamped);
         scrubBar_->setCurrentFrame(FramePosition(frame));
         
         if (debugCallback_) {
@@ -707,51 +692,24 @@ protected:
     }
     double clamped = 0.0;
 
-    if (sourceWidget == trackView_->viewport()) {
-      const QRect viewportRect = trackView_->viewport()->rect();
-      if (viewportRect.isEmpty()) {
-        return QObject::eventFilter(watched, event);
-      }
-      const QPoint viewportPos = mouseEvent->pos();
-      if (!viewportRect.contains(viewportPos) ||
-          viewportPos.y() > kTopSeekHotZonePx) {
-        return QObject::eventFilter(watched, event);
-      }
-
-      const QPointF scenePos = trackView_->mapToScene(viewportPos);
-      if (trackView_->scene()) {
-        // Do not steal input from clip/resize handle interactions.
-        const auto items =
-            trackView_->scene()->items(scenePos, Qt::IntersectsItemShape);
-        for (auto *item : items) {
-          if (dynamic_cast<ResizeHandle *>(item) ||
-              dynamic_cast<ClipItem *>(item)) {
-            return QObject::eventFilter(watched, event);
-          }
-        }
-      }
-
-      clamped = std::clamp(scenePos.x(), 0.0, frameMax);
-    } else {
-      if (event->type() == QEvent::MouseButtonPress &&
-          isReservedRangeInteraction(sourceWidget, mouseEvent->pos())) {
-        seeking_ = false;
-        seekSource_ = nullptr;
-        reservedClickCandidate_ = true;
-        reservedClickSource_ = sourceWidget;
-        reservedPressGlobalPos_ = sourceWidget->mapToGlobal(mouseEvent->pos());
-        return QObject::eventFilter(watched, event);
-      }
-      reservedClickCandidate_ = false;
-      reservedClickSource_ = nullptr;
-      clamped = seekFromHeaderWidget(sourceWidget, mouseEvent->pos());
+    if (event->type() == QEvent::MouseButtonPress &&
+        isReservedRangeInteraction(sourceWidget, mouseEvent->pos())) {
+      seeking_ = false;
+      seekSource_ = nullptr;
+      reservedClickCandidate_ = true;
+      reservedClickSource_ = sourceWidget;
+      reservedPressGlobalPos_ = sourceWidget->mapToGlobal(mouseEvent->pos());
+      return QObject::eventFilter(watched, event);
     }
+    reservedClickCandidate_ = false;
+    reservedClickSource_ = nullptr;
+    clamped = seekFromHeaderWidget(sourceWidget, mouseEvent->pos());
 
     seeking_ = true;
     seekSource_ = sourceWidget;
     const int frame = static_cast<int>(std::round(clamped));
 
-    trackView_->setPosition(clamped);
+    trackView_->setCurrentFrame(clamped);
     scrubBar_->setCurrentFrame(FramePosition(frame));
 
     if (debugCallback_) {
@@ -804,7 +762,7 @@ private:
     return rangeRect.contains(pos);
   }
 
-  TimelineTrackView *trackView_ = nullptr;
+  ArtifactTimelineTrackPainterView *trackView_ = nullptr;
   ArtifactTimelineScrubBar *scrubBar_ = nullptr;
   bool seeking_ = false;
   QWidget *seekSource_ = nullptr;
@@ -817,7 +775,8 @@ private:
 
 class HeaderScrollFilter final : public QObject {
 public:
-  HeaderScrollFilter(TimelineTrackView *trackView, QObject *parent = nullptr)
+  HeaderScrollFilter(ArtifactTimelineTrackPainterView *trackView,
+                     QObject *parent = nullptr)
       : QObject(parent), trackView_(trackView) {}
 
 protected:
@@ -827,9 +786,7 @@ protected:
     }
 
     auto *widget = qobject_cast<QWidget *>(watched);
-    auto *hBar = trackView_->horizontalScrollBar();
-    auto *vBar = trackView_->verticalScrollBar();
-    if (!widget || (!hBar && !vBar)) {
+    if (!widget) {
       return QObject::eventFilter(watched, event);
     }
 
@@ -843,28 +800,28 @@ protected:
       const bool wantsHorizontal =
           (wheelEvent->modifiers() & Qt::ShiftModifier);
 
-      if (wantsHorizontal && hBar) {
+      if (wantsHorizontal) {
         int delta = wheelScrollDelta(wheelEvent, true);
         if (delta == 0) {
           delta = wheelScrollDelta(wheelEvent, false);
         }
         if (delta != 0) {
-          hBar->setValue(hBar->value() - delta);
+          trackView_->setHorizontalOffset(
+              std::max(0.0, trackView_->horizontalOffset() - delta));
           event->accept();
           return true;
         }
       }
 
-      if (vBar && vBar->maximum() > vBar->minimum()) {
-        int delta = wheelScrollDelta(wheelEvent, false);
-        if (delta == 0) {
-          delta = wheelScrollDelta(wheelEvent, true);
-        }
-        if (delta != 0) {
-          vBar->setValue(vBar->value() - delta);
-          event->accept();
-          return true;
-        }
+      int delta = wheelScrollDelta(wheelEvent, false);
+      if (delta == 0) {
+        delta = wheelScrollDelta(wheelEvent, true);
+      }
+      if (delta != 0) {
+        trackView_->setVerticalOffset(
+            std::max(0.0, trackView_->verticalOffset() - delta));
+        event->accept();
+        return true;
       }
 
       return QObject::eventFilter(watched, event);
@@ -888,12 +845,10 @@ protected:
       const QPoint currentGlobalPos = mouseEvent->globalPosition().toPoint();
       const QPoint delta = currentGlobalPos - lastGlobalPos_;
       lastGlobalPos_ = currentGlobalPos;
-      if (hBar) {
-        hBar->setValue(hBar->value() - delta.x());
-      }
-      if (vBar) {
-        vBar->setValue(vBar->value() - delta.y());
-      }
+      trackView_->setHorizontalOffset(
+          std::max(0.0, trackView_->horizontalOffset() - delta.x()));
+      trackView_->setVerticalOffset(
+          std::max(0.0, trackView_->verticalOffset() - delta.y()));
       event->accept();
       return true;
     }
@@ -915,7 +870,7 @@ protected:
   }
 
 private:
-  TimelineTrackView *trackView_ = nullptr;
+  ArtifactTimelineTrackPainterView *trackView_ = nullptr;
   bool panning_ = false;
   QPoint lastGlobalPos_;
 };
@@ -1276,10 +1231,13 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   auto *trackStack = new QStackedLayout();
   trackStack->setContentsMargins(0, 0, 0, 0);
   trackStack->setSpacing(0);
-  trackStack->setStackingMode(QStackedLayout::StackAll);
+  trackStack->setStackingMode(QStackedLayout::StackOne);
   trackStack->addWidget(timelineTrackView);
   trackStack->addWidget(painterTrackView);
+  trackStack->setCurrentWidget(painterTrackView);
   trackHost->setLayout(trackStack);
+  timelineTrackView->setVisible(false);
+  timelineTrackView->setEnabled(false);
 
   auto updateZoom = [this]() {
     if (!impl_->trackView_ || !impl_->workArea_)
@@ -1289,7 +1247,9 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
     float e = impl_->navigator_->endValue();
     double range = std::max(0.01f, e - s);
 
-    int viewW = impl_->trackView_->viewport()->width();
+    int viewW = impl_->painterTrackView_
+                    ? impl_->painterTrackView_->width()
+                    : impl_->trackView_->width();
     if (viewW > 0) {
       double newZoom = viewW / (duration * range);
       impl_->trackView_->setZoomLevel(newZoom);
@@ -1303,16 +1263,12 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
       // ズームレベルをシグナルで通知
       Q_EMIT zoomLevelChanged(newZoom * 100.0);
 
-      if (auto *hBar = impl_->trackView_->horizontalScrollBar()) {
-        hBar->setValue(static_cast<int>(s * duration * newZoom));
-        if (impl_->painterTrackView_) {
-          impl_->painterTrackView_->setHorizontalOffset(
-              static_cast<double>(hBar->value()));
-        }
-        if (impl_->scrubBar_) {
-          impl_->scrubBar_->setRulerHorizontalOffset(
-              static_cast<double>(hBar->value()));
-        }
+      const double offset = s * duration * newZoom;
+      if (impl_->painterTrackView_) {
+        impl_->painterTrackView_->setHorizontalOffset(offset);
+      }
+      if (impl_->scrubBar_) {
+        impl_->scrubBar_->setRulerHorizontalOffset(offset);
       }
     }
   };
@@ -1554,54 +1510,36 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   auto *playheadOverlay = new TimelinePlayheadOverlay(rightPanel);
 
   auto *playheadSync = new PlayheadSyncFilter(
-      rightPanel, rightPanel, timelineTrackView, playheadOverlay, rightPanel);
+      rightPanel, rightPanel, painterTrackView, playheadOverlay, rightPanel);
   rightPanel->installEventFilter(playheadSync);
-  timelineTrackView->installEventFilter(playheadSync);
-  if (timelineTrackView->viewport()) {
-    timelineTrackView->viewport()->installEventFilter(playheadSync);
+  if (painterTrackView) {
+    painterTrackView->installEventFilter(playheadSync);
   }
   impl_->playheadOverlay_ = playheadOverlay;
   impl_->playheadSync_ = playheadSync;
 
   auto *headerSeekFilter =
-      new HeaderSeekFilter(timelineTrackView, scrubBar, rightPanel);
+      new HeaderSeekFilter(painterTrackView, scrubBar, rightPanel);
   headerSeekFilter->setDebugCallback([this](const QString &msg) {
     Q_EMIT timelineDebugMessage(msg);
   });
   timeNavigatorWidget->installEventFilter(headerSeekFilter);
   workAreaWidget->installEventFilter(headerSeekFilter);
   scrubBar->installEventFilter(headerSeekFilter); // Install on scrub bar
-  if (timelineTrackView->viewport()) {
-    timelineTrackView->viewport()->installEventFilter(headerSeekFilter);
-  }
 
   auto *headerScrollFilter =
-      new HeaderScrollFilter(timelineTrackView, rightPanel);
+      new HeaderScrollFilter(painterTrackView, rightPanel);
   rightPanel->installEventFilter(headerScrollFilter);
   timeNavigatorWidget->installEventFilter(headerScrollFilter);
   scrubBar->installEventFilter(headerScrollFilter);
   workAreaWidget->installEventFilter(headerScrollFilter);
 
-  if (timelineTrackView->viewport()) {
+  if (painterTrackView) {
     auto *viewResizeFilter =
         new ViewportResizeFilter(rightPanel, updateZoom, rightPanel);
-    timelineTrackView->viewport()->installEventFilter(viewResizeFilter);
+    painterTrackView->installEventFilter(viewResizeFilter);
   }
 
-  if (auto *hBar = timelineTrackView->horizontalScrollBar()) {
-    QObject::connect(hBar, &QScrollBar::valueChanged, this, [this](int value) {
-      if (impl_->painterTrackView_) {
-        impl_->painterTrackView_->setHorizontalOffset(
-            static_cast<double>(value));
-      }
-      if (impl_->scrubBar_) {
-        impl_->scrubBar_->setRulerHorizontalOffset(static_cast<double>(value));
-      }
-      if (impl_->playheadSync_) {
-        impl_->playheadSync_->sync();
-      }
-    });
-  }
   QObject::connect(scrubBar, &ArtifactTimelineScrubBar::frameChanged, this,
                    [this](const auto &frame) {
                      impl_->currentFrame_ = static_cast<double>(frame.framePosition());
@@ -1616,8 +1554,8 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
       timelineTrackView, &TimelineTrackView::keyframeNavigationRequested, this,
       [this](int step) { jumpToKeyframeHit(step); });
   if (auto *playbackService = ArtifactPlaybackService::instance()) {
-    QObject::connect(
-        playbackService, &ArtifactPlaybackService::frameChanged, this,
+  QObject::connect(
+      playbackService, &ArtifactPlaybackService::frameChanged, this,
         [this, timelineTrackView, scrubBar,
          playbackService](const FramePosition &frame) {
           const auto currentComp = playbackService->currentComposition();
@@ -1721,14 +1659,15 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
                      &ArtifactTimelineWidget::onLayerCreated);
     QObject::connect(svc, &ArtifactProjectService::layerRemoved, this,
                      &ArtifactTimelineWidget::onLayerRemoved);
-    QObject::connect(svc, &ArtifactProjectService::layerSelected, this,
-                     [this](const LayerID &layerId) {
-                       if (!impl_->trackView_) {
+  QObject::connect(svc, &ArtifactProjectService::layerSelected, this,
+                     [this, syncPainterSelectionState](const LayerID &layerId) {
+                       Q_UNUSED(layerId);
+                       if (!impl_ || !impl_->painterTrackView_) {
                          return;
                        }
                        impl_->syncingLayerSelection_ = true;
-                       impl_->trackView_->selectClipForLayer(layerId);
                        impl_->syncingLayerSelection_ = false;
+                       syncPainterSelectionState();
                      });
     if (auto *app = ArtifactApplicationManager::instance()) {
       if (auto *selection = app->layerSelectionManager()) {
@@ -1848,22 +1787,26 @@ void ArtifactTimelineWidget::setComposition(const CompositionID &id) {
         }
         QTimer::singleShot(0, this, [this]() {
           if (!impl_ || !impl_->trackView_ || !impl_->navigator_ ||
-              !impl_->trackView_->viewport()) {
+              !impl_->painterTrackView_) {
             return;
           }
           const double duration = impl_->trackView_->duration();
           const double range = std::max(
               0.01, static_cast<double>(impl_->navigator_->endValue() -
                                         impl_->navigator_->startValue()));
-          const int viewW = impl_->trackView_->viewport()->width();
+          const int viewW = impl_->painterTrackView_->width();
           if (viewW <= 0) {
             return;
           }
           const double newZoom = viewW / (duration * range);
           impl_->trackView_->setZoomLevel(newZoom);
-          if (auto *hBar = impl_->trackView_->horizontalScrollBar()) {
-            hBar->setValue(static_cast<int>(impl_->navigator_->startValue() *
-                                            duration * newZoom));
+          impl_->painterTrackView_->setPixelsPerFrame(newZoom);
+          const double offset =
+              impl_->navigator_->startValue() * duration * newZoom;
+          impl_->painterTrackView_->setHorizontalOffset(offset);
+          if (impl_->scrubBar_) {
+            impl_->scrubBar_->setRulerPixelsPerFrame(newZoom);
+            impl_->scrubBar_->setRulerHorizontalOffset(offset);
           }
           if (impl_->playheadSync_) {
             impl_->playheadSync_->sync();
@@ -2016,9 +1959,8 @@ void ArtifactTimelineWidget::refreshTracks() {
         collectKeyframeMarkers(composition, selectionManager, trackIndexByLayerId));
   }
 
-  if (impl_->trackView_ && !impl_->trackView_->legacyPaintSuppressed() &&
-      impl_->trackView_->viewport()) {
-    impl_->trackView_->viewport()->update();
+  if (impl_->painterTrackView_) {
+    impl_->painterTrackView_->update();
   }
   if (impl_->playheadSync_) {
     impl_->playheadSync_->sync();
@@ -2036,7 +1978,28 @@ bool ArtifactTimelineWidget::isLayerNameEditable() const {
   return impl_->layerTimelinePanel_ ? impl_->layerTimelinePanel_->isLayerNameEditable() : false;
 }
 
-void ArtifactTimelineWidget::paintEvent(QPaintEvent *event) {}
+void ArtifactTimelineWidget::paintEvent(QPaintEvent *event) {
+  Q_UNUSED(event);
+
+  QPainter painter(this);
+  painter.setRenderHint(QPainter::Antialiasing, false);
+
+  const QRect bounds = rect();
+  const QColor base = palette().color(QPalette::Window);
+  const QColor border = palette().color(QPalette::Mid).darker(115);
+  const QColor topShade = palette().color(QPalette::Shadow);
+
+  painter.fillRect(bounds, base);
+
+  // Provide a subtle shell so the timeline reads as one owner-drawn surface.
+  painter.setPen(QPen(border, 1));
+  painter.drawRect(bounds.adjusted(0, 0, -1, -1));
+
+  QColor accent = topShade;
+  accent.setAlpha(90);
+  painter.fillRect(QRect(bounds.left(), bounds.top(), bounds.width(), 1),
+                   accent);
+}
 
 void ArtifactTimelineWidget::mousePressEvent(QMouseEvent *event) {
   if (impl_ && impl_->trackView_ && event &&

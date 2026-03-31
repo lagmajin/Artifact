@@ -135,9 +135,10 @@ public:
  void drawGizmoLine(Detail::float3 start, Detail::float3 end, const FloatColor& color, float thickness = 1.0f);
  void drawGizmoArrow(Detail::float3 start, Detail::float3 end, const FloatColor& color, float size = 1.0f);
  void drawGizmoRing(Detail::float3 center, Detail::float3 normal, float radius, const FloatColor& color, float thickness = 1.0f);
- void draw3DLine(Detail::float3 start, Detail::float3 end, const FloatColor& color, float thickness = 1.0f);
- void draw3DArrow(Detail::float3 start, Detail::float3 end, const FloatColor& color, float size = 1.0f);
- void draw3DCircle(Detail::float3 center, Detail::float3 normal, float radius, const FloatColor& color, float thickness = 1.0f);
+  void draw3DLine(Detail::float3 start, Detail::float3 end, const FloatColor& color, float thickness = 1.0f);
+  void draw3DArrow(Detail::float3 start, Detail::float3 end, const FloatColor& color, float size = 1.0f);
+  void draw3DCircle(Detail::float3 center, Detail::float3 normal, float radius, const FloatColor& color, float thickness = 1.0f);
+  void draw3DQuad(Detail::float3 v0, Detail::float3 v1, Detail::float3 v2, Detail::float3 v3, const FloatColor& color);
 
  void drawCheckerboard(float x, float y, float w, float h, float tileSize, const FloatColor& c1, const FloatColor& c2);
  void drawGrid(float x, float y, float w, float h, float spacing, float thickness, const FloatColor& color);

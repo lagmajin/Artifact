@@ -61,14 +61,16 @@ HitResult hitTestClips(
  const QVector<ArtifactTimelineTrackPainterView::TrackClipVisual>& clips,
  const QVector<int>& heights,
  const double mouseX, const double mouseY,
- const double ppf, const double xOffset)
+ const double ppf, const double xOffset,
+ const double yOffset)
 {
+ const double localMouseY = mouseY + yOffset;
  for (int i = 0; i < clips.size(); ++i) {
   const auto& clip = clips[i];
   if (clip.trackIndex < 0 || clip.trackIndex >= heights.size()) continue;
   const int trackTop = trackTopAt(heights, clip.trackIndex);
   const int trackH = heights[clip.trackIndex];
-  if (mouseY < trackTop || mouseY > trackTop + trackH) continue;
+  if (localMouseY < trackTop || localMouseY > trackTop + trackH) continue;
   const double clipX = clip.startFrame * ppf - xOffset;
   const double clipW = std::max(2.0, clip.durationFrame * ppf);
   if (mouseX >= clipX - kEdgeHitZone && mouseX <= clipX + kEdgeHitZone)
@@ -85,23 +87,25 @@ QPointF markerCenterFor(
  const ArtifactTimelineTrackPainterView::KeyframeMarkerVisual& marker,
  const QVector<int>& heights,
  const double ppf,
- const double xOffset)
+ const double xOffset,
+ const double yOffset)
 {
  if (marker.trackIndex < 0 || marker.trackIndex >= heights.size()) {
   return {};
  }
  const int trackTop = trackTopAt(heights, marker.trackIndex);
  const int trackH = heights[marker.trackIndex];
- return QPointF(marker.frame * ppf - xOffset, trackTop + trackH * 0.5);
+ return QPointF(marker.frame * ppf - xOffset, trackTop + trackH * 0.5 - yOffset);
 }
 
 QRectF markerHitRectFor(
  const ArtifactTimelineTrackPainterView::KeyframeMarkerVisual& marker,
  const QVector<int>& heights,
  const double ppf,
- const double xOffset)
+ const double xOffset,
+ const double yOffset)
 {
- const QPointF center = markerCenterFor(marker, heights, ppf, xOffset);
+ const QPointF center = markerCenterFor(marker, heights, ppf, xOffset, yOffset);
  if (center.isNull()) {
   return {};
  }
@@ -112,7 +116,8 @@ QRectF clipRectFor(
  const ArtifactTimelineTrackPainterView::TrackClipVisual& clip,
  const QVector<int>& heights,
  const double ppf,
- const double xOffset)
+ const double xOffset,
+ const double yOffset)
 {
  if (clip.trackIndex < 0 || clip.trackIndex >= heights.size()) {
   return {};
@@ -122,21 +127,22 @@ QRectF clipRectFor(
  const int trackH = heights[clip.trackIndex];
  const double clipX = clip.startFrame * ppf - xOffset;
  const double clipW = std::max(2.0, clip.durationFrame * ppf);
- return QRectF(clipX, trackTop + 2.0, clipW, std::max(8, trackH - 4));
+ return QRectF(clipX, trackTop + 2.0 - yOffset, clipW, std::max(8, trackH - 4));
 }
 
 MarkerHitResult hitTestMarkers(
  const QVector<ArtifactTimelineTrackPainterView::KeyframeMarkerVisual>& markers,
  const QVector<int>& heights,
  const double mouseX, const double mouseY,
- const double ppf, const double xOffset)
+ const double ppf, const double xOffset,
+ const double yOffset)
 {
  for (int i = 0; i < markers.size(); ++i) {
   const auto& marker = markers[i];
   if (marker.trackIndex < 0 || marker.trackIndex >= heights.size()) {
    continue;
   }
-  const QPointF center = markerCenterFor(marker, heights, ppf, xOffset);
+  const QPointF center = markerCenterFor(marker, heights, ppf, xOffset, yOffset);
   if (center.isNull()) {
    continue;
   }
@@ -159,6 +165,7 @@ public:
  double currentFrame_ = 0.0;
  double pixelsPerFrame_ = 2.0;
  double horizontalOffset_ = 0.0;
+ double verticalOffset_ = 0.0;
  QVector<int> trackHeights_;
  QVector<TrackClipVisual> clips_;
 
@@ -171,6 +178,8 @@ public:
  int hoverClipIndex_ = -1;
  DragMode hoverEdge_ = DragMode::None;
  int hoverMarkerIndex_ = -1;
+ bool panning_ = false;
+ QPoint lastPanPoint_;
  QVector<ArtifactTimelineTrackPainterView::KeyframeMarkerVisual> keyframeMarkers_;
 };
 
@@ -265,6 +274,20 @@ double ArtifactTimelineTrackPainterView::horizontalOffset() const
  return impl_->horizontalOffset_;
 }
 
+void ArtifactTimelineTrackPainterView::setVerticalOffset(const double value)
+{
+ if (std::abs(impl_->verticalOffset_ - value) < 0.0001) {
+  return;
+ }
+ impl_->verticalOffset_ = std::max(0.0, value);
+ update();
+}
+
+double ArtifactTimelineTrackPainterView::verticalOffset() const
+{
+ return impl_->verticalOffset_;
+}
+
 void ArtifactTimelineTrackPainterView::setTrackCount(const int count)
 {
  const int sanitized = std::max(kMinTrackCount, count);
@@ -337,7 +360,7 @@ void ArtifactTimelineTrackPainterView::setSelectedLayerIds(const QSet<LayerID>& 
  for (auto& clip : impl_->clips_) {
   const bool selected = layerIds.contains(clip.layerId);
   if (clip.selected != selected) {
-   const QRectF rect = clipRectFor(clip, impl_->trackHeights_, impl_->pixelsPerFrame_, impl_->horizontalOffset_);
+   const QRectF rect = clipRectFor(clip, impl_->trackHeights_, impl_->pixelsPerFrame_, impl_->horizontalOffset_, impl_->verticalOffset_);
    clip.selected = selected;
    if (rect.isValid()) {
     dirtyRect = hasDirty ? dirtyRect.united(rect) : rect;
@@ -379,18 +402,20 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent* event)
  const QRect fullRect = rect();
  const double ppf = impl_->pixelsPerFrame_;
  const double xOffset = impl_->horizontalOffset_;
+ const double yOffset = impl_->verticalOffset_;
 
  // Track rows (Virtualization)
  int currentY = 0;
  for (int i = 0; i < impl_->trackHeights_.size(); ++i) {
   const int rowH = impl_->trackHeights_[i];
+  const double rowTop = currentY - yOffset;
   
   // 画面外（dirtyRect外）の行は描画をスキップ
-  if (currentY + rowH >= dirtyRect.top() && currentY <= dirtyRect.bottom()) {
+  if (rowTop + rowH >= dirtyRect.top() && rowTop <= dirtyRect.bottom()) {
     const QColor rowColor = (i % 2 == 0) ? QColor(34, 35, 41) : QColor(38, 39, 46);
-    p.fillRect(QRect(0, currentY, fullRect.width(), rowH), rowColor);
+    p.fillRect(QRectF(0.0, rowTop, fullRect.width(), rowH), rowColor);
     p.setPen(QPen(QColor(18, 18, 20), 1));
-    p.drawLine(0, currentY + rowH, fullRect.width(), currentY + rowH);
+    p.drawLine(0, rowTop + rowH, fullRect.width(), rowTop + rowH);
   }
   
   currentY += rowH + kTrackSpacing;
@@ -425,6 +450,7 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent* event)
   for (int t = 0; t < clip.trackIndex && t < impl_->trackHeights_.size(); ++t) {
       clipY += impl_->trackHeights_[t] + kTrackSpacing;
   }
+  clipY -= static_cast<int>(std::round(yOffset));
   const int clipH = (clip.trackIndex >= 0 && clip.trackIndex < impl_->trackHeights_.size()) 
                     ? impl_->trackHeights_[clip.trackIndex] : kDefaultTrackHeight;
 
@@ -441,7 +467,7 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent* event)
   const int trackH = impl_->trackHeights_[clip.trackIndex];
   const double x = clip.startFrame * ppf - xOffset;
   const double w = std::max(2.0, clip.durationFrame * ppf);
-  QRectF clipRect(x, trackTop + 2.0, w, std::max(8, trackH - 4));
+  QRectF clipRect(x, trackTop + 2.0 - yOffset, w, std::max(8, trackH - 4));
   if (!clipRect.intersects(QRectF(fullRect))) {
    continue;
   }
@@ -486,7 +512,7 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent* event)
   if (marker.trackIndex < 0 || marker.trackIndex >= impl_->trackHeights_.size()) {
    continue;
   }
-  const QPointF center = markerCenterFor(marker, impl_->trackHeights_, ppf, xOffset);
+  const QPointF center = markerCenterFor(marker, impl_->trackHeights_, ppf, xOffset, yOffset);
   if (!dirtyRect.adjusted(-8, -8, 8, 8).contains(center.toPoint())) {
    continue;
   }
@@ -552,12 +578,20 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent* event)
 
 void ArtifactTimelineTrackPainterView::mousePressEvent(QMouseEvent* event)
 {
+ if (event->button() == Qt::MiddleButton) {
+  impl_->panning_ = true;
+  impl_->lastPanPoint_ = event->position().toPoint();
+  setCursor(Qt::ClosedHandCursor);
+  event->accept();
+  return;
+ }
+
  if (event->button() == Qt::LeftButton) {
   const double mouseX = event->position().x();
   const double mouseY = event->position().y();
   const auto markerHit = hitTestMarkers(impl_->keyframeMarkers_, impl_->trackHeights_,
                                         mouseX, mouseY, impl_->pixelsPerFrame_,
-                                        impl_->horizontalOffset_);
+                                        impl_->horizontalOffset_, impl_->verticalOffset_);
   if (markerHit.markerIndex >= 0) {
    const auto& marker = impl_->keyframeMarkers_[markerHit.markerIndex];
    const double frame = std::clamp(marker.frame, 0.0, impl_->durationFrames_);
@@ -568,7 +602,8 @@ void ArtifactTimelineTrackPainterView::mousePressEvent(QMouseEvent* event)
   }
   const auto hit = hitTestClips(impl_->clips_, impl_->trackHeights_,
                                  mouseX, mouseY,
-                                 impl_->pixelsPerFrame_, impl_->horizontalOffset_);
+                                 impl_->pixelsPerFrame_, impl_->horizontalOffset_,
+                                 impl_->verticalOffset_);
   if (hit.mode != DragMode::None) {
    impl_->dragMode_           = hit.mode;
    impl_->dragClipIndex_      = hit.clipIndex;
@@ -598,7 +633,8 @@ void ArtifactTimelineTrackPainterView::mouseMoveEvent(QMouseEvent* event)
  const double mouseY = event->position().y();
  const double ppf    = impl_->pixelsPerFrame_;
  const auto markerHit = hitTestMarkers(impl_->keyframeMarkers_, impl_->trackHeights_,
-                                       mouseX, mouseY, ppf, impl_->horizontalOffset_);
+                                       mouseX, mouseY, ppf, impl_->horizontalOffset_,
+                                       impl_->verticalOffset_);
 
  if (impl_->dragMode_ != DragMode::None && impl_->dragClipIndex_ >= 0) {
   const auto oldClip = impl_->clips_[impl_->dragClipIndex_];
@@ -628,15 +664,16 @@ void ArtifactTimelineTrackPainterView::mouseMoveEvent(QMouseEvent* event)
   Q_EMIT timelineDebugMessage(status);
 
   const QRectF dirtyRect =
-      clipRectFor(oldClip, impl_->trackHeights_, ppf, impl_->horizontalOffset_)
-          .united(clipRectFor(clip, impl_->trackHeights_, ppf, impl_->horizontalOffset_));
+      clipRectFor(oldClip, impl_->trackHeights_, ppf, impl_->horizontalOffset_, impl_->verticalOffset_)
+          .united(clipRectFor(clip, impl_->trackHeights_, ppf, impl_->horizontalOffset_, impl_->verticalOffset_));
   update(dirtyRect.adjusted(-2.0, -2.0, 2.0, 2.0).toAlignedRect());
   event->accept();
   return;
  }
 
- const auto hit = hitTestClips(impl_->clips_, impl_->trackHeights_,
-                                mouseX, mouseY, ppf, impl_->horizontalOffset_);
+  const auto hit = hitTestClips(impl_->clips_, impl_->trackHeights_,
+                                mouseX, mouseY, ppf, impl_->horizontalOffset_,
+                                impl_->verticalOffset_);
  const bool changed = (hit.clipIndex != impl_->hoverClipIndex_ || hit.mode != impl_->hoverEdge_);
  const auto oldHoverClipIndex = impl_->hoverClipIndex_;
  const auto oldHoverEdge = impl_->hoverEdge_;
@@ -660,11 +697,11 @@ void ArtifactTimelineTrackPainterView::mouseMoveEvent(QMouseEvent* event)
   QRectF dirtyRect;
   if (oldHoverClipIndex >= 0 && oldHoverClipIndex < impl_->clips_.size()) {
    dirtyRect = clipRectFor(impl_->clips_[oldHoverClipIndex], impl_->trackHeights_,
-                           ppf, impl_->horizontalOffset_);
+                           ppf, impl_->horizontalOffset_, impl_->verticalOffset_);
   }
   if (hit.clipIndex >= 0 && hit.clipIndex < impl_->clips_.size()) {
    const QRectF rect = clipRectFor(impl_->clips_[hit.clipIndex], impl_->trackHeights_,
-                                   ppf, impl_->horizontalOffset_);
+                                   ppf, impl_->horizontalOffset_, impl_->verticalOffset_);
    dirtyRect = dirtyRect.isValid() ? dirtyRect.united(rect) : rect;
   }
   if (!dirtyRect.isValid() && oldHoverEdge != hit.mode) {
@@ -674,24 +711,46 @@ void ArtifactTimelineTrackPainterView::mouseMoveEvent(QMouseEvent* event)
  }
  if (oldHoverMarkerIndex != impl_->hoverMarkerIndex_) {
   QRectF dirtyRect;
-  if (oldHoverMarkerIndex >= 0 && oldHoverMarkerIndex < impl_->keyframeMarkers_.size()) {
-   dirtyRect = markerHitRectFor(impl_->keyframeMarkers_[oldHoverMarkerIndex],
-                                impl_->trackHeights_, ppf, impl_->horizontalOffset_);
+ if (oldHoverMarkerIndex >= 0 && oldHoverMarkerIndex < impl_->keyframeMarkers_.size()) {
+  dirtyRect = markerHitRectFor(impl_->keyframeMarkers_[oldHoverMarkerIndex],
+                                impl_->trackHeights_, ppf, impl_->horizontalOffset_,
+                                impl_->verticalOffset_);
   }
   if (impl_->hoverMarkerIndex_ >= 0 && impl_->hoverMarkerIndex_ < impl_->keyframeMarkers_.size()) {
    const QRectF rect = markerHitRectFor(impl_->keyframeMarkers_[impl_->hoverMarkerIndex_],
-                                        impl_->trackHeights_, ppf, impl_->horizontalOffset_);
+                                        impl_->trackHeights_, ppf, impl_->horizontalOffset_,
+                                        impl_->verticalOffset_);
    dirtyRect = dirtyRect.isValid() ? dirtyRect.united(rect) : rect;
   }
   update((dirtyRect.isValid() ? dirtyRect : QRectF(0.0, 0.0, width(), height()))
              .adjusted(-2.0, -2.0, 2.0, 2.0)
              .toAlignedRect());
  }
+ if (impl_->panning_ && (event->buttons() & Qt::MiddleButton)) {
+  const QPoint current = event->position().toPoint();
+  const QPoint delta = current - impl_->lastPanPoint_;
+  impl_->lastPanPoint_ = current;
+  if (delta.x() != 0) {
+   setHorizontalOffset(std::max(0.0, impl_->horizontalOffset_ - static_cast<double>(delta.x())));
+  }
+  if (delta.y() != 0) {
+   setVerticalOffset(std::max(0.0, impl_->verticalOffset_ - static_cast<double>(delta.y())));
+  }
+  event->accept();
+  return;
+ }
  QWidget::mouseMoveEvent(event);
 }
 
 void ArtifactTimelineTrackPainterView::mouseReleaseEvent(QMouseEvent* event)
 {
+ if (event->button() == Qt::MiddleButton && impl_->panning_) {
+  impl_->panning_ = false;
+  setCursor(Qt::ArrowCursor);
+  event->accept();
+  return;
+ }
+
  if (event->button() == Qt::LeftButton && impl_->dragMode_ != DragMode::None) {
   const int idx = impl_->dragClipIndex_;
   if (idx >= 0 && idx < impl_->clips_.size()) {
@@ -713,6 +772,27 @@ void ArtifactTimelineTrackPainterView::mouseReleaseEvent(QMouseEvent* event)
   return;
  }
  QWidget::mouseReleaseEvent(event);
+}
+
+void ArtifactTimelineTrackPainterView::wheelEvent(QWheelEvent* event)
+{
+ if (!event) {
+  return;
+ }
+
+ const QPoint angle = event->angleDelta();
+ if (angle.isNull()) {
+  event->ignore();
+  return;
+ }
+
+ const double delta = static_cast<double>(angle.y()) / 120.0 * 40.0;
+ if (event->modifiers() & Qt::ShiftModifier) {
+  setHorizontalOffset(std::max(0.0, impl_->horizontalOffset_ - delta));
+ } else {
+  setVerticalOffset(std::max(0.0, impl_->verticalOffset_ - delta));
+ }
+ event->accept();
 }
 
 void ArtifactTimelineTrackPainterView::leaveEvent(QEvent* event)

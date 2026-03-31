@@ -54,6 +54,8 @@ public:
                      const FloatColor& color, float size = 1.0f);
     void draw3DCircle(const QVector3D& center, const QVector3D& normal,
                       float radius, const FloatColor& color, float thickness = 1.0f);
+    void draw3DQuad(const QVector3D& v0, const QVector3D& v1, const QVector3D& v2, const QVector3D& v3,
+                    const FloatColor& color);
 
 private:
     class Impl;

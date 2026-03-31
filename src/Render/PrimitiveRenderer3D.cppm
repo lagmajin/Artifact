@@ -594,6 +594,24 @@ public:
         drawGizmoLineGeometry(vertices.data(), static_cast<Uint32>(vertices.size()));
     }
 
+    void drawGizmoQuad(const QVector3D& v0, const QVector3D& v1, const QVector3D& v2, const QVector3D& v3,
+                       const FloatColor& color)
+    {
+        // For now, just draw the outline of the quad
+        // TODO: Implement filled quad rendering
+        const GizmoLineVertex vertices[] = {
+            makeGizmoLineVertex(v0, color),
+            makeGizmoLineVertex(v1, color),
+            makeGizmoLineVertex(v1, color),
+            makeGizmoLineVertex(v2, color),
+            makeGizmoLineVertex(v2, color),
+            makeGizmoLineVertex(v3, color),
+            makeGizmoLineVertex(v3, color),
+            makeGizmoLineVertex(v0, color)
+        };
+        drawGizmoLineGeometry(vertices, 8);
+    }
+
     void drawBillboard(const QVector3D& center, const QVector2D& size,
                        ITextureView* textureView, const FloatColor& tint,
                        float opacity, float rollDegrees)
@@ -779,6 +797,12 @@ void PrimitiveRenderer3D::draw3DCircle(const QVector3D& center, const QVector3D&
 {
     (void)thickness;
     impl_->drawGizmoRing(center, normal, radius, color);
+}
+
+void PrimitiveRenderer3D::draw3DQuad(const QVector3D& v0, const QVector3D& v1, const QVector3D& v2, const QVector3D& v3,
+                                     const FloatColor& color)
+{
+    impl_->drawGizmoQuad(v0, v1, v2, v3, color);
 }
 
 } // namespace Artifact

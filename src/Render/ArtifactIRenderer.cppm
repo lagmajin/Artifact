@@ -848,6 +848,8 @@ void ArtifactIRenderer::draw3DArrow(Detail::float3 start, Detail::float3 end, co
 { drawGizmoArrow(start, end, color, size); }
 void ArtifactIRenderer::draw3DCircle(Detail::float3 center, Detail::float3 normal, float radius, const FloatColor& color, float thickness)
 { drawGizmoRing(center, normal, radius, color, thickness); }
+void ArtifactIRenderer::draw3DQuad(Detail::float3 v0, Detail::float3 v1, Detail::float3 v2, Detail::float3 v3, const FloatColor& color)
+{ impl_->primitiveRenderer3D_.draw3DQuad({v0.x, v0.y, v0.z}, {v1.x, v1.y, v1.z}, {v2.x, v2.y, v2.z}, {v3.x, v3.y, v3.z}, color); }
 void ArtifactIRenderer::setUpscaleConfig(bool, float)    {}
  Diligent::RefCntAutoPtr<Diligent::IRenderDevice> ArtifactIRenderer::device() const
  { return impl_->deviceManager_.device(); }

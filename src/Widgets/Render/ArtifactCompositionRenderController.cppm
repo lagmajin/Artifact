@@ -50,6 +50,7 @@ import Artifact.Layer.Solid2D;
 import Artifact.Layers.SolidImage;
 import Artifact.Layer.Text;
 import Artifact.Layer.Composition;
+import Artifact.Layers.Model3D;
 import Artifact.Render.Offscreen;
 import Frame.Position;
 import Artifact.Application.Manager;
@@ -369,7 +370,6 @@ ArtifactAbstractLayerPtr hitTopmostLayerAtViewportPos(const ArtifactCompositionP
 return ArtifactAbstractLayerPtr();
 }
 
-#if 0
 void drawLayerForCompositionView(const ArtifactAbstractLayerPtr &layer,
                                  ArtifactIRenderer *renderer,
                                  float opacityOverride = -1.0f,
@@ -393,6 +393,12 @@ void drawLayerForCompositionView(const ArtifactAbstractLayerPtr &layer,
 
   const QTransform globalTransform = layer->getGlobalTransform();
   const QMatrix4x4 globalTransform4x4 = layer->getGlobalTransform4x4();
+
+  // Handle 3D layers separately
+  if (layer->is3D()) {
+    layer->draw(renderer);
+    return;
+  }
 
   auto applyRasterizerEffectsAndMasksToSurface = [&](const ArtifactAbstractLayerPtr& targetLayer,
                                             QImage& surface) {
@@ -654,7 +660,6 @@ void drawLayerForCompositionView(const ArtifactAbstractLayerPtr &layer,
            << "type=" << layer->type_index().name();
   layer->draw(renderer);
 }
-#endif
 
 } // namespace
 

@@ -2,6 +2,7 @@
 #include <QColor>
 #include <QMouseEvent>
 #include <QPaintEvent>
+#include <QWheelEvent>
 #include <QSet>
 #include <QVector>
 #include <QWidget>
@@ -51,6 +52,7 @@ export namespace Artifact
  void mousePressEvent(QMouseEvent* event) override;
  void mouseMoveEvent(QMouseEvent* event) override;
  void mouseReleaseEvent(QMouseEvent* event) override;
+ void wheelEvent(QWheelEvent* event) override;
  void leaveEvent(QEvent* event) override;
  QSize minimumSizeHint() const override;
 
@@ -69,6 +71,9 @@ export namespace Artifact
 
   void setHorizontalOffset(double value);
   double horizontalOffset() const;
+
+  void setVerticalOffset(double value);
+  double verticalOffset() const;
 
   void setTrackCount(int count);
   int trackCount() const;
