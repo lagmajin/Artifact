@@ -3,6 +3,7 @@ module;
 #include <QRectF>
 #include <QCursor>
 #include <memory>
+#include <vector>
 
 export module Artifact.Widgets.TransformGizmo;
 
@@ -13,6 +14,11 @@ import Utils.Id;
 import Color.Float;
 
 export namespace Artifact {
+
+ struct SnapLine {
+  bool isVertical = false;
+  float position = 0.0f;
+ };
 
  class TransformGizmo {
  public:
@@ -28,7 +34,8 @@ export namespace Artifact {
    Move,
    Scale_TL, Scale_TR, Scale_BL, Scale_BR,
    Scale_T, Scale_B, Scale_L, Scale_R,
-   Rotate
+   Rotate,
+   Anchor
   };
 
   TransformGizmo();
@@ -46,6 +53,7 @@ export namespace Artifact {
   void handleMouseRelease();
 
   bool isDragging() const { return isDragging_; }
+  HandleType activeHandle() const { return activeHandle_; }
 
  private:
   HandleType hitTest(const QPointF& viewportPos, ArtifactIRenderer* renderer) const;
@@ -55,20 +63,22 @@ export namespace Artifact {
   Mode mode_ = Mode::All;
   HandleType activeHandle_ = HandleType::None;
   bool isDragging_ = false;
+  std::vector<SnapLine> activeSnapLines_;
   QPointF dragStartCanvasPos_;
   QPointF dragStartLayerPos_;
   float dragStartScaleX_ = 1.0f;
   float dragStartScaleY_ = 1.0f;
   float dragStartRotation_ = 0.0f;
+  QTransform dragStartGlobalTransform_;
   QRectF dragStartBoundingBox_;
   QRectF dragStartLocalBounds_;
   QPointF dragStartAnchor_;
   QPointF lastCanvasMousePos_;
   
-  static constexpr float HANDLE_SIZE = 8.0f;
-  static constexpr float ROTATE_HANDLE_DISTANCE = 30.0f;
+  static constexpr float HANDLE_SIZE = 10.0f;
+  static constexpr float ROTATE_HANDLE_DISTANCE = 32.0f;
   static constexpr float ROTATE_HANDLE_RADIUS = 6.0f;
-  static constexpr float ANCHOR_HANDLE_SIZE = 6.0f;
+  static constexpr float ANCHOR_HANDLE_SIZE = 8.0f;
  };
 
 }

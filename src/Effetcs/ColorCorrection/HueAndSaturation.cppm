@@ -1,181 +1,157 @@
-﻿module;
+module;
 
 #include <cmath>
 #include <algorithm>
-#include <QVariant>
-#include <QList>
 #include <opencv2/opencv.hpp>
-
-#include <iostream>
+#include <QVariant>
+#include <QVector>
 #include <vector>
-#include <string>
-#include <map>
-#include <unordered_map>
-#include <set>
-#include <unordered_set>
 #include <memory>
-#include <algorithm>
-#include <cmath>
-#include <functional>
-#include <optional>
-#include <utility>
-#include <array>
-#include <mutex>
-#include <thread>
-#include <chrono>
-#include <filesystem>
-#include <fstream>
-#include <sstream>
-#include <stdexcept>
-#include <type_traits>
-#include <variant>
-#include <any>
-#include <atomic>
-#include <condition_variable>
-#include <queue>
-#include <deque>
-#include <list>
-#include <tuple>
-#include <numeric>
-#include <regex>
-#include <random>
+
 module HueAndSaturation;
 
-
-
-
-import Color.Conversion;
-import Image.ImageF32x4_RGBA;
-import Utils.String.UniString;
+import Artifact.Effect.Abstract;
+import Artifact.Effect.ImplBase;
+import Image.ImageF32x4RGBAWithCache;
 import Property.Abstract;
+import Utils.String.UniString;
+import CvUtils;
 
 namespace Artifact {
 
-using namespace ArtifactCore;
+// ─────────────────────────────────────────────────────────
+// CPU 実装: Hue / Saturation / Lightness / Colorize
+// OpenCV HSV 変換を使用（既存アルゴリズム維持）
+// ─────────────────────────────────────────────────────────
 
-class HueAndSaturation::Impl {
+class HueAndSaturationCPUImpl : public ArtifactEffectImplBase {
 public:
-    float hue = 0.0f;          // -180.0 ~ 180.0
-    float saturation = 1.0f;   // 0.0 ~ 2.0
-    float lightness = 0.0f;    // -1.0 ~ 1.0
-    bool colorize = false;     // 単色化を有効にするか
+    float hueShift_ = 0.0f;
+    float saturationScale_ = 1.0f;
+    float lightnessShift_ = 0.0f;
+    bool colorize_ = false;
+
+    void applyCPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) override {
+        dst = src;
+        cv::Mat mat = dst.toCvMat();
+        if (mat.empty()) return;
+
+        cv::Mat bgr, hsv;
+        int from_to[] = { 0,2, 1,1, 2,0 };
+        bgr.create(mat.size(), CV_32FC3);
+        cv::mixChannels(&mat, 1, &bgr, 1, from_to, 3);
+        
+        cv::cvtColor(bgr, hsv, cv::COLOR_BGR2HSV);
+
+        for (int y = 0; y < hsv.rows; ++y) {
+            for (int x = 0; x < hsv.cols; ++x) {
+                cv::Vec3f& pixel = hsv.at<cv::Vec3f>(y, x);
+                
+                if (colorize_) {
+                    pixel[0] = std::fmod(hueShift_ + 360.0f, 360.0f);
+                    pixel[1] = saturationScale_;
+                    pixel[2] = std::clamp(pixel[2] + lightnessShift_, 0.0f, 1.0f);
+                } else {
+                    pixel[0] = std::fmod(pixel[0] + hueShift_ + 360.0f, 360.0f);
+                    pixel[1] = std::clamp(pixel[1] * saturationScale_, 0.0f, 1.0f);
+                    pixel[2] = std::clamp(pixel[2] + lightnessShift_, 0.0f, 1.0f);
+                }
+            }
+        }
+
+        cv::cvtColor(hsv, bgr, cv::COLOR_HSV2BGR);
+        
+        int back_from_to[] = { 2,0, 1,1, 0,2 };
+        cv::mixChannels(&bgr, 1, &mat, 1, back_from_to, 3);
+        
+        dst.fromCvMat(mat);
+    }
 };
 
-HueAndSaturation::HueAndSaturation()
-    : ArtifactAbstractEffect(), impl_(new Impl()) {
+// ─────────────────────────────────────────────────────────
+// GPU 実装 (HLSL) — 現在は CPU フォールバック
+// ─────────────────────────────────────────────────────────
+
+class HueAndSaturationGPUImpl : public ArtifactEffectImplBase {
+public:
+    float hueShift_ = 0.0f;
+    float saturationScale_ = 1.0f;
+    float lightnessShift_ = 0.0f;
+    bool colorize_ = false;
+
+    void applyCPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) override {
+        cpuImpl_.applyCPU(src, dst);
+    }
+
+    void applyGPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) override {
+        // TODO: Diligent Engine による GPU 実装
+        applyCPU(src, dst);
+    }
+
+private:
+    HueAndSaturationCPUImpl cpuImpl_;
+};
+
+// ─────────────────────────────────────────────────────────
+// HueAndSaturation 本体
+// ─────────────────────────────────────────────────────────
+
+HueAndSaturation::HueAndSaturation() {
     setEffectID(UniString("effect.colorcorrection.hsl"));
     setDisplayName(UniString("Hue / Saturation"));
     setPipelineStage(EffectPipelineStage::Rasterizer);
+
+    auto cpuImpl = std::make_shared<HueAndSaturationCPUImpl>();
+    auto gpuImpl = std::make_shared<HueAndSaturationGPUImpl>();
+    setCPUImpl(cpuImpl);
+    setGPUImpl(gpuImpl);
+    setComputeMode(ComputeMode::AUTO);
 }
 
-HueAndSaturation::~HueAndSaturation() {
-    delete impl_;
-}
+HueAndSaturation::~HueAndSaturation() = default;
 
-void HueAndSaturation::setHue(float hueShift) {
-    impl_->hue = std::clamp(hueShift, -180.0f, 180.0f);
-}
-
-float HueAndSaturation::hue() const {
-    return impl_->hue;
-}
-
-void HueAndSaturation::setSaturation(float saturationScale) {
-    impl_->saturation = std::clamp(saturationScale, 0.0f, 2.0f);
-}
-
-float HueAndSaturation::saturation() const {
-    return impl_->saturation;
-}
-
-void HueAndSaturation::setLightness(float lightnessShift) {
-    impl_->lightness = std::clamp(lightnessShift, -1.0f, 1.0f);
-}
-
-float HueAndSaturation::lightness() const {
-    return impl_->lightness;
-}
-
-void HueAndSaturation::setColorize(bool colorize) {
-    impl_->colorize = colorize;
-}
-
-bool HueAndSaturation::isColorize() const {
-    return impl_->colorize;
-}
-
-void HueAndSaturation::apply(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) {
-    dst = src;
-    cv::Mat mat = dst.image().toCVMat();
-    if (mat.empty()) return;
-
-    // Convert from RGBA/BGRA float to HSV
-    // OpenCV expects BGR float to be in 0.0 - 1.0 range, H will be 0-360, S,V 0-1
-    cv::Mat bgr, hsv;
-    int from_to[] = { 0,2, 1,1, 2,0 };
-    bgr.create(mat.size(), CV_32FC3);
-    cv::mixChannels(&mat, 1, &bgr, 1, from_to, 3);
-    
-    cv::cvtColor(bgr, hsv, cv::COLOR_BGR2HSV);
-
-    for (int y = 0; y < hsv.rows; ++y) {
-        for (int x = 0; x < hsv.cols; ++x) {
-            cv::Vec3f& pixel = hsv.at<cv::Vec3f>(y, x);
-            
-            if (impl_->colorize) {
-                pixel[0] = std::fmod(impl_->hue + 360.0f, 360.0f);
-                pixel[1] = impl_->saturation;
-                pixel[2] = std::clamp(pixel[2] + impl_->lightness, 0.0f, 1.0f);
-            } else {
-                pixel[0] = std::fmod(pixel[0] + impl_->hue + 360.0f, 360.0f);
-                pixel[1] = std::clamp(pixel[1] * impl_->saturation, 0.0f, 1.0f);
-                pixel[2] = std::clamp(pixel[2] + impl_->lightness, 0.0f, 1.0f);
-            }
-        }
+void HueAndSaturation::syncImpls() {
+    if (auto* cpu = dynamic_cast<HueAndSaturationCPUImpl*>(cpuImpl_.get())) {
+        cpu->hueShift_ = hueShift_;
+        cpu->saturationScale_ = saturationScale_;
+        cpu->lightnessShift_ = lightnessShift_;
+        cpu->colorize_ = colorize_;
     }
-
-    cv::cvtColor(hsv, bgr, cv::COLOR_HSV2BGR);
-    
-    // Copy back to RGBA, preserving original alpha
-    int back_from_to[] = { 2,0, 1,1, 0,2 };
-    cv::mixChannels(&bgr, 1, &mat, 1, back_from_to, 3);
-    
-    dst.image().setFromCVMat(mat);
-    dst.UpdateGpuTextureFromCpuData();
+    if (auto* gpu = dynamic_cast<HueAndSaturationGPUImpl*>(gpuImpl_.get())) {
+        gpu->hueShift_ = hueShift_;
+        gpu->saturationScale_ = saturationScale_;
+        gpu->lightnessShift_ = lightnessShift_;
+        gpu->colorize_ = colorize_;
+    }
 }
 
 std::vector<AbstractProperty> HueAndSaturation::getProperties() const {
     std::vector<AbstractProperty> props(4);
-    
+
     props[0].setName("Hue");
-    props[0].setValue(impl_->hue);
-    props[0].setType(PropertyType::Float);
-    
+    props[0].setType(ArtifactCore::PropertyType::Float);
+    props[0].setValue(QVariant(static_cast<double>(hueShift_)));
+
     props[1].setName("Saturation");
-    props[1].setValue(impl_->saturation);
-    props[1].setType(PropertyType::Float);
-    
+    props[1].setType(ArtifactCore::PropertyType::Float);
+    props[1].setValue(QVariant(static_cast<double>(saturationScale_)));
+
     props[2].setName("Lightness");
-    props[2].setValue(impl_->lightness);
-    props[2].setType(PropertyType::Float);
-    
+    props[2].setType(ArtifactCore::PropertyType::Float);
+    props[2].setValue(QVariant(static_cast<double>(lightnessShift_)));
+
     props[3].setName("Colorize");
-    props[3].setValue(impl_->colorize);
-    props[3].setType(PropertyType::Boolean);
+    props[3].setType(ArtifactCore::PropertyType::Boolean);
+    props[3].setValue(colorize_);
 
     return props;
 }
 
 void HueAndSaturation::setPropertyValue(const UniString& name, const QVariant& value) {
-    if (name == "Hue") {
-        setHue(value.toFloat());
-    } else if (name == "Saturation") {
-        setSaturation(value.toFloat());
-    } else if (name == "Lightness") {
-        setLightness(value.toFloat());
-    } else if (name == "Colorize") {
-        setColorize(value.toBool());
-    }
+    if (name == "Hue") setHue(value.toFloat());
+    else if (name == "Saturation") setSaturation(value.toFloat());
+    else if (name == "Lightness") setLightness(value.toFloat());
+    else if (name == "Colorize") setColorize(value.toBool());
 }
 
 } // namespace Artifact

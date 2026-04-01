@@ -55,6 +55,7 @@
 
 import Artifact.Service.Application;
 import Artifact.Widgets.AppDialogs;
+import Widgets.Utils.CSS;
 import Input.Operator;
 import InputEvent;
 import Application.AppSettings;
@@ -67,6 +68,7 @@ namespace ArtifactCore {
   Impl();
   ~Impl();
   
+  QComboBox* themeCombo_;
   QCheckBox* autoSaveCheckBox_;
   QSpinBox* autoSaveIntervalSpinBox_;
   QCheckBox* showStartupDialogCheckBox_;
@@ -85,7 +87,31 @@ namespace ArtifactCore {
  {
   auto* mainLayout = new QVBoxLayout(this);
   
-  // Auto-Save Group
+ // Auto-Save Group
+  auto* appearanceGroup = new QGroupBox("Appearance", this);
+  auto* appearanceLayout = new QVBoxLayout(appearanceGroup);
+  auto* themeLayout = new QHBoxLayout();
+  themeLayout->addWidget(new QLabel("Theme preset:", this));
+  impl_->themeCombo_ = new QComboBox(this);
+  const QVector<DccStylePreset> themePresets = {
+      DccStylePreset::StudioStyle,
+      DccStylePreset::MayaStyle,
+      DccStylePreset::ModoStyle,
+      DccStylePreset::BlenderStyle,
+      DccStylePreset::DaVinciStyle,
+      DccStylePreset::_3dsMaxStyle,
+      DccStylePreset::NukeStyle,
+      DccStylePreset::HighContrast,
+      DccStylePreset::DefaultQt,
+  };
+  for (auto preset : themePresets) {
+    impl_->themeCombo_->addItem(themePresetLabel(preset), themePresetKey(preset));
+  }
+  themeLayout->addWidget(impl_->themeCombo_);
+  themeLayout->addStretch();
+  appearanceLayout->addLayout(themeLayout);
+  mainLayout->addWidget(appearanceGroup);
+
   auto* autoSaveGroup = new QGroupBox("Auto-Save", this);
   auto* autoSaveLayout = new QVBoxLayout(autoSaveGroup);
   
@@ -120,6 +146,13 @@ namespace ArtifactCore {
  void GeneralSettingPage::loadSettings()
  {
   auto* settings = ArtifactAppSettings::instance();
+  if (impl_->themeCombo_) {
+    const QString themeKey = themePresetKey(themePresetFromName(settings->themeName()));
+    const int idx = impl_->themeCombo_->findData(themeKey);
+    if (idx >= 0) {
+      impl_->themeCombo_->setCurrentIndex(idx);
+    }
+  }
  impl_->autoSaveIntervalSpinBox_->setValue(settings->autoSaveIntervalMinutes());
  impl_->showStartupDialogCheckBox_->setChecked(settings->loadLastProjectOnStartup());
   QSettings qsettings;
@@ -129,6 +162,9 @@ namespace ArtifactCore {
  void GeneralSettingPage::saveSettings()
  {
   auto* settings = ArtifactAppSettings::instance();
+  if (impl_->themeCombo_) {
+    settings->setThemeName(impl_->themeCombo_->currentData().toString());
+  }
   settings->setAutoSaveIntervalMinutes(impl_->autoSaveIntervalSpinBox_->value());
   settings->setLoadLastProjectOnStartup(impl_->showStartupDialogCheckBox_->isChecked());
   QSettings qsettings;
@@ -1257,16 +1293,18 @@ void MemoryAndCpuSettingPage::resetSetting()
  public:
   Impl();
   ~Impl();
-  QListWidget* categoryList_;
-  QStackedWidget* settingPages_;
-  QDialogButtonBox* buttonBox_;
-  
- GeneralSettingPage* generalPage_;
- ImportSettingPage* importPage_;
- PreviewSettingPage* previewPage_;
-  ShortcutSettingPage* shortcutPage_;
-  MemoryAndCpuSettingPage* memoryPage_;
-  PluginSettingPage* pluginPage_;
+   QListWidget* categoryList_;
+   QStackedWidget* settingPages_;
+   QDialogButtonBox* buttonBox_;
+   
+  GeneralSettingPage* generalPage_;
+  ImportSettingPage* importPage_;
+  PreviewSettingPage* previewPage_;
+   ShortcutSettingPage* shortcutPage_;
+   MemoryAndCpuSettingPage* memoryPage_;
+   PluginSettingPage* pluginPage_;
+   AISettingPage* aiPage_;
+   AISettingPage* aiPage_;
   
   void setupUI(ApplicationSettingDialog* dialog);
   void onCategoryChanged(int index);
@@ -1302,12 +1340,14 @@ void MemoryAndCpuSettingPage::resetSetting()
   // Category list (left side)
   categoryList_ = new QListWidget(dialog);
   categoryList_->setMaximumWidth(150);
-  categoryList_->addItem("General");
-  categoryList_->addItem("Import");
-  categoryList_->addItem("Preview");
-  categoryList_->addItem("Memory & Performance");
-  categoryList_->addItem("Shortcuts");
-  categoryList_->addItem("Plugins");
+   categoryList_->addItem("General");
+   categoryList_->addItem("Import");
+   categoryList_->addItem("Preview");
+   categoryList_->addItem("Memory & Performance");
+   categoryList_->addItem("Shortcuts");
+   categoryList_->addItem("Plugins");
+   categoryList_->addItem("AI");
+   categoryList_->addItem("AI");
   categoryList_->setCurrentRow(0);
   contentLayout->addWidget(categoryList_);
   
@@ -1320,13 +1360,15 @@ void MemoryAndCpuSettingPage::resetSetting()
   previewPage_ = new PreviewSettingPage(dialog);
   memoryPage_ = new MemoryAndCpuSettingPage(dialog);
   
-  settingPages_->addWidget(generalPage_);
-  settingPages_->addWidget(importPage_);
-  settingPages_->addWidget(previewPage_);
-  settingPages_->addWidget(memoryPage_);
-  shortcutPage_ = new ShortcutSettingPage(dialog);
-  settingPages_->addWidget(shortcutPage_);
-  settingPages_->addWidget(pluginPage_ = new PluginSettingPage(dialog));
+   settingPages_->addWidget(generalPage_);
+   settingPages_->addWidget(importPage_);
+   settingPages_->addWidget(previewPage_);
+   settingPages_->addWidget(memoryPage_);
+   shortcutPage_ = new ShortcutSettingPage(dialog);
+   settingPages_->addWidget(shortcutPage_);
+   settingPages_->addWidget(pluginPage_ = new PluginSettingPage(dialog));
+   settingPages_->addWidget(aiPage_ = new AISettingPage(dialog));
+   settingPages_->addWidget(aiPage_ = new AISettingPage(dialog));
   
   contentLayout->addWidget(settingPages_, 1);
   
@@ -1394,19 +1436,155 @@ void MemoryAndCpuSettingPage::resetSetting()
 
  W_OBJECT_IMPL(PluginSettingPage)
 
- class PluginSettingPage::Impl {
- public:
-  Impl();
-  ~Impl();
-  QTableWidget* pluginTable_;
-  QPushButton* refreshButton_;
-  QPushButton* openFolderButton_;
-  QString pluginDirectory_;
-  void loadPlugins(PluginSettingPage* page);
-  QStringList getPluginPaths();
- };
+  class PluginSettingPage::Impl {
+  public:
+   Impl();
+   ~Impl();
+   QTableWidget* pluginTable_;
+   QPushButton* refreshButton_;
+   QPushButton* openFolderButton_;
+   QString pluginDirectory_;
+   void loadPlugins(PluginSettingPage* page);
+   QStringList getPluginPaths();
+  };
 
- PluginSettingPage::Impl::Impl() {
+  class AISettingPage::Impl {
+  public:
+   Impl();
+   ~Impl();
+   QLineEdit* modelPathEdit_;
+   QPushButton* browseButton_;
+   QPushButton* initButton_;
+   QPushButton* shutdownButton_;
+   QLabel* statusLabel_;
+   QComboBox* providerCombo_;
+
+   void loadSettings();
+   void saveSettings();
+   void updateStatus();
+  };
+
+  AISettingPage::Impl::Impl() {}
+  AISettingPage::Impl::~Impl() {}
+
+  void AISettingPage::Impl::loadSettings() {
+   QSettings settings;
+   modelPathEdit_->setText(settings.value("AI/ModelPath", "models/llama-3.2-1b-instruct.q4_k_m.gguf").toString());
+   QString provider = settings.value("AI/Provider", "local").toString();
+   int idx = providerCombo_->findText(provider);
+   if (idx >= 0) providerCombo_->setCurrentIndex(idx);
+   updateStatus();
+  }
+
+  void AISettingPage::Impl::saveSettings() {
+   QSettings settings;
+   settings.setValue("AI/ModelPath", modelPathEdit_->text());
+   settings.setValue("AI/Provider", providerCombo_->currentText());
+  }
+
+  void AISettingPage::Impl::updateStatus() {
+   auto* client = AIClient::instance();
+   if (client->isInitialized()) {
+    statusLabel_->setText("Status: <font color='green'>Initialized</font>");
+    initButton_->setEnabled(false);
+    shutdownButton_->setEnabled(true);
+   } else {
+    statusLabel_->setText("Status: <font color='gray'>Not initialized</font>");
+    initButton_->setEnabled(true);
+    shutdownButton_->setEnabled(false);
+   }
+  }
+
+  AISettingPage::AISettingPage(QWidget* parent) : QWidget(parent), impl_(new Impl()) {
+   auto* mainLayout = new QVBoxLayout(this);
+
+   auto* modelGroup = new QGroupBox("Model Settings", this);
+   auto* modelLayout = new QFormLayout(modelGroup);
+
+   impl_->providerCombo_ = new QComboBox(this);
+   impl_->providerCombo_->addItem("Local (llama.cpp)");
+   impl_->providerCombo_->addItem("OpenAI");
+   impl_->providerCombo_->addItem("Ollama");
+   modelLayout->addRow("Provider", impl_->providerCombo_);
+
+   auto* pathLayout = new QHBoxLayout();
+   impl_->modelPathEdit_ = new QLineEdit(this);
+   impl_->modelPathEdit_->setPlaceholderText("Path to GGUF model file...");
+   impl_->browseButton_ = new QPushButton("Browse...", this);
+   pathLayout->addWidget(impl_->modelPathEdit_);
+   pathLayout->addWidget(impl_->browseButton_);
+   modelLayout->addRow("Model Path", pathLayout);
+
+   mainLayout->addWidget(modelGroup);
+
+   auto* statusGroup = new QGroupBox("AI Status", this);
+   auto* statusLayout = new QVBoxLayout(statusGroup);
+   impl_->statusLabel_ = new QLabel("Status: Not initialized", this);
+   statusLayout->addWidget(impl_->statusLabel_);
+
+   auto* actionLayout = new QHBoxLayout();
+   impl_->initButton_ = new QPushButton("Initialize AI", this);
+   impl_->shutdownButton_ = new QPushButton("Shutdown AI", this);
+   actionLayout->addWidget(impl_->initButton_);
+   actionLayout->addWidget(impl_->shutdownButton_);
+   actionLayout->addStretch();
+   statusLayout->addLayout(actionLayout);
+
+   mainLayout->addWidget(statusGroup);
+
+   auto* infoLabel = new QLabel(
+    "Select a local GGUF model file to use with the AI chat.\n"
+    "Recommended: llama-3.2-1b-instruct.q4_k_m.gguf (~1.3GB)\n"
+    "AI will not be loaded until you click 'Initialize AI'.", this);
+   infoLabel->setWordWrap(true);
+   infoLabel->setStyleSheet("color: gray; font-size: 11px;");
+   mainLayout->addWidget(infoLabel);
+   mainLayout->addStretch();
+
+   impl_->loadSettings();
+
+   connect(impl_->browseButton_, &QPushButton::clicked, this, [this]() {
+    QString path = QFileDialog::getOpenFileName(this, "Select AI Model",
+     QCoreApplication::applicationDirPath(),
+     "GGUF Model Files (*.gguf);;All Files (*)");
+    if (!path.isEmpty()) {
+     impl_->modelPathEdit_->setText(path);
+    }
+   });
+
+   connect(impl_->initButton_, &QPushButton::clicked, this, [this]() {
+    QString modelPath = impl_->modelPathEdit_->text();
+    if (modelPath.isEmpty()) {
+     QMessageBox::warning(this, "Initialize AI", "Please select a model file first.");
+     return;
+    }
+    if (!QFileInfo::exists(modelPath)) {
+     QMessageBox::warning(this, "Initialize AI",
+      QString("Model file not found:\n%1").arg(modelPath));
+     return;
+    }
+
+    auto* client = AIClient::instance();
+    if (client->initialize(modelPath)) {
+     impl_->updateStatus();
+     QMessageBox::information(this, "Initialize AI", "AI initialized successfully!");
+    } else {
+     QMessageBox::warning(this, "Initialize AI",
+      "Failed to initialize AI. Check the model file and logs.");
+    }
+   });
+
+   connect(impl_->shutdownButton_, &QPushButton::clicked, this, [this]() {
+    auto* client = AIClient::instance();
+    client->shutdown();
+    impl_->updateStatus();
+   });
+  }
+
+  AISettingPage::~AISettingPage() { delete impl_; }
+  QVector<QWidget*> AISettingPage::settingWidgets() const { return QVector<QWidget*>(); }
+
+  PluginSettingPage::Impl::Impl() {
   pluginDirectory_ = QCoreApplication::applicationDirPath() + "/plugins";
  }
  PluginSettingPage::Impl::~Impl() {}

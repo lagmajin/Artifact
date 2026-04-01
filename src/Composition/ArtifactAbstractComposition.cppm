@@ -79,8 +79,11 @@ namespace Artifact {
    void bringToFront(const LayerID& id);
    void sendToBack(const LayerID& id);
 
-   bool isPlaying_ = false;
- };
+    bool isPlaying_ = false;
+
+    // Asset usage tracking
+    QVector<ArtifactCore::AssetID> getUsedAssets() const;
+  };
 
  ArtifactAbstractComposition::Impl::Impl(ArtifactAbstractComposition* owner) : owner_(owner)
  {
@@ -305,12 +308,32 @@ ArtifactAbstractLayerPtr ArtifactAbstractComposition::Impl::backMostLayer() cons
     return ArtifactAbstractLayerPtr();
 }
 
- QVector<ArtifactAbstractLayerPtr> ArtifactAbstractComposition::Impl::allLayerBackToFront() const
- {
-  auto v = layerMultiIndex_.all();
-  std::reverse(v.begin(), v.end());
-  return v;
- }
+  QVector<ArtifactAbstractLayerPtr> ArtifactAbstractComposition::Impl::allLayerBackToFront() const
+  {
+   auto v = layerMultiIndex_.all();
+   std::reverse(v.begin(), v.end());
+   return v;
+  }
+
+  QVector<ArtifactCore::AssetID> ArtifactAbstractComposition::Impl::getUsedAssets() const
+  {
+    QVector<ArtifactCore::AssetID> usedAssets;
+
+    // Collect assets from all layers
+    for (const auto& layer : layerMultiIndex_.all()) {
+      if (!layer) continue;
+
+      // TODO: Implement asset collection based on layer type
+      // For now, return empty list - will be expanded in future
+      // Example: if (auto videoLayer = std::dynamic_pointer_cast<ArtifactVideoLayer>(layer)) {
+      //   if (auto assetId = videoLayer->sourceAssetId()) {
+      //     usedAssets.append(assetId);
+      //   }
+      // }
+    }
+
+    return usedAssets;
+  }
 
  ArtifactAbstractComposition::ArtifactAbstractComposition(const CompositionID& id, const ArtifactCompositionInitParams& params) :impl_(new Impl(this))
  {
@@ -755,6 +778,11 @@ std::shared_ptr<ArtifactAbstractComposition> ArtifactAbstractComposition::fromJs
         }
     }
     return comp;
+}
+
+QVector<ArtifactCore::AssetID> ArtifactAbstractComposition::getUsedAssets() const
+{
+  return impl_->getUsedAssets();
 }
 
 QImage ArtifactAbstractComposition::getThumbnail(int width, int height) const

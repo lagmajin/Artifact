@@ -114,10 +114,6 @@ class ArtifactPlaybackControlWidget::Impl {
 public:
     ArtifactPlaybackControlWidget* owner_;
     
-    // Display
-    QLabel* timecodeLabel_ = nullptr;
-    QLabel* statusLabel_ = nullptr;
-    
     // Buttons
     QToolButton* playButton_ = nullptr;
     QToolButton* pauseButton_ = nullptr;
@@ -139,9 +135,6 @@ public:
     bool isStopped_ = true;
     bool isLooping_ = false;
     float playbackSpeed_ = 1.0f;
-    int64_t currentFrame_ = 0;
-    double frameRate_ = 30.0;
-    
     Impl(ArtifactPlaybackControlWidget* owner)
         : owner_(owner)
     {}
@@ -154,28 +147,7 @@ public:
         mainLayout->setSpacing(6);
         mainLayout->setContentsMargins(10, 2, 10, 2);
         
-        // 1. タイムコードディスプレイ (Pro Look)
-        timecodeLabel_ = new QLabel("00:00:00:00");
-        timecodeLabel_->setObjectName("playbackTimecode");
-        timecodeLabel_->setAlignment(Qt::AlignCenter);
-        timecodeLabel_->setFixedWidth(120);
-        timecodeLabel_->setStyleSheet(R"(
-            QLabel#playbackTimecode {
-                background-color: #000000;
-                color: #00FFCC;
-                font-family: 'Consolas', 'Courier New', monospace;
-                font-size: 16px;
-                font-weight: bold;
-                border: 1px solid #333;
-                border-radius: 3px;
-                padding: 2px 6px;
-            }
-        )");
-        mainLayout->addWidget(timecodeLabel_);
-        
-        mainLayout->addSpacing(10);
-
-        // 2. 再生コントロールグループ
+        // 再生コントロールグループ
         auto* playLayout = new QHBoxLayout();
         playLayout->setSpacing(2);
         
@@ -210,7 +182,7 @@ public:
         mainLayout->addLayout(playLayout);
         mainLayout->addSpacing(12);
         
-        // 3. 編集・オプショングループ (In/Out/Loop)
+        // 編集・オプショングループ (In/Out/Loop)
         auto* optionLayout = new QHBoxLayout();
         optionLayout->setSpacing(2);
         
@@ -233,12 +205,6 @@ public:
         
         mainLayout->addLayout(optionLayout);
         mainLayout->addStretch();
-        
-        // ステータス表示（FPS等）
-        statusLabel_ = new QLabel("30.00 fps");
-        statusLabel_->setStyleSheet("color: #666; font-size: 10px; font-family: 'Consolas';");
-        mainLayout->addWidget(statusLabel_);
-        
         connectSignals();
     }
     
@@ -274,28 +240,6 @@ public:
         }
         
         return button;
-    }
-    
-    void updateTimecodeDisplay()
-    {
-        if (!timecodeLabel_) return;
-        
-        int64_t f = currentFrame_;
-        int64_t fps = static_cast<int64_t>(std::round(frameRate_));
-        if (fps <= 0) fps = 30;
-        
-        int64_t frames = f % fps;
-        int64_t totalSeconds = f / fps;
-        int64_t seconds = totalSeconds % 60;
-        int64_t totalMinutes = totalSeconds / 60;
-        int64_t minutes = totalMinutes % 60;
-        int64_t hours = totalMinutes / 60;
-        
-        timecodeLabel_->setText(QString("%1:%2:%3:%4")
-            .arg(hours, 2, 10, QChar('0'))
-            .arg(minutes, 2, 10, QChar('0'))
-            .arg(seconds, 2, 10, QChar('0'))
-            .arg(frames, 2, 10, QChar('0')));
     }
     
     void connectSignals()
@@ -341,12 +285,6 @@ public:
             QObject::connect(service, &ArtifactPlaybackService::playbackStateChanged,
                 owner_, [this](::Artifact::PlaybackState state) {
                     this->updatePlaybackState(state);
-                });
-            
-            QObject::connect(service, &ArtifactPlaybackService::frameChanged,
-                owner_, [this](const ArtifactCore::FramePosition& position) {
-                    currentFrame_ = position.framePosition();
-                    updateTimecodeDisplay();
                 });
             
             QObject::connect(service, &ArtifactPlaybackService::loopingChanged,
@@ -669,14 +607,11 @@ public:
     ArtifactPlaybackInfoWidget* owner_;
     
     QLabel* frameLabel_ = nullptr;
-    QLabel* timecodeLabel_ = nullptr;
-    QLabel* fpsLabel_ = nullptr;
     QLabel* speedLabel_ = nullptr;
     QLabel* droppedLabel_ = nullptr;
     
     int64_t currentFrame_ = 0;
     int64_t totalFrames_ = 300;
-    float fps_ = 30.0f;
     float speed_ = 1.0f;
     int64_t droppedFrames_ = 0;
     
@@ -693,17 +628,7 @@ public:
         // フレーム表示
         frameLabel_ = createLabel("0 / 300", "現在のフレーム / 総フレーム数");
         layout->addWidget(frameLabel_);
-        
-        // タイムコード表示
-        timecodeLabel_ = createLabel("00:00:00:00", "タイムコード (HH:MM:SS:FF)");
-        timecodeLabel_->setFont(QFont("Consolas", 11, QFont::Bold));
-        layout->addWidget(timecodeLabel_);
-        
         layout->addSpacing(24);
-        
-        // FPS 表示
-        fpsLabel_ = createLabel("30.00 fps", "フレームレート");
-        layout->addWidget(fpsLabel_);
         
         // 速度表示
         speedLabel_ = createLabel("1.00x", "再生速度");
@@ -724,25 +649,6 @@ public:
         label->setAlignment(Qt::AlignVCenter | Qt::AlignLeft);
         label->setStyleSheet("color: #e0e0e0; font-size: 12px;");
         return label;
-    }
-    
-    void updateTimecode()
-    {
-        int64_t totalSeconds = currentFrame_ / static_cast<int64_t>(fps_);
-        int64_t frame = currentFrame_ % static_cast<int64_t>(fps_);
-        int64_t hours = totalSeconds / 3600;
-        int64_t minutes = (totalSeconds % 3600) / 60;
-        int64_t seconds = totalSeconds % 60;
-        
-        QString tc = QString("%1:%2:%3:%4")
-            .arg(hours, 2, 10, QChar('0'))
-            .arg(minutes, 2, 10, QChar('0'))
-            .arg(seconds, 2, 10, QChar('0'))
-            .arg(frame, 2, 10, QChar('0'));
-        
-        if (timecodeLabel_) {
-            timecodeLabel_->setText(tc);
-        }
     }
 };
 
@@ -781,7 +687,6 @@ void ArtifactPlaybackInfoWidget::paintEvent(QPaintEvent* event)
 void ArtifactPlaybackInfoWidget::setCurrentFrame(int64_t frame)
 {
     impl_->currentFrame_ = frame;
-    impl_->updateTimecode();
     
     if (impl_->frameLabel_) {
         impl_->frameLabel_->setText(QString("%1 / %2").arg(frame).arg(impl_->totalFrames_));
@@ -798,11 +703,7 @@ void ArtifactPlaybackInfoWidget::setTotalFrames(int64_t frames)
 
 void ArtifactPlaybackInfoWidget::setFrameRate(float fps)
 {
-    impl_->fps_ = fps;
-    if (impl_->fpsLabel_) {
-        impl_->fpsLabel_->setText(QString("%1 fps").arg(fps, 0, 'f', 2));
-    }
-    impl_->updateTimecode();
+    Q_UNUSED(fps);
 }
 
 void ArtifactPlaybackInfoWidget::setPlaybackSpeed(float speed)

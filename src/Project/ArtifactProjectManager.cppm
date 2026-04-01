@@ -494,6 +494,98 @@ ArtifactProjectManager& ArtifactProjectManager::getInstance()
   }
  }
 
+namespace {
+  static const int kBackupGenerationCount = 3;
+
+  bool createBackupFile(const QString& filePath)
+  {
+    if (filePath.isEmpty() || !QFile::exists(filePath)) {
+      return false;
+    }
+
+    QString dir = QFileInfo(filePath).absolutePath();
+    QString baseName = QFileInfo(filePath).fileName();
+
+    // Shift existing backups: remove oldest, rename newer ones
+    for (int i = kBackupGenerationCount - 1; i >= 1; --i) {
+      QString olderBackup = dir + "/" + baseName + QString(".bak~%1").arg(i);
+      QString newerBackup = dir + "/" + baseName + QString(".bak~%1").arg(i + 1);
+      if (QFile::exists(newerBackup)) {
+        QFile::remove(newerBackup);
+      }
+      if (QFile::exists(olderBackup)) {
+        QFile::rename(olderBackup, newerBackup);
+      }
+    }
+
+    // Create first generation backup
+    QString firstBackup = dir + "/" + baseName + ".bak~1";
+    if (QFile::exists(firstBackup)) {
+      QFile::remove(firstBackup);
+    }
+    return QFile::copy(filePath, firstBackup);
+  }
+
+  struct SaveValidationResult {
+    bool success = true;
+    QStringList warnings;
+    QStringList errors;
+  };
+
+  SaveValidationResult validateBeforeSave(const std::shared_ptr<ArtifactProject>& projectPtr)
+  {
+    SaveValidationResult result;
+    if (!projectPtr || projectPtr->isNull()) {
+      result.success = false;
+      result.errors.append("Project is null");
+      return result;
+    }
+
+    // Phase 3: 参照切れ検出
+    auto healthReport = ArtifactProjectHealthChecker::check(projectPtr.get());
+    for (const auto& issue : healthReport.issues) {
+      if (issue.severity == HealthIssueSeverity::Error) {
+        result.errors.append(issue.message);
+        if (issue.category == "BrokenReference" || issue.category == "MissingAsset") {
+          result.warnings.append(QString("[Broken Ref] %1 in %2").arg(issue.message, issue.targetName));
+        }
+      } else if (issue.severity == HealthIssueSeverity::Warning) {
+        result.warnings.append(issue.message);
+      }
+    }
+
+    // Phase 4: Composition/Layer の整合性チェック
+    auto items = projectPtr->projectItems();
+    int compCount = 0;
+    int layerCount = 0;
+    for (auto* root : items) {
+      std::function<void(ProjectItem*)> countItems = [&](ProjectItem* item) {
+        if (!item) return;
+        if (item->type() == eProjectItemType::Composition) {
+          compCount++;
+          auto* compItem = static_cast<CompositionItem*>(item);
+          auto res = projectPtr->findComposition(compItem->compositionId);
+          if (res.success) {
+            if (auto comp = res.ptr.lock()) {
+              layerCount += comp->allLayer().size();
+            }
+          } else {
+            result.errors.append(QString("Composition ID lookup failed: %1").arg(compItem->compositionId.toString()));
+          }
+        }
+        for (auto* child : item->children) countItems(child);
+      };
+      countItems(root);
+    }
+
+    if (compCount == 0 && layerCount == 0) {
+      result.warnings.append("Project has no compositions or layers");
+    }
+
+    return result;
+  }
+}
+
 ArtifactProjectExporterResult ArtifactProjectManager::saveToFile(const QString& fullpath)
  {
   ArtifactProjectExporterResult result;
@@ -504,7 +596,151 @@ ArtifactProjectExporterResult ArtifactProjectManager::saveToFile(const QString& 
    return result;
   }
 
+  // Phase 3+4: 保存前の参照整合性チェックとバリデーション
+  auto validation = validateBeforeSave(projectPtr);
+  if (!validation.errors.isEmpty()) {
+    qWarning() << "[saveToFile] Validation errors found:" << validation.errors;
+    // エラーがあっても保存は続行（ユーザーに警告のみ）
+  }
+  if (!validation.warnings.isEmpty()) {
+    qDebug() << "[saveToFile] Validation warnings:" << validation.warnings;
+  }
+
   runProjectHookScript(QStringLiteral("before_project_save"), fullpath);
+
+  // Create backup before saving (if file exists)
+  if (QFile::exists(fullpath)) {
+    if (!createBackupFile(fullpath)) {
+      qWarning() << "[saveToFile] Failed to create backup for:" << fullpath;
+    }
+  }
+
+  ArtifactProjectExporter exporter;
+  exporter.setProject(projectPtr);
+  exporter.setOutputPath(fullpath);
+  result = exporter.exportProject();
+
+  if (result.success) {
+   impl_->currentProjectPath_ = fullpath;
+   runProjectHookScript(QStringLiteral("after_project_export"), fullpath);
+  } else {
+   runProjectHookScript(QStringLiteral("on_project_save_failed"), fullpath);
+  }
+  return result;
+ }
+
+    QString dir = QFileInfo(filePath).absolutePath();
+    QString baseName = QFileInfo(filePath).fileName();
+
+    // Shift existing backups: remove oldest, rename newer ones
+    for (int i = kBackupGenerationCount - 1; i >= 1; --i) {
+      QString olderBackup = dir + "/" + baseName + QString(".bak~%1").arg(i);
+      QString newerBackup = dir + "/" + baseName + QString(".bak~%1").arg(i + 1);
+      if (QFile::exists(newerBackup)) {
+        QFile::remove(newerBackup);
+      }
+      if (QFile::exists(olderBackup)) {
+        QFile::rename(olderBackup, newerBackup);
+      }
+    }
+
+    // Create first generation backup
+    QString firstBackup = dir + "/" + baseName + ".bak~1";
+    if (QFile::exists(firstBackup)) {
+      QFile::remove(firstBackup);
+    }
+    return QFile::copy(filePath, firstBackup);
+  }
+
+  struct SaveValidationResult {
+    bool success = true;
+    QStringList warnings;
+    QStringList errors;
+  };
+
+  SaveValidationResult validateBeforeSave(const std::shared_ptr<ArtifactProject>& projectPtr)
+  {
+    SaveValidationResult result;
+    if (!projectPtr || projectPtr->isNull()) {
+      result.success = false;
+      result.errors.append("Project is null");
+      return result;
+    }
+
+    // Phase 3: 参照切れ検出
+    auto healthReport = ArtifactProjectHealthChecker::check(projectPtr.get());
+    for (const auto& issue : healthReport.issues) {
+      if (issue.severity == HealthIssueSeverity::Error) {
+        result.errors.append(issue.message);
+        if (issue.category == "BrokenReference" || issue.category == "MissingAsset") {
+          result.warnings.append(QString("[Broken Ref] %1 in %2").arg(issue.message, issue.targetName));
+        }
+      } else if (issue.severity == HealthIssueSeverity::Warning) {
+        result.warnings.append(issue.message);
+      }
+    }
+
+    // Phase 4: Composition/Layer の整合性チェック
+    auto items = projectPtr->projectItems();
+    int compCount = 0;
+    int layerCount = 0;
+    for (auto* root : items) {
+      std::function<void(ProjectItem*)> countItems = [&](ProjectItem* item) {
+        if (!item) return;
+        if (item->type() == eProjectItemType::Composition) {
+          compCount++;
+          auto* compItem = static_cast<CompositionItem*>(item);
+          auto res = projectPtr->findComposition(compItem->compositionId);
+          if (res.success) {
+            if (auto comp = res.ptr.lock()) {
+              layerCount += comp->allLayer().size();
+            }
+          } else {
+            result.errors.append(QString("Composition ID lookup failed: %1").arg(compItem->compositionId.toString()));
+          }
+        }
+        for (auto* child : item->children) countItems(child);
+      };
+      countItems(root);
+    }
+
+    if (compCount == 0 && layerCount == 0) {
+      result.warnings.append("Project has no compositions or layers");
+    }
+
+    return result;
+  }
+}
+
+ArtifactProjectExporterResult ArtifactProjectManager::saveToFile(const QString& fullpath)
+ {
+  ArtifactProjectExporterResult result;
+  result.success = false;
+
+  auto projectPtr = impl_->currentProjectPtr_;
+  if (!projectPtr || projectPtr->isNull()) {
+   return result;
+  }
+
+  // Phase 3+4: 保存前の参照整合性チェックとバリデーション
+  auto validation = validateBeforeSave(projectPtr);
+  if (!validation.errors.isEmpty()) {
+    qWarning() << "[saveToFile] Validation errors found:" << validation.errors;
+    // エラーがあっても保存は続行（ユーザーに警告のみ）
+  }
+  if (!validation.warnings.isEmpty()) {
+    qDebug() << "[saveToFile] Validation warnings:" << validation.warnings;
+  }
+
+  runProjectHookScript(QStringLiteral("before_project_save"), fullpath);
+
+  // Create backup before saving (if file exists)
+  if (QFile::exists(fullpath)) {
+    if (!createBackupFile(fullpath)) {
+      qWarning() << "[saveToFile] Failed to create backup for:" << fullpath;
+    }
+  }
+
   ArtifactProjectExporter exporter;
   exporter.setProject(projectPtr);
   exporter.setOutputPath(fullpath);
@@ -925,19 +1161,135 @@ QVector<ProjectItem*> ArtifactProjectManager::projectItems() const
    return result;
   }
 
-  ArtifactLayerResult ArtifactProjectManager::addLayerToComposition(const CompositionID& compositionId, ArtifactLayerInitParams& params)
-  {
-   auto result = impl_->addLayerToComposition(compositionId, params);
-   if (result.success && result.layer) {
-    layerCreated(compositionId, result.layer->id());
+   ArtifactLayerResult ArtifactProjectManager::addLayerToComposition(const CompositionID& compositionId, ArtifactLayerInitParams& params)
+   {
+    auto result = impl_->addLayerToComposition(compositionId, params);
+    if (result.success && result.layer) {
+     layerCreated(compositionId, result.layer->id());
+    }
+    return result;
    }
-   return result;
-  }
 
-  bool projectManagerCurrentClose()
-  {
+   ArtifactProjectExporterResult ArtifactProjectManager::saveIncremental(const QString& fullpath)
+   {
+    ArtifactProjectExporterResult result;
+    result.success = false;
 
-   return true;
-  }
+    auto projectPtr = impl_->currentProjectPtr_;
+    if (!projectPtr || projectPtr->isNull()) {
+     return result;
+    }
 
-}
+    // Phase 5: 増分保存 — 既存ファイルがある場合はバージョン番号をインクリメント
+    QString targetPath = fullpath;
+    if (QFile::exists(fullpath)) {
+      QFileInfo fi(fullpath);
+      QString dir = fi.absolutePath();
+      QString baseName = fi.completeBaseName();
+      QString ext = fi.suffix();
+
+      // Find next incremental version
+      int version = 1;
+      QString candidate;
+      do {
+        candidate = QString("%1/%2_v%3.%4").arg(dir, baseName).arg(version, 3, 10, QChar('0')).arg(ext);
+        version++;
+      } while (QFile::exists(candidate) && version < 1000);
+
+      targetPath = candidate;
+      qDebug() << "[saveIncremental] Saving as version" << (version - 1) << ":" << targetPath;
+    }
+
+    // Validation before save
+    auto validation = validateBeforeSave(projectPtr);
+    if (!validation.warnings.isEmpty()) {
+      qDebug() << "[saveIncremental] Validation warnings:" << validation.warnings;
+    }
+
+    runProjectHookScript(QStringLiteral("before_project_save"), targetPath);
+
+    ArtifactProjectExporter exporter;
+    exporter.setProject(projectPtr);
+    exporter.setOutputPath(targetPath);
+    result = exporter.exportProject();
+
+    if (result.success) {
+     impl_->currentProjectPath_ = targetPath;
+     runProjectHookScript(QStringLiteral("after_project_export"), targetPath);
+     qDebug() << "[saveIncremental] Saved successfully:" << targetPath;
+    } else {
+     runProjectHookScript(QStringLiteral("on_project_save_failed"), targetPath);
+    }
+    return result;
+   }
+
+   bool projectManagerCurrentClose()
+   {
+
+    return true;
+   }
+
+ }
+    return result;
+   }
+
+   ArtifactProjectExporterResult ArtifactProjectManager::saveIncremental(const QString& fullpath)
+   {
+    ArtifactProjectExporterResult result;
+    result.success = false;
+
+    auto projectPtr = impl_->currentProjectPtr_;
+    if (!projectPtr || projectPtr->isNull()) {
+     return result;
+    }
+
+    // Phase 5: 増分保存 — 既存ファイルがある場合はバージョン番号をインクリメント
+    QString targetPath = fullpath;
+    if (QFile::exists(fullpath)) {
+      QFileInfo fi(fullpath);
+      QString dir = fi.absolutePath();
+      QString baseName = fi.completeBaseName();
+      QString ext = fi.suffix();
+
+      // Find next incremental version
+      int version = 1;
+      QString candidate;
+      do {
+        candidate = QString("%1/%2_v%3.%4").arg(dir, baseName).arg(version, 3, 10, QChar('0')).arg(ext);
+        version++;
+      } while (QFile::exists(candidate) && version < 1000);
+
+      targetPath = candidate;
+      qDebug() << "[saveIncremental] Saving as version" << (version - 1) << ":" << targetPath;
+    }
+
+    // Validation before save
+    auto validation = validateBeforeSave(projectPtr);
+    if (!validation.warnings.isEmpty()) {
+      qDebug() << "[saveIncremental] Validation warnings:" << validation.warnings;
+    }
+
+    runProjectHookScript(QStringLiteral("before_project_save"), targetPath);
+
+    ArtifactProjectExporter exporter;
+    exporter.setProject(projectPtr);
+    exporter.setOutputPath(targetPath);
+    result = exporter.exportProject();
+
+    if (result.success) {
+     impl_->currentProjectPath_ = targetPath;
+     runProjectHookScript(QStringLiteral("after_project_export"), targetPath);
+     qDebug() << "[saveIncremental] Saved successfully:" << targetPath;
+    } else {
+     runProjectHookScript(QStringLiteral("on_project_save_failed"), targetPath);
+    }
+    return result;
+   }
+
+   bool projectManagerCurrentClose()
+   {
+
+    return true;
+   }
+
+ }

@@ -7,6 +7,9 @@ module;
 #include <QPushButton>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
+#include <QColor>
+#include <QFont>
+#include <QPalette>
 
 #include <iostream>
 #include <vector>
@@ -43,11 +46,9 @@ module;
 #include <random>
 module Artifact.Widgets.UndoHistoryWidget;
 
-
-
-
 import Artifact.Widgets.UndoHistoryWidget;
 import Undo.UndoManager;
+import Widgets.Utils.CSS;
 
 namespace Artifact {
 
@@ -70,27 +71,58 @@ ArtifactUndoHistoryWidget::ArtifactUndoHistoryWidget(QWidget* parent)
  root->setContentsMargins(8, 8, 8, 8);
  root->setSpacing(8);
 
+ setAutoFillBackground(true);
+ QPalette widgetPalette = palette();
+ widgetPalette.setColor(QPalette::Window, QColor(ArtifactCore::currentDCCTheme().backgroundColor));
+ widgetPalette.setColor(QPalette::WindowText, QColor(ArtifactCore::currentDCCTheme().textColor));
+ setPalette(widgetPalette);
+
  impl_->summaryLabel = new QLabel("Undo: 0 / Redo: 0", this);
- impl_->summaryLabel->setStyleSheet("font-weight: bold; color: #ddd;");
+ {
+  QFont f = impl_->summaryLabel->font();
+  f.setBold(true);
+  impl_->summaryLabel->setFont(f);
+  QPalette pal = impl_->summaryLabel->palette();
+  pal.setColor(QPalette::WindowText, QColor(ArtifactCore::currentDCCTheme().textColor));
+  impl_->summaryLabel->setPalette(pal);
+ }
  root->addWidget(impl_->summaryLabel);
 
  auto* split = new QHBoxLayout();
  split->setSpacing(8);
 
  auto* undoFrame = new QFrame(this);
- auto* undoLayout = new QVBoxLayout(undoFrame);
- undoLayout->setContentsMargins(6, 6, 6, 6);
- undoLayout->addWidget(new QLabel("Undo Stack", undoFrame));
+ undoFrame->setFrameShape(QFrame::StyledPanel);
+  auto* undoLayout = new QVBoxLayout(undoFrame);
+  undoLayout->setContentsMargins(6, 6, 6, 6);
+  undoLayout->addWidget(new QLabel("Undo Stack", undoFrame));
  impl_->undoList = new QListWidget(undoFrame);
- undoLayout->addWidget(impl_->undoList);
+ {
+  QPalette pal = impl_->undoList->palette();
+  pal.setColor(QPalette::Base, QColor(ArtifactCore::currentDCCTheme().secondaryBackgroundColor));
+  pal.setColor(QPalette::Text, QColor(ArtifactCore::currentDCCTheme().textColor));
+  pal.setColor(QPalette::Window, QColor(ArtifactCore::currentDCCTheme().backgroundColor));
+  pal.setColor(QPalette::Highlight, QColor(ArtifactCore::currentDCCTheme().accentColor));
+  impl_->undoList->setPalette(pal);
+ }
+  undoLayout->addWidget(impl_->undoList);
  split->addWidget(undoFrame, 1);
 
  auto* redoFrame = new QFrame(this);
+ redoFrame->setFrameShape(QFrame::StyledPanel);
  auto* redoLayout = new QVBoxLayout(redoFrame);
  redoLayout->setContentsMargins(6, 6, 6, 6);
  redoLayout->addWidget(new QLabel("Redo Stack", redoFrame));
  impl_->redoList = new QListWidget(redoFrame);
- redoLayout->addWidget(impl_->redoList);
+ {
+  QPalette pal = impl_->redoList->palette();
+  pal.setColor(QPalette::Base, QColor(ArtifactCore::currentDCCTheme().secondaryBackgroundColor));
+  pal.setColor(QPalette::Text, QColor(ArtifactCore::currentDCCTheme().textColor));
+  pal.setColor(QPalette::Window, QColor(ArtifactCore::currentDCCTheme().backgroundColor));
+  pal.setColor(QPalette::Highlight, QColor(ArtifactCore::currentDCCTheme().accentColor));
+  impl_->redoList->setPalette(pal);
+ }
+  redoLayout->addWidget(impl_->redoList);
  split->addWidget(redoFrame, 1);
 
  root->addLayout(split, 1);
@@ -100,19 +132,19 @@ ArtifactUndoHistoryWidget::ArtifactUndoHistoryWidget(QWidget* parent)
  impl_->undoButton = new QPushButton("Undo", this);
  impl_->redoButton = new QPushButton("Redo", this);
  impl_->clearButton = new QPushButton("Clear", this);
- buttons->addWidget(impl_->undoButton);
- buttons->addWidget(impl_->redoButton);
- buttons->addStretch();
- buttons->addWidget(impl_->clearButton);
- root->addLayout(buttons);
-
- setStyleSheet(R"(
-  QWidget { background-color: #1e1e1e; color: #ccc; }
-  QFrame { border: 1px solid #333; border-radius: 4px; background-color: #252526; }
-  QListWidget { border: 1px solid #3a3a3a; background: #1e1e1e; }
-  QPushButton { background: #3b3b3b; border: 1px solid #5a5a5a; padding: 4px 8px; border-radius: 3px; }
-  QPushButton:hover { background: #4a4a4a; }
- )");
+ {
+  QPalette pal = impl_->undoButton->palette();
+  pal.setColor(QPalette::Button, QColor(ArtifactCore::currentDCCTheme().secondaryBackgroundColor));
+  pal.setColor(QPalette::ButtonText, QColor(ArtifactCore::currentDCCTheme().textColor));
+  impl_->undoButton->setPalette(pal);
+  impl_->redoButton->setPalette(pal);
+  impl_->clearButton->setPalette(pal);
+ }
+  buttons->addWidget(impl_->undoButton);
+  buttons->addWidget(impl_->redoButton);
+  buttons->addStretch();
+  buttons->addWidget(impl_->clearButton);
+  root->addLayout(buttons);
 
  UndoManager* mgr = UndoManager::instance();
  connect(impl_->undoButton, &QPushButton::clicked, this, [mgr]() {

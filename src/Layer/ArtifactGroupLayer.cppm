@@ -1,11 +1,11 @@
 module;
-#include <vector>
-#include <algorithm>
 #include <QDebug>
 #include <QJsonArray>
 #include <QJsonObject>
 
 module Artifact.Layer.Group;
+
+import std;
 
 import Artifact.Layer.Abstract;
 import Utils.Id;

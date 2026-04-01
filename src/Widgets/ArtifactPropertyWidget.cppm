@@ -2,6 +2,7 @@
 
 #include <QWidget>
 #include <QVBoxLayout>
+#include <QLayout>
 #include <QLabel>
 #include <QLineEdit>
 #include <QFormLayout>
@@ -62,6 +63,24 @@ import Artifact.Service.Project;
 import Time.Rational;
 
 namespace Artifact {
+
+namespace {
+void clearLayoutRecursive(QLayout* layout) {
+    if (!layout) {
+        return;
+    }
+    while (QLayoutItem* item = layout->takeAt(0)) {
+        if (QLayout* childLayout = item->layout()) {
+            clearLayoutRecursive(childLayout);
+        }
+        if (QWidget* widget = item->widget()) {
+            widget->hide();
+            widget->deleteLater();
+        }
+        delete item;
+    }
+}
+}
 
  W_OBJECT_IMPL(ArtifactPropertyWidget)
 
@@ -476,134 +495,7 @@ ArtifactPropertyWidget::ArtifactPropertyWidget(QWidget* parent)
             }
         });
     }
-    setStyleSheet(QStringLiteral(R"(
-QScrollArea#artifactPropertyWidget {
- background: #2E2E2E;
- border: none;
 }
-QWidget#artifactPropertyContainer {
- background: #2E2E2E;
-}
-QLineEdit {
- background: #3A3A3A;
- color: #E0E0E0;
- border: 1px solid #454545;
- border-radius: 6px;
- padding: 4px 8px;
- selection-background-color: #F5933C;
-}
-QLineEdit:focus {
- border-color: #F5933C;
-}
-QGroupBox {
- color: #E0E0E0;
- font-weight: 600;
- border: 1px solid #454545;
- border-radius: 8px;
- margin-top: 10px;
- padding-top: 8px;
- background: #333333;
-}
-QGroupBox::title {
- subcontrol-origin: margin;
- left: 10px;
- padding: 0 6px;
- color: #E0E0E0;
-}
-QWidget#propertyRow {
- background: #363636;
- border: 1px solid #454545;
- border-radius: 6px;
-}
-QWidget#propertyRow:hover {
- border-color: #606060;
- background: #3E3E3E;
-}
-QLabel#propertyRowLabel {
- color: #E0E0E0;
- font-weight: 500;
- padding-left: 4px;
-}
-QLabel#propertyScrubHandle {
- color: #8E8E8E;
- background: #333333;
- border: 1px solid #454545;
- border-radius: 4px;
- font-family: Consolas;
- font-size: 10px;
-}
-QLabel#propertyScrubHandle:hover {
- color: #D0D0D0;
- border-color: #F5933C;
-}
-QSpinBox, QDoubleSpinBox, QComboBox, QFontComboBox {
- min-height: 26px;
- background: #3A3A3A;
- color: #E0E0E0;
- border: 1px solid #454545;
- border-radius: 6px;
- padding: 2px 6px;
-}
-QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus, QFontComboBox:focus {
- border-color: #F5933C;
-}
-QSlider::groove:horizontal {
- height: 4px;
- background: #3A3A3A;
- border-radius: 2px;
-}
-QSlider::handle:horizontal {
- width: 6px;
- margin: -6px 0;
- background: #F5933C;
- border: 1px solid #F5933C;
- border-radius: 2px;
-}
-QSlider::handle:horizontal:hover {
- background: #FFAA55;
- border-color: #FFAA55;
-}
-QPushButton#propertyKeyButton,
-QPushButton#propertyResetButton,
-QPushButton#propertyExprButton,
-QPushButton#propertyPathBrowseButton {
- background: #404040;
- color: #E0E0E0;
- border: 1px solid #454545;
- border-radius: 4px;
-}
-QPushButton#propertyKeyButton:hover,
-QPushButton#propertyResetButton:hover,
-QPushButton#propertyExprButton:hover,
-QPushButton#propertyPathBrowseButton:hover {
- background: #4A4A4A;
- border-color: #606060;
-}
-QPushButton#propertyColorSwatchButton {
- border: 1px solid #454545;
- border-radius: 4px;
-}
-QLabel#propertyColorValueLabel {
- color: #E0E0E0;
- font-family: Consolas;
-}
-QCheckBox {
- color: #E0E0E0;
- spacing: 6px;
-}
-QCheckBox::indicator {
- width: 15px;
- height: 15px;
- border: 1px solid #454545;
- border-radius: 3px;
- background: #3A3A3A;
-}
-QCheckBox::indicator:checked {
- background: #F5933C;
- border-color: #F5933C;
-}
-)"));
- }
 
 ArtifactPropertyWidget::~ArtifactPropertyWidget() {
    if (impl_->currentLayerChangedConnection) {
@@ -769,6 +661,8 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
         }
     }
 
+    clearLayoutRecursive(mainLayout);
+
     if (!currentLayer) {
         QLabel* emptyLabel = new QLabel("No layer selected");
         emptyLabel->setObjectName(QStringLiteral("propertyEmptyLabel"));
@@ -908,7 +802,7 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
         }
 
         auto* effectLabel = new QLabel(QStringLiteral("Effect: %1").arg(effect->displayName().toQString()), summaryGroup);
-        effectLabel->setStyleSheet(QStringLiteral("QLabel { color: #E0E0E0; font-weight: bold; }"));
+        effectLabel->setStyleSheet(QStringLiteral("QLabel { color: #E8E8E8; font-weight: bold; }"));
         summaryLayout->addWidget(effectLabel);
 
         addRowsFromProperties(
@@ -986,7 +880,7 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
 
     if (hasFocusedEffect) {
         auto* focusedLabel = new QLabel(QStringLiteral("Focused Effect ID: %1").arg(focusedEffectId));
-        focusedLabel->setStyleSheet(QStringLiteral("QLabel { color: #E0E0E0; font-size: 11px; }"));
+        focusedLabel->setStyleSheet(QStringLiteral("QLabel { color: #D0D0D0; font-size: 11px; }"));
         mainLayout->addWidget(focusedLabel);
     }
 

@@ -27,20 +27,9 @@ public:
 };
 
 AIClient::AIClient(): impl_(new Impl()) {
-    // ローカル AI を初期化
+    // ローカル AI エージェントを作成（初期化は明示的に呼び出すまで遅延）
     impl_->localAgent = std::make_shared<LlamaLocalAgent>();
-
-    // モデルパスは設定から取得、またはデフォルト
-    QString modelPath = "models/llama-3.2-1b-instruct.q4_k_m.gguf";
-
-    // 初期化を試みる（失敗してもフォールバックするだけ）
-    if (impl_->localAgent->initialize(modelPath)) {
-        impl_->initialized = true;
-        qDebug() << "[AIClient] Local AI initialized successfully";
-    } else {
-        qWarning() << "[AIClient] Failed to initialize local AI, using fallback responses";
-        impl_->initialized = false;
-    }
+    impl_->initialized = false; // 自動初期化しない
 }
 
 AIClient::~AIClient(){ delete impl_; }
@@ -54,14 +43,38 @@ void AIClient::setApiKey(const UniString& key) { impl_->apiKey = key; }
 
 void AIClient::setProvider(const UniString& provider) {
     impl_->provider = provider;
-    
-    if (provider == UniString("local") || provider == UniString("llama")) {
-        // ローカル AI に切り替え
-        if (!impl_->initialized) {
-            QString modelPath = "models/llama-3.2-1b-instruct.q4_k_m.gguf";
-            impl_->initialized = impl_->localAgent->initialize(modelPath);
+}
+
+bool AIClient::initialize(const QString& modelPath) {
+    if (impl_->initialized) return true;
+
+    QString path = modelPath;
+    if (path.isEmpty()) {
+        path = "models/llama-3.2-1b-instruct.q4_k_m.gguf";
+    }
+
+    if (impl_->localAgent) {
+        impl_->initialized = impl_->localAgent->initialize(path);
+        if (impl_->initialized) {
+            qDebug() << "[AIClient] Local AI initialized successfully";
+        } else {
+            qWarning() << "[AIClient] Failed to initialize local AI with model:" << path;
         }
     }
+    return impl_->initialized;
+}
+
+bool AIClient::isInitialized() const {
+    return impl_->initialized;
+}
+
+void AIClient::shutdown() {
+    if (impl_->localAgent) {
+        impl_->localAgent.reset();
+        impl_->localAgent = std::make_shared<LlamaLocalAgent>();
+    }
+    impl_->initialized = false;
+    qDebug() << "[AIClient] Local AI shut down";
 }
 
 UniString AIClient::sendMessage(const UniString& message) {

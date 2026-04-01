@@ -76,8 +76,10 @@ export namespace Artifact
   bool hasRenderQueueForComposition(const ArtifactCore::CompositionID& compositionId) const;
   int renderQueueCountForComposition(const ArtifactCore::CompositionID& compositionId) const;
   ArtifactCore::CompositionID jobCompositionIdAt(int index) const;
-  QString jobCompositionNameAt(int index) const;
-  QString jobStatusAt(int index) const;
+   QString jobCompositionNameAt(int index) const;
+   QString jobNameAt(int index) const;
+   void setJobNameAt(int index, const QString& name);
+   QString jobStatusAt(int index) const;
   int jobProgressAt(int index) const;
   QString jobOutputPathAt(int index) const;
   void setJobOutputPathAt(int index, const QString& outputPath);

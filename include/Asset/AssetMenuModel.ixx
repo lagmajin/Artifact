@@ -4,6 +4,7 @@
 #include <QByteArray>
 #include <QList>
 #include <QIcon>
+#include <QStringList>
 
 #include <iostream>
 #include <vector>
@@ -55,6 +56,11 @@ export namespace Artifact
   UniString type;
   UniString path;
   bool isFolder = false;
+  bool isSequence = false;
+  int sequenceFrameCount = 0;
+  int sequenceStartFrame = 0;
+  int sequencePadding = 0;
+  QStringList sequencePaths;
   QIcon icon;  // Optional: custom icon/thumbnail
  };
 

@@ -9,6 +9,7 @@ export module Artifact.Widgets.TextGizmo;
 
 import Artifact.Render.IRenderer;
 import Artifact.Layer.Abstract;
+import Artifact.Layer.Text;
 import Text.GlyphLayout;
 import Text.Animator;
 
@@ -22,7 +23,16 @@ public:
         RangeEnd,
         Offset,
         CharacterSelect,
-        AnchorPoint
+        AnchorPoint,
+        // Text box bounds editing
+        BoxLeft,
+        BoxRight,
+        BoxTop,
+        BoxBottom,
+        BoxCornerTopLeft,
+        BoxCornerTopRight,
+        BoxCornerBottomLeft,
+        BoxCornerBottomRight
     };
 
     TextGizmo();

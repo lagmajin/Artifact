@@ -1,10 +1,28 @@
-﻿module;
+module;
 #include <QObject>
-#include <Artifact/Render/ArtifactIRenderer.ixx>
-#include <Artifact/Layer/ArtifactAbstractLayer.ixx>
+#include <QVector>
+#include <QVector3D>
+#include <QVector2D>
+#include <QFileDialog>
+#include <QFileInfo>
 module Artifact.Layers.Model3D;
 
+import Artifact.Render.IRenderer;
+import Artifact.Layer.Abstract;
+import Color.Float;
+import Mesh;
+import Time.Rational;
+import MeshImporter;
+import Utils.String.UniString;
+
 namespace Artifact {
+
+namespace {
+Artifact::Detail::float3 toFloat3(const QVector3D& v)
+{
+    return {v.x(), v.y(), v.z()};
+}
+}
 
 class Artifact3DLayer::Impl {
 public:
@@ -24,8 +42,41 @@ Artifact3DLayer::Artifact3DLayer() : impl_(new Impl()) {
 Artifact3DLayer::~Artifact3DLayer() { delete impl_; }
 
 void Artifact3DLayer::loadFromFile() {
-    // TODO: Implement loading from file using ufbx or tinyobjloader
-    // For now, create a simple cube mesh programmatically
+    // Try loading via MeshImporter (ufbx for FBX, tinyobj for OBJ)
+    ArtifactCore::MeshImporter importer;
+    auto mesh = importer.importMeshFromFile(UniString("")); // Will be set by user
+    
+    if (mesh && mesh->vertexCount() > 0) {
+        impl_->mesh_ = *mesh;
+        impl_->meshLoaded_ = true;
+        return;
+    }
+    
+    // Fallback: create a simple cube mesh programmatically
+    if (!impl_->meshLoaded_) {
+        createCubeMesh();
+        impl_->meshLoaded_ = true;
+    }
+}
+
+void Artifact3DLayer::loadFromFile(const QString& filePath) {
+    if (filePath.isEmpty()) {
+        loadFromFile();
+        return;
+    }
+    
+    ArtifactCore::MeshImporter importer;
+    auto mesh = importer.importMeshFromFile(UniString(filePath));
+    
+    if (mesh && mesh->vertexCount() > 0) {
+        impl_->mesh_ = *mesh;
+        impl_->meshLoaded_ = true;
+        setLayerName(QFileInfo(filePath).baseName());
+        return;
+    }
+    
+    // Fallback to cube on failure
+    qWarning() << "Failed to load mesh from:" << filePath << "- using default cube";
     if (!impl_->meshLoaded_) {
         createCubeMesh();
         impl_->meshLoaded_ = true;
@@ -48,7 +99,8 @@ void Artifact3DLayer::createCubeMesh() {
 
     impl_->mesh_.setVertexCount(8);
     auto& vertexAttrs = impl_->mesh_.vertexAttributes();
-    vertexAttrs.add<QVector3D>("position", positions);
+    auto positionAttr = vertexAttrs.add<QVector3D>("position");
+    positionAttr->data() = positions;
 
     // Add polygons (triangulated for simplicity)
     // Bottom face
@@ -86,22 +138,22 @@ void Artifact3DLayer::draw(ArtifactIRenderer* renderer) {
 
     // Get transform
     const auto& t3 = transform3D();
-    const RationalTime time(currentFrame(), 30); // Assume 30fps for now
-    const QVector3D position(t3.positionXAt(time), t3.positionYAt(time), t3.positionZAt(time));
-    const QVector3D scale(t3.scaleXAt(time), t3.scaleYAt(time), 1.0f); // Z scale not implemented yet
-    const QVector3D anchor(t3.anchorXAt(time), t3.anchorYAt(time), t3.anchorZAt(time));
+    const RationalTime frameTime(currentFrame(), 30); // Assume 30fps for now
+    const QVector3D position(t3.positionXAt(frameTime), t3.positionYAt(frameTime), t3.positionZAt(frameTime));
+    const QVector3D scale(t3.scaleXAt(frameTime), t3.scaleYAt(frameTime), 1.0f); // Z scale not implemented yet
+    const QVector3D anchor(t3.anchorXAt(frameTime), t3.anchorYAt(frameTime), t3.anchorZAt(frameTime));
 
     // Get mesh data
     const auto& vertexAttrs = impl_->mesh_.vertexAttributes();
     const auto positions = vertexAttrs.get<QVector3D>("position");
-    if (positions.isEmpty()) {
+    if (!positions || positions->data().isEmpty()) {
         return;
     }
 
     // Transform vertices
     QVector<QVector3D> transformedVertices;
-    transformedVertices.reserve(positions.size());
-    for (const auto& pos : positions) {
+    transformedVertices.reserve(positions->data().size());
+    for (const auto& pos : positions->data()) {
         QVector3D v = pos;
         v *= scale;
         v += position - anchor; // Apply anchor offset
@@ -114,25 +166,18 @@ void Artifact3DLayer::draw(ArtifactIRenderer* renderer) {
     const float thickness = 2.0f;
 
     if (impl_->renderMode_ == RenderMode::Solid) {
-        // Draw filled polygons
+        // Draw filled polygons with fan triangulation for N-gons
         const FloatColor color = solidColor;
         for (int i = 0; i < impl_->mesh_.polygonCount(); ++i) {
             const auto vertexIndices = impl_->mesh_.getPolygonVertices(i);
             if (vertexIndices.size() >= 3) {
-                // For triangles, draw as quad with duplicated vertex
-                if (vertexIndices.size() == 3) {
+                // Fan triangulation: v0-v1-v2, v0-v2-v3, v0-v3-v4, ...
+                for (size_t j = 1; j + 1 < vertexIndices.size(); ++j) {
                     const QVector3D& v0 = transformedVertices[vertexIndices[0]];
-                    const QVector3D& v1 = transformedVertices[vertexIndices[1]];
-                    const QVector3D& v2 = transformedVertices[vertexIndices[2]];
-                    renderer->draw3DQuad(v0, v1, v2, v2, color); // Triangle as quad
-                } else if (vertexIndices.size() == 4) {
-                    const QVector3D& v0 = transformedVertices[vertexIndices[0]];
-                    const QVector3D& v1 = transformedVertices[vertexIndices[1]];
-                    const QVector3D& v2 = transformedVertices[vertexIndices[2]];
-                    const QVector3D& v3 = transformedVertices[vertexIndices[3]];
-                    renderer->draw3DQuad(v0, v1, v2, v3, color);
+                    const QVector3D& v1 = transformedVertices[vertexIndices[j]];
+                    const QVector3D& v2 = transformedVertices[vertexIndices[j + 1]];
+                    renderer->draw3DQuad(toFloat3(v0), toFloat3(v1), toFloat3(v2), toFloat3(v2), color);
                 }
-                // TODO: Handle N-gons with triangulation
             }
         }
     } else {
@@ -143,7 +188,7 @@ void Artifact3DLayer::draw(ArtifactIRenderer* renderer) {
             for (size_t j = 0; j < vertexIndices.size(); ++j) {
                 const QVector3D& v0 = transformedVertices[vertexIndices[j]];
                 const QVector3D& v1 = transformedVertices[vertexIndices[(j + 1) % vertexIndices.size()]];
-                renderer->draw3DLine(v0, v1, color, thickness);
+                renderer->draw3DLine(toFloat3(v0), toFloat3(v1), color, thickness);
             }
         }
     }
@@ -162,7 +207,7 @@ std::vector<ArtifactCore::PropertyGroup> Artifact3DLayer::getLayerPropertyGroups
 
     auto renderModeProp = persistentLayerProperty(QStringLiteral("render.mode"), PropertyType::Integer,
                                                   static_cast<int>(renderMode()), -50);
-    renderModeProp->setDisplayName(QStringLiteral("Render Mode"));
+    renderModeProp->setDisplayLabel(QStringLiteral("Render Mode"));
     renderGroup.addProperty(renderModeProp);
 
     groups.push_back(renderGroup);

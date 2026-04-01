@@ -131,6 +131,8 @@ public:
     // Render output
     QImage renderFrame(int width, int height, float time);
     void renderToImage(QImage& target, float time);
+    void renderToImage(QImage& target, int64_t frameNumber);
+    void renderToImage(QImage& target, int64_t frameNumber);
     
     // Cached rendering
     bool getCachedFrame(int64_t frame, QImage& out);

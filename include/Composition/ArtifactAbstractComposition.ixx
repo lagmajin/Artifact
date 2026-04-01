@@ -11,6 +11,7 @@ import std;
 
 import Utils;
 import Utils.String.UniString;
+import Asset.File;
 
 import Color.Float;
 
@@ -108,6 +109,9 @@ export namespace Artifact {
   static std::shared_ptr<ArtifactAbstractComposition> fromJson(const QJsonDocument& doc);
 
   QVector<ArtifactAbstractLayerPtr> allLayer();
+
+  // Asset usage tracking for unused asset detection
+  QVector<ArtifactCore::AssetID> getUsedAssets() const;
 
   /*Thumbnail*/
   QImage getThumbnail(int width = 128, int height = 128) const;

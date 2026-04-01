@@ -15,10 +15,13 @@ export namespace Artifact
  protected:
 
  public:
-  explicit ArtifactTimeCodeWidget(QWidget* parent = nullptr);
+ explicit ArtifactTimeCodeWidget(QWidget* parent = nullptr);
   ~ArtifactTimeCodeWidget();
 
   void updateTimeCode(int frame);
+
+ protected:
+  void paintEvent(QPaintEvent* event) override;
  };
  
  class ArtifactTimelineSearchBarWidget :public QWidget {

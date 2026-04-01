@@ -221,11 +221,9 @@ namespace Artifact {
 
   auto* header = new QWidget(this);
   header->setFixedHeight(50);
-  header->setStyleSheet("background-color: #2D2D30; border-bottom: 1px solid #444;");
   auto* headerLayout = new QHBoxLayout(header);
   headerLayout->setContentsMargins(15, 0, 15, 0);
   auto* title = new QLabel(QStringLiteral("Plane Layer Settings"), header);
-  title->setStyleSheet("color: white; font-weight: bold; font-size: 13px;");
   headerLayout->addWidget(title);
   headerLayout->addStretch();
   mainLayout->addWidget(header);
@@ -237,12 +235,10 @@ namespace Artifact {
 
   auto editableLabel = impl_->nameEditableLabel = new EditableLabel();
   editableLabel->setText("平面 1");
-  editableLabel->setStyleSheet("background: #252526; padding: 6px; border-radius: 4px; font-weight: bold;");
 
   auto* nameRow = new QHBoxLayout();
   auto* nameLabel = new QLabel("Name:", content);
   nameLabel->setFixedWidth(60);
-  nameLabel->setStyleSheet("color: #AAA; font-weight: bold;");
   nameRow->addWidget(nameLabel);
   nameRow->addWidget(editableLabel, 1);
 
@@ -253,14 +249,12 @@ namespace Artifact {
   settingFrameLayout->setContentsMargins(10, 10, 10, 10);
   settingFrameLayout->setSpacing(0);
   settingFrameLayout->addWidget(settingPage);
-  settingFrame->setStyleSheet("background-color: #232325; border: 1px solid #3F3F46; border-radius: 4px;");
 
   contentLayout->addLayout(nameRow);
   contentLayout->addWidget(settingFrame, 1);
   mainLayout->addWidget(content, 1);
 
   auto* footer = new QWidget(this);
-  footer->setStyleSheet("background-color: #252526; border-top: 1px solid #333;");
   auto* footerLayout = new QHBoxLayout(footer);
   footerLayout->setContentsMargins(15, 10, 15, 10);
   auto* dialogButtonBox = impl_->dialogButtonBox = new QDialogButtonBox();
@@ -268,18 +262,15 @@ namespace Artifact {
   if (auto* okBtn = dialogButtonBox->button(QDialogButtonBox::Ok)) {
       okBtn->setFixedSize(80, 28);
       okBtn->setText("OK");
-      okBtn->setStyleSheet("background: #007ACC; color: white; border-radius: 4px; font-weight: bold;");
   }
   if (auto* cancelBtn = dialogButtonBox->button(QDialogButtonBox::Cancel)) {
       cancelBtn->setFixedSize(80, 28);
       cancelBtn->setText("Cancel");
-      cancelBtn->setStyleSheet("background: #3E3E42; color: #DDD; border-radius: 4px; border: 1px solid #555;");
   }
   footerLayout->addStretch();
   footerLayout->addWidget(dialogButtonBox);
   mainLayout->addWidget(footer);
 
-  setStyleSheet("QDialog { background-color: #1E1E20; border: 1px solid #444; }");
   
   QObject::connect(dialogButtonBox, &QDialogButtonBox::accepted, this, [this]() {
       if (impl_->nameEditableLabel) impl_->nameEditableLabel->finishEdit();
@@ -388,8 +379,6 @@ void CreateSolidLayerSettingDialog::showAnimated()
   layout->addWidget(settingPage);
   layout->addWidget(dialogButtonBox, 0, Qt::AlignRight);
   setLayout(layout);
-  auto style = getDCCStyleSheetPreset(DccStylePreset::StudioStyle);
-  setStyleSheet(style);
   
   QObject::connect(dialogButtonBox, &QDialogButtonBox::accepted, this, [this]() {
       if (impl_->nameEditableLabel) impl_->nameEditableLabel->finishEdit();

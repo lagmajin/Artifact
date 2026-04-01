@@ -3,6 +3,7 @@
 #include <wobjectimpl.h>
 #include <wobjectdefs.h>
 #include <QFileInfo>
+#include <QDateTime>
 
 #include <QHash>
 #include <QJsonArray>
@@ -78,8 +79,9 @@ namespace Artifact {
    bool removeById(CompositionID id);
    void removeAllCompositions();
   bool addImportedComposition(ArtifactCompositionPtr comp, const QString& name);
-  void setProjectName(const QString& name);
-  void setAuthor(const QString& author);
+   void setProjectName(const QString& name);
+   void setAuthor(const QString& author);
+   ArtifactProjectSettings projectSettings() const { return projectSettings_; }
 
   // AI向けメタデータ
   void setAIDescription(const QString& description);
@@ -470,7 +472,9 @@ void ArtifactProject::Impl::createCompositions(const QStringList& names) {}
   QJsonObject result;
   result["name"] = projectSettings_.projectName();
   result["author"] = projectSettings_.author().toQString();
-  result["version"] = "1.0";
+  result["version"] = "1.1";
+  result["minVersion"] = "1.0";
+  result["savedAt"] = QDateTime::currentDateTime().toString(Qt::ISODate);
 
   // AI向けメタデータを追加
   if (!aiDescription_.isEmpty()) {
@@ -579,9 +583,73 @@ void ArtifactProject::Impl::createCompositions(const QStringList& names) {}
   }
 
   if (errorMessage) {
-   errorMessage->clear();
+    errorMessage->clear();
   }
   return true;
+ }
+
+ std::vector<ProjectValidationIssue> ArtifactProject::validate() const
+ {
+  std::vector<ProjectValidationIssue> issues;
+
+  // Settings validation
+  const auto settingsIssues = settings().validate();
+  issues.insert(issues.end(), settingsIssues.begin(), settingsIssues.end());
+
+  // Composition validation
+  for (const auto& item : impl_->ownedItems_) {
+    if (!item) continue;
+    std::function<void(const ProjectItem*)> walk = [&](const ProjectItem* node) {
+      if (!node) return;
+      if (node->type() == eProjectItemType::Composition) {
+        const auto* compItem = static_cast<const CompositionItem*>(node);
+        auto findResult = impl_->findComposition(compItem->compositionId);
+        if (findResult.success) {
+          if (auto comp = findResult.ptr.lock()) {
+            const QString compName = compItem->name.toQString().trimmed();
+            if (compName.isEmpty()) {
+              issues.push_back({
+                ProjectValidationIssue::Severity::Warning,
+                "composition.name",
+                "コンポジション名が空です",
+                "コンポジションに名前を設定してください"
+              });
+            }
+
+            if (comp->layerCount() == 0) {
+              issues.push_back({
+                ProjectValidationIssue::Severity::Info,
+                "composition.layers",
+                QString("コンポジション '%1' にレイヤーがありません").arg(compName),
+                "レイヤーを追加してください"
+              });
+            }
+
+            const auto layers = comp->allLayer();
+            for (int i = 0; i < layers.size(); ++i) {
+              const auto& layer = layers[i];
+              if (!layer) continue;
+              const QString layerName = layer->layerName().trimmed();
+              if (layerName.isEmpty()) {
+                issues.push_back({
+                  ProjectValidationIssue::Severity::Info,
+                  "layer.name",
+                  QString("コンポジション '%1' 内のレイヤー名が空です").arg(compName),
+                  "レイヤーに名前を設定してください"
+                });
+              }
+            }
+          }
+        }
+      }
+      for (const auto* child : node->children) {
+        walk(child);
+      }
+    };
+    walk(item.get());
+  }
+
+  return issues;
  }
 		
 ArtifactProject::ArtifactProject() :impl_(new Impl())
@@ -858,6 +926,11 @@ ArtifactProject::ArtifactProject() :impl_(new Impl())
  void ArtifactProject::setProjectName(const QString& name)
  {
   impl_->setProjectName(name);
+ }
+
+ ArtifactProjectSettings ArtifactProject::settings() const
+ {
+  return impl_->projectSettings();
  }
 
  void ArtifactProject::setAuthor(const QString& author)

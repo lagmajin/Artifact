@@ -163,6 +163,7 @@ public:
     RefCntAutoPtr<ITextureView> defaultTextureSRV_;
 
     PSOAndSRB gizmo3DPsoAndSrb_;
+    PSOAndSRB gizmo3DTrianglePsoAndSrb_;
     RefCntAutoPtr<IBuffer> gizmoLineConstantBuffer_;
     RefCntAutoPtr<IBuffer> gizmoLineVertexBuffer_;
     Uint32 gizmoLineVertexCapacity_ = 0;
@@ -471,9 +472,11 @@ public:
         }
     }
 
-    void drawGizmoLineGeometry(const GizmoLineVertex* vertices, Uint32 vertexCount)
+    void drawGizmoGeometry(const GizmoLineVertex* vertices, Uint32 vertexCount, const PSOAndSRB& psoAndSrb,
+                           PRIMITIVE_TOPOLOGY primitiveTopology)
     {
-        if (!hasRenderTarget() || !ctx_ || !gizmo3DPsoAndSrb_.pPSO || !gizmo3DPsoAndSrb_.pSRB ||
+        (void)primitiveTopology;
+        if (!hasRenderTarget() || !ctx_ || !psoAndSrb.pPSO || !psoAndSrb.pSRB ||
             !gizmoLineVertexBuffer_ || !gizmoLineConstantBuffer_ || vertexCount < 2) {
             return;
         }
@@ -502,22 +505,36 @@ public:
 
         auto* rtv = currentRTV();
         ctx_->SetRenderTargets(1, &rtv, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
-        ctx_->SetPipelineState(gizmo3DPsoAndSrb_.pPSO);
+        ctx_->SetPipelineState(psoAndSrb.pPSO);
 
         IBuffer* buffers[] = { gizmoLineVertexBuffer_ };
         Uint64 offsets[] = { 0 };
         ctx_->SetVertexBuffers(0, 1, buffers, offsets, RESOURCE_STATE_TRANSITION_MODE_TRANSITION,
                                SET_VERTEX_BUFFERS_FLAG_RESET);
 
-        if (auto* cbVar = gizmo3DPsoAndSrb_.pSRB->GetVariableByName(SHADER_TYPE_VERTEX, "TransformCB")) {
+        if (auto* cbVar = psoAndSrb.pSRB->GetVariableByName(SHADER_TYPE_VERTEX, "TransformCB")) {
             cbVar->Set(gizmoLineConstantBuffer_);
         }
-        ctx_->CommitShaderResources(gizmo3DPsoAndSrb_.pSRB, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+        ctx_->CommitShaderResources(psoAndSrb.pSRB, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
 
         DrawAttribs drawAttrs;
         drawAttrs.NumVertices = vertexCount;
         drawAttrs.Flags = DRAW_FLAG_VERIFY_ALL;
         ctx_->Draw(drawAttrs);
+    }
+
+    void drawGizmoLineGeometry(const GizmoLineVertex* vertices, Uint32 vertexCount)
+    {
+        drawGizmoGeometry(vertices, vertexCount, gizmo3DPsoAndSrb_, PRIMITIVE_TOPOLOGY_LINE_LIST);
+    }
+
+    void drawGizmoTriangleGeometry(const GizmoLineVertex* vertices, Uint32 vertexCount)
+    {
+        if (!gizmo3DTrianglePsoAndSrb_.pPSO || !gizmo3DTrianglePsoAndSrb_.pSRB) {
+            drawGizmoLineGeometry(vertices, vertexCount);
+            return;
+        }
+        drawGizmoGeometry(vertices, vertexCount, gizmo3DTrianglePsoAndSrb_, PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
     }
 
     void drawGizmoLine(const QVector3D& start, const QVector3D& end, const FloatColor& color)
@@ -542,24 +559,48 @@ public:
         QVector3D side = normalizeOrFallback(QVector3D::crossProduct(direction, QVector3D(0.0f, 0.0f, 1.0f)),
                                              QVector3D::crossProduct(direction, QVector3D(0.0f, 1.0f, 0.0f)));
         side = normalizeOrFallback(side, QVector3D(1.0f, 0.0f, 0.0f));
+        QVector3D up = normalizeOrFallback(QVector3D::crossProduct(direction, side), QVector3D(0.0f, 1.0f, 0.0f));
+        up = normalizeOrFallback(up, QVector3D(0.0f, 1.0f, 0.0f));
 
         const float headLength = std::min(std::max(size * 0.35f, length * 0.15f), length * 0.45f);
-        const float headWidth = std::max(size * 0.25f, headLength * 0.6f);
+        const float shaftWidth = std::max(size * 0.16f, length * 0.035f);
+        const float headWidth = std::max(size * 0.28f, headLength * 0.55f);
         const QVector3D headBase = end - direction * headLength;
-        const QVector3D headLeft = headBase + side * headWidth;
-        const QVector3D headRight = headBase - side * headWidth;
+        const QVector3D shaftSide = side * shaftWidth;
+        const QVector3D shaftUp = up * shaftWidth;
+        const QVector3D headSide = side * headWidth;
+        const QVector3D headUp = up * headWidth;
 
         std::vector<GizmoLineVertex> vertices;
-        vertices.reserve(8);
-        vertices.push_back(makeGizmoLineVertex(start, color));
-        vertices.push_back(makeGizmoLineVertex(headBase, color));
-        vertices.push_back(makeGizmoLineVertex(headBase, color));
-        vertices.push_back(makeGizmoLineVertex(end, color));
-        vertices.push_back(makeGizmoLineVertex(headLeft, color));
-        vertices.push_back(makeGizmoLineVertex(end, color));
-        vertices.push_back(makeGizmoLineVertex(headRight, color));
-        vertices.push_back(makeGizmoLineVertex(end, color));
-        drawGizmoLineGeometry(vertices.data(), static_cast<Uint32>(vertices.size()));
+        vertices.reserve(30);
+
+        const auto appendTriangle = [&](const QVector3D& a, const QVector3D& b, const QVector3D& c) {
+            vertices.push_back(makeGizmoLineVertex(a, color));
+            vertices.push_back(makeGizmoLineVertex(b, color));
+            vertices.push_back(makeGizmoLineVertex(c, color));
+        };
+
+        const auto appendQuad = [&](const QVector3D& a, const QVector3D& b,
+                                    const QVector3D& c, const QVector3D& d) {
+            appendTriangle(a, b, c);
+            appendTriangle(a, c, d);
+        };
+
+        // Shaft: two crossed ribbons so the arrow reads thick from most angles.
+        appendQuad(start - shaftSide, start + shaftSide, headBase + shaftSide, headBase - shaftSide);
+        appendQuad(start - shaftUp, start + shaftUp, headBase + shaftUp, headBase - shaftUp);
+
+        // Head: a small pyramid with four faces.
+        const QVector3D head0 = headBase - headSide - headUp;
+        const QVector3D head1 = headBase + headSide - headUp;
+        const QVector3D head2 = headBase + headSide + headUp;
+        const QVector3D head3 = headBase - headSide + headUp;
+        appendTriangle(head0, head1, end);
+        appendTriangle(head1, head2, end);
+        appendTriangle(head2, head3, end);
+        appendTriangle(head3, head0, end);
+
+        drawGizmoTriangleGeometry(vertices.data(), static_cast<Uint32>(vertices.size()));
     }
 
     void drawGizmoRing(const QVector3D& center, const QVector3D& normal, float radius,
@@ -597,19 +638,15 @@ public:
     void drawGizmoQuad(const QVector3D& v0, const QVector3D& v1, const QVector3D& v2, const QVector3D& v3,
                        const FloatColor& color)
     {
-        // For now, just draw the outline of the quad
-        // TODO: Implement filled quad rendering
         const GizmoLineVertex vertices[] = {
             makeGizmoLineVertex(v0, color),
             makeGizmoLineVertex(v1, color),
-            makeGizmoLineVertex(v1, color),
             makeGizmoLineVertex(v2, color),
+            makeGizmoLineVertex(v0, color),
             makeGizmoLineVertex(v2, color),
-            makeGizmoLineVertex(v3, color),
-            makeGizmoLineVertex(v3, color),
-            makeGizmoLineVertex(v0, color)
+            makeGizmoLineVertex(v3, color)
         };
-        drawGizmoLineGeometry(vertices, 8);
+        drawGizmoTriangleGeometry(vertices, 6);
     }
 
     void drawBillboard(const QVector3D& center, const QVector2D& size,
@@ -694,6 +731,7 @@ void PrimitiveRenderer3D::createBuffers(RefCntAutoPtr<IRenderDevice> device, TEX
 void PrimitiveRenderer3D::setPSOs(ShaderManager& shaderManager)
 {
     impl_->gizmo3DPsoAndSrb_ = shaderManager.gizmo3DPsoAndSrb();
+    impl_->gizmo3DTrianglePsoAndSrb_ = shaderManager.gizmo3DTrianglePsoAndSrb();
 }
 
 void PrimitiveRenderer3D::setContext(IDeviceContext* ctx)
@@ -728,6 +766,8 @@ void PrimitiveRenderer3D::destroy()
     impl_->vs_ = nullptr;
     impl_->gizmo3DPsoAndSrb_.pPSO = nullptr;
     impl_->gizmo3DPsoAndSrb_.pSRB = nullptr;
+    impl_->gizmo3DTrianglePsoAndSrb_.pPSO = nullptr;
+    impl_->gizmo3DTrianglePsoAndSrb_.pSRB = nullptr;
     impl_->ctx_ = nullptr;
     impl_->swapChain_ = nullptr;
     impl_->overrideRTV_ = nullptr;

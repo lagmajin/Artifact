@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <QFileSystemModel>
 #include <QDir>
 #include <QLabel>
@@ -35,8 +35,10 @@
 #include <QPaintEvent>
 #include <QMouseEvent>
 #include <QMessageBox>
+#include <QRegularExpression>
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <set>
 #include <QFontMetrics>
 #include <QSlider>
@@ -44,6 +46,8 @@
 #include <QGridLayout>
 #include <QElapsedTimer>
 #include <QTimer>
+#include <QFileSystemWatcher>
+#include <QScrollArea>
 #include <opencv2/opencv.hpp>
 #include <opencv2/videoio.hpp>
 #include <opencv2/imgproc.hpp>
@@ -58,10 +62,12 @@
 #endif
 #include <tbb/parallel_for.h>
 #include <tbb/blocked_range.h>
+#include <tbb/task_group.h>
 #include <mutex>
 
 module Widgets.AssetBrowser;
 
+import Widgets.AssetBrowser;
 import Widgets.Utils.CSS;
 import Artifact.Service.Project;
 import Artifact.Project.Manager;
@@ -71,8 +77,184 @@ import AssetMenuModel;
 import AssetDirectoryModel;
 import Utils.String.UniString;
 import File.TypeDetector;
+import Audio.Segment;
+import Artifact.Audio.Waveform;
+import MediaPlaybackController;
+import Asset.Sequence;
+import Reactive.Events;
 
 namespace Artifact {
+
+namespace {
+
+struct SequenceMatch
+{
+  QString prefix;
+  QString separator;
+  QString digits;
+  QString extension;
+  int frameNumber = -1;
+  int padding = 0;
+
+  bool isValid() const
+  {
+    return !prefix.isEmpty() && padding > 0 && frameNumber >= 0;
+  }
+};
+
+static bool parseSequenceMatch(const QString& fileName, SequenceMatch& match)
+{
+  static const QRegularExpression pattern(
+      QStringLiteral(R"((.*?)([._-]?)(\d{2,})$)"),
+      QRegularExpression::CaseInsensitiveOption);
+
+  const QFileInfo info(fileName);
+  const QString baseName = info.completeBaseName();
+  const auto captured = pattern.match(baseName);
+  if (!captured.hasMatch()) {
+    return false;
+  }
+
+  match.prefix = captured.captured(1) + captured.captured(2);
+  match.separator = captured.captured(2);
+  match.digits = captured.captured(3);
+  match.extension = info.suffix().toLower();
+  match.padding = match.digits.size();
+  match.frameNumber = match.digits.toInt();
+  return match.isValid();
+}
+
+static QString sequenceDisplayName(const SequenceMatch& match)
+{
+  if (!match.isValid()) {
+    return {};
+  }
+
+  QString display = match.prefix;
+  display += QString(match.padding, QLatin1Char('#'));
+  if (!match.extension.isEmpty()) {
+    display += QLatin1Char('.');
+    display += match.extension;
+  }
+  return display;
+}
+
+static QString sequenceGroupKey(const QFileInfo& info, const SequenceMatch& match)
+{
+  return QStringLiteral("%1|%2|%3")
+      .arg(QDir::cleanPath(info.absolutePath()),
+           match.prefix,
+           match.extension);
+}
+
+static QString sequenceRangeLabel(int startFrame, int endFrame, int padding)
+{
+  const QString first = QString::number(startFrame).rightJustified(std::max(1, padding), QLatin1Char('0'));
+  const QString last = QString::number(endFrame).rightJustified(std::max(1, padding), QLatin1Char('0'));
+  return QStringLiteral("%1-%2").arg(first, last);
+}
+
+static bool pcm16StereoToAudioSegment(const QByteArray& pcm, int sampleRate, ArtifactCore::AudioSegment& segment)
+{
+  if (pcm.size() < static_cast<int>(sizeof(qint16) * 2)) {
+    return false;
+  }
+
+  const int frameCount = pcm.size() / static_cast<int>(sizeof(qint16) * 2);
+  if (frameCount <= 0) {
+    return false;
+  }
+
+  const auto* samples = reinterpret_cast<const qint16*>(pcm.constData());
+  segment.sampleRate = sampleRate > 0 ? sampleRate : 44100;
+  segment.layout = ArtifactCore::AudioChannelLayout::Stereo;
+  segment.channelData.clear();
+  segment.channelData.resize(2);
+  segment.channelData[0].resize(frameCount);
+  segment.channelData[1].resize(frameCount);
+
+  for (int i = 0; i < frameCount; ++i) {
+    const int base = i * 2;
+    segment.channelData[0][i] = static_cast<float>(samples[base]) / 32768.0f;
+    segment.channelData[1][i] = static_cast<float>(samples[base + 1]) / 32768.0f;
+  }
+
+  return true;
+}
+
+static QIcon buildAudioWaveformIcon(const QString& filePath, const QSize& targetSize)
+{
+  if (filePath.isEmpty() || targetSize.isEmpty()) {
+    return {};
+  }
+
+  ArtifactCore::MediaPlaybackController playback;
+  if (!playback.openMediaFile(filePath)) {
+    return {};
+  }
+
+  QByteArray pcm;
+  pcm.reserve(32768);
+  for (int i = 0; i < 48 && pcm.size() < 65536; ++i) {
+    const QByteArray chunk = playback.getNextAudioFrame();
+    if (chunk.isEmpty()) {
+      break;
+    }
+    pcm.append(chunk);
+  }
+
+  ArtifactCore::AudioSegment segment;
+  if (!pcm16StereoToAudioSegment(pcm, 44100, segment)) {
+    return {};
+  }
+
+  Artifact::AudioWaveformGenerator generator;
+  const int waveformWidth = std::max(96, targetSize.width() * 2);
+  const Artifact::WaveformData waveform = generator.generate(segment, waveformWidth);
+  if (waveform.peaks.isEmpty()) {
+    return {};
+  }
+
+  QImage image(targetSize, QImage::Format_ARGB32_Premultiplied);
+  image.fill(QColor(20, 21, 25));
+
+  QPainter painter(&image);
+  painter.setRenderHint(QPainter::Antialiasing, true);
+
+  const QRect frameRect = image.rect().adjusted(1, 1, -1, -1);
+  painter.setPen(QPen(QColor(57, 60, 68), 1));
+  painter.setBrush(QColor(28, 29, 33));
+  painter.drawRoundedRect(frameRect, 8, 8);
+
+  const QRect waveRect = frameRect.adjusted(8, 8, -8, -8);
+  painter.setPen(Qt::NoPen);
+  painter.setBrush(QColor(14, 15, 18));
+  painter.drawRoundedRect(waveRect, 6, 6);
+
+  const QColor waveColor(92, 184, 255);
+  const QColor peakColor(155, 219, 255);
+  const int centerY = waveRect.center().y();
+  const int halfHeight = std::max(1, waveRect.height() / 2 - 2);
+  const int count = waveform.peaks.size();
+  const double step = count > 0 ? static_cast<double>(waveRect.width()) / static_cast<double>(count) : 0.0;
+
+  painter.setPen(QPen(QColor(74, 78, 88), 1));
+  painter.drawLine(QPointF(waveRect.left(), centerY), QPointF(waveRect.right(), centerY));
+
+  painter.setPen(QPen(waveColor, 1.6, Qt::SolidLine, Qt::RoundCap));
+  for (int i = 0; i < count; ++i) {
+    const float peak = std::clamp(waveform.peaks[i], 0.0f, 1.0f);
+    const int bar = std::max(1, static_cast<int>(std::round(peak * static_cast<float>(halfHeight))));
+    const int x = waveRect.left() + static_cast<int>(std::round((i + 0.5) * step));
+    painter.setPen(QPen(i % 8 == 0 ? peakColor : waveColor, 1.4, Qt::SolidLine, Qt::RoundCap));
+    painter.drawLine(QPointF(x, centerY - bar), QPointF(x, centerY + bar));
+  }
+
+  painter.end();
+  return QIcon(QPixmap::fromImage(image));
+}
+
+} // namespace
 
  using namespace ArtifactCore;
 
@@ -377,6 +559,116 @@ protected:
   QColor accent_;
  };
 
+ // ─────────────────────────────────────────────────────────
+ // P1-1: Breadcrumb Navigation Widget
+ // ─────────────────────────────────────────────────────────
+
+ class ArtifactBreadcrumbWidget::Impl {
+ public:
+  Impl() = default;
+  ~Impl() = default;
+
+  QString currentPath_;
+  QString rootPath_;
+  QHBoxLayout* layout_ = nullptr;
+  QList<QToolButton*> buttons_;
+
+  void clearButtons() {
+   for (auto* btn : buttons_) {
+    btn->deleteLater();
+   }
+   buttons_.clear();
+  }
+
+  void rebuildButtons() {
+   clearButtons();
+
+   if (currentPath_.isEmpty()) return;
+
+   QDir dir(currentPath_);
+   QStringList parts;
+   QString accumulated = rootPath_;
+
+   // Build path parts from root to current
+   QString relativePath = dir.absolutePath();
+   if (relativePath.startsWith(rootPath_, Qt::CaseInsensitive)) {
+    relativePath = relativePath.mid(rootPath_.length());
+    if (relativePath.startsWith('/')) relativePath = relativePath.mid(1);
+    parts = relativePath.split('/', Qt::SkipEmptyParts);
+   }
+
+   // Root button
+   auto* rootBtn = new QToolButton();
+   rootBtn->setText(QFileInfo(rootPath_).fileName() + " ▸");
+   rootBtn->setObjectName("breadcrumbRoot");
+   rootBtn->setStyleSheet(
+    "QToolButton { background: transparent; color: #8888aa; border: none; padding: 4px 8px; font-size: 12px; }"
+    "QToolButton:hover { color: #ffffff; background: rgba(255,255,255,0.1); border-radius: 3px; }"
+   );
+   rootBtn->setCursor(Qt::PointingHandCursor);
+   layout_->addWidget(rootBtn);
+   buttons_.append(rootBtn);
+
+   QObject::connect(rootBtn, &QToolButton::clicked, [this]() {
+    emit qobject_cast<ArtifactBreadcrumbWidget*>(rootBtn->parentWidget()->parentWidget())->pathClicked(rootPath_);
+   });
+
+   // Build accumulated path and buttons for each part
+   for (int i = 0; i < parts.size(); ++i) {
+    accumulated += "/" + parts[i];
+    QString partName = parts[i];
+    QString clickPath = accumulated;
+
+    auto* btn = new QToolButton();
+    bool isLast = (i == parts.size() - 1);
+    btn->setText(isLast ? partName : partName + " ▸");
+    btn->setObjectName(isLast ? "breadcrumbCurrent" : "breadcrumbPart");
+    btn->setStyleSheet(isLast
+     ? "QToolButton { background: transparent; color: #ffffff; border: none; padding: 4px 8px; font-size: 12px; font-weight: bold; }"
+     : "QToolButton { background: transparent; color: #8888aa; border: none; padding: 4px 8px; font-size: 12px; }"
+       "QToolButton:hover { color: #ffffff; background: rgba(255,255,255,0.1); border-radius: 3px; }"
+    );
+    btn->setCursor(isLast ? Qt::ArrowCursor : Qt::PointingHandCursor);
+    btn->setEnabled(!isLast);
+    layout_->addWidget(btn);
+    buttons_.append(btn);
+
+    if (!isLast) {
+     QObject::connect(btn, &QToolButton::clicked, [this, clickPath]() {
+      emit qobject_cast<ArtifactBreadcrumbWidget*>(btn->parentWidget()->parentWidget())->pathClicked(clickPath);
+     });
+    }
+   }
+
+   layout_->addStretch();
+  }
+ };
+
+ W_OBJECT_IMPL(ArtifactBreadcrumbWidget)
+
+ ArtifactBreadcrumbWidget::ArtifactBreadcrumbWidget(QWidget* parent)
+   : QFrame(parent), impl_(new Impl())
+ {
+  setFrameStyle(QFrame::NoFrame);
+  setFixedHeight(28);
+  setStyleSheet("background-color: #1a1a2e; border-bottom: 1px solid #333355;");
+
+  impl_->layout_ = new QHBoxLayout(this);
+  impl_->layout_->setContentsMargins(8, 2, 8, 2);
+  impl_->layout_->setSpacing(2);
+ }
+
+ ArtifactBreadcrumbWidget::~ArtifactBreadcrumbWidget() { delete impl_; }
+
+ void ArtifactBreadcrumbWidget::setPath(const QString& path) {
+  impl_->currentPath_ = path;
+  impl_->rebuildButtons();
+ }
+
+ void ArtifactBreadcrumbWidget::setRootPath(const QString& rootPath) {
+  impl_->rootPath_ = rootPath;
+  impl_->rebuildButtons();
+ }
 
 
  class ArtifactAssetBrowserToolBar::Impl
@@ -434,7 +726,11 @@ protected:
   QIcon defaultVideoIcon_;
   QIcon defaultAudioIcon_;
   QIcon defaultFontIcon_;
+  QSet<QString> importedAssetPaths_;
   QSet<QString> unusedAssetPaths_;
+  QFileSystemWatcher* fileWatcher_ = nullptr;
+  QTimer* fileWatcherDebounce_ = nullptr;
+  bool fileWatcherPending_ = false;
  public:
   Impl();
   ~Impl();
@@ -448,6 +744,7 @@ protected:
   QFileSystemModel* fileModel_ = nullptr;
   QButtonGroup* filterButtonGroup_ = nullptr;
   QLabel* currentPathLabel_ = nullptr;
+  ArtifactBreadcrumbWidget* breadcrumbWidget_ = nullptr;
   QLabel* browserStatusLabel_ = nullptr;
   AssetInfoPanelWidget* fileInfoPanel_ = nullptr;  // File details display
   QSlider* thumbnailSizeSlider_ = nullptr;  // Thumbnail size adjustment
@@ -473,6 +770,7 @@ protected:
   void processThumbnailWarmupBatch();
   QIcon getFileIcon(const QString& fileName, const QString& filePath);
   void clearThumbnailCache();
+  void refreshImportedAssetCache();
    bool isImageFile(const QString& fileName) const;
    bool isVideoFile(const QString& fileName) const;
    bool isAudioFile(const QString& fileName) const;
@@ -491,6 +789,12 @@ protected:
   void syncDirectorySelection();
   void refreshUnusedAssetCache();
   void sortItems(QList<AssetMenuItem>& items) const;
+  
+  std::vector<ReactiveRule> rules;
+  int selectedRuleIndex = -1;
+  bool updatingInspector = false;
+
+  QString expandedSequenceKey_; // M-AB-2 Phase 2: 現在展開中のシーケンスキー
  };
 
  ArtifactAssetBrowser::Impl::Impl()
@@ -504,10 +808,85 @@ protected:
    defaultAudioIcon_ = style->standardIcon(QStyle::SP_MediaVolume);
    defaultFontIcon_ = style->standardIcon(QStyle::SP_FileDialogDetailedView);
   }
+
+  // P0-1: File system watcher for auto-refresh
+  fileWatcher_ = new QFileSystemWatcher();
+  fileWatcherDebounce_ = new QTimer();
+  fileWatcherDebounce_->setSingleShot(true);
+  fileWatcherDebounce_->setInterval(500); // 500ms debounce
+
+  QObject::connect(fileWatcher_, &QFileSystemWatcher::directoryChanged,
+   fileWatcherDebounce_, [this]() {
+    fileWatcherPending_ = true;
+    fileWatcherDebounce_->start();
+   });
+
+  QObject::connect(fileWatcher_, &QFileSystemWatcher::fileChanged,
+   fileWatcherDebounce_, [this]() {
+    fileWatcherPending_ = true;
+    fileWatcherDebounce_->start();
+   });
+
+  QObject::connect(fileWatcherDebounce_, &QTimer::timeout,
+   fileWatcherDebounce_, [this]() {
+    if (fileWatcherPending_) {
+     fileWatcherPending_ = false;
+     // Refresh imported cache and re-apply filters
+     refreshImportedAssetCache();
+     refreshUnusedAssetCache();
+     applyFilters();
+    }
+   });
  }
 
  ArtifactAssetBrowser::Impl::~Impl()
  {
+  if (fileWatcher_) {
+   fileWatcher_->deleteLater();
+  }
+  if (fileWatcherDebounce_) {
+   fileWatcherDebounce_->deleteLater();
+  }
+ }
+
+  // P0-1: File system watcher for auto-refresh
+  fileWatcher_ = new QFileSystemWatcher();
+  fileWatcherDebounce_ = new QTimer();
+  fileWatcherDebounce_->setSingleShot(true);
+  fileWatcherDebounce_->setInterval(500); // 500ms debounce
+
+  QObject::connect(fileWatcher_, &QFileSystemWatcher::directoryChanged,
+   fileWatcherDebounce_, [this]() {
+    fileWatcherPending_ = true;
+    fileWatcherDebounce_->start();
+   });
+
+  QObject::connect(fileWatcher_, &QFileSystemWatcher::fileChanged,
+   fileWatcherDebounce_, [this]() {
+    fileWatcherPending_ = true;
+    fileWatcherDebounce_->start();
+   });
+
+  QObject::connect(fileWatcherDebounce_, &QTimer::timeout,
+   fileWatcherDebounce_, [this]() {
+    if (fileWatcherPending_) {
+     fileWatcherPending_ = false;
+     // Refresh imported cache and re-apply filters
+     refreshImportedAssetCache();
+     refreshUnusedAssetCache();
+     applyFilters();
+    }
+   });
+ }
+
+ ArtifactAssetBrowser::Impl::~Impl()
+ {
+  if (fileWatcher_) {
+   fileWatcher_->deleteLater();
+  }
+  if (fileWatcherDebounce_) {
+   fileWatcherDebounce_->deleteLater();
+  }
  }
 
 void ArtifactAssetBrowser::Impl::handleDoubleClicked(ArtifactAssetBrowser* owner)
@@ -545,7 +924,10 @@ void ArtifactAssetBrowser::Impl::handleDoubleClicked(ArtifactAssetBrowser* owner
   if (!svc) {
    return;
   }
-  svc->importAssetsFromPaths(QStringList() << filePath);
+  const QStringList paths = item.isSequence && !item.sequencePaths.isEmpty()
+      ? item.sequencePaths
+      : QStringList{filePath};
+  svc->importAssetsFromPaths(paths);
 }
 
 void ArtifactAssetBrowser::Impl::defaultHandleMousePressEvent(QMouseEvent* event)
@@ -624,49 +1006,18 @@ void ArtifactAssetBrowser::Impl::defaultHandleMousePressEvent(QMouseEvent* event
          lower.endsWith(".woff2");
  }
 
- bool ArtifactAssetBrowser::Impl::isImportedAssetPath(const QString& filePath) const
+bool ArtifactAssetBrowser::Impl::isImportedAssetPath(const QString& filePath) const
 {
   if (filePath.isEmpty()) {
-   return false;
-  }
-
-  auto* svc = ArtifactProjectService::instance();
-  if (!svc) {
    return false;
   }
 
   const QString canonicalTarget = QFileInfo(filePath).canonicalFilePath().isEmpty()
     ? QFileInfo(filePath).absoluteFilePath()
     : QFileInfo(filePath).canonicalFilePath();
-
-  std::function<bool(ProjectItem*)> containsPath = [&](ProjectItem* item) -> bool {
-   if (!item) {
-    return false;
-   }
-   if (item->type() == eProjectItemType::Footage) {
-    const QString candidatePath = static_cast<Artifact::FootageItem*>(item)->filePath;
-    const QString canonicalCandidate = QFileInfo(candidatePath).canonicalFilePath().isEmpty()
-      ? QFileInfo(candidatePath).absoluteFilePath()
-      : QFileInfo(candidatePath).canonicalFilePath();
-    if (QDir::cleanPath(canonicalCandidate) == QDir::cleanPath(canonicalTarget)) {
-     return true;
-    }
-   }
-   for (auto* child : item->children) {
-    if (containsPath(child)) {
-     return true;
-    }
-   }
-   return false;
-  };
-
-  const auto roots = svc->projectItems();
-  for (auto* root : roots) {
-   if (containsPath(root)) {
-    return true;
-   }
-  }
-  return false;
+  const QString cleanedTarget = QDir::cleanPath(canonicalTarget);
+  return importedAssetPaths_.contains(cleanedTarget)
+    || importedAssetPaths_.contains(QDir::cleanPath(filePath));
 }
 
 QStringList ArtifactAssetBrowser::Impl::selectedAssetPaths() const
@@ -677,17 +1028,24 @@ QStringList ArtifactAssetBrowser::Impl::selectedAssetPaths() const
   }
 
   const QModelIndexList selectedIndexes = fileView_->selectionModel()->selectedIndexes();
+  QSet<QString> seen;
   paths.reserve(selectedIndexes.size());
   for (const QModelIndex& index : selectedIndexes) {
    const AssetMenuItem item = assetModel_->itemAt(index.row());
-   if (!item.isFolder) {
-    const QString path = item.path.toQString();
-    if (!path.isEmpty()) {
+   if (item.isFolder) {
+    continue;
+   }
+
+   const QStringList itemPaths = item.isSequence && !item.sequencePaths.isEmpty()
+       ? item.sequencePaths
+       : QStringList{item.path.toQString()};
+   for (const QString& path : itemPaths) {
+    if (!path.isEmpty() && !seen.contains(path)) {
+     seen.insert(path);
      paths.append(path);
     }
    }
   }
-  paths.removeDuplicates();
   return paths;
 }
 
@@ -703,8 +1061,23 @@ int ArtifactAssetBrowser::Impl::rowForPath(const QString& filePath) const
     if (QDir::cleanPath(item.path.toQString()) == normalized) {
       return row;
     }
+    if (item.isSequence) {
+      for (const QString& sequencePath : item.sequencePaths) {
+        if (QDir::cleanPath(sequencePath) == normalized) {
+          return row;
+        }
+      }
+    }
   }
   return -1;
+}
+
+int selectedVisibleRowCount(const QItemSelectionModel* selectionModel)
+{
+  if (!selectionModel) {
+    return 0;
+  }
+  return selectionModel->selectedRows().size();
 }
 
 void ArtifactAssetBrowser::Impl::updateBrowserStatus()
@@ -713,7 +1086,8 @@ void ArtifactAssetBrowser::Impl::updateBrowserStatus()
     return;
   }
 
-  const QString selectedText = QStringLiteral("Selected: %1").arg(selectedAssetPaths().size());
+  const int selectedRows = selectedVisibleRowCount(fileView_ ? fileView_->selectionModel() : nullptr);
+  const QString selectedText = QStringLiteral("Selected: %1").arg(selectedRows);
   const QString typeText = QStringLiteral("Type: %1").arg(currentFileTypeFilter_);
   const QString statusText = QStringLiteral("Status: %1").arg(currentStatusFilter_);
   const QString sortText = QStringLiteral("Sort: %1").arg(currentSortMode_);
@@ -960,6 +1334,11 @@ QIcon ArtifactAssetBrowser::Impl::generateThumbnail(const QString& filePath)
 
   // For audio files, use a default audio icon
   if (isAudioFile(fileInfo.fileName())) {
+   const QIcon waveformIcon = buildAudioWaveformIcon(filePath, thumbnailSize_);
+   if (!waveformIcon.isNull()) {
+    thumbnailCache_[filePath] = waveformIcon;
+    return waveformIcon;
+   }
    thumbnailCache_[filePath] = defaultAudioIcon_;
    return defaultAudioIcon_;
   }
@@ -1008,27 +1387,85 @@ QIcon ArtifactAssetBrowser::Impl::generateThumbnail(const QString& filePath)
 
  void ArtifactAssetBrowser::Impl::processThumbnailWarmupBatch()
  {
-  if (!assetModel_) {
+  if (!fileView_ || !assetModel_) {
    thumbnailWarmupQueue_.clear();
    thumbnailWarmupPending_.clear();
    return;
   }
 
-  int processed = 0;
-  while (!thumbnailWarmupQueue_.isEmpty() && processed < 4) {
-   const QString path = thumbnailWarmupQueue_.dequeue();
-   thumbnailWarmupPending_.remove(path);
-   const QIcon icon = generateThumbnail(path);
-   if (!icon.isNull()) {
-    assetModel_->updateItemIconByPath(path, icon);
-   }
-   ++processed;
+  // P0-2: TBB parallel thumbnail generation
+  // Collect batch of paths to process
+  int batchSize = std::min(16, thumbnailWarmupQueue_.size());
+  QStringList batchPaths;
+  for (int i = 0; i < batchSize; ++i) {
+   batchPaths.append(thumbnailWarmupQueue_.dequeue());
   }
 
-  if (thumbnailWarmupQueue_.isEmpty() && thumbnailWarmupTimer_) {
-   thumbnailWarmupTimer_->stop();
+  // Process in parallel using TBB
+  std::mutex cacheMutex;
+  tbb::task_group tg;
+
+  for (const QString& path : batchPaths) {
+   tg.run([this, &cacheMutex, path]() {
+    // Generate thumbnail (thread-safe for QPixmap and OpenCV)
+    QIcon icon;
+    QFileInfo fileInfo(path);
+
+    if (fileInfo.isDir()) {
+     QStyle* style = QApplication::style();
+     if (style) icon = style->standardIcon(QStyle::SP_DirIcon);
+     else icon = defaultFileIcon_;
+    } else if (isImageFile(fileInfo.fileName())) {
+     QPixmap pixmap(path);
+     if (!pixmap.isNull()) {
+      icon = QIcon(pixmap.scaled(thumbnailSize_, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+     }
+    } else if (isVideoFile(fileInfo.fileName())) {
+     cv::VideoCapture cap(path.toLocal8Bit().constData());
+     if (cap.isOpened()) {
+      cv::Mat frame;
+      if (cap.read(frame) && !frame.empty()) {
+       cv::Mat rgb;
+       cv::cvtColor(frame, rgb, cv::COLOR_BGR2RGB);
+       QImage qimg(rgb.data, rgb.cols, rgb.rows, rgb.step, QImage::Format_RGB888);
+       QPixmap pm = QPixmap::fromImage(qimg).scaled(thumbnailSize_, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+       icon = QIcon(pm);
+      }
+     }
+    } else if (isAudioFile(fileInfo.fileName())) {
+     icon = buildAudioWaveformIcon(path, thumbnailSize_);
+     if (icon.isNull()) icon = defaultAudioIcon_;
+    } else if (isFontFile(fileInfo.fileName())) {
+     icon = defaultFontIcon_;
+    }
+
+    if (icon.isNull()) icon = defaultFileIcon_;
+
+    // Thread-safe cache update
+    {
+     std::lock_guard<std::mutex> lock(cacheMutex);
+     thumbnailCache_[path] = icon;
+    }
+   });
   }
- }
+
+  tg.wait(); // Wait for all parallel tasks to complete
+
+  // Remove processed paths from pending set
+  for (const QString& path : batchPaths) {
+   thumbnailWarmupPending_.remove(path);
+  }
+
+  // Update the view
+  if (!batchPaths.isEmpty()) {
+   assetModel_->refreshIcons();
+  }
+
+  // Continue warmup if there are more items
+   if (thumbnailWarmupQueue_.isEmpty() && thumbnailWarmupTimer_) {
+    thumbnailWarmupTimer_->stop();
+   }
+  }
 
  QIcon ArtifactAssetBrowser::Impl::getFileIcon(const QString& fileName, const QString& filePath)
  {
@@ -1042,6 +1479,46 @@ void ArtifactAssetBrowser::Impl::clearThumbnailCache()
   thumbnailWarmupPending_.clear();
   if (thumbnailWarmupTimer_) {
    thumbnailWarmupTimer_->stop();
+  }
+}
+
+void ArtifactAssetBrowser::Impl::refreshImportedAssetCache()
+{
+  importedAssetPaths_.clear();
+
+  auto* svc = ArtifactProjectService::instance();
+  if (!svc) {
+    return;
+  }
+
+  std::function<void(ProjectItem*)> visit = [&](ProjectItem* item) {
+    if (!item) {
+      return;
+    }
+
+    if (item->type() == eProjectItemType::Footage) {
+      const auto* footage = static_cast<const Artifact::FootageItem*>(item);
+      if (footage) {
+        const QString filePath = footage->filePath;
+        if (!filePath.isEmpty()) {
+          const QFileInfo info(filePath);
+          const QString canonical = info.canonicalFilePath().isEmpty()
+              ? QDir::cleanPath(info.absoluteFilePath())
+              : QDir::cleanPath(info.canonicalFilePath());
+          importedAssetPaths_.insert(QDir::cleanPath(filePath));
+          importedAssetPaths_.insert(canonical);
+        }
+      }
+    }
+
+    for (auto* child : item->children) {
+      visit(child);
+    }
+  };
+
+  const auto roots = svc->projectItems();
+  for (auto* root : roots) {
+    visit(root);
   }
 }
 
@@ -1059,6 +1536,19 @@ void ArtifactAssetBrowser::Impl::syncProjectAssetRoot()
    assetsDir.mkpath(".");
   }
 
+  // P0-1: Update file system watcher
+  if (fileWatcher_) {
+   QStringList oldDirs = fileWatcher_->directories();
+   for (const QString& dir : oldDirs) {
+    fileWatcher_->removePath(dir);
+   }
+   // Watch the asset root and all immediate subdirectories
+   fileWatcher_->addPath(assetsPath);
+   for (const QFileInfo& entry : assetsDir.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot)) {
+    fileWatcher_->addPath(entry.absoluteFilePath());
+   }
+  }
+
   QString previousRoot = currentDirectoryPath_;
   directoryModel_->setAssetRootPath(assetsPath);
 
@@ -1069,6 +1559,7 @@ void ArtifactAssetBrowser::Impl::syncProjectAssetRoot()
   }
 
   refreshUnusedAssetCache();
+  refreshImportedAssetCache();
   clearThumbnailCache();
   applyFilters();
   syncDirectorySelection();
@@ -1132,96 +1623,297 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
   directoryView_->scrollTo(matchedIndex, QAbstractItemView::PositionAtCenter);
  }
 
- void ArtifactAssetBrowser::Impl::applyFilters()
- {
-  if (!fileView_ || !assetModel_ || currentDirectoryPath_.isEmpty()) return;
+void ArtifactAssetBrowser::Impl::applyFilters()
+{
+  if (!fileView_ || !assetModel_ || currentDirectoryPath_.isEmpty()) {
+    return;
+  }
 
   QDir dir(currentDirectoryPath_);
-  if (!dir.exists()) return;
+  if (!dir.exists()) {
+    return;
+  }
 
-  // Update path label
+  if (breadcrumbWidget_) {
+   breadcrumbWidget_->setPath(currentDirectoryPath_);
+  }
+  if (breadcrumbWidget_) {
+   breadcrumbWidget_->setPath(currentDirectoryPath_);
+  }
   if (currentPathLabel_) {
-   currentPathLabel_->setText(currentDirectoryPath_);
+    if (expandedSequenceKey_.isEmpty()) {
+      currentPathLabel_->setText(currentDirectoryPath_);
+    } else {
+      currentPathLabel_->setText(QStringLiteral("%1 > %2")
+        .arg(currentDirectoryPath_)
+        .arg(expandedSequenceKey_.split('|').last()));
+    }
   }
   updateBrowserStatus();
 
-  // Get both files and directories, excluding . and ..
+  const bool inSequenceMode = !expandedSequenceKey_.isEmpty();
+
   QStringList entries = dir.entryList(QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot);
-  QList<AssetMenuItem> items;
+  const int entryCount = entries.size();
 
+  QStringList fullPaths;
+  fullPaths.reserve(entryCount);
   for (const QString& entry : entries) {
-   QString fullPath = dir.absoluteFilePath(entry);
-   QFileInfo fileInfo(fullPath);
+    fullPaths.append(dir.absoluteFilePath(entry));
+  }
 
-   // Skip directories if filtering for specific file types (except "all")
-   bool isDir = fileInfo.isDir();
-   if (isDir && currentFileTypeFilter_ != "all") {
-    continue;
-   }
+  std::vector<AssetMenuItem> builtItems(static_cast<size_t>(entryCount));
+  std::vector<char> keepFlags(static_cast<size_t>(entryCount), 0);
+  std::vector<char> sequenceFlags(static_cast<size_t>(entryCount), 0);
+  std::vector<SequenceMatch> sequenceMatches(static_cast<size_t>(entryCount));
 
-   // Check search filter
-   if (!matchesSearchFilter(entry)) {
-    continue;
-   }
+  tbb::parallel_for(
+      tbb::blocked_range<int>(0, entryCount),
+      [&](const tbb::blocked_range<int>& range) {
+        for (int i = range.begin(); i != range.end(); ++i) {
+          const QString& entry = entries.at(i);
+          const QString& fullPath = fullPaths.at(i);
+          QFileInfo fileInfo(fullPath);
+          const bool isDir = fileInfo.isDir();
 
-    // For files, check type filter
-    if (!isDir && !matchesFileTypeFilter(entry)) {
-     continue;
+          if (isDir && currentFileTypeFilter_ != "all") {
+            continue;
+          }
+          if (!matchesSearchFilter(entry)) {
+            continue;
+          }
+          if (!isDir && !matchesFileTypeFilter(entry)) {
+            continue;
+          }
+
+          AssetMenuItem item;
+          item.name = UniString::fromQString(entry);
+          item.path = UniString::fromQString(fullPath);
+          item.type = UniString::fromQString(isDir ? QStringLiteral("Folder")
+                                                   : fileInfo.suffix().toUpper());
+          item.isFolder = isDir;
+          item.icon = placeholderIconFor(entry, isDir);
+
+          if (!isDir && isImageFile(entry)) {
+            SequenceMatch match;
+            if (parseSequenceMatch(entry, match)) {
+              sequenceMatches[static_cast<size_t>(i)] = match;
+              sequenceFlags[static_cast<size_t>(i)] = 1;
+            }
+          }
+
+          builtItems[static_cast<size_t>(i)] = std::move(item);
+          keepFlags[static_cast<size_t>(i)] = 1;
+        }
+      });
+
+  struct SequenceBucket
+  {
+    QString key;
+    QString displayName;
+    QString representativePath;
+    QString extension;
+    QStringList paths;
+    int startFrame = std::numeric_limits<int>::max();
+    int endFrame = std::numeric_limits<int>::min();
+    int padding = 0;
+    bool emitted = false;
+  };
+
+  QHash<QString, SequenceBucket> sequenceBuckets;
+  sequenceBuckets.reserve(entryCount);
+
+  for (int i = 0; i < entryCount; ++i) {
+    if (!keepFlags[static_cast<size_t>(i)] || !sequenceFlags[static_cast<size_t>(i)]) {
+      continue;
+    }
+    const SequenceMatch match = sequenceMatches[static_cast<size_t>(i)];
+    if (!match.isValid()) {
+      continue;
     }
 
-    // Check status filter
-    if (!isDir && currentStatusFilter_ != "all") {
-     const bool imported = isImportedAssetPath(fullPath);
-     const bool unused = isUnusedAssetPath(fullPath);
-     const bool missing = isMissingAssetPath(fullPath);
-     if (currentStatusFilter_ == "imported" && !imported) continue;
-     if (currentStatusFilter_ == "missing" && !missing) continue;
-     if (currentStatusFilter_ == "unused" && !unused) continue;
+    const QString filePath = fullPaths.at(i);
+    const QFileInfo info(filePath);
+    const QString key = sequenceGroupKey(info, match);
+    auto& bucket = sequenceBuckets[key];
+    if (bucket.paths.isEmpty()) {
+      bucket.key = key;
+      bucket.displayName = sequenceDisplayName(match);
+      bucket.representativePath = filePath;
+      bucket.extension = match.extension;
+      bucket.padding = match.padding;
     }
+    bucket.paths.append(filePath);
+    bucket.startFrame = std::min(bucket.startFrame, match.frameNumber);
+    bucket.endFrame = std::max(bucket.endFrame, match.frameNumber);
+    if (bucket.representativePath.isEmpty()) {
+      bucket.representativePath = filePath;
+    }
+  }
 
-    AssetMenuItem item;
-   item.name = UniString::fromQString(entry);
-   item.path = UniString::fromQString(fullPath);
-   QString itemType = isDir ? QStringLiteral("Folder") : fileInfo.suffix().toUpper();
-   if (!isDir) {
-    const bool imported = isImportedAssetPath(fullPath);
-    const bool unused = isUnusedAssetPath(fullPath);
-    const bool missing = isMissingAssetPath(fullPath);
+  for (auto it = sequenceBuckets.begin(); it != sequenceBuckets.end(); ++it) {
+    auto& bucket = it.value();
+    std::sort(bucket.paths.begin(), bucket.paths.end(), [](const QString& lhs, const QString& rhs) {
+      return QString::localeAwareCompare(lhs, rhs) < 0;
+    });
+    if (!bucket.paths.isEmpty()) {
+      bucket.representativePath = bucket.paths.first();
+    }
+  }
+
+  const auto aggregateStatus = [this](const QStringList& paths) {
+    struct Status {
+      bool imported = false;
+      bool unused = false;
+      bool missing = false;
+    };
+
+    Status status;
+    status.imported = !paths.isEmpty();
+    status.unused = !paths.isEmpty();
+    for (const QString& path : paths) {
+      const bool imported = isImportedAssetPath(path);
+      const bool unused = isUnusedAssetPath(path);
+      const bool missing = isMissingAssetPath(path);
+      status.imported = status.imported && imported;
+      status.unused = status.unused && unused;
+      status.missing = status.missing || missing;
+    }
+    return status;
+  };
+
+  const auto decorateType = [](const QString& baseType, bool imported, bool unused, bool missing) {
+    QString result = baseType;
     if (missing && imported && unused) {
-     itemType = QStringLiteral("Missing • Imported • Unused • %1").arg(itemType);
+      result = QStringLiteral("Missing • Imported • Unused • %1").arg(result);
     } else if (missing && imported) {
-     itemType = QStringLiteral("Missing • Imported • %1").arg(itemType);
+      result = QStringLiteral("Missing • Imported • %1").arg(result);
     } else if (missing) {
-     itemType = QStringLiteral("Missing • %1").arg(itemType);
+      result = QStringLiteral("Missing • %1").arg(result);
     } else if (imported && unused) {
-     itemType = QStringLiteral("Imported • Unused • %1").arg(itemType);
+      result = QStringLiteral("Imported • Unused • %1").arg(result);
     } else if (imported) {
-     itemType = QStringLiteral("Imported • %1").arg(itemType);
+      result = QStringLiteral("Imported • %1").arg(result);
     } else if (unused) {
-     itemType = QStringLiteral("Unused • %1").arg(itemType);
+      result = QStringLiteral("Unused • %1").arg(result);
     }
-   }
-   item.type = UniString::fromQString(itemType);
-   item.isFolder = isDir;
+    return result;
+  };
 
-   item.icon = placeholderIconFor(entry, isDir);
-   if (!isDir && (isImageFile(entry) || isVideoFile(entry))) {
-    queueThumbnailWarmup(fullPath);
-   }
+  QList<AssetMenuItem> items;
+  items.reserve(entryCount);
+  for (int i = 0; i < entryCount; ++i) {
+    if (!keepFlags[static_cast<size_t>(i)]) {
+      continue;
+    }
 
-   items.append(item);
+    AssetMenuItem item = builtItems[static_cast<size_t>(i)];
+    const QString filePath = item.path.toQString();
+    if (item.isFolder) {
+      items.append(std::move(item));
+      continue;
+    }
+
+    if (sequenceFlags[static_cast<size_t>(i)]) {
+      const SequenceMatch match = sequenceMatches[static_cast<size_t>(i)];
+      if (!match.isValid()) {
+        continue;
+      }
+      const QString key = sequenceGroupKey(QFileInfo(filePath), match);
+
+      if (inSequenceMode) {
+        if (key != expandedSequenceKey_) {
+          continue; // スキップ: 別のシーケンス
+        }
+        // 展開モードでは、集約せず通常ファイルとして下の共通処理へ流す。
+      } else {
+        auto bucketIt = sequenceBuckets.find(key);
+        if (bucketIt == sequenceBuckets.end()) {
+          continue;
+        }
+        SequenceBucket& bucket = bucketIt.value();
+        if (bucket.emitted) {
+          continue;
+        }
+        bucket.emitted = true;
+
+        if (bucket.paths.size() < 2) {
+          // Not enough members to form a real sequence; fall back to the single file.
+          const auto singleStatus = aggregateStatus(QStringList{filePath});
+          if (currentStatusFilter_ != "all") {
+            if (currentStatusFilter_ == "imported" && !singleStatus.imported) continue;
+            if (currentStatusFilter_ == "missing" && !singleStatus.missing) continue;
+            if (currentStatusFilter_ == "unused" && !singleStatus.unused) continue;
+          }
+          item.type = UniString::fromQString(decorateType(item.type.toQString(),
+                                                          singleStatus.imported,
+                                                          singleStatus.unused,
+                                                          singleStatus.missing));
+          if (isImageFile(entries.at(i)) || isVideoFile(entries.at(i))) {
+            queueThumbnailWarmup(filePath);
+          }
+          items.append(std::move(item));
+          continue;
+        }
+
+        const auto status = aggregateStatus(bucket.paths);
+        if (currentStatusFilter_ != "all") {
+          if (currentStatusFilter_ == "imported" && !status.imported) continue;
+          if (currentStatusFilter_ == "missing" && !status.missing) continue;
+          if (currentStatusFilter_ == "unused" && !status.unused) continue;
+        }
+
+        const QString rangeLabel = sequenceRangeLabel(bucket.startFrame, bucket.endFrame, bucket.padding);
+        item.name = UniString::fromQString(bucket.displayName);
+        item.type = UniString::fromQString(
+            QStringLiteral("Sequence • %1 frames • %2 • %3")
+                .arg(bucket.paths.size())
+                .arg(rangeLabel)
+                .arg(bucket.extension.toUpper()));
+        item.isSequence = true;
+        item.sequenceFrameCount = bucket.paths.size();
+        item.sequenceStartFrame = bucket.startFrame;
+        item.sequencePadding = bucket.padding;
+        item.sequencePaths = bucket.paths;
+        item.path = UniString::fromQString(bucket.representativePath);
+        item.icon = placeholderIconFor(QFileInfo(bucket.representativePath).fileName(), false);
+        item.type = UniString::fromQString(decorateType(item.type.toQString(),
+                                                        status.imported,
+                                                        status.unused,
+                                                        status.missing));
+        queueThumbnailWarmup(bucket.representativePath);
+        items.append(std::move(item));
+        continue;
+      }
+    } else if (inSequenceMode) {
+      // 展開モード中は、ターゲットシーケンスに該当しない通常ファイルなどは表示しない
+      continue;
+    }
+
+    const auto status = aggregateStatus(QStringList{filePath});
+    if (currentStatusFilter_ != "all") {
+      if (currentStatusFilter_ == "imported" && !status.imported) continue;
+      if (currentStatusFilter_ == "missing" && !status.missing) continue;
+      if (currentStatusFilter_ == "unused" && !status.unused) continue;
+    }
+
+    item.type = UniString::fromQString(decorateType(item.type.toQString(),
+                                                    status.imported,
+                                                    status.unused,
+                                                    status.missing));
+    if (isImageFile(entries.at(i)) || isVideoFile(entries.at(i))) {
+      queueThumbnailWarmup(filePath);
+    }
+    items.append(std::move(item));
   }
 
   sortItems(items);
   assetModel_->setItems(items);
- }
+}
 
- ArtifactAssetBrowser::ArtifactAssetBrowser(QWidget* parent /*= nullptr*/) :QWidget(parent), impl_(new Impl())
+ArtifactAssetBrowser::ArtifactAssetBrowser(QWidget* parent /*= nullptr*/) :QWidget(parent), impl_(new Impl())
  {
   setWindowTitle("AssetBrowser");
-
-  auto style = getDCCStyleSheetPreset(DccStylePreset::StudioStyle);
-  setStyleSheet(style);
 
   // Enable drag and drop
   setAcceptDrops(true);
@@ -1374,26 +2066,28 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
   directoryView->setAcceptDrops(true);
   directoryView->setDropIndicatorShown(true);
   directoryView->setDragDropMode(QAbstractItemView::DropOnly);
-  directoryView->setStyleSheet(QStringLiteral(
-      "QTreeView { background: #1c1d21; border: 1px solid #2c2f36; }"
-      "QTreeView::item { height: 42px; }"
-      "QTreeView::branch { background: transparent; }"));
 
   QString desktopPath = assetsPath;
 
   auto assetPathLabel = new QLabel("Assets");
   assetPathLabel->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
-  assetPathLabel->setStyleSheet("font-weight: bold;");
 
-  auto filePathLabel = impl_->currentPathLabel_ = new QLabel(desktopPath);
-  filePathLabel->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
-  filePathLabel->setStyleSheet("color: gray; font-size: 10pt;");
-  filePathLabel->setWordWrap(true);
+  // P1-1: Breadcrumb navigation widget (replaces old path label)
+  auto breadcrumb = impl_->breadcrumbWidget_ = new ArtifactBreadcrumbWidget();
+  breadcrumb->setRootPath(assetsPath);
+  breadcrumb->setPath(desktopPath);
+  connect(breadcrumb, &ArtifactBreadcrumbWidget::pathClicked, this, [this](const QString& path) {
+   if (path.isEmpty() || path == impl_->currentDirectoryPath_) return;
+   impl_->currentDirectoryPath_ = path;
+   impl_->clearThumbnailCache();
+   impl_->applyFilters();
+   impl_->syncDirectorySelection();
+   folderChanged(path);
+  });
 
   auto browserStatusLabel = impl_->browserStatusLabel_ = new QLabel(
       QStringLiteral("Selected: 0 | Type: all | Status: all | Sort: name | Search: -"));
   browserStatusLabel->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
-  browserStatusLabel->setStyleSheet("color: #98a2b3; font-size: 9pt;");
   browserStatusLabel->setWordWrap(true);
 
   auto assetModel = impl_->assetModel_ = new AssetMenuModel(this);
@@ -1460,6 +2154,11 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
 
   if (impl_->upButton_) {
    connect(impl_->upButton_, &QToolButton::clicked, this, [this]() {
+    if (!impl_->expandedSequenceKey_.isEmpty()) {
+     impl_->expandedSequenceKey_.clear();
+     impl_->applyFilters();
+     return;
+    }
     if (impl_->currentDirectoryPath_.isEmpty()) return;
     const QString assetsRoot = ArtifactProjectManager::getInstance().currentProjectAssetsPath();
     const QDir currentDir(impl_->currentDirectoryPath_);
@@ -1519,6 +2218,16 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
    if (filePath.isEmpty()) return;
    itemDoubleClicked(filePath);
 
+   // If it's a sequence, expand it
+   if (item.isSequence) {
+    SequenceMatch sm;
+    if (parseSequenceMatch(QFileInfo(filePath).fileName(), sm)) {
+     impl_->expandedSequenceKey_ = sequenceGroupKey(QFileInfo(filePath), sm);
+     impl_->applyFilters();
+     return;
+    }
+   }
+
    // If it's a folder, navigate into it
    if (item.isFolder) {
     impl_->currentDirectoryPath_ = filePath;
@@ -1540,20 +2249,9 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
 
   // Connect file item selection to update details
   connect(fileView->selectionModel(), &QItemSelectionModel::selectionChanged, this, [this]() {
-   QModelIndexList selectedIndexes = impl_->fileView_->selectionModel()->selectedIndexes();
-   QStringList selectedFiles;
-   selectedFiles.reserve(selectedIndexes.size());
-   if (!selectedIndexes.isEmpty()) {
-    for (const QModelIndex& index : selectedIndexes) {
-     const AssetMenuItem item = impl_->assetModel_->itemAt(index.row());
-     const QString filePath = item.path.toQString();
-     if (!filePath.isEmpty()) {
-      selectedFiles.append(filePath);
-     }
-    }
-    if (!selectedFiles.isEmpty()) {
-     updateFileInfo(selectedFiles.first());
-    }
+   const QStringList selectedFiles = impl_->selectedAssetPaths();
+   if (!selectedFiles.isEmpty()) {
+    updateFileInfo(selectedFiles.first());
    } else if (impl_->fileInfoPanel_) {
     impl_->fileInfoPanel_->clearAsset();
    }
@@ -1596,17 +2294,21 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
   fileInfoGroup->setLayout(fileInfoLayout);
   fileInfoGroup->setMinimumHeight(220);
 
-  // Initial load
-  impl_->applyFilters();
-
   auto* projectService = ArtifactProjectService::instance();
   if (projectService) {
+   if (projectService->hasProject()) {
+    impl_->syncProjectAssetRoot();
+   } else {
+    impl_->applyFilters();
+   }
    connect(projectService, &ArtifactProjectService::projectCreated, this, [this]() {
     impl_->syncProjectAssetRoot();
    });
    connect(projectService, &ArtifactProjectService::projectChanged, this, [this]() {
     impl_->syncProjectAssetRoot();
    });
+  } else {
+   impl_->applyFilters();
   }
 
   auto toolbarRow = new QHBoxLayout();
@@ -1617,7 +2319,7 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
 
   auto VBoxLayout = new  QVBoxLayout();
   VBoxLayout->addWidget(assetPathLabel);
-  VBoxLayout->addWidget(filePathLabel);
+  VBoxLayout->addWidget(breadcrumb);
   VBoxLayout->addWidget(browserStatusLabel);
   VBoxLayout->addWidget(thumbnailControlGroup);
   VBoxLayout->addWidget(fileView);
@@ -1868,10 +2570,25 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
   QStringList lines;
   QStringList badges;
   QColor accent = QColor(96, 96, 96);
-  const bool imported = impl_->isImportedAssetPath(filePath);
-  const bool unused = impl_->isUnusedAssetPath(filePath);
-  const bool missing = impl_->isMissingAssetPath(filePath);
+  bool imported = impl_->isImportedAssetPath(filePath);
+  bool unused = impl_->isUnusedAssetPath(filePath);
+  bool missing = impl_->isMissingAssetPath(filePath);
   const QString fileName = fileInfo.fileName();
+  AssetMenuItem modelItem;
+  const int modelRow = impl_->rowForPath(filePath);
+  if (modelRow >= 0 && impl_->assetModel_) {
+   modelItem = impl_->assetModel_->itemAt(modelRow);
+  }
+  if (modelItem.isSequence && !modelItem.sequencePaths.isEmpty()) {
+   imported = true;
+   unused = true;
+   missing = false;
+   for (const QString& sequencePath : modelItem.sequencePaths) {
+    imported = imported && impl_->isImportedAssetPath(sequencePath);
+    unused = unused && impl_->isUnusedAssetPath(sequencePath);
+    missing = missing || impl_->isMissingAssetPath(sequencePath);
+   }
+  }
 
   // Check if it's a folder
   if (fileInfo.isDir()) {
@@ -1946,6 +2663,18 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
    accent = QColor(96, 96, 96);
   }
 
+  if (modelItem.isSequence) {
+   badges.prepend(QStringLiteral("Sequence"));
+   lines.prepend(QStringLiteral("Frames: %1").arg(modelItem.sequenceFrameCount));
+   if (!modelItem.sequencePaths.isEmpty()) {
+    const QString firstFrame = QFileInfo(modelItem.sequencePaths.first()).fileName();
+    const QString lastFrame = QFileInfo(modelItem.sequencePaths.last()).fileName();
+    lines.prepend(QStringLiteral("Range: %1 .. %2").arg(firstFrame, lastFrame));
+    lines.prepend(QStringLiteral("Representative: %1").arg(QFileInfo(modelItem.path.toQString()).fileName()));
+   }
+   accent = QColor(88, 132, 190);
+  }
+
   if (imported) {
    badges << QStringLiteral("Imported");
   } else {
@@ -1978,12 +2707,17 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
   QMenu contextMenu;
 
   const QStringList selectedAssetPaths = impl_->selectedAssetPaths();
-  const QStringList importTargets = selectedAssetPaths.isEmpty() ? QStringList{filePath} : selectedAssetPaths;
+  const QStringList itemPaths = item.isSequence && !item.sequencePaths.isEmpty()
+   ? item.sequencePaths
+   : QStringList{filePath};
+  const QStringList importTargets = selectedAssetPaths.isEmpty() ? itemPaths : selectedAssetPaths;
 
   // Add to Project action
-  const QString addActionLabel = importTargets.size() > 1
-   ? QStringLiteral("Add %1 Items to Project").arg(importTargets.size())
-   : QStringLiteral("Add to Project");
+  const QString addActionLabel = item.isSequence
+   ? QStringLiteral("Add Sequence to Project")
+   : (importTargets.size() > 1
+      ? QStringLiteral("Add %1 Items to Project").arg(importTargets.size())
+      : QStringLiteral("Add to Project"));
   QAction* addToProjectAction = contextMenu.addAction(addActionLabel);
   connect(addToProjectAction, &QAction::triggered, this, [this, importTargets, filePath]() {
    if (importTargets.isEmpty() && filePath.isEmpty()) return;
@@ -2025,7 +2759,7 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
    QApplication::clipboard()->setText(filePath);
   });
 
-  const auto removeTargets = selectedAssetPaths.isEmpty() ? QStringList{filePath} : selectedAssetPaths;
+  const auto removeTargets = selectedAssetPaths.isEmpty() ? itemPaths : selectedAssetPaths;
   const auto removableItems = impl_->footageItemsForPaths(removeTargets);
   if (!removableItems.empty()) {
    QAction* removeFromProjectAction = contextMenu.addAction("Remove from Project");
@@ -2036,10 +2770,11 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
    });
   }
 
-  if (!item.isFolder && impl_->isMissingAssetPath(filePath) && !impl_->footageItemsForPaths(QStringList{filePath}).empty()) {
+  if (!item.isFolder && (impl_->isMissingAssetPath(filePath) || item.isSequence) && !impl_->footageItemsForPaths(itemPaths).empty()) {
    QAction* relinkAction = contextMenu.addAction("Relink Missing...");
-   connect(relinkAction, &QAction::triggered, this, [this, filePath]() {
-    if (impl_->relinkProjectItemsForPath(filePath, this)) {
+   connect(relinkAction, &QAction::triggered, this, [this, itemPaths, filePath]() {
+    const QString relinkTarget = itemPaths.isEmpty() ? filePath : itemPaths.first();
+    if (impl_->relinkProjectItemsForPath(relinkTarget, this)) {
      impl_->refreshUnusedAssetCache();
      impl_->applyFilters();
     }
@@ -2047,6 +2782,25 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
   }
 
   contextMenu.addSeparator();
+
+  if (item.isSequence && impl_->expandedSequenceKey_.isEmpty()) {
+   QAction* showFramesAction = contextMenu.addAction("Show Sequence Frames");
+   connect(showFramesAction, &QAction::triggered, this, [this, filePath]() {
+    SequenceMatch sm;
+    if (parseSequenceMatch(QFileInfo(filePath).fileName(), sm)) {
+     impl_->expandedSequenceKey_ = sequenceGroupKey(QFileInfo(filePath), sm);
+     impl_->applyFilters();
+    }
+   });
+   contextMenu.addSeparator();
+  } else if (!impl_->expandedSequenceKey_.isEmpty()) {
+   QAction* backToFolderAction = contextMenu.addAction("Back to Folder");
+   connect(backToFolderAction, &QAction::triggered, this, [this]() {
+    impl_->expandedSequenceKey_.clear();
+    impl_->applyFilters();
+   });
+   contextMenu.addSeparator();
+  }
 
   // Show file properties action
   QAction* showPropertiesAction = contextMenu.addAction("Properties");

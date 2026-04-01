@@ -2,12 +2,11 @@ module;
 #include <QVector3D>
 #include <QVector4D>
 #include <QMatrix4x4>
-#include <cmath>
-#include <algorithm>
-#include <limits>
 #include <wobjectimpl.h>
 
 module Artifact.Widgets.Gizmo3D;
+
+import std;
 
 namespace Artifact {
 
@@ -416,19 +415,19 @@ void Artifact3DGizmo::draw(ArtifactIRenderer* renderer, const QMatrix4x4& view, 
     if (mode_ == GizmoMode::Move) {
         drawAxisArrow(GizmoAxis::X,
                       center,
-                      {impl_->position.x() + s * 1.08f, impl_->position.y(), impl_->position.z()},
+                      {impl_->position.x() + s * 1.16f, impl_->position.y(), impl_->position.z()},
                       {1.0f, 0.22f, 0.18f, 1.0f},
-                      s * 0.30f);
+                      s * 0.42f);
         drawAxisArrow(GizmoAxis::Y,
                       center,
-                      {impl_->position.x(), impl_->position.y() - s * 1.08f, impl_->position.z()},
+                      {impl_->position.x(), impl_->position.y() - s * 1.16f, impl_->position.z()},
                       {0.20f, 1.0f, 0.28f, 1.0f},
-                      s * 0.30f);
+                      s * 0.42f);
         drawAxisArrow(GizmoAxis::Z,
                       center,
-                      {impl_->position.x(), impl_->position.y(), impl_->position.z() + s},
+                      {impl_->position.x(), impl_->position.y(), impl_->position.z() + s * 1.12f},
                       depthEnabled_ ? FloatColor{0.28f, 0.58f, 1.0f, 1.0f} : FloatColor{0.45f, 0.45f, 0.45f, 0.7f},
-                      s * 0.30f);
+                      s * 0.42f);
     } 
     else if (mode_ == GizmoMode::Rotate) {
         drawAxisRing(GizmoAxis::X, center, {1, 0, 0}, s * 1.04f, {1.0f, 0.22f, 0.18f, 1.0f}, 1.1f);

@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <QThread>
 #include <QElapsedTimer>
 #include <QMutexLocker>
@@ -77,6 +77,7 @@ public:
     size_t audioResyncClearCount_ = 0;
     size_t audioClockCorrectionCount_ = 0;
     std::atomic<bool> audioSeekPending_{true};
+    bool audioExhausted_ = false;  // 音声データが尽きたフラグ（再シーク時にリセット）
     
     // タイミング
     QElapsedTimer elapsedTimer_;
@@ -359,11 +360,12 @@ public:
         const double exactSamplesPerFrame = static_cast<double>(audioSampleRate_) / safeFrameRate;
 
         if (audioTargetBufferedFrames_ == 0) {
+            // 先読みは16フレーム分程度に抑える（48フレームは重すぎる）
             audioTargetBufferedFrames_ = static_cast<size_t>(
-                std::max<int>(samplesPerFrame * 48, audioSampleRate_ * 2));
+                std::max<int>(samplesPerFrame * 16, audioSampleRate_));
         }
         const size_t audioStartBufferedFrames_ = static_cast<size_t>(
-            std::max<int>(samplesPerFrame * 16, audioSampleRate_ * 2));
+            std::max<int>(samplesPerFrame * 8, audioSampleRate_ / 2));
 
         const int64_t currentFrame = currentFrame_.load();
         if (audioSeekPending_.exchange(false)) {
@@ -376,6 +378,12 @@ public:
             audioRenderer_->clearBuffer();
             audioNextFrame_ = currentFrame;
             audioSampleAccumulator_ = 0.0;
+            audioExhausted_ = false;  // シーク時にリセット
+        }
+
+        // 既に音声が尽きているなら再フィルしない（末尾での毎ループ CPU 消費を防止）
+        if (audioExhausted_) {
+            return;
         }
 
         bool audioExhausted = false;
@@ -398,8 +406,9 @@ public:
             ++audioNextFrame_;
         }
 
-        // オーディオ尽きた場合、残りをサイレンスで埋めて部分アンダーランを防止
+        // オーディオ尽きた場合、残りをサイレンスで1回だけ埋めてフラグを立てる
         if (audioExhausted) {
+            audioExhausted_ = true;
             const size_t buffered = audioRenderer_->bufferedFrames();
             if (buffered > 0 && buffered < audioTargetBufferedFrames_) {
                 const size_t silenceFrames = audioTargetBufferedFrames_ - buffered;

@@ -1,12 +1,12 @@
 module;
 
-#include <algorithm>
-#include <cmath>
 #include <QDebug>
 #include <QJsonObject>
 #include <QVariant>
 
 module Artifact.Layer.Audio;
+
+import std;
 
 import Property.Abstract;
 import Property.Group;

@@ -363,11 +363,115 @@ namespace Artifact {
    ctx->trimLayerOutAtCurrentTime();
   }
  }
- void ArtifactEditMenu::Impl::handleSelectAll() { qWarning() << "[Edit] Select All not yet implemented"; }
- void ArtifactEditMenu::Impl::handleSelectNone() { qWarning() << "[Edit] Select None not yet implemented"; }
- void ArtifactEditMenu::Impl::handleInvertSelection() { qWarning() << "[Edit] Invert Selection not yet implemented"; }
- void ArtifactEditMenu::Impl::handleSelectSameType() { qWarning() << "[Edit] Select Same Type not yet implemented"; }
- void ArtifactEditMenu::Impl::handleFind() { qWarning() << "[Edit] Find not yet implemented"; }
+ void ArtifactEditMenu::Impl::handleSelectAll() {
+  auto* selMgr = ArtifactApplicationManager::instance()
+                     ? ArtifactApplicationManager::instance()->layerSelectionManager()
+                     : nullptr;
+  auto* svc = ArtifactProjectService::instance();
+  if (!selMgr || !svc) return;
+
+  auto comp = svc->currentComposition().lock();
+  if (!comp) return;
+
+  selMgr->clearSelection();
+  for (const auto& layer : comp->allLayer()) {
+   if (layer) {
+    selMgr->addToSelection(layer);
+   }
+  }
+  qDebug() << "[Edit] Selected all" << comp->allLayer().size() << "layers";
+ }
+
+ void ArtifactEditMenu::Impl::handleSelectNone() {
+  auto* selMgr = ArtifactApplicationManager::instance()
+                     ? ArtifactApplicationManager::instance()->layerSelectionManager()
+                     : nullptr;
+  if (!selMgr) return;
+
+  selMgr->clearSelection();
+  qDebug() << "[Edit] Selection cleared";
+ }
+
+ void ArtifactEditMenu::Impl::handleInvertSelection() {
+  auto* selMgr = ArtifactApplicationManager::instance()
+                     ? ArtifactApplicationManager::instance()->layerSelectionManager()
+                     : nullptr;
+  auto* svc = ArtifactProjectService::instance();
+  if (!selMgr || !svc) return;
+
+  auto comp = svc->currentComposition().lock();
+  if (!comp) return;
+
+  const auto currentSelection = selMgr->selectedLayers();
+  QSet<ArtifactAbstractLayerPtr> selectedSet(currentSelection.begin(), currentSelection.end());
+
+  selMgr->clearSelection();
+  for (const auto& layer : comp->allLayer()) {
+   if (layer && !selectedSet.contains(layer)) {
+    selMgr->addToSelection(layer);
+   }
+  }
+  qDebug() << "[Edit] Inverted selection:" << selMgr->selectedLayers().size() << "layers";
+ }
+
+ void ArtifactEditMenu::Impl::handleSelectSameType() {
+  auto* selMgr = ArtifactApplicationManager::instance()
+                     ? ArtifactApplicationManager::instance()->layerSelectionManager()
+                     : nullptr;
+  auto* svc = ArtifactProjectService::instance();
+  if (!selMgr || !svc) return;
+
+  auto comp = svc->currentComposition().lock();
+  if (!comp) return;
+
+  const auto currentSelection = selMgr->selectedLayers();
+  if (currentSelection.isEmpty()) return;
+
+  // Get the type of the first selected layer
+  LayerType targetType = currentSelection.first()->layerType();
+
+  selMgr->clearSelection();
+  for (const auto& layer : comp->allLayer()) {
+   if (layer && layer->layerType() == targetType) {
+    selMgr->addToSelection(layer);
+   }
+  }
+  qDebug() << "[Edit] Selected same type:" << selMgr->selectedLayers().size() << "layers";
+ }
+
+ void ArtifactEditMenu::Impl::handleFind() {
+  if (!parentWidget_) return;
+
+  bool ok = false;
+  const QString searchText = QInputDialog::getText(parentWidget_, "検索",
+   "レイヤー名の一部を入力:", QLineEdit::Normal, QString(), &ok);
+  if (!ok || searchText.trimmed().isEmpty()) return;
+
+  auto* svc = ArtifactProjectService::instance();
+  auto* selMgr = ArtifactApplicationManager::instance()
+                     ? ArtifactApplicationManager::instance()->layerSelectionManager()
+                     : nullptr;
+  if (!svc || !selMgr) return;
+
+  auto comp = svc->currentComposition().lock();
+  if (!comp) return;
+
+  selMgr->clearSelection();
+  int foundCount = 0;
+  const QString lowerSearch = searchText.toLower();
+
+  for (const auto& layer : comp->allLayer()) {
+   if (layer && layer->layerName().toLower().contains(lowerSearch)) {
+    selMgr->addToSelection(layer);
+    foundCount++;
+   }
+  }
+
+  if (auto* sb = parentWidget_ ? parentWidget_->findChild<QStatusBar*>() : nullptr) {
+   sb->showMessage(QString("Found %1 layer(s) matching \"%2\"").arg(foundCount).arg(searchText), 3000);
+  }
+  qDebug() << "[Edit] Found" << foundCount << "layers matching" << searchText;
+ }
  void ArtifactEditMenu::Impl::handlePreferences() { 
   auto* dialog = new ApplicationSettingDialog(parentWidget_);
   dialog->setAttribute(Qt::WA_DeleteOnClose);
@@ -405,9 +509,11 @@ namespace Artifact {
   splitAction->setEnabled(hasProject && hasSelection);
   trimInAction->setEnabled(hasProject && hasSelection);
   trimOutAction->setEnabled(hasProject && hasSelection);
-  selectAllAction->setEnabled(hasProject);
-  selectNoneAction->setEnabled(hasProject && hasSelection);
-  findAction->setEnabled(hasProject);
+   selectAllAction->setEnabled(hasProject);
+   selectNoneAction->setEnabled(hasProject && hasSelection);
+   invertSelectionAction->setEnabled(hasProject && hasSelection);
+   selectSameTypeAction->setEnabled(hasProject && hasSelection);
+   findAction->setEnabled(hasProject);
  }
 
  W_OBJECT_IMPL(ArtifactEditMenu)

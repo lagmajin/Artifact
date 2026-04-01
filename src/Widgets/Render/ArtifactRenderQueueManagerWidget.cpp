@@ -47,6 +47,8 @@ module;
 module Artifact.Widgets.Render.QueueManager;
 
 import Widgets.Utils.CSS;
+import Artifact.Event.Types;
+import Event.Bus;
 import Artifact.Render.Queue.Service;
 import Artifact.Render.Queue.Presets;
 import Artifact.Service.Project;
@@ -88,6 +90,8 @@ namespace Artifact
   ArtifactRenderQueueService* service = nullptr;
   QList<JobEntry> jobs;
   QVector<int> visibleToSource;
+  ArtifactCore::EventBus eventBus_;
+  std::vector<ArtifactCore::EventBus::Subscription> eventBusSubscriptions_;
 
   QLineEdit* searchEdit = nullptr;
   QComboBox* filterCombo = nullptr;
@@ -178,6 +182,7 @@ namespace Artifact
     historyListWidget->addItem(QString("[%1] %2").arg(QDateTime::currentDateTime().toString("HH:mm:ss"), message));
     while (historyListWidget->count() > 300) delete historyListWidget->takeItem(0);
     historyListWidget->scrollToBottom();
+    saveHistory();
   }
 
   void saveHistory() const {
@@ -217,6 +222,20 @@ namespace Artifact
     if (jobListWidget && selectedSource >= 0 && selectedSource < jobListWidget->count()) {
       jobListWidget->setCurrentRow(selectedSource);
     }
+  }
+
+  void postQueueChanged(const QString& reason = QString()) {
+    eventBus_.post<RenderQueueChangedEvent>(RenderQueueChangedEvent{
+        service ? service->jobCount() : 0,
+        selectedSourceIndex(),
+        reason
+    });
+    eventBus_.drain();
+  }
+
+  void postHistoryMessage(const QString& message, int sourceIndex = -1, bool alsoHistory = true) {
+    eventBus_.post<RenderQueueLogEvent>(RenderQueueLogEvent{message, sourceIndex, alsoHistory});
+    eventBus_.drain();
   }
 
   void updateJobList() {
@@ -415,6 +434,21 @@ namespace Artifact
   impl_->previewLabel->setScaledContents(false);
   layout->addWidget(impl_->previewLabel);
 
+  auto* historyGroup = new QGroupBox("Render History / Log");
+  auto* historyLayout = new QVBoxLayout(historyGroup);
+  impl_->historyListWidget = new QListWidget();
+  impl_->historyListWidget->setObjectName("renderQueueHistory");
+  historyLayout->addWidget(impl_->historyListWidget, 1);
+  auto* historyButtonLayout = new QHBoxLayout();
+  impl_->clearHistoryButton = new QPushButton("Clear");
+  impl_->exportHistoryButton = new QPushButton("Export...");
+  historyButtonLayout->addWidget(impl_->clearHistoryButton);
+  historyButtonLayout->addWidget(impl_->exportHistoryButton);
+  historyButtonLayout->addStretch();
+  historyLayout->addLayout(historyButtonLayout);
+  layout->addWidget(historyGroup, 1);
+  impl_->loadHistory();
+
   // Bottom
   impl_->totalProgressBar = new QProgressBar();
   impl_->summaryLabel = new QLabel("Ready");
@@ -494,8 +528,80 @@ namespace Artifact
 
   // Services
   if (impl_->service) {
-    connect(impl_->service, &ArtifactRenderQueueService::jobProgressChanged, this, [this](int i, int p) {
-        impl_->syncJobsFromService();
+    impl_->eventBusSubscriptions_.push_back(
+        impl_->eventBus_.subscribe<RenderQueueChangedEvent>([this](const RenderQueueChangedEvent& event) {
+          Q_UNUSED(event);
+          if (!impl_) {
+            return;
+          }
+          impl_->syncJobsFromService();
+        }));
+    impl_->eventBusSubscriptions_.push_back(
+        impl_->eventBus_.subscribe<RenderQueueLogEvent>([this](const RenderQueueLogEvent& event) {
+          if (!impl_) {
+            return;
+          }
+          if (event.message.trimmed().isEmpty()) {
+            return;
+          }
+          impl_->logServiceEvent(event.message, event.sourceIndex, event.alsoHistory);
+        }));
+    connect(impl_->service, &ArtifactRenderQueueService::jobAdded, this, [this](int index) {
+        Q_UNUSED(index);
+        if (!impl_) {
+          return;
+        }
+        impl_->postQueueChanged(QStringLiteral("Job added"));
+    });
+    connect(impl_->service, &ArtifactRenderQueueService::jobRemoved, this, [this](int index) {
+        Q_UNUSED(index);
+        if (!impl_) {
+          return;
+        }
+        impl_->postQueueChanged(QStringLiteral("Job removed"));
+    });
+    connect(impl_->service, &ArtifactRenderQueueService::jobUpdated, this, [this](int index) {
+        Q_UNUSED(index);
+        if (!impl_) {
+          return;
+        }
+        impl_->postQueueChanged(QStringLiteral("Job updated"));
+    });
+    connect(impl_->service, &ArtifactRenderQueueService::jobProgressChanged, this, [this](int index, int progress) {
+        Q_UNUSED(progress);
+        if (!impl_) {
+          return;
+        }
+        impl_->postQueueChanged(QStringLiteral("Job progress updated"));
+    });
+    connect(impl_->service, &ArtifactRenderQueueService::jobStatusChanged, this, [this](int index, int status) {
+        Q_UNUSED(status);
+        if (!impl_ || !impl_->service) {
+          return;
+        }
+        const QString jobName = impl_->service->jobCompositionNameAt(index);
+        const QString jobStatus = impl_->service->jobStatusAt(index);
+        if (jobStatus == "Failed") {
+          const QString error = impl_->service->jobErrorMessageAt(index);
+          impl_->postHistoryMessage(QString("Job failed: %1%2")
+              .arg(jobName)
+              .arg(error.trimmed().isEmpty() ? QString() : QString(" | %1").arg(error)), index);
+        } else if (jobStatus == "Completed") {
+          impl_->postHistoryMessage(QString("Job completed: %1").arg(jobName), index);
+        } else if (jobStatus == "Rendering") {
+          impl_->postHistoryMessage(QString("Job started: %1").arg(jobName), index);
+        } else {
+          impl_->postHistoryMessage(QString("Job status -> %1: %2").arg(jobName, jobStatus), index, false);
+        }
+        impl_->postQueueChanged(QStringLiteral("Job status changed"));
+    });
+    connect(impl_->service, &ArtifactRenderQueueService::queueReordered, this, [this](int fromIndex, int toIndex) {
+        Q_UNUSED(fromIndex);
+        Q_UNUSED(toIndex);
+        if (!impl_) {
+          return;
+        }
+        impl_->postQueueChanged(QStringLiteral("Queue reordered"));
     });
     connect(impl_->service, &ArtifactRenderQueueService::allJobsCompleted, this, [this]() {
 #ifdef _WIN32
@@ -503,7 +609,9 @@ namespace Artifact
 #else
         QApplication::beep();
 #endif
-        impl_->logUiEvent("All jobs completed");
+        if (impl_) {
+          impl_->postHistoryMessage(QStringLiteral("All jobs completed"));
+        }
     });
     connect(impl_->service, &ArtifactRenderQueueService::previewFrameReady, this, [this](int jobIndex, int frameNumber) {
         QImage frame = impl_->service->lastRenderedFrame();
@@ -517,7 +625,6 @@ namespace Artifact
   connect(impl_->addButton, &QPushButton::clicked, this, [this]() {
     if (impl_->service) {
       impl_->service->addRenderQueue();
-      impl_->syncJobsFromService();
     }
   });
 
@@ -526,7 +633,6 @@ namespace Artifact
       const int index = impl_->selectedSourceIndex();
       if (index >= 0) {
         impl_->service->removeRenderQueueAt(index);
-        impl_->syncJobsFromService();
       }
     }
   });
@@ -536,13 +642,37 @@ namespace Artifact
       const int index = impl_->selectedSourceIndex();
       if (index >= 0) {
         impl_->service->duplicateRenderQueueAt(index);
-        impl_->syncJobsFromService();
       }
     }
   });
 
   connect(impl_->startButton, &QPushButton::clicked, this, [this]() {
     if (impl_->service) impl_->service->startAllJobs();
+  });
+
+  connect(impl_->clearHistoryButton, &QPushButton::clicked, this, [this]() {
+    if (!impl_->historyListWidget) return;
+    impl_->historyListWidget->clear();
+    impl_->saveHistory();
+  });
+
+  connect(impl_->exportHistoryButton, &QPushButton::clicked, this, [this]() {
+    if (!impl_->historyListWidget) return;
+    const QString filePath = QFileDialog::getSaveFileName(
+        this,
+        "Export Render History",
+        QDir::homePath() + "/Desktop/render_queue_history.log",
+        "Log Files (*.log *.txt);;All Files (*)");
+    if (filePath.isEmpty()) return;
+    QFile file(filePath);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Text | QIODevice::Truncate)) {
+      QMessageBox::warning(this, "Export Failed", QString("Failed to open %1").arg(filePath));
+      return;
+    }
+    QTextStream out(&file);
+    for (int i = 0; i < impl_->historyListWidget->count(); ++i) {
+      out << impl_->historyListWidget->item(i)->text() << '\n';
+    }
   });
 
   impl_->syncJobsFromService();

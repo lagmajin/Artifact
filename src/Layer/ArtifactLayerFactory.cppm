@@ -124,10 +124,13 @@ namespace Artifact {
   case LayerType::Camera:
    ptr = std::make_shared<ArtifactCameraLayer>();
    break;
-  case LayerType::Group:
-   ptr = std::make_shared<ArtifactGroupLayer>();
-   break;
-  default:
+   case LayerType::Group:
+    ptr = std::make_shared<ArtifactGroupLayer>();
+    break;
+   case LayerType::Clone:
+    ptr = std::make_shared<ArtifactCloneLayer>();
+    break;
+   default:
    break;
   }
 

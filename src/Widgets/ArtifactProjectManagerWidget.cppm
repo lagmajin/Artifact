@@ -20,6 +20,9 @@
 #include <QMenu>
 #include <QPixmap>
 #include <QIcon>
+#include <QBrush>
+#include <QColor>
+#include <QFont>
 #include <QStringList>
 #include <QTimer>
 #include <QInputDialog>
@@ -50,6 +53,7 @@
 #include <QDialogButtonBox>
 #include <QStyle>
 #include <QPainter>
+#include <QPalette>
 
 #include <QScrollBar>
 #include <QKeyEvent>
@@ -94,6 +98,7 @@ module Artifact.Widgets.ProjectManagerWidget;
 
 import std;
 import Artifact.Widgets.SoftwareRenderInspectors;
+import Widgets.Utils.CSS;
 
 
 import Utils.String.UniString;
@@ -107,6 +112,8 @@ import Artifact.Project.Roles;
 import Artifact.Project.Cleanup;
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Search.Query;
+import Artifact.Event.Types;
+import Event.Bus;
 import Artifact.Layer.InitParams;
 import Artifact.Widgets.LayerPanelWidget;
 import Artifact.Widgets.CreatePlaneLayerDialog;
@@ -389,6 +396,15 @@ public:
         setObjectName(QStringLiteral("projectInfoPanel"));
         setAutoFillBackground(true);
         setFixedHeight(90);
+        const QColor background = QColor(ArtifactCore::currentDCCTheme().backgroundColor);
+        const QColor surface = QColor(ArtifactCore::currentDCCTheme().secondaryBackgroundColor);
+        const QColor text = QColor(ArtifactCore::currentDCCTheme().textColor);
+        const QColor muted = text.darker(130);
+        const QColor border = QColor(ArtifactCore::currentDCCTheme().borderColor);
+        QPalette widgetPalette = palette();
+        widgetPalette.setColor(QPalette::Window, background);
+        widgetPalette.setColor(QPalette::WindowText, text);
+        setPalette(widgetPalette);
         auto layout = new QHBoxLayout(this);
         layout->setContentsMargins(12, 8, 12, 8);
         layout->setSpacing(15);
@@ -397,26 +413,37 @@ public:
         thumbnail->setFixedSize(120, 68);
         thumbnail->setAlignment(Qt::AlignCenter);
         thumbnail->setText("PREVIEW");
-        thumbnail->setStyleSheet(R"(
-            QLabel {
-                background-color: #111;
-                border: 1px solid #3e3e42;
-                border-radius: 3px;
-                color: #444;
-                font-size: 9px;
-                font-weight: bold;
-            }
-        )");
+        thumbnail->setAutoFillBackground(true);
+        {
+            QPalette pal = thumbnail->palette();
+            pal.setColor(QPalette::Window, surface);
+            pal.setColor(QPalette::WindowText, muted);
+            pal.setColor(QPalette::Base, surface);
+            pal.setColor(QPalette::Mid, border);
+            thumbnail->setPalette(pal);
+        }
 
         auto infoLayout = new QVBoxLayout();
         infoLayout->setSpacing(2);
         infoLayout->setContentsMargins(0, 5, 0, 5);
 
         titleLabel = new QLabel("Project");
-        titleLabel->setStyleSheet("color: #eee; font-weight: bold; font-size: 13px;");
+        {
+            QFont f = titleLabel->font();
+            f.setBold(true);
+            f.setPointSize(13);
+            titleLabel->setFont(f);
+            QPalette pal = titleLabel->palette();
+            pal.setColor(QPalette::WindowText, text);
+            titleLabel->setPalette(pal);
+        }
 
         detailsLabel = new QLabel("Select an item to see details");
-        detailsLabel->setStyleSheet("color: #888; font-size: 11px;");
+        {
+            QPalette pal = detailsLabel->palette();
+            pal.setColor(QPalette::WindowText, muted);
+            detailsLabel->setPalette(pal);
+        }
 
         infoLayout->addWidget(titleLabel);
         infoLayout->addWidget(detailsLabel);
@@ -484,7 +511,7 @@ public:
 protected:
     void paintEvent(QPaintEvent* event) override {
         QPainter painter(this);
-        painter.fillRect(event->rect(), QColor(0x25, 0x25, 0x26));
+        painter.fillRect(event->rect(), QColor(ArtifactCore::currentDCCTheme().backgroundColor));
         QWidget::paintEvent(event);
     }
 };
@@ -502,7 +529,7 @@ HoverThumbnailPopupWidget::HoverThumbnailPopupWidget(QWidget* parent) : QWidget(
   setWindowFlags(Qt::ToolTip | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint);
   setAttribute(Qt::WA_TranslucentBackground);
   setAttribute(Qt::WA_ShowWithoutActivating);
-  setStyleSheet("background-color: rgba(30, 30, 30, 240); border: 1px solid #444; border-radius: 6px;");
+  setAutoFillBackground(false);
 
   impl_->layout = new QVBoxLayout(this);
   impl_->layout->setContentsMargins(10, 10, 10, 10);
@@ -511,15 +538,34 @@ HoverThumbnailPopupWidget::HoverThumbnailPopupWidget(QWidget* parent) : QWidget(
   impl_->thumbnailLabel = new QLabel(this);
   impl_->thumbnailLabel->setFixedSize(200, 112);
   impl_->thumbnailLabel->setScaledContents(true);
-  impl_->thumbnailLabel->setStyleSheet("background-color: #000; border-radius: 4px;");
+  {
+    QPalette pal = impl_->thumbnailLabel->palette();
+    pal.setColor(QPalette::Window, QColor(ArtifactCore::currentDCCTheme().secondaryBackgroundColor));
+    pal.setColor(QPalette::WindowText, QColor(ArtifactCore::currentDCCTheme().textColor));
+    impl_->thumbnailLabel->setAutoFillBackground(true);
+    impl_->thumbnailLabel->setPalette(pal);
+  }
   impl_->layout->addWidget(impl_->thumbnailLabel, 0, Qt::AlignCenter);
 
   for (int i = 0; i < 3; ++i) {
     QLabel* l = new QLabel(this);
-    l->setStyleSheet("color: #ccc; font-size: 11px; font-family: 'Segoe UI';");
+    {
+      QPalette pal = l->palette();
+      pal.setColor(QPalette::WindowText, QColor(ArtifactCore::currentDCCTheme().textColor).darker(115));
+      l->setPalette(pal);
+    }
     impl_->infoLabels.append(l);
     impl_->layout->addWidget(l);
   }
+}
+
+void HoverThumbnailPopupWidget::paintEvent(QPaintEvent* event) {
+  QPainter painter(this);
+  painter.setRenderHint(QPainter::Antialiasing);
+  painter.setBrush(QColor(30, 30, 30, 240));
+  painter.setPen(QPen(QColor(ArtifactCore::currentDCCTheme().borderColor)));
+  painter.drawRoundedRect(rect().adjusted(0, 0, -1, -1), 6, 6);
+  QWidget::paintEvent(event);
 }
 
 HoverThumbnailPopupWidget::~HoverThumbnailPopupWidget() { delete impl_; }
@@ -1066,35 +1112,6 @@ ArtifactProjectView::ArtifactProjectView(QWidget* parent) : QWidget(parent), imp
     verticalScrollBar_ = new QScrollBar(Qt::Vertical, this);
     scrollY_ = 0;
 
-    setStyleSheet(R"(
-        ArtifactProjectView {
-            background-color: #282828;
-            color: #CCC;
-            outline: none;
-            border: none;
-        }
-        QScrollBar:vertical {
-            border: none;
-            background: #282828;
-            width: 8px;
-            margin: 0px;
-        }
-        QScrollBar::handle:vertical {
-            background: #3e3e42;
-            min-height: 20px;
-            border-radius: 4px;
-        }
-        QScrollBar::handle:vertical:hover {
-            background: #4a4a4e;
-        }
-        QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
-            height: 0px;
-        }
-        QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
-            background: none;
-        }
-    )");
-
     connect(verticalScrollBar_, &QScrollBar::valueChanged, this, [this](int value) {
         scrollY_ = value;
         update();
@@ -1134,6 +1151,9 @@ void ArtifactProjectView::setModel(QAbstractItemModel* model)
         QObject::connect(impl_->selectionModel, &QItemSelectionModel::selectionChanged, this,
             [this](const QItemSelection&, const QItemSelection&) {
                 update();
+                if (impl_->selectionModel) {
+                    itemSelected(impl_->selectionModel->currentIndex());
+                }
             });
         impl_->modelConnections.push_back(QObject::connect(impl_->model, &QAbstractItemModel::modelReset, this,
             [this]() { refreshVisibleContent(); }));
@@ -1592,7 +1612,13 @@ void ArtifactProjectView::editIndex(const QModelIndex& index) {
     if (!impl_->nameEditor) {
         QLineEdit* editor = new QLineEdit(this);
         impl_->nameEditor = editor;
-        impl_->nameEditor->setStyleSheet("background: #333; color: white; border: 1px solid #007ACC; padding: 1px; selection-background-color: #005A9E;");
+        {
+            QPalette pal = impl_->nameEditor->palette();
+            pal.setColor(QPalette::Base, QColor(ArtifactCore::currentDCCTheme().secondaryBackgroundColor));
+            pal.setColor(QPalette::Text, QColor(ArtifactCore::currentDCCTheme().textColor));
+            pal.setColor(QPalette::Highlight, QColor(ArtifactCore::currentDCCTheme().accentColor));
+            impl_->nameEditor->setPalette(pal);
+        }
         connect(impl_->nameEditor, &QLineEdit::editingFinished, this, [this]() {
             if (!impl_ || !impl_->editingIndex.isValid() || !impl_->nameEditor) return;
             const QString newName = impl_->nameEditor->text().trimmed();
@@ -1950,7 +1976,11 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
 
                 auto* infoLabel = new QLabel(
                     QStringLiteral("ID: %1").arg(compositionId.toString()), dialog);
-                infoLabel->setStyleSheet(QStringLiteral("color: #888;"));
+                {
+                    QPalette pal = infoLabel->palette();
+                    pal.setColor(QPalette::WindowText, QColor(ArtifactCore::currentDCCTheme().textColor).darker(135));
+                    infoLabel->setPalette(pal);
+                }
                 layout->addWidget(infoLabel);
 
                 auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, dialog);
@@ -2237,13 +2267,6 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
         }
     }
 
-    menu.setStyleSheet(R"(
-        QMenu { background-color: #2D2D30; color: #CCC; border: 1px solid #1a1a1a; padding: 4px; }
-        QMenu::item { padding: 4px 20px 4px 20px; border-radius: 2px; }
-        QMenu::item:selected { background-color: #094771; color: white; }
-        QMenu::separator { height: 1px; background: #3e3e42; margin: 4px 10px; }
-    )");
-
     menu.exec(event->globalPos());
 }
 
@@ -2414,7 +2437,6 @@ void ArtifactProjectView::mousePressEvent(QMouseEvent* event) {
                     if (s != -1 && e != -1) { QItemSelection sel; for (int i = std::min(s, e); i <= std::max(s, e); ++i) sel.select(impl_->visibleRows[i].index0, impl_->visibleRows[i].index0); selectionModel()->select(sel, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows); }
                 } else selectionModel()->setCurrentIndex(idx, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
             }
-            itemSelected(idx);
             return;
         }
         if (selectionModel()) selectionModel()->clearSelection();
@@ -2503,6 +2525,9 @@ public:
     QTimer* proxyQueueTimer_ = nullptr;
     QMetaObject::Connection currentRowChangedConnection_;
     bool headerLayoutInitialized_ = false;
+    ArtifactCore::EventBus eventBus_;
+    std::vector<ArtifactCore::EventBus::Subscription> eventBusSubscriptions_;
+    QTimer* thumbnailUpdateDebounce_ = nullptr;
 
     QModelIndex currentSelectionIndex0() const {
         if (!projectView_ || !projectView_->selectionModel()) {
@@ -2636,6 +2661,35 @@ public:
             return static_cast<CompositionItem*>(item)->compositionId.toString();
         }
         return item->name.toQString();
+    }
+
+    QStringList selectedItemIds() const {
+        QStringList ids;
+        if (!projectView_ || !projectView_->selectionModel()) {
+            return ids;
+        }
+        const auto rows = projectView_->selectionModel()->selectedRows(0);
+        ids.reserve(rows.size());
+        for (const auto& row : rows) {
+            QModelIndex sourceIdx = row;
+            if (auto proxy = qobject_cast<const QSortFilterProxyModel*>(sourceIdx.model())) {
+                sourceIdx = proxy->mapToSource(sourceIdx).siblingAtColumn(0);
+            }
+            const QVariant ptrVar = sourceIdx.data(Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::ProjectItemPtr));
+            auto* item = ptrVar.isValid() ? reinterpret_cast<ProjectItem*>(ptrVar.value<quintptr>()) : nullptr;
+            if (item) {
+                ids.push_back(item->id.toString());
+            }
+        }
+        return ids;
+    }
+
+    SelectionChangedEvent makeSelectionChangedEvent() const {
+        SelectionChangedEvent event;
+        event.selectedItemIds = selectedItemIds();
+        event.currentItemId = currentSelectedItem() ? currentSelectedItem()->id.toString() : QString();
+        event.selectedCount = event.selectedItemIds.size();
+        return event;
     }
 
     QString selectionSummaryText() const {
@@ -2946,32 +3000,6 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
 {
     setObjectName(QStringLiteral("artifactProjectManagerWidget"));
     setAutoFillBackground(true);
-    setStyleSheet(R"(
-        QWidget#artifactProjectManagerWidget {
-            background-color: #20252c;
-        }
-        QWidget#projectManagerChrome {
-            background-color: #252b33;
-            border-bottom: 1px solid #1a1f26;
-        }
-        QWidget#projectInfoPanel {
-            background-color: #252526;
-            border-bottom: 2px solid #1a1a1a;
-        }
-        QLabel#projectManagerSectionLabel {
-            color: #8d99a6;
-            font-size: 10px;
-            padding: 5px 10px;
-            font-weight: bold;
-        }
-        QWidget#projectManagerFilterBar {
-            background-color: #252b33;
-        }
-        QWidget#projectManagerToolBox {
-            background-color: #2D2D30;
-            border-top: 1px solid #1a1a1a;
-        }
-    )");
 
     auto mainLayout = new QVBoxLayout(this);
     mainLayout->setContentsMargins(0, 0, 0, 0);
@@ -2996,12 +3024,26 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     selectionChromeLayout->setContentsMargins(10, 0, 10, 8);
     selectionChromeLayout->setSpacing(4);
     impl_->selectionSummaryLabel = new QLabel(QStringLiteral("Selected: 0 | Filter: - | Type: All | All items"), selectionChrome);
-    impl_->selectionSummaryLabel->setStyleSheet("color: #9aa7b4; font-size: 10px;");
     impl_->selectionSummaryLabel->setWordWrap(true);
+    {
+        QFont f = impl_->selectionSummaryLabel->font();
+        f.setPointSize(10);
+        impl_->selectionSummaryLabel->setFont(f);
+        QPalette pal = impl_->selectionSummaryLabel->palette();
+        pal.setColor(QPalette::WindowText, QColor(ArtifactCore::currentDCCTheme().textColor).darker(135));
+        impl_->selectionSummaryLabel->setPalette(pal);
+    }
     selectionChromeLayout->addWidget(impl_->selectionSummaryLabel);
     impl_->selectionDetailLabel = new QLabel(QStringLiteral("Use the search bar or click an item to inspect it."), selectionChrome);
-    impl_->selectionDetailLabel->setStyleSheet("color: #c7ccd4; font-size: 11px;");
     impl_->selectionDetailLabel->setWordWrap(true);
+    {
+        QFont f = impl_->selectionDetailLabel->font();
+        f.setPointSize(11);
+        impl_->selectionDetailLabel->setFont(f);
+        QPalette pal = impl_->selectionDetailLabel->palette();
+        pal.setColor(QPalette::WindowText, QColor(ArtifactCore::currentDCCTheme().textColor).darker(120));
+        impl_->selectionDetailLabel->setPalette(pal);
+    }
     selectionChromeLayout->addWidget(impl_->selectionDetailLabel);
 
     auto* selectionButtons = new QHBoxLayout();
@@ -3024,19 +3066,18 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
 
     impl_->searchBar = new QLineEdit(chromePanel);
     impl_->searchBar->setPlaceholderText("Search (type:footage tag:png regex:shot_.* unused:true)...");
-    impl_->searchBar->setStyleSheet(R"(
-        QLineEdit {
-            background-color: #1E1E1E;
-            color: #AAA;
-            border: 1px solid #333;
-            border-radius: 4px;
-            padding: 5px 10px;
-            margin: 0 10px 8px 10px;
-            font-size: 11px;
-        }
-        QLineEdit:focus { border: 1px solid #007ACC; color: white; }
-    )");
     impl_->searchBar->setClearButtonEnabled(true);
+    {
+        QFont f = impl_->searchBar->font();
+        f.setPointSize(11);
+        impl_->searchBar->setFont(f);
+        QPalette pal = impl_->searchBar->palette();
+        pal.setColor(QPalette::Base, QColor(ArtifactCore::currentDCCTheme().secondaryBackgroundColor));
+        pal.setColor(QPalette::Text, QColor(ArtifactCore::currentDCCTheme().textColor));
+        pal.setColor(QPalette::PlaceholderText, QColor(ArtifactCore::currentDCCTheme().textColor).darker(145));
+        pal.setColor(QPalette::Highlight, QColor(ArtifactCore::currentDCCTheme().accentColor));
+        impl_->searchBar->setPalette(pal);
+    }
     chromeLayout->addWidget(impl_->searchBar);
 
     auto* filterBarHost = new QWidget(chromePanel);
@@ -3096,8 +3137,14 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
         impl_->copySelectedPathToClipboard();
     });
     connect(impl_->projectView_, &ArtifactProjectView::itemSelected, [this](const QModelIndex& idx) {
-        if (impl_->proxyModel_ && impl_->infoPanel_) impl_->infoPanel_->updateInfo(impl_->proxyModel_->mapToSource(idx));
-        if (impl_) impl_->refreshSelectionChrome();
+        if (!impl_) {
+            return;
+        }
+        if (impl_->proxyModel_ && impl_->infoPanel_) {
+            impl_->infoPanel_->updateInfo(impl_->proxyModel_->mapToSource(idx));
+        }
+        impl_->eventBus_.post<SelectionChangedEvent>(impl_->makeSelectionChangedEvent());
+        impl_->eventBus_.drain();
     });
     connect(impl_->projectView_, &ArtifactProjectView::itemDoubleClicked, [this](const QModelIndex& idx) {
         itemDoubleClicked(idx);
@@ -3137,8 +3184,91 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     });
 
     auto svc = ArtifactProjectService::instance();
-    connect(svc, &ArtifactProjectService::projectChanged, this, [this]() { updateRequested(); });
-    connect(svc, &ArtifactProjectService::projectCreated, this, [this]() { updateRequested(); });
+    connect(svc, &ArtifactProjectService::projectChanged, this, [this, svc]() {
+        if (!impl_) {
+            return;
+        }
+        const QString projectName = svc && svc->getCurrentProjectSharedPtr()
+            ? svc->getCurrentProjectSharedPtr()->projectName().toQString()
+            : QString();
+        impl_->eventBus_.post<ProjectChangedEvent>(ProjectChangedEvent{QString(), projectName});
+        impl_->eventBus_.drain();
+    });
+    connect(svc, &ArtifactProjectService::projectCreated, this, [this, svc]() {
+        if (!impl_) {
+            return;
+        }
+        const QString projectName = svc && svc->getCurrentProjectSharedPtr()
+            ? svc->getCurrentProjectSharedPtr()->projectName().toQString()
+            : QString();
+        impl_->eventBus_.post<ProjectChangedEvent>(ProjectChangedEvent{QString(), projectName});
+        impl_->eventBus_.drain();
+    });
+    connect(svc, &ArtifactProjectService::compositionCreated, this, [this](const CompositionID& id) {
+        impl_->eventBus_.post<CompositionCreatedEvent>(CompositionCreatedEvent{
+            QString::fromStdString(id.toString()), QString()
+        });
+        impl_->eventBus_.drain();
+    });
+    connect(svc, &ArtifactProjectService::layerCreated, this, [this](const CompositionID& cid, const LayerID& lid) {
+        impl_->eventBus_.post<LayerChangedEvent>(LayerChangedEvent{
+            QString::fromStdString(cid.toString()),
+            QString::fromStdString(lid.toString()),
+            LayerChangedEvent::ChangeType::Created
+        });
+        impl_->eventBus_.drain();
+    });
+    connect(svc, &ArtifactProjectService::layerRemoved, this, [this](const CompositionID& cid, const LayerID& lid) {
+        impl_->eventBus_.post<LayerChangedEvent>(LayerChangedEvent{
+            QString::fromStdString(cid.toString()),
+            QString::fromStdString(lid.toString()),
+            LayerChangedEvent::ChangeType::Removed
+        });
+        impl_->eventBus_.drain();
+    });
+    connect(svc, &ArtifactProjectService::currentCompositionChanged, this, [this](const CompositionID& cid) {
+        if (!impl_) {
+            return;
+        }
+        impl_->eventBus_.post<CurrentCompositionChangedEvent>(CurrentCompositionChangedEvent{
+            QString::fromStdString(cid.toString())
+        });
+        impl_->eventBus_.drain();
+    });
+
+    // EventBus subscriptions
+    impl_->thumbnailUpdateDebounce_ = new QTimer(this);
+    impl_->thumbnailUpdateDebounce_->setSingleShot(true);
+    impl_->thumbnailUpdateDebounce_->setInterval(300);
+    connect(impl_->thumbnailUpdateDebounce_, &QTimer::timeout, this, [this]() {
+        updateRequested();
+    });
+
+    impl_->eventBusSubscriptions_.push_back(
+        impl_->eventBus_.subscribe<CompositionCreatedEvent>([this](const CompositionCreatedEvent&) {
+        impl_->thumbnailUpdateDebounce_->start();
+    }));
+    impl_->eventBusSubscriptions_.push_back(
+        impl_->eventBus_.subscribe<LayerChangedEvent>([this](const LayerChangedEvent&) {
+        impl_->thumbnailUpdateDebounce_->start();
+    }));
+    impl_->eventBusSubscriptions_.push_back(
+        impl_->eventBus_.subscribe<ProjectChangedEvent>([this](const ProjectChangedEvent&) {
+        updateRequested();
+    }));
+    impl_->eventBusSubscriptions_.push_back(
+        impl_->eventBus_.subscribe<CurrentCompositionChangedEvent>([this](const CurrentCompositionChangedEvent&) {
+        if (impl_) {
+            impl_->syncSelectionToCurrentComposition();
+        }
+    }));
+    impl_->eventBusSubscriptions_.push_back(
+        impl_->eventBus_.subscribe<SelectionChangedEvent>([this](const SelectionChangedEvent&) {
+        if (impl_) {
+            impl_->refreshSelectionChrome();
+        }
+    }));
+
     impl_->refreshSelectionChrome();
 
     auto* focusSearchShortcut = new QShortcut(QKeySequence::Find, this);
@@ -3222,6 +3352,9 @@ void ArtifactProjectManagerWidget::showEvent(QShowEvent* event)
 
 bool ArtifactProjectManagerWidget::event(QEvent* event)
 {
+    if (impl_) {
+        impl_->eventBus_.drain();
+    }
     const bool handled = QWidget::event(event);
     if (event && (event->type() == QEvent::WindowActivate ||
                   event->type() == QEvent::ActivationChange ||
@@ -3276,10 +3409,12 @@ ArtifactProjectManagerToolBox::ArtifactProjectManagerToolBox(QWidget* parent) : 
             b->setText(fallbackText);
         }
         b->setIconSize(QSize(16, 16));
-        b->setStyleSheet(R"(
-            QPushButton { background: transparent; border: none; border-radius: 3px; padding: 2px; color: #ddd; font-size: 10px; font-weight: bold; }
-            QPushButton:hover { background: #444; }
-        )");
+        b->setFlat(true);
+        {
+            QPalette pal = b->palette();
+            pal.setColor(QPalette::ButtonText, QColor(ArtifactCore::currentDCCTheme().textColor));
+            b->setPalette(pal);
+        }
         return b;
     };
 
@@ -3304,7 +3439,7 @@ ArtifactProjectManagerToolBox::~ArtifactProjectManagerToolBox() {}
 void ArtifactProjectManagerToolBox::paintEvent(QPaintEvent* event)
 {
     QPainter painter(this);
-    painter.fillRect(event->rect(), QColor(0x2D, 0x2D, 0x30));
+    painter.fillRect(event->rect(), QColor(ArtifactCore::currentDCCTheme().secondaryBackgroundColor));
     QWidget::paintEvent(event);
 }
 void ArtifactProjectManagerToolBox::resizeEvent(QResizeEvent*) {}

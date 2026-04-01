@@ -679,6 +679,26 @@ void ArtifactParticleLayer::renderToImage(QImage& target, float time)
     emit frameRendered(static_cast<int64_t>(time * fps));
 }
 
+void ArtifactParticleLayer::renderToImage(QImage& target, int64_t frameNumber)
+{
+    float fps = 30.0f;
+    if (auto comp = static_cast<ArtifactAbstractComposition*>(composition())) {
+        fps = comp->frameRate().framerate();
+    }
+    float time = static_cast<float>(frameNumber) / fps;
+    renderToImage(target, time);
+}
+
+void ArtifactParticleLayer::renderToImage(QImage& target, int64_t frameNumber)
+{
+    float fps = 30.0f;
+    if (auto comp = static_cast<ArtifactAbstractComposition*>(composition())) {
+        fps = comp->frameRate().framerate();
+    }
+    float time = static_cast<float>(frameNumber) / fps;
+    renderToImage(target, time);
+}
+
 bool ArtifactParticleLayer::getCachedFrame(int64_t frame, QImage& out)
 {
     if (frame == impl_->cachedFrameNumber && !impl_->cachedFrame.isNull()) {

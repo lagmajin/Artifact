@@ -91,17 +91,43 @@ export namespace ArtifactCore {
  };
 
  class PluginSettingPage : public QWidget {
-  W_OBJECT(PluginSettingPage)
- public:
-  explicit PluginSettingPage(QWidget* parent = nullptr);
-  ~PluginSettingPage();
+   W_OBJECT(PluginSettingPage)
+  public:
+   explicit PluginSettingPage(QWidget* parent = nullptr);
+   ~PluginSettingPage();
 
-  QVector<QWidget*> settingWidgets() const;
+   QVector<QWidget*> settingWidgets() const;
 
- private:
-  class Impl;
-  Impl* impl_;
- };
+  private:
+   class Impl;
+   Impl* impl_;
+  };
+
+  class AISettingPage : public QWidget {
+   W_OBJECT(AISettingPage)
+  public:
+   explicit AISettingPage(QWidget* parent = nullptr);
+   ~AISettingPage();
+
+   QVector<QWidget*> settingWidgets() const;
+
+  private:
+   class Impl;
+   Impl* impl_;
+  };
+
+  class AISettingPage : public QWidget {
+   W_OBJECT(AISettingPage)
+  public:
+   explicit AISettingPage(QWidget* parent = nullptr);
+   ~AISettingPage();
+
+   QVector<QWidget*> settingWidgets() const;
+
+  private:
+   class Impl;
+   Impl* impl_;
+  };
 
 class ApplicationSettingDialog:public QDialog
 {

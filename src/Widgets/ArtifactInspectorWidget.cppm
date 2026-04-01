@@ -28,6 +28,8 @@
 #include <QContextMenuEvent>
 #include <QApplication>
 #include <QClipboard>
+#include <QPalette>
+#include <QFont>
 #include <cstdlib>
 
 #include <iostream>
@@ -74,6 +76,8 @@ import Widgets.Utils.CSS;
 import Artifact.Service.Project;
 import Artifact.Composition.Abstract;
 import Artifact.Effect.Abstract;
+import Artifact.Event.Types;
+import Event.Bus;
 import Undo.UndoManager;
 import Generator.Effector;
 import Artifact.Effect.Generator.Cloner;
@@ -158,6 +162,8 @@ namespace Artifact {
    LayerID currentLayerId_;
    QMetaObject::Connection compositionNoteConnection_;
    QMetaObject::Connection layerNoteConnection_;
+   ArtifactCore::EventBus eventBus_;
+   std::vector<ArtifactCore::EventBus::Subscription> eventBusSubscriptions_;
 
    void rebuildMenu();
    void defaultHandleKeyPressEvent(QKeyEvent* event);
@@ -1024,11 +1030,6 @@ void ArtifactInspectorWidget::Impl::handleRemoveEffectClicked(int rackIndex)
 
   ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget* parent /*= nullptr*/) :QScrollArea(parent),impl_(new Impl())
  {
-
-  auto style = getDCCStyleSheetPreset(DccStylePreset::StudioStyle);
-
-  setStyleSheet(style);
-
   // メインレイアウト
   auto mainLayout = new QVBoxLayout();
   impl_->containerWidget = new QWidget();
@@ -1064,12 +1065,26 @@ void ArtifactInspectorWidget::Impl::handleRemoveEffectClicked(int rackIndex)
 
   // ステータスラベル
   impl_->statusLabel = new QLabel("Status: No project");
-  impl_->statusLabel->setStyleSheet("QLabel { color: #888; font-style: italic; }");
+  {
+    QFont f = impl_->statusLabel->font();
+    f.setItalic(true);
+    impl_->statusLabel->setFont(f);
+    QPalette pal = impl_->statusLabel->palette();
+    pal.setColor(QPalette::WindowText, QColor(ArtifactCore::currentDCCTheme().textColor).darker(135));
+    impl_->statusLabel->setPalette(pal);
+  }
   layerInfoLayout->addWidget(impl_->statusLabel);
 
   // レイヤー名ラベル
   impl_->layerNameLabel = new QLabel("Layer: (No project)");
-  impl_->layerNameLabel->setStyleSheet("QLabel { font-weight: bold; }");
+  {
+    QFont f = impl_->layerNameLabel->font();
+    f.setBold(true);
+    impl_->layerNameLabel->setFont(f);
+    QPalette pal = impl_->layerNameLabel->palette();
+    pal.setColor(QPalette::WindowText, QColor(ArtifactCore::currentDCCTheme().textColor));
+    impl_->layerNameLabel->setPalette(pal);
+  }
   layerInfoLayout->addWidget(impl_->layerNameLabel);
 
   // レイヤータイプラベル
@@ -1144,9 +1159,6 @@ void ArtifactInspectorWidget::Impl::handleRemoveEffectClicked(int rackIndex)
 
   for (int i = 0; i < 5; ++i) {
       auto rackGroup = new QGroupBox(rackNames[i]);
-      rackGroup->setStyleSheet(
-          "QGroupBox { font-weight: bold; border: 1px solid #555; border-radius: 4px; margin-top: 14px; padding-top: 6px; }"
-          "QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top left; left: 10px; padding: 0 4px; color: #DDD; background: #2D2D30; }");
       auto rackLayout = new QVBoxLayout();
       
       impl_->racks[i].listWidget = new QListWidget();
@@ -1275,8 +1287,20 @@ void ArtifactInspectorWidget::Impl::handleRemoveEffectClicked(int rackIndex)
   auto projectService = ArtifactProjectService::instance();
   if (projectService) {
    // プロジェクト作成/クローズシグナルに接続
+   QObject::connect(projectService, &ArtifactProjectService::projectChanged, this, [this]() {
+    if (!impl_) {
+      return;
+    }
+    impl_->eventBus_.post<ProjectChangedEvent>(ProjectChangedEvent{QString(), QString()});
+    impl_->eventBus_.drain();
+   });
+
    QObject::connect(projectService, &ArtifactProjectService::projectCreated, this, [this]() {
-    impl_->handleProjectCreated();
+    if (!impl_) {
+      return;
+    }
+    impl_->eventBus_.post<ProjectChangedEvent>(ProjectChangedEvent{QString(), QString()});
+    impl_->eventBus_.drain();
    });
 
    // TODO: projectClosed シグナルがあれば接続
@@ -1286,24 +1310,74 @@ void ArtifactInspectorWidget::Impl::handleRemoveEffectClicked(int rackIndex)
 
    // コンポジション作成シグナルに接続
    QObject::connect(projectService, &ArtifactProjectService::compositionCreated, this, [this](const CompositionID& id) {
-    impl_->handleCompositionCreated(id);
+    if (!impl_) {
+      return;
+    }
+    impl_->eventBus_.post<CurrentCompositionChangedEvent>(CurrentCompositionChangedEvent{
+      QString::fromStdString(id.toString())
+    });
+    impl_->eventBus_.drain();
    });
 
    QObject::connect(projectService, &ArtifactProjectService::currentCompositionChanged, this, [this](const CompositionID& id) {
-    impl_->handleCompositionChanged(id);
+    if (!impl_) {
+      return;
+    }
+    impl_->eventBus_.post<CurrentCompositionChangedEvent>(CurrentCompositionChangedEvent{
+      QString::fromStdString(id.toString())
+    });
+    impl_->eventBus_.drain();
    });
 
    // レイヤー作成シグナルに接続（作成されたレイヤーを自動選択）
    QObject::connect(projectService, &ArtifactProjectService::layerCreated, this, [this](const CompositionID& cid, const LayerID& id) {
-    if (impl_->currentCompositionId_ == cid) {
-        impl_->handleLayerSelected(id);
+    if (!impl_) {
+      return;
     }
+    impl_->eventBus_.post<LayerSelectionChangedEvent>(LayerSelectionChangedEvent{
+      QString::fromStdString(cid.toString()),
+      QString::fromStdString(id.toString())
+    });
+    impl_->eventBus_.drain();
    });
 
    // レイヤー選択シグナルに接続
    QObject::connect(projectService, &ArtifactProjectService::layerSelected, this, [this](const LayerID& id) {
-    impl_->handleLayerSelected(id);
+    if (!impl_) {
+      return;
+    }
+    impl_->eventBus_.post<LayerSelectionChangedEvent>(LayerSelectionChangedEvent{
+      QString::fromStdString(impl_->currentCompositionId_.toString()),
+      QString::fromStdString(id.toString())
+    });
+    impl_->eventBus_.drain();
    });
+
+   impl_->eventBusSubscriptions_.push_back(
+   impl_->eventBus_.subscribe<ProjectChangedEvent>([this](const ProjectChangedEvent&) {
+     if (!impl_) {
+       return;
+     }
+     impl_->handleProjectCreated();
+   }));
+   impl_->eventBusSubscriptions_.push_back(
+   impl_->eventBus_.subscribe<CurrentCompositionChangedEvent>([this](const CurrentCompositionChangedEvent& event) {
+     if (!impl_) {
+       return;
+     }
+     const CompositionID cid(event.compositionId);
+     impl_->handleCompositionChanged(cid);
+   }));
+   impl_->eventBusSubscriptions_.push_back(
+   impl_->eventBus_.subscribe<LayerSelectionChangedEvent>([this](const LayerSelectionChangedEvent& event) {
+     if (!impl_) {
+       return;
+     }
+     const CompositionID cid(event.compositionId);
+     const LayerID lid(event.layerId);
+     impl_->currentCompositionId_ = cid;
+     impl_->handleLayerSelected(lid);
+   }));
   }
   impl_->refreshRackButtons();
  }

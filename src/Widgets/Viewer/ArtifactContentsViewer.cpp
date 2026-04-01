@@ -93,7 +93,8 @@ namespace Artifact
    void syncModelViewerMode();
    void attachMediaOutputs();
    void detachMediaOutputs();
-   void activateImage(const QString& filepath);
+   void fitImageToWindow();
+   void applyImageTransform();
    void activateVideo(const QString& filepath);
    void activateModel(const QString& filepath);
 
@@ -314,25 +315,107 @@ namespace Artifact
    modelViewerReady = true;
   }
 
-  void ArtifactContentsViewer::Impl::activateImage(const QString& filepath)
-  {
-   QPixmap pix(filepath);
-   if (pix.isNull()) {
-    showInfoMessage("Failed to load image:\n" + filepath);
-    return;
+   void ArtifactContentsViewer::Impl::activateImage(const QString& filepath)
+   {
+    QPixmap pix(filepath);
+    if (pix.isNull()) {
+     showInfoMessage("Failed to load image:\n" + filepath);
+     return;
+    }
+
+    zoomLevel = 1.0;
+    rotationDegrees = 0.0;
+    originalImage = pix;
+    applyImageTransform();
+    stackedWidget->setCurrentWidget(imageScrollArea);
+    updateHeader();
+    updatePlaybackState();
+    updateActionAvailability();
+    updateModeButtons();
    }
 
-   zoomLevel = 1.0;
-   rotationDegrees = 0.0;
-   originalImage = pix;
-   imageLabel->setPixmap(originalImage);
-   imageLabel->setFixedSize(originalImage.size());
-   stackedWidget->setCurrentWidget(imageScrollArea);
-   updateHeader();
-   updatePlaybackState();
-   updateActionAvailability();
-   updateModeButtons();
-  }
+   void ArtifactContentsViewer::Impl::fitImageToWindow()
+   {
+    if (originalImage.isNull() || !imageScrollArea) return;
+
+    const QSize viewportSize = imageScrollArea->viewport()->size();
+    const QSize imageSize = originalImage.size();
+
+    if (imageSize.isEmpty() || viewportSize.isEmpty()) return;
+
+    const double scaleX = static_cast<double>(viewportSize.width()) / imageSize.width();
+    const double scaleY = static_cast<double>(viewportSize.height()) / imageSize.height();
+    const double fitScale = std::min(scaleX, scaleY);
+
+    zoomLevel = fitScale;
+    rotationDegrees = 0.0;
+    applyImageTransform();
+   }
+
+   void ArtifactContentsViewer::Impl::applyImageTransform()
+   {
+    if (originalImage.isNull() || !imageLabel) return;
+
+    if (rotationDegrees != 0.0) {
+     QTransform transform;
+     transform.rotate(rotationDegrees);
+     const QPixmap rotated = originalImage.transformed(transform, Qt::SmoothTransformation);
+     const QSize scaledSize = rotated.size() * zoomLevel;
+     imageLabel->setPixmap(rotated);
+     imageLabel->setFixedSize(scaledSize);
+    } else {
+     const QSize scaledSize = originalImage.size() * zoomLevel;
+     imageLabel->setPixmap(originalImage);
+     imageLabel->setFixedSize(scaledSize);
+    }
+   }
+
+    zoomLevel = 1.0;
+    rotationDegrees = 0.0;
+    originalImage = pix;
+    applyImageTransform();
+    stackedWidget->setCurrentWidget(imageScrollArea);
+    updateHeader();
+    updatePlaybackState();
+    updateActionAvailability();
+    updateModeButtons();
+   }
+
+   void ArtifactContentsViewer::Impl::fitImageToWindow()
+   {
+    if (originalImage.isNull() || !imageScrollArea) return;
+
+    const QSize viewportSize = imageScrollArea->viewport()->size();
+    const QSize imageSize = originalImage.size();
+
+    if (imageSize.isEmpty() || viewportSize.isEmpty()) return;
+
+    const double scaleX = static_cast<double>(viewportSize.width()) / imageSize.width();
+    const double scaleY = static_cast<double>(viewportSize.height()) / imageSize.height();
+    const double fitScale = std::min(scaleX, scaleY);
+
+    zoomLevel = fitScale;
+    rotationDegrees = 0.0;
+    applyImageTransform();
+   }
+
+   void ArtifactContentsViewer::Impl::applyImageTransform()
+   {
+    if (originalImage.isNull() || !imageLabel) return;
+
+    if (rotationDegrees != 0.0) {
+     QTransform transform;
+     transform.rotate(rotationDegrees);
+     const QPixmap rotated = originalImage.transformed(transform, Qt::SmoothTransformation);
+     const QSize scaledSize = rotated.size() * zoomLevel;
+     imageLabel->setPixmap(rotated);
+     imageLabel->setFixedSize(scaledSize);
+    } else {
+     const QSize scaledSize = originalImage.size() * zoomLevel;
+     imageLabel->setPixmap(originalImage);
+     imageLabel->setFixedSize(scaledSize);
+    }
+   }
 
   void ArtifactContentsViewer::Impl::activateVideo(const QString& filepath)
   {
@@ -584,31 +667,35 @@ namespace Artifact
    , stackedWidget(new QStackedWidget(parent))
   {
    headerWidget = new QWidget(parent);
-   auto* headerLayout = new QHBoxLayout(headerWidget);
+   auto* headerLayout = new QVBoxLayout(headerWidget);
    headerLayout->setContentsMargins(10, 8, 10, 8);
-   headerLayout->setSpacing(8);
+   headerLayout->setSpacing(6);
+
+   auto* infoRow = new QHBoxLayout();
+   infoRow->setContentsMargins(0, 0, 0, 0);
+   infoRow->setSpacing(10);
 
    auto* textColumn = new QVBoxLayout();
    textColumn->setContentsMargins(0, 0, 0, 0);
    textColumn->setSpacing(2);
 
    titleLabel = new QLabel(QStringLiteral("Contents Viewer"), headerWidget);
-   titleLabel->setStyleSheet("font-size: 15px; font-weight: 600; color: #f0f0f0;");
+   titleLabel->setStyleSheet("font-size: 15px; font-weight: 600; color: #e8e8e8;");
    typeBadgeLabel = new QLabel(QStringLiteral("Idle"), headerWidget);
    typeBadgeLabel->setStyleSheet(R"(
      QLabel {
-       background: #3a3a3a;
-       color: #f0f0f0;
+       background: #2f2f2f;
+       color: #e8e8e8;
        border-radius: 9px;
        padding: 2px 8px;
        font-size: 11px;
      }
    )");
    metaLabel = new QLabel(QStringLiteral("No file selected"), headerWidget);
-   metaLabel->setStyleSheet("color: #a8a8a8; font-size: 11px;");
+   metaLabel->setStyleSheet("color: #c4c4c4; font-size: 11px;");
    metaLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
    stateLabel = new QLabel(QStringLiteral("State: Idle"), headerWidget);
-   stateLabel->setStyleSheet("color: #c6c6c6; font-size: 11px;");
+   stateLabel->setStyleSheet("color: #d0d0d0; font-size: 11px;");
 
    textColumn->addWidget(titleLabel);
    textColumn->addWidget(metaLabel);
@@ -658,17 +745,17 @@ namespace Artifact
    seekSlider->setStyleSheet(R"(
     QSlider::groove:horizontal {
       height: 4px;
-      background: #2a2a2a;
+      background: #343434;
       border-radius: 2px;
     }
     QSlider::handle:horizontal {
       width: 12px;
       margin: -5px 0;
       border-radius: 6px;
-      background: #d0d0d0;
+      background: #e8e8e8;
     }
     QSlider::sub-page:horizontal {
-      background: #6b8cff;
+      background: #f5933c;
       border-radius: 2px;
     }
    )");
@@ -689,26 +776,20 @@ namespace Artifact
    buttonRow->addWidget(finalButton);
    buttonRow->addWidget(compareButton);
 
-   headerLayout->addLayout(textColumn, 1);
-   headerLayout->addLayout(badgeColumn, 0);
-   headerLayout->addLayout(buttonRow, 0);
+   infoRow->addLayout(textColumn, 1);
+   infoRow->addLayout(badgeColumn, 0);
+   headerLayout->addLayout(infoRow);
+   headerLayout->addLayout(buttonRow);
 
-   QObject::connect(fitButton, &QToolButton::clicked, parent, [this]() {
-    if (currentFileType == ArtifactCore::FileType::Image || currentFileType == ArtifactCore::FileType::Model3D) {
+    QObject::connect(fitButton, &QToolButton::clicked, parent, [this]() {
      if (currentFileType == ArtifactCore::FileType::Image) {
-      zoomLevel = 1.0;
-      rotationDegrees = 0.0;
-      if (imageLabel && !originalImage.isNull()) {
-       imageLabel->setPixmap(originalImage);
-       imageLabel->setFixedSize(originalImage.size());
-      }
-     } else if (modelViewer) {
+      fitImageToWindow();
+     } else if (currentFileType == ArtifactCore::FileType::Model3D && modelViewer) {
       modelViewer->resetView();
      }
      updateHeader();
      updatePlaybackState();
-    }
-   });
+    });
 
    QObject::connect(rotateLeftButton, &QToolButton::clicked, parent, [this]() {
     if (currentFileType == ArtifactCore::FileType::Image) {
@@ -849,26 +930,26 @@ namespace Artifact
    imageScrollArea->setAlignment(Qt::AlignCenter);
    imageScrollArea->setStyleSheet(R"(
      QScrollArea {
-       background-color: #1a1a1a;
+       background-color: #242424;
        border: none;
      }
      QScrollBar:vertical {
-       background: #111;
+       background: #1b1b1b;
        width: 10px;
        margin: 0px;
      }
      QScrollBar::handle:vertical {
-       background: #333;
+       background: #444;
        min-height: 20px;
        border-radius: 5px;
      }
      QScrollBar:horizontal {
-       background: #111;
+       background: #1b1b1b;
        height: 10px;
        margin: 0px;
      }
      QScrollBar::handle:horizontal {
-       background: #333;
+       background: #444;
        min-width: 20px;
        border-radius: 5px;
      }
@@ -878,7 +959,7 @@ namespace Artifact
    infoLabel = new QLabel();
    infoLabel->setAlignment(Qt::AlignCenter);
    infoLabel->setWordWrap(true);
-   infoLabel->setStyleSheet("color: #888; background-color: #1a1a1a; font-family: 'Segoe UI'; font-size: 14px;");
+   infoLabel->setStyleSheet("color: #bcbcbc; background-color: #242424; font-family: 'Segoe UI'; font-size: 14px;");
 
    stackedWidget->addWidget(imageScrollArea);
    stackedWidget->addWidget(infoLabel);
@@ -980,7 +1061,7 @@ namespace Artifact
   {
       if (impl_->currentFileType == ArtifactCore::FileType::Image &&
           impl_->stackedWidget->currentWidget() == impl_->imageScrollArea &&
-          !impl_->imageLabel->pixmap().isNull()) {
+          !impl_->originalImage.isNull()) {
           const double scaleFactor = 1.15;
           if (event->angleDelta().y() > 0) {
               impl_->zoomLevel *= scaleFactor;
@@ -989,8 +1070,15 @@ namespace Artifact
           }
           
           impl_->zoomLevel = qBound(0.05, impl_->zoomLevel, 10.0);
-          QSize newSize = impl_->imageLabel->pixmap().size() * impl_->zoomLevel;
-          impl_->imageLabel->setFixedSize(newSize);
+          impl_->applyImageTransform();
+          event->accept();
+          return;
+      }
+      QWidget::wheelEvent(event);
+  }
+          
+          impl_->zoomLevel = qBound(0.05, impl_->zoomLevel, 10.0);
+          impl_->applyImageTransform();
           event->accept();
           return;
       }

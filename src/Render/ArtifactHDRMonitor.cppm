@@ -1,10 +1,8 @@
-﻿module;
-
+module;
 #include <QObject>
-#include <algorithm>
-#include <cmath>
-#include <numeric>
 #include <wobjectimpl.h>
+
+import std;
 
 import Color.Float;
 

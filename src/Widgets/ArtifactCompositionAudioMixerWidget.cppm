@@ -182,36 +182,36 @@ public:
 
         setStyleSheet(QStringLiteral(R"(
             QFrame#AudioMixerStripCard {
-                background: #1a2027;
-                border: 1px solid #2b3845;
+                background: #23272b;
+                border: 1px solid #3a4046;
                 border-radius: 8px;
             }
             QSlider::groove:vertical {
                 width: 8px;
-                background: #0f1419;
-                 border: 1px solid #454545;
+                background: #171a1e;
+                border: 1px solid #4a4f55;
                 border-radius: 4px;
             }
             QSlider::sub-page:vertical {
-                background: #1f2c39;
+                background: #41464c;
                 border-radius: 4px;
             }
             QSlider::add-page:vertical {
-                background: #4e89c5;
+                background: #a88d5d;
                 border-radius: 4px;
             }
             QSlider::handle:vertical {
                 width: 28px;
                 height: 12px;
                 margin: 0 -10px;
-                background: #edf4fb;
-                border: 1px solid #9fb5cb;
+                background: #f0f0f0;
+                border: 1px solid #b9b9b9;
                 border-radius: 4px;
             }
             QPushButton {
-                background: #26303a;
-                color: #d6dde5;
-                border: 1px solid #3d4b59;
+                background: #2b3035;
+                color: #dde2e7;
+                border: 1px solid #444b52;
                 border-radius: 4px;
                 font-weight: 700;
             }
@@ -386,36 +386,36 @@ public:
 
         setStyleSheet(QStringLiteral(R"(
             QFrame#AudioMixerMasterCard {
-                background: #202a36;
-                border: 1px solid #465b74;
+                background: #26292d;
+                border: 1px solid #474b51;
                 border-radius: 8px;
             }
             QSlider::groove:vertical {
                 width: 8px;
-                background: #0f1419;
-                border: 1px solid #2a3745;
+                background: #171a1e;
+                border: 1px solid #4a4f55;
                 border-radius: 4px;
             }
             QSlider::sub-page:vertical {
-                background: #243447;
+                background: #4a4f56;
                 border-radius: 4px;
             }
             QSlider::add-page:vertical {
-                background: #5f9fe0;
+                background: #ad8d59;
                 border-radius: 4px;
             }
             QSlider::handle:vertical {
                 width: 30px;
                 height: 12px;
                 margin: 0 -11px;
-                background: #eef4fb;
-                border: 1px solid #b0c5dc;
+                background: #f0f0f0;
+                border: 1px solid #b9b9b9;
                 border-radius: 4px;
             }
             QPushButton {
-                background: #2a3138;
-                color: #d6dde5;
-                border: 1px solid #3a4652;
+                background: #2b3035;
+                color: #dde2e7;
+                border: 1px solid #444b52;
                 border-radius: 4px;
                 font-weight: 700;
             }
@@ -545,7 +545,6 @@ ArtifactCompositionAudioMixerWidget::ArtifactCompositionAudioMixerWidget(QWidget
     , impl_(new Impl())
 {
     setAttribute(Qt::WA_StyledBackground, true);
-    setStyleSheet(QStringLiteral("background: #15191d;"));
 
     impl_->mixer_ = new AudioMixer(this);
 
@@ -569,15 +568,12 @@ ArtifactCompositionAudioMixerWidget::ArtifactCompositionAudioMixerWidget(QWidget
     rootLayout->setSpacing(0);
 
     auto* header = new QWidget(this);
-    header->setStyleSheet(QStringLiteral("background: #1b2026; border-bottom: 1px solid #2b333b;"));
     auto* headerLayout = new QVBoxLayout(header);
     headerLayout->setContentsMargins(12, 10, 12, 10);
     headerLayout->setSpacing(2);
 
     auto* titleLabel = new QLabel(QStringLiteral("Audio Mixer"), header);
-    titleLabel->setStyleSheet(QStringLiteral("color: #f0f3f6; font-size: 13px; font-weight: 700;"));
     auto* subtitleLabel = new QLabel(QStringLiteral("Master bus and current composition audio layers"), header);
-    subtitleLabel->setStyleSheet(QStringLiteral("color: #7d8b99; font-size: 11px;"));
 
     headerLayout->addWidget(titleLabel);
     headerLayout->addWidget(subtitleLabel);
@@ -585,7 +581,6 @@ ArtifactCompositionAudioMixerWidget::ArtifactCompositionAudioMixerWidget(QWidget
     auto* scrollArea = new QScrollArea(this);
     scrollArea->setWidgetResizable(true);
     scrollArea->setFrameShape(QFrame::NoFrame);
-    scrollArea->setStyleSheet(QStringLiteral("QScrollArea { background: #15191d; border: none; }"));
 
     impl_->contentWidget_ = new QWidget(scrollArea);
     impl_->contentLayout_ = new QHBoxLayout(impl_->contentWidget_);

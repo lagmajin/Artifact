@@ -7,11 +7,18 @@
 #include <QHBoxLayout>
 #include <QPushButton>
 #include <QKeyEvent>
+#include <QColor>
+#include <QFont>
+#include <QPaintEvent>
+#include <QPalette>
+#include <QPen>
+#include <QPainter>
 #include <wobjectimpl.h>
 
 module Artifact.Timeline.TimeCodeWidget;
 
 import Time.Rational;
+import Widgets.Utils.CSS;
 
 namespace Artifact
 {
@@ -42,6 +49,18 @@ namespace Artifact
   impl_->frameNumberLabel_->setObjectName("frameLabel");
   impl_->timecodeLabel_->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
   impl_->frameNumberLabel_->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+  {
+   const QColor textColor = QColor(ArtifactCore::currentDCCTheme().textColor);
+   const QColor mutedTextColor = textColor.darker(125);
+   QPalette timePal = impl_->timecodeLabel_->palette();
+   timePal.setColor(QPalette::WindowText, textColor);
+   impl_->timecodeLabel_->setPalette(timePal);
+   impl_->timecodeLabel_->setAutoFillBackground(false);
+   QPalette framePal = impl_->frameNumberLabel_->palette();
+   framePal.setColor(QPalette::WindowText, mutedTextColor);
+   impl_->frameNumberLabel_->setPalette(framePal);
+   impl_->frameNumberLabel_->setAutoFillBackground(false);
+  }
 
   layout->addWidget(impl_->timecodeLabel_);
   layout->addSpacing(8);
@@ -51,27 +70,25 @@ namespace Artifact
   setLayout(layout);
   setFixedHeight(42);
 
-  setAttribute(Qt::WA_StyledBackground, true);
+  setAttribute(Qt::WA_StyledBackground, false);
 
-   setStyleSheet(
-    "ArtifactTimeCodeWidget {"
-    "  background-color: #1C222E;"
-    "  border-bottom: 1px solid #27323F;"
-    "}"
-    "QLabel#timeLabel {"
-    "  font-family: 'Consolas', 'Courier New', monospace;"
-    "  font-size: 18px;"
-    "  font-weight: bold;"
-    "  color: #C4D4E2;"
-    "}"
-    "QLabel#frameLabel {"
-    "  font-family: 'Consolas', 'Courier New', monospace;"
-    "  font-size: 16px;"
-    "  font-weight: bold;"
-    "  color: #A0B4C8;"
-    "  padding-top: 1px;"
-    "}"
-   );
+  const QPalette pal = palette();
+  setAutoFillBackground(true);
+  QPalette localPal = pal;
+  localPal.setColor(QPalette::Window, QColor(ArtifactCore::currentDCCTheme().secondaryBackgroundColor));
+  setPalette(localPal);
+
+  QFont timeFont(QStringLiteral("Consolas"));
+  timeFont.setStyleHint(QFont::Monospace);
+  timeFont.setBold(true);
+  timeFont.setPointSize(18);
+  impl_->timecodeLabel_->setFont(timeFont);
+
+  QFont frameFont(QStringLiteral("Consolas"));
+  frameFont.setStyleHint(QFont::Monospace);
+  frameFont.setBold(true);
+  frameFont.setPointSize(16);
+  impl_->frameNumberLabel_->setFont(frameFont);
  }
 
  ArtifactTimeCodeWidget::~ArtifactTimeCodeWidget()
@@ -106,6 +123,15 @@ namespace Artifact
 
     // Example use of RationalTime API (kept for future extension)
     Q_UNUSED(rt);
+ }
+
+ void ArtifactTimeCodeWidget::paintEvent(QPaintEvent* event)
+ {
+ QPainter painter(this);
+  painter.fillRect(rect(), palette().window().color());
+  painter.setPen(QPen(QColor(ArtifactCore::currentDCCTheme().borderColor), 1));
+  painter.drawLine(rect().bottomLeft(), rect().bottomRight());
+  QWidget::paintEvent(event);
  }
 
  W_OBJECT_IMPL(ArtifactTimelineSearchBarWidget)
@@ -143,10 +169,10 @@ ArtifactTimelineSearchBarWidget::ArtifactTimelineSearchBarWidget(QWidget* parent
 
   setStyleSheet(
    "ArtifactTimelineSearchBarWidget {"
-   "  background-color: #2D2D2D;"
+   "  background-color: #232325;"
    "}"
    "QLineEdit#timelineSearchBox {"
-   "  background-color: #1E1E1E;"
+   "  background-color: #232325;"
    "  color: #CCCCCC;"
    "  border: 1px solid #3E3E3E;"
    "  border-radius: 12px;"
@@ -154,7 +180,7 @@ ArtifactTimelineSearchBarWidget::ArtifactTimelineSearchBarWidget(QWidget* parent
    "  font-size: 11px;"
    "}"
    "QLineEdit#timelineSearchBox:focus {"
-   "  border: 1px solid #007ACC;"
+   "  border: 1px solid #D47D32;"
    "}"
   );
 

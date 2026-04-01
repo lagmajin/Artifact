@@ -83,15 +83,7 @@ ArtifactMenuBar::Impl::Impl(QWidget* mainWindow, ArtifactMenuBar* menuBar)
 ArtifactMenuBar::ArtifactMenuBar(QWidget* mainWindow, QWidget* parent)
  : QMenuBar(parent), impl_(new Impl(mainWindow, this))
 {
- setStyleSheet(R"(
- QMenuBar { background-color: #1E1E1E; color: #E0E0E0; font-size: 13px; }
- QMenuBar::item { padding: 4px 10px; }
- QMenu { background-color: #2D2D2D; color: #E0E0E0; font-size: 13px; icon-size: 16px; border: 1px solid #444444; }
- QMenu::item { padding: 6px 28px 6px 28px; }
- QMenu::item:selected { background-color: #414141; }
- QMenu::item:disabled { color: rgba(160, 160, 160, 110); background-color: #262626; }
- QMenu::item:disabled:selected { color: rgba(230, 230, 230, 180); background-color: #343434; }
-)");
+ setAutoFillBackground(true);
 }
 
 ArtifactMenuBar::~ArtifactMenuBar()

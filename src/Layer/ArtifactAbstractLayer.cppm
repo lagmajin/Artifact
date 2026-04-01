@@ -513,6 +513,50 @@ QTransform ArtifactAbstractLayer::getGlobalTransform() const {
   return local;
 }
 
+QTransform ArtifactAbstractLayer::getLocalTransformAt(int64_t frameNumber) const {
+  const auto &t = transform3D();
+  const RationalTime time(frameNumber, effectiveLayerFrameRate(this));
+  auto evaluateDouble = [this, &time](const QString &propertyPath, double fallback) {
+    const auto it = impl_->propertyCache_.constFind(propertyPath);
+    if (it == impl_->propertyCache_.constEnd() || !it.value()) {
+      return fallback;
+    }
+    const auto &property = *it.value();
+    if (!property.isAnimatable() || property.getKeyFrames().empty()) {
+      return fallback;
+    }
+    const QVariant animatedValue = property.interpolateValue(time);
+    return animatedValue.isValid() ? animatedValue.toDouble() : fallback;
+  };
+
+  const double positionX = evaluateDouble(QStringLiteral("transform.position.x"), t.positionXAt(time));
+  const double positionY = evaluateDouble(QStringLiteral("transform.position.y"), t.positionYAt(time));
+  const double rotation = evaluateDouble(QStringLiteral("transform.rotation"), t.rotationAt(time));
+  const double scaleX = evaluateDouble(QStringLiteral("transform.scale.x"), t.scaleXAt(time));
+  const double scaleY = evaluateDouble(QStringLiteral("transform.scale.y"), t.scaleYAt(time));
+  const double anchorX = evaluateDouble(QStringLiteral("transform.anchor.x"), t.anchorXAt(time));
+  const double anchorY = evaluateDouble(QStringLiteral("transform.anchor.y"), t.anchorYAt(time));
+
+  // Skip physics for random access evaluating (e.g. motion path rendering) to maintain determinism.
+
+  QTransform result;
+  result.translate(positionX, positionY);
+  result.rotate(rotation);
+  result.scale(scaleX, scaleY);
+  result.translate(-anchorX, -anchorY);
+
+  return result;
+}
+
+QTransform ArtifactAbstractLayer::getGlobalTransformAt(int64_t frameNumber) const {
+  QTransform local = getLocalTransformAt(frameNumber);
+  auto parent = parentLayer();
+  if (parent) {
+    return local * parent->getGlobalTransformAt(frameNumber); // Time remapping on parent not considered here yet
+  }
+  return local;
+}
+
 QMatrix4x4 ArtifactAbstractLayer::getLocalTransform4x4() const {
   const auto &t = transform3D();
   const RationalTime time(currentFrame(), effectiveLayerFrameRate(this));
@@ -659,6 +703,8 @@ void ArtifactAbstractLayer::setTimeRemapKey(int64_t compFrame,
 bool ArtifactAbstractLayer::isTimeRemapEnabled() const { return false; }
 
 bool ArtifactAbstractLayer::isNullLayer() const { return false; }
+
+bool ArtifactAbstractLayer::isCloneLayer() const { return false; }
 
 bool ArtifactAbstractLayer::hasAudio() const { return false; }
 

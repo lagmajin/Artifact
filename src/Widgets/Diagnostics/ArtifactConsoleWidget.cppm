@@ -11,6 +11,8 @@ module;
 #include <QFont>
 #include <QSignalBlocker>
 #include <QDateTime>
+#include <QDateTimeEdit>
+#include <QComboBox>
 #include <QIcon>
 #include <QString>
 #include <QPainter>
@@ -22,6 +24,7 @@ module;
 #include <QTextStream>
 #include <QClipboard>
 #include <QApplication>
+#include <QRegularExpression>
 #include <algorithm>
 #include <wobjectimpl.h>
 
@@ -71,8 +74,15 @@ public:
     QToolButton* copyVisibleBtn_ = nullptr;
     QToolButton* saveVisibleBtn_ = nullptr;
     QLineEdit* searchEdit_ = nullptr;
+    QDateTimeEdit* startTimeEdit_ = nullptr;
+    QDateTimeEdit* endTimeEdit_ = nullptr;
+    QCheckBox* timeFilterCheck_ = nullptr;
+    QComboBox* contextFilterCombo_ = nullptr;
+    QToolButton* saveFiltersBtn_ = nullptr;
+    QToolButton* loadFiltersBtn_ = nullptr;
     QLabel* fontSizeLabel_ = nullptr;
     QSpinBox* fontSizeSpin_ = nullptr;
+    QToolButton* debugFilterBtn_ = nullptr;
     QToolButton* infoFilterBtn_ = nullptr;
     QToolButton* warningFilterBtn_ = nullptr;
     QToolButton* errorFilterBtn_ = nullptr;
@@ -80,6 +90,7 @@ public:
     QPlainTextEdit* detailView_ = nullptr;
     QLabel* statusLabel_ = nullptr;
 
+    bool showDebug_ = true;
     bool showInfo_ = true;
     bool showWarning_ = true;
     bool showError_ = true;
@@ -88,8 +99,16 @@ public:
     bool collapse_ = true;
     bool importantOnly_ = false;
     QString searchFilter_;
+    QRegularExpression regexFilter_;
+    QDateTime startTime_;
+    QDateTime endTime_;
+    bool useTimeFilter_ = false;
+    QStringList contextFilters_;
+    QStringList availableContexts_;
+    bool useContextFilter_ = false;
     int consoleFontPointSize_ = 12;
     int pendingWhilePaused_ = 0;
+    int totalDebugCount_ = 0;
     int totalInfoCount_ = 0;
     int totalWarningCount_ = 0;
     int totalErrorCount_ = 0;
@@ -97,6 +116,9 @@ public:
 
     Impl(ArtifactConsoleWidget* owner) : owner_(owner) {
         loadSettings();
+        // Initialize time range to last hour
+        endTime_ = QDateTime::currentDateTime();
+        startTime_ = endTime_.addSecs(-3600);
     }
 
     static constexpr const char* kFontPointSizeKey = "ui/console/fontPointSize";
@@ -155,6 +177,73 @@ public:
         )");
         toolbarLayout->addWidget(searchEdit_);
 
+        timeFilterCheck_ = new QCheckBox("Time Filter");
+        timeFilterCheck_->setStyleSheet(R"(
+            QCheckBox {
+                color: #e0e0e0;
+                font-size: 10px;
+            }
+        )");
+        toolbarLayout->addWidget(timeFilterCheck_);
+
+        startTimeEdit_ = new QDateTimeEdit(startTime_);
+        startTimeEdit_->setDisplayFormat("yyyy-MM-dd hh:mm:ss");
+        startTimeEdit_->setCalendarPopup(true);
+        startTimeEdit_->setStyleSheet(R"(
+            QDateTimeEdit {
+                background-color: #3c3c3c;
+                color: #e0e0e0;
+                border: 1px solid #555555;
+                border-radius: 4px;
+                padding: 2px;
+                height: 22px;
+            }
+        )");
+        toolbarLayout->addWidget(startTimeEdit_);
+
+        QLabel* toLabel = new QLabel("to");
+        toLabel->setStyleSheet("color: #e0e0e0; font-size: 10px;");
+        toolbarLayout->addWidget(toLabel);
+
+        endTimeEdit_ = new QDateTimeEdit(endTime_);
+        endTimeEdit_->setDisplayFormat("yyyy-MM-dd hh:mm:ss");
+        endTimeEdit_->setCalendarPopup(true);
+        endTimeEdit_->setStyleSheet(R"(
+            QDateTimeEdit {
+                background-color: #3c3c3c;
+                color: #e0e0e0;
+                border: 1px solid #555555;
+                border-radius: 4px;
+                padding: 2px;
+                height: 22px;
+            }
+        )");
+        toolbarLayout->addWidget(endTimeEdit_);
+
+        QLabel* contextLabel = new QLabel("Context:");
+        contextLabel->setStyleSheet("color: #e0e0e0; font-size: 10px;");
+        toolbarLayout->addWidget(contextLabel);
+
+        contextFilterCombo_ = new QComboBox();
+        contextFilterCombo_->addItem("All", QString());
+        contextFilterCombo_->setStyleSheet(R"(
+            QComboBox {
+                background-color: #3c3c3c;
+                color: #e0e0e0;
+                border: 1px solid #555555;
+                border-radius: 4px;
+                padding: 2px;
+                height: 22px;
+            }
+        )");
+        toolbarLayout->addWidget(contextFilterCombo_);
+
+        saveFiltersBtn_ = createToolButton("MaterialVS/colored/E3E3E3/save.svg", "Save current filters");
+        toolbarLayout->addWidget(saveFiltersBtn_);
+
+        loadFiltersBtn_ = createToolButton("MaterialVS/colored/E3E3E3/folder_open.svg", "Load saved filters");
+        toolbarLayout->addWidget(loadFiltersBtn_);
+
         toolbarLayout->addStretch();
 
         copySelectedBtn_ = createToolButton("MaterialVS/colored/E3E3E3/copy.svg", "Copy selected log");
@@ -179,6 +268,11 @@ public:
         fontSizeSpin_->setFixedWidth(84);
         fontSizeSpin_->setToolTip(QStringLiteral("Console font size"));
         toolbarLayout->addWidget(fontSizeSpin_);
+
+        debugFilterBtn_ = createToolButton("MaterialVS/colored/4CAF50/bug_report.svg", "Toggle Debug");
+        debugFilterBtn_->setCheckable(true);
+        debugFilterBtn_->setChecked(true);
+        toolbarLayout->addWidget(debugFilterBtn_);
 
         infoFilterBtn_ = createToolButton("MaterialVS/colored/E3E3E3/info.svg", "Toggle Information");
         infoFilterBtn_->setCheckable(true);
@@ -275,6 +369,43 @@ public:
 
         QObject::connect(searchEdit_, &QLineEdit::textChanged, owner_, [this](const QString& text) {
             searchFilter_ = text;
+            regexFilter_.setPattern(text);
+            regexFilter_.setPatternOptions(QRegularExpression::CaseInsensitiveOption);
+            refreshList();
+        });
+
+        QObject::connect(timeFilterCheck_, &QCheckBox::toggled, owner_, [this](bool checked) {
+            useTimeFilter_ = checked;
+            refreshList();
+        });
+
+        QObject::connect(startTimeEdit_, &QDateTimeEdit::dateTimeChanged, owner_, [this](const QDateTime& dt) {
+            startTime_ = dt;
+            if (useTimeFilter_) refreshList();
+        });
+
+        QObject::connect(endTimeEdit_, &QDateTimeEdit::dateTimeChanged, owner_, [this](const QDateTime& dt) {
+            endTime_ = dt;
+            if (useTimeFilter_) refreshList();
+        });
+
+        QObject::connect(contextFilterCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged), owner_, [this](int index) {
+            QString selected = contextFilterCombo_->itemData(index).toString();
+            useContextFilter_ = !selected.isEmpty();
+            contextFilters_ = useContextFilter_ ? QStringList{selected} : QStringList{};
+            refreshList();
+        });
+
+        QObject::connect(saveFiltersBtn_, &QToolButton::clicked, owner_, [this]() {
+            saveFilterPreset();
+        });
+
+        QObject::connect(loadFiltersBtn_, &QToolButton::clicked, owner_, [this]() {
+            loadFilterPreset();
+        });
+
+        QObject::connect(debugFilterBtn_, &QToolButton::toggled, owner_, [this](bool checked) {
+            showDebug_ = checked;
             refreshList();
         });
 
@@ -478,14 +609,21 @@ public:
         updateStatus();
     }
 
-    bool shouldShowLog(LogLevel level, const QString& message) const {
-        if (!searchFilter_.isEmpty() && !message.contains(searchFilter_, Qt::CaseInsensitive)) {
+    bool shouldShowLog(LogLevel level, const QString& message, const QDateTime& timestamp, const QString& context) const {
+        if (!searchFilter_.isEmpty() && !regexFilter_.match(message).hasMatch()) {
+            return false;
+        }
+        if (useTimeFilter_ && (timestamp < startTime_ || timestamp > endTime_)) {
+            return false;
+        }
+        if (useContextFilter_ && !contextFilters_.contains(context)) {
             return false;
         }
         if (importantOnly_ && !(level == LogLevel::Warning || level == LogLevel::Error || level == LogLevel::Fatal)) {
             return false;
         }
-        if (level == LogLevel::Debug || level == LogLevel::Info) return showInfo_;
+        if (level == LogLevel::Debug) return showDebug_;
+        if (level == LogLevel::Info) return showInfo_;
         if (level == LogLevel::Warning) return showWarning_;
         if (level == LogLevel::Error || level == LogLevel::Fatal) return showError_;
         return true;
@@ -496,7 +634,7 @@ public:
         std::vector<DisplayLogEntry> entries;
         entries.reserve(logs.size());
         for (const auto& log : logs) {
-            if (!shouldShowLog(log.level, log.message)) {
+            if (!shouldShowLog(log.level, log.message, log.timestamp, log.context)) {
                 continue;
             }
             if (collapse_ && !entries.empty()) {
@@ -515,19 +653,93 @@ public:
     }
 
     void recountTotalsFromLogger() {
+        totalDebugCount_ = 0;
         totalInfoCount_ = 0;
         totalWarningCount_ = 0;
         totalErrorCount_ = 0;
+        availableContexts_.clear();
         const auto logs = Logger::instance()->getLogs();
         for (const auto& log : logs) {
-            if (log.level == LogLevel::Warning) {
+            if (!log.context.isEmpty() && !availableContexts_.contains(log.context)) {
+                availableContexts_.append(log.context);
+            }
+            if (log.level == LogLevel::Debug) {
+                ++totalDebugCount_;
+            } else if (log.level == LogLevel::Info) {
+                ++totalInfoCount_;
+            } else if (log.level == LogLevel::Warning) {
                 ++totalWarningCount_;
             } else if (log.level == LogLevel::Error || log.level == LogLevel::Fatal) {
                 ++totalErrorCount_;
-            } else {
-                ++totalInfoCount_;
             }
         }
+        updateContextCombo();
+    }
+
+    void updateContextCombo() {
+        if (!contextFilterCombo_) return;
+        const QSignalBlocker blocker(contextFilterCombo_);
+        contextFilterCombo_->clear();
+        contextFilterCombo_->addItem("All", QString());
+        for (const QString& context : availableContexts_) {
+            contextFilterCombo_->addItem(context, context);
+        }
+    }
+
+    void saveFilterPreset() {
+        QSettings settings;
+        settings.beginGroup("ConsoleFilters");
+        settings.setValue("showDebug", showDebug_);
+        settings.setValue("showInfo", showInfo_);
+        settings.setValue("showWarning", showWarning_);
+        settings.setValue("showError", showError_);
+        settings.setValue("useTimeFilter", useTimeFilter_);
+        settings.setValue("startTime", startTime_);
+        settings.setValue("endTime", endTime_);
+        settings.setValue("useContextFilter", useContextFilter_);
+        settings.setValue("contextFilters", contextFilters_);
+        settings.setValue("importantOnly", importantOnly_);
+        settings.setValue("searchFilter", searchFilter_);
+        settings.endGroup();
+    }
+
+    void loadFilterPreset() {
+        QSettings settings;
+        settings.beginGroup("ConsoleFilters");
+        showDebug_ = settings.value("showDebug", true).toBool();
+        showInfo_ = settings.value("showInfo", true).toBool();
+        showWarning_ = settings.value("showWarning", true).toBool();
+        showError_ = settings.value("showError", true).toBool();
+        useTimeFilter_ = settings.value("useTimeFilter", false).toBool();
+        startTime_ = settings.value("startTime", QDateTime::currentDateTime().addSecs(-3600)).toDateTime();
+        endTime_ = settings.value("endTime", QDateTime::currentDateTime()).toDateTime();
+        useContextFilter_ = settings.value("useContextFilter", false).toBool();
+        contextFilters_ = settings.value("contextFilters", QStringList{}).toStringList();
+        importantOnly_ = settings.value("importantOnly", false).toBool();
+        searchFilter_ = settings.value("searchFilter", QString{}).toString();
+        regexFilter_.setPattern(searchFilter_);
+        regexFilter_.setPatternOptions(QRegularExpression::CaseInsensitiveOption);
+        settings.endGroup();
+
+        // Update UI
+        if (debugFilterBtn_) debugFilterBtn_->setChecked(showDebug_);
+        if (infoFilterBtn_) infoFilterBtn_->setChecked(showInfo_);
+        if (warningFilterBtn_) warningFilterBtn_->setChecked(showWarning_);
+        if (errorFilterBtn_) errorFilterBtn_->setChecked(showError_);
+        if (timeFilterCheck_) timeFilterCheck_->setChecked(useTimeFilter_);
+        if (startTimeEdit_) startTimeEdit_->setDateTime(startTime_);
+        if (endTimeEdit_) endTimeEdit_->setDateTime(endTime_);
+        if (importantOnlyBtn_) importantOnlyBtn_->setChecked(importantOnly_);
+        if (searchEdit_) searchEdit_->setText(searchFilter_);
+        // Context filter update
+        if (contextFilterCombo_ && !contextFilters_.isEmpty()) {
+            int index = contextFilterCombo_->findData(contextFilters_.first());
+            if (index >= 0) contextFilterCombo_->setCurrentIndex(index);
+        } else if (contextFilterCombo_) {
+            contextFilterCombo_->setCurrentIndex(0);
+        }
+
+        refreshList();
     }
 
     void refreshList() {
@@ -568,7 +780,7 @@ public:
             updateStatus();
             return;
         }
-        if (!shouldShowLog(level, message)) {
+        if (!shouldShowLog(level, message, ts, context)) {
             updateStatus();
             return;
         }

@@ -81,6 +81,14 @@ public:
     void drawTextureLocal(float x, float y, float w, float h, ITextureView* pSRV, float opacity = 1.0f);
     void drawMaskedTextureLocal(float x, float y, float w, float h, ITextureView* sceneSRV, const QImage& maskImage, float opacity = 1.0f);
 
+    // Batch rendering
+    void beginBatch();
+    void endBatch();
+
+    // Batch rendering
+    void beginBatch();
+    void endBatch();
+
 private:
     class Impl;
     Impl* impl_;

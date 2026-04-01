@@ -1,11 +1,16 @@
 module;
 
 #include <QAction>
+#include <QColor>
+#include <QFont>
 #include <QLabel>
 #include <QMenu>
+#include <QPalette>
 #include <QString>
 
 module ArtifactStatusBar;
+
+import Widgets.Utils.CSS;
 
 namespace Artifact
 {
@@ -43,36 +48,50 @@ namespace Artifact
  ArtifactStatusBar::ArtifactStatusBar(QWidget* parent)
   : QStatusBar(parent)
  {
+  const QColor backgroundColor = QColor(ArtifactCore::currentDCCTheme().backgroundColor);
+  const QColor surfaceColor = QColor(ArtifactCore::currentDCCTheme().secondaryBackgroundColor);
+  const QColor textColor = QColor(ArtifactCore::currentDCCTheme().textColor);
+  const QColor mutedTextColor = textColor.darker(130);
+  const QColor accentColor = QColor(ArtifactCore::currentDCCTheme().accentColor);
+  const QColor dangerColor = QColor(QStringLiteral("#E91E63"));
+  const QColor borderColor = QColor(ArtifactCore::currentDCCTheme().borderColor);
+
   setSizeGripEnabled(true);
-  setStyleSheet(R"(
-      QStatusBar {
-          background: #181818;
-          border-top: 1px solid #2d2d2d;
-          min-height: 26px;
-          color: #888;
-      }
-      QStatusBar::item { border: none; }
-      QLabel {
-          color: #888;
-          font-size: 10px;
-          font-family: 'Segoe UI', 'Meiryo', sans-serif;
-          padding: 0 10px;
-          border-left: 1px solid #2d2d2d;
-      }
-  )");
+  setAutoFillBackground(true);
+  QPalette statusPalette = palette();
+  statusPalette.setColor(QPalette::Window, backgroundColor);
+  statusPalette.setColor(QPalette::Base, surfaceColor);
+  statusPalette.setColor(QPalette::WindowText, textColor);
+  statusPalette.setColor(QPalette::Mid, borderColor);
+  setPalette(statusPalette);
 
   for (int i = 0; i < kItemCount; ++i) {
       labels_[i] = new QLabel(defaultTextForItem(static_cast<Item>(i)), this);
       labels_[i]->setAlignment(Qt::AlignCenter);
+      labels_[i]->setAutoFillBackground(false);
+      QPalette labelPalette = labels_[i]->palette();
+      labelPalette.setColor(QPalette::WindowText, mutedTextColor);
+      labels_[i]->setPalette(labelPalette);
   }
 
-  // Set specific styles/widths for certain labels
-  labels_[itemIndex(Item::TimelineDebug)]->setStyleSheet("color: #4CAF50; font-weight: bold; border-left: none; padding-left: 12px;");
+  QFont boldFont = font();
+  boldFont.setBold(true);
+  labels_[itemIndex(Item::TimelineDebug)]->setFont(boldFont);
   labels_[itemIndex(Item::Memory)]->setMinimumWidth(100);
   labels_[itemIndex(Item::FPS)]->setMinimumWidth(80);
   labels_[itemIndex(Item::Zoom)]->setMinimumWidth(80);
   labels_[itemIndex(Item::Coordinates)]->setMinimumWidth(110);
-  labels_[itemIndex(Item::Console)]->setStyleSheet("color: #E91E63; font-weight: bold;");
+  labels_[itemIndex(Item::Console)]->setFont(boldFont);
+  {
+      QPalette p = labels_[itemIndex(Item::TimelineDebug)]->palette();
+      p.setColor(QPalette::WindowText, accentColor);
+      labels_[itemIndex(Item::TimelineDebug)]->setPalette(p);
+  }
+  {
+      QPalette p = labels_[itemIndex(Item::Console)]->palette();
+      p.setColor(QPalette::WindowText, dangerColor);
+      labels_[itemIndex(Item::Console)]->setPalette(p);
+  }
 
   addWidget(labels_[itemIndex(Item::TimelineDebug)]);
   addWidget(labels_[itemIndex(Item::Project)], 1);

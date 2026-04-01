@@ -1,9 +1,8 @@
-﻿module ;
+module ;
 
 export module Artifact.Layers.Model3D;
 
 import Artifact.Layer.Abstract;
-import Mesh.Mesh;
 
 export namespace Artifact {
 
@@ -17,10 +16,13 @@ export namespace Artifact {
  private:
    class Impl;
    Impl* impl_;
+   void createCubeMesh();
+
  public:
-   Artifact3DLayer();
-   ~Artifact3DLayer();
-   void loadFromFile() override;
+    Artifact3DLayer();
+    ~Artifact3DLayer();
+    void loadFromFile();
+    void loadFromFile(const QString& filePath);
 
    // Render mode
    RenderMode renderMode() const;
@@ -34,15 +36,5 @@ export namespace Artifact {
    std::vector<ArtifactCore::PropertyGroup> getLayerPropertyGroups() const override;
    bool setLayerPropertyValue(const QString &propertyPath, const QVariant &value) override;
  };
- 
- 
- 
- 
- 
- };
 
-
-
-
-
-};
+}

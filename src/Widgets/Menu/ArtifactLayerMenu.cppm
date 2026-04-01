@@ -490,12 +490,37 @@ void ArtifactLayerMenu::Impl::handleClearParent()
 
 void ArtifactLayerMenu::Impl::handlePrecompose()
 {
-    QMessageBox::information(menu_->window(), "Layer", "プリコンポーズは次のステップで実装します。");
+    auto* service = ArtifactProjectService::instance();
+    if (!service || selectedLayerId_.isNil()) return;
+    auto comp = service->currentComposition().lock();
+    if (!comp) return;
+
+    auto layer = comp->findLayerById(selectedLayerId_);
+    if (!layer) return;
+
+    bool ok = false;
+    const QString newName = QInputDialog::getText(
+        menu_->window(),
+        "プリコンポーズ",
+        "新しいコンポジション名:",
+        QLineEdit::Normal,
+        layer->layerName() + " Precomp",
+        &ok);
+    if (!ok || newName.trimmed().isEmpty()) return;
+
+    // 選択レイヤーを新しいコンポジションに移動
+    service->precomposeLayersInCurrentComposition({selectedLayerId_}, UniString(newName.trimmed()));
 }
 
 void ArtifactLayerMenu::Impl::handleSplitLayer()
 {
-    QMessageBox::information(menu_->window(), "Layer", "レイヤー分割は次のステップで実装します。");
+    auto* service = ArtifactProjectService::instance();
+    if (!service || selectedLayerId_.isNil()) return;
+    auto comp = service->currentComposition().lock();
+    if (!comp) return;
+
+    // 現在の時間でレイヤーを分割
+    service->splitLayerAtCurrentTime(comp->id(), selectedLayerId_);
 }
 
 ArtifactLayerMenu::ArtifactLayerMenu(QWidget* parent)

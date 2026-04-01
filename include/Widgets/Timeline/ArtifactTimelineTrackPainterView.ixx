@@ -28,6 +28,10 @@ export namespace Artifact
    LayerID layerId;
    int trackIndex = -1;
    double frame = 0.0;
+   int laneIndex = 0;
+   int laneCount = 1;
+   bool selectedLayer = false;
+   bool eased = false;
    QColor color = QColor(247, 204, 83);
    QString label;
   };

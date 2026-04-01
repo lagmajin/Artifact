@@ -519,19 +519,19 @@ ArtifactFloatPropertyEditor::ArtifactFloatPropertyEditor(
     QDoubleSpinBox, QSpinBox {
         background: transparent;
         border: none;
-        color: #5BC0EB;
+        color: #E8E8E8;
         font-family: 'Segoe UI', sans-serif;
         font-weight: 600;
         font-size: 11px;
         padding-right: 2px;
     }
     QDoubleSpinBox:hover, QSpinBox:hover {
-        background: rgba(91, 192, 235, 0.1);
+        background: rgba(245, 147, 60, 0.08);
         border-radius: 2px;
     }
     QDoubleSpinBox:focus, QSpinBox:focus {
-        background: #222;
-        border: 1px solid #5BC0EB;
+        background: #232323;
+        border: 1px solid #F5933C;
         color: #FFF;
     }
   )";
@@ -561,7 +561,7 @@ ArtifactFloatPropertyEditor::ArtifactFloatPropertyEditor(
           border-radius: 1px;
       }
       QSlider::handle:horizontal {
-          background: #5BC0EB;
+          background: #F5933C;
           width: 8px;
           height: 8px;
           margin: -3px 0;
@@ -714,19 +714,19 @@ ArtifactIntPropertyEditor::ArtifactIntPropertyEditor(
     QSpinBox {
         background: transparent;
         border: none;
-        color: #5BC0EB;
+        color: #E8E8E8;
         font-family: 'Segoe UI', sans-serif;
         font-weight: 600;
         font-size: 11px;
         padding-right: 2px;
     }
     QSpinBox:hover {
-        background: rgba(91, 192, 235, 0.1);
+        background: rgba(245, 147, 60, 0.08);
         border-radius: 2px;
     }
     QSpinBox:focus {
-        background: #222;
-        border: 1px solid #5BC0EB;
+        background: #232323;
+        border: 1px solid #F5933C;
         color: #FFF;
     }
   )";
@@ -756,7 +756,7 @@ ArtifactIntPropertyEditor::ArtifactIntPropertyEditor(
           border-radius: 1px;
       }
       QSlider::handle:horizontal {
-          background: #5BC0EB;
+          background: #F5933C;
           width: 8px;
           height: 8px;
           margin: -3px 0;

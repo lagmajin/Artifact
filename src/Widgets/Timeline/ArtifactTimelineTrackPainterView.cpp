@@ -24,6 +24,7 @@ constexpr int kTrackSpacing = 1;
 constexpr int kClipCorner = 4;
 constexpr int kClipPadding = 6;
 constexpr int kMinTrackCount = 1;
+constexpr double kMarkerLaneStep = 8.0;
 
 double clampDurationFrames(const double value)
 {
@@ -95,7 +96,10 @@ QPointF markerCenterFor(
  }
  const int trackTop = trackTopAt(heights, marker.trackIndex);
  const int trackH = heights[marker.trackIndex];
- return QPointF(marker.frame * ppf - xOffset, trackTop + trackH * 0.5 - yOffset);
+ const int laneCount = std::max(1, marker.laneCount);
+ const int laneIndex = std::clamp(marker.laneIndex, 0, laneCount - 1);
+ const double laneOffset = (laneIndex - (laneCount - 1) * 0.5) * kMarkerLaneStep;
+ return QPointF(marker.frame * ppf - xOffset, trackTop + trackH * 0.5 - yOffset + laneOffset);
 }
 
 QRectF markerHitRectFor(
@@ -106,10 +110,11 @@ QRectF markerHitRectFor(
  const double yOffset)
 {
  const QPointF center = markerCenterFor(marker, heights, ppf, xOffset, yOffset);
- if (center.isNull()) {
+  if (center.isNull()) {
   return {};
- }
- return QRectF(center.x() - 8.0, center.y() - 8.0, 16.0, 16.0);
+  }
+ const qreal size = marker.laneCount > 1 ? 7.0 : 8.0;
+ return QRectF(center.x() - size, center.y() - size, size * 2.0, size * 2.0);
 }
 
 QRectF clipRectFor(
@@ -475,9 +480,9 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent* event)
   const bool isHovered = (i == impl_->hoverClipIndex_);
   const bool isSelected = clip.selected;
   const QColor fill = clip.selected
-   ? QColor(180, 110, 45) // Modo Amber
-   : (isHovered ? clip.fillColor.lighter(115) : clip.fillColor);
-  p.setPen(QPen(clip.selected ? QColor(255, 194, 118) : QColor(17, 17, 20), clip.selected ? 2 : 1));
+   ? clip.fillColor.lighter(126)
+   : (isHovered ? clip.fillColor.lighter(118) : clip.fillColor);
+  p.setPen(QPen(clip.selected ? QColor(255, 214, 154) : QColor(17, 17, 20), clip.selected ? 2 : 1));
   p.setBrush(fill);
   p.drawRoundedRect(clipRect, kClipCorner, kClipCorner);
 
@@ -517,7 +522,7 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent* event)
    continue;
   }
   const bool isHovered = markerIndex == impl_->hoverMarkerIndex_;
-  const int size = isHovered ? 6 : 5;
+  const int size = marker.laneCount > 1 ? (isHovered ? 6 : 5) : (isHovered ? 7 : 6);
   const QRectF diamondRect(center.x() - size, center.y() - size,
                            size * 2.0, size * 2.0);
   QPolygonF diamond;
@@ -525,12 +530,22 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent* event)
           << QPointF(diamondRect.right(), diamondRect.center().y())
           << QPointF(diamondRect.center().x(), diamondRect.bottom())
           << QPointF(diamondRect.left(), diamondRect.center().y());
-  p.setPen(QPen(QColor(20, 20, 24), 1));
-  p.setBrush(isHovered ? marker.color.lighter(125) : marker.color);
-  p.drawPolygon(diamond);
+  if (marker.selectedLayer) {
+   QPolygonF outer = diamond;
+   p.setPen(QPen(QColor(12, 12, 14, 220), 2.0));
+   p.setBrush(Qt::NoBrush);
+   p.drawPolygon(outer);
+   p.setPen(QPen(QColor(255, 255, 255, 240), 1.0));
+   p.setBrush(Qt::white);
+   p.drawPolygon(diamond);
+  } else {
+   p.setPen(QPen(QColor(20, 20, 24), 1));
+   p.setBrush(marker.eased ? marker.color.lighter(105) : marker.color);
+   p.drawPolygon(diamond);
+  }
   if (!marker.label.isEmpty()) {
-   p.setPen(isHovered ? QColor(255, 248, 220) : QColor(240, 240, 244));
-   p.drawText(QRectF(center.x() + 8.0, center.y() - 8.0, 120.0, 16.0),
+   p.setPen(marker.selectedLayer ? QColor(255, 250, 240) : (isHovered ? QColor(255, 248, 220) : QColor(240, 240, 244)));
+   p.drawText(QRectF(center.x() + 8.0, center.y() - 8.0, 150.0, 16.0),
               Qt::AlignLeft | Qt::AlignVCenter,
               marker.label);
   }
@@ -539,15 +554,15 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent* event)
  // Current frame marker.
  const double playheadX = impl_->currentFrame_ * ppf - xOffset;
  if (playheadX >= dirtyRect.left() - 4.0 && playheadX <= dirtyRect.right() + 4.0) {
-  p.setPen(QPen(QColor(238, 74, 88, 220), 2));
+  p.setPen(QPen(QColor(238, 74, 88, 230), 3));
   p.drawLine(QPointF(playheadX, dirtyRect.top()), QPointF(playheadX, dirtyRect.bottom()));
-  p.setBrush(QColor(238, 74, 88, 220));
+  p.setBrush(QColor(238, 74, 88, 230));
   p.setPen(Qt::NoPen);
   const QPointF tip(playheadX, dirtyRect.top() + 2.0);
   const QPolygonF head({
-      tip + QPointF(-6.0, 0.0),
-      tip + QPointF(6.0, 0.0),
-      tip + QPointF(0.0, 9.0),
+      tip + QPointF(-7.0, 0.0),
+      tip + QPointF(7.0, 0.0),
+      tip + QPointF(0.0, 11.0),
   });
   p.drawPolygon(head);
  }

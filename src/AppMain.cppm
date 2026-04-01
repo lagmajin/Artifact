@@ -90,6 +90,7 @@ import Artifact.Layers.Selection.Manager;
 import Artifact.Service.Playback;
 import Artifact.Service.Project;
 import Artifact.Project.Roles;
+import EnvironmentVariable;
 import Artifact.Widgets.UndoHistoryWidget;
 import Artifact.Widgets.PythonHookManagerWidget;
 import Artifact.Widgets.ProjectManagerWidget;
@@ -640,7 +641,11 @@ int main(int argc, char *argv[]) {
   }
 
   QApplication a(argc, argv);
-  configureQtPluginPaths();
+  configureQtPaths();
+
+  // Initialize environment variable manager
+  auto* envManager = ArtifactCore::EnvironmentVariableManager::instance();
+  qDebug() << "[AppMain] Environment variables loaded:" << envManager->variableNames().size();
 
   // Initialize translations
   {
@@ -660,36 +665,16 @@ int main(int argc, char *argv[]) {
   QLoggingCategory::setFilterRules(
       QStringLiteral("artifact.compositionview.debug=false\n"
                      "artifact.layer.video.debug=true"));
-  a.setStyle(QStyleFactory::create(QStringLiteral("Fusion")));
-
-  // 設定からテーマを取得
   auto *settings = ArtifactCore::ArtifactAppSettings::instance();
-  QString themeName = settings->themeName();
-  DccStylePreset preset = DccStylePreset::StudioStyle; // デフォルト
-
-  if (themeName == "HighContrast") {
-    preset = DccStylePreset::HighContrast;
-  } else if (themeName == "Maya") {
-    preset = DccStylePreset::MayaStyle;
-  } else if (themeName == "Modo") {
-    preset = DccStylePreset::ModoStyle;
-  } else if (themeName == "Studio" || themeName == "Dark") {
-    preset = DccStylePreset::StudioStyle;
-  } else if (themeName == "Blender") {
-    preset = DccStylePreset::BlenderStyle;
-  } else if (themeName == "DaVinci" || themeName == "Resolve") {
-    preset = DccStylePreset::DaVinciStyle;
-  } else if (themeName == "3dsMax") {
-    preset = DccStylePreset::_3dsMaxStyle;
-  } else if (themeName == "Nuke") {
-    preset = DccStylePreset::NukeStyle;
-  } else if (themeName == "Light") {
-    preset = DccStylePreset::DefaultQt;
-  }
-
-  auto selectedTheme = ArtifactCore::getDCCTheme(preset);
-  a.setPalette(ArtifactCore::buildDCCPalette(selectedTheme));
-  a.setStyleSheet(ArtifactCore::buildDCCStyleSheet(selectedTheme));
+  auto applyThemeFromSettings = [&a, settings]() {
+    if (!settings) {
+      return;
+    }
+    ArtifactCore::applyDCCTheme(a, settings->themeName());
+  };
+  applyThemeFromSettings();
+  QObject::connect(settings, &ArtifactCore::ArtifactAppSettings::settingsChanged,
+                   &a, applyThemeFromSettings);
   auto pool = QThreadPool::globalInstance();
 
   pool->setMaxThreadCount(10);
@@ -862,9 +847,6 @@ int main(int argc, char *argv[]) {
             contentsViewer->setFilePath(footage->filePath);
             mw->setDockVisible(QStringLiteral("Contents Viewer"), true);
             mw->activateDock(QStringLiteral("Contents Viewer"));
-            if (assetBrowser) {
-              assetBrowser->selectAssetPaths(QStringList{footage->filePath});
-            }
           });
     }
     QObject::connect(

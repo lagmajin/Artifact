@@ -2,46 +2,12 @@ module;
 
 #include <QString>
 #include <QVariant>
-
-#include <iostream>
 #include <vector>
-#include <string>
-#include <map>
-#include <unordered_map>
-#include <set>
-#include <unordered_set>
-#include <memory>
-#include <algorithm>
-#include <cmath>
-#include <functional>
-#include <optional>
-#include <utility>
-#include <array>
-#include <mutex>
-#include <thread>
-#include <chrono>
-#include <filesystem>
-#include <fstream>
-#include <sstream>
-#include <stdexcept>
-#include <type_traits>
-#include <variant>
-#include <any>
-#include <atomic>
-#include <condition_variable>
-#include <queue>
-#include <deque>
-#include <list>
-#include <tuple>
-#include <numeric>
-#include <regex>
-#include <random>
+
 export module BrightnessEffect;
 
-
-
-
 import Artifact.Effect.Abstract;
+import Artifact.Effect.ImplBase;
 import Image.ImageF32x4RGBAWithCache;
 import Property.Abstract;
 import Utils.String.UniString;
@@ -52,37 +18,36 @@ using namespace ArtifactCore;
 
 // 明度 (Brightness) エフェクト
 // 画像全体の明るさを調整する基本的なカラーコレクション
+// CPU/GPU 両対応、同一アルゴリズム
 class BrightnessEffect : public ArtifactAbstractEffect {
 private:
-    class Impl;
-    Impl* impl_;
+    float brightness_ = 0.0f;
+    float contrast_ = 0.0f;
+    float highlights_ = 0.0f;
+    float shadows_ = 0.0f;
 
-protected:
-    void apply(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) override;
+    void syncImpls();
 
 public:
     BrightnessEffect();
     ~BrightnessEffect() override;
 
-    // 明度 (-1.0 ~ 1.0, default: 0.0)
-    void setBrightness(float brightness);
-    float brightness() const;
+    void setBrightness(float v) { brightness_ = std::clamp(v, -1.0f, 1.0f); syncImpls(); }
+    float brightness() const { return brightness_; }
 
-    // コントラスト (-1.0 ~ 1.0, default: 0.0)
-    void setContrast(float contrast);
-    float contrast() const;
+    void setContrast(float v) { contrast_ = std::clamp(v, -1.0f, 1.0f); syncImpls(); }
+    float contrast() const { return contrast_; }
 
-    // ハイライト調整 (-1.0 ~ 1.0, default: 0.0)
-    void setHighlights(float highlights);
-    float highlights() const;
+    void setHighlights(float v) { highlights_ = std::clamp(v, -1.0f, 1.0f); syncImpls(); }
+    float highlights() const { return highlights_; }
 
-    // シャドウ調整 (-1.0 ~ 1.0, default: 0.0)
-    void setShadows(float shadows);
-    float shadows() const;
+    void setShadows(float v) { shadows_ = std::clamp(v, -1.0f, 1.0f); syncImpls(); }
+    float shadows() const { return shadows_; }
 
-    // プロパティ取得
     std::vector<AbstractProperty> getProperties() const override;
     void setPropertyValue(const UniString& name, const QVariant& value) override;
+
+    bool supportsGPU() const override { return true; }
 };
 
 } // namespace Artifact

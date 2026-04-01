@@ -17,6 +17,7 @@
 module Widgets.Dock.StyleManager;
 
 import Widgets.Dock.GlowStyle;
+import Widgets.Utils.CSS;
 
 namespace Artifact {
 
@@ -97,10 +98,12 @@ ads::CDockWidget* resolveActiveDock(ads::CDockManager* dockManager, ads::CDockWi
 
 QString tabTextColor(const bool isActiveDock, const bool /*isFloatingTab*/, const bool /*isCurrentTab*/)
 {
+    const QColor themeText = QColor(ArtifactCore::currentDCCTheme().textColor);
+    const QColor mutedText = themeText.darker(125);
     if (isActiveDock) {
-        return QStringLiteral("#ffffff");
+        return themeText.name(QColor::HexRgb);
     }
-    return QStringLiteral("#BBBBBB");
+    return mutedText.name(QColor::HexRgb);
 }
 
 void applyTabLabelColors(ads::CDockWidgetTab* tab, const QString& color, const bool emphasize)
@@ -123,6 +126,7 @@ void applyTabLabelColors(ads::CDockWidgetTab* tab, const QString& color, const b
 DockStyleManager::DockStyleManager(ads::CDockManager* dockManager, QObject* parent)
     : QObject(parent), impl_(new Impl()) {
     impl_->dockManager_ = dockManager;
+    impl_->glowColor_ = QColor(ArtifactCore::currentDCCTheme().accentColor);
 
     impl_->glowStyle_ = new DockGlowStyle(QApplication::style());
     impl_->dockManager_->setStyle(impl_->glowStyle_);

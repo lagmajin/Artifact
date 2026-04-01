@@ -50,6 +50,7 @@ public:
     PSOAndSRB spriteTransformPsoAndSrb() const;
     PSOAndSRB maskedSpritePsoAndSrb() const;
     PSOAndSRB gizmo3DPsoAndSrb() const;
+    PSOAndSRB gizmo3DTrianglePsoAndSrb() const;
 
     RefCntAutoPtr<ISampler> spriteSampler() const;
 

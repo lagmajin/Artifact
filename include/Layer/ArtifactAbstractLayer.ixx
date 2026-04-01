@@ -51,7 +51,8 @@ enum class LayerType {
   Light = 12,
   Group = 13,
   Folder = 14,
-  Particle = 15   // パーティクルレイヤー
+  Particle = 15,   // パーティクルレイヤー
+  Clone = 16       // クローンレイヤー (MoGraph)
 };
 
 enum class LayerDirtyFlag : uint32_t {
@@ -108,12 +109,14 @@ public:
 protected:
     void setIs3D(bool value);
 
+public:
   virtual QJsonObject toJson() const;
   static ArtifactAbstractLayerPtr fromJson(const QJsonObject &obj);
-
   void Show();
   void Hide();
   bool isVisible() const;
+  virtual void draw(ArtifactIRenderer *renderer) = 0;
+  LayerID id() const;
   void setVisible(bool visible = true);
   QString layerName() const;
   void setLayerName(const QString &name);
@@ -123,12 +126,8 @@ protected:
   void setComposition(void *comp);
   void *composition() const;
 
-  virtual void draw(ArtifactIRenderer *renderer) = 0;
-
   LAYER_BLEND_TYPE layerBlendType() const;
   void setBlendMode(LAYER_BLEND_TYPE type);
-
-  LayerID id() const;
 
   std::type_index type_index() const;
   void *QueryInterface(const std::type_index &ti);
@@ -152,6 +151,8 @@ protected:
   void setTransform();
   QTransform getGlobalTransform() const;
   QTransform getLocalTransform() const;
+  QTransform getGlobalTransformAt(int64_t frameNumber) const;
+  QTransform getLocalTransformAt(int64_t frameNumber) const;
   QMatrix4x4 getGlobalTransform4x4() const;
   QMatrix4x4 getLocalTransform4x4() const;
   ArtifactAbstractLayerPtr parentLayer() const;
@@ -185,6 +186,7 @@ protected:
   void clearParent();
   bool hasParent() const;
   virtual bool isNullLayer() const;
+  virtual bool isCloneLayer() const;
   virtual QRectF localBounds() const;
 
   virtual bool isAdjustmentLayer() const;
@@ -233,21 +235,22 @@ protected:
   void addDirtyReason(LayerDirtyReason reason);
   bool hasDirtyReason(LayerDirtyReason reason) const;
   uint64_t dirtyReasonMask() const;
-  void clearDirtyReasons();
+   void clearDirtyReasons();
+
+   /*Effects*/
+public:
+   void addEffect(std::shared_ptr<class ArtifactAbstractEffect> effect);
+   void removeEffect(const UniString &effectID);
+   void clearEffects();
+   std::vector<std::shared_ptr<class ArtifactAbstractEffect>> getEffects() const;
+   std::shared_ptr<class ArtifactAbstractEffect>
+   getEffect(const UniString &effectID) const;
+   int effectCount() const;
+   /*Effects*/
 
   /*Thumbnail*/
   QImage getThumbnail(int width = 128, int height = 128) const;
   /*Thumbnail*/
-
-  /*Effects*/
-  void addEffect(std::shared_ptr<class ArtifactAbstractEffect> effect);
-  void removeEffect(const UniString &effectID);
-  void clearEffects();
-  std::vector<std::shared_ptr<class ArtifactAbstractEffect>> getEffects() const;
-  std::shared_ptr<class ArtifactAbstractEffect>
-  getEffect(const UniString &effectID) const;
-  int effectCount() const;
-  /*Effects*/
 
   virtual std::vector<ArtifactCore::PropertyGroup>
   getLayerPropertyGroups() const;

@@ -53,6 +53,7 @@ import Property.Abstract;
 import Artifact.Render.IRenderer;
 import Artifact.Render.CompositionRenderer;
 import Artifact.Preview.Pipeline;
+import Artifact.MainWindow;
 import Artifact.Layer.Image;
 import FloatRGBA;
 import Image.ImageF32x4_RGBA;
@@ -141,6 +142,7 @@ struct LayerSoloCommandEntry {
   bool maskEditDirty_ = false;
   ArtifactAbstractLayerWeak maskEditLayer_;
   std::vector<LayerMask> maskEditBefore_;
+  bool immersiveMode_ = false;
 
   void beginMaskEditTransaction(const ArtifactAbstractLayerPtr& layer);
   void markMaskEditDirty();
@@ -155,6 +157,7 @@ struct LayerSoloCommandEntry {
   void recreateSwapChainInternal(QWidget* window);
   bool ensureMaskPreviewRT(int width, int height);
   void requestRender();
+  void toggleImmersiveMode(bool immersive);
   void showCommandPalette();
   void hideCommandPalette();
   bool isCommandPaletteVisible() const;
@@ -937,82 +940,136 @@ bool ArtifactLayerEditorWidgetV2::Impl::executeCommandText(const QString& text)
        } else {
         layer->draw(renderer_.get());
        }
-       if (editMode_ == EditMode::Mask && layer->maskCount() > 0) {
-        const float zoom = std::max(0.001f, renderer_->getZoom());
-        const float hitRadius = std::max(4.0f, 7.0f / zoom);
-        const QTransform globalTransform = layer->getGlobalTransform();
-        auto toCanvas = [&](const QPointF& localPos) -> Detail::float2 {
-         const QPointF canvasPos = globalTransform.map(localPos);
-         return {static_cast<float>(canvasPos.x()), static_cast<float>(canvasPos.y())};
-        };
+        if (editMode_ == EditMode::Mask && layer->maskCount() > 0) {
+         const float zoom = std::max(0.001f, renderer_->getZoom());
+         const float hitRadius = std::max(4.0f, 7.0f / zoom);
+         const QTransform globalTransform = layer->getGlobalTransform();
+         auto toCanvas = [&](const QPointF& localPos) -> Detail::float2 {
+          const QPointF canvasPos = globalTransform.map(localPos);
+          return {static_cast<float>(canvasPos.x()), static_cast<float>(canvasPos.y())};
+         };
 
-        const FloatColor maskLineShadowColor = {0.0f, 0.0f, 0.0f, 0.30f};
-        const FloatColor maskLineColor = {0.26f, 0.84f, 0.96f, 0.96f};
-        const FloatColor maskPointShadowColor = {0.0f, 0.0f, 0.0f, 0.42f};
-        const FloatColor maskPointColor = {0.97f, 0.99f, 1.0f, 1.0f};
-        const FloatColor hoverColor = {1.0f, 0.76f, 0.28f, 1.0f};
-        const FloatColor dragColor = {1.0f, 0.40f, 0.24f, 1.0f};
+         const FloatColor maskLineShadowColor = {0.0f, 0.0f, 0.0f, 0.30f};
+         const FloatColor maskLineColor = {0.26f, 0.84f, 0.96f, 0.96f};
+         const FloatColor maskPointShadowColor = {0.0f, 0.0f, 0.0f, 0.42f};
+         const FloatColor maskPointColor = {0.97f, 0.99f, 1.0f, 1.0f};
+         const FloatColor hoverColor = {1.0f, 0.76f, 0.28f, 1.0f};
+         const FloatColor dragColor = {1.0f, 0.40f, 0.24f, 1.0f};
 
-        for (int m = 0; m < layer->maskCount(); ++m) {
-         const LayerMask mask = layer->mask(m);
-         if (!mask.isEnabled()) {
-          continue;
-         }
-         for (int p = 0; p < mask.maskPathCount(); ++p) {
-          const MaskPath path = mask.maskPath(p);
-          const int vertexCount = path.vertexCount();
-          if (vertexCount <= 0) {
+         for (int m = 0; m < layer->maskCount(); ++m) {
+          const LayerMask mask = layer->mask(m);
+          if (!mask.isEnabled()) {
            continue;
           }
-
-          struct VertexMarker {
-           Detail::float2 pos;
-           FloatColor color;
-           float radius;
-          };
-          std::vector<VertexMarker> markers;
-          markers.reserve(static_cast<size_t>(vertexCount));
-
-          Detail::float2 lastCanvasPos;
-          for (int v = 0; v < vertexCount; ++v) {
-           const MaskVertex vertex = path.vertex(v);
-           const Detail::float2 currentCanvasPos = toCanvas(vertex.position);
-           if (v > 0) {
-            renderer_->drawThickLineLocal(lastCanvasPos, currentCanvasPos, 6.0f, maskLineShadowColor);
-            renderer_->drawThickLineLocal(lastCanvasPos, currentCanvasPos, 3.5f, maskLineColor);
+          for (int p = 0; p < mask.maskPathCount(); ++p) {
+           const MaskPath path = mask.maskPath(p);
+           const int vertexCount = path.vertexCount();
+           if (vertexCount <= 0) {
+            continue;
            }
 
-           FloatColor currentColor = maskPointColor;
-           float currentPointRadius = 17.0f;
-           if (draggingMaskIndex_ == m && draggingPathIndex_ == p &&
-               draggingVertexIndex_ == v) {
-            currentColor = dragColor;
-            currentPointRadius = 21.0f;
-           } else if (hoveredMaskIndex_ == m && hoveredPathIndex_ == p &&
-                      hoveredVertexIndex_ == v) {
-            currentColor = hoverColor;
-            currentPointRadius = 21.0f;
+           struct VertexMarker {
+            Detail::float2 pos;
+            FloatColor color;
+            float radius;
+           };
+           std::vector<VertexMarker> markers;
+           markers.reserve(static_cast<size_t>(vertexCount));
+
+           Detail::float2 lastCanvasPos;
+           for (int v = 0; v < vertexCount; ++v) {
+            const MaskVertex vertex = path.vertex(v);
+            const Detail::float2 currentCanvasPos = toCanvas(vertex.position);
+            if (v > 0) {
+             renderer_->drawThickLineLocal(lastCanvasPos, currentCanvasPos, 6.0f, maskLineShadowColor);
+             renderer_->drawThickLineLocal(lastCanvasPos, currentCanvasPos, 3.5f, maskLineColor);
+            }
+
+            FloatColor currentColor = maskPointColor;
+            float currentPointRadius = 17.0f;
+            if (draggingMaskIndex_ == m && draggingPathIndex_ == p &&
+                draggingVertexIndex_ == v) {
+             currentColor = dragColor;
+             currentPointRadius = 21.0f;
+            } else if (hoveredMaskIndex_ == m && hoveredPathIndex_ == p &&
+                       hoveredVertexIndex_ == v) {
+             currentColor = hoverColor;
+             currentPointRadius = 21.0f;
+            }
+            markers.push_back({currentCanvasPos, currentColor, currentPointRadius});
+            lastCanvasPos = currentCanvasPos;
            }
-           markers.push_back({currentCanvasPos, currentColor, currentPointRadius});
-           lastCanvasPos = currentCanvasPos;
-          }
 
-          if (path.isClosed() && vertexCount > 1) {
-           const Detail::float2 firstCanvasPos = toCanvas(path.vertex(0).position);
-           renderer_->drawThickLineLocal(lastCanvasPos, firstCanvasPos, 7.0f, maskLineShadowColor);
-           renderer_->drawThickLineLocal(lastCanvasPos, firstCanvasPos, 4.0f, maskLineColor);
-          }
+           if (path.isClosed() && vertexCount > 1) {
+            const Detail::float2 firstCanvasPos = toCanvas(path.vertex(0).position);
+            renderer_->drawThickLineLocal(lastCanvasPos, firstCanvasPos, 7.0f, maskLineShadowColor);
+            renderer_->drawThickLineLocal(lastCanvasPos, firstCanvasPos, 4.0f, maskLineColor);
+           }
 
-          for (const auto& marker : markers) {
-           renderer_->drawPoint(marker.pos.x, marker.pos.y, marker.radius + 3.0f, maskPointShadowColor);
-           renderer_->drawPoint(marker.pos.x, marker.pos.y, marker.radius, marker.color);
+           for (const auto& marker : markers) {
+            renderer_->drawPoint(marker.pos.x, marker.pos.y, marker.radius + 3.0f, maskPointShadowColor);
+            renderer_->drawPoint(marker.pos.x, marker.pos.y, marker.radius, marker.color);
+           }
+          }
+         }
+        }
+
+        // Effect partial application visualization (Rect/Mask region overlay)
+        const auto effects = layer->getEffects();
+        for (const auto& effect : effects) {
+         if (!effect || !effect->isEnabled()) continue;
+         if (effect->pipelineStage() != EffectPipelineStage::Rasterizer) continue;
+
+         const bool hasRectRestriction = effect->hasRectRestriction();
+         const bool hasMaskRestriction = effect->hasMaskRestriction();
+
+         if (hasRectRestriction) {
+          const QRectF effectRect = effect->effectRect();
+          const QPointF topLeft = globalTransform.map(effectRect.topLeft());
+          const QPointF bottomRight = globalTransform.map(effectRect.bottomRight());
+          const float w = static_cast<float>(bottomRight.x() - topLeft.x());
+          const float h = static_cast<float>(bottomRight.y() - topLeft.y());
+
+          // Draw effect region overlay with dashed border
+          const FloatColor effectRegionColor = {0.35f, 0.85f, 0.35f, 0.6f};
+          const FloatColor effectBorderColor = {0.35f, 0.85f, 0.35f, 0.9f};
+          renderer_->drawRectLocal(static_cast<float>(topLeft.x()), static_cast<float>(topLeft.y()),
+                                   w, h, effectRegionColor, 0.3f);
+          renderer_->drawRectOutline(static_cast<float>(topLeft.x()), static_cast<float>(topLeft.y()),
+                                     w, h, effectBorderColor);
+         }
+
+         if (hasMaskRestriction) {
+          // Draw mask regions that this effect is limited to
+          for (int m = 0; m < layer->maskCount(); ++m) {
+           const LayerMask mask = layer->mask(m);
+           if (!mask.isEnabled()) continue;
+           for (int p = 0; p < mask.maskPathCount(); ++p) {
+            const MaskPath path = mask.maskPath(p);
+            const int vertexCount = path.vertexCount();
+            if (vertexCount < 2) continue;
+
+            const FloatColor effectMaskColor = {0.85f, 0.65f, 0.25f, 0.8f};
+            Detail::float2 lastPos;
+            for (int v = 0; v < vertexCount; ++v) {
+             const MaskVertex vertex = path.vertex(v);
+             const Detail::float2 currentPos = toCanvas(vertex.position);
+             if (v > 0) {
+              renderer_->drawThickLineLocal(lastPos, currentPos, 3.0f, effectMaskColor);
+             }
+             lastPos = currentPos;
+            }
+            if (path.isClosed()) {
+             const Detail::float2 firstPos = toCanvas(path.vertex(0).position);
+             renderer_->drawThickLineLocal(lastPos, firstPos, 3.0f, effectMaskColor);
+            }
+           }
           }
          }
         }
        }
       }
-     }
-     if (layerInfoText_.isEmpty()) {
+      if (layerInfoText_.isEmpty()) {
       layerInfoText_ = QStringLiteral("No inspect data");
      }
     }
@@ -1038,8 +1095,26 @@ void ArtifactLayerEditorWidgetV2::Impl::requestRender()
  needsRender_ = true;
 }
 
+void ArtifactLayerEditorWidgetV2::Impl::toggleImmersiveMode(bool immersive)
+{
+ if (!widget_) {
+  return;
+ }
+
+ immersiveMode_ = immersive;
+ if (auto* mw = qobject_cast<ArtifactMainWindow*>(widget_->window())) {
+  mw->setDockImmersive(widget_, immersive);
+ } else if (auto* topLevel = widget_->window()) {
+  if (immersive) {
+   topLevel->showFullScreen();
+  } else {
+   topLevel->showNormal();
+  }
+ }
+}
+
 void ArtifactLayerEditorWidgetV2::Impl::recreateSwapChain(QWidget* window)
- {
+{
   if (!initialized_ || !renderer_) {
    return;
   }
@@ -1108,32 +1183,117 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
     }
   });
 
-  if (auto* service = ArtifactProjectService::instance()) {
-   QObject::connect(service, &ArtifactProjectService::layerSelected, this, [this](const ArtifactCore::LayerID& id) {
-    setTargetLayer(id);
-   });
-  QObject::connect(service, &ArtifactProjectService::layerRemoved, this, [this](const ArtifactCore::CompositionID&, const ArtifactCore::LayerID& id) {
-    if (impl_->targetLayerId_ == id) {
-     clearTargetLayer();
-    }
-   });
-   QObject::connect(service, &ArtifactProjectService::projectChanged, this, [this]() {
-    const auto targetId = impl_->targetLayerId_;
-    if (targetId.isNil()) {
-     return;
-    }
-    if (auto* currentService = ArtifactProjectService::instance()) {
-     if (auto composition = currentService->currentComposition().lock()) {
-      if (composition->containsLayerById(targetId)) {
+   if (auto* service = ArtifactProjectService::instance()) {
+    QObject::connect(service, &ArtifactProjectService::layerSelected, this, [this](const ArtifactCore::LayerID& id) {
+     setTargetLayer(id);
+    });
+   QObject::connect(service, &ArtifactProjectService::layerRemoved, this, [this](const ArtifactCore::CompositionID&, const ArtifactCore::LayerID& id) {
+     if (impl_->targetLayerId_ == id) {
+      clearTargetLayer();
+     }
+    });
+    QObject::connect(service, &ArtifactProjectService::compositionCreated, this, [this](const ArtifactCore::CompositionID&) {
+     // Composition が作成されたら現在の選択レイヤーを追従
+     if (auto comp = service->currentComposition().lock()) {
+      const auto layers = comp->allLayer();
+      for (const auto& layer : layers) {
+       if (layer && layer->isSolo()) {
+        setTargetLayer(layer->id());
+        return;
+       }
+      }
+     }
+    });
+    QObject::connect(service, &ArtifactProjectService::currentCompositionChanged, this, [this]() {
+     // Composition 切り替え時に target layer を再解決
+     const auto targetId = impl_->targetLayerId_;
+     if (targetId.isNil()) {
+      return;
+     }
+     if (auto comp = service->currentComposition().lock()) {
+      if (comp->containsLayerById(targetId)) {
        setTargetLayer(targetId);
        return;
       }
      }
-    }
-    clearTargetLayer();
-   });
+     // 現在の composition にレイヤーがなければクリア
+     clearTargetLayer();
+    });
+    QObject::connect(service, &ArtifactProjectService::projectChanged, this, [this]() {
+     const auto targetId = impl_->targetLayerId_;
+     if (targetId.isNil()) {
+      return;
+     }
+     if (auto* currentService = ArtifactProjectService::instance()) {
+      if (auto composition = currentService->currentComposition().lock()) {
+       if (composition->containsLayerById(targetId)) {
+        setTargetLayer(targetId);
+        return;
+       }
+      }
+     }
+     clearTargetLayer();
+    });
+   }
   }
- }
+    });
+    QObject::connect(service, &ArtifactProjectService::compositionCreated, this, [this](const ArtifactCore::CompositionID&) {
+     // Composition が作成されたら現在の選択レイヤーを追従
+     if (auto comp = service->currentComposition().lock()) {
+      const auto layers = comp->allLayer();
+      for (const auto& layer : layers) {
+       if (layer && layer->isSolo()) {
+        setTargetLayer(layer->id());
+        return;
+       }
+      }
+     }
+    });
+    QObject::connect(service, &ArtifactProjectService::currentCompositionChanged, this, [this]() {
+     // Composition 切り替え時に target layer を再解決
+     const auto targetId = impl_->targetLayerId_;
+     if (targetId.isNil()) {
+      return;
+     }
+     if (auto comp = service->currentComposition().lock()) {
+      if (comp->containsLayerById(targetId)) {
+       setTargetLayer(targetId);
+       return;
+      }
+     }
+     // 現在の composition にレイヤーがなければクリア
+     clearTargetLayer();
+    });
+    QObject::connect(service, &ArtifactProjectService::projectChanged, this, [this]() {
+     const auto targetId = impl_->targetLayerId_;
+     if (targetId.isNil()) {
+      return;
+     }
+     if (auto* currentService = ArtifactProjectService::instance()) {
+      if (auto composition = currentService->currentComposition().lock()) {
+       if (composition->containsLayerById(targetId)) {
+        setTargetLayer(targetId);
+        return;
+       }
+      }
+     }
+     clearTargetLayer();
+    });
+   }
+
+  auto* immersiveShortcut = new QShortcut(QKeySequence(Qt::Key_F11), this);
+  QObject::connect(immersiveShortcut, &QShortcut::activated, this, [this]() {
+   if (impl_) {
+    impl_->toggleImmersiveMode(!impl_->immersiveMode_);
+   }
+  });
+  auto* immersiveExitShortcut = new QShortcut(QKeySequence(Qt::Key_Escape), this);
+  QObject::connect(immersiveExitShortcut, &QShortcut::activated, this, [this]() {
+   if (impl_ && impl_->immersiveMode_) {
+    impl_->toggleImmersiveMode(false);
+   }
+  });
+  }
 
 void ArtifactLayerEditorWidgetV2::clearTargetLayer()
 {
@@ -1158,8 +1318,20 @@ void ArtifactLayerEditorWidgetV2::clearTargetLayer()
 
 void ArtifactLayerEditorWidgetV2::keyPressEvent(QKeyEvent* event)
 {
+ if (event && event->key() == Qt::Key_F11 && !event->isAutoRepeat()) {
+  if (impl_) {
+   impl_->toggleImmersiveMode(!impl_->immersiveMode_);
+  }
+  event->accept();
+  return;
+ }
  if (event && event->key() == Qt::Key_F && (event->modifiers() & Qt::ControlModifier)) {
   impl_->showCommandPalette();
+  event->accept();
+  return;
+ }
+ if (impl_ && impl_->immersiveMode_ && event && event->key() == Qt::Key_Escape) {
+  impl_->toggleImmersiveMode(false);
   event->accept();
   return;
  }

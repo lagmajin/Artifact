@@ -68,7 +68,7 @@ namespace Artifact {
       QComboBox, QLineEdit, QSpinBox, QDoubleSpinBox {
           background-color: #2D2D30; border: 1px solid #454545; border-radius: 4px; color: white; padding: 4px 8px;
       }
-      QComboBox:hover, QLineEdit:focus { border: 1px solid #007ACC; }
+      QComboBox:hover, QLineEdit:focus { border: 1px solid #D47D32; }
   )";
 
   impl_->widthSpinBox = new DragSpinBox();
@@ -127,7 +127,6 @@ namespace Artifact {
 
   impl_->bgColorButton = new QPushButton("Pick Color");
   impl_->bgColorButton->setFixedSize(100, 24);
-  impl_->bgColorButton->setStyleSheet("background-color: #000; border: 1px solid #555; border-radius: 4px; color: white;");
   
   formLayout->addRow("Preset:", impl_->resolutionCombobox_);
   formLayout->addRow("Resolution:", sizeWidget);
@@ -175,13 +174,9 @@ namespace Artifact {
       QColor c = QColor::fromRgbF(picked.r(), picked.g(), picked.b(), picked.a());
       if (c.isValid()) {
           impl_->bgColor = c;
-          impl_->bgColorButton->setStyleSheet(QString("background-color: %1; border: 1px solid #555; border-radius: 4px; color: %2;")
-              .arg(c.name())
-              .arg(c.lightness() > 128 ? "black" : "white"));
       }
   });
 
-  setStyleSheet(pageStyle);
  }
 
  CompositionSettingPage::~CompositionSettingPage() {}
@@ -254,11 +249,9 @@ namespace Artifact {
   // Header Area
   auto header = new QWidget();
   header->setFixedHeight(50);
-  header->setStyleSheet("background-color: #2D2D30; border-bottom: 1px solid #444;");
   auto hLayout = new QHBoxLayout(header);
   hLayout->setContentsMargins(15, 0, 15, 0);
   auto title = new QLabel("Composition Settings");
-  title->setStyleSheet("color: white; font-weight: bold; font-size: 13px;");
   hLayout->addWidget(title);
   hLayout->addStretch();
   mainLayout->addWidget(header);
@@ -270,11 +263,9 @@ namespace Artifact {
 
   auto nameRow = new QHBoxLayout();
   auto nameLbl = new QLabel("Name:");
-  nameLbl->setStyleSheet("color: #AAA; font-weight: bold;");
   nameLbl->setFixedWidth(60);
   impl_->compositionNameEdit_ = new EditableLabel();
   impl_->compositionNameEdit_->setText("Comp1");
-  impl_->compositionNameEdit_->setStyleSheet("background: #252526; padding: 4px; border-radius: 4px; font-weight: bold;");
   nameRow->addWidget(nameLbl);
   nameRow->addWidget(impl_->compositionNameEdit_);
   content->addLayout(nameRow);
@@ -282,25 +273,17 @@ namespace Artifact {
   impl_->pTabWidget = new QTabWidget();
   impl_->compositionSettingPage_ = new CompositionSettingPage();
   impl_->pTabWidget->addTab(impl_->compositionSettingPage_, "Basic");
-  impl_->pTabWidget->setStyleSheet(R"(
-      QTabWidget::pane { border: 1px solid #3F3F46; top: -1px; background: #1E1E20; }
-      QTabBar::tab { background: #2D2D30; color: #999; padding: 6px 15px; border: 1px solid #3F3F46; border-bottom: none; border-top-left-radius: 4px; border-top-right-radius: 4px; }
-      QTabBar::tab:selected { background: #1E1E20; color: white; border-bottom: 2px solid #007ACC; }
-  )");
   content->addWidget(impl_->pTabWidget);
   mainLayout->addLayout(content);
 
   // Footer / Buttons
   auto footer = new QWidget();
-  footer->setStyleSheet("background-color: #252526; border-top: 1px solid #333;");
   auto fLayout = new QHBoxLayout(footer);
   fLayout->setContentsMargins(15, 10, 15, 10);
   auto okBtn = new QPushButton("OK");
   okBtn->setFixedSize(80, 28);
-  okBtn->setStyleSheet("background: #007ACC; color: white; border-radius: 4px; font-weight: bold;");
   auto cancelBtn = new QPushButton("Cancel");
   cancelBtn->setFixedSize(80, 28);
-  cancelBtn->setStyleSheet("background: #3E3E42; color: #DDD; border-radius: 4px; border: 1px solid #555;");
   fLayout->addStretch();
   fLayout->addWidget(okBtn);
   fLayout->addWidget(cancelBtn);
@@ -309,7 +292,6 @@ namespace Artifact {
   QObject::connect(okBtn, &QPushButton::clicked, this, [this]() { impl_->ok(this); });
   QObject::connect(cancelBtn, &QPushButton::clicked, this, [this]() { impl_->cancel(this); });
 
-  setStyleSheet("QDialog { background-color: #1E1E20; border: 1px solid #444; }");
  }
 
  CreateCompositionDialog::~CreateCompositionDialog() { delete impl_; }

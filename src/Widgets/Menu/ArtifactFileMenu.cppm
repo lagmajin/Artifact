@@ -110,6 +110,53 @@ bool confirmPotentiallyDestructiveAction(QWidget* parent, const QString& title, 
     box.exec();
     return box.clickedButton() == yesButton;
 }
+
+// P0-2: 保存確認付き終了/プロジェクトクローズ
+bool confirmUnsavedChanges(QWidget* parent, const QString& actionName)
+{
+    auto* svc = ArtifactProjectService::instance();
+    if (!svc || !svc->hasProject()) return true;
+
+    auto project = svc->getCurrentProjectSharedPtr();
+    if (!project) return true;
+
+    // Check if project is dirty
+    bool hasUnsaved = project->isDirty();
+    if (!hasUnsaved) {
+        if (auto* undoMgr = svc->undoManager()) {
+            hasUnsaved = undoMgr->hasUnsavedChanges();
+        }
+    }
+
+    if (!hasUnsaved) return true;
+
+    QMessageBox box(parent);
+    box.setWindowTitle(QStringLiteral("保存の確認"));
+    box.setIcon(QMessageBox::Warning);
+    box.setText(QStringLiteral("プロジェクトに変更があります。%1 前に保存しますか？").arg(actionName));
+    box.setInformativeText(QStringLiteral("未保存の変更は失われる可能性があります。"));
+
+    auto* saveButton = box.addButton(QStringLiteral("保存"), QMessageBox::AcceptRole);
+    auto* discardButton = box.addButton(QStringLiteral("破棄"), QMessageBox::DestructiveRole);
+    auto* cancelButton = box.addButton(QStringLiteral("キャンセル"), QMessageBox::RejectRole);
+    box.setDefaultButton(saveButton);
+
+    box.exec();
+
+    if (box.clickedButton() == cancelButton) return false;
+    if (box.clickedButton() == discardButton) return true;
+
+    // Save
+    auto& manager = ArtifactProjectManager::getInstance();
+    QString path = manager.currentProjectPath();
+    if (path.isEmpty()) {
+        path = QFileDialog::getSaveFileName(parent, "プロジェクトを保存", QString(),
+            "Artifact Project (*.artifact *.json);;All Files (*.*)");
+        if (path.isEmpty()) return false;
+    }
+    auto result = manager.saveToFile(path);
+    return result.success;
+}
 }
 
 class ArtifactFileMenu::Impl {
@@ -558,13 +605,26 @@ void ArtifactFileMenu::Impl::rebuildMenu()
         } else {
             for (const auto& path : recent) {
                 QFileInfo fi(path);
-                auto* action = recentProjectsMenu->addAction(fi.fileName());
-                action->setData(path);
-                action->setStatusTip(path);
-                QObject::connect(action, &QAction::triggered, menu_, [path]() {
+                QString displayName = fi.fileName();
+                QString displayPath = fi.absolutePath();
+
+                // P0-1: Show full path in submenu for clarity
+                auto* fileAction = recentProjectsMenu->addAction(displayName);
+                fileAction->setData(path);
+                fileAction->setStatusTip(path);
+                fileAction->setToolTip(path);
+
+                // P0-1: Add path as a disabled sub-item for visual clarity
+                auto* pathAction = recentProjectsMenu->addAction(QStringLiteral("  %1").arg(displayPath));
+                pathAction->setEnabled(false);
+                pathAction->setToolTip(path);
+
+                QObject::connect(fileAction, &QAction::triggered, menu_, [path]() {
                     ArtifactProjectManager::getInstance().loadFromFile(path);
                 });
             }
+        }
+    }
         }
     }
 }
@@ -596,13 +656,8 @@ void ArtifactFileMenu::projectCreateRequested()
 void ArtifactFileMenu::projectClosed()
 {
     if (auto* svc = ArtifactProjectService::instance()) {
-        if (svc->hasProject()) {
-            if (!confirmPotentiallyDestructiveAction(
-                this,
-                QStringLiteral("プロジェクトを閉じる"),
-                QStringLiteral("現在のプロジェクトを閉じますか？\n未保存の変更は失われる可能性があります。"))) {
-                return;
-            }
+        if (!confirmUnsavedChanges(this, QStringLiteral("プロジェクトを閉じる"))) {
+            return;
         }
     }
     ArtifactProjectManager::getInstance().closeCurrentProject();
@@ -611,13 +666,8 @@ void ArtifactFileMenu::projectClosed()
 void ArtifactFileMenu::quitApplication()
 {
     if (auto* svc = ArtifactProjectService::instance()) {
-        if (svc->hasProject()) {
-            if (!confirmPotentiallyDestructiveAction(
-                this,
-                QStringLiteral("終了確認"),
-                QStringLiteral("Artifact を終了しますか？\n未保存の変更は失われる可能性があります。"))) {
-                return;
-            }
+        if (!confirmUnsavedChanges(this, QStringLiteral("終了"))) {
+            return;
         }
     }
     QApplication::quit();
@@ -626,13 +676,29 @@ void ArtifactFileMenu::quitApplication()
 void ArtifactFileMenu::restartApplication()
 {
     if (auto* svc = ArtifactProjectService::instance()) {
-        if (svc->hasProject()) {
-            if (!confirmPotentiallyDestructiveAction(
-                this,
-                QStringLiteral("再起動確認"),
-                QStringLiteral("Artifact を再起動しますか？\n未保存の変更は失われる可能性があります。"))) {
-                return;
-            }
+        if (!confirmUnsavedChanges(this, QStringLiteral("再起動"))) {
+            return;
+        }
+    }
+    }
+    ArtifactProjectManager::getInstance().closeCurrentProject();
+}
+
+void ArtifactFileMenu::quitApplication()
+{
+    if (auto* svc = ArtifactProjectService::instance()) {
+        if (!confirmUnsavedChanges(this, QStringLiteral("終了"))) {
+            return;
+        }
+    }
+    QApplication::quit();
+}
+
+void ArtifactFileMenu::restartApplication()
+{
+    if (auto* svc = ArtifactProjectService::instance()) {
+        if (!confirmUnsavedChanges(this, QStringLiteral("再起動"))) {
+            return;
         }
     }
 

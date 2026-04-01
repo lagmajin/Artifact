@@ -214,7 +214,114 @@ void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer) {
 
 std::vector<ArtifactCore::PropertyGroup> ArtifactShapeLayer::getLayerPropertyGroups() const {
  std::vector<ArtifactCore::PropertyGroup> groups;
- // TODO: implement property groups
+
+ // Shape Type Group
+ ArtifactCore::PropertyGroup shapeGroup;
+ shapeGroup.setName("Shape");
+ shapeGroup.setCollapsed(false);
+
+ ArtifactCore::Property shapeTypeProp;
+ shapeTypeProp.setName("Type");
+ shapeTypeProp.setType(ArtifactCore::PropertyType::Enum);
+ shapeTypeProp.setValue(static_cast<int>(impl_->shapeType_));
+ QStringList shapeTypes = {"Rect", "Ellipse", "Star", "Polygon", "Line"};
+ shapeTypeProp.setEnumLabels(shapeTypes);
+ shapeGroup.addProperty(shapeTypeProp);
+
+ ArtifactCore::Property widthProp;
+ widthProp.setName("Width");
+ widthProp.setType(ArtifactCore::PropertyType::Integer);
+ widthProp.setValue(impl_->width_);
+ shapeGroup.addProperty(widthProp);
+
+ ArtifactCore::Property heightProp;
+ heightProp.setName("Height");
+ heightProp.setType(ArtifactCore::PropertyType::Integer);
+ heightProp.setValue(impl_->height_);
+ shapeGroup.addProperty(heightProp);
+
+ groups.push_back(shapeGroup);
+
+ // Appearance Group
+ ArtifactCore::PropertyGroup appearanceGroup;
+ appearanceGroup.setName("Appearance");
+ appearanceGroup.setCollapsed(false);
+
+ ArtifactCore::Property fillColorProp;
+ fillColorProp.setName("Fill Color");
+ fillColorProp.setType(ArtifactCore::PropertyType::Color);
+ fillColorProp.setValue(QColor(
+  static_cast<int>(impl_->fillColor_.r() * 255),
+  static_cast<int>(impl_->fillColor_.g() * 255),
+  static_cast<int>(impl_->fillColor_.b() * 255),
+  static_cast<int>(impl_->fillColor_.a() * 255)
+ ));
+ appearanceGroup.addProperty(fillColorProp);
+
+ ArtifactCore::Property fillEnabledProp;
+ fillEnabledProp.setName("Fill Enabled");
+ fillEnabledProp.setType(ArtifactCore::PropertyType::Boolean);
+ fillEnabledProp.setValue(impl_->fillEnabled_);
+ appearanceGroup.addProperty(fillEnabledProp);
+
+ ArtifactCore::Property strokeColorProp;
+ strokeColorProp.setName("Stroke Color");
+ strokeColorProp.setType(ArtifactCore::PropertyType::Color);
+ strokeColorProp.setValue(QColor(
+  static_cast<int>(impl_->strokeColor_.r() * 255),
+  static_cast<int>(impl_->strokeColor_.g() * 255),
+  static_cast<int>(impl_->strokeColor_.b() * 255),
+  static_cast<int>(impl_->strokeColor_.a() * 255)
+ ));
+ appearanceGroup.addProperty(strokeColorProp);
+
+ ArtifactCore::Property strokeWidthProp;
+ strokeWidthProp.setName("Stroke Width");
+ strokeWidthProp.setType(ArtifactCore::PropertyType::Float);
+ strokeWidthProp.setValue(impl_->strokeWidth_);
+ appearanceGroup.addProperty(strokeWidthProp);
+
+ ArtifactCore::Property strokeEnabledProp;
+ strokeEnabledProp.setName("Stroke Enabled");
+ strokeEnabledProp.setType(ArtifactCore::PropertyType::Boolean);
+ strokeEnabledProp.setValue(impl_->strokeEnabled_);
+ appearanceGroup.addProperty(strokeEnabledProp);
+
+ groups.push_back(appearanceGroup);
+
+ // Shape-specific params
+ ArtifactCore::PropertyGroup paramsGroup;
+ paramsGroup.setName("Shape Parameters");
+ paramsGroup.setCollapsed(false);
+
+ if (impl_->shapeType_ == ShapeType::Rect) {
+  ArtifactCore::Property cornerProp;
+  cornerProp.setName("Corner Radius");
+  cornerProp.setType(ArtifactCore::PropertyType::Float);
+  cornerProp.setValue(impl_->cornerRadius_);
+  paramsGroup.addProperty(cornerProp);
+ } else if (impl_->shapeType_ == ShapeType::Star) {
+  ArtifactCore::Property pointsProp;
+  pointsProp.setName("Points");
+  pointsProp.setType(ArtifactCore::PropertyType::Integer);
+  pointsProp.setValue(impl_->starPoints_);
+  paramsGroup.addProperty(pointsProp);
+
+  ArtifactCore::Property innerProp;
+  innerProp.setName("Inner Radius");
+  innerProp.setType(ArtifactCore::PropertyType::Float);
+  innerProp.setValue(impl_->starInnerRadius_);
+  paramsGroup.addProperty(innerProp);
+ } else if (impl_->shapeType_ == ShapeType::Polygon) {
+  ArtifactCore::Property sidesProp;
+  sidesProp.setName("Sides");
+  sidesProp.setType(ArtifactCore::PropertyType::Integer);
+  sidesProp.setValue(impl_->polygonSides_);
+  paramsGroup.addProperty(sidesProp);
+ }
+
+ groups.push_back(paramsGroup);
+
  return groups;
 }
 

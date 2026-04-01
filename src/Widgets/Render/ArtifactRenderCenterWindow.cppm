@@ -1,5 +1,7 @@
 module;
 #include <QMainWindow>
+#include <QColor>
+#include <QPalette>
 #include <QStatusBar>
 #include <QWidget>
 #include <QVBoxLayout>
@@ -12,6 +14,7 @@ module Artifact.Widgets.RenderCenterWindow;
 
 import Artifact.Widgets.RenderCenterWindow;
 import Artifact.Widgets.Render.QueueManager;
+import Widgets.Utils.CSS;
 
 namespace Artifact {
 
@@ -62,7 +65,12 @@ ArtifactRenderCenterWindow::ArtifactRenderCenterWindow(QWidget* parent)
 #endif
 
  auto* host = new QWidget(this);
- host->setStyleSheet(QStringLiteral("background: #181818;"));
+ host->setAutoFillBackground(true);
+ {
+  QPalette pal = host->palette();
+  pal.setColor(QPalette::Window, QColor(ArtifactCore::currentDCCTheme().backgroundColor));
+  host->setPalette(pal);
+ }
  auto* hostLayout = new QVBoxLayout(host);
  hostLayout->setContentsMargins(0, 0, 0, 0);
  hostLayout->setSpacing(0);
@@ -73,7 +81,11 @@ ArtifactRenderCenterWindow::ArtifactRenderCenterWindow(QWidget* parent)
  setCentralWidget(host);
  
  if (statusBar()) {
-  statusBar()->setStyleSheet(QStringLiteral("background: #121212; color: #666; border-top: 1px solid #252525;"));
+  QPalette pal = statusBar()->palette();
+  pal.setColor(QPalette::Window, QColor(ArtifactCore::currentDCCTheme().secondaryBackgroundColor));
+  pal.setColor(QPalette::WindowText, QColor(ArtifactCore::currentDCCTheme().textColor).darker(150));
+  statusBar()->setAutoFillBackground(true);
+  statusBar()->setPalette(pal);
   statusBar()->showMessage(QStringLiteral("Render Center Ready"));
  }
 }

@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <tbb/parallel_for.h>
 #include <tbb/blocked_range.h>
 #include <tbb/task_arena.h>
@@ -174,6 +174,22 @@ namespace Artifact
             return info.dir().filePath(QStringLiteral("%1.__audio_tmp__.wav").arg(baseName));
         }
 
+        FrameRange effectiveRenderRangeForComposition(const ArtifactCompositionPtr& composition)
+        {
+            if (!composition) {
+                return FrameRange(0, 100);
+            }
+
+            FrameRange range = composition->workAreaRange();
+            if (!range.isValid() || range.isEmpty()) {
+                range = composition->frameRange();
+            }
+            if (!range.isValid() || range.isEmpty()) {
+                range = FrameRange(0, 100);
+            }
+            return range.normalized();
+        }
+
         bool writeAudioSegmentAsWav(const QString& filePath,
                                     const ArtifactCore::AudioSegment& segment,
                                     QString* errorMessage)
@@ -284,6 +300,7 @@ namespace Artifact
 
         ArtifactCore::CompositionID compositionId; // 対象コンポジションID
         QString compositionName;      // コンポジション名
+        QString jobName;              // ジョブ名（ユーザー編集可能）
         QString outputPath;           // 出力パス
         QString outputFormat;         // 出力形式 (MP4, PNG sequence等)
         QString codec;                // コーデック
@@ -1176,6 +1193,22 @@ namespace Artifact
             return jobs[index].compositionName;
         }
 
+        QString jobNameAt(int index) const {
+            if (index < 0 || index >= jobs.size()) {
+                return {};
+            }
+            const auto& job = jobs[index];
+            return job.jobName.isEmpty() ? job.compositionName : job.jobName;
+        }
+
+        void setJobName(int index, const QString& name) {
+            if (index < 0 || index >= jobs.size()) {
+                return;
+            }
+            jobs[index].jobName = name;
+            if (jobUpdated) jobUpdated(index);
+        }
+
         QString jobStatusAt(int index) const {
             if (index < 0 || index >= jobs.size()) {
                 return QStringLiteral("Pending");
@@ -1573,8 +1606,35 @@ namespace Artifact
             if (!layer) {
                 return fallback;
             }
+            // Solid2D / SolidImage は sourceSize() が 0 を返すため localBounds() から取得
+            if (std::dynamic_pointer_cast<ArtifactSolid2DLayer>(layer) ||
+                std::dynamic_pointer_cast<ArtifactSolidImageLayer>(layer)) {
+                const auto bounds = layer->localBounds();
+                if (bounds.isValid() && bounds.width() > 0 && bounds.height() > 0) {
+                    return QSize(
+                        std::max(16, static_cast<int>(std::ceil(bounds.width()))),
+                        std::max(16, static_cast<int>(std::ceil(bounds.height()))));
+                }
+            }
             const auto source = layer->sourceSize();
-            return QSize(std::max(16, source.width), std::max(16, source.height));
+            const int w = source.width > 0 ? source.width : fallback.width();
+            const int h = source.height > 0 ? source.height : fallback.height();
+            return QSize(std::max(16, w), std::max(16, h));
+        }
+            // Solid2D / SolidImage は sourceSize() が 0 を返すため localBounds() から取得
+            if (std::dynamic_pointer_cast<ArtifactSolid2DLayer>(layer) ||
+                std::dynamic_pointer_cast<ArtifactSolidImageLayer>(layer)) {
+                const auto bounds = layer->localBounds();
+                if (bounds.isValid() && bounds.width() > 0 && bounds.height() > 0) {
+                    return QSize(
+                        std::max(16, static_cast<int>(std::ceil(bounds.width()))),
+                        std::max(16, static_cast<int>(std::ceil(bounds.height()))));
+                }
+            }
+            const auto source = layer->sourceSize();
+            const int w = source.width > 0 ? source.width : fallback.width();
+            const int h = source.height > 0 ? source.height : fallback.height();
+            return QSize(std::max(16, w), std::max(16, h));
         }
 
         QImage renderTextLayerSurface(const std::shared_ptr<ArtifactTextLayer>& textLayer, const QSize& size) const
@@ -1705,7 +1765,7 @@ namespace Artifact
                     continue;
                 }
 
-                const QSize layerSize = safeLayerSize(layer, surface.size());
+                const QSize layerSize(surface.size());
                 const qreal opacity = std::clamp(static_cast<qreal>(layer->opacity()), 0.0, 1.0);
                 painter.save();
                 painter.setOpacity(opacity);
@@ -1944,18 +2004,22 @@ namespace Artifact
         if (found.success) {
             if (const auto comp = found.ptr.lock()) {
                 const auto totalRange = comp->frameRange();
-                const auto workAreaRange = comp->workAreaRange();
-                job.startFrame = static_cast<int>(std::max<int64_t>(0, workAreaRange.start()));
-                job.endFrame = static_cast<int>(std::max<int64_t>(job.startFrame + 1, workAreaRange.end()));
+                const auto effectiveRange = effectiveRenderRangeForComposition(comp);
+                job.startFrame = static_cast<int>(std::max<int64_t>(0, effectiveRange.start()));
+                job.endFrame = static_cast<int>(std::max<int64_t>(job.startFrame + 1, effectiveRange.end()));
                 job.frameRate = comp->frameRate().framerate();
                 const QSize size = comp->settings().compositionSize();
                 if (size.width() > 0 && size.height() > 0) {
                     job.resolutionWidth = size.width();
                     job.resolutionHeight = size.height();
                 }
-                if (!totalRange.isValid() || totalRange.duration() <= 0) {
+                if ((!totalRange.isValid() || totalRange.duration() <= 0) && (!effectiveRange.isValid() || effectiveRange.duration() <= 0)) {
                     job.startFrame = 0;
                     job.endFrame = 100;
+                }
+                // 音声ありコンポジションは音声統合レンダーをデフォルトで有効化
+                if (comp->hasAudio()) {
+                    job.integratedRenderEnabled = true;
                 }
             }
         }
@@ -2004,16 +2068,16 @@ namespace Artifact
         if (found.success) {
             if (const auto comp = found.ptr.lock()) {
                 const auto totalRange = comp->frameRange();
-                const auto workAreaRange = comp->workAreaRange();
-                job.startFrame = static_cast<int>(std::max<int64_t>(0, workAreaRange.start()));
-                job.endFrame = static_cast<int>(std::max<int64_t>(job.startFrame + 1, workAreaRange.end()));
+                const auto effectiveRange = effectiveRenderRangeForComposition(comp);
+                job.startFrame = static_cast<int>(std::max<int64_t>(0, effectiveRange.start()));
+                job.endFrame = static_cast<int>(std::max<int64_t>(job.startFrame + 1, effectiveRange.end()));
                 job.frameRate = comp->frameRate().framerate();
                 const QSize size = comp->settings().compositionSize();
                 if (size.width() > 0 && size.height() > 0) {
                     job.resolutionWidth = size.width();
                     job.resolutionHeight = size.height();
                 }
-                if (!totalRange.isValid() || totalRange.duration() <= 0) {
+                if ((!totalRange.isValid() || totalRange.duration() <= 0) && (!effectiveRange.isValid() || effectiveRange.duration() <= 0)) {
                     job.startFrame = 0;
                     job.endFrame = 100;
                 }
@@ -2111,6 +2175,17 @@ namespace Artifact
     QString ArtifactRenderQueueService::jobCompositionNameAt(int index) const
     {
         return impl_->queueManager.jobCompositionNameAt(index);
+    }
+
+    QString ArtifactRenderQueueService::jobNameAt(int index) const
+    {
+        return impl_->queueManager.jobNameAt(index);
+    }
+
+    void ArtifactRenderQueueService::setJobNameAt(int index, const QString& name)
+    {
+        impl_->queueManager.setJobName(index, name.trimmed());
+        impl_->syncCoreQueueModel();
     }
 
     QString ArtifactRenderQueueService::jobStatusAt(int index) const
@@ -2696,6 +2771,7 @@ namespace Artifact
             QJsonObject obj;
             obj["compositionId"] = job.compositionId.toString();
             obj["compositionName"] = job.compositionName;
+            obj["jobName"] = job.jobName;
             obj["outputPath"] = job.outputPath;
             obj["outputFormat"] = job.outputFormat;
             obj["codec"] = job.codec;
@@ -2729,6 +2805,7 @@ namespace Artifact
             ArtifactRenderJob job;
             job.compositionId = ArtifactCore::CompositionID(obj["compositionId"].toString());
             job.compositionName = obj["compositionName"].toString();
+            job.jobName = obj["jobName"].toString();
             job.outputPath = obj["outputPath"].toString();
             job.outputFormat = obj["outputFormat"].toString();
             job.codec = obj["codec"].toString();
@@ -2789,9 +2866,9 @@ namespace Artifact
             job.resolutionHeight = settings.compositionSize().height();
             job.frameRate = comp->frameRate().framerate();
             job.bitrate = 8000;
-            job.startFrame = 0;
-            const auto frameRange = comp->frameRange();
-            job.endFrame = frameRange.isValid() ? static_cast<int>(std::max<int64_t>(frameRange.start(), frameRange.end())) : 100;
+            const auto range = effectiveRenderRangeForComposition(comp);
+            job.startFrame = static_cast<int>(std::max<int64_t>(0, range.start()));
+            job.endFrame = static_cast<int>(std::max<int64_t>(job.startFrame + 1, range.end()));
 
             const QString safeName = item->name.toQString().trimmed().isEmpty()
                 ? QStringLiteral("Composition_%1").arg(added + 1)
@@ -2831,9 +2908,9 @@ namespace Artifact
             job.resolutionHeight = settings.compositionSize().height();
             job.frameRate = comp->frameRate().framerate();
             job.bitrate = 8000;
-            job.startFrame = 0;
-            const auto frameRange = comp->frameRange();
-            job.endFrame = frameRange.isValid() ? static_cast<int>(std::max<int64_t>(frameRange.start(), frameRange.end())) : 100;
+            const auto range = effectiveRenderRangeForComposition(comp);
+            job.startFrame = static_cast<int>(std::max<int64_t>(0, range.start()));
+            job.endFrame = static_cast<int>(std::max<int64_t>(job.startFrame + 1, range.end()));
 
             const QString safeName = job.compositionName.trimmed().isEmpty()
                 ? QStringLiteral("Composition_%1").arg(added + 1)

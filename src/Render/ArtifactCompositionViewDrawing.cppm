@@ -294,24 +294,11 @@ bool layerUsesSurfaceUploadForCompositionView(const ArtifactAbstractLayerPtr& la
   return std::dynamic_pointer_cast<ArtifactImageLayer>(layer) != nullptr ||
          std::dynamic_pointer_cast<ArtifactSvgLayer>(layer) != nullptr ||
          std::dynamic_pointer_cast<ArtifactVideoLayer>(layer) != nullptr ||
-         std::dynamic_pointer_cast<ArtifactTextLayer>(layer) != nullptr;
-}
-
-bool layerUsesGpuTextureCacheForCompositionView(const ArtifactAbstractLayerPtr& layer)
-{
-  if (!layer) {
-    return false;
-  }
-
-  if (std::dynamic_pointer_cast<ArtifactVideoLayer>(layer)) {
-    return false;
-  }
-
-  return std::dynamic_pointer_cast<ArtifactImageLayer>(layer) != nullptr ||
-         std::dynamic_pointer_cast<ArtifactSvgLayer>(layer) != nullptr ||
          std::dynamic_pointer_cast<ArtifactTextLayer>(layer) != nullptr ||
          std::dynamic_pointer_cast<ArtifactSolid2DLayer>(layer) != nullptr ||
-         std::dynamic_pointer_cast<ArtifactSolidImageLayer>(layer) != nullptr;
+         std::dynamic_pointer_cast<ArtifactSolidImageLayer>(layer) != nullptr ||
+         std::dynamic_pointer_cast<ArtifactParticleLayer>(layer) != nullptr;
+}
 }
 
 void drawLayerForCompositionView(const ArtifactAbstractLayerPtr &layer,
@@ -331,6 +318,9 @@ void drawLayerForCompositionView(const ArtifactAbstractLayerPtr &layer,
   const QRectF localRect = layer->localBounds();
   if (!localRect.isValid() || localRect.width() <= 0.0 ||
       localRect.height() <= 0.0) {
+    qDebug() << "[drawLayerForCompositionView] skip layer: invalid local bounds"
+             << "id=" << layer->id().toString() << "rect=" << localRect
+             << "sourceSize=" << layer->sourceSize().width << "x" << layer->sourceSize().height;
     return;
   }
 
@@ -516,6 +506,46 @@ void drawLayerForCompositionView(const ArtifactAbstractLayerPtr &layer,
       if (!childImage.isNull()) {
         applySurfaceAndDraw(childImage, localRect, hasRasterizerEffectsOrMasks(layer));
       }
+    }
+    return;
+  }
+
+  if (const auto particleLayer =
+          std::dynamic_pointer_cast<ArtifactParticleLayer>(layer)) {
+    const QSize surfaceSize(
+        std::max(1, static_cast<int>(std::ceil(localRect.width()))),
+        std::max(1, static_cast<int>(std::ceil(localRect.height()))));
+    QImage surface(surfaceSize, QImage::Format_ARGB32_Premultiplied);
+    surface.fill(Qt::transparent);
+
+    // Render particles to surface
+    particleLayer->renderToImage(surface, cacheFrameNumber >= 0 ? cacheFrameNumber : layer->currentFrame());
+
+    if (!surface.isNull()) {
+      applySurfaceAndDraw(surface, localRect, hasRasterizerEffectsOrMasks(layer));
+    }
+    return;
+  }
+
+  layer->draw(renderer);
+}
+    }
+    return;
+  }
+
+  if (const auto particleLayer =
+          std::dynamic_pointer_cast<ArtifactParticleLayer>(layer)) {
+    const QSize surfaceSize(
+        std::max(1, static_cast<int>(std::ceil(localRect.width()))),
+        std::max(1, static_cast<int>(std::ceil(localRect.height()))));
+    QImage surface(surfaceSize, QImage::Format_ARGB32_Premultiplied);
+    surface.fill(Qt::transparent);
+
+    // Render particles to surface
+    particleLayer->renderToImage(surface, cacheFrameNumber >= 0 ? cacheFrameNumber : layer->currentFrame());
+
+    if (!surface.isNull()) {
+      applySurfaceAndDraw(surface, localRect, hasRasterizerEffectsOrMasks(layer));
     }
     return;
   }

@@ -6,6 +6,7 @@
 #include <QIcon>
 #include <QList>
 #include <QStringList>
+#include <QSet>
 #include <QStyle>
 #include <QVariant>
 #include <QMimeData>
@@ -140,14 +141,22 @@ namespace Artifact
   return Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsDragEnabled;
  }
 
- QMimeData* AssetMenuModel::mimeData(const QModelIndexList& indexes) const
- {
-  QMimeData* mimeData = new QMimeData();
-  QList<QUrl> urls;
-  for (const QModelIndex& index : indexes) {
-   if (index.isValid() && index.row() >= 0 && index.row() < impl_->items_.size()) {
-    const QString path = impl_->items_.at(index.row()).path.toQString();
-    if (!path.isEmpty()) {
+QMimeData* AssetMenuModel::mimeData(const QModelIndexList& indexes) const
+{
+ QMimeData* mimeData = new QMimeData();
+ QList<QUrl> urls;
+ QSet<QString> seenPaths;
+ for (const QModelIndex& index : indexes) {
+  if (index.isValid() && index.row() >= 0 && index.row() < impl_->items_.size()) {
+    const auto& item = impl_->items_.at(index.row());
+    const QStringList paths = item.isSequence && !item.sequencePaths.isEmpty()
+        ? item.sequencePaths
+        : QStringList{item.path.toQString()};
+    for (const QString& path : paths) {
+     if (path.isEmpty() || seenPaths.contains(path)) {
+      continue;
+     }
+     seenPaths.insert(path);
      urls.append(QUrl::fromLocalFile(path));
     }
    }

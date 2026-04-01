@@ -64,6 +64,11 @@ public:
     void setApiKey(const UniString& key);
     void setProvider(const UniString& provider);
 
+    // 初期化（メニューから明示的に呼び出す）
+    bool initialize(const QString& modelPath = QString());
+    bool isInitialized() const;
+    void shutdown();
+
     // Send a message to AI synchronously (legacy/wait)
     UniString sendMessage(const UniString& message);
 

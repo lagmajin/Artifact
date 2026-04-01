@@ -54,6 +54,7 @@ public:
     RefCntAutoPtr<IBuffer> m_draw_dot_line_vertex_buffer;
     RefCntAutoPtr<IBuffer> m_draw_dot_line_cb;
     RefCntAutoPtr<IBuffer> m_draw_viewer_helper_cb;
+    RefCntAutoPtr<IBuffer> m_draw_outline_rect_cb;
 
     PSOAndSRB m_draw_sprite_pso_and_srb;
     PSOAndSRB m_draw_sprite_transform_pso_and_srb;
@@ -98,7 +99,34 @@ public:
     PSOAndSRB m_draw_checkerboard_pso_and_srb;
     PSOAndSRB m_draw_grid_pso_and_srb;
     PSOAndSRB m_draw_rect_outline_pso_and_srb;
+    PSOAndSRB m_batch_solid_rect_pso_and_srb;
     std::unordered_map<qint64, CachedTexture> m_maskTexCache;
+
+    // Batch rendering state
+    static constexpr int kMaxBatchVertices = 4096;
+    static constexpr int kMaxBatchIndices = 6144;
+    RectVertex m_batchVertices[kMaxBatchVertices];
+    uint32_t m_batchIndices[kMaxBatchIndices];
+    int m_batchVertexCount = 0;
+    int m_batchIndexCount = 0;
+    FloatColor m_batchColor = {1.0f, 1.0f, 1.0f, 1.0f};
+    bool m_batchActive = false;
+
+    void flushBatch();
+    void addToBatch(float x0, float y0, float x1, float y1, float x2, float y2, float x3, float y3, const FloatColor& color);
+
+    // Batch rendering state
+    static constexpr int kMaxBatchVertices = 4096;
+    static constexpr int kMaxBatchIndices = 6144;
+    RectVertex m_batchVertices[kMaxBatchVertices];
+    uint32_t m_batchIndices[kMaxBatchIndices];
+    int m_batchVertexCount = 0;
+    int m_batchIndexCount = 0;
+    FloatColor m_batchColor = {1.0f, 1.0f, 1.0f, 1.0f};
+    bool m_batchActive = false;
+
+    void flushBatch();
+    void addToBatch(float x0, float y0, float x1, float y1, float x2, float y2, float x3, float y3, const FloatColor& color);
 
     ViewportTransformer viewport_;
 
@@ -112,6 +140,10 @@ public:
         return pSwapChain_ ? pSwapChain_->GetCurrentBackBufferRTV() : nullptr;
     }
     bool hasRenderTarget() const { return m_overrideRTV != nullptr || pSwapChain_ != nullptr; }
+
+    // Batch vertex buffer
+    RefCntAutoPtr<IBuffer> m_batchVertexBuffer;
+    RefCntAutoPtr<IBuffer> m_batchIndexBuffer;
 };
 
 PrimitiveRenderer2D::PrimitiveRenderer2D()
@@ -145,6 +177,8 @@ void PrimitiveRenderer2D::setPSOs(ShaderManager& shaderManager)
     impl_->m_draw_checkerboard_pso_and_srb    = shaderManager.checkerboardPsoAndSrb();
     impl_->m_draw_grid_pso_and_srb            = shaderManager.gridPsoAndSrb();
     impl_->m_draw_rect_outline_pso_and_srb    = shaderManager.outlinePsoAndSrb();
+    impl_->m_batch_solid_rect_pso_and_srb     = shaderManager.batchSolidRectPsoAndSrb();
+    impl_->m_batch_solid_rect_pso_and_srb     = shaderManager.batchSolidRectPsoAndSrb();
 }
 
 void PrimitiveRenderer2D::createBuffers(RefCntAutoPtr<IRenderDevice> device, TEXTURE_FORMAT /*rtvFormat*/)
@@ -174,13 +208,55 @@ void PrimitiveRenderer2D::createBuffers(RefCntAutoPtr<IRenderDevice> device, TEX
 
     {
         BufferDesc CBDesc;
-        CBDesc.Name           = "DrawSolidColorCB";
+        CBDesc.Name           = "ViewerHelperCB";
         CBDesc.Usage          = USAGE_DYNAMIC;
         CBDesc.BindFlags      = BIND_UNIFORM_BUFFER;
         CBDesc.CPUAccessFlags = CPU_ACCESS_WRITE;
-        CBDesc.Size           = sizeof(DrawSpriteConstants);
-        device->CreateBuffer(CBDesc, nullptr, &impl_->m_draw_solid_rect_cb);
+        CBDesc.Size           = sizeof(ViewerHelperCB);
+        device->CreateBuffer(CBDesc, nullptr, &impl_->m_draw_viewer_helper_cb);
     }
+
+    // Batch rendering buffers
+    {
+        BufferDesc vbDesc;
+        vbDesc.Name           = "Batch Vertex Buffer";
+        vbDesc.BindFlags      = BIND_VERTEX_BUFFER;
+        vbDesc.Usage          = USAGE_DYNAMIC;
+        vbDesc.CPUAccessFlags = CPU_ACCESS_WRITE;
+        vbDesc.Size           = sizeof(RectVertex) * kMaxBatchVertices;
+        device->CreateBuffer(vbDesc, nullptr, &impl_->m_batchVertexBuffer);
+    }
+    {
+        BufferDesc ibDesc;
+        ibDesc.Name           = "Batch Index Buffer";
+        ibDesc.BindFlags      = BIND_INDEX_BUFFER;
+        ibDesc.Usage          = USAGE_DYNAMIC;
+        ibDesc.CPUAccessFlags = CPU_ACCESS_WRITE;
+        ibDesc.Size           = sizeof(uint32_t) * kMaxBatchIndices;
+        device->CreateBuffer(ibDesc, nullptr, &impl_->m_batchIndexBuffer);
+    }
+}
+
+    // Batch rendering buffers
+    {
+        BufferDesc vbDesc;
+        vbDesc.Name           = "Batch Vertex Buffer";
+        vbDesc.BindFlags      = BIND_VERTEX_BUFFER;
+        vbDesc.Usage          = USAGE_DYNAMIC;
+        vbDesc.CPUAccessFlags = CPU_ACCESS_WRITE;
+        vbDesc.Size           = sizeof(RectVertex) * kMaxBatchVertices;
+        device->CreateBuffer(vbDesc, nullptr, &impl_->m_batchVertexBuffer);
+    }
+    {
+        BufferDesc ibDesc;
+        ibDesc.Name           = "Batch Index Buffer";
+        ibDesc.BindFlags      = BIND_INDEX_BUFFER;
+        ibDesc.Usage          = USAGE_DYNAMIC;
+        ibDesc.CPUAccessFlags = CPU_ACCESS_WRITE;
+        ibDesc.Size           = sizeof(uint32_t) * kMaxBatchIndices;
+        device->CreateBuffer(ibDesc, nullptr, &impl_->m_batchIndexBuffer);
+    }
+}
 
     {
         BufferDesc CBDesc;
@@ -375,6 +451,92 @@ void PrimitiveRenderer2D::clear(const FloatColor& color)
 void PrimitiveRenderer2D::drawRectLocal(float x, float y, float w, float h, const FloatColor& color, float opacity)
 {
     if (!impl_->hasRenderTarget() || !impl_->m_draw_solid_rect_pso_and_srb.pPSO) return;
+
+    // If batch is active, accumulate vertices
+    if (impl_->m_batchActive) {
+        auto viewportCB = impl_->viewport_.GetViewportCB();
+        const float zoom = std::max(viewportCB.zoom, 0.001f);
+        const float panX = viewportCB.offset.x;
+        const float panY = viewportCB.offset.y;
+        const float screenW = std::max(viewportCB.screenSize.x, 0.001f);
+        const float screenH = std::max(viewportCB.screenSize.y, 0.001f);
+
+        // Compute NDC positions on CPU
+        auto toNdc = [&](float cx, float cy) -> std::pair<float, float> {
+            float wx = cx * zoom + panX;
+            float wy = cy * zoom + panY;
+            float ndcX = wx / screenW * 2.0f - 1.0f;
+            float ndcY = -(wy / screenH * 2.0f - 1.0f); // Y flip
+            return {ndcX, ndcY};
+        };
+
+        auto [x0n, y0n] = toNdc(x, y);
+        auto [x1n, y1n] = toNdc(x + w, y);
+        auto [x2n, y2n] = toNdc(x, y + h);
+        auto [x3n, y3n] = toNdc(x + w, y + h);
+
+        float alpha = color.a() * opacity;
+        FloatColor c = {color.r(), color.g(), color.b(), alpha};
+        impl_->addToBatch(x0n, y0n, x1n, y1n, x2n, y2n, x3n, y3n, c);
+        return;
+    }
+
+    float alpha = color.a() * opacity;
+    RectVertex vertices[4] = {
+        {{0.0f, 0.0f}, {color.r(), color.g(), color.b(), alpha}},
+        {{1.0f, 0.0f}, {color.r(), color.g(), color.b(), alpha}},
+        {{0.0f, 1.0f}, {color.r(), color.g(), color.b(), alpha}},
+        {{1.0f, 1.0f}, {color.r(), color.g(), color.b(), alpha}},
+    };
+    
+    auto* pRTV = impl_->getCurrentRTV();
+    impl_->pCtx_->SetRenderTargets(1, &pRTV, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+
+    {
+        void* pData = nullptr;
+        impl_->pCtx_->MapBuffer(impl_->m_draw_solid_rect_vertex_buffer, MAP_WRITE, MAP_FLAG_DISCARD, pData);
+        std::memcpy(pData, vertices, sizeof(vertices));
+        impl_->pCtx_->UnmapBuffer(impl_->m_draw_solid_rect_vertex_buffer, MAP_WRITE);
+    }
+
+    {
+        CBSolidColor cb = { {color.r(), color.g(), color.b(), alpha} };
+        void* pData = nullptr;
+        impl_->pCtx_->MapBuffer(impl_->m_draw_solid_rect_cb, MAP_WRITE, MAP_FLAG_DISCARD, pData);
+        std::memcpy(pData, &cb, sizeof(cb));
+        impl_->pCtx_->UnmapBuffer(impl_->m_draw_solid_rect_cb, MAP_WRITE);
+    }
+
+    {
+        auto viewportCB = impl_->viewport_.GetViewportCB();
+        const float zoom = std::max(viewportCB.zoom, 0.001f);
+        CBSolidTransform2D cbTransform;
+        cbTransform.offset     = { x * zoom + viewportCB.offset.x, y * zoom + viewportCB.offset.y };
+        cbTransform.scale      = { w * zoom, h * zoom };
+        cbTransform.screenSize = viewportCB.screenSize;
+        void* pData = nullptr;
+        impl_->pCtx_->MapBuffer(impl_->m_draw_solid_rect_trnsform_cb, MAP_WRITE, MAP_FLAG_DISCARD, pData);
+        std::memcpy(pData, &cbTransform, sizeof(cbTransform));
+        impl_->pCtx_->UnmapBuffer(impl_->m_draw_solid_rect_trnsform_cb, MAP_WRITE);
+    }
+
+    impl_->pCtx_->SetPipelineState(impl_->m_draw_solid_rect_pso_and_srb.pPSO);
+
+    IBuffer* pBuffers[] = { impl_->m_draw_solid_rect_vertex_buffer };
+    Uint64 offsets[] = { 0 };
+    impl_->pCtx_->SetVertexBuffers(0, 1, pBuffers, offsets,
+        RESOURCE_STATE_TRANSITION_MODE_TRANSITION, SET_VERTEX_BUFFERS_FLAG_RESET);
+    impl_->pCtx_->SetIndexBuffer(impl_->m_draw_solid_rect_index_buffer, 0,
+        RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+
+    impl_->m_draw_solid_rect_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_VERTEX, "TransformCB")->Set(impl_->m_draw_solid_rect_trnsform_cb);
+    impl_->m_draw_solid_rect_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_PIXEL, "ColorBuffer")->Set(impl_->m_draw_solid_rect_cb);
+    impl_->pCtx_->CommitShaderResources(impl_->m_draw_solid_rect_pso_and_srb.pSRB,
+        RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+
+    DrawIndexedAttribs drawAttrs(6, VT_UINT32, DRAW_FLAG_VERIFY_ALL);
+    impl_->pCtx_->DrawIndexed(drawAttrs);
+}
 
     float alpha = color.a() * opacity;
     RectVertex vertices[4] = {
@@ -616,6 +778,190 @@ void PrimitiveRenderer2D::drawSolidRectTransformed(float x, float y, float w, fl
 void PrimitiveRenderer2D::drawSolidRect(float x, float y, float w, float h, const FloatColor& color, float opacity)
 {
     this->drawRectLocal(x, y, w, h, color, opacity);
+}
+
+void PrimitiveRenderer2D::beginBatch()
+{
+    impl_->m_batchVertexCount = 0;
+    impl_->m_batchIndexCount = 0;
+    impl_->m_batchActive = true;
+}
+
+void PrimitiveRenderer2D::endBatch()
+{
+    impl_->flushBatch();
+    impl_->m_batchActive = false;
+}
+
+void PrimitiveRenderer2D::Impl::flushBatch()
+{
+    if (m_batchVertexCount == 0 || !hasRenderTarget() || !m_draw_solid_rect_pso_and_srb.pPSO) return;
+
+    // Upload vertices
+    {
+        void* pData = nullptr;
+        pCtx_->MapBuffer(m_batchVertexBuffer, MAP_WRITE, MAP_FLAG_DISCARD, pData);
+        std::memcpy(pData, m_batchVertices, sizeof(RectVertex) * m_batchVertexCount);
+        pCtx_->UnmapBuffer(m_batchVertexBuffer, MAP_WRITE);
+    }
+
+    // Upload indices
+    {
+        void* pData = nullptr;
+        pCtx_->MapBuffer(m_batchIndexBuffer, MAP_WRITE, MAP_FLAG_DISCARD, pData);
+        std::memcpy(pData, m_batchIndices, sizeof(uint32_t) * m_batchIndexCount);
+        pCtx_->UnmapBuffer(m_batchIndexBuffer, MAP_WRITE);
+    }
+
+    auto* pRTV = getCurrentRTV();
+    pCtx_->SetRenderTargets(1, &pRTV, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+    pCtx_->SetPipelineState(m_draw_solid_rect_pso_and_srb.pPSO);
+
+    IBuffer* pBuffers[] = { m_batchVertexBuffer };
+    Uint64 offsets[] = { 0 };
+    pCtx_->SetVertexBuffers(0, 1, pBuffers, offsets,
+        RESOURCE_STATE_TRANSITION_MODE_TRANSITION, SET_VERTEX_BUFFERS_FLAG_RESET);
+    pCtx_->SetIndexBuffer(m_batchIndexBuffer, 0);
+
+    // Set transform CB
+    auto viewportCB = viewport_.GetViewportCB();
+    const float zoom = std::max(viewportCB.zoom, 0.001f);
+    CBSolidTransform2D cbTransform;
+    cbTransform.offset     = viewportCB.offset;
+    cbTransform.scale      = { zoom, zoom };
+    cbTransform.screenSize = viewportCB.screenSize;
+    {
+        void* pData = nullptr;
+        pCtx_->MapBuffer(m_draw_solid_rect_trnsform_cb, MAP_WRITE, MAP_FLAG_DISCARD, pData);
+        std::memcpy(pData, &cbTransform, sizeof(cbTransform));
+        pCtx_->UnmapBuffer(m_draw_solid_rect_trnsform_cb, MAP_WRITE);
+    }
+    m_draw_solid_rect_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_VERTEX, "TransformCB")->Set(m_draw_solid_rect_trnsform_cb);
+    pCtx_->CommitShaderResources(m_draw_solid_rect_pso_and_srb.pSRB,
+        RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+
+    DrawIndexedAttribs drawAttrs(m_batchIndexCount, VT_UINT32, DRAW_FLAG_VERIFY_ALL);
+    pCtx_->DrawIndexed(drawAttrs);
+
+    m_batchVertexCount = 0;
+    m_batchIndexCount = 0;
+}
+
+void PrimitiveRenderer2D::Impl::addToBatch(float x0, float y0, float x1, float y1, float x2, float y2, float x3, float y3, const FloatColor& color)
+{
+    if (m_batchVertexCount + 4 > kMaxBatchVertices || m_batchIndexCount + 6 > kMaxBatchIndices) {
+        flushBatch();
+    }
+
+    float4 c = { color.r(), color.g(), color.b(), color.a() };
+    int baseIdx = m_batchVertexCount;
+    m_batchVertices[baseIdx + 0] = {{x0, y0}, c};
+    m_batchVertices[baseIdx + 1] = {{x1, y1}, c};
+    m_batchVertices[baseIdx + 2] = {{x2, y2}, c};
+    m_batchVertices[baseIdx + 3] = {{x3, y3}, c};
+
+    int baseI = m_batchIndexCount;
+    m_batchIndices[baseI + 0] = baseIdx + 0;
+    m_batchIndices[baseI + 1] = baseIdx + 1;
+    m_batchIndices[baseI + 2] = baseIdx + 2;
+    m_batchIndices[baseI + 3] = baseIdx + 0;
+    m_batchIndices[baseI + 4] = baseIdx + 2;
+    m_batchIndices[baseI + 5] = baseIdx + 3;
+
+    m_batchVertexCount += 4;
+    m_batchIndexCount += 6;
+}
+
+void PrimitiveRenderer2D::beginBatch()
+{
+    impl_->m_batchVertexCount = 0;
+    impl_->m_batchIndexCount = 0;
+    impl_->m_batchActive = true;
+}
+
+void PrimitiveRenderer2D::endBatch()
+{
+    impl_->flushBatch();
+    impl_->m_batchActive = false;
+}
+
+void PrimitiveRenderer2D::Impl::flushBatch()
+{
+    if (m_batchVertexCount == 0 || !hasRenderTarget() || !m_draw_solid_rect_pso_and_srb.pPSO) return;
+
+    // Upload vertices
+    {
+        void* pData = nullptr;
+        pCtx_->MapBuffer(m_batchVertexBuffer, MAP_WRITE, MAP_FLAG_DISCARD, pData);
+        std::memcpy(pData, m_batchVertices, sizeof(RectVertex) * m_batchVertexCount);
+        pCtx_->UnmapBuffer(m_batchVertexBuffer, MAP_WRITE);
+    }
+
+    // Upload indices
+    {
+        void* pData = nullptr;
+        pCtx_->MapBuffer(m_batchIndexBuffer, MAP_WRITE, MAP_FLAG_DISCARD, pData);
+        std::memcpy(pData, m_batchIndices, sizeof(uint32_t) * m_batchIndexCount);
+        pCtx_->UnmapBuffer(m_batchIndexBuffer, MAP_WRITE);
+    }
+
+    auto* pRTV = getCurrentRTV();
+    pCtx_->SetRenderTargets(1, &pRTV, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+    pCtx_->SetPipelineState(m_draw_solid_rect_pso_and_srb.pPSO);
+
+    IBuffer* pBuffers[] = { m_batchVertexBuffer };
+    Uint64 offsets[] = { 0 };
+    pCtx_->SetVertexBuffers(0, 1, pBuffers, offsets,
+        RESOURCE_STATE_TRANSITION_MODE_TRANSITION, SET_VERTEX_BUFFERS_FLAG_RESET);
+    pCtx_->SetIndexBuffer(m_batchIndexBuffer, 0);
+
+    // Set transform CB
+    auto viewportCB = viewport_.GetViewportCB();
+    const float zoom = std::max(viewportCB.zoom, 0.001f);
+    CBSolidTransform2D cbTransform;
+    cbTransform.offset     = viewportCB.offset;
+    cbTransform.scale      = { zoom, zoom };
+    cbTransform.screenSize = viewportCB.screenSize;
+    {
+        void* pData = nullptr;
+        pCtx_->MapBuffer(m_draw_solid_rect_trnsform_cb, MAP_WRITE, MAP_FLAG_DISCARD, pData);
+        std::memcpy(pData, &cbTransform, sizeof(cbTransform));
+        pCtx_->UnmapBuffer(m_draw_solid_rect_trnsform_cb, MAP_WRITE);
+    }
+    m_draw_solid_rect_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_VERTEX, "TransformCB")->Set(m_draw_solid_rect_trnsform_cb);
+    pCtx_->CommitShaderResources(m_draw_solid_rect_pso_and_srb.pSRB,
+        RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+
+    DrawIndexedAttribs drawAttrs(m_batchIndexCount, VT_UINT32, DRAW_FLAG_VERIFY_ALL);
+    pCtx_->DrawIndexed(drawAttrs);
+
+    m_batchVertexCount = 0;
+    m_batchIndexCount = 0;
+}
+
+void PrimitiveRenderer2D::Impl::addToBatch(float x0, float y0, float x1, float y1, float x2, float y2, float x3, float y3, const FloatColor& color)
+{
+    if (m_batchVertexCount + 4 > kMaxBatchVertices || m_batchIndexCount + 6 > kMaxBatchIndices) {
+        flushBatch();
+    }
+
+    float4 c = { color.r(), color.g(), color.b(), color.a() };
+    int baseIdx = m_batchVertexCount;
+    m_batchVertices[baseIdx + 0] = {{x0, y0}, c};
+    m_batchVertices[baseIdx + 1] = {{x1, y1}, c};
+    m_batchVertices[baseIdx + 2] = {{x2, y2}, c};
+    m_batchVertices[baseIdx + 3] = {{x3, y3}, c};
+
+    int baseI = m_batchIndexCount;
+    m_batchIndices[baseI + 0] = baseIdx + 0;
+    m_batchIndices[baseI + 1] = baseIdx + 1;
+    m_batchIndices[baseI + 2] = baseIdx + 2;
+    m_batchIndices[baseI + 3] = baseIdx + 0;
+    m_batchIndices[baseI + 4] = baseIdx + 2;
+    m_batchIndices[baseI + 5] = baseIdx + 3;
+
+    m_batchVertexCount += 4;
+    m_batchIndexCount += 6;
 }
 
 void PrimitiveRenderer2D::drawLineLocal(float2 p1, float2 p2, const FloatColor& c1, const FloatColor& c2)
@@ -1174,12 +1520,16 @@ void PrimitiveRenderer2D::drawRectOutlineLocal(float x, float y, float w, float 
 {
     if (!impl_->hasRenderTarget() || !impl_->m_draw_rect_outline_pso_and_srb.pPSO) return;
 
+    // 矩形の4頂点 (0,0) to (1,1) のローカル座標
     RectVertex vertices[4] = {
-        {{0, 0}, {color.r(), color.g(), color.b(), color.a()}},
-        {{w, 0}, {color.r(), color.g(), color.b(), color.a()}},
-        {{w, h}, {color.r(), color.g(), color.b(), color.a()}},
-        {{0, h}, {color.r(), color.g(), color.b(), color.a()}},
+        {{0.0f, 0.0f}, {color.r(), color.g(), color.b(), color.a()}},
+        {{1.0f, 0.0f}, {color.r(), color.g(), color.b(), color.a()}},
+        {{1.0f, 1.0f}, {color.r(), color.g(), color.b(), color.a()}},
+        {{0.0f, 1.0f}, {color.r(), color.g(), color.b(), color.a()}},
     };
+
+    // インデックスバッファ (2三角形)
+    uint32_t indices[6] = { 0, 1, 2, 0, 2, 3 };
 
     {
         void* pData = nullptr;
@@ -1188,13 +1538,31 @@ void PrimitiveRenderer2D::drawRectOutlineLocal(float x, float y, float w, float 
         impl_->pCtx_->UnmapBuffer(impl_->m_draw_solid_rect_vertex_buffer, MAP_WRITE);
     }
 
+    // TransformCB: offset(x,y), scale(w,h), screenSize
+    {
+        void* pData = nullptr;
+        impl_->pCtx_->MapBuffer(impl_->m_draw_solid_rect_cb, MAP_WRITE, MAP_FLAG_DISCARD, pData);
+        float* cbData = static_cast<float*>(pData);
+        cbData[0] = x; // offset.x
+        cbData[1] = y; // offset.y
+        cbData[2] = w; // scale.x
+        cbData[3] = h; // scale.y
+        cbData[4] = impl_->canvasSize_.x; // screenSize.x
+        cbData[5] = impl_->canvasSize_.y; // screenSize.y
+        impl_->pCtx_->UnmapBuffer(impl_->m_draw_solid_rect_cb, MAP_WRITE);
+    }
+
     auto* pRTV = impl_->getCurrentRTV();
     impl_->pCtx_->SetRenderTargets(1, &pRTV, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
     impl_->pCtx_->SetPipelineState(impl_->m_draw_rect_outline_pso_and_srb.pPSO);
+    impl_->m_draw_rect_outline_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_VERTEX, "TransformCB")->SetBuffer(impl_->m_draw_solid_rect_cb);
     impl_->pCtx_->CommitShaderResources(impl_->m_draw_rect_outline_pso_and_srb.pSRB,
         RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
 
-    DrawIndexedAttribs drawAttrs(8, VT_UINT32, DRAW_FLAG_VERIFY_ALL);
+    impl_->pCtx_->SetVertexBuffers(0, 1, &impl_->m_draw_solid_rect_vertex_buffer, nullptr, nullptr, SET_VERTEX_BUFFERS_FLAG_RESET);
+    impl_->pCtx_->SetIndexBuffer(impl_->m_draw_solid_rect_index_buffer, 0);
+
+    DrawIndexedAttribs drawAttrs(6, VT_UINT32, DRAW_FLAG_VERIFY_ALL);
     impl_->pCtx_->DrawIndexed(drawAttrs);
 }
 

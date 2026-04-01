@@ -46,6 +46,7 @@ export namespace Artifact {
   void setDockVisible(const QString& title, bool visible);
   void activateDock(const QString& title);
   bool closeDock(const QString& title);
+  void setDockImmersive(QWidget* widget, bool immersive);
 
   void closeAllDocks();
   void showStatusMessage(const QString& message, int timeoutMs = 2000);

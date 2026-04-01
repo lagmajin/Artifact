@@ -80,6 +80,46 @@ namespace {
   constexpr int kLayerNameMinWidth = 120;
   constexpr char kLayerReorderMimeType[] = "application/x-artifact-layer-reorder";
 
+ QString makeTimelineButtonStyle(const QWidget* widget, bool checkedAccent = false)
+ {
+  const QPalette pal = widget ? widget->palette() : QPalette{};
+  const QColor bg = pal.button().color();
+  const QColor fg = pal.buttonText().color();
+  const QColor border = pal.mid().color().darker(120);
+  const QColor checkedBg = checkedAccent ? pal.highlight().color() : bg.darker(108);
+  const QColor hoverBg = bg.lighter(110);
+  const QColor pressedBg = bg.darker(115);
+  return QStringLiteral(
+      "QPushButton { background:%1; color:%2; border:none; border-right:1px solid %3; font-size:11px; }"
+      "QPushButton:hover { background:%4; }"
+      "QPushButton:pressed { background:%5; }"
+      "QPushButton:checked { background:%6; color:%7; }")
+      .arg(bg.name(), fg.name(), border.name(), hoverBg.name(), pressedBg.name(),
+           checkedBg.name(), pal.highlightedText().color().name());
+ }
+
+ QString makeTimelineLineEditStyle(const QWidget* widget)
+ {
+  const QPalette pal = widget ? widget->palette() : QPalette{};
+  const QColor bg = pal.base().color();
+  const QColor fg = pal.text().color();
+  const QColor border = pal.mid().color().darker(120);
+  return QStringLiteral("QLineEdit { background:%1; color:%2; border:1px solid %3; padding:0 4px; }")
+      .arg(bg.name(), fg.name(), border.name());
+ }
+
+ QString makeTimelineComboStyle(const QWidget* widget)
+ {
+  const QPalette pal = widget ? widget->palette() : QPalette{};
+  const QColor bg = pal.button().color();
+  const QColor fg = pal.buttonText().color();
+  const QColor border = pal.mid().color().darker(120);
+  return QStringLiteral(
+      "QComboBox { background:%1; color:%2; border:1px solid %3; padding:1px 6px; }"
+      "QComboBox::drop-down { width:18px; border-left:1px solid %3; }")
+      .arg(bg.name(), fg.name(), border.name());
+ }
+
  QIcon loadSvgAsIcon(const QString& path, int size = 16)
  {
   if (path.isEmpty()) {
@@ -159,6 +199,47 @@ namespace {
    return !video->isAudioMuted() && video->audioVolume() > 0.001;
   }
   return false;
+ }
+
+ bool layerHasAnimation(const ArtifactAbstractLayerPtr& layer)
+ {
+  if (!layer) {
+   return false;
+  }
+  const auto groups = layer->getLayerPropertyGroups();
+  for (const auto& group : groups) {
+   for (const auto& property : group.sortedProperties()) {
+    if (!property || !property->isAnimatable()) {
+     continue;
+    }
+    if (!property->getKeyFrames().empty()) {
+     return true;
+    }
+   }
+  }
+  return false;
+ }
+
+ bool layerMatchesDisplayMode(const ArtifactAbstractLayerPtr& layer,
+                              TimelineLayerDisplayMode mode,
+                              const QSet<ArtifactAbstractLayerPtr>& selectedLayers)
+ {
+  if (!layer) {
+   return false;
+  }
+  switch (mode) {
+  case TimelineLayerDisplayMode::AllLayers:
+    return true;
+  case TimelineLayerDisplayMode::SelectedOnly:
+    return selectedLayers.contains(layer);
+  case TimelineLayerDisplayMode::AnimatedOnly:
+    return layerHasAnimation(layer);
+  case TimelineLayerDisplayMode::AudioOnly:
+    return layerCanOutputAudio(layer);
+  case TimelineLayerDisplayMode::VideoOnly:
+    return std::dynamic_pointer_cast<ArtifactVideoLayer>(layer) != nullptr;
+  }
+  return true;
  }
 
  QPixmap loadLayerPanelPixmap(const QString& resourceRelativePath, const QString& fallbackFileName = {})
@@ -784,9 +865,9 @@ namespace {
  // ArtifactLayerPanelHeaderWidget Implementation
  // ============================================================================
 
- class ArtifactLayerPanelHeaderWidget::Impl
- {
- public:
+class ArtifactLayerPanelHeaderWidget::Impl
+{
+public:
   Impl()
   {
     visibilityIcon = loadLayerPanelPixmap(QStringLiteral("MaterialVS/neutral/visibility.svg"), QStringLiteral("visibility.png"));
@@ -802,6 +883,11 @@ namespace {
   QPixmap soloIcon;
   QPixmap audioIcon;
   QPixmap shyIcon;
+  int propertyColumnWidth = kLayerColumnWidth;
+  bool resizingPropertyColumns = false;
+  int resizeStartX = 0;
+  int resizeStartWidth = kLayerColumnWidth;
+  static constexpr int resizeHandleHalfWidth = 4;
   
   QPushButton* visibilityButton = nullptr;
   QPushButton* lockButton = nullptr;
@@ -815,9 +901,9 @@ namespace {
 
  W_OBJECT_IMPL(ArtifactLayerPanelHeaderWidget)
 
- ArtifactLayerPanelHeaderWidget::ArtifactLayerPanelHeaderWidget(QWidget* parent)
+ArtifactLayerPanelHeaderWidget::ArtifactLayerPanelHeaderWidget(QWidget* parent)
   : QWidget(parent), impl_(new Impl())
- {
+{
   impl_->visibilityIcon = loadLayerPanelPixmap(QStringLiteral("MaterialVS/neutral/visibility.svg"), QStringLiteral("visibility.png"));
   impl_->lockIcon = loadLayerPanelPixmap(QStringLiteral("MaterialVS/yellow/lock.svg"), QStringLiteral("lock.png"));
   if (impl_->lockIcon.isNull()) impl_->lockIcon = loadLayerPanelPixmap(QStringLiteral("MaterialVS/yellow/lock_open.svg"), QStringLiteral("unlock.png"));
@@ -828,49 +914,63 @@ namespace {
   auto visButton = impl_->visibilityButton = new QPushButton();
   visButton->setFixedSize(QSize(kLayerColumnWidth, kLayerHeaderButtonSize));
   visButton->setIcon(impl_->visibilityIcon);
-  visButton->setStyleSheet("background-color: #2D2D30; border: none; border-right: 1px solid #1a1a1a;");
+  visButton->setIconSize(QSize(14, 14));
+  visButton->setStyleSheet(makeTimelineButtonStyle(this));
   visButton->setFlat(true);
   visButton->setEnabled(false);
+  visButton->setAttribute(Qt::WA_TransparentForMouseEvents, true);
 
   auto lockButton = impl_->lockButton = new QPushButton();
   lockButton->setFixedSize(QSize(kLayerColumnWidth, kLayerHeaderButtonSize));
   if (!impl_->lockIcon.isNull()) lockButton->setIcon(impl_->lockIcon);
-  lockButton->setStyleSheet("background-color: #2D2D30; border: none; border-right: 1px solid #1a1a1a;");
+  lockButton->setIconSize(QSize(14, 14));
+  lockButton->setStyleSheet(makeTimelineButtonStyle(this));
   lockButton->setEnabled(false);
+  lockButton->setAttribute(Qt::WA_TransparentForMouseEvents, true);
 
   auto soloButton = impl_->soloButton = new QPushButton();
   soloButton->setFixedSize(QSize(kLayerColumnWidth, kLayerHeaderButtonSize));
   if (!impl_->soloIcon.isNull()) soloButton->setIcon(impl_->soloIcon);
-  soloButton->setStyleSheet("background-color: #2D2D30; border: none; border-right: 1px solid #1a1a1a;");
+  soloButton->setIconSize(QSize(14, 14));
+  soloButton->setStyleSheet(makeTimelineButtonStyle(this));
   soloButton->setEnabled(false);
+  soloButton->setAttribute(Qt::WA_TransparentForMouseEvents, true);
 
   auto audioButton = impl_->audioButton = new QPushButton();
   audioButton->setFixedSize(QSize(kLayerColumnWidth, kLayerHeaderButtonSize));
   if (!impl_->audioIcon.isNull()) audioButton->setIcon(impl_->audioIcon);
-  audioButton->setStyleSheet("background-color: #2D2D30; border: none; border-right: 1px solid #1a1a1a;");
+  audioButton->setIconSize(QSize(14, 14));
+  audioButton->setStyleSheet(makeTimelineButtonStyle(this));
   audioButton->setEnabled(false);
+  audioButton->setAttribute(Qt::WA_TransparentForMouseEvents, true);
 
   auto shyButton = impl_->shyButton = new QPushButton;
   shyButton->setFixedSize(QSize(kLayerColumnWidth, kLayerHeaderButtonSize));
   shyButton->setCheckable(true);
   if (!impl_->shyIcon.isNull()) shyButton->setIcon(impl_->shyIcon);
+  shyButton->setIconSize(QSize(14, 14));
   shyButton->setToolTip("Master Shy Switch");
-  shyButton->setStyleSheet("QPushButton { background-color: #2D2D30; border: none; border-right: 1px solid #1a1a1a; } QPushButton:checked { background-color: #3b3bef; }");
+  shyButton->setStyleSheet(makeTimelineButtonStyle(this, true));
+  shyButton->setAttribute(Qt::WA_TransparentForMouseEvents, true);
 
   auto layerNameButton = impl_->layerNameButton = new QPushButton("Layer Name");
-  QString btnStyle = "QPushButton { background-color: #2D2D30; color: #CCC; border: none; border-right: 1px solid #1a1a1a; font-size: 11px; text-align: left; padding-left: 5px; }";
+  QString btnStyle = makeTimelineButtonStyle(this);
+  btnStyle += QStringLiteral("QPushButton { text-align:left; padding-left:5px; }");
   layerNameButton->setStyleSheet(btnStyle);
   layerNameButton->setEnabled(false);
+  layerNameButton->setAttribute(Qt::WA_TransparentForMouseEvents, true);
   
   auto parentHeader = impl_->parentHeaderButton = new QPushButton("Parent");
   parentHeader->setFixedWidth(kInlineParentWidth);
-  parentHeader->setStyleSheet(btnStyle);
+  parentHeader->setStyleSheet(makeTimelineButtonStyle(this));
   parentHeader->setEnabled(false);
+  parentHeader->setAttribute(Qt::WA_TransparentForMouseEvents, true);
   
   auto blendHeader = impl_->blendHeaderButton = new QPushButton("Blend");
   blendHeader->setFixedWidth(kInlineBlendWidth);
-  blendHeader->setStyleSheet(btnStyle);
+  blendHeader->setStyleSheet(makeTimelineButtonStyle(this));
   blendHeader->setEnabled(false);
+  blendHeader->setAttribute(Qt::WA_TransparentForMouseEvents, true);
 
   auto* layout = new QHBoxLayout(this);
   layout->setContentsMargins(0, 0, 0, 0);
@@ -892,8 +992,9 @@ namespace {
     Q_EMIT shyToggled(checked);
   });
 
-  setStyleSheet("background-color: #2D2D30; border-bottom: 1px solid #1a1a1a;");
+  setAutoFillBackground(true);
   setFixedHeight(kLayerHeaderHeight);
+  setMouseTracking(true);
 }
 
  ArtifactLayerPanelHeaderWidget::~ArtifactLayerPanelHeaderWidget()
@@ -906,6 +1007,81 @@ int ArtifactLayerPanelHeaderWidget::iconSize() const { return 14; }
 int ArtifactLayerPanelHeaderWidget::totalHeaderHeight() const
 {
  return minimumHeight() > 0 ? minimumHeight() : sizeHint().height();
+}
+
+void ArtifactLayerPanelHeaderWidget::setPropertyColumnWidth(int width)
+{
+  const int clamped = std::clamp(width, 18, 56);
+  if (!impl_ || impl_->propertyColumnWidth == clamped) {
+    return;
+  }
+  impl_->propertyColumnWidth = clamped;
+  if (impl_->visibilityButton) impl_->visibilityButton->setFixedWidth(clamped);
+  if (impl_->lockButton) impl_->lockButton->setFixedWidth(clamped);
+  if (impl_->soloButton) impl_->soloButton->setFixedWidth(clamped);
+  if (impl_->audioButton) impl_->audioButton->setFixedWidth(clamped);
+  if (impl_->shyButton) impl_->shyButton->setFixedWidth(clamped);
+  updateGeometry();
+  update();
+}
+
+int ArtifactLayerPanelHeaderWidget::propertyColumnWidth() const
+{
+  return impl_ ? impl_->propertyColumnWidth : kLayerColumnWidth;
+}
+
+void ArtifactLayerPanelHeaderWidget::mousePressEvent(QMouseEvent* event)
+{
+  const int boundaryX = propertyColumnWidth() * kLayerPropertyColumnCount;
+  if (event->button() == Qt::LeftButton &&
+      std::abs(event->pos().x() - boundaryX) <= Impl::resizeHandleHalfWidth) {
+    impl_->resizingPropertyColumns = true;
+    impl_->resizeStartX = event->globalPosition().x();
+    impl_->resizeStartWidth = propertyColumnWidth();
+    setCursor(Qt::SplitHCursor);
+    event->accept();
+    return;
+  }
+  QWidget::mousePressEvent(event);
+}
+
+void ArtifactLayerPanelHeaderWidget::mouseMoveEvent(QMouseEvent* event)
+{
+  if (impl_->resizingPropertyColumns) {
+    const int dx = static_cast<int>(std::round(event->globalPosition().x() - impl_->resizeStartX));
+    setPropertyColumnWidth(impl_->resizeStartWidth + dx / kLayerPropertyColumnCount);
+    Q_EMIT propertyColumnWidthChanged(propertyColumnWidth());
+    event->accept();
+    return;
+  }
+
+  const int boundaryX = propertyColumnWidth() * kLayerPropertyColumnCount;
+  if (std::abs(event->pos().x() - boundaryX) <= Impl::resizeHandleHalfWidth) {
+    setCursor(Qt::SplitHCursor);
+  } else {
+    unsetCursor();
+  }
+  QWidget::mouseMoveEvent(event);
+}
+
+void ArtifactLayerPanelHeaderWidget::mouseReleaseEvent(QMouseEvent* event)
+{
+  if (impl_->resizingPropertyColumns && event->button() == Qt::LeftButton) {
+    impl_->resizingPropertyColumns = false;
+    unsetCursor();
+    Q_EMIT propertyColumnWidthChanged(propertyColumnWidth());
+    event->accept();
+    return;
+  }
+  QWidget::mouseReleaseEvent(event);
+}
+
+void ArtifactLayerPanelHeaderWidget::leaveEvent(QEvent* event)
+{
+  if (!impl_->resizingPropertyColumns) {
+    unsetCursor();
+  }
+  QWidget::leaveEvent(event);
 }
 
  // ============================================================================
@@ -977,6 +1153,12 @@ int ArtifactLayerPanelHeaderWidget::totalHeaderHeight() const
   LayerID selectedLayerId;
   QVector<VisibleRow> visibleRows;
   QHash<QString, bool> expandedByLayerId;
+  TimelineLayerDisplayMode displayMode = TimelineLayerDisplayMode::AllLayers;
+  int rowHeight = kLayerRowHeight;
+  int propertyColumnWidth = kLayerColumnWidth;
+  bool resizingPropertyColumns = false;
+  int resizeStartX = 0;
+  int resizeStartWidth = kLayerColumnWidth;
   QPointer<QComboBox> inlineParentEditor;
   QPointer<QComboBox> inlineBlendEditor;
   QPointer<QLineEdit> inlineNameEditor;
@@ -1047,6 +1229,42 @@ int ArtifactLayerPanelHeaderWidget::totalHeaderHeight() const
    }
   }
 
+  void setDisplayMode(TimelineLayerDisplayMode mode, ArtifactLayerPanelWidget* owner)
+  {
+   if (displayMode == mode) {
+    return;
+   }
+   displayMode = mode;
+   if (owner) {
+    owner->updateLayout();
+   }
+  }
+
+  void setRowHeight(int height, ArtifactLayerPanelWidget* owner)
+  {
+   const int clamped = std::clamp(height, 20, 48);
+   if (rowHeight == clamped) {
+    return;
+   }
+   rowHeight = clamped;
+   if (owner) {
+    owner->updateLayout();
+   }
+  }
+
+  void setPropertyColumnWidth(int width, ArtifactLayerPanelWidget* owner)
+  {
+   const int clamped = std::clamp(width, 18, 44);
+   if (propertyColumnWidth == clamped) {
+    return;
+   }
+   propertyColumnWidth = clamped;
+   if (owner) {
+    owner->update();
+    owner->updateGeometry();
+   }
+  }
+
   void clearDragState()
   {
    dragCandidateLayerId = LayerID();
@@ -1109,8 +1327,9 @@ int ArtifactLayerPanelHeaderWidget::totalHeaderHeight() const
    if (visibleRows.isEmpty()) {
     return 0;
    }
+   const int rowHeightPx = std::max(1, rowHeight);
    return std::clamp<int>(
-    (y + (kLayerRowHeight / 2)) / kLayerRowHeight,
+    (y + (rowHeightPx / 2)) / rowHeightPx,
     0,
     static_cast<int>(visibleRows.size()));
   }
@@ -1154,12 +1373,27 @@ int ArtifactLayerPanelHeaderWidget::totalHeaderHeight() const
     return;
    }
 
+   QSet<ArtifactAbstractLayerPtr> selectedLayers;
+   if (displayMode == TimelineLayerDisplayMode::SelectedOnly) {
+    if (auto* app = ArtifactApplicationManager::instance()) {
+     if (auto* selection = app->layerSelectionManager()) {
+      selectedLayers = selection->selectedLayers();
+      if (selectedLayers.isEmpty()) {
+       if (auto current = selection->currentLayer()) {
+        selectedLayers.insert(current);
+       }
+      }
+     }
+    }
+   }
+
    QVector<ArtifactAbstractLayerPtr> layers;
    const LayerSearchQuery query = parseLayerSearchQuery(filterText);
    const bool hasQuery = !query.isEmpty();
    for (auto& l : comp->allLayer()) {
      if (!l) continue;
      if (shyHidden && l->isShy()) continue;
+     if (!layerMatchesDisplayMode(l, displayMode, selectedLayers)) continue;
      const bool matches = !hasQuery || matchesLayerSearchQuery(l, comp, query);
      if (hasQuery && searchMatchMode == SearchMatchMode::FilterOnly && !matches) continue;
      layers.push_back(l);
@@ -1235,6 +1469,17 @@ int ArtifactLayerPanelHeaderWidget::totalHeaderHeight() const
       appendNode(l, 0, stack);
     }
    }
+  }
+
+  int propertyColumnsWidth() const
+  {
+   return std::max(1, propertyColumnWidth) * kLayerPropertyColumnCount;
+  }
+
+  QRect propertyColumnResizeRect(int rowTop, int rowHeightPx) const
+  {
+   const int x = propertyColumnsWidth();
+   return QRect(x - 4, rowTop, 8, rowHeightPx);
   }
  };
 
@@ -1365,6 +1610,36 @@ void ArtifactLayerPanelWidget::setShyHidden(bool hidden)
   updateLayout();
 }
 
+void ArtifactLayerPanelWidget::setDisplayMode(TimelineLayerDisplayMode mode)
+{
+  impl_->setDisplayMode(mode, this);
+}
+
+TimelineLayerDisplayMode ArtifactLayerPanelWidget::displayMode() const
+{
+  return impl_->displayMode;
+}
+
+void ArtifactLayerPanelWidget::setRowHeight(int rowHeight)
+{
+  impl_->setRowHeight(rowHeight, this);
+}
+
+int ArtifactLayerPanelWidget::rowHeight() const
+{
+  return impl_->rowHeight;
+}
+
+void ArtifactLayerPanelWidget::setPropertyColumnWidth(int width)
+{
+  impl_->setPropertyColumnWidth(width, this);
+}
+
+int ArtifactLayerPanelWidget::propertyColumnWidth() const
+{
+  return impl_->propertyColumnWidth;
+}
+
 void ArtifactLayerPanelWidget::setFilterText(const QString& text)
 {
   if (impl_->filterText == text) {
@@ -1437,13 +1712,15 @@ void ArtifactLayerPanelWidget::performUpdateLayout()
   };
 
   const QVector<Impl::VisibleRow> oldRows = impl_->visibleRows;
+  const int previousContentHeight = impl_->lastContentHeight;
   impl_->refreshLayerChangedSubscriptions(this);
   
   impl_->clearInlineEditors();
   impl_->rebuildVisibleRows();
   const bool structureChanged = !rowsEqual(oldRows, impl_->visibleRows);
   const int count = impl_->visibleRows.size();
-  const int contentHeight = std::max(kLayerRowHeight, count * kLayerRowHeight);
+  const int rowH = std::max(1, impl_->rowHeight);
+  const int contentHeight = std::max(rowH, count * rowH);
   if (contentHeight != impl_->lastContentHeight) {
     setMinimumHeight(0);
     setMinimumHeight(contentHeight);
@@ -1452,7 +1729,7 @@ void ArtifactLayerPanelWidget::performUpdateLayout()
     impl_->lastContentHeight = contentHeight;
   }
   update();
-  if (structureChanged) {
+  if (structureChanged || contentHeight != previousContentHeight) {
     Q_EMIT visibleRowsChanged();
   }
   
@@ -1503,14 +1780,15 @@ void ArtifactLayerPanelWidget::performUpdateLayout()
     impl_->inlineNameEditor = new QLineEdit(this);
     impl_->inlineNameEditor->setText(l->layerName());
     impl_->inlineNameEditor->selectAll();
-    impl_->inlineNameEditor->setStyleSheet("background-color: #2D2D30; color: white; border: 1px solid #007ACC;");
+    impl_->inlineNameEditor->setStyleSheet(makeTimelineLineEditStyle(impl_->inlineNameEditor));
 
     // Position it
     const int rowIndent = impl_->visibleRows[idx].depth * 14;
-    const int nameStartX = kLayerColumnWidth * kLayerPropertyColumnCount;
+    const int nameStartX = std::max(1, impl_->propertyColumnWidth) * kLayerPropertyColumnCount;
     const int textX = nameStartX + rowIndent + (impl_->visibleRows[idx].hasChildren ? 16 : 4);
     const int editorWidth = std::max(60, width() - textX - kInlineParentWidth - kInlineBlendWidth - 8);
-    impl_->inlineNameEditor->setGeometry(textX, idx * kLayerRowHeight + 2, editorWidth, kLayerRowHeight - 4);
+    const int rowH = std::max(1, impl_->rowHeight);
+    impl_->inlineNameEditor->setGeometry(textX, idx * rowH + 2, editorWidth, rowH - 4);
 
     QObject::connect(impl_->inlineNameEditor, &QLineEdit::editingFinished, this, [this, id]() {
       if (!impl_->inlineNameEditor) return;
@@ -1543,10 +1821,10 @@ void ArtifactLayerPanelWidget::performUpdateLayout()
 void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
 {
   setFocus();
-  const int rowH = kLayerRowHeight;
-  const int colW = kLayerColumnWidth;
+  const int rowH = std::max(1, impl_->rowHeight);
+  const int colW = std::max(1, impl_->propertyColumnWidth);
+  const int clickX = event->pos().x();
   int idx = event->pos().y() / rowH;
-  int clickX = event->pos().x();
 
   if (idx < 0 || idx >= impl_->visibleRows.size()) {
     impl_->clearDragState();
@@ -1596,9 +1874,7 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
       impl_->clearInlineEditors();
       auto* combo = new QComboBox(this);
       combo->setGeometry(parentRect);
-      combo->setStyleSheet(
-        "QComboBox { background:#2d2d30; color:#ddd; border:1px solid #4a4a4f; padding:1px 6px; }"
-        "QComboBox::drop-down { width:18px; border-left:1px solid #4a4a4f; }");
+      combo->setStyleSheet(makeTimelineComboStyle(combo));
       combo->addItem(QStringLiteral("<None>"), QString());
       if (auto comp = safeCompositionLookup(impl_->compositionId)) {
         for (const auto& candidate : comp->allLayer()) {
@@ -1637,9 +1913,7 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
       impl_->clearInlineEditors();
       auto* combo = new QComboBox(this);
       combo->setGeometry(blendRect);
-      combo->setStyleSheet(
-        "QComboBox { background:#2d2d30; color:#ddd; border:1px solid #4a4a4f; padding:1px 6px; }"
-        "QComboBox::drop-down { width:18px; border-left:1px solid #4a4a4f; }");
+      combo->setStyleSheet(makeTimelineComboStyle(combo));
       const auto items = blendModeItems();
       for (const auto& [name, mode] : items) {
         combo->addItem(name, static_cast<int>(mode));
@@ -2114,8 +2388,8 @@ void ArtifactLayerPanelWidget::mouseDoubleClickEvent(QMouseEvent* event)
     QWidget::mouseDoubleClickEvent(event);
     return;
    }
-  const int rowH = kLayerRowHeight;
-  const int colW = kLayerColumnWidth;
+  const int rowH = std::max(1, impl_->rowHeight);
+  const int colW = std::max(1, impl_->propertyColumnWidth);
   const int idx = event->pos().y() / rowH;
   if (idx < 0 || idx >= impl_->visibleRows.size()) {
    QWidget::mouseDoubleClickEvent(event);
@@ -2151,7 +2425,7 @@ void ArtifactLayerPanelWidget::mouseDoubleClickEvent(QMouseEvent* event)
    }
 
    const int nameStartX = colW * kLayerPropertyColumnCount;
-  const bool showInlineCombos = width() >= (kLayerColumnWidth * kLayerPropertyColumnCount + kInlineComboReserve + kLayerNameMinWidth);
+  const bool showInlineCombos = width() >= (colW * kLayerPropertyColumnCount + kInlineComboReserve + kLayerNameMinWidth);
   const int parentRectX = width() - kInlineComboReserve;
   const int nameX = nameStartX + row.depth * 14 + (row.hasChildren ? 16 : 4);
   const int nameWidth = showInlineCombos ? std::max(20, parentRectX - nameX - 8) : std::max(20, width() - nameX - 8);
@@ -2165,8 +2439,7 @@ void ArtifactLayerPanelWidget::mouseDoubleClickEvent(QMouseEvent* event)
   impl_->clearInlineEditors();
   auto* editor = new QLineEdit(layer->layerName(), this);
   editor->setGeometry(editRect);
-  editor->setStyleSheet(
-   "QLineEdit { background:#2d2d30; color:#f0f0f0; border:1px solid #4a8bc2; padding:0 4px; }");
+  editor->setStyleSheet(makeTimelineLineEditStyle(editor));
   impl_->inlineNameEditor = editor;
   impl_->editingLayerId = layer->id();
   editor->show();
@@ -2190,8 +2463,8 @@ void ArtifactLayerPanelWidget::mouseDoubleClickEvent(QMouseEvent* event)
   event->accept();
  }
 
- void ArtifactLayerPanelWidget::mouseMoveEvent(QMouseEvent* event)
- {
+void ArtifactLayerPanelWidget::mouseMoveEvent(QMouseEvent* event)
+{
   if ((event->buttons() & Qt::LeftButton) && !impl_->dragCandidateLayerId.isNil()) {
     const int dragDistance = (event->pos() - impl_->dragStartPos).manhattanLength();
     if (impl_->draggedLayerId.isNil() && !impl_->dragStarted_ && dragDistance >= QApplication::startDragDistance()) {
@@ -2217,34 +2490,37 @@ void ArtifactLayerPanelWidget::mouseDoubleClickEvent(QMouseEvent* event)
     }
   }
 
-  int idx = event->pos().y() / kLayerRowHeight;
+  const int rowH = std::max(1, impl_->rowHeight);
+  const int colW = std::max(1, impl_->propertyColumnWidth);
+  const int separatorX = colW * kLayerPropertyColumnCount;
+  int idx = event->pos().y() / rowH;
   if (idx != impl_->hoveredLayerIndex) {
     const int previousHoveredIndex = impl_->hoveredLayerIndex;
     impl_->hoveredLayerIndex = idx;
     if (previousHoveredIndex >= 0 && previousHoveredIndex < impl_->visibleRows.size()) {
-      update(0, previousHoveredIndex * kLayerRowHeight, width(), kLayerRowHeight);
+      update(0, previousHoveredIndex * rowH, width(), rowH);
     }
     if (idx >= 0 && idx < impl_->visibleRows.size()) {
-      update(0, idx * kLayerRowHeight, width(), kLayerRowHeight);
+      update(0, idx * rowH, width(), rowH);
     }
   }
-  bool pointer = event->pos().x() < kLayerColumnWidth * kLayerPropertyColumnCount;
+  bool pointer = event->pos().x() < separatorX;
   if (!pointer && idx >= 0 && idx < impl_->visibleRows.size()) {
     const auto& row = impl_->visibleRows[idx];
     if (row.hasChildren) {
-      const int nameStartX = kLayerColumnWidth * kLayerPropertyColumnCount;
+      const int nameStartX = separatorX;
       const int indent = 14;
       const int toggleSize = 10;
       const int toggleX = nameStartX + row.depth * indent + 2;
-      const QRect toggleRect(toggleX, idx * kLayerRowHeight + (kLayerRowHeight - toggleSize) / 2, toggleSize, toggleSize);
+      const QRect toggleRect(toggleX, idx * rowH + (rowH - toggleSize) / 2, toggleSize, toggleSize);
       pointer = toggleRect.contains(event->pos());
     }
   }
   setCursor(pointer ? Qt::PointingHandCursor : Qt::ArrowCursor);
- }
+}
 
- void ArtifactLayerPanelWidget::mouseReleaseEvent(QMouseEvent* event)
- {
+void ArtifactLayerPanelWidget::mouseReleaseEvent(QMouseEvent* event)
+{
   if (event->button() == Qt::LeftButton && !impl_->draggedLayerId.isNil()) {
     impl_->clearDragState();
     unsetCursor();
@@ -2447,8 +2723,9 @@ void ArtifactLayerPanelWidget::keyPressEvent(QKeyEvent* event)
     }
    }
    if (selectedIdx >= 0) {
-    const int y = selectedIdx * kLayerRowHeight + kLayerRowHeight / 2;
-    const int x = kLayerColumnWidth * kLayerPropertyColumnCount + 20;
+    const int rowH = std::max(1, impl_->rowHeight);
+    const int y = selectedIdx * rowH + rowH / 2;
+    const int x = std::max(1, impl_->propertyColumnWidth) * kLayerPropertyColumnCount + 20;
     QMouseEvent fakeEvent(QEvent::MouseButtonDblClick, QPointF(x, y), Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
     mouseDoubleClickEvent(&fakeEvent);
     event->accept();
@@ -2476,11 +2753,12 @@ void ArtifactLayerPanelWidget::keyPressEvent(QKeyEvent* event)
    const int mouseY = event->position().y();
 
    // ホイール操作対象の行を取得
-   const int rowIdx = mouseY / kLayerRowHeight;
-   const bool showInlineCombos = width() >= (kLayerColumnWidth * kLayerPropertyColumnCount + kInlineComboReserve + kLayerNameMinWidth);
+   const int rowH = std::max(1, impl_->rowHeight);
+   const int rowIdx = mouseY / rowH;
+  const bool showInlineCombos = width() >= (std::max(1, impl_->propertyColumnWidth) * kLayerPropertyColumnCount + kInlineComboReserve + kLayerNameMinWidth);
    const int parentRectX = width() - kInlineComboReserve;
-   const QRect parentRect(parentRectX, rowIdx * kLayerRowHeight + kInlineComboMarginY, kInlineParentWidth, kInlineComboHeight);
-   const QRect blendRect(parentRect.right() + kInlineComboGap, rowIdx * kLayerRowHeight + kInlineComboMarginY, kInlineBlendWidth, kInlineComboHeight);
+   const QRect parentRect(parentRectX, rowIdx * rowH + kInlineComboMarginY, kInlineParentWidth, kInlineComboHeight);
+   const QRect blendRect(parentRect.right() + kInlineComboGap, rowIdx * rowH + kInlineComboMarginY, kInlineBlendWidth, kInlineComboHeight);
    const bool isBlendModeArea = showInlineCombos &&
                                 rowIdx >= 0 && rowIdx < impl_->visibleRows.size() &&
                                 blendRect.contains(QPoint(mouseX, mouseY));
@@ -2560,7 +2838,8 @@ void ArtifactLayerPanelWidget::keyPressEvent(QKeyEvent* event)
    const int previousHoveredIndex = impl_->hoveredLayerIndex;
    impl_->hoveredLayerIndex = -1;
    if (previousHoveredIndex >= 0 && previousHoveredIndex < impl_->visibleRows.size()) {
-    update(0, previousHoveredIndex * kLayerRowHeight, width(), kLayerRowHeight);
+    const int rowH = std::max(1, impl_->rowHeight);
+    update(0, previousHoveredIndex * rowH, width(), rowH);
    }
   }
 
@@ -2568,11 +2847,12 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
 {
   QPainter p(this);
   p.setRenderHint(QPainter::SmoothPixmapTransform);
-  const int rowH = kLayerRowHeight;
-  const int colW = kLayerColumnWidth;
+  const int rowH = std::max(1, impl_->rowHeight);
+  const int colW = std::max(1, impl_->propertyColumnWidth);
   const int iconSize = 16;
   const int offset = (colW - iconSize) / 2;
   const int nameStartX = colW * kLayerPropertyColumnCount;
+  const int separatorX = nameStartX;
   const int indent = 14;
   const int toggleSize = 10;
   
@@ -2639,6 +2919,8 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
       const int textX = nameStartX + row.depth * indent + 4;
       p.setPen(QColor(196, 196, 196));
       p.drawText(textX, y, std::max(20, width() - textX - 8), rowH, Qt::AlignVCenter | Qt::AlignLeft, row.label);
+      p.setPen(QPen(QColor(92, 92, 98, 180), 1));
+      p.drawLine(separatorX, y, separatorX, y + rowH);
       continue;
     }
 
@@ -2708,6 +2990,9 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
     curX += colW;
     p.setOpacity(1.0);
     p.drawLine(curX - 1, y, curX - 1, y + rowH);
+
+    p.setPen(QPen(QColor(92, 92, 98, 180), 1));
+    p.drawLine(separatorX, y, separatorX, y + rowH);
 
     // Name
     const int nameX = nameStartX + row.depth * indent;
@@ -3066,6 +3351,12 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
 
   QObject::connect(impl_->header, &ArtifactLayerPanelHeaderWidget::shyToggled,
                    impl_->panel, &ArtifactLayerPanelWidget::setShyHidden);
+  QObject::connect(impl_->header, &ArtifactLayerPanelHeaderWidget::propertyColumnWidthChanged,
+                   this, [this](int width) {
+                    if (impl_ && impl_->panel) {
+                      impl_->panel->setPropertyColumnWidth(width);
+                    }
+                   });
   QObject::connect(impl_->panel, &ArtifactLayerPanelWidget::visibleRowsChanged,
                    this, [this]() {
                     const bool isEmpty = impl_->panel->visibleTimelineRows().isEmpty();
@@ -3086,11 +3377,50 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
    delete impl_;
   }
 
-  void ArtifactLayerTimelinePanelWrapper::setComposition(const CompositionID& id)
-  {
-   impl_->id = id;
-   impl_->panel->setComposition(id);
+void ArtifactLayerTimelinePanelWrapper::setComposition(const CompositionID& id)
+{
+  impl_->id = id;
+  impl_->panel->setComposition(id);
+}
+
+void ArtifactLayerTimelinePanelWrapper::setDisplayMode(TimelineLayerDisplayMode mode)
+{
+  if (impl_ && impl_->panel) {
+    impl_->panel->setDisplayMode(mode);
   }
+}
+
+TimelineLayerDisplayMode ArtifactLayerTimelinePanelWrapper::displayMode() const
+{
+  return impl_ && impl_->panel ? impl_->panel->displayMode() : TimelineLayerDisplayMode::AllLayers;
+}
+
+void ArtifactLayerTimelinePanelWrapper::setRowHeight(int rowHeight)
+{
+  if (impl_ && impl_->panel) {
+    impl_->panel->setRowHeight(rowHeight);
+  }
+}
+
+int ArtifactLayerTimelinePanelWrapper::rowHeight() const
+{
+  return impl_ && impl_->panel ? impl_->panel->rowHeight() : kLayerRowHeight;
+}
+
+void ArtifactLayerTimelinePanelWrapper::setPropertyColumnWidth(int width)
+{
+  if (impl_ && impl_->panel) {
+    if (impl_->header) {
+      impl_->header->setPropertyColumnWidth(width);
+    }
+    impl_->panel->setPropertyColumnWidth(width);
+  }
+}
+
+int ArtifactLayerTimelinePanelWrapper::propertyColumnWidth() const
+{
+  return impl_ && impl_->panel ? impl_->panel->propertyColumnWidth() : kLayerColumnWidth;
+}
 
   void ArtifactLayerTimelinePanelWrapper::setFilterText(const QString& text)
   {
