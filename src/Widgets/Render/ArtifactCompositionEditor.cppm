@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <QAction>
 #include <QActionGroup>
 #include <QCloseEvent>
@@ -41,7 +41,7 @@ module;
 #include <QFileInfo>
 #include <QImageReader>
 #include <wobjectimpl.h>
-#include "../../../../out/build/x64-Debug/vcpkg_installed/x64-windows/include/Qt6/QtCore/QTimer"
+#include <QTimer>
 
 
 module Artifact.Widgets.CompositionEditor;

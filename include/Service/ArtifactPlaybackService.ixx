@@ -141,6 +141,8 @@ public: // signals
         W_SIGNAL(frameRangeChanged, range);
     void currentCompositionChanged(ArtifactCompositionPtr composition)
         W_SIGNAL(currentCompositionChanged, composition);
+    void audioLevelChanged(float leftRms, float rightRms, float leftPeak, float rightPeak)
+        W_SIGNAL(audioLevelChanged, leftRms, rightRms, leftPeak, rightPeak);
 };
 
 }

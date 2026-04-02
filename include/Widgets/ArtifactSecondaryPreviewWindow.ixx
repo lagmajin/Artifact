@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <QWidget>
 #include <QLabel>
 #include <QVBoxLayout>
@@ -14,13 +14,14 @@ module;
 #include <QApplication>
 #include <QStatusBar>
 #include <QStyle>
+#include <wobjectdefs.h>
 
 export module Artifact.Widgets.SecondaryPreviewWindow;
 
 export namespace Artifact {
 
 class ArtifactSecondaryPreviewWindow : public QWidget {
-    Q_OBJECT
+    W_OBJECT(ArtifactSecondaryPreviewWindow)
 private:
     class Impl;
     Impl* impl_;
@@ -50,9 +51,9 @@ public:
     void setUpdateRate(int fps);
     int updateRate() const;
 
-signals:
-    void closed();
-    fullscreenToggled(bool enabled);
+    signals:
+    void closed() W_SIGNAL(closed);
+    void fullscreenToggled(bool enabled) W_SIGNAL(fullscreenToggled, enabled);
 
 protected:
     void keyPressEvent(QKeyEvent* event) override;

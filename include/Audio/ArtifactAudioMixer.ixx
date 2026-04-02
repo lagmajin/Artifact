@@ -137,12 +137,15 @@ public:
     void setAllMuted(bool muted);
     void resetAllPeaks();
 
-    // オーディオエンジンのサンプルレート
     void setSampleRate(int rate);
     int sampleRate() const;
 
     void setBufferSize(int size);
     int bufferSize() const;
+
+    void updatePlaybackLevels(float leftRms, float rightRms);
+
+    void updatePlaybackLevels(float leftRms, float rightRms);
 
 
     void channelStripAdded(LayerID layerId) W_SIGNAL(channelStripAdded, layerId);

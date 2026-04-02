@@ -1,12 +1,11 @@
 module;
 
-#include <cmath>
 #include <algorithm>
+#include <cmath>
+#include <memory>
 #include <opencv2/opencv.hpp>
 #include <QVariant>
-#include <QVector>
 #include <vector>
-#include <memory>
 
 module BrightnessEffect;
 
@@ -15,13 +14,8 @@ import Artifact.Effect.ImplBase;
 import Image.ImageF32x4RGBAWithCache;
 import Property.Abstract;
 import Utils.String.UniString;
-import CvUtils;
 
 namespace Artifact {
-
-// ─────────────────────────────────────────────────────────
-// CPU 実装: Brightness / Contrast / Highlights / Shadows
-// ─────────────────────────────────────────────────────────
 
 class BrightnessEffectCPUImpl : public ArtifactEffectImplBase {
 public:
@@ -32,48 +26,36 @@ public:
 
     void applyCPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) override {
         dst = src;
-        cv::Mat mat = dst.toCvMat();
-        if (mat.empty()) return;
+        cv::Mat mat = dst.image().toCVMat();
+        if (mat.empty()) {
+            return;
+        }
 
-        // Contrast factor: factor = (1 + contrast) / (1 - contrast)
-        float contrastFactor = (contrast_ != 1.0f) ? (1.0f + contrast_) / (1.0f - contrast_) : 100.0f;
+        const float contrastFactor = (contrast_ != 1.0f) ? (1.0f + contrast_) / (1.0f - contrast_) : 100.0f;
 
         for (int y = 0; y < mat.rows; ++y) {
             for (int x = 0; x < mat.cols; ++x) {
                 cv::Vec4f& pixel = mat.at<cv::Vec4f>(y, x);
                 for (int c = 0; c < 3; ++c) {
                     float val = pixel[c];
-
-                    // 1. Brightness: 単純加算
                     val += brightness_;
-
-                    // 2. Contrast: 中間値(0.5)を基準にスケーリング
                     val = contrastFactor * (val - 0.5f) + 0.5f;
-
-                    // 3. Highlights: 明るい部分 (val > 0.5) のみ
                     if (val > 0.5f) {
-                        float highlightWeight = (val - 0.5f) * 2.0f; // 0..1
+                        const float highlightWeight = (val - 0.5f) * 2.0f;
                         val += highlights_ * highlightWeight * 0.5f;
                     }
-
-                    // 4. Shadows: 暗い部分 (val < 0.5) のみ
                     if (val < 0.5f) {
-                        float shadowWeight = (0.5f - val) * 2.0f; // 0..1
+                        const float shadowWeight = (0.5f - val) * 2.0f;
                         val += shadows_ * shadowWeight * 0.5f;
                     }
-
                     pixel[c] = std::clamp(val, 0.0f, 1.0f);
                 }
             }
         }
 
-        dst.fromCvMat(mat);
+        dst.image().setFromCVMat(mat);
     }
 };
-
-// ─────────────────────────────────────────────────────────
-// GPU 実装 (HLSL) — 現在は CPU フォールバック
-// ─────────────────────────────────────────────────────────
 
 class BrightnessEffectGPUImpl : public ArtifactEffectImplBase {
 public:
@@ -87,9 +69,6 @@ public:
     }
 
     void applyGPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) override {
-        // TODO: Diligent Engine による GPU 実装
-        // Constant Buffer に brightness, contrastFactor, highlights, shadows
-        // 全画面クアッドで per-pixel 処理
         applyCPU(src, dst);
     }
 
@@ -97,32 +76,25 @@ private:
     BrightnessEffectCPUImpl cpuImpl_;
 };
 
-// ─────────────────────────────────────────────────────────
-// BrightnessEffect 本体
-// ─────────────────────────────────────────────────────────
-
 BrightnessEffect::BrightnessEffect() {
     setEffectID(UniString("effect.colorcorrection.brightness"));
     setDisplayName(UniString("Brightness / Contrast"));
     setPipelineStage(EffectPipelineStage::Rasterizer);
-
-    auto cpuImpl = std::make_shared<BrightnessEffectCPUImpl>();
-    auto gpuImpl = std::make_shared<BrightnessEffectGPUImpl>();
-    setCPUImpl(cpuImpl);
-    setGPUImpl(gpuImpl);
+    setCPUImpl(std::make_shared<BrightnessEffectCPUImpl>());
+    setGPUImpl(std::make_shared<BrightnessEffectGPUImpl>());
     setComputeMode(ComputeMode::AUTO);
 }
 
 BrightnessEffect::~BrightnessEffect() = default;
 
 void BrightnessEffect::syncImpls() {
-    if (auto* cpu = dynamic_cast<BrightnessEffectCPUImpl*>(cpuImpl_.get())) {
+    if (auto cpu = std::dynamic_pointer_cast<BrightnessEffectCPUImpl>(cpuImpl())) {
         cpu->brightness_ = brightness_;
         cpu->contrast_ = contrast_;
         cpu->highlights_ = highlights_;
         cpu->shadows_ = shadows_;
     }
-    if (auto* gpu = dynamic_cast<BrightnessEffectGPUImpl*>(gpuImpl_.get())) {
+    if (auto gpu = std::dynamic_pointer_cast<BrightnessEffectGPUImpl>(gpuImpl())) {
         gpu->brightness_ = brightness_;
         gpu->contrast_ = contrast_;
         gpu->highlights_ = highlights_;

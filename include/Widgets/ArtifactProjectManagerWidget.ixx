@@ -61,18 +61,20 @@ public:
 };
 */
 
-class HoverThumbnailPopupWidget:public QWidget {
-private:
- class Impl;
- Impl* impl_;
-public:
- explicit HoverThumbnailPopupWidget(QWidget* parent = nullptr);
- ~HoverThumbnailPopupWidget();
- void setThumbnail(const QPixmap& pixmap);
- void setLabels(const QStringList& labels);
- void setLabel(int idx, const QString& text);
- void showAt(const QPoint& globalPos);
-};
+ class HoverThumbnailPopupWidget:public QWidget {
+ private:
+  class Impl;
+  Impl* impl_;
+ protected:
+  void paintEvent(QPaintEvent* event) override;
+ public:
+  explicit HoverThumbnailPopupWidget(QWidget* parent = nullptr);
+  ~HoverThumbnailPopupWidget();
+  void setThumbnail(const QPixmap& pixmap);
+  void setLabels(const QStringList& labels);
+  void setLabel(int idx, const QString& text);
+  void showAt(const QPoint& globalPos);
+ };
 
  class ArtifactProjectView :public QWidget {
   W_OBJECT(ArtifactProjectView)

@@ -782,6 +782,23 @@ bool ArtifactProjectService::setLayerParentInCurrentComposition(const LayerID& l
     return true;
 }
 
+bool ArtifactProjectService::precomposeLayersInCurrentComposition(const QVector<LayerID>& layerIds, const UniString& newCompositionName)
+{
+    // TODO: Implement precompose (pre-render selected layers into a new composition)
+    qWarning() << "[ArtifactProjectService] precomposeLayersInCurrentComposition is not yet implemented";
+    Q_UNUSED(layerIds);
+    Q_UNUSED(newCompositionName);
+    return false;
+}
+
+void ArtifactProjectService::splitLayerAtCurrentTime(const CompositionID& compositionId, const LayerID& layerId)
+{
+    // TODO: Implement layer split at current playhead position
+    qWarning() << "[ArtifactProjectService] splitLayerAtCurrentTime is not yet implemented";
+    Q_UNUSED(compositionId);
+    Q_UNUSED(layerId);
+}
+
 bool ArtifactProjectService::clearLayerParentInCurrentComposition(const LayerID& layerId)
 {
     auto comp = currentComposition().lock();

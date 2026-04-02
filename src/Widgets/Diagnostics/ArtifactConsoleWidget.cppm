@@ -14,6 +14,9 @@ module;
 #include <QDateTimeEdit>
 #include <QComboBox>
 #include <QIcon>
+#include <QColor>
+#include <QPalette>
+#include <QBrush>
 #include <QString>
 #include <QPainter>
 #include <QMenu>
@@ -89,6 +92,10 @@ public:
     QListWidget* logList_ = nullptr;
     QPlainTextEdit* detailView_ = nullptr;
     QLabel* statusLabel_ = nullptr;
+    QLabel* filterSummaryLabel_ = nullptr;
+    QColor infoColor_;
+    QColor warningColor_;
+    QColor dangerColor_;
 
     bool showDebug_ = true;
     bool showInfo_ = true;
@@ -128,6 +135,24 @@ public:
         layout->setContentsMargins(0, 0, 0, 0);
         layout->setSpacing(0);
 
+        const QColor background = QColor(ArtifactCore::currentDCCTheme().backgroundColor);
+        const QColor surface = QColor(ArtifactCore::currentDCCTheme().secondaryBackgroundColor);
+        const QColor text = QColor(ArtifactCore::currentDCCTheme().textColor);
+        const QColor muted = text.darker(130);
+        const QColor accent = QColor(ArtifactCore::currentDCCTheme().accentColor);
+        const QColor danger = QColor(QStringLiteral("#FF4B4B"));
+        const QColor warning = QColor(QStringLiteral("#FFD700"));
+        const QColor info = QColor(QStringLiteral("#E0E0E0"));
+        dangerColor_ = danger;
+        warningColor_ = warning;
+        infoColor_ = info;
+
+        owner_->setAutoFillBackground(true);
+        QPalette ownerPalette = owner_->palette();
+        ownerPalette.setColor(QPalette::Window, background);
+        ownerPalette.setColor(QPalette::WindowText, text);
+        owner_->setPalette(ownerPalette);
+
         // Toolbar
         auto* toolbarLayout = new QHBoxLayout();
         toolbarLayout->setContentsMargins(4, 4, 4, 4);
@@ -137,7 +162,11 @@ public:
         toolbarLayout->addWidget(clearBtn_);
 
         clearOnPlayCheck_ = new QCheckBox("Clear on Play");
-        clearOnPlayCheck_->setStyleSheet("color: #bbbbbb;");
+        clearOnPlayCheck_->setPalette([&]() {
+            QPalette pal = clearOnPlayCheck_->palette();
+            pal.setColor(QPalette::WindowText, muted);
+            return pal;
+        }());
         toolbarLayout->addWidget(clearOnPlayCheck_);
 
         pauseBtn_ = createToolButton("MaterialVS/colored/E3E3E3/pause.svg", "Pause incoming logs");
@@ -165,77 +194,72 @@ public:
         toolbarLayout->addSpacing(8);
         searchEdit_ = new QLineEdit();
         searchEdit_->setPlaceholderText("Search...");
-        searchEdit_->setStyleSheet(R"(
-            QLineEdit {
-                background-color: #3c3c3c;
-                color: #e0e0e0;
-                border: 1px solid #555555;
-                border-radius: 4px;
-                padding: 2px 8px;
-                height: 22px;
-            }
-        )");
+        {
+            QPalette pal = searchEdit_->palette();
+            pal.setColor(QPalette::Base, surface);
+            pal.setColor(QPalette::Text, text);
+            pal.setColor(QPalette::PlaceholderText, muted.darker(110));
+            searchEdit_->setPalette(pal);
+        }
         toolbarLayout->addWidget(searchEdit_);
 
         timeFilterCheck_ = new QCheckBox("Time Filter");
-        timeFilterCheck_->setStyleSheet(R"(
-            QCheckBox {
-                color: #e0e0e0;
-                font-size: 10px;
-            }
-        )");
+        timeFilterCheck_->setPalette([&]() {
+            QPalette pal = timeFilterCheck_->palette();
+            pal.setColor(QPalette::WindowText, muted);
+            return pal;
+        }());
         toolbarLayout->addWidget(timeFilterCheck_);
 
         startTimeEdit_ = new QDateTimeEdit(startTime_);
         startTimeEdit_->setDisplayFormat("yyyy-MM-dd hh:mm:ss");
         startTimeEdit_->setCalendarPopup(true);
-        startTimeEdit_->setStyleSheet(R"(
-            QDateTimeEdit {
-                background-color: #3c3c3c;
-                color: #e0e0e0;
-                border: 1px solid #555555;
-                border-radius: 4px;
-                padding: 2px;
-                height: 22px;
-            }
-        )");
+        {
+            QPalette pal = startTimeEdit_->palette();
+            pal.setColor(QPalette::Base, surface);
+            pal.setColor(QPalette::Text, text);
+            pal.setColor(QPalette::WindowText, text);
+            startTimeEdit_->setPalette(pal);
+        }
         toolbarLayout->addWidget(startTimeEdit_);
 
         QLabel* toLabel = new QLabel("to");
-        toLabel->setStyleSheet("color: #e0e0e0; font-size: 10px;");
+        toLabel->setPalette([&]() {
+            QPalette pal = toLabel->palette();
+            pal.setColor(QPalette::WindowText, muted);
+            return pal;
+        }());
         toolbarLayout->addWidget(toLabel);
 
         endTimeEdit_ = new QDateTimeEdit(endTime_);
         endTimeEdit_->setDisplayFormat("yyyy-MM-dd hh:mm:ss");
         endTimeEdit_->setCalendarPopup(true);
-        endTimeEdit_->setStyleSheet(R"(
-            QDateTimeEdit {
-                background-color: #3c3c3c;
-                color: #e0e0e0;
-                border: 1px solid #555555;
-                border-radius: 4px;
-                padding: 2px;
-                height: 22px;
-            }
-        )");
+        {
+            QPalette pal = endTimeEdit_->palette();
+            pal.setColor(QPalette::Base, surface);
+            pal.setColor(QPalette::Text, text);
+            pal.setColor(QPalette::WindowText, text);
+            endTimeEdit_->setPalette(pal);
+        }
         toolbarLayout->addWidget(endTimeEdit_);
 
         QLabel* contextLabel = new QLabel("Context:");
-        contextLabel->setStyleSheet("color: #e0e0e0; font-size: 10px;");
+        contextLabel->setPalette([&]() {
+            QPalette pal = contextLabel->palette();
+            pal.setColor(QPalette::WindowText, muted);
+            return pal;
+        }());
         toolbarLayout->addWidget(contextLabel);
 
         contextFilterCombo_ = new QComboBox();
         contextFilterCombo_->addItem("All", QString());
-        contextFilterCombo_->setStyleSheet(R"(
-            QComboBox {
-                background-color: #3c3c3c;
-                color: #e0e0e0;
-                border: 1px solid #555555;
-                border-radius: 4px;
-                padding: 2px;
-                height: 22px;
-            }
-        )");
+        {
+            QPalette pal = contextFilterCombo_->palette();
+            pal.setColor(QPalette::Base, surface);
+            pal.setColor(QPalette::Button, surface);
+            pal.setColor(QPalette::Text, text);
+            contextFilterCombo_->setPalette(pal);
+        }
         toolbarLayout->addWidget(contextFilterCombo_);
 
         saveFiltersBtn_ = createToolButton("MaterialVS/colored/E3E3E3/save.svg", "Save current filters");
@@ -291,48 +315,53 @@ public:
 
         layout->addLayout(toolbarLayout);
 
+        auto* summaryLayout = new QHBoxLayout();
+        summaryLayout->setContentsMargins(8, 0, 8, 4);
+        summaryLayout->setSpacing(0);
+        filterSummaryLabel_ = new QLabel();
+        filterSummaryLabel_->setWordWrap(false);
+        {
+            QPalette pal = filterSummaryLabel_->palette();
+            pal.setColor(QPalette::WindowText, muted);
+            filterSummaryLabel_->setPalette(pal);
+        }
+        summaryLayout->addWidget(filterSummaryLabel_, 1);
+        layout->addLayout(summaryLayout);
+
         statusLabel_ = new QLabel(owner_);
-        statusLabel_->setStyleSheet("color: #9a9a9a; padding: 2px 8px;");
+        statusLabel_->setPalette([&]() {
+            QPalette pal = statusLabel_->palette();
+            pal.setColor(QPalette::WindowText, muted);
+            return pal;
+        }());
         layout->addWidget(statusLabel_);
 
         auto* splitter = new QSplitter(Qt::Vertical, owner_);
 
         logList_ = new QListWidget();
         logList_->setAlternatingRowColors(true);
-        logList_->setStyleSheet(R"(
-            QListWidget {
-                background-color: #1e1e1e;
-                color: #e0e0e0;
-                border: none;
-                font-family: Consolas, monospace;
-            }
-            QListWidget::item {
-                padding: 2px 4px;
-                border-bottom: 1px solid #2d2d2d;
-            }
-            QListWidget::item:alternate {
-                background-color: #252526;
-            }
-            QListWidget::item:selected {
-                background-color: #37373d;
-                color: white;
-            }
-        )");
+        {
+            QPalette pal = logList_->palette();
+            pal.setColor(QPalette::Base, background);
+            pal.setColor(QPalette::Window, background);
+            pal.setColor(QPalette::Text, text);
+            pal.setColor(QPalette::AlternateBase, background.darker(110));
+            pal.setColor(QPalette::Highlight, accent);
+            pal.setColor(QPalette::HighlightedText, QColor(QStringLiteral("#FFFFFF")));
+            logList_->setPalette(pal);
+        }
         splitter->addWidget(logList_);
 
         detailView_ = new QPlainTextEdit(owner_);
         detailView_->setReadOnly(true);
         detailView_->setMinimumHeight(110);
-        detailView_->setStyleSheet(R"(
-            QPlainTextEdit {
-                background-color: #171717;
-                color: #d8d8d8;
-                border: none;
-                border-top: 1px solid #2d2d2d;
-                font-family: Consolas, monospace;
-                padding: 6px;
-            }
-        )");
+        {
+            QPalette pal = detailView_->palette();
+            pal.setColor(QPalette::Base, surface);
+            pal.setColor(QPalette::Window, surface);
+            pal.setColor(QPalette::Text, text);
+            detailView_->setPalette(pal);
+        }
         splitter->addWidget(detailView_);
         splitter->setStretchFactor(0, 4);
         splitter->setStretchFactor(1, 1);
@@ -349,21 +378,25 @@ public:
                 refreshList();
                 pendingWhilePaused_ = 0;
             }
+            saveFilterPreset();
             updateStatus();
         });
 
         QObject::connect(autoScrollBtn_, &QToolButton::toggled, owner_, [this](bool checked) {
             autoScroll_ = checked;
+            saveFilterPreset();
             updateStatus();
         });
 
         QObject::connect(collapseBtn_, &QToolButton::toggled, owner_, [this](bool checked) {
             collapse_ = checked;
+            saveFilterPreset();
             refreshList();
         });
 
         QObject::connect(importantOnlyBtn_, &QToolButton::toggled, owner_, [this](bool checked) {
             importantOnly_ = checked;
+            saveFilterPreset();
             refreshList();
         });
 
@@ -371,21 +404,25 @@ public:
             searchFilter_ = text;
             regexFilter_.setPattern(text);
             regexFilter_.setPatternOptions(QRegularExpression::CaseInsensitiveOption);
+            saveFilterPreset();
             refreshList();
         });
 
         QObject::connect(timeFilterCheck_, &QCheckBox::toggled, owner_, [this](bool checked) {
             useTimeFilter_ = checked;
+            saveFilterPreset();
             refreshList();
         });
 
         QObject::connect(startTimeEdit_, &QDateTimeEdit::dateTimeChanged, owner_, [this](const QDateTime& dt) {
             startTime_ = dt;
+            saveFilterPreset();
             if (useTimeFilter_) refreshList();
         });
 
         QObject::connect(endTimeEdit_, &QDateTimeEdit::dateTimeChanged, owner_, [this](const QDateTime& dt) {
             endTime_ = dt;
+            saveFilterPreset();
             if (useTimeFilter_) refreshList();
         });
 
@@ -393,6 +430,7 @@ public:
             QString selected = contextFilterCombo_->itemData(index).toString();
             useContextFilter_ = !selected.isEmpty();
             contextFilters_ = useContextFilter_ ? QStringList{selected} : QStringList{};
+            saveFilterPreset();
             refreshList();
         });
 
@@ -406,19 +444,23 @@ public:
 
         QObject::connect(debugFilterBtn_, &QToolButton::toggled, owner_, [this](bool checked) {
             showDebug_ = checked;
+            saveFilterPreset();
             refreshList();
         });
 
         QObject::connect(infoFilterBtn_, &QToolButton::toggled, owner_, [this](bool checked) {
             showInfo_ = checked;
+            saveFilterPreset();
             refreshList();
         });
         QObject::connect(warningFilterBtn_, &QToolButton::toggled, owner_, [this](bool checked) {
             showWarning_ = checked;
+            saveFilterPreset();
             refreshList();
         });
         QObject::connect(errorFilterBtn_, &QToolButton::toggled, owner_, [this](bool checked) {
             showError_ = checked;
+            saveFilterPreset();
             refreshList();
         });
 
@@ -442,6 +484,8 @@ public:
         logList_->setContextMenuPolicy(Qt::CustomContextMenu);
         QObject::connect(logList_, &QListWidget::customContextMenuRequested, owner_, [this](const QPoint& pos) {
             QMenu menu;
+            const QListWidgetItem* current = logList_->currentItem();
+            const QString currentContext = current ? current->data(Qt::UserRole + 2).toString() : QString();
 
             QAction* copyAction = menu.addAction("Copy");
             copyAction->setEnabled(!logList_->selectedItems().isEmpty());
@@ -472,6 +516,20 @@ public:
                 saveVisibleLogsToFile();
             });
 
+            if (!currentContext.isEmpty()) {
+                menu.addSeparator();
+
+                QAction* filterToContextAction = menu.addAction(QStringLiteral("Show Only Context: %1").arg(currentContext));
+                QObject::connect(filterToContextAction, &QAction::triggered, owner_, [this, currentContext]() {
+                    setContextFilter(QStringList{currentContext});
+                });
+
+                QAction* clearContextAction = menu.addAction("Show All Contexts");
+                QObject::connect(clearContextAction, &QAction::triggered, owner_, [this]() {
+                    clearContextFilter();
+                });
+            }
+
             menu.exec(logList_->viewport()->mapToGlobal(pos));
         });
 
@@ -487,9 +545,11 @@ public:
                 detailView_->clear();
             }
             pendingWhilePaused_ = 0;
+            totalDebugCount_ = 0;
             totalInfoCount_ = 0;
             totalWarningCount_ = 0;
             totalErrorCount_ = 0;
+            updateFilterSummary();
             updateStatus();
         });
 
@@ -502,28 +562,9 @@ public:
             });
         }
 
-        owner_->setStyleSheet(R"(
-            ArtifactConsoleWidget {
-                background-color: #2d2d2d;
-            }
-            QToolButton {
-                background-color: transparent;
-                border: 1px solid transparent;
-                border-radius: 4px;
-                padding: 4px;
-            }
-            QToolButton:hover {
-                background-color: rgba(255, 255, 255, 0.1);
-            }
-            QToolButton:checked {
-                background-color: rgba(100, 150, 255, 0.3);
-                border: 1px solid rgba(100, 150, 255, 0.5);
-            }
-        )");
-
         connectFontControls();
         applyFontPointSize(consoleFontPointSize_, false);
-        refreshList();
+        loadFilterPreset();
     }
 
     QToolButton* createToolButton(const QString& iconPath, const QString& tooltip) {
@@ -532,6 +573,7 @@ public:
         btn->setIconSize(QSize(18, 18));
         btn->setToolTip(tooltip);
         btn->setMinimumHeight(28);
+        btn->setAutoRaise(true);
         return btn;
     }
 
@@ -597,6 +639,7 @@ public:
         if (infoFilterBtn_) infoFilterBtn_->setFont(textFont);
         if (warningFilterBtn_) warningFilterBtn_->setFont(textFont);
         if (errorFilterBtn_) errorFilterBtn_->setFont(textFont);
+        if (filterSummaryLabel_) filterSummaryLabel_->setFont(textFont);
         if (statusLabel_) statusLabel_->setFont(textFont);
 
         const QFont monospaceFont = monoFont();
@@ -686,9 +729,34 @@ public:
         }
     }
 
+    void setContextFilter(const QStringList& contexts) {
+        contextFilters_ = contexts;
+        useContextFilter_ = !contextFilters_.isEmpty();
+        if (contextFilterCombo_) {
+            const QSignalBlocker blocker(contextFilterCombo_);
+            if (useContextFilter_) {
+                const int index = contextFilterCombo_->findData(contextFilters_.first());
+                if (index >= 0) {
+                    contextFilterCombo_->setCurrentIndex(index);
+                }
+            } else {
+                contextFilterCombo_->setCurrentIndex(0);
+            }
+        }
+        updateFilterSummary();
+        refreshList();
+    }
+
+    void clearContextFilter() {
+        setContextFilter(QStringList{});
+    }
+
     void saveFilterPreset() {
         QSettings settings;
         settings.beginGroup("ConsoleFilters");
+        settings.setValue("clearOnPlay", clearOnPlayCheck_ ? clearOnPlayCheck_->isChecked() : false);
+        settings.setValue("autoScroll", autoScroll_);
+        settings.setValue("collapse", collapse_);
         settings.setValue("showDebug", showDebug_);
         settings.setValue("showInfo", showInfo_);
         settings.setValue("showWarning", showWarning_);
@@ -701,11 +769,15 @@ public:
         settings.setValue("importantOnly", importantOnly_);
         settings.setValue("searchFilter", searchFilter_);
         settings.endGroup();
+        updateFilterSummary();
     }
 
     void loadFilterPreset() {
         QSettings settings;
         settings.beginGroup("ConsoleFilters");
+        const bool clearOnPlay = settings.value("clearOnPlay", false).toBool();
+        autoScroll_ = settings.value("autoScroll", true).toBool();
+        collapse_ = settings.value("collapse", true).toBool();
         showDebug_ = settings.value("showDebug", true).toBool();
         showInfo_ = settings.value("showInfo", true).toBool();
         showWarning_ = settings.value("showWarning", true).toBool();
@@ -722,21 +794,63 @@ public:
         settings.endGroup();
 
         // Update UI
-        if (debugFilterBtn_) debugFilterBtn_->setChecked(showDebug_);
-        if (infoFilterBtn_) infoFilterBtn_->setChecked(showInfo_);
-        if (warningFilterBtn_) warningFilterBtn_->setChecked(showWarning_);
-        if (errorFilterBtn_) errorFilterBtn_->setChecked(showError_);
-        if (timeFilterCheck_) timeFilterCheck_->setChecked(useTimeFilter_);
-        if (startTimeEdit_) startTimeEdit_->setDateTime(startTime_);
-        if (endTimeEdit_) endTimeEdit_->setDateTime(endTime_);
-        if (importantOnlyBtn_) importantOnlyBtn_->setChecked(importantOnly_);
-        if (searchEdit_) searchEdit_->setText(searchFilter_);
+        if (clearOnPlayCheck_) {
+            const QSignalBlocker blocker(clearOnPlayCheck_);
+            clearOnPlayCheck_->setChecked(clearOnPlay);
+        }
+        if (autoScrollBtn_) {
+            const QSignalBlocker blocker(autoScrollBtn_);
+            autoScrollBtn_->setChecked(autoScroll_);
+        }
+        if (collapseBtn_) {
+            const QSignalBlocker blocker(collapseBtn_);
+            collapseBtn_->setChecked(collapse_);
+        }
+        if (debugFilterBtn_) {
+            const QSignalBlocker blocker(debugFilterBtn_);
+            debugFilterBtn_->setChecked(showDebug_);
+        }
+        if (infoFilterBtn_) {
+            const QSignalBlocker blocker(infoFilterBtn_);
+            infoFilterBtn_->setChecked(showInfo_);
+        }
+        if (warningFilterBtn_) {
+            const QSignalBlocker blocker(warningFilterBtn_);
+            warningFilterBtn_->setChecked(showWarning_);
+        }
+        if (errorFilterBtn_) {
+            const QSignalBlocker blocker(errorFilterBtn_);
+            errorFilterBtn_->setChecked(showError_);
+        }
+        if (timeFilterCheck_) {
+            const QSignalBlocker blocker(timeFilterCheck_);
+            timeFilterCheck_->setChecked(useTimeFilter_);
+        }
+        if (startTimeEdit_) {
+            const QSignalBlocker blocker(startTimeEdit_);
+            startTimeEdit_->setDateTime(startTime_);
+        }
+        if (endTimeEdit_) {
+            const QSignalBlocker blocker(endTimeEdit_);
+            endTimeEdit_->setDateTime(endTime_);
+        }
+        if (importantOnlyBtn_) {
+            const QSignalBlocker blocker(importantOnlyBtn_);
+            importantOnlyBtn_->setChecked(importantOnly_);
+        }
+        if (searchEdit_) {
+            const QSignalBlocker blocker(searchEdit_);
+            searchEdit_->setText(searchFilter_);
+        }
         // Context filter update
-        if (contextFilterCombo_ && !contextFilters_.isEmpty()) {
-            int index = contextFilterCombo_->findData(contextFilters_.first());
-            if (index >= 0) contextFilterCombo_->setCurrentIndex(index);
-        } else if (contextFilterCombo_) {
-            contextFilterCombo_->setCurrentIndex(0);
+        if (contextFilterCombo_) {
+            const QSignalBlocker blocker(contextFilterCombo_);
+            if (!contextFilters_.isEmpty()) {
+                int index = contextFilterCombo_->findData(contextFilters_.first());
+                if (index >= 0) contextFilterCombo_->setCurrentIndex(index);
+            } else {
+                contextFilterCombo_->setCurrentIndex(0);
+            }
         }
 
         refreshList();
@@ -764,11 +878,14 @@ public:
         if (!logList_->currentItem()) {
             showItemDetails(nullptr);
         }
+        updateFilterSummary();
         updateStatus();
     }
 
     void onLogAdded(LogLevel level, const QString& message, const QString& context, const QDateTime& ts) {
-        if (level == LogLevel::Warning) {
+        if (level == LogLevel::Debug) {
+            ++totalDebugCount_;
+        } else if (level == LogLevel::Warning) {
             ++totalWarningCount_;
         } else if (level == LogLevel::Error || level == LogLevel::Fatal) {
             ++totalErrorCount_;
@@ -844,11 +961,11 @@ public:
         item->setData(Qt::UserRole + 5, buildFullText(entry));
         
         if (entry.level == LogLevel::Warning) {
-            item->setForeground(QBrush(QColor(255, 215, 0))); // Gold
+            item->setForeground(QBrush(warningColor_));
         } else if (entry.level == LogLevel::Error || entry.level == LogLevel::Fatal) {
-            item->setForeground(QBrush(QColor(255, 75, 75))); // Red
+            item->setForeground(QBrush(dangerColor_));
         } else {
-            item->setForeground(QBrush(QColor(224, 224, 224)));
+            item->setForeground(QBrush(infoColor_));
         }
     }
 
@@ -891,16 +1008,37 @@ public:
         if (!statusLabel_) {
             return;
         }
-        const int totalCount = totalInfoCount_ + totalWarningCount_ + totalErrorCount_;
+        const int totalCount = totalDebugCount_ + totalInfoCount_ + totalWarningCount_ + totalErrorCount_;
         statusLabel_->setText(
-            QStringLiteral("Shown %1 / Total %2   Info %3   Warning %4   Error %5%6%7")
+            QStringLiteral("Shown %1 / Total %2   Debug %3   Info %4   Warning %5   Error %6%7%8")
                 .arg(static_cast<int>(displayEntries_.size()))
                 .arg(totalCount)
+                .arg(totalDebugCount_)
                 .arg(totalInfoCount_)
                 .arg(totalWarningCount_)
                 .arg(totalErrorCount_)
                 .arg(paused_ ? QStringLiteral("   Paused") : QString())
                 .arg(pendingWhilePaused_ > 0 ? QStringLiteral(" (+%1 queued)").arg(pendingWhilePaused_) : QString()));
+    }
+
+    void updateFilterSummary() {
+        if (!filterSummaryLabel_) {
+            return;
+        }
+
+        QStringList parts;
+        parts << QStringLiteral("Search: %1").arg(searchFilter_.isEmpty() ? QStringLiteral("off") : searchFilter_);
+        parts << QStringLiteral("Time: %1").arg(useTimeFilter_
+            ? QStringLiteral("%1 - %2").arg(startTime_.toString("yyyy-MM-dd hh:mm:ss"), endTime_.toString("yyyy-MM-dd hh:mm:ss"))
+            : QStringLiteral("off"));
+        parts << QStringLiteral("Context: %1").arg(useContextFilter_ && !contextFilters_.isEmpty() ? contextFilters_.join(", ") : QStringLiteral("all"));
+        parts << QStringLiteral("Levels: %1%2%3%4")
+            .arg(showDebug_ ? QStringLiteral("D") : QStringLiteral("-"))
+            .arg(showInfo_ ? QStringLiteral("I") : QStringLiteral("-"))
+            .arg(showWarning_ ? QStringLiteral("W") : QStringLiteral("-"))
+            .arg(showError_ ? QStringLiteral("E") : QStringLiteral("-"));
+        parts << QStringLiteral("Mode: %1").arg(importantOnly_ ? QStringLiteral("important-only") : QStringLiteral("all"));
+        filterSummaryLabel_->setText(parts.join(QStringLiteral("   ")));
     }
 
     QString visibleLogText() const {

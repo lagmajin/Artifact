@@ -31,6 +31,7 @@ import Artifact.Composition.InitParams;
 import Artifact.Layer.Factory;
 import Artifact.Layer.InitParams;
 import Artifact.Layer.Result;
+import Artifact.Layer.Svg;
 
 import Artifact.Project.Items;
 
@@ -421,6 +422,7 @@ void ArtifactProject::Impl::createCompositions(const QStringList& names) {}
   if (typeName.find("null") != std::string::npos) return LayerType::Null;
   if (typeName.find("solid") != std::string::npos) return LayerType::Solid;
   if (typeName.find("image") != std::string::npos) return LayerType::Image;
+  if (typeName.find("shape") != std::string::npos) return LayerType::Shape;
   if (typeName.find("svg") != std::string::npos) return LayerType::Shape;
   if (typeName.find("particle") != std::string::npos) return LayerType::Particle;
   if (typeName.find("adjust") != std::string::npos) return LayerType::Adjustment;
@@ -1106,20 +1108,24 @@ ArtifactProject::ArtifactProject() :impl_(new Impl())
       return result;
     }
     
-    LayerType inferredType = inferLayerTypeFromRuntimeName(layerToDuplicate);
-    if (inferredType == LayerType::Unknown || inferredType == LayerType::None) {
-      inferredType = LayerType::Solid;
-    }
-
     QString baseName = layerToDuplicate->layerName();
     if (baseName.isEmpty()) {
       baseName = QStringLiteral("Layer");
     }
-    ArtifactLayerInitParams params(baseName + QStringLiteral(" Copy"), inferredType);
-
-    result = createLayerAndAddToComposition(compositionId, params);
+    if (auto svgLayer = std::dynamic_pointer_cast<ArtifactSvgLayer>(layerToDuplicate)) {
+      ArtifactSvgInitParams svgParams(baseName + QStringLiteral(" Copy"));
+      svgParams.setSvgPath(svgLayer->sourcePath());
+      result = createLayerAndAddToComposition(compositionId, svgParams);
+    } else {
+      LayerType inferredType = inferLayerTypeFromRuntimeName(layerToDuplicate);
+      if (inferredType == LayerType::Unknown || inferredType == LayerType::None) {
+        inferredType = LayerType::Solid;
+      }
+      ArtifactLayerInitParams params(baseName + QStringLiteral(" Copy"), inferredType);
+      result = createLayerAndAddToComposition(compositionId, params);
+    }
     if (result.success && result.layer) {
-      copyLayerProperties(layerToDuplicate, result.layer, params.name().toQString());
+      copyLayerProperties(layerToDuplicate, result.layer, baseName + QStringLiteral(" Copy"));
       setDirty(true);
     }
     return result;
@@ -1163,16 +1169,23 @@ ArtifactProject::ArtifactProject() :impl_(new Impl())
     int copiedCount = 0;
     for (const auto& sourceLayer : sourceLayers) {
       if (!sourceLayer) continue;
-      LayerType inferredType = inferLayerTypeFromRuntimeName(sourceLayer);
-      if (inferredType == LayerType::Unknown || inferredType == LayerType::None) {
-        inferredType = LayerType::Solid;
-      }
       QString layerName = sourceLayer->layerName();
       if (layerName.isEmpty()) {
         layerName = QStringLiteral("Layer");
       }
-      ArtifactLayerInitParams layerParams(layerName, inferredType);
-      auto layerCreate = createLayerAndAddToComposition(newCompResult.id, layerParams);
+      auto layerCreate = [&]() -> ArtifactLayerResult {
+        if (auto svgLayer = std::dynamic_pointer_cast<ArtifactSvgLayer>(sourceLayer)) {
+          ArtifactSvgInitParams layerParams(layerName);
+          layerParams.setSvgPath(svgLayer->sourcePath());
+          return createLayerAndAddToComposition(newCompResult.id, layerParams);
+        }
+        LayerType inferredType = inferLayerTypeFromRuntimeName(sourceLayer);
+        if (inferredType == LayerType::Unknown || inferredType == LayerType::None) {
+          inferredType = LayerType::Solid;
+        }
+        ArtifactLayerInitParams layerParams(layerName, inferredType);
+        return createLayerAndAddToComposition(newCompResult.id, layerParams);
+      }();
       if (layerCreate.success) {
         copyLayerProperties(sourceLayer, layerCreate.layer, layerName);
         ++copiedCount;

@@ -19,7 +19,8 @@ import Artifact.Layer.Video;
 import Artifact.Layer.Audio;
 import Artifact.Layer.Camera;
 import Artifact.Layer.Text;
-import Artifact.Layer.Group;
+ import Artifact.Layer.Group;
+ import Artifact.Layer.Clone;
 //import Artifact.Layer.Video;
 
 namespace Artifact {
@@ -92,14 +93,16 @@ namespace Artifact {
    ptr = std::make_shared<ArtifactTextLayer>();
    break;
   case LayerType::Shape: {
-   auto svgLayer = std::make_shared<ArtifactSvgLayer>();
    if (auto* svgParams = dynamic_cast<ArtifactSvgInitParams*>(&params)) {
+    auto svgLayer = std::make_shared<ArtifactSvgLayer>();
     const QString path = svgParams->svgPath();
     if (!path.isEmpty()) {
      svgLayer->loadFromPath(path);
     }
+    ptr = svgLayer;
+   } else {
+    ptr = std::make_shared<ArtifactShapeLayer>();
    }
-   ptr = svgLayer;
    break;
   }
   case LayerType::Particle:
@@ -166,11 +169,23 @@ namespace Artifact {
       if (!json.contains("type")) return nullptr;
       LayerType type = static_cast<LayerType>(json["type"].toInt());
       QString name = json.value("name").toString("Layer");
-      
-      ArtifactLayerInitParams params(name, type);
-      
       ArtifactLayerFactory factory;
-      auto result = factory.createLayer(params);
+      if (json.contains("svg.sourcePath") || json.contains("sourcePath") || json.contains("svg.fitToLayer")) {
+          ArtifactSvgInitParams svgParams(name);
+          if (json.contains("svg.sourcePath")) {
+              svgParams.setSvgPath(json.value("svg.sourcePath").toString());
+          } else if (json.contains("sourcePath")) {
+              svgParams.setSvgPath(json.value("sourcePath").toString());
+          }
+          auto result = factory.createLayer(svgParams);
+          if (result.success && result.layer) {
+              result.layer->fromJsonProperties(json);
+              return result.layer;
+          }
+          return nullptr;
+      }
+      ArtifactLayerInitParams paramsForFactory(name, type);
+      auto result = factory.createLayer(paramsForFactory);
       if (result.success && result.layer) {
           result.layer->fromJsonProperties(json);
           return result.layer;

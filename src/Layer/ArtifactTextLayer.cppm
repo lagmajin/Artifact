@@ -682,7 +682,7 @@ void ArtifactTextLayer::updateImage() {
   doc.setUndoRedoEnabled(false);
 
   // Set default font
-  QFont defaultFont = FontManager::makeFont(impl_->textStyle_);
+  QFont defaultFont = FontManager::makeFont(impl_->textStyle_, displayText);
   doc.setDefaultFont(defaultFont);
 
   // Apply basic styles to the whole document

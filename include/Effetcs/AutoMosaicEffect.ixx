@@ -13,7 +13,7 @@ module;
 export module Artifact.Effect.AutoMosaic;
 
 import Artifact.Effect.Abstract;
-import Artifact.Effect.FaceDetection;
+import ArtifactCore.ImageProcessing.FaceDetection;
 import Utils.String.UniString;
 import Property.Abstract;
 
@@ -79,9 +79,9 @@ public:
 
     // エフェクト処理
     QImage applyMosaic(const QImage& input, const QVector<QRect>& regions) const;
+    QImage applyToImage(const QImage& input) const;
 
     // ArtifactAbstractEffect
-    QImage applyToImage(const QImage& input) const override;
     std::vector<AbstractProperty> getProperties() const override;
     void setPropertyValue(const UniString& name, const QVariant& value) override;
 };

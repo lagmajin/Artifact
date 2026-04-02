@@ -49,14 +49,13 @@ module;
 
 #include <opencv2/opencv.hpp>
 
-import Application.AppSettings;
-
 #include <windows.h>
 
 // #include <pybind11/pybind11.h>
 
 module Artifact.AppMain;
 
+import Application.AppSettings;
 import Artifact.Widgets.PlaybackControlWidget;
 import Transform;
 import Draw;
@@ -616,6 +615,10 @@ void test() {
 
   // フルパスを作成
   // QString fullPath = QDir(exePath).filePath(fileName);
+}
+
+static void configureQtPaths() {
+  // TODO: Configure Qt plugin paths and environment as needed
 }
 
 int main(int argc, char *argv[]) {

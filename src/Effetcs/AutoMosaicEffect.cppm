@@ -14,7 +14,7 @@ module;
 module Artifact.Effect.AutoMosaic;
 
 import Artifact.Effect.Abstract;
-import Artifact.Effect.FaceDetection;
+import ArtifactCore.ImageProcessing.FaceDetection;
 import Utils.String.UniString;
 import Property.Abstract;
 import CvUtils;
@@ -208,9 +208,8 @@ std::vector<AbstractProperty> AutoMosaicEffect::getProperties() const {
 
     AbstractProperty typeProp;
     typeProp.setName("Mosaic Type");
-    typeProp.setType(PropertyType::Enum);
+    typeProp.setType(PropertyType::Integer);
     typeProp.setValue(static_cast<int>(mosaicType_));
-    typeProp.setEnumLabels({"Pixelate", "Gaussian", "Median"});
     props.push_back(typeProp);
 
     AbstractProperty strengthProp;

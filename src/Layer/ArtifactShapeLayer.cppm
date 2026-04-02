@@ -3,6 +3,7 @@ module;
 #include <QPainterPath>
 #include <QColor>
 #include <QImage>
+#include <QMatrix4x4>
 #include <QJsonObject>
 #include <QJsonArray>
 #include <cmath>
@@ -10,6 +11,7 @@ module;
 module Artifact.Layer.Shape;
 
 import std;
+import Artifact.Layer.CloneEffectSupport;
 
 namespace Artifact
 {
@@ -53,14 +55,22 @@ bool ArtifactShapeLayer::isShapeLayer() const { return true; }
 // Shape Type
 // ============================================================
 
-void ArtifactShapeLayer::setShapeType(ShapeType type) { impl_->shapeType_ = type; }
+void ArtifactShapeLayer::setShapeType(ShapeType type) {
+ impl_->shapeType_ = type;
+ Q_EMIT changed();
+}
 ShapeType ArtifactShapeLayer::shapeType() const { return impl_->shapeType_; }
 
 // ============================================================
 // Size
 // ============================================================
 
-void ArtifactShapeLayer::setSize(int w, int h) { impl_->width_ = w; impl_->height_ = h; setSourceSize(Size_2D(w, h)); }
+void ArtifactShapeLayer::setSize(int w, int h) {
+ impl_->width_ = w;
+ impl_->height_ = h;
+ setSourceSize(Size_2D(w, h));
+ Q_EMIT changed();
+}
 int ArtifactShapeLayer::shapeWidth() const { return impl_->width_; }
 int ArtifactShapeLayer::shapeHeight() const { return impl_->height_; }
 
@@ -68,28 +78,28 @@ int ArtifactShapeLayer::shapeHeight() const { return impl_->height_; }
 // Style
 // ============================================================
 
-void ArtifactShapeLayer::setFillColor(const FloatColor& c) { impl_->fillColor_ = c; }
+void ArtifactShapeLayer::setFillColor(const FloatColor& c) { impl_->fillColor_ = c; Q_EMIT changed(); }
 FloatColor ArtifactShapeLayer::fillColor() const { return impl_->fillColor_; }
-void ArtifactShapeLayer::setStrokeColor(const FloatColor& c) { impl_->strokeColor_ = c; }
+void ArtifactShapeLayer::setStrokeColor(const FloatColor& c) { impl_->strokeColor_ = c; Q_EMIT changed(); }
 FloatColor ArtifactShapeLayer::strokeColor() const { return impl_->strokeColor_; }
-void ArtifactShapeLayer::setStrokeWidth(float w) { impl_->strokeWidth_ = w; }
+void ArtifactShapeLayer::setStrokeWidth(float w) { impl_->strokeWidth_ = w; Q_EMIT changed(); }
 float ArtifactShapeLayer::strokeWidth() const { return impl_->strokeWidth_; }
-void ArtifactShapeLayer::setFillEnabled(bool e) { impl_->fillEnabled_ = e; }
+void ArtifactShapeLayer::setFillEnabled(bool e) { impl_->fillEnabled_ = e; Q_EMIT changed(); }
 bool ArtifactShapeLayer::fillEnabled() const { return impl_->fillEnabled_; }
-void ArtifactShapeLayer::setStrokeEnabled(bool e) { impl_->strokeEnabled_ = e; }
+void ArtifactShapeLayer::setStrokeEnabled(bool e) { impl_->strokeEnabled_ = e; Q_EMIT changed(); }
 bool ArtifactShapeLayer::strokeEnabled() const { return impl_->strokeEnabled_; }
 
 // ============================================================
 // Shape Params
 // ============================================================
 
-void ArtifactShapeLayer::setCornerRadius(float r) { impl_->cornerRadius_ = r; }
+void ArtifactShapeLayer::setCornerRadius(float r) { impl_->cornerRadius_ = r; Q_EMIT changed(); }
 float ArtifactShapeLayer::cornerRadius() const { return impl_->cornerRadius_; }
-void ArtifactShapeLayer::setStarPoints(int p) { impl_->starPoints_ = std::max(3, p); }
+void ArtifactShapeLayer::setStarPoints(int p) { impl_->starPoints_ = std::max(3, p); Q_EMIT changed(); }
 int ArtifactShapeLayer::starPoints() const { return impl_->starPoints_; }
-void ArtifactShapeLayer::setStarInnerRadius(float r) { impl_->starInnerRadius_ = std::clamp(r, 0.0f, 1.0f); }
+void ArtifactShapeLayer::setStarInnerRadius(float r) { impl_->starInnerRadius_ = std::clamp(r, 0.0f, 1.0f); Q_EMIT changed(); }
 float ArtifactShapeLayer::starInnerRadius() const { return impl_->starInnerRadius_; }
-void ArtifactShapeLayer::setPolygonSides(int s) { impl_->polygonSides_ = std::max(3, s); }
+void ArtifactShapeLayer::setPolygonSides(int s) { impl_->polygonSides_ = std::max(3, s); Q_EMIT changed(); }
 int ArtifactShapeLayer::polygonSides() const { return impl_->polygonSides_; }
 
 // ============================================================
@@ -202,10 +212,23 @@ QImage ArtifactShapeLayer::toQImage() const {
 // ============================================================
 
 void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer) {
- if (!renderer) return;
+ if (!renderer) {
+  return;
+ }
  QImage img = toQImage();
- if (img.isNull()) return;
- renderer->drawSprite(0, 0, impl_->width_, impl_->height_, img);
+ if (img.isNull()) {
+  return;
+ }
+ const QMatrix4x4 baseTransform = getGlobalTransform4x4();
+ drawWithClonerEffect(this, baseTransform, [renderer, img, this](const QMatrix4x4& transform, float weight) {
+  renderer->drawSpriteTransformed(0.0f,
+                                  0.0f,
+                                  static_cast<float>(impl_->width_),
+                                  static_cast<float>(impl_->height_),
+                                  transform,
+                                  img,
+                                  this->opacity() * weight);
+ });
 }
 
 // ============================================================
@@ -218,107 +241,111 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactShapeLayer::getLayerPropertyGro
  // Shape Type Group
  ArtifactCore::PropertyGroup shapeGroup;
  shapeGroup.setName("Shape");
- shapeGroup.setCollapsed(false);
 
- ArtifactCore::Property shapeTypeProp;
- shapeTypeProp.setName("Type");
- shapeTypeProp.setType(ArtifactCore::PropertyType::Enum);
- shapeTypeProp.setValue(static_cast<int>(impl_->shapeType_));
- QStringList shapeTypes = {"Rect", "Ellipse", "Star", "Polygon", "Line"};
- shapeTypeProp.setEnumLabels(shapeTypes);
- shapeGroup.addProperty(shapeTypeProp);
+ auto shapeTypeProp = std::make_shared<ArtifactCore::AbstractProperty>();
+ shapeTypeProp->setName(QStringLiteral("shape.type"));
+  shapeTypeProp->setType(ArtifactCore::PropertyType::Integer);
+  shapeTypeProp->setValue(static_cast<int>(impl_->shapeType_));
+ shapeTypeProp->setDisplayLabel(QStringLiteral("Type"));
+ shapeTypeProp->setTooltip(QStringLiteral("0=Rect,1=Ellipse,2=Star,3=Polygon,4=Line"));
+  shapeGroup.addProperty(shapeTypeProp);
 
- ArtifactCore::Property widthProp;
- widthProp.setName("Width");
- widthProp.setType(ArtifactCore::PropertyType::Integer);
- widthProp.setValue(impl_->width_);
- shapeGroup.addProperty(widthProp);
+ auto widthProp = std::make_shared<ArtifactCore::AbstractProperty>();
+ widthProp->setName(QStringLiteral("shape.width"));
+  widthProp->setType(ArtifactCore::PropertyType::Integer);
+  widthProp->setValue(impl_->width_);
+ widthProp->setDisplayLabel(QStringLiteral("Width"));
+  shapeGroup.addProperty(widthProp);
 
- ArtifactCore::Property heightProp;
- heightProp.setName("Height");
- heightProp.setType(ArtifactCore::PropertyType::Integer);
- heightProp.setValue(impl_->height_);
- shapeGroup.addProperty(heightProp);
+ auto heightProp = std::make_shared<ArtifactCore::AbstractProperty>();
+ heightProp->setName(QStringLiteral("shape.height"));
+  heightProp->setType(ArtifactCore::PropertyType::Integer);
+  heightProp->setValue(impl_->height_);
+ heightProp->setDisplayLabel(QStringLiteral("Height"));
+  shapeGroup.addProperty(heightProp);
 
  groups.push_back(shapeGroup);
 
  // Appearance Group
  ArtifactCore::PropertyGroup appearanceGroup;
  appearanceGroup.setName("Appearance");
- appearanceGroup.setCollapsed(false);
 
- ArtifactCore::Property fillColorProp;
- fillColorProp.setName("Fill Color");
- fillColorProp.setType(ArtifactCore::PropertyType::Color);
- fillColorProp.setValue(QColor(
+ auto fillColorProp = std::make_shared<ArtifactCore::AbstractProperty>();
+ fillColorProp->setName(QStringLiteral("shape.fillColor"));
+  fillColorProp->setType(ArtifactCore::PropertyType::Color);
+  fillColorProp->setValue(QColor(
   static_cast<int>(impl_->fillColor_.r() * 255),
   static_cast<int>(impl_->fillColor_.g() * 255),
   static_cast<int>(impl_->fillColor_.b() * 255),
   static_cast<int>(impl_->fillColor_.a() * 255)
- ));
- appearanceGroup.addProperty(fillColorProp);
+  ));
+ fillColorProp->setDisplayLabel(QStringLiteral("Fill Color"));
+  appearanceGroup.addProperty(fillColorProp);
 
- ArtifactCore::Property fillEnabledProp;
- fillEnabledProp.setName("Fill Enabled");
- fillEnabledProp.setType(ArtifactCore::PropertyType::Boolean);
- fillEnabledProp.setValue(impl_->fillEnabled_);
- appearanceGroup.addProperty(fillEnabledProp);
+ auto fillEnabledProp = std::make_shared<ArtifactCore::AbstractProperty>();
+ fillEnabledProp->setName(QStringLiteral("shape.fillEnabled"));
+  fillEnabledProp->setType(ArtifactCore::PropertyType::Boolean);
+  fillEnabledProp->setValue(impl_->fillEnabled_);
+ fillEnabledProp->setDisplayLabel(QStringLiteral("Fill Enabled"));
+  appearanceGroup.addProperty(fillEnabledProp);
 
- ArtifactCore::Property strokeColorProp;
- strokeColorProp.setName("Stroke Color");
- strokeColorProp.setType(ArtifactCore::PropertyType::Color);
- strokeColorProp.setValue(QColor(
+ auto strokeColorProp = std::make_shared<ArtifactCore::AbstractProperty>();
+ strokeColorProp->setName(QStringLiteral("shape.strokeColor"));
+  strokeColorProp->setType(ArtifactCore::PropertyType::Color);
+  strokeColorProp->setValue(QColor(
   static_cast<int>(impl_->strokeColor_.r() * 255),
   static_cast<int>(impl_->strokeColor_.g() * 255),
   static_cast<int>(impl_->strokeColor_.b() * 255),
   static_cast<int>(impl_->strokeColor_.a() * 255)
- ));
- appearanceGroup.addProperty(strokeColorProp);
+  ));
+ strokeColorProp->setDisplayLabel(QStringLiteral("Stroke Color"));
+  appearanceGroup.addProperty(strokeColorProp);
 
- ArtifactCore::Property strokeWidthProp;
- strokeWidthProp.setName("Stroke Width");
- strokeWidthProp.setType(ArtifactCore::PropertyType::Float);
- strokeWidthProp.setValue(impl_->strokeWidth_);
- appearanceGroup.addProperty(strokeWidthProp);
+ auto strokeWidthProp = std::make_shared<ArtifactCore::AbstractProperty>();
+ strokeWidthProp->setName(QStringLiteral("shape.strokeWidth"));
+  strokeWidthProp->setType(ArtifactCore::PropertyType::Float);
+  strokeWidthProp->setValue(impl_->strokeWidth_);
+ strokeWidthProp->setDisplayLabel(QStringLiteral("Stroke Width"));
+  appearanceGroup.addProperty(strokeWidthProp);
 
- ArtifactCore::Property strokeEnabledProp;
- strokeEnabledProp.setName("Stroke Enabled");
- strokeEnabledProp.setType(ArtifactCore::PropertyType::Boolean);
- strokeEnabledProp.setValue(impl_->strokeEnabled_);
- appearanceGroup.addProperty(strokeEnabledProp);
+ auto strokeEnabledProp = std::make_shared<ArtifactCore::AbstractProperty>();
+ strokeEnabledProp->setName(QStringLiteral("shape.strokeEnabled"));
+  strokeEnabledProp->setType(ArtifactCore::PropertyType::Boolean);
+  strokeEnabledProp->setValue(impl_->strokeEnabled_);
+ strokeEnabledProp->setDisplayLabel(QStringLiteral("Stroke Enabled"));
+  appearanceGroup.addProperty(strokeEnabledProp);
 
  groups.push_back(appearanceGroup);
 
  // Shape-specific params
  ArtifactCore::PropertyGroup paramsGroup;
  paramsGroup.setName("Shape Parameters");
- paramsGroup.setCollapsed(false);
 
- if (impl_->shapeType_ == ShapeType::Rect) {
-  ArtifactCore::Property cornerProp;
-  cornerProp.setName("Corner Radius");
-  cornerProp.setType(ArtifactCore::PropertyType::Float);
-  cornerProp.setValue(impl_->cornerRadius_);
+ auto cornerProp = std::make_shared<ArtifactCore::AbstractProperty>();
+ cornerProp->setName(QStringLiteral("shape.cornerRadius"));
+  cornerProp->setType(ArtifactCore::PropertyType::Float);
+  cornerProp->setValue(impl_->cornerRadius_);
+ cornerProp->setDisplayLabel(QStringLiteral("Corner Radius"));
   paramsGroup.addProperty(cornerProp);
- } else if (impl_->shapeType_ == ShapeType::Star) {
-  ArtifactCore::Property pointsProp;
-  pointsProp.setName("Points");
-  pointsProp.setType(ArtifactCore::PropertyType::Integer);
-  pointsProp.setValue(impl_->starPoints_);
+ auto pointsProp = std::make_shared<ArtifactCore::AbstractProperty>();
+ pointsProp->setName(QStringLiteral("shape.starPoints"));
+  pointsProp->setType(ArtifactCore::PropertyType::Integer);
+  pointsProp->setValue(impl_->starPoints_);
+ pointsProp->setDisplayLabel(QStringLiteral("Points"));
   paramsGroup.addProperty(pointsProp);
 
-  ArtifactCore::Property innerProp;
-  innerProp.setName("Inner Radius");
-  innerProp.setType(ArtifactCore::PropertyType::Float);
-  innerProp.setValue(impl_->starInnerRadius_);
+ auto innerProp = std::make_shared<ArtifactCore::AbstractProperty>();
+ innerProp->setName(QStringLiteral("shape.starInnerRadius"));
+  innerProp->setType(ArtifactCore::PropertyType::Float);
+  innerProp->setValue(impl_->starInnerRadius_);
+ innerProp->setDisplayLabel(QStringLiteral("Inner Radius"));
   paramsGroup.addProperty(innerProp);
- } else if (impl_->shapeType_ == ShapeType::Polygon) {
-  ArtifactCore::Property sidesProp;
-  sidesProp.setName("Sides");
-  sidesProp.setType(ArtifactCore::PropertyType::Integer);
-  sidesProp.setValue(impl_->polygonSides_);
+ auto sidesProp = std::make_shared<ArtifactCore::AbstractProperty>();
+ sidesProp->setName(QStringLiteral("shape.polygonSides"));
+  sidesProp->setType(ArtifactCore::PropertyType::Integer);
+  sidesProp->setValue(impl_->polygonSides_);
+ sidesProp->setDisplayLabel(QStringLiteral("Sides"));
   paramsGroup.addProperty(sidesProp);
- }
 
  groups.push_back(paramsGroup);
 
@@ -326,6 +353,10 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactShapeLayer::getLayerPropertyGro
 }
 
 bool ArtifactShapeLayer::setLayerPropertyValue(const QString& propertyPath, const QVariant& value) {
+ if (propertyPath == "shape.type") {
+  setShapeType(static_cast<ShapeType>(value.toInt()));
+  return true;
+ }
  if (propertyPath == "shape.fillColor") {
   auto c = value.value<QColor>();
   setFillColor(FloatColor(c.redF(), c.greenF(), c.blueF(), c.alphaF()));

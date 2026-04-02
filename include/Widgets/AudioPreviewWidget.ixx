@@ -16,6 +16,7 @@ module;
 #include <QTimer>
 #include <QFileInfo>
 #include <QTime>
+#include <wobjectdefs.h>
 
 export module Artifact.Widgets.AudioPreview;
 
@@ -23,7 +24,7 @@ export namespace Artifact {
 
 // 音声波形表示ウィジェット
 class AudioWaveformWidget : public QWidget {
-    Q_OBJECT
+    W_OBJECT(AudioWaveformWidget)
 private:
     QVector<float> samples_;
     int sampleRate_ = 44100;
@@ -42,18 +43,19 @@ public:
     void clear();
 
 signals:
-    void positionChanged(int sampleIndex);
+    void positionChanged(int sampleIndex) W_SIGNAL(positionChanged, sampleIndex);
 
 protected:
     void paintEvent(QPaintEvent* event) override;
     void mousePressEvent(QMouseEvent* event) override;
     void mouseMoveEvent(QMouseEvent* event) override;
     void mouseReleaseEvent(QMouseEvent* event) override;
+    void updatePositionFromMouse(const QPoint& pos);
 };
 
 // 音声プレビューウィジェット
 class ArtifactAudioPreviewWidget : public QWidget {
-    Q_OBJECT
+    W_OBJECT(ArtifactAudioPreviewWidget)
 private:
     class Impl;
     Impl* impl_;
@@ -71,10 +73,13 @@ public:
     void setVolume(float volume);
     float volume() const;
 
+    void updateDurationLabel();
+    int sampleIndexToMs(int sampleIndex) const;
+
 signals:
-    void playbackStarted();
-    void playbackStopped();
-    void positionChanged(int ms);
+    void playbackStarted() W_SIGNAL(playbackStarted);
+    void playbackStopped() W_SIGNAL(playbackStopped);
+    void positionChanged(int ms) W_SIGNAL(positionChanged, ms);
 
 protected:
     void closeEvent(QCloseEvent* event) override;

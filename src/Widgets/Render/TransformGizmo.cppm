@@ -170,7 +170,7 @@ TransformGizmo::TransformGizmo() {}
 TransformGizmo::~TransformGizmo() {}
 
 void TransformGizmo::setMode(Mode mode) {
- qDebug() << "[TransformGizmo] setMode:" << mode_ << "->" << mode;
+ qDebug() << "[TransformGizmo] setMode:" << static_cast<int>(mode_) << "->" << static_cast<int>(mode);
  mode_ = mode;
  if (!allowsHandle(activeHandle_)) {
   activeHandle_ = HandleType::None;

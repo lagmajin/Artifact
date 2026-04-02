@@ -10,6 +10,8 @@
 #include <QJsonDocument>
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QInputDialog>
+#include <QLineEdit>
 module Artifact.Menu.Edit;
 import std;
 
@@ -428,11 +430,11 @@ namespace Artifact {
   if (currentSelection.isEmpty()) return;
 
   // Get the type of the first selected layer
-  LayerType targetType = currentSelection.first()->layerType();
+  auto targetType = (*currentSelection.constBegin())->type_index();
 
   selMgr->clearSelection();
   for (const auto& layer : comp->allLayer()) {
-   if (layer && layer->layerType() == targetType) {
+   if (layer && layer->type_index() == targetType) {
     selMgr->addToSelection(layer);
    }
   }

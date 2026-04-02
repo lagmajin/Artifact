@@ -1014,59 +1014,6 @@ bool ArtifactLayerEditorWidgetV2::Impl::executeCommandText(const QString& text)
          }
         }
 
-        // Effect partial application visualization (Rect/Mask region overlay)
-        const auto effects = layer->getEffects();
-        for (const auto& effect : effects) {
-         if (!effect || !effect->isEnabled()) continue;
-         if (effect->pipelineStage() != EffectPipelineStage::Rasterizer) continue;
-
-         const bool hasRectRestriction = effect->hasRectRestriction();
-         const bool hasMaskRestriction = effect->hasMaskRestriction();
-
-         if (hasRectRestriction) {
-          const QRectF effectRect = effect->effectRect();
-          const QPointF topLeft = globalTransform.map(effectRect.topLeft());
-          const QPointF bottomRight = globalTransform.map(effectRect.bottomRight());
-          const float w = static_cast<float>(bottomRight.x() - topLeft.x());
-          const float h = static_cast<float>(bottomRight.y() - topLeft.y());
-
-          // Draw effect region overlay with dashed border
-          const FloatColor effectRegionColor = {0.35f, 0.85f, 0.35f, 0.6f};
-          const FloatColor effectBorderColor = {0.35f, 0.85f, 0.35f, 0.9f};
-          renderer_->drawRectLocal(static_cast<float>(topLeft.x()), static_cast<float>(topLeft.y()),
-                                   w, h, effectRegionColor, 0.3f);
-          renderer_->drawRectOutline(static_cast<float>(topLeft.x()), static_cast<float>(topLeft.y()),
-                                     w, h, effectBorderColor);
-         }
-
-         if (hasMaskRestriction) {
-          // Draw mask regions that this effect is limited to
-          for (int m = 0; m < layer->maskCount(); ++m) {
-           const LayerMask mask = layer->mask(m);
-           if (!mask.isEnabled()) continue;
-           for (int p = 0; p < mask.maskPathCount(); ++p) {
-            const MaskPath path = mask.maskPath(p);
-            const int vertexCount = path.vertexCount();
-            if (vertexCount < 2) continue;
-
-            const FloatColor effectMaskColor = {0.85f, 0.65f, 0.25f, 0.8f};
-            Detail::float2 lastPos;
-            for (int v = 0; v < vertexCount; ++v) {
-             const MaskVertex vertex = path.vertex(v);
-             const Detail::float2 currentPos = toCanvas(vertex.position);
-             if (v > 0) {
-              renderer_->drawThickLineLocal(lastPos, currentPos, 3.0f, effectMaskColor);
-             }
-             lastPos = currentPos;
-            }
-            if (path.isClosed()) {
-             const Detail::float2 firstPos = toCanvas(path.vertex(0).position);
-             renderer_->drawThickLineLocal(lastPos, firstPos, 3.0f, effectMaskColor);
-            }
-           }
-          }
-         }
-        }
        }
       }
       if (layerInfoText_.isEmpty()) {
@@ -1187,13 +1134,12 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
     QObject::connect(service, &ArtifactProjectService::layerSelected, this, [this](const ArtifactCore::LayerID& id) {
      setTargetLayer(id);
     });
-   QObject::connect(service, &ArtifactProjectService::layerRemoved, this, [this](const ArtifactCore::CompositionID&, const ArtifactCore::LayerID& id) {
+    QObject::connect(service, &ArtifactProjectService::layerRemoved, this, [this](const ArtifactCore::CompositionID&, const ArtifactCore::LayerID& id) {
      if (impl_->targetLayerId_ == id) {
       clearTargetLayer();
      }
     });
-    QObject::connect(service, &ArtifactProjectService::compositionCreated, this, [this](const ArtifactCore::CompositionID&) {
-     // Composition が作成されたら現在の選択レイヤーを追従
+    QObject::connect(service, &ArtifactProjectService::compositionCreated, this, [this, service](const ArtifactCore::CompositionID&) {
      if (auto comp = service->currentComposition().lock()) {
       const auto layers = comp->allLayer();
       for (const auto& layer : layers) {
@@ -1204,8 +1150,7 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
       }
      }
     });
-    QObject::connect(service, &ArtifactProjectService::currentCompositionChanged, this, [this]() {
-     // Composition 切り替え時に target layer を再解決
+    QObject::connect(service, &ArtifactProjectService::currentCompositionChanged, this, [this, service]() {
      const auto targetId = impl_->targetLayerId_;
      if (targetId.isNil()) {
       return;
@@ -1216,83 +1161,23 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
        return;
       }
      }
-     // 現在の composition にレイヤーがなければクリア
      clearTargetLayer();
     });
-    QObject::connect(service, &ArtifactProjectService::projectChanged, this, [this]() {
+    QObject::connect(service, &ArtifactProjectService::projectChanged, this, [this, service]() {
      const auto targetId = impl_->targetLayerId_;
      if (targetId.isNil()) {
       return;
      }
-     if (auto* currentService = ArtifactProjectService::instance()) {
-      if (auto composition = currentService->currentComposition().lock()) {
-       if (composition->containsLayerById(targetId)) {
-        setTargetLayer(targetId);
-        return;
-       }
-      }
-     }
-     clearTargetLayer();
-    });
-   }
-  }
-    });
-    QObject::connect(service, &ArtifactProjectService::compositionCreated, this, [this](const ArtifactCore::CompositionID&) {
-     // Composition が作成されたら現在の選択レイヤーを追従
-     if (auto comp = service->currentComposition().lock()) {
-      const auto layers = comp->allLayer();
-      for (const auto& layer : layers) {
-       if (layer && layer->isSolo()) {
-        setTargetLayer(layer->id());
-        return;
-       }
-      }
-     }
-    });
-    QObject::connect(service, &ArtifactProjectService::currentCompositionChanged, this, [this]() {
-     // Composition 切り替え時に target layer を再解決
-     const auto targetId = impl_->targetLayerId_;
-     if (targetId.isNil()) {
-      return;
-     }
-     if (auto comp = service->currentComposition().lock()) {
-      if (comp->containsLayerById(targetId)) {
+     if (auto composition = service->currentComposition().lock()) {
+      if (composition->containsLayerById(targetId)) {
        setTargetLayer(targetId);
        return;
-      }
-     }
-     // 現在の composition にレイヤーがなければクリア
-     clearTargetLayer();
-    });
-    QObject::connect(service, &ArtifactProjectService::projectChanged, this, [this]() {
-     const auto targetId = impl_->targetLayerId_;
-     if (targetId.isNil()) {
-      return;
-     }
-     if (auto* currentService = ArtifactProjectService::instance()) {
-      if (auto composition = currentService->currentComposition().lock()) {
-       if (composition->containsLayerById(targetId)) {
-        setTargetLayer(targetId);
-        return;
-       }
       }
      }
      clearTargetLayer();
     });
    }
 
-  auto* immersiveShortcut = new QShortcut(QKeySequence(Qt::Key_F11), this);
-  QObject::connect(immersiveShortcut, &QShortcut::activated, this, [this]() {
-   if (impl_) {
-    impl_->toggleImmersiveMode(!impl_->immersiveMode_);
-   }
-  });
-  auto* immersiveExitShortcut = new QShortcut(QKeySequence(Qt::Key_Escape), this);
-  QObject::connect(immersiveExitShortcut, &QShortcut::activated, this, [this]() {
-   if (impl_ && impl_->immersiveMode_) {
-    impl_->toggleImmersiveMode(false);
-   }
-  });
   }
 
 void ArtifactLayerEditorWidgetV2::clearTargetLayer()

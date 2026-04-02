@@ -30,6 +30,7 @@ import Artifact.Project.Manager;
 import Artifact.Service.Project;
 import Utils.Path;
 import Artifact.Widgets.AppDialogs;
+import Undo.UndoManager;
 import Artifact.Layer.Image;
 import Artifact.Layer.Svg;
 import Artifact.Layers.SolidImage;
@@ -123,7 +124,7 @@ bool confirmUnsavedChanges(QWidget* parent, const QString& actionName)
     // Check if project is dirty
     bool hasUnsaved = project->isDirty();
     if (!hasUnsaved) {
-        if (auto* undoMgr = svc->undoManager()) {
+        if (auto* undoMgr = UndoManager::instance()) {
             hasUnsaved = undoMgr->hasUnsavedChanges();
         }
     }
@@ -625,8 +626,6 @@ void ArtifactFileMenu::Impl::rebuildMenu()
             }
         }
     }
-        }
-    }
 }
 
 W_OBJECT_IMPL(ArtifactFileMenu)
@@ -659,27 +658,6 @@ void ArtifactFileMenu::projectClosed()
         if (!confirmUnsavedChanges(this, QStringLiteral("プロジェクトを閉じる"))) {
             return;
         }
-    }
-    ArtifactProjectManager::getInstance().closeCurrentProject();
-}
-
-void ArtifactFileMenu::quitApplication()
-{
-    if (auto* svc = ArtifactProjectService::instance()) {
-        if (!confirmUnsavedChanges(this, QStringLiteral("終了"))) {
-            return;
-        }
-    }
-    QApplication::quit();
-}
-
-void ArtifactFileMenu::restartApplication()
-{
-    if (auto* svc = ArtifactProjectService::instance()) {
-        if (!confirmUnsavedChanges(this, QStringLiteral("再起動"))) {
-            return;
-        }
-    }
     }
     ArtifactProjectManager::getInstance().closeCurrentProject();
 }

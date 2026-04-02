@@ -402,6 +402,7 @@ void ShaderManager::Impl::createLineFamilyPSOs()
     static const ShaderResourceVariableDesc outlineVars[] = {
         { SHADER_TYPE_VERTEX, "TransformCB", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC },
         { SHADER_TYPE_PIXEL,  "ColorBuffer", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC },
+        { SHADER_TYPE_PIXEL,  "OutlineParams", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC },
     };
 
     GraphicsPipelineStateCreateInfo outlineInfo;
@@ -455,8 +456,6 @@ void ShaderManager::Impl::createLineFamilyPSOs()
     batchPsInfo.SourceLength = g_qsBatchSolidColorPSSource.length();
     device_->CreateShader(batchPsInfo, &batchSolidRectShaders_.PS);
 
-    static const ShaderResourceVariableDesc batchVars[] = {};
-
     GraphicsPipelineStateCreateInfo batchInfo;
     batchInfo.PSODesc.Name = "BatchSolidRect PSO";
     batchInfo.PSODesc.PipelineType = PIPELINE_TYPE_GRAPHICS;
@@ -479,62 +478,8 @@ void ShaderManager::Impl::createLineFamilyPSOs()
     batchBlend.RenderTargetWriteMask = COLOR_MASK_ALL;
     batchGP.InputLayout.LayoutElements = batchLayoutElems;
     batchGP.InputLayout.NumElements = _countof(batchLayoutElems);
-    batchInfo.PSODesc.ResourceLayout.Variables = batchVars;
-    batchInfo.PSODesc.ResourceLayout.NumVariables = _countof(batchVars);
-    device_->CreateGraphicsPipelineState(batchInfo, &batchSolidRectPsoAndSrb_.pPSO);
-    if (batchSolidRectPsoAndSrb_.pPSO) {
-        batchSolidRectPsoAndSrb_.pPSO->CreateShaderResourceBinding(&batchSolidRectPsoAndSrb_.pSRB, true);
-    }
-}
-
-    // Batch Solid Rect PSO (pass-through VS, vertex color PS, no ColorBuffer)
-    static const LayoutElement batchLayoutElems[] = {
-        LayoutElement{0, 0, 2, VT_FLOAT32, false},
-        LayoutElement{1, 0, 4, VT_FLOAT32, false}
-    };
-
-    ShaderCreateInfo batchVsInfo;
-    batchVsInfo.SourceLanguage = Diligent::SHADER_SOURCE_LANGUAGE_HLSL;
-    batchVsInfo.Desc.ShaderType = Diligent::SHADER_TYPE_VERTEX;
-    batchVsInfo.Desc.Name = "BatchSolidRectVertexShader";
-    batchVsInfo.Source = ArtifactCore::drawBatchSolidRectVSSource.constData();
-    batchVsInfo.SourceLength = ArtifactCore::drawBatchSolidRectVSSource.length();
-    device_->CreateShader(batchVsInfo, &batchSolidRectShaders_.VS);
-
-    ShaderCreateInfo batchPsInfo;
-    batchPsInfo.SourceLanguage = Diligent::SHADER_SOURCE_LANGUAGE_HLSL;
-    batchPsInfo.Desc.ShaderType = Diligent::SHADER_TYPE_PIXEL;
-    batchPsInfo.Desc.Name = "BatchSolidRectPixelShader";
-    batchPsInfo.Source = g_qsBatchSolidColorPSSource.constData();
-    batchPsInfo.SourceLength = g_qsBatchSolidColorPSSource.length();
-    device_->CreateShader(batchPsInfo, &batchSolidRectShaders_.PS);
-
-    static const ShaderResourceVariableDesc batchVars[] = {};
-
-    GraphicsPipelineStateCreateInfo batchInfo;
-    batchInfo.PSODesc.Name = "BatchSolidRect PSO";
-    batchInfo.PSODesc.PipelineType = PIPELINE_TYPE_GRAPHICS;
-    batchInfo.pVS = batchSolidRectShaders_.VS;
-    batchInfo.pPS = batchSolidRectShaders_.PS;
-    auto& batchGP = batchInfo.GraphicsPipeline;
-    batchGP.NumRenderTargets = 1;
-    batchGP.RTVFormats[0] = rtvFormat_;
-    batchGP.PrimitiveTopology = PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-    batchGP.RasterizerDesc.CullMode = CULL_MODE_NONE;
-    batchGP.DepthStencilDesc.DepthEnable = False;
-    auto& batchBlend = batchGP.BlendDesc.RenderTargets[0];
-    batchBlend.BlendEnable = True;
-    batchBlend.SrcBlend = BLEND_FACTOR_SRC_ALPHA;
-    batchBlend.DestBlend = BLEND_FACTOR_INV_SRC_ALPHA;
-    batchBlend.BlendOp = BLEND_OPERATION_ADD;
-    batchBlend.SrcBlendAlpha = BLEND_FACTOR_ONE;
-    batchBlend.DestBlendAlpha = BLEND_FACTOR_INV_SRC_ALPHA;
-    batchBlend.BlendOpAlpha = BLEND_OPERATION_ADD;
-    batchBlend.RenderTargetWriteMask = COLOR_MASK_ALL;
-    batchGP.InputLayout.LayoutElements = batchLayoutElems;
-    batchGP.InputLayout.NumElements = _countof(batchLayoutElems);
-    batchInfo.PSODesc.ResourceLayout.Variables = batchVars;
-    batchInfo.PSODesc.ResourceLayout.NumVariables = _countof(batchVars);
+    batchInfo.PSODesc.ResourceLayout.Variables = nullptr;
+    batchInfo.PSODesc.ResourceLayout.NumVariables = 0;
     device_->CreateGraphicsPipelineState(batchInfo, &batchSolidRectPsoAndSrb_.pPSO);
     if (batchSolidRectPsoAndSrb_.pPSO) {
         batchSolidRectPsoAndSrb_.pPSO->CreateShaderResourceBinding(&batchSolidRectPsoAndSrb_.pSRB, true);
@@ -698,7 +643,8 @@ void ShaderManager::Impl::createUtilityFamilyPSOs()
 
     static const ShaderResourceVariableDesc checkerVars[] = {
         { SHADER_TYPE_VERTEX, "TransformCB", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC },
-        { SHADER_TYPE_PIXEL,  "ViewerHelperCB", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC }
+        { SHADER_TYPE_PIXEL,  "ViewerHelperCB", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC },
+        { SHADER_TYPE_PIXEL,  "ColorBuffer", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC }
     };
     static const LayoutElement checkerLayoutElems[] = {
         LayoutElement{0, 0, 2, VT_FLOAT32, false},
@@ -1012,6 +958,11 @@ PSOAndSRB ShaderManager::gizmo3DPsoAndSrb() const
 PSOAndSRB ShaderManager::gizmo3DTrianglePsoAndSrb() const
 {
     return impl_->gizmo3DTrianglePsoAndSrb_;
+}
+
+PSOAndSRB ShaderManager::batchSolidRectPsoAndSrb() const
+{
+    return impl_->batchSolidRectPsoAndSrb_;
 }
 
 RefCntAutoPtr<ISampler> ShaderManager::spriteSampler() const

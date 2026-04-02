@@ -2,6 +2,7 @@ module;
 
 #include <QString>
 #include <QVariant>
+#include <algorithm>
 #include <memory>
 #include <vector>
 

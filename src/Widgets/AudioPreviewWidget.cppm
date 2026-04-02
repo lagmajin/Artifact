@@ -20,11 +20,16 @@ module;
 #include <QFile>
 #include <QThread>
 #include <QElapsedTimer>
+#include <wobjectimpl.h>
 #include <cmath>
+#include <algorithm>
 
 module Artifact.Widgets.AudioPreview;
 
 namespace Artifact {
+
+W_OBJECT_IMPL(AudioWaveformWidget)
+W_OBJECT_IMPL(ArtifactAudioPreviewWidget)
 
 // ─────────────────────────────────────────────────────────
 // AudioWaveformWidget
@@ -143,7 +148,7 @@ void AudioWaveformWidget::updatePositionFromMouse(const QPoint& pos) {
 // ─────────────────────────────────────────────────────────
 
 class AudioPlaybackEngine : public QObject {
-    Q_OBJECT
+    W_OBJECT(AudioPlaybackEngine)
 public:
     explicit AudioPlaybackEngine(QObject* parent = nullptr)
         : QObject(parent)
@@ -263,9 +268,9 @@ public:
     const QVector<float>& waveformSamples() const { return waveformSamples_; }
 
 signals:
-    void playbackStarted();
-    void playbackStopped();
-    void positionChanged(int sampleIndex);
+    void playbackStarted() W_SIGNAL(playbackStarted);
+    void playbackStopped() W_SIGNAL(playbackStopped);
+    void positionChanged(int sampleIndex) W_SIGNAL(positionChanged, sampleIndex);
 
 private slots:
     void onTimerTick() {
@@ -283,7 +288,7 @@ private slots:
         }
 
         const int byteOffset = currentSample_ * numChannels_ * bytesPerSample;
-        const int writeBytes = std::min(bytesToWrite, audioData_.size() - byteOffset);
+        const int writeBytes = std::min(bytesToWrite, static_cast<int>(audioData_.size()) - byteOffset);
 
         if (writeBytes > 0) {
             qint64 written = audioDevice_->write(audioData_.constData() + byteOffset, writeBytes);
@@ -343,6 +348,8 @@ private:
     int currentSample_ = 0;
     bool isPlaying_ = false;
 };
+
+W_OBJECT_IMPL(AudioPlaybackEngine)
 
 // ─────────────────────────────────────────────────────────
 // ArtifactAudioPreviewWidget
@@ -533,8 +540,8 @@ void ArtifactAudioPreviewWidget::updateDurationLabel() {
     const int currentMs = sampleIndexToMs(impl_->engine_->currentPosition());
     const int totalMs = sampleIndexToMs(impl_->engine_->totalSamples());
 
-    const QTime currentTime(0, 0, 0, 0).addMSecs(currentMs);
-    const QTime totalTime(0, 0, 0, 0).addMSecs(totalMs);
+    const QTime currentTime = QTime(0, 0, 0, 0).addMSecs(currentMs);
+    const QTime totalTime = QTime(0, 0, 0, 0).addMSecs(totalMs);
 
     impl_->durationLabel_->setText(
         QString("%1 / %2")
@@ -549,5 +556,3 @@ int ArtifactAudioPreviewWidget::sampleIndexToMs(int sampleIndex) const {
 }
 
 } // namespace Artifact
-
-#include "AudioPreviewWidget.moc"

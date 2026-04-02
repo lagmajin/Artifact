@@ -1,6 +1,7 @@
 module;
 #include <QString>
 #include <QWidget>
+#include <QVariant>
 #include <wobjectdefs.h>
 
 
@@ -21,7 +22,7 @@ public:
 
 signals:
   void optionChanged(const QString &toolName, const QString &optionName,
-                     const QVariant &value);
+                     const QVariant &value) W_SIGNAL(optionChanged, toolName, optionName, value);
 
 private:
   class Impl;

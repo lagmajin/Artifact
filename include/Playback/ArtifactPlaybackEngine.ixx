@@ -142,6 +142,8 @@ public: // signals
         W_SIGNAL(frameRangeChanged, range);
     void droppedFrameDetected(int64_t count)
         W_SIGNAL(droppedFrameDetected, count);
+    void audioLevelChanged(float leftRms, float rightRms, float leftPeak, float rightPeak)
+        W_SIGNAL(audioLevelChanged, leftRms, rightRms, leftPeak, rightPeak);
 };
 
 } // namespace Artifact

@@ -51,10 +51,12 @@ public:
 
     RefCntAutoPtr<IBuffer> m_draw_thick_line_vertex_buffer;
     RefCntAutoPtr<IBuffer> m_draw_solid_triangle_vertex_buffer;
+    RefCntAutoPtr<IBuffer> m_draw_solid_circle_vertex_buffer;
     RefCntAutoPtr<IBuffer> m_draw_dot_line_vertex_buffer;
     RefCntAutoPtr<IBuffer> m_draw_dot_line_cb;
     RefCntAutoPtr<IBuffer> m_draw_viewer_helper_cb;
     RefCntAutoPtr<IBuffer> m_draw_outline_rect_cb;
+    RefCntAutoPtr<IBuffer> m_draw_outline_params_cb;
 
     PSOAndSRB m_draw_sprite_pso_and_srb;
     PSOAndSRB m_draw_sprite_transform_pso_and_srb;
@@ -101,19 +103,6 @@ public:
     PSOAndSRB m_draw_rect_outline_pso_and_srb;
     PSOAndSRB m_batch_solid_rect_pso_and_srb;
     std::unordered_map<qint64, CachedTexture> m_maskTexCache;
-
-    // Batch rendering state
-    static constexpr int kMaxBatchVertices = 4096;
-    static constexpr int kMaxBatchIndices = 6144;
-    RectVertex m_batchVertices[kMaxBatchVertices];
-    uint32_t m_batchIndices[kMaxBatchIndices];
-    int m_batchVertexCount = 0;
-    int m_batchIndexCount = 0;
-    FloatColor m_batchColor = {1.0f, 1.0f, 1.0f, 1.0f};
-    bool m_batchActive = false;
-
-    void flushBatch();
-    void addToBatch(float x0, float y0, float x1, float y1, float x2, float y2, float x3, float y3, const FloatColor& color);
 
     // Batch rendering state
     static constexpr int kMaxBatchVertices = 4096;
@@ -178,186 +167,181 @@ void PrimitiveRenderer2D::setPSOs(ShaderManager& shaderManager)
     impl_->m_draw_grid_pso_and_srb            = shaderManager.gridPsoAndSrb();
     impl_->m_draw_rect_outline_pso_and_srb    = shaderManager.outlinePsoAndSrb();
     impl_->m_batch_solid_rect_pso_and_srb     = shaderManager.batchSolidRectPsoAndSrb();
-    impl_->m_batch_solid_rect_pso_and_srb     = shaderManager.batchSolidRectPsoAndSrb();
 }
 
 void PrimitiveRenderer2D::createBuffers(RefCntAutoPtr<IRenderDevice> device, TEXTURE_FORMAT /*rtvFormat*/)
 {
-    if (!device) return;
+    if (!device) {
+        return;
+    }
     impl_->pDevice_ = device;
 
     {
-        BufferDesc VertDesc;
-        VertDesc.Name           = "Sprite vertex buffer";
-        VertDesc.Usage          = USAGE_DYNAMIC;
-        VertDesc.BindFlags      = BIND_VERTEX_BUFFER;
-        VertDesc.CPUAccessFlags = CPU_ACCESS_WRITE;
-        VertDesc.Size           = sizeof(SpriteVertex) * 4;
-        device->CreateBuffer(VertDesc, nullptr, &impl_->m_draw_sprite_vertex_buffer);
+        BufferDesc desc;
+        desc.Name           = "Sprite vertex buffer";
+        desc.Usage          = USAGE_DYNAMIC;
+        desc.BindFlags      = BIND_VERTEX_BUFFER;
+        desc.CPUAccessFlags = CPU_ACCESS_WRITE;
+        desc.Size           = sizeof(SpriteVertex) * 4;
+        device->CreateBuffer(desc, nullptr, &impl_->m_draw_sprite_vertex_buffer);
     }
 
     {
-        BufferDesc CBDesc;
-        CBDesc.Name           = "SpriteCB";
-        CBDesc.Size           = sizeof(DrawSpriteConstants);
-        CBDesc.Usage          = USAGE_DYNAMIC;
-        CBDesc.BindFlags      = BIND_UNIFORM_BUFFER;
-        CBDesc.CPUAccessFlags = CPU_ACCESS_WRITE;
-        device->CreateBuffer(CBDesc, nullptr, &impl_->m_draw_sprite_cb);
+        BufferDesc desc;
+        desc.Name           = "SpriteCB";
+        desc.Size           = sizeof(DrawSpriteConstants);
+        desc.Usage          = USAGE_DYNAMIC;
+        desc.BindFlags      = BIND_UNIFORM_BUFFER;
+        desc.CPUAccessFlags = CPU_ACCESS_WRITE;
+        device->CreateBuffer(desc, nullptr, &impl_->m_draw_sprite_cb);
     }
 
     {
-        BufferDesc CBDesc;
-        CBDesc.Name           = "ViewerHelperCB";
-        CBDesc.Usage          = USAGE_DYNAMIC;
-        CBDesc.BindFlags      = BIND_UNIFORM_BUFFER;
-        CBDesc.CPUAccessFlags = CPU_ACCESS_WRITE;
-        CBDesc.Size           = sizeof(ViewerHelperCB);
-        device->CreateBuffer(CBDesc, nullptr, &impl_->m_draw_viewer_helper_cb);
-    }
-
-    // Batch rendering buffers
-    {
-        BufferDesc vbDesc;
-        vbDesc.Name           = "Batch Vertex Buffer";
-        vbDesc.BindFlags      = BIND_VERTEX_BUFFER;
-        vbDesc.Usage          = USAGE_DYNAMIC;
-        vbDesc.CPUAccessFlags = CPU_ACCESS_WRITE;
-        vbDesc.Size           = sizeof(RectVertex) * kMaxBatchVertices;
-        device->CreateBuffer(vbDesc, nullptr, &impl_->m_batchVertexBuffer);
-    }
-    {
-        BufferDesc ibDesc;
-        ibDesc.Name           = "Batch Index Buffer";
-        ibDesc.BindFlags      = BIND_INDEX_BUFFER;
-        ibDesc.Usage          = USAGE_DYNAMIC;
-        ibDesc.CPUAccessFlags = CPU_ACCESS_WRITE;
-        ibDesc.Size           = sizeof(uint32_t) * kMaxBatchIndices;
-        device->CreateBuffer(ibDesc, nullptr, &impl_->m_batchIndexBuffer);
-    }
-}
-
-    // Batch rendering buffers
-    {
-        BufferDesc vbDesc;
-        vbDesc.Name           = "Batch Vertex Buffer";
-        vbDesc.BindFlags      = BIND_VERTEX_BUFFER;
-        vbDesc.Usage          = USAGE_DYNAMIC;
-        vbDesc.CPUAccessFlags = CPU_ACCESS_WRITE;
-        vbDesc.Size           = sizeof(RectVertex) * kMaxBatchVertices;
-        device->CreateBuffer(vbDesc, nullptr, &impl_->m_batchVertexBuffer);
-    }
-    {
-        BufferDesc ibDesc;
-        ibDesc.Name           = "Batch Index Buffer";
-        ibDesc.BindFlags      = BIND_INDEX_BUFFER;
-        ibDesc.Usage          = USAGE_DYNAMIC;
-        ibDesc.CPUAccessFlags = CPU_ACCESS_WRITE;
-        ibDesc.Size           = sizeof(uint32_t) * kMaxBatchIndices;
-        device->CreateBuffer(ibDesc, nullptr, &impl_->m_batchIndexBuffer);
-    }
-}
-
-    {
-        BufferDesc CBDesc;
-        CBDesc.Name           = "DrawSolidTransformCB";
-        CBDesc.Usage          = USAGE_DYNAMIC;
-        CBDesc.BindFlags      = BIND_UNIFORM_BUFFER;
-        CBDesc.CPUAccessFlags = CPU_ACCESS_WRITE;
-        CBDesc.Size           = sizeof(CBSolidTransform2D);
-        device->CreateBuffer(CBDesc, nullptr, &impl_->m_draw_solid_rect_trnsform_cb);
+        BufferDesc desc;
+        desc.Name           = "ViewerHelperCB";
+        desc.Usage          = USAGE_DYNAMIC;
+        desc.BindFlags      = BIND_UNIFORM_BUFFER;
+        desc.CPUAccessFlags = CPU_ACCESS_WRITE;
+        struct ViewerHelperCB {
+            float tileSize;
+            float thickness;
+            float2 padding;
+            float4 color1;
+            float4 color2;
+        };
+        desc.Size = sizeof(ViewerHelperCB);
+        device->CreateBuffer(desc, nullptr, &impl_->m_draw_viewer_helper_cb);
     }
 
     {
-        BufferDesc CBDesc;
-        CBDesc.Name           = "DrawSolidRectTransformMatrixCB";
-        CBDesc.Usage          = USAGE_DYNAMIC;
-        CBDesc.BindFlags      = BIND_UNIFORM_BUFFER;
-        CBDesc.CPUAccessFlags = CPU_ACCESS_WRITE;
-        CBDesc.Size           = sizeof(CBSolidRectTransform2D);
-        device->CreateBuffer(CBDesc, nullptr, &impl_->m_draw_solid_rect_transform_matrix_cb);
+        BufferDesc desc;
+        desc.Name           = "Batch Vertex Buffer";
+        desc.BindFlags      = BIND_VERTEX_BUFFER;
+        desc.Usage          = USAGE_DYNAMIC;
+        desc.CPUAccessFlags = CPU_ACCESS_WRITE;
+        desc.Size           = sizeof(RectVertex) * impl_->kMaxBatchVertices;
+        device->CreateBuffer(desc, nullptr, &impl_->m_batchVertexBuffer);
+    }
+    {
+        BufferDesc desc;
+        desc.Name           = "Batch Index Buffer";
+        desc.BindFlags      = BIND_INDEX_BUFFER;
+        desc.Usage          = USAGE_DYNAMIC;
+        desc.CPUAccessFlags = CPU_ACCESS_WRITE;
+        desc.Size           = sizeof(uint32_t) * impl_->kMaxBatchIndices;
+        device->CreateBuffer(desc, nullptr, &impl_->m_batchIndexBuffer);
     }
 
     {
-        BufferDesc CBDesc;
-        CBDesc.Name           = "DrawSpriteTransformMatrixCB";
-        CBDesc.Usage          = USAGE_DYNAMIC;
-        CBDesc.BindFlags      = BIND_UNIFORM_BUFFER;
-        CBDesc.CPUAccessFlags = CPU_ACCESS_WRITE;
-        CBDesc.Size           = sizeof(CBSolidRectTransform2D);
-        device->CreateBuffer(CBDesc, nullptr, &impl_->m_draw_sprite_transform_matrix_cb);
+        BufferDesc desc;
+        desc.Name           = "DrawSolidTransformCB";
+        desc.Usage          = USAGE_DYNAMIC;
+        desc.BindFlags      = BIND_UNIFORM_BUFFER;
+        desc.CPUAccessFlags = CPU_ACCESS_WRITE;
+        desc.Size           = sizeof(CBSolidTransform2D);
+        device->CreateBuffer(desc, nullptr, &impl_->m_draw_solid_rect_trnsform_cb);
     }
 
     {
-        BufferDesc vbDesc;
-        vbDesc.Name           = "SolidRect Vertex Buffer";
-        vbDesc.BindFlags      = BIND_VERTEX_BUFFER;
-        vbDesc.Usage          = USAGE_DYNAMIC;
-        vbDesc.CPUAccessFlags = CPU_ACCESS_WRITE;
-        vbDesc.Size           = sizeof(RectVertex) * 4;
-        device->CreateBuffer(vbDesc, nullptr, &impl_->m_draw_solid_rect_vertex_buffer);
-
-        vbDesc.Name = "SolidTriangle Vertex Buffer";
-        vbDesc.Size = sizeof(RectVertex) * 3;
-        device->CreateBuffer(vbDesc, nullptr, &impl_->m_draw_solid_triangle_vertex_buffer);
+        BufferDesc desc;
+        desc.Name           = "DrawSolidRectTransformMatrixCB";
+        desc.Usage          = USAGE_DYNAMIC;
+        desc.BindFlags      = BIND_UNIFORM_BUFFER;
+        desc.CPUAccessFlags = CPU_ACCESS_WRITE;
+        desc.Size           = sizeof(CBSolidRectTransform2D);
+        device->CreateBuffer(desc, nullptr, &impl_->m_draw_solid_rect_transform_matrix_cb);
     }
 
     {
-        uint32_t indices[6] = { 0, 1, 2, 2, 1, 3 };
-        BufferDesc IndexBufferDesc;
-        IndexBufferDesc.Name           = "SolidRectIndexBuffer";
-        IndexBufferDesc.Usage          = USAGE_DEFAULT;
-        IndexBufferDesc.BindFlags      = BIND_INDEX_BUFFER;
-        IndexBufferDesc.Size           = sizeof(indices);
-        IndexBufferDesc.CPUAccessFlags = CPU_ACCESS_NONE;
-        BufferData InitData;
-        InitData.pData    = indices;
-        InitData.DataSize = sizeof(indices);
-        device->CreateBuffer(IndexBufferDesc, &InitData, &impl_->m_draw_solid_rect_index_buffer);
+        BufferDesc desc;
+        desc.Name           = "DrawSpriteTransformMatrixCB";
+        desc.Usage          = USAGE_DYNAMIC;
+        desc.BindFlags      = BIND_UNIFORM_BUFFER;
+        desc.CPUAccessFlags = CPU_ACCESS_WRITE;
+        desc.Size           = sizeof(CBSolidRectTransform2D);
+        device->CreateBuffer(desc, nullptr, &impl_->m_draw_sprite_transform_matrix_cb);
     }
 
     {
-        BufferDesc vbDesc;
-        vbDesc.Name           = "ThickLine Vertex Buffer";
-        vbDesc.BindFlags      = BIND_VERTEX_BUFFER;
-        vbDesc.Usage          = USAGE_DYNAMIC;
-        vbDesc.CPUAccessFlags = CPU_ACCESS_WRITE;
-        vbDesc.Size           = sizeof(RectVertex) * 4;
-        device->CreateBuffer(vbDesc, nullptr, &impl_->m_draw_thick_line_vertex_buffer);
+        BufferDesc desc;
+        desc.Name           = "SolidRect Vertex Buffer";
+        desc.BindFlags      = BIND_VERTEX_BUFFER;
+        desc.Usage          = USAGE_DYNAMIC;
+        desc.CPUAccessFlags = CPU_ACCESS_WRITE;
+        desc.Size           = sizeof(RectVertex) * 4;
+        device->CreateBuffer(desc, nullptr, &impl_->m_draw_solid_rect_vertex_buffer);
+
+        desc.Name = "SolidTriangle Vertex Buffer";
+        desc.Size = sizeof(RectVertex) * 3;
+        device->CreateBuffer(desc, nullptr, &impl_->m_draw_solid_triangle_vertex_buffer);
+
+        desc.Name = "SolidCircle Vertex Buffer";
+        desc.Size = sizeof(RectVertex) * 96;
+        device->CreateBuffer(desc, nullptr, &impl_->m_draw_solid_circle_vertex_buffer);
     }
 
     {
-        BufferDesc vbDesc;
-        vbDesc.Name           = "DotLine Vertex Buffer";
-        vbDesc.BindFlags      = BIND_VERTEX_BUFFER;
-        vbDesc.Usage          = USAGE_DYNAMIC;
-        vbDesc.CPUAccessFlags = CPU_ACCESS_WRITE;
-        vbDesc.Size           = sizeof(DotLineVertex) * 4;
-        device->CreateBuffer(vbDesc, nullptr, &impl_->m_draw_dot_line_vertex_buffer);
+        const uint32_t indices[6] = { 0, 1, 2, 2, 1, 3 };
+        BufferDesc desc;
+        desc.Name           = "SolidRectIndexBuffer";
+        desc.Usage          = USAGE_DEFAULT;
+        desc.BindFlags      = BIND_INDEX_BUFFER;
+        desc.Size           = sizeof(indices);
+        desc.CPUAccessFlags = CPU_ACCESS_NONE;
+        BufferData initData;
+        initData.pData    = indices;
+        initData.DataSize = sizeof(indices);
+        device->CreateBuffer(desc, &initData, &impl_->m_draw_solid_rect_index_buffer);
     }
 
     {
-        struct DotLineShaderCB { float thickness; float spacing; float2 padding; };
-        BufferDesc CBDesc;
-        CBDesc.Name           = "DotLineCB";
-        CBDesc.Usage          = USAGE_DYNAMIC;
-        CBDesc.BindFlags      = BIND_UNIFORM_BUFFER;
-        CBDesc.CPUAccessFlags = CPU_ACCESS_WRITE;
-        CBDesc.Size           = sizeof(DotLineShaderCB);
-        device->CreateBuffer(CBDesc, nullptr, &impl_->m_draw_dot_line_cb);
+        BufferDesc desc;
+        desc.Name           = "ThickLine Vertex Buffer";
+        desc.BindFlags      = BIND_VERTEX_BUFFER;
+        desc.Usage          = USAGE_DYNAMIC;
+        desc.CPUAccessFlags = CPU_ACCESS_WRITE;
+        desc.Size           = sizeof(RectVertex) * 4;
+        device->CreateBuffer(desc, nullptr, &impl_->m_draw_thick_line_vertex_buffer);
     }
 
     {
-        struct CBViewerHelper { float v1; float v2; float2 p; float4 c1; float4 c2; };
-        BufferDesc CBDesc;
-        CBDesc.Name           = "ViewerHelperCB";
-        CBDesc.Usage          = USAGE_DYNAMIC;
-        CBDesc.BindFlags      = BIND_UNIFORM_BUFFER;
-        CBDesc.CPUAccessFlags = CPU_ACCESS_WRITE;
-        CBDesc.Size           = sizeof(CBViewerHelper);
-        device->CreateBuffer(CBDesc, nullptr, &impl_->m_draw_viewer_helper_cb);
+        BufferDesc desc;
+        desc.Name           = "DotLine Vertex Buffer";
+        desc.BindFlags      = BIND_VERTEX_BUFFER;
+        desc.Usage          = USAGE_DYNAMIC;
+        desc.CPUAccessFlags = CPU_ACCESS_WRITE;
+        desc.Size           = sizeof(DotLineVertex) * 4;
+        device->CreateBuffer(desc, nullptr, &impl_->m_draw_dot_line_vertex_buffer);
     }
 
+    {
+        struct DotLineShaderCB {
+            float thickness;
+            float spacing;
+            float2 padding;
+        };
+        BufferDesc desc;
+        desc.Name           = "DotLineCB";
+        desc.Usage          = USAGE_DYNAMIC;
+        desc.BindFlags      = BIND_UNIFORM_BUFFER;
+        desc.CPUAccessFlags = CPU_ACCESS_WRITE;
+        desc.Size           = sizeof(DotLineShaderCB);
+        device->CreateBuffer(desc, nullptr, &impl_->m_draw_dot_line_cb);
+    }
+
+    {
+        struct OutlineParamsCB {
+            float outlineThickness;
+            float padding[3];
+        };
+        BufferDesc desc;
+        desc.Name           = "OutlineParamsCB";
+        desc.Usage          = USAGE_DYNAMIC;
+        desc.BindFlags      = BIND_UNIFORM_BUFFER;
+        desc.CPUAccessFlags = CPU_ACCESS_WRITE;
+        desc.Size           = sizeof(OutlineParamsCB);
+        device->CreateBuffer(desc, nullptr, &impl_->m_draw_outline_params_cb);
+    }
 }
 
 void PrimitiveRenderer2D::destroy()
@@ -373,9 +357,11 @@ void PrimitiveRenderer2D::destroy()
     impl_->m_draw_solid_rect_index_buffer       = nullptr;
     impl_->m_draw_thick_line_vertex_buffer      = nullptr;
     impl_->m_draw_solid_triangle_vertex_buffer  = nullptr;
+    impl_->m_draw_solid_circle_vertex_buffer    = nullptr;
     impl_->m_draw_dot_line_vertex_buffer        = nullptr;
     impl_->m_draw_dot_line_cb                   = nullptr;
     impl_->m_draw_viewer_helper_cb              = nullptr;
+    impl_->m_draw_outline_params_cb             = nullptr;
     impl_->m_draw_sprite_pso_and_srb         = {};
     impl_->m_draw_sprite_transform_pso_and_srb = {};
     impl_->m_sprite_sampler                  = nullptr;
@@ -451,6 +437,10 @@ void PrimitiveRenderer2D::clear(const FloatColor& color)
 void PrimitiveRenderer2D::drawRectLocal(float x, float y, float w, float h, const FloatColor& color, float opacity)
 {
     if (!impl_->hasRenderTarget() || !impl_->m_draw_solid_rect_pso_and_srb.pPSO) return;
+    if (!impl_->pCtx_ || !impl_->m_draw_solid_rect_vertex_buffer || !impl_->m_draw_solid_rect_cb ||
+        !impl_->m_draw_solid_rect_trnsform_cb || !impl_->m_draw_solid_rect_index_buffer) {
+        return;
+    }
 
     // If batch is active, accumulate vertices
     if (impl_->m_batchActive) {
@@ -538,66 +528,14 @@ void PrimitiveRenderer2D::drawRectLocal(float x, float y, float w, float h, cons
     impl_->pCtx_->DrawIndexed(drawAttrs);
 }
 
-    float alpha = color.a() * opacity;
-    RectVertex vertices[4] = {
-        {{0.0f, 0.0f}, {color.r(), color.g(), color.b(), alpha}},
-        {{1.0f, 0.0f}, {color.r(), color.g(), color.b(), alpha}},
-        {{0.0f, 1.0f}, {color.r(), color.g(), color.b(), alpha}},
-        {{1.0f, 1.0f}, {color.r(), color.g(), color.b(), alpha}},
-    };
-    
-    auto* pRTV = impl_->getCurrentRTV();
-    impl_->pCtx_->SetRenderTargets(1, &pRTV, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
-
-    {
-        void* pData = nullptr;
-        impl_->pCtx_->MapBuffer(impl_->m_draw_solid_rect_vertex_buffer, MAP_WRITE, MAP_FLAG_DISCARD, pData);
-        std::memcpy(pData, vertices, sizeof(vertices));
-        impl_->pCtx_->UnmapBuffer(impl_->m_draw_solid_rect_vertex_buffer, MAP_WRITE);
-    }
-
-    {
-        CBSolidColor cb = { {color.r(), color.g(), color.b(), alpha} };
-        void* pData = nullptr;
-        impl_->pCtx_->MapBuffer(impl_->m_draw_solid_rect_cb, MAP_WRITE, MAP_FLAG_DISCARD, pData);
-        std::memcpy(pData, &cb, sizeof(cb));
-        impl_->pCtx_->UnmapBuffer(impl_->m_draw_solid_rect_cb, MAP_WRITE);
-    }
-
-    {
-        auto viewportCB = impl_->viewport_.GetViewportCB();
-        const float zoom = std::max(viewportCB.zoom, 0.001f);
-        CBSolidTransform2D cbTransform;
-        cbTransform.offset     = { x * zoom + viewportCB.offset.x, y * zoom + viewportCB.offset.y };
-        cbTransform.scale      = { w * zoom, h * zoom };
-        cbTransform.screenSize = viewportCB.screenSize;
-        void* pData = nullptr;
-        impl_->pCtx_->MapBuffer(impl_->m_draw_solid_rect_trnsform_cb, MAP_WRITE, MAP_FLAG_DISCARD, pData);
-        std::memcpy(pData, &cbTransform, sizeof(cbTransform));
-        impl_->pCtx_->UnmapBuffer(impl_->m_draw_solid_rect_trnsform_cb, MAP_WRITE);
-    }
-
-    impl_->pCtx_->SetPipelineState(impl_->m_draw_solid_rect_pso_and_srb.pPSO);
-
-    IBuffer* pBuffers[] = { impl_->m_draw_solid_rect_vertex_buffer };
-    Uint64 offsets[] = { 0 };
-    impl_->pCtx_->SetVertexBuffers(0, 1, pBuffers, offsets,
-        RESOURCE_STATE_TRANSITION_MODE_TRANSITION, SET_VERTEX_BUFFERS_FLAG_RESET);
-    impl_->pCtx_->SetIndexBuffer(impl_->m_draw_solid_rect_index_buffer, 0,
-        RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
-
-    impl_->m_draw_solid_rect_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_VERTEX, "TransformCB")->Set(impl_->m_draw_solid_rect_trnsform_cb);
-    impl_->m_draw_solid_rect_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_PIXEL, "ColorBuffer")->Set(impl_->m_draw_solid_rect_cb);
-    impl_->pCtx_->CommitShaderResources(impl_->m_draw_solid_rect_pso_and_srb.pSRB,
-        RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
-
-    DrawIndexedAttribs drawAttrs(6, VT_UINT32, DRAW_FLAG_VERIFY_ALL);
-    impl_->pCtx_->DrawIndexed(drawAttrs);
-}
-
 void PrimitiveRenderer2D::drawSolidRectTransformed(float x, float y, float w, float h, const QTransform& transform, const FloatColor& color, float opacity)
 {
     if (!impl_->hasRenderTarget() || !impl_->m_draw_solid_rect_transform_pso_and_srb.pPSO) return;
+    if (!impl_->pCtx_ || !impl_->m_draw_solid_rect_vertex_buffer || !impl_->m_draw_solid_rect_cb ||
+        !impl_->m_draw_solid_rect_trnsform_cb || !impl_->m_draw_solid_rect_transform_matrix_cb ||
+        !impl_->m_draw_solid_rect_index_buffer) {
+        return;
+    }
 
     float alpha = color.a() * opacity;
     // Transformed API expects vertex input in 0..1 range (unit quad)
@@ -687,6 +625,10 @@ void PrimitiveRenderer2D::drawSolidRectTransformed(float x, float y, float w, fl
 void PrimitiveRenderer2D::drawSolidRectTransformed(float x, float y, float w, float h, const QMatrix4x4& transform, const FloatColor& color, float opacity)
 {
     if (!impl_->hasRenderTarget() || !impl_->m_draw_solid_rect_transform_pso_and_srb.pPSO) return;
+    if (!impl_->pCtx_ || !impl_->m_draw_solid_rect_vertex_buffer || !impl_->m_draw_solid_rect_cb ||
+        !impl_->m_draw_solid_rect_transform_matrix_cb || !impl_->m_draw_solid_rect_index_buffer) {
+        return;
+    }
 
     float alpha = color.a() * opacity;
     RectVertex vertices[4] = {
@@ -780,19 +722,6 @@ void PrimitiveRenderer2D::drawSolidRect(float x, float y, float w, float h, cons
     this->drawRectLocal(x, y, w, h, color, opacity);
 }
 
-void PrimitiveRenderer2D::beginBatch()
-{
-    impl_->m_batchVertexCount = 0;
-    impl_->m_batchIndexCount = 0;
-    impl_->m_batchActive = true;
-}
-
-void PrimitiveRenderer2D::endBatch()
-{
-    impl_->flushBatch();
-    impl_->m_batchActive = false;
-}
-
 void PrimitiveRenderer2D::Impl::flushBatch()
 {
     if (m_batchVertexCount == 0 || !hasRenderTarget() || !m_draw_solid_rect_pso_and_srb.pPSO) return;
@@ -821,7 +750,7 @@ void PrimitiveRenderer2D::Impl::flushBatch()
     Uint64 offsets[] = { 0 };
     pCtx_->SetVertexBuffers(0, 1, pBuffers, offsets,
         RESOURCE_STATE_TRANSITION_MODE_TRANSITION, SET_VERTEX_BUFFERS_FLAG_RESET);
-    pCtx_->SetIndexBuffer(m_batchIndexBuffer, 0);
+    pCtx_->SetIndexBuffer(m_batchIndexBuffer, 0, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
 
     // Set transform CB
     auto viewportCB = viewport_.GetViewportCB();
@@ -847,118 +776,36 @@ void PrimitiveRenderer2D::Impl::flushBatch()
     m_batchIndexCount = 0;
 }
 
-void PrimitiveRenderer2D::Impl::addToBatch(float x0, float y0, float x1, float y1, float x2, float y2, float x3, float y3, const FloatColor& color)
+void PrimitiveRenderer2D::Impl::addToBatch(float x0, float y0, float x1, float y1,
+                                           float x2, float y2, float x3, float y3,
+                                           const FloatColor& color)
 {
+    if (!m_batchActive) {
+        return;
+    }
+    if (!pCtx_ || !hasRenderTarget()) {
+        return;
+    }
     if (m_batchVertexCount + 4 > kMaxBatchVertices || m_batchIndexCount + 6 > kMaxBatchIndices) {
         flushBatch();
     }
-
-    float4 c = { color.r(), color.g(), color.b(), color.a() };
-    int baseIdx = m_batchVertexCount;
-    m_batchVertices[baseIdx + 0] = {{x0, y0}, c};
-    m_batchVertices[baseIdx + 1] = {{x1, y1}, c};
-    m_batchVertices[baseIdx + 2] = {{x2, y2}, c};
-    m_batchVertices[baseIdx + 3] = {{x3, y3}, c};
-
-    int baseI = m_batchIndexCount;
-    m_batchIndices[baseI + 0] = baseIdx + 0;
-    m_batchIndices[baseI + 1] = baseIdx + 1;
-    m_batchIndices[baseI + 2] = baseIdx + 2;
-    m_batchIndices[baseI + 3] = baseIdx + 0;
-    m_batchIndices[baseI + 4] = baseIdx + 2;
-    m_batchIndices[baseI + 5] = baseIdx + 3;
-
-    m_batchVertexCount += 4;
-    m_batchIndexCount += 6;
-}
-
-void PrimitiveRenderer2D::beginBatch()
-{
-    impl_->m_batchVertexCount = 0;
-    impl_->m_batchIndexCount = 0;
-    impl_->m_batchActive = true;
-}
-
-void PrimitiveRenderer2D::endBatch()
-{
-    impl_->flushBatch();
-    impl_->m_batchActive = false;
-}
-
-void PrimitiveRenderer2D::Impl::flushBatch()
-{
-    if (m_batchVertexCount == 0 || !hasRenderTarget() || !m_draw_solid_rect_pso_and_srb.pPSO) return;
-
-    // Upload vertices
-    {
-        void* pData = nullptr;
-        pCtx_->MapBuffer(m_batchVertexBuffer, MAP_WRITE, MAP_FLAG_DISCARD, pData);
-        std::memcpy(pData, m_batchVertices, sizeof(RectVertex) * m_batchVertexCount);
-        pCtx_->UnmapBuffer(m_batchVertexBuffer, MAP_WRITE);
-    }
-
-    // Upload indices
-    {
-        void* pData = nullptr;
-        pCtx_->MapBuffer(m_batchIndexBuffer, MAP_WRITE, MAP_FLAG_DISCARD, pData);
-        std::memcpy(pData, m_batchIndices, sizeof(uint32_t) * m_batchIndexCount);
-        pCtx_->UnmapBuffer(m_batchIndexBuffer, MAP_WRITE);
-    }
-
-    auto* pRTV = getCurrentRTV();
-    pCtx_->SetRenderTargets(1, &pRTV, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
-    pCtx_->SetPipelineState(m_draw_solid_rect_pso_and_srb.pPSO);
-
-    IBuffer* pBuffers[] = { m_batchVertexBuffer };
-    Uint64 offsets[] = { 0 };
-    pCtx_->SetVertexBuffers(0, 1, pBuffers, offsets,
-        RESOURCE_STATE_TRANSITION_MODE_TRANSITION, SET_VERTEX_BUFFERS_FLAG_RESET);
-    pCtx_->SetIndexBuffer(m_batchIndexBuffer, 0);
-
-    // Set transform CB
-    auto viewportCB = viewport_.GetViewportCB();
-    const float zoom = std::max(viewportCB.zoom, 0.001f);
-    CBSolidTransform2D cbTransform;
-    cbTransform.offset     = viewportCB.offset;
-    cbTransform.scale      = { zoom, zoom };
-    cbTransform.screenSize = viewportCB.screenSize;
-    {
-        void* pData = nullptr;
-        pCtx_->MapBuffer(m_draw_solid_rect_trnsform_cb, MAP_WRITE, MAP_FLAG_DISCARD, pData);
-        std::memcpy(pData, &cbTransform, sizeof(cbTransform));
-        pCtx_->UnmapBuffer(m_draw_solid_rect_trnsform_cb, MAP_WRITE);
-    }
-    m_draw_solid_rect_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_VERTEX, "TransformCB")->Set(m_draw_solid_rect_trnsform_cb);
-    pCtx_->CommitShaderResources(m_draw_solid_rect_pso_and_srb.pSRB,
-        RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
-
-    DrawIndexedAttribs drawAttrs(m_batchIndexCount, VT_UINT32, DRAW_FLAG_VERIFY_ALL);
-    pCtx_->DrawIndexed(drawAttrs);
-
-    m_batchVertexCount = 0;
-    m_batchIndexCount = 0;
-}
-
-void PrimitiveRenderer2D::Impl::addToBatch(float x0, float y0, float x1, float y1, float x2, float y2, float x3, float y3, const FloatColor& color)
-{
     if (m_batchVertexCount + 4 > kMaxBatchVertices || m_batchIndexCount + 6 > kMaxBatchIndices) {
-        flushBatch();
+        return;
     }
 
-    float4 c = { color.r(), color.g(), color.b(), color.a() };
-    int baseIdx = m_batchVertexCount;
-    m_batchVertices[baseIdx + 0] = {{x0, y0}, c};
-    m_batchVertices[baseIdx + 1] = {{x1, y1}, c};
-    m_batchVertices[baseIdx + 2] = {{x2, y2}, c};
-    m_batchVertices[baseIdx + 3] = {{x3, y3}, c};
+    const uint32_t baseVertex = static_cast<uint32_t>(m_batchVertexCount);
+    const float4 c = { color.r(), color.g(), color.b(), color.a() };
+    m_batchVertices[m_batchVertexCount + 0] = { { x0, y0 }, c };
+    m_batchVertices[m_batchVertexCount + 1] = { { x1, y1 }, c };
+    m_batchVertices[m_batchVertexCount + 2] = { { x2, y2 }, c };
+    m_batchVertices[m_batchVertexCount + 3] = { { x3, y3 }, c };
 
-    int baseI = m_batchIndexCount;
-    m_batchIndices[baseI + 0] = baseIdx + 0;
-    m_batchIndices[baseI + 1] = baseIdx + 1;
-    m_batchIndices[baseI + 2] = baseIdx + 2;
-    m_batchIndices[baseI + 3] = baseIdx + 0;
-    m_batchIndices[baseI + 4] = baseIdx + 2;
-    m_batchIndices[baseI + 5] = baseIdx + 3;
+    m_batchIndices[m_batchIndexCount + 0] = baseVertex + 0;
+    m_batchIndices[m_batchIndexCount + 1] = baseVertex + 1;
+    m_batchIndices[m_batchIndexCount + 2] = baseVertex + 2;
+    m_batchIndices[m_batchIndexCount + 3] = baseVertex + 2;
+    m_batchIndices[m_batchIndexCount + 4] = baseVertex + 1;
+    m_batchIndices[m_batchIndexCount + 5] = baseVertex + 3;
 
     m_batchVertexCount += 4;
     m_batchIndexCount += 6;
@@ -1216,6 +1063,10 @@ void PrimitiveRenderer2D::drawBezierLocal(float2 p0, float2 p1, float2 p2, float
 void PrimitiveRenderer2D::drawSolidTriangleLocal(float2 p0, float2 p1, float2 p2, const FloatColor& color)
 {
     if (!impl_->hasRenderTarget() || !impl_->m_draw_solid_triangle_pso_and_srb.pPSO) return;
+    if (!impl_->pCtx_ || !impl_->m_draw_solid_triangle_vertex_buffer || !impl_->m_draw_solid_rect_cb ||
+        !impl_->m_draw_solid_rect_trnsform_cb) {
+        return;
+    }
 
     float4 c = { color.r(), color.g(), color.b(), color.a() };
     RectVertex vertices[3] = {
@@ -1301,6 +1152,10 @@ void PrimitiveRenderer2D::drawCircle(float x, float y, float radius, const Float
 void PrimitiveRenderer2D::drawSolidCircle(float cx, float cy, float radius, const FloatColor& color)
 {
     if (radius <= 0.0f) return;
+    if (!impl_->pCtx_ || !impl_->m_draw_solid_circle_vertex_buffer || !impl_->m_draw_solid_rect_cb ||
+        !impl_->m_draw_solid_rect_trnsform_cb || !impl_->m_draw_solid_triangle_pso_and_srb.pPSO) {
+        return;
+    }
     
     // ファン状の三角形で円を描画（32 セグメント）
     constexpr int segments = 32;
@@ -1331,9 +1186,9 @@ void PrimitiveRenderer2D::drawSolidCircle(float cx, float cy, float radius, cons
     // 頂点データを書き込み
     {
         void* pData = nullptr;
-        impl_->pCtx_->MapBuffer(impl_->m_draw_solid_rect_vertex_buffer, MAP_WRITE, MAP_FLAG_DISCARD, pData);
+        impl_->pCtx_->MapBuffer(impl_->m_draw_solid_circle_vertex_buffer, MAP_WRITE, MAP_FLAG_DISCARD, pData);
         std::memcpy(pData, vertices.data(), sizeof(RectVertex) * vertexCount);
-        impl_->pCtx_->UnmapBuffer(impl_->m_draw_solid_rect_vertex_buffer, MAP_WRITE);
+        impl_->pCtx_->UnmapBuffer(impl_->m_draw_solid_circle_vertex_buffer, MAP_WRITE);
     }
     
     // 定数バッファを設定
@@ -1352,7 +1207,7 @@ void PrimitiveRenderer2D::drawSolidCircle(float cx, float cy, float radius, cons
     
     impl_->pCtx_->SetPipelineState(impl_->m_draw_solid_triangle_pso_and_srb.pPSO);
     
-    IBuffer* pBuffers[] = { impl_->m_draw_solid_rect_vertex_buffer };
+    IBuffer* pBuffers[] = { impl_->m_draw_solid_circle_vertex_buffer };
     Uint64 offsets[] = { 0 };
     impl_->pCtx_->SetVertexBuffers(0, 1, pBuffers, offsets,
         RESOURCE_STATE_TRANSITION_MODE_TRANSITION, SET_VERTEX_BUFFERS_FLAG_RESET);
@@ -1390,6 +1245,7 @@ void PrimitiveRenderer2D::drawPoint(float x, float y, float size, const FloatCol
 void PrimitiveRenderer2D::drawCheckerboard(float x, float y, float w, float h, float tileSize, const FloatColor& c1, const FloatColor& c2)
 {
     if (!impl_->hasRenderTarget() || !impl_->m_draw_checkerboard_pso_and_srb.pPSO) return;
+    if (!impl_->pCtx_ || !impl_->m_draw_solid_rect_cb || !impl_->m_draw_viewer_helper_cb) return;
 
     RectVertex vertices[4] = {
         {{0.0f, 0.0f}, {1,1,1,1}},
@@ -1421,6 +1277,14 @@ void PrimitiveRenderer2D::drawCheckerboard(float x, float y, float w, float h, f
     }
 
     {
+        CBSolidColor colorCb = { { c1.r(), c1.g(), c1.b(), c1.a() } };
+        void* pData = nullptr;
+        impl_->pCtx_->MapBuffer(impl_->m_draw_solid_rect_cb, MAP_WRITE, MAP_FLAG_DISCARD, pData);
+        std::memcpy(pData, &colorCb, sizeof(colorCb));
+        impl_->pCtx_->UnmapBuffer(impl_->m_draw_solid_rect_cb, MAP_WRITE);
+    }
+
+    {
         auto viewportCB = impl_->viewport_.GetViewportCB();
         const float zoom = std::max(viewportCB.zoom, 0.001f);
         CBSolidTransform2D cbTransform;
@@ -1441,6 +1305,9 @@ void PrimitiveRenderer2D::drawCheckerboard(float x, float y, float w, float h, f
         RESOURCE_STATE_TRANSITION_MODE_TRANSITION, SET_VERTEX_BUFFERS_FLAG_RESET);
 
     impl_->m_draw_checkerboard_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_VERTEX, "TransformCB")->Set(impl_->m_draw_solid_rect_trnsform_cb);
+    if (auto* colorVar = impl_->m_draw_checkerboard_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_PIXEL, "ColorBuffer")) {
+        colorVar->Set(impl_->m_draw_solid_rect_cb);
+    }
     impl_->m_draw_checkerboard_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_PIXEL, "ViewerHelperCB")->Set(impl_->m_draw_viewer_helper_cb);
     impl_->pCtx_->CommitShaderResources(impl_->m_draw_checkerboard_pso_and_srb.pSRB,
         RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
@@ -1455,6 +1322,7 @@ void PrimitiveRenderer2D::drawGrid(float x, float y, float w, float h,
     float spacing, float thickness, const FloatColor& color)
 {
     if (!impl_->hasRenderTarget() || !impl_->m_draw_grid_pso_and_srb.pPSO) return;
+    if (!impl_->pCtx_ || !impl_->m_draw_solid_rect_cb || !impl_->m_draw_viewer_helper_cb) return;
 
     RectVertex vertices[4] = {
         {{0.0f, 0.0f}, {1,1,1,1}},
@@ -1486,6 +1354,14 @@ void PrimitiveRenderer2D::drawGrid(float x, float y, float w, float h,
     }
 
     {
+        CBSolidColor colorCb = { { color.r(), color.g(), color.b(), 1.0f } };
+        void* pData = nullptr;
+        impl_->pCtx_->MapBuffer(impl_->m_draw_solid_rect_cb, MAP_WRITE, MAP_FLAG_DISCARD, pData);
+        std::memcpy(pData, &colorCb, sizeof(colorCb));
+        impl_->pCtx_->UnmapBuffer(impl_->m_draw_solid_rect_cb, MAP_WRITE);
+    }
+
+    {
         auto viewportCB = impl_->viewport_.GetViewportCB();
         const float zoom = std::max(viewportCB.zoom, 0.001f);
         CBSolidTransform2D cbTransform;
@@ -1506,6 +1382,9 @@ void PrimitiveRenderer2D::drawGrid(float x, float y, float w, float h,
         RESOURCE_STATE_TRANSITION_MODE_TRANSITION, SET_VERTEX_BUFFERS_FLAG_RESET);
 
     impl_->m_draw_grid_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_VERTEX, "TransformCB")->Set(impl_->m_draw_solid_rect_trnsform_cb);
+    if (auto* colorVar = impl_->m_draw_grid_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_PIXEL, "ColorBuffer")) {
+        colorVar->Set(impl_->m_draw_solid_rect_cb);
+    }
     impl_->m_draw_grid_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_PIXEL, "ViewerHelperCB")->Set(impl_->m_draw_viewer_helper_cb);
     impl_->pCtx_->CommitShaderResources(impl_->m_draw_grid_pso_and_srb.pSRB,
         RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
@@ -1519,6 +1398,7 @@ void PrimitiveRenderer2D::drawGrid(float x, float y, float w, float h,
 void PrimitiveRenderer2D::drawRectOutlineLocal(float x, float y, float w, float h, const FloatColor& color)
 {
     if (!impl_->hasRenderTarget() || !impl_->m_draw_rect_outline_pso_and_srb.pPSO) return;
+    if (!impl_->pCtx_ || !impl_->m_draw_solid_rect_cb || !impl_->m_draw_solid_rect_trnsform_cb || !impl_->m_draw_outline_params_cb) return;
 
     // 矩形の4頂点 (0,0) to (1,1) のローカル座標
     RectVertex vertices[4] = {
@@ -1541,26 +1421,52 @@ void PrimitiveRenderer2D::drawRectOutlineLocal(float x, float y, float w, float 
     // TransformCB: offset(x,y), scale(w,h), screenSize
     {
         void* pData = nullptr;
+        impl_->pCtx_->MapBuffer(impl_->m_draw_solid_rect_trnsform_cb, MAP_WRITE, MAP_FLAG_DISCARD, pData);
+        auto* cbData = static_cast<CBSolidTransform2D*>(pData);
+        auto viewportCB = impl_->viewport_.GetViewportCB();
+        cbData->offset     = { x, y };
+        cbData->scale      = { w, h };
+        cbData->screenSize = viewportCB.screenSize;
+        impl_->pCtx_->UnmapBuffer(impl_->m_draw_solid_rect_trnsform_cb, MAP_WRITE);
+    }
+
+    {
+        CBSolidColor cbColor = { { color.r(), color.g(), color.b(), color.a() } };
+        void* pData = nullptr;
         impl_->pCtx_->MapBuffer(impl_->m_draw_solid_rect_cb, MAP_WRITE, MAP_FLAG_DISCARD, pData);
-        float* cbData = static_cast<float*>(pData);
-        cbData[0] = x; // offset.x
-        cbData[1] = y; // offset.y
-        cbData[2] = w; // scale.x
-        cbData[3] = h; // scale.y
-        cbData[4] = impl_->canvasSize_.x; // screenSize.x
-        cbData[5] = impl_->canvasSize_.y; // screenSize.y
+        std::memcpy(pData, &cbColor, sizeof(cbColor));
         impl_->pCtx_->UnmapBuffer(impl_->m_draw_solid_rect_cb, MAP_WRITE);
+    }
+
+    {
+        struct OutlineParamsCB {
+            float outlineThickness;
+            float padding[3];
+        };
+        OutlineParamsCB params{0.08f, {0.0f, 0.0f, 0.0f}};
+        void* pData = nullptr;
+        impl_->pCtx_->MapBuffer(impl_->m_draw_outline_params_cb, MAP_WRITE, MAP_FLAG_DISCARD, pData);
+        std::memcpy(pData, &params, sizeof(params));
+        impl_->pCtx_->UnmapBuffer(impl_->m_draw_outline_params_cb, MAP_WRITE);
     }
 
     auto* pRTV = impl_->getCurrentRTV();
     impl_->pCtx_->SetRenderTargets(1, &pRTV, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
     impl_->pCtx_->SetPipelineState(impl_->m_draw_rect_outline_pso_and_srb.pPSO);
-    impl_->m_draw_rect_outline_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_VERTEX, "TransformCB")->SetBuffer(impl_->m_draw_solid_rect_cb);
+    impl_->m_draw_rect_outline_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_VERTEX, "TransformCB")->Set(impl_->m_draw_solid_rect_trnsform_cb);
+    impl_->m_draw_rect_outline_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_PIXEL, "ColorBuffer")->Set(impl_->m_draw_solid_rect_cb);
+    if (auto* outlineVar = impl_->m_draw_rect_outline_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_PIXEL, "OutlineParams")) {
+        outlineVar->Set(impl_->m_draw_outline_params_cb);
+    }
     impl_->pCtx_->CommitShaderResources(impl_->m_draw_rect_outline_pso_and_srb.pSRB,
         RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
 
-    impl_->pCtx_->SetVertexBuffers(0, 1, &impl_->m_draw_solid_rect_vertex_buffer, nullptr, nullptr, SET_VERTEX_BUFFERS_FLAG_RESET);
-    impl_->pCtx_->SetIndexBuffer(impl_->m_draw_solid_rect_index_buffer, 0);
+    IBuffer* pBuffers[] = { impl_->m_draw_solid_rect_vertex_buffer };
+    Uint64 offsets[] = { 0 };
+    impl_->pCtx_->SetVertexBuffers(0, 1, pBuffers, offsets,
+        RESOURCE_STATE_TRANSITION_MODE_TRANSITION, SET_VERTEX_BUFFERS_FLAG_RESET);
+    impl_->pCtx_->SetIndexBuffer(impl_->m_draw_solid_rect_index_buffer, 0,
+        RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
 
     DrawIndexedAttribs drawAttrs(6, VT_UINT32, DRAW_FLAG_VERIFY_ALL);
     impl_->pCtx_->DrawIndexed(drawAttrs);
@@ -1571,6 +1477,7 @@ void PrimitiveRenderer2D::drawSpriteLocal(float x, float y, float w, float h, co
     if (!impl_->hasRenderTarget() || !impl_->m_draw_sprite_pso_and_srb.pPSO) return;
     if (image.isNull()) return;
     if (!impl_->pDevice_ || !impl_->pCtx_) return;
+    if (!impl_->m_draw_sprite_vertex_buffer || !impl_->m_draw_sprite_cb) return;
 
     impl_->m_frameCount++;
     if (impl_->m_frameCount % 60 == 0) {

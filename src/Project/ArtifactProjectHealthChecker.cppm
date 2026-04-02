@@ -485,7 +485,7 @@ void ArtifactProjectHealthChecker::checkSpellingIssues(ArtifactProject* project,
     };
     
     // Check project name
-    QString projectName = project->projectName();
+    QString projectName = project->settings().projectName();
     for (const QString& token : tokenizeText(projectName)) {
         checkWord(token, "project name", projectName);
     }

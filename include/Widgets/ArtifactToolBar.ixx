@@ -104,3 +104,6 @@ public:
 };
 
 }; // namespace Artifact
+
+W_REGISTER_ARGTYPE(Artifact::ToolBarDisplayMode)
+W_REGISTER_ARGTYPE(Artifact::WorkspaceMode)

@@ -210,6 +210,16 @@ QMimeData* AssetMenuModel::mimeData(const QModelIndexList& indexes) const
   return false;
  }
 
+ void AssetMenuModel::refreshIcons()
+ {
+  if (impl_->items_.isEmpty()) {
+   return;
+  }
+  const QModelIndex topLeft = createIndex(0, 0);
+  const QModelIndex bottomRight = createIndex(impl_->items_.size() - 1, 0);
+  Q_EMIT dataChanged(topLeft, bottomRight, {Qt::DecorationRole});
+ }
+
  void AssetMenuModel::clear()
  {
   beginResetModel();

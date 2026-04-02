@@ -3144,7 +3144,7 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
             impl_->infoPanel_->updateInfo(impl_->proxyModel_->mapToSource(idx));
         }
         impl_->eventBus_.post<SelectionChangedEvent>(impl_->makeSelectionChangedEvent());
-        impl_->eventBus_.drain();
+        (void)impl_->eventBus_.drain();
     });
     connect(impl_->projectView_, &ArtifactProjectView::itemDoubleClicked, [this](const QModelIndex& idx) {
         itemDoubleClicked(idx);
@@ -3189,51 +3189,51 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
             return;
         }
         const QString projectName = svc && svc->getCurrentProjectSharedPtr()
-            ? svc->getCurrentProjectSharedPtr()->projectName().toQString()
+            ? svc->projectName().toQString()
             : QString();
         impl_->eventBus_.post<ProjectChangedEvent>(ProjectChangedEvent{QString(), projectName});
-        impl_->eventBus_.drain();
+        (void)impl_->eventBus_.drain();
     });
     connect(svc, &ArtifactProjectService::projectCreated, this, [this, svc]() {
         if (!impl_) {
             return;
         }
         const QString projectName = svc && svc->getCurrentProjectSharedPtr()
-            ? svc->getCurrentProjectSharedPtr()->projectName().toQString()
+            ? svc->projectName().toQString()
             : QString();
         impl_->eventBus_.post<ProjectChangedEvent>(ProjectChangedEvent{QString(), projectName});
-        impl_->eventBus_.drain();
+        (void)impl_->eventBus_.drain();
     });
     connect(svc, &ArtifactProjectService::compositionCreated, this, [this](const CompositionID& id) {
         impl_->eventBus_.post<CompositionCreatedEvent>(CompositionCreatedEvent{
-            QString::fromStdString(id.toString()), QString()
+            id.toString(), QString()
         });
-        impl_->eventBus_.drain();
+        (void)impl_->eventBus_.drain();
     });
     connect(svc, &ArtifactProjectService::layerCreated, this, [this](const CompositionID& cid, const LayerID& lid) {
         impl_->eventBus_.post<LayerChangedEvent>(LayerChangedEvent{
-            QString::fromStdString(cid.toString()),
-            QString::fromStdString(lid.toString()),
+            cid.toString(),
+            lid.toString(),
             LayerChangedEvent::ChangeType::Created
         });
-        impl_->eventBus_.drain();
+        (void)impl_->eventBus_.drain();
     });
     connect(svc, &ArtifactProjectService::layerRemoved, this, [this](const CompositionID& cid, const LayerID& lid) {
         impl_->eventBus_.post<LayerChangedEvent>(LayerChangedEvent{
-            QString::fromStdString(cid.toString()),
-            QString::fromStdString(lid.toString()),
+            cid.toString(),
+            lid.toString(),
             LayerChangedEvent::ChangeType::Removed
         });
-        impl_->eventBus_.drain();
+        (void)impl_->eventBus_.drain();
     });
     connect(svc, &ArtifactProjectService::currentCompositionChanged, this, [this](const CompositionID& cid) {
         if (!impl_) {
             return;
         }
         impl_->eventBus_.post<CurrentCompositionChangedEvent>(CurrentCompositionChangedEvent{
-            QString::fromStdString(cid.toString())
+            cid.toString()
         });
-        impl_->eventBus_.drain();
+        (void)impl_->eventBus_.drain();
     });
 
     // EventBus subscriptions
@@ -3353,7 +3353,7 @@ void ArtifactProjectManagerWidget::showEvent(QShowEvent* event)
 bool ArtifactProjectManagerWidget::event(QEvent* event)
 {
     if (impl_) {
-        impl_->eventBus_.drain();
+        (void)impl_->eventBus_.drain();
     }
     const bool handled = QWidget::event(event);
     if (event && (event->type() == QEvent::WindowActivate ||

@@ -1,59 +1,63 @@
 ﻿module;
-#include <QString>
-#include <QVector>
-#include <QCoreApplication>
-#include <QListWidget>
-#include <QStackedWidget>
-#include <QVBoxLayout>
-#include <QHBoxLayout>
-#include <QPushButton>
-#include <QLabel>
-#include <QCheckBox>
-#include <QSpinBox>
-#include <QGroupBox>
-#include <QDialogButtonBox>
-#include <QComboBox>
-#include <QLineEdit>
-#include <QDialog>
 #include <QAbstractButton>
-#include <QApplication>
-#include <QSlider>
-#include <QProgressBar>
-#include <QTimer>
-#include <QMessageBox>
-#include <QSettings>
-#include <QClipboard>
-#include <QThread>
-#include <QTableWidget>
-#include <QHeaderView>
 #include <QAbstractItemView>
-#include <QFormLayout>
-#include <QKeySequence>
-#include <QKeySequenceEdit>
-#include <QFileDialog>
+#include <QApplication>
+#include <QCheckBox>
+#include <QClipboard>
+#include <QComboBox>
+#include <QCoreApplication>
+#include <QDesktopServices>
+#include <QDialog>
+#include <QDialogButtonBox>
 #include <QDir>
 #include <QFile>
+#include <QFileDialog>
 #include <QFileInfo>
 #include <QFileInfoList>
+#include <QFormLayout>
+#include <QGroupBox>
+#include <QHBoxLayout>
+#include <QHeaderView>
+#include <QKeyEvent>
+#include <QKeySequence>
+#include <QKeySequenceEdit>
+#include <QLabel>
+#include <QLineEdit>
+#include <QListWidget>
+#include <QMessageBox>
 #include <QPluginLoader>
-#include <QDesktopServices>
+#include <QProgressBar>
+#include <QPushButton>
+#include <QSettings>
+#include <QSlider>
+#include <QSpinBox>
+#include <QStackedWidget>
 #include <QStandardPaths>
+#include <QString>
+#include <QTableWidget>
+#include <QThread>
+#include <QTimer>
 #include <QUrl>
+#include <QVBoxLayout>
+#include <QVector>
 #include <algorithm>
 #include <map>
 #include <set>
 #include <vector>
+
+
 #ifdef Q_OS_WIN
 #include <windows.h>
 #include <psapi.h>
+
 #undef MessageBox
 #endif
 #include <wobjectimpl.h>
 
-
- module ApplicationSettingDialog;
+module ApplicationSettingDialog;
 
 import Artifact.Service.Application;
+import AI.Client;
 import Artifact.Widgets.AppDialogs;
 import Widgets.Utils.CSS;
 import Input.Operator;
@@ -62,63 +66,55 @@ import Application.AppSettings;
 
 namespace ArtifactCore {
 
- // GeneralSettingPage Implementation
- class GeneralSettingPage::Impl {
- public:
+// GeneralSettingPage Implementation
+class GeneralSettingPage::Impl {
+public:
   Impl();
   ~Impl();
-  
-  QComboBox* themeCombo_;
-  QCheckBox* autoSaveCheckBox_;
-  QSpinBox* autoSaveIntervalSpinBox_;
-  QCheckBox* showStartupDialogCheckBox_;
- };
 
- GeneralSettingPage::Impl::Impl()
- {
- }
+  QComboBox *themeCombo_;
+  QCheckBox *autoSaveCheckBox_;
+  QSpinBox *autoSaveIntervalSpinBox_;
+  QCheckBox *showStartupDialogCheckBox_;
+};
 
- GeneralSettingPage::Impl::~Impl()
- {
- }
+GeneralSettingPage::Impl::Impl() {}
 
- GeneralSettingPage::GeneralSettingPage(QWidget* parent)
-  : QWidget(parent), impl_(new Impl())
- {
-  auto* mainLayout = new QVBoxLayout(this);
-  
- // Auto-Save Group
-  auto* appearanceGroup = new QGroupBox("Appearance", this);
-  auto* appearanceLayout = new QVBoxLayout(appearanceGroup);
-  auto* themeLayout = new QHBoxLayout();
+GeneralSettingPage::Impl::~Impl() {}
+
+GeneralSettingPage::GeneralSettingPage(QWidget *parent)
+    : QWidget(parent), impl_(new Impl()) {
+  auto *mainLayout = new QVBoxLayout(this);
+
+  // Auto-Save Group
+  auto *appearanceGroup = new QGroupBox("Appearance", this);
+  auto *appearanceLayout = new QVBoxLayout(appearanceGroup);
+  auto *themeLayout = new QHBoxLayout();
   themeLayout->addWidget(new QLabel("Theme preset:", this));
   impl_->themeCombo_ = new QComboBox(this);
   const QVector<DccStylePreset> themePresets = {
-      DccStylePreset::StudioStyle,
-      DccStylePreset::MayaStyle,
-      DccStylePreset::ModoStyle,
-      DccStylePreset::BlenderStyle,
-      DccStylePreset::DaVinciStyle,
-      DccStylePreset::_3dsMaxStyle,
-      DccStylePreset::NukeStyle,
-      DccStylePreset::HighContrast,
+      DccStylePreset::StudioStyle,  DccStylePreset::MayaStyle,
+      DccStylePreset::ModoStyle,    DccStylePreset::BlenderStyle,
+      DccStylePreset::DaVinciStyle, DccStylePreset::_3dsMaxStyle,
+      DccStylePreset::NukeStyle,    DccStylePreset::HighContrast,
       DccStylePreset::DefaultQt,
   };
   for (auto preset : themePresets) {
-    impl_->themeCombo_->addItem(themePresetLabel(preset), themePresetKey(preset));
+    impl_->themeCombo_->addItem(themePresetLabel(preset),
+                                themePresetKey(preset));
   }
   themeLayout->addWidget(impl_->themeCombo_);
   themeLayout->addStretch();
   appearanceLayout->addLayout(themeLayout);
   mainLayout->addWidget(appearanceGroup);
 
-  auto* autoSaveGroup = new QGroupBox("Auto-Save", this);
-  auto* autoSaveLayout = new QVBoxLayout(autoSaveGroup);
-  
+  auto *autoSaveGroup = new QGroupBox("Auto-Save", this);
+  auto *autoSaveLayout = new QVBoxLayout(autoSaveGroup);
+
   impl_->autoSaveCheckBox_ = new QCheckBox("Enable Auto-Save", this);
   autoSaveLayout->addWidget(impl_->autoSaveCheckBox_);
-  
-  auto* intervalLayout = new QHBoxLayout();
+
+  auto *intervalLayout = new QHBoxLayout();
   intervalLayout->addWidget(new QLabel("Save every:", this));
   impl_->autoSaveIntervalSpinBox_ = new QSpinBox(this);
   impl_->autoSaveIntervalSpinBox_->setRange(1, 60);
@@ -126,156 +122,188 @@ namespace ArtifactCore {
   intervalLayout->addWidget(impl_->autoSaveIntervalSpinBox_);
   intervalLayout->addStretch();
   autoSaveLayout->addLayout(intervalLayout);
-  
+
   mainLayout->addWidget(autoSaveGroup);
-  
+
   // Startup Group
-  auto* startupGroup = new QGroupBox("Startup", this);
-  auto* startupLayout = new QVBoxLayout(startupGroup);
-  
-  impl_->showStartupDialogCheckBox_ = new QCheckBox("Load last project on startup", this);
+  auto *startupGroup = new QGroupBox("Startup", this);
+  auto *startupLayout = new QVBoxLayout(startupGroup);
+
+  impl_->showStartupDialogCheckBox_ =
+      new QCheckBox("Load last project on startup", this);
   startupLayout->addWidget(impl_->showStartupDialogCheckBox_);
-  
+
   mainLayout->addWidget(startupGroup);
-  
+
   mainLayout->addStretch();
 
   loadSettings();
- }
+}
 
- void GeneralSettingPage::loadSettings()
- {
-  auto* settings = ArtifactAppSettings::instance();
+void GeneralSettingPage::loadSettings() {
+  auto *settings = ArtifactAppSettings::instance();
   if (impl_->themeCombo_) {
-    const QString themeKey = themePresetKey(themePresetFromName(settings->themeName()));
+    const QString themeKey =
+        themePresetKey(themePresetFromName(settings->themeName()));
     const int idx = impl_->themeCombo_->findData(themeKey);
     if (idx >= 0) {
       impl_->themeCombo_->setCurrentIndex(idx);
     }
   }
- impl_->autoSaveIntervalSpinBox_->setValue(settings->autoSaveIntervalMinutes());
- impl_->showStartupDialogCheckBox_->setChecked(settings->loadLastProjectOnStartup());
+  impl_->autoSaveIntervalSpinBox_->setValue(
+      settings->autoSaveIntervalMinutes());
+  impl_->showStartupDialogCheckBox_->setChecked(
+      settings->loadLastProjectOnStartup());
   QSettings qsettings;
-  impl_->autoSaveCheckBox_->setChecked(qsettings.value(QStringLiteral("Settings/General/AutoSaveEnabled"), true).toBool());
- }
+  impl_->autoSaveCheckBox_->setChecked(
+      qsettings.value(QStringLiteral("Settings/General/AutoSaveEnabled"), true)
+          .toBool());
+}
 
- void GeneralSettingPage::saveSettings()
- {
-  auto* settings = ArtifactAppSettings::instance();
+void GeneralSettingPage::saveSettings() {
+  auto *settings = ArtifactAppSettings::instance();
   if (impl_->themeCombo_) {
     settings->setThemeName(impl_->themeCombo_->currentData().toString());
   }
-  settings->setAutoSaveIntervalMinutes(impl_->autoSaveIntervalSpinBox_->value());
-  settings->setLoadLastProjectOnStartup(impl_->showStartupDialogCheckBox_->isChecked());
+  settings->setAutoSaveIntervalMinutes(
+      impl_->autoSaveIntervalSpinBox_->value());
+  settings->setLoadLastProjectOnStartup(
+      impl_->showStartupDialogCheckBox_->isChecked());
   QSettings qsettings;
-  qsettings.setValue(QStringLiteral("Settings/General/AutoSaveEnabled"), impl_->autoSaveCheckBox_->isChecked());
- }
+  qsettings.setValue(QStringLiteral("Settings/General/AutoSaveEnabled"),
+                     impl_->autoSaveCheckBox_->isChecked());
+}
 
- GeneralSettingPage::~GeneralSettingPage()
- {
-  delete impl_;
- }
+QList<SettingItemInfo> GeneralSettingPage::searchableItems() const {
+  QList<SettingItemInfo> items;
+  if (impl_->themeCombo_) {
+    items.append({QStringLiteral("Theme preset"),
+                  QStringLiteral("Application theme/appearance"),
+                  QStringLiteral("General"), impl_->themeCombo_});
+  }
+  if (impl_->autoSaveCheckBox_) {
+    items.append({QStringLiteral("Enable Auto-Save"),
+                  QStringLiteral("Automatically save project at intervals"),
+                  QStringLiteral("General"), impl_->autoSaveCheckBox_});
+  }
+  if (impl_->autoSaveIntervalSpinBox_) {
+    items.append({QStringLiteral("Auto-Save Interval"),
+                  QStringLiteral("Minutes between auto-saves"),
+                  QStringLiteral("General"), impl_->autoSaveIntervalSpinBox_});
+  }
+  if (impl_->showStartupDialogCheckBox_) {
+    items.append(
+        {QStringLiteral("Load last project on startup"),
+         QStringLiteral("Restore previous project when application starts"),
+         QStringLiteral("General"), impl_->showStartupDialogCheckBox_});
+  }
+  return items;
+}
 
- // ImportSettingPage Implementation
- class ImportSettingPage::Impl {
- public:
+GeneralSettingPage::~GeneralSettingPage() { delete impl_; }
+
+// ImportSettingPage Implementation
+class ImportSettingPage::Impl {
+public:
   Impl();
   ~Impl();
-  
+
   // Media Import Settings
-  QComboBox* defaultFrameRateCombo_;
-  QComboBox* colorSpaceCombo_;
-  QComboBox* audioSampleRateCombo_;
-  
+  QComboBox *defaultFrameRateCombo_;
+  QComboBox *colorSpaceCombo_;
+  QComboBox *audioSampleRateCombo_;
+
   // Footage Interpretation
-  QCheckBox* autoDetectAlphaCheckBox_;
-  QCheckBox* interpretFootageCheckBox_;
-  QComboBox* fieldOrderCombo_;
-  
+  QCheckBox *autoDetectAlphaCheckBox_;
+  QCheckBox *interpretFootageCheckBox_;
+  QComboBox *fieldOrderCombo_;
+
   // Sequence Settings
-  QSpinBox* stillDurationSpinBox_;
-  QCheckBox* createCompositionCheckBox_;
- };
+  QSpinBox *stillDurationSpinBox_;
+  QCheckBox *createCompositionCheckBox_;
+};
 
- ImportSettingPage::Impl::Impl()
- {
- }
+ImportSettingPage::Impl::Impl() {}
 
- ImportSettingPage::Impl::~Impl()
- {
- }
+ImportSettingPage::Impl::~Impl() {}
 
- ImportSettingPage::ImportSettingPage(QWidget* parent)
-  : QWidget(parent), impl_(new Impl())
- {
-  auto* mainLayout = new QVBoxLayout(this);
-  
+ImportSettingPage::ImportSettingPage(QWidget *parent)
+    : QWidget(parent), impl_(new Impl()) {
+  auto *mainLayout = new QVBoxLayout(this);
+
   // Media Import Group
-  auto* mediaImportGroup = new QGroupBox("Media Import", this);
-  auto* mediaImportLayout = new QVBoxLayout(mediaImportGroup);
-  
+  auto *mediaImportGroup = new QGroupBox("Media Import", this);
+  auto *mediaImportLayout = new QVBoxLayout(mediaImportGroup);
+
   // Frame Rate
-  auto* frameRateLayout = new QHBoxLayout();
+  auto *frameRateLayout = new QHBoxLayout();
   frameRateLayout->addWidget(new QLabel("Default Frame Rate:", this));
   impl_->defaultFrameRateCombo_ = new QComboBox(this);
-  impl_->defaultFrameRateCombo_->addItems({"23.976 fps", "24 fps", "25 fps", "29.97 fps", "30 fps", "50 fps", "59.94 fps", "60 fps"});
+  impl_->defaultFrameRateCombo_->addItems({"23.976 fps", "24 fps", "25 fps",
+                                           "29.97 fps", "30 fps", "50 fps",
+                                           "59.94 fps", "60 fps"});
   impl_->defaultFrameRateCombo_->setCurrentText("30 fps");
   frameRateLayout->addWidget(impl_->defaultFrameRateCombo_);
   frameRateLayout->addStretch();
   mediaImportLayout->addLayout(frameRateLayout);
-  
+
   // Color Space
-  auto* colorSpaceLayout = new QHBoxLayout();
+  auto *colorSpaceLayout = new QHBoxLayout();
   colorSpaceLayout->addWidget(new QLabel("Color Space:", this));
   impl_->colorSpaceCombo_ = new QComboBox(this);
-  impl_->colorSpaceCombo_->addItems({"sRGB", "Linear", "Rec.709", "Rec.2020", "DCI-P3", "Adobe RGB"});
+  impl_->colorSpaceCombo_->addItems(
+      {"sRGB", "Linear", "Rec.709", "Rec.2020", "DCI-P3", "Adobe RGB"});
   impl_->colorSpaceCombo_->setCurrentText("sRGB");
   colorSpaceLayout->addWidget(impl_->colorSpaceCombo_);
   colorSpaceLayout->addStretch();
   mediaImportLayout->addLayout(colorSpaceLayout);
-  
+
   // Audio Sample Rate
-  auto* audioSampleLayout = new QHBoxLayout();
+  auto *audioSampleLayout = new QHBoxLayout();
   audioSampleLayout->addWidget(new QLabel("Audio Sample Rate:", this));
   impl_->audioSampleRateCombo_ = new QComboBox(this);
-  impl_->audioSampleRateCombo_->addItems({"44100 Hz", "48000 Hz", "96000 Hz", "192000 Hz"});
+  impl_->audioSampleRateCombo_->addItems(
+      {"44100 Hz", "48000 Hz", "96000 Hz", "192000 Hz"});
   impl_->audioSampleRateCombo_->setCurrentText("48000 Hz");
   audioSampleLayout->addWidget(impl_->audioSampleRateCombo_);
   audioSampleLayout->addStretch();
   mediaImportLayout->addLayout(audioSampleLayout);
-  
+
   mainLayout->addWidget(mediaImportGroup);
-  
+
   // Footage Interpretation Group
-  auto* footageGroup = new QGroupBox("Footage Interpretation", this);
-  auto* footageLayout = new QVBoxLayout(footageGroup);
-  
-  impl_->autoDetectAlphaCheckBox_ = new QCheckBox("Auto-detect alpha channel", this);
+  auto *footageGroup = new QGroupBox("Footage Interpretation", this);
+  auto *footageLayout = new QVBoxLayout(footageGroup);
+
+  impl_->autoDetectAlphaCheckBox_ =
+      new QCheckBox("Auto-detect alpha channel", this);
   impl_->autoDetectAlphaCheckBox_->setChecked(true);
   footageLayout->addWidget(impl_->autoDetectAlphaCheckBox_);
-  
-  impl_->interpretFootageCheckBox_ = new QCheckBox("Interpret footage on import", this);
+
+  impl_->interpretFootageCheckBox_ =
+      new QCheckBox("Interpret footage on import", this);
   impl_->interpretFootageCheckBox_->setChecked(true);
   footageLayout->addWidget(impl_->interpretFootageCheckBox_);
-  
+
   // Field Order
-  auto* fieldOrderLayout = new QHBoxLayout();
+  auto *fieldOrderLayout = new QHBoxLayout();
   fieldOrderLayout->addWidget(new QLabel("Field Order:", this));
   impl_->fieldOrderCombo_ = new QComboBox(this);
-  impl_->fieldOrderCombo_->addItems({"Progressive", "Upper Field First", "Lower Field First"});
+  impl_->fieldOrderCombo_->addItems(
+      {"Progressive", "Upper Field First", "Lower Field First"});
   impl_->fieldOrderCombo_->setCurrentText("Progressive");
   fieldOrderLayout->addWidget(impl_->fieldOrderCombo_);
   fieldOrderLayout->addStretch();
   footageLayout->addLayout(fieldOrderLayout);
-  
+
   mainLayout->addWidget(footageGroup);
-  
+
   // Sequence Settings Group
-  auto* sequenceGroup = new QGroupBox("Sequence Settings", this);
-  auto* sequenceLayout = new QVBoxLayout(sequenceGroup);
-  
+  auto *sequenceGroup = new QGroupBox("Sequence Settings", this);
+  auto *sequenceLayout = new QVBoxLayout(sequenceGroup);
+
   // Still Duration
-  auto* durationLayout = new QHBoxLayout();
+  auto *durationLayout = new QHBoxLayout();
   durationLayout->addWidget(new QLabel("Still Image Duration:", this));
   impl_->stillDurationSpinBox_ = new QSpinBox(this);
   impl_->stillDurationSpinBox_->setRange(1, 3600);
@@ -284,32 +312,53 @@ namespace ArtifactCore {
   durationLayout->addWidget(impl_->stillDurationSpinBox_);
   durationLayout->addStretch();
   sequenceLayout->addLayout(durationLayout);
-  
-  impl_->createCompositionCheckBox_ = new QCheckBox("Create composition when importing sequences", this);
+
+  impl_->createCompositionCheckBox_ =
+      new QCheckBox("Create composition when importing sequences", this);
   impl_->createCompositionCheckBox_->setChecked(true);
   sequenceLayout->addWidget(impl_->createCompositionCheckBox_);
-  
+
   mainLayout->addWidget(sequenceGroup);
-  
+
   mainLayout->addStretch();
- }
+}
 
- ImportSettingPage::~ImportSettingPage()
- {
-  delete impl_;
- }
+ImportSettingPage::~ImportSettingPage() { delete impl_; }
 
- void ImportSettingPage::loadSettings()
- {
+void ImportSettingPage::loadSettings() {
   QSettings settings;
-  const QString frameRate = settings.value(QStringLiteral("Settings/Import/DefaultFrameRate"), QStringLiteral("30 fps")).toString();
-  const QString colorSpace = settings.value(QStringLiteral("Settings/Import/ColorSpace"), QStringLiteral("sRGB")).toString();
-  const QString audioRate = settings.value(QStringLiteral("Settings/Import/AudioSampleRate"), QStringLiteral("48000 Hz")).toString();
-  const bool autoDetectAlpha = settings.value(QStringLiteral("Settings/Import/AutoDetectAlpha"), true).toBool();
-  const bool interpretFootage = settings.value(QStringLiteral("Settings/Import/InterpretFootage"), true).toBool();
-  const QString fieldOrder = settings.value(QStringLiteral("Settings/Import/FieldOrder"), QStringLiteral("Progressive")).toString();
-  const int stillDuration = settings.value(QStringLiteral("Settings/Import/StillDuration"), 5).toInt();
-  const bool createComposition = settings.value(QStringLiteral("Settings/Import/CreateComposition"), true).toBool();
+  const QString frameRate =
+      settings
+          .value(QStringLiteral("Settings/Import/DefaultFrameRate"),
+                 QStringLiteral("30 fps"))
+          .toString();
+  const QString colorSpace =
+      settings
+          .value(QStringLiteral("Settings/Import/ColorSpace"),
+                 QStringLiteral("sRGB"))
+          .toString();
+  const QString audioRate =
+      settings
+          .value(QStringLiteral("Settings/Import/AudioSampleRate"),
+                 QStringLiteral("48000 Hz"))
+          .toString();
+  const bool autoDetectAlpha =
+      settings.value(QStringLiteral("Settings/Import/AutoDetectAlpha"), true)
+          .toBool();
+  const bool interpretFootage =
+      settings.value(QStringLiteral("Settings/Import/InterpretFootage"), true)
+          .toBool();
+  const QString fieldOrder =
+      settings
+          .value(QStringLiteral("Settings/Import/FieldOrder"),
+                 QStringLiteral("Progressive"))
+          .toString();
+  const int stillDuration =
+      settings.value(QStringLiteral("Settings/Import/StillDuration"), 5)
+          .toInt();
+  const bool createComposition =
+      settings.value(QStringLiteral("Settings/Import/CreateComposition"), true)
+          .toBool();
 
   impl_->defaultFrameRateCombo_->setCurrentText(frameRate);
   impl_->colorSpaceCombo_->setCurrentText(colorSpace);
@@ -319,82 +368,132 @@ namespace ArtifactCore {
   impl_->fieldOrderCombo_->setCurrentText(fieldOrder);
   impl_->stillDurationSpinBox_->setValue(stillDuration);
   impl_->createCompositionCheckBox_->setChecked(createComposition);
- }
+}
 
- void ImportSettingPage::saveSettings()
- {
+void ImportSettingPage::saveSettings() {
   QSettings settings;
-  settings.setValue(QStringLiteral("Settings/Import/DefaultFrameRate"), impl_->defaultFrameRateCombo_->currentText());
-  settings.setValue(QStringLiteral("Settings/Import/ColorSpace"), impl_->colorSpaceCombo_->currentText());
-  settings.setValue(QStringLiteral("Settings/Import/AudioSampleRate"), impl_->audioSampleRateCombo_->currentText());
-  settings.setValue(QStringLiteral("Settings/Import/AutoDetectAlpha"), impl_->autoDetectAlphaCheckBox_->isChecked());
-  settings.setValue(QStringLiteral("Settings/Import/InterpretFootage"), impl_->interpretFootageCheckBox_->isChecked());
-  settings.setValue(QStringLiteral("Settings/Import/FieldOrder"), impl_->fieldOrderCombo_->currentText());
-  settings.setValue(QStringLiteral("Settings/Import/StillDuration"), impl_->stillDurationSpinBox_->value());
-  settings.setValue(QStringLiteral("Settings/Import/CreateComposition"), impl_->createCompositionCheckBox_->isChecked());
- }
+  settings.setValue(QStringLiteral("Settings/Import/DefaultFrameRate"),
+                    impl_->defaultFrameRateCombo_->currentText());
+  settings.setValue(QStringLiteral("Settings/Import/ColorSpace"),
+                    impl_->colorSpaceCombo_->currentText());
+  settings.setValue(QStringLiteral("Settings/Import/AudioSampleRate"),
+                    impl_->audioSampleRateCombo_->currentText());
+  settings.setValue(QStringLiteral("Settings/Import/AutoDetectAlpha"),
+                    impl_->autoDetectAlphaCheckBox_->isChecked());
+  settings.setValue(QStringLiteral("Settings/Import/InterpretFootage"),
+                    impl_->interpretFootageCheckBox_->isChecked());
+  settings.setValue(QStringLiteral("Settings/Import/FieldOrder"),
+                    impl_->fieldOrderCombo_->currentText());
+  settings.setValue(QStringLiteral("Settings/Import/StillDuration"),
+                    impl_->stillDurationSpinBox_->value());
+  settings.setValue(QStringLiteral("Settings/Import/CreateComposition"),
+                    impl_->createCompositionCheckBox_->isChecked());
+}
 
- // PreviewSettingPage Implementation
- class PreviewSettingPage::Impl {
- public:
+QList<SettingItemInfo> ImportSettingPage::searchableItems() const {
+  QList<SettingItemInfo> items;
+  if (impl_->defaultFrameRateCombo_) {
+    items.append({QStringLiteral("Default Frame Rate"),
+                  QStringLiteral("Frame rate for imported media"),
+                  QStringLiteral("Import"), impl_->defaultFrameRateCombo_});
+  }
+  if (impl_->colorSpaceCombo_) {
+    items.append({QStringLiteral("Color Space"),
+                  QStringLiteral("Color space for imported media"),
+                  QStringLiteral("Import"), impl_->colorSpaceCombo_});
+  }
+  if (impl_->audioSampleRateCombo_) {
+    items.append({QStringLiteral("Audio Sample Rate"),
+                  QStringLiteral("Sample rate for imported audio"),
+                  QStringLiteral("Import"), impl_->audioSampleRateCombo_});
+  }
+  if (impl_->autoDetectAlphaCheckBox_) {
+    items.append(
+        {QStringLiteral("Auto-detect alpha channel"),
+         QStringLiteral("Automatically detect transparency in footage"),
+         QStringLiteral("Import"), impl_->autoDetectAlphaCheckBox_});
+  }
+  if (impl_->interpretFootageCheckBox_) {
+    items.append({QStringLiteral("Interpret footage on import"),
+                  QStringLiteral("Show interpretation dialog when importing"),
+                  QStringLiteral("Import"), impl_->interpretFootageCheckBox_});
+  }
+  if (impl_->fieldOrderCombo_) {
+    items.append({QStringLiteral("Field Order"),
+                  QStringLiteral("Interlaced footage field order"),
+                  QStringLiteral("Import"), impl_->fieldOrderCombo_});
+  }
+  if (impl_->stillDurationSpinBox_) {
+    items.append({QStringLiteral("Still Image Duration"),
+                  QStringLiteral("Default duration for still images"),
+                  QStringLiteral("Import"), impl_->stillDurationSpinBox_});
+  }
+  if (impl_->createCompositionCheckBox_) {
+    items.append({QStringLiteral("Create composition when importing sequences"),
+                  QStringLiteral(
+                      "Automatically create composition from image sequences"),
+                  QStringLiteral("Import"), impl_->createCompositionCheckBox_});
+  }
+  return items;
+}
+
+// PreviewSettingPage Implementation
+class PreviewSettingPage::Impl {
+public:
   Impl();
   ~Impl();
-  
+
   // Preview Quality
-  QComboBox* previewQualityCombo_;
-  QSlider* previewResolutionSlider_;
-  QLabel* resolutionLabel_;
-  
+  QComboBox *previewQualityCombo_;
+  QSlider *previewResolutionSlider_;
+  QLabel *resolutionLabel_;
+
   // Cache Settings
-  QCheckBox* enableCacheCheckBox_;
-  QSpinBox* cacheSizeSpinBox_;
-  QCheckBox* enableDiskCacheCheckBox_;
-  
+  QCheckBox *enableCacheCheckBox_;
+  QSpinBox *cacheSizeSpinBox_;
+  QCheckBox *enableDiskCacheCheckBox_;
+
   // Thumbnail Settings
-  QCheckBox* generateThumbnailsCheckBox_;
-  QComboBox* thumbnailQualityCombo_;
-  
+  QCheckBox *generateThumbnailsCheckBox_;
+  QComboBox *thumbnailQualityCombo_;
+
   // GPU Acceleration
-  QCheckBox* enableGPUCheckBox_;
-  QComboBox* gpuDeviceCombo_;
- };
+  QCheckBox *enableGPUCheckBox_;
+  QComboBox *gpuDeviceCombo_;
+};
 
- PreviewSettingPage::Impl::Impl()
- {
- }
+PreviewSettingPage::Impl::Impl() {}
 
- PreviewSettingPage::Impl::~Impl()
- {
- }
+PreviewSettingPage::Impl::~Impl() {}
 
- PreviewSettingPage::PreviewSettingPage(QWidget* parent)
-  : QWidget(parent), impl_(new Impl())
- {
-  auto* mainLayout = new QVBoxLayout(this);
-  
+PreviewSettingPage::PreviewSettingPage(QWidget *parent)
+    : QWidget(parent), impl_(new Impl()) {
+  auto *mainLayout = new QVBoxLayout(this);
+
   // Preview Quality Group
-  auto* qualityGroup = new QGroupBox("Preview Quality", this);
-  auto* qualityLayout = new QVBoxLayout(qualityGroup);
-  
+  auto *qualityGroup = new QGroupBox("Preview Quality", this);
+  auto *qualityLayout = new QVBoxLayout(qualityGroup);
+
   // Quality Preset
-  auto* presetLayout = new QHBoxLayout();
+  auto *presetLayout = new QHBoxLayout();
   presetLayout->addWidget(new QLabel("Quality Preset:", this));
   impl_->previewQualityCombo_ = new QComboBox(this);
-  impl_->previewQualityCombo_->addItems({"Draft", "Fast", "Adaptive", "Full Quality"});
+  impl_->previewQualityCombo_->addItems(
+      {"Draft", "Fast", "Adaptive", "Full Quality"});
   impl_->previewQualityCombo_->setCurrentText("Adaptive");
   presetLayout->addWidget(impl_->previewQualityCombo_);
   presetLayout->addStretch();
   qualityLayout->addLayout(presetLayout);
-  
+
   // Preview Resolution
-  auto* resolutionLayout = new QVBoxLayout();
-  auto* resLabelLayout = new QHBoxLayout();
+  auto *resolutionLayout = new QVBoxLayout();
+  auto *resLabelLayout = new QHBoxLayout();
   resLabelLayout->addWidget(new QLabel("Preview Resolution:", this));
   impl_->resolutionLabel_ = new QLabel("50%", this);
   resLabelLayout->addWidget(impl_->resolutionLabel_);
   resLabelLayout->addStretch();
   resolutionLayout->addLayout(resLabelLayout);
-  
+
   impl_->previewResolutionSlider_ = new QSlider(Qt::Horizontal, this);
   impl_->previewResolutionSlider_->setRange(25, 100);
   impl_->previewResolutionSlider_->setValue(50);
@@ -402,22 +501,24 @@ namespace ArtifactCore {
   impl_->previewResolutionSlider_->setTickInterval(25);
   resolutionLayout->addWidget(impl_->previewResolutionSlider_);
   qualityLayout->addLayout(resolutionLayout);
-  
-  QObject::connect(impl_->previewResolutionSlider_, &QSlider::valueChanged, [this](int value) {
-   impl_->resolutionLabel_->setText(QString::number(value) + "%");
-  });
-  
+
+  QObject::connect(impl_->previewResolutionSlider_, &QSlider::valueChanged,
+                   [this](int value) {
+                     impl_->resolutionLabel_->setText(QString::number(value) +
+                                                      "%");
+                   });
+
   mainLayout->addWidget(qualityGroup);
-  
+
   // Cache Settings Group
-  auto* cacheGroup = new QGroupBox("Cache Settings", this);
-  auto* cacheLayout = new QVBoxLayout(cacheGroup);
-  
+  auto *cacheGroup = new QGroupBox("Cache Settings", this);
+  auto *cacheLayout = new QVBoxLayout(cacheGroup);
+
   impl_->enableCacheCheckBox_ = new QCheckBox("Enable RAM cache", this);
   impl_->enableCacheCheckBox_->setChecked(true);
   cacheLayout->addWidget(impl_->enableCacheCheckBox_);
-  
-  auto* cacheSizeLayout = new QHBoxLayout();
+
+  auto *cacheSizeLayout = new QHBoxLayout();
   cacheSizeLayout->addWidget(new QLabel("Cache Size:", this));
   impl_->cacheSizeSpinBox_ = new QSpinBox(this);
   impl_->cacheSizeSpinBox_->setRange(512, 32768);
@@ -427,22 +528,23 @@ namespace ArtifactCore {
   cacheSizeLayout->addWidget(impl_->cacheSizeSpinBox_);
   cacheSizeLayout->addStretch();
   cacheLayout->addLayout(cacheSizeLayout);
-  
+
   impl_->enableDiskCacheCheckBox_ = new QCheckBox("Enable disk cache", this);
   impl_->enableDiskCacheCheckBox_->setChecked(false);
   cacheLayout->addWidget(impl_->enableDiskCacheCheckBox_);
-  
+
   mainLayout->addWidget(cacheGroup);
-  
+
   // Thumbnail Settings Group (using FFmpegThumbnailExtractor)
-  auto* thumbnailGroup = new QGroupBox("Thumbnail Generation", this);
-  auto* thumbnailLayout = new QVBoxLayout(thumbnailGroup);
-  
-  impl_->generateThumbnailsCheckBox_ = new QCheckBox("Generate thumbnails for media files", this);
+  auto *thumbnailGroup = new QGroupBox("Thumbnail Generation", this);
+  auto *thumbnailLayout = new QVBoxLayout(thumbnailGroup);
+
+  impl_->generateThumbnailsCheckBox_ =
+      new QCheckBox("Generate thumbnails for media files", this);
   impl_->generateThumbnailsCheckBox_->setChecked(true);
   thumbnailLayout->addWidget(impl_->generateThumbnailsCheckBox_);
-  
-  auto* thumbQualityLayout = new QHBoxLayout();
+
+  auto *thumbQualityLayout = new QHBoxLayout();
   thumbQualityLayout->addWidget(new QLabel("Thumbnail Quality:", this));
   impl_->thumbnailQualityCombo_ = new QComboBox(this);
   impl_->thumbnailQualityCombo_->addItems({"Low", "Medium", "High"});
@@ -450,460 +552,547 @@ namespace ArtifactCore {
   thumbQualityLayout->addWidget(impl_->thumbnailQualityCombo_);
   thumbQualityLayout->addStretch();
   thumbnailLayout->addLayout(thumbQualityLayout);
-  
+
   mainLayout->addWidget(thumbnailGroup);
-  
+
   // GPU Acceleration Group
-  auto* gpuGroup = new QGroupBox("GPU Acceleration", this);
-  auto* gpuLayout = new QVBoxLayout(gpuGroup);
-  
+  auto *gpuGroup = new QGroupBox("GPU Acceleration", this);
+  auto *gpuLayout = new QVBoxLayout(gpuGroup);
+
   impl_->enableGPUCheckBox_ = new QCheckBox("Enable GPU acceleration", this);
   impl_->enableGPUCheckBox_->setChecked(true);
   gpuLayout->addWidget(impl_->enableGPUCheckBox_);
-  
-  auto* gpuDeviceLayout = new QHBoxLayout();
+
+  auto *gpuDeviceLayout = new QHBoxLayout();
   gpuDeviceLayout->addWidget(new QLabel("GPU Device:", this));
   impl_->gpuDeviceCombo_ = new QComboBox(this);
-  impl_->gpuDeviceCombo_->addItems({"Auto (Best Available)", "NVIDIA GPU", "AMD GPU", "Intel GPU"});
+  impl_->gpuDeviceCombo_->addItems(
+      {"Auto (Best Available)", "NVIDIA GPU", "AMD GPU", "Intel GPU"});
   impl_->gpuDeviceCombo_->setCurrentText("Auto (Best Available)");
   gpuDeviceLayout->addWidget(impl_->gpuDeviceCombo_);
   gpuDeviceLayout->addStretch();
   gpuLayout->addLayout(gpuDeviceLayout);
-  
+
   mainLayout->addWidget(gpuGroup);
-  
+
   mainLayout->addStretch();
- }
-
- PreviewSettingPage::~PreviewSettingPage()
- {
-  delete impl_;
- }
-
- void PreviewSettingPage::loadSettings()
- {
-  QSettings settings;
-  impl_->previewQualityCombo_->setCurrentText(settings.value(QStringLiteral("Settings/Preview/QualityPreset"), QStringLiteral("Adaptive")).toString());
-  impl_->previewResolutionSlider_->setValue(settings.value(QStringLiteral("Settings/Preview/Resolution"), 50).toInt());
-  impl_->enableCacheCheckBox_->setChecked(settings.value(QStringLiteral("Settings/Preview/EnableRAMCache"), true).toBool());
-  impl_->cacheSizeSpinBox_->setValue(settings.value(QStringLiteral("Settings/Preview/CacheSizeMB"), 4096).toInt());
-  impl_->enableDiskCacheCheckBox_->setChecked(settings.value(QStringLiteral("Settings/Preview/EnableDiskCache"), false).toBool());
-  impl_->generateThumbnailsCheckBox_->setChecked(settings.value(QStringLiteral("Settings/Preview/GenerateThumbnails"), true).toBool());
-  impl_->thumbnailQualityCombo_->setCurrentText(settings.value(QStringLiteral("Settings/Preview/ThumbnailQuality"), QStringLiteral("Medium")).toString());
-  impl_->enableGPUCheckBox_->setChecked(settings.value(QStringLiteral("Settings/Preview/EnableGPU"), true).toBool());
-  impl_->gpuDeviceCombo_->setCurrentText(settings.value(QStringLiteral("Settings/Preview/GPUDevice"), QStringLiteral("Auto (Best Available)")).toString());
- }
-
- void PreviewSettingPage::saveSettings()
- {
-  QSettings settings;
-  settings.setValue(QStringLiteral("Settings/Preview/QualityPreset"), impl_->previewQualityCombo_->currentText());
-  settings.setValue(QStringLiteral("Settings/Preview/Resolution"), impl_->previewResolutionSlider_->value());
-  settings.setValue(QStringLiteral("Settings/Preview/EnableRAMCache"), impl_->enableCacheCheckBox_->isChecked());
-  settings.setValue(QStringLiteral("Settings/Preview/CacheSizeMB"), impl_->cacheSizeSpinBox_->value());
-  settings.setValue(QStringLiteral("Settings/Preview/EnableDiskCache"), impl_->enableDiskCacheCheckBox_->isChecked());
-  settings.setValue(QStringLiteral("Settings/Preview/GenerateThumbnails"), impl_->generateThumbnailsCheckBox_->isChecked());
-  settings.setValue(QStringLiteral("Settings/Preview/ThumbnailQuality"), impl_->thumbnailQualityCombo_->currentText());
-  settings.setValue(QStringLiteral("Settings/Preview/EnableGPU"), impl_->enableGPUCheckBox_->isChecked());
-  settings.setValue(QStringLiteral("Settings/Preview/GPUDevice"), impl_->gpuDeviceCombo_->currentText());
- }
-
-
-
-LabelColorSettingWidget::LabelColorSettingWidget(const QString& labelname, const QColor& color, QWidget* parent /*= NULL*/)
-{
 }
 
-LabelColorSettingWidget::~LabelColorSettingWidget()
-{
+PreviewSettingPage::~PreviewSettingPage() { delete impl_; }
+
+void PreviewSettingPage::loadSettings() {
+  QSettings settings;
+  impl_->previewQualityCombo_->setCurrentText(
+      settings
+          .value(QStringLiteral("Settings/Preview/QualityPreset"),
+                 QStringLiteral("Adaptive"))
+          .toString());
+  impl_->previewResolutionSlider_->setValue(
+      settings.value(QStringLiteral("Settings/Preview/Resolution"), 50)
+          .toInt());
+  impl_->enableCacheCheckBox_->setChecked(
+      settings.value(QStringLiteral("Settings/Preview/EnableRAMCache"), true)
+          .toBool());
+  impl_->cacheSizeSpinBox_->setValue(
+      settings.value(QStringLiteral("Settings/Preview/CacheSizeMB"), 4096)
+          .toInt());
+  impl_->enableDiskCacheCheckBox_->setChecked(
+      settings.value(QStringLiteral("Settings/Preview/EnableDiskCache"), false)
+          .toBool());
+  impl_->generateThumbnailsCheckBox_->setChecked(
+      settings
+          .value(QStringLiteral("Settings/Preview/GenerateThumbnails"), true)
+          .toBool());
+  impl_->thumbnailQualityCombo_->setCurrentText(
+      settings
+          .value(QStringLiteral("Settings/Preview/ThumbnailQuality"),
+                 QStringLiteral("Medium"))
+          .toString());
+  impl_->enableGPUCheckBox_->setChecked(
+      settings.value(QStringLiteral("Settings/Preview/EnableGPU"), true)
+          .toBool());
+  impl_->gpuDeviceCombo_->setCurrentText(
+      settings
+          .value(QStringLiteral("Settings/Preview/GPUDevice"),
+                 QStringLiteral("Auto (Best Available)"))
+          .toString());
 }
+
+void PreviewSettingPage::saveSettings() {
+  QSettings settings;
+  settings.setValue(QStringLiteral("Settings/Preview/QualityPreset"),
+                    impl_->previewQualityCombo_->currentText());
+  settings.setValue(QStringLiteral("Settings/Preview/Resolution"),
+                    impl_->previewResolutionSlider_->value());
+  settings.setValue(QStringLiteral("Settings/Preview/EnableRAMCache"),
+                    impl_->enableCacheCheckBox_->isChecked());
+  settings.setValue(QStringLiteral("Settings/Preview/CacheSizeMB"),
+                    impl_->cacheSizeSpinBox_->value());
+  settings.setValue(QStringLiteral("Settings/Preview/EnableDiskCache"),
+                    impl_->enableDiskCacheCheckBox_->isChecked());
+  settings.setValue(QStringLiteral("Settings/Preview/GenerateThumbnails"),
+                    impl_->generateThumbnailsCheckBox_->isChecked());
+  settings.setValue(QStringLiteral("Settings/Preview/ThumbnailQuality"),
+                    impl_->thumbnailQualityCombo_->currentText());
+  settings.setValue(QStringLiteral("Settings/Preview/EnableGPU"),
+                    impl_->enableGPUCheckBox_->isChecked());
+  settings.setValue(QStringLiteral("Settings/Preview/GPUDevice"),
+                    impl_->gpuDeviceCombo_->currentText());
+}
+
+QList<SettingItemInfo> PreviewSettingPage::searchableItems() const {
+  QList<SettingItemInfo> items;
+  if (impl_->previewQualityCombo_) {
+    items.append({QStringLiteral("Quality Preset"),
+                  QStringLiteral("Preview quality preset"),
+                  QStringLiteral("Preview"), impl_->previewQualityCombo_});
+  }
+  if (impl_->previewResolutionSlider_) {
+    items.append({QStringLiteral("Preview Resolution"),
+                  QStringLiteral("Preview resolution scale"),
+                  QStringLiteral("Preview"), impl_->previewResolutionSlider_});
+  }
+  if (impl_->enableCacheCheckBox_) {
+    items.append({QStringLiteral("Enable RAM cache"),
+                  QStringLiteral("Cache preview frames in memory"),
+                  QStringLiteral("Preview"), impl_->enableCacheCheckBox_});
+  }
+  if (impl_->cacheSizeSpinBox_) {
+    items.append({QStringLiteral("Cache Size"),
+                  QStringLiteral("Maximum RAM cache size"),
+                  QStringLiteral("Preview"), impl_->cacheSizeSpinBox_});
+  }
+  if (impl_->enableDiskCacheCheckBox_) {
+    items.append({QStringLiteral("Enable disk cache"),
+                  QStringLiteral("Cache preview frames to disk"),
+                  QStringLiteral("Preview"), impl_->enableDiskCacheCheckBox_});
+  }
+  if (impl_->generateThumbnailsCheckBox_) {
+    items.append({QStringLiteral("Generate thumbnails"),
+                  QStringLiteral("Generate thumbnails for media"),
+                  QStringLiteral("Preview"),
+                  impl_->generateThumbnailsCheckBox_});
+  }
+  if (impl_->thumbnailQualityCombo_) {
+    items.append({QStringLiteral("Thumbnail Quality"),
+                  QStringLiteral("Quality of generated thumbnails"),
+                  QStringLiteral("Preview"), impl_->thumbnailQualityCombo_});
+  }
+  if (impl_->enableGPUCheckBox_) {
+    items.append({QStringLiteral("Enable GPU acceleration"),
+                  QStringLiteral("Use GPU for preview"),
+                  QStringLiteral("Preview"), impl_->enableGPUCheckBox_});
+  }
+  if (impl_->gpuDeviceCombo_) {
+    items.append({QStringLiteral("GPU Device"),
+                  QStringLiteral("Select GPU device"),
+                  QStringLiteral("Preview"), impl_->gpuDeviceCombo_});
+  }
+  return items;
+}
+
+LabelColorSettingWidget::LabelColorSettingWidget(const QString &labelname,
+                                                 const QColor &color,
+                                                 QWidget *parent /*= NULL*/) {}
+
+LabelColorSettingWidget::~LabelColorSettingWidget() {}
 
 // ShortcutSettingPage Implementation
 class ShortcutSettingPage::Impl {
 public:
-    Impl() = default;
-    ~Impl() = default;
+  Impl() = default;
+  ~Impl() = default;
 
-    QLineEdit* filterEdit_ = nullptr;
-    QLabel* summaryLabel_ = nullptr;
-    QTableWidget* shortcutTable_ = nullptr;
-    QPushButton* refreshButton_ = nullptr;
-    QPushButton* copySelectionButton_ = nullptr;
-    QPushButton* editButton_ = nullptr;
-    QPushButton* clearButton_ = nullptr;
+  QLineEdit *filterEdit_ = nullptr;
+  QLabel *summaryLabel_ = nullptr;
+  QTableWidget *shortcutTable_ = nullptr;
+  QPushButton *refreshButton_ = nullptr;
+  QPushButton *copySelectionButton_ = nullptr;
+  QPushButton *editButton_ = nullptr;
+  QPushButton *clearButton_ = nullptr;
 
-    struct ShortcutRow {
-        QString keyMapName;
-        QString context;
-        QString actionId;
-        QString actionName;
-        QString shortcut;
-        QString category;
-        QString description;
-        int keyCode = 0;
-        int modifierMask = 0;
-        bool editable = false;
-    };
+  struct ShortcutRow {
+    QString keyMapName;
+    QString context;
+    QString actionId;
+    QString actionName;
+    QString shortcut;
+    QString category;
+    QString description;
+    int keyCode = 0;
+    int modifierMask = 0;
+    bool editable = false;
+  };
 
-    static bool rowMatchesFilter(const ShortcutRow& row, const QString& needle)
-    {
-        if (needle.isEmpty()) {
-            return true;
-        }
-        return row.context.contains(needle, Qt::CaseInsensitive) ||
-               row.actionId.contains(needle, Qt::CaseInsensitive) ||
-               row.actionName.contains(needle, Qt::CaseInsensitive) ||
-               row.shortcut.contains(needle, Qt::CaseInsensitive) ||
-               row.category.contains(needle, Qt::CaseInsensitive) ||
-               row.description.contains(needle, Qt::CaseInsensitive);
+  static bool rowMatchesFilter(const ShortcutRow &row, const QString &needle) {
+    if (needle.isEmpty()) {
+      return true;
+    }
+    return row.context.contains(needle, Qt::CaseInsensitive) ||
+           row.actionId.contains(needle, Qt::CaseInsensitive) ||
+           row.actionName.contains(needle, Qt::CaseInsensitive) ||
+           row.shortcut.contains(needle, Qt::CaseInsensitive) ||
+           row.category.contains(needle, Qt::CaseInsensitive) ||
+           row.description.contains(needle, Qt::CaseInsensitive);
+  }
+
+  static InputEvent::Modifiers modifiersFromQt(int modifierBits) {
+    InputEvent::Modifiers mods;
+    if (modifierBits & Qt::ControlModifier) {
+      mods |= InputEvent::ModifierKey::LCtrl;
+    }
+    if (modifierBits & Qt::ShiftModifier) {
+      mods |= InputEvent::ModifierKey::LShift;
+    }
+    if (modifierBits & Qt::AltModifier) {
+      mods |= InputEvent::ModifierKey::LAlt;
+    }
+    if (modifierBits & Qt::MetaModifier) {
+      mods |= InputEvent::ModifierKey::LMeta;
+    }
+    return mods;
+  }
+
+  static bool decodeShortcut(const QKeySequence &sequence, int *keyCode,
+                             InputEvent::Modifiers *modifiers) {
+    if (!keyCode || !modifiers || sequence.isEmpty()) {
+      return false;
     }
 
-    static InputEvent::Modifiers modifiersFromQt(int modifierBits)
-    {
-        InputEvent::Modifiers mods;
-        if (modifierBits & Qt::ControlModifier) {
-            mods |= InputEvent::ModifierKey::LCtrl;
-        }
-        if (modifierBits & Qt::ShiftModifier) {
-            mods |= InputEvent::ModifierKey::LShift;
-        }
-        if (modifierBits & Qt::AltModifier) {
-            mods |= InputEvent::ModifierKey::LAlt;
-        }
-        if (modifierBits & Qt::MetaModifier) {
-            mods |= InputEvent::ModifierKey::LMeta;
-        }
-        return mods;
+    const int combined = sequence[0];
+    if (combined == 0) {
+      return false;
     }
 
-    static bool decodeShortcut(const QKeySequence& sequence, int* keyCode, InputEvent::Modifiers* modifiers)
-    {
-        if (!keyCode || !modifiers || sequence.isEmpty()) {
-            return false;
-        }
-
-        const int combined = sequence[0];
-        if (combined == 0) {
-            return false;
-        }
-
-        const int modifierMask = static_cast<int>(Qt::KeyboardModifierMask);
-        const int modifierBits = combined & modifierMask;
-        const int key = combined & ~modifierMask;
-        if (key == 0) {
-            return false;
-        }
-
-        *keyCode = key;
-        *modifiers = modifiersFromQt(modifierBits);
-        return true;
+    const int modifierMask = static_cast<int>(Qt::KeyboardModifierMask);
+    const int modifierBits = combined & modifierMask;
+    const int key = combined & ~modifierMask;
+    if (key == 0) {
+      return false;
     }
 
-    static QString settingsGroup()
-    {
-        return QStringLiteral("Settings/Shortcuts/KeyMaps");
+    *keyCode = key;
+    *modifiers = modifiersFromQt(modifierBits);
+    return true;
+  }
+
+  static QString settingsGroup() {
+    return QStringLiteral("Settings/Shortcuts/KeyMaps");
+  }
+
+  std::vector<ShortcutRow> collectRows() const {
+    std::vector<ShortcutRow> rows;
+    auto *am = ArtifactCore::ActionManager::instance();
+    auto *input = ArtifactCore::InputOperator::instance();
+    if (!am) {
+      return rows;
     }
 
-    std::vector<ShortcutRow> collectRows() const
-    {
-        std::vector<ShortcutRow> rows;
-        auto* am = ArtifactCore::ActionManager::instance();
-        auto* input = ArtifactCore::InputOperator::instance();
-        if (!am) {
-            return rows;
+    std::set<QString> boundActionIds;
+    if (input) {
+      const auto keyMaps = input->allKeyMaps();
+      for (auto *keyMap : keyMaps) {
+        if (!keyMap) {
+          continue;
         }
-
-        std::set<QString> boundActionIds;
-        if (input) {
-            const auto keyMaps = input->allKeyMaps();
-            for (auto* keyMap : keyMaps) {
-                if (!keyMap) {
-                    continue;
-                }
-                const QString context = keyMap->context().isEmpty() ? keyMap->name() : keyMap->context();
-                for (auto* binding : keyMap->allBindings()) {
-                    if (!binding) {
-                        continue;
-                    }
-                    ShortcutRow row;
-                    row.keyMapName = keyMap->name();
-                    row.context = context;
-                    row.actionId = binding->actionId();
-                    row.shortcut = binding->toString();
-                    row.description = binding->description();
-                    row.keyCode = binding->keyCode();
-                    row.modifierMask = static_cast<int>(binding->modifiers());
-                    row.editable = true;
-                    if (auto* action = am->getAction(binding->actionId())) {
-                        row.actionName = action->label();
-                        row.category = action->category();
-                        if (row.description.isEmpty()) {
-                            row.description = action->description();
-                        }
-                    } else {
-                        row.category = QStringLiteral("KeyMap");
-                        row.actionName = binding->name().isEmpty() ? binding->actionId() : binding->name();
-                    }
-                    if (!row.actionId.isEmpty()) {
-                        boundActionIds.insert(row.actionId);
-                    }
-                    rows.push_back(row);
-                }
-            }
-        }
-
-        const auto actions = am->allActions();
-        for (auto* action : actions) {
-            if (!action) {
-                continue;
-            }
-            if (boundActionIds.contains(action->id())) {
-                continue;
-            }
-            ShortcutRow row;
-            row.actionId = action->id();
+        const QString context =
+            keyMap->context().isEmpty() ? keyMap->name() : keyMap->context();
+        for (auto *binding : keyMap->allBindings()) {
+          if (!binding) {
+            continue;
+          }
+          ShortcutRow row;
+          row.keyMapName = keyMap->name();
+          row.context = context;
+          row.actionId = binding->actionId();
+          row.shortcut = binding->toString();
+          row.description = binding->description();
+          row.keyCode = binding->keyCode();
+          row.modifierMask = static_cast<int>(binding->modifiers());
+          row.editable = true;
+          if (auto *action = am->getAction(binding->actionId())) {
             row.actionName = action->label();
             row.category = action->category();
-            row.description = action->description();
-            row.context = QStringLiteral("Unassigned");
-            row.shortcut = QStringLiteral("Unassigned");
-            rows.push_back(row);
+            if (row.description.isEmpty()) {
+              row.description = action->description();
+            }
+          } else {
+            row.category = QStringLiteral("KeyMap");
+            row.actionName = binding->name().isEmpty() ? binding->actionId()
+                                                       : binding->name();
+          }
+          if (!row.actionId.isEmpty()) {
+            boundActionIds.insert(row.actionId);
+          }
+          rows.push_back(row);
         }
-
-        std::sort(rows.begin(), rows.end(), [](const ShortcutRow& lhs, const ShortcutRow& rhs) {
-            if (lhs.context != rhs.context) {
-                return lhs.context < rhs.context;
-            }
-            if (lhs.actionName != rhs.actionName) {
-                return lhs.actionName < rhs.actionName;
-            }
-            return lhs.shortcut < rhs.shortcut;
-        });
-        return rows;
+      }
     }
 
-    void restoreFromSettings()
-    {
-        auto* input = ArtifactCore::InputOperator::instance();
-        if (!input) {
-            return;
-        }
-
-        QSettings settings;
-        settings.beginGroup(settingsGroup());
-        const auto keyMaps = input->allKeyMaps();
-        for (auto* keyMap : keyMaps) {
-            if (!keyMap) {
-                continue;
-            }
-            const QString json = settings.value(keyMap->name()).toString();
-            if (!json.trimmed().isEmpty()) {
-                keyMap->fromJSON(json);
-            }
-        }
-        settings.endGroup();
+    const auto actions = am->allActions();
+    for (auto *action : actions) {
+      if (!action) {
+        continue;
+      }
+      if (boundActionIds.contains(action->id())) {
+        continue;
+      }
+      ShortcutRow row;
+      row.actionId = action->id();
+      row.actionName = action->label();
+      row.category = action->category();
+      row.description = action->description();
+      row.context = QStringLiteral("Unassigned");
+      row.shortcut = QStringLiteral("Unassigned");
+      rows.push_back(row);
     }
 
-    void saveToSettings() const
-    {
-        auto* input = ArtifactCore::InputOperator::instance();
-        if (!input) {
-            return;
-        }
+    std::sort(rows.begin(), rows.end(),
+              [](const ShortcutRow &lhs, const ShortcutRow &rhs) {
+                if (lhs.context != rhs.context) {
+                  return lhs.context < rhs.context;
+                }
+                if (lhs.actionName != rhs.actionName) {
+                  return lhs.actionName < rhs.actionName;
+                }
+                return lhs.shortcut < rhs.shortcut;
+              });
+    return rows;
+  }
 
-        QSettings settings;
-        settings.beginGroup(settingsGroup());
-        const auto keyMaps = input->allKeyMaps();
-        for (auto* keyMap : keyMaps) {
-            if (!keyMap) {
-                continue;
-            }
-            settings.setValue(keyMap->name(), keyMap->toJSON());
-        }
-        settings.endGroup();
+  void restoreFromSettings() {
+    auto *input = ArtifactCore::InputOperator::instance();
+    if (!input) {
+      return;
     }
 
-    bool applyShortcutToRow(ShortcutSettingPage* page, int row, const QKeySequence& sequence)
-    {
-        if (!shortcutTable_ || row < 0 || row >= shortcutTable_->rowCount()) {
-            return false;
-        }
+    QSettings settings;
+    settings.beginGroup(settingsGroup());
+    const auto keyMaps = input->allKeyMaps();
+    for (auto *keyMap : keyMaps) {
+      if (!keyMap) {
+        continue;
+      }
+      const QString json = settings.value(keyMap->name()).toString();
+      if (!json.trimmed().isEmpty()) {
+        keyMap->fromJSON(json);
+      }
+    }
+    settings.endGroup();
+  }
 
-        auto* shortcutItem = shortcutTable_->item(row, 2);
-        if (!shortcutItem) {
-            return false;
-        }
-
-        const QVariantMap meta = shortcutItem->data(Qt::UserRole).toMap();
-        const QString keyMapName = meta.value(QStringLiteral("keyMapName")).toString();
-        const QString actionId = meta.value(QStringLiteral("actionId")).toString();
-        const QString actionName = meta.value(QStringLiteral("actionName")).toString();
-        const QString description = meta.value(QStringLiteral("description")).toString();
-
-        auto* input = ArtifactCore::InputOperator::instance();
-        auto* am = ArtifactCore::ActionManager::instance();
-        if (!input || !am) {
-            return false;
-        }
-
-        auto* keyMap = input->getKeyMap(keyMapName);
-        auto* action = am->getAction(actionId);
-        if (!keyMap || !action) {
-            return false;
-        }
-
-        if (sequence.isEmpty()) {
-            keyMap->removeBinding(actionId);
-            saveToSettings();
-            refreshTable(page);
-            return true;
-        }
-
-        int keyCode = 0;
-        InputEvent::Modifiers modifiers;
-        if (!decodeShortcut(sequence, &keyCode, &modifiers)) {
-            QMessageBox::warning(page, QStringLiteral("Edit Shortcut"),
-                                 QStringLiteral("Only single-step shortcuts are supported."));
-            return false;
-        }
-
-        if (auto* existing = keyMap->findBinding(keyCode, modifiers)) {
-            if (existing->actionId() != actionId) {
-                keyMap->removeBinding(existing);
-            }
-        }
-
-        keyMap->removeBinding(actionId);
-        keyMap->addBinding(keyCode, modifiers, action, description);
-        Q_UNUSED(actionName);
-        saveToSettings();
-        refreshTable(page);
-        return true;
+  void saveToSettings() const {
+    auto *input = ArtifactCore::InputOperator::instance();
+    if (!input) {
+      return;
     }
 
-    void editSelectedShortcut(ShortcutSettingPage* page, bool clearOnly = false)
-    {
-        if (!shortcutTable_) {
-            return;
-        }
+    QSettings settings;
+    settings.beginGroup(settingsGroup());
+    const auto keyMaps = input->allKeyMaps();
+    for (auto *keyMap : keyMaps) {
+      if (!keyMap) {
+        continue;
+      }
+      settings.setValue(keyMap->name(), keyMap->toJSON());
+    }
+    settings.endGroup();
+  }
 
-        const auto selected = shortcutTable_->selectionModel() ? shortcutTable_->selectionModel()->selectedRows() : QModelIndexList();
-        if (selected.isEmpty()) {
-            QMessageBox::information(page, QStringLiteral("Shortcut"), QStringLiteral("Select a shortcut row first."));
-            return;
-        }
-
-        const int row = selected.first().row();
-        auto* shortcutItem = shortcutTable_->item(row, 2);
-        if (!shortcutItem) {
-            return;
-        }
-
-        const QVariantMap meta = shortcutItem->data(Qt::UserRole).toMap();
-        if (!meta.value(QStringLiteral("editable")).toBool()) {
-            QMessageBox::information(page, QStringLiteral("Shortcut"), QStringLiteral("This row is not editable."));
-            return;
-        }
-
-        if (clearOnly) {
-            applyShortcutToRow(page, row, QKeySequence());
-            return;
-        }
-
-        QDialog dialog(page);
-        dialog.setWindowTitle(QStringLiteral("Edit Shortcut"));
-        auto* layout = new QVBoxLayout(&dialog);
-        auto* form = new QFormLayout();
-        auto* actionLabel = new QLabel(meta.value(QStringLiteral("actionName")).toString(), &dialog);
-        auto* mapLabel = new QLabel(meta.value(QStringLiteral("context")).toString(), &dialog);
-        auto* sequenceEdit = new QKeySequenceEdit(&dialog);
-        sequenceEdit->setKeySequence(QKeySequence(shortcutItem->text()));
-        form->addRow(QStringLiteral("Action"), actionLabel);
-        form->addRow(QStringLiteral("Context"), mapLabel);
-        form->addRow(QStringLiteral("Shortcut"), sequenceEdit);
-        layout->addLayout(form);
-
-        auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
-        auto* clearButton = buttons->addButton(QStringLiteral("Clear"), QDialogButtonBox::ActionRole);
-        layout->addWidget(buttons);
-
-        QObject::connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
-        QObject::connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
-        QObject::connect(clearButton, &QAbstractButton::clicked, &dialog, [&dialog](bool) {
-            dialog.done(QDialog::Accepted + 1);
-        });
-
-        const int result = dialog.exec();
-        if (result == QDialog::Rejected) {
-            return;
-        }
-        if (result == QDialog::Accepted + 1) {
-            applyShortcutToRow(page, row, QKeySequence());
-            return;
-        }
-        applyShortcutToRow(page, row, sequenceEdit->keySequence());
+  bool applyShortcutToRow(ShortcutSettingPage *page, int row,
+                          const QKeySequence &sequence) {
+    if (!shortcutTable_ || row < 0 || row >= shortcutTable_->rowCount()) {
+      return false;
     }
 
-    void refreshTable(ShortcutSettingPage* page)
-    {
-        if (!shortcutTable_) {
-            return;
-        }
-        const QString needle = filterEdit_ ? filterEdit_->text().trimmed() : QString();
-        const auto rows = collectRows();
-        shortcutTable_->setRowCount(0);
-        int visibleCount = 0;
-        for (const auto& row : rows) {
-            if (!rowMatchesFilter(row, needle)) {
-                continue;
-            }
-            const int currentRow = shortcutTable_->rowCount();
-            shortcutTable_->insertRow(currentRow);
-            auto* contextItem = new QTableWidgetItem(row.context);
-            auto* actionItem = new QTableWidgetItem(row.actionName);
-            auto* shortcutItem = new QTableWidgetItem(row.shortcut);
-            auto* categoryItem = new QTableWidgetItem(row.category);
-            auto* descriptionItem = new QTableWidgetItem(row.description);
-            if (!row.editable) {
-                shortcutItem->setFlags(shortcutItem->flags() & ~Qt::ItemIsEditable);
-            }
-            QVariantMap meta;
-            meta.insert(QStringLiteral("keyMapName"), row.keyMapName);
-            meta.insert(QStringLiteral("context"), row.context);
-            meta.insert(QStringLiteral("actionId"), row.actionId);
-            meta.insert(QStringLiteral("actionName"), row.actionName);
-            meta.insert(QStringLiteral("shortcut"), row.shortcut);
-            meta.insert(QStringLiteral("category"), row.category);
-            meta.insert(QStringLiteral("description"), row.description);
-            meta.insert(QStringLiteral("keyCode"), row.keyCode);
-            meta.insert(QStringLiteral("modifierMask"), row.modifierMask);
-            meta.insert(QStringLiteral("editable"), row.editable);
-            shortcutItem->setData(Qt::UserRole, meta);
-            contextItem->setData(Qt::UserRole, row.actionId);
-            shortcutTable_->setItem(currentRow, 0, contextItem);
-            shortcutTable_->setItem(currentRow, 1, actionItem);
-            shortcutTable_->setItem(currentRow, 2, shortcutItem);
-            shortcutTable_->setItem(currentRow, 3, categoryItem);
-            shortcutTable_->setItem(currentRow, 4, descriptionItem);
-            ++visibleCount;
-        }
-        if (summaryLabel_) {
-            summaryLabel_->setText(QStringLiteral("%1 shortcut entries").arg(visibleCount));
-        }
-        shortcutTable_->resizeColumnsToContents();
-        shortcutTable_->horizontalHeader()->setStretchLastSection(true);
-        Q_UNUSED(page);
+    auto *shortcutItem = shortcutTable_->item(row, 2);
+    if (!shortcutItem) {
+      return false;
     }
+
+    const QVariantMap meta = shortcutItem->data(Qt::UserRole).toMap();
+    const QString keyMapName =
+        meta.value(QStringLiteral("keyMapName")).toString();
+    const QString actionId = meta.value(QStringLiteral("actionId")).toString();
+    const QString actionName =
+        meta.value(QStringLiteral("actionName")).toString();
+    const QString description =
+        meta.value(QStringLiteral("description")).toString();
+
+    auto *input = ArtifactCore::InputOperator::instance();
+    auto *am = ArtifactCore::ActionManager::instance();
+    if (!input || !am) {
+      return false;
+    }
+
+    auto *keyMap = input->getKeyMap(keyMapName);
+    auto *action = am->getAction(actionId);
+    if (!keyMap || !action) {
+      return false;
+    }
+
+    if (sequence.isEmpty()) {
+      keyMap->removeBinding(actionId);
+      saveToSettings();
+      refreshTable(page);
+      return true;
+    }
+
+    int keyCode = 0;
+    InputEvent::Modifiers modifiers;
+    if (!decodeShortcut(sequence, &keyCode, &modifiers)) {
+      QMessageBox::warning(
+          page, QStringLiteral("Edit Shortcut"),
+          QStringLiteral("Only single-step shortcuts are supported."));
+      return false;
+    }
+
+    if (auto *existing = keyMap->findBinding(keyCode, modifiers)) {
+      if (existing->actionId() != actionId) {
+        keyMap->removeBinding(existing);
+      }
+    }
+
+    keyMap->removeBinding(actionId);
+    keyMap->addBinding(keyCode, modifiers, action, description);
+    Q_UNUSED(actionName);
+    saveToSettings();
+    refreshTable(page);
+    return true;
+  }
+
+  void editSelectedShortcut(ShortcutSettingPage *page, bool clearOnly = false) {
+    if (!shortcutTable_) {
+      return;
+    }
+
+    const auto selected = shortcutTable_->selectionModel()
+                              ? shortcutTable_->selectionModel()->selectedRows()
+                              : QModelIndexList();
+    if (selected.isEmpty()) {
+      QMessageBox::information(page, QStringLiteral("Shortcut"),
+                               QStringLiteral("Select a shortcut row first."));
+      return;
+    }
+
+    const int row = selected.first().row();
+    auto *shortcutItem = shortcutTable_->item(row, 2);
+    if (!shortcutItem) {
+      return;
+    }
+
+    const QVariantMap meta = shortcutItem->data(Qt::UserRole).toMap();
+    if (!meta.value(QStringLiteral("editable")).toBool()) {
+      QMessageBox::information(page, QStringLiteral("Shortcut"),
+                               QStringLiteral("This row is not editable."));
+      return;
+    }
+
+    if (clearOnly) {
+      applyShortcutToRow(page, row, QKeySequence());
+      return;
+    }
+
+    QDialog dialog(page);
+    dialog.setWindowTitle(QStringLiteral("Edit Shortcut"));
+    auto *layout = new QVBoxLayout(&dialog);
+    auto *form = new QFormLayout();
+    auto *actionLabel = new QLabel(
+        meta.value(QStringLiteral("actionName")).toString(), &dialog);
+    auto *mapLabel =
+        new QLabel(meta.value(QStringLiteral("context")).toString(), &dialog);
+    auto *sequenceEdit = new QKeySequenceEdit(&dialog);
+    sequenceEdit->setKeySequence(QKeySequence(shortcutItem->text()));
+    form->addRow(QStringLiteral("Action"), actionLabel);
+    form->addRow(QStringLiteral("Context"), mapLabel);
+    form->addRow(QStringLiteral("Shortcut"), sequenceEdit);
+    layout->addLayout(form);
+
+    auto *buttons = new QDialogButtonBox(
+        QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+    auto *clearButton = buttons->addButton(QStringLiteral("Clear"),
+                                           QDialogButtonBox::ActionRole);
+    layout->addWidget(buttons);
+
+    QObject::connect(buttons, &QDialogButtonBox::accepted, &dialog,
+                     &QDialog::accept);
+    QObject::connect(buttons, &QDialogButtonBox::rejected, &dialog,
+                     &QDialog::reject);
+    QObject::connect(clearButton, &QAbstractButton::clicked, &dialog,
+                     [&dialog](bool) { dialog.done(QDialog::Accepted + 1); });
+
+    const int result = dialog.exec();
+    if (result == QDialog::Rejected) {
+      return;
+    }
+    if (result == QDialog::Accepted + 1) {
+      applyShortcutToRow(page, row, QKeySequence());
+      return;
+    }
+    applyShortcutToRow(page, row, sequenceEdit->keySequence());
+  }
+
+  void refreshTable(ShortcutSettingPage *page) {
+    if (!shortcutTable_) {
+      return;
+    }
+    const QString needle =
+        filterEdit_ ? filterEdit_->text().trimmed() : QString();
+    const auto rows = collectRows();
+    shortcutTable_->setRowCount(0);
+    int visibleCount = 0;
+    for (const auto &row : rows) {
+      if (!rowMatchesFilter(row, needle)) {
+        continue;
+      }
+      const int currentRow = shortcutTable_->rowCount();
+      shortcutTable_->insertRow(currentRow);
+      auto *contextItem = new QTableWidgetItem(row.context);
+      auto *actionItem = new QTableWidgetItem(row.actionName);
+      auto *shortcutItem = new QTableWidgetItem(row.shortcut);
+      auto *categoryItem = new QTableWidgetItem(row.category);
+      auto *descriptionItem = new QTableWidgetItem(row.description);
+      if (!row.editable) {
+        shortcutItem->setFlags(shortcutItem->flags() & ~Qt::ItemIsEditable);
+      }
+      QVariantMap meta;
+      meta.insert(QStringLiteral("keyMapName"), row.keyMapName);
+      meta.insert(QStringLiteral("context"), row.context);
+      meta.insert(QStringLiteral("actionId"), row.actionId);
+      meta.insert(QStringLiteral("actionName"), row.actionName);
+      meta.insert(QStringLiteral("shortcut"), row.shortcut);
+      meta.insert(QStringLiteral("category"), row.category);
+      meta.insert(QStringLiteral("description"), row.description);
+      meta.insert(QStringLiteral("keyCode"), row.keyCode);
+      meta.insert(QStringLiteral("modifierMask"), row.modifierMask);
+      meta.insert(QStringLiteral("editable"), row.editable);
+      shortcutItem->setData(Qt::UserRole, meta);
+      contextItem->setData(Qt::UserRole, row.actionId);
+      shortcutTable_->setItem(currentRow, 0, contextItem);
+      shortcutTable_->setItem(currentRow, 1, actionItem);
+      shortcutTable_->setItem(currentRow, 2, shortcutItem);
+      shortcutTable_->setItem(currentRow, 3, categoryItem);
+      shortcutTable_->setItem(currentRow, 4, descriptionItem);
+      ++visibleCount;
+    }
+    if (summaryLabel_) {
+      summaryLabel_->setText(
+          QStringLiteral("%1 shortcut entries").arg(visibleCount));
+    }
+    shortcutTable_->resizeColumnsToContents();
+    shortcutTable_->horizontalHeader()->setStretchLastSection(true);
+    Q_UNUSED(page);
+  }
 };
 
-ShortcutSettingPage::ShortcutSettingPage(QWidget* parent)
-  : QWidget(parent), impl_(new Impl())
-{
-  auto* mainLayout = new QVBoxLayout(this);
-  auto* headerLayout = new QHBoxLayout();
+ShortcutSettingPage::ShortcutSettingPage(QWidget *parent)
+    : QWidget(parent), impl_(new Impl()) {
+  auto *mainLayout = new QVBoxLayout(this);
+  auto *headerLayout = new QHBoxLayout();
   headerLayout->addWidget(new QLabel(QStringLiteral("Search:"), this));
   impl_->filterEdit_ = new QLineEdit(this);
-  impl_->filterEdit_->setPlaceholderText(QStringLiteral("Filter by action, shortcut, context, or description"));
+  impl_->filterEdit_->setPlaceholderText(
+      QStringLiteral("Filter by action, shortcut, context, or description"));
   headerLayout->addWidget(impl_->filterEdit_, 1);
   impl_->refreshButton_ = new QPushButton(QStringLiteral("Refresh"), this);
   headerLayout->addWidget(impl_->refreshButton_);
@@ -911,7 +1100,8 @@ ShortcutSettingPage::ShortcutSettingPage(QWidget* parent)
   headerLayout->addWidget(impl_->editButton_);
   impl_->clearButton_ = new QPushButton(QStringLiteral("Clear"), this);
   headerLayout->addWidget(impl_->clearButton_);
-  impl_->copySelectionButton_ = new QPushButton(QStringLiteral("Copy Selection"), this);
+  impl_->copySelectionButton_ =
+      new QPushButton(QStringLiteral("Copy Selection"), this);
   headerLayout->addWidget(impl_->copySelectionButton_);
   mainLayout->addLayout(headerLayout);
 
@@ -922,47 +1112,55 @@ ShortcutSettingPage::ShortcutSettingPage(QWidget* parent)
   impl_->shortcutTable_ = new QTableWidget(this);
   impl_->shortcutTable_->setColumnCount(5);
   impl_->shortcutTable_->setHorizontalHeaderLabels(
-      {QStringLiteral("Context"), QStringLiteral("Action"), QStringLiteral("Shortcut"), QStringLiteral("Category"), QStringLiteral("Description")});
+      {QStringLiteral("Context"), QStringLiteral("Action"),
+       QStringLiteral("Shortcut"), QStringLiteral("Category"),
+       QStringLiteral("Description")});
   impl_->shortcutTable_->setSelectionBehavior(QAbstractItemView::SelectRows);
   impl_->shortcutTable_->setSelectionMode(QAbstractItemView::ExtendedSelection);
   impl_->shortcutTable_->setEditTriggers(QAbstractItemView::NoEditTriggers);
   impl_->shortcutTable_->horizontalHeader()->setStretchLastSection(true);
-  impl_->shortcutTable_->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
+  impl_->shortcutTable_->horizontalHeader()->setSectionResizeMode(
+      QHeaderView::ResizeToContents);
   mainLayout->addWidget(impl_->shortcutTable_, 1);
 
-  connect(impl_->filterEdit_, &QLineEdit::textChanged, this, [this]() {
-    impl_->refreshTable(this);
-  });
-  connect(impl_->refreshButton_, &QPushButton::clicked, this, [this]() {
-    impl_->refreshTable(this);
-  });
-  connect(impl_->editButton_, &QPushButton::clicked, this, [this]() {
-    impl_->editSelectedShortcut(this, false);
-  });
-  connect(impl_->clearButton_, &QPushButton::clicked, this, [this]() {
-    impl_->editSelectedShortcut(this, true);
-  });
-  connect(impl_->shortcutTable_, &QTableWidget::cellDoubleClicked, this, [this](int row, int column) {
-    if (column == 2) {
-      impl_->editSelectedShortcut(this, false);
-    } else if (row >= 0 && row < impl_->shortcutTable_->rowCount()) {
-      impl_->shortcutTable_->selectRow(row);
-    }
-  });
+  connect(impl_->filterEdit_, &QLineEdit::textChanged, this,
+          [this]() { impl_->refreshTable(this); });
+  connect(impl_->refreshButton_, &QPushButton::clicked, this,
+          [this]() { impl_->refreshTable(this); });
+  connect(impl_->editButton_, &QPushButton::clicked, this,
+          [this]() { impl_->editSelectedShortcut(this, false); });
+  connect(impl_->clearButton_, &QPushButton::clicked, this,
+          [this]() { impl_->editSelectedShortcut(this, true); });
+  connect(impl_->shortcutTable_, &QTableWidget::cellDoubleClicked, this,
+          [this](int row, int column) {
+            if (column == 2) {
+              impl_->editSelectedShortcut(this, false);
+            } else if (row >= 0 && row < impl_->shortcutTable_->rowCount()) {
+              impl_->shortcutTable_->selectRow(row);
+            }
+          });
   connect(impl_->copySelectionButton_, &QPushButton::clicked, this, [this]() {
     if (!impl_->shortcutTable_) {
       return;
     }
     QStringList lines;
-    const auto selected = impl_->shortcutTable_->selectionModel() ? impl_->shortcutTable_->selectionModel()->selectedRows() : QModelIndexList();
-    for (const QModelIndex& index : selected) {
-      const QString context = impl_->shortcutTable_->item(index.row(), 0)->text();
-      const QString action = impl_->shortcutTable_->item(index.row(), 1)->text();
-      const QString shortcut = impl_->shortcutTable_->item(index.row(), 2)->text();
+    const auto selected =
+        impl_->shortcutTable_->selectionModel()
+            ? impl_->shortcutTable_->selectionModel()->selectedRows()
+            : QModelIndexList();
+    for (const QModelIndex &index : selected) {
+      const QString context =
+          impl_->shortcutTable_->item(index.row(), 0)->text();
+      const QString action =
+          impl_->shortcutTable_->item(index.row(), 1)->text();
+      const QString shortcut =
+          impl_->shortcutTable_->item(index.row(), 2)->text();
       lines << QStringLiteral("%1 | %2 | %3").arg(context, action, shortcut);
     }
     if (lines.isEmpty()) {
-      QMessageBox::information(this, QStringLiteral("Copy Selection"), QStringLiteral("Select one or more shortcut rows first."));
+      QMessageBox::information(
+          this, QStringLiteral("Copy Selection"),
+          QStringLiteral("Select one or more shortcut rows first."));
       return;
     }
     QApplication::clipboard()->setText(lines.join(QStringLiteral("\n")));
@@ -971,721 +1169,979 @@ ShortcutSettingPage::ShortcutSettingPage(QWidget* parent)
   loadSettings();
 }
 
-ShortcutSettingPage::~ShortcutSettingPage()
-{
-  delete impl_;
-}
+ShortcutSettingPage::~ShortcutSettingPage() { delete impl_; }
 
-QVector<QWidget*> ShortcutSettingPage::settingWidgets() const
-{
-  QVector<QWidget*> widgets;
+QVector<QWidget *> ShortcutSettingPage::settingWidgets() const {
+  QVector<QWidget *> widgets;
   widgets.push_back(impl_->filterEdit_);
   widgets.push_back(impl_->shortcutTable_);
   return widgets;
 }
 
-void ShortcutSettingPage::loadSettings()
-{
+void ShortcutSettingPage::loadSettings() {
   QSettings settings;
   if (impl_->filterEdit_) {
-    impl_->filterEdit_->setText(settings.value(QStringLiteral("Settings/Shortcuts/Filter"), QString()).toString());
+    impl_->filterEdit_->setText(
+        settings.value(QStringLiteral("Settings/Shortcuts/Filter"), QString())
+            .toString());
   }
   impl_->restoreFromSettings();
   impl_->refreshTable(this);
 }
 
-void ShortcutSettingPage::saveSettings()
-{
+void ShortcutSettingPage::saveSettings() {
   QSettings settings;
   if (impl_->filterEdit_) {
-    settings.setValue(QStringLiteral("Settings/Shortcuts/Filter"), impl_->filterEdit_->text());
+    settings.setValue(QStringLiteral("Settings/Shortcuts/Filter"),
+                      impl_->filterEdit_->text());
   }
   impl_->saveToSettings();
 }
-	
+
+QList<SettingItemInfo> ShortcutSettingPage::searchableItems() const {
+  QList<SettingItemInfo> items;
+  if (impl_->filterEdit_) {
+    items.append({QStringLiteral("Search shortcuts"),
+                  QStringLiteral("Filter shortcut entries"),
+                  QStringLiteral("Shortcuts"), impl_->filterEdit_});
+  }
+  if (impl_->shortcutTable_) {
+    items.append({QStringLiteral("Shortcut list"),
+                  QStringLiteral("All keyboard shortcuts"),
+                  QStringLiteral("Shortcuts"), impl_->shortcutTable_});
+  }
+  return items;
+}
+
 // MemoryAndCpuSettingPage Implementation
 class MemoryAndCpuSettingPage::Impl {
 public:
-    Impl() : memoryUsageBar_(nullptr), memoryLabel_(nullptr), cpuUsageBar_(nullptr), cpuLabel_(nullptr), workerThreadsSpinBox_(nullptr), autoTuneButton_(nullptr), clearCacheButton_(nullptr), updateTimer_(nullptr), prevProcessTimeMs_(0), prevTickMs_(0), processorCount_(1) {}
-    ~Impl() {}
+  Impl()
+      : memoryUsageBar_(nullptr), memoryLabel_(nullptr), cpuUsageBar_(nullptr),
+        cpuLabel_(nullptr), workerThreadsSpinBox_(nullptr),
+        autoTuneButton_(nullptr), clearCacheButton_(nullptr),
+        updateTimer_(nullptr), prevProcessTimeMs_(0), prevTickMs_(0),
+        processorCount_(1) {}
+  ~Impl() {}
 
-    QProgressBar* memoryUsageBar_;
-    QLabel* memoryLabel_;
-    QProgressBar* cpuUsageBar_;
-    QLabel* cpuLabel_;
-    QSpinBox* workerThreadsSpinBox_;
-    QPushButton* autoTuneButton_;
-    QPushButton* clearCacheButton_;
-    QTimer* updateTimer_;
+  QProgressBar *memoryUsageBar_;
+  QLabel *memoryLabel_;
+  QProgressBar *cpuUsageBar_;
+  QLabel *cpuLabel_;
+  QSpinBox *workerThreadsSpinBox_;
+  QPushButton *autoTuneButton_;
+  QPushButton *clearCacheButton_;
+  QTimer *updateTimer_;
 
-    // for CPU calculation (Windows)
-    unsigned long long prevProcessTimeMs_;
-    unsigned long long prevTickMs_;
-    int processorCount_;
+  // for CPU calculation (Windows)
+  unsigned long long prevProcessTimeMs_;
+  unsigned long long prevTickMs_;
+  int processorCount_;
 
-    struct CacheClearStats {
-        int removedFiles = 0;
-        int removedDirectories = 0;
-        int failedPaths = 0;
-    };
+  struct CacheClearStats {
+    int removedFiles = 0;
+    int removedDirectories = 0;
+    int failedPaths = 0;
+  };
 
-    void initializeProcessorCount()
-    {
+  void initializeProcessorCount() {
 #ifdef Q_OS_WIN
-        SYSTEM_INFO sysInfo;
-        GetSystemInfo(&sysInfo);
-        processorCount_ = (int)sysInfo.dwNumberOfProcessors;
-        if (processorCount_ < 1) processorCount_ = 1;
+    SYSTEM_INFO sysInfo;
+    GetSystemInfo(&sysInfo);
+    processorCount_ = (int)sysInfo.dwNumberOfProcessors;
+    if (processorCount_ < 1)
+      processorCount_ = 1;
 #else
-        processorCount_ = QThread::idealThreadCount();
-        if (processorCount_ < 1) processorCount_ = 1;
+    processorCount_ = QThread::idealThreadCount();
+    if (processorCount_ < 1)
+      processorCount_ = 1;
 #endif
-    }
+  }
 
-    unsigned long long fileTimeToMs(const FILETIME& ft)
-    {
-        unsigned long long high = (unsigned long long)ft.dwHighDateTime;
-        unsigned long long low = (unsigned long long)ft.dwLowDateTime;
-        unsigned long long val100ns = (high << 32) | low; // 100-ns intervals
-        return val100ns / 10000ULL; // to ms
-    }
+  unsigned long long fileTimeToMs(const FILETIME &ft) {
+    unsigned long long high = (unsigned long long)ft.dwHighDateTime;
+    unsigned long long low = (unsigned long long)ft.dwLowDateTime;
+    unsigned long long val100ns = (high << 32) | low; // 100-ns intervals
+    return val100ns / 10000ULL;                       // to ms
+  }
 
-    void updateStats(QWidget* parent)
-    {
+  void updateStats(QWidget *parent) {
 #ifdef Q_OS_WIN
-        // Memory (system)
-        MEMORYSTATUSEX memx;
-        memx.dwLength = sizeof(memx);
-        GlobalMemoryStatusEx(&memx);
-        unsigned long long totalPhys = memx.ullTotalPhys;
-        unsigned long long availPhys = memx.ullAvailPhys;
-        unsigned long long usedPhys = totalPhys - availPhys;
-        int memPercent = 0;
-        if (totalPhys > 0) memPercent = int((usedPhys * 100ULL) / totalPhys);
+    // Memory (system)
+    MEMORYSTATUSEX memx;
+    memx.dwLength = sizeof(memx);
+    GlobalMemoryStatusEx(&memx);
+    unsigned long long totalPhys = memx.ullTotalPhys;
+    unsigned long long availPhys = memx.ullAvailPhys;
+    unsigned long long usedPhys = totalPhys - availPhys;
+    int memPercent = 0;
+    if (totalPhys > 0)
+      memPercent = int((usedPhys * 100ULL) / totalPhys);
 
-        if (memoryUsageBar_) memoryUsageBar_->setValue(memPercent);
-        if (memoryLabel_) memoryLabel_->setText(QString("%1 / %2 (%3%)").arg(QString::number(usedPhys / (1024*1024))).arg(QString::number(totalPhys / (1024*1024))).arg(memPercent));
+    if (memoryUsageBar_)
+      memoryUsageBar_->setValue(memPercent);
+    if (memoryLabel_)
+      memoryLabel_->setText(QString("%1 / %2 (%3%)")
+                                .arg(QString::number(usedPhys / (1024 * 1024)))
+                                .arg(QString::number(totalPhys / (1024 * 1024)))
+                                .arg(memPercent));
 
-        // CPU (process percentage)
-        FILETIME ftCreation, ftExit, ftKernel, ftUser;
-        if (GetProcessTimes(GetCurrentProcess(), &ftCreation, &ftExit, &ftKernel, &ftUser)) {
-            unsigned long long procMs = fileTimeToMs(ftKernel) + fileTimeToMs(ftUser);
-            unsigned long long curTick = GetTickCount64();
+    // CPU (process percentage)
+    FILETIME ftCreation, ftExit, ftKernel, ftUser;
+    if (GetProcessTimes(GetCurrentProcess(), &ftCreation, &ftExit, &ftKernel,
+                        &ftUser)) {
+      unsigned long long procMs = fileTimeToMs(ftKernel) + fileTimeToMs(ftUser);
+      unsigned long long curTick = GetTickCount64();
 
-            if (prevTickMs_ == 0) {
-                prevTickMs_ = curTick;
-                prevProcessTimeMs_ = procMs;
-            }
+      if (prevTickMs_ == 0) {
+        prevTickMs_ = curTick;
+        prevProcessTimeMs_ = procMs;
+      }
 
-            unsigned long long deltaProc = procMs - prevProcessTimeMs_;
-            unsigned long long deltaTime = curTick - prevTickMs_;
+      unsigned long long deltaProc = procMs - prevProcessTimeMs_;
+      unsigned long long deltaTime = curTick - prevTickMs_;
 
-            double cpuPercent = 0.0;
-            if (deltaTime > 0) {
-                cpuPercent = (double)deltaProc / (double)deltaTime / (double)processorCount_ * 100.0;
-                if (cpuPercent < 0.0) cpuPercent = 0.0;
-                if (cpuPercent > 100.0) cpuPercent = 100.0 * processorCount_; // clamp high but allow multi-core >100 theoretical
-            }
+      double cpuPercent = 0.0;
+      if (deltaTime > 0) {
+        cpuPercent = (double)deltaProc / (double)deltaTime /
+                     (double)processorCount_ * 100.0;
+        if (cpuPercent < 0.0)
+          cpuPercent = 0.0;
+        if (cpuPercent > 100.0)
+          cpuPercent = 100.0 * processorCount_; // clamp high but allow
+                                                // multi-core >100 theoretical
+      }
 
-            int cpuInt = int(cpuPercent);
-            if (cpuUsageBar_) cpuUsageBar_->setValue(qBound(0, cpuInt, 100));
-            if (cpuLabel_) cpuLabel_->setText(QString("%1% (process)").arg(QString::number(cpuPercent, 'f', 1)));
+      int cpuInt = int(cpuPercent);
+      if (cpuUsageBar_)
+        cpuUsageBar_->setValue(qBound(0, cpuInt, 100));
+      if (cpuLabel_)
+        cpuLabel_->setText(
+            QString("%1% (process)").arg(QString::number(cpuPercent, 'f', 1)));
 
-            prevProcessTimeMs_ = procMs;
-            prevTickMs_ = curTick;
-        }
+      prevProcessTimeMs_ = procMs;
+      prevTickMs_ = curTick;
+    }
 #else
-        Q_UNUSED(parent);
-        // Non-Windows platforms: show placeholders
-        if (memoryUsageBar_) memoryUsageBar_->setValue(0);
-        if (memoryLabel_) memoryLabel_->setText("N/A");
-        if (cpuUsageBar_) cpuUsageBar_->setValue(0);
-        if (cpuLabel_) cpuLabel_->setText("N/A");
+    Q_UNUSED(parent);
+    // Non-Windows platforms: show placeholders
+    if (memoryUsageBar_)
+      memoryUsageBar_->setValue(0);
+    if (memoryLabel_)
+      memoryLabel_->setText("N/A");
+    if (cpuUsageBar_)
+      cpuUsageBar_->setValue(0);
+    if (cpuLabel_)
+      cpuLabel_->setText("N/A");
 #endif
+  }
+
+  void clearPathRecursive(const QString &path, CacheClearStats &stats) {
+    QFileInfo info(path);
+    if (!info.exists()) {
+      return;
     }
 
-    void clearPathRecursive(const QString& path, CacheClearStats& stats)
-    {
-        QFileInfo info(path);
-        if (!info.exists()) {
-            return;
-        }
-
-        if (info.isDir()) {
-            QDir dir(path);
-            const QFileInfoList entries = dir.entryInfoList(QDir::NoDotAndDotDot | QDir::AllEntries);
-            for (const QFileInfo& entry : entries) {
-                clearPathRecursive(entry.absoluteFilePath(), stats);
-            }
-            QDir parentDir = info.dir();
-            if (parentDir.rmdir(info.fileName())) {
-                ++stats.removedDirectories;
-            } else {
-                ++stats.failedPaths;
-            }
-            return;
-        }
-
-        if (QFile::remove(path)) {
-            ++stats.removedFiles;
-        } else {
-            ++stats.failedPaths;
-        }
+    if (info.isDir()) {
+      QDir dir(path);
+      const QFileInfoList entries =
+          dir.entryInfoList(QDir::NoDotAndDotDot | QDir::AllEntries);
+      for (const QFileInfo &entry : entries) {
+        clearPathRecursive(entry.absoluteFilePath(), stats);
+      }
+      QDir parentDir = info.dir();
+      if (parentDir.rmdir(info.fileName())) {
+        ++stats.removedDirectories;
+      } else {
+        ++stats.failedPaths;
+      }
+      return;
     }
 
-    CacheClearStats clearAppCaches()
-    {
-        CacheClearStats stats;
-        const QString appDataDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
-        if (appDataDir.isEmpty()) {
-            return stats;
-        }
-
-        const QStringList cacheTargets = {
-            QDir(appDataDir).filePath(QStringLiteral("ProxyCache")),
-            QDir(appDataDir).filePath(QStringLiteral("Recovery")),
-            QDir(appDataDir).filePath(QStringLiteral("RecoveredProject.artifact.json"))
-        };
-
-        for (const QString& target : cacheTargets) {
-            clearPathRecursive(target, stats);
-        }
-
-        return stats;
+    if (QFile::remove(path)) {
+      ++stats.removedFiles;
+    } else {
+      ++stats.failedPaths;
     }
+  }
+
+  CacheClearStats clearAppCaches() {
+    CacheClearStats stats;
+    const QString appDataDir =
+        QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+    if (appDataDir.isEmpty()) {
+      return stats;
+    }
+
+    const QStringList cacheTargets = {
+        QDir(appDataDir).filePath(QStringLiteral("ProxyCache")),
+        QDir(appDataDir).filePath(QStringLiteral("Recovery")),
+        QDir(appDataDir)
+            .filePath(QStringLiteral("RecoveredProject.artifact.json"))};
+
+    for (const QString &target : cacheTargets) {
+      clearPathRecursive(target, stats);
+    }
+
+    return stats;
+  }
 };
 
-MemoryAndCpuSettingPage::MemoryAndCpuSettingPage(QWidget* parent /*= nullptr*/)
- : QWidget(parent), impl_(new Impl())
-{
-    impl_->initializeProcessorCount();
+MemoryAndCpuSettingPage::MemoryAndCpuSettingPage(QWidget *parent /*= nullptr*/)
+    : QWidget(parent), impl_(new Impl()) {
+  impl_->initializeProcessorCount();
 
-    auto* mainLayout = new QVBoxLayout(this);
+  auto *mainLayout = new QVBoxLayout(this);
 
-    auto* statsGroup = new QGroupBox("Memory & CPU", this);
-    auto* statsLayout = new QVBoxLayout(statsGroup);
+  auto *statsGroup = new QGroupBox("Memory & CPU", this);
+  auto *statsLayout = new QVBoxLayout(statsGroup);
 
-    // Memory
-    auto* memLayout = new QHBoxLayout();
-    memLayout->addWidget(new QLabel("System Memory Usage:", this));
-    impl_->memoryUsageBar_ = new QProgressBar(this);
-    impl_->memoryUsageBar_->setRange(0, 100);
-    impl_->memoryUsageBar_->setValue(0);
-    impl_->memoryUsageBar_->setTextVisible(false);
-    memLayout->addWidget(impl_->memoryUsageBar_);
-    impl_->memoryLabel_ = new QLabel("", this);
-    memLayout->addWidget(impl_->memoryLabel_);
-    statsLayout->addLayout(memLayout);
+  // Memory
+  auto *memLayout = new QHBoxLayout();
+  memLayout->addWidget(new QLabel("System Memory Usage:", this));
+  impl_->memoryUsageBar_ = new QProgressBar(this);
+  impl_->memoryUsageBar_->setRange(0, 100);
+  impl_->memoryUsageBar_->setValue(0);
+  impl_->memoryUsageBar_->setTextVisible(false);
+  memLayout->addWidget(impl_->memoryUsageBar_);
+  impl_->memoryLabel_ = new QLabel("", this);
+  memLayout->addWidget(impl_->memoryLabel_);
+  statsLayout->addLayout(memLayout);
 
-    // CPU
-    auto* cpuLayout = new QHBoxLayout();
-    cpuLayout->addWidget(new QLabel("CPU Usage:", this));
-    impl_->cpuUsageBar_ = new QProgressBar(this);
-    impl_->cpuUsageBar_->setRange(0, 100);
-    impl_->cpuUsageBar_->setValue(0);
-    impl_->cpuUsageBar_->setTextVisible(false);
-    cpuLayout->addWidget(impl_->cpuUsageBar_);
-    impl_->cpuLabel_ = new QLabel("", this);
-    cpuLayout->addWidget(impl_->cpuLabel_);
-    statsLayout->addLayout(cpuLayout);
+  // CPU
+  auto *cpuLayout = new QHBoxLayout();
+  cpuLayout->addWidget(new QLabel("CPU Usage:", this));
+  impl_->cpuUsageBar_ = new QProgressBar(this);
+  impl_->cpuUsageBar_->setRange(0, 100);
+  impl_->cpuUsageBar_->setValue(0);
+  impl_->cpuUsageBar_->setTextVisible(false);
+  cpuLayout->addWidget(impl_->cpuUsageBar_);
+  impl_->cpuLabel_ = new QLabel("", this);
+  cpuLayout->addWidget(impl_->cpuLabel_);
+  statsLayout->addLayout(cpuLayout);
 
-    mainLayout->addWidget(statsGroup);
+  mainLayout->addWidget(statsGroup);
 
-    // Performance tuning
-    auto* perfGroup = new QGroupBox("Performance Tuning", this);
-    auto* perfLayout = new QVBoxLayout(perfGroup);
+  // Performance tuning
+  auto *perfGroup = new QGroupBox("Performance Tuning", this);
+  auto *perfLayout = new QVBoxLayout(perfGroup);
 
-    auto* threadLayout = new QHBoxLayout();
-    threadLayout->addWidget(new QLabel("Worker Threads:", this));
-    impl_->workerThreadsSpinBox_ = new QSpinBox(this);
-    impl_->workerThreadsSpinBox_->setRange(1, qMax(1, impl_->processorCount_));
-    impl_->workerThreadsSpinBox_->setValue(qMax(1, impl_->processorCount_ - 1));
-    threadLayout->addWidget(impl_->workerThreadsSpinBox_);
-    impl_->autoTuneButton_ = new QPushButton("Auto-tune", this);
-    threadLayout->addWidget(impl_->autoTuneButton_);
-    threadLayout->addStretch();
-    perfLayout->addLayout(threadLayout);
+  auto *threadLayout = new QHBoxLayout();
+  threadLayout->addWidget(new QLabel("Worker Threads:", this));
+  impl_->workerThreadsSpinBox_ = new QSpinBox(this);
+  impl_->workerThreadsSpinBox_->setRange(1, qMax(1, impl_->processorCount_));
+  impl_->workerThreadsSpinBox_->setValue(qMax(1, impl_->processorCount_ - 1));
+  threadLayout->addWidget(impl_->workerThreadsSpinBox_);
+  impl_->autoTuneButton_ = new QPushButton("Auto-tune", this);
+  threadLayout->addWidget(impl_->autoTuneButton_);
+  threadLayout->addStretch();
+  perfLayout->addLayout(threadLayout);
 
-    impl_->clearCacheButton_ = new QPushButton("Clear Cache", this);
-    perfLayout->addWidget(impl_->clearCacheButton_);
+  impl_->clearCacheButton_ = new QPushButton("Clear Cache", this);
+  perfLayout->addWidget(impl_->clearCacheButton_);
 
-    mainLayout->addWidget(perfGroup);
+  mainLayout->addWidget(perfGroup);
 
-    mainLayout->addStretch();
+  mainLayout->addStretch();
 
-    // Timer for live updates
-    impl_->updateTimer_ = new QTimer(this);
-    connect(impl_->updateTimer_, &QTimer::timeout, this, [this]() {
-        impl_->updateStats(this);
-    });
-    impl_->updateTimer_->start(1000);
+  // Timer for live updates
+  impl_->updateTimer_ = new QTimer(this);
+  connect(impl_->updateTimer_, &QTimer::timeout, this,
+          [this]() { impl_->updateStats(this); });
+  impl_->updateTimer_->start(1000);
 
-    // Auto-tune handler
-    connect(impl_->autoTuneButton_, &QPushButton::clicked, this, [this]() {
-        int recommended = qMax(1, impl_->processorCount_ - 1);
-        impl_->workerThreadsSpinBox_->setValue(recommended);
-    });
+  // Auto-tune handler
+  connect(impl_->autoTuneButton_, &QPushButton::clicked, this, [this]() {
+    int recommended = qMax(1, impl_->processorCount_ - 1);
+    impl_->workerThreadsSpinBox_->setValue(recommended);
+  });
 
-    // Clear cache handler
-    connect(impl_->clearCacheButton_, &QPushButton::clicked, this, [this]() {
-        if (!Artifact::ArtifactMessageBox::confirmDelete(this,
-            QStringLiteral("Clear Cache"),
-            QStringLiteral("Remove generated proxy and recovery cache files?"))) {
-            return;
-        }
+  // Clear cache handler
+  connect(impl_->clearCacheButton_, &QPushButton::clicked, this, [this]() {
+    if (!Artifact::ArtifactMessageBox::confirmDelete(
+            this, QStringLiteral("Clear Cache"),
+            QStringLiteral(
+                "Remove generated proxy and recovery cache files?"))) {
+      return;
+    }
 
-        const Impl::CacheClearStats stats = impl_->clearAppCaches();
-        const QString summary = QStringLiteral("Removed %1 file(s), %2 folder(s).%3")
+    const Impl::CacheClearStats stats = impl_->clearAppCaches();
+    const QString summary =
+        QStringLiteral("Removed %1 file(s), %2 folder(s).%3")
             .arg(stats.removedFiles)
             .arg(stats.removedDirectories)
             .arg(stats.failedPaths > 0
-                ? QStringLiteral("\nFailed to remove %1 path(s).").arg(stats.failedPaths)
-                : QString());
-        QMessageBox::information(this, QStringLiteral("Clear Cache"), summary);
-    });
+                     ? QStringLiteral("\nFailed to remove %1 path(s).")
+                           .arg(stats.failedPaths)
+                     : QString());
+    QMessageBox::information(this, QStringLiteral("Clear Cache"), summary);
+  });
 
-    loadSettings();
+  loadSettings();
 }
 
 void MemoryAndCpuSettingPage::loadSettings() {
-    auto* settings = ArtifactAppSettings::instance();
-    int count = settings->renderThreadCount();
-    if (count <= 0) {
-        impl_->workerThreadsSpinBox_->setValue(qMax(1, impl_->processorCount_ - 1));
-    } else {
-        impl_->workerThreadsSpinBox_->setValue(count);
-    }
+  auto *settings = ArtifactAppSettings::instance();
+  int count = settings->renderThreadCount();
+  if (count <= 0) {
+    impl_->workerThreadsSpinBox_->setValue(qMax(1, impl_->processorCount_ - 1));
+  } else {
+    impl_->workerThreadsSpinBox_->setValue(count);
+  }
 }
 
 void MemoryAndCpuSettingPage::saveSettings() {
-    auto* settings = ArtifactAppSettings::instance();
-    settings->setRenderThreadCount(impl_->workerThreadsSpinBox_->value());
+  auto *settings = ArtifactAppSettings::instance();
+  settings->setRenderThreadCount(impl_->workerThreadsSpinBox_->value());
 }
 
-MemoryAndCpuSettingPage::~MemoryAndCpuSettingPage()
-{
-    if (impl_) {
-        if (impl_->updateTimer_) impl_->updateTimer_->stop();
-        delete impl_;
-        impl_ = nullptr;
-    }
+QList<SettingItemInfo> MemoryAndCpuSettingPage::searchableItems() const {
+  QList<SettingItemInfo> items;
+  if (impl_->workerThreadsSpinBox_) {
+    items.append({QStringLiteral("Worker Threads"),
+                  QStringLiteral("Number of render worker threads"),
+                  QStringLiteral("Memory & Performance"),
+                  impl_->workerThreadsSpinBox_});
+  }
+  if (impl_->autoTuneButton_) {
+    items.append({QStringLiteral("Auto-tune"),
+                  QStringLiteral("Automatically optimize thread count"),
+                  QStringLiteral("Memory & Performance"),
+                  impl_->autoTuneButton_});
+  }
+  if (impl_->clearCacheButton_) {
+    items.append({QStringLiteral("Clear Cache"),
+                  QStringLiteral("Remove proxy and recovery cache files"),
+                  QStringLiteral("Memory & Performance"),
+                  impl_->clearCacheButton_});
+  }
+  return items;
 }
 
-int MemoryAndCpuSettingPage::cpuCount() const
-{
-    return impl_ ? qMax(1, impl_->processorCount_) : 1;
+MemoryAndCpuSettingPage::~MemoryAndCpuSettingPage() {
+  if (impl_) {
+    if (impl_->updateTimer_)
+      impl_->updateTimer_->stop();
+    delete impl_;
+    impl_ = nullptr;
+  }
 }
 
-void MemoryAndCpuSettingPage::resetSetting()
-{
-    if (!impl_) {
-        return;
-    }
-    impl_->workerThreadsSpinBox_->setValue(qMax(1, impl_->processorCount_ - 1));
-    impl_->autoTuneButton_->setEnabled(true);
-    impl_->clearCacheButton_->setEnabled(true);
+int MemoryAndCpuSettingPage::cpuCount() const {
+  return impl_ ? qMax(1, impl_->processorCount_) : 1;
 }
 
- class ApplicationSettingDialog::Impl
- {
- private:
+void MemoryAndCpuSettingPage::resetSetting() {
+  if (!impl_) {
+    return;
+  }
+  impl_->workerThreadsSpinBox_->setValue(qMax(1, impl_->processorCount_ - 1));
+  impl_->autoTuneButton_->setEnabled(true);
+  impl_->clearCacheButton_->setEnabled(true);
+}
 
- public:
+class ApplicationSettingDialog::Impl {
+private:
+public:
   Impl();
   ~Impl();
-   QListWidget* categoryList_;
-   QStackedWidget* settingPages_;
-   QDialogButtonBox* buttonBox_;
-   
-  GeneralSettingPage* generalPage_;
-  ImportSettingPage* importPage_;
-  PreviewSettingPage* previewPage_;
-   ShortcutSettingPage* shortcutPage_;
-   MemoryAndCpuSettingPage* memoryPage_;
-   PluginSettingPage* pluginPage_;
-   AISettingPage* aiPage_;
-   AISettingPage* aiPage_;
-  
-  void setupUI(ApplicationSettingDialog* dialog);
+  QListWidget *categoryList_;
+  QStackedWidget *settingPages_;
+  QDialogButtonBox *buttonBox_;
+  QLineEdit *searchBar_;
+  QListWidget *searchResultsList_;
+  QWidget *leftPanel_;
+  QStackedWidget *leftPanelStack_;
+
+  GeneralSettingPage *generalPage_;
+  ImportSettingPage *importPage_;
+  PreviewSettingPage *previewPage_;
+  ShortcutSettingPage *shortcutPage_;
+  MemoryAndCpuSettingPage *memoryPage_;
+  PluginSettingPage *pluginPage_;
+  AISettingPage *aiPage_;
+
+  void setupUI(ApplicationSettingDialog *dialog);
   void onCategoryChanged(int index);
- };
+  void onSearchTextChanged(const QString &text);
+  void onSearchResultClicked(int row);
+  void highlightWidget(QWidget *widget);
+};
 
- ApplicationSettingDialog::Impl::Impl()
-  : categoryList_(nullptr)
-  , settingPages_(nullptr)
-  , buttonBox_(nullptr)
-  , generalPage_(nullptr)
-  , importPage_(nullptr)
-  , previewPage_(nullptr)
-  , shortcutPage_(nullptr)
-  , memoryPage_(nullptr)
-  , pluginPage_(nullptr)
- {
+ApplicationSettingDialog::Impl::Impl()
+    : categoryList_(nullptr), settingPages_(nullptr), buttonBox_(nullptr),
+      searchBar_(nullptr), searchResultsList_(nullptr), leftPanel_(nullptr),
+      leftPanelStack_(nullptr), generalPage_(nullptr), importPage_(nullptr),
+      previewPage_(nullptr), shortcutPage_(nullptr), memoryPage_(nullptr),
+      pluginPage_(nullptr), aiPage_(nullptr) {}
 
- }
+ApplicationSettingDialog::Impl::~Impl() {}
 
- ApplicationSettingDialog::Impl::~Impl()
- {
+void ApplicationSettingDialog::Impl::setupUI(ApplicationSettingDialog *dialog) {
+  auto *mainLayout = new QVBoxLayout(dialog);
 
- }
+  searchBar_ = new QLineEdit(dialog);
+  searchBar_->setPlaceholderText(QStringLiteral("Search settings..."));
+  searchBar_->setClearButtonEnabled(true);
+  mainLayout->addWidget(searchBar_);
 
- void ApplicationSettingDialog::Impl::setupUI(ApplicationSettingDialog* dialog)
- {
-  // Main layout
-  auto* mainLayout = new QVBoxLayout(dialog);
-  
-  // Content area (category list + settings pages)
-  auto* contentLayout = new QHBoxLayout();
-  
-  // Category list (left side)
+  auto *contentLayout = new QHBoxLayout();
+
+  leftPanelStack_ = new QStackedWidget(dialog);
+
   categoryList_ = new QListWidget(dialog);
   categoryList_->setMaximumWidth(150);
-   categoryList_->addItem("General");
-   categoryList_->addItem("Import");
-   categoryList_->addItem("Preview");
-   categoryList_->addItem("Memory & Performance");
-   categoryList_->addItem("Shortcuts");
-   categoryList_->addItem("Plugins");
-   categoryList_->addItem("AI");
-   categoryList_->addItem("AI");
+  categoryList_->addItem("General");
+  categoryList_->addItem("Import");
+  categoryList_->addItem("Preview");
+  categoryList_->addItem("Memory & Performance");
+  categoryList_->addItem("Shortcuts");
+  categoryList_->addItem("Plugins");
+  categoryList_->addItem("AI");
   categoryList_->setCurrentRow(0);
-  contentLayout->addWidget(categoryList_);
-  
-  // Settings pages (right side)
+  leftPanelStack_->addWidget(categoryList_);
+
+  searchResultsList_ = new QListWidget(dialog);
+  searchResultsList_->setMaximumWidth(150);
+  searchResultsList_->hide();
+  leftPanelStack_->addWidget(searchResultsList_);
+
+  leftPanelStack_->setCurrentIndex(0);
+  contentLayout->addWidget(leftPanelStack_);
+
   settingPages_ = new QStackedWidget(dialog);
-  
-  // Add pages
+
   generalPage_ = new GeneralSettingPage(dialog);
   importPage_ = new ImportSettingPage(dialog);
   previewPage_ = new PreviewSettingPage(dialog);
   memoryPage_ = new MemoryAndCpuSettingPage(dialog);
-  
-   settingPages_->addWidget(generalPage_);
-   settingPages_->addWidget(importPage_);
-   settingPages_->addWidget(previewPage_);
-   settingPages_->addWidget(memoryPage_);
-   shortcutPage_ = new ShortcutSettingPage(dialog);
-   settingPages_->addWidget(shortcutPage_);
-   settingPages_->addWidget(pluginPage_ = new PluginSettingPage(dialog));
-   settingPages_->addWidget(aiPage_ = new AISettingPage(dialog));
-   settingPages_->addWidget(aiPage_ = new AISettingPage(dialog));
-  
+
+  settingPages_->addWidget(generalPage_);
+  settingPages_->addWidget(importPage_);
+  settingPages_->addWidget(previewPage_);
+  settingPages_->addWidget(memoryPage_);
+  shortcutPage_ = new ShortcutSettingPage(dialog);
+  settingPages_->addWidget(shortcutPage_);
+  settingPages_->addWidget(pluginPage_ = new PluginSettingPage(dialog));
+  settingPages_->addWidget(aiPage_ = new AISettingPage(dialog));
+
   contentLayout->addWidget(settingPages_, 1);
-  
+
   mainLayout->addLayout(contentLayout);
-  
-  // Button box
+
   buttonBox_ = new QDialogButtonBox(
-   QDialogButtonBox::Ok | QDialogButtonBox::Cancel | QDialogButtonBox::Apply,
-   dialog);
+      QDialogButtonBox::Ok | QDialogButtonBox::Cancel | QDialogButtonBox::Apply,
+      dialog);
   mainLayout->addWidget(buttonBox_);
-  
-  // Connect signals
+
   QObject::connect(categoryList_, &QListWidget::currentRowChanged,
-   [this](int index) { onCategoryChanged(index); });
-  QObject::connect(buttonBox_, &QDialogButtonBox::accepted, dialog, &ApplicationSettingDialog::accept);
-  QObject::connect(buttonBox_, &QDialogButtonBox::rejected, dialog, &QDialog::reject);
-  QObject::connect(buttonBox_->button(QDialogButtonBox::Apply), &QPushButton::clicked, dialog, &ApplicationSettingDialog::saveSettings);
- }
+                   [this](int index) { onCategoryChanged(index); });
+  QObject::connect(searchBar_, &QLineEdit::textChanged,
+                   [this](const QString &text) { onSearchTextChanged(text); });
+  QObject::connect(searchResultsList_, &QListWidget::currentRowChanged,
+                   [this](int row) { onSearchResultClicked(row); });
+  QObject::connect(buttonBox_, &QDialogButtonBox::accepted, dialog,
+                   &ApplicationSettingDialog::accept);
+  QObject::connect(buttonBox_, &QDialogButtonBox::rejected, dialog,
+                   &QDialog::reject);
+  QObject::connect(buttonBox_->button(QDialogButtonBox::Apply),
+                   &QPushButton::clicked, dialog,
+                   &ApplicationSettingDialog::saveSettings);
+}
 
- void ApplicationSettingDialog::Impl::onCategoryChanged(int index)
- {
+void ApplicationSettingDialog::Impl::onCategoryChanged(int index) {
   settingPages_->setCurrentIndex(index);
- }
+}
 
- ApplicationSettingDialog::ApplicationSettingDialog(QWidget* parent /*= nullptr*/):QDialog(parent),impl_(new Impl)
- {
+void ApplicationSettingDialog::Impl::onSearchTextChanged(const QString &text) {
+  if (text.isEmpty()) {
+    leftPanelStack_->setCurrentIndex(0);
+    searchResultsList_->clear();
+    return;
+  }
+
+  leftPanelStack_->setCurrentIndex(1);
+  searchResultsList_->clear();
+
+  const QString needle = text.toLower();
+
+  struct PageEntry {
+    ISettingPage *page;
+    int pageIndex;
+    QString categoryName;
+  };
+
+  QVector<PageEntry> pages;
+  pages.reserve(7);
+  if (generalPage_)
+    pages.push_back({generalPage_, 0, QStringLiteral("General")});
+  if (importPage_)
+    pages.push_back({importPage_, 1, QStringLiteral("Import")});
+  if (previewPage_)
+    pages.push_back({previewPage_, 2, QStringLiteral("Preview")});
+  if (memoryPage_)
+    pages.push_back({memoryPage_, 3, QStringLiteral("Memory & Performance")});
+  if (shortcutPage_)
+    pages.push_back({shortcutPage_, 4, QStringLiteral("Shortcuts")});
+  if (pluginPage_)
+    pages.push_back({pluginPage_, 5, QStringLiteral("Plugins")});
+  if (aiPage_)
+    pages.push_back({aiPage_, 6, QStringLiteral("AI")});
+
+  for (const auto &entry : pages) {
+    if (!entry.page)
+      continue;
+    const auto items = entry.page->searchableItems();
+    for (const auto &item : items) {
+      if (item.label.toLower().contains(needle) ||
+          item.description.toLower().contains(needle) ||
+          item.category.toLower().contains(needle)) {
+        auto *listItem = new QListWidgetItem(item.label, searchResultsList_);
+        listItem->setToolTip(item.description);
+        listItem->setData(Qt::UserRole, entry.pageIndex);
+        if (item.widget) {
+          listItem->setData(Qt::UserRole + 1,
+                            reinterpret_cast<qlonglong>(item.widget));
+        }
+      }
+    }
+  }
+
+  if (searchResultsList_->count() == 0) {
+    auto *noResultItem = new QListWidgetItem(
+        QStringLiteral("No settings found"), searchResultsList_);
+    noResultItem->setFlags(noResultItem->flags() & ~Qt::ItemIsSelectable);
+    noResultItem->setForeground(Qt::gray);
+  }
+}
+
+void ApplicationSettingDialog::Impl::onSearchResultClicked(int row) {
+  auto *item = searchResultsList_->item(row);
+  if (!item)
+    return;
+
+  const int pageIndex = item->data(Qt::UserRole).toInt();
+  settingPages_->setCurrentIndex(pageIndex);
+
+  const qlonglong widgetPtr = item->data(Qt::UserRole + 1).toLongLong();
+  if (widgetPtr != 0) {
+    highlightWidget(reinterpret_cast<QWidget *>(widgetPtr));
+  }
+}
+
+void ApplicationSettingDialog::Impl::highlightWidget(QWidget *widget) {
+  if (!widget)
+    return;
+  widget->setFocus(Qt::OtherFocusReason);
+
+  const QString highlightStyle = QStringLiteral(
+      "outline: 2px solid #4A90D9; outline-offset: 2px; border-radius: 3px;");
+  widget->setStyleSheet(highlightStyle);
+
+  auto *timer = new QTimer(widget);
+  timer->setSingleShot(true);
+  widget->connect(timer, &QTimer::timeout, [widget, timer]() {
+    widget->setStyleSheet(QString());
+    timer->deleteLater();
+  });
+  timer->start(2000);
+}
+
+ApplicationSettingDialog::ApplicationSettingDialog(
+    QWidget *parent /*= nullptr*/)
+    : QDialog(parent), impl_(new Impl) {
   setWindowTitle("Application Settings");
   setMinimumSize(700, 500);
-  
+
   impl_->setupUI(this);
- }
+}
 
- ApplicationSettingDialog::~ApplicationSettingDialog()
- {
-  delete impl_;
- }
+ApplicationSettingDialog::~ApplicationSettingDialog() { delete impl_; }
 
- void ApplicationSettingDialog::loadSettings()
- {
- impl_->generalPage_->loadSettings();
- impl_->importPage_->loadSettings();
- impl_->previewPage_->loadSettings();
+void ApplicationSettingDialog::loadSettings() {
+  impl_->generalPage_->loadSettings();
+  impl_->importPage_->loadSettings();
+  impl_->previewPage_->loadSettings();
   impl_->shortcutPage_->loadSettings();
- impl_->memoryPage_->loadSettings();
+  impl_->memoryPage_->loadSettings();
+  impl_->pluginPage_->loadSettings();
+  impl_->aiPage_->loadSettings();
 }
 
- void ApplicationSettingDialog::saveSettings()
- {
- impl_->generalPage_->saveSettings();
- impl_->importPage_->saveSettings();
- impl_->previewPage_->saveSettings();
+void ApplicationSettingDialog::saveSettings() {
+  impl_->generalPage_->saveSettings();
+  impl_->importPage_->saveSettings();
+  impl_->previewPage_->saveSettings();
   impl_->shortcutPage_->saveSettings();
- impl_->memoryPage_->saveSettings();
- 
- ArtifactAppSettings::instance()->sync();
+  impl_->memoryPage_->saveSettings();
+  impl_->pluginPage_->saveSettings();
+  impl_->aiPage_->saveSettings();
+
+  ArtifactAppSettings::instance()->sync();
 }
 
- void ApplicationSettingDialog::accept()
- {
-     saveSettings();
-     QDialog::accept();
- }
+void ApplicationSettingDialog::accept() {
+  saveSettings();
+  QDialog::accept();
+}
 
-// PluginSettingPage Implementation 
-
- W_OBJECT_IMPL(PluginSettingPage)
-
-  class PluginSettingPage::Impl {
-  public:
-   Impl();
-   ~Impl();
-   QTableWidget* pluginTable_;
-   QPushButton* refreshButton_;
-   QPushButton* openFolderButton_;
-   QString pluginDirectory_;
-   void loadPlugins(PluginSettingPage* page);
-   QStringList getPluginPaths();
-  };
-
-  class AISettingPage::Impl {
-  public:
-   Impl();
-   ~Impl();
-   QLineEdit* modelPathEdit_;
-   QPushButton* browseButton_;
-   QPushButton* initButton_;
-   QPushButton* shutdownButton_;
-   QLabel* statusLabel_;
-   QComboBox* providerCombo_;
-
-   void loadSettings();
-   void saveSettings();
-   void updateStatus();
-  };
-
-  AISettingPage::Impl::Impl() {}
-  AISettingPage::Impl::~Impl() {}
-
-  void AISettingPage::Impl::loadSettings() {
-   QSettings settings;
-   modelPathEdit_->setText(settings.value("AI/ModelPath", "models/llama-3.2-1b-instruct.q4_k_m.gguf").toString());
-   QString provider = settings.value("AI/Provider", "local").toString();
-   int idx = providerCombo_->findText(provider);
-   if (idx >= 0) providerCombo_->setCurrentIndex(idx);
-   updateStatus();
+void ApplicationSettingDialog::keyPressEvent(QKeyEvent *event) {
+  if (event->key() == Qt::Key_F && (event->modifiers() & Qt::ControlModifier)) {
+    if (impl_->searchBar_) {
+      impl_->searchBar_->setFocus();
+      impl_->searchBar_->selectAll();
+      event->accept();
+      return;
+    }
   }
-
-  void AISettingPage::Impl::saveSettings() {
-   QSettings settings;
-   settings.setValue("AI/ModelPath", modelPathEdit_->text());
-   settings.setValue("AI/Provider", providerCombo_->currentText());
+  if (event->key() == Qt::Key_Escape) {
+    if (impl_->searchBar_ && !impl_->searchBar_->text().isEmpty()) {
+      impl_->searchBar_->clear();
+      event->accept();
+      return;
+    }
   }
+  QDialog::keyPressEvent(event);
+}
 
-  void AISettingPage::Impl::updateStatus() {
-   auto* client = AIClient::instance();
-   if (client->isInitialized()) {
+// PluginSettingPage Implementation
+
+W_OBJECT_IMPL(PluginSettingPage)
+W_OBJECT_IMPL(AISettingPage)
+
+class PluginSettingPage::Impl {
+public:
+  Impl();
+  ~Impl();
+  QTableWidget *pluginTable_;
+  QPushButton *refreshButton_;
+  QPushButton *openFolderButton_;
+  QString pluginDirectory_;
+  void loadPlugins(PluginSettingPage *page);
+  QStringList getPluginPaths();
+};
+
+class AISettingPage::Impl {
+public:
+  Impl();
+  ~Impl();
+  QLineEdit *modelPathEdit_;
+  QPushButton *browseButton_;
+  QPushButton *initButton_;
+  QPushButton *shutdownButton_;
+  QLabel *statusLabel_;
+  QComboBox *providerCombo_;
+
+  void loadSettings();
+  void saveSettings();
+  void updateStatus();
+};
+
+AISettingPage::Impl::Impl() {}
+AISettingPage::Impl::~Impl() {}
+
+void AISettingPage::Impl::loadSettings() {
+  QSettings settings;
+  modelPathEdit_->setText(
+      settings.value("AI/ModelPath", "models/llama-3.2-1b-instruct.q4_k_m.gguf")
+          .toString());
+  QString provider = settings.value("AI/Provider", "local").toString();
+  int idx = providerCombo_->findText(provider);
+  if (idx >= 0)
+    providerCombo_->setCurrentIndex(idx);
+  updateStatus();
+}
+
+void AISettingPage::Impl::saveSettings() {
+  QSettings settings;
+  settings.setValue("AI/ModelPath", modelPathEdit_->text());
+  settings.setValue("AI/Provider", providerCombo_->currentText());
+}
+
+void AISettingPage::Impl::updateStatus() {
+  auto *client = Artifact::AIClient::instance();
+  if (client->isInitialized()) {
     statusLabel_->setText("Status: <font color='green'>Initialized</font>");
     initButton_->setEnabled(false);
     shutdownButton_->setEnabled(true);
-   } else {
+  } else {
     statusLabel_->setText("Status: <font color='gray'>Not initialized</font>");
     initButton_->setEnabled(true);
     shutdownButton_->setEnabled(false);
-   }
   }
+}
 
-  AISettingPage::AISettingPage(QWidget* parent) : QWidget(parent), impl_(new Impl()) {
-   auto* mainLayout = new QVBoxLayout(this);
+AISettingPage::AISettingPage(QWidget *parent)
+    : QWidget(parent), impl_(new Impl()) {
+  auto *mainLayout = new QVBoxLayout(this);
 
-   auto* modelGroup = new QGroupBox("Model Settings", this);
-   auto* modelLayout = new QFormLayout(modelGroup);
+  auto *modelGroup = new QGroupBox("Model Settings", this);
+  auto *modelLayout = new QFormLayout(modelGroup);
 
-   impl_->providerCombo_ = new QComboBox(this);
-   impl_->providerCombo_->addItem("Local (llama.cpp)");
-   impl_->providerCombo_->addItem("OpenAI");
-   impl_->providerCombo_->addItem("Ollama");
-   modelLayout->addRow("Provider", impl_->providerCombo_);
+  impl_->providerCombo_ = new QComboBox(this);
+  impl_->providerCombo_->addItem("Local (llama.cpp)");
+  impl_->providerCombo_->addItem("OpenAI");
+  impl_->providerCombo_->addItem("Ollama");
+  modelLayout->addRow("Provider", impl_->providerCombo_);
 
-   auto* pathLayout = new QHBoxLayout();
-   impl_->modelPathEdit_ = new QLineEdit(this);
-   impl_->modelPathEdit_->setPlaceholderText("Path to GGUF model file...");
-   impl_->browseButton_ = new QPushButton("Browse...", this);
-   pathLayout->addWidget(impl_->modelPathEdit_);
-   pathLayout->addWidget(impl_->browseButton_);
-   modelLayout->addRow("Model Path", pathLayout);
+  auto *pathLayout = new QHBoxLayout();
+  impl_->modelPathEdit_ = new QLineEdit(this);
+  impl_->modelPathEdit_->setPlaceholderText("Path to GGUF model file...");
+  impl_->browseButton_ = new QPushButton("Browse...", this);
+  pathLayout->addWidget(impl_->modelPathEdit_);
+  pathLayout->addWidget(impl_->browseButton_);
+  modelLayout->addRow("Model Path", pathLayout);
 
-   mainLayout->addWidget(modelGroup);
+  mainLayout->addWidget(modelGroup);
 
-   auto* statusGroup = new QGroupBox("AI Status", this);
-   auto* statusLayout = new QVBoxLayout(statusGroup);
-   impl_->statusLabel_ = new QLabel("Status: Not initialized", this);
-   statusLayout->addWidget(impl_->statusLabel_);
+  auto *statusGroup = new QGroupBox("AI Status", this);
+  auto *statusLayout = new QVBoxLayout(statusGroup);
+  impl_->statusLabel_ = new QLabel("Status: Not initialized", this);
+  statusLayout->addWidget(impl_->statusLabel_);
 
-   auto* actionLayout = new QHBoxLayout();
-   impl_->initButton_ = new QPushButton("Initialize AI", this);
-   impl_->shutdownButton_ = new QPushButton("Shutdown AI", this);
-   actionLayout->addWidget(impl_->initButton_);
-   actionLayout->addWidget(impl_->shutdownButton_);
-   actionLayout->addStretch();
-   statusLayout->addLayout(actionLayout);
+  auto *actionLayout = new QHBoxLayout();
+  impl_->initButton_ = new QPushButton("Initialize AI", this);
+  impl_->shutdownButton_ = new QPushButton("Shutdown AI", this);
+  actionLayout->addWidget(impl_->initButton_);
+  actionLayout->addWidget(impl_->shutdownButton_);
+  actionLayout->addStretch();
+  statusLayout->addLayout(actionLayout);
 
-   mainLayout->addWidget(statusGroup);
+  mainLayout->addWidget(statusGroup);
 
-   auto* infoLabel = new QLabel(
-    "Select a local GGUF model file to use with the AI chat.\n"
-    "Recommended: llama-3.2-1b-instruct.q4_k_m.gguf (~1.3GB)\n"
-    "AI will not be loaded until you click 'Initialize AI'.", this);
-   infoLabel->setWordWrap(true);
-   infoLabel->setStyleSheet("color: gray; font-size: 11px;");
-   mainLayout->addWidget(infoLabel);
-   mainLayout->addStretch();
+  auto *infoLabel =
+      new QLabel("Select a local GGUF model file to use with the AI chat.\n"
+                 "Recommended: llama-3.2-1b-instruct.q4_k_m.gguf (~1.3GB)\n"
+                 "AI will not be loaded until you click 'Initialize AI'.",
+                 this);
+  infoLabel->setWordWrap(true);
+  infoLabel->setStyleSheet("color: gray; font-size: 11px;");
+  mainLayout->addWidget(infoLabel);
+  mainLayout->addStretch();
 
-   impl_->loadSettings();
+  impl_->loadSettings();
 
-   connect(impl_->browseButton_, &QPushButton::clicked, this, [this]() {
-    QString path = QFileDialog::getOpenFileName(this, "Select AI Model",
-     QCoreApplication::applicationDirPath(),
-     "GGUF Model Files (*.gguf);;All Files (*)");
+  connect(impl_->browseButton_, &QPushButton::clicked, this, [this]() {
+    QString path = QFileDialog::getOpenFileName(
+        this, "Select AI Model", QCoreApplication::applicationDirPath(),
+        "GGUF Model Files (*.gguf);;All Files (*)");
     if (!path.isEmpty()) {
-     impl_->modelPathEdit_->setText(path);
+      impl_->modelPathEdit_->setText(path);
     }
-   });
+  });
 
-   connect(impl_->initButton_, &QPushButton::clicked, this, [this]() {
+  connect(impl_->initButton_, &QPushButton::clicked, this, [this]() {
     QString modelPath = impl_->modelPathEdit_->text();
     if (modelPath.isEmpty()) {
-     QMessageBox::warning(this, "Initialize AI", "Please select a model file first.");
-     return;
+      QMessageBox::warning(this, "Initialize AI",
+                           "Please select a model file first.");
+      return;
     }
     if (!QFileInfo::exists(modelPath)) {
-     QMessageBox::warning(this, "Initialize AI",
-      QString("Model file not found:\n%1").arg(modelPath));
-     return;
+      QMessageBox::warning(this, "Initialize AI",
+                           QString("Model file not found:\n%1").arg(modelPath));
+      return;
     }
 
-    auto* client = AIClient::instance();
+    auto *client = Artifact::AIClient::instance();
     if (client->initialize(modelPath)) {
-     impl_->updateStatus();
-     QMessageBox::information(this, "Initialize AI", "AI initialized successfully!");
+      impl_->updateStatus();
+      QMessageBox::information(this, "Initialize AI",
+                               "AI initialized successfully!");
     } else {
-     QMessageBox::warning(this, "Initialize AI",
-      "Failed to initialize AI. Check the model file and logs.");
+      QMessageBox::warning(
+          this, "Initialize AI",
+          "Failed to initialize AI. Check the model file and logs.");
     }
-   });
+  });
 
-   connect(impl_->shutdownButton_, &QPushButton::clicked, this, [this]() {
-    auto* client = AIClient::instance();
+  connect(impl_->shutdownButton_, &QPushButton::clicked, this, [this]() {
+    auto *client = Artifact::AIClient::instance();
     client->shutdown();
     impl_->updateStatus();
-   });
-  }
+  });
+}
 
-  AISettingPage::~AISettingPage() { delete impl_; }
-  QVector<QWidget*> AISettingPage::settingWidgets() const { return QVector<QWidget*>(); }
+AISettingPage::~AISettingPage() { delete impl_; }
+QVector<QWidget *> AISettingPage::settingWidgets() const {
+  return QVector<QWidget *>();
+}
+void AISettingPage::loadSettings() { impl_->loadSettings(); }
+void AISettingPage::saveSettings() { impl_->saveSettings(); }
 
-  PluginSettingPage::Impl::Impl() {
+PluginSettingPage::Impl::Impl() {
   pluginDirectory_ = QCoreApplication::applicationDirPath() + "/plugins";
- }
- PluginSettingPage::Impl::~Impl() {}
+}
+PluginSettingPage::Impl::~Impl() {}
 
- QStringList PluginSettingPage::Impl::getPluginPaths() {
+QStringList PluginSettingPage::Impl::getPluginPaths() {
   QStringList paths;
   QDir dir(pluginDirectory_);
   if (dir.exists()) {
-   QFileInfoList entries = dir.entryInfoList(QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot);
-   for (const QFileInfo& entry : entries) {
-    if (entry.isDir()) {
-     QDir subDir(entry.absoluteFilePath());
-     QFileInfoList plugins = subDir.entryInfoList(QStringList() << "*.dll" << "*.so" << "*.dylib", QDir::Files);
-     for (const QFileInfo& plugin : plugins) paths.append(plugin.absoluteFilePath());
-    } else if (entry.suffix() == "dll" || entry.suffix() == "so" || entry.suffix() == "dylib") {
-     paths.append(entry.absoluteFilePath());
+    QFileInfoList entries =
+        dir.entryInfoList(QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot);
+    for (const QFileInfo &entry : entries) {
+      if (entry.isDir()) {
+        QDir subDir(entry.absoluteFilePath());
+        QFileInfoList plugins = subDir.entryInfoList(
+            QStringList() << "*.dll" << "*.so" << "*.dylib", QDir::Files);
+        for (const QFileInfo &plugin : plugins)
+          paths.append(plugin.absoluteFilePath());
+      } else if (entry.suffix() == "dll" || entry.suffix() == "so" ||
+                 entry.suffix() == "dylib") {
+        paths.append(entry.absoluteFilePath());
+      }
     }
-   }
   }
   return paths;
- }
+}
 
- void PluginSettingPage::Impl::loadPlugins(PluginSettingPage* page) {
-  if (!pluginTable_) return;
+void PluginSettingPage::Impl::loadPlugins(PluginSettingPage *page) {
+  if (!pluginTable_)
+    return;
   pluginTable_->setRowCount(0);
   QStringList pluginPaths = getPluginPaths();
-  for (const QString& path : pluginPaths) {
-   QPluginLoader loader(path);
-   QJsonObject metaData = loader.metaData();
-   int row = pluginTable_->rowCount();
-   pluginTable_->insertRow(row);
-   QString name = metaData.value("Name").toString();
-   if (name.isEmpty()) { QFileInfo info(path); name = info.baseName(); }
-   pluginTable_->setItem(row, 0, new QTableWidgetItem(name));
-   pluginTable_->setItem(row, 1, new QTableWidgetItem(metaData.value("Version").toString()));
-   QString vendor = metaData.value("Vendor").toString();
-   if (vendor.isEmpty()) vendor = metaData.value("Author").toString();
-   pluginTable_->setItem(row, 2, new QTableWidgetItem(vendor));
-   pluginTable_->setItem(row, 3, new QTableWidgetItem(metaData.value("Description").toString()));
-   QString status = loader.isLoaded() ? "Loaded" : (loader.load() ? "Loaded" : "Failed");
-   pluginTable_->setItem(row, 4, new QTableWidgetItem(status));
-   pluginTable_->item(row, 0)->setData(Qt::UserRole, path);
+  for (const QString &path : pluginPaths) {
+    QPluginLoader loader(path);
+    QJsonObject metaData = loader.metaData();
+    int row = pluginTable_->rowCount();
+    pluginTable_->insertRow(row);
+    QString name = metaData.value("Name").toString();
+    if (name.isEmpty()) {
+      QFileInfo info(path);
+      name = info.baseName();
+    }
+    pluginTable_->setItem(row, 0, new QTableWidgetItem(name));
+    pluginTable_->setItem(
+        row, 1, new QTableWidgetItem(metaData.value("Version").toString()));
+    QString vendor = metaData.value("Vendor").toString();
+    if (vendor.isEmpty())
+      vendor = metaData.value("Author").toString();
+    pluginTable_->setItem(row, 2, new QTableWidgetItem(vendor));
+    pluginTable_->setItem(
+        row, 3, new QTableWidgetItem(metaData.value("Description").toString()));
+    QString status =
+        loader.isLoaded() ? "Loaded" : (loader.load() ? "Loaded" : "Failed");
+    pluginTable_->setItem(row, 4, new QTableWidgetItem(status));
+    pluginTable_->item(row, 0)->setData(Qt::UserRole, path);
   }
   pluginTable_->resizeColumnsToContents();
- }
+}
 
- PluginSettingPage::PluginSettingPage(QWidget* parent) : QWidget(parent), impl_(new Impl()) {
-  auto* mainLayout = new QVBoxLayout(this);
-  auto* infoGroup = new QGroupBox("Plugin Directory", this);
-  auto* infoLayout = new QHBoxLayout(infoGroup);
-  auto* dirLabel = new QLabel(impl_->pluginDirectory_, this);
+PluginSettingPage::PluginSettingPage(QWidget *parent)
+    : QWidget(parent), impl_(new Impl()) {
+  auto *mainLayout = new QVBoxLayout(this);
+  auto *infoGroup = new QGroupBox("Plugin Directory", this);
+  auto *infoLayout = new QHBoxLayout(infoGroup);
+  auto *dirLabel = new QLabel(impl_->pluginDirectory_, this);
   dirLabel->setStyleSheet("color: gray;");
   infoLayout->addWidget(dirLabel);
   impl_->openFolderButton_ = new QPushButton("Open Folder", this);
   infoLayout->addWidget(impl_->openFolderButton_);
   mainLayout->addWidget(infoGroup);
-  auto* tableGroup = new QGroupBox("Installed Plugins", this);
-  auto* tableLayout = new QVBoxLayout(tableGroup);
+  auto *tableGroup = new QGroupBox("Installed Plugins", this);
+  auto *tableLayout = new QVBoxLayout(tableGroup);
   impl_->pluginTable_ = new QTableWidget(this);
   impl_->pluginTable_->setColumnCount(5);
-  impl_->pluginTable_->setHorizontalHeaderLabels({"Name", "Version", "Vendor", "Description", "Status"});
+  impl_->pluginTable_->setHorizontalHeaderLabels(
+      {"Name", "Version", "Vendor", "Description", "Status"});
   impl_->pluginTable_->setSelectionBehavior(QAbstractItemView::SelectRows);
   impl_->pluginTable_->setEditTriggers(QAbstractItemView::NoEditTriggers);
   impl_->pluginTable_->horizontalHeader()->setStretchLastSection(true);
   tableLayout->addWidget(impl_->pluginTable_);
   mainLayout->addWidget(tableGroup);
-  auto* buttonLayout = new QHBoxLayout();
+  auto *buttonLayout = new QHBoxLayout();
   impl_->refreshButton_ = new QPushButton("Refresh", this);
   buttonLayout->addWidget(impl_->refreshButton_);
   buttonLayout->addStretch();
-  auto* unloadButton = new QPushButton("Unload Selected", this);
+  auto *unloadButton = new QPushButton("Unload Selected", this);
   buttonLayout->addWidget(unloadButton);
-  auto* loadButton = new QPushButton("Load Selected", this);
+  auto *loadButton = new QPushButton("Load Selected", this);
   buttonLayout->addWidget(loadButton);
   mainLayout->addLayout(buttonLayout);
   impl_->loadPlugins(this);
-  connect(impl_->refreshButton_, &QPushButton::clicked, this, [this]() { impl_->loadPlugins(this); });
-  connect(impl_->openFolderButton_, &QPushButton::clicked, this, [this]() { QDesktopServices::openUrl(QUrl::fromLocalFile(impl_->pluginDirectory_)); });
+  connect(impl_->refreshButton_, &QPushButton::clicked, this,
+          [this]() { impl_->loadPlugins(this); });
+  connect(impl_->openFolderButton_, &QPushButton::clicked, this, [this]() {
+    QDesktopServices::openUrl(QUrl::fromLocalFile(impl_->pluginDirectory_));
+  });
   connect(unloadButton, &QPushButton::clicked, this, [this]() {
-   QModelIndexList selected = impl_->pluginTable_->selectionModel()->selectedRows();
-   if (selected.isEmpty()) { QMessageBox::information(this, "Unload Plugin", "Please select a plugin to unload."); return; }
-   for (const QModelIndex& index : selected) {
-    QString path = impl_->pluginTable_->item(index.row(), 0)->data(Qt::UserRole).toString();
-    QPluginLoader loader(path);
-    if (loader.isLoaded()) loader.unload();
-   }
-   impl_->loadPlugins(this);
+    QModelIndexList selected =
+        impl_->pluginTable_->selectionModel()->selectedRows();
+    if (selected.isEmpty()) {
+      QMessageBox::information(this, "Unload Plugin",
+                               "Please select a plugin to unload.");
+      return;
+    }
+    for (const QModelIndex &index : selected) {
+      QString path = impl_->pluginTable_->item(index.row(), 0)
+                         ->data(Qt::UserRole)
+                         .toString();
+      QPluginLoader loader(path);
+      if (loader.isLoaded())
+        loader.unload();
+    }
+    impl_->loadPlugins(this);
   });
   connect(loadButton, &QPushButton::clicked, this, [this]() {
-   QModelIndexList selected = impl_->pluginTable_->selectionModel()->selectedRows();
-   if (selected.isEmpty()) { QMessageBox::information(this, "Load Plugin", "Please select a plugin to load."); return; }
-   for (const QModelIndex& index : selected) {
-    QString path = impl_->pluginTable_->item(index.row(), 0)->data(Qt::UserRole).toString();
-    QPluginLoader loader(path);
-    if (!loader.isLoaded()) loader.load();
-   }
-   impl_->loadPlugins(this);
+    QModelIndexList selected =
+        impl_->pluginTable_->selectionModel()->selectedRows();
+    if (selected.isEmpty()) {
+      QMessageBox::information(this, "Load Plugin",
+                               "Please select a plugin to load.");
+      return;
+    }
+    for (const QModelIndex &index : selected) {
+      QString path = impl_->pluginTable_->item(index.row(), 0)
+                         ->data(Qt::UserRole)
+                         .toString();
+      QPluginLoader loader(path);
+      if (!loader.isLoaded())
+        loader.load();
+    }
+    impl_->loadPlugins(this);
   });
- }
+}
 
- PluginSettingPage::~PluginSettingPage() { delete impl_; }
- QVector<QWidget*> PluginSettingPage::settingWidgets() const { return QVector<QWidget*>(); }
-  
-}; 
+PluginSettingPage::~PluginSettingPage() { delete impl_; }
+QVector<QWidget *> PluginSettingPage::settingWidgets() const {
+  return QVector<QWidget *>();
+}
+void PluginSettingPage::loadSettings() { impl_->loadPlugins(this); }
+void PluginSettingPage::saveSettings() {}
+QList<SettingItemInfo> PluginSettingPage::searchableItems() const {
+  QList<SettingItemInfo> items;
+  if (impl_->pluginTable_) {
+    items.append({QStringLiteral("Installed plugins"),
+                  QStringLiteral("Manage loaded plugins"),
+                  QStringLiteral("Plugins"), impl_->pluginTable_});
+  }
+  if (impl_->refreshButton_) {
+    items.append({QStringLiteral("Refresh plugins"),
+                  QStringLiteral("Reload plugin list"),
+                  QStringLiteral("Plugins"), impl_->refreshButton_});
+  }
+  if (impl_->openFolderButton_) {
+    items.append({QStringLiteral("Open plugin folder"),
+                  QStringLiteral("Open plugin directory"),
+                  QStringLiteral("Plugins"), impl_->openFolderButton_});
+  }
+  return items;
+}
+
+QList<SettingItemInfo> AISettingPage::searchableItems() const {
+  QList<SettingItemInfo> items;
+  if (impl_->providerCombo_) {
+    items.append({QStringLiteral("AI Provider"),
+                  QStringLiteral("AI backend provider (Local/OpenAI/Ollama)"),
+                  QStringLiteral("AI"), impl_->providerCombo_});
+  }
+  if (impl_->modelPathEdit_) {
+    items.append({QStringLiteral("AI Model Path"),
+                  QStringLiteral("Path to GGUF model file"),
+                  QStringLiteral("AI"), impl_->modelPathEdit_});
+  }
+  return items;
+}
+
+}; // namespace ArtifactCore

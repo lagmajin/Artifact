@@ -41,6 +41,9 @@
 #include <numeric>
 #include <regex>
 #include <random>
+
+//#include <wobjectimpl.h>
+
 module Artifact.Audio.Waveform;
 
 import Audio.Segment;
@@ -48,6 +51,8 @@ import Audio.Segment;
 namespace Artifact {
 
 namespace {
+
+	
 
 QVector<float> monoSamples(const AudioSegment& segment)
 {

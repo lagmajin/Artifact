@@ -1314,7 +1314,7 @@ void ArtifactInspectorWidget::Impl::handleRemoveEffectClicked(int rackIndex)
       return;
     }
     impl_->eventBus_.post<CurrentCompositionChangedEvent>(CurrentCompositionChangedEvent{
-      QString::fromStdString(id.toString())
+      id.toString()
     });
     impl_->eventBus_.drain();
    });
@@ -1324,7 +1324,7 @@ void ArtifactInspectorWidget::Impl::handleRemoveEffectClicked(int rackIndex)
       return;
     }
     impl_->eventBus_.post<CurrentCompositionChangedEvent>(CurrentCompositionChangedEvent{
-      QString::fromStdString(id.toString())
+      id.toString()
     });
     impl_->eventBus_.drain();
    });
@@ -1335,8 +1335,8 @@ void ArtifactInspectorWidget::Impl::handleRemoveEffectClicked(int rackIndex)
       return;
     }
     impl_->eventBus_.post<LayerSelectionChangedEvent>(LayerSelectionChangedEvent{
-      QString::fromStdString(cid.toString()),
-      QString::fromStdString(id.toString())
+      cid.toString(),
+      id.toString()
     });
     impl_->eventBus_.drain();
    });
@@ -1347,8 +1347,8 @@ void ArtifactInspectorWidget::Impl::handleRemoveEffectClicked(int rackIndex)
       return;
     }
     impl_->eventBus_.post<LayerSelectionChangedEvent>(LayerSelectionChangedEvent{
-      QString::fromStdString(impl_->currentCompositionId_.toString()),
-      QString::fromStdString(id.toString())
+      impl_->currentCompositionId_.toString(),
+      id.toString()
     });
     impl_->eventBus_.drain();
    });

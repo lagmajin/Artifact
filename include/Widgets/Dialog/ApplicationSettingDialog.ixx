@@ -8,15 +8,22 @@ export module ApplicationSettingDialog;
 
 export namespace ArtifactCore {
 
- // Base class for setting pages to manage loading/saving consistently
- class ISettingPage {
- public:
-  virtual ~ISettingPage() = default;
-  virtual void loadSettings() = 0;
-  virtual void saveSettings() = 0;
+ struct SettingItemInfo {
+  QString label;
+  QString description;
+  QString category;
+  QWidget* widget = nullptr;
  };
 
- // General Settings Page
+  class ISettingPage {
+  public:
+   virtual ~ISettingPage() = default;
+   virtual void loadSettings() = 0;
+   virtual void saveSettings() = 0;
+   virtual QList<SettingItemInfo> searchableItems() const = 0;
+  };
+
+  // General Settings Page
  class GeneralSettingPage : public QWidget, public ISettingPage {
  private:
   class Impl;
@@ -26,6 +33,7 @@ export namespace ArtifactCore {
   ~GeneralSettingPage();
   void loadSettings() override;
   void saveSettings() override;
+  QList<SettingItemInfo> searchableItems() const override;
  };
 
  // Import Settings Page
@@ -38,6 +46,7 @@ export namespace ArtifactCore {
   ~ImportSettingPage();
   void loadSettings() override;
   void saveSettings() override;
+  QList<SettingItemInfo> searchableItems() const override;
  };
 
  // Preview Settings Page
@@ -50,6 +59,7 @@ export namespace ArtifactCore {
   ~PreviewSettingPage();
   void loadSettings() override;
   void saveSettings() override;
+  QList<SettingItemInfo> searchableItems() const override;
  };
 
  class LabelColorSettingWidget :public QWidget {
@@ -74,6 +84,7 @@ export namespace ArtifactCore {
   void resetSetting();
   void loadSettings() override;
   void saveSettings() override;
+  QList<SettingItemInfo> searchableItems() const override;
  };
 
 
@@ -88,41 +99,35 @@ export namespace ArtifactCore {
   QVector<QWidget*> settingWidgets() const;
   void loadSettings() override;
   void saveSettings() override;
+  QList<SettingItemInfo> searchableItems() const override;
  };
 
- class PluginSettingPage : public QWidget {
+ class PluginSettingPage : public QWidget, public ISettingPage {
    W_OBJECT(PluginSettingPage)
   public:
    explicit PluginSettingPage(QWidget* parent = nullptr);
    ~PluginSettingPage();
 
    QVector<QWidget*> settingWidgets() const;
+   void loadSettings() override;
+   void saveSettings() override;
+   QList<SettingItemInfo> searchableItems() const;
 
   private:
    class Impl;
    Impl* impl_;
   };
 
-  class AISettingPage : public QWidget {
+  class AISettingPage : public QWidget, public ISettingPage {
    W_OBJECT(AISettingPage)
   public:
    explicit AISettingPage(QWidget* parent = nullptr);
    ~AISettingPage();
 
    QVector<QWidget*> settingWidgets() const;
-
-  private:
-   class Impl;
-   Impl* impl_;
-  };
-
-  class AISettingPage : public QWidget {
-   W_OBJECT(AISettingPage)
-  public:
-   explicit AISettingPage(QWidget* parent = nullptr);
-   ~AISettingPage();
-
-   QVector<QWidget*> settingWidgets() const;
+   void loadSettings() override;
+   void saveSettings() override;
+   QList<SettingItemInfo> searchableItems() const;
 
   private:
    class Impl;
@@ -140,6 +145,8 @@ public:
  void accept() override;
  void loadSettings();
  void saveSettings();
+protected:
+ void keyPressEvent(QKeyEvent* event) override;
 };
 
 

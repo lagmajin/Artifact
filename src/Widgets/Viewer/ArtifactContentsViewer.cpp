@@ -93,10 +93,11 @@ namespace Artifact
    void syncModelViewerMode();
    void attachMediaOutputs();
    void detachMediaOutputs();
-   void fitImageToWindow();
-   void applyImageTransform();
+   void activateImage(const QString& filepath);
    void activateVideo(const QString& filepath);
    void activateModel(const QString& filepath);
+   void fitImageToWindow();
+   void applyImageTransform();
 
    static qint64 framesToMs(int64_t frame);
    static QString humanFileSize(qint64 bytes);
@@ -315,107 +316,34 @@ namespace Artifact
    modelViewerReady = true;
   }
 
-   void ArtifactContentsViewer::Impl::activateImage(const QString& filepath)
-   {
-    QPixmap pix(filepath);
-    if (pix.isNull()) {
-     showInfoMessage("Failed to load image:\n" + filepath);
-     return;
-    }
-
-    zoomLevel = 1.0;
-    rotationDegrees = 0.0;
-    originalImage = pix;
-    applyImageTransform();
-    stackedWidget->setCurrentWidget(imageScrollArea);
-    updateHeader();
-    updatePlaybackState();
-    updateActionAvailability();
-    updateModeButtons();
+  void ArtifactContentsViewer::Impl::activateImage(const QString& filepath)
+  {
+   QFileInfo info(filepath);
+   if (!info.exists()) {
+    showInfoMessage("Image file does not exist:\n" + filepath);
+    return;
    }
 
-   void ArtifactContentsViewer::Impl::fitImageToWindow()
-   {
-    if (originalImage.isNull() || !imageScrollArea) return;
-
-    const QSize viewportSize = imageScrollArea->viewport()->size();
-    const QSize imageSize = originalImage.size();
-
-    if (imageSize.isEmpty() || viewportSize.isEmpty()) return;
-
-    const double scaleX = static_cast<double>(viewportSize.width()) / imageSize.width();
-    const double scaleY = static_cast<double>(viewportSize.height()) / imageSize.height();
-    const double fitScale = std::min(scaleX, scaleY);
-
-    zoomLevel = fitScale;
-    rotationDegrees = 0.0;
-    applyImageTransform();
+   QPixmap pixmap(info.absoluteFilePath());
+   if (pixmap.isNull()) {
+    showInfoMessage("Failed to load image:\n" + filepath);
+    return;
    }
 
-   void ArtifactContentsViewer::Impl::applyImageTransform()
-   {
-    if (originalImage.isNull() || !imageLabel) return;
-
-    if (rotationDegrees != 0.0) {
-     QTransform transform;
-     transform.rotate(rotationDegrees);
-     const QPixmap rotated = originalImage.transformed(transform, Qt::SmoothTransformation);
-     const QSize scaledSize = rotated.size() * zoomLevel;
-     imageLabel->setPixmap(rotated);
-     imageLabel->setFixedSize(scaledSize);
-    } else {
-     const QSize scaledSize = originalImage.size() * zoomLevel;
-     imageLabel->setPixmap(originalImage);
-     imageLabel->setFixedSize(scaledSize);
-    }
-   }
-
-    zoomLevel = 1.0;
-    rotationDegrees = 0.0;
-    originalImage = pix;
-    applyImageTransform();
-    stackedWidget->setCurrentWidget(imageScrollArea);
-    updateHeader();
-    updatePlaybackState();
-    updateActionAvailability();
-    updateModeButtons();
-   }
-
-   void ArtifactContentsViewer::Impl::fitImageToWindow()
-   {
-    if (originalImage.isNull() || !imageScrollArea) return;
-
-    const QSize viewportSize = imageScrollArea->viewport()->size();
-    const QSize imageSize = originalImage.size();
-
-    if (imageSize.isEmpty() || viewportSize.isEmpty()) return;
-
-    const double scaleX = static_cast<double>(viewportSize.width()) / imageSize.width();
-    const double scaleY = static_cast<double>(viewportSize.height()) / imageSize.height();
-    const double fitScale = std::min(scaleX, scaleY);
-
-    zoomLevel = fitScale;
-    rotationDegrees = 0.0;
-    applyImageTransform();
-   }
-
-   void ArtifactContentsViewer::Impl::applyImageTransform()
-   {
-    if (originalImage.isNull() || !imageLabel) return;
-
-    if (rotationDegrees != 0.0) {
-     QTransform transform;
-     transform.rotate(rotationDegrees);
-     const QPixmap rotated = originalImage.transformed(transform, Qt::SmoothTransformation);
-     const QSize scaledSize = rotated.size() * zoomLevel;
-     imageLabel->setPixmap(rotated);
-     imageLabel->setFixedSize(scaledSize);
-    } else {
-     const QSize scaledSize = originalImage.size() * zoomLevel;
-     imageLabel->setPixmap(originalImage);
-     imageLabel->setFixedSize(scaledSize);
-    }
-   }
+   clearPlaybackRange();
+   originalImage = pixmap;
+   rotationDegrees = 0.0;
+   zoomLevel = 1.0;
+   imageLabel->setPixmap(pixmap);
+   imageLabel->setFixedSize(pixmap.size());
+   imageScrollArea->setWidgetResizable(false);
+   stackedWidget->setCurrentWidget(imageScrollArea);
+   fitImageToWindow();
+   updateHeader();
+   updatePlaybackState();
+   updateActionAvailability();
+   updateModeButtons();
+  }
 
   void ArtifactContentsViewer::Impl::activateVideo(const QString& filepath)
   {
@@ -447,6 +375,53 @@ namespace Artifact
    updatePlaybackState();
    updateActionAvailability();
    updateModeButtons();
+  }
+
+  void ArtifactContentsViewer::Impl::fitImageToWindow()
+  {
+   if (originalImage.isNull() || !imageScrollArea || !imageLabel) {
+    return;
+   }
+
+   const QPixmap currentPixmap = imageLabel->pixmap();
+   const QSize baseSize = currentPixmap.isNull() ? originalImage.size() : currentPixmap.size();
+   if (baseSize.isEmpty()) {
+    return;
+   }
+
+   const QSize viewportSize = imageScrollArea->viewport() ? imageScrollArea->viewport()->size() : QSize();
+   if (viewportSize.isEmpty()) {
+    zoomLevel = 1.0;
+    applyImageTransform();
+    return;
+   }
+
+   const double scaleX = static_cast<double>(viewportSize.width()) / static_cast<double>(baseSize.width());
+   const double scaleY = static_cast<double>(viewportSize.height()) / static_cast<double>(baseSize.height());
+   zoomLevel = std::clamp(std::min(scaleX, scaleY), 0.05, 10.0);
+   applyImageTransform();
+  }
+
+  void ArtifactContentsViewer::Impl::applyImageTransform()
+  {
+   if (originalImage.isNull() || !imageLabel) {
+    return;
+   }
+
+   QTransform transform;
+   transform.rotate(rotationDegrees);
+   QPixmap transformed = originalImage.transformed(transform, Qt::SmoothTransformation);
+   if (transformed.isNull()) {
+    return;
+   }
+
+   const QSize targetSize = (transformed.size() * zoomLevel).expandedTo(QSize(1, 1));
+   if (targetSize != transformed.size()) {
+    transformed = transformed.scaled(targetSize, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+   }
+
+   imageLabel->setPixmap(transformed);
+   imageLabel->setFixedSize(transformed.size());
   }
 
   void ArtifactContentsViewer::Impl::syncModelViewerMode()
@@ -1068,14 +1043,6 @@ namespace Artifact
           } else {
               impl_->zoomLevel /= scaleFactor;
           }
-          
-          impl_->zoomLevel = qBound(0.05, impl_->zoomLevel, 10.0);
-          impl_->applyImageTransform();
-          event->accept();
-          return;
-      }
-      QWidget::wheelEvent(event);
-  }
           
           impl_->zoomLevel = qBound(0.05, impl_->zoomLevel, 10.0);
           impl_->applyImageTransform();

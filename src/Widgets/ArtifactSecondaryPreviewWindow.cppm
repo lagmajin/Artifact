@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <QWidget>
 #include <QLabel>
 #include <QVBoxLayout>
@@ -22,11 +22,15 @@ module;
 #include <QPalette>
 #include <QColor>
 
+#include <wobjectimpl.h>
+
 module Artifact.Widgets.SecondaryPreviewWindow;
 
 import Widgets.Utils.CSS;
 
 namespace Artifact {
+
+	W_OBJECT_IMPL(ArtifactSecondaryPreviewWindow)
 
 class ArtifactSecondaryPreviewWindow::Impl {
 public:
@@ -86,7 +90,7 @@ public:
 
     QSize scaledImageSize(const QSize& imageSize, const QSize& availableSize) const {
         if (imageSize.isEmpty() || availableSize.isEmpty()) return imageSize;
-        return imageSize.scaled(availableSize, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+        return imageSize.scaled(availableSize.width(), availableSize.height(), Qt::KeepAspectRatio);
     }
 };
 

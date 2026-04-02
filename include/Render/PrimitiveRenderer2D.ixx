@@ -85,10 +85,6 @@ public:
     void beginBatch();
     void endBatch();
 
-    // Batch rendering
-    void beginBatch();
-    void endBatch();
-
 private:
     class Impl;
     Impl* impl_;

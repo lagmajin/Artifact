@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <QThread>
 #include <QElapsedTimer>
 #include <QMutexLocker>
@@ -14,7 +14,8 @@ module;
 #include <chrono>
 #include <mutex>
 #include <condition_variable>
-#include "../../../out/build/x64-Debug/vcpkg_installed/x64-windows/include/Qt6/QtGui/QFont"
+
+#include <QFont>
 
 module Artifact.Playback.Engine;
 
@@ -99,6 +100,12 @@ public:
         audioRenderer_ = std::make_unique<AudioRenderer>();
         QObject::connect(workerThread_, &QThread::started, [this]() { onThreadStarted(); });
         QObject::connect(workerThread_, &QThread::finished, [this]() { onThreadFinished(); });
+
+        audioRenderer_->setLevelCallback([this](const AudioLevelData& levels) {
+            QMetaObject::invokeMethod(owner_, [this, levels]() {
+                Q_EMIT owner_->audioLevelChanged(levels.leftRms, levels.rightRms, levels.leftPeak, levels.rightPeak);
+            }, Qt::QueuedConnection);
+        });
     }
     
     ~Impl() {
@@ -247,14 +254,22 @@ public:
                 const size_t buffered = audioRenderer_->bufferedFrames();
                 const size_t halfTarget = audioTargetBufferedFrames_ / 2;
                 if (buffered >= audioTargetBufferedFrames_) {
-                    std::this_thread::sleep_for(std::chrono::milliseconds(4));
+                    const size_t surplus = buffered - audioTargetBufferedFrames_;
+                    const int samplesPerMs = audioSampleRate_ / 1000;
+                    const int maxSleepMs = 2;
+                    const int sleepMs = std::min(maxSleepMs, std::max(0, static_cast<int>(surplus / std::max(1, samplesPerMs))));
+                    if (sleepMs > 0) {
+                        std::this_thread::sleep_for(std::chrono::milliseconds(sleepMs));
+                    } else {
+                        std::this_thread::yield();
+                    }
                 } else if (buffered >= halfTarget) {
                     std::this_thread::yield();
                 } else {
                     // バッファ半分以下 — sleep せずに即デコード続行
                 }
             } else {
-                std::this_thread::sleep_for(std::chrono::milliseconds(4));
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
             }
         }
 
@@ -271,9 +286,11 @@ public:
     
     /// フレーム更新処理
     void updateFrame(int64_t targetFrame) {
-        // コンポジションの状態更新
+        // コンポジションの状態更新をメインスレッドに委譲
         if (composition_) {
-            composition_->setFramePosition(FramePosition(targetFrame));
+            QMetaObject::invokeMethod(composition_.get(), [comp = composition_, targetFrame]() {
+                comp->setFramePosition(FramePosition(targetFrame));
+            }, Qt::QueuedConnection);
         }
 
         // フレームを描画（現在はダミー）
@@ -287,12 +304,11 @@ public:
         }
         
         // メインスレッドに通知
-        // DirectConnection だとワーカースレッドで UI を触ってしまうため QueuedConnection を維持
         QMetaObject::invokeMethod(owner_, [this, pos = FramePosition(targetFrame), frame = frontBuffer_]() {
             Q_EMIT owner_->frameChanged(pos, frame);
         }, Qt::QueuedConnection);
     }
-    
+
     /// フレーム描画
     QImage renderFrame(const FramePosition& position) {
         QSize sz(1280, 720); // Default preview size

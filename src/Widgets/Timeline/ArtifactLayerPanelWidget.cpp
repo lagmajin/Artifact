@@ -52,6 +52,7 @@ import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
 import Artifact.Layer.Image;
 import Artifact.Layer.Svg;
+import Artifact.Layer.Shape;
 import Artifact.Layer.Video;
 import Artifact.Layer.Text;
 import Artifact.Layer.Solid2D;
@@ -170,6 +171,9 @@ namespace {
   }
   if (auto solid = std::dynamic_pointer_cast<ArtifactSolid2DLayer>(layer)) {
    return QColor(219, 112, 147);  // PaleVioletRed - ソリッド
+  }
+  if (std::dynamic_pointer_cast<ArtifactShapeLayer>(layer)) {
+   return QColor(255, 170, 64);  // Warm orange - シェイプ
   }
   if (auto svg = std::dynamic_pointer_cast<ArtifactSvgLayer>(layer)) {
    return QColor(147, 112, 219);  // MediumPurple - SVG
@@ -322,10 +326,13 @@ namespace {
    return QStringLiteral("text");
   }
   if (std::dynamic_pointer_cast<ArtifactImageLayer>(layer)) {
-   return QStringLiteral("image");
+    return QStringLiteral("image");
+  }
+  if (std::dynamic_pointer_cast<ArtifactShapeLayer>(layer)) {
+    return QStringLiteral("shape");
   }
   if (std::dynamic_pointer_cast<ArtifactSvgLayer>(layer)) {
-   return QStringLiteral("shape");
+    return QStringLiteral("svg");
   }
   if (std::dynamic_pointer_cast<ArtifactVideoLayer>(layer)) {
    return QStringLiteral("video");
@@ -2087,6 +2094,7 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
     QAction* createNullAct   = createMenu->addAction("Null Layer");
     QAction* createAdjustAct = createMenu->addAction("Adjustment Layer");
     QAction* createTextAct   = createMenu->addAction("Text Layer");
+    QAction* createShapeAct  = createMenu->addAction("Shape Layer");
     QAction* createParticleAct = createMenu->addAction("Particle Layer");
     QAction* createCameraAct = createMenu->addAction("Camera Layer");
     createMenu->setIcon(impl_->iconCreateSolid);
@@ -2094,6 +2102,7 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
     createNullAct->setIcon(impl_->iconCreateNull);
     createAdjustAct->setIcon(impl_->iconCreateAdjust);
     createTextAct->setIcon(impl_->iconCreateText);
+    createShapeAct->setIcon(impl_->iconCreateSolid);
     createCameraAct->setIcon(impl_->iconCreateText);
 
     menu.addSeparator();
@@ -2364,6 +2373,11 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
       }
     } else if (chosen == createTextAct) {
       ArtifactTextLayerInitParams params(QStringLiteral("Text"));
+      if (service) {
+       service->addLayerToCurrentComposition(params);
+      }
+    } else if (chosen == createShapeAct) {
+      ArtifactLayerInitParams params(QStringLiteral("Shape"), LayerType::Shape);
       if (service) {
        service->addLayerToCurrentComposition(params);
       }

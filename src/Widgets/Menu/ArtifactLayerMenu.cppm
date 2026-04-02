@@ -495,7 +495,7 @@ void ArtifactLayerMenu::Impl::handlePrecompose()
     auto comp = service->currentComposition().lock();
     if (!comp) return;
 
-    auto layer = comp->findLayerById(selectedLayerId_);
+    auto layer = comp->layerById(selectedLayerId_);
     if (!layer) return;
 
     bool ok = false;

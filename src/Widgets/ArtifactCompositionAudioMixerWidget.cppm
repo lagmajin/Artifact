@@ -561,6 +561,13 @@ ArtifactCompositionAudioMixerWidget::ArtifactCompositionAudioMixerWidget(QWidget
             playbackService->setAudioMasterVolume(masterBus->volume());
             playbackService->setAudioMasterMuted(masterBus->isMuted());
         }
+
+        QObject::connect(playbackService, &ArtifactPlaybackService::audioLevelChanged, this,
+            [this](float leftRms, float rightRms, float leftPeak, float rightPeak) {
+                if (auto* masterBus = impl_->mixer_->masterBus()) {
+                    masterBus->updateLevels(leftRms, rightRms);
+                }
+            });
     }
 
     auto* rootLayout = new QVBoxLayout(this);

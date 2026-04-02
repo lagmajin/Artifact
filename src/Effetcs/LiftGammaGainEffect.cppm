@@ -1,4 +1,5 @@
 module;
+
 #include <QString>
 #include <QVariant>
 #include <QVector>
@@ -19,9 +20,44 @@ import CvUtils;
 
 namespace Artifact {
 
-// ─────────────────────────────────────────────────────────
-// CPU 実装: Lift / Gamma / Gain
-// ─────────────────────────────────────────────────────────
+static void applyLiftGammaGainCore(const ImageF32x4RGBAWithCache& src,
+                                   ImageF32x4RGBAWithCache& dst,
+                                   float liftR, float liftG, float liftB,
+                                   float gammaR, float gammaG, float gammaB,
+                                   float gainR, float gainG, float gainB) {
+    dst = src;
+    cv::Mat mat = dst.image().toCVMat();
+    if (mat.empty()) {
+        return;
+    }
+
+    for (int y = 0; y < mat.rows; ++y) {
+        for (int x = 0; x < mat.cols; ++x) {
+            cv::Vec4f& p = mat.at<cv::Vec4f>(y, x);
+            float& b = p[0];
+            float& g = p[1];
+            float& r = p[2];
+
+            r += liftR * 0.1f;
+            g += liftG * 0.1f;
+            b += liftB * 0.1f;
+
+            if (gammaR != 1.0f) r = std::pow(std::max(r, 0.0f), 1.0f / gammaR);
+            if (gammaG != 1.0f) g = std::pow(std::max(g, 0.0f), 1.0f / gammaG);
+            if (gammaB != 1.0f) b = std::pow(std::max(b, 0.0f), 1.0f / gammaB);
+
+            r *= gainR;
+            g *= gainG;
+            b *= gainB;
+
+            r = std::clamp(r, 0.0f, 1.0f);
+            g = std::clamp(g, 0.0f, 1.0f);
+            b = std::clamp(b, 0.0f, 1.0f);
+        }
+    }
+
+    dst.image().setFromCVMat(mat);
+}
 
 class LiftGammaGainCPUImpl : public ArtifactEffectImplBase {
 public:
@@ -30,47 +66,9 @@ public:
     float gainR_ = 1.0f, gainG_ = 1.0f, gainB_ = 1.0f;
 
     void applyCPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) override {
-        dst = src;
-        cv::Mat mat = dst.toCvMat();
-        if (mat.empty()) return;
-
-        for (int y = 0; y < mat.rows; ++y) {
-            for (int x = 0; x < mat.cols; ++x) {
-                cv::Vec4f& p = mat.at<cv::Vec4f>(y, x);
-                // BGR order in OpenCV
-                float& b = p[0];
-                float& g = p[1];
-                float& r = p[2];
-
-                // 1. Lift: シャドウ領域に加算
-                r += liftR_ * 0.1f;
-                g += liftG_ * 0.1f;
-                b += liftB_ * 0.1f;
-
-                // 2. Gamma: ミッドトーンのガンマ補正
-                if (gammaR_ != 1.0f) r = std::pow(std::max(r, 0.0f), 1.0f / gammaR_);
-                if (gammaG_ != 1.0f) g = std::pow(std::max(g, 0.0f), 1.0f / gammaG_);
-                if (gammaB_ != 1.0f) b = std::pow(std::max(b, 0.0f), 1.0f / gammaB_);
-
-                // 3. Gain: ハイライト領域に乗算
-                r *= gainR_;
-                g *= gainG_;
-                b *= gainB_;
-
-                // Clamp
-                r = std::clamp(r, 0.0f, 1.0f);
-                g = std::clamp(g, 0.0f, 1.0f);
-                b = std::clamp(b, 0.0f, 1.0f);
-            }
-        }
-
-        dst.fromCvMat(mat);
+        applyLiftGammaGainCore(src, dst, liftR_, liftG_, liftB_, gammaR_, gammaG_, gammaB_, gainR_, gainG_, gainB_);
     }
 };
-
-// ─────────────────────────────────────────────────────────
-// GPU 実装 (CPU fallback)
-// ─────────────────────────────────────────────────────────
 
 class LiftGammaGainGPUImpl : public ArtifactEffectImplBase {
 public:
@@ -79,42 +77,32 @@ public:
     float gainR_ = 1.0f, gainG_ = 1.0f, gainB_ = 1.0f;
 
     void applyCPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) override {
-        cpuImpl_.applyCPU(src, dst);
+        applyLiftGammaGainCore(src, dst, liftR_, liftG_, liftB_, gammaR_, gammaG_, gammaB_, gainR_, gainG_, gainB_);
     }
 
     void applyGPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) override {
-        // TODO: Diligent Engine による GPU 実装
         applyCPU(src, dst);
     }
-
-private:
-    LiftGammaGainCPUImpl cpuImpl_;
 };
-
-// ─────────────────────────────────────────────────────────
-// LiftGammaGainEffect 本体
-// ─────────────────────────────────────────────────────────
 
 LiftGammaGainEffect::LiftGammaGainEffect() {
     setDisplayName(ArtifactCore::UniString("Lift / Gamma / Gain"));
     setPipelineStage(EffectPipelineStage::Rasterizer);
 
-    auto cpuImpl = std::make_shared<LiftGammaGainCPUImpl>();
-    auto gpuImpl = std::make_shared<LiftGammaGainGPUImpl>();
-    setCPUImpl(cpuImpl);
-    setGPUImpl(gpuImpl);
+    setCPUImpl(std::make_shared<LiftGammaGainCPUImpl>());
+    setGPUImpl(std::make_shared<LiftGammaGainGPUImpl>());
     setComputeMode(ComputeMode::AUTO);
 }
 
 LiftGammaGainEffect::~LiftGammaGainEffect() = default;
 
 void LiftGammaGainEffect::syncImpls() {
-    if (auto* cpu = dynamic_cast<LiftGammaGainCPUImpl*>(cpuImpl_.get())) {
+    if (auto* cpu = dynamic_cast<LiftGammaGainCPUImpl*>(cpuImpl().get())) {
         cpu->liftR_ = liftR_; cpu->liftG_ = liftG_; cpu->liftB_ = liftB_;
         cpu->gammaR_ = gammaR_; cpu->gammaG_ = gammaG_; cpu->gammaB_ = gammaB_;
         cpu->gainR_ = gainR_; cpu->gainG_ = gainG_; cpu->gainB_ = gainB_;
     }
-    if (auto* gpu = dynamic_cast<LiftGammaGainGPUImpl*>(gpuImpl_.get())) {
+    if (auto* gpu = dynamic_cast<LiftGammaGainGPUImpl*>(gpuImpl().get())) {
         gpu->liftR_ = liftR_; gpu->liftG_ = liftG_; gpu->liftB_ = liftB_;
         gpu->gammaR_ = gammaR_; gpu->gammaG_ = gammaG_; gpu->gammaB_ = gammaB_;
         gpu->gainR_ = gainR_; gpu->gainG_ = gainG_; gpu->gainB_ = gainB_;
@@ -124,17 +112,14 @@ void LiftGammaGainEffect::syncImpls() {
 std::vector<AbstractProperty> LiftGammaGainEffect::getProperties() const {
     std::vector<AbstractProperty> props;
 
-    // Lift
     props.push_back({}); props.back().setName("Lift R"); props.back().setType(PropertyType::Float); props.back().setValue(liftR_);
     props.push_back({}); props.back().setName("Lift G"); props.back().setType(PropertyType::Float); props.back().setValue(liftG_);
     props.push_back({}); props.back().setName("Lift B"); props.back().setType(PropertyType::Float); props.back().setValue(liftB_);
 
-    // Gamma
     props.push_back({}); props.back().setName("Gamma R"); props.back().setType(PropertyType::Float); props.back().setValue(gammaR_);
     props.push_back({}); props.back().setName("Gamma G"); props.back().setType(PropertyType::Float); props.back().setValue(gammaG_);
     props.push_back({}); props.back().setName("Gamma B"); props.back().setType(PropertyType::Float); props.back().setValue(gammaB_);
 
-    // Gain
     props.push_back({}); props.back().setName("Gain R"); props.back().setType(PropertyType::Float); props.back().setValue(gainR_);
     props.push_back({}); props.back().setName("Gain G"); props.back().setType(PropertyType::Float); props.back().setValue(gainG_);
     props.push_back({}); props.back().setName("Gain B"); props.back().setType(PropertyType::Float); props.back().setValue(gainB_);

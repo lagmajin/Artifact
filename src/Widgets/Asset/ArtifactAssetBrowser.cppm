@@ -609,8 +609,10 @@ protected:
    layout_->addWidget(rootBtn);
    buttons_.append(rootBtn);
 
-   QObject::connect(rootBtn, &QToolButton::clicked, [this]() {
-    emit qobject_cast<ArtifactBreadcrumbWidget*>(rootBtn->parentWidget()->parentWidget())->pathClicked(rootPath_);
+   QObject::connect(rootBtn, &QToolButton::clicked, [this, rootBtn]() {
+    if (auto* breadcrumb = qobject_cast<ArtifactBreadcrumbWidget*>(rootBtn->parentWidget()->parentWidget())) {
+     breadcrumb->pathClicked(rootPath_);
+    }
    });
 
    // Build accumulated path and buttons for each part
@@ -634,8 +636,10 @@ protected:
     buttons_.append(btn);
 
     if (!isLast) {
-     QObject::connect(btn, &QToolButton::clicked, [this, clickPath]() {
-      emit qobject_cast<ArtifactBreadcrumbWidget*>(btn->parentWidget()->parentWidget())->pathClicked(clickPath);
+     QObject::connect(btn, &QToolButton::clicked, [this, btn, clickPath]() {
+      if (auto* breadcrumb = qobject_cast<ArtifactBreadcrumbWidget*>(btn->parentWidget()->parentWidget())) {
+       breadcrumb->pathClicked(clickPath);
+      }
      });
     }
    }
@@ -808,46 +812,6 @@ protected:
    defaultAudioIcon_ = style->standardIcon(QStyle::SP_MediaVolume);
    defaultFontIcon_ = style->standardIcon(QStyle::SP_FileDialogDetailedView);
   }
-
-  // P0-1: File system watcher for auto-refresh
-  fileWatcher_ = new QFileSystemWatcher();
-  fileWatcherDebounce_ = new QTimer();
-  fileWatcherDebounce_->setSingleShot(true);
-  fileWatcherDebounce_->setInterval(500); // 500ms debounce
-
-  QObject::connect(fileWatcher_, &QFileSystemWatcher::directoryChanged,
-   fileWatcherDebounce_, [this]() {
-    fileWatcherPending_ = true;
-    fileWatcherDebounce_->start();
-   });
-
-  QObject::connect(fileWatcher_, &QFileSystemWatcher::fileChanged,
-   fileWatcherDebounce_, [this]() {
-    fileWatcherPending_ = true;
-    fileWatcherDebounce_->start();
-   });
-
-  QObject::connect(fileWatcherDebounce_, &QTimer::timeout,
-   fileWatcherDebounce_, [this]() {
-    if (fileWatcherPending_) {
-     fileWatcherPending_ = false;
-     // Refresh imported cache and re-apply filters
-     refreshImportedAssetCache();
-     refreshUnusedAssetCache();
-     applyFilters();
-    }
-   });
- }
-
- ArtifactAssetBrowser::Impl::~Impl()
- {
-  if (fileWatcher_) {
-   fileWatcher_->deleteLater();
-  }
-  if (fileWatcherDebounce_) {
-   fileWatcherDebounce_->deleteLater();
-  }
- }
 
   // P0-1: File system watcher for auto-refresh
   fileWatcher_ = new QFileSystemWatcher();
@@ -1395,7 +1359,7 @@ QIcon ArtifactAssetBrowser::Impl::generateThumbnail(const QString& filePath)
 
   // P0-2: TBB parallel thumbnail generation
   // Collect batch of paths to process
-  int batchSize = std::min(16, thumbnailWarmupQueue_.size());
+  const int batchSize = std::min(16, static_cast<int>(thumbnailWarmupQueue_.size()));
   QStringList batchPaths;
   for (int i = 0; i < batchSize; ++i) {
    batchPaths.append(thumbnailWarmupQueue_.dequeue());

@@ -67,7 +67,7 @@ public:
     ArtifactCompositionPtr currentComposition_;
     QElapsedTimer audioTimer_;
     double audioOffsetSeconds_ = 0.0;
-    bool audioRunning_ = false;
+    std::atomic_bool audioRunning_{false};
     std::function<double()> externalAudioClockProvider_;
     std::function<double()> playbackClockProvider_;
     float audioMasterVolume_ = 1.0f;
@@ -114,16 +114,23 @@ public:
             qDebug() << "[PlaybackService] Dropped frames:" << count;
         });
 
+        QObject::connect(engine_, &ArtifactPlaybackEngine::audioLevelChanged,
+                         owner_, [this](float leftRms, float rightRms, float leftPeak, float rightPeak) {
+            Q_EMIT owner_->audioLevelChanged(leftRms, rightRms, leftPeak, rightPeak);
+        }, Qt::QueuedConnection);
+
         // コントローラーのシグナルも転送（後方互換性）
+        // NOTE: controller は現在 engine に置き換えられているため、シグナル転送を無効化して二重通知を防止
+        /*
         QObject::connect(controller_, &ArtifactCompositionPlaybackController::playbackStateChanged,
                          owner_, &ArtifactPlaybackService::playbackStateChanged,
                          Qt::DirectConnection);
 
         QObject::connect(controller_, &ArtifactCompositionPlaybackController::frameChanged,
                          owner_, [this](const FramePosition& position) {
-            syncCurrentCompositionFrame(position);
-            Q_EMIT owner_->frameChanged(position);
-        }, Qt::DirectConnection);
+             syncCurrentCompositionFrame(position);
+             Q_EMIT owner_->frameChanged(position);
+         }, Qt::DirectConnection);
 
         QObject::connect(controller_, &ArtifactCompositionPlaybackController::playbackSpeedChanged,
                          owner_, &ArtifactPlaybackService::playbackSpeedChanged,
@@ -136,6 +143,7 @@ public:
         QObject::connect(controller_, &ArtifactCompositionPlaybackController::frameRangeChanged,
                          owner_, &ArtifactPlaybackService::frameRangeChanged,
                          Qt::DirectConnection);
+        */
 
         // オーディオクロックプロバイダーを設定
         controller_->setAudioClockProvider([this]() -> double {

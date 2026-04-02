@@ -65,6 +65,7 @@ module Artifact.Render.Queue.Service;
 
 
 import Render.Queue.Manager;
+import Frame.Range;
 import Artifact.Project.Manager;
 import Artifact.Project.Items;
 import Artifact.Service.Project;
@@ -1606,21 +1607,6 @@ namespace Artifact
             if (!layer) {
                 return fallback;
             }
-            // Solid2D / SolidImage は sourceSize() が 0 を返すため localBounds() から取得
-            if (std::dynamic_pointer_cast<ArtifactSolid2DLayer>(layer) ||
-                std::dynamic_pointer_cast<ArtifactSolidImageLayer>(layer)) {
-                const auto bounds = layer->localBounds();
-                if (bounds.isValid() && bounds.width() > 0 && bounds.height() > 0) {
-                    return QSize(
-                        std::max(16, static_cast<int>(std::ceil(bounds.width()))),
-                        std::max(16, static_cast<int>(std::ceil(bounds.height()))));
-                }
-            }
-            const auto source = layer->sourceSize();
-            const int w = source.width > 0 ? source.width : fallback.width();
-            const int h = source.height > 0 ? source.height : fallback.height();
-            return QSize(std::max(16, w), std::max(16, h));
-        }
             // Solid2D / SolidImage は sourceSize() が 0 を返すため localBounds() から取得
             if (std::dynamic_pointer_cast<ArtifactSolid2DLayer>(layer) ||
                 std::dynamic_pointer_cast<ArtifactSolidImageLayer>(layer)) {

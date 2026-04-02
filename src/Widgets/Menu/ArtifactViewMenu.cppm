@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <QWidget>
 #include <QMenu>
 #include <QAction>
@@ -9,6 +9,8 @@ module;
 
 
 #include <wobjectimpl.h>
+
+#include <QMessageBox>
 
 module Artifact.Menu.View;
 import std;
@@ -238,18 +240,18 @@ namespace Artifact {
      menu->addSeparator();
      secondaryPreviewAction = menu->addAction("セカンドモニタープレビュー(&S)");
      secondaryPreviewAction->setShortcut(QKeySequence(Qt::Key_F12));
-     QObject::connect(secondaryPreviewAction, &QAction::triggered, menu, [this]() {
-      if (!mainWindow) return;
-      auto screens = QGuiApplication::screens();
-      if (screens.size() < 2) {
-       QMessageBox::information(menu, "セカンドモニタープレビュー",
-        "2つ目のモニターが検出されていません。\n"
-        "マルチディスプレイ環境でご利用ください。");
-       return;
-      }
-      // Show on second screen by default
-      mainWindow->showSecondaryPreviewOnScreen(1);
-     });
+      QObject::connect(secondaryPreviewAction, &QAction::triggered, menu, [this, menu]() {
+       if (!mainWindow) return;
+       auto screens = QGuiApplication::screens();
+       if (screens.size() < 2) {
+        QMessageBox::information(menu, "セカンドモニタープレビュー",
+         "2つ目のモニターが検出されていません。\n"
+         "マルチディスプレイ環境でご利用ください。");
+        return;
+       }
+       // TODO: Implement secondary preview on second screen
+       qWarning() << "[ViewMenu] Secondary preview not yet implemented";
+      });
     }
 
  ArtifactViewMenu::Impl::~Impl()
