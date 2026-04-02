@@ -5,6 +5,7 @@
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QComboBox>
+#include <QColor>
 #include <QDebug>
 #include <QIcon>
 #include <QHBoxLayout>
@@ -64,6 +65,7 @@ import Artifact.Tool.Manager;
 import Utils.Path;
 import Artifact.Layer.InitParams;
 import File.TypeDetector;
+import Widgets.Utils.CSS;
 
 namespace Artifact {
 
@@ -99,6 +101,11 @@ QIcon loadIconWithFallback(const QString& fileName)
     return icon;
   }
   return QIcon(ArtifactCore::resolveIconPath(fileName));
+}
+
+QIcon loadEditorMenuIcon(const QString& fileName)
+{
+  return loadIconWithFallback(fileName);
 }
 
 ArtifactCompositionPtr resolvePreferredComposition() {
@@ -159,15 +166,20 @@ private slots:
     // Update font properties
     const float size = std::max(10.0f, layer_->fontSize());
     const int pointSize = static_cast<int>(size * 0.75f);
+    const auto theme = ArtifactCore::currentDCCTheme();
     editor_->setStyleSheet(QStringLiteral(R"(
       QPlainTextEdit {
-        background-color: rgba(30, 30, 30, 180);
-        color: white;
-        border: 1px dashed #d47d32;
-        font-family: "%1";
-        font-size: %2pt;
+        background-color: %1;
+        color: %2;
+        border: 1px dashed %3;
+        font-family: "%4";
+        font-size: %5pt;
       }
-    )").arg(layer_->fontFamily().toQString()).arg(pointSize));
+    )").arg(QColor(theme.secondaryBackgroundColor).name(QColor::HexArgb),
+             QColor(theme.textColor).name(),
+             QColor(theme.borderColor).name(),
+             layer_->fontFamily().toQString(),
+             QString::number(pointSize)));
   }
 
 private:
@@ -224,16 +236,21 @@ bool editTextLayerInline(QWidget* parent, const ArtifactAbstractLayerPtr& layer,
   const float size = std::max(10.0f, textLayer->fontSize());
   const float zoom = renderer ? renderer->getZoom() : 1.0f;
   const int pointSize = static_cast<int>(size * 0.75f * zoom);
+  const auto theme = ArtifactCore::currentDCCTheme();
 
   editor->setStyleSheet(QStringLiteral(R"(
     QPlainTextEdit {
-      background-color: rgba(30, 30, 30, 180);
-      color: white;
-      border: 1px dashed #d47d32;
-      font-family: "%1";
-      font-size: %2pt;
+      background-color: %1;
+      color: %2;
+      border: 1px dashed %3;
+      font-family: "%4";
+      font-size: %5pt;
     }
-  )").arg(textLayer->fontFamily().toQString()).arg(pointSize));
+  )").arg(QColor(theme.secondaryBackgroundColor).name(QColor::HexArgb),
+          QColor(theme.textColor).name(),
+          QColor(theme.borderColor).name(),
+          textLayer->fontFamily().toQString(),
+          QString::number(pointSize)));
 
   const QPoint hostPos = parent->mapTo(host, QPoint(x, y));
   editor->setGeometry(hostPos.x(), hostPos.y(), w, h);
@@ -1481,13 +1498,23 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
     : QWidget(parent), impl_(new Impl()) {
   setMinimumSize(960, 640);
   setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+  setAutoFillBackground(true);
+
+  const auto theme = ArtifactCore::currentDCCTheme();
+  QPalette editorPalette = palette();
+  editorPalette.setColor(QPalette::Window, QColor(theme.backgroundColor));
+  editorPalette.setColor(QPalette::WindowText, QColor(theme.textColor));
+  setPalette(editorPalette);
 
   auto *mainLayout = new QVBoxLayout(this);
   mainLayout->setContentsMargins(0, 0, 0, 0);
   mainLayout->setSpacing(0);
 
   impl_->renderController_ = new CompositionRenderController(this);
-  impl_->renderController_->setClearColor({ 0.11f, 0.11f, 0.12f, 1.0f });
+  {
+    const QColor clear(theme.backgroundColor);
+    impl_->renderController_->setClearColor({ clear.redF(), clear.greenF(), clear.blueF(), 1.0f });
+  }
 
   QObject::connect(impl_->renderController_, &CompositionRenderController::videoDebugMessage,
                    this, &ArtifactCompositionEditor::videoDebugMessage);
@@ -1505,6 +1532,13 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   impl_->topToolbar_ = new QToolBar(this);
   impl_->topToolbar_->setMovable(false);
   impl_->topToolbar_->setIconSize(QSize(18, 18));
+  {
+    QPalette pal = impl_->topToolbar_->palette();
+    pal.setColor(QPalette::Window, QColor(theme.secondaryBackgroundColor));
+    pal.setColor(QPalette::Button, QColor(theme.secondaryBackgroundColor));
+    pal.setColor(QPalette::WindowText, QColor(theme.textColor));
+    impl_->topToolbar_->setPalette(pal);
+  }
 
   impl_->resetAction_ = impl_->topToolbar_->addAction("Reset");
   impl_->topToolbar_->addSeparator();
@@ -1549,12 +1583,14 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   impl_->topToolbar_->addWidget(impl_->toolModeButton_);
 
   auto* gizmoMenu = new QMenu(impl_->topToolbar_);
+  gizmoMenu->setIcon(loadEditorMenuIcon(QStringLiteral("MaterialVS/neutral/transform.svg")));
   auto* gizmoGroup = new QActionGroup(this);
   gizmoGroup->setExclusive(true);
-  const auto addGizmoAction = [&](const QString& text, TransformGizmo::Mode mode, bool checked) {
+  const auto addGizmoAction = [&](const QString& text, const QString& iconPath, TransformGizmo::Mode mode, bool checked) {
     QAction* action = gizmoMenu->addAction(text);
     action->setCheckable(true);
     action->setChecked(checked);
+    action->setIcon(loadEditorMenuIcon(iconPath));
     gizmoGroup->addAction(action);
     connect(action, &QAction::triggered, this, [this, mode]() {
       if (auto* gizmo = impl_->renderController_ ? impl_->renderController_->gizmo() : nullptr) {
@@ -1563,13 +1599,14 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
       }
     });
   };
-  addGizmoAction(QStringLiteral("Gizmo: All"), TransformGizmo::Mode::All, true);
-  addGizmoAction(QStringLiteral("Gizmo: Move"), TransformGizmo::Mode::Move, false);
-  addGizmoAction(QStringLiteral("Gizmo: Rotate"), TransformGizmo::Mode::Rotate, false);
-  addGizmoAction(QStringLiteral("Gizmo: Scale"), TransformGizmo::Mode::Scale, false);
+  addGizmoAction(QStringLiteral("Gizmo: All"), QStringLiteral("MaterialVS/neutral/view_sidebar.svg"), TransformGizmo::Mode::All, true);
+  addGizmoAction(QStringLiteral("Gizmo: Move"), QStringLiteral("MaterialVS/neutral/transform.svg"), TransformGizmo::Mode::Move, false);
+  addGizmoAction(QStringLiteral("Gizmo: Rotate"), QStringLiteral("Material/redo.svg"), TransformGizmo::Mode::Rotate, false);
+  addGizmoAction(QStringLiteral("Gizmo: Scale"), QStringLiteral("MaterialVS/neutral/crop.svg"), TransformGizmo::Mode::Scale, false);
   impl_->gizmoModeButton_ = new QToolButton(this);
   impl_->gizmoModeButton_->setText(QStringLiteral("Gizmo"));
   impl_->gizmoModeButton_->setMenu(gizmoMenu);
+  impl_->gizmoModeButton_->setIcon(loadEditorMenuIcon(QStringLiteral("MaterialVS/neutral/transform.svg")));
   impl_->gizmoModeButton_->setPopupMode(QToolButton::InstantPopup);
   impl_->topToolbar_->addWidget(impl_->gizmoModeButton_);
 
@@ -1644,6 +1681,13 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   // Bottom Bar (Viewer Controls)
   impl_->bottomBar_ = new QWidget(this);
   impl_->bottomBar_->setFixedHeight(28);
+  impl_->bottomBar_->setAutoFillBackground(true);
+  {
+    QPalette pal = impl_->bottomBar_->palette();
+    pal.setColor(QPalette::Window, QColor(theme.secondaryBackgroundColor));
+    pal.setColor(QPalette::WindowText, QColor(theme.textColor));
+    impl_->bottomBar_->setPalette(pal);
+  }
 
   auto *bottomLayout = new QHBoxLayout(impl_->bottomBar_);
   bottomLayout->setContentsMargins(6, 0, 6, 0);
@@ -1655,12 +1699,24 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   impl_->resolutionCombo_->addItem("Half", QVariant::fromValue(static_cast<int>(PreviewQualityPreset::Preview)));
   impl_->resolutionCombo_->addItem("Quarter", QVariant::fromValue(static_cast<int>(PreviewQualityPreset::Draft)));
   impl_->resolutionCombo_->setFixedWidth(70);
+  {
+    QPalette pal = impl_->resolutionCombo_->palette();
+    pal.setColor(QPalette::Base, QColor(theme.backgroundColor));
+    pal.setColor(QPalette::Button, QColor(theme.secondaryBackgroundColor));
+    pal.setColor(QPalette::Text, QColor(theme.textColor));
+    impl_->resolutionCombo_->setPalette(pal);
+  }
 
   // Fast Preview Button (Lightning)
   impl_->fastPreviewBtn_ = new QToolButton(impl_->bottomBar_);
   impl_->fastPreviewBtn_->setText("⚡"); // Lightning icon
   impl_->fastPreviewBtn_->setToolTip("Fast Preview (Lightning)");
   impl_->fastPreviewBtn_->setPopupMode(QToolButton::InstantPopup);
+  {
+    QPalette pal = impl_->fastPreviewBtn_->palette();
+    pal.setColor(QPalette::ButtonText, QColor(theme.textColor));
+    impl_->fastPreviewBtn_->setPalette(pal);
+  }
 
   auto *fastPreviewMenu = new QMenu(impl_->fastPreviewBtn_);
   QAction *fpOff = fastPreviewMenu->addAction("Off");
@@ -1696,6 +1752,11 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   impl_->displayOptionsBtn_->setText("👁"); // View options icon
   impl_->displayOptionsBtn_->setToolTip("Choose transparency, grid, and guide options");
   impl_->displayOptionsBtn_->setPopupMode(QToolButton::InstantPopup);
+  {
+    QPalette pal = impl_->displayOptionsBtn_->palette();
+    pal.setColor(QPalette::ButtonText, QColor(theme.textColor));
+    impl_->displayOptionsBtn_->setPalette(pal);
+  }
 
   auto *displayMenu = new QMenu(impl_->displayOptionsBtn_);
   QAction *checkerboardAct = displayMenu->addAction("Checkerboard");
@@ -1753,6 +1814,20 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   mainLayout->addWidget(impl_->topToolbar_);
   mainLayout->addWidget(impl_->compositionView_, 1);
   mainLayout->addWidget(impl_->bottomBar_);
+  impl_->topToolbar_->setStyleSheet(QStringLiteral(
+      "QToolBar { background: %1; border-bottom: 1px solid %2; spacing: 2px; }"
+      "QToolButton { background: transparent; color: %3; border: none; padding: 3px 6px; }"
+      "QToolButton:hover { background: rgba(255,255,255,0.08); border-radius: 4px; }")
+      .arg(QColor(theme.secondaryBackgroundColor).name(),
+           QColor(theme.borderColor).name(),
+           QColor(theme.textColor).name()));
+  impl_->bottomBar_->setStyleSheet(QStringLiteral(
+      "QWidget { background: %1; border-top: 1px solid %2; }"
+      "QToolButton { background: transparent; color: %3; border: none; padding: 3px 6px; }"
+      "QToolButton:hover { background: rgba(255,255,255,0.08); border-radius: 4px; }")
+      .arg(QColor(theme.secondaryBackgroundColor).name(),
+           QColor(theme.borderColor).name(),
+           QColor(theme.textColor).name()));
   impl_->syncOverlayGeometry(this);
   QTimer::singleShot(0, this, [this]() {
     if (impl_) {

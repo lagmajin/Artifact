@@ -1069,6 +1069,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   displayModeCombo->addItem(QStringLiteral("All Layers"), static_cast<int>(TimelineLayerDisplayMode::AllLayers));
   displayModeCombo->addItem(QStringLiteral("Selected"), static_cast<int>(TimelineLayerDisplayMode::SelectedOnly));
   displayModeCombo->addItem(QStringLiteral("Animated"), static_cast<int>(TimelineLayerDisplayMode::AnimatedOnly));
+  displayModeCombo->addItem(QStringLiteral("Keyframes + Important"), static_cast<int>(TimelineLayerDisplayMode::ImportantAndKeyframed));
   displayModeCombo->addItem(QStringLiteral("Audio"), static_cast<int>(TimelineLayerDisplayMode::AudioOnly));
   displayModeCombo->addItem(QStringLiteral("Video"), static_cast<int>(TimelineLayerDisplayMode::VideoOnly));
   displayModeCombo->setCurrentIndex(0);

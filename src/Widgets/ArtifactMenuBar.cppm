@@ -11,6 +11,7 @@ import Menu.Composition;
 import Artifact.Menu.Layer;
 import Artifact.Menu.Effect;
 import Menu.Animation;
+import Artifact.Menu.Script;
 import Menu.Render;
 import Menu.Time;
 import Artifact.Menu.View;
@@ -36,6 +37,7 @@ public:
  ArtifactLayerMenu* layerMenu = nullptr;
  ArtifactEffectMenu* effectMenu = nullptr;
  ArtifactAnimationMenu* animationMenu = nullptr;
+ ArtifactScriptMenu* scriptMenu = nullptr;
  ArtifactRenderMenu* renderMenu = nullptr;
  ArtifactTimeMenu* timeMenu = nullptr;
  ArtifactViewMenu* viewMenu = nullptr;
@@ -53,6 +55,7 @@ ArtifactMenuBar::Impl::Impl(QWidget* mainWindow, ArtifactMenuBar* menuBar)
  layerMenu = new ArtifactLayerMenu(menuBar);
  effectMenu = new ArtifactEffectMenu(menuBar);
  animationMenu = new ArtifactAnimationMenu(menuBar);
+ scriptMenu = new ArtifactScriptMenu(menuBar);
  renderMenu = new ArtifactRenderMenu(mainWindow, menuBar);
  timeMenu = new ArtifactTimeMenu(menuBar);
  viewMenu = new ArtifactViewMenu(menuBar);
@@ -68,6 +71,7 @@ ArtifactMenuBar::Impl::Impl(QWidget* mainWindow, ArtifactMenuBar* menuBar)
  menuBar->addMenu(layerMenu);
  menuBar->addMenu(effectMenu);
  menuBar->addMenu(animationMenu);
+ menuBar->addMenu(scriptMenu);
  menuBar->addMenu(renderMenu);
  menuBar->addMenu(timeMenu);
  menuBar->addMenu(viewMenu);

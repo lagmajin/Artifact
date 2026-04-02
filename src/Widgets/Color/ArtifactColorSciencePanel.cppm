@@ -13,10 +13,10 @@
 #include <wobjectimpl.h>
 
 
-import Color.ScienceManager;
+
 
 module Artifact.Widgets.ColorSciencePanel;
-
+import Color.ScienceManager;
 namespace Artifact {
 
 class ArtifactColorSciencePanel::Impl {

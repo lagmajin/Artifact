@@ -1,7 +1,9 @@
 ﻿module;
 #include <QColor>
+#include <QContextMenuEvent>
 #include <QMouseEvent>
 #include <QPaintEvent>
+#include <QMenu>
 #include <QWheelEvent>
 #include <QSet>
 #include <QVector>
@@ -56,6 +58,7 @@ export namespace Artifact
  void mousePressEvent(QMouseEvent* event) override;
  void mouseMoveEvent(QMouseEvent* event) override;
  void mouseReleaseEvent(QMouseEvent* event) override;
+ void contextMenuEvent(QContextMenuEvent* event) override;
  void wheelEvent(QWheelEvent* event) override;
  void leaveEvent(QEvent* event) override;
  QSize minimumSizeHint() const override;

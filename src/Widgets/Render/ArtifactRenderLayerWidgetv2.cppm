@@ -9,8 +9,10 @@
 #include <QLoggingCategory>
 #include <QDialog>
 #include <QAbstractItemView>
+#include <QContextMenuEvent>
 #include <QLineEdit>
 #include <QListWidget>
+#include <QMenu>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QShortcut>
@@ -20,6 +22,7 @@
 #include <QBrush>
 #include <QFontMetrics>
 #include <QColor>
+#include <QPalette>
 #include <QStringList>
 #include <QDateTime>
 #include <QDir>
@@ -55,9 +58,11 @@ import Artifact.Render.CompositionRenderer;
 import Artifact.Preview.Pipeline;
 import Artifact.MainWindow;
 import Artifact.Layer.Image;
+import Utils.Path;
 import FloatRGBA;
 import Image.ImageF32x4_RGBA;
 import CvUtils;
+import Widgets.Utils.CSS;
 
 namespace Artifact {
 
@@ -79,6 +84,16 @@ struct LayerSoloCommandEntry {
  QStringList aliases;
  std::function<void()> action;
 };
+
+QIcon loadLayerEditorIcon(const QString& resourcePath)
+{
+ const QString resolved = ArtifactCore::resolveIconResourcePath(resourcePath);
+ QIcon icon(resolved);
+ if (!icon.isNull()) {
+  return icon;
+ }
+ return QIcon(ArtifactCore::resolveIconPath(resourcePath));
+}
 }
 
  class ArtifactLayerEditorWidgetV2::Impl {
@@ -132,6 +147,11 @@ struct LayerSoloCommandEntry {
   QPointF panOffset_{ 0.0, 0.0 };
   QString debugText_;
   QString layerInfoText_;
+  bool layerVisible_ = false;
+  bool layerLocked_ = false;
+  bool layerSolo_ = false;
+  bool layerActive_ = false;
+  bool hasLayerState_ = false;
   int hoveredMaskIndex_ = -1;
   int hoveredPathIndex_ = -1;
   int hoveredVertexIndex_ = -1;
@@ -208,6 +228,7 @@ void ArtifactLayerEditorWidgetV2::Impl::showCommandPalette()
  }
 
  if (!commandPalette_) {
+  const auto theme = ArtifactCore::currentDCCTheme();
   commandPalette_ = new QDialog(widget_);
   commandPalette_->setObjectName(QStringLiteral("layerSoloCommandPalette"));
   commandPalette_->setWindowFlags(Qt::Tool | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint);
@@ -230,37 +251,66 @@ void ArtifactLayerEditorWidgetV2::Impl::showCommandPalette()
   commandList_->setAlternatingRowColors(true);
   commandList_->setFocusPolicy(Qt::NoFocus);
 
+  commandPalette_->setAutoFillBackground(true);
+  {
+    QPalette pal = commandPalette_->palette();
+    pal.setColor(QPalette::Window, QColor(theme.backgroundColor));
+    pal.setColor(QPalette::WindowText, QColor(theme.textColor));
+    commandPalette_->setPalette(pal);
+  }
+  {
+    QPalette pal = commandEdit_->palette();
+    pal.setColor(QPalette::Base, QColor(theme.secondaryBackgroundColor));
+    pal.setColor(QPalette::Text, QColor(theme.textColor));
+    pal.setColor(QPalette::PlaceholderText, QColor(theme.textColor).darker(145));
+    commandEdit_->setPalette(pal);
+  }
+  {
+    QPalette pal = commandList_->palette();
+    pal.setColor(QPalette::Base, QColor(theme.backgroundColor));
+    pal.setColor(QPalette::AlternateBase, QColor(theme.secondaryBackgroundColor));
+    pal.setColor(QPalette::Text, QColor(theme.textColor));
+    pal.setColor(QPalette::Highlight, QColor(theme.accentColor));
+    pal.setColor(QPalette::HighlightedText, QColor(theme.backgroundColor));
+    commandList_->setPalette(pal);
+  }
+
   layout->addWidget(commandEdit_);
   layout->addWidget(commandList_);
 
-  commandPalette_->setStyleSheet(R"(
+  commandPalette_->setStyleSheet(QStringLiteral(R"(
     QDialog#layerSoloCommandPalette {
-      background: #252525;
-      border: 1px solid #4A4A4A;
+      background: %1;
+      border: 1px solid %2;
       border-radius: 10px;
     }
     QLineEdit#layerSoloCommandSearch {
-      background: #1F1F1F;
-      color: #F0F0F0;
-      border: 1px solid #444;
+      background: %3;
+      color: %4;
+      border: 1px solid %2;
       border-radius: 8px;
       padding: 6px 10px;
       font-size: 11px;
     }
     QListWidget#layerSoloCommandList {
-      background: #202020;
-      color: #E8E8E8;
-      border: 1px solid #3A3A3A;
+      background: %1;
+      color: %4;
+      border: 1px solid %2;
       border-radius: 8px;
     }
     QListWidget#layerSoloCommandList::item {
       padding: 6px 8px;
     }
     QListWidget#layerSoloCommandList::item:selected {
-      background: #4A6FA5;
-      color: white;
+      background: %5;
+      color: %6;
     }
-  )");
+  )").arg(QColor(theme.backgroundColor).name(),
+           QColor(theme.borderColor).name(),
+           QColor(theme.secondaryBackgroundColor).name(),
+           QColor(theme.textColor).name(),
+           QColor(theme.accentColor).name(),
+           QColor(theme.textColor).name()));
 
   QObject::connect(commandEdit_, &QLineEdit::textChanged, widget_, [this](const QString& text) {
     rebuildCommandPalette(text);
@@ -705,6 +755,9 @@ bool ArtifactLayerEditorWidgetV2::Impl::executeCommandText(const QString& text)
                         : viewSurfaceMode_ == ViewSurfaceMode::Source
                               ? QStringLiteral("Source")
                               : QStringLiteral("BeforeAfter"));
+  if (viewSurfaceMode_ == ViewSurfaceMode::BeforeAfter) {
+   parts << QStringLiteral("Compare=Final/Source");
+  }
 
  if (renderer_) {
   parts << QStringLiteral("Zoom=%1").arg(renderer_->getZoom(), 0, 'f', 2);
@@ -847,10 +900,23 @@ bool ArtifactLayerEditorWidgetV2::Impl::executeCommandText(const QString& text)
       const auto localBounds = layer->localBounds();
       const auto globalBounds = layer->transformedBoundingBox();
       const auto source = layer->sourceSize();
+      const auto layers = composition->allLayer();
+      int childCount = 0;
+      for (const auto& candidate : layers) {
+       if (candidate && candidate->parentLayerId() == layer->id()) {
+        ++childCount;
+       }
+      }
       const bool isVisible = layer->isVisible();
       const bool isLocked = layer->isLocked();
       const bool isSolo = layer->isSolo();
       const bool isActive = layer->isActiveAt(currentFrame);
+      const auto parent = layer->parentLayer();
+      layerVisible_ = isVisible;
+      layerLocked_ = isLocked;
+      layerSolo_ = isSolo;
+      layerActive_ = isActive;
+      hasLayerState_ = true;
       const QString stateLabel =
           !isVisible
               ? QStringLiteral("Hidden")
@@ -875,6 +941,12 @@ bool ArtifactLayerEditorWidgetV2::Impl::executeCommandText(const QString& text)
           .arg(isSolo ? QStringLiteral("Y") : QStringLiteral("N"))
           .arg(isActive ? QStringLiteral("Y") : QStringLiteral("N"))
           .arg(stateLabel);
+      layerInfoText_ += QStringLiteral(" | Impact=P:%1 C:%2 M:%3 E:%4")
+          .arg(parent ? (parent->layerName().isEmpty() ? QStringLiteral("(Unnamed)") : parent->layerName())
+                      : QStringLiteral("-"))
+          .arg(childCount)
+          .arg(layer->maskCount())
+          .arg(layer->effectCount());
       if (source.width > 0 && source.height > 0) {
        // レイヤーサイズも設定（コンポジションサイズを上書きしないためコメントアウト）
        // renderer_->setCanvasSize(static_cast<float>(source.width), static_cast<float>(source.height));
@@ -1184,6 +1256,11 @@ void ArtifactLayerEditorWidgetV2::clearTargetLayer()
 {
  std::lock_guard<std::mutex> lock(impl_->resizeMutex_);
  impl_->targetLayerId_ = LayerID();
+ impl_->hasLayerState_ = false;
+ impl_->layerVisible_ = false;
+ impl_->layerLocked_ = false;
+ impl_->layerSolo_ = false;
+ impl_->layerActive_ = false;
  impl_->hoveredMaskIndex_ = -1;
  impl_->hoveredPathIndex_ = -1;
  impl_->hoveredVertexIndex_ = -1;
@@ -1400,6 +1477,91 @@ void ArtifactLayerEditorWidgetV2::mouseReleaseEvent(QMouseEvent* event)
   QWidget::mouseReleaseEvent(event);
  }
 
+void ArtifactLayerEditorWidgetV2::contextMenuEvent(QContextMenuEvent* event)
+{
+ if (!event) {
+  return;
+ }
+
+ QMenu menu(this);
+ QMenu* editMenu = menu.addMenu(QStringLiteral("Edit Mode"));
+ QMenu* displayMenu = menu.addMenu(QStringLiteral("Display Mode"));
+ QMenu* surfaceMenu = menu.addMenu(QStringLiteral("Compare Surface"));
+
+ auto addAction = [](QMenu* target, const QString& text, const QIcon& icon, bool checked, QObject* receiver, const std::function<void()>& slot) {
+  QAction* action = target->addAction(text);
+  action->setCheckable(true);
+  action->setChecked(checked);
+  if (!icon.isNull()) {
+   action->setIcon(icon);
+  }
+  QObject::connect(action, &QAction::triggered, receiver, [slot](bool) {
+   slot();
+  });
+  return action;
+ };
+
+ editMenu->setIcon(loadLayerEditorIcon(QStringLiteral("MaterialVS/blue/edit.svg")));
+ displayMenu->setIcon(loadLayerEditorIcon(QStringLiteral("MaterialVS/neutral/view_sidebar.svg")));
+ surfaceMenu->setIcon(loadLayerEditorIcon(QStringLiteral("MaterialVS/neutral/visibility.svg")));
+
+ addAction(editMenu, QStringLiteral("View"), loadLayerEditorIcon(QStringLiteral("MaterialVS/neutral/visibility.svg")), impl_->editMode_ == EditMode::View, this, [this]() {
+  setEditMode(EditMode::View);
+ });
+ addAction(editMenu, QStringLiteral("Transform"), loadLayerEditorIcon(QStringLiteral("MaterialVS/neutral/transform.svg")), impl_->editMode_ == EditMode::Transform, this, [this]() {
+  setEditMode(EditMode::Transform);
+ });
+ addAction(editMenu, QStringLiteral("Mask"), loadLayerEditorIcon(QStringLiteral("MaterialVS/neutral/draw.svg")), impl_->editMode_ == EditMode::Mask, this, [this]() {
+  setEditMode(EditMode::Mask);
+ });
+
+ addAction(displayMenu, QStringLiteral("Color"), loadLayerEditorIcon(QStringLiteral("Material/palette.svg")), impl_->displayMode_ == DisplayMode::Color, this, [this]() {
+  setDisplayMode(DisplayMode::Color);
+ });
+ addAction(displayMenu, QStringLiteral("Alpha"), loadLayerEditorIcon(QStringLiteral("MaterialVS/neutral/visibility.svg")), impl_->displayMode_ == DisplayMode::Alpha, this, [this]() {
+  setDisplayMode(DisplayMode::Alpha);
+ });
+ addAction(displayMenu, QStringLiteral("Mask"), loadLayerEditorIcon(QStringLiteral("MaterialVS/neutral/draw.svg")), impl_->displayMode_ == DisplayMode::Mask, this, [this]() {
+  setDisplayMode(DisplayMode::Mask);
+ });
+ addAction(displayMenu, QStringLiteral("Wireframe"), loadLayerEditorIcon(QStringLiteral("MaterialVS/neutral/tune.svg")), impl_->displayMode_ == DisplayMode::Wireframe, this, [this]() {
+  setDisplayMode(DisplayMode::Wireframe);
+ });
+
+ addAction(surfaceMenu, QStringLiteral("Final"), loadLayerEditorIcon(QStringLiteral("MaterialVS/neutral/visibility.svg")), impl_->viewSurfaceMode_ == ViewSurfaceMode::Final, this, [this]() {
+  if (impl_) {
+   impl_->viewSurfaceMode_ = ViewSurfaceMode::Final;
+   impl_->requestRender();
+  }
+ });
+ addAction(surfaceMenu, QStringLiteral("Source"), loadLayerEditorIcon(QStringLiteral("MaterialVS/blue/file_open.svg")), impl_->viewSurfaceMode_ == ViewSurfaceMode::Source, this, [this]() {
+  if (impl_) {
+   impl_->viewSurfaceMode_ = ViewSurfaceMode::Source;
+   impl_->requestRender();
+  }
+ });
+ addAction(surfaceMenu, QStringLiteral("Before / After"), loadLayerEditorIcon(QStringLiteral("Material/history.svg")), impl_->viewSurfaceMode_ == ViewSurfaceMode::BeforeAfter, this, [this]() {
+  if (impl_) {
+   impl_->viewSurfaceMode_ = ViewSurfaceMode::BeforeAfter;
+   impl_->requestRender();
+  }
+ });
+
+ menu.addSeparator();
+ menu.addAction(QStringLiteral("Mask Edit Mode"), this, [this]() {
+  setEditMode(EditMode::Mask);
+ });
+ menu.addAction(QStringLiteral("Reset View"), this, [this]() {
+  resetView();
+ });
+ menu.addAction(QStringLiteral("Fit to View"), this, [this]() {
+  fitToViewport();
+ });
+
+ menu.exec(event->globalPos());
+ event->accept();
+}
+
  void ArtifactLayerEditorWidgetV2::mouseDoubleClickEvent(QMouseEvent* event)
  {
  if (event->button() == Qt::LeftButton && impl_->editMode_ == EditMode::Mask && !impl_->targetLayerId_.isNil()) {
@@ -1570,15 +1732,24 @@ void ArtifactLayerEditorWidgetV2::paintEvent(QPaintEvent* event)
  painter.setRenderHint(QPainter::Antialiasing, true);
  painter.setRenderHint(QPainter::TextAntialiasing, true);
 
- const QRect overlayRect(12, 12, std::max(240, std::min(width() - 24, 560)), 96);
- painter.setPen(Qt::NoPen);
- painter.setBrush(QColor(16, 18, 22, 185));
- painter.drawRoundedRect(overlayRect, 10, 10);
- painter.setPen(QColor(240, 240, 240));
- QFont font = painter.font();
- font.setPointSizeF(std::max(9.0, font.pointSizeF()));
- font.setBold(true);
- painter.setFont(font);
+ const QRect overlayRect(12, 12, std::max(240, std::min(width() - 24, 560)), 124);
+  const auto theme = ArtifactCore::currentDCCTheme();
+  painter.setPen(Qt::NoPen);
+ painter.setBrush(QColor(theme.secondaryBackgroundColor).darker(145));
+  painter.drawRoundedRect(overlayRect, 10, 10);
+ painter.setPen(QColor(theme.textColor));
+  QFont font = painter.font();
+  font.setPointSizeF(std::max(9.0, font.pointSizeF()));
+  font.setBold(true);
+  painter.setFont(font);
+
+ auto drawBadge = [&](const QRect& rect, const QString& label, const QColor& fill, const QColor& text) {
+  painter.setPen(Qt::NoPen);
+  painter.setBrush(fill);
+  painter.drawRoundedRect(rect, 8, 8);
+  painter.setPen(text);
+  painter.drawText(rect, Qt::AlignCenter, label);
+ };
 
  const QString modeLabel =
      impl_->viewSurfaceMode_ == ViewSurfaceMode::Final
@@ -1588,35 +1759,69 @@ void ArtifactLayerEditorWidgetV2::paintEvent(QPaintEvent* event)
                : QStringLiteral("COMPARE");
  const QColor modeColor =
      impl_->viewSurfaceMode_ == ViewSurfaceMode::Final
-         ? QColor(84, 160, 255)
+         ? QColor(theme.accentColor)
          : impl_->viewSurfaceMode_ == ViewSurfaceMode::Source
-               ? QColor(255, 173, 76)
-               : QColor(156, 102, 255);
+               ? QColor(theme.selectionColor)
+               : QColor(theme.borderColor);
  const QRect modeRect(width() - 118, 12, 106, 28);
- painter.setPen(Qt::NoPen);
- painter.setBrush(QColor(modeColor.red(), modeColor.green(), modeColor.blue(), 210));
- painter.drawRoundedRect(modeRect, 9, 9);
- painter.setPen(Qt::white);
- painter.drawText(modeRect, Qt::AlignCenter, modeLabel);
+  painter.setPen(Qt::NoPen);
+  painter.setBrush(QColor(modeColor.red(), modeColor.green(), modeColor.blue(), 210));
+  painter.drawRoundedRect(modeRect, 9, 9);
+ painter.setPen(QColor(theme.backgroundColor));
+  painter.drawText(modeRect, Qt::AlignCenter, modeLabel);
+
+ const int badgeY = overlayRect.y() + 40;
+ const int badgeH = 20;
+ const int badgeW = 56;
+ const int badgeGap = 6;
+ const QColor okColor(theme.accentColor);
+ const QColor mutedColor(theme.borderColor);
+ const QColor warnColor(theme.selectionColor);
+ drawBadge(QRect(overlayRect.x() + 14, badgeY, badgeW, badgeH),
+           QStringLiteral("Vis"),
+           impl_->hasLayerState_ && impl_->layerVisible_ ? okColor : mutedColor,
+           QColor(theme.textColor));
+ drawBadge(QRect(overlayRect.x() + 14 + (badgeW + badgeGap), badgeY, badgeW, badgeH),
+           QStringLiteral("Lock"),
+           impl_->hasLayerState_ && impl_->layerLocked_ ? warnColor : mutedColor,
+           QColor(theme.textColor));
+ drawBadge(QRect(overlayRect.x() + 14 + (badgeW + badgeGap) * 2, badgeY, badgeW, badgeH),
+           QStringLiteral("Solo"),
+           impl_->hasLayerState_ && impl_->layerSolo_ ? okColor : mutedColor,
+           QColor(theme.textColor));
+ drawBadge(QRect(overlayRect.x() + 14 + (badgeW + badgeGap) * 3, badgeY, badgeW, badgeH),
+           QStringLiteral("Act"),
+           impl_->hasLayerState_ && impl_->layerActive_ ? okColor : mutedColor,
+           QColor(theme.textColor));
 
  const int textX = overlayRect.x() + 14;
- int textY = overlayRect.y() + 22;
- painter.drawText(textX, textY, QStringLiteral("Layer Solo View"));
- font.setBold(false);
- painter.setFont(font);
- textY += 20;
- painter.drawText(textX, textY, impl_->debugText_.isEmpty() ? QStringLiteral("No layer selected") : impl_->debugText_);
- textY += 18;
- painter.setPen(QColor(205, 214, 226));
- painter.drawText(textX, textY, impl_->layerInfoText_.isEmpty() ? QStringLiteral("Inspect: -") : impl_->layerInfoText_);
+ int textY = overlayRect.y() + 70;
+  painter.drawText(textX, textY, QStringLiteral("Layer Solo View"));
+  font.setBold(false);
+  painter.setFont(font);
+  textY += 20;
+  painter.drawText(textX, textY, impl_->debugText_.isEmpty() ? QStringLiteral("No layer selected") : impl_->debugText_);
+  textY += 18;
+ painter.setPen(QColor(theme.textColor).darker(120));
+  painter.drawText(textX, textY, impl_->layerInfoText_.isEmpty() ? QStringLiteral("Inspect: -") : impl_->layerInfoText_);
 
  if (impl_->viewSurfaceMode_ != ViewSurfaceMode::Final && !impl_->lastRenderedFrame_.isNull()) {
   const QSize thumbSize(std::min(180, width() / 4), std::min(100, height() / 5));
-  const QRect thumbRect(width() - thumbSize.width() - 12, 12, thumbSize.width(), thumbSize.height());
-  painter.setPen(QColor(240, 240, 240, 160));
-  painter.setBrush(QColor(0, 0, 0, 140));
+ const QRect thumbRect(width() - thumbSize.width() - 12, 12, thumbSize.width(), thumbSize.height());
+  painter.setPen(QColor(theme.borderColor));
+  painter.setBrush(QColor(theme.secondaryBackgroundColor).darker(150));
   painter.drawRoundedRect(thumbRect.adjusted(0, 0, -1, -1), 8, 8);
   painter.drawImage(thumbRect, impl_->lastRenderedFrame_.scaled(thumbRect.size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
+  QFont thumbFont = painter.font();
+  thumbFont.setPointSizeF(std::max(8.0, thumbFont.pointSizeF() - 1.0));
+  thumbFont.setBold(true);
+  painter.setFont(thumbFont);
+  painter.setPen(QColor(theme.textColor));
+  painter.drawText(thumbRect.adjusted(8, 6, -8, -thumbRect.height() + 20), Qt::AlignLeft | Qt::AlignTop,
+                   impl_->viewSurfaceMode_ == ViewSurfaceMode::BeforeAfter ? QStringLiteral("Source / Compare") : QStringLiteral("Source"));
+  painter.setPen(QColor(theme.textColor).darker(120));
+  painter.drawText(thumbRect.adjusted(8, thumbRect.height() - 24, -8, -6), Qt::AlignRight | Qt::AlignBottom,
+                   impl_->viewSurfaceMode_ == ViewSurfaceMode::BeforeAfter ? QStringLiteral("Final = background layer") : QStringLiteral("Source preview"));
  }
 }
 

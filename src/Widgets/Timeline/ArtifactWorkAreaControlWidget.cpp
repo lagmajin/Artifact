@@ -1,15 +1,40 @@
 module;
 #include <QWidget>
 #include <QPainter>
+#include <QLinearGradient>
 #include <QMouseEvent>
 #include <algorithm>
 
 #include <wobjectimpl.h>
 module Artifact.Widget.WorkAreaControlWidget;
 
+import Widgets.Utils.CSS;
+
 namespace Artifact
 {
 	W_OBJECT_IMPL(WorkAreaControl)
+
+ namespace
+ {
+  struct TimelineTheme
+  {
+   QColor background;
+   QColor surface;
+   QColor border;
+   QColor accent;
+  };
+
+  TimelineTheme timelineTheme()
+  {
+   const auto& theme = ArtifactCore::currentDCCTheme();
+   return {
+    QColor(theme.backgroundColor),
+    QColor(theme.secondaryBackgroundColor),
+    QColor(theme.borderColor),
+    QColor(theme.accentColor),
+   };
+  }
+ }
 	
  class WorkAreaControl::Impl
  {
@@ -56,9 +81,10 @@ namespace Artifact
  {
   QPainter p(this);
   p.setRenderHint(QPainter::Antialiasing);
+  const TimelineTheme theme = timelineTheme();
 
   // Background
-  p.fillRect(rect(), QColor(35, 35, 35));
+  p.fillRect(rect(), theme.background);
 
   // Constrain usable width to keep handles fully inside
   const int handleHalfW = 6;
@@ -75,12 +101,12 @@ namespace Artifact
   // Range strip
   QRect rangeRect(x1, 0, x2 - x1, height());
   QLinearGradient grad(rangeRect.topLeft(), rangeRect.bottomLeft());
-  grad.setColorAt(0, QColor(180, 110, 45, 120)); // Modo Amber
-  grad.setColorAt(1, QColor(140, 80, 30, 120));
+  grad.setColorAt(0, theme.accent.lighter(120));
+  grad.setColorAt(1, theme.accent.darker(130));
   p.fillRect(rangeRect, grad);
 
   // Bottom border for work area
-  p.setPen(QPen(QColor(220, 140, 50), 2));
+  p.setPen(QPen(theme.accent, 2));
   p.drawLine(x1, height() - 1, x2, height() - 1);
 
   // Handles (Blue AE style) - highlight on hover
@@ -89,18 +115,18 @@ namespace Artifact
   
   // Left handle
   if (impl_->hoveringLeft || impl_->draggingLeft) {
-    p.setBrush(QColor(240, 160, 60));  // Brighter on hover
+    p.setBrush(theme.accent.lighter(135));
   } else {
-    p.setBrush(QColor(180, 110, 45));
+    p.setBrush(theme.accent);
   }
-  p.setPen(QPen(Qt::white, 1));
+  p.setPen(QPen(theme.border.lighter(120), 1));
   p.drawRoundedRect(QRectF(x1 - handleHalfW, handleTopInset, handleW, handleHeight), 2, 2);
   
   // Right handle
   if (impl_->hoveringRight || impl_->draggingRight) {
-    p.setBrush(QColor(240, 160, 60));  // Brighter on hover
+    p.setBrush(theme.accent.lighter(135));
   } else {
-    p.setBrush(QColor(180, 110, 45));
+    p.setBrush(theme.accent);
   }
   p.drawRoundedRect(QRectF(x2 - handleHalfW, handleTopInset, handleW, handleHeight), 2, 2);
  }

@@ -164,7 +164,12 @@ public:
         }, "再生/一時停止 (Space)", Qt::Key_Space);
         playButton_->setFixedSize(44, 36); // Play is special
         playButton_->setIconSize(QSize(28, 28));
-        
+
+        stopButton_ = createToolButton(QStringList{
+            QStringLiteral("MaterialVS/colored/E3E3E3/stop.svg"),
+            QStringLiteral("Material/stop.svg")
+        }, "停止", 0);
+
         stepForwardButton_ = createToolButton(QStringList{
             QStringLiteral("MaterialVS/neutral/skip_next.svg")
         }, "1フレーム進む (→)", Qt::Key_Right);
@@ -176,6 +181,7 @@ public:
         playLayout->addWidget(seekStartButton_);
         playLayout->addWidget(stepBackwardButton_);
         playLayout->addWidget(playButton_);
+        playLayout->addWidget(stopButton_);
         playLayout->addWidget(stepForwardButton_);
         playLayout->addWidget(seekEndButton_);
         
@@ -247,6 +253,10 @@ public:
         // 再生制御
         QObject::connect(playButton_, &QToolButton::clicked, owner_, [this]() {
             handlePlayButtonClicked();
+        });
+
+        QObject::connect(stopButton_, &QToolButton::clicked, owner_, [this]() {
+            handleStopButtonClicked();
         });
         
         // シーク操作

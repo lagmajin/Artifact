@@ -98,6 +98,7 @@ import Artifact.Widgets.Timeline;
 import Artifact.Widgets.CompositionEditor;
 import Artifact.Widgets.RenderLayerEditor;
 import Artifact.Widgets.SoftwareRenderInspectors;
+import Artifact.Widgets.MarkdownNoteEditorWidget;
 import Artifact.Widgets.Render.QueueManager;
 import Artifact.Widgets.RenderCenterWindow;
 import Artifact.Contents.Viewer;
@@ -117,7 +118,7 @@ using namespace Artifact;
 using namespace ArtifactCore;
 
 namespace {
-constexpr int kMainWindowLayoutVersion = 7;
+constexpr int kMainWindowLayoutVersion = 8;
 
 quint64 processWorkingSetMB() {
 #if defined(_WIN32)
@@ -965,6 +966,16 @@ int main(int argc, char *argv[]) {
         });
     mw->addDockedWidget(QStringLiteral("Inspector"), ads::RightDockWidgetArea,
                         new ArtifactInspectorWidget(mw));
+    auto* compositionNoteWidget =
+        new ArtifactMarkdownNoteEditorWidget(MarkdownNoteTarget::Composition, mw);
+    mw->addDockedWidgetTabbed(QStringLiteral("Composition Note"),
+                              ads::RightDockWidgetArea, compositionNoteWidget,
+                              QStringLiteral("Inspector"));
+    auto* layerNoteWidget =
+        new ArtifactMarkdownNoteEditorWidget(MarkdownNoteTarget::Layer, mw);
+    mw->addDockedWidgetTabbed(QStringLiteral("Layer Note"),
+                              ads::RightDockWidgetArea, layerNoteWidget,
+                              QStringLiteral("Inspector"));
     auto *propertyPanel = new ArtifactPropertyWidget(mw);
     mw->addDockedWidgetTabbed(QStringLiteral("Properties"),
                               ads::RightDockWidgetArea, propertyPanel,
@@ -993,6 +1004,15 @@ int main(int argc, char *argv[]) {
                                        ? ArtifactApplicationManager::instance()
                                              ->layerSelectionManager()
                                        : nullptr) {
+        QObject::connect(selectionManager,
+                         &ArtifactLayerSelectionManager::selectionChanged, mw,
+                         [propertyPanel, selectionManager]() {
+                           if (!propertyPanel || !selectionManager) {
+                             return;
+                           }
+                           propertyPanel->setFocusedEffectId(QString());
+                           propertyPanel->setLayer(selectionManager->currentLayer());
+                         });
         QObject::connect(selectionManager,
                          &ArtifactLayerSelectionManager::selectionChanged, mw,
                          [projectService, selectionManager]() {

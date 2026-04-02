@@ -69,10 +69,15 @@ export namespace Artifact {
   float dragStartScaleX_ = 1.0f;
   float dragStartScaleY_ = 1.0f;
   float dragStartRotation_ = 0.0f;
+  int64_t dragStartFrame_ = 0;
+  bool dragStartHasPositionKey_ = false;
+  bool dragStartHasRotationKey_ = false;
+  bool dragStartHasScaleKey_ = false;
   QTransform dragStartGlobalTransform_;
   QRectF dragStartBoundingBox_;
   QRectF dragStartLocalBounds_;
   QPointF dragStartAnchor_;
+  float dragStartAnchorZ_ = 0.0f;
   QPointF lastCanvasMousePos_;
   
   static constexpr float HANDLE_SIZE = 10.0f;

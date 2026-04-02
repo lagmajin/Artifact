@@ -2793,8 +2793,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       renderer_->drawRectLocal(0.0f, 0.0f, rcw, rch, bgColor, 1.0f);
       if (showCheckerboard_) {
         renderer_->drawCheckerboard(0.0f, 0.0f, rcw, rch, 16.0f,
-                                    {0.25f, 0.25f, 0.25f, 1.0f},
-                                    {0.35f, 0.35f, 0.35f, 1.0f});
+                                    {0.25f, 0.25f, 0.25f, 0.42f},
+                                    {0.35f, 0.35f, 0.35f, 0.32f});
       }
       renderer_->setOverrideRTV(nullptr);
       basePassMs = markPhaseMs();
@@ -2897,14 +2897,15 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
     } else {
       // === Fallback path (GPU パイプラインなし) ===
       const FloatColor bgColor = comp->backgroundColor();
-      if (showCheckerboard_) {
-        renderer_->drawCheckerboard(0.0f, 0.0f, cw, ch, 16.0f,
-                                    {0.25f, 0.25f, 0.25f, 1.0f},
-                                    {0.35f, 0.35f, 0.35f, 1.0f});
-      } else if (compositionRenderer_) {
+      if (compositionRenderer_) {
         compositionRenderer_->DrawCompositionBackground(bgColor);
       } else {
         renderer_->drawRectLocal(0.0f, 0.0f, cw, ch, bgColor, 1.0f);
+      }
+      if (showCheckerboard_) {
+        renderer_->drawCheckerboard(0.0f, 0.0f, cw, ch, 16.0f,
+                                    {0.25f, 0.25f, 0.25f, 0.42f},
+                                    {0.35f, 0.35f, 0.35f, 0.32f});
       }
       if (showGrid_) {
         renderer_->drawGrid(0, 0, cw, ch, 100.0f, 1.0f,

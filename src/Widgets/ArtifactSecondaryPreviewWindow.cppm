@@ -21,7 +21,6 @@
 #include <QGraphicsOpacityEffect>
 #include <QPalette>
 #include <QColor>
-
 #include <wobjectimpl.h>
 
 module Artifact.Widgets.SecondaryPreviewWindow;
@@ -90,7 +89,8 @@ public:
 
     QSize scaledImageSize(const QSize& imageSize, const QSize& availableSize) const {
         if (imageSize.isEmpty() || availableSize.isEmpty()) return imageSize;
-        return imageSize.scaled(availableSize.width(), availableSize.height(), Qt::KeepAspectRatio);
+        return QSize(imageSize.width(), imageSize.height())
+            .scaled(availableSize.width(), availableSize.height(), Qt::KeepAspectRatio);
     }
 };
 

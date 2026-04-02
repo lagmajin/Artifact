@@ -24,6 +24,7 @@ export namespace Artifact
   AllLayers,
   SelectedOnly,
   AnimatedOnly,
+  ImportantAndKeyframed,
   AudioOnly,
   VideoOnly
  };

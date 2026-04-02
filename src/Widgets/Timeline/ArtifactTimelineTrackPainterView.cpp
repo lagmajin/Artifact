@@ -1,5 +1,6 @@
 ﻿module;
 #include <QFontMetrics>
+#include <QContextMenuEvent>
 #include <QPainter>
 #include <QPen>
 #include <QRectF>
@@ -7,11 +8,21 @@
 #include <QSize>
 #include <QtGlobal>
 #include <QCursor>
+#include <QMenu>
 #include <wobjectimpl.h>
 
 module Artifact.Timeline.TrackPainterView;
 
 import std;
+import Widgets.Utils.CSS;
+import Artifact.Application.Manager;
+import Artifact.Composition.Abstract;
+import Artifact.Layer.Abstract;
+import Artifact.Layers.Selection.Manager;
+import Artifact.Service.Project;
+import Frame.Position;
+import Property.Abstract;
+import Time.Rational;
 
 namespace Artifact
 {
@@ -19,6 +30,27 @@ W_OBJECT_IMPL(ArtifactTimelineTrackPainterView)
 
 namespace
 {
+struct TimelineThemeColors
+{
+ QColor background;
+ QColor surface;
+ QColor border;
+ QColor accent;
+ QColor text;
+};
+
+TimelineThemeColors timelineThemeColors()
+{
+ const auto& theme = ArtifactCore::currentDCCTheme();
+ return {
+  QColor(theme.backgroundColor),
+  QColor(theme.secondaryBackgroundColor),
+  QColor(theme.borderColor),
+  QColor(theme.accentColor),
+  QColor(theme.textColor),
+ };
+}
+
 constexpr int kDefaultTrackHeight = 30;
 constexpr int kTrackSpacing = 1;
 constexpr int kClipCorner = 4;
@@ -157,6 +189,93 @@ MarkerHitResult hitTestMarkers(
   }
  }
  return {};
+}
+
+QVector<ArtifactAbstractLayerPtr> selectedTimelineLayers()
+{
+ QVector<ArtifactAbstractLayerPtr> layers;
+ if (auto *app = ArtifactApplicationManager::instance()) {
+  if (auto *selection = app->layerSelectionManager()) {
+   const auto selected = selection->selectedLayers();
+   layers.reserve(selected.size());
+   for (const auto &layer : selected) {
+    layers.push_back(layer);
+   }
+   if (layers.isEmpty()) {
+    if (auto current = selection->currentLayer()) {
+     layers.push_back(current);
+    }
+   }
+  }
+ }
+ return layers;
+}
+
+bool applyKeyframeEditAtFrame(const ArtifactCompositionPtr &composition,
+                              const ArtifactAbstractLayerPtr &layer,
+                              const qint64 frame,
+                              const bool removeKeyframes)
+{
+ if (!composition || !layer) {
+  return false;
+ }
+
+ const double fps = std::max(1.0, static_cast<double>(composition->frameRate().framerate()));
+ const RationalTime nowTime(frame, static_cast<int64_t>(std::llround(fps)));
+
+ bool changed = false;
+ for (const auto &group : layer->getLayerPropertyGroups()) {
+  for (const auto &property : group.sortedProperties()) {
+   if (!property || !property->isAnimatable()) {
+    continue;
+   }
+   if (removeKeyframes) {
+    if (property->hasKeyFrameAt(nowTime)) {
+     property->removeKeyFrame(nowTime);
+     changed = true;
+    }
+   } else {
+    const QVariant value = property->interpolateValue(nowTime);
+    property->addKeyFrame(nowTime, value.isValid() ? value : property->getValue());
+    changed = true;
+   }
+  }
+ }
+
+ if (changed) {
+  layer->changed();
+ }
+ return changed;
+}
+
+bool applyTimelineLayerRangeEdit(const ArtifactAbstractLayerPtr &layer,
+                                 const qint64 startFrame,
+                                 const qint64 durationFrame,
+                                 const bool preserveExistingDuration)
+{
+ if (!layer) {
+  return false;
+ }
+
+ const qint64 oldInPoint = layer->inPoint().framePosition();
+ const qint64 oldOutPoint = layer->outPoint().framePosition();
+ const qint64 oldStartTime = layer->startTime().framePosition();
+ const qint64 oldDuration = std::max<qint64>(1, oldOutPoint - oldInPoint);
+
+ const qint64 inPoint = std::max<qint64>(0, startFrame);
+ const qint64 outPoint = preserveExistingDuration
+                             ? std::max<qint64>(inPoint + 1, inPoint + oldDuration)
+                             : std::max<qint64>(inPoint + 1, startFrame + durationFrame);
+ const qint64 inPointDelta = inPoint - oldInPoint;
+
+ layer->setInPoint(FramePosition(inPoint));
+ layer->setOutPoint(FramePosition(outPoint));
+
+ if (!preserveExistingDuration && inPointDelta != 0) {
+  layer->setStartTime(FramePosition(oldStartTime + inPointDelta));
+ }
+
+ return oldInPoint != inPoint || oldOutPoint != outPoint || oldStartTime != layer->startTime().framePosition();
 }
 } // namespace
 
@@ -400,9 +519,10 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent* event)
 {
  QPainter p(this);
  p.setRenderHint(QPainter::Antialiasing, true);
+ const TimelineThemeColors theme = timelineThemeColors();
  
- const QRect dirtyRect = event->rect();
- p.fillRect(dirtyRect, QColor(28, 29, 33));
+  const QRect dirtyRect = event->rect();
+ p.fillRect(dirtyRect, theme.background);
 
  const QRect fullRect = rect();
  const double ppf = impl_->pixelsPerFrame_;
@@ -417,9 +537,9 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent* event)
   
   // 画面外（dirtyRect外）の行は描画をスキップ
   if (rowTop + rowH >= dirtyRect.top() && rowTop <= dirtyRect.bottom()) {
-    const QColor rowColor = (i % 2 == 0) ? QColor(34, 35, 41) : QColor(38, 39, 46);
+    const QColor rowColor = (i % 2 == 0) ? theme.surface.lighter(106) : theme.surface.darker(108);
     p.fillRect(QRectF(0.0, rowTop, fullRect.width(), rowH), rowColor);
-    p.setPen(QPen(QColor(18, 18, 20), 1));
+    p.setPen(QPen(theme.border.darker(160), 1));
     p.drawLine(0, rowTop + rowH, fullRect.width(), rowTop + rowH);
   }
   
@@ -438,7 +558,7 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent* event)
   if (!major && !minor) {
    continue;
   }
-  p.setPen(QPen(major ? QColor(78, 79, 88) : QColor(54, 55, 62), 1));
+  p.setPen(QPen(major ? theme.border.lighter(125) : theme.border.darker(115), 1));
   p.drawLine(QPointF(x, dirtyRect.top()), QPointF(x, dirtyRect.bottom()));
  }
 
@@ -482,13 +602,13 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent* event)
   const QColor fill = clip.selected
    ? clip.fillColor.lighter(126)
    : (isHovered ? clip.fillColor.lighter(118) : clip.fillColor);
-  p.setPen(QPen(clip.selected ? QColor(255, 214, 154) : QColor(17, 17, 20), clip.selected ? 2 : 1));
+  p.setPen(QPen(clip.selected ? theme.accent.lighter(155) : theme.border.darker(170), clip.selected ? 2 : 1));
   p.setBrush(fill);
   p.drawRoundedRect(clipRect, kClipCorner, kClipCorner);
 
   if (isSelected || isHovered) {
    const QColor rim = isSelected
-       ? QColor(255, 214, 154, 220)
+       ? QColor(theme.accent.lighter(160))
        : QColor(255, 255, 255, 90);
    p.setBrush(Qt::NoBrush);
    p.setPen(QPen(rim, isSelected ? 2.0 : 1.0));
@@ -496,7 +616,7 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent* event)
   }
 
   if (!clip.title.isEmpty() && clipRect.width() > 28.0) {
-   p.setPen(clip.selected ? Qt::black : QColor(235, 239, 247));
+   p.setPen(clip.selected ? theme.background : theme.text);
    const QString text = QFontMetrics(p.font()).elidedText(clip.title, Qt::ElideRight, static_cast<int>(clipRect.width()) - (kClipPadding * 2));
    p.drawText(clipRect.adjusted(kClipPadding, 0, -kClipPadding, 0), Qt::AlignVCenter | Qt::AlignLeft, text);
   }
@@ -532,19 +652,19 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent* event)
           << QPointF(diamondRect.left(), diamondRect.center().y());
   if (marker.selectedLayer) {
    QPolygonF outer = diamond;
-   p.setPen(QPen(QColor(12, 12, 14, 220), 2.0));
+   p.setPen(QPen(theme.background.darker(190), 2.0));
    p.setBrush(Qt::NoBrush);
    p.drawPolygon(outer);
-   p.setPen(QPen(QColor(255, 255, 255, 240), 1.0));
+   p.setPen(QPen(theme.text.lighter(120), 1.0));
    p.setBrush(Qt::white);
    p.drawPolygon(diamond);
   } else {
-   p.setPen(QPen(QColor(20, 20, 24), 1));
+   p.setPen(QPen(theme.border.darker(170), 1));
    p.setBrush(marker.eased ? marker.color.lighter(105) : marker.color);
    p.drawPolygon(diamond);
   }
   if (!marker.label.isEmpty()) {
-   p.setPen(marker.selectedLayer ? QColor(255, 250, 240) : (isHovered ? QColor(255, 248, 220) : QColor(240, 240, 244)));
+   p.setPen(marker.selectedLayer ? theme.text.lighter(120) : (isHovered ? theme.accent.lighter(180) : theme.text));
    p.drawText(QRectF(center.x() + 8.0, center.y() - 8.0, 150.0, 16.0),
               Qt::AlignLeft | Qt::AlignVCenter,
               marker.label);
@@ -554,9 +674,9 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent* event)
  // Current frame marker.
  const double playheadX = impl_->currentFrame_ * ppf - xOffset;
  if (playheadX >= dirtyRect.left() - 4.0 && playheadX <= dirtyRect.right() + 4.0) {
-  p.setPen(QPen(QColor(238, 74, 88, 230), 3));
+  p.setPen(QPen(theme.accent, 3));
   p.drawLine(QPointF(playheadX, dirtyRect.top()), QPointF(playheadX, dirtyRect.bottom()));
-  p.setBrush(QColor(238, 74, 88, 230));
+  p.setBrush(theme.accent);
   p.setPen(Qt::NoPen);
   const QPointF tip(playheadX, dirtyRect.top() + 2.0);
   const QPolygonF head({
@@ -570,9 +690,9 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent* event)
  // Small HUD for track state.
  const QRect hudRect(10, 10, 180, 44);
  p.setPen(Qt::NoPen);
- p.setBrush(QColor(15, 16, 20, 185));
+ p.setBrush(theme.background.darker(180));
  p.drawRoundedRect(hudRect, 8, 8);
- p.setPen(QColor(236, 239, 244));
+ p.setPen(theme.text);
  const int selectedCount = std::count_if(
      impl_->clips_.cbegin(), impl_->clips_.cend(),
      [](const auto& clip) { return clip.selected; });
@@ -585,7 +705,7 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent* event)
                              .arg(static_cast<int>(std::round(impl_->currentFrame_)))
                              .arg(impl_->trackHeights_.size());
  p.drawText(hudRect.adjusted(10, 4, -10, -18), Qt::AlignLeft | Qt::AlignVCenter, hudText);
- p.setPen(QColor(190, 197, 207));
+ p.setPen(theme.text.darker(130));
  p.drawText(hudRect.adjusted(10, 20, -10, -4), Qt::AlignLeft | Qt::AlignVCenter,
             QStringLiteral("Sel:%1  Hov:%2").arg(selectedCount).arg(hoveredText));
 
@@ -787,6 +907,175 @@ void ArtifactTimelineTrackPainterView::mouseReleaseEvent(QMouseEvent* event)
   return;
  }
  QWidget::mouseReleaseEvent(event);
+}
+
+void ArtifactTimelineTrackPainterView::contextMenuEvent(QContextMenuEvent* event)
+{
+ if (!event) {
+  return;
+ }
+
+ ArtifactCompositionPtr composition;
+ if (auto *svc = ArtifactProjectService::instance()) {
+  composition = svc->currentComposition().lock();
+ }
+
+ const double mouseX = static_cast<double>(event->pos().x());
+ const double mouseY = static_cast<double>(event->pos().y());
+ const auto clipHit = hitTestClips(impl_->clips_, impl_->trackHeights_, mouseX, mouseY,
+                                   impl_->pixelsPerFrame_, impl_->horizontalOffset_,
+                                   impl_->verticalOffset_);
+ const bool clipUnderCursor = clipHit.mode != DragMode::None &&
+                              clipHit.clipIndex >= 0 &&
+                              clipHit.clipIndex < impl_->clips_.size();
+ const auto layers = selectedTimelineLayers();
+ const auto markerHit = hitTestMarkers(impl_->keyframeMarkers_, impl_->trackHeights_,
+                                       mouseX, mouseY, impl_->pixelsPerFrame_,
+                                       impl_->horizontalOffset_, impl_->verticalOffset_);
+ const bool markerUnderCursor = markerHit.markerIndex >= 0 &&
+                                markerHit.markerIndex < impl_->keyframeMarkers_.size();
+ if (layers.isEmpty() && !clipUnderCursor && !markerUnderCursor) {
+  event->ignore();
+  return;
+ }
+ const qint64 markerFrame = markerUnderCursor
+                                ? static_cast<qint64>(std::llround(
+                                      std::clamp(impl_->keyframeMarkers_[markerHit.markerIndex].frame,
+                                                 0.0, impl_->durationFrames_)))
+                                : static_cast<qint64>(std::llround(
+                                      std::clamp(impl_->currentFrame_, 0.0, impl_->durationFrames_)));
+
+ QMenu menu(this);
+ QAction* jumpToMarkerAct = nullptr;
+ if (markerUnderCursor) {
+  const auto &marker = impl_->keyframeMarkers_[markerHit.markerIndex];
+  const QString label = marker.label.isEmpty() ? QStringLiteral("Keyframe") : marker.label;
+  jumpToMarkerAct = menu.addAction(QStringLiteral("Jump to %1").arg(label));
+ }
+ menu.addAction(QStringLiteral("Add Keyframe at Playhead"));
+ QAction* removeKeyframeAct = menu.addAction(QStringLiteral("Remove Keyframe at Playhead"));
+ QAction* addMarkerFrameAct = nullptr;
+ QAction* removeMarkerFrameAct = nullptr;
+ if (markerUnderCursor) {
+  menu.addSeparator();
+  addMarkerFrameAct = menu.addAction(QStringLiteral("Add Keyframe at Marker Frame"));
+  removeMarkerFrameAct = menu.addAction(QStringLiteral("Remove Keyframe at Marker Frame"));
+ }
+
+ QAction* splitClipAct = nullptr;
+ QAction* duplicateClipAct = nullptr;
+ QAction* trimInClipAct = nullptr;
+ QAction* trimOutClipAct = nullptr;
+ QAction* moveStartClipAct = nullptr;
+ QAction* deleteClipAct = nullptr;
+ if (clipUnderCursor) {
+  if (!markerUnderCursor) {
+   menu.addSeparator();
+  }
+  splitClipAct = menu.addAction(QStringLiteral("Split Layer at Playhead"));
+  duplicateClipAct = menu.addAction(QStringLiteral("Duplicate Layer"));
+  moveStartClipAct = menu.addAction(QStringLiteral("Move Start to Playhead"));
+  trimInClipAct = menu.addAction(QStringLiteral("Trim In at Playhead"));
+  trimOutClipAct = menu.addAction(QStringLiteral("Trim Out at Playhead"));
+  deleteClipAct = menu.addAction(QStringLiteral("Delete Layer"));
+ }
+
+ const QAction* chosen = menu.exec(event->globalPos());
+ if (!chosen) {
+  event->accept();
+  return;
+ }
+
+ if (chosen == jumpToMarkerAct) {
+  const double targetFrame =
+      std::clamp(static_cast<double>(markerFrame), 0.0, impl_->durationFrames_);
+  setCurrentFrame(targetFrame);
+  seekRequested(targetFrame);
+  if (auto *svc = ArtifactProjectService::instance()) {
+   if (auto comp = svc->currentComposition().lock()) {
+    comp->goToFrame(static_cast<int64_t>(std::llround(targetFrame)));
+   }
+  }
+  event->accept();
+  return;
+ }
+
+ if (clipUnderCursor && composition) {
+  const auto &clip = impl_->clips_[clipHit.clipIndex];
+  const auto layer = composition->layerById(clip.layerId);
+  if (chosen == splitClipAct) {
+   if (auto *svc = ArtifactProjectService::instance()) {
+    svc->splitLayerAtCurrentTime(composition->id(), clip.layerId);
+   }
+   event->accept();
+   return;
+  }
+  if (chosen == duplicateClipAct) {
+   if (auto *svc = ArtifactProjectService::instance()) {
+    if (svc->duplicateLayerInCurrentComposition(clip.layerId)) {
+     svc->projectChanged();
+    }
+   }
+   event->accept();
+   return;
+  }
+  if (chosen == deleteClipAct) {
+   if (auto *svc = ArtifactProjectService::instance()) {
+    svc->removeLayerFromComposition(composition->id(), clip.layerId);
+   }
+   event->accept();
+   return;
+  }
+  if (layer && (chosen == moveStartClipAct || chosen == trimInClipAct || chosen == trimOutClipAct)) {
+   const qint64 currentFrame = static_cast<qint64>(std::llround(
+       std::clamp(impl_->currentFrame_, 0.0, impl_->durationFrames_)));
+   bool changed = false;
+   if (chosen == moveStartClipAct) {
+    changed = applyTimelineLayerRangeEdit(layer, currentFrame, 0, true);
+   } else if (chosen == trimInClipAct) {
+    changed = applyTimelineLayerRangeEdit(layer, currentFrame, 0, false);
+   } else if (chosen == trimOutClipAct) {
+    const qint64 duration = layer->outPoint().framePosition() - layer->inPoint().framePosition();
+    changed = applyTimelineLayerRangeEdit(layer, currentFrame - duration, duration, false);
+   }
+   if (changed) {
+    if (auto *svc = ArtifactProjectService::instance()) {
+     svc->projectChanged();
+    }
+    Q_EMIT timelineDebugMessage(
+        QStringLiteral("Edited %1 at F%2")
+            .arg(clip.title.isEmpty() ? clip.clipId : clip.title)
+            .arg(currentFrame));
+   }
+   event->accept();
+   return;
+  }
+ }
+
+ const bool removeKeyframes = (chosen == removeKeyframeAct || chosen == removeMarkerFrameAct);
+ const qint64 editFrame = (chosen == addMarkerFrameAct || chosen == removeMarkerFrameAct)
+                              ? markerFrame
+                              : static_cast<qint64>(
+                                    std::llround(std::clamp(impl_->currentFrame_, 0.0, impl_->durationFrames_)));
+ bool changed = false;
+ for (const auto &layer : layers) {
+  changed |= applyKeyframeEditAtFrame(composition, layer, editFrame, removeKeyframes);
+ }
+
+ if (changed) {
+  if (auto *svc = ArtifactProjectService::instance()) {
+   svc->projectChanged();
+  }
+  const QString actionText = removeKeyframes ? QStringLiteral("Removed") : QStringLiteral("Added");
+  Q_EMIT timelineDebugMessage(
+      QStringLiteral("%1 keyframe at F%2 for %3 layer(s)")
+          .arg(actionText)
+          .arg(editFrame)
+          .arg(layers.size()));
+  update();
+ }
+
+ event->accept();
 }
 
 void ArtifactTimelineTrackPainterView::wheelEvent(QWheelEvent* event)

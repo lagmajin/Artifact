@@ -13,6 +13,7 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QMouseEvent>
+#include <QTimer>
 #include <wobjectimpl.h>
 module Artifact.Widgets.CreatePlaneLayerDialog;
 
@@ -334,13 +335,14 @@ void CreateSolidLayerSettingDialog::showEvent(QShowEvent* event)
   QDialog::showEvent(event);
   QPoint endPos;
   if (parentWidget()) {
-   endPos = parentWidget()->mapToGlobal(parentWidget()->rect().center())
-            - QPoint(width() / 2, height() / 2);
+    endPos = parentWidget()->mapToGlobal(parentWidget()->rect().center())
+             - QPoint(width() / 2, height() / 2);
   } else {
-   endPos = QGuiApplication::primaryScreen()->availableGeometry().center()
-            - QPoint(width() / 2, height() / 2);
+    endPos = QGuiApplication::primaryScreen()->availableGeometry().center()
+             - QPoint(width() / 2, height() / 2);
   }
-  move(endPos);
+  // フレームレスウィンドウは即時移動が反映されにくいため、遅延させて確実に中央配置する
+  QTimer::singleShot(0, this, [this, endPos]() { move(endPos); });
 }
 
 void CreateSolidLayerSettingDialog::showAnimated()

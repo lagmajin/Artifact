@@ -706,19 +706,13 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
     summaryLayout->setSpacing(4);
 
     const std::unordered_set<std::string> keyLayerProperties = {
+        "layer.name",
         "transform.position.x",
         "transform.position.y",
         "transform.scale.x",
         "transform.scale.y",
         "transform.rotation",
-        "transform.anchor.x",
-        "transform.anchor.y",
         "layer.opacity",
-        "layer.name",
-        "layer.visible",
-        "layer.locked",
-        "layer.solo",
-        "layer.shy",
         "time.inPoint",
         "time.outPoint",
         "time.startTime"
@@ -728,8 +722,7 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
     std::vector<std::shared_ptr<ArtifactCore::AbstractProperty>> layerSummaryProperties;
     for (const auto& groupDef : layerGroups) {
         auto sortedProps = groupDef.sortedProperties();
-        // Keep the quick-edit strip large enough to include anchor and opacity.
-        auto picked = prioritizedSummaryProperties(sortedProps, keyLayerProperties, 8);
+        auto picked = prioritizedSummaryProperties(sortedProps, keyLayerProperties, 6);
         layerSummaryProperties.insert(layerSummaryProperties.end(), picked.begin(), picked.end());
     }
 

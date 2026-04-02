@@ -793,10 +793,37 @@ bool ArtifactProjectService::precomposeLayersInCurrentComposition(const QVector<
 
 void ArtifactProjectService::splitLayerAtCurrentTime(const CompositionID& compositionId, const LayerID& layerId)
 {
-    // TODO: Implement layer split at current playhead position
-    qWarning() << "[ArtifactProjectService] splitLayerAtCurrentTime is not yet implemented";
-    Q_UNUSED(compositionId);
-    Q_UNUSED(layerId);
+    auto comp = findComposition(compositionId).ptr.lock();
+    if (!comp || layerId.isNil()) {
+        return;
+    }
+
+    auto layer = comp->layerById(layerId);
+    if (!layer) {
+        return;
+    }
+
+    const auto now = comp->framePosition();
+    const qint64 nowFrame = now.framePosition();
+    const qint64 inFrame = layer->inPoint().framePosition();
+    const qint64 outFrame = layer->outPoint().framePosition();
+    if (nowFrame <= inFrame || nowFrame >= outFrame) {
+        return;
+    }
+
+    const auto oldOut = layer->outPoint();
+    layer->setOutPoint(now);
+
+    auto result = impl_->projectManager().duplicateLayerInComposition(compositionId, layerId);
+    if (!result.success || !result.layer) {
+        layer->setOutPoint(oldOut);
+        return;
+    }
+
+    auto newLayer = result.layer;
+    newLayer->setInPoint(now);
+    newLayer->setOutPoint(oldOut);
+    projectChanged();
 }
 
 bool ArtifactProjectService::clearLayerParentInCurrentComposition(const LayerID& layerId)

@@ -1050,6 +1050,7 @@ void ArtifactInspectorWidget::Impl::handleRemoveEffectClicked(int rackIndex)
   compositionNoteLayout->addWidget(impl_->compositionNoteEdit);
   compositionNoteLayout->setContentsMargins(6, 6, 6, 6);
   impl_->compositionNoteGroup->setLayout(compositionNoteLayout);
+  impl_->compositionNoteGroup->hide();
   layerInfoLayout->addWidget(impl_->compositionNoteGroup);
 
   impl_->layerNoteGroup = new QGroupBox("Layer Note");
@@ -1061,6 +1062,7 @@ void ArtifactInspectorWidget::Impl::handleRemoveEffectClicked(int rackIndex)
   layerNoteLayout->addWidget(impl_->layerNoteEdit);
   layerNoteLayout->setContentsMargins(6, 6, 6, 6);
   impl_->layerNoteGroup->setLayout(layerNoteLayout);
+  impl_->layerNoteGroup->hide();
   layerInfoLayout->addWidget(impl_->layerNoteGroup);
 
   // ステータスラベル

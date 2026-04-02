@@ -587,9 +587,4 @@ int AudioMixer::bufferSize() const
     return impl_->bufferSize_;
 }
 
-void AudioMixer::updatePlaybackLevels(float leftRms, float rightRms)
-{
-    impl_->refreshPlaybackLevels(leftRms, rightRms);
-}
-
 } // namespace Artifact

@@ -205,10 +205,10 @@ namespace {
   return false;
  }
 
- bool layerHasAnimation(const ArtifactAbstractLayerPtr& layer)
- {
+bool layerHasAnimation(const ArtifactAbstractLayerPtr& layer)
+{
   if (!layer) {
-   return false;
+    return false;
   }
   const auto groups = layer->getLayerPropertyGroups();
   for (const auto& group : groups) {
@@ -222,9 +222,33 @@ namespace {
    }
   }
   return false;
- }
+}
 
- bool layerMatchesDisplayMode(const ArtifactAbstractLayerPtr& layer,
+bool layerHasImportantTimelineState(const ArtifactAbstractLayerPtr& layer)
+{
+  if (!layer) {
+    return false;
+  }
+
+  const auto& transform = layer->transform3D();
+  const bool hasTransformOffset =
+      std::abs(transform.positionX()) > 0.0001 ||
+      std::abs(transform.positionY()) > 0.0001 ||
+      std::abs(transform.scaleX() - 1.0f) > 0.0001 ||
+      std::abs(transform.scaleY() - 1.0f) > 0.0001 ||
+      std::abs(transform.rotation()) > 0.0001 ||
+      std::abs(transform.anchorX()) > 0.0001 ||
+      std::abs(transform.anchorY()) > 0.0001;
+
+  const bool hasOpacityOffset = std::abs(layer->opacity() - 1.0f) > 0.0001f;
+  const bool hasTimelineOffset =
+      layer->inPoint().framePosition() != 0 ||
+      layer->startTime().framePosition() != 0;
+
+  return hasTransformOffset || hasOpacityOffset || hasTimelineOffset;
+}
+
+bool layerMatchesDisplayMode(const ArtifactAbstractLayerPtr& layer,
                               TimelineLayerDisplayMode mode,
                               const QSet<ArtifactAbstractLayerPtr>& selectedLayers)
  {
@@ -238,6 +262,8 @@ namespace {
     return selectedLayers.contains(layer);
   case TimelineLayerDisplayMode::AnimatedOnly:
     return layerHasAnimation(layer);
+  case TimelineLayerDisplayMode::ImportantAndKeyframed:
+    return layerHasAnimation(layer) || layerHasImportantTimelineState(layer);
   case TimelineLayerDisplayMode::AudioOnly:
     return layerCanOutputAudio(layer);
   case TimelineLayerDisplayMode::VideoOnly:
@@ -1383,21 +1409,21 @@ void ArtifactLayerPanelHeaderWidget::leaveEvent(QEvent* event)
    QSet<ArtifactAbstractLayerPtr> selectedLayers;
    if (displayMode == TimelineLayerDisplayMode::SelectedOnly) {
     if (auto* app = ArtifactApplicationManager::instance()) {
-     if (auto* selection = app->layerSelectionManager()) {
-      selectedLayers = selection->selectedLayers();
-      if (selectedLayers.isEmpty()) {
-       if (auto current = selection->currentLayer()) {
-        selectedLayers.insert(current);
-       }
+      if (auto* selection = app->layerSelectionManager()) {
+        selectedLayers = selection->selectedLayers();
+        if (selectedLayers.isEmpty()) {
+          if (auto current = selection->currentLayer()) {
+            selectedLayers.insert(current);
+          }
+        }
       }
-     }
     }
    }
 
-   QVector<ArtifactAbstractLayerPtr> layers;
-   const LayerSearchQuery query = parseLayerSearchQuery(filterText);
-   const bool hasQuery = !query.isEmpty();
-   for (auto& l : comp->allLayer()) {
+  QVector<ArtifactAbstractLayerPtr> layers;
+  const LayerSearchQuery query = parseLayerSearchQuery(filterText);
+  const bool hasQuery = !query.isEmpty();
+  for (auto& l : comp->allLayer()) {
      if (!l) continue;
      if (shyHidden && l->isShy()) continue;
      if (!layerMatchesDisplayMode(l, displayMode, selectedLayers)) continue;
