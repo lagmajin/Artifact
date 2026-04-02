@@ -1,6 +1,7 @@
 ﻿module;
 #include <QObject>
 #include <QApplication>
+#include <QAbstractButton>
 #include <QColor>
 #include <QEvent>
 #include <QLabel>
@@ -112,13 +113,51 @@ void applyTabLabelColors(ads::CDockWidgetTab* tab, const QString& color, const b
         return;
     }
 
-    const QString labelStyle = QStringLiteral("color: %1; background: transparent; font-weight: %2;")
-        .arg(color, emphasize ? QStringLiteral("600") : QStringLiteral("500"));
-    for (auto* label : tab->findChildren<QLabel*>()) {
-        if (label) {
-            label->setStyleSheet(labelStyle);
+    const QColor textColor(color);
+    const QString labelStyle = QStringLiteral("background: transparent; font-weight: %1; font-size: 12px;")
+        .arg(emphasize ? QStringLiteral("700") : QStringLiteral("600"));
+    auto applyTextStyle = [&](QWidget* child) {
+        if (!child) {
+            return;
         }
+        child->setStyleSheet(QStringLiteral("color: %1; %2")
+                                 .arg(color, labelStyle));
+        auto pal = child->palette();
+        pal.setColor(QPalette::WindowText, textColor);
+        pal.setColor(QPalette::Text, textColor);
+        pal.setColor(QPalette::ButtonText, textColor);
+        child->setPalette(pal);
+        auto font = child->font();
+        const int pointSize = font.pointSize();
+        font.setPointSize(pointSize > 0 ? qMax(12, pointSize + 1) : 12);
+        font.setBold(emphasize);
+        child->setFont(font);
+    };
+    applyTextStyle(tab);
+    for (auto* label : tab->findChildren<QLabel*>()) {
+        applyTextStyle(label);
     }
+    for (auto* button : tab->findChildren<QAbstractButton*>()) {
+        applyTextStyle(button);
+    }
+
+    const QColor themeBg = QColor(ArtifactCore::currentDCCTheme().backgroundColor);
+    const QColor themeBorder = QColor(ArtifactCore::currentDCCTheme().accentColor);
+    const QColor tabBg = emphasize ? themeBg.lighter(108) : themeBg.darker(108);
+    const QString tabStyle = QStringLiteral(
+                                "background-color: %1;"
+                                "border: 1px solid %2;"
+                                "border-radius: 0px;"
+                                "min-width: 96px;"
+                                "min-height: 22px;"
+                                "padding: 2px 10px;"
+                                "margin: 0px;"
+                                "background-image: none;"
+                                "color: %3;")
+                                .arg(tabBg.name(QColor::HexRgb),
+                                     themeBorder.name(QColor::HexRgb),
+                                     color);
+    tab->setStyleSheet(tabStyle);
 }
 
 }

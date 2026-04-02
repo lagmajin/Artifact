@@ -341,8 +341,7 @@ void CreateSolidLayerSettingDialog::showEvent(QShowEvent* event)
     endPos = QGuiApplication::primaryScreen()->availableGeometry().center()
              - QPoint(width() / 2, height() / 2);
   }
-  // フレームレスウィンドウは即時移動が反映されにくいため、遅延させて確実に中央配置する
-  QTimer::singleShot(0, this, [this, endPos]() { move(endPos); });
+  move(endPos);
 }
 
 void CreateSolidLayerSettingDialog::showAnimated()

@@ -2,8 +2,6 @@
 #include <QProxyStyle>
 #include <QPainter>
 #include <QStyleOption>
-#include <QLinearGradient>
-#include <QRadialGradient>
 #include <wobjectimpl.h>
 #include "DockWidget.h"
 #include "DockAreaWidget.h"
@@ -96,100 +94,41 @@ void DockGlowStyle::drawComplexControl(ComplexControl control, const QStyleOptio
 void DockGlowStyle::drawDockWidgetGlow(const QStyleOption* option, QPainter* painter,
                                         const QWidget* widget) const {
     if (!painter || !option) return;
-    
+
     painter->save();
-    painter->setRenderHint(QPainter::Antialiasing);
-    
+
     QRect rect = option->rect;
     int w = impl_->glowWidth_;
-    
+
     QColor glowColor = impl_->glowColor_;
     glowColor.setAlphaF(impl_->glowIntensity_);
-    QColor transparentColor = impl_->glowColor_;
-    transparentColor.setAlphaF(0);
-    
-    // ウィジェット本体は上側（タブ接触部分）を除いてグロー
-    
-    // 左辺のグロー
-    QLinearGradient leftGradient(rect.left(), 0, rect.left() + w, 0);
-    leftGradient.setColorAt(0, glowColor);
-    leftGradient.setColorAt(1, transparentColor);
-    painter->fillRect(rect.left(), rect.top() + w, w, rect.height() - w, leftGradient);
-    
-    // 右辺のグロー
-    QLinearGradient rightGradient(rect.right() - w, 0, rect.right(), 0);
-    rightGradient.setColorAt(0, transparentColor);
-    rightGradient.setColorAt(1, glowColor);
-    painter->fillRect(rect.right() - w, rect.top() + w, w, rect.height() - w, rightGradient);
-    
-    // 下辺のグロー
-    QLinearGradient bottomGradient(0, rect.bottom() - w, 0, rect.bottom());
-    bottomGradient.setColorAt(0, transparentColor);
-    bottomGradient.setColorAt(1, glowColor);
-    painter->fillRect(rect.left(), rect.bottom() - w, rect.width(), w, bottomGradient);
-    
-    // 左下コーナー
-    QRadialGradient blCorner(rect.left() + w, rect.bottom() - w, w);
-    blCorner.setColorAt(0, glowColor);
-    blCorner.setColorAt(1, transparentColor);
-    painter->fillRect(rect.left(), rect.bottom() - w, w, w, blCorner);
-    
-    // 右下コーナー
-    QRadialGradient brCorner(rect.right() - w, rect.bottom() - w, w);
-    brCorner.setColorAt(0, glowColor);
-    brCorner.setColorAt(1, transparentColor);
-    painter->fillRect(rect.right() - w, rect.bottom() - w, w, w, brCorner);
-    
+
+    // グラデーションの代わりに、フラットなアクセント枠だけにする。
+    painter->fillRect(QRect(rect.left(), rect.top() + w, w, rect.height() - w), glowColor);
+    painter->fillRect(QRect(rect.right() - w + 1, rect.top() + w, w, rect.height() - w), glowColor);
+    painter->fillRect(QRect(rect.left(), rect.bottom() - w + 1, rect.width(), w), glowColor);
+
     painter->restore();
 }
 
 void DockGlowStyle::drawDockTabGlow(const QStyleOption* option, QPainter* painter,
                                      const QWidget* widget) const {
     if (!painter || !option) return;
-    
+
     painter->save();
-    painter->setRenderHint(QPainter::Antialiasing);
-    
+
     QRect rect = option->rect;
     int w = impl_->glowWidth_;
-    
+
     QColor glowColor = impl_->glowColor_;
     glowColor.setAlphaF(impl_->glowIntensity_ * 0.9f);
-    QColor transparentColor = impl_->glowColor_;
-    transparentColor.setAlphaF(0);
-    
-    // タブは下側（ウィジェット接触部分）を除いてグロー
-    
-    // 上辺の強いグロー
-    QLinearGradient topGradient(0, rect.top(), 0, rect.top() + w);
-    topGradient.setColorAt(0, glowColor);
-    topGradient.setColorAt(1, transparentColor);
-    painter->fillRect(rect.left(), rect.top(), rect.width(), w, topGradient);
-    
-    // 左辺のグロー
-    QLinearGradient leftGradient(rect.left(), 0, rect.left() + w, 0);
-    leftGradient.setColorAt(0, glowColor);
-    leftGradient.setColorAt(1, transparentColor);
-    painter->fillRect(rect.left(), rect.top(), w, rect.height() - w, leftGradient);
-    
-    // 右辺のグロー
-    QLinearGradient rightGradient(rect.right() - w, 0, rect.right(), 0);
-    rightGradient.setColorAt(0, transparentColor);
-    rightGradient.setColorAt(1, glowColor);
-    painter->fillRect(rect.right() - w, rect.top(), w, rect.height() - w, rightGradient);
-    
-    // 左上コーナー
-    QRadialGradient tlCorner(rect.left() + w, rect.top() + w, w);
-    tlCorner.setColorAt(0, glowColor);
-    tlCorner.setColorAt(1, transparentColor);
-    painter->fillRect(rect.left(), rect.top(), w, w, tlCorner);
-    
-    // 右上コーナー
-    QRadialGradient trCorner(rect.right() - w, rect.top() + w, w);
-    trCorner.setColorAt(0, glowColor);
-    trCorner.setColorAt(1, transparentColor);
-    painter->fillRect(rect.right() - w, rect.top(), w, w, trCorner);
-    
+
+    // タブ上部だけを少し強調し、それ以外はフラットな枠線にする。
+    painter->fillRect(QRect(rect.left(), rect.top(), rect.width(), w), glowColor);
+    painter->fillRect(QRect(rect.left(), rect.top(), w, rect.height()), glowColor);
+    painter->fillRect(QRect(rect.right() - w + 1, rect.top(), w, rect.height()), glowColor);
+    painter->fillRect(QRect(rect.left(), rect.bottom() - w + 1, rect.width(), w), glowColor);
+
     painter->restore();
 }
 

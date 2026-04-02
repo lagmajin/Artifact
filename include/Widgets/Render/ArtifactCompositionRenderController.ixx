@@ -66,8 +66,12 @@ void setShowSafeMargins(bool show);
 bool isShowSafeMargins() const;
 void setGpuBlendEnabled(bool enabled);
 bool isGpuBlendEnabled() const;
-void setShowMotionPathOverlay(bool show);
-bool isShowMotionPathOverlay() const;
+   void setShowMotionPathOverlay(bool show);
+   bool isShowMotionPathOverlay() const;
+
+   // Render Queue support: when active, composition changed signals do not invalidate caches
+   void setRenderQueueActive(bool active);
+   bool isRenderQueueActive() const;
 
 // Ghost previews are composited in the controller render pass, not by a QWidget overlay.
 void setDropGhostPreview(const QRectF& viewportRect,

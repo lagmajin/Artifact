@@ -940,9 +940,10 @@ public:
   bool showGuides_ = false;
   bool showSafeMargins_ = false;
   bool showMotionPathOverlay_ = true;
-  bool showFrameInfo_ = false; // Changed to false by default
-  int currentFrameForOverlay_ = 0;
-  quint64 renderFrameCounter_ = 0;
+   bool showFrameInfo_ = false; // Changed to false by default
+   int currentFrameForOverlay_ = 0;
+   quint64 renderFrameCounter_ = 0;
+   bool renderQueueActive_ = false; // When true, suppress cache invalidation during Render Queue
   int lastPipelineStateMask_ = -1;
   QSize lastDispatchWarningSize_;
   QByteArray lastFinalPresentKey_;
@@ -1122,6 +1123,11 @@ public:
       return;
     }
 
+    // Ensure renderer is initialized before any rendering operations
+    if (!renderer_->isInitialized() && hostWidget_) {
+      renderer_->initialize(hostWidget_.data());
+    }
+
     const auto size = composition->settings().compositionSize();
     const float cw = static_cast<float>(size.width() > 0 ? size.width() : 1920);
     const float ch =
@@ -1157,6 +1163,9 @@ public:
     compositionChangedConnection_ = QObject::connect(
         composition.get(), &ArtifactAbstractComposition::changed, owner,
         [this, owner, composition]() {
+          if (renderQueueActive_) {
+            return; // Render Queue 実行中はキャッシュクリアをスキップ
+          }
           surfaceCache_.clear();
           if (gpuTextureCacheManager_) {
             gpuTextureCacheManager_->clear();
@@ -2768,11 +2777,11 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
           (origViewW > 0.0f) ? (rcw / origViewW) : 1.0f;
 
       // -- 1: 背景を accum に直接描画（オフスクリーン座標系）--
-      // 背景は常に表示されるべきなので、オフスクリーンRT全体に描画する。
+      // 背景は Composition Space で現在の Pan/Zoom を適用して描画する。
       renderer_->setViewportSize(rcw, rch);
-      renderer_->setCanvasSize(rcw, rch);
-      renderer_->setZoom(1.0f);
-      renderer_->setPan(0.0f, 0.0f);
+      renderer_->setCanvasSize(cw, ch);  // ← Composition Space に設定
+      renderer_->setZoom(origZoom);      // ← 現在のカメラズームを適用
+      renderer_->setPan(origPanX, origPanY); // ← 現在のカメラパンを適用
       {
         Diligent::Viewport offVP;
         offVP.TopLeftX = 0.0f;
@@ -2790,16 +2799,17 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       // RTVをクリアしてから背景を描画
       renderer_->setClearColor(FloatColor{0.0f, 0.0f, 0.0f, 1.0f});
       renderer_->clear();
-      renderer_->drawRectLocal(0.0f, 0.0f, rcw, rch, bgColor, 1.0f);
+      renderer_->drawRectLocal(0.0f, 0.0f, cw, ch, bgColor, 1.0f);  // ← Composition Space 全体を描画
       if (showCheckerboard_) {
-        renderer_->drawCheckerboard(0.0f, 0.0f, rcw, rch, 16.0f,
+        renderer_->drawCheckerboard(0.0f, 0.0f, cw, ch, 16.0f,
                                     {0.25f, 0.25f, 0.25f, 0.42f},
                                     {0.35f, 0.35f, 0.35f, 0.32f});
       }
       renderer_->setOverrideRTV(nullptr);
       basePassMs = markPhaseMs();
 
-      // オフスクリーン描画用の座標系設定（レイヤー用）。
+      // レイヤー描画用に、ダウンサンプル后的なオフスクリーン座標系に切り替え
+      renderer_->setCanvasSize(rcw, rch);  // ← レイヤー描画用に戻す
       renderer_->setZoom(origZoom * offscreenScale);
       renderer_->setPan(origPanX * offscreenScale, origPanY * offscreenScale);
 
@@ -2896,6 +2906,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       layerPassMs = markPhaseMs();
     } else {
       // === Fallback path (GPU パイプラインなし) ===
+      renderer_->setCanvasSize(cw, ch);  // キャンバスを Composition Space に設定
       const FloatColor bgColor = comp->backgroundColor();
       if (compositionRenderer_) {
         compositionRenderer_->DrawCompositionBackground(bgColor);
@@ -3595,6 +3606,17 @@ void CompositionRenderController::Impl::drawViewportGhostOverlay(
     const float ch =
         static_cast<float>(compSize.height() > 0 ? compSize.height() : 1080);
     renderer_->setCanvasSize(cw, ch);
+   }
   }
-}
-} // namespace Artifact
+
+  void CompositionRenderController::setRenderQueueActive(bool active) {
+    if (impl_) {
+      impl_->renderQueueActive_ = active;
+    }
+  }
+
+  bool CompositionRenderController::isRenderQueueActive() const {
+    return impl_ ? impl_->renderQueueActive_ : false;
+  }
+
+ } // namespace Artifact

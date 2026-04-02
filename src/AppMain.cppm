@@ -714,7 +714,7 @@ int main(int argc, char *argv[]) {
                                 QStringLiteral("Console"), consoleWidget,
                                 QRect(200, 200, 800, 400));
     auto *compositionEditor = new ArtifactCompositionEditor(mw);
-    compositionEditor->setMinimumWidth(1440);
+    compositionEditor->setMinimumWidth(1200); // Reasonable minimum for composition viewer
     compositionEditor->setSizePolicy(QSizePolicy::Expanding,
                                      QSizePolicy::Expanding);
     mw->addDockedWidget(QStringLiteral("Composition Viewer"),
@@ -756,7 +756,7 @@ int main(int argc, char *argv[]) {
         },
         QStringLiteral("Composition Viewer"));
     auto *layerViewEditor = new ArtifactRenderLayerEditor(mw);
-    layerViewEditor->setMinimumWidth(1440);
+    layerViewEditor->setMinimumWidth(1200); // Match composition viewer minimum
     layerViewEditor->setSizePolicy(QSizePolicy::Expanding,
                                    QSizePolicy::Expanding);
     mw->addDockedWidgetTabbed(QStringLiteral("Layer View (Diligent)"),
@@ -776,8 +776,8 @@ int main(int argc, char *argv[]) {
                               QStringLiteral("Project"));
     auto *contentsViewer = new ArtifactContentsViewer(mw);
     mw->addDockedWidgetTabbed(QStringLiteral("Contents Viewer"),
-                              ads::LeftDockWidgetArea, contentsViewer,
-                              QStringLiteral("Asset Browser"));
+                              ads::CenterDockWidgetArea, contentsViewer,
+                              QStringLiteral("Composition Viewer"));
     mw->setDockVisible(QStringLiteral("Contents Viewer"), false);
     QObject::connect(assetBrowser, &ArtifactAssetBrowser::itemDoubleClicked, mw,
                      [mw, contentsViewer](const QString &itemPath) {

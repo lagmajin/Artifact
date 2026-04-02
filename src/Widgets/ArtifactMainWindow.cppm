@@ -299,17 +299,18 @@ ArtifactMainWindow::ArtifactMainWindow(QWidget* parent)
  impl_->dockStyleManager->setGlowColor(QColor(ArtifactCore::currentDCCTheme().accentColor));
  impl_->dockStyleManager->setGlowWidth(2);
  impl_->dockStyleManager->setGlowIntensity(0.72f);
- // Dock styling now comes from the global theme and DockStyleManager.
- impl_->centralWidgetHost = new QWidget(this);
- auto* centralDock = new CDockWidget(QStringLiteral("Workspace"), this);
+  // Dock styling now comes from the global theme and DockStyleManager.
+  impl_->centralWidgetHost = new QWidget(this);
+  impl_->centralWidgetHost->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+  auto* centralDock = new CDockWidget(QStringLiteral("Workspace"), this);
  centralDock->setObjectName(QStringLiteral("ArtifactCentralDock"));
  centralDock->setWidget(impl_->centralWidgetHost);
  centralDock->setFeatures(ads::CDockWidget::AllDockWidgetFeatures); // Enable floating, etc.
  impl_->dockManager->setCentralWidget(centralDock);
  impl_->primaryCenterDock = centralDock; impl_->dockStyleManager->applyStyle();
 
- statusBar();
- resize(1800, 1100);
+  statusBar();
+  resize(2000, 1200); // Increased initial window size to give central area more space
 }
 
 ArtifactMainWindow::~ArtifactMainWindow()
