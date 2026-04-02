@@ -350,6 +350,53 @@ CompositionRenderController::CameraFrustumVisual buildCameraFrustumVisual(
   return visual;
 }
 
+void drawFrustumOverlay(ArtifactIRenderer* renderer,
+                        const CompositionRenderController::CameraFrustumVisual& visual)
+{
+  if (!renderer || !visual.valid) {
+    return;
+  }
+
+  auto drawLoop = [renderer](const QVector<QVector3D>& corners,
+                             const FloatColor& shadowColor,
+                             const FloatColor& coreColor,
+                             float thickness) {
+    if (corners.size() != 4) {
+      return;
+    }
+    for (int i = 0; i < 4; ++i) {
+      const QVector3D& a = corners[i];
+      const QVector3D& b = corners[(i + 1) % 4];
+      renderer->drawSolidLine({a.x(), a.y()}, {b.x(), b.y()}, shadowColor, thickness + 2.0f);
+      renderer->drawSolidLine({a.x(), a.y()}, {b.x(), b.y()}, coreColor, thickness);
+    }
+  };
+
+  const FloatColor nearShadow{0.0f, 0.0f, 0.0f, 0.55f};
+  const FloatColor nearCore{0.96f, 0.98f, 1.0f, 0.98f};
+  const FloatColor farShadow{0.0f, 0.0f, 0.0f, 0.34f};
+  const FloatColor farCore{0.24f, 0.90f, 1.0f, 0.72f};
+  const FloatColor connectorShadow{0.0f, 0.0f, 0.0f, 0.28f};
+  const FloatColor connectorCore{1.0f, 0.84f, 0.30f, 0.78f};
+
+  drawLoop(visual.nearPlaneCorners, nearShadow, nearCore, 2.8f);
+  drawLoop(visual.farPlaneCorners, farShadow, farCore, 2.0f);
+
+  if (visual.nearPlaneCorners.size() == 4 && visual.farPlaneCorners.size() == 4) {
+    for (int i = 0; i < 4; ++i) {
+      const QVector3D& a = visual.nearPlaneCorners[i];
+      const QVector3D& b = visual.farPlaneCorners[i];
+      renderer->drawSolidLine({a.x(), a.y()}, {b.x(), b.y()}, connectorShadow, 2.8f);
+      renderer->drawSolidLine({a.x(), a.y()}, {b.x(), b.y()}, connectorCore, 1.5f);
+    }
+  }
+
+  renderer->drawCrosshair(visual.cameraPosition.x(), visual.cameraPosition.y(), 10.0f,
+                          FloatColor{0.0f, 0.0f, 0.0f, 0.42f});
+  renderer->drawCrosshair(visual.cameraPosition.x(), visual.cameraPosition.y(), 8.0f,
+                          FloatColor{1.0f, 1.0f, 1.0f, 0.82f});
+}
+
 QPointF motionPathAnchorPositionAt(const ArtifactAbstractLayerPtr& layer, const RationalTime& time)
 {
   if (!layer) {
@@ -942,6 +989,7 @@ public:
   bool showCheckerboard_ = false;
   bool showGuides_ = false;
   bool showSafeMargins_ = false;
+  bool showCameraOverlay_ = false;
   bool showMotionPathOverlay_ = true;
   bool showFrameInfo_ = false; // Changed to false by default
   int currentFrameForOverlay_ = 0;
@@ -1639,6 +1687,14 @@ void CompositionRenderController::setShowSafeMargins(bool show) {
 }
 bool CompositionRenderController::isShowSafeMargins() const {
   return impl_->showSafeMargins_;
+}
+void CompositionRenderController::setShowCameraOverlay(bool show) {
+  impl_->showCameraOverlay_ = show;
+  impl_->invalidateOverlayComposite();
+  renderOneFrame();
+}
+bool CompositionRenderController::isShowCameraOverlay() const {
+  return impl_ ? impl_->showCameraOverlay_ : false;
 }
 
 void CompositionRenderController::setShowMotionPathOverlay(bool show) {
@@ -2952,6 +3008,13 @@ void CompositionRenderController::Impl::renderOneFrameImpl(CompositionRenderCont
                                4.0f, currentColor);
         }
       }
+    }
+  }
+
+  if (renderer_ && showCameraOverlay_ && comp && !selectedLayerId_.isNil()) {
+    const auto visual = cameraFrustumVisual();
+    if (visual.valid) {
+      drawFrustumOverlay(renderer_.get(), visual);
     }
   }
 

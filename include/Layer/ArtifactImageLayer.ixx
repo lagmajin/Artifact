@@ -14,27 +14,32 @@ import Image;
 
 export namespace Artifact {
 
- class ArtifactImageLayer:public ArtifactAbstractLayer {
- W_OBJECT(ArtifactImageLayer)
- private:
-  class Impl;
-  Impl* impl_;
- public:
-  ArtifactImageLayer();
-  ~ArtifactImageLayer();
-  QImage toQImage() const;
-  bool loadFromPath(const QString& path);
-  QString sourcePath() const;
-  void setFromQImage(const QImage& image);
-  void setFromCvMat(const cv::Mat& mat);
-  void setFromCvMat();
-  void setFitToLayer(bool fit);
-  bool fitToLayer() const;
-  QRectF localBounds() const override;
-  std::vector<ArtifactCore::PropertyGroup> getLayerPropertyGroups() const override;
-  bool setLayerPropertyValue(const QString& propertyPath, const QVariant& value) override;
+  class ArtifactImageLayer:public ArtifactAbstractLayer {
+  W_OBJECT(ArtifactImageLayer)
+  private:
+   class Impl;
+   Impl* impl_;
+  public:
+   ArtifactImageLayer();
+   ~ArtifactImageLayer();
+   QImage toQImage() const;
+   bool loadFromPath(const QString& path);
+   QString sourcePath() const;
+   void setFromQImage(const QImage& image);
+   void setFromCvMat(const cv::Mat& mat);
+   void setFromCvMat();
+   void setFitToLayer(bool fit);
+   bool fitToLayer() const;
+   QRectF localBounds() const override;
+   std::vector<ArtifactCore::PropertyGroup> getLayerPropertyGroups() const override;
+   bool setLayerPropertyValue(const QString& propertyPath, const QVariant& value) override;
 
-  void draw(ArtifactIRenderer* renderer) override;
- };
+   // Get OIIO metadata if available
+   std::optional<ArtifactCore::ImageMetadata> imageMetadata() const;
+   // Get raw buffer if available (for processing pipeline)
+   std::optional<ArtifactCore::RawImage> rawImageData() const;
+
+   void draw(ArtifactIRenderer* renderer) override;
+  };
 
 }

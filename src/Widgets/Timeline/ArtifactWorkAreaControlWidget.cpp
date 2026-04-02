@@ -7,9 +7,35 @@ module;
 #include <wobjectimpl.h>
 module Artifact.Widget.WorkAreaControlWidget;
 
+import Widgets.Utils.CSS;
+
 namespace Artifact
 {
 	W_OBJECT_IMPL(WorkAreaControl)
+
+ namespace {
+ struct TimelineTheme {
+  QColor background;
+  QColor surface;
+  QColor surfaceBorder;
+  QColor accent;
+  QColor accentHover;
+  QColor text;
+ };
+
+ TimelineTheme timelineTheme()
+ {
+  const auto& theme = ArtifactCore::currentDCCTheme();
+  TimelineTheme colors;
+  colors.background = QColor(theme.backgroundColor);
+  colors.surface = QColor(theme.secondaryBackgroundColor);
+  colors.surfaceBorder = QColor(theme.borderColor);
+  colors.accent = QColor(theme.accentColor);
+  colors.accentHover = QColor(theme.accentColor).lighter(112);
+  colors.text = QColor(theme.textColor);
+  return colors;
+ }
+ }
 	
  class WorkAreaControl::Impl
  {
@@ -56,9 +82,10 @@ namespace Artifact
  {
   QPainter p(this);
   p.setRenderHint(QPainter::Antialiasing);
+  const auto colors = timelineTheme();
 
   // Background
-  p.fillRect(rect(), QColor(35, 35, 35));
+  p.fillRect(rect(), colors.background);
 
   // Constrain usable width to keep handles fully inside
   const int handleHalfW = 6;
@@ -69,18 +96,22 @@ namespace Artifact
   int x2 = handleHalfW + static_cast<int>(end * usableWidth);
 
   // Darken outside range
-  p.fillRect(0, 0, x1, height(), QColor(0, 0, 0, 100));
-  p.fillRect(x2, 0, width() - x2, height(), QColor(0, 0, 0, 100));
+  QColor shadow = colors.background.darker(150);
+  shadow.setAlpha(100);
+  p.fillRect(0, 0, x1, height(), shadow);
+  p.fillRect(x2, 0, width() - x2, height(), shadow);
 
   // Range strip
   QRect rangeRect(x1, 0, x2 - x1, height());
   QLinearGradient grad(rangeRect.topLeft(), rangeRect.bottomLeft());
-  grad.setColorAt(0, QColor(180, 110, 45, 120)); // Modo Amber
-  grad.setColorAt(1, QColor(140, 80, 30, 120));
+  QColor accent = colors.accent;
+  accent.setAlpha(120);
+  grad.setColorAt(0, accent.lighter(108));
+  grad.setColorAt(1, accent.darker(130));
   p.fillRect(rangeRect, grad);
 
   // Bottom border for work area
-  p.setPen(QPen(QColor(220, 140, 50), 2));
+  p.setPen(QPen(colors.accent, 2));
   p.drawLine(x1, height() - 1, x2, height() - 1);
 
   // Handles (Blue AE style) - highlight on hover
@@ -89,18 +120,18 @@ namespace Artifact
   
   // Left handle
   if (impl_->hoveringLeft || impl_->draggingLeft) {
-    p.setBrush(QColor(240, 160, 60));  // Brighter on hover
+    p.setBrush(colors.accentHover);
   } else {
-    p.setBrush(QColor(180, 110, 45));
+    p.setBrush(colors.accent);
   }
-  p.setPen(QPen(Qt::white, 1));
+  p.setPen(QPen(colors.text, 1));
   p.drawRoundedRect(QRectF(x1 - handleHalfW, handleTopInset, handleW, handleHeight), 2, 2);
   
   // Right handle
   if (impl_->hoveringRight || impl_->draggingRight) {
-    p.setBrush(QColor(240, 160, 60));  // Brighter on hover
+    p.setBrush(colors.accentHover);
   } else {
-    p.setBrush(QColor(180, 110, 45));
+    p.setBrush(colors.accent);
   }
   p.drawRoundedRect(QRectF(x2 - handleHalfW, handleTopInset, handleW, handleHeight), 2, 2);
  }

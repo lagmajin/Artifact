@@ -9,5 +9,6 @@ export import Menu.Composition;
 export import Artifact.Menu.Layer;
 export import Artifact.Menu.Effect;
 export import Menu.Animation;
+export import Artifact.Menu.Script;
 export import Menu.Option;
 export import Menu.Help;

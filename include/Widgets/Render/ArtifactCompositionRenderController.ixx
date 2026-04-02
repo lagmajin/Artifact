@@ -64,6 +64,8 @@ void setShowGuides(bool show);
 bool isShowGuides() const;
 void setShowSafeMargins(bool show);
 bool isShowSafeMargins() const;
+void setShowCameraOverlay(bool show);
+bool isShowCameraOverlay() const;
 void setGpuBlendEnabled(bool enabled);
 bool isGpuBlendEnabled() const;
 void setShowMotionPathOverlay(bool show);

@@ -104,8 +104,105 @@ namespace Artifact {
 
  //using namespace ArtifactWidgets;
 
- namespace {
- constexpr int kEffectRackCount = 5;
+namespace {
+constexpr int kEffectRackCount = 5;
+
+struct InspectorThemeColors {
+ QColor text;
+ QColor mutedText;
+ QColor surface;
+ QColor elevatedSurface;
+ QColor border;
+ QColor accent;
+ QColor button;
+ QColor buttonHover;
+ QColor buttonPressed;
+};
+
+InspectorThemeColors inspectorThemeColors()
+{
+ const auto& theme = ArtifactCore::currentDCCTheme();
+ InspectorThemeColors colors;
+ colors.text = QColor(theme.textColor);
+ colors.mutedText = colors.text.darker(128);
+ colors.surface = QColor(theme.secondaryBackgroundColor);
+ colors.elevatedSurface = QColor(theme.backgroundColor);
+ colors.border = QColor(theme.borderColor);
+ colors.accent = QColor(theme.accentColor);
+ colors.button = QColor(theme.buttonColor);
+ colors.buttonHover = QColor(theme.buttonHoverColor);
+ colors.buttonPressed = QColor(theme.buttonPressedColor);
+ return colors;
+}
+
+void applyWidgetPalette(QWidget* widget, const QColor& windowColor, const QColor& textColor)
+{
+ if (!widget) {
+  return;
+ }
+ widget->setAutoFillBackground(true);
+ QPalette pal = widget->palette();
+ pal.setColor(QPalette::Window, windowColor);
+ pal.setColor(QPalette::WindowText, textColor);
+ widget->setPalette(pal);
+}
+
+void applyTextWidgetTheme(QPlainTextEdit* edit)
+{
+ if (!edit) {
+  return;
+ }
+ const auto colors = inspectorThemeColors();
+ edit->setAutoFillBackground(true);
+ QPalette pal = edit->palette();
+ pal.setColor(QPalette::Window, colors.surface);
+ pal.setColor(QPalette::Base, colors.surface.darker(108));
+ pal.setColor(QPalette::Text, colors.text);
+ pal.setColor(QPalette::WindowText, colors.text);
+ pal.setColor(QPalette::Highlight, colors.accent);
+ pal.setColor(QPalette::HighlightedText, colors.elevatedSurface);
+ edit->setPalette(pal);
+}
+
+void applyListTheme(QListWidget* list)
+{
+ if (!list) {
+  return;
+ }
+ const auto colors = inspectorThemeColors();
+ list->setAutoFillBackground(true);
+ QPalette pal = list->palette();
+ pal.setColor(QPalette::Window, colors.surface);
+ pal.setColor(QPalette::Base, colors.surface.darker(110));
+ pal.setColor(QPalette::Text, colors.text);
+ pal.setColor(QPalette::WindowText, colors.text);
+ pal.setColor(QPalette::Highlight, colors.accent);
+ pal.setColor(QPalette::HighlightedText, colors.elevatedSurface);
+ list->setPalette(pal);
+}
+
+void applyButtonTheme(QPushButton* button)
+{
+ if (!button) {
+  return;
+ }
+ const auto colors = inspectorThemeColors();
+ QPalette pal = button->palette();
+ pal.setColor(QPalette::Button, colors.button);
+ pal.setColor(QPalette::ButtonText, colors.text);
+ pal.setColor(QPalette::WindowText, colors.text);
+ button->setPalette(pal);
+}
+
+void applyLabelTheme(QLabel* label, const QColor& color)
+{
+ if (!label) {
+  return;
+ }
+ QPalette pal = label->palette();
+ pal.setColor(QPalette::WindowText, color);
+ label->setPalette(pal);
+}
 
  int rackIndexFromStage(EffectPipelineStage stage)
  {
@@ -191,6 +288,7 @@ namespace Artifact {
    void refreshRackButtons();
    void setEffectRackEnabled(bool enabled);
    void setEffectsStateText(const QString& text, bool visible);
+   void applyTheme();
    void setNoProjectState();
    void setNoLayerState();
   };
@@ -211,6 +309,62 @@ void ArtifactInspectorWidget::Impl::setEffectsStateText(const QString& text, boo
  if (!effectsStateLabel) return;
  effectsStateLabel->setText(text);
  effectsStateLabel->setVisible(visible);
+}
+
+void ArtifactInspectorWidget::Impl::applyTheme()
+{
+ const auto colors = inspectorThemeColors();
+
+ if (containerWidget) {
+  applyWidgetPalette(containerWidget, colors.elevatedSurface, colors.text);
+ }
+ if (tabWidget) {
+  tabWidget->setDocumentMode(true);
+  applyWidgetPalette(tabWidget, colors.elevatedSurface, colors.text);
+ }
+ if (effectsScrollArea) {
+  applyWidgetPalette(effectsScrollArea, colors.elevatedSurface, colors.text);
+  if (effectsScrollArea->viewport()) {
+   applyWidgetPalette(effectsScrollArea->viewport(), colors.elevatedSurface, colors.text);
+  }
+ }
+ if (effectsTabWidget) {
+  applyWidgetPalette(effectsTabWidget, colors.elevatedSurface, colors.text);
+ }
+ if (compositionNoteGroup) {
+  applyWidgetPalette(compositionNoteGroup, colors.elevatedSurface, colors.text);
+ }
+ if (layerNoteGroup) {
+  applyWidgetPalette(layerNoteGroup, colors.elevatedSurface, colors.text);
+ }
+ if (compositionNoteEdit) {
+  applyTextWidgetTheme(compositionNoteEdit);
+ }
+ if (layerNoteEdit) {
+  applyTextWidgetTheme(layerNoteEdit);
+ }
+ for (auto& rack : racks) {
+  if (rack.listWidget) {
+   applyListTheme(rack.listWidget);
+  }
+  if (rack.addButton) {
+   applyButtonTheme(rack.addButton);
+  }
+  if (rack.removeButton) {
+   applyButtonTheme(rack.removeButton);
+  }
+  if (rack.moveUpButton) {
+   applyButtonTheme(rack.moveUpButton);
+  }
+  if (rack.moveDownButton) {
+   applyButtonTheme(rack.moveDownButton);
+  }
+ }
+
+ applyLabelTheme(statusLabel, colors.mutedText);
+ applyLabelTheme(layerNameLabel, colors.text);
+ applyLabelTheme(layerTypeLabel, colors.mutedText);
+ applyLabelTheme(effectsStateLabel, colors.mutedText);
 }
 
  ArtifactInspectorWidget::Impl::~Impl()
@@ -1270,6 +1424,7 @@ void ArtifactInspectorWidget::Impl::handleRemoveEffectClicked(int rackIndex)
   impl_->effectsTabWidget->setLayout(effectsLayout);
   impl_->effectsScrollArea->setWidget(impl_->effectsTabWidget);
   impl_->tabWidget->addTab(impl_->effectsScrollArea, "Effects");
+  impl_->applyTheme();
 
   // タブをメインレイアウトに追加
   mainLayout->addWidget(impl_->tabWidget);

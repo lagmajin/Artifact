@@ -1703,6 +1703,10 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   QAction *guidesAct = displayMenu->addAction("Guides");
   QAction *safeMarginsAct = displayMenu->addAction("Safe Area");
   displayMenu->addSeparator();
+  QAction *cameraOverlayAct = displayMenu->addAction("Camera Overlay");
+  cameraOverlayAct->setCheckable(true);
+  cameraOverlayAct->setToolTip("Experimental overlay for camera frustum and frame");
+  displayMenu->addSeparator();
   QAction *gpuBlendAct = displayMenu->addAction("GPU Blend (CS)");
   checkerboardAct->setCheckable(true);
   gridAct->setCheckable(true);
@@ -1729,6 +1733,11 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
                      if (impl_->renderController_)
                        impl_->renderController_->setShowSafeMargins(checked);
                    });
+  QObject::connect(cameraOverlayAct, &QAction::toggled, this, [this](bool checked) {
+    if (impl_->renderController_) {
+      impl_->renderController_->setShowCameraOverlay(checked);
+    }
+  });
   QObject::connect(gpuBlendAct, &QAction::toggled, this, [this](bool checked) {
     if (impl_->renderController_) {
       impl_->renderController_->setGpuBlendEnabled(checked);
@@ -1741,6 +1750,7 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
     gridAct->setChecked(impl_->renderController_->isShowGrid());
     guidesAct->setChecked(impl_->renderController_->isShowGuides());
     safeMarginsAct->setChecked(impl_->renderController_->isShowSafeMargins());
+    cameraOverlayAct->setChecked(impl_->renderController_->isShowCameraOverlay());
     gpuBlendAct->setChecked(impl_->renderController_->isGpuBlendEnabled());
   }
 

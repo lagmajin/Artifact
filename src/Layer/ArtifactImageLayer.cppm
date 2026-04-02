@@ -16,6 +16,8 @@ import std;
 import CvUtils;
 import Artifact.Render.IRenderer;
 import Image.ImageF32x4_RGBA;
+import Image.Import.OIIO;
+import Image.Raw;
 import Size;
 
 namespace Artifact {
@@ -34,6 +36,11 @@ public:
     mutable QFuture<QImage> prefetchFuture_;
     mutable QFutureWatcher<QImage> prefetchWatcher_;
     mutable bool prefetchDone_ = false;
+
+    // OIIO import metadata (if loaded via OIIO)
+    std::optional<ArtifactCore::ImageMetadata> metadata_;
+    // Raw pixel buffer for processing pipeline (if available)
+    std::optional<ArtifactCore::RawImage> rawBuffer_;
 };
 
 W_OBJECT_IMPL(ArtifactImageLayer)
@@ -62,6 +69,24 @@ ArtifactImageLayer::~ArtifactImageLayer() {
 
 bool ArtifactImageLayer::loadFromPath(const QString& path)
 {
+    // まず OIIO で読めるか試す (metadata を取る目的も兼ねる)
+    auto oiiResult = ArtifactCore::loadImageWithOIIO(path);
+    bool useOIIO = oiiResult.has_value();
+
+    QSize size;
+    if (useOIIO) {
+        // OIIO 成功
+        const auto& import = oiiResult.value();
+        impl_->metadata_ = import.metadata;
+        impl_->rawBuffer_ = import.rawImage;
+        size = QSize(import.metadata.width, import.metadata.height);
+        qDebug() << "[ArtifactImageLayer] OIIO load succeeded:" << path
+                 << "size=" << size << "colorspace=" << import.metadata.colorspace.c_str();
+    } else {
+        // OIIO 失敗、QImageReader にフォールバック
+        qDebug() << "[ArtifactImageLayer] OIIO failed, fallback to QImageReader:" << path;
+    }
+
     QImageReader reader(path);
     reader.setAutoTransform(true);
     if (!reader.canRead()) {
@@ -72,7 +97,11 @@ bool ArtifactImageLayer::loadFromPath(const QString& path)
         return false;
     }
 
-    const QSize size = reader.size();
+    // QImageReader でサイズ取得 (OIIO が成功していればその値を使うが、念のため)
+    if (!useOIIO) {
+        size = reader.size();
+    }
+
     impl_->sourcePath_ = path;
     impl_->cache_.reset();
     impl_->prefetchDone_ = false;
@@ -83,17 +112,25 @@ bool ArtifactImageLayer::loadFromPath(const QString& path)
         setSourceSize(Size_2D(size.width(), size.height()));
     }
 
-    // [Fix 1] バックグラウンドで画像を先読みし、初回 draw() 呼び出し時の
-    // メインスレッドブロックを排除する
-    impl_->prefetchFuture_ = QtConcurrent::run([path]() -> QImage {
-        QImageReader r(path);
-        r.setAutoTransform(true);
-        QImage img = r.read();
-        if (!img.isNull()) {
-            // GPU 転送用に RGBA8888 に変換も先側で実行しておく
-            return img.convertToFormat(QImage::Format_RGBA8888);
+    // バックグラウンド先読み: OIIO が成功した場合は QImage への変換を它的に実施
+    // QImageReader が成功した場合は既存通り
+    impl_->prefetchFuture_ = QtConcurrent::run([path, useOIIO]() -> QImage {
+        if (useOIIO) {
+            // OIIO loader を呼び出して QImage を得る
+            auto oiiResult = ArtifactCore::loadImageWithOIIO(path);
+            if (oiiResult.has_value() && oiiResult->image) {
+                return *oiiResult->image;
+            }
+            return QImage();
+        } else {
+            QImageReader r(path);
+            r.setAutoTransform(true);
+            QImage img = r.read();
+            if (!img.isNull()) {
+                return img.convertToFormat(QImage::Format_RGBA8888);
+            }
+            return img;
         }
-        return img;
     });
     impl_->prefetchWatcher_.setFuture(impl_->prefetchFuture_);
 
@@ -265,6 +302,16 @@ QRectF ArtifactImageLayer::localBounds() const
         return QRectF();
     }
     return QRectF(0.0, 0.0, static_cast<qreal>(size.width), static_cast<qreal>(size.height));
+}
+
+std::optional<ArtifactCore::ImageMetadata> ArtifactImageLayer::imageMetadata() const
+{
+    return impl_->metadata_;
+}
+
+std::optional<ArtifactCore::RawImage> ArtifactImageLayer::rawImageData() const
+{
+    return impl_->rawBuffer_;
 }
 
 } // namespace Artifact

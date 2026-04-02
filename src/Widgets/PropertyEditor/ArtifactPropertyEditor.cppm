@@ -36,8 +36,144 @@ import Artifact.Service.Playback;
 import Artifact.Service.Project;
 import Time.Rational;
 import FloatColorPickerDialog;
+import Widgets.Utils.CSS;
 
 namespace Artifact {
+
+namespace {
+
+struct PropertyEditorTheme {
+  QColor text;
+  QColor mutedText;
+  QColor surface;
+  QColor elevatedSurface;
+  QColor border;
+  QColor accent;
+  QColor hover;
+  QColor pressed;
+};
+
+PropertyEditorTheme propertyEditorTheme()
+{
+  const auto& theme = ArtifactCore::currentDCCTheme();
+  PropertyEditorTheme colors;
+  colors.text = QColor(theme.textColor);
+  colors.mutedText = colors.text.darker(128);
+  colors.surface = QColor(theme.secondaryBackgroundColor);
+  colors.elevatedSurface = QColor(theme.backgroundColor);
+  colors.border = QColor(theme.borderColor);
+  colors.accent = QColor(theme.accentColor);
+  colors.hover = QColor(theme.buttonHoverColor);
+  colors.pressed = QColor(theme.buttonPressedColor);
+  return colors;
+}
+
+QString propertyNumericStyle()
+{
+  const auto colors = propertyEditorTheme();
+  return QStringLiteral(R"(
+    QDoubleSpinBox, QSpinBox {
+        background: transparent;
+        border: 1px solid %1;
+        color: %2;
+        font-weight: 600;
+        font-size: 11px;
+        padding-right: 2px;
+        border-radius: 3px;
+    }
+    QDoubleSpinBox:hover, QSpinBox:hover {
+        background: %3;
+    }
+    QDoubleSpinBox:focus, QSpinBox:focus {
+        background: %4;
+        border: 1px solid %5;
+        color: %6;
+    }
+  )")
+      .arg(colors.border.darker(135).name(QColor::HexRgb),
+           colors.text.name(QColor::HexRgb),
+           colors.hover.name(QColor::HexRgb),
+           colors.elevatedSurface.darker(115).name(QColor::HexRgb),
+           colors.accent.name(QColor::HexRgb),
+           colors.text.lighter(110).name(QColor::HexRgb));
+}
+
+QString propertySliderStyle()
+{
+  const auto colors = propertyEditorTheme();
+  return QStringLiteral(R"(
+      QSlider::groove:horizontal {
+          background: %1;
+          height: 2px;
+          border-radius: 1px;
+      }
+      QSlider::handle:horizontal {
+          background: %2;
+          width: 8px;
+          height: 8px;
+          margin: -3px 0;
+          border-radius: 4px;
+      }
+  )")
+      .arg(colors.border.darker(145).name(QColor::HexRgb),
+           colors.accent.name(QColor::HexRgb));
+}
+
+QString propertyRowStyle()
+{
+  const auto colors = propertyEditorTheme();
+  return QStringLiteral(R"(
+      QWidget#propertyRow {
+          background: transparent;
+          border-bottom: 1px solid %1;
+      }
+      QWidget#propertyRow:hover {
+          background: %2;
+      }
+      QLabel#propertyRowLabel {
+          color: %3;
+          font-size: 10px;
+          font-weight: 500;
+      }
+      QLabel#propertyScrubHandle {
+          color: %4;
+          font-size: 10px;
+      }
+  )")
+      .arg(colors.border.darker(150).name(QColor::HexRgb),
+           colors.surface.darker(115).name(QColor::HexRgb),
+           colors.mutedText.name(QColor::HexRgb),
+           colors.border.darker(140).name(QColor::HexRgb));
+}
+
+QString propertyButtonStyle(const QColor& bg, const QColor& fg, const QColor& border)
+{
+  return QStringLiteral(R"(
+      QPushButton {
+          background: %1;
+          color: %2;
+          border: 1px solid %3;
+          border-radius: 3px;
+      }
+      QPushButton:hover {
+          background: %4;
+      }
+      QPushButton:pressed {
+          background: %5;
+      }
+      QPushButton:disabled {
+          color: %6;
+      }
+  )")
+      .arg(bg.name(QColor::HexRgb),
+           fg.name(QColor::HexRgb),
+           border.name(QColor::HexRgb),
+           bg.lighter(112).name(QColor::HexRgb),
+           bg.darker(112).name(QColor::HexRgb),
+           fg.darker(150).name(QColor::HexRgb));
+}
+
+} // namespace
 
 ArtifactAbstractPropertyEditor::ArtifactAbstractPropertyEditor(QWidget *parent)
     : QWidget(parent) {}
@@ -515,31 +651,10 @@ ArtifactFloatPropertyEditor::ArtifactFloatPropertyEditor(
     softMax_ = hardMax;
   }
 
-  const QString numericStyle = R"(
-    QDoubleSpinBox, QSpinBox {
-        background: transparent;
-        border: none;
-        color: #E8E8E8;
-        font-family: 'Segoe UI', sans-serif;
-        font-weight: 600;
-        font-size: 11px;
-        padding-right: 2px;
-    }
-    QDoubleSpinBox:hover, QSpinBox:hover {
-        background: rgba(245, 147, 60, 0.08);
-        border-radius: 2px;
-    }
-    QDoubleSpinBox:focus, QSpinBox:focus {
-        background: #232323;
-        border: 1px solid #F5933C;
-        color: #FFF;
-    }
-  )";
-
   spinBox_->setRange(meta.hardMin.isValid() ? meta.hardMin.toDouble() : -1e6,
                      meta.hardMax.isValid() ? meta.hardMax.toDouble() : 1e6);
   spinBox_->setValue(property.getValue().toDouble());
-  spinBox_->setStyleSheet(numericStyle);
+  spinBox_->setStyleSheet(propertyNumericStyle());
   if (meta.step.isValid()) {
     spinBox_->setSingleStep(meta.step.toDouble());
   }
@@ -554,20 +669,7 @@ ArtifactFloatPropertyEditor::ArtifactFloatPropertyEditor(
   slider_->setTracking(true); // ドラッグ中の追従を有効化
   slider_->setValue(floatToSliderPosition(property.getValue().toDouble(),
                                           softMin_, softMax_));
-  slider_->setStyleSheet(R"(
-      QSlider::groove:horizontal {
-          background: #333;
-          height: 2px;
-          border-radius: 1px;
-      }
-      QSlider::handle:horizontal {
-          background: #F5933C;
-          width: 8px;
-          height: 8px;
-          margin: -3px 0;
-          border-radius: 4px;
-      }
-  )");
+  slider_->setStyleSheet(propertySliderStyle());
 
   QObject::connect(spinBox_, &QDoubleSpinBox::valueChanged, this,
                    [this](const double nextValue) {
@@ -710,31 +812,10 @@ ArtifactIntPropertyEditor::ArtifactIntPropertyEditor(
     softMax_ = hardMax;
   }
 
-  const QString numericStyle = R"(
-    QSpinBox {
-        background: transparent;
-        border: none;
-        color: #E8E8E8;
-        font-family: 'Segoe UI', sans-serif;
-        font-weight: 600;
-        font-size: 11px;
-        padding-right: 2px;
-    }
-    QSpinBox:hover {
-        background: rgba(245, 147, 60, 0.08);
-        border-radius: 2px;
-    }
-    QSpinBox:focus {
-        background: #232323;
-        border: 1px solid #F5933C;
-        color: #FFF;
-    }
-  )";
-
   spinBox_->setRange(meta.hardMin.isValid() ? meta.hardMin.toInt() : -1000000,
                      meta.hardMax.isValid() ? meta.hardMax.toInt() : 1000000);
   spinBox_->setValue(property.getValue().toInt());
-  spinBox_->setStyleSheet(numericStyle);
+  spinBox_->setStyleSheet(propertyNumericStyle());
   if (meta.step.isValid()) {
     spinBox_->setSingleStep(meta.step.toInt());
   }
@@ -749,20 +830,7 @@ ArtifactIntPropertyEditor::ArtifactIntPropertyEditor(
   slider_->setTracking(true);
   slider_->setValue(
       intToSliderPosition(property.getValue().toInt(), softMin_, softMax_));
-  slider_->setStyleSheet(R"(
-      QSlider::groove:horizontal {
-          background: #333;
-          height: 2px;
-          border-radius: 1px;
-      }
-      QSlider::handle:horizontal {
-          background: #F5933C;
-          width: 8px;
-          height: 8px;
-          margin: -3px 0;
-          border-radius: 4px;
-      }
-  )");
+  slider_->setStyleSheet(propertySliderStyle());
 
   QObject::connect(
       spinBox_, &QSpinBox::valueChanged, this, [this](const int nextValue) {
@@ -1131,9 +1199,8 @@ void ArtifactColorPropertyEditor::setValueFromVariant(const QVariant &value) {
 void ArtifactColorPropertyEditor::applyColor(const QColor &color) {
   currentColor_ = color;
   if (button_) {
-    button_->setStyleSheet(QStringLiteral("background-color: %1; border: 1px "
-                                          "solid #454545; border-radius: 4px;")
-                               .arg(color.name()));
+    const auto colors = propertyEditorTheme();
+    button_->setStyleSheet(propertyButtonStyle(color, colors.text, colors.border));
   }
   if (valueLabel_) {
     valueLabel_->setText(color.name(QColor::HexArgb).toUpper());
@@ -1152,24 +1219,7 @@ ArtifactPropertyEditorRowWidget::ArtifactPropertyEditorRowWidget(
       nextKeyBtn_(new QPushButton(this)) {
   setObjectName(QStringLiteral("propertyRow"));
   setFocusPolicy(Qt::StrongFocus);
-  setStyleSheet(R"(
-      QWidget#propertyRow {
-          background: transparent;
-          border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-      }
-      QWidget#propertyRow:hover {
-          background: rgba(255, 255, 255, 0.02);
-      }
-      QLabel#propertyRowLabel {
-          color: #AAA;
-          font-size: 10px;
-          font-weight: 500;
-      }
-      QLabel#propertyScrubHandle {
-          color: #444;
-          font-size: 10px;
-      }
-  )");
+  setStyleSheet(propertyRowStyle());
 
   auto *layout = new QHBoxLayout(this);
   layout->setContentsMargins(8, 4, 8, 4);
@@ -1190,7 +1240,8 @@ ArtifactPropertyEditorRowWidget::ArtifactPropertyEditorRowWidget(
   auto *keyframeControlLayout = new QHBoxLayout();
   keyframeControlLayout->setSpacing(0);
 
-  const QString navStyle = R"(
+  const auto colors = propertyEditorTheme();
+  const QString navStyle = QStringLiteral(R"(
         QPushButton {
             background: transparent;
             border: none;
@@ -1198,15 +1249,17 @@ ArtifactPropertyEditorRowWidget::ArtifactPropertyEditorRowWidget(
             border-radius: 2px;
         }
         QPushButton:hover {
-            background: rgba(255, 255, 255, 0.1);
+            background: %1;
         }
         QPushButton:pressed {
-            background: rgba(255, 255, 255, 0.05);
+            background: %2;
         }
         QPushButton:disabled {
             opacity: 0.3;
         }
-    )";
+    )")
+      .arg(colors.hover.name(QColor::HexRgb),
+           colors.pressed.name(QColor::HexRgb));
 
   prevKeyBtn_->setFixedSize(14, 22);
   nextKeyBtn_->setFixedSize(14, 22);
@@ -1226,23 +1279,26 @@ ArtifactPropertyEditorRowWidget::ArtifactPropertyEditorRowWidget(
   keyframeButton_->setCheckable(true);
   keyframeButton_->setIcon(keyIcon);
   keyframeButton_->setIconSize(QSize(14, 14));
-  keyframeButton_->setStyleSheet(R"(
+  keyframeButton_->setStyleSheet(QStringLiteral(R"(
         QPushButton#propertyKeyButton {
             background: transparent;
             border: none;
             border-radius: 2px;
         }
         QPushButton#propertyKeyButton:hover {
-            background: rgba(255, 255, 255, 0.1);
+            background: %1;
         }
         QPushButton#propertyKeyButton:checked {
-            background: rgba(212, 125, 50, 0.2);
-            border: 1px solid rgba(212, 125, 50, 0.5);
+            background: %2;
+            border: 1px solid %3;
         }
         QPushButton#propertyKeyButton:disabled {
             opacity: 0.3;
         }
-    )");
+    )")
+      .arg(colors.hover.name(QColor::HexRgb),
+           colors.accent.darker(170).name(QColor::HexRgb),
+           colors.accent.lighter(120).name(QColor::HexRgb)));
 
   keyframeControlLayout->addWidget(prevKeyBtn_);
   keyframeControlLayout->addWidget(keyframeButton_);
@@ -1253,16 +1309,16 @@ ArtifactPropertyEditorRowWidget::ArtifactPropertyEditorRowWidget(
   resetButton_->setFixedSize(24, 24);
   resetButton_->setIcon(resIcon);
   resetButton_->setIconSize(QSize(14, 14));
-  resetButton_->setStyleSheet(R"(
+  resetButton_->setStyleSheet(QStringLiteral(R"(
         QPushButton#propertyResetButton {
             background: transparent;
             border: none;
         }
         QPushButton#propertyResetButton:hover {
-            background: #4A4A4A;
+            background: %1;
             border-radius: 3px;
         }
-    )");
+    )").arg(colors.hover.name(QColor::HexRgb)));
   resetButton_->setVisible(false);
 
   expressionButton_->setObjectName(QStringLiteral("propertyExprButton"));
@@ -1271,16 +1327,16 @@ ArtifactPropertyEditorRowWidget::ArtifactPropertyEditorRowWidget(
   expressionButton_->setFixedSize(26, 24);
   expressionButton_->setIcon(exprIcon);
   expressionButton_->setIconSize(QSize(14, 14));
-  expressionButton_->setStyleSheet(R"(
+  expressionButton_->setStyleSheet(QStringLiteral(R"(
         QPushButton#propertyExprButton {
             background: transparent;
             border: none;
         }
         QPushButton#propertyExprButton:hover {
-            background: #4A4A4A;
+            background: %1;
             border-radius: 3px;
         }
-    )");
+    )").arg(colors.hover.name(QColor::HexRgb)));
   expressionButton_->setVisible(false);
 
   scrubHandle_->installEventFilter(this);

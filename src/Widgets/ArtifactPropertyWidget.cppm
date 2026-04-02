@@ -7,6 +7,8 @@
 #include <QLineEdit>
 #include <QFormLayout>
 #include <QGroupBox>
+#include <QFont>
+#include <QPalette>
 #include <QCursor>
 #include <QMenu>
 #include <QTimer>
@@ -61,10 +63,79 @@ import Artifact.Widgets.PropertyEditor;
 import Artifact.Service.Playback;
 import Artifact.Service.Project;
 import Time.Rational;
+import Widgets.Utils.CSS;
 
 namespace Artifact {
 
 namespace {
+
+struct PropertyThemeColors {
+    QColor text;
+    QColor mutedText;
+    QColor border;
+    QColor surface;
+    QColor elevatedSurface;
+    QColor accent;
+};
+
+PropertyThemeColors propertyThemeColors()
+{
+    const auto& theme = ArtifactCore::currentDCCTheme();
+    PropertyThemeColors colors;
+    colors.text = QColor(theme.textColor);
+    colors.mutedText = colors.text.darker(125);
+    colors.border = QColor(theme.borderColor);
+    colors.surface = QColor(theme.secondaryBackgroundColor);
+    colors.elevatedSurface = QColor(theme.backgroundColor);
+    colors.accent = QColor(theme.accentColor);
+    return colors;
+}
+
+void applyPropertyLabelTheme(QLabel* label, bool emphasized = false)
+{
+    if (!label) {
+        return;
+    }
+    const auto colors = propertyThemeColors();
+    QPalette pal = label->palette();
+    pal.setColor(QPalette::WindowText, emphasized ? colors.text : colors.mutedText);
+    label->setPalette(pal);
+    label->setAutoFillBackground(false);
+}
+
+QString propertyGroupStyleSheet()
+{
+    const auto colors = propertyThemeColors();
+    const QColor titleBg = colors.elevatedSurface.darker(118);
+    const QColor titleText = colors.text;
+    const QColor line = colors.surface.darker(138);
+    return QStringLiteral(R"(
+        QGroupBox {
+            background: transparent;
+            border: none;
+            border-top: 1px solid %1;
+            margin-top: 24px;
+            padding-top: 2px;
+            font-weight: 700;
+            font-size: 10px;
+            color: %2;
+        }
+        QGroupBox::title {
+            subcontrol-origin: margin;
+            subcontrol-position: top left;
+            padding: 4px 10px;
+            background: %3;
+            color: %4;
+            letter-spacing: 1px;
+            width: 100%;
+        }
+    )")
+        .arg(line.name(QColor::HexRgb),
+             colors.mutedText.name(QColor::HexRgb),
+             titleBg.name(QColor::HexRgb),
+             titleText.name(QColor::HexRgb));
+}
+
 void clearLayoutRecursive(QLayout* layout) {
     if (!layout) {
         return;
@@ -802,7 +873,12 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
         }
 
         auto* effectLabel = new QLabel(QStringLiteral("Effect: %1").arg(effect->displayName().toQString()), summaryGroup);
-        effectLabel->setStyleSheet(QStringLiteral("QLabel { color: #E8E8E8; font-weight: bold; }"));
+        effectLabel->setFont([&]() {
+            QFont font = effectLabel->font();
+            font.setBold(true);
+            return font;
+        }());
+        applyPropertyLabelTheme(effectLabel, true);
         summaryLayout->addWidget(effectLabel);
 
         addRowsFromProperties(
@@ -831,27 +907,7 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
         groupLayout->setContentsMargins(8, 8, 8, 8);
         groupLayout->setSpacing(4);
     
-    group->setStyleSheet(R"(
-        QGroupBox {
-            background: transparent;
-            border: none;
-            border-top: 1px solid #333;
-            margin-top: 24px;
-            padding-top: 2px;
-            font-weight: 700;
-            font-size: 10px;
-            color: #AAA;
-        }
-        QGroupBox::title {
-            subcontrol-origin: margin;
-            subcontrol-position: top left;
-            padding: 4px 10px;
-            background: #252525;
-            color: #DDD;
-            letter-spacing: 1px;
-            width: 100%;
-        }
-    )");
+        group->setStyleSheet(propertyGroupStyleSheet());
 
         auto sortedProps = groupDef.sortedProperties();
         bool addedGroupProperties = false;
@@ -880,7 +936,10 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
 
     if (hasFocusedEffect) {
         auto* focusedLabel = new QLabel(QStringLiteral("Focused Effect ID: %1").arg(focusedEffectId));
-        focusedLabel->setStyleSheet(QStringLiteral("QLabel { color: #D0D0D0; font-size: 11px; }"));
+        QFont font = focusedLabel->font();
+        font.setPointSize(font.pointSize() > 0 ? font.pointSize() : 11);
+        focusedLabel->setFont(font);
+        applyPropertyLabelTheme(focusedLabel, false);
         mainLayout->addWidget(focusedLabel);
     }
 
@@ -904,27 +963,7 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
         groupLayout->setContentsMargins(8, 8, 8, 8);
         groupLayout->setSpacing(4);
     
-    group->setStyleSheet(R"(
-        QGroupBox {
-            background: transparent;
-            border: none;
-            border-top: 1px solid #333;
-            margin-top: 24px;
-            padding-top: 2px;
-            font-weight: 700;
-            font-size: 10px;
-            color: #AAA;
-        }
-        QGroupBox::title {
-            subcontrol-origin: margin;
-            subcontrol-position: top left;
-            padding: 4px 10px;
-            background: #252525;
-            color: #DDD;
-            letter-spacing: 1px;
-            width: 100%;
-        }
-    )");
+        group->setStyleSheet(propertyGroupStyleSheet());
 
         ArtifactCore::PropertyGroup propGroup(effect->displayName().toQString());
         for (const auto& p : effect->getProperties()) {

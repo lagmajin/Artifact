@@ -1121,7 +1121,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   searchStatusLabel->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
   {
     QPalette pal = searchStatusLabel->palette();
-    pal.setColor(QPalette::WindowText, QColor(169, 183, 198));
+    pal.setColor(QPalette::WindowText, QColor(currentDCCTheme().textColor).darker(125));
     searchStatusLabel->setPalette(pal);
   }
   searchStatusLabel->setText("");
@@ -1130,7 +1130,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   keyframeStatusLabel->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
   {
     QPalette pal = keyframeStatusLabel->palette();
-    pal.setColor(QPalette::WindowText, QColor(168, 214, 255));
+    pal.setColor(QPalette::WindowText, QColor(currentDCCTheme().accentColor));
     keyframeStatusLabel->setPalette(pal);
   }
   keyframeStatusLabel->setText("");

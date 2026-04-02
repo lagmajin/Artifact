@@ -12,6 +12,7 @@
 module Artifact.Timeline.TrackPainterView;
 
 import std;
+import Widgets.Utils.CSS;
 
 namespace Artifact
 {
@@ -25,6 +26,40 @@ constexpr int kClipCorner = 4;
 constexpr int kClipPadding = 6;
 constexpr int kMinTrackCount = 1;
 constexpr double kMarkerLaneStep = 8.0;
+
+struct TimelineThemeColors {
+ QColor background;
+ QColor surface;
+ QColor surfaceBorder;
+ QColor gridMajor;
+ QColor gridMinor;
+ QColor text;
+ QColor mutedText;
+ QColor accent;
+ QColor selection;
+ QColor selectionSoft;
+ QColor hud;
+ QColor hudText;
+};
+
+TimelineThemeColors timelineThemeColors()
+{
+ const auto& theme = ArtifactCore::currentDCCTheme();
+ TimelineThemeColors colors;
+ colors.background = QColor(theme.backgroundColor);
+ colors.surface = QColor(theme.secondaryBackgroundColor);
+ colors.surfaceBorder = QColor(theme.borderColor);
+ colors.gridMajor = colors.surfaceBorder.lighter(112);
+ colors.gridMinor = colors.surfaceBorder.darker(125);
+ colors.text = QColor(theme.textColor);
+ colors.mutedText = colors.text.darker(128);
+ colors.accent = QColor(theme.accentColor);
+  colors.selection = colors.accent.lighter(114);
+  colors.selectionSoft = colors.accent.lighter(136);
+ colors.hud = colors.background.darker(130);
+ colors.hudText = colors.text.lighter(108);
+ return colors;
+}
 
 double clampDurationFrames(const double value)
 {
@@ -400,9 +435,10 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent* event)
 {
  QPainter p(this);
  p.setRenderHint(QPainter::Antialiasing, true);
+ const auto colors = timelineThemeColors();
  
  const QRect dirtyRect = event->rect();
- p.fillRect(dirtyRect, QColor(28, 29, 33));
+ p.fillRect(dirtyRect, colors.background.darker(116));
 
  const QRect fullRect = rect();
  const double ppf = impl_->pixelsPerFrame_;
@@ -417,9 +453,9 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent* event)
   
   // 画面外（dirtyRect外）の行は描画をスキップ
   if (rowTop + rowH >= dirtyRect.top() && rowTop <= dirtyRect.bottom()) {
-    const QColor rowColor = (i % 2 == 0) ? QColor(34, 35, 41) : QColor(38, 39, 46);
+    const QColor rowColor = (i % 2 == 0) ? colors.background.darker(108) : colors.background.darker(118);
     p.fillRect(QRectF(0.0, rowTop, fullRect.width(), rowH), rowColor);
-    p.setPen(QPen(QColor(18, 18, 20), 1));
+    p.setPen(QPen(colors.surfaceBorder.darker(150), 1));
     p.drawLine(0, rowTop + rowH, fullRect.width(), rowTop + rowH);
   }
   
@@ -438,7 +474,7 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent* event)
   if (!major && !minor) {
    continue;
   }
-  p.setPen(QPen(major ? QColor(78, 79, 88) : QColor(54, 55, 62), 1));
+  p.setPen(QPen(major ? colors.gridMajor : colors.gridMinor, 1));
   p.drawLine(QPointF(x, dirtyRect.top()), QPointF(x, dirtyRect.bottom()));
  }
 
@@ -479,24 +515,32 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent* event)
 
   const bool isHovered = (i == impl_->hoverClipIndex_);
   const bool isSelected = clip.selected;
-  const QColor fill = clip.selected
-   ? clip.fillColor.lighter(126)
-   : (isHovered ? clip.fillColor.lighter(118) : clip.fillColor);
-  p.setPen(QPen(clip.selected ? QColor(255, 214, 154) : QColor(17, 17, 20), clip.selected ? 2 : 1));
+  QColor fill = clip.fillColor;
+  if (isSelected) {
+   fill = fill.lighter(118);
+  } else if (isHovered) {
+   fill = fill.lighter(110);
+  }
+  if (isSelected || isHovered) {
+   const QColor accentOverlay = isSelected ? colors.selection : colors.selectionSoft;
+   fill = QColor::fromRgb(
+       (fill.red() + accentOverlay.red()) / 2,
+       (fill.green() + accentOverlay.green()) / 2,
+       (fill.blue() + accentOverlay.blue()) / 2);
+  }
+  p.setPen(QPen(clip.selected ? colors.selection : colors.surfaceBorder.darker(165), clip.selected ? 2 : 1));
   p.setBrush(fill);
   p.drawRoundedRect(clipRect, kClipCorner, kClipCorner);
 
   if (isSelected || isHovered) {
-   const QColor rim = isSelected
-       ? QColor(255, 214, 154, 220)
-       : QColor(255, 255, 255, 90);
+   const QColor rim = isSelected ? colors.selection : colors.selectionSoft;
    p.setBrush(Qt::NoBrush);
    p.setPen(QPen(rim, isSelected ? 2.0 : 1.0));
    p.drawRoundedRect(clipRect.adjusted(1.0, 1.0, -1.0, -1.0), kClipCorner, kClipCorner);
   }
 
   if (!clip.title.isEmpty() && clipRect.width() > 28.0) {
-   p.setPen(clip.selected ? Qt::black : QColor(235, 239, 247));
+   p.setPen(clip.selected ? colors.background : colors.text);
    const QString text = QFontMetrics(p.font()).elidedText(clip.title, Qt::ElideRight, static_cast<int>(clipRect.width()) - (kClipPadding * 2));
    p.drawText(clipRect.adjusted(kClipPadding, 0, -kClipPadding, 0), Qt::AlignVCenter | Qt::AlignLeft, text);
   }
@@ -505,7 +549,7 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent* event)
   if ((isHovered || clip.selected) && clipRect.width() > 16.0) {
    const qreal gripY1 = clipRect.center().y() - 5.0;
    const qreal gripY2 = clipRect.center().y() + 5.0;
-   p.setPen(QPen(QColor(255, 255, 255, isHovered ? 180 : 100), 2.0, Qt::SolidLine, Qt::RoundCap));
+   p.setPen(QPen(QColor(colors.text.red(), colors.text.green(), colors.text.blue(), isHovered ? 170 : 100), 2.0, Qt::SolidLine, Qt::RoundCap));
    p.drawLine(QPointF(clipRect.left()  + 4.0, gripY1), QPointF(clipRect.left()  + 4.0, gripY2));
    p.drawLine(QPointF(clipRect.right() - 4.0, gripY1), QPointF(clipRect.right() - 4.0, gripY2));
   }
@@ -532,19 +576,19 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent* event)
           << QPointF(diamondRect.left(), diamondRect.center().y());
   if (marker.selectedLayer) {
    QPolygonF outer = diamond;
-   p.setPen(QPen(QColor(12, 12, 14, 220), 2.0));
+   p.setPen(QPen(colors.background.darker(200), 2.0));
    p.setBrush(Qt::NoBrush);
    p.drawPolygon(outer);
-   p.setPen(QPen(QColor(255, 255, 255, 240), 1.0));
-   p.setBrush(Qt::white);
+   p.setPen(QPen(colors.selection.lighter(118), 1.0));
+   p.setBrush(colors.selectionSoft);
    p.drawPolygon(diamond);
   } else {
-   p.setPen(QPen(QColor(20, 20, 24), 1));
-   p.setBrush(marker.eased ? marker.color.lighter(105) : marker.color);
+   p.setPen(QPen(colors.surfaceBorder.darker(170), 1));
+   p.setBrush(marker.eased ? marker.color.lighter(106) : marker.color);
    p.drawPolygon(diamond);
   }
   if (!marker.label.isEmpty()) {
-   p.setPen(marker.selectedLayer ? QColor(255, 250, 240) : (isHovered ? QColor(255, 248, 220) : QColor(240, 240, 244)));
+   p.setPen(marker.selectedLayer ? colors.selection.lighter(125) : (isHovered ? colors.text : colors.mutedText));
    p.drawText(QRectF(center.x() + 8.0, center.y() - 8.0, 150.0, 16.0),
               Qt::AlignLeft | Qt::AlignVCenter,
               marker.label);
@@ -554,9 +598,10 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent* event)
  // Current frame marker.
  const double playheadX = impl_->currentFrame_ * ppf - xOffset;
  if (playheadX >= dirtyRect.left() - 4.0 && playheadX <= dirtyRect.right() + 4.0) {
-  p.setPen(QPen(QColor(238, 74, 88, 230), 3));
+  const QColor playhead = colors.selection;
+  p.setPen(QPen(playhead, 2));
   p.drawLine(QPointF(playheadX, dirtyRect.top()), QPointF(playheadX, dirtyRect.bottom()));
-  p.setBrush(QColor(238, 74, 88, 230));
+  p.setBrush(playhead);
   p.setPen(Qt::NoPen);
   const QPointF tip(playheadX, dirtyRect.top() + 2.0);
   const QPolygonF head({
@@ -570,9 +615,9 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent* event)
  // Small HUD for track state.
  const QRect hudRect(10, 10, 180, 44);
  p.setPen(Qt::NoPen);
- p.setBrush(QColor(15, 16, 20, 185));
+ p.setBrush(colors.hud);
  p.drawRoundedRect(hudRect, 8, 8);
- p.setPen(QColor(236, 239, 244));
+ p.setPen(colors.hudText);
  const int selectedCount = std::count_if(
      impl_->clips_.cbegin(), impl_->clips_.cend(),
      [](const auto& clip) { return clip.selected; });
@@ -585,7 +630,7 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent* event)
                              .arg(static_cast<int>(std::round(impl_->currentFrame_)))
                              .arg(impl_->trackHeights_.size());
  p.drawText(hudRect.adjusted(10, 4, -10, -18), Qt::AlignLeft | Qt::AlignVCenter, hudText);
- p.setPen(QColor(190, 197, 207));
+ p.setPen(colors.mutedText);
  p.drawText(hudRect.adjusted(10, 20, -10, -4), Qt::AlignLeft | Qt::AlignVCenter,
             QStringLiteral("Sel:%1  Hov:%2").arg(selectedCount).arg(hoveredText));
 

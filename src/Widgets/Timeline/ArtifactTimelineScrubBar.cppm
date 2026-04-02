@@ -15,6 +15,7 @@ module Artifact.Timeline.ScrubBar;
 import std;
 
 import Frame.Position;
+import Widgets.Utils.CSS;
 
 namespace Artifact
 {
@@ -219,6 +220,7 @@ namespace Artifact
   Q_UNUSED(event);
   QPainter p(this);
   p.setRenderHint(QPainter::Antialiasing, true);
+  const auto& theme = ArtifactCore::currentDCCTheme();
 
   const QRect r = rect();
   const int w = r.width();
@@ -232,11 +234,11 @@ namespace Artifact
   const int topBandHeight = std::max(11, h / 3);
   const QRect railRect(trackLeft, centerY - railHalfH + 2, std::max(1, trackRight - trackLeft + 1), railHalfH * 2);
 
-  const QColor bgTop(32, 32, 36);
-  const QColor bgBottom(24, 24, 27);
-  const QColor railColor(62, 62, 68);
-  const QColor railBorder(78, 78, 86);
-  const QColor accent(180, 110, 45); // Modo Amber
+  const QColor bgTop = QColor(theme.backgroundColor).darker(118);
+  const QColor bgBottom = QColor(theme.secondaryBackgroundColor).darker(120);
+  const QColor railColor = QColor(theme.secondaryBackgroundColor);
+  const QColor railBorder = QColor(theme.borderColor);
+  const QColor accent = QColor(theme.accentColor);
   const QColor accentStrong = impl_->dragging_ ? accent.lighter(120) : (impl_->hover_ ? accent.lighter(110) : accent);
 
   QLinearGradient bgGrad(r.topLeft(), r.bottomLeft());
@@ -247,15 +249,23 @@ namespace Artifact
   QRect topBand = r;
   topBand.setHeight(topBandHeight);
   QLinearGradient topBandGrad(topBand.topLeft(), topBand.bottomLeft());
-  topBandGrad.setColorAt(0.0, QColor(52, 52, 58, 220));
-  topBandGrad.setColorAt(1.0, QColor(37, 37, 43, 200));
+  QColor topBandTop = QColor(theme.backgroundColor).darker(112);
+  topBandTop.setAlpha(220);
+  QColor topBandBottom = QColor(theme.backgroundColor).darker(130);
+  topBandBottom.setAlpha(200);
+  topBandGrad.setColorAt(0.0, topBandTop);
+  topBandGrad.setColorAt(1.0, topBandBottom);
   p.fillRect(topBand, topBandGrad);
 
-  p.setPen(QColor(18, 18, 18, 180));
+  QColor topLine = QColor(theme.backgroundColor).darker(180);
+  topLine.setAlpha(180);
+  p.setPen(topLine);
   p.drawLine(r.topLeft(), r.topRight());
-  p.setPen(QColor(0, 0, 0, 160));
+  QColor bottomLine = QColor(theme.backgroundColor).darker(220);
+  bottomLine.setAlpha(160);
+  p.setPen(bottomLine);
   p.drawLine(r.bottomLeft(), r.bottomRight());
-  p.setPen(QColor(90, 90, 96, 180));
+  p.setPen(QColor(theme.borderColor).darker(120));
   p.drawRect(r.adjusted(0, 0, -1, -1));
 
   // ── タイムラインズームに合わせたルーラー描画 ──────────────────────
@@ -284,16 +294,16 @@ namespace Artifact
     if (rx < 0.0 || rx > w) continue;
     const bool isMajor = (f % majorStep) == 0;
     const int tickH = isMajor ? (topBandHeight - 2) : (topBandHeight / 2);
-    p.setPen(QPen(isMajor ? QColor(160, 165, 180, 200) : QColor(90, 95, 110, 160), 1));
-    p.drawLine(QPointF(rx, topBandHeight - tickH), QPointF(rx, topBandHeight - 1));
-    if (isMajor) {
+   p.setPen(QPen(isMajor ? QColor(theme.textColor).lighter(110) : QColor(theme.textColor).darker(135), 1));
+   p.drawLine(QPointF(rx, topBandHeight - tickH), QPointF(rx, topBandHeight - 1));
+   if (isMajor) {
      const QString label = QString::number(f);
      const double labelW = static_cast<double>(QFontMetrics(p.font()).horizontalAdvance(label));
      const double labelX = rx + 3.0;
      if (labelX <= lastLabelRight + 6.0) {
       continue;
      }
-     p.setPen(QColor(180, 185, 200));
+     p.setPen(QColor(theme.textColor));
      p.drawText(QRectF(labelX, 0.0, labelW + 6.0, topBandHeight - 2), Qt::AlignLeft | Qt::AlignVCenter, label);
      lastLabelRight = labelX + labelW;
     }
@@ -322,7 +332,7 @@ namespace Artifact
    const int majorStepFrames = std::max(1, (impl_->totalFrames_ - 1) / approxMajorCount);
    const int minorStepFrames = std::max(1, majorStepFrames / 5);
 
-   p.setPen(QPen(QColor(95, 95, 105, 170), 1));
+   p.setPen(QPen(QColor(theme.textColor).darker(140), 1));
    for (int f = 0; f < impl_->totalFrames_; f += minorStepFrames) {
     const int x = impl_->frameToX(f, w);
     if (x < railRect.left() || x > railRect.right()) continue;
@@ -349,9 +359,9 @@ namespace Artifact
    .arg(ss, 2, 10, QChar('0'))
    .arg(ff, 2, 10, QChar('0'));
 
-  p.setPen(QColor(225, 225, 230));
+  p.setPen(QColor(theme.textColor));
   p.drawText(QRect(10, 0, 88, h), Qt::AlignVCenter | Qt::AlignLeft, leftLabel);
-  p.setPen(QColor(170, 170, 178));
+  p.setPen(QColor(theme.textColor).darker(125));
   p.drawText(QRect(w - 128, 0, 118, h), Qt::AlignVCenter | Qt::AlignRight, rightLabel);
  }
 

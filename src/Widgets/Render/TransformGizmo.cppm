@@ -120,6 +120,13 @@ FloatColor brighten(const FloatColor& color, const float factor)
  };
 }
 
+float pointDistance(const QPointF& a, const QPointF& b)
+{
+ const float dx = static_cast<float>(a.x() - b.x());
+ const float dy = static_cast<float>(a.y() - b.y());
+ return std::sqrt(dx * dx + dy * dy);
+}
+
 void drawEmphasizedLine(ArtifactIRenderer* renderer,
                         const Detail::float2& a,
                         const Detail::float2& b,
@@ -240,26 +247,86 @@ const bool showAnchor = mode_ == Mode::All || mode_ == Mode::Move;
  const Detail::float2 bc_c((float)globalTransform.map(QPointF(localRect.center().x(), localRect.bottom())).x(), (float)globalTransform.map(QPointF(localRect.center().x(), localRect.bottom())).y());
  const Detail::float2 lc_c((float)globalTransform.map(QPointF(localRect.left(), localRect.center().y())).x(), (float)globalTransform.map(QPointF(localRect.left(), localRect.center().y())).y());
  const Detail::float2 rc_c((float)globalTransform.map(QPointF(localRect.right(), localRect.center().y())).x(), (float)globalTransform.map(QPointF(localRect.right(), localRect.center().y())).y());
+ const Detail::float2 center_c((float)globalTransform.map(localRect.center()).x(), (float)globalTransform.map(localRect.center()).y());
+ const QPointF rotateCenterWorld = globalTransform.map(localRect.center());
+ const QPointF rotateRightWorld = globalTransform.map(QPointF(localRect.right(), localRect.center().y()));
+ const QPointF rotateTopWorld = globalTransform.map(QPointF(localRect.center().x(), localRect.top()));
+ const float rotateBaseRadius = std::max(pointDistance(rotateCenterWorld, rotateRightWorld),
+                                         pointDistance(rotateCenterWorld, rotateTopWorld));
+ const float rotateRingRadius = rotateBaseRadius + std::max(18.0f * invZoom, 16.0f);
+ const float rotateRingThickness = std::max(2.25f * invZoom, 1.6f);
 
  // Draw handles
- auto drawHandle = [&](const Detail::float2& pos) {
+ auto drawHandle = [&](const Detail::float2& pos, const FloatColor& color) {
   const QRectF rect(pos.x - handleSize * 0.5f, pos.y - handleSize * 0.5f, handleSize, handleSize);
-  drawEmphasizedRect(renderer, rect, {1.0f, 1.0f, 1.0f, 1.0f}, std::max(1.0f, 0.8f * invZoom), invZoom, activeHandle_ != HandleType::None);
+  drawEmphasizedRect(renderer, rect, color, std::max(1.0f, 0.8f * invZoom), invZoom, activeHandle_ != HandleType::None);
  };
 
  if (showScale) {
-  drawHandle(tl_c); drawHandle(tr_c); drawHandle(bl_c); drawHandle(br_c);
-  drawHandle(tc_c); drawHandle(bc_c); drawHandle(lc_c); drawHandle(rc_c);
+  const FloatColor scaleX = activeHandle_ == HandleType::Scale_L || activeHandle_ == HandleType::Scale_R
+      ? FloatColor{1.0f, 0.35f, 0.22f, 1.0f}
+      : FloatColor{0.92f, 0.24f, 0.16f, 1.0f};
+  const FloatColor scaleY = activeHandle_ == HandleType::Scale_T || activeHandle_ == HandleType::Scale_B
+      ? FloatColor{0.22f, 1.0f, 0.42f, 1.0f}
+      : FloatColor{0.16f, 0.86f, 0.28f, 1.0f};
+  const FloatColor scaleCorner = activeHandle_ == HandleType::Scale_TL || activeHandle_ == HandleType::Scale_TR ||
+                                 activeHandle_ == HandleType::Scale_BL || activeHandle_ == HandleType::Scale_BR
+      ? FloatColor{1.0f, 0.95f, 0.92f, 1.0f}
+      : FloatColor{0.94f, 0.94f, 0.94f, 1.0f};
+  const float axisThickness = std::max(2.0f * invZoom, 1.4f);
+  const float axisNodeRadius = std::max(handleSize * 0.36f, 4.0f);
+
+  // Main scale axes: the common DCC "sticks out from center" look.
+  drawEmphasizedLine(renderer, center_c, lc_c, scaleX, axisThickness, invZoom, activeHandle_ == HandleType::Scale_L);
+  drawEmphasizedLine(renderer, center_c, rc_c, scaleX, axisThickness, invZoom, activeHandle_ == HandleType::Scale_R);
+  drawEmphasizedLine(renderer, center_c, tc_c, scaleY, axisThickness, invZoom, activeHandle_ == HandleType::Scale_T);
+  drawEmphasizedLine(renderer, center_c, bc_c, scaleY, axisThickness, invZoom, activeHandle_ == HandleType::Scale_B);
+
+  renderer->drawCircle(center_c.x, center_c.y, std::max(handleSize * 0.28f, 3.0f),
+                       FloatColor{0.0f, 0.0f, 0.0f, 0.55f}, 0.0f, true);
+  renderer->drawCircle(center_c.x, center_c.y, std::max(handleSize * 0.18f, 2.0f),
+                       FloatColor{1.0f, 1.0f, 1.0f, 0.92f}, 0.0f, true);
+
+  renderer->drawCircle(lc_c.x, lc_c.y, axisNodeRadius, scaleX, 0.0f, true);
+  renderer->drawCircle(rc_c.x, rc_c.y, axisNodeRadius, scaleX, 0.0f, true);
+  renderer->drawCircle(tc_c.x, tc_c.y, axisNodeRadius, scaleY, 0.0f, true);
+  renderer->drawCircle(bc_c.x, bc_c.y, axisNodeRadius, scaleY, 0.0f, true);
+
+  // Corner handles stay available, but visually subordinate to the axis-based handles.
+  drawHandle(tl_c, scaleCorner);
+  drawHandle(tr_c, scaleCorner);
+  drawHandle(bl_c, scaleCorner);
+  drawHandle(br_c, scaleCorner);
  }
 
- // Rotation handle: line from top-center upward with circle
- const Detail::float2 rotateTip((float)globalTransform.map(QPointF(localRect.center().x(), localRect.top() - ROTATE_HANDLE_DISTANCE)).x(), 
-                                (float)globalTransform.map(QPointF(localRect.center().x(), localRect.top() - ROTATE_HANDLE_DISTANCE)).y());
-
  if (showRotate) {
-  drawEmphasizedLine(renderer, tc_c, rotateTip, gizmoColor, lineThickness, invZoom, isActive);
-  renderer->drawCircle(rotateTip.x, rotateTip.y, handleSize * 0.72f, brighten(gizmoColor, 1.05f), lineThickness, false);
-  renderer->drawCircle(rotateTip.x, rotateTip.y, handleSize * 0.28f, {1.0f, 1.0f, 1.0f, 1.0f}, 0.0f, true);
+  const FloatColor rotateOuter = isActive ? brighten(gizmoColor, 1.16f) : brighten(gizmoColor, 1.00f);
+  const FloatColor rotateInner = isActive ? FloatColor{1.0f, 1.0f, 1.0f, 0.92f} : FloatColor{1.0f, 1.0f, 1.0f, 0.72f};
+  const FloatColor rotateShadow = FloatColor{0.0f, 0.0f, 0.0f, activeHandle_ == HandleType::Rotate ? 0.48f : 0.34f};
+  renderer->drawCircle((float)rotateCenterWorld.x() + std::max(1.2f, 1.1f * invZoom),
+                       (float)rotateCenterWorld.y() + std::max(1.2f, 1.1f * invZoom),
+                       rotateRingRadius,
+                       rotateShadow,
+                       rotateRingThickness + std::max(1.0f, 0.8f * invZoom),
+                       false);
+  renderer->drawCircle((float)rotateCenterWorld.x(),
+                       (float)rotateCenterWorld.y(),
+                       rotateRingRadius,
+                       rotateOuter,
+                       rotateRingThickness,
+                       false);
+  renderer->drawCircle((float)rotateCenterWorld.x() + rotateRingRadius,
+                       (float)rotateCenterWorld.y(),
+                       std::max(handleSize * 0.40f, 4.0f),
+                       rotateOuter,
+                       0.0f,
+                       true);
+  renderer->drawCircle((float)rotateCenterWorld.x() + rotateRingRadius,
+                       (float)rotateCenterWorld.y(),
+                       std::max(handleSize * 0.18f, 2.0f),
+                       rotateInner,
+                       0.0f,
+                       true);
  }
 
  // Anchor point: crosshair at anchor position
@@ -330,13 +397,21 @@ TransformGizmo::HandleType TransformGizmo::hitTest(const QPointF& viewportPos, A
  if (allowsHandle(HandleType::Scale_L) && checkLocalPoint(QPointF(localRect.left(), localRect.center().y()))) return HandleType::Scale_L;
  if (allowsHandle(HandleType::Scale_R) && checkLocalPoint(QPointF(localRect.right(), localRect.center().y()))) return HandleType::Scale_R;
 
- // 2. Rotation handle: above top-center
- const QPointF localRotTip(localRect.center().x(), localRect.top() - ROTATE_HANDLE_DISTANCE);
- QPointF worldRotTip = globalTransform.map(localRotTip);
- auto vRotTip = renderer->canvasToViewport({(float)worldRotTip.x(), (float)worldRotTip.y()});
- const float rotHitR = ROTATE_HANDLE_RADIUS + 6.0f;
- QRectF rotRect(vRotTip.x - rotHitR, vRotTip.y - rotHitR, rotHitR * 2, rotHitR * 2);
- if (allowsHandle(HandleType::Rotate) && rotRect.contains(viewportPos)) return HandleType::Rotate;
+ const QPointF rotateCenterWorld = globalTransform.map(localRect.center());
+ const QPointF rotateRightWorld = globalTransform.map(QPointF(localRect.right(), localRect.center().y()));
+ const QPointF rotateTopWorld = globalTransform.map(QPointF(localRect.center().x(), localRect.top()));
+ const float rotateBaseRadius = std::max(pointDistance(rotateCenterWorld, rotateRightWorld),
+                                         pointDistance(rotateCenterWorld, rotateTopWorld));
+ const float rotateRingRadius = rotateBaseRadius + std::max(18.0f * invZoom, 16.0f);
+
+ // 2. Rotation handle: ring around the object, similar to 3D DCC rotate gizmos.
+ {
+  auto mouseCanvas = renderer->viewportToCanvas({(float)viewportPos.x(), (float)viewportPos.y()});
+  const QPointF mousePos(mouseCanvas.x, mouseCanvas.y);
+  const float ringHit = std::max(10.0f * invZoom, 8.0f);
+  const float distToRing = std::abs(pointDistance(mousePos, rotateCenterWorld) - rotateRingRadius);
+  if (allowsHandle(HandleType::Rotate) && distToRing <= ringHit) return HandleType::Rotate;
+ }
 
  // 3. Anchor point handle
  const auto& t3d = layer_->transform3D();
