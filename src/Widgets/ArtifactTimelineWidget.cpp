@@ -17,6 +17,7 @@
 #include <QTimer>
 #include <QWheelEvent>
 #include <QWidget>
+#include <cmath>
 #include <limits>
 #include <qtmetamacros.h>
 #include <wobjectdefs.h>
@@ -170,6 +171,23 @@ QColor layerTimelineColor(const ArtifactAbstractLayerPtr& layer)
     return QColor(255, 110, 180);
   }
   return QColor(94, 124, 189);
+}
+
+double layerTimelineMaxDurationFrames(const ArtifactAbstractLayerPtr& layer,
+                                      const double fps)
+{
+  if (!layer || fps <= 0.0) {
+    return 0.0;
+  }
+  if (const auto video = std::dynamic_pointer_cast<ArtifactVideoLayer>(layer)) {
+    const qint64 sourceFrames = video->effectiveFrameCount();
+    return sourceFrames > 0 ? static_cast<double>(sourceFrames) : 0.0;
+  }
+  if (const auto audio = std::dynamic_pointer_cast<ArtifactAudioLayer>(layer)) {
+    const double sourceFrames = audio->duration() * fps;
+    return sourceFrames > 0.0 ? std::ceil(sourceFrames) : 0.0;
+  }
+  return 0.0;
 }
 
 bool applyTimelineLayerRangeEdit(const CompositionID &compositionId,
@@ -1807,6 +1825,9 @@ void ArtifactTimelineWidget::refreshTracks() {
   if (auto *app = ArtifactApplicationManager::instance()) {
     selectionManager = app->layerSelectionManager();
   }
+  const double fps = composition
+                         ? std::max(1.0, static_cast<double>(composition->frameRate().framerate()))
+                         : 30.0;
   if (impl_->painterTrackView_) {
     impl_->painterTrackView_->setTrackCount(
         std::max(1, static_cast<int>(timelineRows.size())));
@@ -1845,6 +1866,10 @@ void ArtifactTimelineWidget::refreshTracks() {
       visual.durationFrame = clipDuration;
       visual.title = layer->layerName();
       visual.fillColor = layerTimelineColor(layer);
+      visual.maxDurationFrame = layerTimelineMaxDurationFrames(layer, fps);
+      visual.resizeEnabled =
+          (visual.maxDurationFrame <= 0.0) ||
+          (std::abs(visual.durationFrame - visual.maxDurationFrame) > 0.001);
       if (selectionManager) {
         visual.selected = selectionManager->isSelected(layer);
       }

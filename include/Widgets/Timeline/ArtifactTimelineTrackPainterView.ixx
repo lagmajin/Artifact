@@ -48,6 +48,8 @@ export namespace Artifact
    QString title;
    QColor fillColor = QColor(73, 126, 196);
    bool selected = false;
+   bool resizeEnabled = true;
+   double maxDurationFrame = 0.0;
   };
 
  private:

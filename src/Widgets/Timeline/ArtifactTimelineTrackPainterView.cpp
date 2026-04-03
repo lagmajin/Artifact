@@ -9,6 +9,7 @@
 #include <QtGlobal>
 #include <QCursor>
 #include <QMenu>
+#include <cmath>
 #include <wobjectimpl.h>
 
 module Artifact.Timeline.TrackPainterView;
@@ -107,10 +108,12 @@ HitResult hitTestClips(
   if (localMouseY < trackTop || localMouseY > trackTop + trackH) continue;
   const double clipX = clip.startFrame * ppf - xOffset;
   const double clipW = std::max(2.0, clip.durationFrame * ppf);
-  if (mouseX >= clipX - kEdgeHitZone && mouseX <= clipX + kEdgeHitZone)
-   return {DragMode::ResizeLeft, i};
-  if (mouseX >= clipX + clipW - kEdgeHitZone && mouseX <= clipX + clipW + kEdgeHitZone)
-   return {DragMode::ResizeRight, i};
+  if (clip.resizeEnabled) {
+   if (mouseX >= clipX - kEdgeHitZone && mouseX <= clipX + kEdgeHitZone)
+    return {DragMode::ResizeLeft, i};
+   if (mouseX >= clipX + clipW - kEdgeHitZone && mouseX <= clipX + clipW + kEdgeHitZone)
+    return {DragMode::ResizeRight, i};
+  }
   if (mouseX > clipX && mouseX < clipX + clipW)
    return {DragMode::MoveBody, i};
  }
@@ -626,8 +629,8 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent* event)
    p.drawText(clipRect.adjusted(kClipPadding, 0, -kClipPadding, 0), Qt::AlignVCenter | Qt::AlignLeft, text);
   }
 
-  // リサイズグリップ (ホバー時 or 選択時にエッジに縦線を描画)
-  if ((isHovered || clip.selected) && clipRect.width() > 16.0) {
+  // リサイズグリップは、伸縮可能なクリップだけに表示する
+  if (clip.resizeEnabled && (isHovered || clip.selected) && clipRect.width() > 16.0) {
    const qreal gripY1 = clipRect.center().y() - 5.0;
    const qreal gripY2 = clipRect.center().y() + 5.0;
    p.setPen(QPen(QColor(255, 255, 255, isHovered ? 180 : 100), 2.0, Qt::SolidLine, Qt::RoundCap));
@@ -829,13 +832,20 @@ void ArtifactTimelineTrackPainterView::mouseMoveEvent(QMouseEvent* event)
    clip.startFrame = impl_->dragOrigStartFrame_ + deltaFrames;
    break;
   case DragMode::ResizeLeft: {
-   const double end      = impl_->dragOrigStartFrame_ + impl_->dragOrigDuration_;
-   clip.startFrame       = std::min(impl_->dragOrigStartFrame_ + deltaFrames, end - 1.0);
-   clip.durationFrame    = end - clip.startFrame;
+   const double end = impl_->dragOrigStartFrame_ + impl_->dragOrigDuration_;
+   clip.startFrame = std::min(impl_->dragOrigStartFrame_ + deltaFrames, end - 1.0);
+   const double desiredDuration = end - clip.startFrame;
+   clip.durationFrame = clip.maxDurationFrame > 0.0
+                            ? std::clamp(desiredDuration, 1.0, clip.maxDurationFrame)
+                            : std::max(1.0, desiredDuration);
+   clip.startFrame = std::max(0.0, end - clip.durationFrame);
    break;
   }
   case DragMode::ResizeRight:
    clip.durationFrame = std::max(1.0, impl_->dragOrigDuration_ + deltaFrames);
+   if (clip.maxDurationFrame > 0.0) {
+    clip.durationFrame = std::min(clip.durationFrame, clip.maxDurationFrame);
+   }
    break;
   default: break;
   }
@@ -893,10 +903,10 @@ void ArtifactTimelineTrackPainterView::mouseMoveEvent(QMouseEvent* event)
   }
   update(dirtyRect.adjusted(-2.0, -2.0, 2.0, 2.0).toAlignedRect());
  }
- if (oldHoverMarkerIndex != impl_->hoverMarkerIndex_) {
+  if (oldHoverMarkerIndex != impl_->hoverMarkerIndex_) {
   QRectF dirtyRect;
- if (oldHoverMarkerIndex >= 0 && oldHoverMarkerIndex < impl_->keyframeMarkers_.size()) {
-  dirtyRect = markerHitRectFor(impl_->keyframeMarkers_[oldHoverMarkerIndex],
+  if (oldHoverMarkerIndex >= 0 && oldHoverMarkerIndex < impl_->keyframeMarkers_.size()) {
+   dirtyRect = markerHitRectFor(impl_->keyframeMarkers_[oldHoverMarkerIndex],
                                 impl_->trackHeights_, ppf, impl_->horizontalOffset_,
                                 impl_->verticalOffset_);
   }
