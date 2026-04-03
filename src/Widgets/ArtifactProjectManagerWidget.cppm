@@ -399,6 +399,11 @@ HeaderResizeHit headerResizeHit(const QVector<int>& columnWidths, const QPoint& 
     return {};
 }
 
+int projectGridColumns(const int viewportWidth, const int cellWidth, const int padding)
+{
+    return std::max(1, (std::max(0, viewportWidth) - padding * 2) / std::max(1, cellWidth));
+}
+
 } // namespace
 
  W_OBJECT_IMPL(ArtifactProjectManagerWidget)
@@ -825,6 +830,7 @@ void scheduleProjectViewRefresh(ArtifactProjectView* view)
 // --- Project View (Tree) ---
 class ArtifactProjectView::Impl {
 public:
+    ProjectViewMode viewMode = ProjectViewMode::List;
     struct VisibleRow {
         QModelIndex index0;
         int depth = 0;
@@ -872,6 +878,10 @@ public:
     int headerHeight = 24;
     int rowHeight = 28;
     int indentWidth = 16;
+    int gridCellWidth = 152;
+    int gridCellHeight = 168;
+    int gridThumbHeight = 96;
+    int gridPadding = 8;
 
     QString keyForIndex(QModelIndex index) const {
         index = index.siblingAtColumn(0);
@@ -1247,6 +1257,24 @@ void ArtifactProjectView::sortByColumn(const int column, const Qt::SortOrder ord
     }
 }
 
+void ArtifactProjectView::setViewMode(const ProjectViewMode mode)
+{
+    if (!impl_) {
+        return;
+    }
+    if (impl_->viewMode == mode) {
+        return;
+    }
+    impl_->viewMode = mode;
+    updateScrollRange();
+    refreshVisibleContent();
+}
+
+ProjectViewMode ArtifactProjectView::viewMode() const
+{
+    return impl_ ? impl_->viewMode : ProjectViewMode::List;
+}
+
 void ArtifactProjectView::setColumnWidth(const int column, const int width)
 {
     if (!impl_ || column < 0) {
@@ -1345,6 +1373,25 @@ QModelIndex ArtifactProjectView::indexAt(const QPoint& pos) const
     if (!impl_) {
         return {};
     }
+    if (impl_->viewMode == ProjectViewMode::Grid) {
+        const int columns = projectGridColumns(width(), impl_->gridCellWidth, impl_->gridPadding);
+        const QPoint contentPos = QPoint(pos.x(), pos.y() + scrollY_ - impl_->headerHeight);
+        if (contentPos.y() < 0) {
+            return {};
+        }
+        const int cellCol = std::max(0, (contentPos.x() - impl_->gridPadding) / impl_->gridCellWidth);
+        const int cellRow = std::max(0, contentPos.y() / impl_->gridCellHeight);
+        const int index = cellRow * columns + cellCol;
+        if (index < 0 || index >= impl_->visibleRows.size()) {
+            return {};
+        }
+        const int localX = contentPos.x() - impl_->gridPadding - cellCol * impl_->gridCellWidth;
+        const int localY = contentPos.y() - cellRow * impl_->gridCellHeight;
+        if (localX < 0 || localX >= impl_->gridCellWidth || localY < 0 || localY >= impl_->gridCellHeight) {
+            return {};
+        }
+        return impl_->visibleRows[index].index0;
+    }
     const int y = pos.y() + scrollY_;
     if (y < impl_->headerHeight) {
         return {};
@@ -1360,6 +1407,18 @@ QRect ArtifactProjectView::visualRect(const QModelIndex& index) const
 {
     if (!impl_) {
         return {};
+    }
+    if (impl_->viewMode == ProjectViewMode::Grid) {
+        const int row = impl_->rowForIndex(index);
+        if (row < 0) {
+            return {};
+        }
+        const int columns = projectGridColumns(width(), impl_->gridCellWidth, impl_->gridPadding);
+        const int cellRow = row / columns;
+        const int cellCol = row % columns;
+        const int x = impl_->gridPadding + cellCol * impl_->gridCellWidth;
+        const int y = impl_->headerHeight + cellRow * impl_->gridCellHeight - scrollY_;
+        return QRect(x, y, std::max(40, impl_->gridCellWidth - 8), std::max(40, impl_->gridCellHeight - 8));
     }
     const int row = impl_->rowForIndex(index);
     if (row < 0) {
@@ -1407,115 +1466,190 @@ void ArtifactProjectView::paintEvent(QPaintEvent* event)
 
     const int contentWidth = std::max(width(), impl_->totalColumnWidth());
 
-    // Draw Rows
     painter.save();
-    // We want the rows to be clipped to the area below the header.
     painter.setClipRect(0, impl_->headerHeight, width(), height() - impl_->headerHeight);
     painter.translate(0, -scrollY_);
 
-    const int firstRow = std::max(0, (scrollY_ - impl_->headerHeight) / impl_->rowHeight);
-    const int visibleRowCount = height() / impl_->rowHeight + 3;
-    const int totalVisibleRows = static_cast<int>(impl_->visibleRows.size());
-    const int lastRow = std::min(totalVisibleRows, firstRow + visibleRowCount);
+    if (impl_->viewMode == ProjectViewMode::Grid) {
+        const int columns = projectGridColumns(width(), impl_->gridCellWidth, impl_->gridPadding);
+        const int totalVisibleRows = static_cast<int>(impl_->visibleRows.size());
+        const int firstRow = std::max(0, (scrollY_ - impl_->headerHeight) / impl_->gridCellHeight);
+        const int visibleRowCount = height() / impl_->gridCellHeight + 3;
+        const int lastRow = std::min((totalVisibleRows + columns - 1) / columns, firstRow + visibleRowCount);
 
-    for (int row = firstRow; row < lastRow; ++row) {
-        const auto& visibleRow = impl_->visibleRows[row];
-        const QModelIndex index0 = visibleRow.index0;
-        const QRect rowRect(
-            0,
-            impl_->headerHeight + row * impl_->rowHeight,
-            contentWidth,
-            impl_->rowHeight);
-
-        const bool selected = selectionModel() && selectionModel()->isRowSelected(index0.row(), index0.parent());
-        const bool hovered = impl_->hoverIndex.isValid() && impl_->hoverIndex == index0;
-        const QVariant ptrVar = index0.data(Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::ProjectItemPtr));
-        auto* item = ptrVar.isValid() ? reinterpret_cast<ProjectItem*>(ptrVar.value<quintptr>()) : nullptr;
-        bool unusedItem = false;
-        if (item && item->type() == eProjectItemType::Footage) {
-            const QString path = QFileInfo(static_cast<FootageItem*>(item)->filePath).absoluteFilePath();
-            if (auto* proxy = qobject_cast<const ProjectFilterProxyModel*>(impl_->model)) {
-                unusedItem = proxy->isUnusedAssetPath(path);
-            }
-        }
-
-        QColor rowFill = selected ? Impl::Colors::RowSelected : (hovered ? Impl::Colors::RowHover : Impl::Colors::Background);
-        if (unusedItem && !selected) {
-            rowFill = QColor(0x3A, 0x2A, 0x2A);
-        }
-        painter.fillRect(rowRect, rowFill);
-
-        painter.setPen(Impl::Colors::RowBorder);
-        painter.drawLine(rowRect.bottomLeft(), rowRect.bottomRight());
-
-        int cellX = 0;
-        const int configuredColumnCount = static_cast<int>(impl_->columnWidths.size());
-        const int modelColumnCount = impl_->model ? impl_->model->columnCount({}) : 0;
-        const int columnCount = std::max(configuredColumnCount, modelColumnCount);
-
-        for (int column = 0; column < columnCount; ++column) {
-            const int width = column < impl_->columnWidths.size() ? impl_->columnWidths[column] : 120;
-            const QRect cellRect(cellX, rowRect.top(), width, rowRect.height());
-
-            const QModelIndex cellIndex = index0.siblingAtColumn(column);
-            painter.setPen(selected ? Impl::Colors::RowSelectedText : Impl::Colors::RowText);
-
-            if (column == 0) {
-                if (impl_->editingIndex.isValid() && impl_->editingIndex == index0 && impl_->nameEditor) {
-                    const int indent = visibleRow.depth * impl_->indentWidth;
-                    int textLeft = cellRect.left() + 8 + indent + (impl_->hasChildren(index0) ? 18 : 0);
-                    const QVariant iconVar = cellIndex.data(Qt::DecorationRole);
-                    if (iconVar.canConvert<QIcon>()) { textLeft += 22; }
-                    const QRect editorRect(textLeft, cellRect.top() + 2, std::max(50, cellRect.right() - textLeft - 8), cellRect.height() - 4);
-                    // Name editor needs to be moved accounting for scrollY_
-                    const QRect screenEditorRect = editorRect.translated(0, -scrollY_);
-                    if (impl_->nameEditor->geometry() != screenEditorRect) impl_->nameEditor->setGeometry(screenEditorRect);
-                    if (!impl_->nameEditor->isVisible()) { impl_->nameEditor->show(); impl_->nameEditor->setFocus(); }
-                } else {
-                    const int indent = visibleRow.depth * impl_->indentWidth;
-                    const QRect contentRect = cellRect.adjusted(8 + indent, 0, -8, 0);
-                    if (impl_->hasChildren(index0)) {
-                        const QRect branchRect(contentRect.left(), contentRect.center().y() - 6, 12, 12);
-                        const bool branchHovered = (impl_->hoverBranchIndex == index0);
-                        QPainterPath branchPath;
-                        if (impl_->isExpanded(index0)) {
-                            branchPath.moveTo(branchRect.left() + 2, branchRect.top() + 4);
-                            branchPath.lineTo(branchRect.right() - 2, branchRect.top() + 4);
-                            branchPath.lineTo(branchRect.center().x(), branchRect.bottom() - 2);
-                        } else {
-                            branchPath.moveTo(branchRect.left() + 4, branchRect.top() + 2);
-                            branchPath.lineTo(branchRect.left() + 4, branchRect.bottom() - 2);
-                            branchPath.lineTo(branchRect.right() - 2, branchRect.center().y());
-                        }
-                        painter.fillPath(branchPath, (selected || branchHovered) ? Impl::Colors::RowSelectedText : Impl::Colors::BranchNormal);
-                    }
-                    int textLeft = contentRect.left() + (impl_->hasChildren(index0) ? 18 : 0);
-                    if (unusedItem) {
-                        painter.setPen(QColor(0xF0, 0x9A, 0x4A));
-                        painter.drawText(QRect(textLeft, rowRect.top(), 14, rowRect.height()), Qt::AlignVCenter | Qt::AlignLeft, QStringLiteral("●"));
-                        textLeft += 14;
-                        painter.setPen(selected ? Impl::Colors::RowSelectedText : Impl::Colors::RowText);
-                    }
-                    const QVariant iconVar = cellIndex.data(Qt::DecorationRole);
-                    if (iconVar.canConvert<QIcon>()) {
-                        const QIcon icon = qvariant_cast<QIcon>(iconVar);
-                        const QRect iconRect(textLeft, rowRect.top() + (rowRect.height() - 16) / 2, 16, 16);
-                        icon.paint(&painter, iconRect);
-                        textLeft += 22;
-                    }
-                    painter.drawText(QRect(textLeft, rowRect.top(), std::max(0, cellRect.right() - textLeft - 8), rowRect.height()),
-                        Qt::AlignVCenter | Qt::AlignLeft,
-                        painter.fontMetrics().elidedText(cellIndex.data(Qt::DisplayRole).toString(), Qt::ElideRight, std::max(0, cellRect.width() - (textLeft - cellRect.left()) - 12)));
+        for (int gridRow = firstRow; gridRow < lastRow; ++gridRow) {
+            for (int col = 0; col < columns; ++col) {
+                const int rowIndex = gridRow * columns + col;
+                if (rowIndex < 0 || rowIndex >= totalVisibleRows) {
+                    continue;
                 }
-            } else {
-                const QString text = cellIndex.data(Qt::DisplayRole).toString();
-                Qt::Alignment alignment = Qt::AlignVCenter | Qt::AlignLeft;
-                if (column == 1 || column == 2 || column == 3) alignment = Qt::AlignVCenter | Qt::AlignRight;
-                painter.drawText(cellRect.adjusted(8, 0, -8, 0), alignment, painter.fontMetrics().elidedText(text, Qt::ElideRight, cellRect.width() - 16));
+                const auto& visibleRow = impl_->visibleRows[rowIndex];
+                const QModelIndex index0 = visibleRow.index0;
+                const QRect cellRect(
+                    impl_->gridPadding + col * impl_->gridCellWidth,
+                    impl_->headerHeight + gridRow * impl_->gridCellHeight,
+                    impl_->gridCellWidth - 8,
+                    impl_->gridCellHeight - 8);
+
+                const bool selected = selectionModel() && selectionModel()->isRowSelected(index0.row(), index0.parent());
+                const bool hovered = impl_->hoverIndex.isValid() && impl_->hoverIndex == index0;
+                const QVariant ptrVar = index0.data(Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::ProjectItemPtr));
+                auto* item = ptrVar.isValid() ? reinterpret_cast<ProjectItem*>(ptrVar.value<quintptr>()) : nullptr;
+                bool unusedItem = false;
+                if (item && item->type() == eProjectItemType::Footage) {
+                    const QString path = QFileInfo(static_cast<FootageItem*>(item)->filePath).absoluteFilePath();
+                    if (auto* proxy = qobject_cast<const ProjectFilterProxyModel*>(impl_->model)) {
+                        unusedItem = proxy->isUnusedAssetPath(path);
+                    }
+                }
+
+                QColor cellFill = hovered ? QColor(0x2E, 0x2E, 0x33) : Impl::Colors::Background;
+                if (unusedItem && !selected) {
+                    cellFill = QColor(0x3A, 0x2A, 0x2A);
+                }
+                if (selected) {
+                    cellFill = Impl::Colors::RowSelected;
+                }
+                painter.fillRect(cellRect, cellFill);
+
+                QPen borderPen(selected ? Impl::Colors::RowSelectedText : Impl::Colors::RowBorder);
+                painter.setPen(borderPen);
+                painter.drawRect(cellRect.adjusted(0, 0, -1, -1));
+
+                QRect thumbRect = cellRect.adjusted(6, 6, -6, -(impl_->gridCellHeight - impl_->gridThumbHeight - 12));
+                thumbRect.setHeight(std::max(48, thumbRect.height()));
+                QPixmap thumb;
+                if (item) {
+                    thumb = projectItemPreviewPixmap(item, thumbRect.size());
+                }
+                if (!thumb.isNull()) {
+                    painter.drawPixmap(thumbRect, thumb);
+                } else {
+                    painter.fillRect(thumbRect, QColor(0x20, 0x20, 0x20));
+                    painter.setPen(QColor(0x90, 0x90, 0x90));
+                    painter.drawText(thumbRect, Qt::AlignCenter, projectItemTypeLabel(item ? item->type() : eProjectItemType::Unknown));
+                }
+
+                if (unusedItem) {
+                    painter.setPen(QColor(0xF0, 0x9A, 0x4A));
+                    painter.drawText(cellRect.adjusted(cellRect.width() - 20, 2, -2, -2), Qt::AlignTop | Qt::AlignRight, QStringLiteral("▲"));
+                }
+
+                const QRect titleRect(cellRect.left() + 6, cellRect.bottom() - 34, cellRect.width() - 12, 16);
+                painter.setPen(selected ? Impl::Colors::RowSelectedText : Impl::Colors::RowText);
+                painter.drawText(titleRect, Qt::AlignLeft | Qt::AlignVCenter,
+                                 painter.fontMetrics().elidedText(index0.data(Qt::DisplayRole).toString(), Qt::ElideRight, titleRect.width()));
+                const QRect typeRect(cellRect.left() + 6, cellRect.bottom() - 18, cellRect.width() - 12, 14);
+                painter.setPen(QColor(0xA8, 0xB7, 0xC6));
+                painter.drawText(typeRect, Qt::AlignLeft | Qt::AlignVCenter,
+                                 projectItemTypeLabel(static_cast<eProjectItemType>(
+                                     index0.data(Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::ProjectItemType)).toInt())));
             }
+        }
+    } else {
+        const int firstRow = std::max(0, (scrollY_ - impl_->headerHeight) / impl_->rowHeight);
+        const int visibleRowCount = height() / impl_->rowHeight + 3;
+        const int totalVisibleRows = static_cast<int>(impl_->visibleRows.size());
+        const int lastRow = std::min(totalVisibleRows, firstRow + visibleRowCount);
+
+        for (int row = firstRow; row < lastRow; ++row) {
+            const auto& visibleRow = impl_->visibleRows[row];
+            const QModelIndex index0 = visibleRow.index0;
+            const QRect rowRect(
+                0,
+                impl_->headerHeight + row * impl_->rowHeight,
+                contentWidth,
+                impl_->rowHeight);
+
+            const bool selected = selectionModel() && selectionModel()->isRowSelected(index0.row(), index0.parent());
+            const bool hovered = impl_->hoverIndex.isValid() && impl_->hoverIndex == index0;
+            const QVariant ptrVar = index0.data(Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::ProjectItemPtr));
+            auto* item = ptrVar.isValid() ? reinterpret_cast<ProjectItem*>(ptrVar.value<quintptr>()) : nullptr;
+            bool unusedItem = false;
+            if (item && item->type() == eProjectItemType::Footage) {
+                const QString path = QFileInfo(static_cast<FootageItem*>(item)->filePath).absoluteFilePath();
+                if (auto* proxy = qobject_cast<const ProjectFilterProxyModel*>(impl_->model)) {
+                    unusedItem = proxy->isUnusedAssetPath(path);
+                }
+            }
+
+            QColor rowFill = selected ? Impl::Colors::RowSelected : (hovered ? Impl::Colors::RowHover : Impl::Colors::Background);
+            if (unusedItem && !selected) {
+                rowFill = QColor(0x3A, 0x2A, 0x2A);
+            }
+            painter.fillRect(rowRect, rowFill);
+
             painter.setPen(Impl::Colors::RowBorder);
-            painter.drawLine(cellRect.topRight(), cellRect.bottomRight());
-            cellX += width;
+            painter.drawLine(rowRect.bottomLeft(), rowRect.bottomRight());
+
+            int cellX = 0;
+            const int configuredColumnCount = static_cast<int>(impl_->columnWidths.size());
+            const int modelColumnCount = impl_->model ? impl_->model->columnCount({}) : 0;
+            const int columnCount = std::max(configuredColumnCount, modelColumnCount);
+
+            for (int column = 0; column < columnCount; ++column) {
+                const int width = column < impl_->columnWidths.size() ? impl_->columnWidths[column] : 120;
+                const QRect cellRect(cellX, rowRect.top(), width, rowRect.height());
+
+                const QModelIndex cellIndex = index0.siblingAtColumn(column);
+                painter.setPen(selected ? Impl::Colors::RowSelectedText : Impl::Colors::RowText);
+
+                if (column == 0) {
+                    if (impl_->editingIndex.isValid() && impl_->editingIndex == index0 && impl_->nameEditor) {
+                        const int indent = visibleRow.depth * impl_->indentWidth;
+                        int textLeft = cellRect.left() + 8 + indent + (impl_->hasChildren(index0) ? 18 : 0);
+                        const QVariant iconVar = cellIndex.data(Qt::DecorationRole);
+                        if (iconVar.canConvert<QIcon>()) { textLeft += 22; }
+                        const QRect editorRect(textLeft, cellRect.top() + 2, std::max(50, cellRect.right() - textLeft - 8), cellRect.height() - 4);
+                        const QRect screenEditorRect = editorRect.translated(0, -scrollY_);
+                        if (impl_->nameEditor->geometry() != screenEditorRect) impl_->nameEditor->setGeometry(screenEditorRect);
+                        if (!impl_->nameEditor->isVisible()) { impl_->nameEditor->show(); impl_->nameEditor->setFocus(); }
+                    } else {
+                        const int indent = visibleRow.depth * impl_->indentWidth;
+                        const QRect contentRect = cellRect.adjusted(8 + indent, 0, -8, 0);
+                        if (impl_->hasChildren(index0)) {
+                            const QRect branchRect(contentRect.left(), contentRect.center().y() - 6, 12, 12);
+                            const bool branchHovered = (impl_->hoverBranchIndex == index0);
+                            QPainterPath branchPath;
+                            if (impl_->isExpanded(index0)) {
+                                branchPath.moveTo(branchRect.left() + 2, branchRect.top() + 4);
+                                branchPath.lineTo(branchRect.right() - 2, branchRect.top() + 4);
+                                branchPath.lineTo(branchRect.center().x(), branchRect.bottom() - 2);
+                            } else {
+                                branchPath.moveTo(branchRect.left() + 4, branchRect.top() + 2);
+                                branchPath.lineTo(branchRect.left() + 4, branchRect.bottom() - 2);
+                                branchPath.lineTo(branchRect.right() - 2, branchRect.center().y());
+                            }
+                            painter.fillPath(branchPath, (selected || branchHovered) ? Impl::Colors::RowSelectedText : Impl::Colors::BranchNormal);
+                        }
+                        int textLeft = contentRect.left() + (impl_->hasChildren(index0) ? 18 : 0);
+                        if (unusedItem) {
+                            painter.setPen(QColor(0xF0, 0x9A, 0x4A));
+                            painter.drawText(QRect(textLeft, rowRect.top(), 14, rowRect.height()), Qt::AlignVCenter | Qt::AlignLeft, QStringLiteral("●"));
+                            textLeft += 14;
+                            painter.setPen(selected ? Impl::Colors::RowSelectedText : Impl::Colors::RowText);
+                        }
+                        const QVariant iconVar = cellIndex.data(Qt::DecorationRole);
+                        if (iconVar.canConvert<QIcon>()) {
+                            const QIcon icon = qvariant_cast<QIcon>(iconVar);
+                            const QRect iconRect(textLeft, rowRect.top() + (rowRect.height() - 16) / 2, 16, 16);
+                            icon.paint(&painter, iconRect);
+                            textLeft += 22;
+                        }
+                        painter.drawText(QRect(textLeft, rowRect.top(), std::max(0, cellRect.right() - textLeft - 8), rowRect.height()),
+                            Qt::AlignVCenter | Qt::AlignLeft,
+                            painter.fontMetrics().elidedText(cellIndex.data(Qt::DisplayRole).toString(), Qt::ElideRight, std::max(0, cellRect.width() - (textLeft - cellRect.left()) - 12)));
+                    }
+                } else {
+                    const QString text = cellIndex.data(Qt::DisplayRole).toString();
+                    Qt::Alignment alignment = Qt::AlignVCenter | Qt::AlignLeft;
+                    if (column == 1 || column == 2 || column == 3) alignment = Qt::AlignVCenter | Qt::AlignRight;
+                    painter.drawText(cellRect.adjusted(8, 0, -8, 0), alignment, painter.fontMetrics().elidedText(text, Qt::ElideRight, cellRect.width() - 16));
+                }
+                painter.setPen(Impl::Colors::RowBorder);
+                painter.drawLine(cellRect.topRight(), cellRect.bottomRight());
+                cellX += width;
+            }
         }
     }
     painter.restore();
@@ -1729,7 +1863,7 @@ void ArtifactProjectView::mouseMoveEvent(QMouseEvent* event) {
 
     const QModelIndex idx = indexAt(mousePos);
     QModelIndex branchIdx;
-    if (idx.isValid() && mousePos.y() >= impl_->headerHeight) {
+    if (impl_->viewMode == ProjectViewMode::List && idx.isValid() && mousePos.y() >= impl_->headerHeight) {
         const QRect rowRect = visualRect(idx);
         const int row = impl_->rowForIndex(idx);
         const int depth = (row >= 0 && row < impl_->visibleRows.size()) ? impl_->visibleRows[row].depth : 0;
@@ -1875,7 +2009,17 @@ bool ArtifactProjectView::event(QEvent* event)
 void ArtifactProjectView::updateScrollRange()
 {
     if (!impl_ || !verticalScrollBar_) return;
-    const int contentHeight = impl_->headerHeight + static_cast<int>(impl_->visibleRows.size()) * impl_->rowHeight;
+    const int contentHeight = [this]() {
+        if (!impl_) {
+            return 0;
+        }
+        if (impl_->viewMode == ProjectViewMode::Grid) {
+            const int columns = projectGridColumns(width(), impl_->gridCellWidth, impl_->gridPadding);
+            const int rowCount = (impl_->visibleRows.size() + columns - 1) / columns;
+            return impl_->headerHeight + rowCount * impl_->gridCellHeight;
+        }
+        return impl_->headerHeight + static_cast<int>(impl_->visibleRows.size()) * impl_->rowHeight;
+    }();
     verticalScrollBar_->setPageStep(height());
     verticalScrollBar_->setRange(0, std::max(0, contentHeight - height()));
     verticalScrollBar_->setVisible(contentHeight > height());
@@ -2553,6 +2697,7 @@ public:
     QComboBox* typeFilterBox = nullptr;
     QCheckBox* unusedOnlyCheck = nullptr;
     QProgressBar* proxyQueueProgress = nullptr;
+    QComboBox* viewModeBox = nullptr;
     ArtifactProjectManagerToolBox* toolBox = nullptr;
     QLabel* projectNameLabel = nullptr;
     QLabel* selectionSummaryLabel = nullptr;
@@ -3277,6 +3422,8 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     impl_->typeFilterBox->addItems(QStringList() << "All" << "Composition" << "Footage" << "Folder" << "Solid");
     impl_->unusedOnlyCheck = new QCheckBox("Unused only", filterBarHost);
     impl_->proxyQueueProgress = new QProgressBar(filterBarHost);
+    impl_->viewModeBox = new QComboBox(filterBarHost);
+    impl_->viewModeBox->addItems(QStringList() << QStringLiteral("List") << QStringLiteral("Grid"));
     impl_->proxyQueueProgress->setVisible(false);
     impl_->proxyQueueProgress->setTextVisible(true);
     impl_->proxyQueueProgress->setFormat("Proxy queue %v/%m");
@@ -3284,6 +3431,7 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     filterBar->addWidget(impl_->unusedOnlyCheck);
     filterBar->addStretch();
     filterBar->addWidget(impl_->proxyQueueProgress, 1);
+    filterBar->addWidget(impl_->viewModeBox);
     chromeLayout->addWidget(filterBarHost);
     mainLayout->addWidget(chromePanel);
 
@@ -3333,6 +3481,14 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     });
     connect(impl_->unusedOnlyCheck, &QCheckBox::toggled, [this](bool) {
         impl_->handleSearch(impl_->searchBar ? impl_->searchBar->text() : QString());
+    });
+    connect(impl_->viewModeBox, &QComboBox::currentIndexChanged, this, [this](int index) {
+        if (!impl_ || !impl_->projectView_ || !impl_->viewModeBox) {
+            return;
+        }
+        const int clamped = std::clamp(index, 0, impl_->viewModeBox->count() - 1);
+        const ProjectViewMode mode = clamped == 1 ? ProjectViewMode::Grid : ProjectViewMode::List;
+        impl_->projectView_->setViewMode(mode);
     });
     connect(impl_->openSelectionButton, &QPushButton::clicked, this, [this]() {
         impl_->openSelectedItem(this);

@@ -52,6 +52,11 @@ W_REGISTER_ARGTYPE(QFileInfo)
 
 export namespace Artifact {
 
+ enum class ProjectViewMode {
+  List,
+  Grid
+ };
+
  /*
 class ArtifactToolBar :public QToolBar {
 private:
@@ -107,6 +112,8 @@ public:
   void setCurrentIndex(const QModelIndex& index);
   void setSortingEnabled(bool enabled);
   void sortByColumn(int column, Qt::SortOrder order);
+  void setViewMode(ProjectViewMode mode);
+  ProjectViewMode viewMode() const;
   void setColumnWidth(int column, int width);
   void expand(const QModelIndex& index);
   void collapse(const QModelIndex& index);
