@@ -2561,6 +2561,7 @@ public:
     QLabel* statusVisibleLabel = nullptr;
     QLabel* statusFilterLabel = nullptr;
     QLabel* statusSelectionLabel = nullptr;
+    QLabel* statusUnusedLabel = nullptr;
     QPushButton* openSelectionButton = nullptr;
     QPushButton* revealSelectionButton = nullptr;
     QPushButton* renameSelectionButton = nullptr;
@@ -2802,6 +2803,33 @@ public:
         return totalBytes;
     }
 
+    int visibleUnusedCount() const {
+        if (!proxyModel_) {
+            return 0;
+        }
+        std::function<int(const QModelIndex&)> countRecursive = [&](const QModelIndex& parent) -> int {
+            int total = 0;
+            const int rowCount = proxyModel_->rowCount(parent);
+            for (int row = 0; row < rowCount; ++row) {
+                const QModelIndex idx0 = proxyModel_->index(row, 0, parent);
+                if (!idx0.isValid()) {
+                    continue;
+                }
+                const QVariant ptrVar = idx0.data(Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::ProjectItemPtr));
+                auto* item = ptrVar.isValid() ? reinterpret_cast<ProjectItem*>(ptrVar.value<quintptr>()) : nullptr;
+                if (item && item->type() == eProjectItemType::Footage) {
+                    const QString path = QFileInfo(static_cast<FootageItem*>(item)->filePath).absoluteFilePath();
+                    if (proxyModel_->isUnusedAssetPath(path)) {
+                        ++total;
+                    }
+                }
+                total += countRecursive(idx0);
+            }
+            return total;
+        };
+        return countRecursive({});
+    }
+
     QString statusVisibleText() const {
         const int totalCount = totalItemCount();
         const int visibleCount = projectView_ ? projectView_->visibleItemCount() : 0;
@@ -2831,6 +2859,10 @@ public:
         return QStringLiteral("Selection: %1").arg(humanFileSize(selectedAssetBytes()));
     }
 
+    QString statusUnusedText() const {
+        return QStringLiteral("Unused: %1").arg(visibleUnusedCount());
+    }
+
     QString selectionSummaryText() const {
         const int selectedCount = projectView_ && projectView_->selectionModel()
             ? projectView_->selectionModel()->selectedRows(0).size()
@@ -2856,6 +2888,9 @@ public:
         }
         if (statusSelectionLabel) {
             statusSelectionLabel->setText(statusSelectionText());
+        }
+        if (statusUnusedLabel) {
+            statusUnusedLabel->setText(statusUnusedText());
         }
     }
 
@@ -3274,7 +3309,8 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     impl_->statusVisibleLabel = new QLabel(QStringLiteral("0件中 0件表示"), impl_->statusBarWidget);
     impl_->statusFilterLabel = new QLabel(QStringLiteral("Filter: All items"), impl_->statusBarWidget);
     impl_->statusSelectionLabel = new QLabel(QStringLiteral("Selection: 0 B"), impl_->statusBarWidget);
-    for (QLabel* label : {impl_->statusVisibleLabel, impl_->statusFilterLabel, impl_->statusSelectionLabel}) {
+    impl_->statusUnusedLabel = new QLabel(QStringLiteral("Unused: 0"), impl_->statusBarWidget);
+    for (QLabel* label : {impl_->statusVisibleLabel, impl_->statusFilterLabel, impl_->statusSelectionLabel, impl_->statusUnusedLabel}) {
         QFont f = label->font();
         f.setPointSize(9);
         label->setFont(f);
@@ -3285,6 +3321,7 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     statusLayout->addWidget(impl_->statusVisibleLabel, 0, Qt::AlignLeft | Qt::AlignVCenter);
     statusLayout->addWidget(impl_->statusFilterLabel, 1, Qt::AlignCenter);
     statusLayout->addWidget(impl_->statusSelectionLabel, 0, Qt::AlignRight | Qt::AlignVCenter);
+    statusLayout->addWidget(impl_->statusUnusedLabel, 0, Qt::AlignRight | Qt::AlignVCenter);
     mainLayout->addWidget(impl_->statusBarWidget);
 
     impl_->toolBox = new ArtifactProjectManagerToolBox(this);

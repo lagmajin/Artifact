@@ -86,6 +86,8 @@ namespace Artifact
    void updateActionAvailability();
    void updateModeButtons();
    void updateSurfaceShellState();
+   void rebuildRecentSourceMenu();
+   void recordRecentSource(const QString& filepath);
    void clearPlaybackRange();
    void setPlaybackRange(int64_t startFrame, int64_t endFrame);
    void resetCurrentMode();
@@ -110,6 +112,7 @@ namespace Artifact
    QLabel* viewerBadgeLabel = nullptr;
    QLabel* gpuFpsLabel = nullptr;
    QToolButton* recentSourceButton = nullptr;
+   QMenu* recentSourceMenu = nullptr;
    QWidget* transportBarWidget = nullptr;
    QWidget* channelMetaBarWidget = nullptr;
    QLabel* channelLabel = nullptr;
@@ -141,6 +144,7 @@ namespace Artifact
    bool videoWidgetsReady = false;
    bool modelViewerReady = false;
    QString currentFilePath;
+   QStringList recentSourcePaths;
    ArtifactCore::FileType currentFileType = ArtifactCore::FileType::Unknown;
    ContentsViewerMode currentMode = ContentsViewerMode::Source;
    double zoomLevel = 1.0;
@@ -653,6 +657,58 @@ namespace Artifact
    updateSurfaceShellState();
   }
 
+  void ArtifactContentsViewer::Impl::recordRecentSource(const QString& filepath)
+  {
+   if (filepath.trimmed().isEmpty()) {
+    return;
+   }
+   const QFileInfo info(filepath);
+   const QString normalized = info.exists() ? info.absoluteFilePath() : filepath;
+   recentSourcePaths.removeAll(normalized);
+   recentSourcePaths.prepend(normalized);
+   while (recentSourcePaths.size() > 10) {
+    recentSourcePaths.removeLast();
+   }
+   rebuildRecentSourceMenu();
+  }
+
+  void ArtifactContentsViewer::Impl::rebuildRecentSourceMenu()
+  {
+   if (!recentSourceButton) {
+    return;
+   }
+   if (!recentSourceMenu) {
+    recentSourceMenu = new QMenu(recentSourceButton);
+   }
+   recentSourceMenu->clear();
+
+   if (recentSourcePaths.isEmpty()) {
+    auto* emptyAction = recentSourceMenu->addAction(QStringLiteral("(No recent sources)"));
+    emptyAction->setEnabled(false);
+    recentSourceButton->setMenu(recentSourceMenu);
+    recentSourceButton->setEnabled(false);
+    return;
+   }
+
+   for (const QString& path : recentSourcePaths) {
+    const QFileInfo info(path);
+    QString label = info.fileName();
+    if (label.isEmpty()) {
+     label = path;
+    }
+    if (info.exists()) {
+     label += QStringLiteral("  ·  %1").arg(info.absolutePath());
+    }
+    recentSourceMenu->addAction(label, [this, path]() {
+     if (owner_) {
+      owner_->setFilePath(path);
+     }
+    });
+   }
+   recentSourceButton->setMenu(recentSourceMenu);
+   recentSourceButton->setEnabled(true);
+  }
+
   void ArtifactContentsViewer::Impl::updateSurfaceShellState()
   {
    if (viewerBadgeLabel) {
@@ -730,13 +786,8 @@ namespace Artifact
    recentSourceButton->setAutoRaise(true);
    recentSourceButton->setPopupMode(QToolButton::InstantPopup);
    recentSourceButton->setCursor(Qt::PointingHandCursor);
-   auto* recentMenu = new QMenu(recentSourceButton);
-   recentMenu->addAction(QStringLiteral("(Recent source history placeholder)"))->setEnabled(false);
-   recentMenu->addSeparator();
-   recentMenu->addAction(QStringLiteral("comp_v03.exr"));
-   recentMenu->addAction(QStringLiteral("shot_plate_v07.mov"));
-   recentMenu->addAction(QStringLiteral("preview_temp.aep"));
-   recentSourceButton->setMenu(recentMenu);
+   recentSourceButton->setEnabled(false);
+   rebuildRecentSourceMenu();
 
    leftTitleLayout->addWidget(titleLabel);
    leftTitleLayout->addWidget(recentSourceButton);
@@ -1125,6 +1176,7 @@ namespace Artifact
   void ArtifactContentsViewer::setFilePath(const QString& filepath)
   {
    impl_->currentFilePath = filepath;
+   impl_->recordRecentSource(filepath);
    ArtifactCore::FileTypeDetector detector;
    impl_->currentFileType = detector.detect(filepath);
    impl_->resetCurrentMode();

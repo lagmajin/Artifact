@@ -1541,6 +1541,8 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
       createTransportButton(QStringLiteral(">"), QStringLiteral("Next frame"));
   auto *jumpEndButton =
       createTransportButton(QStringLiteral(">|"), QStringLiteral("Go to end"));
+  auto *fitViewButton =
+      createTransportButton(QStringLiteral("Fit"), QStringLiteral("Fit / reset timeline view"));
 
   impl_->timecodeEdit_ = new QLineEdit(transportBar);
   impl_->timecodeEdit_->setPlaceholderText(QStringLiteral("00:00:00:00"));
@@ -1569,6 +1571,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   transportLayout->addWidget(playPauseButton);
   transportLayout->addWidget(stepForwardButton);
   transportLayout->addWidget(jumpEndButton);
+  transportLayout->addWidget(fitViewButton);
   transportLayout->addSpacing(6);
   transportLayout->addWidget(impl_->timecodeEdit_);
   transportLayout->addSpacing(4);
@@ -1722,6 +1725,9 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
         comp->goToEndFrame();
       }
     }
+  });
+  QObject::connect(fitViewButton, &QToolButton::clicked, this, [this]() {
+    resetTimelineViewport();
   });
   QObject::connect(impl_->loopToggle_, &QCheckBox::toggled, this,
                    [this](bool enabled) {
