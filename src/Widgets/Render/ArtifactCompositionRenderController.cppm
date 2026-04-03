@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <DeviceContext.h>
 #define NOMINMAX
 #define QT_NO_KEYWORDS
@@ -852,6 +852,34 @@ void drawLayerForCompositionView(
   layer->draw(renderer);
 }
 
+void drawCompositionRegionOverlay(ArtifactIRenderer* renderer,
+                                  const ArtifactCompositionPtr& comp,
+                                  bool showCheckerboard) {
+  if (!renderer || !comp) {
+    return;
+  }
+
+  const QSize compSize = comp->settings().compositionSize();
+  const float cw =
+      static_cast<float>(compSize.width() > 0 ? compSize.width() : 1920);
+  const float ch =
+      static_cast<float>(compSize.height() > 0 ? compSize.height() : 1080);
+  if (cw <= 0.0f || ch <= 0.0f) {
+    return;
+  }
+
+  if (showCheckerboard) {
+    renderer->drawCheckerboard(
+        0.0f, 0.0f, cw, ch, 16.0f, {0.18f, 0.18f, 0.18f, 0.08f},
+        {0.24f, 0.24f, 0.24f, 0.05f});
+  }
+
+  renderer->drawRectOutline(0.0f, 0.0f, cw, ch,
+                            FloatColor{0.02f, 0.02f, 0.02f, 0.85f});
+  renderer->drawRectOutline(0.0f, 0.0f, cw, ch,
+                            FloatColor{0.42f, 0.68f, 0.96f, 0.95f});
+}
+
 // CompositionChangeDetector - 差分レンダリング用の変更検出器
 class CompositionChangeDetector {
 private:
@@ -913,6 +941,7 @@ public:
   QTimer *renderTimer_ = nullptr;
   bool initialized_ = false;
   bool running_ = false;
+  float devicePixelRatio_ = 1.0f;
   bool renderScheduled_ = false;
   bool renderInProgress_ = false;
   bool renderRescheduleRequested_ = false;
@@ -1317,8 +1346,9 @@ void CompositionRenderController::initialize(QWidget *hostWidget) {
   impl_->compositionRenderer_ =
       std::make_unique<CompositionRenderer>(*impl_->renderer_);
   impl_->renderer_->setClearColor(impl_->clearColor_);
-  impl_->hostWidth_ = static_cast<float>(hostWidget->width());
-  impl_->hostHeight_ = static_cast<float>(hostWidget->height());
+  impl_->devicePixelRatio_ = static_cast<float>(hostWidget->devicePixelRatio());
+  impl_->hostWidth_ = static_cast<float>(hostWidget->width()) * impl_->devicePixelRatio_;
+  impl_->hostHeight_ = static_cast<float>(hostWidget->height()) * impl_->devicePixelRatio_;
   impl_->renderer_->setViewportSize(impl_->hostWidth_, impl_->hostHeight_);
 
   const auto comp = impl_->previewPipeline_.composition();
@@ -1462,13 +1492,18 @@ void CompositionRenderController::recreateSwapChain(QWidget *hostWidget) {
   impl_->invalidateBaseComposite();
 }
 
-void CompositionRenderController::setViewportSize(float width, float height) {
+void CompositionRenderController::setViewportSize(float w, float h) {
   if (!impl_->renderer_) {
     return;
   }
-  impl_->hostWidth_ = width;
-  impl_->hostHeight_ = height;
-  impl_->renderer_->setViewportSize(width, height);
+  // Refresh DPR whenever the viewport is resized (handles window-to-monitor changes)
+  if (impl_->hostWidget_) {
+    impl_->devicePixelRatio_ = static_cast<float>(impl_->hostWidget_->devicePixelRatio());
+  }
+  // Callers pass logical pixels; convert to physical pixels for the renderer
+  impl_->hostWidth_ = w * impl_->devicePixelRatio_;
+  impl_->hostHeight_ = h * impl_->devicePixelRatio_;
+  impl_->renderer_->setViewportSize(impl_->hostWidth_, impl_->hostHeight_);
   impl_->invalidateBaseComposite();
 }
 
@@ -1494,7 +1529,9 @@ void CompositionRenderController::setPreviewQualityPreset(
     impl_->previewDownsample_ = factor;
     impl_->invalidateBaseComposite();
     if (impl_->hostWidth_ > 0 && impl_->hostHeight_ > 0) {
-      setViewportSize(impl_->hostWidth_, impl_->hostHeight_);
+      // hostWidth_/hostHeight_ are already physical pixels; call renderer directly
+      impl_->renderer_->setViewportSize(impl_->hostWidth_, impl_->hostHeight_);
+      impl_->invalidateBaseComposite();
     }
     renderOneFrame();
   }
@@ -1504,7 +1541,9 @@ void CompositionRenderController::panBy(const QPointF &viewportDelta) {
   if (!impl_->renderer_) {
     return;
   }
-  impl_->renderer_->panBy((float)viewportDelta.x(), (float)viewportDelta.y());
+  // viewportDelta is in logical pixels from Qt; convert to physical for the renderer
+  impl_->renderer_->panBy((float)viewportDelta.x() * impl_->devicePixelRatio_,
+                           (float)viewportDelta.y() * impl_->devicePixelRatio_);
   impl_->invalidateBaseComposite();
   renderOneFrame();
 }
@@ -1741,8 +1780,10 @@ void CompositionRenderController::zoomInAt(const QPointF &viewportPos) {
     notifyViewportInteractionActivity();
     const float currentZoom = impl_->renderer_->getZoom();
     const float newZoom = std::clamp(currentZoom * 1.1f, 0.05f, 64.0f);
+    // viewportPos is in logical pixels; convert to physical
     impl_->renderer_->zoomAroundViewportPoint(
-        {(float)viewportPos.x(), (float)viewportPos.y()}, newZoom);
+        {(float)viewportPos.x() * impl_->devicePixelRatio_,
+         (float)viewportPos.y() * impl_->devicePixelRatio_}, newZoom);
     impl_->invalidateBaseComposite();
     renderOneFrame();
   }
@@ -1753,8 +1794,10 @@ void CompositionRenderController::zoomOutAt(const QPointF &viewportPos) {
     notifyViewportInteractionActivity();
     const float currentZoom = impl_->renderer_->getZoom();
     const float newZoom = std::clamp(currentZoom / 1.1f, 0.05f, 64.0f);
+    // viewportPos is in logical pixels; convert to physical
     impl_->renderer_->zoomAroundViewportPoint(
-        {(float)viewportPos.x(), (float)viewportPos.y()}, newZoom);
+        {(float)viewportPos.x() * impl_->devicePixelRatio_,
+         (float)viewportPos.y() * impl_->devicePixelRatio_}, newZoom);
     impl_->invalidateBaseComposite();
     renderOneFrame();
   }
@@ -1762,7 +1805,7 @@ void CompositionRenderController::zoomOutAt(const QPointF &viewportPos) {
 
 void CompositionRenderController::zoomFit() {
   if (impl_->renderer_) {
-    impl_->renderer_->fitToViewport();
+    impl_->renderer_->fitToViewport(0.0f);
     impl_->invalidateBaseComposite();
     float panX, panY;
     impl_->renderer_->getPan(panX, panY);
@@ -1791,6 +1834,10 @@ void CompositionRenderController::zoomFill() {
 void CompositionRenderController::zoom100() {
   if (impl_->renderer_) {
     impl_->renderer_->setZoom(1.0f);
+    // Center the canvas in the viewport at 100% zoom
+    const float panX = (impl_->hostWidth_  - impl_->lastCanvasWidth_)  * 0.5f;
+    const float panY = (impl_->hostHeight_ - impl_->lastCanvasHeight_) * 0.5f;
+    impl_->renderer_->setPan(panX, panY);
     impl_->invalidateBaseComposite();
     renderOneFrame();
   }
@@ -1844,8 +1891,10 @@ void CompositionRenderController::focusSelectedLayer() {
 LayerID CompositionRenderController::layerAtViewportPos(
     const QPointF &viewportPos) const {
   auto comp = impl_->previewPipeline_.composition();
+  // viewportPos is in logical pixels; convert to physical for hit testing
+  const QPointF physPos = viewportPos * impl_->devicePixelRatio_;
   const auto layer =
-      hitTopmostLayerAtViewportPos(comp, impl_->renderer_.get(), viewportPos);
+      hitTopmostLayerAtViewportPos(comp, impl_->renderer_.get(), physPos);
   return layer ? layer->id() : LayerID::Nil();
 }
 
@@ -1870,7 +1919,8 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
   if (!event || !impl_->renderer_)
     return;
 
-  const QPointF viewportPos = event->position();
+  // event->position() is in logical pixels; convert to physical for rendering pipeline
+  const QPointF viewportPos = event->position() * impl_->devicePixelRatio_;
 
   // 3D Gizmo hit test (GIZ-2)
   auto comp = impl_->previewPipeline_.composition();
@@ -2185,7 +2235,9 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
   }
 }
 
-void CompositionRenderController::handleMouseMove(const QPointF &viewportPos) {
+void CompositionRenderController::handleMouseMove(const QPointF &viewportPosLogical) {
+  // Convert logical pixels (from Qt event) to physical pixels for the rendering pipeline
+  const QPointF viewportPos = viewportPosLogical * impl_->devicePixelRatio_;
   auto toolManager = ArtifactApplicationManager::instance()->toolManager();
   auto activeTool =
       toolManager ? toolManager->activeTool() : ToolType::Selection;
@@ -2438,7 +2490,9 @@ Qt::CursorShape CompositionRenderController::cursorShapeForViewportPos(
   if (!impl_->gizmo_ || !impl_->renderer_) {
     return Qt::ArrowCursor;
   }
-  return impl_->gizmo_->cursorShapeForViewportPos(viewportPos,
+  // viewportPos is in logical pixels; convert to physical for gizmo hit testing
+  const QPointF physPos = viewportPos * impl_->devicePixelRatio_;
+  return impl_->gizmo_->cursorShapeForViewportPos(physPos,
                                                   impl_->renderer_.get());
 }
 
@@ -2516,15 +2570,15 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
   // 強制的なサイズ同期:
   // ホストウィジェットの物理サイズとスワップチェーンを一致させる
   if (auto *host = hostWidget_.data()) {
-    const float curW = static_cast<float>(host->width());
-    const float curH = static_cast<float>(host->height());
+    const float curW = static_cast<float>(host->width()) * devicePixelRatio_;
+    const float curH = static_cast<float>(host->height()) * devicePixelRatio_;
     if (std::abs(curW - hostWidth_) > 0.5f ||
         std::abs(curH - hostHeight_) > 0.5f) {
       qDebug() << "[CompositionView] Widget size changed, scheduling swapchain "
                   "update:"
                << curW << "x" << curH;
-      pendingResizeSize_ =
-          QSize(static_cast<int>(curW), static_cast<int>(curH));
+      // Store logical pixels — setViewportSize applies DPR internally
+      pendingResizeSize_ = QSize(host->width(), host->height());
       if (resizeDebounceTimer_) {
         resizeDebounceTimer_->start(80);
       }
@@ -2565,6 +2619,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       static_cast<float>(compSize.width() > 0 ? compSize.width() : 1920);
   const float ch =
       static_cast<float>(compSize.height() > 0 ? compSize.height() : 1080);
+  const FloatColor bgColor = comp->backgroundColor();
   lastCanvasWidth_ = cw;
   lastCanvasHeight_ = ch;
 
@@ -2690,6 +2745,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       QByteArray::number(showGuides_ ? 1 : 0) +
       QByteArray::number(showSafeMargins_ ? 1 : 0) +
       QByteArray::number(viewportInteracting_ ? 1 : 0);
+  renderer_->setClearColor(clearColor_);
   renderer_->clear();
 
   {
@@ -2845,16 +2901,10 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
             << "compositionSpaceApplied=" << true;
       }
       renderer_->setOverrideRTV(accumRTV);
-      // RTVをクリアしてから背景を描画
-      renderer_->setClearColor(FloatColor{0.0f, 0.0f, 0.0f, 1.0f});
+      // accum を透明でクリア（bgColor はレイヤーブレンドに影響しないよう後で Composition Space で描画）
+      renderer_->setClearColor(FloatColor{0.0f, 0.0f, 0.0f, 0.0f});
       renderer_->clear();
-      const QImage backgroundSprite = makeSolidColorSprite(bgColor);
-      renderer_->drawSprite(0.0f, 0.0f, cw, ch, backgroundSprite, 1.0f);
-      if (showCheckerboard_) {
-        renderer_->drawCheckerboard(0.0f, 0.0f, cw, ch, 16.0f,
-                                    {0.25f, 0.25f, 0.25f, 0.42f},
-                                    {0.35f, 0.35f, 0.35f, 0.32f});
-      }
+      renderer_->setClearColor(clearColor_);
       renderer_->setOverrideRTV(nullptr);
       basePassMs = markPhaseMs();
 
@@ -2864,6 +2914,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       renderer_->setPan(origPanX * offscreenScale, origPanY * offscreenScale);
 
       // -- 2: レイヤーブレンド（frameOutOfRange ならスキップ）--
+      bool blendPerformed = false;  // accumがUNORDERED_ACCESS状態になったか追跡
       if (!frameOutOfRange) {
         const DetailLevel lod = detailLevelFromZoom(renderer_->getZoom());
         for (const auto &layer : layers) {
@@ -2917,6 +2968,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
             continue;
           }
           renderPipeline_.swapAccumAndTemp();
+          blendPerformed = true;  // accumはUNORDERED_ACCESS状態
           accumSRV = renderPipeline_.accumSRV();
           tempUAV = renderPipeline_.tempUAV();
         }
@@ -2936,13 +2988,56 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                           static_cast<Diligent::Uint32>(origViewH));
       }
 
-      // -- 3: オフスクリーン RT を画面全体に描画（スクリーン座標） --
+      // -- 3: bgColor 背景矩形を描画（D3D12 viewport 確定後、accum blit より前） --
+      // SetViewports 済みの状態で swap chain 上に描画する。
+      // accum の SRC_ALPHA blit は透明ピクセル (α=0) の領域でこの bgColor を透過させる。
+      // レイヤーブレンドは accum 内で完結するため bgColor は一切影響しない。
+      renderer_->setCanvasSize(cw, ch);
+      renderer_->setZoom(origZoom);
+      renderer_->setPan(origPanX, origPanY);
+      if (compositionViewLog().isDebugEnabled()) {
+        qCDebug(compositionViewLog)
+            << "[CompositionView] background pass (GPU)"
+            << "localRect=" << QRectF(0.0f, 0.0f, cw, ch)
+            << "viewport=" << QRectF(0.0f, 0.0f, viewportW, viewportH)
+            << "zoom=" << origZoom
+            << "pan=" << QPointF(origPanX, origPanY)
+            << "bg=" << QColor::fromRgbF(bgColor.r(), bgColor.g(), bgColor.b(),
+                                          bgColor.a())
+            << "checker=" << showCheckerboard_
+            << "usesCompositionRenderer=" << (compositionRenderer_ != nullptr)
+            << "backgroundDrawMode=solidRect";
+      }
+      renderer_->drawSolidRect(0.0f, 0.0f, cw, ch, bgColor, 1.0f);
+
+      // -- 4: オフスクリーン RT を画面全体に描画（スクリーン座標、SRC_ALPHA ブレンド） --
+      // drawSpriteTransformed (opacity 付き) を使うことで SRC_ALPHA ブレンドが適用され、
+      // accum の透明ピクセル（レイヤーなし領域）から手前の bgColor 矩形が透けて見える。
       renderer_->setCanvasSize(origViewW, origViewH);
       renderer_->setZoom(1.0f);
       renderer_->setPan(0.0f, 0.0f);
-      renderer_->setClearColor(origClearColor);
-      renderer_->drawSprite(0, 0, origViewW, origViewH,
-                            renderPipeline_.accumSRV());
+      // Bug B fix: ブレンドCSが UNORDERED_ACCESS に書いた accum テクスチャを
+      // SRV として読む前に SHADER_RESOURCE へ状態遷移する。
+      // ブレンドが一度も実行されなかった場合、accum は RENDER_TARGET 状態のままなので
+      // この明示的バリアはスキップし、drawSpriteTransformed 内の auto-TRANSITION に任せる。
+      if (blendPerformed) {
+        if (auto *accumTex = renderPipeline_.accumSRV()
+                                 ? renderPipeline_.accumSRV()->GetTexture()
+                                 : nullptr) {
+          Diligent::StateTransitionDesc accumBarrier;
+          accumBarrier.pResource           = accumTex;
+          accumBarrier.OldState            = RESOURCE_STATE_UNORDERED_ACCESS;
+          accumBarrier.NewState            = RESOURCE_STATE_SHADER_RESOURCE;
+          ctx->TransitionResourceStates(1, &accumBarrier);
+        }
+      }
+      {
+        QMatrix4x4 screenIdentity;
+        screenIdentity.setToIdentity();
+        renderer_->drawSpriteTransformed(0.0f, 0.0f, origViewW, origViewH,
+                                         screenIdentity,
+                                         renderPipeline_.accumSRV(), 1.0f);
+      }
 
       // コンポジションのキャンバス座標系に戻す
       if (compositionRenderer_) {
@@ -2953,6 +3048,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       }
       renderer_->setZoom(origZoom);
       renderer_->setPan(origPanX, origPanY);
+      renderer_->setClearColor(origClearColor); // Bug A fix: GPUパス前に保存したクリアカラーを復元
       layerPassMs = markPhaseMs();
     } else {
       // === Fallback path (GPU パイプラインなし) ===
@@ -2969,12 +3065,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                           static_cast<Diligent::Uint32>(viewportW),
                           static_cast<Diligent::Uint32>(viewportH));
       }
-      if (compositionViewLog().isDebugEnabled()) {
-        renderer_->setClearColor(FloatColor{1.0f, 0.0f, 1.0f, 1.0f});
-        renderer_->clear();
-      }
       renderer_->setCanvasSize(cw, ch);  // キャンバスを Composition Space に設定
-      const FloatColor bgColor = comp->backgroundColor();
       if (compositionViewLog().isDebugEnabled()) {
         float fallbackPanX = 0.0f;
         float fallbackPanY = 0.0f;
@@ -2991,17 +3082,9 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                                 bgColor.a())
             << "checker=" << showCheckerboard_
             << "usesCompositionRenderer=" << (compositionRenderer_ != nullptr)
-            << "backgroundDrawMode=drawRectLocal";
+            << "backgroundDrawMode=clear";
       }
-      // Unify fallback background drawing with the GPU path so we can
-      // rule out DrawCompositionBackground() as the source of the mismatch.
-      const QImage backgroundSprite = makeSolidColorSprite(bgColor);
-      renderer_->drawSprite(0.0f, 0.0f, cw, ch, backgroundSprite, 1.0f);
-      if (showCheckerboard_) {
-        renderer_->drawCheckerboard(0.0f, 0.0f, cw, ch, 16.0f,
-                                    {0.25f, 0.25f, 0.25f, 0.42f},
-                                    {0.35f, 0.35f, 0.35f, 0.32f});
-      }
+      renderer_->drawSolidRect(0.0f, 0.0f, cw, ch, bgColor, 1.0f);
       if (showGrid_) {
         renderer_->drawGrid(0, 0, cw, ch, 100.0f, 1.0f,
                             {0.3f, 0.3f, 0.3f, 0.5f});
@@ -3490,6 +3573,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
     const ArtifactAbstractLayerPtr selectedLayer =
         (!selectedLayerId_.isNil() && comp) ? comp->layerById(selectedLayerId_)
                                             : ArtifactAbstractLayerPtr{};
+    drawCompositionRegionOverlay(renderer_.get(), comp, showCheckerboard_);
     drawViewportGhostOverlay(owner, comp, selectedLayer, currentFrame);
     overlayMs = markPhaseMs();
 

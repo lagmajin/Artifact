@@ -4,8 +4,10 @@
 #include <cstring>
 #include <QImage>
 #include <QPointF>
+#include <QRectF>
 #include <QTransform>
 #include <QDebug>
+#include <QLoggingCategory>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/RenderDevice.h>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/DeviceContext.h>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/SwapChain.h>
@@ -29,6 +31,8 @@ import Color.Float;
 import Artifact.Render.ShaderManager;
 
 namespace Artifact {
+
+Q_LOGGING_CATEGORY(primitiveRenderer2DLog, "artifact.primitiverenderer2d")
 
 using namespace Diligent;
 using namespace ArtifactCore;
@@ -395,6 +399,7 @@ void PrimitiveRenderer2D::setZoom(float zoom)                { impl_->viewport_.
 void PrimitiveRenderer2D::panBy(float dx, float dy)          { impl_->viewport_.PanBy(dx, dy); }
 void PrimitiveRenderer2D::resetView()                        { impl_->viewport_.ResetView(); }
 void PrimitiveRenderer2D::fitToViewport(float margin)        { impl_->viewport_.FitCanvasToViewport(margin); }
+void PrimitiveRenderer2D::fillToViewport(float margin)       { impl_->viewport_.FillCanvasToViewport(margin); }
 
 void PrimitiveRenderer2D::setViewMatrix(const QMatrix4x4& view) { impl_->externalViewMatrix_ = view; }
 void PrimitiveRenderer2D::setProjectionMatrix(const QMatrix4x4& proj) { impl_->externalProjMatrix_ = proj; }
@@ -442,24 +447,42 @@ void PrimitiveRenderer2D::drawRectLocal(float x, float y, float w, float h, cons
         return;
     }
 
+    const auto viewportCB = impl_->viewport_.GetViewportCB();
+    const float zoom = std::max(viewportCB.zoom, 0.001f);
+    const float panX = viewportCB.offset.x;
+    const float panY = viewportCB.offset.y;
+    const float screenW = std::max(viewportCB.screenSize.x, 0.001f);
+    const float screenH = std::max(viewportCB.screenSize.y, 0.001f);
+
+    auto toNdc = [&](float cx, float cy) -> std::pair<float, float> {
+        const float wx = cx * zoom + panX;
+        const float wy = cy * zoom + panY;
+        const float ndcX = wx / screenW * 2.0f - 1.0f;
+        const float ndcY = -(wy / screenH * 2.0f - 1.0f); // Y flip
+        return {ndcX, ndcY};
+    };
+
+    if (primitiveRenderer2DLog().isDebugEnabled()) {
+        const auto [x0n, y0n] = toNdc(x, y);
+        const auto [x1n, y1n] = toNdc(x + w, y);
+        const auto [x2n, y2n] = toNdc(x, y + h);
+        const auto [x3n, y3n] = toNdc(x + w, y + h);
+
+        qCDebug(primitiveRenderer2DLog)
+            << "[PrimitiveRenderer2D] solid rect"
+            << "localRect=" << QRectF(x, y, w, h)
+            << "viewport=" << QRectF(0.0, 0.0, screenW, screenH)
+            << "pan=" << QPointF(panX, panY)
+            << "zoom=" << zoom
+            << "ndc v0=" << QPointF(x0n, y0n)
+            << "v1=" << QPointF(x1n, y1n)
+            << "v2=" << QPointF(x2n, y2n)
+            << "v3=" << QPointF(x3n, y3n)
+            << "batch=" << impl_->m_batchActive;
+    }
+
     // If batch is active, accumulate vertices
     if (impl_->m_batchActive) {
-        auto viewportCB = impl_->viewport_.GetViewportCB();
-        const float zoom = std::max(viewportCB.zoom, 0.001f);
-        const float panX = viewportCB.offset.x;
-        const float panY = viewportCB.offset.y;
-        const float screenW = std::max(viewportCB.screenSize.x, 0.001f);
-        const float screenH = std::max(viewportCB.screenSize.y, 0.001f);
-
-        // Compute NDC positions on CPU
-        auto toNdc = [&](float cx, float cy) -> std::pair<float, float> {
-            float wx = cx * zoom + panX;
-            float wy = cy * zoom + panY;
-            float ndcX = wx / screenW * 2.0f - 1.0f;
-            float ndcY = -(wy / screenH * 2.0f - 1.0f); // Y flip
-            return {ndcX, ndcY};
-        };
-
         auto [x0n, y0n] = toNdc(x, y);
         auto [x1n, y1n] = toNdc(x + w, y);
         auto [x2n, y2n] = toNdc(x, y + h);
@@ -498,8 +521,6 @@ void PrimitiveRenderer2D::drawRectLocal(float x, float y, float w, float h, cons
     }
 
     {
-        auto viewportCB = impl_->viewport_.GetViewportCB();
-        const float zoom = std::max(viewportCB.zoom, 0.001f);
         CBSolidTransform2D cbTransform;
         cbTransform.offset     = { x * zoom + viewportCB.offset.x, y * zoom + viewportCB.offset.y };
         cbTransform.scale      = { w * zoom, h * zoom };

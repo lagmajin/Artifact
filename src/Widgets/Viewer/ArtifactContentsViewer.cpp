@@ -76,6 +76,7 @@ module Artifact.Contents.Viewer;
 
 import Artifact.Preview.Pipeline;
 import MediaPlaybackController;
+import Widgets.Utils.CSS;
 import File.TypeDetector;
 import Artifact.Widgets.ModelViewer;
 import Utils.String.UniString;
