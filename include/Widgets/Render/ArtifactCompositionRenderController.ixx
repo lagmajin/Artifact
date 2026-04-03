@@ -93,6 +93,7 @@ void resetView();
 void zoomInAt(const QPointF& viewportPos);
 void zoomOutAt(const QPointF& viewportPos);
 void zoomFit();
+void zoomFill();
   void zoom100();
   void focusSelectedLayer();
   LayerID layerAtViewportPos(const QPointF& viewportPos) const;

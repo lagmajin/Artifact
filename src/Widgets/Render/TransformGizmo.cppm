@@ -75,6 +75,9 @@ QRectF adjustedResizeBox(const QRectF& startBox, const QPointF& delta, Transform
  case TransformGizmo::HandleType::Scale_B:
   box.setBottom(box.bottom() + delta.y());
   break;
+ case TransformGizmo::HandleType::Scale_Center:
+  box.translate(delta);
+  break;
  default:
   break;
  }
@@ -137,6 +140,25 @@ float pointDistance(const QPointF& a, const Detail::float2& b)
 float pointDistance(const Detail::float2& a, const QPointF& b)
 {
  return pointDistance(QPointF(a.x, a.y), b);
+}
+
+float pointToSegmentDistance(const QPointF& p, const QPointF& a, const QPointF& b)
+{
+ const double ax = a.x();
+ const double ay = a.y();
+ const double bx = b.x();
+ const double by = b.y();
+ const double px = p.x();
+ const double py = p.y();
+ const double abx = bx - ax;
+ const double aby = by - ay;
+ const double lenSq = abx * abx + aby * aby;
+ if (lenSq <= 1e-9) {
+  return pointDistance(p, a);
+ }
+ const double t = std::clamp(((px - ax) * abx + (py - ay) * aby) / lenSq, 0.0, 1.0);
+ const QPointF proj(ax + abx * t, ay + aby * t);
+ return pointDistance(p, proj);
 }
 
 struct TransformSnapshot {
@@ -238,11 +260,14 @@ const FloatColor& color,
                         const float invZoom,
                         const bool active)
 {
- const float shadowShift = std::max(1.2f, 1.75f * invZoom);
- const float shadowThickness = thickness + std::max(1.5f, 1.6f * invZoom);
+ const float dx = b.x - a.x;
+ const float dy = b.y - a.y;
+ const float len = std::sqrt(dx * dx + dy * dy);
+ const Detail::float2 norm = len > 0.0001f ? Detail::float2{ -dy / len, dx / len } : Detail::float2{0.0f, 0.0f};
+ const float shadowShift = std::max(1.0f, 1.25f * invZoom);
+ const float shadowThickness = thickness + std::max(0.8f, 0.7f * invZoom);
  const FloatColor shadow = { 0.0f, 0.0f, 0.0f, active ? 0.42f : 0.30f };
  const FloatColor highlight = brighten(color, active ? 1.18f : 1.08f);
-
  renderer->drawSolidLine({a.x + shadowShift, a.y + shadowShift},
                           {b.x + shadowShift, b.y + shadowShift},
                           shadow, shadowThickness);
@@ -323,7 +348,7 @@ if (!localRect.isValid() || localRect.width() <= 0.0 || localRect.height() <= 0.
 localRect.adjust(-GIZMO_OFFSET, -GIZMO_OFFSET, GIZMO_OFFSET, GIZMO_OFFSET);
 
 const QTransform globalTransform = layer_->getGlobalTransform();
- FloatColor gizmoColor{0.0f, 0.5f, 1.0f, 1.0f}; // Cyan-ish blue
+ FloatColor gizmoColor{0.0f, 0.72f, 1.0f, 1.0f}; // More saturated cyan
  if (isDragging_) gizmoColor = {1.0f, 1.0f, 0.0f, 1.0f}; // Yellow while dragging
  const bool isActive = isDragging_ || activeHandle_ != HandleType::None;
 
@@ -360,15 +385,15 @@ const bool showAnchor = mode_ == Mode::All;
  if (showScale) {
   const Detail::float2 center_c((float)globalTransform.map(localRect.center()).x(), (float)globalTransform.map(localRect.center()).y());
   const FloatColor scaleX = activeHandle_ == HandleType::Scale_L || activeHandle_ == HandleType::Scale_R
-      ? FloatColor{1.0f, 0.42f, 0.26f, 1.0f}
-      : FloatColor{0.92f, 0.32f, 0.20f, 1.0f};
+      ? FloatColor{1.0f, 0.24f, 0.10f, 1.0f}
+      : FloatColor{0.98f, 0.18f, 0.06f, 1.0f};
   const FloatColor scaleY = activeHandle_ == HandleType::Scale_T || activeHandle_ == HandleType::Scale_B
-      ? FloatColor{0.34f, 1.0f, 0.46f, 1.0f}
-      : FloatColor{0.22f, 0.82f, 0.34f, 1.0f};
+      ? FloatColor{0.18f, 1.0f, 0.30f, 1.0f}
+      : FloatColor{0.08f, 0.86f, 0.22f, 1.0f};
   const FloatColor scaleCorner = activeHandle_ == HandleType::Scale_TL || activeHandle_ == HandleType::Scale_TR ||
                                  activeHandle_ == HandleType::Scale_BL || activeHandle_ == HandleType::Scale_BR
-      ? FloatColor{1.0f, 0.95f, 0.92f, 1.0f}
-      : FloatColor{0.94f, 0.94f, 0.94f, 1.0f};
+      ? FloatColor{1.0f, 0.98f, 0.96f, 1.0f}
+      : FloatColor{0.98f, 0.98f, 0.98f, 1.0f};
 
   const float axisThickness = std::max(1.05f, 1.25f * invZoom);
   const float cornerAxisThickness = std::max(0.9f, 1.05f * invZoom);
@@ -389,7 +414,17 @@ const bool showAnchor = mode_ == Mode::All;
   drawHandle(bc_c, scaleY);
   drawHandle(lc_c, scaleX);
   drawHandle(rc_c, scaleX);
-}
+
+  const float centerHandleSize = std::max(10.0f, handleSize * 0.9f);
+  const QRectF centerRect(center_c.x - centerHandleSize * 0.5f,
+                          center_c.y - centerHandleSize * 0.5f,
+                          centerHandleSize, centerHandleSize);
+  drawEmphasizedRect(renderer, centerRect,
+                     activeHandle_ == HandleType::Scale_Center ? FloatColor{1.0f, 0.92f, 0.35f, 1.0f}
+                                                               : FloatColor{0.96f, 0.96f, 0.96f, 1.0f},
+                     std::max(1.0f, 0.75f * invZoom), invZoom,
+                     activeHandle_ != HandleType::None);
+ }
 
  const auto& t3d = layer_->transform3D();
  const QPointF rotateCenterWorld = globalTransform.map(localRect.center());
@@ -484,6 +519,7 @@ TransformGizmo::HandleType TransformGizmo::hitTest(const QPointF& viewportPos, A
  const QTransform globalTransform = layer_->getGlobalTransform();
  const float zoom = renderer->getZoom();
  const float invZoom = zoom > 0.0001f ? 1.0f / zoom : 1.0f;
+ const float handleSize = std::clamp(HANDLE_SIZE * 1.65f * invZoom, 9.0f, 22.0f);
  
  // 1. Check handles first (they should have priority over the body)
  auto checkLocalPoint = [&](const QPointF& localPoint) {
@@ -501,6 +537,18 @@ TransformGizmo::HandleType TransformGizmo::hitTest(const QPointF& viewportPos, A
  if (allowsHandle(HandleType::Scale_B) && checkLocalPoint(QPointF(localRect.center().x(), localRect.bottom()))) return HandleType::Scale_B;
  if (allowsHandle(HandleType::Scale_L) && checkLocalPoint(QPointF(localRect.left(), localRect.center().y()))) return HandleType::Scale_L;
  if (allowsHandle(HandleType::Scale_R) && checkLocalPoint(QPointF(localRect.right(), localRect.center().y()))) return HandleType::Scale_R;
+ if (allowsHandle(HandleType::Scale_Center)) {
+  const QPointF centerPoint = localRect.center();
+  const QPointF worldPoint = globalTransform.map(centerPoint);
+  const auto vPos = renderer->canvasToViewport({static_cast<float>(worldPoint.x()),
+                                                static_cast<float>(worldPoint.y())});
+  const float centerHandleSize = std::max(10.0f, 10.0f * invZoom);
+  if (QRectF(vPos.x - centerHandleSize * 0.5f,
+             vPos.y - centerHandleSize * 0.5f,
+             centerHandleSize, centerHandleSize).contains(viewportPos)) {
+   return HandleType::Scale_Center;
+  }
+ }
 
  const auto& t3d = layer_->transform3D();
 
@@ -517,6 +565,19 @@ TransformGizmo::HandleType TransformGizmo::hitTest(const QPointF& viewportPos, A
   const float ringHit = std::max(12.0f * invZoom, 9.0f);
   const float distToRing = std::abs(pointDistance(mousePos, rotateCenterWorld) - rotateRingRadius);
   if (allowsHandle(HandleType::Rotate) && distToRing <= ringHit) return HandleType::Rotate;
+
+  const QPointF arrowTip(rotateCenterWorld.x(), rotateCenterWorld.y() - rotateRingRadius);
+  const QPointF arrowBase(rotateCenterWorld.x(), rotateCenterWorld.y() - rotateRingRadius * 0.88f);
+  const float arrowRadius = std::max(handleSize * 0.34f, 3.5f);
+  const float arrowHit = std::max(4.5f, 4.0f * invZoom);
+  if (allowsHandle(HandleType::Rotate)) {
+   if (pointDistance(mousePos, arrowTip) <= arrowRadius + ringHit) {
+    return HandleType::Rotate;
+   }
+   if (pointToSegmentDistance(mousePos, arrowBase, arrowTip) <= arrowHit) {
+    return HandleType::Rotate;
+   }
+  }
  }
 
  // 3. Anchor point handle
@@ -561,13 +622,20 @@ Qt::CursorShape TransformGizmo::cursorShapeForViewportPos(const QPointF& viewpor
   case HandleType::Scale_T:
   case HandleType::Scale_B:
    return Qt::SizeVerCursor;
+ case HandleType::Scale_Center:
+  return Qt::SizeAllCursor;
  case HandleType::Rotate:
    return Qt::CrossCursor;
  case HandleType::Anchor:
    return Qt::CrossCursor;
-  default:
+ default:
   return Qt::ArrowCursor;
  }
+}
+
+TransformGizmo::HandleType TransformGizmo::handleAtViewportPos(const QPointF& viewportPos, ArtifactIRenderer* renderer) const
+{
+ return hitTest(viewportPos, renderer);
 }
 
 bool TransformGizmo::handleMousePress(const QPointF& viewportPos, ArtifactIRenderer* renderer) {
@@ -606,11 +674,12 @@ case Mode::Move:
   return handle == HandleType::Move;
   case Mode::Rotate:
    return handle == HandleType::Rotate;
- case Mode::Scale:
+case Mode::Scale:
   return handle == HandleType::Scale_TL || handle == HandleType::Scale_TR ||
          handle == HandleType::Scale_BL || handle == HandleType::Scale_BR ||
          handle == HandleType::Scale_T || handle == HandleType::Scale_B ||
-         handle == HandleType::Scale_L || handle == HandleType::Scale_R;
+         handle == HandleType::Scale_L || handle == HandleType::Scale_R ||
+         handle == HandleType::Scale_Center;
  }
  return false;
 }
@@ -765,6 +834,29 @@ bool TransformGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRender
        localOffset, dragStartScaleX_, dragStartScaleY_, dragStartRotation_);
    const QPointF newOffset = applyScaleRotateToVector(
        localOffset, dragStartScaleX_, dragStartScaleY_, newRotation);
+   t3d.setPosition(time,
+                   dragStartLayerPos_.x() + static_cast<float>(startOffset.x() - newOffset.x()),
+                   dragStartLayerPos_.y() + static_cast<float>(startOffset.y() - newOffset.y()));
+   layer_->setDirty(LayerDirtyFlag::Transform);
+   Q_EMIT layer_->changed();
+  } else if (activeHandle_ == HandleType::Scale_Center) {
+   const QPointF pivotLocal = dragStartLocalBounds_.center();
+   const QPointF pivotWorldStart = dragStartGlobalTransform_.map(pivotLocal);
+   const QPointF startVec = dragStartCanvasPos_ - pivotWorldStart;
+   const QPointF currentVec = currentCanvasPos - pivotWorldStart;
+   const float startLen = std::max(1.0f, static_cast<float>(std::sqrt(startVec.x() * startVec.x() + startVec.y() * startVec.y())));
+   const float currentLen = std::max(0.001f, static_cast<float>(std::sqrt(currentVec.x() * currentVec.x() + currentVec.y() * currentVec.y())));
+   const float factor = std::clamp(currentLen / startLen, 0.05f, 100.0f);
+   const float newScaleX = dragStartScaleX_ * factor;
+   const float newScaleY = dragStartScaleY_ * factor;
+
+   const QPointF localOffset = pivotLocal - dragStartAnchor_;
+   const QPointF startOffset = applyScaleRotateToVector(
+       localOffset, dragStartScaleX_, dragStartScaleY_, dragStartRotation_);
+   const QPointF newOffset = applyScaleRotateToVector(
+       localOffset, newScaleX, newScaleY, dragStartRotation_);
+
+   t3d.setScale(time, newScaleX, newScaleY);
    t3d.setPosition(time,
                    dragStartLayerPos_.x() + static_cast<float>(startOffset.x() - newOffset.x()),
                    dragStartLayerPos_.y() + static_cast<float>(startOffset.y() - newOffset.y()));

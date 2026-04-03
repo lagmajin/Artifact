@@ -72,9 +72,9 @@ namespace {
   constexpr int kLayerHeaderButtonSize = 24;
   constexpr int kLayerColumnWidth = 28;
   constexpr int kLayerPropertyColumnCount = 5;
-  constexpr int kInlineComboHeight = 24;
-  constexpr int kInlineBlendWidth = 120;
-  constexpr int kInlineParentWidth = 150;
+  constexpr int kInlineComboHeight = 26;
+  constexpr int kInlineBlendWidth = 140;
+  constexpr int kInlineParentWidth = 172;
   constexpr int kInlineComboGap = 6;
   constexpr int kInlineComboMarginY = 2;
   constexpr int kInlineComboReserve = kInlineParentWidth + kInlineBlendWidth + kInlineComboGap + 10;
@@ -115,9 +115,10 @@ namespace {
   const QColor bg = pal.button().color();
   const QColor fg = pal.buttonText().color();
   const QColor border = pal.mid().color().darker(120);
-  return QStringLiteral(
-      "QComboBox { background:%1; color:%2; border:1px solid %3; padding:1px 6px; }"
-      "QComboBox::drop-down { width:18px; border-left:1px solid %3; }")
+ return QStringLiteral(
+      "QComboBox { background:%1; color:%2; border:1px solid %3; padding:2px 8px; min-height:22px; font-size:11px; }"
+      "QComboBox::drop-down { width:20px; border-left:1px solid %3; }"
+      "QComboBox QAbstractItemView { font-size:11px; }")
       .arg(bg.name(), fg.name(), border.name());
  }
 
@@ -1819,7 +1820,7 @@ void ArtifactLayerPanelWidget::performUpdateLayout()
     const int rowIndent = impl_->visibleRows[idx].depth * 14;
     const int nameStartX = std::max(1, impl_->propertyColumnWidth) * kLayerPropertyColumnCount;
     const int textX = nameStartX + rowIndent + (impl_->visibleRows[idx].hasChildren ? 16 : 4);
-    const int editorWidth = std::max(60, width() - textX - kInlineParentWidth - kInlineBlendWidth - 8);
+  const int editorWidth = std::max(60, width() - textX - kInlineParentWidth - kInlineBlendWidth - 8);
     const int rowH = std::max(1, impl_->rowHeight);
     impl_->inlineNameEditor->setGeometry(textX, idx * rowH + 2, editorWidth, rowH - 4);
 

@@ -34,6 +34,7 @@ public /*slots*/:
   void zoomIn(); W_SLOT(zoomIn);
   void zoomOut(); W_SLOT(zoomOut);
   void zoomFit(); W_SLOT(zoomFit);
+  void zoomFill(); W_SLOT(zoomFill);
   void zoom100(); W_SLOT(zoom100);
 
 signals:

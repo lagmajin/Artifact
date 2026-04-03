@@ -643,34 +643,34 @@ namespace Artifact
   {
    headerWidget = new QWidget(parent);
    auto* headerLayout = new QVBoxLayout(headerWidget);
-   headerLayout->setContentsMargins(10, 8, 10, 8);
-   headerLayout->setSpacing(6);
+   headerLayout->setContentsMargins(8, 4, 8, 4);
+   headerLayout->setSpacing(3);
 
    auto* infoRow = new QHBoxLayout();
    infoRow->setContentsMargins(0, 0, 0, 0);
-   infoRow->setSpacing(10);
+   infoRow->setSpacing(6);
 
    auto* textColumn = new QVBoxLayout();
    textColumn->setContentsMargins(0, 0, 0, 0);
-   textColumn->setSpacing(2);
+   textColumn->setSpacing(1);
 
    titleLabel = new QLabel(QStringLiteral("Contents Viewer"), headerWidget);
-   titleLabel->setStyleSheet("font-size: 15px; font-weight: 600; color: #e8e8e8;");
+   titleLabel->setStyleSheet("font-size: 14px; font-weight: 600; color: #e8e8e8;");
    typeBadgeLabel = new QLabel(QStringLiteral("Idle"), headerWidget);
    typeBadgeLabel->setStyleSheet(R"(
      QLabel {
        background: #2f2f2f;
        color: #e8e8e8;
        border-radius: 9px;
-       padding: 2px 8px;
-       font-size: 11px;
+       padding: 2px 6px;
+       font-size: 10px;
      }
    )");
    metaLabel = new QLabel(QStringLiteral("No file selected"), headerWidget);
-   metaLabel->setStyleSheet("color: #c4c4c4; font-size: 11px;");
+   metaLabel->setStyleSheet("color: #c4c4c4; font-size: 10px;");
    metaLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
    stateLabel = new QLabel(QStringLiteral("State: Idle"), headerWidget);
-   stateLabel->setStyleSheet("color: #d0d0d0; font-size: 11px;");
+   stateLabel->setStyleSheet("color: #d0d0d0; font-size: 10px;");
 
    textColumn->addWidget(titleLabel);
    textColumn->addWidget(metaLabel);
@@ -678,13 +678,13 @@ namespace Artifact
 
    auto* badgeColumn = new QVBoxLayout();
    badgeColumn->setContentsMargins(0, 0, 0, 0);
-   badgeColumn->setSpacing(4);
+   badgeColumn->setSpacing(2);
    badgeColumn->addWidget(typeBadgeLabel, 0, Qt::AlignLeft);
    badgeColumn->addStretch(1);
 
    auto* buttonRow = new QHBoxLayout();
    buttonRow->setContentsMargins(0, 0, 0, 0);
-   buttonRow->setSpacing(4);
+   buttonRow->setSpacing(2);
 
    auto createButton = [parent](const QString& text, const QString& tooltip) {
     auto* button = new QToolButton(parent);
@@ -692,6 +692,8 @@ namespace Artifact
     button->setToolTip(tooltip);
     button->setAutoRaise(true);
     button->setCursor(Qt::PointingHandCursor);
+    button->setFixedHeight(22);
+    button->setMinimumWidth(0);
     return button;
    };
 
@@ -739,14 +741,14 @@ namespace Artifact
    buttonRow->addWidget(rotateLeftButton);
    buttonRow->addWidget(rotateRightButton);
    buttonRow->addWidget(resetButton);
-   buttonRow->addSpacing(8);
+   buttonRow->addSpacing(4);
    buttonRow->addWidget(playButton);
    buttonRow->addWidget(pauseButton);
    buttonRow->addWidget(stopButton);
-   buttonRow->addSpacing(8);
+   buttonRow->addSpacing(4);
    buttonRow->addWidget(copyPathButton);
    buttonRow->addWidget(revealButton);
-   buttonRow->addSpacing(8);
+   buttonRow->addSpacing(4);
    buttonRow->addWidget(sourceButton);
    buttonRow->addWidget(finalButton);
    buttonRow->addWidget(compareButton);

@@ -83,6 +83,7 @@ public:
  void panBy(float dx, float dy);
  void resetView();
  void fitToViewport(float margin = 50.0f);
+ void fillToViewport(float margin = 0.0f);
  void setViewMatrix(const QMatrix4x4& view);
  void setProjectionMatrix(const QMatrix4x4& proj);
  void setUseExternalMatrices(bool use);

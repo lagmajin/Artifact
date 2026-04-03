@@ -142,7 +142,7 @@ void applyTabLabelColors(ads::CDockWidgetTab* tab, const QString& color, const b
     }
 
     const QColor themeBg = QColor(ArtifactCore::currentDCCTheme().backgroundColor);
-    const QColor themeBorder = QColor(ArtifactCore::currentDCCTheme().accentColor);
+    const QColor themeBorder = QColor(ArtifactCore::currentDCCTheme().borderColor);
     const QColor tabBg = emphasize ? themeBg.lighter(108) : themeBg.darker(108);
     const QString tabStyle = QStringLiteral(
                                 "background-color: %1;"
@@ -165,7 +165,7 @@ void applyTabLabelColors(ads::CDockWidgetTab* tab, const QString& color, const b
 DockStyleManager::DockStyleManager(ads::CDockManager* dockManager, QObject* parent)
     : QObject(parent), impl_(new Impl()) {
     impl_->dockManager_ = dockManager;
-    impl_->glowColor_ = QColor(ArtifactCore::currentDCCTheme().accentColor);
+    impl_->glowColor_ = QColor(ArtifactCore::currentDCCTheme().borderColor);
 
     impl_->glowStyle_ = new DockGlowStyle(QApplication::style());
     impl_->dockManager_->setStyle(impl_->glowStyle_);

@@ -12,6 +12,7 @@
 #include <QEvent>
 #include <QCoreApplication>
 #include <QContextMenuEvent>
+#include <QCursor>
 #include <QHideEvent>
 #include <QHash>
 #include <QFocusEvent>
@@ -41,6 +42,8 @@
 #include <QMimeData>
 #include <QFileInfo>
 #include <QImageReader>
+#include <QPainterPath>
+#include <QPixmap>
 #include <wobjectimpl.h>
 #include <QTimer>
 
@@ -72,6 +75,27 @@ namespace Artifact {
 W_OBJECT_IMPL(ArtifactCompositionEditor)
 
 namespace {
+QCursor makeRotateCursor()
+{
+  QPixmap pixmap(32, 32);
+  pixmap.fill(Qt::transparent);
+  QPainter painter(&pixmap);
+  painter.setRenderHint(QPainter::Antialiasing, true);
+  QPen pen(QColor(240, 240, 240));
+  pen.setWidth(2);
+  pen.setCapStyle(Qt::RoundCap);
+  pen.setJoinStyle(Qt::RoundJoin);
+  painter.setPen(pen);
+  painter.setBrush(Qt::NoBrush);
+  painter.drawEllipse(QRectF(6, 6, 20, 20));
+  QPainterPath path;
+  path.moveTo(23, 11);
+  path.lineTo(27, 8);
+  path.lineTo(26, 14);
+  painter.drawPath(path);
+  return QCursor(pixmap, 16, 16);
+}
+
 // CompositionEditor 内部の同期は Qt signal を増やさず、
 // ここで定義する deferred event に集約する。
 // selection / tool label / fit などの状態変化は postEvent でまとめて反映する。
@@ -291,7 +315,7 @@ public:
       controller_->renderOneFrame();
       resizePending_ = false;
       if (pendingInitialFit_) {
-        QTimer::singleShot(0, this, [this]() { scheduleInitialFit(); });
+        QTimer::singleShot(50, this, [this]() { scheduleInitialFit(); });
       }
     });
   }
@@ -310,6 +334,24 @@ public:
         overlayWidget_->raise();
       }
     }
+  }
+
+  void updateViewportCursor(const QPointF& pos) {
+    if (!controller_ || spacePressed_) {
+      return;
+    }
+    if (controller_->gizmo() && controller_->gizmo()->activeHandle() == TransformGizmo::HandleType::Rotate) {
+      setCursor(makeRotateCursor());
+      return;
+    }
+    if (controller_->gizmo()) {
+      const auto handle = controller_->gizmo()->handleAtViewportPos(pos, controller_->renderer());
+      if (handle == TransformGizmo::HandleType::Rotate) {
+        setCursor(makeRotateCursor());
+        return;
+      }
+    }
+    setCursor(controller_->cursorShapeForViewportPos(pos));
   }
 
 protected:
@@ -332,7 +374,7 @@ protected:
           controller_->setViewportSize((float)width(), (float)height());
           // フェーズ2：Composition 接続とレンダー開始はイベントループを1サイクル挟んで実行
           // (重いシェーダーコンパイル直後の UI ブロックを軽減)
-          QTimer::singleShot(10, this, [this]() {
+          QTimer::singleShot(50, this, [this]() {
             if (!controller_ || !isVisible()) return;
             controller_->setComposition(resolvePreferredComposition());
             pendingInitialFit_ = true;
@@ -471,7 +513,7 @@ protected:
       resizePending_ = true;
       if (resizeDebounceTimer_) {
         resizeDebounceTimer_->stop();
-        resizeDebounceTimer_->start(80);
+        resizeDebounceTimer_->start(160);
       }
     }
   }
@@ -578,8 +620,7 @@ protected:
       controller_->handleMousePress(event);
       if (controller_->gizmo() && controller_->gizmo()->isDragging()) {
         grabMouse();
-        const auto cursor = controller_->cursorShapeForViewportPos(event->position());
-        setCursor(cursor == Qt::OpenHandCursor ? Qt::ClosedHandCursor : cursor);
+        updateViewportCursor(event->position());
         if (overlayWidget_) {
           overlayWidget_->update();
         }
@@ -610,13 +651,14 @@ protected:
       controller_->handleMouseMove(event->position());
       if (controller_->gizmo() && controller_->gizmo()->isDragging()) {
         controller_->renderOneFrame();
+        updateViewportCursor(event->position());
         event->accept();
         return;
       }
       if (spacePressed_) {
           setCursor(Qt::OpenHandCursor);
       } else {
-          setCursor(controller_->cursorShapeForViewportPos(event->position()));
+          updateViewportCursor(event->position());
       }
     }
 
@@ -658,7 +700,7 @@ protected:
         update();
       }
       if (!spacePressed_) {
-          setCursor(controller_->cursorShapeForViewportPos(event->position()));
+          updateViewportCursor(event->position());
       }
     }
 
@@ -974,9 +1016,9 @@ private:
         QTimer::singleShot(50, this, [this]() { scheduleInitialFit(); });
         return;
       }
-      controller_->zoomFit();
+      controller_->zoomFill();
       pendingInitialFit_ = false;
-      // Fit完了後にrenderingスタート
+      // Fill完了後にrenderingスタート
       controller_->renderOneFrame();
       if (autoStartPending_) {
         autoStartPending_ = false;
@@ -1544,7 +1586,7 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   impl_->topToolbar_->addSeparator();
   impl_->zoomInAction_ = impl_->topToolbar_->addAction("Zoom+");
   impl_->zoomOutAction_ = impl_->topToolbar_->addAction("Zoom-");
-  impl_->zoomFitAction_ = impl_->topToolbar_->addAction("Fit");
+  impl_->zoomFitAction_ = impl_->topToolbar_->addAction("Fill");
   impl_->zoom100Action_ = impl_->topToolbar_->addAction("100%");
   impl_->editTextAction_ = impl_->topToolbar_->addAction("Edit Text");
   impl_->editTextAction_->setToolTip(QStringLiteral("Edit current text layer"));
@@ -1843,7 +1885,7 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   QObject::connect(impl_->zoomOutAction_, &QAction::triggered, this,
                    &ArtifactCompositionEditor::zoomOut);
   QObject::connect(impl_->zoomFitAction_, &QAction::triggered, this,
-                   &ArtifactCompositionEditor::zoomFit);
+                   &ArtifactCompositionEditor::zoomFill);
   QObject::connect(impl_->zoom100Action_, &QAction::triggered, this,
                    &ArtifactCompositionEditor::zoom100);
   QObject::connect(impl_->editTextAction_, &QAction::triggered, this,
@@ -2049,6 +2091,12 @@ void ArtifactCompositionEditor::zoomOut() {
 void ArtifactCompositionEditor::zoomFit() {
   if (impl_->renderController_) {
     impl_->renderController_->zoomFit();
+  }
+}
+
+void ArtifactCompositionEditor::zoomFill() {
+  if (impl_->renderController_) {
+    impl_->renderController_->zoomFill();
   }
 }
 

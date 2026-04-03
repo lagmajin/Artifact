@@ -128,6 +128,7 @@ namespace Artifact
   void panBy(float dx, float dy)         { primitiveRenderer_.panBy(dx, dy); }
   void resetView()                       { primitiveRenderer_.resetView(); }
   void fitToViewport(float margin)       { primitiveRenderer_.fitToViewport(margin); }
+  void fillToViewport(float margin)      { primitiveRenderer_.fillToViewport(margin); }
   void setViewMatrix(const QMatrix4x4& view) { primitiveRenderer_.setViewMatrix(view); primitiveRenderer3D_.setViewMatrix(view); }
   void setProjectionMatrix(const QMatrix4x4& proj) { primitiveRenderer_.setProjectionMatrix(proj); primitiveRenderer3D_.setProjectionMatrix(proj); }
   void setUseExternalMatrices(bool use)  { primitiveRenderer_.setUseExternalMatrices(use); }
@@ -728,6 +729,7 @@ namespace Artifact
  void ArtifactIRenderer::panBy(float dx, float dy)              { impl_->panBy(dx, dy); }
  void ArtifactIRenderer::resetView()                            { impl_->resetView(); }
  void ArtifactIRenderer::fitToViewport(float margin)            { impl_->fitToViewport(margin); }
+ void ArtifactIRenderer::fillToViewport(float margin)            { impl_->fillToViewport(margin); }
  void ArtifactIRenderer::setViewMatrix(const QMatrix4x4& view)  { impl_->setViewMatrix(view); }
  void ArtifactIRenderer::setProjectionMatrix(const QMatrix4x4& proj) { impl_->setProjectionMatrix(proj); }
  void ArtifactIRenderer::setUseExternalMatrices(bool use)  { impl_->setUseExternalMatrices(use); }

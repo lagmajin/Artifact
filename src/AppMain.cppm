@@ -714,7 +714,7 @@ int main(int argc, char *argv[]) {
                                 QStringLiteral("Console"), consoleWidget,
                                 QRect(200, 200, 800, 400));
     auto *compositionEditor = new ArtifactCompositionEditor(mw);
-    compositionEditor->setMinimumWidth(1200); // Reasonable minimum for composition viewer
+    compositionEditor->setMinimumWidth(1024); // Keep the center area from getting too cramped
     compositionEditor->setSizePolicy(QSizePolicy::Expanding,
                                      QSizePolicy::Expanding);
     mw->addDockedWidget(QStringLiteral("Composition Viewer"),
@@ -756,7 +756,7 @@ int main(int argc, char *argv[]) {
         },
         QStringLiteral("Composition Viewer"));
     auto *layerViewEditor = new ArtifactRenderLayerEditor(mw);
-    layerViewEditor->setMinimumWidth(1200); // Match composition viewer minimum
+    layerViewEditor->setMinimumWidth(1024); // Match composition viewer minimum
     layerViewEditor->setSizePolicy(QSizePolicy::Expanding,
                                    QSizePolicy::Expanding);
     mw->addDockedWidgetTabbed(QStringLiteral("Layer View (Diligent)"),
@@ -1004,15 +1004,6 @@ int main(int argc, char *argv[]) {
                                        ? ArtifactApplicationManager::instance()
                                              ->layerSelectionManager()
                                        : nullptr) {
-        QObject::connect(selectionManager,
-                         &ArtifactLayerSelectionManager::selectionChanged, mw,
-                         [propertyPanel, selectionManager]() {
-                           if (!propertyPanel || !selectionManager) {
-                             return;
-                           }
-                           propertyPanel->setFocusedEffectId(QString());
-                           propertyPanel->setLayer(selectionManager->currentLayer());
-                         });
         QObject::connect(selectionManager,
                          &ArtifactLayerSelectionManager::selectionChanged, mw,
                          [projectService, selectionManager]() {

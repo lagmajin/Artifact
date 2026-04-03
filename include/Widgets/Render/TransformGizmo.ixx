@@ -34,6 +34,7 @@ export namespace Artifact {
    Move,
    Scale_TL, Scale_TR, Scale_BL, Scale_BR,
    Scale_T, Scale_B, Scale_L, Scale_R,
+   Scale_Center,
    Rotate,
    Anchor
   };
@@ -47,6 +48,7 @@ export namespace Artifact {
   void setLayer(ArtifactAbstractLayerPtr layer);
   void draw(ArtifactIRenderer* renderer);
   Qt::CursorShape cursorShapeForViewportPos(const QPointF& viewportPos, ArtifactIRenderer* renderer) const;
+  HandleType handleAtViewportPos(const QPointF& viewportPos, ArtifactIRenderer* renderer) const;
 
   bool handleMousePress(const QPointF& viewportPos, ArtifactIRenderer* renderer);
   bool handleMouseMove(const QPointF& viewportPos, ArtifactIRenderer* renderer);

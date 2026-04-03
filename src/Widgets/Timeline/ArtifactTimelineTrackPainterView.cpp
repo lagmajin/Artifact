@@ -688,7 +688,7 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent* event)
  }
 
  // Small HUD for track state.
- const QRect hudRect(10, 10, 180, 44);
+ const QRect hudRect(10, 10, 204, 44);
  p.setPen(Qt::NoPen);
  p.setBrush(theme.background.darker(180));
  p.drawRoundedRect(hudRect, 8, 8);
@@ -701,9 +701,10 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent* event)
             ? impl_->clips_[impl_->hoverClipIndex_].clipId
             : impl_->clips_[impl_->hoverClipIndex_].title)
      : QStringLiteral("-");
- const QString hudText = QStringLiteral("F%1 | R%2")
+ const QString hudText = QStringLiteral("F%1 | R%2 | KF%3")
                              .arg(static_cast<int>(std::round(impl_->currentFrame_)))
-                             .arg(impl_->trackHeights_.size());
+                             .arg(impl_->trackHeights_.size())
+                             .arg(impl_->keyframeMarkers_.size());
  p.drawText(hudRect.adjusted(10, 4, -10, -18), Qt::AlignLeft | Qt::AlignVCenter, hudText);
  p.setPen(theme.text.darker(130));
  p.drawText(hudRect.adjusted(10, 20, -10, -4), Qt::AlignLeft | Qt::AlignVCenter,

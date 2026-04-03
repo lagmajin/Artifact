@@ -87,6 +87,12 @@ W_OBJECT_IMPL(CompositionRenderController)
 namespace {
 Q_LOGGING_CATEGORY(compositionViewLog, "artifact.compositionview")
 
+QImage makeSolidColorSprite(const FloatColor &color) {
+  QImage image(1, 1, QImage::Format_RGBA8888);
+  image.fill(QColor::fromRgbF(color.r(), color.g(), color.b(), color.a()));
+  return image;
+}
+
 enum class SelectionMode { Replace, Add, Toggle };
 
 enum class LayerDragMode { None, Move, ScaleTL, ScaleTR, ScaleBL, ScaleBR };
@@ -955,6 +961,8 @@ public:
   QString dropGhostHint_;
   QString dropCandidateLabel_;
   FloatColor clearColor_ = {0.12f, 0.13f, 0.18f, 1.0f};
+  QString lastBackgroundKey_;
+  CompositionID lastBackgroundCompositionId_;
   QHash<QString, LayerSurfaceCacheEntry> surfaceCache_;
   std::unique_ptr<GPUTextureCacheManager> gpuTextureCacheManager_;
 
@@ -1316,7 +1324,7 @@ void CompositionRenderController::initialize(QWidget *hostWidget) {
   const auto comp = impl_->previewPipeline_.composition();
   if (comp) {
     impl_->applyCompositionState(comp);
-    impl_->renderer_->fitToViewport();
+    impl_->renderer_->fillToViewport();
   }
 
   impl_->renderTimer_ = new QTimer(this);
@@ -1575,7 +1583,7 @@ void CompositionRenderController::setComposition(
 
   if (composition && impl_->renderer_) {
     impl_->applyCompositionState(composition);
-    impl_->renderer_->fitToViewport();
+    impl_->renderer_->fillToViewport();
 
     // 各レイヤーの変更を監視
     for (auto &layer : composition->allLayer()) {
@@ -1760,6 +1768,20 @@ void CompositionRenderController::zoomFit() {
     impl_->renderer_->getPan(panX, panY);
     const float zoom = impl_->renderer_->getZoom();
     qDebug() << "[CompositionRenderController] zoomFit done:"
+             << "zoom=" << zoom << "pan=(" << panX << "," << panY << ")"
+             << "hostSize=" << impl_->hostWidth_ << "x" << impl_->hostHeight_;
+    renderOneFrame();
+  }
+}
+
+void CompositionRenderController::zoomFill() {
+  if (impl_->renderer_) {
+    impl_->renderer_->fillToViewport();
+    impl_->invalidateBaseComposite();
+    float panX, panY;
+    impl_->renderer_->getPan(panX, panY);
+    const float zoom = impl_->renderer_->getZoom();
+    qDebug() << "[CompositionRenderController] zoomFill done:"
              << "zoom=" << zoom << "pan=(" << panX << "," << panY << ")"
              << "hostSize=" << impl_->hostWidth_ << "x" << impl_->hostHeight_;
     renderOneFrame();
@@ -2628,6 +2650,19 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
           .arg(comp->backgroundColor().g(), 0, 'f', 4)
           .arg(comp->backgroundColor().b(), 0, 'f', 4)
           .arg(comp->backgroundColor().a(), 0, 'f', 4);
+  if (backgroundKey != lastBackgroundKey_ || lastBackgroundCompositionId_ != comp->id()) {
+    lastBackgroundKey_ = backgroundKey;
+    lastBackgroundCompositionId_ = comp->id();
+    qInfo() << "[CompositionView][Background]"
+            << "compositionId=" << comp->id().toString()
+            << "background=" << backgroundKey
+            << "clearColor="
+            << QStringLiteral("%1,%2,%3,%4")
+                   .arg(clearColor_.r(), 0, 'f', 4)
+                   .arg(clearColor_.g(), 0, 'f', 4)
+                   .arg(clearColor_.b(), 0, 'f', 4)
+                   .arg(clearColor_.a(), 0, 'f', 4);
+  }
   const QByteArray baseRenderKey =
       QByteArray("comp=") + comp->id().toString().toUtf8() +
       "|baseSerial=" + QByteArray::number(baseInvalidationSerial_) +
@@ -2795,11 +2830,26 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       }
 
       const FloatColor bgColor = comp->backgroundColor();
+      if (compositionViewLog().isDebugEnabled()) {
+        qCDebug(compositionViewLog)
+            << "[CompositionView] background pass (gpu)"
+            << "compSize=" << QSize(static_cast<int>(cw), static_cast<int>(ch))
+            << "rtSize=" << QSize(static_cast<int>(rcw), static_cast<int>(rch))
+            << "viewport=" << QSize(static_cast<int>(origViewW),
+                                    static_cast<int>(origViewH))
+            << "zoom=" << origZoom << "pan=" << QPointF(origPanX, origPanY)
+            << "bg="
+            << QColor::fromRgbF(bgColor.r(), bgColor.g(), bgColor.b(),
+                                bgColor.a())
+            << "checker=" << showCheckerboard_
+            << "compositionSpaceApplied=" << true;
+      }
       renderer_->setOverrideRTV(accumRTV);
       // RTVをクリアしてから背景を描画
       renderer_->setClearColor(FloatColor{0.0f, 0.0f, 0.0f, 1.0f});
       renderer_->clear();
-      renderer_->drawRectLocal(0.0f, 0.0f, cw, ch, bgColor, 1.0f);  // ← Composition Space 全体を描画
+      const QImage backgroundSprite = makeSolidColorSprite(bgColor);
+      renderer_->drawSprite(0.0f, 0.0f, cw, ch, backgroundSprite, 1.0f);
       if (showCheckerboard_) {
         renderer_->drawCheckerboard(0.0f, 0.0f, cw, ch, 16.0f,
                                     {0.25f, 0.25f, 0.25f, 0.42f},
@@ -2906,13 +2956,47 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       layerPassMs = markPhaseMs();
     } else {
       // === Fallback path (GPU パイプラインなし) ===
+      renderer_->setViewportSize(viewportW, viewportH);
+      if (auto ctx = renderer_->immediateContext()) {
+        Diligent::Viewport hostVP;
+        hostVP.TopLeftX = 0.0f;
+        hostVP.TopLeftY = 0.0f;
+        hostVP.Width = viewportW;
+        hostVP.Height = viewportH;
+        hostVP.MinDepth = 0.0f;
+        hostVP.MaxDepth = 1.0f;
+        ctx->SetViewports(1, &hostVP,
+                          static_cast<Diligent::Uint32>(viewportW),
+                          static_cast<Diligent::Uint32>(viewportH));
+      }
+      if (compositionViewLog().isDebugEnabled()) {
+        renderer_->setClearColor(FloatColor{1.0f, 0.0f, 1.0f, 1.0f});
+        renderer_->clear();
+      }
       renderer_->setCanvasSize(cw, ch);  // キャンバスを Composition Space に設定
       const FloatColor bgColor = comp->backgroundColor();
-      if (compositionRenderer_) {
-        compositionRenderer_->DrawCompositionBackground(bgColor);
-      } else {
-        renderer_->drawRectLocal(0.0f, 0.0f, cw, ch, bgColor, 1.0f);
+      if (compositionViewLog().isDebugEnabled()) {
+        float fallbackPanX = 0.0f;
+        float fallbackPanY = 0.0f;
+        renderer_->getPan(fallbackPanX, fallbackPanY);
+        qCDebug(compositionViewLog)
+            << "[CompositionView] background pass (fallback)"
+            << "compSize=" << QSize(static_cast<int>(cw), static_cast<int>(ch))
+            << "viewport=" << QSize(static_cast<int>(viewportW),
+                                    static_cast<int>(viewportH))
+            << "zoom=" << renderer_->getZoom()
+            << "pan=" << QPointF(fallbackPanX, fallbackPanY)
+            << "bg="
+            << QColor::fromRgbF(bgColor.r(), bgColor.g(), bgColor.b(),
+                                bgColor.a())
+            << "checker=" << showCheckerboard_
+            << "usesCompositionRenderer=" << (compositionRenderer_ != nullptr)
+            << "backgroundDrawMode=drawRectLocal";
       }
+      // Unify fallback background drawing with the GPU path so we can
+      // rule out DrawCompositionBackground() as the source of the mismatch.
+      const QImage backgroundSprite = makeSolidColorSprite(bgColor);
+      renderer_->drawSprite(0.0f, 0.0f, cw, ch, backgroundSprite, 1.0f);
       if (showCheckerboard_) {
         renderer_->drawCheckerboard(0.0f, 0.0f, cw, ch, 16.0f,
                                     {0.25f, 0.25f, 0.25f, 0.42f},
@@ -2922,11 +3006,47 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
         renderer_->drawGrid(0, 0, cw, ch, 100.0f, 1.0f,
                             {0.3f, 0.3f, 0.3f, 0.5f});
       }
+
+      if (compositionViewLog().isDebugEnabled()) {
+        const auto tl = renderer_->canvasToViewport({0.0f, 0.0f});
+        const auto br = renderer_->canvasToViewport({cw, ch});
+        const float rectX = std::min(tl.x, br.x);
+        const float rectY = std::min(tl.y, br.y);
+        const float rectW = std::fabs(br.x - tl.x);
+        const float rectH = std::fabs(br.y - tl.y);
+
+        qCDebug(compositionViewLog)
+            << "[CompositionView] fallback comp rect in viewport"
+            << QRectF(rectX, rectY, rectW, rectH);
+
+        const float prevZoom = renderer_->getZoom();
+        float prevPanX = 0.0f;
+        float prevPanY = 0.0f;
+        renderer_->getPan(prevPanX, prevPanY);
+
+        renderer_->setCanvasSize(viewportW, viewportH);
+        renderer_->setZoom(1.0f);
+        renderer_->setPan(0.0f, 0.0f);
+
+        renderer_->drawRectLocal(12.0f, 12.0f, 72.0f, 72.0f,
+                                 {1.0f, 0.0f, 1.0f, 0.9f}, 1.0f);
+        renderer_->drawRectOutline(rectX, rectY, rectW, rectH,
+                                   {1.0f, 0.2f, 0.2f, 1.0f});
+
+        renderer_->setCanvasSize(cw, ch);
+        renderer_->setZoom(prevZoom);
+        renderer_->setPan(prevPanX, prevPanY);
+      }
       basePassMs = markPhaseMs();
 
       if (!frameOutOfRange) {
-        // ROI 計算用のビューポート矩形
-        const QRectF viewportRect(0.0f, 0.0f, cw, ch);
+        // ROI 計算は「コンポジション枠」ではなく「実際に見えている canvas 範囲」で行う。
+        // これを comp size で切ると、画面内に残っているのにオブジェクトや gizmo が消える。
+        const QRectF viewportRect =
+            viewportRectToCanvasRect(renderer_.get(), QPointF(0.0f, 0.0f),
+                                     QPointF(viewportW, viewportH));
+        const float roiPad = std::max(48.0f, 64.0f / std::max(0.001f, renderer_->getZoom()));
+        const QRectF roiRect = viewportRect.adjusted(-roiPad, -roiPad, roiPad, roiPad);
         const DetailLevel lod = detailLevelFromZoom(renderer_->getZoom());
 
         for (const auto &layer : layers) {
@@ -2939,7 +3059,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
           // === 段階 2: ROI 計算 ===
           const QRectF layerBounds = layer->transformedBoundingBox();
-          const QRectF intersected = layerBounds.intersected(viewportRect);
+          const QRectF intersected = layerBounds.intersected(roiRect);
 
           // === 段階 3: 空 ROI スキップ ===
           if (intersected.isEmpty()) {
