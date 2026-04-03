@@ -120,6 +120,74 @@ inline int wheelScrollDelta(const QWheelEvent *event, const bool horizontal) {
   const QPoint angleDelta = event->angleDelta();
   return horizontal ? angleDelta.x() : angleDelta.y();
 }
+
+inline double wheelStepUnits(const QWheelEvent *event) {
+  if (!event) {
+    return 0.0;
+  }
+
+  const int primary = wheelScrollDelta(event, false);
+  const int fallback = wheelScrollDelta(event, true);
+  const int raw = primary != 0 ? primary : fallback;
+  if (raw == 0) {
+    return 0.0;
+  }
+  return static_cast<double>(raw) / 120.0;
+}
+
+bool applyTimelineViewportWheel(ArtifactTimelineNavigatorWidget *navigator,
+                                ArtifactTimelineTrackPainterView *trackView,
+                                const QWheelEvent *event,
+                                const std::function<void(bool)> &syncViewport) {
+  if (!navigator || !trackView || !event) {
+    return false;
+  }
+
+  const double steps = wheelStepUnits(event);
+  if (std::abs(steps) < 0.0001) {
+    return false;
+  }
+
+  const float start = navigator->startValue();
+  const float end = navigator->endValue();
+  const double currentRange = std::clamp(static_cast<double>(end - start), 0.01, 1.0);
+  double newStart = start;
+  double newEnd = end;
+
+  if (event->modifiers() & Qt::ControlModifier) {
+    const QPoint anchorPos = trackView->mapFromGlobal(event->globalPosition().toPoint());
+    const double anchor = trackView->width() > 0
+                              ? std::clamp(static_cast<double>(anchorPos.x()) /
+                                               static_cast<double>(trackView->width()),
+                                           0.0, 1.0)
+                              : 0.5;
+    const double zoomFactor = std::pow(1.12, steps);
+    const double targetRange = std::clamp(currentRange / std::max(0.001, zoomFactor),
+                                          0.01, 1.0);
+    const double focus = static_cast<double>(start) + currentRange * anchor;
+    newStart = std::clamp(focus - targetRange * anchor, 0.0, 1.0 - targetRange);
+    newEnd = newStart + targetRange;
+  } else {
+    const double panRange = currentRange * 0.18 * steps;
+    newStart = std::clamp(static_cast<double>(start) - panRange, 0.0,
+                          1.0 - currentRange);
+    newEnd = newStart + currentRange;
+  }
+
+  if (std::abs(static_cast<double>(start) - newStart) < 0.0001 &&
+      std::abs(static_cast<double>(end) - newEnd) < 0.0001) {
+    return true;
+  }
+
+  const QSignalBlocker blocker(navigator);
+  navigator->setStart(static_cast<float>(newStart));
+  navigator->setEnd(static_cast<float>(newEnd));
+  if (syncViewport) {
+    syncViewport(true);
+  }
+  return true;
+}
+
 inline int
 layerInsertionIndexForTrackDrop(const QVector<LayerID> &trackLayerIds,
                                 const LayerID &draggedLayerId,
@@ -801,8 +869,11 @@ private:
 class HeaderScrollFilter final : public QObject {
 public:
   HeaderScrollFilter(ArtifactTimelineTrackPainterView *trackView,
+                     ArtifactTimelineNavigatorWidget *navigator,
+                     std::function<void(bool)> syncViewport,
                      QObject *parent = nullptr)
-      : QObject(parent), trackView_(trackView) {}
+      : QObject(parent), trackView_(trackView), navigator_(navigator),
+        syncViewport_(std::move(syncViewport)) {}
 
 protected:
   bool eventFilter(QObject *watched, QEvent *event) override {
@@ -818,37 +889,10 @@ protected:
     switch (event->type()) {
     case QEvent::Wheel: {
       auto *wheelEvent = static_cast<QWheelEvent *>(event);
-      if (wheelEvent->modifiers() & Qt::ControlModifier) {
-        return QObject::eventFilter(watched, event);
-      }
-
-      const bool wantsHorizontal =
-          (wheelEvent->modifiers() & Qt::ShiftModifier);
-
-      if (wantsHorizontal) {
-        int delta = wheelScrollDelta(wheelEvent, true);
-        if (delta == 0) {
-          delta = wheelScrollDelta(wheelEvent, false);
-        }
-        if (delta != 0) {
-          trackView_->setHorizontalOffset(
-              std::max(0.0, trackView_->horizontalOffset() - delta));
-          event->accept();
-          return true;
-        }
-      }
-
-      int delta = wheelScrollDelta(wheelEvent, false);
-      if (delta == 0) {
-        delta = wheelScrollDelta(wheelEvent, true);
-      }
-      if (delta != 0) {
-        trackView_->setVerticalOffset(
-            std::max(0.0, trackView_->verticalOffset() - delta));
+      if (applyTimelineViewportWheel(navigator_, trackView_, wheelEvent, syncViewport_)) {
         event->accept();
         return true;
       }
-
       return QObject::eventFilter(watched, event);
     }
     case QEvent::MouseButtonPress: {
@@ -896,6 +940,8 @@ protected:
 
 private:
   ArtifactTimelineTrackPainterView *trackView_ = nullptr;
+  ArtifactTimelineNavigatorWidget *navigator_ = nullptr;
+  std::function<void(bool)> syncViewport_;
   bool panning_ = false;
   QPoint lastGlobalPos_;
 };
@@ -1074,6 +1120,45 @@ public:
 ArtifactTimelineWidget::Impl::Impl() {}
 
 ArtifactTimelineWidget::Impl::~Impl() {}
+
+void ArtifactTimelineWidget::syncTimelineViewportFromNavigator(const bool emitZoomSignal)
+{
+  if (!impl_ || !impl_->painterTrackView_ || !impl_->navigator_ || !impl_->scrubBar_) {
+    return;
+  }
+
+  const double duration = impl_->painterTrackView_->durationFrames();
+  const float start = impl_->navigator_->startValue();
+  const float end = impl_->navigator_->endValue();
+  const double range = std::max(0.01, static_cast<double>(end - start));
+  const int viewW = impl_->painterTrackView_->width();
+  if (viewW <= 0) {
+    return;
+  }
+
+  const double newZoom = static_cast<double>(viewW) / (duration * range);
+  impl_->painterTrackView_->setPixelsPerFrame(newZoom);
+  impl_->scrubBar_->setRulerPixelsPerFrame(newZoom);
+  const double offset = static_cast<double>(start) * duration * newZoom;
+  impl_->painterTrackView_->setHorizontalOffset(offset);
+  impl_->scrubBar_->setRulerHorizontalOffset(offset);
+
+  if (emitZoomSignal) {
+    Q_EMIT zoomLevelChanged(newZoom * 100.0);
+  }
+}
+
+void ArtifactTimelineWidget::resetTimelineViewport()
+{
+  if (!impl_ || !impl_->navigator_) {
+    return;
+  }
+
+  const QSignalBlocker blocker(impl_->navigator_);
+  impl_->navigator_->setStart(0.0f);
+  impl_->navigator_->setEnd(1.0f);
+  syncTimelineViewportFromNavigator(true);
+}
 
 ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
     : QWidget(parent), impl_(new Impl()) {
@@ -1317,30 +1402,10 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   trackHost->setLayout(trackLayout);
 
   auto updateZoom = [this]() {
-    if (!impl_->painterTrackView_ || !impl_->workArea_)
+    if (!impl_->painterTrackView_ || !impl_->workArea_) {
       return;
-    double duration = impl_->painterTrackView_->durationFrames();
-    float s = impl_->navigator_->startValue();
-    float e = impl_->navigator_->endValue();
-    double range = std::max(0.01f, e - s);
-
-    int viewW = impl_->painterTrackView_->width();
-    if (viewW > 0) {
-      double newZoom = viewW / (duration * range);
-      impl_->painterTrackView_->setPixelsPerFrame(newZoom);
-      if (impl_->scrubBar_) {
-        impl_->scrubBar_->setRulerPixelsPerFrame(newZoom);
-      }
-
-      // ズームレベルをシグナルで通知
-      Q_EMIT zoomLevelChanged(newZoom * 100.0);
-
-      const double offset = s * duration * newZoom;
-      impl_->painterTrackView_->setHorizontalOffset(offset);
-      if (impl_->scrubBar_) {
-        impl_->scrubBar_->setRulerHorizontalOffset(offset);
-      }
     }
+    syncTimelineViewportFromNavigator(true);
   };
 
   auto syncPainterSelectionState = [this]() {
@@ -1535,11 +1600,16 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   scrubBar->installEventFilter(headerSeekFilter); // Install on scrub bar
 
   auto *headerScrollFilter =
-      new HeaderScrollFilter(painterTrackView, rightPanel);
+      new HeaderScrollFilter(painterTrackView, timeNavigatorWidget,
+                             [this](const bool emitZoomSignal) {
+                               syncTimelineViewportFromNavigator(emitZoomSignal);
+                             },
+                             rightPanel);
   rightPanel->installEventFilter(headerScrollFilter);
   timeNavigatorWidget->installEventFilter(headerScrollFilter);
   scrubBar->installEventFilter(headerScrollFilter);
   workAreaWidget->installEventFilter(headerScrollFilter);
+  painterTrackView->installEventFilter(headerScrollFilter);
 
   if (painterTrackView) {
     auto *viewResizeFilter =
@@ -1740,23 +1810,7 @@ void ArtifactTimelineWidget::setComposition(const CompositionID &id) {
           if (!impl_ || !impl_->navigator_ || !impl_->painterTrackView_) {
             return;
           }
-          const double duration = impl_->painterTrackView_->durationFrames();
-          const double range = std::max(
-              0.01, static_cast<double>(impl_->navigator_->endValue() -
-                                        impl_->navigator_->startValue()));
-          const int viewW = impl_->painterTrackView_->width();
-          if (viewW <= 0) {
-            return;
-          }
-          const double newZoom = viewW / (duration * range);
-          impl_->painterTrackView_->setPixelsPerFrame(newZoom);
-          const double offset =
-              impl_->navigator_->startValue() * duration * newZoom;
-          impl_->painterTrackView_->setHorizontalOffset(offset);
-          if (impl_->scrubBar_) {
-            impl_->scrubBar_->setRulerPixelsPerFrame(newZoom);
-            impl_->scrubBar_->setRulerHorizontalOffset(offset);
-          }
+          syncTimelineViewportFromNavigator(true);
           updateKeyframeState();
         });
 
@@ -1965,21 +2019,16 @@ void ArtifactTimelineWidget::mouseMoveEvent(QMouseEvent *event) {
 }
 
 void ArtifactTimelineWidget::wheelEvent(QWheelEvent *event) {
-  // ホイールでシーク (Ctrl+ホイールで ±10)
-  const int delta = event->angleDelta().y();
-  if (delta == 0) { event->ignore(); return; }
-
-  const int step = (event->modifiers() & Qt::ControlModifier) ? 10 : 1;
-  const int direction = (delta > 0) ? 1 : -1;
-  const int frameDelta = direction * step;
-
-  if (impl_ && impl_->painterTrackView_) {
-    double newPos = impl_->painterTrackView_->currentFrame() + frameDelta;
-    impl_->painterTrackView_->setCurrentFrame(std::max(0.0, newPos));
-    impl_->painterTrackView_->seekRequested(
-        std::clamp(newPos, 0.0, impl_->painterTrackView_->durationFrames()));
+  if (impl_ &&
+      applyTimelineViewportWheel(impl_->navigator_, impl_->painterTrackView_,
+                                 event,
+                                 [this](const bool emitZoomSignal) {
+                                   syncTimelineViewportFromNavigator(emitZoomSignal);
+                                 })) {
+    event->accept();
+    return;
   }
-  event->accept();
+  QWidget::wheelEvent(event);
 }
 
 void ArtifactTimelineWidget::syncWorkAreaFromCurrentComposition() {
@@ -2069,6 +2118,11 @@ void ArtifactTimelineWidget::keyPressEvent(QKeyEvent *event) {
       event->accept();
       return;
     }
+  }
+  if (event->key() == Qt::Key_0 && (event->modifiers() & Qt::ControlModifier)) {
+    resetTimelineViewport();
+    event->accept();
+    return;
   }
   if (event->key() == Qt::Key_Space) {
     if (auto *svc = ArtifactPlaybackService::instance()) {

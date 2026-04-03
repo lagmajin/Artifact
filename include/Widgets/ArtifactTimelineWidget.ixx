@@ -111,6 +111,8 @@ class ArtifactTimelineWidget :public QWidget {
   class Impl;
   Impl* impl_;
   void syncWorkAreaFromCurrentComposition();
+  void syncTimelineViewportFromNavigator(bool emitZoomSignal = true);
+  void resetTimelineViewport();
   void updateSearchState();
   void updateKeyframeState();
  protected:
