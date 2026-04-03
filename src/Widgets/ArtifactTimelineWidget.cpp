@@ -1441,12 +1441,36 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
       });
   QObject::connect(
       painterTrackView, &ArtifactTimelineTrackPainterView::clipSelected, this,
-      [this](const QString& clipId, const ArtifactCore::LayerID& layerId) {
+      [this](const QString& clipId, const ArtifactCore::LayerID& layerId, const int modifiers) {
         Q_UNUSED(clipId);
         if (impl_->syncingLayerSelection_) {
           return;
         }
-        if (auto* svc = ArtifactProjectService::instance()) {
+        auto *svc = ArtifactProjectService::instance();
+        auto *app = ArtifactApplicationManager::instance();
+        auto *selection = app ? app->layerSelectionManager() : nullptr;
+        auto comp = svc ? svc->currentComposition().lock() : ArtifactCompositionPtr{};
+        auto layer = comp ? comp->layerById(layerId) : ArtifactAbstractLayerPtr{};
+        const bool ctrl = modifiers & Qt::ControlModifier;
+        const bool shift = modifiers & Qt::ShiftModifier;
+        if (selection && layer) {
+          selection->setActiveComposition(comp);
+          if (ctrl) {
+            if (selection->isSelected(layer)) {
+              selection->removeFromSelection(layer);
+            } else {
+              selection->addToSelection(layer);
+            }
+            return;
+          }
+          if (shift) {
+            selection->addToSelection(layer);
+            return;
+          }
+          selection->selectLayer(layer);
+          return;
+        }
+        if (svc) {
           svc->selectLayer(layerId);
         }
       });

@@ -10,6 +10,8 @@
 #include <QCursor>
 #include <QMenu>
 #include <cmath>
+#include <QHash>
+#include <QRect>
 #include <wobjectimpl.h>
 
 module Artifact.Timeline.TrackPainterView;
@@ -80,6 +82,7 @@ int trackTopAt(const QVector<int>& heights, const int trackIndex)
 }
 
 constexpr int kEdgeHitZone = 6;
+constexpr int kMarqueeThresholdPx = 4;
 
 enum class DragMode { None, MoveBody, ResizeLeft, ResizeRight };
 
@@ -195,6 +198,35 @@ MarkerHitResult hitTestMarkers(
  return {};
 }
 
+QString keyframeSelectionKey(const ArtifactTimelineTrackPainterView::KeyframeMarkerVisual& marker)
+{
+ return QStringLiteral("%1|%2|%3")
+     .arg(marker.layerId.toString())
+     .arg(marker.propertyPath)
+     .arg(static_cast<qint64>(std::llround(marker.frame)));
+}
+
+QString keyframeSelectionKey(const LayerID& layerId,
+                             const QString& propertyPath,
+                             const qint64 frame)
+{
+ return QStringLiteral("%1|%2|%3")
+     .arg(layerId.toString())
+     .arg(propertyPath)
+     .arg(frame);
+}
+
+bool markerIntersectsRect(const ArtifactTimelineTrackPainterView::KeyframeMarkerVisual& marker,
+                          const QVector<int>& heights,
+                          const double ppf,
+                          const double xOffset,
+                          const double yOffset,
+                          const QRectF& rect)
+{
+ const QRectF hitRect = markerHitRectFor(marker, heights, ppf, xOffset, yOffset);
+ return hitRect.isValid() && rect.intersects(hitRect);
+}
+
 QVector<ArtifactAbstractLayerPtr> selectedTimelineLayers()
 {
  QVector<ArtifactAbstractLayerPtr> layers;
@@ -213,6 +245,48 @@ QVector<ArtifactAbstractLayerPtr> selectedTimelineLayers()
   }
  }
  return layers;
+}
+
+void applyMarkerSelectionFlags(QVector<ArtifactTimelineTrackPainterView::KeyframeMarkerVisual>& markers,
+                               const QSet<QString>& selectedKeys)
+{
+ for (auto& marker : markers) {
+  marker.selected = selectedKeys.contains(keyframeSelectionKey(marker));
+ }
+}
+
+QSet<QString> selectedMarkerKeysFromRect(
+    const QVector<ArtifactTimelineTrackPainterView::KeyframeMarkerVisual>& markers,
+    const QVector<int>& heights,
+    const double ppf,
+    const double xOffset,
+    const double yOffset,
+    const QRectF& rect)
+{
+ QSet<QString> keys;
+ if (!rect.isValid()) {
+  return keys;
+ }
+ for (const auto& marker : markers) {
+  if (marker.trackIndex < 0 || marker.trackIndex >= heights.size()) {
+   continue;
+  }
+  if (markerIntersectsRect(marker, heights, ppf, xOffset, yOffset, rect)) {
+   keys.insert(keyframeSelectionKey(marker));
+  }
+ }
+ return keys;
+}
+
+QVector<int> selectedMarkerIndices(const QVector<ArtifactTimelineTrackPainterView::KeyframeMarkerVisual>& markers)
+{
+ QVector<int> indices;
+ for (int i = 0; i < markers.size(); ++i) {
+  if (markers[i].selected) {
+   indices.push_back(i);
+  }
+ }
+ return indices;
 }
 
 bool applyKeyframeEditAtFrame(const ArtifactCompositionPtr &composition,
@@ -313,6 +387,18 @@ public:
  bool panning_ = false;
  QPoint lastPanPoint_;
  QVector<ArtifactTimelineTrackPainterView::KeyframeMarkerVisual> keyframeMarkers_;
+ QSet<QString> selectedMarkerKeys_;
+ QPoint marqueePressPoint_;
+ QRectF marqueeRect_;
+ bool marqueeDragging_ = false;
+ bool marqueeSelecting_ = false;
+ bool marqueeReplaceSelection_ = false;
+ bool marqueeToggleSelection_ = false;
+ Qt::KeyboardModifiers marqueeModifiers_ = Qt::NoModifier;
+ bool marqueeCandidate_ = false;
+ bool marqueeOnEmpty_ = false;
+ QVector<int> dragMarkerIndices_;
+ QVector<qint64> dragMarkerStartFrames_;
 };
 
 ArtifactTimelineTrackPainterView::Impl::Impl()
@@ -481,6 +567,7 @@ void ArtifactTimelineTrackPainterView::setKeyframeMarkers(
  const QVector<KeyframeMarkerVisual>& markers)
 {
  impl_->keyframeMarkers_ = markers;
+ applyMarkerSelectionFlags(impl_->keyframeMarkers_, impl_->selectedMarkerKeys_);
  update();
 }
 
@@ -651,6 +738,7 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent* event)
   }
   const bool isHovered = markerIndex == impl_->hoverMarkerIndex_ ||
                          (impl_->markerDragging_ && markerIndex == impl_->pressedMarkerIndex_);
+  const bool isSelected = marker.selected;
   const int size = marker.laneCount > 1 ? (isHovered ? 6 : 5) : (isHovered ? 7 : 6);
   const QRectF diamondRect(center.x() - size, center.y() - size,
                            size * 2.0, size * 2.0);
@@ -659,7 +747,11 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent* event)
           << QPointF(diamondRect.right(), diamondRect.center().y())
           << QPointF(diamondRect.center().x(), diamondRect.bottom())
           << QPointF(diamondRect.left(), diamondRect.center().y());
-  if (marker.selectedLayer) {
+  if (isSelected) {
+   p.setPen(QPen(theme.accent.lighter(145), 2.0));
+   p.setBrush(QColor(marker.color).lighter(118));
+   p.drawPolygon(diamond);
+  } else if (marker.selectedLayer) {
    QPolygonF outer = diamond;
    p.setPen(QPen(theme.background.darker(190), 2.0));
    p.setBrush(Qt::NoBrush);
@@ -678,6 +770,15 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent* event)
               Qt::AlignLeft | Qt::AlignVCenter,
               marker.label);
   }
+ }
+
+ if (impl_->marqueeSelecting_ && impl_->marqueeRect_.isValid()) {
+  QPen pen(theme.accent.lighter(150), 1.0, Qt::DashLine);
+  p.setPen(pen);
+  QColor fill = theme.accent;
+  fill.setAlpha(48);
+  p.setBrush(fill);
+  p.drawRect(impl_->marqueeRect_);
  }
 
  // Current frame marker.
@@ -702,18 +803,22 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent* event)
  p.setBrush(theme.background.darker(180));
  p.drawRoundedRect(hudRect, 8, 8);
  p.setPen(theme.text);
- const int selectedCount = std::count_if(
-     impl_->clips_.cbegin(), impl_->clips_.cend(),
-     [](const auto& clip) { return clip.selected; });
+  const int selectedCount = std::count_if(
+      impl_->clips_.cbegin(), impl_->clips_.cend(),
+      [](const auto& clip) { return clip.selected; });
+  const int selectedMarkerCount = std::count_if(
+      impl_->keyframeMarkers_.cbegin(), impl_->keyframeMarkers_.cend(),
+      [](const auto& marker) { return marker.selected; });
  const QString hoveredText = (impl_->hoverClipIndex_ >= 0 && impl_->hoverClipIndex_ < impl_->clips_.size())
      ? (impl_->clips_[impl_->hoverClipIndex_].title.isEmpty()
             ? impl_->clips_[impl_->hoverClipIndex_].clipId
             : impl_->clips_[impl_->hoverClipIndex_].title)
      : QStringLiteral("-");
- const QString hudText = QStringLiteral("F%1 | R%2 | KF%3")
+  const QString hudText = QStringLiteral("F%1 | R%2 | KF%3 | SK%4")
                              .arg(static_cast<int>(std::round(impl_->currentFrame_)))
                              .arg(impl_->trackHeights_.size())
-                             .arg(impl_->keyframeMarkers_.size());
+                             .arg(impl_->keyframeMarkers_.size())
+                             .arg(selectedMarkerCount);
  p.drawText(hudRect.adjusted(10, 4, -10, -18), Qt::AlignLeft | Qt::AlignVCenter, hudText);
  p.setPen(theme.text.darker(130));
  p.drawText(hudRect.adjusted(10, 20, -10, -4), Qt::AlignLeft | Qt::AlignVCenter,
@@ -732,17 +837,79 @@ void ArtifactTimelineTrackPainterView::mousePressEvent(QMouseEvent* event)
  }
 
  if (event->button() == Qt::LeftButton) {
+  impl_->marqueeCandidate_ = true;
+  impl_->marqueeOnEmpty_ = false;
+  impl_->marqueeSelecting_ = false;
+  impl_->marqueeRect_ = QRectF();
+  impl_->marqueePressPoint_ = event->position().toPoint();
+  impl_->marqueeModifiers_ = event->modifiers();
+  impl_->marqueeReplaceSelection_ =
+      !(impl_->marqueeModifiers_ & (Qt::ShiftModifier | Qt::ControlModifier));
+  impl_->marqueeToggleSelection_ =
+      (impl_->marqueeModifiers_ & Qt::ControlModifier) &&
+      !(impl_->marqueeModifiers_ & Qt::ShiftModifier);
+
   const double mouseX = event->position().x();
   const double mouseY = event->position().y();
   const auto markerHit = hitTestMarkers(impl_->keyframeMarkers_, impl_->trackHeights_,
                                         mouseX, mouseY, impl_->pixelsPerFrame_,
                                         impl_->horizontalOffset_, impl_->verticalOffset_);
   if (markerHit.markerIndex >= 0) {
+   impl_->marqueeCandidate_ = false;
    impl_->pressedMarkerIndex_ = markerHit.markerIndex;
+   const auto& marker = impl_->keyframeMarkers_[markerHit.markerIndex];
+   const QString markerKey = keyframeSelectionKey(marker);
+   const bool selected = marker.selected;
+   if (event->modifiers() & Qt::ShiftModifier) {
+    impl_->marqueeCandidate_ = false;
+    impl_->pressedMarkerIndex_ = -1;
+    impl_->selectedMarkerKeys_.insert(markerKey);
+    applyMarkerSelectionFlags(impl_->keyframeMarkers_, impl_->selectedMarkerKeys_);
+    Q_EMIT keyframeSelectionChanged(impl_->selectedMarkerKeys_.size());
+    update();
+    event->accept();
+    return;
+   }
+   if (event->modifiers() & Qt::ControlModifier) {
+    impl_->marqueeCandidate_ = false;
+    impl_->pressedMarkerIndex_ = -1;
+    if (impl_->selectedMarkerKeys_.contains(markerKey)) {
+     impl_->selectedMarkerKeys_.remove(markerKey);
+    } else {
+     impl_->selectedMarkerKeys_.insert(markerKey);
+    }
+    applyMarkerSelectionFlags(impl_->keyframeMarkers_, impl_->selectedMarkerKeys_);
+    Q_EMIT keyframeSelectionChanged(impl_->selectedMarkerKeys_.size());
+    update();
+    event->accept();
+    return;
+   }
+
    impl_->markerDragging_ = false;
+   impl_->marqueeCandidate_ = false;
    impl_->markerPressPoint_ = event->position().toPoint();
    impl_->markerPressFrame_ = static_cast<qint64>(std::llround(
-       std::clamp(impl_->keyframeMarkers_[markerHit.markerIndex].frame, 0.0, impl_->durationFrames_)));
+       std::clamp(marker.frame, 0.0, impl_->durationFrames_)));
+   impl_->dragMarkerIndices_.clear();
+   impl_->dragMarkerStartFrames_.clear();
+   if (selected && impl_->selectedMarkerKeys_.size() > 1) {
+    for (int i = 0; i < impl_->keyframeMarkers_.size(); ++i) {
+     const auto& selectedMarker = impl_->keyframeMarkers_[i];
+     if (selectedMarker.selected) {
+      impl_->dragMarkerIndices_.push_back(i);
+      impl_->dragMarkerStartFrames_.push_back(static_cast<qint64>(std::llround(
+          std::clamp(selectedMarker.frame, 0.0, impl_->durationFrames_))));
+     }
+    }
+   }
+   if (impl_->dragMarkerIndices_.isEmpty()) {
+    impl_->dragMarkerIndices_.push_back(markerHit.markerIndex);
+    impl_->dragMarkerStartFrames_.push_back(impl_->markerPressFrame_);
+    impl_->selectedMarkerKeys_.clear();
+    impl_->selectedMarkerKeys_.insert(markerKey);
+    applyMarkerSelectionFlags(impl_->keyframeMarkers_, impl_->selectedMarkerKeys_);
+    Q_EMIT keyframeSelectionChanged(impl_->selectedMarkerKeys_.size());
+   }
    setCursor(Qt::PointingHandCursor);
    event->accept();
    return;
@@ -752,22 +919,20 @@ void ArtifactTimelineTrackPainterView::mousePressEvent(QMouseEvent* event)
                                  impl_->pixelsPerFrame_, impl_->horizontalOffset_,
                                  impl_->verticalOffset_);
   if (hit.mode != DragMode::None) {
+   impl_->marqueeCandidate_ = false;
    impl_->dragMode_           = hit.mode;
    impl_->dragClipIndex_      = hit.clipIndex;
    impl_->dragStartX_         = mouseX;
    impl_->dragOrigStartFrame_ = impl_->clips_[hit.clipIndex].startFrame;
    impl_->dragOrigDuration_   = impl_->clips_[hit.clipIndex].durationFrame;
    const auto& clip = impl_->clips_[hit.clipIndex];
-   clipSelected(clip.clipId, clip.layerId);
+   clipSelected(clip.clipId, clip.layerId, static_cast<int>(event->modifiers()));
    if (hit.mode == DragMode::MoveBody) setCursor(Qt::ClosedHandCursor);
    event->accept();
    return;
   }
-  clipDeselected();
-  const double clickedFrame = (mouseX + impl_->horizontalOffset_) / std::max(0.001, impl_->pixelsPerFrame_);
-  const double clamped = std::clamp(clickedFrame, 0.0, impl_->durationFrames_);
-  seekRequested(clamped);
-  setCurrentFrame(clamped);
+  impl_->marqueeOnEmpty_ = true;
+  impl_->marqueePressPoint_ = event->position().toPoint();
   event->accept();
   return;
  }
@@ -783,41 +948,91 @@ void ArtifactTimelineTrackPainterView::mouseMoveEvent(QMouseEvent* event)
                                        mouseX, mouseY, ppf, impl_->horizontalOffset_,
                                        impl_->verticalOffset_);
 
- if (impl_->pressedMarkerIndex_ >= 0 &&
-     impl_->pressedMarkerIndex_ < impl_->keyframeMarkers_.size() &&
-     (event->buttons() & Qt::LeftButton)) {
-  const QPoint delta = event->position().toPoint() - impl_->markerPressPoint_;
-  if (!impl_->markerDragging_ &&
-      (std::abs(delta.x()) >= kMarkerDragThresholdPx ||
-       std::abs(delta.y()) >= kMarkerDragThresholdPx)) {
-   impl_->markerDragging_ = true;
-   setCursor(Qt::ClosedHandCursor);
-  }
-
-  if (impl_->markerDragging_) {
-   auto& marker = impl_->keyframeMarkers_[impl_->pressedMarkerIndex_];
-   const double oldFrame = marker.frame;
-   const double newFrame = std::clamp((mouseX + impl_->horizontalOffset_) /
-                                          std::max(0.001, ppf),
-                                      0.0, impl_->durationFrames_);
-   if (std::abs(oldFrame - newFrame) >= 0.0001) {
-    const QRectF oldRect = markerHitRectFor(marker, impl_->trackHeights_, ppf,
-                                            impl_->horizontalOffset_, impl_->verticalOffset_);
-    marker.frame = newFrame;
-    const QRectF newRect = markerHitRectFor(marker, impl_->trackHeights_, ppf,
-                                            impl_->horizontalOffset_, impl_->verticalOffset_);
-    const QRectF dirty = oldRect.united(newRect).adjusted(-2.0, -2.0, 2.0, 2.0);
-    if (dirty.isValid()) {
-     update(dirty.toAlignedRect());
-    } else {
-     update();
-    }
+  if (impl_->pressedMarkerIndex_ >= 0 &&
+      impl_->pressedMarkerIndex_ < impl_->keyframeMarkers_.size() &&
+      (event->buttons() & Qt::LeftButton)) {
+   const QPoint delta = event->position().toPoint() - impl_->markerPressPoint_;
+   if (!impl_->markerDragging_ &&
+       (std::abs(delta.x()) >= kMarkerDragThresholdPx ||
+        std::abs(delta.y()) >= kMarkerDragThresholdPx)) {
+    impl_->markerDragging_ = true;
+    setCursor(Qt::ClosedHandCursor);
    }
+
+   if (impl_->markerDragging_) {
+    const double newFrame = std::clamp((mouseX + impl_->horizontalOffset_) /
+                                           std::max(0.001, ppf),
+                                       0.0, impl_->durationFrames_);
+    bool changed = false;
+    QRectF dirtyRect;
+    const bool batchDrag = impl_->dragMarkerIndices_.size() > 1;
+    if (batchDrag) {
+     for (int i = 0; i < impl_->dragMarkerIndices_.size(); ++i) {
+      const int markerIndex = impl_->dragMarkerIndices_[i];
+      if (markerIndex < 0 || markerIndex >= impl_->keyframeMarkers_.size()) {
+       continue;
+      }
+      auto& marker = impl_->keyframeMarkers_[markerIndex];
+      const qint64 startFrame = impl_->dragMarkerStartFrames_.value(i, 0);
+      const double oldFrame = marker.frame;
+      const double movedFrame = std::clamp(static_cast<double>(startFrame) +
+                                               (newFrame - impl_->markerPressFrame_),
+                                           0.0, impl_->durationFrames_);
+      if (std::abs(oldFrame - movedFrame) < 0.0001) {
+       continue;
+      }
+      const QRectF oldRect = markerHitRectFor(marker, impl_->trackHeights_, ppf,
+                                              impl_->horizontalOffset_, impl_->verticalOffset_);
+      marker.frame = movedFrame;
+      const QRectF newRect = markerHitRectFor(marker, impl_->trackHeights_, ppf,
+                                              impl_->horizontalOffset_, impl_->verticalOffset_);
+      dirtyRect = dirtyRect.isValid() ? dirtyRect.united(oldRect.united(newRect)) : oldRect.united(newRect);
+      changed = true;
+     }
+    } else {
+     auto& marker = impl_->keyframeMarkers_[impl_->pressedMarkerIndex_];
+     const double oldFrame = marker.frame;
+     if (std::abs(oldFrame - newFrame) >= 0.0001) {
+      const QRectF oldRect = markerHitRectFor(marker, impl_->trackHeights_, ppf,
+                                              impl_->horizontalOffset_, impl_->verticalOffset_);
+      marker.frame = newFrame;
+      const QRectF newRect = markerHitRectFor(marker, impl_->trackHeights_, ppf,
+                                              impl_->horizontalOffset_, impl_->verticalOffset_);
+      dirtyRect = oldRect.united(newRect);
+      changed = true;
+     }
+    }
+    if (changed) {
+     const QRectF dirty = dirtyRect.adjusted(-2.0, -2.0, 2.0, 2.0);
+     if (dirty.isValid()) {
+      update(dirty.toAlignedRect());
+     } else {
+      update();
+     }
+    }
+    event->accept();
+    return;
+   }
+
+  if ((event->buttons() & Qt::LeftButton) && impl_->pressedMarkerIndex_ >= 0) {
    event->accept();
    return;
   }
+ }
 
-  if ((event->buttons() & Qt::LeftButton) && impl_->pressedMarkerIndex_ >= 0) {
+ if (impl_->marqueeCandidate_ && (event->buttons() & Qt::LeftButton)) {
+  const QPoint current = event->position().toPoint();
+  const QPoint delta = current - impl_->marqueePressPoint_;
+  if (!impl_->marqueeSelecting_ &&
+      (std::abs(delta.x()) >= kMarqueeThresholdPx ||
+       std::abs(delta.y()) >= kMarqueeThresholdPx)) {
+   impl_->marqueeSelecting_ = true;
+   setCursor(Qt::CrossCursor);
+  }
+  if (impl_->marqueeSelecting_) {
+   const QRect newRect = QRect(impl_->marqueePressPoint_, current).normalized();
+   impl_->marqueeRect_ = newRect;
+   update();
    event->accept();
    return;
   }
@@ -945,21 +1160,164 @@ void ArtifactTimelineTrackPainterView::mouseReleaseEvent(QMouseEvent* event)
   return;
  }
 
+ if (event->button() == Qt::LeftButton && impl_->marqueeCandidate_) {
+  if (impl_->marqueeSelecting_ && impl_->marqueeRect_.isValid()) {
+   const QRectF rect = impl_->marqueeRect_;
+   const auto selectedMarkerKeys =
+       selectedMarkerKeysFromRect(impl_->keyframeMarkers_, impl_->trackHeights_,
+                                  impl_->pixelsPerFrame_, impl_->horizontalOffset_,
+                                  impl_->verticalOffset_, rect);
+   const auto selectedClipIds =
+       [&]() {
+        QVector<LayerID> ids;
+        for (const auto& clip : impl_->clips_) {
+         if (clip.trackIndex < 0 || clip.trackIndex >= impl_->trackHeights_.size()) {
+          continue;
+         }
+         const QRectF clipRectLocal = clipRectFor(clip, impl_->trackHeights_,
+                                                  impl_->pixelsPerFrame_,
+                                                  impl_->horizontalOffset_,
+                                                  impl_->verticalOffset_);
+         if (clipRectLocal.isValid() && clipRectLocal.intersects(rect)) {
+          ids.push_back(clip.layerId);
+         }
+        }
+        return ids;
+       }();
+
+   if (impl_->marqueeReplaceSelection_) {
+    impl_->selectedMarkerKeys_.clear();
+    impl_->selectedMarkerKeys_.unite(selectedMarkerKeys);
+   } else if (impl_->marqueeToggleSelection_) {
+    for (const auto& key : selectedMarkerKeys) {
+     if (impl_->selectedMarkerKeys_.contains(key)) {
+      impl_->selectedMarkerKeys_.remove(key);
+     } else {
+      impl_->selectedMarkerKeys_.insert(key);
+     }
+    }
+   } else {
+    impl_->selectedMarkerKeys_.unite(selectedMarkerKeys);
+   }
+   applyMarkerSelectionFlags(impl_->keyframeMarkers_, impl_->selectedMarkerKeys_);
+   Q_EMIT keyframeSelectionChanged(impl_->selectedMarkerKeys_.size());
+
+   auto* app = ArtifactApplicationManager::instance();
+   auto* selection = app ? app->layerSelectionManager() : nullptr;
+   if (selection) {
+    if (impl_->marqueeReplaceSelection_) {
+     if (selectedClipIds.isEmpty()) {
+      selection->clearSelection();
+     } else {
+      bool first = true;
+      for (const auto& layerId : selectedClipIds) {
+       if (layerId.isNil()) {
+        continue;
+       }
+       auto comp = ArtifactProjectService::instance()
+                       ? ArtifactProjectService::instance()->currentComposition().lock()
+                       : ArtifactCompositionPtr{};
+       auto layer = comp ? comp->layerById(layerId) : ArtifactAbstractLayerPtr{};
+       if (!layer) {
+        continue;
+       }
+       if (first) {
+        selection->selectLayer(layer);
+        first = false;
+       } else {
+        selection->addToSelection(layer);
+       }
+      }
+     }
+    } else {
+     auto comp = ArtifactProjectService::instance()
+                     ? ArtifactProjectService::instance()->currentComposition().lock()
+                     : ArtifactCompositionPtr{};
+     for (const auto& layerId : selectedClipIds) {
+      if (layerId.isNil()) {
+       continue;
+      }
+      auto layer = comp ? comp->layerById(layerId) : ArtifactAbstractLayerPtr{};
+      if (!layer) {
+       continue;
+      }
+      if (impl_->marqueeToggleSelection_ && selection->isSelected(layer)) {
+       selection->removeFromSelection(layer);
+      } else if (selection->isSelected(layer)) {
+       continue;
+      } else {
+       selection->addToSelection(layer);
+      }
+     }
+    }
+   }
+
+   update();
+  } else if (impl_->marqueeOnEmpty_) {
+   const double clickedFrame = (event->position().x() + impl_->horizontalOffset_) /
+                               std::max(0.001, impl_->pixelsPerFrame_);
+   const double clamped = std::clamp(clickedFrame, 0.0, impl_->durationFrames_);
+   clipDeselected();
+   seekRequested(clamped);
+   setCurrentFrame(clamped);
+  }
+  impl_->marqueeCandidate_ = false;
+  impl_->marqueeOnEmpty_ = false;
+  impl_->marqueeSelecting_ = false;
+  impl_->marqueeRect_ = QRectF();
+  impl_->marqueeModifiers_ = Qt::NoModifier;
+  setCursor(Qt::ArrowCursor);
+  event->accept();
+  return;
+ }
+
  if (event->button() == Qt::LeftButton && impl_->pressedMarkerIndex_ >= 0) {
   const int idx = impl_->pressedMarkerIndex_;
   if (idx < impl_->keyframeMarkers_.size()) {
    const auto& marker = impl_->keyframeMarkers_[idx];
    if (impl_->markerDragging_) {
-    const qint64 fromFrame = impl_->markerPressFrame_;
-    const qint64 toFrame = static_cast<qint64>(std::llround(
-        std::clamp(marker.frame, 0.0, impl_->durationFrames_)));
-    if (fromFrame >= 0 && toFrame >= 0 && fromFrame != toFrame) {
-     Q_EMIT keyframeMoveRequested(marker.layerId, marker.propertyPath, fromFrame, toFrame);
-     Q_EMIT timelineDebugMessage(
-         QStringLiteral("Moved keyframe %1: F%2 -> F%3")
-             .arg(marker.label.isEmpty() ? QStringLiteral("keyframe") : marker.label)
-             .arg(fromFrame)
-             .arg(toFrame));
+    const bool batchDrag = impl_->dragMarkerIndices_.size() > 1;
+    if (batchDrag) {
+     for (int i = 0; i < impl_->dragMarkerIndices_.size(); ++i) {
+      const int markerIndex = impl_->dragMarkerIndices_.value(i, -1);
+      if (markerIndex < 0 || markerIndex >= impl_->keyframeMarkers_.size()) {
+       continue;
+      }
+      const auto& draggedMarker = impl_->keyframeMarkers_[markerIndex];
+      const qint64 fromFrame = impl_->dragMarkerStartFrames_.value(i, -1);
+      const qint64 toFrame = static_cast<qint64>(std::llround(
+          std::clamp(draggedMarker.frame, 0.0, impl_->durationFrames_)));
+      if (fromFrame >= 0 && toFrame >= 0 && fromFrame != toFrame) {
+       Q_EMIT keyframeMoveRequested(draggedMarker.layerId, draggedMarker.propertyPath, fromFrame, toFrame);
+       const QString movedKey = keyframeSelectionKey(draggedMarker);
+       impl_->selectedMarkerKeys_.remove(
+           keyframeSelectionKey(draggedMarker.layerId, draggedMarker.propertyPath, fromFrame));
+       impl_->selectedMarkerKeys_.insert(movedKey);
+      }
+     }
+     applyMarkerSelectionFlags(impl_->keyframeMarkers_, impl_->selectedMarkerKeys_);
+     Q_EMIT keyframeSelectionChanged(impl_->selectedMarkerKeys_.size());
+    } else {
+     const qint64 fromFrame = impl_->markerPressFrame_;
+     const qint64 toFrame = static_cast<qint64>(std::llround(
+         std::clamp(marker.frame, 0.0, impl_->durationFrames_)));
+     if (fromFrame >= 0 && toFrame >= 0 && fromFrame != toFrame) {
+      Q_EMIT keyframeMoveRequested(marker.layerId, marker.propertyPath, fromFrame, toFrame);
+       const QString oldKey =
+           keyframeSelectionKey(marker.layerId, marker.propertyPath, fromFrame);
+      const QString newKey = keyframeSelectionKey(marker);
+      if (impl_->selectedMarkerKeys_.contains(oldKey)) {
+       impl_->selectedMarkerKeys_.remove(oldKey);
+       impl_->selectedMarkerKeys_.insert(newKey);
+      }
+      applyMarkerSelectionFlags(impl_->keyframeMarkers_, impl_->selectedMarkerKeys_);
+      Q_EMIT keyframeSelectionChanged(impl_->selectedMarkerKeys_.size());
+      Q_EMIT timelineDebugMessage(
+          QStringLiteral("Moved keyframe %1: F%2 -> F%3")
+              .arg(marker.label.isEmpty() ? QStringLiteral("keyframe") : marker.label)
+              .arg(fromFrame)
+              .arg(toFrame));
+     }
     }
    } else {
     const double frame = std::clamp(marker.frame, 0.0, impl_->durationFrames_);
@@ -971,6 +1329,8 @@ void ArtifactTimelineTrackPainterView::mouseReleaseEvent(QMouseEvent* event)
   impl_->markerDragging_ = false;
   impl_->markerPressPoint_ = QPoint();
   impl_->markerPressFrame_ = -1;
+  impl_->dragMarkerIndices_.clear();
+  impl_->dragMarkerStartFrames_.clear();
   if (impl_->hoverMarkerIndex_ >= 0) {
    setCursor(Qt::PointingHandCursor);
   } else {
@@ -1002,6 +1362,19 @@ void ArtifactTimelineTrackPainterView::mouseReleaseEvent(QMouseEvent* event)
   case DragMode::MoveBody:    setCursor(Qt::OpenHandCursor); break;
   default:                    setCursor(Qt::ArrowCursor);    break;
   }
+  event->accept();
+  return;
+ }
+
+ if (event->button() == Qt::LeftButton && impl_->marqueeOnEmpty_ && !impl_->marqueeSelecting_) {
+  const double clickedFrame = (event->position().x() + impl_->horizontalOffset_) /
+                              std::max(0.001, impl_->pixelsPerFrame_);
+  const double clamped = std::clamp(clickedFrame, 0.0, impl_->durationFrames_);
+  clipDeselected();
+  seekRequested(clamped);
+  setCurrentFrame(clamped);
+  impl_->marqueeCandidate_ = false;
+  impl_->marqueeOnEmpty_ = false;
   event->accept();
   return;
  }

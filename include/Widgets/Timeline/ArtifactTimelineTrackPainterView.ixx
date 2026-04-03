@@ -33,6 +33,7 @@ export namespace Artifact
    int laneIndex = 0;
    int laneCount = 1;
    bool selectedLayer = false;
+   bool selected = false;
    bool eased = false;
    QColor color = QColor(247, 204, 83);
    QString propertyPath;
@@ -99,7 +100,7 @@ export namespace Artifact
 
  public /*signals*/:
   void seekRequested(double frame) W_SIGNAL(seekRequested, frame);
-  void clipSelected(const QString& clipId, const LayerID& layerId) W_SIGNAL(clipSelected, clipId, layerId);
+  void clipSelected(const QString& clipId, const LayerID& layerId, int modifiers) W_SIGNAL(clipSelected, clipId, layerId, modifiers);
   void clipDeselected() W_SIGNAL(clipDeselected);
   void clipMoved(const QString& clipId, double startFrame) W_SIGNAL(clipMoved, clipId, startFrame);
   void clipResized(const QString& clipId, double startFrame, double durationFrame) W_SIGNAL(clipResized, clipId, startFrame, durationFrame);
@@ -107,6 +108,7 @@ export namespace Artifact
                              const QString& propertyPath,
                              qint64 fromFrame,
                              qint64 toFrame) W_SIGNAL(keyframeMoveRequested, layerId, propertyPath, fromFrame, toFrame);
+  void keyframeSelectionChanged(int selectedCount) W_SIGNAL(keyframeSelectionChanged, selectedCount);
   void timelineDebugMessage(const QString& message) W_SIGNAL(timelineDebugMessage, message);
  };
 }
