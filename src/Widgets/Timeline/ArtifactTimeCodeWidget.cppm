@@ -162,32 +162,48 @@ ArtifactTimelineSearchBarWidget::ArtifactTimelineSearchBarWidget(QWidget* parent
   impl_->searchLineEdit_->setMinimumHeight(26);
   setFixedHeight(34);
   impl_->searchLineEdit_->installEventFilter(this);
+  {
+   const auto& theme = ArtifactCore::currentDCCTheme();
+   QPalette searchPal = impl_->searchLineEdit_->palette();
+   searchPal.setColor(QPalette::Base, QColor(theme.secondaryBackgroundColor));
+   searchPal.setColor(QPalette::Text, QColor(theme.textColor));
+   searchPal.setColor(QPalette::PlaceholderText, QColor(theme.textColor).darker(140));
+   searchPal.setColor(QPalette::Window, QColor(theme.secondaryBackgroundColor));
+   impl_->searchLineEdit_->setPalette(searchPal);
+  }
 
   layout->addWidget(impl_->searchLineEdit_);
 
   setAttribute(Qt::WA_StyledBackground, true);
+  setAutoFillBackground(false);
 
-  setStyleSheet(
-   "ArtifactTimelineSearchBarWidget {"
-   "  background-color: #232325;"
-   "}"
-   "QLineEdit#timelineSearchBox {"
-   "  background-color: #232325;"
-   "  color: #CCCCCC;"
-   "  border: 1px solid #3E3E3E;"
-   "  border-radius: 12px;"
-   "  padding: 0px 10px;"
-   "  font-size: 11px;"
-   "}"
-   "QLineEdit#timelineSearchBox:focus {"
-   "  border: 1px solid #D47D32;"
-   "}"
-  );
-
-  QObject::connect(impl_->searchLineEdit_, &QLineEdit::textChanged, this, [this](const QString& text) {
+ QObject::connect(impl_->searchLineEdit_, &QLineEdit::textChanged, this, [this](const QString& text) {
    searchTextChanged(text);
   });
  }
+
+void ArtifactTimelineSearchBarWidget::focusSearch()
+{
+ if (impl_ && impl_->searchLineEdit_) {
+  impl_->searchLineEdit_->setFocus(Qt::ShortcutFocusReason);
+  impl_->searchLineEdit_->selectAll();
+ }
+}
+
+void ArtifactTimelineSearchBarWidget::clearSearch()
+{
+ if (impl_ && impl_->searchLineEdit_ && !impl_->searchLineEdit_->text().isEmpty()) {
+  impl_->searchLineEdit_->blockSignals(true);
+  impl_->searchLineEdit_->clear();
+  impl_->searchLineEdit_->blockSignals(false);
+  searchCleared();
+ }
+}
+
+bool ArtifactTimelineSearchBarWidget::hasSearchText() const
+{
+ return impl_ && impl_->searchLineEdit_ && !impl_->searchLineEdit_->text().isEmpty();
+}
 
  bool ArtifactTimelineSearchBarWidget::eventFilter(QObject* watched, QEvent* event)
  {
@@ -203,8 +219,7 @@ ArtifactTimelineSearchBarWidget::ArtifactTimelineSearchBarWidget(QWidget* parent
    }
    if (keyEvent->key() == Qt::Key_Escape) {
     if (impl_->searchLineEdit_ && !impl_->searchLineEdit_->text().isEmpty()) {
-     impl_->searchLineEdit_->clear();
-     searchCleared();
+     clearSearch();
      return true;
     }
    }
