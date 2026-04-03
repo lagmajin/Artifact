@@ -1316,6 +1316,7 @@ void ArtifactLayerPanelHeaderWidget::leaveEvent(QEvent* event)
    }
    displayMode = mode;
    if (owner) {
+    this->expandPathToSelectedLayer();
     owner->updateLayout();
    }
   }
@@ -1327,6 +1328,7 @@ void ArtifactLayerPanelHeaderWidget::leaveEvent(QEvent* event)
    }
    propertyDisplayMode = mode;
    if (owner) {
+    this->expandPathToSelectedLayer();
     owner->updateLayout();
    }
   }
@@ -1572,7 +1574,45 @@ void ArtifactLayerPanelHeaderWidget::leaveEvent(QEvent* event)
    const int x = propertyColumnsWidth();
    return QRect(x - 4, rowTop, 8, rowHeightPx);
   }
- };
+
+  void expandPathToSelectedLayer()
+  {
+   auto comp = safeCompositionLookup(compositionId);
+   if (!comp) {
+    return;
+   }
+
+   LayerID targetId = selectedLayerId;
+   if (targetId.isNil()) {
+    if (auto* app = ArtifactApplicationManager::instance()) {
+      if (auto* selection = app->layerSelectionManager()) {
+        if (auto current = selection->currentLayer()) {
+          targetId = current->id();
+        }
+      }
+    }
+   }
+   if (targetId.isNil()) {
+    return;
+   }
+
+   QSet<QString> visited;
+   while (!targetId.isNil()) {
+    const QString idStr = targetId.toString();
+    if (idStr.isEmpty() || visited.contains(idStr)) {
+      break;
+    }
+    visited.insert(idStr);
+    expandedByLayerId[idStr] = true;
+
+    const auto layer = comp->layerById(targetId);
+    if (!layer || !layer->hasParent()) {
+      break;
+    }
+    targetId = layer->parentLayerId();
+   }
+  }
+};
 
  W_OBJECT_IMPL(ArtifactLayerPanelWidget)
 
@@ -1653,7 +1693,8 @@ void ArtifactLayerPanelHeaderWidget::leaveEvent(QEvent* event)
     QObject::connect(service, &ArtifactProjectService::layerSelected, this, [this](const LayerID& layerId) {
       if (impl_->selectedLayerId != layerId) {
         impl_->selectedLayerId = layerId;
-        update();
+        impl_->expandPathToSelectedLayer();
+        updateLayout();
       }
     });
     if (auto* app = ArtifactApplicationManager::instance()) {
@@ -1665,7 +1706,8 @@ void ArtifactLayerPanelHeaderWidget::leaveEvent(QEvent* event)
           if (impl_->selectedLayerId != nextId) {
             impl_->selectedLayerId = nextId;
           }
-          update();
+          impl_->expandPathToSelectedLayer();
+          updateLayout();
         });
       }
     }
