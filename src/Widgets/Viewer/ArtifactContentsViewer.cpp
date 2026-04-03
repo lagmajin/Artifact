@@ -5,6 +5,9 @@ module;
 #include <QStackedWidget>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QFont>
+#include <QPalette>
+#include <QColor>
 #include <QDesktopServices>
 #include <QGuiApplication>
 #include <QClipboard>
@@ -12,6 +15,7 @@ module;
 #include <QSlider>
 #include <wobjectimpl.h>
 #include <QVBoxLayout>
+#include <QResizeEvent>
 #include <QPixmap>
 #include <QScrollArea>
 #include <QStyle>
@@ -22,9 +26,13 @@ module;
 #include <QFileInfo>
 #include <QUrl>
 #include <QSignalBlocker>
+#include <QAudioFormat>
+#include <QAudioSink>
 #include <QMediaPlayer>
 #include <QAudioOutput>
 #include <QVideoWidget>
+#include <QIODevice>
+#include <QTimer>
 #include <QTransform>
 
 #include <iostream>
@@ -67,6 +75,7 @@ module Artifact.Contents.Viewer;
 
 
 import Artifact.Preview.Pipeline;
+import MediaPlaybackController;
 import File.TypeDetector;
 import Artifact.Widgets.ModelViewer;
 import Utils.String.UniString;
@@ -82,6 +91,7 @@ namespace Artifact
 
    void showInfoMessage(const QString& text);
    void updateHeader();
+   void updateSurfaceMeta();
    void updatePlaybackState();
    void updateActionAvailability();
    void updateModeButtons();
@@ -89,6 +99,10 @@ namespace Artifact
    void setPlaybackRange(int64_t startFrame, int64_t endFrame);
    void resetCurrentMode();
    void ensureVideoWidgets();
+   void ensureAudioController();
+   void releaseAudioPlayback();
+   void activateAudio(const QString& filepath);
+   void pumpAudioPlayback();
    void ensureModelViewer();
    void syncModelViewerMode();
    void attachMediaOutputs();
@@ -106,8 +120,10 @@ namespace Artifact
    QWidget* headerWidget = nullptr;
    QLabel* titleLabel = nullptr;
    QLabel* typeBadgeLabel = nullptr;
+   QLabel* viewerBadgeLabel = nullptr;
    QLabel* metaLabel = nullptr;
    QLabel* stateLabel = nullptr;
+   QLabel* surfaceMetaLabel = nullptr;
    QToolButton* fitButton = nullptr;
    QToolButton* rotateLeftButton = nullptr;
    QToolButton* rotateRightButton = nullptr;
@@ -127,20 +143,28 @@ namespace Artifact
    QVideoWidget* videoWidget = nullptr;
    QMediaPlayer* mediaPlayer = nullptr;
    QAudioOutput* audioOutput = nullptr;
+   std::unique_ptr<ArtifactCore::MediaPlaybackController> audioController_;
+   QAudioSink* audioSink = nullptr;
+   QIODevice* audioSinkDevice = nullptr;
+   QTimer* audioPumpTimer = nullptr;
    QLabel* infoLabel = nullptr;
    Artifact3DModelViewer* modelViewer = nullptr;
    bool videoWidgetsReady = false;
    bool modelViewerReady = false;
+   bool audioWidgetsReady = false;
    QString currentFilePath;
    ArtifactCore::FileType currentFileType = ArtifactCore::FileType::Unknown;
    ContentsViewerMode currentMode = ContentsViewerMode::Source;
    double zoomLevel = 1.0;
    double rotationDegrees = 0.0;
+   bool imageFitMode = true;
    QPixmap originalImage;
    QPoint lastMousePos;
    bool playbackRangeActive = false;
    qint64 playbackRangeStartMs = 0;
    qint64 playbackRangeEndMs = 0;
+   qint64 audioPlaybackPositionMs = 0;
+   QByteArray audioPendingBuffer;
   };
 
   qint64 ArtifactContentsViewer::Impl::framesToMs(int64_t frame)
@@ -186,6 +210,16 @@ namespace Artifact
        .arg(seconds, 2, 10, QChar('0'));
   }
 
+  static qint64 audioBytesToMs(qint64 bytes)
+  {
+   constexpr qint64 kSampleRate = 44100;
+   constexpr qint64 kBytesPerFrame = 4; // 16-bit stereo
+   if (bytes <= 0) {
+    return 0;
+   }
+   return (bytes * 1000) / (kSampleRate * kBytesPerFrame);
+  }
+
   void ArtifactContentsViewer::Impl::showInfoMessage(const QString& text)
   {
    infoLabel->setText(text);
@@ -203,6 +237,7 @@ namespace Artifact
     stateLabel->setText(QStringLiteral("State: Idle"));
    }
    updateModeButtons();
+   updateSurfaceMeta();
   }
 
   void ArtifactContentsViewer::Impl::clearPlaybackRange()
@@ -224,10 +259,150 @@ namespace Artifact
    playbackRangeActive = true;
   }
 
+  void ArtifactContentsViewer::Impl::ensureAudioController()
+  {
+   if (!audioController_) {
+    audioController_ = std::make_unique<ArtifactCore::MediaPlaybackController>();
+    audioController_->setDecoderBackend(ArtifactCore::DecoderBackend::FFmpeg);
+   }
+  }
+
+  void ArtifactContentsViewer::Impl::releaseAudioPlayback()
+  {
+   audioPendingBuffer.clear();
+   audioPlaybackPositionMs = 0;
+
+   if (audioPumpTimer) {
+    audioPumpTimer->stop();
+   }
+
+   if (audioSink) {
+    audioSink->stop();
+    audioSink->deleteLater();
+    audioSink = nullptr;
+   }
+   audioSinkDevice = nullptr;
+
+   if (audioController_) {
+    audioController_->stop();
+    audioController_->closeMedia();
+   }
+  }
+
+  void ArtifactContentsViewer::Impl::activateAudio(const QString& filepath)
+  {
+   QFileInfo info(filepath);
+   if (!info.exists()) {
+    showInfoMessage("Audio file does not exist:\n" + filepath);
+    return;
+   }
+
+   ensureAudioController();
+   if (!audioController_->openMediaFile(info.absoluteFilePath())) {
+    showInfoMessage("Failed to load audio:\n" + filepath);
+    return;
+   }
+
+   if (audioPumpTimer) {
+    audioPumpTimer->stop();
+   }
+
+   if (audioSink) {
+    audioSink->stop();
+    audioSink->deleteLater();
+    audioSink = nullptr;
+   }
+   audioSinkDevice = nullptr;
+   audioPendingBuffer.clear();
+
+   QAudioFormat format;
+   format.setSampleRate(44100);
+   format.setChannelCount(2);
+   format.setSampleFormat(QAudioFormat::Int16);
+
+   audioSink = new QAudioSink(format, owner_);
+   audioSink->setVolume(1.0f);
+   audioSinkDevice = audioSink->start();
+   audioSink->suspend();
+
+   if (!audioPumpTimer) {
+    audioPumpTimer = new QTimer(owner_);
+    QObject::connect(audioPumpTimer, &QTimer::timeout, owner_, [this]() {
+     pumpAudioPlayback();
+    });
+   }
+   audioPumpTimer->setInterval(16);
+
+   audioPlaybackPositionMs = 0;
+   if (infoLabel) {
+    infoLabel->setText(QStringLiteral("Audio preview ready\n%1").arg(info.absoluteFilePath()));
+    stackedWidget->setCurrentWidget(infoLabel);
+   }
+   updateHeader();
+   updatePlaybackState();
+   updateActionAvailability();
+   updateModeButtons();
+   if (owner_) {
+    owner_->play();
+   }
+  }
+
+  void ArtifactContentsViewer::Impl::pumpAudioPlayback()
+  {
+   if (currentFileType != ArtifactCore::FileType::Audio || !audioController_ || !audioSink || !audioSinkDevice) {
+    return;
+   }
+
+   if (audioSink->state() == QAudio::SuspendedState || audioSink->state() == QAudio::StoppedState) {
+    return;
+   }
+
+   if (playbackRangeActive && audioPlaybackPositionMs >= playbackRangeEndMs) {
+    audioController_->stop();
+    audioController_->seek(playbackRangeStartMs);
+    audioPendingBuffer.clear();
+    audioPlaybackPositionMs = playbackRangeStartMs;
+    audioSink->suspend();
+    updatePlaybackState();
+    return;
+   }
+
+   while (audioPendingBuffer.size() < 32768) {
+    const QByteArray chunk = audioController_->getNextAudioFrame();
+    if (chunk.isEmpty()) {
+     break;
+    }
+    audioPendingBuffer.append(chunk);
+   }
+
+   if (audioPendingBuffer.isEmpty()) {
+    audioController_->stop();
+    audioPlaybackPositionMs = playbackRangeActive ? playbackRangeStartMs : 0;
+    audioSink->suspend();
+    updatePlaybackState();
+    return;
+   }
+
+   const qint64 written = audioSinkDevice->write(audioPendingBuffer.constData(),
+                                                 static_cast<qint64>(audioPendingBuffer.size()));
+   if (written > 0) {
+    audioPendingBuffer.remove(0, static_cast<int>(written));
+    audioPlaybackPositionMs += audioBytesToMs(written);
+    if (seekSlider && !seekSlider->isSliderDown()) {
+     QSignalBlocker blocker(seekSlider);
+     seekSlider->setValue(static_cast<int>(std::clamp<qint64>(audioPlaybackPositionMs, 0, std::numeric_limits<int>::max())));
+    }
+    updatePlaybackState();
+   }
+  }
+
   void ArtifactContentsViewer::Impl::resetCurrentMode()
   {
    clearPlaybackRange();
    currentMode = ContentsViewerMode::Source;
+   imageFitMode = true;
+
+   releaseAudioPlayback();
 
    if (mediaPlayer) {
     QSignalBlocker blocker(mediaPlayer);
@@ -334,6 +509,7 @@ namespace Artifact
    originalImage = pixmap;
    rotationDegrees = 0.0;
    zoomLevel = 1.0;
+   imageFitMode = true;
    imageLabel->setPixmap(pixmap);
    imageLabel->setFixedSize(pixmap.size());
    imageScrollArea->setWidgetResizable(false);
@@ -399,6 +575,7 @@ namespace Artifact
    const double scaleX = static_cast<double>(viewportSize.width()) / static_cast<double>(baseSize.width());
    const double scaleY = static_cast<double>(viewportSize.height()) / static_cast<double>(baseSize.height());
    zoomLevel = std::clamp(std::min(scaleX, scaleY), 0.05, 10.0);
+   imageFitMode = true;
    applyImageTransform();
   }
 
@@ -461,6 +638,9 @@ namespace Artifact
    case ArtifactCore::FileType::Video:
     typeBadgeLabel->setText(QStringLiteral("Video"));
     break;
+   case ArtifactCore::FileType::Audio:
+    typeBadgeLabel->setText(QStringLiteral("Audio"));
+    break;
    case ArtifactCore::FileType::Model3D:
     typeBadgeLabel->setText(QStringLiteral("3D Model"));
     break;
@@ -496,6 +676,35 @@ namespace Artifact
     if (duration > 0) {
      metaParts.prepend(QStringLiteral("Duration %1").arg(formatDurationMs(duration)));
     }
+   } else if (currentFileType == ArtifactCore::FileType::Audio && audioController_ && audioController_->isMediaOpen()) {
+    const qint64 duration = audioController_->getDuration();
+    if (duration > 0) {
+     metaParts.prepend(QStringLiteral("Duration %1").arg(formatDurationMs(duration)));
+    }
+    const auto metadata = audioController_->getMetadata();
+    if (!metadata.formatName.isEmpty()) {
+     metaParts.prepend(metadata.formatName);
+    }
+    if (!metadata.streams.empty()) {
+     for (const auto& stream : metadata.streams) {
+      if (stream.type == ArtifactCore::MediaType::Audio) {
+       QStringList audioBits;
+       if (stream.audioCodec.sampleRate > 0) {
+        audioBits << QStringLiteral("%1 Hz").arg(stream.audioCodec.sampleRate);
+       }
+       if (stream.audioCodec.channels > 0) {
+        audioBits << QStringLiteral("%1 ch").arg(stream.audioCodec.channels);
+       }
+       if (!stream.audioCodec.codecName.isEmpty()) {
+        audioBits << stream.audioCodec.codecName;
+       }
+       if (!audioBits.isEmpty()) {
+        metaParts.prepend(audioBits.join(QStringLiteral(" / ")));
+       }
+       break;
+      }
+     }
+    }
    } else if (currentFileType == ArtifactCore::FileType::Model3D) {
     const QString suffix = info.suffix().toUpper();
     if (!suffix.isEmpty()) {
@@ -513,6 +722,89 @@ namespace Artifact
    }
 
    metaLabel->setText(metaParts.join(QStringLiteral(" | ")));
+   updateSurfaceMeta();
+  }
+
+  void ArtifactContentsViewer::Impl::updateSurfaceMeta()
+  {
+   if (!surfaceMetaLabel) {
+    return;
+   }
+
+   QStringList chips;
+   chips << QStringLiteral("Viewer");
+   switch (currentFileType) {
+   case ArtifactCore::FileType::Image:
+    chips << QStringLiteral("Image");
+    if (!originalImage.isNull()) {
+     chips << QStringLiteral("%1x%2").arg(originalImage.width()).arg(originalImage.height());
+     chips << QStringLiteral("Zoom %1%").arg(static_cast<int>(std::round(zoomLevel * 100.0)));
+     chips << QStringLiteral("Rotate %1°").arg(static_cast<int>(std::round(rotationDegrees)));
+    }
+    break;
+   case ArtifactCore::FileType::Video:
+    chips << QStringLiteral("Video");
+    if (mediaPlayer) {
+     const qreal speed = mediaPlayer->playbackRate();
+     chips << QStringLiteral("%1 / %2")
+                 .arg(formatDurationMs(mediaPlayer->position()))
+                 .arg(formatDurationMs(mediaPlayer->duration()));
+     chips << QStringLiteral("Speed x%1").arg(speed, 0, 'f', speed >= 1.0 ? 1 : 2);
+     chips << (playbackRangeActive
+                   ? QStringLiteral("Range %1-%2").arg(formatDurationMs(playbackRangeStartMs),
+                                                         formatDurationMs(playbackRangeEndMs))
+                   : QStringLiteral("Range Off"));
+    }
+    break;
+   case ArtifactCore::FileType::Audio:
+    chips << QStringLiteral("Audio");
+    if (audioController_) {
+     const qint64 position = audioPlaybackPositionMs;
+     const qint64 duration = audioController_->getDuration();
+     if (duration > 0) {
+      chips << QStringLiteral("%1 / %2")
+                  .arg(formatDurationMs(position))
+                  .arg(formatDurationMs(duration));
+     }
+     chips << (audioController_->getDecoderBackend() == ArtifactCore::DecoderBackend::MediaFoundation
+                   ? QStringLiteral("MediaFoundation")
+                   : QStringLiteral("FFmpeg"));
+     chips << (playbackRangeActive
+                   ? QStringLiteral("Range %1-%2").arg(formatDurationMs(playbackRangeStartMs),
+                                                         formatDurationMs(playbackRangeEndMs))
+                   : QStringLiteral("Range Off"));
+    }
+    break;
+   case ArtifactCore::FileType::Model3D:
+    chips << QStringLiteral("3D");
+    if (modelViewer) {
+     switch (modelViewer->displayMode()) {
+     case Artifact3DModelViewer::DisplayMode::Wireframe:
+      chips << QStringLiteral("Wireframe");
+      break;
+     case Artifact3DModelViewer::DisplayMode::SolidWithWire:
+      chips << QStringLiteral("Solid+Wire");
+      break;
+     case Artifact3DModelViewer::DisplayMode::Solid:
+      chips << QStringLiteral("Solid");
+      break;
+     }
+    }
+    break;
+   default:
+    chips << QStringLiteral("Unknown");
+    break;
+   }
+
+   if (currentMode == ContentsViewerMode::Source) {
+    chips << QStringLiteral("Source");
+   } else if (currentMode == ContentsViewerMode::Final) {
+    chips << QStringLiteral("Final");
+   } else if (currentMode == ContentsViewerMode::Compare) {
+    chips << QStringLiteral("Compare");
+   }
+
+   surfaceMetaLabel->setText(chips.join(QStringLiteral("  •  ")));
   }
 
   void ArtifactContentsViewer::Impl::updatePlaybackState()
@@ -522,7 +814,7 @@ namespace Artifact
    }
 
    QString stateText = QStringLiteral("Idle");
-   if (currentFileType == ArtifactCore::FileType::Image) {
+  if (currentFileType == ArtifactCore::FileType::Image) {
     stateText = QStringLiteral("Image preview");
    } else if (currentFileType == ArtifactCore::FileType::Video && mediaPlayer) {
     switch (mediaPlayer->playbackState()) {
@@ -547,6 +839,30 @@ namespace Artifact
     if (duration > 0) {
      stateText += QStringLiteral(" | %1 / %2")
                      .arg(formatDurationMs(position))
+                     .arg(formatDurationMs(duration));
+    }
+   } else if (currentFileType == ArtifactCore::FileType::Audio && audioController_ && audioController_->isMediaOpen()) {
+    switch (audioController_->getState()) {
+    case ArtifactCore::PlaybackState::Playing:
+     stateText = QStringLiteral("Playing");
+     break;
+    case ArtifactCore::PlaybackState::Paused:
+     stateText = QStringLiteral("Paused");
+     break;
+    case ArtifactCore::PlaybackState::Stopped:
+    default:
+     stateText = QStringLiteral("Stopped");
+     break;
+    }
+    if (playbackRangeActive) {
+     stateText += QStringLiteral(" | Range %1-%2")
+                     .arg(formatDurationMs(playbackRangeStartMs))
+                     .arg(formatDurationMs(playbackRangeEndMs));
+    }
+    const qint64 duration = audioController_->getDuration();
+    if (duration > 0) {
+     stateText += QStringLiteral(" | %1 / %2")
+                     .arg(formatDurationMs(audioPlaybackPositionMs))
                      .arg(formatDurationMs(duration));
     }
    } else if (currentFileType == ArtifactCore::FileType::Model3D) {
@@ -576,14 +892,19 @@ namespace Artifact
 
    stateLabel->setText(QStringLiteral("State: %1").arg(stateText));
 
+   const bool isVideo = currentFileType == ArtifactCore::FileType::Video;
+   const bool isAudio = currentFileType == ArtifactCore::FileType::Audio;
+   const bool audioReady = isAudio && audioController_ && audioController_->isMediaOpen();
    if (playButton) {
-    playButton->setEnabled(currentFileType == ArtifactCore::FileType::Video);
+    playButton->setEnabled(isVideo || audioReady);
    }
    if (pauseButton) {
-    pauseButton->setEnabled(currentFileType == ArtifactCore::FileType::Video && mediaPlayer && mediaPlayer->playbackState() == QMediaPlayer::PlayingState);
+    pauseButton->setEnabled((isVideo && mediaPlayer && mediaPlayer->playbackState() == QMediaPlayer::PlayingState)
+                             || (audioReady && audioController_->getState() == ArtifactCore::PlaybackState::Playing));
    }
    if (stopButton) {
-    stopButton->setEnabled(currentFileType == ArtifactCore::FileType::Video && mediaPlayer && mediaPlayer->playbackState() != QMediaPlayer::StoppedState);
+    stopButton->setEnabled((isVideo && mediaPlayer && mediaPlayer->playbackState() != QMediaPlayer::StoppedState)
+                            || (audioReady && audioController_->getState() != ArtifactCore::PlaybackState::Stopped));
    }
    if (copyPathButton) {
     copyPathButton->setEnabled(!currentFilePath.isEmpty());
@@ -592,10 +913,22 @@ namespace Artifact
     revealButton->setEnabled(!currentFilePath.isEmpty());
    }
    if (seekSlider) {
-    const bool isVideo = currentFileType == ArtifactCore::FileType::Video;
-    seekSlider->setEnabled(isVideo);
-    seekSlider->setVisible(isVideo);
-    if (!isVideo) {
+    const bool isSeekable = isVideo || audioReady;
+    seekSlider->setEnabled(isSeekable);
+    seekSlider->setVisible(isSeekable);
+    if (isVideo) {
+     if (mediaPlayer) {
+      QSignalBlocker blocker(seekSlider);
+      seekSlider->setRange(0, static_cast<int>(std::clamp<qint64>(mediaPlayer->duration(), 0, std::numeric_limits<int>::max())));
+      seekSlider->setValue(static_cast<int>(std::clamp<qint64>(mediaPlayer->position(), 0, std::numeric_limits<int>::max())));
+     }
+    } else if (isAudio) {
+     if (audioReady) {
+      QSignalBlocker blocker(seekSlider);
+      seekSlider->setRange(0, static_cast<int>(std::clamp<qint64>(audioController_->getDuration(), 0, std::numeric_limits<int>::max())));
+      seekSlider->setValue(static_cast<int>(std::clamp<qint64>(audioPlaybackPositionMs, 0, std::numeric_limits<int>::max())));
+     }
+    } else {
      QSignalBlocker blocker(seekSlider);
      seekSlider->setRange(0, 0);
      seekSlider->setValue(0);
@@ -607,6 +940,7 @@ namespace Artifact
    if (resetButton) {
     resetButton->setEnabled(currentFileType == ArtifactCore::FileType::Image
                             || currentFileType == ArtifactCore::FileType::Video
+                            || currentFileType == ArtifactCore::FileType::Audio
                             || currentFileType == ArtifactCore::FileType::Model3D);
    }
    if (rotateLeftButton) {
@@ -615,6 +949,7 @@ namespace Artifact
    if (rotateRightButton) {
     rotateRightButton->setEnabled(currentFileType == ArtifactCore::FileType::Image);
    }
+   updateSurfaceMeta();
   }
 
   void ArtifactContentsViewer::Impl::updateActionAvailability()
@@ -655,7 +990,15 @@ namespace Artifact
    textColumn->setSpacing(1);
 
    titleLabel = new QLabel(QStringLiteral("Contents Viewer"), headerWidget);
-   titleLabel->setStyleSheet("font-size: 14px; font-weight: 600; color: #e8e8e8;");
+   {
+    QFont titleFont = titleLabel->font();
+    titleFont.setPointSize(14);
+    titleFont.setWeight(QFont::DemiBold);
+    titleLabel->setFont(titleFont);
+    QPalette pal = titleLabel->palette();
+    pal.setColor(QPalette::WindowText, QColor(ArtifactCore::currentDCCTheme().textColor));
+    titleLabel->setPalette(pal);
+   }
    typeBadgeLabel = new QLabel(QStringLiteral("Idle"), headerWidget);
    typeBadgeLabel->setStyleSheet(R"(
      QLabel {
@@ -666,11 +1009,37 @@ namespace Artifact
        font-size: 10px;
      }
    )");
+   viewerBadgeLabel = new QLabel(QStringLiteral("Viewer 01"), headerWidget);
+   viewerBadgeLabel->setStyleSheet(R"(
+     QLabel {
+       background: #202020;
+       color: #dcdcdc;
+       border: 1px solid #343434;
+       border-radius: 8px;
+       padding: 2px 8px;
+       font-size: 10px;
+       font-weight: 700;
+     }
+   )");
    metaLabel = new QLabel(QStringLiteral("No file selected"), headerWidget);
-   metaLabel->setStyleSheet("color: #c4c4c4; font-size: 10px;");
+   {
+    QFont metaFont = metaLabel->font();
+    metaFont.setPointSize(10);
+    metaLabel->setFont(metaFont);
+    QPalette pal = metaLabel->palette();
+    pal.setColor(QPalette::WindowText, QColor(ArtifactCore::currentDCCTheme().textColor).darker(125));
+    metaLabel->setPalette(pal);
+   }
    metaLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
    stateLabel = new QLabel(QStringLiteral("State: Idle"), headerWidget);
-   stateLabel->setStyleSheet("color: #d0d0d0; font-size: 10px;");
+   {
+    QFont stateFont = stateLabel->font();
+    stateFont.setPointSize(10);
+    stateLabel->setFont(stateFont);
+    QPalette pal = stateLabel->palette();
+    pal.setColor(QPalette::WindowText, QColor(ArtifactCore::currentDCCTheme().textColor).darker(120));
+    stateLabel->setPalette(pal);
+   }
 
    textColumn->addWidget(titleLabel);
    textColumn->addWidget(metaLabel);
@@ -679,6 +1048,7 @@ namespace Artifact
    auto* badgeColumn = new QVBoxLayout();
    badgeColumn->setContentsMargins(0, 0, 0, 0);
    badgeColumn->setSpacing(2);
+   badgeColumn->addWidget(viewerBadgeLabel, 0, Qt::AlignLeft);
    badgeColumn->addWidget(typeBadgeLabel, 0, Qt::AlignLeft);
    badgeColumn->addStretch(1);
 
@@ -701,9 +1071,9 @@ namespace Artifact
    rotateLeftButton = createButton(QStringLiteral("⟲"), QStringLiteral("Rotate left"));
    rotateRightButton = createButton(QStringLiteral("⟳"), QStringLiteral("Rotate right"));
    resetButton = createButton(QStringLiteral("Reset"), QStringLiteral("Reset view state"));
-   playButton = createButton(QStringLiteral("Play"), QStringLiteral("Play video"));
-   pauseButton = createButton(QStringLiteral("Pause"), QStringLiteral("Pause video"));
-   stopButton = createButton(QStringLiteral("Stop"), QStringLiteral("Stop video"));
+   playButton = createButton(QStringLiteral("Play"), QStringLiteral("Play media"));
+   pauseButton = createButton(QStringLiteral("Pause"), QStringLiteral("Pause media"));
+   stopButton = createButton(QStringLiteral("Stop"), QStringLiteral("Stop media"));
    copyPathButton = createButton(QStringLiteral("Copy"), QStringLiteral("Copy file path"));
    revealButton = createButton(QStringLiteral("Open"), QStringLiteral("Open containing folder"));
    sourceButton = createButton(QStringLiteral("Source"), QStringLiteral("Show source view"));
@@ -718,24 +1088,7 @@ namespace Artifact
    seekSlider->setPageStep(5000);
    seekSlider->setTracking(true);
    seekSlider->setVisible(false);
-   seekSlider->setToolTip(QStringLiteral("Scrub video position"));
-   seekSlider->setStyleSheet(R"(
-    QSlider::groove:horizontal {
-      height: 4px;
-      background: #343434;
-      border-radius: 2px;
-    }
-    QSlider::handle:horizontal {
-      width: 12px;
-      margin: -5px 0;
-      border-radius: 6px;
-      background: #e8e8e8;
-    }
-    QSlider::sub-page:horizontal {
-      background: #f5933c;
-      border-radius: 2px;
-    }
-   )");
+   seekSlider->setToolTip(QStringLiteral("Scrub media position"));
 
    buttonRow->addWidget(fitButton);
    buttonRow->addWidget(rotateLeftButton);
@@ -753,10 +1106,25 @@ namespace Artifact
    buttonRow->addWidget(finalButton);
    buttonRow->addWidget(compareButton);
 
+   auto* surfaceMetaRow = new QHBoxLayout();
+   surfaceMetaRow->setContentsMargins(0, 0, 0, 0);
+   surfaceMetaRow->setSpacing(6);
+   surfaceMetaLabel = new QLabel(QStringLiteral("Viewer • Idle"), headerWidget);
+   {
+    QFont surfaceFont = surfaceMetaLabel->font();
+    surfaceFont.setPointSize(10);
+    surfaceMetaLabel->setFont(surfaceFont);
+    QPalette pal = surfaceMetaLabel->palette();
+    pal.setColor(QPalette::WindowText, QColor(ArtifactCore::currentDCCTheme().textColor));
+    surfaceMetaLabel->setPalette(pal);
+   }
+   surfaceMetaRow->addWidget(surfaceMetaLabel, 1);
+
    infoRow->addLayout(textColumn, 1);
    infoRow->addLayout(badgeColumn, 0);
    headerLayout->addLayout(infoRow);
    headerLayout->addLayout(buttonRow);
+   headerLayout->addLayout(surfaceMetaRow);
 
     QObject::connect(fitButton, &QToolButton::clicked, parent, [this]() {
      if (currentFileType == ArtifactCore::FileType::Image) {
@@ -888,10 +1256,40 @@ namespace Artifact
    });
 
    QObject::connect(seekSlider, &QSlider::sliderMoved, parent, [this](int value) {
-    if (currentFileType != ArtifactCore::FileType::Video || !mediaPlayer) {
+    if (currentFileType == ArtifactCore::FileType::Video && mediaPlayer) {
+     mediaPlayer->setPosition(static_cast<qint64>(value));
+     updatePlaybackState();
      return;
     }
-    mediaPlayer->setPosition(static_cast<qint64>(value));
+    if (currentFileType == ArtifactCore::FileType::Audio && audioController_ && audioController_->isMediaOpen()) {
+     const bool wasPlaying = audioController_->getState() == ArtifactCore::PlaybackState::Playing;
+     audioController_->seek(static_cast<qint64>(value));
+     audioPlaybackPositionMs = static_cast<qint64>(value);
+     audioPendingBuffer.clear();
+     if (audioSink && audioSink->state() == QAudio::StoppedState) {
+      audioSinkDevice = audioSink->start();
+     }
+     if (audioSink) {
+      if (wasPlaying) {
+       audioSink->resume();
+      } else {
+       audioSink->suspend();
+      }
+     }
+     if (audioPumpTimer) {
+      if (wasPlaying) {
+       audioPumpTimer->start(16);
+      } else {
+       audioPumpTimer->stop();
+      }
+     }
+     if (wasPlaying) {
+      pumpAudioPlayback();
+     }
+     updatePlaybackState();
+     return;
+    }
+    Q_UNUSED(value);
     updatePlaybackState();
    });
 
@@ -899,44 +1297,31 @@ namespace Artifact
    imageScrollArea = new QScrollArea();
    imageLabel = new QLabel();
    imageLabel->setAlignment(Qt::AlignCenter);
-   imageLabel->setStyleSheet("background: transparent;");
    imageLabel->setScaledContents(true); // Allow manual scaling via setFixedSize
    
    imageScrollArea->setWidget(imageLabel);
    imageScrollArea->setWidgetResizable(false); // We want to control sizing based on zoom
    imageScrollArea->setAlignment(Qt::AlignCenter);
-   imageScrollArea->setStyleSheet(R"(
-     QScrollArea {
-       background-color: #242424;
-       border: none;
-     }
-     QScrollBar:vertical {
-       background: #1b1b1b;
-       width: 10px;
-       margin: 0px;
-     }
-     QScrollBar::handle:vertical {
-       background: #444;
-       min-height: 20px;
-       border-radius: 5px;
-     }
-     QScrollBar:horizontal {
-       background: #1b1b1b;
-       height: 10px;
-       margin: 0px;
-     }
-     QScrollBar::handle:horizontal {
-       background: #444;
-       min-width: 20px;
-       border-radius: 5px;
-     }
-    )");
+   {
+    QPalette scrollPalette = imageScrollArea->palette();
+    scrollPalette.setColor(QPalette::Window, QColor(ArtifactCore::currentDCCTheme().backgroundColor));
+    scrollPalette.setColor(QPalette::Base, QColor(ArtifactCore::currentDCCTheme().secondaryBackgroundColor));
+    imageScrollArea->setPalette(scrollPalette);
+   }
+   imageScrollArea->setAutoFillBackground(true);
 
    // Info/Message View Setup
    infoLabel = new QLabel();
    infoLabel->setAlignment(Qt::AlignCenter);
    infoLabel->setWordWrap(true);
-   infoLabel->setStyleSheet("color: #bcbcbc; background-color: #242424; font-family: 'Segoe UI'; font-size: 14px;");
+   {
+    QFont infoFont = infoLabel->font();
+    infoFont.setPointSize(14);
+    infoLabel->setFont(infoFont);
+    QPalette pal = infoLabel->palette();
+    pal.setColor(QPalette::WindowText, QColor(ArtifactCore::currentDCCTheme().textColor).darker(120));
+    infoLabel->setPalette(pal);
+   }
 
    stackedWidget->addWidget(imageScrollArea);
    stackedWidget->addWidget(infoLabel);
@@ -1009,6 +1394,9 @@ namespace Artifact
    case ArtifactCore::FileType::Video:
     impl_->activateVideo(filepath);
     break;
+   case ArtifactCore::FileType::Audio:
+    impl_->activateAudio(filepath);
+    break;
    case ArtifactCore::FileType::Model3D:
     impl_->activateModel(filepath);
     break;
@@ -1047,11 +1435,22 @@ namespace Artifact
           }
           
           impl_->zoomLevel = qBound(0.05, impl_->zoomLevel, 10.0);
+          impl_->imageFitMode = false;
           impl_->applyImageTransform();
           event->accept();
           return;
       }
       QWidget::wheelEvent(event);
+  }
+
+  void ArtifactContentsViewer::resizeEvent(QResizeEvent* event)
+  {
+      if (impl_ && impl_->currentFileType == ArtifactCore::FileType::Image &&
+          impl_->stackedWidget && impl_->stackedWidget->currentWidget() == impl_->imageScrollArea &&
+          impl_->imageFitMode) {
+          impl_->fitImageToWindow();
+      }
+      QWidget::resizeEvent(event);
   }
 
   void ArtifactContentsViewer::mousePressEvent(QMouseEvent* event)
@@ -1114,6 +1513,32 @@ void ArtifactContentsViewer::play()
    return;
   }
 
+  if (impl_->currentFileType == ArtifactCore::FileType::Audio) {
+   if (!impl_->audioController_ || !impl_->audioController_->isMediaOpen()) {
+    impl_->showInfoMessage("Cannot play unsupported content.\n" + impl_->currentFilePath);
+    return;
+   }
+   if (impl_->audioController_->getState() == ArtifactCore::PlaybackState::Stopped) {
+    impl_->audioController_->seek(impl_->playbackRangeActive ? impl_->playbackRangeStartMs : 0);
+   }
+   if (impl_->audioSink && impl_->audioSink->state() == QAudio::SuspendedState) {
+    impl_->audioSink->resume();
+   }
+   if (impl_->audioSink && impl_->audioSink->state() == QAudio::StoppedState) {
+    impl_->audioSinkDevice = impl_->audioSink->start();
+   }
+   impl_->audioController_->play();
+   if (impl_->audioPumpTimer) {
+    impl_->audioPumpTimer->start(16);
+   }
+   if (impl_->stackedWidget && impl_->infoLabel) {
+    impl_->stackedWidget->setCurrentWidget(impl_->infoLabel);
+   }
+   impl_->pumpAudioPlayback();
+   impl_->updatePlaybackState();
+   return;
+  }
+
   impl_->showInfoMessage("Cannot play unsupported content.\n" + impl_->currentFilePath);
 }
 
@@ -1126,6 +1551,23 @@ void ArtifactContentsViewer::pause()
    return;
   }
 
+  if (impl_->currentFileType == ArtifactCore::FileType::Audio) {
+   if (!impl_->audioController_ || !impl_->audioController_->isMediaOpen()) {
+    return;
+   }
+   if (impl_->audioPumpTimer) {
+    impl_->audioPumpTimer->stop();
+   }
+   if (impl_->audioSink) {
+    impl_->audioSink->suspend();
+   }
+   if (impl_->audioController_) {
+    impl_->audioController_->pause();
+   }
+   impl_->updatePlaybackState();
+   return;
+  }
+
   qDebug() << "ArtifactContentsViewer::pause no-op for current type:" << static_cast<int>(impl_->currentFileType);
 }
 
@@ -1133,6 +1575,7 @@ void ArtifactContentsViewer::stop()
 {
   if (impl_->currentFileType == ArtifactCore::FileType::Image && !impl_->imageLabel->pixmap().isNull()) {
    impl_->zoomLevel = 1.0;
+   impl_->imageFitMode = true;
    impl_->imageLabel->setFixedSize(impl_->imageLabel->pixmap().size());
    impl_->updateHeader();
    impl_->updatePlaybackState();
@@ -1146,6 +1589,30 @@ void ArtifactContentsViewer::stop()
     impl_->mediaPlayer->setPosition(impl_->playbackRangeStartMs);
    } else {
     impl_->mediaPlayer->setPosition(0);
+   }
+   impl_->updatePlaybackState();
+   return;
+  }
+
+  if (impl_->currentFileType == ArtifactCore::FileType::Audio) {
+   if (!impl_->audioController_ || !impl_->audioController_->isMediaOpen()) {
+    return;
+   }
+   if (impl_->audioPumpTimer) {
+    impl_->audioPumpTimer->stop();
+   }
+   if (impl_->audioSink) {
+    impl_->audioSink->stop();
+   }
+   if (impl_->audioController_) {
+    impl_->audioController_->stop();
+    impl_->audioController_->seek(impl_->playbackRangeActive ? impl_->playbackRangeStartMs : 0);
+   }
+   impl_->audioPendingBuffer.clear();
+   impl_->audioPlaybackPositionMs = impl_->playbackRangeActive ? impl_->playbackRangeStartMs : 0;
+   if (impl_->seekSlider) {
+    QSignalBlocker blocker(impl_->seekSlider);
+    impl_->seekSlider->setValue(static_cast<int>(std::clamp<qint64>(impl_->audioPlaybackPositionMs, 0, std::numeric_limits<int>::max())));
    }
    impl_->updatePlaybackState();
    return;
@@ -1169,6 +1636,18 @@ void ArtifactContentsViewer::playRange(int64_t start, int64_t end)
    return;
   }
 
+  if (impl_->currentFileType == ArtifactCore::FileType::Audio) {
+   if (!impl_->audioController_ || !impl_->audioController_->isMediaOpen()) {
+    return;
+   }
+   impl_->setPlaybackRange(start, end);
+   if (impl_->audioController_) {
+    impl_->audioController_->seek(impl_->playbackRangeStartMs);
+   }
+   play();
+   return;
+  }
+
   play();
 }
 
@@ -1179,6 +1658,7 @@ void ArtifactContentsViewer::rotateLeft()
  }
 
  impl_->rotationDegrees -= 90.0;
+ impl_->imageFitMode = false;
  QTransform transform;
  transform.rotate(impl_->rotationDegrees);
  const QPixmap rotated = impl_->originalImage.transformed(transform, Qt::SmoothTransformation);
@@ -1194,6 +1674,7 @@ void ArtifactContentsViewer::rotateRight()
  }
 
  impl_->rotationDegrees += 90.0;
+ impl_->imageFitMode = false;
  QTransform transform;
  transform.rotate(impl_->rotationDegrees);
  const QPixmap rotated = impl_->originalImage.transformed(transform, Qt::SmoothTransformation);
@@ -1210,6 +1691,7 @@ void ArtifactContentsViewer::resetView()
 
  impl_->zoomLevel = 1.0;
  impl_->rotationDegrees = 0.0;
+ impl_->imageFitMode = true;
  impl_->imageLabel->setPixmap(impl_->originalImage);
  impl_->imageLabel->setFixedSize(impl_->originalImage.size());
  impl_->updateHeader();

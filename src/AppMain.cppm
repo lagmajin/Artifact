@@ -78,6 +78,7 @@ import Codec.Thumbnail.FFmpeg;
 
 import Widgets.Render.Queue;
 import Widgets.Utils.CSS;
+import Widgets.CommonStyle;
 import IO.ImageExporter;
 import ArtifactStatusBar;
 import Artifact.Application.Manager;
@@ -674,9 +675,22 @@ int main(int argc, char *argv[]) {
     if (!settings) {
       return;
     }
-    ArtifactCore::applyDCCTheme(a, settings->themeName());
+    ArtifactCore::DccStyleTheme theme =
+        ArtifactCore::getDCCTheme(ArtifactCore::themePresetFromName(settings->themeName()));
+    const QString themePresetPath = settings->themePresetPath().trimmed();
+    if (!themePresetPath.isEmpty()) {
+      QString loadError;
+      ArtifactCore::DccStyleTheme loadedTheme;
+      if (ArtifactCore::loadDCCThemePresetFromFile(themePresetPath, &loadedTheme, &loadError)) {
+        theme = loadedTheme;
+      } else {
+        qWarning() << "[AppMain] Failed to load theme preset:" << themePresetPath << loadError;
+      }
+    }
+    ArtifactCore::applyDCCTheme(a, theme);
   };
   applyThemeFromSettings();
+  QApplication::setStyle(new ArtifactCommonStyle(QStyleFactory::create(QStringLiteral("Fusion"))));
   QObject::connect(settings, &ArtifactCore::ArtifactAppSettings::settingsChanged,
                    &a, applyThemeFromSettings);
   auto pool = QThreadPool::globalInstance();
@@ -708,7 +722,7 @@ int main(int argc, char *argv[]) {
     auto *playbackControl = new ArtifactPlaybackControlWidget(mw);
     mw->addDockedWidgetFloating(QStringLiteral("Playback Control"),
                                 QStringLiteral("PlaybackControl"),
-                                playbackControl, QRect(120, 840, 600, 56));
+                                playbackControl, QRect(120, 828, 720, 96));
     auto *consoleWidget = new ArtifactConsoleWidget(mw);
     mw->addDockedWidgetFloating(QStringLiteral("Console"),
                                 QStringLiteral("Console"), consoleWidget,
@@ -1004,9 +1018,40 @@ int main(int argc, char *argv[]) {
                                        ? ArtifactApplicationManager::instance()
                                              ->layerSelectionManager()
                                        : nullptr) {
+        const auto syncSelectedLayerUi =
+            [layerViewEditor, propertyPanel, projectService, selectionManager](
+                const LayerID &layerId) {
+              if (layerViewEditor) {
+                if (layerId.isNil()) {
+                  layerViewEditor->view()->clearTargetLayer();
+                } else {
+                  layerViewEditor->setTargetLayer(layerId);
+                }
+              }
+              if (propertyPanel) {
+                propertyPanel->setFocusedEffectId(QString());
+                if (layerId.isNil()) {
+                  propertyPanel->clear();
+                } else if (projectService) {
+                  auto current = selectionManager ? selectionManager->currentLayer()
+                                                  : ArtifactAbstractLayerPtr{};
+                  if (!current || current->id() != layerId) {
+                    const auto comp = projectService->currentComposition().lock();
+                    current = comp ? comp->layerById(layerId) : ArtifactAbstractLayerPtr{};
+                  }
+                  if (current) {
+                    propertyPanel->setLayer(current);
+                  } else {
+                    propertyPanel->clear();
+                  }
+                } else {
+                  propertyPanel->clear();
+                }
+              }
+            };
         QObject::connect(selectionManager,
                          &ArtifactLayerSelectionManager::selectionChanged, mw,
-                         [projectService, selectionManager]() {
+                         [projectService, selectionManager, syncSelectedLayerUi]() {
                            if (!projectService || !selectionManager) {
                              return;
                            }
@@ -1014,6 +1059,7 @@ int main(int argc, char *argv[]) {
                                selectionManager->currentLayer();
                            projectService->selectLayer(
                                current ? current->id() : LayerID::Nil());
+                           syncSelectedLayerUi(current ? current->id() : LayerID::Nil());
                          });
       }
       QObject::connect(projectService, &ArtifactProjectService::projectChanged,
@@ -1047,8 +1093,11 @@ int main(int argc, char *argv[]) {
           });
       QObject::connect(
           projectService, &ArtifactProjectService::layerSelected, mw,
-          [layerViewEditor, propertyPanel,
-           projectService](const LayerID &layerId) {
+          [layerViewEditor, propertyPanel, projectService,
+           selectionManager = ArtifactApplicationManager::instance()
+                                  ? ArtifactApplicationManager::instance()
+                                        ->layerSelectionManager()
+                                  : nullptr](const LayerID &layerId) {
             if (layerViewEditor) {
               if (layerId.isNil()) {
                 layerViewEditor->view()->clearTargetLayer();
@@ -1060,11 +1109,22 @@ int main(int argc, char *argv[]) {
               propertyPanel->setFocusedEffectId(QString());
               if (layerId.isNil()) {
                 propertyPanel->clear();
-              } else if (auto comp =
-                             projectService->currentComposition().lock()) {
-                propertyPanel->setLayer(comp->layerById(layerId));
               } else {
-                propertyPanel->clear();
+                ArtifactAbstractLayerPtr current = selectionManager
+                                                       ? selectionManager
+                                                             ->currentLayer()
+                                                       : ArtifactAbstractLayerPtr{};
+                if (!current || current->id() != layerId) {
+                  if (auto comp =
+                          projectService->currentComposition().lock()) {
+                    current = comp->layerById(layerId);
+                  }
+                }
+                if (current) {
+                  propertyPanel->setLayer(current);
+                } else {
+                  propertyPanel->clear();
+                }
               }
             }
           });
@@ -1110,7 +1170,7 @@ int main(int argc, char *argv[]) {
           });
       QObject::connect(projectService,
                        &ArtifactProjectService::currentCompositionChanged, mw,
-                       [projectService]() {
+                       [projectService, propertyPanel]() {
                          if (!projectService) {
                            return;
                          }
@@ -1121,6 +1181,23 @@ int main(int argc, char *argv[]) {
                                      : nullptr) {
                            selectionManager->setActiveComposition(
                                projectService->currentComposition().lock());
+                           if (propertyPanel) {
+                             propertyPanel->setFocusedEffectId(QString());
+                             const ArtifactAbstractLayerPtr currentLayer =
+                                 selectionManager->currentLayer();
+                             if (currentLayer) {
+                               const auto comp =
+                                   projectService->currentComposition().lock();
+                               if (comp && comp->layerById(currentLayer->id())) {
+                                 propertyPanel->setLayer(
+                                     comp->layerById(currentLayer->id()));
+                               } else {
+                                 propertyPanel->clear();
+                               }
+                             } else {
+                               propertyPanel->clear();
+                             }
+                           }
                          }
                        });
       QObject::connect(

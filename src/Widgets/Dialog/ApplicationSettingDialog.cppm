@@ -9,6 +9,9 @@
 #include <QHBoxLayout>
 #include <QPushButton>
 #include <QLabel>
+#include <QFont>
+#include <QPalette>
+#include <QColor>
 #include <QCheckBox>
 #include <QSpinBox>
 #include <QGroupBox>
@@ -71,7 +74,10 @@ namespace ArtifactCore {
   Impl();
   ~Impl();
   
-  QComboBox* themeCombo_;
+ QComboBox* themeCombo_;
+  QLineEdit* themePresetPathEdit_;
+  QPushButton* browseThemePresetButton_;
+  QPushButton* clearThemePresetButton_;
   QCheckBox* autoSaveCheckBox_;
   QSpinBox* autoSaveIntervalSpinBox_;
   QCheckBox* showStartupDialogCheckBox_;
@@ -113,6 +119,18 @@ namespace ArtifactCore {
   themeLayout->addWidget(impl_->themeCombo_);
   themeLayout->addStretch();
   appearanceLayout->addLayout(themeLayout);
+
+  auto* presetPathLayout = new QHBoxLayout();
+  presetPathLayout->addWidget(new QLabel("Theme preset file:", this));
+  impl_->themePresetPathEdit_ = new QLineEdit(this);
+  impl_->themePresetPathEdit_->setReadOnly(true);
+  impl_->themePresetPathEdit_->setPlaceholderText("Load a JSON theme preset file");
+  presetPathLayout->addWidget(impl_->themePresetPathEdit_, 1);
+  impl_->browseThemePresetButton_ = new QPushButton("Browse...", this);
+  impl_->clearThemePresetButton_ = new QPushButton("Clear", this);
+  presetPathLayout->addWidget(impl_->browseThemePresetButton_);
+  presetPathLayout->addWidget(impl_->clearThemePresetButton_);
+  appearanceLayout->addLayout(presetPathLayout);
   mainLayout->addWidget(appearanceGroup);
 
   auto* autoSaveGroup = new QGroupBox("Auto-Save", this);
@@ -143,6 +161,21 @@ namespace ArtifactCore {
   
   mainLayout->addStretch();
 
+  QObject::connect(impl_->browseThemePresetButton_, &QPushButton::clicked, this, [this]() {
+    const QString startDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+    const QString filePath = QFileDialog::getOpenFileName(
+        this, QStringLiteral("Select Theme Preset"), startDir,
+        QStringLiteral("Theme preset (*.json);;All files (*)"));
+    if (!filePath.isEmpty() && impl_->themePresetPathEdit_) {
+      impl_->themePresetPathEdit_->setText(QFileInfo(filePath).absoluteFilePath());
+    }
+  });
+  QObject::connect(impl_->clearThemePresetButton_, &QPushButton::clicked, this, [this]() {
+    if (impl_->themePresetPathEdit_) {
+      impl_->themePresetPathEdit_->clear();
+    }
+  });
+
   loadSettings();
  }
 
@@ -156,6 +189,9 @@ namespace ArtifactCore {
       impl_->themeCombo_->setCurrentIndex(idx);
     }
   }
+  if (impl_->themePresetPathEdit_) {
+    impl_->themePresetPathEdit_->setText(settings->themePresetPath());
+  }
  impl_->autoSaveIntervalSpinBox_->setValue(settings->autoSaveIntervalMinutes());
  impl_->showStartupDialogCheckBox_->setChecked(settings->loadLastProjectOnStartup());
   QSettings qsettings;
@@ -167,6 +203,9 @@ void GeneralSettingPage::saveSettings()
   auto* settings = ArtifactAppSettings::instance();
   if (impl_->themeCombo_) {
     settings->setThemeName(impl_->themeCombo_->currentData().toString());
+  }
+  if (impl_->themePresetPathEdit_) {
+    settings->setThemePresetPath(impl_->themePresetPathEdit_->text().trimmed());
   }
   settings->setAutoSaveIntervalMinutes(impl_->autoSaveIntervalSpinBox_->value());
   settings->setLoadLastProjectOnStartup(impl_->showStartupDialogCheckBox_->isChecked());
@@ -180,6 +219,11 @@ QList<SettingItemInfo> GeneralSettingPage::searchableItems() const
   if (impl_->themeCombo_) {
     items.append({QStringLiteral("Theme preset"), QStringLiteral("Application theme preset"),
                   QStringLiteral("General"), impl_->themeCombo_});
+  }
+  if (impl_->themePresetPathEdit_) {
+    items.append({QStringLiteral("Theme preset file"),
+                  QStringLiteral("Load a JSON theme preset file"),
+                  QStringLiteral("General"), impl_->themePresetPathEdit_});
   }
   if (impl_->autoSaveCheckBox_) {
     items.append({QStringLiteral("Enable Auto-Save"), QStringLiteral("Toggle auto-save"),
@@ -1024,7 +1068,11 @@ ShortcutSettingPage::ShortcutSettingPage(QWidget* parent)
   mainLayout->addLayout(headerLayout);
 
   impl_->summaryLabel_ = new QLabel(this);
-  impl_->summaryLabel_->setStyleSheet(QStringLiteral("color: #8a93a2;"));
+  {
+    QPalette pal = impl_->summaryLabel_->palette();
+    pal.setColor(QPalette::WindowText, QColor(ArtifactCore::currentDCCTheme().textColor).darker(130));
+    impl_->summaryLabel_->setPalette(pal);
+  }
   mainLayout->addWidget(impl_->summaryLabel_);
 
   impl_->shortcutTable_ = new QTableWidget(this);
@@ -1687,9 +1735,16 @@ void ApplicationSettingDialog::saveSettings()
     "Select a local GGUF model file to use with the AI chat.\n"
     "Recommended: llama-3.2-1b-instruct.q4_k_m.gguf (~1.3GB)\n"
     "AI will not be loaded until you click 'Initialize AI'.", this);
-   infoLabel->setWordWrap(true);
-   infoLabel->setStyleSheet("color: gray; font-size: 11px;");
-   mainLayout->addWidget(infoLabel);
+  infoLabel->setWordWrap(true);
+  {
+    QFont infoFont = infoLabel->font();
+    infoFont.setPointSize(11);
+    infoLabel->setFont(infoFont);
+    QPalette pal = infoLabel->palette();
+    pal.setColor(QPalette::WindowText, QColor(ArtifactCore::currentDCCTheme().textColor).darker(150));
+    infoLabel->setPalette(pal);
+  }
+  mainLayout->addWidget(infoLabel);
    mainLayout->addStretch();
 
    impl_->loadSettings();
@@ -1814,7 +1869,11 @@ void ApplicationSettingDialog::saveSettings()
   auto* infoGroup = new QGroupBox("Plugin Directory", this);
   auto* infoLayout = new QHBoxLayout(infoGroup);
   auto* dirLabel = new QLabel(impl_->pluginDirectory_, this);
-  dirLabel->setStyleSheet("color: gray;");
+  {
+    QPalette pal = dirLabel->palette();
+    pal.setColor(QPalette::WindowText, QColor(ArtifactCore::currentDCCTheme().textColor).darker(150));
+    dirLabel->setPalette(pal);
+  }
   infoLayout->addWidget(dirLabel);
   impl_->openFolderButton_ = new QPushButton("Open Folder", this);
   infoLayout->addWidget(impl_->openFolderButton_);
