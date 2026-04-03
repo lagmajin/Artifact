@@ -7,6 +7,9 @@
 #include <QLineEdit>
 #include <QFormLayout>
 #include <QGroupBox>
+#include <QFont>
+#include <QPalette>
+#include <QColor>
 #include <QCursor>
 #include <QMenu>
 #include <QTimer>
@@ -56,6 +59,7 @@ import Property.Group;
 import Undo.UndoManager;
 import Artifact.Effect.Abstract;
 import Utils.String.UniString;
+import Widgets.Utils.CSS;
 import Artifact.Widgets.ExpressionCopilotWidget;
 import Artifact.Widgets.PropertyEditor;
 import Artifact.Service.Playback;
@@ -65,6 +69,19 @@ import Time.Rational;
 namespace Artifact {
 
 namespace {
+void applyThemeTextPalette(QWidget* widget, int shade = 100)
+{
+    if (!widget) {
+        return;
+    }
+    const auto& theme = ArtifactCore::currentDCCTheme();
+    QPalette pal = widget->palette();
+    const QColor textColor(theme.textColor);
+    pal.setColor(QPalette::WindowText, textColor.darker(shade));
+    pal.setColor(QPalette::Text, textColor.darker(shade));
+    widget->setPalette(pal);
+}
+
 void clearLayoutRecursive(QLayout* layout) {
     if (!layout) {
         return;
@@ -368,6 +385,31 @@ ArtifactPropertyEditorRowWidget* createPropertyRow(
     return row;
 }
 
+void alignPropertyRowLabels(
+    const std::vector<ArtifactPropertyEditorRowWidget*>& rows,
+    const int minimumLabelWidth = 132,
+    const int maximumLabelWidth = 184)
+{
+    int labelWidth = minimumLabelWidth;
+    for (auto* row : rows) {
+        if (!row || !row->label()) {
+            continue;
+        }
+        labelWidth = std::max(labelWidth, row->label()->sizeHint().width());
+    }
+    labelWidth = std::clamp(labelWidth, minimumLabelWidth, maximumLabelWidth);
+
+    for (auto* row : rows) {
+        if (!row || !row->label()) {
+            continue;
+        }
+        row->label()->setMinimumWidth(labelWidth);
+        row->label()->setMaximumWidth(labelWidth);
+        row->label()->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+        row->label()->setAlignment(Qt::AlignVCenter | Qt::AlignLeft);
+    }
+}
+
 void addRowsFromProperties(
     QWidget* parent,
     QVBoxLayout* layout,
@@ -375,7 +417,8 @@ void addRowsFromProperties(
     const QString& filterText,
     const std::function<void(const QString&, const QVariant&)>& applyValue,
     bool* addedAny,
-    QHash<QString, ArtifactPropertyEditorRowWidget*>* registry = nullptr)
+    QHash<QString, ArtifactPropertyEditorRowWidget*>* registry = nullptr,
+    std::vector<ArtifactPropertyEditorRowWidget*>* collectedRows = nullptr)
 {
     for (const auto& ptr : properties) {
         if (!ptr || !propertyMatchesFilter(*ptr, filterText)) {
@@ -385,6 +428,9 @@ void addRowsFromProperties(
             layout->addWidget(row);
             if (registry) {
                 registry->insert(ptr->getName(), row);
+            }
+            if (collectedRows) {
+                collectedRows->push_back(row);
             }
             if (addedAny) {
                 *addedAny = true;
@@ -702,8 +748,8 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
 
     auto* summaryGroup = new QGroupBox(QStringLiteral("Summary"));
     auto* summaryLayout = new QVBoxLayout(summaryGroup);
-    summaryLayout->setContentsMargins(8, 8, 8, 8);
-    summaryLayout->setSpacing(4);
+    summaryLayout->setContentsMargins(10, 8, 10, 8);
+    summaryLayout->setSpacing(5);
 
     const std::unordered_set<std::string> keyLayerProperties = {
         "layer.name",
@@ -740,6 +786,7 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
     };
 
     bool hasSummaryProperties = false;
+    std::vector<ArtifactPropertyEditorRowWidget*> summaryRows;
     if (auto layerNameProperty = removePropertyByName(QStringLiteral("layer.name"))) {
         if (auto* row = createPropertyRow(
                 summaryGroup,
@@ -754,6 +801,7 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
                 })) {
             summaryLayout->addWidget(row);
             propertyEditors.insert(layerNameProperty->getName(), row);
+            summaryRows.push_back(row);
             hasSummaryProperties = true;
         }
     }
@@ -772,7 +820,8 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
             }
         },
         &hasSummaryProperties,
-        &propertyEditors);
+        &propertyEditors,
+        &summaryRows);
 
     const auto effects = currentLayer->getEffects();
     const bool hasFocusedEffect = !focusedEffectId.trimmed().isEmpty();
@@ -795,9 +844,10 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
         }
 
         auto* effectLabel = new QLabel(QStringLiteral("Effect: %1").arg(effect->displayName().toQString()), summaryGroup);
-        effectLabel->setStyleSheet(QStringLiteral("QLabel { color: #E8E8E8; font-weight: bold; }"));
+        effectLabel->setObjectName(QStringLiteral("propertySectionLabel"));
         summaryLayout->addWidget(effectLabel);
 
+        std::vector<ArtifactPropertyEditorRowWidget*> effectSummaryRows;
         addRowsFromProperties(
             summaryGroup,
             summaryLayout,
@@ -808,10 +858,13 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
                 effect->setPropertyValue(name, value);
             },
             &hasSummaryProperties,
-            &propertyEditors);
+            &propertyEditors,
+            &effectSummaryRows);
+        alignPropertyRowLabels(effectSummaryRows, 132, 176);
     }
 
     if (hasSummaryProperties) {
+        alignPropertyRowLabels(summaryRows, 132, 176);
         mainLayout->addWidget(summaryGroup);
         hasAnyProperties = true;
     } else {
@@ -821,33 +874,17 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
     for (const auto& groupDef : layerGroups) {
         QGroupBox* group = new QGroupBox(groupDef.name().isEmpty() ? QStringLiteral("Layer") : groupDef.name());
         auto* groupLayout = new QVBoxLayout(group);
-        groupLayout->setContentsMargins(8, 8, 8, 8);
-        groupLayout->setSpacing(4);
-    
-    group->setStyleSheet(R"(
-        QGroupBox {
-            background: transparent;
-            border: none;
-            border-top: 1px solid #333;
-            margin-top: 24px;
-            padding-top: 2px;
-            font-weight: 700;
-            font-size: 10px;
-            color: #AAA;
-        }
-        QGroupBox::title {
-            subcontrol-origin: margin;
-            subcontrol-position: top left;
-            padding: 4px 10px;
-            background: #252525;
-            color: #DDD;
-            letter-spacing: 1px;
-            width: 100%;
-        }
-    )");
+        groupLayout->setContentsMargins(10, 8, 10, 8);
+        groupLayout->setSpacing(5);
+        QFont groupFont = group->font();
+        groupFont.setPointSize(10);
+        groupFont.setWeight(QFont::DemiBold);
+        group->setFont(groupFont);
+        applyThemeTextPalette(group, 120);
 
         auto sortedProps = groupDef.sortedProperties();
         bool addedGroupProperties = false;
+        std::vector<ArtifactPropertyEditorRowWidget*> groupRows;
         addRowsFromProperties(
             group,
             groupLayout,
@@ -862,8 +899,10 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
                 }
             },
             &addedGroupProperties,
-            &propertyEditors);
+            &propertyEditors,
+            &groupRows);
         if (addedGroupProperties) {
+            alignPropertyRowLabels(groupRows, 132, 184);
             mainLayout->addWidget(group);
             hasAnyProperties = true;
         } else {
@@ -873,7 +912,11 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
 
     if (hasFocusedEffect) {
         auto* focusedLabel = new QLabel(QStringLiteral("Focused Effect ID: %1").arg(focusedEffectId));
-        focusedLabel->setStyleSheet(QStringLiteral("QLabel { color: #D0D0D0; font-size: 11px; }"));
+        focusedLabel->setObjectName(QStringLiteral("propertySectionLabel"));
+        QFont focusedFont = focusedLabel->font();
+        focusedFont.setPointSize(11);
+        focusedLabel->setFont(focusedFont);
+        applyThemeTextPalette(focusedLabel, 110);
         mainLayout->addWidget(focusedLabel);
     }
 
@@ -894,30 +937,13 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
 
         QGroupBox* group = new QGroupBox(QString("%1 %2").arg(stageName).arg(effect->displayName().toQString()));
         auto* groupLayout = new QVBoxLayout(group);
-        groupLayout->setContentsMargins(8, 8, 8, 8);
-        groupLayout->setSpacing(4);
-    
-    group->setStyleSheet(R"(
-        QGroupBox {
-            background: transparent;
-            border: none;
-            border-top: 1px solid #333;
-            margin-top: 24px;
-            padding-top: 2px;
-            font-weight: 700;
-            font-size: 10px;
-            color: #AAA;
-        }
-        QGroupBox::title {
-            subcontrol-origin: margin;
-            subcontrol-position: top left;
-            padding: 4px 10px;
-            background: #252525;
-            color: #DDD;
-            letter-spacing: 1px;
-            width: 100%;
-        }
-    )");
+        groupLayout->setContentsMargins(10, 8, 10, 8);
+        groupLayout->setSpacing(5);
+        QFont groupFont = group->font();
+        groupFont.setPointSize(10);
+        groupFont.setWeight(QFont::DemiBold);
+        group->setFont(groupFont);
+        applyThemeTextPalette(group, 120);
 
         ArtifactCore::PropertyGroup propGroup(effect->displayName().toQString());
         for (const auto& p : effect->getProperties()) {
@@ -926,6 +952,7 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
 
         auto sortedProps = propGroup.sortedProperties();
         bool addedGroupProperties = false;
+        std::vector<ArtifactPropertyEditorRowWidget*> effectRows;
         addRowsFromProperties(
             group,
             groupLayout,
@@ -936,9 +963,11 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
                 effect->setPropertyValue(name, value);
             },
             &addedGroupProperties,
-            &propertyEditors);
+            &propertyEditors,
+            &effectRows);
 
         if (addedGroupProperties) {
+            alignPropertyRowLabels(effectRows, 132, 176);
             mainLayout->addWidget(group);
             hasAnyProperties = true;
         } else {

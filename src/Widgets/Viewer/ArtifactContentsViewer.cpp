@@ -436,7 +436,12 @@ namespace Artifact
    }
 
    videoWidget = new QVideoWidget(owner_);
-   videoWidget->setStyleSheet("background-color: #0f0f0f;");
+   {
+    QPalette pal = videoWidget->palette();
+    pal.setColor(QPalette::Window, QColor(ArtifactCore::currentDCCTheme().backgroundColor));
+    videoWidget->setPalette(pal);
+   }
+   videoWidget->setAutoFillBackground(true);
 
    mediaPlayer = new QMediaPlayer(owner_);
    audioOutput = new QAudioOutput(owner_);
@@ -1000,27 +1005,24 @@ namespace Artifact
     titleLabel->setPalette(pal);
    }
    typeBadgeLabel = new QLabel(QStringLiteral("Idle"), headerWidget);
-   typeBadgeLabel->setStyleSheet(R"(
-     QLabel {
-       background: #2f2f2f;
-       color: #e8e8e8;
-       border-radius: 9px;
-       padding: 2px 6px;
-       font-size: 10px;
-     }
-   )");
+   {
+    QFont badgeFont = typeBadgeLabel->font();
+    badgeFont.setPointSize(10);
+    typeBadgeLabel->setFont(badgeFont);
+    QPalette pal = typeBadgeLabel->palette();
+    pal.setColor(QPalette::WindowText, QColor(ArtifactCore::currentDCCTheme().textColor));
+    typeBadgeLabel->setPalette(pal);
+   }
    viewerBadgeLabel = new QLabel(QStringLiteral("Viewer 01"), headerWidget);
-   viewerBadgeLabel->setStyleSheet(R"(
-     QLabel {
-       background: #202020;
-       color: #dcdcdc;
-       border: 1px solid #343434;
-       border-radius: 8px;
-       padding: 2px 8px;
-       font-size: 10px;
-       font-weight: 700;
-     }
-   )");
+   {
+    QFont badgeFont = viewerBadgeLabel->font();
+    badgeFont.setPointSize(10);
+    badgeFont.setWeight(QFont::DemiBold);
+    viewerBadgeLabel->setFont(badgeFont);
+    QPalette pal = viewerBadgeLabel->palette();
+    pal.setColor(QPalette::WindowText, QColor(ArtifactCore::currentDCCTheme().textColor));
+    viewerBadgeLabel->setPalette(pal);
+   }
    metaLabel = new QLabel(QStringLiteral("No file selected"), headerWidget);
    {
     QFont metaFont = metaLabel->font();

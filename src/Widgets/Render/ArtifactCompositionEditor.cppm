@@ -191,19 +191,15 @@ private slots:
     const float size = std::max(10.0f, layer_->fontSize());
     const int pointSize = static_cast<int>(size * 0.75f);
     const auto theme = ArtifactCore::currentDCCTheme();
-    editor_->setStyleSheet(QStringLiteral(R"(
-      QPlainTextEdit {
-        background-color: %1;
-        color: %2;
-        border: 1px dashed %3;
-        font-family: "%4";
-        font-size: %5pt;
-      }
-    )").arg(QColor(theme.secondaryBackgroundColor).name(QColor::HexArgb),
-             QColor(theme.textColor).name(),
-             QColor(theme.borderColor).name(),
-             layer_->fontFamily().toQString(),
-             QString::number(pointSize)));
+    QFont editorFont = editor_->font();
+    editorFont.setFamily(layer_->fontFamily().toQString());
+    editorFont.setPointSize(pointSize);
+    editor_->setFont(editorFont);
+    QPalette editorPalette = editor_->palette();
+    editorPalette.setColor(QPalette::Base, QColor(theme.secondaryBackgroundColor));
+    editorPalette.setColor(QPalette::Text, QColor(theme.textColor));
+    editorPalette.setColor(QPalette::Window, QColor(theme.secondaryBackgroundColor));
+    editor_->setPalette(editorPalette);
   }
 
 private:
@@ -261,20 +257,15 @@ bool editTextLayerInline(QWidget* parent, const ArtifactAbstractLayerPtr& layer,
   const float zoom = renderer ? renderer->getZoom() : 1.0f;
   const int pointSize = static_cast<int>(size * 0.75f * zoom);
   const auto theme = ArtifactCore::currentDCCTheme();
-
-  editor->setStyleSheet(QStringLiteral(R"(
-    QPlainTextEdit {
-      background-color: %1;
-      color: %2;
-      border: 1px dashed %3;
-      font-family: "%4";
-      font-size: %5pt;
-    }
-  )").arg(QColor(theme.secondaryBackgroundColor).name(QColor::HexArgb),
-          QColor(theme.textColor).name(),
-          QColor(theme.borderColor).name(),
-          textLayer->fontFamily().toQString(),
-          QString::number(pointSize)));
+  QFont editorFont = editor->font();
+  editorFont.setFamily(textLayer->fontFamily().toQString());
+  editorFont.setPointSize(pointSize);
+  editor->setFont(editorFont);
+  QPalette editorPalette = editor->palette();
+  editorPalette.setColor(QPalette::Base, QColor(theme.secondaryBackgroundColor));
+  editorPalette.setColor(QPalette::Text, QColor(theme.textColor));
+  editorPalette.setColor(QPalette::Window, QColor(theme.secondaryBackgroundColor));
+  editor->setPalette(editorPalette);
 
   const QPoint hostPos = parent->mapTo(host, QPoint(x, y));
   editor->setGeometry(hostPos.x(), hostPos.y(), w, h);
@@ -345,7 +336,9 @@ public:
       return;
     }
     if (controller_->gizmo()) {
-      const auto handle = controller_->gizmo()->handleAtViewportPos(pos, controller_->renderer());
+      // pos は Qt の論理ピクセル; gizmo の直接呼び出しは物理ピクセルが必要
+      const QPointF physPos = pos * devicePixelRatio();
+      const auto handle = controller_->gizmo()->handleAtViewportPos(physPos, controller_->renderer());
       if (handle == TransformGizmo::HandleType::Rotate) {
         setCursor(makeRotateCursor());
         return;
@@ -1856,20 +1849,17 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   mainLayout->addWidget(impl_->topToolbar_);
   mainLayout->addWidget(impl_->compositionView_, 1);
   mainLayout->addWidget(impl_->bottomBar_);
-  impl_->topToolbar_->setStyleSheet(QStringLiteral(
-      "QToolBar { background: %1; border-bottom: 1px solid %2; spacing: 2px; }"
-      "QToolButton { background: transparent; color: %3; border: none; padding: 3px 6px; }"
-      "QToolButton:hover { background: rgba(255,255,255,0.08); border-radius: 4px; }")
-      .arg(QColor(theme.secondaryBackgroundColor).name(),
-           QColor(theme.borderColor).name(),
-           QColor(theme.textColor).name()));
-  impl_->bottomBar_->setStyleSheet(QStringLiteral(
-      "QWidget { background: %1; border-top: 1px solid %2; }"
-      "QToolButton { background: transparent; color: %3; border: none; padding: 3px 6px; }"
-      "QToolButton:hover { background: rgba(255,255,255,0.08); border-radius: 4px; }")
-      .arg(QColor(theme.secondaryBackgroundColor).name(),
-           QColor(theme.borderColor).name(),
-           QColor(theme.textColor).name()));
+  impl_->topToolbar_->setAutoFillBackground(true);
+  QPalette topPalette = impl_->topToolbar_->palette();
+  topPalette.setColor(QPalette::Window, QColor(theme.secondaryBackgroundColor));
+  topPalette.setColor(QPalette::Button, QColor(theme.secondaryBackgroundColor));
+  topPalette.setColor(QPalette::WindowText, QColor(theme.textColor));
+  impl_->topToolbar_->setPalette(topPalette);
+  impl_->bottomBar_->setAutoFillBackground(true);
+  QPalette bottomPalette = impl_->bottomBar_->palette();
+  bottomPalette.setColor(QPalette::Window, QColor(theme.secondaryBackgroundColor));
+  bottomPalette.setColor(QPalette::WindowText, QColor(theme.textColor));
+  impl_->bottomBar_->setPalette(bottomPalette);
   impl_->syncOverlayGeometry(this);
   QTimer::singleShot(0, this, [this]() {
     if (impl_) {
