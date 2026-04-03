@@ -1,6 +1,7 @@
 ﻿module;
 #include <QFontMetrics>
 #include <QContextMenuEvent>
+#include <QKeyEvent>
 #include <QPainter>
 #include <QPen>
 #include <QRectF>
@@ -1097,6 +1098,89 @@ void ArtifactTimelineTrackPainterView::wheelEvent(QWheelEvent* event)
  } else {
   setVerticalOffset(std::max(0.0, impl_->verticalOffset_ - delta));
  }
+ event->accept();
+}
+
+void ArtifactTimelineTrackPainterView::keyPressEvent(QKeyEvent* event)
+{
+ if (!event || !impl_) {
+  QWidget::keyPressEvent(event);
+  return;
+ }
+
+ const auto selectedIndices = selectedMarkerIndices(impl_->keyframeMarkers_);
+ if (selectedIndices.isEmpty()) {
+  QWidget::keyPressEvent(event);
+  return;
+ }
+
+ const int key = event->key();
+ if (key != Qt::Key_Left && key != Qt::Key_Right) {
+  QWidget::keyPressEvent(event);
+  return;
+ }
+
+ const qint64 stepFrames = (event->modifiers() & Qt::ShiftModifier) ? 10 : 1;
+ const qint64 deltaFrames = (key == Qt::Key_Left) ? -stepFrames : stepFrames;
+ if (deltaFrames == 0) {
+  event->ignore();
+  return;
+ }
+
+ struct MoveRequest {
+  LayerID layerId;
+  QString propertyPath;
+  qint64 fromFrame = -1;
+  qint64 toFrame = -1;
+  QString oldKey;
+  QString newKey;
+ };
+
+ QVector<MoveRequest> requests;
+ requests.reserve(selectedIndices.size());
+ for (const int idx : selectedIndices) {
+  if (idx < 0 || idx >= impl_->keyframeMarkers_.size()) {
+   continue;
+  }
+  const auto& marker = impl_->keyframeMarkers_[idx];
+  const qint64 fromFrame = static_cast<qint64>(std::llround(
+      std::clamp(marker.frame, 0.0, impl_->durationFrames_)));
+  const qint64 toFrame = std::clamp(fromFrame + deltaFrames, qint64(0),
+                                    static_cast<qint64>(std::llround(impl_->durationFrames_)));
+  if (fromFrame == toFrame) {
+   continue;
+  }
+
+  MoveRequest request;
+  request.layerId = marker.layerId;
+  request.propertyPath = marker.propertyPath;
+  request.fromFrame = fromFrame;
+  request.toFrame = toFrame;
+  request.oldKey = keyframeSelectionKey(marker.layerId, marker.propertyPath, fromFrame);
+  request.newKey = keyframeSelectionKey(marker.layerId, marker.propertyPath, toFrame);
+  requests.push_back(std::move(request));
+ }
+
+ if (requests.isEmpty()) {
+  event->accept();
+  return;
+ }
+
+ for (const auto& request : requests) {
+  impl_->selectedMarkerKeys_.remove(request.oldKey);
+  impl_->selectedMarkerKeys_.insert(request.newKey);
+  applyMarkerSelectionFlags(impl_->keyframeMarkers_, impl_->selectedMarkerKeys_);
+  Q_EMIT keyframeMoveRequested(request.layerId, request.propertyPath, request.fromFrame,
+                               request.toFrame);
+ }
+
+ applyMarkerSelectionFlags(impl_->keyframeMarkers_, impl_->selectedMarkerKeys_);
+ Q_EMIT keyframeSelectionChanged(impl_->selectedMarkerKeys_.size());
+ Q_EMIT timelineDebugMessage(
+     QStringLiteral("Moved %1 keyframe(s) by %2 frame(s)")
+         .arg(requests.size())
+         .arg(deltaFrames));
+ update();
  event->accept();
 }
 
