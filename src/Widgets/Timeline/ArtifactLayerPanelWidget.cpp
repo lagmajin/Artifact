@@ -399,6 +399,24 @@ bool layerMatchesDisplayMode(const ArtifactAbstractLayerPtr& layer,
   return {};
  }
 
+ QString humanizePropertyName(QString value)
+ {
+  value = value.trimmed();
+  if (value.isEmpty()) {
+   return value;
+  }
+  value.replace(QStringLiteral("."), QStringLiteral(" "));
+  value.replace(QStringLiteral("_"), QStringLiteral(" "));
+  value.replace(QRegularExpression(QStringLiteral("([a-z0-9])([A-Z])")),
+                QStringLiteral("\\1 \\2"));
+  value.replace(QRegularExpression(QStringLiteral("\\s+")),
+                QStringLiteral(" "));
+  if (!value.isEmpty()) {
+   value[0] = value[0].toUpper();
+  }
+  return value;
+ }
+
  QString parentLayerName(const ArtifactAbstractLayerPtr& layer, const ArtifactCompositionPtr& comp)
  {
   if (!layer || !comp || !layer->hasParent()) {
@@ -878,17 +896,22 @@ bool layerMatchesDisplayMode(const ArtifactAbstractLayerPtr& layer,
     for (const auto& group : layer->getLayerPropertyGroups()) {
      for (const auto& property : group.sortedProperties()) {
       if (!property || !property->isAnimatable()) {
-       continue;
+        continue;
       }
       if (property->getKeyFrames().empty()) {
        continue;
       }
+      const auto meta = property->metadata();
       const QString propertyName = property->getName().trimmed();
-      if (propertyName.isEmpty() || seen.contains(propertyName)) {
+      QString displayName = meta.displayLabel.trimmed();
+      if (displayName.isEmpty()) {
+       displayName = humanizePropertyName(propertyName);
+      }
+      if (displayName.isEmpty() || seen.contains(displayName)) {
        continue;
       }
-      seen.insert(propertyName);
-      labels.push_back(propertyName);
+      seen.insert(displayName);
+      labels.push_back(displayName);
      }
     }
     return labels;
