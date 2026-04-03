@@ -6,9 +6,12 @@
 #include <QEvent>
 #include <QGraphicsRectItem>
 #include <QLabel>
+#include <QLineEdit>
+#include <QStringList>
 #include <QMenu>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QCheckBox>
 #include <QResizeEvent>
 #include <QScrollBar>
 #include <QSignalBlocker>
@@ -18,6 +21,7 @@
 #include <QWheelEvent>
 #include <QWidget>
 #include <cmath>
+#include <cctype>
 #include <limits>
 #include <qtmetamacros.h>
 #include <wobjectdefs.h>
@@ -133,6 +137,56 @@ inline double wheelStepUnits(const QWheelEvent *event) {
     return 0.0;
   }
   return static_cast<double>(raw) / 120.0;
+}
+
+QString formatTimelineTimecode(const qint64 frame, const int fps)
+{
+  const int safeFps = std::max(1, fps);
+  const qint64 clampedFrame = std::max<qint64>(0, frame);
+  const qint64 framesPerHour = static_cast<qint64>(safeFps) * 3600;
+  const qint64 framesPerMinute = static_cast<qint64>(safeFps) * 60;
+  const qint64 hours = clampedFrame / framesPerHour;
+  const qint64 minutes = (clampedFrame % framesPerHour) / framesPerMinute;
+  const qint64 seconds = (clampedFrame % framesPerMinute) / safeFps;
+  const qint64 frames = clampedFrame % safeFps;
+  return QStringLiteral("%1:%2:%3:%4")
+      .arg(hours, 2, 10, QChar('0'))
+      .arg(minutes, 2, 10, QChar('0'))
+      .arg(seconds, 2, 10, QChar('0'))
+      .arg(frames, 2, 10, QChar('0'));
+}
+
+std::optional<qint64> parseTimelineTimecode(const QString &text, const int fps)
+{
+  const QString trimmed = text.trimmed();
+  if (trimmed.isEmpty()) {
+    return std::nullopt;
+  }
+
+  bool ok = false;
+  const qint64 rawFrame = trimmed.toLongLong(&ok);
+  if (ok) {
+    return std::max<qint64>(0, rawFrame);
+  }
+
+  const QStringList parts = trimmed.split(QLatin1Char(':'), Qt::SkipEmptyParts);
+  if (parts.size() != 4) {
+    return std::nullopt;
+  }
+
+  qint64 values[4] = {0, 0, 0, 0};
+  for (int i = 0; i < 4; ++i) {
+    values[i] = parts[i].toLongLong(&ok);
+    if (!ok || values[i] < 0) {
+      return std::nullopt;
+    }
+  }
+
+  const qint64 safeFps = std::max<qint64>(1, fps);
+  return values[0] * safeFps * 3600 +
+         values[1] * safeFps * 60 +
+         values[2] * safeFps +
+         values[3];
 }
 
 bool applyTimelineViewportWheel(ArtifactTimelineNavigatorWidget *navigator,
@@ -1096,6 +1150,8 @@ private:
 public:
   Impl();
   ~Impl();
+  void updateTransportSurface();
+  void seekToTransportText();
   ArtifactTimelineBottomLabel *timelineLabel_ = nullptr;
   ArtifactTimelineSearchBarWidget *searchBar_ = nullptr;
   QLabel *searchStatusLabel_ = nullptr;
@@ -1106,6 +1162,10 @@ public:
   ArtifactTimelineScrubBar *scrubBar_ = nullptr;
   WorkAreaControl *workArea_ = nullptr;
   ArtifactTimelineNavigatorWidget *navigator_ = nullptr;
+  QLineEdit *timecodeEdit_ = nullptr;
+  QCheckBox *loopToggle_ = nullptr;
+  QComboBox *speedCombo_ = nullptr;
+  QLabel *transportStatusLabel_ = nullptr;
   CompositionID compositionId_;
   bool shyActive_ = false;
   QString filterText_;
@@ -1120,6 +1180,60 @@ public:
 ArtifactTimelineWidget::Impl::Impl() {}
 
 ArtifactTimelineWidget::Impl::~Impl() {}
+
+void ArtifactTimelineWidget::Impl::seekToTransportText()
+{
+  if (!owner_ || !painterTrackView_ || !timecodeEdit_) {
+    return;
+  }
+
+  const int fps = scrubBar_ ? std::max(1, scrubBar_->fps()) : 30;
+  const std::optional<qint64> parsed = parseTimelineTimecode(timecodeEdit_->text(), fps);
+  if (!parsed.has_value()) {
+    timecodeEdit_->setText(formatTimelineTimecode(
+        static_cast<qint64>(std::llround(std::max(0.0, currentFrame_))), fps));
+    return;
+  }
+
+  const qint64 clamped = std::clamp<qint64>(
+      *parsed, 0, static_cast<qint64>(std::llround(std::max(0.0, painterTrackView_->durationFrames() - 1.0))));
+  painterTrackView_->setCurrentFrame(static_cast<double>(clamped));
+  painterTrackView_->seekRequested(static_cast<double>(clamped));
+  currentFrame_ = static_cast<double>(clamped);
+  if (scrubBar_) {
+    scrubBar_->setCurrentFrame(FramePosition(static_cast<int>(clamped)));
+  }
+  updateTransportSurface();
+}
+
+void ArtifactTimelineWidget::Impl::updateTransportSurface()
+{
+  if (timecodeEdit_) {
+    const int fps = scrubBar_ ? std::max(1, scrubBar_->fps()) : 30;
+    const qint64 frame = static_cast<qint64>(std::llround(std::max(0.0, currentFrame_)));
+    const QSignalBlocker blocker(timecodeEdit_);
+    timecodeEdit_->setText(formatTimelineTimecode(frame, fps));
+  }
+  if (loopToggle_) {
+    const ArtifactPlaybackService *playback = ArtifactPlaybackService::instance();
+    const bool looping = playback ? playback->isLooping() : false;
+    const QSignalBlocker blocker(loopToggle_);
+    loopToggle_->setChecked(looping);
+  }
+  if (speedCombo_) {
+    const ArtifactPlaybackService *playback = ArtifactPlaybackService::instance();
+    const float speed = playback ? playback->playbackSpeed() : 1.0f;
+    const int index = (speed >= 1.5f) ? 2 : (speed <= 0.75f ? 0 : 1);
+    const QSignalBlocker blocker(speedCombo_);
+    speedCombo_->setCurrentIndex(index);
+  }
+  if (transportStatusLabel_) {
+    const int fps = scrubBar_ ? std::max(1, scrubBar_->fps()) : 30;
+    const qint64 frame = static_cast<qint64>(std::llround(std::max(0.0, currentFrame_)));
+    transportStatusLabel_->setText(
+        QStringLiteral("F%1").arg(formatTimelineTimecode(frame, fps)));
+  }
+}
 
 void ArtifactTimelineWidget::syncTimelineViewportFromNavigator(const bool emitZoomSignal)
 {
@@ -1394,6 +1508,76 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   scrubBar->setVisible(true);
   scrubBar->update();
 
+  auto *transportBar = new QWidget();
+  auto *transportLayout = new QHBoxLayout(transportBar);
+  transportLayout->setContentsMargins(8, 4, 8, 4);
+  transportLayout->setSpacing(6);
+  transportBar->setFixedHeight(32);
+  transportBar->setAutoFillBackground(true);
+  {
+    const QColor bg = palette().color(QPalette::Window).darker(115);
+    transportBar->setStyleSheet(QStringLiteral("background-color: %1;").arg(bg.name()));
+  }
+
+  auto createTransportButton = [transportBar](const QString &text,
+                                              const QString &tooltip) {
+    auto *button = new QToolButton(transportBar);
+    button->setText(text);
+    button->setToolTip(tooltip);
+    button->setAutoRaise(true);
+    button->setCursor(Qt::PointingHandCursor);
+    button->setFixedHeight(22);
+    button->setMinimumWidth(24);
+    return button;
+  };
+
+  auto *jumpStartButton =
+      createTransportButton(QStringLiteral("|<"), QStringLiteral("Go to start"));
+  auto *stepBackButton =
+      createTransportButton(QStringLiteral("<"), QStringLiteral("Previous frame"));
+  auto *playPauseButton =
+      createTransportButton(QStringLiteral("Play"), QStringLiteral("Play / pause"));
+  auto *stepForwardButton =
+      createTransportButton(QStringLiteral(">"), QStringLiteral("Next frame"));
+  auto *jumpEndButton =
+      createTransportButton(QStringLiteral(">|"), QStringLiteral("Go to end"));
+
+  impl_->timecodeEdit_ = new QLineEdit(transportBar);
+  impl_->timecodeEdit_->setPlaceholderText(QStringLiteral("00:00:00:00"));
+  impl_->timecodeEdit_->setFixedWidth(128);
+  impl_->timecodeEdit_->setClearButtonEnabled(true);
+  impl_->timecodeEdit_->setToolTip(QStringLiteral("Enter frame or timecode and press Enter"));
+
+  impl_->loopToggle_ = new QCheckBox(QStringLiteral("↺"), transportBar);
+  impl_->loopToggle_->setToolTip(QStringLiteral("Toggle looping"));
+  impl_->loopToggle_->setCursor(Qt::PointingHandCursor);
+
+  impl_->speedCombo_ = new QComboBox(transportBar);
+  impl_->speedCombo_->addItem(QStringLiteral("0.5x"), 0.5);
+  impl_->speedCombo_->addItem(QStringLiteral("1x"), 1.0);
+  impl_->speedCombo_->addItem(QStringLiteral("2x"), 2.0);
+  impl_->speedCombo_->setCurrentIndex(1);
+  impl_->speedCombo_->setToolTip(QStringLiteral("Playback speed"));
+  impl_->speedCombo_->setFixedWidth(72);
+
+  impl_->transportStatusLabel_ = new QLabel(QStringLiteral("F00:00:00:00"), transportBar);
+  impl_->transportStatusLabel_->setToolTip(QStringLiteral("Current frame"));
+  impl_->transportStatusLabel_->setMinimumWidth(110);
+
+  transportLayout->addWidget(jumpStartButton);
+  transportLayout->addWidget(stepBackButton);
+  transportLayout->addWidget(playPauseButton);
+  transportLayout->addWidget(stepForwardButton);
+  transportLayout->addWidget(jumpEndButton);
+  transportLayout->addSpacing(6);
+  transportLayout->addWidget(impl_->timecodeEdit_);
+  transportLayout->addSpacing(4);
+  transportLayout->addWidget(impl_->loopToggle_);
+  transportLayout->addWidget(impl_->speedCombo_);
+  transportLayout->addSpacing(8);
+  transportLayout->addWidget(impl_->transportStatusLabel_);
+  transportLayout->addStretch(1);
+
   auto *trackHost = new QWidget();
   auto *trackLayout = new QVBoxLayout();
   trackLayout->setContentsMargins(0, 0, 0, 0);
@@ -1496,6 +1680,85 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
                        playback->goToFrame(frame);
                      }
                    });
+  QObject::connect(impl_->timecodeEdit_, &QLineEdit::returnPressed, this,
+                   [this]() {
+                     if (impl_) {
+                       impl_->seekToTransportText();
+                     }
+                   });
+  QObject::connect(impl_->timecodeEdit_, &QLineEdit::editingFinished, this,
+                   [this]() {
+                     if (impl_) {
+                       impl_->updateTransportSurface();
+                     }
+                   });
+  QObject::connect(jumpStartButton, &QToolButton::clicked, this, [this]() {
+    if (auto *svc = ArtifactProjectService::instance()) {
+      auto comp = svc->currentComposition().lock();
+      if (comp) {
+        comp->goToStartFrame();
+      }
+    }
+  });
+  QObject::connect(stepBackButton, &QToolButton::clicked, this, [this]() {
+    if (auto *svc = ArtifactPlaybackService::instance()) {
+      svc->goToPreviousFrame();
+    }
+  });
+  QObject::connect(playPauseButton, &QToolButton::clicked, this, [this]() {
+    if (auto *svc = ArtifactPlaybackService::instance()) {
+      svc->togglePlayPause();
+    }
+  });
+  QObject::connect(stepForwardButton, &QToolButton::clicked, this, [this]() {
+    if (auto *svc = ArtifactPlaybackService::instance()) {
+      svc->goToNextFrame();
+    }
+  });
+  QObject::connect(jumpEndButton, &QToolButton::clicked, this, [this]() {
+    if (auto *svc = ArtifactProjectService::instance()) {
+      auto comp = svc->currentComposition().lock();
+      if (comp) {
+        comp->goToEndFrame();
+      }
+    }
+  });
+  QObject::connect(impl_->loopToggle_, &QCheckBox::toggled, this,
+                   [this](bool enabled) {
+                     if (auto *svc = ArtifactPlaybackService::instance()) {
+                       svc->setLooping(enabled);
+                     }
+                     if (impl_) {
+                       impl_->updateTransportSurface();
+                     }
+                   });
+  QObject::connect(impl_->speedCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+                   [this](int index) {
+                     if (!impl_ || !impl_->speedCombo_) {
+                       return;
+                     }
+                     const int dataIndex = std::clamp(index, 0, impl_->speedCombo_->count() - 1);
+                     const float speed = impl_->speedCombo_->itemData(dataIndex).toFloat();
+                     if (auto *svc = ArtifactPlaybackService::instance()) {
+                       svc->setPlaybackSpeed(speed);
+                     }
+                     if (impl_) {
+                       impl_->updateTransportSurface();
+                     }
+                   });
+  if (auto *playbackService = ArtifactPlaybackService::instance()) {
+    QObject::connect(playbackService, &ArtifactPlaybackService::playbackStateChanged, this,
+                     [playPauseButton, playbackService](PlaybackState) {
+                       if (!playPauseButton || !playbackService) {
+                         return;
+                       }
+                       playPauseButton->setText(
+                           playbackService->isPlaying() ? QStringLiteral("Pause")
+                                                        : QStringLiteral("Play"));
+                     });
+    playPauseButton->setText(playbackService->isPlaying() ? QStringLiteral("Pause")
+                                                          : QStringLiteral("Play"));
+  }
   QObject::connect(
       painterTrackView, &ArtifactTimelineTrackPainterView::seekRequested, this,
       [this, scrubBar](double frame) {
@@ -1585,6 +1848,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
 
   auto rightPanel = new QWidget();
   rightPanelLayout->addWidget(timeNavigatorWidget);
+  rightPanelLayout->addWidget(transportBar);
   rightPanelLayout->addWidget(scrubBar);
   rightPanelLayout->addWidget(workAreaWidget);
   rightPanelLayout->addWidget(trackHost);
@@ -1626,6 +1890,9 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
                        impl_->painterTrackView_->setCurrentFrame(
                            static_cast<double>(frame.framePosition()));
                      }
+                     if (impl_) {
+                       impl_->updateTransportSurface();
+                     }
                      updateKeyframeState();
                    });
   if (auto *playbackService = ArtifactPlaybackService::instance()) {
@@ -1645,13 +1912,33 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
           impl_->currentFrame_ = static_cast<double>(frame.framePosition());
           const QSignalBlocker blocker(scrubBar);
           scrubBar->setCurrentFrame(frame);
+          if (impl_) {
+            impl_->updateTransportSurface();
+          }
           // 再生中は毎フレーム全レイヤーをスキャンするコストを避けるため15フレームに1回
           if (frame.framePosition() % 15 == 0) {
             updateKeyframeState();
           }
         });
+  QObject::connect(playbackService, &ArtifactPlaybackService::loopingChanged, this,
+                   [this](bool) {
+                     if (impl_) {
+                       impl_->updateTransportSurface();
+                     }
+                   });
+  QObject::connect(playbackService, &ArtifactPlaybackService::playbackSpeedChanged, this,
+                   [this](float) {
+                     if (impl_) {
+                       impl_->updateTransportSurface();
+                     }
+                   });
   }
   QTimer::singleShot(0, this, [updateZoom]() { updateZoom(); });
+  QTimer::singleShot(0, this, [this]() {
+    if (impl_) {
+      impl_->updateTransportSurface();
+    }
+  });
 
   // Ŝ̃^CCXvb^[
   auto mainSplitter = new QSplitter(Qt::Horizontal);

@@ -85,6 +85,7 @@ namespace Artifact
    void updatePlaybackState();
    void updateActionAvailability();
    void updateModeButtons();
+   void updateSurfaceShellState();
    void clearPlaybackRange();
    void setPlaybackRange(int64_t startFrame, int64_t endFrame);
    void resetCurrentMode();
@@ -106,6 +107,14 @@ namespace Artifact
    QWidget* headerWidget = nullptr;
    QLabel* titleLabel = nullptr;
    QLabel* typeBadgeLabel = nullptr;
+   QLabel* viewerBadgeLabel = nullptr;
+   QLabel* gpuFpsLabel = nullptr;
+   QToolButton* recentSourceButton = nullptr;
+   QWidget* transportBarWidget = nullptr;
+   QWidget* channelMetaBarWidget = nullptr;
+   QLabel* channelLabel = nullptr;
+   QLabel* cursorValueLabel = nullptr;
+   QLabel* channelHintLabel = nullptr;
    QLabel* metaLabel = nullptr;
    QLabel* stateLabel = nullptr;
    QToolButton* fitButton = nullptr;
@@ -202,6 +211,7 @@ namespace Artifact
    if (stateLabel) {
     stateLabel->setText(QStringLiteral("State: Idle"));
    }
+   updateSurfaceShellState();
    updateModeButtons();
   }
 
@@ -456,16 +466,19 @@ namespace Artifact
 
    switch (currentFileType) {
    case ArtifactCore::FileType::Image:
-    typeBadgeLabel->setText(QStringLiteral("Image"));
+    typeBadgeLabel->setText(QStringLiteral("[2D]"));
     break;
    case ArtifactCore::FileType::Video:
-    typeBadgeLabel->setText(QStringLiteral("Video"));
+    typeBadgeLabel->setText(QStringLiteral("[2D]"));
     break;
    case ArtifactCore::FileType::Model3D:
-    typeBadgeLabel->setText(QStringLiteral("3D Model"));
+    typeBadgeLabel->setText(QStringLiteral("[3D]"));
+    break;
+   case ArtifactCore::FileType::Audio:
+    typeBadgeLabel->setText(QStringLiteral("[AUD]"));
     break;
    default:
-    typeBadgeLabel->setText(QStringLiteral("Unknown"));
+    typeBadgeLabel->setText(QStringLiteral("[UNK]"));
     break;
    }
    if (currentMode == ContentsViewerMode::Source) {
@@ -513,6 +526,7 @@ namespace Artifact
    }
 
    metaLabel->setText(metaParts.join(QStringLiteral(" | ")));
+   updateSurfaceShellState();
   }
 
   void ArtifactContentsViewer::Impl::updatePlaybackState()
@@ -615,6 +629,7 @@ namespace Artifact
    if (rotateRightButton) {
     rotateRightButton->setEnabled(currentFileType == ArtifactCore::FileType::Image);
    }
+   updateSurfaceShellState();
   }
 
   void ArtifactContentsViewer::Impl::updateActionAvailability()
@@ -635,6 +650,58 @@ namespace Artifact
    if (finalButton) finalButton->setChecked(currentMode == ContentsViewerMode::Final);
    if (compareButton) compareButton->setChecked(currentMode == ContentsViewerMode::Compare);
    syncModelViewerMode();
+   updateSurfaceShellState();
+  }
+
+  void ArtifactContentsViewer::Impl::updateSurfaceShellState()
+  {
+   if (viewerBadgeLabel) {
+    QString badge = QStringLiteral("[A]");
+    if (currentMode == ContentsViewerMode::Final) {
+     badge = QStringLiteral("[B]");
+    } else if (currentMode == ContentsViewerMode::Compare) {
+     badge = QStringLiteral("[AB]");
+    }
+    viewerBadgeLabel->setText(badge);
+   }
+
+   if (gpuFpsLabel) {
+    gpuFpsLabel->setText(QStringLiteral("GPU --% | --fps"));
+   }
+
+   if (channelLabel) {
+    QString channelText = QStringLiteral("RGBA  Z  UV  Luma");
+    if (currentFileType == ArtifactCore::FileType::Audio) {
+     channelText = QStringLiteral("L  R  Mid  Side");
+    } else if (currentFileType == ArtifactCore::FileType::Model3D) {
+     channelText = QStringLiteral("Pos  Norm  UV");
+    }
+    channelLabel->setText(channelText);
+   }
+
+   if (cursorValueLabel) {
+    QString cursorText = QStringLiteral("Pixel: --");
+    if (currentFileType == ArtifactCore::FileType::Model3D) {
+     cursorText = QStringLiteral("World: --");
+    } else if (currentFileType == ArtifactCore::FileType::Audio) {
+     cursorText = QStringLiteral("Audio: --");
+    }
+    cursorValueLabel->setText(cursorText);
+   }
+
+   if (channelHintLabel) {
+    QString hint = QStringLiteral("Surface: Viewer");
+    if (currentFileType == ArtifactCore::FileType::Image) {
+     hint = QStringLiteral("Surface: 2D");
+    } else if (currentFileType == ArtifactCore::FileType::Video) {
+     hint = QStringLiteral("Surface: Video");
+    } else if (currentFileType == ArtifactCore::FileType::Model3D) {
+     hint = QStringLiteral("Surface: 3D");
+    } else if (currentFileType == ArtifactCore::FileType::Audio) {
+     hint = QStringLiteral("Surface: Audio");
+    }
+    channelHintLabel->setText(hint);
+   }
   }
 
   ArtifactContentsViewer::Impl::Impl(ArtifactContentsViewer* parent)
@@ -642,45 +709,78 @@ namespace Artifact
    , stackedWidget(new QStackedWidget(parent))
   {
    headerWidget = new QWidget(parent);
-   auto* headerLayout = new QVBoxLayout(headerWidget);
-   headerLayout->setContentsMargins(8, 4, 8, 4);
-   headerLayout->setSpacing(3);
+   headerWidget->setFixedHeight(26);
+   headerWidget->setObjectName(QStringLiteral("contentsViewerTitleBar"));
+   headerWidget->setStyleSheet(QStringLiteral("background: #3a3a3a;"));
+   auto* headerLayout = new QHBoxLayout(headerWidget);
+   headerLayout->setContentsMargins(8, 2, 8, 2);
+   headerLayout->setSpacing(6);
 
-   auto* infoRow = new QHBoxLayout();
-   infoRow->setContentsMargins(0, 0, 0, 0);
-   infoRow->setSpacing(6);
-
-   auto* textColumn = new QVBoxLayout();
-   textColumn->setContentsMargins(0, 0, 0, 0);
-   textColumn->setSpacing(1);
+   auto* leftTitleGroup = new QWidget(headerWidget);
+   auto* leftTitleLayout = new QHBoxLayout(leftTitleGroup);
+   leftTitleLayout->setContentsMargins(0, 0, 0, 0);
+   leftTitleLayout->setSpacing(6);
 
    titleLabel = new QLabel(QStringLiteral("Contents Viewer"), headerWidget);
-   titleLabel->setStyleSheet("font-size: 14px; font-weight: 600; color: #e8e8e8;");
-   typeBadgeLabel = new QLabel(QStringLiteral("Idle"), headerWidget);
+   titleLabel->setStyleSheet("font-size: 13px; font-weight: 600; color: #e8e8e8;");
+
+   recentSourceButton = new QToolButton(headerWidget);
+   recentSourceButton->setText(QStringLiteral("Recent ▾"));
+   recentSourceButton->setToolTip(QStringLiteral("Recent source history"));
+   recentSourceButton->setAutoRaise(true);
+   recentSourceButton->setPopupMode(QToolButton::InstantPopup);
+   recentSourceButton->setCursor(Qt::PointingHandCursor);
+   auto* recentMenu = new QMenu(recentSourceButton);
+   recentMenu->addAction(QStringLiteral("(Recent source history placeholder)"))->setEnabled(false);
+   recentMenu->addSeparator();
+   recentMenu->addAction(QStringLiteral("comp_v03.exr"));
+   recentMenu->addAction(QStringLiteral("shot_plate_v07.mov"));
+   recentMenu->addAction(QStringLiteral("preview_temp.aep"));
+   recentSourceButton->setMenu(recentMenu);
+
+   leftTitleLayout->addWidget(titleLabel);
+   leftTitleLayout->addWidget(recentSourceButton);
+   leftTitleLayout->addStretch(1);
+
+   typeBadgeLabel = new QLabel(QStringLiteral("[2D]"), headerWidget);
    typeBadgeLabel->setStyleSheet(R"(
      QLabel {
        background: #2f2f2f;
        color: #e8e8e8;
-       border-radius: 9px;
+       border-radius: 8px;
        padding: 2px 6px;
        font-size: 10px;
      }
    )");
-   metaLabel = new QLabel(QStringLiteral("No file selected"), headerWidget);
-   metaLabel->setStyleSheet("color: #c4c4c4; font-size: 10px;");
-   metaLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
-   stateLabel = new QLabel(QStringLiteral("State: Idle"), headerWidget);
-   stateLabel->setStyleSheet("color: #d0d0d0; font-size: 10px;");
 
-   textColumn->addWidget(titleLabel);
-   textColumn->addWidget(metaLabel);
-   textColumn->addWidget(stateLabel);
+   viewerBadgeLabel = new QLabel(QStringLiteral("[A]"), headerWidget);
+   viewerBadgeLabel->setAlignment(Qt::AlignCenter);
+   viewerBadgeLabel->setStyleSheet(R"(
+     QLabel {
+       background: #6a9fd8;
+       color: #101722;
+       border-radius: 9px;
+       padding: 2px 8px;
+       font-size: 10px;
+       font-weight: 700;
+     }
+   )");
 
-   auto* badgeColumn = new QVBoxLayout();
-   badgeColumn->setContentsMargins(0, 0, 0, 0);
-   badgeColumn->setSpacing(2);
-   badgeColumn->addWidget(typeBadgeLabel, 0, Qt::AlignLeft);
-   badgeColumn->addStretch(1);
+   gpuFpsLabel = new QLabel(QStringLiteral("GPU --% | --fps"), headerWidget);
+   gpuFpsLabel->setStyleSheet("color: #b9c3d2; font-size: 10px;");
+
+   headerLayout->addWidget(leftTitleGroup, 1);
+   headerLayout->addWidget(typeBadgeLabel, 0, Qt::AlignVCenter);
+   headerLayout->addWidget(viewerBadgeLabel, 0, Qt::AlignVCenter);
+   headerLayout->addStretch(1);
+   headerLayout->addWidget(gpuFpsLabel, 0, Qt::AlignRight | Qt::AlignVCenter);
+
+   transportBarWidget = new QWidget(parent);
+   transportBarWidget->setObjectName(QStringLiteral("contentsViewerTransportBar"));
+   transportBarWidget->setStyleSheet(QStringLiteral("background: #2a2a2a;"));
+   auto* transportLayout = new QHBoxLayout(transportBarWidget);
+   transportLayout->setContentsMargins(8, 4, 8, 4);
+   transportLayout->setSpacing(3);
 
    auto* buttonRow = new QHBoxLayout();
    buttonRow->setContentsMargins(0, 0, 0, 0);
@@ -752,11 +852,35 @@ namespace Artifact
    buttonRow->addWidget(sourceButton);
    buttonRow->addWidget(finalButton);
    buttonRow->addWidget(compareButton);
+   transportLayout->addLayout(buttonRow, 0);
+   transportLayout->addWidget(seekSlider, 1);
+   transportBarWidget->setFixedHeight(30);
 
-   infoRow->addLayout(textColumn, 1);
-   infoRow->addLayout(badgeColumn, 0);
-   headerLayout->addLayout(infoRow);
-   headerLayout->addLayout(buttonRow);
+   channelMetaBarWidget = new QWidget(parent);
+   channelMetaBarWidget->setObjectName(QStringLiteral("contentsViewerChannelMetaBar"));
+   channelMetaBarWidget->setStyleSheet(QStringLiteral("background: #222222;"));
+   auto* channelLayout = new QHBoxLayout(channelMetaBarWidget);
+   channelLayout->setContentsMargins(8, 2, 8, 2);
+   channelLayout->setSpacing(6);
+
+   channelLabel = new QLabel(QStringLiteral("RGBA | Z | UV | Luma"), channelMetaBarWidget);
+   channelLabel->setStyleSheet("color: #cdd6e5; font-size: 10px; font-family: 'Consolas';");
+   metaLabel = new QLabel(QStringLiteral("No file selected"), channelMetaBarWidget);
+   metaLabel->setStyleSheet("color: #c4c4c4; font-size: 10px;");
+   metaLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+   stateLabel = new QLabel(QStringLiteral("State: Idle"), channelMetaBarWidget);
+   stateLabel->setStyleSheet("color: #d0d0d0; font-size: 10px;");
+   cursorValueLabel = new QLabel(QStringLiteral("Pixel: --"), channelMetaBarWidget);
+   cursorValueLabel->setStyleSheet("color: #dbe6f5; font-size: 10px; font-family: 'Consolas';");
+   channelHintLabel = new QLabel(QStringLiteral("Surface: Viewer"), channelMetaBarWidget);
+   channelHintLabel->setStyleSheet("color: #91a4bf; font-size: 10px;");
+
+   channelLayout->addWidget(channelLabel, 0, Qt::AlignVCenter);
+   channelLayout->addWidget(metaLabel, 1);
+   channelLayout->addWidget(stateLabel, 0, Qt::AlignVCenter);
+   channelLayout->addWidget(cursorValueLabel, 0, Qt::AlignVCenter);
+   channelLayout->addWidget(channelHintLabel, 0, Qt::AlignRight | Qt::AlignVCenter);
+   channelMetaBarWidget->setFixedHeight(22);
 
     QObject::connect(fitButton, &QToolButton::clicked, parent, [this]() {
      if (currentFileType == ArtifactCore::FileType::Image) {
@@ -945,10 +1069,13 @@ namespace Artifact
    layout->setContentsMargins(0, 0, 0, 0);
    layout->setSpacing(0);
    layout->addWidget(headerWidget);
-   layout->addWidget(seekSlider);
    layout->addWidget(stackedWidget);
+   layout->addWidget(transportBarWidget);
+   layout->addWidget(channelMetaBarWidget);
+   layout->setStretch(1, 1);
    parent->setLayout(layout);
 
+   updateSurfaceShellState();
    updateHeader();
    updatePlaybackState();
    updateActionAvailability();
