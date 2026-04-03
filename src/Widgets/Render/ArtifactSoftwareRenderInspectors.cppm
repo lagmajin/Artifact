@@ -774,6 +774,7 @@ public:
     PreviewNavigationState nav_;
     bool isPanning_ = false;
     QPointF lastMousePos_;
+    qint64 lastRenderTimeMs_ = 0;  // For overlay display
 
     ArtifactCompositionPtr selectedComposition() const
     {
@@ -855,6 +856,8 @@ public:
         }
 
         const qint64 elapsedMs = timer.elapsed();
+        lastRenderTimeMs_ = elapsedMs;  // Save for overlay
+
         if (elapsedMs >= 8 || (owner_ && owner_->isVisible())) {
             qCDebug(softwareInspectorPerfLog) << "[SoftwareCompositionView][Refresh]"
                                               << "ms=" << elapsedMs
@@ -882,6 +885,7 @@ public:
     PreviewNavigationState nav_;
     bool isPanning_ = false;
     QPointF lastMousePos_;
+    qint64 lastRenderTimeMs_ = 0;  // For overlay display
 
     ArtifactCompositionPtr selectedComposition() const;
     ArtifactAbstractLayerPtr selectedLayer() const;
@@ -1037,6 +1041,8 @@ void ArtifactSoftwareLayerTestWidget::Impl::refreshPreview()
     }
 
     const qint64 elapsedMs = timer.elapsed();
+    lastRenderTimeMs_ = elapsedMs;  // Save for overlay
+
     if (elapsedMs >= 8 || (owner_ && owner_->isVisible())) {
         qCDebug(softwareInspectorPerfLog) << "[SoftwareLayerView][Refresh]"
                                           << "ms=" << elapsedMs
@@ -1193,6 +1199,50 @@ void ArtifactSoftwareCompositionTestWidget::mouseReleaseEvent(QMouseEvent* event
         return;
     }
     QWidget::mouseReleaseEvent(event);
+}
+
+void ArtifactSoftwareCompositionTestWidget::paintEvent(QPaintEvent* event)
+{
+    QWidget::paintEvent(event);
+
+    if (!impl_ || !impl_->previewLabel_ || !impl_->previewLabel_->isVisible()) {
+        return;
+    }
+
+    QPainter painter(this);
+    painter.setRenderHint(QPainter::Antialiasing);
+    painter.setRenderHint(QPainter::TextAntialiasing);
+
+    const QRect previewRect = impl_->previewLabel_->geometry();
+    const int padding = 6;
+    QFontMetrics fm(painter.font());
+
+    // Render time (bottom-right)
+    QString timeText = QString("%1 ms").arg(impl_->lastRenderTimeMs_);
+    QRect timeRect = fm.boundingRect(timeText).adjusted(-padding, -padding, padding, padding);
+    timeRect.moveTo(previewRect.right() - timeRect.width() - padding, previewRect.bottom() - timeRect.height() - padding);
+    painter.fillRect(timeRect, QColor(0, 0, 0, 180));
+    painter.setPen(Qt::white);
+    painter.drawText(timeRect, Qt::AlignCenter, timeText);
+
+    // Composition info (top-left)
+    const auto composition = impl_->selectedComposition();
+    const QString compText = [&composition]() {
+        if (!composition) return QStringLiteral("No composition");
+        QStringList lines;
+        lines << composition->settings().compositionName().toQString();
+        lines << QString("%1 layers").arg(composition->layerCount());
+        return lines.join('\n');
+    }();
+
+    if (!compText.isEmpty()) {
+        // Only first line for compact overlay
+        QString firstLine = compText.left(compText.indexOf('\n'));
+        QRect compRect = fm.boundingRect(firstLine).adjusted(-padding, -padding, padding, padding);
+        compRect.moveTo(previewRect.left() + padding, previewRect.top() + padding);
+        painter.fillRect(compRect, QColor(0, 0, 0, 180));
+        painter.drawText(compRect, Qt::AlignCenter, firstLine);
+    }
 }
 
 ArtifactSoftwareLayerTestWidget::ArtifactSoftwareLayerTestWidget(QWidget* parent)
@@ -1361,6 +1411,53 @@ void ArtifactSoftwareLayerTestWidget::mouseReleaseEvent(QMouseEvent* event)
         return;
     }
     QWidget::mouseReleaseEvent(event);
+}
+
+void ArtifactSoftwareLayerTestWidget::paintEvent(QPaintEvent* event)
+{
+    QWidget::paintEvent(event);
+
+    if (!impl_ || !impl_->previewLabel_ || !impl_->previewLabel_->isVisible()) {
+        return;
+    }
+
+    QPainter painter(this);
+    painter.setRenderHint(QPainter::Antialiasing);
+    painter.setRenderHint(QPainter::TextAntialiasing);
+
+    const QRect previewRect = impl_->previewLabel_->geometry();
+    const int padding = 6;
+    QFontMetrics fm(painter.font());
+
+    // Render time (bottom-right)
+    QString timeText = QString("%1 ms").arg(impl_->lastRenderTimeMs_);
+    QRect timeRect = fm.boundingRect(timeText).adjusted(-padding, -padding, padding, padding);
+    timeRect.moveTo(previewRect.right() - timeRect.width() - padding, previewRect.bottom() - timeRect.height() - padding);
+    painter.fillRect(timeRect, QColor(0, 0, 0, 180));
+    painter.setPen(Qt::white);
+    painter.drawText(timeRect, Qt::AlignCenter, timeText);
+
+    // Layer info (top-left)
+    const auto composition = impl_->selectedComposition();
+    const auto layer = impl_->selectedLayer();
+    QString layerText = [&]() {
+        if (!layer) return QStringLiteral("No layer");
+        QStringList lines;
+        lines << layer->layerName().toQString();
+        if (composition) {
+            const QSize size = layer->localBounds().size().toQSize();
+            lines << QString("%1 x %2 px").arg(size.width()).arg(size.height());
+        }
+        return lines.join('\n');
+    }();
+
+    if (!layerText.isEmpty()) {
+        QString firstLine = layerText.left(layerText.indexOf('\n'));
+        QRect layerRect = fm.boundingRect(firstLine).adjusted(-padding, -padding, padding, padding);
+        layerRect.moveTo(previewRect.left() + padding, previewRect.top() + padding);
+        painter.fillRect(layerRect, QColor(0, 0, 0, 180));
+        painter.drawText(layerRect, Qt::AlignCenter, firstLine);
+    }
 }
 
 } // namespace Artifact

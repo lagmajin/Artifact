@@ -632,6 +632,10 @@ public:
         invalidateFilter();
     }
 
+    bool isUnusedAssetPath(const QString& path) const {
+        return unusedAssetPaths_.contains(path);
+    }
+
     void setAdvancedFilter(const QString& expression, const QString& typeFilter, const bool unusedOnly) {
         rawExpression_ = expression.trimmed();
         typeFilter_ = typeFilter.trimmed().toLower();
@@ -1425,8 +1429,20 @@ void ArtifactProjectView::paintEvent(QPaintEvent* event)
 
         const bool selected = selectionModel() && selectionModel()->isRowSelected(index0.row(), index0.parent());
         const bool hovered = impl_->hoverIndex.isValid() && impl_->hoverIndex == index0;
+        const QVariant ptrVar = index0.data(Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::ProjectItemPtr));
+        auto* item = ptrVar.isValid() ? reinterpret_cast<ProjectItem*>(ptrVar.value<quintptr>()) : nullptr;
+        bool unusedItem = false;
+        if (item && item->type() == eProjectItemType::Footage) {
+            const QString path = QFileInfo(static_cast<FootageItem*>(item)->filePath).absoluteFilePath();
+            if (auto* proxy = qobject_cast<const ProjectFilterProxyModel*>(impl_->model)) {
+                unusedItem = proxy->isUnusedAssetPath(path);
+            }
+        }
 
-        const QColor rowFill = selected ? Impl::Colors::RowSelected : (hovered ? Impl::Colors::RowHover : Impl::Colors::Background);
+        QColor rowFill = selected ? Impl::Colors::RowSelected : (hovered ? Impl::Colors::RowHover : Impl::Colors::Background);
+        if (unusedItem && !selected) {
+            rowFill = QColor(0x3A, 0x2A, 0x2A);
+        }
         painter.fillRect(rowRect, rowFill);
 
         painter.setPen(Impl::Colors::RowBorder);
@@ -1474,6 +1490,12 @@ void ArtifactProjectView::paintEvent(QPaintEvent* event)
                         painter.fillPath(branchPath, (selected || branchHovered) ? Impl::Colors::RowSelectedText : Impl::Colors::BranchNormal);
                     }
                     int textLeft = contentRect.left() + (impl_->hasChildren(index0) ? 18 : 0);
+                    if (unusedItem) {
+                        painter.setPen(QColor(0xF0, 0x9A, 0x4A));
+                        painter.drawText(QRect(textLeft, rowRect.top(), 14, rowRect.height()), Qt::AlignVCenter | Qt::AlignLeft, QStringLiteral("●"));
+                        textLeft += 14;
+                        painter.setPen(selected ? Impl::Colors::RowSelectedText : Impl::Colors::RowText);
+                    }
                     const QVariant iconVar = cellIndex.data(Qt::DecorationRole);
                     if (iconVar.canConvert<QIcon>()) {
                         const QIcon icon = qvariant_cast<QIcon>(iconVar);
