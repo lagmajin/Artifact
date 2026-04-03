@@ -223,6 +223,27 @@ QString projectItemTypeLabel(const eProjectItemType type)
     }
 }
 
+QString humanFileSize(const quint64 bytes)
+{
+    static const char* kUnits[] = {"B", "KB", "MB", "GB", "TB", "PB"};
+    double value = static_cast<double>(bytes);
+    int unitIndex = 0;
+    while (value >= 1024.0 && unitIndex < 5) {
+        value /= 1024.0;
+        ++unitIndex;
+    }
+
+    if (unitIndex == 0) {
+        return QStringLiteral("%1 %2")
+            .arg(static_cast<qulonglong>(bytes))
+            .arg(QString::fromLatin1(kUnits[unitIndex]));
+    }
+
+    return QStringLiteral("%1 %2")
+        .arg(QString::number(value, 'f', value >= 10.0 ? 0 : 1))
+        .arg(QString::fromLatin1(kUnits[unitIndex]));
+}
+
 QPixmap projectItemPreviewPixmap(ProjectItem* item, const QSize& targetSize)
 {
     if (!item) {
@@ -1277,6 +1298,11 @@ void ArtifactProjectView::expandAll()
     };
     expandRecursive({});
     refreshVisibleContent();
+}
+
+int ArtifactProjectView::visibleItemCount() const
+{
+    return impl_ ? impl_->visibleRows.size() : 0;
 }
 
 void ArtifactProjectView::collapseAll()
@@ -2509,6 +2535,10 @@ public:
     QLabel* projectNameLabel = nullptr;
     QLabel* selectionSummaryLabel = nullptr;
     QLabel* selectionDetailLabel = nullptr;
+    QWidget* statusBarWidget = nullptr;
+    QLabel* statusVisibleLabel = nullptr;
+    QLabel* statusFilterLabel = nullptr;
+    QLabel* statusSelectionLabel = nullptr;
     QPushButton* openSelectionButton = nullptr;
     QPushButton* revealSelectionButton = nullptr;
     QPushButton* renameSelectionButton = nullptr;
@@ -2692,6 +2722,93 @@ public:
         return event;
     }
 
+    int totalItemCount() const {
+        if (!projectModel_) {
+            return 0;
+        }
+        std::function<int(const QModelIndex&)> countRecursive = [&](const QModelIndex& parent) -> int {
+            int total = 0;
+            const int rowCount = projectModel_->rowCount(parent);
+            for (int row = 0; row < rowCount; ++row) {
+                const QModelIndex idx = projectModel_->index(row, 0, parent);
+                if (!idx.isValid()) {
+                    continue;
+                }
+                ++total;
+                total += countRecursive(idx);
+            }
+            return total;
+        };
+        return countRecursive({});
+    }
+
+    quint64 selectedAssetBytes() const {
+        if (!projectView_ || !projectView_->selectionModel()) {
+            return 0;
+        }
+
+        QSet<QString> uniqueFootagePaths;
+        const auto rows = projectView_->selectionModel()->selectedRows(0);
+        for (const auto& row : rows) {
+            QModelIndex sourceIdx = row;
+            if (auto proxy = qobject_cast<const QSortFilterProxyModel*>(sourceIdx.model())) {
+                sourceIdx = proxy->mapToSource(sourceIdx).siblingAtColumn(0);
+            }
+            const QVariant ptrVar = sourceIdx.data(Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::ProjectItemPtr));
+            auto* item = ptrVar.isValid() ? reinterpret_cast<ProjectItem*>(ptrVar.value<quintptr>()) : nullptr;
+            if (!item) {
+                continue;
+            }
+
+            QVector<FootageItem*> footageItems;
+            collectFootageRecursive(item, footageItems);
+            for (auto* footage : footageItems) {
+                if (!footage || footage->filePath.isEmpty()) {
+                    continue;
+                }
+                uniqueFootagePaths.insert(QFileInfo(footage->filePath).absoluteFilePath());
+            }
+        }
+
+        quint64 totalBytes = 0;
+        for (const QString& path : uniqueFootagePaths) {
+            const QFileInfo info(path);
+            if (info.exists()) {
+                totalBytes += static_cast<quint64>(info.size());
+            }
+        }
+        return totalBytes;
+    }
+
+    QString statusVisibleText() const {
+        const int totalCount = totalItemCount();
+        const int visibleCount = projectView_ ? projectView_->visibleItemCount() : 0;
+        return QStringLiteral("%1件中 %2件表示").arg(totalCount).arg(visibleCount);
+    }
+
+    QString statusFilterText() const {
+        QStringList tokens;
+        const QString searchText = searchBar ? searchBar->text().trimmed() : QString();
+        const QString typeText = typeFilterBox ? typeFilterBox->currentText().trimmed() : QStringLiteral("All");
+        if (!searchText.isEmpty()) {
+            tokens << QStringLiteral("Search: %1").arg(searchText);
+        }
+        if (!typeText.isEmpty() && typeText.compare(QStringLiteral("All"), Qt::CaseInsensitive) != 0) {
+            tokens << typeText;
+        }
+        if (unusedOnlyCheck && unusedOnlyCheck->isChecked()) {
+            tokens << QStringLiteral("Unused");
+        }
+        if (tokens.isEmpty()) {
+            return QStringLiteral("Filter: All items");
+        }
+        return QStringLiteral("Filter: %1").arg(tokens.join(QStringLiteral(" + ")));
+    }
+
+    QString statusSelectionText() const {
+        return QStringLiteral("Selection: %1").arg(humanFileSize(selectedAssetBytes()));
+    }
+
     QString selectionSummaryText() const {
         const int selectedCount = projectView_ && projectView_->selectionModel()
             ? projectView_->selectionModel()->selectedRows(0).size()
@@ -2706,6 +2823,18 @@ public:
             .arg(searchText.isEmpty() ? QStringLiteral("-") : searchText)
             .arg(typeText)
             .arg(unusedText);
+    }
+
+    void refreshStatusChrome() {
+        if (statusVisibleLabel) {
+            statusVisibleLabel->setText(statusVisibleText());
+        }
+        if (statusFilterLabel) {
+            statusFilterLabel->setText(statusFilterText());
+        }
+        if (statusSelectionLabel) {
+            statusSelectionLabel->setText(statusSelectionText());
+        }
     }
 
     void refreshSelectionChrome() {
@@ -2738,6 +2867,7 @@ public:
         if (relinkSelectionButton) {
             relinkSelectionButton->setEnabled(isFootage && !QFileInfo(static_cast<FootageItem*>(item)->filePath).exists());
         }
+        refreshStatusChrome();
     }
 
     void openSelectedItem(QWidget* parent) {
@@ -2968,7 +3098,6 @@ public:
                         refreshSelectionChrome();
                     });
             }
-            refreshSelectionChrome();
         }
         refreshUnusedAssetCache();
         if (proxyModel_) {
@@ -2977,6 +3106,7 @@ public:
                 typeFilterBox ? typeFilterBox->currentText() : QString(),
                 unusedOnlyCheck ? unusedOnlyCheck->isChecked() : false);
         }
+        refreshSelectionChrome();
         syncSelectionToCurrentComposition();
     }
 
@@ -3103,6 +3233,37 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     impl_->projectView_ = new ArtifactProjectView(this);
     impl_->projectView_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     mainLayout->addWidget(impl_->projectView_);
+
+    impl_->statusBarWidget = new QWidget(this);
+    impl_->statusBarWidget->setObjectName(QStringLiteral("projectManagerStatusBar"));
+    impl_->statusBarWidget->setAutoFillBackground(true);
+    {
+        QPalette pal = impl_->statusBarWidget->palette();
+        const QColor base = QColor(ArtifactCore::currentDCCTheme().secondaryBackgroundColor).darker(118);
+        const QColor text = QColor(ArtifactCore::currentDCCTheme().textColor).darker(125);
+        pal.setColor(QPalette::Window, base);
+        pal.setColor(QPalette::WindowText, text);
+        impl_->statusBarWidget->setPalette(pal);
+    }
+    auto* statusLayout = new QHBoxLayout(impl_->statusBarWidget);
+    statusLayout->setContentsMargins(10, 3, 10, 4);
+    statusLayout->setSpacing(12);
+
+    impl_->statusVisibleLabel = new QLabel(QStringLiteral("0件中 0件表示"), impl_->statusBarWidget);
+    impl_->statusFilterLabel = new QLabel(QStringLiteral("Filter: All items"), impl_->statusBarWidget);
+    impl_->statusSelectionLabel = new QLabel(QStringLiteral("Selection: 0 B"), impl_->statusBarWidget);
+    for (QLabel* label : {impl_->statusVisibleLabel, impl_->statusFilterLabel, impl_->statusSelectionLabel}) {
+        QFont f = label->font();
+        f.setPointSize(9);
+        label->setFont(f);
+        QPalette pal = label->palette();
+        pal.setColor(QPalette::WindowText, QColor(ArtifactCore::currentDCCTheme().textColor).darker(125));
+        label->setPalette(pal);
+    }
+    statusLayout->addWidget(impl_->statusVisibleLabel, 0, Qt::AlignLeft | Qt::AlignVCenter);
+    statusLayout->addWidget(impl_->statusFilterLabel, 1, Qt::AlignCenter);
+    statusLayout->addWidget(impl_->statusSelectionLabel, 0, Qt::AlignRight | Qt::AlignVCenter);
+    mainLayout->addWidget(impl_->statusBarWidget);
 
     impl_->toolBox = new ArtifactProjectManagerToolBox(this);
     mainLayout->addWidget(impl_->toolBox);

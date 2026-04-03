@@ -116,6 +116,7 @@ public:
   void editIndex(const QModelIndex& index);
   void ensureIndexVisible(const QModelIndex& index);
   void refreshVisibleContent();
+  int visibleItemCount() const;
 
   void expandAll();
   void collapseAll();
