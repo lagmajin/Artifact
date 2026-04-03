@@ -28,6 +28,12 @@ export namespace Artifact
   AudioOnly,
   VideoOnly
  };
+
+ enum class TimelinePropertyDisplayMode
+ {
+  GroupedProperties,
+  KeyframesOnly
+ };
 	
    class ArtifactLayerPanelHeaderWidget :public QWidget
    {
@@ -90,6 +96,8 @@ export namespace Artifact
   void setShyHidden(bool hidden);
   void setDisplayMode(TimelineLayerDisplayMode mode);
   TimelineLayerDisplayMode displayMode() const;
+  void setPropertyDisplayMode(TimelinePropertyDisplayMode mode);
+  TimelinePropertyDisplayMode propertyDisplayMode() const;
   void setRowHeight(int rowHeight);
   int rowHeight() const;
   void setPropertyColumnWidth(int width);
@@ -131,6 +139,8 @@ export namespace Artifact
   SearchMatchMode searchMatchMode() const;
   void setDisplayMode(TimelineLayerDisplayMode mode);
   TimelineLayerDisplayMode displayMode() const;
+  void setPropertyDisplayMode(TimelinePropertyDisplayMode mode);
+  TimelinePropertyDisplayMode propertyDisplayMode() const;
   void setRowHeight(int rowHeight);
   int rowHeight() const;
   void setPropertyColumnWidth(int width);

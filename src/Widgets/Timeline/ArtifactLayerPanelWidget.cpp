@@ -859,7 +859,8 @@ bool layerMatchesDisplayMode(const ArtifactAbstractLayerPtr& layer,
     }
   };
 
-  QVector<QString> layerPanelGroupLabels(const ArtifactAbstractLayerPtr& layer)
+  QVector<QString> layerPanelPropertyLabels(const ArtifactAbstractLayerPtr& layer,
+                                           const TimelinePropertyDisplayMode mode)
   {
    QVector<QString> labels;
    if (!layer) {
@@ -871,6 +872,27 @@ bool layerMatchesDisplayMode(const ArtifactAbstractLayerPtr& layer,
      return existing.compare(candidate, Qt::CaseInsensitive) == 0;
     });
    };
+
+   if (mode == TimelinePropertyDisplayMode::KeyframesOnly) {
+    QSet<QString> seen;
+    for (const auto& group : layer->getLayerPropertyGroups()) {
+     for (const auto& property : group.sortedProperties()) {
+      if (!property || !property->isAnimatable()) {
+       continue;
+      }
+      if (property->getKeyFrames().empty()) {
+       continue;
+      }
+      const QString propertyName = property->getName().trimmed();
+      if (propertyName.isEmpty() || seen.contains(propertyName)) {
+       continue;
+      }
+      seen.insert(propertyName);
+      labels.push_back(propertyName);
+     }
+    }
+    return labels;
+   }
 
    for (const auto& group : layer->getLayerPropertyGroups()) {
     const QString groupName = group.name().trimmed();
@@ -1183,6 +1205,7 @@ void ArtifactLayerPanelHeaderWidget::leaveEvent(QEvent* event)
   bool shyHidden = false;
   QString filterText;
   SearchMatchMode searchMatchMode = SearchMatchMode::FilterOnly;
+  TimelinePropertyDisplayMode propertyDisplayMode = TimelinePropertyDisplayMode::KeyframesOnly;
   int hoveredLayerIndex = -1;
   LayerID selectedLayerId;
   QVector<VisibleRow> visibleRows;
@@ -1269,6 +1292,17 @@ void ArtifactLayerPanelHeaderWidget::leaveEvent(QEvent* event)
     return;
    }
    displayMode = mode;
+   if (owner) {
+    owner->updateLayout();
+   }
+  }
+
+  void setPropertyDisplayMode(TimelinePropertyDisplayMode mode, ArtifactLayerPanelWidget* owner)
+  {
+   if (propertyDisplayMode == mode) {
+    return;
+   }
+   propertyDisplayMode = mode;
    if (owner) {
     owner->updateLayout();
    }
@@ -1462,7 +1496,7 @@ void ArtifactLayerPanelHeaderWidget::leaveEvent(QEvent* event)
      if (emitted.contains(nodeId)) return;
 
      const auto nodeChildren = children.value(nodeId);
-     const auto panelGroups = layerPanelGroupLabels(node);
+     const auto panelGroups = layerPanelPropertyLabels(node, propertyDisplayMode);
      const bool hasChildren = !nodeChildren.isEmpty() || !panelGroups.isEmpty();
      const bool expanded = expandedByLayerId.value(nodeId, true);
      const bool nodeMatched = hasQuery && matchesLayerSearchQuery(node, comp, query);
@@ -1652,6 +1686,16 @@ void ArtifactLayerPanelWidget::setDisplayMode(TimelineLayerDisplayMode mode)
 TimelineLayerDisplayMode ArtifactLayerPanelWidget::displayMode() const
 {
   return impl_->displayMode;
+}
+
+void ArtifactLayerPanelWidget::setPropertyDisplayMode(TimelinePropertyDisplayMode mode)
+{
+  impl_->setPropertyDisplayMode(mode, this);
+}
+
+TimelinePropertyDisplayMode ArtifactLayerPanelWidget::propertyDisplayMode() const
+{
+  return impl_->propertyDisplayMode;
 }
 
 void ArtifactLayerPanelWidget::setRowHeight(int rowHeight)
@@ -3434,6 +3478,18 @@ void ArtifactLayerTimelinePanelWrapper::setDisplayMode(TimelineLayerDisplayMode 
 TimelineLayerDisplayMode ArtifactLayerTimelinePanelWrapper::displayMode() const
 {
   return impl_ && impl_->panel ? impl_->panel->displayMode() : TimelineLayerDisplayMode::AllLayers;
+}
+
+void ArtifactLayerTimelinePanelWrapper::setPropertyDisplayMode(TimelinePropertyDisplayMode mode)
+{
+  if (impl_ && impl_->panel) {
+    impl_->panel->setPropertyDisplayMode(mode);
+  }
+}
+
+TimelinePropertyDisplayMode ArtifactLayerTimelinePanelWrapper::propertyDisplayMode() const
+{
+  return impl_ && impl_->panel ? impl_->panel->propertyDisplayMode() : TimelinePropertyDisplayMode::KeyframesOnly;
 }
 
 void ArtifactLayerTimelinePanelWrapper::setRowHeight(int rowHeight)

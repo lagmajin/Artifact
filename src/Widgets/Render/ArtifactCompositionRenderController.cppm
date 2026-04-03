@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <DeviceContext.h>
 #define NOMINMAX
 #define QT_NO_KEYWORDS
@@ -2846,7 +2846,9 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       }
       renderer_->setOverrideRTV(accumRTV);
       // RTVをクリアしてから背景を描画
-      renderer_->setClearColor(FloatColor{0.0f, 0.0f, 0.0f, 1.0f});
+      // Keep the offscreen viewport transparent outside the composition rect.
+      // Opaque black here would overwrite the host background after the final blit.
+      renderer_->setClearColor(FloatColor{0.0f, 0.0f, 0.0f, 0.0f});
       renderer_->clear();
       const QImage backgroundSprite = makeSolidColorSprite(bgColor);
       renderer_->drawSprite(0.0f, 0.0f, cw, ch, backgroundSprite, 1.0f);
@@ -3740,3 +3742,4 @@ void CompositionRenderController::Impl::drawViewportGhostOverlay(
   }
 
  } // namespace Artifact
+

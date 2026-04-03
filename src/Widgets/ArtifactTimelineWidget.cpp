@@ -1,4 +1,4 @@
-module;
+﻿module;
 
 #include <QBoxLayout>
 #include <QBrush>
@@ -1036,6 +1036,7 @@ public:
   ArtifactTimelineSearchBarWidget *searchBar_ = nullptr;
   QLabel *searchStatusLabel_ = nullptr;
   QLabel *keyframeStatusLabel_ = nullptr;
+  QComboBox *propertyModeCombo_ = nullptr;
   ArtifactLayerTimelinePanelWrapper *layerTimelinePanel_ = nullptr;
   ArtifactTimelineTrackPainterView *painterTrackView_ = nullptr;
   ArtifactTimelineScrubBar *scrubBar_ = nullptr;
@@ -1072,6 +1073,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
 
   auto layerTreeView = new ArtifactLayerTimelinePanelWrapper();
   layerTreeView->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+  layerTreeView->setPropertyDisplayMode(TimelinePropertyDisplayMode::KeyframesOnly);
   impl_->layerTimelinePanel_ = layerTreeView;
 
   auto leftSplitter = new DraggableSplitter(Qt::Horizontal);
@@ -1090,6 +1092,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   auto searchBar = new ArtifactTimelineSearchBarWidget();     // Search
   auto searchModeCombo = new QComboBox();                     // Search mode
   auto displayModeCombo = new QComboBox();                    // Layer display mode
+  auto propertyModeCombo = new QComboBox();                   // Property display mode
   auto densityCombo = new QComboBox();                        // Row density
   auto globalSwitches = new ArtifactTimelineGlobalSwitches(); // AE Switches
   auto searchStatusLabel = new QLabel();
@@ -1098,6 +1101,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   impl_->searchBar_ = searchBar;
   impl_->searchStatusLabel_ = searchStatusLabel;
   impl_->keyframeStatusLabel_ = keyframeStatusLabel;
+  impl_->propertyModeCombo_ = propertyModeCombo;
 
   QObject::connect(searchBar, &ArtifactTimelineSearchBarWidget::searchTextChanged,
                    this, &ArtifactTimelineWidget::onSearchTextChanged);
@@ -1118,6 +1122,9 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   displayModeCombo->addItem(QStringLiteral("Audio"), static_cast<int>(TimelineLayerDisplayMode::AudioOnly));
   displayModeCombo->addItem(QStringLiteral("Video"), static_cast<int>(TimelineLayerDisplayMode::VideoOnly));
   displayModeCombo->setCurrentIndex(0);
+  propertyModeCombo->addItem(QStringLiteral("All Properties"), static_cast<int>(TimelinePropertyDisplayMode::GroupedProperties));
+  propertyModeCombo->addItem(QStringLiteral("Keyframes Only"), static_cast<int>(TimelinePropertyDisplayMode::KeyframesOnly));
+  propertyModeCombo->setCurrentIndex(1);
   densityCombo->addItem(QStringLiteral("Compact"), 24);
   densityCombo->addItem(QStringLiteral("Normal"), 28);
   densityCombo->addItem(QStringLiteral("Comfortable"), 36);
@@ -1143,6 +1150,16 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
                         displayModeCombo->itemData(dataIndex).toInt());
                      layerTreeView->setDisplayMode(mode);
                    });
+  QObject::connect(propertyModeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+                   [layerTreeView, propertyModeCombo](int index) {
+                     if (!layerTreeView || propertyModeCombo->count() <= 0) {
+                       return;
+                     }
+                     const int dataIndex = std::clamp(index, 0, propertyModeCombo->count() - 1);
+                     const auto mode = static_cast<TimelinePropertyDisplayMode>(
+                         propertyModeCombo->itemData(dataIndex).toInt());
+                     layerTreeView->setPropertyDisplayMode(mode);
+                   });
   QObject::connect(densityCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
                    [layerTreeView, densityCombo](int index) {
                      if (!layerTreeView || densityCombo->count() <= 0) {
@@ -1160,6 +1177,8 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   searchModeCombo->setMinimumWidth(120);
   displayModeCombo->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
   displayModeCombo->setMinimumWidth(108);
+  propertyModeCombo->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+  propertyModeCombo->setMinimumWidth(138);
   densityCombo->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
   densityCombo->setMinimumWidth(98);
   searchStatusLabel->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
@@ -1190,6 +1209,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   searchBarLayout->addWidget(searchBar);
   searchBarLayout->addWidget(searchModeCombo);
   searchBarLayout->addWidget(displayModeCombo);
+  searchBarLayout->addWidget(propertyModeCombo);
   searchBarLayout->addWidget(densityCombo);
   searchBarLayout->addWidget(searchStatusLabel);
   searchBarLayout->addWidget(keyframeStatusLabel);
@@ -1203,7 +1223,8 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   searchBarLayout->setStretch(5, 0);
   searchBarLayout->setStretch(6, 0);
   searchBarLayout->setStretch(7, 0);
-  searchBarLayout->setStretch(8, 1);
+  searchBarLayout->setStretch(8, 0);
+  searchBarLayout->setStretch(9, 1);
 
   QObject::connect(globalSwitches, &ArtifactTimelineGlobalSwitches::shyChanged,
                    this, &ArtifactTimelineWidget::onShyChanged);
@@ -1991,6 +2012,15 @@ void ArtifactTimelineWidget::keyPressEvent(QKeyEvent *event) {
   }
 
   // スペースキーで再生/一時停止
+  if (event->key() == Qt::Key_U) {
+    if (impl_ && impl_->propertyModeCombo_ && impl_->propertyModeCombo_->count() >= 2) {
+      const int current = impl_->propertyModeCombo_->currentIndex();
+      const int next = (current == 0) ? 1 : 0;
+      impl_->propertyModeCombo_->setCurrentIndex(next);
+      event->accept();
+      return;
+    }
+  }
   if (event->key() == Qt::Key_Space) {
     if (auto *svc = ArtifactPlaybackService::instance()) {
       svc->togglePlayPause();
@@ -2289,3 +2319,4 @@ void ArtifactTimelineWidget::jumpToKeyframeHit(int step)
 }
 
 }; // namespace Artifact
+
