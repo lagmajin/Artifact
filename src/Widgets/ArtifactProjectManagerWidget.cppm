@@ -2707,6 +2707,7 @@ public:
     QLabel* statusFilterLabel = nullptr;
     QLabel* statusSelectionLabel = nullptr;
     QLabel* statusUnusedLabel = nullptr;
+    QLabel* statusModeLabel = nullptr;
     QPushButton* openSelectionButton = nullptr;
     QPushButton* revealSelectionButton = nullptr;
     QPushButton* renameSelectionButton = nullptr;
@@ -3008,6 +3009,15 @@ public:
         return QStringLiteral("Unused: %1").arg(visibleUnusedCount());
     }
 
+    QString statusModeText() const {
+        if (!projectView_) {
+            return QStringLiteral("Mode: -");
+        }
+        return projectView_->viewMode() == ProjectViewMode::Grid
+            ? QStringLiteral("Mode: Grid")
+            : QStringLiteral("Mode: List");
+    }
+
     QString selectionSummaryText() const {
         const int selectedCount = projectView_ && projectView_->selectionModel()
             ? projectView_->selectionModel()->selectedRows(0).size()
@@ -3036,6 +3046,9 @@ public:
         }
         if (statusUnusedLabel) {
             statusUnusedLabel->setText(statusUnusedText());
+        }
+        if (statusModeLabel) {
+            statusModeLabel->setText(statusModeText());
         }
     }
 
@@ -3458,7 +3471,8 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     impl_->statusFilterLabel = new QLabel(QStringLiteral("Filter: All items"), impl_->statusBarWidget);
     impl_->statusSelectionLabel = new QLabel(QStringLiteral("Selection: 0 B"), impl_->statusBarWidget);
     impl_->statusUnusedLabel = new QLabel(QStringLiteral("Unused: 0"), impl_->statusBarWidget);
-    for (QLabel* label : {impl_->statusVisibleLabel, impl_->statusFilterLabel, impl_->statusSelectionLabel, impl_->statusUnusedLabel}) {
+    impl_->statusModeLabel = new QLabel(QStringLiteral("Mode: List"), impl_->statusBarWidget);
+    for (QLabel* label : {impl_->statusVisibleLabel, impl_->statusFilterLabel, impl_->statusSelectionLabel, impl_->statusUnusedLabel, impl_->statusModeLabel}) {
         QFont f = label->font();
         f.setPointSize(9);
         label->setFont(f);
@@ -3470,6 +3484,7 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     statusLayout->addWidget(impl_->statusFilterLabel, 1, Qt::AlignCenter);
     statusLayout->addWidget(impl_->statusSelectionLabel, 0, Qt::AlignRight | Qt::AlignVCenter);
     statusLayout->addWidget(impl_->statusUnusedLabel, 0, Qt::AlignRight | Qt::AlignVCenter);
+    statusLayout->addWidget(impl_->statusModeLabel, 0, Qt::AlignRight | Qt::AlignVCenter);
     mainLayout->addWidget(impl_->statusBarWidget);
 
     impl_->toolBox = new ArtifactProjectManagerToolBox(this);
@@ -3489,6 +3504,7 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
         const int clamped = std::clamp(index, 0, impl_->viewModeBox->count() - 1);
         const ProjectViewMode mode = clamped == 1 ? ProjectViewMode::Grid : ProjectViewMode::List;
         impl_->projectView_->setViewMode(mode);
+        impl_->refreshStatusChrome();
     });
     connect(impl_->openSelectionButton, &QPushButton::clicked, this, [this]() {
         impl_->openSelectedItem(this);
