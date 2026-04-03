@@ -58,6 +58,7 @@ import Artifact.Render.CompositionRenderer;
 import Artifact.Preview.Pipeline;
 import Artifact.MainWindow;
 import Artifact.Layer.Image;
+import Graphics.Shader.Compute.MaskCutout;
 import Utils.Path;
 import FloatRGBA;
 import Image.ImageF32x4_RGBA;
@@ -134,9 +135,14 @@ QIcon loadLayerEditorIcon(const QString& resourcePath)
   bool m_initialized;
   RefCntAutoPtr<ITexture> m_layerRT;
   RefCntAutoPtr<ITexture> m_maskPreviewRT;
+  RefCntAutoPtr<ITexture> m_maskCutoutRT;
   Uint32 m_maskPreviewWidth = 0;
   Uint32 m_maskPreviewHeight = 0;
+  Uint32 m_maskCutoutWidth = 0;
+  Uint32 m_maskCutoutHeight = 0;
   RefCntAutoPtr<IFence> m_layer_fence;
+  std::unique_ptr<ArtifactCore::GpuContext> maskGpuContext_;
+  std::unique_ptr<ArtifactCore::MaskCutoutPipeline> maskCutoutPipeline_;
   LayerID targetLayerId_{};
   FloatColor targetLayerTint_{ 1.0f, 0.5f, 0.5f, 1.0f };
   FloatColor clearColor_{ 0.10f, 0.10f, 0.10f, 1.0f };
@@ -178,6 +184,8 @@ QIcon loadLayerEditorIcon(const QString& resourcePath)
   bool ensureMaskPreviewRT(int width, int height);
   void requestRender();
   void toggleImmersiveMode(bool immersive);
+  bool ensureMaskCutoutRT(int width, int height);
+  bool ensureMaskCutoutPipeline();
   void showCommandPalette();
   void hideCommandPalette();
   bool isCommandPaletteVisible() const;
@@ -508,8 +516,13 @@ bool ArtifactLayerEditorWidgetV2::Impl::executeCommandText(const QString& text)
    renderer_.reset();
   }
   m_maskPreviewRT = nullptr;
+  m_maskCutoutRT = nullptr;
   m_maskPreviewWidth = 0;
   m_maskPreviewHeight = 0;
+  m_maskCutoutWidth = 0;
+  m_maskCutoutHeight = 0;
+  maskCutoutPipeline_.reset();
+  maskGpuContext_.reset();
   compositionRenderer_.reset();
   initialized_ = false;
   resizePending_ = false;
@@ -835,9 +848,71 @@ bool ArtifactLayerEditorWidgetV2::Impl::executeCommandText(const QString& text)
    return false;
   }
 
-  m_maskPreviewWidth = newWidth;
-  m_maskPreviewHeight = newHeight;
+ m_maskPreviewWidth = newWidth;
+ m_maskPreviewHeight = newHeight;
+ return true;
+ }
+
+ bool ArtifactLayerEditorWidgetV2::Impl::ensureMaskCutoutRT(int width, int height)
+ {
+  if (!renderer_ || width <= 0 || height <= 0) {
+   return false;
+  }
+
+  const Uint32 newWidth = static_cast<Uint32>(width);
+  const Uint32 newHeight = static_cast<Uint32>(height);
+  if (m_maskCutoutRT && m_maskCutoutWidth == newWidth && m_maskCutoutHeight == newHeight) {
+   return true;
+  }
+
+  auto device = renderer_->device();
+  if (!device) {
+   return false;
+  }
+
+  m_maskCutoutRT = nullptr;
+
+  TextureDesc desc;
+  desc.Name = "MaskCutoutRT";
+  desc.Type = RESOURCE_DIM_TEX_2D;
+  desc.Width = newWidth;
+  desc.Height = newHeight;
+  desc.MipLevels = 1;
+  desc.Format = TEX_FORMAT_RGBA8_UNORM;
+  desc.BindFlags = BIND_RENDER_TARGET | BIND_SHADER_RESOURCE | BIND_UNORDERED_ACCESS;
+
+  device->CreateTexture(desc, nullptr, &m_maskCutoutRT);
+  if (!m_maskCutoutRT) {
+   m_maskCutoutWidth = 0;
+   m_maskCutoutHeight = 0;
+   return false;
+  }
+
+  m_maskCutoutWidth = newWidth;
+  m_maskCutoutHeight = newHeight;
   return true;
+ }
+
+ bool ArtifactLayerEditorWidgetV2::Impl::ensureMaskCutoutPipeline()
+ {
+  if (!renderer_ || !renderer_->device() || !renderer_->immediateContext()) {
+   return false;
+  }
+
+  if (!maskGpuContext_) {
+   maskGpuContext_ = std::make_unique<ArtifactCore::GpuContext>(renderer_->device(),
+                                                                renderer_->immediateContext());
+  }
+  if (!maskCutoutPipeline_) {
+   maskCutoutPipeline_ = std::make_unique<ArtifactCore::MaskCutoutPipeline>(*maskGpuContext_);
+   if (!maskCutoutPipeline_->initialize()) {
+    maskCutoutPipeline_.reset();
+    maskGpuContext_.reset();
+    return false;
+   }
+  }
+
+  return maskCutoutPipeline_ && maskCutoutPipeline_->ready();
  }
 
  void ArtifactLayerEditorWidgetV2::Impl::startRenderLoop()
@@ -953,7 +1028,7 @@ bool ArtifactLayerEditorWidgetV2::Impl::executeCommandText(const QString& text)
       }
       if (!isVisible || !isActive || layer->opacity() <= 0.0f) {
       } else {
-       const bool useMaskPreview = false;
+       const bool useMaskPreview = layer->maskCount() > 0;
        if (useMaskPreview) {
         const int width = std::max(1, static_cast<int>(std::lround(widget_->width() * widget_->devicePixelRatioF())));
         const int height = std::max(1, static_cast<int>(std::lround(widget_->height() * widget_->devicePixelRatioF())));
@@ -986,17 +1061,37 @@ bool ArtifactLayerEditorWidgetV2::Impl::executeCommandText(const QString& text)
            mask.applyToImage(maskMat.cols, maskMat.rows, &maskMat);
           }
           const QImage maskOverlay = ArtifactCore::CvUtils::cvMatToQImage(maskMat);
-
-          renderer_->clear();
-          renderer_->setCanvasSize(static_cast<float>(width), static_cast<float>(height));
-          renderer_->setZoom(1.0f);
-          renderer_->setPan(0.0f, 0.0f);
-          renderer_->drawMaskedTextureLocal(0.0f, 0.0f,
-                                            static_cast<float>(width),
-                                            static_cast<float>(height),
-                                            previewSRV,
-                                            maskOverlay,
-                                            1.0f);
+          bool usedGpuMaskCutout = false;
+          if (ensureMaskCutoutRT(width, height) && ensureMaskCutoutPipeline()) {
+           auto* cutoutUAV = m_maskCutoutRT ? m_maskCutoutRT->GetDefaultView(TEXTURE_VIEW_UNORDERED_ACCESS) : nullptr;
+           auto* cutoutSRV = m_maskCutoutRT ? m_maskCutoutRT->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE) : nullptr;
+           auto ctx = renderer_->immediateContext();
+           if (cutoutUAV && cutoutSRV && ctx &&
+               maskCutoutPipeline_->apply(ctx.Get(), maskOverlay, previewSRV, cutoutUAV, 1.0f)) {
+            renderer_->clear();
+            renderer_->setCanvasSize(static_cast<float>(width), static_cast<float>(height));
+            renderer_->setZoom(1.0f);
+            renderer_->setPan(0.0f, 0.0f);
+            renderer_->drawSprite(0.0f, 0.0f,
+                                  static_cast<float>(width),
+                                  static_cast<float>(height),
+                                  cutoutSRV,
+                                  1.0f);
+            usedGpuMaskCutout = true;
+           }
+          }
+          if (!usedGpuMaskCutout) {
+           renderer_->clear();
+           renderer_->setCanvasSize(static_cast<float>(width), static_cast<float>(height));
+           renderer_->setZoom(1.0f);
+           renderer_->setPan(0.0f, 0.0f);
+           renderer_->drawMaskedTextureLocal(0.0f, 0.0f,
+                                             static_cast<float>(width),
+                                             static_cast<float>(height),
+                                             previewSRV,
+                                             maskOverlay,
+                                             1.0f);
+          }
           if (compSize.width() > 0 && compSize.height() > 0) {
            renderer_->setCanvasSize(static_cast<float>(compSize.width()), static_cast<float>(compSize.height()));
           }
