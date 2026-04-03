@@ -35,6 +35,7 @@ export namespace Artifact
    bool selectedLayer = false;
    bool eased = false;
    QColor color = QColor(247, 204, 83);
+   QString propertyPath;
    QString label;
   };
 
@@ -100,6 +101,10 @@ export namespace Artifact
   void clipDeselected() W_SIGNAL(clipDeselected);
   void clipMoved(const QString& clipId, double startFrame) W_SIGNAL(clipMoved, clipId, startFrame);
   void clipResized(const QString& clipId, double startFrame, double durationFrame) W_SIGNAL(clipResized, clipId, startFrame, durationFrame);
+  void keyframeMoveRequested(const LayerID& layerId,
+                             const QString& propertyPath,
+                             qint64 fromFrame,
+                             qint64 toFrame) W_SIGNAL(keyframeMoveRequested, layerId, propertyPath, fromFrame, toFrame);
   void timelineDebugMessage(const QString& message) W_SIGNAL(timelineDebugMessage, message);
  };
 }

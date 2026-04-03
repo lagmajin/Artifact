@@ -310,6 +310,7 @@ collectKeyframeMarkers(const ArtifactCompositionPtr& composition,
     struct DraftMarker {
       qint64 frame = 0;
       QString label;
+      QString propertyPath;
       QColor color;
       bool selectedLayer = false;
       bool eased = false;
@@ -332,7 +333,7 @@ collectKeyframeMarkers(const ArtifactCompositionPtr& composition,
                              : (eased ? QColor(82, 208, 255)
                                       : QColor(247, 204, 83));
           color.setAlpha(selectedLayer ? 255 : 245);
-          drafts.push_back(DraftMarker{frame, propertyName, color, selectedLayer, eased});
+          drafts.push_back(DraftMarker{frame, propertyName, propertyName, color, selectedLayer, eased});
         }
       }
     }
@@ -360,6 +361,7 @@ collectKeyframeMarkers(const ArtifactCompositionPtr& composition,
       marker.trackIndex = trackIndex;
       marker.frame = static_cast<double>(draft.frame);
       marker.label = draft.label;
+      marker.propertyPath = draft.propertyPath;
       marker.color = draft.color;
       marker.selectedLayer = draft.selectedLayer;
       marker.eased = draft.eased;
@@ -478,6 +480,49 @@ bool applyKeyframeEditAtPlayhead(const ArtifactCompositionPtr& composition,
     layer->changed();
   }
   return changed;
+}
+
+bool moveKeyframeAtFrame(const ArtifactCompositionPtr& composition,
+                         const LayerID& layerId,
+                         const QString& propertyPath,
+                         const qint64 fromFrame,
+                         const qint64 toFrame)
+{
+  if (!composition || layerId.isNil() || propertyPath.trimmed().isEmpty()) {
+    return false;
+  }
+
+  auto layer = composition->layerById(layerId);
+  if (!layer) {
+    return false;
+  }
+
+  auto property = layer->getProperty(propertyPath);
+  if (!property || !property->isAnimatable()) {
+    return false;
+  }
+
+  const double fps = std::max(
+      1.0, static_cast<double>(composition->frameRate().framerate()));
+  const RationalTime fromTime(fromFrame, static_cast<int64_t>(std::llround(fps)));
+  const RationalTime toTime(toFrame, static_cast<int64_t>(std::llround(fps)));
+  if (fromTime == toTime) {
+    return false;
+  }
+
+  const auto keyframes = property->getKeyFrames();
+  const auto it = std::find_if(
+      keyframes.begin(), keyframes.end(),
+      [&fromTime](const KeyFrame& keyframe) { return keyframe.time == fromTime; });
+  if (it == keyframes.end()) {
+    return false;
+  }
+
+  const KeyFrame moved = *it;
+  property->removeKeyFrame(fromTime);
+  property->addKeyFrame(toTime, moved.value, moved.easing);
+  layer->changed();
+  return true;
 }
 
 struct KeyframeNavigationState {
@@ -1387,6 +1432,23 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
              const double durationFrame) {
         applyTimelineLayerTrim(impl_->compositionId_, clipId, startFrame,
                                durationFrame);
+      });
+  QObject::connect(
+      painterTrackView, &ArtifactTimelineTrackPainterView::keyframeMoveRequested, this,
+      [this](const ArtifactCore::LayerID &layerId, const QString &propertyPath,
+             const qint64 fromFrame, const qint64 toFrame) {
+        const ArtifactCompositionPtr composition =
+            safeCompositionLookup(impl_->compositionId_);
+        if (!composition) {
+          return;
+        }
+        if (!moveKeyframeAtFrame(composition, layerId, propertyPath, fromFrame, toFrame)) {
+          return;
+        }
+        if (auto *svc = ArtifactProjectService::instance()) {
+          svc->projectChanged();
+        }
+        refreshTracks();
       });
   QObject::connect(painterTrackView, &ArtifactTimelineTrackPainterView::timelineDebugMessage, this, &ArtifactTimelineWidget::timelineDebugMessage);
   // auto layerTimelinePanel = new ArtifactLayerTimelinePanelWrapper();

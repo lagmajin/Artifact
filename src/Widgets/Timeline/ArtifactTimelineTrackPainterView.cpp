@@ -57,6 +57,7 @@ constexpr int kClipCorner = 4;
 constexpr int kClipPadding = 6;
 constexpr int kMinTrackCount = 1;
 constexpr double kMarkerLaneStep = 8.0;
+constexpr int kMarkerDragThresholdPx = 4;
 
 double clampDurationFrames(const double value)
 {
@@ -302,6 +303,10 @@ public:
  int hoverClipIndex_ = -1;
  DragMode hoverEdge_ = DragMode::None;
  int hoverMarkerIndex_ = -1;
+ int pressedMarkerIndex_ = -1;
+ bool markerDragging_ = false;
+ QPoint markerPressPoint_;
+ qint64 markerPressFrame_ = -1;
  bool panning_ = false;
  QPoint lastPanPoint_;
  QVector<ArtifactTimelineTrackPainterView::KeyframeMarkerVisual> keyframeMarkers_;
@@ -641,7 +646,8 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent* event)
   if (!dirtyRect.adjusted(-8, -8, 8, 8).contains(center.toPoint())) {
    continue;
   }
-  const bool isHovered = markerIndex == impl_->hoverMarkerIndex_;
+  const bool isHovered = markerIndex == impl_->hoverMarkerIndex_ ||
+                         (impl_->markerDragging_ && markerIndex == impl_->pressedMarkerIndex_);
   const int size = marker.laneCount > 1 ? (isHovered ? 6 : 5) : (isHovered ? 7 : 6);
   const QRectF diamondRect(center.x() - size, center.y() - size,
                            size * 2.0, size * 2.0);
@@ -729,10 +735,12 @@ void ArtifactTimelineTrackPainterView::mousePressEvent(QMouseEvent* event)
                                         mouseX, mouseY, impl_->pixelsPerFrame_,
                                         impl_->horizontalOffset_, impl_->verticalOffset_);
   if (markerHit.markerIndex >= 0) {
-   const auto& marker = impl_->keyframeMarkers_[markerHit.markerIndex];
-   const double frame = std::clamp(marker.frame, 0.0, impl_->durationFrames_);
-   seekRequested(frame);
-   setCurrentFrame(frame);
+   impl_->pressedMarkerIndex_ = markerHit.markerIndex;
+   impl_->markerDragging_ = false;
+   impl_->markerPressPoint_ = event->position().toPoint();
+   impl_->markerPressFrame_ = static_cast<qint64>(std::llround(
+       std::clamp(impl_->keyframeMarkers_[markerHit.markerIndex].frame, 0.0, impl_->durationFrames_)));
+   setCursor(Qt::PointingHandCursor);
    event->accept();
    return;
   }
@@ -771,6 +779,46 @@ void ArtifactTimelineTrackPainterView::mouseMoveEvent(QMouseEvent* event)
  const auto markerHit = hitTestMarkers(impl_->keyframeMarkers_, impl_->trackHeights_,
                                        mouseX, mouseY, ppf, impl_->horizontalOffset_,
                                        impl_->verticalOffset_);
+
+ if (impl_->pressedMarkerIndex_ >= 0 &&
+     impl_->pressedMarkerIndex_ < impl_->keyframeMarkers_.size() &&
+     (event->buttons() & Qt::LeftButton)) {
+  const QPoint delta = event->position().toPoint() - impl_->markerPressPoint_;
+  if (!impl_->markerDragging_ &&
+      (std::abs(delta.x()) >= kMarkerDragThresholdPx ||
+       std::abs(delta.y()) >= kMarkerDragThresholdPx)) {
+   impl_->markerDragging_ = true;
+   setCursor(Qt::ClosedHandCursor);
+  }
+
+  if (impl_->markerDragging_) {
+   auto& marker = impl_->keyframeMarkers_[impl_->pressedMarkerIndex_];
+   const double oldFrame = marker.frame;
+   const double newFrame = std::clamp((mouseX + impl_->horizontalOffset_) /
+                                          std::max(0.001, ppf),
+                                      0.0, impl_->durationFrames_);
+   if (std::abs(oldFrame - newFrame) >= 0.0001) {
+    const QRectF oldRect = markerHitRectFor(marker, impl_->trackHeights_, ppf,
+                                            impl_->horizontalOffset_, impl_->verticalOffset_);
+    marker.frame = newFrame;
+    const QRectF newRect = markerHitRectFor(marker, impl_->trackHeights_, ppf,
+                                            impl_->horizontalOffset_, impl_->verticalOffset_);
+    const QRectF dirty = oldRect.united(newRect).adjusted(-2.0, -2.0, 2.0, 2.0);
+    if (dirty.isValid()) {
+     update(dirty.toAlignedRect());
+    } else {
+     update();
+    }
+   }
+   event->accept();
+   return;
+  }
+
+  if ((event->buttons() & Qt::LeftButton) && impl_->pressedMarkerIndex_ >= 0) {
+   event->accept();
+   return;
+  }
+ }
 
  if (impl_->dragMode_ != DragMode::None && impl_->dragClipIndex_ >= 0) {
   const auto oldClip = impl_->clips_[impl_->dragClipIndex_];
@@ -883,6 +931,46 @@ void ArtifactTimelineTrackPainterView::mouseReleaseEvent(QMouseEvent* event)
  if (event->button() == Qt::MiddleButton && impl_->panning_) {
   impl_->panning_ = false;
   setCursor(Qt::ArrowCursor);
+  event->accept();
+  return;
+ }
+
+ if (event->button() == Qt::LeftButton && impl_->pressedMarkerIndex_ >= 0) {
+  const int idx = impl_->pressedMarkerIndex_;
+  if (idx < impl_->keyframeMarkers_.size()) {
+   const auto& marker = impl_->keyframeMarkers_[idx];
+   if (impl_->markerDragging_) {
+    const qint64 fromFrame = impl_->markerPressFrame_;
+    const qint64 toFrame = static_cast<qint64>(std::llround(
+        std::clamp(marker.frame, 0.0, impl_->durationFrames_)));
+    if (fromFrame >= 0 && toFrame >= 0 && fromFrame != toFrame) {
+     Q_EMIT keyframeMoveRequested(marker.layerId, marker.propertyPath, fromFrame, toFrame);
+     Q_EMIT timelineDebugMessage(
+         QStringLiteral("Moved keyframe %1: F%2 -> F%3")
+             .arg(marker.label.isEmpty() ? QStringLiteral("keyframe") : marker.label)
+             .arg(fromFrame)
+             .arg(toFrame));
+    }
+   } else {
+    const double frame = std::clamp(marker.frame, 0.0, impl_->durationFrames_);
+    seekRequested(frame);
+    setCurrentFrame(frame);
+   }
+  }
+  impl_->pressedMarkerIndex_ = -1;
+  impl_->markerDragging_ = false;
+  impl_->markerPressPoint_ = QPoint();
+  impl_->markerPressFrame_ = -1;
+  if (impl_->hoverMarkerIndex_ >= 0) {
+   setCursor(Qt::PointingHandCursor);
+  } else {
+   switch (impl_->hoverEdge_) {
+   case DragMode::ResizeLeft:
+   case DragMode::ResizeRight: setCursor(Qt::SizeHorCursor);  break;
+   case DragMode::MoveBody:    setCursor(Qt::OpenHandCursor); break;
+   default:                    setCursor(Qt::ArrowCursor);    break;
+   }
+  }
   event->accept();
   return;
  }
