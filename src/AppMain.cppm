@@ -113,7 +113,7 @@ import Artifact.Script.Hooks;
 import Artifact.Widgets.Test.ScrollPoC;
 
 import Diagnostics.Logger;
-import Artifact.Widgets.ConsoleWidget;
+import Artifact.Widgets.DebugConsoleWidget;
 
 using namespace Artifact;
 using namespace ArtifactCore;
@@ -723,9 +723,9 @@ int main(int argc, char *argv[]) {
     mw->addDockedWidgetFloating(QStringLiteral("Playback Control"),
                                 QStringLiteral("PlaybackControl"),
                                 playbackControl, QRect(120, 828, 720, 96));
-    auto *consoleWidget = new ArtifactConsoleWidget(mw);
-    mw->addDockedWidgetFloating(QStringLiteral("Console"),
-                                QStringLiteral("Console"), consoleWidget,
+    auto *consoleWidget = new ArtifactDebugConsoleWidget(mw);
+    mw->addDockedWidgetFloating(QStringLiteral("Debug Console"),
+                                QStringLiteral("DebugConsole"), consoleWidget,
                                 QRect(200, 200, 800, 400));
     auto *compositionEditor = new ArtifactCompositionEditor(mw);
     compositionEditor->setMinimumWidth(1024); // Keep the center area from getting too cramped

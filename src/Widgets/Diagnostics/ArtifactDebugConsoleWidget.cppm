@@ -1,5 +1,8 @@
 module;
 #include <QBoxLayout>
+#include <QAbstractItemView>
+#include <QItemSelection>
+#include <QMouseEvent>
 #include <QToolButton>
 #include <QListWidget>
 #include <QLineEdit>
@@ -17,6 +20,7 @@ module;
 #include <QColor>
 #include <QPalette>
 #include <QBrush>
+#include <QVariant>
 #include <QString>
 #include <QPainter>
 #include <QMenu>
@@ -31,7 +35,7 @@ module;
 #include <algorithm>
 #include <wobjectimpl.h>
 
-module Artifact.Widgets.ConsoleWidget;
+module Artifact.Widgets.DebugConsoleWidget;
 
 import Diagnostics.Logger;
 import Utils;
@@ -53,9 +57,40 @@ namespace Artifact {
 
 using namespace ArtifactCore;
 
-W_OBJECT_IMPL(ArtifactConsoleWidget)
+W_OBJECT_IMPL(ArtifactDebugConsoleWidget)
 
-class ArtifactConsoleWidget::Impl {
+class DebugConsoleLogListWidget final : public QListWidget {
+public:
+    explicit DebugConsoleLogListWidget(QWidget* parent = nullptr)
+        : QListWidget(parent) {}
+
+protected:
+    void mousePressEvent(QMouseEvent* event) override {
+        if (event && event->button() == Qt::LeftButton &&
+            event->modifiers().testFlag(Qt::ShiftModifier)) {
+            const QModelIndex clicked = indexAt(event->pos());
+            if (clicked.isValid() && selectionModel()) {
+                const QModelIndex anchor =
+                    currentIndex().isValid() ? currentIndex() : clicked;
+                const int firstRow = std::min(anchor.row(), clicked.row());
+                const int lastRow = std::max(anchor.row(), clicked.row());
+                const QModelIndex top = model()->index(firstRow, 0);
+                const QModelIndex bottom = model()->index(lastRow, 0);
+                QItemSelection range(top, bottom);
+                selectionModel()->select(
+                    range, QItemSelectionModel::ClearAndSelect |
+                               QItemSelectionModel::Rows);
+                selectionModel()->setCurrentIndex(clicked,
+                                                  QItemSelectionModel::NoUpdate);
+                event->accept();
+                return;
+            }
+        }
+        QListWidget::mousePressEvent(event);
+    }
+};
+
+class ArtifactDebugConsoleWidget::Impl {
 public:
     struct DisplayLogEntry {
         LogLevel level;
@@ -65,7 +100,7 @@ public:
         int count = 1;
     };
 
-    ArtifactConsoleWidget* owner_;
+    ArtifactDebugConsoleWidget* owner_;
     
     QToolButton* clearBtn_ = nullptr;
     QCheckBox* clearOnPlayCheck_ = nullptr;
@@ -121,14 +156,15 @@ public:
     int totalErrorCount_ = 0;
     std::vector<DisplayLogEntry> displayEntries_;
 
-    Impl(ArtifactConsoleWidget* owner) : owner_(owner) {
+    Impl(ArtifactDebugConsoleWidget* owner) : owner_(owner) {
         loadSettings();
         // Initialize time range to last hour
         endTime_ = QDateTime::currentDateTime();
         startTime_ = endTime_.addSecs(-3600);
     }
 
-    static constexpr const char* kFontPointSizeKey = "ui/console/fontPointSize";
+    static constexpr const char* kFontPointSizeKey = "ui/debugConsole/fontPointSize";
+    static constexpr const char* kLegacyFontPointSizeKey = "ui/console/fontPointSize";
 
     void setupUI() {
         auto* layout = new QVBoxLayout(owner_);
@@ -290,7 +326,7 @@ public:
         fontSizeSpin_->setRange(8, 24);
         fontSizeSpin_->setSuffix(QStringLiteral(" pt"));
         fontSizeSpin_->setFixedWidth(84);
-        fontSizeSpin_->setToolTip(QStringLiteral("Console font size"));
+        fontSizeSpin_->setToolTip(QStringLiteral("Debug console font size"));
         toolbarLayout->addWidget(fontSizeSpin_);
 
         debugFilterBtn_ = createToolButton("MaterialVS/colored/4CAF50/bug_report.svg", "Toggle Debug");
@@ -338,8 +374,10 @@ public:
 
         auto* splitter = new QSplitter(Qt::Vertical, owner_);
 
-        logList_ = new QListWidget();
+        logList_ = new DebugConsoleLogListWidget();
         logList_->setAlternatingRowColors(true);
+        logList_->setSelectionMode(QAbstractItemView::ExtendedSelection);
+        logList_->setSelectionBehavior(QAbstractItemView::SelectRows);
         {
             QPalette pal = logList_->palette();
             pal.setColor(QPalette::Base, background);
@@ -592,7 +630,9 @@ public:
 
     void loadSettings() {
         QSettings settings;
-        const int stored = settings.value(QString::fromLatin1(kFontPointSizeKey), 12).toInt();
+        const QVariant storedValue = settings.value(QString::fromLatin1(kFontPointSizeKey));
+        const QVariant legacyStoredValue = settings.value(QString::fromLatin1(kLegacyFontPointSizeKey));
+        const int stored = storedValue.isValid() ? storedValue.toInt() : legacyStoredValue.toInt();
         consoleFontPointSize_ = std::clamp(stored, 8, 24);
     }
 
@@ -753,7 +793,7 @@ public:
 
     void saveFilterPreset() {
         QSettings settings;
-        settings.beginGroup("ConsoleFilters");
+        settings.beginGroup("DebugConsoleFilters");
         settings.setValue("clearOnPlay", clearOnPlayCheck_ ? clearOnPlayCheck_->isChecked() : false);
         settings.setValue("autoScroll", autoScroll_);
         settings.setValue("collapse", collapse_);
@@ -774,21 +814,25 @@ public:
 
     void loadFilterPreset() {
         QSettings settings;
-        settings.beginGroup("ConsoleFilters");
-        const bool clearOnPlay = settings.value("clearOnPlay", false).toBool();
-        autoScroll_ = settings.value("autoScroll", true).toBool();
-        collapse_ = settings.value("collapse", true).toBool();
-        showDebug_ = settings.value("showDebug", true).toBool();
-        showInfo_ = settings.value("showInfo", true).toBool();
-        showWarning_ = settings.value("showWarning", true).toBool();
-        showError_ = settings.value("showError", true).toBool();
-        useTimeFilter_ = settings.value("useTimeFilter", false).toBool();
-        startTime_ = settings.value("startTime", QDateTime::currentDateTime().addSecs(-3600)).toDateTime();
-        endTime_ = settings.value("endTime", QDateTime::currentDateTime()).toDateTime();
-        useContextFilter_ = settings.value("useContextFilter", false).toBool();
-        contextFilters_ = settings.value("contextFilters", QStringList{}).toStringList();
-        importantOnly_ = settings.value("importantOnly", false).toBool();
-        searchFilter_ = settings.value("searchFilter", QString{}).toString();
+        settings.beginGroup("DebugConsoleFilters");
+        const auto legacy = [&settings](const char* key, const QVariant& fallback) -> QVariant {
+            const QString legacyKey = QStringLiteral("ConsoleFilters/%1").arg(QString::fromLatin1(key));
+            return settings.value(QString::fromLatin1(key), settings.value(legacyKey, fallback));
+        };
+        const bool clearOnPlay = legacy("clearOnPlay", false).toBool();
+        autoScroll_ = legacy("autoScroll", true).toBool();
+        collapse_ = legacy("collapse", true).toBool();
+        showDebug_ = legacy("showDebug", true).toBool();
+        showInfo_ = legacy("showInfo", true).toBool();
+        showWarning_ = legacy("showWarning", true).toBool();
+        showError_ = legacy("showError", true).toBool();
+        useTimeFilter_ = legacy("useTimeFilter", false).toBool();
+        startTime_ = legacy("startTime", QDateTime::currentDateTime().addSecs(-3600)).toDateTime();
+        endTime_ = legacy("endTime", QDateTime::currentDateTime()).toDateTime();
+        useContextFilter_ = legacy("useContextFilter", false).toBool();
+        contextFilters_ = legacy("contextFilters", QStringList{}).toStringList();
+        importantOnly_ = legacy("importantOnly", false).toBool();
+        searchFilter_ = legacy("searchFilter", QString{}).toString();
         regexFilter_.setPattern(searchFilter_);
         regexFilter_.setPatternOptions(QRegularExpression::CaseInsensitiveOption);
         settings.endGroup();
@@ -1068,8 +1112,8 @@ public:
     void saveVisibleLogsToFile() const {
         const QString path = QFileDialog::getSaveFileName(
             owner_,
-            QStringLiteral("Save Console Logs"),
-            QStringLiteral("artifact_console_logs.txt"),
+            QStringLiteral("Save Debug Console Logs"),
+            QStringLiteral("artifact_debug_console_logs.txt"),
             QStringLiteral("Text Files (*.txt);;Log Files (*.log);;All Files (*.*)"));
         if (path.isEmpty()) {
             return;
@@ -1083,20 +1127,20 @@ public:
     }
 };
 
-ArtifactConsoleWidget::ArtifactConsoleWidget(QWidget* parent)
+ArtifactDebugConsoleWidget::ArtifactDebugConsoleWidget(QWidget* parent)
     : QWidget(parent), impl_(new Impl(this)) {
     impl_->setupUI();
 }
 
-ArtifactConsoleWidget::~ArtifactConsoleWidget() {
+ArtifactDebugConsoleWidget::~ArtifactDebugConsoleWidget() {
     delete impl_;
 }
 
-int ArtifactConsoleWidget::consoleFontPointSize() const {
+int ArtifactDebugConsoleWidget::debugConsoleFontPointSize() const {
     return impl_ ? impl_->fontPointSize() : 12;
 }
 
-void ArtifactConsoleWidget::setConsoleFontPointSize(int pointSize) {
+void ArtifactDebugConsoleWidget::setDebugConsoleFontPointSize(int pointSize) {
     if (!impl_) {
         return;
     }
