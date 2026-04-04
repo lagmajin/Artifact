@@ -2996,12 +2996,28 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       renderer_->setZoom(origZoom);
       renderer_->setPan(origPanX, origPanY);
       if (compositionViewLog().isDebugEnabled()) {
+        const float screenW = std::max(viewportW, 0.001f);
+        const float screenH = std::max(viewportH, 0.001f);
+        const auto toNdc = [&](float cx, float cy) -> QPointF {
+          const float wx = cx * origZoom + origPanX;
+          const float wy = cy * origZoom + origPanY;
+          return QPointF(wx / screenW * 2.0f - 1.0f,
+                         -((wy / screenH) * 2.0f - 1.0f));
+        };
+        const QPointF v0 = toNdc(0.0f, 0.0f);
+        const QPointF v1 = toNdc(cw, 0.0f);
+        const QPointF v2 = toNdc(0.0f, ch);
+        const QPointF v3 = toNdc(cw, ch);
         qCDebug(compositionViewLog)
             << "[CompositionView] background pass (GPU)"
             << "localRect=" << QRectF(0.0f, 0.0f, cw, ch)
             << "viewport=" << QRectF(0.0f, 0.0f, viewportW, viewportH)
             << "zoom=" << origZoom
             << "pan=" << QPointF(origPanX, origPanY)
+            << "ndc v0=" << v0
+            << "v1=" << v1
+            << "v2=" << v2
+            << "v3=" << v3
             << "bg=" << QColor::fromRgbF(bgColor.r(), bgColor.g(), bgColor.b(),
                                           bgColor.a())
             << "checker=" << showCheckerboard_
@@ -3070,6 +3086,18 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
         float fallbackPanX = 0.0f;
         float fallbackPanY = 0.0f;
         renderer_->getPan(fallbackPanX, fallbackPanY);
+        const float screenW = std::max(viewportW, 0.001f);
+        const float screenH = std::max(viewportH, 0.001f);
+        const auto toNdc = [&](float cx, float cy) -> QPointF {
+          const float wx = cx * renderer_->getZoom() + fallbackPanX;
+          const float wy = cy * renderer_->getZoom() + fallbackPanY;
+          return QPointF(wx / screenW * 2.0f - 1.0f,
+                         -((wy / screenH) * 2.0f - 1.0f));
+        };
+        const QPointF v0 = toNdc(0.0f, 0.0f);
+        const QPointF v1 = toNdc(cw, 0.0f);
+        const QPointF v2 = toNdc(0.0f, ch);
+        const QPointF v3 = toNdc(cw, ch);
         qCDebug(compositionViewLog)
             << "[CompositionView] background pass (fallback)"
             << "compSize=" << QSize(static_cast<int>(cw), static_cast<int>(ch))
@@ -3077,6 +3105,10 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                                     static_cast<int>(viewportH))
             << "zoom=" << renderer_->getZoom()
             << "pan=" << QPointF(fallbackPanX, fallbackPanY)
+            << "ndc v0=" << v0
+            << "v1=" << v1
+            << "v2=" << v2
+            << "v3=" << v3
             << "bg="
             << QColor::fromRgbF(bgColor.r(), bgColor.g(), bgColor.b(),
                                 bgColor.a())
