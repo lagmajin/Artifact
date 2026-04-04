@@ -2995,7 +2995,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       renderer_->setCanvasSize(cw, ch);
       renderer_->setZoom(origZoom);
       renderer_->setPan(origPanX, origPanY);
-      if (compositionViewLog().isDebugEnabled()) {
+      if (true) {
         const float screenW = std::max(viewportW, 0.001f);
         const float screenH = std::max(viewportH, 0.001f);
         const auto toNdc = [&](float cx, float cy) -> QPointF {
@@ -3008,8 +3008,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
         const QPointF v1 = toNdc(cw, 0.0f);
         const QPointF v2 = toNdc(0.0f, ch);
         const QPointF v3 = toNdc(cw, ch);
-        qCDebug(compositionViewLog)
-            << "[CompositionView] background pass (GPU)"
+        qInfo() << "[CompositionView][BackgroundRect][GPU]"
             << "localRect=" << QRectF(0.0f, 0.0f, cw, ch)
             << "viewport=" << QRectF(0.0f, 0.0f, viewportW, viewportH)
             << "zoom=" << origZoom
@@ -3082,7 +3081,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                           static_cast<Diligent::Uint32>(viewportH));
       }
       renderer_->setCanvasSize(cw, ch);  // キャンバスを Composition Space に設定
-      if (compositionViewLog().isDebugEnabled()) {
+      if (true) {
         float fallbackPanX = 0.0f;
         float fallbackPanY = 0.0f;
         renderer_->getPan(fallbackPanX, fallbackPanY);
@@ -3098,8 +3097,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
         const QPointF v1 = toNdc(cw, 0.0f);
         const QPointF v2 = toNdc(0.0f, ch);
         const QPointF v3 = toNdc(cw, ch);
-        qCDebug(compositionViewLog)
-            << "[CompositionView] background pass (fallback)"
+        qInfo() << "[CompositionView][BackgroundRect][Fallback]"
             << "compSize=" << QSize(static_cast<int>(cw), static_cast<int>(ch))
             << "viewport=" << QSize(static_cast<int>(viewportW),
                                     static_cast<int>(viewportH))
