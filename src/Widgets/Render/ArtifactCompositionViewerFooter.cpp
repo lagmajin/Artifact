@@ -171,21 +171,6 @@ namespace Artifact {
   layout->addWidget(impl_->memLabel);
 
   setLayout(layout);
-  setStyleSheet(R"(
-    QToolButton {
-      background: transparent;
-      border: 1px solid transparent;
-      border-radius: 4px;
-      padding: 2px;
-    }
-    QToolButton:hover {
-      background-color: rgba(255, 255, 255, 0.08);
-      border-color: rgba(255, 255, 255, 0.12);
-    }
-    QToolButton:pressed {
-      background-color: rgba(255, 255, 255, 0.16);
-    }
-  )");
 
   // Connections
   connect(impl_->pSnapShotButton, &QToolButton::clicked, this, &ArtifactCompositionViewerFooter::takeSnapShotRequested);

@@ -6,6 +6,7 @@ module;
 #include <QLineEdit>
 #include <QPushButton>
 #include <QLabel>
+#include <QFont>
 #include <QTimer>
 #include <QApplication>
 #include <QClipboard>
@@ -34,7 +35,14 @@ namespace Artifact {
             auto headerLayout = new QHBoxLayout();
             auto iconLabel = new QLabel(QString::fromUtf8("✨"));
             auto titleLabel = new QLabel("Expression Copilot");
-            titleLabel->setStyleSheet("font-weight: bold; font-size: 14px;");
+            QFont titleFont = titleLabel->font();
+            titleFont.setBold(true);
+            if (titleFont.pointSize() > 0) {
+                titleFont.setPointSize(titleFont.pointSize() + 2);
+            } else {
+                titleFont.setPointSize(14);
+            }
+            titleLabel->setFont(titleFont);
             headerLayout->addWidget(iconLabel);
             headerLayout->addWidget(titleLabel);
             headerLayout->addStretch();

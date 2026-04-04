@@ -19,7 +19,6 @@ SpectrumAnalyzerWidget::SpectrumAnalyzerWidget(QWidget* parent)
  setMinimumHeight(40);
  setFixedHeight(60);
  setMinimumWidth(60);
- setStyleSheet("background: #121212; border-bottom: 2px solid #333;");
 }
 
 SpectrumAnalyzerWidget::~SpectrumAnalyzerWidget() = default;

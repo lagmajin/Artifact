@@ -50,20 +50,7 @@ public:
             btn->setToolTip(tooltip);
             btn->setIcon(icon);
             btn->setIconSize(QSize(19, 19));
-            btn->setStyleSheet(R"(
-                QPushButton {
-                    background-color: transparent;
-                    border: 1px solid transparent;
-                    border-radius: 4px;
-                }
-                QPushButton:hover {
-                    background-color: #444444;
-                }
-                QPushButton:checked {
-                    background-color: #0078D7;
-                    border: 1px solid #005A9E;
-                }
-            )");
+            btn->setFlat(true);
             layout->addWidget(btn);
             return btn;
         };

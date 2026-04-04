@@ -14,6 +14,10 @@
 #include <QLabel>
 #include <QMouseEvent>
 #include <QTimer>
+#include <QIcon>
+#include <QPixmap>
+#include <QColor>
+#include <QPen>
 #include <wobjectimpl.h>
 module Artifact.Widgets.CreatePlaneLayerDialog;
 
@@ -32,6 +36,31 @@ import Artifact.Service.Project;
 import Artifact.Composition.Abstract;
 import Composition.Settings;
 import Artifact.Layers.SolidImage;
+
+namespace {
+void updateColorButtonPreview(QPushButton* button, const QColor& color)
+{
+    if (!button) {
+        return;
+    }
+
+    QPixmap pix(button->size().isEmpty() ? QSize(56, 18) : button->size());
+    pix.fill(Qt::transparent);
+
+    {
+        QPainter painter(&pix);
+        painter.setRenderHint(QPainter::Antialiasing);
+        painter.setPen(QPen(QColor(85, 85, 85), 1));
+        painter.setBrush(color);
+        painter.drawRoundedRect(pix.rect().adjusted(1, 1, -2, -2), 3, 3);
+    }
+
+    button->setIcon(QIcon(pix));
+    button->setIconSize(pix.size());
+    button->setToolTip(color.name());
+    button->setText({});
+}
+} // namespace
 
 namespace Artifact {
 	
@@ -74,7 +103,7 @@ namespace Artifact {
 
   impl_->bgColorButton = new QPushButton();
   impl_->bgColorButton->setFixedSize(60, 24);
-  impl_->bgColorButton->setStyleSheet("background-color: rgb(255, 255, 255); border: 1px solid #555;");
+  updateColorButtonPreview(impl_->bgColorButton, impl_->bgColor);
 
   impl_->matchCompButton = new QPushButton("コンポジションサイズに合わせる");
 
@@ -126,8 +155,7 @@ namespace Artifact {
       }
 
       impl_->bgColor = c;
-      QString style = QString("background-color: %1; border: 1px solid #555;").arg(c.name());
-      impl_->bgColorButton->setStyleSheet(style);
+      updateColorButtonPreview(impl_->bgColorButton, c);
 
       // Suggest name
       FloatColor fc(c.redF(), c.greenF(), c.blueF(), c.alphaF());
@@ -176,8 +204,7 @@ namespace Artifact {
       QColor c;
       c.setRgbF(color.r(), color.g(), color.b(), color.a());
       impl_->bgColor = c;
-      QString style = QString("background-color: %1; border: 1px solid #555;").arg(c.name());
-      impl_->bgColorButton->setStyleSheet(style);
+      updateColorButtonPreview(impl_->bgColorButton, c);
   }
 
  ArtifactSolidLayerInitParams PlaneLayerSettingPage::getInitParams(const QString& name) const

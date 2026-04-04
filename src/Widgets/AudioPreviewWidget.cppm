@@ -5,6 +5,7 @@ module;
 #include <QPushButton>
 #include <QHBoxLayout>
 #include <QVBoxLayout>
+#include <QFont>
 #include <QPainter>
 #include <QPaintEvent>
 #include <QMouseEvent>
@@ -20,6 +21,7 @@ module;
 #include <QFile>
 #include <QThread>
 #include <QElapsedTimer>
+#include <QPalette>
 #include <wobjectimpl.h>
 #include <cmath>
 #include <algorithm>
@@ -383,7 +385,14 @@ ArtifactAudioPreviewWidget::ArtifactAudioPreviewWidget(QWidget* parent)
 
     // Title
     impl_->titleLabel_ = new QLabel("Audio Preview");
-    impl_->titleLabel_->setStyleSheet("font-size: 14px; font-weight: bold; color: #ffffff;");
+    QFont titleFont = impl_->titleLabel_->font();
+    titleFont.setBold(true);
+    if (titleFont.pointSize() > 0) {
+        titleFont.setPointSize(titleFont.pointSize() + 2);
+    } else {
+        titleFont.setPointSize(14);
+    }
+    impl_->titleLabel_->setFont(titleFont);
 
     // Waveform
     impl_->waveformWidget_ = new AudioWaveformWidget();
@@ -391,35 +400,34 @@ ArtifactAudioPreviewWidget::ArtifactAudioPreviewWidget(QWidget* parent)
 
     // Duration
     impl_->durationLabel_ = new QLabel("00:00 / 00:00");
-    impl_->durationLabel_->setStyleSheet("color: #aaaaaa; font-size: 11px;");
+    QFont durationFont = impl_->durationLabel_->font();
+    if (durationFont.pointSize() > 0) {
+        durationFont.setPointSize(durationFont.pointSize() - 1);
+    } else {
+        durationFont.setPointSize(11);
+    }
+    impl_->durationLabel_->setFont(durationFont);
 
     // Controls
     auto* controlsLayout = new QHBoxLayout();
 
     impl_->playButton_ = new QPushButton("▶ Play");
-    impl_->playButton_->setStyleSheet(
-        "QPushButton { background-color: #27ae60; color: white; border-radius: 4px; padding: 6px 16px; }"
-        "QPushButton:hover { background-color: #2ecc71; }"
-        "QPushButton:disabled { background-color: #555; color: #888; }"
-    );
+    impl_->playButton_->setDefault(false);
 
     impl_->stopButton_ = new QPushButton("⏹ Stop");
-    impl_->stopButton_->setStyleSheet(
-        "QPushButton { background-color: #c0392b; color: white; border-radius: 4px; padding: 6px 16px; }"
-        "QPushButton:hover { background-color: #e74c3c; }"
-        "QPushButton:disabled { background-color: #555; color: #888; }"
-    );
+    impl_->stopButton_->setDefault(false);
 
     controlsLayout->addWidget(impl_->playButton_);
     controlsLayout->addWidget(impl_->stopButton_);
     controlsLayout->addStretch();
 
     // Volume
-    controlsLayout->addWidget(new QLabel("Vol:"));
+    auto* volumeLabel = new QLabel("Vol:");
     impl_->volumeSlider_ = new QSlider(Qt::Horizontal);
     impl_->volumeSlider_->setRange(0, 100);
     impl_->volumeSlider_->setValue(80);
     impl_->volumeSlider_->setFixedWidth(100);
+    controlsLayout->addWidget(volumeLabel);
     controlsLayout->addWidget(impl_->volumeSlider_);
 
     mainLayout->addWidget(impl_->titleLabel_);

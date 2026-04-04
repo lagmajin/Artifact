@@ -3,6 +3,9 @@
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QPushButton>
+#include <QFrame>
+#include <QPalette>
+#include <QColor>
 #include <QFileDialog>
 #include <QIcon>
 #include <QPixmap>
@@ -48,9 +51,16 @@ ArtifactColorSwatchWidget::ArtifactColorSwatchWidget(QWidget* parent)
     impl_->listWidget->setIconSize(QSize(32, 32));
     impl_->listWidget->setMovement(QListView::Static);
     impl_->listWidget->setSelectionMode(QAbstractItemView::SingleSelection);
-    impl_->listWidget->setStyleSheet("QListWidget { background-color: #2b2b2b; border: 1px solid #333; outline: none; }"
-                                    "QListWidget::item { border: 1px solid transparent; }"
-                                    "QListWidget::item:selected { border: 2px solid #0078d7; background: transparent; }");
+    impl_->listWidget->setFrameShape(QFrame::StyledPanel);
+    impl_->listWidget->setFrameShadow(QFrame::Sunken);
+    impl_->listWidget->setLineWidth(1);
+    QPalette swatchPalette = impl_->listWidget->palette();
+    swatchPalette.setColor(QPalette::Base, QColor(43, 43, 43));
+    swatchPalette.setColor(QPalette::Window, QColor(43, 43, 43));
+    swatchPalette.setColor(QPalette::Highlight, QColor(0, 120, 215));
+    swatchPalette.setColor(QPalette::HighlightedText, Qt::white);
+    impl_->listWidget->setPalette(swatchPalette);
+    impl_->listWidget->viewport()->setPalette(swatchPalette);
     
     mainLayout->addWidget(impl_->listWidget);
 
