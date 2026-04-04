@@ -114,14 +114,13 @@ void applyTabLabelColors(ads::CDockWidgetTab* tab, const QString& color, const b
     }
 
     const QColor textColor(color);
-    const QString labelStyle = QStringLiteral("background: transparent; font-weight: %1; font-size: 12px;")
-        .arg(emphasize ? QStringLiteral("700") : QStringLiteral("600"));
+    const QColor themeBg = QColor(ArtifactCore::currentDCCTheme().backgroundColor);
+    const QColor themeBorder = QColor(ArtifactCore::currentDCCTheme().borderColor);
+    const QColor tabBg = emphasize ? themeBg.lighter(108) : themeBg.darker(108);
     auto applyTextStyle = [&](QWidget* child) {
         if (!child) {
             return;
         }
-        child->setStyleSheet(QStringLiteral("color: %1; %2")
-                                 .arg(color, labelStyle));
         auto pal = child->palette();
         pal.setColor(QPalette::WindowText, textColor);
         pal.setColor(QPalette::Text, textColor);
@@ -134,30 +133,22 @@ void applyTabLabelColors(ads::CDockWidgetTab* tab, const QString& color, const b
         child->setFont(font);
     };
     applyTextStyle(tab);
+    tab->setAutoFillBackground(true);
+    auto tabPalette = tab->palette();
+    tabPalette.setColor(QPalette::WindowText, textColor);
+    tabPalette.setColor(QPalette::Text, textColor);
+    tabPalette.setColor(QPalette::ButtonText, textColor);
+    tabPalette.setColor(QPalette::Window, tabBg);
+    tabPalette.setColor(QPalette::Button, tabBg);
+    tabPalette.setColor(QPalette::Base, tabBg);
+    tabPalette.setColor(QPalette::Mid, themeBorder);
+    tab->setPalette(tabPalette);
     for (auto* label : tab->findChildren<QLabel*>()) {
         applyTextStyle(label);
     }
     for (auto* button : tab->findChildren<QAbstractButton*>()) {
         applyTextStyle(button);
     }
-
-    const QColor themeBg = QColor(ArtifactCore::currentDCCTheme().backgroundColor);
-    const QColor themeBorder = QColor(ArtifactCore::currentDCCTheme().borderColor);
-    const QColor tabBg = emphasize ? themeBg.lighter(108) : themeBg.darker(108);
-    const QString tabStyle = QStringLiteral(
-                                "background-color: %1;"
-                                "border: 1px solid %2;"
-                                "border-radius: 0px;"
-                                "min-width: 96px;"
-                                "min-height: 22px;"
-                                "padding: 2px 10px;"
-                                "margin: 0px;"
-                                "background-image: none;"
-                                "color: %3;")
-                                .arg(tabBg.name(QColor::HexRgb),
-                                     themeBorder.name(QColor::HexRgb),
-                                     color);
-    tab->setStyleSheet(tabStyle);
 }
 
 }
@@ -172,6 +163,9 @@ DockStyleManager::DockStyleManager(ads::CDockManager* dockManager, QObject* pare
 
     qApp->installEventFilter(this);
 
+    // Dock styling reacts to window/dock focus events only.
+    // Do not wire ArtifactProjectService signals into this manager; style
+    // refresh should stay driven by dock/focus state.
     connect(dockManager, &ads::CDockManager::focusedDockWidgetChanged,
             this, [this](ads::CDockWidget*, ads::CDockWidget* now) {
         impl_->focusedDockWidget_ = now;

@@ -10,6 +10,8 @@ module;
 #include <QListView>
 #include <QListWidget>
 #include <QToolButton>
+#include <QShortcut>
+#include <QKeySequence>
 #include <QDragEnterEvent>
 #include <QDropEvent>
 #include <QMimeData>
@@ -29,6 +31,7 @@ module;
 #include <QClipboard>
 #include <QApplication>
 #include <QFileDialog>
+#include <QDirIterator>
 #include <QImage>
 #include <QImageReader>
 #include <QPainter>
@@ -52,6 +55,7 @@ module;
 #include <opencv2/videoio.hpp>
 #include <opencv2/imgproc.hpp>
 #include <QHBoxLayout>
+#include <QSplitter>
 #include <QAbstractItemView>
 #include <QStyledItemDelegate>
 #include <QStyleOptionViewItem>
@@ -69,6 +73,9 @@ module Widgets.AssetBrowser;
 
 import Widgets.AssetBrowser;
 import Widgets.Utils.CSS;
+import std;
+import Artifact.Event.Types;
+import Event.Bus;
 import Artifact.Service.Project;
 import Artifact.Project.Manager;
 import Artifact.Project.Items;
@@ -597,15 +604,12 @@ protected:
     parts = relativePath.split('/', Qt::SkipEmptyParts);
    }
 
-   // Root button
-   auto* rootBtn = new QToolButton();
-   rootBtn->setText(QFileInfo(rootPath_).fileName() + " ▸");
-   rootBtn->setObjectName("breadcrumbRoot");
-   rootBtn->setStyleSheet(
-    "QToolButton { background: transparent; color: #8888aa; border: none; padding: 4px 8px; font-size: 12px; }"
-    "QToolButton:hover { color: #ffffff; background: rgba(255,255,255,0.1); border-radius: 3px; }"
-   );
-   rootBtn->setCursor(Qt::PointingHandCursor);
+  // Root button
+  auto* rootBtn = new QToolButton();
+  rootBtn->setText(QFileInfo(rootPath_).fileName() + " ▸");
+  rootBtn->setObjectName("breadcrumbRoot");
+   rootBtn->setAutoRaise(true);
+  rootBtn->setCursor(Qt::PointingHandCursor);
    layout_->addWidget(rootBtn);
    buttons_.append(rootBtn);
 
@@ -625,11 +629,7 @@ protected:
     bool isLast = (i == parts.size() - 1);
     btn->setText(isLast ? partName : partName + " ▸");
     btn->setObjectName(isLast ? "breadcrumbCurrent" : "breadcrumbPart");
-    btn->setStyleSheet(isLast
-     ? "QToolButton { background: transparent; color: #ffffff; border: none; padding: 4px 8px; font-size: 12px; font-weight: bold; }"
-     : "QToolButton { background: transparent; color: #8888aa; border: none; padding: 4px 8px; font-size: 12px; }"
-       "QToolButton:hover { color: #ffffff; background: rgba(255,255,255,0.1); border-radius: 3px; }"
-    );
+    btn->setAutoRaise(true);
     btn->setCursor(isLast ? Qt::ArrowCursor : Qt::PointingHandCursor);
     btn->setEnabled(!isLast);
     layout_->addWidget(btn);
@@ -650,12 +650,20 @@ protected:
 
  W_OBJECT_IMPL(ArtifactBreadcrumbWidget)
 
- ArtifactBreadcrumbWidget::ArtifactBreadcrumbWidget(QWidget* parent)
-   : QFrame(parent), impl_(new Impl())
- {
+ArtifactBreadcrumbWidget::ArtifactBreadcrumbWidget(QWidget* parent)
+  : QFrame(parent), impl_(new Impl())
+{
   setFrameStyle(QFrame::NoFrame);
   setFixedHeight(28);
-  setStyleSheet("background-color: #1a1a2e; border-bottom: 1px solid #333355;");
+  setAutoFillBackground(true);
+  {
+    QPalette pal = palette();
+    pal.setColor(QPalette::Window, QColor(ArtifactCore::currentDCCTheme().secondaryBackgroundColor));
+    pal.setColor(QPalette::WindowText, QColor(ArtifactCore::currentDCCTheme().textColor));
+    pal.setColor(QPalette::Button, QColor(ArtifactCore::currentDCCTheme().secondaryBackgroundColor));
+    pal.setColor(QPalette::ButtonText, QColor(ArtifactCore::currentDCCTheme().textColor));
+    setPalette(pal);
+  }
 
   impl_->layout_ = new QHBoxLayout(this);
   impl_->layout_->setContentsMargins(8, 2, 8, 2);
@@ -735,9 +743,13 @@ protected:
   QFileSystemWatcher* fileWatcher_ = nullptr;
   QTimer* fileWatcherDebounce_ = nullptr;
   bool fileWatcherPending_ = false;
- public:
+  ArtifactCore::EventBus eventBus_;
+  std::vector<ArtifactCore::EventBus::Subscription> eventBusSubscriptions_;
+  public:
   Impl();
   ~Impl();
+  QToolButton* backButton_ = nullptr;
+  QToolButton* forwardButton_ = nullptr;
   QToolButton* upButton_ = nullptr;
   QToolButton* refreshButton_ = nullptr;
   QTreeView* directoryView_ = nullptr;
@@ -759,13 +771,18 @@ protected:
    QString currentSortMode_ = "name";
    QString currentDirectoryPath_;
    QString currentFileTypeFilter_ = "all";
-   QString currentStatusFilter_ = "all";
+  QString currentStatusFilter_ = "all";
    QString currentSearchFilter_;
+   int currentSearchResultCount_ = -1;
+  QStringList navigationHistory_;
+  int navigationHistoryIndex_ = -1;
+  bool navigatingHistory_ = false;
 
   void handleDirectryChanged();
   void handleDoubleClicked(ArtifactAssetBrowser* owner);
   void defaultHandleMousePressEvent(QMouseEvent* event);
   void applyFilters();
+  QList<AssetMenuItem> buildSearchResults(const QString& queryText) const;
   bool matchesFileTypeFilter(const QString& fileName) const;
   bool matchesSearchFilter(const QString& fileName) const;
   QIcon generateThumbnail(const QString& filePath);
@@ -791,6 +808,9 @@ protected:
   void updateBrowserStatus();
   void syncProjectAssetRoot();
   void syncDirectorySelection();
+  void pushNavigationHistory(const QString& path);
+  void navigateHistoryStep(int delta, ArtifactAssetBrowser* owner);
+  void updateNavigationButtons();
   void refreshUnusedAssetCache();
   void sortItems(QList<AssetMenuItem>& items) const;
   
@@ -841,10 +861,13 @@ protected:
      applyFilters();
     }
    });
+
+  // Keep project refreshes on the local EventBus.
+  // Do not add direct ArtifactProjectService signal/slot refresh hooks here.
  }
 
- ArtifactAssetBrowser::Impl::~Impl()
- {
+ArtifactAssetBrowser::Impl::~Impl()
+{
   if (fileWatcher_) {
    fileWatcher_->deleteLater();
   }
@@ -852,6 +875,59 @@ protected:
    fileWatcherDebounce_->deleteLater();
   }
  }
+
+void ArtifactAssetBrowser::Impl::pushNavigationHistory(const QString& path)
+{
+  const QString normalized = QDir::cleanPath(path.trimmed());
+  if (normalized.isEmpty()) {
+    return;
+  }
+
+  if (navigationHistoryIndex_ >= 0 && navigationHistoryIndex_ < navigationHistory_.size()) {
+    if (QDir::cleanPath(navigationHistory_.at(navigationHistoryIndex_)) == normalized) {
+      updateNavigationButtons();
+      return;
+    }
+  }
+
+  while (navigationHistory_.size() > navigationHistoryIndex_ + 1) {
+    navigationHistory_.removeLast();
+  }
+  navigationHistory_.append(normalized);
+  navigationHistoryIndex_ = navigationHistory_.size() - 1;
+  updateNavigationButtons();
+}
+
+void ArtifactAssetBrowser::Impl::updateNavigationButtons()
+{
+  if (backButton_) {
+    backButton_->setEnabled(navigationHistoryIndex_ > 0);
+  }
+  if (forwardButton_) {
+    forwardButton_->setEnabled(navigationHistoryIndex_ >= 0 &&
+                              navigationHistoryIndex_ + 1 < navigationHistory_.size());
+  }
+}
+
+void ArtifactAssetBrowser::Impl::navigateHistoryStep(int delta, ArtifactAssetBrowser* owner)
+{
+  if (delta == 0 || navigationHistory_.isEmpty()) {
+    return;
+  }
+  const int target = navigationHistoryIndex_ + delta;
+  if (target < 0 || target >= navigationHistory_.size()) {
+    return;
+  }
+
+  const QString path = navigationHistory_.at(target);
+  navigatingHistory_ = true;
+  navigationHistoryIndex_ = target;
+  updateNavigationButtons();
+  if (owner) {
+    owner->navigateToFolder(path);
+  }
+  navigatingHistory_ = false;
+}
 
 void ArtifactAssetBrowser::Impl::handleDoubleClicked(ArtifactAssetBrowser* owner)
 {
@@ -1055,11 +1131,94 @@ void ArtifactAssetBrowser::Impl::updateBrowserStatus()
   const QString typeText = QStringLiteral("Type: %1").arg(currentFileTypeFilter_);
   const QString statusText = QStringLiteral("Status: %1").arg(currentStatusFilter_);
   const QString sortText = QStringLiteral("Sort: %1").arg(currentSortMode_);
-  const QString searchText = currentSearchFilter_.isEmpty()
+  QString searchText = currentSearchFilter_.isEmpty()
       ? QStringLiteral("Search: -")
       : QStringLiteral("Search: %1").arg(currentSearchFilter_);
+  if (!currentSearchFilter_.isEmpty() && currentSearchResultCount_ >= 0) {
+    searchText += QStringLiteral(" (%1 results)").arg(currentSearchResultCount_);
+  }
   browserStatusLabel_->setText(
       QStringLiteral("%1 | %2 | %3 | %4 | %5").arg(selectedText, typeText, statusText, sortText, searchText));
+}
+
+QList<AssetMenuItem> ArtifactAssetBrowser::Impl::buildSearchResults(const QString& queryText) const
+{
+  QList<AssetMenuItem> items;
+  const QString query = queryText.trimmed();
+  if (query.isEmpty()) {
+    return items;
+  }
+
+  QString rootPath = ArtifactProjectManager::getInstance().currentProjectAssetsPath();
+  if (rootPath.isEmpty()) {
+    rootPath = currentDirectoryPath_;
+  }
+  if (rootPath.isEmpty() || !QDir(rootPath).exists()) {
+    return items;
+  }
+
+  const auto matchesQuery = [&](const QFileInfo& info) {
+    const QString name = info.fileName();
+    return name.contains(query, Qt::CaseInsensitive) ||
+           info.absoluteFilePath().contains(query, Qt::CaseInsensitive);
+  };
+
+  QDirIterator it(rootPath,
+                  QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot,
+                  QDirIterator::Subdirectories);
+  while (it.hasNext()) {
+    const QString path = it.next();
+    QFileInfo info(path);
+    if (!info.exists()) {
+      continue;
+    }
+    if (!matchesQuery(info)) {
+      continue;
+    }
+    if (info.isDir() && currentStatusFilter_ != "all") {
+      continue;
+    }
+
+    const auto statusFor = [this](const QString& path) {
+      struct Status {
+        bool imported = false;
+        bool unused = false;
+        bool missing = false;
+      };
+      Status status;
+      status.imported = isImportedAssetPath(path);
+      status.unused = isUnusedAssetPath(path);
+      status.missing = isMissingAssetPath(path);
+      return status;
+    };
+
+    const auto status = statusFor(path);
+    if (!info.isDir() && currentStatusFilter_ != "all") {
+      if (currentStatusFilter_ == "imported" && !status.imported) continue;
+      if (currentStatusFilter_ == "missing" && !status.missing) continue;
+      if (currentStatusFilter_ == "unused" && !status.unused) continue;
+    }
+
+    AssetMenuItem item;
+    const QString fileName = info.fileName();
+    if (!info.isDir() && !matchesFileTypeFilter(fileName)) {
+      continue;
+    }
+
+    item.name = UniString::fromQString(fileName);
+    item.path = UniString::fromQString(path);
+    item.type = UniString::fromQString(info.suffix().toUpper().isEmpty()
+                                       ? QStringLiteral("File")
+                                       : info.suffix().toUpper());
+    item.isFolder = info.isDir();
+    item.icon = placeholderIconFor(fileName, info.isDir());
+    item.type = UniString::fromQString(info.isDir()
+                                           ? QStringLiteral("Folder")
+                                           : QStringLiteral("%1").arg(item.type.toQString()));
+    items.append(std::move(item));
+  }
+
+  return items;
 }
 
 void ArtifactAssetBrowser::Impl::sortItems(QList<AssetMenuItem>& items) const
@@ -1593,27 +1752,44 @@ void ArtifactAssetBrowser::Impl::applyFilters()
     return;
   }
 
+  const QString searchText = currentSearchFilter_.trimmed();
+  const bool searchMode = !searchText.isEmpty();
+  updateBrowserStatus();
+
+  if (searchMode) {
+    const QList<AssetMenuItem> items = buildSearchResults(searchText);
+    currentSearchResultCount_ = items.size();
+    if (breadcrumbWidget_) {
+      breadcrumbWidget_->setVisible(false);
+    }
+    if (currentPathLabel_) {
+      currentPathLabel_->setVisible(true);
+      currentPathLabel_->setText(QStringLiteral("Search results: \"%1\" — %2 items")
+                                     .arg(searchText)
+                                     .arg(items.size()));
+    }
+
+    QList<AssetMenuItem> sortedItems = items;
+    sortItems(sortedItems);
+    assetModel_->setItems(sortedItems);
+    updateBrowserStatus();
+    return;
+  }
+
+  currentSearchResultCount_ = -1;
+
   QDir dir(currentDirectoryPath_);
   if (!dir.exists()) {
     return;
   }
 
   if (breadcrumbWidget_) {
-   breadcrumbWidget_->setPath(currentDirectoryPath_);
-  }
-  if (breadcrumbWidget_) {
-   breadcrumbWidget_->setPath(currentDirectoryPath_);
+    breadcrumbWidget_->setVisible(true);
+    breadcrumbWidget_->setPath(currentDirectoryPath_);
   }
   if (currentPathLabel_) {
-    if (expandedSequenceKey_.isEmpty()) {
-      currentPathLabel_->setText(currentDirectoryPath_);
-    } else {
-      currentPathLabel_->setText(QStringLiteral("%1 > %2")
-        .arg(currentDirectoryPath_)
-        .arg(expandedSequenceKey_.split('|').last()));
-    }
+    currentPathLabel_->setVisible(false);
   }
-  updateBrowserStatus();
 
   const bool inSequenceMode = !expandedSequenceKey_.isEmpty();
 
@@ -1893,6 +2069,49 @@ ArtifactAssetBrowser::ArtifactAssetBrowser(QWidget* parent /*= nullptr*/) :QWidg
   impl_->searchEdit_ = assetToolBar->findChild<QLineEdit*>();
   impl_->upButton_ = assetToolBar->findChild<QToolButton*>(QStringLiteral("assetBrowserUpButton"));
   impl_->refreshButton_ = assetToolBar->findChild<QToolButton*>(QStringLiteral("assetBrowserRefreshButton"));
+  auto backButton = impl_->backButton_ = new QToolButton();
+  backButton->setObjectName(QStringLiteral("assetBrowserBackButton"));
+  backButton->setText(QStringLiteral("◀"));
+  backButton->setToolTip(QStringLiteral("Back"));
+  backButton->setEnabled(false);
+  auto forwardButton = impl_->forwardButton_ = new QToolButton();
+  forwardButton->setObjectName(QStringLiteral("assetBrowserForwardButton"));
+  forwardButton->setText(QStringLiteral("▶"));
+  forwardButton->setToolTip(QStringLiteral("Forward"));
+  forwardButton->setEnabled(false);
+  auto* backShortcut = new QShortcut(QKeySequence(Qt::ALT | Qt::Key_Left), this);
+  QObject::connect(backShortcut, &QShortcut::activated, this, [this]() {
+    if (impl_) {
+      impl_->navigateHistoryStep(-1, this);
+    }
+  });
+  auto* forwardShortcut = new QShortcut(QKeySequence(Qt::ALT | Qt::Key_Right), this);
+  QObject::connect(forwardShortcut, &QShortcut::activated, this, [this]() {
+    if (impl_) {
+      impl_->navigateHistoryStep(+1, this);
+    }
+  });
+  auto* focusSearchShortcut = new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_L), this);
+  QObject::connect(focusSearchShortcut, &QShortcut::activated, this, [this]() {
+    if (impl_ && impl_->searchEdit_) {
+      impl_->searchEdit_->setFocus(Qt::ShortcutFocusReason);
+      impl_->searchEdit_->selectAll();
+    }
+  });
+  auto* focusSearchShortcutAlt = new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_F), this);
+  QObject::connect(focusSearchShortcutAlt, &QShortcut::activated, this, [this]() {
+    if (impl_ && impl_->searchEdit_) {
+      impl_->searchEdit_->setFocus(Qt::ShortcutFocusReason);
+      impl_->searchEdit_->selectAll();
+    }
+  });
+  auto* clearSearchShortcut = new QShortcut(QKeySequence(Qt::Key_Escape), this);
+  QObject::connect(clearSearchShortcut, &QShortcut::activated, this, [this]() {
+    if (impl_ && impl_->searchEdit_ && !impl_->searchEdit_->text().isEmpty()) {
+      impl_->searchEdit_->clear();
+      impl_->searchEdit_->setFocus(Qt::ShortcutFocusReason);
+    }
+  });
   auto viewModeButton = new QToolButton();
   viewModeButton->setObjectName(QStringLiteral("assetBrowserViewModeButton"));
   viewModeButton->setCheckable(true);
@@ -2002,7 +2221,7 @@ ArtifactAssetBrowser::ArtifactAssetBrowser(QWidget* parent /*= nullptr*/) :QWidg
 
   auto vLayout = new QVBoxLayout();
 
-  auto layout = new QHBoxLayout();
+  auto layout = new QVBoxLayout();
 
   auto directoryView = impl_->directoryView_ = new QTreeView();
   auto directoryModel = impl_->directoryModel_ = new AssetDirectoryModel(this);
@@ -2030,11 +2249,15 @@ ArtifactAssetBrowser::ArtifactAssetBrowser(QWidget* parent /*= nullptr*/) :QWidg
   directoryView->setAcceptDrops(true);
   directoryView->setDropIndicatorShown(true);
   directoryView->setDragDropMode(QAbstractItemView::DropOnly);
+  directoryView->setContextMenuPolicy(Qt::CustomContextMenu);
+  directoryView->setMinimumWidth(120);
+  directoryView->setMaximumWidth(400);
 
   QString desktopPath = assetsPath;
 
   auto assetPathLabel = new QLabel("Assets");
   assetPathLabel->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+  impl_->currentPathLabel_ = assetPathLabel;
 
   // P1-1: Breadcrumb navigation widget (replaces old path label)
   auto breadcrumb = impl_->breadcrumbWidget_ = new ArtifactBreadcrumbWidget();
@@ -2042,11 +2265,7 @@ ArtifactAssetBrowser::ArtifactAssetBrowser(QWidget* parent /*= nullptr*/) :QWidg
   breadcrumb->setPath(desktopPath);
   connect(breadcrumb, &ArtifactBreadcrumbWidget::pathClicked, this, [this](const QString& path) {
    if (path.isEmpty() || path == impl_->currentDirectoryPath_) return;
-   impl_->currentDirectoryPath_ = path;
-   impl_->clearThumbnailCache();
-   impl_->applyFilters();
-   impl_->syncDirectorySelection();
-   folderChanged(path);
+   navigateToFolder(path);
   });
 
   auto browserStatusLabel = impl_->browserStatusLabel_ = new QLabel(
@@ -2116,6 +2335,17 @@ ArtifactAssetBrowser::ArtifactAssetBrowser(QWidget* parent /*= nullptr*/) :QWidg
    });
   }
 
+  connect(backButton, &QToolButton::clicked, this, [this]() {
+   if (impl_) {
+    impl_->navigateHistoryStep(-1, this);
+   }
+  });
+  connect(forwardButton, &QToolButton::clicked, this, [this]() {
+   if (impl_) {
+    impl_->navigateHistoryStep(1, this);
+   }
+  });
+
   if (impl_->upButton_) {
    connect(impl_->upButton_, &QToolButton::clicked, this, [this]() {
     if (!impl_->expandedSequenceKey_.isEmpty()) {
@@ -2130,15 +2360,11 @@ ArtifactAssetBrowser::ArtifactAssetBrowser(QWidget* parent /*= nullptr*/) :QWidg
     if (nextPath.isEmpty()) {
      nextPath = assetsRoot;
     }
-   if (!assetsRoot.isEmpty() && !nextPath.startsWith(assetsRoot, Qt::CaseInsensitive)) {
+    if (!assetsRoot.isEmpty() && !nextPath.startsWith(assetsRoot, Qt::CaseInsensitive)) {
      nextPath = assetsRoot;
     }
     if (nextPath.isEmpty() || nextPath == impl_->currentDirectoryPath_) return;
-    impl_->currentDirectoryPath_ = nextPath;
-    impl_->clearThumbnailCache();
-    impl_->applyFilters();
-    impl_->syncDirectorySelection();
-    folderChanged(nextPath);
+    navigateToFolder(nextPath);
    });
   }
 
@@ -2161,18 +2387,58 @@ ArtifactAssetBrowser::ArtifactAssetBrowser(QWidget* parent /*= nullptr*/) :QWidg
    impl_->applyFilters();
   });
 
-  // Connect directory change to update file list (LEFT -> RIGHT widget coordination)
+ // Connect directory change to update file list (LEFT -> RIGHT widget coordination)
   connect(directoryView, &QTreeView::clicked, this, [this, directoryModel](const QModelIndex& index) {
    QString path = directoryModel->pathFromIndex(index);
 
    if (!path.isEmpty()) {
-    impl_->currentDirectoryPath_ = path;
-    impl_->clearThumbnailCache();
-    impl_->applyFilters();
-    impl_->syncDirectorySelection();
-    folderChanged(path);
+    navigateToFolder(path);
    }
   });
+
+  connect(directoryView, &QTreeView::customContextMenuRequested, this,
+          [this, directoryView, directoryModel](const QPoint& pos) {
+            const QModelIndex index = directoryView->indexAt(pos);
+            if (!index.isValid()) {
+              return;
+            }
+            const QString path = directoryModel->pathFromIndex(index);
+            if (path.isEmpty()) {
+              return;
+            }
+
+            QMenu menu(directoryView);
+            QAction* openAction = menu.addAction(QStringLiteral("Open Folder"));
+            connect(openAction, &QAction::triggered, this, [this, path]() {
+              navigateToFolder(path);
+            });
+
+            if (QFileInfo(path).isDir()) {
+              const bool alreadyFavorite = directoryModel->isFavoritePath(path);
+              QAction* favoriteAction = menu.addAction(alreadyFavorite
+                                                            ? QStringLiteral("Remove from Favorites")
+                                                            : QStringLiteral("Add to Favorites"));
+              connect(favoriteAction, &QAction::triggered, this,
+                      [this, path, directoryModel, alreadyFavorite]() {
+                        if (alreadyFavorite) {
+                          const QString guid = directoryModel->favoriteGuidForPath(path);
+                          if (!guid.isEmpty()) {
+                            directoryModel->removeFavorite(guid);
+                          }
+                        } else {
+                          directoryModel->addFavorite(path, QFileInfo(path).fileName());
+                        }
+                      });
+            }
+
+            menu.addSeparator();
+            QAction* revealAction = menu.addAction(QStringLiteral("Open in File Explorer"));
+            connect(revealAction, &QAction::triggered, this, [path]() {
+              QDesktopServices::openUrl(QUrl::fromLocalFile(path));
+            });
+
+            menu.exec(directoryView->mapToGlobal(pos));
+          });
 
   // Connect file double-click to add to project or navigate into folder
   connect(fileView, &QListView::doubleClicked, this, [this](const QModelIndex& index) {
@@ -2194,11 +2460,7 @@ ArtifactAssetBrowser::ArtifactAssetBrowser(QWidget* parent /*= nullptr*/) :QWidg
 
    // If it's a folder, navigate into it
    if (item.isFolder) {
-    impl_->currentDirectoryPath_ = filePath;
-    impl_->clearThumbnailCache();
-    impl_->applyFilters();
-    impl_->syncDirectorySelection();
-    this->folderChanged(filePath);
+    navigateToFolder(filePath);
     return;
    }
 
@@ -2230,19 +2492,32 @@ ArtifactAssetBrowser::ArtifactAssetBrowser(QWidget* parent /*= nullptr*/) :QWidg
   auto sizeLabel = new QLabel("64px");
   auto sizeSlider = impl_->thumbnailSizeSlider_ = new QSlider(Qt::Horizontal);
   sizeSlider->setMinimum(32);  // Min 32px
-  sizeSlider->setMaximum(256);  // Max 256px
+  sizeSlider->setMaximum(128);  // Max 128px
   sizeSlider->setValue(64);  // Default 64px
   sizeSlider->setTickPosition(QSlider::TicksBelow);
-  sizeSlider->setTickInterval(32);
+  sizeSlider->setTickInterval(16);
 
-  connect(sizeSlider, &QSlider::valueChanged, this, [this, sizeLabel, fileView](int value) {
+  auto applyThumbnailSize = [this, sizeLabel, fileView, applyViewMode](int value) {
+   const bool listMode = value <= 32;
+   if (impl_->listViewMode_ != listMode) {
+    applyViewMode(listMode);
+   }
+
    sizeLabel->setText(QString("%1px").arg(value));
+   if (listMode) {
+    fileView->setIconSize(QSize(16, 16));
+    fileView->setGridSize(QSize(260, 40));
+    fileView->setSpacing(2);
+    return;
+   }
 
-   // Update icon size and grid size
    fileView->setIconSize(QSize(value, value));
-   int gridSize = value + 36;  // Add padding for text and spacing
+   const int gridSize = value + 36;  // Add padding for text and spacing
    fileView->setGridSize(QSize(gridSize, gridSize));
-  });
+  };
+
+  connect(sizeSlider, &QSlider::valueChanged, this, applyThumbnailSize);
+  applyThumbnailSize(sizeSlider->value());
 
   thumbnailLayout->addWidget(new QLabel("Size:"));
   thumbnailLayout->addWidget(sizeSlider);
@@ -2266,22 +2541,30 @@ ArtifactAssetBrowser::ArtifactAssetBrowser(QWidget* parent /*= nullptr*/) :QWidg
     impl_->applyFilters();
    }
    connect(projectService, &ArtifactProjectService::projectCreated, this, [this]() {
-    impl_->syncProjectAssetRoot();
+    impl_->eventBus_.post<ProjectChangedEvent>(ProjectChangedEvent{QString(), QString()});
    });
    connect(projectService, &ArtifactProjectService::projectChanged, this, [this]() {
-    impl_->syncProjectAssetRoot();
+    impl_->eventBus_.post<ProjectChangedEvent>(ProjectChangedEvent{QString(), QString()});
    });
+   impl_->eventBusSubscriptions_.push_back(
+    impl_->eventBus_.subscribe<ProjectChangedEvent>([this](const ProjectChangedEvent&) {
+     impl_->syncProjectAssetRoot();
+    }));
   } else {
    impl_->applyFilters();
   }
 
   auto toolbarRow = new QHBoxLayout();
   toolbarRow->setContentsMargins(0, 0, 0, 0);
+  toolbarRow->addWidget(backButton, 0);
+  toolbarRow->addWidget(forwardButton, 0);
   toolbarRow->addWidget(assetToolBar, 1);
   toolbarRow->addWidget(sortModeButton, 0);
   toolbarRow->addWidget(viewModeButton, 0);
 
   auto VBoxLayout = new  QVBoxLayout();
+  auto rightPanel = new QWidget();
+  rightPanel->setLayout(VBoxLayout);
   VBoxLayout->addWidget(assetPathLabel);
   VBoxLayout->addWidget(breadcrumb);
   VBoxLayout->addWidget(browserStatusLabel);
@@ -2289,10 +2572,18 @@ ArtifactAssetBrowser::ArtifactAssetBrowser(QWidget* parent /*= nullptr*/) :QWidg
   VBoxLayout->addWidget(fileView);
   VBoxLayout->addWidget(fileInfoGroup);
 
+  auto splitter = new QSplitter(Qt::Horizontal);
+  splitter->setChildrenCollapsible(false);
+  splitter->addWidget(directoryView);
+  splitter->addWidget(rightPanel);
+  splitter->setStretchFactor(0, 3);
+  splitter->setStretchFactor(1, 7);
+  splitter->setSizes({360, 840});
+
   vLayout->addLayout(toolbarRow);
   vLayout->addLayout(filterButtonsLayout);
-  layout->addWidget(directoryView, 1);
-  layout->addLayout(VBoxLayout, 3);
+  layout->addLayout(vLayout);
+  layout->addWidget(splitter);
   setLayout(layout);
  }
 
@@ -2462,6 +2753,9 @@ ArtifactAssetBrowser::ArtifactAssetBrowser(QWidget* parent /*= nullptr*/) :QWidg
   void ArtifactAssetBrowser::navigateToFolder(const QString& folderPath)
   {
    if (folderPath.isEmpty() || !QDir(folderPath).exists()) return;
+   if (impl_ && !impl_->navigatingHistory_) {
+    impl_->pushNavigationHistory(folderPath);
+   }
    impl_->currentDirectoryPath_ = folderPath;
    impl_->clearThumbnailCache();
    impl_->applyFilters();
@@ -2700,11 +2994,27 @@ ArtifactAssetBrowser::ArtifactAssetBrowser(QWidget* parent /*= nullptr*/) :QWidg
    QAction* openFolderAction = contextMenu.addAction("Open Folder");
    connect(openFolderAction, &QAction::triggered, this, [this, filePath]() {
     if (filePath.isEmpty()) return;
-    impl_->currentDirectoryPath_ = filePath;
-    impl_->clearThumbnailCache();
-    impl_->applyFilters();
-    impl_->syncDirectorySelection();
-     this->folderChanged(filePath);
+    navigateToFolder(filePath);
+   });
+
+   const bool alreadyFavorite = impl_ && impl_->directoryModel_
+                                   ? impl_->directoryModel_->isFavoritePath(filePath)
+                                   : false;
+   QAction* favoriteAction = contextMenu.addAction(alreadyFavorite
+                                                       ? "Remove from Favorites"
+                                                       : "Add to Favorites");
+   connect(favoriteAction, &QAction::triggered, this, [this, filePath, alreadyFavorite]() {
+    if (!impl_ || !impl_->directoryModel_) {
+     return;
+    }
+    if (alreadyFavorite) {
+     const QString guid = impl_->directoryModel_->favoriteGuidForPath(filePath);
+     if (!guid.isEmpty()) {
+      impl_->directoryModel_->removeFavorite(guid);
+     }
+    } else {
+     impl_->directoryModel_->addFavorite(filePath, QFileInfo(filePath).fileName());
+    }
    });
    contextMenu.addSeparator();
   }

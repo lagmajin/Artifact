@@ -91,6 +91,35 @@ struct MarkerHitResult {
  int markerIndex = -1;
 };
 
+QString keyframeSelectionKey(const LayerID& layerId, const QString& propertyPath, const qint64 frame)
+{
+ return QStringLiteral("%1|%2|%3")
+     .arg(layerId.toString(), propertyPath, QString::number(frame));
+}
+
+QVector<int> selectedMarkerIndices(
+ const QVector<ArtifactTimelineTrackPainterView::KeyframeMarkerVisual>& markers)
+{
+ QVector<int> indices;
+ for (int i = 0; i < markers.size(); ++i) {
+  if (markers[i].selected) {
+   indices.push_back(i);
+  }
+ }
+ return indices;
+}
+
+void applyMarkerSelectionFlags(
+ QVector<ArtifactTimelineTrackPainterView::KeyframeMarkerVisual>& markers,
+ const QSet<QString>& selectedKeys)
+{
+ for (auto& marker : markers) {
+  const qint64 frame = static_cast<qint64>(std::llround(marker.frame));
+  marker.selected = selectedKeys.contains(
+      keyframeSelectionKey(marker.layerId, marker.propertyPath, frame));
+ }
+}
+
 HitResult hitTestClips(
  const QVector<ArtifactTimelineTrackPainterView::TrackClipVisual>& clips,
  const QVector<int>& heights,
@@ -305,6 +334,7 @@ public:
  int hoverMarkerIndex_ = -1;
  bool panning_ = false;
  QPoint lastPanPoint_;
+ QSet<QString> selectedMarkerKeys_;
  QVector<ArtifactTimelineTrackPainterView::KeyframeMarkerVisual> keyframeMarkers_;
 };
 
@@ -474,6 +504,7 @@ void ArtifactTimelineTrackPainterView::setKeyframeMarkers(
  const QVector<KeyframeMarkerVisual>& markers)
 {
  impl_->keyframeMarkers_ = markers;
+ applyMarkerSelectionFlags(impl_->keyframeMarkers_, impl_->selectedMarkerKeys_);
  update();
 }
 
@@ -651,7 +682,17 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent* event)
           << QPointF(diamondRect.right(), diamondRect.center().y())
           << QPointF(diamondRect.center().x(), diamondRect.bottom())
           << QPointF(diamondRect.left(), diamondRect.center().y());
-  if (marker.selectedLayer) {
+  if (marker.selected) {
+   QPolygonF outer = diamond;
+   p.setPen(QPen(theme.accent.lighter(155), 2.0));
+   p.setBrush(Qt::NoBrush);
+   p.drawPolygon(outer);
+   p.setPen(QPen(theme.background.darker(190), 2.0));
+   p.drawPolygon(outer);
+   p.setPen(QPen(theme.text.lighter(120), 1.0));
+   p.setBrush(Qt::white);
+   p.drawPolygon(diamond);
+  } else if (marker.selectedLayer) {
    QPolygonF outer = diamond;
    p.setPen(QPen(theme.background.darker(190), 2.0));
    p.setBrush(Qt::NoBrush);
@@ -732,8 +773,15 @@ void ArtifactTimelineTrackPainterView::mousePressEvent(QMouseEvent* event)
   if (markerHit.markerIndex >= 0) {
    const auto& marker = impl_->keyframeMarkers_[markerHit.markerIndex];
    const double frame = std::clamp(marker.frame, 0.0, impl_->durationFrames_);
+   impl_->selectedMarkerKeys_.clear();
+   impl_->selectedMarkerKeys_.insert(
+       keyframeSelectionKey(marker.layerId, marker.propertyPath,
+                            static_cast<qint64>(std::llround(marker.frame))));
+   applyMarkerSelectionFlags(impl_->keyframeMarkers_, impl_->selectedMarkerKeys_);
+   Q_EMIT keyframeSelectionChanged(impl_->selectedMarkerKeys_.size());
    seekRequested(frame);
    setCurrentFrame(frame);
+   update();
    event->accept();
    return;
   }
@@ -754,6 +802,12 @@ void ArtifactTimelineTrackPainterView::mousePressEvent(QMouseEvent* event)
    return;
   }
   clipDeselected();
+  if (!impl_->selectedMarkerKeys_.isEmpty()) {
+   impl_->selectedMarkerKeys_.clear();
+   applyMarkerSelectionFlags(impl_->keyframeMarkers_, impl_->selectedMarkerKeys_);
+   Q_EMIT keyframeSelectionChanged(0);
+   update();
+  }
   const double clickedFrame = (mouseX + impl_->horizontalOffset_) / std::max(0.001, impl_->pixelsPerFrame_);
   const double clamped = std::clamp(clickedFrame, 0.0, impl_->durationFrames_);
   seekRequested(clamped);
@@ -1014,6 +1068,9 @@ void ArtifactTimelineTrackPainterView::contextMenuEvent(QContextMenuEvent* event
   }
   if (chosen == duplicateClipAct) {
    if (auto *svc = ArtifactProjectService::instance()) {
+    // This view only emits projectChanged after a local edit has already been applied.
+    // Do not add ArtifactProjectService signal/slot wiring here; keep refresh
+    // propagation on the service side or via the local EventBus in higher-level widgets.
     if (svc->duplicateLayerInCurrentComposition(clip.layerId)) {
      svc->projectChanged();
     }
@@ -1041,6 +1098,9 @@ void ArtifactTimelineTrackPainterView::contextMenuEvent(QContextMenuEvent* event
     changed = applyTimelineLayerRangeEdit(layer, currentFrame - duration, duration, false);
    }
    if (changed) {
+    // This view only emits projectChanged after a local edit has already been applied.
+    // Do not add ArtifactProjectService signal/slot wiring here; keep refresh
+    // propagation on the service side or via the local EventBus in higher-level widgets.
     if (auto *svc = ArtifactProjectService::instance()) {
      svc->projectChanged();
     }
@@ -1108,7 +1168,11 @@ void ArtifactTimelineTrackPainterView::keyPressEvent(QKeyEvent* event)
   return;
  }
 
- const auto selectedIndices = selectedMarkerIndices(impl_->keyframeMarkers_);
+ auto selectedIndices = selectedMarkerIndices(impl_->keyframeMarkers_);
+ if (selectedIndices.isEmpty() && impl_->hoverMarkerIndex_ >= 0 &&
+     impl_->hoverMarkerIndex_ < impl_->keyframeMarkers_.size()) {
+  selectedIndices.push_back(impl_->hoverMarkerIndex_);
+ }
  if (selectedIndices.isEmpty()) {
   QWidget::keyPressEvent(event);
   return;

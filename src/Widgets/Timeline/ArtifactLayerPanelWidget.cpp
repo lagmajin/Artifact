@@ -3,6 +3,7 @@ module;
 #include <QApplication>
 #include <QPainter>
 #include <QWidget>
+#include <QLabel>
 #include <QString>
 #include <QVector>
 #include <QScrollArea>
@@ -41,6 +42,8 @@ module;
 module Artifact.Widgets.LayerPanelWidget;
 
 import std;
+import Artifact.Event.Types;
+import Event.Bus;
 
 import Utils.Path;
 import Artifact.Application.Manager;
@@ -81,46 +84,55 @@ namespace {
   constexpr int kLayerNameMinWidth = 120;
   constexpr char kLayerReorderMimeType[] = "application/x-artifact-layer-reorder";
 
- QString makeTimelineButtonStyle(const QWidget* widget, bool checkedAccent = false)
- {
-  const QPalette pal = widget ? widget->palette() : QPalette{};
-  const QColor bg = pal.button().color();
-  const QColor fg = pal.buttonText().color();
-  const QColor border = pal.mid().color().darker(120);
-  const QColor checkedBg = checkedAccent ? pal.highlight().color() : bg.darker(108);
-  const QColor hoverBg = bg.lighter(110);
-  const QColor pressedBg = bg.darker(115);
-  return QStringLiteral(
-      "QPushButton { background:%1; color:%2; border:none; border-right:1px solid %3; font-size:11px; }"
-      "QPushButton:hover { background:%4; }"
-      "QPushButton:pressed { background:%5; }"
-      "QPushButton:checked { background:%6; color:%7; }")
-      .arg(bg.name(), fg.name(), border.name(), hoverBg.name(), pressedBg.name(),
-           checkedBg.name(), pal.highlightedText().color().name());
+void applyTimelineButtonPalette(QPushButton* button, bool checkedAccent = false)
+{
+ if (!button) {
+  return;
  }
+ const QPalette pal = button->palette();
+ const QColor bg = pal.button().color();
+ const QColor fg = pal.buttonText().color();
+ const QColor border = pal.mid().color().darker(120);
+ const QColor checkedBg = checkedAccent ? pal.highlight().color() : bg.darker(108);
+ const QColor hoverBg = bg.lighter(110);
+ const QColor pressedBg = bg.darker(115);
+ button->setAutoFillBackground(true);
+ button->setFlat(true);
+ button->setPalette(pal);
+ auto font = button->font();
+ font.setPointSize(font.pointSize() > 0 ? qMax(11, font.pointSize()) : 11);
+ font.setBold(checkedAccent);
+ button->setFont(font);
+ button->setProperty("artifactButtonBg", bg);
+ button->setProperty("artifactButtonFg", fg);
+ button->setProperty("artifactButtonBorder", border);
+ button->setProperty("artifactButtonCheckedBg", checkedBg);
+ button->setProperty("artifactButtonHoverBg", hoverBg);
+ button->setProperty("artifactButtonPressedBg", pressedBg);
+}
 
- QString makeTimelineLineEditStyle(const QWidget* widget)
- {
-  const QPalette pal = widget ? widget->palette() : QPalette{};
-  const QColor bg = pal.base().color();
-  const QColor fg = pal.text().color();
-  const QColor border = pal.mid().color().darker(120);
-  return QStringLiteral("QLineEdit { background:%1; color:%2; border:1px solid %3; padding:0 4px; }")
-      .arg(bg.name(), fg.name(), border.name());
+void applyTimelineLineEditPalette(QLineEdit* edit)
+{
+ if (!edit) {
+  return;
  }
+ const QPalette pal = edit->palette();
+ edit->setAutoFillBackground(true);
+ edit->setPalette(pal);
+}
 
- QString makeTimelineComboStyle(const QWidget* widget)
- {
-  const QPalette pal = widget ? widget->palette() : QPalette{};
-  const QColor bg = pal.button().color();
-  const QColor fg = pal.buttonText().color();
-  const QColor border = pal.mid().color().darker(120);
- return QStringLiteral(
-      "QComboBox { background:%1; color:%2; border:1px solid %3; padding:2px 8px; min-height:22px; font-size:11px; }"
-      "QComboBox::drop-down { width:20px; border-left:1px solid %3; }"
-      "QComboBox QAbstractItemView { font-size:11px; }")
-      .arg(bg.name(), fg.name(), border.name());
+void applyTimelineComboPalette(QComboBox* combo)
+{
+ if (!combo) {
+  return;
  }
+ const QPalette pal = combo->palette();
+ combo->setAutoFillBackground(true);
+ combo->setPalette(pal);
+ if (auto* view = combo->view()) {
+  view->setPalette(pal);
+ }
+}
 
  QIcon loadSvgAsIcon(const QString& path, int size = 16)
  {
@@ -927,7 +939,7 @@ public:
   QPushButton* lockButton = nullptr;
   QPushButton* soloButton = nullptr;
   QPushButton* audioButton = nullptr;
-  QPushButton* layerNameButton = nullptr;
+  QLabel* layerNameButton = nullptr;
   QPushButton* shyButton = nullptr;
   QPushButton* parentHeaderButton = nullptr;
   QPushButton* blendHeaderButton = nullptr;
@@ -949,7 +961,7 @@ ArtifactLayerPanelHeaderWidget::ArtifactLayerPanelHeaderWidget(QWidget* parent)
   visButton->setFixedSize(QSize(kLayerColumnWidth, kLayerHeaderButtonSize));
   visButton->setIcon(impl_->visibilityIcon);
   visButton->setIconSize(QSize(14, 14));
-  visButton->setStyleSheet(makeTimelineButtonStyle(this));
+  applyTimelineButtonPalette(visButton);
   visButton->setFlat(true);
   visButton->setEnabled(false);
   visButton->setAttribute(Qt::WA_TransparentForMouseEvents, true);
@@ -958,7 +970,7 @@ ArtifactLayerPanelHeaderWidget::ArtifactLayerPanelHeaderWidget(QWidget* parent)
   lockButton->setFixedSize(QSize(kLayerColumnWidth, kLayerHeaderButtonSize));
   if (!impl_->lockIcon.isNull()) lockButton->setIcon(impl_->lockIcon);
   lockButton->setIconSize(QSize(14, 14));
-  lockButton->setStyleSheet(makeTimelineButtonStyle(this));
+  applyTimelineButtonPalette(lockButton);
   lockButton->setEnabled(false);
   lockButton->setAttribute(Qt::WA_TransparentForMouseEvents, true);
 
@@ -966,7 +978,7 @@ ArtifactLayerPanelHeaderWidget::ArtifactLayerPanelHeaderWidget(QWidget* parent)
   soloButton->setFixedSize(QSize(kLayerColumnWidth, kLayerHeaderButtonSize));
   if (!impl_->soloIcon.isNull()) soloButton->setIcon(impl_->soloIcon);
   soloButton->setIconSize(QSize(14, 14));
-  soloButton->setStyleSheet(makeTimelineButtonStyle(this));
+  applyTimelineButtonPalette(soloButton);
   soloButton->setEnabled(false);
   soloButton->setAttribute(Qt::WA_TransparentForMouseEvents, true);
 
@@ -974,7 +986,7 @@ ArtifactLayerPanelHeaderWidget::ArtifactLayerPanelHeaderWidget(QWidget* parent)
   audioButton->setFixedSize(QSize(kLayerColumnWidth, kLayerHeaderButtonSize));
   if (!impl_->audioIcon.isNull()) audioButton->setIcon(impl_->audioIcon);
   audioButton->setIconSize(QSize(14, 14));
-  audioButton->setStyleSheet(makeTimelineButtonStyle(this));
+  applyTimelineButtonPalette(audioButton);
   audioButton->setEnabled(false);
   audioButton->setAttribute(Qt::WA_TransparentForMouseEvents, true);
 
@@ -984,25 +996,32 @@ ArtifactLayerPanelHeaderWidget::ArtifactLayerPanelHeaderWidget(QWidget* parent)
   if (!impl_->shyIcon.isNull()) shyButton->setIcon(impl_->shyIcon);
   shyButton->setIconSize(QSize(14, 14));
   shyButton->setToolTip("Master Shy Switch");
-  shyButton->setStyleSheet(makeTimelineButtonStyle(this, true));
+  applyTimelineButtonPalette(shyButton, true);
   shyButton->setAttribute(Qt::WA_TransparentForMouseEvents, true);
 
-  auto layerNameButton = impl_->layerNameButton = new QPushButton("Layer Name");
-  QString btnStyle = makeTimelineButtonStyle(this);
-  btnStyle += QStringLiteral("QPushButton { text-align:left; padding-left:5px; }");
-  layerNameButton->setStyleSheet(btnStyle);
-  layerNameButton->setEnabled(false);
+  auto layerNameButton = impl_->layerNameButton = new QLabel(QStringLiteral("Layer Name"));
+  layerNameButton->setAlignment(Qt::AlignVCenter | Qt::AlignLeft);
+  layerNameButton->setAutoFillBackground(true);
+  {
+    QPalette pal = layerNameButton->palette();
+    pal.setColor(QPalette::Window, palette().color(QPalette::Button));
+    pal.setColor(QPalette::WindowText, palette().color(QPalette::ButtonText));
+    layerNameButton->setPalette(pal);
+  }
+  auto layerFont = layerNameButton->font();
+  layerFont.setBold(true);
+  layerNameButton->setFont(layerFont);
   layerNameButton->setAttribute(Qt::WA_TransparentForMouseEvents, true);
   
   auto parentHeader = impl_->parentHeaderButton = new QPushButton("Parent");
   parentHeader->setFixedWidth(kInlineParentWidth);
-  parentHeader->setStyleSheet(makeTimelineButtonStyle(this));
+  applyTimelineButtonPalette(parentHeader);
   parentHeader->setEnabled(false);
   parentHeader->setAttribute(Qt::WA_TransparentForMouseEvents, true);
   
   auto blendHeader = impl_->blendHeaderButton = new QPushButton("Blend");
   blendHeader->setFixedWidth(kInlineBlendWidth);
-  blendHeader->setStyleSheet(makeTimelineButtonStyle(this));
+  applyTimelineButtonPalette(blendHeader);
   blendHeader->setEnabled(false);
   blendHeader->setAttribute(Qt::WA_TransparentForMouseEvents, true);
 
@@ -1209,6 +1228,8 @@ void ArtifactLayerPanelHeaderWidget::leaveEvent(QEvent* event)
   bool audioPulseVisible = false;
   QHash<QString, QMetaObject::Connection> layerChangedConnections;
   int lastContentHeight = -1;
+  ArtifactCore::EventBus eventBus_;
+  std::vector<ArtifactCore::EventBus::Subscription> eventBusSubscriptions_;
   
   void clearInlineEditors()
   {
@@ -1314,6 +1335,10 @@ void ArtifactLayerPanelHeaderWidget::leaveEvent(QEvent* event)
    }
    layerChangedConnections.clear();
   }
+
+  // Project/composition refreshes are intentionally routed through the local
+  // EventBus. Keep ArtifactProjectService signal/slot wiring out of this widget
+  // unless a new dependency is explicitly required.
 
   void refreshLayerChangedSubscriptions(ArtifactLayerPanelWidget* owner)
   {
@@ -1566,38 +1591,24 @@ void ArtifactLayerPanelHeaderWidget::leaveEvent(QEvent* event)
   if (auto* service = ArtifactProjectService::instance()) {
     QObject::connect(service, &ArtifactProjectService::layerCreated, this, [this](const CompositionID& compId, const LayerID& layerId) {
       if (impl_->compositionId == compId) {
-        this->updateLayout();
-        // Start follow-up UI work on the next event loop tick so layer creation
-        // itself stays responsive.
-       QTimer::singleShot(0, this, [this, layerId]() {
-          const auto widgets = QApplication::allWidgets();
-          for (QWidget* w : widgets) {
-           if (!w) continue;
-           const QString className = QString::fromLatin1(w->metaObject()->className());
-           if (className.contains("ArtifactInspectorWidget", Qt::CaseInsensitive)) {
-            w->show();
-            w->raise();
-            w->activateWindow();
-            break;
-           }
-          }
-
-          if (impl_->layerNameEditable) {
-            this->editLayerName(layerId);
-          }
-          // Ensure layer is visible in the scroll area wrapper if possible
-          Q_EMIT visibleRowsChanged();
-        });
+        impl_->eventBus_.post<LayerChangedEvent>(LayerChangedEvent{
+          compId.toString(),
+          layerId.toString(),
+          LayerChangedEvent::ChangeType::Created});
       }
     });
-    QObject::connect(service, &ArtifactProjectService::layerRemoved, this, [this](const CompositionID& compId, const LayerID&) {
-      if (impl_->compositionId == compId) this->updateLayout();
+    QObject::connect(service, &ArtifactProjectService::layerRemoved, this, [this](const CompositionID& compId, const LayerID& layerId) {
+      if (impl_->compositionId == compId) {
+        impl_->eventBus_.post<LayerChangedEvent>(LayerChangedEvent{
+          compId.toString(),
+          layerId.toString(),
+          LayerChangedEvent::ChangeType::Removed});
+      }
     });
     QObject::connect(service, &ArtifactProjectService::layerSelected, this, [this](const LayerID& layerId) {
-      if (impl_->selectedLayerId != layerId) {
-        impl_->selectedLayerId = layerId;
-        update();
-      }
+      impl_->eventBus_.post<LayerSelectionChangedEvent>(LayerSelectionChangedEvent{
+        impl_->compositionId.toString(),
+        layerId.toString()});
     });
     if (auto* app = ArtifactApplicationManager::instance()) {
       if (auto* selection = app->layerSelectionManager()) {
@@ -1612,14 +1623,67 @@ void ArtifactLayerPanelHeaderWidget::leaveEvent(QEvent* event)
         });
       }
     }
+
+    impl_->eventBusSubscriptions_.push_back(
+      impl_->eventBus_.subscribe<LayerChangedEvent>([this](const LayerChangedEvent& event) {
+        if (impl_->compositionId.toString() != event.compositionId) {
+          return;
+        }
+        if (event.changeType == LayerChangedEvent::ChangeType::Created) {
+          this->updateLayout();
+          // Start follow-up UI work on the next event loop tick so layer creation
+          // itself stays responsive.
+          const LayerID layerId(event.layerId);
+          QTimer::singleShot(0, this, [this, layerId]() {
+            const auto widgets = QApplication::allWidgets();
+            for (QWidget* w : widgets) {
+             if (!w) continue;
+             const QString className = QString::fromLatin1(w->metaObject()->className());
+             if (className.contains("ArtifactInspectorWidget", Qt::CaseInsensitive)) {
+              w->show();
+              w->raise();
+              w->activateWindow();
+              break;
+             }
+            }
+
+            if (impl_->layerNameEditable) {
+              this->editLayerName(layerId);
+            }
+            // Ensure layer is visible in the scroll area wrapper if possible
+            Q_EMIT visibleRowsChanged();
+          });
+          return;
+        }
+        if (event.changeType == LayerChangedEvent::ChangeType::Removed) {
+          this->updateLayout();
+        }
+      }));
+    impl_->eventBusSubscriptions_.push_back(
+      impl_->eventBus_.subscribe<LayerSelectionChangedEvent>([this](const LayerSelectionChangedEvent& event) {
+        const LayerID layerId(event.layerId);
+        if (impl_->selectedLayerId != layerId) {
+          impl_->selectedLayerId = layerId;
+          update();
+        }
+      }));
+    impl_->eventBusSubscriptions_.push_back(
+      impl_->eventBus_.subscribe<CurrentCompositionChangedEvent>([this](const CurrentCompositionChangedEvent& event) {
+        const CompositionID compId(event.compositionId);
+        if (impl_->compositionId.isNil()) {
+          impl_->compositionId = compId;
+        }
+        updateLayout();
+      }));
+    impl_->eventBusSubscriptions_.push_back(
+      impl_->eventBus_.subscribe<ProjectChangedEvent>([this](const ProjectChangedEvent&) {
+        updateLayout();
+      }));
     QObject::connect(service, &ArtifactProjectService::compositionCreated, this, [this](const CompositionID& compId) {
-      if (impl_->compositionId.isNil()) {
-        impl_->compositionId = compId;
-      }
-      updateLayout();
+      impl_->eventBus_.post<CurrentCompositionChangedEvent>(CurrentCompositionChangedEvent{compId.toString()});
     });
     QObject::connect(service, &ArtifactProjectService::projectChanged, this, [this]() {
-      updateLayout();
+      impl_->eventBus_.post<ProjectChangedEvent>(ProjectChangedEvent{QString(), QString()});
     });
   }
  }
@@ -1814,7 +1878,7 @@ void ArtifactLayerPanelWidget::performUpdateLayout()
     impl_->inlineNameEditor = new QLineEdit(this);
     impl_->inlineNameEditor->setText(l->layerName());
     impl_->inlineNameEditor->selectAll();
-    impl_->inlineNameEditor->setStyleSheet(makeTimelineLineEditStyle(impl_->inlineNameEditor));
+    applyTimelineLineEditPalette(impl_->inlineNameEditor);
 
     // Position it
     const int rowIndent = impl_->visibleRows[idx].depth * 14;
@@ -1908,7 +1972,7 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
       impl_->clearInlineEditors();
       auto* combo = new QComboBox(this);
       combo->setGeometry(parentRect);
-      combo->setStyleSheet(makeTimelineComboStyle(combo));
+      applyTimelineComboPalette(combo);
       combo->addItem(QStringLiteral("<None>"), QString());
       if (auto comp = safeCompositionLookup(impl_->compositionId)) {
         for (const auto& candidate : comp->allLayer()) {
@@ -1947,7 +2011,7 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
       impl_->clearInlineEditors();
       auto* combo = new QComboBox(this);
       combo->setGeometry(blendRect);
-      combo->setStyleSheet(makeTimelineComboStyle(combo));
+      applyTimelineComboPalette(combo);
       const auto items = blendModeItems();
       for (const auto& [name, mode] : items) {
         combo->addItem(name, static_cast<int>(mode));
@@ -2480,7 +2544,7 @@ void ArtifactLayerPanelWidget::mouseDoubleClickEvent(QMouseEvent* event)
   impl_->clearInlineEditors();
   auto* editor = new QLineEdit(layer->layerName(), this);
   editor->setGeometry(editRect);
-  editor->setStyleSheet(makeTimelineLineEditStyle(editor));
+  applyTimelineLineEditPalette(editor);
   impl_->inlineNameEditor = editor;
   impl_->editingLayerId = layer->id();
   editor->show();
