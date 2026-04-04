@@ -688,6 +688,18 @@ int main(int argc, char *argv[]) {
       }
     }
     ArtifactCore::applyDCCTheme(a, theme);
+    if (auto* style = a.style()) {
+      style->polish(&a);
+      const auto widgets = QApplication::allWidgets();
+      for (QWidget* widget : widgets) {
+        if (!widget) {
+          continue;
+        }
+        style->unpolish(widget);
+        style->polish(widget);
+        widget->update();
+      }
+    }
   };
   applyThemeFromSettings();
   QApplication::setStyle(new ArtifactCommonStyle(QStyleFactory::create(QStringLiteral("Fusion"))));
