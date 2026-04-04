@@ -85,10 +85,24 @@ public:
     owner_->setPalette(pal);
     editor_->setPalette(pal);
 
-    owner_->setStyleSheet(QStringLiteral(
-        "#markdownNoteTitle { font-weight: 600; font-size: 13px; }"
-        "#markdownNoteSubtitle { color: rgba(200, 200, 200, 180); font-size: 11px; }"
-        "#markdownNoteEditor { background: rgba(0, 0, 0, 18); border: 1px solid rgba(128,128,128,80); border-radius: 6px; padding: 6px; }"));
+    QFont titleFont = titleLabel_->font();
+    titleFont.setBold(true);
+    titleFont.setPointSize(titleFont.pointSize() > 0 ? titleFont.pointSize() + 1 : 11);
+    titleLabel_->setFont(titleFont);
+
+    QPalette subtitlePal = subtitleLabel_->palette();
+    subtitlePal.setColor(QPalette::WindowText, QColor(theme.textColor).darker(135));
+    subtitleLabel_->setPalette(subtitlePal);
+
+    editor_->setAutoFillBackground(true);
+    QPalette editorPal = editor_->palette();
+    editorPal.setColor(QPalette::Base, QColor(theme.secondaryBackgroundColor));
+    editorPal.setColor(QPalette::Text, QColor(theme.textColor));
+    editorPal.setColor(QPalette::PlaceholderText, QColor(theme.textColor).darker(145));
+    editor_->setPalette(editorPal);
+
+    owner_->setAutoFillBackground(true);
+    owner_->setPalette(pal);
 
     QObject::connect(editor_, &QPlainTextEdit::textChanged, owner_, [this]() {
       if (updating_) {

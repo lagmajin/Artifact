@@ -278,39 +278,21 @@ void ArtifactLayerEditorWidgetV2::Impl::showCommandPalette()
   layout->addWidget(commandEdit_);
   layout->addWidget(commandList_);
 
-  commandPalette_->setStyleSheet(QStringLiteral(R"(
-    QDialog#layerSoloCommandPalette {
-      background: %1;
-      border: 1px solid %2;
-      border-radius: 10px;
-    }
-    QLineEdit#layerSoloCommandSearch {
-      background: %3;
-      color: %4;
-      border: 1px solid %2;
-      border-radius: 8px;
-      padding: 6px 10px;
-      font-size: 11px;
-    }
-    QListWidget#layerSoloCommandList {
-      background: %1;
-      color: %4;
-      border: 1px solid %2;
-      border-radius: 8px;
-    }
-    QListWidget#layerSoloCommandList::item {
-      padding: 6px 8px;
-    }
-    QListWidget#layerSoloCommandList::item:selected {
-      background: %5;
-      color: %6;
-    }
-  )").arg(QColor(theme.backgroundColor).name(),
-           QColor(theme.borderColor).name(),
-           QColor(theme.secondaryBackgroundColor).name(),
-           QColor(theme.textColor).name(),
-           QColor(theme.accentColor).name(),
-           QColor(theme.textColor).name()));
+  commandPalette_->setAutoFillBackground(true);
+  {
+    QPalette pal = commandPalette_->palette();
+    pal.setColor(QPalette::Window, QColor(theme.backgroundColor));
+    pal.setColor(QPalette::WindowText, QColor(theme.textColor));
+    pal.setColor(QPalette::Base, QColor(theme.secondaryBackgroundColor));
+    pal.setColor(QPalette::Text, QColor(theme.textColor));
+    pal.setColor(QPalette::Highlight, QColor(theme.accentColor));
+    pal.setColor(QPalette::HighlightedText, QColor(theme.textColor));
+    pal.setColor(QPalette::Button, QColor(theme.secondaryBackgroundColor));
+    pal.setColor(QPalette::ButtonText, QColor(theme.textColor));
+    commandPalette_->setPalette(pal);
+    commandEdit_->setPalette(pal);
+    commandList_->setPalette(pal);
+  }
 
   QObject::connect(commandEdit_, &QLineEdit::textChanged, widget_, [this](const QString& text) {
     rebuildCommandPalette(text);
