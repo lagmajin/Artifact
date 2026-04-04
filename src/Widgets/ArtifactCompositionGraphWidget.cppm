@@ -17,9 +17,12 @@
 #include <qevent.h>
 module Artifact.Widgets.CompositionGraphWidget;
 
+import std;
 import Artifact.Service.Project;
 import Artifact.Layer.Abstract;
 import Artifact.Layer.InitParams;
+import Artifact.Event.Types;
+import Event.Bus;
 import Utils;
 import Utils.String.UniString;
 
@@ -66,6 +69,8 @@ namespace Artifact {
         QGraphicsScene* scene;
         QLineEdit* searchBar;
         QMap<LayerID, LayerNodeItem*> nodeMap;
+        ArtifactCore::EventBus eventBus_;
+        std::vector<ArtifactCore::EventBus::Subscription> eventBusSubscriptions_;
 
         void setupUi(QWidget* parent) {
             auto layout = new QVBoxLayout(parent);
@@ -264,11 +269,37 @@ namespace Artifact {
         
         auto service = ArtifactProjectService::instance();
         connect(service, &ArtifactProjectService::projectChanged, this, [this]() {
-            impl_->refresh();
+            impl_->eventBus_.post<ProjectChangedEvent>(ProjectChangedEvent{QString(), QString()});
         });
         connect(service, &ArtifactProjectService::compositionCreated, this, [this](const CompositionID&) {
-            impl_->refresh();
+            impl_->eventBus_.post<CompositionCreatedEvent>(CompositionCreatedEvent{QString(), QString()});
         });
+        connect(service, &ArtifactProjectService::currentCompositionChanged, this, [this](const CompositionID&) {
+            impl_->eventBus_.post<CurrentCompositionChangedEvent>(CurrentCompositionChangedEvent{QString()});
+        });
+        connect(service, &ArtifactProjectService::layerCreated, this, [this](const CompositionID&, const LayerID& layerId) {
+            impl_->eventBus_.post<LayerChangedEvent>(LayerChangedEvent{QString(), layerId.toString(), LayerChangedEvent::ChangeType::Created});
+        });
+        connect(service, &ArtifactProjectService::layerRemoved, this, [this](const CompositionID&, const LayerID& layerId) {
+            impl_->eventBus_.post<LayerChangedEvent>(LayerChangedEvent{QString(), layerId.toString(), LayerChangedEvent::ChangeType::Removed});
+        });
+
+        impl_->eventBusSubscriptions_.push_back(
+            impl_->eventBus_.subscribe<ProjectChangedEvent>([this](const ProjectChangedEvent&) {
+                impl_->refresh();
+            }));
+        impl_->eventBusSubscriptions_.push_back(
+            impl_->eventBus_.subscribe<CompositionCreatedEvent>([this](const CompositionCreatedEvent&) {
+                impl_->refresh();
+            }));
+        impl_->eventBusSubscriptions_.push_back(
+            impl_->eventBus_.subscribe<CurrentCompositionChangedEvent>([this](const CurrentCompositionChangedEvent&) {
+                impl_->refresh();
+            }));
+        impl_->eventBusSubscriptions_.push_back(
+            impl_->eventBus_.subscribe<LayerChangedEvent>([this](const LayerChangedEvent&) {
+                impl_->refresh();
+            }));
 
         connect(impl_->searchBar, &QLineEdit::textChanged, this, [this](const QString& text) {
             impl_->filterNodes(text);

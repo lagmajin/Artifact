@@ -22,8 +22,10 @@ module Artifact.Widgets.CompositionAudioMixer;
 import Artifact.Widgets.CompositionAudioMixer;
 import Artifact.Audio.Mixer;
 import Artifact.Composition.Abstract;
+import Artifact.Event.Types;
 import Artifact.Service.Project;
 import Artifact.Service.Playback;
+import Event.Bus;
 import std;
 
 namespace Artifact
@@ -470,6 +472,8 @@ public:
     QWidget* contentWidget_ = nullptr;
     QHBoxLayout* contentLayout_ = nullptr;
     QLabel* emptyLabel_ = nullptr;
+    ArtifactCore::EventBus eventBus_;
+    std::vector<ArtifactCore::EventBus::Subscription> eventBusSubscriptions_;
 
     void clearRows()
     {
@@ -559,24 +563,41 @@ ArtifactCompositionAudioMixerWidget::ArtifactCompositionAudioMixerWidget(QWidget
     rootLayout->addWidget(header);
     rootLayout->addWidget(scrollArea, 1);
 
-    auto scheduleRefresh = [this]() {
-        QTimer::singleShot(0, this, &ArtifactCompositionAudioMixerWidget::refreshFromCurrentComposition);
-    };
-
     if (auto* service = ArtifactProjectService::instance()) {
-        QObject::connect(service, &ArtifactProjectService::projectChanged, this, scheduleRefresh);
+        QObject::connect(service, &ArtifactProjectService::projectChanged, this, [this]() {
+            impl_->eventBus_.post<ProjectChangedEvent>(ProjectChangedEvent{QString(), QString()});
+        });
         QObject::connect(service, &ArtifactProjectService::currentCompositionChanged, this,
-            [scheduleRefresh](const CompositionID&) {
-                scheduleRefresh();
+            [this](const CompositionID& compositionId) {
+                impl_->eventBus_.post<CurrentCompositionChangedEvent>(CurrentCompositionChangedEvent{compositionId.toString()});
             });
         QObject::connect(service, &ArtifactProjectService::layerCreated, this,
-            [scheduleRefresh](const CompositionID&, const LayerID&) {
-                scheduleRefresh();
+            [this](const CompositionID& compositionId, const LayerID& layerId) {
+                impl_->eventBus_.post<LayerChangedEvent>(LayerChangedEvent{
+                    compositionId.toString(),
+                    layerId.toString(),
+                    LayerChangedEvent::ChangeType::Created});
             });
         QObject::connect(service, &ArtifactProjectService::layerRemoved, this,
-            [scheduleRefresh](const CompositionID&, const LayerID&) {
-                scheduleRefresh();
+            [this](const CompositionID& compositionId, const LayerID& layerId) {
+                impl_->eventBus_.post<LayerChangedEvent>(LayerChangedEvent{
+                    compositionId.toString(),
+                    layerId.toString(),
+                    LayerChangedEvent::ChangeType::Removed});
             });
+
+        impl_->eventBusSubscriptions_.push_back(
+            impl_->eventBus_.subscribe<ProjectChangedEvent>([this](const ProjectChangedEvent&) {
+                refreshFromCurrentComposition();
+            }));
+        impl_->eventBusSubscriptions_.push_back(
+            impl_->eventBus_.subscribe<CurrentCompositionChangedEvent>([this](const CurrentCompositionChangedEvent&) {
+                refreshFromCurrentComposition();
+            }));
+        impl_->eventBusSubscriptions_.push_back(
+            impl_->eventBus_.subscribe<LayerChangedEvent>([this](const LayerChangedEvent&) {
+                refreshFromCurrentComposition();
+            }));
     }
 
     refreshFromCurrentComposition();

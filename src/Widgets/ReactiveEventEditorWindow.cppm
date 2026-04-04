@@ -34,11 +34,14 @@ module;
 
 module Artifact.Widgets.ReactiveEventEditorWindow;
 
+import std;
 import Artifact.Widgets.ReactiveEventEditorWindow;
+import Artifact.Event.Types;
 import Artifact.Service.Project;
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
 import Artifact.Project.Items;
+import Event.Bus;
 import Reactive.Events;
 import Utils.String.UniString;
 
@@ -264,6 +267,8 @@ public:
  QPushButton* duplicateRuleButton = nullptr;
  QPushButton* removeRuleButton = nullptr;
  QPushButton* refreshButton = nullptr;
+ ArtifactCore::EventBus eventBus_;
+ std::vector<ArtifactCore::EventBus::Subscription> eventBusSubscriptions_;
 
  std::vector<ReactiveRule> rules;
  int selectedRuleIndex = -1;
@@ -802,27 +807,68 @@ connect(impl_->ruleTree, &QTreeWidget::currentItemChanged, this,
  connect(impl_->cooldownEdit, qOverload<double>(&QDoubleSpinBox::valueChanged), this,
          [hookApply](double) { hookApply(); });
 
- auto* svc = ArtifactProjectService::instance();
- if (svc) {
+  auto* svc = ArtifactProjectService::instance();
+  if (svc) {
   connect(svc, &ArtifactProjectService::projectChanged, this, [this]() {
    if (impl_) {
-    impl_->rebuildTargetTree();
-    impl_->appendLog(QStringLiteral("Target tree refreshed"));
+    impl_->eventBus_.post<ProjectChangedEvent>(ProjectChangedEvent{QString(), QString()});
    }
   });
   connect(svc, &ArtifactProjectService::projectCreated, this, [this]() {
-   if (impl_) impl_->refreshAll();
+   if (impl_) {
+    impl_->eventBus_.post<CompositionCreatedEvent>(CompositionCreatedEvent{QString(), QString()});
+   }
   });
-  connect(svc, &ArtifactProjectService::compositionCreated, this, [this](const CompositionID&) {
-   if (impl_) impl_->refreshAll();
+  connect(svc, &ArtifactProjectService::compositionCreated, this, [this](const CompositionID& compositionId) {
+   if (impl_) {
+    impl_->eventBus_.post<CurrentCompositionChangedEvent>(CurrentCompositionChangedEvent{compositionId.toString()});
+   }
   });
-  connect(svc, &ArtifactProjectService::currentCompositionChanged, this, [this](const CompositionID&) {
-   if (impl_) impl_->rebuildTargetTree();
+  connect(svc, &ArtifactProjectService::currentCompositionChanged, this, [this](const CompositionID& compositionId) {
+   if (impl_) {
+    impl_->eventBus_.post<CurrentCompositionChangedEvent>(CurrentCompositionChangedEvent{compositionId.toString()});
+   }
   });
-  connect(svc, &ArtifactProjectService::layerSelected, this, [this](const LayerID&) {
-   if (impl_) impl_->appendLog(QStringLiteral("Layer selection changed"));
+  connect(svc, &ArtifactProjectService::layerSelected, this, [this, svc](const LayerID& layerId) {
+   if (!impl_) {
+    return;
+   }
+   QString compositionId;
+   if (svc) {
+    const auto current = svc->currentComposition();
+    if (!current.expired()) {
+     compositionId = current.lock()->id().toString();
+    }
+   }
+   impl_->eventBus_.post<LayerSelectionChangedEvent>(LayerSelectionChangedEvent{compositionId, layerId.toString()});
   });
- }
+
+  impl_->eventBusSubscriptions_.push_back(
+   impl_->eventBus_.subscribe<ProjectChangedEvent>([this](const ProjectChangedEvent&) {
+    if (impl_) {
+     impl_->rebuildTargetTree();
+     impl_->appendLog(QStringLiteral("Target tree refreshed"));
+    }
+   }));
+  impl_->eventBusSubscriptions_.push_back(
+   impl_->eventBus_.subscribe<CurrentCompositionChangedEvent>([this](const CurrentCompositionChangedEvent&) {
+    if (impl_) {
+     impl_->rebuildTargetTree();
+    }
+   }));
+  impl_->eventBusSubscriptions_.push_back(
+   impl_->eventBus_.subscribe<CompositionCreatedEvent>([this](const CompositionCreatedEvent&) {
+    if (impl_) {
+     impl_->refreshAll();
+    }
+   }));
+  impl_->eventBusSubscriptions_.push_back(
+   impl_->eventBus_.subscribe<LayerSelectionChangedEvent>([this](const LayerSelectionChangedEvent&) {
+    if (impl_) {
+     impl_->appendLog(QStringLiteral("Layer selection changed"));
+    }
+   }));
+  }
 
  impl_->loadSampleRules();
  impl_->refreshAll();
