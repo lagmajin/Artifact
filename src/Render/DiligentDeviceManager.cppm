@@ -144,6 +144,42 @@ namespace {
 #endif
     }
 
+    bool hasVulkanInstanceExtension(const char* extensionName)
+    {
+#if VULKAN_SUPPORTED
+        HMODULE loader = ::GetModuleHandleW(L"vulkan-1.dll");
+        if (!loader) {
+            loader = ::LoadLibraryW(L"vulkan-1.dll");
+        }
+        if (!loader) {
+            return false;
+        }
+
+        const auto enumerateExtensions = reinterpret_cast<PFN_vkEnumerateInstanceExtensionProperties>(
+            ::GetProcAddress(loader, "vkEnumerateInstanceExtensionProperties"));
+        if (!enumerateExtensions) {
+            return false;
+        }
+
+        uint32_t extensionCount = 0;
+        if (enumerateExtensions(nullptr, &extensionCount, nullptr) != VK_SUCCESS || extensionCount == 0) {
+            return false;
+        }
+
+        std::vector<VkExtensionProperties> extensions(extensionCount);
+        if (enumerateExtensions(nullptr, &extensionCount, extensions.data()) != VK_SUCCESS) {
+            return false;
+        }
+
+        return std::any_of(extensions.begin(), extensions.end(), [extensionName](const VkExtensionProperties& props) {
+            return QString::fromLatin1(props.extensionName) == extensionName;
+        });
+#else
+        (void)extensionName;
+        return false;
+#endif
+    }
+
     VulkanValidationInfo queryVulkanValidationInfo()
     {
         VulkanValidationInfo info;
@@ -260,6 +296,19 @@ namespace {
         creationAttribs.EnableValidation = true;
         creationAttribs.SetValidationLevel(Diligent::VALIDATION_LEVEL_2);
         creationAttribs.Features.VariableRateShading = Diligent::DEVICE_FEATURE_STATE_ENABLED;
+
+        static constexpr const char* kVulkanInstanceExtensions[] = {
+            VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME
+        };
+        if (hasVulkanInstanceExtension(kVulkanInstanceExtensions[0])) {
+            creationAttribs.InstanceExtensionCount = 1;
+            creationAttribs.ppInstanceExtensionNames = kVulkanInstanceExtensions;
+            qDebug() << "[DiligentDeviceManager] Vulkan instance extensions:"
+                     << kVulkanInstanceExtensions[0];
+        } else {
+            qWarning() << "[DiligentDeviceManager] Vulkan instance extension not available:"
+                       << kVulkanInstanceExtensions[0];
+        }
 
         // 1. Try with Ray Tracing enabled
         creationAttribs.Features.RayTracing = DEVICE_FEATURE_STATE_ENABLED;
