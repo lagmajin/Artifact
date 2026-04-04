@@ -34,6 +34,7 @@ module;
 #include <QIODevice>
 #include <QTimer>
 #include <QTransform>
+#include <QVector>
 
 #include <iostream>
 #include <vector>
@@ -76,6 +77,7 @@ module Artifact.Contents.Viewer;
 
 import Artifact.Preview.Pipeline;
 import MediaPlaybackController;
+import Artifact.Widgets.AudioPreview;
 import Widgets.Utils.CSS;
 import File.TypeDetector;
 import Artifact.Widgets.ModelViewer;
@@ -100,8 +102,11 @@ namespace Artifact
    void setPlaybackRange(int64_t startFrame, int64_t endFrame);
    void resetCurrentMode();
    void ensureVideoWidgets();
+   void ensureAudioWidgets();
    void ensureAudioController();
    void releaseAudioPlayback();
+   void resetAudioWaveform();
+   void appendAudioWaveformSamples(const QByteArray& pcmData);
    void activateAudio(const QString& filepath);
    void pumpAudioPlayback();
    void ensureModelViewer();
@@ -148,6 +153,10 @@ namespace Artifact
    QAudioSink* audioSink = nullptr;
    QIODevice* audioSinkDevice = nullptr;
    QTimer* audioPumpTimer = nullptr;
+   QWidget* audioPage = nullptr;
+   AudioWaveformWidget* audioWaveformWidget = nullptr;
+   QLabel* audioWaveformLabel = nullptr;
+   QVector<float> audioWaveformSamples;
    QLabel* infoLabel = nullptr;
    Artifact3DModelViewer* modelViewer = nullptr;
    bool videoWidgetsReady = false;
@@ -268,10 +277,89 @@ namespace Artifact
    }
   }
 
+  void ArtifactContentsViewer::Impl::ensureAudioWidgets()
+  {
+   if (audioPage) {
+    return;
+   }
+
+   audioPage = new QWidget(owner_);
+   auto* layout = new QVBoxLayout(audioPage);
+   layout->setContentsMargins(12, 12, 12, 12);
+   layout->setSpacing(8);
+
+   audioWaveformLabel = new QLabel(QStringLiteral("Audio waveform preview"), audioPage);
+   {
+    QFont labelFont = audioWaveformLabel->font();
+    labelFont.setPointSize(11);
+    labelFont.setWeight(QFont::DemiBold);
+    audioWaveformLabel->setFont(labelFont);
+    QPalette pal = audioWaveformLabel->palette();
+    pal.setColor(QPalette::WindowText, QColor(ArtifactCore::currentDCCTheme().textColor));
+    audioWaveformLabel->setPalette(pal);
+   }
+
+   audioWaveformWidget = new AudioWaveformWidget(audioPage);
+   audioWaveformWidget->setMinimumHeight(180);
+
+   layout->addWidget(audioWaveformLabel);
+   layout->addWidget(audioWaveformWidget, 1);
+   stackedWidget->addWidget(audioPage);
+  }
+
+  void ArtifactContentsViewer::Impl::resetAudioWaveform()
+  {
+   audioWaveformSamples.clear();
+   if (audioWaveformWidget) {
+    audioWaveformWidget->clear();
+   }
+  }
+
+  void ArtifactContentsViewer::Impl::appendAudioWaveformSamples(const QByteArray& pcmData)
+  {
+   if (!audioWaveformWidget || pcmData.size() < 4) {
+    return;
+   }
+
+   constexpr int kBytesPerFrame = 4;
+   constexpr int kTargetBins = 48;
+
+   const int frameCount = pcmData.size() / kBytesPerFrame;
+   if (frameCount <= 0) {
+    return;
+   }
+
+   const int framesPerBin = std::max(1, frameCount / kTargetBins);
+   const char* raw = pcmData.constData();
+
+   for (int startFrame = 0; startFrame < frameCount; startFrame += framesPerBin) {
+    const int endFrame = std::min(startFrame + framesPerBin, frameCount);
+    float peak = 0.0f;
+    for (int frame = startFrame; frame < endFrame; ++frame) {
+     const auto* sample = reinterpret_cast<const qint16*>(raw + frame * kBytesPerFrame);
+     const float left = std::abs(static_cast<float>(sample[0]) / 32768.0f);
+     const float right = std::abs(static_cast<float>(sample[1]) / 32768.0f);
+     peak = std::max(peak, std::max(left, right));
+    }
+    audioWaveformSamples.append(std::clamp(peak, 0.0f, 1.0f));
+   }
+
+   constexpr int kMaxSamples = 4096;
+   if (audioWaveformSamples.size() > kMaxSamples) {
+    audioWaveformSamples.remove(0, audioWaveformSamples.size() - kMaxSamples);
+   }
+
+   audioWaveformWidget->setSamples(audioWaveformSamples, 44100);
+   if (!audioWaveformSamples.isEmpty()) {
+    audioWaveformWidget->setPosition(audioWaveformSamples.size() - 1);
+   }
+  }
+
   void ArtifactContentsViewer::Impl::releaseAudioPlayback()
   {
    audioPendingBuffer.clear();
    audioPlaybackPositionMs = 0;
+   resetAudioWaveform();
 
    if (audioPumpTimer) {
     audioPumpTimer->stop();
@@ -304,6 +392,9 @@ namespace Artifact
     return;
    }
 
+   ensureAudioWidgets();
+   resetAudioWaveform();
+
    if (audioPumpTimer) {
     audioPumpTimer->stop();
    }
@@ -335,8 +426,18 @@ namespace Artifact
    audioPumpTimer->setInterval(16);
 
    audioPlaybackPositionMs = 0;
+   if (audioWaveformLabel) {
+    const auto metadata = audioController_->getMetadata();
+    audioWaveformLabel->setText(metadata.formatName.isEmpty()
+                                    ? QStringLiteral("Audio waveform preview")
+                                    : QStringLiteral("Audio waveform preview  •  %1").arg(metadata.formatName));
+   }
    if (infoLabel) {
     infoLabel->setText(QStringLiteral("Audio preview ready\n%1").arg(info.absoluteFilePath()));
+   }
+   if (audioPage) {
+    stackedWidget->setCurrentWidget(audioPage);
+   } else if (infoLabel) {
     stackedWidget->setCurrentWidget(infoLabel);
    }
    updateHeader();
@@ -387,8 +488,10 @@ namespace Artifact
    const qint64 written = audioSinkDevice->write(audioPendingBuffer.constData(),
                                                  static_cast<qint64>(audioPendingBuffer.size()));
    if (written > 0) {
+    const QByteArray writtenChunk = audioPendingBuffer.left(static_cast<int>(written));
     audioPendingBuffer.remove(0, static_cast<int>(written));
     audioPlaybackPositionMs += audioBytesToMs(written);
+    appendAudioWaveformSamples(writtenChunk);
     if (seekSlider && !seekSlider->isSliderDown()) {
      QSignalBlocker blocker(seekSlider);
      seekSlider->setValue(static_cast<int>(std::clamp<qint64>(audioPlaybackPositionMs, 0, std::numeric_limits<int>::max())));
@@ -1534,8 +1637,8 @@ void ArtifactContentsViewer::play()
    if (impl_->audioPumpTimer) {
     impl_->audioPumpTimer->start(16);
    }
-   if (impl_->stackedWidget && impl_->infoLabel) {
-    impl_->stackedWidget->setCurrentWidget(impl_->infoLabel);
+   if (impl_->stackedWidget && impl_->audioPage) {
+    impl_->stackedWidget->setCurrentWidget(impl_->audioPage);
    }
    impl_->pumpAudioPlayback();
    impl_->updatePlaybackState();
@@ -1566,6 +1669,9 @@ void ArtifactContentsViewer::pause()
    }
    if (impl_->audioController_) {
     impl_->audioController_->pause();
+   }
+   if (impl_->stackedWidget && impl_->audioPage) {
+    impl_->stackedWidget->setCurrentWidget(impl_->audioPage);
    }
    impl_->updatePlaybackState();
    return;
@@ -1613,9 +1719,13 @@ void ArtifactContentsViewer::stop()
    }
    impl_->audioPendingBuffer.clear();
    impl_->audioPlaybackPositionMs = impl_->playbackRangeActive ? impl_->playbackRangeStartMs : 0;
+   impl_->resetAudioWaveform();
    if (impl_->seekSlider) {
     QSignalBlocker blocker(impl_->seekSlider);
     impl_->seekSlider->setValue(static_cast<int>(std::clamp<qint64>(impl_->audioPlaybackPositionMs, 0, std::numeric_limits<int>::max())));
+   }
+   if (impl_->stackedWidget && impl_->audioPage) {
+    impl_->stackedWidget->setCurrentWidget(impl_->audioPage);
    }
    impl_->updatePlaybackState();
    return;

@@ -12,6 +12,8 @@
 #include <QCursor>
 #include <QLineEdit>
 #include <QGraphicsOpacityEffect>
+#include <QPalette>
+#include <QColor>
 #include <qevent.h>
 module Artifact.Widgets.CompositionGraphWidget;
 
@@ -73,20 +75,11 @@ namespace Artifact {
             // Search Bar Header
             searchBar = new QLineEdit();
             searchBar->setPlaceholderText("Search layers...");
-            searchBar->setStyleSheet(R"(
-                QLineEdit {
-                    background-color: #2D2D30;
-                    color: #CCCCCC;
-                    border: none;
-                    border-bottom: 1px solid #444444;
-                    padding: 6px 10px;
-                    font-size: 12px;
-                }
-                QLineEdit:focus {
-                    background-color: #3E3E42;
-                    border-bottom: 1px solid #007ACC;
-                }
-            )");
+            QPalette searchPalette = searchBar->palette();
+            searchPalette.setColor(QPalette::Base, QColor(45, 45, 48));
+            searchPalette.setColor(QPalette::Text, QColor(204, 204, 204));
+            searchPalette.setColor(QPalette::PlaceholderText, QColor(136, 136, 136));
+            searchBar->setPalette(searchPalette);
             layout->addWidget(searchBar);
 
             scene = new QGraphicsScene(parent);
@@ -113,7 +106,6 @@ namespace Artifact {
             LayerNodeItem* node = dynamic_cast<LayerNodeItem*>(item);
 
             QMenu menu(parent);
-            menu.setStyleSheet("QMenu { background-color: #2D2D30; color: white; border: 1px solid #444; } QMenu::item:selected { background-color: #3E3E42; }");
 
             if (node) {
                 auto selectAction = menu.addAction("Select Layer");

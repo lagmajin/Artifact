@@ -429,7 +429,8 @@ namespace Artifact
   // Live preview
   impl_->previewLabel = new QLabel("No preview");
   impl_->previewLabel->setFixedSize(320, 180);
-  impl_->previewLabel->setStyleSheet("QLabel { background: #1a1a1a; border: 1px solid #333; }");
+  impl_->previewLabel->setFrameShape(QFrame::StyledPanel);
+  impl_->previewLabel->setFrameShadow(QFrame::Sunken);
   impl_->previewLabel->setAlignment(Qt::AlignCenter);
   impl_->previewLabel->setScaledContents(false);
   layout->addWidget(impl_->previewLabel);

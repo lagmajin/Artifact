@@ -27,6 +27,9 @@ module;
 #include <QWheelEvent>
 #include <QUuid>
 #include <QAbstractItemView>
+#include <QPalette>
+#include <QColor>
+#include <QFont>
 #include <wobjectimpl.h>
 
 module Artifact.Widgets.ReactiveEventEditorWindow;
@@ -557,7 +560,11 @@ ArtifactReactiveEventEditorWindow::ArtifactReactiveEventEditorWindow(QWidget* pa
  resize(1440, 900);
 
  auto* host = new QWidget(this);
- host->setStyleSheet(QStringLiteral("background: #181A1F; color: #E5E7EB;"));
+ host->setAutoFillBackground(true);
+ QPalette hostPalette = host->palette();
+ hostPalette.setColor(QPalette::Window, QColor(24, 26, 31));
+ hostPalette.setColor(QPalette::WindowText, QColor(229, 231, 235));
+ host->setPalette(hostPalette);
  auto* rootLayout = new QVBoxLayout(host);
  rootLayout->setContentsMargins(8, 8, 8, 8);
  rootLayout->setSpacing(8);
@@ -574,9 +581,10 @@ ArtifactReactiveEventEditorWindow::ArtifactReactiveEventEditorWindow(QWidget* pa
  impl_->targetTree->setSelectionMode(QAbstractItemView::SingleSelection);
  impl_->targetTree->setMouseTracking(true);
  impl_->targetTree->setItemDelegate(new ReactiveTargetDelegate(impl_->targetTree));
- impl_->targetTree->setStyleSheet(QStringLiteral(
-     "QTreeWidget { background: #1D2026; border: 1px solid #2B2F37; }"
-     "QTreeWidget::item { padding: 0px; }"));
+ QPalette targetPalette = impl_->targetTree->palette();
+ targetPalette.setColor(QPalette::Base, QColor(29, 32, 38));
+ targetPalette.setColor(QPalette::Window, QColor(29, 32, 38));
+ impl_->targetTree->setPalette(targetPalette);
 
  auto* centerPanel = new QWidget(upperSplitter);
  auto* centerLayout = new QVBoxLayout(centerPanel);
@@ -600,9 +608,10 @@ ArtifactReactiveEventEditorWindow::ArtifactReactiveEventEditorWindow(QWidget* pa
  impl_->ruleTree->setHeaderHidden(true);
  impl_->ruleTree->setSelectionMode(QAbstractItemView::SingleSelection);
  impl_->ruleTree->setMouseTracking(true);
- impl_->ruleTree->setStyleSheet(QStringLiteral(
-     "QTreeWidget { background: #20242B; border: 1px solid #2B2F37; }"
-     "QTreeWidget::item { padding: 3px 4px; }"));
+ QPalette rulePalette = impl_->ruleTree->palette();
+ rulePalette.setColor(QPalette::Base, QColor(32, 36, 43));
+ rulePalette.setColor(QPalette::Window, QColor(32, 36, 43));
+ impl_->ruleTree->setPalette(rulePalette);
  centerLayout->addWidget(impl_->ruleTree, 1);
 
  auto* inspectorScroll = new QScrollArea(upperSplitter);
@@ -610,13 +619,22 @@ ArtifactReactiveEventEditorWindow::ArtifactReactiveEventEditorWindow(QWidget* pa
  inspectorScroll->setFrameShape(QFrame::NoFrame);
  impl_->inspectorContainer = new QWidget(inspectorScroll);
  inspectorScroll->setWidget(impl_->inspectorContainer);
- inspectorScroll->setStyleSheet(QStringLiteral("QScrollArea { border: 1px solid #2B2F37; background: #1C2026; }"));
+ inspectorScroll->setAutoFillBackground(true);
+ QPalette inspectorScrollPalette = inspectorScroll->palette();
+ inspectorScrollPalette.setColor(QPalette::Window, QColor(28, 32, 38));
+ inspectorScroll->setPalette(inspectorScrollPalette);
  auto* inspectorLayout = new QVBoxLayout(impl_->inspectorContainer);
  inspectorLayout->setContentsMargins(12, 12, 12, 12);
  inspectorLayout->setSpacing(8);
 
  auto* inspectorTitle = new QLabel(QStringLiteral("Inspector"), impl_->inspectorContainer);
- inspectorTitle->setStyleSheet(QStringLiteral("font-weight: 700; font-size: 14px; color: #F3F4F6;"));
+ QFont inspectorTitleFont = inspectorTitle->font();
+ inspectorTitleFont.setBold(true);
+ inspectorTitleFont.setPointSize(14);
+ inspectorTitle->setFont(inspectorTitleFont);
+ QPalette inspectorTitlePalette = inspectorTitle->palette();
+ inspectorTitlePalette.setColor(QPalette::WindowText, QColor(243, 244, 246));
+ inspectorTitle->setPalette(inspectorTitlePalette);
  inspectorLayout->addWidget(inspectorTitle);
 
  impl_->enabledCheck = new QCheckBox(QStringLiteral("Enabled"), impl_->inspectorContainer);
@@ -680,11 +698,15 @@ ArtifactReactiveEventEditorWindow::ArtifactReactiveEventEditorWindow(QWidget* pa
  impl_->eventLog->setReadOnly(true);
  impl_->eventLog->setMaximumBlockCount(1000);
  impl_->eventLog->setMinimumHeight(140);
- impl_->eventLog->setStyleSheet(QStringLiteral(
-     "QPlainTextEdit { background: #111319; border: 1px solid #2B2F37; color: #D6DEE8; }"));
+ QPalette eventLogPalette = impl_->eventLog->palette();
+ eventLogPalette.setColor(QPalette::Base, QColor(17, 19, 25));
+ eventLogPalette.setColor(QPalette::Text, QColor(214, 222, 232));
+ impl_->eventLog->setPalette(eventLogPalette);
 
  impl_->statusLabel = new QLabel(QStringLiteral("Ready"), host);
- impl_->statusLabel->setStyleSheet(QStringLiteral("color: #A6B3C3;"));
+ QPalette statusPalette = impl_->statusLabel->palette();
+ statusPalette.setColor(QPalette::WindowText, QColor(166, 179, 195));
+ impl_->statusLabel->setPalette(statusPalette);
 
  rootLayout->addWidget(upperSplitter, 1);
  rootLayout->addWidget(impl_->eventLog, 0);
