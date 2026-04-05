@@ -298,6 +298,26 @@ Artifact3DModelViewer::DisplayMode Artifact3DModelViewer::displayMode() const
     return impl_->mode;
 }
 
+float Artifact3DModelViewer::zoomFactor() const
+{
+    return impl_ ? impl_->zoomFactor : 1.0f;
+}
+
+float Artifact3DModelViewer::cameraYaw() const
+{
+    return impl_ ? impl_->cameraYaw : 0.0f;
+}
+
+float Artifact3DModelViewer::cameraPitch() const
+{
+    return impl_ ? impl_->cameraPitch : 0.0f;
+}
+
+QVector3D Artifact3DModelViewer::cameraPosition() const
+{
+    return impl_ ? impl_->cameraPosition : QVector3D(0.0f, 0.0f, 5.0f);
+}
+
 void Artifact3DModelViewer::requestUpdate()
 {
     if (impl_->renderWindow) {

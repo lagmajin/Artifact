@@ -22,6 +22,7 @@ module;
 #include <QBrush>
 #include <QFont>
 #include <QTimer>
+#include <QSet>
 #include <wobjectimpl.h>
 #include <cmath>
 #include <Widgets/Dialog/ArtifactDialogButtons.hpp>
@@ -29,6 +30,7 @@ module;
 module Artifact.Widgets.CreateCameraLayerDialog;
 
 import Artifact.Layer.Camera;
+import Artifact.Service.Project;
 import Widgets.Utils.CSS;
 
 namespace Artifact {
@@ -138,6 +140,70 @@ float fovFromFocalLength(float mm)
     if (mm <= 0.0f) return 0.0f;
     return static_cast<float>(
         2.0 * std::atan(18.0 / static_cast<double>(mm)) * 180.0 / 3.14159265358979);
+}
+
+QSet<QString> currentLayerNames()
+{
+    QSet<QString> names;
+    if (auto* service = ArtifactProjectService::instance()) {
+        if (auto comp = service->currentComposition().lock()) {
+            for (const auto& layer : comp->allLayer()) {
+                if (!layer) {
+                    continue;
+                }
+                const QString name = layer->layerName().trimmed();
+                if (!name.isEmpty()) {
+                    names.insert(name);
+                }
+            }
+        }
+    }
+    return names;
+}
+
+QString makeUniqueSequentialName(QString baseName, const QSet<QString>& occupied)
+{
+    baseName = baseName.trimmed();
+    if (baseName.isEmpty()) {
+        baseName = QStringLiteral("Camera 1");
+    }
+    if (!occupied.contains(baseName)) {
+        return baseName;
+    }
+
+    QString prefix = baseName;
+    int startNumber = 2;
+    int end = baseName.size();
+    while (end > 0 && baseName.at(end - 1).isDigit()) {
+        --end;
+    }
+    if (end < baseName.size()) {
+        int start = end;
+        while (start > 0 && baseName.at(start - 1).isSpace()) {
+            --start;
+        }
+        bool ok = false;
+        const int current = baseName.mid(end).toInt(&ok);
+        if (ok) {
+            prefix = baseName.left(start);
+            startNumber = current + 1;
+        }
+    }
+    if (prefix == baseName && !prefix.endsWith(QLatin1Char(' '))) {
+        prefix += QLatin1Char(' ');
+    }
+    for (int index = startNumber; index < 10000; ++index) {
+        const QString candidate = prefix + QString::number(index);
+        if (!occupied.contains(candidate)) {
+            return candidate;
+        }
+    }
+    return baseName;
+}
+
+QString uniqueCameraLayerName()
+{
+    return makeUniqueSequentialName(QStringLiteral("Camera 1"), currentLayerNames());
 }
 
 } // namespace
@@ -262,7 +328,7 @@ CreateCameraLayerDialog::CreateCameraLayerDialog(QWidget* parent)
         lbl->setFixedWidth(80);
         lbl->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
         lbl->setStyleSheet("color: #cccccc;");
-        impl_->nameEdit = new QLineEdit(u8"カメラ 1", row);
+        impl_->nameEdit = new QLineEdit(uniqueCameraLayerName(), row);
         rl->addWidget(lbl);
         rl->addWidget(impl_->nameEdit, 1);
         bLay->addWidget(row);

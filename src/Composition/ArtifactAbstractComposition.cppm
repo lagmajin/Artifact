@@ -54,7 +54,7 @@ namespace Artifact {
   float playbackSpeed_ = 1.0f;
   CompositionID id_;
   QString compositionNote_;
-  FloatColor backgroundColor_ = { 0.1f, 0.1f, 0.1f, 1.0f };
+  FloatColor backgroundColor_ = { 0.47f, 0.47f, 0.47f, 1.0f };
   //PlaybackClock playbackClock_;  // 高精度再生クロック
   
   AppendLayerToCompositionResult appendLayerTop(ArtifactAbstractLayerPtr layer);

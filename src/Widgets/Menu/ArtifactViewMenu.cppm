@@ -20,6 +20,8 @@ import Artifact.MainWindow;
 import Widgets.AssetBrowser;
 import Artifact.Widgets.ReactiveEventEditorWindow;
 import Utils.Path;
+import Event.Bus;
+import Artifact.Event.Types;
 
 namespace Artifact {
  using namespace ArtifactCore;
@@ -72,6 +74,8 @@ namespace Artifact {
      int newBrowserCount_ = 1;
      QAction* openReactiveEventEditorAction = nullptr;
      QAction* secondaryPreviewAction = nullptr;
+     ArtifactCore::EventBus eventBus_ = ArtifactCore::globalEventBus();
+     std::vector<ArtifactCore::EventBus::Subscription> eventBusSubscriptions_;
 
     void refreshEnabledState();
     void rebuildWindowPanelsMenu();
@@ -160,29 +164,32 @@ namespace Artifact {
      svc->setPreviewQualityPreset(::PreviewQualityPreset::Final);
     });
 
-    QObject::connect(svc, &ArtifactProjectService::previewQualityPresetChanged, menu, [this](::PreviewQualityPreset preset) {
-     switch (preset) {
-     case ::PreviewQualityPreset::Draft:
-      qualityDraftAction->setChecked(true);
-      resQuarterAction->setChecked(true);
-      break;
-     case ::PreviewQualityPreset::Preview:
-      qualityPreviewAction->setChecked(true);
-      resHalfAction->setChecked(true);
-      break;
-     case ::PreviewQualityPreset::Final:
-      qualityFinalAction->setChecked(true);
-      resFullAction->setChecked(true);
-      break;
-     }
-    });
+    eventBusSubscriptions_.push_back(eventBus_.subscribe<PreviewQualityPresetChangedEvent>(
+        [this](const PreviewQualityPresetChangedEvent& event) {
+         switch (static_cast<::PreviewQualityPreset>(event.preset)) {
+         case ::PreviewQualityPreset::Draft:
+          qualityDraftAction->setChecked(true);
+          resQuarterAction->setChecked(true);
+          break;
+         case ::PreviewQualityPreset::Preview:
+          qualityPreviewAction->setChecked(true);
+          resHalfAction->setChecked(true);
+          break;
+         case ::PreviewQualityPreset::Final:
+          qualityFinalAction->setChecked(true);
+          resFullAction->setChecked(true);
+          break;
+         }
+        }));
 
-    QObject::connect(svc, &ArtifactProjectService::projectChanged, menu, [this]() {
-     refreshEnabledState();
-    });
-    QObject::connect(svc, &ArtifactProjectService::compositionCreated, menu, [this](const auto&) {
-     refreshEnabledState();
-    });
+    eventBusSubscriptions_.push_back(eventBus_.subscribe<ProjectChangedEvent>(
+        [this](const ProjectChangedEvent&) {
+         refreshEnabledState();
+        }));
+    eventBusSubscriptions_.push_back(eventBus_.subscribe<CompositionCreatedEvent>(
+        [this](const CompositionCreatedEvent&) {
+         refreshEnabledState();
+        }));
    }
    
    QObject::connect(menu, &QMenu::aboutToShow, menu, [this]() {

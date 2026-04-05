@@ -39,6 +39,10 @@ public:
     void setCameraPosition(const QVector3D& position);
     void setDisplayMode(DisplayMode mode);
     DisplayMode displayMode() const;
+    float zoomFactor() const;
+    float cameraYaw() const;
+    float cameraPitch() const;
+    QVector3D cameraPosition() const;
 
     void requestUpdate();
 };

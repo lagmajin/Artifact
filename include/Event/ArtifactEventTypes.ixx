@@ -4,6 +4,8 @@ module;
 
 export module Artifact.Event.Types;
 
+import Playback.State;
+
 export namespace Artifact {
 
 struct ProjectChangedEvent {
@@ -11,9 +13,18 @@ struct ProjectChangedEvent {
     QString projectName;
 };
 
+struct ProjectCreatedEvent {
+    QString projectId;
+    QString projectName;
+};
+
 struct CompositionCreatedEvent {
     QString compositionId;
     QString compositionName;
+};
+
+struct CompositionRemovedEvent {
+    QString compositionId;
 };
 
 struct CurrentCompositionChangedEvent {
@@ -35,10 +46,65 @@ struct FrameChangedEvent {
     qint64 frame = 0;
 };
 
+struct PlaybackStateChangedEvent {
+    ArtifactCore::PlaybackState state = ArtifactCore::PlaybackState::Stopped;
+};
+
+struct PlaybackSpeedChangedEvent {
+    float speed = 1.0f;
+};
+
+struct PreviewQualityPresetChangedEvent {
+    int preset = 1;
+};
+
+struct PlaybackLoopingChangedEvent {
+    bool loop = false;
+};
+
+struct PlaybackFrameRangeChangedEvent {
+    qint64 startFrame = 0;
+    qint64 endFrame = 0;
+};
+
+struct PlaybackCompositionChangedEvent {
+    QString compositionId;
+};
+
 struct WorkAreaChangedEvent {
     QString compositionId;
     qint64 startFrame = 0;
     qint64 endFrame = 0;
+};
+
+struct TimelineShyChangedEvent {
+    bool shy = false;
+};
+
+struct TimelineMotionBlurChangedEvent {
+    bool enabled = false;
+};
+
+struct TimelineFrameBlendingChangedEvent {
+    bool enabled = false;
+};
+
+struct TimelineGraphEditorToggledEvent {
+    bool enabled = false;
+};
+
+struct FontChangedEvent {
+    QString fontName;
+};
+
+struct ColorSwatchSelectedEvent {
+    float r = 0.0f;
+    float g = 0.0f;
+    float b = 0.0f;
+    float a = 1.0f;
+};
+
+struct ColorSwatchChangedEvent {
 };
 
 struct LayerSelectionChangedEvent {

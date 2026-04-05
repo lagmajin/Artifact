@@ -24,6 +24,8 @@
 #include <QCheckBox>
 #include <QFrame>
 #include <QScrollArea>
+#include <QSet>
+#include <QHash>
 module Artifact.Widgets.CreatePlaneLayerDialog;
 
 import std;
@@ -43,6 +45,8 @@ import Artifact.Layers.SolidImage;
 
 namespace {
 
+QString nearestNamedColor(const QColor& color);
+
 void updateColorButtonPreview(QPushButton* button, const QColor& color)
 {
     if (!button) return;
@@ -57,7 +61,7 @@ void updateColorButtonPreview(QPushButton* button, const QColor& color)
     }
     button->setIcon(QIcon(pix));
     button->setIconSize(pix.size());
-    button->setToolTip(color.name());
+    button->setToolTip(QStringLiteral("%1 (%2)").arg(nearestNamedColor(color), color.name()));
     button->setText({});
 }
 
@@ -102,6 +106,116 @@ QWidget* makeRow(QWidget* parent, const QString& labelText, int labelWidth,
     lay->addWidget(ctrl, 1);
     if (extra) lay->addWidget(extra);
     return row;
+}
+
+QString nearestNamedColor(const QColor& color)
+{
+    const auto names = QColor::colorNames();
+    if (names.isEmpty()) {
+        return color.name();
+    }
+
+    const int targetR = color.red();
+    const int targetG = color.green();
+    const int targetB = color.blue();
+    int bestDistance = std::numeric_limits<int>::max();
+    QString bestName = color.name();
+    for (const QString& name : names) {
+        const QColor namedColor(name);
+        const int dr = namedColor.red() - targetR;
+        const int dg = namedColor.green() - targetG;
+        const int db = namedColor.blue() - targetB;
+        const int distance = dr * dr + dg * dg + db * db;
+        if (distance < bestDistance) {
+            bestDistance = distance;
+            bestName = name;
+        }
+    }
+
+    const QString lower = bestName.toLower();
+    static const QHash<QString, QString> kLocalized = {
+        {QStringLiteral("white"), QStringLiteral("ホワイト")},
+        {QStringLiteral("black"), QStringLiteral("ブラック")},
+        {QStringLiteral("red"), QStringLiteral("レッド")},
+        {QStringLiteral("green"), QStringLiteral("グリーン")},
+        {QStringLiteral("blue"), QStringLiteral("ブルー")},
+        {QStringLiteral("yellow"), QStringLiteral("イエロー")},
+        {QStringLiteral("cyan"), QStringLiteral("シアン")},
+        {QStringLiteral("magenta"), QStringLiteral("マゼンタ")},
+        {QStringLiteral("gray"), QStringLiteral("グレー")},
+        {QStringLiteral("lightgray"), QStringLiteral("ライトグレー")},
+        {QStringLiteral("darkgray"), QStringLiteral("ダークグレー")},
+        {QStringLiteral("orange"), QStringLiteral("オレンジ")},
+        {QStringLiteral("purple"), QStringLiteral("パープル")},
+        {QStringLiteral("pink"), QStringLiteral("ピンク")},
+        {QStringLiteral("brown"), QStringLiteral("ブラウン")}
+    };
+    return kLocalized.value(lower, bestName);
+}
+
+QString makeUniqueSequentialName(QString baseName, const QSet<QString>& occupied)
+{
+    baseName = baseName.trimmed();
+    if (baseName.isEmpty()) {
+        baseName = QStringLiteral("平面 1");
+    }
+    if (!occupied.contains(baseName)) {
+        return baseName;
+    }
+
+    QString prefix = baseName;
+    int startNumber = 2;
+    int end = baseName.size();
+    while (end > 0 && baseName.at(end - 1).isDigit()) {
+        --end;
+    }
+    if (end < baseName.size()) {
+        int start = end;
+        while (start > 0 && baseName.at(start - 1).isSpace()) {
+            --start;
+        }
+        bool ok = false;
+        const int current = baseName.mid(end).toInt(&ok);
+        if (ok) {
+            prefix = baseName.left(start);
+            startNumber = current + 1;
+        }
+    }
+    if (prefix == baseName && !prefix.endsWith(QLatin1Char(' '))) {
+        prefix += QLatin1Char(' ');
+    }
+    for (int index = startNumber; index < 10000; ++index) {
+        const QString candidate = prefix + QString::number(index);
+        if (!occupied.contains(candidate)) {
+            return candidate;
+        }
+    }
+    return baseName;
+}
+
+QSet<QString> currentLayerNames()
+{
+    QSet<QString> names;
+    if (auto* service = Artifact::ArtifactProjectService::instance()) {
+        if (auto comp = service->currentComposition().lock()) {
+            for (const auto& layer : comp->allLayer()) {
+                if (!layer) {
+                    continue;
+                }
+                const QString name = layer->layerName().trimmed();
+                if (!name.isEmpty()) {
+                    names.insert(name);
+                }
+            }
+        }
+    }
+    return names;
+}
+
+QString suggestedPlaneLayerName(const QColor& color)
+{
+    const QString base = QStringLiteral("%1 平面 1").arg(nearestNamedColor(color));
+    return makeUniqueSequentialName(base, currentLayerNames());
 }
 
 } // namespace
@@ -314,6 +428,7 @@ PlaneLayerSettingPage::PlaneLayerSettingPage(QWidget* parent)
         impl_->bgColor = c;
         updateColorButtonPreview(impl_->bgColorButton, c);
         updateHexFromColor(impl_->hexColorEdit, c);
+        Q_EMIT colorChanged(suggestedPlaneLayerName(c));
     });
 
     QObject::connect(impl_->hexColorEdit, &QLineEdit::editingFinished, this, [this]() {
@@ -321,6 +436,7 @@ PlaneLayerSettingPage::PlaneLayerSettingPage(QWidget* parent)
         if (c.isValid()) {
             impl_->bgColor = c;
             updateColorButtonPreview(impl_->bgColorButton, c);
+            Q_EMIT colorChanged(suggestedPlaneLayerName(c));
         }
     });
 
@@ -496,7 +612,7 @@ CreateSolidLayerSettingDialog::CreateSolidLayerSettingDialog(QWidget* parent)
     chrome.scrollLayout->addWidget(makeSectionHeader(u8"名前", chrome.scrollContent));
     {
         impl_->nameEditableLabel = new EditableLabel();
-        impl_->nameEditableLabel->setText(u8"ホワイト 平面 1");
+        impl_->nameEditableLabel->setText(suggestedPlaneLayerName(QColor(255, 255, 255, 255)));
 
         auto* nameRow = new QWidget(chrome.scrollContent);
         auto* nameRowLay = new QHBoxLayout(nameRow);
@@ -522,7 +638,7 @@ CreateSolidLayerSettingDialog::CreateSolidLayerSettingDialog(QWidget* parent)
         if (impl_->nameEditableLabel) impl_->nameEditableLabel->finishEdit();
         QString name = impl_->nameEditableLabel
             ? impl_->nameEditableLabel->text()
-            : u8"平面 1";
+            : suggestedPlaneLayerName(QColor(255, 255, 255, 255));
         ArtifactSolidLayerInitParams params = impl_->settingPage->getInitParams(name);
         Q_EMIT submit(params);
         accept();
@@ -627,7 +743,7 @@ EditPlaneLayerSettingDialog::EditPlaneLayerSettingDialog(QWidget* parent)
     chrome.scrollLayout->addWidget(makeSectionHeader(u8"名前", chrome.scrollContent));
     {
         impl_->nameEditableLabel = new EditableLabel();
-        impl_->nameEditableLabel->setText(u8"平面 1");
+        impl_->nameEditableLabel->setText(suggestedPlaneLayerName(QColor(255, 255, 255, 255)));
 
         auto* nameRow = new QWidget(chrome.scrollContent);
         auto* nameRowLay = new QHBoxLayout(nameRow);
@@ -652,7 +768,7 @@ EditPlaneLayerSettingDialog::EditPlaneLayerSettingDialog(QWidget* parent)
         if (impl_->nameEditableLabel) impl_->nameEditableLabel->finishEdit();
         QString name = impl_->nameEditableLabel
             ? impl_->nameEditableLabel->text()
-            : u8"平面 1";
+            : suggestedPlaneLayerName(QColor(255, 255, 255, 255));
         ArtifactSolidLayerInitParams params = impl_->settingPage->getInitParams(name);
         if (impl_->targetLayer) {
             impl_->targetLayer->setLayerName(name);

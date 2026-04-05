@@ -24,6 +24,7 @@
 #include <QPair>
 #include <QStringList>
 #include <QVector>
+#include <vector>
 #include <wobjectimpl.h>
 
 #include <algorithm>
@@ -45,6 +46,8 @@ import Artifact.Layer.Solid2D;
 import Artifact.Mask.Path;
 import Artifact.Mask.LayerMask;
 import Layer.Blend;
+import Event.Bus;
+import Artifact.Event.Types;
 
 namespace Artifact {
 
@@ -765,6 +768,8 @@ class ArtifactSoftwareCompositionTestWidget::Impl {
 public:
     QWidget* owner_ = nullptr;
     ArtifactProjectService* service_ = nullptr;
+    ArtifactCore::EventBus eventBus_ = ArtifactCore::globalEventBus();
+    std::vector<ArtifactCore::EventBus::Subscription> eventBusSubscriptions_;
     QComboBox* compositionCombo_ = nullptr;
     QCheckBox* followCurrentCompositionCheck_ = nullptr;
     QComboBox* effectCombo_ = nullptr;
@@ -871,6 +876,8 @@ class ArtifactSoftwareLayerTestWidget::Impl {
 public:
     QWidget* owner_ = nullptr;
     ArtifactProjectService* service_ = nullptr;
+    ArtifactCore::EventBus eventBus_ = ArtifactCore::globalEventBus();
+    std::vector<ArtifactCore::EventBus::Subscription> eventBusSubscriptions_;
     QComboBox* compositionCombo_ = nullptr;
     QComboBox* layerCombo_ = nullptr;
     QCheckBox* followCurrentCompositionCheck_ = nullptr;
@@ -1096,31 +1103,34 @@ ArtifactSoftwareCompositionTestWidget::ArtifactSoftwareCompositionTestWidget(QWi
         saveImagePreview(this, impl_->lastImage_, QStringLiteral("software_composition_test"));
     });
 
-    if (impl_->service_) {
-        QObject::connect(impl_->service_, &ArtifactProjectService::projectChanged, this, [this]() {
-            impl_->reloadCompositions();
-            impl_->refreshPreview();
-        });
-        QObject::connect(impl_->service_, &ArtifactProjectService::compositionCreated, this, [this](const ArtifactCore::CompositionID& id) {
-            impl_->reloadCompositions();
-            if (impl_->followCurrentCompositionCheck_ && impl_->followCurrentCompositionCheck_->isChecked()) {
-                impl_->setCurrentCompositionSelection(id);
-            }
-            impl_->refreshPreview();
-        });
-        QObject::connect(impl_->service_, &ArtifactProjectService::currentCompositionChanged, this, [this](const ArtifactCore::CompositionID& id) {
-            if (impl_->followCurrentCompositionCheck_ && impl_->followCurrentCompositionCheck_->isChecked()) {
-                impl_->setCurrentCompositionSelection(id);
-            }
-            impl_->refreshPreview();
-        });
-        QObject::connect(impl_->service_, &ArtifactProjectService::layerCreated, this, [this](const ArtifactCore::CompositionID&, const ArtifactCore::LayerID&) {
-            impl_->refreshPreview();
-        });
-        QObject::connect(impl_->service_, &ArtifactProjectService::layerRemoved, this, [this](const ArtifactCore::CompositionID&, const ArtifactCore::LayerID&) {
-            impl_->refreshPreview();
-        });
-    }
+    impl_->eventBusSubscriptions_.push_back(
+        impl_->eventBus_.subscribe<ProjectChangedEvent>(
+            [this](const ProjectChangedEvent&) {
+                impl_->reloadCompositions();
+                impl_->refreshPreview();
+            }));
+    impl_->eventBusSubscriptions_.push_back(
+        impl_->eventBus_.subscribe<CompositionCreatedEvent>(
+            [this](const CompositionCreatedEvent& event) {
+                impl_->reloadCompositions();
+                if (impl_->followCurrentCompositionCheck_ && impl_->followCurrentCompositionCheck_->isChecked()) {
+                    impl_->setCurrentCompositionSelection(ArtifactCore::CompositionID(event.compositionId));
+                }
+                impl_->refreshPreview();
+            }));
+    impl_->eventBusSubscriptions_.push_back(
+        impl_->eventBus_.subscribe<CurrentCompositionChangedEvent>(
+            [this](const CurrentCompositionChangedEvent& event) {
+                if (impl_->followCurrentCompositionCheck_ && impl_->followCurrentCompositionCheck_->isChecked()) {
+                    impl_->setCurrentCompositionSelection(ArtifactCore::CompositionID(event.compositionId));
+                }
+                impl_->refreshPreview();
+            }));
+    impl_->eventBusSubscriptions_.push_back(
+        impl_->eventBus_.subscribe<LayerChangedEvent>(
+            [this](const LayerChangedEvent&) {
+                impl_->refreshPreview();
+            }));
 }
 
 ArtifactSoftwareCompositionTestWidget::~ArtifactSoftwareCompositionTestWidget()
@@ -1260,35 +1270,37 @@ ArtifactSoftwareLayerTestWidget::ArtifactSoftwareLayerTestWidget(QWidget* parent
         saveImagePreview(this, impl_->lastImage_, QStringLiteral("software_layer_test"));
     });
 
-    if (impl_->service_) {
-        QObject::connect(impl_->service_, &ArtifactProjectService::projectChanged, this, [this]() {
-            impl_->reloadCompositions();
-            impl_->reloadLayers();
-            impl_->refreshPreview();
-        });
-        QObject::connect(impl_->service_, &ArtifactProjectService::currentCompositionChanged, this, [this](const ArtifactCore::CompositionID& id) {
-            if (impl_->followCurrentCompositionCheck_ && impl_->followCurrentCompositionCheck_->isChecked()) {
-                impl_->setCurrentCompositionSelection(id);
+    impl_->eventBusSubscriptions_.push_back(
+        impl_->eventBus_.subscribe<ProjectChangedEvent>(
+            [this](const ProjectChangedEvent&) {
+                impl_->reloadCompositions();
                 impl_->reloadLayers();
-            }
-            impl_->refreshPreview();
-        });
-        QObject::connect(impl_->service_, &ArtifactProjectService::layerCreated, this, [this](const ArtifactCore::CompositionID&, const ArtifactCore::LayerID&) {
-            impl_->reloadLayers();
-            impl_->refreshPreview();
-        });
-        QObject::connect(impl_->service_, &ArtifactProjectService::layerRemoved, this, [this](const ArtifactCore::CompositionID&, const ArtifactCore::LayerID&) {
-            impl_->reloadLayers();
-            impl_->refreshPreview();
-        });
-        QObject::connect(impl_->service_, &ArtifactProjectService::layerSelected, this, [this](const ArtifactCore::LayerID& id) {
-            if (!impl_->followSelectionCheck_ || !impl_->followSelectionCheck_->isChecked()) {
-                return;
-            }
-            impl_->setCurrentLayerSelection(id);
-            impl_->refreshPreview();
-        });
-    }
+                impl_->refreshPreview();
+            }));
+    impl_->eventBusSubscriptions_.push_back(
+        impl_->eventBus_.subscribe<CurrentCompositionChangedEvent>(
+            [this](const CurrentCompositionChangedEvent& event) {
+                if (impl_->followCurrentCompositionCheck_ && impl_->followCurrentCompositionCheck_->isChecked()) {
+                    impl_->setCurrentCompositionSelection(ArtifactCore::CompositionID(event.compositionId));
+                    impl_->reloadLayers();
+                }
+                impl_->refreshPreview();
+            }));
+    impl_->eventBusSubscriptions_.push_back(
+        impl_->eventBus_.subscribe<LayerChangedEvent>(
+            [this](const LayerChangedEvent&) {
+                impl_->reloadLayers();
+                impl_->refreshPreview();
+            }));
+    impl_->eventBusSubscriptions_.push_back(
+        impl_->eventBus_.subscribe<LayerSelectionChangedEvent>(
+            [this](const LayerSelectionChangedEvent& event) {
+                if (!impl_->followSelectionCheck_ || !impl_->followSelectionCheck_->isChecked()) {
+                    return;
+                }
+                impl_->setCurrentLayerSelection(ArtifactCore::LayerID(event.layerId));
+                impl_->refreshPreview();
+            }));
 }
 
 ArtifactSoftwareLayerTestWidget::~ArtifactSoftwareLayerTestWidget()

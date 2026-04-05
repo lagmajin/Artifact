@@ -75,6 +75,8 @@ import Widgets.Utils.CSS;
 
 import Artifact.Service.Project;
 import Artifact.Service.Playback; // 追加
+import Event.Bus;
+import Artifact.Event.Types;
 import Undo.UndoManager;
 import Frame.Position;
 import Color.Float;
@@ -979,7 +981,7 @@ public:
    bool showFrameInfo_ = false; // Changed to false by default
    int currentFrameForOverlay_ = 0;
    quint64 renderFrameCounter_ = 0;
-   bool renderQueueActive_ = false; // When true, suppress cache invalidation during Render Queue
+  bool renderQueueActive_ = false; // When true, suppress cache invalidation during Render Queue
   int lastPipelineStateMask_ = -1;
   QSize lastDispatchWarningSize_;
   QByteArray lastFinalPresentKey_;
@@ -990,7 +992,7 @@ public:
   QString dropGhostTitle_;
   QString dropGhostHint_;
   QString dropCandidateLabel_;
-  FloatColor clearColor_ = {0.12f, 0.13f, 0.18f, 1.0f};
+  FloatColor clearColor_;
   QString lastBackgroundKey_;
   CompositionID lastBackgroundCompositionId_;
   QHash<QString, LayerSurfaceCacheEntry> surfaceCache_;
@@ -1011,6 +1013,8 @@ public:
   bool viewportInteracting_ = false;
   QTimer *viewportInteractionTimer_ = nullptr;
   QTimer *resizeDebounceTimer_ = nullptr;
+  ArtifactCore::EventBus eventBus_ = ArtifactCore::globalEventBus();
+  std::vector<ArtifactCore::EventBus::Subscription> eventBusSubscriptions_;
   QSize pendingResizeSize_;
   bool isRubberBandSelecting_ = false;
   bool dragGroupMove_ = false;
@@ -1263,45 +1267,30 @@ CompositionRenderController::CompositionRenderController(QObject *parent)
 
   // Connect to project service to track layer selection
   if (auto *svc = ArtifactProjectService::instance()) {
-    connect(svc, &ArtifactProjectService::layerSelected, this,
-            [this](const LayerID &id) { setSelectedLayerId(id); });
-
-    // Always follow the active composition even if upstream wiring misses one
-    // path.
-    connect(svc, &ArtifactProjectService::currentCompositionChanged, this,
-            [this, svc](const CompositionID &id) {
-              ArtifactCompositionPtr comp;
-              if (!id.isNil()) {
-                const auto found = svc->findComposition(id);
-                if (found.success && !found.ptr.expired()) {
-                  comp = found.ptr.lock();
-                }
-              }
-              if (!comp) {
-                comp = resolvePreferredComposition(svc);
-              }
-              setComposition(comp);
-            });
-
-    // Project-level mutations can replace composition/layer instances; resync
-    // aggressively.
-    connect(svc, &ArtifactProjectService::projectChanged, this, [this, svc]() {
-      auto latest = resolvePreferredComposition(svc);
-      auto current = impl_->previewPipeline_.composition();
-      if (latest != current) {
-        setComposition(latest);
-      } else {
-        impl_->invalidateBaseComposite();
-      }
-    });
-
-    // Ensure layers created after setComposition() are also bound to redraw.
-    connect(svc, &ArtifactProjectService::layerCreated, this,
-            [this](const CompositionID &compId, const LayerID &layerId) {
+    impl_->eventBusSubscriptions_.push_back(
+        impl_->eventBus_.subscribe<LayerSelectionChangedEvent>(
+            [this](const LayerSelectionChangedEvent& event) {
               auto comp = impl_->previewPipeline_.composition();
-              if (!comp || comp->id() != compId) {
+              if (comp && !event.compositionId.isEmpty() &&
+                  comp->id().toString() != event.compositionId) {
                 return;
               }
+              setSelectedLayerId(LayerID(event.layerId));
+            }));
+
+    // Ensure layers created after setComposition() are also bound to redraw.
+    impl_->eventBusSubscriptions_.push_back(
+        impl_->eventBus_.subscribe<LayerChangedEvent>(
+            [this](const LayerChangedEvent& event) {
+              if (event.changeType != LayerChangedEvent::ChangeType::Created) {
+                return;
+              }
+              auto comp = impl_->previewPipeline_.composition();
+              if (!comp || event.compositionId.isEmpty() ||
+                  comp->id().toString() != event.compositionId) {
+                return;
+              }
+              const auto layerId = LayerID(event.layerId);
               if (auto layer = comp->layerById(layerId)) {
                 impl_->layerChangedConnections_.push_back(
                     connect(layer.get(), &ArtifactAbstractLayer::changed, this,
@@ -1318,11 +1307,42 @@ CompositionRenderController::CompositionRenderController(QObject *parent)
                               renderOneFrame();
                             }));
               }
-            });
+            }));
 
-    // Handle resolution changes
-    connect(svc, &ArtifactProjectService::previewQualityPresetChanged, this,
-            &CompositionRenderController::setPreviewQualityPreset);
+    impl_->eventBusSubscriptions_.push_back(
+        impl_->eventBus_.subscribe<CurrentCompositionChangedEvent>(
+            [this, svc](const CurrentCompositionChangedEvent& event) {
+              ArtifactCompositionPtr comp;
+              if (!event.compositionId.trimmed().isEmpty()) {
+                const auto found = svc->findComposition(CompositionID(event.compositionId));
+                if (found.success && !found.ptr.expired()) {
+                  comp = found.ptr.lock();
+                }
+              }
+              if (!comp) {
+                comp = resolvePreferredComposition(svc);
+              }
+              setComposition(comp);
+            }));
+
+    impl_->eventBusSubscriptions_.push_back(
+        impl_->eventBus_.subscribe<ProjectChangedEvent>(
+            [this, svc](const ProjectChangedEvent&) {
+              auto latest = resolvePreferredComposition(svc);
+              auto current = impl_->previewPipeline_.composition();
+              if (latest != current) {
+                setComposition(latest);
+              } else {
+                impl_->invalidateBaseComposite();
+              }
+            }));
+
+    // Handle resolution changes via internal event bus
+    impl_->eventBusSubscriptions_.push_back(
+        impl_->eventBus_.subscribe<PreviewQualityPresetChangedEvent>(
+            [this](const PreviewQualityPresetChangedEvent& event) {
+              setPreviewQualityPreset(static_cast<PreviewQualityPreset>(event.preset));
+            }));
 
     // Initial sync
     setPreviewQualityPreset(svc->previewQualityPreset());
@@ -3006,34 +3026,6 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       renderer_->setCanvasSize(cw, ch);
       renderer_->setZoom(origZoom);
       renderer_->setPan(origPanX, origPanY);
-      if (true) {
-        const float screenW = std::max(viewportW, 0.001f);
-        const float screenH = std::max(viewportH, 0.001f);
-        const auto toNdc = [&](float cx, float cy) -> QPointF {
-          const float wx = cx * origZoom + origPanX;
-          const float wy = cy * origZoom + origPanY;
-          return QPointF(wx / screenW * 2.0f - 1.0f,
-                         -((wy / screenH) * 2.0f - 1.0f));
-        };
-        const QPointF v0 = toNdc(0.0f, 0.0f);
-        const QPointF v1 = toNdc(cw, 0.0f);
-        const QPointF v2 = toNdc(0.0f, ch);
-        const QPointF v3 = toNdc(cw, ch);
-        qInfo() << "[CompositionView][BackgroundRect][GPU]"
-            << "localRect=" << QRectF(0.0f, 0.0f, cw, ch)
-            << "viewport=" << QRectF(0.0f, 0.0f, viewportW, viewportH)
-            << "zoom=" << origZoom
-            << "pan=" << QPointF(origPanX, origPanY)
-            << "ndc v0=" << v0
-            << "v1=" << v1
-            << "v2=" << v2
-            << "v3=" << v3
-            << "bg=" << QColor::fromRgbF(bgColor.r(), bgColor.g(), bgColor.b(),
-                                          bgColor.a())
-            << "checker=" << showCheckerboard_
-            << "usesCompositionRenderer=" << (compositionRenderer_ != nullptr)
-            << "backgroundDrawMode=solidRect";
-      }
       renderer_->drawSolidRect(0.0f, 0.0f, cw, ch, bgColor, 1.0f);
 
       // -- 4: オフスクリーン RT を画面全体に描画（スクリーン座標、SRC_ALPHA ブレンド） --
@@ -3092,39 +3084,6 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                           static_cast<Diligent::Uint32>(viewportH));
       }
       renderer_->setCanvasSize(cw, ch);  // キャンバスを Composition Space に設定
-      if (true) {
-        float fallbackPanX = 0.0f;
-        float fallbackPanY = 0.0f;
-        renderer_->getPan(fallbackPanX, fallbackPanY);
-        const float screenW = std::max(viewportW, 0.001f);
-        const float screenH = std::max(viewportH, 0.001f);
-        const auto toNdc = [&](float cx, float cy) -> QPointF {
-          const float wx = cx * renderer_->getZoom() + fallbackPanX;
-          const float wy = cy * renderer_->getZoom() + fallbackPanY;
-          return QPointF(wx / screenW * 2.0f - 1.0f,
-                         -((wy / screenH) * 2.0f - 1.0f));
-        };
-        const QPointF v0 = toNdc(0.0f, 0.0f);
-        const QPointF v1 = toNdc(cw, 0.0f);
-        const QPointF v2 = toNdc(0.0f, ch);
-        const QPointF v3 = toNdc(cw, ch);
-        qInfo() << "[CompositionView][BackgroundRect][Fallback]"
-            << "compSize=" << QSize(static_cast<int>(cw), static_cast<int>(ch))
-            << "viewport=" << QSize(static_cast<int>(viewportW),
-                                    static_cast<int>(viewportH))
-            << "zoom=" << renderer_->getZoom()
-            << "pan=" << QPointF(fallbackPanX, fallbackPanY)
-            << "ndc v0=" << v0
-            << "v1=" << v1
-            << "v2=" << v2
-            << "v3=" << v3
-            << "bg="
-            << QColor::fromRgbF(bgColor.r(), bgColor.g(), bgColor.b(),
-                                bgColor.a())
-            << "checker=" << showCheckerboard_
-            << "usesCompositionRenderer=" << (compositionRenderer_ != nullptr)
-            << "backgroundDrawMode=clear";
-      }
       renderer_->drawSolidRect(0.0f, 0.0f, cw, ch, bgColor, 1.0f);
       if (showGrid_) {
         renderer_->drawGrid(0, 0, cw, ch, 100.0f, 1.0f,

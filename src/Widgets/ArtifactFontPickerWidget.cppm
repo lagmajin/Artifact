@@ -9,6 +9,9 @@ module;
 
 module Artifact.Widgets.FontPicker;
 
+import Artifact.Event.Types;
+import Event.Bus;
+
 namespace Artifact {
 
 W_OBJECT_IMPL(FontPickerWidget)
@@ -38,6 +41,7 @@ void FontPickerWidget::setupUi() {
 
     connect(fontCombo_, &QComboBox::currentTextChanged, this, [this](const QString& text) {
         Q_EMIT fontChanged(text);
+        ArtifactCore::globalEventBus().post<FontChangedEvent>(FontChangedEvent{text});
     });
 }
 

@@ -2,6 +2,7 @@ module;
 #include <wobjectdefs.h>
 #include <QFile>
 #include <QWidget>
+#include <QEvent>
 #include <QResizeEvent>
 #include <QWheelEvent>
 #include <QMouseEvent>
@@ -42,6 +43,7 @@ export namespace Artifact
   void resetView(); W_SLOT(resetView);
 
  protected:
+  bool eventFilter(QObject* watched, QEvent* event) override;
   void focusInEvent(QFocusEvent* event) override;
   void focusOutEvent(QFocusEvent* event) override;
   void resizeEvent(QResizeEvent* event) override;

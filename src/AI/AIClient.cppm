@@ -21,6 +21,7 @@ import Utils.String.UniString;
 import Core.AI.PromptGenerator;
 import Core.AI.LocalAgent;
 import Core.AI.LlamaAgent;
+import Core.AI.OnnxDmlAgent;
 
 namespace Artifact {
 
@@ -39,6 +40,27 @@ public:
     std::atomic<bool> cancellationRequested{false};
 };
 
+namespace {
+
+LocalAIAgentPtr createLocalAgentForProvider(const UniString& provider)
+{
+    const QString normalized = provider.toQString().trimmed().toLower();
+    if (normalized == QStringLiteral("onnx") ||
+        normalized == QStringLiteral("onnx-dml") ||
+        normalized == QStringLiteral("onnxdml") ||
+        normalized == QStringLiteral("directml")) {
+        return std::make_shared<OnnxDmlLocalAgent>();
+    }
+    return std::make_shared<LlamaLocalAgent>();
+}
+
+bool backendProviderChanged(const UniString& current, const UniString& next)
+{
+    return current.toQString().trimmed().toLower() != next.toQString().trimmed().toLower();
+}
+
+} // namespace
+
 AIClient::AIClient() : impl_(new Impl()) {
     impl_->localAgent = std::make_shared<LlamaLocalAgent>();
 }
@@ -53,7 +75,15 @@ AIClient* AIClient::instance() {
 void AIClient::setApiKey(const UniString& key) { impl_->apiKey = key; }
 
 void AIClient::setProvider(const UniString& provider) {
-    impl_->provider = provider;
+    bool changed = false;
+    {
+        std::lock_guard<std::mutex> lock(impl_->mutex);
+        changed = backendProviderChanged(impl_->provider, provider);
+        impl_->provider = provider;
+    }
+    if (changed) {
+        shutdown();
+    }
 }
 
 namespace {
@@ -89,7 +119,19 @@ bool AIClient::initialize(const QString& modelPath) {
     lowerCurrentThreadPriority();
     QString path = modelPath.trimmed();
     if (path.isEmpty()) {
-        path = QStringLiteral("models/llama-3.2-1b-instruct.q4_k_m.gguf");
+        QString provider;
+        {
+            std::lock_guard<std::mutex> lock(impl_->mutex);
+            provider = impl_->provider.toQString().trimmed().toLower();
+        }
+        if (provider == QStringLiteral("onnx") ||
+            provider == QStringLiteral("onnx-dml") ||
+            provider == QStringLiteral("onnxdml") ||
+            provider == QStringLiteral("directml")) {
+            path = QStringLiteral("models/onnx/model.onnx");
+        } else {
+            path = QStringLiteral("models/llama-3.2-1b-instruct.q4_k_m.gguf");
+        }
     }
     LocalAIAgentPtr localAgent;
     std::uint64_t loadGeneration = 0;
@@ -99,13 +141,11 @@ bool AIClient::initialize(const QString& modelPath) {
             return true;
         }
         if (impl_->initializing) {
-            qInfo() << "[AIClient] Local llama.cpp backend is already initializing:" << path;
+            qInfo() << "[AIClient] Local AI backend is already initializing:" << path;
             return false;
         }
 
-        if (!impl_->localAgent) {
-            impl_->localAgent = std::make_shared<LlamaLocalAgent>();
-        }
+        impl_->localAgent = createLocalAgentForProvider(impl_->provider);
 
         impl_->initializing = true;
         impl_->initialized = false;
@@ -135,11 +175,12 @@ bool AIClient::initialize(const QString& modelPath) {
         return loaded;
     }
     if (loaded) {
-        qInfo() << "[AIClient] Local llama.cpp backend initialized:" << path;
+        qInfo() << "[AIClient] Local AI backend initialized:" << path
+                << "provider=" << impl_->provider.toQString();
     } else {
-        QString errorText = QStringLiteral("Failed to initialize local llama.cpp backend.");
-        if (const auto* llamaAgent = dynamic_cast<const LlamaLocalAgent*>(localAgent.get())) {
-            const QString detail = llamaAgent->lastError();
+        QString errorText = QStringLiteral("Failed to initialize local AI backend.");
+        if (localAgent) {
+            const QString detail = localAgent->lastError();
             if (!detail.isEmpty()) {
                 errorText = detail;
             }
@@ -171,7 +212,7 @@ void AIClient::shutdown() {
         impl_->initialized = false;
         previousModelPath = impl_->modelPath;
         impl_->localAgent.reset();
-        impl_->localAgent = std::make_shared<LlamaLocalAgent>();
+        impl_->localAgent = createLocalAgentForProvider(impl_->provider);
         impl_->modelPath.clear();
     }
     qDebug() << "[AIClient] Local AI shut down";

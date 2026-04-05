@@ -31,6 +31,8 @@ import File.TypeDetector;
 import Artifact.Layers.Selection.Manager;
 import Artifact.Application.Manager;
 import Artifact.Render.Queue.Service;
+import Event.Bus;
+import Artifact.Event.Types;
 //import Artifact.Render.FrameCache;
 
 namespace Artifact
@@ -143,7 +145,13 @@ void ArtifactProjectService::Impl::installSelectionBridge(ArtifactProjectService
                         return;
                       }
                       lastForwardedLayerId_ = nextId;
-                      owner->layerSelected(nextId);
+                      // Qt signal は廃止 — EventBus で Inspector に通知する
+                      ArtifactCore::globalEventBus().publish<LayerSelectionChangedEvent>(
+                          LayerSelectionChangedEvent{
+                              owner->currentComposition().lock()
+                                  ? owner->currentComposition().lock()->id().toString()
+                                  : QString(),
+                              nextId.toString()});
                     });
   }
  }
@@ -209,8 +217,9 @@ void ArtifactProjectService::Impl::addLayerToCurrentComposition(const ArtifactLa
      }
     }
     }
-
-    notifyProjectMutation(manager);
+    // notifyProjectMutation は呼ばない。
+    // LayerChangedEvent{Created} が projectManager::layerCreated 経由で既に発火済みのため、
+    // ProjectChangedEvent を追加発火すると全ウィジェットが二重リビルドされる。
    }
 
    if (auto* service = ArtifactProjectService::instance()) {
@@ -501,16 +510,32 @@ ArtifactProjectService::ArtifactProjectService(QObject*parent):QObject(parent),i
 {
   connect(&impl_->projectManager(),&ArtifactProjectManager::projectCreated,this,[this]() {
    impl_->currentCompositionId_ = {};
+   ArtifactCore::globalEventBus().publish<ProjectChangedEvent>(
+       ProjectChangedEvent{QString(), QString()});
+   const QString pname = hasProject() ? impl_->projectName().toQString() : QString();
+   ArtifactCore::globalEventBus().publish<ProjectCreatedEvent>(
+       ProjectCreatedEvent{QString(), pname});
    projectCreated();
   });
  connect(&impl_->projectManager(), &ArtifactProjectManager::compositionCreated, this, [this](const CompositionID& id) {
    if (impl_->currentCompositionId_.isNil()) {
     changeCurrentComposition(id);
    }
+   ArtifactCore::globalEventBus().publish<CompositionCreatedEvent>(
+       CompositionCreatedEvent{id.toString(), QString()});
    compositionCreated(id);
   });
-  connect(&impl_->projectManager(), &ArtifactProjectManager::layerCreated, this, &ArtifactProjectService::layerCreated);
-  connect(&impl_->projectManager(), &ArtifactProjectManager::projectChanged, this, &ArtifactProjectService::projectChanged);
+  connect(&impl_->projectManager(), &ArtifactProjectManager::layerCreated, this, [this](const CompositionID& compId, const LayerID& layerId) {
+    ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
+        LayerChangedEvent{compId.toString(), layerId.toString(), LayerChangedEvent::ChangeType::Created});
+    layerCreated(compId, layerId);
+  });
+  connect(&impl_->projectManager(), &ArtifactProjectManager::projectChanged, this, [this]() {
+    const QString pname = hasProject() ? impl_->projectName().toQString() : QString();
+    ArtifactCore::globalEventBus().publish<ProjectChangedEvent>(
+        ProjectChangedEvent{QString(), pname});
+    projectChanged();
+  });
   impl_->installSelectionBridge(this);
    
    
@@ -546,7 +571,12 @@ void ArtifactProjectService::selectLayer(const LayerID& id)
      const auto current = selectionManager->currentLayer();
      if (current && current->id() == id) {
       selectionManager->setActiveComposition(currentComposition().lock());
-      layerSelected(id);
+      // 同レイヤー再選択でも Inspector を確実に更新する
+      // Qt signal layerSelected() は廃止 — EventBus に一本化
+      ArtifactCore::globalEventBus().publish<LayerSelectionChangedEvent>(
+          LayerSelectionChangedEvent{
+              currentComposition().lock() ? currentComposition().lock()->id().toString() : QString(),
+              id.toString()});
       return;
      }
      impl_->forwardingSelectionChange_ = true;
@@ -561,6 +591,10 @@ void ArtifactProjectService::selectLayer(const LayerID& id)
      impl_->forwardingSelectionChange_ = false;
    }
   }
+  ArtifactCore::globalEventBus().publish<LayerSelectionChangedEvent>(
+      LayerSelectionChangedEvent{
+          currentComposition().lock() ? currentComposition().lock()->id().toString() : QString(),
+          id.toString()});
   layerSelected(id);
 }
 
@@ -583,6 +617,8 @@ bool ArtifactProjectService::removeLayerFromComposition(const CompositionID& com
     if (ok) {
         // [Optimization] Only emit layerRemoved. notifyProjectMutation triggers global projectChanged 
         // which causes heavy UI rebuilds. Most widgets handle layerRemoved specifically.
+        ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
+            LayerChangedEvent{compositionId.toString(), layerId.toString(), LayerChangedEvent::ChangeType::Removed});
         layerRemoved(compositionId, layerId);
     }
     return ok;
@@ -1129,8 +1165,10 @@ QString ArtifactProjectService::projectItemRemovalConfirmationMessage(ProjectIte
    auto projectShared = pm.getCurrentProjectSharedPtr();
    if (!projectShared) return false;
    bool ok = projectShared->removeCompositionById(id);
-   if (ok) {
+ if (ok) {
     compositionRemoved(id);
+    ArtifactCore::globalEventBus().publish<CompositionRemovedEvent>(
+        CompositionRemovedEvent{id.toString()});
     projectShared->projectChanged();
    }
    return ok;
@@ -1247,6 +1285,8 @@ ChangeCompositionResult ArtifactProjectService::changeCurrentComposition(const C
 {
   auto result = impl_->changeCurrentComposition(id);
   if (result.success) {
+   ArtifactCore::globalEventBus().publish<CurrentCompositionChangedEvent>(
+       CurrentCompositionChangedEvent{id.toString()});
    currentCompositionChanged(id);
   }
   return result;
@@ -1296,6 +1336,8 @@ void ArtifactProjectService::createProject(const ArtifactProjectSettings& settin
 {
  auto& manager = impl_->projectManager();
  manager.createProject(setting.projectName());
+ ArtifactCore::globalEventBus().publish<ProjectChangedEvent>(
+     ProjectChangedEvent{QString(), setting.projectName()});
 }
 
 void ArtifactProjectService::removeAllAssets()
@@ -1310,6 +1352,8 @@ void ArtifactProjectService::removeAllAssets()
 void ArtifactProjectService::setPreviewQualityPreset(PreviewQualityPreset preset)
 {
  impl_->setPreviewQualityPreset(preset);
+ ArtifactCore::globalEventBus().publish<PreviewQualityPresetChangedEvent>(
+     PreviewQualityPresetChangedEvent{static_cast<int>(preset)});
  previewQualityPresetChanged(preset);
 }
 

@@ -90,7 +90,14 @@ UniString ArtifactLayerInitParams::name() const
  {
 
  return impl_->layerName();
+}
+
+void ArtifactLayerInitParams::setName(const UniString& name)
+{
+ if (impl_) {
+  *impl_ = Impl(impl_->layerType(), name);
  }
+}
 
 LayerType ArtifactLayerInitParams::layerType() const
 {
@@ -232,7 +239,7 @@ LayerType ArtifactLayerInitParams::layerType() const
  {
  }
 
- ArtifactCameraLayerInitParams::ArtifactCameraLayerInitParams() :ArtifactLayerInitParams(UniString("name"), LayerType::Camera)
+ ArtifactCameraLayerInitParams::ArtifactCameraLayerInitParams() :ArtifactLayerInitParams(UniString("Camera 1"), LayerType::Camera)
  {
 
  }

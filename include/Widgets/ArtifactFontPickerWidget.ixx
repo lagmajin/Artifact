@@ -10,6 +10,7 @@ export module Artifact.Widgets.FontPicker;
 
 import Font.FreeFont;
 import Font.Descriptor;
+import Event.Bus;
 
 namespace Artifact {
 
@@ -30,6 +31,7 @@ private:
     void updateFontList();
 
     QComboBox* fontCombo_ = nullptr;
+    ArtifactCore::EventBus::Subscription fontChangeSubscription_;
 };
 
 } // namespace Artifact

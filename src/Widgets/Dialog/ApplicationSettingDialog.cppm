@@ -29,6 +29,7 @@
 #include <QDesktopServices>
 #include <QStandardPaths>
 #include <QUrl>
+#include <QShowEvent>
 #ifdef Q_OS_WIN
 #include <windows.h>
 #include <psapi.h>
@@ -109,12 +110,17 @@ namespace ArtifactCore {
   // autoSaveEnabled の項目が AppSettings にまだないので、将来的に追加が必要
  }
 
- void GeneralSettingPage::saveSettings()
- {
+void GeneralSettingPage::saveSettings()
+{
   auto* settings = ArtifactAppSettings::instance();
   settings->setAutoSaveIntervalMinutes(impl_->autoSaveIntervalSpinBox_->value());
   settings->setLoadLastProjectOnStartup(impl_->showStartupDialogCheckBox_->isChecked());
- }
+}
+
+QList<SettingItemInfo> GeneralSettingPage::searchableItems() const
+{
+  return {};
+}
 
  GeneralSettingPage::~GeneralSettingPage()
  {
@@ -659,6 +665,11 @@ void MemoryAndCpuSettingPage::saveSettings() {
     settings->setRenderThreadCount(impl_->workerThreadsSpinBox_->value());
 }
 
+QList<SettingItemInfo> MemoryAndCpuSettingPage::searchableItems() const
+{
+    return {};
+}
+
 MemoryAndCpuSettingPage::~MemoryAndCpuSettingPage()
 {
     if (impl_) {
@@ -671,10 +682,22 @@ MemoryAndCpuSettingPage::~MemoryAndCpuSettingPage()
 // Add loadSettings/saveSettings stubs for other pages if not yet implemented
 void ImportSettingPage::loadSettings() {}
 void ImportSettingPage::saveSettings() {}
+QList<SettingItemInfo> ImportSettingPage::searchableItems() const
+{
+  return {};
+}
 void PreviewSettingPage::loadSettings() {}
 void PreviewSettingPage::saveSettings() {}
+QList<SettingItemInfo> PreviewSettingPage::searchableItems() const
+{
+  return {};
+}
 void ShortcutSettingPage::loadSettings() {}
 void ShortcutSettingPage::saveSettings() {}
+QList<SettingItemInfo> ShortcutSettingPage::searchableItems() const
+{
+  return {};
+}
 
  class ApplicationSettingDialog::Impl
  {
@@ -928,7 +951,53 @@ void ShortcutSettingPage::saveSettings() {}
   });
  }
 
- PluginSettingPage::~PluginSettingPage() { delete impl_; }
- QVector<QWidget*> PluginSettingPage::settingWidgets() const { return QVector<QWidget*>(); }
-  
+PluginSettingPage::~PluginSettingPage() { delete impl_; }
+QVector<QWidget*> PluginSettingPage::settingWidgets() const { return QVector<QWidget*>(); }
+void PluginSettingPage::loadSettings() { if (impl_) impl_->loadPlugins(this); }
+void PluginSettingPage::saveSettings() {}
+QList<SettingItemInfo> PluginSettingPage::searchableItems() const { return {}; }
+
+// AISettingPage Implementation
+class AISettingPage::Impl {
+public:
+  Impl() = default;
+  ~Impl() = default;
+  QLabel* label_ = nullptr;
+};
+
+W_OBJECT_IMPL(AISettingPage)
+
+AISettingPage::AISettingPage(QWidget* parent)
+  : QWidget(parent), impl_(new Impl())
+{
+  auto* layout = new QVBoxLayout(this);
+  impl_->label_ = new QLabel(QStringLiteral("AI settings are managed in the AI panel."), this);
+  impl_->label_->setWordWrap(true);
+  layout->addWidget(impl_->label_);
+  layout->addStretch();
+}
+
+AISettingPage::~AISettingPage()
+{
+  delete impl_;
+}
+
+QVector<QWidget*> AISettingPage::settingWidgets() const
+{
+  return {};
+}
+
+void AISettingPage::loadSettings() {}
+void AISettingPage::saveSettings() {}
+QList<SettingItemInfo> AISettingPage::searchableItems() const
+{
+  return {};
+}
+
+void ApplicationSettingDialog::showEvent(QShowEvent* event)
+{
+  QDialog::showEvent(event);
+  loadSettings();
+}
+ 
 }; 

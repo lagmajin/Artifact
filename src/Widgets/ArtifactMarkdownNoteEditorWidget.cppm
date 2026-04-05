@@ -8,6 +8,7 @@
 #include <QPalette>
 #include <QColor>
 #include <QString>
+#include <vector>
 #include <compare>
 
 module Artifact.Widgets.MarkdownNoteEditorWidget;
@@ -17,6 +18,8 @@ import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
 import Artifact.Layers.Selection.Manager;
 import Artifact.Service.Project;
+import Event.Bus;
+import Artifact.Event.Types;
 import Widgets.Utils.CSS;
 import Utils.Id;
 
@@ -46,8 +49,8 @@ public:
   QLabel* subtitleLabel_ = nullptr;
   QPlainTextEdit* editor_ = nullptr;
   QMetaObject::Connection noteConnection_;
-  QMetaObject::Connection serviceConnection_;
-  QMetaObject::Connection selectionConnection_;
+  ArtifactCore::EventBus eventBus_ = ArtifactCore::globalEventBus();
+  std::vector<ArtifactCore::EventBus::Subscription> eventBusSubscriptions_;
   bool updating_ = false;
   CompositionID currentCompositionId_;
   LayerID currentLayerId_;
@@ -111,33 +114,26 @@ public:
       commitText();
     });
 
-    auto* service = ArtifactProjectService::instance();
-    if (service) {
-      serviceConnection_ = QObject::connect(service, &ArtifactProjectService::projectChanged, owner_, [this]() {
-        refreshBinding();
-      });
-      QObject::connect(service, &ArtifactProjectService::currentCompositionChanged, owner_, [this](const CompositionID&) {
-        refreshBinding();
-      });
-      QObject::connect(service, &ArtifactProjectService::layerSelected, owner_, [this](const LayerID&) {
-        refreshBinding();
-      });
-      QObject::connect(service, &ArtifactProjectService::layerRemoved, owner_, [this](const CompositionID&, const LayerID& removedId) {
-        if (target_ == MarkdownNoteTarget::Layer && currentLayerId_ == removedId) {
+    eventBusSubscriptions_.push_back(eventBus_.subscribe<ProjectChangedEvent>(
+        [this](const ProjectChangedEvent&) {
           refreshBinding();
-        }
-      });
-    }
-
-    if (auto* app = ArtifactApplicationManager::instance()) {
-      if (auto* selection = app->layerSelectionManager()) {
-        selectionConnection_ = QObject::connect(selection, &ArtifactLayerSelectionManager::selectionChanged, owner_, [this]() {
+        }));
+    eventBusSubscriptions_.push_back(eventBus_.subscribe<CurrentCompositionChangedEvent>(
+        [this](const CurrentCompositionChangedEvent&) {
+          refreshBinding();
+        }));
+    eventBusSubscriptions_.push_back(eventBus_.subscribe<LayerSelectionChangedEvent>(
+        [this](const LayerSelectionChangedEvent&) {
           if (target_ == MarkdownNoteTarget::Layer) {
             refreshBinding();
           }
-        });
-      }
-    }
+        }));
+    eventBusSubscriptions_.push_back(eventBus_.subscribe<LayerChangedEvent>(
+        [this](const LayerChangedEvent& event) {
+          if (target_ == MarkdownNoteTarget::Layer && currentLayerId_.toString() == event.layerId) {
+            refreshBinding();
+          }
+        }));
 
     refreshBinding();
   }

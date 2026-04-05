@@ -40,6 +40,7 @@ import Utils.Path;
 import Color.Float;
 import Font.FreeFont;
 import Artifact.Widgets.FontPicker;
+import Artifact.Event.Types;
 import Artifact.Widgets.ExpressionCopilotWidget;
 import Artifact.Service.Playback;
 import Artifact.Service.Project;
@@ -1051,11 +1052,17 @@ ArtifactFontFamilyPropertyEditor::ArtifactFontFamilyPropertyEditor(
   layout->addWidget(fontPicker_);
 
   setValueFromVariant(property.getValue());
-  QObject::connect(
+  if (false) {
+    QObject::connect(
       fontPicker_, &FontPickerWidget::fontChanged, this,
       [this](const QString &family) {
         commitValue(ArtifactCore::FontManager::resolvedFamily(family));
       });
+  }
+
+  fontChangeSubscription_ = ArtifactCore::globalEventBus().subscribe<FontChangedEvent>([this](const FontChangedEvent& ev){
+    commitValue(ArtifactCore::FontManager::resolvedFamily(ev.fontName));
+  });
 }
 
 QVariant ArtifactFontFamilyPropertyEditor::value() const {

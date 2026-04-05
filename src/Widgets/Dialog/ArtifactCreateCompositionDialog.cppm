@@ -21,6 +21,7 @@
 #include <QScreen>
 #include <QTimer>
 #include <QDebug>
+#include <QSet>
 #include <algorithm>
 #include <cmath>
 
@@ -31,6 +32,8 @@ import Widgets.EditableLabel;
 import DragSpinBox;
 import Color.Float;
 import Artifact.Project.Manager;
+import Artifact.Project.Items;
+import Artifact.Service.Project;
 import Utils.String.UniString;
 import FloatColorPickerDialog;
 
@@ -38,6 +41,82 @@ namespace Artifact {
 
  using namespace ArtifactCore;
  using namespace ArtifactWidgets;
+
+namespace {
+
+void collectCompositionNames(ProjectItem* item, QSet<QString>& names)
+{
+ if (!item) {
+  return;
+ }
+ if (item->type() == eProjectItemType::Composition) {
+  const QString name = item->name.toQString().trimmed();
+  if (!name.isEmpty()) {
+   names.insert(name);
+  }
+ }
+ for (auto* child : item->children) {
+  collectCompositionNames(child, names);
+ }
+}
+
+QSet<QString> occupiedCompositionNames()
+{
+ QSet<QString> names;
+ if (auto* service = ArtifactProjectService::instance()) {
+  for (auto* root : service->projectItems()) {
+   collectCompositionNames(root, names);
+  }
+ }
+ return names;
+}
+
+QString makeUniqueSequentialName(QString baseName, const QSet<QString>& occupied)
+{
+ baseName = baseName.trimmed();
+ if (baseName.isEmpty()) {
+  baseName = QStringLiteral("Comp1");
+ }
+ if (!occupied.contains(baseName)) {
+  return baseName;
+ }
+
+ QString prefix = baseName;
+ int startNumber = 2;
+ int end = baseName.size();
+ while (end > 0 && baseName.at(end - 1).isDigit()) {
+  --end;
+ }
+ if (end < baseName.size()) {
+  int start = end;
+  while (start > 0 && baseName.at(start - 1).isSpace()) {
+   --start;
+  }
+  bool ok = false;
+  const int current = baseName.mid(end).toInt(&ok);
+  if (ok) {
+   prefix = baseName.left(start);
+   startNumber = current + 1;
+  }
+ }
+ if (prefix == baseName && !prefix.endsWith(QLatin1Char(' '))) {
+  prefix += QLatin1Char(' ');
+ }
+ for (int index = startNumber; index < 10000; ++index) {
+  const QString candidate = prefix + QString::number(index);
+  if (!occupied.contains(candidate)) {
+   return candidate;
+  }
+ }
+ return baseName;
+}
+
+QString uniqueCompositionName(const QString& baseName)
+{
+ return makeUniqueSequentialName(baseName, occupiedCompositionNames());
+}
+
+} // namespace
 	
  class CompositionSettingPage::Impl
  {
@@ -280,8 +359,11 @@ namespace Artifact {
  {
   if (okCalled_) return;
   okCalled_ = true;
-  if (compositionNameEdit_) compositionNameEdit_->finishEdit();
-  QString name = compositionNameEdit_ ? compositionNameEdit_->text() : "Comp1";
+ if (compositionNameEdit_) compositionNameEdit_->finishEdit();
+  QString name = compositionNameEdit_ ? compositionNameEdit_->text().trimmed() : QString();
+  if (name.isEmpty()) {
+    name = uniqueCompositionName(QStringLiteral("Comp1"));
+  }
   if (compositionSettingPage_) {
     acceptedParams_ = compositionSettingPage_->getInitParams(name);
     accepted_ = true;
@@ -322,7 +404,7 @@ namespace Artifact {
   auto nameLbl = new QLabel("Name:");
   nameLbl->setFixedWidth(60);
   impl_->compositionNameEdit_ = new EditableLabel();
-  impl_->compositionNameEdit_->setText("Comp1");
+  impl_->compositionNameEdit_->setText(uniqueCompositionName(QStringLiteral("Comp1")));
   nameRow->addWidget(nameLbl);
   nameRow->addWidget(impl_->compositionNameEdit_);
   content->addLayout(nameRow);

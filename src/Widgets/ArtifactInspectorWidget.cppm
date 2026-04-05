@@ -779,8 +779,13 @@ void ArtifactInspectorWidget::Impl::updateLayerNote()
 
   // コンポジションを取得
   if (currentCompositionId_.isNil()) {
-   setNoLayerState();
-   return;
+   // イベントで compositionId が届かなかった場合のフォールバック
+   if (auto comp = projectService->currentComposition().lock()) {
+     currentCompositionId_ = comp->id();
+   } else {
+     setNoLayerState();
+     return;
+   }
   }
 
   auto findResult = projectService->findComposition(currentCompositionId_);
@@ -1443,76 +1448,7 @@ void ArtifactInspectorWidget::Impl::handleRemoveEffectClicked(int rackIndex)
   // 初期状態: プロジェクトなし -> 無効化
   impl_->setNoProjectState();
 
-  auto projectService = ArtifactProjectService::instance();
-  if (projectService) {
-   // プロジェクト作成/クローズシグナルに接続
-   QObject::connect(projectService, &ArtifactProjectService::projectChanged, this, [this]() {
-    if (!impl_) {
-      return;
-    }
-    impl_->eventBus_.post<ProjectChangedEvent>(ProjectChangedEvent{QString(), QString()});
-    impl_->eventBus_.drain();
-   });
-
-   QObject::connect(projectService, &ArtifactProjectService::projectCreated, this, [this]() {
-    if (!impl_) {
-      return;
-    }
-    impl_->eventBus_.post<ProjectChangedEvent>(ProjectChangedEvent{QString(), QString()});
-    impl_->eventBus_.drain();
-   });
-
-   // TODO: projectClosed シグナルがあれば接続
-   // QObject::connect(projectService, &ArtifactProjectService::projectClosed, this, [this]() {
-   //  impl_->handleProjectClosed();
-   // });
-
-   // コンポジション作成シグナルに接続
-   QObject::connect(projectService, &ArtifactProjectService::compositionCreated, this, [this](const CompositionID& id) {
-    if (!impl_) {
-      return;
-    }
-    impl_->eventBus_.post<CurrentCompositionChangedEvent>(CurrentCompositionChangedEvent{
-      id.toString()
-    });
-    impl_->eventBus_.drain();
-   });
-
-   QObject::connect(projectService, &ArtifactProjectService::currentCompositionChanged, this, [this](const CompositionID& id) {
-    if (!impl_) {
-      return;
-    }
-    impl_->eventBus_.post<CurrentCompositionChangedEvent>(CurrentCompositionChangedEvent{
-      id.toString()
-    });
-    impl_->eventBus_.drain();
-   });
-
-   // レイヤー作成シグナルに接続（作成されたレイヤーを自動選択）
-   QObject::connect(projectService, &ArtifactProjectService::layerCreated, this, [this](const CompositionID& cid, const LayerID& id) {
-    if (!impl_) {
-      return;
-    }
-    impl_->eventBus_.post<LayerSelectionChangedEvent>(LayerSelectionChangedEvent{
-      cid.toString(),
-      id.toString()
-    });
-    impl_->eventBus_.drain();
-   });
-
-   // レイヤー選択シグナルに接続
-   QObject::connect(projectService, &ArtifactProjectService::layerSelected, this, [this](const LayerID& id) {
-    if (!impl_) {
-      return;
-    }
-    impl_->eventBus_.post<LayerSelectionChangedEvent>(LayerSelectionChangedEvent{
-      impl_->currentCompositionId_.toString(),
-      id.toString()
-    });
-    impl_->eventBus_.drain();
-   });
-
-   impl_->eventBusSubscriptions_.push_back(
+  impl_->eventBusSubscriptions_.push_back(
    impl_->eventBus_.subscribe<ProjectChangedEvent>([this](const ProjectChangedEvent&) {
      if (!impl_) {
        return;
@@ -1534,10 +1470,37 @@ void ArtifactInspectorWidget::Impl::handleRemoveEffectClicked(int rackIndex)
      }
      const CompositionID cid(event.compositionId);
      const LayerID lid(event.layerId);
-     impl_->currentCompositionId_ = cid;
+     // compositionId が nil の場合は既存の currentCompositionId_ を上書きしない。
+     // nil を代入すると updateLayerInfo の nil チェックで即 return してしまう。
+     if (!cid.isNil()) {
+       impl_->currentCompositionId_ = cid;
+     } else if (impl_->currentCompositionId_.isNil()) {
+       // フォールバック: サービスから直接取得
+       if (auto* svc = ArtifactProjectService::instance()) {
+         if (auto comp = svc->currentComposition().lock()) {
+           impl_->currentCompositionId_ = comp->id();
+         }
+       }
+     }
      impl_->handleLayerSelected(lid);
    }));
-  }
+   impl_->eventBusSubscriptions_.push_back(
+   impl_->eventBus_.subscribe<LayerChangedEvent>([this](const LayerChangedEvent& event) {
+     if (!impl_ || event.changeType != LayerChangedEvent::ChangeType::Created) {
+       return;
+     }
+     const CompositionID cid(event.compositionId);
+     const LayerID lid(event.layerId);
+     if (cid.isNil() || lid.isNil()) return;
+     // 追加先コンポジションが現在表示中のコンポジションと一致する場合、追加レイヤーを自動選択
+     const bool cidMatches = impl_->currentCompositionId_.isNil() || cid == impl_->currentCompositionId_;
+     if (cidMatches) {
+       if (impl_->currentCompositionId_.isNil()) {
+         impl_->currentCompositionId_ = cid;
+       }
+       impl_->handleLayerSelected(lid);
+     }
+   }));
   impl_->refreshRackButtons();
  }
 
