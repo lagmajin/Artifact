@@ -63,6 +63,7 @@ export namespace Artifact {
   virtual ~ArtifactLayerInitParams();
   LayerType layerType() const;
   UniString name() const;
+  void setName(const UniString& name);
  };
 
 

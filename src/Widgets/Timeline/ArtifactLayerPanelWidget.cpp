@@ -49,6 +49,8 @@ import Artifact.Layer.Video;
 import Layer.Blend;
 import Artifact.Layer.InitParams;
 import File.TypeDetector;
+import Event.Bus;
+import Artifact.Event.Types;
 
 namespace Artifact
 {
@@ -180,6 +182,9 @@ namespace {
     if (!sourceWidget) return false;
 
     // ビューポート上のドラッグイベントをターゲットパネルに転送
+    // 転送先が accept した場合は元の event も acceptProposedAction() で受理する。
+    // Qt のドラッグシステムは元の event->isAccepted() を見てドロップ可否を判断するため、
+    // これを省略するとドラッグが即座に IgnoreAction で終了してしまう。
     switch (event->type()) {
      case QEvent::DragEnter: {
       auto* dragEvent = static_cast<QDragEnterEvent*>(event);
@@ -190,7 +195,10 @@ namespace {
           dragEvent->buttons(),
           dragEvent->modifiers());
       QCoreApplication::sendEvent(target_, &forwardedEvent);
-      return forwardedEvent.isAccepted();
+      if (forwardedEvent.isAccepted()) {
+        dragEvent->acceptProposedAction();
+      }
+      return true;
      }
      case QEvent::DragMove: {
       auto* dragEvent = static_cast<QDragMoveEvent*>(event);
@@ -201,7 +209,10 @@ namespace {
           dragEvent->buttons(),
           dragEvent->modifiers());
       QCoreApplication::sendEvent(target_, &forwardedEvent);
-      return forwardedEvent.isAccepted();
+      if (forwardedEvent.isAccepted()) {
+        dragEvent->acceptProposedAction();
+      }
+      return true;
      }
      case QEvent::DragLeave:
       QCoreApplication::sendEvent(target_, static_cast<QDragLeaveEvent*>(event));
@@ -215,7 +226,10 @@ namespace {
           dropEvent->buttons(),
           dropEvent->modifiers());
       QCoreApplication::sendEvent(target_, &forwardedEvent);
-      return forwardedEvent.isAccepted();
+      if (forwardedEvent.isAccepted()) {
+        dropEvent->acceptProposedAction();
+      }
+      return true;
      }
      default:
       return false;
@@ -473,9 +487,29 @@ int ArtifactLayerPanelHeaderWidget::totalHeaderHeight() const
  return minimumHeight() > 0 ? minimumHeight() : sizeHint().height();
 }
 
- // ============================================================================
- // ArtifactLayerPanelWidget Implementation
- // ============================================================================
+void ArtifactLayerPanelHeaderWidget::mousePressEvent(QMouseEvent* event)
+{
+ QWidget::mousePressEvent(event);
+}
+
+void ArtifactLayerPanelHeaderWidget::mouseMoveEvent(QMouseEvent* event)
+{
+ QWidget::mouseMoveEvent(event);
+}
+
+void ArtifactLayerPanelHeaderWidget::mouseReleaseEvent(QMouseEvent* event)
+{
+ QWidget::mouseReleaseEvent(event);
+}
+
+void ArtifactLayerPanelHeaderWidget::leaveEvent(QEvent* event)
+{
+ QWidget::leaveEvent(event);
+}
+
+// ============================================================================
+// ArtifactLayerPanelWidget Implementation
+// ============================================================================
 
  class ArtifactLayerPanelWidget::Impl
  {
@@ -536,6 +570,10 @@ int ArtifactLayerPanelHeaderWidget::totalHeaderHeight() const
   QIcon iconCreateSolid, iconCreateNull, iconCreateAdjust, iconCreateText;
   bool shyHidden = false;
   QString filterText;
+  SearchMatchMode searchMatchMode = SearchMatchMode::AllVisible;
+  TimelineLayerDisplayMode displayMode = TimelineLayerDisplayMode::AllLayers;
+  int rowHeight = kLayerRowHeight;
+  int propertyColumnWidth = kLayerColumnWidth * kLayerPropertyColumnCount;
   int hoveredLayerIndex = -1;
   LayerID selectedLayerId;
   QVector<VisibleRow> visibleRows;
@@ -554,6 +592,9 @@ int ArtifactLayerPanelHeaderWidget::totalHeaderHeight() const
   QTimer* layoutDebounceTimer = nullptr;
   QHash<QString, QMetaObject::Connection> layerChangedConnections;
   int lastContentHeight = -1;
+  // EventBus 購読リスト。Qt シグナル接続は廃止し全て EventBus 経由で受け取る。
+  ArtifactCore::EventBus eventBus_ = ArtifactCore::globalEventBus();
+  std::vector<ArtifactCore::EventBus::Subscription> eventBusSubscriptions_;
   
   void clearInlineEditors()
   {
@@ -801,52 +842,64 @@ int ArtifactLayerPanelHeaderWidget::totalHeaderHeight() const
     this->performUpdateLayout();
   });
 
-  if (auto* service = ArtifactProjectService::instance()) {
-    QObject::connect(service, &ArtifactProjectService::layerCreated, this, [this](const CompositionID& compId, const LayerID& layerId) {
-      if (impl_->compositionId == compId) {
-        this->updateLayout();
-        // Start follow-up UI work on the next event loop tick so layer creation
-        // itself stays responsive.
-       QTimer::singleShot(0, this, [this, layerId]() {
-          const auto widgets = QApplication::allWidgets();
-          for (QWidget* w : widgets) {
-           if (!w) continue;
-           const QString className = QString::fromLatin1(w->metaObject()->className());
-           if (className.contains("ArtifactInspectorWidget", Qt::CaseInsensitive)) {
-            w->show();
-            w->raise();
-            w->activateWindow();
-            break;
-           }
+  // Qt シグナルは使用しない。全てのサービスイベントは EventBus 経由で受け取る。
+  // ArtifactProjectService の Qt signal (layerCreated / layerRemoved / layerSelected /
+  // compositionCreated / projectChanged) への QObject::connect は廃止済み。
+  impl_->eventBusSubscriptions_.push_back(
+    impl_->eventBus_.subscribe<LayerChangedEvent>([this](const LayerChangedEvent& event) {
+      if (event.changeType == LayerChangedEvent::ChangeType::Created) {
+        if (impl_->compositionId.isNil() ||
+            event.compositionId == impl_->compositionId.toString()) {
+          updateLayout();
+          const LayerID layerId(event.layerId);
+          QMetaObject::invokeMethod(this, [this, layerId]() {
+            const auto widgets = QApplication::allWidgets();
+            for (QWidget* w : widgets) {
+              if (!w) continue;
+              const QString className =
+                  QString::fromLatin1(w->metaObject()->className());
+              if (className.contains("ArtifactInspectorWidget",
+                                     Qt::CaseInsensitive)) {
+                w->show();
+                w->raise();
+                w->activateWindow();
+                break;
+              }
+            }
+            if (impl_->layerNameEditable) {
+              editLayerName(layerId);
+            }
+            Q_EMIT visibleRowsChanged();
+          }, Qt::QueuedConnection);
+        }
+      } else if (event.changeType == LayerChangedEvent::ChangeType::Removed) {
+        if (event.compositionId == impl_->compositionId.toString()) {
+          updateLayout();
+        }
+      }
+    }));
+  impl_->eventBusSubscriptions_.push_back(
+    impl_->eventBus_.subscribe<LayerSelectionChangedEvent>(
+        [this](const LayerSelectionChangedEvent& event) {
+          const LayerID layerId(event.layerId);
+          if (impl_->selectedLayerId != layerId) {
+            impl_->selectedLayerId = layerId;
+            update();
           }
-
-          if (impl_->layerNameEditable) {
-            this->editLayerName(layerId);
+        }));
+  impl_->eventBusSubscriptions_.push_back(
+    impl_->eventBus_.subscribe<CompositionCreatedEvent>(
+        [this](const CompositionCreatedEvent& event) {
+          if (impl_->compositionId.isNil()) {
+            impl_->compositionId = CompositionID(event.compositionId);
           }
-          // Ensure layer is visible in the scroll area wrapper if possible
-          Q_EMIT visibleRowsChanged();
-        });
-      }
-    });
-    QObject::connect(service, &ArtifactProjectService::layerRemoved, this, [this](const CompositionID& compId, const LayerID&) {
-      if (impl_->compositionId == compId) this->updateLayout();
-    });
-    QObject::connect(service, &ArtifactProjectService::layerSelected, this, [this](const LayerID& layerId) {
-      if (impl_->selectedLayerId != layerId) {
-        impl_->selectedLayerId = layerId;
-        update();
-      }
-    });
-    QObject::connect(service, &ArtifactProjectService::compositionCreated, this, [this](const CompositionID& compId) {
-      if (impl_->compositionId.isNil()) {
-        impl_->compositionId = compId;
-      }
-      updateLayout();
-    });
-    QObject::connect(service, &ArtifactProjectService::projectChanged, this, [this]() {
-      updateLayout();
-    });
-  }
+          updateLayout();
+        }));
+  impl_->eventBusSubscriptions_.push_back(
+    impl_->eventBus_.subscribe<ProjectChangedEvent>(
+        [this](const ProjectChangedEvent&) {
+          updateLayout();
+        }));
  }
 
 ArtifactLayerPanelWidget::~ArtifactLayerPanelWidget()
@@ -876,6 +929,62 @@ void ArtifactLayerPanelWidget::setFilterText(const QString& text)
   }
   impl_->filterText = text;
   updateLayout();
+}
+
+void ArtifactLayerPanelWidget::setSearchMatchMode(SearchMatchMode mode)
+{
+  if (impl_->searchMatchMode == mode) {
+    return;
+  }
+  impl_->searchMatchMode = mode;
+  updateLayout();
+}
+
+SearchMatchMode ArtifactLayerPanelWidget::searchMatchMode() const
+{
+  return impl_->searchMatchMode;
+}
+
+void ArtifactLayerPanelWidget::setDisplayMode(TimelineLayerDisplayMode mode)
+{
+  if (impl_->displayMode == mode) {
+    return;
+  }
+  impl_->displayMode = mode;
+  updateLayout();
+}
+
+TimelineLayerDisplayMode ArtifactLayerPanelWidget::displayMode() const
+{
+  return impl_->displayMode;
+}
+
+void ArtifactLayerPanelWidget::setRowHeight(int rowHeight)
+{
+  if (rowHeight <= 0 || impl_->rowHeight == rowHeight) {
+    return;
+  }
+  impl_->rowHeight = rowHeight;
+  updateLayout();
+}
+
+int ArtifactLayerPanelWidget::rowHeight() const
+{
+  return impl_->rowHeight;
+}
+
+void ArtifactLayerPanelWidget::setPropertyColumnWidth(int width)
+{
+  if (width <= 0 || impl_->propertyColumnWidth == width) {
+    return;
+  }
+  impl_->propertyColumnWidth = width;
+  updateLayout();
+}
+
+int ArtifactLayerPanelWidget::propertyColumnWidth() const
+{
+  return impl_->propertyColumnWidth;
 }
 
 void ArtifactLayerPanelWidget::updateLayout()
@@ -938,8 +1047,8 @@ void ArtifactLayerPanelWidget::performUpdateLayout()
   impl_->updatingLayout = false;
  }
 
- QVector<LayerID> ArtifactLayerPanelWidget::visibleTimelineRows() const
- {
+QVector<LayerID> ArtifactLayerPanelWidget::visibleTimelineRows() const
+{
   QVector<LayerID> rows;
   rows.reserve(impl_->visibleRows.size());
   for (const auto& row : impl_->visibleRows) {
@@ -950,7 +1059,19 @@ void ArtifactLayerPanelWidget::performUpdateLayout()
    }
   }
   return rows;
- }
+}
+
+QVector<LayerID> ArtifactLayerPanelWidget::matchingTimelineRows() const
+{
+  QVector<LayerID> rows;
+  rows.reserve(impl_->visibleRows.size());
+  for (const auto& row : impl_->visibleRows) {
+    if (row.kind == Impl::RowKind::Layer && row.layer) {
+      rows.append(row.layer->id());
+    }
+  }
+  return rows;
+}
 
  int ArtifactLayerPanelWidget::layerRowIndex(const LayerID& id) const
  {
@@ -962,8 +1083,8 @@ void ArtifactLayerPanelWidget::performUpdateLayout()
   return -1;
  }
 
- void ArtifactLayerPanelWidget::editLayerName(const LayerID& id)
-  {
+void ArtifactLayerPanelWidget::editLayerName(const LayerID& id)
+ {
   if (!impl_->layerNameEditable) {
    return;
   }
@@ -1006,7 +1127,17 @@ void ArtifactLayerPanelWidget::performUpdateLayout()
     impl_->inlineNameEditor->setFocus();
    }
   }
- }
+}
+
+void ArtifactLayerPanelWidget::scrollToLayer(const LayerID& id)
+{
+  const int idx = layerRowIndex(id);
+  if (idx < 0) {
+    return;
+  }
+  impl_->selectedLayerId = id;
+  update();
+}
 
  void ArtifactLayerPanelWidget::setLayerNameEditable(bool enabled)
  {
@@ -1133,11 +1264,11 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
       QObject::connect(combo, QOverload<int>::of(&QComboBox::activated), this, [this, service, layer, combo](int i) {
         const auto mode = static_cast<LAYER_BLEND_TYPE>(combo->itemData(i).toInt());
         layer->setBlendMode(mode);
-        if (service) {
-          if (auto project = service->getCurrentProjectSharedPtr()) {
-            project->projectChanged();
-          }
-        }
+        // Qt signal / ProjectChangedEvent は使用しない。
+        // ブレンドモードはレンダリング属性のみの変更であり、
+        // layer->changed() でレンダラーに直接通知するだけで十分。
+        // project->projectChanged() を呼ぶと全ウィジェットがフルリビルドされるため不適切。
+        emit layer->changed();
         combo->deleteLater();
         update();
       });
@@ -1473,22 +1604,13 @@ void ArtifactLayerPanelWidget::mouseDoubleClickEvent(QMouseEvent* event)
  {
   if ((event->buttons() & Qt::LeftButton) && !impl_->dragCandidateLayerId.isNil()) {
     const int dragDistance = (event->pos() - impl_->dragStartPos).manhattanLength();
-    if (impl_->draggedLayerId.isNil() && !impl_->dragStarted_ && dragDistance >= QApplication::startDragDistance()) {
+    if (!impl_->dragStarted_ && dragDistance >= QApplication::startDragDistance()) {
       impl_->dragStarted_ = true;
       impl_->draggedLayerId = impl_->dragCandidateLayerId;
-      auto* mime = new QMimeData();
-      mime->setData(kLayerReorderMimeType, impl_->draggedLayerId.toString().toUtf8());
-      mime->setText(impl_->draggedLayerId.toString());
-      
-      QDrag drag(this);
-      drag.setMimeData(mime);
-      drag.setHotSpot(event->pos() - impl_->dragStartPos);
-      
-      // Note: exec() blocks until drop completes.
-      const Qt::DropAction dropResult = drag.exec(Qt::MoveAction);
-      
-      impl_->clearDragState();
-      unsetCursor();
+    }
+    if (impl_->dragStarted_) {
+      impl_->dragInsertVisibleRow = impl_->insertionVisibleRowForY(event->pos().y());
+      setCursor(Qt::DragMoveCursor);
       update();
       event->accept();
       return;
@@ -1523,12 +1645,69 @@ void ArtifactLayerPanelWidget::mouseDoubleClickEvent(QMouseEvent* event)
 
  void ArtifactLayerPanelWidget::mouseReleaseEvent(QMouseEvent* event)
  {
-  if (event->button() == Qt::LeftButton && !impl_->draggedLayerId.isNil()) {
-    impl_->clearDragState();
-    unsetCursor();
-    update();
-    event->accept();
-    return;
+  if (event->button() == Qt::LeftButton) {
+    if (impl_->dragStarted_ && !impl_->draggedLayerId.isNil()) {
+      auto* svc = ArtifactProjectService::instance();
+      auto comp = safeCompositionLookup(impl_->compositionId);
+      const LayerID dragLayerId = impl_->draggedLayerId;
+      if (svc && comp && !dragLayerId.isNil()) {
+        QVector<LayerID> visibleLayerIds;
+        visibleLayerIds.reserve(impl_->visibleRows.size());
+        for (const auto& row : impl_->visibleRows) {
+          if (row.kind == Impl::RowKind::Layer && row.layer) {
+            visibleLayerIds.push_back(row.layer->id());
+          }
+        }
+        const auto allLayers = comp->allLayer();
+        int oldIndex = -1;
+        for (int i = 0; i < allLayers.size(); ++i) {
+          if (allLayers[i] && allLayers[i]->id() == dragLayerId) {
+            oldIndex = i;
+            break;
+          }
+        }
+        if (oldIndex >= 0 && !visibleLayerIds.isEmpty()) {
+          QVector<LayerID> remainingVisibleLayerIds;
+          remainingVisibleLayerIds.reserve(visibleLayerIds.size());
+          for (const auto& layerId : visibleLayerIds) {
+            if (layerId != dragLayerId) {
+              remainingVisibleLayerIds.push_back(layerId);
+            }
+          }
+          const int targetVisibleIndex = std::clamp(
+            impl_->layerCountBeforeVisibleRowExcluding(impl_->dragInsertVisibleRow, dragLayerId),
+            0,
+            static_cast<int>(remainingVisibleLayerIds.size()));
+          int newIndex = oldIndex;
+          if (targetVisibleIndex >= static_cast<int>(remainingVisibleLayerIds.size())) {
+            newIndex = static_cast<int>(allLayers.size()) - 1;
+          } else {
+            const LayerID targetLayerId = remainingVisibleLayerIds[targetVisibleIndex];
+            int targetIndex = -1;
+            for (int i = 0; i < allLayers.size(); ++i) {
+              if (allLayers[i] && allLayers[i]->id() == targetLayerId) {
+                targetIndex = i;
+                break;
+              }
+            }
+            if (targetIndex >= 0) {
+              if (oldIndex < targetIndex) --targetIndex;
+              newIndex = targetIndex;
+            }
+          }
+          newIndex = std::clamp(newIndex, 0, std::max(0, static_cast<int>(allLayers.size()) - 1));
+          if (newIndex != oldIndex) {
+            svc->moveLayerInCurrentComposition(dragLayerId, newIndex);
+            updateLayout();
+          }
+        }
+      }
+      impl_->clearDragState();
+      unsetCursor();
+      update();
+      event->accept();
+      return;
+    }
   }
 
   impl_->clearDragState();
@@ -2239,6 +2418,54 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
    }
   }
 
+  void ArtifactLayerTimelinePanelWrapper::setSearchMatchMode(SearchMatchMode mode)
+  {
+   if (impl_ && impl_->panel) {
+    impl_->panel->setSearchMatchMode(mode);
+   }
+  }
+
+  SearchMatchMode ArtifactLayerTimelinePanelWrapper::searchMatchMode() const
+  {
+   return impl_ && impl_->panel ? impl_->panel->searchMatchMode() : SearchMatchMode::AllVisible;
+  }
+
+  void ArtifactLayerTimelinePanelWrapper::setDisplayMode(TimelineLayerDisplayMode mode)
+  {
+   if (impl_ && impl_->panel) {
+    impl_->panel->setDisplayMode(mode);
+   }
+  }
+
+  TimelineLayerDisplayMode ArtifactLayerTimelinePanelWrapper::displayMode() const
+  {
+   return impl_ && impl_->panel ? impl_->panel->displayMode() : TimelineLayerDisplayMode::AllLayers;
+  }
+
+  void ArtifactLayerTimelinePanelWrapper::setRowHeight(int rowHeight)
+  {
+   if (impl_ && impl_->panel) {
+    impl_->panel->setRowHeight(rowHeight);
+   }
+  }
+
+  int ArtifactLayerTimelinePanelWrapper::rowHeight() const
+  {
+   return impl_ && impl_->panel ? impl_->panel->rowHeight() : 0;
+  }
+
+  void ArtifactLayerTimelinePanelWrapper::setPropertyColumnWidth(int width)
+  {
+   if (impl_ && impl_->panel) {
+    impl_->panel->setPropertyColumnWidth(width);
+   }
+  }
+
+  int ArtifactLayerTimelinePanelWrapper::propertyColumnWidth() const
+  {
+   return impl_ && impl_->panel ? impl_->panel->propertyColumnWidth() : 0;
+  }
+
   void ArtifactLayerTimelinePanelWrapper::setLayerNameEditable(bool enabled)
   {
     if (impl_ && impl_->panel) {
@@ -2262,6 +2489,21 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
    return {};
   }
   return impl_->panel->visibleTimelineRows();
+ }
+
+ QVector<LayerID> ArtifactLayerTimelinePanelWrapper::matchingTimelineRows() const
+ {
+  if (!impl_ || !impl_->panel) {
+   return {};
+  }
+  return impl_->panel->matchingTimelineRows();
+ }
+
+ void ArtifactLayerTimelinePanelWrapper::scrollToLayer(const LayerID& id)
+ {
+  if (impl_ && impl_->panel) {
+   impl_->panel->scrollToLayer(id);
+  }
  }
 
 } // namespace Artifact

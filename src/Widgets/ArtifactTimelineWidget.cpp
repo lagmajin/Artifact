@@ -33,7 +33,6 @@ import Widgets.Utils.CSS;
 import Artifact.Layers.Hierarchy.Model;
 import Artifact.Widget.WorkAreaControlWidget;
 
-import ArtifactTimelineIconModel;
 import Artifact.Widgets.LayerPanelWidget;
 import Artifact.Timeline.ScrubBar;
 import Artifact.Widgets.Timeline.Label;
@@ -46,6 +45,8 @@ import Artifact.Timeline.Objects;
 import Artifact.Widgets.Timeline.GlobalSwitches;
 import Artifact.Service.Project;
 import Artifact.Service.Playback;
+import Event.Bus;
+import Artifact.Event.Types;
 import Artifact.Application.Manager;
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
@@ -227,7 +228,9 @@ bool applyTimelineLayerRangeEdit(const CompositionID &compositionId,
     layer->setStartTime(FramePosition(oldStartTime + inPointDelta));
   }
   
-  svc->projectChanged();
+  // layer::changed() でレンダラーとタイムライン Track ビューに通知する。
+  // Qt signal projectChanged() は廃止済み。直接 layer->changed() を発火する。
+  emit layer->changed();
   return true;
 }
 
@@ -1076,6 +1079,12 @@ public:
   bool syncingLayerSelection_ = false;
   double currentFrame_ = 0.0;
   QMetaObject::Connection compositionChangedConnection_;
+  ArtifactCore::EventBus eventBus_ = ArtifactCore::globalEventBus();
+  std::vector<ArtifactCore::EventBus::Subscription> eventBusSubscriptions_;
+  // refreshTracks() の重複キューイング防止フラグ。
+  // ProjectChangedEvent と LayerChangedEvent が同一フレームで両方発火した場合に
+  // refreshTracks() が 2 回実行されるのを防ぐ。
+  bool pendingRefresh_ = false;
 };
 
 ArtifactTimelineWidget::Impl::Impl() {}
@@ -1290,8 +1299,15 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   searchBarLayout->setStretch(10, 0);
   searchBarLayout->setStretch(11, 1);
 
-  QObject::connect(globalSwitches, &ArtifactTimelineGlobalSwitches::shyChanged,
+  // legacy direct signal connection disabled — prefer EventBus
+  if (false) QObject::connect(globalSwitches, &ArtifactTimelineGlobalSwitches::shyChanged,
                    this, &ArtifactTimelineWidget::onShyChanged);
+
+  // Subscribe to global timeline switches via EventBus
+  impl_->eventBusSubscriptions_.push_back(
+      impl_->eventBus_.subscribe<TimelineShyChangedEvent>([this](const TimelineShyChangedEvent& e) {
+        QMetaObject::invokeMethod(this, [this, e]() { onShyChanged(e.shy); }, Qt::QueuedConnection);
+      }));
     QObject::connect(layerTreeView,
                    &ArtifactLayerTimelinePanelWrapper::visibleRowsChanged, this,
                    [this]() {
@@ -1638,31 +1654,29 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
                      updateSelectionState();
                      updateKeyframeState();
                    });
-  if (auto *playbackService = ArtifactPlaybackService::instance()) {
-  QObject::connect(
-      playbackService, &ArtifactPlaybackService::frameChanged, this,
-        [this, scrubBar,
-         playbackService](const FramePosition &frame) {
-          const auto currentComp = playbackService->currentComposition();
-          if (!currentComp || currentComp->id() != impl_->compositionId_) {
-            return;
-          }
+  impl_->eventBusSubscriptions_.push_back(
+      impl_->eventBus_.subscribe<FrameChangedEvent>(
+          [this, scrubBar](const FrameChangedEvent &event) {
+            if (impl_->compositionId_.isNil() ||
+                event.compositionId != impl_->compositionId_.toString()) {
+              return;
+            }
 
-          if (impl_->painterTrackView_) {
-            impl_->painterTrackView_->setCurrentFrame(
-                static_cast<double>(frame.framePosition()));
-            impl_->painterTrackView_->update();
-          }
-          impl_->currentFrame_ = static_cast<double>(frame.framePosition());
-          const QSignalBlocker blocker(scrubBar);
-          scrubBar->setCurrentFrame(frame);
-          updateSelectionState();
-          // 再生中は毎フレーム全レイヤーをスキャンするコストを避けるため15フレームに1回
-          if (frame.framePosition() % 15 == 0) {
-            updateKeyframeState();
-          }
-        });
-  }
+            const FramePosition frame(event.frame);
+            if (impl_->painterTrackView_) {
+              impl_->painterTrackView_->setCurrentFrame(
+                  static_cast<double>(frame.framePosition()));
+              impl_->painterTrackView_->update();
+            }
+            impl_->currentFrame_ = static_cast<double>(frame.framePosition());
+            const QSignalBlocker blocker(scrubBar);
+            scrubBar->setCurrentFrame(frame);
+            updateSelectionState();
+            // 再生中は毎フレーム全レイヤーをスキャンするコストを避けるため15フレームに1回
+            if (frame.framePosition() % 15 == 0) {
+              updateKeyframeState();
+            }
+          }));
   QTimer::singleShot(0, this, [updateZoom]() { updateZoom(); });
 
   // Ŝ̃^CCXvb^[
@@ -1701,57 +1715,95 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
     Q_UNUSED(leftScroll);
   }
 
-  // Connect Layer Signals
-  if (auto *svc = ArtifactProjectService::instance()) {
-    QObject::connect(svc, &ArtifactProjectService::layerCreated, this,
-                     &ArtifactTimelineWidget::onLayerCreated);
-    QObject::connect(svc, &ArtifactProjectService::layerRemoved, this,
-                     &ArtifactTimelineWidget::onLayerRemoved);
-    QObject::connect(svc, &ArtifactProjectService::layerSelected, this,
-                     [this, syncPainterSelectionState](const LayerID &layerId) {
-                       Q_UNUSED(layerId);
-                       if (!impl_ || !impl_->painterTrackView_) {
-                         return;
-                       }
-                       syncPainterSelectionState();
-                       updateSelectionState();
-                       updateSearchState();
-                       updateKeyframeState();
-                     });
-    if (auto *app = ArtifactApplicationManager::instance()) {
-      if (auto *selection = app->layerSelectionManager()) {
-        QObject::connect(
-            selection, &ArtifactLayerSelectionManager::selectionChanged, this,
-            [this, syncPainterSelectionState]() {
-              if (!impl_) {
-                return;
-              }
-              QMetaObject::invokeMethod(
-                  this,
-                  [this, syncPainterSelectionState]() {
-                    syncPainterSelectionState();
-                    updateSelectionState();
-                    updateSearchState();
-                    updateKeyframeState();
-                  },
-                  Qt::QueuedConnection);
-            });
-      }
+  // EventBus に載っている広域状態変化を購読する
+  // scheduleRefresh: ProjectChangedEvent と LayerChangedEvent が同一フレームで両方発火しても
+  // refreshTracks() が 1 回だけ実行されるようにデバウンスする。
+  const auto scheduleRefresh = [this]() {
+    if (!impl_->pendingRefresh_) {
+      impl_->pendingRefresh_ = true;
+      QMetaObject::invokeMethod(
+          this,
+          [this]() {
+            if (!impl_) return;
+            impl_->pendingRefresh_ = false;
+            if (!impl_->painterTrackView_) return;
+            refreshTracks();
+            updateSelectionState();
+          },
+          Qt::QueuedConnection);
     }
-    QObject::connect(svc, &ArtifactProjectService::projectChanged, this,
-                     [this]() {
-                       QMetaObject::invokeMethod(
-                           this,
-                           [this]() {
-                             if (!impl_ || !impl_->painterTrackView_) {
-                               return;
-                             }
-                             refreshTracks();
-                             updateSelectionState();
-                           },
-                           Qt::QueuedConnection);
-                     });
-  }
+  };
+
+  impl_->eventBusSubscriptions_.push_back(
+      impl_->eventBus_.subscribe<ProjectChangedEvent>(
+          [this, scheduleRefresh](const ProjectChangedEvent&) {
+            if (!impl_ || !impl_->painterTrackView_) return;
+            scheduleRefresh();
+          }));
+  impl_->eventBusSubscriptions_.push_back(
+      impl_->eventBus_.subscribe<LayerChangedEvent>(
+          [this, scheduleRefresh](const LayerChangedEvent& event) {
+            if (event.changeType == LayerChangedEvent::ChangeType::Created) {
+              onLayerCreated(CompositionID(event.compositionId), LayerID(event.layerId));
+            } else if (event.changeType == LayerChangedEvent::ChangeType::Removed) {
+              onLayerRemoved(CompositionID(event.compositionId), LayerID(event.layerId));
+            } else {
+              if (!impl_ || !impl_->painterTrackView_) return;
+              scheduleRefresh();
+            }
+          }));
+  impl_->eventBusSubscriptions_.push_back(
+      impl_->eventBus_.subscribe<SelectionChangedEvent>(
+          [this, syncPainterSelectionState](const SelectionChangedEvent&) {
+            if (!impl_ || !impl_->painterTrackView_) {
+              return;
+            }
+            QMetaObject::invokeMethod(
+                this,
+                [this, syncPainterSelectionState]() {
+                  syncPainterSelectionState();
+                  updateSelectionState();
+                  updateSearchState();
+                  updateKeyframeState();
+                },
+                Qt::QueuedConnection);
+          }));
+  impl_->eventBusSubscriptions_.push_back(
+      impl_->eventBus_.subscribe<LayerSelectionChangedEvent>(
+          [this, syncPainterSelectionState](const LayerSelectionChangedEvent&) {
+            if (!impl_ || !impl_->painterTrackView_) {
+              return;
+            }
+            QMetaObject::invokeMethod(
+                this,
+                [this, syncPainterSelectionState]() {
+                  syncPainterSelectionState();
+                  updateSelectionState();
+                  updateSearchState();
+                  updateKeyframeState();
+                },
+                Qt::QueuedConnection);
+          }));
+  impl_->eventBusSubscriptions_.push_back(
+      impl_->eventBus_.subscribe<CurrentCompositionChangedEvent>(
+          [this](const CurrentCompositionChangedEvent& event) {
+            if (event.compositionId.trimmed().isEmpty()) {
+              return;
+            }
+            const CompositionID compositionId(event.compositionId);
+            if (!impl_ || compositionId == impl_->compositionId_) {
+              return;
+            }
+            QMetaObject::invokeMethod(
+                this,
+                [this, compositionId]() {
+                  if (!impl_) {
+                    return;
+                  }
+                  setComposition(compositionId);
+                },
+                Qt::QueuedConnection);
+          }));
 }
 
 ArtifactTimelineWidget::~ArtifactTimelineWidget() {
@@ -2211,7 +2263,9 @@ void ArtifactTimelineWidget::keyPressEvent(QKeyEvent *event) {
       }
 
       if (changed) {
-        svc->projectChanged();
+        // applyTimelineLayerMove / applyTimelineLayerRangeEdit の中で
+        // emit layer->changed() が発火済みのため、ここでは何もしない。
+        // svc->projectChanged() は廃止済み。
       }
       event->accept();
       return;
@@ -2237,42 +2291,6 @@ void ArtifactTimelineWidget::keyReleaseEvent(QKeyEvent *event) {
 
   QWidget::keyReleaseEvent(event);
 }
-
-
-class ArtifactTimelineIconView::Impl {
-private:
-public:
-  Impl();
-  ~Impl();
-};
-
-ArtifactTimelineIconView::Impl::Impl() {}
-
-ArtifactTimelineIconView::Impl::~Impl() {}
-
-ArtifactTimelineIconView::ArtifactTimelineIconView(
-    QWidget *parent /*= nullptr*/)
-    : QTreeView(parent) {
-  // setHeaderHidden(true); // optional compact header mode
-  setColumnWidth(0, 16); // ACR
-  setColumnWidth(1, 16);
-  setColumnWidth(2, 16);
-  setColumnWidth(3, 16);
-  setSelectionBehavior(QAbstractItemView::SelectRows);
-  int iconW = 24;
-  header()->setIconSize(QSize(iconW, iconW));
-
-  auto model = new ArtifactTimelineIconModel();
-
-  setModel(model);
-  header()->setDefaultAlignment(Qt::AlignLeft | Qt::AlignVCenter);
-
-  header()->resizeSection(0, 20);
-  header()->setStretchLastSection(false);
-}
-
-ArtifactTimelineIconView::~ArtifactTimelineIconView() {}
-
  void ArtifactTimelineWidget::onSearchTextChanged(const QString& text)
  {
   impl_->filterText_ = text;

@@ -5,6 +5,7 @@ module;
 #include <QComboBox>
 #include <QStackedWidget>
 #include <QHBoxLayout>
+#include <QEvent>
 #include <QLabel>
 #include <QFont>
 #include <QPalette>
@@ -14,6 +15,7 @@ module;
 #include <QClipboard>
 #include <QToolButton>
 #include <QSlider>
+#include <QVector3D>
 #include <wobjectimpl.h>
 #include <QVBoxLayout>
 #include <QResizeEvent>
@@ -103,6 +105,7 @@ namespace Artifact
    void updateHeader();
    void updateViewerBadge();
    void updateSurfaceMeta();
+   void updateChannelMetaSurface();
    void loadRecentSources();
    void rememberRecentSource(const QString& filepath);
    void refreshRecentSourceCombo();
@@ -134,9 +137,11 @@ namespace Artifact
    void syncModelViewerMode();
    void attachMediaOutputs();
    void detachMediaOutputs();
+   void installEventFilters();
    void activateImage(const QString& filepath);
    void activateVideo(const QString& filepath);
    void activateModel(const QString& filepath);
+   void openCompareSource(bool leftSide);
    void fitImageToWindow();
    void applyImageTransform();
 
@@ -152,6 +157,7 @@ namespace Artifact
    QComboBox* recentSourceCombo = nullptr;
    QLabel* metaLabel = nullptr;
    QLabel* stateLabel = nullptr;
+   QLabel* channelMetaLabel = nullptr;
    QLabel* surfaceMetaLabel = nullptr;
    QToolButton* fitButton = nullptr;
    QToolButton* rotateLeftButton = nullptr;
@@ -213,6 +219,10 @@ namespace Artifact
    int compareWipePercent = 50;
    int viewerAssignment = 1;
    bool viewerHasFocus = false;
+   bool eventFiltersInstalled = false;
+   bool hoverProbeValid = false;
+   QPoint hoverProbePos;
+   QColor hoverProbeColor;
    QString compareSourceAPath;
    QString compareSourceBPath;
   };
@@ -796,16 +806,17 @@ namespace Artifact
     panelLayout->setContentsMargins(0, 0, 0, 0);
     panelLayout->setSpacing(6);
 
-    headerOut = new QLabel(headerText, panel);
-    {
-     QFont headerFont = headerOut->font();
-     headerFont.setPointSize(11);
-     headerFont.setWeight(QFont::DemiBold);
+   headerOut = new QLabel(headerText, panel);
+   {
+    QFont headerFont = headerOut->font();
+    headerFont.setPointSize(11);
+    headerFont.setWeight(QFont::DemiBold);
      headerOut->setFont(headerFont);
      QPalette pal = headerOut->palette();
      pal.setColor(QPalette::WindowText, QColor(ArtifactCore::currentDCCTheme().textColor));
      headerOut->setPalette(pal);
     }
+    headerOut->setCursor(Qt::PointingHandCursor);
 
     contentOut = new QLabel(panel);
     contentOut->setAlignment(Qt::AlignCenter);
@@ -851,10 +862,11 @@ namespace Artifact
    });
 
    layout->addWidget(hintLabel, 0);
-   layout->addWidget(compareSplitter, 1);
-   layout->addWidget(compareWipeSlider, 0);
-   stackedWidget->addWidget(comparePage);
-   updateCompareWipe();
+  layout->addWidget(compareSplitter, 1);
+  layout->addWidget(compareWipeSlider, 0);
+  stackedWidget->addWidget(comparePage);
+  updateCompareWipe();
+
   }
 
   void ArtifactContentsViewer::Impl::updateCompareWipe()
@@ -1309,6 +1321,16 @@ namespace Artifact
    updateSurfaceMeta();
   }
 
+  void ArtifactContentsViewer::Impl::openCompareSource(bool leftSide)
+  {
+   const QString path = leftSide ? compareSourceAPath : compareSourceBPath;
+   if (path.trimmed().isEmpty() || !owner_) {
+    return;
+   }
+   owner_->setFilePath(path);
+   owner_->setViewerMode(ContentsViewerMode::Source);
+  }
+
   void ArtifactContentsViewer::Impl::updateSurfaceMeta()
   {
    if (!surfaceMetaLabel) {
@@ -1374,6 +1396,14 @@ namespace Artifact
       chips << QStringLiteral("Solid");
       break;
      }
+     chips << QStringLiteral("Zoom %1%").arg(static_cast<int>(std::round(modelViewer->zoomFactor() * 100.0f)));
+     chips << QStringLiteral("Yaw %1°").arg(static_cast<int>(std::round(modelViewer->cameraYaw())));
+     chips << QStringLiteral("Pitch %1°").arg(static_cast<int>(std::round(modelViewer->cameraPitch())));
+     const QVector3D cameraPos = modelViewer->cameraPosition();
+     chips << QStringLiteral("Cam %1,%2,%3")
+                 .arg(static_cast<int>(std::round(cameraPos.x())))
+                 .arg(static_cast<int>(std::round(cameraPos.y())))
+                 .arg(static_cast<int>(std::round(cameraPos.z())));
     }
     break;
    default:
@@ -1396,6 +1426,80 @@ namespace Artifact
    }
 
    surfaceMetaLabel->setText(chips.join(QStringLiteral("  •  ")));
+   if (currentMode == ContentsViewerMode::Compare) {
+    surfaceMetaLabel->setToolTip(QStringLiteral("Compare mode. Click the A/B chips to reopen their sources, or use Tab to swap sides."));
+   } else {
+    surfaceMetaLabel->setToolTip(QStringLiteral("Viewer state summary"));
+   }
+   updateChannelMetaSurface();
+  }
+
+  void ArtifactContentsViewer::Impl::updateChannelMetaSurface()
+  {
+   if (!channelMetaLabel) {
+    return;
+   }
+
+   QStringList chips;
+   switch (currentFileType) {
+   case ArtifactCore::FileType::Image:
+    chips << QStringLiteral("RGBA");
+    chips << QStringLiteral("RGB");
+    chips << QStringLiteral("Alpha");
+    chips << QStringLiteral("Luma");
+    if (hoverProbeValid) {
+     chips << QStringLiteral("Probe %1,%2")
+                 .arg(hoverProbePos.x())
+                 .arg(hoverProbePos.y());
+     chips << QStringLiteral("#%1%2%3%4")
+                 .arg(hoverProbeColor.red(), 2, 16, QChar('0'))
+                 .arg(hoverProbeColor.green(), 2, 16, QChar('0'))
+                 .arg(hoverProbeColor.blue(), 2, 16, QChar('0'))
+                 .arg(hoverProbeColor.alpha(), 2, 16, QChar('0'))
+                 .toUpper();
+    } else {
+     chips << QStringLiteral("Hover to probe pixels");
+    }
+    break;
+   case ArtifactCore::FileType::Video:
+    chips << QStringLiteral("RGBA");
+    chips << QStringLiteral("Audio");
+    chips << QStringLiteral("Timeline");
+    chips << QStringLiteral("Cursor Sample");
+    break;
+   case ArtifactCore::FileType::Audio:
+    chips << QStringLiteral("L/R");
+    chips << QStringLiteral("Waveform");
+    chips << QStringLiteral("Peak");
+    chips << QStringLiteral("Cursor Sample");
+    break;
+  case ArtifactCore::FileType::Model3D:
+   chips << QStringLiteral("World XYZ");
+   chips << QStringLiteral("Camera");
+   chips << QStringLiteral("Orbit");
+   chips << QStringLiteral("Dolly");
+    if (modelViewer) {
+     chips << QStringLiteral("Zoom %1%").arg(static_cast<int>(std::round(modelViewer->zoomFactor() * 100.0f)));
+     chips << QStringLiteral("Yaw %1°").arg(static_cast<int>(std::round(modelViewer->cameraYaw())));
+     chips << QStringLiteral("Pitch %1°").arg(static_cast<int>(std::round(modelViewer->cameraPitch())));
+    }
+   break;
+   default:
+    chips << QStringLiteral("No data");
+    chips << QStringLiteral("Unsupported");
+    break;
+   }
+
+   if (currentMode == ContentsViewerMode::Compare) {
+    chips << QStringLiteral("A/B compare");
+   }
+
+   channelMetaLabel->setText(chips.join(QStringLiteral("  •  ")));
+   if (currentMode == ContentsViewerMode::Compare) {
+    channelMetaLabel->setToolTip(QStringLiteral("Compare routing is active. Hover probe stays tied to the current source."));
+   } else {
+    channelMetaLabel->setToolTip(QStringLiteral("Channel and probe metadata"));
+   }
   }
 
   void ArtifactContentsViewer::Impl::updatePlaybackState()
@@ -1456,7 +1560,7 @@ namespace Artifact
                      .arg(formatDurationMs(audioPlaybackPositionMs))
                      .arg(formatDurationMs(duration));
     }
-   } else if (currentFileType == ArtifactCore::FileType::Model3D) {
+  } else if (currentFileType == ArtifactCore::FileType::Model3D) {
     stateText = QStringLiteral("3D model inspect");
     if (modelViewer) {
      switch (modelViewer->displayMode()) {
@@ -1471,6 +1575,12 @@ namespace Artifact
       stateText += QStringLiteral(" | Solid");
       break;
      }
+     stateText += QStringLiteral(" | Zoom %1%")
+                      .arg(static_cast<int>(std::round(modelViewer->zoomFactor() * 100.0f)));
+     stateText += QStringLiteral(" | Yaw %1°")
+                      .arg(static_cast<int>(std::round(modelViewer->cameraYaw())));
+     stateText += QStringLiteral(" | Pitch %1°")
+                      .arg(static_cast<int>(std::round(modelViewer->cameraPitch())));
     }
    }
    if (currentMode == ContentsViewerMode::Source) {
@@ -1646,7 +1756,7 @@ namespace Artifact
     viewerAssignmentCombo->setEditable(false);
     viewerAssignmentCombo->setMinimumWidth(120);
     viewerAssignmentCombo->setMaximumWidth(140);
-    viewerAssignmentCombo->setToolTip(QStringLiteral("Viewer assignment"));
+    viewerAssignmentCombo->setToolTip(QStringLiteral("Viewer assignment (Ctrl+1..4)"));
     for (int i = 1; i <= 4; ++i) {
      viewerAssignmentCombo->addItem(QStringLiteral("Viewer %1").arg(i, 2, 10, QChar('0')), i);
     }
@@ -1676,6 +1786,16 @@ namespace Artifact
     pal.setColor(QPalette::WindowText, QColor(ArtifactCore::currentDCCTheme().textColor).darker(120));
     stateLabel->setPalette(pal);
    }
+   channelMetaLabel = new QLabel(QStringLiteral("RGBA • Hover to probe pixels"), headerWidget);
+   {
+    QFont channelFont = channelMetaLabel->font();
+    channelFont.setPointSize(10);
+    channelMetaLabel->setFont(channelFont);
+    QPalette pal = channelMetaLabel->palette();
+    pal.setColor(QPalette::WindowText, QColor(ArtifactCore::currentDCCTheme().textColor).darker(110));
+    channelMetaLabel->setPalette(pal);
+   }
+   channelMetaLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
 
    auto* titleRow = new QHBoxLayout();
    titleRow->setContentsMargins(0, 0, 0, 0);
@@ -1687,6 +1807,7 @@ namespace Artifact
    textColumn->addLayout(titleRow);
    textColumn->addWidget(metaLabel);
    textColumn->addWidget(stateLabel);
+   textColumn->addWidget(channelMetaLabel);
 
    auto* badgeColumn = new QVBoxLayout();
    badgeColumn->setContentsMargins(0, 0, 0, 0);
@@ -1951,6 +2072,41 @@ namespace Artifact
     }
    });
 
+   auto installViewerAssignmentShortcut = [parent, this](int slot) {
+    auto* shortcut = new QShortcut(QKeySequence(QStringLiteral("Ctrl+%1").arg(slot)), parent);
+    shortcut->setContext(Qt::WidgetWithChildrenShortcut);
+    shortcut->setAutoRepeat(false);
+    QObject::connect(shortcut, &QShortcut::activated, parent, [this, slot]() {
+     if (owner_) {
+      owner_->setViewerAssignment(slot);
+     }
+     updateViewerBadge();
+     updateSurfaceMeta();
+    });
+   };
+   installViewerAssignmentShortcut(1);
+   installViewerAssignmentShortcut(2);
+   installViewerAssignmentShortcut(3);
+   installViewerAssignmentShortcut(4);
+
+   auto* assignCompareAShortcut = new QShortcut(QKeySequence(QStringLiteral("Ctrl+Shift+A")), parent);
+   assignCompareAShortcut->setContext(Qt::WidgetWithChildrenShortcut);
+   assignCompareAShortcut->setAutoRepeat(false);
+   QObject::connect(assignCompareAShortcut, &QShortcut::activated, parent, [this]() {
+    if (currentMode == ContentsViewerMode::Compare) {
+     assignCompareSource(true);
+    }
+   });
+
+   auto* assignCompareBShortcut = new QShortcut(QKeySequence(QStringLiteral("Ctrl+Shift+B")), parent);
+   assignCompareBShortcut->setContext(Qt::WidgetWithChildrenShortcut);
+   assignCompareBShortcut->setAutoRepeat(false);
+   QObject::connect(assignCompareBShortcut, &QShortcut::activated, parent, [this]() {
+    if (currentMode == ContentsViewerMode::Compare) {
+     assignCompareSource(false);
+    }
+   });
+
    QObject::connect(seekSlider, &QSlider::sliderMoved, parent, [this](int value) {
     if (currentFileType == ArtifactCore::FileType::Video && mediaPlayer) {
      mediaPlayer->setPosition(static_cast<qint64>(value));
@@ -1998,6 +2154,8 @@ namespace Artifact
    imageScrollArea->setWidget(imageLabel);
    imageScrollArea->setWidgetResizable(false); // We want to control sizing based on zoom
    imageScrollArea->setAlignment(Qt::AlignCenter);
+   imageScrollArea->viewport()->setMouseTracking(true);
+   imageLabel->setMouseTracking(true);
    {
     QPalette scrollPalette = imageScrollArea->palette();
     scrollPalette.setColor(QPalette::Window, QColor(ArtifactCore::currentDCCTheme().backgroundColor));
@@ -2028,6 +2186,16 @@ namespace Artifact
    if (viewerAssignmentCombo) {
     QSignalBlocker blocker(viewerAssignmentCombo);
     viewerAssignmentCombo->setCurrentIndex(std::clamp(viewerAssignment, 1, 4) - 1);
+   }
+
+   if (compareAssignAButton) {
+    compareAssignAButton->setToolTip(QStringLiteral("Assign current source to compare A (Ctrl+Shift+A)"));
+   }
+   if (compareAssignBButton) {
+    compareAssignBButton->setToolTip(QStringLiteral("Assign current source to compare B (Ctrl+Shift+B)"));
+   }
+   if (compareSwapButton) {
+    compareSwapButton->setToolTip(QStringLiteral("Swap compare sides (Tab)"));
    }
 
    auto layout = new QVBoxLayout(parent);
@@ -2071,12 +2239,89 @@ namespace Artifact
    mediaPlayer->setAudioOutput(nullptr);
    mediaPlayer->setVideoOutput(nullptr);
   }
+
+  void ArtifactContentsViewer::Impl::installEventFilters()
+  {
+   if (eventFiltersInstalled) {
+    return;
+   }
+
+   if (imageScrollArea && imageScrollArea->viewport()) {
+    imageScrollArea->viewport()->installEventFilter(owner_);
+   }
+   if (imageLabel) {
+    imageLabel->installEventFilter(owner_);
+   }
+   if (compareSourceHeader) {
+    compareSourceHeader->installEventFilter(owner_);
+   }
+   if (compareFinalHeader) {
+    compareFinalHeader->installEventFilter(owner_);
+   }
+
+   eventFiltersInstalled = true;
+  }
+
+  bool ArtifactContentsViewer::eventFilter(QObject* watched, QEvent* event)
+  {
+   if (!impl_) {
+    return QWidget::eventFilter(watched, event);
+   }
+
+   if ((watched == impl_->compareSourceHeader || watched == impl_->compareFinalHeader) &&
+       event->type() == QEvent::MouseButtonRelease) {
+    auto* mouseEvent = static_cast<QMouseEvent*>(event);
+    if (mouseEvent->button() == Qt::LeftButton) {
+     const bool isLeft = watched == impl_->compareSourceHeader;
+     impl_->openCompareSource(isLeft);
+     return true;
+    }
+   }
+
+   if (impl_->currentFileType == ArtifactCore::FileType::Image && impl_->imageLabel && impl_->imageScrollArea) {
+    const bool matchesViewport = watched == impl_->imageScrollArea->viewport();
+    const bool matchesLabel = watched == impl_->imageLabel;
+    if (matchesViewport || matchesLabel) {
+     switch (event->type()) {
+     case QEvent::MouseMove: {
+      auto* mouseEvent = static_cast<QMouseEvent*>(event);
+      const QPoint localPos = matchesLabel
+                                  ? mouseEvent->position().toPoint()
+                                  : impl_->imageLabel->mapFrom(impl_->imageScrollArea->viewport(),
+                                                              mouseEvent->position().toPoint());
+      const QPixmap pixmap = impl_->imageLabel->pixmap();
+      if (!pixmap.isNull()) {
+       const QPoint clampedPos(
+           std::clamp(localPos.x(), 0, std::max(0, pixmap.width() - 1)),
+           std::clamp(localPos.y(), 0, std::max(0, pixmap.height() - 1)));
+       if (clampedPos.x() >= 0 && clampedPos.y() >= 0) {
+        impl_->hoverProbeValid = true;
+        impl_->hoverProbePos = clampedPos;
+        impl_->hoverProbeColor = pixmap.toImage().pixelColor(clampedPos);
+        impl_->updateChannelMetaSurface();
+       }
+      }
+      break;
+     }
+     case QEvent::Leave:
+      impl_->hoverProbeValid = false;
+      impl_->updateChannelMetaSurface();
+      break;
+     default:
+      break;
+     }
+    }
+   }
+
+   return QWidget::eventFilter(watched, event);
+  }
 	
 	W_OBJECT_IMPL(ArtifactContentsViewer)
 
 ArtifactContentsViewer::ArtifactContentsViewer(QWidget* parent/*=nullptr*/) :QWidget(parent), impl_(new Impl(this))
 {
  setFocusPolicy(Qt::StrongFocus);
+ impl_->installEventFilters();
 }
 
  ArtifactContentsViewer::~ArtifactContentsViewer()
@@ -2090,6 +2335,7 @@ ArtifactContentsViewer::ArtifactContentsViewer(QWidget* parent/*=nullptr*/) :QWi
    impl_->rememberRecentSource(filepath);
    ArtifactCore::FileTypeDetector detector;
    impl_->currentFileType = detector.detect(filepath);
+   impl_->hoverProbeValid = false;
    impl_->resetCurrentMode();
 
    switch (impl_->currentFileType) {

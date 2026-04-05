@@ -23,6 +23,7 @@ import std;
 
 import Property.Abstract;
 import Artifact.Widgets.FontPicker;
+import Event.Bus;
 
 export namespace Artifact {
 
@@ -153,6 +154,7 @@ public:
 
 private:
     FontPickerWidget* fontPicker_ = nullptr;
+    ArtifactCore::EventBus::Subscription fontChangeSubscription_;
 };
 
 class ArtifactPathPropertyEditor final : public ArtifactAbstractPropertyEditor {

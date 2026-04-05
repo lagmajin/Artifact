@@ -13,6 +13,8 @@ module;
 module Artifact.Widgets.Timeline.GlobalSwitches;
 
 import Utils.Path;
+import Artifact.Event.Types;
+import Event.Bus;
 
 namespace Artifact {
 namespace {
@@ -37,6 +39,7 @@ public:
     QPushButton* motionBlurBtn = nullptr;
     QPushButton* frameBlendBtn = nullptr;
     QPushButton* graphEditorBtn = nullptr;
+    ArtifactCore::EventBus eventBus_ = ArtifactCore::globalEventBus();
 
     void setupUi(QWidget* parent) {
         auto layout = new QHBoxLayout(parent);
@@ -84,10 +87,10 @@ ArtifactTimelineGlobalSwitches::ArtifactTimelineGlobalSwitches(QWidget* parent)
     : QWidget(parent), impl_(new Impl()) {
     impl_->setupUi(this);
 
-    connect(impl_->shyBtn, &QPushButton::toggled, this, [this](bool v){ Q_EMIT shyChanged(v); });
-    connect(impl_->motionBlurBtn, &QPushButton::toggled, this, [this](bool v){ Q_EMIT motionBlurChanged(v); });
-    connect(impl_->frameBlendBtn, &QPushButton::toggled, this, [this](bool v){ Q_EMIT frameBlendingChanged(v); });
-    connect(impl_->graphEditorBtn, &QPushButton::toggled, this, [this](bool v){ Q_EMIT graphEditorToggled(v); });
+    connect(impl_->shyBtn, &QPushButton::toggled, this, [this](bool v){ Q_EMIT shyChanged(v); impl_->eventBus_.post<TimelineShyChangedEvent>(TimelineShyChangedEvent{v}); });
+    connect(impl_->motionBlurBtn, &QPushButton::toggled, this, [this](bool v){ Q_EMIT motionBlurChanged(v); impl_->eventBus_.post<TimelineMotionBlurChangedEvent>(TimelineMotionBlurChangedEvent{v}); });
+    connect(impl_->frameBlendBtn, &QPushButton::toggled, this, [this](bool v){ Q_EMIT frameBlendingChanged(v); impl_->eventBus_.post<TimelineFrameBlendingChangedEvent>(TimelineFrameBlendingChangedEvent{v}); });
+    connect(impl_->graphEditorBtn, &QPushButton::toggled, this, [this](bool v){ Q_EMIT graphEditorToggled(v); impl_->eventBus_.post<TimelineGraphEditorToggledEvent>(TimelineGraphEditorToggledEvent{v}); });
 }
 
 ArtifactTimelineGlobalSwitches::~ArtifactTimelineGlobalSwitches() {

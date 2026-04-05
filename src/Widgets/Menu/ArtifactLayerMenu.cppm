@@ -8,6 +8,7 @@ module;
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QTimer>
+#include <QSet>
 #include <wobjectimpl.h>
 
 module Artifact.Menu.Layer;
@@ -25,6 +26,74 @@ import Artifact.Widgets.AppDialogs;
 
 namespace Artifact {
 using namespace ArtifactCore;
+
+namespace {
+
+QSet<QString> currentLayerNames()
+{
+    QSet<QString> names;
+    if (auto* service = ArtifactProjectService::instance()) {
+        if (auto comp = service->currentComposition().lock()) {
+            for (const auto& layer : comp->allLayer()) {
+                if (!layer) {
+                    continue;
+                }
+                const QString name = layer->layerName().trimmed();
+                if (!name.isEmpty()) {
+                    names.insert(name);
+                }
+            }
+        }
+    }
+    return names;
+}
+
+QString makeUniqueSequentialName(QString baseName, const QSet<QString>& occupied)
+{
+    baseName = baseName.trimmed();
+    if (baseName.isEmpty()) {
+        baseName = QStringLiteral("Layer 1");
+    }
+    if (!occupied.contains(baseName)) {
+        return baseName;
+    }
+
+    QString prefix = baseName;
+    int startNumber = 2;
+    int end = baseName.size();
+    while (end > 0 && baseName.at(end - 1).isDigit()) {
+        --end;
+    }
+    if (end < baseName.size()) {
+        int start = end;
+        while (start > 0 && baseName.at(start - 1).isSpace()) {
+            --start;
+        }
+        bool ok = false;
+        const int current = baseName.mid(end).toInt(&ok);
+        if (ok) {
+            prefix = baseName.left(start);
+            startNumber = current + 1;
+        }
+    }
+    if (prefix == baseName && !prefix.endsWith(QLatin1Char(' '))) {
+        prefix += QLatin1Char(' ');
+    }
+    for (int index = startNumber; index < 10000; ++index) {
+        const QString candidate = prefix + QString::number(index);
+        if (!occupied.contains(candidate)) {
+            return candidate;
+        }
+    }
+    return baseName;
+}
+
+QString uniqueLayerName(const QString& baseName)
+{
+    return makeUniqueSequentialName(baseName, currentLayerNames());
+}
+
+} // namespace
 
 W_OBJECT_IMPL(ArtifactLayerMenu)
 
@@ -311,7 +380,7 @@ void ArtifactLayerMenu::Impl::handleCreateNull()
         QMessageBox::warning(menu_ ? menu_->window() : nullptr, "Layer", "コンポジションが選択されていません。");
         return;
     }
-    ArtifactNullLayerInitParams params(u8"Null 1");
+    ArtifactNullLayerInitParams params(uniqueLayerName(u8"Null 1"));
     auto* service = ArtifactProjectService::instance();
     if (auto comp = service->currentComposition().lock()) {
         auto size = comp->settings().compositionSize();
@@ -327,7 +396,7 @@ void ArtifactLayerMenu::Impl::handleCreateAdjust()
         QMessageBox::warning(menu_ ? menu_->window() : nullptr, "Layer", "コンポジションが選択されていません。");
         return;
     }
-    ArtifactSolidLayerInitParams params(u8"Adjustment Layer");
+    ArtifactSolidLayerInitParams params(uniqueLayerName(u8"Adjustment Layer 1"));
     auto* service = ArtifactProjectService::instance();
     if (auto comp = service->currentComposition().lock()) {
         auto size = comp->settings().compositionSize();
@@ -344,7 +413,7 @@ void ArtifactLayerMenu::Impl::handleCreateText()
         QMessageBox::warning(menu_ ? menu_->window() : nullptr, "Layer", "コンポジションが選択されていません。");
         return;
     }
-    ArtifactTextLayerInitParams params(u8"Text 1");
+    ArtifactTextLayerInitParams params(uniqueLayerName(u8"Text 1"));
     ArtifactProjectService::instance()->addLayerToCurrentComposition(params);
 }
 
@@ -354,7 +423,7 @@ void ArtifactLayerMenu::Impl::handleCreateParticle()
         QMessageBox::warning(menu_ ? menu_->window() : nullptr, "Layer", "コンポジションが選択されていません。");
         return;
     }
-    ArtifactLayerInitParams params(u8"Particle 1", LayerType::Particle);
+    ArtifactLayerInitParams params(uniqueLayerName(u8"Particle 1"), LayerType::Particle);
     ArtifactProjectService::instance()->addLayerToCurrentComposition(params);
 }
 
@@ -365,6 +434,7 @@ void ArtifactLayerMenu::Impl::handleCreateCamera()
         return;
     }
     ArtifactCameraLayerInitParams params;
+    params.setName(UniString(uniqueLayerName(u8"Camera 1")));
     ArtifactProjectService::instance()->addLayerToCurrentComposition(params);
 }
 
@@ -384,7 +454,7 @@ void ArtifactLayerMenu::Impl::handleCreateAudio()
         return;
     }
 
-    ArtifactAudioInitParams params(QFileInfo(path).baseName());
+    ArtifactAudioInitParams params(uniqueLayerName(QFileInfo(path).baseName()));
     params.setAudioPath(path);
     ArtifactProjectService::instance()->addLayerToCurrentComposition(params);
 }
@@ -498,9 +568,10 @@ void ArtifactLayerMenu::Impl::handleSplitLayer()
     QMessageBox::information(menu_->window(), "Layer", "レイヤー分割は次のステップで実装します。");
 }
 
-ArtifactLayerMenu::ArtifactLayerMenu(QWidget* parent)
+ArtifactLayerMenu::ArtifactLayerMenu(QWidget* mainWindow, QWidget* parent)
     : QMenu(parent), impl_(new Impl(this))
 {
+    Q_UNUSED(mainWindow);
     setTitle("レイヤー(&L)");
 }
 

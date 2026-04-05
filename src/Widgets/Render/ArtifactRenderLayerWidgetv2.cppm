@@ -13,6 +13,7 @@
 #include <QFileDialog>
 #include <QImage>
 #include <QStandardPaths>
+#include <vector>
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -28,6 +29,8 @@ import Artifact.Service.Application;
 import Artifact.Service.Project;
 import Artifact.Service.Playback;
 import Artifact.Service.ActiveContext;
+import Event.Bus;
+import Artifact.Event.Types;
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
 import Property.Abstract;
@@ -69,6 +72,8 @@ Q_LOGGING_CATEGORY(layerViewPerfLog, "artifact.layerviewperf")
   std::mutex resizeMutex_;
   quint64 renderTickCount_ = 0;
   quint64 renderExecutedCount_ = 0;
+  ArtifactCore::EventBus eventBus_ = ArtifactCore::globalEventBus();
+  std::vector<ArtifactCore::EventBus::Subscription> eventBusSubscriptions_;
   
   
  bool released = true;
@@ -381,31 +386,36 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
     }
   });
 
-  if (auto* service = ArtifactProjectService::instance()) {
-   QObject::connect(service, &ArtifactProjectService::layerSelected, this, [this](const ArtifactCore::LayerID& id) {
-    setTargetLayer(id);
-   });
-  QObject::connect(service, &ArtifactProjectService::layerRemoved, this, [this](const ArtifactCore::CompositionID&, const ArtifactCore::LayerID& id) {
-    if (impl_->targetLayerId_ == id) {
-     clearTargetLayer();
-    }
-   });
-   QObject::connect(service, &ArtifactProjectService::projectChanged, this, [this]() {
-    const auto targetId = impl_->targetLayerId_;
-    if (targetId.isNil()) {
-     return;
-    }
-    if (auto* currentService = ArtifactProjectService::instance()) {
-     if (auto composition = currentService->currentComposition().lock()) {
-      if (composition->containsLayerById(targetId)) {
-       setTargetLayer(targetId);
-       return;
-      }
-     }
-    }
-    clearTargetLayer();
-   });
-  }
+  impl_->eventBusSubscriptions_.push_back(
+      impl_->eventBus_.subscribe<LayerSelectionChangedEvent>(
+          [this](const LayerSelectionChangedEvent& event) {
+            setTargetLayer(LayerID(event.layerId));
+          }));
+  impl_->eventBusSubscriptions_.push_back(
+      impl_->eventBus_.subscribe<LayerChangedEvent>(
+          [this](const LayerChangedEvent& event) {
+            if (event.changeType == LayerChangedEvent::ChangeType::Removed &&
+                impl_->targetLayerId_.toString() == event.layerId) {
+              clearTargetLayer();
+            }
+          }));
+  impl_->eventBusSubscriptions_.push_back(
+      impl_->eventBus_.subscribe<ProjectChangedEvent>(
+          [this](const ProjectChangedEvent&) {
+            const auto targetId = impl_->targetLayerId_;
+            if (targetId.isNil()) {
+              return;
+            }
+            if (auto* currentService = ArtifactProjectService::instance()) {
+              if (auto composition = currentService->currentComposition().lock()) {
+                if (composition->containsLayerById(targetId)) {
+                  setTargetLayer(targetId);
+                  return;
+                }
+              }
+            }
+            clearTargetLayer();
+          }));
  }
 
  void ArtifactLayerEditorWidgetV2::clearTargetLayer()
@@ -517,6 +527,11 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
 
  }
 
+ void ArtifactLayerEditorWidgetV2::contextMenuEvent(QContextMenuEvent* event)
+ {
+  QWidget::contextMenuEvent(event);
+ }
+
  void ArtifactLayerEditorWidgetV2::showEvent(QShowEvent* event)
  {
  QWidget::showEvent(event);
@@ -559,6 +574,11 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
  void ArtifactLayerEditorWidgetV2::focusInEvent(QFocusEvent* event)
  {
 
+ }
+
+ void ArtifactLayerEditorWidgetV2::focusOutEvent(QFocusEvent* event)
+ {
+  QWidget::focusOutEvent(event);
  }
 
  void ArtifactLayerEditorWidgetV2::setClearColor(const FloatColor& color)

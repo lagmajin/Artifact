@@ -117,6 +117,8 @@ import Artifact.Widgets.Test.ScrollPoC;
 import Diagnostics.Logger;
 import Artifact.Widgets.DebugConsoleWidget;
 import Widgets.AIChatWidget;
+import Event.Bus;
+import Artifact.Event.Types;
 
 using namespace Artifact;
 using namespace ArtifactCore;
@@ -727,13 +729,28 @@ int main(int argc, char *argv[]) {
     QSettings aiSettings;
     const bool autoInitialize = aiSettings.value(QStringLiteral("AI/AutoInitialize"), false).toBool();
     const QString provider = aiSettings.value(QStringLiteral("AI/Provider"), QStringLiteral("local")).toString().trimmed();
-    const QString modelPath = aiSettings.value(QStringLiteral("AI/ModelPath"),
-                                               QStringLiteral("models/llama-3.2-1b-instruct.q4_k_m.gguf"))
-                                  .toString()
-                                  .trimmed();
+    QString modelPath = aiSettings.value(QStringLiteral("AI/ModelPath")).toString().trimmed();
+    if (modelPath.isEmpty()) {
+      const QString normalizedProvider = provider.toLower();
+      if (normalizedProvider == QStringLiteral("onnx") ||
+          normalizedProvider == QStringLiteral("onnx-dml") ||
+          normalizedProvider == QStringLiteral("onnxdml") ||
+          normalizedProvider == QStringLiteral("directml")) {
+        modelPath = QStringLiteral("models/onnx/model.onnx");
+      } else {
+        modelPath = QStringLiteral("models/llama-3.2-1b-instruct.q4_k_m.gguf");
+      }
+    }
     if (autoInitialize) {
-      if (!provider.isEmpty() && provider.compare(QStringLiteral("local"), Qt::CaseInsensitive) != 0) {
-        qWarning() << "[AppMain] Auto AI initialization is only enabled for the local backend:"
+      const QString normalizedProvider = provider.toLower();
+      if (!provider.isEmpty() &&
+          normalizedProvider != QStringLiteral("local") &&
+          normalizedProvider != QStringLiteral("llama") &&
+          normalizedProvider != QStringLiteral("onnx-dml") &&
+          normalizedProvider != QStringLiteral("onnx") &&
+          normalizedProvider != QStringLiteral("onnxdml") &&
+          normalizedProvider != QStringLiteral("directml")) {
+        qWarning() << "[AppMain] Auto AI initialization skipped: unsupported provider:"
                    << provider;
       } else if (modelPath.isEmpty()) {
         qWarning() << "[AppMain] Auto AI initialization skipped: model path is empty";
@@ -1004,9 +1021,11 @@ int main(int argc, char *argv[]) {
           mw->setDockVisible(QStringLiteral("Contents Viewer"), true);
           mw->activateDock(QStringLiteral("Contents Viewer"));
         });
-    QObject::connect(
-        projectService, &ArtifactProjectService::currentCompositionChanged, mw,
-        [projectManagerWidget](const CompositionID &compId) {
+    static ArtifactCore::EventBus appEventBus = ArtifactCore::globalEventBus();
+    static std::vector<ArtifactCore::EventBus::Subscription> appEventSubscriptions;
+    appEventSubscriptions.push_back(appEventBus.subscribe<CurrentCompositionChangedEvent>(
+        [projectManagerWidget](const CurrentCompositionChangedEvent& event) {
+          const CompositionID compId(event.compositionId);
           auto *projectView = projectManagerWidget
                                   ? projectManagerWidget->projectView()
                                   : nullptr;
@@ -1046,7 +1065,7 @@ int main(int argc, char *argv[]) {
               return;
             }
           }
-        });
+        }));
     QObject::connect(
         assetBrowser, &ArtifactAssetBrowser::selectionChanged, mw,
         [mw, contentsViewer, projectManagerWidget](const QStringList &selectedFiles) {
@@ -1135,7 +1154,7 @@ int main(int argc, char *argv[]) {
                 }
               }
             };
-        QObject::connect(selectionManager,
+      QObject::connect(selectionManager,
                          &ArtifactLayerSelectionManager::selectionChanged, mw,
                          [projectService, selectionManager, syncSelectedLayerUi]() {
                            if (!projectService || !selectionManager) {
@@ -1148,42 +1167,40 @@ int main(int argc, char *argv[]) {
                            syncSelectedLayerUi(current ? current->id() : LayerID::Nil());
                          });
       }
-      QObject::connect(projectService, &ArtifactProjectService::projectChanged,
-                       mw, [status]() { status->setProjectText("Modified"); });
-      QObject::connect(projectService, &ArtifactProjectService::projectChanged,
-                       mw, []() {
-                         ArtifactPythonHookManager::runHook(
-                             QStringLiteral("project_changed"));
-                       });
-      QObject::connect(projectService, &ArtifactProjectService::projectChanged,
-                       mw, [autoSaveManager]() {
-                         if (autoSaveManager)
-                           autoSaveManager->markDirty();
-                       });
-      QObject::connect(projectService, &ArtifactProjectService::layerCreated,
-                       mw, [status](const CompositionID &, const LayerID &) {
-                         status->setProjectText("Layer Added");
-                       });
-      QObject::connect(
-          projectService, &ArtifactProjectService::layerCreated, mw,
-          [](const CompositionID &compId, const LayerID &layerId) {
-            ArtifactPythonHookManager::runHook(
-                QStringLiteral("layer_added"),
-                QStringList() << compId.toString() << layerId.toString());
-          });
-      QObject::connect(
-          projectService, &ArtifactProjectService::layerCreated, mw,
-          [autoSaveManager](const CompositionID &, const LayerID &) {
-            if (autoSaveManager)
+      appEventSubscriptions.push_back(appEventBus.subscribe<ProjectChangedEvent>(
+          [status, autoSaveManager](const ProjectChangedEvent&) {
+            if (status) {
+              status->setProjectText("Modified");
+            }
+            ArtifactPythonHookManager::runHook(QStringLiteral("project_changed"));
+            if (autoSaveManager) {
               autoSaveManager->markDirty();
-          });
-      QObject::connect(
-          projectService, &ArtifactProjectService::layerSelected, mw,
-          [layerViewEditor, propertyPanel, projectService,
-           selectionManager = ArtifactApplicationManager::instance()
-                                  ? ArtifactApplicationManager::instance()
-                                        ->layerSelectionManager()
-                                  : nullptr](const LayerID &layerId) {
+            }
+          }));
+      appEventSubscriptions.push_back(appEventBus.subscribe<LayerChangedEvent>(
+          [status, autoSaveManager](const LayerChangedEvent& event) {
+            if (event.changeType == LayerChangedEvent::ChangeType::Created) {
+              if (status) {
+                status->setProjectText("Layer Added");
+              }
+              ArtifactPythonHookManager::runHook(
+                  QStringLiteral("layer_added"),
+                  QStringList() << event.compositionId << event.layerId);
+            } else if (event.changeType == LayerChangedEvent::ChangeType::Removed) {
+              if (status) {
+                status->setProjectText("Layer Removed");
+              }
+              ArtifactPythonHookManager::runHook(
+                  QStringLiteral("layer_removed"),
+                  QStringList() << event.compositionId << event.layerId);
+            }
+            if (autoSaveManager) {
+              autoSaveManager->markDirty();
+            }
+          }));
+      appEventSubscriptions.push_back(appEventBus.subscribe<LayerSelectionChangedEvent>(
+          [layerViewEditor, propertyPanel, status, projectService](const LayerSelectionChangedEvent& event) {
+            const LayerID layerId(event.layerId);
             if (layerViewEditor) {
               if (layerId.isNil()) {
                 layerViewEditor->view()->clearTargetLayer();
@@ -1196,14 +1213,15 @@ int main(int argc, char *argv[]) {
               if (layerId.isNil()) {
                 propertyPanel->clear();
               } else {
-                ArtifactAbstractLayerPtr current = selectionManager
-                                                       ? selectionManager
-                                                             ->currentLayer()
-                                                       : ArtifactAbstractLayerPtr{};
+                ArtifactAbstractLayerPtr current;
+                if (auto *selectionManager = ArtifactApplicationManager::instance()
+                                                 ? ArtifactApplicationManager::instance()->layerSelectionManager()
+                                                 : nullptr) {
+                  current = selectionManager->currentLayer();
+                }
                 if (!current || current->id() != layerId) {
-                  if (auto comp =
-                          projectService->currentComposition().lock()) {
-                    current = comp->layerById(layerId);
+                  if (auto comp = projectService ? projectService->currentComposition().lock() : ArtifactCompositionPtr{}) {
+                    current = comp ? comp->layerById(layerId) : ArtifactAbstractLayerPtr{};
                   }
                 }
                 if (current) {
@@ -1213,157 +1231,56 @@ int main(int argc, char *argv[]) {
                 }
               }
             }
-          });
-      QObject::connect(projectService, &ArtifactProjectService::layerSelected,
-                       mw, [status, projectService](const LayerID &layerId) {
-                         if (!status) {
-                           return;
-                         }
-                         if (layerId.isNil()) {
-                           status->setLayerText("None");
-                           return;
-                         }
-                         if (auto comp =
-                                 projectService->currentComposition().lock()) {
-                           if (auto layer = comp->layerById(layerId)) {
-                             const QString name = layer->layerName().trimmed();
-                             status->setLayerText(
-                                 name.isEmpty() ? layerId.toString() : name);
-                             return;
-                           }
-                         }
-                         status->setLayerText(layerId.toString());
-                       });
-      QObject::connect(
-          projectService, &ArtifactProjectService::currentCompositionChanged,
-          mw, [compositionEditor, projectService](const CompositionID &compId) {
-            if (!compositionEditor || !projectService) {
-              return;
-            }
-            const auto found = projectService->findComposition(compId);
-            if (found.success && !found.ptr.expired()) {
-              auto comp = found.ptr.lock();
-              compositionEditor->setComposition(comp);
-
-              // タブタイトルにコンポジション名を表示
-              const QString compName =
-                  comp->settings().compositionName().toQString();
-              if (!compName.isEmpty()) {
-                // compositionEditor のウィンドウタイトルを更新（タブに表示）
-                compositionEditor->setWindowTitle(compName);
+            if (status) {
+              if (layerId.isNil()) {
+                status->setLayerText("None");
+              } else if (auto comp = projectService ? projectService->currentComposition().lock() : ArtifactCompositionPtr{}) {
+                if (auto layer = comp->layerById(layerId)) {
+                  const QString name = layer->layerName().trimmed();
+                  status->setLayerText(name.isEmpty() ? layerId.toString() : name);
+                } else {
+                  status->setLayerText(layerId.toString());
+                }
+              } else {
+                status->setLayerText(layerId.toString());
               }
             }
-          });
-      QObject::connect(projectService,
-                       &ArtifactProjectService::currentCompositionChanged, mw,
-                       [projectService, propertyPanel]() {
-                         if (!projectService) {
-                           return;
-                         }
-                         if (auto *selectionManager =
-                                 ArtifactApplicationManager::instance()
-                                     ? ArtifactApplicationManager::instance()
-                                           ->layerSelectionManager()
-                                     : nullptr) {
-                           selectionManager->setActiveComposition(
-                               projectService->currentComposition().lock());
-                           if (propertyPanel) {
-                             propertyPanel->setFocusedEffectId(QString());
-                             const ArtifactAbstractLayerPtr currentLayer =
-                                 selectionManager->currentLayer();
-                             if (currentLayer) {
-                               const auto comp =
-                                   projectService->currentComposition().lock();
-                               if (comp && comp->layerById(currentLayer->id())) {
-                                 propertyPanel->setLayer(
-                                     comp->layerById(currentLayer->id()));
-                               } else {
-                                 propertyPanel->clear();
-                               }
-                             } else {
-                               propertyPanel->clear();
-                             }
-                           }
-                         }
-                       });
-      QObject::connect(
-          projectService, &ArtifactProjectService::currentCompositionChanged,
-          mw, [status, projectService](const CompositionID &compId) {
-            if (!status) {
-              return;
+          }));
+      appEventSubscriptions.push_back(appEventBus.subscribe<CurrentCompositionChangedEvent>(
+          [compositionEditor, projectService, propertyPanel, layerViewEditor, status](const CurrentCompositionChangedEvent& event) {
+            const CompositionID compId(event.compositionId);
+            if (compositionEditor && projectService) {
+              const auto found = projectService->findComposition(compId);
+              if (found.success && !found.ptr.expired()) {
+                auto comp = found.ptr.lock();
+                compositionEditor->setComposition(comp);
+                const QString compName = comp->settings().compositionName().toQString();
+                if (!compName.isEmpty()) {
+                  compositionEditor->setWindowTitle(compName);
+                }
+              }
             }
-            if (compId.isNil()) {
-              status->setLayerText("None");
-              status->setCompositionInfo("NO COMPOSITION", 0, 0, 0);
-              return;
+            if (propertyPanel) {
+              propertyPanel->setFocusedEffectId(QString());
+              propertyPanel->clear();
             }
-            if (auto comp = projectService->currentComposition().lock()) {
-              status->setLayerText(
-                  comp->allLayer().isEmpty()
-                      ? "None"
-                      : QStringLiteral("(composition active)"));
-
-              // コンポジション情報をステータスバーに表示
-              const auto &settings = comp->settings();
-              status->setCompositionInfo(settings.compositionName().toQString(),
-                                         settings.compositionSize().width(),
-                                         settings.compositionSize().height(),
-                                         comp->frameRate().framerate());
+            if (layerViewEditor) {
+              layerViewEditor->view()->clearTargetLayer();
             }
-          });
-      QObject::connect(projectService,
-                       &ArtifactProjectService::currentCompositionChanged, mw,
-                       [layerViewEditor]() {
-                         if (layerViewEditor) {
-                           layerViewEditor->view()->clearTargetLayer();
-                         }
-                       });
-      QObject::connect(projectService,
-                       &ArtifactProjectService::currentCompositionChanged, mw,
-                       [propertyPanel]() {
-                         if (propertyPanel) {
-                           propertyPanel->setFocusedEffectId(QString());
-                           propertyPanel->clear();
-                         }
-                       });
-      QObject::connect(projectService, &ArtifactProjectService::projectCreated,
-                       mw,
-                       [propertyPanel, layerViewEditor, compositionEditor]() {
-                         if (propertyPanel) {
-                           propertyPanel->setFocusedEffectId(QString());
-                           propertyPanel->clear();
-                         }
-                         if (layerViewEditor) {
-                           layerViewEditor->view()->clearTargetLayer();
-                         }
-                         if (compositionEditor) {
-                           compositionEditor->setComposition(nullptr);
-                         }
-                       });
-      QObject::connect(projectService, &ArtifactProjectService::layerRemoved,
-                       mw, [status](const CompositionID &, const LayerID &) {
-                         status->setProjectText("Layer Removed");
-                       });
-      QObject::connect(
-          projectService, &ArtifactProjectService::layerRemoved, mw,
-          [](const CompositionID &compId, const LayerID &layerId) {
-            ArtifactPythonHookManager::runHook(
-                QStringLiteral("layer_removed"),
-                QStringList() << compId.toString() << layerId.toString());
-          });
-      QObject::connect(
-          projectService, &ArtifactProjectService::layerRemoved, mw,
-          [autoSaveManager](const CompositionID &, const LayerID &) {
-            if (autoSaveManager)
-              autoSaveManager->markDirty();
-          });
-      QObject::connect(projectService,
-                       &ArtifactProjectService::compositionCreated, mw,
-                       [](const CompositionID &compId) {
-                         ArtifactPythonHookManager::runHook(
-                             QStringLiteral("composition_created"),
-                             QStringList() << compId.toString());
-                       });
+            if (status) {
+              if (compId.isNil()) {
+                status->setLayerText("None");
+                status->setCompositionInfo("NO COMPOSITION", 0, 0, 0);
+              } else if (auto comp = projectService ? projectService->currentComposition().lock() : ArtifactCompositionPtr{}) {
+                status->setLayerText(comp->allLayer().isEmpty() ? "None" : QStringLiteral("(composition active)"));
+                const auto &settings = comp->settings();
+                status->setCompositionInfo(settings.compositionName().toQString(),
+                                           settings.compositionSize().width(),
+                                           settings.compositionSize().height(),
+                                           comp->frameRate().framerate());
+              }
+            }
+          }));
       const auto timelineDockTitle =
           [projectService](const CompositionID &compId) {
             QString compositionLabel = compId.toString();
@@ -1386,10 +1303,13 @@ int main(int argc, char *argv[]) {
       const auto timelineDockObjectId = [](const CompositionID &compId) {
         return QStringLiteral("timeline::%1").arg(compId.toString());
       };
-      QObject::connect(
-          projectService, &ArtifactProjectService::compositionCreated, mw,
+      appEventSubscriptions.push_back(appEventBus.subscribe<CompositionCreatedEvent>(
           [mw, timelineDockTitle, timelineDockObjectId,
-           status](const CompositionID &compId) {
+           status](const CompositionCreatedEvent& event) {
+            const CompositionID compId(event.compositionId);
+            ArtifactPythonHookManager::runHook(
+                QStringLiteral("composition_created"),
+                QStringList() << event.compositionId);
             QTimer::singleShot(
                 0, mw,
                 [mw, compId, timelineDockTitle, timelineDockObjectId,
@@ -1402,7 +1322,6 @@ int main(int argc, char *argv[]) {
                   panel->setComposition(compId);
                   panel->setWindowTitle(dockTitle);
 
-                  // ズームレベル変更をステータスバーに接続
                   QObject::connect(panel,
                                    &ArtifactTimelineWidget::zoomLevelChanged,
                                    status, &ArtifactStatusBar::setZoomPercent);
@@ -1422,17 +1341,16 @@ int main(int argc, char *argv[]) {
                     mw->activateDock(dockId);
                   });
                 });
-          });
-      QObject::connect(projectService,
-                       &ArtifactProjectService::compositionRemoved, mw,
-                       [mw, timelineDockObjectId](const CompositionID &compId) {
-                         mw->closeDock(timelineDockObjectId(compId));
-                       });
-      QObject::connect(projectService, &ArtifactProjectService::projectCreated,
-                       mw, []() {
-                         ArtifactPythonHookManager::runHook(
-                             QStringLiteral("project_opened"));
-                       });
+          }));
+      appEventSubscriptions.push_back(appEventBus.subscribe<CompositionRemovedEvent>(
+          [mw, timelineDockObjectId](const CompositionRemovedEvent& event) {
+            mw->closeDock(timelineDockObjectId(CompositionID(event.compositionId)));
+          }));
+      appEventSubscriptions.push_back(appEventBus.subscribe<ProjectCreatedEvent>(
+          [](const ProjectCreatedEvent&) {
+            ArtifactPythonHookManager::runHook(
+                QStringLiteral("project_opened"));
+          }));
     }
 
     if (projectService && compositionEditor) {

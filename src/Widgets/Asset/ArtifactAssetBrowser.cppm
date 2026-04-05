@@ -8,6 +8,7 @@
 #include <QWidget>
 #include <QListView>
 #include <QListWidget>
+#include <QLayoutItem>
 #include <QToolButton>
 #include <QDragEnterEvent>
 #include <QDropEvent>
@@ -53,7 +54,105 @@ import File.TypeDetector;
 
 namespace Artifact {
 
- using namespace ArtifactCore;
+using namespace ArtifactCore;
+
+namespace {
+QString normalizeAssetPath(const QString& path)
+{
+  if (path.trimmed().isEmpty()) {
+   return {};
+  }
+  const QFileInfo info(path);
+  const QString canonical = info.canonicalFilePath();
+  return QDir::cleanPath(canonical.isEmpty() ? info.absoluteFilePath() : canonical);
+}
+}
+
+class ArtifactBreadcrumbWidget::Impl
+{
+public:
+ Impl() = default;
+ QWidget* owner_ = nullptr;
+ QHBoxLayout* layout_ = nullptr;
+ QString rootPath_;
+ QString currentPath_;
+
+ void rebuild();
+};
+
+W_OBJECT_IMPL(ArtifactBreadcrumbWidget)
+
+void ArtifactBreadcrumbWidget::Impl::rebuild()
+{
+ if (!owner_ || !layout_) {
+  return;
+ }
+ while (QLayoutItem* item = layout_->takeAt(0)) {
+  if (auto* widget = item->widget()) {
+   widget->deleteLater();
+  }
+  delete item;
+ }
+ const QString current = currentPath_.isEmpty() ? rootPath_ : currentPath_;
+ QStringList parts = current.split(QDir::separator(), Qt::SkipEmptyParts);
+ QString path;
+ if (!rootPath_.isEmpty()) {
+  const QString root = QDir::cleanPath(rootPath_);
+  auto* rootButton = new QToolButton(owner_);
+  rootButton->setText(QFileInfo(root).fileName().isEmpty() ? root : QFileInfo(root).fileName());
+  QObject::connect(rootButton, &QToolButton::clicked, owner_, [this, root]() {
+   Q_EMIT static_cast<ArtifactBreadcrumbWidget*>(owner_)->pathClicked(root);
+  });
+  layout_->addWidget(rootButton);
+  path = root;
+ }
+ for (const QString& part : parts) {
+  if (!path.isEmpty()) {
+   path += QDir::separator();
+  }
+  path += part;
+  auto* button = new QToolButton(owner_);
+  button->setText(part);
+  QObject::connect(button, &QToolButton::clicked, owner_, [this, path]() {
+   Q_EMIT static_cast<ArtifactBreadcrumbWidget*>(owner_)->pathClicked(path);
+  });
+  layout_->addWidget(button);
+ }
+ layout_->addStretch(1);
+}
+
+ArtifactBreadcrumbWidget::ArtifactBreadcrumbWidget(QWidget* parent)
+  : QFrame(parent), impl_(new Impl())
+{
+ impl_->owner_ = this;
+ impl_->layout_ = new QHBoxLayout(this);
+ impl_->layout_->setContentsMargins(0, 0, 0, 0);
+ impl_->layout_->setSpacing(4);
+ setFrameShape(QFrame::NoFrame);
+}
+
+ArtifactBreadcrumbWidget::~ArtifactBreadcrumbWidget()
+{
+ delete impl_;
+}
+
+void ArtifactBreadcrumbWidget::setRootPath(const QString& rootPath)
+{
+ if (!impl_) {
+  return;
+ }
+ impl_->rootPath_ = normalizeAssetPath(rootPath);
+ impl_->rebuild();
+}
+
+void ArtifactBreadcrumbWidget::setPath(const QString& path)
+{
+ if (!impl_) {
+  return;
+ }
+ impl_->currentPath_ = normalizeAssetPath(path);
+ impl_->rebuild();
+}
 
  class AssetFileListView final : public QListView
  {
@@ -1055,6 +1154,66 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
    event->acceptProposedAction();
   }
  }
+
+void ArtifactAssetBrowser::selectAssetPaths(const QStringList& filePaths)
+{
+  if (!impl_ || !impl_->fileView_ || !impl_->assetModel_) {
+   return;
+  }
+
+  QStringList normalizedPaths;
+  normalizedPaths.reserve(filePaths.size());
+  for (const QString& filePath : filePaths) {
+   const QString normalized = normalizeAssetPath(filePath);
+   if (!normalized.isEmpty()) {
+    normalizedPaths.append(normalized);
+   }
+  }
+  normalizedPaths.removeDuplicates();
+  if (normalizedPaths.isEmpty()) {
+   return;
+  }
+
+  const QString targetFolder = QFileInfo(normalizedPaths.first()).absolutePath();
+  if (!targetFolder.isEmpty() && targetFolder != impl_->currentDirectoryPath_) {
+   navigateToFolder(targetFolder);
+  } else {
+   impl_->applyFilters();
+  }
+
+  auto* selection = impl_->fileView_->selectionModel();
+  if (!selection) {
+   return;
+  }
+
+  QSignalBlocker blocker(selection);
+  selection->clearSelection();
+  QModelIndex firstSelected;
+  for (int row = 0; row < impl_->assetModel_->rowCount(); ++row) {
+   const AssetMenuItem item = impl_->assetModel_->itemAt(row);
+   if (item.isFolder) {
+    continue;
+   }
+   const QString itemPath = normalizeAssetPath(item.path.toQString());
+   if (itemPath.isEmpty() || !normalizedPaths.contains(itemPath)) {
+    continue;
+   }
+   const QModelIndex index = impl_->assetModel_->index(row, 0);
+   if (!index.isValid()) {
+    continue;
+   }
+   selection->select(index, QItemSelectionModel::Select | QItemSelectionModel::Rows);
+   if (!firstSelected.isValid()) {
+    firstSelected = index;
+   }
+  }
+
+  if (firstSelected.isValid()) {
+   impl_->fileView_->setCurrentIndex(firstSelected);
+   updateFileInfo(normalizedPaths.first());
+   emit selectionChanged(normalizedPaths);
+  }
+}
 
  void ArtifactAssetBrowser::dropEvent(QDropEvent* event)
  {

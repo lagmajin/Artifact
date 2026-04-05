@@ -8,6 +8,7 @@ module;
 #include <QVector>
 #include <QTextEdit>
 #include <QPushButton>
+#include <QComboBox>
 #include <QLineEdit>
 #include <QLabel>
 #include <QFileDialog>
@@ -112,6 +113,7 @@ public:
     QPushButton* cancel = nullptr;
 
     // Model loading toolbar
+    QComboBox* providerCombo = nullptr;
     QLineEdit* modelPathEdit = nullptr;
     QPushButton* browseButton = nullptr;
     QPushButton* loadButton = nullptr;
@@ -141,6 +143,7 @@ public:
     void appendMessage(const QString& role, const QString& text);
     void updateCurrentAssistantMessage(const QString& text, bool persist = true);
     void updateModelStatus(AIClient* client);
+    void updateModelPathPlaceholder();
     void setSendingState(bool sending);
 };
 
@@ -194,6 +197,19 @@ void AIChatWidget::Impl::updateModelStatus(AIClient* client)
         if (browseButton) {
             browseButton->setEnabled(true);
         }
+    }
+}
+
+void AIChatWidget::Impl::updateModelPathPlaceholder()
+{
+    if (!modelPathEdit || !providerCombo) {
+        return;
+    }
+    const QString provider = providerCombo->currentData().toString().trimmed().toLower();
+    if (provider == QStringLiteral("onnx-dml") || provider == QStringLiteral("onnx")) {
+        modelPathEdit->setPlaceholderText(QStringLiteral("Path to .onnx model or model directory…"));
+    } else {
+        modelPathEdit->setPlaceholderText(QStringLiteral("Path to .gguf model…"));
     }
 }
 
@@ -448,7 +464,7 @@ void AIChatWidget::Impl::dispatchMessage(const QString& txt, AIClient* client)
 
     const QString modelPath = resolveModelPath();
     if (modelPath.isEmpty()) {
-        appendSystemLine(QStringLiteral("Model path is not configured. Use the Browse button above to select a GGUF model."));
+        appendSystemLine(QStringLiteral("Model path is not configured. Use the Browse button above to select a local model."));
         return;
     }
     if (!QFileInfo::exists(modelPath)) {
@@ -459,7 +475,7 @@ void AIChatWidget::Impl::dispatchMessage(const QString& txt, AIClient* client)
     isInitializing = true;
     pendingMessage = trimmed;
     setSendingState(true);
-    appendSystemLine(QStringLiteral("Loading local llama.cpp model in background: %1").arg(modelPath));
+    appendSystemLine(QStringLiteral("Loading local AI model in background: %1").arg(modelPath));
 
     std::thread([client, modelPath]() {
         client->initialize(modelPath);
@@ -486,8 +502,12 @@ AIChatWidget::AIChatWidget(QWidget* parent) : QWidget(parent), impl_(new Impl())
     auto* modelBarLayout = new QHBoxLayout(modelBar);
     modelBarLayout->setContentsMargins(0, 0, 0, 0);
     modelBarLayout->setSpacing(4);
+    impl_->providerCombo = new QComboBox(modelBar);
+    impl_->providerCombo->addItem(QStringLiteral("GGUF / llama.cpp"), QStringLiteral("local"));
+    impl_->providerCombo->addItem(QStringLiteral("ONNX + DirectML"), QStringLiteral("onnx-dml"));
+    impl_->providerCombo->setFixedWidth(124);
+    impl_->providerCombo->setToolTip(QStringLiteral("Select the local AI backend."));
     impl_->modelPathEdit = new QLineEdit(modelBar);
-    impl_->modelPathEdit->setPlaceholderText(QStringLiteral("Path to .gguf model…"));
     impl_->modelPathEdit->setReadOnly(true);
     impl_->browseButton = new QPushButton(QStringLiteral("Browse…"), modelBar);
     impl_->browseButton->setFixedWidth(70);
@@ -497,6 +517,7 @@ AIChatWidget::AIChatWidget(QWidget* parent) : QWidget(parent), impl_(new Impl())
     impl_->unloadButton->setFixedWidth(60);
     impl_->modelStatusLabel = new QLabel(QStringLiteral("Not loaded"), modelBar);
     impl_->modelStatusLabel->setMinimumWidth(70);
+    modelBarLayout->addWidget(impl_->providerCombo);
     modelBarLayout->addWidget(impl_->modelPathEdit, 1);
     modelBarLayout->addWidget(impl_->browseButton);
     modelBarLayout->addWidget(impl_->loadButton);
@@ -548,7 +569,33 @@ AIChatWidget::AIChatWidget(QWidget* parent) : QWidget(parent), impl_(new Impl())
             impl_->modelPathEdit->setText(savedPath);
         }
     }
+    {
+        QSettings settings;
+        QString provider = settings.value(QStringLiteral("AI/Provider"), QStringLiteral("local")).toString().trimmed().toLower();
+        if (provider == QStringLiteral("onnx") ||
+            provider == QStringLiteral("onnxdml") ||
+            provider == QStringLiteral("directml")) {
+            provider = QStringLiteral("onnx-dml");
+        }
+        const int index = impl_->providerCombo->findData(provider.isEmpty() ? QStringLiteral("local") : provider);
+        if (index >= 0) {
+            impl_->providerCombo->setCurrentIndex(index);
+        }
+    }
+    impl_->updateModelPathPlaceholder();
     impl_->updateModelStatus(client);
+
+    QObject::connect(impl_->providerCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this, client](int) {
+        if (!impl_ || !impl_->providerCombo) {
+            return;
+        }
+        const QString provider = impl_->providerCombo->currentData().toString();
+        QSettings settings;
+        settings.setValue(QStringLiteral("AI/Provider"), provider);
+        AIClient::instance()->setProvider(UniString(provider));
+        impl_->updateModelPathPlaceholder();
+        impl_->updateModelStatus(client);
+    });
 
     QObject::connect(impl_->newSessionButton, &QPushButton::clicked, this, [this]() {
         impl_->createNewSession();
@@ -565,8 +612,12 @@ AIChatWidget::AIChatWidget(QWidget* parent) : QWidget(parent), impl_(new Impl())
         dialog->setAttribute(Qt::WA_DeleteOnClose);
         dialog->setWindowTitle(QStringLiteral("Select AI Model"));
         dialog->setFileMode(QFileDialog::ExistingFile);
-        dialog->setOption(QFileDialog::DontUseNativeDialog, true);
-        dialog->setNameFilter(QStringLiteral("GGUF Model Files (*.gguf);;All Files (*)"));
+        const QString provider = impl_->providerCombo ? impl_->providerCombo->currentData().toString().trimmed().toLower() : QStringLiteral("local");
+        if (provider == QStringLiteral("onnx-dml") || provider == QStringLiteral("onnx")) {
+            dialog->setNameFilter(QStringLiteral("ONNX Model Files (*.onnx *.ort);;All Files (*)"));
+        } else {
+            dialog->setNameFilter(QStringLiteral("GGUF Model Files (*.gguf);;All Files (*)"));
+        }
         dialog->setDirectory(
             impl_->modelPathEdit->text().isEmpty()
                 ? QString()
@@ -597,7 +648,7 @@ AIChatWidget::AIChatWidget(QWidget* parent) : QWidget(parent), impl_(new Impl())
     QObject::connect(impl_->loadButton, &QPushButton::clicked, this, [this, client]() {
         const QString path = impl_->modelPathEdit->text().trimmed();
         if (path.isEmpty() || !QFileInfo::exists(path)) {
-            impl_->appendSystemLine(QStringLiteral("Please browse for a valid .gguf model file first."));
+            impl_->appendSystemLine(QStringLiteral("Please browse for a valid model file or directory first."));
             return;
         }
         impl_->isInitializing = true;
@@ -754,6 +805,21 @@ void AIChatWidget::sendUserMessage(const UniString& msg) {
 }
 
 void AIChatWidget::setProvider(const UniString& provider) {
+    if (impl_ && impl_->providerCombo) {
+        QString normalized = provider.toQString().trimmed().toLower();
+        if (normalized == QStringLiteral("onnx") ||
+            normalized == QStringLiteral("onnxdml") ||
+            normalized == QStringLiteral("directml")) {
+            normalized = QStringLiteral("onnx-dml");
+        }
+        const int index = impl_->providerCombo->findData(normalized.isEmpty() ? QStringLiteral("local") : normalized);
+        if (index >= 0) {
+            impl_->providerCombo->setCurrentIndex(index);
+        }
+        QSettings settings;
+        settings.setValue(QStringLiteral("AI/Provider"), normalized.isEmpty() ? QStringLiteral("local") : normalized);
+        impl_->updateModelPathPlaceholder();
+    }
     AIClient::instance()->setProvider(provider);
 }
 

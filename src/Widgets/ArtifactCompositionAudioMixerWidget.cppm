@@ -563,46 +563,18 @@ ArtifactCompositionAudioMixerWidget::ArtifactCompositionAudioMixerWidget(QWidget
     rootLayout->addWidget(header);
     rootLayout->addWidget(scrollArea, 1);
 
-    if (auto* service = ArtifactProjectService::instance()) {
-        QObject::connect(service, &ArtifactProjectService::projectChanged, this, [this]() {
-            impl_->eventBus_.post<ProjectChangedEvent>(ProjectChangedEvent{QString(), QString()});
-            impl_->eventBus_.drain();
-        });
-        QObject::connect(service, &ArtifactProjectService::currentCompositionChanged, this,
-            [this](const CompositionID& compositionId) {
-                impl_->eventBus_.post<CurrentCompositionChangedEvent>(CurrentCompositionChangedEvent{compositionId.toString()});
-                impl_->eventBus_.drain();
-            });
-        QObject::connect(service, &ArtifactProjectService::layerCreated, this,
-            [this](const CompositionID& compositionId, const LayerID& layerId) {
-                impl_->eventBus_.post<LayerChangedEvent>(LayerChangedEvent{
-                    compositionId.toString(),
-                    layerId.toString(),
-                    LayerChangedEvent::ChangeType::Created});
-                impl_->eventBus_.drain();
-            });
-        QObject::connect(service, &ArtifactProjectService::layerRemoved, this,
-            [this](const CompositionID& compositionId, const LayerID& layerId) {
-                impl_->eventBus_.post<LayerChangedEvent>(LayerChangedEvent{
-                    compositionId.toString(),
-                    layerId.toString(),
-                    LayerChangedEvent::ChangeType::Removed});
-                impl_->eventBus_.drain();
-            });
-
-        impl_->eventBusSubscriptions_.push_back(
-            impl_->eventBus_.subscribe<ProjectChangedEvent>([this](const ProjectChangedEvent&) {
-                refreshFromCurrentComposition();
-            }));
-        impl_->eventBusSubscriptions_.push_back(
-            impl_->eventBus_.subscribe<CurrentCompositionChangedEvent>([this](const CurrentCompositionChangedEvent&) {
-                refreshFromCurrentComposition();
-            }));
-        impl_->eventBusSubscriptions_.push_back(
-            impl_->eventBus_.subscribe<LayerChangedEvent>([this](const LayerChangedEvent&) {
-                refreshFromCurrentComposition();
-            }));
-    }
+    impl_->eventBusSubscriptions_.push_back(
+        impl_->eventBus_.subscribe<ProjectChangedEvent>([this](const ProjectChangedEvent&) {
+            refreshFromCurrentComposition();
+        }));
+    impl_->eventBusSubscriptions_.push_back(
+        impl_->eventBus_.subscribe<CurrentCompositionChangedEvent>([this](const CurrentCompositionChangedEvent&) {
+            refreshFromCurrentComposition();
+        }));
+    impl_->eventBusSubscriptions_.push_back(
+        impl_->eventBus_.subscribe<LayerChangedEvent>([this](const LayerChangedEvent&) {
+            refreshFromCurrentComposition();
+        }));
 
     refreshFromCurrentComposition();
 }

@@ -1,6 +1,7 @@
 module;
 #include <QTimer>
 #include <QElapsedTimer>
+#include <QMetaObject>
 #include <QThread>
 #include <wobjectimpl.h>
 
@@ -50,6 +51,8 @@ import Frame.Rate;
 import Frame.Range;
 import Artifact.Composition.PlaybackController;
 import Artifact.Composition.Abstract;
+import Event.Bus;
+import Artifact.Event.Types;
 
 namespace Artifact {
 
@@ -83,31 +86,53 @@ public:
         // エンジンのシグナルをサービスに転送
         QObject::connect(engine_, &ArtifactPlaybackEngine::playbackStateChanged,
                          owner_, [this](PlaybackState state) {
-            if (state == PlaybackState::Paused) {
-                pauseAudioClock();
-            } else if (state == PlaybackState::Stopped) {
-                stopAudioClock();
-            }
-            Q_EMIT owner_->playbackStateChanged(state);
+            const auto publishState = [this, state]() {
+                if (state == PlaybackState::Paused) {
+                    pauseAudioClock();
+                } else if (state == PlaybackState::Stopped) {
+                    stopAudioClock();
+                }
+                ArtifactCore::globalEventBus().publish<PlaybackStateChangedEvent>(
+                    PlaybackStateChangedEvent{state});
+                Q_EMIT owner_->playbackStateChanged(state);
+            };
+            QMetaObject::invokeMethod(owner_, publishState, Qt::QueuedConnection);
         }, Qt::DirectConnection);
         
         QObject::connect(engine_, &ArtifactPlaybackEngine::frameChanged,
                          owner_, [this](const FramePosition& position, const QImage&) {
-            syncCurrentCompositionFrame(position);
-            Q_EMIT owner_->frameChanged(position);
+            const QString compositionId = currentComposition_ ? currentComposition_->id().toString() : QString();
+            const auto publishFrame = [this, position, compositionId]() {
+                syncCurrentCompositionFrame(position);
+                ArtifactCore::globalEventBus().publish<FrameChangedEvent>(
+                    FrameChangedEvent{compositionId, position.framePosition()});
+                Q_EMIT owner_->frameChanged(position);
+            };
+            QMetaObject::invokeMethod(owner_, publishFrame, Qt::QueuedConnection);
         }, Qt::DirectConnection);
         
         QObject::connect(engine_, &ArtifactPlaybackEngine::playbackSpeedChanged,
-                         owner_, &ArtifactPlaybackService::playbackSpeedChanged,
-                         Qt::DirectConnection);
+                         owner_, [this](float speed) {
+            ArtifactCore::globalEventBus().publish<PlaybackSpeedChangedEvent>(
+                PlaybackSpeedChangedEvent{speed});
+            Q_EMIT owner_->playbackSpeedChanged(speed);
+        }, Qt::DirectConnection);
         
         QObject::connect(engine_, &ArtifactPlaybackEngine::loopingChanged,
-                         owner_, &ArtifactPlaybackService::loopingChanged,
-                         Qt::DirectConnection);
+                         owner_, [this](bool loop) {
+            ArtifactCore::globalEventBus().publish<PlaybackLoopingChangedEvent>(
+                PlaybackLoopingChangedEvent{loop});
+            Q_EMIT owner_->loopingChanged(loop);
+        }, Qt::DirectConnection);
         
         QObject::connect(engine_, &ArtifactPlaybackEngine::frameRangeChanged,
-                         owner_, &ArtifactPlaybackService::frameRangeChanged,
-                         Qt::DirectConnection);
+                         owner_, [this](const FrameRange& range) {
+            ArtifactCore::globalEventBus().publish<PlaybackFrameRangeChangedEvent>(
+                PlaybackFrameRangeChangedEvent{
+                    range.start(),
+                    range.end()});
+            Q_EMIT owner_->frameRangeChanged(range);
+        }, Qt::DirectConnection);
         
         QObject::connect(engine_, &ArtifactPlaybackEngine::droppedFrameDetected,
                          owner_, [this](int64_t count) {
@@ -478,6 +503,9 @@ void ArtifactPlaybackService::setCurrentComposition(ArtifactCompositionPtr compo
             impl_->controller_->setCurrentFrame(composition->framePosition());
         }
 
+        ArtifactCore::globalEventBus().publish<PlaybackCompositionChangedEvent>(
+            PlaybackCompositionChangedEvent{
+                composition ? composition->id().toString() : QString()});
         Q_EMIT currentCompositionChanged(composition);
     }
 }

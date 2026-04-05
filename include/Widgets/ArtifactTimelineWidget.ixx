@@ -147,14 +147,4 @@ class ArtifactTimelineWidget :public QWidget {
   void onSearchTextChanged(const QString& text);
  };
 
- class ArtifactTimelineIconView :public QTreeView
- {
- private:
-  class Impl;
-  Impl* impl_;
- public:
-  explicit ArtifactTimelineIconView(QWidget* parent = nullptr);
-  ~ArtifactTimelineIconView();
- };
-
 };

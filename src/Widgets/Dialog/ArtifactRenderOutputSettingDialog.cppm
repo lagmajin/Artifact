@@ -15,9 +15,15 @@
 #include <QSignalBlocker>
 #include <QSpinBox>
 #include <QStringList>
+#include <QCoreApplication>
+#include <QProcess>
+#include <QProcessEnvironment>
+#include <QDir>
+#include <QFileInfo>
 #include <Widgets/Dialog/ArtifactDialogButtons.hpp>
 module Artifact.Widget.Dialog.RenderOutputSetting;
 
+import Encoder.FFmpegEncoder;
 import Artifact.Render.Queue.Presets;
 
 
@@ -38,6 +44,7 @@ namespace Artifact
   QComboBox* codecCombo = nullptr;
   QString codecProfile;
   QComboBox* backendCombo = nullptr;
+  QLabel* backendInfoLabel = nullptr;
   QComboBox* resolutionCombo = nullptr;
   QSpinBox* widthSpin = nullptr;
   QSpinBox* heightSpin = nullptr;
@@ -50,6 +57,9 @@ namespace Artifact
   void handleBrowseClicked(ArtifactRenderOutputSettingDialog* dialog);
   void syncResolutionEditors();
   void syncResolutionPreset();
+  void updateBackendInfo();
+  static QString resolveFfmpegExePath();
+  static bool ffmpegExeSupportsEncoder(const QString& ffmpegPath, const QString& encoderName);
   static void ensureComboContains(QComboBox* combo, const QString& value);
   void loadFormatPresets();
   void applyPresetToEditors(const QString& presetId);
@@ -128,6 +138,96 @@ namespace Artifact
    resolutionCombo->setCurrentIndex(index >= 0 ? index : resolutionCombo->findText("Custom"));
    widthSpin->setEnabled(preset == "Custom");
    heightSpin->setEnabled(preset == "Custom");
+ }
+
+ void ArtifactRenderOutputSettingDialog::Impl::updateBackendInfo()
+ {
+   if (!backendInfoLabel) {
+     return;
+   }
+
+  const QStringList codecs = ArtifactCore::FFmpegEncoder::availableVideoCodecs();
+  QStringList visibleCodecs;
+   for (const QString& codec : codecs) {
+     const QString normalized = codec.trimmed().toLower();
+     if (normalized == QStringLiteral("h264") || normalized == QStringLiteral("h265")
+         || normalized == QStringLiteral("hevc") || normalized == QStringLiteral("prores")
+         || normalized == QStringLiteral("vp9") || normalized == QStringLiteral("dnxhd")
+         || normalized == QStringLiteral("mjpeg")) {
+       visibleCodecs << codec;
+     }
+   }
+   if (visibleCodecs.isEmpty()) {
+     visibleCodecs = codecs.mid(0, 6);
+   }
+
+   const QString ffmpegPath = resolveFfmpegExePath();
+   const bool nvencH264 = ffmpegExeSupportsEncoder(ffmpegPath, QStringLiteral("h264_nvenc"));
+   const bool nvencHevc = ffmpegExeSupportsEncoder(ffmpegPath, QStringLiteral("hevc_nvenc"));
+
+   QStringList lines;
+   lines << QStringLiteral("Hardware FFmpeg: %1")
+               .arg((nvencH264 || nvencHevc) ? QStringLiteral("NVENC available") : QStringLiteral("NVENC unavailable, will fallback"));
+   if (visibleCodecs.isEmpty()) {
+     lines << QStringLiteral("FFmpeg codecs: unavailable");
+   } else {
+     lines << QStringLiteral("FFmpeg codecs: %1").arg(visibleCodecs.join(QStringLiteral(", ")));
+   }
+   backendInfoLabel->setText(lines.join(QStringLiteral(" | ")));
+   backendInfoLabel->setToolTip(QStringLiteral("pipe-hw first tries NVENC through FFmpeg.exe. If the encoder is unavailable, the job falls back to the software pipe backend."));
+ }
+
+ QString ArtifactRenderOutputSettingDialog::Impl::resolveFfmpegExePath()
+ {
+   const QString executableName = QStringLiteral("ffmpeg.exe");
+   const QString executableStem = QStringLiteral("ffmpeg");
+   const QString appDir = QCoreApplication::applicationDirPath();
+   const QString currentDir = QDir::currentPath();
+   const QStringList candidatePaths = {
+     QDir(appDir).filePath(executableName),
+     QDir(appDir).filePath(executableStem),
+     QDir(appDir).filePath(QStringLiteral("bin/") + executableName),
+     QDir(appDir).filePath(QStringLiteral("bin/") + executableStem),
+     QDir(currentDir).filePath(executableName),
+     QDir(currentDir).filePath(executableStem),
+     QDir(currentDir).filePath(QStringLiteral("bin/") + executableName),
+     QDir(currentDir).filePath(QStringLiteral("bin/") + executableStem)
+   };
+   for (const QString& candidate : candidatePaths) {
+     const QFileInfo info(candidate);
+     if (info.exists() && info.isFile()) {
+       return info.absoluteFilePath();
+     }
+   }
+   const QStringList envPath = QProcessEnvironment::systemEnvironment()
+                                   .value(QStringLiteral("PATH"))
+                                   .split(QDir::listSeparator(), Qt::SkipEmptyParts);
+   for (const QString& pathEntry : envPath) {
+     const QString candidate = QDir(pathEntry).filePath(executableName);
+     const QFileInfo info(candidate);
+     if (info.exists() && info.isFile()) {
+       return info.absoluteFilePath();
+     }
+   }
+   return executableName;
+ }
+
+ bool ArtifactRenderOutputSettingDialog::Impl::ffmpegExeSupportsEncoder(const QString& ffmpegPath, const QString& encoderName)
+ {
+   if (ffmpegPath.trimmed().isEmpty() || encoderName.trimmed().isEmpty()) {
+     return false;
+   }
+
+   QProcess probe;
+   probe.setProcessChannelMode(QProcess::MergedChannels);
+   probe.start(ffmpegPath, {QStringLiteral("-hide_banner"), QStringLiteral("-encoders")});
+   if (!probe.waitForFinished(5000)) {
+     probe.kill();
+     probe.waitForFinished(1000);
+     return false;
+   }
+   const QString output = QString::fromUtf8(probe.readAllStandardOutput());
+   return output.contains(encoderName, Qt::CaseInsensitive);
  }
 
  void ArtifactRenderOutputSettingDialog::Impl::ensureComboContains(QComboBox* combo, const QString& value)
@@ -220,8 +320,13 @@ namespace Artifact
  QString ArtifactRenderOutputSettingDialog::Impl::normalizeBackend(const QString& backend)
  {
    const QString value = backend.trimmed().toLower();
-   if (value == QStringLiteral("pipe") || value == QStringLiteral("ffmpeg.exe") || value == QStringLiteral("ffmpeg")) {
+  if (value == QStringLiteral("pipe") || value == QStringLiteral("ffmpeg.exe") || value == QStringLiteral("ffmpeg")) {
      return QStringLiteral("pipe");
+   }
+   if (value == QStringLiteral("pipe-hw") || value == QStringLiteral("pipe-hw (nvenc)")
+       || value == QStringLiteral("ffmpeg-hw") || value == QStringLiteral("hardware")
+       || value == QStringLiteral("hw")) {
+     return QStringLiteral("pipe-hw");
    }
    if (value == QStringLiteral("native") || value == QStringLiteral("api") || value == QStringLiteral("ffmpegapi")) {
      return QStringLiteral("native");
@@ -271,9 +376,13 @@ namespace Artifact
 
     impl_->backendCombo = new QComboBox();
     impl_->backendCombo->addItems(QStringList{
-      "auto", "pipe", "native"
+      "auto", "pipe", "pipe-hw (NVENC)", "native"
     });
     formLayout->addRow("Encoder Backend:", impl_->backendCombo);
+    impl_->backendInfoLabel = new QLabel(this);
+    impl_->backendInfoLabel->setWordWrap(true);
+    formLayout->addRow(QString(), impl_->backendInfoLabel);
+    impl_->updateBackendInfo();
 
     // Resolution presets + custom width/height
     impl_->resolutionCombo = new QComboBox();
@@ -347,6 +456,9 @@ namespace Artifact
     });
     QObject::connect(impl_->heightSpin, qOverload<int>(&QSpinBox::valueChanged), [this](int) {
         impl_->syncResolutionPreset();
+    });
+    QObject::connect(impl_->backendCombo, &QComboBox::currentTextChanged, [this](const QString&) {
+        impl_->updateBackendInfo();
     });
 
     QObject::connect(impl_->okButton, &QPushButton::clicked, this, &QDialog::accept);
@@ -482,15 +594,18 @@ namespace Artifact
    return impl_ ? impl_->codecProfile : QString();
  }
 
- void ArtifactRenderOutputSettingDialog::setEncoderBackend(const QString& backend)
- {
-   if (!impl_->backendCombo) {
-     return;
-   }
-   const QString normalized = Impl::normalizeBackend(backend);
-   const int index = impl_->backendCombo->findText(normalized);
-   impl_->backendCombo->setCurrentIndex(index >= 0 ? index : 0);
- }
+void ArtifactRenderOutputSettingDialog::setEncoderBackend(const QString& backend)
+{
+  if (!impl_->backendCombo) {
+    return;
+  }
+  const QString normalized = Impl::normalizeBackend(backend);
+  const QString displayText = (normalized == QStringLiteral("pipe-hw"))
+      ? QStringLiteral("pipe-hw (NVENC)")
+      : normalized;
+  const int index = impl_->backendCombo->findText(displayText);
+  impl_->backendCombo->setCurrentIndex(index >= 0 ? index : 0);
+}
 
  QString ArtifactRenderOutputSettingDialog::encoderBackend() const
  {

@@ -18,6 +18,8 @@ module Artifact.Widgets.ColorSwatchWidget;
 
 import Color.Swatch;
 import Color.Float;
+import Artifact.Event.Types;
+import Event.Bus;
 
 namespace Artifact {
 
@@ -26,6 +28,7 @@ W_OBJECT_IMPL(ArtifactColorSwatchWidget)
 class ArtifactColorSwatchWidget::Impl {
 public:
     ArtifactCore::ColorSwatch swatch;
+    ArtifactCore::EventBus eventBus_ = ArtifactCore::globalEventBus();
     QListWidget* listWidget = nullptr;
     QPushButton* btnLoad = nullptr;
     QPushButton* btnSave = nullptr;
@@ -84,7 +87,9 @@ ArtifactColorSwatchWidget::ArtifactColorSwatchWidget(QWidget* parent)
         if (!item) return;
         int idx = impl_->listWidget->row(item);
         if (idx >= 0 && idx < (int)impl_->swatch.count()) {
-            Q_EMIT colorSelected(impl_->swatch.at(idx).color);
+            const auto &entry = impl_->swatch.at(idx);
+            impl_->eventBus_.post<ColorSwatchSelectedEvent>(ColorSwatchSelectedEvent{entry.color.r(), entry.color.g(), entry.color.b(), entry.color.a()});
+            Q_EMIT colorSelected(entry.color);
         }
     });
 
@@ -95,6 +100,7 @@ ArtifactColorSwatchWidget::~ArtifactColorSwatchWidget() = default;
 void ArtifactColorSwatchWidget::setSwatch(const ArtifactCore::ColorSwatch& sw) {
     impl_->swatch = sw;
     updateListView();
+    impl_->eventBus_.post<ColorSwatchChangedEvent>(ColorSwatchChangedEvent{});
     Q_EMIT swatchChanged();
 }
 
@@ -130,6 +136,7 @@ void ArtifactColorSwatchWidget::onLoadGPL() {
     if (!path.isEmpty()) {
         if (impl_->swatch.importGPL(path.toStdString())) {
             updateListView();
+            impl_->eventBus_.post<ColorSwatchChangedEvent>(ColorSwatchChangedEvent{});
             Q_EMIT swatchChanged();
         }
     }
@@ -146,6 +153,7 @@ void ArtifactColorSwatchWidget::onSaveGPL() {
 void ArtifactColorSwatchWidget::onClear() {
     impl_->swatch.clear();
     updateListView();
+    impl_->eventBus_.post<ColorSwatchChangedEvent>(ColorSwatchChangedEvent{});
     Q_EMIT swatchChanged();
 }
 

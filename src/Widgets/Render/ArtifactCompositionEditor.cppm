@@ -70,6 +70,8 @@ import Artifact.Layer.InitParams;
 import File.TypeDetector;
 import Application.AppSettings;
 import Widgets.Utils.CSS;
+import Event.Bus;
+import Artifact.Event.Types;
 
 namespace Artifact {
 
@@ -1436,6 +1438,8 @@ public:
 
   bool selectionSyncQueued_ = false;
   bool toolLabelSyncQueued_ = false;
+  ArtifactCore::EventBus eventBus_ = ArtifactCore::globalEventBus();
+  std::vector<ArtifactCore::EventBus::Subscription> eventBusSubscriptions_;
 
   // 外部 signal から即時に widget を書き換えず、イベントループの次 tick にまとめて反映する。
   void queueSelectionSync(ArtifactCompositionEditor* owner) {
@@ -1940,36 +1944,14 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
       impl_->resolutionCombo_->setCurrentIndex(targetIndex);
     };
     syncResolutionCombo(service->previewQualityPreset());
-    QObject::connect(service, &ArtifactProjectService::previewQualityPresetChanged,
-                     this, syncResolutionCombo);
-    QObject::connect(
-        service, &ArtifactProjectService::currentCompositionChanged, this,
-        [this](const ArtifactCore::CompositionID &id) {
-          if (id.isNil()) {
-            setComposition(nullptr);
-          } else {
-            auto compResult =
-                ArtifactProjectService::instance()->findComposition(id);
-            if (compResult.success) {
-              setComposition(compResult.ptr.lock());
-            } else {
-              setComposition(nullptr);
-            }
-          }
-        });
-    QObject::connect(
-        service, &ArtifactProjectService::projectChanged, this,
-        [this]() { setComposition(resolvePreferredComposition()); });
+    impl_->eventBusSubscriptions_.push_back(
+        impl_->eventBus_.subscribe<PreviewQualityPresetChangedEvent>(
+            [this, syncResolutionCombo](const PreviewQualityPresetChangedEvent& event) {
+              syncResolutionCombo(static_cast<PreviewQualityPreset>(event.preset));
+            }));
   }
 
   if (auto *app = ArtifactApplicationManager::instance()) {
-    if (auto *active = app->activeContextService()) {
-      QObject::connect(active,
-                       &ArtifactActiveContextService::activeCompositionChanged,
-                       this, [this](ArtifactCompositionPtr composition) {
-                         setComposition(composition);
-                       });
-    }
     if (auto *toolManager = app->toolManager()) {
       QObject::connect(toolManager, &ArtifactToolManager::toolChanged, this,
                        [this](ToolType) {
@@ -1978,27 +1960,90 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
                          }
                        });
     }
-    if (auto *selection = app->layerSelectionManager()) {
-      QObject::connect(selection, &ArtifactLayerSelectionManager::selectionChanged,
-                       this, [this, selection]() {
-                         Q_UNUSED(selection);
-                         if (impl_) {
-                           impl_->queueSelectionSync(this);
-                         }
-                       });
-      if (impl_) {
-        impl_->queueSelectionSync(this);
-      }
+    if (impl_) {
+      impl_->queueSelectionSync(this);
     }
   }
 
-  if (auto *playback = ArtifactPlaybackService::instance()) {
-    QObject::connect(playback,
-                     &ArtifactPlaybackService::currentCompositionChanged, this,
-                     [this](ArtifactCompositionPtr composition) {
-                       setComposition(composition);
-                     });
-  }
+  impl_->eventBusSubscriptions_.push_back(
+      impl_->eventBus_.subscribe<ProjectChangedEvent>(
+          [this](const ProjectChangedEvent&) {
+            if (!impl_ || !impl_->renderController_) {
+              return;
+            }
+            const auto next = resolvePreferredComposition();
+            const auto current = impl_->renderController_->composition();
+            if (current && next && current->id() == next->id()) {
+              impl_->queueSelectionSync(this);
+              return;
+            }
+            setComposition(next);
+            impl_->queueSelectionSync(this);
+          }));
+
+  impl_->eventBusSubscriptions_.push_back(
+      impl_->eventBus_.subscribe<CurrentCompositionChangedEvent>(
+          [this](const CurrentCompositionChangedEvent& event) {
+            if (!impl_ || !impl_->renderController_) {
+              return;
+            }
+            if (event.compositionId.trimmed().isEmpty()) {
+              setComposition(nullptr);
+              return;
+            }
+            auto *service = ArtifactProjectService::instance();
+            if (!service) {
+              setComposition(nullptr);
+              return;
+            }
+            auto result = service->findComposition(CompositionID(event.compositionId));
+            if (result.success) {
+              const auto next = result.ptr.lock();
+              const auto current = impl_->renderController_->composition();
+              if (!current || !next || current->id() != next->id()) {
+                setComposition(next);
+              }
+              return;
+            }
+            setComposition(nullptr);
+          }));
+
+  impl_->eventBusSubscriptions_.push_back(
+      impl_->eventBus_.subscribe<SelectionChangedEvent>(
+          [this](const SelectionChangedEvent&) {
+            if (impl_) {
+              impl_->queueSelectionSync(this);
+            }
+          }));
+
+  impl_->eventBusSubscriptions_.push_back(
+      impl_->eventBus_.subscribe<LayerSelectionChangedEvent>(
+          [this](const LayerSelectionChangedEvent&) {
+            if (impl_) {
+              impl_->queueSelectionSync(this);
+            }
+          }));
+
+  impl_->eventBusSubscriptions_.push_back(
+      impl_->eventBus_.subscribe<PlaybackCompositionChangedEvent>(
+          [this](const PlaybackCompositionChangedEvent& event) {
+            if (event.compositionId.trimmed().isEmpty()) {
+              if (impl_ && impl_->renderController_ &&
+                  !impl_->renderController_->composition()) {
+                return;
+              }
+              setComposition(nullptr);
+              return;
+            }
+            if (auto* service = ArtifactProjectService::instance()) {
+              auto result = service->findComposition(CompositionID(event.compositionId));
+              if (result.success) {
+                setComposition(result.ptr.lock());
+                return;
+              }
+            }
+            setComposition(nullptr);
+          }));
 }
 
 void ArtifactCompositionEditor::resizeEvent(QResizeEvent* event) {

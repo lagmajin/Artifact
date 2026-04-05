@@ -156,6 +156,24 @@ namespace Artifact
             return executableName;
         }
 
+        bool ffmpegExeSupportsEncoder(const QString& ffmpegPath, const QString& encoderName)
+        {
+            if (ffmpegPath.trimmed().isEmpty() || encoderName.trimmed().isEmpty()) {
+                return false;
+            }
+
+            QProcess probe;
+            probe.setProcessChannelMode(QProcess::MergedChannels);
+            probe.start(ffmpegPath, {QStringLiteral("-hide_banner"), QStringLiteral("-encoders")});
+            if (!probe.waitForFinished(5000)) {
+                probe.kill();
+                probe.waitForFinished(1000);
+                return false;
+            }
+            const QString output = QString::fromUtf8(probe.readAllStandardOutput());
+            return output.contains(encoderName, Qt::CaseInsensitive);
+        }
+
         QString deriveIntegratedVideoTempPath(const QString& finalOutputPath)
         {
             const QFileInfo info(finalOutputPath);
@@ -352,12 +370,18 @@ namespace Artifact
     enum class VideoEncodeBackendKind {
         Auto,
         Pipe,
+        PipeHardware,
         Native
     };
 
     static VideoEncodeBackendKind parseVideoEncodeBackend(const QString& backend)
     {
         const QString value = backend.trimmed().toLower();
+        if (value == QLatin1String("pipe-hw") || value == QLatin1String("pipe-hw (nvenc)")
+            || value == QLatin1String("ffmpeg-hw")
+            || value == QLatin1String("hardware") || value == QLatin1String("hw")) {
+            return VideoEncodeBackendKind::PipeHardware;
+        }
         if (value == QLatin1String("pipe") || value == QLatin1String("ffmpeg.exe") || value == QLatin1String("ffmpeg")) {
             return VideoEncodeBackendKind::Pipe;
         }
@@ -505,9 +529,13 @@ namespace Artifact
         return value;
     }
 
-    static QString ffmpegPipeEncoderName(const QString& codec)
+    static QString ffmpegPipeEncoderName(const QString& codec, bool preferHardware = false)
     {
         const QString value = normalizeCodecName(codec);
+        if (preferHardware) {
+            if (value == QStringLiteral("h264")) return QStringLiteral("h264_nvenc");
+            if (value == QStringLiteral("h265")) return QStringLiteral("hevc_nvenc");
+        }
         if (value == QStringLiteral("h264")) return QStringLiteral("libx264");
         if (value == QStringLiteral("h265")) return QStringLiteral("libx265");
         if (value == QStringLiteral("prores")) return QStringLiteral("prores_ks");
@@ -563,10 +591,17 @@ namespace Artifact
         return QStringLiteral("yuv420p");
     }
 
-    static QStringList ffmpegPipeQualityArgs(const ArtifactRenderJob& job)
+    static QStringList ffmpegPipeQualityArgs(const ArtifactRenderJob& job, bool preferHardware = false)
     {
         const QString value = normalizeCodecName(job.codec);
         QStringList args;
+        if (preferHardware && (value == QStringLiteral("h264") || value == QStringLiteral("h265"))) {
+            args << QStringLiteral("-preset") << QStringLiteral("p5")
+                 << QStringLiteral("-b:v") << QString::number(std::max(1, job.bitrate) * 1000)
+                 << QStringLiteral("-maxrate") << QString::number(std::max(1, job.bitrate) * 1200)
+                 << QStringLiteral("-bufsize") << QString::number(std::max(1, job.bitrate) * 2000);
+            return args;
+        }
         if (value == QStringLiteral("h264") || value == QStringLiteral("h265")) {
             args << QStringLiteral("-preset") << QStringLiteral("slow")
                  << QStringLiteral("-crf") << QStringLiteral("18")
@@ -694,6 +729,11 @@ namespace Artifact
 
     class PipeFFmpegExeBackend final : public IVideoEncodeBackend {
     public:
+        explicit PipeFFmpegExeBackend(bool preferHardware = false)
+            : preferHardware_(preferHardware)
+        {
+        }
+
         bool open(const ArtifactRenderJob& job, QString* errorMessage) override
         {
             close();
@@ -705,6 +745,13 @@ namespace Artifact
             const int height = std::max(1, job.resolutionHeight);
             const double fps = job.frameRate > 0.0 ? job.frameRate : 30.0;
             const QString codec = normalizeCodecName(job.codec);
+            if (preferHardware_ && codec != QStringLiteral("h264") && codec != QStringLiteral("h265")) {
+                if (errorMessage) {
+                    *errorMessage = QStringLiteral("pipe-hw is only supported for H.264/H.265 jobs");
+                }
+                lastError_ = QStringLiteral("Unsupported hardware codec: %1").arg(codec);
+                return false;
+            }
 
             QStringList args;
             args << QStringLiteral("-y")
@@ -713,9 +760,9 @@ namespace Artifact
                  << QStringLiteral("-video_size") << QStringLiteral("%1x%2").arg(width).arg(height)
                  << QStringLiteral("-framerate") << QString::number(fps, 'f', 6)
                  << QStringLiteral("-i") << QStringLiteral("-")
-                 << QStringLiteral("-c:v") << ffmpegPipeEncoderName(codec);
+                 << QStringLiteral("-c:v") << ffmpegPipeEncoderName(codec, preferHardware_);
 
-            const QStringList qualityArgs = ffmpegPipeQualityArgs(job);
+            const QStringList qualityArgs = ffmpegPipeQualityArgs(job, preferHardware_);
             for (const QString& arg : qualityArgs) {
                 args << arg;
             }
@@ -723,6 +770,19 @@ namespace Artifact
                  << job.outputPath;
 
             const QString ffmpegPath = resolveFfmpegExePath();
+            if (preferHardware_) {
+                const QString hwEncoder = (codec == QStringLiteral("h265"))
+                    ? QStringLiteral("hevc_nvenc")
+                    : QStringLiteral("h264_nvenc");
+                if (!ffmpegExeSupportsEncoder(ffmpegPath, hwEncoder)) {
+                    if (errorMessage) {
+                        *errorMessage = QStringLiteral("ffmpeg.exe does not advertise %1").arg(hwEncoder);
+                    }
+                    lastError_ = QStringLiteral("Missing hardware encoder: %1").arg(hwEncoder);
+                    close();
+                    return false;
+                }
+            }
             process_->start(ffmpegPath, args);
             if (!process_->waitForStarted()) {
                 if (errorMessage) {
@@ -790,6 +850,7 @@ namespace Artifact
     private:
         std::unique_ptr<QProcess> process_;
         QString lastError_;
+        bool preferHardware_ = false;
     };
 
     class NativeFFmpegBackend final : public IVideoEncodeBackend {
@@ -857,9 +918,25 @@ namespace Artifact
             if (errorMessage) *errorMessage = localError;
             return nullptr;
         };
+        const auto tryPipeHardware = [&]() -> std::unique_ptr<IVideoEncodeBackend> {
+            QString localError;
+            auto backend = std::make_unique<PipeFFmpegExeBackend>(true);
+            if (backend->open(job, &localError)) {
+                if (backendName) *backendName = QStringLiteral("pipe-hw");
+                if (errorMessage) errorMessage->clear();
+                return backend;
+            }
+            if (errorMessage) *errorMessage = localError;
+            return nullptr;
+        };
 
         switch (requested) {
         case VideoEncodeBackendKind::Pipe:
+            return tryPipe();
+        case VideoEncodeBackendKind::PipeHardware:
+            if (auto hardwareBackend = tryPipeHardware()) {
+                return hardwareBackend;
+            }
             return tryPipe();
         case VideoEncodeBackendKind::Native:
             return tryNative();

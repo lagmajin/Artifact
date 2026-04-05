@@ -47,6 +47,8 @@ import Artifact.Service.Project;
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
 import Artifact.Effect.Abstract;
+import Event.Bus;
+import Artifact.Event.Types;
 
 namespace Artifact {
 
@@ -57,12 +59,10 @@ namespace Artifact {
     ArtifactWebBridge::ArtifactWebBridge(QObject* parent)
         : QObject(parent)
     {
-        // ProjectService の layerSelected シグナルを監視して JS 側にフォワード
-        if (auto* service = ArtifactProjectService::instance()) {
-            connect(service, &ArtifactProjectService::layerSelected, this, [this](const LayerID& id) {
-                emit layerSelectionChanged(id.toString());
-            });
-        }
+        eventBusSubscriptions_.push_back(eventBus_.subscribe<LayerSelectionChangedEvent>(
+            [this](const LayerSelectionChangedEvent& event) {
+                emit layerSelectionChanged(event.layerId);
+            }));
     }
 
     ArtifactWebBridge::~ArtifactWebBridge() = default;

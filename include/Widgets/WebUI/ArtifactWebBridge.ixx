@@ -45,6 +45,7 @@ export module Artifact.Widgets.WebBridge;
 
 import Utils.Id;
 import Utils.String.UniString;
+import Event.Bus;
 
 export namespace Artifact {
 
@@ -64,6 +65,9 @@ export namespace Artifact {
     // ===================================================================
     class ArtifactWebBridge : public QObject {
         W_OBJECT(ArtifactWebBridge)
+    private:
+        ArtifactCore::EventBus eventBus_ = ArtifactCore::globalEventBus();
+        std::vector<ArtifactCore::EventBus::Subscription> eventBusSubscriptions_;
 
     public:
         explicit ArtifactWebBridge(QObject* parent = nullptr);

@@ -63,6 +63,8 @@ import Utils;
 import Icon.SvgToIcon;
 import Frame.Range;
 import Playback.State;
+import Event.Bus;
+import Artifact.Event.Types;
 import Artifact.Composition.InOutPoints;
 import Widgets.Utils.CSS;
 import Artifact.Application.Manager;
@@ -187,6 +189,8 @@ public:
     bool isLooping_ = false;
     float playbackSpeed_ = 1.0f;
     ArtifactInOutPoints* inOutPoints_ = nullptr;
+    ArtifactCore::EventBus eventBus_ = ArtifactCore::globalEventBus();
+    std::vector<ArtifactCore::EventBus::Subscription> eventBusSubscriptions_;
     Impl(ArtifactPlaybackControlWidget* owner)
         : owner_(owner)
     {}
@@ -496,43 +500,36 @@ public:
             updateFrameWidgets();
         });
         
-        // サービスからの状態更新を監視
-        if (auto* service = ArtifactPlaybackService::instance()) {
-            QObject::connect(service, &ArtifactPlaybackService::playbackStateChanged,
-                owner_, [this](PlaybackState state) {
-                    this->updatePlaybackState(state);
-                });
-
-            QObject::connect(service, &ArtifactPlaybackService::frameChanged,
-                owner_, [this](const FramePosition&) {
-                    updateFrameWidgets();
-                });
-
-            QObject::connect(service, &ArtifactPlaybackService::frameRangeChanged,
-                owner_, [this](const FrameRange&) {
-                    updateFrameWidgets();
-                });
-
-            QObject::connect(service, &ArtifactPlaybackService::playbackSpeedChanged,
-                owner_, [this](float speed) {
-                    updateSpeedPresetButtons(speed);
-                });
-            
-            QObject::connect(service, &ArtifactPlaybackService::loopingChanged,
-                owner_, [this](bool loop) {
-                    isLooping_ = loop;
-                    if (loopButton_) {
-                        loopButton_->blockSignals(true);
-                        loopButton_->setChecked(loop);
-                        loopButton_->blockSignals(false);
-                    }
-                });
-
-            QObject::connect(service, &ArtifactPlaybackService::currentCompositionChanged,
-                owner_, [this](ArtifactCompositionPtr) {
-                    syncFromService();
-                });
-        }
+        // サービスからの状態更新は internal event bus に集約する
+        eventBusSubscriptions_.push_back(eventBus_.subscribe<PlaybackStateChangedEvent>(
+            [this](const PlaybackStateChangedEvent& event) {
+                updatePlaybackState(event.state);
+            }));
+        eventBusSubscriptions_.push_back(eventBus_.subscribe<FrameChangedEvent>(
+            [this](const FrameChangedEvent&) {
+                updateFrameWidgets();
+            }));
+        eventBusSubscriptions_.push_back(eventBus_.subscribe<PlaybackFrameRangeChangedEvent>(
+            [this](const PlaybackFrameRangeChangedEvent&) {
+                updateFrameWidgets();
+            }));
+        eventBusSubscriptions_.push_back(eventBus_.subscribe<PlaybackSpeedChangedEvent>(
+            [this](const PlaybackSpeedChangedEvent& event) {
+                updateSpeedPresetButtons(event.speed);
+            }));
+        eventBusSubscriptions_.push_back(eventBus_.subscribe<PlaybackLoopingChangedEvent>(
+            [this](const PlaybackLoopingChangedEvent& event) {
+                isLooping_ = event.loop;
+                if (loopButton_) {
+                    loopButton_->blockSignals(true);
+                    loopButton_->setChecked(event.loop);
+                    loopButton_->blockSignals(false);
+                }
+            }));
+        eventBusSubscriptions_.push_back(eventBus_.subscribe<PlaybackCompositionChangedEvent>(
+            [this](const PlaybackCompositionChangedEvent&) {
+                syncFromService();
+            }));
     }
     
     void handlePlayButtonClicked()
