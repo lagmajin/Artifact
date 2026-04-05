@@ -8,6 +8,7 @@ module;
 
 // JSON and QVariant used in serialization
 #include <QColor>
+#include <QHash>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QVariant>
@@ -22,8 +23,11 @@ import Animation.Transform2D;
 import Frame.Position;
 import Time.Rational;
 import Frame.Rate;
+import Animation.Value;
 
 import Artifact.Layer.Settings;
+import Artifact.Layer.Physics;
+import Artifact.Layer.Matte;
 import Artifact.Composition.Abstract;
 import Artifact.Effect.Abstract;
 import Artifact.Effect.ImplBase;
@@ -57,14 +61,28 @@ void notifyLayerMutation(ArtifactAbstractLayer *layer, LayerDirtyFlag flag,
   layer->addDirtyReason(reason);
   Q_EMIT layer->changed();
 }
+
+double effectiveLayerFrameRate(const ArtifactAbstractLayer *layer) {
+  if (!layer) {
+    return 30.0;
+  }
+  auto *composition =
+      static_cast<ArtifactAbstractComposition *>(layer->composition());
+  if (!composition) {
+    return 30.0;
+  }
+  const double fps = composition->frameRate().framerate();
+  return fps > 0.0 ? fps : 30.0;
+}
 } // namespace
 
 class ArtifactAbstractLayer::Impl {
 public:
-  bool is3D_ = true;
+   bool is3D_ = false;
   bool isVisible_ = true;
   Id id;
   QString name_;
+  QString layerNote_;
   ArtifactAbstractComposition *composition_ = nullptr;
   LayerID parentLayerId_;
   LAYER_BLEND_TYPE blendMode_ = LAYER_BLEND_TYPE::BLEND_NORMAL;
@@ -79,8 +97,23 @@ public:
   bool isGuide_ = false;
   bool isSolo_ = false;
   bool isShy_ = false;
+  bool isAdjustmentLayer_ = false;
   int labelColorIndex_ = 0;
   float opacity_ = 1.0f; // Opacity (0.0 - 1.0)
+
+  // Physics components
+  LayerPhysicsSettings physics_;
+
+  // Matte components (Asset-based track mattes)
+  std::vector<LayerMatteReference> mattes_;
+
+  // Runtime Physics State
+  mutable ArtifactCore::SpringState springX_;
+  mutable ArtifactCore::SpringState springY_;
+  mutable ArtifactCore::SpringState springRot_;
+  mutable ArtifactCore::SpringState springSX_;
+  mutable ArtifactCore::SpringState springSY_;
+  mutable int64_t lastPhysicsFrame_ = -1;
 
   uint32_t dirtyFlags_ = (uint32_t)LayerDirtyFlag::All;
   uint64_t dirtyReasonMask_ =
@@ -91,6 +124,7 @@ public:
 
   // マスクコンテナ
   std::vector<LayerMask> masks_;
+  mutable QHash<QString, std::shared_ptr<AbstractProperty>> propertyCache_;
 
 public:
   Impl();
@@ -188,6 +222,17 @@ void ArtifactAbstractLayer::setLayerName(const QString &name) {
                       LayerDirtyReason::PropertyChanged);
 }
 
+QString ArtifactAbstractLayer::layerNote() const { return impl_->layerNote_; }
+
+void ArtifactAbstractLayer::setLayerNote(const QString &note) {
+  if (!assignIfChanged(impl_->layerNote_, note)) {
+    return;
+  }
+  Q_EMIT layerNoteChanged(note);
+  notifyLayerMutation(this, LayerDirtyFlag::All,
+                      LayerDirtyReason::PropertyChanged);
+}
+
 std::type_index ArtifactAbstractLayer::type_index() const {
   return impl_->type_index_;
 }
@@ -203,9 +248,8 @@ void ArtifactAbstractLayer::goToPrevFrame() {}
 void ArtifactAbstractLayer::goToFrame(int64_t frameNumber /*= 0*/) {
   // グローバルフレーム → レイヤー相対フレーム:
   // relativeFrame = globalFrame - inPoint + startTime
-  impl_->currentFrame_ = frameNumber
-    - impl_->inPoint_.framePosition()
-    + impl_->startTime_.framePosition();
+  impl_->currentFrame_ = frameNumber - impl_->inPoint_.framePosition() +
+                         impl_->startTime_.framePosition();
 }
 
 int64_t ArtifactAbstractLayer::currentFrame() const {
@@ -279,7 +323,9 @@ void ArtifactAbstractLayer::setShy(bool shy) {
                       LayerDirtyReason::PropertyChanged);
 }
 
-int ArtifactAbstractLayer::labelColorIndex() const { return impl_->labelColorIndex_; }
+int ArtifactAbstractLayer::labelColorIndex() const {
+  return impl_->labelColorIndex_;
+}
 void ArtifactAbstractLayer::setLabelColorIndex(int index) {
   if (impl_->labelColorIndex_ != index) {
     impl_->labelColorIndex_ = index;
@@ -323,14 +369,136 @@ ArtifactAbstractLayerPtr ArtifactAbstractLayer::parentLayer() const {
 
 QTransform ArtifactAbstractLayer::getLocalTransform() const {
   const auto &t = transform3D();
+  const RationalTime time(currentFrame(), effectiveLayerFrameRate(this));
+  auto evaluateDouble = [this, &time](const QString &propertyPath,
+                                      double fallback) {
+    const auto it = impl_->propertyCache_.constFind(propertyPath);
+    if (it == impl_->propertyCache_.constEnd() || !it.value()) {
+      return fallback;
+    }
+    const auto &property = *it.value();
+    if (!property.isAnimatable() || property.getKeyFrames().empty()) {
+      return fallback;
+    }
+    const QVariant animatedValue = property.interpolateValue(time);
+    return animatedValue.isValid() ? animatedValue.toDouble() : fallback;
+  };
+
+  double positionX =
+      evaluateDouble(QStringLiteral("transform.position.x"), t.positionX());
+  double positionY =
+      evaluateDouble(QStringLiteral("transform.position.y"), t.positionY());
+  double rotation =
+      evaluateDouble(QStringLiteral("transform.rotation"), t.rotation());
+
+  // 物理演算オフセットの適用
+  if (impl_->physics_.enabled) {
+    const double fps = effectiveLayerFrameRate(this);
+    const float dt = 1.0f / static_cast<float>(fps);
+    const int64_t curFrame = currentFrame();
+
+    // スクラブや逆再生、初回起動時のリセット
+    if (impl_->lastPhysicsFrame_ == -1 ||
+        curFrame <= impl_->lastPhysicsFrame_ ||
+        (curFrame - impl_->lastPhysicsFrame_) > 10) {
+      impl_->springX_.currentValue = 0.0f;
+      impl_->springX_.velocity = 0.0f;
+      impl_->springY_.currentValue = 0.0f;
+      impl_->springY_.velocity = 0.0f;
+      impl_->springRot_.currentValue = 0.0f;
+      impl_->springRot_.velocity = 0.0f;
+      impl_->springX_.initialized = true;
+      impl_->springY_.initialized = true;
+      impl_->springRot_.initialized = true;
+    } else {
+      // 前のフレームのベース位置を評価
+      const RationalTime prevTime(impl_->lastPhysicsFrame_, fps);
+      auto evalAt = [this, &prevTime, &t](const QString &path,
+                                          double fallback) {
+        const auto it = impl_->propertyCache_.constFind(path);
+        if (it == impl_->propertyCache_.constEnd() || !it.value())
+          return fallback;
+        const QVariant v = it.value()->interpolateValue(prevTime);
+        return v.isValid() ? v.toDouble() : fallback;
+      };
+
+      const double prevBaseX =
+          evalAt(QStringLiteral("transform.position.x"), t.positionX());
+      const double prevBaseY =
+          evalAt(QStringLiteral("transform.position.y"), t.positionY());
+      const double prevBaseRot =
+          evalAt(QStringLiteral("transform.rotation"), t.rotation());
+
+      // 1フレーム分の移動量（速度）を外力としてバネに注入する
+      const float velocityX = static_cast<float>(positionX - prevBaseX) / dt;
+      const float velocityY = static_cast<float>(positionY - prevBaseY) / dt;
+      const float velocityRot = static_cast<float>(rotation - prevBaseRot) / dt;
+
+      const int64_t steps = curFrame - impl_->lastPhysicsFrame_;
+      const float currentSec = static_cast<float>(time.toDouble());
+
+      for (int64_t i = 0; i < steps; ++i) {
+        const float stepTime = currentSec + (i * dt);
+
+        auto updateChannel = [&](ArtifactCore::SpringState &state,
+                                 float baseVelocity, float channelIndex) {
+          state.stiffness = impl_->physics_.stiffness;
+          state.damping = impl_->physics_.damping;
+
+          // 1. Follow Through: キーフレームの速度による反動
+          state.velocity -= baseVelocity * impl_->physics_.followThroughGain;
+
+          // 2. Wiggle: 自律的な揺れ（複数の正弦波で不規則さをシミュレート）
+          float wiggleForce = 0.0f;
+          if (impl_->physics_.wiggleFreq > 0.01f &&
+              impl_->physics_.wiggleAmp > 0.01f) {
+            // 決定論的なノイズ（位相をチャンネルごとにずらす）
+            float phase = channelIndex * 1.57f;
+            float noise =
+                std::sin(stepTime * impl_->physics_.wiggleFreq * 6.28f +
+                         phase) +
+                std::sin(stepTime * impl_->physics_.wiggleFreq * 1.33f * 6.28f +
+                         phase * 0.5f) *
+                    0.5f;
+            wiggleForce =
+                noise * impl_->physics_.wiggleAmp * state.stiffness * 0.1f;
+          }
+
+          // ターゲット(0)への復元力 + Wiggleの外力
+          float force = -state.stiffness * state.currentValue -
+                        state.damping * state.velocity + wiggleForce;
+          state.velocity += force * dt;
+          state.currentValue += state.velocity * dt;
+        };
+
+        updateChannel(impl_->springX_, velocityX, 0.0f);
+        updateChannel(impl_->springY_, velocityY, 1.0f);
+        updateChannel(impl_->springRot_, velocityRot, 2.0f);
+      }
+    }
+    impl_->lastPhysicsFrame_ = curFrame;
+
+    positionX += impl_->springX_.currentValue;
+    positionY += impl_->springY_.currentValue;
+    rotation += impl_->springRot_.currentValue;
+  }
+
+  const double scaleX =
+      evaluateDouble(QStringLiteral("transform.scale.x"), t.scaleX());
+  const double scaleY =
+      evaluateDouble(QStringLiteral("transform.scale.y"), t.scaleY());
+  const double anchorX =
+      evaluateDouble(QStringLiteral("transform.anchor.x"), t.anchorX());
+  const double anchorY =
+      evaluateDouble(QStringLiteral("transform.anchor.y"), t.anchorY());
   QTransform result;
 
   // AE-like transform: Translate(Pos) * Rotate(Rot) * Scale(Scale) *
   // Translate(-Anchor)
-  result.translate(t.positionX(), t.positionY());
-  result.rotate(t.rotation());
-  result.scale(t.scaleX(), t.scaleY());
-  result.translate(-t.anchorX(), -t.anchorY());
+  result.translate(positionX, positionY);
+  result.rotate(rotation);
+  result.scale(scaleX, scaleY);
+  result.translate(-anchorX, -anchorY);
 
   return result;
 }
@@ -345,18 +513,93 @@ QTransform ArtifactAbstractLayer::getGlobalTransform() const {
   return local;
 }
 
+QTransform ArtifactAbstractLayer::getLocalTransformAt(int64_t frameNumber) const {
+  const auto &t = transform3D();
+  const RationalTime time(frameNumber, effectiveLayerFrameRate(this));
+  auto evaluateDouble = [this, &time](const QString &propertyPath, double fallback) {
+    const auto it = impl_->propertyCache_.constFind(propertyPath);
+    if (it == impl_->propertyCache_.constEnd() || !it.value()) {
+      return fallback;
+    }
+    const auto &property = *it.value();
+    if (!property.isAnimatable() || property.getKeyFrames().empty()) {
+      return fallback;
+    }
+    const QVariant animatedValue = property.interpolateValue(time);
+    return animatedValue.isValid() ? animatedValue.toDouble() : fallback;
+  };
+
+  const double positionX = evaluateDouble(QStringLiteral("transform.position.x"), t.positionXAt(time));
+  const double positionY = evaluateDouble(QStringLiteral("transform.position.y"), t.positionYAt(time));
+  const double rotation = evaluateDouble(QStringLiteral("transform.rotation"), t.rotationAt(time));
+  const double scaleX = evaluateDouble(QStringLiteral("transform.scale.x"), t.scaleXAt(time));
+  const double scaleY = evaluateDouble(QStringLiteral("transform.scale.y"), t.scaleYAt(time));
+  const double anchorX = evaluateDouble(QStringLiteral("transform.anchor.x"), t.anchorXAt(time));
+  const double anchorY = evaluateDouble(QStringLiteral("transform.anchor.y"), t.anchorYAt(time));
+
+  // Skip physics for random access evaluating (e.g. motion path rendering) to maintain determinism.
+
+  QTransform result;
+  result.translate(positionX, positionY);
+  result.rotate(rotation);
+  result.scale(scaleX, scaleY);
+  result.translate(-anchorX, -anchorY);
+
+  return result;
+}
+
+QTransform ArtifactAbstractLayer::getGlobalTransformAt(int64_t frameNumber) const {
+  QTransform local = getLocalTransformAt(frameNumber);
+  auto parent = parentLayer();
+  if (parent) {
+    return local * parent->getGlobalTransformAt(frameNumber); // Time remapping on parent not considered here yet
+  }
+  return local;
+}
+
 QMatrix4x4 ArtifactAbstractLayer::getLocalTransform4x4() const {
   const auto &t = transform3D();
+  const RationalTime time(currentFrame(), effectiveLayerFrameRate(this));
+  auto evaluateDouble = [this, &time](const QString &propertyPath,
+                                      double fallback) {
+    const auto it = impl_->propertyCache_.constFind(propertyPath);
+    if (it == impl_->propertyCache_.constEnd() || !it.value()) {
+      return fallback;
+    }
+    const auto &property = *it.value();
+    if (!property.isAnimatable() || property.getKeyFrames().empty()) {
+      return fallback;
+    }
+    const QVariant animatedValue = property.interpolateValue(time);
+    return animatedValue.isValid() ? animatedValue.toDouble() : fallback;
+  };
+  const double positionX =
+      evaluateDouble(QStringLiteral("transform.position.x"), t.positionX());
+  const double positionY =
+      evaluateDouble(QStringLiteral("transform.position.y"), t.positionY());
+  const double positionZ = t.positionZ();
+  const double rotation =
+      evaluateDouble(QStringLiteral("transform.rotation"), t.rotation());
+  const double scaleX =
+      evaluateDouble(QStringLiteral("transform.scale.x"), t.scaleX());
+  const double scaleY =
+      evaluateDouble(QStringLiteral("transform.scale.y"), t.scaleY());
+  const double anchorX =
+      evaluateDouble(QStringLiteral("transform.anchor.x"), t.anchorX());
+  const double anchorY =
+      evaluateDouble(QStringLiteral("transform.anchor.y"), t.anchorY());
+  const double anchorZ = t.anchorZ();
   QMatrix4x4 result;
 
-  // AE-like transform order: Translate(Pos) * Rotate(Z) * Rotate(Y) * Rotate(X) * Scale(Scale) * Translate(-Anchor)
-  // Qt's translate/rotate/scale multiply from the right: Result = I * T * R * S * Tinv
-  result.translate(t.positionX(), t.positionY(), t.positionZ());
-  result.rotate(t.rotation(), 0, 0, 1); // Z-rotation
+  // AE-like transform order: Translate(Pos) * Rotate(Z) * Rotate(Y) * Rotate(X)
+  // * Scale(Scale) * Translate(-Anchor) Qt's translate/rotate/scale multiply
+  // from the right: Result = I * T * R * S * Tinv
+  result.translate(positionX, positionY, positionZ);
+  result.rotate(rotation, 0, 0, 1); // Z-rotation
   // result.rotate(t.rotationY(), 0, 1, 0); // Placeholder for Y
   // result.rotate(t.rotationX(), 1, 0, 0); // Placeholder for X
-  result.scale(t.scaleX(), t.scaleY(), 1.0f);
-  result.translate(-t.anchorX(), -t.anchorY(), -t.anchorZ());
+  result.scale(scaleX, scaleY, 1.0f);
+  result.translate(-anchorX, -anchorY, -anchorZ);
 
   return result;
 }
@@ -371,9 +614,15 @@ QMatrix4x4 ArtifactAbstractLayer::getGlobalTransform4x4() const {
   return local;
 }
 
-bool ArtifactAbstractLayer::isAdjustmentLayer() const { return false; }
+bool ArtifactAbstractLayer::isAdjustmentLayer() const {
+  return impl_->isAdjustmentLayer_;
+}
 void ArtifactAbstractLayer::setAdjustmentLayer(bool isAdjustment) {
-  // adjustmentLayer = isAdjustment;
+  if (impl_->isAdjustmentLayer_ != isAdjustment) {
+    impl_->isAdjustmentLayer_ = isAdjustment;
+    notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                        LayerDirtyReason::PropertyChanged);
+  }
 }
 
 bool ArtifactAbstractLayer::isVisible() const { return impl_->isVisible_; }
@@ -440,7 +689,11 @@ bool ArtifactAbstractLayer::hasParent() const {
   return !impl_->parentLayerId_.isNil();
 }
 
-bool ArtifactAbstractLayer::is3D() const { return false; }
+bool ArtifactAbstractLayer::is3D() const { return impl_->is3D_; }
+
+void ArtifactAbstractLayer::setIs3D(bool value) {
+    impl_->is3D_ = value;
+}
 
 void ArtifactAbstractLayer::setTimeRemapEnabled(bool) {}
 
@@ -450,6 +703,8 @@ void ArtifactAbstractLayer::setTimeRemapKey(int64_t compFrame,
 bool ArtifactAbstractLayer::isTimeRemapEnabled() const { return false; }
 
 bool ArtifactAbstractLayer::isNullLayer() const { return false; }
+
+bool ArtifactAbstractLayer::isCloneLayer() const { return false; }
 
 bool ArtifactAbstractLayer::hasAudio() const { return false; }
 
@@ -477,12 +732,13 @@ QRectF ArtifactAbstractLayer::localBounds() const {
   if (size.width <= 0 || size.height <= 0) {
     return QRectF();
   }
-  return QRectF(0.0, 0.0, static_cast<qreal>(size.width), static_cast<qreal>(size.height));
+  return QRectF(0.0, 0.0, static_cast<qreal>(size.width),
+                static_cast<qreal>(size.height));
 }
 
-bool ArtifactAbstractLayer::getAudio(AudioSegment &outSegment, const FramePosition &start,
-                                    int frameCount, int sampleRate)
-{
+bool ArtifactAbstractLayer::getAudio(AudioSegment &outSegment,
+                                     const FramePosition &start, int frameCount,
+                                     int sampleRate) {
   // Default implementation: no audio
   Q_UNUSED(outSegment);
   Q_UNUSED(start);
@@ -493,7 +749,8 @@ bool ArtifactAbstractLayer::getAudio(AudioSegment &outSegment, const FramePositi
 
 QRectF ArtifactAbstractLayer::transformedBoundingBox() const {
   const QRectF localRect = localBounds();
-  if (!localRect.isValid() || localRect.width() <= 0.0 || localRect.height() <= 0.0) {
+  if (!localRect.isValid() || localRect.width() <= 0.0 ||
+      localRect.height() <= 0.0) {
     return QRectF();
   }
 
@@ -517,12 +774,40 @@ const AnimatableTransform3D &ArtifactAbstractLayer::transform3D() const {
   return impl_->transform_;
 }
 
+QVector3D ArtifactAbstractLayer::position3D() const {
+  const auto time =
+      RationalTime(currentFrame(), 30); // Use composition FPS if possible
+  return QVector3D(impl_->transform_.positionXAt(time),
+                   impl_->transform_.positionYAt(time),
+                   impl_->transform_.positionZAt(time));
+}
+
+void ArtifactAbstractLayer::setPosition3D(const QVector3D &pos) {
+  const auto time = RationalTime(currentFrame(), 30);
+  impl_->transform_.setPosition(time, pos.x(), pos.y());
+  impl_->transform_.setPositionZ(time, pos.z());
+  changed();
+}
+
+QVector3D ArtifactAbstractLayer::rotation3D() const {
+  const auto time = RationalTime(currentFrame(), 30);
+  return QVector3D(impl_->transform_.rotationAt(time), 0,
+                   0); // Only X rotation for now
+}
+
+void ArtifactAbstractLayer::setRotation3D(const QVector3D &rot) {
+  const auto time = RationalTime(currentFrame(), 30);
+  impl_->transform_.setRotation(time, rot.x());
+  changed();
+}
+
 QJsonObject ArtifactAbstractLayer::toJson() const {
 
   QJsonObject obj;
   // Basic metadata
   obj["id"] = id().toString();
   obj["name"] = layerName();
+  obj["layerNote"] = impl_->layerNote_;
   obj["type"] = static_cast<int>(LayerType::Unknown);
   obj["parentId"] = parentLayerId().toString();
   obj["inPoint"] = (qint64)impl_->inPoint_.framePosition();
@@ -537,6 +822,13 @@ QJsonObject ArtifactAbstractLayer::toJson() const {
   obj["isShy"] = impl_->isShy_;
   obj["labelColorIndex"] = impl_->labelColorIndex_;
   obj["opacity"] = static_cast<double>(impl_->opacity_);
+
+  // Mattes
+  QJsonArray mattesArr;
+  for (const auto &matte : impl_->mattes_) {
+    mattesArr.append(matte.toJson());
+  }
+  obj["mattes"] = mattesArr;
 
   // Transform
   QJsonObject trans;
@@ -595,6 +887,7 @@ QJsonObject ArtifactAbstractLayer::toJson() const {
     effectsArr.append(eobj);
   }
   obj["effects"] = effectsArr;
+  obj["isAdjustment"] = impl_->isAdjustmentLayer_;
 
   return obj;
 }
@@ -613,7 +906,11 @@ void ArtifactAbstractLayer::applyPropertiesFromJson(const QJsonObject &obj) {
   // Subclasses should override to handle layer-specific fields
   if (!obj.contains("effects") || !obj["effects"].isArray())
     return;
-  auto arr = obj["effects"].toArray();
+  if (obj.contains("isAdjustment")) {
+    setAdjustmentLayer(obj["isAdjustment"].toBool());
+  }
+
+  const auto arr = obj.value("effects").toArray();
   for (const auto &ev : arr) {
     if (!ev.isObject())
       continue;
@@ -663,6 +960,8 @@ void ArtifactAbstractLayer::applyPropertiesFromJson(const QJsonObject &obj) {
 void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject &obj) {
   if (obj.contains("name"))
     setLayerName(obj["name"].toString());
+  if (obj.contains("layerNote"))
+    setLayerNote(obj["layerNote"].toString());
   if (obj.contains("inPoint"))
     setInPoint(FramePosition(obj["inPoint"].toVariant().toLongLong()));
   if (obj.contains("outPoint"))
@@ -688,6 +987,20 @@ void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject &obj) {
         static_cast<int>(LAYER_BLEND_TYPE::BLEND_NORMAL));
     setBlendMode(static_cast<LAYER_BLEND_TYPE>(mode));
   }
+
+  // Mattes
+  if (obj.contains("mattes") && obj["mattes"].isArray()) {
+    auto mattesArr = obj["mattes"].toArray();
+    impl_->mattes_.clear();
+    for (const auto &matteVal : mattesArr) {
+      if (matteVal.isObject()) {
+        LayerMatteReference matte;
+        matte.fromJson(matteVal.toObject());
+        impl_->mattes_.push_back(matte);
+      }
+    }
+  }
+
   if (obj.contains("parentId")) {
     const QString parentId = obj["parentId"].toString();
     if (parentId.isEmpty())
@@ -713,6 +1026,18 @@ void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject &obj) {
     if (trans.contains("ax"))
       t3.setAnchor(t0, trans["ax"].toDouble(), trans["ay"].toDouble(),
                    trans["az"].toDouble());
+  }
+
+  if (obj.contains("mattes") && obj["mattes"].isArray()) {
+    auto mattesArr = obj["mattes"].toArray();
+    impl_->mattes_.clear();
+    for (const auto &matteVal : mattesArr) {
+      if (matteVal.isObject()) {
+        LayerMatteReference matte;
+        matte.fromJson(matteVal.toObject());
+        impl_->mattes_.push_back(matte);
+      }
+    }
   }
 
   applyPropertiesFromJson(obj);
@@ -792,17 +1117,9 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
   using namespace ArtifactCore;
   PropertyGroup layerGroup(QStringLiteral("Layer"));
 
-  auto makeProp = [](const QString &name, PropertyType type,
-                     const QVariant &value, int priority = 0) {
-    auto p = std::make_shared<AbstractProperty>();
-    p->setName(name);
-    p->setType(type);
-    p->setValue(value);
-    p->setDisplayPriority(priority);
-    if (type == PropertyType::Integer) {
-      p->setStep(1);
-    }
-    return p;
+  auto makeProp = [this](const QString &name, PropertyType type,
+                         const QVariant &value, int priority = 0) {
+    return persistentLayerProperty(name, type, value, priority);
   };
 
   layerGroup.addProperty(makeProp(QStringLiteral("layer.name"),
@@ -818,7 +1135,8 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
   layerGroup.addProperty(makeProp(QStringLiteral("layer.shy"),
                                   PropertyType::Boolean, isShy(), -150));
   layerGroup.addProperty(makeProp(QStringLiteral("layer.labelColorIndex"),
-                                  PropertyType::Integer, labelColorIndex(), -145));
+                                  PropertyType::Integer, labelColorIndex(),
+                                  -145));
 
   auto opacityProp =
       makeProp(QStringLiteral("layer.opacity"), PropertyType::Float,
@@ -901,7 +1219,90 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
   layerGroup.addProperty(makeProp(QStringLiteral("source.height"),
                                   PropertyType::Integer, sz.height, -30));
 
-  return {transformGroup, layerGroup};
+  // 物理演算プロパティグループ
+  PropertyGroup physicsGroup(QStringLiteral("Physics"));
+
+  auto physicsEnabledProp =
+      makeProp(QStringLiteral("physics.enabled"), PropertyType::Boolean,
+               impl_->physics_.enabled, -100);
+  physicsGroup.addProperty(physicsEnabledProp);
+
+  auto stiffnessProp =
+      makeProp(QStringLiteral("physics.stiffness"), PropertyType::Float,
+               static_cast<double>(impl_->physics_.stiffness), -99);
+  stiffnessProp->setHardRange(0.0, 1000.0);
+  stiffnessProp->setSoftRange(0.0, 500.0);
+  stiffnessProp->setStep(1.0);
+  physicsGroup.addProperty(stiffnessProp);
+
+  auto dampingProp =
+      makeProp(QStringLiteral("physics.damping"), PropertyType::Float,
+               static_cast<double>(impl_->physics_.damping), -98);
+  dampingProp->setHardRange(0.0, 100.0);
+  dampingProp->setSoftRange(0.0, 50.0);
+  dampingProp->setStep(0.1);
+  physicsGroup.addProperty(dampingProp);
+
+  auto followThroughProp =
+      makeProp(QStringLiteral("physics.followThroughGain"), PropertyType::Float,
+               static_cast<double>(impl_->physics_.followThroughGain), -97);
+  followThroughProp->setHardRange(0.0, 2.0);
+  followThroughProp->setSoftRange(0.0, 1.0);
+  followThroughProp->setStep(0.01);
+  physicsGroup.addProperty(followThroughProp);
+
+  auto wiggleFreqProp =
+      makeProp(QStringLiteral("physics.wiggleFreq"), PropertyType::Float,
+               static_cast<double>(impl_->physics_.wiggleFreq), -96);
+  wiggleFreqProp->setUnit(QStringLiteral("Hz"));
+  wiggleFreqProp->setSoftRange(0.0, 10.0);
+  physicsGroup.addProperty(wiggleFreqProp);
+
+  auto wiggleAmpProp =
+      makeProp(QStringLiteral("physics.wiggleAmp"), PropertyType::Float,
+               static_cast<double>(impl_->physics_.wiggleAmp), -95);
+  wiggleAmpProp->setSoftRange(0.0, 100.0);
+  physicsGroup.addProperty(wiggleAmpProp);
+
+  auto isAdjustmentProp =
+      makeProp(QStringLiteral("layer.isAdjustment"), PropertyType::Boolean,
+               isAdjustmentLayer(), -50);
+  isAdjustmentProp->setTooltip(
+      QStringLiteral("Apply effects to all layers below"));
+  layerGroup.addProperty(isAdjustmentProp);
+
+  return {transformGroup, physicsGroup, layerGroup};
+}
+
+std::shared_ptr<ArtifactCore::AbstractProperty>
+ArtifactAbstractLayer::getProperty(const QString &name) const {
+  auto &cache = impl_->propertyCache_;
+  auto it = cache.find(name);
+  if (it != cache.end()) {
+    return it.value();
+  }
+  return nullptr;
+}
+
+std::shared_ptr<ArtifactCore::AbstractProperty>
+ArtifactAbstractLayer::persistentLayerProperty(const QString &propertyPath,
+                                               PropertyType type,
+                                               const QVariant &value,
+                                               int priority) const {
+  auto &cache = impl_->propertyCache_;
+  auto it = cache.find(propertyPath);
+  if (it == cache.end() || !it.value()) {
+    it = cache.insert(propertyPath, std::make_shared<AbstractProperty>());
+  }
+  auto property = it.value();
+  property->setName(propertyPath);
+  property->setType(type);
+  property->setValue(value);
+  property->setDisplayPriority(priority);
+  if (type == PropertyType::Integer) {
+    property->setStep(1);
+  }
+  return property;
 }
 
 bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
@@ -934,8 +1335,43 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
     setLabelColorIndex(value.toInt());
     return true;
   }
+  if (propertyPath == QStringLiteral("layer.isAdjustment")) {
+    setAdjustmentLayer(value.toBool());
+    return true;
+  }
+
   if (propertyPath == QStringLiteral("layer.opacity")) {
     setOpacity(static_cast<float>(value.toDouble()));
+    return true;
+  }
+
+  // Physics properties
+  if (propertyPath == QStringLiteral("physics.enabled")) {
+    impl_->physics_.enabled = value.toBool();
+    if (!impl_->physics_.enabled) {
+      impl_->lastPhysicsFrame_ = -1; // Reset state when disabled
+    }
+    Q_EMIT changed();
+    return true;
+  }
+  if (propertyPath == QStringLiteral("physics.stiffness")) {
+    impl_->physics_.stiffness = static_cast<float>(value.toDouble());
+    return true;
+  }
+  if (propertyPath == QStringLiteral("physics.damping")) {
+    impl_->physics_.damping = static_cast<float>(value.toDouble());
+    return true;
+  }
+  if (propertyPath == QStringLiteral("physics.followThroughGain")) {
+    impl_->physics_.followThroughGain = static_cast<float>(value.toDouble());
+    return true;
+  }
+  if (propertyPath == QStringLiteral("physics.wiggleFreq")) {
+    impl_->physics_.wiggleFreq = static_cast<float>(value.toDouble());
+    return true;
+  }
+  if (propertyPath == QStringLiteral("physics.wiggleAmp")) {
+    impl_->physics_.wiggleAmp = static_cast<float>(value.toDouble());
     return true;
   }
 
@@ -1089,7 +1525,21 @@ void ArtifactAbstractLayer::clearMasks() { impl_->clearMasks(); }
 bool ArtifactAbstractLayer::hasMasks() const { return impl_->maskCount() > 0; }
 
 // Opacity
-float ArtifactAbstractLayer::opacity() const { return impl_->opacity_; }
+float ArtifactAbstractLayer::opacity() const {
+  const auto it =
+      impl_->propertyCache_.constFind(QStringLiteral("layer.opacity"));
+  if (it == impl_->propertyCache_.constEnd() || !it.value()) {
+    return impl_->opacity_;
+  }
+  const auto &property = *it.value();
+  if (!property.isAnimatable() || property.getKeyFrames().empty()) {
+    return impl_->opacity_;
+  }
+  const RationalTime time(currentFrame(), effectiveLayerFrameRate(this));
+  const QVariant animatedValue = property.interpolateValue(time);
+  return animatedValue.isValid() ? static_cast<float>(animatedValue.toDouble())
+                                 : impl_->opacity_;
+}
 
 void ArtifactAbstractLayer::setOpacity(float value) {
   const float clamped = std::clamp(value, 0.0f, 1.0f);
@@ -1099,4 +1549,11 @@ void ArtifactAbstractLayer::setOpacity(float value) {
                         LayerDirtyReason::PropertyChanged);
   }
 }
-}; // namespace Artifact
+
+void ArtifactAbstractLayer::drawLOD(ArtifactIRenderer *renderer,
+                                    DetailLevel lod) {
+  Q_UNUSED(lod);
+  draw(renderer);
+}
+
+} // namespace Artifact

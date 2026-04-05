@@ -8,6 +8,7 @@ export module Artifact.Widgets.RenderLayerEditor;
 import Artifact.Widgets.RenderLayerWidgetv2;
 import Color.Float;
 import Utils.Id;
+import Tool;
 
 export namespace Artifact {
  using namespace ArtifactCore;
@@ -26,7 +27,11 @@ export namespace Artifact {
 
   void setClearColor(const FloatColor& color);
   void setTargetLayer(const LayerID& id);
+  void setEditMode(EditMode mode);
+  void setDisplayMode(DisplayMode mode);
   void resetView();
+
+  QSize sizeHint() const override;
 
  public/*slots*/:
   void play(); W_SLOT(play);

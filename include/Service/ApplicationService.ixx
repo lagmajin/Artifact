@@ -25,6 +25,8 @@ export namespace Artifact {
  public:
   explicit ApplicationService(QObject* parent = nullptr);
   ~ApplicationService();
+  
+  static ApplicationService* instance();
 
   bool initialize();
   void shutdown();

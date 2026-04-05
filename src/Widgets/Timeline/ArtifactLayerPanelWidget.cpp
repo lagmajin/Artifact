@@ -44,6 +44,7 @@ import Artifact.Project.Manager;
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
 import Artifact.Layer.Image;
+import Artifact.Layer.Svg;
 import Artifact.Layer.Video;
 import Layer.Blend;
 import Artifact.Layer.InitParams;
@@ -57,7 +58,7 @@ namespace {
   constexpr int kLayerHeaderHeight = 26;
   constexpr int kLayerHeaderButtonSize = 24;
   constexpr int kLayerColumnWidth = 28;
-  constexpr int kLayerPropertyColumnCount = 4;
+  constexpr int kLayerPropertyColumnCount = 5;
   constexpr int kInlineComboHeight = 24;
   constexpr int kInlineBlendWidth = 120;
   constexpr int kInlineParentWidth = 150;
@@ -244,6 +245,9 @@ namespace {
 
   LayerType inferLayerTypeFromFile(const QString& filePath)
   {
+    if (filePath.endsWith(QStringLiteral(".svg"), Qt::CaseInsensitive)) {
+      return LayerType::Shape;
+    }
     ArtifactCore::FileTypeDetector detector;
     const auto type = detector.detect(filePath);
     switch (type) {
@@ -361,11 +365,13 @@ namespace {
   QPixmap visibilityIcon;
   QPixmap lockIcon;
   QPixmap soloIcon;
+  QPixmap audioIcon;
   QPixmap shyIcon;
   
   QPushButton* visibilityButton = nullptr;
   QPushButton* lockButton = nullptr;
   QPushButton* soloButton = nullptr;
+  QPushButton* audioButton = nullptr;
   QPushButton* layerNameButton = nullptr;
   QPushButton* shyButton = nullptr;
   QPushButton* parentHeaderButton = nullptr;
@@ -377,6 +383,13 @@ namespace {
  ArtifactLayerPanelHeaderWidget::ArtifactLayerPanelHeaderWidget(QWidget* parent)
   : QWidget(parent), impl_(new Impl())
  {
+  impl_->visibilityIcon = loadLayerPanelPixmap(QStringLiteral("MaterialVS/neutral/visibility.svg"), QStringLiteral("visibility.png"));
+  impl_->lockIcon = loadLayerPanelPixmap(QStringLiteral("MaterialVS/yellow/lock.svg"), QStringLiteral("lock.png"));
+  if (impl_->lockIcon.isNull()) impl_->lockIcon = loadLayerPanelPixmap(QStringLiteral("MaterialVS/yellow/lock_open.svg"), QStringLiteral("unlock.png"));
+  impl_->soloIcon = loadLayerPanelPixmap(QStringLiteral("MaterialVS/purple/group.svg"), QStringLiteral("solo.png"));
+  impl_->audioIcon = loadLayerPanelPixmap(QStringLiteral("MaterialVS/neutral/volume.svg"),         QStringLiteral("volume.png"));
+  impl_->shyIcon = loadLayerPanelPixmap(QStringLiteral("MaterialVS/orange/visibility_off.svg"));
+
   auto visButton = impl_->visibilityButton = new QPushButton();
   visButton->setFixedSize(QSize(kLayerColumnWidth, kLayerHeaderButtonSize));
   visButton->setIcon(impl_->visibilityIcon);
@@ -395,6 +408,12 @@ namespace {
   if (!impl_->soloIcon.isNull()) soloButton->setIcon(impl_->soloIcon);
   soloButton->setStyleSheet("background-color: #2D2D30; border: none; border-right: 1px solid #1a1a1a;");
   soloButton->setEnabled(false);
+
+  auto audioButton = impl_->audioButton = new QPushButton();
+  audioButton->setFixedSize(QSize(kLayerColumnWidth, kLayerHeaderButtonSize));
+  if (!impl_->audioIcon.isNull()) audioButton->setIcon(impl_->audioIcon);
+  audioButton->setStyleSheet("background-color: #2D2D30; border: none; border-right: 1px solid #1a1a1a;");
+  audioButton->setEnabled(false);
 
   auto shyButton = impl_->shyButton = new QPushButton;
   shyButton->setFixedSize(QSize(kLayerColumnWidth, kLayerHeaderButtonSize));
@@ -424,6 +443,7 @@ namespace {
   layout->addWidget(visButton);
   layout->addWidget(lockButton);
   layout->addWidget(soloButton);
+  layout->addWidget(audioButton);
   layout->addWidget(shyButton);
   layout->addWidget(layerNameButton, 1);
   
@@ -500,7 +520,6 @@ int ArtifactLayerPanelHeaderWidget::totalHeaderHeight() const
     iconCreateNull    = loadLayerPanelIcon(QStringLiteral("MaterialVS/purple/group.svg"));
     iconCreateAdjust  = loadLayerPanelIcon(QStringLiteral("MaterialVS/orange/warning.svg"));
     iconCreateText    = loadLayerPanelIcon(QStringLiteral("MaterialVS/purple/title.svg"));
-    iconCreateLight   = loadLayerPanelIcon(QStringLiteral("Material/wb_sunny.svg"));
   }
   ~Impl() = default;
 
@@ -514,7 +533,7 @@ int ArtifactLayerPanelHeaderWidget::totalHeaderHeight() const
   QIcon iconRename, iconCopy, iconDelete, iconFileOpen;
   QIcon iconVisOn, iconVisOff, iconLock, iconUnlock, iconSolo, iconShy;
   QIcon iconLink, iconLinkOff;
-  QIcon iconCreateSolid, iconCreateNull, iconCreateAdjust, iconCreateText, iconCreateLight;
+  QIcon iconCreateSolid, iconCreateNull, iconCreateAdjust, iconCreateText;
   bool shyHidden = false;
   QString filterText;
   int hoveredLayerIndex = -1;
@@ -534,6 +553,7 @@ int ArtifactLayerPanelHeaderWidget::totalHeaderHeight() const
   bool updatingLayout = false;  // 再帰呼び出し防止フラグ
   QTimer* layoutDebounceTimer = nullptr;
   QHash<QString, QMetaObject::Connection> layerChangedConnections;
+  int lastContentHeight = -1;
   
   void clearInlineEditors()
   {
@@ -616,9 +636,8 @@ int ArtifactLayerPanelHeaderWidget::totalHeaderHeight() const
     if (layerChangedConnections.contains(idStr)) {
       continue;
     }
-    // [Fix A] layer::changed は表示内容の再描画（update）のみ。
-    // updateLayout() を呼ぶとレイアウト全体の再構築が連鎖するため和止。
-    // レイアーの追加/削除による構造変化は layerCreated/Removed で別途処理する。
+    // [Optimization] layer::changed (property changes) should ONLY trigger repaint,
+    // not a full layout rebuild. Structural changes are handled by separate signals.
     layerChangedConnections.insert(
       idStr,
       QObject::connect(layer.get(), &ArtifactAbstractLayer::changed, owner, [owner]() {
@@ -687,12 +706,13 @@ int ArtifactLayerPanelHeaderWidget::totalHeaderHeight() const
 
    QVector<ArtifactAbstractLayerPtr> layers;
     const QString needle = filterText.trimmed();
-    for (auto& l : comp->allLayer()) {
+   for (auto& l : comp->allLayer()) {
      if (!l) continue;
      if (shyHidden && l->isShy()) continue;
      if (!needle.isEmpty() && !l->layerName().contains(needle, Qt::CaseInsensitive)) continue;
      layers.push_back(l);
     }
+   std::reverse(layers.begin(), layers.end());
    if (layers.isEmpty()) {
     return;
    }
@@ -872,18 +892,48 @@ void ArtifactLayerPanelWidget::performUpdateLayout()
   // 再帰呼び出しを防止
   if (impl_->updatingLayout) return;
   impl_->updatingLayout = true;
+
+  const auto rowsEqual = [](const QVector<Impl::VisibleRow>& lhs,
+                            const QVector<Impl::VisibleRow>& rhs) -> bool {
+    if (lhs.size() != rhs.size()) {
+      return false;
+    }
+    for (int i = 0; i < lhs.size(); ++i) {
+      const auto& a = lhs[i];
+      const auto& b = rhs[i];
+      const QString aId = a.layer ? a.layer->id().toString() : QString();
+      const QString bId = b.layer ? b.layer->id().toString() : QString();
+      if (aId != bId ||
+          a.depth != b.depth ||
+          a.hasChildren != b.hasChildren ||
+          a.expanded != b.expanded ||
+          a.kind != b.kind ||
+          a.label != b.label) {
+        return false;
+      }
+    }
+    return true;
+  };
+
+  const QVector<Impl::VisibleRow> oldRows = impl_->visibleRows;
   impl_->refreshLayerChangedSubscriptions(this);
   
   impl_->clearInlineEditors();
   impl_->rebuildVisibleRows();
+  const bool structureChanged = !rowsEqual(oldRows, impl_->visibleRows);
   const int count = impl_->visibleRows.size();
   const int contentHeight = std::max(kLayerRowHeight, count * kLayerRowHeight);
-  setMinimumHeight(0);
-  setMinimumHeight(contentHeight);
-  setMaximumHeight(QWIDGETSIZE_MAX);
-  updateGeometry();
+  if (contentHeight != impl_->lastContentHeight) {
+    setMinimumHeight(0);
+    setMinimumHeight(contentHeight);
+    setMaximumHeight(QWIDGETSIZE_MAX);
+    updateGeometry();
+    impl_->lastContentHeight = contentHeight;
+  }
   update();
-  Q_EMIT visibleRowsChanged();
+  if (structureChanged) {
+    Q_EMIT visibleRowsChanged();
+  }
   
   impl_->updatingLayout = false;
  }
@@ -1146,6 +1196,7 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
 
     const bool supportsSourceReplacement =
       static_cast<bool>(std::dynamic_pointer_cast<ArtifactImageLayer>(layer)) ||
+      static_cast<bool>(std::dynamic_pointer_cast<ArtifactSvgLayer>(layer)) ||
       static_cast<bool>(std::dynamic_pointer_cast<ArtifactVideoLayer>(layer));
     if (supportsSourceReplacement) {
       replaceSourceAct = menu.addAction("Replace Source...");
@@ -1185,13 +1236,14 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
     QAction* createNullAct   = createMenu->addAction("Null Layer");
     QAction* createAdjustAct = createMenu->addAction("Adjustment Layer");
     QAction* createTextAct   = createMenu->addAction("Text Layer");
-    QAction* createLightAct  = createMenu->addAction("Light Layer");
+    QAction* createParticleAct = createMenu->addAction("Particle Layer");
+    QAction* createCameraAct = createMenu->addAction("Camera Layer");
     createMenu->setIcon(impl_->iconCreateSolid);
     createSolidAct->setIcon(impl_->iconCreateSolid);
     createNullAct->setIcon(impl_->iconCreateNull);
     createAdjustAct->setIcon(impl_->iconCreateAdjust);
     createTextAct->setIcon(impl_->iconCreateText);
-    createLightAct->setIcon(impl_->iconCreateLight);
+    createCameraAct->setIcon(impl_->iconCreateText);
 
     QAction* chosen = menu.exec(event->globalPosition().toPoint());
     auto comp = safeCompositionLookup(impl_->compositionId);
@@ -1216,6 +1268,8 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
       QString filter;
       if (std::dynamic_pointer_cast<ArtifactImageLayer>(layer)) {
        filter = QStringLiteral("Images (*.png *.jpg *.jpeg *.bmp *.tif *.tiff *.webp);;All Files (*.*)");
+      } else if (std::dynamic_pointer_cast<ArtifactSvgLayer>(layer)) {
+       filter = QStringLiteral("SVG (*.svg);;All Files (*.*)");
       } else {
        filter = QStringLiteral("Media Files (*.mp4 *.mov *.mkv *.avi *.webm *.mp3 *.wav *.flac *.aac *.m4a *.ogg);;All Files (*.*)");
       }
@@ -1318,8 +1372,13 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
       if (service) {
        service->addLayerToCurrentComposition(params);
       }
-    } else if (chosen == createLightAct) {
-      ArtifactLayerInitParams params(QStringLiteral("Light"), LayerType::Light);
+    } else if (chosen == createParticleAct) {
+      ArtifactLayerInitParams params(QStringLiteral("Particle"), LayerType::Particle);
+      if (service) {
+       service->addLayerToCurrentComposition(params);
+      }
+    } else if (chosen == createCameraAct) {
+      ArtifactCameraLayerInitParams params;
       if (service) {
        service->addLayerToCurrentComposition(params);
       }
@@ -1438,8 +1497,14 @@ void ArtifactLayerPanelWidget::mouseDoubleClickEvent(QMouseEvent* event)
 
   int idx = event->pos().y() / kLayerRowHeight;
   if (idx != impl_->hoveredLayerIndex) {
+    const int previousHoveredIndex = impl_->hoveredLayerIndex;
     impl_->hoveredLayerIndex = idx;
-    update();
+    if (previousHoveredIndex >= 0 && previousHoveredIndex < impl_->visibleRows.size()) {
+      update(0, previousHoveredIndex * kLayerRowHeight, width(), kLayerRowHeight);
+    }
+    if (idx >= 0 && idx < impl_->visibleRows.size()) {
+      update(0, idx * kLayerRowHeight, width(), kLayerRowHeight);
+    }
   }
   bool pointer = event->pos().x() < kLayerColumnWidth * kLayerPropertyColumnCount;
   if (!pointer && idx >= 0 && idx < impl_->visibleRows.size()) {
@@ -1694,11 +1759,14 @@ void ArtifactLayerPanelWidget::keyPressEvent(QKeyEvent* event)
 
   void ArtifactLayerPanelWidget::leaveEvent(QEvent*)
   {
+   const int previousHoveredIndex = impl_->hoveredLayerIndex;
    impl_->hoveredLayerIndex = -1;
-   update();
+   if (previousHoveredIndex >= 0 && previousHoveredIndex < impl_->visibleRows.size()) {
+    update(0, previousHoveredIndex * kLayerRowHeight, width(), kLayerRowHeight);
+   }
   }
 
-void ArtifactLayerPanelWidget::paintEvent(QPaintEvent*)
+void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
 {
   QPainter p(this);
   p.setRenderHint(QPainter::SmoothPixmapTransform);
@@ -1709,7 +1777,9 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent*)
   const int nameStartX = colW * kLayerPropertyColumnCount;
   const int indent = 14;
   const int toggleSize = 10;
-  p.fillRect(rect(), QColor(42, 42, 42));
+  
+  const QRect dirtyRect = event->rect();
+  p.fillRect(dirtyRect, QColor(42, 42, 42));
 
   if (impl_->visibleRows.isEmpty()) {
     auto comp = safeCompositionLookup(impl_->compositionId);
@@ -1723,7 +1793,11 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent*)
     return;
   }
 
-  for (int i = 0; i < impl_->visibleRows.size(); ++i) {
+  // 可視範囲のみループを回す（仮想化）
+  const int startRow = std::max(0, dirtyRect.top() / rowH);
+  const int endRow = std::min(static_cast<int>(impl_->visibleRows.size() - 1), (dirtyRect.bottom() + rowH - 1) / rowH);
+
+  for (int i = startRow; i <= endRow; ++i) {
     int y = i * rowH;
     const auto& row = impl_->visibleRows[i];
     auto l = row.layer;
@@ -1776,7 +1850,6 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent*)
     p.drawLine(curX - 1, y, curX - 1, y + rowH);
 
     // Sound/Audio
-    // TODO: Connect to actual audio state if available. For now, assume always "on" but low opacity if not active.
     p.setOpacity(0.15);
     if (!impl_->audioIcon.isNull()) {
       p.drawPixmap(QRect(curX + offset, y + offset, iconSize, iconSize), impl_->audioIcon);
@@ -1880,10 +1953,10 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent*)
   }
   if (mime->hasUrls()) {
     for (const auto& url : mime->urls()) {
-      if (url.isLocalFile()) {
+        if (url.isLocalFile()) {
          const QString filePath = url.toLocalFile();
          const LayerType type = inferLayerTypeFromFile(filePath);
-         if (type == LayerType::Image || type == LayerType::Video || type == LayerType::Audio) {
+         if (type == LayerType::Image || type == LayerType::Video || type == LayerType::Audio || type == LayerType::Shape) {
            e->acceptProposedAction();
            update();
            return;
@@ -1897,7 +1970,7 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent*)
        const QString trimmed = path.trimmed();
        if (!trimmed.isEmpty()) {
          const LayerType type = inferLayerTypeFromFile(trimmed);
-         if (type == LayerType::Image || type == LayerType::Video || type == LayerType::Audio) {
+         if (type == LayerType::Image || type == LayerType::Video || type == LayerType::Audio || type == LayerType::Shape) {
            e->acceptProposedAction();
            update();
            return;
@@ -2021,7 +2094,7 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent*)
       if (url.isLocalFile()) {
         const QString filePath = url.toLocalFile();
         const LayerType type = inferLayerTypeFromFile(filePath);
-        if (type == LayerType::Image || type == LayerType::Video || type == LayerType::Audio) {
+        if (type == LayerType::Image || type == LayerType::Video || type == LayerType::Audio || type == LayerType::Shape) {
           validPaths.append(filePath);
         }
       }
@@ -2034,7 +2107,7 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent*)
       const QString trimmed = path.trimmed();
       if (trimmed.isEmpty()) continue;
       const LayerType type = inferLayerTypeFromFile(trimmed);
-      if (type == LayerType::Image || type == LayerType::Video || type == LayerType::Audio) {
+      if (type == LayerType::Image || type == LayerType::Video || type == LayerType::Audio || type == LayerType::Shape) {
         validPaths.append(trimmed);
       }
     }
@@ -2061,14 +2134,19 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent*)
       return;
     }
 
-    ArtifactProjectManager& manager = ArtifactProjectManager::getInstance();
-    manager.addAssetsFromFilePaths(imported);
-
     for (const auto& path : imported) {
       const LayerType type = inferLayerTypeFromFile(path);
       if (type == LayerType::Image) {
         ArtifactImageInitParams params(QFileInfo(path).baseName());
         params.setImagePath(path);
+        svc->addLayerToCurrentComposition(params);
+      } else if (type == LayerType::Shape) {
+        ArtifactSvgInitParams params(QFileInfo(path).baseName());
+        params.setSvgPath(path);
+        svc->addLayerToCurrentComposition(params);
+      } else if (type == LayerType::Audio) {
+        ArtifactAudioInitParams params(QFileInfo(path).baseName());
+        params.setAudioPath(path);
         svc->addLayerToCurrentComposition(params);
       } else {
         ArtifactLayerInitParams params(QFileInfo(path).baseName(), type);

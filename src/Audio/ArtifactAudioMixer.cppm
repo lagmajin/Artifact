@@ -382,6 +382,32 @@ public:
             std::clamp(masterLeft + masterGain, -60.0f, 0.0f),
             std::clamp(masterRight + masterGain, -60.0f, 0.0f));
     }
+
+    void refreshPlaybackLevels(float leftRms, float rightRms) const
+    {
+        // Distribute real-time levels to channel strips proportionally
+        for (const auto& pair : channelStrips_) {
+            auto* strip = pair.second.get();
+            if (!strip) continue;
+            if (strip->isMuted()) {
+                strip->updateLevels(-60.0f, -60.0f);
+                continue;
+            }
+            const float gain = volumeToMeterDb(strip->volume(), false);
+            strip->updateLevels(
+                std::clamp(leftRms + gain, -60.0f, 0.0f),
+                std::clamp(rightRms + gain, -60.0f, 0.0f));
+        }
+
+        if (!masterBus_) {
+            return;
+        }
+        if (masterBus_->isMuted()) {
+            masterBus_->updateLevels(-60.0f, -60.0f);
+            return;
+        }
+        masterBus_->updateLevels(leftRms, rightRms);
+    }
 };
 
 AudioMixer::AudioMixer(QObject* parent)
@@ -454,6 +480,11 @@ AudioMixerMasterBus* AudioMixer::masterBus()
 const AudioMixerMasterBus* AudioMixer::masterBus() const
 {
     return impl_->masterBus_.get();
+}
+
+void AudioMixer::updatePlaybackLevels(float leftRms, float rightRms)
+{
+    impl_->refreshPlaybackLevels(leftRms, rightRms);
 }
 
 void AudioMixer::clearChannelStrips()

@@ -5,6 +5,7 @@ module;
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QHeaderView>
+#include <Widgets/Dialog/ArtifactDialogButtons.hpp>
 
 module Artifact.Widgets.ObjectPicker;
 
@@ -41,14 +42,17 @@ ArtifactObjectPickerDialog::ArtifactObjectPickerDialog(QWidget* parent)
     layout->addWidget(objectTree_, 1);
     
     // OK/Cancel ボタン
-    buttonBox_ = new QDialogButtonBox(static_cast<QDialogButtonBox::StandardButtons>(QDialogButtonBox::Ok | QDialogButtonBox::Cancel), this);
-    layout->addWidget(buttonBox_);
+    const DialogButtonRow buttons = createWindowsDialogButtonRow(this);
+    buttonRow_ = buttons.widget;
+    okButton_ = buttons.okButton;
+    cancelButton_ = buttons.cancelButton;
+    layout->addWidget(buttonRow_);
     
     // シグナル接続
     connect(objectTree_, &QTreeWidget::itemDoubleClicked, this, &ArtifactObjectPickerDialog::onObjectDoubleClicked);
     connect(searchEdit_, &QLineEdit::textChanged, this, &ArtifactObjectPickerDialog::onSearchTextChanged);
-    connect(buttonBox_, &QDialogButtonBox::accepted, this, &ArtifactObjectPickerDialog::onOkClicked);
-    connect(buttonBox_, &QDialogButtonBox::rejected, this, &ArtifactObjectPickerDialog::onCancelClicked);
+    connect(okButton_, &QPushButton::clicked, this, &ArtifactObjectPickerDialog::onOkClicked);
+    connect(cancelButton_, &QPushButton::clicked, this, &ArtifactObjectPickerDialog::onCancelClicked);
     
     // ツリー構築
     buildObjectTree();

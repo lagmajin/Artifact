@@ -14,20 +14,25 @@
 #include <QFormLayout>
 #include <QLabel>
 #include <QComboBox>
-#include <QColorDialog>
 #include <QPushButton>
+#include <QToolButton>
+#include <QSignalBlocker>
 #include <QGuiApplication>
 #include <QScreen>
 #include <QTimer>
 #include <QDebug>
+#include <algorithm>
+#include <cmath>
 
 module Dialog.Composition;
 
 import Widgets.Utils.CSS;
 import Widgets.EditableLabel;
 import DragSpinBox;
+import Color.Float;
 import Artifact.Project.Manager;
 import Utils.String.UniString;
+import FloatColorPickerDialog;
 
 namespace Artifact {
 
@@ -43,10 +48,13 @@ namespace Artifact {
   QComboBox* pixelAspectCombo_ = nullptr;
   DragSpinBox* widthSpinBox = nullptr;
   DragSpinBox* heightSpinBox = nullptr;
+  QToolButton* aspectLockButton_ = nullptr;
   DoubleDragSpinBox* durationSpinBox = nullptr;
   QLineEdit* startTimecodeEdit = nullptr;
   QPushButton* bgColorButton = nullptr;
   QColor bgColor = QColor(0, 0, 0, 255);
+  bool aspectRatioLocked_ = false;
+  double lockedAspectRatio_ = 16.0 / 9.0;
  };
 
  CompositionSettingPage::Impl::Impl() {}
@@ -67,7 +75,7 @@ namespace Artifact {
       QComboBox, QLineEdit, QSpinBox, QDoubleSpinBox {
           background-color: #2D2D30; border: 1px solid #454545; border-radius: 4px; color: white; padding: 4px 8px;
       }
-      QComboBox:hover, QLineEdit:focus { border: 1px solid #007ACC; }
+      QComboBox:hover, QLineEdit:focus { border: 1px solid #D47D32; }
   )";
 
   impl_->widthSpinBox = new DragSpinBox();
@@ -79,6 +87,15 @@ namespace Artifact {
   impl_->resolutionCombobox_->addItem("HD 1080p (1920x1080)", QVariant::fromValue(QSize(1920, 1080)));
   impl_->resolutionCombobox_->addItem("HD 720p (1280x720)", QVariant::fromValue(QSize(1280, 720)));
   impl_->resolutionCombobox_->addItem("4K UHD (3840x2160)", QVariant::fromValue(QSize(3840, 2160)));
+  impl_->resolutionCombobox_->addItem("4K DCI (4096x2160)", QVariant::fromValue(QSize(4096, 2160)));
+  impl_->resolutionCombobox_->addItem("2K DCI (2048x1080)", QVariant::fromValue(QSize(2048, 1080)));
+  impl_->resolutionCombobox_->insertSeparator(impl_->resolutionCombobox_->count());
+  impl_->resolutionCombobox_->addItem("Instagram/TikTok (1080x1920)", QVariant::fromValue(QSize(1080, 1920)));
+  impl_->resolutionCombobox_->addItem("Instagram Square (1080x1080)", QVariant::fromValue(QSize(1080, 1080)));
+  impl_->resolutionCombobox_->insertSeparator(impl_->resolutionCombobox_->count());
+  impl_->resolutionCombobox_->addItem("SD PAL (720x576)", QVariant::fromValue(QSize(720, 576)));
+  impl_->resolutionCombobox_->addItem("SD NTSC (720x480)", QVariant::fromValue(QSize(720, 480)));
+  impl_->resolutionCombobox_->insertSeparator(impl_->resolutionCombobox_->count());
   impl_->resolutionCombobox_->addItem("Custom...", QVariant::fromValue(QSize(-1, -1)));
 
   const QSize initialResolution = impl_->resolutionCombobox_->currentData().toSize();
@@ -92,6 +109,12 @@ namespace Artifact {
   sizeHBox->setContentsMargins(0, 0, 0, 0);
   sizeHBox->addWidget(impl_->widthSpinBox);
   sizeHBox->addWidget(new QLabel("x"));
+  impl_->aspectLockButton_ = new QToolButton();
+  impl_->aspectLockButton_->setCheckable(true);
+  impl_->aspectLockButton_->setAutoRaise(true);
+  impl_->aspectLockButton_->setToolTip(QStringLiteral("Lock aspect ratio"));
+  impl_->aspectLockButton_->setText(QStringLiteral("🔓"));
+  sizeHBox->addWidget(impl_->aspectLockButton_);
   sizeHBox->addWidget(impl_->heightSpinBox);
   sizeHBox->addWidget(new QLabel("px"));
 
@@ -117,7 +140,6 @@ namespace Artifact {
 
   impl_->bgColorButton = new QPushButton("Pick Color");
   impl_->bgColorButton->setFixedSize(100, 24);
-  impl_->bgColorButton->setStyleSheet("background-color: #000; border: 1px solid #555; border-radius: 4px; color: white;");
   
   formLayout->addRow("Preset:", impl_->resolutionCombobox_);
   formLayout->addRow("Resolution:", sizeWidget);
@@ -135,11 +157,16 @@ namespace Artifact {
   QObject::connect(impl_->resolutionCombobox_, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int) {
     QSize sz = impl_->resolutionCombobox_->currentData().toSize();
     if (sz.width() > 0 && sz.height() > 0) {
+      const QSignalBlocker widthBlock(impl_->widthSpinBox);
+      const QSignalBlocker heightBlock(impl_->heightSpinBox);
       impl_->widthSpinBox->setValue(sz.width());
       impl_->heightSpinBox->setValue(sz.height());
+      if (sz.height() > 0) {
+        impl_->lockedAspectRatio_ = static_cast<double>(sz.width()) / static_cast<double>(sz.height());
+      }
     }
   });
-  
+
   auto forceCustom = [this]() {
       if (impl_->resolutionCombobox_->currentData().toSize().width() != -1) {
           impl_->resolutionCombobox_->blockSignals(true);
@@ -147,20 +174,66 @@ namespace Artifact {
           impl_->resolutionCombobox_->blockSignals(false);
       }
   };
-  QObject::connect(impl_->widthSpinBox, QOverload<int>::of(&QSpinBox::valueChanged), this, forceCustom);
-  QObject::connect(impl_->heightSpinBox, QOverload<int>::of(&QSpinBox::valueChanged), this, forceCustom);
 
-  QObject::connect(impl_->bgColorButton, &QPushButton::clicked, this, [this]() {
-      QColor c = QColorDialog::getColor(impl_->bgColor, this, "Background Color");
-      if (c.isValid()) {
-          impl_->bgColor = c;
-          impl_->bgColorButton->setStyleSheet(QString("background-color: %1; border: 1px solid #555; border-radius: 4px; color: %2;")
-              .arg(c.name())
-              .arg(c.lightness() > 128 ? "black" : "white"));
+  auto updateHeightFromWidth = [this](int width) {
+      if (!impl_->aspectRatioLocked_ || !impl_->heightSpinBox) {
+          return;
+      }
+      const double ratio = impl_->lockedAspectRatio_ > 0.0 ? impl_->lockedAspectRatio_ : 1.0;
+      const int newHeight = std::max(1, static_cast<int>(std::round(static_cast<double>(width) / ratio)));
+      const QSignalBlocker block(impl_->heightSpinBox);
+      impl_->heightSpinBox->setValue(newHeight);
+  };
+
+  auto updateWidthFromHeight = [this](int height) {
+      if (!impl_->aspectRatioLocked_ || !impl_->widthSpinBox) {
+          return;
+      }
+      const double ratio = impl_->lockedAspectRatio_ > 0.0 ? impl_->lockedAspectRatio_ : 1.0;
+      const int newWidth = std::max(1, static_cast<int>(std::round(static_cast<double>(height) * ratio)));
+      const QSignalBlocker block(impl_->widthSpinBox);
+      impl_->widthSpinBox->setValue(newWidth);
+  };
+
+  QObject::connect(impl_->widthSpinBox, QOverload<int>::of(&QSpinBox::valueChanged), this, [this, forceCustom, updateHeightFromWidth](int value) {
+      forceCustom();
+      updateHeightFromWidth(value);
+  });
+  QObject::connect(impl_->heightSpinBox, QOverload<int>::of(&QSpinBox::valueChanged), this, [this, forceCustom, updateWidthFromHeight](int value) {
+      forceCustom();
+      updateWidthFromHeight(value);
+  });
+
+  QObject::connect(impl_->aspectLockButton_, &QToolButton::toggled, this, [this](bool locked) {
+      impl_->aspectRatioLocked_ = locked;
+      if (locked) {
+          const int width = std::max(1, impl_->widthSpinBox ? impl_->widthSpinBox->value() : 1);
+          const int height = std::max(1, impl_->heightSpinBox ? impl_->heightSpinBox->value() : 1);
+          impl_->lockedAspectRatio_ = static_cast<double>(width) / static_cast<double>(height);
+      }
+      if (impl_->aspectLockButton_) {
+          impl_->aspectLockButton_->setText(locked ? QStringLiteral("🔒") : QStringLiteral("🔓"));
       }
   });
 
-  setStyleSheet(pageStyle);
+  QObject::connect(impl_->bgColorButton, &QPushButton::clicked, this, [this]() {
+      ArtifactWidgets::FloatColorPicker picker(this);
+      picker.setWindowTitle(QStringLiteral("Background Color"));
+      picker.setColor(FloatColor(impl_->bgColor.redF(),
+                                 impl_->bgColor.greenF(),
+                                 impl_->bgColor.blueF(),
+                                 impl_->bgColor.alphaF()));
+      if (picker.exec() != QDialog::Accepted) {
+          return;
+      }
+
+      const FloatColor picked = picker.getColor();
+      QColor c = QColor::fromRgbF(picked.r(), picked.g(), picked.b(), picked.a());
+      if (c.isValid()) {
+          impl_->bgColor = c;
+      }
+  });
+
  }
 
  CompositionSettingPage::~CompositionSettingPage() {}
@@ -233,11 +306,9 @@ namespace Artifact {
   // Header Area
   auto header = new QWidget();
   header->setFixedHeight(50);
-  header->setStyleSheet("background-color: #2D2D30; border-bottom: 1px solid #444;");
   auto hLayout = new QHBoxLayout(header);
   hLayout->setContentsMargins(15, 0, 15, 0);
   auto title = new QLabel("Composition Settings");
-  title->setStyleSheet("color: white; font-weight: bold; font-size: 13px;");
   hLayout->addWidget(title);
   hLayout->addStretch();
   mainLayout->addWidget(header);
@@ -249,11 +320,9 @@ namespace Artifact {
 
   auto nameRow = new QHBoxLayout();
   auto nameLbl = new QLabel("Name:");
-  nameLbl->setStyleSheet("color: #AAA; font-weight: bold;");
   nameLbl->setFixedWidth(60);
   impl_->compositionNameEdit_ = new EditableLabel();
   impl_->compositionNameEdit_->setText("Comp1");
-  impl_->compositionNameEdit_->setStyleSheet("background: #252526; padding: 4px; border-radius: 4px; font-weight: bold;");
   nameRow->addWidget(nameLbl);
   nameRow->addWidget(impl_->compositionNameEdit_);
   content->addLayout(nameRow);
@@ -261,25 +330,17 @@ namespace Artifact {
   impl_->pTabWidget = new QTabWidget();
   impl_->compositionSettingPage_ = new CompositionSettingPage();
   impl_->pTabWidget->addTab(impl_->compositionSettingPage_, "Basic");
-  impl_->pTabWidget->setStyleSheet(R"(
-      QTabWidget::pane { border: 1px solid #3F3F46; top: -1px; background: #1E1E20; }
-      QTabBar::tab { background: #2D2D30; color: #999; padding: 6px 15px; border: 1px solid #3F3F46; border-bottom: none; border-top-left-radius: 4px; border-top-right-radius: 4px; }
-      QTabBar::tab:selected { background: #1E1E20; color: white; border-bottom: 2px solid #007ACC; }
-  )");
   content->addWidget(impl_->pTabWidget);
   mainLayout->addLayout(content);
 
   // Footer / Buttons
   auto footer = new QWidget();
-  footer->setStyleSheet("background-color: #252526; border-top: 1px solid #333;");
   auto fLayout = new QHBoxLayout(footer);
   fLayout->setContentsMargins(15, 10, 15, 10);
   auto okBtn = new QPushButton("OK");
   okBtn->setFixedSize(80, 28);
-  okBtn->setStyleSheet("background: #007ACC; color: white; border-radius: 4px; font-weight: bold;");
   auto cancelBtn = new QPushButton("Cancel");
   cancelBtn->setFixedSize(80, 28);
-  cancelBtn->setStyleSheet("background: #3E3E42; color: #DDD; border-radius: 4px; border: 1px solid #555;");
   fLayout->addStretch();
   fLayout->addWidget(okBtn);
   fLayout->addWidget(cancelBtn);
@@ -288,7 +349,6 @@ namespace Artifact {
   QObject::connect(okBtn, &QPushButton::clicked, this, [this]() { impl_->ok(this); });
   QObject::connect(cancelBtn, &QPushButton::clicked, this, [this]() { impl_->cancel(this); });
 
-  setStyleSheet("QDialog { background-color: #1E1E20; border: 1px solid #444; }");
  }
 
  CreateCompositionDialog::~CreateCompositionDialog() { delete impl_; }

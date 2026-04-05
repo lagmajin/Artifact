@@ -179,31 +179,36 @@ ArtifactCompositionPlaybackController::~ArtifactCompositionPlaybackController() 
 void ArtifactCompositionPlaybackController::play() {
     if (impl_->state_ == PlaybackState::Playing) return;
     
+    PlaybackState oldState = impl_->state_;
     impl_->state_ = PlaybackState::Playing;
     impl_->timer_->setInterval(impl_->calculateInterval());
     impl_->startTimer();
     
-    qDebug() << "PlaybackController::play - interval" << impl_->calculateInterval();
+    qDebug() << "[PlaybackController] state transition:" << (int)oldState << "->" << (int)PlaybackState::Playing
+             << "- interval" << impl_->calculateInterval();
     Q_EMIT playbackStateChanged(impl_->state_);
 }
 
 void ArtifactCompositionPlaybackController::pause() {
     if (impl_->state_ != PlaybackState::Playing) return;
     
+    PlaybackState oldState = impl_->state_;
     impl_->state_ = PlaybackState::Paused;
     impl_->stopTimer();
     
+    qDebug() << "[PlaybackController] state transition:" << (int)oldState << "->" << (int)PlaybackState::Paused;
     Q_EMIT playbackStateChanged(impl_->state_);
 }
 
 void ArtifactCompositionPlaybackController::stop() {
     if (impl_->state_ == PlaybackState::Stopped) return;
     
+    PlaybackState oldState = impl_->state_;
     impl_->state_ = PlaybackState::Stopped;
     impl_->stopTimer();
     impl_->currentFrame_ = impl_->frameRange_.start();
     
-    qDebug() << "PlaybackController::stop";
+    qDebug() << "[PlaybackController] state transition:" << (int)oldState << "->" << (int)PlaybackState::Stopped;
     Q_EMIT playbackStateChanged(impl_->state_);
     Q_EMIT frameChanged(impl_->currentFrame_);
 }

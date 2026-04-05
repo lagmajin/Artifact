@@ -23,6 +23,8 @@ import std;
 
 import Core.FastSettingsStore;
 import Utils.Path;
+import Artifact.Service.Application;
+import Widgets.KeyboardOverlayDialog;
 
 namespace Artifact {
  using namespace ArtifactCore;
@@ -38,6 +40,7 @@ namespace Artifact {
   QAction* docsAction_ = nullptr;
   QAction* checkUpdatesAction_ = nullptr;
   QAction* exportDiagnosticsAction_ = nullptr;
+  QAction* keyboardOverlayAction_ = nullptr;
  };
 
  ArtifactHelpMenu::Impl::Impl()
@@ -56,6 +59,10 @@ namespace Artifact {
 
   exportDiagnosticsAction_ = new QAction(u8"Export Diagnostics...");
   exportDiagnosticsAction_->setIcon(QIcon(resolveIconPath("Material/inventory.svg")));
+
+  keyboardOverlayAction_ = new QAction(u8"Keyboard Shortcuts Overlay");
+  keyboardOverlayAction_->setIcon(QIcon(resolveIconPath("Material/keyboard.svg")));
+  keyboardOverlayAction_->setShortcuts({QKeySequence(QStringLiteral("Ctrl+/")), QKeySequence::HelpContents});
  }
 
  ArtifactHelpMenu::Impl::~Impl()
@@ -65,6 +72,7 @@ namespace Artifact {
   delete docsAction_;
   delete checkUpdatesAction_;
   delete exportDiagnosticsAction_;
+  delete keyboardOverlayAction_;
  }
 
  ArtifactHelpMenu::ArtifactHelpMenu(QWidget* parent /*= nullptr*/):QMenu(parent),impl_(new Impl())
@@ -80,10 +88,13 @@ namespace Artifact {
   addSeparator();
   addAction(impl_->checkUpdatesAction_);
   addAction(impl_->exportDiagnosticsAction_);
+  addSeparator();
+  addAction(impl_->keyboardOverlayAction_);
 
   // connections
   connect(impl_->versionInfoAction_, &QAction::triggered, this, [this]() {
-    QMessageBox::information(this, tr("Version"), tr("Artifact Version: %1").arg("1.0.0"));
+    const QString ver = ApplicationService::instance()->applicationVersion();
+    QMessageBox::information(this, tr("Version"), tr("Artifact Version: %1").arg(ver));
   });
 
   connect(impl_->aboutAction_, &QAction::triggered, this, [this]() {
@@ -96,6 +107,15 @@ namespace Artifact {
 
   connect(impl_->checkUpdatesAction_, &QAction::triggered, this, [this]() {
     QMessageBox::information(this, tr("Updates"), tr("No updates available."));
+  });
+
+  connect(impl_->keyboardOverlayAction_, &QAction::triggered, this, [this]() {
+    static ArtifactWidgets::KeyboardOverlayDialog* overlay = nullptr;
+    if (!overlay) {
+      overlay = new ArtifactWidgets::KeyboardOverlayDialog(this->window());
+    }
+    overlay->setCompactMode(true);
+    overlay->showCentered();
   });
 
   connect(impl_->exportDiagnosticsAction_, &QAction::triggered, this, [this]() {

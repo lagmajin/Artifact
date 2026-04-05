@@ -4,8 +4,10 @@ module;
 #include <PipelineState.h>
 #include <Sampler.h>
 #include <RefCntAutoPtr.hpp>
+#include <tbb/task_group.h>
 #include <BasicMath.hpp>
 #include <QByteArray>
+#include <QDebug>
 #include <cmath>
 
 module Artifact.Render.ShaderManager;
@@ -38,6 +40,9 @@ public:
     RenderShaderPair checkerboardShaders_;
     RenderShaderPair gridShaders_;
     RenderShaderPair spriteTransformShaders_;
+    RenderShaderPair maskedSpriteShaders_;
+    RenderShaderPair gizmo3DShaders_;
+    RenderShaderPair batchSolidRectShaders_;
 
     PSOAndSRB linePsoAndSrb_;
     PSOAndSRB outlinePsoAndSrb_;
@@ -50,6 +55,10 @@ public:
     PSOAndSRB checkerboardPsoAndSrb_;
     PSOAndSRB gridPsoAndSrb_;
     PSOAndSRB spriteTransformPsoAndSrb_;
+    PSOAndSRB maskedSpritePsoAndSrb_;
+    PSOAndSRB gizmo3DPsoAndSrb_;
+    PSOAndSRB gizmo3DTrianglePsoAndSrb_;
+    PSOAndSRB batchSolidRectPsoAndSrb_;
 
     RefCntAutoPtr<ISampler> spriteSampler_;
 
@@ -65,6 +74,10 @@ public:
     void createShaders();
     void createPSOs();
     void destroy();
+
+    void createLineFamilyPSOs();
+    void createSpriteFamilyPSOs();
+    void createUtilityFamilyPSOs();
 };
 
 void ShaderManager::Impl::createShaders()
@@ -151,6 +164,34 @@ void ShaderManager::Impl::createShaders()
     spriteTransformVsInfo.Source = ArtifactCore::drawSpriteTransformVSSource.constData();
     spriteTransformVsInfo.SourceLength = ArtifactCore::drawSpriteTransformVSSource.length();
 
+    const QByteArray maskedSpritePsSource = R"(
+struct PS_INPUT
+{
+    float4 Position : SV_POSITION;
+    float2 TexCoord : TEXCOORD0;
+    float4 Color    : COLOR0;
+};
+
+Texture2D g_scene : register(t0);
+Texture2D g_mask  : register(t1);
+SamplerState g_sampler : register(s0);
+
+float4 main(PS_INPUT input) : SV_TARGET
+{
+    float4 scene = g_scene.Sample(g_sampler, input.TexCoord);
+    float maskAlpha = g_mask.Sample(g_sampler, input.TexCoord).a;
+    float4 color = scene * input.Color;
+    color.a *= maskAlpha;
+    return color;
+}
+)";
+    ShaderCreateInfo maskedSpritePsInfo;
+    maskedSpritePsInfo.SourceLanguage = Diligent::SHADER_SOURCE_LANGUAGE_HLSL;
+    maskedSpritePsInfo.Desc.ShaderType = Diligent::SHADER_TYPE_PIXEL;
+    maskedSpritePsInfo.Desc.Name = "MaskedSpritePixelShader";
+    maskedSpritePsInfo.Source = maskedSpritePsSource.constData();
+    maskedSpritePsInfo.SourceLength = maskedSpritePsSource.length();
+
     ShaderCreateInfo solidRectPsInfo2;
     solidRectPsInfo2.SourceLanguage = Diligent::SHADER_SOURCE_LANGUAGE_HLSL;
     solidRectPsInfo2.Desc.ShaderType = Diligent::SHADER_TYPE_PIXEL;
@@ -183,11 +224,17 @@ void ShaderManager::Impl::createShaders()
     device_->CreateShader(solidRectPsInfo2, &solidRectTransformShaders_.PS);
     device_->CreateShader(spriteTransformVsInfo, &spriteTransformShaders_.VS);
     spriteTransformShaders_.PS = spriteShaders_.PS;
+    device_->CreateShader(spriteTransformVsInfo, &maskedSpriteShaders_.VS);
+    device_->CreateShader(maskedSpritePsInfo, &maskedSpriteShaders_.PS);
 
-    device_->CreateShader(checkerboardPsInfo, &checkerboardShaders_.PS);
-    device_->CreateShader(gridPsInfo, &gridShaders_.PS);
-    checkerboardShaders_.VS = solidShaders_.VS;
-    gridShaders_.VS = solidShaders_.VS;
+    device_->CreateShader(checkerboardPsInfo, &checkerboardShaders_.VS);
+    checkerboardShaders_.PS = solidShaders_.PS;
+    device_->CreateShader(gridPsInfo, &gridShaders_.VS);
+    gridShaders_.PS = solidShaders_.PS;
+
+    // Outline shaders
+    device_->CreateShader(drawOutlineRectVsInfo, &outlineShaders_.VS);
+    device_->CreateShader(drawOutlineRectPsInfo, &outlineShaders_.PS);
 
     {
         ShaderCreateInfo thickLineVsInfo;
@@ -226,6 +273,451 @@ void ShaderManager::Impl::createShaders()
         device_->CreateShader(dotLineVsInfo, &dotLineShaders_.VS);
         device_->CreateShader(dotLinePsInfo, &dotLineShaders_.PS);
     }
+
+    {
+        // Gizmo 3D Shader (Simple 3D transformation)
+        const char* gizmo3DVS = R"(
+            cbuffer TransformCB {
+                float4x4 g_WorldViewProj;
+            };
+            struct VSInput {
+                float3 Pos   : ATTRIB0;
+                float4 Color : ATTRIB1;
+            };
+            struct PSInput {
+                float4 Pos   : SV_POSITION;
+                float4 Color : COLOR;
+            };
+            void main(in VSInput VSIn, out PSInput PSIn) {
+                PSIn.Pos   = mul(float4(VSIn.Pos, 1.0), g_WorldViewProj);
+                PSIn.Color = VSIn.Color;
+            }
+        )";
+        ShaderCreateInfo vsInfo;
+        vsInfo.SourceLanguage = SHADER_SOURCE_LANGUAGE_HLSL;
+        vsInfo.Desc.ShaderType = SHADER_TYPE_VERTEX;
+        vsInfo.Desc.Name = "Gizmo3D VS";
+        vsInfo.Source = gizmo3DVS;
+        
+        device_->CreateShader(vsInfo, &gizmo3DShaders_.VS);
+        gizmo3DShaders_.PS = lineShaders_.PS; // Reuse simple color pixel shader
+    }
+}
+
+void ShaderManager::Impl::createLineFamilyPSOs()
+{
+    if (!device_) {
+        return;
+    }
+
+    static const LayoutElement lineLayoutElems[] = {
+        LayoutElement{0, 0, 2, VT_FLOAT32, false},
+        LayoutElement{1, 0, 4, VT_FLOAT32, false}
+    };
+    static const ShaderResourceVariableDesc lineVars[] = {
+        { SHADER_TYPE_VERTEX, "TransformCB", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC }
+    };
+
+    GraphicsPipelineStateCreateInfo lineInfo;
+    lineInfo.PSODesc.Name = "DrawLine PSO";
+    lineInfo.PSODesc.PipelineType = PIPELINE_TYPE_GRAPHICS;
+    lineInfo.pVS = lineShaders_.VS;
+    lineInfo.pPS = lineShaders_.PS;
+    auto& lineGP = lineInfo.GraphicsPipeline;
+    lineGP.NumRenderTargets = 1;
+    lineGP.RTVFormats[0] = rtvFormat_;
+    lineGP.PrimitiveTopology = PRIMITIVE_TOPOLOGY_LINE_LIST;
+    lineGP.RasterizerDesc.CullMode = CULL_MODE_NONE;
+    lineGP.DepthStencilDesc.DepthEnable = False;
+    lineGP.InputLayout.LayoutElements = lineLayoutElems;
+    lineGP.InputLayout.NumElements = _countof(lineLayoutElems);
+    lineInfo.PSODesc.ResourceLayout.Variables = lineVars;
+    lineInfo.PSODesc.ResourceLayout.NumVariables = _countof(lineVars);
+    device_->CreateGraphicsPipelineState(lineInfo, &linePsoAndSrb_.pPSO);
+    if (linePsoAndSrb_.pPSO) {
+        linePsoAndSrb_.pPSO->CreateShaderResourceBinding(&linePsoAndSrb_.pSRB, true);
+    }
+
+    static const LayoutElement solidLayoutElems[] = {
+        LayoutElement{0, 0, 2, VT_FLOAT32, false},
+        LayoutElement{1, 0, 4, VT_FLOAT32, false}
+    };
+    static const ShaderResourceVariableDesc solidVars[] = {
+        { SHADER_TYPE_VERTEX, "TransformCB", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC },
+        { SHADER_TYPE_PIXEL,  "ColorBuffer", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC },
+    };
+
+    GraphicsPipelineStateCreateInfo solidInfo;
+    solidInfo.PSODesc.Name = "DrawSolidRect PSO";
+    solidInfo.PSODesc.PipelineType = PIPELINE_TYPE_GRAPHICS;
+    solidInfo.pVS = solidShaders_.VS;
+    solidInfo.pPS = solidShaders_.PS;
+    auto& solidGP = solidInfo.GraphicsPipeline;
+    solidGP.NumRenderTargets = 1;
+    solidGP.RTVFormats[0] = rtvFormat_;
+    solidGP.PrimitiveTopology = PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP;
+    solidGP.RasterizerDesc.CullMode = CULL_MODE_NONE;
+    solidGP.DepthStencilDesc.DepthEnable = False;
+    auto& solidBlend = solidGP.BlendDesc.RenderTargets[0];
+    solidBlend.BlendEnable = True;
+    solidBlend.SrcBlend = BLEND_FACTOR_SRC_ALPHA;
+    solidBlend.DestBlend = BLEND_FACTOR_INV_SRC_ALPHA;
+    solidBlend.BlendOp = BLEND_OPERATION_ADD;
+    solidBlend.SrcBlendAlpha = BLEND_FACTOR_ONE;
+    solidBlend.DestBlendAlpha = BLEND_FACTOR_INV_SRC_ALPHA;
+    solidBlend.BlendOpAlpha = BLEND_OPERATION_ADD;
+    solidBlend.RenderTargetWriteMask = COLOR_MASK_ALL;
+    solidGP.InputLayout.LayoutElements = solidLayoutElems;
+    solidGP.InputLayout.NumElements = _countof(solidLayoutElems);
+    solidInfo.PSODesc.ResourceLayout.Variables = solidVars;
+    solidInfo.PSODesc.ResourceLayout.NumVariables = _countof(solidVars);
+    device_->CreateGraphicsPipelineState(solidInfo, &solidRectPsoAndSrb_.pPSO);
+    if (solidRectPsoAndSrb_.pPSO) {
+        solidRectPsoAndSrb_.pPSO->CreateShaderResourceBinding(&solidRectPsoAndSrb_.pSRB, true);
+    }
+
+    GraphicsPipelineStateCreateInfo transformInfo = solidInfo;
+    transformInfo.PSODesc.Name = "DrawSolidRectTransform PSO";
+    transformInfo.pVS = solidRectTransformShaders_.VS;
+    transformInfo.pPS = solidRectTransformShaders_.PS;
+    transformInfo.GraphicsPipeline.PrimitiveTopology = PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    device_->CreateGraphicsPipelineState(transformInfo, &solidRectTransformPsoAndSrb_.pPSO);
+    if (solidRectTransformPsoAndSrb_.pPSO) {
+        solidRectTransformPsoAndSrb_.pPSO->CreateShaderResourceBinding(&solidRectTransformPsoAndSrb_.pSRB, true);
+    }
+
+    GraphicsPipelineStateCreateInfo triangleInfo = solidInfo;
+    triangleInfo.PSODesc.Name = "DrawSolidTriangle PSO";
+    triangleInfo.GraphicsPipeline.PrimitiveTopology = PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    device_->CreateGraphicsPipelineState(triangleInfo, &solidTrianglePsoAndSrb_.pPSO);
+    if (solidTrianglePsoAndSrb_.pPSO) {
+        solidTrianglePsoAndSrb_.pPSO->CreateShaderResourceBinding(&solidTrianglePsoAndSrb_.pSRB, true);
+    }
+
+    // Outline Rect PSO
+    static const LayoutElement outlineLayoutElems[] = {
+        LayoutElement{0, 0, 2, VT_FLOAT32, false},
+        LayoutElement{1, 0, 4, VT_FLOAT32, false}
+    };
+    static const ShaderResourceVariableDesc outlineVars[] = {
+        { SHADER_TYPE_VERTEX, "TransformCB", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC },
+        { SHADER_TYPE_PIXEL,  "ColorBuffer", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC },
+        { SHADER_TYPE_PIXEL,  "OutlineParams", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC },
+    };
+
+    GraphicsPipelineStateCreateInfo outlineInfo;
+    outlineInfo.PSODesc.Name = "DrawOutlineRect PSO";
+    outlineInfo.PSODesc.PipelineType = PIPELINE_TYPE_GRAPHICS;
+    outlineInfo.pVS = outlineShaders_.VS;
+    outlineInfo.pPS = outlineShaders_.PS;
+    auto& outlineGP = outlineInfo.GraphicsPipeline;
+    outlineGP.NumRenderTargets = 1;
+    outlineGP.RTVFormats[0] = rtvFormat_;
+    outlineGP.PrimitiveTopology = PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP;
+    outlineGP.RasterizerDesc.CullMode = CULL_MODE_NONE;
+    outlineGP.DepthStencilDesc.DepthEnable = False;
+    auto& outlineBlend = outlineGP.BlendDesc.RenderTargets[0];
+    outlineBlend.BlendEnable = True;
+    outlineBlend.SrcBlend = BLEND_FACTOR_SRC_ALPHA;
+    outlineBlend.DestBlend = BLEND_FACTOR_INV_SRC_ALPHA;
+    outlineBlend.BlendOp = BLEND_OPERATION_ADD;
+    outlineBlend.SrcBlendAlpha = BLEND_FACTOR_ONE;
+    outlineBlend.DestBlendAlpha = BLEND_FACTOR_INV_SRC_ALPHA;
+    outlineBlend.BlendOpAlpha = BLEND_OPERATION_ADD;
+    outlineBlend.RenderTargetWriteMask = COLOR_MASK_ALL;
+    outlineGP.InputLayout.LayoutElements = outlineLayoutElems;
+    outlineGP.InputLayout.NumElements = _countof(outlineLayoutElems);
+    outlineInfo.PSODesc.ResourceLayout.Variables = outlineVars;
+    outlineInfo.PSODesc.ResourceLayout.NumVariables = _countof(outlineVars);
+    device_->CreateGraphicsPipelineState(outlineInfo, &outlinePsoAndSrb_.pPSO);
+    if (outlinePsoAndSrb_.pPSO) {
+        outlinePsoAndSrb_.pPSO->CreateShaderResourceBinding(&outlinePsoAndSrb_.pSRB, true);
+    }
+
+    // Batch Solid Rect PSO (pass-through VS, vertex color PS, no ColorBuffer)
+    static const LayoutElement batchLayoutElems[] = {
+        LayoutElement{0, 0, 2, VT_FLOAT32, false},
+        LayoutElement{1, 0, 4, VT_FLOAT32, false}
+    };
+
+    ShaderCreateInfo batchVsInfo;
+    batchVsInfo.SourceLanguage = Diligent::SHADER_SOURCE_LANGUAGE_HLSL;
+    batchVsInfo.Desc.ShaderType = Diligent::SHADER_TYPE_VERTEX;
+    batchVsInfo.Desc.Name = "BatchSolidRectVertexShader";
+    batchVsInfo.Source = ArtifactCore::drawBatchSolidRectVSSource.constData();
+    batchVsInfo.SourceLength = ArtifactCore::drawBatchSolidRectVSSource.length();
+    device_->CreateShader(batchVsInfo, &batchSolidRectShaders_.VS);
+
+    ShaderCreateInfo batchPsInfo;
+    batchPsInfo.SourceLanguage = Diligent::SHADER_SOURCE_LANGUAGE_HLSL;
+    batchPsInfo.Desc.ShaderType = Diligent::SHADER_TYPE_PIXEL;
+    batchPsInfo.Desc.Name = "BatchSolidRectPixelShader";
+    batchPsInfo.Source = g_qsBatchSolidColorPSSource.constData();
+    batchPsInfo.SourceLength = g_qsBatchSolidColorPSSource.length();
+    device_->CreateShader(batchPsInfo, &batchSolidRectShaders_.PS);
+
+    GraphicsPipelineStateCreateInfo batchInfo;
+    batchInfo.PSODesc.Name = "BatchSolidRect PSO";
+    batchInfo.PSODesc.PipelineType = PIPELINE_TYPE_GRAPHICS;
+    batchInfo.pVS = batchSolidRectShaders_.VS;
+    batchInfo.pPS = batchSolidRectShaders_.PS;
+    auto& batchGP = batchInfo.GraphicsPipeline;
+    batchGP.NumRenderTargets = 1;
+    batchGP.RTVFormats[0] = rtvFormat_;
+    batchGP.PrimitiveTopology = PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    batchGP.RasterizerDesc.CullMode = CULL_MODE_NONE;
+    batchGP.DepthStencilDesc.DepthEnable = False;
+    auto& batchBlend = batchGP.BlendDesc.RenderTargets[0];
+    batchBlend.BlendEnable = True;
+    batchBlend.SrcBlend = BLEND_FACTOR_SRC_ALPHA;
+    batchBlend.DestBlend = BLEND_FACTOR_INV_SRC_ALPHA;
+    batchBlend.BlendOp = BLEND_OPERATION_ADD;
+    batchBlend.SrcBlendAlpha = BLEND_FACTOR_ONE;
+    batchBlend.DestBlendAlpha = BLEND_FACTOR_INV_SRC_ALPHA;
+    batchBlend.BlendOpAlpha = BLEND_OPERATION_ADD;
+    batchBlend.RenderTargetWriteMask = COLOR_MASK_ALL;
+    batchGP.InputLayout.LayoutElements = batchLayoutElems;
+    batchGP.InputLayout.NumElements = _countof(batchLayoutElems);
+    batchInfo.PSODesc.ResourceLayout.Variables = nullptr;
+    batchInfo.PSODesc.ResourceLayout.NumVariables = 0;
+    device_->CreateGraphicsPipelineState(batchInfo, &batchSolidRectPsoAndSrb_.pPSO);
+    if (batchSolidRectPsoAndSrb_.pPSO) {
+        batchSolidRectPsoAndSrb_.pPSO->CreateShaderResourceBinding(&batchSolidRectPsoAndSrb_.pSRB, true);
+    }
+}
+
+void ShaderManager::Impl::createSpriteFamilyPSOs()
+{
+    if (!device_) {
+        return;
+    }
+
+    static const LayoutElement spriteLayoutElems[] = {
+        LayoutElement{0, 0, 2, VT_FLOAT32, false},
+        LayoutElement{1, 0, 2, VT_FLOAT32, false},
+        LayoutElement{2, 0, 4, VT_FLOAT32, false}
+    };
+    static const ShaderResourceVariableDesc spriteVars[] = {
+        { SHADER_TYPE_VERTEX, "TransformCB", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC },
+        { SHADER_TYPE_PIXEL, "g_texture", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC },
+        { SHADER_TYPE_PIXEL, "g_sampler", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC },
+    };
+
+    GraphicsPipelineStateCreateInfo spriteInfo;
+    spriteInfo.PSODesc.Name = "DrawSprite PSO";
+    spriteInfo.PSODesc.PipelineType = PIPELINE_TYPE_GRAPHICS;
+    spriteInfo.pVS = spriteShaders_.VS;
+    spriteInfo.pPS = spriteShaders_.PS;
+    auto& spriteGP = spriteInfo.GraphicsPipeline;
+    spriteGP.NumRenderTargets = 1;
+    spriteGP.RTVFormats[0] = rtvFormat_;
+    spriteGP.PrimitiveTopology = PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP;
+    spriteGP.RasterizerDesc.CullMode = CULL_MODE_NONE;
+    spriteGP.DepthStencilDesc.DepthEnable = False;
+    auto& spriteBlend = spriteGP.BlendDesc.RenderTargets[0];
+    spriteBlend.BlendEnable = True;
+    spriteBlend.SrcBlend = BLEND_FACTOR_SRC_ALPHA;
+    spriteBlend.DestBlend = BLEND_FACTOR_INV_SRC_ALPHA;
+    spriteBlend.BlendOp = BLEND_OPERATION_ADD;
+    spriteBlend.SrcBlendAlpha = BLEND_FACTOR_ONE;
+    spriteBlend.DestBlendAlpha = BLEND_FACTOR_INV_SRC_ALPHA;
+    spriteBlend.BlendOpAlpha = BLEND_OPERATION_ADD;
+    spriteBlend.RenderTargetWriteMask = COLOR_MASK_ALL;
+    spriteGP.InputLayout.LayoutElements = spriteLayoutElems;
+    spriteGP.InputLayout.NumElements = _countof(spriteLayoutElems);
+    spriteInfo.PSODesc.ResourceLayout.Variables = spriteVars;
+    spriteInfo.PSODesc.ResourceLayout.NumVariables = _countof(spriteVars);
+    const bool vrsEnabled = device_->GetDeviceInfo().Features.VariableRateShading != DEVICE_FEATURE_STATE_DISABLED;
+    if (vrsEnabled && (device_->GetAdapterInfo().ShadingRate.CapFlags & SHADING_RATE_CAP_FLAG_PER_PRIMITIVE)) {
+        spriteInfo.GraphicsPipeline.ShadingRateFlags = PIPELINE_SHADING_RATE_FLAG_PER_PRIMITIVE;
+    } else {
+        spriteInfo.GraphicsPipeline.ShadingRateFlags = PIPELINE_SHADING_RATE_FLAG_NONE;
+        if (device_->GetAdapterInfo().ShadingRate.CapFlags & SHADING_RATE_CAP_FLAG_PER_PRIMITIVE) {
+            qWarning() << "[ShaderManager] Per-primitive shading rate is supported by the adapter,"
+                       << "but VariableRateShading is disabled for this device. PSOs will be created without ShadingRateFlags.";
+        }
+    }
+    device_->CreateGraphicsPipelineState(spriteInfo, &spritePsoAndSrb_.pPSO);
+    if (spritePsoAndSrb_.pPSO) {
+        spritePsoAndSrb_.pPSO->CreateShaderResourceBinding(&spritePsoAndSrb_.pSRB, true);
+    } else {
+        qWarning() << "[ShaderManager] Failed to create PSO:" << "DrawSprite PSO";
+    }
+
+    GraphicsPipelineStateCreateInfo spriteTransformInfo = spriteInfo;
+    spriteTransformInfo.PSODesc.Name = "DrawSpriteTransform PSO";
+    spriteTransformInfo.pVS = spriteTransformShaders_.VS;
+    spriteTransformInfo.pPS = spriteTransformShaders_.PS;
+    spriteTransformInfo.GraphicsPipeline.PrimitiveTopology = PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    device_->CreateGraphicsPipelineState(spriteTransformInfo, &spriteTransformPsoAndSrb_.pPSO);
+    if (spriteTransformPsoAndSrb_.pPSO) {
+        spriteTransformPsoAndSrb_.pPSO->CreateShaderResourceBinding(&spriteTransformPsoAndSrb_.pSRB, true);
+    } else {
+        qWarning() << "[ShaderManager] Failed to create PSO:" << "DrawSpriteTransform PSO";
+    }
+
+    static const ShaderResourceVariableDesc maskedSpriteVars[] = {
+        { SHADER_TYPE_VERTEX, "TransformCB", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC },
+        { SHADER_TYPE_PIXEL, "g_scene", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC },
+        { SHADER_TYPE_PIXEL, "g_mask", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC },
+        { SHADER_TYPE_PIXEL, "g_sampler", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC },
+    };
+
+    GraphicsPipelineStateCreateInfo maskedSpriteInfo = spriteInfo;
+    maskedSpriteInfo.PSODesc.Name = "DrawMaskedSprite PSO";
+    maskedSpriteInfo.pVS = maskedSpriteShaders_.VS;
+    maskedSpriteInfo.pPS = maskedSpriteShaders_.PS;
+    maskedSpriteInfo.PSODesc.ResourceLayout.Variables = maskedSpriteVars;
+    maskedSpriteInfo.PSODesc.ResourceLayout.NumVariables = _countof(maskedSpriteVars);
+    device_->CreateGraphicsPipelineState(maskedSpriteInfo, &maskedSpritePsoAndSrb_.pPSO);
+    if (maskedSpritePsoAndSrb_.pPSO) {
+        maskedSpritePsoAndSrb_.pPSO->CreateShaderResourceBinding(&maskedSpritePsoAndSrb_.pSRB, true);
+    } else {
+        qWarning() << "[ShaderManager] Failed to create PSO:" << "DrawMaskedSprite PSO";
+    }
+}
+
+void ShaderManager::Impl::createUtilityFamilyPSOs()
+{
+    if (!device_) {
+        return;
+    }
+
+    static const LayoutElement thickLineLayoutElems[] = {
+        LayoutElement{0, 0, 2, VT_FLOAT32, false},
+        LayoutElement{1, 0, 4, VT_FLOAT32, false}
+    };
+    static const ShaderResourceVariableDesc thickLineVars[] = {
+        { SHADER_TYPE_VERTEX, "TransformCB", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC }
+    };
+
+    GraphicsPipelineStateCreateInfo thickLineInfo;
+    thickLineInfo.PSODesc.Name = "DrawThickLine PSO";
+    thickLineInfo.PSODesc.PipelineType = PIPELINE_TYPE_GRAPHICS;
+    thickLineInfo.pVS = thickLineShaders_.VS;
+    thickLineInfo.pPS = thickLineShaders_.PS;
+    auto& thickGP = thickLineInfo.GraphicsPipeline;
+    thickGP.NumRenderTargets = 1;
+    thickGP.RTVFormats[0] = rtvFormat_;
+    thickGP.PrimitiveTopology = PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP;
+    thickGP.RasterizerDesc.CullMode = CULL_MODE_NONE;
+    thickGP.DepthStencilDesc.DepthEnable = False;
+    thickGP.InputLayout.LayoutElements = thickLineLayoutElems;
+    thickGP.InputLayout.NumElements = _countof(thickLineLayoutElems);
+    thickLineInfo.PSODesc.ResourceLayout.Variables = thickLineVars;
+    thickLineInfo.PSODesc.ResourceLayout.NumVariables = _countof(thickLineVars);
+    device_->CreateGraphicsPipelineState(thickLineInfo, &thickLinePsoAndSrb_.pPSO);
+    if (thickLinePsoAndSrb_.pPSO) {
+        thickLinePsoAndSrb_.pPSO->CreateShaderResourceBinding(&thickLinePsoAndSrb_.pSRB, true);
+    }
+
+    static const LayoutElement dotLineLayoutElems[] = {
+        LayoutElement{0, 0, 2, VT_FLOAT32, false},
+        LayoutElement{1, 0, 4, VT_FLOAT32, false},
+        LayoutElement{2, 0, 1, VT_FLOAT32, false}
+    };
+    static const ShaderResourceVariableDesc dotLineVars[] = {
+        { SHADER_TYPE_VERTEX, "TransformCB", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC },
+        { SHADER_TYPE_PIXEL,  "DotLineCB",   SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC }
+    };
+
+    GraphicsPipelineStateCreateInfo dotLineInfo;
+    dotLineInfo.PSODesc.Name = "DrawDotLine PSO";
+    dotLineInfo.PSODesc.PipelineType = PIPELINE_TYPE_GRAPHICS;
+    dotLineInfo.pVS = dotLineShaders_.VS;
+    dotLineInfo.pPS = dotLineShaders_.PS;
+    auto& dotGP = dotLineInfo.GraphicsPipeline;
+    dotGP.NumRenderTargets = 1;
+    dotGP.RTVFormats[0] = rtvFormat_;
+    dotGP.PrimitiveTopology = PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP;
+    dotGP.RasterizerDesc.CullMode = CULL_MODE_NONE;
+    dotGP.DepthStencilDesc.DepthEnable = False;
+    dotGP.InputLayout.LayoutElements = dotLineLayoutElems;
+    dotGP.InputLayout.NumElements = _countof(dotLineLayoutElems);
+    dotLineInfo.PSODesc.ResourceLayout.Variables = dotLineVars;
+    dotLineInfo.PSODesc.ResourceLayout.NumVariables = _countof(dotLineVars);
+    device_->CreateGraphicsPipelineState(dotLineInfo, &dotLinePsoAndSrb_.pPSO);
+    if (dotLinePsoAndSrb_.pPSO) {
+        dotLinePsoAndSrb_.pPSO->CreateShaderResourceBinding(&dotLinePsoAndSrb_.pSRB, true);
+    }
+
+    static const ShaderResourceVariableDesc checkerVars[] = {
+        { SHADER_TYPE_VERTEX, "TransformCB", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC },
+        { SHADER_TYPE_PIXEL,  "ViewerHelperCB", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC },
+        { SHADER_TYPE_PIXEL,  "ColorBuffer", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC }
+    };
+    static const LayoutElement checkerLayoutElems[] = {
+        LayoutElement{0, 0, 2, VT_FLOAT32, false},
+        LayoutElement{1, 0, 4, VT_FLOAT32, false}
+    };
+
+    GraphicsPipelineStateCreateInfo checkerInfo;
+    checkerInfo.PSODesc.Name = "Checkerboard PSO";
+    checkerInfo.PSODesc.PipelineType = PIPELINE_TYPE_GRAPHICS;
+    checkerInfo.pVS = solidShaders_.VS;
+    checkerInfo.pPS = checkerboardShaders_.PS;
+    auto& checkerGP = checkerInfo.GraphicsPipeline;
+    checkerGP.NumRenderTargets = 1;
+    checkerGP.RTVFormats[0] = rtvFormat_;
+    checkerGP.PrimitiveTopology = PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP;
+    checkerGP.RasterizerDesc.CullMode = CULL_MODE_NONE;
+    checkerGP.DepthStencilDesc.DepthEnable = False;
+    checkerGP.InputLayout.LayoutElements = checkerLayoutElems;
+    checkerGP.InputLayout.NumElements = _countof(checkerLayoutElems);
+    checkerInfo.PSODesc.ResourceLayout.Variables = checkerVars;
+    checkerInfo.PSODesc.ResourceLayout.NumVariables = _countof(checkerVars);
+    device_->CreateGraphicsPipelineState(checkerInfo, &checkerboardPsoAndSrb_.pPSO);
+    if (checkerboardPsoAndSrb_.pPSO) {
+        checkerboardPsoAndSrb_.pPSO->CreateShaderResourceBinding(&checkerboardPsoAndSrb_.pSRB, true);
+    }
+
+    GraphicsPipelineStateCreateInfo gridInfo = checkerInfo;
+    gridInfo.PSODesc.Name = "Grid PSO";
+    gridInfo.pPS = gridShaders_.PS;
+    device_->CreateGraphicsPipelineState(gridInfo, &gridPsoAndSrb_.pPSO);
+    if (gridPsoAndSrb_.pPSO) {
+        gridPsoAndSrb_.pPSO->CreateShaderResourceBinding(&gridPsoAndSrb_.pSRB, true);
+    }
+
+    static const LayoutElement gizmoLayoutElems[] = {
+        LayoutElement{0, 0, 3, VT_FLOAT32, false},
+        LayoutElement{1, 0, 4, VT_FLOAT32, false}
+    };
+    static const ShaderResourceVariableDesc gizmoVars[] = {
+        { SHADER_TYPE_VERTEX, "TransformCB", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC }
+    };
+
+    GraphicsPipelineStateCreateInfo gizmoInfo;
+    gizmoInfo.PSODesc.Name = "Gizmo3D PSO";
+    gizmoInfo.PSODesc.PipelineType = PIPELINE_TYPE_GRAPHICS;
+    gizmoInfo.pVS = gizmo3DShaders_.VS;
+    gizmoInfo.pPS = gizmo3DShaders_.PS;
+    auto& gizmoGP = gizmoInfo.GraphicsPipeline;
+    gizmoGP.NumRenderTargets = 1;
+    gizmoGP.RTVFormats[0] = rtvFormat_;
+    gizmoGP.PrimitiveTopology = PRIMITIVE_TOPOLOGY_LINE_LIST;
+    gizmoGP.RasterizerDesc.CullMode = CULL_MODE_NONE;
+    gizmoGP.DepthStencilDesc.DepthEnable = True;
+    gizmoGP.DepthStencilDesc.DepthFunc = COMPARISON_FUNC_ALWAYS;
+    gizmoGP.BlendDesc.RenderTargets[0].BlendEnable = True;
+    gizmoGP.BlendDesc.RenderTargets[0].SrcBlend = BLEND_FACTOR_SRC_ALPHA;
+    gizmoGP.BlendDesc.RenderTargets[0].DestBlend = BLEND_FACTOR_INV_SRC_ALPHA;
+    gizmoGP.InputLayout.LayoutElements = gizmoLayoutElems;
+    gizmoGP.InputLayout.NumElements = _countof(gizmoLayoutElems);
+    gizmoInfo.PSODesc.ResourceLayout.Variables = gizmoVars;
+    gizmoInfo.PSODesc.ResourceLayout.NumVariables = _countof(gizmoVars);
+    device_->CreateGraphicsPipelineState(gizmoInfo, &gizmo3DPsoAndSrb_.pPSO);
+    if (gizmo3DPsoAndSrb_.pPSO) {
+        gizmo3DPsoAndSrb_.pPSO->CreateShaderResourceBinding(&gizmo3DPsoAndSrb_.pSRB, true);
+    }
+
+    GraphicsPipelineStateCreateInfo gizmoTriangleInfo = gizmoInfo;
+    gizmoTriangleInfo.PSODesc.Name = "Gizmo3D Triangle PSO";
+    gizmoTriangleInfo.GraphicsPipeline.PrimitiveTopology = PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    device_->CreateGraphicsPipelineState(gizmoTriangleInfo, &gizmo3DTrianglePsoAndSrb_.pPSO);
+    if (gizmo3DTrianglePsoAndSrb_.pPSO) {
+        gizmo3DTrianglePsoAndSrb_.pPSO->CreateShaderResourceBinding(&gizmo3DTrianglePsoAndSrb_.pSRB, true);
+    }
 }
 
 void ShaderManager::Impl::createPSOs()
@@ -233,160 +725,11 @@ void ShaderManager::Impl::createPSOs()
     if (!device_) {
         return;
     }
-
-    GraphicsPipelineStateCreateInfo drawLinePSOCreateInfo;
-    drawLinePSOCreateInfo.PSODesc.Name = "DrawLine PSO";
-    drawLinePSOCreateInfo.PSODesc.PipelineType = PIPELINE_TYPE_GRAPHICS;
-    LayoutElement lineLayoutElems[] = {
-        LayoutElement{0, 0, 2, VT_FLOAT32, false},
-        LayoutElement{1, 0, 4, VT_FLOAT32, false}
-    };
-
-    drawLinePSOCreateInfo.pVS = lineShaders_.VS;
-    drawLinePSOCreateInfo.pPS = lineShaders_.PS;
-
-    auto& LGP = drawLinePSOCreateInfo.GraphicsPipeline;
-    LGP.NumRenderTargets = 1;
-    LGP.RTVFormats[0] = rtvFormat_;
-    LGP.PrimitiveTopology = PRIMITIVE_TOPOLOGY_LINE_LIST;
-    LGP.RasterizerDesc.CullMode = CULL_MODE_NONE;
-    LGP.DepthStencilDesc.DepthEnable = False;
-    LGP.InputLayout.LayoutElements = lineLayoutElems;
-    LGP.InputLayout.NumElements = 2;
-
-    ShaderResourceVariableDesc Vars_Line[] = {
-        { SHADER_TYPE_VERTEX, "TransformCB", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC }
-    };
-    drawLinePSOCreateInfo.PSODesc.ResourceLayout.Variables = Vars_Line;
-    drawLinePSOCreateInfo.PSODesc.ResourceLayout.NumVariables = _countof(Vars_Line);
-
-    device_->CreateGraphicsPipelineState(drawLinePSOCreateInfo, &linePsoAndSrb_.pPSO);
-    if (linePsoAndSrb_.pPSO)
-    {
-        linePsoAndSrb_.pPSO->CreateShaderResourceBinding(&linePsoAndSrb_.pSRB, true);
-    }
-
-    GraphicsPipelineStateCreateInfo drawSolidRectPSOCreateInfo;
-    drawSolidRectPSOCreateInfo.PSODesc.Name = "DrawSolidRect PSO";
-    drawSolidRectPSOCreateInfo.PSODesc.PipelineType = PIPELINE_TYPE_GRAPHICS;
-    LayoutElement solidRectLayoutElems[] = {
-        LayoutElement{0, 0, 2, VT_FLOAT32, false},
-        LayoutElement{1, 0, 4, VT_FLOAT32, false}
-    };
-
-    auto& GP = drawSolidRectPSOCreateInfo.GraphicsPipeline;
-    GP.NumRenderTargets = 1;
-    GP.RTVFormats[0] = rtvFormat_;
-    GP.PrimitiveTopology = PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP;
-    GP.RasterizerDesc.CullMode = CULL_MODE_NONE;
-    GP.DepthStencilDesc.DepthEnable = False;
-    auto& solidRTBlend = GP.BlendDesc.RenderTargets[0];
-    solidRTBlend.BlendEnable = True;
-    solidRTBlend.SrcBlend = BLEND_FACTOR_SRC_ALPHA;
-    solidRTBlend.DestBlend = BLEND_FACTOR_INV_SRC_ALPHA;
-    solidRTBlend.BlendOp = BLEND_OPERATION_ADD;
-    solidRTBlend.SrcBlendAlpha = BLEND_FACTOR_ONE;
-    solidRTBlend.DestBlendAlpha = BLEND_FACTOR_INV_SRC_ALPHA;
-    solidRTBlend.BlendOpAlpha = BLEND_OPERATION_ADD;
-    solidRTBlend.RenderTargetWriteMask = COLOR_MASK_ALL;
-    LayoutElement LayoutElems2[] =
-    {
-        LayoutElement{0, 0, 2, VT_FLOAT32, false},
-        LayoutElement{1, 0, 4, VT_FLOAT32, false}
-    };
-    GP.InputLayout.LayoutElements = LayoutElems2;
-    GP.InputLayout.NumElements = 2;
-    ShaderResourceVariableDesc Vars2[] =
-    {
-        { SHADER_TYPE_VERTEX, "TransformCB", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC },
-        { SHADER_TYPE_PIXEL,  "ColorBuffer", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC },
-    };
-    drawSolidRectPSOCreateInfo.PSODesc.ResourceLayout.Variables = Vars2;
-    drawSolidRectPSOCreateInfo.PSODesc.ResourceLayout.NumVariables = _countof(Vars2);
-
-    drawSolidRectPSOCreateInfo.GraphicsPipeline.InputLayout.LayoutElements = solidRectLayoutElems;
-    drawSolidRectPSOCreateInfo.GraphicsPipeline.InputLayout.NumElements = 2;
-
-    drawSolidRectPSOCreateInfo.pVS = solidShaders_.VS;
-    drawSolidRectPSOCreateInfo.pPS = solidShaders_.PS;
-
-    device_->CreateGraphicsPipelineState(drawSolidRectPSOCreateInfo, &solidRectPsoAndSrb_.pPSO);
-    if (solidRectPsoAndSrb_.pPSO)
-    {
-        solidRectPsoAndSrb_.pPSO->CreateShaderResourceBinding(&solidRectPsoAndSrb_.pSRB, true);
-    }
-
-    GraphicsPipelineStateCreateInfo drawSolidRectTransformPSOCreateInfo = drawSolidRectPSOCreateInfo;
-    drawSolidRectTransformPSOCreateInfo.PSODesc.Name = "DrawSolidRectTransform PSO";
-    drawSolidRectTransformPSOCreateInfo.pVS = solidRectTransformShaders_.VS;
-    drawSolidRectTransformPSOCreateInfo.pPS = solidRectTransformShaders_.PS;
-    drawSolidRectTransformPSOCreateInfo.GraphicsPipeline.PrimitiveTopology = PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-    device_->CreateGraphicsPipelineState(drawSolidRectTransformPSOCreateInfo, &solidRectTransformPsoAndSrb_.pPSO);
-    if (solidRectTransformPsoAndSrb_.pPSO)
-    {
-        solidRectTransformPsoAndSrb_.pPSO->CreateShaderResourceBinding(&solidRectTransformPsoAndSrb_.pSRB, true);
-    }
-
-    GraphicsPipelineStateCreateInfo spritePSOCreateInfo;
-    spritePSOCreateInfo.PSODesc.Name = "DrawSprite PSO";
-    spritePSOCreateInfo.PSODesc.PipelineType = PIPELINE_TYPE_GRAPHICS;
-    LayoutElement spriteLayoutElems[] = {
-        LayoutElement{0, 0, 2, VT_FLOAT32, false},
-        LayoutElement{1, 0, 2, VT_FLOAT32, false},
-        LayoutElement{2, 0, 4, VT_FLOAT32, false}
-    };
-    auto& GP2 = spritePSOCreateInfo.GraphicsPipeline;
-    GP2.NumRenderTargets = 1;
-    GP2.RTVFormats[0] = rtvFormat_;
-    GP2.PrimitiveTopology = PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP;
-    GP2.RasterizerDesc.CullMode = CULL_MODE_NONE;
-    GP2.DepthStencilDesc.DepthEnable = False;
-    auto& spriteRTBlend = GP2.BlendDesc.RenderTargets[0];
-    spriteRTBlend.BlendEnable = True;
-    spriteRTBlend.SrcBlend = BLEND_FACTOR_SRC_ALPHA;
-    spriteRTBlend.DestBlend = BLEND_FACTOR_INV_SRC_ALPHA;
-    spriteRTBlend.BlendOp = BLEND_OPERATION_ADD;
-    spriteRTBlend.SrcBlendAlpha = BLEND_FACTOR_ONE;
-    spriteRTBlend.DestBlendAlpha = BLEND_FACTOR_INV_SRC_ALPHA;
-    spriteRTBlend.BlendOpAlpha = BLEND_OPERATION_ADD;
-    spriteRTBlend.RenderTargetWriteMask = COLOR_MASK_ALL;
-    GP2.InputLayout.LayoutElements = spriteLayoutElems;
-    GP2.InputLayout.NumElements = 3;
-    ShaderResourceVariableDesc spriteVars[] = {
-        { SHADER_TYPE_VERTEX, "TransformCB", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC },
-        { SHADER_TYPE_PIXEL, "g_texture", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC },
-        { SHADER_TYPE_PIXEL, "g_sampler", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC },
-    };
-    spritePSOCreateInfo.PSODesc.ResourceLayout.Variables = spriteVars;
-    spritePSOCreateInfo.PSODesc.ResourceLayout.NumVariables = _countof(spriteVars);
-    spritePSOCreateInfo.pVS = spriteShaders_.VS;
-    spritePSOCreateInfo.pPS = spriteShaders_.PS;
-
-    device_->CreateGraphicsPipelineState(spritePSOCreateInfo, &spritePsoAndSrb_.pPSO);
-    if (spritePsoAndSrb_.pPSO)
-    {
-        spritePsoAndSrb_.pPSO->CreateShaderResourceBinding(&spritePsoAndSrb_.pSRB, true);
-    }
-
-    GraphicsPipelineStateCreateInfo drawSpriteTransformPSOCreateInfo = spritePSOCreateInfo;
-    drawSpriteTransformPSOCreateInfo.PSODesc.Name = "DrawSpriteTransform PSO";
-    drawSpriteTransformPSOCreateInfo.pVS = spriteTransformShaders_.VS;
-    drawSpriteTransformPSOCreateInfo.pPS = spriteTransformShaders_.PS;
-    drawSpriteTransformPSOCreateInfo.GraphicsPipeline.PrimitiveTopology = PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-    device_->CreateGraphicsPipelineState(drawSpriteTransformPSOCreateInfo, &spriteTransformPsoAndSrb_.pPSO);
-    if (spriteTransformPsoAndSrb_.pPSO)
-    {
-        spriteTransformPsoAndSrb_.pPSO->CreateShaderResourceBinding(&spriteTransformPsoAndSrb_.pSRB, true);
-    }
-
-    GraphicsPipelineStateCreateInfo drawSolidTrianglePSOCreateInfo = drawSolidRectPSOCreateInfo;
-    drawSolidTrianglePSOCreateInfo.PSODesc.Name = "DrawSolidTriangle PSO";
-    drawSolidTrianglePSOCreateInfo.GraphicsPipeline.PrimitiveTopology = PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-    device_->CreateGraphicsPipelineState(drawSolidTrianglePSOCreateInfo, &solidTrianglePsoAndSrb_.pPSO);
-    if (solidTrianglePsoAndSrb_.pPSO)
-    {
-        solidTrianglePsoAndSrb_.pPSO->CreateShaderResourceBinding(&solidTrianglePsoAndSrb_.pSRB, true);
-    }
+    tbb::task_group tasks;
+    tasks.run([this]() { createLineFamilyPSOs(); });
+    tasks.run([this]() { createSpriteFamilyPSOs(); });
+    tasks.run([this]() { createUtilityFamilyPSOs(); });
+    tasks.wait();
 
     SamplerDesc spriteSamplerDesc;
     spriteSamplerDesc.MinFilter = FILTER_TYPE_LINEAR;
@@ -401,108 +744,6 @@ void ShaderManager::Impl::createPSOs()
     spriteSamplerDesc.MinLOD = 0.0f;
     spriteSamplerDesc.MaxLOD = FLT_MAX;
     device_->CreateSampler(spriteSamplerDesc, &spriteSampler_);
-
-    {
-        GraphicsPipelineStateCreateInfo thickLinePSOCreateInfo;
-        thickLinePSOCreateInfo.PSODesc.Name = "DrawThickLine PSO";
-        thickLinePSOCreateInfo.PSODesc.PipelineType = PIPELINE_TYPE_GRAPHICS;
-
-        LayoutElement thickLineLayoutElems[] = {
-            LayoutElement{0, 0, 2, VT_FLOAT32, false},
-            LayoutElement{1, 0, 4, VT_FLOAT32, false}
-        };
-
-        auto& TLGP = thickLinePSOCreateInfo.GraphicsPipeline;
-        TLGP.NumRenderTargets = 1;
-        TLGP.RTVFormats[0] = rtvFormat_;
-        TLGP.PrimitiveTopology = PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP;
-        TLGP.RasterizerDesc.CullMode = CULL_MODE_NONE;
-        TLGP.DepthStencilDesc.DepthEnable = False;
-        TLGP.InputLayout.LayoutElements = thickLineLayoutElems;
-        TLGP.InputLayout.NumElements = 2;
-
-        ShaderResourceVariableDesc thickLineVars[] = {
-            { SHADER_TYPE_VERTEX, "TransformCB", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC }
-        };
-        thickLinePSOCreateInfo.PSODesc.ResourceLayout.Variables = thickLineVars;
-        thickLinePSOCreateInfo.PSODesc.ResourceLayout.NumVariables = 1;
-
-        thickLinePSOCreateInfo.pVS = thickLineShaders_.VS;
-        thickLinePSOCreateInfo.pPS = thickLineShaders_.PS;
-
-        device_->CreateGraphicsPipelineState(thickLinePSOCreateInfo, &thickLinePsoAndSrb_.pPSO);
-        if (thickLinePsoAndSrb_.pPSO)
-        {
-            thickLinePsoAndSrb_.pPSO->CreateShaderResourceBinding(&thickLinePsoAndSrb_.pSRB, true);
-        }
-    }
-
-    {
-        GraphicsPipelineStateCreateInfo dotLinePSOCreateInfo;
-        dotLinePSOCreateInfo.PSODesc.Name = "DrawDotLine PSO";
-        dotLinePSOCreateInfo.PSODesc.PipelineType = PIPELINE_TYPE_GRAPHICS;
-
-        LayoutElement dotLineLayoutElems[] = {
-            LayoutElement{0, 0, 2, VT_FLOAT32, false},
-            LayoutElement{1, 0, 4, VT_FLOAT32, false},
-            LayoutElement{2, 0, 1, VT_FLOAT32, false}
-        };
-
-        auto& DLGP = dotLinePSOCreateInfo.GraphicsPipeline;
-        DLGP.NumRenderTargets = 1;
-        DLGP.RTVFormats[0] = rtvFormat_;
-        DLGP.PrimitiveTopology = PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP;
-        DLGP.RasterizerDesc.CullMode = CULL_MODE_NONE;
-        DLGP.DepthStencilDesc.DepthEnable = False;
-        DLGP.InputLayout.LayoutElements = dotLineLayoutElems;
-        DLGP.InputLayout.NumElements = 3;
-
-        ShaderResourceVariableDesc dotLineVars[] = {
-            { SHADER_TYPE_VERTEX, "TransformCB", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC },
-            { SHADER_TYPE_PIXEL,  "DotLineCB",   SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC }
-        };
-        dotLinePSOCreateInfo.PSODesc.ResourceLayout.Variables = dotLineVars;
-        dotLinePSOCreateInfo.PSODesc.ResourceLayout.NumVariables = 2;
-
-        dotLinePSOCreateInfo.pVS = dotLineShaders_.VS;
-        dotLinePSOCreateInfo.pPS = dotLineShaders_.PS;
-
-        device_->CreateGraphicsPipelineState(dotLinePSOCreateInfo, &dotLinePsoAndSrb_.pPSO);
-        if (dotLinePsoAndSrb_.pPSO)
-        {
-            dotLinePsoAndSrb_.pPSO->CreateShaderResourceBinding(&dotLinePsoAndSrb_.pSRB, true);
-        }
-    }
-
-    {
-        GraphicsPipelineStateCreateInfo PSOCreateInfo = drawSolidRectPSOCreateInfo;
-        PSOCreateInfo.PSODesc.Name = "Checkerboard PSO";
-        PSOCreateInfo.pPS = checkerboardShaders_.PS;
-        ShaderResourceVariableDesc Vars[] = {
-            { SHADER_TYPE_VERTEX, "TransformCB", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC },
-            { SHADER_TYPE_PIXEL,  "ViewerHelperCB", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC }
-        };
-        PSOCreateInfo.PSODesc.ResourceLayout.Variables = Vars;
-        PSOCreateInfo.PSODesc.ResourceLayout.NumVariables = _countof(Vars);
-        device_->CreateGraphicsPipelineState(PSOCreateInfo, &checkerboardPsoAndSrb_.pPSO);
-        if (checkerboardPsoAndSrb_.pPSO)
-            checkerboardPsoAndSrb_.pPSO->CreateShaderResourceBinding(&checkerboardPsoAndSrb_.pSRB, true);
-    }
-
-    {
-        GraphicsPipelineStateCreateInfo PSOCreateInfo = drawSolidRectPSOCreateInfo;
-        PSOCreateInfo.PSODesc.Name = "Grid PSO";
-        PSOCreateInfo.pPS = gridShaders_.PS;
-        ShaderResourceVariableDesc Vars[] = {
-            { SHADER_TYPE_VERTEX, "TransformCB", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC },
-            { SHADER_TYPE_PIXEL,  "ViewerHelperCB", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC }
-        };
-        PSOCreateInfo.PSODesc.ResourceLayout.Variables = Vars;
-        PSOCreateInfo.PSODesc.ResourceLayout.NumVariables = _countof(Vars);
-        device_->CreateGraphicsPipelineState(PSOCreateInfo, &gridPsoAndSrb_.pPSO);
-        if (gridPsoAndSrb_.pPSO)
-            gridPsoAndSrb_.pPSO->CreateShaderResourceBinding(&gridPsoAndSrb_.pSRB, true);
-    }
 }
 
 void ShaderManager::Impl::destroy()
@@ -517,6 +758,8 @@ void ShaderManager::Impl::destroy()
     solidRectTransformPsoAndSrb_.pSRB.Release();
     spritePsoAndSrb_.pPSO.Release();
     spritePsoAndSrb_.pSRB.Release();
+    maskedSpritePsoAndSrb_.pPSO.Release();
+    maskedSpritePsoAndSrb_.pSRB.Release();
     thickLinePsoAndSrb_.pPSO.Release();
     thickLinePsoAndSrb_.pSRB.Release();
     dotLinePsoAndSrb_.pPSO.Release();
@@ -527,6 +770,10 @@ void ShaderManager::Impl::destroy()
     checkerboardPsoAndSrb_.pSRB.Release();
     gridPsoAndSrb_.pPSO.Release();
     gridPsoAndSrb_.pSRB.Release();
+    gizmo3DPsoAndSrb_.pPSO.Release();
+    gizmo3DPsoAndSrb_.pSRB.Release();
+    gizmo3DTrianglePsoAndSrb_.pPSO.Release();
+    gizmo3DTrianglePsoAndSrb_.pSRB.Release();
 
     lineShaders_.VS.Release();
     lineShaders_.PS.Release();
@@ -538,6 +785,8 @@ void ShaderManager::Impl::destroy()
     solidRectTransformShaders_.PS.Release();
     spriteShaders_.VS.Release();
     spriteShaders_.PS.Release();
+    maskedSpriteShaders_.VS.Release();
+    maskedSpriteShaders_.PS.Release();
     thickLineShaders_.VS.Release();
     thickLineShaders_.PS.Release();
     dotLineShaders_.VS.Release();
@@ -546,6 +795,8 @@ void ShaderManager::Impl::destroy()
     checkerboardShaders_.PS.Release();
     gridShaders_.VS.Release();
     gridShaders_.PS.Release();
+    gizmo3DShaders_.VS.Release();
+    gizmo3DShaders_.PS.Release();
 
     spriteSampler_.Release();
 
@@ -634,6 +885,11 @@ RenderShaderPair ShaderManager::gridShaders() const
     return impl_->gridShaders_;
 }
 
+RenderShaderPair ShaderManager::maskedSpriteShaders() const
+{
+    return impl_->maskedSpriteShaders_;
+}
+
 PSOAndSRB ShaderManager::linePsoAndSrb() const
 {
     return impl_->linePsoAndSrb_;
@@ -687,6 +943,26 @@ PSOAndSRB ShaderManager::gridPsoAndSrb() const
 PSOAndSRB ShaderManager::spriteTransformPsoAndSrb() const
 {
     return impl_->spriteTransformPsoAndSrb_;
+}
+
+PSOAndSRB ShaderManager::maskedSpritePsoAndSrb() const
+{
+    return impl_->maskedSpritePsoAndSrb_;
+}
+
+PSOAndSRB ShaderManager::gizmo3DPsoAndSrb() const
+{
+    return impl_->gizmo3DPsoAndSrb_;
+}
+
+PSOAndSRB ShaderManager::gizmo3DTrianglePsoAndSrb() const
+{
+    return impl_->gizmo3DTrianglePsoAndSrb_;
+}
+
+PSOAndSRB ShaderManager::batchSolidRectPsoAndSrb() const
+{
+    return impl_->batchSolidRectPsoAndSrb_;
 }
 
 RefCntAutoPtr<ISampler> ShaderManager::spriteSampler() const

@@ -117,9 +117,6 @@ namespace Artifact
  RenderQueueManagerJobDetailWidget::RenderQueueManagerJobDetailWidget(QWidget* parent /*= nullptr*/) : QWidget(parent)
   , impl_(new Impl(this))
  {
-  auto style = getDCCStyleSheetPreset(DccStylePreset::ModoStyle);
-
-  setStyleSheet(style);
  }
 
  RenderQueueManagerJobDetailWidget::~RenderQueueManagerJobDetailWidget()
@@ -196,10 +193,6 @@ namespace Artifact
 
  RenderQueueJobWidget::RenderQueueJobWidget(QWidget* parent /*= nullptr*/) :QWidget(parent), impl_(new Impl())
  {
-  auto style = getDCCStyleSheetPreset(DccStylePreset::ModoStyle);
-
-  setStyleSheet(style);
-
   setWindowTitle("RenderQueueManagerHeaderWidget");
   QVBoxLayout* mainLayout = new QVBoxLayout(this);
   impl_->toggleButton = new QToolButton(this);

@@ -109,9 +109,11 @@ export namespace Artifact {
   int renderQueueCountForComposition(const CompositionID& id) const;
   QString compositionRemovalConfirmationMessage(const CompositionID& id) const;
   bool removeCompositionWithRenderQueueCleanup(const CompositionID& id, int* removedQueueCount = nullptr);
-  bool duplicateComposition(const CompositionID& id);
-  bool renameComposition(const CompositionID& id, const UniString& name);
-  std::shared_ptr<ArtifactProject> getCurrentProjectSharedPtr() const;
+   bool duplicateComposition(const CompositionID& id);
+   bool renameComposition(const CompositionID& id, const UniString& name);
+   bool precomposeLayersInCurrentComposition(const QVector<LayerID>& layerIds, const UniString& newCompositionName);
+   void splitLayerAtCurrentTime(const CompositionID& compositionId, const LayerID& layerId);
+   std::shared_ptr<ArtifactProject> getCurrentProjectSharedPtr() const;
  public /*signals*/:
   void layerRemoved(const CompositionID& compId, const LayerID& layerId)
    W_SIGNAL(layerRemoved, compId, layerId);

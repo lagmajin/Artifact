@@ -30,11 +30,14 @@ export namespace Artifact {
   void mouseMoveEvent(QMouseEvent* event) override;
   void wheelEvent(QWheelEvent* event) override;
   void resizeEvent(QResizeEvent* event) override;
+  void contextMenuEvent(QContextMenuEvent* event) override;
   void paintEvent(QPaintEvent* event) override;
   void showEvent(QShowEvent* event) override;
+  void hideEvent(QHideEvent* event) override;
   void closeEvent(QCloseEvent* event) override;
 
   void focusInEvent(QFocusEvent* event) override;
+  void focusOutEvent(QFocusEvent* event) override;
 
  public:
   explicit ArtifactLayerEditorWidgetV2(QWidget* parent = nullptr);

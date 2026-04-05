@@ -2,6 +2,14 @@
 project(Artifact)
 
 # ---------------------------------------------------------------------------
+# Version
+# ---------------------------------------------------------------------------
+set(ARTIFACT_VERSION_MAJOR 0)
+set(ARTIFACT_VERSION_MINOR 9)
+set(ARTIFACT_VERSION_PATCH 0)
+set(ARTIFACT_VERSION "${ARTIFACT_VERSION_MAJOR}.${ARTIFACT_VERSION_MINOR}.${ARTIFACT_VERSION_PATCH}")
+
+# ---------------------------------------------------------------------------
 # ソース収集とモジュール分類
 # ---------------------------------------------------------------------------
 file(GLOB_RECURSE POTENTIAL_SOURCES CONFIGURE_DEPENDS 
@@ -23,6 +31,8 @@ foreach(file_path ${POTENTIAL_SOURCES})
        file_path MATCHES "src/Effect/ArtifactStabilizer\\.cppm" OR
        file_path MATCHES "include/Render/ArtifactFrameCache\\.ixx" OR
        file_path MATCHES "src/Render/ArtifactFrameCache\\.cppm" OR
+       file_path MATCHES "include/Layer/ArtifactLayerGroup\\.ixx" OR
+       file_path MATCHES "src/Layer/ArtifactLayerGroup\\.cppm" OR
        file_path MATCHES "include/Color/ArtifactColorWheels\\.ixx" OR
        file_path MATCHES "src/Color/ArtifactColorWheels\\.cppm" OR
        file_path MATCHES "include/Preview/ArtifactTimelineClock\\.ixx" OR
@@ -79,6 +89,15 @@ set_target_properties(Artifact PROPERTIES
     ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>"
     VS_DEBUGGER_WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>"
 )
+
+# Version compile definitions
+target_compile_definitions(Artifact PRIVATE
+    ARTIFACT_VERSION_STRING="${ARTIFACT_VERSION}"
+    ARTIFACT_VERSION_MAJOR=${ARTIFACT_VERSION_MAJOR}
+    ARTIFACT_VERSION_MINOR=${ARTIFACT_VERSION_MINOR}
+    ARTIFACT_VERSION_PATCH=${ARTIFACT_VERSION_PATCH}
+)
+
 if(TARGET __CMAKE::CXX23)
     set_property(TARGET Artifact PROPERTY CXX_MODULE_STD ON)
 else()
@@ -246,6 +265,57 @@ else()
     )
     target_include_directories(Artifact PRIVATE "${VCPKG_INSTALLED}/include")
 endif()
+
+artifact_enable_delay_load(Artifact
+    DEBUG_DLLS
+        opencv_core4d.dll
+        opencv_calib3d4d.dll
+        opencv_dnn4d.dll
+        opencv_features2d4d.dll
+        opencv_flann4d.dll
+        opencv_gapi4d.dll
+        opencv_highgui4d.dll
+        opencv_imgcodecs4d.dll
+        opencv_imgproc4d.dll
+        opencv_ml4d.dll
+        opencv_objdetect4d.dll
+        opencv_photo4d.dll
+        opencv_stitching4d.dll
+        opencv_video4d.dll
+        opencv_videoio4d.dll
+        tbb12_debug.dll
+        tbbmalloc_debug.dll
+        tbbbind_2_5_debug.dll
+        avcodec-62.dll
+        avformat-62.dll
+        avutil-60.dll
+        swscale-9.dll
+        swresample-6.dll
+    RELEASE_DLLS
+        opencv_core4.dll
+        opencv_calib3d4.dll
+        opencv_dnn4.dll
+        opencv_features2d4.dll
+        opencv_flann4.dll
+        opencv_gapi4.dll
+        opencv_highgui4.dll
+        opencv_imgcodecs4.dll
+        opencv_imgproc4.dll
+        opencv_ml4.dll
+        opencv_objdetect4.dll
+        opencv_photo4.dll
+        opencv_stitching4.dll
+        opencv_video4.dll
+        opencv_videoio4.dll
+        tbb12.dll
+        tbbmalloc.dll
+        tbbbind_2_5.dll
+        avcodec-62.dll
+        avformat-62.dll
+        avutil-60.dll
+        swscale-9.dll
+        swresample-6.dll
+)
 
 # Windows 固有
 if(WIN32)

@@ -2,11 +2,13 @@ module;
 
 #include <QDebug>
 #include <QImage>
+#include <QMatrix4x4>
 #include <QImageReader>
 #include <QPainter>
 #include <QFutureWatcher>
 #include <QtConcurrent>
 #include <wobjectimpl.h>
+#include <Layer/ArtifactCloneEffectSupport.hpp>
 
 module Artifact.Layer.Image;
 
@@ -17,7 +19,6 @@ import Image.ImageF32x4_RGBA;
 import Size;
 
 namespace Artifact {
-
 class ArtifactImageLayer::Impl {
 public:
     Impl() = default;
@@ -31,12 +32,28 @@ public:
     mutable std::shared_ptr<QImage> cache_;
     // [Fix 1] バックグラウンド先読み用
     mutable QFuture<QImage> prefetchFuture_;
+    mutable QFutureWatcher<QImage> prefetchWatcher_;
     mutable bool prefetchDone_ = false;
 };
 
 W_OBJECT_IMPL(ArtifactImageLayer)
 
 ArtifactImageLayer::ArtifactImageLayer() : impl_(new Impl()) {
+    QObject::connect(&impl_->prefetchWatcher_, &QFutureWatcher<QImage>::finished, this, [this]() {
+        if (!impl_) {
+            return;
+        }
+
+        QImage loaded = impl_->prefetchWatcher_.result();
+        if (!loaded.isNull()) {
+            impl_->cache_ = std::make_shared<QImage>(std::move(loaded));
+            impl_->width_ = impl_->cache_->width();
+            impl_->height_ = impl_->cache_->height();
+            setSourceSize(Size_2D(impl_->width_, impl_->height_));
+        }
+        impl_->prefetchDone_ = true;
+        Q_EMIT changed();
+    });
 }
 
 ArtifactImageLayer::~ArtifactImageLayer() {
@@ -78,6 +95,7 @@ bool ArtifactImageLayer::loadFromPath(const QString& path)
         }
         return img;
     });
+    impl_->prefetchWatcher_.setFuture(impl_->prefetchFuture_);
 
     qDebug() << "[ArtifactImageLayer] Prefetch started:" << path
              << "sizeHint=" << size;
@@ -91,24 +109,33 @@ QString ArtifactImageLayer::sourcePath() const
 
 std::vector<ArtifactCore::PropertyGroup> ArtifactImageLayer::getLayerPropertyGroups() const
 {
-    std::vector<ArtifactCore::PropertyGroup> groups;
-    
-    ArtifactCore::PropertyGroup group("Image Layer");
-    // TODO: プロパティの追加
-    
-    groups.push_back(group);
-    
-    // Base class groups (Transform, etc.)
-    auto baseGroups = ArtifactAbstractLayer::getLayerPropertyGroups();
-    groups.insert(groups.end(), baseGroups.begin(), baseGroups.end());
-    
+    auto groups = ArtifactAbstractLayer::getLayerPropertyGroups();
+    ArtifactCore::PropertyGroup imageGroup(QStringLiteral("Image"));
+
+    auto makeProp = [this](const QString& name, ArtifactCore::PropertyType type,
+                           const QVariant& value, int priority = 0) {
+        return persistentLayerProperty(name, type, value, priority);
+    };
+
+    imageGroup.addProperty(makeProp(QStringLiteral("image.sourcePath"),
+                                    ArtifactCore::PropertyType::String,
+                                    sourcePath(), -150));
+    imageGroup.addProperty(makeProp(QStringLiteral("image.fitToLayer"),
+                                    ArtifactCore::PropertyType::Boolean,
+                                    impl_->fitToLayer_, -140));
+
+    groups.push_back(imageGroup);
     return groups;
 }
 
 bool ArtifactImageLayer::setLayerPropertyValue(const QString& propertyPath, const QVariant& value)
 {
-    if (propertyPath == "sourcePath") {
+    if (propertyPath == QStringLiteral("image.sourcePath") || propertyPath == QStringLiteral("sourcePath")) {
         return loadFromPath(value.toString());
+    }
+    if (propertyPath == QStringLiteral("image.fitToLayer")) {
+        setFitToLayer(value.toBool());
+        return true;
     }
     
     return ArtifactAbstractLayer::setLayerPropertyValue(propertyPath, value);
@@ -144,11 +171,14 @@ void ArtifactImageLayer::draw(ArtifactIRenderer* renderer)
         size = Size_2D(impl_->width_, impl_->height_);
     }
 
-    // Diligent レンデラーで drawSprite を呼び出し
-    // 他のレンデラータイプの場合は動的に処理されるべき
-    if (renderer != nullptr) {
-        renderer->drawSpriteTransformed(0.0f, 0.0f, (float)size.width, (float)size.height, getGlobalTransform(), img, this->opacity());
-    }
+    const QMatrix4x4 baseTransform = getGlobalTransform4x4();
+    drawWithClonerEffect(this, baseTransform, [renderer, &img, size, this](const QMatrix4x4& transform, float weight) {
+        renderer->drawSpriteTransformed(0.0f, 0.0f,
+                                        static_cast<float>(size.width),
+                                        static_cast<float>(size.height),
+                                        transform, img,
+                                        this->opacity() * weight);
+    });
 }
 
 QImage ArtifactImageLayer::toQImage() const

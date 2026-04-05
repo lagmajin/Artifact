@@ -11,6 +11,7 @@ import std;
 import Artifact.Service.Project;
 import Artifact.Render.Queue.Service;
 import Artifact.MainWindow;
+import Artifact.Widgets.RenderCenterWindow;
 import Utils.Path;
 import Artifact.Widgets.Test.ScrollPoC;
 
@@ -18,9 +19,6 @@ namespace Artifact {
 using namespace ArtifactCore;
 
 namespace {
- const QString kRenderQueueDockId = QStringLiteral("render_manager_dock");
- const QString kRenderQueueDockTitle = QStringLiteral("Render Manager");
-
  QWidget* findWidgetByClassHint(const QString& classHint)
  {
   const auto widgets = QApplication::allWidgets();
@@ -52,6 +50,7 @@ public:
  QAction* clearAllAction = nullptr;
 
  void addCurrentToQueue();
+ void addAllCompositions();
  void showQueue();
  void showRenderManager();
  void showRenderSettings();
@@ -89,6 +88,8 @@ ArtifactRenderMenu::Impl::Impl(ArtifactRenderMenu* menu, QWidget* mainWindow)
  auto* scrollPoCAction = new QAction("Scroll PoC (Floating)", menu);
 
  menu->addAction(addCurrentToQueueAction);
+ auto* addAllCompsAction = new QAction("全コンポジションをキューに追加(&A)", menu);
+ menu->addAction(addAllCompsAction);
  menu->addSeparator();
  menu->addAction(showQueueAction);
  menu->addAction(showRenderManagerAction);
@@ -100,6 +101,7 @@ ArtifactRenderMenu::Impl::Impl(ArtifactRenderMenu* menu, QWidget* mainWindow)
  menu->addAction(scrollPoCAction);
 
  QObject::connect(addCurrentToQueueAction, &QAction::triggered, menu, [this]() { addCurrentToQueue(); });
+ QObject::connect(addAllCompsAction, &QAction::triggered, menu, [this]() { addAllCompositions(); });
  QObject::connect(showQueueAction, &QAction::triggered, menu, [this]() { showQueue(); });
  QObject::connect(showRenderManagerAction, &QAction::triggered, menu, [this]() { showRenderManager(); });
  QObject::connect(renderSettingsAction, &QAction::triggered, menu, [this]() { showRenderSettings(); });
@@ -138,36 +140,40 @@ void ArtifactRenderMenu::Impl::addCurrentToQueue()
  showQueue();
 }
 
+void ArtifactRenderMenu::Impl::addAllCompositions()
+{
+ auto* queueService = ArtifactRenderQueueService::instance();
+ if (!queueService) return;
+
+ const int added = queueService->addAllCompositions();
+ if (added > 0) {
+  QMessageBox::information(mainWindow_ ? mainWindow_ : menu_, "Render",
+   QString("%1 個のコンポジションをキューに追加しました。").arg(added));
+ } else {
+  QMessageBox::information(mainWindow_ ? mainWindow_ : menu_, "Render",
+   "追加できるコンポジションがありません。");
+ }
+
+ showQueue();
+}
+
 void ArtifactRenderMenu::Impl::showQueue()
 {
- if (auto* mw = qobject_cast<ArtifactMainWindow*>(mainWindow_)) {
-  mw->activateDock(kRenderQueueDockId);
-  mw->activateDock(kRenderQueueDockTitle);
+ // まず既存の独立ウィンドウを探す
+ if (auto* window = qobject_cast<ArtifactRenderCenterWindow*>(findWidgetByClassHint("ArtifactRenderCenterWindow"))) {
+  window->present();
   return;
  }
- const auto widgets = QApplication::allWidgets();
- for (QWidget* w : widgets) {
-  if (!w) continue;
-  const QString className = QString::fromLatin1(w->metaObject()->className());
-  if (className.contains("RenderQueueManagerWidget", Qt::CaseInsensitive)) {
-   w->show();
-   w->raise();
-   w->activateWindow();
-   return;
-  }
- }
+
+ // なければ新しく作成（MainWindowを親にするが、Windowフラグで独立させる）
+ auto* newWindow = new ArtifactRenderCenterWindow(mainWindow_);
+ newWindow->setAttribute(Qt::WA_DeleteOnClose);
+ newWindow->present();
 }
 
 void ArtifactRenderMenu::Impl::showRenderManager()
 {
- if (auto* mw = qobject_cast<ArtifactMainWindow*>(mainWindow_)) {
-  mw->activateDock(kRenderQueueDockId);
-  mw->activateDock(kRenderQueueDockTitle);
- } else if (QWidget* w = findWidgetByClassHint("RenderQueueManagerWidget")) {
-  w->show();
-  w->raise();
-  w->activateWindow();
- }
+ showQueue();
 }
 
 void ArtifactRenderMenu::Impl::showRenderSettings()

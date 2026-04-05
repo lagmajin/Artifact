@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <QSet>
 #include <QObject>
 #include <wobjectdefs.h>
@@ -51,6 +51,7 @@ export namespace Artifact {
  public:
   explicit ArtifactLayerSelectionManager(QObject* parent = nullptr);
   ~ArtifactLayerSelectionManager();
+    static ArtifactLayerSelectionManager* instance();
 
   // Layer Selection
   void selectLayer(const ArtifactAbstractLayerPtr& layer);

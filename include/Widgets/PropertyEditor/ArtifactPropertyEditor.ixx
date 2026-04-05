@@ -1,17 +1,21 @@
 module;
 
 #include <QWidget>
+#include <QAbstractButton>
 #include <QLabel>
+#include <QPaintEvent>
 #include <QPushButton>
 #include <QVariant>
 #include <QColor>
-#include <QCheckBox>
 #include <QComboBox>
 #include <QDoubleSpinBox>
 #include <QFontComboBox>
+#include <QKeyEvent>
+#include <QContextMenuEvent>
 #include <QLineEdit>
 #include <QSlider>
 #include <QSpinBox>
+#include <QTextEdit>
 
 export module Artifact.Widgets.PropertyEditor;
 
@@ -35,21 +39,28 @@ enum class ArtifactNumericEditorLayoutMode {
 class ArtifactAbstractPropertyEditor : public QWidget {
 public:
     using CommitHandler = std::function<void(const QVariant&)>;
+    using PreviewHandler = std::function<void(const QVariant&)>;
 
     explicit ArtifactAbstractPropertyEditor(QWidget* parent = nullptr);
     ~ArtifactAbstractPropertyEditor() override;
 
     void setCommitHandler(CommitHandler handler);
+    void setPreviewHandler(PreviewHandler handler);
+    void previewCurrentValue() const;
+    void previewValueFromVariant(const QVariant& value) const;
+    void commitCurrentValue() const;
     virtual QVariant value() const = 0;
     virtual void setValueFromVariant(const QVariant& value) = 0;
     virtual bool supportsScrub() const;
-    virtual void scrubByPixels(int deltaPixels, bool fineAdjust);
+    virtual void scrubByPixels(int deltaPixels, Qt::KeyboardModifiers modifiers);
 
 protected:
     void commitValue(const QVariant& value) const;
+    void previewValue(const QVariant& value) const;
 
 private:
     CommitHandler commitHandler_;
+    PreviewHandler previewHandler_;
 };
 
 ArtifactNumericEditorLayoutMode globalNumericEditorLayoutMode();
@@ -61,7 +72,7 @@ public:
     QVariant value() const override;
     void setValueFromVariant(const QVariant& value) override;
     bool supportsScrub() const override;
-    void scrubByPixels(int deltaPixels, bool fineAdjust) override;
+    void scrubByPixels(int deltaPixels, Qt::KeyboardModifiers modifiers) override;
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
@@ -75,6 +86,7 @@ private:
     QSlider* slider_ = nullptr;
     double softMin_ = 0.0;
     double softMax_ = 1.0;
+    bool sliderInteracting_ = false;
 };
 
 class ArtifactIntPropertyEditor final : public ArtifactAbstractPropertyEditor {
@@ -83,13 +95,21 @@ public:
     QVariant value() const override;
     void setValueFromVariant(const QVariant& value) override;
     bool supportsScrub() const override;
-    void scrubByPixels(int deltaPixels, bool fineAdjust) override;
+    void scrubByPixels(int deltaPixels, Qt::KeyboardModifiers modifiers) override;
+
+protected:
+    bool eventFilter(QObject* watched, QEvent* event) override;
+
+private:
+    int intToSliderPosition(int value, int min, int max) const;
+    int sliderPositionToInt(int pos, int min, int max) const;
 
 private:
     QSpinBox* spinBox_ = nullptr;
     QSlider* slider_ = nullptr;
     int softMin_ = 0;
     int softMax_ = 100;
+    bool sliderInteracting_ = false;
 };
 
 class ArtifactBoolPropertyEditor final : public ArtifactAbstractPropertyEditor {
@@ -99,7 +119,7 @@ public:
     void setValueFromVariant(const QVariant& value) override;
 
 private:
-    QCheckBox* checkBox_ = nullptr;
+    QAbstractButton* toggleSwitch_ = nullptr;
 };
 
 class ArtifactStringPropertyEditor final : public ArtifactAbstractPropertyEditor {
@@ -110,6 +130,19 @@ public:
 
 private:
     QLineEdit* lineEdit_ = nullptr;
+};
+
+class ArtifactMultilineStringPropertyEditor final : public ArtifactAbstractPropertyEditor {
+public:
+    explicit ArtifactMultilineStringPropertyEditor(const ArtifactCore::AbstractProperty& property, QWidget* parent = nullptr);
+    QVariant value() const override;
+    void setValueFromVariant(const QVariant& value) override;
+
+protected:
+    bool eventFilter(QObject* watched, QEvent* event) override;
+
+private:
+    QTextEdit* textEdit_ = nullptr;
 };
 
 class ArtifactFontFamilyPropertyEditor final : public ArtifactAbstractPropertyEditor {
@@ -206,7 +239,10 @@ public:
     static ArtifactPropertyRowLayoutMode globalLayoutMode();
 
 private:
+    void finishScrub(bool commitChanges);
+
     QLabel* label_ = nullptr;
+    QLabel* scrubHandle_ = nullptr;
     ArtifactAbstractPropertyEditor* editor_ = nullptr;
     QPushButton* keyframeButton_ = nullptr;
     QPushButton* resetButton_ = nullptr;
@@ -220,11 +256,24 @@ private:
     NavigationHandler navigationHandler_;
     
     bool scrubbing_ = false;
+    bool scrubStarted_ = false;
     int scrubStartX_ = 0;
+    int scrubThreshold_ = 4;
     QVariant scrubStartValue_;
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
+    void keyPressEvent(QKeyEvent* event) override;
+    void enterEvent(QEnterEvent* event) override;
+    void leaveEvent(QEvent* event) override;
+    void paintEvent(QPaintEvent* event) override;
+    void contextMenuEvent(QContextMenuEvent* event) override;
+
+private:
+    void updateAuxControlVisibility();
+
+private:
+    QString propertyName_;
 };
 
 ArtifactAbstractPropertyEditor* createPropertyEditorWidget(

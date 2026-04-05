@@ -1,6 +1,7 @@
 module;
 #include <QTimer>
 #include <QElapsedTimer>
+#include <QThread>
 #include <wobjectimpl.h>
 
 #include <iostream>
@@ -66,11 +67,13 @@ public:
     ArtifactCompositionPtr currentComposition_;
     QElapsedTimer audioTimer_;
     double audioOffsetSeconds_ = 0.0;
-    bool audioRunning_ = false;
+    std::atomic_bool audioRunning_{false};
     std::function<double()> externalAudioClockProvider_;
     std::function<double()> playbackClockProvider_;
     float audioMasterVolume_ = 1.0f;
     bool audioMasterMuted_ = false;
+    std::atomic<int64_t> pendingCompositionFrame_{0};
+    std::atomic_bool compositionFrameSyncQueued_{false};
 
     explicit Impl(ArtifactPlaybackService* owner)
         : owner_(owner) {
@@ -79,19 +82,18 @@ public:
         
         // エンジンのシグナルをサービスに転送
         QObject::connect(engine_, &ArtifactPlaybackEngine::playbackStateChanged,
-                         owner_, [this](bool playing, bool paused, bool stopped) {
-            PlaybackState state = PlaybackState::Stopped;
-            if (playing) state = PlaybackState::Playing;
-            else if (paused) state = PlaybackState::Paused;
-            else if (stopped) state = PlaybackState::Stopped;
+                         owner_, [this](PlaybackState state) {
+            if (state == PlaybackState::Paused) {
+                pauseAudioClock();
+            } else if (state == PlaybackState::Stopped) {
+                stopAudioClock();
+            }
             Q_EMIT owner_->playbackStateChanged(state);
         }, Qt::DirectConnection);
         
         QObject::connect(engine_, &ArtifactPlaybackEngine::frameChanged,
                          owner_, [this](const FramePosition& position, const QImage&) {
-            if (currentComposition_) {
-                currentComposition_->setFramePosition(position);
-            }
+            syncCurrentCompositionFrame(position);
             Q_EMIT owner_->frameChanged(position);
         }, Qt::DirectConnection);
         
@@ -112,18 +114,23 @@ public:
             qDebug() << "[PlaybackService] Dropped frames:" << count;
         });
 
+        QObject::connect(engine_, &ArtifactPlaybackEngine::audioLevelChanged,
+                         owner_, [this](float leftRms, float rightRms, float leftPeak, float rightPeak) {
+            Q_EMIT owner_->audioLevelChanged(leftRms, rightRms, leftPeak, rightPeak);
+        }, Qt::QueuedConnection);
+
         // コントローラーのシグナルも転送（後方互換性）
+        // NOTE: controller は現在 engine に置き換えられているため、シグナル転送を無効化して二重通知を防止
+        /*
         QObject::connect(controller_, &ArtifactCompositionPlaybackController::playbackStateChanged,
                          owner_, &ArtifactPlaybackService::playbackStateChanged,
                          Qt::DirectConnection);
 
         QObject::connect(controller_, &ArtifactCompositionPlaybackController::frameChanged,
                          owner_, [this](const FramePosition& position) {
-            if (currentComposition_) {
-                currentComposition_->setFramePosition(position);
-            }
-            Q_EMIT owner_->frameChanged(position);
-        }, Qt::DirectConnection);
+             syncCurrentCompositionFrame(position);
+             Q_EMIT owner_->frameChanged(position);
+         }, Qt::DirectConnection);
 
         QObject::connect(controller_, &ArtifactCompositionPlaybackController::playbackSpeedChanged,
                          owner_, &ArtifactPlaybackService::playbackSpeedChanged,
@@ -136,6 +143,7 @@ public:
         QObject::connect(controller_, &ArtifactCompositionPlaybackController::frameRangeChanged,
                          owner_, &ArtifactPlaybackService::frameRangeChanged,
                          Qt::DirectConnection);
+        */
 
         // オーディオクロックプロバイダーを設定
         controller_->setAudioClockProvider([this]() -> double {
@@ -155,12 +163,7 @@ public:
             if (externalAudioClockProvider_) {
                 return externalAudioClockProvider_();
             }
-
-            double seconds = audioOffsetSeconds_;
-            if (audioRunning_) {
-                seconds += static_cast<double>(audioTimer_.elapsed()) / 1000.0;
-            }
-            return seconds;
+            return 0.0;
         });
 
         engine_->setAudioMasterVolume(audioMasterVolume_);
@@ -174,6 +177,8 @@ public:
     
     void startAudioClock() {
         if (!audioRunning_) {
+            qDebug() << "[PlaybackService][AudioClock] start"
+                     << "offsetSeconds=" << audioOffsetSeconds_;
             audioTimer_.start();
             audioRunning_ = true;
         }
@@ -181,10 +186,14 @@ public:
     void pauseAudioClock() {
         if (audioRunning_) {
             audioOffsetSeconds_ += static_cast<double>(audioTimer_.elapsed()) / 1000.0;
+            qDebug() << "[PlaybackService][AudioClock] pause"
+                     << "offsetSeconds=" << audioOffsetSeconds_;
             audioRunning_ = false;
         }
     }
     void stopAudioClock() {
+        qDebug() << "[PlaybackService][AudioClock] stop"
+                 << "previousOffsetSeconds=" << audioOffsetSeconds_;
         audioOffsetSeconds_ = 0.0;
         audioRunning_ = false;
     }
@@ -193,6 +202,36 @@ public:
     }
     void setPlaybackClockProvider(const std::function<double()>& provider) {
         setExternalAudioClockProvider(provider);
+    }
+
+    void syncCurrentCompositionFrame(const FramePosition& position) {
+        if (!currentComposition_) {
+            return;
+        }
+
+        const auto composition = currentComposition_;
+        pendingCompositionFrame_.store(position.framePosition(), std::memory_order_relaxed);
+
+        if (composition->thread() == QThread::currentThread()) {
+            composition->goToFrame(position.framePosition());
+            return;
+        }
+
+        if (compositionFrameSyncQueued_.exchange(true, std::memory_order_acq_rel)) {
+            return;
+        }
+
+        QMetaObject::invokeMethod(
+            composition.get(),
+            [this, composition]() {
+                const int64_t latestFrame =
+                    pendingCompositionFrame_.load(std::memory_order_relaxed);
+                compositionFrameSyncQueued_.store(false, std::memory_order_release);
+                if (composition) {
+                    composition->goToFrame(latestFrame);
+                }
+            },
+            Qt::QueuedConnection);
     }
 };
 
@@ -259,8 +298,7 @@ void ArtifactPlaybackService::togglePlayPause() {
 void ArtifactPlaybackService::goToFrame(const FramePosition& position) {
     if (impl_->engine_) {
         impl_->engine_->goToFrame(position);
-    }
-    if (impl_->controller_) {
+    } else if (impl_->controller_) {
         impl_->controller_->goToFrame(position);
     }
 }
@@ -268,8 +306,7 @@ void ArtifactPlaybackService::goToFrame(const FramePosition& position) {
 void ArtifactPlaybackService::goToNextFrame() {
     if (impl_->engine_) {
         impl_->engine_->goToNextFrame();
-    }
-    if (impl_->controller_) {
+    } else if (impl_->controller_) {
         impl_->controller_->goToNextFrame();
     }
 }
@@ -277,8 +314,7 @@ void ArtifactPlaybackService::goToNextFrame() {
 void ArtifactPlaybackService::goToPreviousFrame() {
     if (impl_->engine_) {
         impl_->engine_->goToPreviousFrame();
-    }
-    if (impl_->controller_) {
+    } else if (impl_->controller_) {
         impl_->controller_->goToPreviousFrame();
     }
 }
@@ -286,8 +322,7 @@ void ArtifactPlaybackService::goToPreviousFrame() {
 void ArtifactPlaybackService::goToStartFrame() {
     if (impl_->engine_) {
         impl_->engine_->goToStartFrame();
-    }
-    if (impl_->controller_) {
+    } else if (impl_->controller_) {
         impl_->controller_->goToStartFrame();
     }
 }
@@ -295,8 +330,7 @@ void ArtifactPlaybackService::goToStartFrame() {
 void ArtifactPlaybackService::goToEndFrame() {
     if (impl_->engine_) {
         impl_->engine_->goToEndFrame();
-    }
-    if (impl_->controller_) {
+    } else if (impl_->controller_) {
         impl_->controller_->goToEndFrame();
     }
 }
@@ -330,8 +364,7 @@ FramePosition ArtifactPlaybackService::currentFrame() const {
 void ArtifactPlaybackService::setCurrentFrame(const FramePosition& position) {
     if (impl_->engine_) {
         impl_->engine_->setCurrentFrame(position);
-    }
-    if (impl_->controller_) {
+    } else if (impl_->controller_) {
         impl_->controller_->setCurrentFrame(position);
     }
 }
@@ -458,8 +491,7 @@ ArtifactCompositionPtr ArtifactPlaybackService::currentComposition() const {
 void ArtifactPlaybackService::setInOutPoints(ArtifactInOutPoints* inOutPoints) {
     if (impl_ && impl_->engine_) {
         impl_->engine_->setInOutPoints(inOutPoints);
-    }
-    if (impl_ && impl_->controller_) {
+    } else if (impl_ && impl_->controller_) {
         impl_->controller_->setInOutPoints(inOutPoints);
     }
 }
@@ -474,8 +506,7 @@ ArtifactInOutPoints* ArtifactPlaybackService::inOutPoints() const {
 void ArtifactPlaybackService::goToNextMarker() {
     if (impl_ && impl_->engine_) {
         impl_->engine_->goToNextMarker();
-    }
-    if (impl_ && impl_->controller_) {
+    } else if (impl_ && impl_->controller_) {
         impl_->controller_->goToNextMarker();
     }
 }
@@ -483,8 +514,7 @@ void ArtifactPlaybackService::goToNextMarker() {
 void ArtifactPlaybackService::goToPreviousMarker() {
     if (impl_ && impl_->engine_) {
         impl_->engine_->goToPreviousMarker();
-    }
-    if (impl_ && impl_->controller_) {
+    } else if (impl_ && impl_->controller_) {
         impl_->controller_->goToPreviousMarker();
     }
 }
@@ -492,8 +522,7 @@ void ArtifactPlaybackService::goToPreviousMarker() {
 void ArtifactPlaybackService::goToNextChapter() {
     if (impl_ && impl_->engine_) {
         impl_->engine_->goToNextChapter();
-    }
-    if (impl_ && impl_->controller_) {
+    } else if (impl_ && impl_->controller_) {
         impl_->controller_->goToNextChapter();
     }
 }
@@ -501,8 +530,7 @@ void ArtifactPlaybackService::goToNextChapter() {
 void ArtifactPlaybackService::goToPreviousChapter() {
     if (impl_ && impl_->engine_) {
         impl_->engine_->goToPreviousChapter();
-    }
-    if (impl_ && impl_->controller_) {
+    } else if (impl_ && impl_->controller_) {
         impl_->controller_->goToPreviousChapter();
     }
 }

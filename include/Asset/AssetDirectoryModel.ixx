@@ -7,6 +7,7 @@
 #include <QVector>
 #include <QDir>
 #include <QFileInfo>
+#include <QSettings>
 #include <wobjectdefs.h>
 
 #include <iostream>
@@ -50,6 +51,12 @@ export module AssetDirectoryModel;
 
 export namespace Artifact {
 
+ struct FavoriteEntry {
+  QString guid;
+  QString name;
+  QString path;
+ };
+
  struct TreeItem {
   QString guid;
   QString name;
@@ -59,6 +66,13 @@ export namespace Artifact {
   TreeItem* parent = nullptr;
   QVector<TreeItem*> children;
   bool childrenLoaded = false;
+
+  // Folder Intelligence
+  float imageRatio = 0.0f;
+  float videoRatio = 0.0f;
+  float audioRatio = 0.0f;
+  float threeDRatio = 0.0f;
+  bool intelligenceLoaded = false;
 
   ~TreeItem() {
    for (auto child : children) {
@@ -87,6 +101,10 @@ export namespace Artifact {
   bool canFetchMore(const QModelIndex& parent) const override;
   void fetchMore(const QModelIndex& parent) override;
 
+  Qt::DropActions supportedDropActions() const override;
+  QStringList mimeTypes() const override;
+  bool dropMimeData(const QMimeData* data, Qt::DropAction action, int row, int column, const QModelIndex& parent) override;
+
   void setAssetRootPath(const QString& path);
   void setPackageRootPath(const QString& path);
 
@@ -99,6 +117,9 @@ export namespace Artifact {
 
   void addFavorite(const QString& path, const QString& displayName = "");
   void removeFavorite(const QString& guid);
+  bool isFavoritePath(const QString& path) const;
+  QString favoriteGuidForPath(const QString& path) const;
+  QVector<FavoriteEntry> favoriteEntries() const;
 
  public:
   //signals

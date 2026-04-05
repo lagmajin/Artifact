@@ -11,6 +11,23 @@ import Utils.Id;
 export namespace Artifact
 {
  using namespace ArtifactCore;
+
+ enum class SearchMatchMode
+ {
+  AllVisible,
+  HighlightOnly,
+  FilterOnly
+ };
+
+ enum class TimelineLayerDisplayMode
+ {
+  AllLayers,
+  SelectedOnly,
+  AnimatedOnly,
+  ImportantAndKeyframed,
+  AudioOnly,
+  VideoOnly
+ };
 	
    class ArtifactLayerPanelHeaderWidget :public QWidget
    {
@@ -18,11 +35,18 @@ export namespace Artifact
    private:
     class Impl;
     Impl* impl_;
-   protected:
+  protected:
+   void mousePressEvent(QMouseEvent* event) override;
+   void mouseMoveEvent(QMouseEvent* event) override;
+   void mouseReleaseEvent(QMouseEvent* event) override;
+   void leaveEvent(QEvent* event) override;
 
    public:
     explicit ArtifactLayerPanelHeaderWidget(QWidget* parent = nullptr);
     ~ArtifactLayerPanelHeaderWidget();
+
+    void setPropertyColumnWidth(int width);
+    int propertyColumnWidth() const;
 
     // Get button dimensions for layout synchronization
     int buttonSize() const;  // Returns fixed button size (e.g., 28)
@@ -30,9 +54,10 @@ export namespace Artifact
     int totalHeaderHeight() const;  // Returns total header height
 
    public /*signals*/:
-    void lockClicked() W_SIGNAL(lockClicked)
-    void soloClicked() W_SIGNAL(soloClicked)
-    void shyToggled(bool hidden) W_SIGNAL(shyToggled, hidden)
+   void lockClicked() W_SIGNAL(lockClicked);
+   void soloClicked() W_SIGNAL(soloClicked);
+   void shyToggled(bool hidden) W_SIGNAL(shyToggled, hidden);
+   void propertyColumnWidthChanged(int width) W_SIGNAL(propertyColumnWidthChanged, width);
    };
 
 
@@ -63,19 +88,29 @@ export namespace Artifact
   // Set the composition to display layers for
   void setComposition(const CompositionID& id);
   void setShyHidden(bool hidden);
+  void setDisplayMode(TimelineLayerDisplayMode mode);
+  TimelineLayerDisplayMode displayMode() const;
+  void setRowHeight(int rowHeight);
+  int rowHeight() const;
+  void setPropertyColumnWidth(int width);
+  int propertyColumnWidth() const;
   void setFilterText(const QString& text);
+  void setSearchMatchMode(SearchMatchMode mode);
+  SearchMatchMode searchMatchMode() const;
   void setLayerNameEditable(bool enabled);
   bool isLayerNameEditable() const;
   void updateLayout();
+  QVector<LayerID> matchingTimelineRows() const;
   QVector<LayerID> visibleTimelineRows() const;
   int layerRowIndex(const LayerID& id) const;
   void editLayerName(const LayerID& id);
+  void scrollToLayer(const LayerID& id);
 
  private:
   void performUpdateLayout();
 
   public /*signals*/:
-   void visibleRowsChanged() W_SIGNAL(visibleRowsChanged)
+   void visibleRowsChanged() W_SIGNAL(visibleRowsChanged);
 
  };
 
@@ -93,10 +128,20 @@ export namespace Artifact
   ~ArtifactLayerTimelinePanelWrapper();
   void setComposition(const CompositionID& id);
   void setFilterText(const QString& text);
+  void setSearchMatchMode(SearchMatchMode mode);
+  SearchMatchMode searchMatchMode() const;
+  void setDisplayMode(TimelineLayerDisplayMode mode);
+  TimelineLayerDisplayMode displayMode() const;
+  void setRowHeight(int rowHeight);
+  int rowHeight() const;
+  void setPropertyColumnWidth(int width);
+  int propertyColumnWidth() const;
   class QScrollBar* verticalScrollBar() const;
+  QVector<LayerID> matchingTimelineRows() const;
   QVector<LayerID> visibleTimelineRows() const;
   void setLayerNameEditable(bool enabled);
   bool isLayerNameEditable() const;
+  void scrollToLayer(const LayerID& id);
 
   public /*signals*/:
    void visibleRowsChanged() W_SIGNAL(visibleRowsChanged)

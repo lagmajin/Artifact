@@ -43,6 +43,7 @@ namespace Artifact
                            Uint32 width,
                            Uint32 height,
                            TEXTURE_FORMAT format,
+                           BIND_FLAGS bindFlags,
                            const char* name,
                            TextureBundle& bundle)
   {
@@ -61,7 +62,7 @@ namespace Artifact
    desc.ArraySize = 1;
    desc.SampleCount = 1;
    desc.Usage = USAGE_DEFAULT;
-   desc.BindFlags = BIND_RENDER_TARGET | BIND_SHADER_RESOURCE | BIND_UNORDERED_ACCESS;
+   desc.BindFlags = bindFlags;
 
    bundle = {};
    device->CreateTexture(desc, nullptr, &bundle.texture);
@@ -73,10 +74,13 @@ namespace Artifact
    }
 
    bundle.srv = bundle.texture->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE);
-   bundle.uav = bundle.texture->GetDefaultView(TEXTURE_VIEW_UNORDERED_ACCESS);
+   bundle.uav = (bindFlags & BIND_UNORDERED_ACCESS) != 0
+                    ? bundle.texture->GetDefaultView(TEXTURE_VIEW_UNORDERED_ACCESS)
+                    : nullptr;
    bundle.rtv = bundle.texture->GetDefaultView(TEXTURE_VIEW_RENDER_TARGET);
 
-   if (!bundle.srv || !bundle.uav || !bundle.rtv)
+   const bool needsUav = (bindFlags & BIND_UNORDERED_ACCESS) != 0;
+   if (!bundle.srv || !bundle.rtv || (needsUav && !bundle.uav))
    {
     qWarning() << "[RenderPipeline] Missing default views for" << name;
     bundle = {};
@@ -179,11 +183,11 @@ namespace Artifact
 
  bool RenderPipeline::ready() const
  {
-  return impl_->device_ != nullptr && impl_->width_ > 0 && impl_->height_ > 0 &&
+ return impl_->device_ != nullptr && impl_->width_ > 0 && impl_->height_ > 0 &&
          impl_->accum_.texture && impl_->temp_.texture && impl_->layer_.texture &&
          impl_->accum_.srv && impl_->accum_.uav && impl_->accum_.rtv &&
          impl_->temp_.srv && impl_->temp_.uav && impl_->temp_.rtv &&
-         impl_->layer_.srv && impl_->layer_.uav && impl_->layer_.rtv;
+         impl_->layer_.srv && impl_->layer_.rtv;
  }
 
  bool RenderPipeline::renderComposition(
@@ -229,15 +233,21 @@ namespace Artifact
                                      Uint32 height,
                                      TEXTURE_FORMAT format)
  {
-  if (!createTextureBundle(device, width, height, format, "RenderPipeline.Accum", impl_->accum_))
+  if (!createTextureBundle(device, width, height, format,
+                           BIND_RENDER_TARGET | BIND_SHADER_RESOURCE | BIND_UNORDERED_ACCESS,
+                           "RenderPipeline.Accum", impl_->accum_))
   {
    return false;
   }
-  if (!createTextureBundle(device, width, height, format, "RenderPipeline.Temp", impl_->temp_))
+  if (!createTextureBundle(device, width, height, format,
+                           BIND_RENDER_TARGET | BIND_SHADER_RESOURCE | BIND_UNORDERED_ACCESS,
+                           "RenderPipeline.Temp", impl_->temp_))
   {
    return false;
   }
-  if (!createTextureBundle(device, width, height, format, "RenderPipeline.Layer", impl_->layer_))
+  if (!createTextureBundle(device, width, height, RenderConfig::MainRTVFormat,
+                           BIND_RENDER_TARGET | BIND_SHADER_RESOURCE,
+                           "RenderPipeline.Layer", impl_->layer_))
   {
    return false;
   }

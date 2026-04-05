@@ -64,16 +64,27 @@ public:
     void setApiKey(const UniString& key);
     void setProvider(const UniString& provider);
 
+    // 初期化（メニューから明示的に呼び出す）
+    bool initialize(const QString& modelPath = QString());
+    bool isInitialized() const;
+    bool isInitializing() const;
+    void shutdown();
+
     // Send a message to AI synchronously (legacy/wait)
     UniString sendMessage(const UniString& message);
 
     // Send a message asynchronously
     void postMessage(const UniString& message);
 
+    // Cancel the currently running message generation
+    void cancelMessage();
+
     // Signals
     void messageReceived(QString message) W_SIGNAL(messageReceived, message);
     void partialMessageReceived(QString partialText) W_SIGNAL(partialMessageReceived, partialText);
     void errorOccurred(QString error) W_SIGNAL(errorOccurred, error);
+    void initializationFinished(bool success, QString modelPath) W_SIGNAL(initializationFinished, success, modelPath);
+    void messageCancelled() W_SIGNAL(messageCancelled);
 };
 
 }

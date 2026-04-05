@@ -60,3 +60,13 @@
   - `Software Layer Test` は sandbox blend/offset/scale/rotation controls を撤去し、selected layer の実データを composition 上に重ねて確認する viewer へ整理
   - `ArtifactImageLayer` / `ArtifactSolidImageLayer` / `ArtifactSolid2DLayer` / `ArtifactTextLayer` / `ArtifactVideoLayer` を個別に surface 化し、blend mode / global transform / transformed bounds を preview に反映
   - これにより、software rendering で作られた composition view と layer view の描画を、UI 用ダミーカードではなく current project data に一致させる方向へ寄せた
+
+## M11.1 Hardware Render Integration
+
+- 目標:
+  ソフトウェアパイプラインをDiligentバックエンドにブリッジし、エフェクトをコンピュートシェーダーにオフロード。
+- 対象:
+  ハードウェアアクセラレーション、バックエンド切り替え。
+- 完了条件:
+  エフェクト適用時のパフォーマンス向上が確認され、C-RND-2 Render Graph Cleanupに依存。
+- ステータス: 2026-03-30 追加。C-RND-2完了後に着手。

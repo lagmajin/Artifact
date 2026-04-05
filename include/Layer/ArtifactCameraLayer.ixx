@@ -11,6 +11,11 @@ import Property.Group;
 
 export namespace Artifact {
 
+ enum class ProjectionMode : int {
+  Perspective = 0,
+  Orthographic = 1,
+ };
+
  // AfterEffects compatible Camera Layer
  class ArtifactCameraLayer : public ArtifactAbstractLayer {
   W_OBJECT(ArtifactCameraLayer)
@@ -34,6 +39,28 @@ export namespace Artifact {
 
   bool depthOfField() const;
   void setDepthOfField(bool enabled);
+
+  // Projection mode
+  ProjectionMode projectionMode() const;
+  void setProjectionMode(ProjectionMode mode);
+
+  // Perspective-specific
+  float fov() const;
+  void setFov(float fovDegrees);
+
+  // Orthographic-specific
+  float orthoWidth() const;
+  void setOrthoWidth(float width);
+
+  float orthoHeight() const;
+  void setOrthoHeight(float height);
+
+  // Clipping planes
+  float nearClipPlane() const;
+  void setNearClipPlane(float distance);
+
+  float farClipPlane() const;
+  void setFarClipPlane(float distance);
 
   // Projection / View
   QMatrix4x4 viewMatrix() const;

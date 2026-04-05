@@ -1,8 +1,10 @@
 ﻿module;
 #include <QObject>
 #include <QApplication>
+#include <QAbstractButton>
 #include <QColor>
 #include <QEvent>
+#include <QLabel>
 #include <QPointer>
 #include <QStyle>
 #include <QTimer>
@@ -16,6 +18,7 @@
 module Widgets.Dock.StyleManager;
 
 import Widgets.Dock.GlowStyle;
+import Widgets.Utils.CSS;
 
 namespace Artifact {
 
@@ -94,25 +97,57 @@ ads::CDockWidget* resolveActiveDock(ads::CDockManager* dockManager, ads::CDockWi
     return dockManager->focusedDockWidget();
 }
 
-void repolishTabTextWidgets(ads::CDockWidgetTab* tab)
+QString tabTextColor(const bool isActiveDock, const bool /*isFloatingTab*/, const bool /*isCurrentTab*/)
+{
+    const QColor themeText = QColor(ArtifactCore::currentDCCTheme().textColor);
+    const QColor mutedText = themeText.darker(125);
+    if (isActiveDock) {
+        return themeText.name(QColor::HexRgb);
+    }
+    return mutedText.name(QColor::HexRgb);
+}
+
+void applyTabLabelColors(ads::CDockWidgetTab* tab, const QString& color, const bool emphasize)
 {
     if (!tab) {
         return;
     }
 
-    // Tab title widgets are styled through the main window stylesheet.
-    // Repolish the label-like children so state changes on the parent tab
-    // are reflected without forcing inline styles that would override hover
-    // and floating-state selectors.
-    for (auto* child : tab->findChildren<QWidget*>()) {
+    const QColor textColor(color);
+    const QColor themeBg = QColor(ArtifactCore::currentDCCTheme().backgroundColor);
+    const QColor themeBorder = QColor(ArtifactCore::currentDCCTheme().borderColor);
+    const QColor tabBg = emphasize ? themeBg.lighter(108) : themeBg.darker(108);
+    auto applyTextStyle = [&](QWidget* child) {
         if (!child) {
-            continue;
+            return;
         }
-
-        const QString className = QString::fromLatin1(child->metaObject()->className());
-        if (className.contains(QStringLiteral("Label"), Qt::CaseInsensitive)) {
-            repolishWidget(child);
-        }
+        auto pal = child->palette();
+        pal.setColor(QPalette::WindowText, textColor);
+        pal.setColor(QPalette::Text, textColor);
+        pal.setColor(QPalette::ButtonText, textColor);
+        child->setPalette(pal);
+        auto font = child->font();
+        const int pointSize = font.pointSize();
+        font.setPointSize(pointSize > 0 ? qMax(12, pointSize + 1) : 12);
+        font.setBold(emphasize);
+        child->setFont(font);
+    };
+    applyTextStyle(tab);
+    tab->setAutoFillBackground(true);
+    auto tabPalette = tab->palette();
+    tabPalette.setColor(QPalette::WindowText, textColor);
+    tabPalette.setColor(QPalette::Text, textColor);
+    tabPalette.setColor(QPalette::ButtonText, textColor);
+    tabPalette.setColor(QPalette::Window, tabBg);
+    tabPalette.setColor(QPalette::Button, tabBg);
+    tabPalette.setColor(QPalette::Base, tabBg);
+    tabPalette.setColor(QPalette::Mid, themeBorder);
+    tab->setPalette(tabPalette);
+    for (auto* label : tab->findChildren<QLabel*>()) {
+        applyTextStyle(label);
+    }
+    for (auto* button : tab->findChildren<QAbstractButton*>()) {
+        applyTextStyle(button);
     }
 }
 
@@ -121,12 +156,16 @@ void repolishTabTextWidgets(ads::CDockWidgetTab* tab)
 DockStyleManager::DockStyleManager(ads::CDockManager* dockManager, QObject* parent)
     : QObject(parent), impl_(new Impl()) {
     impl_->dockManager_ = dockManager;
+    impl_->glowColor_ = QColor(ArtifactCore::currentDCCTheme().borderColor);
 
     impl_->glowStyle_ = new DockGlowStyle(QApplication::style());
     impl_->dockManager_->setStyle(impl_->glowStyle_);
 
     qApp->installEventFilter(this);
 
+    // Dock styling reacts to window/dock focus events only.
+    // Do not wire ArtifactProjectService signals into this manager; style
+    // refresh should stay driven by dock/focus state.
     connect(dockManager, &ads::CDockManager::focusedDockWidgetChanged,
             this, [this](ads::CDockWidget*, ads::CDockWidget* now) {
         impl_->focusedDockWidget_ = now;
@@ -282,8 +321,8 @@ void DockStyleManager::refreshDockDecorations() {
             tab->setProperty("artifactActiveTab", isActiveTab);
             tab->setProperty("artifactFloatingTab", isFloating);
             tab->setProperty("artifactCurrentTab", isCurrentTab);
+            applyTabLabelColors(tab, tabTextColor(isActiveTab, isFloating, isCurrentTab), isActiveTab);
             repolishWidget(tab);
-            repolishTabTextWidgets(tab);
             anyChanged = true;
         }
     }

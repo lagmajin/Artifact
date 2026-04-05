@@ -47,6 +47,7 @@ import Undo.UndoManager;
 import Utils.String.UniString;
 import Artifact.Effect.Abstract;
 import Artifact.Layer.Abstract;
+import Artifact.Mask.LayerMask;
 import Artifact.Composition.Abstract;
 import Animation.Transform3D;
 import Time.Rational;
@@ -190,6 +191,44 @@ QString RemoveLayerCommand::label() const {
     return QStringLiteral("Remove Layer");
 }
 
+namespace {
+void applyMaskSnapshot(const ArtifactAbstractLayerPtr& layer, const std::vector<LayerMask>& masks) {
+    if (!layer) {
+        return;
+    }
+
+    layer->clearMasks();
+    for (const auto& mask : masks) {
+        layer->addMask(mask);
+    }
+    layer->changed();
+}
+} // namespace
+
+// --- MaskEditCommand ---
+MaskEditCommand::MaskEditCommand(ArtifactAbstractLayerPtr layer,
+                                 std::vector<LayerMask> beforeMasks,
+                                 std::vector<LayerMask> afterMasks)
+    : layer_(layer), beforeMasks_(std::move(beforeMasks)), afterMasks_(std::move(afterMasks)) {}
+
+void MaskEditCommand::undo() {
+    applyMaskSnapshot(layer_.lock(), beforeMasks_);
+    if (auto mgr = UndoManager::instance()) {
+        mgr->notifyAnythingChanged();
+    }
+}
+
+void MaskEditCommand::redo() {
+    applyMaskSnapshot(layer_.lock(), afterMasks_);
+    if (auto mgr = UndoManager::instance()) {
+        mgr->notifyAnythingChanged();
+    }
+}
+
+QString MaskEditCommand::label() const {
+    return QStringLiteral("Edit Mask");
+}
+
 
 // --- UndoManager ---
 UndoManager::UndoManager(): impl_(new Impl()) {}
@@ -296,5 +335,73 @@ size_t UndoManager::maxHistorySize() const { return impl_->maxHistorySize_; }
 bool UndoManager::hasUnsavedChanges() const { return impl_->version_ != impl_->savedVersion_; }
 void UndoManager::markAsSaved() { impl_->savedVersion_ = impl_->version_; }
 int64_t UndoManager::currentVersion() const { return impl_->version_; }
+
+// --- MoveLayerIndexCommand ---
+MoveLayerIndexCommand::MoveLayerIndexCommand(ArtifactCompositionPtr comp, ArtifactAbstractLayerPtr layer, int oldIndex, int newIndex)
+    : comp_(comp), layer_(layer), oldIndex_(oldIndex), newIndex_(newIndex) {}
+
+void MoveLayerIndexCommand::undo() {
+    auto comp = comp_.lock();
+    auto layer = layer_.lock();
+    if (comp && layer) {
+        comp->moveLayerToIndex(layer->id(), oldIndex_);
+    }
+}
+
+void MoveLayerIndexCommand::redo() {
+    auto comp = comp_.lock();
+    auto layer = layer_.lock();
+    if (comp && layer) {
+        comp->moveLayerToIndex(layer->id(), newIndex_);
+    }
+}
+
+QString MoveLayerIndexCommand::label() const {
+    return QStringLiteral("Move Layer: %1 → %2").arg(oldIndex_).arg(newIndex_);
+}
+
+// --- RenameLayerCommand ---
+RenameLayerCommand::RenameLayerCommand(ArtifactAbstractLayerPtr layer, const QString& oldName, const QString& newName)
+    : layer_(layer), oldName_(oldName), newName_(newName) {}
+
+void RenameLayerCommand::undo() {
+    auto layer = layer_.lock();
+    if (layer) {
+        layer->setLayerName(oldName_);
+    }
+}
+
+void RenameLayerCommand::redo() {
+    auto layer = layer_.lock();
+    if (layer) {
+        layer->setLayerName(newName_);
+    }
+}
+
+QString RenameLayerCommand::label() const {
+    return QStringLiteral("Rename Layer: %1 → %2").arg(oldName_).arg(newName_);
+}
+
+// --- ChangeLayerOpacityCommand ---
+ChangeLayerOpacityCommand::ChangeLayerOpacityCommand(ArtifactAbstractLayerPtr layer, float oldOpacity, float newOpacity)
+    : layer_(layer), oldOpacity_(oldOpacity), newOpacity_(newOpacity) {}
+
+void ChangeLayerOpacityCommand::undo() {
+    auto layer = layer_.lock();
+    if (layer) {
+        layer->setOpacity(oldOpacity_);
+    }
+}
+
+void ChangeLayerOpacityCommand::redo() {
+    auto layer = layer_.lock();
+    if (layer) {
+        layer->setOpacity(newOpacity_);
+    }
+}
+
+QString ChangeLayerOpacityCommand::label() const {
+    return QStringLiteral("Change Opacity: %1% → %2%").arg(oldOpacity_ * 100).arg(newOpacity_ * 100);
+}
 
 }

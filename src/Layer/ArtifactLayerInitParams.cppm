@@ -213,6 +213,25 @@ LayerType ArtifactLayerInitParams::layerType() const
 
  }
 
+ ArtifactSvgInitParams::ArtifactSvgInitParams(const QString& name) :ArtifactLayerInitParams(name, LayerType::Shape)
+ {
+
+ }
+
+ ArtifactSvgInitParams::~ArtifactSvgInitParams()
+ {
+
+ }
+
+ ArtifactAudioInitParams::ArtifactAudioInitParams(const QString& name)
+     : ArtifactLayerInitParams(name, LayerType::Audio)
+ {
+ }
+
+ ArtifactAudioInitParams::~ArtifactAudioInitParams()
+ {
+ }
+
  ArtifactCameraLayerInitParams::ArtifactCameraLayerInitParams() :ArtifactLayerInitParams(UniString("name"), LayerType::Camera)
  {
 

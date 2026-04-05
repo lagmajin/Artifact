@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <QThread>
 #include <QElapsedTimer>
 #include <QMutexLocker>
@@ -14,7 +14,8 @@ module;
 #include <chrono>
 #include <mutex>
 #include <condition_variable>
-#include "../../../out/build/x64-Debug/vcpkg_installed/x64-windows/include/Qt6/QtGui/QFont"
+
+#include <QFont>
 
 module Artifact.Playback.Engine;
 
@@ -25,6 +26,7 @@ import Artifact.Composition.Abstract;
 import Artifact.Composition.InOutPoints;
 import AudioRenderer;
 import Audio.Segment;
+import Playback.State;
 
 namespace Artifact {
 
@@ -39,9 +41,7 @@ public:
     QThread* workerThread_;
     
     // 再生状態
-    std::atomic<bool> playing_{false};
-    std::atomic<bool> paused_{false};
-    std::atomic<bool> stopped_{true};
+    std::atomic<PlaybackState> state_{PlaybackState::Stopped};
     
     // フレーム状態
     std::atomic<int64_t> currentFrame_{0};
@@ -70,9 +70,21 @@ public:
     int audioSampleRate_ = 48000;
     float audioMasterVolume_ = 1.0f;
     bool audioMasterMuted_ = false;
+    int64_t audioNextFrame_ = 0;
+    size_t audioTargetBufferedFrames_ = 0;
+    double audioSampleAccumulator_ = 0.0;
+    size_t audioOpenRetryCount_ = 0;
+    size_t audioResyncClearCount_ = 0;
+    size_t audioClockCorrectionCount_ = 0;
+    std::atomic<bool> audioSeekPending_{true};
+    bool audioExhausted_ = false;  // 音声データが尽きたフラグ（再シーク時にリセット）
     
     // タイミング
     QElapsedTimer elapsedTimer_;
+    std::chrono::time_point<std::chrono::steady_clock> playbackStartTime_;
+    int64_t playbackStartFrame_ = 0;
+    std::atomic<int64_t> lastEmittedFrame_{-1};
+    
     std::chrono::microseconds frameBudget_{0};
     int64_t droppedFrameCount_{0};
     std::chrono::time_point<std::chrono::steady_clock> lastFrameTime_;
@@ -85,7 +97,14 @@ public:
     {
         workerThread_ = new QThread();
         audioRenderer_ = std::make_unique<AudioRenderer>();
-        // connect は別途 QObject::connect で記述
+        QObject::connect(workerThread_, &QThread::started, [this]() { onThreadStarted(); });
+        QObject::connect(workerThread_, &QThread::finished, [this]() { onThreadFinished(); });
+
+        audioRenderer_->setLevelCallback([this](const AudioLevelData& levels) {
+            QMetaObject::invokeMethod(owner_, [this, levels]() {
+                Q_EMIT owner_->audioLevelChanged(levels.leftRms, levels.rightRms, levels.leftPeak, levels.rightPeak);
+            }, Qt::QueuedConnection);
+        });
     }
     
     ~Impl() {
@@ -98,35 +117,59 @@ public:
     }
     
     void start() {
+        qDebug() << "[PlaybackEngine] start requested"
+                 << "workerRunning=" << (workerThread_ && workerThread_->isRunning())
+                 << "currentFrame=" << currentFrame_.load()
+                 << "audioNextFrame=" << audioNextFrame_;
+        
+        PlaybackState oldState = state_.load();
+        state_ = PlaybackState::Playing;
+        qDebug() << "[PlaybackEngine] state transition:" << (int)oldState << "->" << (int)PlaybackState::Playing;
+
         if (!workerThread_->isRunning()) {
-            playing_ = true;
-            paused_ = false;
-            stopped_ = false;
-            QObject::connect(workerThread_, &QThread::started, [this]() { onThreadStarted(); });
-            QObject::connect(workerThread_, &QThread::finished, [this]() { onThreadFinished(); });
+            playbackStartTime_ = std::chrono::steady_clock::now();
+            playbackStartFrame_ = currentFrame_.load();
+            audioNextFrame_ = currentFrame_.load();
             workerThread_->start(QThread::TimeCriticalPriority);
         } else {
-            paused_ = false;
-            playing_ = true;
-            stopped_ = false;
+            playbackStartTime_ = std::chrono::steady_clock::now();
+            playbackStartFrame_ = currentFrame_.load();
+            audioNextFrame_ = currentFrame_.load();
             condition_.notify_one();
         }
     }
     
     void stop() {
-        playing_ = false;
-        paused_ = false;
-        stopped_ = true;
+        qDebug() << "[PlaybackEngine] stop requested"
+                 << "workerRunning=" << (workerThread_ && workerThread_->isRunning())
+                 << "currentFrame=" << currentFrame_.load()
+                 << "audioNextFrame=" << audioNextFrame_
+                 << "audioResyncClears=" << audioResyncClearCount_
+                 << "audioClockCorrections=" << audioClockCorrectionCount_;
+        
+        PlaybackState oldState = state_.load();
+        state_ = PlaybackState::Stopped;
+        qDebug() << "[PlaybackEngine] state transition:" << (int)oldState << "->" << (int)PlaybackState::Stopped;
+
         condition_.notify_one();
+        audioNextFrame_ = currentFrame_.load();
+        audioSeekPending_ = true;
         if (audioRenderer_) {
             audioRenderer_->stop();
             audioRenderer_->closeDevice();
         }
+        if (workerThread_) {
+            workerThread_->quit();
+        }
     }
     
     void pause() {
-        paused_ = true;
-        playing_ = false;
+        PlaybackState oldState = state_.load();
+        state_ = PlaybackState::Paused;
+        qDebug() << "[PlaybackEngine] state transition:" << (int)oldState << "->" << (int)PlaybackState::Paused;
+
+        playbackStartFrame_ = currentFrame_.load();
+        playbackStartTime_ = std::chrono::steady_clock::now();
     }
     
     /// メイン再生ループ（ワーカースレッドで実行）
@@ -134,129 +177,165 @@ public:
         elapsedTimer_.start();
         lastFrameTime_ = std::chrono::steady_clock::now();
         
-        const double fps = frameRate_.framerate() * std::abs(playbackSpeed_);
-        const int64_t frameIntervalUs = static_cast<int64_t>(1000000.0 / fps);
-        frameBudget_ = std::chrono::microseconds(frameIntervalUs);
+        const double fps = frameRate_.framerate();
+        // インターバルはあくまでベース。実際には毎ループ時間をチェックする。
+        const int64_t frameIntervalUs = static_cast<int64_t>(1000000.0 / (fps * std::abs(playbackSpeed_)));
         
-        qDebug() << "[PlaybackEngine] Starting playback at" << fps << "fps,"
-                 << "interval:" << frameIntervalUs << "us";
+        qDebug() << "[PlaybackEngine] Starting high-precision playback loop at" << (fps * std::abs(playbackSpeed_)) << "fps";
         
-        while (playing_ || paused_) {
-            if (paused_) {
-                // 一時停止中は待機
+        while (state_ != PlaybackState::Stopped) {
+            if (state_ == PlaybackState::Paused) {
                 std::unique_lock<std::mutex> lock(mutex_);
-                condition_.wait(lock, [this]() { return !paused_ || stopped_; });
+                condition_.wait(lock, [this]() { return state_ != PlaybackState::Paused; });
+                if (state_ == PlaybackState::Stopped) break;
+                // 再開時にベース時間を再調整（現在のフレーム位置から再開）
+                playbackStartTime_ = std::chrono::steady_clock::now();
+                playbackStartFrame_ = currentFrame_.load();
                 continue;
             }
             
-            auto loopStart = std::chrono::steady_clock::now();
+            auto now = std::chrono::steady_clock::now();
             
-            // フレーム更新
-            updateFrame();
+            // 経過時間から現在の論理的なターゲットフレームを計算
+            auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(now - playbackStartTime_);
+            double elapsedSeconds = elapsed.count() / 1000000.0;
             
-            // オーディオ更新
+            // 重要：フレーム = 開始フレーム + (経過秒 * fps * 再生速度)
+            int64_t frameOffset = static_cast<int64_t>(std::round(elapsedSeconds * fps * playbackSpeed_));
+            int64_t targetFrame = playbackStartFrame_ + frameOffset;
+            
+            // ループ・範囲チェック
+            FramePosition startPos = effectiveStartFrame();
+            FramePosition endPos = effectiveEndFrame();
+            int64_t totalFramesInRange = endPos.framePosition() - startPos.framePosition() + 1;
+            
+            if (totalFramesInRange > 0) {
+                if (targetFrame > endPos.framePosition()) {
+                    if (looping_) {
+                        // ループ時はベース時間をリセットして、最初から回す
+                        qDebug() << "[PlaybackEngine] Loop wrap (end -> start)" << targetFrame << "->" << startPos.framePosition();
+                        playbackStartTime_ = now;
+                        playbackStartFrame_ = startPos.framePosition();
+                        targetFrame = startPos.framePosition();
+                        audioSeekPending_ = true;
+                    } else {
+                        state_ = PlaybackState::Stopped;
+                        QMetaObject::invokeMethod(owner_, [this]() {
+                            Q_EMIT owner_->playbackStateChanged(PlaybackState::Stopped);
+                        }, Qt::QueuedConnection);
+                        break;
+                    }
+                } else if (targetFrame < startPos.framePosition()) {
+                    if (looping_) {
+                        playbackStartTime_ = now;
+                        playbackStartFrame_ = endPos.framePosition();
+                        targetFrame = endPos.framePosition();
+                    } else {
+                        targetFrame = startPos.framePosition();
+                    }
+                }
+            }
+            
+            // フレームが更新された場合のみ描画と通知を行う
+            if (targetFrame != lastEmittedFrame_) {
+                currentFrame_ = targetFrame;
+                updateFrame(targetFrame);
+                lastEmittedFrame_ = targetFrame;
+            }
+            
+            // オーディオパケットの供給
             updateAudio();
             
-            // 経過時間計算
-            auto loopEnd = std::chrono::steady_clock::now();
-            auto loopDuration = std::chrono::duration_cast<std::chrono::microseconds>(loopEnd - loopStart).count();
-            
-            // ドロップフレーム検出
-            if (loopDuration > frameIntervalUs * 1.5) {
-                ++droppedFrameCount_;
-                QMetaObject::invokeMethod(owner_, [this, count = droppedFrameCount_]() {
-                    Q_EMIT owner_->droppedFrameDetected(count);
-                }, Qt::QueuedConnection);
-            }
-            
-            // 次のフレームまで待機
-            int64_t waitTime = frameIntervalUs - loopDuration;
-            if (waitTime > 0) {
-                // 高精度待機
-                QThread::usleep(static_cast<unsigned long>(waitTime));
-            }
-            
-            // オーディオ同期（プロバイダーが設定されている場合）
-            if (audioClockProvider_) {
+            // オーディオ同期
+            if (audioClockProvider_ && audioRenderer_ && audioRenderer_->isActive()) {
                 syncWithAudioClock();
             }
+
+            // 音声バッファが十分あるときだけ軽く待機する。
+            // 充填が追いついていない間は sleep を飛ばして先読みを優先する。
+            if (audioRenderer_) {
+                const size_t buffered = audioRenderer_->bufferedFrames();
+                const size_t halfTarget = audioTargetBufferedFrames_ / 2;
+                if (buffered >= audioTargetBufferedFrames_) {
+                    const size_t surplus = buffered - audioTargetBufferedFrames_;
+                    const int samplesPerMs = audioSampleRate_ / 1000;
+                    const int maxSleepMs = 2;
+                    const int sleepMs = std::min(maxSleepMs, std::max(0, static_cast<int>(surplus / std::max(1, samplesPerMs))));
+                    if (sleepMs > 0) {
+                        std::this_thread::sleep_for(std::chrono::milliseconds(sleepMs));
+                    } else {
+                        std::this_thread::yield();
+                    }
+                } else if (buffered >= halfTarget) {
+                    std::this_thread::yield();
+                } else {
+                    // バッファ半分以下 — sleep せずに即デコード続行
+                }
+            } else {
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+        }
+
+        audioSeekPending_ = true;
+        if (audioRenderer_) {
+            audioRenderer_->clearBuffer();  // drain 中の不安定な部分アンダーランを防止
+            audioRenderer_->stop();
+            audioRenderer_->closeDevice();
+        }
+        if (workerThread_) {
+            workerThread_->quit();
         }
     }
     
     /// フレーム更新処理
-    void updateFrame() {
-        // 次のフレームを計算
-        int64_t nextFrame = currentFrame_.load();
+    void updateFrame(int64_t targetFrame) {
+        // コンポジションの状態更新をメインスレッドに委譲
+        if (composition_) {
+            QMetaObject::invokeMethod(composition_.get(), [comp = composition_, targetFrame]() {
+                comp->setFramePosition(FramePosition(targetFrame));
+            }, Qt::QueuedConnection);
+        }
+
+        // フレームを描画（現在はダミー）
+        QImage renderedFrame = renderFrame(FramePosition(targetFrame));
         
-        if (playbackSpeed_ >= 0) {
-            nextFrame += static_cast<int64_t>(playbackSpeed_);
-        } else {
-            nextFrame -= static_cast<int64_t>(std::abs(playbackSpeed_));
+        // バッファに格納
+        {
+            QMutexLocker locker(&bufferMutex_);
+            // renderedFrame already points to backBuffer_ due to optimization
+            std::swap(frontBuffer_, backBuffer_);
         }
         
-        // In/Out Points を考慮
-        FramePosition startFrame = effectiveStartFrame();
-        FramePosition endFrame = effectiveEndFrame();
-        
-        if (nextFrame > endFrame.framePosition()) {
-            if (looping_) {
-                nextFrame = startFrame.framePosition();
-            } else {
-                // 再生終了
-                playing_ = false;
-                stopped_ = true;
-                QMetaObject::invokeMethod(owner_, [this]() {
-                    Q_EMIT owner_->playbackStateChanged(false, false, true);
-                }, Qt::QueuedConnection);
-                return;
-            }
-        } else if (nextFrame < startFrame.framePosition()) {
-            if (looping_) {
-                nextFrame = endFrame.framePosition();
-            } else {
-                nextFrame = startFrame.framePosition();
-            }
-        }
-        
-        currentFrame_ = nextFrame;
-        
-        // フレームを描画
-        QImage renderedFrame = renderFrame(FramePosition(nextFrame));
-        
-        // バッファに格納（スレッドセーフ）
-        QMutexLocker locker(&bufferMutex_);
-        backBuffer_ = renderedFrame;
-        std::swap(frontBuffer_, backBuffer_);
-        
-        // メインスレッドにフレーム通知
-        QMetaObject::invokeMethod(owner_, [this, pos = FramePosition(nextFrame), frame = frontBuffer_]() {
+        // メインスレッドに通知
+        QMetaObject::invokeMethod(owner_, [this, pos = FramePosition(targetFrame), frame = frontBuffer_]() {
             Q_EMIT owner_->frameChanged(pos, frame);
         }, Qt::QueuedConnection);
     }
-    
+
     /// フレーム描画
     QImage renderFrame(const FramePosition& position) {
-        if (!composition_) {
-            QImage blank(1920, 1080, QImage::Format_ARGB32_Premultiplied);
-            blank.fill(Qt::black);
-            return blank;
+        QSize sz(1280, 720); // Default preview size
+        if (composition_) {
+            auto compSz = composition_->settings().compositionSize();
+            sz = QSize(compSz.width(), compSz.height());
+        }
+
+        // Re-use frontBuffer if size matches to avoid allocations
+        if (backBuffer_.size() != sz || backBuffer_.format() != QImage::Format_ARGB32_Premultiplied) {
+            backBuffer_ = QImage(sz, QImage::Format_ARGB32_Premultiplied);
         }
         
-        // コンポジションにフレーム位置を設定してレンダリング
-        composition_->setFramePosition(position);
+        backBuffer_.fill(QColor(32, 34, 38));
         
-        // TODO: 実際のレンダリング処理
-        // 現在はダミー画像を返す
-        QImage frame(1920, 1080, QImage::Format_ARGB32_Premultiplied);
-        frame.fill(QColor(32, 34, 38));
-        
-        QPainter painter(&frame);
+        QPainter painter(&backBuffer_);
+        painter.setRenderHint(QPainter::Antialiasing);
         painter.setPen(Qt::white);
         painter.setFont(QFont("Segoe UI", 24, QFont::Bold));
-        painter.drawText(frame.rect(), Qt::AlignCenter, 
+        painter.drawText(backBuffer_.rect(), Qt::AlignCenter, 
             QString("Frame %1").arg(position.framePosition()));
+        painter.end();
         
-        return frame;
+        return backBuffer_;
     }
     
     /// オーディオ更新
@@ -265,58 +344,156 @@ public:
 
         if (!composition_->hasAudio()) {
             if (audioRenderer_->isActive()) {
+                qDebug() << "[PlaybackEngine][Audio] composition has no audio. Stopping output.";
                 audioRenderer_->stop();
                 audioRenderer_->closeDevice();
             }
             return;
         }
-        
-        // デバイスのオープン確認
-        if (!audioRenderer_->isActive()) {
-            if (audioRenderer_->openDevice("")) {
-                audioRenderer_->start();
-            } else {
+
+        if (!audioRenderer_->isDeviceOpen()) {
+            ++audioOpenRetryCount_;
+            if (audioOpenRetryCount_ <= 12 || (audioOpenRetryCount_ % 50) == 0) {
+                qWarning() << "[PlaybackEngine][Audio] renderer device not open during preroll"
+                           << "openRetry=" << audioOpenRetryCount_
+                           << "bufferedFrames=" << audioRenderer_->bufferedFrames()
+                           << "targetBufferedFrames=" << audioTargetBufferedFrames_;
+            }
+            if (!audioRenderer_->openDevice("")) {
                 return;
             }
+            audioSampleRate_ = std::max(1, audioRenderer_->sampleRate());
         }
 
         audioRenderer_->setMasterVolume(std::clamp(audioMasterVolume_, 0.0f, 2.0f) <= 0.0001f
             ? -144.0f
             : 20.0f * std::log10(std::clamp(audioMasterVolume_, 0.0f, 2.0f)));
         audioRenderer_->setMute(audioMasterMuted_);
-        
-        // 1フレーム分のサンプル数を計算
-        int samplesPerFrame = static_cast<int>(audioSampleRate_ / frameRate_.framerate());
+
+        const double safeFrameRate = std::max<double>(1e-6, static_cast<double>(frameRate_.framerate()));
+        const int samplesPerFrame = static_cast<int>(std::round(static_cast<double>(audioSampleRate_) / safeFrameRate));
         if (samplesPerFrame <= 0) return;
-        
-        AudioSegment segment;
-        if (composition_->getAudio(segment, FramePosition(currentFrame_), samplesPerFrame, audioSampleRate_)) {
+
+        // Exact (fractional) samples-per-frame used by the accumulator to eliminate
+        // integer rounding drift at non-integer frame rates (e.g. 29.97, 23.976 fps).
+        const double exactSamplesPerFrame = static_cast<double>(audioSampleRate_) / safeFrameRate;
+
+        if (audioTargetBufferedFrames_ == 0) {
+            // 先読みは16フレーム分程度に抑える（48フレームは重すぎる）
+            audioTargetBufferedFrames_ = static_cast<size_t>(
+                std::max<int>(samplesPerFrame * 16, audioSampleRate_));
+        }
+        const size_t audioStartBufferedFrames_ = static_cast<size_t>(
+            std::max<int>(samplesPerFrame * 8, audioSampleRate_ / 2));
+
+        const int64_t currentFrame = currentFrame_.load();
+        if (audioSeekPending_.exchange(false)) {
+            ++audioResyncClearCount_;
+            qWarning() << "[PlaybackEngine][Audio] resetting audio stream state"
+                       << "count=" << audioResyncClearCount_
+                       << "audioNextFrame(before)=" << audioNextFrame_
+                       << "currentFrame=" << currentFrame
+                       << "bufferedFrames=" << audioRenderer_->bufferedFrames();
+            audioRenderer_->clearBuffer();
+            audioNextFrame_ = currentFrame;
+            audioSampleAccumulator_ = 0.0;
+            audioExhausted_ = false;  // シーク時にリセット
+        }
+
+        // 既に音声が尽きているなら再フィルしない（末尾での毎ループ CPU 消費を防止）
+        if (audioExhausted_) {
+            return;
+        }
+
+        bool audioExhausted = false;
+        while (audioRenderer_->bufferedFrames() < audioTargetBufferedFrames_) {
+            audioSampleAccumulator_ += exactSamplesPerFrame;
+            int samplesThisFrame = static_cast<int>(audioSampleAccumulator_);
+            audioSampleAccumulator_ -= static_cast<double>(samplesThisFrame);
+            if (samplesThisFrame <= 0) samplesThisFrame = 1;
+
+            AudioSegment segment;
+            if (!composition_->getAudio(segment, FramePosition(audioNextFrame_), samplesThisFrame, audioSampleRate_)) {
+                audioExhausted = true;
+                qWarning() << "[PlaybackEngine][Audio] composition getAudio exhausted"
+                           << "requestFrame=" << audioNextFrame_
+                           << "samplesThisFrame=" << samplesThisFrame
+                           << "bufferedFrames=" << audioRenderer_->bufferedFrames();
+                break;
+            }
             audioRenderer_->enqueue(segment);
+            ++audioNextFrame_;
+        }
+
+        // オーディオ尽きた場合、残りをサイレンスで1回だけ埋めてフラグを立てる
+        if (audioExhausted) {
+            audioExhausted_ = true;
+            const size_t buffered = audioRenderer_->bufferedFrames();
+            if (buffered > 0 && buffered < audioTargetBufferedFrames_) {
+                const size_t silenceFrames = audioTargetBufferedFrames_ - buffered;
+                const int channels = std::max(1, audioRenderer_->channelCount());
+                AudioSegment silence;
+                silence.sampleRate = audioSampleRate_;
+                silence.channelData.resize(channels);
+                for (int ch = 0; ch < channels; ++ch) {
+                    silence.channelData[ch].resize(silenceFrames, 0.0f);
+                }
+                audioRenderer_->enqueue(silence);
+            }
+        }
+
+        if (!audioRenderer_->isActive()) {
+            if (audioRenderer_->bufferedFrames() >= audioStartBufferedFrames_ ||
+                (audioExhausted && audioRenderer_->bufferedFrames() > 0)) {
+                audioRenderer_->start();
+                if (!audioRenderer_->isActive()) {
+                    return;
+                }
+                audioOpenRetryCount_ = 0;
+            } else {
+                return;
+            }
+        } else if (audioRenderer_->bufferedFrames() < static_cast<size_t>(samplesPerFrame * 2)) {
+            qWarning() << "[PlaybackEngine][Audio] low buffered frames during playback"
+                       << "bufferedFrames=" << audioRenderer_->bufferedFrames()
+                       << "samplesPerFrame=" << samplesPerFrame
+                       << "targetBufferedFrames=" << audioTargetBufferedFrames_;
         }
     }
     
     /// オーディオ同期
     void syncWithAudioClock() {
         if (!audioClockProvider_) return;
+        if (state_ != PlaybackState::Playing) return;
+        if (!audioRenderer_ || !audioRenderer_->isActive()) return;
         if (composition_ && !composition_->hasAudio()) return;
         
-        double audioTime = audioClockProvider_();  // 秒
-
-        // 【修正】オーディオ側の時間がまったく進んでいない（0.0付近のまま）場合は、
-        //  開始直後や音声停止中のため、同期を行わないようスキップ
+        double audioTime = audioClockProvider_();
         if (audioTime <= 0.001) return;
 
-        double expectedTime = static_cast<double>(currentFrame_.load()) / frameRate_.framerate();
-        double diff = audioTime - expectedTime;
+        const double safeFrameRate = std::max(1e-6, static_cast<double>(frameRate_.framerate()));
+        const int64_t currentFrame = currentFrame_.load();
+        const int64_t endFrame = effectiveEndFrame().framePosition();
+        if (endFrame > 0 && currentFrame >= endFrame - 2) {
+            return;
+        }
+
+        double currentEngineTime = static_cast<double>(currentFrame) / safeFrameRate;
+        double diff = audioTime - currentEngineTime;
         
-        // 100ms 以上ずれていたら補正
-        if (std::abs(diff) > 0.1) {
-            // qDebug() << "[PlaybackEngine] Audio sync: diff =" << diff << "s, adjusting frame";
-            
-            int64_t newFrame = static_cast<int64_t>(audioTime * frameRate_.framerate());
-            currentFrame_ = std::clamp(newFrame, 
-                effectiveStartFrame().framePosition(),
-                effectiveEndFrame().framePosition());
+        // 33ms 以上ずれていたら「ベース時間」自体を書き換えて、滑らかに追従させる
+        // これにより、毎ループ +1 フレームするのではなく、絶対時間へ収束させる
+        if (std::abs(diff) > 0.033) {
+            ++audioClockCorrectionCount_;
+            qWarning() << "[PlaybackEngine][AudioClock] correcting engine timeline"
+                       << "count=" << audioClockCorrectionCount_
+                       << "audioTime=" << audioTime
+                       << "engineTime=" << currentEngineTime
+                       << "diff=" << diff
+                       << "currentFrame=" << currentFrame;
+            auto now = std::chrono::steady_clock::now();
+            playbackStartTime_ = now;
+            playbackStartFrame_ = static_cast<int64_t>(std::round(audioTime * safeFrameRate));
         }
     }
     
@@ -405,32 +582,30 @@ bool ArtifactPlaybackEngine::isLooping() const {
 }
 
 void ArtifactPlaybackEngine::play() {
-    if (impl_->playing_) return;
+    if (impl_->state_ == PlaybackState::Playing) return;
     
-    impl_->playing_ = true;
-    impl_->paused_ = false;
-    impl_->stopped_ = false;
     impl_->start();
     
-    Q_EMIT playbackStateChanged(true, false, false);
+    Q_EMIT playbackStateChanged(PlaybackState::Playing);
 }
 
 void ArtifactPlaybackEngine::pause() {
-    if (!impl_->playing_) return;
+    if (impl_->state_ != PlaybackState::Playing) return;
     
     impl_->pause();
-    Q_EMIT playbackStateChanged(false, true, false);
+    Q_EMIT playbackStateChanged(PlaybackState::Paused);
 }
 
 void ArtifactPlaybackEngine::stop() {
     impl_->stop();
     impl_->currentFrame_ = impl_->effectiveStartFrame().framePosition();
-    Q_EMIT playbackStateChanged(false, false, true);
+    impl_->audioNextFrame_ = impl_->currentFrame_.load();
+    Q_EMIT playbackStateChanged(PlaybackState::Stopped);
     Q_EMIT frameChanged(FramePosition(impl_->currentFrame_), QImage());
 }
 
 void ArtifactPlaybackEngine::togglePlayPause() {
-    if (impl_->playing_ || impl_->paused_) {
+    if (impl_->state_ == PlaybackState::Playing) {
         pause();
     } else {
         play();
@@ -439,6 +614,11 @@ void ArtifactPlaybackEngine::togglePlayPause() {
 
 void ArtifactPlaybackEngine::goToFrame(const FramePosition& position) {
     impl_->currentFrame_ = position.framePosition();
+    impl_->playbackStartFrame_ = impl_->currentFrame_.load();
+    impl_->playbackStartTime_ = std::chrono::steady_clock::now();
+    impl_->lastEmittedFrame_ = std::numeric_limits<int64_t>::min();
+    impl_->audioNextFrame_ = impl_->currentFrame_.load();
+    impl_->audioSeekPending_ = true;
     if (impl_->audioRenderer_) {
         impl_->audioRenderer_->clearBuffer();
     }
@@ -486,15 +666,15 @@ void ArtifactPlaybackEngine::goToPreviousChapter() {
 }
 
 bool ArtifactPlaybackEngine::isPlaying() const {
-    return impl_->playing_;
+    return impl_->state_ == PlaybackState::Playing;
 }
 
 bool ArtifactPlaybackEngine::isPaused() const {
-    return impl_->paused_;
+    return impl_->state_ == PlaybackState::Paused;
 }
 
 bool ArtifactPlaybackEngine::isStopped() const {
-    return impl_->stopped_;
+    return impl_->state_ == PlaybackState::Stopped;
 }
 
 FramePosition ArtifactPlaybackEngine::currentFrame() const {
@@ -535,9 +715,16 @@ bool ArtifactPlaybackEngine::audioMasterMuted() const {
 
 void ArtifactPlaybackEngine::setComposition(ArtifactCompositionPtr composition) {
     impl_->composition_ = composition;
+    impl_->audioTargetBufferedFrames_ = 0;
+    impl_->audioSampleAccumulator_ = 0.0;
+    impl_->audioSeekPending_ = true;
+    if (impl_->audioRenderer_) {
+        impl_->audioRenderer_->clearBuffer();
+    }
     if (composition) {
         impl_->frameRange_ = composition->frameRange();
         impl_->frameRate_ = composition->frameRate();
+        impl_->audioNextFrame_ = impl_->currentFrame_.load();
     }
 }
 

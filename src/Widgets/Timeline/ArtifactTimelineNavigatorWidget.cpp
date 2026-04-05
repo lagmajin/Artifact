@@ -1,5 +1,6 @@
 module;
 #include <QMouseEvent>
+#include <QLinearGradient>
 #include <QPainter>
 #include <QWidget>
 #include <wobjectimpl.h>
@@ -7,6 +8,7 @@ module;
 module Artifact.Timeline.NavigatorWidget;
 
 import std;
+import Widgets.Utils.CSS;
 
 namespace Artifact
 {
@@ -16,6 +18,27 @@ namespace Artifact
  {
   constexpr int kHandleHalfW = 6;
   constexpr int kHandleW = kHandleHalfW * 2;
+
+  struct TimelineTheme
+  {
+   QColor background;
+   QColor surface;
+   QColor border;
+   QColor accent;
+   QColor text;
+  };
+
+  TimelineTheme timelineTheme()
+  {
+   const auto& theme = ArtifactCore::currentDCCTheme();
+   return {
+    QColor(theme.backgroundColor),
+    QColor(theme.secondaryBackgroundColor),
+    QColor(theme.borderColor),
+    QColor(theme.accentColor),
+    QColor(theme.textColor),
+   };
+  }
  }
 
  class ArtifactTimelineNavigatorWidget::Impl
@@ -86,13 +109,14 @@ namespace Artifact
  {
   QPainter p(this);
   p.setRenderHint(QPainter::Antialiasing);
+  const TimelineTheme theme = timelineTheme();
 
   const QRect outer = rect();
-  p.fillRect(outer, QColor(31, 31, 35));
+  p.fillRect(outer, theme.background);
 
-  p.setPen(QColor(56, 56, 62));
+  p.setPen(theme.border);
   p.drawLine(outer.topLeft(), outer.topRight());
-  p.setPen(QColor(15, 15, 18));
+  p.setPen(theme.background.darker(170));
   p.drawLine(outer.bottomLeft(), outer.bottomRight());
 
   const QRect trackRect = outer.adjusted(kHandleHalfW, 4, -kHandleHalfW, -4);
@@ -101,7 +125,7 @@ namespace Artifact
   }
 
   p.setPen(Qt::NoPen);
-  p.setBrush(QColor(46, 46, 52));
+  p.setBrush(theme.surface);
   p.drawRoundedRect(trackRect, 3, 3);
 
   const int usableWidth = std::max(1, width() - kHandleW);
@@ -115,7 +139,7 @@ namespace Artifact
   p.fillRect(QRect(clampedX2, trackRect.top(), std::max(0, trackRect.right() - clampedX2), trackRect.height()),
              QColor(0, 0, 0, 70));
 
-  p.setPen(QPen(QColor(68, 68, 74), 1));
+  p.setPen(QPen(theme.border.lighter(105), 1));
   const int segmentCount = std::clamp(trackRect.width() / 72, 4, 12);
   for (int i = 1; i < segmentCount; ++i) {
    const int x = trackRect.left() + static_cast<int>(std::lround((static_cast<double>(i) / segmentCount) * trackRect.width()));
@@ -127,7 +151,7 @@ namespace Artifact
    const int majorStepFrames = std::max(1, (impl_->totalFrames_ - 1) / approxMajorCount);
    const int minorStepFrames = std::max(1, majorStepFrames / 4);
 
-   p.setPen(QPen(QColor(118, 118, 128, 150), 1));
+   p.setPen(QPen(theme.border.lighter(140), 1));
    for (int f = 0; f < impl_->totalFrames_; f += minorStepFrames) {
     const double ratio = static_cast<double>(f) / std::max(1, impl_->totalFrames_ - 1);
     const int x = trackRect.left() + static_cast<int>(std::lround(ratio * trackRect.width()));
@@ -143,20 +167,20 @@ namespace Artifact
 
   const QRect rangeRect(clampedX1, trackRect.top(), std::max(1, clampedX2 - clampedX1), trackRect.height());
   QLinearGradient grad(rangeRect.topLeft(), rangeRect.bottomLeft());
-  grad.setColorAt(0.0, QColor(180, 110, 45, 215)); // Modo Amber
-  grad.setColorAt(1.0, QColor(140, 80, 30, 215));
-  p.setPen(QPen(QColor(220, 140, 50, 220), 1));
+  grad.setColorAt(0.0, theme.accent.lighter(110));
+  grad.setColorAt(1.0, theme.accent.darker(135));
+  p.setPen(QPen(theme.accent.lighter(120), 1));
   p.setBrush(grad);
   p.drawRoundedRect(rangeRect.adjusted(0, 0, -1, 0), 3, 3);
 
   const QRectF leftHandleRect(clampedX1 - kHandleHalfW, 2, kHandleW, height() - 4);
   const QRectF rightHandleRect(clampedX2 - kHandleHalfW, 2, kHandleW, height() - 4);
-  p.setBrush(QColor(240, 210, 180));
-  p.setPen(QPen(QColor(22, 22, 26), 1));
+  p.setBrush(theme.surface.lighter(130));
+  p.setPen(QPen(theme.border.darker(135), 1));
   p.drawRoundedRect(leftHandleRect, 2, 2);
   p.drawRoundedRect(rightHandleRect, 2, 2);
 
-  p.setPen(QColor(180, 110, 45));
+  p.setPen(theme.accent);
   p.drawLine(rangeRect.left(), outer.bottom() - 1, rangeRect.right(), outer.bottom() - 1);
  }
 

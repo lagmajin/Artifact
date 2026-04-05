@@ -44,15 +44,26 @@ export module Artifact.Project.Settings;
 
 
 
-
+import std;
 import Utils;
 import Utils.String.UniString;
-
 
 
 export namespace Artifact {
 
  using namespace ArtifactCore;
+
+ struct ProjectValidationIssue {
+  enum class Severity {
+   Info,
+   Warning,
+   Error
+  };
+  Severity severity;
+  QString field;
+  QString message;
+  QString suggestion;
+ };
 
  class ArtifactProjectSettings:public QObject {
  private:
@@ -69,6 +80,9 @@ export namespace Artifact {
   template <StringLike T>
   void setAuthor(const T& name);
   QJsonObject toJson() const;
+
+  // Validation
+  std::vector<ProjectValidationIssue> validate() const;
 
   ArtifactProjectSettings& operator=(const ArtifactProjectSettings& settings);
 

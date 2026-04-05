@@ -45,6 +45,9 @@ export module Artifact.Layer.Particle;
 
 
 import Artifact.Layer.Abstract;
+import Artifact.Composition.Abstract;
+import Artifact.Composition.PlaybackController;
+import Playback.State;
 import Artifact.Generator.Particle;
 import Animation.Transform2D;
 import Animation.Transform3D;
@@ -129,6 +132,7 @@ public:
     // Render output
     QImage renderFrame(int width, int height, float time);
     void renderToImage(QImage& target, float time);
+    void renderToImage(QImage& target, int64_t frameNumber);
     
     // Cached rendering
     bool getCachedFrame(int64_t frame, QImage& out);
@@ -147,7 +151,7 @@ signals:
     void particleSystemChanged() W_SIGNAL(particleSystemChanged);
     void emitterAdded(int index) W_SIGNAL(emitterAdded, index);
     void emitterRemoved(int index) W_SIGNAL(emitterRemoved, index);
-    void playbackStateChanged(bool playing) W_SIGNAL(playbackStateChanged, playing);
+    void playbackStateChanged(PlaybackState state) W_SIGNAL(playbackStateChanged, state);
     void frameRendered(int64_t frame) W_SIGNAL(frameRendered, frame);
 };
 

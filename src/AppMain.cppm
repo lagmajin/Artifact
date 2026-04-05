@@ -1,45 +1,46 @@
 
 module;
-#include <QtCore/QtGlobal>
+#include <QAbstractButton>
 #include <QApplication>
 #include <QColor>
-#include <QDebug>
-#include <QImageReader>
-#include <QLoggingCategory>
-#include <QMainWindow>
+#include <QCommandLineOption>
 #include <QDateTime>
+#include <QDebug>
+#include <QDesktopServices>
 #include <QDir>
+#include <QElapsedTimer>
+#include <QFile>
+#include <QFileInfo>
+#include <QFileInfoList>
 #include <QFont>
 #include <QIcon>
-#include <QSettings>
 #include <QImage>
 #include <QImageReader>
-#include <QPainter>
-#include <QRectF>
-#include <QTimer>
-#include <QElapsedTimer>
-#include <QMessageBox>
-#include <QAbstractButton>
-#include <QPushButton>
-#include <QStandardPaths>
 #include <QJsonDocument>
-#include <QFileInfo>
-#include <QFile>
-#include <QPixmap>
-#include <QCommandLineOption>
+#include <QLoggingCategory>
+#include <QMainWindow>
+#include <QMessageBox>
 #include <QMetaType>
-#include <QDesktopServices>
-#include <QUrl>
-#include <qthreadpool.h>
-#include <QFileInfoList>
+#include <QPainter>
+#include <QPixmap>
+#include <QPushButton>
+#include <QRectF>
+#include <QSettings>
+#include <QSortFilterProxyModel>
+#include <QStandardPaths>
 #include <QStyleFactory>
+#include <QTimer>
+#include <QUrl>
+#include <QtCore/QtGlobal>
 #include <ads_globals.h>
-#include <memory>
-#include <atomic>
 #include <algorithm>
+#include <atomic>
+#include <memory>
+#include <thread>
+#include <qthreadpool.h>
 
 #define _CRT_SECURE_NO_WARNINGS
-#pragma warning(disable:4996)
+#pragma warning(disable : 4996)
 #pragma push_macro("emit")
 #pragma push_macro("event")
 #undef emit
@@ -51,12 +52,11 @@ module;
 
 #include <windows.h>
 
-//#include <pybind11/pybind11.h>
+// #include <pybind11/pybind11.h>
 
 module Artifact.AppMain;
 
-
-
+import Application.AppSettings;
 import Artifact.Widgets.PlaybackControlWidget;
 import Transform;
 import Draw;
@@ -64,9 +64,8 @@ import Glow;
 
 import ImageProcessing;
 
-
-//import hostfxr;
-//import HalideTest;
+// import hostfxr;
+// import HalideTest;
 import Graphics;
 import SearchImage;
 import UI.Layout.State;
@@ -77,17 +76,23 @@ import Test;
 import ImageProcessing.SpectralGlow;
 
 import Codec.Thumbnail.FFmpeg;
+import AI.Client;
 
 import Widgets.Render.Queue;
 import Widgets.Utils.CSS;
+import Widgets.CommonStyle;
 import IO.ImageExporter;
 import ArtifactStatusBar;
+import Artifact.Application.Manager;
 import Artifact.PythonAPI;
 import Script.Python.Engine;
 import Diagnostics.CrashHandler;
 import Translation.Manager;
+import Artifact.Layers.Selection.Manager;
 import Artifact.Service.Playback;
 import Artifact.Service.Project;
+import Artifact.Project.Roles;
+import EnvironmentVariable;
 import Artifact.Widgets.UndoHistoryWidget;
 import Artifact.Widgets.PythonHookManagerWidget;
 import Artifact.Widgets.ProjectManagerWidget;
@@ -96,7 +101,10 @@ import Artifact.Widgets.Timeline;
 import Artifact.Widgets.CompositionEditor;
 import Artifact.Widgets.RenderLayerEditor;
 import Artifact.Widgets.SoftwareRenderInspectors;
+import Artifact.Widgets.MarkdownNoteEditorWidget;
 import Artifact.Widgets.Render.QueueManager;
+import Artifact.Widgets.RenderCenterWindow;
+import Artifact.Contents.Viewer;
 import Widgets.Inspector;
 import Widgets.AssetBrowser;
 import Artifact.Widgets.ArtifactPropertyWidget;
@@ -107,253 +115,245 @@ import Artifact.Script.Hooks;
 import Artifact.Widgets.Test.ScrollPoC;
 
 import Diagnostics.Logger;
-import Artifact.Widgets.ConsoleWidget;
+import Artifact.Widgets.DebugConsoleWidget;
+import Widgets.AIChatWidget;
 
 using namespace Artifact;
 using namespace ArtifactCore;
 
-namespace
-{
- constexpr int kMainWindowLayoutVersion = 6;
+namespace {
+constexpr int kMainWindowLayoutVersion = 8;
 
- quint64 processWorkingSetMB()
- {
+quint64 processWorkingSetMB() {
 #if defined(_WIN32)
   MEMORYSTATUSEX memStatus{};
   memStatus.dwLength = sizeof(memStatus);
-  if (GlobalMemoryStatusEx(&memStatus))
-  {
-   const quint64 totalPhys = static_cast<quint64>(memStatus.ullTotalPhys);
-   const quint64 availPhys = static_cast<quint64>(memStatus.ullAvailPhys);
-   return (totalPhys - availPhys) / (1024ull * 1024ull);
+  if (GlobalMemoryStatusEx(&memStatus)) {
+    const quint64 totalPhys = static_cast<quint64>(memStatus.ullTotalPhys);
+    const quint64 availPhys = static_cast<quint64>(memStatus.ullAvailPhys);
+    return (totalPhys - availPhys) / (1024ull * 1024ull);
   }
 #endif
   return 0;
- }
+}
 
-void bootstrapPythonScripts()
-{
-  auto& py = PythonEngine::instance();
-  if (!py.initialize())
-  {
-   return;
+void bootstrapPythonScripts() {
+  auto &py = PythonEngine::instance();
+  if (!py.initialize()) {
+    return;
   }
 
   ArtifactPythonAPI::registerAll();
 
   const QString appDir = QCoreApplication::applicationDirPath();
   const QStringList scriptDirs = {
-   QDir(appDir).filePath("scripts"),
-   QDir(QDir::currentPath()).filePath("scripts")
-  };
+      QDir(appDir).filePath("scripts"),
+      QDir(QDir::currentPath()).filePath("scripts")};
 
-  for (const QString& dirPath : scriptDirs)
-  {
-   QDir dir(dirPath);
-   if (!dir.exists())
-   {
-    continue;
-   }
+  for (const QString &dirPath : scriptDirs) {
+    QDir dir(dirPath);
+    if (!dir.exists()) {
+      continue;
+    }
 
-   py.addSearchPath(dir.absolutePath().toStdString());
-   const QFileInfoList files = dir.entryInfoList(QStringList() << "*.py", QDir::Files, QDir::Name);
-   for (const QFileInfo& fileInfo : files)
-   {
-    py.executeFile(fileInfo.absoluteFilePath().toStdString());
-   }
+    py.addSearchPath(dir.absolutePath().toStdString());
+    const QFileInfoList files =
+        dir.entryInfoList(QStringList() << "*.py", QDir::Files, QDir::Name);
+    for (const QFileInfo &fileInfo : files) {
+      py.executeFile(fileInfo.absoluteFilePath().toStdString());
+    }
   }
- }
+}
 
- void configureQtPluginPaths()
- {
+void configureQtPluginPaths() {
   const QString appDir = QCoreApplication::applicationDirPath();
   const QStringList candidates = {
-   QDir(appDir).filePath(QStringLiteral("plugins")),
-   QDir(appDir).filePath(QStringLiteral("../vcpkg_installed/x64-windows/Qt6/plugins")),
-   QDir(appDir).filePath(QStringLiteral("../vcpkg_installed/x64-windows/debug/Qt6/plugins")),
-   QDir(appDir).filePath(QStringLiteral("../vcpkg_installed/x64-windows/Qt6/plugins")),
-   QDir(appDir).filePath(QStringLiteral("../vcpkg_installed/x64-windows/debug/Qt6/plugins"))
-  };
+      QDir(appDir).filePath(QStringLiteral("plugins")),
+      QDir(appDir).filePath(
+          QStringLiteral("../vcpkg_installed/x64-windows/Qt6/plugins")),
+      QDir(appDir).filePath(
+          QStringLiteral("../vcpkg_installed/x64-windows/debug/Qt6/plugins")),
+      QDir(appDir).filePath(
+          QStringLiteral("../vcpkg_installed/x64-windows/Qt6/plugins")),
+      QDir(appDir).filePath(
+          QStringLiteral("../vcpkg_installed/x64-windows/debug/Qt6/plugins"))};
 
-  for (const QString& path : candidates)
-  {
-   if (QDir(path).exists())
-   {
-    QCoreApplication::addLibraryPath(path);
-   }
+  for (const QString &path : candidates) {
+    if (QDir(path).exists()) {
+      QCoreApplication::addLibraryPath(path);
+    }
   }
 
-  qDebug() << "[QtPluginPaths] libraryPaths=" << QCoreApplication::libraryPaths();
-  qDebug() << "[QtPluginPaths] supportedImageFormats=" << QImageReader::supportedImageFormats();
- }
+  qDebug() << "[QtPluginPaths] libraryPaths="
+           << QCoreApplication::libraryPaths();
+  qDebug() << "[QtPluginPaths] supportedImageFormats="
+           << QImageReader::supportedImageFormats();
+}
 
- QByteArray currentProjectSnapshotJson()
- {
-  auto project = ArtifactProjectManager::getInstance().getCurrentProjectSharedPtr();
-  if (!project)
-  {
-   return {};
+QByteArray currentProjectSnapshotJson() {
+  auto project =
+      ArtifactProjectManager::getInstance().getCurrentProjectSharedPtr();
+  if (!project) {
+    return {};
   }
   const QJsonDocument doc(project->toJson());
   return doc.toJson(QJsonDocument::Indented);
- }
+}
 
- QString sessionStateFilePath()
- {
-  const QString appDataDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+QString sessionStateFilePath() {
+  const QString appDataDir =
+      QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
   QDir dataDir(appDataDir);
-  if (!dataDir.exists())
-  {
-   dataDir.mkpath(QStringLiteral("."));
+  if (!dataDir.exists()) {
+    dataDir.mkpath(QStringLiteral("."));
   }
   return dataDir.filePath(QStringLiteral("session_state.cbor"));
- }
+}
 
-QString recoveryDirectoryPath()
-{
-  const QString appDataDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+QString recoveryDirectoryPath() {
+  const QString appDataDir =
+      QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
   QDir dataDir(appDataDir);
-  if (!dataDir.exists())
-  {
-   dataDir.mkpath(QStringLiteral("."));
+  if (!dataDir.exists()) {
+    dataDir.mkpath(QStringLiteral("."));
   }
   return dataDir.filePath(QStringLiteral("Recovery"));
 }
 
-bool isStartupDialogSuppressed()
-{
+bool isStartupDialogSuppressed() {
   ArtifactCore::FastSettingsStore sessionStore(sessionStateFilePath());
-  const QString suppressUntilIso = sessionStore.value(
-    QStringLiteral("Session/startupDialogSuppressUntil"),
-    QString()).toString();
-  if (suppressUntilIso.isEmpty())
-  {
+  const QString suppressUntilIso =
+      sessionStore
+          .value(QStringLiteral("Session/startupDialogSuppressUntil"),
+                 QString())
+          .toString();
+  if (suppressUntilIso.isEmpty()) {
     return false;
   }
 
-  const QDateTime suppressUntil = QDateTime::fromString(suppressUntilIso, Qt::ISODate);
-  if (!suppressUntil.isValid())
-  {
+  const QDateTime suppressUntil =
+      QDateTime::fromString(suppressUntilIso, Qt::ISODate);
+  if (!suppressUntil.isValid()) {
     return false;
   }
   return QDateTime::currentDateTime() < suppressUntil;
 }
 
-void suppressStartupDialogForDays(int days)
-{
+void suppressStartupDialogForDays(int days) {
   ArtifactCore::FastSettingsStore sessionStore(sessionStateFilePath());
-  const QDateTime suppressUntil = QDateTime::currentDateTime().addDays(std::max(1, days));
-  sessionStore.setValue(
-    QStringLiteral("Session/startupDialogSuppressUntil"),
-    suppressUntil.toString(Qt::ISODate));
+  const QDateTime suppressUntil =
+      QDateTime::currentDateTime().addDays(std::max(1, days));
+  sessionStore.setValue(QStringLiteral("Session/startupDialogSuppressUntil"),
+                        suppressUntil.toString(Qt::ISODate));
   sessionStore.sync();
 }
 
-void sanitizeSessionStateStore()
-{
+void sanitizeSessionStateStore() {
   ArtifactCore::FastSettingsStore sessionStore(sessionStateFilePath());
-  const QVariant running = sessionStore.value(QStringLiteral("Session/isRunning"), false);
-  if (running.isValid() && running.typeId() != QMetaType::Bool)
-  {
+  const QVariant running =
+      sessionStore.value(QStringLiteral("Session/isRunning"), false);
+  if (running.isValid() && running.typeId() != QMetaType::Bool) {
     sessionStore.setValue(QStringLiteral("Session/isRunning"), false);
   }
 
   const QVariant pid = sessionStore.value(QStringLiteral("Session/pid"));
-  if (pid.isValid() && !pid.canConvert<qlonglong>())
-  {
+  if (pid.isValid() && !pid.canConvert<qlonglong>()) {
     sessionStore.remove(QStringLiteral("Session/pid"));
   }
 
-  const QVariant startTs = sessionStore.value(QStringLiteral("Session/startTimestamp"));
-  if (startTs.isValid() && startTs.typeId() != QMetaType::QString)
-  {
+  const QVariant startTs =
+      sessionStore.value(QStringLiteral("Session/startTimestamp"));
+  if (startTs.isValid() && startTs.typeId() != QMetaType::QString) {
     sessionStore.remove(QStringLiteral("Session/startTimestamp"));
   }
 
-  const QVariant cleanTs = sessionStore.value(QStringLiteral("Session/lastCleanExitTimestamp"));
-  if (cleanTs.isValid() && cleanTs.typeId() != QMetaType::QString)
-  {
+  const QVariant cleanTs =
+      sessionStore.value(QStringLiteral("Session/lastCleanExitTimestamp"));
+  if (cleanTs.isValid() && cleanTs.typeId() != QMetaType::QString) {
     sessionStore.remove(QStringLiteral("Session/lastCleanExitTimestamp"));
   }
 
-  const QVariant layoutAttempted = sessionStore.value(QStringLiteral("Session/layoutRestoreAttempted"));
-  if (layoutAttempted.isValid() && layoutAttempted.typeId() != QMetaType::Bool)
-  {
+  const QVariant layoutAttempted =
+      sessionStore.value(QStringLiteral("Session/layoutRestoreAttempted"));
+  if (layoutAttempted.isValid() &&
+      layoutAttempted.typeId() != QMetaType::Bool) {
     sessionStore.remove(QStringLiteral("Session/layoutRestoreAttempted"));
   }
 
-  const QVariant layoutGeomRestored = sessionStore.value(QStringLiteral("Session/layoutGeometryRestored"));
-  if (layoutGeomRestored.isValid() && layoutGeomRestored.typeId() != QMetaType::Bool)
-  {
+  const QVariant layoutGeomRestored =
+      sessionStore.value(QStringLiteral("Session/layoutGeometryRestored"));
+  if (layoutGeomRestored.isValid() &&
+      layoutGeomRestored.typeId() != QMetaType::Bool) {
     sessionStore.remove(QStringLiteral("Session/layoutGeometryRestored"));
   }
 
-  const QVariant layoutStateRestored = sessionStore.value(QStringLiteral("Session/layoutStateRestored"));
-  if (layoutStateRestored.isValid() && layoutStateRestored.typeId() != QMetaType::Bool)
-  {
+  const QVariant layoutStateRestored =
+      sessionStore.value(QStringLiteral("Session/layoutStateRestored"));
+  if (layoutStateRestored.isValid() &&
+      layoutStateRestored.typeId() != QMetaType::Bool) {
     sessionStore.remove(QStringLiteral("Session/layoutStateRestored"));
   }
 
-  const QVariant layoutResetApplied = sessionStore.value(QStringLiteral("Session/layoutResetApplied"));
-  if (layoutResetApplied.isValid() && layoutResetApplied.typeId() != QMetaType::Bool)
-  {
+  const QVariant layoutResetApplied =
+      sessionStore.value(QStringLiteral("Session/layoutResetApplied"));
+  if (layoutResetApplied.isValid() &&
+      layoutResetApplied.typeId() != QMetaType::Bool) {
     sessionStore.remove(QStringLiteral("Session/layoutResetApplied"));
   }
 
-  const QVariant layoutRestoreTs = sessionStore.value(QStringLiteral("Session/layoutRestoreTimestamp"));
-  if (layoutRestoreTs.isValid() && layoutRestoreTs.typeId() != QMetaType::QString)
-  {
+  const QVariant layoutRestoreTs =
+      sessionStore.value(QStringLiteral("Session/layoutRestoreTimestamp"));
+  if (layoutRestoreTs.isValid() &&
+      layoutRestoreTs.typeId() != QMetaType::QString) {
     sessionStore.remove(QStringLiteral("Session/layoutRestoreTimestamp"));
   }
 
-  const QVariant startupDialogSuppressUntil = sessionStore.value(
-    QStringLiteral("Session/startupDialogSuppressUntil"));
-  if (startupDialogSuppressUntil.isValid() && startupDialogSuppressUntil.typeId() != QMetaType::QString)
-  {
+  const QVariant startupDialogSuppressUntil =
+      sessionStore.value(QStringLiteral("Session/startupDialogSuppressUntil"));
+  if (startupDialogSuppressUntil.isValid() &&
+      startupDialogSuppressUntil.typeId() != QMetaType::QString) {
     sessionStore.remove(QStringLiteral("Session/startupDialogSuppressUntil"));
   }
   sessionStore.sync();
 }
 
-void recordLayoutRestoreResult(
-  bool attempted,
-  bool geometryRestored,
-  bool stateRestored,
-  bool resetApplied)
-{
+void recordLayoutRestoreResult(bool attempted, bool geometryRestored,
+                               bool stateRestored, bool resetApplied) {
   ArtifactCore::FastSettingsStore sessionStore(sessionStateFilePath());
-  sessionStore.setValue(QStringLiteral("Session/layoutRestoreAttempted"), attempted);
-  sessionStore.setValue(QStringLiteral("Session/layoutGeometryRestored"), geometryRestored);
-  sessionStore.setValue(QStringLiteral("Session/layoutStateRestored"), stateRestored);
-  sessionStore.setValue(QStringLiteral("Session/layoutResetApplied"), resetApplied);
-  sessionStore.setValue(QStringLiteral("Session/layoutRestoreTimestamp"), QDateTime::currentDateTime().toString(Qt::ISODate));
+  sessionStore.setValue(QStringLiteral("Session/layoutRestoreAttempted"),
+                        attempted);
+  sessionStore.setValue(QStringLiteral("Session/layoutGeometryRestored"),
+                        geometryRestored);
+  sessionStore.setValue(QStringLiteral("Session/layoutStateRestored"),
+                        stateRestored);
+  sessionStore.setValue(QStringLiteral("Session/layoutResetApplied"),
+                        resetApplied);
+  sessionStore.setValue(QStringLiteral("Session/layoutRestoreTimestamp"),
+                        QDateTime::currentDateTime().toString(Qt::ISODate));
   sessionStore.sync();
 }
 
-void sanitizeLayoutStore(ArtifactCore::FastSettingsStore& layoutStore)
-{
-  const QVariant geometry = layoutStore.value(QStringLiteral("MainWindow/geometry"));
-  if (geometry.isValid() && !geometry.canConvert<QByteArray>())
-  {
+void sanitizeLayoutStore(ArtifactCore::FastSettingsStore &layoutStore) {
+  const QVariant geometry =
+      layoutStore.value(QStringLiteral("MainWindow/geometry"));
+  if (geometry.isValid() && !geometry.canConvert<QByteArray>()) {
     layoutStore.remove(QStringLiteral("MainWindow/geometry"));
   }
 
   const QVariant state = layoutStore.value(QStringLiteral("MainWindow/state"));
-  if (state.isValid() && !state.canConvert<QByteArray>())
-  {
+  if (state.isValid() && !state.canConvert<QByteArray>()) {
     layoutStore.remove(QStringLiteral("MainWindow/state"));
   }
 
-  const QVariant version = layoutStore.value(QStringLiteral("MainWindow/version"));
-  if (version.isValid() && version.typeId() != QMetaType::QString)
-  {
+  const QVariant version =
+      layoutStore.value(QStringLiteral("MainWindow/version"));
+  if (version.isValid() && version.typeId() != QMetaType::QString) {
     layoutStore.remove(QStringLiteral("MainWindow/version"));
   }
- layoutStore.sync();
+  layoutStore.sync();
 }
 
-QIcon buildTemporaryAppIcon()
-{
+QIcon buildTemporaryAppIcon() {
   QPixmap pix(256, 256);
   pix.fill(QColor(28, 28, 32));
 
@@ -373,59 +373,58 @@ QIcon buildTemporaryAppIcon()
   return QIcon(pix);
 }
 
-bool markSessionStartAndDetectUncleanExit()
-{
+bool markSessionStartAndDetectUncleanExit() {
   sanitizeSessionStateStore();
   ArtifactCore::FastSettingsStore sessionStore(sessionStateFilePath());
-  const bool wasRunning = sessionStore.value(QStringLiteral("Session/isRunning"), false).toBool();
+  const bool wasRunning =
+      sessionStore.value(QStringLiteral("Session/isRunning"), false).toBool();
   sessionStore.setValue(QStringLiteral("Session/isRunning"), true);
-  sessionStore.setValue(QStringLiteral("Session/startTimestamp"), QDateTime::currentDateTime().toString(Qt::ISODate));
-  sessionStore.setValue(QStringLiteral("Session/pid"), static_cast<qlonglong>(QCoreApplication::applicationPid()));
+  sessionStore.setValue(QStringLiteral("Session/startTimestamp"),
+                        QDateTime::currentDateTime().toString(Qt::ISODate));
+  sessionStore.setValue(
+      QStringLiteral("Session/pid"),
+      static_cast<qlonglong>(QCoreApplication::applicationPid()));
   sessionStore.sync();
   return wasRunning;
- }
+}
 
- void markSessionEndClean()
- {
+void markSessionEndClean() {
   ArtifactCore::FastSettingsStore sessionStore(sessionStateFilePath());
   sessionStore.setValue(QStringLiteral("Session/isRunning"), false);
-  sessionStore.setValue(QStringLiteral("Session/lastCleanExitTimestamp"), QDateTime::currentDateTime().toString(Qt::ISODate));
+  sessionStore.setValue(QStringLiteral("Session/lastCleanExitTimestamp"),
+                        QDateTime::currentDateTime().toString(Qt::ISODate));
   sessionStore.sync();
- }
+}
 
- void showUncleanExitNoticeIfNeeded(bool hadUncleanExit, QWidget* parent)
- {
-  if (!hadUncleanExit)
-  {
-   return;
+void showUncleanExitNoticeIfNeeded(bool hadUncleanExit, QWidget *parent) {
+  if (!hadUncleanExit) {
+    return;
   }
 
   QMessageBox box(parent);
   box.setIcon(QMessageBox::Warning);
   box.setWindowTitle(QStringLiteral("Previous Session Did Not Exit Cleanly"));
   box.setText(QStringLiteral("前回セッションが正常終了していません。"));
-  box.setInformativeText(QStringLiteral("復旧スナップショットの場所を開きますか？"));
-  auto* openFolder = box.addButton(QStringLiteral("Open Recovery Folder"), QMessageBox::ActionRole);
+  box.setInformativeText(
+      QStringLiteral("復旧スナップショットの場所を開きますか？"));
+  auto *openFolder = box.addButton(QStringLiteral("Open Recovery Folder"),
+                                   QMessageBox::ActionRole);
   box.addButton(QStringLiteral("Continue"), QMessageBox::AcceptRole);
   box.exec();
 
-  if (box.clickedButton() == openFolder)
-  {
-   const QString recoveryDir = recoveryDirectoryPath();
-   QDir dir(recoveryDir);
-   if (!dir.exists())
-   {
-    dir.mkpath(QStringLiteral("."));
-   }
-   QDesktopServices::openUrl(QUrl::fromLocalFile(recoveryDir));
+  if (box.clickedButton() == openFolder) {
+    const QString recoveryDir = recoveryDirectoryPath();
+    QDir dir(recoveryDir);
+    if (!dir.exists()) {
+      dir.mkpath(QStringLiteral("."));
+    }
+    QDesktopServices::openUrl(QUrl::fromLocalFile(recoveryDir));
   }
- }
+}
 
- bool showRecoveryPrompt(ArtifactAutoSaveManager& autoSave, QWidget* parent)
- {
-  if (!autoSave.hasRecoveryPoint())
-  {
-   return false;
+bool showRecoveryPrompt(ArtifactAutoSaveManager &autoSave, QWidget *parent) {
+  if (!autoSave.hasRecoveryPoint()) {
+    return false;
   }
 
   QMessageBox box(parent);
@@ -433,648 +432,1169 @@ bool markSessionStartAndDetectUncleanExit()
   box.setWindowTitle("Recovery Snapshot Found");
   box.setText("A crash recovery snapshot was found.");
   box.setInformativeText("Recover the latest snapshot now?");
-  auto* recover = box.addButton("Recover", QMessageBox::AcceptRole);
+  auto *recover = box.addButton("Recover", QMessageBox::AcceptRole);
   box.addButton("Ignore", QMessageBox::RejectRole);
   box.exec();
 
-  if (box.clickedButton() != recover)
-  {
-   return false;
+  if (box.clickedButton() != recover) {
+    return false;
   }
 
   QByteArray recoveredJson;
   QString sourcePath;
-  if (!autoSave.loadLatestRecoveryPoint(&recoveredJson, &sourcePath) || recoveredJson.isEmpty())
-  {
-   return false;
+  if (!autoSave.loadLatestRecoveryPoint(&recoveredJson, &sourcePath) ||
+      recoveredJson.isEmpty()) {
+    return false;
   }
 
-  const QString tempRoot = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+  const QString tempRoot =
+      QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
   QDir tempDir(tempRoot);
   tempDir.mkpath(".");
-  const QString recoveredPath = tempDir.filePath("RecoveredProject.artifact.json");
+  const QString recoveredPath =
+      tempDir.filePath("RecoveredProject.artifact.json");
   QFile out(recoveredPath);
-  if (!out.open(QIODevice::WriteOnly | QIODevice::Truncate))
-  {
-   return false;
+  if (!out.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+    return false;
   }
   out.write(recoveredJson);
   out.close();
 
   ArtifactProjectManager::getInstance().loadFromFile(recoveredPath);
   return true;
- }
 }
+} // namespace
 
-void test()
-{
- cv::Mat mat(400, 640, CV_8UC3, cv::Scalar(0, 0, 0));
- cv::Mat mask(400, 640, CV_8UC3, cv::Scalar(0, 0, 0));
- cv::Mat dst(400, 640, CV_8UC3, cv::Scalar(0, 0, 0));
- drawStar5(mat,
-  cv::Scalar(0, 255, 255),  // edgeColor（黄）
-  2,                        // edgeThickness
-  cv::Scalar(-1, -1, -1),   // fillColor（無視される）
-  0.8f);
- 
+void test() {
+  cv::Mat mat(400, 640, CV_8UC3, cv::Scalar(0, 0, 0));
+  cv::Mat mask(400, 640, CV_8UC3, cv::Scalar(0, 0, 0));
+  cv::Mat dst(400, 640, CV_8UC3, cv::Scalar(0, 0, 0));
+  drawStar5(mat, cv::Scalar(0, 255, 255), // edgeColor（黄）
+            2,                            // edgeThickness
+            cv::Scalar(-1, -1, -1),       // fillColor（無視される）
+            0.8f);
 
+  float threshold = 0.5f;        // この閾値より明るいピクセルがグローの元になる
+  int vertical_blur_radius = 80; // 縦方向ぼかしの半径 (大きいほど縦に伸びる)
+  float intensity = 1.1f;        // グローの強度
 
+  cv::Mat glowed_image =
+      applyVerticalGlow(mat, threshold, vertical_blur_radius, intensity);
+  SetEnvironmentVariableW(L"COREHOST_TRACE", L"1");
+  SetEnvironmentVariableW(L"COREHOST_TRACEFILE",
+                          L"C:\\temp\\hostfxr_trace.log");
 
- float threshold = 0.5f;   // この閾値より明るいピクセルがグローの元になる
- int vertical_blur_radius = 80; // 縦方向ぼかしの半径 (大きいほど縦に伸びる)
- float intensity = 1.1f;   // グローの強度
+  /*
+  DotnetRuntimeHost host;
 
- cv::Mat glowed_image = applyVerticalGlow(mat, threshold, vertical_blur_radius, intensity);
- SetEnvironmentVariableW(L"COREHOST_TRACE", L"1");
- SetEnvironmentVariableW(L"COREHOST_TRACEFILE", L"C:\\temp\\hostfxr_trace.log");
-
-
- /*
- DotnetRuntimeHost host;
-
- // ① .NET SDKのルート or dotnet.exeのルートを指定（例: "C:/Program Files/dotnet"）
- if (!host.initialize("C:/Program Files/dotnet")) {
-  qWarning() << "hostfxr 初期化失敗";
-  return;
- }
-
- // ② アセンブリパスを指定（.dll）→ ここでは MyApp.dll を仮定
- QString dllPath = "C:/Users/lagma/Desktop/Artifact/Artifact/App/Debug/net9.0/ArtifactScriptRunner.dll";
-
- // 呼び出し先の型名とメソッド名（C#側と一致させる）
- if (!host.loadAssembly(dllPath))
- {
-  qWarning() << "アセンブリのロード失敗";
-  return;
- }
-
- void* method = nullptr;
- if (!(method = host.getFunctionPointer("ArtifactScriptRunner.ArtifactScriptRunner,ArtifactScriptRunner", "Add"))) {
-  //std::cerr << hostfxr.getError() << std::endl;
-  //return 1;
- }
-
-
-	*/
-  //メソッドを呼び出す。
- //int result = reinterpret_cast<int(*)(int, int)>(method)(1, 2);
- //std::cout << result << std::endl;
-
- /*
- int test_width = 100;
- int test_height = 50;
- cv::Mat input_test_mat(test_height, test_width, CV_32FC4);
-
- // サンプルデータでMatを埋める (BGRA順)
- // 例えば、左上は青、右上は赤、左下は緑、右下は白
- for (int y = 0; y < test_height; ++y) {
-  for (int x = 0; x < test_width; ++x) {
-   // OpenCV Vec4f: [Blue, Green, Red, Alpha]
-   float B = (float)x / test_width;         // xが進むにつれて青が強くなる
-   float G = (float)y / test_height;        // yが進むにつれて緑が強くなる
-   float R = 1.0f - (float)x / test_width;  // xが進むにつれて赤が弱くなる
-   float A = 1.0f;                          // アルファは常に1.0 (不透明)
-
-   input_test_mat.at<cv::Vec4f>(y, x) = cv::Vec4f(B, G, R, A);
+  // ① .NET SDKのルート or dotnet.exeのルートを指定（例: "C:/Program
+  Files/dotnet"） if (!host.initialize("C:/Program Files/dotnet")) { qWarning()
+  << "hostfxr 初期化失敗"; return;
   }
- }
 
- cv::Mat output_result_mat = process_bgra_mat_with_halide_gpu(input_test_mat);
- */cv::Size img_size(800, 600);
- // 背景色: 0.0-1.0の範囲でグレー (RGBA)
- /*
- cv::Scalar bg_color(0.2, 0.2, 0.2, 1.0);
+  // ② アセンブリパスを指定（.dll）→ ここでは MyApp.dll を仮定
+  QString dllPath =
+  "C:/Users/lagma/Desktop/Artifact/Artifact/App/Debug/net9.0/ArtifactScriptRunner.dll";
 
- cv::Point center(400, 300);
- int size = 200;
- int radius = 40; // 角の丸め半径
-
-  cv::Mat pentagon_no_fill = drawFilledRoundedPentagon(img_size, bg_color, center, size, radius,
-  cv::Scalar(0.0, 0.0, 0.0, 0.0), // 完全に透明
-  cv::Scalar(0.0, 1.0, 0.0, 1.0), // 不透明な緑
-  2);
-
- int test_width = 100;
- int test_height = 50;
- cv::Mat input_test_mat(test_height, test_width, CV_32FC4);
-
- // サンプルデータでMatを埋める (BGRA順)
- // 例えば、左上は青、右上は赤、左下は緑、右下は白
- for (int y = 0; y < test_height; ++y) {
-  for (int x = 0; x < test_width; ++x) {
-   // OpenCV Vec4f: [Blue, Green, Red, Alpha]
-   float B = (float)x / test_width;         // xが進むにつれて青が強くなる
-   float G = (float)y / test_height;        // yが進むにつれて緑が強くなる
-   float R = 1.0f - (float)x / test_width;  // xが進むにつれて赤が弱くなる
-   float A = 1.0f;                          // アルファは常に1.0 (不透明)
-
-   input_test_mat.at<cv::Vec4f>(y, x) = cv::Vec4f(B, G, R, A);
-  }
- }
- */
- //auto testImage = findAndLoadImageInAppDir("test.jpg", CV_32FC4);
-
- //auto context=new GpuContext();
-
- //context->Initialize();
-
- //auto negateCS = new NegateCS(context->D3D12RenderDevice(),context->D3D12DeviceContext());
-
- //negateCS->loadShaderBinaryFromDirectory(QCoreApplication::applicationDirPath(), "Negate.cso");
-
- //negateCS->Process(testImage);
-
- //SpectralGlow glow;
-
- //glow.ElegantGlow(testImage);
-
-
- int width = 600;
- int height = 400;
-
-
-
-
- // 作成する単色の色 (例: 青)
- // QColor::blue() の代わりに QColor(255, 0, 0) (赤), QColor(0, 255, 0) (緑) なども指定できます。
- //QColor singleColor = QColor(0, 0, 255); // RGB (赤, 緑, 青) の値で青色を設定
-
- // QImageオブジェクトを作成
- // Format_RGB32 は、各ピクセルが32ビット（RGBA）で表現される形式です。
- // この形式は、多くのシステムで効率的に扱われます。
- //QImage image(width, height, QImage::Format_RGB32);
-
- // 画像を単色で塗りつぶす
- // fill() メソッドは、指定された色で画像全体を塗りつぶします。
- //image.fill(singleColor);
-
- //auto file= findFirstFileByLooseExtensionFromAppDir("mov");
-
- //FFmpegThumbnailExtractor extractor;
-
- //auto image=extractor.extractThumbnail(file);
-
- //QString exePath = QCoreApplication::applicationDirPath();
-
- // 適当なファイル名（例：thumb_1234.png）
- //QString fileName = "thumb_" + QString::number(QDateTime::currentMSecsSinceEpoch()) + ".png";
-
- // フルパスを作成
- //QString fullPath = QDir(exePath).filePath(fileName);
-
-
-
-}
-
-int main(int argc, char* argv[])
-{
- ArtifactCore::CrashHandler::install();
- ArtifactCore::Logger::instance()->install();
-
- qDebug() << "Artifact Debug Console Initialized. Hello ArtifactStudio!";
-
- tbb::global_control c(tbb::global_control::max_allowed_parallelism, std::thread::hardware_concurrency());
-
- AddDllDirectory(L"C:\\Users\\lagma\\Desktop\\Artifact\\Artifact\\App");
- SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_DEFAULT_DIRS | LOAD_LIBRARY_SEARCH_USER_DIRS);
- //qsetenv("QT_QPA_PLATFORM", "windows:darkmode=[1]");
-
- //QTextCodec::setCodecForLocale(QTextCodec::codecForName("Shift-JIS"));
- bool renderMode = false;
-	
-
-	if (renderMode)
-	 {
-		
-		
-	 }else
-	 {
-		 
-	 }
-	
- QApplication a(argc, argv);
-  configureQtPluginPaths();
-
-  // Initialize translations
+  // 呼び出し先の型名とメソッド名（C#側と一致させる）
+  if (!host.loadAssembly(dllPath))
   {
-   auto& tr = Artifact::TranslationManager::instance();
-   const QString translationsDir = QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("translations"));
-   if (QDir(translationsDir).exists()) {
-    tr.loadFromDirectory(translationsDir);
-    qDebug() << "[AppMain] translations loaded, locale:" << tr.locale();
-   } else {
-    qDebug() << "[AppMain] translations directory not found:" << translationsDir;
+   qWarning() << "アセンブリのロード失敗";
+   return;
+  }
+
+  void* method = nullptr;
+  if (!(method =
+  host.getFunctionPointer("ArtifactScriptRunner.ArtifactScriptRunner,ArtifactScriptRunner",
+  "Add"))) {
+   //std::cerr << hostfxr.getError() << std::endl;
+   //return 1;
+  }
+
+
+         */
+  // メソッドを呼び出す。
+  // int result = reinterpret_cast<int(*)(int, int)>(method)(1, 2);
+  // std::cout << result << std::endl;
+
+  /*
+  int test_width = 100;
+  int test_height = 50;
+  cv::Mat input_test_mat(test_height, test_width, CV_32FC4);
+
+  // サンプルデータでMatを埋める (BGRA順)
+  // 例えば、左上は青、右上は赤、左下は緑、右下は白
+  for (int y = 0; y < test_height; ++y) {
+   for (int x = 0; x < test_width; ++x) {
+    // OpenCV Vec4f: [Blue, Green, Red, Alpha]
+    float B = (float)x / test_width;         // xが進むにつれて青が強くなる
+    float G = (float)y / test_height;        // yが進むにつれて緑が強くなる
+    float R = 1.0f - (float)x / test_width;  // xが進むにつれて赤が弱くなる
+    float A = 1.0f;                          // アルファは常に1.0 (不透明)
+
+    input_test_mat.at<cv::Vec4f>(y, x) = cv::Vec4f(B, G, R, A);
    }
   }
 
-  QLoggingCategory::setFilterRules(QStringLiteral("artifact.compositionview.debug=false"));
-  a.setStyle(QStyleFactory::create(QStringLiteral("Fusion")));
-	 auto modoTheme = ArtifactCore::getDCCTheme(DccStylePreset::ModoStyle);
-	 a.setStyleSheet(ArtifactCore::buildDCCStyleSheet(modoTheme));
-	 auto pool = QThreadPool::globalInstance();
+  cv::Mat output_result_mat = process_bgra_mat_with_halide_gpu(input_test_mat);
+  */
+  cv::Size img_size(800, 600);
+  // 背景色: 0.0-1.0の範囲でグレー (RGBA)
+  /*
+  cv::Scalar bg_color(0.2, 0.2, 0.2, 1.0);
 
-	 pool->setMaxThreadCount(10);
+  cv::Point center(400, 300);
+  int size = 200;
+  int radius = 40; // 角の丸め半径
+
+   cv::Mat pentagon_no_fill = drawFilledRoundedPentagon(img_size, bg_color,
+  center, size, radius, cv::Scalar(0.0, 0.0, 0.0, 0.0), // 完全に透明
+   cv::Scalar(0.0, 1.0, 0.0, 1.0), // 不透明な緑
+   2);
+
+  int test_width = 100;
+  int test_height = 50;
+  cv::Mat input_test_mat(test_height, test_width, CV_32FC4);
+
+  // サンプルデータでMatを埋める (BGRA順)
+  // 例えば、左上は青、右上は赤、左下は緑、右下は白
+  for (int y = 0; y < test_height; ++y) {
+   for (int x = 0; x < test_width; ++x) {
+    // OpenCV Vec4f: [Blue, Green, Red, Alpha]
+    float B = (float)x / test_width;         // xが進むにつれて青が強くなる
+    float G = (float)y / test_height;        // yが進むにつれて緑が強くなる
+    float R = 1.0f - (float)x / test_width;  // xが進むにつれて赤が弱くなる
+    float A = 1.0f;                          // アルファは常に1.0 (不透明)
+
+    input_test_mat.at<cv::Vec4f>(y, x) = cv::Vec4f(B, G, R, A);
+   }
+  }
+  */
+  // auto testImage = findAndLoadImageInAppDir("test.jpg", CV_32FC4);
+
+  // auto context=new GpuContext();
+
+  // context->Initialize();
+
+  // auto negateCS = new
+  // NegateCS(context->D3D12RenderDevice(),context->D3D12DeviceContext());
+
+  // negateCS->loadShaderBinaryFromDirectory(QCoreApplication::applicationDirPath(),
+  // "Negate.cso");
+
+  // negateCS->Process(testImage);
+
+  // SpectralGlow glow;
+
+  // glow.ElegantGlow(testImage);
+
+  int width = 600;
+  int height = 400;
+
+  // 作成する単色の色 (例: 青)
+  // QColor::blue() の代わりに QColor(255, 0, 0) (赤), QColor(0, 255, 0) (緑)
+  // なども指定できます。
+  // QColor singleColor = QColor(0, 0, 255); // RGB (赤, 緑, 青)
+  // の値で青色を設定
+
+  // QImageオブジェクトを作成
+  // Format_RGB32 は、各ピクセルが32ビット（RGBA）で表現される形式です。
+  // この形式は、多くのシステムで効率的に扱われます。
+  // QImage image(width, height, QImage::Format_RGB32);
+
+  // 画像を単色で塗りつぶす
+  // fill() メソッドは、指定された色で画像全体を塗りつぶします。
+  // image.fill(singleColor);
+
+  // auto file= findFirstFileByLooseExtensionFromAppDir("mov");
+
+  // FFmpegThumbnailExtractor extractor;
+
+  // auto image=extractor.extractThumbnail(file);
+
+  // QString exePath = QCoreApplication::applicationDirPath();
+
+  // 適当なファイル名（例：thumb_1234.png）
+  // QString fileName = "thumb_" +
+  // QString::number(QDateTime::currentMSecsSinceEpoch()) + ".png";
+
+  // フルパスを作成
+  // QString fullPath = QDir(exePath).filePath(fileName);
+}
+
+static void configureQtPaths() {
+  // TODO: Configure Qt plugin paths and environment as needed
+}
+
+int main(int argc, char *argv[]) {
+  ArtifactCore::CrashHandler::install();
+  ArtifactCore::Logger::instance()->install();
+
+  qDebug() << "Artifact Debug Console Initialized. Hello ArtifactStudio!";
+
+  tbb::global_control c(tbb::global_control::max_allowed_parallelism,
+                        std::thread::hardware_concurrency());
+
+  AddDllDirectory(L"C:\\Users\\lagma\\Desktop\\Artifact\\Artifact\\App");
+  SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_DEFAULT_DIRS |
+                           LOAD_LIBRARY_SEARCH_USER_DIRS);
+  // qsetenv("QT_QPA_PLATFORM", "windows:darkmode=[1]");
+
+  // QTextCodec::setCodecForLocale(QTextCodec::codecForName("Shift-JIS"));
+  bool renderMode = false;
+
+  if (renderMode) {
+
+  } else {
+  }
+
+  QApplication a(argc, argv);
+  configureQtPaths();
+
+  // Initialize environment variable manager
+  auto* envManager = ArtifactCore::EnvironmentVariableManager::instance();
+  qDebug() << "[AppMain] Environment variables loaded:" << envManager->variableNames().size();
+
+  // Initialize translations
+  {
+    auto &tr = Artifact::TranslationManager::instance();
+    const QString translationsDir =
+        QDir(QCoreApplication::applicationDirPath())
+            .filePath(QStringLiteral("translations"));
+    if (QDir(translationsDir).exists()) {
+      tr.loadFromDirectory(translationsDir);
+      qDebug() << "[AppMain] translations loaded, locale:" << tr.locale();
+    } else {
+      qDebug() << "[AppMain] translations directory not found:"
+               << translationsDir;
+    }
+  }
+
+  QLoggingCategory::setFilterRules(
+      QStringLiteral("artifact.compositionview.debug=false\n"
+                     "artifact.layer.video.debug=true"));
+  auto *settings = ArtifactCore::ArtifactAppSettings::instance();
+  auto applyThemeFromSettings = [&a, settings]() {
+    if (!settings) {
+      return;
+    }
+    ArtifactCore::DccStyleTheme theme =
+        ArtifactCore::getDCCTheme(ArtifactCore::themePresetFromName(settings->themeName()));
+    const QString themePresetPath = settings->themePresetPath().trimmed();
+    if (!themePresetPath.isEmpty()) {
+      QString loadError;
+      ArtifactCore::DccStyleTheme loadedTheme;
+      if (ArtifactCore::loadDCCThemePresetFromFile(themePresetPath, &loadedTheme, &loadError)) {
+        theme = loadedTheme;
+      } else {
+        qWarning() << "[AppMain] Failed to load theme preset:" << themePresetPath << loadError;
+      }
+    }
+    ArtifactCore::applyDCCTheme(a, theme);
+    if (auto* style = a.style()) {
+      style->polish(&a);
+      const auto widgets = QApplication::allWidgets();
+      for (QWidget* widget : widgets) {
+        if (!widget) {
+          continue;
+        }
+        style->unpolish(widget);
+        style->polish(widget);
+        widget->update();
+
+        const QString className = QString::fromLatin1(widget->metaObject()->className());
+        const QColor clear(theme.backgroundColor);
+        if (className == QStringLiteral("Artifact::ArtifactCompositionEditor")) {
+          auto* compositionEditor = static_cast<ArtifactCompositionEditor*>(widget);
+          compositionEditor->setClearColor(
+              {clear.redF(), clear.greenF(), clear.blueF(), 1.0f});
+        } else if (className == QStringLiteral("Artifact::ArtifactRenderLayerEditor")) {
+          auto* layerEditor = static_cast<ArtifactRenderLayerEditor*>(widget);
+          if (auto* view = layerEditor->view()) {
+            view->setClearColor(
+                {clear.redF(), clear.greenF(), clear.blueF(), 1.0f});
+          }
+        }
+      }
+    }
+  };
+  applyThemeFromSettings();
+  QApplication::setStyle(new ArtifactCommonStyle(QStyleFactory::create(QStringLiteral("Fusion"))));
+  QObject::connect(settings, &ArtifactCore::ArtifactAppSettings::settingsChanged,
+                   &a, applyThemeFromSettings);
+
+  {
+    QSettings aiSettings;
+    const bool autoInitialize = aiSettings.value(QStringLiteral("AI/AutoInitialize"), false).toBool();
+    const QString provider = aiSettings.value(QStringLiteral("AI/Provider"), QStringLiteral("local")).toString().trimmed();
+    const QString modelPath = aiSettings.value(QStringLiteral("AI/ModelPath"),
+                                               QStringLiteral("models/llama-3.2-1b-instruct.q4_k_m.gguf"))
+                                  .toString()
+                                  .trimmed();
+    if (autoInitialize) {
+      if (!provider.isEmpty() && provider.compare(QStringLiteral("local"), Qt::CaseInsensitive) != 0) {
+        qWarning() << "[AppMain] Auto AI initialization is only enabled for the local backend:"
+                   << provider;
+      } else if (modelPath.isEmpty()) {
+        qWarning() << "[AppMain] Auto AI initialization skipped: model path is empty";
+      } else if (!QFileInfo::exists(modelPath)) {
+        qWarning() << "[AppMain] Auto AI initialization skipped: model not found:" << modelPath;
+      } else {
+        auto* client = AIClient::instance();
+        if (client->isInitializing()) {
+          qInfo() << "[AppMain] Auto AI initialization skipped: backend is already loading";
+        } else {
+        std::thread([client, modelPath]() {
+          if (!client->initialize(modelPath)) {
+            if (client->isInitializing()) {
+              qInfo() << "[AppMain] Auto AI initialization is already in progress:" << modelPath;
+            } else {
+              qWarning() << "[AppMain] Auto AI initialization failed for model:" << modelPath;
+            }
+          } else {
+            qDebug() << "[AppMain] Auto AI initialized from settings:" << modelPath;
+          }
+        }).detach();
+        }
+      }
+    }
+  }
+
+  auto pool = QThreadPool::globalInstance();
+
+  pool->setMaxThreadCount(10);
 
   bootstrapPythonScripts();
   ArtifactPythonHookManager::runHook(QStringLiteral("on_startup"));
-    const bool hadUncleanExit = markSessionStartAndDetectUncleanExit();
-    const QIcon appIcon = buildTemporaryAppIcon();
-    QApplication::setWindowIcon(appIcon);
-    using namespace Artifact;
-    auto* mw = new ArtifactMainWindow();
-    mw->setObjectName("ArtifactMainWindow");
-    mw->setWindowTitle("Artifact");
-    mw->setWindowIcon(appIcon);
-    auto* status = new ArtifactStatusBar(mw);
-    mw->setStatusBar(status);
-    status->showReadyMessage();
-    status->setProjectText("Loaded");
-    auto* projectService = ArtifactProjectService::instance();
-    auto* playbackService = ArtifactPlaybackService::instance();
-    auto* autoSaveManager = new ArtifactAutoSaveManager();
-    const QString recoveryDir = QDir(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)).filePath("Recovery");
-    QTimer::singleShot(0, mw, [=]() {
-    auto* playbackControl = new ArtifactPlaybackControlWidget(mw);
-    mw->addDockedWidgetFloating(
-        QStringLiteral("Playback Control"),
-        QStringLiteral("PlaybackControl"),
-        playbackControl,
-        QRect(120, 840, 600, 56));
-    auto* consoleWidget = new ArtifactConsoleWidget(mw);
-    mw->addDockedWidgetFloating(
-        QStringLiteral("Console"),
-        QStringLiteral("Console"),
-        consoleWidget,
-        QRect(200, 200, 800, 400));
-    auto* compositionEditor = new ArtifactCompositionEditor(mw);
-    mw->addDockedWidget(QStringLiteral("Composition Viewer"), ads::CenterDockWidgetArea, compositionEditor);
+  const bool hadUncleanExit = markSessionStartAndDetectUncleanExit();
+  const QIcon appIcon = buildTemporaryAppIcon();
+  QApplication::setWindowIcon(appIcon);
+  using namespace Artifact;
+  auto *mw = new ArtifactMainWindow();
+  mw->setObjectName("ArtifactMainWindow");
+  mw->setWindowTitle("Artifact");
+  mw->setWindowIcon(appIcon);
+  auto *status = new ArtifactStatusBar(mw);
+  mw->setStatusBar(status);
+  status->showReadyMessage();
+  status->setProjectText("Loaded");
+  auto *projectService = ArtifactProjectService::instance();
+  auto *playbackService = ArtifactPlaybackService::instance();
+  auto *autoSaveManager = new ArtifactAutoSaveManager();
+  QPointer<ArtifactRenderCenterWindow> renderCenterWindow;
+  const QString recoveryDir =
+      QDir(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation))
+          .filePath("Recovery");
+  QTimer::singleShot(0, mw, [=, &renderCenterWindow]() {
+    QSettings aiSettings;
+    const QString aiProvider =
+        aiSettings.value(QStringLiteral("AI/Provider"), QStringLiteral("local"))
+            .toString()
+            .trimmed();
+    auto *playbackControl = new ArtifactPlaybackControlWidget(mw);
+    mw->addDockedWidgetFloating(QStringLiteral("Playback Control"),
+                                QStringLiteral("PlaybackControl"),
+                                playbackControl, QRect(120, 828, 720, 96));
+    auto *consoleWidget = new ArtifactDebugConsoleWidget(mw);
+    mw->addDockedWidgetFloating(QStringLiteral("Debug Console"),
+                                QStringLiteral("DebugConsole"), consoleWidget,
+                                QRect(200, 200, 800, 400));
+    auto *aiChatWidget = new AIChatWidget(mw);
+    aiChatWidget->setProvider(UniString(aiProvider));
+    mw->addDockedWidgetFloating(QStringLiteral("AI Chat"),
+                                QStringLiteral("AIChat"), aiChatWidget,
+                                QRect(1040, 200, 760, 520));
+    auto *compositionEditor = new ArtifactCompositionEditor(mw);
+    compositionEditor->setMinimumWidth(1024); // Keep the center area from getting too cramped
+    compositionEditor->setSizePolicy(QSizePolicy::Expanding,
+                                     QSizePolicy::Expanding);
+    mw->addDockedWidget(QStringLiteral("Composition Viewer"),
+                        ads::CenterDockWidgetArea, compositionEditor);
 
-    QObject::connect(compositionEditor, &ArtifactCompositionEditor::videoDebugMessage,
-                     status, &ArtifactStatusBar::setTimelineDebugText);
+    QObject::connect(compositionEditor,
+                     &ArtifactCompositionEditor::videoDebugMessage, status,
+                     &ArtifactStatusBar::setTimelineDebugText);
 
     // Update StatusBar console summary
     auto updateStatusConsole = [status, mw]() {
-        if (!status) return;
-        auto logs = Logger::instance()->getLogs();
-        int errors = 0;
-        int warnings = 0;
-        for (const auto& log : logs) {
-            if (log.level == LogLevel::Warning) warnings++;
-            else if (log.level == LogLevel::Error || log.level == LogLevel::Fatal) errors++;
-        }
-        // status->setConsoleSummary(errors, warnings); // We can use this if the previous edit definitely worked
-        // If setConsoleSummary failed to compile, we can manually set text for now to avoid block
-        status->setProjectText(QString("Logs: %1E %2W").arg(errors).arg(warnings)); 
+      if (!status)
+        return;
+      auto logs = Logger::instance()->getLogs();
+      int errors = 0;
+      int warnings = 0;
+      for (const auto &log : logs) {
+        if (log.level == LogLevel::Warning)
+          warnings++;
+        else if (log.level == LogLevel::Error || log.level == LogLevel::Fatal)
+          errors++;
+      }
+      // status->setConsoleSummary(errors, warnings); // We can use this if the
+      // previous edit definitely worked If setConsoleSummary failed to compile,
+      // we can manually set text for now to avoid block
+      status->setProjectText(
+          QString("Logs: %1E %2W").arg(errors).arg(warnings));
     };
-    QObject::connect(Logger::instance(), &Logger::logAdded, mw, updateStatusConsole);
-    QObject::connect(Logger::instance(), &Logger::logsCleared, mw, updateStatusConsole);
-    auto* softwareCompositionView = new ArtifactSoftwareCompositionTestWidget(mw);
-    mw->addDockedWidgetTabbed(
+    QObject::connect(Logger::instance(), &Logger::logAdded, mw,
+                     updateStatusConsole);
+    QObject::connect(Logger::instance(), &Logger::logsCleared, mw,
+                     updateStatusConsole);
+    mw->addLazyDockedWidgetTabbedWithId(
+        QStringLiteral("Composition View (Software)"),
         QStringLiteral("Composition View (Software)"),
         ads::CenterDockWidgetArea,
-        softwareCompositionView,
+        [mw]() -> QWidget * {
+          return new ArtifactSoftwareCompositionTestWidget(mw);
+        },
         QStringLiteral("Composition Viewer"));
-    auto* layerViewEditor = new ArtifactRenderLayerEditor(mw);
-    mw->addDockedWidgetTabbed(
-        QStringLiteral("Layer View (Diligent)"),
-        ads::CenterDockWidgetArea,
-        layerViewEditor,
-        QStringLiteral("Composition Viewer"));
-    auto* softwareLayerView = new ArtifactSoftwareLayerTestWidget(mw);
-    mw->addDockedWidgetTabbed(
+    auto *layerViewEditor = new ArtifactRenderLayerEditor(mw);
+    layerViewEditor->setMinimumWidth(1024); // Match composition viewer minimum
+    layerViewEditor->setSizePolicy(QSizePolicy::Expanding,
+                                   QSizePolicy::Expanding);
+    mw->addDockedWidgetTabbed(QStringLiteral("Layer View (Diligent)"),
+                              ads::CenterDockWidgetArea, layerViewEditor,
+                              QStringLiteral("Composition Viewer"));
+    mw->addLazyDockedWidgetTabbedWithId(
         QStringLiteral("Layer View (Software)"),
-        ads::CenterDockWidgetArea,
-        softwareLayerView,
+        QStringLiteral("Layer View (Software)"), ads::CenterDockWidgetArea,
+        [mw]() -> QWidget * { return new ArtifactSoftwareLayerTestWidget(mw); },
         QStringLiteral("Layer View (Diligent)"));
-    mw->addDockedWidget(QStringLiteral("Project"), ads::LeftDockWidgetArea, new ArtifactProjectManagerWidget(mw));
-    mw->addDockedWidget(QStringLiteral("Asset Browser"), ads::LeftDockWidgetArea, new ArtifactAssetBrowser(mw));
-    mw->addDockedWidget(QStringLiteral("Inspector"), ads::RightDockWidgetArea, new ArtifactInspectorWidget(mw));
-    auto* propertyPanel = new ArtifactPropertyWidget(mw);
-    mw->addDockedWidgetTabbed(QStringLiteral("Properties"), ads::RightDockWidgetArea, propertyPanel, QStringLiteral("Inspector"));
-    mw->addDockedWidget(QStringLiteral("Audio Mixer"), ads::RightDockWidgetArea, new ArtifactCompositionAudioMixerWidget(mw));
+    auto *projectManagerWidget = new ArtifactProjectManagerWidget(mw);
+    mw->addDockedWidget(QStringLiteral("Project"), ads::LeftDockWidgetArea,
+                        projectManagerWidget);
+    auto *assetBrowser = new ArtifactAssetBrowser(mw);
+    mw->addDockedWidgetTabbed(QStringLiteral("Asset Browser"),
+                              ads::LeftDockWidgetArea, assetBrowser,
+                              QStringLiteral("Project"));
+    auto *contentsViewer = new ArtifactContentsViewer(mw);
+    mw->addDockedWidgetTabbed(QStringLiteral("Contents Viewer"),
+                              ads::CenterDockWidgetArea, contentsViewer,
+                              QStringLiteral("Composition Viewer"));
+    mw->setDockVisible(QStringLiteral("Contents Viewer"), false);
+    QObject::connect(assetBrowser, &ArtifactAssetBrowser::itemDoubleClicked, mw,
+                     [mw, contentsViewer](const QString &itemPath) {
+                       if (!contentsViewer || itemPath.isEmpty()) {
+                         return;
+                       }
+                       if (!QFileInfo(itemPath).isFile()) {
+                         return;
+                       }
+                       contentsViewer->setFilePath(itemPath);
+                       mw->setDockVisible(QStringLiteral("Contents Viewer"),
+                                          true);
+                       mw->activateDock(QStringLiteral("Contents Viewer"));
+                     });
+    if (auto *projectView = projectManagerWidget
+                                ? projectManagerWidget->projectView()
+                                : nullptr) {
+      QObject::connect(
+          projectView, &ArtifactProjectView::itemSelected, mw,
+          [mw, assetBrowser, contentsViewer](const QModelIndex &index) {
+            if (!index.isValid()) {
+              return;
+            }
+            QModelIndex sourceIdx = index;
+            if (auto proxy = qobject_cast<const QSortFilterProxyModel *>(
+                    index.model())) {
+              sourceIdx = proxy->mapToSource(index);
+            }
+            const QVariant typeVar = sourceIdx.data(
+                Qt::UserRole +
+                static_cast<int>(
+                    Artifact::ProjectItemDataRole::ProjectItemType));
+            const QVariant ptrVar = sourceIdx.data(
+                Qt::UserRole +
+                static_cast<int>(
+                    Artifact::ProjectItemDataRole::ProjectItemPtr));
+            if (!typeVar.isValid()) {
+              return;
+            }
+
+            if (typeVar.toInt() ==
+                static_cast<int>(eProjectItemType::Composition)) {
+              const QVariant idVar = sourceIdx.data(
+                  Qt::UserRole +
+                  static_cast<int>(
+                      Artifact::ProjectItemDataRole::CompositionId));
+              if (!idVar.isValid()) {
+                return;
+              }
+              if (auto *service = ArtifactProjectService::instance()) {
+                service->changeCurrentComposition(
+                    CompositionID(idVar.toString()));
+              }
+              return;
+            }
+
+            if (typeVar.toInt() !=
+                    static_cast<int>(eProjectItemType::Footage) ||
+                !ptrVar.isValid() || !contentsViewer) {
+              return;
+            }
+            ProjectItem *item =
+                reinterpret_cast<ProjectItem *>(ptrVar.value<quintptr>());
+            auto *footage = item && item->type() == eProjectItemType::Footage
+                                ? static_cast<FootageItem *>(item)
+                                : nullptr;
+            if (!footage || footage->filePath.isEmpty() ||
+                !QFileInfo(footage->filePath).isFile()) {
+              return;
+            }
+            if (assetBrowser) {
+              assetBrowser->selectAssetPaths(QStringList{footage->filePath});
+            }
+            contentsViewer->setFilePath(footage->filePath);
+            mw->setDockVisible(QStringLiteral("Contents Viewer"), true);
+            mw->activateDock(QStringLiteral("Contents Viewer"));
+          });
+    }
+    QObject::connect(
+        projectManagerWidget, &ArtifactProjectManagerWidget::itemDoubleClicked,
+        mw, [mw, contentsViewer, assetBrowser](const QModelIndex &index) {
+          if (!index.isValid()) {
+            return;
+          }
+          QModelIndex sourceIdx = index;
+          if (auto proxy =
+                  qobject_cast<const QSortFilterProxyModel *>(index.model())) {
+            sourceIdx = proxy->mapToSource(index);
+          }
+          const QVariant typeVar = sourceIdx.data(
+              Qt::UserRole +
+              static_cast<int>(Artifact::ProjectItemDataRole::ProjectItemType));
+          const QVariant ptrVar = sourceIdx.data(
+              Qt::UserRole +
+              static_cast<int>(Artifact::ProjectItemDataRole::ProjectItemPtr));
+          if (!typeVar.isValid()) {
+            return;
+          }
+          if (typeVar.toInt() ==
+              static_cast<int>(eProjectItemType::Composition)) {
+            const QVariant idVar = sourceIdx.data(
+                Qt::UserRole +
+                static_cast<int>(Artifact::ProjectItemDataRole::CompositionId));
+            if (!idVar.isValid()) {
+              return;
+            }
+            const CompositionID compId(idVar.toString());
+            if (auto *service = ArtifactProjectService::instance()) {
+              service->changeCurrentComposition(compId);
+            }
+            mw->setDockVisible(QStringLiteral("Composition View (Software)"),
+                               true);
+            mw->activateDock(QStringLiteral("Composition View (Software)"));
+            return;
+          }
+          if (typeVar.toInt() != static_cast<int>(eProjectItemType::Footage) ||
+              !ptrVar.isValid() || !contentsViewer) {
+            return;
+          }
+          ProjectItem *item =
+              reinterpret_cast<ProjectItem *>(ptrVar.value<quintptr>());
+          auto *footage = item && item->type() == eProjectItemType::Footage
+                              ? static_cast<FootageItem *>(item)
+                              : nullptr;
+          if (!footage || footage->filePath.isEmpty() ||
+              !QFileInfo(footage->filePath).isFile()) {
+            return;
+          }
+          if (assetBrowser) {
+            assetBrowser->selectAssetPaths(QStringList{footage->filePath});
+          }
+          contentsViewer->setFilePath(footage->filePath);
+          mw->setDockVisible(QStringLiteral("Contents Viewer"), true);
+          mw->activateDock(QStringLiteral("Contents Viewer"));
+        });
+    QObject::connect(
+        projectService, &ArtifactProjectService::currentCompositionChanged, mw,
+        [projectManagerWidget](const CompositionID &compId) {
+          auto *projectView = projectManagerWidget
+                                  ? projectManagerWidget->projectView()
+                                  : nullptr;
+          if (!projectView || compId.isNil() || !projectView->model()) {
+            return;
+          }
+          auto *model = projectView->model();
+          const int rowCount = model->rowCount();
+          for (int row = 0; row < rowCount; ++row) {
+            const QModelIndex index = model->index(row, 0);
+            if (!index.isValid()) {
+              continue;
+            }
+            const QModelIndex sourceIdx =
+                qobject_cast<const QSortFilterProxyModel *>(index.model())
+                    ? qobject_cast<const QSortFilterProxyModel *>(index.model())
+                          ->mapToSource(index)
+                    : index;
+            const QVariant typeVar = sourceIdx.data(
+                Qt::UserRole +
+                static_cast<int>(
+                    Artifact::ProjectItemDataRole::ProjectItemType));
+            if (!typeVar.isValid() ||
+                typeVar.toInt() !=
+                    static_cast<int>(eProjectItemType::Composition)) {
+              continue;
+            }
+            const QVariant idVar = sourceIdx.data(
+                Qt::UserRole +
+                static_cast<int>(Artifact::ProjectItemDataRole::CompositionId));
+            if (!idVar.isValid()) {
+              continue;
+            }
+            if (CompositionID(idVar.toString()) == compId) {
+              projectView->setCurrentIndex(index);
+              projectView->ensureIndexVisible(index);
+              return;
+            }
+          }
+        });
+    QObject::connect(
+        assetBrowser, &ArtifactAssetBrowser::selectionChanged, mw,
+        [mw, contentsViewer, projectManagerWidget](const QStringList &selectedFiles) {
+          if (projectManagerWidget) {
+            projectManagerWidget->selectItemsByFilePaths(selectedFiles);
+          }
+          if (!contentsViewer || selectedFiles.size() != 1) {
+            return;
+          }
+          const QString filePath = selectedFiles.first().trimmed();
+          if (filePath.isEmpty() || !QFileInfo(filePath).isFile()) {
+            return;
+          }
+          contentsViewer->setFilePath(filePath);
+          mw->setDockVisible(QStringLiteral("Contents Viewer"), true);
+          mw->activateDock(QStringLiteral("Contents Viewer"));
+        });
+    mw->addDockedWidget(QStringLiteral("Inspector"), ads::RightDockWidgetArea,
+                        new ArtifactInspectorWidget(mw));
+    auto* compositionNoteWidget =
+        new ArtifactMarkdownNoteEditorWidget(MarkdownNoteTarget::Composition, mw);
+    mw->addDockedWidgetTabbed(QStringLiteral("Composition Note"),
+                              ads::RightDockWidgetArea, compositionNoteWidget,
+                              QStringLiteral("Inspector"));
+    auto* layerNoteWidget =
+        new ArtifactMarkdownNoteEditorWidget(MarkdownNoteTarget::Layer, mw);
+    mw->addDockedWidgetTabbed(QStringLiteral("Layer Note"),
+                              ads::RightDockWidgetArea, layerNoteWidget,
+                              QStringLiteral("Inspector"));
+    auto *propertyPanel = new ArtifactPropertyWidget(mw);
+    mw->addDockedWidgetTabbed(QStringLiteral("Properties"),
+                              ads::RightDockWidgetArea, propertyPanel,
+                              QStringLiteral("Inspector"));
+    mw->addDockedWidget(QStringLiteral("Audio Mixer"), ads::RightDockWidgetArea,
+                        new ArtifactCompositionAudioMixerWidget(mw));
+    renderCenterWindow = new ArtifactRenderCenterWindow();
     mw->setDockVisible(QStringLiteral("Audio Mixer"), false);
-    mw->setDockVisible(QStringLiteral("Render Manager"), true);
-    mw->setDockVisible(QStringLiteral("Composition View (Software)"), true);
-    mw->setDockVisible(QStringLiteral("Layer View (Diligent)"), true);
-    mw->setDockVisible(QStringLiteral("Layer View (Software)"), true);
+    mw->setDockVisible(QStringLiteral("Composition View (Software)"), false);
+    mw->setDockVisible(QStringLiteral("Layer View (Diligent)"), false);
+    mw->setDockVisible(QStringLiteral("Layer View (Software)"), false);
 
     autoSaveManager->initialize("ArtifactProject", recoveryDir);
     autoSaveManager->start();
     if (!isStartupDialogSuppressed()) {
-        const bool hasRecoveryPoint = autoSaveManager->hasRecoveryPoint();
-        showUncleanExitNoticeIfNeeded(hadUncleanExit, mw);
-        showRecoveryPrompt(*autoSaveManager, mw);
-        if (hadUncleanExit || hasRecoveryPoint) {
-            suppressStartupDialogForDays(3);
-        }
+      const bool hasRecoveryPoint = autoSaveManager->hasRecoveryPoint();
+      showUncleanExitNoticeIfNeeded(hadUncleanExit, mw);
+      showRecoveryPrompt(*autoSaveManager, mw);
+      if (hadUncleanExit || hasRecoveryPoint) {
+        suppressStartupDialogForDays(3);
+      }
     }
 
     if (projectService) {
-        QObject::connect(projectService, &ArtifactProjectService::projectChanged, mw, [status]() {
-            status->setProjectText("Modified");
-        });
-        QObject::connect(projectService, &ArtifactProjectService::projectChanged, mw, []() {
-            ArtifactPythonHookManager::runHook(QStringLiteral("project_changed"));
-        });
-        QObject::connect(projectService, &ArtifactProjectService::projectChanged, mw, [autoSaveManager]() {
-            if (autoSaveManager) autoSaveManager->markDirty();
-        });
-        QObject::connect(projectService, &ArtifactProjectService::layerCreated, mw, [status](const CompositionID&, const LayerID&) {
-            status->setProjectText("Layer Added");
-        });
-        QObject::connect(projectService, &ArtifactProjectService::layerCreated, mw, [](const CompositionID& compId, const LayerID& layerId) {
-            ArtifactPythonHookManager::runHook(QStringLiteral("layer_added"), QStringList() << compId.toString() << layerId.toString());
-        });
-        QObject::connect(projectService, &ArtifactProjectService::layerCreated, mw, [autoSaveManager](const CompositionID&, const LayerID&) {
-            if (autoSaveManager) autoSaveManager->markDirty();
-        });
-        QObject::connect(projectService, &ArtifactProjectService::layerSelected, mw, [layerViewEditor, propertyPanel, projectService](const LayerID& layerId) {
-            if (layerViewEditor) {
+      if (auto *selectionManager = ArtifactApplicationManager::instance()
+                                       ? ArtifactApplicationManager::instance()
+                                             ->layerSelectionManager()
+                                       : nullptr) {
+        const auto syncSelectedLayerUi =
+            [layerViewEditor, propertyPanel, projectService, selectionManager](
+                const LayerID &layerId) {
+              if (layerViewEditor) {
                 if (layerId.isNil()) {
-                    layerViewEditor->view()->clearTargetLayer();
+                  layerViewEditor->view()->clearTargetLayer();
                 } else {
-                    layerViewEditor->setTargetLayer(layerId);
+                  layerViewEditor->setTargetLayer(layerId);
                 }
-            }
-            if (propertyPanel) {
+              }
+              if (propertyPanel) {
                 propertyPanel->setFocusedEffectId(QString());
                 if (layerId.isNil()) {
+                  propertyPanel->clear();
+                } else if (projectService) {
+                  auto current = selectionManager ? selectionManager->currentLayer()
+                                                  : ArtifactAbstractLayerPtr{};
+                  if (!current || current->id() != layerId) {
+                    const auto comp = projectService->currentComposition().lock();
+                    current = comp ? comp->layerById(layerId) : ArtifactAbstractLayerPtr{};
+                  }
+                  if (current) {
+                    propertyPanel->setLayer(current);
+                  } else {
                     propertyPanel->clear();
-                } else if (auto comp = projectService->currentComposition().lock()) {
-                    propertyPanel->setLayer(comp->layerById(layerId));
+                  }
                 } else {
-                    propertyPanel->clear();
+                  propertyPanel->clear();
                 }
+              }
+            };
+        QObject::connect(selectionManager,
+                         &ArtifactLayerSelectionManager::selectionChanged, mw,
+                         [projectService, selectionManager, syncSelectedLayerUi]() {
+                           if (!projectService || !selectionManager) {
+                             return;
+                           }
+                           const ArtifactAbstractLayerPtr current =
+                               selectionManager->currentLayer();
+                           projectService->selectLayer(
+                               current ? current->id() : LayerID::Nil());
+                           syncSelectedLayerUi(current ? current->id() : LayerID::Nil());
+                         });
+      }
+      QObject::connect(projectService, &ArtifactProjectService::projectChanged,
+                       mw, [status]() { status->setProjectText("Modified"); });
+      QObject::connect(projectService, &ArtifactProjectService::projectChanged,
+                       mw, []() {
+                         ArtifactPythonHookManager::runHook(
+                             QStringLiteral("project_changed"));
+                       });
+      QObject::connect(projectService, &ArtifactProjectService::projectChanged,
+                       mw, [autoSaveManager]() {
+                         if (autoSaveManager)
+                           autoSaveManager->markDirty();
+                       });
+      QObject::connect(projectService, &ArtifactProjectService::layerCreated,
+                       mw, [status](const CompositionID &, const LayerID &) {
+                         status->setProjectText("Layer Added");
+                       });
+      QObject::connect(
+          projectService, &ArtifactProjectService::layerCreated, mw,
+          [](const CompositionID &compId, const LayerID &layerId) {
+            ArtifactPythonHookManager::runHook(
+                QStringLiteral("layer_added"),
+                QStringList() << compId.toString() << layerId.toString());
+          });
+      QObject::connect(
+          projectService, &ArtifactProjectService::layerCreated, mw,
+          [autoSaveManager](const CompositionID &, const LayerID &) {
+            if (autoSaveManager)
+              autoSaveManager->markDirty();
+          });
+      QObject::connect(
+          projectService, &ArtifactProjectService::layerSelected, mw,
+          [layerViewEditor, propertyPanel, projectService,
+           selectionManager = ArtifactApplicationManager::instance()
+                                  ? ArtifactApplicationManager::instance()
+                                        ->layerSelectionManager()
+                                  : nullptr](const LayerID &layerId) {
+            if (layerViewEditor) {
+              if (layerId.isNil()) {
+                layerViewEditor->view()->clearTargetLayer();
+              } else {
+                layerViewEditor->setTargetLayer(layerId);
+              }
             }
-        });
-        QObject::connect(projectService, &ArtifactProjectService::currentCompositionChanged, mw, [compositionEditor, projectService](const CompositionID& compId) {
+            if (propertyPanel) {
+              propertyPanel->setFocusedEffectId(QString());
+              if (layerId.isNil()) {
+                propertyPanel->clear();
+              } else {
+                ArtifactAbstractLayerPtr current = selectionManager
+                                                       ? selectionManager
+                                                             ->currentLayer()
+                                                       : ArtifactAbstractLayerPtr{};
+                if (!current || current->id() != layerId) {
+                  if (auto comp =
+                          projectService->currentComposition().lock()) {
+                    current = comp->layerById(layerId);
+                  }
+                }
+                if (current) {
+                  propertyPanel->setLayer(current);
+                } else {
+                  propertyPanel->clear();
+                }
+              }
+            }
+          });
+      QObject::connect(projectService, &ArtifactProjectService::layerSelected,
+                       mw, [status, projectService](const LayerID &layerId) {
+                         if (!status) {
+                           return;
+                         }
+                         if (layerId.isNil()) {
+                           status->setLayerText("None");
+                           return;
+                         }
+                         if (auto comp =
+                                 projectService->currentComposition().lock()) {
+                           if (auto layer = comp->layerById(layerId)) {
+                             const QString name = layer->layerName().trimmed();
+                             status->setLayerText(
+                                 name.isEmpty() ? layerId.toString() : name);
+                             return;
+                           }
+                         }
+                         status->setLayerText(layerId.toString());
+                       });
+      QObject::connect(
+          projectService, &ArtifactProjectService::currentCompositionChanged,
+          mw, [compositionEditor, projectService](const CompositionID &compId) {
             if (!compositionEditor || !projectService) {
-                return;
+              return;
             }
             const auto found = projectService->findComposition(compId);
             if (found.success && !found.ptr.expired()) {
-                auto comp = found.ptr.lock();
-                compositionEditor->setComposition(comp);
+              auto comp = found.ptr.lock();
+              compositionEditor->setComposition(comp);
 
-                // タブタイトルにコンポジション名を表示
-                const QString compName = comp->settings().compositionName().toQString();
-                if (!compName.isEmpty()) {
-                    // compositionEditor のウィンドウタイトルを更新（タブに表示）
-                    compositionEditor->setWindowTitle(compName);
-                }
+              // タブタイトルにコンポジション名を表示
+              const QString compName =
+                  comp->settings().compositionName().toQString();
+              if (!compName.isEmpty()) {
+                // compositionEditor のウィンドウタイトルを更新（タブに表示）
+                compositionEditor->setWindowTitle(compName);
+              }
             }
-        });
-        QObject::connect(projectService, &ArtifactProjectService::currentCompositionChanged, mw, [layerViewEditor]() {
-            if (layerViewEditor) {
-                layerViewEditor->view()->clearTargetLayer();
+          });
+      QObject::connect(projectService,
+                       &ArtifactProjectService::currentCompositionChanged, mw,
+                       [projectService, propertyPanel]() {
+                         if (!projectService) {
+                           return;
+                         }
+                         if (auto *selectionManager =
+                                 ArtifactApplicationManager::instance()
+                                     ? ArtifactApplicationManager::instance()
+                                           ->layerSelectionManager()
+                                     : nullptr) {
+                           selectionManager->setActiveComposition(
+                               projectService->currentComposition().lock());
+                           if (propertyPanel) {
+                             propertyPanel->setFocusedEffectId(QString());
+                             const ArtifactAbstractLayerPtr currentLayer =
+                                 selectionManager->currentLayer();
+                             if (currentLayer) {
+                               const auto comp =
+                                   projectService->currentComposition().lock();
+                               if (comp && comp->layerById(currentLayer->id())) {
+                                 propertyPanel->setLayer(
+                                     comp->layerById(currentLayer->id()));
+                               } else {
+                                 propertyPanel->clear();
+                               }
+                             } else {
+                               propertyPanel->clear();
+                             }
+                           }
+                         }
+                       });
+      QObject::connect(
+          projectService, &ArtifactProjectService::currentCompositionChanged,
+          mw, [status, projectService](const CompositionID &compId) {
+            if (!status) {
+              return;
             }
-        });
-        QObject::connect(projectService, &ArtifactProjectService::currentCompositionChanged, mw, [propertyPanel]() {
-            if (propertyPanel) {
-                propertyPanel->setFocusedEffectId(QString());
-                propertyPanel->clear();
+            if (compId.isNil()) {
+              status->setLayerText("None");
+              status->setCompositionInfo("NO COMPOSITION", 0, 0, 0);
+              return;
             }
-        });
-        QObject::connect(projectService, &ArtifactProjectService::projectCreated, mw, [propertyPanel, layerViewEditor, compositionEditor]() {
-            if (propertyPanel) {
-                propertyPanel->setFocusedEffectId(QString());
-                propertyPanel->clear();
+            if (auto comp = projectService->currentComposition().lock()) {
+              status->setLayerText(
+                  comp->allLayer().isEmpty()
+                      ? "None"
+                      : QStringLiteral("(composition active)"));
+
+              // コンポジション情報をステータスバーに表示
+              const auto &settings = comp->settings();
+              status->setCompositionInfo(settings.compositionName().toQString(),
+                                         settings.compositionSize().width(),
+                                         settings.compositionSize().height(),
+                                         comp->frameRate().framerate());
             }
-            if (layerViewEditor) {
-                layerViewEditor->view()->clearTargetLayer();
-            }
-            if (compositionEditor) {
-                compositionEditor->setComposition(nullptr);
-            }
-        });
-        QObject::connect(projectService, &ArtifactProjectService::layerRemoved, mw, [status](const CompositionID&, const LayerID&) {
-            status->setProjectText("Layer Removed");
-        });
-        QObject::connect(projectService, &ArtifactProjectService::layerRemoved, mw, [](const CompositionID& compId, const LayerID& layerId) {
-            ArtifactPythonHookManager::runHook(QStringLiteral("layer_removed"), QStringList() << compId.toString() << layerId.toString());
-        });
-        QObject::connect(projectService, &ArtifactProjectService::layerRemoved, mw, [autoSaveManager](const CompositionID&, const LayerID&) {
-            if (autoSaveManager) autoSaveManager->markDirty();
-        });
-        QObject::connect(projectService, &ArtifactProjectService::compositionCreated, mw, [](const CompositionID& compId) {
-            ArtifactPythonHookManager::runHook(QStringLiteral("composition_created"), QStringList() << compId.toString());
-        });
-        const auto timelineDockTitle = [projectService](const CompositionID& compId) {
+          });
+      QObject::connect(projectService,
+                       &ArtifactProjectService::currentCompositionChanged, mw,
+                       [layerViewEditor]() {
+                         if (layerViewEditor) {
+                           layerViewEditor->view()->clearTargetLayer();
+                         }
+                       });
+      QObject::connect(projectService,
+                       &ArtifactProjectService::currentCompositionChanged, mw,
+                       [propertyPanel]() {
+                         if (propertyPanel) {
+                           propertyPanel->setFocusedEffectId(QString());
+                           propertyPanel->clear();
+                         }
+                       });
+      QObject::connect(projectService, &ArtifactProjectService::projectCreated,
+                       mw,
+                       [propertyPanel, layerViewEditor, compositionEditor]() {
+                         if (propertyPanel) {
+                           propertyPanel->setFocusedEffectId(QString());
+                           propertyPanel->clear();
+                         }
+                         if (layerViewEditor) {
+                           layerViewEditor->view()->clearTargetLayer();
+                         }
+                         if (compositionEditor) {
+                           compositionEditor->setComposition(nullptr);
+                         }
+                       });
+      QObject::connect(projectService, &ArtifactProjectService::layerRemoved,
+                       mw, [status](const CompositionID &, const LayerID &) {
+                         status->setProjectText("Layer Removed");
+                       });
+      QObject::connect(
+          projectService, &ArtifactProjectService::layerRemoved, mw,
+          [](const CompositionID &compId, const LayerID &layerId) {
+            ArtifactPythonHookManager::runHook(
+                QStringLiteral("layer_removed"),
+                QStringList() << compId.toString() << layerId.toString());
+          });
+      QObject::connect(
+          projectService, &ArtifactProjectService::layerRemoved, mw,
+          [autoSaveManager](const CompositionID &, const LayerID &) {
+            if (autoSaveManager)
+              autoSaveManager->markDirty();
+          });
+      QObject::connect(projectService,
+                       &ArtifactProjectService::compositionCreated, mw,
+                       [](const CompositionID &compId) {
+                         ArtifactPythonHookManager::runHook(
+                             QStringLiteral("composition_created"),
+                             QStringList() << compId.toString());
+                       });
+      const auto timelineDockTitle =
+          [projectService](const CompositionID &compId) {
             QString compositionLabel = compId.toString();
             if (projectService) {
-                const auto found = projectService->findComposition(compId);
-                if (found.success) {
-                    if (auto composition = found.ptr.lock()) {
-                        const QString liveName = composition->settings().compositionName().toQString().trimmed();
-                        if (!liveName.isEmpty()) {
-                            compositionLabel = liveName;
-                        }
-                    }
+              const auto found = projectService->findComposition(compId);
+              if (found.success) {
+                if (auto composition = found.ptr.lock()) {
+                  const QString liveName = composition->settings()
+                                               .compositionName()
+                                               .toQString()
+                                               .trimmed();
+                  if (!liveName.isEmpty()) {
+                    compositionLabel = liveName;
+                  }
                 }
+              }
             }
             return compositionLabel;
-        };
-        const auto timelineDockObjectId = [](const CompositionID& compId) {
-            return QStringLiteral("timeline::%1").arg(compId.toString());
-        };
-        QObject::connect(projectService, &ArtifactProjectService::compositionCreated, mw, [mw, timelineDockTitle, timelineDockObjectId, status](const CompositionID& compId) {
-            QTimer::singleShot(0, mw, [mw, compId, timelineDockTitle, timelineDockObjectId, status]() {
-                const QString dockTitle = timelineDockTitle(compId);
-                const QString dockId = timelineDockObjectId(compId);
-                auto* panel = new ArtifactTimelineWidget(mw);
-                panel->setMinimumHeight(500);
-                panel->resize(1200, 500);
-                panel->setComposition(compId);
-                panel->setWindowTitle(dockTitle);
-                
-                // ズームレベル変更をステータスバーに接続
-                QObject::connect(panel, &ArtifactTimelineWidget::zoomLevelChanged, status, &ArtifactStatusBar::setZoomPercent);
-                QObject::connect(panel, &ArtifactTimelineWidget::timelineDebugMessage, status, &ArtifactStatusBar::setTimelineDebugText);
-                
-                mw->addDockedWidgetTabbedWithId(
-                    dockTitle,
-                    dockId,
-                    ads::BottomDockWidgetArea,
-                    panel,
-                    QStringLiteral("timeline::"));
-                QTimer::singleShot(0, mw, [mw, dockId]() {
-                    mw->activateDock(dockId);
-                });
-                QTimer::singleShot(0, mw, [mw]() {
-                    mw->moveDockToTabGroup(QStringLiteral("Render Manager"),
-                                           QStringLiteral("timeline::"));
-                });
-                QTimer::singleShot(0, mw, [mw, dockId, panel]() {
+          };
+      const auto timelineDockObjectId = [](const CompositionID &compId) {
+        return QStringLiteral("timeline::%1").arg(compId.toString());
+      };
+      QObject::connect(
+          projectService, &ArtifactProjectService::compositionCreated, mw,
+          [mw, timelineDockTitle, timelineDockObjectId,
+           status](const CompositionID &compId) {
+            QTimer::singleShot(
+                0, mw,
+                [mw, compId, timelineDockTitle, timelineDockObjectId,
+                 status]() {
+                  const QString dockTitle = timelineDockTitle(compId);
+                  const QString dockId = timelineDockObjectId(compId);
+                  auto *panel = new ArtifactTimelineWidget(mw);
+                  panel->setMinimumHeight(500);
+                  panel->resize(1200, 500);
+                  panel->setComposition(compId);
+                  panel->setWindowTitle(dockTitle);
+
+                  // ズームレベル変更をステータスバーに接続
+                  QObject::connect(panel,
+                                   &ArtifactTimelineWidget::zoomLevelChanged,
+                                   status, &ArtifactStatusBar::setZoomPercent);
+                  QObject::connect(
+                      panel, &ArtifactTimelineWidget::timelineDebugMessage,
+                      status, &ArtifactStatusBar::setTimelineDebugText);
+
+                  mw->addDockedWidgetTabbedWithId(
+                      dockTitle, dockId, ads::BottomDockWidgetArea, panel,
+                      QStringLiteral("timeline::"));
+                  QTimer::singleShot(
+                      0, mw, [mw, dockId]() { mw->activateDock(dockId); });
+                  QTimer::singleShot(0, mw, [mw, dockId, panel]() {
                     if (panel) {
-                        panel->setFocus(Qt::OtherFocusReason);
+                      panel->setFocus(Qt::OtherFocusReason);
                     }
                     mw->activateDock(dockId);
+                  });
                 });
-            });
-        });
-// Add Render Queue Manager widget to timeline area (bottom tab group)
-auto* renderQueueWidget = new Artifact::RenderQueueManagerWidget(mw);
-mw->addDockedWidgetTabbedWithId(
-    QStringLiteral("Render Manager"),
-    QStringLiteral("render_manager_dock"),
-    ads::BottomDockWidgetArea,
-    renderQueueWidget,
-    QStringLiteral("timeline::")
-);
-QTimer::singleShot(0, mw, [mw]() {
-    mw->moveDockToTabGroup(QStringLiteral("Render Manager"),
-                           QStringLiteral("timeline::"));
-});
-        QObject::connect(projectService, &ArtifactProjectService::compositionRemoved, mw, [mw, timelineDockObjectId](const CompositionID& compId) {
-            mw->closeDock(timelineDockObjectId(compId));
-        });
-        QObject::connect(projectService, &ArtifactProjectService::projectCreated, mw, []() {
-            ArtifactPythonHookManager::runHook(QStringLiteral("project_opened"));
-        });
+          });
+      QObject::connect(projectService,
+                       &ArtifactProjectService::compositionRemoved, mw,
+                       [mw, timelineDockObjectId](const CompositionID &compId) {
+                         mw->closeDock(timelineDockObjectId(compId));
+                       });
+      QObject::connect(projectService, &ArtifactProjectService::projectCreated,
+                       mw, []() {
+                         ArtifactPythonHookManager::runHook(
+                             QStringLiteral("project_opened"));
+                       });
     }
 
     if (projectService && compositionEditor) {
-        if (auto current = projectService->currentComposition().lock()) {
-            compositionEditor->setComposition(current);
-        }
+      if (auto current = projectService->currentComposition().lock()) {
+        compositionEditor->setComposition(current);
+      }
     }
 
     auto latestFrame = std::make_shared<std::atomic<long long>>(0);
     auto hasFrameUpdate = std::make_shared<std::atomic_bool>(false);
     auto frameCounter = std::make_shared<std::atomic<int>>(0);
 
-    auto* uiTimer = new QTimer(mw);
+    auto *uiTimer = new QTimer(mw);
     uiTimer->setInterval(33); // ~30Hz UI update
-    QObject::connect(uiTimer, &QTimer::timeout, mw, [status, latestFrame, hasFrameUpdate]() {
-        if (hasFrameUpdate->exchange(false)) {
-            status->setFrame(latestFrame->load());
-        }
-    });
+    QObject::connect(uiTimer, &QTimer::timeout, mw,
+                     [status, latestFrame, hasFrameUpdate]() {
+                       if (hasFrameUpdate->exchange(false)) {
+                         status->setFrame(latestFrame->load());
+                       }
+                     });
     uiTimer->start();
 
-    auto* statsTimer = new QTimer(mw);
+    auto *statsTimer = new QTimer(mw);
     statsTimer->setInterval(500);
     auto fpsElapsed = std::make_shared<QElapsedTimer>();
     fpsElapsed->start();
-    QObject::connect(statsTimer, &QTimer::timeout, mw, [status, fpsElapsed, frameCounter]() {
-        status->setMemoryMB(processWorkingSetMB());
-        const qint64 elapsedMs = fpsElapsed->elapsed();
-        if (elapsedMs > 0) {
+    QObject::connect(
+        statsTimer, &QTimer::timeout, mw, [status, fpsElapsed, frameCounter]() {
+          status->setMemoryMB(processWorkingSetMB());
+          const qint64 elapsedMs = fpsElapsed->elapsed();
+          if (elapsedMs > 0) {
             const int frames = frameCounter->exchange(0);
             const double fps = frames * 1000.0 / static_cast<double>(elapsedMs);
             status->setFPS(fps);
-        }
-        fpsElapsed->restart();
-    });
+          }
+          fpsElapsed->restart();
+        });
     statsTimer->start();
 
-    auto* recoveryTimer = new QTimer(mw);
+    auto *recoveryTimer = new QTimer(mw);
     recoveryTimer->setInterval(120000);
     QObject::connect(recoveryTimer, &QTimer::timeout, mw, [autoSaveManager]() {
-        if (!autoSaveManager || !autoSaveManager->isDirty()) {
-            return;
-        }
-        const QByteArray snapshot = currentProjectSnapshotJson();
-        if (!snapshot.isEmpty()) {
-            autoSaveManager->createRecoveryPoint(snapshot);
-        }
+      if (!autoSaveManager || !autoSaveManager->isDirty()) {
+        return;
+      }
+      const QByteArray snapshot = currentProjectSnapshotJson();
+      if (!snapshot.isEmpty()) {
+        autoSaveManager->createRecoveryPoint(snapshot);
+      }
     });
     recoveryTimer->start();
 
     if (playbackService) {
-        QObject::connect(playbackService, &ArtifactPlaybackService::frameChanged, mw,
-            [latestFrame, hasFrameUpdate, frameCounter](const FramePosition& position) {
-                latestFrame->store(position.framePosition());
-                hasFrameUpdate->store(true);
-                frameCounter->fetch_add(1);
-            });
+      QObject::connect(playbackService, &ArtifactPlaybackService::frameChanged,
+                       mw,
+                       [latestFrame, hasFrameUpdate,
+                        frameCounter](const FramePosition &position) {
+                         latestFrame->store(position.framePosition());
+                         hasFrameUpdate->store(true);
+                         frameCounter->fetch_add(1);
+                       });
     }
 
     {
-        const QString appDataDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
-        QDir dataDir(appDataDir);
-        if (!dataDir.exists()) {
-            dataDir.mkpath(QStringLiteral("."));
+      const QString appDataDir =
+          QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+      QDir dataDir(appDataDir);
+      if (!dataDir.exists()) {
+        dataDir.mkpath(QStringLiteral("."));
+      }
+      ArtifactCore::FastSettingsStore layoutStore(
+          dataDir.filePath(QStringLiteral("main_window_layout.cbor")));
+      sanitizeLayoutStore(layoutStore);
+      if (!layoutStore.contains(QStringLiteral("MainWindow/layoutKey")) &&
+          !layoutStore.contains(QStringLiteral("MainWindow/geometry")) &&
+          !layoutStore.contains(QStringLiteral("MainWindow/state"))) {
+        // Backward compatibility: import once from legacy QSettings.
+        QSettings legacy(QStringLiteral("ArtifactStudio"),
+                         QStringLiteral("Artifact"));
+        auto legacyState = UiLayoutState::loadFromSettings(
+            legacy, QStringLiteral("MainWindow"));
+        if (!legacyState.isEmpty()) {
+          legacyState.saveToStore(layoutStore, QStringLiteral("MainWindow"));
+          layoutStore.sync();
         }
-        ArtifactCore::FastSettingsStore layoutStore(dataDir.filePath(QStringLiteral("main_window_layout.cbor")));
-        sanitizeLayoutStore(layoutStore);
-        if (!layoutStore.contains(QStringLiteral("MainWindow/layoutKey")) &&
-            !layoutStore.contains(QStringLiteral("MainWindow/geometry")) &&
-            !layoutStore.contains(QStringLiteral("MainWindow/state"))) {
-            // Backward compatibility: import once from legacy QSettings.
-            QSettings legacy(QStringLiteral("ArtifactStudio"), QStringLiteral("Artifact"));
-            auto legacyState = UiLayoutState::loadFromSettings(legacy, QStringLiteral("MainWindow"));
-            if (!legacyState.isEmpty()) {
-                legacyState.saveToStore(layoutStore, QStringLiteral("MainWindow"));
-                layoutStore.sync();
-            }
-        }
-        auto layoutState = UiLayoutState::loadFromStore(layoutStore, "MainWindow");
-        if (layoutState.version != kMainWindowLayoutVersion) {
-            layoutStore.remove("MainWindow/layoutKey");
-            layoutStore.remove("MainWindow/version");
-            layoutStore.remove("MainWindow/geometry");
-            layoutStore.remove("MainWindow/state");
-            layoutStore.sync();
-            layoutState = UiLayoutState("ArtifactMainWindow");
-        }
-        bool geometryRestored = true;
-        bool stateRestored = true;
-        const bool hasGeometry = !layoutState.geometry.isEmpty();
-        const bool hasState = !layoutState.state.isEmpty();
-        if (!layoutState.geometry.isEmpty()) {
-            geometryRestored = mw->restoreGeometry(layoutState.geometry);
-        }
-        if (!layoutState.state.isEmpty()) {
-            stateRestored = mw->restoreState(layoutState.state);
-        }
-        bool resetApplied = false;
-        if ((!layoutState.geometry.isEmpty() && !geometryRestored) ||
-            (!layoutState.state.isEmpty() && !stateRestored)) {
-            // Saved layout is likely incompatible with current dock/widget set.
-            layoutStore.remove("MainWindow/layoutKey");
-            layoutStore.remove("MainWindow/version");
-            layoutStore.remove("MainWindow/geometry");
-            layoutStore.remove("MainWindow/state");
-            layoutStore.sync();
-            mw->resize(1600, 900);
-            resetApplied = true;
-        }
-        recordLayoutRestoreResult(hasGeometry || hasState, geometryRestored, stateRestored, resetApplied);
+      }
+      auto layoutState =
+          UiLayoutState::loadFromStore(layoutStore, "MainWindow");
+      if (layoutState.version != kMainWindowLayoutVersion) {
+        layoutStore.remove("MainWindow/layoutKey");
+        layoutStore.remove("MainWindow/version");
+        layoutStore.remove("MainWindow/geometry");
+        layoutStore.remove("MainWindow/state");
+        layoutStore.sync();
+        layoutState = UiLayoutState("ArtifactMainWindow");
+      }
+      bool geometryRestored = true;
+      bool stateRestored = true;
+      const bool hasGeometry = !layoutState.geometry.isEmpty();
+      const bool hasState = !layoutState.state.isEmpty();
+      if (!layoutState.geometry.isEmpty()) {
+        geometryRestored = mw->restoreGeometry(layoutState.geometry);
+      }
+      if (!layoutState.state.isEmpty()) {
+        stateRestored = mw->restoreState(layoutState.state);
+      }
+      bool resetApplied = false;
+      if ((!layoutState.geometry.isEmpty() && !geometryRestored) ||
+          (!layoutState.state.isEmpty() && !stateRestored)) {
+        // Saved layout is likely incompatible with current dock/widget set.
+        layoutStore.remove("MainWindow/layoutKey");
+        layoutStore.remove("MainWindow/version");
+        layoutStore.remove("MainWindow/geometry");
+        layoutStore.remove("MainWindow/state");
+        layoutStore.sync();
+        mw->resize(1600, 900);
+        resetApplied = true;
+      }
+      recordLayoutRestoreResult(hasGeometry || hasState, geometryRestored,
+                                stateRestored, resetApplied);
     }
     mw->setDockVisible(QStringLiteral("Layer View (Diligent)"), true);
-    });
+    mw->activateDock(QStringLiteral("Layer View (Diligent)"));
+  });
 
-    QObject::connect(&a, &QCoreApplication::aboutToQuit, [mw]() {
-        const QString appDataDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
-        QDir dataDir(appDataDir);
-        if (!dataDir.exists()) {
-            dataDir.mkpath(QStringLiteral("."));
+  QObject::connect(&a, &QCoreApplication::aboutToQuit, [mw]() {
+    const QString appDataDir =
+        QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+    QDir dataDir(appDataDir);
+    if (!dataDir.exists()) {
+      dataDir.mkpath(QStringLiteral("."));
+    }
+    ArtifactCore::FastSettingsStore layoutStore(
+        dataDir.filePath(QStringLiteral("main_window_layout.cbor")));
+    UiLayoutState layoutState("ArtifactMainWindow");
+    layoutState.version = kMainWindowLayoutVersion;
+    layoutState.geometry = mw->saveGeometry();
+    layoutState.state = mw->saveState();
+    layoutState.saveToStore(layoutStore, "MainWindow");
+    layoutStore.sync();
+  });
+  QObject::connect(&a, &QCoreApplication::aboutToQuit, [&renderCenterWindow]() {
+    if (renderCenterWindow) {
+      renderCenterWindow->deleteLater();
+    }
+  });
+  QObject::connect(&a, &QCoreApplication::aboutToQuit, mw,
+                   &QObject::deleteLater);
+  QObject::connect(&a, &QCoreApplication::aboutToQuit, [&]() {
+    if (autoSaveManager) {
+      if (autoSaveManager->isDirty()) {
+        const QByteArray snapshot = currentProjectSnapshotJson();
+        if (!snapshot.isEmpty()) {
+          autoSaveManager->createRecoveryPoint(snapshot);
         }
-        ArtifactCore::FastSettingsStore layoutStore(dataDir.filePath(QStringLiteral("main_window_layout.cbor")));
-        UiLayoutState layoutState("ArtifactMainWindow");
-        layoutState.version = kMainWindowLayoutVersion;
-        layoutState.geometry = mw->saveGeometry();
-        layoutState.state = mw->saveState();
-        layoutState.saveToStore(layoutStore, "MainWindow");
-        layoutStore.sync();
-    });
-    QObject::connect(&a, &QCoreApplication::aboutToQuit, mw, &QObject::deleteLater);
-    QObject::connect(&a, &QCoreApplication::aboutToQuit, [&]() {
-        if (autoSaveManager) {
-            if (autoSaveManager->isDirty()) {
-                const QByteArray snapshot = currentProjectSnapshotJson();
-                if (!snapshot.isEmpty()) {
-                    autoSaveManager->createRecoveryPoint(snapshot);
-                }
-            }
-            autoSaveManager->stop();
-            delete autoSaveManager;
-        }
-        markSessionEndClean();
-    });
+      }
+      autoSaveManager->stop();
+      delete autoSaveManager;
+    }
+    markSessionEndClean();
+  });
 
-    mw->show();
-    return a.exec();
-
+  mw->show();
+  return a.exec();
 }

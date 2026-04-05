@@ -5,6 +5,9 @@ module;
 #include <QLabel>
 #include <QTimer>
 #include <QPainter>
+#include <QColor>
+#include <QFont>
+#include <QPalette>
 #include <QMap>
 #include <wobjectdefs.h>
 #include <wobjectimpl.h>
@@ -48,6 +51,7 @@ export module Artifact.Widgets.PerformanceProfilerWidget;
 
 
 import ArtifactCore.Utils.PerformanceProfiler;
+import Widgets.Utils.CSS;
 
 namespace Artifact {
 
@@ -93,17 +97,17 @@ protected:
             
             // Background
             painter.setPen(Qt::NoPen);
-            painter.setBrush(QColor(50, 50, 50));
+            painter.setBrush(QColor(ArtifactCore::currentDCCTheme().secondaryBackgroundColor));
             painter.drawRect(x, y, maxBarWidth, barHeight);
             
             // Value bar
             int barWidth = static_cast<int>((sample.durationMs / maxTime) * maxBarWidth);
-            QColor barColor = sample.durationMs > 16.6 ? QColor(255, 100, 100) : QColor(100, 255, 100);
+            QColor barColor = sample.durationMs > 16.6 ? QColor(QStringLiteral("#F44336")) : QColor(QStringLiteral("#4CAF50"));
             painter.setBrush(barColor);
             painter.drawRect(x, y, barWidth, barHeight);
 
             // Label
-            painter.setPen(QColor(220, 220, 220));
+            painter.setPen(QColor(ArtifactCore::currentDCCTheme().textColor));
             painter.drawText(10, y + 15, QString::fromStdString(name));
             painter.drawText(x + maxBarWidth + 10, y + 15, QString("%1 ms").arg(sample.durationMs, 0, 'f', 2));
 
@@ -133,9 +137,13 @@ private:
             .arg(totalTime, 0, 'f', 1)
             .arg(queueWaitTime, 0, 'f', 2));
         
-        if (fps < 30) fpsLabel_->setStyleSheet("color: #F44336; font-size: 16px; font-weight: bold;");
-        else if (fps < 55) fpsLabel_->setStyleSheet("color: #FF9800; font-size: 16px; font-weight: bold;");
-        else fpsLabel_->setStyleSheet("color: #4CAF50; font-size: 16px; font-weight: bold;");
+        {
+            QPalette pal = fpsLabel_->palette();
+            if (fps < 30) pal.setColor(QPalette::WindowText, QColor(QStringLiteral("#F44336")));
+            else if (fps < 55) pal.setColor(QPalette::WindowText, QColor(QStringLiteral("#FF9800")));
+            else pal.setColor(QPalette::WindowText, QColor(QStringLiteral("#4CAF50")));
+            fpsLabel_->setPalette(pal);
+        }
 
         // 重い処理上位3件のログ出力 (1秒に1回)
         static int logCounter = 0;
@@ -158,12 +166,34 @@ private:
         layout->setContentsMargins(15, 15, 15, 15);
         layout->setSpacing(10);
 
+        setAutoFillBackground(true);
+        QPalette widgetPalette = palette();
+        widgetPalette.setColor(QPalette::Window, QColor(ArtifactCore::currentDCCTheme().backgroundColor));
+        widgetPalette.setColor(QPalette::WindowText, QColor(ArtifactCore::currentDCCTheme().textColor));
+        setPalette(widgetPalette);
+
         auto header = new QHBoxLayout();
         auto title = new QLabel("Performance Profiler");
-        title->setStyleSheet("color: #aaa; font-size: 14px; font-weight: bold;");
+        {
+            QFont f = title->font();
+            f.setBold(true);
+            f.setPointSize(14);
+            title->setFont(f);
+            QPalette pal = title->palette();
+            pal.setColor(QPalette::WindowText, QColor(ArtifactCore::currentDCCTheme().textColor).darker(130));
+            title->setPalette(pal);
+        }
         
         fpsLabel_ = new QLabel("FPS: --");
-        fpsLabel_->setStyleSheet("color: #4CAF50; font-size: 24px; font-weight: bold;");
+        {
+            QFont f = fpsLabel_->font();
+            f.setBold(true);
+            f.setPointSize(24);
+            fpsLabel_->setFont(f);
+            QPalette pal = fpsLabel_->palette();
+            pal.setColor(QPalette::WindowText, QColor(QStringLiteral("#4CAF50")));
+            fpsLabel_->setPalette(pal);
+        }
 
         header->addWidget(title);
         header->addStretch();
@@ -173,7 +203,6 @@ private:
         layout->addSpacing(20);
         layout->addStretch(); // Placeholder for painted bars
 
-        setStyleSheet("background-color: #1a1a1a;");
         setMinimumSize(400, 300);
     }
 

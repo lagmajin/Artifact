@@ -5,6 +5,8 @@ module;
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QToolTip>
+#include <QPalette>
+#include <QColor>
 
 module Artifact.Widgets.ObjectReference;
 
@@ -105,11 +107,13 @@ void ArtifactObjectReferenceWidget::updateDisplay()
 {
     if (currentId_.isNil()) {
         nameEdit_->setText(QStringLiteral("None"));
-        nameEdit_->setStyleSheet(QStringLiteral("color: gray;"));
+        QPalette palette = nameEdit_->palette();
+        palette.setColor(QPalette::Text, QColor(140, 140, 140));
+        nameEdit_->setPalette(palette);
         clearButton_->setEnabled(false);
     } else {
         nameEdit_->setText(currentId_.toString());
-        nameEdit_->setStyleSheet(QString());
+        nameEdit_->setPalette(QPalette());
         clearButton_->setEnabled(allowNull_);
         
         // 名前解決（オプション）
@@ -120,7 +124,7 @@ void ArtifactObjectReferenceWidget::updateDisplay()
                 auto layer = comp->layerById(currentId_);
                 if (layer) {
                     nameEdit_->setText(layer->layerName() + QStringLiteral(" (ID: %1)").arg(currentId_.toString()));
-                    nameEdit_->setStyleSheet(QString());
+                    nameEdit_->setPalette(QPalette());
                 }
             }
         }

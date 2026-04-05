@@ -1,125 +1,96 @@
-﻿module;
+module;
 
-#include <cmath>
 #include <algorithm>
-#include <opencv2/opencv.hpp>
-
-#include <iostream>
-#include <vector>
-#include <string>
-#include <map>
-#include <unordered_map>
-#include <set>
-#include <unordered_set>
+#include <cmath>
 #include <memory>
-#include <functional>
-#include <optional>
-#include <utility>
-#include <array>
-#include <mutex>
-#include <thread>
-#include <chrono>
-#include <filesystem>
-#include <fstream>
-#include <sstream>
-#include <stdexcept>
-#include <type_traits>
-#include <variant>
-#include <any>
-#include <atomic>
-#include <condition_variable>
-#include <queue>
-#include <deque>
-#include <list>
-#include <tuple>
-#include <numeric>
-#include <regex>
-#include <random>
+#include <opencv2/opencv.hpp>
+#include <QVariant>
+#include <vector>
 
-#include <QList>
 module ExposureEffect;
 
-import std;
-
-
+import Artifact.Effect.Abstract;
+import Artifact.Effect.ImplBase;
+import Image.ImageF32x4RGBAWithCache;
+import Property.Abstract;
+import Utils.String.UniString;
 
 namespace Artifact {
 
-class ExposureEffect::Impl {
+class ExposureEffectCPUImpl : public ArtifactEffectImplBase {
 public:
-    float exposure = 0.0f;        // EV (-5.0 ~ 5.0)
-    float offset = 0.0f;          // (-0.5 ~ 0.5)
-    float gammaCorrection = 1.0f; // (0.2 ~ 5.0)
+    float exposure_ = 0.0f;
+    float offset_ = 0.0f;
+    float gammaCorrection_ = 1.0f;
+
+    void applyCPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) override {
+        dst = src;
+        cv::Mat mat = dst.image().toCVMat();
+        if (mat.empty()) {
+            return;
+        }
+
+        const float exposureMultiplier = std::pow(2.0f, exposure_);
+        const float gammaInv = 1.0f / std::max(0.0001f, gammaCorrection_);
+
+        for (int y = 0; y < mat.rows; ++y) {
+            for (int x = 0; x < mat.cols; ++x) {
+                cv::Vec4f& pixel = mat.at<cv::Vec4f>(y, x);
+                for (int c = 0; c < 3; ++c) {
+                    float val = pixel[c] * exposureMultiplier + offset_;
+                    val = std::max(0.0f, val);
+                    if (gammaInv != 1.0f) {
+                        val = std::pow(val, gammaInv);
+                    }
+                    pixel[c] = std::clamp(val, 0.0f, 1.0f);
+                }
+            }
+        }
+
+        dst.image().setFromCVMat(mat);
+    }
 };
 
-ExposureEffect::ExposureEffect()
-    : ArtifactAbstractEffect(), impl_(new Impl()) {
+class ExposureEffectGPUImpl : public ArtifactEffectImplBase {
+public:
+    float exposure_ = 0.0f;
+    float offset_ = 0.0f;
+    float gammaCorrection_ = 1.0f;
+
+    void applyCPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) override {
+        cpuImpl_.applyCPU(src, dst);
+    }
+
+    void applyGPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) override {
+        applyCPU(src, dst);
+    }
+
+private:
+    ExposureEffectCPUImpl cpuImpl_;
+};
+
+ExposureEffect::ExposureEffect() {
     setEffectID(UniString("effect.colorcorrection.exposure"));
     setDisplayName(UniString("Exposure"));
     setPipelineStage(EffectPipelineStage::Rasterizer);
+    setCPUImpl(std::make_shared<ExposureEffectCPUImpl>());
+    setGPUImpl(std::make_shared<ExposureEffectGPUImpl>());
+    setComputeMode(ComputeMode::AUTO);
 }
 
-ExposureEffect::~ExposureEffect() {
-    delete impl_;
-}
+ExposureEffect::~ExposureEffect() = default;
 
-void ExposureEffect::setExposure(float ev) {
-    impl_->exposure = std::clamp(ev, -5.0f, 5.0f);
-}
-
-float ExposureEffect::exposure() const {
-    return impl_->exposure;
-}
-
-void ExposureEffect::setOffset(float offset) {
-    impl_->offset = std::clamp(offset, -0.5f, 0.5f);
-}
-
-float ExposureEffect::offset() const {
-    return impl_->offset;
-}
-
-void ExposureEffect::setGammaCorrection(float gamma) {
-    impl_->gammaCorrection = std::clamp(gamma, 0.2f, 5.0f);
-}
-
-float ExposureEffect::gammaCorrection() const {
-    return impl_->gammaCorrection;
-}
-
-void ExposureEffect::apply(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) {
-    dst = src;
-    cv::Mat mat = dst.image().toCVMat();
-    if (mat.empty()) return;
-
-    float exposureMultiplier = std::pow(2.0f, impl_->exposure);
-    float offsetVal = impl_->offset;
-    float gammaInv = 1.0f / std::max(0.0001f, impl_->gammaCorrection);
-
-    // BGR/RGBA のうちRGB(A)のRGB部分だけ処理
-    // cv::MatはCV_32FC4と仮定
-    for (int y = 0; y < mat.rows; ++y) {
-        for (int x = 0; x < mat.cols; ++x) {
-            cv::Vec4f& pixel = mat.at<cv::Vec4f>(y, x);
-            
-            for (int c = 0; c < 3; ++c) {
-                // 1. Exposure
-                float val = pixel[c] * exposureMultiplier;
-                // 2. Offset
-                val += offsetVal;
-                // Clamp before gamma to avoid NaN on negative
-                val = std::max(0.0f, val);
-                // 3. Gamma
-                if (gammaInv != 1.0f) {
-                    val = std::pow(val, gammaInv);
-                }
-                pixel[c] = std::clamp(val, 0.0f, 1.0f);
-            }
-        }
+void ExposureEffect::syncImpls() {
+    if (auto cpu = std::dynamic_pointer_cast<ExposureEffectCPUImpl>(cpuImpl())) {
+        cpu->exposure_ = exposure_;
+        cpu->offset_ = offset_;
+        cpu->gammaCorrection_ = gammaCorrection_;
     }
-
-    dst.image().setFromCVMat(mat);
-    dst.UpdateGpuTextureFromCpuData();
+    if (auto gpu = std::dynamic_pointer_cast<ExposureEffectGPUImpl>(gpuImpl())) {
+        gpu->exposure_ = exposure_;
+        gpu->offset_ = offset_;
+        gpu->gammaCorrection_ = gammaCorrection_;
+    }
 }
 
 std::vector<AbstractProperty> ExposureEffect::getProperties() const {
@@ -127,30 +98,23 @@ std::vector<AbstractProperty> ExposureEffect::getProperties() const {
 
     props[0].setName("Exposure");
     props[0].setType(ArtifactCore::PropertyType::Float);
-    props[0].setDefaultValue(QVariant(static_cast<double>(impl_->exposure)));
-    props[0].setValue(QVariant(static_cast<double>(impl_->exposure)));
+    props[0].setValue(QVariant(static_cast<double>(exposure_)));
 
     props[1].setName("Offset");
     props[1].setType(ArtifactCore::PropertyType::Float);
-    props[1].setDefaultValue(QVariant(static_cast<double>(impl_->offset)));
-    props[1].setValue(QVariant(static_cast<double>(impl_->offset)));
+    props[1].setValue(QVariant(static_cast<double>(offset_)));
 
     props[2].setName("Gamma");
     props[2].setType(ArtifactCore::PropertyType::Float);
-    props[2].setDefaultValue(QVariant(static_cast<double>(impl_->gammaCorrection)));
-    props[2].setValue(QVariant(static_cast<double>(impl_->gammaCorrection)));
+    props[2].setValue(QVariant(static_cast<double>(gammaCorrection_)));
 
     return props;
 }
 
 void ExposureEffect::setPropertyValue(const UniString& name, const QVariant& value) {
-    if (name == "Exposure") {
-        setExposure(value.toFloat());
-    } else if (name == "Offset") {
-        setOffset(value.toFloat());
-    } else if (name == "Gamma") {
-        setGammaCorrection(value.toFloat());
-    }
+    if (name == "Exposure") setExposure(value.toFloat());
+    else if (name == "Offset") setOffset(value.toFloat());
+    else if (name == "Gamma") setGammaCorrection(value.toFloat());
 }
 
 } // namespace Artifact

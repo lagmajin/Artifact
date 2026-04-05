@@ -1,5 +1,6 @@
 ﻿module;
 #include <QLabel>
+#include <QIcon>
 #include <QWidget>
 #include <QBoxLayout>
 #include <QComboBox>
@@ -48,6 +49,7 @@ module Artifact.Widgets.CompositionFooter;
 
 import Utils.Path;
 import Artifact.Service.Project;
+import Artifact.Service.Playback;
 
 
 namespace {
@@ -77,6 +79,7 @@ namespace Artifact {
   QToolButton* pSnapShotButton = nullptr;
   QToolButton* pShutterButton = nullptr;
   QToolButton* pPlayPauseButton = nullptr;
+  QToolButton* pStopButton = nullptr;
   QLabel* fpsLabel = nullptr;
   QLabel* memLabel = nullptr;
   QLabel* selectionLabel = nullptr;
@@ -103,6 +106,11 @@ namespace Artifact {
   pPlayPauseButton->setIconSize(QSize(20, 20));
   pPlayPauseButton->setAutoRaise(true);
   pPlayPauseButton->setToolTip("Play/Pause");
+  pStopButton = new QToolButton();
+  pStopButton->setIcon(loadIconWithFallback("MaterialVS/green/stop.svg"));
+  pStopButton->setIconSize(QSize(20, 20));
+  pStopButton->setAutoRaise(true);
+  pStopButton->setToolTip("Stop");
   fpsLabel = new QLabel("FPS: N/A");
   memLabel = new QLabel("Mem: N/A");
   selectionLabel = new QLabel("");
@@ -118,6 +126,7 @@ namespace Artifact {
   delete pSnapShotButton;
   delete pShutterButton;
   delete pPlayPauseButton;
+  delete pStopButton;
   delete fpsLabel;
   delete memLabel;
   delete selectionLabel;
@@ -143,6 +152,8 @@ namespace Artifact {
   // Playback controls
   impl_->pPlayPauseButton->setToolTip("Play/Pause");
   layout->addWidget(impl_->pPlayPauseButton);
+  impl_->pStopButton->setToolTip("Stop");
+  layout->addWidget(impl_->pStopButton);
 
   // Snapshot
   layout->addWidget(impl_->pSnapShotButton);
@@ -160,21 +171,6 @@ namespace Artifact {
   layout->addWidget(impl_->memLabel);
 
   setLayout(layout);
-  setStyleSheet(R"(
-    QToolButton {
-      background: transparent;
-      border: 1px solid transparent;
-      border-radius: 4px;
-      padding: 2px;
-    }
-    QToolButton:hover {
-      background-color: rgba(255, 255, 255, 0.08);
-      border-color: rgba(255, 255, 255, 0.12);
-    }
-    QToolButton:pressed {
-      background-color: rgba(255, 255, 255, 0.16);
-    }
-  )");
 
   // Connections
   connect(impl_->pSnapShotButton, &QToolButton::clicked, this, &ArtifactCompositionViewerFooter::takeSnapShotRequested);
@@ -187,6 +183,18 @@ namespace Artifact {
       impl_->pPlayPauseButton->setIcon(loadIconWithFallback("MaterialVS/green/play_arrow.svg"));
     }
     Q_EMIT playPauseToggled(impl_->isPlaying_);
+  });
+
+  connect(impl_->pStopButton, &QToolButton::clicked, this, [this]() {
+    if (auto* playback = ArtifactPlaybackService::instance()) {
+      playback->stop();
+    }
+    impl_->isPlaying_ = false;
+    if (impl_->pPlayPauseButton) {
+      impl_->pPlayPauseButton->setIcon(loadIconWithFallback("MaterialVS/green/play_arrow.svg"));
+    }
+    Q_EMIT stopRequested();
+    Q_EMIT playPauseToggled(false);
   });
 
   // Periodic refresh to update displayed FPS/Mem if set externally

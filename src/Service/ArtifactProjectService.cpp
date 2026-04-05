@@ -9,6 +9,8 @@ module;
 #include <QImage>
 #include <QImageReader>
 #include <QFutureWatcher>
+#include <QRectF>
+#include <QtSvg/QSvgRenderer>
 #include <QtConcurrent>
 module Artifact.Service.Project;
 
@@ -21,6 +23,8 @@ import Artifact.Layer.Result;
 import Artifact.Composition.Abstract;
 import Artifact.Project.Items;
 import Artifact.Layer.Image;
+import Artifact.Layer.Svg;
+import Artifact.Layer.Audio;
 import Artifact.Layer.Video;
 import Image.PSDDocument;
 import File.TypeDetector;
@@ -41,6 +45,20 @@ namespace Artifact
    }
 
    const QString suffix = QFileInfo(path).suffix().toLower();
+   if (suffix == QStringLiteral("svg")) {
+    QSvgRenderer renderer(path);
+    if (renderer.isValid()) {
+     const QSize svgSize = renderer.defaultSize();
+     if (svgSize.isValid() && !svgSize.isEmpty()) {
+      return svgSize;
+     }
+     const QRectF viewBox = renderer.viewBoxF();
+     if (viewBox.isValid() && viewBox.width() > 0.0 && viewBox.height() > 0.0) {
+      return viewBox.size().toSize();
+     }
+    }
+   }
+
    if (suffix == QStringLiteral("psd") || suffix == QStringLiteral("psb")) {
     ArtifactCore::PsdDocument doc;
     if (doc.open(path)) {
@@ -60,15 +78,16 @@ namespace Artifact
   }
  }
 	
- class ArtifactProjectService::Impl
- {
- private:
- 	
- 	
- public:
+class ArtifactProjectService::Impl
+{
+private:
+	
+	
+public:
   Impl();
   ~Impl();
   static ArtifactProjectManager& projectManager();
+  void installSelectionBridge(ArtifactProjectService* owner);
   void addLayerToCurrentComposition(const ArtifactLayerInitParams& params);
   void addAssetFromPath(const UniString& path);
   QStringList importAssetsFromPaths(const QStringList& sourcePaths);
@@ -90,6 +109,8 @@ namespace Artifact
   //ProgressiveRenderer progressiveRenderer_;
 
   void checkImportedAssetCompatibility(const QStringList& importedPaths);
+  bool forwardingSelectionChange_ = false;
+  LayerID lastForwardedLayerId_;
  };
 
  ArtifactProjectService::Impl::Impl()
@@ -99,10 +120,34 @@ namespace Artifact
 
 // Impl::removeLayerFromComposition was removed; use manager call in service wrapper
 
- ArtifactProjectService::Impl::~Impl()
- {
+ArtifactProjectService::Impl::~Impl()
+{
 
+}
+
+void ArtifactProjectService::Impl::installSelectionBridge(ArtifactProjectService* owner)
+{
+ if (!owner) {
+  return;
  }
+ if (auto* app = ArtifactApplicationManager::instance()) {
+  if (auto* selectionManager = app->layerSelectionManager()) {
+   QObject::connect(selectionManager, &ArtifactLayerSelectionManager::selectionChanged, owner,
+                    [this, owner, selectionManager]() {
+                      if (forwardingSelectionChange_) {
+                        return;
+                      }
+                      const auto current = selectionManager ? selectionManager->currentLayer() : ArtifactAbstractLayerPtr{};
+                      const LayerID nextId = current ? current->id() : LayerID();
+                      if (nextId == lastForwardedLayerId_) {
+                        return;
+                      }
+                      lastForwardedLayerId_ = nextId;
+                      owner->layerSelected(nextId);
+                    });
+  }
+ }
+}
 
  ArtifactProjectManager& ArtifactProjectService::Impl::projectManager()
  {
@@ -452,8 +497,8 @@ void ArtifactProjectService::Impl::importAssetsFromPathsAsync(
 
  W_OBJECT_IMPL(ArtifactProjectService)
 	
- ArtifactProjectService::ArtifactProjectService(QObject*parent):QObject(parent),impl_(new Impl())
- {
+ArtifactProjectService::ArtifactProjectService(QObject*parent):QObject(parent),impl_(new Impl())
+{
   connect(&impl_->projectManager(),&ArtifactProjectManager::projectCreated,this,[this]() {
    impl_->currentCompositionId_ = {};
    projectCreated();
@@ -466,6 +511,7 @@ void ArtifactProjectService::Impl::importAssetsFromPathsAsync(
   });
   connect(&impl_->projectManager(), &ArtifactProjectManager::layerCreated, this, &ArtifactProjectService::layerCreated);
   connect(&impl_->projectManager(), &ArtifactProjectManager::projectChanged, this, &ArtifactProjectService::projectChanged);
+  impl_->installSelectionBridge(this);
    
    
  }
@@ -493,27 +539,30 @@ void ArtifactProjectService::Impl::importAssetsFromPathsAsync(
 
  }
 
- void ArtifactProjectService::selectLayer(const LayerID& id)
- {
+void ArtifactProjectService::selectLayer(const LayerID& id)
+{
   if (auto* app = ArtifactApplicationManager::instance()) {
     if (auto* selectionManager = app->layerSelectionManager()) {
      const auto current = selectionManager->currentLayer();
      if (current && current->id() == id) {
       selectionManager->setActiveComposition(currentComposition().lock());
+      layerSelected(id);
       return;
      }
+     impl_->forwardingSelectionChange_ = true;
      selectionManager->setActiveComposition(currentComposition().lock());
      if (id.isNil()) {
       selectionManager->clearSelection();
-     } else if (auto comp = currentComposition().lock()) {
+    } else if (auto comp = currentComposition().lock()) {
       selectionManager->selectLayer(comp->layerById(id));
     } else {
       selectionManager->clearSelection();
     }
+     impl_->forwardingSelectionChange_ = false;
    }
   }
   layerSelected(id);
- }
+}
 
  void ArtifactProjectService::addLayer(const CompositionID& id, const ArtifactLayerInitParams& param)
  {
@@ -532,12 +581,12 @@ bool ArtifactProjectService::removeLayerFromComposition(const CompositionID& com
 {
     bool ok = impl_->projectManager().removeLayerFromComposition(compositionId, layerId);
     if (ok) {
+        // [Optimization] Only emit layerRemoved. notifyProjectMutation triggers global projectChanged 
+        // which causes heavy UI rebuilds. Most widgets handle layerRemoved specifically.
         layerRemoved(compositionId, layerId);
-        notifyProjectMutation(impl_->projectManager());
     }
     return ok;
 }
-
 bool ArtifactProjectService::moveLayerInCurrentComposition(const LayerID& layerId, int newIndex)
 {
     auto comp = currentComposition().lock();
@@ -609,6 +658,10 @@ bool ArtifactProjectService::replaceLayerSourceInCurrentComposition(const LayerI
     bool replaced = false;
     if (auto imageLayer = std::dynamic_pointer_cast<ArtifactImageLayer>(layer)) {
         replaced = imageLayer->loadFromPath(trimmed);
+    } else if (auto svgLayer = std::dynamic_pointer_cast<ArtifactSvgLayer>(layer)) {
+        replaced = svgLayer->loadFromPath(trimmed);
+    } else if (auto audioLayer = std::dynamic_pointer_cast<ArtifactAudioLayer>(layer)) {
+        replaced = audioLayer->loadFromPath(trimmed);
     } else if (auto videoLayer = std::dynamic_pointer_cast<ArtifactVideoLayer>(layer)) {
         replaced = videoLayer->loadFromPath(trimmed);
     }
@@ -672,7 +725,6 @@ bool ArtifactProjectService::setLayerVisibleInCurrentComposition(const LayerID& 
         return false;
     }
     layer->setVisible(visible);
-    notifyProjectMutation(impl_->projectManager());
     return true;
 }
 
@@ -687,7 +739,6 @@ bool ArtifactProjectService::setLayerLockedInCurrentComposition(const LayerID& l
         return false;
     }
     layer->setLocked(locked);
-    notifyProjectMutation(impl_->projectManager());
     return true;
 }
 
@@ -702,7 +753,6 @@ bool ArtifactProjectService::setLayerSoloInCurrentComposition(const LayerID& lay
         return false;
     }
     layer->setSolo(solo);
-    notifyProjectMutation(impl_->projectManager());
     return true;
 }
 
@@ -761,6 +811,50 @@ bool ArtifactProjectService::setLayerParentInCurrentComposition(const LayerID& l
     }
     notifyProjectMutation(impl_->projectManager());
     return true;
+}
+
+bool ArtifactProjectService::precomposeLayersInCurrentComposition(const QVector<LayerID>& layerIds, const UniString& newCompositionName)
+{
+    // TODO: Implement precompose (pre-render selected layers into a new composition)
+    qWarning() << "[ArtifactProjectService] precomposeLayersInCurrentComposition is not yet implemented";
+    Q_UNUSED(layerIds);
+    Q_UNUSED(newCompositionName);
+    return false;
+}
+
+void ArtifactProjectService::splitLayerAtCurrentTime(const CompositionID& compositionId, const LayerID& layerId)
+{
+    auto comp = findComposition(compositionId).ptr.lock();
+    if (!comp || layerId.isNil()) {
+        return;
+    }
+
+    auto layer = comp->layerById(layerId);
+    if (!layer) {
+        return;
+    }
+
+    const auto now = comp->framePosition();
+    const qint64 nowFrame = now.framePosition();
+    const qint64 inFrame = layer->inPoint().framePosition();
+    const qint64 outFrame = layer->outPoint().framePosition();
+    if (nowFrame <= inFrame || nowFrame >= outFrame) {
+        return;
+    }
+
+    const auto oldOut = layer->outPoint();
+    layer->setOutPoint(now);
+
+    auto result = impl_->projectManager().duplicateLayerInComposition(compositionId, layerId);
+    if (!result.success || !result.layer) {
+        layer->setOutPoint(oldOut);
+        return;
+    }
+
+    auto newLayer = result.layer;
+    newLayer->setInPoint(now);
+    newLayer->setOutPoint(oldOut);
+    projectChanged();
 }
 
 bool ArtifactProjectService::clearLayerParentInCurrentComposition(const LayerID& layerId)
@@ -822,6 +916,8 @@ bool ArtifactProjectService::addEffectToLayerInCurrentComposition(const LayerID&
         return false;
     }
     layer->addEffect(effect);
+    Q_EMIT layer->changed();
+    Q_EMIT projectChanged();
     return true;
 }
 
@@ -839,6 +935,8 @@ bool ArtifactProjectService::removeEffectFromLayerInCurrentComposition(const Lay
         return false;
     }
     layer->removeEffect(UniString(effectId.toStdString()));
+    Q_EMIT layer->changed();
+    Q_EMIT projectChanged();
     return true;
 }
 
@@ -859,6 +957,8 @@ bool ArtifactProjectService::setEffectEnabledInLayerInCurrentComposition(const L
     for (const auto& effect : layer->getEffects()) {
         if (effect && effect->effectID().toQString() == effectId) {
             effect->setEnabled(enabled);
+            Q_EMIT layer->changed();
+            Q_EMIT projectChanged();
             return true;
         }
     }
@@ -926,6 +1026,8 @@ bool ArtifactProjectService::moveEffectInLayerInCurrentComposition(const LayerID
             layer->addEffect(effect);
         }
     }
+    Q_EMIT layer->changed();
+    Q_EMIT projectChanged();
     return true;
 }
 

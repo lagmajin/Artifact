@@ -26,7 +26,11 @@ Project View / Project panel を独立して改善するための実装メモ。
 - 目標:
   project 内の folder/bin 整理を進めやすくする。
 - 対象:
-  folder 作成、drag & drop 整理、expand/collapse、unused view、tag/filter。
+  - [x] folder 作成 (Folder creation): Improved to ask for a name using QInputDialog and handled via ProjectService.
+  - [x] drag & drop 整理 (Drag & drop organization): Support multiple selection move and added ancestor check to prevent illegal parenting.
+  - [x] expand/collapse
+  - [x] unused view
+  - [x] tag/filter
 
 ## M-PV-4 Import Flow
 
@@ -41,6 +45,9 @@ Project View / Project panel を独立して改善するための実装メモ。
   Project View から composition / timeline / viewer を自然に開けるようにする。
 - 対象:
   current composition 同期、double-click、context menu、new comp from selection。
+- 進行メモ:
+  - Project View の current composition 表示は Timeline / Contents Viewer の状態チップと意味を揃える方向で進める
+  - selection summary は Project View を基準に、他ビューでも「今どこを見ているか」が読める形へ寄せる
 
 ## First Pass Notes
 
@@ -54,12 +61,11 @@ Project View / Project panel を独立して改善するための実装メモ。
 
   - context menu に `Repeat Last Command` / `Repeat Last New Command` を追加
 
-## Next Slice for M-PV-3
+## Next Slice for M-PV-3 (Completed 2026-04-04)
 
-- folder/bin の配置先選択
-- nested folder 作成 API
-- drag & drop で project item 整理
-- unused / recent / tag の仮想 view
+- [x] folder/bin の配置先選択 (Folder creation at selection)
+- [x] drag & drop で project item 整理 (Support multiple items and ancestor check)
+- [x] unused / recent / tag の仮想 view (Implemented via search bar filters: `unused:true`, `tag:`)
 
 ## Follow-up Notes
 

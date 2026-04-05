@@ -45,11 +45,6 @@ module;
 #include <regex>
 #include <random>
 export module Artifact.Widgets.ProjectManagerWidget;
-
-
-
-
-
 import Artifact.Project;
 
 W_REGISTER_ARGTYPE(QStringList)
@@ -66,18 +61,20 @@ public:
 };
 */
 
-class HoverThumbnailPopupWidget:public QWidget {
-private:
- class Impl;
- Impl* impl_;
-public:
- explicit HoverThumbnailPopupWidget(QWidget* parent = nullptr);
- ~HoverThumbnailPopupWidget();
- void setThumbnail(const QPixmap& pixmap);
- void setLabels(const QStringList& labels);
- void setLabel(int idx, const QString& text);
- void showAt(const QPoint& globalPos);
-};
+ class HoverThumbnailPopupWidget:public QWidget {
+ private:
+  class Impl;
+  Impl* impl_;
+ protected:
+  void paintEvent(QPaintEvent* event) override;
+ public:
+  explicit HoverThumbnailPopupWidget(QWidget* parent = nullptr);
+  ~HoverThumbnailPopupWidget();
+  void setThumbnail(const QPixmap& pixmap);
+  void setLabels(const QStringList& labels);
+  void setLabel(int idx, const QString& text);
+  void showAt(const QPoint& globalPos);
+ };
 
  class ArtifactProjectView :public QWidget {
   W_OBJECT(ArtifactProjectView)
@@ -188,11 +185,14 @@ public:
  public:
   explicit ArtifactProjectManagerWidget(QWidget* parent = nullptr);
   ~ArtifactProjectManagerWidget();
+  ArtifactProjectView* projectView() const;
+  bool selectItemsByFilePaths(const QStringList& filePaths);
   void setFilter();
   void triggerUpdate();
   void setThumbnailEnabled(bool b = true);
- public /*signals*/:
+  public /*signals*/:
   void onFileDropped(const QStringList& list) W_SIGNAL(onFileDropped, list);
+  void itemDoubleClicked(const QModelIndex& index) W_SIGNAL(itemDoubleClicked, index);
    
  public/*Slots*/:
   void updateRequested();

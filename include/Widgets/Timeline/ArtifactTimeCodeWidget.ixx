@@ -1,4 +1,6 @@
 module;
+#include <QEvent>
+#include <QObject>
 #include <QWidget>
 #include <wobjectdefs.h>
 export module Artifact.Timeline.TimeCodeWidget;
@@ -13,10 +15,13 @@ export namespace Artifact
  protected:
 
  public:
-  explicit ArtifactTimeCodeWidget(QWidget* parent = nullptr);
+ explicit ArtifactTimeCodeWidget(QWidget* parent = nullptr);
   ~ArtifactTimeCodeWidget();
 
   void updateTimeCode(int frame);
+
+ protected:
+  void paintEvent(QPaintEvent* event) override;
  };
  
  class ArtifactTimelineSearchBarWidget :public QWidget {
@@ -28,7 +33,18 @@ export namespace Artifact
   explicit ArtifactTimelineSearchBarWidget(QWidget* parent = nullptr);
   ~ArtifactTimelineSearchBarWidget();
 
+  void focusSearch();
+  void clearSearch();
+  bool hasSearchText() const;
+
+ protected:
+  bool eventFilter(QObject* watched, QEvent* event) override;
+
+ public:
   void searchTextChanged(const QString& text) W_SIGNAL(searchTextChanged, text);
+  void searchNextRequested() W_SIGNAL(searchNextRequested);
+  void searchPrevRequested() W_SIGNAL(searchPrevRequested);
+  void searchCleared() W_SIGNAL(searchCleared);
  };
 
 };

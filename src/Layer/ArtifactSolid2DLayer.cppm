@@ -1,7 +1,10 @@
 module;
 #include <QList>
 #include <QColor>
+#include <QJsonObject>
+#include <QMatrix4x4>
 #include <QVariant>
+#include <Layer/ArtifactCloneEffectSupport.hpp>
 
 module Artifact.Layer.Solid2D;
 
@@ -62,18 +65,51 @@ namespace Artifact
   setSourceSize(Size_2D(width, height));
  }
 
+ QJsonObject ArtifactSolid2DLayer::toJson() const
+ {
+  QJsonObject obj = ArtifactAbstractLayer::toJson();
+  obj["type"] = static_cast<int>(LayerType::Solid);
+  obj["solidWidth"] = sourceSize().width;
+  obj["solidHeight"] = sourceSize().height;
+  QJsonObject colorObj;
+  const auto c = color();
+  colorObj["r"] = c.r();
+  colorObj["g"] = c.g();
+  colorObj["b"] = c.b();
+  colorObj["a"] = c.a();
+  obj["solidColor"] = colorObj;
+  return obj;
+ }
+
+ void ArtifactSolid2DLayer::fromJsonProperties(const QJsonObject& obj)
+ {
+  ArtifactAbstractLayer::fromJsonProperties(obj);
+  if (obj.contains("solidWidth") || obj.contains("solidHeight")) {
+   const int width = obj.value("solidWidth").toInt(sourceSize().width);
+   const int height = obj.value("solidHeight").toInt(sourceSize().height);
+   setSize(width, height);
+  }
+  if (obj.contains("solidColor") && obj["solidColor"].isObject()) {
+   const auto colorObj = obj["solidColor"].toObject();
+   setColor(FloatColor(static_cast<float>(colorObj.value("r").toDouble(1.0)),
+                       static_cast<float>(colorObj.value("g").toDouble(1.0)),
+                       static_cast<float>(colorObj.value("b").toDouble(1.0)),
+                       static_cast<float>(colorObj.value("a").toDouble(1.0))));
+  }
+ }
+
  std::vector<ArtifactCore::PropertyGroup> ArtifactSolid2DLayer::getLayerPropertyGroups() const
  {
   auto groups = ArtifactAbstractLayer::getLayerPropertyGroups();
   ArtifactCore::PropertyGroup solidGroup(QStringLiteral("Solid"));
 
-  auto p = std::make_shared<ArtifactCore::AbstractProperty>();
-  p->setName(QStringLiteral("solid.color"));
-  p->setType(ArtifactCore::PropertyType::Color);
   const auto c = color();
+  auto p = persistentLayerProperty(QStringLiteral("solid.color"),
+                                   ArtifactCore::PropertyType::Color,
+                                   QColor::fromRgbF(c.r(), c.g(), c.b(), c.a()),
+                                   -120);
   p->setColorValue(QColor::fromRgbF(c.r(), c.g(), c.b(), c.a()));
   p->setValue(p->getColorValue());
-  p->setDisplayPriority(-120);
   p->setAnimatable(true);
   solidGroup.addProperty(p);
 
@@ -96,11 +132,17 @@ void ArtifactSolid2DLayer::draw(ArtifactIRenderer* renderer)
 {
  if (!renderer) return;
  auto size = this->sourceSize();
- renderer->drawSolidRect(0.0f, 0.0f,
-                         static_cast<float>(size.width),
-                         static_cast<float>(size.height),
-                         impl_->color(),
-                         this->opacity());
+ const QMatrix4x4 baseTransform = getGlobalTransform4x4();
+ drawWithClonerEffect(this, baseTransform, [renderer, size, this](const QMatrix4x4& transform, float weight) {
+  const FloatColor src = impl_->color();
+  const FloatColor color(src.r(), src.g(), src.b(), src.a() * this->opacity() * weight);
+  renderer->drawSolidRectTransformed(0.0f, 0.0f,
+                                     static_cast<float>(size.width),
+                                     static_cast<float>(size.height),
+                                     transform,
+                                     color,
+                                     1.0f);
+ });
 }
 
 }

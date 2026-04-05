@@ -44,6 +44,8 @@ module Artifact.Composition.InitParams;
 
 
 
+import Core.Defaults;
+
 namespace Artifact {
 
  class ArtifactCompositionInitParams::Impl {
@@ -64,16 +66,16 @@ namespace Artifact {
   Impl()
    : compositionName_(std::string("New Composition")),
      pixelAspectRatio_(1, 1),
-     frameRate_(30.0),
-     duration_(300, 30.0),
-     startTimeCode_(0, 30.0),
+     frameRate_(kDefaultFrameRate),
+     duration_(kDefaultDurationFrames, kDefaultFrameRate),
+     startTimeCode_(0, kDefaultFrameRate),
      backgroundColor_(0.0f, 0.0f, 0.0f, 1.0f),
      resolutionFactor_(ResolutionFactor::Full),
      renderer3D_(Renderer3DType::Classic3D)
   {
-   resolution_.width = 1920;
-   resolution_.height = 1080;
-   workArea_.inPoint = RationalTime(0, 30.0);
+   resolution_.width = kDefaultWidth;
+   resolution_.height = kDefaultHeight;
+   workArea_.inPoint = RationalTime(0, kDefaultFrameRate);
    workArea_.outPoint = duration_;
    workArea_.enabled = true;
   }

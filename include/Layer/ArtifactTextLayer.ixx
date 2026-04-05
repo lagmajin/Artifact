@@ -98,8 +98,30 @@ public:
     void setAllCaps(bool enabled);
     bool isAllCaps() const;
 
+    void setUnderline(bool enabled);
+    bool isUnderline() const;
+
+    void setStrikethrough(bool enabled);
+    bool isStrikethrough() const;
+
     void setHorizontalAlignment(ArtifactCore::TextHorizontalAlignment alignment);
     ArtifactCore::TextHorizontalAlignment horizontalAlignment() const;
+
+    void setVerticalAlignment(ArtifactCore::TextVerticalAlignment alignment);
+    ArtifactCore::TextVerticalAlignment verticalAlignment() const;
+
+    void setWrapMode(ArtifactCore::TextWrapMode wrapMode);
+    ArtifactCore::TextWrapMode wrapMode() const;
+
+    void setMaxWidth(float width);
+    float maxWidth() const;
+
+    void setBoxHeight(float height);
+    float boxHeight() const;
+
+    void setParagraphSpacing(float spacing);
+    float paragraphSpacing() const;
+
     QImage toQImage() const;
 
     // Trigger update of internal image

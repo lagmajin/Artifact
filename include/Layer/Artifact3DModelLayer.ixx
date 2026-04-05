@@ -1,25 +1,40 @@
-﻿module ;
+module ;
 
 export module Artifact.Layers.Model3D;
 
-
+import Artifact.Layer.Abstract;
 
 export namespace Artifact {
 
- class Artifact3DLayer
- {
- private:
-  class Impl;
-  Impl* impl_;
- public:
-  Artifact3DLayer();
-  ~Artifact3DLayer();
-  void loadFromFile();
-
+ enum class RenderMode {
+   Wireframe,
+   Solid
  };
 
+ class Artifact3DLayer : public ArtifactAbstractLayer
+ {
+ private:
+   class Impl;
+   Impl* impl_;
+   void createCubeMesh();
 
+ public:
+    Artifact3DLayer();
+    ~Artifact3DLayer();
+    void loadFromFile();
+    void loadFromFile(const QString& filePath);
 
+   // Render mode
+   RenderMode renderMode() const;
+   void setRenderMode(RenderMode mode);
 
+   // ArtifactIRenderer interface
+   void draw(ArtifactIRenderer* renderer) override;
+   void drawLOD(ArtifactIRenderer* renderer, DetailLevel lod) override;
 
-};
+   // Properties
+   std::vector<ArtifactCore::PropertyGroup> getLayerPropertyGroups() const override;
+   bool setLayerPropertyValue(const QString &propertyPath, const QVariant &value) override;
+ };
+
+}

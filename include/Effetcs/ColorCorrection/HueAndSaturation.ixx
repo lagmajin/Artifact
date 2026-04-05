@@ -2,46 +2,12 @@ module;
 
 #include <QString>
 #include <QVariant>
-
-#include <iostream>
 #include <vector>
-#include <string>
-#include <map>
-#include <unordered_map>
-#include <set>
-#include <unordered_set>
-#include <memory>
-#include <algorithm>
-#include <cmath>
-#include <functional>
-#include <optional>
-#include <utility>
-#include <array>
-#include <mutex>
-#include <thread>
-#include <chrono>
-#include <filesystem>
-#include <fstream>
-#include <sstream>
-#include <stdexcept>
-#include <type_traits>
-#include <variant>
-#include <any>
-#include <atomic>
-#include <condition_variable>
-#include <queue>
-#include <deque>
-#include <list>
-#include <tuple>
-#include <numeric>
-#include <regex>
-#include <random>
+
 export module HueAndSaturation;
 
-
-
-
 import Artifact.Effect.Abstract;
+import Artifact.Effect.ImplBase;
 import Image.ImageF32x4RGBAWithCache;
 import Property.Abstract;
 import Utils.String.UniString;
@@ -51,36 +17,36 @@ export namespace Artifact {
 using namespace ArtifactCore;
 
 // 色相・彩度・明度 (Hue, Saturation, Lightness) エフェクト
+// CPU/GPU 両対応、同一アルゴリズム
 class HueAndSaturation : public ArtifactAbstractEffect {
 private:
-    class Impl;
-    Impl* impl_;
+    float hueShift_ = 0.0f;
+    float saturationScale_ = 1.0f;
+    float lightnessShift_ = 0.0f;
+    bool colorize_ = false;
 
-protected:
-    void apply(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) override;
+    void syncImpls();
 
 public:
     HueAndSaturation();
     ~HueAndSaturation() override;
 
-    // 色相シフト (-180.0 ~ 180.0, default: 0.0) -> HSV空間のHに加算
-    void setHue(float hueShift);
-    float hue() const;
+    void setHue(float v) { hueShift_ = std::clamp(v, -180.0f, 180.0f); syncImpls(); }
+    float hue() const { return hueShift_; }
 
-    // 彩度スケール (0.0 ~ 2.0, default: 1.0) -> HSV空間のSに乗算
-    void setSaturation(float saturationScale);
-    float saturation() const;
+    void setSaturation(float v) { saturationScale_ = std::clamp(v, 0.0f, 2.0f); syncImpls(); }
+    float saturation() const { return saturationScale_; }
 
-    // 明度シフト (-1.0 ~ 1.0, default: 0.0) -> HSV空間のVに加算（または Lに乗算等）
-    void setLightness(float lightnessShift);
-    float lightness() const;
+    void setLightness(float v) { lightnessShift_ = std::clamp(v, -1.0f, 1.0f); syncImpls(); }
+    float lightness() const { return lightnessShift_; }
 
-    // カラライズ（単色化）の有効化
-    void setColorize(bool colorize);
-    bool isColorize() const;
+    void setColorize(bool v) { colorize_ = v; syncImpls(); }
+    bool isColorize() const { return colorize_; }
 
     std::vector<AbstractProperty> getProperties() const override;
     void setPropertyValue(const UniString& name, const QVariant& value) override;
+
+    bool supportsGPU() const override { return true; }
 };
 
 } // namespace Artifact

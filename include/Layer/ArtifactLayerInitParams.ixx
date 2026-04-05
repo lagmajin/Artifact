@@ -125,6 +125,30 @@ export namespace Artifact {
   void setImagePath(const QString& path) { imagePath_ = path; }
  };
 
+ class ArtifactSvgInitParams : public ArtifactLayerInitParams
+ {
+ private:
+  QString svgPath_;
+
+ public:
+  explicit ArtifactSvgInitParams(const QString& name);
+  ~ArtifactSvgInitParams();
+  QString svgPath() const { return svgPath_; }
+  void setSvgPath(const QString& path) { svgPath_ = path; }
+ };
+
+ class ArtifactAudioInitParams :public ArtifactLayerInitParams
+ {
+ private:
+  QString audioPath_;
+
+ public:
+  ArtifactAudioInitParams(const QString& name);
+  ~ArtifactAudioInitParams();
+  QString audioPath() const { return audioPath_; }
+  void setAudioPath(const QString& path) { audioPath_ = path; }
+ };
+
 
  class ArtifactCameraLayerInitParams :public ArtifactLayerInitParams
  {

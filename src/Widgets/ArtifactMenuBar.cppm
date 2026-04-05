@@ -11,6 +11,7 @@ import Menu.Composition;
 import Artifact.Menu.Layer;
 import Artifact.Menu.Effect;
 import Menu.Animation;
+import Artifact.Menu.Script;
 import Menu.Render;
 import Menu.Time;
 import Artifact.Menu.View;
@@ -36,6 +37,7 @@ public:
  ArtifactLayerMenu* layerMenu = nullptr;
  ArtifactEffectMenu* effectMenu = nullptr;
  ArtifactAnimationMenu* animationMenu = nullptr;
+ ArtifactScriptMenu* scriptMenu = nullptr;
  ArtifactRenderMenu* renderMenu = nullptr;
  ArtifactTimeMenu* timeMenu = nullptr;
  ArtifactViewMenu* viewMenu = nullptr;
@@ -48,11 +50,12 @@ ArtifactMenuBar::Impl::Impl(QWidget* mainWindow, ArtifactMenuBar* menuBar)
  : mainWindow_(mainWindow), menuBar_(menuBar)
 {
  fileMenu = new ArtifactFileMenu(menuBar);
- editMenu = new ArtifactEditMenu(menuBar);
+ editMenu = new ArtifactEditMenu(mainWindow, menuBar);
  compMenu = new ArtifactCompositionMenu(mainWindow, menuBar);
- layerMenu = new ArtifactLayerMenu(menuBar);
+ layerMenu = new ArtifactLayerMenu(mainWindow, menuBar);
  effectMenu = new ArtifactEffectMenu(menuBar);
  animationMenu = new ArtifactAnimationMenu(menuBar);
+ scriptMenu = new ArtifactScriptMenu(menuBar);
  renderMenu = new ArtifactRenderMenu(mainWindow, menuBar);
  timeMenu = new ArtifactTimeMenu(menuBar);
  viewMenu = new ArtifactViewMenu(menuBar);
@@ -68,6 +71,7 @@ ArtifactMenuBar::Impl::Impl(QWidget* mainWindow, ArtifactMenuBar* menuBar)
  menuBar->addMenu(layerMenu);
  menuBar->addMenu(effectMenu);
  menuBar->addMenu(animationMenu);
+ menuBar->addMenu(scriptMenu);
  menuBar->addMenu(renderMenu);
  menuBar->addMenu(timeMenu);
  menuBar->addMenu(viewMenu);
@@ -83,15 +87,7 @@ ArtifactMenuBar::Impl::Impl(QWidget* mainWindow, ArtifactMenuBar* menuBar)
 ArtifactMenuBar::ArtifactMenuBar(QWidget* mainWindow, QWidget* parent)
  : QMenuBar(parent), impl_(new Impl(mainWindow, this))
 {
- setStyleSheet(R"(
- QMenuBar { background-color: #1E1E1E; color: #E0E0E0; font-size: 13px; }
- QMenuBar::item { padding: 4px 10px; }
- QMenu { background-color: #2D2D2D; color: #E0E0E0; font-size: 13px; icon-size: 16px; border: 1px solid #444444; }
- QMenu::item { padding: 6px 28px 6px 28px; }
- QMenu::item:selected { background-color: #414141; }
- QMenu::item:disabled { color: rgba(160, 160, 160, 110); background-color: #262626; }
- QMenu::item:disabled:selected { color: rgba(230, 230, 230, 180); background-color: #343434; }
-)");
+ setAutoFillBackground(true);
 }
 
 ArtifactMenuBar::~ArtifactMenuBar()

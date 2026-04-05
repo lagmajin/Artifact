@@ -12,6 +12,7 @@ module;
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
+#include <QDebug>
 module Artifact.Composition.Abstract;
 
 import std;
@@ -52,6 +53,7 @@ namespace Artifact {
   bool looping_ = false;
   float playbackSpeed_ = 1.0f;
   CompositionID id_;
+  QString compositionNote_;
   FloatColor backgroundColor_ = { 0.1f, 0.1f, 0.1f, 1.0f };
   //PlaybackClock playbackClock_;  // 高精度再生クロック
   
@@ -77,8 +79,11 @@ namespace Artifact {
    void bringToFront(const LayerID& id);
    void sendToBack(const LayerID& id);
 
-   bool isPlaying_ = false;
- };
+    bool isPlaying_ = false;
+
+    // Asset usage tracking
+    QVector<ArtifactCore::AssetID> getUsedAssets() const;
+  };
 
  ArtifactAbstractComposition::Impl::Impl(ArtifactAbstractComposition* owner) : owner_(owner)
  {
@@ -303,12 +308,32 @@ ArtifactAbstractLayerPtr ArtifactAbstractComposition::Impl::backMostLayer() cons
     return ArtifactAbstractLayerPtr();
 }
 
- QVector<ArtifactAbstractLayerPtr> ArtifactAbstractComposition::Impl::allLayerBackToFront() const
- {
-  auto v = layerMultiIndex_.all();
-  std::reverse(v.begin(), v.end());
-  return v;
- }
+  QVector<ArtifactAbstractLayerPtr> ArtifactAbstractComposition::Impl::allLayerBackToFront() const
+  {
+   auto v = layerMultiIndex_.all();
+   std::reverse(v.begin(), v.end());
+   return v;
+  }
+
+  QVector<ArtifactCore::AssetID> ArtifactAbstractComposition::Impl::getUsedAssets() const
+  {
+    QVector<ArtifactCore::AssetID> usedAssets;
+
+    // Collect assets from all layers
+    for (const auto& layer : layerMultiIndex_.all()) {
+      if (!layer) continue;
+
+      // TODO: Implement asset collection based on layer type
+      // For now, return empty list - will be expanded in future
+      // Example: if (auto videoLayer = std::dynamic_pointer_cast<ArtifactVideoLayer>(layer)) {
+      //   if (auto assetId = videoLayer->sourceAssetId()) {
+      //     usedAssets.append(assetId);
+      //   }
+      // }
+    }
+
+    return usedAssets;
+  }
 
  ArtifactAbstractComposition::ArtifactAbstractComposition(const CompositionID& id, const ArtifactCompositionInitParams& params) :impl_(new Impl(this))
  {
@@ -409,6 +434,8 @@ bool ArtifactAbstractComposition::getAudio(AudioSegment &outSegment, const Frame
                                             int frameCount, int sampleRate)
 {
     bool hasAnyAudio = false;
+    int activeAudioLayerCount = 0;
+    int producedAudioLayerCount = 0;
     
     // Prepare output segment
     if (outSegment.channelCount() < 2) {
@@ -421,6 +448,7 @@ bool ArtifactAbstractComposition::getAudio(AudioSegment &outSegment, const Frame
     AudioSegment layerSegment;
     for (auto &layer : impl_->layerMultiIndex_) {
         if (layer && layer->isActiveAt(start) && layer->hasAudio()) {
+            ++activeAudioLayerCount;
             if (layer->getAudio(layerSegment, start, frameCount, sampleRate)) {
                 // Simple mix (Addition)
                 int chCount = std::min(outSegment.channelCount(), layerSegment.channelCount());
@@ -433,9 +461,18 @@ bool ArtifactAbstractComposition::getAudio(AudioSegment &outSegment, const Frame
                         outData[i] += layerData[i];
                     }
                 }
+                ++producedAudioLayerCount;
                 hasAnyAudio = true;
             }
         }
+    }
+    if (activeAudioLayerCount > 0 && !hasAnyAudio) {
+        qWarning() << "[Composition][Audio] active layers produced no audio"
+                   << "startFrame=" << start.framePosition()
+                   << "frameCount=" << frameCount
+                   << "sampleRate=" << sampleRate
+                   << "activeAudioLayers=" << activeAudioLayerCount
+                   << "producedAudioLayers=" << producedAudioLayerCount;
     }
     return hasAnyAudio;
 }
@@ -550,6 +587,21 @@ void ArtifactAbstractComposition::setCompositionName(const UniString& name)
     impl_->settings_.setCompositionName(name);
 }
 
+QString ArtifactAbstractComposition::compositionNote() const
+{
+    return impl_->compositionNote_;
+}
+
+void ArtifactAbstractComposition::setCompositionNote(const QString& note)
+{
+    if (impl_->compositionNote_ == note) {
+        return;
+    }
+    impl_->compositionNote_ = note;
+    Q_EMIT compositionNoteChanged(note);
+    Q_EMIT changed();
+}
+
 void ArtifactAbstractComposition::setCompositionSize(const QSize& size)
 {
     impl_->settings_.setCompositionSize(size);
@@ -642,6 +694,15 @@ QJsonDocument ArtifactAbstractComposition::toJson() const{
     obj["frameRange"] = impl_->frameRange_.toJson();
     obj["workAreaRange"] = impl_->workAreaRange_.toJson();
     obj["name"] = impl_->settings_.compositionName().toQString();
+    obj["compositionNote"] = impl_->compositionNote_;
+    obj["width"] = impl_->settings_.compositionSize().width();
+    obj["height"] = impl_->settings_.compositionSize().height();
+    QJsonObject backgroundColorObj;
+    backgroundColorObj["r"] = impl_->backgroundColor_.r();
+    backgroundColorObj["g"] = impl_->backgroundColor_.g();
+    backgroundColorObj["b"] = impl_->backgroundColor_.b();
+    backgroundColorObj["a"] = impl_->backgroundColor_.a();
+    obj["backgroundColor"] = backgroundColorObj;
     QJsonArray layersArray;
     for (const auto& layer : impl_->layerMultiIndex_.all()) {
         if (layer) {
@@ -671,12 +732,27 @@ std::shared_ptr<ArtifactAbstractComposition> ArtifactAbstractComposition::fromJs
     if (obj.contains("name")) {
         params.setCompositionName(obj["name"].toString());
     }
+    if (obj.contains("width") && obj.contains("height")) {
+        params.setResolution(obj["width"].toInt(), obj["height"].toInt());
+    }
+    if (obj.contains("backgroundColor") && obj["backgroundColor"].isObject()) {
+        const QJsonObject backgroundColorObj = obj["backgroundColor"].toObject();
+        params.setBackgroundColor(FloatColor{
+            static_cast<float>(backgroundColorObj["r"].toDouble()),
+            static_cast<float>(backgroundColorObj["g"].toDouble()),
+            static_cast<float>(backgroundColorObj["b"].toDouble()),
+            static_cast<float>(backgroundColorObj["a"].toDouble(1.0))
+        });
+    }
     auto comp = std::make_shared<ArtifactAbstractComposition>(compId, params);
     if (obj.contains("frameRange") && obj["frameRange"].isObject()) {
         comp->setFrameRange(FrameRange::fromJson(obj["frameRange"].toObject()));
     }
     if (obj.contains("workAreaRange") && obj["workAreaRange"].isObject()) {
         comp->setWorkAreaRange(FrameRange::fromJson(obj["workAreaRange"].toObject()));
+    }
+    if (obj.contains("compositionNote")) {
+        comp->setCompositionNote(obj["compositionNote"].toString());
     }
     
     if (obj.contains("layers") && obj["layers"].isArray()) {
@@ -702,6 +778,11 @@ std::shared_ptr<ArtifactAbstractComposition> ArtifactAbstractComposition::fromJs
         }
     }
     return comp;
+}
+
+QVector<ArtifactCore::AssetID> ArtifactAbstractComposition::getUsedAssets() const
+{
+  return impl_->getUsedAssets();
 }
 
 QImage ArtifactAbstractComposition::getThumbnail(int width, int height) const

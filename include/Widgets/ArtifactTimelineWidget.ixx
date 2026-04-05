@@ -105,63 +105,15 @@ using namespace ArtifactCore;
   void clearTrackHighlight();
  };
 
-class TimelineTrackView :public QGraphicsView {
- W_OBJECT(TimelineTrackView)
- private:
-  class Impl;
-  Impl* impl_;
- protected:
-  void drawForeground(QPainter* painter, const QRectF& rect) override;
-  void drawBackground(QPainter* painter, const QRectF& rect) override;
-
-  void mousePressEvent(QMouseEvent* event) override;
-  void mouseMoveEvent(QMouseEvent* event) override;
-  void mouseReleaseEvent(QMouseEvent* event) override;
-  void keyPressEvent(QKeyEvent* event) override;
-  void wheelEvent(QWheelEvent* event) override;
-  void resizeEvent(QResizeEvent* event) override;
-
- public:
-  explicit TimelineTrackView(QWidget* parent = nullptr);
-  ~TimelineTrackView();
-  double position() const;
-  void setPosition(double position);
-  double duration() const;
-  void setDuration(double duration);
-  double zoomLevel() const;
-  void setZoomLevel(double pixelsPerFrame);
-  double visibleStartFrame() const;
-  double visibleEndFrame() const;
-
-  // Track and clip management
-  TimelineScene* timelineScene() const;
-  int addTrack(double height = 20.0);
-  void clearTracks();
-  void removeTrack(int trackIndex);
-  ClipItem* addClip(int trackIndex, double start, double duration);
-  void removeClip(ClipItem* clip);
-  void clearSelection();
-  void selectClipForLayer(const LayerID& layerId);
-
-  QSize minimumSizeHint() const override;
-
- public /*signals*/:
-  void seekPositionChanged(double ratio) W_SIGNAL(seekPositionChanged,ratio);
-  void clipSelected(ClipItem* clip) W_SIGNAL(clipSelected,clip);
-  void clipDeselected(ClipItem* clip) W_SIGNAL(clipDeselected,clip);
-  void layerClipMoved(LayerID layerId, int trackIndex, double start)
-   W_SIGNAL(layerClipMoved, layerId, trackIndex, start);
-  void layerClipTrimmed(LayerID layerId, int trackIndex, double start, double duration)
-   W_SIGNAL(layerClipTrimmed, layerId, trackIndex, start, duration);
-  void timelineDebugMessage(const QString& message) W_SIGNAL(timelineDebugMessage, message);
- };
-
-
- class ArtifactTimelineWidget :public QWidget {
+class ArtifactTimelineWidget :public QWidget {
   W_OBJECT(ArtifactTimelineWidget)
  private:
   class Impl;
   Impl* impl_;
+  void syncWorkAreaFromCurrentComposition();
+  void updateSearchState();
+  void updateKeyframeState();
+  void updateSelectionState();
  protected:
   void paintEvent(QPaintEvent* event) override;
   void mousePressEvent(QMouseEvent* event) override;
@@ -174,7 +126,7 @@ class TimelineTrackView :public QGraphicsView {
   explicit ArtifactTimelineWidget(QWidget* parent = nullptr);
   ~ArtifactTimelineWidget();
   void update();
-  void setComposition(const CompositionID& id);
+ void setComposition(const CompositionID& id);
 
   // Layer management
   void onLayerCreated(const CompositionID& compId, const LayerID& layerId);
@@ -183,6 +135,8 @@ class TimelineTrackView :public QGraphicsView {
   void refreshTracks();
   void setLayerNameEditable(bool enabled);
   bool isLayerNameEditable() const;
+  void jumpToSearchHit(int step);
+  void jumpToKeyframeHit(int step);
 
   /*signals:*/
  public:

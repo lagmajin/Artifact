@@ -147,6 +147,9 @@ asset 状態が保存再読込で落ちないようにする。
 - file details の basic metadata
 - folder open context action
 
+## Status (2026-04-04)
+- [x] Asset Browser Navigator Phase 1-4 (Splitter, Breadcrumb, History, Search, Presentation, Intelligence, Favorites, Context Menu) - Completed.
+
 未着手寄り:
 
 - imported / missing / unused badge

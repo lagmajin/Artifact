@@ -15,7 +15,7 @@ export namespace Artifact {
  protected:
   
  public:
-  explicit ArtifactEditMenu(QWidget* parent=nullptr);
+  explicit ArtifactEditMenu(QWidget* mainWindow = nullptr, QWidget* parent = nullptr);
   ~ArtifactEditMenu();
 
   void rebuildMenu();

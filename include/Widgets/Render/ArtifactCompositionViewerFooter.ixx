@@ -32,6 +32,7 @@ export namespace Artifact {
   void zoomFitRequested() W_SIGNAL(zoomFitRequested);
   void zoom100Requested() W_SIGNAL(zoom100Requested);
   void playPauseToggled(bool playing) W_SIGNAL(playPauseToggled,playing);
+  void stopRequested() W_SIGNAL(stopRequested);
  };
 
 

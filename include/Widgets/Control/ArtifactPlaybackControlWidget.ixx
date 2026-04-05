@@ -96,7 +96,7 @@ public: // slots
 
 
 /// 再生情報表示ウィジェット
-/// 現在のフレーム、タイムコード、FPS などを表示
+/// 現在のフレーム、再生速度、ドロップフレーム数などを表示
 class ArtifactPlaybackInfoWidget : public QWidget
 {
     W_OBJECT(ArtifactPlaybackInfoWidget)

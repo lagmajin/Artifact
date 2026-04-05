@@ -35,6 +35,7 @@ public:
     RenderShaderPair solidTriangleShaders() const;
     RenderShaderPair checkerboardShaders() const;
     RenderShaderPair gridShaders() const;
+    RenderShaderPair maskedSpriteShaders() const;
 
     PSOAndSRB linePsoAndSrb() const;
     PSOAndSRB outlinePsoAndSrb() const;
@@ -47,6 +48,10 @@ public:
     PSOAndSRB checkerboardPsoAndSrb() const;
     PSOAndSRB gridPsoAndSrb() const;
     PSOAndSRB spriteTransformPsoAndSrb() const;
+    PSOAndSRB maskedSpritePsoAndSrb() const;
+    PSOAndSRB gizmo3DPsoAndSrb() const;
+    PSOAndSRB gizmo3DTrianglePsoAndSrb() const;
+    PSOAndSRB batchSolidRectPsoAndSrb() const;
 
     RefCntAutoPtr<ISampler> spriteSampler() const;
 

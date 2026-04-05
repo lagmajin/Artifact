@@ -12,18 +12,24 @@
 #include <QFormLayout>
 #include <QLabel>
 #include <QPushButton>
+#include <QObject>
+#include <QMetaObject>
 #include <QMenu>
 #include <QCursor>
 #include <QDoubleSpinBox>
 #include <QSpinBox>
 #include <QCheckBox>
 #include <QLineEdit>
+#include <QPlainTextEdit>
+#include <QSignalBlocker>
 #include <QColorDialog>
 #include <QMessageBox>
 #include <QVariant>
 #include <QContextMenuEvent>
 #include <QApplication>
 #include <QClipboard>
+#include <QPalette>
+#include <QFont>
 #include <cstdlib>
 
 #include <iostream>
@@ -70,6 +76,8 @@ import Widgets.Utils.CSS;
 import Artifact.Service.Project;
 import Artifact.Composition.Abstract;
 import Artifact.Effect.Abstract;
+import Artifact.Event.Types;
+import Event.Bus;
 import Undo.UndoManager;
 import Generator.Effector;
 import Artifact.Effect.Generator.Cloner;
@@ -99,6 +107,138 @@ namespace Artifact {
  namespace {
  constexpr int kEffectRackCount = 5;
 
+ QColor themeColor(const QString& value, const QColor& fallback)
+ {
+  const QColor color(value);
+  return color.isValid() ? color : fallback;
+ }
+
+ QColor blendColor(const QColor& a, const QColor& b, const qreal t)
+ {
+  const qreal clamped = std::clamp(t, 0.0, 1.0);
+  return QColor::fromRgbF(
+      a.redF() * (1.0 - clamped) + b.redF() * clamped,
+      a.greenF() * (1.0 - clamped) + b.greenF() * clamped,
+      a.blueF() * (1.0 - clamped) + b.blueF() * clamped,
+      a.alphaF() * (1.0 - clamped) + b.alphaF() * clamped);
+ }
+
+ void applyInspectorPalette(QWidget* widget, const bool elevated = false)
+ {
+  if (!widget) {
+   return;
+  }
+  const auto& theme = ArtifactCore::currentDCCTheme();
+  const QColor background =
+      themeColor(theme.backgroundColor, QColor(QStringLiteral("#20242A")));
+  const QColor surface = themeColor(theme.secondaryBackgroundColor,
+                                    QColor(QStringLiteral("#2B3038")));
+  const QColor text =
+      themeColor(theme.textColor, QColor(QStringLiteral("#E3E7EC")));
+  const QColor selection =
+      themeColor(theme.selectionColor, QColor(QStringLiteral("#3C5B76")));
+  const QColor border =
+      themeColor(theme.borderColor, QColor(QStringLiteral("#404754")));
+  const QColor accent =
+      themeColor(theme.accentColor, QColor(QStringLiteral("#5E94C7")));
+
+  widget->setAttribute(Qt::WA_StyledBackground, true);
+  widget->setAutoFillBackground(true);
+  QPalette pal = widget->palette();
+  const QColor window = elevated ? blendColor(surface, background, 0.16) : background;
+  pal.setColor(QPalette::Window, window);
+  pal.setColor(QPalette::WindowText, text);
+  pal.setColor(QPalette::Base, surface);
+  pal.setColor(QPalette::AlternateBase, blendColor(surface, background, 0.12));
+  pal.setColor(QPalette::Text, text);
+  pal.setColor(QPalette::Button, surface);
+  pal.setColor(QPalette::ButtonText, text);
+  pal.setColor(QPalette::Highlight, selection);
+  pal.setColor(QPalette::HighlightedText, background);
+  pal.setColor(QPalette::Mid, border);
+  pal.setColor(QPalette::Light, accent.lighter(120));
+  widget->setPalette(pal);
+ }
+
+ void applyInspectorLabelPalette(QLabel* label, const bool prominent = false)
+ {
+  if (!label) {
+   return;
+  }
+  const auto& theme = ArtifactCore::currentDCCTheme();
+  const QColor text =
+      themeColor(theme.textColor, QColor(QStringLiteral("#E3E7EC")));
+  const QColor accent =
+      themeColor(theme.accentColor, QColor(QStringLiteral("#5E94C7")));
+  QPalette pal = label->palette();
+  pal.setColor(QPalette::WindowText, prominent ? accent : text);
+  label->setPalette(pal);
+ }
+
+ void applyInspectorSectionBox(QGroupBox* box)
+ {
+  if (!box) {
+   return;
+  }
+  applyInspectorPalette(box, true);
+  QFont font = box->font();
+  font.setPointSize(10);
+  font.setWeight(QFont::DemiBold);
+  box->setFont(font);
+ }
+
+ void applyInspectorTextEdit(QPlainTextEdit* edit)
+ {
+  if (!edit) {
+   return;
+  }
+  applyInspectorPalette(edit, true);
+  edit->setTabChangesFocus(true);
+ }
+
+ void applyInspectorList(QListWidget* list)
+ {
+  if (!list) {
+   return;
+  }
+  applyInspectorPalette(list, true);
+  list->setAlternatingRowColors(true);
+ }
+
+ void applyInspectorButton(QPushButton* button, const bool accent = false)
+ {
+  if (!button) {
+   return;
+  }
+  const auto& theme = ArtifactCore::currentDCCTheme();
+  const QColor background =
+      themeColor(theme.backgroundColor, QColor(QStringLiteral("#20242A")));
+  const QColor surface = themeColor(theme.secondaryBackgroundColor,
+                                    QColor(QStringLiteral("#2B3038")));
+  const QColor text =
+      themeColor(theme.textColor, QColor(QStringLiteral("#E3E7EC")));
+  const QColor selection =
+      themeColor(theme.selectionColor, QColor(QStringLiteral("#3C5B76")));
+  const QColor border =
+      themeColor(theme.borderColor, QColor(QStringLiteral("#404754")));
+  const QColor fill =
+      accent ? themeColor(theme.accentColor, QColor(QStringLiteral("#5E94C7")))
+             : surface;
+  const QColor contrast = accent ? background : text;
+
+  button->setAttribute(Qt::WA_StyledBackground, true);
+  button->setAutoFillBackground(true);
+  QPalette pal = button->palette();
+  pal.setColor(QPalette::Button, fill);
+  pal.setColor(QPalette::ButtonText, contrast);
+  pal.setColor(QPalette::Window, surface);
+  pal.setColor(QPalette::WindowText, text);
+  pal.setColor(QPalette::Highlight, selection);
+  pal.setColor(QPalette::HighlightedText, background);
+  pal.setColor(QPalette::Mid, border);
+  button->setPalette(pal);
+ }
+
  int rackIndexFromStage(EffectPipelineStage stage)
  {
   const int stageIndex = static_cast<int>(stage);
@@ -127,6 +267,10 @@ namespace Artifact {
    QTabWidget* tabWidget = nullptr;
 
    // Layer Info Tab
+   QGroupBox* compositionNoteGroup = nullptr;
+   QPlainTextEdit* compositionNoteEdit = nullptr;
+   QGroupBox* layerNoteGroup = nullptr;
+   QPlainTextEdit* layerNoteEdit = nullptr;
    QLabel* layerNameLabel = nullptr;
    QLabel* layerTypeLabel = nullptr;
    QLabel* statusLabel = nullptr;
@@ -148,6 +292,10 @@ namespace Artifact {
 
    CompositionID currentCompositionId_;
    LayerID currentLayerId_;
+   QMetaObject::Connection compositionNoteConnection_;
+   QMetaObject::Connection layerNoteConnection_;
+   ArtifactCore::EventBus eventBus_ = ArtifactCore::globalEventBus();
+   std::vector<ArtifactCore::EventBus::Subscription> eventBusSubscriptions_;
 
    void rebuildMenu();
    void defaultHandleKeyPressEvent(QKeyEvent* event);
@@ -162,7 +310,10 @@ namespace Artifact {
    void handleProjectCreated();
    void handleProjectClosed();
    void handleCompositionCreated(const CompositionID& id);
+   void handleCompositionChanged(const CompositionID& id);
    void handleLayerSelected(const LayerID& id);
+   void updateCompositionNote();
+   void updateLayerNote();
    void updateLayerInfo();
    void updateEffectsList();
    void updatePropertiesForEffect(const QString& effectId);
@@ -401,24 +552,216 @@ void ArtifactInspectorWidget::Impl::setEffectsStateText(const QString& text, boo
   setNoProjectState();
  }
 
- void ArtifactInspectorWidget::Impl::handleCompositionCreated(const CompositionID& id)
- {
-  qDebug() << "[Inspector] Composition created:" << id.toString();
-  currentCompositionId_ = id;
-  // コンポジション作成時はまだレイヤーなし
-  layerNameLabel->setText("Layer: (No layer in composition)");
-  layerTypeLabel->setText("Type: N/A");
-  statusLabel->setText("Status: Add layers to the composition");
-  setEffectsStateText("Add and select a layer to manage effects.", true);
- }
+void ArtifactInspectorWidget::Impl::handleCompositionCreated(const CompositionID& id)
+{
+ qDebug() << "[Inspector] Composition created:" << id.toString();
+ currentCompositionId_ = id;
+ updateCompositionNote();
+ updateLayerNote();
+ // コンポジション作成時はまだレイヤーなし
+ layerNameLabel->setText("Layer: (No layer in composition)");
+ layerTypeLabel->setText("Type: N/A");
+ statusLabel->setText("Status: Add layers to the composition");
+ setEffectsStateText("Add and select a layer to manage effects.", true);
+}
 
- void ArtifactInspectorWidget::Impl::handleLayerSelected(const LayerID& id)
- {
- qDebug() << "[Inspector] Layer selected:" << id.toString();
-  currentLayerId_ = id;
+void ArtifactInspectorWidget::Impl::handleCompositionChanged(const CompositionID& id)
+{
+ qDebug() << "[Inspector] Composition changed:" << id.toString();
+ currentCompositionId_ = id;
+ updateCompositionNote();
+ updateLayerNote();
+
+ if (currentLayerId_.isNil()) {
+  setNoLayerState();
+  return;
+  }
+
   updateLayerInfo();
   updateEffectsList();
  }
+
+void ArtifactInspectorWidget::Impl::handleLayerSelected(const LayerID& id)
+{
+ qDebug() << "[Inspector] Layer selected:" << id.toString();
+ currentLayerId_ = id;
+ updateLayerNote();
+ updateLayerInfo();
+ updateEffectsList();
+}
+
+void ArtifactInspectorWidget::Impl::updateCompositionNote()
+{
+  auto disconnectNoteConnection = [this]() {
+    if (compositionNoteConnection_) {
+      QObject::disconnect(compositionNoteConnection_);
+      compositionNoteConnection_ = {};
+    }
+  };
+
+  if (!compositionNoteEdit) {
+    return;
+  }
+
+  auto projectService = ArtifactProjectService::instance();
+  if (!projectService || currentCompositionId_.isNil()) {
+    disconnectNoteConnection();
+    compositionNoteEdit->blockSignals(true);
+    compositionNoteEdit->clear();
+    compositionNoteEdit->setEnabled(false);
+    compositionNoteEdit->blockSignals(false);
+    if (compositionNoteGroup) {
+      compositionNoteGroup->setEnabled(false);
+    }
+    return;
+  }
+
+  auto findResult = projectService->findComposition(currentCompositionId_);
+  if (!findResult.success) {
+    disconnectNoteConnection();
+    compositionNoteEdit->blockSignals(true);
+    compositionNoteEdit->clear();
+    compositionNoteEdit->setEnabled(false);
+    compositionNoteEdit->blockSignals(false);
+    if (compositionNoteGroup) {
+      compositionNoteGroup->setEnabled(false);
+    }
+    return;
+  }
+
+  auto comp = findResult.ptr.lock();
+  if (!comp) {
+    disconnectNoteConnection();
+    compositionNoteEdit->blockSignals(true);
+    compositionNoteEdit->clear();
+    compositionNoteEdit->setEnabled(false);
+    compositionNoteEdit->blockSignals(false);
+    if (compositionNoteGroup) {
+      compositionNoteGroup->setEnabled(false);
+    }
+    return;
+  }
+
+  disconnectNoteConnection();
+  compositionNoteConnection_ = QObject::connect(
+      comp.get(),
+      &ArtifactAbstractComposition::compositionNoteChanged,
+      compositionNoteEdit,
+      [this](const QString& note) {
+        if (!compositionNoteEdit) {
+          return;
+        }
+        QSignalBlocker blocker(compositionNoteEdit);
+        compositionNoteEdit->setPlainText(note);
+        compositionNoteEdit->setEnabled(true);
+        if (compositionNoteGroup) {
+          compositionNoteGroup->setEnabled(true);
+        }
+      });
+
+  const QString note = comp->compositionNote();
+  {
+    QSignalBlocker blocker(compositionNoteEdit);
+    compositionNoteEdit->setPlainText(note);
+    compositionNoteEdit->setEnabled(true);
+  }
+  if (compositionNoteGroup) {
+    compositionNoteGroup->setEnabled(true);
+  }
+}
+
+void ArtifactInspectorWidget::Impl::updateLayerNote()
+{
+  auto disconnectNoteConnection = [this]() {
+    if (layerNoteConnection_) {
+      QObject::disconnect(layerNoteConnection_);
+      layerNoteConnection_ = {};
+    }
+  };
+
+  if (!layerNoteEdit) {
+    return;
+  }
+
+  auto projectService = ArtifactProjectService::instance();
+  if (!projectService || currentCompositionId_.isNil() || currentLayerId_.isNil()) {
+    disconnectNoteConnection();
+    layerNoteEdit->blockSignals(true);
+    layerNoteEdit->clear();
+    layerNoteEdit->setEnabled(false);
+    layerNoteEdit->blockSignals(false);
+    if (layerNoteGroup) {
+      layerNoteGroup->setEnabled(false);
+    }
+    return;
+  }
+
+  auto findResult = projectService->findComposition(currentCompositionId_);
+  if (!findResult.success) {
+    disconnectNoteConnection();
+    layerNoteEdit->blockSignals(true);
+    layerNoteEdit->clear();
+    layerNoteEdit->setEnabled(false);
+    layerNoteEdit->blockSignals(false);
+    if (layerNoteGroup) {
+      layerNoteGroup->setEnabled(false);
+    }
+    return;
+  }
+
+  auto comp = findResult.ptr.lock();
+  if (!comp || !comp->containsLayerById(currentLayerId_)) {
+    disconnectNoteConnection();
+    layerNoteEdit->blockSignals(true);
+    layerNoteEdit->clear();
+    layerNoteEdit->setEnabled(false);
+    layerNoteEdit->blockSignals(false);
+    if (layerNoteGroup) {
+      layerNoteGroup->setEnabled(false);
+    }
+    return;
+  }
+
+  auto layer = comp->layerById(currentLayerId_);
+  if (!layer) {
+    disconnectNoteConnection();
+    layerNoteEdit->blockSignals(true);
+    layerNoteEdit->clear();
+    layerNoteEdit->setEnabled(false);
+    layerNoteEdit->blockSignals(false);
+    if (layerNoteGroup) {
+      layerNoteGroup->setEnabled(false);
+    }
+    return;
+  }
+
+  disconnectNoteConnection();
+  layerNoteConnection_ = QObject::connect(
+      layer.get(),
+      &ArtifactAbstractLayer::layerNoteChanged,
+      layerNoteEdit,
+      [this](const QString& note) {
+        if (!layerNoteEdit) {
+          return;
+        }
+        QSignalBlocker blocker(layerNoteEdit);
+        layerNoteEdit->setPlainText(note);
+        layerNoteEdit->setEnabled(true);
+        if (layerNoteGroup) {
+          layerNoteGroup->setEnabled(true);
+        }
+      });
+
+  const QString note = layer->layerNote();
+  {
+    QSignalBlocker blocker(layerNoteEdit);
+    layerNoteEdit->setPlainText(note);
+    layerNoteEdit->setEnabled(true);
+  }
+  if (layerNoteGroup) {
+    layerNoteGroup->setEnabled(true);
+  }
+}
 
  void ArtifactInspectorWidget::Impl::updateLayerInfo()
  {
@@ -467,6 +810,19 @@ void ArtifactInspectorWidget::Impl::setEffectsStateText(const QString& text, boo
   // レイヤー情報を表示
   QString layerName = layer->layerName();
   layerNameLabel->setText(QString("Layer: %1").arg(layerName.isEmpty() ? "(Unnamed)" : layerName));
+  {
+    const auto theme = ArtifactCore::currentDCCTheme();
+    QFont nameFont = layerNameLabel->font();
+    nameFont.setBold(true);
+    nameFont.setPointSize(nameFont.pointSize() + 1);
+    layerNameLabel->setFont(nameFont);
+    applyInspectorLabelPalette(layerNameLabel, true);
+
+    QFont typeFont = layerTypeLabel->font();
+    typeFont.setBold(true);
+    layerTypeLabel->setFont(typeFont);
+    applyInspectorLabelPalette(layerTypeLabel, false);
+  }
 
   // レイヤータイプを判定
   QString layerType = "Unknown";
@@ -480,15 +836,53 @@ void ArtifactInspectorWidget::Impl::setEffectsStateText(const QString& text, boo
   }
   layerTypeLabel->setText(QString("Type: %1").arg(layerType));
 
-  statusLabel->setText(QString("Status: Layer selected - ID: %1").arg(currentLayerId_.toString()));
-  setEffectsStateText(QString(), false);
+  const int maskCount = layer->maskCount();
+  const QString maskText = maskCount > 0
+      ? QStringLiteral("Masks: %1").arg(maskCount)
+      : QStringLiteral("Masks: none");
+  statusLabel->setText(QString("Status: Layer selected - ID: %1 | %2")
+                           .arg(currentLayerId_.toString(), maskText));
+  {
+    const auto theme = ArtifactCore::currentDCCTheme();
+    applyInspectorLabelPalette(statusLabel, true);
+  }
+  setEffectsStateText(maskCount > 0
+                          ? QStringLiteral("Mask / roto editing is available for this layer.")
+                          : QStringLiteral("No masks on this layer. Use Mask tool to create one."),
+                      true);
 
   qDebug() << "[Inspector] Updated layer info:" << layerName << "Type:" << layerType;
  }
 
 void ArtifactInspectorWidget::Impl::setNoProjectState()
- {
+{
   containerWidget->setEnabled(false);
+  if (compositionNoteConnection_) {
+    QObject::disconnect(compositionNoteConnection_);
+    compositionNoteConnection_ = {};
+  }
+  if (layerNoteConnection_) {
+    QObject::disconnect(layerNoteConnection_);
+    layerNoteConnection_ = {};
+  }
+  if (compositionNoteEdit) {
+    compositionNoteEdit->blockSignals(true);
+    compositionNoteEdit->clear();
+    compositionNoteEdit->setEnabled(false);
+    compositionNoteEdit->blockSignals(false);
+  }
+  if (compositionNoteGroup) {
+    compositionNoteGroup->setEnabled(false);
+  }
+  if (layerNoteEdit) {
+    layerNoteEdit->blockSignals(true);
+    layerNoteEdit->clear();
+    layerNoteEdit->setEnabled(false);
+    layerNoteEdit->blockSignals(false);
+  }
+  if (layerNoteGroup) {
+    layerNoteGroup->setEnabled(false);
+  }
   layerNameLabel->setText("Layer: (No project)");
   layerTypeLabel->setText("Type: N/A");
   statusLabel->setText("Status: Create or open a project");
@@ -499,11 +893,24 @@ void ArtifactInspectorWidget::Impl::setNoProjectState()
  }
 
 void ArtifactInspectorWidget::Impl::setNoLayerState()
- {
+{
   layerNameLabel->setText("Layer: (No layer selected)");
   layerTypeLabel->setText("Type: N/A");
   statusLabel->setText("Status: Select a layer or create one");
   currentLayerId_ = LayerID();
+  if (layerNoteConnection_) {
+    QObject::disconnect(layerNoteConnection_);
+    layerNoteConnection_ = {};
+  }
+  if (layerNoteEdit) {
+    layerNoteEdit->blockSignals(true);
+    layerNoteEdit->clear();
+    layerNoteEdit->setEnabled(false);
+    layerNoteEdit->blockSignals(false);
+  }
+  if (layerNoteGroup) {
+    layerNoteGroup->setEnabled(false);
+  }
 
   // エフェクトリストもクリア
   for (auto& rack : racks) {
@@ -772,39 +1179,115 @@ void ArtifactInspectorWidget::Impl::handleRemoveEffectClicked(int rackIndex)
 
   ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget* parent /*= nullptr*/) :QScrollArea(parent),impl_(new Impl())
  {
-
-  auto style = getDCCStyleSheetPreset(DccStylePreset::ModoStyle);
-
-  setStyleSheet(style);
-
   // メインレイアウト
   auto mainLayout = new QVBoxLayout();
   impl_->containerWidget = new QWidget();
+  applyInspectorPalette(impl_->containerWidget);
 
   // タブウィジェットを作成
   impl_->tabWidget = new QTabWidget();
+  applyInspectorPalette(impl_->tabWidget);
 
   // ================== Layer Info Tab ==================
   auto layerInfoWidget = new QWidget();
   auto layerInfoLayout = new QVBoxLayout();
 
+  impl_->compositionNoteGroup = new QGroupBox("Composition Note");
+  applyInspectorSectionBox(impl_->compositionNoteGroup);
+  auto compositionNoteLayout = new QVBoxLayout();
+  impl_->compositionNoteEdit = new QPlainTextEdit();
+  impl_->compositionNoteEdit->setPlaceholderText("Write quick notes for this composition...");
+  impl_->compositionNoteEdit->setMinimumHeight(120);
+  applyInspectorTextEdit(impl_->compositionNoteEdit);
+  compositionNoteLayout->addWidget(impl_->compositionNoteEdit);
+  compositionNoteLayout->setContentsMargins(6, 6, 6, 6);
+  impl_->compositionNoteGroup->setLayout(compositionNoteLayout);
+  impl_->compositionNoteGroup->hide();
+  layerInfoLayout->addWidget(impl_->compositionNoteGroup);
+
+  impl_->layerNoteGroup = new QGroupBox("Layer Note");
+  applyInspectorSectionBox(impl_->layerNoteGroup);
+  auto layerNoteLayout = new QVBoxLayout();
+  impl_->layerNoteEdit = new QPlainTextEdit();
+  impl_->layerNoteEdit->setPlaceholderText("Write quick notes for the selected layer...");
+  impl_->layerNoteEdit->setMinimumHeight(110);
+  applyInspectorTextEdit(impl_->layerNoteEdit);
+  layerNoteLayout->addWidget(impl_->layerNoteEdit);
+  layerNoteLayout->setContentsMargins(6, 6, 6, 6);
+  impl_->layerNoteGroup->setLayout(layerNoteLayout);
+  impl_->layerNoteGroup->hide();
+  layerInfoLayout->addWidget(impl_->layerNoteGroup);
+
   // ステータスラベル
   impl_->statusLabel = new QLabel("Status: No project");
-  impl_->statusLabel->setStyleSheet("QLabel { color: #888; font-style: italic; }");
+  {
+    QFont f = impl_->statusLabel->font();
+    f.setItalic(true);
+    impl_->statusLabel->setFont(f);
+    applyInspectorLabelPalette(impl_->statusLabel, false);
+  }
   layerInfoLayout->addWidget(impl_->statusLabel);
 
   // レイヤー名ラベル
   impl_->layerNameLabel = new QLabel("Layer: (No project)");
-  impl_->layerNameLabel->setStyleSheet("QLabel { font-weight: bold; }");
+  {
+    QFont f = impl_->layerNameLabel->font();
+    f.setBold(true);
+    impl_->layerNameLabel->setFont(f);
+    applyInspectorLabelPalette(impl_->layerNameLabel, true);
+  }
   layerInfoLayout->addWidget(impl_->layerNameLabel);
 
   // レイヤータイプラベル
   impl_->layerTypeLabel = new QLabel("Type: N/A");
+  applyInspectorLabelPalette(impl_->layerTypeLabel, false);
   layerInfoLayout->addWidget(impl_->layerTypeLabel);
 
   layerInfoLayout->setAlignment(Qt::AlignTop);
   layerInfoLayout->setContentsMargins(8, 8, 8, 8);
   layerInfoLayout->setSpacing(4);
+
+  QObject::connect(impl_->compositionNoteEdit, &QPlainTextEdit::textChanged, this, [this]() {
+    if (!impl_->compositionNoteEdit || impl_->currentCompositionId_.isNil()) {
+      return;
+    }
+    auto projectService = ArtifactProjectService::instance();
+    if (!projectService) {
+      return;
+    }
+    auto findResult = projectService->findComposition(impl_->currentCompositionId_);
+    if (!findResult.success) {
+      return;
+    }
+    auto comp = findResult.ptr.lock();
+    if (!comp) {
+      return;
+    }
+    comp->setCompositionNote(impl_->compositionNoteEdit->toPlainText());
+  });
+
+  QObject::connect(impl_->layerNoteEdit, &QPlainTextEdit::textChanged, this, [this]() {
+    if (!impl_->layerNoteEdit || impl_->currentCompositionId_.isNil() || impl_->currentLayerId_.isNil()) {
+      return;
+    }
+    auto projectService = ArtifactProjectService::instance();
+    if (!projectService) {
+      return;
+    }
+    auto findResult = projectService->findComposition(impl_->currentCompositionId_);
+    if (!findResult.success) {
+      return;
+    }
+    auto comp = findResult.ptr.lock();
+    if (!comp) {
+      return;
+    }
+    auto layer = comp->layerById(impl_->currentLayerId_);
+    if (!layer) {
+      return;
+    }
+    layer->setLayerNote(impl_->layerNoteEdit->toPlainText());
+  });
 
   layerInfoWidget->setLayout(layerInfoLayout);
   impl_->tabWidget->addTab(layerInfoWidget, "Layer Info");
@@ -816,6 +1299,7 @@ void ArtifactInspectorWidget::Impl::handleRemoveEffectClicked(int rackIndex)
   auto effectsLayout = new QVBoxLayout();
   impl_->effectsStateLabel = new QLabel("Create or open a project to manage effects.");
   impl_->effectsStateLabel->setWordWrap(true);
+  applyInspectorLabelPalette(impl_->effectsStateLabel, false);
   effectsLayout->addWidget(impl_->effectsStateLabel);
 
   QString rackNames[5] = {
@@ -828,13 +1312,12 @@ void ArtifactInspectorWidget::Impl::handleRemoveEffectClicked(int rackIndex)
 
   for (int i = 0; i < 5; ++i) {
       auto rackGroup = new QGroupBox(rackNames[i]);
-      rackGroup->setStyleSheet(
-          "QGroupBox { font-weight: bold; border: 1px solid #555; border-radius: 4px; margin-top: 14px; padding-top: 6px; }"
-          "QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top left; left: 10px; padding: 0 4px; color: #DDD; background: #2D2D30; }");
+      applyInspectorSectionBox(rackGroup);
       auto rackLayout = new QVBoxLayout();
       
       impl_->racks[i].listWidget = new QListWidget();
       impl_->racks[i].listWidget->setMaximumHeight(100);
+      applyInspectorList(impl_->racks[i].listWidget);
       impl_->racks[i].listWidget->setContextMenuPolicy(Qt::CustomContextMenu);
       if (impl_->racks[i].listWidget->viewport()) {
           impl_->racks[i].listWidget->viewport()->setContextMenuPolicy(Qt::CustomContextMenu);
@@ -845,6 +1328,10 @@ void ArtifactInspectorWidget::Impl::handleRemoveEffectClicked(int rackIndex)
       impl_->racks[i].removeButton = new QPushButton("- Remove");
       impl_->racks[i].moveUpButton = new QPushButton("Up");
       impl_->racks[i].moveDownButton = new QPushButton("Down");
+      applyInspectorButton(impl_->racks[i].addButton, true);
+      applyInspectorButton(impl_->racks[i].removeButton, false);
+      applyInspectorButton(impl_->racks[i].moveUpButton, false);
+      applyInspectorButton(impl_->racks[i].moveDownButton, false);
       btnLayout->addWidget(impl_->racks[i].addButton);
       btnLayout->addWidget(impl_->racks[i].removeButton);
       btnLayout->addWidget(impl_->racks[i].moveUpButton);
@@ -959,8 +1446,20 @@ void ArtifactInspectorWidget::Impl::handleRemoveEffectClicked(int rackIndex)
   auto projectService = ArtifactProjectService::instance();
   if (projectService) {
    // プロジェクト作成/クローズシグナルに接続
+   QObject::connect(projectService, &ArtifactProjectService::projectChanged, this, [this]() {
+    if (!impl_) {
+      return;
+    }
+    impl_->eventBus_.post<ProjectChangedEvent>(ProjectChangedEvent{QString(), QString()});
+    impl_->eventBus_.drain();
+   });
+
    QObject::connect(projectService, &ArtifactProjectService::projectCreated, this, [this]() {
-    impl_->handleProjectCreated();
+    if (!impl_) {
+      return;
+    }
+    impl_->eventBus_.post<ProjectChangedEvent>(ProjectChangedEvent{QString(), QString()});
+    impl_->eventBus_.drain();
    });
 
    // TODO: projectClosed シグナルがあれば接続
@@ -970,20 +1469,74 @@ void ArtifactInspectorWidget::Impl::handleRemoveEffectClicked(int rackIndex)
 
    // コンポジション作成シグナルに接続
    QObject::connect(projectService, &ArtifactProjectService::compositionCreated, this, [this](const CompositionID& id) {
-    impl_->handleCompositionCreated(id);
+    if (!impl_) {
+      return;
+    }
+    impl_->eventBus_.post<CurrentCompositionChangedEvent>(CurrentCompositionChangedEvent{
+      id.toString()
+    });
+    impl_->eventBus_.drain();
+   });
+
+   QObject::connect(projectService, &ArtifactProjectService::currentCompositionChanged, this, [this](const CompositionID& id) {
+    if (!impl_) {
+      return;
+    }
+    impl_->eventBus_.post<CurrentCompositionChangedEvent>(CurrentCompositionChangedEvent{
+      id.toString()
+    });
+    impl_->eventBus_.drain();
    });
 
    // レイヤー作成シグナルに接続（作成されたレイヤーを自動選択）
    QObject::connect(projectService, &ArtifactProjectService::layerCreated, this, [this](const CompositionID& cid, const LayerID& id) {
-    if (impl_->currentCompositionId_ == cid) {
-        impl_->handleLayerSelected(id);
+    if (!impl_) {
+      return;
     }
+    impl_->eventBus_.post<LayerSelectionChangedEvent>(LayerSelectionChangedEvent{
+      cid.toString(),
+      id.toString()
+    });
+    impl_->eventBus_.drain();
    });
 
    // レイヤー選択シグナルに接続
    QObject::connect(projectService, &ArtifactProjectService::layerSelected, this, [this](const LayerID& id) {
-    impl_->handleLayerSelected(id);
+    if (!impl_) {
+      return;
+    }
+    impl_->eventBus_.post<LayerSelectionChangedEvent>(LayerSelectionChangedEvent{
+      impl_->currentCompositionId_.toString(),
+      id.toString()
+    });
+    impl_->eventBus_.drain();
    });
+
+   impl_->eventBusSubscriptions_.push_back(
+   impl_->eventBus_.subscribe<ProjectChangedEvent>([this](const ProjectChangedEvent&) {
+     if (!impl_) {
+       return;
+     }
+     impl_->handleProjectCreated();
+   }));
+   impl_->eventBusSubscriptions_.push_back(
+   impl_->eventBus_.subscribe<CurrentCompositionChangedEvent>([this](const CurrentCompositionChangedEvent& event) {
+     if (!impl_) {
+       return;
+     }
+     const CompositionID cid(event.compositionId);
+     impl_->handleCompositionChanged(cid);
+   }));
+   impl_->eventBusSubscriptions_.push_back(
+   impl_->eventBus_.subscribe<LayerSelectionChangedEvent>([this](const LayerSelectionChangedEvent& event) {
+     if (!impl_) {
+       return;
+     }
+     const CompositionID cid(event.compositionId);
+     const LayerID lid(event.layerId);
+     impl_->currentCompositionId_ = cid;
+     impl_->handleLayerSelected(lid);
+   }));
   }
   impl_->refreshRackButtons();
  }
@@ -993,7 +1546,12 @@ void ArtifactInspectorWidget::Impl::handleRemoveEffectClicked(int rackIndex)
   delete impl_;
  }
 
- void ArtifactInspectorWidget::triggerUpdate()
+ QSize ArtifactInspectorWidget::sizeHint() const
+ {
+  return QSize(300, 600);
+ }
+
+ void ArtifactInspectorWidget::clear()
  {
   update();
  }

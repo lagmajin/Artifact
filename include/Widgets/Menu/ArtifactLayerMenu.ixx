@@ -18,7 +18,7 @@ export namespace Artifact {
   class Impl;
   Impl* impl_;
  public:
-  explicit ArtifactLayerMenu(QWidget* parent=nullptr);
+  explicit ArtifactLayerMenu(QWidget* mainWindow = nullptr, QWidget* parent = nullptr);
   ~ArtifactLayerMenu();
   QMenu* newLayerMenu() const;
  //signals

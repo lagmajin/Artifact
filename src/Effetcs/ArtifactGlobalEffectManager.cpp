@@ -82,6 +82,11 @@ namespace Artifact
 
  }
 
+ void ArtifactGlobalEffectManager::factoryByID(const EffectID& id)
+ {
+  Q_UNUSED(id);
+ }
+
 ArtifactGlobalEffectManager* ArtifactGlobalEffectManager::effectManager()
  {
  static ArtifactGlobalEffectManager instance = ArtifactGlobalEffectManager();

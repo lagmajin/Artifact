@@ -53,8 +53,27 @@
 - 完了条件:
   - preview 側の debug 表示を painter 直書きから減らせる
 
+## M-IR-6 Performance Optimization
+
+- 目標:
+  フレームキャッシュ、マルチスレッド（例: `std::jthread`）、GPUプロファイリングを導入し、レンダリング性能を向上させる。
+- 対象:
+  キャッシュ戦略、非同期レンダリング、バックエンド切り替え時のアーティファクト回避。
+- 完了条件:
+  4Kレンダーを30fpsでベンチマーク可能。
+
+## M-IR-7 Advanced Primitives
+
+- 目標:
+  3Dギズモ、ベクトルパス、アンチエイリアスラインをサポートし、VFX機能を強化。
+- 対象:
+  プリミティブ拡張、シェーダー統合。
+- 完了条件:
+  複雑なエフェクト（例: Object Fracture）がレンダラーで処理可能。
+
 ## First Notes
 
 - 2026-03-12 時点の `ArtifactIRenderer` は、public API は広いが backend 実装はかなり uneven。
 - software fallback は `QPainter` ベースで primitive はあるが、transform 系はほぼ no-op。
 - Diligent backend parity と text API は未整備。
+- 2026-03-30: M-IR-6/7 を追加し、性能と拡張性を強化。

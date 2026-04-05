@@ -25,6 +25,9 @@ export namespace Artifact {
  public:
   explicit ArtifactInspectorWidget(QWidget* parent = nullptr);
   ~ArtifactInspectorWidget();
+
+  QSize sizeHint() const override;
+
   void clear();
  //signals:
  

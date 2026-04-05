@@ -58,9 +58,27 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactLightLayer::getLayerPropertyGro
     
     ArtifactCore::PropertyGroup lightOptions("Light Options");
     // Simplified enum handling for now (could use a specialized enum property)
-    lightOptions.addProperty(ArtifactCore::Property("Intensity", lightImpl_->intensity_, 0.0f, 1000.0f, "%"));
-    lightOptions.addProperty(ArtifactCore::Property("Shadows", lightImpl_->castsShadows_));
-    lightOptions.addProperty(ArtifactCore::Property("Shadow Radius", lightImpl_->shadowRadius_, 0.0f, 500.0f, "px"));
+    auto intensityProp = persistentLayerProperty(QStringLiteral("Light Options/Intensity"),
+                                                 ArtifactCore::PropertyType::Float,
+                                                 static_cast<double>(lightImpl_->intensity_), -140);
+    intensityProp->setHardRange(0.0, 1000.0);
+    intensityProp->setSoftRange(0.0, 250.0);
+    intensityProp->setUnit(QStringLiteral("%"));
+    lightOptions.addProperty(intensityProp);
+
+    lightOptions.addProperty(persistentLayerProperty(
+        QStringLiteral("Light Options/Shadows"),
+        ArtifactCore::PropertyType::Boolean,
+        lightImpl_->castsShadows_, -130));
+
+    auto radiusProp = persistentLayerProperty(
+        QStringLiteral("Light Options/Shadow Radius"),
+        ArtifactCore::PropertyType::Float,
+        static_cast<double>(lightImpl_->shadowRadius_), -120);
+    radiusProp->setHardRange(0.0, 500.0);
+    radiusProp->setSoftRange(0.0, 200.0);
+    radiusProp->setUnit(QStringLiteral("px"));
+    lightOptions.addProperty(radiusProp);
     
     groups.push_back(lightOptions);
     return groups;

@@ -1,8 +1,12 @@
 module;
 #include <QWidget>
 #include <QDebug>
+#include <QString>
+#include <QStringList>
 #include <atomic>
 #include <mutex>
+#include <vector>
+#include <vulkan/vulkan.h>
 #include <RenderDevice.h>
 #include <DeviceContext.h>
 #include <SwapChain.h>
@@ -32,6 +36,12 @@ namespace {
         RefCntAutoPtr<IDeviceContext> immediateContext;
         RENDER_DEVICE_TYPE type = RENDER_DEVICE_TYPE_UNDEFINED;
         std::atomic_uint32_t refCount{0};
+    };
+
+    struct VulkanValidationInfo {
+        bool loaderAvailable = false;
+        bool enumerateLayersAvailable = false;
+        QStringList layers;
     };
 
     RenderBackendPreference getBackendPreferenceFromEnv()
@@ -131,6 +141,67 @@ namespace {
 #else
         return false;
 #endif
+    }
+
+    VulkanValidationInfo queryVulkanValidationInfo()
+    {
+        VulkanValidationInfo info;
+#if VULKAN_SUPPORTED
+        HMODULE loader = ::GetModuleHandleW(L"vulkan-1.dll");
+        if (!loader) {
+            loader = ::LoadLibraryW(L"vulkan-1.dll");
+        }
+        if (!loader) {
+            return info;
+        }
+
+        info.loaderAvailable = true;
+        const auto enumerateLayers = reinterpret_cast<PFN_vkEnumerateInstanceLayerProperties>(
+            ::GetProcAddress(loader, "vkEnumerateInstanceLayerProperties"));
+        if (!enumerateLayers) {
+            return info;
+        }
+
+        info.enumerateLayersAvailable = true;
+        uint32_t layerCount = 0;
+        if (enumerateLayers(&layerCount, nullptr) != VK_SUCCESS || layerCount == 0) {
+            return info;
+        }
+
+        std::vector<VkLayerProperties> layerProps(layerCount);
+        if (enumerateLayers(&layerCount, layerProps.data()) != VK_SUCCESS) {
+            info.layers.clear();
+            return info;
+        }
+
+        for (uint32_t i = 0; i < layerCount; ++i) {
+            info.layers.push_back(QString::fromLatin1(layerProps[i].layerName));
+        }
+#endif
+        return info;
+    }
+
+    void logVulkanValidationInfo()
+    {
+        const auto info = queryVulkanValidationInfo();
+        const QString requestedBackend = qEnvironmentVariable("ARTIFACT_RENDER_BACKEND");
+        const QString explicitInstanceLayers = qEnvironmentVariable("VK_INSTANCE_LAYERS");
+        const QString explicitLayerPath = qEnvironmentVariable("VK_LAYER_PATH");
+        const bool hasKhronosValidation = info.layers.contains(QStringLiteral("VK_LAYER_KHRONOS_validation"));
+
+        qWarning() << "[DiligentDeviceManager][VulkanValidation]"
+                   << "requestedBackend=" << (requestedBackend.isEmpty() ? QStringLiteral("<auto>") : requestedBackend)
+                   << "loaderAvailable=" << info.loaderAvailable
+                   << "enumerateLayersAvailable=" << info.enumerateLayersAvailable
+                   << "hasKhronosValidation=" << hasKhronosValidation
+                   << "VK_INSTANCE_LAYERS=" << (explicitInstanceLayers.isEmpty() ? QStringLiteral("<unset>") : explicitInstanceLayers)
+                   << "VK_LAYER_PATH=" << (explicitLayerPath.isEmpty() ? QStringLiteral("<unset>") : explicitLayerPath)
+                   << "availableLayers=" << info.layers;
+
+        if (info.loaderAvailable && info.enumerateLayersAvailable && !hasKhronosValidation) {
+            qWarning() << "[DiligentDeviceManager][VulkanValidation] VK_LAYER_KHRONOS_validation is not available."
+                       << "Detailed Vulkan validation output may be missing.";
+        }
     }
 
     bool tryCreateD3D12Device(RefCntAutoPtr<IRenderDevice>& outDevice,
@@ -330,6 +401,7 @@ void DiligentDeviceManager::Impl::initialize(QWidget* widget)
     const auto backendPreference = getBackendPreferenceFromEnv();
     qDebug() << "[DiligentDeviceManager] initialize requested backend="
              << backendPreferenceName(backendPreference);
+    logVulkanValidationInfo();
 
     if (!acquireSharedRenderDeviceForCurrentBackend(device_, immediateContext_)) {
         qWarning() << "Failed to create Diligent Engine device and contexts.";
