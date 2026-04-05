@@ -41,6 +41,7 @@ export module Artifact.Service.Playback;
 import Frame.Position;
 import Frame.Rate;
 import Frame.Range;
+import Playback.State;
 import Artifact.Composition.PlaybackController;
 import Artifact.Composition.Abstract;
 import Artifact.Playback.Engine;
@@ -141,6 +142,8 @@ public: // signals
         W_SIGNAL(frameRangeChanged, range);
     void currentCompositionChanged(ArtifactCompositionPtr composition)
         W_SIGNAL(currentCompositionChanged, composition);
+    void audioLevelChanged(float leftRms, float rightRms, float leftPeak, float rightPeak)
+        W_SIGNAL(audioLevelChanged, leftRms, rightRms, leftPeak, rightPeak);
 };
 
 }

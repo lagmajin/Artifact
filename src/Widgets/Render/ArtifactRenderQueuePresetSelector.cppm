@@ -8,9 +8,9 @@
 #include <QPushButton>
 #include <QListWidget>
 #include <QGroupBox>
-#include <QDialogButtonBox>
 #include <QFrame>
 #include <wobjectimpl.h>
+#include <Widgets/Dialog/ArtifactDialogButtons.hpp>
 
 module Artifact.Widgets.RenderQueuePresetSelector;
 
@@ -43,6 +43,8 @@ public:
             // アイコン（簡易）
             if (preset.isImageSequence) {
                 item->setIcon(QIcon::fromTheme("image-x-generic"));
+            } else if (preset.isAnimatedImage) {
+                item->setIcon(QIcon::fromTheme("video-x-generic"));
             } else {
                 item->setIcon(QIcon::fromTheme("video-x-generic"));
             }
@@ -85,7 +87,9 @@ public:
 class ArtifactRenderQueuePresetDialog::Impl {
 public:
     ArtifactRenderQueuePresetSelector* presetSelector = nullptr;
-    QDialogButtonBox* buttonBox = nullptr;
+    QWidget* buttonRow = nullptr;
+    QPushButton* okButton = nullptr;
+    QPushButton* cancelButton = nullptr;
     QVector<QString> selectedPresetIds;
     
     void onConfirmed() {
@@ -110,6 +114,7 @@ ArtifactRenderQueuePresetSelector::ArtifactRenderQueuePresetSelector(QWidget* pa
     
     impl_->categoryCombo = new QComboBox(this);
     impl_->categoryCombo->addItem(QStringLiteral("ビデオ形式"), static_cast<int>(ArtifactRenderFormatCategory::Video));
+    impl_->categoryCombo->addItem(QStringLiteral("アニメ画像"), static_cast<int>(ArtifactRenderFormatCategory::AnimatedImage));
     impl_->categoryCombo->addItem(QStringLiteral("連番画像"), static_cast<int>(ArtifactRenderFormatCategory::ImageSequence));
     categoryRow->addWidget(impl_->categoryCombo, 1);
     
@@ -236,18 +241,20 @@ ArtifactRenderQueuePresetDialog::ArtifactRenderQueuePresetDialog(QWidget* parent
     layout->addWidget(impl_->presetSelector, 1);
     
     // ボタン
-    impl_->buttonBox = new QDialogButtonBox(
-        QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
-    
-    connect(impl_->buttonBox, &QDialogButtonBox::accepted, this, [this]() {
+    const DialogButtonRow buttons = createWindowsDialogButtonRow(this);
+    impl_->buttonRow = buttons.widget;
+    impl_->okButton = buttons.okButton;
+    impl_->cancelButton = buttons.cancelButton;
+
+    connect(impl_->okButton, &QPushButton::clicked, this, [this]() {
         impl_->onConfirmed();
         Q_EMIT presetsConfirmed(impl_->selectedPresetIds);
     });
-    connect(impl_->buttonBox, &QDialogButtonBox::rejected, this, [this]() {
+    connect(impl_->cancelButton, &QPushButton::clicked, this, [this]() {
         Q_EMIT canceled();
     });
-    
-    layout->addWidget(impl_->buttonBox);
+
+    layout->addWidget(impl_->buttonRow);
 }
 
 ArtifactRenderQueuePresetDialog::~ArtifactRenderQueuePresetDialog() {

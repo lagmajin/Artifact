@@ -1,5 +1,6 @@
 module;
 
+#include <QJsonObject>
 #include <QVariant>
 
 #include <iostream>
@@ -38,6 +39,7 @@ module;
 export module Artifact.Layer.Audio;
 
 import Audio.Volume;
+import Audio.Segment;
 import Artifact.Layer.Abstract;
 
 export namespace Artifact
@@ -46,9 +48,10 @@ export namespace Artifact
 
  class ArtifactAudioLayer :public ArtifactAbstractLayer
  {
- private:
-  class Impl;
-  Impl* impl_;
+  private:
+   class Impl;
+   Impl* impl_;
+   bool decodeFrameToCache(qint64 frameNumber);
  public:
   ArtifactAudioLayer();
   ~ArtifactAudioLayer();
@@ -57,6 +60,21 @@ export namespace Artifact
   float volume() const;
   bool isMuted() const;
   void mute();
+  bool loadFromPath(const QString& path);
+  QString sourcePath() const;
+  bool isLoaded() const;
+
+  // Audio metadata
+  double duration() const;
+  int sampleRate() const;
+  int channelCount() const;
+  qint64 totalFrames() const;
+
+  // Cache information
+  size_t getCacheSize() const;
+  size_t getCacheMemoryUsage() const;
+  QJsonObject toJson() const override;
+  void fromJsonProperties(const QJsonObject& obj) override;
 
   std::vector<ArtifactCore::PropertyGroup> getLayerPropertyGroups() const override;
   bool setLayerPropertyValue(const QString& propertyPath, const QVariant& value) override;
@@ -64,6 +82,8 @@ export namespace Artifact
   void draw(ArtifactIRenderer* renderer) override;
   bool hasVideo() const override;
   bool hasAudio() const override;
+  bool getAudio(ArtifactCore::AudioSegment &outSegment, const FramePosition &start,
+                int frameCount, int sampleRate) override;
  };
 
 };

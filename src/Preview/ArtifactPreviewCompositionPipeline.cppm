@@ -36,10 +36,13 @@ module;
 #include <QImage>
 #include <QColor>
 #include <QPointF>
+#include <QMatrix4x4>
 #include <QSize>
 #include <QRectF>
 #include <QTransform>
 #include <QDebug>
+#include <QLoggingCategory>
+#include <Layer/ArtifactCloneEffectSupport.hpp>
 module Artifact.Preview.Pipeline;
 
 
@@ -49,6 +52,7 @@ import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
 import Artifact.Effect.Abstract;
 import Artifact.Layer.Image;
+import Artifact.Layer.Svg;
 import Artifact.Layer.Solid2D;
 import Artifact.Layer.Text;
 import Artifact.Layer.Video;
@@ -61,12 +65,16 @@ namespace Artifact
 {
  namespace
  {
+  Q_LOGGING_CATEGORY(previewPipelineLog, "artifact.previewpipeline")
+
   QColor toQColor(const FloatColor& color)
   {
    return QColor::fromRgbF(color.r(), color.g(), color.b(), color.a());
   }
 
-  void drawLayerForPreviewView(const ArtifactAbstractLayerPtr& layer, ArtifactIRenderer* renderer)
+  void drawLayerForPreviewView(const ArtifactAbstractLayerPtr& layer,
+                               ArtifactIRenderer* renderer,
+                               const ArtifactCore::LayerID& selectedLayerId)
   {
    if (!layer || !renderer) return;
 
@@ -91,87 +99,132 @@ namespace Artifact
     return false;
    };
 
-   if (const auto solid2D = std::dynamic_pointer_cast<ArtifactSolid2DLayer>(layer)) {
+  if (const auto solid2D = std::dynamic_pointer_cast<ArtifactSolid2DLayer>(layer)) {
     if (hasRasterizerEffects(layer)) {
-     const QSize surfaceSize(
-         std::max(1, static_cast<int>(std::ceil(localRect.width()))),
-         std::max(1, static_cast<int>(std::ceil(localRect.height()))));
-     QImage surface(surfaceSize, QImage::Format_ARGB32_Premultiplied);
-     surface.fill(toQColor(solid2D->color()));
-     renderer->drawSprite(static_cast<float>(worldRect.x()),
-                          static_cast<float>(worldRect.y()),
-                          static_cast<float>(worldRect.width()),
-                          static_cast<float>(worldRect.height()), surface,
-                          layer->opacity());
+      const QSize surfaceSize(
+          std::max(1, static_cast<int>(std::ceil(localRect.width()))),
+          std::max(1, static_cast<int>(std::ceil(localRect.height()))));
+      QImage surface(surfaceSize, QImage::Format_ARGB32_Premultiplied);
+      surface.fill(toQColor(solid2D->color()));
+      const QMatrix4x4 baseTransform = layer->getGlobalTransform4x4();
+      drawWithClonerEffect(layer, baseTransform, [renderer, worldRect, surface, layer, selectedLayerId](const QMatrix4x4& transform, float weight) {
+        const float opacity = layer->opacity() * ((selectedLayerId.isNil() || layer->id() == selectedLayerId) ? 1.0f : 0.22f);
+        renderer->drawSpriteTransformed(static_cast<float>(worldRect.x()),
+                                        static_cast<float>(worldRect.y()),
+                                        static_cast<float>(worldRect.width()),
+                                        static_cast<float>(worldRect.height()),
+                                        transform, surface,
+                                        opacity * weight);
+      });
     } else {
-     renderer->drawSolidRect(static_cast<float>(worldRect.x()),
-                             static_cast<float>(worldRect.y()),
-                             static_cast<float>(worldRect.width()),
-                             static_cast<float>(worldRect.height()),
-                             solid2D->color(), layer->opacity());
+     const QMatrix4x4 baseTransform = layer->getGlobalTransform4x4();
+     drawWithClonerEffect(layer, baseTransform, [renderer, worldRect, solid2D, layer, selectedLayerId](const QMatrix4x4& transform, float weight) {
+      const float opacity = layer->opacity() * ((selectedLayerId.isNil() || layer->id() == selectedLayerId) ? 1.0f : 0.22f);
+      const FloatColor c = solid2D->color();
+      renderer->drawSolidRectTransformed(static_cast<float>(worldRect.x()),
+                                         static_cast<float>(worldRect.y()),
+                                         static_cast<float>(worldRect.width()),
+                                         static_cast<float>(worldRect.height()),
+                                         transform,
+                                         c,
+                                         opacity * weight);
+     });
     }
     return;
    }
 
-   if (const auto solidImage = std::dynamic_pointer_cast<ArtifactSolidImageLayer>(layer)) {
+  if (const auto solidImage = std::dynamic_pointer_cast<ArtifactSolidImageLayer>(layer)) {
     if (hasRasterizerEffects(layer)) {
-     const QSize surfaceSize(
-         std::max(1, static_cast<int>(std::ceil(localRect.width()))),
-         std::max(1, static_cast<int>(std::ceil(localRect.height()))));
-     QImage surface(surfaceSize, QImage::Format_ARGB32_Premultiplied);
-     surface.fill(toQColor(solidImage->color()));
-     renderer->drawSprite(static_cast<float>(worldRect.x()),
-                          static_cast<float>(worldRect.y()),
-                          static_cast<float>(worldRect.width()),
-                          static_cast<float>(worldRect.height()), surface,
-                          layer->opacity());
+      const QSize surfaceSize(
+          std::max(1, static_cast<int>(std::ceil(localRect.width()))),
+          std::max(1, static_cast<int>(std::ceil(localRect.height()))));
+      QImage surface(surfaceSize, QImage::Format_ARGB32_Premultiplied);
+      surface.fill(toQColor(solidImage->color()));
+      const QMatrix4x4 baseTransform = layer->getGlobalTransform4x4();
+      drawWithClonerEffect(layer, baseTransform, [renderer, worldRect, surface, layer, selectedLayerId](const QMatrix4x4& transform, float weight) {
+        const float opacity = layer->opacity() * ((selectedLayerId.isNil() || layer->id() == selectedLayerId) ? 1.0f : 0.22f);
+        renderer->drawSpriteTransformed(static_cast<float>(worldRect.x()),
+                                        static_cast<float>(worldRect.y()),
+                                        static_cast<float>(worldRect.width()),
+                                        static_cast<float>(worldRect.height()),
+                                        transform, surface,
+                                        opacity * weight);
+      });
     } else {
-     renderer->drawSolidRect(static_cast<float>(worldRect.x()),
-                             static_cast<float>(worldRect.y()),
-                             static_cast<float>(worldRect.width()),
-                             static_cast<float>(worldRect.height()),
-                             solidImage->color(), layer->opacity());
+      const QMatrix4x4 baseTransform = layer->getGlobalTransform4x4();
+      drawWithClonerEffect(layer, baseTransform, [renderer, worldRect, solidImage, layer, selectedLayerId](const QMatrix4x4& transform, float weight) {
+      const float opacity = layer->opacity() * ((selectedLayerId.isNil() || layer->id() == selectedLayerId) ? 1.0f : 0.22f);
+      renderer->drawSolidRectTransformed(static_cast<float>(worldRect.x()),
+                                         static_cast<float>(worldRect.y()),
+                                         static_cast<float>(worldRect.width()),
+                                         static_cast<float>(worldRect.height()),
+                                         transform,
+                                         solidImage->color(),
+                                         opacity * weight);
+     });
     }
     return;
    }
 
-   if (const auto imageLayer = std::dynamic_pointer_cast<ArtifactImageLayer>(layer)) {
+  if (const auto imageLayer = std::dynamic_pointer_cast<ArtifactImageLayer>(layer)) {
     const QImage img = imageLayer->toQImage();
     if (!img.isNull()) {
-     renderer->drawSprite(static_cast<float>(worldRect.x()),
-                          static_cast<float>(worldRect.y()),
-                          static_cast<float>(worldRect.width()),
-                          static_cast<float>(worldRect.height()), img,
-                          layer->opacity());
+     const QMatrix4x4 baseTransform = layer->getGlobalTransform4x4();
+     drawWithClonerEffect(layer, baseTransform, [renderer, worldRect, img, layer, selectedLayerId](const QMatrix4x4& transform, float weight) {
+      const float opacity = layer->opacity() * ((selectedLayerId.isNil() || layer->id() == selectedLayerId) ? 1.0f : 0.22f);
+      renderer->drawSpriteTransformed(static_cast<float>(worldRect.x()),
+                                       static_cast<float>(worldRect.y()),
+                                       static_cast<float>(worldRect.width()),
+                                       static_cast<float>(worldRect.height()),
+                                       transform, img,
+                                       opacity * weight);
+     });
      return;
     }
    }
 
-   if (const auto videoLayer = std::dynamic_pointer_cast<ArtifactVideoLayer>(layer)) {
+   if (const auto svgLayer = std::dynamic_pointer_cast<ArtifactSvgLayer>(layer)) {
+    if (svgLayer->isLoaded()) {
+     svgLayer->draw(renderer);
+     return;
+    }
+   }
+
+  if (const auto videoLayer = std::dynamic_pointer_cast<ArtifactVideoLayer>(layer)) {
     const QImage frame = videoLayer->currentFrameToQImage();
     if (!frame.isNull()) {
-     renderer->drawSprite(static_cast<float>(worldRect.x()),
-                          static_cast<float>(worldRect.y()),
-                          static_cast<float>(worldRect.width()),
-                          static_cast<float>(worldRect.height()), frame,
-                          layer->opacity());
+     const QMatrix4x4 baseTransform = layer->getGlobalTransform4x4();
+     drawWithClonerEffect(layer, baseTransform, [renderer, worldRect, frame, layer, selectedLayerId](const QMatrix4x4& transform, float weight) {
+      const float opacity = layer->opacity() * ((selectedLayerId.isNil() || layer->id() == selectedLayerId) ? 1.0f : 0.22f);
+      renderer->drawSpriteTransformed(static_cast<float>(worldRect.x()),
+                                       static_cast<float>(worldRect.y()),
+                                       static_cast<float>(worldRect.width()),
+                                       static_cast<float>(worldRect.height()),
+                                       transform, frame,
+                                       opacity * weight);
+     });
      return;
     }
    }
 
-   if (const auto textLayer = std::dynamic_pointer_cast<ArtifactTextLayer>(layer)) {
+  if (const auto textLayer = std::dynamic_pointer_cast<ArtifactTextLayer>(layer)) {
     const QImage textImage = textLayer->toQImage();
     if (!textImage.isNull()) {
-     renderer->drawSprite(static_cast<float>(worldRect.x()),
-                          static_cast<float>(worldRect.y()),
-                          static_cast<float>(worldRect.width()),
-                          static_cast<float>(worldRect.height()), textImage,
-                          layer->opacity());
+     const QMatrix4x4 baseTransform = layer->getGlobalTransform4x4();
+     drawWithClonerEffect(layer, baseTransform, [renderer, worldRect, textImage, layer, selectedLayerId](const QMatrix4x4& transform, float weight) {
+      const float opacity = layer->opacity() * ((selectedLayerId.isNil() || layer->id() == selectedLayerId) ? 1.0f : 0.22f);
+      renderer->drawSpriteTransformed(static_cast<float>(worldRect.x()),
+                                       static_cast<float>(worldRect.y()),
+                                       static_cast<float>(worldRect.width()),
+                                       static_cast<float>(worldRect.height()),
+                                       transform, textImage,
+                                       opacity * weight);
+     });
      return;
     }
    }
 
-   layer->draw(renderer);
+    layer->draw(renderer);
   }
  } // namespace
 
@@ -217,25 +270,36 @@ namespace Artifact
      continue;
     }
     layer->goToFrame(currentFrame_);
-    drawLayerForPreviewView(layer, renderer);
+    drawLayerForPreviewView(layer, renderer, selectedLayerId_);
    }
    
    // 3. UI Overlays (Gizmos)
    if (!selectedLayerId_.isNil())
    {
     auto layer = composition_->layerById(selectedLayerId_);
+    qCDebug(previewPipelineLog) << "[PreviewPipeline][Gizmo]"
+                                << "selectedLayerId=" << selectedLayerId_.toString()
+                                << "hasLayer=" << static_cast<bool>(layer)
+                                << "frame=" << currentFrame.framePosition()
+                                << "active=" << (layer ? layer->isActiveAt(currentFrame) : false);
     if (layer && layer->isActiveAt(currentFrame))
     {
      auto global = layer->getGlobalTransform();
      auto localBounds = layer->localBounds();
      if (!localBounds.isValid() || localBounds.width() <= 0.0 || localBounds.height() <= 0.0) {
-      qDebug() << "[PreviewPipeline] skip gizmo: invalid local bounds"
-               << "id=" << layer->id().toString()
-               << "bounds=(" << localBounds.left() << ","
-               << localBounds.top() << ","
-               << localBounds.width() << ","
-               << localBounds.height() << ")";
+      qCDebug(previewPipelineLog) << "[PreviewPipeline][Gizmo] skip draw: invalid local bounds"
+                                  << "id=" << layer->id().toString()
+                                  << "bounds=" << localBounds;
      } else {
+      qCDebug(previewPipelineLog) << "[PreviewPipeline][Gizmo] draw"
+                                  << "id=" << layer->id().toString()
+                                  << "bounds=" << localBounds
+                                  << "m11=" << global.m11()
+                                  << "m12=" << global.m12()
+                                  << "m21=" << global.m21()
+                                  << "m22=" << global.m22()
+                                  << "dx=" << global.dx()
+                                  << "dy=" << global.dy();
       float w = (float)localBounds.width();
       float h = (float)localBounds.height();
 
@@ -268,9 +332,9 @@ namespace Artifact
       }
     }
     } else if (layer) {
-     qDebug() << "[PreviewPipeline] skip gizmo: layer inactive at frame"
-              << "id=" << layer->id().toString()
-              << "frame=" << currentFrame.framePosition();
+     qCDebug(previewPipelineLog) << "[PreviewPipeline][Gizmo] skip draw: inactive frame"
+                                 << "id=" << layer->id().toString()
+                                 << "frame=" << currentFrame.framePosition();
     }
    }
 

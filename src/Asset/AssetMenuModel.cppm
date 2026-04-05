@@ -6,6 +6,7 @@
 #include <QIcon>
 #include <QList>
 #include <QStringList>
+#include <QSet>
 #include <QStyle>
 #include <QVariant>
 #include <QMimeData>
@@ -140,14 +141,22 @@ namespace Artifact
   return Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsDragEnabled;
  }
 
- QMimeData* AssetMenuModel::mimeData(const QModelIndexList& indexes) const
- {
-  QMimeData* mimeData = new QMimeData();
-  QList<QUrl> urls;
-  for (const QModelIndex& index : indexes) {
-   if (index.isValid() && index.row() >= 0 && index.row() < impl_->items_.size()) {
-    const QString path = impl_->items_.at(index.row()).path.toQString();
-    if (!path.isEmpty()) {
+QMimeData* AssetMenuModel::mimeData(const QModelIndexList& indexes) const
+{
+ QMimeData* mimeData = new QMimeData();
+ QList<QUrl> urls;
+ QSet<QString> seenPaths;
+ for (const QModelIndex& index : indexes) {
+  if (index.isValid() && index.row() >= 0 && index.row() < impl_->items_.size()) {
+    const auto& item = impl_->items_.at(index.row());
+    const QStringList paths = item.isSequence && !item.sequencePaths.isEmpty()
+        ? item.sequencePaths
+        : QStringList{item.path.toQString()};
+    for (const QString& path : paths) {
+     if (path.isEmpty() || seenPaths.contains(path)) {
+      continue;
+     }
+     seenPaths.insert(path);
      urls.append(QUrl::fromLocalFile(path));
     }
    }
@@ -181,6 +190,34 @@ namespace Artifact
   beginInsertRows(QModelIndex(), row, row);
   impl_->items_.append(item);
   endInsertRows();
+ }
+
+ bool AssetMenuModel::updateItemIconByPath(const QString& path, const QIcon& icon)
+ {
+  if (path.isEmpty() || icon.isNull()) {
+   return false;
+  }
+
+  for (int row = 0; row < impl_->items_.size(); ++row) {
+   auto& item = impl_->items_[row];
+   if (item.path.toQString() == path) {
+    item.icon = icon;
+    const QModelIndex index = createIndex(row, 0);
+    Q_EMIT dataChanged(index, index, {Qt::DecorationRole});
+    return true;
+   }
+  }
+  return false;
+ }
+
+ void AssetMenuModel::refreshIcons()
+ {
+  if (impl_->items_.isEmpty()) {
+   return;
+  }
+  const QModelIndex topLeft = createIndex(0, 0);
+  const QModelIndex bottomRight = createIndex(impl_->items_.size() - 1, 0);
+  Q_EMIT dataChanged(topLeft, bottomRight, {Qt::DecorationRole});
  }
 
  void AssetMenuModel::clear()

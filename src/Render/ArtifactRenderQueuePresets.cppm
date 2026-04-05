@@ -62,6 +62,7 @@ public:
             .name = "ProRes 422 MOV",
             .container = "mov",
             .codec = "prores",
+            .codecProfile = "hq",
             .description = "Apple ProRes 422 MOV 形式（編集向け）",
             .isImageSequence = false
         });
@@ -72,6 +73,7 @@ public:
             .name = "ProRes 4444 MOV",
             .container = "mov",
             .codec = "prores",
+            .codecProfile = "4444",
             .description = "Apple ProRes 4444 MOV 形式（アルファチャンネル対応）",
             .isImageSequence = false
         });
@@ -113,6 +115,38 @@ public:
             .container = "webm",
             .codec = "vp9",
             .description = "WebM VP9 形式（Web 向け）",
+            .isImageSequence = false
+        });
+
+        // === Animated Image Presets ===
+
+        standardPresets.push_back({
+            .id = "gif_animation",
+            .name = "GIF Animation",
+            .container = "gif",
+            .codec = "gif",
+            .description = "Web 向け GIF アニメーション（互換性重視）",
+            .isAnimatedImage = true,
+            .isImageSequence = false
+        });
+
+        standardPresets.push_back({
+            .id = "apng_animation",
+            .name = "APNG Animation",
+            .container = "apng",
+            .codec = "apng",
+            .description = "APNG アニメーション（alpha 対応・高画質）",
+            .isAnimatedImage = true,
+            .isImageSequence = false
+        });
+
+        standardPresets.push_back({
+            .id = "webp_animation",
+            .name = "Animated WebP",
+            .container = "webp",
+            .codec = "webp",
+            .description = "Animated WebP（Web 向け・alpha 対応）",
+            .isAnimatedImage = true,
             .isImageSequence = false
         });
         
@@ -205,10 +239,12 @@ QVector<ArtifactRenderFormatPreset> ArtifactRenderFormatPresetManager::presetsBy
     QMutexLocker locker(&impl_->mutex);
     QVector<ArtifactRenderFormatPreset> result;
     
-    const auto filterByCategory = [category](const ArtifactRenderFormatPreset& preset) -> bool {
+        const auto filterByCategory = [category](const ArtifactRenderFormatPreset& preset) -> bool {
         switch (category) {
             case ArtifactRenderFormatCategory::Video:
-                return !preset.isImageSequence;
+                return !preset.isImageSequence && !preset.isAnimatedImage;
+            case ArtifactRenderFormatCategory::AnimatedImage:
+                return preset.isAnimatedImage;
             case ArtifactRenderFormatCategory::ImageSequence:
                 return preset.isImageSequence;
             case ArtifactRenderFormatCategory::Audio:

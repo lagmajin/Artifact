@@ -322,9 +322,9 @@ QString ArtifactProjectManager::Impl::makeUniqueAssetPath(const QString& directo
  {
   if(currentProjectPtr_)
   {
-   return true;
-  }
-  return false;
+    return true;
+   }
+
  }
 
  ArtifactProjectManager::ArtifactProjectManager(QObject* parent /*= nullptr*/) :QObject(parent), impl_(new Impl())
@@ -494,6 +494,98 @@ ArtifactProjectManager& ArtifactProjectManager::getInstance()
   }
  }
 
+namespace {
+  static const int kBackupGenerationCount = 3;
+
+  bool createBackupFile(const QString& filePath)
+  {
+    if (filePath.isEmpty() || !QFile::exists(filePath)) {
+      return false;
+    }
+
+    QString dir = QFileInfo(filePath).absolutePath();
+    QString baseName = QFileInfo(filePath).fileName();
+
+    // Shift existing backups: remove oldest, rename newer ones
+    for (int i = kBackupGenerationCount - 1; i >= 1; --i) {
+      QString olderBackup = dir + "/" + baseName + QString(".bak~%1").arg(i);
+      QString newerBackup = dir + "/" + baseName + QString(".bak~%1").arg(i + 1);
+      if (QFile::exists(newerBackup)) {
+        QFile::remove(newerBackup);
+      }
+      if (QFile::exists(olderBackup)) {
+        QFile::rename(olderBackup, newerBackup);
+      }
+    }
+
+    // Create first generation backup
+    QString firstBackup = dir + "/" + baseName + ".bak~1";
+    if (QFile::exists(firstBackup)) {
+      QFile::remove(firstBackup);
+    }
+    return QFile::copy(filePath, firstBackup);
+  }
+
+  struct SaveValidationResult {
+    bool success = true;
+    QStringList warnings;
+    QStringList errors;
+  };
+
+  SaveValidationResult validateBeforeSave(const std::shared_ptr<ArtifactProject>& projectPtr)
+  {
+    SaveValidationResult result;
+    if (!projectPtr || projectPtr->isNull()) {
+      result.success = false;
+      result.errors.append("Project is null");
+      return result;
+    }
+
+    // Phase 3: 参照切れ検出
+    auto healthReport = ArtifactProjectHealthChecker::check(projectPtr.get());
+    for (const auto& issue : healthReport.issues) {
+      if (issue.severity == HealthIssueSeverity::Error) {
+        result.errors.append(issue.message);
+        if (issue.category == "BrokenReference" || issue.category == "MissingAsset") {
+          result.warnings.append(QString("[Broken Ref] %1 in %2").arg(issue.message, issue.targetName));
+        }
+      } else if (issue.severity == HealthIssueSeverity::Warning) {
+        result.warnings.append(issue.message);
+      }
+    }
+
+    // Phase 4: Composition/Layer の整合性チェック
+    auto items = projectPtr->projectItems();
+    int compCount = 0;
+    int layerCount = 0;
+    for (auto* root : items) {
+      std::function<void(ProjectItem*)> countItems = [&](ProjectItem* item) {
+        if (!item) return;
+        if (item->type() == eProjectItemType::Composition) {
+          compCount++;
+          auto* compItem = static_cast<CompositionItem*>(item);
+          auto res = projectPtr->findComposition(compItem->compositionId);
+          if (res.success) {
+            if (auto comp = res.ptr.lock()) {
+              layerCount += comp->allLayer().size();
+            }
+          } else {
+            result.errors.append(QString("Composition ID lookup failed: %1").arg(compItem->compositionId.toString()));
+          }
+        }
+        for (auto* child : item->children) countItems(child);
+      };
+      countItems(root);
+    }
+
+    if (compCount == 0 && layerCount == 0) {
+      result.warnings.append("Project has no compositions or layers");
+    }
+
+    return result;
+  }
+}
+
 ArtifactProjectExporterResult ArtifactProjectManager::saveToFile(const QString& fullpath)
  {
   ArtifactProjectExporterResult result;
@@ -504,7 +596,25 @@ ArtifactProjectExporterResult ArtifactProjectManager::saveToFile(const QString& 
    return result;
   }
 
+  // Phase 3+4: 保存前の参照整合性チェックとバリデーション
+  auto validation = validateBeforeSave(projectPtr);
+  if (!validation.errors.isEmpty()) {
+    qWarning() << "[saveToFile] Validation errors found:" << validation.errors;
+    // エラーがあっても保存は続行（ユーザーに警告のみ）
+  }
+  if (!validation.warnings.isEmpty()) {
+    qDebug() << "[saveToFile] Validation warnings:" << validation.warnings;
+  }
+
   runProjectHookScript(QStringLiteral("before_project_save"), fullpath);
+
+  // Create backup before saving (if file exists)
+  if (QFile::exists(fullpath)) {
+    if (!createBackupFile(fullpath)) {
+      qWarning() << "[saveToFile] Failed to create backup for:" << fullpath;
+    }
+  }
+
   ArtifactProjectExporter exporter;
   exporter.setProject(projectPtr);
   exporter.setOutputPath(fullpath);
@@ -515,9 +625,9 @@ ArtifactProjectExporterResult ArtifactProjectManager::saveToFile(const QString& 
    runProjectHookScript(QStringLiteral("after_project_export"), fullpath);
   } else {
    runProjectHookScript(QStringLiteral("on_project_save_failed"), fullpath);
-  }
-  return result;
- }
+   }
+    return result;
+   }
 
  QString ArtifactProjectManager::currentProjectPath() const
  {
@@ -569,9 +679,21 @@ QVector<ProjectItem*> ArtifactProjectManager::projectItems() const
   }
  }
 
- void ArtifactProjectManager::createComposition(const QString, const QSize& size)
+ void ArtifactProjectManager::createComposition(const QString name, const QSize& size)
  {
-
+  ArtifactCompositionInitParams params;
+  if (!name.isEmpty()) {
+    params.setCompositionName(UniString(name));
+  }
+  if (size.isValid() && size.width() > 0 && size.height() > 0) {
+    params.setResolution(size.width(), size.height());
+  }
+  auto result = createComposition(params);
+  if (!result.success) {
+    qDebug() << "ArtifactProjectManager::createComposition(name,size) failed"
+             << "name=" << name
+             << "size=" << QStringLiteral("%1x%2").arg(size.width()).arg(size.height());
+  }
  }
 
  CreateCompositionResult ArtifactProjectManager::createComposition(const ArtifactCompositionInitParams& params)
@@ -913,19 +1035,13 @@ QVector<ProjectItem*> ArtifactProjectManager::projectItems() const
    return result;
   }
 
-  ArtifactLayerResult ArtifactProjectManager::addLayerToComposition(const CompositionID& compositionId, ArtifactLayerInitParams& params)
-  {
+   ArtifactLayerResult ArtifactProjectManager::addLayerToComposition(const CompositionID& compositionId, ArtifactLayerInitParams& params)
+   {
    auto result = impl_->addLayerToComposition(compositionId, params);
    if (result.success && result.layer) {
-    layerCreated(compositionId, result.layer->id());
-   }
-   return result;
+     layerCreated(compositionId, result.layer->id());
+    }
+    return result;
   }
 
-  bool projectManagerCurrentClose()
-  {
-
-   return true;
-  }
-
-}
+} // namespace Artifact

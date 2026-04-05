@@ -43,6 +43,9 @@ namespace Artifact
         // レンダラーへのアクセス
         ArtifactIRenderer* renderer() { return renderer_.get(); }
 
+        // QImageとして取得
+        QImage renderToQImage(const FramePosition& position, ArtifactAbstractComposition* composition);
+
     private:
         RefCntAutoPtr<IRenderDevice> pDevice_;
         RefCntAutoPtr<IDeviceContext> pContext_;
@@ -102,10 +105,7 @@ namespace Artifact
         // レイヤーリストを取得
         auto layers = composition->allLayer();
         
-        // After Effectsのようにインデックスが大きいレイヤーが背面にあると仮定し、
-        // 背面から順に描画（ペインターズ・アルゴリズム）
-        std::reverse(layers.begin(), layers.end());
-
+        // `allLayer()` は背面 -> 前面の順で保持されているので、そのまま描画する。
         for (auto& layer : layers) {
             if (layer && layer->isActiveAt(position) && layer->isVisible()) {
                 // 各レイヤーの描画ロジック（render）を呼び出し
@@ -160,6 +160,12 @@ namespace Artifact
 
         pContext_->UnmapTextureSubresource(pStagingTex, 0, 0);
         return image;
+    }
+
+    QImage OffscreenCompositionRenderer::renderToQImage(const FramePosition& position, ArtifactAbstractComposition* composition)
+    {
+        renderFrame(position, composition);
+        return renderer_->readbackToImage();
     }
 
     bool OffscreenCompositionRenderer::saveFrame(const QString& path)

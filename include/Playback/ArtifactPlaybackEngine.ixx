@@ -50,6 +50,8 @@ import Frame.Position;
 import Frame.Rate;
 import Frame.Range;
 import Artifact.Composition.Abstract;
+import Artifact.Composition.PlaybackController;
+import Playback.State;
 
 W_REGISTER_ARGTYPE(QImage)
 W_REGISTER_ARGTYPE(ArtifactCore::FramePosition)
@@ -131,8 +133,8 @@ public:
 public: // signals
     void frameChanged(const FramePosition& position, const QImage& frame)
         W_SIGNAL(frameChanged, position, frame);
-    void playbackStateChanged(bool playing, bool paused, bool stopped)
-        W_SIGNAL(playbackStateChanged, playing, paused, stopped);
+    void playbackStateChanged(PlaybackState state)
+        W_SIGNAL(playbackStateChanged, state);
     void playbackSpeedChanged(float speed)
         W_SIGNAL(playbackSpeedChanged, speed);
     void loopingChanged(bool loop)
@@ -141,6 +143,8 @@ public: // signals
         W_SIGNAL(frameRangeChanged, range);
     void droppedFrameDetected(int64_t count)
         W_SIGNAL(droppedFrameDetected, count);
+    void audioLevelChanged(float leftRms, float rightRms, float leftPeak, float rightPeak)
+        W_SIGNAL(audioLevelChanged, leftRms, rightRms, leftPeak, rightPeak);
 };
 
 } // namespace Artifact

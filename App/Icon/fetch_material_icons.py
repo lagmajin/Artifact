@@ -2,6 +2,7 @@ import os
 import urllib.request
 import urllib.error
 import xml.etree.ElementTree as ET
+import shutil
 
 ICONS_TO_FETCH = [
     "add", "remove", "layers", "library_add", "video_settings",
@@ -12,8 +13,15 @@ ICONS_TO_FETCH = [
     "skip_next", "skip_previous", "fast_forward", "fast_rewind",
     "arrow_drop_down", "arrow_right", "check", "close", "more_vert", "more_horiz",
     "undo", "redo", "zoom_in", "zoom_out", "search", "filter_center_focus",
-    "tune", "volume_up", "volume_off", "visibility", "visibility_off", "lock", "lock_open"
+    "tune", "volume_up", "volume_off", "visibility", "visibility_off", "lock", "lock_open",
+    "arrow_left", "code", "diamond"
 ]
+
+# Generated substitutes for icon ids that are referenced in code but do not
+# exist in the older Material Icons set that this script downloads.
+ALIAS_ICONS = {
+    "keyframe": "diamond",
+}
 
 COLORS = {
     "blue": "#4FC1FF",
@@ -89,6 +97,13 @@ def colorize_icon(name):
         out_path = os.path.join(MATERIAL_VS_DIR, color_name, f"{name}.svg")
         new_tree.write(out_path, encoding='utf-8', xml_declaration=False)
 
+def copy_alias_icon(alias_name, source_name):
+    for color_name in COLORS.keys():
+        source_path = os.path.join(MATERIAL_VS_DIR, color_name, f"{source_name}.svg")
+        alias_path = os.path.join(MATERIAL_VS_DIR, color_name, f"{alias_name}.svg")
+        if os.path.exists(source_path):
+            shutil.copyfile(source_path, alias_path)
+
 def main():
     # Discover existing icons in Material dir to colorize them too
     existing = [f[:-4] for f in os.listdir(MATERIAL_DIR) if f.endswith('.svg')]
@@ -97,6 +112,9 @@ def main():
     for icon in sorted(all_icons):
         download_icon(icon)
         colorize_icon(icon)
+
+    for alias_name, source_name in ALIAS_ICONS.items():
+        copy_alias_icon(alias_name, source_name)
     
     print("Done fetching and colorizing icons!")
 

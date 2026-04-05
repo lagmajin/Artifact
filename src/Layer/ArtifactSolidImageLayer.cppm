@@ -1,7 +1,14 @@
 module;
-
+#define NOMINMAX
+#define QT_NO_KEYWORDS
+#include <Layer/ArtifactCloneEffectSupport.hpp>
 #include <QColor>
+#include <QImage>
+#include <QJsonObject>
+#include <QLoggingCategory>
+#include <QMatrix4x4>
 #include <QVariant>
+
 
 module Artifact.Layers.SolidImage;
 
@@ -12,6 +19,10 @@ import Property.Group;
 import Animation.Value;
 
 namespace Artifact {
+namespace {
+Q_LOGGING_CATEGORY(solidImageLayerLog, "artifact.solidimagelayer")
+}
+
 ArtifactSolidImageLayerSettings::ArtifactSolidImageLayerSettings() = default;
 ArtifactSolidImageLayerSettings::~ArtifactSolidImageLayerSettings() = default;
 
@@ -55,18 +66,48 @@ void ArtifactSolidImageLayer::setSize(const int width, const int height) {
   setSourceSize(Size_2D(width, height));
 }
 
+QJsonObject ArtifactSolidImageLayer::toJson() const {
+  QJsonObject obj = ArtifactAbstractLayer::toJson();
+  obj["type"] = static_cast<int>(LayerType::Solid);
+  obj["solidWidth"] = sourceSize().width;
+  obj["solidHeight"] = sourceSize().height;
+  QJsonObject colorObj;
+  const auto c = color();
+  colorObj["r"] = c.r();
+  colorObj["g"] = c.g();
+  colorObj["b"] = c.b();
+  colorObj["a"] = c.a();
+  obj["solidColor"] = colorObj;
+  return obj;
+}
+
+void ArtifactSolidImageLayer::fromJsonProperties(const QJsonObject &obj) {
+  ArtifactAbstractLayer::fromJsonProperties(obj);
+  if (obj.contains("solidWidth") || obj.contains("solidHeight")) {
+    const int width = obj.value("solidWidth").toInt(sourceSize().width);
+    const int height = obj.value("solidHeight").toInt(sourceSize().height);
+    setSize(width, height);
+  }
+  if (obj.contains("solidColor") && obj["solidColor"].isObject()) {
+    const auto colorObj = obj["solidColor"].toObject();
+    setColor(FloatColor(static_cast<float>(colorObj.value("r").toDouble(1.0)),
+                        static_cast<float>(colorObj.value("g").toDouble(1.0)),
+                        static_cast<float>(colorObj.value("b").toDouble(1.0)),
+                        static_cast<float>(colorObj.value("a").toDouble(1.0))));
+  }
+}
+
 std::vector<ArtifactCore::PropertyGroup>
 ArtifactSolidImageLayer::getLayerPropertyGroups() const {
   auto groups = ArtifactAbstractLayer::getLayerPropertyGroups();
   ArtifactCore::PropertyGroup solidGroup(QStringLiteral("Solid"));
 
-  auto property = std::make_shared<ArtifactCore::AbstractProperty>();
-  property->setName(QStringLiteral("solid.color"));
-  property->setType(ArtifactCore::PropertyType::Color);
+  auto property = persistentLayerProperty(QStringLiteral("solid.color"),
+                                          ArtifactCore::PropertyType::Color,
+                                          QVariant(), -120);
   const auto c = color();
   property->setColorValue(QColor::fromRgbF(c.r(), c.g(), c.b(), c.a()));
   property->setValue(property->getColorValue());
-  property->setDisplayPriority(-120);
   property->setAnimatable(true); // キーフレーム可能に設定
   solidGroup.addProperty(property);
 
@@ -90,17 +131,40 @@ void ArtifactSolidImageLayer::draw(ArtifactIRenderer *renderer) {
   // 現在のフレーム位置に基づく補間値を取得
   auto frame = FramePosition(currentFrame());
   auto color = impl_->color_.at(frame);
-  
-  qDebug() << "[ArtifactSolidImageLayer::draw] id:" << id().toString()
-           << "currentFrame:" << currentFrame() 
-           << "color: (" << color.r() << color.g() << color.b() << color.a() << ")"
-           << "size:" << size.width << "x" << size.height
-           << "opacity:" << opacity();
 
-  renderer->drawSolidRect(0.0f, 0.0f,
-                          static_cast<float>(size.width),
-                          static_cast<float>(size.height),
-                          color,
-                          this->opacity());
+  static int drawLogSamples = 0;
+  if (drawLogSamples < 5) {
+    ++drawLogSamples;
+    qCDebug(solidImageLayerLog)
+        << "[ArtifactSolidImageLayer::draw] id:" << id().toString()
+        << "currentFrame:" << currentFrame() << "color: (" << color.r()
+        << color.g() << color.b() << color.a() << ")"
+        << "size:" << size.width << "x" << size.height
+        << "opacity:" << opacity();
+  }
+
+  const QMatrix4x4 baseTransform = getGlobalTransform4x4();
+  drawWithClonerEffect(
+      this, baseTransform,
+      [renderer, size, color, this](const QMatrix4x4 &transform, float weight) {
+        const FloatColor cloneColor(color.r(), color.g(), color.b(),
+                                    color.a() * this->opacity() * weight);
+        renderer->drawSolidRectTransformed(
+            0.0f, 0.0f, static_cast<float>(size.width),
+            static_cast<float>(size.height), transform, cloneColor, 1.0f);
+      });
+}
+
+QImage ArtifactSolidImageLayer::toQImage() const {
+  const auto size = sourceSize();
+  if (size.width <= 0 || size.height <= 0) {
+    return QImage();
+  }
+  auto frame = FramePosition(currentFrame());
+  auto color = impl_->color_.at(frame);
+  const auto c = QColor::fromRgbF(color.r(), color.g(), color.b(), color.a());
+  QImage image(size.width, size.height, QImage::Format_ARGB32_Premultiplied);
+  image.fill(c);
+  return image;
 }
 } // namespace Artifact

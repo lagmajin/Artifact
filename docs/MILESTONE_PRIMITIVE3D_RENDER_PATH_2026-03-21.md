@@ -74,8 +74,11 @@ Done:
 - 3D 関連の責務一覧が docs に残る
 - `primitive2d` の 3D 対応先が明確になる
 - どの API を拡張すべきかが決まる
+- Artifact3DLayer が ArtifactAbstractLayer から継承
+- is3D() メソッドが適切に実装
+- 基本的な 3D wireframe 描画が可能
 
-### P3D-2 Solid Shading Path
+### P3D-2 Solid Shading Path (進行中)
 
 目的:
 Blender の Solid に近い、単純で壊れにくい 3D viewport を作る。
@@ -95,9 +98,10 @@ Blender の Solid に近い、単純で壊れにくい 3D viewport を作る。
 
 Done:
 
-- 3D 物体が solid で読める
+- 3D 物体が solid で読める (face filling implemented)
 - wireframe と切り替えても破綻しない
-- 2D overlay を上から重ねられる
+- 2D overlay を上から重ねられる (inherited from base class)
+- material の最小限実装 (render mode プロパティ)
 
 ### P3D-3 Mesh Upload And Cache
 
@@ -119,8 +123,9 @@ Done:
 
 Done:
 
-- カメラ移動や回転で再生成が走りすぎない
-- 同じ mesh を複数レイヤーで共有しやすい
+- Mesh データ構造の統合 (ArtifactCore::Mesh を使用)
+- 基本的な mesh loading と rendering
+- transform 変更と geometry 変更の分離 (transform は毎フレーム適用)
 
 ### P3D-4 Camera And Gizmo Parity
 

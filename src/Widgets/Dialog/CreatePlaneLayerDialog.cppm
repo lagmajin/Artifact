@@ -13,7 +13,17 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QMouseEvent>
+#include <QTimer>
+#include <QIcon>
+#include <QPixmap>
+#include <QColor>
+#include <QPen>
+#include <QPainter>
 #include <wobjectimpl.h>
+#include <QApplication>
+#include <QCheckBox>
+#include <QFrame>
+#include <QScrollArea>
 module Artifact.Widgets.CreatePlaneLayerDialog;
 
 import std;
@@ -26,431 +36,711 @@ import DragSpinBox;
 import Utils.String.UniString;
 import Color.Float;
 import FloatColorPickerDialog;
-//import Color.Utils;
 import Artifact.Service.Project;
 import Artifact.Composition.Abstract;
 import Composition.Settings;
 import Artifact.Layers.SolidImage;
 
-namespace Artifact {
-	
- using namespace ArtifactCore;
- using namespace ArtifactWidgets;
+namespace {
 
- W_OBJECT_IMPL(PlaneLayerSettingPage)
-
- class PlaneLayerSettingPage::Impl {
- public:
-  Impl();
-  ~Impl() = default;
-  DragSpinBox* widthSpinBox = nullptr;
-  DragSpinBox* heightSpinBox = nullptr;
-  QComboBox* resolutionCombobox_ = nullptr;
-  QPushButton* bgColorButton = nullptr;
-  QPushButton* matchCompButton = nullptr;
-  QColor bgColor = QColor(255, 255, 255, 255);
- };
-
- PlaneLayerSettingPage::Impl::Impl()
- {
- }
-
- PlaneLayerSettingPage::PlaneLayerSettingPage(QWidget* parent /*= nullptr*/) :QWidget(parent), impl_(new Impl())
- {
-  impl_->widthSpinBox = new DragSpinBox();
-  impl_->widthSpinBox->setRange(1, 16384);
-  impl_->widthSpinBox->setValue(1920);
-  
-  impl_->heightSpinBox = new DragSpinBox();
-  impl_->heightSpinBox->setRange(1, 16384);
-  impl_->heightSpinBox->setValue(1080);
-  
-  impl_->resolutionCombobox_ = new QComboBox();
-  impl_->resolutionCombobox_->addItem("1920x1080 (FHD)", QVariant::fromValue(QSize(1920, 1080)));
-  impl_->resolutionCombobox_->addItem("1280x720 (HD)", QVariant::fromValue(QSize(1280, 720)));
-  impl_->resolutionCombobox_->addItem("3840x2160 (4K)", QVariant::fromValue(QSize(3840, 2160)));
-  impl_->resolutionCombobox_->addItem("カスタム", QVariant::fromValue(QSize(-1, -1)));
-
-  impl_->bgColorButton = new QPushButton();
-  impl_->bgColorButton->setFixedSize(60, 24);
-  impl_->bgColorButton->setStyleSheet("background-color: rgb(255, 255, 255); border: 1px solid #555;");
-
-  impl_->matchCompButton = new QPushButton("コンポジションサイズに合わせる");
-
-  auto vboxLayout = new QFormLayout();
-  vboxLayout->addRow("プリセット:", impl_->resolutionCombobox_);
-  vboxLayout->addRow("幅 (px):", impl_->widthSpinBox);
-  vboxLayout->addRow("高さ (px):", impl_->heightSpinBox);
-  vboxLayout->addRow("", impl_->matchCompButton);
-  vboxLayout->addRow("カラー:", impl_->bgColorButton);
-  setLayout(vboxLayout);
-
-  QObject::connect(impl_->resolutionCombobox_, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int) {
-    QSize sz = impl_->resolutionCombobox_->currentData().toSize();
-    if (sz.width() > 0 && sz.height() > 0) {
-      impl_->widthSpinBox->setValue(sz.width());
-      impl_->heightSpinBox->setValue(sz.height());
+void updateColorButtonPreview(QPushButton* button, const QColor& color)
+{
+    if (!button) return;
+    QPixmap pix(button->size().isEmpty() ? QSize(40, 24) : button->size());
+    pix.fill(Qt::transparent);
+    {
+        QPainter painter(&pix);
+        painter.setRenderHint(QPainter::Antialiasing);
+        painter.setPen(QPen(QColor(85, 85, 85), 1));
+        painter.setBrush(color);
+        painter.drawRoundedRect(pix.rect().adjusted(1, 1, -2, -2), 3, 3);
     }
-  });
+    button->setIcon(QIcon(pix));
+    button->setIconSize(pix.size());
+    button->setToolTip(color.name());
+    button->setText({});
+}
 
-  auto forceCustom = [this](int) {
-      impl_->resolutionCombobox_->blockSignals(true);
-      impl_->resolutionCombobox_->setCurrentIndex(impl_->resolutionCombobox_->count() - 1);
-      impl_->resolutionCombobox_->blockSignals(false);
-  };
-  QObject::connect(impl_->widthSpinBox, QOverload<int>::of(&QSpinBox::valueChanged), this, forceCustom);
-  QObject::connect(impl_->heightSpinBox, QOverload<int>::of(&QSpinBox::valueChanged), this, forceCustom);
+void updateHexFromColor(QLineEdit* edit, const QColor& color)
+{
+    edit->setText(QString("#%1%2%3%4")
+        .arg(color.red(),   2, 16, QChar('0'))
+        .arg(color.green(), 2, 16, QChar('0'))
+        .arg(color.blue(),  2, 16, QChar('0'))
+        .arg(color.alpha(), 2, 16, QChar('0'))
+        .toLower());
+}
 
-  QObject::connect(impl_->bgColorButton, &QPushButton::clicked, this, [this]() {
-      FloatColorPicker picker(this);
-      picker.setWindowTitle(QStringLiteral("平面のカラーを選択"));
-      picker.setColor(FloatColor(
-          impl_->bgColor.redF(),
-          impl_->bgColor.greenF(),
-          impl_->bgColor.blueF(),
-          impl_->bgColor.alphaF()));
+// Builds a section header widget (title label + horizontal rule).
+QWidget* makeSectionHeader(const QString& title, QWidget* parent)
+{
+    auto* w = new QWidget(parent);
+    auto* layout = new QVBoxLayout(w);
+    layout->setContentsMargins(0, 8, 0, 2);
+    layout->setSpacing(2);
+    auto* label = new QLabel(title, w);
+    label->setStyleSheet("color: #999; font-size: 11px;");
+    auto* line = new QFrame(w);
+    line->setFrameShape(QFrame::HLine);
+    line->setStyleSheet("color: #3a3a3a;");
+    layout->addWidget(label);
+    layout->addWidget(line);
+    return w;
+}
 
-      if (picker.exec() != QDialog::Accepted) {
-          return;
-      }
+// Builds a right-label + control row.
+QWidget* makeRow(QWidget* parent, const QString& labelText, int labelWidth,
+                 QWidget* ctrl, QWidget* extra = nullptr)
+{
+    auto* row = new QWidget(parent);
+    auto* lay = new QHBoxLayout(row);
+    lay->setContentsMargins(20, 2, 4, 2);
+    auto* lbl = new QLabel(labelText, row);
+    lbl->setFixedWidth(labelWidth);
+    lbl->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    lay->addWidget(lbl);
+    lay->addWidget(ctrl, 1);
+    if (extra) lay->addWidget(extra);
+    return row;
+}
 
-      const FloatColor picked = picker.getColor();
-      const QColor c = QColor::fromRgbF(
-          picked.r(),
-          picked.g(),
-          picked.b(),
-          picked.a());
-      if (!c.isValid()) {
-          return;
-      }
+} // namespace
 
-      impl_->bgColor = c;
-      QString style = QString("background-color: %1; border: 1px solid #555;").arg(c.name());
-      impl_->bgColorButton->setStyleSheet(style);
+namespace Artifact {
 
-      // Suggest name
-      FloatColor fc(c.redF(), c.greenF(), c.blueF(), c.alphaF());
-      //UniString naturalName = ColorUtils::getNaturalColorName(fc);
-      // Q_EMIT colorChanged(naturalName.toQString());
-  });
+using namespace ArtifactCore;
+using namespace ArtifactWidgets;
 
-  QObject::connect(impl_->matchCompButton, &QPushButton::clicked, this, &PlaneLayerSettingPage::resizeCompositionSize);
- }
+// ─────────────────────────────────────────────────────────────────────────────
+//  PlaneLayerSettingPage
+// ─────────────────────────────────────────────────────────────────────────────
 
- PlaneLayerSettingPage::~PlaneLayerSettingPage()
- {
-  delete impl_;
- }
+W_OBJECT_IMPL(PlaneLayerSettingPage)
 
- void PlaneLayerSettingPage::setDefaultFocus()
- {
- }
+class PlaneLayerSettingPage::Impl {
+public:
+    Impl() = default;
+    ~Impl() = default;
 
- void PlaneLayerSettingPage::spouitMode()
- {
- }
+    DragSpinBox*  widthSpinBox    = nullptr;
+    DragSpinBox*  heightSpinBox   = nullptr;
+    QPushButton*  lockButton      = nullptr;
+    bool          aspectLocked    = false;
+    double        lockedRatio     = 16.0 / 9.0;
 
- void PlaneLayerSettingPage::resizeCompositionSize()
- {
-      auto service = ArtifactProjectService::instance();
-      if (service) {
-          auto compWeak = service->currentComposition();
-          if (auto comp = compWeak.lock()) {
-              auto size = comp->settings().compositionSize();
-              if (size.width() > 0 && size.height() > 0) {
-                  impl_->widthSpinBox->setValue(size.width());
-                  impl_->heightSpinBox->setValue(size.height());
-                  return;
-              }
-          }
-      }
-      impl_->widthSpinBox->setValue(1920);
-      impl_->heightSpinBox->setValue(1080);
- }
-  
-  void PlaneLayerSettingPage::setInitialParams(int p_width, int p_height, const FloatColor& color)
-  {
-      impl_->widthSpinBox->setValue(p_width);
-      impl_->heightSpinBox->setValue(p_height);
-      QColor c;
-      c.setRgbF(color.r(), color.g(), color.b(), color.a());
-      impl_->bgColor = c;
-      QString style = QString("background-color: %1; border: 1px solid #555;").arg(c.name());
-      impl_->bgColorButton->setStyleSheet(style);
-  }
+    QComboBox*    unitCombo         = nullptr;
+    QComboBox*    pixelAspectCombo  = nullptr;
+    QPushButton*  bgColorButton     = nullptr;
+    QPushButton*  matchCompButton   = nullptr;
+    QLineEdit*    hexColorEdit      = nullptr;
+    QCheckBox*    fitToCompCheck    = nullptr;
 
- ArtifactSolidLayerInitParams PlaneLayerSettingPage::getInitParams(const QString& name) const
- {
-     ArtifactSolidLayerInitParams params(name);
-     params.setWidth(impl_->widthSpinBox->value());
-     params.setHeight(impl_->heightSpinBox->value());
-     QColor c = impl_->bgColor;
-     params.setColor(FloatColor(c.redF(), c.greenF(), c.blueF(), c.alphaF()));
-     return params;
- }
+    QColor bgColor = QColor(255, 255, 255, 255);
+};
 
- W_OBJECT_IMPL(CreateSolidLayerSettingDialog)
-	
-  class CreateSolidLayerSettingDialog::Impl
- {
- public:
-  EditableLabel* nameEditableLabel = nullptr;
-  PlaneLayerSettingPage* settingPage = nullptr;
-  QDialogButtonBox* dialogButtonBox = nullptr;
-  QPropertyAnimation* m_showAnimation = nullptr;
-  QPropertyAnimation* m_hideAnimation = nullptr;
-  QPoint m_dragPosition;
-  bool m_isDragging = false;
-  Impl();
-  ~Impl()=default;
- };
+PlaneLayerSettingPage::PlaneLayerSettingPage(QWidget* parent)
+    : QWidget(parent), impl_(new Impl())
+{
+    // ── Widgets ──────────────────────────────────────────────────────────────
 
- CreateSolidLayerSettingDialog::Impl::Impl()
- {
- }
+    impl_->widthSpinBox = new DragSpinBox(this);
+    impl_->widthSpinBox->setRange(1, 16384);
+    impl_->widthSpinBox->setValue(1920);
 
- CreateSolidLayerSettingDialog::CreateSolidLayerSettingDialog(QWidget* parent /*= nullptr*/) :QDialog(parent),impl_(new Impl())
- {
-  setWindowTitle("Plane Layer Settings");
-  setFixedSize(520, 460);
-  setWindowFlags(windowFlags() | Qt::Dialog | Qt::FramelessWindowHint);
-  setAttribute(Qt::WA_NoChildEventsForParent);
-  auto* mainLayout = new QVBoxLayout(this);
-  mainLayout->setContentsMargins(0, 0, 0, 0);
-  mainLayout->setSpacing(0);
+    impl_->heightSpinBox = new DragSpinBox(this);
+    impl_->heightSpinBox->setRange(1, 16384);
+    impl_->heightSpinBox->setValue(1080);
 
-  auto* header = new QWidget(this);
-  header->setFixedHeight(50);
-  header->setStyleSheet("background-color: #2D2D30; border-bottom: 1px solid #444;");
-  auto* headerLayout = new QHBoxLayout(header);
-  headerLayout->setContentsMargins(15, 0, 15, 0);
-  auto* title = new QLabel(QStringLiteral("Plane Layer Settings"), header);
-  title->setStyleSheet("color: white; font-weight: bold; font-size: 13px;");
-  headerLayout->addWidget(title);
-  headerLayout->addStretch();
-  mainLayout->addWidget(header);
+    impl_->lockButton = new QPushButton(this);
+    impl_->lockButton->setText(u8"🔒");
+    impl_->lockButton->setFixedSize(20, 20);
+    impl_->lockButton->setCheckable(true);
+    impl_->lockButton->setChecked(false);
+    impl_->lockButton->setToolTip(u8"縦横比をロック");
+    impl_->lockButton->setStyleSheet(
+        "QPushButton { background: transparent; border: none; font-size: 12px; }"
+        "QPushButton:checked { color: #ff9900; }"
+    );
 
-  auto* content = new QWidget(this);
-  auto* contentLayout = new QVBoxLayout(content);
-  contentLayout->setContentsMargins(20, 20, 20, 10);
-  contentLayout->setSpacing(14);
+    impl_->unitCombo = new QComboBox(this);
+    impl_->unitCombo->addItem(u8"ピクセル");
+    impl_->unitCombo->addItem(u8"ポイント");
+    impl_->unitCombo->addItem(u8"パーセント");
+    impl_->unitCombo->addItem(u8"ミリメートル");
 
-  auto editableLabel = impl_->nameEditableLabel = new EditableLabel();
-  editableLabel->setText("平面 1");
-  editableLabel->setStyleSheet("background: #252526; padding: 6px; border-radius: 4px; font-weight: bold;");
+    impl_->pixelAspectCombo = new QComboBox(this);
+    impl_->pixelAspectCombo->addItem(u8"正方形ピクセル");
+    impl_->pixelAspectCombo->addItem(u8"D1/DV NTSC");
+    impl_->pixelAspectCombo->addItem(u8"D1/DV PAL");
+    impl_->pixelAspectCombo->addItem(u8"D1/DV NTSC ワイドスクリーン");
+    impl_->pixelAspectCombo->addItem(u8"D1/DV PAL ワイドスクリーン");
+    impl_->pixelAspectCombo->addItem(u8"アナモフィック 2:1");
 
-  auto* nameRow = new QHBoxLayout();
-  auto* nameLabel = new QLabel("Name:", content);
-  nameLabel->setFixedWidth(60);
-  nameLabel->setStyleSheet("color: #AAA; font-weight: bold;");
-  nameRow->addWidget(nameLabel);
-  nameRow->addWidget(editableLabel, 1);
+    impl_->bgColorButton = new QPushButton(this);
+    impl_->bgColorButton->setFixedSize(40, 24);
+    updateColorButtonPreview(impl_->bgColorButton, impl_->bgColor);
 
-  auto settingPage = impl_->settingPage = new PlaneLayerSettingPage(this);
-  settingPage->resizeCompositionSize();
-  auto* settingFrame = new QWidget(content);
-  auto* settingFrameLayout = new QVBoxLayout(settingFrame);
-  settingFrameLayout->setContentsMargins(10, 10, 10, 10);
-  settingFrameLayout->setSpacing(0);
-  settingFrameLayout->addWidget(settingPage);
-  settingFrame->setStyleSheet("background-color: #232325; border: 1px solid #3F3F46; border-radius: 4px;");
+    impl_->hexColorEdit = new QLineEdit(this);
+    impl_->hexColorEdit->setFixedWidth(140);
+    updateHexFromColor(impl_->hexColorEdit, impl_->bgColor);
 
-  contentLayout->addLayout(nameRow);
-  contentLayout->addWidget(settingFrame, 1);
-  mainLayout->addWidget(content, 1);
+    impl_->matchCompButton = new QPushButton(u8"コンポジションサイズを使用", this);
 
-  auto* footer = new QWidget(this);
-  footer->setStyleSheet("background-color: #252526; border-top: 1px solid #333;");
-  auto* footerLayout = new QHBoxLayout(footer);
-  footerLayout->setContentsMargins(15, 10, 15, 10);
-  auto* dialogButtonBox = impl_->dialogButtonBox = new QDialogButtonBox();
-  dialogButtonBox->setStandardButtons(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
-  if (auto* okBtn = dialogButtonBox->button(QDialogButtonBox::Ok)) {
-      okBtn->setFixedSize(80, 28);
-      okBtn->setText("OK");
-      okBtn->setStyleSheet("background: #007ACC; color: white; border-radius: 4px; font-weight: bold;");
-  }
-  if (auto* cancelBtn = dialogButtonBox->button(QDialogButtonBox::Cancel)) {
-      cancelBtn->setFixedSize(80, 28);
-      cancelBtn->setText("Cancel");
-      cancelBtn->setStyleSheet("background: #3E3E42; color: #DDD; border-radius: 4px; border: 1px solid #555;");
-  }
-  footerLayout->addStretch();
-  footerLayout->addWidget(dialogButtonBox);
-  mainLayout->addWidget(footer);
+    impl_->fitToCompCheck = new QCheckBox(u8"平面をコンポジションサイズに合わせる", this);
+    impl_->fitToCompCheck->setChecked(false);
 
-  setStyleSheet("QDialog { background-color: #1E1E20; border: 1px solid #444; }");
-  
-  QObject::connect(dialogButtonBox, &QDialogButtonBox::accepted, this, [this]() {
-      if (impl_->nameEditableLabel) impl_->nameEditableLabel->finishEdit();
-      QString name = impl_->nameEditableLabel ? impl_->nameEditableLabel->text() : "Solid";
-      ArtifactSolidLayerInitParams params = impl_->settingPage->getInitParams(name);
-      Q_EMIT submit(params);
-      accept();
-  });
-  QObject::connect(dialogButtonBox, &QDialogButtonBox::rejected, this, &QDialog::reject);
+    // ── Layout ───────────────────────────────────────────────────────────────
 
-  QObject::connect(settingPage, &PlaneLayerSettingPage::colorChanged, this, [this](const QString& name) {
-      if (impl_->nameEditableLabel) {
-          impl_->nameEditableLabel->setText(name);
-      }
-  });
- }
+    auto* vbox = new QVBoxLayout(this);
+    vbox->setContentsMargins(0, 0, 0, 0);
+    vbox->setSpacing(0);
 
- CreateSolidLayerSettingDialog::~CreateSolidLayerSettingDialog()
- {
-  delete impl_;
- }
+    // サイズ section
+    vbox->addWidget(makeSectionHeader(u8"サイズ", this));
 
- void CreateSolidLayerSettingDialog::keyPressEvent(QKeyEvent* event)
- {
-  QDialog::keyPressEvent(event);
- }
+    // 幅 row: spinbox + "px" label + lock button
+    {
+        auto* ctrl = new QWidget(this);
+        auto* ctrlLay = new QHBoxLayout(ctrl);
+        ctrlLay->setContentsMargins(0, 0, 0, 0);
+        ctrlLay->setSpacing(4);
+        ctrlLay->addWidget(impl_->widthSpinBox, 1);
+        ctrlLay->addWidget(new QLabel("px", this));
+        ctrlLay->addWidget(impl_->lockButton);
+        vbox->addWidget(makeRow(this, u8"幅", 100, ctrl));
+    }
+
+    // 高さ row: spinbox + "px" label
+    {
+        auto* ctrl = new QWidget(this);
+        auto* ctrlLay = new QHBoxLayout(ctrl);
+        ctrlLay->setContentsMargins(0, 0, 0, 0);
+        ctrlLay->setSpacing(4);
+        ctrlLay->addWidget(impl_->heightSpinBox, 1);
+        ctrlLay->addWidget(new QLabel("px", this));
+        vbox->addWidget(makeRow(this, u8"高さ", 100, ctrl));
+    }
+
+    // 単位 row
+    vbox->addWidget(makeRow(this, u8"単位", 100, impl_->unitCombo));
+
+    // コンポジションサイズを使用 button (indented to align with controls)
+    {
+        auto* btnRow = new QWidget(this);
+        auto* btnRowLay = new QHBoxLayout(btnRow);
+        btnRowLay->setContentsMargins(20, 2, 4, 2);
+        btnRowLay->addSpacing(104);
+        btnRowLay->addWidget(impl_->matchCompButton, 1);
+        vbox->addWidget(btnRow);
+    }
+
+    // ピクセル縦横比 row
+    vbox->addWidget(makeRow(this, u8"ピクセル縦横比", 100, impl_->pixelAspectCombo));
+
+    // カラー section
+    vbox->addWidget(makeSectionHeader(u8"カラー", this));
+
+    // カラー row: color swatch + hex edit
+    {
+        auto* ctrl = new QWidget(this);
+        auto* ctrlLay = new QHBoxLayout(ctrl);
+        ctrlLay->setContentsMargins(0, 0, 0, 0);
+        ctrlLay->setSpacing(6);
+        ctrlLay->addWidget(impl_->bgColorButton);
+        ctrlLay->addWidget(impl_->hexColorEdit);
+        ctrlLay->addStretch();
+        vbox->addWidget(makeRow(this, u8"カラー", 100, ctrl));
+    }
+
+    // fitToCompCheck row (indented to align with controls)
+    {
+        auto* checkRow = new QWidget(this);
+        auto* checkRowLay = new QHBoxLayout(checkRow);
+        checkRowLay->setContentsMargins(20, 2, 4, 2);
+        checkRowLay->addSpacing(104);
+        checkRowLay->addWidget(impl_->fitToCompCheck, 1);
+        vbox->addWidget(checkRow);
+    }
+
+    vbox->addStretch();
+
+    // ── Connections ───────────────────────────────────────────────────────────
+
+    // Aspect-ratio lock: store ratio when engaged, enforce on spin changes.
+    QObject::connect(impl_->lockButton, &QPushButton::toggled, this, [this](bool checked) {
+        impl_->aspectLocked = checked;
+        if (checked) {
+            int w = impl_->widthSpinBox->value();
+            int h = impl_->heightSpinBox->value();
+            impl_->lockedRatio = (h > 0) ? static_cast<double>(w) / h : 16.0 / 9.0;
+        }
+    });
+
+    QObject::connect(impl_->widthSpinBox, QOverload<int>::of(&QSpinBox::valueChanged),
+                     this, [this](int w) {
+        if (impl_->aspectLocked) {
+            impl_->heightSpinBox->blockSignals(true);
+            impl_->heightSpinBox->setValue(
+                static_cast<int>(std::round(w / impl_->lockedRatio)));
+            impl_->heightSpinBox->blockSignals(false);
+        }
+    });
+
+    QObject::connect(impl_->heightSpinBox, QOverload<int>::of(&QSpinBox::valueChanged),
+                     this, [this](int h) {
+        if (impl_->aspectLocked) {
+            impl_->widthSpinBox->blockSignals(true);
+            impl_->widthSpinBox->setValue(
+                static_cast<int>(std::round(h * impl_->lockedRatio)));
+            impl_->widthSpinBox->blockSignals(false);
+        }
+    });
+
+    QObject::connect(impl_->bgColorButton, &QPushButton::clicked, this, [this]() {
+        FloatColorPicker picker(this);
+        picker.setWindowTitle(QStringLiteral("平面のカラーを選択"));
+        picker.setColor(FloatColor(
+            impl_->bgColor.redF(),
+            impl_->bgColor.greenF(),
+            impl_->bgColor.blueF(),
+            impl_->bgColor.alphaF()));
+
+        if (picker.exec() != QDialog::Accepted) return;
+
+        const FloatColor picked = picker.getColor();
+        const QColor c = QColor::fromRgbF(picked.r(), picked.g(), picked.b(), picked.a());
+        if (!c.isValid()) return;
+
+        impl_->bgColor = c;
+        updateColorButtonPreview(impl_->bgColorButton, c);
+        updateHexFromColor(impl_->hexColorEdit, c);
+    });
+
+    QObject::connect(impl_->hexColorEdit, &QLineEdit::editingFinished, this, [this]() {
+        QColor c(impl_->hexColorEdit->text().trimmed());
+        if (c.isValid()) {
+            impl_->bgColor = c;
+            updateColorButtonPreview(impl_->bgColorButton, c);
+        }
+    });
+
+    QObject::connect(impl_->matchCompButton, &QPushButton::clicked,
+                     this, &PlaneLayerSettingPage::resizeCompositionSize);
+}
+
+PlaneLayerSettingPage::~PlaneLayerSettingPage()
+{
+    delete impl_;
+}
+
+void PlaneLayerSettingPage::setDefaultFocus() {}
+
+void PlaneLayerSettingPage::spouitMode() {}
+
+void PlaneLayerSettingPage::resizeCompositionSize()
+{
+    auto service = ArtifactProjectService::instance();
+    if (service) {
+        auto compWeak = service->currentComposition();
+        if (auto comp = compWeak.lock()) {
+            auto size = comp->settings().compositionSize();
+            if (size.width() > 0 && size.height() > 0) {
+                impl_->widthSpinBox->setValue(size.width());
+                impl_->heightSpinBox->setValue(size.height());
+                return;
+            }
+        }
+    }
+    impl_->widthSpinBox->setValue(1920);
+    impl_->heightSpinBox->setValue(1080);
+}
+
+void PlaneLayerSettingPage::setInitialParams(int p_width, int p_height, const FloatColor& color)
+{
+    impl_->widthSpinBox->setValue(p_width);
+    impl_->heightSpinBox->setValue(p_height);
+    QColor c;
+    c.setRgbF(color.r(), color.g(), color.b(), color.a());
+    impl_->bgColor = c;
+    updateColorButtonPreview(impl_->bgColorButton, c);
+    updateHexFromColor(impl_->hexColorEdit, c);
+}
+
+ArtifactSolidLayerInitParams PlaneLayerSettingPage::getInitParams(const QString& name) const
+{
+    ArtifactSolidLayerInitParams params(name);
+    params.setWidth(impl_->widthSpinBox->value());
+    params.setHeight(impl_->heightSpinBox->value());
+    QColor c = impl_->bgColor;
+    params.setColor(FloatColor(c.redF(), c.greenF(), c.blueF(), c.alphaF()));
+    return params;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Shared helper: build the standard dialog chrome (header + scroll + footer)
+// ─────────────────────────────────────────────────────────────────────────────
+
+namespace {
+
+struct DialogChrome {
+    QVBoxLayout* mainLayout   = nullptr;
+    QScrollArea* scrollArea   = nullptr;
+    QWidget*     scrollContent = nullptr;
+    QVBoxLayout* scrollLayout  = nullptr;
+    QPushButton* closeButton   = nullptr;
+    QDialogButtonBox* buttonBox = nullptr;
+};
+
+DialogChrome buildDialogChrome(QDialog* dlg)
+{
+    DialogChrome chrome;
+
+    dlg->setWindowFlags(dlg->windowFlags() | Qt::Dialog | Qt::FramelessWindowHint);
+    dlg->setAttribute(Qt::WA_NoChildEventsForParent);
+
+    chrome.mainLayout = new QVBoxLayout(dlg);
+    chrome.mainLayout->setContentsMargins(0, 0, 0, 0);
+    chrome.mainLayout->setSpacing(0);
+
+    // Header bar
+    auto* header = new QWidget(dlg);
+    header->setFixedHeight(50);
+    header->setStyleSheet("background-color: #2a2a2a;");
+    auto* headerLayout = new QHBoxLayout(header);
+    headerLayout->setContentsMargins(15, 0, 10, 0);
+
+    auto* titleLabel = new QLabel(u8"平面設定", header);
+    titleLabel->setStyleSheet("color: #e0e0e0; font-size: 13px; font-weight: bold;");
+
+    chrome.closeButton = new QPushButton(u8"×", header);
+    chrome.closeButton->setFixedSize(30, 30);
+    chrome.closeButton->setStyleSheet(
+        "QPushButton { background: transparent; color: #aaaaaa; border: none; font-size: 18px; }"
+        "QPushButton:hover { color: #ff4444; }"
+    );
+
+    headerLayout->addWidget(titleLabel);
+    headerLayout->addStretch();
+    headerLayout->addWidget(chrome.closeButton);
+    chrome.mainLayout->addWidget(header);
+
+    // Scroll area
+    chrome.scrollArea = new QScrollArea(dlg);
+    chrome.scrollArea->setWidgetResizable(true);
+    chrome.scrollArea->setFrameShape(QFrame::NoFrame);
+    chrome.scrollArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+
+    chrome.scrollContent = new QWidget(chrome.scrollArea);
+    chrome.scrollLayout = new QVBoxLayout(chrome.scrollContent);
+    chrome.scrollLayout->setContentsMargins(20, 10, 20, 10);
+    chrome.scrollLayout->setSpacing(0);
+
+    chrome.scrollArea->setWidget(chrome.scrollContent);
+    chrome.mainLayout->addWidget(chrome.scrollArea, 1);
+
+    // Footer
+    auto* footer = new QWidget(dlg);
+    auto* footerLayout = new QHBoxLayout(footer);
+    footerLayout->setContentsMargins(15, 10, 15, 10);
+
+    // Create button box as signal source only (not in visual layout)
+    chrome.buttonBox = new QDialogButtonBox(dlg);
+    chrome.buttonBox->setStandardButtons(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+    chrome.buttonBox->hide();
+
+    // Visual buttons in explicit Windows order: [OK] [キャンセル]
+    auto* okBtn = new QPushButton("OK", footer);
+    okBtn->setFixedSize(80, 28);
+    auto* cancelBtn = new QPushButton(u8"キャンセル", footer);
+    cancelBtn->setFixedSize(80, 28);
+    QObject::connect(okBtn,     &QPushButton::clicked,
+                     chrome.buttonBox->button(QDialogButtonBox::Ok),     &QPushButton::click);
+    QObject::connect(cancelBtn, &QPushButton::clicked,
+                     chrome.buttonBox->button(QDialogButtonBox::Cancel), &QPushButton::click);
+    footerLayout->addStretch();
+    footerLayout->addWidget(okBtn);
+    footerLayout->addWidget(cancelBtn);
+    chrome.mainLayout->addWidget(footer);
+
+    return chrome;
+}
+
+} // namespace
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  CreateSolidLayerSettingDialog
+// ─────────────────────────────────────────────────────────────────────────────
+
+W_OBJECT_IMPL(CreateSolidLayerSettingDialog)
+
+class CreateSolidLayerSettingDialog::Impl
+{
+public:
+    EditableLabel*    nameEditableLabel = nullptr;
+    PlaneLayerSettingPage* settingPage  = nullptr;
+    QDialogButtonBox* dialogButtonBox   = nullptr;
+    QPoint m_dragPosition;
+    bool   m_isDragging = false;
+};
+
+CreateSolidLayerSettingDialog::CreateSolidLayerSettingDialog(QWidget* parent)
+    : QDialog(parent), impl_(new Impl())
+{
+    setWindowTitle(u8"平面設定");
+    setFixedSize(520, 500);
+
+    auto chrome = buildDialogChrome(this);
+    impl_->dialogButtonBox = chrome.buttonBox;
+
+    // 名前 section
+    chrome.scrollLayout->addWidget(makeSectionHeader(u8"名前", chrome.scrollContent));
+    {
+        impl_->nameEditableLabel = new EditableLabel();
+        impl_->nameEditableLabel->setText(u8"ホワイト 平面 1");
+
+        auto* nameRow = new QWidget(chrome.scrollContent);
+        auto* nameRowLay = new QHBoxLayout(nameRow);
+        nameRowLay->setContentsMargins(20, 2, 4, 2);
+        auto* nameLabel = new QLabel(u8"名前", nameRow);
+        nameLabel->setFixedWidth(100);
+        nameLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        nameRowLay->addWidget(nameLabel);
+        nameRowLay->addWidget(impl_->nameEditableLabel, 1);
+        chrome.scrollLayout->addWidget(nameRow);
+    }
+
+    // Settings page (サイズ + カラー sections)
+    auto* settingPage = impl_->settingPage = new PlaneLayerSettingPage(chrome.scrollContent);
+    settingPage->resizeCompositionSize();
+    chrome.scrollLayout->addWidget(settingPage);
+    chrome.scrollLayout->addStretch();
+
+    // Connections
+    QObject::connect(chrome.closeButton, &QPushButton::clicked, this, &QDialog::reject);
+
+    QObject::connect(chrome.buttonBox, &QDialogButtonBox::accepted, this, [this]() {
+        if (impl_->nameEditableLabel) impl_->nameEditableLabel->finishEdit();
+        QString name = impl_->nameEditableLabel
+            ? impl_->nameEditableLabel->text()
+            : u8"平面 1";
+        ArtifactSolidLayerInitParams params = impl_->settingPage->getInitParams(name);
+        Q_EMIT submit(params);
+        accept();
+    });
+    QObject::connect(chrome.buttonBox, &QDialogButtonBox::rejected, this, &QDialog::reject);
+
+    QObject::connect(settingPage, &PlaneLayerSettingPage::colorChanged,
+                     this, [this](const QString& name) {
+        if (impl_->nameEditableLabel)
+            impl_->nameEditableLabel->setText(name);
+    });
+}
+
+CreateSolidLayerSettingDialog::~CreateSolidLayerSettingDialog()
+{
+    delete impl_;
+}
+
+void CreateSolidLayerSettingDialog::keyPressEvent(QKeyEvent* event)
+{
+    QDialog::keyPressEvent(event);
+}
 
 void CreateSolidLayerSettingDialog::mousePressEvent(QMouseEvent* event)
 {
-  if (event->button() == Qt::LeftButton) {
-   impl_->m_dragPosition = event->globalPosition().toPoint() - frameGeometry().topLeft();
-   impl_->m_isDragging = true;
-   event->accept();
-   return;
-  }
-  QDialog::mousePressEvent(event);
+    if (event->button() == Qt::LeftButton) {
+        impl_->m_dragPosition = event->globalPosition().toPoint() - frameGeometry().topLeft();
+        impl_->m_isDragging = true;
+        event->accept();
+        return;
+    }
+    QDialog::mousePressEvent(event);
 }
 
- void CreateSolidLayerSettingDialog::mouseReleaseEvent(QMouseEvent* event)
- {
-  if (impl_->m_isDragging && event->button() == Qt::LeftButton) {
-   impl_->m_isDragging = false;
-   event->accept();
-   return;
-  }
-  QDialog::mouseReleaseEvent(event);
- }
+void CreateSolidLayerSettingDialog::mouseReleaseEvent(QMouseEvent* event)
+{
+    if (impl_->m_isDragging && event->button() == Qt::LeftButton) {
+        impl_->m_isDragging = false;
+        event->accept();
+        return;
+    }
+    QDialog::mouseReleaseEvent(event);
+}
 
- void CreateSolidLayerSettingDialog::mouseMoveEvent(QMouseEvent* event)
- {
-  if (impl_->m_isDragging && (event->buttons() & Qt::LeftButton)) {
-   move(event->globalPosition().toPoint() - impl_->m_dragPosition);
-   event->accept();
-   return;
-  }
-  QDialog::mouseMoveEvent(event);
- }
+void CreateSolidLayerSettingDialog::mouseMoveEvent(QMouseEvent* event)
+{
+    if (impl_->m_isDragging && (event->buttons() & Qt::LeftButton)) {
+        move(event->globalPosition().toPoint() - impl_->m_dragPosition);
+        event->accept();
+        return;
+    }
+    QDialog::mouseMoveEvent(event);
+}
 
 void CreateSolidLayerSettingDialog::showEvent(QShowEvent* event)
 {
-  QDialog::showEvent(event);
-  QPoint endPos;
-  if (parentWidget()) {
-   endPos = parentWidget()->mapToGlobal(parentWidget()->rect().center())
-            - QPoint(width() / 2, height() / 2);
-  } else {
-   endPos = QGuiApplication::primaryScreen()->availableGeometry().center()
-            - QPoint(width() / 2, height() / 2);
-  }
-  move(endPos);
+    QDialog::showEvent(event);
+    QWidget* anchor = parentWidget() ? parentWidget()->window() : QApplication::activeWindow();
+    QPoint endPos;
+    if (anchor) {
+        endPos = anchor->mapToGlobal(anchor->rect().center())
+                 - QPoint(width() / 2, height() / 2);
+    } else {
+        endPos = QGuiApplication::primaryScreen()->availableGeometry().center()
+                 - QPoint(width() / 2, height() / 2);
+    }
+    move(endPos);
 }
 
 void CreateSolidLayerSettingDialog::showAnimated()
 {
-  show();
+    show();
 }
 
- W_OBJECT_IMPL(EditPlaneLayerSettingDialog)
+// ─────────────────────────────────────────────────────────────────────────────
+//  EditPlaneLayerSettingDialog
+// ─────────────────────────────────────────────────────────────────────────────
 
- class EditPlaneLayerSettingDialog::Impl
- {
- public:
-  EditableLabel* nameEditableLabel = nullptr;
-  PlaneLayerSettingPage* settingPage = nullptr;
-  QDialogButtonBox* dialogButtonBox = nullptr;
-  ArtifactSolidImageLayer* targetLayer = nullptr;
- };
+W_OBJECT_IMPL(EditPlaneLayerSettingDialog)
 
- EditPlaneLayerSettingDialog::EditPlaneLayerSettingDialog(QWidget* parent) :QDialog(parent), impl_(new Impl())
- {
-  setWindowTitle(u8"平面設定の編集");
-  setFixedSize(600, 400);
-  setWindowFlags(windowFlags() | Qt::Dialog | Qt::FramelessWindowHint);
-  setAttribute(Qt::WA_NoChildEventsForParent);
-  QVBoxLayout* layout = new QVBoxLayout();
+class EditPlaneLayerSettingDialog::Impl
+{
+public:
+    EditableLabel*         nameEditableLabel = nullptr;
+    PlaneLayerSettingPage* settingPage       = nullptr;
+    QDialogButtonBox*      dialogButtonBox   = nullptr;
+    ArtifactSolidImageLayer* targetLayer     = nullptr;
+    QPoint m_dragPosition;
+    bool   m_isDragging = false;
+};
 
-  auto editableLabel = impl_->nameEditableLabel = new EditableLabel();
-  editableLabel->setText("Solid");
-  
-  auto settingPage = impl_->settingPage = new PlaneLayerSettingPage(this);
-  
-  auto dialogButtonBox = impl_->dialogButtonBox = new QDialogButtonBox();
-  dialogButtonBox->setStandardButtons(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
-  
-  layout->addWidget(editableLabel);
-  layout->addWidget(settingPage);
-  layout->addWidget(dialogButtonBox, 0, Qt::AlignRight);
-  setLayout(layout);
-  auto style = getDCCStyleSheetPreset(DccStylePreset::ModoStyle);
-  setStyleSheet(style);
-  
-  QObject::connect(dialogButtonBox, &QDialogButtonBox::accepted, this, [this]() {
-      if (impl_->nameEditableLabel) impl_->nameEditableLabel->finishEdit();
-      QString name = impl_->nameEditableLabel ? impl_->nameEditableLabel->text() : "Solid";
-      ArtifactSolidLayerInitParams params = impl_->settingPage->getInitParams(name);
-      
-      if (impl_->targetLayer) {
-          impl_->targetLayer->setLayerName(name);
-          impl_->targetLayer->setSize(params.width(), params.height());
-          impl_->targetLayer->setColor(params.color());
-      }
-      accept();
-  });
-  QObject::connect(dialogButtonBox, &QDialogButtonBox::rejected, this, &QDialog::reject);
+EditPlaneLayerSettingDialog::EditPlaneLayerSettingDialog(QWidget* parent)
+    : QDialog(parent), impl_(new Impl())
+{
+    setWindowTitle(u8"平面設定");
+    setFixedSize(520, 500);
 
-  QObject::connect(settingPage, &PlaneLayerSettingPage::colorChanged, this, [this](const QString& name) {
-      if (impl_->nameEditableLabel) {
-          impl_->nameEditableLabel->setText(name);
-      }
-  });
- }
+    auto chrome = buildDialogChrome(this);
+    impl_->dialogButtonBox = chrome.buttonBox;
 
- EditPlaneLayerSettingDialog::~EditPlaneLayerSettingDialog()
- {
-  delete impl_;
- }
+    // 名前 section
+    chrome.scrollLayout->addWidget(makeSectionHeader(u8"名前", chrome.scrollContent));
+    {
+        impl_->nameEditableLabel = new EditableLabel();
+        impl_->nameEditableLabel->setText(u8"平面 1");
 
- void EditPlaneLayerSettingDialog::keyPressEvent(QKeyEvent* event) { QDialog::keyPressEvent(event); }
-void EditPlaneLayerSettingDialog::mousePressEvent(QMouseEvent* event) { QDialog::mousePressEvent(event); }
-void EditPlaneLayerSettingDialog::mouseReleaseEvent(QMouseEvent* event) { QDialog::mouseReleaseEvent(event); }
-void EditPlaneLayerSettingDialog::mouseMoveEvent(QMouseEvent* event) { QDialog::mouseMoveEvent(event); }
+        auto* nameRow = new QWidget(chrome.scrollContent);
+        auto* nameRowLay = new QHBoxLayout(nameRow);
+        nameRowLay->setContentsMargins(20, 2, 4, 2);
+        auto* nameLabel = new QLabel(u8"名前", nameRow);
+        nameLabel->setFixedWidth(100);
+        nameLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        nameRowLay->addWidget(nameLabel);
+        nameRowLay->addWidget(impl_->nameEditableLabel, 1);
+        chrome.scrollLayout->addWidget(nameRow);
+    }
+
+    // Settings page (サイズ + カラー sections)
+    auto* settingPage = impl_->settingPage = new PlaneLayerSettingPage(chrome.scrollContent);
+    chrome.scrollLayout->addWidget(settingPage);
+    chrome.scrollLayout->addStretch();
+
+    // Connections
+    QObject::connect(chrome.closeButton, &QPushButton::clicked, this, &QDialog::reject);
+
+    QObject::connect(chrome.buttonBox, &QDialogButtonBox::accepted, this, [this]() {
+        if (impl_->nameEditableLabel) impl_->nameEditableLabel->finishEdit();
+        QString name = impl_->nameEditableLabel
+            ? impl_->nameEditableLabel->text()
+            : u8"平面 1";
+        ArtifactSolidLayerInitParams params = impl_->settingPage->getInitParams(name);
+        if (impl_->targetLayer) {
+            impl_->targetLayer->setLayerName(name);
+            impl_->targetLayer->setSize(params.width(), params.height());
+            impl_->targetLayer->setColor(params.color());
+        }
+        accept();
+    });
+    QObject::connect(chrome.buttonBox, &QDialogButtonBox::rejected, this, &QDialog::reject);
+
+    QObject::connect(settingPage, &PlaneLayerSettingPage::colorChanged,
+                     this, [this](const QString& name) {
+        if (impl_->nameEditableLabel)
+            impl_->nameEditableLabel->setText(name);
+    });
+}
+
+EditPlaneLayerSettingDialog::~EditPlaneLayerSettingDialog()
+{
+    delete impl_;
+}
+
+void EditPlaneLayerSettingDialog::keyPressEvent(QKeyEvent* event)
+{
+    QDialog::keyPressEvent(event);
+}
+
+void EditPlaneLayerSettingDialog::mousePressEvent(QMouseEvent* event)
+{
+    if (event->button() == Qt::LeftButton) {
+        impl_->m_dragPosition = event->globalPosition().toPoint() - frameGeometry().topLeft();
+        impl_->m_isDragging = true;
+        event->accept();
+        return;
+    }
+    QDialog::mousePressEvent(event);
+}
+
+void EditPlaneLayerSettingDialog::mouseReleaseEvent(QMouseEvent* event)
+{
+    if (impl_->m_isDragging && event->button() == Qt::LeftButton) {
+        impl_->m_isDragging = false;
+        event->accept();
+        return;
+    }
+    QDialog::mouseReleaseEvent(event);
+}
+
+void EditPlaneLayerSettingDialog::mouseMoveEvent(QMouseEvent* event)
+{
+    if (impl_->m_isDragging && (event->buttons() & Qt::LeftButton)) {
+        move(event->globalPosition().toPoint() - impl_->m_dragPosition);
+        event->accept();
+        return;
+    }
+    QDialog::mouseMoveEvent(event);
+}
+
 void EditPlaneLayerSettingDialog::showEvent(QShowEvent* event)
 {
-  QDialog::showEvent(event);
-  QPoint endPos;
-  if (parentWidget()) {
-   endPos = parentWidget()->mapToGlobal(parentWidget()->rect().center())
-            - QPoint(width() / 2, height() / 2);
-  } else {
-   endPos = QGuiApplication::primaryScreen()->availableGeometry().center()
-            - QPoint(width() / 2, height() / 2);
-  }
-  move(endPos);
+    QDialog::showEvent(event);
+    QWidget* anchor = parentWidget() ? parentWidget()->window() : QApplication::activeWindow();
+    QPoint endPos;
+    if (anchor) {
+        endPos = anchor->mapToGlobal(anchor->rect().center())
+                 - QPoint(width() / 2, height() / 2);
+    } else {
+        endPos = QGuiApplication::primaryScreen()->availableGeometry().center()
+                 - QPoint(width() / 2, height() / 2);
+    }
+    move(endPos);
 }
 
 void EditPlaneLayerSettingDialog::showAnimated()
 {
-  show();
+    show();
 }
 
- void EditPlaneLayerSettingDialog::setupEdit(std::shared_ptr<ArtifactSolidImageLayer> layer)
- {
-     if (!layer) return;
-     impl_->targetLayer = layer.get();
-     if (impl_->nameEditableLabel) {
-         impl_->nameEditableLabel->setText(layer->layerName());
-     }
-     if (impl_->settingPage) {
-         auto size = layer->sourceSize();
-         impl_->settingPage->setInitialParams(size.width, size.height, layer->color());
-     }
- }
+void EditPlaneLayerSettingDialog::setupEdit(std::shared_ptr<ArtifactSolidImageLayer> layer)
+{
+    if (!layer) return;
+    impl_->targetLayer = layer.get();
+    if (impl_->nameEditableLabel)
+        impl_->nameEditableLabel->setText(layer->layerName());
+    if (impl_->settingPage) {
+        auto size = layer->sourceSize();
+        impl_->settingPage->setInitialParams(size.width, size.height, layer->color());
+    }
+}
 
 };

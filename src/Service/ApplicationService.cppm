@@ -24,6 +24,12 @@ public:
  std::unique_ptr<ArtifactToolService> toolService_;
 };
 
+ApplicationService* ApplicationService::instance()
+{
+ static ApplicationService s_instance(nullptr);
+ return &s_instance;
+}
+
 ApplicationService::ApplicationService(QObject* parent)
  : QObject(parent), impl_(new Impl())
 {
@@ -114,7 +120,7 @@ ArtifactToolService* ApplicationService::toolService() const
 
 QString ApplicationService::applicationVersion() const
 {
- return QStringLiteral("1.0.0");
+ return QStringLiteral(ARTIFACT_VERSION_STRING);
 }
 
 bool ApplicationService::isProjectOpen() const

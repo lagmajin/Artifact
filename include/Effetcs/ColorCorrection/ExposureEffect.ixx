@@ -2,46 +2,14 @@ module;
 
 #include <QString>
 #include <QVariant>
-
-#include <iostream>
-#include <vector>
-#include <string>
-#include <map>
-#include <unordered_map>
-#include <set>
-#include <unordered_set>
-#include <memory>
 #include <algorithm>
-#include <cmath>
-#include <functional>
-#include <optional>
-#include <utility>
-#include <array>
-#include <mutex>
-#include <thread>
-#include <chrono>
-#include <filesystem>
-#include <fstream>
-#include <sstream>
-#include <stdexcept>
-#include <type_traits>
-#include <variant>
-#include <any>
-#include <atomic>
-#include <condition_variable>
-#include <queue>
-#include <deque>
-#include <list>
-#include <tuple>
-#include <numeric>
-#include <regex>
-#include <random>
+#include <memory>
+#include <vector>
+
 export module ExposureEffect;
 
-
-
-
 import Artifact.Effect.Abstract;
+import Artifact.Effect.ImplBase;
 import Image.ImageF32x4RGBAWithCache;
 import Property.Abstract;
 import Utils.String.UniString;
@@ -52,35 +20,32 @@ using namespace ArtifactCore;
 
 // 露出 (Exposure) エフェクト
 // 写真撮影における露出補正をシミュレート
+// CPU/GPU 両対応、同一アルゴリズム
 class ExposureEffect : public ArtifactAbstractEffect {
 private:
-    class Impl;
-    Impl* impl_;
+    float exposure_ = 0.0f;        // EV (-5.0 ~ 5.0)
+    float offset_ = 0.0f;          // (-0.5 ~ 0.5)
+    float gammaCorrection_ = 1.0f; // (0.2 ~ 5.0)
 
-protected:
-    void apply(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) override;
+    void syncImpls();
 
 public:
     ExposureEffect();
     ~ExposureEffect() override;
 
-    // 露出 EV値 (-5.0 ~ 5.0, default: 0.0)
-    // 1EV = 2倍の明るさ変化
-    void setExposure(float ev);
-    float exposure() const;
+    void setExposure(float ev) { exposure_ = std::clamp(ev, -5.0f, 5.0f); syncImpls(); }
+    float exposure() const { return exposure_; }
 
-    // オフセット (-0.5 ~ 0.5, default: 0.0)
-    // リニア空間でのシフト（暗部の底上げ等）
-    void setOffset(float offset);
-    float offset() const;
+    void setOffset(float offset) { offset_ = std::clamp(offset, -0.5f, 0.5f); syncImpls(); }
+    float offset() const { return offset_; }
 
-    // ガンマ補正 (0.2 ~ 5.0, default: 1.0)
-    void setGammaCorrection(float gamma);
-    float gammaCorrection() const;
+    void setGammaCorrection(float gamma) { gammaCorrection_ = std::clamp(gamma, 0.2f, 5.0f); syncImpls(); }
+    float gammaCorrection() const { return gammaCorrection_; }
 
-    // プロパティ取得
     std::vector<AbstractProperty> getProperties() const override;
     void setPropertyValue(const UniString& name, const QVariant& value) override;
+
+    bool supportsGPU() const override { return true; }
 };
 
 } // namespace Artifact

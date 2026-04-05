@@ -26,6 +26,7 @@ import Artifact.Effect.Abstract;
 import Artifact.Mask.LayerMask;
 import Frame.Position;
 import Audio.Segment;
+export import Property.Abstract;
 export import Property.Group;
 
 import Artifact.Render.IRenderer;
@@ -43,13 +44,15 @@ enum class LayerType {
   Adjustment, // 調整レイヤー
   Text,       // テキストレイヤー
   Shape,      // シェイプレイヤー
-  Precomp,    // プリコンポジション
-  Audio,      // 音声レイヤー
-  Video,      // 映像・音声フッテージ
-  Camera,
-  Light,
-  Group,
-  Folder
+  Precomp = 8,    // プリコンポジション
+  Audio = 9,      // 音声レイヤー
+  Video = 10,     // 映像・音声フッテージ
+  Camera = 11,
+  Light = 12,
+  Group = 13,
+  Folder = 14,
+  Particle = 15,   // パーティクルレイヤー
+  Clone = 16       // クローンレイヤー (MoGraph)
 };
 
 enum class LayerDirtyFlag : uint32_t {
@@ -73,6 +76,13 @@ enum class LayerDirtyReason : uint64_t {
   UserEdit = 1ull << 7
 };
 
+// LOD (Level of Detail) system
+enum class DetailLevel {
+  Low,    // 簡略化された描画（ズーム 0-25%）
+  Medium, // 標準的な描画（ズーム 25-75%）
+  High    // 高詳細な描画（ズーム 75-100%）
+};
+
 class ArtifactAbstractLayer;
 
 using ArtifactAbstractLayerPtr = std::shared_ptr<ArtifactAbstractLayer>;
@@ -86,30 +96,38 @@ private:
 
 protected:
   void setSourceSize(const Size_2D &size);
+  std::shared_ptr<ArtifactCore::AbstractProperty>
+  persistentLayerProperty(const QString &propertyPath,
+                          ArtifactCore::PropertyType type,
+                          const QVariant &value,
+                          int priority = 0) const;
 
 public:
-  ArtifactAbstractLayer();
-  virtual ~ArtifactAbstractLayer();
+    ArtifactAbstractLayer();
+    virtual ~ArtifactAbstractLayer();
 
-  QJsonObject toJson() const;
+protected:
+    void setIs3D(bool value);
+
+public:
+  virtual QJsonObject toJson() const;
   static ArtifactAbstractLayerPtr fromJson(const QJsonObject &obj);
-
   void Show();
   void Hide();
   bool isVisible() const;
+  virtual void draw(ArtifactIRenderer *renderer) = 0;
+  LayerID id() const;
   void setVisible(bool visible = true);
   QString layerName() const;
   void setLayerName(const QString &name);
+  QString layerNote() const;
+  void setLayerNote(const QString& note);
 
   void setComposition(void *comp);
   void *composition() const;
 
-  virtual void draw(ArtifactIRenderer *renderer) = 0;
-
   LAYER_BLEND_TYPE layerBlendType() const;
   void setBlendMode(LAYER_BLEND_TYPE type);
-
-  LayerID id() const;
 
   std::type_index type_index() const;
   void *QueryInterface(const std::type_index &ti);
@@ -124,9 +142,17 @@ public:
   const AnimatableTransform2D &transform2D() const;
   AnimatableTransform3D &transform3D();
   const AnimatableTransform3D &transform3D() const;
+  
+  QVector3D position3D() const;
+  void setPosition3D(const QVector3D &pos);
+  QVector3D rotation3D() const;
+  void setRotation3D(const QVector3D &rot);
+
   void setTransform();
   QTransform getGlobalTransform() const;
   QTransform getLocalTransform() const;
+  QTransform getGlobalTransformAt(int64_t frameNumber) const;
+  QTransform getLocalTransformAt(int64_t frameNumber) const;
   QMatrix4x4 getGlobalTransform4x4() const;
   QMatrix4x4 getLocalTransform4x4() const;
   ArtifactAbstractLayerPtr parentLayer() const;
@@ -152,7 +178,7 @@ public:
   virtual void goToFrame(int64_t frameNumber = 0);
   int64_t currentFrame() const;
   void applyPropertiesFromJson(const QJsonObject &obj);
-  void fromJsonProperties(const QJsonObject &obj);
+  virtual void fromJsonProperties(const QJsonObject &obj);
   /*Timeline*/
 
   void setParentById(const LayerID &id);
@@ -160,6 +186,7 @@ public:
   void clearParent();
   bool hasParent() const;
   virtual bool isNullLayer() const;
+  virtual bool isCloneLayer() const;
   virtual QRectF localBounds() const;
 
   virtual bool isAdjustmentLayer() const;
@@ -208,27 +235,28 @@ public:
   void addDirtyReason(LayerDirtyReason reason);
   bool hasDirtyReason(LayerDirtyReason reason) const;
   uint64_t dirtyReasonMask() const;
-  void clearDirtyReasons();
+   void clearDirtyReasons();
+
+   /*Effects*/
+public:
+   void addEffect(std::shared_ptr<class ArtifactAbstractEffect> effect);
+   void removeEffect(const UniString &effectID);
+   void clearEffects();
+   std::vector<std::shared_ptr<class ArtifactAbstractEffect>> getEffects() const;
+   std::shared_ptr<class ArtifactAbstractEffect>
+   getEffect(const UniString &effectID) const;
+   int effectCount() const;
+   /*Effects*/
 
   /*Thumbnail*/
   QImage getThumbnail(int width = 128, int height = 128) const;
   /*Thumbnail*/
 
-  /*Effects*/
-  void addEffect(std::shared_ptr<class ArtifactAbstractEffect> effect);
-  void removeEffect(const UniString &effectID);
-  void clearEffects();
-  std::vector<std::shared_ptr<class ArtifactAbstractEffect>> getEffects() const;
-  std::shared_ptr<class ArtifactAbstractEffect>
-  getEffect(const UniString &effectID) const;
-  int effectCount() const;
-  /*Effects*/
-
-  /*Generic Properties*/
   virtual std::vector<ArtifactCore::PropertyGroup>
   getLayerPropertyGroups() const;
   virtual bool setLayerPropertyValue(const QString &propertyPath,
                                      const QVariant &value);
+  std::shared_ptr<ArtifactCore::AbstractProperty> getProperty(const QString &name) const;
   /*Generic Properties*/
 
   /*Masks*/
@@ -241,7 +269,12 @@ public:
   bool hasMasks() const;
   /*Masks*/
 
+  // LOD (Level of Detail) rendering
+  virtual void drawLOD(ArtifactIRenderer* renderer, DetailLevel lod);
+
   void changed() W_SIGNAL(changed);
+  void layerNoteChanged(QString note)
+    W_SIGNAL(layerNoteChanged, note);
 
 public:
 };

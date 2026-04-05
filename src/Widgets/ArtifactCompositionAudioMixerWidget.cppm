@@ -12,6 +12,9 @@ module;
 #include <QSlider>
 #include <QTimer>
 #include <QVBoxLayout>
+#include <QFont>
+#include <QPalette>
+#include <QColor>
 #include <wobjectimpl.h>
 
 module Artifact.Widgets.CompositionAudioMixer;
@@ -19,8 +22,10 @@ module Artifact.Widgets.CompositionAudioMixer;
 import Artifact.Widgets.CompositionAudioMixer;
 import Artifact.Audio.Mixer;
 import Artifact.Composition.Abstract;
+import Artifact.Event.Types;
 import Artifact.Service.Project;
 import Artifact.Service.Playback;
+import Event.Bus;
 import std;
 
 namespace Artifact
@@ -127,6 +132,7 @@ public:
         setObjectName(QStringLiteral("AudioMixerStripCard"));
         setFrameShape(QFrame::NoFrame);
         setAttribute(Qt::WA_StyledBackground, true);
+        setAutoFillBackground(true);
         setFixedWidth(148);
         setMinimumHeight(374);
 
@@ -138,7 +144,13 @@ public:
         nameLabel_->setAlignment(Qt::AlignCenter);
         nameLabel_->setWordWrap(true);
         nameLabel_->setFixedHeight(36);
-        nameLabel_->setStyleSheet(QStringLiteral("color: #e6e6e6; font-weight: 600;"));
+        QFont nameFont = nameLabel_->font();
+        nameFont.setBold(true);
+        nameFont.setPointSize(nameFont.pointSize() > 0 ? nameFont.pointSize() : 10);
+        nameLabel_->setFont(nameFont);
+        QPalette namePalette = nameLabel_->palette();
+        namePalette.setColor(QPalette::WindowText, QColor(230, 230, 230));
+        nameLabel_->setPalette(namePalette);
 
         meterWidget_ = new AudioLevelMeterWidget(this);
 
@@ -151,7 +163,12 @@ public:
 
         volumeValueLabel_ = new QLabel(this);
         volumeValueLabel_->setAlignment(Qt::AlignCenter);
-        volumeValueLabel_->setStyleSheet(QStringLiteral("color: #8fa6bf; font-weight: 600;"));
+        QFont valueFont = volumeValueLabel_->font();
+        valueFont.setBold(true);
+        volumeValueLabel_->setFont(valueFont);
+        QPalette valuePalette = volumeValueLabel_->palette();
+        valuePalette.setColor(QPalette::WindowText, QColor(143, 166, 191));
+        volumeValueLabel_->setPalette(valuePalette);
 
         muteButton_ = new QPushButton(QStringLiteral("M"), this);
         muteButton_->setCheckable(true);
@@ -180,53 +197,9 @@ public:
         layout->addWidget(volumeValueLabel_, 0);
         layout->addLayout(buttonLayout, 0);
 
-        setStyleSheet(QStringLiteral(R"(
-            QFrame#AudioMixerStripCard {
-                background: #1a2027;
-                border: 1px solid #2b3845;
-                border-radius: 8px;
-            }
-            QSlider::groove:vertical {
-                width: 8px;
-                background: #0f1419;
-                 border: 1px solid #454545;
-                border-radius: 4px;
-            }
-            QSlider::sub-page:vertical {
-                background: #1f2c39;
-                border-radius: 4px;
-            }
-            QSlider::add-page:vertical {
-                background: #4e89c5;
-                border-radius: 4px;
-            }
-            QSlider::handle:vertical {
-                width: 28px;
-                height: 12px;
-                margin: 0 -10px;
-                background: #edf4fb;
-                border: 1px solid #9fb5cb;
-                border-radius: 4px;
-            }
-            QPushButton {
-                background: #26303a;
-                color: #d6dde5;
-                border: 1px solid #3d4b59;
-                border-radius: 4px;
-                font-weight: 700;
-            }
-            QPushButton:checked {
-                color: #081018;
-            }
-            QPushButton:checked[muteButton="true"] {
-                background: #c55b5b;
-                border-color: #d07171;
-            }
-            QPushButton:checked[soloButton="true"] {
-                background: #d8b64f;
-                border-color: #e4c66a;
-            }
-        )"));
+        QPalette cardPalette = palette();
+        cardPalette.setColor(QPalette::Window, QColor(35, 39, 43));
+        setPalette(cardPalette);
         muteButton_->setProperty("muteButton", true);
         soloButton_->setProperty("soloButton", true);
 
@@ -340,6 +313,7 @@ public:
         setObjectName(QStringLiteral("AudioMixerMasterCard"));
         setFrameShape(QFrame::NoFrame);
         setAttribute(Qt::WA_StyledBackground, true);
+        setAutoFillBackground(true);
         setFixedWidth(160);
         setMinimumHeight(374);
 
@@ -351,7 +325,13 @@ public:
         nameLabel_->setAlignment(Qt::AlignCenter);
         nameLabel_->setWordWrap(true);
         nameLabel_->setFixedHeight(36);
-        nameLabel_->setStyleSheet(QStringLiteral("color: #f0f3f6; font-weight: 700;"));
+        QFont nameFont = nameLabel_->font();
+        nameFont.setBold(true);
+        nameFont.setPointSize(nameFont.pointSize() > 0 ? nameFont.pointSize() : 10);
+        nameLabel_->setFont(nameFont);
+        QPalette namePalette = nameLabel_->palette();
+        namePalette.setColor(QPalette::WindowText, QColor(240, 243, 246));
+        nameLabel_->setPalette(namePalette);
 
         meterWidget_ = new AudioLevelMeterWidget(this);
 
@@ -364,7 +344,12 @@ public:
 
         volumeValueLabel_ = new QLabel(this);
         volumeValueLabel_->setAlignment(Qt::AlignCenter);
-        volumeValueLabel_->setStyleSheet(QStringLiteral("color: #9bc0e3; font-weight: 700;"));
+        QFont valueFont = volumeValueLabel_->font();
+        valueFont.setBold(true);
+        volumeValueLabel_->setFont(valueFont);
+        QPalette valuePalette = volumeValueLabel_->palette();
+        valuePalette.setColor(QPalette::WindowText, QColor(155, 192, 227));
+        volumeValueLabel_->setPalette(valuePalette);
 
         muteButton_ = new QPushButton(QStringLiteral("M"), this);
         muteButton_->setCheckable(true);
@@ -384,47 +369,9 @@ public:
         layout->addWidget(volumeValueLabel_, 0);
         layout->addWidget(muteButton_, 0, Qt::AlignCenter);
 
-        setStyleSheet(QStringLiteral(R"(
-            QFrame#AudioMixerMasterCard {
-                background: #202a36;
-                border: 1px solid #465b74;
-                border-radius: 8px;
-            }
-            QSlider::groove:vertical {
-                width: 8px;
-                background: #0f1419;
-                border: 1px solid #2a3745;
-                border-radius: 4px;
-            }
-            QSlider::sub-page:vertical {
-                background: #243447;
-                border-radius: 4px;
-            }
-            QSlider::add-page:vertical {
-                background: #5f9fe0;
-                border-radius: 4px;
-            }
-            QSlider::handle:vertical {
-                width: 30px;
-                height: 12px;
-                margin: 0 -11px;
-                background: #eef4fb;
-                border: 1px solid #b0c5dc;
-                border-radius: 4px;
-            }
-            QPushButton {
-                background: #2a3138;
-                color: #d6dde5;
-                border: 1px solid #3a4652;
-                border-radius: 4px;
-                font-weight: 700;
-            }
-            QPushButton:checked {
-                color: #081018;
-                background: #c55b5b;
-                border-color: #d07171;
-            }
-        )"));
+        QPalette cardPalette = palette();
+        cardPalette.setColor(QPalette::Window, QColor(38, 41, 45));
+        setPalette(cardPalette);
 
         volumeCommitTimer_ = new QTimer(this);
         volumeCommitTimer_->setSingleShot(true);
@@ -525,6 +472,8 @@ public:
     QWidget* contentWidget_ = nullptr;
     QHBoxLayout* contentLayout_ = nullptr;
     QLabel* emptyLabel_ = nullptr;
+    ArtifactCore::EventBus eventBus_ = ArtifactCore::globalEventBus();
+    std::vector<ArtifactCore::EventBus::Subscription> eventBusSubscriptions_;
 
     void clearRows()
     {
@@ -545,7 +494,7 @@ ArtifactCompositionAudioMixerWidget::ArtifactCompositionAudioMixerWidget(QWidget
     , impl_(new Impl())
 {
     setAttribute(Qt::WA_StyledBackground, true);
-    setStyleSheet(QStringLiteral("background: #15191d;"));
+    setAutoFillBackground(true);
 
     impl_->mixer_ = new AudioMixer(this);
 
@@ -562,6 +511,13 @@ ArtifactCompositionAudioMixerWidget::ArtifactCompositionAudioMixerWidget(QWidget
             playbackService->setAudioMasterVolume(masterBus->volume());
             playbackService->setAudioMasterMuted(masterBus->isMuted());
         }
+
+        QObject::connect(playbackService, &ArtifactPlaybackService::audioLevelChanged, this,
+            [this](float leftRms, float rightRms, float leftPeak, float rightPeak) {
+                Q_UNUSED(leftPeak);
+                Q_UNUSED(rightPeak);
+                impl_->mixer_->updatePlaybackLevels(leftRms, rightRms);
+            });
     }
 
     auto* rootLayout = new QVBoxLayout(this);
@@ -569,15 +525,25 @@ ArtifactCompositionAudioMixerWidget::ArtifactCompositionAudioMixerWidget(QWidget
     rootLayout->setSpacing(0);
 
     auto* header = new QWidget(this);
-    header->setStyleSheet(QStringLiteral("background: #1b2026; border-bottom: 1px solid #2b333b;"));
     auto* headerLayout = new QVBoxLayout(header);
     headerLayout->setContentsMargins(12, 10, 12, 10);
     headerLayout->setSpacing(2);
 
     auto* titleLabel = new QLabel(QStringLiteral("Audio Mixer"), header);
-    titleLabel->setStyleSheet(QStringLiteral("color: #f0f3f6; font-size: 13px; font-weight: 700;"));
     auto* subtitleLabel = new QLabel(QStringLiteral("Master bus and current composition audio layers"), header);
-    subtitleLabel->setStyleSheet(QStringLiteral("color: #7d8b99; font-size: 11px;"));
+    {
+        QPalette titlePalette = titleLabel->palette();
+        titlePalette.setColor(QPalette::WindowText, QColor(240, 243, 246));
+        titleLabel->setPalette(titlePalette);
+        QFont titleFont = titleLabel->font();
+        titleFont.setBold(true);
+        titleFont.setPointSize(titleFont.pointSize() > 0 ? titleFont.pointSize() + 1 : 11);
+        titleLabel->setFont(titleFont);
+
+        QPalette subtitlePalette = subtitleLabel->palette();
+        subtitlePalette.setColor(QPalette::WindowText, QColor(166, 179, 195));
+        subtitleLabel->setPalette(subtitlePalette);
+    }
 
     headerLayout->addWidget(titleLabel);
     headerLayout->addWidget(subtitleLabel);
@@ -585,9 +551,9 @@ ArtifactCompositionAudioMixerWidget::ArtifactCompositionAudioMixerWidget(QWidget
     auto* scrollArea = new QScrollArea(this);
     scrollArea->setWidgetResizable(true);
     scrollArea->setFrameShape(QFrame::NoFrame);
-    scrollArea->setStyleSheet(QStringLiteral("QScrollArea { background: #15191d; border: none; }"));
 
     impl_->contentWidget_ = new QWidget(scrollArea);
+    impl_->contentWidget_->setAutoFillBackground(true);
     impl_->contentLayout_ = new QHBoxLayout(impl_->contentWidget_);
     impl_->contentLayout_->setContentsMargins(12, 12, 12, 12);
     impl_->contentLayout_->setSpacing(10);
@@ -597,24 +563,45 @@ ArtifactCompositionAudioMixerWidget::ArtifactCompositionAudioMixerWidget(QWidget
     rootLayout->addWidget(header);
     rootLayout->addWidget(scrollArea, 1);
 
-    auto scheduleRefresh = [this]() {
-        QTimer::singleShot(0, this, &ArtifactCompositionAudioMixerWidget::refreshFromCurrentComposition);
-    };
-
     if (auto* service = ArtifactProjectService::instance()) {
-        QObject::connect(service, &ArtifactProjectService::projectChanged, this, scheduleRefresh);
+        QObject::connect(service, &ArtifactProjectService::projectChanged, this, [this]() {
+            impl_->eventBus_.post<ProjectChangedEvent>(ProjectChangedEvent{QString(), QString()});
+            impl_->eventBus_.drain();
+        });
         QObject::connect(service, &ArtifactProjectService::currentCompositionChanged, this,
-            [scheduleRefresh](const CompositionID&) {
-                scheduleRefresh();
+            [this](const CompositionID& compositionId) {
+                impl_->eventBus_.post<CurrentCompositionChangedEvent>(CurrentCompositionChangedEvent{compositionId.toString()});
+                impl_->eventBus_.drain();
             });
         QObject::connect(service, &ArtifactProjectService::layerCreated, this,
-            [scheduleRefresh](const CompositionID&, const LayerID&) {
-                scheduleRefresh();
+            [this](const CompositionID& compositionId, const LayerID& layerId) {
+                impl_->eventBus_.post<LayerChangedEvent>(LayerChangedEvent{
+                    compositionId.toString(),
+                    layerId.toString(),
+                    LayerChangedEvent::ChangeType::Created});
+                impl_->eventBus_.drain();
             });
         QObject::connect(service, &ArtifactProjectService::layerRemoved, this,
-            [scheduleRefresh](const CompositionID&, const LayerID&) {
-                scheduleRefresh();
+            [this](const CompositionID& compositionId, const LayerID& layerId) {
+                impl_->eventBus_.post<LayerChangedEvent>(LayerChangedEvent{
+                    compositionId.toString(),
+                    layerId.toString(),
+                    LayerChangedEvent::ChangeType::Removed});
+                impl_->eventBus_.drain();
             });
+
+        impl_->eventBusSubscriptions_.push_back(
+            impl_->eventBus_.subscribe<ProjectChangedEvent>([this](const ProjectChangedEvent&) {
+                refreshFromCurrentComposition();
+            }));
+        impl_->eventBusSubscriptions_.push_back(
+            impl_->eventBus_.subscribe<CurrentCompositionChangedEvent>([this](const CurrentCompositionChangedEvent&) {
+                refreshFromCurrentComposition();
+            }));
+        impl_->eventBusSubscriptions_.push_back(
+            impl_->eventBus_.subscribe<LayerChangedEvent>([this](const LayerChangedEvent&) {
+                refreshFromCurrentComposition();
+            }));
     }
 
     refreshFromCurrentComposition();
@@ -643,7 +630,11 @@ void ArtifactCompositionAudioMixerWidget::refreshFromCurrentComposition()
         impl_->emptyLabel_ = new QLabel(QStringLiteral("No audio layers in the current composition"), impl_->contentWidget_);
         impl_->emptyLabel_->setAlignment(Qt::AlignCenter);
         impl_->emptyLabel_->setFixedWidth(180);
-        impl_->emptyLabel_->setStyleSheet(QStringLiteral("color: #7d8b99; padding: 28px 12px; background: #1a2027; border: 1px dashed #314050; border-radius: 8px;"));
+        impl_->emptyLabel_->setAutoFillBackground(true);
+        QPalette emptyPalette = impl_->emptyLabel_->palette();
+        emptyPalette.setColor(QPalette::WindowText, QColor(125, 139, 153));
+        emptyPalette.setColor(QPalette::Window, QColor(26, 32, 39));
+        impl_->emptyLabel_->setPalette(emptyPalette);
         impl_->contentLayout_->addWidget(impl_->emptyLabel_);
     } else {
         for (auto* strip : strips) {

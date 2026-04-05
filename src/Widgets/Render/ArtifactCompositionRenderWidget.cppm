@@ -14,6 +14,7 @@
 #include <QRectF>
 #include <QTimer>
 #include <QDebug>
+#include <atomic>
 #include <cmath>
 #include <algorithm>
 #include <wobjectimpl.h>
@@ -28,6 +29,7 @@ import Artifact.Application.Manager;
 import Artifact.Layers.Selection.Manager;
 import Artifact.Tool.Manager;
 import Artifact.Service.ActiveContext;
+import Artifact.Service.Playback;
 import InputEvent;
 import Input.Operator;
 import Undo.UndoManager;
@@ -112,11 +114,14 @@ namespace Artifact {
   std::unique_ptr<ArtifactIRenderer> renderer_;
   ArtifactPreviewCompositionPipeline previewPipeline_;
   bool initialized_ = false;
-  bool isPlaying_ = false;
+  std::atomic_bool isPlaying_{ false };
+  std::atomic_bool needsRender_{ true };
   std::atomic_bool running_{ false };
   tbb::task_group renderTask_;
   std::mutex renderMutex_;
   QWidget* widget_ = nullptr;
+  QTimer* resizeDebounceTimer_ = nullptr;
+  QSize pendingResizeSize_;
   
   QPointF lastMousePos_;
   ArtifactCore::LayerID selectedLayerId_ = ArtifactCore::LayerID::Nil();
@@ -138,7 +143,31 @@ namespace Artifact {
    widget_ = window;
    renderer_ = std::make_unique<ArtifactIRenderer>();
    renderer_->initialize(window);
+   resizeDebounceTimer_ = new QTimer(widget_);
+   resizeDebounceTimer_->setSingleShot(true);
+   QObject::connect(resizeDebounceTimer_, &QTimer::timeout, widget_, [this]() {
+    if (!initialized_ || !renderer_) {
+     return;
+    }
+    const QSize pendingSize = pendingResizeSize_.isValid() ? pendingResizeSize_ : widget_->size();
+    renderer_->recreateSwapChain(widget_);
+    renderer_->setViewportSize(static_cast<float>(pendingSize.width()),
+                               static_cast<float>(pendingSize.height()));
+    requestRender();
+   });
+   if (auto* playback = ArtifactPlaybackService::instance()) {
+   QObject::connect(playback, &ArtifactPlaybackService::playbackStateChanged, widget_,
+                     [this](::Artifact::PlaybackState state) {
+      isPlaying_.store(state == ::Artifact::PlaybackState::Playing, std::memory_order_release);
+      requestRender();
+     });
+    QObject::connect(playback, &ArtifactPlaybackService::frameChanged, widget_,
+                     [this](const auto&) {
+      requestRender();
+     });
+   }
    initialized_ = true;
+   needsRender_.store(true, std::memory_order_release);
   }
 
   void destroy() {
@@ -152,6 +181,12 @@ namespace Artifact {
    running_ = true;
    renderTask_.run([this]() {
     while (running_.load(std::memory_order_acquire)) {
+     const bool playing = isPlaying_.load(std::memory_order_acquire);
+     const bool dirty = needsRender_.exchange(false, std::memory_order_acq_rel);
+     if (!playing && !dirty) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(33));
+      continue;
+     }
      {
       std::lock_guard<std::mutex> lock(renderMutex_);
       renderOneFrame();
@@ -177,6 +212,10 @@ namespace Artifact {
    }
    previewPipeline_.render(renderer_.get());
    renderer_->present();
+  }
+
+  void requestRender() {
+   needsRender_.store(true, std::memory_order_release);
   }
   
   static ArtifactCore::InputEvent::Modifiers translateModifiers(Qt::KeyboardModifiers qtMods) {
@@ -257,11 +296,15 @@ namespace Artifact {
  void ArtifactCompositionRenderWidget::setComposition(ArtifactCompositionPtr composition) {
   std::lock_guard<std::mutex> lock(impl_->renderMutex_);
   impl_->previewPipeline_.setComposition(composition);
+  if (auto* playback = ArtifactPlaybackService::instance()) {
+   playback->setCurrentComposition(composition);
+  }
   if (composition && impl_->renderer_) {
    auto size = composition->settings().compositionSize();
    impl_->renderer_->setCanvasSize((float)size.width(), (float)size.height());
    impl_->renderer_->fitToViewport();
   }
+  impl_->requestRender();
   ArtifactApplicationManager::instance()->activeContextService()->setActiveComposition(composition);
  }
 
@@ -269,21 +312,32 @@ namespace Artifact {
   if (impl_->renderer_) {
    std::lock_guard<std::mutex> lock(impl_->renderMutex_);
    impl_->renderer_->setClearColor(color);
+   impl_->requestRender();
   }
  }
 
  void ArtifactCompositionRenderWidget::play() {
-  impl_->isPlaying_ = true;
+  if (auto* playback = ArtifactPlaybackService::instance()) {
+   playback->play();
+  } else {
+   impl_->isPlaying_.store(true, std::memory_order_release);
+   impl_->requestRender();
+  }
  }
 
  void ArtifactCompositionRenderWidget::stop() {
-  impl_->isPlaying_ = false;
+  if (auto* playback = ArtifactPlaybackService::instance()) {
+   playback->stop();
+  }
+  impl_->isPlaying_.store(false, std::memory_order_release);
+  impl_->requestRender();
  }
 
  void ArtifactCompositionRenderWidget::resetView() {
   if (impl_->renderer_) {
    std::lock_guard<std::mutex> lock(impl_->renderMutex_);
    impl_->renderer_->resetView();
+   impl_->requestRender();
   }
  }
 
@@ -291,6 +345,7 @@ namespace Artifact {
   if (impl_->renderer_) {
    std::lock_guard<std::mutex> lock(impl_->renderMutex_);
    impl_->renderer_->zoomAroundViewportPoint({width() / 2.0f, height() / 2.0f}, 1.1f);
+   impl_->requestRender();
   }
  }
 
@@ -298,13 +353,15 @@ namespace Artifact {
   if (impl_->renderer_) {
    std::lock_guard<std::mutex> lock(impl_->renderMutex_);
    impl_->renderer_->zoomAroundViewportPoint({width() / 2.0f, height() / 2.0f}, 0.909f);
+   impl_->requestRender();
   }
  }
 
  void ArtifactCompositionRenderWidget::zoomFit() {
   if (impl_->renderer_) {
    std::lock_guard<std::mutex> lock(impl_->renderMutex_);
-   impl_->renderer_->fitToViewport();
+   impl_->renderer_->fitToViewport(0.0f);
+   impl_->requestRender();
   }
  }
 
@@ -312,15 +369,29 @@ namespace Artifact {
   if (impl_->renderer_) {
    std::lock_guard<std::mutex> lock(impl_->renderMutex_);
    impl_->renderer_->setZoom(1.0f);
+   // Center the canvas in the viewport at 100% zoom
+   if (auto comp = impl_->previewPipeline_.composition()) {
+    auto size = comp->settings().compositionSize();
+    const float cw  = static_cast<float>(size.width());
+    const float ch  = static_cast<float>(size.height());
+    const float dpr = static_cast<float>(devicePixelRatioF());
+    const float panX = (width()  * dpr - cw) * 0.5f;
+    const float panY = (height() * dpr - ch) * 0.5f;
+    impl_->renderer_->setPan(panX, panY);
+   }
+   impl_->requestRender();
   }
  }
 
  void ArtifactCompositionRenderWidget::resizeEvent(QResizeEvent* event) {
   QWidget::resizeEvent(event);
   if (impl_->initialized_) {
-   std::lock_guard<std::mutex> lock(impl_->renderMutex_);
-   impl_->renderer_->recreateSwapChain(this);
-   impl_->renderer_->setViewportSize((float)width(), (float)height());
+   impl_->pendingResizeSize_ = event->size();
+   if (impl_->resizeDebounceTimer_) {
+    impl_->resizeDebounceTimer_->stop();
+    impl_->resizeDebounceTimer_->start(80);
+   }
+   impl_->requestRender();
   }
  }
 
@@ -329,22 +400,31 @@ namespace Artifact {
  void ArtifactCompositionRenderWidget::showEvent(QShowEvent* event) {
   QWidget::showEvent(event);
   if (!impl_->initialized_) {
-   impl_->initialize(this);
-   impl_->renderer_->setViewportSize((float)width(), (float)height());
-   
-   connect(ArtifactApplicationManager::instance()->layerSelectionManager(), &ArtifactLayerSelectionManager::selectionChanged, this, [this]() {
-    auto selected = ArtifactApplicationManager::instance()->layerSelectionManager()->selectedLayers();
-    if (!selected.isEmpty()) impl_->selectedLayerId_ = (*selected.begin())->id();
-    else impl_->selectedLayerId_ = ArtifactCore::LayerID::Nil();
-    impl_->previewPipeline_.setSelectedLayerId(impl_->selectedLayerId_);
-   });
+   QTimer::singleShot(0, this, [this]() {
+    if (!impl_ || impl_->initialized_ || !isVisible()) {
+     return;
+    }
+    impl_->initialize(this);
+    impl_->renderer_->setViewportSize((float)width(), (float)height());
 
-   connect(ArtifactApplicationManager::instance()->toolManager(), &ArtifactToolManager::toolChanged, this, [this](ToolType tool) {
-       if (tool == ToolType::Hand) setCursor(Qt::OpenHandCursor);
-       else setCursor(Qt::ArrowCursor);
-   });
+    connect(ArtifactApplicationManager::instance()->layerSelectionManager(), &ArtifactLayerSelectionManager::selectionChanged, this, [this]() {
+     auto* selection = ArtifactApplicationManager::instance()->layerSelectionManager();
+     auto current = selection ? selection->currentLayer() : ArtifactAbstractLayerPtr{};
+     if (current) impl_->selectedLayerId_ = current->id();
+     else impl_->selectedLayerId_ = ArtifactCore::LayerID::Nil();
+     impl_->previewPipeline_.setSelectedLayerId(impl_->selectedLayerId_);
+     impl_->requestRender();
+    });
 
-   impl_->startRenderLoop();
+    connect(ArtifactApplicationManager::instance()->toolManager(), &ArtifactToolManager::toolChanged, this, [this](ToolType tool) {
+        if (tool == ToolType::Hand) setCursor(Qt::OpenHandCursor);
+        else setCursor(Qt::ArrowCursor);
+        impl_->requestRender();
+    });
+
+    impl_->requestRender();
+    impl_->startRenderLoop();
+   });
   }
  }
 
@@ -381,6 +461,7 @@ namespace Artifact {
    float zoomFactor = (delta > 0) ? 1.1f : 0.909f;
    QPointF pos = event->position();
    impl_->renderer_->zoomAroundViewportPoint({(float)pos.x(), (float)pos.y()}, zoomFactor);
+   impl_->requestRender();
   }
   event->accept();
  }
@@ -393,6 +474,7 @@ namespace Artifact {
    setCursor(Qt::ClosedHandCursor);
    impl_->lastMousePos_ = event->position();
    impl_->isPanningViewport_ = true;
+   impl_->requestRender();
    event->accept();
   } else if (event->button() == Qt::RightButton) {
       // Context Menu
@@ -429,6 +511,7 @@ namespace Artifact {
       }
       event->accept();
       impl_->updateHoverCursor(event->position());
+      impl_->requestRender();
   } else if (event->button() == Qt::LeftButton) {
    if (impl_->renderer_) {
     std::lock_guard<std::mutex> lock(impl_->renderMutex_);
@@ -487,11 +570,12 @@ namespace Artifact {
     }
    }
    impl_->updateHoverCursor(event->position());
+   impl_->requestRender();
    event->accept();
   }
  }
 
-void ArtifactCompositionRenderWidget::mouseReleaseEvent(QMouseEvent* event) {
+ void ArtifactCompositionRenderWidget::mouseReleaseEvent(QMouseEvent* event) {
   if (impl_->isDraggingLayer_) {
    if (impl_->renderer_) {
     std::lock_guard<std::mutex> lock(impl_->renderMutex_);
@@ -533,6 +617,7 @@ void ArtifactCompositionRenderWidget::mouseReleaseEvent(QMouseEvent* event) {
   impl_->isDraggingLayer_ = false;
   impl_->isPanningViewport_ = false;
   impl_->dragMode_ = LayerDragMode::None;
+  impl_->requestRender();
   event->accept();
  }
 
@@ -543,6 +628,7 @@ void ArtifactCompositionRenderWidget::mouseReleaseEvent(QMouseEvent* event) {
    if (impl_->renderer_) {
     std::lock_guard<std::mutex> lock(impl_->renderMutex_);
     impl_->renderer_->panBy((float)delta.x(), (float)delta.y());
+    impl_->requestRender();
    }
    event->accept();
   } else if (event->buttons() & Qt::LeftButton && impl_->isDraggingLayer_) {
@@ -638,6 +724,7 @@ void ArtifactCompositionRenderWidget::mouseReleaseEvent(QMouseEvent* event) {
    }
    impl_->dragAppliedDelta_ = totalDelta;
    }
+   impl_->requestRender();
    event->accept();
   } else {
    impl_->updateHoverCursor(event->position());
@@ -686,6 +773,7 @@ void ArtifactCompositionRenderWidget::mouseReleaseEvent(QMouseEvent* event) {
           }
       }
   }
+  impl_->requestRender();
   event->accept();
  }
 

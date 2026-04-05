@@ -6,8 +6,12 @@
 #include <QPushButton>
 #include <QLabel>
 #include <QIcon>
+#include <QBrush>
+#include <QColor>
+#include <QFont>
 #include <QPixmap>
 #include <QPainter>
+#include <QPalette>
 #include <QtSVG/QSvgRenderer>
 #include <QHeaderView>
 #include <QStyle>
@@ -23,6 +27,7 @@ import std;
 
 import Artifact.Project;
 import Artifact.Project.Health;
+import Widgets.Utils.CSS;
 import Utils.Path;
 import Utils.String.UniString;
 
@@ -57,7 +62,7 @@ public:
     void refresh() {
         if (!project_) {
             statusLabel_->setText("No project loaded.");
-            statusLabel_->setStyleSheet("color: #888; font-weight: bold;");
+            applyStatusColor(QColor(ArtifactCore::currentDCCTheme().textColor).darker(130));
             issuesTree_->clear();
             return;
         }
@@ -71,14 +76,14 @@ public:
         if (report.isHealthy) {
             if (report.issues.isEmpty()) {
                 statusLabel_->setText("Project is Healthy");
-                statusLabel_->setStyleSheet("color: #4CAF50; font-weight: bold; font-size: 14px;");
+                applyStatusColor(QColor(QStringLiteral("#4CAF50")));
             } else {
                 statusLabel_->setText("Project has Minor Warnings");
-                statusLabel_->setStyleSheet("color: #FF9800; font-weight: bold; font-size: 14px;");
+                applyStatusColor(QColor(QStringLiteral("#FF9800")));
             }
         } else {
             statusLabel_->setText("Project has Critical Issues");
-            statusLabel_->setStyleSheet("color: #F44336; font-weight: bold; font-size: 14px;");
+            applyStatusColor(QColor(QStringLiteral("#F44336")));
         }
 
         // Add issues to tree
@@ -89,13 +94,13 @@ public:
             QIcon icon;
             if (issue.severity == HealthIssueSeverity::Error) {
                 icon = loadHealthSeverityIcon(issue.severity);
-                item->setForeground(0, Qt::red);
+                item->setForeground(0, QBrush(QColor(QStringLiteral("#F44336"))));
             } else if (issue.severity == HealthIssueSeverity::Warning) {
                 icon = loadHealthSeverityIcon(issue.severity);
-                item->setForeground(0, QColor(255, 165, 0)); // Orange
+                item->setForeground(0, QBrush(QColor(QStringLiteral("#FF9800"))));
             } else {
                 icon = loadHealthSeverityIcon(issue.severity);
-                item->setForeground(0, QColor(79, 193, 255)); // Blue
+                item->setForeground(0, QBrush(QColor(QStringLiteral("#4FA8FF"))));
             }
             item->setIcon(0, icon);
             
@@ -164,30 +169,43 @@ private:
     }
 
     void setupUI() {
+        const QColor background = QColor(ArtifactCore::currentDCCTheme().backgroundColor);
+        const QColor surface = QColor(ArtifactCore::currentDCCTheme().secondaryBackgroundColor);
+        const QColor text = QColor(ArtifactCore::currentDCCTheme().textColor);
+        const QColor muted = text.darker(130);
+        const QColor accent = QColor(ArtifactCore::currentDCCTheme().accentColor);
+
         auto mainLayout = new QVBoxLayout(this);
         mainLayout->setContentsMargins(15, 15, 15, 15);
         mainLayout->setSpacing(12);
 
+        setAutoFillBackground(true);
+        QPalette widgetPalette = palette();
+        widgetPalette.setColor(QPalette::Window, background);
+        widgetPalette.setColor(QPalette::WindowText, text);
+        setPalette(widgetPalette);
+
         // Header Panel
         auto headerLayout = new QHBoxLayout();
         statusLabel_ = new QLabel("Loading...");
-        statusLabel_->setStyleSheet("font-weight: bold; font-size: 14px;");
+        {
+            QFont f = statusLabel_->font();
+            f.setBold(true);
+            f.setPointSize(14);
+            statusLabel_->setFont(f);
+            QPalette pal = statusLabel_->palette();
+            pal.setColor(QPalette::WindowText, muted);
+            statusLabel_->setPalette(pal);
+        }
         
         auto refreshBtn = new QPushButton("Scan Project");
         refreshBtn->setFixedWidth(120);
-        refreshBtn->setStyleSheet(R"(
-            QPushButton {
-                background-color: #3e3e42;
-                color: #eee;
-                border: 1px solid #555;
-                padding: 6px 12px;
-                border-radius: 4px;
-            }
-            QPushButton:hover {
-                background-color: #4e4e52;
-                border: 1px solid #777;
-            }
-        )");
+        {
+            QPalette pal = refreshBtn->palette();
+            pal.setColor(QPalette::Button, surface);
+            pal.setColor(QPalette::ButtonText, text);
+            refreshBtn->setPalette(pal);
+        }
         connect(refreshBtn, &QPushButton::clicked, this, &ArtifactProjectHealthDashboard::refresh);
 
         headerLayout->addWidget(statusLabel_);
@@ -204,40 +222,31 @@ private:
         issuesTree_->setColumnWidth(3, 100);
         issuesTree_->setAlternatingRowColors(true);
         issuesTree_->setIndentation(0);
-        issuesTree_->setStyleSheet(R"(
-            QTreeWidget {
-                background-color: #1e1e1e;
-                color: #ccc;
-                border: 1px solid #333;
-                selection-background-color: #3f3f46;
-                alternate-background-color: #252526;
-            }
-            QHeaderView::section {
-                background-color: #2d2d2d;
-                color: #aaa;
-                padding: 4px;
-                border: 1px solid #1a1a1a;
-            }
-        )");
+        {
+            QPalette pal = issuesTree_->palette();
+            pal.setColor(QPalette::Window, background);
+            pal.setColor(QPalette::Base, surface);
+            pal.setColor(QPalette::AlternateBase, background.darker(110));
+            pal.setColor(QPalette::Text, text);
+            pal.setColor(QPalette::WindowText, text);
+            pal.setColor(QPalette::Highlight, accent);
+            pal.setColor(QPalette::HighlightedText, QColor(QStringLiteral("#FFFFFF")));
+            pal.setColor(QPalette::Button, surface);
+            pal.setColor(QPalette::ButtonText, text);
+            issuesTree_->setPalette(pal);
+        }
         mainLayout->addWidget(issuesTree_);
 
         // Footer Actions
         auto footerLayout = new QHBoxLayout();
         fixBtn_ = new QPushButton("Auto Repair");
         fixBtn_->setEnabled(false);
-        fixBtn_->setStyleSheet(R"(
-            QPushButton {
-                background-color: #007acc;
-                color: white;
-                border: none;
-                padding: 8px 16px;
-                border-radius: 4px;
-            }
-            QPushButton:disabled {
-                background-color: #444;
-                color: #888;
-            }
-        )");
+        {
+            QPalette pal = fixBtn_->palette();
+            pal.setColor(QPalette::Button, accent);
+            pal.setColor(QPalette::ButtonText, QColor(QStringLiteral("#FFFFFF")));
+            fixBtn_->setPalette(pal);
+        }
         connect(fixBtn_, &QPushButton::clicked, this, [this]() {
             if (!project_) return;
             AutoRepairOptions options;
@@ -255,9 +264,19 @@ private:
         footerLayout->addStretch();
         footerLayout->addWidget(fixBtn_);
         mainLayout->addLayout(footerLayout);
+    }
 
-        // Set modern dark theme appearance
-        setStyleSheet("background-color: #1e1e1e; color: #ccc;");
+    void applyStatusColor(const QColor& color) {
+        if (!statusLabel_) {
+            return;
+        }
+        QFont f = statusLabel_->font();
+        f.setBold(true);
+        f.setPointSize(14);
+        statusLabel_->setFont(f);
+        QPalette pal = statusLabel_->palette();
+        pal.setColor(QPalette::WindowText, color);
+        statusLabel_->setPalette(pal);
     }
 
     ArtifactProject* project_ = nullptr;

@@ -13,6 +13,7 @@
 #include <QDropEvent>
 #include <QMimeData>
 #include <QSortFilterProxyModel>
+#include <QDrag>
 #include <QButtonGroup>
 #include <QPixmap>
 #include <QIcon>
@@ -26,9 +27,12 @@
 #include <QClipboard>
 #include <QApplication>
 #include <QImage>
+#include <QImageReader>
+#include <QPainter>
 #include <QSlider>
 #include <QGroupBox>
 #include <QGridLayout>
+#include <QElapsedTimer>
 #include <opencv2/opencv.hpp>
 #include <opencv2/videoio.hpp>
 #include <opencv2/imgproc.hpp>
@@ -50,6 +54,53 @@ import File.TypeDetector;
 namespace Artifact {
 
  using namespace ArtifactCore;
+
+ class AssetFileListView final : public QListView
+ {
+ public:
+  explicit AssetFileListView(QWidget* parent = nullptr) : QListView(parent) {}
+
+ protected:
+  void startDrag(Qt::DropActions supportedActions) override
+  {
+   const QModelIndexList indexes = selectedIndexes();
+   if (indexes.isEmpty() || !model()) {
+    return;
+   }
+
+   QElapsedTimer dragTimer;
+   dragTimer.start();
+
+   std::unique_ptr<QMimeData> mimeData(model()->mimeData(indexes));
+   if (!mimeData) {
+    return;
+   }
+
+   auto* drag = new QDrag(this);
+   drag->setMimeData(mimeData.release());
+
+   QPixmap dragPixmap(160, 28);
+   dragPixmap.fill(QColor(32, 32, 32, 220));
+   {
+    QPainter painter(&dragPixmap);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    painter.setPen(QColor(255, 255, 255, 235));
+    painter.drawRoundedRect(dragPixmap.rect().adjusted(0, 0, -1, -1), 6, 6);
+    const QString label = indexes.size() == 1
+     ? model()->data(indexes.first(), Qt::DisplayRole).toString()
+     : QStringLiteral("%1 items").arg(indexes.size());
+    painter.drawText(dragPixmap.rect().adjusted(10, 0, -10, 0),
+                     Qt::AlignVCenter | Qt::AlignLeft,
+                     QFontMetrics(font()).elidedText(label, Qt::ElideRight, 140));
+   }
+   drag->setPixmap(dragPixmap);
+   drag->setHotSpot(QPoint(12, dragPixmap.height() / 2));
+
+   qDebug() << "[AssetBrowser][Drag]" << "mimeMs=" << dragTimer.elapsed()
+            << "items=" << indexes.size();
+   drag->exec(supportedActions, Qt::CopyAction);
+  }
+ };
 
 
 
@@ -708,7 +759,7 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
   filePathLabel->setWordWrap(true);
 
   auto assetModel = impl_->assetModel_ = new AssetMenuModel(this);
-  auto fileView = impl_->fileView_ = new QListView();
+  auto fileView = impl_->fileView_ = new AssetFileListView();
   fileView->setModel(assetModel);
   impl_->currentDirectoryPath_ = desktopPath;  // Set initial directory
   fileView->setViewMode(QListView::IconMode);
@@ -720,12 +771,12 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
   fileView->setWordWrap(true);
   fileView->setSpacing(5);  // Uniform spacing between items
   fileView->setUniformItemSizes(true);  // Optimize rendering with uniform sizes
-   fileView->setDragEnabled(true);
-   fileView->setAcceptDrops(true);
-   fileView->setDropIndicatorShown(true);
-   fileView->setDragDropMode(QAbstractItemView::DragDrop);
-   fileView->setDefaultDropAction(Qt::MoveAction);
-   fileView->setSelectionMode(QAbstractItemView::ExtendedSelection);
+  fileView->setDragEnabled(true);
+  fileView->setAcceptDrops(true);
+  fileView->setDropIndicatorShown(true);
+  fileView->setDragDropMode(QAbstractItemView::DragDrop);
+  fileView->setDefaultDropAction(Qt::CopyAction);
+  fileView->setSelectionMode(QAbstractItemView::ExtendedSelection);
   fileView->setContextMenuPolicy(Qt::CustomContextMenu);  // Enable custom context menu
 
   // Connect search filter
@@ -899,14 +950,19 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
 
   vLayout->addWidget(assetToolBar);
   vLayout->addLayout(filterButtonsLayout);
-  layout->addWidget(directoryView);
-  layout->addLayout(VBoxLayout);
+  layout->addWidget(directoryView, 1);
+  layout->addLayout(VBoxLayout, 3);
   setLayout(layout);
  }
 
  ArtifactAssetBrowser::~ArtifactAssetBrowser()
  {
   delete impl_;
+ }
+
+ QSize ArtifactAssetBrowser::sizeHint() const
+ {
+  return QSize(250, 600);
  }
 
  W_OBJECT_IMPL(ArtifactAssetBrowser)
@@ -1113,11 +1169,14 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
       lowerName.endsWith(".jpeg") || lowerName.endsWith(".bmp") ||
       lowerName.endsWith(".gif") || lowerName.endsWith(".tga") ||
       lowerName.endsWith(".tiff") || lowerName.endsWith(".exr")) {
-   QImage image(filePath);
-   if (!image.isNull()) {
-    info += QString("Resolution: %1 x %2 px<br>").arg(image.width()).arg(image.height());
-    // Color depth info
-    info += QString("Format: %1-bit").arg(image.depth());
+   QImageReader imageReader(filePath);
+   const QSize imageSize = imageReader.size();
+   if (imageSize.isValid()) {
+    info += QString("Resolution: %1 x %2 px<br>").arg(imageSize.width()).arg(imageSize.height());
+    const QByteArray imageFormat = imageReader.format();
+    if (!imageFormat.isEmpty()) {
+     info += QString("Format: %1").arg(QString::fromLatin1(imageFormat).toUpper());
+    }
    }
   }
   else if (impl_->isVideoFile(fileName)) {

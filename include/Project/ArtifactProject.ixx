@@ -97,8 +97,9 @@ export namespace Artifact {
   void createFolder(const QString& name, FolderItem* parentFolder);
   bool moveItem(ProjectItem* item, ProjectItem* newParent);
   bool removeItem(ProjectItem* item);
-  bool validateProjectTree(QString* errorMessage = nullptr) const;
-  bool isDirty() const;
+   bool validateProjectTree(QString* errorMessage = nullptr) const;
+   std::vector<ProjectValidationIssue> validate() const;
+   bool isDirty() const;
   QJsonObject toJson() const;
    
  public:
@@ -116,11 +117,27 @@ export namespace Artifact {
 
   void layerCreated(const CompositionID& compId, const LayerID& layerId)
    W_SIGNAL(layerCreated, compId, layerId);
-  void layerRemoved(const CompositionID& compId, const LayerID& id)
+ void layerRemoved(const CompositionID& compId, const LayerID& id)
    W_SIGNAL(layerRemoved, compId, id);
 
- 	
+  void projectDirtyChanged(bool dirty)
+   W_SIGNAL(projectDirtyChanged, dirty);
+
+
  };
+
+ template <typename NameT, typename SizeT>
+  requires StringLike<NameT> && SizeLike<SizeT>
+inline void ArtifactProject::createComposition(NameT name, SizeT size)
+{
+  ArtifactCompositionInitParams params;
+  params.setCompositionName(UniString(ArtifactCore::toQString(name)));
+  const QSize qSize(size);
+  if (qSize.isValid() && qSize.width() > 0 && qSize.height() > 0) {
+    params.setResolution(qSize.width(), qSize.height());
+  }
+  createComposition(params);
+ }
 
 
  typedef std::shared_ptr<ArtifactProject> ArtifactProjectPtr;

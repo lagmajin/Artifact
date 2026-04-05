@@ -6,11 +6,19 @@
 #include <QLineEdit>
 #include <QHBoxLayout>
 #include <QPushButton>
+#include <QKeyEvent>
+#include <QColor>
+#include <QFont>
+#include <QPaintEvent>
+#include <QPalette>
+#include <QPen>
+#include <QPainter>
 #include <wobjectimpl.h>
 
 module Artifact.Timeline.TimeCodeWidget;
 
 import Time.Rational;
+import Widgets.Utils.CSS;
 
 namespace Artifact
 {
@@ -41,6 +49,18 @@ namespace Artifact
   impl_->frameNumberLabel_->setObjectName("frameLabel");
   impl_->timecodeLabel_->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
   impl_->frameNumberLabel_->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+  {
+   const QColor textColor = QColor(ArtifactCore::currentDCCTheme().textColor);
+   const QColor mutedTextColor = textColor.darker(125);
+   QPalette timePal = impl_->timecodeLabel_->palette();
+   timePal.setColor(QPalette::WindowText, textColor);
+   impl_->timecodeLabel_->setPalette(timePal);
+   impl_->timecodeLabel_->setAutoFillBackground(false);
+   QPalette framePal = impl_->frameNumberLabel_->palette();
+   framePal.setColor(QPalette::WindowText, mutedTextColor);
+   impl_->frameNumberLabel_->setPalette(framePal);
+   impl_->frameNumberLabel_->setAutoFillBackground(false);
+  }
 
   layout->addWidget(impl_->timecodeLabel_);
   layout->addSpacing(8);
@@ -48,28 +68,27 @@ namespace Artifact
   layout->addStretch();
 
   setLayout(layout);
-  setFixedHeight(34);
+  setFixedHeight(42);
 
-  setAttribute(Qt::WA_StyledBackground, true);
+  setAttribute(Qt::WA_StyledBackground, false);
 
-  setStyleSheet(
-   "ArtifactTimeCodeWidget {"
-   "  background-color: #1C222E;"
-   "  border-bottom: 1px solid #27323F;"
-   "}"
-   "QLabel#timeLabel {"
-   "  font-family: 'Consolas', 'Courier New', monospace;"
-   "  font-size: 15px;"
-   "  font-weight: bold;"
-   "  color: #C4D4E2;"
-   "}"
-   "QLabel#frameLabel {"
-   "  font-family: 'Consolas', 'Courier New', monospace;"
-   "  font-size: 11px;"
-   "  color: #4E6475;"
-   "  padding-top: 2px;"
-   "}"
-  );
+  const QPalette pal = palette();
+  setAutoFillBackground(true);
+  QPalette localPal = pal;
+  localPal.setColor(QPalette::Window, QColor(ArtifactCore::currentDCCTheme().secondaryBackgroundColor));
+  setPalette(localPal);
+
+  QFont timeFont(QStringLiteral("Consolas"));
+  timeFont.setStyleHint(QFont::Monospace);
+  timeFont.setBold(true);
+  timeFont.setPointSize(18);
+  impl_->timecodeLabel_->setFont(timeFont);
+
+  QFont frameFont(QStringLiteral("Consolas"));
+  frameFont.setStyleHint(QFont::Monospace);
+  frameFont.setBold(true);
+  frameFont.setPointSize(16);
+  impl_->frameNumberLabel_->setFont(frameFont);
  }
 
  ArtifactTimeCodeWidget::~ArtifactTimeCodeWidget()
@@ -106,6 +125,15 @@ namespace Artifact
     Q_UNUSED(rt);
  }
 
+ void ArtifactTimeCodeWidget::paintEvent(QPaintEvent* event)
+ {
+ QPainter painter(this);
+  painter.fillRect(rect(), palette().window().color());
+  painter.setPen(QPen(QColor(ArtifactCore::currentDCCTheme().borderColor), 1));
+  painter.drawLine(rect().bottomLeft(), rect().bottomRight());
+  QWidget::paintEvent(event);
+ }
+
  W_OBJECT_IMPL(ArtifactTimelineSearchBarWidget)
 
  class ArtifactTimelineSearchBarWidget::Impl {
@@ -114,11 +142,11 @@ namespace Artifact
   QLineEdit* searchLineEdit_ = nullptr;
  };
 
- ArtifactTimelineSearchBarWidget::Impl::Impl()
- {
-  searchLineEdit_ = new QLineEdit();
-  searchLineEdit_->setPlaceholderText("検索");
- }
+ArtifactTimelineSearchBarWidget::Impl::Impl()
+{
+ searchLineEdit_ = new QLineEdit();
+ searchLineEdit_->setPlaceholderText("検索 (type:text fx:blur tag:bg parent:none visible:false)");
+}
 
 ArtifactTimelineSearchBarWidget::ArtifactTimelineSearchBarWidget(QWidget* parent)
   : QWidget(parent), impl_(new Impl())
@@ -133,31 +161,70 @@ ArtifactTimelineSearchBarWidget::ArtifactTimelineSearchBarWidget(QWidget* parent
   impl_->searchLineEdit_->setClearButtonEnabled(true);
   impl_->searchLineEdit_->setMinimumHeight(26);
   setFixedHeight(34);
+  impl_->searchLineEdit_->installEventFilter(this);
+  {
+   const auto& theme = ArtifactCore::currentDCCTheme();
+   QPalette searchPal = impl_->searchLineEdit_->palette();
+   searchPal.setColor(QPalette::Base, QColor(theme.secondaryBackgroundColor));
+   searchPal.setColor(QPalette::Text, QColor(theme.textColor));
+   searchPal.setColor(QPalette::PlaceholderText, QColor(theme.textColor).darker(140));
+   searchPal.setColor(QPalette::Window, QColor(theme.secondaryBackgroundColor));
+   impl_->searchLineEdit_->setPalette(searchPal);
+  }
 
   layout->addWidget(impl_->searchLineEdit_);
 
   setAttribute(Qt::WA_StyledBackground, true);
+  setAutoFillBackground(false);
 
-  setStyleSheet(
-   "ArtifactTimelineSearchBarWidget {"
-   "  background-color: #2D2D2D;"
-   "}"
-   "QLineEdit#timelineSearchBox {"
-   "  background-color: #1E1E1E;"
-   "  color: #CCCCCC;"
-   "  border: 1px solid #3E3E3E;"
-   "  border-radius: 12px;"
-   "  padding: 0px 10px;"
-   "  font-size: 11px;"
-   "}"
-   "QLineEdit#timelineSearchBox:focus {"
-   "  border: 1px solid #007ACC;"
-   "}"
-  );
-
-  QObject::connect(impl_->searchLineEdit_, &QLineEdit::textChanged, this, [this](const QString& text) {
+ QObject::connect(impl_->searchLineEdit_, &QLineEdit::textChanged, this, [this](const QString& text) {
    searchTextChanged(text);
   });
+ }
+
+void ArtifactTimelineSearchBarWidget::focusSearch()
+{
+ if (impl_ && impl_->searchLineEdit_) {
+  impl_->searchLineEdit_->setFocus(Qt::ShortcutFocusReason);
+  impl_->searchLineEdit_->selectAll();
+ }
+}
+
+void ArtifactTimelineSearchBarWidget::clearSearch()
+{
+ if (impl_ && impl_->searchLineEdit_ && !impl_->searchLineEdit_->text().isEmpty()) {
+  impl_->searchLineEdit_->blockSignals(true);
+  impl_->searchLineEdit_->clear();
+  impl_->searchLineEdit_->blockSignals(false);
+  searchCleared();
+ }
+}
+
+bool ArtifactTimelineSearchBarWidget::hasSearchText() const
+{
+ return impl_ && impl_->searchLineEdit_ && !impl_->searchLineEdit_->text().isEmpty();
+}
+
+ bool ArtifactTimelineSearchBarWidget::eventFilter(QObject* watched, QEvent* event)
+ {
+  if (watched == impl_->searchLineEdit_ && event && event->type() == QEvent::KeyPress) {
+   auto* keyEvent = static_cast<QKeyEvent*>(event);
+   if (keyEvent->key() == Qt::Key_Return || keyEvent->key() == Qt::Key_Enter) {
+    if (keyEvent->modifiers() & Qt::ShiftModifier) {
+     searchPrevRequested();
+    } else {
+     searchNextRequested();
+    }
+    return true;
+   }
+   if (keyEvent->key() == Qt::Key_Escape) {
+    if (impl_->searchLineEdit_ && !impl_->searchLineEdit_->text().isEmpty()) {
+     clearSearch();
+     return true;
+    }
+   }
+  }
+  return QWidget::eventFilter(watched, event);
  }
 
  ArtifactTimelineSearchBarWidget::~ArtifactTimelineSearchBarWidget()

@@ -46,6 +46,10 @@ module Artifact.Color.Node;
 
 
 
+import Color.ColorSpace;
+
+
+
 
 
 namespace Artifact {
@@ -408,11 +412,29 @@ void ColorSpaceNode::setTargetSpace(int space) {
     emit paramsChanged();
 }
 
-void ColorSpaceNode::process(float* /*pixels*/, int /*width*/, int /*height*/) {
+void ColorSpaceNode::process(float* pixels, int width, int height) {
     if (!isEnabled() || isBypassed()) return;
-    // TODO: Integrate with ColorManager::getConversionMatrix()
-    // For now this is a placeholder — actual CSC should use
-    // the 3x3 matrix from the color management system
+    if (!pixels || width <= 0 || height <= 0) return;
+    if (sourceSpace_ == targetSpace_) return;
+
+    const int totalPixels = width * height;
+    const auto matrix = ArtifactCore::ColorSpaceConverter::getConversionMatrix(
+        static_cast<ArtifactCore::ColorSpace>(sourceSpace_),
+        static_cast<ArtifactCore::ColorSpace>(targetSpace_));
+
+    // 4x4 matrix applied to each RGBA pixel
+    for (int i = 0; i < totalPixels; ++i) {
+        const int idx = i * 4;
+        const float r = pixels[idx + 0];
+        const float g = pixels[idx + 1];
+        const float b = pixels[idx + 2];
+        const float a = pixels[idx + 3];
+
+        pixels[idx + 0] = matrix[0] * r + matrix[1] * g + matrix[2] * b + matrix[3] * a;
+        pixels[idx + 1] = matrix[4] * r + matrix[5] * g + matrix[6] * b + matrix[7] * a;
+        pixels[idx + 2] = matrix[8] * r + matrix[9] * g + matrix[10] * b + matrix[11] * a;
+        pixels[idx + 3] = matrix[12] * r + matrix[13] * g + matrix[14] * b + matrix[15] * a;
+    }
 }
 
 // ============================================================

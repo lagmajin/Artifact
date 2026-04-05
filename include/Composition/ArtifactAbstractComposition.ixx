@@ -11,6 +11,7 @@ import std;
 
 import Utils;
 import Utils.String.UniString;
+import Asset.File;
 
 import Color.Float;
 
@@ -54,6 +55,8 @@ export namespace Artifact {
   const CompositionContext& compositionContext() const;
   void setCompositionContext(const CompositionContext& context);
   void setCompositionName(const UniString& name);
+  QString compositionNote() const;
+  void setCompositionNote(const QString& note);
   void setCompositionSize(const QSize& size);
 
   ArtifactAbstractLayerPtr layerById(const LayerID& id);
@@ -67,7 +70,9 @@ export namespace Artifact {
 
    void setBackGroundColor(const FloatColor& color);
    FloatColor backgroundColor() const;
-   void changed() W_SIGNAL(changed);
+  void changed() W_SIGNAL(changed);
+  void compositionNoteChanged(QString note)
+    W_SIGNAL(compositionNoteChanged, note);
   FramePosition framePosition() const;
   void setFramePosition(const FramePosition& position);
   void setTimeCode();
@@ -104,6 +109,9 @@ export namespace Artifact {
   static std::shared_ptr<ArtifactAbstractComposition> fromJson(const QJsonDocument& doc);
 
   QVector<ArtifactAbstractLayerPtr> allLayer();
+
+  // Asset usage tracking for unused asset detection
+  QVector<ArtifactCore::AssetID> getUsedAssets() const;
 
   /*Thumbnail*/
   QImage getThumbnail(int width = 128, int height = 128) const;

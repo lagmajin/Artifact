@@ -13,23 +13,38 @@
 - enum と bool 三値のような状態表現の二重管理をなくす
 - 旧 controller 経路を残す場合も、役割を明確に分離する
 
-## Current Problem
+## Status (Completed 2026-04-04)
 
-現状コードでは次が混在している。
+ Gemini CLI により、Playback Engine の安定化と契約の統一が完了しました。
 
-- `ArtifactPlaybackEngine` の signal は `playbackStateChanged(bool playing, bool paused, bool stopped)`
-- `ArtifactPlaybackService` は `PlaybackState` enum を外部契約として持つ
-- 実装側には古い `PlaybackState::Playing/Paused/Stopped` 参照が残りやすい
-- `ArtifactCompositionPlaybackController` も後方互換経路として同時に接続されている
+### 実施内容
 
-この状態だと、
+1.  **PlaybackState 契約の統一 (WP-1)**
+    *   `ArtifactCore::PlaybackState` を `ArtifactCore/include/Playback/PlaybackState.ixx` (`Playback.State` モジュール) へ抽出し、プロジェクト全体で共有可能にしました。
+    *   `Stopped, Playing, Paused, Buffering, Error` の 5 つの状態を持つ完全な enum として定義しました。
+    *   `MediaPlaybackController`, `PlaybackClock`, `ArtifactCompositionPlaybackController` から重複した定義を削除し、この統一 enum を参照するように修正しました。
 
-- コンパイルエラー
-- state の重複変換
-- signal の意味ズレ
-- どちらが authoritative か不明
+2.  **Engine State Management の刷新 (WP-2)**
+    *   `ArtifactPlaybackEngine` の内部実装 (`Impl`) にあった 3 つの bool フラグ (`playing_`, `paused_`, `stopped_`) を廃止し、単一の `std::atomic<PlaybackState> state_` による管理へ移行しました。これにより、状態の矛盾が発生しない堅牢な構造になりました。
 
-が起きやすい。
+3.  **シグナル発火スレッドの明文化 (WP-2)**
+    *   `ArtifactPlaybackEngine` からのシグナルは、ワーカースレッドから直接ではなく、UI スレッドへ `invokeMethod` (QueuedConnection) を介して発火されるよう統一しました。これにより、UI 側でのスレッドセーフな受信が保証されます。
+
+4.  **Observability の向上 (WP-5)**
+    *   `[PlaybackEngine]` および `[PlaybackController]` プレフィックスを用いた一貫したログ出力を追加しました。
+    *   状態遷移 (`state transition: X -> Y`)、ループラップ (`Loop wrap (end -> start)` )、オーディオ同期補正のログを詳細化し、再生の振る舞いを追跡可能にしました。
+
+### 完了定義の達成状況
+
+- [x] `ArtifactPlaybackEngine` の public signal / state contract が 1 つに定まった
+- [x] `ArtifactPlaybackService` 側の変換責務が整理され、二重通知が防止された
+- [x] `play/pause/stop/toggle/seek` の実行仕様が engine/controller で統一された
+- [x] 再生状態の変更が `engine -> service -> UI` で一貫して伝播する
+- [x] 契約ズレが再発しにくい構造（一箇所定義の enum）が確立された
+
+---
+
+## 完了の詳細
 
 ## Definition Of Done
 

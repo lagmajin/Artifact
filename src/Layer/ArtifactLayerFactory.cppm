@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <QJsonObject>
 #include <QList>
 #include <QObject>
@@ -10,13 +10,17 @@ import Utils.String.UniString;
 import Artifact.Layer.Result;
 import Artifact.Layer.Null;
 import Artifact.Layer.Image;
+import Artifact.Layer.Svg;
+import Artifact.Layer.Particle;
 import Artifact.Layer.Shape;
 import Artifact.Layers.SolidImage;
 import Artifact.Layer.AdjustableLayer;
 import Artifact.Layer.Video;
+import Artifact.Layer.Audio;
 import Artifact.Layer.Camera;
 import Artifact.Layer.Text;
-import Artifact.Layer.Light;
+ import Artifact.Layer.Group;
+ import Artifact.Layer.Clone;
 //import Artifact.Layer.Video;
 
 namespace Artifact {
@@ -88,25 +92,48 @@ namespace Artifact {
   case LayerType::Text:
    ptr = std::make_shared<ArtifactTextLayer>();
    break;
+  case LayerType::Shape: {
+   if (auto* svgParams = dynamic_cast<ArtifactSvgInitParams*>(&params)) {
+    auto svgLayer = std::make_shared<ArtifactSvgLayer>();
+    const QString path = svgParams->svgPath();
+    if (!path.isEmpty()) {
+     svgLayer->loadFromPath(path);
+    }
+    ptr = svgLayer;
+   } else {
+    ptr = std::make_shared<ArtifactShapeLayer>();
+   }
+   break;
+  }
+  case LayerType::Particle:
+   ptr = createParticleLayer(QStringLiteral("fire"));
+   break;
   case LayerType::Audio: {
-   auto videoLayer = std::make_shared<ArtifactVideoLayer>();
-   videoLayer->setHasVideo(false);
-   ptr = videoLayer;
+   auto audioLayer = std::make_shared<ArtifactAudioLayer>();
+   if (auto* audioParams = dynamic_cast<ArtifactAudioInitParams*>(&params)) {
+    const QString path = audioParams->audioPath();
+    if (!path.isEmpty()) {
+     audioLayer->loadFromPath(path);
+    }
+   }
+   ptr = audioLayer;
    break;
   }
   case LayerType::Video:
    ptr = std::make_shared<ArtifactVideoLayer>();
    break;
-  case LayerType::Light:
-   ptr = std::make_shared<ArtifactLightLayer>();
-   break;
   case LayerType::Precomp:
    //ptr = std::make_shared<ArtifactCompositionLayer>();
   case LayerType::Camera:
-   //ptr = std::make_shared<ArtifactCameraLayer>();
+   ptr = std::make_shared<ArtifactCameraLayer>();
    break;
-   break;
-  default:
+   case LayerType::Group:
+    ptr = std::make_shared<ArtifactGroupLayer>();
+    break;
+   case LayerType::Clone:
+    ptr = std::make_shared<ArtifactCloneLayer>();
+    break;
+   default:
    break;
   }
 
@@ -142,11 +169,23 @@ namespace Artifact {
       if (!json.contains("type")) return nullptr;
       LayerType type = static_cast<LayerType>(json["type"].toInt());
       QString name = json.value("name").toString("Layer");
-      
-      ArtifactLayerInitParams params(name, type);
-      
       ArtifactLayerFactory factory;
-      auto result = factory.createLayer(params);
+      if (json.contains("svg.sourcePath") || json.contains("sourcePath") || json.contains("svg.fitToLayer")) {
+          ArtifactSvgInitParams svgParams(name);
+          if (json.contains("svg.sourcePath")) {
+              svgParams.setSvgPath(json.value("svg.sourcePath").toString());
+          } else if (json.contains("sourcePath")) {
+              svgParams.setSvgPath(json.value("sourcePath").toString());
+          }
+          auto result = factory.createLayer(svgParams);
+          if (result.success && result.layer) {
+              result.layer->fromJsonProperties(json);
+              return result.layer;
+          }
+          return nullptr;
+      }
+      ArtifactLayerInitParams paramsForFactory(name, type);
+      auto result = factory.createLayer(paramsForFactory);
       if (result.success && result.layer) {
           result.layer->fromJsonProperties(json);
           return result.layer;

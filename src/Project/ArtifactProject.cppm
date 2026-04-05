@@ -3,6 +3,7 @@
 #include <wobjectimpl.h>
 #include <wobjectdefs.h>
 #include <QFileInfo>
+#include <QDateTime>
 
 #include <QHash>
 #include <QJsonArray>
@@ -30,6 +31,7 @@ import Artifact.Composition.InitParams;
 import Artifact.Layer.Factory;
 import Artifact.Layer.InitParams;
 import Artifact.Layer.Result;
+import Artifact.Layer.Svg;
 
 import Artifact.Project.Items;
 
@@ -78,8 +80,9 @@ namespace Artifact {
    bool removeById(CompositionID id);
    void removeAllCompositions();
   bool addImportedComposition(ArtifactCompositionPtr comp, const QString& name);
-  void setProjectName(const QString& name);
-  void setAuthor(const QString& author);
+   void setProjectName(const QString& name);
+   void setAuthor(const QString& author);
+   ArtifactProjectSettings projectSettings() const { return projectSettings_; }
 
   // AI向けメタデータ
   void setAIDescription(const QString& description);
@@ -349,8 +352,9 @@ void ArtifactProject::Impl::createCompositions(const QStringList& names) {}
 
  void ArtifactProject::Impl::setDirty(bool dirty)
  {
-  isDirty_ = dirty;
-  // TODO: ダーティ状態が変更されたときの通知を実装する
+  if (isDirty_ != dirty) {
+   isDirty_ = dirty;
+  }
  }
 
  void ArtifactProject::Impl::setAIDescription(const QString& description)
@@ -418,10 +422,12 @@ void ArtifactProject::Impl::createCompositions(const QStringList& names) {}
   if (typeName.find("null") != std::string::npos) return LayerType::Null;
   if (typeName.find("solid") != std::string::npos) return LayerType::Solid;
   if (typeName.find("image") != std::string::npos) return LayerType::Image;
+  if (typeName.find("shape") != std::string::npos) return LayerType::Shape;
+  if (typeName.find("svg") != std::string::npos) return LayerType::Shape;
+  if (typeName.find("particle") != std::string::npos) return LayerType::Particle;
   if (typeName.find("adjust") != std::string::npos) return LayerType::Adjustment;
   if (typeName.find("text") != std::string::npos) return LayerType::Text;
   if (typeName.find("camera") != std::string::npos) return LayerType::Camera;
-  if (typeName.find("light") != std::string::npos) return LayerType::Light;
   if (typeName.find("audio") != std::string::npos) return LayerType::Audio;
   if (typeName.find("video") != std::string::npos) return LayerType::Video;
 
@@ -468,7 +474,9 @@ void ArtifactProject::Impl::createCompositions(const QStringList& names) {}
   QJsonObject result;
   result["name"] = projectSettings_.projectName();
   result["author"] = projectSettings_.author().toQString();
-  result["version"] = "1.0";
+  result["version"] = "1.1";
+  result["minVersion"] = "1.0";
+  result["savedAt"] = QDateTime::currentDateTime().toString(Qt::ISODate);
 
   // AI向けメタデータを追加
   if (!aiDescription_.isEmpty()) {
@@ -577,9 +585,73 @@ void ArtifactProject::Impl::createCompositions(const QStringList& names) {}
   }
 
   if (errorMessage) {
-   errorMessage->clear();
+    errorMessage->clear();
   }
   return true;
+ }
+
+ std::vector<ProjectValidationIssue> ArtifactProject::validate() const
+ {
+  std::vector<ProjectValidationIssue> issues;
+
+  // Settings validation
+  const auto settingsIssues = settings().validate();
+  issues.insert(issues.end(), settingsIssues.begin(), settingsIssues.end());
+
+  // Composition validation
+  for (const auto& item : impl_->ownedItems_) {
+    if (!item) continue;
+    std::function<void(const ProjectItem*)> walk = [&](const ProjectItem* node) {
+      if (!node) return;
+      if (node->type() == eProjectItemType::Composition) {
+        const auto* compItem = static_cast<const CompositionItem*>(node);
+        auto findResult = impl_->findComposition(compItem->compositionId);
+        if (findResult.success) {
+          if (auto comp = findResult.ptr.lock()) {
+            const QString compName = compItem->name.toQString().trimmed();
+            if (compName.isEmpty()) {
+              issues.push_back({
+                ProjectValidationIssue::Severity::Warning,
+                "composition.name",
+                "コンポジション名が空です",
+                "コンポジションに名前を設定してください"
+              });
+            }
+
+            if (comp->layerCount() == 0) {
+              issues.push_back({
+                ProjectValidationIssue::Severity::Info,
+                "composition.layers",
+                QString("コンポジション '%1' にレイヤーがありません").arg(compName),
+                "レイヤーを追加してください"
+              });
+            }
+
+            const auto layers = comp->allLayer();
+            for (int i = 0; i < layers.size(); ++i) {
+              const auto& layer = layers[i];
+              if (!layer) continue;
+              const QString layerName = layer->layerName().trimmed();
+              if (layerName.isEmpty()) {
+                issues.push_back({
+                  ProjectValidationIssue::Severity::Info,
+                  "layer.name",
+                  QString("コンポジション '%1' 内のレイヤー名が空です").arg(compName),
+                  "レイヤーに名前を設定してください"
+                });
+              }
+            }
+          }
+        }
+      }
+      for (const auto* child : node->children) {
+        walk(child);
+      }
+    };
+    walk(item.get());
+  }
+
+  return issues;
  }
 		
 ArtifactProject::ArtifactProject() :impl_(new Impl())
@@ -858,6 +930,11 @@ ArtifactProject::ArtifactProject() :impl_(new Impl())
   impl_->setProjectName(name);
  }
 
+ ArtifactProjectSettings ArtifactProject::settings() const
+ {
+  return impl_->projectSettings();
+ }
+
  void ArtifactProject::setAuthor(const QString& author)
  {
   impl_->setAuthor(author);
@@ -1031,20 +1108,24 @@ ArtifactProject::ArtifactProject() :impl_(new Impl())
       return result;
     }
     
-    LayerType inferredType = inferLayerTypeFromRuntimeName(layerToDuplicate);
-    if (inferredType == LayerType::Unknown || inferredType == LayerType::None) {
-      inferredType = LayerType::Solid;
-    }
-
     QString baseName = layerToDuplicate->layerName();
     if (baseName.isEmpty()) {
       baseName = QStringLiteral("Layer");
     }
-    ArtifactLayerInitParams params(baseName + QStringLiteral(" Copy"), inferredType);
-
-    result = createLayerAndAddToComposition(compositionId, params);
+    if (auto svgLayer = std::dynamic_pointer_cast<ArtifactSvgLayer>(layerToDuplicate)) {
+      ArtifactSvgInitParams svgParams(baseName + QStringLiteral(" Copy"));
+      svgParams.setSvgPath(svgLayer->sourcePath());
+      result = createLayerAndAddToComposition(compositionId, svgParams);
+    } else {
+      LayerType inferredType = inferLayerTypeFromRuntimeName(layerToDuplicate);
+      if (inferredType == LayerType::Unknown || inferredType == LayerType::None) {
+        inferredType = LayerType::Solid;
+      }
+      ArtifactLayerInitParams params(baseName + QStringLiteral(" Copy"), inferredType);
+      result = createLayerAndAddToComposition(compositionId, params);
+    }
     if (result.success && result.layer) {
-      copyLayerProperties(layerToDuplicate, result.layer, params.name().toQString());
+      copyLayerProperties(layerToDuplicate, result.layer, baseName + QStringLiteral(" Copy"));
       setDirty(true);
     }
     return result;
@@ -1088,16 +1169,23 @@ ArtifactProject::ArtifactProject() :impl_(new Impl())
     int copiedCount = 0;
     for (const auto& sourceLayer : sourceLayers) {
       if (!sourceLayer) continue;
-      LayerType inferredType = inferLayerTypeFromRuntimeName(sourceLayer);
-      if (inferredType == LayerType::Unknown || inferredType == LayerType::None) {
-        inferredType = LayerType::Solid;
-      }
       QString layerName = sourceLayer->layerName();
       if (layerName.isEmpty()) {
         layerName = QStringLiteral("Layer");
       }
-      ArtifactLayerInitParams layerParams(layerName, inferredType);
-      auto layerCreate = createLayerAndAddToComposition(newCompResult.id, layerParams);
+      auto layerCreate = [&]() -> ArtifactLayerResult {
+        if (auto svgLayer = std::dynamic_pointer_cast<ArtifactSvgLayer>(sourceLayer)) {
+          ArtifactSvgInitParams layerParams(layerName);
+          layerParams.setSvgPath(svgLayer->sourcePath());
+          return createLayerAndAddToComposition(newCompResult.id, layerParams);
+        }
+        LayerType inferredType = inferLayerTypeFromRuntimeName(sourceLayer);
+        if (inferredType == LayerType::Unknown || inferredType == LayerType::None) {
+          inferredType = LayerType::Solid;
+        }
+        ArtifactLayerInitParams layerParams(layerName, inferredType);
+        return createLayerAndAddToComposition(newCompResult.id, layerParams);
+      }();
       if (layerCreate.success) {
         copyLayerProperties(sourceLayer, layerCreate.layer, layerName);
         ++copiedCount;

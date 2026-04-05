@@ -137,30 +137,69 @@ namespace Artifact
   return UniString("1.0");
  }
 
- ArtifactProjectImporterResult ArtifactProjectImporter::Impl::importProject()
- {
-  ArtifactProjectImporterResult result;
-  result.success = false;
-  result.project = nullptr;
-  result.compositionsLoaded = 0;
-  result.layersLoaded = 0;
+  ArtifactProjectImporterResult ArtifactProjectImporter::Impl::importProject()
+  {
+   ArtifactProjectImporterResult result;
+   result.success = false;
+   result.project = nullptr;
+   result.compositionsLoaded = 0;
+   result.layersLoaded = 0;
 
-  if (inputPath_.isEmpty()) {
-   result.errorMessage = UniString("Input path is empty");
-   qDebug() << "[Importer] Error: Input path is empty";
-   return result;
-  }
+   if (inputPath_.isEmpty()) {
+    result.errorMessage = UniString("Input path is empty");
+    qDebug() << "[Importer] Error: Input path is empty";
+    return result;
+   }
 
-  // JSONドキュメントを読み込む
-  UniString errorMsg;
-  QJsonDocument doc = loadJsonDocument(inputPath_, errorMsg);
-  if (doc.isNull()) {
-   result.errorMessage = errorMsg;
-   qDebug() << "[Importer] Error loading document:" << errorMsg.toQString();
-   return result;
-  }
+   // JSONドキュメントを読み込む
+   UniString errorMsg;
+   QJsonDocument doc = loadJsonDocument(inputPath_, errorMsg);
+   if (doc.isNull()) {
+    result.errorMessage = errorMsg;
+    qDebug() << "[Importer] Error loading document:" << errorMsg.toQString();
+    return result;
+   }
 
-  QJsonObject root = doc.object();
+   QJsonObject root = doc.object();
+
+   // Version compatibility check
+   QString fileVersion = root.contains("version") && root["version"].isString()
+    ? root["version"].toString()
+    : QStringLiteral("1.0");
+   QString minVersion = root.contains("minVersion") && root["minVersion"].isString()
+    ? root["minVersion"].toString()
+    : fileVersion;
+
+   // Current supported version
+   static const QString kCurrentVersion = "1.1";
+   static const QString kMinSupportedVersion = "1.0";
+
+   // Check if file version is too new
+   auto versionToFloat = [](const QString& v) -> float {
+    bool ok = false;
+    float val = v.toFloat(&ok);
+    return ok ? val : 0.0f;
+   };
+
+   float fileVer = versionToFloat(fileVersion);
+   float minSupportedVer = versionToFloat(kMinSupportedVersion);
+   float currentVer = versionToFloat(kCurrentVersion);
+
+   if (fileVer > currentVer) {
+    qWarning() << "[Importer] File version" << fileVersion << "is newer than supported" << kCurrentVersion;
+    result.errorMessage = UniString(QStringLiteral("Project file version %1 is newer than supported version %2. Please update the application.").arg(fileVersion, kCurrentVersion).toStdString());
+    return result;
+   }
+
+   // Check if minVersion requirement is satisfied
+   float minReqVer = versionToFloat(minVersion);
+   if (minReqVer > currentVer) {
+    qWarning() << "[Importer] File requires minimum version" << minVersion << "but current is" << kCurrentVersion;
+    result.errorMessage = UniString(QStringLiteral("Project file requires minimum version %1 but current version is %2").arg(minVersion, kCurrentVersion).toStdString());
+    return result;
+   }
+
+   qDebug() << "[Importer] Version check passed - file version:" << fileVersion << "min version:" << minVersion;
   auto projectPtr = std::make_shared<ArtifactProject>();
 
   // プロジェクト基本情報の読み込み

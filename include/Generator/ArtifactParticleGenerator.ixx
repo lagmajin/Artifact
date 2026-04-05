@@ -1,7 +1,8 @@
-﻿module;
+module;
 #include <QObject>
 #include <QVector2D>
 #include <QVector3D>
+#include <QMatrix4x4>
 #include <QColor>
 #include <QImage>
 #include <QRandomGenerator>
@@ -45,9 +46,7 @@
 #include <random>
 export module Artifact.Generator.Particle;
 
-
-
-
+import Graphics.ParticleData;
 
 W_REGISTER_ARGTYPE(QVector2D)
 W_REGISTER_ARGTYPE(QVector3D)
@@ -100,6 +99,32 @@ struct Particle {
     // State
     bool alive = true;
     bool active = true;
+};
+
+/**
+ * @brief Frame snapshot for rendering (Shared between Software and Diligent)
+ */
+struct ParticleRenderData {
+    struct Vertex {
+        float px, py, pz; // Position
+        float vx, vy, vz; // Velocity
+        float r, g, b, a; // Color (RGBA)
+        float size = 1.0f;
+        float rotation = 0.0f;
+        float age = 0.0f;
+        float lifetime = 1.0f;
+    };
+    std::vector<Vertex> particles;
+    int64_t frameNumber = 0;
+};
+
+/**
+ * @brief Render context containing camera and global settings
+ */
+struct ParticleRenderContext {
+    QMatrix4x4 viewMatrix;
+    QMatrix4x4 projectionMatrix;
+    QSize viewportSize;
 };
 
 /**
@@ -503,8 +528,12 @@ public:
     const ParticleRenderSettings& renderSettings() const { return renderSettings_; }
     void setRenderSettings(const ParticleRenderSettings& s) { renderSettings_ = s; }
     
-    // Simulation
+    // Simulation / Snapshot
     void update(float deltaTime);
+    void goToFrame(int64_t frame, double fps);
+    void reset();
+    ParticleRenderData captureRenderData() const;
+
     QImage updateAndRenderSoftwareFrame(float deltaTime, int width, int height,
                                        const QColor& clearColor = QColor(0, 0, 0, 0));
     void setPaused(bool paused) { paused_ = paused; }

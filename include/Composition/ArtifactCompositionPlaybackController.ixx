@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <QObject>
 #include <QTimer>
 #include <functional>
@@ -46,6 +46,7 @@ import Frame.Position;
 import Frame.Rate;
 import Frame.Range;
 import Artifact.Composition.InOutPoints;
+import Playback.State;
 
 W_REGISTER_ARGTYPE(ArtifactCore::FramePosition)
 W_REGISTER_ARGTYPE(ArtifactCore::FrameRange)
@@ -55,12 +56,6 @@ W_REGISTER_ARGTYPE(ArtifactCore::FrameRate)
 export namespace Artifact {
 
 using namespace ArtifactCore;
-
-enum class PlaybackState {
-    Stopped,
-    Playing,
-    Paused
-};
 
 class ArtifactCompositionPlaybackController : public QObject {
     W_OBJECT(ArtifactCompositionPlaybackController)
@@ -145,4 +140,4 @@ public:
 
 }
 
-W_REGISTER_ARGTYPE(Artifact::PlaybackState)
+W_REGISTER_ARGTYPE(ArtifactCore::PlaybackState)

@@ -54,6 +54,8 @@ private:
     static void checkFrameRanges(ArtifactProject* project, ProjectHealthReport& report);
     static void checkMissingAssets(ArtifactProject* project, ProjectHealthReport& report);
     static void checkBrokenReferences(ArtifactProject* project, ProjectHealthReport& report);
+    static void checkNamingIssues(ArtifactProject* project, ProjectHealthReport& report);
+    static void checkSpellingIssues(ArtifactProject* project, ProjectHealthReport& report);
     static void repairFrameRanges(ArtifactProject* project, AutoRepairResult& result, const AutoRepairOptions& options);
     static void repairMissingAssets(ArtifactProject* project, AutoRepairResult& result, const AutoRepairOptions& options);
     static void repairBrokenReferences(ArtifactProject* project, AutoRepairResult& result, const AutoRepairOptions& options);

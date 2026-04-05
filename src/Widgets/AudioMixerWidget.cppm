@@ -10,6 +10,9 @@
 #include <QMenu>
 #include <QAction>
 #include <QMouseEvent>
+#include <QFont>
+#include <QPalette>
+#include <QColor>
 #include <cmath>
 #include <wobjectimpl.h>
 
@@ -103,6 +106,7 @@ AudioChannelStripWidget::AudioChannelStripWidget(std::shared_ptr<ArtifactCore::A
     : QWidget(parent), bus_(bus) {
     
     analyzer_ = std::make_unique<ArtifactCore::AudioAnalyzer>(1024);
+    clipTimer_.start();
     
     setFixedWidth(80);
     setMinimumHeight(350);
@@ -127,17 +131,19 @@ AudioChannelStripWidget::AudioChannelStripWidget(std::shared_ptr<ArtifactCore::A
     QString busName = QString::fromStdString(bus->getName());
     QLabel* nameLabel = new QLabel(busName, this);
     nameLabel->setAlignment(Qt::AlignCenter);
-    nameLabel->setStyleSheet("color: #E0E0E0; font-weight: bold; font-family: 'Inter', sans-serif; font-size: 11px;");
+    QFont nameFont = nameLabel->font();
+    nameFont.setBold(true);
+    nameFont.setPointSize(11);
+    nameLabel->setFont(nameFont);
+    QPalette namePalette = nameLabel->palette();
+    namePalette.setColor(QPalette::WindowText, QColor(224, 224, 224));
+    nameLabel->setPalette(namePalette);
     layout->addWidget(nameLabel);
 
     // 2. Pan Pot (簡易的に水平スライダー)
     QSlider* panSlider = new QSlider(Qt::Horizontal, this);
     panSlider->setRange(-100, 100);
     panSlider->setValue(static_cast<int>(bus->getPan() * 100));
-    panSlider->setStyleSheet(
-        "QSlider::groove:horizontal { height: 4px; background: #2A2A2A; border-radius: 2px; }"
-        "QSlider::handle:horizontal { width: 10px; height: 10px; background: #4FC3F7; border-radius: 5px; margin: -3px 0; }"
-    );
     connect(panSlider, &QSlider::valueChanged, this, [this](int val) {
         bus_->setPan(val / 100.0f);
     });
@@ -150,10 +156,6 @@ AudioChannelStripWidget::AudioChannelStripWidget(std::shared_ptr<ArtifactCore::A
     QSlider* fader = new QSlider(Qt::Vertical, this);
     fader->setRange(-600, 120); // -60dB to +12dB (0.1dB step)
     fader->setValue(static_cast<int>(bus->getVolume() * 10));
-    fader->setStyleSheet(
-        "QSlider::groove:vertical { width: 6px; background: #222222; border-radius: 3px; }"
-        "QSlider::handle:vertical { width: 24px; height: 14px; background: #E0E0E0; border-radius: 2px; margin: 0 -9px; }"
-    );
     connect(fader, &QSlider::valueChanged, this, [this](int val) {
         bus_->setVolume(val / 10.0f);
     });
@@ -166,10 +168,7 @@ AudioChannelStripWidget::AudioChannelStripWidget(std::shared_ptr<ArtifactCore::A
     QPushButton* muteBtn = new QPushButton("M", this);
     muteBtn->setCheckable(true);
     muteBtn->setFixedSize(28, 28);
-    muteBtn->setStyleSheet(
-        "QPushButton { background: #333333; color: white; border: 1px solid #444; border-radius: 4px; font-weight: bold; }"
-        "QPushButton:checked { background: #FF5252; color: white; }"
-    );
+    muteBtn->setFlat(true);
     connect(muteBtn, &QPushButton::toggled, this, [this](bool checked) {
         bus_->setMute(checked);
     });
@@ -177,10 +176,7 @@ AudioChannelStripWidget::AudioChannelStripWidget(std::shared_ptr<ArtifactCore::A
     QPushButton* soloBtn = new QPushButton("S", this);
     soloBtn->setCheckable(true);
     soloBtn->setFixedSize(28, 28);
-    soloBtn->setStyleSheet(
-        "QPushButton { background: #333333; color: white; border: 1px solid #444; border-radius: 4px; font-weight: bold; }"
-        "QPushButton:checked { background: #FFD600; color: black; }"
-    );
+    soloBtn->setFlat(true);
     connect(soloBtn, &QPushButton::toggled, this, [this](bool checked) {
         bus_->setSolo(checked);
     });
@@ -191,7 +187,10 @@ AudioChannelStripWidget::AudioChannelStripWidget(std::shared_ptr<ArtifactCore::A
 
     // レンダリングスタイル
     setAttribute(Qt::WA_StyledBackground, true);
-    setStyleSheet("background: #1A1B1E; border-right: 1px solid #2C2E33;");
+    setAutoFillBackground(true);
+    QPalette stripPalette = palette();
+    stripPalette.setColor(QPalette::Window, QColor(26, 27, 30));
+    setPalette(stripPalette);
 }
 
 AudioChannelStripWidget::~AudioChannelStripWidget() = default;
@@ -201,6 +200,14 @@ void AudioChannelStripWidget::updateMeters() {
     if (analyzer_ && bus_) {
         auto result = analyzer_->analyze(bus_->getOutputBuffer());
         analyzerWidget_->setSpectrum(result.spectrum);
+    }
+
+    if (bus_) {
+        const float peak = std::max(bus_->getPeakLevel(0), bus_->getPeakLevel(1));
+        clipPeak_ = peak;
+        if (peak >= 1.0f) {
+            clipLatchedUntilMs_ = clipTimer_.elapsed() + 1200;
+        }
     }
     
     update(); // 強制再描画
@@ -225,6 +232,7 @@ void AudioChannelStripWidget::paintEvent(QPaintEvent* event) {
     // Get levels (L/R 平均または最大)
     float peak = std::max(bus_->getPeakLevel(0), bus_->getPeakLevel(1));
     float rms = std::max(bus_->getRMSLevel(0), bus_->getRMSLevel(1));
+    const bool clipped = clipPeak_ >= 1.0f || clipTimer_.elapsed() < clipLatchedUntilMs_;
 
     // Convert to 0-1 range for display (Logarithmic)
     auto toDbfs = [](float val) {
@@ -243,6 +251,18 @@ void AudioChannelStripWidget::paintEvent(QPaintEvent* event) {
 
     int fillH = static_cast<int>(peakNorm * meterH);
     painter.fillRect(meterX, meterY + meterH - fillH, meterW, fillH, grad);
+
+    if (clipped) {
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(QColor(232, 54, 54));
+        painter.drawRoundedRect(QRect(meterX - 34, meterY - 24, 42, 18), 6, 6);
+        painter.setPen(QColor(255, 245, 245));
+        QFont clipFont = painter.font();
+        clipFont.setBold(true);
+        clipFont.setPixelSize(9);
+        painter.setFont(clipFont);
+        painter.drawText(QRect(meterX - 34, meterY - 24, 42, 18), Qt::AlignCenter, QStringLiteral("CLIP"));
+    }
 
     // 目盛り (dBFS scale)
     static const struct { float db; bool showLabel; } kMarks[] = {
@@ -301,7 +321,11 @@ AudioMixerWidget::AudioMixerWidget(ArtifactCore::AudioMixer* mixer, QWidget* par
     layout->setSpacing(0);
     layout->setAlignment(Qt::AlignLeft);
 
-    setStyleSheet("background: #0F1012;");
+    setAttribute(Qt::WA_StyledBackground, true);
+    setAutoFillBackground(true);
+    QPalette mixerPalette = palette();
+    mixerPalette.setColor(QPalette::Window, QColor(15, 16, 18));
+    setPalette(mixerPalette);
 
     // テスト用の定期更新タイマー
     QTimer* timer = new QTimer(this);

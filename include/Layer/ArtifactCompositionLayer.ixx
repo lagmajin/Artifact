@@ -2,57 +2,66 @@ module;
 
 #include <QVariant>
 
-#include <iostream>
-#include <vector>
-#include <string>
-#include <map>
-#include <unordered_map>
-#include <set>
-#include <unordered_set>
-#include <memory>
 #include <algorithm>
-#include <cmath>
-#include <functional>
-#include <optional>
-#include <utility>
+#include <any>
 #include <array>
-#include <mutex>
-#include <thread>
+#include <atomic>
 #include <chrono>
+#include <cmath>
+#include <condition_variable>
+#include <deque>
 #include <filesystem>
 #include <fstream>
+#include <functional>
+#include <iostream>
+#include <list>
+#include <map>
+#include <memory>
+#include <mutex>
+#include <numeric>
+#include <optional>
+#include <queue>
+#include <random>
+#include <regex>
+#include <set>
 #include <sstream>
 #include <stdexcept>
-#include <type_traits>
-#include <variant>
-#include <any>
-#include <atomic>
-#include <condition_variable>
-#include <queue>
-#include <deque>
-#include <list>
+#include <string>
+#include <thread>
 #include <tuple>
-#include <numeric>
-#include <regex>
-#include <random>
+#include <type_traits>
+#include <unordered_map>
+#include <unordered_set>
+#include <utility>
+#include <variant>
+#include <vector>
 export module Artifact.Layer.Composition;
 
 import Utils;
 import Artifact.Layer.Abstract;
+import Artifact.Composition.Abstract;
 
 export namespace Artifact {
 
- class ArtifactCompositionLayer:public ArtifactAbstractLayer {
- private:
+class ArtifactCompositionLayer : public ArtifactAbstractLayer {
+private:
   class Impl;
-  Impl* impl_;
- public:
+  Impl *impl_;
+
+public:
   ArtifactCompositionLayer();
   ~ArtifactCompositionLayer();
   CompositionID sourceCompositionId() const;
-  void setCompositionId(const CompositionID& id);
-  std::vector<ArtifactCore::PropertyGroup> getLayerPropertyGroups() const override;
-  bool setLayerPropertyValue(const QString& propertyPath, const QVariant& value) override;
- };
+  void setCompositionId(const CompositionID &id);
 
-}
+  std::shared_ptr<ArtifactAbstractComposition> sourceComposition() const;
+
+  // ArtifactAbstractLayer overrides
+  QRectF localBounds() const override;
+  std::vector<ArtifactCore::PropertyGroup>
+  getLayerPropertyGroups() const override;
+  bool setLayerPropertyValue(const QString &propertyPath,
+                             const QVariant &value) override;
+};
+
+} // namespace Artifact

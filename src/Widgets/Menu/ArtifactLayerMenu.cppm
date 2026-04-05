@@ -5,6 +5,8 @@ module;
 #include <QLineEdit>
 #include <QMenu>
 #include <QMessageBox>
+#include <QFileDialog>
+#include <QFileInfo>
 #include <QTimer>
 #include <wobjectimpl.h>
 
@@ -42,6 +44,9 @@ public:
     QAction* createNullAction = nullptr;
     QAction* createAdjustAction = nullptr;
     QAction* createTextAction = nullptr;
+    QAction* createParticleAction = nullptr;
+    QAction* createCameraAction = nullptr;
+    QAction* createAudioAction = nullptr;
 
     QAction* duplicateLayerAction = nullptr;
     QAction* renameLayerAction = nullptr;
@@ -63,6 +68,9 @@ public:
     void handleCreateNull();
     void handleCreateAdjust();
     void handleCreateText();
+    void handleCreateParticle();
+    void handleCreateCamera();
+    void handleCreateAudio();
 
     void handleDuplicateLayer();
     void handleRenameLayer();
@@ -105,10 +113,21 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     createTextAction->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::SHIFT | Qt::Key_T));
     createTextAction->setIcon(QIcon(resolveIconPath("Material/title.svg")));
 
+    createParticleAction = new QAction("パーティクル(&P)", createMenu);
+
+    createCameraAction = new QAction("カメラ(&C)", createMenu);
+    createCameraAction->setIcon(QIcon(resolveIconPath("Material/videocam.svg")));
+
+    createAudioAction = new QAction("オーディオ(&U)...", createMenu);
+    createAudioAction->setIcon(QIcon(resolveIconPath("Material/audiotrack.svg")));
+
     createMenu->addAction(createSolidAction);
     createMenu->addAction(createNullAction);
     createMenu->addAction(createAdjustAction);
     createMenu->addAction(createTextAction);
+    createMenu->addAction(createParticleAction);
+    createMenu->addAction(createCameraAction);
+    createMenu->addAction(createAudioAction);
 
     duplicateLayerAction = new QAction("レイヤーを複製(&D)", menu);
     duplicateLayerAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_D));
@@ -162,6 +181,9 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     QObject::connect(createNullAction, &QAction::triggered, menu, [this]() { handleCreateNull(); });
     QObject::connect(createAdjustAction, &QAction::triggered, menu, [this]() { handleCreateAdjust(); });
     QObject::connect(createTextAction, &QAction::triggered, menu, [this]() { handleCreateText(); });
+    QObject::connect(createParticleAction, &QAction::triggered, menu, [this]() { handleCreateParticle(); });
+    QObject::connect(createCameraAction, &QAction::triggered, menu, [this]() { handleCreateCamera(); });
+    QObject::connect(createAudioAction, &QAction::triggered, menu, [this]() { handleCreateAudio(); });
 
     QObject::connect(duplicateLayerAction, &QAction::triggered, menu, [this]() { handleDuplicateLayer(); });
     QObject::connect(renameLayerAction, &QAction::triggered, menu, [this]() { handleRenameLayer(); });
@@ -242,6 +264,9 @@ void ArtifactLayerMenu::Impl::refreshEnabledState()
     createNullAction->setEnabled(hasProject);
     createAdjustAction->setEnabled(hasProject);
     createTextAction->setEnabled(hasProject);
+    createParticleAction->setEnabled(hasProject);
+    createCameraAction->setEnabled(hasProject);
+    createAudioAction->setEnabled(hasProject);
 
     duplicateLayerAction->setEnabled(hasLayer);
     renameLayerAction->setEnabled(hasLayer);
@@ -320,6 +345,47 @@ void ArtifactLayerMenu::Impl::handleCreateText()
         return;
     }
     ArtifactTextLayerInitParams params(u8"Text 1");
+    ArtifactProjectService::instance()->addLayerToCurrentComposition(params);
+}
+
+void ArtifactLayerMenu::Impl::handleCreateParticle()
+{
+    if (!ensureCurrentComposition()) {
+        QMessageBox::warning(menu_ ? menu_->window() : nullptr, "Layer", "コンポジションが選択されていません。");
+        return;
+    }
+    ArtifactLayerInitParams params(u8"Particle 1", LayerType::Particle);
+    ArtifactProjectService::instance()->addLayerToCurrentComposition(params);
+}
+
+void ArtifactLayerMenu::Impl::handleCreateCamera()
+{
+    if (!ensureCurrentComposition()) {
+        QMessageBox::warning(menu_ ? menu_->window() : nullptr, "Layer", "コンポジションが選択されていません。");
+        return;
+    }
+    ArtifactCameraLayerInitParams params;
+    ArtifactProjectService::instance()->addLayerToCurrentComposition(params);
+}
+
+void ArtifactLayerMenu::Impl::handleCreateAudio()
+{
+    if (!ensureCurrentComposition()) {
+        QMessageBox::warning(menu_ ? menu_->window() : nullptr, "Layer", "コンポジションが選択されていません。");
+        return;
+    }
+
+    const QString path = QFileDialog::getOpenFileName(
+        menu_ ? menu_->window() : nullptr,
+        QStringLiteral("オーディオを選択"),
+        QString(),
+        QStringLiteral("WAV Audio (*.wav);;All Files (*.*)"));
+    if (path.isEmpty()) {
+        return;
+    }
+
+    ArtifactAudioInitParams params(QFileInfo(path).baseName());
+    params.setAudioPath(path);
     ArtifactProjectService::instance()->addLayerToCurrentComposition(params);
 }
 

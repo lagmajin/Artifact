@@ -4,6 +4,8 @@
 #include <QByteArray>
 #include <QList>
 #include <QIcon>
+#include <QDateTime>
+#include <QStringList>
 
 #include <iostream>
 #include <vector>
@@ -55,8 +57,15 @@ export namespace Artifact
   UniString type;
   UniString path;
   bool isFolder = false;
-  QIcon icon;  // Optional: custom icon/thumbnail
- };
+ bool isSequence = false;
+ int sequenceFrameCount = 0;
+ int sequenceStartFrame = 0;
+ int sequencePadding = 0;
+ qint64 fileSizeBytes = 0;
+ QDateTime lastModified;
+ QStringList sequencePaths;
+ QIcon icon;  // Optional: custom icon/thumbnail
+};
 
  enum class AssetMenuRole
  {
@@ -83,6 +92,8 @@ export namespace Artifact
 
   void setItems(const QList<AssetMenuItem>& items);
   void addItem(const AssetMenuItem& item);
+  bool updateItemIconByPath(const QString& path, const QIcon& icon);
+  void refreshIcons();
   void clear();
   AssetMenuItem itemAt(int row) const;
  };

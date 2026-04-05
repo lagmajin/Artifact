@@ -193,7 +193,7 @@ void ArtifactProjectModel::Impl::refreshTree()
   case Artifact::eProjectItemType::Folder:
    return iconOrFallback(QStringLiteral("MaterialVS/yellow/folder.svg"), QColor(176, 138, 46), QStringLiteral("F"));
   case Artifact::eProjectItemType::Composition:
-   return iconOrFallback(QStringLiteral("MaterialVS/blue/movie.svg"), QColor(74, 128, 191), QStringLiteral("C"));
+   return iconOrFallback(QStringLiteral("MaterialVS/blue/movie_creation.svg"), QColor(74, 128, 191), QStringLiteral("C"));
   case Artifact::eProjectItemType::Solid:
    return iconOrFallback(QStringLiteral("MaterialVS/purple/format_shapes.svg"), QColor(110, 88, 170), QStringLiteral("S"));
   case Artifact::eProjectItemType::Footage: {

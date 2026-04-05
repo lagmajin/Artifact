@@ -9,6 +9,7 @@ module;
 #include <QUrl>
 #include <QInputDialog>
 #include <QLineEdit>
+#include <QRegularExpression>
 #include <QFileInfo>
 #include <QSet>
 #include <QMessageBox>
@@ -29,7 +30,9 @@ import Artifact.Project.Manager;
 import Artifact.Service.Project;
 import Utils.Path;
 import Artifact.Widgets.AppDialogs;
+import Undo.UndoManager;
 import Artifact.Layer.Image;
+import Artifact.Layer.Svg;
 import Artifact.Layers.SolidImage;
 
 namespace Artifact {
@@ -98,7 +101,7 @@ bool confirmPotentiallyDestructiveAction(QWidget* parent, const QString& title, 
     box.setWindowTitle(title);
     box.setIcon(QMessageBox::Warning);
     box.setText(text);
-    box.setMinimumWidth(560);
+    box.setMinimumWidth(760);
     box.setTextInteractionFlags(Qt::TextSelectableByMouse);
 
     auto* yesButton = box.addButton(QStringLiteral("はい"), QMessageBox::AcceptRole);
@@ -106,6 +109,53 @@ bool confirmPotentiallyDestructiveAction(QWidget* parent, const QString& title, 
     box.setDefaultButton(noButton);
     box.exec();
     return box.clickedButton() == yesButton;
+}
+
+// P0-2: 保存確認付き終了/プロジェクトクローズ
+bool confirmUnsavedChanges(QWidget* parent, const QString& actionName)
+{
+    auto* svc = ArtifactProjectService::instance();
+    if (!svc || !svc->hasProject()) return true;
+
+    auto project = svc->getCurrentProjectSharedPtr();
+    if (!project) return true;
+
+    // Check if project is dirty
+    bool hasUnsaved = project->isDirty();
+    if (!hasUnsaved) {
+        if (auto* undoMgr = UndoManager::instance()) {
+            hasUnsaved = undoMgr->hasUnsavedChanges();
+        }
+    }
+
+    if (!hasUnsaved) return true;
+
+    QMessageBox box(parent);
+    box.setWindowTitle(QStringLiteral("保存の確認"));
+    box.setIcon(QMessageBox::Warning);
+    box.setText(QStringLiteral("プロジェクトに変更があります。%1 前に保存しますか？").arg(actionName));
+    box.setInformativeText(QStringLiteral("未保存の変更は失われる可能性があります。"));
+
+    auto* saveButton = box.addButton(QStringLiteral("保存"), QMessageBox::AcceptRole);
+    auto* discardButton = box.addButton(QStringLiteral("破棄"), QMessageBox::DestructiveRole);
+    auto* cancelButton = box.addButton(QStringLiteral("キャンセル"), QMessageBox::RejectRole);
+    box.setDefaultButton(saveButton);
+
+    box.exec();
+
+    if (box.clickedButton() == cancelButton) return false;
+    if (box.clickedButton() == discardButton) return true;
+
+    // Save
+    auto& manager = ArtifactProjectManager::getInstance();
+    QString path = manager.currentProjectPath();
+    if (path.isEmpty()) {
+        path = QFileDialog::getSaveFileName(parent, "プロジェクトを保存", QString(),
+            "Artifact Project (*.artifact *.json);;All Files (*.*)");
+        if (path.isEmpty()) return false;
+    }
+    auto result = manager.saveToFile(path);
+    return result.success;
 }
 }
 
@@ -222,6 +272,13 @@ void ArtifactFileMenu::Impl::handleCreateProject()
     auto result = manager.createProject(UniString(name), true);
     if (!result.isSuccess) {
         qWarning() << "Create project failed";
+    } else {
+        // プロジェクト作成に成功したら履歴に追加
+        // manager.currentProjectPath() はディレクトリパスまたはファイルパスを返す可能性がある
+        QString projectPath = manager.currentProjectPath();
+        if (!projectPath.isEmpty()) {
+            addRecentProject(projectPath);
+        }
     }
 }
 
@@ -265,9 +322,36 @@ void ArtifactFileMenu::Impl::handleSaveProjectAs()
 void ArtifactFileMenu::Impl::handleNewComposition()
 {
     if (!menu_) return;
+
+    // Preset selection
+    QStringList presets;
+    presets << "1920 x 1080  @ 30fps (Full HD)"
+            << "1920 x 1080  @ 24fps (Cinema)"
+            << "3840 x 2160  @ 30fps (4K UHD)"
+            << "1280 x 720   @ 30fps (HD)"
+            << "1080 x 1920  @ 30fps (Vertical HD)"
+            << "1080 x 1920  @ 60fps (Vertical 60)"
+            << "1080 x 1080  @ 30fps (Square)"
+            << "1920 x 1080  @ 60fps (Full HD 60)";
+
     bool ok = false;
-    const QString name = QInputDialog::getText(menu_, "新規コンポジション", "名前:", QLineEdit::Normal, "Composition", &ok);
+    const QString preset = QInputDialog::getItem(menu_, "新規コンポジション", "プリセット:", presets, 0, false, &ok);
+    if (!ok) return;
+
+    // Parse preset: "WxH @ fps (name)"
+    int w = 1920, h = 1080;
+    double fps = 30.0;
+    QRegularExpression re(R"((\d+)\s*x\s*(\d+)\s*@\s*(\d+)fps)");
+    auto match = re.match(preset);
+    if (match.hasMatch()) {
+        w = match.captured(1).toInt();
+        h = match.captured(2).toInt();
+        fps = match.captured(3).toDouble();
+    }
+
+    const QString name = QInputDialog::getText(menu_, "コンポジション名", "名前:", QLineEdit::Normal, "Composition", &ok);
     if (!ok || name.trimmed().isEmpty()) return;
+
     if (auto* svc = ArtifactProjectService::instance()) {
         svc->createComposition(UniString(name.trimmed()));
     }
@@ -345,6 +429,12 @@ void ArtifactFileMenu::Impl::handleExportCurrentFrame()
         // レイヤーサーフェスを取得して描画
         if (auto imageLayer = std::dynamic_pointer_cast<ArtifactImageLayer>(layer)) {
             QImage img = imageLayer->toQImage();
+            if (!img.isNull()) {
+                const auto size = layer->sourceSize();
+                painter.drawImage(QRectF(0, 0, size.width, size.height), img);
+            }
+        } else if (auto svgLayer = std::dynamic_pointer_cast<ArtifactSvgLayer>(layer)) {
+            QImage img = svgLayer->toQImage();
             if (!img.isNull()) {
                 const auto size = layer->sourceSize();
                 painter.drawImage(QRectF(0, 0, size.width, size.height), img);
@@ -438,6 +528,12 @@ void ArtifactFileMenu::Impl::handleExportWorkArea()
                     const auto size = layer->sourceSize();
                     painter.drawImage(QRectF(0, 0, size.width, size.height), img);
                 }
+            } else if (auto svgLayer = std::dynamic_pointer_cast<ArtifactSvgLayer>(layer)) {
+                QImage img = svgLayer->toQImage();
+                if (!img.isNull()) {
+                    const auto size = layer->sourceSize();
+                    painter.drawImage(QRectF(0, 0, size.width, size.height), img);
+                }
             } else if (auto solidLayer = std::dynamic_pointer_cast<ArtifactSolidImageLayer>(layer)) {
                 QImage img(compSize, QImage::Format_ARGB32_Premultiplied);
                 const FloatColor solidColor = solidLayer->color();
@@ -509,10 +605,21 @@ void ArtifactFileMenu::Impl::rebuildMenu()
         } else {
             for (const auto& path : recent) {
                 QFileInfo fi(path);
-                auto* action = recentProjectsMenu->addAction(fi.fileName());
-                action->setData(path);
-                action->setStatusTip(path);
-                QObject::connect(action, &QAction::triggered, menu_, [path]() {
+                QString displayName = fi.fileName();
+                QString displayPath = fi.absolutePath();
+
+                // P0-1: Show full path in submenu for clarity
+                auto* fileAction = recentProjectsMenu->addAction(displayName);
+                fileAction->setData(path);
+                fileAction->setStatusTip(path);
+                fileAction->setToolTip(path);
+
+                // P0-1: Add path as a disabled sub-item for visual clarity
+                auto* pathAction = recentProjectsMenu->addAction(QStringLiteral("  %1").arg(displayPath));
+                pathAction->setEnabled(false);
+                pathAction->setToolTip(path);
+
+                QObject::connect(fileAction, &QAction::triggered, menu_, [path]() {
                     ArtifactProjectManager::getInstance().loadFromFile(path);
                 });
             }
@@ -547,13 +654,8 @@ void ArtifactFileMenu::projectCreateRequested()
 void ArtifactFileMenu::projectClosed()
 {
     if (auto* svc = ArtifactProjectService::instance()) {
-        if (svc->hasProject()) {
-            if (!confirmPotentiallyDestructiveAction(
-                this,
-                QStringLiteral("プロジェクトを閉じる"),
-                QStringLiteral("現在のプロジェクトを閉じますか？\n未保存の変更は失われる可能性があります。"))) {
-                return;
-            }
+        if (!confirmUnsavedChanges(this, QStringLiteral("プロジェクトを閉じる"))) {
+            return;
         }
     }
     ArtifactProjectManager::getInstance().closeCurrentProject();
@@ -562,13 +664,8 @@ void ArtifactFileMenu::projectClosed()
 void ArtifactFileMenu::quitApplication()
 {
     if (auto* svc = ArtifactProjectService::instance()) {
-        if (svc->hasProject()) {
-            if (!confirmPotentiallyDestructiveAction(
-                this,
-                QStringLiteral("終了確認"),
-                QStringLiteral("Artifact を終了しますか？\n未保存の変更は失われる可能性があります。"))) {
-                return;
-            }
+        if (!confirmUnsavedChanges(this, QStringLiteral("終了"))) {
+            return;
         }
     }
     QApplication::quit();
@@ -577,13 +674,8 @@ void ArtifactFileMenu::quitApplication()
 void ArtifactFileMenu::restartApplication()
 {
     if (auto* svc = ArtifactProjectService::instance()) {
-        if (svc->hasProject()) {
-            if (!confirmPotentiallyDestructiveAction(
-                this,
-                QStringLiteral("再起動確認"),
-                QStringLiteral("Artifact を再起動しますか？\n未保存の変更は失われる可能性があります。"))) {
-                return;
-            }
+        if (!confirmUnsavedChanges(this, QStringLiteral("再起動"))) {
+            return;
         }
     }
 

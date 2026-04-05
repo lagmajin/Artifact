@@ -11,6 +11,9 @@ module;
 #include <QSpinBox>
 #include <QFrame>
 #include <QPainter>
+#include <QPalette>
+#include <QColor>
+#include <QLinearGradient>
 #include <QPixmap>
 #include <QResizeEvent>
 #include <QSignalBlocker>
@@ -30,6 +33,7 @@ import Artifact.Service.Playback;
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
 import Layer.Blend;
+import Widgets.Utils.CSS;
 
 namespace Artifact {
 
@@ -306,7 +310,12 @@ ArtifactLayerCompositeTestWidget::ArtifactLayerCompositeTestWidget(QWidget* pare
     
     impl_->previewHost = new QWidget();
     impl_->previewHost->setMinimumSize(800, 600);
-    impl_->previewHost->setStyleSheet("background-color: #1a1a1a;");
+    impl_->previewHost->setAutoFillBackground(true);
+    {
+        QPalette pal = impl_->previewHost->palette();
+        pal.setColor(QPalette::Window, QColor(ArtifactCore::currentDCCTheme().backgroundColor));
+        impl_->previewHost->setPalette(pal);
+    }
     
     auto* previewLayout2 = new QVBoxLayout(impl_->previewHost);
     previewLayout2->setContentsMargins(0, 0, 0, 0);

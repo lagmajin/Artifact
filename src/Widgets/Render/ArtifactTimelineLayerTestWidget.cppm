@@ -17,6 +17,8 @@ module;
 #include <QScrollArea>
 #include <QTimer>
 #include <QDateTime>
+#include <QPalette>
+#include <QColor>
 #include <wobjectimpl.h>
 
 #include <vector>
@@ -36,6 +38,8 @@ import Artifact.Layer.Video;
 import Artifact.Layer.Audio;
 import Artifact.Layers.SolidImage;
 import Layer.Blend;
+import Event.Bus;
+import Artifact.Event.Types;
 
 namespace Artifact {
 
@@ -200,6 +204,8 @@ public:
     
     QImage compositeImage;
     ArtifactCompositionPtr currentComposition;
+    ArtifactCore::EventBus eventBus_ = ArtifactCore::globalEventBus();
+    std::vector<ArtifactCore::EventBus::Subscription> eventBusSubscriptions_;
     
     void reloadCompositions()
     {
@@ -457,7 +463,6 @@ ArtifactTimelineLayerTestWidget::ArtifactTimelineLayerTestWidget(QWidget* parent
     compLayout->addWidget(impl_->refreshButton);
     
     impl_->applyButton = new QPushButton("Apply Changes to Timeline");
-    impl_->applyButton->setStyleSheet("background-color: #4CAF50; color: white; padding: 8px;");
     compLayout->addWidget(impl_->applyButton);
     
     controlLayout->addWidget(compGroup);
@@ -483,12 +488,17 @@ ArtifactTimelineLayerTestWidget::ArtifactTimelineLayerTestWidget(QWidget* parent
     auto* previewLayout = new QVBoxLayout(previewGroup);
     
     impl_->infoLabel = new QLabel();
-    impl_->infoLabel->setStyleSheet("color: #aaa; font-size: 12px;");
+    QPalette infoPalette = impl_->infoLabel->palette();
+    infoPalette.setColor(QPalette::WindowText, QColor(170, 170, 170));
+    impl_->infoLabel->setPalette(infoPalette);
     previewLayout->addWidget(impl_->infoLabel);
     
     impl_->previewHost = new QWidget();
     impl_->previewHost->setMinimumSize(800, 600);
-    impl_->previewHost->setStyleSheet("background-color: #1a1a1a;");
+    QPalette previewPalette = impl_->previewHost->palette();
+    previewPalette.setColor(QPalette::Window, QColor(26, 26, 26));
+    impl_->previewHost->setPalette(previewPalette);
+    impl_->previewHost->setAutoFillBackground(true);
     
     auto* previewLayout2 = new QVBoxLayout(impl_->previewHost);
     previewLayout2->setContentsMargins(0, 0, 0, 0);
@@ -538,21 +548,30 @@ ArtifactTimelineLayerTestWidget::ArtifactTimelineLayerTestWidget(QWidget* parent
     impl_->service = ArtifactProjectService::instance();
     
     if (impl_->service) {
-        // 現在のコンポジションを監視
-        QObject::connect(impl_->service, &ArtifactProjectService::layerCreated, this, [this]() {
-            if (impl_->followCurrentComposition->isChecked()) {
-                impl_->reloadCompositions();
+        impl_->eventBusSubscriptions_.push_back(
+            impl_->eventBus_.subscribe<LayerChangedEvent>([this](const LayerChangedEvent& e) {
+                if (!impl_->followCurrentComposition->isChecked()) {
+                    return;
+                }
+                if (e.changeType == LayerChangedEvent::ChangeType::Created) {
+                    impl_->reloadCompositions();
+                }
                 impl_->reloadLayerControls(this);
                 impl_->updateComposite();
-            }
-        });
-        
-        QObject::connect(impl_->service, &ArtifactProjectService::layerRemoved, this, [this]() {
-            if (impl_->followCurrentComposition->isChecked()) {
-                impl_->reloadLayerControls(this);
-                impl_->updateComposite();
-            }
-        });
+            }));
+
+        QObject::connect(impl_->service, &ArtifactProjectService::layerCreated, this,
+            [this](const ArtifactCore::CompositionID& compId, const ArtifactCore::LayerID& layerId) {
+                impl_->eventBus_.post<LayerChangedEvent>(LayerChangedEvent{
+                    compId.toString(), layerId.toString(), LayerChangedEvent::ChangeType::Created});
+                impl_->eventBus_.drain();
+            });
+        QObject::connect(impl_->service, &ArtifactProjectService::layerRemoved, this,
+            [this](const ArtifactCore::CompositionID& compId, const ArtifactCore::LayerID& layerId) {
+                impl_->eventBus_.post<LayerChangedEvent>(LayerChangedEvent{
+                    compId.toString(), layerId.toString(), LayerChangedEvent::ChangeType::Removed});
+                impl_->eventBus_.drain();
+            });
         
         impl_->reloadCompositions();
         

@@ -53,9 +53,10 @@ export namespace Artifact {
   void createProject();
   CreateProjectResult createProject(const UniString& name, bool force = false);
   void createProject(const QString& projectName, bool force = false);
-  void loadFromFile(const QString& fullpath);
-  ArtifactProjectExporterResult saveToFile(const QString& fullpath);
-  QString currentProjectPath() const;
+   void loadFromFile(const QString& fullpath);
+   ArtifactProjectExporterResult saveToFile(const QString& fullpath);
+   ArtifactProjectExporterResult saveIncremental(const QString& fullpath);
+   QString currentProjectPath() const;
   QString currentProjectAssetsPath() const;
   QStringList copyFilesToProjectAssets(const QStringList& sourcePaths);
   QString relativeAssetPath(const QString& absoluteAssetPath) const;

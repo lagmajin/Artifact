@@ -1,5 +1,6 @@
 module;
 #include <QWidget>
+#include <QResizeEvent>
 #include <wobjectdefs.h>
 
 export module Artifact.Widgets.CompositionEditor;
@@ -22,6 +23,10 @@ public:
  void setComposition(ArtifactCompositionPtr composition);
  void setClearColor(const FloatColor& color);
 
+ QSize sizeHint() const override;
+  void resizeEvent(QResizeEvent* event) override;
+  bool event(QEvent* event) override;
+
 public /*slots*/:
   void play(); W_SLOT(play);
   void stop(); W_SLOT(stop);
@@ -29,6 +34,7 @@ public /*slots*/:
   void zoomIn(); W_SLOT(zoomIn);
   void zoomOut(); W_SLOT(zoomOut);
   void zoomFit(); W_SLOT(zoomFit);
+  void zoomFill(); W_SLOT(zoomFill);
   void zoom100(); W_SLOT(zoom100);
 
 signals:

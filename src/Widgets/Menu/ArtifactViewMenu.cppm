@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <QWidget>
 #include <QMenu>
 #include <QAction>
@@ -10,12 +10,15 @@ module;
 
 #include <wobjectimpl.h>
 
+#include <QMessageBox>
+
 module Artifact.Menu.View;
 import std;
 
 import Artifact.Service.Project;
 import Artifact.MainWindow;
 import Widgets.AssetBrowser;
+import Artifact.Widgets.ReactiveEventEditorWindow;
 import Utils.Path;
 
 namespace Artifact {
@@ -64,8 +67,11 @@ namespace Artifact {
    QAction* qualityPreviewAction = nullptr;
    QAction* qualityFinalAction = nullptr;
    QMenu* windowPanelsMenu = nullptr;
-    ArtifactMainWindow* mainWindow = nullptr;
-    int newBrowserCount_ = 1;
+   ArtifactMainWindow* mainWindow = nullptr;
+     QPointer<ArtifactReactiveEventEditorWindow> reactiveEventEditorWindow;
+     int newBrowserCount_ = 1;
+     QAction* openReactiveEventEditorAction = nullptr;
+     QAction* secondaryPreviewAction = nullptr;
 
     void refreshEnabledState();
     void rebuildWindowPanelsMenu();
@@ -202,24 +208,51 @@ namespace Artifact {
     windowPanelsMenu = menu->addMenu("ウィンドウパネル(&W)");
 
     // Dynamically rebuild the panels menu each time it opens
-    QObject::connect(windowPanelsMenu, &QMenu::aboutToShow, menu, [this]() {
+   QObject::connect(windowPanelsMenu, &QMenu::aboutToShow, menu, [this]() {
      rebuildWindowPanelsMenu();
     });
 
     menu->addSeparator();
-    auto* newBrowserAction = menu->addAction("新規アセットブラウザ(&A)");
-    QObject::connect(newBrowserAction, &QAction::triggered, menu, [this]() {
+    openReactiveEventEditorAction = menu->addAction("リアクティブイベントエディタ(&E)...");
+    QObject::connect(openReactiveEventEditorAction, &QAction::triggered, menu, [this]() {
      if (!mainWindow) return;
-     newBrowserCount_++;
-     auto* browser = new ArtifactAssetBrowser(mainWindow);
-     const QString title = QStringLiteral("Asset Browser (%1)").arg(newBrowserCount_);
-     mainWindow->addDockedWidgetFloating(
-      title,
-      QStringLiteral("asset_browser_%1").arg(newBrowserCount_),
-      browser,
-      QRect(100, 100, 800, 600));
+     if (!reactiveEventEditorWindow) {
+      reactiveEventEditorWindow = new ArtifactReactiveEventEditorWindow(mainWindow);
+      reactiveEventEditorWindow->setAttribute(Qt::WA_DeleteOnClose, true);
+     }
+     reactiveEventEditorWindow->present();
     });
-   }
+
+    menu->addSeparator();
+     auto* newBrowserAction = menu->addAction("新規アセットブラウザ(&A)");
+     QObject::connect(newBrowserAction, &QAction::triggered, menu, [this]() {
+      if (!mainWindow) return;
+      newBrowserCount_++;
+      auto* browser = new ArtifactAssetBrowser(mainWindow);
+      const QString title = QStringLiteral("Asset Browser (%1)").arg(newBrowserCount_);
+      mainWindow->addDockedWidgetFloating(
+       title,
+       QStringLiteral("asset_browser_%1").arg(newBrowserCount_),
+       browser,
+       QRect(100, 100, 800, 600));
+     });
+
+     menu->addSeparator();
+     secondaryPreviewAction = menu->addAction("セカンドモニタープレビュー(&S)");
+     secondaryPreviewAction->setShortcut(QKeySequence(Qt::Key_F12));
+      QObject::connect(secondaryPreviewAction, &QAction::triggered, menu, [this, menu]() {
+       if (!mainWindow) return;
+       auto screens = QGuiApplication::screens();
+       if (screens.size() < 2) {
+        QMessageBox::information(menu, "セカンドモニタープレビュー",
+         "2つ目のモニターが検出されていません。\n"
+         "マルチディスプレイ環境でご利用ください。");
+        return;
+       }
+       // TODO: Implement secondary preview on second screen
+       qWarning() << "[ViewMenu] Secondary preview not yet implemented";
+      });
+    }
 
  ArtifactViewMenu::Impl::~Impl()
  {
@@ -246,6 +279,9 @@ namespace Artifact {
   snapToGuidesAction->setEnabled(hasComp);
   showRulersAction->setEnabled(hasComp);
   useDisplayColorManagementAction->setEnabled(hasComp);
+  if (openReactiveEventEditorAction) {
+   openReactiveEventEditorAction->setEnabled(true);
+  }
  }
 
  W_OBJECT_IMPL(ArtifactViewMenu)

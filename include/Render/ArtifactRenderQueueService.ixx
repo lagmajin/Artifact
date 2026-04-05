@@ -76,13 +76,24 @@ export namespace Artifact
   bool hasRenderQueueForComposition(const ArtifactCore::CompositionID& compositionId) const;
   int renderQueueCountForComposition(const ArtifactCore::CompositionID& compositionId) const;
   ArtifactCore::CompositionID jobCompositionIdAt(int index) const;
-  QString jobCompositionNameAt(int index) const;
-  QString jobStatusAt(int index) const;
+   QString jobCompositionNameAt(int index) const;
+   QString jobNameAt(int index) const;
+   void setJobNameAt(int index, const QString& name);
+   QString jobStatusAt(int index) const;
   int jobProgressAt(int index) const;
   QString jobOutputPathAt(int index) const;
   void setJobOutputPathAt(int index, const QString& outputPath);
   bool jobFrameRangeAt(int index, int* startFrame, int* endFrame) const;
   void setJobFrameRangeAt(int index, int startFrame, int endFrame);
+  bool jobOutputSettingsAt(
+    int index,
+    QString* outputFormat,
+    QString* codec,
+    QString* codecProfile,
+    int* width,
+    int* height,
+    double* fps,
+    int* bitrateKbps) const;
   bool jobOutputSettingsAt(
     int index,
     QString* outputFormat,
@@ -95,10 +106,27 @@ export namespace Artifact
     int index,
     const QString& outputFormat,
     const QString& codec,
+    const QString& codecProfile,
     int width,
     int height,
     double fps,
     int bitrateKbps);
+  void setJobOutputSettingsAt(
+    int index,
+    const QString& outputFormat,
+    const QString& codec,
+    int width,
+    int height,
+    double fps,
+    int bitrateKbps);
+  bool jobIntegratedRenderEnabledAt(int index) const;
+  void setJobIntegratedRenderEnabledAt(int index, bool enabled);
+  QString jobAudioSourcePathAt(int index) const;
+  void setJobAudioSourcePathAt(int index, const QString& path);
+  QString jobAudioCodecAt(int index) const;
+  void setJobAudioCodecAt(int index, const QString& codec);
+  int jobAudioBitrateKbpsAt(int index) const;
+  void setJobAudioBitrateKbpsAt(int index, int bitrateKbps);
   QString jobEncoderBackendAt(int index) const;
   void setJobEncoderBackendAt(int index, const QString& backend);
   QString jobErrorMessageAt(int index) const;
@@ -106,6 +134,16 @@ export namespace Artifact
   void setJobOverlayTransform(int index, float offsetX, float offsetY, float scale, float rotationDeg);
   void resetJobForRerun(int index);
   int resetCompletedAndFailedJobsForRerun();
+
+  // Render Recovery: 失敗フレーム検出
+  struct FailedFrameInfo {
+    int jobId;
+    int frameNumber;
+    QString errorMessage;
+    qint64 timestamp;
+  };
+  QList<FailedFrameInfo> detectFailedFrames(int jobIndex) const;
+  int rerenderFailedFrames(int jobIndex, const QList<int>& frameNumbers);
 
   void startRenderQueue();
   void startAllRenderQueues();
@@ -129,6 +167,7 @@ public:
   void allJobsCompleted() W_SIGNAL(allJobsCompleted)
   void allJobsRemoved() W_SIGNAL(allJobsRemoved)
   void queueReordered(int fromIndex, int toIndex) W_SIGNAL(queueReordered, fromIndex, toIndex)
+  void previewFrameReady(int jobIndex, int frameNumber) W_SIGNAL(previewFrameReady, jobIndex, frameNumber)
 
   // Callback setters (Deprecated, use signals)
   void setJobAddedCallback(std::function<void(int)> callback);
@@ -140,12 +179,25 @@ public:
   void setAllJobsRemovedCallback(std::function<void()> callback);
    void setQueueReorderedCallback(std::function<void(int, int)> callback);
 
-   // Serialization for project save/load
-   QJsonArray toJson() const;
-   void fromJson(const QJsonArray& arr);
-   void clearQueueForLoad();
+    // Serialization for project save/load
+    QJsonArray toJson() const;
+    void fromJson(const QJsonArray& arr);
+    void clearQueueForLoad();
 
-  };
+    // Batch rendering
+    int addAllCompositions();
+    int addCompositions(const QList<ArtifactCore::CompositionID>& compIds);
+
+    // Live preview
+    QImage lastRenderedFrame() const;
+    int lastRenderedFrameNumber() const;
+    int lastRenderedJobIndex() const;
+
+    // Render backend (QPainter or GPU)
+    enum class RenderBackend { QPainter, GPU };
+    void setRenderBackend(RenderBackend backend);
+    RenderBackend renderBackend() const;
+   };
 
 
 

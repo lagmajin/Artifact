@@ -256,6 +256,13 @@ private:
 
 **見積**: 6-10h
 
+### Progress Note (2026-03-27)
+
+- `Cloner (Generator)` をエフェクトタブから追加できるようにした。
+- `ClonerGenerator` に最小のプロパティと `generateCloneData()` を入れた。
+- image / text / svg / video / solid 系の描画へ clone 展開を接続した。
+- 個別 clone 編集はまだ行わない。source layer と generator パラメータだけを編集対象にする。
+
 ---
 
 ### M-MOGRAPH-2: Effector Foundation

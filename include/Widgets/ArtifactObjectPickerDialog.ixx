@@ -3,7 +3,8 @@ module;
 #include <QDialog>
 #include <QTreeWidget>
 #include <QLineEdit>
-#include <QDialogButtonBox>
+#include <QPushButton>
+#include <QWidget>
 #include <wobjectdefs.h>
 
 export module Artifact.Widgets.ObjectPicker;
@@ -39,7 +40,9 @@ private:
     
     QTreeWidget* objectTree_;      // オブジェクトツリー
     QLineEdit* searchEdit_;        // 検索フィルター
-    QDialogButtonBox* buttonBox_;  // OK/Cancel
+    QWidget* buttonRow_;           // OK/Cancel row
+    QPushButton* okButton_;
+    QPushButton* cancelButton_;
     QString referenceType_;
     ArtifactCore::Id currentSelectionId_;
 };
