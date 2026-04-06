@@ -83,6 +83,8 @@ export namespace Artifact
   int jobProgressAt(int index) const;
   QString jobOutputPathAt(int index) const;
   void setJobOutputPathAt(int index, const QString& outputPath);
+  QString jobRenderBackendAt(int index) const;
+  void setJobRenderBackendAt(int index, const QString& backend);
   bool jobFrameRangeAt(int index, int* startFrame, int* endFrame) const;
   void setJobFrameRangeAt(int index, int startFrame, int endFrame);
   bool jobOutputSettingsAt(
@@ -193,8 +195,8 @@ public:
     int lastRenderedFrameNumber() const;
     int lastRenderedJobIndex() const;
 
-    // Render backend (QPainter or GPU)
-    enum class RenderBackend { QPainter, GPU };
+    // Render backend selection for the render queue service.
+    enum class RenderBackend { Auto, CPU, GPU };
     void setRenderBackend(RenderBackend backend);
     RenderBackend renderBackend() const;
    };

@@ -113,6 +113,7 @@ public:
 
     FramePosition currentFrame() const;
     void setCurrentFrame(const FramePosition& position);
+    QImage renderPreviewFrame(const FramePosition& position);
 
     // In/Out Points
     void setInOutPoints(class ArtifactInOutPoints* inOutPoints);

@@ -1,5 +1,6 @@
 ﻿module;
 #include <QObject>
+#include <QImage>
 #include <QSize>
 #include <QString>
 #include <QMutex>
@@ -66,6 +67,7 @@ using namespace ArtifactCore;
  * @brief Cache entry for a rendered frame
  */
 struct FrameCacheEntry {
+    QImage image;
     std::vector<float> pixels;     // RGBA float pixels
     int width = 0;
     int height = 0;
@@ -89,6 +91,21 @@ struct FrameCacheEntry {
         }
         pixels.resize(w * h * 4);
         memorySize = pixels.size() * sizeof(float);
+    }
+
+    FrameCacheEntry(const QImage& src, const FramePosition& pos)
+        : image(src), width(src.width()), height(src.height()), frame(pos) {
+        if (src.isNull() || width <= 0 || height <= 0) {
+            throw std::invalid_argument("Invalid frame image");
+        }
+        if (image.format() != QImage::Format_ARGB32_Premultiplied) {
+            image = image.convertToFormat(QImage::Format_ARGB32_Premultiplied);
+        }
+        pixels.clear();
+        memorySize = static_cast<size_t>(image.sizeInBytes());
+        if (memorySize == 0) {
+            memorySize = static_cast<size_t>(width) * static_cast<size_t>(height) * 4u;
+        }
     }
 };
 

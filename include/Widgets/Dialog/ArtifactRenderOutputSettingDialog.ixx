@@ -27,6 +27,8 @@ export namespace Artifact
   [[nodiscard]] QString codecProfile() const;
   void setEncoderBackend(const QString& backend);
   [[nodiscard]] QString encoderBackend() const;
+  void setRenderBackend(const QString& backend);
+  [[nodiscard]] QString renderBackend() const;
   void setResolution(int width, int height);
   [[nodiscard]] int outputWidth() const;
   [[nodiscard]] int outputHeight() const;
