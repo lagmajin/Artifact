@@ -82,9 +82,12 @@ namespace Artifact {
   QToolButton* pStopButton = nullptr;
   QLabel* fpsLabel = nullptr;
   QLabel* memLabel = nullptr;
+  QLabel* ramPreviewLabel = nullptr;
   QLabel* selectionLabel = nullptr;
   double fps_ = 0.0;
   uint64_t memMB_ = 0;
+  float ramPreviewHitRate_ = 0.0f;
+  int ramPreviewCachedFrameCount_ = 0;
   bool isPlaying_ = false;
   QTimer* refreshTimer = nullptr;
  };
@@ -113,6 +116,7 @@ namespace Artifact {
   pStopButton->setToolTip("Stop");
   fpsLabel = new QLabel("FPS: N/A");
   memLabel = new QLabel("Mem: N/A");
+  ramPreviewLabel = new QLabel("RAM: N/A");
   selectionLabel = new QLabel("");
   refreshTimer = new QTimer();
  }
@@ -129,6 +133,7 @@ namespace Artifact {
   delete pStopButton;
   delete fpsLabel;
   delete memLabel;
+  delete ramPreviewLabel;
   delete selectionLabel;
  }
 
@@ -166,9 +171,11 @@ namespace Artifact {
   impl_->selectionLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
   impl_->fpsLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
   impl_->memLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+  impl_->ramPreviewLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
   layout->addWidget(impl_->selectionLabel);
   layout->addWidget(impl_->fpsLabel);
   layout->addWidget(impl_->memLabel);
+  layout->addWidget(impl_->ramPreviewLabel);
 
   setLayout(layout);
   setStyleSheet(R"(
@@ -216,6 +223,9 @@ namespace Artifact {
   connect(impl_->refreshTimer, &QTimer::timeout, this, [this]() {
     impl_->fpsLabel->setText(QString("FPS: %1").arg(impl_->fps_ > 0.0 ? QString::number(impl_->fps_, 'f', 1) : QString("N/A")));
     impl_->memLabel->setText(QString("Mem: %1 MB").arg(impl_->memMB_ ? QString::number(impl_->memMB_) : QString("N/A")));
+    impl_->ramPreviewLabel->setText(QString("RAM: %1 | %2 frames")
+                                        .arg(QString::number(impl_->ramPreviewHitRate_ * 100.0f, 'f', 0) + QStringLiteral("% hit"))
+                                        .arg(impl_->ramPreviewCachedFrameCount_));
   });
   impl_->refreshTimer->start(1000);
  }
@@ -250,6 +260,16 @@ void ArtifactCompositionViewerFooter::setMemoryUsage(uint64_t memoryMB)
   if (!impl_) return;
   impl_->memMB_ = memoryMB;
   impl_->memLabel->setText(QString("Mem: %1 MB").arg(memoryMB ? QString::number(memoryMB) : QString("N/A")));
+}
+
+void ArtifactCompositionViewerFooter::setRamPreviewStats(float hitRate, int cachedFrameCount)
+{
+  if (!impl_) return;
+  impl_->ramPreviewHitRate_ = std::clamp(hitRate, 0.0f, 1.0f);
+  impl_->ramPreviewCachedFrameCount_ = std::max(0, cachedFrameCount);
+  impl_->ramPreviewLabel->setText(QString("RAM: %1 | %2 frames")
+                                      .arg(QString::number(impl_->ramPreviewHitRate_ * 100.0f, 'f', 0) + QStringLiteral("% hit"))
+                                      .arg(impl_->ramPreviewCachedFrameCount_));
 }
 
 void ArtifactCompositionViewerFooter::setSelectedLayerInfo(const QString& layerInfo)

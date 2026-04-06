@@ -352,13 +352,16 @@ ArtifactPropertyEditorRowWidget* createPropertyRow(
         });
     }
 
-    const bool showExpressionButton = false;
+    const bool showExpressionButton = animatable;
     row->setShowExpressionButton(showExpressionButton);
     if (showExpressionButton) {
-        row->setExpressionHandler([propertyName = property.getName()]() {
+        row->setExpressionHandler([propertyName = property.getName(), editor]() {
             auto* copilot = new ArtifactExpressionCopilotWidget();
             copilot->setWindowFlags(Qt::Window | Qt::WindowStaysOnTopHint | Qt::Tool);
             copilot->setWindowTitle(QStringLiteral("Expression Copilot: %1").arg(propertyName));
+            if (editor) {
+                copilot->setExpressionText(editor->value().toString());
+            }
             copilot->setAttribute(Qt::WA_DeleteOnClose);
             copilot->move(QCursor::pos() - QPoint(150, 200));
             copilot->show();

@@ -85,6 +85,8 @@ namespace Artifact
     QString status;
     QString errorMessage;
     int progress = 0;
+    QString encoderBackend;
+    QString renderBackend;
   };
 
   ArtifactRenderQueueService* service = nullptr;
@@ -216,6 +218,8 @@ namespace Artifact
       e.status = service->jobStatusAt(i);
       e.progress = service->jobProgressAt(i);
       e.errorMessage = service->jobErrorMessageAt(i);
+      e.encoderBackend = service->jobEncoderBackendAt(i);
+      e.renderBackend = service->jobRenderBackendAt(i);
       jobs.append(e);
     }
     updateJobList();
@@ -259,8 +263,14 @@ namespace Artifact
       int filled = std::clamp(job.progress / 10, 0, 10);
       for(int p=0; p<filled; ++p) progressBar[p] = (status == "Rendering") ? '>' : '#';
 
-      QString line = QString("%1  #%2  %-25s  [%3]  %4%")
-        .arg(statusTag).arg(i+1, 2, 10, QChar('0')).arg(job.name.left(25)).arg(progressBar).arg(job.progress, 3);
+      QString line = QString("%1  #%2  %3  [%4]  %5%  E:%6  R:%7")
+        .arg(statusTag)
+        .arg(i+1, 2, 10, QChar('0'))
+        .arg(job.name.left(25).leftJustified(25, QLatin1Char(' '), true))
+        .arg(progressBar)
+        .arg(job.progress, 3)
+        .arg(job.encoderBackend.isEmpty() ? QStringLiteral("auto") : job.encoderBackend)
+        .arg(job.renderBackend.isEmpty() ? QStringLiteral("auto") : job.renderBackend);
 
       auto* item = new QListWidgetItem(line);
       item->setData(Qt::UserRole, i);
