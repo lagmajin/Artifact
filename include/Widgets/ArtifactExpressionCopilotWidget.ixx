@@ -1,6 +1,7 @@
 module;
 #include <wobjectimpl.h>
 #include <QWidget>
+#include <QString>
 export module Artifact.Widgets.ExpressionCopilotWidget;
 
 export namespace Artifact {
@@ -12,6 +13,9 @@ export namespace Artifact {
     public:
         explicit ArtifactExpressionCopilotWidget(QWidget* parent = nullptr);
         ~ArtifactExpressionCopilotWidget() override;
+
+        void setExpressionText(const QString& expression);
+        QString expressionText() const;
 
         QSize sizeHint() const override;
     };

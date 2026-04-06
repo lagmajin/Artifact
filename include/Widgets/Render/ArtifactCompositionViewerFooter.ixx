@@ -22,6 +22,7 @@ export namespace Artifact {
   void setMouseCoordinates(int x, int y);
   void setFPS(double fps);
   void setMemoryUsage(uint64_t memoryMB);
+  void setRamPreviewStats(float hitRate, int cachedFrameCount);
   void setSelectedLayerInfo(const QString& layerInfo);
   void setResolutionInfo(uint32_t width, uint32_t height);
   
