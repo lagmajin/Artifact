@@ -685,6 +685,13 @@ void ArtifactPlaybackEngine::setCurrentFrame(const FramePosition& position) {
     impl_->currentFrame_ = position.framePosition();
 }
 
+QImage ArtifactPlaybackEngine::renderPreviewFrame(const FramePosition& position) {
+    if (!impl_) {
+        return QImage();
+    }
+    return impl_->renderFrame(position);
+}
+
 void ArtifactPlaybackEngine::setInOutPoints(ArtifactInOutPoints* inOutPoints) {
     impl_->inOutPoints_ = inOutPoints;
 }
