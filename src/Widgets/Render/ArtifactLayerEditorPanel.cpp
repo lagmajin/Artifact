@@ -43,6 +43,7 @@ module Artifact.Widgets.LayerEditorPanel;
 
 import Artifact.Widgets.CompositionFooter;
 import Artifact.Widgets.RenderLayerWidgetv2;
+import Artifact.Service.Playback;
 
 namespace Artifact {
 
@@ -64,6 +65,11 @@ namespace Artifact {
   footer_ = new ArtifactCompositionViewerFooter();
 
   QObject::connect(footer_, &ArtifactCompositionViewerFooter::takeSnapShotRequested, editor_, &ArtifactLayerEditorWidgetV2::takeScreenShot);
+  if (auto* playback = ArtifactPlaybackService::instance()) {
+    QObject::connect(playback, &ArtifactPlaybackService::ramPreviewStatsChanged,
+                     footer_, &ArtifactCompositionViewerFooter::setRamPreviewStats);
+    footer_->setRamPreviewStats(playback->ramPreviewHitRate(), playback->ramPreviewCachedFrameCount());
+  }
  }
 
  ArtifactLayerEditorPanel::Impl::~Impl()
