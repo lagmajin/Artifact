@@ -312,6 +312,26 @@ namespace Artifact
 
     if (outputPathEdit) outputPathEdit->setText(service->jobOutputPathAt(index));
 
+    if (outputSettingsSummaryLabel) {
+      QString outputFormat;
+      QString codec;
+      QString codecProfile;
+      int width = 0;
+      int height = 0;
+      double fps = 0.0;
+      int bitrateKbps = 0;
+      service->jobOutputSettingsAt(index, &outputFormat, &codec, &codecProfile, &width, &height, &fps, &bitrateKbps);
+      const QString renderBackend = service->jobRenderBackendAt(index);
+      const QString encoderBackend = service->jobEncoderBackendAt(index);
+      outputSettingsSummaryLabel->setText(
+          QString("Format: %1 | Codec: %2%3 | Encode: %4 | Render: %5")
+              .arg(outputFormat.isEmpty() ? QStringLiteral("MP4") : outputFormat)
+              .arg(codec.isEmpty() ? QStringLiteral("H.264") : codec)
+              .arg(codecProfile.trimmed().isEmpty() ? QString() : QStringLiteral(" (%1)").arg(codecProfile))
+              .arg(encoderBackend)
+              .arg(renderBackend));
+    }
+
     int startFrame = 0;
     int endFrame = 0;
     if (service->jobFrameRangeAt(index, &startFrame, &endFrame)) {
@@ -391,6 +411,9 @@ namespace Artifact
   outputLayout->addRow("Path:", impl_->outputPathEdit);
   impl_->outputSettingsButton = new QPushButton("Format...");
   outputLayout->addRow("Settings:", impl_->outputSettingsButton);
+  impl_->outputSettingsSummaryLabel = new QLabel("Format: MP4 | Codec: H.264 | Encode: auto | Render: auto");
+  impl_->outputSettingsSummaryLabel->setWordWrap(true);
+  outputLayout->addRow("Summary:", impl_->outputSettingsSummaryLabel);
   detailLayout->addWidget(outputGroup);
 
   // Group: Range
@@ -505,6 +528,7 @@ namespace Artifact
     dialog.setCodec(codec);
     dialog.setCodecProfile(codecProfile);
     dialog.setEncoderBackend(impl_->service->jobEncoderBackendAt(index));
+    dialog.setRenderBackend(impl_->service->jobRenderBackendAt(index));
     dialog.setResolution(width, height);
     dialog.setFrameRate(fps);
     dialog.setBitrateKbps(bitrateKbps);
@@ -521,6 +545,7 @@ namespace Artifact
           dialog.frameRate(),
           dialog.bitrateKbps());
       impl_->service->setJobEncoderBackendAt(index, dialog.encoderBackend());
+      impl_->service->setJobRenderBackendAt(index, dialog.renderBackend());
       impl_->syncJobsFromService();
       impl_->syncDetailEditorsFromJob(index);
     }

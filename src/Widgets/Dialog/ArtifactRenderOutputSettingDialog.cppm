@@ -37,6 +37,7 @@ namespace Artifact
   QComboBox* codecCombo = nullptr;
   QString codecProfile;
   QComboBox* backendCombo = nullptr;
+  QComboBox* renderBackendCombo = nullptr;
   QComboBox* resolutionCombo = nullptr;
   QSpinBox* widthSpin = nullptr;
   QSpinBox* heightSpin = nullptr;
@@ -50,7 +51,8 @@ namespace Artifact
   static void ensureComboContains(QComboBox* combo, const QString& value);
   void loadFormatPresets();
   void applyPresetToEditors(const QString& presetId);
-  static QString normalizeBackend(const QString& backend);
+ static QString normalizeBackend(const QString& backend);
+ static QString normalizeRenderBackend(const QString& backend);
  };
 
  ArtifactRenderOutputSettingDialog::Impl::Impl()
@@ -214,17 +216,32 @@ namespace Artifact
    }
   }
 
- QString ArtifactRenderOutputSettingDialog::Impl::normalizeBackend(const QString& backend)
- {
-   const QString value = backend.trimmed().toLower();
-   if (value == QStringLiteral("pipe") || value == QStringLiteral("ffmpeg.exe") || value == QStringLiteral("ffmpeg")) {
+QString ArtifactRenderOutputSettingDialog::Impl::normalizeBackend(const QString& backend)
+{
+  const QString value = backend.trimmed().toLower();
+  if (value == QStringLiteral("pipe") || value == QStringLiteral("ffmpeg.exe") || value == QStringLiteral("ffmpeg")) {
      return QStringLiteral("pipe");
    }
    if (value == QStringLiteral("native") || value == QStringLiteral("api") || value == QStringLiteral("ffmpegapi")) {
      return QStringLiteral("native");
-   }
-   return QStringLiteral("auto");
- }
+  }
+  if (value == QStringLiteral("gpu") || value == QStringLiteral("hardware")) {
+    return QStringLiteral("gpu");
+  }
+  return QStringLiteral("auto");
+}
+
+QString ArtifactRenderOutputSettingDialog::Impl::normalizeRenderBackend(const QString& backend)
+{
+  const QString value = backend.trimmed().toLower();
+  if (value == QStringLiteral("gpu") || value == QStringLiteral("diligent") || value == QStringLiteral("hardware")) {
+    return QStringLiteral("gpu");
+  }
+  if (value == QStringLiteral("cpu") || value == QStringLiteral("software") || value == QStringLiteral("qpainter")) {
+    return QStringLiteral("cpu");
+  }
+  return QStringLiteral("auto");
+}
 	
 	W_OBJECT_IMPL(ArtifactRenderOutputSettingDialog)
 	
@@ -268,9 +285,15 @@ namespace Artifact
 
     impl_->backendCombo = new QComboBox();
     impl_->backendCombo->addItems(QStringList{
-      "auto", "pipe", "native"
+      "auto", "pipe", "native", "gpu"
     });
     formLayout->addRow("Encoder Backend:", impl_->backendCombo);
+
+    impl_->renderBackendCombo = new QComboBox();
+    impl_->renderBackendCombo->addItems(QStringList{
+      "auto", "cpu", "gpu"
+    });
+    formLayout->addRow("Render Backend:", impl_->renderBackendCombo);
 
     // Resolution presets + custom width/height
     impl_->resolutionCombo = new QComboBox();
@@ -476,20 +499,35 @@ namespace Artifact
    return impl_ ? impl_->codecProfile : QString();
  }
 
- void ArtifactRenderOutputSettingDialog::setEncoderBackend(const QString& backend)
- {
-   if (!impl_->backendCombo) {
-     return;
-   }
+void ArtifactRenderOutputSettingDialog::setEncoderBackend(const QString& backend)
+{
+  if (!impl_->backendCombo) {
+    return;
+  }
    const QString normalized = Impl::normalizeBackend(backend);
    const int index = impl_->backendCombo->findText(normalized);
    impl_->backendCombo->setCurrentIndex(index >= 0 ? index : 0);
  }
 
- QString ArtifactRenderOutputSettingDialog::encoderBackend() const
- {
-   return impl_->backendCombo ? Impl::normalizeBackend(impl_->backendCombo->currentText()) : QStringLiteral("auto");
- }
+QString ArtifactRenderOutputSettingDialog::encoderBackend() const
+{
+  return impl_->backendCombo ? Impl::normalizeBackend(impl_->backendCombo->currentText()) : QStringLiteral("auto");
+}
+
+void ArtifactRenderOutputSettingDialog::setRenderBackend(const QString& backend)
+{
+  if (!impl_->renderBackendCombo) {
+    return;
+  }
+  const QString normalized = Impl::normalizeRenderBackend(backend);
+  const int index = impl_->renderBackendCombo->findText(normalized);
+  impl_->renderBackendCombo->setCurrentIndex(index >= 0 ? index : 0);
+}
+
+QString ArtifactRenderOutputSettingDialog::renderBackend() const
+{
+  return impl_->renderBackendCombo ? Impl::normalizeRenderBackend(impl_->renderBackendCombo->currentText()) : QStringLiteral("auto");
+}
 
  void ArtifactRenderOutputSettingDialog::setResolution(int width, int height)
  {

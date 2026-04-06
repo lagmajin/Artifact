@@ -307,6 +307,7 @@ namespace Artifact
         QString codec;                // コーデック
         QString codecProfile;         // コーデックプロファイル (ProRes 422 / 4444 等)
         QString encoderBackend;       // "auto", "pipe", "native"
+        QString renderBackend;        // "auto", "cpu", "gpu"
         bool integratedRenderEnabled;  // audio mux を含めるか
         QString audioSourcePath;       // mux 用の音声ソースパス
         QString audioCodec;            // "aac", "mp3", ...
@@ -334,6 +335,7 @@ namespace Artifact
             , endFrame(100)
             , codecProfile()
             , encoderBackend(QStringLiteral("auto"))
+            , renderBackend(QStringLiteral("auto"))
             , integratedRenderEnabled(false)
             , audioSourcePath()
             , audioCodec(QStringLiteral("aac"))
@@ -352,7 +354,8 @@ namespace Artifact
     enum class VideoEncodeBackendKind {
         Auto,
         Pipe,
-        Native
+        Native,
+        GPU
     };
 
     static VideoEncodeBackendKind parseVideoEncodeBackend(const QString& backend)
@@ -364,7 +367,61 @@ namespace Artifact
         if (value == QLatin1String("native") || value == QLatin1String("api") || value == QLatin1String("ffmpegapi")) {
             return VideoEncodeBackendKind::Native;
         }
+        if (value == QLatin1String("gpu") || value == QLatin1String("hardware")) {
+            return VideoEncodeBackendKind::GPU;
+        }
         return VideoEncodeBackendKind::Auto;
+    }
+
+    static QString normalizeVideoEncodeBackendName(const QString& backend)
+    {
+        switch (parseVideoEncodeBackend(backend)) {
+        case VideoEncodeBackendKind::Pipe:
+            return QStringLiteral("pipe");
+        case VideoEncodeBackendKind::Native:
+            return QStringLiteral("native");
+        case VideoEncodeBackendKind::GPU:
+            return QStringLiteral("gpu");
+        case VideoEncodeBackendKind::Auto:
+        default:
+            return QStringLiteral("auto");
+        }
+    }
+
+    static QString hardwareEncoderNameForCodec(const QString& codec)
+    {
+        const QString c = codec.trimmed().toLower();
+        const QStringList candidates = [&]() {
+            if (c == QStringLiteral("h264")) {
+                return QStringList{QStringLiteral("h264_nvenc"), QStringLiteral("h264_qsv"), QStringLiteral("h264_amf"), QStringLiteral("h264_vaapi")};
+            }
+            if (c == QStringLiteral("h265")) {
+                return QStringList{QStringLiteral("hevc_nvenc"), QStringLiteral("hevc_qsv"), QStringLiteral("hevc_amf"), QStringLiteral("hevc_vaapi")};
+            }
+            if (c == QStringLiteral("vp9")) {
+                return QStringList{QStringLiteral("vp9_qsv"), QStringLiteral("vp9_vaapi")};
+            }
+            return QStringList{};
+        }();
+
+        for (const auto& name : candidates) {
+            if (ArtifactCore::FFmpegEncoder::isEncoderAvailable(name)) {
+                return name;
+            }
+        }
+        return QString();
+    }
+
+    static QString normalizeRenderBackend(const QString& backend)
+    {
+        const QString value = backend.trimmed().toLower();
+        if (value == QLatin1String("gpu") || value == QLatin1String("diligent") || value == QLatin1String("hardware")) {
+            return QStringLiteral("gpu");
+        }
+        if (value == QLatin1String("cpu") || value == QLatin1String("software") || value == QLatin1String("qpainter") || value == QLatin1String("qpaint")) {
+            return QStringLiteral("cpu");
+        }
+        return QStringLiteral("auto");
     }
 
     static QString deriveContainerFromJob(const ArtifactRenderJob& job)
@@ -670,6 +727,36 @@ namespace Artifact
         return settings;
     }
 
+    static ArtifactCore::FFmpegEncoderSettings buildGpuVideoSettings(const ArtifactRenderJob& job,
+                                                                     QString* selectedEncoder,
+                                                                     QString* errorMessage)
+    {
+        ArtifactCore::FFmpegEncoderSettings settings = buildNativeVideoSettings(job);
+        const QString encoderName = hardwareEncoderNameForCodec(job.codec);
+        if (encoderName.isEmpty()) {
+            if (errorMessage) {
+                *errorMessage = QStringLiteral("No hardware encoder found for codec: %1 (available: %2)")
+                    .arg(normalizeCodecName(job.codec),
+                         ArtifactCore::FFmpegEncoder::availableHardwareVideoEncoders().join(QStringLiteral(", ")));
+            }
+            if (selectedEncoder) {
+                selectedEncoder->clear();
+            }
+            return settings;
+        }
+
+        settings.encoderName = encoderName;
+        settings.preset = QStringLiteral("p4");
+        settings.zerolatency = false;
+        if (selectedEncoder) {
+            *selectedEncoder = encoderName;
+        }
+        if (errorMessage) {
+            errorMessage->clear();
+        }
+        return settings;
+    }
+
     static ArtifactCore::ImageF32x4_RGBA qImageToImageF32x4RGBA(const QImage& source)
     {
         // 既に RGBA8888 の場合は変換不要
@@ -794,9 +881,21 @@ namespace Artifact
 
     class NativeFFmpegBackend final : public IVideoEncodeBackend {
     public:
+        explicit NativeFFmpegBackend(bool useGpuBackend = false)
+            : useGpuBackend_(useGpuBackend)
+        {
+        }
+
         bool open(const ArtifactRenderJob& job, QString* errorMessage) override
         {
-            const ArtifactCore::FFmpegEncoderSettings settings = buildNativeVideoSettings(job);
+            QString selectedEncoder;
+            ArtifactCore::FFmpegEncoderSettings settings = useGpuBackend_
+                ? buildGpuVideoSettings(job, &selectedEncoder, errorMessage)
+                : buildNativeVideoSettings(job);
+            if (useGpuBackend_ && selectedEncoder.isEmpty()) {
+                lastError_ = errorMessage ? *errorMessage : QStringLiteral("No hardware encoder available");
+                return false;
+            }
             if (!encoder_.open(job.outputPath, settings)) {
                 lastError_ = encoder_.lastError();
                 if (errorMessage) *errorMessage = lastError_;
@@ -826,6 +925,7 @@ namespace Artifact
         QString lastError() const { return lastError_; }
 
     private:
+        bool useGpuBackend_ = false;
         ArtifactCore::FFmpegEncoder encoder_;
         QString lastError_;
     };
@@ -835,6 +935,22 @@ namespace Artifact
                                                                           QString* errorMessage)
     {
         const VideoEncodeBackendKind requested = parseVideoEncodeBackend(job.encoderBackend);
+        const auto tryGpu = [&]() -> std::unique_ptr<IVideoEncodeBackend> {
+            QString localError;
+            auto backend = std::make_unique<NativeFFmpegBackend>(true);
+            if (backend->open(job, &localError)) {
+                if (backendName) {
+                    const QString encoderName = hardwareEncoderNameForCodec(job.codec);
+                    *backendName = encoderName.isEmpty()
+                        ? QStringLiteral("gpu")
+                        : QStringLiteral("gpu:%1").arg(encoderName);
+                }
+                if (errorMessage) errorMessage->clear();
+                return backend;
+            }
+            if (errorMessage) *errorMessage = localError;
+            return nullptr;
+        };
         const auto tryNative = [&]() -> std::unique_ptr<IVideoEncodeBackend> {
             QString localError;
             auto backend = std::make_unique<NativeFFmpegBackend>();
@@ -863,8 +979,20 @@ namespace Artifact
             return tryPipe();
         case VideoEncodeBackendKind::Native:
             return tryNative();
+        case VideoEncodeBackendKind::GPU:
+            if (auto gpuBackend = tryGpu()) {
+                return gpuBackend;
+            }
+            if (auto nativeBackend = tryNative()) {
+                if (backendName) *backendName = QStringLiteral("native-fallback");
+                return nativeBackend;
+            }
+            return tryPipe();
         case VideoEncodeBackendKind::Auto:
         default:
+            if (auto gpuBackend = tryGpu()) {
+                return gpuBackend;
+            }
             if (auto nativeBackend = tryNative()) {
                 return nativeBackend;
             }
@@ -1476,8 +1604,67 @@ namespace Artifact
         int gpuRendererHeight_ = 0;
 
         // Render backend selection
-        enum class RenderBackend { QPainter, GPU };
-        RenderBackend renderBackend_ = RenderBackend::GPU;
+        enum class RenderBackend { Auto, CPU, GPU };
+        RenderBackend renderBackend_ = RenderBackend::Auto;
+
+        static RenderBackend parseRenderBackend(const QString& backend)
+        {
+            const QString value = normalizeRenderBackend(backend);
+            if (value == QLatin1String("gpu")) {
+                return RenderBackend::GPU;
+            }
+            if (value == QLatin1String("cpu")) {
+                return RenderBackend::CPU;
+            }
+            return RenderBackend::Auto;
+        }
+
+        static QString renderBackendName(RenderBackend backend)
+        {
+            switch (backend) {
+            case RenderBackend::CPU:
+                return QStringLiteral("cpu");
+            case RenderBackend::GPU:
+                return QStringLiteral("gpu");
+            case RenderBackend::Auto:
+            default:
+                return QStringLiteral("auto");
+            }
+        }
+
+        RenderBackend effectiveRenderBackendForJob(const ArtifactRenderJob& job) const
+        {
+            const RenderBackend jobBackend = parseRenderBackend(job.renderBackend);
+            if (jobBackend != RenderBackend::Auto) {
+                return jobBackend;
+            }
+            return renderBackend_;
+        }
+
+        bool ensureGpuRendererInitialized(int width, int height, QString* failureReason)
+        {
+            if (!gpuRenderer_) {
+                gpuRenderer_ = std::make_unique<ArtifactIRenderer>();
+            }
+            if (gpuRenderer_->isInitialized() &&
+                gpuRendererWidth_ == width &&
+                gpuRendererHeight_ == height) {
+                return true;
+            }
+            if (gpuRenderer_->isInitialized()) {
+                gpuRenderer_->destroy();
+            }
+            gpuRenderer_->initializeHeadless(width, height);
+            if (!gpuRenderer_->isInitialized()) {
+                if (failureReason) {
+                    *failureReason = QStringLiteral("Failed to initialize GPU renderer");
+                }
+                return false;
+            }
+            gpuRendererWidth_ = width;
+            gpuRendererHeight_ = height;
+            return true;
+        }
 
         QString resolveDummyOutputPath(const ArtifactRenderJob& job, int index) const {
             QString target = job.outputPath.trimmed();
@@ -2308,7 +2495,7 @@ namespace Artifact
         if (index < 0 || index >= count) {
             return QStringLiteral("auto");
         }
-        return impl_->queueManager.getJob(index).encoderBackend;
+        return normalizeVideoEncodeBackendName(impl_->queueManager.getJob(index).encoderBackend);
     }
 
     void ArtifactRenderQueueService::setJobEncoderBackendAt(int index, const QString& backend)
@@ -2318,7 +2505,28 @@ namespace Artifact
             return;
         }
         auto job = impl_->queueManager.getJob(index);
-        job.encoderBackend = backend.trimmed().isEmpty() ? QStringLiteral("auto") : backend.trimmed().toLower();
+        job.encoderBackend = normalizeVideoEncodeBackendName(backend);
+        impl_->queueManager.updateJob(index, job);
+        impl_->syncCoreQueueModel();
+    }
+
+    QString ArtifactRenderQueueService::jobRenderBackendAt(int index) const
+    {
+        const int count = impl_->queueManager.jobCount();
+        if (index < 0 || index >= count) {
+            return QStringLiteral("auto");
+        }
+        return normalizeRenderBackend(impl_->queueManager.getJob(index).renderBackend);
+    }
+
+    void ArtifactRenderQueueService::setJobRenderBackendAt(int index, const QString& backend)
+    {
+        const int count = impl_->queueManager.jobCount();
+        if (index < 0 || index >= count) {
+            return;
+        }
+        auto job = impl_->queueManager.getJob(index);
+        job.renderBackend = normalizeRenderBackend(backend);
         impl_->queueManager.updateJob(index, job);
         impl_->syncCoreQueueModel();
     }
@@ -2472,35 +2680,47 @@ namespace Artifact
                        << "backend=" << backendName
                        << "error=" << failureReason;
                         success.store(false, std::memory_order_relaxed);
+                    } else {
+                        qInfo() << "[RenderService] Video backend selected"
+                                << "job=" << i
+                                << "requested=" << job.encoderBackend
+                                << "selected=" << backendName;
                     }
                 }
 
-                if (impl_->renderBackend_ == Impl::RenderBackend::GPU && success.load(std::memory_order_relaxed)) {
-                    const int rw = std::max(16, job.resolutionWidth);
-                    const int rh = std::max(16, job.resolutionHeight);
-                    if (!impl_->gpuRenderer_) {
-                        impl_->gpuRenderer_ = std::make_unique<ArtifactIRenderer>();
-                    }
-                    if (!impl_->gpuRenderer_->isInitialized() ||
-                        impl_->gpuRendererWidth_ != rw ||
-                        impl_->gpuRendererHeight_ != rh) {
-                        if (impl_->gpuRenderer_->isInitialized()) {
-                            impl_->gpuRenderer_->destroy();
-                        }
-                        impl_->gpuRenderer_->initializeHeadless(rw, rh);
-                        if (!impl_->gpuRenderer_->isInitialized()) {
-                            success.store(false, std::memory_order_relaxed);
-                            failureReason = QStringLiteral("Failed to initialize GPU renderer");
+                const auto requestedBackend = impl_->effectiveRenderBackendForJob(job);
+                bool useGpuBackend = false;
+                if (success.load(std::memory_order_relaxed)) {
+                    if (requestedBackend == Impl::RenderBackend::GPU) {
+                        const int rw = std::max(16, job.resolutionWidth);
+                        const int rh = std::max(16, job.resolutionHeight);
+                        const char* requestedLabel = "gpu";
+                        QString gpuFailureReason;
+                        if (impl_->ensureGpuRendererInitialized(rw, rh, &gpuFailureReason)) {
+                            useGpuBackend = true;
                         } else {
-                            impl_->gpuRendererWidth_ = rw;
-                            impl_->gpuRendererHeight_ = rh;
+                            qWarning() << "[RenderQueue] GPU backend unavailable, falling back to CPU"
+                                       << "job=" << i
+                                       << "requested=" << requestedLabel
+                                       << "reason=" << gpuFailureReason;
+                        }
+                    } else if (requestedBackend == Impl::RenderBackend::Auto) {
+                        const int rw = std::max(16, job.resolutionWidth);
+                        const int rh = std::max(16, job.resolutionHeight);
+                        QString gpuProbeReason;
+                        if (impl_->ensureGpuRendererInitialized(rw, rh, &gpuProbeReason)) {
+                            useGpuBackend = true;
+                        } else {
+                            qInfo() << "[RenderQueue] Auto backend resolved to CPU"
+                                    << "job=" << i
+                                    << "reason=" << gpuProbeReason;
                         }
                     }
                 }
 
                 QHash<QString, LayerSurfaceCacheEntry> gpuSurfaceCache;
                 std::unique_ptr<GPUTextureCacheManager> gpuTextureCacheManager;
-                if (impl_->renderBackend_ == Impl::RenderBackend::GPU && success.load(std::memory_order_relaxed)) {
+                if (useGpuBackend && success.load(std::memory_order_relaxed)) {
                     gpuTextureCacheManager = std::make_unique<GPUTextureCacheManager>();
                     gpuTextureCacheManager->setDevice(impl_->gpuRenderer_->device());
                 }
@@ -2542,7 +2762,7 @@ namespace Artifact
 
                     QImage qimg;
 
-                    if (impl_->renderBackend_ == Impl::RenderBackend::GPU) {
+                    if (useGpuBackend) {
                         // 経路B: GPU Diligent レンダリング
                         // ヘッドレスレンダラーで1フレームレンダリング → readback
                         const auto compSize = (*compositionForRender)->settings().compositionSize();
@@ -2763,6 +2983,7 @@ namespace Artifact
             obj["codec"] = job.codec;
             obj["codecProfile"] = job.codecProfile;
             obj["encoderBackend"] = job.encoderBackend;
+            obj["renderBackend"] = job.renderBackend;
             obj["integratedRenderEnabled"] = job.integratedRenderEnabled;
             obj["audioSourcePath"] = job.audioSourcePath;
             obj["audioCodec"] = job.audioCodec;
@@ -2797,6 +3018,7 @@ namespace Artifact
             job.codec = obj["codec"].toString();
             job.codecProfile = obj["codecProfile"].toString();
             job.encoderBackend = obj["encoderBackend"].toString("auto");
+            job.renderBackend = normalizeRenderBackend(obj["renderBackend"].toString("auto"));
             job.integratedRenderEnabled = obj["integratedRenderEnabled"].toBool(false);
             job.audioSourcePath = obj["audioSourcePath"].toString();
             job.audioCodec = obj["audioCodec"].toString("aac");
@@ -2848,6 +3070,7 @@ namespace Artifact
             job.codec = QStringLiteral("H.264");
             job.codecProfile = QStringLiteral("high");
             job.encoderBackend = QStringLiteral("auto");
+            job.renderBackend = QStringLiteral("auto");
             job.resolutionWidth = settings.compositionSize().width();
             job.resolutionHeight = settings.compositionSize().height();
             job.frameRate = comp->frameRate().framerate();
@@ -2890,6 +3113,7 @@ namespace Artifact
             job.codec = QStringLiteral("H.264");
             job.codecProfile = QStringLiteral("high");
             job.encoderBackend = QStringLiteral("auto");
+            job.renderBackend = QStringLiteral("auto");
             job.resolutionWidth = settings.compositionSize().width();
             job.resolutionHeight = settings.compositionSize().height();
             job.frameRate = comp->frameRate().framerate();

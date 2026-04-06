@@ -48,6 +48,7 @@ module Artifact.Service.Playback;
 import Frame.Position;
 import Frame.Rate;
 import Frame.Range;
+import Artifact.Render.FrameCache;
 import Artifact.Composition.PlaybackController;
 import Artifact.Composition.Abstract;
 
@@ -65,6 +66,7 @@ public:
     ArtifactCompositionPlaybackController* controller_ = nullptr;
     ArtifactPlaybackEngine* engine_ = nullptr;  // 新しいマルチスレッドエンジン
     ArtifactCompositionPtr currentComposition_;
+    std::unique_ptr<FrameCache> frameCache_;
     QElapsedTimer audioTimer_;
     double audioOffsetSeconds_ = 0.0;
     std::atomic_bool audioRunning_{false};
@@ -72,6 +74,9 @@ public:
     std::function<double()> playbackClockProvider_;
     float audioMasterVolume_ = 1.0f;
     bool audioMasterMuted_ = false;
+    bool ramPreviewEnabled_ = true;
+    int ramPreviewRadiusFrames_ = 48;
+    FrameRange ramPreviewRange_{FramePosition(0), FramePosition(0)};
     std::atomic<int64_t> pendingCompositionFrame_{0};
     std::atomic_bool compositionFrameSyncQueued_{false};
 
@@ -79,6 +84,18 @@ public:
         : owner_(owner) {
         controller_ = new ArtifactCompositionPlaybackController();
         engine_ = new ArtifactPlaybackEngine();
+        frameCache_ = std::make_unique<FrameCache>(owner_);
+        frameCache_->setMaxMemoryBytes(256ull * 1024ull * 1024ull);
+        frameCache_->setMaxFrameCount(180);
+        QObject::connect(frameCache_.get(), &FrameCache::hitRateChanged,
+                         owner_, [this](float rate) {
+            Q_EMIT owner_->ramPreviewStatsChanged(rate,
+                                                  frameCache_ ? frameCache_->currentFrameCount() : 0);
+        }, Qt::QueuedConnection);
+        QObject::connect(frameCache_.get(), &FrameCache::cacheCleared,
+                         owner_, [this]() {
+            emitRamPreviewStats();
+        }, Qt::QueuedConnection);
         
         // エンジンのシグナルをサービスに転送
         QObject::connect(engine_, &ArtifactPlaybackEngine::playbackStateChanged,
@@ -92,8 +109,11 @@ public:
         }, Qt::DirectConnection);
         
         QObject::connect(engine_, &ArtifactPlaybackEngine::frameChanged,
-                         owner_, [this](const FramePosition& position, const QImage&) {
+                         owner_, [this](const FramePosition& position, const QImage& frame) {
             syncCurrentCompositionFrame(position);
+            if (frameCache_ && !frame.isNull()) {
+                frameCache_->put(std::make_shared<FrameCacheEntry>(frame, position));
+            }
             Q_EMIT owner_->frameChanged(position);
         }, Qt::DirectConnection);
         
@@ -233,6 +253,83 @@ public:
             },
             Qt::QueuedConnection);
     }
+
+    void emitRamPreviewStats() {
+        Q_EMIT owner_->ramPreviewStatsChanged(frameCache_ ? frameCache_->hitRate() : 0.0f,
+                                              frameCache_ ? frameCache_->currentFrameCount() : 0);
+    }
+
+    FrameRange clampedRamPreviewRange(const FramePosition& center) const {
+        const int64_t centerFrame = center.framePosition();
+        const int64_t radius = std::max(0, ramPreviewRadiusFrames_);
+        int64_t start = std::max<int64_t>(0, centerFrame - radius);
+        int64_t end = centerFrame + radius;
+        if (currentComposition_) {
+            const auto compositionRange = currentComposition_->frameRange();
+            start = std::max<int64_t>(start, compositionRange.start());
+            end = std::min<int64_t>(end, compositionRange.end());
+        }
+        if (end < start) {
+            end = start;
+        }
+        return FrameRange(start, end);
+    }
+
+    void prewarmRamPreviewAround(const FramePosition& position) {
+        if (!ramPreviewEnabled_ || !frameCache_ || !engine_) {
+            return;
+        }
+
+        const FrameRange range = clampedRamPreviewRange(position);
+        ramPreviewRange_ = range;
+        for (int64_t frame = range.start(); frame <= range.end(); ++frame) {
+            const FramePosition framePos(frame);
+            if (frameCache_->contains(framePos)) {
+                continue;
+            }
+            const QImage preview = engine_->renderPreviewFrame(framePos);
+            if (preview.isNull()) {
+                continue;
+            }
+            try {
+                frameCache_->put(std::make_shared<FrameCacheEntry>(preview, framePos));
+            } catch (const std::exception& e) {
+                qWarning() << "[PlaybackService][RAMPreview] cache put failed:"
+                           << e.what();
+                break;
+            }
+        }
+        emitRamPreviewStats();
+        Q_EMIT owner_->ramPreviewStateChanged(ramPreviewEnabled_, ramPreviewRange_);
+    }
+
+    void prewarmRamPreviewRange(const FrameRange& range) {
+        if (!ramPreviewEnabled_ || !frameCache_ || !engine_) {
+            return;
+        }
+
+        ramPreviewRange_ = range;
+        for (int64_t frame = range.start(); frame <= range.end(); ++frame) {
+            const FramePosition framePos(frame);
+            if (frameCache_->contains(framePos)) {
+                continue;
+            }
+            const QImage preview = engine_->renderPreviewFrame(framePos);
+            if (preview.isNull()) {
+                continue;
+            }
+            try {
+                frameCache_->put(std::make_shared<FrameCacheEntry>(preview, framePos));
+            } catch (const std::exception& e) {
+                qWarning() << "[PlaybackService][RAMPreview] range prewarm failed:"
+                           << e.what();
+                break;
+            }
+        }
+
+        emitRamPreviewStats();
+        Q_EMIT owner_->ramPreviewStateChanged(ramPreviewEnabled_, ramPreviewRange_);
+    }
 };
 
 ArtifactPlaybackService::ArtifactPlaybackService(QObject* parent)
@@ -256,6 +353,7 @@ void ArtifactPlaybackService::play() {
     if (impl_->engine_) {
         impl_->engine_->play();
     }
+    impl_->prewarmRamPreviewAround(currentFrame());
     /*
     if (impl_->controller_) {
         impl_->controller_->play();
@@ -301,6 +399,7 @@ void ArtifactPlaybackService::goToFrame(const FramePosition& position) {
     } else if (impl_->controller_) {
         impl_->controller_->goToFrame(position);
     }
+    impl_->prewarmRamPreviewAround(position);
 }
 
 void ArtifactPlaybackService::goToNextFrame() {
@@ -309,6 +408,7 @@ void ArtifactPlaybackService::goToNextFrame() {
     } else if (impl_->controller_) {
         impl_->controller_->goToNextFrame();
     }
+    impl_->prewarmRamPreviewAround(currentFrame());
 }
 
 void ArtifactPlaybackService::goToPreviousFrame() {
@@ -317,6 +417,7 @@ void ArtifactPlaybackService::goToPreviousFrame() {
     } else if (impl_->controller_) {
         impl_->controller_->goToPreviousFrame();
     }
+    impl_->prewarmRamPreviewAround(currentFrame());
 }
 
 void ArtifactPlaybackService::goToStartFrame() {
@@ -325,6 +426,7 @@ void ArtifactPlaybackService::goToStartFrame() {
     } else if (impl_->controller_) {
         impl_->controller_->goToStartFrame();
     }
+    impl_->prewarmRamPreviewAround(currentFrame());
 }
 
 void ArtifactPlaybackService::goToEndFrame() {
@@ -333,6 +435,7 @@ void ArtifactPlaybackService::goToEndFrame() {
     } else if (impl_->controller_) {
         impl_->controller_->goToEndFrame();
     }
+    impl_->prewarmRamPreviewAround(currentFrame());
 }
 
 bool ArtifactPlaybackService::isPlaying() const {
@@ -367,6 +470,7 @@ void ArtifactPlaybackService::setCurrentFrame(const FramePosition& position) {
     } else if (impl_->controller_) {
         impl_->controller_->setCurrentFrame(position);
     }
+    impl_->prewarmRamPreviewAround(position);
 }
 
 FrameRange ArtifactPlaybackService::frameRange() const {
@@ -381,6 +485,8 @@ void ArtifactPlaybackService::setFrameRange(const FrameRange& range) {
     if (impl_->controller_) {
         impl_->controller_->setFrameRange(range);
     }
+    impl_->ramPreviewRange_ = range;
+    Q_EMIT ramPreviewStateChanged(impl_->ramPreviewEnabled_, impl_->ramPreviewRange_);
 }
 
 FrameRate ArtifactPlaybackService::frameRate() const {
@@ -462,6 +568,9 @@ void ArtifactPlaybackService::setAudioMasterMuted(bool muted) {
 void ArtifactPlaybackService::setCurrentComposition(ArtifactCompositionPtr composition) {
     if (impl_->currentComposition_ != composition) {
         impl_->currentComposition_ = composition;
+        if (impl_->frameCache_) {
+            impl_->frameCache_->clear();
+        }
 
         // エンジンにコンポジションの設定を反映
         if (impl_->engine_ && composition) {
@@ -479,6 +588,10 @@ void ArtifactPlaybackService::setCurrentComposition(ArtifactCompositionPtr compo
         }
 
         Q_EMIT currentCompositionChanged(composition);
+        if (impl_->ramPreviewEnabled_) {
+            impl_->prewarmRamPreviewAround(composition ? composition->framePosition()
+                                                       : currentFrame());
+        }
     }
 }
 
@@ -533,6 +646,84 @@ void ArtifactPlaybackService::goToPreviousChapter() {
     } else if (impl_ && impl_->controller_) {
         impl_->controller_->goToPreviousChapter();
     }
+}
+
+void ArtifactPlaybackService::setRamPreviewEnabled(bool enabled) {
+    if (!impl_) {
+        return;
+    }
+    if (impl_->ramPreviewEnabled_ == enabled) {
+        return;
+    }
+
+    impl_->ramPreviewEnabled_ = enabled;
+    if (!enabled) {
+        Q_EMIT ramPreviewStateChanged(false, impl_->ramPreviewRange_);
+        return;
+    }
+
+    prewarmRamPreviewAroundCurrentFrame();
+}
+
+bool ArtifactPlaybackService::isRamPreviewEnabled() const {
+    return impl_ && impl_->ramPreviewEnabled_;
+}
+
+void ArtifactPlaybackService::setRamPreviewRadius(int frames) {
+    if (!impl_) {
+        return;
+    }
+
+    impl_->ramPreviewRadiusFrames_ = std::max(0, frames);
+    if (impl_->ramPreviewEnabled_) {
+        prewarmRamPreviewAroundCurrentFrame();
+    }
+}
+
+int ArtifactPlaybackService::ramPreviewRadius() const {
+    return impl_ ? impl_->ramPreviewRadiusFrames_ : 0;
+}
+
+void ArtifactPlaybackService::setRamPreviewRange(const FrameRange& range) {
+    if (!impl_) {
+        return;
+    }
+
+    impl_->ramPreviewRange_ = range;
+    if (impl_->ramPreviewEnabled_) {
+        impl_->prewarmRamPreviewRange(range);
+    } else {
+        Q_EMIT ramPreviewStateChanged(false, range);
+    }
+}
+
+FrameRange ArtifactPlaybackService::ramPreviewRange() const {
+    return impl_ ? impl_->ramPreviewRange_ : FrameRange(FramePosition(0), FramePosition(0));
+}
+
+void ArtifactPlaybackService::clearRamPreviewCache() {
+    if (!impl_ || !impl_->frameCache_) {
+        return;
+    }
+
+    impl_->frameCache_->clear();
+    impl_->emitRamPreviewStats();
+}
+
+void ArtifactPlaybackService::prewarmRamPreviewAroundCurrentFrame() {
+    if (!impl_) {
+        return;
+    }
+
+    impl_->prewarmRamPreviewAround(currentFrame());
+}
+
+float ArtifactPlaybackService::ramPreviewHitRate() const {
+    return impl_ && impl_->frameCache_ ? impl_->frameCache_->hitRate() : 0.0f;
+}
+
+int ArtifactPlaybackService::ramPreviewCachedFrameCount() const {
+    return impl_ && impl_->frameCache_ ? impl_->frameCache_->currentFrameCount() : 0;
 }
 
 } // namespace Artifact

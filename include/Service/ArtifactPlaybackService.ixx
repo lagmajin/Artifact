@@ -122,6 +122,18 @@ public:
     void setInOutPoints(class ArtifactInOutPoints* inOutPoints);
     class ArtifactInOutPoints* inOutPoints() const;
 
+    // RAM preview cache
+    void setRamPreviewEnabled(bool enabled);
+    bool isRamPreviewEnabled() const;
+    void setRamPreviewRadius(int frames);
+    int ramPreviewRadius() const;
+    void setRamPreviewRange(const FrameRange& range);
+    FrameRange ramPreviewRange() const;
+    void clearRamPreviewCache();
+    void prewarmRamPreviewAroundCurrentFrame();
+    float ramPreviewHitRate() const;
+    int ramPreviewCachedFrameCount() const;
+
     // Marker navigation
     void goToNextMarker();
     void goToPreviousMarker();
@@ -141,6 +153,10 @@ public: // signals
         W_SIGNAL(frameRangeChanged, range);
     void currentCompositionChanged(ArtifactCompositionPtr composition)
         W_SIGNAL(currentCompositionChanged, composition);
+    void ramPreviewStateChanged(bool enabled, const FrameRange& range)
+        W_SIGNAL(ramPreviewStateChanged, enabled, range);
+    void ramPreviewStatsChanged(float hitRate, int cachedFrameCount)
+        W_SIGNAL(ramPreviewStatsChanged, hitRate, cachedFrameCount);
     void audioLevelChanged(float leftRms, float rightRms, float leftPeak, float rightPeak)
         W_SIGNAL(audioLevelChanged, leftRms, rightRms, leftPeak, rightPeak);
 };
