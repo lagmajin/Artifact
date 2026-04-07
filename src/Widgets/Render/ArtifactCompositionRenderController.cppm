@@ -2,7 +2,6 @@
 #include <DeviceContext.h>
 #define NOMINMAX
 #define QT_NO_KEYWORDS
-#include <opencv2/opencv.hpp>
 
 #include <Layer/ArtifactCloneEffectSupport.hpp>
 #include <QApplication>
@@ -127,12 +126,14 @@ QString buildLayerSurfaceCacheKey(const ArtifactAbstractLayerPtr &layer,
     return QString();
   }
 
-  QString key = layer->id().toString();
+  ArtifactAbstractLayerPtr layerCopy = layer;
+  ArtifactAbstractLayer *layerPtr = layerCopy.get();
+
+  QString key = layerPtr->id().toString();
   key +=
       QStringLiteral("|size=%1x%2").arg(surface.width()).arg(surface.height());
 
-  if (const auto solid2D =
-          std::dynamic_pointer_cast<ArtifactSolid2DLayer>(layer)) {
+  if (const auto solid2D = dynamic_cast<ArtifactSolid2DLayer *>(layerPtr)) {
     const QRectF bounds = solid2D->localBounds();
     key += QStringLiteral("|solid2D|color=%1|bounds=%2x%3")
                .arg(QStringLiteral("%1,%2,%3,%4")
@@ -146,7 +147,7 @@ QString buildLayerSurfaceCacheKey(const ArtifactAbstractLayerPtr &layer,
   }
 
   if (const auto solidImage =
-          std::dynamic_pointer_cast<ArtifactSolidImageLayer>(layer)) {
+          dynamic_cast<ArtifactSolidImageLayer *>(layerPtr)) {
     const QRectF bounds = solidImage->localBounds();
     key += QStringLiteral("|solidImage|color=%1|bounds=%2x%3")
                .arg(QStringLiteral("%1,%2,%3,%4")
@@ -160,7 +161,7 @@ QString buildLayerSurfaceCacheKey(const ArtifactAbstractLayerPtr &layer,
   }
 
   if (const auto imageLayer =
-          std::dynamic_pointer_cast<ArtifactImageLayer>(layer)) {
+          dynamic_cast<ArtifactImageLayer *>(layerPtr)) {
     key += QStringLiteral("|image|src=%1|fit=%2|size=%3x%4")
                .arg(imageLayer->sourcePath())
                .arg(imageLayer->fitToLayer() ? 1 : 0)
@@ -170,7 +171,7 @@ QString buildLayerSurfaceCacheKey(const ArtifactAbstractLayerPtr &layer,
   }
 
   if (const auto svgLayer =
-          std::dynamic_pointer_cast<ArtifactSvgLayer>(layer)) {
+          dynamic_cast<ArtifactSvgLayer *>(layerPtr)) {
     key += QStringLiteral("|svg|src=%1|fit=%2|size=%3x%4")
                .arg(svgLayer->sourcePath())
                .arg(svgLayer->fitToLayer() ? 1 : 0)
@@ -180,7 +181,7 @@ QString buildLayerSurfaceCacheKey(const ArtifactAbstractLayerPtr &layer,
   }
 
   if (const auto videoLayer =
-          std::dynamic_pointer_cast<ArtifactVideoLayer>(layer)) {
+          dynamic_cast<ArtifactVideoLayer *>(layerPtr)) {
     key += QStringLiteral("|video|src=%1|frame=%2|proxy=%3|size=%4x%5")
                .arg(videoLayer->sourcePath())
                .arg(frameNumber)
@@ -191,7 +192,7 @@ QString buildLayerSurfaceCacheKey(const ArtifactAbstractLayerPtr &layer,
   }
 
   if (const auto textLayer =
-          std::dynamic_pointer_cast<ArtifactTextLayer>(layer)) {
+          dynamic_cast<ArtifactTextLayer *>(layerPtr)) {
     key += QStringLiteral("|text|value=%1|surface=%2x%3")
                .arg(textLayer->text().toQString())
                .arg(surface.width())
@@ -296,8 +297,9 @@ buildCameraFrustumVisual(const ArtifactCompositionPtr &comp,
     return visual;
   }
 
-  const auto layer = comp->layerById(selectedLayerId);
-  const auto camera = std::dynamic_pointer_cast<ArtifactCameraLayer>(layer);
+  auto layer = comp->layerById(selectedLayerId);
+  auto *layerPtr = layer.get();
+  const auto camera = dynamic_cast<ArtifactCameraLayer *>(layerPtr);
   if (!camera) {
     return visual;
   }
@@ -537,7 +539,7 @@ hitTopmostLayerAtViewportPos(const ArtifactCompositionPtr &comp,
 }
 
 void drawLayerForCompositionView(
-    const ArtifactAbstractLayerPtr &layer, ArtifactIRenderer *renderer,
+    ArtifactAbstractLayerPtr layer, ArtifactIRenderer *renderer,
     float opacityOverride = -1.0f, QString *videoDebugOut = nullptr,
     QHash<QString, LayerSurfaceCacheEntry> *surfaceCache = nullptr,
     GPUTextureCacheManager *gpuTextureCacheManager = nullptr,
@@ -730,8 +732,7 @@ void drawLayerForCompositionView(
     return true;
   };
 
-  if (const auto solid2D =
-          std::dynamic_pointer_cast<ArtifactSolid2DLayer>(layer)) {
+  if (const auto solid2D = dynamic_cast<ArtifactSolid2DLayer *>(layer.get())) {
     const auto color = solid2D->color();
     if (hasRasterizerEffectsOrMasks(layer)) {
       const QSize surfaceSize(
@@ -751,7 +752,7 @@ void drawLayerForCompositionView(
   }
 
   if (const auto solidImage =
-          std::dynamic_pointer_cast<ArtifactSolidImageLayer>(layer)) {
+          dynamic_cast<ArtifactSolidImageLayer *>(layer.get())) {
     // [Fix] SolidImage も QImage 経由で GPU テクスチャキャッシュを利用する
     const QImage img = solidImage->toQImage();
     if (!img.isNull()) {
@@ -769,7 +770,7 @@ void drawLayerForCompositionView(
   }
 
   if (const auto imageLayer =
-          std::dynamic_pointer_cast<ArtifactImageLayer>(layer)) {
+          dynamic_cast<ArtifactImageLayer *>(layer.get())) {
     const QImage img = imageLayer->toQImage();
     if (!img.isNull()) {
       applySurfaceAndDraw(img, localRect, hasRasterizerEffectsOrMasks(layer));
@@ -778,7 +779,7 @@ void drawLayerForCompositionView(
   }
 
   if (const auto svgLayer =
-          std::dynamic_pointer_cast<ArtifactSvgLayer>(layer)) {
+          dynamic_cast<ArtifactSvgLayer *>(layer.get())) {
     if (svgLayer->isLoaded()) {
       const QImage svgImage = svgLayer->toQImage();
       if (!svgImage.isNull()) {
@@ -792,7 +793,7 @@ void drawLayerForCompositionView(
   }
 
   if (const auto videoLayer =
-          std::dynamic_pointer_cast<ArtifactVideoLayer>(layer)) {
+          dynamic_cast<ArtifactVideoLayer *>(layer.get())) {
     const QImage frame = videoLayer->currentFrameToQImage();
     // デバッグ文字列生成は
     // デバッグカテゴリ有効時のみ実行（毎フレームのコスト削減）
@@ -821,7 +822,7 @@ void drawLayerForCompositionView(
   }
 
   if (const auto textLayer =
-          std::dynamic_pointer_cast<ArtifactTextLayer>(layer)) {
+          dynamic_cast<ArtifactTextLayer *>(layer.get())) {
     const QImage textImage = textLayer->toQImage();
     if (!textImage.isNull()) {
       applySurfaceAndDraw(textImage, localRect,
@@ -831,7 +832,7 @@ void drawLayerForCompositionView(
   }
 
   if (const auto compLayer =
-          std::dynamic_pointer_cast<ArtifactCompositionLayer>(layer)) {
+          dynamic_cast<ArtifactCompositionLayer *>(layer.get())) {
     if (auto childComp = compLayer->sourceComposition()) {
       const QSize childSize = childComp->settings().compositionSize();
       const int64_t childFrame =
@@ -2688,9 +2689,10 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
   }
 
   // Find active camera layer for 3D rendering
-  ArtifactCameraLayerPtr activeCamera;
+  ArtifactCameraLayer *activeCamera = nullptr;
   for (const auto &l : layers) {
-    if (auto cam = std::dynamic_pointer_cast<ArtifactCameraLayer>(l)) {
+    auto layerCopy = l;
+    if (auto cam = dynamic_cast<ArtifactCameraLayer *>(layerCopy.get())) {
       if (cam->isVisible() && cam->isActiveAt(currentFrame)) {
         activeCamera = cam;
         break; // Use first visible camera
