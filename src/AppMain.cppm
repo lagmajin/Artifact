@@ -846,19 +846,29 @@ int main(int argc, char *argv[]) {
         aiSettings.value(QStringLiteral("AI/Provider"), QStringLiteral("local"))
             .toString()
             .trimmed();
-    auto *playbackControl = new ArtifactPlaybackControlWidget(mw);
-    mw->addDockedWidgetFloating(QStringLiteral("Playback Control"),
-                                QStringLiteral("PlaybackControl"),
-                                playbackControl, QRect(120, 828, 720, 96));
-    auto *consoleWidget = new ArtifactDebugConsoleWidget(mw);
-    mw->addDockedWidgetFloating(QStringLiteral("Debug Console"),
-                                QStringLiteral("DebugConsole"), consoleWidget,
-                                QRect(200, 200, 800, 400));
-    auto *aiChatWidget = new AIChatWidget(mw);
-    aiChatWidget->setProvider(UniString(aiProvider));
-    mw->addDockedWidgetFloating(QStringLiteral("AI Chat"),
-                                QStringLiteral("AIChat"), aiChatWidget,
-                                QRect(1040, 200, 760, 520));
+    mw->addLazyDockedWidgetFloating(
+        QStringLiteral("Playback Control"),
+        QStringLiteral("PlaybackControl"),
+        [mw]() -> QWidget* {
+          return new ArtifactPlaybackControlWidget(mw);
+        },
+        QRect(120, 828, 720, 96));
+    mw->addLazyDockedWidgetFloating(
+        QStringLiteral("Debug Console"),
+        QStringLiteral("DebugConsole"),
+        [mw]() -> QWidget* {
+          return new ArtifactDebugConsoleWidget(mw);
+        },
+        QRect(200, 200, 800, 400));
+    mw->addLazyDockedWidgetFloating(
+        QStringLiteral("AI Chat"),
+        QStringLiteral("AIChat"),
+        [mw, aiProvider]() -> QWidget* {
+          auto* widget = new AIChatWidget(mw);
+          widget->setProvider(UniString(aiProvider));
+          return widget;
+        },
+        QRect(1040, 200, 760, 520));
     auto *compositionEditor = new ArtifactCompositionEditor(mw);
     compositionEditor->setMinimumWidth(1024); // Keep the center area from getting too cramped
     compositionEditor->setSizePolicy(QSizePolicy::Expanding,

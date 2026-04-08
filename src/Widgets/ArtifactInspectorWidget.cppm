@@ -352,7 +352,7 @@ constexpr int kInspectorRackMarginB = 6;
    void scheduleRefresh(int reasonMask = CompositionNoteDirty | LayerNoteDirty | LayerInfoDirty | EffectsDirty);
    void refreshNow();
    QString computeLayerInfoSignature(const ArtifactAbstractLayerPtr& layer) const;
-   QString computeRackSignature(int rackIndex, const std::vector<std::shared_ptr<ArtifactCore::AbstractEffect>>& effects) const;
+   QString computeRackSignature(int rackIndex, const std::vector<ArtifactAbstractEffectPtr>& effects) const;
   };
 
 ArtifactInspectorWidget::Impl::Impl()
@@ -362,7 +362,10 @@ ArtifactInspectorWidget::Impl::Impl()
 
 void ArtifactInspectorWidget::Impl::scheduleRefresh(int reasonMask)
 {
- if (!owner) {
+ QObject* context = containerWidget ? static_cast<QObject*>(containerWidget)
+                                    : static_cast<QObject*>(tabWidget);
+ if (!context) {
+  refreshNow();
   return;
  }
  refreshMask_ |= reasonMask;
@@ -370,7 +373,7 @@ void ArtifactInspectorWidget::Impl::scheduleRefresh(int reasonMask)
   return;
  }
  refreshQueued_ = true;
- QTimer::singleShot(0, owner, [this]() {
+ QTimer::singleShot(0, context, [this]() {
   if (!refreshQueued_) {
    return;
   }
@@ -442,7 +445,7 @@ QString ArtifactInspectorWidget::Impl::computeLayerInfoSignature(const ArtifactA
     return signature;
 }
 
-QString ArtifactInspectorWidget::Impl::computeRackSignature(int rackIndex, const std::vector<std::shared_ptr<ArtifactCore::AbstractEffect>>& effects) const
+QString ArtifactInspectorWidget::Impl::computeRackSignature(int rackIndex, const std::vector<ArtifactAbstractEffectPtr>& effects) const
 {
     QString signature;
     signature.reserve(512);
@@ -1155,7 +1158,7 @@ void ArtifactInspectorWidget::Impl::updateEffectsList()
   auto effects = layer->getEffects();
   setEffectRackEnabled(true);
   int effectCount = 0;
-  std::array<std::vector<std::shared_ptr<ArtifactCore::AbstractEffect>>, kEffectRackCount> rackEffects;
+  std::array<std::vector<ArtifactAbstractEffectPtr>, kEffectRackCount> rackEffects;
 
   for (const auto& effect : effects) {
    if (effect) {

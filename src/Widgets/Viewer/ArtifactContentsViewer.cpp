@@ -787,11 +787,11 @@ namespace Artifact
    }
 
    modelViewer = new Artifact3DModelViewer(owner_);
-   QObject::connect(modelViewer, &Artifact3DModelViewer::displayModeChanged, owner_, [this](Artifact3DModelViewer::DisplayMode) {
+   QObject::connect(modelViewer, &Artifact3DModelViewer::displayModeChanged, owner_, [this](int) {
     updateHeader();
     updateSurfaceMeta();
    });
-   auto* resetShortcut = new QShortcut(QKeySequence::ZoomReset, owner_);
+   auto* resetShortcut = new QShortcut(QKeySequence(QStringLiteral("Ctrl+0")), owner_);
    resetShortcut->setContext(Qt::WidgetWithChildrenShortcut);
    QObject::connect(resetShortcut, &QShortcut::activated, owner_, [this]() {
     if (currentFileType == ArtifactCore::FileType::Model3D && modelViewer) {
