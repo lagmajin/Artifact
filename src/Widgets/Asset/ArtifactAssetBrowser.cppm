@@ -1398,6 +1398,14 @@ void ArtifactAssetBrowser::selectAssetPaths(const QStringList& filePaths)
 
   contextMenu.addSeparator();
 
+  if (!item.isFolder) {
+   QAction* previewAction = contextMenu.addAction("Preview in Contents Viewer");
+   connect(previewAction, &QAction::triggered, this, [this, filePath]() {
+    if (filePath.isEmpty()) return;
+    itemDoubleClicked(filePath);
+   });
+  }
+
   if (item.isFolder) {
    QAction* openFolderAction = contextMenu.addAction("Open Folder");
    connect(openFolderAction, &QAction::triggered, this, [this, filePath]() {

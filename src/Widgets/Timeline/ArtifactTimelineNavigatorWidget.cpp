@@ -110,6 +110,7 @@ namespace Artifact
   QPainter p(this);
   p.setRenderHint(QPainter::Antialiasing);
   const TimelineTheme theme = timelineTheme();
+  const QColor playheadColor(255, 106, 71);
 
   const QRect outer = rect();
   p.fillRect(outer, theme.background);
@@ -167,9 +168,9 @@ namespace Artifact
 
   const QRect rangeRect(clampedX1, trackRect.top(), std::max(1, clampedX2 - clampedX1), trackRect.height());
   QLinearGradient grad(rangeRect.topLeft(), rangeRect.bottomLeft());
-  grad.setColorAt(0.0, theme.accent.lighter(110));
-  grad.setColorAt(1.0, theme.accent.darker(135));
-  p.setPen(QPen(theme.accent.lighter(120), 1));
+  grad.setColorAt(0.0, playheadColor.lighter(110));
+  grad.setColorAt(1.0, playheadColor.darker(135));
+  p.setPen(QPen(playheadColor.lighter(120), 1));
   p.setBrush(grad);
   p.drawRoundedRect(rangeRect.adjusted(0, 0, -1, 0), 3, 3);
 
@@ -180,7 +181,7 @@ namespace Artifact
   p.drawRoundedRect(leftHandleRect, 2, 2);
   p.drawRoundedRect(rightHandleRect, 2, 2);
 
-  p.setPen(theme.accent);
+  p.setPen(playheadColor);
   p.drawLine(rangeRect.left(), outer.bottom() - 1, rangeRect.right(), outer.bottom() - 1);
  }
 

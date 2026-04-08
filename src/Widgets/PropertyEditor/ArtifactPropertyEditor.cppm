@@ -52,6 +52,19 @@ import Widgets.Utils.CSS;
 namespace Artifact {
 
 namespace {
+constexpr int kPropertyRowMinHeight = 32;
+constexpr int kPropertyRowLabelMinHeight = 24;
+constexpr int kPropertyRowMarginH = 10;
+constexpr int kPropertyRowMarginV = 5;
+constexpr int kPropertyRowSpacing = 8;
+constexpr int kPropertyActionSpacing = 4;
+constexpr int kPropertyNavButtonWidth = 14;
+constexpr int kPropertyNavButtonHeight = 22;
+constexpr int kPropertyKeyButtonSize = 22;
+constexpr int kPropertyResetButtonSize = 24;
+constexpr int kPropertyExprButtonWidth = 26;
+constexpr int kPropertyExprButtonHeight = 24;
+
 QColor themeColor(const QString& value, const QColor& fallback)
 {
   const QColor color(value);
@@ -1260,17 +1273,18 @@ ArtifactPropertyEditorRowWidget::ArtifactPropertyEditorRowWidget(
   setObjectName(QStringLiteral("propertyRow"));
   setFocusPolicy(Qt::StrongFocus);
   setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-  setMinimumHeight(30);
+  setMinimumHeight(kPropertyRowMinHeight);
   setAutoFillBackground(false);
   setAttribute(Qt::WA_Hover, true);
   applyPropertyFieldPalette(this, true);
 
   auto *layout = new QHBoxLayout(this);
-  layout->setContentsMargins(10, 4, 10, 4);
-  layout->setSpacing(8);
+  layout->setContentsMargins(kPropertyRowMarginH, kPropertyRowMarginV,
+                             kPropertyRowMarginH, kPropertyRowMarginV);
+  layout->setSpacing(kPropertyRowSpacing);
   label_->setObjectName(QStringLiteral("propertyRowLabel"));
   label_->setAlignment(Qt::AlignVCenter | Qt::AlignLeft);
-  label_->setMinimumHeight(22);
+  label_->setMinimumHeight(kPropertyRowLabelMinHeight);
   label_->setSizePolicy(QSizePolicy::MinimumExpanding, QSizePolicy::Fixed);
   scrubHandle_->setToolTip(
       QStringLiteral("Drag to scrub. Shift=fine, Ctrl=coarse, Esc=cancel."));
@@ -1293,10 +1307,10 @@ ArtifactPropertyEditorRowWidget::ArtifactPropertyEditorRowWidget(
   // Keyframe Controls
   auto *keyframeControlLayout = new QHBoxLayout();
   keyframeControlLayout->setContentsMargins(0, 0, 0, 0);
-  keyframeControlLayout->setSpacing(2);
+  keyframeControlLayout->setSpacing(kPropertyActionSpacing);
 
-  prevKeyBtn_->setFixedSize(14, 22);
-  nextKeyBtn_->setFixedSize(14, 22);
+  prevKeyBtn_->setFixedSize(kPropertyNavButtonWidth, kPropertyNavButtonHeight);
+  nextKeyBtn_->setFixedSize(kPropertyNavButtonWidth, kPropertyNavButtonHeight);
   prevKeyBtn_->setIcon(prevIcon);
   nextKeyBtn_->setIcon(nextIcon);
   prevKeyBtn_->setIconSize(QSize(10, 10));
@@ -1311,7 +1325,7 @@ ArtifactPropertyEditorRowWidget::ArtifactPropertyEditorRowWidget(
   keyframeButton_->setObjectName(QStringLiteral("propertyKeyButton"));
   keyframeButton_->setToolTip(
       QStringLiteral("Toggle Keyframe: %1").arg(propertyName));
-  keyframeButton_->setFixedSize(22, 22);
+  keyframeButton_->setFixedSize(kPropertyKeyButtonSize, kPropertyKeyButtonSize);
   keyframeButton_->setCheckable(true);
   keyframeButton_->setIcon(keyIcon);
   keyframeButton_->setIconSize(QSize(14, 14));
@@ -1324,7 +1338,7 @@ ArtifactPropertyEditorRowWidget::ArtifactPropertyEditorRowWidget(
 
   resetButton_->setObjectName(QStringLiteral("propertyResetButton"));
   resetButton_->setToolTip(QStringLiteral("Reset: %1").arg(propertyName));
-  resetButton_->setFixedSize(24, 24);
+  resetButton_->setFixedSize(kPropertyResetButtonSize, kPropertyResetButtonSize);
   resetButton_->setIcon(resIcon);
   resetButton_->setIconSize(QSize(14, 14));
   resetButton_->setFlat(true);
@@ -1334,7 +1348,7 @@ ArtifactPropertyEditorRowWidget::ArtifactPropertyEditorRowWidget(
   expressionButton_->setObjectName(QStringLiteral("propertyExprButton"));
   expressionButton_->setToolTip(
       QStringLiteral("Expression: %1").arg(propertyName));
-  expressionButton_->setFixedSize(26, 24);
+  expressionButton_->setFixedSize(kPropertyExprButtonWidth, kPropertyExprButtonHeight);
   expressionButton_->setIcon(exprIcon);
   expressionButton_->setIconSize(QSize(14, 14));
   expressionButton_->setFlat(true);

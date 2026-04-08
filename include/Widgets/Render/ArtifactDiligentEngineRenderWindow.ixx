@@ -62,6 +62,11 @@ namespace Artifact
    RefCntAutoPtr<IShaderResourceBinding> solidSrb_;
    RefCntAutoPtr<IShaderResourceBinding> wireSrb_;
    Uint32 solidVertexCount_ = 0;
+   float previewZoom_ = 1.0f;
+   float previewYaw_ = 35.0f;
+   float previewPitch_ = 25.0f;
+   QVector3D previewTarget_{0.0f, 0.0f, 0.0f};
+   float previewDistance_ = 4.0f;
    void render();
    void present();
    void ensureSolidResources();
@@ -86,6 +91,11 @@ namespace Artifact
   ShadingMode shadingMode() const;
   void setClearColor(const QColor& color);
   QColor clearColor() const;
+  void setPreviewCamera(float zoom, float yawDeg, float pitchDeg, const QVector3D& target = QVector3D(0.0f, 0.0f, 0.0f));
+  float previewZoom() const;
+  float previewYaw() const;
+  float previewPitch() const;
+  QVector3D previewTarget() const;
   void setMesh(std::shared_ptr<ArtifactCore::Mesh> mesh);
   void clearMesh();
   void requestRender();

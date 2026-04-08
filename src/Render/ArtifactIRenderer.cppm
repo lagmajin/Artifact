@@ -72,6 +72,7 @@ namespace Artifact
   Uint32 m_layerRTWidth = 0;
   Uint32 m_layerRTHeight = 0;
   mutable RefCntAutoPtr<ITexture> m_readbackStagingTex;
+  mutable TEXTURE_FORMAT m_readbackStagingFormat = TEX_FORMAT_UNKNOWN;
   mutable RefCntAutoPtr<IFence> m_readbackFence;
   mutable Uint32 m_readbackStagingWidth = 0;
   mutable Uint32 m_readbackStagingHeight = 0;
@@ -399,28 +400,34 @@ namespace Artifact
 
   if (!srcTex || srcWidth == 0 || srcHeight == 0) return {};
 
-  // Staging texture uses RGBA8_UNORM so the CPU can read raw bytes.
-  // Diligent allows copying from a SRGB source to a linear staging texture
-  // because both share the same memory layout (only the view interpretation differs).
+  const TEXTURE_FORMAT srcFormat = srcTex->GetDesc().Format;
+  const bool useFloatReadback = (srcFormat == TEX_FORMAT_RGBA16_FLOAT);
+  const TEXTURE_FORMAT stagingFormat =
+      useFloatReadback ? TEX_FORMAT_RGBA16_FLOAT : TEX_FORMAT_RGBA8_UNORM;
+
+  // Staging texture mirrors the source format so we can either memcpy raw bytes
+  // for 8-bit sources or unpack half-floats for the HDR swap chain path.
   if (!m_readbackStagingTex ||
       m_readbackStagingWidth != srcWidth ||
-      m_readbackStagingHeight != srcHeight)
+      m_readbackStagingHeight != srcHeight ||
+      m_readbackStagingFormat != stagingFormat)
   {
-   TextureDesc stagDesc;
-   stagDesc.Name           = "ReadbackStagingTexture";
-   stagDesc.Type           = RESOURCE_DIM_TEX_2D;
-   stagDesc.Width          = srcWidth;
-   stagDesc.Height         = srcHeight;
-   stagDesc.MipLevels      = 1;
-   stagDesc.Format         = TEX_FORMAT_RGBA16_FLOAT;
-   stagDesc.Usage          = USAGE_STAGING;
-   stagDesc.CPUAccessFlags = CPU_ACCESS_READ;
-   stagDesc.BindFlags      = BIND_NONE;
-   device->CreateTexture(stagDesc, nullptr, &m_readbackStagingTex);
-   if (!m_readbackStagingTex) return {};
-   m_readbackStagingWidth = srcWidth;
-   m_readbackStagingHeight = srcHeight;
-  }
+    TextureDesc stagDesc;
+    stagDesc.Name           = "ReadbackStagingTexture";
+    stagDesc.Type           = RESOURCE_DIM_TEX_2D;
+    stagDesc.Width          = srcWidth;
+    stagDesc.Height         = srcHeight;
+    stagDesc.MipLevels      = 1;
+    stagDesc.Format         = stagingFormat;
+    stagDesc.Usage          = USAGE_STAGING;
+    stagDesc.CPUAccessFlags = CPU_ACCESS_READ;
+    stagDesc.BindFlags      = BIND_NONE;
+    device->CreateTexture(stagDesc, nullptr, &m_readbackStagingTex);
+    if (!m_readbackStagingTex) return {};
+    m_readbackStagingWidth = srcWidth;
+    m_readbackStagingHeight = srcHeight;
+    m_readbackStagingFormat = stagingFormat;
+   }
 
   if (!m_readbackFence) {
    FenceDesc fDesc;
@@ -455,23 +462,40 @@ namespace Artifact
   ctx->MapTextureSubresource(m_readbackStagingTex, 0, 0, MAP_READ, MAP_FLAG_DO_NOT_WAIT, nullptr, mapped);
   if (!mapped.pData) return {};
 
-  QImage result(static_cast<int>(srcWidth), static_cast<int>(srcHeight), QImage::Format_RGBA8888);
-  const auto* srcRow = static_cast<const uint16_t*>(mapped.pData);
-  for (Uint32 row = 0; row < srcHeight; ++row) {
-   auto* dst = result.scanLine(static_cast<int>(row));
-   const auto* srcHalf = srcRow;
-   for (Uint32 x = 0; x < srcWidth; ++x) {
-    // float16/32 → uint8 with sRGB gamma encoding
-    const float r = std::clamp(Float16::HalfBitsToFloat(srcHalf[x * 4 + 0]), 0.0f, 1.0f);
-    const float g = std::clamp(Float16::HalfBitsToFloat(srcHalf[x * 4 + 1]), 0.0f, 1.0f);
-    const float b = std::clamp(Float16::HalfBitsToFloat(srcHalf[x * 4 + 2]), 0.0f, 1.0f);
-    const float a = std::clamp(Float16::HalfBitsToFloat(srcHalf[x * 4 + 3]), 0.0f, 1.0f);
-    dst[x * 4 + 0] = static_cast<uint8_t>(std::pow(r, 1.0f / 2.2f) * 255.0f + 0.5f);
-    dst[x * 4 + 1] = static_cast<uint8_t>(std::pow(g, 1.0f / 2.2f) * 255.0f + 0.5f);
-    dst[x * 4 + 2] = static_cast<uint8_t>(std::pow(b, 1.0f / 2.2f) * 255.0f + 0.5f);
-    dst[x * 4 + 3] = static_cast<uint8_t>(a * 255.0f + 0.5f);
+  QImage result(static_cast<int>(srcWidth), static_cast<int>(srcHeight),
+                QImage::Format_RGBA8888);
+  const size_t copyRowBytes = static_cast<size_t>(srcWidth) * 4u;
+  const size_t sourceRowBytes =
+      useFloatReadback ? static_cast<size_t>(srcWidth) * 8u : copyRowBytes;
+  if (mapped.Stride < sourceRowBytes) {
+   ctx->UnmapTextureSubresource(m_readbackStagingTex, 0, 0);
+   return {};
+  }
+  if (!useFloatReadback) {
+   const auto* srcRow = static_cast<const uint8_t*>(mapped.pData);
+   for (Uint32 row = 0; row < srcHeight; ++row) {
+    std::memcpy(result.scanLine(static_cast<int>(row)), srcRow, copyRowBytes);
+    srcRow += mapped.Stride;
    }
-   srcRow = reinterpret_cast<const uint16_t*>(reinterpret_cast<const uint8_t*>(srcRow) + mapped.Stride);
+  } else {
+   const auto* srcRow = static_cast<const uint16_t*>(mapped.pData);
+   for (Uint32 row = 0; row < srcHeight; ++row) {
+    auto* dst = result.scanLine(static_cast<int>(row));
+    const auto* srcHalf = srcRow;
+    for (Uint32 x = 0; x < srcWidth; ++x) {
+     // Half-float -> 8-bit sRGB for the HDR swap chain path.
+     const float r = std::clamp(Float16::HalfBitsToFloat(srcHalf[x * 4 + 0]), 0.0f, 1.0f);
+     const float g = std::clamp(Float16::HalfBitsToFloat(srcHalf[x * 4 + 1]), 0.0f, 1.0f);
+     const float b = std::clamp(Float16::HalfBitsToFloat(srcHalf[x * 4 + 2]), 0.0f, 1.0f);
+     const float a = std::clamp(Float16::HalfBitsToFloat(srcHalf[x * 4 + 3]), 0.0f, 1.0f);
+     dst[x * 4 + 0] = static_cast<uint8_t>(std::pow(r, 1.0f / 2.2f) * 255.0f + 0.5f);
+     dst[x * 4 + 1] = static_cast<uint8_t>(std::pow(g, 1.0f / 2.2f) * 255.0f + 0.5f);
+     dst[x * 4 + 2] = static_cast<uint8_t>(std::pow(b, 1.0f / 2.2f) * 255.0f + 0.5f);
+     dst[x * 4 + 3] = static_cast<uint8_t>(a * 255.0f + 0.5f);
+    }
+    srcRow = reinterpret_cast<const uint16_t*>(
+        reinterpret_cast<const uint8_t*>(srcRow) + mapped.Stride);
+   }
   }
   ctx->UnmapTextureSubresource(m_readbackStagingTex, 0, 0);
   return result;
@@ -633,6 +657,7 @@ namespace Artifact
  void ArtifactIRenderer::Impl::destroy()
  {
   m_readbackStagingTex = nullptr;
+  m_readbackStagingFormat = TEX_FORMAT_UNKNOWN;
   m_readbackFence = nullptr;
   m_readbackStagingWidth = 0;
   m_readbackStagingHeight = 0;

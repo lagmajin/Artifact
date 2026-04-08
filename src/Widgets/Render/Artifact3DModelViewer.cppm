@@ -96,6 +96,21 @@ public:
         }
     }
 
+    QString backendText() const
+    {
+        switch (lastBackend) {
+            case ArtifactCore::MeshImporter::Backend::Ufbx:
+                return QStringLiteral("ufbx");
+            case ArtifactCore::MeshImporter::Backend::TinyObj:
+                return QStringLiteral("tinyobj");
+            case ArtifactCore::MeshImporter::Backend::UfbxGltf:
+                return QStringLiteral("glTF via ufbx");
+            case ArtifactCore::MeshImporter::Backend::None:
+            default:
+                return QStringLiteral("none");
+        }
+    }
+
     void updateStatus()
     {
         if (!statusLabel) {
@@ -103,31 +118,34 @@ public:
         }
 
         if (modelLoaded && currentMesh) {
-            QString backendText = QStringLiteral("unknown");
-            switch (lastBackend) {
-                case ArtifactCore::MeshImporter::Backend::Ufbx:
-                    backendText = QStringLiteral("ufbx");
-                    break;
-                case ArtifactCore::MeshImporter::Backend::TinyObj:
-                    backendText = QStringLiteral("tinyobj");
-                    break;
-                case ArtifactCore::MeshImporter::Backend::None:
-                default:
-                    backendText = QStringLiteral("none");
-                    break;
-            }
+            const QVector3D minB = currentMesh->boundingBoxMin();
+            const QVector3D maxB = currentMesh->boundingBoxMax();
+            const QVector3D extents = maxB - minB;
             statusLabel->setText(
-                QString("Model: %1 | Vertices: %2 | Polygons: %3 | Backend: %4")
+                QString("Preview: %1 | Vertices: %2 | Polygons: %3 | Bounds: %4 x %5 x %6 | Backend: %7")
                     .arg(currentModelPath.toQString())
                     .arg(currentMesh->vertexCount())
                     .arg(currentMesh->polygonCount())
-                    .arg(backendText));
+                    .arg(static_cast<int>(std::round(extents.x())))
+                    .arg(static_cast<int>(std::round(extents.y())))
+                    .arg(static_cast<int>(std::round(extents.z())))
+                    .arg(backendText()));
         } else {
             const QString reason = lastErrorText.isEmpty()
                 ? QStringLiteral("3D Model Viewer: no model loaded")
-                : QStringLiteral("3D Model Viewer: %1").arg(lastErrorText);
+                : QStringLiteral("3D Model Viewer: preview unavailable (%1) [%2]")
+                      .arg(lastErrorText)
+                      .arg(backendText());
             statusLabel->setText(reason);
         }
+    }
+
+    void pushCamera()
+    {
+        if (!renderWindow) {
+            return;
+        }
+        renderWindow->setPreviewCamera(zoomFactor, cameraYaw, cameraPitch, QVector3D(0.0f, 0.0f, 0.0f));
     }
 };
 
@@ -244,6 +262,7 @@ void Artifact3DModelViewer::resetView()
     impl_->cameraYaw = 0.0f;
     impl_->cameraPitch = 0.0f;
     impl_->cameraPosition = QVector3D(0.0f, 0.0f, 5.0f);
+    impl_->pushCamera();
     requestUpdate();
 }
 
@@ -260,6 +279,7 @@ void Artifact3DModelViewer::setZoom(float factor)
 {
     impl_->zoomFactor = std::max(0.05f, factor);
     impl_->cameraPosition.setZ(5.0f / impl_->zoomFactor);
+    impl_->pushCamera();
     requestUpdate();
 }
 
@@ -267,17 +287,22 @@ void Artifact3DModelViewer::setCameraRotation(float yaw, float pitch)
 {
     impl_->cameraYaw = yaw;
     impl_->cameraPitch = pitch;
+    impl_->pushCamera();
     requestUpdate();
 }
 
 void Artifact3DModelViewer::setCameraPosition(const QVector3D& position)
 {
     impl_->cameraPosition = position;
+    impl_->pushCamera();
     requestUpdate();
 }
 
 void Artifact3DModelViewer::setDisplayMode(DisplayMode mode)
 {
+    if (impl_->mode == mode) {
+        return;
+    }
     impl_->mode = mode;
     if (impl_->renderWindow) {
         impl_->renderWindow->setShadingMode(Impl::toShadingMode(mode));
@@ -291,11 +316,60 @@ void Artifact3DModelViewer::setDisplayMode(DisplayMode mode)
             impl_->modeCombo->setCurrentIndex(desiredIndex);
         }
     }
+    Q_EMIT displayModeChanged(mode);
 }
 
 Artifact3DModelViewer::DisplayMode Artifact3DModelViewer::displayMode() const
 {
     return impl_->mode;
+}
+
+bool Artifact3DModelViewer::hasModel() const
+{
+    return impl_ && impl_->modelLoaded && impl_->currentMesh;
+}
+
+int Artifact3DModelViewer::vertexCount() const
+{
+    return hasModel() ? impl_->currentMesh->vertexCount() : 0;
+}
+
+int Artifact3DModelViewer::polygonCount() const
+{
+    return hasModel() ? impl_->currentMesh->polygonCount() : 0;
+}
+
+QString Artifact3DModelViewer::backendName() const
+{
+    if (!impl_) {
+        return QStringLiteral("none");
+    }
+    switch (impl_->lastBackend) {
+        case ArtifactCore::MeshImporter::Backend::Ufbx:
+            return QStringLiteral("ufbx");
+        case ArtifactCore::MeshImporter::Backend::TinyObj:
+            return QStringLiteral("tinyobj");
+        case ArtifactCore::MeshImporter::Backend::UfbxGltf:
+            return QStringLiteral("glTF via ufbx");
+        case ArtifactCore::MeshImporter::Backend::None:
+        default:
+            return QStringLiteral("none");
+    }
+}
+
+QString Artifact3DModelViewer::lastErrorText() const
+{
+    return impl_ ? impl_->lastErrorText : QString();
+}
+
+QVector3D Artifact3DModelViewer::meshExtents() const
+{
+    if (!hasModel()) {
+        return QVector3D(0.0f, 0.0f, 0.0f);
+    }
+    const QVector3D minB = impl_->currentMesh->boundingBoxMin();
+    const QVector3D maxB = impl_->currentMesh->boundingBoxMax();
+    return maxB - minB;
 }
 
 float Artifact3DModelViewer::zoomFactor() const

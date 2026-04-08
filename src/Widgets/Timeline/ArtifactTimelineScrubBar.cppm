@@ -260,8 +260,8 @@ namespace Artifact
   const QColor bgBottom = theme.background.darker(116);
   const QColor railColor = theme.surface.darker(108);
   const QColor railBorder = theme.border;
-  const QColor accent = theme.accent;
-  const QColor accentStrong = impl_->dragging_ ? accent.lighter(120) : (impl_->hover_ ? accent.lighter(110) : accent);
+  const QColor playheadColor(255, 106, 71);
+  const QColor playheadStrong = impl_->dragging_ ? playheadColor.lighter(120) : (impl_->hover_ ? playheadColor.lighter(110) : playheadColor);
 
   QLinearGradient bgGrad(r.topLeft(), r.bottomLeft());
   bgGrad.setColorAt(0.0, bgTop);
@@ -317,7 +317,7 @@ namespace Artifact
      if (labelX <= lastLabelRight + 6.0) {
       continue;
      }
-     p.setPen(theme.accent.lighter(195));
+     p.setPen(playheadColor.lighter(195));
      p.drawText(QRectF(labelX, 0.0, labelW + 6.0, topBandHeight - 2), Qt::AlignLeft | Qt::AlignVCenter, label);
      lastLabelRight = labelX + labelW;
     }
@@ -334,8 +334,8 @@ namespace Artifact
   activeRect.setRight(std::max(activeRect.left(), clampedX));
   if (activeRect.width() > 1) {
    QLinearGradient activeGrad(activeRect.topLeft(), activeRect.bottomLeft());
-   activeGrad.setColorAt(0.0, accentStrong.lighter(118));
-   activeGrad.setColorAt(1.0, accentStrong.darker(120));
+   activeGrad.setColorAt(0.0, playheadStrong.lighter(118));
+   activeGrad.setColorAt(1.0, playheadStrong.darker(120));
    p.setPen(Qt::NoPen);
    p.setBrush(activeGrad);
    p.drawRoundedRect(activeRect, railHalfH, railHalfH);
@@ -356,7 +356,7 @@ namespace Artifact
    }
   }
 
-  p.setPen(QPen(accentStrong, impl_->dragging_ || impl_->hover_ ? 2 : 1));
+  p.setPen(QPen(playheadStrong, impl_->dragging_ || impl_->hover_ ? 2 : 1));
   p.drawLine(clampedX, 0, clampedX, h);
 
    const int frame = impl_->currentFrame_.framePosition();

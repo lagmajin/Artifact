@@ -22,6 +22,7 @@
 #include <QLineEdit>
 #include <QPlainTextEdit>
 #include <QSignalBlocker>
+#include <QTimer>
 #include <QColorDialog>
 #include <QMessageBox>
 #include <QVariant>
@@ -104,8 +105,18 @@ namespace Artifact {
 
  //using namespace ArtifactWidgets;
 
- namespace {
- constexpr int kEffectRackCount = 5;
+namespace {
+constexpr int kEffectRackCount = 5;
+constexpr int kInspectorSectionMarginL = 8;
+constexpr int kInspectorSectionMarginT = 8;
+constexpr int kInspectorSectionMarginR = 8;
+constexpr int kInspectorSectionMarginB = 8;
+constexpr int kInspectorSectionSpacing = 4;
+constexpr int kInspectorNoteMargin = 6;
+constexpr int kInspectorRackMarginL = 6;
+constexpr int kInspectorRackMarginT = 10;
+constexpr int kInspectorRackMarginR = 6;
+constexpr int kInspectorRackMarginB = 6;
 
  QColor themeColor(const QString& value, const QColor& fallback)
  {
@@ -296,6 +307,19 @@ namespace Artifact {
    QMetaObject::Connection layerNoteConnection_;
    ArtifactCore::EventBus eventBus_ = ArtifactCore::globalEventBus();
    std::vector<ArtifactCore::EventBus::Subscription> eventBusSubscriptions_;
+   QString lastLayerInfoSignature_;
+   std::array<QString, kEffectRackCount> lastRackSignatures_{};
+   QString lastCompositionNoteText_;
+   QString lastLayerNoteText_;
+   int refreshMask_ = 0;
+   bool refreshQueued_ = false;
+
+   enum RefreshReason {
+    CompositionNoteDirty = 1 << 0,
+    LayerNoteDirty = 1 << 1,
+    LayerInfoDirty = 1 << 2,
+    EffectsDirty = 1 << 3
+   };
 
    void rebuildMenu();
    void defaultHandleKeyPressEvent(QKeyEvent* event);
@@ -325,12 +349,53 @@ namespace Artifact {
    void setEffectsStateText(const QString& text, bool visible);
    void setNoProjectState();
    void setNoLayerState();
+   void scheduleRefresh(int reasonMask = CompositionNoteDirty | LayerNoteDirty | LayerInfoDirty | EffectsDirty);
+   void refreshNow();
+   QString computeLayerInfoSignature(const ArtifactAbstractLayerPtr& layer) const;
+   QString computeRackSignature(int rackIndex, const std::vector<std::shared_ptr<ArtifactCore::AbstractEffect>>& effects) const;
   };
 
- ArtifactInspectorWidget::Impl::Impl()
- {
+ArtifactInspectorWidget::Impl::Impl()
+{
 
+}
+
+void ArtifactInspectorWidget::Impl::scheduleRefresh(int reasonMask)
+{
+ if (!owner) {
+  return;
  }
+ refreshMask_ |= reasonMask;
+ if (refreshQueued_) {
+  return;
+ }
+ refreshQueued_ = true;
+ QTimer::singleShot(0, owner, [this]() {
+  if (!refreshQueued_) {
+   return;
+  }
+  refreshNow();
+ });
+}
+
+void ArtifactInspectorWidget::Impl::refreshNow()
+{
+ const int mask = refreshMask_;
+ refreshMask_ = 0;
+ refreshQueued_ = false;
+ if (mask & CompositionNoteDirty) {
+  updateCompositionNote();
+ }
+ if (mask & LayerNoteDirty) {
+  updateLayerNote();
+ }
+ if (mask & LayerInfoDirty) {
+  updateLayerInfo();
+ }
+ if (mask & EffectsDirty) {
+  updateEffectsList();
+ }
+}
 
 void ArtifactInspectorWidget::Impl::updatePropertiesForEffect(const QString& effectId)
 {
@@ -341,8 +406,64 @@ void ArtifactInspectorWidget::Impl::updatePropertiesForEffect(const QString& eff
 void ArtifactInspectorWidget::Impl::setEffectsStateText(const QString& text, bool visible)
 {
  if (!effectsStateLabel) return;
+ if (effectsStateLabel->text() == text && effectsStateLabel->isVisible() == visible) {
+  return;
+ }
  effectsStateLabel->setText(text);
  effectsStateLabel->setVisible(visible);
+}
+
+QString ArtifactInspectorWidget::Impl::computeLayerInfoSignature(const ArtifactAbstractLayerPtr& layer) const
+{
+    if (!layer) {
+        return QStringLiteral("<no-layer>");
+    }
+
+    QString signature;
+    signature.reserve(256);
+    signature += currentCompositionId_.toString();
+    signature += QLatin1Char('|');
+    signature += layer->id().toString();
+    signature += QLatin1Char('|');
+    signature += layer->layerName();
+    signature += QLatin1Char('|');
+
+    QString layerType = QStringLiteral("Layer");
+    if (layer->isNullLayer()) {
+        layerType = QStringLiteral("Null Layer");
+    } else if (layer->isAdjustmentLayer()) {
+        layerType = QStringLiteral("Adjustment Layer");
+    }
+    signature += layerType;
+    signature += QLatin1Char('|');
+    signature += QString::number(layer->maskCount());
+    signature += QLatin1Char('|');
+    signature += layer->layerNote();
+    return signature;
+}
+
+QString ArtifactInspectorWidget::Impl::computeRackSignature(int rackIndex, const std::vector<std::shared_ptr<ArtifactCore::AbstractEffect>>& effects) const
+{
+    QString signature;
+    signature.reserve(512);
+    signature += currentCompositionId_.toString();
+    signature += QLatin1Char('|');
+    signature += currentLayerId_.toString();
+    signature += QLatin1Char('|');
+    signature += QString::number(rackIndex);
+    signature += QLatin1Char('|');
+    for (const auto& effect : effects) {
+        if (!effect) {
+            continue;
+        }
+        signature += effect->effectID().toQString();
+        signature += QLatin1Char('|');
+        signature += effect->displayName().toQString();
+        signature += QLatin1Char('|');
+        signature += effect->isEnabled() ? QStringLiteral("1") : QStringLiteral("0");
+        signature += QLatin1Char('|');
+    }
+    return signature;
 }
 
  ArtifactInspectorWidget::Impl::~Impl()
@@ -538,12 +659,8 @@ void ArtifactInspectorWidget::Impl::setEffectsStateText(const QString& text, boo
  void ArtifactInspectorWidget::Impl::handleProjectCreated()
  {
   qDebug() << "[Inspector] Project created";
-  // プロジェクト作成時はまだレイヤーがないので「レイヤー未選択」状態に
  containerWidget->setEnabled(true);
-  layerNameLabel->setText("Layer: (No layer selected)");
-  layerTypeLabel->setText("Type: N/A");
-  statusLabel->setText("Status: Waiting for layer selection");
-  setEffectsStateText("Select a layer to manage effects.", true);
+ scheduleRefresh(CompositionNoteDirty | LayerNoteDirty | LayerInfoDirty | EffectsDirty);
  }
 
  void ArtifactInspectorWidget::Impl::handleProjectClosed()
@@ -556,38 +673,21 @@ void ArtifactInspectorWidget::Impl::handleCompositionCreated(const CompositionID
 {
  qDebug() << "[Inspector] Composition created:" << id.toString();
  currentCompositionId_ = id;
- updateCompositionNote();
- updateLayerNote();
- // コンポジション作成時はまだレイヤーなし
- layerNameLabel->setText("Layer: (No layer in composition)");
- layerTypeLabel->setText("Type: N/A");
- statusLabel->setText("Status: Add layers to the composition");
- setEffectsStateText("Add and select a layer to manage effects.", true);
+ scheduleRefresh(CompositionNoteDirty | LayerNoteDirty | LayerInfoDirty | EffectsDirty);
 }
 
 void ArtifactInspectorWidget::Impl::handleCompositionChanged(const CompositionID& id)
 {
  qDebug() << "[Inspector] Composition changed:" << id.toString();
  currentCompositionId_ = id;
- updateCompositionNote();
- updateLayerNote();
-
- if (currentLayerId_.isNil()) {
-  setNoLayerState();
-  return;
-  }
-
-  updateLayerInfo();
-  updateEffectsList();
- }
+ scheduleRefresh(CompositionNoteDirty | LayerNoteDirty | LayerInfoDirty | EffectsDirty);
+}
 
 void ArtifactInspectorWidget::Impl::handleLayerSelected(const LayerID& id)
 {
  qDebug() << "[Inspector] Layer selected:" << id.toString();
  currentLayerId_ = id;
- updateLayerNote();
- updateLayerInfo();
- updateEffectsList();
+ scheduleRefresh(LayerNoteDirty | LayerInfoDirty | EffectsDirty);
 }
 
 void ArtifactInspectorWidget::Impl::updateCompositionNote()
@@ -660,6 +760,14 @@ void ArtifactInspectorWidget::Impl::updateCompositionNote()
       });
 
   const QString note = comp->compositionNote();
+  if (note == lastCompositionNoteText_) {
+    compositionNoteEdit->setEnabled(true);
+    if (compositionNoteGroup) {
+      compositionNoteGroup->setEnabled(true);
+    }
+    return;
+  }
+  lastCompositionNoteText_ = note;
   {
     QSignalBlocker blocker(compositionNoteEdit);
     compositionNoteEdit->setPlainText(note);
@@ -753,6 +861,14 @@ void ArtifactInspectorWidget::Impl::updateLayerNote()
       });
 
   const QString note = layer->layerNote();
+  if (note == lastLayerNoteText_) {
+    layerNoteEdit->setEnabled(true);
+    if (layerNoteGroup) {
+      layerNoteGroup->setEnabled(true);
+    }
+    return;
+  }
+  lastLayerNoteText_ = note;
   {
     QSignalBlocker blocker(layerNoteEdit);
     layerNoteEdit->setPlainText(note);
@@ -811,6 +927,12 @@ void ArtifactInspectorWidget::Impl::updateLayerNote()
    setNoLayerState();
    return;
   }
+
+  const QString nextSignature = computeLayerInfoSignature(layer);
+  if (nextSignature == lastLayerInfoSignature_) {
+   return;
+  }
+  lastLayerInfoSignature_ = nextSignature;
 
   // レイヤー情報を表示
   QString layerName = layer->layerName();
@@ -893,9 +1015,15 @@ void ArtifactInspectorWidget::Impl::setNoProjectState()
   statusLabel->setText("Status: Create or open a project");
   currentCompositionId_ = CompositionID();
   currentLayerId_ = LayerID();
+  lastLayerInfoSignature_.clear();
+  lastCompositionNoteText_.clear();
+  lastLayerNoteText_.clear();
+  lastRackSignatures_.fill(QString());
+  refreshMask_ = 0;
+  refreshQueued_ = false;
   setEffectRackEnabled(false);
   setEffectsStateText("Create or open a project to manage effects.", true);
- }
+}
 
 void ArtifactInspectorWidget::Impl::setNoLayerState()
 {
@@ -923,6 +1051,11 @@ void ArtifactInspectorWidget::Impl::setNoLayerState()
     rack.listWidget->clear();
    }
   }
+  lastLayerInfoSignature_.clear();
+  lastLayerNoteText_.clear();
+  lastRackSignatures_.fill(QString());
+  refreshMask_ = 0;
+  refreshQueued_ = false;
   setEffectRackEnabled(false);
   setEffectsStateText("Select a layer to manage effects.", true);
   refreshRackButtons();
@@ -971,11 +1104,8 @@ void ArtifactInspectorWidget::Impl::setNoLayerState()
   }
  }
 
-  void ArtifactInspectorWidget::Impl::updateEffectsList()
- {
-  for (int i=0; i<kEffectRackCount; ++i) {
-      if (racks[i].listWidget) racks[i].listWidget->clear();
-  }
+void ArtifactInspectorWidget::Impl::updateEffectsList()
+{
   if (currentLayerId_.isNil()) {
       setEffectRackEnabled(false);
       setEffectsStateText("Select a layer to manage effects.", true);
@@ -1021,35 +1151,52 @@ void ArtifactInspectorWidget::Impl::setNoLayerState()
       refreshRackButtons();
       return;
   }
-  Q_UNUSED(layer);
 
   auto effects = layer->getEffects();
   setEffectRackEnabled(true);
   int effectCount = 0;
+  std::array<std::vector<std::shared_ptr<ArtifactCore::AbstractEffect>>, kEffectRackCount> rackEffects;
 
   for (const auto& effect : effects) {
    if (effect) {
     ++effectCount;
-    QString effectName = effect->displayName().toQString();
-    QString effectStatus = effect->isEnabled() ? "✓" : "✗";
-    QString itemText = QString("[%1] %2").arg(effectStatus, effectName);
-
-    auto item = new QListWidgetItem(itemText);
-    item->setData(Qt::UserRole, effect->effectID().toQString());
-
     const int rackIdx = rackIndexFromStage(effect->pipelineStage());
     if (rackIdx >= 0) {
-        if (racks[rackIdx].listWidget) racks[rackIdx].listWidget->addItem(item);
+        rackEffects[rackIdx].push_back(effect);
     }
    }
   }
-  for (int i=0; i<kEffectRackCount; ++i) {
-      if (racks[i].listWidget && racks[i].listWidget->count() == 0) {
+
+  for (int i = 0; i < kEffectRackCount; ++i) {
+      const QString rackSignature = computeRackSignature(i, rackEffects[i]);
+      if (rackSignature == lastRackSignatures_[i]) {
+          continue;
+      }
+      lastRackSignatures_[i] = rackSignature;
+
+      if (!racks[i].listWidget) {
+          continue;
+      }
+      racks[i].listWidget->clear();
+      if (rackEffects[i].empty()) {
           auto item = new QListWidgetItem("(No effects)");
           item->setFlags(item->flags() & ~Qt::ItemIsSelectable);
           racks[i].listWidget->addItem(item);
+          continue;
+      }
+      for (const auto& effect : rackEffects[i]) {
+          if (!effect) {
+              continue;
+          }
+          QString effectName = effect->displayName().toQString();
+          QString effectStatus = effect->isEnabled() ? "✓" : "✗";
+          QString itemText = QString("[%1] %2").arg(effectStatus, effectName);
+          auto* item = new QListWidgetItem(itemText);
+          item->setData(Qt::UserRole, effect->effectID().toQString());
+          racks[i].listWidget->addItem(item);
       }
   }
+
   if (effectCount == 0) {
       setEffectsStateText("No effects on the selected layer yet.", true);
   } else {
@@ -1205,7 +1352,10 @@ void ArtifactInspectorWidget::Impl::handleRemoveEffectClicked(int rackIndex)
   impl_->compositionNoteEdit->setMinimumHeight(120);
   applyInspectorTextEdit(impl_->compositionNoteEdit);
   compositionNoteLayout->addWidget(impl_->compositionNoteEdit);
-  compositionNoteLayout->setContentsMargins(6, 6, 6, 6);
+  compositionNoteLayout->setContentsMargins(kInspectorNoteMargin,
+                                            kInspectorNoteMargin,
+                                            kInspectorNoteMargin,
+                                            kInspectorNoteMargin);
   impl_->compositionNoteGroup->setLayout(compositionNoteLayout);
   impl_->compositionNoteGroup->hide();
   layerInfoLayout->addWidget(impl_->compositionNoteGroup);
@@ -1218,7 +1368,10 @@ void ArtifactInspectorWidget::Impl::handleRemoveEffectClicked(int rackIndex)
   impl_->layerNoteEdit->setMinimumHeight(110);
   applyInspectorTextEdit(impl_->layerNoteEdit);
   layerNoteLayout->addWidget(impl_->layerNoteEdit);
-  layerNoteLayout->setContentsMargins(6, 6, 6, 6);
+  layerNoteLayout->setContentsMargins(kInspectorNoteMargin,
+                                      kInspectorNoteMargin,
+                                      kInspectorNoteMargin,
+                                      kInspectorNoteMargin);
   impl_->layerNoteGroup->setLayout(layerNoteLayout);
   impl_->layerNoteGroup->hide();
   layerInfoLayout->addWidget(impl_->layerNoteGroup);
@@ -1249,8 +1402,11 @@ void ArtifactInspectorWidget::Impl::handleRemoveEffectClicked(int rackIndex)
   layerInfoLayout->addWidget(impl_->layerTypeLabel);
 
   layerInfoLayout->setAlignment(Qt::AlignTop);
-  layerInfoLayout->setContentsMargins(8, 8, 8, 8);
-  layerInfoLayout->setSpacing(4);
+  layerInfoLayout->setContentsMargins(kInspectorSectionMarginL,
+                                      kInspectorSectionMarginT,
+                                      kInspectorSectionMarginR,
+                                      kInspectorSectionMarginB);
+  layerInfoLayout->setSpacing(kInspectorSectionSpacing);
 
   QObject::connect(impl_->compositionNoteEdit, &QPlainTextEdit::textChanged, this, [this]() {
     if (!impl_->compositionNoteEdit || impl_->currentCompositionId_.isNil()) {
@@ -1344,7 +1500,10 @@ void ArtifactInspectorWidget::Impl::handleRemoveEffectClicked(int rackIndex)
       
       rackLayout->addWidget(impl_->racks[i].listWidget);
       rackLayout->addLayout(btnLayout);
-      rackLayout->setContentsMargins(6, 10, 6, 6);
+      rackLayout->setContentsMargins(kInspectorRackMarginL,
+                                     kInspectorRackMarginT,
+                                     kInspectorRackMarginR,
+                                     kInspectorRackMarginB);
       rackGroup->setLayout(rackLayout);
       
       effectsLayout->addWidget(rackGroup);
@@ -1428,7 +1587,10 @@ void ArtifactInspectorWidget::Impl::handleRemoveEffectClicked(int rackIndex)
   }
 
   effectsLayout->addStretch();
-  effectsLayout->setContentsMargins(8, 8, 8, 8);
+  effectsLayout->setContentsMargins(kInspectorSectionMarginL,
+                                    kInspectorSectionMarginT,
+                                    kInspectorSectionMarginR,
+                                    kInspectorSectionMarginB);
   effectsLayout->setSpacing(8);
 
   impl_->effectsTabWidget->setLayout(effectsLayout);

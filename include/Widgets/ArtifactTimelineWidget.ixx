@@ -2,77 +2,30 @@
 
 #include <wobjectdefs.h>
 //#include <QtWidgets/QtWidgets>
-#include <QGraphicsView>
 #include <QMouseEvent>
 #include <QWheelEvent>
 #include <QKeyEvent>
-#include <QGraphicsScene>
+
+#include <QWidget>
 export module Artifact.Widgets.Timeline;
 
 import std;
 import Utils.Id;
-import Artifact.Timeline.Objects;
 
 W_REGISTER_ARGTYPE(ArtifactCore::LayerID)
 
 export namespace Artifact {
 using namespace ArtifactCore;
 
- class TimelineScene : public QGraphicsScene
- {
-	 W_OBJECT(TimelineScene)
- private:
-  class Impl;
-  Impl* impl_;
- public:
-  enum class SnapStrength
-  {
-   Low = 0,
-   Medium,
-   High
-  };
-
-  explicit TimelineScene(QWidget* parent = nullptr);
-  ~TimelineScene();
-  
-  void drawBackground(QPainter* painter, const QRectF& rect) override;
-  
-  // Track management
-  int addTrack(double height = 20.0);
-  void clearTracks();
-  void removeTrack(int trackIndex);
-  int trackCount() const;
-  double trackHeight(int trackIndex) const;
-  void setTrackHeight(int trackIndex, double height);
-  double getTrackYPosition(int trackIndex) const;
-  
-  // Clip management
-  ClipItem* addClip(int trackIndex, double start, double duration);
-  void removeClip(ClipItem* clip);
-  const std::vector<ClipItem*>& getClips() const;
-  int getTrackAtPosition(double yPos) const;
-  
-  // Selection
-  void clearSelection();
-  const std::vector<ClipItem*>& getSelectedClips() const;
-
-  // Snap strength control
-  void setSnapStrength(SnapStrength strength);
-  [[nodiscard]] SnapStrength snapStrength() const;
-  void setRippleEditEnabled(bool enabled);
-  [[nodiscard]] bool rippleEditEnabled() const;
-  
-  // Visual helpers
-  void highlightTrack(int trackIndex);
-  void clearTrackHighlight();
- };
-
 class ArtifactTimelineWidget :public QWidget {
   W_OBJECT(ArtifactTimelineWidget)
  private:
-  class Impl;
+ class Impl;
   Impl* impl_;
+  void syncTimelineViewportFromNavigator();
+  void syncTimelineHorizontalOffset(double offset);
   void syncWorkAreaFromCurrentComposition();
+  void syncPainterSelectionState();
   void updateSearchState();
   void updateKeyframeState();
   void updateSelectionState();

@@ -16,6 +16,8 @@ module;
 export module Artifact.Timeline.TrackPainterView;
 
 import Utils.Id;
+import Artifact.Composition.Abstract;
+import Artifact.Layers.Selection.Manager;
 
 W_REGISTER_ARGTYPE(ArtifactCore::LayerID)
 
@@ -90,13 +92,16 @@ export namespace Artifact
   void setTrackCount(int count);
   int trackCount() const;
 
+  void setTrackHeights(const QVector<int>& heights);
   void setTrackHeight(int trackIndex, int height);
   int trackHeight(int trackIndex) const;
 
   void clearClips();
   void setClips(const QVector<TrackClipVisual>& clips);
   void setKeyframeMarkers(const QVector<KeyframeMarkerVisual>& markers);
-  void setSelectedLayerIds(const QSet<LayerID>& layerIds);
+  void syncSelectionState(const ArtifactCompositionPtr& composition,
+                          ArtifactLayerSelectionManager* selectionManager,
+                          const QVector<LayerID>& trackLayerIds);
   QVector<TrackClipVisual> clips() const;
 
  public /*signals*/:

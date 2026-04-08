@@ -749,57 +749,46 @@ void ShaderManager::Impl::createPSOs()
 
 void ShaderManager::Impl::destroy()
 {
-    linePsoAndSrb_.pPSO->Release();
-    linePsoAndSrb_.pSRB->Release();
-    outlinePsoAndSrb_.pPSO->Release();
-    outlinePsoAndSrb_.pSRB->Release();
-    solidRectPsoAndSrb_.pPSO->Release();
-    solidRectPsoAndSrb_.pSRB->Release();
-    solidRectTransformPsoAndSrb_.pPSO->Release();
-    solidRectTransformPsoAndSrb_.pSRB->Release();
-    spritePsoAndSrb_.pPSO->Release();
-    spritePsoAndSrb_.pSRB->Release();
-    maskedSpritePsoAndSrb_.pPSO->Release();
-    maskedSpritePsoAndSrb_.pSRB->Release();
-    thickLinePsoAndSrb_.pPSO->Release();
-    thickLinePsoAndSrb_.pSRB->Release();
-    dotLinePsoAndSrb_.pPSO->Release();
-    dotLinePsoAndSrb_.pSRB->Release();
-    solidTrianglePsoAndSrb_.pPSO->Release();
-    solidTrianglePsoAndSrb_.pSRB->Release();
-    checkerboardPsoAndSrb_.pPSO->Release();
-    checkerboardPsoAndSrb_.pSRB->Release();
-    gridPsoAndSrb_.pPSO->Release();
-    gridPsoAndSrb_.pSRB->Release();
-    gizmo3DPsoAndSrb_.pPSO->Release();
-    gizmo3DPsoAndSrb_.pSRB->Release();
-    gizmo3DTrianglePsoAndSrb_.pPSO->Release();
-    gizmo3DTrianglePsoAndSrb_.pSRB->Release();
+    auto clearPso = [](auto& pair) {
+        pair.pPSO = nullptr;
+        pair.pSRB = nullptr;
+    };
+    auto clearShaderPair = [](auto& pair) {
+        pair.VS = nullptr;
+        pair.PS = nullptr;
+    };
 
-    lineShaders_.VS->Release();
-    lineShaders_.PS->Release();
-    outlineShaders_.VS->Release();
-    outlineShaders_.PS->Release();
-    solidShaders_.VS->Release();
-    solidShaders_.PS->Release();
-    solidRectTransformShaders_.VS->Release();
-    solidRectTransformShaders_.PS->Release();
-    spriteShaders_.VS->Release();
-    spriteShaders_.PS->Release();
-    maskedSpriteShaders_.VS->Release();
-    maskedSpriteShaders_.PS->Release();
-    thickLineShaders_.VS->Release();
-    thickLineShaders_.PS->Release();
-    dotLineShaders_.VS->Release();
-    dotLineShaders_.PS->Release();
-    checkerboardShaders_.VS->Release();
-    checkerboardShaders_.PS->Release();
-    gridShaders_.VS->Release();
-    gridShaders_.PS->Release();
-    gizmo3DShaders_.VS->Release();
-    gizmo3DShaders_.PS->Release();
+    clearPso(linePsoAndSrb_);
+    clearPso(outlinePsoAndSrb_);
+    clearPso(solidRectPsoAndSrb_);
+    clearPso(solidRectTransformPsoAndSrb_);
+    clearPso(spritePsoAndSrb_);
+    clearPso(maskedSpritePsoAndSrb_);
+    clearPso(thickLinePsoAndSrb_);
+    clearPso(dotLinePsoAndSrb_);
+    clearPso(solidTrianglePsoAndSrb_);
+    clearPso(checkerboardPsoAndSrb_);
+    clearPso(gridPsoAndSrb_);
+    clearPso(gizmo3DPsoAndSrb_);
+    clearPso(gizmo3DTrianglePsoAndSrb_);
+    clearPso(batchSolidRectPsoAndSrb_);
 
-    spriteSampler_->Release();
+    clearShaderPair(lineShaders_);
+    clearShaderPair(outlineShaders_);
+    clearShaderPair(solidShaders_);
+    clearShaderPair(solidRectTransformShaders_);
+    clearShaderPair(spriteShaders_);
+    clearShaderPair(spriteTransformShaders_);
+    clearShaderPair(maskedSpriteShaders_);
+    clearShaderPair(thickLineShaders_);
+    clearShaderPair(dotLineShaders_);
+    clearShaderPair(solidTriangleShaders_);
+    clearShaderPair(checkerboardShaders_);
+    clearShaderPair(gridShaders_);
+    clearShaderPair(gizmo3DShaders_);
+    clearShaderPair(batchSolidRectShaders_);
+
+    spriteSampler_ = nullptr;
 
     initialized_ = false;
 }

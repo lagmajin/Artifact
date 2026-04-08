@@ -13,6 +13,10 @@ module;
 
 
 #include <windows.h>
+#include <clocale>
+#include <cstdio>
+#include <fcntl.h>
+#include <io.h>
 
 // #include <pybind11/pybind11.h>
 #include <filesystem>
@@ -630,7 +634,39 @@ static void configureQtPaths() {
   // TODO: Configure Qt plugin paths and environment as needed
 }
 
+#if defined(_WIN32)
+static void configureWindowsUtf8Console()
+{
+  if (GetConsoleWindow() != nullptr) {
+    SetConsoleOutputCP(CP_UTF8);
+    SetConsoleCP(CP_UTF8);
+  }
+
+  std::setlocale(LC_ALL, ".UTF-8");
+
+  const int stdoutFd = _fileno(stdout);
+  if (stdoutFd >= 0 && _isatty(stdoutFd)) {
+    _setmode(stdoutFd, _O_U8TEXT);
+  }
+
+  const int stderrFd = _fileno(stderr);
+  if (stderrFd >= 0 && _isatty(stderrFd)) {
+    _setmode(stderrFd, _O_U8TEXT);
+  }
+
+  const int stdinFd = _fileno(stdin);
+  if (stdinFd >= 0 && _isatty(stdinFd)) {
+    _setmode(stdinFd, _O_U8TEXT);
+  }
+}
+#else
+static void configureWindowsUtf8Console()
+{
+}
+#endif
+
 int main(int argc, char *argv[]) {
+  configureWindowsUtf8Console();
   ArtifactCore::CrashHandler::install();
   ArtifactCore::Logger::instance()->install();
 
@@ -1074,16 +1110,6 @@ int main(int argc, char *argv[]) {
           if (projectManagerWidget) {
             projectManagerWidget->selectItemsByFilePaths(selectedFiles);
           }
-          if (!contentsViewer || selectedFiles.size() != 1) {
-            return;
-          }
-          const QString filePath = selectedFiles.first().trimmed();
-          if (filePath.isEmpty() || !QFileInfo(filePath).isFile()) {
-            return;
-          }
-          contentsViewer->setFilePath(filePath);
-          mw->setDockVisible(QStringLiteral("Contents Viewer"), true);
-          mw->activateDock(QStringLiteral("Contents Viewer"));
         });
     mw->addDockedWidget(QStringLiteral("Inspector"), ads::RightDockWidgetArea,
                         new ArtifactInspectorWidget(mw));

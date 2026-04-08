@@ -757,6 +757,19 @@ namespace Artifact
      updatePlaybackState();
     });
 
+   QObject::connect(mediaPlayer, &QMediaPlayer::mediaStatusChanged, owner_,
+    [this](QMediaPlayer::MediaStatus status) {
+     if (status == QMediaPlayer::EndOfMedia) {
+      const qint64 resetPosition = playbackRangeActive ? playbackRangeStartMs : 0;
+      if (seekSlider) {
+       QSignalBlocker blocker(seekSlider);
+       seekSlider->setValue(static_cast<int>(std::clamp<qint64>(resetPosition, 0, std::numeric_limits<int>::max())));
+      }
+      mediaPlayer->setPosition(resetPosition);
+     }
+     updatePlaybackState();
+    });
+
    QObject::connect(mediaPlayer, &QMediaPlayer::errorOccurred, owner_,
     [this](QMediaPlayer::Error error, const QString& errorString) {
      if (error == QMediaPlayer::NoError) return;
@@ -774,6 +787,19 @@ namespace Artifact
    }
 
    modelViewer = new Artifact3DModelViewer(owner_);
+   QObject::connect(modelViewer, &Artifact3DModelViewer::displayModeChanged, owner_, [this](Artifact3DModelViewer::DisplayMode) {
+    updateHeader();
+    updateSurfaceMeta();
+   });
+   auto* resetShortcut = new QShortcut(QKeySequence::ZoomReset, owner_);
+   resetShortcut->setContext(Qt::WidgetWithChildrenShortcut);
+   QObject::connect(resetShortcut, &QShortcut::activated, owner_, [this]() {
+    if (currentFileType == ArtifactCore::FileType::Model3D && modelViewer) {
+     modelViewer->resetView();
+     updateHeader();
+     updatePlaybackState();
+    }
+   });
    stackedWidget->addWidget(modelViewer);
    modelViewerReady = true;
   }
@@ -1136,6 +1162,9 @@ namespace Artifact
   void ArtifactContentsViewer::Impl::activateModel(const QString& filepath)
   {
    ensureModelViewer();
+   if (modelViewer) {
+    modelViewer->setDisplayMode(Artifact3DModelViewer::DisplayMode::Solid);
+   }
    modelViewer->loadModel(ArtifactCore::UniString(filepath.toStdString()));
    syncModelViewerMode();
    updateDisplayedPage();
@@ -1211,7 +1240,7 @@ namespace Artifact
     break;
    case ContentsViewerMode::Source:
    default:
-    modelViewer->setDisplayMode(Artifact3DModelViewer::DisplayMode::Wireframe);
+    modelViewer->setDisplayMode(Artifact3DModelViewer::DisplayMode::Solid);
     break;
    }
   }
@@ -1303,10 +1332,24 @@ namespace Artifact
     }
    } else if (currentFileType == ArtifactCore::FileType::Model3D) {
     const QString suffix = info.suffix().toUpper();
-    if (!suffix.isEmpty()) {
-     metaParts.prepend(QStringLiteral("%1 model").arg(suffix));
+    if (modelViewer && modelViewer->hasModel()) {
+     metaParts.prepend(QStringLiteral("Preview"));
+     metaParts.prepend(QStringLiteral("%1v / %2p")
+                           .arg(modelViewer->vertexCount())
+                           .arg(modelViewer->polygonCount()));
+     if (!suffix.isEmpty()) {
+      metaParts.prepend(QStringLiteral("%1").arg(suffix));
+     }
+    } else if (modelViewer) {
+     metaParts.prepend(QStringLiteral("Preview unavailable"));
+     if (!suffix.isEmpty()) {
+      metaParts.prepend(QStringLiteral("%1").arg(suffix));
+     }
+     if (!modelViewer->backendName().isEmpty() && modelViewer->backendName() != QStringLiteral("none")) {
+      metaParts.prepend(modelViewer->backendName());
+     }
     } else {
-     metaParts.prepend(QStringLiteral("3D viewer"));
+     metaParts.prepend(QStringLiteral("Preview unavailable"));
     }
     if (modelViewer && modelViewer->displayMode() == Artifact3DModelViewer::DisplayMode::Wireframe) {
      metaParts.prepend(QStringLiteral("Wireframe"));
@@ -1383,8 +1426,9 @@ namespace Artifact
     }
     break;
    case ArtifactCore::FileType::Model3D:
-    chips << QStringLiteral("3D");
-    if (modelViewer) {
+    chips << QStringLiteral("3D Preview");
+    if (modelViewer && modelViewer->hasModel()) {
+     chips << modelViewer->backendName();
      switch (modelViewer->displayMode()) {
      case Artifact3DModelViewer::DisplayMode::Wireframe:
       chips << QStringLiteral("Wireframe");
@@ -1396,14 +1440,20 @@ namespace Artifact
       chips << QStringLiteral("Solid");
       break;
      }
+     chips << QStringLiteral("%1v / %2p")
+                 .arg(modelViewer->vertexCount())
+                 .arg(modelViewer->polygonCount());
      chips << QStringLiteral("Zoom %1%").arg(static_cast<int>(std::round(modelViewer->zoomFactor() * 100.0f)));
      chips << QStringLiteral("Yaw %1°").arg(static_cast<int>(std::round(modelViewer->cameraYaw())));
      chips << QStringLiteral("Pitch %1°").arg(static_cast<int>(std::round(modelViewer->cameraPitch())));
-     const QVector3D cameraPos = modelViewer->cameraPosition();
-     chips << QStringLiteral("Cam %1,%2,%3")
-                 .arg(static_cast<int>(std::round(cameraPos.x())))
-                 .arg(static_cast<int>(std::round(cameraPos.y())))
-                 .arg(static_cast<int>(std::round(cameraPos.z())));
+    } else if (modelViewer) {
+     chips << QStringLiteral("Preview unavailable");
+     chips << modelViewer->backendName();
+     if (!modelViewer->lastErrorText().isEmpty()) {
+      chips << modelViewer->lastErrorText();
+     }
+    } else {
+     chips << QStringLiteral("Preview unavailable");
     }
     break;
    default:
@@ -1561,8 +1611,8 @@ namespace Artifact
                      .arg(formatDurationMs(duration));
     }
   } else if (currentFileType == ArtifactCore::FileType::Model3D) {
-    stateText = QStringLiteral("3D model inspect");
-    if (modelViewer) {
+   stateText = QStringLiteral("3D preview");
+    if (modelViewer && modelViewer->hasModel()) {
      switch (modelViewer->displayMode()) {
      case Artifact3DModelViewer::DisplayMode::Wireframe:
       stateText += QStringLiteral(" | Wireframe");
@@ -1575,12 +1625,14 @@ namespace Artifact
       stateText += QStringLiteral(" | Solid");
       break;
      }
-     stateText += QStringLiteral(" | Zoom %1%")
-                      .arg(static_cast<int>(std::round(modelViewer->zoomFactor() * 100.0f)));
-     stateText += QStringLiteral(" | Yaw %1°")
-                      .arg(static_cast<int>(std::round(modelViewer->cameraYaw())));
-     stateText += QStringLiteral(" | Pitch %1°")
-                      .arg(static_cast<int>(std::round(modelViewer->cameraPitch())));
+    } else if (modelViewer) {
+     stateText += QStringLiteral(" | Preview unavailable");
+     if (!modelViewer->backendName().isEmpty() && modelViewer->backendName() != QStringLiteral("none")) {
+      stateText += QStringLiteral(" | %1").arg(modelViewer->backendName());
+     }
+     if (!modelViewer->lastErrorText().isEmpty()) {
+      stateText += QStringLiteral(" | %1").arg(modelViewer->lastErrorText());
+     }
     }
    }
    if (currentMode == ContentsViewerMode::Source) {
@@ -1659,6 +1711,15 @@ namespace Artifact
   void ArtifactContentsViewer::Impl::updateActionAvailability()
   {
    const bool isModel = currentFileType == ArtifactCore::FileType::Model3D;
+   if (fitButton) {
+    if (isModel) {
+     fitButton->setText(QStringLiteral("Reset 3D"));
+     fitButton->setToolTip(QStringLiteral("Reset 3D view"));
+    } else {
+     fitButton->setText(QStringLiteral("Fit"));
+     fitButton->setToolTip(QStringLiteral("Fit view"));
+    }
+   }
    if (sourceButton) sourceButton->setVisible(!isModel);
    if (finalButton) finalButton->setVisible(!isModel);
    if (compareButton) compareButton->setVisible(!isModel);
