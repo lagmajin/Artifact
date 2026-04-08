@@ -502,6 +502,50 @@ void ArtifactMainWindow::addDockedWidgetFloating(const QString& title, const QSt
  impl_->dockStyleManager->applyStyle();
 }
 
+void ArtifactMainWindow::addLazyDockedWidgetFloating(
+ const QString& title,
+ const QString& dockId,
+ std::function<QWidget*()> factory,
+ const QRect& floatingGeometry)
+{
+ if (!impl_ || !impl_->dockManager || !factory) {
+  return;
+ }
+
+ auto* dock = new CDockWidget(title, this);
+ dock->setObjectName(dockId.isEmpty() ? title : dockId);
+ auto* placeholder = new QWidget(dock);
+ dock->setWidget(placeholder);
+
+ QObject::connect(dock, &ads::CDockWidget::visibilityChanged, this, [dock, placeholder, factory = std::move(factory)](bool visible) mutable {
+  if (!visible || dock->property("artifactLazyWidgetCreated").toBool()) {
+   return;
+  }
+
+  QWidget* widget = factory ? factory() : nullptr;
+  if (!widget) {
+   return;
+  }
+
+  dock->setProperty("artifactLazyWidgetCreated", true);
+  dock->setWidget(widget);
+  if (placeholder) {
+   placeholder->deleteLater();
+  }
+  refreshDockWidgetSurface(dock);
+ });
+
+ auto* container = impl_->dockManager->addDockWidgetFloating(dock);
+ if (container) {
+  container->setGeometry(floatingGeometry);
+ }
+
+ impl_->dockWidgets.push_back(dock);
+ wireDockWidgetSignals(dock, this);
+ dock->toggleView(true);
+ impl_->dockStyleManager->applyStyle();
+}
+
 void ArtifactMainWindow::moveDockToTabGroup(const QString& title, const QString& tabGroupPrefix)
 {
  if (!impl_ || !impl_->dockManager || title.isEmpty() || tabGroupPrefix.isEmpty()) return;

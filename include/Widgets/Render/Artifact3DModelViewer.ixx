@@ -40,7 +40,7 @@ public:
     void setCameraRotation(float yaw, float pitch);
     void setCameraPosition(const QVector3D& position);
     void setDisplayMode(DisplayMode mode);
-    void displayModeChanged(DisplayMode mode) W_SIGNAL(displayModeChanged, mode);
+    void displayModeChanged(int mode) W_SIGNAL(displayModeChanged, mode);
     DisplayMode displayMode() const;
     bool hasModel() const;
     int vertexCount() const;

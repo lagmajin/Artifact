@@ -316,7 +316,7 @@ void Artifact3DModelViewer::setDisplayMode(DisplayMode mode)
             impl_->modeCombo->setCurrentIndex(desiredIndex);
         }
     }
-    Q_EMIT displayModeChanged(mode);
+    Q_EMIT displayModeChanged(static_cast<int>(mode));
 }
 
 Artifact3DModelViewer::DisplayMode Artifact3DModelViewer::displayMode() const

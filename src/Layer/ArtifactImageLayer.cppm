@@ -27,19 +27,18 @@ namespace
 {
 QImage loadImageViaOIIO(const QString& path, QSize* sizeOut = nullptr, QString* errorOut = nullptr)
 {
-    using namespace OIIO;
     const std::string utf8Path = path.toUtf8().toStdString();
 
-    ImageBuf source(utf8Path);
-    if (!source.read(0, 0, true, TypeDesc::UINT8)) {
+    OIIO::ImageBuf source(utf8Path);
+    if (!source.read(0, 0, true, OIIO::TypeDesc::UINT8)) {
         if (errorOut) {
             *errorOut = QString::fromStdString(source.geterror());
         }
         return {};
     }
 
-    ImageBuf oriented = reorient(source);
-    const ImageSpec& spec = oriented.spec();
+    OIIO::ImageBuf oriented = OIIO::ImageBufAlgo::reorient(source);
+    const OIIO::ImageSpec& spec = oriented.spec();
     if (spec.width <= 0 || spec.height <= 0 || spec.nchannels <= 0) {
         if (errorOut) {
             *errorOut = QStringLiteral("Invalid image dimensions or channel count.");
@@ -47,22 +46,22 @@ QImage loadImageViaOIIO(const QString& path, QSize* sizeOut = nullptr, QString* 
         return {};
     }
 
-    ImageBuf rgba;
+    OIIO::ImageBuf rgba;
     if (spec.nchannels >= 4) {
         const std::array<int, 4> channelOrder{0, 1, 2, 3};
-        rgba = channels(oriented, 4, channelOrder);
+        rgba = OIIO::ImageBufAlgo::channels(oriented, 4, channelOrder);
     } else if (spec.nchannels == 3) {
         const std::array<int, 4> channelOrder{0, 1, 2, -1};
         const std::array<float, 4> channelValues{0.0f, 0.0f, 0.0f, 1.0f};
-        rgba = channels(oriented, 4, channelOrder, channelValues);
+        rgba = OIIO::ImageBufAlgo::channels(oriented, 4, channelOrder, channelValues);
     } else if (spec.nchannels == 2) {
         const std::array<int, 4> channelOrder{0, 0, 0, 1};
         const std::array<float, 4> channelValues{0.0f, 0.0f, 0.0f, 1.0f};
-        rgba = channels(oriented, 4, channelOrder, channelValues);
+        rgba = OIIO::ImageBufAlgo::channels(oriented, 4, channelOrder, channelValues);
     } else {
         const std::array<int, 4> channelOrder{0, 0, 0, -1};
         const std::array<float, 4> channelValues{0.0f, 0.0f, 0.0f, 1.0f};
-        rgba = channels(oriented, 4, channelOrder, channelValues);
+        rgba = OIIO::ImageBufAlgo::channels(oriented, 4, channelOrder, channelValues);
     }
 
     QImage image(spec.width, spec.height, QImage::Format_RGBA8888);
@@ -73,7 +72,7 @@ QImage loadImageViaOIIO(const QString& path, QSize* sizeOut = nullptr, QString* 
         return {};
     }
 
-    if (!rgba.get_pixels(ROI::All(), TypeDesc::UINT8, image.bits())) {
+    if (!rgba.get_pixels(OIIO::ROI::All(), OIIO::TypeDesc::UINT8, image.bits())) {
         if (errorOut) {
             *errorOut = QString::fromStdString(rgba.geterror());
         }
@@ -131,8 +130,13 @@ ArtifactImageLayer::~ArtifactImageLayer() {
 bool ArtifactImageLayer::loadFromPath(const QString& path)
 {
     const std::string utf8Path = path.toUtf8().toStdString();
-    ImageBuf headerOnly(utf8Path);
-    const ImageSpec& spec = headerOnly.spec();
+    OIIO::ImageBuf headerOnly(utf8Path);
+    if (!headerOnly.read(0, 0, true, OIIO::TypeDesc::UINT8)) {
+        qWarning() << "[ArtifactImageLayer] Failed to load image from:" << path
+                   << "error=" << QString::fromStdString(headerOnly.geterror());
+        return false;
+    }
+    const OIIO::ImageSpec& spec = headerOnly.spec();
     if (spec.width <= 0 || spec.height <= 0) {
         qWarning() << "[ArtifactImageLayer] Failed to load image from:" << path
                    << "error=" << QString::fromStdString(headerOnly.geterror());
