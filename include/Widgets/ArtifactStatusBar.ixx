@@ -1,13 +1,15 @@
 module;
+#include <utility>
+#include <array>
+#include <cstdint>
 
 #include <QtWidgets/QStatusBar>
 #include <QtWidgets/QLabel>
 #include <QtWidgets/QMenu>
 #include <QtGui/QContextMenuEvent>
-#include <array>
-#include <cstdint>
-
 export module ArtifactStatusBar;
+
+
 
 export namespace Artifact
 {

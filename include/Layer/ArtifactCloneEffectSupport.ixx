@@ -1,9 +1,10 @@
-module;
-#include <QMatrix4x4>
+﻿module;
+#include <utility>
 #include <algorithm>
 #include <functional>
 #include <memory>
 #include <vector>
+#include <QMatrix4x4>
 
 export module Artifact.Layer.CloneEffectSupport;
 

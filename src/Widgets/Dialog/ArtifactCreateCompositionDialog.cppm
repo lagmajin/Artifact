@@ -1,4 +1,5 @@
-﻿module;
+module;
+#include <utility>
 #include <QTime>
 #include <QWidget>
 #include <QDialog>

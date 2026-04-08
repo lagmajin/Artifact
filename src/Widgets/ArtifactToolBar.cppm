@@ -1,4 +1,5 @@
-﻿module;
+module;
+#include <utility>
 #include <QAction>
 #include <QActionGroup>
 #include <QDebug>

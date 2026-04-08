@@ -1,15 +1,6 @@
 ﻿module;
-#include <QObject>
-#include <QThread>
-#include <QThreadPool>
-#include <QFuture>
-#include <QVector>
-#include <QMap>
-#include <QMutex>
-#include <QMutexLocker>
 #include <atomic>
 #include <functional>
-#include <wobjectdefs.h>
 
 #include <iostream>
 #include <vector>
@@ -25,8 +16,6 @@
 #include <optional>
 #include <utility>
 #include <array>
-#include <mutex>
-#include <thread>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -36,7 +25,6 @@
 #include <variant>
 #include <any>
 #include <atomic>
-#include <condition_variable>
 #include <queue>
 #include <deque>
 #include <list>
@@ -44,7 +32,17 @@
 #include <numeric>
 #include <regex>
 #include <random>
+#include <wobjectdefs.h>
+#include <QObject>
+#include <QThread>
+#include <QThreadPool>
+#include <QFuture>
+#include <QVector>
+#include <QMap>
+#include <QMutex>
+#include <QMutexLocker>
 export module Artifact.Render.Scheduler;
+
 
 
 

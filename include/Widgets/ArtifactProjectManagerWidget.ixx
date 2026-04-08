@@ -1,16 +1,4 @@
-module;
-#include <QList>
-#include <wobjectdefs.h>
-#include <QWidget>
-#include <QScrollBar>
-#include <QToolBar>
-#include <QFileInfo>
-#include <QItemSelectionModel>
-#include <QKeyEvent>
-#include <QModelIndex>
-#include <QPaintEvent>
-#include <QStringList>
-
+﻿module;
 #include <iostream>
 #include <vector>
 #include <string>
@@ -25,8 +13,6 @@ module;
 #include <optional>
 #include <utility>
 #include <array>
-#include <mutex>
-#include <thread>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -36,7 +22,6 @@ module;
 #include <variant>
 #include <any>
 #include <atomic>
-#include <condition_variable>
 #include <queue>
 #include <deque>
 #include <list>
@@ -44,7 +29,19 @@ module;
 #include <numeric>
 #include <regex>
 #include <random>
+#include <wobjectdefs.h>
+#include <QList>
+#include <QWidget>
+#include <QScrollBar>
+#include <QToolBar>
+#include <QFileInfo>
+#include <QItemSelectionModel>
+#include <QKeyEvent>
+#include <QModelIndex>
+#include <QPaintEvent>
+#include <QStringList>
 export module Artifact.Widgets.ProjectManagerWidget;
+
 import Artifact.Project;
 
 W_REGISTER_ARGTYPE(QStringList)

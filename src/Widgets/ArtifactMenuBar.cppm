@@ -1,9 +1,11 @@
-module;
+﻿module;
+#include <utility>
+#include <QSize>
 #include <QMenuBar>
 #include <QMenu>
 #include <wobjectimpl.h>
-
 module Menu.MenuBar;
+
 
 import Artifact.Menu.File;
 import Artifact.Menu.Edit;
@@ -58,30 +60,30 @@ ArtifactMenuBar::Impl::Impl(QWidget* mainWindow, ArtifactMenuBar* menuBar)
  scriptMenu = new ArtifactScriptMenu(menuBar);
  renderMenu = new ArtifactRenderMenu(mainWindow, menuBar);
  timeMenu = new ArtifactTimeMenu(menuBar);
- viewMenu = new ArtifactViewMenu(menuBar);
+ viewMenu = new ArtifactViewMenu(static_cast<QWidget*>(menuBar));
  optionMenu = new ArtifactOptionMenu(menuBar);
 #if defined(_DEBUG) || !defined(NDEBUG)
  testMenu = new ArtifactTestMenu(menuBar);
 #endif
  helpMenu = new ArtifactHelpMenu(menuBar);
 
- menuBar->addMenu(fileMenu);
- menuBar->addMenu(editMenu);
- menuBar->addMenu(compMenu);
- menuBar->addMenu(layerMenu);
- menuBar->addMenu(effectMenu);
- menuBar->addMenu(animationMenu);
- menuBar->addMenu(scriptMenu);
- menuBar->addMenu(renderMenu);
- menuBar->addMenu(timeMenu);
- menuBar->addMenu(viewMenu);
- menuBar->addMenu(optionMenu);
+ menuBar->addMenu(static_cast<QMenu*>(fileMenu));
+ menuBar->addMenu(static_cast<QMenu*>(editMenu));
+ menuBar->addMenu(static_cast<QMenu*>(compMenu));
+ menuBar->addMenu(static_cast<QMenu*>(layerMenu));
+ menuBar->addMenu(static_cast<QMenu*>(effectMenu));
+ menuBar->addMenu(static_cast<QMenu*>(animationMenu));
+ menuBar->addMenu(static_cast<QMenu*>(scriptMenu));
+ menuBar->addMenu(static_cast<QMenu*>(renderMenu));
+ menuBar->addMenu(static_cast<QMenu*>(timeMenu));
+ menuBar->addMenu(static_cast<QMenu*>(viewMenu));
+ menuBar->addMenu(static_cast<QMenu*>(optionMenu));
 #if defined(_DEBUG) || !defined(NDEBUG)
  if (testMenu) {
-  menuBar->addMenu(testMenu);
+  menuBar->addMenu(static_cast<QMenu*>(testMenu));
  }
 #endif
- menuBar->addMenu(helpMenu);
+ menuBar->addMenu(static_cast<QMenu*>(helpMenu));
 }
 
 ArtifactMenuBar::ArtifactMenuBar(QWidget* mainWindow, QWidget* parent)

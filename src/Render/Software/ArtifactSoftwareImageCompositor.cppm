@@ -1,12 +1,12 @@
 module;
+#include <utility>
 #include <QImage>
 #include <QPainter>
 #include <QColor>
 #include <QTransform>
-#include <opencv2/core.hpp>
-#include <opencv2/imgproc.hpp>
 #include <algorithm>
 #include <cmath>
+#include <opencv2/opencv.hpp>
 
 module Artifact.Render.SoftwareCompositor;
 

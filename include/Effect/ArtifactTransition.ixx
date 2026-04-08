@@ -1,13 +1,5 @@
 module;
-#include <QObject>
-#include <QVector2D>
-#include <QVector3D>
-#include <QColor>
-#include <QImage>
-#include <QEasingCurve>
 #include <memory>
-#include <wobjectdefs.h>
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -15,15 +7,12 @@ module;
 #include <unordered_map>
 #include <set>
 #include <unordered_set>
-#include <memory>
 #include <algorithm>
 #include <cmath>
 #include <functional>
 #include <optional>
 #include <utility>
 #include <array>
-#include <mutex>
-#include <thread>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -33,7 +22,6 @@ module;
 #include <variant>
 #include <any>
 #include <atomic>
-#include <condition_variable>
 #include <queue>
 #include <deque>
 #include <list>
@@ -41,7 +29,16 @@ module;
 #include <numeric>
 #include <regex>
 #include <random>
+#include <wobjectdefs.h>
+#include <QObject>
+#include <QVector2D>
+#include <QVector3D>
+#include <QColor>
+#include <QImage>
+#include <QEasingCurve>
+
 export module Artifact.Effect.Transition;
+
 
 
 

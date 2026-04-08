@@ -1,8 +1,10 @@
 ﻿module;
+#include <utility>
+
+#include <wobjectdefs.h>
 #include <QMenu>
 #include <QWidget>
 
-#include <wobjectdefs.h>
 export module Artifact.Menu.File;
 
 

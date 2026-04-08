@@ -1,12 +1,16 @@
 ﻿module;
-#include <QWidget>
-#include <wobjectdefs.h>
+#include <utility>
 #include <memory>
 
+#include <wobjectdefs.h>
+#include <QWidget>
 export module Artifact.Widgets.ColorSwatchWidget;
+
 
 import Color.Float;
 import Color.Swatch;
+
+W_REGISTER_ARGTYPE(ArtifactCore::FloatColor)
 
 export namespace Artifact {
 

@@ -1,4 +1,5 @@
-﻿module;
+module;
+#include <utility>
 export module IComposition2D;
 
 export namespace ArtifactCore

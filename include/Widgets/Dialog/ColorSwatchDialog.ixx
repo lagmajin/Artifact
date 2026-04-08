@@ -1,10 +1,13 @@
 module;
+#include <utility>
+
 #include <QDialog>
 #include <wobjectdefs.h>
-
 export module Artifact.Widgets.ColorSwatchDialog;
 
 import Color.Float;
+
+W_REGISTER_ARGTYPE(ArtifactCore::FloatColor)
 
 export namespace Artifact {
 

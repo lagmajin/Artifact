@@ -1,8 +1,11 @@
 module;
+#include <utility>
+#include <memory>
 #include <QString>
 #include <QVector>
-#include <memory>
+
 export module Artifact.Composition.Result;
+
 
 import Utils;
 import Utils.String.UniString;

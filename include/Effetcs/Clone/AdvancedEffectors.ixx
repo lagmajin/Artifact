@@ -1,7 +1,4 @@
 module;
-#include <QVector3D>
-#include <QMatrix4x4>
-#include <QColor>
 #include <cmath>
 #include <random>
 
@@ -19,8 +16,6 @@ module;
 #include <optional>
 #include <utility>
 #include <array>
-#include <mutex>
-#include <thread>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -30,7 +25,6 @@ module;
 #include <variant>
 #include <any>
 #include <atomic>
-#include <condition_variable>
 #include <queue>
 #include <deque>
 #include <list>
@@ -38,6 +32,9 @@ module;
 #include <numeric>
 #include <regex>
 #include <random>
+#include <QVector3D>
+#include <QMatrix4x4>
+#include <QColor>
 export module Artifact.Effect.Clone.Advanced;
 
 

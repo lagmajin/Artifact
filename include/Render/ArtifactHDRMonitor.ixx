@@ -1,13 +1,14 @@
-module;
+﻿module;
+#include <utility>
 
-#include <wobjectdefs.h>
-#include <QObject>
-#include <QRect>
 #include <memory>
 #include <vector>
-
+#include <QObject>
+#include <QRect>
+#include <wobjectdefs.h>
 export module Render.HDRMonitor;
 
+import std;
 import Color.Float;
 
 export namespace Artifact {

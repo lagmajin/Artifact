@@ -1,11 +1,13 @@
-module;
-#include <QWidget>
-#include <QIcon>
-#include <QString>
+﻿module;
+#include <utility>
 #include <vector>
 #include <memory>
 #include <functional>
+
 #include <wobjectdefs.h>
+#include <QWidget>
+#include <QIcon>
+#include <QString>
 
 export module Artifact.Widgets.PieMenu;
 

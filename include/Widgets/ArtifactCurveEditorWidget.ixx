@@ -1,11 +1,10 @@
-﻿module;
-#include <QWidget>
-#include <wobjectdefs.h>
+module;
+#include <utility>
 #include <vector>
 
+#include <QWidget>
+#include <wobjectdefs.h>
 export module Widget.CurveEditor;
-
-import std;
 
 export namespace ArtifactCore {
 

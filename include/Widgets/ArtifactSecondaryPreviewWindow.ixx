@@ -1,4 +1,6 @@
-﻿module;
+module;
+#include <utility>
+
 #include <QWidget>
 #include <QLabel>
 #include <QVBoxLayout>
@@ -15,7 +17,6 @@
 #include <QStatusBar>
 #include <QStyle>
 #include <wobjectdefs.h>
-
 export module Artifact.Widgets.SecondaryPreviewWindow;
 
 export namespace Artifact {

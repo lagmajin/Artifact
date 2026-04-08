@@ -1,4 +1,10 @@
 ﻿module;
+#include <utility>
+#include <atomic>
+#include <thread>
+#include <chrono>
+#include <mutex>
+#include <condition_variable>
 #include <QThread>
 #include <QElapsedTimer>
 #include <QMutexLocker>
@@ -8,16 +14,8 @@
 #include <QDebug>
 #include <wobjectimpl.h>
 #include <QFont>
-
-#include <atomic>
-#include <thread>
-#include <chrono>
-#include <mutex>
-#include <condition_variable>
-
-#include <QFont>
-
 module Artifact.Playback.Engine;
+
 
 import Frame.Position;
 import Frame.Rate;

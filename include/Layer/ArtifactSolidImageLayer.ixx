@@ -1,9 +1,9 @@
 module;
+#include <utility>
+#include <vector>
+
 #include <QImage>
-
 export module Artifact.Layers.SolidImage;
-
-import std;
 import Color.Float;
 import Artifact.Layer.Abstract;
 

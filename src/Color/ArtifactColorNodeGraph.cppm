@@ -201,6 +201,16 @@ ColorNodeGraph::ColorNodeGraph(QObject* parent)
 
 ColorNodeGraph::~ColorNodeGraph() = default;
 
+void ColorNodeGraph::connectionAdded(const NodeConnection&)
+{
+    // The wobject-generated thunk is currently unreliable under this module layout.
+}
+
+void ColorNodeGraph::connectionRemoved(const NodeConnection&)
+{
+    // The wobject-generated thunk is currently unreliable under this module layout.
+}
+
 // --- Node Management ---
 
 QUuid ColorNodeGraph::addNode(std::unique_ptr<ColorNode> node) {

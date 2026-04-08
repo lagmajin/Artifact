@@ -1,6 +1,7 @@
 ﻿module;
-#include <QString>
 #include <memory>
+#include <string>
+#include <QString>
 
 #include <iostream>
 #include <vector>
@@ -16,8 +17,6 @@
 #include <optional>
 #include <utility>
 #include <array>
-#include <mutex>
-#include <thread>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -27,7 +26,6 @@
 #include <variant>
 #include <any>
 #include <atomic>
-#include <condition_variable>
 #include <queue>
 #include <deque>
 #include <list>
@@ -84,7 +82,7 @@ export namespace Artifact {
   ArtifactLayerSearchQuery& operator=(const ArtifactLayerSearchQuery&) = default;
   ArtifactLayerSearchQuery& operator=(ArtifactLayerSearchQuery&&) noexcept = default;
 
-  void setSearchText(const QString& text) { if (data_) data_->searchText = text; }
+  void setSearchText(const char* text) { if (data_) data_->searchText = QString::fromUtf8(text ? text : ""); }
   QString getSearchText() const { return data_ ? data_->searchText : QString(); }
 
   void setLayerType(LayerSearchType type) { if (data_) data_->layerTypeFilter = static_cast<int>(type); }
@@ -155,12 +153,14 @@ export namespace Artifact {
    return cnt;
   }
 
-  bool matchesName(const QString& name) const {
+  bool matchesName(const char* name) const {
    if (!data_ || data_->searchText.isEmpty()) return true;
    bool cs = (data_->filterOptions & static_cast<int>(SearchFilterOption::CaseSensitive)) != 0;
    bool whole = (data_->filterOptions & static_cast<int>(SearchFilterOption::WholeWord)) != 0;
    Qt::CaseSensitivity sensitivity = cs ? Qt::CaseSensitive : Qt::CaseInsensitive;
-   return whole ? (name.compare(data_->searchText, sensitivity) == 0) : name.contains(data_->searchText, sensitivity);
+   const QString viewText = QString::fromUtf8(name ? name : "");
+   return whole ? (viewText.compare(data_->searchText, sensitivity) == 0)
+                : viewText.contains(data_->searchText, sensitivity);
   }
 
   bool matchesType(LayerSearchType type) const {
@@ -168,7 +168,7 @@ export namespace Artifact {
    return (data_->layerTypeFilter & static_cast<int>(type)) != 0;
   }
 
-  bool matches(const QString& name, LayerSearchType type, bool visible, bool locked, bool selected) const {
+  bool matches(const char* name, LayerSearchType type, bool visible, bool locked, bool selected) const {
    if (!data_) return false;
    if (!matchesName(name)) return false;
    if (!matchesType(type)) return false;

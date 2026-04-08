@@ -1,7 +1,6 @@
 ﻿module;
 #include <QPointF>
 #include <QPolygonF>
-#include <opencv2/opencv.hpp>
 #include <vector>
 #include <cmath>
 #include <algorithm>
@@ -40,9 +39,8 @@
 #include <numeric>
 #include <regex>
 #include <random>
+#include <opencv2/opencv.hpp>
 module Artifact.Mask.Path;
-
-
 
 
 import Utils.String.UniString;

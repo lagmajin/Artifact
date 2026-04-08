@@ -1,8 +1,10 @@
-module;
-#include <QObject>
-#include <wobjectdefs.h>
+﻿module;
+#include <utility>
 
+#include <wobjectdefs.h>
+#include <QObject>
 export module Artifact.Controller.TimelineViewProvider;
+
 
 import Utils.Id;
 import Artifact.Widgets.Timeline;

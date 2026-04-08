@@ -1,4 +1,5 @@
 module;
+#include <utility>
 #include <QDebug>
 #include <QLoggingCategory>
 #include <QPointF>
@@ -305,6 +306,13 @@ void drawEmphasizedRect(ArtifactIRenderer* renderer,
 TransformGizmo::TransformGizmo() {}
 TransformGizmo::~TransformGizmo() {}
 
+void TransformGizmo::setLayer(ArtifactAbstractLayerPtr layer) {
+  layer_ = std::move(layer);
+  if (!isDragging_) {
+    activeHandle_ = HandleType::None;
+  }
+}
+
 void TransformGizmo::setMode(Mode mode) {
  qDebug() << "[TransformGizmo] setMode:" << static_cast<int>(mode_) << "->" << static_cast<int>(mode);
  mode_ = mode;
@@ -316,13 +324,6 @@ void TransformGizmo::setMode(Mode mode) {
 
 TransformGizmo::Mode TransformGizmo::mode() const {
  return mode_;
-}
-
-void TransformGizmo::setLayer(ArtifactAbstractLayerPtr layer) {
- layer_ = layer;
- if (!isDragging_) {
-  activeHandle_ = HandleType::None;
- }
 }
 
 static constexpr double HANDLE_SIZE = 8.0;

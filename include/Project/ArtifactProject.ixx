@@ -1,16 +1,16 @@
 ﻿module;
+#include <utility>
 
 //#include <memory>
-#include <QObject>
-#include <QPointer>
+#include <memory>
+#include <vector>
 
 #include <wobjectdefs.h>
+#include <QObject>
+#include <QPointer>
 #include <QJsonObject>
 
-//#include <boost/signals2.hpp>
 export module Artifact.Project;
-
-import std;
 
 export import Artifact.Project.Settings;
 

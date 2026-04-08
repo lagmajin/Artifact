@@ -1,4 +1,5 @@
-﻿module;
+module;
+#include <utility>
 
 #include <QAbstractButton>
 #include <QAction>

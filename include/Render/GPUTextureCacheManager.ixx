@@ -1,11 +1,5 @@
-module;
-#include <QHash>
-#include <QImage>
-#include <QMutex>
-#include <QSet>
-#include <QSize>
-#include <QString>
-#include <wobjectdefs.h>
+﻿module;
+#include <utility>
 
 #include <memory>
 
@@ -13,7 +7,15 @@ module;
 #include <DiligentCore/Graphics/GraphicsEngine/interface/RenderDevice.h>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/Texture.h>
 
+#include <wobjectdefs.h>
+#include <QHash>
+#include <QImage>
+#include <QMutex>
+#include <QSet>
+#include <QSize>
+#include <QString>
 export module Artifact.Render.GPUTextureCacheManager;
+
 
 export namespace Artifact {
 

@@ -1,15 +1,16 @@
 module;
+#include <utility>
+#include <memory>
+#include <vector>
+#include <algorithm>
+#include <cmath>
+#include <opencv2/opencv.hpp>
 #include <QString>
 #include <QColor>
 #include <QImage>
 #include <QVariant>
 #include <QVector>
 #include <QRect>
-#include <opencv2/opencv.hpp>
-#include <memory>
-#include <vector>
-#include <algorithm>
-#include <cmath>
 
 module Artifact.Effect.AutoMosaic;
 

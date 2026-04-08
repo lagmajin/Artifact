@@ -1,9 +1,11 @@
-module;
+﻿module;
+#include <utility>
+
+#include <wobjectdefs.h>
 #include <QWidget>
 #include <QVector3D>
-#include <wobjectdefs.h>
-
 export module Artifact.Widgets.ModelViewer;
+
 
 import Utils.String.UniString;
 import Color.Float;

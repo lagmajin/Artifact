@@ -1,12 +1,12 @@
 module;
-
+#include <utility>
 #include <algorithm>
 #include <cmath>
 #include <memory>
+#include <vector>
 #include <opencv2/opencv.hpp>
 #include <QVariant>
 #include <QStringList>
-#include <vector>
 
 module Artifact.Effect.WhiteBalance;
 

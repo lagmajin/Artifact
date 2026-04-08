@@ -2,8 +2,6 @@
 
 #include <cmath>
 #include <algorithm>
-#include <QDebug>
-#include <wobjectimpl.h>
 
 #include <iostream>
 #include <vector>
@@ -13,8 +11,6 @@
 #include <set>
 #include <unordered_set>
 #include <memory>
-#include <algorithm>
-#include <cmath>
 #include <functional>
 #include <optional>
 #include <utility>
@@ -38,6 +34,8 @@
 #include <numeric>
 #include <regex>
 #include <random>
+#include <QDebug>
+#include <wobjectimpl.h>
 module Artifact.Color.Wheels;
 
 

@@ -1,16 +1,17 @@
 ﻿module;
+#include <utility>
 
+#include <wobjectdefs.h>
 #include <QString>
 #include <QStringList>
 #include <QVector>
 #include <QObject>
-#include <wobjectdefs.h>
 export module Artifact.Audio.Mixer;
+
 
 import Artifact.Layer.Abstract;
 import Artifact.Composition.Abstract;
 import Utils.Id;
-import std;
 
 export namespace Artifact
 {

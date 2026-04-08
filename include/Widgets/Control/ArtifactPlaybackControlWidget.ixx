@@ -1,4 +1,6 @@
-﻿module;
+module;
+#include <utility>
+
 #include <wobjectdefs.h>
 #include <QWidget>
 #include <QHBoxLayout>
@@ -10,7 +12,6 @@
 #include <QComboBox>
 #include <QSpinBox>
 #include <QTime>
-
 export module Artifact.Widgets.PlaybackControlWidget;
 
 export namespace Artifact

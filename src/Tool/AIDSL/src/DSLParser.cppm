@@ -1,16 +1,17 @@
 module;
+#include <utility>
 #include <sstream>
 #include <algorithm>
 #include <cctype>
 #include <regex>
-#include "DSLTypes.ixx"
+//#include "DSLTypes.ixx"
 
 export module AIToolDSL.Parser;
 
 import AIToolDSL.Types;
 import std;
 
-export namespace AIToolDSL {
+namespace AIToolDSL {
 
 namespace {
 
@@ -134,14 +135,16 @@ std::unique_ptr<ExprNode> parseFilter(const std::vector<std::string>& tokens, si
         if (i + 2 >= tokens.size()) {
             break;
         }
-        auto lhs = std::make_unique<PropertyRef>(PropertyRef{ tokens[i] });
+        auto lhs = std::make_unique<PropertyRef>(std::string(tokens[i]));
         auto op = parseBinOp(tokens[i + 1]);
         auto rhs = std::make_unique<Literal>(parseValue(tokens[i + 2]));
         i += 3;
 
-        auto cond = std::make_unique<BinaryExpr>(BinaryExpr{
-            std::move(lhs), op, std::move(rhs)
-        });
+        auto expr = BinaryExpr{};
+        expr.lhs = std::move(lhs);
+        expr.op = op;
+        expr.rhs = std::move(rhs);
+        auto cond = std::make_unique<BinaryExpr>(std::move(expr));
         conditions.push_back(std::move(cond));
     }
 
@@ -154,13 +157,17 @@ std::unique_ptr<ExprNode> parseFilter(const std::vector<std::string>& tokens, si
     // Combine with AND (nested left-associative)
     auto result = std::move(conditions[0]);
     for (size_t i = 1; i < conditions.size(); ++i) {
-        result = std::make_unique<BinaryExpr>(BinaryExpr{
-            std::move(result), BinOp::Eq, std::move(conditions[i])  // placeholder op; will not be used
-        });
+        auto expr = BinaryExpr{};
+        expr.lhs = std::move(result);
+        expr.op = BinOp::Eq;  // placeholder op; will not be used
+        expr.rhs = std::move(conditions[i]);
+        result = std::make_unique<BinaryExpr>(std::move(expr));
         // Actually we need a proper AND chain, but for simplicity we flatten later
     }
     return result;
 }
+
+} // namespace
 
 // Convert PropertyRef::evaluate to use actual lookup
 bool PropertyRef::evaluate(const std::unordered_map<std::string, Value>& props) const {
@@ -178,8 +185,6 @@ bool BinaryExpr::evaluate(const std::unordered_map<std::string, Value>& props) c
     // This is a stub; real implementation would evaluate both sides and compare
     return true;
 }
-
-} // namespace
 
 // Public parse function
 ParseResult AIDSLInterpreter::parseImpl(const std::string& input) {
@@ -271,8 +276,7 @@ ParseResult AIDSLInterpreter::parseImpl(const std::string& input) {
                 cmd->filter = nullptr;  // placeholder
                 cmd->sourceLine = trimmed;
                 if (inTransaction && currentTransaction) {
-                    currentTransaction->body.push_back(cmd.get());
-                    currentTransaction->body.push_back(std::unique_ptr<CommandNode>{});
+                    currentTransaction->body.push_back(std::move(cmd));
                 } else {
                     script.commands.push_back(std::move(cmd));
                 }
@@ -296,8 +300,7 @@ ParseResult AIDSLInterpreter::parseImpl(const std::string& input) {
                 cmd->value = parseValue(valueStr);
                 cmd->sourceLine = trimmed;
                 if (inTransaction && currentTransaction) {
-                    currentTransaction->body.push_back(cmd.get());
-                    currentTransaction->body.push_back(std::unique_ptr<CommandNode>{});
+                    currentTransaction->body.push_back(std::move(cmd));
                 } else {
                     script.commands.push_back(std::move(cmd));
                 }
@@ -328,8 +331,7 @@ ParseResult AIDSLInterpreter::parseImpl(const std::string& input) {
                 }
                 cmd->sourceLine = trimmed;
                 if (inTransaction && currentTransaction) {
-                    currentTransaction->body.push_back(cmd.get());
-                    currentTransaction->body.push_back(std::unique_ptr<CommandNode>{});
+                    currentTransaction->body.push_back(std::move(cmd));
                 } else {
                     script.commands.push_back(std::move(cmd));
                 }
@@ -442,7 +444,7 @@ std::string QuerySelectedLayers::execute(
 
 std::string QueryActiveComp::execute(
     const std::unordered_map<std::string, CompID>& compMap,
-    const std::unordered_map<std::string, CompID>>& layerMap
+    const std::unordered_map<std::string, std::vector<LayerID>>& layerMap
 ) const {
     return R"({"status":"not_implemented"})";
 }
@@ -512,8 +514,7 @@ void AIDSLInterpreter::setActiveCompByName(const std::string& compName) {
     }
 }
 
-void AIDSLInterpreter::setLayerLookup(const std::unordered_map<std::string, LayerID>& lookup) {
-    // Expected: name -> vector of IDs (since names may not be unique)
+void AIDSLInterpreter::setLayerLookup(const std::unordered_map<std::string, std::vector<LayerID>>& lookup) {
     layerNameToIds_ = lookup;
 }
 

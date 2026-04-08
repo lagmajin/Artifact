@@ -1,6 +1,8 @@
-module;
+﻿module;
+#include <utility>
 #include <QWidget>
 export module Artifact.Render.WrapperWidget;
+
 
 
 export namespace Artifact

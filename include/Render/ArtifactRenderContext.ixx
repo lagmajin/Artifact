@@ -1,11 +1,12 @@
-module;
+﻿module;
+#include <utility>
+#include <memory>
+#include <vector>
 #include <QRectF>
 #include <QSize>
 #include <QColor>
-#include <memory>
-#include <vector>
-
 export module Artifact.Render.Context;
+
 
 import Artifact.Render.ROI;
 

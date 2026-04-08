@@ -1,12 +1,12 @@
-﻿module;
-
-#include <wobjectdefs.h>
-
-#include <QtWidgets/QScrollArea>
+module;
+#include <utility>
 
 #include <Audio/AudioDllImport.hpp>
 
+#include <wobjectdefs.h>
+#include <QtWidgets/QScrollArea>
 export module Widgets.Inspector;
+
 
 export namespace Artifact {
 

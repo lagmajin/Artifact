@@ -1,6 +1,4 @@
-module;
-#include <QString>
-
+﻿module;
 #include <iostream>
 #include <vector>
 #include <string>
@@ -15,8 +13,6 @@ module;
 #include <optional>
 #include <utility>
 #include <array>
-#include <mutex>
-#include <thread>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -26,7 +22,6 @@ module;
 #include <variant>
 #include <any>
 #include <atomic>
-#include <condition_variable>
 #include <queue>
 #include <deque>
 #include <list>
@@ -34,8 +29,9 @@ module;
 #include <numeric>
 #include <regex>
 #include <random>
-export module Artifact.Engine.DAG.Graph;
+#include <QString>
 
+export module Artifact.Engine.DAG.Graph;
 
 
 
@@ -229,7 +225,7 @@ export namespace Artifact {
                         auto targetKey = c.targetNodeId.toString().toStdString();
                         inDegree[targetKey]--;
                         if (inDegree[targetKey] == 0) {
-                            auto tgt = findNode(NodeID(c.targetNodeId.toString()));
+                            auto tgt = findNode(NodeID(c.targetNodeId));
                             if (tgt) queue.push_back(tgt);
                         }
                     }
@@ -271,7 +267,7 @@ export namespace Artifact {
                 // 下流ノードをキューに追加
                 for (const auto& c : connections_) {
                     if (c.enabled && c.sourceNodeId == currentId) {
-                        queue.push_back(NodeID(c.targetNodeId.toString()));
+                        queue.push_back(NodeID(c.targetNodeId));
                     }
                 }
             }

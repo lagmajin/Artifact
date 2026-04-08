@@ -1,4 +1,12 @@
-module;
+﻿module;
+#include <utility>
+#include <memory>
+#include <typeindex>
+#include <vector>
+#include <functional>
+
+#include <qtypes.h>
+#include <wobjectdefs.h>
 #include <QHash>
 #include <QImage>
 #include <QJsonObject>
@@ -7,12 +15,8 @@ module;
 #include <QString>
 #include <QTransform>
 #include <QMatrix4x4>
-#include <qtypes.h>
-#include <wobjectdefs.h>
 
 export module Artifact.Layer.Abstract;
-
-import std;
 
 import Size;
 import Utils.Id;
@@ -83,11 +87,6 @@ enum class DetailLevel {
   High    // 高詳細な描画（ズーム 75-100%）
 };
 
-class ArtifactAbstractLayer;
-
-using ArtifactAbstractLayerPtr = std::shared_ptr<ArtifactAbstractLayer>;
-using ArtifactAbstractLayerWeak = std::weak_ptr<ArtifactAbstractLayer>;
-
 class ArtifactAbstractLayer : public QObject {
   W_OBJECT(ArtifactAbstractLayer)
 private:
@@ -111,7 +110,7 @@ protected:
 
 public:
   virtual QJsonObject toJson() const;
-  static ArtifactAbstractLayerPtr fromJson(const QJsonObject &obj);
+  static std::shared_ptr<ArtifactAbstractLayer> fromJson(const QJsonObject &obj);
   void Show();
   void Hide();
   bool isVisible() const;
@@ -155,7 +154,7 @@ public:
   QTransform getLocalTransformAt(int64_t frameNumber) const;
   QMatrix4x4 getGlobalTransform4x4() const;
   QMatrix4x4 getLocalTransform4x4() const;
-  ArtifactAbstractLayerPtr parentLayer() const;
+  std::shared_ptr<ArtifactAbstractLayer> parentLayer() const;
   bool isTimeRemapEnabled() const;
   void setTimeRemapEnabled(bool);
   void setTimeRemapKey(int64_t compFrame, double sourceFrame);
@@ -278,6 +277,11 @@ public:
 
 public:
 };
+
+// Aliases defined AFTER the complete class definition so MSVC attaches
+// module context to the shared_ptr<T> template argument correctly.
+using ArtifactAbstractLayerPtr = std::shared_ptr<ArtifactAbstractLayer>;
+using ArtifactAbstractLayerWeak = std::weak_ptr<ArtifactAbstractLayer>;
 
 inline uint qHash(const Artifact::ArtifactAbstractLayerPtr &key,
                   uint seed = 0) noexcept {

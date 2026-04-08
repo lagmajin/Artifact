@@ -1,4 +1,5 @@
-﻿module;
+module;
+#include <utility>
 #include <array>
 #include <cmath>
 #include <cstring>

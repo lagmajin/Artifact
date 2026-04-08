@@ -1,8 +1,10 @@
 module;
+#include <utility>
 #include <QString>
 #include <QStringList>
 
 export module Artifact.Event.Types;
+
 
 import Playback.State;
 

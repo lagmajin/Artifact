@@ -1,8 +1,4 @@
 ﻿module;
-#include <wobjectimpl.h>
-#include <QMetaObject>
-#include <qlogging.h>
-#include <QDebug>
 #include <iostream>
 #include <vector>
 #include <string>
@@ -36,6 +32,11 @@
 #include <numeric>
 #include <regex>
 #include <random>
+#include <wobjectimpl.h>
+#include <QMetaObject>
+#include <qlogging.h>
+#include <QDebug>
+
 module Artifact.Service.ActiveContext;
 
 

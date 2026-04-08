@@ -1,4 +1,5 @@
 module;
+#include <utility>
 #include <string>
 #include <vector>
 #include <memory>
@@ -15,8 +16,13 @@ export namespace AIToolDSL {
 struct CommandNode;
 struct QueryNode;
 struct ExprNode;
-struct Action;
-struct TransactionAction;
+struct Action {
+    virtual ~Action() = default;
+};
+struct TransactionAction : Action {
+    std::string name;
+    std::vector<std::unique_ptr<Action>> actions;
+};
 
 // Utility types
 using LayerID = std::string;  // "#L1234"
@@ -30,8 +36,7 @@ export using Value = std::variant<
     int64_t,
     double,
     std::string,
-    std::vector<double>,  // vec2, vec3, vec4
-    FrameTime
+    std::vector<double>  // vec2, vec3, vec4
 >;
 
 // Frame expression: 12f or 12
@@ -53,6 +58,7 @@ struct ExprNode {
 
 struct PropertyRef : ExprNode {
     PropertyPath path;
+    explicit PropertyRef(PropertyPath p) : path(std::move(p)) {}
     bool evaluate(const std::unordered_map<std::string, Value>& props) const override;
 };
 
@@ -231,7 +237,7 @@ struct DSLScript {
 export struct ParseResult {
     DSLScript script;
     std::string error;
-    bool success() const { return !hasError && script.hasError; }
+    bool success() const { return error.empty() && !script.hasError; }
 };
 
 // DSL interface
@@ -261,7 +267,7 @@ public:
     void setActiveCompByName(const std::string& compName);
 
     // Lookup helpers (host app integration)
-    void setLayerLookup(const std::unordered_map<std::string, LayerID>& lookup);
+    void setLayerLookup(const std::unordered_map<std::string, std::vector<LayerID>>& lookup);
     void setCompLookup(const std::unordered_map<std::string, CompID>& lookup);
 
 private:

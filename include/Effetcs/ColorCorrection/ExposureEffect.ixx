@@ -1,10 +1,10 @@
 module;
-
-#include <QString>
-#include <QVariant>
+#include <utility>
 #include <algorithm>
 #include <memory>
 #include <vector>
+#include <QString>
+#include <QVariant>
 
 export module ExposureEffect;
 

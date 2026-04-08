@@ -1,9 +1,9 @@
 module;
-
-#include <QString>
-#include <QVariant>
+#include <utility>
 #include <algorithm>
 #include <vector>
+#include <QString>
+#include <QVariant>
 
 export module BrightnessEffect;
 

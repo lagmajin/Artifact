@@ -1,6 +1,5 @@
-﻿module;
-#include <QIcon>
-#include <QStandardItemModel>
+module;
+#include <compare>
 module ArtifactTimelineIconModel;
 
 import Utils.Path;

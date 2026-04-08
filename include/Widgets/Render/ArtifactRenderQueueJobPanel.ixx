@@ -1,8 +1,10 @@
-
+﻿
 module;
+#include <utility>
 #include <wobjectdefs.h>
 #include <QObject>
 #include <QWidget>
+
 export module Artifact.Widgets.RenderQueueJobPanel;
 
 export namespace Artifact

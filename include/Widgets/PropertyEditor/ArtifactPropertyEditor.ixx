@@ -1,4 +1,8 @@
 module;
+#include <utility>
+
+#include <functional>
+#include <vector>
 
 #include <QWidget>
 #include <QAbstractButton>
@@ -16,10 +20,7 @@ module;
 #include <QSlider>
 #include <QSpinBox>
 #include <QTextEdit>
-
 export module Artifact.Widgets.PropertyEditor;
-
-import std;
 
 import Property.Abstract;
 import Artifact.Widgets.FontPicker;

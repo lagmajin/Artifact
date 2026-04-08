@@ -1,10 +1,11 @@
 module;
+#include <utility>
+
 #include <QWidget>
 #include <QPushButton>
 #include <QHBoxLayout>
 #include <QVBoxLayout>
 #include <wobjectdefs.h>
-
 export module Artifact.Widgets.Alignment;
 
 namespace Artifact {

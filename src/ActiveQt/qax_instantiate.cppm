@@ -1,4 +1,5 @@
-﻿module;
+module;
+#include <utility>
 
 // qax_instantiate must be defined in the global module fragment so it is
 // emitted as a regular external symbol that Qt6AxServerd.lib can resolve.

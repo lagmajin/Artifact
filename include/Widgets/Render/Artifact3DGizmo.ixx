@@ -1,12 +1,13 @@
-module;
+﻿module;
+#include <utility>
+#include <memory>
 #include <QObject>
 #include <QVector3D>
 #include <QMatrix4x4>
 #include <QColor>
-#include <memory>
 #include <wobjectdefs.h>
-
 export module Artifact.Widgets.Gizmo3D;
+
 
 import Artifact.Render.IRenderer;
 import Color.Float;
@@ -35,7 +36,7 @@ struct Ray {
     QVector3D direction;
 };
 
-class Artifact3DGizmo : public QObject {
+export class Artifact3DGizmo : public QObject {
     W_OBJECT(Artifact3DGizmo)
 public:
     explicit Artifact3DGizmo(QObject* parent = nullptr);

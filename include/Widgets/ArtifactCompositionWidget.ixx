@@ -1,6 +1,7 @@
 module;
-#include <wobjectdefs.h>
+#include <utility>
 #include <memory>
+#include <wobjectdefs.h>
 #include <QObject>
 #include <QWidget>
 export module ArtifactCompositionWidget;

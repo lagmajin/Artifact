@@ -1,11 +1,10 @@
-module;
+﻿module;
+#include <utility>
 
-#include <QWidget>
 #include <wobjectdefs.h>
-
+#include <QWidget>
 export module Artifact.Widgets.CompositionAudioMixer;
 
-import std;
 
 export namespace Artifact
 {

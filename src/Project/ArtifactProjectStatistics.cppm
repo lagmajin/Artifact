@@ -1,4 +1,7 @@
-﻿module;
+module;
+
+#pragma warning(push)
+#pragma warning(disable: 2382)  // redefinition; different exception specifications (std::ranges)
 
 #include <QString>
 #include <QVector>
@@ -38,6 +41,9 @@
 #include <numeric>
 #include <regex>
 #include <random>
+
+#pragma warning(pop)
+
 module Artifact.Project.Statistics;
 
 

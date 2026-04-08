@@ -1,9 +1,9 @@
-﻿module;
+module;
+#include <utility>
 #include <cmath>
-#include <opencv2/opencv.hpp>
 #include <memory>
-
 #include <QList>
+#include <opencv2/opencv.hpp>
 
 module HueAndSaturation;
 

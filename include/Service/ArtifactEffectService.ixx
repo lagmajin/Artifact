@@ -1,13 +1,14 @@
 module;
-#include <QObject>
+#include <utility>
+#include <memory>
+#include <vector>
+
 #include <wobjectdefs.h>
+#include <QObject>
 #include <wobjectimpl.h>
 #include <QString>
 #include <QStringList>
 #include <QVariant>
-#include <memory>
-#include <vector>
-
 export module Artifact.Service.Effect;
 
 import Utils.String.UniString;

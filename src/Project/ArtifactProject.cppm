@@ -1,18 +1,19 @@
 ﻿module;
+#include <utility>
 #include <QDebug>
 #include <wobjectimpl.h>
 #include <wobjectdefs.h>
 #include <QFileInfo>
 #include <QDateTime>
-
 #include <QHash>
 #include <QJsonArray>
 #include <QVector>
 #include <QDir>
 #include <QSet>
 #include <QtTest/QtTest>
-//#include <QtCore/QString>
 module Artifact.Project;
+
+//#include <QtCore/QString>
 
 import std;
 

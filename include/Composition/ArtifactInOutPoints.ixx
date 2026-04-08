@@ -1,11 +1,6 @@
 ﻿module;
-#include <QObject>
-#include <QString>
-#include <QStringList>
-#include <QColor>
 #include <optional>
 #include <vector>
-#include <wobjectdefs.h>
 
 #include <iostream>
 #include <vector>
@@ -21,8 +16,6 @@
 #include <optional>
 #include <utility>
 #include <array>
-#include <mutex>
-#include <thread>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -32,7 +25,6 @@
 #include <variant>
 #include <any>
 #include <atomic>
-#include <condition_variable>
 #include <queue>
 #include <deque>
 #include <list>
@@ -40,11 +32,15 @@
 #include <numeric>
 #include <regex>
 #include <random>
+#include <wobjectdefs.h>
+#include <QObject>
+#include <QString>
+#include <QStringList>
+#include <QColor>
 export module Artifact.Composition.InOutPoints;
 
 
-
-
+import std;
 import Frame.Position;
 import Frame.Range;
 

@@ -1,11 +1,12 @@
-module;
+﻿module;
+#include <utility>
+
+#include <wobjectdefs.h>
 #include <QString>
 #include <QWidget>
 #include <QVariant>
-#include <wobjectdefs.h>
-
-
 export module Widgets.ToolOptionsBar;
+
 
 export namespace Artifact {
 

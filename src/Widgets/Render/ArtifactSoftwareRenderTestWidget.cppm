@@ -1,4 +1,5 @@
 module;
+#include <utility>
 #include <QWidget>
 #include <QImage>
 #include <QPainter>
@@ -8,14 +9,14 @@ module;
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QDateTime>
-#include <opencv2/core.hpp>
-#include <opencv2/imgproc.hpp>
+#include <opencv2/opencv.hpp>
 #include <wobjectimpl.h>
 #include <vector>
 #include <array>
 #include <cmath>
 #include <algorithm>
 #include <limits>
+
 
 module Artifact.Widgets.SoftwareRenderTest;
 import Artifact.Render.SoftwareCompositor;

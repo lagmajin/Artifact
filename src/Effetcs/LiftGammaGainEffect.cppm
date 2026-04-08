@@ -1,13 +1,13 @@
 module;
-
-#include <QString>
-#include <QVariant>
-#include <QVector>
-#include <opencv2/opencv.hpp>
+#include <utility>
 #include <memory>
 #include <vector>
 #include <algorithm>
 #include <cmath>
+#include <opencv2/opencv.hpp>
+#include <QString>
+#include <QVariant>
+#include <QVector>
 
 module Artifact.Effect.LiftGammaGain;
 

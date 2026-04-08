@@ -1,4 +1,6 @@
-﻿module;
+module;
+#include <utility>
+
 #include <QWidget>
 #include <QImage>
 #include <QSize>
@@ -6,7 +8,6 @@
 #include <QMouseEvent>
 #include <QWheelEvent>
 #include <wobjectdefs.h>
-
 export module Artifact.Widgets.SoftwareRenderInspectors;
 
 import Artifact.Composition.Abstract;

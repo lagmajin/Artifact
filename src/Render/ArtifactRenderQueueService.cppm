@@ -429,7 +429,7 @@ namespace Artifact
         }();
 
         for (const auto& name : candidates) {
-            if (ArtifactCore::FFmpegEncoder::isEncoderAvailable(name)) {
+            if (ArtifactCore::FFmpegEncoder::isEncoderAvailableByName(name)) {
                 return name;
             }
         }
@@ -772,7 +772,7 @@ namespace Artifact
             if (errorMessage) {
                 *errorMessage = QStringLiteral("No hardware encoder found for codec: %1 (available: %2)")
                     .arg(normalizeCodecName(job.codec),
-                         ArtifactCore::FFmpegEncoder::availableHardwareVideoEncoders().join(QStringLiteral(", ")));
+                         ArtifactCore::FFmpegEncoder::availableVideoCodecs().join(QStringLiteral(", ")));
             }
             if (selectedEncoder) {
                 selectedEncoder->clear();
@@ -780,7 +780,7 @@ namespace Artifact
             return settings;
         }
 
-        settings.encoderName = encoderName;
+        settings.videoCodec = encoderName;
         settings.preset = QStringLiteral("p4");
         settings.zerolatency = false;
         if (selectedEncoder) {
@@ -2094,7 +2094,7 @@ namespace Artifact
                         continue;
                     }
                     layer->goToFrame(job.startFrame);
-                    drawLayerForCompositionView(layer, gpuRenderer_.get(), 1.0f, nullptr,
+                    drawLayerForCompositionView(layer.get(), gpuRenderer_.get(), 1.0f, nullptr,
                                             &surfaceCache, &gpuTextureCacheManager,
                                             job.startFrame, true);
                 }
@@ -2862,7 +2862,7 @@ namespace Artifact
                         for (const auto& layer : gpuLayers) {
                             if (!layer || !layer->isVisible() || !layer->isActiveAt(gpuPos)) continue;
                             layer->goToFrame(f);
-                            drawLayerForCompositionView(layer, impl_->gpuRenderer_.get(), 1.0f, nullptr,
+                            drawLayerForCompositionView(layer.get(), impl_->gpuRenderer_.get(), 1.0f, nullptr,
                                                         &gpuSurfaceCache, gpuTextureCacheManager.get(), f, true);
                         }
                         impl_->gpuRenderer_->flush();

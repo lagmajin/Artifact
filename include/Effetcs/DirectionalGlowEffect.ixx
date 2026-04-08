@@ -1,12 +1,12 @@
 module;
-#include <QString>
-#include <QVariant>
-#include <QVector>
-#include <opencv2/opencv.hpp>
+#include <utility>
 #include <memory>
 #include <vector>
 #include <algorithm>
 #include <cmath>
+#include <QString>
+#include <QVariant>
+#include <QVector>
 
 export module Artifact.Effect.DirectionalGlow;
 

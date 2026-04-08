@@ -1,9 +1,10 @@
-module ;
-#include <QString>
+module;
+#include <utility>
 #include <memory>
 #include <wobjectdefs.h>
 
 export module Artifact.Layer.Light;
+#include <QString>
 
 import Artifact.Layer.Abstract;
 import Property.Group;

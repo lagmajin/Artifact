@@ -1,4 +1,5 @@
 module;
+#include <utility>
 
 #include <QBrush>
 #include <QColor>
@@ -421,7 +422,7 @@ TimelineScene::TimelineScene(QWidget* parent) : QGraphicsScene(parent), impl_(ne
   impl_->clips_.push_back(clip);
   impl_->clipTracks_[clip] = trackIndex;
 
-  QObject::connect(clip, &ClipItem::dragMoved, this, [this](ClipItem*, const double, const double sceneY) {
+  clip->setDragMovedCallback([this](ClipItem*, const double, const double sceneY) {
    const int hoverTrack = getTrackAtPosition(sceneY);
    if (hoverTrack >= 0)
    {
@@ -433,11 +434,11 @@ TimelineScene::TimelineScene(QWidget* parent) : QGraphicsScene(parent), impl_(ne
    }
   });
 
-  QObject::connect(clip, &ClipItem::dragStarted, this, [this, clip](ClipItem*) {
+  clip->setDragStartedCallback([this, clip](ClipItem*) {
    impl_->beginDrag(clip);
   });
 
-  QObject::connect(clip, &ClipItem::dragEnded, this, [this, clip](ClipItem*, const double sceneX, const double sceneY) {
+  clip->setDragEndedCallback([this, clip](ClipItem*, const double sceneX, const double sceneY) {
    if (!impl_->drag_.active)
    {
     impl_->beginDrag(clip);

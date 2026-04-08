@@ -1,6 +1,8 @@
 ﻿module;
-#include <QWidget>
+#include <utility>
 #include <wobjectdefs.h>
+#include <QWidget>
+
 export module Artifact.Widgets.CompositionFooter;
 
 export namespace Artifact {

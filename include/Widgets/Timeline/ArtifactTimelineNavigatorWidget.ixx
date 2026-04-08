@@ -1,10 +1,12 @@
 module;
+#include <utility>
+
 #include <QMouseEvent>
 #include <QPaintEvent>
 #include <QWidget>
 #include <wobjectdefs.h>
-
 export module Artifact.Timeline.NavigatorWidget;
+
 
 export namespace Artifact
 {

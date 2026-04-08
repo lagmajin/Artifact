@@ -1,15 +1,12 @@
-module;
+﻿module;
+
 #include <QString>
 #include <QVariant>
 #include <QVector>
-#include <opencv2/opencv.hpp>
-#include <memory>
-#include <vector>
-#include <algorithm>
-#include <cmath>
 
 export module Artifact.Effect.WhiteBalance;
 
+import std;
 import Artifact.Effect.Abstract;
 import Artifact.Effect.ImplBase;
 import Image.ImageF32x4RGBAWithCache;

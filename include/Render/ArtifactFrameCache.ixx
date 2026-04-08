@@ -1,14 +1,7 @@
-﻿module;
-#include <QObject>
-#include <QImage>
-#include <QSize>
-#include <QString>
-#include <QMutex>
-#include <QWaitCondition>
+module;
 #include <map>
 #include <set>
 #include <memory>
-#include <wobjectdefs.h>
 
 #include <iostream>
 #include <vector>
@@ -24,8 +17,6 @@
 #include <optional>
 #include <utility>
 #include <array>
-#include <mutex>
-#include <thread>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -35,7 +26,6 @@
 #include <variant>
 #include <any>
 #include <atomic>
-#include <condition_variable>
 #include <queue>
 #include <deque>
 #include <list>
@@ -43,7 +33,14 @@
 #include <numeric>
 #include <regex>
 #include <random>
+#include <wobjectdefs.h>
 export module Artifact.Render.FrameCache;
+#include <QObject>
+#include <QImage>
+#include <QSize>
+#include <QString>
+#include <QMutex>
+#include <QWaitCondition>
 
 
 
@@ -58,8 +55,6 @@ struct FrameRange {
 };
 
 W_REGISTER_ARGTYPE(ArtifactCore::FramePosition)
-
-export namespace Artifact {
 
 using namespace ArtifactCore;
 

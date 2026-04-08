@@ -1,5 +1,4 @@
 ﻿module;
-#include <wobjectimpl.h>
 #include <vector>
 #include <stack>
 #include <memory>
@@ -38,6 +37,8 @@
 #include <numeric>
 #include <regex>
 #include <random>
+#include <wobjectimpl.h>
+
 module Undo.UndoManager;
 
 

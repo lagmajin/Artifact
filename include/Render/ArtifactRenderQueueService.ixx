@@ -1,8 +1,4 @@
-module;
-#include <wobjectdefs.h>
-#include <QObject>
-#include <QJsonArray>
-#include <QJsonObject>
+﻿module;
 
 #include <iostream>
 #include <vector>
@@ -18,8 +14,6 @@ module;
 #include <optional>
 #include <utility>
 #include <array>
-#include <mutex>
-#include <thread>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -29,7 +23,6 @@ module;
 #include <variant>
 #include <any>
 #include <atomic>
-#include <condition_variable>
 #include <queue>
 #include <deque>
 #include <list>
@@ -37,7 +30,12 @@ module;
 #include <numeric>
 #include <regex>
 #include <random>
+#include <wobjectdefs.h>
+#include <QObject>
+#include <QJsonArray>
+#include <QJsonObject>
 export module Artifact.Render.Queue.Service;
+
 import Utils.Id;
 import Artifact.Render.Queue.Presets;
 

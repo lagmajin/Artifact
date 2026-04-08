@@ -56,6 +56,7 @@
 #include <QStyle>
 #include <QPainter>
 #include <QPalette>
+#include <QStringView>
 
 #include <QScrollBar>
 #include <QKeyEvent>
@@ -663,7 +664,7 @@ private:
         for (int c = 0; c < cols; ++c) {
             const QModelIndex idx = sourceModel()->index(sourceRow, c, sourceParent);
             const QString text = sourceModel()->data(idx, Qt::DisplayRole).toString();
-            if (query_.matches(text, LayerSearchType::Any, true, false, false)) {
+            if (query_.matches(text.toUtf8().constData(), LayerSearchType::Any, true, false, false)) {
                 return true;
             }
         }
@@ -3118,7 +3119,7 @@ public:
         if (!proxyModel_) return;
         const QString trimmed = text.trimmed();
         ArtifactLayerSearchQuery query;
-        query.setSearchText(trimmed);
+        query.setSearchText(trimmed.toUtf8().constData());
         proxyModel_->setSearchQuery(query);
         proxyModel_->setAdvancedFilter(
             trimmed,

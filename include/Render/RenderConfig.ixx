@@ -1,4 +1,5 @@
 module;
+#include <utility>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/GraphicsTypes.h>
 
 export module Artifact.Render.Config;

@@ -1,10 +1,13 @@
 ﻿module;
+#include <utility>
+
 #include <wobjectdefs.h>
 #include <QObject>
 #include <QString>
 #include <QDebug>
 
 export module Artifact.Tool.Service;
+
 
 import Tool;
 import Artifact.Tool.Manager;

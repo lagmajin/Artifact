@@ -1,10 +1,5 @@
 ﻿module;
-#include <algorithm>
-#include <array>
-#include <cmath>
-#include <cstring>
-#include <unordered_map>
-#include <vector>
+
 #include <QImage>
 #include <QMatrix4x4>
 #include <QVector2D>
@@ -23,6 +18,7 @@
 
 module Artifact.Render.PrimitiveRenderer3D;
 
+import std;
 import Artifact.Render.ShaderManager;
 
 namespace Artifact {

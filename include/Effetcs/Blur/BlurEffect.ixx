@@ -1,9 +1,10 @@
 module;
-#include <QString>
-#include <QVariant>
+#include <utility>
 #include <vector>
 #include <algorithm>
 #include <cmath>
+#include <QString>
+#include <QVariant>
 
 export module Artifact.Effect.Rasterizer.Blur;
 

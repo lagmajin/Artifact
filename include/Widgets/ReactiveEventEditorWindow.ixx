@@ -1,8 +1,8 @@
 module;
+#include <utility>
 
 #include <QMainWindow>
 #include <wobjectdefs.h>
-
 export module Artifact.Widgets.ReactiveEventEditorWindow;
 
 export namespace Artifact {

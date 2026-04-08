@@ -1,4 +1,5 @@
-﻿module;
+module;
+#include <utility>
 #include <RenderDevice.h>
 #include <Shader.h>
 #include <PipelineState.h>

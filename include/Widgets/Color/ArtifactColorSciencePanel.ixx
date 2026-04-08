@@ -1,13 +1,13 @@
-module;
-
+﻿module;
+#include <utility>
 #include <QWidget>
-#include <wobjectdefs.h>
 
+#include <wobjectdefs.h>
 export module Artifact.Widgets.ColorSciencePanel;
 
-export namespace Artifact {
+import Color.ScienceManager;
 
-class ArtifactColorScienceManager;
+export namespace Artifact {
 
 class ArtifactColorSciencePanel : public QWidget {
   W_OBJECT(ArtifactColorSciencePanel)

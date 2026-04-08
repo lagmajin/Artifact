@@ -1,8 +1,10 @@
 module;
+#include <utility>
+
 #include <QString>
 #include <QSize>
-
 export module Artifact.Render.Manager;
+
 
 export namespace Artifact {
 

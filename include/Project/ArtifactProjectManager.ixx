@@ -1,12 +1,12 @@
 module;
+#include <utility>
 
+#include <memory>
+#include <wobjectdefs.h>
 #include <QString>
 #include <QStringList>
 #include <QObject>
-#include <wobjectdefs.h>
 export module Artifact.Project.Manager;
-
-import std;
 
 import Utils;
 import Utils.String.UniString;

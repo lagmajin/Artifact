@@ -1,4 +1,5 @@
-﻿module;
+module;
+#include <utility>
 #include <wobjectimpl.h>
 #include <QVBoxLayout>
 #include <QDebug>

@@ -1,4 +1,5 @@
-﻿module;
+module;
+#include <utility>
 #include <QLabel>
 #include <QBoxLayout>
 #include <QVBoxLayout>

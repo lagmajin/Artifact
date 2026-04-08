@@ -1,11 +1,12 @@
-﻿module ;
+module;
+#include <utility>
+
+#include "qnamespace.h"
+
 #include <QColor>
 #include <QGraphicsItem>
 #include <QGraphicsSceneMouseEvent>
 #include <wobjectdefs.h>
-
-#include "qnamespace.h"
-
 export module Artifact.Timeline.Objects;
 
 import Utils.Id;
@@ -14,11 +15,9 @@ export namespace Artifact
 {
  using namespace ArtifactCore;
 
- class ResizeHandle : public QGraphicsObject{
+class ResizeHandle : public QGraphicsItem{
  	//W_OBJECT(ResizeHandle)
  protected:
- QVariant itemChange(GraphicsItemChange change,
-  const QVariant& value) override;
   void mousePressEvent(QGraphicsSceneMouseEvent* event) override;
   void mouseMoveEvent(QGraphicsSceneMouseEvent* event) override;
   void mouseReleaseEvent(QGraphicsSceneMouseEvent* event) override;
@@ -34,23 +33,23 @@ export namespace Artifact
 
  };
 	
- class ClipItem : public QGraphicsObject {
+ class ClipItem : public QGraphicsItem {
  private:
   class Impl;
   Impl* impl_;
  public:
+  using DragStartedCallback = std::function<void(ClipItem*)>;
+  using DragMovedCallback = std::function<void(ClipItem*, double, double)>;
+  using DragEndedCallback = std::function<void(ClipItem*, double, double)>;
+  using GeometryEditedCallback = std::function<void(ClipItem*, double, double)>;
+
   ClipItem(double start, double duration, double height);
   ~ClipItem();
-  // Friend factory functions (declare before Verdigris macro to avoid access
-  // specifier issues the macro may inject). These free functions are defined
-  // in the implementation file and are visible to other translation units.
   friend ClipItem* createClipItem(double start, double duration, double height);
   friend void destroyClipItem(ClipItem* clip);
-  W_OBJECT(ClipItem)
   QRectF boundingRect() const override;
   void paint(QPainter* painter, const QStyleOptionGraphicsItem* option, QWidget* widget = nullptr) override;
  protected:
-  QVariant itemChange(GraphicsItemChange change, const QVariant& value) override;
   // Mouse event overrides for drag handling
   void mousePressEvent(QGraphicsSceneMouseEvent* event) override;
   void mouseMoveEvent(QGraphicsSceneMouseEvent* event) override;
@@ -72,12 +71,10 @@ export namespace Artifact
   void setDuration(double duration);
   void setLayerId(const LayerID& layerId);
   LayerID layerId() const;
-
-  // Drag lifecycle signals (foundation): emit during drag so external code can react
-  void dragStarted(ClipItem* clip) W_SIGNAL(dragStarted,clip);
-  void dragMoved(ClipItem* clip, double sceneX, double sceneY) W_SIGNAL(dragMoved,clip,sceneX,sceneY);
-  void dragEnded(ClipItem* clip, double sceneX, double sceneY) W_SIGNAL(dragEnded,clip,sceneX,sceneY);
-  void geometryEdited(ClipItem* clip, double start, double duration) W_SIGNAL(geometryEdited, clip, start, duration);
+  void setDragStartedCallback(DragStartedCallback callback);
+  void setDragMovedCallback(DragMovedCallback callback);
+  void setDragEndedCallback(DragEndedCallback callback);
+  void setGeometryEditedCallback(GeometryEditedCallback callback);
  };
 
 // Forward declarations of factory functions
@@ -90,4 +87,3 @@ void destroyClipItem(ClipItem* clip);
 
 };
 
-W_REGISTER_ARGTYPE(Artifact::ClipItem*)

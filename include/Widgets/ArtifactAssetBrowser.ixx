@@ -1,4 +1,6 @@
-module;
+﻿module;
+#include <utility>
+
 #include <wobjectdefs.h>
 #include <QWidget>
 #include <QTreeView>
@@ -10,8 +12,8 @@ module;
 #include <QDragEnterEvent>
 #include <QDropEvent>
 #include <QPoint>
-
 export module Widgets.AssetBrowser;
+
 
 export namespace Artifact {
 

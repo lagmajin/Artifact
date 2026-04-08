@@ -1,15 +1,16 @@
-module;
+﻿module;
+#include <utility>
+#include <memory>
+#include <vector>
 #include <QPointF>
 #include <QRectF>
 #include <QCursor>
-#include <memory>
-#include <vector>
-
 export module Artifact.Widgets.TransformGizmo;
+
 
 import Artifact.Render.IRenderer;
 import Artifact.Composition.Abstract;
-import Artifact.Layer.Abstract;
+export import Artifact.Layer.Abstract;
 import Utils.Id;
 import Color.Float;
 
@@ -20,7 +21,7 @@ export namespace Artifact {
   float position = 0.0f;
  };
 
- class TransformGizmo {
+ export class TransformGizmo {
  public:
   enum class Mode {
    All,

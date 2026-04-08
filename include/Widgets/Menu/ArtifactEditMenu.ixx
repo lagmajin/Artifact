@@ -1,8 +1,10 @@
 ﻿module;
+#include <utility>
+
 #include <wobjectdefs.h>
 #include <QMenu>
-
 export module Artifact.Menu.Edit;
+
 
 
 export namespace Artifact {

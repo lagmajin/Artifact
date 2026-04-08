@@ -1,9 +1,8 @@
-module;
-
-
+﻿module;
+#include <utility>
+#include <wobjectdefs.h>
 #include <QWidget>
 
-#include <wobjectdefs.h>
 export module Artifact.Widgets.RenderLayerWidgetv2;
 
 import Core.Scale.Zoom;

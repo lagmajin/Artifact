@@ -1,6 +1,9 @@
-﻿module;
+module;
+#include <utility>
+
 #include <wobjectdefs.h>
 export module Tool;
+
 
 export namespace Artifact {
  enum class EditMode

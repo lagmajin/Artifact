@@ -1,9 +1,12 @@
-﻿module ;
+﻿module;
+#include <utility>
 #include <wobjectdefs.h>
 #include <QObject>
 #include <QString>
 
 export module Artifact.Tool.Manager;
+
+import std;
 
 export namespace Artifact {
 

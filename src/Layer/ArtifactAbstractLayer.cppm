@@ -1,5 +1,5 @@
-module;
-
+﻿module;
+#include <utility>
 #include <QDebug>
 #include <QPointF>
 #include <QRectF>
@@ -826,7 +826,7 @@ QJsonObject ArtifactAbstractLayer::toJson() const {
   // Mattes
   QJsonArray mattesArr;
   for (const auto &matte : impl_->mattes_) {
-    mattesArr.append(matte.toJson());
+    mattesArr.append(QJsonValue(matte.toJson()));
   }
   obj["mattes"] = mattesArr;
 

@@ -1,5 +1,4 @@
-﻿module;
-#include <QWidget>
+module;
 #include <QBoxLayout>
 
 

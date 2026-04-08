@@ -1,9 +1,11 @@
 ﻿module;
+#include <utility>
+
+#include <wobjectdefs.h>
 #include <QWidget>
 #include <QKeyEvent>
-#include <wobjectdefs.h>
-
 export module Artifact.Widgets.LayerCompositeTest;
+
 
 export namespace Artifact {
 

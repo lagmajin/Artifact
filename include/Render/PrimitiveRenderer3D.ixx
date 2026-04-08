@@ -1,25 +1,26 @@
-module;
-#include <QImage>
-#include <QMatrix4x4>
-#include <QVector2D>
-#include <QVector3D>
+﻿module;
+#include <utility>
 #include <RenderDevice.h>
 #include <DeviceContext.h>
 #include <SwapChain.h>
 #include <Texture.h>
 #include <RefCntAutoPtr.hpp>
+#include <QImage>
+#include <QMatrix4x4>
+#include <QVector2D>
+#include <QVector3D>
 
 export module Artifact.Render.PrimitiveRenderer3D;
 
+import std;
 import Graphics;
 import Color.Float;
+import Artifact.Render.ShaderManager;
 
 export namespace Artifact {
 
 using namespace Diligent;
 using namespace ArtifactCore;
-
-class ShaderManager;
 
 class PrimitiveRenderer3D {
 public:

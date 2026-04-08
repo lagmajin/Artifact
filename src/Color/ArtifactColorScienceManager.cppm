@@ -1,5 +1,5 @@
-﻿module;
-
+module;
+#include <utility>
 #include <QDebug>
 #include <QDir>
 #include <QFileInfo>

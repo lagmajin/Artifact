@@ -1,4 +1,5 @@
-﻿module;
+module;
+#include <utility>
 // ArtifactIRenderer maintenance rule:
 // Do not rewrite the existing D3D12-specific path by guesswork.
 // Do not replace this renderer with a Qt-only implementation.

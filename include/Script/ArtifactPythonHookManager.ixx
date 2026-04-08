@@ -1,6 +1,4 @@
-module;
-#include <QString>
-#include <QStringList>
+﻿module;
 
 #include <iostream>
 #include <vector>
@@ -16,8 +14,6 @@ module;
 #include <optional>
 #include <utility>
 #include <array>
-#include <mutex>
-#include <thread>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -27,7 +23,6 @@ module;
 #include <variant>
 #include <any>
 #include <atomic>
-#include <condition_variable>
 #include <queue>
 #include <deque>
 #include <list>
@@ -35,7 +30,11 @@ module;
 #include <numeric>
 #include <regex>
 #include <random>
+#include <QString>
+#include <QStringList>
 export module Artifact.Script.Hooks;
+
+import std;
 
 export namespace Artifact {
 

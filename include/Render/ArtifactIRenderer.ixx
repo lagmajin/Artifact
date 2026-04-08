@@ -1,18 +1,19 @@
 ﻿module;
+#include <utility>
 // ArtifactIRenderer maintenance rule:
 // Do not rewrite the existing D3D12-specific path by guesswork.
 // Do not replace this renderer with a Qt-only implementation.
 // Extend backends carefully while preserving the current Diligent/D3D12 architecture.
-#include <QImage>
-#include <QTransform>
-#include <QMatrix4x4>
-#include <QWidget>
 #include <RenderDevice.h>
 #include <DeviceContext.h>
 #include <RefCntAutoPtr.hpp>
 #include <memory>
-
+#include <QImage>
+#include <QTransform>
+#include <QMatrix4x4>
+#include <QWidget>
 export module Artifact.Render.IRenderer;
+
 
 import Color.Float;
 import Graphics.RayTracingManager;

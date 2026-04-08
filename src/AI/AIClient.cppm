@@ -1,22 +1,22 @@
 module;
-#include <QString>
-#include <QStringList>
-#include <QDebug>
-#include <QMetaObject>
-#include <QSettings>
+#include <utility>
 #ifdef _WIN32
 #define NOMINMAX
 #include <Windows.h>
 #endif
 #include <cstdint>
 #include <atomic>
+#include <memory>
 #include <mutex>
 #include <thread>
+#include <QString>
+#include <QStringList>
+#include <QDebug>
+#include <QMetaObject>
+#include <QSettings>
 #include <wobjectimpl.h>
 
 module AI.Client;
-
-import std;
 import Utils.String.UniString;
 import Core.AI.PromptGenerator;
 import Core.AI.LocalAgent;

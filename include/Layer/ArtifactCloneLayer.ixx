@@ -1,12 +1,13 @@
-module;
+﻿module;
+#include <utility>
+#include <vector>
+#include <memory>
 #include <QString>
 #include <QVariant>
 #include <QVector3D>
 #include <QMatrix4x4>
-#include <vector>
-#include <memory>
-
 export module Artifact.Layer.Clone;
+
 
 import Artifact.Layers;
 import Artifact.Effect.Clone.Core;

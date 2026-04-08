@@ -1,12 +1,13 @@
 ﻿module;
-#include <QWidget>
+#include <utility>
 #include <RenderDevice.h>
 #include <DeviceContext.h>
 #include <SwapChain.h>
 #include <RefCntAutoPtr.hpp>
 #include <windows.h>
-
+#include <QWidget>
 export module Artifact.Render.DiligentDeviceManager;
+
 
 export namespace Artifact {
 

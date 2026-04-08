@@ -1,11 +1,13 @@
 ﻿module;
-#include <QWidget>
-#include <QElapsedTimer>
+#include <utility>
 #include <memory>
 #include <string>
-#include <wobjectdefs.h>
 
+#include <wobjectdefs.h>
+#include <QWidget>
+#include <QElapsedTimer>
 export module Artifact.Widgets.AudioMixer;
+
 
 import Audio.Mixer;
 import Audio.Bus;

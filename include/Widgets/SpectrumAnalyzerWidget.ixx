@@ -1,9 +1,12 @@
 ﻿module;
-#include <QWidget>
-#include <wobjectdefs.h>
+#include <utility>
 #include <vector>
 
+#include <wobjectdefs.h>
+#include <QWidget>
 export module Artifact.Widgets.SpectrumAnalyzer;
+
+
 
 export namespace Artifact {
 

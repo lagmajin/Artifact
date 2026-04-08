@@ -1,11 +1,12 @@
-﻿module;
+module;
+#include <utility>
 
 #include <QtCore/QScopedPointer>
 #include <QtWidgets/QtWidgets>
 #include <Qtwidgets/QMenu>
 #include <wobjectdefs.h>
-
 export module Menu.Composition;
+
 
 export namespace Artifact {
 

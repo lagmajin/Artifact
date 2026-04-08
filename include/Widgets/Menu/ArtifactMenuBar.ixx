@@ -1,7 +1,8 @@
-﻿module;
+module;
+#include <utility>
+
 #include <QtWidgets>
 #include <wobjectdefs.h>
-
 export module Menu.MenuBar;
 
 export namespace Artifact {

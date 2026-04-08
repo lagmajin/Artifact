@@ -1,6 +1,6 @@
-// ReSharper disable All
+﻿// ReSharper disable All
 module;
-
+#include <utility>
 #include <QJsonDocument>
 #include <QList>
 #include <qforeach.h>
@@ -9,10 +9,10 @@ module;
 #include <QVector>
 #include <QMultiMap>
 #include <QString>
-#include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
 #include <QDebug>
+
 module Artifact.Composition.Abstract;
 
 import std;

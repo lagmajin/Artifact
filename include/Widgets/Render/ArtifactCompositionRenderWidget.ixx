@@ -1,9 +1,11 @@
 module;
+#include <utility>
+
 #include <QWidget>
 #include <QEvent>
 #include <wobjectdefs.h>
-
 export module Artifact.Widgets.CompositionRenderWidget;
+
 
 import Color.Float;
 import Artifact.Composition.Abstract;

@@ -19,9 +19,6 @@
 #include <QTextLayout>
 #include <QTextOption>
 #include <QVariant>
-#include <opencv2/imgproc.hpp>
-#include <opencv2/opencv.hpp>
-
 #include <Layer/ArtifactCloneEffectSupport.hpp>
 #include <algorithm>
 #include <any>
@@ -56,6 +53,7 @@
 #include <utility>
 #include <variant>
 #include <vector>
+#include <opencv2/opencv.hpp>
 
 module Artifact.Layer.Text;
 

@@ -1,10 +1,12 @@
 module;
+#include <utility>
+#include <memory>
 #include <QString>
 #include <QFileInfo>
 #include <QDir>
 #include <QProcess>
 #include <QDebug>
-#include <memory>
+#include <QStringList>
 
 export module Proxy.Service;
 

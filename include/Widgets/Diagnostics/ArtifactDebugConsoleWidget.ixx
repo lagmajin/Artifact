@@ -1,7 +1,8 @@
 module;
+#include <utility>
+
 #include <wobjectdefs.h>
 #include <QWidget>
-
 export module Artifact.Widgets.DebugConsoleWidget;
 
 export namespace Artifact {

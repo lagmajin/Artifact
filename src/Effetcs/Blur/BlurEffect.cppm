@@ -1,7 +1,7 @@
-﻿module;
-#include <opencv2/opencv.hpp>
+module;
+#include <utility>
 #include <memory>
-
+#include <opencv2/opencv.hpp>
 #include <QList>
 
 module Artifact.Effect.Rasterizer.Blur;

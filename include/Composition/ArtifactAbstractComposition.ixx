@@ -1,14 +1,14 @@
-module;
+﻿module;
+#include <utility>
+#include <memory>
 #include <wobjectdefs.h>
-
 #include <QObject>
 #include <QImage>
 #include <QJsonDocument>
 #include <QSize>
+
 export module Artifact.Composition.Abstract;
-
 import std;
-
 import Utils;
 import Utils.String.UniString;
 import Asset.File;
@@ -20,7 +20,7 @@ import Frame.Range;
 import Frame.Position;
 import Container.MultiIndex;
 import Composition.Context;
-import Artifact.Layer.Abstract;
+export import Artifact.Layer.Abstract;
 import Artifact.Composition.Result;
 import Artifact.Composition.InitParams;
 import Composition.Settings;

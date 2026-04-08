@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <QString>
 #include <QVector>
 #include <QColor>
@@ -39,7 +39,7 @@ module Artifact.Project.Items;
 
 
 
-
+import std;
 import Utils.Id;
 import Utils.String.UniString;
 
