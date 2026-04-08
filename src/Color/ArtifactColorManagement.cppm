@@ -1,13 +1,5 @@
 module;
 
-#include <QString>
-#include <QVector>
-#include <QMatrix4x4>
-#include <QFile>
-#include <QTextStream>
-#include <QDebug>
-#include <QRegularExpression>
-#include <wobjectimpl.h>
 #include <cmath>
 
 #include <iostream>
@@ -19,7 +11,6 @@ module;
 #include <unordered_set>
 #include <memory>
 #include <algorithm>
-#include <cmath>
 #include <functional>
 #include <optional>
 #include <utility>
@@ -43,6 +34,15 @@ module;
 #include <numeric>
 #include <regex>
 #include <random>
+#include <QString>
+#include <QVector>
+#include <QMatrix4x4>
+#include <QFile>
+#include <QTextStream>
+#include <QDebug>
+#include <QRegularExpression>
+#include <wobjectimpl.h>
+
 module Artifact.Color.Management;
 
 

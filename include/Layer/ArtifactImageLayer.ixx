@@ -1,12 +1,10 @@
 ﻿module;
+#include <utility>
 #include <QImage>
 #include <QVariant>
-
-#include <opencv2/opencv.hpp>
-
 #include <wobjectimpl.h>
-
 export module Artifact.Layer.Image;
+
 
 import Artifact.Layers;
 

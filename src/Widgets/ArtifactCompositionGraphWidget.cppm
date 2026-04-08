@@ -1,4 +1,5 @@
 ﻿module;
+#include <utility>
 #include <wobjectimpl.h>
 #include <QGraphicsScene>
 #include <QGraphicsView>
@@ -15,6 +16,7 @@
 #include <QPalette>
 #include <QColor>
 #include <qevent.h>
+
 module Artifact.Widgets.CompositionGraphWidget;
 
 import std;

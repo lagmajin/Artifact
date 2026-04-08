@@ -1,9 +1,4 @@
 ﻿module;
-#include <wobjectdefs.h>
-#include <QString>
-#include <QStringList>
-#include <QVariant>
-#include <QObject>
 #include <iostream>
 #include <vector>
 #include <string>
@@ -18,8 +13,6 @@
 #include <optional>
 #include <utility>
 #include <array>
-#include <mutex>
-#include <thread>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -29,7 +22,6 @@
 #include <variant>
 #include <any>
 #include <atomic>
-#include <condition_variable>
 #include <queue>
 #include <deque>
 #include <list>
@@ -37,7 +29,13 @@
 #include <numeric>
 #include <regex>
 #include <random>
+#include <wobjectdefs.h>
+#include <QString>
+#include <QStringList>
+#include <QVariant>
+#include <QObject>
 export module Undo.UndoManager;
+
 
 
 

@@ -1,10 +1,11 @@
-module;
+﻿module;
+#include <utility>
 #include <QMessageBox>
 #include <QWidget>
 #include <QString>
 #include <QPushButton>
-
 module Artifact.Widgets.AppDialogs;
+
 
 namespace Artifact {
 

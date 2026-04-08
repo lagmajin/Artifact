@@ -1,19 +1,18 @@
-﻿module ;
+﻿module;
+#include <utility>
 
 
-#include <wobjectcpp.h>
-
-#include <QtWidgets/QMainWindow>
 #include <memory> // Added for std::unique_ptr if used in Impl
+#include <functional>
+#include <wobjectcpp.h>
+#include <QtWidgets/QMainWindow>
 #include <ads_globals.h>
-
 
 export module Artifact.MainWindow;
 
+
 import Artifact.Widgets.AudioMixer; // Added
 import Audio.Mixer; // Added
-
-import std;
 
 export namespace Artifact {
  

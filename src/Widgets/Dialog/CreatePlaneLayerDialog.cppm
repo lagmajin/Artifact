@@ -1,4 +1,5 @@
-﻿module;
+module;
+#include <utility>
 #include <QDialogButtonBox>
 #include <QVBoxLayout>
 #include <QWidget>

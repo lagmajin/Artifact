@@ -1,6 +1,5 @@
 ﻿module;
 #include <QColor>
-#include <wobjectimpl.h>
 #include <QGraphicsItem>
 #include <QGraphicsScene>
 #include <QGraphicsRectItem>
@@ -8,11 +7,9 @@
 #include <QPainter>
 #include <QStyleOptionGraphicsItem>
 #include <QWidget>
-#include <QVariant>
 #include <QPointF>
 #include <QRectF>
 #include <QBrush>
-#include <QPointer>
 
 module Artifact.Timeline.Objects;
 import std;
@@ -54,11 +51,15 @@ public:
     QGraphicsRectItem* ghostRect = nullptr;
     QPointF dragStartScenePos;
     QPointF dragStartItemPos;
+    ClipItem::DragStartedCallback onDragStarted;
+    ClipItem::DragMovedCallback onDragMoved;
+    ClipItem::DragEndedCallback onDragEnded;
+    ClipItem::GeometryEditedCallback onGeometryEdited;
     Impl() {}
     ~Impl() {}
 };
 
- ResizeHandle::ResizeHandle(Side s, QGraphicsItem* parent) : QGraphicsObject(parent), side(s)
+ ResizeHandle::ResizeHandle(Side s, QGraphicsItem* parent) : QGraphicsItem(parent), side(s)
  {
   setFlag(ItemIsMovable, false);
   setFlag(ItemSendsGeometryChanges);
@@ -67,8 +68,6 @@ public:
   setAcceptedMouseButtons(Qt::LeftButton);
   setCursor(Qt::SizeHorCursor);
  }
-
-W_OBJECT_IMPL(ClipItem)
 
 QRectF ResizeHandle::boundingRect() const {
     return QRectF(-kResizeHandleHalfWidth, 0, kResizeHandleHalfWidth * 2.0,
@@ -92,22 +91,6 @@ void ResizeHandle::paint(QPainter* painter, const QStyleOptionGraphicsItem* opti
 }
 
 // (factory helpers are provided as free functions: createClipItem / destroyClipItem)
-
-QVariant ResizeHandle::itemChange(GraphicsItemChange change, const QVariant& value)
-{
-    if (g_clipGeometrySyncInProgress) {
-        return QGraphicsObject::itemChange(change, value);
-    }
-    if (change == QGraphicsItem::ItemPositionChange && parentItem()) {
-        Q_UNUSED(value);
-        if (auto* clip = dynamic_cast<ClipItem*>(parentItem())) {
-            const qreal anchoredX = (side == Left) ? 0.0 : clip->getDuration();
-            return QPointF(anchoredX, 0.0);
-        }
-        return QPointF(0.0, 0.0);
-    }
-    return QGraphicsObject::itemChange(change, value);
-}
 
 void ResizeHandle::mousePressEvent(QGraphicsSceneMouseEvent* event)
 {
@@ -143,7 +126,7 @@ void ResizeHandle::mouseReleaseEvent(QGraphicsSceneMouseEvent* event)
 
 
 
- ClipItem::ClipItem(double start, double duration, double height) : QGraphicsObject()
+ ClipItem::ClipItem(double start, double duration, double height) : QGraphicsItem()
  {
   //setBrush(QColor(70, 120, 180));
   setFlags(
@@ -306,7 +289,9 @@ void ClipItem::setStartDuration(double start, double duration)
     }
     g_clipGeometrySyncInProgress = false;
     if (std::abs(newStart - oldStart) > 1e-9 || std::abs(newDuration - oldDuration) > 1e-9) {
-        Q_EMIT geometryEdited(this, impl_->start, impl_->duration);
+        if (impl_->onGeometryEdited) {
+            impl_->onGeometryEdited(this, impl_->start, impl_->duration);
+        }
     }
 }
 
@@ -331,7 +316,9 @@ void ClipItem::endHandleResize(ResizeHandle::Side side)
     if ((side == ResizeHandle::Left && impl_->interaction == Impl::InteractionState::ResizingLeft) ||
         (side == ResizeHandle::Right && impl_->interaction == Impl::InteractionState::ResizingRight)) {
         impl_->interaction = Impl::InteractionState::Idle;
-        Q_EMIT geometryEdited(this, impl_->start, impl_->duration);
+        if (impl_->onGeometryEdited) {
+            impl_->onGeometryEdited(this, impl_->start, impl_->duration);
+        }
     }
 }
 
@@ -355,7 +342,9 @@ void ClipItem::setStart(double start)
         g_clipGeometrySyncInProgress = false;
         update();
         if (std::abs(impl_->start - oldStart) > 1e-9) {
-            Q_EMIT geometryEdited(this, impl_->start, impl_->duration);
+            if (impl_->onGeometryEdited) {
+                impl_->onGeometryEdited(this, impl_->start, impl_->duration);
+            }
         }
     }
 }
@@ -379,7 +368,9 @@ void ClipItem::setDuration(double duration)
         g_clipGeometrySyncInProgress = false;
         update();
         if (std::abs(newDuration - oldDuration) > 1e-9) {
-            Q_EMIT geometryEdited(this, impl_->start, impl_->duration);
+            if (impl_->onGeometryEdited) {
+                impl_->onGeometryEdited(this, impl_->start, impl_->duration);
+            }
         }
     }
 }
@@ -408,7 +399,7 @@ void ClipItem::mousePressEvent(QGraphicsSceneMouseEvent* event)
     impl_->isDragging = false;
     // Selection state is managed by the owner-draw timeline widget to avoid
     // double-toggle between widget-level and item-level press events.
-    QGraphicsObject::mousePressEvent(event);
+    QGraphicsItem::mousePressEvent(event);
 }
 
 void ClipItem::mouseMoveEvent(QGraphicsSceneMouseEvent* event)
@@ -430,13 +421,17 @@ void ClipItem::mouseMoveEvent(QGraphicsSceneMouseEvent* event)
             impl_->ghostRect->setZValue(1000);
             scene()->addItem(impl_->ghostRect);
         }
-        Q_EMIT dragStarted(this);
+        if (impl_->onDragStarted) {
+            impl_->onDragStarted(this);
+        }
     }
 
     if (impl_->isDragging && impl_->ghostRect) {
         QPointF newPos = impl_->dragStartItemPos + QPointF(delta.x(), delta.y());
         impl_->ghostRect->setPos(newPos);
-        Q_EMIT dragMoved(this, impl_->ghostRect->scenePos().x(), impl_->ghostRect->scenePos().y());
+        if (impl_->onDragMoved) {
+            impl_->onDragMoved(this, impl_->ghostRect->scenePos().x(), impl_->ghostRect->scenePos().y());
+        }
     }
     event->accept();
 }
@@ -448,7 +443,6 @@ void ClipItem::mouseReleaseEvent(QGraphicsSceneMouseEvent* event)
         event->accept();
         return;
     }
-    QPointer<ClipItem> selfGuard(this);
     if (impl_->isDragging) {
         QPointF endPos = pos();
         if (impl_->ghostRect) {
@@ -466,28 +460,39 @@ void ClipItem::mouseReleaseEvent(QGraphicsSceneMouseEvent* event)
         setPos(impl_->start, pos().y());
         update();
 
-        Q_EMIT dragEnded(this, endPos.x(), endPos.y());
-        if (!selfGuard || !impl_) {
-            event->accept();
-            return;
+        if (impl_->onDragEnded) {
+            impl_->onDragEnded(this, endPos.x(), endPos.y());
         }
     }
-    QGraphicsObject::mouseReleaseEvent(event);
+    QGraphicsItem::mouseReleaseEvent(event);
 }
 
-QVariant ClipItem::itemChange(GraphicsItemChange change, const QVariant& value)
+void ClipItem::setDragStartedCallback(DragStartedCallback callback)
 {
-  // Provide a minimal implementation for itemChange used by the timeline.
-  // Return base class behavior where appropriate.
-  switch (change) {
-  case QGraphicsItem::ItemPositionChange:
-  case QGraphicsItem::ItemPositionHasChanged:
-  case QGraphicsItem::ItemSelectedChange:
-  case QGraphicsItem::ItemSelectedHasChanged:
-    return QGraphicsObject::itemChange(change, value);
-  default:
-    return QGraphicsObject::itemChange(change, value);
-  }
+    if (impl_) {
+        impl_->onDragStarted = std::move(callback);
+    }
+}
+
+void ClipItem::setDragMovedCallback(DragMovedCallback callback)
+{
+    if (impl_) {
+        impl_->onDragMoved = std::move(callback);
+    }
+}
+
+void ClipItem::setDragEndedCallback(DragEndedCallback callback)
+{
+    if (impl_) {
+        impl_->onDragEnded = std::move(callback);
+    }
+}
+
+void ClipItem::setGeometryEditedCallback(GeometryEditedCallback callback)
+{
+    if (impl_) {
+        impl_->onGeometryEdited = std::move(callback);
+    }
 }
 
 };

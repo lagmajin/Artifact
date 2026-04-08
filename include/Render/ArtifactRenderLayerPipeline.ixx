@@ -1,13 +1,13 @@
 module;
+#include <utility>
 #include <DiligentCore/Common/interface/RefCntAutoPtr.hpp>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/Texture.h>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/DeviceContext.h>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/RenderDevice.h>
 #include "../../../ArtifactCore/include/Define/DllExportMacro.hpp"
+#include <vector>
 
 export module Artifact.Render.Pipeline;
-
-import std;
 import Layer.Blend;
 import Artifact.Layer.Abstract;
 import Graphics.LayerBlendPipeline;

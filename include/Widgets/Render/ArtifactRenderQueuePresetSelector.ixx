@@ -1,4 +1,7 @@
-module;
+﻿module;
+#include <utility>
+
+#include <wobjectdefs.h>
 #include <QWidget>
 #include <QComboBox>
 #include <QCheckBox>
@@ -8,7 +11,6 @@ module;
 #include <QPushButton>
 #include <QListWidget>
 #include <QGroupBox>
-#include <wobjectdefs.h>
 
 export module Artifact.Widgets.RenderQueuePresetSelector;
 

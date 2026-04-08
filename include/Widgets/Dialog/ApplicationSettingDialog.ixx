@@ -1,13 +1,13 @@
 module;
+#include <utility>
+
 #include <QColor>
 #include <QDialog>
 #include <QList>
 #include <QString>
 #include <QVector>
 #include <QWidget>
-
 #include <wobjectdefs.h>
-
 export module ApplicationSettingDialog;
 
 export namespace ArtifactCore {

@@ -1,13 +1,4 @@
 module;
-#include <QObject>
-#include <QString>
-#include <QStringList>
-#include <QTimer>
-#include <QDateTime>
-#include <QDir>
-#include <QFile>
-#include <QFileInfo>
-#include <QByteArray>
 
 #include <iostream>
 #include <vector>
@@ -23,8 +14,6 @@ module;
 #include <optional>
 #include <utility>
 #include <array>
-#include <mutex>
-#include <thread>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -34,7 +23,6 @@ module;
 #include <variant>
 #include <any>
 #include <atomic>
-#include <condition_variable>
 #include <queue>
 #include <deque>
 #include <list>
@@ -42,7 +30,19 @@ module;
 #include <numeric>
 #include <regex>
 #include <random>
+
+#include <QObject>
+#include <QString>
+#include <QStringList>
+#include <QTimer>
+#include <QDateTime>
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
+#include <QByteArray>
+
 export module Artifact.Project.AutoSaveManager;
+
 
 export namespace Artifact {
 
@@ -95,9 +95,9 @@ export namespace Artifact {
     ArtifactAutoSaveManager() = default;
     ~ArtifactAutoSaveManager() = default;
 
-    void initialize(const QString& projectPath, const QString& autoSaveDir) {
-      projectFilePath_ = projectPath;
-      autoSaveDirectory_ = autoSaveDir;
+    void initialize(const std::filesystem::path& projectPath, const std::filesystem::path& autoSaveDir) {
+      projectFilePath_ = QString::fromStdWString(projectPath.wstring());
+      autoSaveDirectory_ = QString::fromStdWString(autoSaveDir.wstring());
       ensureAutoSaveDir();
     }
 
@@ -152,7 +152,7 @@ export namespace Artifact {
       }
     }
 
-    bool createRecoveryPoint(const QByteArray& projectSnapshotJsonUtf8, QString* outPath = nullptr) {
+    bool createRecoveryPoint(const std::string& projectSnapshotJsonUtf8, std::string* outPath = nullptr) {
       const QString dirPath = ensureAutoSaveDir();
       if (dirPath.isEmpty()) {
         status_ = AutoSaveStatus::SaveFailed;
@@ -169,7 +169,7 @@ export namespace Artifact {
         return false;
       }
 
-      const qint64 written = file.write(projectSnapshotJsonUtf8);
+      const qint64 written = file.write(projectSnapshotJsonUtf8.data(), static_cast<qint64>(projectSnapshotJsonUtf8.size()));
       file.close();
       if (written <= 0) {
         status_ = AutoSaveStatus::SaveFailed;
@@ -181,7 +181,7 @@ export namespace Artifact {
       isDirty_ = false;
       status_ = AutoSaveStatus::SaveComplete;
       lastError_.clear();
-      if (outPath) *outPath = fullPath;
+      if (outPath) *outPath = fullPath.toStdString();
       return true;
     }
 
@@ -202,7 +202,7 @@ export namespace Artifact {
       return result;
     }
 
-    bool loadLatestRecoveryPoint(QByteArray* outJsonUtf8, QString* outPath = nullptr) {
+    bool loadLatestRecoveryPoint(std::string* outJsonUtf8, std::string* outPath = nullptr) {
       if (!outJsonUtf8) return false;
       QDir dir(ensureAutoSaveDir());
       if (!dir.exists()) return false;
@@ -214,11 +214,11 @@ export namespace Artifact {
       QFile file(latest);
       if (!file.open(QIODevice::ReadOnly)) return false;
 
-      *outJsonUtf8 = file.readAll();
+      *outJsonUtf8 = file.readAll().toStdString();
       file.close();
-      if (outPath) *outPath = latest;
+      if (outPath) *outPath = latest.toStdString();
       status_ = AutoSaveStatus::RecoveringFromCrash;
-      return !outJsonUtf8->isEmpty();
+      return !outJsonUtf8->empty();
     }
   };
 

@@ -518,13 +518,18 @@ namespace Artifact
 
       // 接線方向に ориентация
       if (point.tangent.length() > 0.001f) {
-       QVector3D tangent = point.tangent.normalized();
+       QVector3D tangent(point.tangent.x(), point.tangent.y(), point.tangent.z());
+       tangent.normalize();
        QVector3D up(0, 1, 0);
        if (std::abs(QVector3D::dotProduct(tangent, up)) > 0.99f) {
         up = QVector3D(1, 0, 0);
        }
-       QVector3D right = QVector3D::crossProduct(up, tangent).normalized();
-       up = QVector3D::crossProduct(tangent, right).normalized();
+       const QVector3D rightCross = QVector3D::crossProduct(up, tangent);
+       QVector3D right(rightCross.x(), rightCross.y(), rightCross.z());
+       right.normalize();
+       const QVector3D upCross = QVector3D::crossProduct(tangent, right);
+       up = QVector3D(upCross.x(), upCross.y(), upCross.z());
+       up.normalize();
 
        QMatrix4x4 orient;
        orient.setColumn(0, QVector4D(right, 0));

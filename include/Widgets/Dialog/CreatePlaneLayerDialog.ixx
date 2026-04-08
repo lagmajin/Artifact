@@ -1,10 +1,10 @@
 module;
+#include <utility>
+#include <memory>
 #include <QDialog>
 #include <QWidget>
-
 #include <wobjectdefs.h>
 export module Artifact.Widgets.CreatePlaneLayerDialog;
-import std;
 
 import Widgets.Dialog.Abstract;
 import Artifact.Layer.InitParams;

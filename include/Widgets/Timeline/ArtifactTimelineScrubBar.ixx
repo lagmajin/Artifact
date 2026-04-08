@@ -1,11 +1,13 @@
-﻿module;
+module;
+#include <utility>
+
 #include <QMouseEvent>
 #include <QPaintEvent>
 #include <QSize>
 #include <QWidget>
 #include <wobjectdefs.h>
-
 export module Artifact.Timeline.ScrubBar;
+
 
 import Frame.Position;
 

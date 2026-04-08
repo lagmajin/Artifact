@@ -3,7 +3,6 @@
 #define NOMINMAX
 #define QT_NO_KEYWORDS
 
-#include <Layer/ArtifactCloneEffectSupport.hpp>
 #include <QApplication>
 #include <QByteArray>
 #include <QColor>
@@ -24,6 +23,7 @@
 #include <QVector3D>
 #include <QVector4D>
 #include <QVector>
+#include <opencv2/core.hpp>
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -44,6 +44,7 @@ import Artifact.Render.Context;
 import Artifact.Preview.Pipeline;
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
+import Artifact.Layer.CloneEffectSupport;
 import Artifact.Layer.Camera;
 import Artifact.Layer.Light;
 import Artifact.Effect.Abstract;
@@ -120,20 +121,17 @@ bool isScaleHandle(TransformGizmo::HandleType handle) {
 }
 } // namespace
 
-QString buildLayerSurfaceCacheKey(const ArtifactAbstractLayerPtr &layer,
+QString buildLayerSurfaceCacheKey(ArtifactAbstractLayer *layer,
                                   const QImage &surface, int64_t frameNumber) {
   if (!layer) {
     return QString();
   }
 
-  ArtifactAbstractLayerPtr layerCopy = layer;
-  ArtifactAbstractLayer *layerPtr = layerCopy.get();
-
-  QString key = layerPtr->id().toString();
+  QString key = layer->id().toString();
   key +=
       QStringLiteral("|size=%1x%2").arg(surface.width()).arg(surface.height());
 
-  if (const auto solid2D = dynamic_cast<ArtifactSolid2DLayer *>(layerPtr)) {
+  if (auto *solid2D = dynamic_cast<ArtifactSolid2DLayer *>(layer)) {
     const QRectF bounds = solid2D->localBounds();
     key += QStringLiteral("|solid2D|color=%1|bounds=%2x%3")
                .arg(QStringLiteral("%1,%2,%3,%4")
@@ -146,8 +144,7 @@ QString buildLayerSurfaceCacheKey(const ArtifactAbstractLayerPtr &layer,
     return key;
   }
 
-  if (const auto solidImage =
-          dynamic_cast<ArtifactSolidImageLayer *>(layerPtr)) {
+  if (auto *solidImage = dynamic_cast<ArtifactSolidImageLayer *>(layer)) {
     const QRectF bounds = solidImage->localBounds();
     key += QStringLiteral("|solidImage|color=%1|bounds=%2x%3")
                .arg(QStringLiteral("%1,%2,%3,%4")
@@ -160,8 +157,7 @@ QString buildLayerSurfaceCacheKey(const ArtifactAbstractLayerPtr &layer,
     return key;
   }
 
-  if (const auto imageLayer =
-          dynamic_cast<ArtifactImageLayer *>(layerPtr)) {
+  if (auto *imageLayer = dynamic_cast<ArtifactImageLayer *>(layer)) {
     key += QStringLiteral("|image|src=%1|fit=%2|size=%3x%4")
                .arg(imageLayer->sourcePath())
                .arg(imageLayer->fitToLayer() ? 1 : 0)
@@ -170,8 +166,7 @@ QString buildLayerSurfaceCacheKey(const ArtifactAbstractLayerPtr &layer,
     return key;
   }
 
-  if (const auto svgLayer =
-          dynamic_cast<ArtifactSvgLayer *>(layerPtr)) {
+  if (auto *svgLayer = dynamic_cast<ArtifactSvgLayer *>(layer)) {
     key += QStringLiteral("|svg|src=%1|fit=%2|size=%3x%4")
                .arg(svgLayer->sourcePath())
                .arg(svgLayer->fitToLayer() ? 1 : 0)
@@ -180,8 +175,7 @@ QString buildLayerSurfaceCacheKey(const ArtifactAbstractLayerPtr &layer,
     return key;
   }
 
-  if (const auto videoLayer =
-          dynamic_cast<ArtifactVideoLayer *>(layerPtr)) {
+  if (auto *videoLayer = dynamic_cast<ArtifactVideoLayer *>(layer)) {
     key += QStringLiteral("|video|src=%1|frame=%2|proxy=%3|size=%4x%5")
                .arg(videoLayer->sourcePath())
                .arg(frameNumber)
@@ -191,8 +185,7 @@ QString buildLayerSurfaceCacheKey(const ArtifactAbstractLayerPtr &layer,
     return key;
   }
 
-  if (const auto textLayer =
-          dynamic_cast<ArtifactTextLayer *>(layerPtr)) {
+  if (auto *textLayer = dynamic_cast<ArtifactTextLayer *>(layer)) {
     key += QStringLiteral("|text|value=%1|surface=%2x%3")
                .arg(textLayer->text().toQString())
                .arg(surface.width())
@@ -539,7 +532,7 @@ hitTopmostLayerAtViewportPos(const ArtifactCompositionPtr &comp,
 }
 
 void drawLayerForCompositionView(
-    ArtifactAbstractLayerPtr layer, ArtifactIRenderer *renderer,
+    ArtifactAbstractLayer *layer, ArtifactIRenderer *renderer,
     float opacityOverride = -1.0f, QString *videoDebugOut = nullptr,
     QHash<QString, LayerSurfaceCacheEntry> *surfaceCache = nullptr,
     GPUTextureCacheManager *gpuTextureCacheManager = nullptr,
@@ -579,7 +572,7 @@ void drawLayerForCompositionView(
   }
 
   auto applyRasterizerEffectsAndMasksToSurface =
-      [&](const ArtifactAbstractLayerPtr &targetLayer, QImage &surface) {
+      [&](ArtifactAbstractLayer *targetLayer, QImage &surface) {
         if (!targetLayer || surface.isNull()) {
           return;
         }
@@ -636,7 +629,7 @@ void drawLayerForCompositionView(
       };
 
   auto hasRasterizerEffectsOrMasks =
-      [](const ArtifactAbstractLayerPtr &targetLayer) {
+      [](ArtifactAbstractLayer *targetLayer) {
         if (!targetLayer) {
           return false;
         }
@@ -732,7 +725,7 @@ void drawLayerForCompositionView(
     return true;
   };
 
-  if (const auto solid2D = dynamic_cast<ArtifactSolid2DLayer *>(layer.get())) {
+  if (auto *solid2D = dynamic_cast<ArtifactSolid2DLayer *>(layer)) {
     const auto color = solid2D->color();
     if (hasRasterizerEffectsOrMasks(layer)) {
       const QSize surfaceSize(
@@ -751,8 +744,7 @@ void drawLayerForCompositionView(
     return;
   }
 
-  if (const auto solidImage =
-          dynamic_cast<ArtifactSolidImageLayer *>(layer.get())) {
+  if (auto *solidImage = dynamic_cast<ArtifactSolidImageLayer *>(layer)) {
     // [Fix] SolidImage も QImage 経由で GPU テクスチャキャッシュを利用する
     const QImage img = solidImage->toQImage();
     if (!img.isNull()) {
@@ -769,8 +761,7 @@ void drawLayerForCompositionView(
     return;
   }
 
-  if (const auto imageLayer =
-          dynamic_cast<ArtifactImageLayer *>(layer.get())) {
+  if (auto *imageLayer = dynamic_cast<ArtifactImageLayer *>(layer)) {
     const QImage img = imageLayer->toQImage();
     if (!img.isNull()) {
       applySurfaceAndDraw(img, localRect, hasRasterizerEffectsOrMasks(layer));
@@ -778,8 +769,7 @@ void drawLayerForCompositionView(
     }
   }
 
-  if (const auto svgLayer =
-          dynamic_cast<ArtifactSvgLayer *>(layer.get())) {
+  if (auto *svgLayer = dynamic_cast<ArtifactSvgLayer *>(layer)) {
     if (svgLayer->isLoaded()) {
       const QImage svgImage = svgLayer->toQImage();
       if (!svgImage.isNull()) {
@@ -792,8 +782,7 @@ void drawLayerForCompositionView(
     }
   }
 
-  if (const auto videoLayer =
-          dynamic_cast<ArtifactVideoLayer *>(layer.get())) {
+  if (auto *videoLayer = dynamic_cast<ArtifactVideoLayer *>(layer)) {
     const QImage frame = videoLayer->currentFrameToQImage();
     // デバッグ文字列生成は
     // デバッグカテゴリ有効時のみ実行（毎フレームのコスト削減）
@@ -821,8 +810,7 @@ void drawLayerForCompositionView(
     }
   }
 
-  if (const auto textLayer =
-          dynamic_cast<ArtifactTextLayer *>(layer.get())) {
+  if (auto *textLayer = dynamic_cast<ArtifactTextLayer *>(layer)) {
     const QImage textImage = textLayer->toQImage();
     if (!textImage.isNull()) {
       applySurfaceAndDraw(textImage, localRect,
@@ -831,8 +819,7 @@ void drawLayerForCompositionView(
     return;
   }
 
-  if (const auto compLayer =
-          dynamic_cast<ArtifactCompositionLayer *>(layer.get())) {
+  if (auto *compLayer = dynamic_cast<ArtifactCompositionLayer *>(layer)) {
     if (auto childComp = compLayer->sourceComposition()) {
       const QSize childSize = childComp->settings().compositionSize();
       const int64_t childFrame =
@@ -2164,22 +2151,23 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
       }
 
       if (hitLayer) {
+        const std::shared_ptr<ArtifactAbstractLayer> hitLayerRef = hitLayer;
         if (selection) {
           const bool ctrl = event->modifiers().testFlag(Qt::ControlModifier);
           const bool shift = event->modifiers().testFlag(Qt::ShiftModifier);
           if (ctrl) {
-            if (selection->isSelected(hitLayer)) {
-              selection->removeFromSelection(hitLayer);
+            if (selection->isSelected(hitLayerRef)) {
+              selection->removeFromSelection(hitLayerRef);
             } else {
-              selection->addToSelection(hitLayer);
+              selection->addToSelection(hitLayerRef);
             }
           } else if (shift) {
-            selection->addToSelection(hitLayer);
+            selection->addToSelection(hitLayerRef);
           } else {
             if (auto *svc = ArtifactProjectService::instance()) {
               svc->selectLayer(hitLayer->id());
             } else {
-              selection->selectLayer(hitLayer);
+              selection->selectLayer(hitLayerRef);
             }
           }
         }
@@ -2199,7 +2187,7 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
           impl_->isRubberBandSelecting_ = false;
           impl_->dragGroupMove_ = selection &&
                                   selection->selectedLayers().size() > 1 &&
-                                  selection->isSelected(hitLayer);
+                                  selection->isSelected(hitLayerRef);
           impl_->dragGroupLayers_.clear();
           impl_->dragGroupStartPositions_.clear();
           if (impl_->dragGroupMove_ && selection) {
@@ -2446,14 +2434,15 @@ void CompositionRenderController::handleMouseRelease() {
         if (!layer) {
           continue;
         }
+        const std::shared_ptr<ArtifactAbstractLayer> layerRef = layer;
         if (impl_->selectionMode_ == SelectionMode::Toggle) {
-          if (selection->isSelected(layer)) {
-            selection->removeFromSelection(layer);
+          if (selection->isSelected(layerRef)) {
+            selection->removeFromSelection(layerRef);
           } else {
-            selection->addToSelection(layer);
+            selection->addToSelection(layerRef);
           }
         } else {
-          selection->addToSelection(layer);
+          selection->addToSelection(layerRef);
         }
       }
 
@@ -2798,7 +2787,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                       if (layer->maskCount() > 0) {
                         return true;
                       }
-                      return layerHasCpuRasterizerWork(layer);
+                      return layerHasCpuRasterizerWork(layer.get());
                     });
     const bool gpuBlendPathRequested =
         gpuBlendRequested && hasGpuBlendJustification;
@@ -2959,10 +2948,10 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
             continue;
 
           ++drawnLayerCount;
-          if (layerUsesSurfaceUploadForCompositionView(layer)) {
+          if (layerUsesSurfaceUploadForCompositionView(layer.get())) {
             ++surfaceUploadLayerCount;
           }
-          if (layerHasCpuRasterizerWork(layer)) {
+          if (layerHasCpuRasterizerWork(layer.get())) {
             ++cpuRasterLayerCount;
           }
 
@@ -2985,7 +2974,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                   ? &lastVideoDebug_
                   : nullptr;
           drawLayerForCompositionView(
-              layer, renderer_.get(), 1.0f, dbgOut, &surfaceCache_,
+              layer.get(), renderer_.get(), 1.0f, dbgOut, &surfaceCache_,
               gpuTextureCacheManager_.get(), currentFrame.framePosition(), true,
               lod, has3DCamera ? &cameraViewMatrix : nullptr,
               has3DCamera ? &cameraProjMatrix : nullptr);
@@ -3152,10 +3141,10 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
           }
 
           ++drawnLayerCount;
-          if (layerUsesSurfaceUploadForCompositionView(layer)) {
+          if (layerUsesSurfaceUploadForCompositionView(layer.get())) {
             ++surfaceUploadLayerCount;
           }
-          if (layerHasCpuRasterizerWork(layer)) {
+          if (layerHasCpuRasterizerWork(layer.get())) {
             ++cpuRasterLayerCount;
           }
           layer->goToFrame(currentFrame.framePosition());
@@ -3169,7 +3158,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                   ? &lastVideoDebug_
                   : nullptr;
           drawLayerForCompositionView(
-              layer, renderer_.get(), opacity, dbgOut, &surfaceCache_,
+              layer.get(), renderer_.get(), opacity, dbgOut, &surfaceCache_,
               gpuTextureCacheManager_.get(), currentFrame.framePosition(),
               false, lod, has3DCamera ? &cameraViewMatrix : nullptr,
               has3DCamera ? &cameraProjMatrix : nullptr);
@@ -3389,8 +3378,9 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
     }
 
     if (renderer_ && !selectedIds.isEmpty()) {
-      const auto layersForOverlay =
-          comp ? comp->allLayer() : QVector<ArtifactAbstractLayerPtr>{};
+      const auto layersForOverlay = comp
+                                        ? comp->allLayer()
+                                        : decltype(comp->allLayer()){};
 
       // M-UI-6 Composition Motion Path Overlay
       if (comp) {
@@ -3399,6 +3389,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
         for (const auto &layer : layersForOverlay) {
           if (!layer || !isLayerSelected(selectedIds, layer))
             continue;
+          const std::shared_ptr<ArtifactAbstractLayer> &layerRef = layer;
 
           const auto &t3d = layer->transform3D();
           auto posTimes = t3d.getPositionKeyFrameTimes();

@@ -1,7 +1,5 @@
-﻿module;
-#include <QObject>
+module;
 #include <functional>
-#include <wobjectdefs.h>
 
 #include <iostream>
 #include <vector>
@@ -17,8 +15,6 @@
 #include <optional>
 #include <utility>
 #include <array>
-#include <mutex>
-#include <thread>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -28,7 +24,6 @@
 #include <variant>
 #include <any>
 #include <atomic>
-#include <condition_variable>
 #include <queue>
 #include <deque>
 #include <list>
@@ -36,6 +31,8 @@
 #include <numeric>
 #include <regex>
 #include <random>
+#include <QObject>
+#include <wobjectdefs.h>
 export module Artifact.Service.Playback;
 
 import Frame.Position;
@@ -45,6 +42,7 @@ import Playback.State;
 import Artifact.Composition.PlaybackController;
 import Artifact.Composition.Abstract;
 import Artifact.Playback.Engine;
+import Artifact.Composition.InOutPoints;
 
 W_REGISTER_ARGTYPE(Artifact::ArtifactCompositionPtr)
 
@@ -120,8 +118,8 @@ public:
     ArtifactCompositionPtr currentComposition() const;
 
     // In/Out Points
-    void setInOutPoints(class ArtifactInOutPoints* inOutPoints);
-    class ArtifactInOutPoints* inOutPoints() const;
+    void setInOutPoints(ArtifactInOutPoints* inOutPoints);
+    ArtifactInOutPoints* inOutPoints() const;
 
     // RAM preview cache
     void setRamPreviewEnabled(bool enabled);

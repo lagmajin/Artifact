@@ -1,4 +1,5 @@
 module;
+#include <utility>
 #include <QHash>
 #include <QImage>
 #include <QMutex>

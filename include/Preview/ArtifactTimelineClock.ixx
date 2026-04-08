@@ -1,8 +1,4 @@
-﻿module;
-#include <wobjectimpl.h>
-#include <QObject>
-#include <QString>
-
+module;
 #include <iostream>
 #include <vector>
 #include <string>
@@ -17,8 +13,6 @@
 #include <optional>
 #include <utility>
 #include <array>
-#include <mutex>
-#include <thread>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -28,7 +22,6 @@
 #include <variant>
 #include <any>
 #include <atomic>
-#include <condition_variable>
 #include <queue>
 #include <deque>
 #include <list>
@@ -37,6 +30,9 @@
 #include <regex>
 #include <random>
 export module Artifact.Preview.Clock;
+#include <wobjectimpl.h>
+#include <QObject>
+#include <QString>
 
 
 

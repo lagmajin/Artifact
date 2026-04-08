@@ -1,12 +1,4 @@
-﻿module;
-#include <QObject>
-#include <QString>
-#include <QVector>
-#include <QImage>
-#include <QPointF>
-#include <QSize>
-#include <QColor>
-#include <wobjectdefs.h>
+module;
 
 #include <iostream>
 #include <vector>
@@ -22,8 +14,6 @@
 #include <optional>
 #include <utility>
 #include <array>
-#include <mutex>
-#include <thread>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -33,7 +23,6 @@
 #include <variant>
 #include <any>
 #include <atomic>
-#include <condition_variable>
 #include <queue>
 #include <deque>
 #include <list>
@@ -42,6 +31,14 @@
 #include <regex>
 #include <random>
 export module Artifact.Effect.Stabilizer;
+#include <wobjectdefs.h>
+#include <QObject>
+#include <QString>
+#include <QVector>
+#include <QImage>
+#include <QPointF>
+#include <QSize>
+#include <QColor>
 
 
 

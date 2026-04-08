@@ -1,4 +1,7 @@
-module;
+﻿module;
+#include <utility>
+
+#include <wobjectdefs.h>
 #include <QObject>
 #include <QCursor>
 #include <QMouseEvent>
@@ -8,7 +11,6 @@ module;
 #include <QVector>
 #include <QRectF>
 #include <QString>
-#include <wobjectdefs.h>
 
 export module Artifact.Widgets.CompositionRenderController;
 
@@ -21,6 +23,7 @@ import Artifact.Widgets.Gizmo3D;
 import Geometry.CameraGuide;
 import Utils.Id;
 import Artifact.LOD.Manager;
+import Artifact.Widgets.TransformGizmo;
 
 export namespace Artifact {
  using namespace ArtifactCore;
@@ -104,7 +107,7 @@ void handleMouseMove(const QPointF& viewportPos);
   void handleMouseRelease();
   bool hasPendingMaskEdit() const;
 
-class TransformGizmo* gizmo() const;
+TransformGizmo* gizmo() const;
  class Artifact3DGizmo* gizmo3D() const;
  struct CameraFrustumVisual {
   bool valid = false;

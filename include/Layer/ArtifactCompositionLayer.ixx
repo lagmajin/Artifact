@@ -1,6 +1,4 @@
-module;
-
-#include <QVariant>
+﻿module;
 
 #include <algorithm>
 #include <any>
@@ -8,7 +6,6 @@ module;
 #include <atomic>
 #include <chrono>
 #include <cmath>
-#include <condition_variable>
 #include <deque>
 #include <filesystem>
 #include <fstream>
@@ -17,7 +14,6 @@ module;
 #include <list>
 #include <map>
 #include <memory>
-#include <mutex>
 #include <numeric>
 #include <optional>
 #include <queue>
@@ -27,7 +23,6 @@ module;
 #include <sstream>
 #include <stdexcept>
 #include <string>
-#include <thread>
 #include <tuple>
 #include <type_traits>
 #include <unordered_map>
@@ -35,7 +30,9 @@ module;
 #include <utility>
 #include <variant>
 #include <vector>
+#include <QVariant>
 export module Artifact.Layer.Composition;
+
 
 import Utils;
 import Artifact.Layer.Abstract;

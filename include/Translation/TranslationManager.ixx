@@ -1,10 +1,12 @@
-module;
+﻿module;
+#include <utility>
+#include <memory>
 #include <QString>
 #include <QStringList>
 #include <QJsonObject>
-#include <memory>
 
 export module Translation.Manager;
+
 
 export namespace Artifact
 {

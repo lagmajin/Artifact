@@ -1,11 +1,12 @@
-module;
+﻿module;
+#include <utility>
+#include <vector>
+#include <memory>
 #include <QPointF>
 #include <QRectF>
 #include <QCursor>
-#include <vector>
-#include <memory>
-
 export module Artifact.Widgets.TextGizmo;
+
 
 import Artifact.Render.IRenderer;
 import Artifact.Layer.Abstract;

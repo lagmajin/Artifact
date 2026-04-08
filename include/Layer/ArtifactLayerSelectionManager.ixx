@@ -1,7 +1,4 @@
-﻿module;
-#include <QSet>
-#include <QObject>
-#include <wobjectdefs.h>
+module;
 #include <iostream>
 #include <vector>
 #include <string>
@@ -16,8 +13,6 @@
 #include <optional>
 #include <utility>
 #include <array>
-#include <mutex>
-#include <thread>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -27,7 +22,6 @@
 #include <variant>
 #include <any>
 #include <atomic>
-#include <condition_variable>
 #include <queue>
 #include <deque>
 #include <list>
@@ -35,6 +29,9 @@
 #include <numeric>
 #include <regex>
 #include <random>
+#include <QSet>
+#include <QObject>
+#include <wobjectdefs.h>
 export module Artifact.Layers.Selection.Manager;
 
 
@@ -71,3 +68,5 @@ export namespace Artifact {
  };
 
 }
+
+W_REGISTER_ARGTYPE(Artifact::ArtifactCompositionPtr)

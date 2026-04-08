@@ -1,7 +1,10 @@
 module;
+#include <utility>
+
 #include <QWidget>
 #include <wobjectdefs.h>
 export module Artifact.Widget.WorkAreaControlWidget;
+
 
 export namespace Artifact
 {

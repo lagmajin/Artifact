@@ -1,4 +1,5 @@
-module;
+﻿module;
+#include <utility>
 #include <QString>
 #include <QStringList>
 #include <QVector>
@@ -6,6 +7,7 @@ module;
 
 export module Artifact.Render.Queue.Presets;
 
+import std;
 export namespace Artifact {
 
 /**

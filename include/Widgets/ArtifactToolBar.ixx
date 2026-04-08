@@ -1,7 +1,9 @@
 ﻿module;
+#include <utility>
+
+#include <wobjectdefs.h>
 #include <QString>
 #include <QToolBar>
-#include <wobjectdefs.h>
 
 export module Widgets.ToolBar;
 

@@ -1,10 +1,11 @@
 module;
+#include <utility>
+
 #include <QDialog>
 #include <QWidget>
 #include <QString>
 #include <QStringList>
 #include <wobjectdefs.h>
-
 export module Artifact.Widgets.PrecomposeDialog;
 
 export namespace Artifact {

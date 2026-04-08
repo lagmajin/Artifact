@@ -5,7 +5,6 @@
 #include <QHash>
 #include <QDebug>
 #include <cmath>
-#include <opencv2/opencv.hpp>
 
 #include <iostream>
 #include <vector>
@@ -40,6 +39,7 @@
 #include <numeric>
 #include <regex>
 #include <random>
+#include <opencv2/opencv.hpp>
 module Generator.Effector;
 
 

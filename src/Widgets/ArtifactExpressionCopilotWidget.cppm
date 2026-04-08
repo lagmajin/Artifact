@@ -1,4 +1,5 @@
 module;
+#include <utility>
 #include <wobjectimpl.h>
 #include <algorithm>
 #include <QApplication>
@@ -8,6 +9,7 @@ module;
 #include <QFontDatabase>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QLineEdit>
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QRegularExpression>
@@ -88,7 +90,8 @@ private:
 
 QString posToLineColumn(const QString& text, int position)
 {
-    position = std::clamp(position, 0, text.size());
+    const int textSize = static_cast<int>(text.size());
+    position = std::clamp(position, 0, textSize);
     int line = 1;
     int column = 1;
     for (int i = 0; i < position; ++i) {
@@ -141,7 +144,8 @@ public:
         if (position >= 0 && position < text.size()) {
             QTextCursor cursor(expressionEdit->document());
             cursor.setPosition(position);
-            cursor.setPosition(std::min(position + std::max(1, length), text.size()), QTextCursor::KeepAnchor);
+            const int textSize = static_cast<int>(text.size());
+            cursor.setPosition(std::min(position + std::max(1, length), textSize), QTextCursor::KeepAnchor);
 
             QTextEdit::ExtraSelection selection;
             selection.cursor = cursor;

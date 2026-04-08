@@ -1,14 +1,7 @@
 module;
-#include <QObject>
-#include <QThread>
-#include <QImage>
-#include <QMutex>
-#include <QWaitCondition>
-#include <QAtomicInt>
 #include <chrono>
 #include <atomic>
 #include <functional>
-#include <wobjectdefs.h>
 
 #include <iostream>
 #include <vector>
@@ -24,8 +17,6 @@ module;
 #include <optional>
 #include <utility>
 #include <array>
-#include <mutex>
-#include <thread>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -35,7 +26,6 @@ module;
 #include <variant>
 #include <any>
 #include <atomic>
-#include <condition_variable>
 #include <queue>
 #include <deque>
 #include <list>
@@ -44,6 +34,13 @@ module;
 #include <regex>
 #include <random>
 
+#include <wobjectdefs.h>
+#include <QObject>
+#include <QThread>
+#include <QImage>
+#include <QMutex>
+#include <QWaitCondition>
+#include <QAtomicInt>
 export module Artifact.Playback.Engine;
 
 import Frame.Position;
@@ -52,6 +49,7 @@ import Frame.Range;
 import Artifact.Composition.Abstract;
 import Artifact.Composition.PlaybackController;
 import Playback.State;
+import Artifact.Composition.InOutPoints;
 
 W_REGISTER_ARGTYPE(QImage)
 W_REGISTER_ARGTYPE(ArtifactCore::FramePosition)
@@ -116,8 +114,8 @@ public:
     QImage renderPreviewFrame(const FramePosition& position);
 
     // In/Out Points
-    void setInOutPoints(class ArtifactInOutPoints* inOutPoints);
-    class ArtifactInOutPoints* inOutPoints() const;
+    void setInOutPoints(ArtifactInOutPoints* inOutPoints);
+    ArtifactInOutPoints* inOutPoints() const;
 
     // オーディオクロック同期
     void setAudioClockProvider(const std::function<double()>& provider);

@@ -1,7 +1,4 @@
-﻿module ;
-#include <QSize>
-#include <QString>
-#include "../ArtifactCore/include/Define/DllExportMacro.hpp"
+﻿module;
 
 
 #include <iostream>
@@ -18,8 +15,6 @@
 #include <optional>
 #include <utility>
 #include <array>
-#include <mutex>
-#include <thread>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -29,7 +24,6 @@
 #include <variant>
 #include <any>
 #include <atomic>
-#include <condition_variable>
 #include <queue>
 #include <deque>
 #include <list>
@@ -37,7 +31,11 @@
 #include <numeric>
 #include <regex>
 #include <random>
+#include "../ArtifactCore/include/Define/DllExportMacro.hpp"
+#include <QSize>
+#include <QString>
 export module Composition.Settings;
+
 
 
 

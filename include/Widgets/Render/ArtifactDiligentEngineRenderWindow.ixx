@@ -1,12 +1,8 @@
 ﻿module;
-#include <QColor>
-#include <QPoint>
+#include <utility>
 #include <memory>
-#include <QWindow>
-#include <QWidget>
 
 
-#include <wobjectimpl.h>
 #include <Buffer.h>
 #include <PipelineState.h>
 #include <RefCntAutoPtr.hpp>
@@ -14,10 +10,15 @@
 #include <RenderDevice.h>
 #include <DeviceContext.h>
 #include <ShaderResourceBinding.h>
-
+#include <QColor>
+#include <QPoint>
+#include <QWindow>
+#include <QWidget>
+#include <wobjectimpl.h>
 
 
 export module ArtifactDiligentEngineRenderWindow;
+
 
 import Mesh;
 

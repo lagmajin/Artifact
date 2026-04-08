@@ -1,8 +1,11 @@
-module;
-#include <QMenu>
-#include <wobjectdefs.h>
+﻿module;
+#include <utility>
 
+#include <wobjectdefs.h>
+#include <QMenu>
 export module Menu.Render;
+
+
 
 export namespace Artifact {
 

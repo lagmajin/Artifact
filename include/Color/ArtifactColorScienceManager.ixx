@@ -1,12 +1,13 @@
 module;
+#include <utility>
 
-#include <QColor>
-#include <QObject>
 #include <memory>
 #include <string>
 #include <vector>
 #include <wobjectdefs.h>
 
+#include <QColor>
+#include <QObject>
 export module Color.ScienceManager;
 
 import Color.Float;

@@ -1,11 +1,11 @@
 module;
-
+#include <utility>
 #include <algorithm>
 #include <cmath>
 #include <memory>
-#include <opencv2/opencv.hpp>
 #include <QVariant>
 #include <vector>
+#include <opencv2/opencv.hpp>
 
 module Artifact.Effect.DirectionalGlow;
 

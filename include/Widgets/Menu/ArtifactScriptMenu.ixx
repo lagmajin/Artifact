@@ -1,8 +1,9 @@
-module;
+﻿module;
+#include <utility>
 #include <QMenu>
 #include <wobjectdefs.h>
-
 export module Artifact.Menu.Script;
+
 
 export namespace Artifact {
 

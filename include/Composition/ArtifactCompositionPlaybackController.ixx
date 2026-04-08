@@ -1,8 +1,5 @@
 module;
-#include <QObject>
-#include <QTimer>
 #include <functional>
-#include <wobjectdefs.h>
 
 #include <iostream>
 #include <vector>
@@ -18,8 +15,6 @@ module;
 #include <optional>
 #include <utility>
 #include <array>
-#include <mutex>
-#include <thread>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -29,7 +24,6 @@ module;
 #include <variant>
 #include <any>
 #include <atomic>
-#include <condition_variable>
 #include <queue>
 #include <deque>
 #include <list>
@@ -37,6 +31,9 @@ module;
 #include <numeric>
 #include <regex>
 #include <random>
+#include <wobjectdefs.h>
+#include <QObject>
+#include <QTimer>
 export module Artifact.Composition.PlaybackController;
 
 

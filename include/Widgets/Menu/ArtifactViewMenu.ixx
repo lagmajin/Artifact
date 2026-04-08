@@ -1,12 +1,12 @@
 ﻿module;
+#include <utility>
 #include <QMenu>
 #include <wobjectimpl.h>
-
 export module Artifact.Menu.View;
 
-export namespace Artifact {
+import Artifact.MainWindow;
 
- class ArtifactMainWindow;
+export namespace Artifact {
 
  class ArtifactViewMenu :public QMenu{
   W_OBJECT(ArtifactViewMenu)

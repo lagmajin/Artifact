@@ -1,4 +1,5 @@
 module;
+#include <utility>
 #include <Layer/ArtifactCloneEffectSupport.hpp>
 
 #include <QColor>
@@ -48,10 +49,10 @@ export struct LayerSurfaceCacheEntry
   int64_t frameNumber = std::numeric_limits<int64_t>::min();
 };
 
-export bool layerHasCpuRasterizerWork(const ArtifactAbstractLayerPtr& layer);
-export bool layerUsesSurfaceUploadForCompositionView(const ArtifactAbstractLayerPtr& layer);
-export bool layerUsesGpuTextureCacheForCompositionView(const ArtifactAbstractLayerPtr& layer);
-export void drawLayerForCompositionView(const ArtifactAbstractLayerPtr &layer,
+export bool layerHasCpuRasterizerWork(ArtifactAbstractLayer* layer);
+export bool layerUsesSurfaceUploadForCompositionView(ArtifactAbstractLayer* layer);
+export bool layerUsesGpuTextureCacheForCompositionView(ArtifactAbstractLayer* layer);
+export void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
                                         ArtifactIRenderer *renderer,
                                         float opacityOverride = -1.0f,
                                         QString* videoDebugOut = nullptr,
@@ -111,7 +112,7 @@ QImage downsampleForLOD(const QImage& image, DetailLevel lod)
   return image.scaled(targetW, targetH, Qt::IgnoreAspectRatio, Qt::FastTransformation);
 }
 
-QString buildLayerSurfaceCacheKey(const ArtifactAbstractLayerPtr& layer,
+QString buildLayerSurfaceCacheKey(ArtifactAbstractLayer* layer,
                                   const QImage& surface,
                                   int64_t frameNumber)
 {
@@ -124,7 +125,7 @@ QString buildLayerSurfaceCacheKey(const ArtifactAbstractLayerPtr& layer,
              .arg(surface.width())
              .arg(surface.height());
 
-  if (const auto solid2D = std::dynamic_pointer_cast<ArtifactSolid2DLayer>(layer)) {
+  if (auto* solid2D = dynamic_cast<ArtifactSolid2DLayer*>(layer)) {
     const QRectF bounds = solid2D->localBounds();
     key += QStringLiteral("|solid2D|color=%1|bounds=%2x%3")
                .arg(rgbaKey(solid2D->color().r(), solid2D->color().g(), solid2D->color().b(), solid2D->color().a()))
@@ -133,7 +134,7 @@ QString buildLayerSurfaceCacheKey(const ArtifactAbstractLayerPtr& layer,
     return key;
   }
 
-  if (const auto solidImage = std::dynamic_pointer_cast<ArtifactSolidImageLayer>(layer)) {
+  if (auto* solidImage = dynamic_cast<ArtifactSolidImageLayer*>(layer)) {
     const QRectF bounds = solidImage->localBounds();
     key += QStringLiteral("|solidImage|color=%1|bounds=%2x%3")
                .arg(rgbaKey(solidImage->color().r(), solidImage->color().g(), solidImage->color().b(), solidImage->color().a()))
@@ -142,7 +143,7 @@ QString buildLayerSurfaceCacheKey(const ArtifactAbstractLayerPtr& layer,
     return key;
   }
 
-  if (const auto imageLayer = std::dynamic_pointer_cast<ArtifactImageLayer>(layer)) {
+  if (auto* imageLayer = dynamic_cast<ArtifactImageLayer*>(layer)) {
     key += QStringLiteral("|image|src=%1|fit=%2|size=%3x%4")
                .arg(imageLayer->sourcePath())
                .arg(imageLayer->fitToLayer() ? 1 : 0)
@@ -151,7 +152,7 @@ QString buildLayerSurfaceCacheKey(const ArtifactAbstractLayerPtr& layer,
     return key;
   }
 
-  if (const auto svgLayer = std::dynamic_pointer_cast<ArtifactSvgLayer>(layer)) {
+  if (auto* svgLayer = dynamic_cast<ArtifactSvgLayer*>(layer)) {
     key += QStringLiteral("|svg|src=%1|fit=%2|size=%3x%4")
                .arg(svgLayer->sourcePath())
                .arg(svgLayer->fitToLayer() ? 1 : 0)
@@ -160,7 +161,7 @@ QString buildLayerSurfaceCacheKey(const ArtifactAbstractLayerPtr& layer,
     return key;
   }
 
-  if (const auto videoLayer = std::dynamic_pointer_cast<ArtifactVideoLayer>(layer)) {
+  if (auto* videoLayer = dynamic_cast<ArtifactVideoLayer*>(layer)) {
     key += QStringLiteral("|video|src=%1|frame=%2|proxy=%3|size=%4x%5")
                .arg(videoLayer->sourcePath())
                .arg(frameNumber)
@@ -170,7 +171,7 @@ QString buildLayerSurfaceCacheKey(const ArtifactAbstractLayerPtr& layer,
     return key;
   }
 
-  if (const auto textLayer = std::dynamic_pointer_cast<ArtifactTextLayer>(layer)) {
+  if (auto* textLayer = dynamic_cast<ArtifactTextLayer*>(layer)) {
     key += QStringLiteral("|text|value=%1|font=%2|size=%3|bold=%4|italic=%5|allCaps=%6|underline=%7|strike=%8|fill=%9|strokeEnabled=%10|strokeColor=%11|strokeWidth=%12|shadowEnabled=%13|shadowColor=%14|shadowOffset=%15,%16|shadowBlur=%17|tracking=%18|leading=%19|wrap=%20|mw=%21|bh=%22|va=%23|ha=%24|ps=%25|surface=%26x%27")
                .arg(textLayer->text().toQString())
                .arg(textLayer->fontFamily().toQString())
@@ -205,8 +206,8 @@ QString buildLayerSurfaceCacheKey(const ArtifactAbstractLayerPtr& layer,
   return QString();
 }
 
-void applyRasterizerEffectsAndMasksToSurface(const ArtifactAbstractLayerPtr& targetLayer,
-                                             QImage& surface)
+void applyRasterizerEffectsAndMasksToSurface(ArtifactAbstractLayer* targetLayer,
+                                              QImage& surface)
 {
   if (!targetLayer || surface.isNull()) {
     return;
@@ -260,7 +261,7 @@ void applyRasterizerEffectsAndMasksToSurface(const ArtifactAbstractLayerPtr& tar
   surface = ArtifactCore::CvUtils::cvMatToQImage(mat);
 }
 
-bool hasRasterizerEffectsOrMasks(const ArtifactAbstractLayerPtr& targetLayer)
+bool hasRasterizerEffectsOrMasks(ArtifactAbstractLayer* targetLayer)
 {
   if (!targetLayer) {
     return false;
@@ -279,12 +280,12 @@ bool hasRasterizerEffectsOrMasks(const ArtifactAbstractLayerPtr& targetLayer)
 
 } // namespace
 
-bool layerHasCpuRasterizerWork(const ArtifactAbstractLayerPtr& layer)
+bool layerHasCpuRasterizerWork(ArtifactAbstractLayer* layer)
 {
   return hasRasterizerEffectsOrMasks(layer);
 }
 
-bool layerUsesSurfaceUploadForCompositionView(const ArtifactAbstractLayerPtr& layer)
+bool layerUsesSurfaceUploadForCompositionView(ArtifactAbstractLayer* layer)
 {
   if (!layer) {
     return false;
@@ -292,31 +293,31 @@ bool layerUsesSurfaceUploadForCompositionView(const ArtifactAbstractLayerPtr& la
   if (hasRasterizerEffectsOrMasks(layer)) {
     return true;
   }
-  return std::dynamic_pointer_cast<ArtifactImageLayer>(layer) != nullptr ||
-         std::dynamic_pointer_cast<ArtifactSvgLayer>(layer) != nullptr ||
-         std::dynamic_pointer_cast<ArtifactVideoLayer>(layer) != nullptr ||
-         std::dynamic_pointer_cast<ArtifactTextLayer>(layer) != nullptr ||
-         std::dynamic_pointer_cast<ArtifactSolid2DLayer>(layer) != nullptr ||
-         std::dynamic_pointer_cast<ArtifactSolidImageLayer>(layer) != nullptr ||
-         std::dynamic_pointer_cast<ArtifactParticleLayer>(layer) != nullptr;
+  return dynamic_cast<ArtifactImageLayer*>(layer) != nullptr ||
+         dynamic_cast<ArtifactSvgLayer*>(layer) != nullptr ||
+         dynamic_cast<ArtifactVideoLayer*>(layer) != nullptr ||
+         dynamic_cast<ArtifactTextLayer*>(layer) != nullptr ||
+         dynamic_cast<ArtifactSolid2DLayer*>(layer) != nullptr ||
+         dynamic_cast<ArtifactSolidImageLayer*>(layer) != nullptr ||
+         dynamic_cast<ArtifactParticleLayer*>(layer) != nullptr;
 }
 
-bool layerUsesGpuTextureCacheForCompositionView(const ArtifactAbstractLayerPtr& layer)
+bool layerUsesGpuTextureCacheForCompositionView(ArtifactAbstractLayer* layer)
 {
   if (!layer) {
     return false;
   }
 
-  return std::dynamic_pointer_cast<ArtifactImageLayer>(layer) != nullptr ||
-         std::dynamic_pointer_cast<ArtifactSvgLayer>(layer) != nullptr ||
-         std::dynamic_pointer_cast<ArtifactVideoLayer>(layer) != nullptr ||
-         std::dynamic_pointer_cast<ArtifactTextLayer>(layer) != nullptr ||
-         std::dynamic_pointer_cast<ArtifactSolid2DLayer>(layer) != nullptr ||
-         std::dynamic_pointer_cast<ArtifactSolidImageLayer>(layer) != nullptr ||
-         std::dynamic_pointer_cast<ArtifactParticleLayer>(layer) != nullptr;
+  return dynamic_cast<ArtifactImageLayer*>(layer) != nullptr ||
+         dynamic_cast<ArtifactSvgLayer*>(layer) != nullptr ||
+         dynamic_cast<ArtifactVideoLayer*>(layer) != nullptr ||
+         dynamic_cast<ArtifactTextLayer*>(layer) != nullptr ||
+         dynamic_cast<ArtifactSolid2DLayer*>(layer) != nullptr ||
+         dynamic_cast<ArtifactSolidImageLayer*>(layer) != nullptr ||
+         dynamic_cast<ArtifactParticleLayer*>(layer) != nullptr;
 }
 
-void drawLayerForCompositionView(const ArtifactAbstractLayerPtr &layer,
+void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
                                  ArtifactIRenderer *renderer,
                                  float opacityOverride,
                                  QString* videoDebugOut,
@@ -413,8 +414,7 @@ void drawLayerForCompositionView(const ArtifactAbstractLayerPtr &layer,
     return true;
   };
 
-  if (const auto solid2D =
-          std::dynamic_pointer_cast<ArtifactSolid2DLayer>(layer)) {
+    if (auto* solid2D = dynamic_cast<ArtifactSolid2DLayer*>(layer)) {
     const auto color = solid2D->color();
     if (hasRasterizerEffectsOrMasks(layer)) {
       const QSize surfaceSize(
@@ -434,8 +434,7 @@ void drawLayerForCompositionView(const ArtifactAbstractLayerPtr &layer,
     return;
   }
 
-  if (const auto solidImage =
-          std::dynamic_pointer_cast<ArtifactSolidImageLayer>(layer)) {
+    if (auto* solidImage = dynamic_cast<ArtifactSolidImageLayer*>(layer)) {
     const auto color = solidImage->color();
     if (hasRasterizerEffectsOrMasks(layer)) {
       const QSize surfaceSize(
@@ -455,8 +454,7 @@ void drawLayerForCompositionView(const ArtifactAbstractLayerPtr &layer,
     return;
   }
 
-  if (const auto imageLayer =
-          std::dynamic_pointer_cast<ArtifactImageLayer>(layer)) {
+  if (auto* imageLayer = dynamic_cast<ArtifactImageLayer*>(layer)) {
     const QImage img = downsampleForLOD(imageLayer->toQImage(), lod);
     if (!img.isNull()) {
       applySurfaceAndDraw(img, localRect, hasRasterizerEffectsOrMasks(layer));
@@ -464,8 +462,7 @@ void drawLayerForCompositionView(const ArtifactAbstractLayerPtr &layer,
     }
   }
 
-  if (const auto svgLayer =
-          std::dynamic_pointer_cast<ArtifactSvgLayer>(layer)) {
+  if (auto* svgLayer = dynamic_cast<ArtifactSvgLayer*>(layer)) {
     if (svgLayer->isLoaded()) {
       const QImage svgImage = svgLayer->toQImage();
       if (!svgImage.isNull()) {
@@ -477,8 +474,7 @@ void drawLayerForCompositionView(const ArtifactAbstractLayerPtr &layer,
     }
   }
 
-  if (const auto videoLayer =
-          std::dynamic_pointer_cast<ArtifactVideoLayer>(layer)) {
+  if (auto* videoLayer = dynamic_cast<ArtifactVideoLayer*>(layer)) {
     const QImage frame = downsampleForLOD(offlineRender
         ? videoLayer->decodeFrameToQImage(cacheFrameNumber >= 0 ? cacheFrameNumber : layer->currentFrame())
         : videoLayer->currentFrameToQImage(), lod);
@@ -501,8 +497,7 @@ void drawLayerForCompositionView(const ArtifactAbstractLayerPtr &layer,
     }
   }
 
-  if (const auto textLayer =
-          std::dynamic_pointer_cast<ArtifactTextLayer>(layer)) {
+  if (auto* textLayer = dynamic_cast<ArtifactTextLayer*>(layer)) {
     const QImage textImage = textLayer->toQImage();
     if (!textImage.isNull()) {
       applySurfaceAndDraw(textImage, localRect, hasRasterizerEffectsOrMasks(layer));
@@ -510,8 +505,7 @@ void drawLayerForCompositionView(const ArtifactAbstractLayerPtr &layer,
     return;
   }
 
-  if (const auto compLayer =
-          std::dynamic_pointer_cast<ArtifactCompositionLayer>(layer)) {
+  if (auto* compLayer = dynamic_cast<ArtifactCompositionLayer*>(layer)) {
     if (auto childComp = compLayer->sourceComposition()) {
       const QSize childSize = childComp->settings().compositionSize();
       const int64_t childFrame = layer->currentFrame() - layer->inPoint().framePosition();
@@ -525,8 +519,7 @@ void drawLayerForCompositionView(const ArtifactAbstractLayerPtr &layer,
     return;
   }
 
-  if (const auto particleLayer =
-          std::dynamic_pointer_cast<ArtifactParticleLayer>(layer)) {
+  if (auto* particleLayer = dynamic_cast<ArtifactParticleLayer*>(layer)) {
     const QSize surfaceSize(
         std::max(1, static_cast<int>(std::ceil(localRect.width()))),
         std::max(1, static_cast<int>(std::ceil(localRect.height()))));

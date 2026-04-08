@@ -1,4 +1,5 @@
 module;
+#include <utility>
 #include <wobjectdefs.h>
 #include <QObject>
 export module Artifact.Preview.Worker;

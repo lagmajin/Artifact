@@ -1,20 +1,19 @@
-﻿module;
+module;
+#include <utility>
+
 #include <QObject>
 #include <QString>
 #include <QDebug>
 #include <wobjectdefs.h>
-
 export module Artifact.Service.Application;
 
 import Artifact.Service.ClipboardManager;
 import Artifact.Tool.Service;
+import Artifact.Application.Manager;
+import Artifact.Service.Project;
+import Artifact.Service.ActiveContext;
 
 export namespace Artifact {
-
- class ArtifactApplicationManager;
- class ArtifactProjectService;
- class ArtifactActiveContextService;
- class ArtifactToolManager;
 
   class ApplicationService : public QObject
   {

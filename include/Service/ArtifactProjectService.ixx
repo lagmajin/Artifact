@@ -1,15 +1,17 @@
-﻿module;
+module;
+#include <utility>
+#include <memory>
+#include <functional>
+#include <vector>
+
+//#include <winrt/impl/Windows.UI.Composition.1.h>
+
 #include <wobjectdefs.h>
 #include <QSize>
 #include <QString>
 #include <QStringList>
 #include <QObject>
-
-//#include <winrt/impl/Windows.UI.Composition.1.h>
-
 export module Artifact.Service.Project;
-
-import std;
 
 import Utils;
 import Utils.String.Like;

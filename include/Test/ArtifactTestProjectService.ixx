@@ -1,22 +1,3 @@
-module;
-
-#include <QObject>
-
-export module Artifact.Test.ProjectService;
-
-export namespace Artifact
-{
- class ArtifactTestProjectManager
- {
- private:
- 	
- public:
- 	ArtifactTestProjectManager();
-    ~ArtifactTestProjectManager();
- };
-
-
-
-
-
-};
+// Legacy compatibility shim. This file is intentionally kept non-modular
+// because the real implementation lives in Artifact.Test.ProjectManager and
+// nothing imports this module name anymore.

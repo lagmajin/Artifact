@@ -1,8 +1,4 @@
-﻿module;
-#include <QObject>
-#include <QColor>
-#include <QEvent>
-#include <wobjectdefs.h>
+module;
 #include "DockManager.h"
 
 #include <iostream>
@@ -19,8 +15,6 @@
 #include <optional>
 #include <utility>
 #include <array>
-#include <mutex>
-#include <thread>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -30,7 +24,6 @@
 #include <variant>
 #include <any>
 #include <atomic>
-#include <condition_variable>
 #include <queue>
 #include <deque>
 #include <list>
@@ -38,7 +31,11 @@
 #include <numeric>
 #include <regex>
 #include <random>
+#include <wobjectdefs.h>
 export module Widgets.Dock.StyleManager;
+#include <QObject>
+#include <QColor>
+#include <QEvent>
 
 
 

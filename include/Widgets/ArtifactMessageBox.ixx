@@ -1,7 +1,8 @@
 module;
+#include <utility>
+
 #include <QString>
 #include <QWidget>
-
 export module Artifact.Widgets.AppDialogs;
 
 export namespace Artifact {

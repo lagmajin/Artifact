@@ -1,4 +1,5 @@
-﻿module;
+module;
+#include <utility>
 #include <QString>
 #include <QCoreApplication>
 #include <QListWidget>

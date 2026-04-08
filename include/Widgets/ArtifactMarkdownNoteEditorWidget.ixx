@@ -3,8 +3,8 @@
 #include <QPlainTextEdit>
 #include <QString>
 #include <QShowEvent>
-
 export module Artifact.Widgets.MarkdownNoteEditorWidget;
+
 
 export namespace Artifact {
 

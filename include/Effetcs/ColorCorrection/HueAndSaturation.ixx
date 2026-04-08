@@ -1,8 +1,8 @@
 module;
-
+#include <utility>
+#include <vector>
 #include <QString>
 #include <QVariant>
-#include <vector>
 
 export module HueAndSaturation;
 

@@ -1,4 +1,7 @@
-module;
+﻿module;
+#include <utility>
+
+#include <wobjectdefs.h>
 #include <QWidget>
 #include <QLabel>
 #include <QSlider>
@@ -16,9 +19,8 @@ module;
 #include <QTimer>
 #include <QFileInfo>
 #include <QTime>
-#include <wobjectdefs.h>
-
 export module Artifact.Widgets.AudioPreview;
+
 
 export namespace Artifact {
 

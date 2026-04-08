@@ -1,7 +1,8 @@
-﻿module;
+module;
+#include <utility>
+#include <entt/entt.hpp>
 #include <QString>
 #include <QApplication>
-#include <entt/entt.hpp>
 export  module Artifact.Application.Manager;
 
 

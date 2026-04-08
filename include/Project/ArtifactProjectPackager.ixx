@@ -1,5 +1,5 @@
-module;
-
+﻿module;
+#include <utility>
 #include <QString>
 #include <QStringList>
 #include <QDir>
@@ -7,8 +7,8 @@ module;
 #include <QJsonObject>
 #include <QJsonArray>
 #include <QJsonDocument>
-
 export module Artifact.Project.Packager;
+
 
 import Artifact.Project;
 

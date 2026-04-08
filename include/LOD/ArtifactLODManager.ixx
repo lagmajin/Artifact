@@ -1,10 +1,11 @@
-module;
-#include <QObject>
-#include <wobjectdefs.h>
-#include <algorithm>
-#include <cmath>
+﻿module;
 
+#include <wobjectdefs.h>
+
+#include <QObject>
 export module Artifact.LOD.Manager;
+
+import std;
 
 export namespace Artifact {
 

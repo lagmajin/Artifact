@@ -1,4 +1,5 @@
 module;
+#include <utility>
 
 #include <QWidget>
 #include <QLineEdit>
@@ -6,7 +7,6 @@ module;
 #include <QHBoxLayout>
 #include <QPointer>
 #include <wobjectdefs.h>
-
 export module Artifact.Widgets.ObjectReference;
 
 import Utils.Id;

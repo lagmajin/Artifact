@@ -1,6 +1,8 @@
 module;
 #include <wobjectimpl.h>
+#include <QBoxLayout>
 #include <QWidget>
+#include <utility>
 export module Artifact.Widgets.LayerEditorPanel;
 
 export namespace Artifact {

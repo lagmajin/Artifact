@@ -1,5 +1,21 @@
-
+﻿
 module;
+
+
+#define _CRT_SECURE_NO_WARNINGS
+#pragma warning(disable : 4996)
+#pragma push_macro("emit")
+#pragma push_macro("event")
+#undef emit
+#include <tbb/tbb.h>
+#pragma pop_macro("event")
+#pragma pop_macro("emit")
+
+
+#include <windows.h>
+
+// #include <pybind11/pybind11.h>
+#include <filesystem>
 #include <QAbstractButton>
 #include <QApplication>
 #include <QColor>
@@ -33,28 +49,14 @@ module;
 #include <QUrl>
 #include <QtCore/QtGlobal>
 #include <ads_globals.h>
-#include <algorithm>
-#include <atomic>
-#include <memory>
-#include <thread>
 #include <qthreadpool.h>
 
-#define _CRT_SECURE_NO_WARNINGS
-#pragma warning(disable : 4996)
-#pragma push_macro("emit")
-#pragma push_macro("event")
-#undef emit
-#include <tbb/tbb.h>
-#pragma pop_macro("event")
-#pragma pop_macro("emit")
-
+#include <QByteArray>
 #include <opencv2/opencv.hpp>
-
-#include <windows.h>
-
-// #include <pybind11/pybind11.h>
-
+#include <string>
 module Artifact.AppMain;
+
+import std;
 
 import Application.AppSettings;
 import Artifact.Widgets.PlaybackControlWidget;
@@ -442,10 +444,10 @@ bool showRecoveryPrompt(ArtifactAutoSaveManager &autoSave, QWidget *parent) {
     return false;
   }
 
-  QByteArray recoveredJson;
-  QString sourcePath;
+  std::string recoveredJson;
+  std::string sourcePath;
   if (!autoSave.loadLatestRecoveryPoint(&recoveredJson, &sourcePath) ||
-      recoveredJson.isEmpty()) {
+      recoveredJson.empty()) {
     return false;
   }
 
@@ -459,7 +461,7 @@ bool showRecoveryPrompt(ArtifactAutoSaveManager &autoSave, QWidget *parent) {
   if (!out.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
     return false;
   }
-  out.write(recoveredJson);
+  out.write(QByteArray::fromStdString(recoveredJson));
   out.close();
 
   ArtifactProjectManager::getInstance().loadFromFile(recoveredPath);
@@ -1107,7 +1109,8 @@ int main(int argc, char *argv[]) {
     mw->setDockVisible(QStringLiteral("Layer View (Diligent)"), false);
     mw->setDockVisible(QStringLiteral("Layer View (Software)"), false);
 
-    autoSaveManager->initialize("ArtifactProject", recoveryDir);
+    autoSaveManager->initialize(std::filesystem::path("ArtifactProject"),
+                                std::filesystem::path(recoveryDir.toStdWString()));
     autoSaveManager->start();
     if (!isStartupDialogSuppressed()) {
       const bool hasRecoveryPoint = autoSaveManager->hasRecoveryPoint();
@@ -1398,7 +1401,7 @@ int main(int argc, char *argv[]) {
       }
       const QByteArray snapshot = currentProjectSnapshotJson();
       if (!snapshot.isEmpty()) {
-        autoSaveManager->createRecoveryPoint(snapshot);
+        autoSaveManager->createRecoveryPoint(snapshot.toStdString());
       }
     });
     recoveryTimer->start();
@@ -1504,7 +1507,7 @@ int main(int argc, char *argv[]) {
       if (autoSaveManager->isDirty()) {
         const QByteArray snapshot = currentProjectSnapshotJson();
         if (!snapshot.isEmpty()) {
-          autoSaveManager->createRecoveryPoint(snapshot);
+          autoSaveManager->createRecoveryPoint(snapshot.toStdString());
         }
       }
       autoSaveManager->stop();

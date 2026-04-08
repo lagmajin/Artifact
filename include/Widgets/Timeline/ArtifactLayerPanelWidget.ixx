@@ -1,9 +1,11 @@
-﻿module;
+module;
+#include <utility>
 #include <wobjectdefs.h>
 #include <QWidget>
 #include <QScrollBar>
 #include <QVector>
 #include <QWheelEvent>
+
 export module Artifact.Widgets.LayerPanelWidget;
 
 import Utils.Id;

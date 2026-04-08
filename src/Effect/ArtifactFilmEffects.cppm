@@ -329,6 +329,10 @@ FilmEffectPreset::FilmEffectPreset(const QString& id,
 
 FilmEffectPreset::~FilmEffectPreset() = default;
 
+void FilmEffectPreset::changed() {}
+
+void FilmEffectPreset::presetLoaded() {}
+
 void FilmEffectPreset::applyMasterIntensity() {
     grain_.intensity *= masterIntensity_;
     scratches_.opacity *= masterIntensity_;
@@ -636,6 +640,10 @@ FilmEffectProcessor::FilmEffectProcessor(QObject* parent)
 }
 
 FilmEffectProcessor::~FilmEffectProcessor() = default;
+
+void FilmEffectProcessor::presetChanged(FilmEffectPreset*) {}
+
+void FilmEffectProcessor::frameProcessed() {}
 
 void FilmEffectProcessor::setPreset(FilmEffectPreset* preset) {
     impl_->currentPreset_ = preset;

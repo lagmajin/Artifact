@@ -1,13 +1,10 @@
 ﻿module;
-#include <QObject>
-#include <QString>
-#include <QVector>
-#include <QVector2D>
-#include <QColor>
+#pragma warning(push)
+#pragma warning(disable: 4348)  // redeclaration of default parameter
+#pragma warning(disable: 4679)  // could not import symbol
+#pragma warning(disable: 2382)  // redefinition; different exception specifications (std::ranges)
 #include <random>
 #include <memory>
-#include <wobjectdefs.h>
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -15,15 +12,12 @@
 #include <unordered_map>
 #include <set>
 #include <unordered_set>
-#include <memory>
 #include <algorithm>
 #include <cmath>
 #include <functional>
 #include <optional>
 #include <utility>
 #include <array>
-#include <mutex>
-#include <thread>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -33,22 +27,21 @@
 #include <variant>
 #include <any>
 #include <atomic>
-#include <condition_variable>
 #include <queue>
 #include <deque>
 #include <list>
 #include <tuple>
 #include <numeric>
 #include <regex>
-#include <random>
+#include <QObject>
+#include <QString>
+#include <QVector>
+#include <QVector2D>
+#include <QColor>
+#include <wobjectdefs.h>
+#pragma warning(pop)
+
 export module Artifact.Effect.Film;
-
-
-
-
-
-W_REGISTER_ARGTYPE(QColor)
-W_REGISTER_ARGTYPE(QVector2D)
 
 export namespace Artifact {
 
@@ -287,8 +280,8 @@ public:
     bool fromJSON(const QString& json);
     
 signals:
-    void changed() W_SIGNAL(changed);
-    void presetLoaded() W_SIGNAL(presetLoaded);
+    void changed();
+    void presetLoaded();
 };
 
 // ==================== Built-in Presets ====================
@@ -343,10 +336,8 @@ public:
     static FilmEffectPreset* getPresetById(const QString& id);
     
 signals:
-    void presetChanged(FilmEffectPreset* preset) W_SIGNAL(presetChanged, preset);
-    void frameProcessed() W_SIGNAL(frameProcessed);
+    void presetChanged(FilmEffectPreset* preset);
+    void frameProcessed();
 };
 
 } // namespace Artifact
-
-W_REGISTER_ARGTYPE(Artifact::FilmEffectPreset*)

@@ -1,4 +1,5 @@
-﻿module;
+module;
+#include <utility>
 #include <algorithm>
 #include <wobjectimpl.h>
 #include <QDialog>
@@ -335,18 +336,6 @@ QString ArtifactRenderOutputSettingDialog::Impl::normalizeBackend(const QString&
   }
   if (value == QStringLiteral("gpu")) {
     return QStringLiteral("gpu");
-  }
-  return QStringLiteral("auto");
-}
-
-QString ArtifactRenderOutputSettingDialog::Impl::normalizeRenderBackend(const QString& backend)
-{
-  const QString value = backend.trimmed().toLower();
-  if (value == QStringLiteral("gpu") || value == QStringLiteral("diligent") || value == QStringLiteral("hardware")) {
-    return QStringLiteral("gpu");
-  }
-  if (value == QStringLiteral("cpu") || value == QStringLiteral("software") || value == QStringLiteral("qpainter")) {
-    return QStringLiteral("cpu");
   }
   return QStringLiteral("auto");
 }

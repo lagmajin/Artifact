@@ -1,13 +1,14 @@
-module;
+﻿module;
+#include <utility>
 
+#include <wobjectdefs.h>
 #include <QDialog>
 #include <QTreeWidget>
 #include <QLineEdit>
 #include <QPushButton>
 #include <QWidget>
-#include <wobjectdefs.h>
-
 export module Artifact.Widgets.ObjectPicker;
+
 
 import Utils.Id;
 

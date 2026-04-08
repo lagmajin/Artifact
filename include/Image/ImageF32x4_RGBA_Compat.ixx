@@ -1,6 +1,8 @@
-﻿module;
+module;
+#include <utility>
 #include <opencv2/opencv.hpp>
 export module Image.ImageF32x4_RGBA.Compat;
+
 
 import Image.ImageF32xN;
 import Image.ImageF32x4_RGBA;

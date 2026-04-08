@@ -5,7 +5,6 @@ module;
 #include <QPointF>
 #include <QDebug>
 #include <wobjectimpl.h>
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -14,8 +13,6 @@ module;
 #include <set>
 #include <unordered_set>
 #include <memory>
-#include <algorithm>
-#include <cmath>
 #include <functional>
 #include <optional>
 #include <utility>
@@ -39,6 +36,7 @@ module;
 #include <numeric>
 #include <regex>
 #include <random>
+
 module Artifact.Effect.MotionBlur;
 
 

@@ -1,8 +1,4 @@
-module;
-#include <QString>
-#include <QObject>
-
-#include <QJsonObject>
+﻿module;
 #include <wobjectdefs.h>
 #include <vulkan/vulkan_core.h>
 
@@ -21,8 +17,6 @@ module;
 #include <optional>
 #include <utility>
 #include <array>
-#include <mutex>
-#include <thread>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -32,7 +26,6 @@ module;
 #include <variant>
 #include <any>
 #include <atomic>
-#include <condition_variable>
 #include <queue>
 #include <deque>
 #include <list>
@@ -40,11 +33,11 @@ module;
 #include <numeric>
 #include <regex>
 #include <random>
+#include <QString>
+#include <QObject>
+#include <QJsonObject>
 export module Artifact.Project.Settings;
 
-
-
-import std;
 import Utils;
 import Utils.String.UniString;
 

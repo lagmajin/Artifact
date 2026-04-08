@@ -1,4 +1,5 @@
-module;
+﻿module;
+#include <utility>
 #include <QImage>
 #include <QSize>
 #include <QString>
@@ -6,6 +7,7 @@ module;
 
 export module Artifact.Render.SoftwareCompositor;
 
+import std;
 import Layer.Blend;
 
 export namespace Artifact::SoftwareRender {

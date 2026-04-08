@@ -1,4 +1,6 @@
-﻿module;
+module;
+#include <utility>
+
 #include <QColor>
 #include <QContextMenuEvent>
 #include <QKeyEvent>
@@ -11,7 +13,6 @@
 #include <QWidget>
 #include <QString>
 #include <wobjectdefs.h>
-
 export module Artifact.Timeline.TrackPainterView;
 
 import Utils.Id;

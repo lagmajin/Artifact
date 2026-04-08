@@ -1,4 +1,5 @@
-﻿module;
+module;
+#include <utility>
 #include <QProxyStyle>
 #include <QPainter>
 #include <QStyleOption>

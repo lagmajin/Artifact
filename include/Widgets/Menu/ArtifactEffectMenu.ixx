@@ -1,6 +1,8 @@
 ﻿module;
-#include <QMenu>
+#include <utility>
+
 #include <wobjectdefs.h>
+#include <QMenu>
 
 export module Artifact.Menu.Effect;
 

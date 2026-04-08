@@ -1,4 +1,7 @@
 ﻿module;
+#include <utility>
+#include <algorithm>
+#include <cmath>
 #include <QWidget>
 #include <QPainter>
 #include <QMouseEvent>
@@ -10,8 +13,6 @@
 #include <QBrush>
 #include <QFont>
 #include <QPainterPath>
-#include <algorithm>
-#include <cmath>
 #include <wobjectimpl.h>
 
 module Widget.CurveEditor;

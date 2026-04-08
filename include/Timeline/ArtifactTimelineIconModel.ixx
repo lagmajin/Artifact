@@ -1,5 +1,7 @@
-﻿module;
+module;
+#include <QIcon>
 #include <QStandardItemModel>
+#include <utility>
 export module ArtifactTimelineIconModel;
 
 export namespace Artifact

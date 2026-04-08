@@ -1,9 +1,11 @@
-module;
+﻿module;
+#include <utility>
+
+#include <wobjectdefs.h>
 #include <QWidget>
 #include <QScrollBar>
-#include <wobjectdefs.h>
-
 export module Artifact.Widgets.Test.ScrollPoC;
+
 
 export namespace Artifact {
 

@@ -1,17 +1,14 @@
-module;
+﻿module;
+
 #include <QString>
 #include <QColor>
 #include <QImage>
 #include <QVariant>
 #include <QVector>
 #include <QRect>
-#include <opencv2/opencv.hpp>
-#include <memory>
-#include <vector>
-#include <algorithm>
-
 export module Artifact.Effect.AutoMosaic;
 
+import std;
 import Artifact.Effect.Abstract;
 import ArtifactCore.ImageProcessing.FaceDetection;
 import Utils.String.UniString;

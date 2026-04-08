@@ -1,4 +1,6 @@
-module;
+﻿module;
+#include <utility>
+
 #include <wobjectdefs.h>
 #include <QFile>
 #include <QWidget>
@@ -7,8 +9,8 @@ module;
 #include <QWheelEvent>
 #include <QMouseEvent>
 #include <QFocusEvent>
-
 export module Artifact.Contents.Viewer;
+
 
 export namespace Artifact
 {

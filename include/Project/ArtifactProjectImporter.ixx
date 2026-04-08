@@ -1,6 +1,4 @@
-﻿module;
-#include <QString>
-
+module;
 #include <iostream>
 #include <vector>
 #include <string>
@@ -15,8 +13,6 @@
 #include <optional>
 #include <utility>
 #include <array>
-#include <mutex>
-#include <thread>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -26,7 +22,6 @@
 #include <variant>
 #include <any>
 #include <atomic>
-#include <condition_variable>
 #include <queue>
 #include <deque>
 #include <list>
@@ -35,6 +30,7 @@
 #include <regex>
 #include <random>
 
+#include <QString>
 #include <QList>
 export module Artifact.Project.Importer;
 

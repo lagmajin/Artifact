@@ -12,8 +12,6 @@
 #include <QThread>
 #include <QFuture>
 #include <QtConcurrent>
-#include <opencv2/opencv.hpp>
-#include <opencv2/videoio.hpp>
 #include <mutex>
 #include <unordered_map>
 #include <deque>

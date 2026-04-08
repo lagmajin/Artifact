@@ -1,8 +1,9 @@
 module;
+#include <utility>
+
 #include <QWidget>
 #include <QResizeEvent>
 #include <wobjectdefs.h>
-
 export module Artifact.Widgets.CompositionEditor;
 
 import Color.Float;

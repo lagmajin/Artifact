@@ -1,4 +1,5 @@
-﻿module;
+module;
+#include <utility>
 export module Artifact.Render.Controller;
 
 export namespace ArtifactCore

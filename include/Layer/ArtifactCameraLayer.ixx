@@ -1,10 +1,11 @@
-module ;
-#include <QMatrix4x4>
-#include <QString>
+﻿module;
+#include <utility>
 #include <memory>
 #include <wobjectdefs.h>
-
+#include <QMatrix4x4>
+#include <QString>
 export module Artifact.Layer.Camera;
+
 
 import Artifact.Layer.Abstract;
 import Property.Group;

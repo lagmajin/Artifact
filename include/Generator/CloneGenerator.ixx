@@ -1,9 +1,4 @@
-module;
-#include <QVector>
-#include <QMatrix4x4>
-#include <QString>
-#include <QVector3D>
-
+﻿module;
 #include <iostream>
 #include <vector>
 #include <string>
@@ -18,8 +13,6 @@ module;
 #include <optional>
 #include <utility>
 #include <array>
-#include <mutex>
-#include <thread>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -29,7 +22,6 @@ module;
 #include <variant>
 #include <any>
 #include <atomic>
-#include <condition_variable>
 #include <queue>
 #include <deque>
 #include <list>
@@ -37,6 +29,11 @@ module;
 #include <numeric>
 #include <regex>
 #include <random>
+#include <QVector>
+#include <QMatrix4x4>
+#include <QString>
+#include <QVector3D>
+
 export module Generator.Clone;
 
 

@@ -1,8 +1,10 @@
 module;
+#include <utility>
+#include <wobjectdefs.h>
 #include <QEvent>
 #include <QObject>
 #include <QWidget>
-#include <wobjectdefs.h>
+
 export module Artifact.Timeline.TimeCodeWidget;
 
 export namespace Artifact

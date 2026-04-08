@@ -1,4 +1,5 @@
-﻿module;
+module;
+#include <utility>
 #include <QFileSystemModel>
 #include <QDir>
 #include <QLabel>
@@ -30,13 +31,11 @@
 #include <QImage>
 #include <QImageReader>
 #include <QPainter>
+#include <opencv2/opencv.hpp>
 #include <QSlider>
 #include <QGroupBox>
 #include <QGridLayout>
 #include <QElapsedTimer>
-#include <opencv2/opencv.hpp>
-#include <opencv2/videoio.hpp>
-#include <opencv2/imgproc.hpp>
 #include <QHBoxLayout>
 #include <QAbstractItemView>
 #include <wobjectimpl.h>

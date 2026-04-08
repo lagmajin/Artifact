@@ -1,6 +1,8 @@
 ﻿module;
+#include <utility>
 #include <wobjectdefs.h>
 #include <QObject>
+
 export module Artifact.Service.ActiveContext;
 
 import Artifact.Composition.Abstract;
