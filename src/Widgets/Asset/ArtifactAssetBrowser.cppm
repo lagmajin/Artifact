@@ -267,6 +267,7 @@ void ArtifactBreadcrumbWidget::setPath(const QString& path)
   AssetDirectoryModel* directoryModel_ = nullptr;
   QListView* fileView_ = nullptr;
   AssetMenuModel* assetModel_ = nullptr;
+  QLabel* syncStateLabel_ = nullptr;
   QLineEdit* searchEdit_ = nullptr;
   QFileSystemModel* fileModel_ = nullptr;
   QButtonGroup* filterButtonGroup_ = nullptr;
@@ -299,6 +300,7 @@ void ArtifactBreadcrumbWidget::setPath(const QString& path)
   void syncProjectAssetRoot();
   void syncDirectorySelection();
   void refreshUnusedAssetCache();
+  QString syncStateText() const;
  };
 
  ArtifactAssetBrowser::Impl::Impl()
@@ -474,6 +476,12 @@ bool ArtifactAssetBrowser::Impl::isMissingAssetPath(const QString& filePath) con
    return false;
   }
   return !QFileInfo::exists(filePath);
+}
+
+QString ArtifactAssetBrowser::Impl::syncStateText() const
+{
+ auto* svc = ArtifactProjectService::instance();
+ return svc ? QStringLiteral("Project View linked") : QStringLiteral("Project View offline");
 }
 
  QIcon ArtifactAssetBrowser::Impl::generateThumbnail(const QString& filePath)
@@ -856,6 +864,12 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
   filePathLabel->setStyleSheet("color: gray; font-size: 10pt;");
   filePathLabel->setWordWrap(true);
 
+  impl_->syncStateLabel_ = new QLabel(impl_->syncStateText(), this);
+  impl_->syncStateLabel_->setAlignment(Qt::AlignCenter);
+  impl_->syncStateLabel_->setStyleSheet(
+      "font-weight: 700; padding: 3px 8px; border-radius: 10px; "
+      "color: #8fb3ff; background: rgba(60, 70, 96, 0.85);");
+
   auto assetModel = impl_->assetModel_ = new AssetMenuModel(this);
   auto fileView = impl_->fileView_ = new AssetFileListView();
   fileView->setModel(assetModel);
@@ -1033,15 +1047,22 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
   if (projectService) {
    connect(projectService, &ArtifactProjectService::projectCreated, this, [this]() {
     impl_->syncProjectAssetRoot();
+    if (impl_->syncStateLabel_) {
+     impl_->syncStateLabel_->setText(impl_->syncStateText());
+    }
    });
    connect(projectService, &ArtifactProjectService::projectChanged, this, [this]() {
     impl_->syncProjectAssetRoot();
+    if (impl_->syncStateLabel_) {
+     impl_->syncStateLabel_->setText(impl_->syncStateText());
+    }
    });
   }
 
   auto VBoxLayout = new  QVBoxLayout();
   VBoxLayout->addWidget(assetPathLabel);
   VBoxLayout->addWidget(filePathLabel);
+  VBoxLayout->addWidget(impl_->syncStateLabel_);
   VBoxLayout->addWidget(thumbnailControlGroup);
   VBoxLayout->addWidget(fileView);
   VBoxLayout->addWidget(fileInfoGroup);

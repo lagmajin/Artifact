@@ -74,3 +74,8 @@ Project View / Project panel を独立して改善するための実装メモ。
   - current composition 同期時、対象 composition の親 folder を 1 段だけでなく root まで展開するよう修正
   - 選択変更時に `ensureIndexVisible()` を通し、深い階層でも current composition が viewport 外へ取り残されないよう修正
   - これにより、custom `QAbstractScrollArea` ベース Project View でも `M-PV-1 Basic Operations` の「selection と current composition が一致する」を見失いにくくした
+
+- `2026-04-09`
+  - Project View の selection から footage を拾って Asset Browser へ返す往復同期を追加し、`M-PV-1 Basic Operations` の selection 中心導線を強めた
+  - footage 選択時の current path は Asset Browser 側の表示と揃うので、`M-PV-2 Asset Presentation` の path / status 読み取りがしやすくなった
+  - selection chrome に Asset Browser linked の sync chip を出し、往復同期が効いていることを画面上で読めるようにした

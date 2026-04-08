@@ -2545,6 +2545,7 @@ public:
     QProgressBar* proxyQueueProgress = nullptr;
     ArtifactProjectManagerToolBox* toolBox = nullptr;
     QLabel* projectNameLabel = nullptr;
+    QLabel* syncStateLabel = nullptr;
     QLabel* selectionSummaryLabel = nullptr;
     QLabel* selectionDetailLabel = nullptr;
     QPushButton* openSelectionButton = nullptr;
@@ -2849,7 +2850,14 @@ public:
             .arg(unusedText);
     }
 
+    QString syncStateText() const {
+        return QStringLiteral("Asset Browser linked");
+    }
+
     void refreshSelectionChrome() {
+        if (syncStateLabel) {
+            syncStateLabel->setText(syncStateText());
+        }
         if (selectionSummaryLabel) {
             selectionSummaryLabel->setText(selectionSummaryText());
         }
@@ -3164,6 +3172,21 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     impl_->projectNameLabel = new QLabel("PROJECT");
     impl_->projectNameLabel->setObjectName(QStringLiteral("projectManagerSectionLabel"));
     chromeLayout->addWidget(impl_->projectNameLabel);
+
+    impl_->syncStateLabel = new QLabel(QStringLiteral("Asset Browser linked"), chromePanel);
+    impl_->syncStateLabel->setObjectName(QStringLiteral("projectManagerSyncChip"));
+    {
+        QFont f = impl_->syncStateLabel->font();
+        f.setPointSize(9);
+        f.setBold(true);
+        impl_->syncStateLabel->setFont(f);
+        impl_->syncStateLabel->setAlignment(Qt::AlignCenter);
+        impl_->syncStateLabel->setContentsMargins(8, 3, 8, 3);
+        QPalette pal = impl_->syncStateLabel->palette();
+        pal.setColor(QPalette::WindowText, QColor(ArtifactCore::currentDCCTheme().accentColor));
+        impl_->syncStateLabel->setPalette(pal);
+    }
+    chromeLayout->addWidget(impl_->syncStateLabel);
 
     auto* selectionChrome = new QWidget(chromePanel);
     auto* selectionChromeLayout = new QVBoxLayout(selectionChrome);

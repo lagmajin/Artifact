@@ -24,6 +24,7 @@ import Frame.Position;
 import Time.Rational;
 import Frame.Rate;
 import Animation.Value;
+import Transform.Hlper;
 
 import Artifact.Layer.Settings;
 import Artifact.Layer.Physics;
@@ -491,24 +492,16 @@ QTransform ArtifactAbstractLayer::getLocalTransform() const {
       evaluateDouble(QStringLiteral("transform.anchor.x"), t.anchorX());
   const double anchorY =
       evaluateDouble(QStringLiteral("transform.anchor.y"), t.anchorY());
-  QTransform result;
 
-  // AE-like transform: Translate(Pos) * Rotate(Rot) * Scale(Scale) *
-  // Translate(-Anchor)
-  result.translate(positionX, positionY);
-  result.rotate(rotation);
-  result.scale(scaleX, scaleY);
-  result.translate(-anchorX, -anchorY);
-
-  return result;
+  return makeLayerTransform2D(positionX, positionY, rotation, scaleX, scaleY,
+                              anchorX, anchorY);
 }
 
 QTransform ArtifactAbstractLayer::getGlobalTransform() const {
   QTransform local = getLocalTransform();
   auto parent = parentLayer();
   if (parent) {
-    // In After Effects, parent transform is applied to the child's space
-    return local * parent->getGlobalTransform();
+    return combineLayerTransform2D(local, parent->getGlobalTransform());
   }
   return local;
 }
@@ -539,20 +532,15 @@ QTransform ArtifactAbstractLayer::getLocalTransformAt(int64_t frameNumber) const
 
   // Skip physics for random access evaluating (e.g. motion path rendering) to maintain determinism.
 
-  QTransform result;
-  result.translate(positionX, positionY);
-  result.rotate(rotation);
-  result.scale(scaleX, scaleY);
-  result.translate(-anchorX, -anchorY);
-
-  return result;
+  return makeLayerTransform2D(positionX, positionY, rotation, scaleX, scaleY,
+                              anchorX, anchorY);
 }
 
 QTransform ArtifactAbstractLayer::getGlobalTransformAt(int64_t frameNumber) const {
   QTransform local = getLocalTransformAt(frameNumber);
   auto parent = parentLayer();
   if (parent) {
-    return local * parent->getGlobalTransformAt(frameNumber); // Time remapping on parent not considered here yet
+    return combineLayerTransform2D(local, parent->getGlobalTransformAt(frameNumber)); // Time remapping on parent not considered here yet
   }
   return local;
 }
@@ -589,27 +577,15 @@ QMatrix4x4 ArtifactAbstractLayer::getLocalTransform4x4() const {
   const double anchorY =
       evaluateDouble(QStringLiteral("transform.anchor.y"), t.anchorY());
   const double anchorZ = t.anchorZ();
-  QMatrix4x4 result;
-
-  // AE-like transform order: Translate(Pos) * Rotate(Z) * Rotate(Y) * Rotate(X)
-  // * Scale(Scale) * Translate(-Anchor) Qt's translate/rotate/scale multiply
-  // from the right: Result = I * T * R * S * Tinv
-  result.translate(positionX, positionY, positionZ);
-  result.rotate(rotation, 0, 0, 1); // Z-rotation
-  // result.rotate(t.rotationY(), 0, 1, 0); // Placeholder for Y
-  // result.rotate(t.rotationX(), 1, 0, 0); // Placeholder for X
-  result.scale(scaleX, scaleY, 1.0f);
-  result.translate(-anchorX, -anchorY, -anchorZ);
-
-  return result;
+  return makeLayerTransform3D(positionX, positionY, positionZ, rotation,
+                              scaleX, scaleY, 1.0, anchorX, anchorY, anchorZ);
 }
 
 QMatrix4x4 ArtifactAbstractLayer::getGlobalTransform4x4() const {
   QMatrix4x4 local = getLocalTransform4x4();
   auto parent = parentLayer();
   if (parent) {
-    // Parent * Local
-    return parent->getGlobalTransform4x4() * local;
+    return combineLayerTransform3D(local, parent->getGlobalTransform4x4());
   }
   return local;
 }
