@@ -156,3 +156,15 @@ asset 状態が保存再読込で落ちないようにする。
 - browser と project の選択同期
 - relink workflow の一体化
 - save / restore 整合
+
+## Status (2026-04-09)
+
+- [x] browser ↔ project selection sync を往復方向で接続
+- [x] Project View 起点の footage selection を Asset Browser に返す導線を追加
+- [x] 両ペインに sync chip を出し、同期状態を画面で読めるようにした
+
+次の slice:
+
+- imported / missing / unused badge の見え方を project 側へも揃える
+- relink workflow の一体化
+- save / restore 整合の再確認

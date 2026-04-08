@@ -1071,6 +1071,7 @@ int main(int argc, char *argv[]) {
         });
     static ArtifactCore::EventBus appEventBus = ArtifactCore::globalEventBus();
     static std::vector<ArtifactCore::EventBus::Subscription> appEventSubscriptions;
+    auto selectionSyncGuard = std::make_shared<bool>(false);
     appEventSubscriptions.push_back(appEventBus.subscribe<CurrentCompositionChangedEvent>(
         [projectManagerWidget](const CurrentCompositionChangedEvent& event) {
           const CompositionID compId(event.compositionId);
@@ -1116,11 +1117,56 @@ int main(int argc, char *argv[]) {
         }));
     QObject::connect(
         assetBrowser, &ArtifactAssetBrowser::selectionChanged, mw,
-        [mw, contentsViewer, projectManagerWidget](const QStringList &selectedFiles) {
-          if (projectManagerWidget) {
+        [projectManagerWidget, selectionSyncGuard](const QStringList &selectedFiles) {
+          if (projectManagerWidget && selectionSyncGuard && !*selectionSyncGuard) {
+            *selectionSyncGuard = true;
             projectManagerWidget->selectItemsByFilePaths(selectedFiles);
+            *selectionSyncGuard = false;
           }
         });
+    if (auto* projectView = projectManagerWidget ? projectManagerWidget->projectView() : nullptr) {
+      QObject::connect(projectView, &ArtifactProjectView::itemSelected, mw,
+          [assetBrowser, projectView, selectionSyncGuard](const QModelIndex& idx) {
+            if (!assetBrowser || !selectionSyncGuard || *selectionSyncGuard || !idx.isValid()) {
+              return;
+            }
+            const auto* selectionModel = projectView ? projectView->selectionModel() : nullptr;
+            if (!selectionModel) {
+              return;
+            }
+            QStringList footagePaths;
+            const auto rows = selectionModel->selectedRows(0);
+            footagePaths.reserve(rows.size());
+            for (const QModelIndex& row : rows) {
+              QModelIndex sourceIdx = row;
+              if (auto proxy = qobject_cast<const QSortFilterProxyModel*>(sourceIdx.model())) {
+                sourceIdx = proxy->mapToSource(sourceIdx).siblingAtColumn(0);
+              }
+              const QVariant typeVar = sourceIdx.data(
+                  Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::ProjectItemType));
+              const QVariant ptrVar = sourceIdx.data(
+                  Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::ProjectItemPtr));
+              if (!typeVar.isValid() || typeVar.toInt() != static_cast<int>(eProjectItemType::Footage) ||
+                  !ptrVar.isValid()) {
+                continue;
+              }
+              ProjectItem* item = reinterpret_cast<ProjectItem*>(ptrVar.value<quintptr>());
+              auto* footage = item && item->type() == eProjectItemType::Footage
+                                  ? static_cast<FootageItem*>(item)
+                                  : nullptr;
+              if (footage && !footage->filePath.isEmpty()) {
+                footagePaths.append(footage->filePath);
+              }
+            }
+            footagePaths.removeDuplicates();
+            if (footagePaths.isEmpty()) {
+              return;
+            }
+            *selectionSyncGuard = true;
+            assetBrowser->selectAssetPaths(footagePaths);
+            *selectionSyncGuard = false;
+          });
+    }
     mw->addDockedWidget(QStringLiteral("Inspector"), ads::RightDockWidgetArea,
                         new ArtifactInspectorWidget(mw));
     auto* compositionNoteWidget =
