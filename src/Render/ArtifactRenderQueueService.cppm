@@ -792,20 +792,6 @@ namespace Artifact
         return settings;
     }
 
-    static ArtifactCore::ImageF32x4_RGBA qImageToImageF32x4RGBA(const QImage& source)
-    {
-        // 既に RGBA8888 の場合は変換不要
-        const QImage& rgba = (source.format() == QImage::Format_RGBA8888)
-            ? source
-            : source.convertToFormat(QImage::Format_RGBA8888);
-        cv::Mat mat(rgba.height(), rgba.width(), CV_8UC4,
-                    const_cast<uchar*>(rgba.constBits()),
-                    rgba.bytesPerLine());
-        ArtifactCore::ImageF32x4_RGBA out;
-        out.setFromCVMat(mat);
-        return out;
-    }
-
     class IVideoEncodeBackend {
     public:
         virtual ~IVideoEncodeBackend() = default;
@@ -969,8 +955,10 @@ namespace Artifact
 
         bool addFrame(const QImage& frame, int /*frameIndex*/, QString* errorMessage) override
         {
-            const ArtifactCore::ImageF32x4_RGBA image = qImageToImageF32x4RGBA(frame);
-            if (!encoder_.addImage(image)) {
+            const QImage rgba = (frame.format() == QImage::Format_RGBA8888)
+                ? frame
+                : frame.convertToFormat(QImage::Format_RGBA8888);
+            if (!encoder_.addImage(rgba)) {
                 lastError_ = encoder_.lastError();
                 if (errorMessage) *errorMessage = lastError_;
                 return false;
@@ -2108,13 +2096,6 @@ namespace Artifact
                 return false;
             }
 
-            // QImage → ImageF32x4_RGBA (float 変換)
-            auto floatImage = qImageToImageF32x4RGBA(frame);
-            if (floatImage.isEmpty()) {
-                if (errorMessage) *errorMessage = QStringLiteral("Failed to convert GPU readback to float image");
-                return false;
-            }
-
             // 出力パス決定
             const QString outPath = resolveDummyOutputPath(job, index);
             if (outputPath) *outputPath = outPath;
@@ -2126,7 +2107,7 @@ namespace Artifact
             }
 
             // 保存
-            if (!floatImage.save(outPath)) {
+            if (!frame.save(outPath)) {
                 if (errorMessage) *errorMessage = QStringLiteral("Failed to save GPU rendered image: %1").arg(outPath);
                 return false;
             }
