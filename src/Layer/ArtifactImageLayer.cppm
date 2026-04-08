@@ -1,13 +1,16 @@
 module;
 #include <utility>
+#include <array>
 
 #include <QDebug>
 #include <QImage>
 #include <QMatrix4x4>
-#include <QImageReader>
 #include <QPainter>
 #include <QFutureWatcher>
 #include <QtConcurrent>
+#include <OpenImageIO/imagebuf.h>
+#include <OpenImageIO/imagebufalgo.h>
+#include <OpenImageIO/imageio.h>
 #include <wobjectimpl.h>
 #include <Layer/ArtifactCloneEffectSupport.hpp>
 
@@ -20,6 +23,70 @@ import Image.ImageF32x4_RGBA;
 import Size;
 
 namespace Artifact {
+namespace
+{
+QImage loadImageViaOIIO(const QString& path, QSize* sizeOut = nullptr, QString* errorOut = nullptr)
+{
+    using namespace OIIO;
+    const std::string utf8Path = path.toUtf8().toStdString();
+
+    ImageBuf source(utf8Path);
+    if (!source.read(0, 0, true, TypeDesc::UINT8)) {
+        if (errorOut) {
+            *errorOut = QString::fromStdString(source.geterror());
+        }
+        return {};
+    }
+
+    ImageBuf oriented = reorient(source);
+    const ImageSpec& spec = oriented.spec();
+    if (spec.width <= 0 || spec.height <= 0 || spec.nchannels <= 0) {
+        if (errorOut) {
+            *errorOut = QStringLiteral("Invalid image dimensions or channel count.");
+        }
+        return {};
+    }
+
+    ImageBuf rgba;
+    if (spec.nchannels >= 4) {
+        const std::array<int, 4> channelOrder{0, 1, 2, 3};
+        rgba = channels(oriented, 4, channelOrder);
+    } else if (spec.nchannels == 3) {
+        const std::array<int, 4> channelOrder{0, 1, 2, -1};
+        const std::array<float, 4> channelValues{0.0f, 0.0f, 0.0f, 1.0f};
+        rgba = channels(oriented, 4, channelOrder, channelValues);
+    } else if (spec.nchannels == 2) {
+        const std::array<int, 4> channelOrder{0, 0, 0, 1};
+        const std::array<float, 4> channelValues{0.0f, 0.0f, 0.0f, 1.0f};
+        rgba = channels(oriented, 4, channelOrder, channelValues);
+    } else {
+        const std::array<int, 4> channelOrder{0, 0, 0, -1};
+        const std::array<float, 4> channelValues{0.0f, 0.0f, 0.0f, 1.0f};
+        rgba = channels(oriented, 4, channelOrder, channelValues);
+    }
+
+    QImage image(spec.width, spec.height, QImage::Format_RGBA8888);
+    if (image.isNull()) {
+        if (errorOut) {
+            *errorOut = QStringLiteral("Failed to allocate output image.");
+        }
+        return {};
+    }
+
+    if (!rgba.get_pixels(ROI::All(), TypeDesc::UINT8, image.bits())) {
+        if (errorOut) {
+            *errorOut = QString::fromStdString(rgba.geterror());
+        }
+        return {};
+    }
+
+    if (sizeOut) {
+        *sizeOut = QSize(spec.width, spec.height);
+    }
+    return image;
+}
+}
+
 class ArtifactImageLayer::Impl {
 public:
     Impl() = default;
@@ -63,43 +130,32 @@ ArtifactImageLayer::~ArtifactImageLayer() {
 
 bool ArtifactImageLayer::loadFromPath(const QString& path)
 {
-    QImageReader reader(path);
-    reader.setAutoTransform(true);
-    if (!reader.canRead()) {
+    const std::string utf8Path = path.toUtf8().toStdString();
+    ImageBuf headerOnly(utf8Path);
+    const ImageSpec& spec = headerOnly.spec();
+    if (spec.width <= 0 || spec.height <= 0) {
         qWarning() << "[ArtifactImageLayer] Failed to load image from:" << path
-                   << "format=" << reader.format()
-                   << "error=" << reader.errorString()
-                   << "supported=" << QImageReader::supportedImageFormats();
+                   << "error=" << QString::fromStdString(headerOnly.geterror());
         return false;
     }
 
-    const QSize size = reader.size();
     impl_->sourcePath_ = path;
     impl_->cache_.reset();
     impl_->prefetchDone_ = false;
     impl_->hasImage_ = true;
-    if (size.isValid()) {
-        impl_->width_ = size.width();
-        impl_->height_ = size.height();
-        setSourceSize(Size_2D(size.width(), size.height()));
-    }
+    impl_->width_ = spec.width;
+    impl_->height_ = spec.height;
+    setSourceSize(Size_2D(spec.width, spec.height));
 
-    // [Fix 1] バックグラウンドで画像を先読みし、初回 draw() 呼び出し時の
+    // [Fix 1] OIIO 経由でバックグラウンド先読みし、初回 draw() 呼び出し時の
     // メインスレッドブロックを排除する
     impl_->prefetchFuture_ = QtConcurrent::run([path]() -> QImage {
-        QImageReader r(path);
-        r.setAutoTransform(true);
-        QImage img = r.read();
-        if (!img.isNull()) {
-            // GPU 転送用に RGBA8888 に変換も先側で実行しておく
-            return img.convertToFormat(QImage::Format_RGBA8888);
-        }
-        return img;
+        return loadImageViaOIIO(path);
     });
     impl_->prefetchWatcher_.setFuture(impl_->prefetchFuture_);
 
-    qDebug() << "[ArtifactImageLayer] Prefetch started:" << path
-             << "sizeHint=" << size;
+    qDebug() << "[ArtifactImageLayer] OIIO prefetch started:" << path
+             << "sizeHint=" << QSize(spec.width, spec.height);
     return true;
 }
 
@@ -206,18 +262,18 @@ QImage ArtifactImageLayer::toQImage() const
             return QImage();
         }
         // 非同期パスを通らなかった場合のフォールバック
-        QImageReader reader(impl_->sourcePath_);
-        reader.setAutoTransform(true);
-        QImage loaded = reader.read();
+        QSize size;
+        QString errorString;
+        QImage loaded = loadImageViaOIIO(impl_->sourcePath_, &size, &errorString);
         if (!loaded.isNull()) {
-            impl_->cache_ = std::make_shared<QImage>(loaded.convertToFormat(QImage::Format_RGBA8888));
-            if (impl_->width_ <= 0 || impl_->height_ <= 0) {
-                impl_->width_  = loaded.width();
-                impl_->height_ = loaded.height();
+            impl_->cache_ = std::make_shared<QImage>(loaded);
+            if (size.isValid()) {
+                impl_->width_  = size.width();
+                impl_->height_ = size.height();
             }
         } else {
             qWarning() << "[ArtifactImageLayer::toQImage] Sync fallback load failed:"
-                       << impl_->sourcePath_ << "error=" << reader.errorString();
+                       << impl_->sourcePath_ << "error=" << errorString;
             return QImage();
         }
         impl_->prefetchDone_ = true;

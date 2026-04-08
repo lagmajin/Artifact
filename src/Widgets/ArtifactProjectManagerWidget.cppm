@@ -1903,7 +1903,10 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
         QVariant typeVar = sourceIdx.data(Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::ProjectItemType));
         eProjectItemType type = typeVar.isValid() ? static_cast<eProjectItemType>(typeVar.toInt()) : eProjectItemType::Footage;
 
-        addTrackedAction(QStringLiteral("open"), QStringLiteral("Open"), [this, idx]() {
+        addTrackedAction(QStringLiteral("open"), QStringLiteral("Open"), [this, idx, type]() {
+            if (type == eProjectItemType::Footage) {
+                itemDoubleClicked(idx);
+            }
             handleItemDoubleClicked(idx);
         }, loadProjectViewIcon(QStringLiteral("MaterialVS/blue/file_open.svg")));
         addTrackedAction(QStringLiteral("copy_name"), QStringLiteral("Copy Name"), [sourceIdx]() {
@@ -2051,6 +2054,9 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
         }
 
         if (type == eProjectItemType::Footage) {
+            addTrackedAction(QStringLiteral("preview_in_contents_viewer"), QStringLiteral("Preview in Contents Viewer"), [this, idx]() {
+                itemDoubleClicked(idx);
+            }, loadProjectViewIcon(QStringLiteral("MaterialVS/blue/visibility.svg")));
             addTrackedAction(QStringLiteral("reveal_in_explorer"), QStringLiteral("Reveal in Explorer (R)"), [item]() {
                 if (item && item->type() == eProjectItemType::Footage) {
                     QString path = static_cast<FootageItem*>(item)->filePath;
@@ -2862,7 +2868,12 @@ public:
             if (!hasItem) {
                 selectionDetailLabel->setText(QStringLiteral("Use the search bar or click an item to inspect it."));
             } else {
-                selectionDetailLabel->setText(QStringLiteral("%1 | %2").arg(statusText, pathText.isEmpty() ? QStringLiteral("-") : pathText));
+                const QString pathPart = pathText.isEmpty() ? QStringLiteral("-") : pathText;
+                if (isFootage) {
+                    selectionDetailLabel->setText(QStringLiteral("%1 | %2 | Open previews in Contents Viewer").arg(statusText, pathPart));
+                } else {
+                    selectionDetailLabel->setText(QStringLiteral("%1 | %2").arg(statusText, pathPart));
+                }
             }
         }
         if (openSelectionButton) openSelectionButton->setEnabled(hasItem);

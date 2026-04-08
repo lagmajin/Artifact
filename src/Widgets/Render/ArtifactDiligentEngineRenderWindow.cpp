@@ -312,16 +312,46 @@ bool ArtifactDiligentEngineRenderWindow::initialize()
   return shadingMode_;
  }
 
- void ArtifactDiligentEngineRenderWindow::setClearColor(const QColor& color)
- {
+void ArtifactDiligentEngineRenderWindow::setClearColor(const QColor& color)
+{
   clearColor_ = color;
   requestRender();
- }
+}
 
- QColor ArtifactDiligentEngineRenderWindow::clearColor() const
- {
+QColor ArtifactDiligentEngineRenderWindow::clearColor() const
+{
   return clearColor_;
- }
+}
+
+void ArtifactDiligentEngineRenderWindow::setPreviewCamera(float zoom, float yawDeg, float pitchDeg, const QVector3D& target)
+{
+  previewZoom_ = std::max(0.05f, zoom);
+  previewYaw_ = yawDeg;
+  previewPitch_ = pitchDeg;
+  previewTarget_ = target;
+  previewDistance_ = 4.0f / previewZoom_;
+  requestRender();
+}
+
+float ArtifactDiligentEngineRenderWindow::previewZoom() const
+{
+  return previewZoom_;
+}
+
+float ArtifactDiligentEngineRenderWindow::previewYaw() const
+{
+  return previewYaw_;
+}
+
+float ArtifactDiligentEngineRenderWindow::previewPitch() const
+{
+  return previewPitch_;
+}
+
+QVector3D ArtifactDiligentEngineRenderWindow::previewTarget() const
+{
+  return previewTarget_;
+}
 
  void ArtifactDiligentEngineRenderWindow::requestRender()
  {
@@ -533,7 +563,10 @@ bool ArtifactDiligentEngineRenderWindow::initialize()
 
       QMatrix4x4 view;
       view.setToIdentity();
-      view.translate(0.0f, 0.0f, -4.0f);
+      view.translate(0.0f, 0.0f, -previewDistance_);
+      view.rotate(previewPitch_, 1.0f, 0.0f, 0.0f);
+      view.rotate(previewYaw_, 0.0f, 1.0f, 0.0f);
+      view.translate(-previewTarget_.x(), -previewTarget_.y(), -previewTarget_.z());
 
       QMatrix4x4 proj;
       proj.setToIdentity();

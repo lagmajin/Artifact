@@ -29,6 +29,7 @@
 #include <optional>
 #include <utility>
 #include <array>
+#include <limits>
 #include <mutex>
 #include <thread>
 #include <chrono>
@@ -69,6 +70,9 @@ import Time.Rational;
 namespace Artifact {
 
 namespace {
+constexpr int kPropertyLabelMinWidth = 132;
+constexpr int kPropertyLabelMaxWidth = 184;
+
 QColor themeColor(const QString& value, const QColor& fallback)
 {
     const QColor color(value);
@@ -212,6 +216,9 @@ public:
     bool sliderBeforeValue = false;
     int localPropertyEditDepth = 0;
     QHash<QString, ArtifactPropertyEditorRowWidget*> propertyEditors;
+    QString rebuildSignature;
+    qint64 lastPropertyUpdateFramePosition = std::numeric_limits<qint64>::min();
+    int64_t lastPropertyUpdateFps = -1;
 
     void scheduleRebuild(int delayMs = -1)
     {
@@ -237,6 +244,8 @@ public:
         updateValuesTimer->start(updateValuesDebounceMs);
     }
 
+    QString computeRebuildSignature() const;
+    void invalidatePropertyValueCache();
     void rebuildUI();
     void updatePropertyValues();
     void applyLockState();
@@ -482,8 +491,8 @@ ArtifactPropertyEditorRowWidget* createPropertyRow(
 
 void alignPropertyRowLabels(
     const std::vector<ArtifactPropertyEditorRowWidget*>& rows,
-    const int minimumLabelWidth = 132,
-    const int maximumLabelWidth = 184)
+    const int minimumLabelWidth = kPropertyLabelMinWidth,
+    const int maximumLabelWidth = kPropertyLabelMaxWidth)
 {
     int labelWidth = minimumLabelWidth;
     for (auto* row : rows) {
@@ -564,6 +573,99 @@ std::vector<std::shared_ptr<ArtifactCore::AbstractProperty>> prioritizedSummaryP
 }
 
 } // namespace
+
+QString ArtifactPropertyWidget::Impl::computeRebuildSignature() const {
+    QString signature;
+    signature.reserve(2048);
+
+    signature += QStringLiteral("layer:");
+    signature += currentLayer ? currentLayer->id().toString() : QStringLiteral("<none>");
+    signature += QLatin1Char('\n');
+
+    signature += QStringLiteral("filter:");
+    signature += filterText.trimmed();
+    signature += QLatin1Char('\n');
+
+    signature += QStringLiteral("focused:");
+    signature += focusedEffectId.trimmed();
+    signature += QLatin1Char('\n');
+
+    signature += QStringLiteral("valueColumnFirst:");
+    signature += valueColumnFirst ? QStringLiteral("1") : QStringLiteral("0");
+    signature += QLatin1Char('\n');
+
+    signature += QStringLiteral("sliderBeforeValue:");
+    signature += sliderBeforeValue ? QStringLiteral("1") : QStringLiteral("0");
+    signature += QLatin1Char('\n');
+
+    if (!currentLayer) {
+        return signature;
+    }
+
+    const auto focused = focusedEffectId.trimmed();
+
+    const auto layerGroups = currentLayer->getLayerPropertyGroups();
+    for (const auto& groupDef : layerGroups) {
+        signature += QStringLiteral("group:");
+        signature += groupDef.name();
+        signature += QLatin1Char('\n');
+
+        const auto sortedProps = groupDef.sortedProperties();
+        signature += QStringLiteral("group_count:");
+        signature += QString::number(sortedProps.size());
+        signature += QLatin1Char('\n');
+        for (const auto& property : sortedProps) {
+            if (!property) {
+                continue;
+            }
+            signature += QStringLiteral("property:");
+            signature += property->getName();
+            signature += QLatin1Char('\n');
+        }
+    }
+
+    const auto effects = currentLayer->getEffects();
+    for (const auto& effect : effects) {
+        if (!effect) {
+            continue;
+        }
+        if (!focused.isEmpty() && effect->effectID().toQString() != focused) {
+            continue;
+        }
+
+        signature += QStringLiteral("effect:");
+        signature += effect->effectID().toQString();
+        signature += QLatin1Char('\n');
+
+        signature += QStringLiteral("effect_name:");
+        signature += effect->displayName().toQString();
+        signature += QLatin1Char('\n');
+
+        signature += QStringLiteral("effect_stage:");
+        signature += QString::number(static_cast<int>(effect->pipelineStage()));
+        signature += QLatin1Char('\n');
+
+        ArtifactCore::PropertyGroup propGroup(effect->displayName().toQString());
+        for (const auto& property : effect->getProperties()) {
+            propGroup.addProperty(std::make_shared<ArtifactCore::AbstractProperty>(property));
+        }
+
+        const auto effectSummary = prioritizedSummaryProperties(propGroup.sortedProperties(), {}, 3);
+        signature += QStringLiteral("effect_summary_count:");
+        signature += QString::number(effectSummary.size());
+        signature += QLatin1Char('\n');
+        for (const auto& property : effectSummary) {
+            if (!property) {
+                continue;
+            }
+            signature += QStringLiteral("effect_summary_property:");
+            signature += property->getName();
+            signature += QLatin1Char('\n');
+        }
+    }
+
+    return signature;
+}
 
 ArtifactPropertyWidget::ArtifactPropertyWidget(QWidget* parent)
     : QScrollArea(parent), impl_(new Impl()) 
@@ -647,6 +749,11 @@ ArtifactPropertyWidget::~ArtifactPropertyWidget() {
    delete impl_;
 }
 
+void ArtifactPropertyWidget::Impl::invalidatePropertyValueCache() {
+    lastPropertyUpdateFramePosition = std::numeric_limits<qint64>::min();
+    lastPropertyUpdateFps = -1;
+}
+
 QSize ArtifactPropertyWidget::sizeHint() const {
    return QSize(300, 600);
 }
@@ -654,6 +761,7 @@ QSize ArtifactPropertyWidget::sizeHint() const {
 void ArtifactPropertyWidget::setLayer(ArtifactAbstractLayerPtr layer) {
     if (impl_->currentLayer == layer) {
         // Same layer object – still refresh values in case they changed externally
+        impl_->invalidatePropertyValueCache();
         impl_->scheduleUpdateValues();
         return;
     }
@@ -663,6 +771,7 @@ void ArtifactPropertyWidget::setLayer(ArtifactAbstractLayerPtr layer) {
     }
 
     impl_->currentLayer = layer;
+    impl_->invalidatePropertyValueCache();
     
     // Connect to new layer
     if (impl_->currentLayer) {
@@ -671,6 +780,7 @@ void ArtifactPropertyWidget::setLayer(ArtifactAbstractLayerPtr layer) {
                 if (impl_->localPropertyEditDepth > 0) {
                     return;
                 }
+                impl_->invalidatePropertyValueCache();
                 impl_->scheduleUpdateValues();
             });
     }
@@ -687,6 +797,7 @@ void ArtifactPropertyWidget::setFocusedEffectId(const QString& effectId) {
 void ArtifactPropertyWidget::clear() {
     impl_->currentLayer = nullptr;
     impl_->focusedEffectId.clear();
+    impl_->invalidatePropertyValueCache();
     updateProperties();
 }
 
@@ -744,7 +855,14 @@ void ArtifactPropertyWidget::Impl::updatePropertyValues() {
     auto* playback = ArtifactPlaybackService::instance();
     const auto frameRate = playback ? playback->frameRate() : FrameRate(30.0f);
     const int64_t fps_val = static_cast<int64_t>(std::round(frameRate.framerate()));
-    const auto now = playback ? RationalTime(playback->currentFrame().framePosition(), fps_val) : RationalTime(0, 30);
+    const qint64 framePosition = playback ? static_cast<qint64>(playback->currentFrame().framePosition()) : 0;
+    if (framePosition == lastPropertyUpdateFramePosition && fps_val == lastPropertyUpdateFps) {
+        applyLockState();
+        return;
+    }
+    lastPropertyUpdateFramePosition = framePosition;
+    lastPropertyUpdateFps = fps_val;
+    const auto now = RationalTime(framePosition, fps_val);
 
     for (auto it = propertyEditors.begin(); it != propertyEditors.end(); ++it) {
         const QString& propName = it.key();
@@ -799,13 +917,22 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
 
     rebuilding = true;
 
+    const QString nextSignature = computeRebuildSignature();
+    if (nextSignature == rebuildSignature) {
+        rebuilding = false;
+        updatePropertyValues();
+        return;
+    }
+    rebuildSignature = nextSignature;
+    invalidatePropertyValueCache();
+
     // 既存ウィジェットを全て非表示にする（破棄しない）
     QSet<QString> reusedKeys;
     for (auto it = propertyEditors.begin(); it != propertyEditors.end(); ++it) {
         if (it.value()) {
             it.value()->hide();
-            // レイアウトから一時的に取り除く
-            mainLayout->removeWidget(it.value());
+            // いったん親から切り離して、group box の破棄に巻き込まれないようにする
+            it.value()->setParent(nullptr);
         }
     }
 
@@ -844,7 +971,7 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
     applyPropertySearchPalette(searchEdit);
     QObject::connect(searchEdit, &QLineEdit::textChanged, [this](const QString& text) {
         filterText = text;
-        rebuildUI();
+        scheduleRebuild(80);
     });
     mainLayout->addWidget(searchEdit);
 

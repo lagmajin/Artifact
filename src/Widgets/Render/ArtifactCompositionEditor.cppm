@@ -1473,6 +1473,23 @@ public:
     const int selectedCount = selection ? selection->selectedLayers().size() : 0;
     renderController_->setSelectedLayerId(
         current ? current->id() : ArtifactCore::LayerID::Nil());
+    if (current) {
+      const QString layerName = current->layerName().trimmed();
+      const QString title = layerName.isEmpty()
+                                ? current->id().toString()
+                                : layerName;
+      const QString detail = selectedCount <= 1
+                                 ? QStringLiteral("Layer selected")
+                                 : QStringLiteral("%1 layers selected")
+                                       .arg(selectedCount);
+      renderController_->setInfoOverlayText(title, detail);
+    } else {
+      renderController_->setInfoOverlayText(
+          QStringLiteral("Composition Editor"),
+          selectedCount <= 0
+              ? QStringLiteral("No layer selected")
+              : QStringLiteral("%1 layers selected").arg(selectedCount));
+    }
     if (editTextAction_) {
       editTextAction_->setEnabled(
           selectedCount == 1 &&

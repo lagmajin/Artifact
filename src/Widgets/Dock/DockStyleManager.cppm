@@ -101,10 +101,19 @@ ads::CDockWidget* resolveActiveDock(ads::CDockManager* dockManager, ads::CDockWi
 QString tabTextColor(const bool isActiveDock, const bool /*isFloatingTab*/, const bool /*isCurrentTab*/)
 {
     const QColor themeText = QColor(ArtifactCore::currentDCCTheme().textColor);
-    const QColor mutedText = themeText.darker(125);
     if (isActiveDock) {
         return themeText.name(QColor::HexRgb);
     }
+
+    const QColor background = QColor(ArtifactCore::currentDCCTheme().backgroundColor);
+    QColor mutedText = themeText;
+    if (background.lightnessF() < 0.5) {
+        // Dark theme: inactive tabs still need readable contrast.
+        mutedText = themeText.lighter(135);
+    } else {
+        mutedText = themeText.darker(112);
+    }
+    mutedText.setAlpha(230);
     return mutedText.name(QColor::HexRgb);
 }
 

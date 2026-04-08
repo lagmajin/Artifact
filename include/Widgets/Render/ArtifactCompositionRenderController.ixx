@@ -83,6 +83,10 @@ void setDropGhostPreview(const QRectF& viewportRect,
                          const QString& label);
 void clearDropGhostPreview();
 
+// Lightweight info HUD used for selection / operation feedback.
+void setInfoOverlayText(const QString& title, const QString& detail = QString());
+void clearInfoOverlayText();
+
 // LOD (Level of Detail)
 LODManager* lodManager() const;
 void setLODEnabled(bool enabled);

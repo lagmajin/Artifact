@@ -980,6 +980,9 @@ public:
   QString dropGhostTitle_;
   QString dropGhostHint_;
   QString dropCandidateLabel_;
+  bool infoOverlayVisible_ = false;
+  QString infoOverlayTitle_;
+  QString infoOverlayDetail_;
   FloatColor clearColor_;
   QString lastBackgroundKey_;
   CompositionID lastBackgroundCompositionId_;
@@ -1516,8 +1519,14 @@ void CompositionRenderController::setViewportSize(float w, float h) {
     impl_->devicePixelRatio_ = static_cast<float>(impl_->hostWidget_->devicePixelRatio());
   }
   // Callers pass logical pixels; convert to physical pixels for the renderer
-  impl_->hostWidth_ = w * impl_->devicePixelRatio_;
-  impl_->hostHeight_ = h * impl_->devicePixelRatio_;
+  const float newHostWidth = w * impl_->devicePixelRatio_;
+  const float newHostHeight = h * impl_->devicePixelRatio_;
+  if (std::abs(newHostWidth - impl_->hostWidth_) < 0.5f &&
+      std::abs(newHostHeight - impl_->hostHeight_) < 0.5f) {
+    return;
+  }
+  impl_->hostWidth_ = newHostWidth;
+  impl_->hostHeight_ = newHostHeight;
   impl_->renderer_->setViewportSize(impl_->hostWidth_, impl_->hostHeight_);
   impl_->invalidateBaseComposite();
 }
@@ -1542,12 +1551,11 @@ void CompositionRenderController::setPreviewQualityPreset(
 
   if (impl_->previewDownsample_ != factor) {
     impl_->previewDownsample_ = factor;
-    impl_->invalidateBaseComposite();
     if (impl_->hostWidth_ > 0 && impl_->hostHeight_ > 0) {
       // hostWidth_/hostHeight_ are already physical pixels; call renderer directly
       impl_->renderer_->setViewportSize(impl_->hostWidth_, impl_->hostHeight_);
-      impl_->invalidateBaseComposite();
     }
+    impl_->invalidateBaseComposite();
     renderOneFrame();
   }
 }
@@ -1683,6 +1691,9 @@ void CompositionRenderController::setSelectedLayerId(const LayerID &id) {
 }
 
 void CompositionRenderController::setClearColor(const FloatColor &color) {
+  if (toQColor(impl_->clearColor_) == toQColor(color)) {
+    return;
+  }
   impl_->clearColor_ = color;
   if (impl_->renderer_) {
     impl_->renderer_->setClearColor(color);
@@ -1692,6 +1703,9 @@ void CompositionRenderController::setClearColor(const FloatColor &color) {
 }
 
 void CompositionRenderController::setShowGrid(bool show) {
+  if (impl_->showGrid_ == show) {
+    return;
+  }
   impl_->showGrid_ = show;
   impl_->invalidateOverlayComposite();
   renderOneFrame();
@@ -1700,6 +1714,9 @@ bool CompositionRenderController::isShowGrid() const {
   return impl_->showGrid_;
 }
 void CompositionRenderController::setShowCheckerboard(bool show) {
+  if (impl_->showCheckerboard_ == show) {
+    return;
+  }
   impl_->showCheckerboard_ = show;
   impl_->invalidateBaseComposite();
   renderOneFrame();
@@ -1708,6 +1725,9 @@ bool CompositionRenderController::isShowCheckerboard() const {
   return impl_->showCheckerboard_;
 }
 void CompositionRenderController::setShowGuides(bool show) {
+  if (impl_->showGuides_ == show) {
+    return;
+  }
   impl_->showGuides_ = show;
   impl_->invalidateOverlayComposite();
   renderOneFrame();
@@ -1716,6 +1736,9 @@ bool CompositionRenderController::isShowGuides() const {
   return impl_->showGuides_;
 }
 void CompositionRenderController::setShowSafeMargins(bool show) {
+  if (impl_->showSafeMargins_ == show) {
+    return;
+  }
   impl_->showSafeMargins_ = show;
   impl_->invalidateOverlayComposite();
   renderOneFrame();
@@ -1725,6 +1748,9 @@ bool CompositionRenderController::isShowSafeMargins() const {
 }
 
 void CompositionRenderController::setShowMotionPathOverlay(bool show) {
+  if (impl_->showMotionPathOverlay_ == show) {
+    return;
+  }
   impl_->showMotionPathOverlay_ = show;
   impl_->invalidateOverlayComposite();
   renderOneFrame();
@@ -1738,6 +1764,13 @@ void CompositionRenderController::setDropGhostPreview(
     const QRectF &viewportRect, const QString &title, const QString &hint,
     const QString &label) {
   if (!impl_) {
+    return;
+  }
+  if (impl_->dropGhostVisible_ &&
+      impl_->dropGhostRect_ == viewportRect &&
+      impl_->dropGhostTitle_ == title &&
+      impl_->dropGhostHint_ == hint &&
+      impl_->dropCandidateLabel_ == label) {
     return;
   }
   impl_->dropGhostVisible_ = true;
@@ -1761,6 +1794,38 @@ void CompositionRenderController::clearDropGhostPreview() {
   impl_->dropGhostTitle_.clear();
   impl_->dropGhostHint_.clear();
   impl_->dropCandidateLabel_.clear();
+  impl_->invalidateOverlayComposite();
+  renderOneFrame();
+}
+
+void CompositionRenderController::setInfoOverlayText(const QString &title,
+                                                     const QString &detail) {
+  if (!impl_) {
+    return;
+  }
+  const QString normalizedTitle = title.trimmed();
+  const QString normalizedDetail = detail.trimmed();
+  if (impl_->infoOverlayVisible_ &&
+      impl_->infoOverlayTitle_ == normalizedTitle &&
+      impl_->infoOverlayDetail_ == normalizedDetail) {
+    return;
+  }
+  impl_->infoOverlayVisible_ = true;
+  impl_->infoOverlayTitle_ = normalizedTitle;
+  impl_->infoOverlayDetail_ = normalizedDetail;
+  impl_->invalidateOverlayComposite();
+  renderOneFrame();
+}
+
+void CompositionRenderController::clearInfoOverlayText() {
+  if (!impl_ ||
+      (!impl_->infoOverlayVisible_ && impl_->infoOverlayTitle_.isEmpty() &&
+       impl_->infoOverlayDetail_.isEmpty())) {
+    return;
+  }
+  impl_->infoOverlayVisible_ = false;
+  impl_->infoOverlayTitle_.clear();
+  impl_->infoOverlayDetail_.clear();
   impl_->invalidateOverlayComposite();
   renderOneFrame();
 }
@@ -3779,6 +3844,73 @@ void CompositionRenderController::Impl::drawViewportGhostOverlay(
                  Qt::AlignLeft | Qt::AlignVCenter,
                  fm.elidedText(text, Qt::ElideRight, labelRect.width() - 20));
     }
+  }
+
+  if (infoOverlayVisible_ &&
+      (!infoOverlayTitle_.trimmed().isEmpty() ||
+       !infoOverlayDetail_.trimmed().isEmpty())) {
+    const QString title = infoOverlayTitle_.trimmed().isEmpty()
+                              ? QStringLiteral("Info")
+                              : infoOverlayTitle_.trimmed();
+    const QString detail = infoOverlayDetail_.trimmed();
+    const QFontMetrics fm(p.font());
+    const int lineHeight = fm.height();
+    const int contentWidth = std::max(
+        fm.horizontalAdvance(title),
+        detail.isEmpty() ? 0 : fm.horizontalAdvance(detail));
+    const int contentHeight = detail.isEmpty() ? lineHeight : lineHeight * 2 + 4;
+    QRect labelRect(12, 12, contentWidth + 24, contentHeight + 12);
+    if (labelRect.right() > overlayW - 8) {
+      labelRect.moveRight(overlayW - 8);
+    }
+    if (labelRect.bottom() > overlayH - 8) {
+      labelRect.moveBottom(overlayH - 8);
+    }
+    p.setPen(Qt::NoPen);
+    p.setBrush(QColor(8, 10, 14, 210));
+    p.drawRoundedRect(labelRect, 7, 7);
+    p.setPen(QColor(232, 238, 244));
+    p.drawText(labelRect.adjusted(10, 6, -10, -6),
+               Qt::AlignLeft | Qt::AlignTop, title);
+    if (!detail.isEmpty()) {
+      p.setPen(QColor(178, 190, 204));
+      const QRect detailRect = labelRect.adjusted(10, 6 + lineHeight, -10, -6);
+      p.drawText(detailRect, Qt::AlignLeft | Qt::AlignTop,
+                 fm.elidedText(detail, Qt::ElideRight, detailRect.width()));
+    }
+  }
+
+  const bool snapHintActive = gizmo_ && gizmo_->isDragging() && selectedLayer;
+  if (snapHintActive) {
+    const bool snapBypassed =
+        QGuiApplication::keyboardModifiers().testFlag(Qt::AltModifier);
+    const QString snapTitle =
+        snapBypassed ? QStringLiteral("Snap Off") : QStringLiteral("Snap On");
+    const QString snapDetail =
+        snapBypassed ? QStringLiteral("Hold Alt to enable free move")
+                     : QStringLiteral("Hold Alt to bypass snapping");
+    const QFontMetrics fm(p.font());
+    const int lineHeight = fm.height();
+    const int contentWidth = std::max(
+        fm.horizontalAdvance(snapTitle), fm.horizontalAdvance(snapDetail));
+    QRect labelRect(12, overlayH - (lineHeight * 2 + 28),
+                    contentWidth + 24, lineHeight * 2 + 12);
+    if (labelRect.bottom() > overlayH - 8) {
+      labelRect.moveBottom(overlayH - 8);
+    }
+    if (labelRect.left() < 8) {
+      labelRect.moveLeft(8);
+    }
+    p.setPen(Qt::NoPen);
+    p.setBrush(QColor(8, 10, 14, 210));
+    p.drawRoundedRect(labelRect, 7, 7);
+    p.setPen(QColor(232, 238, 244));
+    p.drawText(labelRect.adjusted(10, 6, -10, -6),
+               Qt::AlignLeft | Qt::AlignTop, snapTitle);
+    p.setPen(QColor(178, 190, 204));
+    const QRect detailRect = labelRect.adjusted(10, 6 + lineHeight, -10, -6);
+    p.drawText(detailRect, Qt::AlignLeft | Qt::AlignTop,
+               fm.elidedText(snapDetail, Qt::ElideRight, detailRect.width()));
   }
 
   p.end();

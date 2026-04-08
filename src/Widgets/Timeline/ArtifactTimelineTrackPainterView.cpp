@@ -120,6 +120,51 @@ void applyMarkerSelectionFlags(
  }
 }
 
+bool sameTrackClipVisual(const ArtifactTimelineTrackPainterView::TrackClipVisual& lhs,
+                         const ArtifactTimelineTrackPainterView::TrackClipVisual& rhs)
+{
+  return lhs.clipId == rhs.clipId &&
+         lhs.layerId == rhs.layerId &&
+         lhs.trackIndex == rhs.trackIndex &&
+         std::abs(lhs.startFrame - rhs.startFrame) < 0.0001 &&
+         std::abs(lhs.durationFrame - rhs.durationFrame) < 0.0001 &&
+         lhs.title == rhs.title &&
+         lhs.fillColor == rhs.fillColor &&
+         lhs.selected == rhs.selected;
+}
+
+bool sameKeyframeMarkerVisual(
+    const ArtifactTimelineTrackPainterView::KeyframeMarkerVisual& lhs,
+    const ArtifactTimelineTrackPainterView::KeyframeMarkerVisual& rhs)
+{
+  return lhs.layerId == rhs.layerId &&
+         lhs.propertyPath == rhs.propertyPath &&
+         lhs.trackIndex == rhs.trackIndex &&
+         std::abs(lhs.frame - rhs.frame) < 0.0001 &&
+         lhs.laneIndex == rhs.laneIndex &&
+         lhs.laneCount == rhs.laneCount &&
+         lhs.selectedLayer == rhs.selectedLayer &&
+         lhs.selected == rhs.selected &&
+         lhs.eased == rhs.eased &&
+         lhs.color == rhs.color &&
+         lhs.label == rhs.label;
+}
+
+template <typename T>
+bool sameVisualList(const QVector<T>& lhs, const QVector<T>& rhs,
+                    bool (*equals)(const T&, const T&))
+{
+  if (lhs.size() != rhs.size()) {
+    return false;
+  }
+  for (int i = 0; i < lhs.size(); ++i) {
+    if (!equals(lhs[i], rhs[i])) {
+      return false;
+    }
+  }
+  return true;
+}
+
 HitResult hitTestClips(
  const QVector<ArtifactTimelineTrackPainterView::TrackClipVisual>& clips,
  const QVector<int>& heights,
@@ -241,6 +286,135 @@ QVector<ArtifactAbstractLayerPtr> selectedTimelineLayers()
  return layers;
 }
 
+QHash<LayerID, int> buildTrackIndexByLayerId(const QVector<LayerID>& trackLayerIds)
+{
+ QHash<LayerID, int> map;
+ for (int i = 0; i < trackLayerIds.size(); ++i) {
+  const auto& layerId = trackLayerIds[i];
+  if (!layerId.isNil()) {
+   map.insert(layerId, i);
+  }
+ }
+ return map;
+}
+
+QVector<ArtifactTimelineTrackPainterView::KeyframeMarkerVisual> collectKeyframeMarkers(
+ const ArtifactCompositionPtr& composition,
+ const ArtifactLayerSelectionManager* selectionManager,
+ const QHash<LayerID, int>& trackIndexByLayerId)
+{
+ QVector<ArtifactTimelineTrackPainterView::KeyframeMarkerVisual> markers;
+ if (!composition) {
+  return markers;
+ }
+
+ QVector<ArtifactAbstractLayerPtr> layers;
+ layers.reserve(trackIndexByLayerId.size());
+ if (const auto visibleLayerIds = trackIndexByLayerId.keys(); !visibleLayerIds.isEmpty()) {
+  for (const auto& layerId : visibleLayerIds) {
+   if (layerId.isNil()) {
+    continue;
+   }
+   if (auto layer = composition->layerById(layerId)) {
+    layers.push_back(layer);
+   }
+  }
+ }
+
+ if (layers.isEmpty()) {
+  return markers;
+ }
+
+ QSet<ArtifactAbstractLayerPtr> highlightLayers;
+ if (selectionManager) {
+  highlightLayers = selectionManager->selectedLayers();
+  if (highlightLayers.isEmpty()) {
+   if (auto currentLayer = selectionManager->currentLayer()) {
+    highlightLayers.insert(currentLayer);
+   }
+  }
+ }
+
+ const double fps = std::max(
+     1.0, static_cast<double>(composition->frameRate().framerate()));
+ for (const auto& layer : layers) {
+  if (!layer) {
+   continue;
+  }
+  const auto trackIt = trackIndexByLayerId.constFind(layer->id());
+  if (trackIt == trackIndexByLayerId.constEnd()) {
+   continue;
+  }
+  const int trackIndex = trackIt.value();
+  const auto groups = layer->getLayerPropertyGroups();
+  struct DraftMarker {
+   qint64 frame = 0;
+   QString propertyPath;
+   QString label;
+   QColor color;
+   bool selectedLayer = false;
+   bool eased = false;
+  };
+  QVector<DraftMarker> drafts;
+  for (const auto& group : groups) {
+   for (const auto& property : group.sortedProperties()) {
+    if (!property || !property->isAnimatable()) {
+     continue;
+    }
+    const auto keyframes = property->getKeyFrames();
+    for (const auto& keyframe : keyframes) {
+     const qint64 frame = keyframe.time.rescaledTo(static_cast<int64_t>(std::round(fps)));
+     const QString propertyName = property->getName();
+     const bool selectedLayer = highlightLayers.contains(layer);
+     const bool eased = keyframe.easing != EasingType::Linear &&
+                        keyframe.easing != EasingType::Hold;
+     QColor color = selectedLayer
+                        ? QColor(255, 255, 255)
+                        : (eased ? QColor(82, 208, 255)
+                                 : QColor(247, 204, 83));
+     color.setAlpha(selectedLayer ? 255 : 245);
+     drafts.push_back(DraftMarker{frame, propertyName, propertyName, color, selectedLayer, eased});
+    }
+   }
+  }
+
+  if (drafts.isEmpty()) {
+   continue;
+  }
+
+  std::sort(drafts.begin(), drafts.end(), [](const DraftMarker& lhs, const DraftMarker& rhs) {
+   if (lhs.frame != rhs.frame) {
+    return lhs.frame < rhs.frame;
+   }
+   return lhs.label < rhs.label;
+  });
+
+  QHash<qint64, int> laneCounts;
+  for (const auto& draft : drafts) {
+   laneCounts[draft.frame] += 1;
+  }
+
+  QHash<qint64, int> laneCursor;
+  for (const auto& draft : drafts) {
+   ArtifactTimelineTrackPainterView::KeyframeMarkerVisual marker;
+   marker.layerId = layer->id();
+   marker.propertyPath = draft.propertyPath;
+   marker.trackIndex = trackIndex;
+   marker.frame = static_cast<double>(draft.frame);
+   marker.label = draft.label;
+   marker.color = draft.color;
+   marker.selectedLayer = draft.selectedLayer;
+   marker.eased = draft.eased;
+   marker.laneCount = std::max(1, laneCounts.value(draft.frame, 1));
+   marker.laneIndex = laneCursor.value(draft.frame, 0);
+   laneCursor[draft.frame] = marker.laneIndex + 1;
+   markers.push_back(std::move(marker));
+  }
+ }
+
+ return markers;
+}
+
 bool applyKeyframeEditAtFrame(const ArtifactCompositionPtr &composition,
                               const ArtifactAbstractLayerPtr &layer,
                               const qint64 frame,
@@ -336,6 +510,10 @@ public:
  QPoint lastPanPoint_;
  QSet<QString> selectedMarkerKeys_;
  QVector<ArtifactTimelineTrackPainterView::KeyframeMarkerVisual> keyframeMarkers_;
+ bool selectionSyncDirty_ = true;
+ const ArtifactAbstractComposition* lastSyncedComposition_ = nullptr;
+ QSet<LayerID> lastSyncedSelectedLayerIds_;
+ QVector<LayerID> lastSyncedTrackLayerIds_;
 };
 
 ArtifactTimelineTrackPainterView::Impl::Impl()
@@ -449,6 +627,7 @@ void ArtifactTimelineTrackPainterView::setTrackCount(const int count)
  if (impl_->trackHeights_.size() == sanitized) {
   return;
  }
+ impl_->selectionSyncDirty_ = true;
  const int oldSize = impl_->trackHeights_.size();
  impl_->trackHeights_.resize(sanitized);
  for (int i = oldSize; i < sanitized; ++i) {
@@ -463,6 +642,32 @@ int ArtifactTimelineTrackPainterView::trackCount() const
  return impl_->trackHeights_.size();
 }
 
+void ArtifactTimelineTrackPainterView::setTrackHeights(const QVector<int>& heights)
+{
+ const int sanitizedCount = std::max(kMinTrackCount, static_cast<int>(heights.size()));
+ bool changed = (impl_->trackHeights_.size() != sanitizedCount);
+ if (!changed) {
+  for (int i = 0; i < sanitizedCount; ++i) {
+   const int value = std::max(16, static_cast<int>(heights.value(i, kDefaultTrackHeight)));
+   if (impl_->trackHeights_[i] != value) {
+    changed = true;
+    break;
+   }
+  }
+ }
+ if (!changed) {
+  return;
+ }
+
+ impl_->selectionSyncDirty_ = true;
+ impl_->trackHeights_.resize(sanitizedCount);
+ for (int i = 0; i < sanitizedCount; ++i) {
+  impl_->trackHeights_[i] = std::max(16, static_cast<int>(heights.value(i, kDefaultTrackHeight)));
+ }
+ updateGeometry();
+ update();
+}
+
 void ArtifactTimelineTrackPainterView::setTrackHeight(const int trackIndex, const int height)
 {
  if (trackIndex < 0 || trackIndex >= impl_->trackHeights_.size()) {
@@ -472,6 +677,7 @@ void ArtifactTimelineTrackPainterView::setTrackHeight(const int trackIndex, cons
  if (impl_->trackHeights_[trackIndex] == sanitized) {
   return;
  }
+ impl_->selectionSyncDirty_ = true;
  impl_->trackHeights_[trackIndex] = sanitized;
  updateGeometry();
  update();
@@ -491,30 +697,66 @@ void ArtifactTimelineTrackPainterView::clearClips()
   return;
  }
  impl_->clips_.clear();
+ impl_->selectionSyncDirty_ = true;
  update();
 }
 
 void ArtifactTimelineTrackPainterView::setClips(const QVector<TrackClipVisual>& clips)
 {
- impl_->clips_ = clips;
- update();
+  if (sameVisualList(impl_->clips_, clips, sameTrackClipVisual)) {
+   return;
+  }
+  impl_->clips_ = clips;
+  impl_->selectionSyncDirty_ = true;
+  update();
 }
 
 void ArtifactTimelineTrackPainterView::setKeyframeMarkers(
  const QVector<KeyframeMarkerVisual>& markers)
 {
- impl_->keyframeMarkers_ = markers;
- applyMarkerSelectionFlags(impl_->keyframeMarkers_, impl_->selectedMarkerKeys_);
- update();
+  if (sameVisualList(impl_->keyframeMarkers_, markers, sameKeyframeMarkerVisual)) {
+   return;
+  }
+  impl_->keyframeMarkers_ = markers;
+  applyMarkerSelectionFlags(impl_->keyframeMarkers_, impl_->selectedMarkerKeys_);
+  impl_->selectionSyncDirty_ = false;
+  update();
 }
 
-void ArtifactTimelineTrackPainterView::setSelectedLayerIds(const QSet<LayerID>& layerIds)
+void ArtifactTimelineTrackPainterView::syncSelectionState(
+ const ArtifactCompositionPtr& composition,
+ ArtifactLayerSelectionManager* selectionManager,
+ const QVector<LayerID>& trackLayerIds)
 {
+ QSet<LayerID> selectedLayerIds;
+ if (selectionManager) {
+  const auto selectedLayers = selectionManager->selectedLayers();
+  selectedLayerIds.reserve(selectedLayers.size());
+  for (const auto& layer : selectedLayers) {
+   if (layer) {
+    selectedLayerIds.insert(layer->id());
+  }
+  }
+  if (selectedLayerIds.isEmpty()) {
+   if (auto currentLayer = selectionManager->currentLayer()) {
+    selectedLayerIds.insert(currentLayer->id());
+   }
+  }
+ }
+
+ const ArtifactAbstractComposition* compositionPtr = composition.get();
+ if (!impl_->selectionSyncDirty_ &&
+     impl_->lastSyncedComposition_ == compositionPtr &&
+     impl_->lastSyncedSelectedLayerIds_ == selectedLayerIds &&
+     impl_->lastSyncedTrackLayerIds_ == trackLayerIds) {
+  return;
+ }
+
  QRectF dirtyRect;
  bool hasDirty = false;
  bool changed = false;
  for (auto& clip : impl_->clips_) {
-  const bool selected = layerIds.contains(clip.layerId);
+  const bool selected = selectedLayerIds.contains(clip.layerId);
   if (clip.selected != selected) {
    const QRectF rect = clipRectFor(clip, impl_->trackHeights_, impl_->pixelsPerFrame_, impl_->horizontalOffset_, impl_->verticalOffset_);
    clip.selected = selected;
@@ -525,9 +767,25 @@ void ArtifactTimelineTrackPainterView::setSelectedLayerIds(const QSet<LayerID>& 
    changed = true;
   }
  }
- if (changed) {
-  update((hasDirty ? dirtyRect : QRectF(rect())).adjusted(-2.0, -2.0, 2.0, 2.0).toAlignedRect());
- }
+
+  const auto trackIndexByLayerId = buildTrackIndexByLayerId(trackLayerIds);
+  const auto newMarkers =
+      collectKeyframeMarkers(composition, selectionManager, trackIndexByLayerId);
+  if (!sameVisualList(impl_->keyframeMarkers_, newMarkers,
+                      sameKeyframeMarkerVisual)) {
+   impl_->keyframeMarkers_ = newMarkers;
+   applyMarkerSelectionFlags(impl_->keyframeMarkers_, impl_->selectedMarkerKeys_);
+   changed = true;
+  }
+
+  if (changed) {
+   update((hasDirty ? dirtyRect : QRectF(rect())).adjusted(-2.0, -2.0, 2.0, 2.0).toAlignedRect());
+  }
+
+  impl_->lastSyncedComposition_ = compositionPtr;
+  impl_->lastSyncedSelectedLayerIds_ = selectedLayerIds;
+  impl_->lastSyncedTrackLayerIds_ = trackLayerIds;
+  impl_->selectionSyncDirty_ = false;
 }
 
 QVector<ArtifactTimelineTrackPainterView::TrackClipVisual> ArtifactTimelineTrackPainterView::clips() const
@@ -713,22 +971,6 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent* event)
   }
  }
 
- // Current frame marker.
- const double playheadX = impl_->currentFrame_ * ppf - xOffset;
- if (playheadX >= dirtyRect.left() - 4.0 && playheadX <= dirtyRect.right() + 4.0) {
-  p.setPen(QPen(theme.accent, 3));
-  p.drawLine(QPointF(playheadX, dirtyRect.top()), QPointF(playheadX, dirtyRect.bottom()));
-  p.setBrush(theme.accent);
-  p.setPen(Qt::NoPen);
-  const QPointF tip(playheadX, dirtyRect.top() + 2.0);
-  const QPolygonF head({
-      tip + QPointF(-7.0, 0.0),
-      tip + QPointF(7.0, 0.0),
-      tip + QPointF(0.0, 11.0),
-  });
-  p.drawPolygon(head);
- }
-
  // Small HUD for track state.
  const QRect hudRect(10, 10, 204, 44);
  p.setPen(Qt::NoPen);
@@ -751,6 +993,22 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent* event)
  p.setPen(theme.text.darker(130));
  p.drawText(hudRect.adjusted(10, 20, -10, -4), Qt::AlignLeft | Qt::AlignVCenter,
             QStringLiteral("Sel:%1  Hov:%2").arg(selectedCount).arg(hoveredText));
+
+ // Current frame marker is drawn last so it stays on top of clips, markers, and HUD.
+ const double playheadX = impl_->currentFrame_ * ppf - xOffset;
+ if (playheadX >= dirtyRect.left() - 6.0 && playheadX <= dirtyRect.right() + 6.0) {
+  const QColor playheadColor(255, 106, 71);
+  p.setPen(QPen(playheadColor, 4));
+  p.drawLine(QPointF(playheadX, dirtyRect.top()), QPointF(playheadX, dirtyRect.bottom()));
+  p.setBrush(playheadColor);
+  p.setPen(QPen(QColor(18, 18, 18, 180), 1));
+  const QPointF tip(playheadX, dirtyRect.top() + 1.0);
+  QPolygonF head;
+  head << (tip + QPointF(-8.0, 0.0))
+       << (tip + QPointF(8.0, 0.0))
+       << (tip + QPointF(0.0, 12.0));
+  p.drawPolygon(head);
+ }
 
  }
 
@@ -781,7 +1039,6 @@ void ArtifactTimelineTrackPainterView::mousePressEvent(QMouseEvent* event)
    Q_EMIT keyframeSelectionChanged(impl_->selectedMarkerKeys_.size());
    seekRequested(frame);
    setCurrentFrame(frame);
-   update();
    event->accept();
    return;
   }
@@ -865,7 +1122,7 @@ void ArtifactTimelineTrackPainterView::mouseMoveEvent(QMouseEvent* event)
   const auto hit = hitTestClips(impl_->clips_, impl_->trackHeights_,
                                 mouseX, mouseY, ppf, impl_->horizontalOffset_,
                                 impl_->verticalOffset_);
- const bool changed = (hit.clipIndex != impl_->hoverClipIndex_ || hit.mode != impl_->hoverEdge_);
+ const bool clipHoverChanged = (hit.clipIndex != impl_->hoverClipIndex_ || hit.mode != impl_->hoverEdge_);
  const auto oldHoverClipIndex = impl_->hoverClipIndex_;
  const auto oldHoverEdge = impl_->hoverEdge_;
  const int oldHoverMarkerIndex = impl_->hoverMarkerIndex_;
@@ -884,38 +1141,43 @@ void ArtifactTimelineTrackPainterView::mouseMoveEvent(QMouseEvent* event)
   }
  }
 
- if (changed) {
-  QRectF dirtyRect;
+ QRectF dirtyRect;
+ bool hasDirty = false;
+ if (clipHoverChanged) {
   if (oldHoverClipIndex >= 0 && oldHoverClipIndex < impl_->clips_.size()) {
    dirtyRect = clipRectFor(impl_->clips_[oldHoverClipIndex], impl_->trackHeights_,
                            ppf, impl_->horizontalOffset_, impl_->verticalOffset_);
+   hasDirty = true;
   }
   if (hit.clipIndex >= 0 && hit.clipIndex < impl_->clips_.size()) {
    const QRectF rect = clipRectFor(impl_->clips_[hit.clipIndex], impl_->trackHeights_,
                                    ppf, impl_->horizontalOffset_, impl_->verticalOffset_);
-   dirtyRect = dirtyRect.isValid() ? dirtyRect.united(rect) : rect;
+   dirtyRect = hasDirty ? dirtyRect.united(rect) : rect;
+   hasDirty = true;
   }
   if (!dirtyRect.isValid() && oldHoverEdge != hit.mode) {
    dirtyRect = QRectF(0.0, 0.0, width(), height());
+   hasDirty = true;
   }
-  update(dirtyRect.adjusted(-2.0, -2.0, 2.0, 2.0).toAlignedRect());
  }
  if (oldHoverMarkerIndex != impl_->hoverMarkerIndex_) {
-  QRectF dirtyRect;
- if (oldHoverMarkerIndex >= 0 && oldHoverMarkerIndex < impl_->keyframeMarkers_.size()) {
-  dirtyRect = markerHitRectFor(impl_->keyframeMarkers_[oldHoverMarkerIndex],
-                                impl_->trackHeights_, ppf, impl_->horizontalOffset_,
-                                impl_->verticalOffset_);
+  if (oldHoverMarkerIndex >= 0 && oldHoverMarkerIndex < impl_->keyframeMarkers_.size()) {
+   const QRectF rect = markerHitRectFor(impl_->keyframeMarkers_[oldHoverMarkerIndex],
+                                        impl_->trackHeights_, ppf, impl_->horizontalOffset_,
+                                        impl_->verticalOffset_);
+   dirtyRect = hasDirty ? dirtyRect.united(rect) : rect;
+   hasDirty = true;
   }
   if (impl_->hoverMarkerIndex_ >= 0 && impl_->hoverMarkerIndex_ < impl_->keyframeMarkers_.size()) {
    const QRectF rect = markerHitRectFor(impl_->keyframeMarkers_[impl_->hoverMarkerIndex_],
                                         impl_->trackHeights_, ppf, impl_->horizontalOffset_,
                                         impl_->verticalOffset_);
-   dirtyRect = dirtyRect.isValid() ? dirtyRect.united(rect) : rect;
+   dirtyRect = hasDirty ? dirtyRect.united(rect) : rect;
+   hasDirty = true;
   }
-  update((dirtyRect.isValid() ? dirtyRect : QRectF(0.0, 0.0, width(), height()))
-             .adjusted(-2.0, -2.0, 2.0, 2.0)
-             .toAlignedRect());
+ }
+ if (hasDirty) {
+  update(dirtyRect.adjusted(-2.0, -2.0, 2.0, 2.0).toAlignedRect());
  }
  if (impl_->panning_ && (event->buttons() & Qt::MiddleButton)) {
   const QPoint current = event->position().toPoint();
