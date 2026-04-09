@@ -297,6 +297,13 @@ namespace Artifact
    }
   }
 
+  // Project items (Footage, Folder, etc.) restoration
+  if (root.contains("projectItems") && root["projectItems"].isArray()) {
+   QJsonArray projectItemsArray = root["projectItems"].toArray();
+   projectPtr->restoreProjectItems(projectItemsArray);
+   qDebug() << "[Importer] Project items restored:" << projectItemsArray.size() << "top-level items";
+  }
+
   // 健康状態のチェックと自動修復の実行
   ArtifactProjectHealthChecker::checkAndRepair(projectPtr.get(), AutoRepairOptions{
       true, // repairFrameRanges
