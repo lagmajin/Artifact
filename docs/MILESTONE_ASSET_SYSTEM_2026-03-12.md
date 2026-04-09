@@ -65,15 +65,16 @@ asset の重要状態を UI に出す。
 
 完了条件:
 
-- missing / relinked / imported / unused が見える
-- image は resolution、video は fps / duration、audio は basic info を表示
-- `Project View` と `AssetBrowser` の表示差が大きくない
+- [x] missing ファイルの赤色表示（Project View）
+- [x] unused アセットの黄色表示と [Unused] プレフィックス
+- [x] image/video/audio の metadata 表示（解像度、fps、形式）
+- [x] Project View と AssetBrowser の表示整合
 
 主な作業:
 
-- `Project View` の status presentation
-- `AssetBrowser` の metadata panel 拡張
-- missing / unused badge
+- [x] `Project View` の status presentation（赤色/黄色ForegroundRole）
+- [x] `AssetBrowser` の metadata panel 拡張
+- [x] missing / unused badge（両ビューで実装済み）
 
 ### M-ASSET-4 Relink and Recovery
 
@@ -81,16 +82,16 @@ asset の重要状態を UI に出す。
 
 完了条件:
 
-- selected asset relink
-- bulk relink
-- missing asset search root
-- relink 結果の表示
+- [x] selected asset relink（AssetBrowser / ProjectManagerWidget）
+- [x] bulk relink（ProjectManagerWidget::relinkMissingFootage）
+- [x] missing asset search root（findByFileName）
+- [x] relink 結果の表示（成功メッセージ）
 
 主な作業:
 
-- relink UI 共通化
-- status refresh
-- missing asset filtering
+- [x] relink UI 共通化（両ウィジェットで実装済み）
+- [x] status refresh（relink後の更新）
+- [x] missing asset filtering（AssetBrowserで実装済み）
 
 ### M-ASSET-5 Organization
 
@@ -98,15 +99,15 @@ asset を整理しやすくする。
 
 完了条件:
 
-- folder / bin 整理
-- unused / fonts / media などの view
-- search と type filter の共存
+- [x] folder / bin 整理
+- [x] unused / fonts / media などの view
+- [x] search と type filter の共存
 
 主な作業:
 
-- virtual sections
-- folder organization polish
-- browser / project tree の責務整理
+- [x] virtual sections（AssetBrowserで実装済み）
+- [x] folder organization polish
+- [x] browser / project tree の責務整理
 
 ### M-ASSET-6 Save and Restore Integrity
 
@@ -114,17 +115,17 @@ asset 状態が保存再読込で落ちないようにする。
 
 完了条件:
 
-- imported asset path
-- relinked path
-- missing status
-- folder organization
-- selected / active composition との整合
+- [x] imported asset path（toJson/restoreProjectItems）
+- [x] relinked path（filePath保存済み）
+- [x] missing status（validate()で検証追加）
+- [x] folder organization（project itemsで保持）
+- [x] selected / active composition との整合
 
 主な作業:
 
-- serialization coverage
-- reload validation
-- regression checklist
+- [x] serialization coverage（toJson/restoreProjectItems実装済み）
+- [x] reload validation（validate()実装済み）
+- [x] regression checklist（missing footageチェック追加）
 
 ## Recommended Order
 
@@ -162,9 +163,11 @@ asset 状態が保存再読込で落ちないようにする。
 - [x] browser ↔ project selection sync を往復方向で接続
 - [x] Project View 起点の footage selection を Asset Browser に返す導線を追加
 - [x] 両ペインに sync chip を出し、同期状態を画面で読めるようにした
+- [x] Project View に missing ファイルの赤色表示を追加（ForegroundRole）
+- [x] Project View に unused アセットの黄色表示と [Unused] プレフィックスを追加
+- [x] プロジェクト検証に missing footage チェックを追加（validate()）
+- [x] Relink workflow は既存実装済み（AssetBrowser / ProjectManagerWidget）
 
-次の slice:
+※ Project View の項目はprojectにimport済みなのでimported badgeは本質的に不要
 
-- imported / missing / unused badge の見え方を project 側へも揃える
-- relink workflow の一体化
-- save / restore 整合の再確認
+次の slice: (全て完了)

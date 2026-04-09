@@ -99,10 +99,12 @@ export namespace Artifact {
   bool removeItem(ProjectItem* item);
    bool validateProjectTree(QString* errorMessage = nullptr) const;
    std::vector<ProjectValidationIssue> validate() const;
-   bool isDirty() const;
-  QJsonObject toJson() const;
-   
- public:
+bool isDirty() const;
+   QJsonObject toJson() const;
+   void restoreProjectItems(const QJsonArray& items);
+   void removeAllAssets();
+    
+  public:
 	//signals
   void projectCreated()
    W_SIGNAL(projectCreated);

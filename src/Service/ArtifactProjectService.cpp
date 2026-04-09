@@ -1342,11 +1342,95 @@ void ArtifactProjectService::createProject(const ArtifactProjectSettings& settin
 
 void ArtifactProjectService::removeAllAssets()
 {
- //removeall assets via projectmanager instance
+  //removeall assets via projectmanager instance
 
- impl_->projectManager().removeAllAssets();
-  
-  
+  impl_->projectManager().removeAllAssets();
+   
+}
+
+
+bool ArtifactProjectService::relinkFootage(ProjectItem* footageItem, const QString& newFilePath)
+{
+  if (!footageItem || footageItem->type() != eProjectItemType::Footage) {
+    return false;
+  }
+  auto* footage = static_cast<FootageItem*>(footageItem);
+  if (newFilePath.isEmpty()) {
+    return false;
+  }
+  const QFileInfo newFileInfo(newFilePath);
+  if (!newFileInfo.exists()) {
+    return false;
+  }
+  // Update the file path
+  footage->filePath = newFileInfo.absoluteFilePath();
+  // Notify project changed
+  auto shared = getCurrentProjectSharedPtr();
+  if (shared) {
+    shared->projectChanged();
+  }
+  return true;
+}
+
+bool ArtifactProjectService::relinkFootageItems(const QVector<FootageItem*>& footageItems, const QString& newFilePath)
+{
+  if (footageItems.isEmpty() || newFilePath.isEmpty()) {
+    return false;
+  }
+  bool anyRelinked = false;
+  for (auto* footage : footageItems) {
+    if (relinkFootage(footage, newFilePath)) {
+      anyRelinked = true;
+    }
+  }
+  return anyRelinked;
+}
+
+FootageItem* ArtifactProjectService::findFootageItemByPath(const QString& filePath) const
+{
+  auto shared = getCurrentProjectSharedPtr();
+  if (!shared) {
+    return nullptr;
+  }
+
+  QString normalizedPath = QDir::cleanPath(QFileInfo(filePath).absoluteFilePath());
+
+  std::function<FootageItem*(ProjectItem*)> findRecursive = [&](ProjectItem* item) -> FootageItem* {
+    if (!item) return nullptr;
+    if (item->type() == eProjectItemType::Footage) {
+      auto* footage = static_cast<FootageItem*>(item);
+      QString itemPath = QDir::cleanPath(QFileInfo(footage->filePath).absoluteFilePath());
+      if (itemPath == normalizedPath) {
+        return footage;
+      }
+    }
+    for (auto* child : item->children) {
+      if (auto* found = findRecursive(child)) {
+        return found;
+      }
+    }
+    return nullptr;
+  };
+
+  const auto roots = shared->projectItems();
+  for (auto* root : roots) {
+    if (auto* found = findRecursive(root)) {
+      return found;
+    }
+  }
+  return nullptr;
+}
+
+bool ArtifactProjectService::relinkFootageByPath(const QString& oldFilePath, const QString& newFilePath)
+{
+  if (oldFilePath.isEmpty() || newFilePath.isEmpty()) {
+    return false;
+  }
+  auto* footage = findFootageItemByPath(oldFilePath);
+  if (!footage) {
+    return false;
+  }
+  return relinkFootage(footage, newFilePath);
 }
 
 void ArtifactProjectService::setPreviewQualityPreset(PreviewQualityPreset preset)

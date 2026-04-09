@@ -116,6 +116,11 @@ export namespace Artifact {
    bool precomposeLayersInCurrentComposition(const QVector<LayerID>& layerIds, const UniString& newCompositionName);
    void splitLayerAtCurrentTime(const CompositionID& compositionId, const LayerID& layerId);
    std::shared_ptr<ArtifactProject> getCurrentProjectSharedPtr() const;
+   // Relink functions
+   bool relinkFootage(ProjectItem* footageItem, const QString& newFilePath);
+   int relinkFootageItems(const QVector<FootageItem*>& footageItems, const QString& newFilePath);
+   bool relinkFootageByPath(const QString& oldFilePath, const QString& newFilePath);
+   FootageItem* findFootageItemByPath(const QString& filePath) const;
  public /*signals*/:
   void layerRemoved(const CompositionID& compId, const LayerID& layerId)
    W_SIGNAL(layerRemoved, compId, layerId);

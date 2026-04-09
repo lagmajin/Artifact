@@ -494,17 +494,71 @@ void ArtifactProject::Impl::createCompositions(const QStringList& names) {}
    result["ai_notes"] = aiNotes_;
   }
 
-  QJsonArray compsArray;
-  for (const auto& comp : container_.all()) {
-   if (comp) {
-    QJsonObject compObj = comp->toJson().object();
-    compObj["name"] = compositionNameFromItems(ownedItems_, comp->id());
-    compsArray.append(compObj);
+QJsonArray compsArray;
+   for (const auto& comp : container_.all()) {
+    if (comp) {
+     QJsonObject compObj = comp->toJson().object();
+     compObj["name"] = compositionNameFromItems(ownedItems_, comp->id());
+     compsArray.append(compObj);
+    }
    }
-  }
-  result["compositions"] = compsArray;
-	  return result;
-	 }
+   result["compositions"] = compsArray;
+
+   // Project items (Footage, Folder, Solid) を再帰的に保存
+   std::function<QJsonObject(const ProjectItem*)> projectItemToJson = [&](const ProjectItem* item) -> QJsonObject {
+     QJsonObject obj;
+     if (!item) return obj;
+     obj["name"] = item->name.toQString();
+     obj["id"] = item->id.toString();
+     switch (item->type()) {
+      case eProjectItemType::Folder: {
+       obj["type"] = "folder";
+       QJsonArray children;
+       for (const auto* child : item->children) {
+         children.append(projectItemToJson(child));
+       }
+       obj["children"] = children;
+       break;
+      }
+      case eProjectItemType::Footage: {
+       obj["type"] = "footage";
+       const auto* footage = static_cast<const FootageItem*>(item);
+       obj["filePath"] = footage->filePath;
+       obj["filePathExists"] = QFileInfo(footage->filePath).exists();
+       break;
+      }
+      case eProjectItemType::Solid: {
+       obj["type"] = "solid";
+       const auto* solid = static_cast<const SolidItem*>(item);
+       obj["color"] = solid->color.name(QColor::HexArgb);
+       break;
+      }
+      case eProjectItemType::Composition: {
+       obj["type"] = "composition";
+       const auto* compItem = static_cast<const CompositionItem*>(item);
+       obj["compositionId"] = compItem->compositionId.toString();
+       break;
+      }
+      default:
+       obj["type"] = "unknown";
+       break;
+     }
+     return obj;
+   };
+
+   // Skip the root "Project Root" folder and save its children directly
+   QJsonArray projectItemsArray;
+   if (!ownedItems_.empty()) {
+     const ProjectItem* root = ownedItems_.front().get();
+     if (root && root->type() == eProjectItemType::Folder) {
+       for (const auto* child : root->children) {
+         projectItemsArray.append(projectItemToJson(child));
+       }
+     }
+   }
+   result["projectItems"] = projectItemsArray;
+
+   return result;
 
  bool ArtifactProject::validateProjectTree(QString* errorMessage) const
  {
@@ -650,6 +704,32 @@ void ArtifactProject::Impl::createCompositions(const QStringList& names) {}
       }
     };
     walk(item.get());
+  }
+
+  // Footage validation - check for missing files
+  for (const auto& item : impl_->ownedItems_) {
+    if (!item) continue;
+    std::function<void(const ProjectItem*)> walkFootage = [&](const ProjectItem* node) {
+      if (!node) return;
+      if (node->type() == eProjectItemType::Footage) {
+        const auto* footage = static_cast<const FootageItem*>(node);
+        if (!footage->filePath.isEmpty()) {
+          QFileInfo fi(footage->filePath);
+          if (!fi.exists()) {
+            issues.push_back({
+              ProjectValidationIssue::Severity::Error,
+              "footage.missing",
+              QString("ファイルが見つかりません: %1").arg(footage->name.toQString()),
+              QString("参照先: %1").arg(footage->filePath)
+            });
+          }
+        }
+      }
+      for (const auto* child : node->children) {
+        walkFootage(child);
+      }
+    };
+    walkFootage(item.get());
   }
 
   return issues;
@@ -1252,6 +1332,114 @@ ArtifactProject::ArtifactProject() :impl_(new Impl())
     if (ok) layerRemoved(compositionId, layerId);
     return ok;
   }
+
+void ArtifactProject::removeAllAssets()
+{
+  if (!impl_) return;
+  // Find the root folder
+  ProjectItem* root = nullptr;
+  if (!impl_->ownedItems_.empty()) {
+    root = impl_->ownedItems_.front().get();
+  }
+  if (!root || root->type() != eProjectItemType::Folder) return;
+
+  // Clear all children except for the root itself
+  root->children.clear();
+
+  // Mark as dirty
+  impl_->setDirty(true);
+  Q_EMIT projectChanged();
+}
+
+void ArtifactProject::restoreProjectItems(const QJsonArray& items)
+{
+  if (!impl_) return;
+
+  // Find the root folder
+  ProjectItem* root = nullptr;
+  if (!impl_->ownedItems_.empty()) {
+    root = impl_->ownedItems_.front().get();
+  }
+  if (!root || root->type() != eProjectItemType::Folder) return;
+
+  // Clear existing children
+  root->children.clear();
+
+  // Helper function to restore items recursively
+  std::function<void(const QJsonObject&, ProjectItem*)> restoreItem = [&](const QJsonObject& obj, ProjectItem* parent) {
+    QString type = obj["type"].toString();
+    QString name = obj["name"].toString();
+    QString idStr = obj["id"].toString();
+
+    if (type == "footage") {
+      auto footageUp = std::make_unique<FootageItem>();
+      footageUp->name.setQString(name);
+      footageUp->filePath = obj["filePath"].toString();
+      if (!idStr.isEmpty()) {
+        footageUp->id = Id(idStr);
+      }
+      footageUp->parent = parent;
+      parent->children.append(footageUp.get());
+      impl_->ownedItems_.push_back(std::move(footageUp));
+    } else if (type == "folder") {
+      auto folderUp = std::make_unique<FolderItem>();
+      folderUp->name.setQString(name);
+      if (!idStr.isEmpty()) {
+        folderUp->id = Id(idStr);
+      }
+      folderUp->parent = parent;
+      parent->children.append(folderUp.get());
+      impl_->ownedItems_.push_back(std::move(folderUp));
+
+      // Restore children
+      QJsonArray children = obj["children"].toArray();
+      for (const auto& childVal : children) {
+        if (childVal.isObject()) {
+          restoreItem(childVal.toObject(), folderUp.get());
+        }
+      }
+    } else if (type == "solid") {
+      auto solidUp = std::make_unique<SolidItem>();
+      solidUp->name.setQString(name);
+      if (!idStr.isEmpty()) {
+        solidUp->id = Id(idStr);
+      }
+      QString colorStr = obj["color"].toString();
+      if (!colorStr.isEmpty()) {
+        solidUp->color = QColor(colorStr);
+      }
+      solidUp->parent = parent;
+      parent->children.append(solidUp.get());
+      impl_->ownedItems_.push_back(std::move(solidUp));
+    } else if (type == "composition") {
+      // Composition items are restored separately in the importer
+      // Just create a placeholder here
+      auto compItemUp = std::make_unique<CompositionItem>();
+      compItemUp->name.setQString(name);
+      if (!idStr.isEmpty()) {
+        compItemUp->id = Id(idStr);
+      }
+      QString compIdStr = obj["compositionId"].toString();
+      if (!compIdStr.isEmpty()) {
+        compItemUp->compositionId = CompositionID(compIdStr);
+      }
+      compItemUp->parent = parent;
+      parent->children.append(compItemUp.get());
+      impl_->ownedItems_.push_back(std::move(compItemUp));
+    }
+  };
+
+  // Restore top-level items
+  for (const auto& val : items) {
+    if (val.isObject()) {
+      restoreItem(val.toObject(), root);
+    }
+  }
+
+  // Mark as dirty (since we modified the project)
+  impl_->setDirty(true);
+  Q_EMIT projectChanged();
+}
 
 
 

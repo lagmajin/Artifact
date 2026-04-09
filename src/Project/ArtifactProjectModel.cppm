@@ -48,6 +48,7 @@ module Artifact.Project.Model;
 
 import Artifact.Project;
 import Artifact.Project.Items;
+import Artifact.Project.Cleanup;
 import Artifact.Service.Project;
 import Artifact.Project.Manager;
 import Artifact.Project.Roles;
@@ -119,21 +120,23 @@ QStandardItem* projectItemFromModelIndex(const QModelIndex& index)
 
 } // namespace
 
- class ArtifactProjectModel::Impl
- {
- private:
-  
+  class ArtifactProjectModel::Impl
+  {
+  private:
+   
 
- public:
+  public:
 
   ArtifactProjectWeakPtr projectPtr_;
   QStandardItemModel* model_ = nullptr;
   QMetaObject::Connection compositionConnection_;
+  QSet<QString> unusedAssetPaths_;
   void refreshTree();
   static ArtifactProjectService* projectService();
   Impl();
   ~Impl();
- };
+  void updateUnusedAssetPaths();
+  };
 
 ArtifactProjectModel::Impl::Impl()
 {
@@ -149,10 +152,25 @@ ArtifactProjectModel::Impl::~Impl()
   QObject::disconnect(compositionConnection_);
 }
 
+void ArtifactProjectModel::Impl::updateUnusedAssetPaths()
+{
+ auto shared = projectPtr_.lock();
+ if (!shared) {
+  unusedAssetPaths_.clear();
+  return;
+ }
+ const QStringList unused = ArtifactProjectCleanupTool::findUnusedAssetPaths(shared.get());
+ unusedAssetPaths_.clear();
+ for (const QString& path : unused) {
+  unusedAssetPaths_.insert(QDir::cleanPath(path));
+ }
+}
+
 void ArtifactProjectModel::Impl::refreshTree()
  {
- if (!model_) return;
- // reset model so view updates cleanly
+  if (!model_) return;
+  updateUnusedAssetPaths();
+  // reset model so view updates cleanly
  this->model_->clear();
  this->model_->setColumnCount(6);
  this->model_->setHorizontalHeaderLabels(QStringList()
@@ -178,129 +196,58 @@ void ArtifactProjectModel::Impl::refreshTree()
  }
 
  auto iconForProjectItem = [](auto* it) -> QIcon {
-  auto iconOrFallback = [](const QString& relativePath, const QColor& fallbackColor, const QString& fallbackText) -> QIcon {
-   QIcon icon = loadProjectIcon(relativePath);
-   if (!icon.isNull()) {
-    return icon;
-   }
-   return makeProjectItemIcon(fallbackColor, fallbackText);
+auto iconOrFallback = [](const QString& relativePath, const QColor& fallbackColor, const QString& fallbackText) -> QIcon {
+    QIcon icon = loadProjectIcon(relativePath);
+    if (!icon.isNull()) {
+      return icon;
+    }
+    return makeProjectItemIcon(fallbackColor, fallbackText);
   };
 
   if (!it) {
-   return makeProjectItemIcon(QColor(90, 90, 90), QStringLiteral("?"));
+    return makeProjectItemIcon(QColor(90, 90, 90), QStringLiteral("?"));
   }
   switch (it->type()) {
   case Artifact::eProjectItemType::Folder:
-   return iconOrFallback(QStringLiteral("MaterialVS/yellow/folder.svg"), QColor(176, 138, 46), QStringLiteral("F"));
+    return iconOrFallback(QStringLiteral("MaterialVS/yellow/folder.svg"), QColor(176, 138, 46), QStringLiteral("F"));
   case Artifact::eProjectItemType::Composition:
-   return iconOrFallback(QStringLiteral("MaterialVS/blue/movie_creation.svg"), QColor(74, 128, 191), QStringLiteral("C"));
+    return iconOrFallback(QStringLiteral("MaterialVS/blue/movie_creation.svg"), QColor(74, 128, 191), QStringLiteral("C"));
   case Artifact::eProjectItemType::Solid:
-   return iconOrFallback(QStringLiteral("MaterialVS/purple/format_shapes.svg"), QColor(110, 88, 170), QStringLiteral("S"));
+    return iconOrFallback(QStringLiteral("MaterialVS/purple/format_shapes.svg"), QColor(110, 88, 170), QStringLiteral("S"));
   case Artifact::eProjectItemType::Footage: {
-   auto* footage = static_cast<Artifact::FootageItem*>(it);
-   const QFileInfo info(footage->filePath);
-   if (!info.exists()) {
-    return iconOrFallback(QStringLiteral("MaterialVS/red/error.svg"), QColor(140, 54, 54), QStringLiteral("!"));
-   }
-   const QString suffix = info.suffix().toLower();
-   if (QStringList{QStringLiteral("ttf"), QStringLiteral("otf"), QStringLiteral("ttc"), QStringLiteral("woff"), QStringLiteral("woff2")}.contains(suffix)) {
-    return iconOrFallback(QStringLiteral("MaterialVS/purple/title.svg"), QColor(121, 82, 168), QStringLiteral("T"));
-   }
-   if (QStringList{QStringLiteral("png"), QStringLiteral("jpg"), QStringLiteral("jpeg"), QStringLiteral("bmp"),
-                   QStringLiteral("gif"), QStringLiteral("tif"), QStringLiteral("tiff"), QStringLiteral("webp"),
-                   QStringLiteral("exr")}.contains(suffix)) {
-    return iconOrFallback(QStringLiteral("MaterialVS/green/photo_library.svg"), QColor(66, 148, 98), QStringLiteral("I"));
-   }
-   if (QStringList{QStringLiteral("mp4"), QStringLiteral("mov"), QStringLiteral("avi"), QStringLiteral("mkv"),
-                   QStringLiteral("webm")}.contains(suffix)) {
-    return iconOrFallback(QStringLiteral("MaterialVS/blue/video_library.svg"), QColor(170, 90, 48), QStringLiteral("V"));
-   }
-   if (QStringList{QStringLiteral("wav"), QStringLiteral("mp3"), QStringLiteral("flac"), QStringLiteral("ogg"),
-                   QStringLiteral("m4a"), QStringLiteral("aac")}.contains(suffix)) {
-    return iconOrFallback(QStringLiteral("MaterialVS/orange/audiotrack.svg"), QColor(52, 120, 148), QStringLiteral("A"));
-   }
-   return iconOrFallback(QStringLiteral("MaterialVS/neutral/inventory.svg"), QColor(96, 96, 96), QStringLiteral("F"));
-  }
-  default:
-   return iconOrFallback(QStringLiteral("MaterialVS/neutral/help.svg"), QColor(90, 90, 90), QStringLiteral("?"));
-  }
- };
-
- std::function<QList<QStandardItem*>(Artifact::ProjectItem*)> buildItem =
-   [&](Artifact::ProjectItem* it) -> QList<QStandardItem*> {
-  QString text = it->name.toQString();
-  QStandardItem* item = new QStandardItem(text);
-  QStandardItem* sizeItem = new QStandardItem();
-  QStandardItem* durationItem = new QStandardItem();
-  QStandardItem* frameRateItem = new QStandardItem();
-  QStandardItem* updatedItem = new QStandardItem();
-  QStandardItem* idItem = new QStandardItem();
-
-  // store item type using ProjectItemDataRole.ProjectItemType
-  item->setData(static_cast<int>(it->type()), Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::ProjectItemType));
-  // store item raw pointer for quick access from view/menus
-  item->setData(QVariant::fromValue(reinterpret_cast<quintptr>(it)), Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::ProjectItemPtr));
-
-  item->setIcon(iconForProjectItem(it));
-
-  // store composition ID as string in UserRole+1 instead of raw pointer
-  // store composition ID using ProjectItemDataRole enum to avoid magic numbers
-  if (it->type() == Artifact::eProjectItemType::Composition) {
-    Artifact::CompositionItem* comp = static_cast<Artifact::CompositionItem*>(it);
-    item->setData(comp->compositionId.toString(), Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::CompositionId));
-
-    // Display ID in the ID column
-    idItem->setText(comp->compositionId.toString());
-
-    // Composition情報を取得
-    auto service = projectService();
-    if (service) {
-      auto findResult = service->findComposition(comp->compositionId);
-      if (findResult.success && findResult.ptr.lock()) {
-        auto composition = findResult.ptr.lock();
-
-        const QSize compSize = composition->settings().compositionSize();
-        if (compSize.width() > 0 && compSize.height() > 0) {
-          sizeItem->setText(QStringLiteral("%1x%2").arg(compSize.width()).arg(compSize.height()));
-        } else {
-          sizeItem->setText(QStringLiteral("-"));
-        }
-
-        const auto frameRange = composition->frameRange();
-        const auto fps = composition->frameRate().framerate();
-        const int64_t totalFrames = std::max<int64_t>(0, frameRange.end() - frameRange.start());
-        durationItem->setText(QStringLiteral("%1 frames").arg(totalFrames));
-        frameRateItem->setText(QStringLiteral("%1 fps").arg(QString::number(fps, 'f', fps == std::floor(fps) ? 0 : 3)));
-
-        qDebug() << "[ProjectModel] Added composition metadata - ID:" << idItem->text()
-                 << "Size:" << sizeItem->text() 
-                 << "Duration:" << durationItem->text() << "FPS:" << frameRateItem->text();
-      }
-    }
-  } else {
-    // clear/empty for non-composition items
-    item->setData(QString(), Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::CompositionId));
-  }
-
-  if (it->type() == Artifact::eProjectItemType::Footage) {
     auto* footage = static_cast<Artifact::FootageItem*>(it);
-    const QByteArray digest = QCryptographicHash::hash(footage->filePath.toUtf8(), QCryptographicHash::Sha1).toHex();
-    item->setData(QString::fromUtf8(digest.left(16)), Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::AssetId));
-    idItem->setText(QString::fromUtf8(digest.left(16)));
-    const QFileInfo fi(footage->filePath);
-    if (fi.exists()) {
-      sizeItem->setText(QString::number(fi.size() / 1024) + " KB");
-      durationItem->setText(fi.suffix().toUpper());
-      const QString suffix = fi.suffix().toLower();
-      if (QStringList{QStringLiteral("ttf"), QStringLiteral("otf"), QStringLiteral("ttc"), QStringLiteral("woff"), QStringLiteral("woff2")}.contains(suffix)) {
-        frameRateItem->setText(QStringLiteral("Font"));
-      } else if (QStringList{QStringLiteral("png"), QStringLiteral("jpg"), QStringLiteral("jpeg"), QStringLiteral("bmp"),
-                      QStringLiteral("gif"), QStringLiteral("tif"), QStringLiteral("tiff"), QStringLiteral("webp"),
-                      QStringLiteral("exr")}.contains(suffix)) {
-        frameRateItem->setText(QStringLiteral("Image"));
-      } else if (QStringList{QStringLiteral("mp4"), QStringLiteral("mov"), QStringLiteral("avi"), QStringLiteral("mkv"),
+    const QFileInfo info(footage->filePath);
+    if (!info.exists()) {
+      return iconOrFallback(QStringLiteral("MaterialVS/red/error.svg"), QColor(140, 54, 54), QStringLiteral("!"));
+    }
+    const QString suffix = info.suffix().toLower();
+    if (QStringList{QStringLiteral("ttf"), QStringLiteral("otf"), QStringLiteral("ttc"), QStringLiteral("woff"), QStringLiteral("woff2")}.contains(suffix)) {
+      return iconOrFallback(QStringLiteral("MaterialVS/purple/title.svg"), QColor(121, 82, 168), QStringLiteral("T"));
+    }
+    if (QStringList{QStringLiteral("png"), QStringLiteral("jpg"), QStringLiteral("jpeg"), QStringLiteral("bmp"),
+                    QStringLiteral("gif"), QStringLiteral("tif"), QStringLiteral("tiff"), QStringLiteral("webp"),
+                    QStringLiteral("exr")}.contains(suffix)) {
+      QImage img(footage->filePath);
+      if (!img.isNull()) {
+        QPixmap pixmap = QPixmap::fromImage(img).scaled(16, 16, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+        return QIcon(pixmap);
+      }
+      return iconOrFallback(QStringLiteral("MaterialVS/green/photo_library.svg"), QColor(66, 148, 98), QStringLiteral("I"));
+    }
+      if (QStringList{QStringLiteral("mp4"), QStringLiteral("mov"), QStringLiteral("avi"), QStringLiteral("mkv"),
                              QStringLiteral("webm")}.contains(suffix)) {
-        frameRateItem->setText(QStringLiteral("Video"));
+        cv::VideoCapture cap(footage->filePath.toLocal8Bit().constData());
+        if (cap.isOpened()) {
+          double fps = cap.get(cv::CAP_PROP_FPS);
+          int frameCount = static_cast<int>(cap.get(cv::CAP_PROP_FRAME_COUNT));
+          double durationSec = (fps > 0) ? static_cast<double>(frameCount) / fps : 0;
+          int durationFrames = static_cast<int>(durationSec * fps);
+          durationItem->setText(durationFrames > 0 ? QStringLiteral("%1 frames").arg(durationFrames) : QStringLiteral("-"));
+          frameRateItem->setText(fps > 0 ? QStringLiteral("%1 fps").arg(QString::number(fps, 'f', fps == std::floor(fps) ? 0 : 3)) : QStringLiteral("Video"));
+          cap.release();
+        } else {
+          frameRateItem->setText(QStringLiteral("Video"));
+        }
       } else if (QStringList{QStringLiteral("wav"), QStringLiteral("mp3"), QStringLiteral("flac"), QStringLiteral("ogg"),
                              QStringLiteral("m4a"), QStringLiteral("aac")}.contains(suffix)) {
         frameRateItem->setText(QStringLiteral("Audio"));
@@ -440,7 +387,25 @@ QVariant ArtifactProjectModel::data(const QModelIndex& index, int role) const
 
   switch (role) {
   case Qt::DisplayRole: // 「画面に表示する文字は何？」
-   return item->data(Qt::DisplayRole);
+   {
+     QVariant baseData = item->data(Qt::DisplayRole);
+     if (item) {
+       const int ptrRole = Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::ProjectItemPtr);
+       const quintptr rawPtr = item->data(ptrRole).value<quintptr>();
+       if (auto* projItem = reinterpret_cast<Artifact::ProjectItem*>(rawPtr)) {
+         if (projItem->type() == Artifact::eProjectItemType::Footage) {
+           auto* footage = static_cast<Artifact::FootageItem*>(projItem);
+           if (!footage->filePath.isEmpty()) {
+             const QString cleanPath = QDir::cleanPath(footage->filePath);
+             if (impl_->unusedAssetPaths_.contains(cleanPath)) {
+               return QString("[Unused] %1").arg(baseData.toString());
+             }
+           }
+         }
+       }
+     }
+     return baseData;
+   }
 
   case Qt::UserRole + 1: // CompositionID文字列
    return item->data(Qt::UserRole + 1);
@@ -452,6 +417,25 @@ QVariant ArtifactProjectModel::data(const QModelIndex& index, int role) const
    return item->data(Qt::DecorationRole);
 
   case Qt::ForegroundRole: // 「文字の色は何色？」
+   if (item) {
+     const int ptrRole = Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::ProjectItemPtr);
+     const quintptr rawPtr = item->data(ptrRole).value<quintptr>();
+     if (auto* projItem = reinterpret_cast<Artifact::ProjectItem*>(rawPtr)) {
+       if (projItem->type() == Artifact::eProjectItemType::Footage) {
+         auto* footage = static_cast<Artifact::FootageItem*>(projItem);
+         if (!footage->filePath.isEmpty()) {
+           QFileInfo fi(footage->filePath);
+           if (!fi.exists()) {
+             return QColor(180, 60, 60); // Red for missing
+           }
+           const QString cleanPath = QDir::cleanPath(footage->filePath);
+           if (impl_->unusedAssetPaths_.contains(cleanPath)) {
+             return QColor(150, 150, 60); // Yellow-ish for unused
+           }
+         }
+       }
+     }
+   }
    return QVariant();
 
   case Qt::TextAlignmentRole: // 「文字の配置は？」
