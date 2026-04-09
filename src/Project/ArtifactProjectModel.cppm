@@ -8,6 +8,7 @@
 #include <QFileInfo>
 #include <QPainter>
 #include <QtSVG/QSvgRenderer>
+#include <opencv2/opencv.hpp>
 #include <iostream>
 #include <vector>
 #include <string>
@@ -167,36 +168,31 @@ void ArtifactProjectModel::Impl::updateUnusedAssetPaths()
 }
 
 void ArtifactProjectModel::Impl::refreshTree()
- {
-  if (!model_) return;
-  updateUnusedAssetPaths();
-  // reset model so view updates cleanly
- this->model_->clear();
- this->model_->setColumnCount(6);
- this->model_->setHorizontalHeaderLabels(QStringList()
-  << QObject::tr("Name")
-  << QObject::tr("Size")
-  << QObject::tr("Duration")
-  << QObject::tr("Frame Rate")
-  << QObject::tr("Updated")
-  << QObject::tr("ID"));
-
- auto shared = projectPtr_.lock();
- if (!shared) return;
- auto roots = shared->projectItems();
-
- qDebug() << "ArtifactProjectModel::refreshTree - roots count:" << roots.size();
- for (auto r : roots) {
-  if (!r) continue;
-  qDebug() << " root:" << r->name.toQString() << " children:" << r->children.size();
-  for (auto c : r->children) {
-    if (!c) continue;
-    qDebug() << "  child:" << c->name.toQString() << " type:" << (int)c->type();
+{
+  if (!model_) {
+    return;
   }
- }
 
- auto iconForProjectItem = [](auto* it) -> QIcon {
-auto iconOrFallback = [](const QString& relativePath, const QColor& fallbackColor, const QString& fallbackText) -> QIcon {
+  updateUnusedAssetPaths();
+
+  model_->clear();
+  model_->setColumnCount(6);
+  model_->setHorizontalHeaderLabels(QStringList()
+    << QObject::tr("Name")
+    << QObject::tr("Size")
+    << QObject::tr("Duration")
+    << QObject::tr("Frame Rate")
+    << QObject::tr("Updated")
+    << QObject::tr("ID"));
+
+  auto shared = projectPtr_.lock();
+  if (!shared) {
+    return;
+  }
+
+  const auto roots = shared->projectItems();
+
+  auto iconOrFallback = [](const QString& relativePath, const QColor& fallbackColor, const QString& fallbackText) -> QIcon {
     QIcon icon = loadProjectIcon(relativePath);
     if (!icon.isNull()) {
       return icon;
@@ -204,104 +200,180 @@ auto iconOrFallback = [](const QString& relativePath, const QColor& fallbackColo
     return makeProjectItemIcon(fallbackColor, fallbackText);
   };
 
-  if (!it) {
-    return makeProjectItemIcon(QColor(90, 90, 90), QStringLiteral("?"));
-  }
-  switch (it->type()) {
-  case Artifact::eProjectItemType::Folder:
-    return iconOrFallback(QStringLiteral("MaterialVS/yellow/folder.svg"), QColor(176, 138, 46), QStringLiteral("F"));
-  case Artifact::eProjectItemType::Composition:
-    return iconOrFallback(QStringLiteral("MaterialVS/blue/movie_creation.svg"), QColor(74, 128, 191), QStringLiteral("C"));
-  case Artifact::eProjectItemType::Solid:
-    return iconOrFallback(QStringLiteral("MaterialVS/purple/format_shapes.svg"), QColor(110, 88, 170), QStringLiteral("S"));
-  case Artifact::eProjectItemType::Footage: {
-    auto* footage = static_cast<Artifact::FootageItem*>(it);
-    const QFileInfo info(footage->filePath);
-    if (!info.exists()) {
-      return iconOrFallback(QStringLiteral("MaterialVS/red/error.svg"), QColor(140, 54, 54), QStringLiteral("!"));
+  auto isImageFile = [](const QString& suffix) {
+    return QStringList{QStringLiteral("png"), QStringLiteral("jpg"), QStringLiteral("jpeg"), QStringLiteral("bmp"),
+                       QStringLiteral("gif"), QStringLiteral("tif"), QStringLiteral("tiff"), QStringLiteral("webp"),
+                       QStringLiteral("exr")}.contains(suffix);
+  };
+  auto isVideoFile = [](const QString& suffix) {
+    return QStringList{QStringLiteral("mp4"), QStringLiteral("mov"), QStringLiteral("avi"), QStringLiteral("mkv"),
+                       QStringLiteral("webm")}.contains(suffix);
+  };
+  auto isAudioFile = [](const QString& suffix) {
+    return QStringList{QStringLiteral("wav"), QStringLiteral("mp3"), QStringLiteral("flac"), QStringLiteral("ogg"),
+                       QStringLiteral("m4a"), QStringLiteral("aac")}.contains(suffix);
+  };
+  auto isFontFile = [](const QString& suffix) {
+    return QStringList{QStringLiteral("ttf"), QStringLiteral("otf"), QStringLiteral("ttc"), QStringLiteral("woff"),
+                       QStringLiteral("woff2")}.contains(suffix);
+  };
+
+  auto iconForProjectItem = [&](Artifact::ProjectItem* it) -> QIcon {
+    if (!it) {
+      return makeProjectItemIcon(QColor(90, 90, 90), QStringLiteral("?"));
     }
-    const QString suffix = info.suffix().toLower();
-    if (QStringList{QStringLiteral("ttf"), QStringLiteral("otf"), QStringLiteral("ttc"), QStringLiteral("woff"), QStringLiteral("woff2")}.contains(suffix)) {
-      return iconOrFallback(QStringLiteral("MaterialVS/purple/title.svg"), QColor(121, 82, 168), QStringLiteral("T"));
-    }
-    if (QStringList{QStringLiteral("png"), QStringLiteral("jpg"), QStringLiteral("jpeg"), QStringLiteral("bmp"),
-                    QStringLiteral("gif"), QStringLiteral("tif"), QStringLiteral("tiff"), QStringLiteral("webp"),
-                    QStringLiteral("exr")}.contains(suffix)) {
-      QImage img(footage->filePath);
-      if (!img.isNull()) {
-        QPixmap pixmap = QPixmap::fromImage(img).scaled(16, 16, Qt::KeepAspectRatio, Qt::SmoothTransformation);
-        return QIcon(pixmap);
+
+    switch (it->type()) {
+    case Artifact::eProjectItemType::Folder:
+      return iconOrFallback(QStringLiteral("MaterialVS/yellow/folder.svg"), QColor(176, 138, 46), QStringLiteral("F"));
+    case Artifact::eProjectItemType::Composition:
+      return iconOrFallback(QStringLiteral("MaterialVS/blue/movie_creation.svg"), QColor(74, 128, 191), QStringLiteral("C"));
+    case Artifact::eProjectItemType::Solid:
+      return iconOrFallback(QStringLiteral("MaterialVS/purple/format_shapes.svg"), QColor(110, 88, 170), QStringLiteral("S"));
+    case Artifact::eProjectItemType::Footage: {
+      auto* footage = static_cast<Artifact::FootageItem*>(it);
+      const QFileInfo info(footage->filePath);
+      if (!info.exists()) {
+        return iconOrFallback(QStringLiteral("MaterialVS/red/error.svg"), QColor(140, 54, 54), QStringLiteral("!"));
       }
-      return iconOrFallback(QStringLiteral("MaterialVS/green/photo_library.svg"), QColor(66, 148, 98), QStringLiteral("I"));
-    }
-      if (QStringList{QStringLiteral("mp4"), QStringLiteral("mov"), QStringLiteral("avi"), QStringLiteral("mkv"),
-                             QStringLiteral("webm")}.contains(suffix)) {
-        cv::VideoCapture cap(footage->filePath.toLocal8Bit().constData());
-        if (cap.isOpened()) {
-          double fps = cap.get(cv::CAP_PROP_FPS);
-          int frameCount = static_cast<int>(cap.get(cv::CAP_PROP_FRAME_COUNT));
-          double durationSec = (fps > 0) ? static_cast<double>(frameCount) / fps : 0;
-          int durationFrames = static_cast<int>(durationSec * fps);
-          durationItem->setText(durationFrames > 0 ? QStringLiteral("%1 frames").arg(durationFrames) : QStringLiteral("-"));
-          frameRateItem->setText(fps > 0 ? QStringLiteral("%1 fps").arg(QString::number(fps, 'f', fps == std::floor(fps) ? 0 : 3)) : QStringLiteral("Video"));
-          cap.release();
-        } else {
-          frameRateItem->setText(QStringLiteral("Video"));
+
+      const QString suffix = info.suffix().toLower();
+      if (isFontFile(suffix)) {
+        return iconOrFallback(QStringLiteral("MaterialVS/purple/title.svg"), QColor(121, 82, 168), QStringLiteral("T"));
+      }
+      if (isImageFile(suffix)) {
+        QImage img(footage->filePath);
+        if (!img.isNull()) {
+          QPixmap pixmap = QPixmap::fromImage(img).scaled(16, 16, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+          return QIcon(pixmap);
         }
-      } else if (QStringList{QStringLiteral("wav"), QStringLiteral("mp3"), QStringLiteral("flac"), QStringLiteral("ogg"),
-                             QStringLiteral("m4a"), QStringLiteral("aac")}.contains(suffix)) {
-        frameRateItem->setText(QStringLiteral("Audio"));
-      } else {
-        frameRateItem->setText(QStringLiteral("Footage"));
+        return iconOrFallback(QStringLiteral("MaterialVS/green/photo_library.svg"), QColor(66, 148, 98), QStringLiteral("I"));
       }
-      updatedItem->setText(fi.lastModified().toString("yyyy-MM-dd HH:mm"));
+      if (isVideoFile(suffix)) {
+        return iconOrFallback(QStringLiteral("MaterialVS/green/movie.svg"), QColor(66, 148, 98), QStringLiteral("V"));
+      }
+      if (isAudioFile(suffix)) {
+        return iconOrFallback(QStringLiteral("MaterialVS/green/music_note.svg"), QColor(66, 148, 98), QStringLiteral("A"));
+      }
+      return iconOrFallback(QStringLiteral("MaterialVS/green/attach_file.svg"), QColor(66, 148, 98), QStringLiteral("F"));
+    }
+    default:
+      return makeProjectItemIcon(QColor(90, 90, 90), QStringLiteral("?"));
+    }
+  };
+
+  std::function<QList<QStandardItem*>(Artifact::ProjectItem*)> buildItem;
+  buildItem = [&](Artifact::ProjectItem* it) -> QList<QStandardItem*> {
+    if (!it) {
+      return {};
+    }
+
+    auto* item = new QStandardItem(iconForProjectItem(it), it->name.toQString());
+    auto* sizeItem = new QStandardItem(QStringLiteral("-"));
+    auto* durationItem = new QStandardItem(QStringLiteral("-"));
+    auto* frameRateItem = new QStandardItem(QStringLiteral("-"));
+    auto* updatedItem = new QStandardItem(QStringLiteral("-"));
+    auto* idItem = new QStandardItem(it->id.toString());
+
+    const int typeRole = Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::ProjectItemType);
+    const int ptrRole = Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::ProjectItemPtr);
+    const int compRole = Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::CompositionId);
+    const int assetRole = Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::AssetId);
+
+    const auto setRoleData = [&](QStandardItem* columnItem) {
+      columnItem->setData(static_cast<int>(it->type()), typeRole);
+      columnItem->setData(QVariant::fromValue(reinterpret_cast<quintptr>(it)), ptrRole);
+      if (it->type() == Artifact::eProjectItemType::Composition) {
+        columnItem->setData(static_cast<Artifact::CompositionItem*>(it)->compositionId.toString(), compRole);
+      }
+      if (it->type() == Artifact::eProjectItemType::Footage) {
+        columnItem->setData(static_cast<Artifact::FootageItem*>(it)->filePath, assetRole);
+      }
+    };
+    setRoleData(item);
+    setRoleData(sizeItem);
+    setRoleData(durationItem);
+    setRoleData(frameRateItem);
+    setRoleData(updatedItem);
+    setRoleData(idItem);
+
+    if (it->type() == Artifact::eProjectItemType::Footage) {
+      auto* footage = static_cast<Artifact::FootageItem*>(it);
+      const QFileInfo info(footage->filePath);
+      if (info.exists()) {
+        sizeItem->setText(QStringLiteral("%1 KB").arg(info.size() / 1024));
+        updatedItem->setText(info.lastModified().toString(QStringLiteral("yyyy-MM-dd HH:mm")));
+
+        const QString suffix = info.suffix().toLower();
+        if (isImageFile(suffix)) {
+          frameRateItem->setText(QStringLiteral("Image"));
+        } else if (isVideoFile(suffix)) {
+          cv::VideoCapture cap(footage->filePath.toLocal8Bit().constData());
+          if (cap.isOpened()) {
+            const double fps = cap.get(cv::CAP_PROP_FPS);
+            const int frameCount = static_cast<int>(cap.get(cv::CAP_PROP_FRAME_COUNT));
+            const double durationSec = (fps > 0.0) ? static_cast<double>(frameCount) / fps : 0.0;
+            const int durationFrames = static_cast<int>(durationSec * fps);
+            durationItem->setText(durationFrames > 0 ? QStringLiteral("%1 frames").arg(durationFrames) : QStringLiteral("-"));
+            frameRateItem->setText(fps > 0.0 ? QStringLiteral("%1 fps").arg(QString::number(fps, 'f', fps == std::floor(fps) ? 0 : 3))
+                                             : QStringLiteral("Video"));
+          } else {
+            frameRateItem->setText(QStringLiteral("Video"));
+          }
+        } else if (isAudioFile(suffix)) {
+          frameRateItem->setText(QStringLiteral("Audio"));
+        } else if (isFontFile(suffix)) {
+          frameRateItem->setText(QStringLiteral("Font"));
+        } else {
+          frameRateItem->setText(QStringLiteral("Footage"));
+        }
+      } else {
+        sizeItem->setText(QStringLiteral("-"));
+        durationItem->setText(QStringLiteral("Missing"));
+        frameRateItem->setText(QStringLiteral("-"));
+        updatedItem->setText(QStringLiteral("Missing"));
+      }
     } else {
-      sizeItem->setText("-");
-      durationItem->setText(QStringLiteral("Missing"));
-      frameRateItem->setText(QStringLiteral("-"));
-      updatedItem->setText("Missing");
+      item->setData(QString(), assetRole);
+      if (it->type() == Artifact::eProjectItemType::Composition) {
+        idItem->setText(static_cast<Artifact::CompositionItem*>(it)->compositionId.toString());
+      }
     }
-  } else {
-    item->setData(QString(), Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::AssetId));
-    updatedItem->setText("-");
-  }
 
-  // children (non-owning raw pointers)
-  for (auto childPtr : it->children) {
-    QList<QStandardItem*> childRow = buildItem(childPtr);
-    item->appendRow(childRow);
-  }
-
-  return QList<QStandardItem*>() << item << sizeItem << durationItem << frameRateItem << updatedItem << idItem;
- };
-
- // Treat only an explicit "Project Root" folder as a hidden placeholder.
- // Older/broken project data may have non-placeholder items at index 0.
- Artifact::ProjectItem* projectPlaceholder = nullptr;
- if (!roots.isEmpty()) {
-     Artifact::ProjectItem* first = roots.at(0);
-     if (first &&
-         first->type() == Artifact::eProjectItemType::Folder &&
-         first->name.toQString() == QStringLiteral("Project Root")) {
-         projectPlaceholder = first;
-     }
- }
-
- for (auto root : roots) {
-  if (!root) continue;
-  if (root == projectPlaceholder) {
-    // append children (if any) as top-level rows and skip this placeholder
-    for (auto childPtr : root->children) {
-      if (!childPtr) continue;
+    for (auto childPtr : it->children) {
       QList<QStandardItem*> childRow = buildItem(childPtr);
-      model_->appendRow(childRow);
+      item->appendRow(childRow);
     }
-    continue;
+
+    return QList<QStandardItem*>() << item << sizeItem << durationItem << frameRateItem << updatedItem << idItem;
+  };
+
+  Artifact::ProjectItem* projectPlaceholder = nullptr;
+  if (!roots.isEmpty()) {
+    Artifact::ProjectItem* first = roots.at(0);
+    if (first &&
+        first->type() == Artifact::eProjectItemType::Folder &&
+        first->name.toQString() == QStringLiteral("Project Root")) {
+      projectPlaceholder = first;
+    }
   }
-  QList<QStandardItem*> rootRow = buildItem(root);
-  model_->appendRow(rootRow);
- }
- }
+
+  for (auto root : roots) {
+    if (!root) {
+      continue;
+    }
+    if (root == projectPlaceholder) {
+      for (auto childPtr : root->children) {
+        if (!childPtr) {
+          continue;
+        }
+        model_->appendRow(buildItem(childPtr));
+      }
+      continue;
+    }
+    model_->appendRow(buildItem(root));
+  }
+}
 // incremental handler: called when a composition is created globally
 void ArtifactProjectModel::onCompositionCreated(const ArtifactCore::CompositionID& id)
 {

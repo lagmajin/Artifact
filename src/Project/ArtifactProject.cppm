@@ -559,6 +559,7 @@ QJsonArray compsArray;
    result["projectItems"] = projectItemsArray;
 
    return result;
+  }
 
  bool ArtifactProject::validateProjectTree(QString* errorMessage) const
  {

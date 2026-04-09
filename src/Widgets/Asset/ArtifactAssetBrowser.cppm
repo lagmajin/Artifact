@@ -26,6 +26,7 @@ module;
 #include <QMenu>
 #include <QDesktopServices>
 #include <QUrl>
+#include <QFileDialog>
 #include <QClipboard>
 #include <QApplication>
 #include <QImage>

@@ -258,11 +258,10 @@ namespace Artifact
 
   const QColor bgTop = theme.background.lighter(112);
   const QColor bgBottom = theme.background.darker(116);
-  const QColor railColor = theme.surface.darker(108);
-  const QColor railBorder = theme.border;
-  const QColor playheadColor(255, 106, 71);
-  const QColor playheadStrong = impl_->dragging_ ? playheadColor.lighter(120) : (impl_->hover_ ? playheadColor.lighter(110) : playheadColor);
-
+ const QColor railColor = theme.surface.darker(108);
+ const QColor railBorder = theme.border;
+ const QColor playheadColor(255, 106, 71);
+ const QColor playheadStrong = impl_->dragging_ ? playheadColor.lighter(120) : (impl_->hover_ ? playheadColor.lighter(110) : playheadColor);
   QLinearGradient bgGrad(r.topLeft(), r.bottomLeft());
   bgGrad.setColorAt(0.0, bgTop);
   bgGrad.setColorAt(1.0, bgBottom);
@@ -355,9 +354,6 @@ namespace Artifact
     p.drawLine(x, railRect.top() - tickH, x, railRect.top() - 1);
    }
   }
-
-  p.setPen(QPen(playheadStrong, impl_->dragging_ || impl_->hover_ ? 2 : 1));
-  p.drawLine(clampedX, 0, clampedX, h);
 
    const int frame = impl_->currentFrame_.framePosition();
    const int fps = impl_->fps_ > 0 ? impl_->fps_ : 30;

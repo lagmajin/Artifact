@@ -18,6 +18,9 @@ module;
 #include <QTimer>
 #include <QWheelEvent>
 #include <QWidget>
+#include <QPaintEvent>
+#include <QPointer>
+#include <QPolygonF>
 #include <limits>
 #include <qtmetamacros.h>
 #include <wobjectdefs.h>
@@ -71,7 +74,7 @@ namespace {
 constexpr double kTimelineRowHeight = 28.0;
 constexpr int kTimelineTopRowHeight = 16; // aligns with right ruler row
 constexpr int kTimelineHeaderRowHeight =
-    34; // fits timecode + frame labels without compression
+    42; // matches the timecode widget height so the readout is not compressed
 constexpr int kTimelineWorkAreaRowHeight = 26;
 constexpr int kDefaultTimelineFrames = 300;
 inline double timelineFrameMax(const double duration) {
@@ -852,7 +855,30 @@ public:
     setAttribute(Qt::WA_NoSystemBackground, true);
   }
 
+  void setPlayheadOverlay(QWidget *overlay)
+  {
+    if (playheadOverlay_ == overlay) {
+      return;
+    }
+    playheadOverlay_ = overlay;
+    if (playheadOverlay_) {
+      playheadOverlay_->setParent(this);
+      playheadOverlay_->setGeometry(rect());
+      playheadOverlay_->raise();
+      playheadOverlay_->show();
+    }
+  }
+
 protected:
+  void resizeEvent(QResizeEvent *event) override
+  {
+    QWidget::resizeEvent(event);
+    if (playheadOverlay_) {
+      playheadOverlay_->setGeometry(rect());
+      playheadOverlay_->raise();
+    }
+  }
+
   void paintEvent(QPaintEvent *event) override {
     Q_UNUSED(event);
 
@@ -873,6 +899,60 @@ protected:
     painter.fillRect(QRect(bounds.left(), bounds.top(), bounds.width(), 1),
                      accent);
   }
+
+private:
+  QPointer<QWidget> playheadOverlay_;
+};
+
+class TimelinePlayheadOverlayWidget final : public QWidget {
+public:
+  explicit TimelinePlayheadOverlayWidget(ArtifactTimelineTrackPainterView *trackView,
+                                        QWidget *parent = nullptr)
+      : QWidget(parent), trackView_(trackView)
+  {
+    setAttribute(Qt::WA_TransparentForMouseEvents, true);
+    setAttribute(Qt::WA_NoSystemBackground, true);
+    setAttribute(Qt::WA_TranslucentBackground, true);
+  }
+
+protected:
+  void paintEvent(QPaintEvent *) override
+  {
+    if (!trackView_) {
+      return;
+    }
+
+    const double ppf = std::max(0.01, trackView_->pixelsPerFrame());
+    const double xOffset = trackView_->horizontalOffset();
+    const double frame = trackView_->currentFrame();
+    const qreal playheadX = static_cast<qreal>(frame * ppf - xOffset);
+    if (playheadX < -12.0 || playheadX > width() + 12.0) {
+      return;
+    }
+
+    QPainter p(this);
+    p.setRenderHint(QPainter::Antialiasing, true);
+
+    const QColor playheadColor(255, 106, 71);
+    const qreal headHeight = 13.0;
+    const qreal headWidth = 14.0;
+    const qreal stemTop = headHeight + 2.0;
+    const qreal stemBottom = static_cast<qreal>(height()) - 1.0;
+
+    p.setPen(QPen(playheadColor, 2, Qt::SolidLine, Qt::FlatCap));
+    p.drawLine(QPointF(playheadX, stemTop), QPointF(playheadX, stemBottom));
+
+    QPolygonF head;
+    head << QPointF(playheadX - headWidth * 0.5, 1.5)
+         << QPointF(playheadX + headWidth * 0.5, 1.5)
+         << QPointF(playheadX, stemTop);
+    p.setBrush(playheadColor);
+    p.setPen(QPen(QColor(18, 18, 18, 180), 1));
+    p.drawPolygon(head);
+  }
+
+private:
+  ArtifactTimelineTrackPainterView *trackView_ = nullptr;
 };
 
 class TimelineStatusClickFilter final : public QObject {
@@ -961,6 +1041,7 @@ public:
   ArtifactTimelineScrubBar *scrubBar_ = nullptr;
   WorkAreaControl *workArea_ = nullptr;
   ArtifactTimelineNavigatorWidget *navigator_ = nullptr;
+  TimelinePlayheadOverlayWidget *playheadOverlay_ = nullptr;
   CompositionID compositionId_;
   bool shyActive_ = false;
   QString filterText_;
@@ -1054,6 +1135,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   searchModeCombo->addItem(QStringLiteral("Highlight Only"), static_cast<int>(SearchMatchMode::HighlightOnly));
   searchModeCombo->addItem(QStringLiteral("Filter Only"), static_cast<int>(SearchMatchMode::FilterOnly));
   searchModeCombo->setCurrentIndex(2);
+  searchModeCombo->setVisible(false);
   displayModeCombo->addItem(QStringLiteral("All Layers"), static_cast<int>(TimelineLayerDisplayMode::AllLayers));
   displayModeCombo->addItem(QStringLiteral("Selected"), static_cast<int>(TimelineLayerDisplayMode::SelectedOnly));
   displayModeCombo->addItem(QStringLiteral("Animated"), static_cast<int>(TimelineLayerDisplayMode::AnimatedOnly));
@@ -1449,6 +1531,10 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   rightPanelLayout->addWidget(painterTrackView, 1);
   rightPanel->setLayout(rightPanelLayout);
 
+  impl_->playheadOverlay_ =
+      new TimelinePlayheadOverlayWidget(painterTrackView, rightPanel);
+  rightPanel->setPlayheadOverlay(impl_->playheadOverlay_);
+
   auto *headerSeekFilter =
       new HeaderSeekFilter(painterTrackView, scrubBar, rightPanel);
   headerSeekFilter->setDebugCallback([this](const QString &msg) {
@@ -1485,6 +1571,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
                        impl_->painterTrackView_->setCurrentFrame(
                            static_cast<double>(frame.framePosition()));
                      }
+                     syncPlayheadOverlay();
                      updateSelectionState();
                      updateKeyframeState();
                      if (auto *app = ArtifactApplicationManager::instance()) {
@@ -1511,6 +1598,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
                   static_cast<double>(frame.framePosition()));
             }
             impl_->currentFrame_ = static_cast<double>(frame.framePosition());
+            syncPlayheadOverlay();
             const QSignalBlocker blocker(scrubBar);
             scrubBar->setCurrentFrame(frame);
             updateSelectionState();
@@ -1717,6 +1805,7 @@ void ArtifactTimelineWidget::setComposition(const CompositionID &id) {
         }
         impl_->painterTrackView_->setCurrentFrame(0.0);
         impl_->currentFrame_ = 0.0;
+        syncPlayheadOverlay();
         if (auto *app = ArtifactApplicationManager::instance()) {
           if (auto *ctx = app->activeContextService()) {
             ctx->seekToFrame(0);
@@ -1862,6 +1951,7 @@ void ArtifactTimelineWidget::refreshTracks() {
     impl_->painterTrackView_->setDurationFrames(
         std::max(1.0, durationFrames));
     impl_->painterTrackView_->setCurrentFrame(impl_->currentFrame_);
+    syncPlayheadOverlay();
     impl_->painterTrackView_->setClips(painterClips);
     syncPainterSelectionState();
   }
@@ -1925,6 +2015,7 @@ void ArtifactTimelineWidget::wheelEvent(QWheelEvent *event) {
   if (impl_ && impl_->painterTrackView_) {
     double newPos = impl_->painterTrackView_->currentFrame() + frameDelta;
     impl_->painterTrackView_->setCurrentFrame(std::max(0.0, newPos));
+    syncPlayheadOverlay();
     impl_->painterTrackView_->seekRequested(
         std::clamp(newPos, 0.0, impl_->painterTrackView_->durationFrames()));
   }
@@ -2249,6 +2340,7 @@ void ArtifactTimelineWidget::syncTimelineHorizontalOffset(const double offset)
   if (impl_->scrubBar_) {
     impl_->scrubBar_->setRulerHorizontalOffset(offset);
   }
+  syncPlayheadOverlay();
 }
 
 void ArtifactTimelineWidget::syncTimelineViewportFromNavigator()
@@ -2279,6 +2371,15 @@ void ArtifactTimelineWidget::syncTimelineViewportFromNavigator()
   const double offset =
       impl_->navigator_->startValue() * duration * newZoom;
   syncTimelineHorizontalOffset(offset);
+  syncPlayheadOverlay();
+}
+
+void ArtifactTimelineWidget::syncPlayheadOverlay()
+{
+  if (!impl_ || !impl_->playheadOverlay_) {
+    return;
+  }
+  impl_->playheadOverlay_->update();
 }
 
  void ArtifactTimelineWidget::jumpToSearchHit(int step)
@@ -2376,6 +2477,7 @@ void ArtifactTimelineWidget::jumpToKeyframeHit(int step)
   if (impl_->painterTrackView_) {
     impl_->painterTrackView_->setCurrentFrame(static_cast<double>(targetFrame));
   }
+  syncPlayheadOverlay();
   if (impl_->scrubBar_) {
     impl_->scrubBar_->setCurrentFrame(FramePosition(static_cast<int>(targetFrame)));
   }

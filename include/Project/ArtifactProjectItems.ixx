@@ -79,7 +79,8 @@ class FolderItem : public ProjectItem {
   FolderItem* addChildFolder(const UniString& name);
 };
 
- class SolidItem : public ProjectItem {
+class SolidItem : public ProjectItem {
+ public:
   eProjectItemType type() const override { return eProjectItemType::Solid; }
   QColor color;
 

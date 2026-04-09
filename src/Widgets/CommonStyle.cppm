@@ -9,6 +9,7 @@ module;
 #include <QMenu>
 #include <QMenuBar>
 #include <QPalette>
+#include <QPainter>
 #include <QPushButton>
 #include <QScrollArea>
 #include <QSlider>
@@ -16,8 +17,10 @@ module;
 #include <QTabBar>
 #include <QTableView>
 #include <QToolBar>
+#include <QToolButton>
 #include <QTreeView>
 #include <QListView>
+#include <QStyleOptionToolButton>
 #include <QStyleFactory>
 
 module Widgets.CommonStyle;
@@ -52,6 +55,73 @@ void scaleMenuFont(QWidget* widget)
   }
   widget->setFont(font);
   widget->setProperty("artifactMenuFontScaled", true);
+}
+
+void drawFramedToolButtonSurface(const QStyleOption* option, QPainter* painter, const QWidget* widget)
+{
+  if (!widget || !widget->property("artifactFramedToolButton").toBool()) {
+    return;
+  }
+  if (!option || !painter) {
+    return;
+  }
+
+  const auto& theme = ArtifactCore::currentDCCTheme();
+  QColor border(theme.borderColor);
+  QColor fill(theme.secondaryBackgroundColor);
+  const bool isPlayButton = widget->property("artifactPlayButton").toBool();
+  const bool isSpeedButton = widget->property("artifactSpeedPresetButton").toBool();
+  const QRect drawRect = option->rect.adjusted(0, 0, -1, -1);
+
+  if (isPlayButton) {
+    border = QColor(QStringLiteral("#BFEAFF"));
+    fill = QColor(QStringLiteral("#8ADFFF"));
+    if (option->state.testFlag(QStyle::State_Sunken) || option->state.testFlag(QStyle::State_On)) {
+      fill = QColor(QStringLiteral("#67C9F0"));
+    } else if (option->state.testFlag(QStyle::State_MouseOver)) {
+      fill = QColor(QStringLiteral("#98E6FF"));
+    }
+  }
+  if (isSpeedButton) {
+    border = QColor(QStringLiteral("#BFEAFF"));
+    fill = QColor(QStringLiteral("#BEEBFF"));
+    if (option->state.testFlag(QStyle::State_On)) {
+      border = QColor(QStringLiteral("#8FD8FF"));
+      fill = QColor(QStringLiteral("#7DC8FF"));
+    } else if (option->state.testFlag(QStyle::State_MouseOver)) {
+      fill = QColor(QStringLiteral("#CFF4FF"));
+    }
+  } else if (option->state.testFlag(QStyle::State_Sunken) || option->state.testFlag(QStyle::State_On)) {
+    if (!isPlayButton) {
+      border = QColor(theme.accentColor).lighter(110);
+      fill = QColor(theme.accentColor).darker(165);
+    }
+  } else if (option->state.testFlag(QStyle::State_MouseOver) && !isPlayButton) {
+    border = QColor(theme.accentColor).lighter(110);
+    fill = QColor(theme.secondaryBackgroundColor).lighter(106);
+  } else if (option->state.testFlag(QStyle::State_MouseOver) && isPlayButton) {
+    // play button handles hover above
+  }
+
+  painter->save();
+  painter->setRenderHint(QPainter::Antialiasing, true);
+  if (isPlayButton) {
+    painter->setPen(Qt::NoPen);
+    painter->setBrush(fill);
+    painter->drawEllipse(drawRect.adjusted(1, 1, -1, -1));
+    painter->setPen(QPen(border, 1));
+    painter->setBrush(Qt::NoBrush);
+    painter->drawEllipse(drawRect.adjusted(1, 1, -1, -1));
+  } else {
+    const qreal radius = isSpeedButton ? 4.0 : 2.0;
+    painter->setPen(Qt::NoPen);
+    painter->setBrush(fill);
+    painter->drawRoundedRect(drawRect.adjusted(1, 1, -1, -1), radius, radius);
+    painter->setPen(QPen(border, 1));
+    painter->setBrush(Qt::NoBrush);
+    painter->drawRoundedRect(drawRect.adjusted(1, 1, -1, -1), radius, radius);
+  }
+  painter->restore();
 }
 } // namespace
 
@@ -139,6 +209,22 @@ int ArtifactCommonStyle::pixelMetric(PixelMetric metric, const QStyleOption* opt
     break;
   }
   return QProxyStyle::pixelMetric(metric, option, widget);
+}
+
+void ArtifactCommonStyle::drawPrimitive(PrimitiveElement element, const QStyleOption* option,
+                                        QPainter* painter, const QWidget* widget) const
+{
+  if (element == PE_PanelButtonTool) {
+    drawFramedToolButtonSurface(option, painter, widget);
+    return;
+  }
+  QProxyStyle::drawPrimitive(element, option, painter, widget);
+}
+
+void ArtifactCommonStyle::drawComplexControl(ComplexControl control, const QStyleOptionComplex* option,
+                                             QPainter* painter, const QWidget* widget) const
+{
+  QProxyStyle::drawComplexControl(control, option, painter, widget);
 }
 
 }

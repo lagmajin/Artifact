@@ -1554,7 +1554,7 @@ public:
 
 ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
     : QWidget(parent), impl_(new Impl()) {
-  setMinimumSize(960, 640);
+  setMinimumSize(0, 0);
   setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
   setAutoFillBackground(true);
 
@@ -2091,7 +2091,7 @@ bool ArtifactCompositionEditor::event(QEvent* event) {
   return QWidget::event(event);
 }
 
-QSize ArtifactCompositionEditor::sizeHint() const { return QSize(1280, 820); }
+QSize ArtifactCompositionEditor::sizeHint() const { return QSize(1024, 720); }
 
 void ArtifactCompositionEditor::setComposition(ArtifactCompositionPtr composition) {
   if (impl_->renderController_) {

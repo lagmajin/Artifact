@@ -31,6 +31,11 @@ import Core.AI.LocalAgent;
 import Core.AI.LlamaAgent;
 import Core.AI.OnnxDmlAgent;
 import Core.AI.CloudAgent;
+import Core.AI.TieredManager;
+import Artifact.Application.Manager;
+import Artifact.Project.Statistics;
+import Artifact.Layer.Abstract;
+import Artifact.Composition.Abstract;
 
 namespace Artifact {
 
@@ -113,6 +118,242 @@ void AIClient::setCloudApiKey(const UniString& provider, const UniString& apiKey
 }
 
 namespace {
+
+QString summarizeCurrentProjectState()
+{
+    QStringList lines;
+    auto* app = ArtifactApplicationManager::instance();
+    auto* projectService = app ? app->projectService() : nullptr;
+    auto* selectionManager = app ? app->layerSelectionManager() : nullptr;
+    auto project = projectService ? projectService->getCurrentProjectSharedPtr() : nullptr;
+
+    if (!project) {
+        lines << QStringLiteral("Project: (none)");
+        return lines.join('\n');
+    }
+
+    const auto stats = ArtifactProjectStatistics::collect(project.get());
+    const QString projectName = project->settings().projectName().trimmed();
+    lines << QStringLiteral("Project: %1")
+                 .arg(projectName.isEmpty() ? QStringLiteral("(untitled)")
+                                            : projectName);
+    lines << QStringLiteral("Compositions: %1").arg(stats.compositionCount);
+    lines << QStringLiteral("Total layers: %1").arg(stats.totalLayerCount);
+    lines << QStringLiteral("Total effects: %1").arg(stats.totalEffectCount);
+
+    int layerHeavyCompositionCount = 0;
+    for (const auto& detail : stats.compositionDetails) {
+        const QString detailName = detail.name.trimmed().isEmpty()
+            ? QStringLiteral("(unnamed)")
+            : detail.name.trimmed();
+        lines << QStringLiteral("Composition: %1 | layers=%2 | effects=%3 | durationFrames=%4")
+                     .arg(detailName)
+                     .arg(detail.layerCount)
+                     .arg(detail.effectCount)
+                     .arg(detail.totalDurationFrames);
+        if (detail.layerCount >= 10) {
+            ++layerHeavyCompositionCount;
+        }
+    }
+    lines << QStringLiteral("Compositions with 10+ layers: %1")
+                 .arg(layerHeavyCompositionCount);
+
+    if (auto comp = projectService ? projectService->currentComposition().lock()
+                                   : ArtifactCompositionPtr{}) {
+        const QString compName =
+            comp->settings().compositionName().toQString().trimmed();
+        lines << QStringLiteral("Active composition: %1 [%2]")
+                     .arg(compName.isEmpty() ? QStringLiteral("(unnamed)")
+                                             : compName,
+                          comp->id().toString());
+    }
+
+    if (selectionManager) {
+        const auto selected = selectionManager->selectedLayers();
+        lines << QStringLiteral("Selected layers: %1").arg(selected.size());
+        int index = 0;
+        for (const auto& layer : selected) {
+            if (!layer) {
+                continue;
+            }
+            const QString layerName = layer->layerName().trimmed();
+            lines << QStringLiteral("Selected layer %1: %2 [%3]")
+                         .arg(++index)
+                         .arg(layerName.isEmpty() ? QStringLiteral("(unnamed)")
+                                                  : layerName,
+                              layer->id().toString());
+        }
+    }
+
+    lines << QStringLiteral("Composition details:");
+    for (const auto& detail : stats.compositionDetails) {
+        lines << QStringLiteral("- %1 | layers=%2 | effects=%3 | durationFrames=%4")
+                     .arg(detail.name.isEmpty() ? QStringLiteral("(unnamed)")
+                                                : detail.name)
+                     .arg(detail.layerCount)
+                     .arg(detail.effectCount)
+                     .arg(detail.totalDurationFrames);
+    }
+
+    return lines.join('\n');
+}
+
+AIContext buildCurrentAIContext()
+{
+    AIContext context = TieredAIManager::instance().globalContext();
+    const QString snapshot = summarizeCurrentProjectState();
+    context.setProjectSummary(snapshot);
+
+    auto* app = ArtifactApplicationManager::instance();
+    auto* projectService = app ? app->projectService() : nullptr;
+    auto* selectionManager = app ? app->layerSelectionManager() : nullptr;
+    auto project = projectService ? projectService->getCurrentProjectSharedPtr() : nullptr;
+    if (project) {
+        const auto stats = ArtifactProjectStatistics::collect(project.get());
+        context.setCompositionCount(stats.compositionCount);
+        context.setTotalLayerCount(stats.totalLayerCount);
+        context.setTotalEffectCount(stats.totalEffectCount);
+        context.clearCompositionNames();
+
+        int heavyCount = 0;
+        for (const auto& detail : stats.compositionDetails) {
+            const QString detailName = detail.name.trimmed().isEmpty()
+                ? QStringLiteral("(unnamed)")
+                : detail.name.trimmed();
+            context.addCompositionName(detailName);
+            if (detail.layerCount >= 10) {
+                ++heavyCount;
+                context.addHeavyCompositionName(detailName);
+            }
+        }
+        context.setHeavyCompositionCount(heavyCount);
+    } else {
+        context.setCompositionCount(0);
+        context.setTotalLayerCount(0);
+        context.setTotalEffectCount(0);
+        context.setHeavyCompositionCount(0);
+        context.clearCompositionNames();
+        context.clearHeavyCompositionNames();
+    }
+
+    if (auto comp = projectService ? projectService->currentComposition().lock()
+                                   : ArtifactCompositionPtr{}) {
+        const QString compName = comp->settings().compositionName().toQString().trimmed();
+        context.setActiveCompositionId(comp->id().toString());
+        context.setActiveCompositionName(compName.isEmpty() ? QStringLiteral("(unnamed)") : compName);
+    }
+    if (selectionManager) {
+        for (const auto& layer : selectionManager->selectedLayers()) {
+            if (!layer) {
+                continue;
+            }
+            const QString layerName = layer->layerName().trimmed();
+            context.addSelectedLayer(layerName.isEmpty() ? layer->id().toString()
+                                                         : layerName);
+        }
+    }
+    return context;
+}
+
+bool tryAnswerReadOnlyQuestion(const QString& message, const AIContext& context, QString* answerOut)
+{
+    if (!answerOut) {
+        return false;
+    }
+
+    const QString q = message.trimmed().toLower();
+    if (q.isEmpty()) {
+        return false;
+    }
+
+    const bool asksCompositionCount =
+        (q.contains(QStringLiteral("コンポジション")) && q.contains(QStringLiteral("いくつ"))) ||
+        q.contains(QStringLiteral("how many compositions")) ||
+        q.contains(QStringLiteral("composition count")) ||
+        q.contains(QStringLiteral("コンポ数"));
+
+    if (asksCompositionCount) {
+        *answerOut = QStringLiteral("コンポジションは %1 個です。")
+                         .arg(context.compositionCount());
+        return true;
+    }
+
+    const bool asksCompositionList =
+        (q.contains(QStringLiteral("コンポジション")) && q.contains(QStringLiteral("一覧"))) ||
+        q.contains(QStringLiteral("list compositions")) ||
+        q.contains(QStringLiteral("composition list"));
+    if (asksCompositionList) {
+        const auto names = context.compositionNames();
+        if (names.isEmpty()) {
+            *answerOut = QStringLiteral("コンポジションはありません。");
+        } else {
+            QStringList lines;
+            lines << QStringLiteral("コンポジション一覧 (%1 個):").arg(names.size());
+            for (int i = 0; i < names.size(); ++i) {
+                lines << QStringLiteral("%1. %2").arg(i + 1).arg(names.at(i));
+            }
+            *answerOut = lines.join(QStringLiteral("\n"));
+        }
+        return true;
+    }
+
+    const bool asksHeavyCompositions =
+        (q.contains(QStringLiteral("10")) && q.contains(QStringLiteral("レイヤー"))) ||
+        q.contains(QStringLiteral("10+")) ||
+        q.contains(QStringLiteral("10個以上")) ||
+        q.contains(QStringLiteral("10 or more layers")) ||
+        q.contains(QStringLiteral("10+ layers"));
+
+    if (asksHeavyCompositions) {
+        const auto names = context.heavyCompositionNames();
+        if (names.isEmpty()) {
+            *answerOut = QStringLiteral("10個以上のレイヤーを持つコンポジションはありません。");
+        } else {
+            *answerOut = QStringLiteral("10個以上のレイヤーを持つコンポジションは %1 個です: %2")
+                             .arg(context.heavyCompositionCount())
+                             .arg(names.join(QStringLiteral(", ")));
+        }
+        return true;
+    }
+
+    const bool asksActiveComposition =
+        (q.contains(QStringLiteral("アクティブ")) && q.contains(QStringLiteral("コンポジション"))) ||
+        q.contains(QStringLiteral("active composition"));
+    if (asksActiveComposition) {
+        const QString name = context.activeCompositionName().trimmed();
+        const QString id = context.activeCompositionId().trimmed();
+        if (name.isEmpty() && id.isEmpty()) {
+            *answerOut = QStringLiteral("アクティブなコンポジションはありません。");
+        } else if (id.isEmpty()) {
+            *answerOut = QStringLiteral("アクティブなコンポジションは %1 です。").arg(name);
+        } else if (name.isEmpty()) {
+            *answerOut = QStringLiteral("アクティブなコンポジション ID は %1 です。").arg(id);
+        } else {
+            *answerOut = QStringLiteral("アクティブなコンポジションは %1 [%2] です。").arg(name, id);
+        }
+        return true;
+    }
+
+    const bool asksSelectedLayers =
+        (q.contains(QStringLiteral("選択")) && q.contains(QStringLiteral("レイヤー"))) ||
+        q.contains(QStringLiteral("selected layers"));
+    if (asksSelectedLayers) {
+        const auto selected = context.selectedLayers();
+        if (selected.empty()) {
+            *answerOut = QStringLiteral("選択中のレイヤーはありません。");
+        } else {
+            QStringList lines;
+            lines << QStringLiteral("選択中のレイヤーは %1 個です。").arg(selected.size());
+            for (int i = 0; i < static_cast<int>(selected.size()); ++i) {
+                lines << QStringLiteral("%1. %2").arg(i + 1).arg(selected[static_cast<size_t>(i)]);
+            }
+            *answerOut = lines.join(QStringLiteral("\n"));
+        }
+        return true;
+    }
+
+    return false;
+}
 
 void lowerCurrentThreadPriority()
 {
@@ -254,6 +495,12 @@ void AIClient::shutdown() {
 UniString AIClient::sendMessage(const UniString& message) {
     const QString systemPrompt = AIPromptGenerator::generateSystemPrompt(DescriptionLanguage::Japanese);
     const QString userPrompt = message.toQString();
+    AIContext context = buildCurrentAIContext();
+
+    QString readOnlyAnswer;
+    if (tryAnswerReadOnlyQuestion(userPrompt, context, &readOnlyAnswer)) {
+        return UniString(readOnlyAnswer);
+    }
 
     LocalAIAgentPtr localAgent;
     bool initialized = false;
@@ -264,7 +511,6 @@ UniString AIClient::sendMessage(const UniString& message) {
     }
 
     if (initialized && localAgent) {
-        AIContext context;
         context.setUserPrompt(userPrompt);
         context.setSystemPrompt(systemPrompt);
 
@@ -285,9 +531,19 @@ void AIClient::cancelMessage() {
 
 void AIClient::postMessage(const UniString& message) {
     impl_->cancellationRequested.store(false, std::memory_order_relaxed);
-    std::thread([this, message]() {
+    const AIContext baseContext = buildCurrentAIContext();
+    std::thread([this, message, baseContext]() {
         lowerCurrentThreadPriority();
         const QString userPrompt = message.toQString();
+        AIContext context = baseContext;
+
+        QString readOnlyAnswer;
+        if (tryAnswerReadOnlyQuestion(userPrompt, context, &readOnlyAnswer)) {
+            QMetaObject::invokeMethod(this, [this, readOnlyAnswer]() {
+                Q_EMIT this->messageReceived(readOnlyAnswer);
+            }, Qt::QueuedConnection);
+            return;
+        }
 
         LocalAIAgentPtr localAgent;
         ICloudAIAgentPtr cloudAgent;
@@ -305,7 +561,7 @@ void AIClient::postMessage(const UniString& message) {
 
         // クラウドエージェントが利用可能な場合、クラウドAIを使用する
         if (cloudAgent && cloudAgent->isAvailable()) {
-            AIContext context;
+            context = baseContext;
             context.setUserPrompt(userPrompt);
             context.setSystemPrompt(AIPromptGenerator::generateSystemPrompt(DescriptionLanguage::Japanese));
 
@@ -339,7 +595,7 @@ void AIClient::postMessage(const UniString& message) {
         }
 
         if (initialized && localAgent) {
-            AIContext context;
+            context = baseContext;
             context.setUserPrompt(userPrompt);
             context.setSystemPrompt(AIPromptGenerator::generateSystemPrompt(DescriptionLanguage::Japanese));
 
@@ -382,34 +638,6 @@ void AIClient::postMessage(const UniString& message) {
                 Q_EMIT this->messageReceived(response);
             }, Qt::QueuedConnection);
             return;
-        }
-
-        if (cloudAgent && cloudAgent->isAvailable()) {
-            AIContext context;
-            context.setUserPrompt(userPrompt);
-            context.setSystemPrompt(AIPromptGenerator::generateSystemPrompt(DescriptionLanguage::Japanese));
-
-            try {
-                auto result = cloudAgent->chat(context.systemPrompt(), userPrompt, context);
-                const QString response = result.success
-                    ? result.content
-                    : QStringLiteral("[AI error] ") + result.errorMessage;
-                QMetaObject::invokeMethod(this, [this, response, success = result.success, error = result.errorMessage]() {
-                    if (!success) {
-                        Q_EMIT this->errorOccurred(QStringLiteral("Cloud AI error: %1").arg(error));
-                    }
-                    Q_EMIT this->partialMessageReceived(response);
-                    Q_EMIT this->messageReceived(response);
-                }, Qt::QueuedConnection);
-                return;
-            } catch (const std::exception& e) {
-                const QString errorMsg = QString::fromUtf8(e.what());
-                QMetaObject::invokeMethod(this, [this, errorMsg]() {
-                    Q_EMIT this->errorOccurred(QStringLiteral("Cloud AI exception: %1").arg(errorMsg));
-                    Q_EMIT this->messageReceived(QStringLiteral("[AI exception] ") + errorMsg);
-                }, Qt::QueuedConnection);
-                return;
-            }
         }
 
         const QString fullResponse = QStringLiteral("[AI unavailable] ") + userPrompt;

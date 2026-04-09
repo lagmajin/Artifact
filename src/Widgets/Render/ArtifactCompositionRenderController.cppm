@@ -843,9 +843,10 @@ void drawLayerForCompositionView(
   layer->draw(renderer);
 }
 
+// Draws composition border outlines only (no checkerboard).
+// Checkerboard is drawn in the background phase via drawCompositionCheckerboard().
 void drawCompositionRegionOverlay(ArtifactIRenderer* renderer,
-                                  const ArtifactCompositionPtr& comp,
-                                  bool showCheckerboard) {
+                                  const ArtifactCompositionPtr& comp) {
   if (!renderer || !comp) {
     return;
   }
@@ -859,16 +860,32 @@ void drawCompositionRegionOverlay(ArtifactIRenderer* renderer,
     return;
   }
 
-  if (showCheckerboard) {
-    renderer->drawCheckerboard(
-        0.0f, 0.0f, cw, ch, 16.0f, {0.18f, 0.18f, 0.18f, 0.08f},
-        {0.24f, 0.24f, 0.24f, 0.05f});
-  }
-
   renderer->drawRectOutline(0.0f, 0.0f, cw, ch,
                             FloatColor{0.02f, 0.02f, 0.02f, 0.85f});
   renderer->drawRectOutline(0.0f, 0.0f, cw, ch,
                             FloatColor{0.42f, 0.68f, 0.96f, 0.95f});
+}
+
+// Draws checkerboard over the composition canvas in Composition Space.
+// Must be called BEFORE layer drawing so transparent regions reveal the pattern.
+void drawCompositionCheckerboard(ArtifactIRenderer* renderer,
+                                  const ArtifactCompositionPtr& comp) {
+  if (!renderer || !comp) {
+    return;
+  }
+
+  const QSize compSize = comp->settings().compositionSize();
+  const float cw =
+      static_cast<float>(compSize.width() > 0 ? compSize.width() : 1920);
+  const float ch =
+      static_cast<float>(compSize.height() > 0 ? compSize.height() : 1080);
+  if (cw <= 0.0f || ch <= 0.0f) {
+    return;
+  }
+
+  renderer->drawCheckerboard(0.0f, 0.0f, cw, ch, 16.0f,
+                              {0.18f, 0.18f, 0.18f, 1.0f},
+                              {0.28f, 0.28f, 0.28f, 1.0f});
 }
 
 // CompositionChangeDetector - 差分レンダリング用の変更検出器
@@ -962,7 +979,7 @@ public:
   int64_t dragFrame_ = 0;
   QPointF dragAppliedDelta_;
   bool showGrid_ = false;
-  bool showCheckerboard_ = false;
+  bool showCheckerboard_ = true;
   bool showGuides_ = false;
   bool showSafeMargins_ = false;
   bool showMotionPathOverlay_ = true;
@@ -3083,6 +3100,10 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       renderer_->setZoom(origZoom);
       renderer_->setPan(origPanX, origPanY);
       renderer_->drawSolidRect(0.0f, 0.0f, cw, ch, bgColor, 1.0f);
+      // チェッカーボードは bgColor の上・レイヤー blit の前に描画して透明領域に透ける。
+      if (showCheckerboard_) {
+        drawCompositionCheckerboard(renderer_.get(), comp);
+      }
 
       // -- 4: オフスクリーン RT を画面全体に描画（スクリーン座標、SRC_ALPHA ブレンド） --
       // drawSpriteTransformed (opacity 付き) を使うことで SRC_ALPHA ブレンドが適用され、
@@ -3141,6 +3162,10 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       }
       renderer_->setCanvasSize(cw, ch);  // キャンバスを Composition Space に設定
       renderer_->drawSolidRect(0.0f, 0.0f, cw, ch, bgColor, 1.0f);
+      // チェッカーボードは bgColor の上・レイヤー描画の前に描画して透明領域に透ける。
+      if (showCheckerboard_) {
+        drawCompositionCheckerboard(renderer_.get(), comp);
+      }
       if (showGrid_) {
         renderer_->drawGrid(0, 0, cw, ch, 100.0f, 1.0f,
                             {0.3f, 0.3f, 0.3f, 0.5f});
@@ -3631,7 +3656,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
     const ArtifactAbstractLayerPtr selectedLayer =
         (!selectedLayerId_.isNil() && comp) ? comp->layerById(selectedLayerId_)
                                             : ArtifactAbstractLayerPtr{};
-    drawCompositionRegionOverlay(renderer_.get(), comp, showCheckerboard_);
+    drawCompositionRegionOverlay(renderer_.get(), comp);
     drawViewportGhostOverlay(owner, comp, selectedLayer, currentFrame);
     overlayMs = markPhaseMs();
 

@@ -57,6 +57,7 @@
 #include <QPainter>
 #include <QPalette>
 #include <QStringView>
+#include <QImageReader>
 
 #include <QScrollBar>
 #include <QKeyEvent>
@@ -232,6 +233,18 @@ QPixmap projectItemPreviewPixmap(ProjectItem* item, const QSize& targetSize)
         return {};
     }
 
+    const auto isImageFile = [](const QString& lowerPath) {
+        return lowerPath.endsWith(".png") || lowerPath.endsWith(".jpg") ||
+               lowerPath.endsWith(".jpeg") || lowerPath.endsWith(".bmp") ||
+               lowerPath.endsWith(".gif") || lowerPath.endsWith(".tga") ||
+               lowerPath.endsWith(".tiff") || lowerPath.endsWith(".exr");
+    };
+    const auto isVideoFile = [](const QString& lowerPath) {
+        return lowerPath.endsWith(".mp4") || lowerPath.endsWith(".mov") ||
+               lowerPath.endsWith(".avi") || lowerPath.endsWith(".mkv") ||
+               lowerPath.endsWith(".webm");
+    };
+
     if (item->type() == eProjectItemType::Footage) {
         const QString path = static_cast<FootageItem*>(item)->filePath;
         const QFileInfo info(path);
@@ -239,14 +252,8 @@ QPixmap projectItemPreviewPixmap(ProjectItem* item, const QSize& targetSize)
             return {};
         }
 
-        // Check if it's an image file
         QString lowerPath = path.toLower();
-        bool isImage = lowerPath.endsWith(".png") || lowerPath.endsWith(".jpg") ||
-                      lowerPath.endsWith(".jpeg") || lowerPath.endsWith(".bmp") ||
-                      lowerPath.endsWith(".gif") || lowerPath.endsWith(".tga") ||
-                      lowerPath.endsWith(".tiff") || lowerPath.endsWith(".exr");
-
-        if (isImage) {
+        if (isImageFile(lowerPath)) {
             QPixmap pix(path);
             if (pix.isNull()) {
                 return {};
@@ -254,21 +261,19 @@ QPixmap projectItemPreviewPixmap(ProjectItem* item, const QSize& targetSize)
             return pix.scaled(targetSize, Qt::KeepAspectRatio, Qt::SmoothTransformation);
         }
 
-        // For video files, extract first frame as thumbnail
-        if (static_cast<FootageItem*>(item)->fileType == ArtifactCore::FileType::Video) {
-            cv::VideoCapture cap(path.toLocal8Bit().constData());
-            if (cap.isOpened()) {
-                cv::Mat frame;
-                if (cap.read(frame) && !frame.empty()) {
-                    cv::cvtColor(frame, frame, cv::COLOR_BGR2RGB);
-                    QImage qimg(frame.data, frame.cols, frame.rows, frame.step, QImage::Format_RGB888);
-                    QPixmap pixmap = QPixmap::fromImage(qimg).scaled(targetSize, Qt::KeepAspectRatio, Qt::SmoothTransformation);
-                    return pixmap;
-                }
-            }
+        if (isVideoFile(lowerPath)) {
+            QPixmap pix(targetSize);
+            pix.fill(Qt::transparent);
+            QPainter painter(&pix);
+            painter.setRenderHint(QPainter::Antialiasing);
+            painter.setPen(QPen(QColor(90, 90, 90), 1.0));
+            painter.setBrush(QColor(66, 148, 98));
+            painter.drawRoundedRect(QRectF(1.0, 1.0, targetSize.width() - 2.0, targetSize.height() - 2.0), 3.0, 3.0);
+            painter.setPen(Qt::white);
+            painter.drawText(pix.rect(), Qt::AlignCenter, QStringLiteral("V"));
+            return pix;
         }
 
-        // For audio and font files, return a generic icon
         return {};
     }
 
@@ -300,18 +305,36 @@ QStringList projectItemMetadataLines(const QModelIndex& sourceIndex, ProjectItem
     QStringList lines;
 
     const QString typeName = projectItemTypeLabel(item->type());
+    const auto isImageFile = [](const QString& lowerPath) {
+        return lowerPath.endsWith(".png") || lowerPath.endsWith(".jpg") ||
+               lowerPath.endsWith(".jpeg") || lowerPath.endsWith(".bmp") ||
+               lowerPath.endsWith(".gif") || lowerPath.endsWith(".tga") ||
+               lowerPath.endsWith(".tiff") || lowerPath.endsWith(".exr");
+    };
+    const auto isVideoFile = [](const QString& lowerPath) {
+        return lowerPath.endsWith(".mp4") || lowerPath.endsWith(".mov") ||
+               lowerPath.endsWith(".avi") || lowerPath.endsWith(".mkv") ||
+               lowerPath.endsWith(".webm");
+    };
+    const auto isAudioFile = [](const QString& lowerPath) {
+        return lowerPath.endsWith(".wav") || lowerPath.endsWith(".mp3") ||
+               lowerPath.endsWith(".flac") || lowerPath.endsWith(".ogg") ||
+               lowerPath.endsWith(".m4a") || lowerPath.endsWith(".aac");
+    };
+    const auto isFontFile = [](const QString& lowerPath) {
+        return lowerPath.endsWith(".ttf") || lowerPath.endsWith(".otf") ||
+               lowerPath.endsWith(".ttc") || lowerPath.endsWith(".woff") ||
+               lowerPath.endsWith(".woff2");
+    };
 
     // Composition metadata
     if (item->type() == eProjectItemType::Composition) {
         auto* composition = static_cast<CompositionItem*>(item);
-        lines << QStringLiteral("Duration: %1 秒").arg(composition->duration.count());
-        lines << QStringLiteral("Frame Rate: %1").arg(composition->frameRate);
-        lines << QStringLiteral("Dimensions: %1 x %2").arg(composition->width).arg(composition->height);
-        lines << QStringLiteral("Frame Range: %1 - %2").arg(composition->startFrame).arg(composition->endFrame);
-        lines << QStringLiteral("Path: %1").arg(composition->compositionFilePath);
+        lines << QStringLiteral("Composition ID: %1").arg(composition->compositionId.toString());
+        lines << QStringLiteral("Kind: Composition");
     }
 
-// Footage metadata
+    // Footage metadata
     if (item->type() == eProjectItemType::Footage) {
         auto* footage = static_cast<FootageItem*>(item);
         const QString path = footage->filePath;
@@ -324,13 +347,9 @@ QStringList projectItemMetadataLines(const QModelIndex& sourceIndex, ProjectItem
             lines << QStringLiteral("Status: Missing");
         }
 
-        // Additional metadata based on file type
         QString lowerPath = path.toLower();
         if (exists) {
-            if (lowerPath.endsWith(".png") || lowerPath.endsWith(".jpg") ||
-                lowerPath.endsWith(".jpeg") || lowerPath.endsWith(".bmp") ||
-                lowerPath.endsWith(".gif") || lowerPath.endsWith(".tga") ||
-                lowerPath.endsWith(".tiff") || lowerPath.endsWith(".exr")) {
+            if (isImageFile(lowerPath)) {
                 QImageReader imageReader(path);
                 const QSize imageSize = imageReader.size();
                 if (imageSize.isValid()) {
@@ -340,55 +359,12 @@ QStringList projectItemMetadataLines(const QModelIndex& sourceIndex, ProjectItem
                         lines << QStringLiteral("Format: %1").arg(QString::fromLatin1(format).toUpper());
                     }
                 }
-            } else if (footage->fileType == ArtifactCore::FileType::Video) {
-                // Video metadata
-                cv::VideoCapture cap(path.toLocal8Bit().constData());
-                if (cap.isOpened()) {
-                    const double width = cap.get(cv::CAP_PROP_FRAME_WIDTH);
-                    const double height = cap.get(cv::CAP_PROP_FRAME_HEIGHT);
-                    const double fps = cap.get(cv::CAP_PROP_FPS);
-                    const double frameCount = cap.get(cv::CAP_PROP_FRAME_COUNT);
-                    if (width > 0.0 && height > 0.0) {
-                        lines << QStringLiteral("Resolution: %1 x %2").arg(static_cast<int>(width)).arg(static_cast<int>(height));
-                    }
-                    if (fps > 0.0) {
-                        lines << QStringLiteral("FPS: %1").arg(QString::number(fps, 'f', fps == std::floor(fps) ? 0 : 2));
-                    }
-                    if (fps > 0.0 && frameCount > 0.0) {
-                        const double duration = frameCount / fps;
-                        lines << QStringLiteral("Duration: %1 秒").arg(QString::number(duration, 'f', 2));
-                    }
-                }
-            } else if (footage->fileType == ArtifactCore::FileType::Audio) {
+            } else if (isVideoFile(lowerPath)) {
+                lines << QStringLiteral("Kind: Video");
+                lines << QStringLiteral("Preview: Generated thumbnail");
+            } else if (isAudioFile(lowerPath)) {
                 lines << QStringLiteral("Kind: Audio");
-            } else if (footage->fileType == ArtifactCore::FileType::Font) {
-                lines << QStringLiteral("Kind: Font");
-            }
-        }
-    }
-                }
-            } else if (footage->fileType == ArtifactCore::FileType::Video) {
-                // Video metadata
-                cv::VideoCapture cap(path.toLocal8Bit().constData());
-                if (cap.isOpened()) {
-                    const double width = cap.get(cv::CAP_PROP_FRAME_WIDTH);
-                    const double height = cap.get(cv::CAP_PROP_FRAME_HEIGHT);
-                    const double fps = cap.get(cv::CAP_PROP_FPS);
-                    const double frameCount = cap.get(cv::CAP_PROP_FRAME_COUNT);
-                    if (width > 0.0 && height > 0.0) {
-                        lines << QStringLiteral("Resolution: %1 x %2").arg(static_cast<int>(width)).arg(static_cast<int>(height));
-                    }
-                    if (fps > 0.0) {
-                        lines << QStringLiteral("FPS: %1").arg(QString::number(fps, 'f', fps == std::floor(fps) ? 0 : 2));
-                    }
-                    if (fps > 0.0 && frameCount > 0.0) {
-                        const double duration = frameCount / fps;
-                        lines << QStringLiteral("Duration: %1 秒").arg(QString::number(duration, 'f', 2));
-                    }
-                }
-            } else if (footage->fileType == ArtifactCore::FileType::Audio) {
-                lines << QStringLiteral("Kind: Audio");
-            } else if (footage->fileType == ArtifactCore::FileType::Font) {
+            } else if (isFontFile(lowerPath)) {
                 lines << QStringLiteral("Kind: Font");
             }
         }
@@ -408,38 +384,6 @@ QStringList projectItemMetadataLines(const QModelIndex& sourceIndex, ProjectItem
         lines << QStringLiteral("Color: #FFFFFF"); // TODO: Get actual color
     }
 
-    return lines;
-}
-
-    if (item->type() == eProjectItemType::Footage) {
-        const QString path = static_cast<FootageItem*>(item)->filePath;
-        const QFileInfo info(path);
-        const QString state = info.exists() ? QStringLiteral("Available") : QStringLiteral("Missing");
-        lines << QStringLiteral("%1 • %2").arg(projectItemTypeLabel(item->type()), state);
-        if (!size.isEmpty() || !duration.isEmpty() || !fps.isEmpty()) {
-            lines << QStringLiteral("%1  %2  %3").arg(size, duration, fps).trimmed();
-        } else {
-            lines << info.fileName();
-        }
-        return lines;
-    }
-
-    if (item->type() == eProjectItemType::Composition) {
-        QString secondLine = projectItemTypeLabel(item->type());
-        if (!size.isEmpty()) {
-            secondLine += QStringLiteral(" • %1").arg(size);
-        }
-        lines << secondLine;
-        lines << QStringLiteral("%1  %2  Updated %3").arg(duration, fps, updated).trimmed();
-        return lines;
-    }
-
-    lines << projectItemTypeLabel(item->type());
-    if (!updated.isEmpty() && updated != QStringLiteral("-")) {
-        lines << QStringLiteral("Updated %1").arg(updated);
-    } else {
-        lines << QStringLiteral("No preview available");
-    }
     return lines;
 }
 

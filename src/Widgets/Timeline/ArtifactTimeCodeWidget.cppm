@@ -10,6 +10,7 @@ module;
 #include <QKeyEvent>
 #include <QColor>
 #include <QFont>
+#include <QFontMetrics>
 #include <QPaintEvent>
 #include <QPalette>
 #include <QPen>
@@ -55,10 +56,12 @@ namespace Artifact
    const QColor mutedTextColor = textColor.darker(125);
    QPalette timePal = impl_->timecodeLabel_->palette();
    timePal.setColor(QPalette::WindowText, textColor);
+   timePal.setColor(QPalette::Text, textColor);
    impl_->timecodeLabel_->setPalette(timePal);
    impl_->timecodeLabel_->setAutoFillBackground(false);
    QPalette framePal = impl_->frameNumberLabel_->palette();
    framePal.setColor(QPalette::WindowText, mutedTextColor);
+   framePal.setColor(QPalette::Text, mutedTextColor);
    impl_->frameNumberLabel_->setPalette(framePal);
    impl_->frameNumberLabel_->setAutoFillBackground(false);
   }
@@ -90,6 +93,16 @@ namespace Artifact
   frameFont.setBold(true);
   frameFont.setPointSize(16);
   impl_->frameNumberLabel_->setFont(frameFont);
+
+  // The header layout can get crowded, so keep the time readout from being
+  // squeezed into unreadable widths.
+  const QFontMetrics timeMetrics(timeFont);
+  const QFontMetrics frameMetrics(frameFont);
+  const int minimumWidth =
+      10 + timeMetrics.horizontalAdvance(QStringLiteral("00:00:00:00")) +
+      8 + frameMetrics.horizontalAdvance(QStringLiteral("999999 f")) + 8;
+  setMinimumWidth(minimumWidth);
+  setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
  }
 
  ArtifactTimeCodeWidget::~ArtifactTimeCodeWidget()

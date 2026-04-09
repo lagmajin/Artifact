@@ -1372,18 +1372,18 @@ bool ArtifactProjectService::relinkFootage(ProjectItem* footageItem, const QStri
   return true;
 }
 
-bool ArtifactProjectService::relinkFootageItems(const QVector<FootageItem*>& footageItems, const QString& newFilePath)
+int ArtifactProjectService::relinkFootageItems(const QVector<FootageItem*>& footageItems, const QString& newFilePath)
 {
   if (footageItems.isEmpty() || newFilePath.isEmpty()) {
-    return false;
+    return 0;
   }
-  bool anyRelinked = false;
+  int relinkedCount = 0;
   for (auto* footage : footageItems) {
     if (relinkFootage(footage, newFilePath)) {
-      anyRelinked = true;
+      ++relinkedCount;
     }
   }
-  return anyRelinked;
+  return relinkedCount;
 }
 
 FootageItem* ArtifactProjectService::findFootageItemByPath(const QString& filePath) const

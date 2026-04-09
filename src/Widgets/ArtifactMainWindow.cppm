@@ -8,6 +8,7 @@
 #undef MessageBox
 #endif
 #include <wobjectimpl.h>
+#include <DockAreaWidget.h>
 #include <DockManager.h>
 #include <DockWidget.h>
 #include <DockWidgetTab.h>
@@ -250,6 +251,7 @@ public:
  QHash<CDockWidget*, bool> immersiveDockVisibility_;
  QPointer<CDockWidget> immersiveTargetDock_;
  bool menuBarInitialized = false;
+ bool initialLayoutApplied = false;
 };
 
 ArtifactMainWindow::ArtifactMainWindow(QWidget* parent)
@@ -800,6 +802,20 @@ void ArtifactMainWindow::setStatusReady()
  statusBar()->showMessage(QStringLiteral("Ready"), 1500);
 }
 
+void ArtifactMainWindow::setDockSplitterSizes(const QString& dockTitle, const QList<int>& sizes)
+{
+ if (!impl_ || !impl_->dockManager) return;
+ for (auto* dock : impl_->dockWidgets) {
+  if (!dock) continue;
+  if (dock->objectName() == dockTitle || dock->windowTitle() == dockTitle) {
+   if (auto* area = dock->dockAreaWidget()) {
+    impl_->dockManager->setSplitterSizes(area, sizes);
+   }
+   return;
+  }
+ }
+}
+
 void ArtifactMainWindow::keyPressEvent(QKeyEvent* event)
 {
  QMainWindow::keyPressEvent(event);
@@ -835,6 +851,23 @@ void ArtifactMainWindow::showEvent(QShowEvent* event)
   const auto floatingWidgets = impl_->dockManager->floatingWidgets();
   for (auto* floatingWidget : floatingWidgets) {
    prepareFloatingDockContainer(floatingWidget, this);
+  }
+  // 初回表示時に左右サイドパネルの幅を整える
+  if (!impl_->initialLayoutApplied) {
+   impl_->initialLayoutApplied = true;
+   for (auto* dock : impl_->dockWidgets) {
+    if (!dock) continue;
+    if (dock->windowTitle() == QStringLiteral("Project") ||
+        dock->objectName() == QStringLiteral("Project")) {
+     if (auto* area = dock->dockAreaWidget()) {
+      const int totalW = this->width();
+      const int sideW = qBound(240, totalW / 7, 360);
+      const int centerW = qMax(400, totalW - 2 * sideW);
+      impl_->dockManager->setSplitterSizes(area, {sideW, centerW, sideW});
+     }
+     break;
+    }
+   }
   }
  });
 }
