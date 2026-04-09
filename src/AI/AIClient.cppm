@@ -1,3 +1,10 @@
+/*
+ * AIClient.cppm
+ *
+ * 作成: 2026-04-09
+ * 説明: AIクライアントの実装
+ */
+
 module;
 #include <utility>
 #ifdef _WIN32
@@ -19,9 +26,11 @@ module;
 module AI.Client;
 import Utils.String.UniString;
 import Core.AI.PromptGenerator;
+import Core.AI.Context;
 import Core.AI.LocalAgent;
 import Core.AI.LlamaAgent;
 import Core.AI.OnnxDmlAgent;
+import Core.AI.CloudAgent;
 
 namespace Artifact {
 
@@ -32,6 +41,7 @@ public:
     UniString apiKey;
     UniString provider = UniString("local");
     LocalAIAgentPtr localAgent;
+    ICloudAIAgentPtr cloudAgent;
     bool initialized = false;
     bool initializing = false;
     std::uint64_t generation = 0;
@@ -83,6 +93,22 @@ void AIClient::setProvider(const UniString& provider) {
     }
     if (changed) {
         shutdown();
+    }
+}
+
+void AIClient::setCloudAgent(ArtifactCore::ICloudAIAgentPtr agent) {
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    impl_->cloudAgent = agent;
+}
+
+void AIClient::setCloudApiKey(const UniString& provider, const UniString& apiKey) {
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    const QString normalizedProvider = provider.toQString().trimmed().toLower();
+    if (!impl_->cloudAgent || impl_->cloudAgent->providerName().trimmed().toLower() != normalizedProvider) {
+        impl_->cloudAgent = CloudAgentFactory::createByName(provider.toQString());
+    }
+    if (impl_->cloudAgent) {
+        impl_->cloudAgent->setApiKey(apiKey.toQString());
     }
 }
 
@@ -146,6 +172,12 @@ bool AIClient::initialize(const QString& modelPath) {
         }
 
         impl_->localAgent = createLocalAgentForProvider(impl_->provider);
+
+        if (impl_->cloudAgent) {
+            if (!impl_->cloudAgent->initialize()) {
+                qWarning() << "[AIClient] Failed to initialize cloud agent";
+            }
+        }
 
         impl_->initializing = true;
         impl_->initialized = false;
@@ -258,6 +290,7 @@ void AIClient::postMessage(const UniString& message) {
         const QString userPrompt = message.toQString();
 
         LocalAIAgentPtr localAgent;
+        ICloudAIAgentPtr cloudAgent;
         bool initialized = false;
         bool initializing = false;
         std::uint64_t currentGeneration = 0;
@@ -266,9 +299,39 @@ void AIClient::postMessage(const UniString& message) {
             initialized = impl_->initialized;
             initializing = impl_->initializing;
             localAgent = impl_->localAgent;
+            cloudAgent = impl_->cloudAgent;
             currentGeneration = impl_->generation;
         }
 
+        // クラウドエージェントが利用可能な場合、クラウドAIを使用する
+        if (cloudAgent && cloudAgent->isAvailable()) {
+            AIContext context;
+            context.setUserPrompt(userPrompt);
+            context.setSystemPrompt(AIPromptGenerator::generateSystemPrompt(DescriptionLanguage::Japanese));
+
+            try {
+                auto result = cloudAgent->chat(context.systemPrompt(), userPrompt, context);
+                if (result.success) {
+                    const QString response = result.content;
+                    QMetaObject::invokeMethod(this, [this, response]() {
+                        Q_EMIT this->messageReceived(response);
+                    }, Qt::QueuedConnection);
+                } else {
+                    QMetaObject::invokeMethod(this, [this, errorMsg = result.errorMessage]() {
+                        Q_EMIT this->errorOccurred(QStringLiteral("Cloud AI error: %1").arg(errorMsg));
+                        Q_EMIT this->messageReceived(QStringLiteral("[AI error] ") + errorMsg);
+                    }, Qt::QueuedConnection);
+                }
+            } catch (const std::exception& e) {
+                QMetaObject::invokeMethod(this, [this, errorMsg = e.what()]() {
+                    Q_EMIT this->errorOccurred(QStringLiteral("Exception: %1").arg(errorMsg));
+                    Q_EMIT this->messageReceived(QStringLiteral("[AI exception] ") + errorMsg);
+                }, Qt::QueuedConnection);
+            }
+            return;
+        }
+
+        // ローカルAI処理（既存の実装をそのまま使用）
         if (initializing && !initialized) {
             Q_EMIT this->errorOccurred(QStringLiteral("Local model is still loading."));
             Q_EMIT this->partialMessageReceived(QStringLiteral("[AI loading]"));
@@ -319,6 +382,34 @@ void AIClient::postMessage(const UniString& message) {
                 Q_EMIT this->messageReceived(response);
             }, Qt::QueuedConnection);
             return;
+        }
+
+        if (cloudAgent && cloudAgent->isAvailable()) {
+            AIContext context;
+            context.setUserPrompt(userPrompt);
+            context.setSystemPrompt(AIPromptGenerator::generateSystemPrompt(DescriptionLanguage::Japanese));
+
+            try {
+                auto result = cloudAgent->chat(context.systemPrompt(), userPrompt, context);
+                const QString response = result.success
+                    ? result.content
+                    : QStringLiteral("[AI error] ") + result.errorMessage;
+                QMetaObject::invokeMethod(this, [this, response, success = result.success, error = result.errorMessage]() {
+                    if (!success) {
+                        Q_EMIT this->errorOccurred(QStringLiteral("Cloud AI error: %1").arg(error));
+                    }
+                    Q_EMIT this->partialMessageReceived(response);
+                    Q_EMIT this->messageReceived(response);
+                }, Qt::QueuedConnection);
+                return;
+            } catch (const std::exception& e) {
+                const QString errorMsg = QString::fromUtf8(e.what());
+                QMetaObject::invokeMethod(this, [this, errorMsg]() {
+                    Q_EMIT this->errorOccurred(QStringLiteral("Cloud AI exception: %1").arg(errorMsg));
+                    Q_EMIT this->messageReceived(QStringLiteral("[AI exception] ") + errorMsg);
+                }, Qt::QueuedConnection);
+                return;
+            }
         }
 
         const QString fullResponse = QStringLiteral("[AI unavailable] ") + userPrompt;

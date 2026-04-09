@@ -61,6 +61,10 @@ public:
     // configuration
     void setApiKey(const UniString& key);
     void setProvider(const UniString& provider);
+    // クラウドAIエージェントの設定
+    void setCloudAgent(ArtifactCore::ICloudAIAgentPtr agent);
+    // クラウドAIのAPIキーを設定
+    void setCloudApiKey(const UniString& provider, const UniString& apiKey);
 
     // 初期化（メニューから明示的に呼び出す）
     bool initialize(const QString& modelPath = QString());
