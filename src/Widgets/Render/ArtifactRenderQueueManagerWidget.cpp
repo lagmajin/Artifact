@@ -16,6 +16,7 @@ module;
 #include <QDateTime>
 #include <QStandardPaths>
 #include <QDir>
+#include <QFileInfo>
 #include <QByteArray>
 #include <QListWidgetItem>
 #include <QSignalBlocker>
@@ -87,6 +88,7 @@ namespace Artifact
     int progress = 0;
     QString encoderBackend;
     QString renderBackend;
+    QString outputPath;
   };
 
   ArtifactRenderQueueService* service = nullptr;
@@ -220,6 +222,7 @@ namespace Artifact
       e.errorMessage = service->jobErrorMessageAt(i);
       e.encoderBackend = service->jobEncoderBackendAt(i);
       e.renderBackend = service->jobRenderBackendAt(i);
+      e.outputPath = service->jobOutputPathAt(i);
       jobs.append(e);
     }
     updateJobList();
@@ -251,31 +254,38 @@ namespace Artifact
     QFont fixedFont("Consolas", 10);
     for (int i = 0; i < jobs.size(); ++i) {
       const auto& job = jobs[i];
-      QString statusTag = "[WAIT ]";
+      QString statusTag = "WAIT";
       QColor textColor(160, 160, 160);
       QString status = normalizeStatus(job.status);
       
-      if (status == "Rendering") { statusTag = "[RUN  ]"; textColor = QColor(0, 210, 255); }
-      else if (status == "Completed") { statusTag = "[DONE ]"; textColor = QColor(100, 220, 100); }
-      else if (status == "Failed") { statusTag = "[ERROR]"; textColor = QColor(255, 80, 80); }
+      if (status == "Rendering") { statusTag = "RUN"; textColor = QColor(0, 210, 255); }
+      else if (status == "Completed") { statusTag = "DONE"; textColor = QColor(100, 220, 100); }
+      else if (status == "Failed") { statusTag = "ERROR"; textColor = QColor(255, 80, 80); }
 
       QString progressBar = "..........";
       int filled = std::clamp(job.progress / 10, 0, 10);
       for(int p=0; p<filled; ++p) progressBar[p] = (status == "Rendering") ? '>' : '#';
 
-      QString line = QString("%1  #%2  %3  [%4]  %5%  E:%6  R:%7")
+      const QString outputPath = job.outputPath.trimmed();
+      const QString outputName = outputPath.isEmpty()
+          ? QStringLiteral("output")
+          : QFileInfo(outputPath).fileName();
+      QString line = QString("%1  #%2  %3  [%4]  %5%  %6")
         .arg(statusTag)
         .arg(i+1, 2, 10, QChar('0'))
-        .arg(job.name.left(25).leftJustified(25, QLatin1Char(' '), true))
+        .arg(job.name.left(28).leftJustified(28, QLatin1Char(' '), true))
         .arg(progressBar)
         .arg(job.progress, 3)
-        .arg(job.encoderBackend.isEmpty() ? QStringLiteral("auto") : job.encoderBackend)
-        .arg(job.renderBackend.isEmpty() ? QStringLiteral("auto") : job.renderBackend);
+        .arg(outputName);
 
       auto* item = new QListWidgetItem(line);
       item->setData(Qt::UserRole, i);
       item->setFont(fixedFont);
       item->setForeground(textColor);
+      item->setToolTip(QString("Output: %1\nEncode: %2\nRender: %3")
+          .arg(outputPath.isEmpty() ? QStringLiteral("(auto)") : outputPath)
+          .arg(job.encoderBackend.isEmpty() ? QStringLiteral("auto") : job.encoderBackend)
+          .arg(job.renderBackend.isEmpty() ? QStringLiteral("auto") : job.renderBackend));
       jobListWidget->addItem(item);
       visibleToSource.push_back(i);
     }

@@ -37,6 +37,7 @@ export module AI.Client;
 
 import std;
 import Utils.String.UniString;
+import Core.AI.CloudAgent;
 
 export namespace Artifact {
 

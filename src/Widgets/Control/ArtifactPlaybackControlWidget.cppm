@@ -3,6 +3,7 @@ module;
 #include <QWidget>
 #include <QHBoxLayout>
 #include <QVBoxLayout>
+#include <QFrame>
 #include <QSizePolicy>
 #include <QFont>
 #include <QPalette>
@@ -11,12 +12,14 @@ module;
 #include <QToolButton>
 #include <QLabel>
 #include <QSlider>
+#include <QFrame>
+#include <QFontMetrics>
 #include <QComboBox>
 #include <QDoubleSpinBox>
 #include <QSignalBlocker>
 #include <QPainter>
+#include <QPaintEvent>
 #include <QStyle>
-#include <QStyleOption>
 #include <QIcon>
 #include <QFileInfo>
 #include <QDebug>
@@ -66,6 +69,7 @@ import Playback.State;
 import Event.Bus;
 import Artifact.Event.Types;
 import Artifact.Composition.InOutPoints;
+import Widgets.StyleSurface;
 import Widgets.Utils.CSS;
 import Artifact.Application.Manager;
 import Artifact.Service.Playback;
@@ -73,6 +77,123 @@ import Artifact.Service.ActiveContext;
 import Artifact.Composition.PlaybackController;
 
 namespace {
+class PlaybackTimecodeFrame final : public QFrame
+{
+public:
+    explicit PlaybackTimecodeFrame(QWidget* parent = nullptr)
+        : QFrame(parent)
+    {
+        setFrameShape(QFrame::StyledPanel);
+        setFrameShadow(QFrame::Plain);
+        setLineWidth(1);
+        setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+        setAttribute(Qt::WA_StyledBackground, true);
+        setAutoFillBackground(false);
+    }
+
+    void setCurrentFrameText(const QString& text)
+    {
+        currentText_ = text;
+        updateGeometry();
+        update();
+    }
+
+    void setRangeText(const QString& text)
+    {
+        rangeText_ = text;
+        updateGeometry();
+        update();
+    }
+
+    QSize sizeHint() const override
+    {
+        QFont currentFont = font();
+        currentFont.setPointSize(13);
+        currentFont.setWeight(QFont::DemiBold);
+        QFont rangeFont = font();
+        rangeFont.setPointSize(11);
+        rangeFont.setWeight(QFont::DemiBold);
+
+        const QFontMetrics currentMetrics(currentFont);
+        const QFontMetrics rangeMetrics(rangeFont);
+        const QStringList currentLines = currentText_.isEmpty()
+            ? QStringList{QStringLiteral("F0"), QStringLiteral("00:00:00:00 / 00:00:00:00")}
+            : currentText_.split(u'\n');
+        const QStringList rangeLines = rangeText_.isEmpty()
+            ? QStringList{QStringLiteral("In"), QStringLiteral("--:--:--:--"), QStringLiteral("/ Out"), QStringLiteral("--:--:--:--")}
+            : rangeText_.split(u'\n');
+
+        int width = 0;
+        for (const auto& line : currentLines) {
+            width = std::max(width, currentMetrics.horizontalAdvance(line));
+        }
+        for (const auto& line : rangeLines) {
+            width = std::max(width, rangeMetrics.horizontalAdvance(line));
+        }
+
+        const int height = currentMetrics.lineSpacing() * currentLines.size() +
+                           rangeMetrics.lineSpacing() * rangeLines.size() + 10;
+        return QSize(width + 18, height + 12);
+    }
+
+    QSize minimumSizeHint() const override
+    {
+        return sizeHint();
+    }
+
+protected:
+    void paintEvent(QPaintEvent* event) override
+    {
+        Q_UNUSED(event);
+
+        const auto& theme = ArtifactCore::currentDCCTheme();
+        QPainter painter(this);
+        painter.setRenderHint(QPainter::Antialiasing, true);
+        painter.fillRect(rect(), QColor(theme.secondaryBackgroundColor));
+        painter.setPen(QPen(QColor(theme.borderColor), 1));
+        painter.drawRect(rect().adjusted(0, 0, -1, -1));
+
+        const QRect content = rect().adjusted(8, 6, -8, -6);
+        QFont currentFont = font();
+        currentFont.setPointSize(13);
+        currentFont.setWeight(QFont::DemiBold);
+        QFont rangeFont = font();
+        rangeFont.setPointSize(11);
+        rangeFont.setWeight(QFont::DemiBold);
+
+        const QColor goldText(QStringLiteral("#D4AF37"));
+        const QColor mutedGoldText(QStringLiteral("#B8942D"));
+        const QStringList currentLines = currentText_.isEmpty()
+            ? QStringList{QStringLiteral("F0"), QStringLiteral("00:00:00:00 / 00:00:00:00")}
+            : currentText_.split(u'\n');
+        const QStringList rangeLines = rangeText_.isEmpty()
+            ? QStringList{QStringLiteral("In"), QStringLiteral("--:--:--:--"), QStringLiteral("/ Out"), QStringLiteral("--:--:--:--")}
+            : rangeText_.split(u'\n');
+
+        painter.setFont(currentFont);
+        painter.setPen(goldText);
+        int y = content.top() + QFontMetrics(currentFont).ascent();
+        const int currentStep = QFontMetrics(currentFont).lineSpacing();
+        for (const auto& line : currentLines) {
+            painter.drawText(content.left(), y, line);
+            y += currentStep;
+        }
+
+        y += 2;
+        painter.setFont(rangeFont);
+        painter.setPen(mutedGoldText);
+        const int rangeStep = QFontMetrics(rangeFont).lineSpacing();
+        for (const auto& line : rangeLines) {
+            painter.drawText(content.left(), y, line);
+            y += rangeStep;
+        }
+    }
+
+private:
+    QString currentText_;
+    QString rangeText_;
+};
+
 void applyThemeTextPalette(QWidget* widget, const QColor& color, int shade = 100)
 {
     if (!widget) {
@@ -179,8 +300,7 @@ public:
     QToolButton* speedHalfButton_ = nullptr;
     QToolButton* speedOneButton_ = nullptr;
     QSlider* scrubSlider_ = nullptr;
-    QLabel* currentTimeLabel_ = nullptr;
-    QLabel* rangeLabel_ = nullptr;
+    class PlaybackTimecodeFrame* timecodeFrame_ = nullptr;
     
     // State
     bool isPlaying_ = false;
@@ -217,8 +337,9 @@ public:
         playButton_ = createToolButton(QStringList{
             QStringLiteral("MaterialVS/colored/E3E3E3/play_arrow.svg")
         }, "再生/一時停止 (Space)", Qt::Key_Space);
-        playButton_->setFixedSize(44, 36); // Play is special
-        playButton_->setIconSize(QSize(28, 28));
+        playButton_->setProperty("artifactPlayButton", true);
+        playButton_->setFixedSize(62, 62); // Play is special and intentionally larger
+        playButton_->setIconSize(QSize(38, 38));
 
         stopButton_ = createToolButton(QStringList{
             QStringLiteral("MaterialVS/colored/E3E3E3/stop.svg"),
@@ -262,35 +383,41 @@ public:
         transportRow->addWidget(clearInOutButton_);
         transportRow->addWidget(loopButton_);
 
-        auto* metaColumn = new QVBoxLayout();
-        metaColumn->setSpacing(2);
-        currentTimeLabel_ = createLabel(QStringLiteral("F0 00:00:00:00 / 00:00:00:00"),
-                                        QStringLiteral("現在フレーム / 総尺"));
-        {
-            QFont font = currentTimeLabel_->font();
-            font.setPointSize(13);
-            font.setWeight(QFont::DemiBold);
-            currentTimeLabel_->setFont(font);
-            applyThemeTextPalette(currentTimeLabel_, QColor(ArtifactCore::currentDCCTheme().textColor));
-        }
-        rangeLabel_ = createLabel(QStringLiteral("In --:--:--:--   Out --:--:--:--"),
-                                  QStringLiteral("In / Out 範囲"));
-        {
-            QFont font = rangeLabel_->font();
-            font.setPointSize(11);
-            rangeLabel_->setFont(font);
-            applyThemeTextPalette(rangeLabel_, QColor(ArtifactCore::currentDCCTheme().textColor), 125);
-        }
-        metaColumn->addWidget(currentTimeLabel_);
-        metaColumn->addWidget(rangeLabel_);
-        transportRow->addLayout(metaColumn);
+        timecodeFrame_ = new PlaybackTimecodeFrame(owner_);
+        transportRow->addWidget(timecodeFrame_);
         transportRow->addStretch();
 
         auto* speedLayout = new QHBoxLayout();
         speedLayout->setSpacing(4);
+        auto* speedLabel = createLabel(QStringLiteral("速度:"), QStringLiteral("再生速度"));
+        {
+            QFont font = speedLabel->font();
+            font.setPointSize(11);
+            font.setWeight(QFont::DemiBold);
+            speedLabel->setFont(font);
+        }
+        speedLayout->addWidget(speedLabel);
         speedQuarterButton_ = createTextToolButton(QStringLiteral("x0.25"), "再生速度 0.25x", true);
         speedHalfButton_ = createTextToolButton(QStringLiteral("x0.5"), "再生速度 0.5x", true);
         speedOneButton_ = createTextToolButton(QStringLiteral("x1.0"), "再生速度 1.0x", true);
+        speedQuarterButton_->setProperty("artifactSpeedPresetButton", true);
+        speedHalfButton_->setProperty("artifactSpeedPresetButton", true);
+        speedOneButton_->setProperty("artifactSpeedPresetButton", true);
+        {
+            auto applySpeedPalette = [](QToolButton* button) {
+                if (!button) {
+                    return;
+                }
+                QPalette pal = button->palette();
+                pal.setColor(QPalette::WindowText, QColor(QStringLiteral("#8FD8FF")));
+                pal.setColor(QPalette::Text, QColor(QStringLiteral("#8FD8FF")));
+                pal.setColor(QPalette::ButtonText, QColor(QStringLiteral("#8FD8FF")));
+                button->setPalette(pal);
+            };
+            applySpeedPalette(speedQuarterButton_);
+            applySpeedPalette(speedHalfButton_);
+            applySpeedPalette(speedOneButton_);
+        }
         speedLayout->addWidget(speedQuarterButton_);
         speedLayout->addWidget(speedHalfButton_);
         speedLayout->addWidget(speedOneButton_);
@@ -310,11 +437,10 @@ public:
     
     QToolButton* createToolButton(const QStringList& iconNames, const QString& tooltip, int shortcut)
     {
-        auto* button = new QToolButton();
+        auto* button = new ArtifactFramedToolButton();
         button->setIcon(loadIconWithFallback(iconNames));
         button->setIconSize(QSize(20, 20));
         button->setToolTip(tooltip);
-        button->setAutoRaise(true);
         button->setFixedSize(32, 32);
         applyThemeTextPalette(button, QColor(ArtifactCore::currentDCCTheme().textColor));
         
@@ -323,6 +449,16 @@ public:
         }
         
         return button;
+    }
+
+    ArtifactToneLabel* createToneLabel(const QString& text, const QString& tooltip, ArtifactTextTone tone)
+    {
+        auto* label = new ArtifactToneLabel(owner_);
+        label->setText(text);
+        label->setTone(tone);
+        label->setToolTip(tooltip);
+        label->setAlignment(Qt::AlignVCenter | Qt::AlignLeft);
+        return label;
     }
 
     QToolButton* createTextToolButton(const QString& text, const QString& tooltip, bool checkable)
@@ -366,8 +502,8 @@ public:
         setChecked(speedHalfButton_, std::abs(speed - 0.5f) < 0.001f);
         setChecked(speedOneButton_, std::abs(speed - 1.0f) < 0.001f);
         playbackSpeed_ = speed;
-        if (currentTimeLabel_) {
-            currentTimeLabel_->setToolTip(QStringLiteral("Playback speed: %1").arg(formatSpeedLabel(speed)));
+        if (timecodeFrame_) {
+            timecodeFrame_->setToolTip(QStringLiteral("Playback speed: %1").arg(formatSpeedLabel(speed)));
         }
     }
 
@@ -392,14 +528,7 @@ public:
             scrubSlider_->setValue(static_cast<int>(clampedCurrent));
         }
 
-        if (currentTimeLabel_) {
-            currentTimeLabel_->setText(QStringLiteral("%1  %2 / %3")
-                                           .arg(formatFrameCount(clampedCurrent))
-                                           .arg(formatTimecode(clampedCurrent, fps))
-                                           .arg(formatTimecode(range.duration(), fps)));
-        }
-
-        if (rangeLabel_) {
+        if (timecodeFrame_) {
             QString inText = QStringLiteral("In --:--:--:--");
             QString outText = QStringLiteral("Out --:--:--:--");
             if (inOutPoints_) {
@@ -410,7 +539,13 @@ public:
                     outText = QStringLiteral("Out %1").arg(formatTimecode(outPoint->framePosition(), fps));
                 }
             }
-            rangeLabel_->setText(QStringLiteral("%1   %2").arg(inText, outText));
+            timecodeFrame_->setCurrentFrameText(QStringLiteral("%1\n%2 / %3")
+                                                   .arg(formatFrameCount(clampedCurrent))
+                                                   .arg(formatTimecode(clampedCurrent, fps))
+                                                   .arg(formatTimecode(range.duration(), fps)));
+            timecodeFrame_->setRangeText(QStringLiteral("In\n%1\n/ Out\n%2")
+                                             .arg(inText.mid(3))
+                                             .arg(outText.mid(5)));
         }
     }
 

@@ -994,22 +994,8 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent* event)
  p.drawText(hudRect.adjusted(10, 20, -10, -4), Qt::AlignLeft | Qt::AlignVCenter,
             QStringLiteral("Sel:%1  Hov:%2").arg(selectedCount).arg(hoveredText));
 
- // Current frame marker is drawn last so it stays on top of clips, markers, and HUD.
- const double playheadX = impl_->currentFrame_ * ppf - xOffset;
- if (playheadX >= dirtyRect.left() - 6.0 && playheadX <= dirtyRect.right() + 6.0) {
-  const QColor playheadColor(255, 106, 71);
-  p.setPen(QPen(playheadColor, 4));
-  p.drawLine(QPointF(playheadX, dirtyRect.top()), QPointF(playheadX, dirtyRect.bottom()));
-  p.setBrush(playheadColor);
-  p.setPen(QPen(QColor(18, 18, 18, 180), 1));
-  const QPointF tip(playheadX, dirtyRect.top() + 1.0);
-  QPolygonF head;
-  head << (tip + QPointF(-8.0, 0.0))
-       << (tip + QPointF(8.0, 0.0))
-       << (tip + QPointF(0.0, 12.0));
-  p.drawPolygon(head);
- }
-
+ // Current frame is now drawn by the parent overlay so it can span the
+ // navigator, scrub bar, work area, and track area as a single marker.
  }
 
 void ArtifactTimelineTrackPainterView::mousePressEvent(QMouseEvent* event)

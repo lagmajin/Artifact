@@ -14,6 +14,7 @@ module;
 #include <QTextOption>
 #include <QDateTime>
 #include <QFileInfo>
+#include <QStandardPaths>
 #include <QStringList>
 #include <QPointF>
 #include <QRegularExpression>
@@ -507,6 +508,51 @@ namespace Artifact
             return fmt;
         }
         return QStringLiteral("mp4");
+    }
+
+    static QString sanitizeFileComponent(QString value)
+    {
+        value = value.trimmed();
+        if (value.isEmpty()) {
+            return QStringLiteral("output");
+        }
+        value.replace(QRegularExpression(QStringLiteral(R"([\\/:*?"<>|]+)")), QStringLiteral("_"));
+        value.replace(QRegularExpression(QStringLiteral(R"(\s+)")), QStringLiteral("_"));
+        value.remove(QRegularExpression(QStringLiteral(R"(^[._-]+)")));
+        value.remove(QRegularExpression(QStringLiteral(R"([._-]+$)")));
+        return value.isEmpty() ? QStringLiteral("output") : value;
+    }
+
+    static QString defaultOutputStemForJob(const ArtifactRenderJob& job)
+    {
+        const QString jobName = sanitizeFileComponent(job.jobName);
+        if (jobName != QStringLiteral("output")) {
+            return jobName;
+        }
+        const QString compName = sanitizeFileComponent(job.compositionName);
+        return compName == QStringLiteral("output") ? QStringLiteral("output") : compName;
+    }
+
+    static QString defaultOutputPathForJob(const ArtifactRenderJob& job)
+    {
+        const QString desktop = QStandardPaths::writableLocation(QStandardPaths::DesktopLocation);
+        const QDir baseDir(desktop.isEmpty() ? QDir::homePath() : desktop);
+        const QString stem = defaultOutputStemForJob(job);
+
+        const QString format = job.outputFormat.trimmed().toLower();
+        if (format.contains(QStringLiteral("sequence")) ||
+            format == QStringLiteral("png") ||
+            format == QStringLiteral("exr") ||
+            format == QStringLiteral("tiff") ||
+            format == QStringLiteral("tif") ||
+            format == QStringLiteral("jpeg") ||
+            format == QStringLiteral("jpg") ||
+            format == QStringLiteral("bmp")) {
+            return baseDir.filePath(QStringLiteral("%1_sequence").arg(stem));
+        }
+
+        const QString ext = deriveContainerFromJob(job);
+        return baseDir.filePath(QStringLiteral("%1.%2").arg(stem, ext));
     }
 
     static bool isImageSequenceContainer(const QString& format)
@@ -1133,7 +1179,11 @@ namespace Artifact
             }
         };
         void addJob(const ArtifactRenderJob& job) {
-            jobs.append(job);
+            ArtifactRenderJob normalized = job;
+            if (normalized.outputPath.trimmed().isEmpty()) {
+                normalized.outputPath = defaultOutputPathForJob(normalized);
+            }
+            jobs.append(normalized);
             if (jobAdded) jobAdded(jobs.size() - 1);
         }
 
@@ -1225,7 +1275,9 @@ namespace Artifact
 
         void setJobOutputPath(int index, const QString& outputPath) {
             if (index < 0 || index >= jobs.size()) return;
-            jobs[index].outputPath = outputPath;
+            auto& job = jobs[index];
+            const QString trimmed = outputPath.trimmed();
+            job.outputPath = trimmed.isEmpty() ? defaultOutputPathForJob(job) : trimmed;
             if (jobUpdated) jobUpdated(index);
         }
 
@@ -1354,6 +1406,9 @@ namespace Artifact
         void updateJob(int index, const ArtifactRenderJob& job) {
             if (index < 0 || index >= jobs.size()) return;
             jobs[index] = job;
+            if (jobs[index].outputPath.trimmed().isEmpty()) {
+                jobs[index].outputPath = defaultOutputPathForJob(jobs[index]);
+            }
             if (jobUpdated) jobUpdated(index);
         }
 
@@ -2209,6 +2264,7 @@ namespace Artifact
         job.bitrate = kDefaultBitrate;
         job.startFrame = 0;
         job.endFrame = 100;
+        job.outputPath = defaultOutputPathForJob(job);
 
         impl_->queueManager.addJob(job);
         impl_->syncCoreQueueModel();
@@ -2230,6 +2286,7 @@ namespace Artifact
         job.bitrate = 8000;
         job.startFrame = 0;
         job.endFrame = 100;
+        job.outputPath = defaultOutputPathForJob(job);
 
         const auto found = ArtifactProjectManager::getInstance().findComposition(compositionId);
         if (found.success) {
@@ -2278,6 +2335,7 @@ namespace Artifact
         job.bitrate = kDefaultBitrate;
         job.startFrame = 0;
         job.endFrame = 100;
+        job.outputPath = defaultOutputPathForJob(job);
 
         // プリセットを適用
         const auto* preset = ArtifactRenderFormatPresetManager::instance().findPresetById(presetId);
@@ -2292,7 +2350,12 @@ namespace Artifact
                     ? QStringLiteral("gif")
                     : preset->container.trimmed();
                 job.outputPath = QDir::homePath() + "/Desktop/output." + suffix;
+            } else {
+                job.outputPath = defaultOutputPathForJob(job);
             }
+        }
+        if (job.outputPath.trimmed().isEmpty()) {
+            job.outputPath = defaultOutputPathForJob(job);
         }
 
         const auto found = ArtifactProjectManager::getInstance().findComposition(compositionId);

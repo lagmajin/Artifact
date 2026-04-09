@@ -43,6 +43,7 @@ module;
 
 import Artifact.Service.Application;
 import Artifact.Widgets.AppDialogs;
+import Artifact.Widgets.AI.ArtifactAICloudSettingsWidget;
 import Application.AppSettings;
 
 namespace ArtifactCore {
@@ -964,6 +965,7 @@ public:
   Impl() = default;
   ~Impl() = default;
   QLabel* label_ = nullptr;
+  Artifact::ArtifactAICloudSettingsWidget* cloudSettings_ = nullptr;
 };
 
 W_OBJECT_IMPL(AISettingPage)
@@ -972,9 +974,11 @@ AISettingPage::AISettingPage(QWidget* parent)
   : QWidget(parent), impl_(new Impl())
 {
   auto* layout = new QVBoxLayout(this);
-  impl_->label_ = new QLabel(QStringLiteral("AI settings are managed in the AI panel."), this);
+  impl_->label_ = new QLabel(QStringLiteral("Cloud AI connection settings are isolated here."), this);
   impl_->label_->setWordWrap(true);
   layout->addWidget(impl_->label_);
+  impl_->cloudSettings_ = new Artifact::ArtifactAICloudSettingsWidget(this);
+  layout->addWidget(impl_->cloudSettings_);
   layout->addStretch();
 }
 
@@ -988,8 +992,16 @@ QVector<QWidget*> AISettingPage::settingWidgets() const
   return {};
 }
 
-void AISettingPage::loadSettings() {}
-void AISettingPage::saveSettings() {}
+void AISettingPage::loadSettings() {
+  if (impl_->cloudSettings_) {
+    impl_->cloudSettings_->loadSettings();
+  }
+}
+void AISettingPage::saveSettings() {
+  if (impl_->cloudSettings_) {
+    impl_->cloudSettings_->saveSettings();
+  }
+}
 QList<SettingItemInfo> AISettingPage::searchableItems() const
 {
   return {};

@@ -62,6 +62,7 @@ export namespace Artifact {
   void setStatusMemoryUsage(uint64_t memoryMB);
   void setStatusFPS(double fps);
   void setStatusReady();
+  void setDockSplitterSizes(const QString& dockTitle, const QList<int>& sizes);
  };
 
 
