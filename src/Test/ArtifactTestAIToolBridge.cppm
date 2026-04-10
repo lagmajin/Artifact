@@ -5,6 +5,7 @@ module;
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QStandardPaths>
+#include <QMetaType>
 #include <QString>
 #include <QStringList>
 #include <QStringView>
@@ -161,6 +162,39 @@ int runAIToolBridgeTests()
     const QJsonObject splitLayerTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("splitLayerAtCurrentTime"));
     report.check(!splitLayerTool.isEmpty(), QStringLiteral("workspace automation exposes split-at-time"));
 
+    const QJsonObject duplicateCompositionTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("duplicateComposition"));
+    report.check(!duplicateCompositionTool.isEmpty(), QStringLiteral("workspace automation exposes composition duplication"));
+
+    const QJsonObject compositionRemovalMessageTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("compositionRemovalConfirmationMessage"));
+    report.check(!compositionRemovalMessageTool.isEmpty(), QStringLiteral("workspace automation exposes composition removal confirmation"));
+
+    const QJsonObject removeCompositionTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("removeCompositionWithRenderQueueCleanup"));
+    report.check(!removeCompositionTool.isEmpty(), QStringLiteral("workspace automation exposes composition removal"));
+
+    const QJsonObject removeAssetsTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("removeAllAssets"));
+    report.check(!removeAssetsTool.isEmpty(), QStringLiteral("workspace automation exposes asset clearing"));
+
+    const QJsonObject findProjectItemTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("findProjectItemById"));
+    report.check(!findProjectItemTool.isEmpty(), QStringLiteral("workspace automation exposes project item lookup"));
+
+    const QJsonObject projectItemRemovalMessageTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("projectItemRemovalConfirmationMessage"));
+    report.check(!projectItemRemovalMessageTool.isEmpty(), QStringLiteral("workspace automation exposes project item removal confirmation"));
+
+    const QJsonObject renameProjectItemTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("renameProjectItemById"));
+    report.check(!renameProjectItemTool.isEmpty(), QStringLiteral("workspace automation exposes project item rename"));
+
+    const QJsonObject moveProjectItemTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("moveProjectItemToFolder"));
+    report.check(!moveProjectItemTool.isEmpty(), QStringLiteral("workspace automation exposes project item move"));
+
+    const QJsonObject createFolderTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("createFolderInProject"));
+    report.check(!createFolderTool.isEmpty(), QStringLiteral("workspace automation exposes project folder creation"));
+
+    const QJsonObject removeProjectItemTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("removeProjectItemById"));
+    report.check(!removeProjectItemTool.isEmpty(), QStringLiteral("workspace automation exposes project item removal"));
+
+    const QJsonObject relinkFootageTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("relinkFootageByPath"));
+    report.check(!relinkFootageTool.isEmpty(), QStringLiteral("workspace automation exposes relink by path"));
+
     QJsonObject parsedToolCall;
     const bool parsed = ArtifactCore::ToolBridge::tryParseToolCall(
         QStringLiteral("```json\n{\"tool\":{\"class\":\"DummyToolHost\",\"method\":\"echo\",\"arguments\":[\"hello\"]}}\n```"),
@@ -262,6 +296,24 @@ int runAIToolBridgeTests()
     const QVariantMap workspaceSnapshot = workspaceSnapshotVariant.toMap();
     report.check(workspaceSnapshot.contains(QStringLiteral("project")),
                  QStringLiteral("workspace snapshot includes project state"));
+
+    const QVariant removalMessageVariant =
+        Artifact::WorkspaceAutomation().invokeMethod(QStringLiteral("compositionRemovalConfirmationMessage"),
+                                                     {QStringLiteral("comp-1")});
+    report.check(removalMessageVariant.typeId() == QMetaType::QString,
+                 QStringLiteral("composition removal confirmation returns text"));
+
+    const QVariant missingItemVariant =
+        Artifact::WorkspaceAutomation().invokeMethod(QStringLiteral("findProjectItemById"),
+                                                     {QStringLiteral("missing-item")});
+    report.check(missingItemVariant.typeId() == QMetaType::QVariantMap,
+                 QStringLiteral("project item lookup returns a snapshot map"));
+
+    const QVariant createFolderResult =
+        Artifact::WorkspaceAutomation().invokeMethod(QStringLiteral("createFolderInProject"),
+                                                     {QStringLiteral("AI Test Folder"), QString()});
+    report.check(createFolderResult.typeId() == QMetaType::Bool,
+                 QStringLiteral("folder creation returns a boolean"));
 
     ArtifactCore::CommandSandbox& sandbox = ArtifactCore::CommandSandbox::instance();
     sandbox.resetPolicy();
