@@ -207,6 +207,15 @@ int runAIToolBridgeTests()
     const QJsonObject setQueueIntegratedTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("setRenderQueueJobIntegratedRenderEnabledAt"));
     report.check(!setQueueIntegratedTool.isEmpty(), QStringLiteral("workspace automation exposes render queue integrated toggle"));
 
+    const QJsonObject startQueueAtTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("startRenderQueueAt"));
+    report.check(!startQueueAtTool.isEmpty(), QStringLiteral("workspace automation exposes render queue start by index"));
+
+    const QJsonObject pauseQueueAtTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("pauseRenderQueueAt"));
+    report.check(!pauseQueueAtTool.isEmpty(), QStringLiteral("workspace automation exposes render queue pause by index"));
+
+    const QJsonObject cancelQueueAtTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("cancelRenderQueueAt"));
+    report.check(!cancelQueueAtTool.isEmpty(), QStringLiteral("workspace automation exposes render queue cancel by index"));
+
     const QJsonObject findProjectItemTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("findProjectItemById"));
     report.check(!findProjectItemTool.isEmpty(), QStringLiteral("workspace automation exposes project item lookup"));
 
@@ -380,6 +389,24 @@ int runAIToolBridgeTests()
                                                      {0});
     report.check(queueErrorVariant.typeId() == QMetaType::QString,
                  QStringLiteral("render queue job error lookup returns text"));
+
+    const QVariant startQueueResult =
+        Artifact::WorkspaceAutomation().invokeMethod(QStringLiteral("startRenderQueueAt"),
+                                                     {0});
+    report.check(startQueueResult.typeId() == QMetaType::Bool,
+                 QStringLiteral("render queue job start returns a boolean"));
+
+    const QVariant pauseQueueResult =
+        Artifact::WorkspaceAutomation().invokeMethod(QStringLiteral("pauseRenderQueueAt"),
+                                                     {0});
+    report.check(pauseQueueResult.typeId() == QMetaType::Bool,
+                 QStringLiteral("render queue job pause returns a boolean"));
+
+    const QVariant cancelQueueResult =
+        Artifact::WorkspaceAutomation().invokeMethod(QStringLiteral("cancelRenderQueueAt"),
+                                                     {0});
+    report.check(cancelQueueResult.typeId() == QMetaType::Bool,
+                 QStringLiteral("render queue job cancel returns a boolean"));
 
     ArtifactCore::CommandSandbox& sandbox = ArtifactCore::CommandSandbox::instance();
     sandbox.resetPolicy();
