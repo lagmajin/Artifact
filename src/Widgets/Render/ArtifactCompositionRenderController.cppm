@@ -23,11 +23,11 @@
 #include <QVector3D>
 #include <QVector4D>
 #include <QVector>
-#include <opencv2/core.hpp>
 #include <algorithm>
 #include <cmath>
 #include <limits>
 #include <memory>
+#include <opencv2/core.hpp>
 #include <utility>
 #include <vector>
 #include <wobjectimpl.h>
@@ -628,23 +628,22 @@ void drawLayerForCompositionView(
         surface = ArtifactCore::CvUtils::cvMatToQImage(mat);
       };
 
-  auto hasRasterizerEffectsOrMasks =
-      [](ArtifactAbstractLayer *targetLayer) {
-        if (!targetLayer) {
-          return false;
-        }
-        if (targetLayer->hasMasks()) {
-          return true;
-        }
+  auto hasRasterizerEffectsOrMasks = [](ArtifactAbstractLayer *targetLayer) {
+    if (!targetLayer) {
+      return false;
+    }
+    if (targetLayer->hasMasks()) {
+      return true;
+    }
 
-        for (const auto &effect : targetLayer->getEffects()) {
-          if (effect && effect->isEnabled() &&
-              effect->pipelineStage() == EffectPipelineStage::Rasterizer) {
-            return true;
-          }
-        }
-        return false;
-      };
+    for (const auto &effect : targetLayer->getEffects()) {
+      if (effect && effect->isEnabled() &&
+          effect->pipelineStage() == EffectPipelineStage::Rasterizer) {
+        return true;
+      }
+    }
+    return false;
+  };
 
   auto applySurfaceAndDraw = [&](QImage surface, const QRectF &rect,
                                  bool allowSurfaceCache) {
@@ -843,10 +842,13 @@ void drawLayerForCompositionView(
   layer->draw(renderer);
 }
 
-// Draws composition border outlines only (no checkerboard).
-// Checkerboard is drawn in the background phase via drawCompositionCheckerboard().
-void drawCompositionRegionOverlay(ArtifactIRenderer* renderer,
-                                  const ArtifactCompositionPtr& comp) {
+// Draws composition border outlines only (no background fill, no checkerboard).
+// Background fill (bgColor) is drawn in the background phase before layer
+// rendering. Checkerboard is drawn via drawCompositionCheckerboard().
+// This function is called in the overlay phase (after layers) so it must NOT
+// draw any solid fill that would cover layer content.
+void drawCompositionRegionOverlay(ArtifactIRenderer *renderer,
+                                  const ArtifactCompositionPtr &comp) {
   if (!renderer || !comp) {
     return;
   }
@@ -867,9 +869,10 @@ void drawCompositionRegionOverlay(ArtifactIRenderer* renderer,
 }
 
 // Draws checkerboard over the composition canvas in Composition Space.
-// Must be called BEFORE layer drawing so transparent regions reveal the pattern.
-void drawCompositionCheckerboard(ArtifactIRenderer* renderer,
-                                  const ArtifactCompositionPtr& comp) {
+// Must be called BEFORE layer drawing so transparent regions reveal the
+// pattern.
+void drawCompositionCheckerboard(ArtifactIRenderer *renderer,
+                                 const ArtifactCompositionPtr &comp) {
   if (!renderer || !comp) {
     return;
   }
@@ -884,8 +887,8 @@ void drawCompositionCheckerboard(ArtifactIRenderer* renderer,
   }
 
   renderer->drawCheckerboard(0.0f, 0.0f, cw, ch, 16.0f,
-                              {0.18f, 0.18f, 0.18f, 1.0f},
-                              {0.28f, 0.28f, 0.28f, 1.0f});
+                             {0.18f, 0.18f, 0.18f, 1.0f},
+                             {0.28f, 0.28f, 0.28f, 1.0f});
 }
 
 // CompositionChangeDetector - 差分レンダリング用の変更検出器
@@ -983,10 +986,11 @@ public:
   bool showGuides_ = false;
   bool showSafeMargins_ = false;
   bool showMotionPathOverlay_ = true;
-   bool showFrameInfo_ = false; // Changed to false by default
-   int currentFrameForOverlay_ = 0;
-   quint64 renderFrameCounter_ = 0;
-  bool renderQueueActive_ = false; // When true, suppress cache invalidation during Render Queue
+  bool showFrameInfo_ = false; // Changed to false by default
+  int currentFrameForOverlay_ = 0;
+  quint64 renderFrameCounter_ = 0;
+  bool renderQueueActive_ =
+      false; // When true, suppress cache invalidation during Render Queue
   int lastPipelineStateMask_ = -1;
   QSize lastDispatchWarningSize_;
   QByteArray lastFinalPresentKey_;
@@ -1265,11 +1269,9 @@ public:
 CompositionRenderController::CompositionRenderController(QObject *parent)
     : QObject(parent), impl_(new Impl()) {
   const auto theme = ArtifactCore::currentDCCTheme();
-  impl_->clearColor_ = FloatColor{
-      QColor(theme.backgroundColor).redF(),
-      QColor(theme.backgroundColor).greenF(),
-      QColor(theme.backgroundColor).blueF(),
-      1.0f};
+  impl_->clearColor_ = FloatColor{QColor(theme.backgroundColor).redF(),
+                                  QColor(theme.backgroundColor).greenF(),
+                                  QColor(theme.backgroundColor).blueF(), 1.0f};
   impl_->gizmo_ = std::make_unique<TransformGizmo>();
   impl_->gizmo3D_ = std::make_unique<Artifact3DGizmo>(this);
 
@@ -1277,7 +1279,7 @@ CompositionRenderController::CompositionRenderController(QObject *parent)
   if (auto *svc = ArtifactProjectService::instance()) {
     impl_->eventBusSubscriptions_.push_back(
         impl_->eventBus_.subscribe<LayerSelectionChangedEvent>(
-            [this](const LayerSelectionChangedEvent& event) {
+            [this](const LayerSelectionChangedEvent &event) {
               auto comp = impl_->previewPipeline_.composition();
               if (comp && !event.compositionId.isEmpty() &&
                   comp->id().toString() != event.compositionId) {
@@ -1289,7 +1291,7 @@ CompositionRenderController::CompositionRenderController(QObject *parent)
     // Ensure layers created after setComposition() are also bound to redraw.
     impl_->eventBusSubscriptions_.push_back(
         impl_->eventBus_.subscribe<LayerChangedEvent>(
-            [this](const LayerChangedEvent& event) {
+            [this](const LayerChangedEvent &event) {
               if (event.changeType != LayerChangedEvent::ChangeType::Created) {
                 return;
               }
@@ -1319,10 +1321,11 @@ CompositionRenderController::CompositionRenderController(QObject *parent)
 
     impl_->eventBusSubscriptions_.push_back(
         impl_->eventBus_.subscribe<CurrentCompositionChangedEvent>(
-            [this, svc](const CurrentCompositionChangedEvent& event) {
+            [this, svc](const CurrentCompositionChangedEvent &event) {
               ArtifactCompositionPtr comp;
               if (!event.compositionId.trimmed().isEmpty()) {
-                const auto found = svc->findComposition(CompositionID(event.compositionId));
+                const auto found =
+                    svc->findComposition(CompositionID(event.compositionId));
                 if (found.success && !found.ptr.expired()) {
                   comp = found.ptr.lock();
                 }
@@ -1335,7 +1338,7 @@ CompositionRenderController::CompositionRenderController(QObject *parent)
 
     impl_->eventBusSubscriptions_.push_back(
         impl_->eventBus_.subscribe<ProjectChangedEvent>(
-            [this, svc](const ProjectChangedEvent&) {
+            [this, svc](const ProjectChangedEvent &) {
               auto latest = resolvePreferredComposition(svc);
               auto current = impl_->previewPipeline_.composition();
               if (latest != current) {
@@ -1348,8 +1351,9 @@ CompositionRenderController::CompositionRenderController(QObject *parent)
     // Handle resolution changes via internal event bus
     impl_->eventBusSubscriptions_.push_back(
         impl_->eventBus_.subscribe<PreviewQualityPresetChangedEvent>(
-            [this](const PreviewQualityPresetChangedEvent& event) {
-              setPreviewQualityPreset(static_cast<PreviewQualityPreset>(event.preset));
+            [this](const PreviewQualityPresetChangedEvent &event) {
+              setPreviewQualityPreset(
+                  static_cast<PreviewQualityPreset>(event.preset));
             }));
 
     // Initial sync
@@ -1382,8 +1386,10 @@ void CompositionRenderController::initialize(QWidget *hostWidget) {
       std::make_unique<CompositionRenderer>(*impl_->renderer_);
   impl_->renderer_->setClearColor(impl_->clearColor_);
   impl_->devicePixelRatio_ = static_cast<float>(hostWidget->devicePixelRatio());
-  impl_->hostWidth_ = static_cast<float>(hostWidget->width()) * impl_->devicePixelRatio_;
-  impl_->hostHeight_ = static_cast<float>(hostWidget->height()) * impl_->devicePixelRatio_;
+  impl_->hostWidth_ =
+      static_cast<float>(hostWidget->width()) * impl_->devicePixelRatio_;
+  impl_->hostHeight_ =
+      static_cast<float>(hostWidget->height()) * impl_->devicePixelRatio_;
   impl_->renderer_->setViewportSize(impl_->hostWidth_, impl_->hostHeight_);
 
   const auto comp = impl_->previewPipeline_.composition();
@@ -1531,9 +1537,11 @@ void CompositionRenderController::setViewportSize(float w, float h) {
   if (!impl_->renderer_) {
     return;
   }
-  // Refresh DPR whenever the viewport is resized (handles window-to-monitor changes)
+  // Refresh DPR whenever the viewport is resized (handles window-to-monitor
+  // changes)
   if (impl_->hostWidget_) {
-    impl_->devicePixelRatio_ = static_cast<float>(impl_->hostWidget_->devicePixelRatio());
+    impl_->devicePixelRatio_ =
+        static_cast<float>(impl_->hostWidget_->devicePixelRatio());
   }
   // Callers pass logical pixels; convert to physical pixels for the renderer
   const float newHostWidth = w * impl_->devicePixelRatio_;
@@ -1569,7 +1577,8 @@ void CompositionRenderController::setPreviewQualityPreset(
   if (impl_->previewDownsample_ != factor) {
     impl_->previewDownsample_ = factor;
     if (impl_->hostWidth_ > 0 && impl_->hostHeight_ > 0) {
-      // hostWidth_/hostHeight_ are already physical pixels; call renderer directly
+      // hostWidth_/hostHeight_ are already physical pixels; call renderer
+      // directly
       impl_->renderer_->setViewportSize(impl_->hostWidth_, impl_->hostHeight_);
     }
     impl_->invalidateBaseComposite();
@@ -1581,9 +1590,10 @@ void CompositionRenderController::panBy(const QPointF &viewportDelta) {
   if (!impl_->renderer_) {
     return;
   }
-  // viewportDelta is in logical pixels from Qt; convert to physical for the renderer
+  // viewportDelta is in logical pixels from Qt; convert to physical for the
+  // renderer
   impl_->renderer_->panBy((float)viewportDelta.x() * impl_->devicePixelRatio_,
-                           (float)viewportDelta.y() * impl_->devicePixelRatio_);
+                          (float)viewportDelta.y() * impl_->devicePixelRatio_);
   impl_->invalidateBaseComposite();
   renderOneFrame();
 }
@@ -1783,10 +1793,8 @@ void CompositionRenderController::setDropGhostPreview(
   if (!impl_) {
     return;
   }
-  if (impl_->dropGhostVisible_ &&
-      impl_->dropGhostRect_ == viewportRect &&
-      impl_->dropGhostTitle_ == title &&
-      impl_->dropGhostHint_ == hint &&
+  if (impl_->dropGhostVisible_ && impl_->dropGhostRect_ == viewportRect &&
+      impl_->dropGhostTitle_ == title && impl_->dropGhostHint_ == hint &&
       impl_->dropCandidateLabel_ == label) {
     return;
   }
@@ -1880,7 +1888,8 @@ void CompositionRenderController::zoomInAt(const QPointF &viewportPos) {
     // viewportPos is in logical pixels; convert to physical
     impl_->renderer_->zoomAroundViewportPoint(
         {(float)viewportPos.x() * impl_->devicePixelRatio_,
-         (float)viewportPos.y() * impl_->devicePixelRatio_}, newZoom);
+         (float)viewportPos.y() * impl_->devicePixelRatio_},
+        newZoom);
     impl_->invalidateBaseComposite();
     renderOneFrame();
   }
@@ -1894,7 +1903,8 @@ void CompositionRenderController::zoomOutAt(const QPointF &viewportPos) {
     // viewportPos is in logical pixels; convert to physical
     impl_->renderer_->zoomAroundViewportPoint(
         {(float)viewportPos.x() * impl_->devicePixelRatio_,
-         (float)viewportPos.y() * impl_->devicePixelRatio_}, newZoom);
+         (float)viewportPos.y() * impl_->devicePixelRatio_},
+        newZoom);
     impl_->invalidateBaseComposite();
     renderOneFrame();
   }
@@ -1932,7 +1942,7 @@ void CompositionRenderController::zoom100() {
   if (impl_->renderer_) {
     impl_->renderer_->setZoom(1.0f);
     // Center the canvas in the viewport at 100% zoom
-    const float panX = (impl_->hostWidth_  - impl_->lastCanvasWidth_)  * 0.5f;
+    const float panX = (impl_->hostWidth_ - impl_->lastCanvasWidth_) * 0.5f;
     const float panY = (impl_->hostHeight_ - impl_->lastCanvasHeight_) * 0.5f;
     impl_->renderer_->setPan(panX, panY);
     impl_->invalidateBaseComposite();
@@ -2016,7 +2026,8 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
   if (!event || !impl_->renderer_)
     return;
 
-  // event->position() is in logical pixels; convert to physical for rendering pipeline
+  // event->position() is in logical pixels; convert to physical for rendering
+  // pipeline
   const QPointF viewportPos = event->position() * impl_->devicePixelRatio_;
 
   // 3D Gizmo hit test (GIZ-2)
@@ -2337,8 +2348,10 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
   }
 }
 
-void CompositionRenderController::handleMouseMove(const QPointF &viewportPosLogical) {
-  // Convert logical pixels (from Qt event) to physical pixels for the rendering pipeline
+void CompositionRenderController::handleMouseMove(
+    const QPointF &viewportPosLogical) {
+  // Convert logical pixels (from Qt event) to physical pixels for the rendering
+  // pipeline
   const QPointF viewportPos = viewportPosLogical * impl_->devicePixelRatio_;
   auto toolManager = ArtifactApplicationManager::instance()->toolManager();
   auto activeTool =
@@ -2809,13 +2822,13 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
           .arg(comp->backgroundColor().g(), 0, 'f', 4)
           .arg(comp->backgroundColor().b(), 0, 'f', 4)
           .arg(comp->backgroundColor().a(), 0, 'f', 4);
-  if (backgroundKey != lastBackgroundKey_ || lastBackgroundCompositionId_ != comp->id()) {
+  if (backgroundKey != lastBackgroundKey_ ||
+      lastBackgroundCompositionId_ != comp->id()) {
     lastBackgroundKey_ = backgroundKey;
     lastBackgroundCompositionId_ = comp->id();
     qInfo() << "[CompositionView][Background]"
             << "compositionId=" << comp->id().toString()
-            << "background=" << backgroundKey
-            << "clearColor="
+            << "background=" << backgroundKey << "clearColor="
             << QStringLiteral("%1,%2,%3,%4")
                    .arg(clearColor_.r(), 0, 'f', 4)
                    .arg(clearColor_.g(), 0, 'f', 4)
@@ -2974,8 +2987,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       // -- 1: 背景を accum に直接描画（オフスクリーン座標系）--
       // 背景は Composition Space で現在の Pan/Zoom を適用して描画する。
       renderer_->setViewportSize(rcw, rch);
-      renderer_->setCanvasSize(cw, ch);  // ← Composition Space に設定
-      renderer_->setZoom(origZoom);      // ← 現在のカメラズームを適用
+      renderer_->setCanvasSize(cw, ch);      // ← Composition Space に設定
+      renderer_->setZoom(origZoom);          // ← 現在のカメラズームを適用
       renderer_->setPan(origPanX, origPanY); // ← 現在のカメラパンを適用
       {
         Diligent::Viewport offVP;
@@ -2995,8 +3008,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
             << "[CompositionView] background pass (gpu)"
             << "compSize=" << QSize(static_cast<int>(cw), static_cast<int>(ch))
             << "rtSize=" << QSize(static_cast<int>(rcw), static_cast<int>(rch))
-            << "viewport=" << QSize(static_cast<int>(origViewW),
-                                    static_cast<int>(origViewH))
+            << "viewport="
+            << QSize(static_cast<int>(origViewW), static_cast<int>(origViewH))
             << "zoom=" << origZoom << "pan=" << QPointF(origPanX, origPanY)
             << "bg="
             << QColor::fromRgbF(bgColor.r(), bgColor.g(), bgColor.b(),
@@ -3005,20 +3018,26 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
             << "compositionSpaceApplied=" << true;
       }
       renderer_->setOverrideRTV(accumRTV);
-      // accum を透明でクリア（bgColor はレイヤーブレンドに影響しないよう後で Composition Space で描画）
+      // accum を透明でクリア（bgColor はレイヤーブレンドに影響しないよう後で
+      // Composition Space で描画）
       renderer_->setClearColor(FloatColor{0.0f, 0.0f, 0.0f, 0.0f});
       renderer_->clear();
+
+      // accum に背景色のみ描画。ボーダーアウトラインは overlay フェーズ
+      // (drawCompositionRegionOverlay) で main FB に描画するため、
+      // accum には含めない。
+      renderer_->drawSolidRect(0.0f, 0.0f, cw, ch, bgColor, 1.0f);
       renderer_->setClearColor(clearColor_);
       renderer_->setOverrideRTV(nullptr);
       basePassMs = markPhaseMs();
 
       // レイヤー描画用に、ダウンサンプル后的なオフスクリーン座標系に切り替え
-      renderer_->setCanvasSize(rcw, rch);  // ← レイヤー描画用に戻す
+      renderer_->setCanvasSize(rcw, rch); // ← レイヤー描画用に戻す
       renderer_->setZoom(origZoom * offscreenScale);
       renderer_->setPan(origPanX * offscreenScale, origPanY * offscreenScale);
 
       // -- 2: レイヤーブレンド（frameOutOfRange ならスキップ）--
-      bool blendPerformed = false;  // accumがUNORDERED_ACCESS状態になったか追跡
+      bool blendPerformed = false; // accumがUNORDERED_ACCESS状態になったか追跡
       if (!frameOutOfRange) {
         const DetailLevel lod = detailLevelFromZoom(renderer_->getZoom());
         for (const auto &layer : layers) {
@@ -3072,7 +3091,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
             continue;
           }
           renderPipeline_.swapAccumAndTemp();
-          blendPerformed = true;  // accumはUNORDERED_ACCESS状態
+          blendPerformed = true; // accumはUNORDERED_ACCESS状態
           accumSRV = renderPipeline_.accumSRV();
           tempUAV = renderPipeline_.tempUAV();
         }
@@ -3092,37 +3111,38 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                           static_cast<Diligent::Uint32>(origViewH));
       }
 
-      // -- 3: bgColor 背景矩形を描画（D3D12 viewport 確定後、accum blit より前） --
-      // SetViewports 済みの状態で swap chain 上に描画する。
-      // accum の SRC_ALPHA blit は透明ピクセル (α=0) の領域でこの bgColor を透過させる。
-      // レイヤーブレンドは accum 内で完結するため bgColor は一切影響しない。
+      // -- 3: main FB に背景を準備してから accum を blit --
+      // チェッカーボードを一番下に描画。bgColor が半透明のとき accum の
+      // SRC_ALPHA blit でチェッカーが透けて見える。
+      // bgColor 自体は accum 内で描画済みのため main FB への重複描画は不要。
       renderer_->setCanvasSize(cw, ch);
       renderer_->setZoom(origZoom);
       renderer_->setPan(origPanX, origPanY);
-      renderer_->drawSolidRect(0.0f, 0.0f, cw, ch, bgColor, 1.0f);
-      // チェッカーボードは bgColor の上・レイヤー blit の前に描画して透明領域に透ける。
       if (showCheckerboard_) {
         drawCompositionCheckerboard(renderer_.get(), comp);
       }
 
-      // -- 4: オフスクリーン RT を画面全体に描画（スクリーン座標、SRC_ALPHA ブレンド） --
-      // drawSpriteTransformed (opacity 付き) を使うことで SRC_ALPHA ブレンドが適用され、
-      // accum の透明ピクセル（レイヤーなし領域）から手前の bgColor 矩形が透けて見える。
+      // -- 4: オフスクリーン RT を画面全体に描画（スクリーン座標、SRC_ALPHA
+      // ブレンド） -- drawSpriteTransformed (opacity 付き) を使うことで
+      // SRC_ALPHA ブレンドが適用され、 accum
+      // の透明ピクセル（レイヤーなし領域）から手前の bgColor
+      // 矩形が透けて見える。
       renderer_->setCanvasSize(origViewW, origViewH);
       renderer_->setZoom(1.0f);
       renderer_->setPan(0.0f, 0.0f);
       // Bug B fix: ブレンドCSが UNORDERED_ACCESS に書いた accum テクスチャを
       // SRV として読む前に SHADER_RESOURCE へ状態遷移する。
-      // ブレンドが一度も実行されなかった場合、accum は RENDER_TARGET 状態のままなので
-      // この明示的バリアはスキップし、drawSpriteTransformed 内の auto-TRANSITION に任せる。
+      // ブレンドが一度も実行されなかった場合、accum は RENDER_TARGET
+      // 状態のままなので この明示的バリアはスキップし、drawSpriteTransformed
+      // 内の auto-TRANSITION に任せる。
       if (blendPerformed) {
         if (auto *accumTex = renderPipeline_.accumSRV()
                                  ? renderPipeline_.accumSRV()->GetTexture()
                                  : nullptr) {
           Diligent::StateTransitionDesc accumBarrier;
-          accumBarrier.pResource           = accumTex;
-          accumBarrier.OldState            = RESOURCE_STATE_UNORDERED_ACCESS;
-          accumBarrier.NewState            = RESOURCE_STATE_SHADER_RESOURCE;
+          accumBarrier.pResource = accumTex;
+          accumBarrier.OldState = RESOURCE_STATE_UNORDERED_ACCESS;
+          accumBarrier.NewState = RESOURCE_STATE_SHADER_RESOURCE;
           ctx->TransitionResourceStates(1, &accumBarrier);
         }
       }
@@ -3143,7 +3163,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       }
       renderer_->setZoom(origZoom);
       renderer_->setPan(origPanX, origPanY);
-      renderer_->setClearColor(origClearColor); // Bug A fix: GPUパス前に保存したクリアカラーを復元
+      renderer_->setClearColor(
+          origClearColor); // Bug A fix: GPUパス前に保存したクリアカラーを復元
       layerPassMs = markPhaseMs();
     } else {
       // === Fallback path (GPU パイプラインなし) ===
@@ -3156,16 +3177,16 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
         hostVP.Height = viewportH;
         hostVP.MinDepth = 0.0f;
         hostVP.MaxDepth = 1.0f;
-        ctx->SetViewports(1, &hostVP,
-                          static_cast<Diligent::Uint32>(viewportW),
+        ctx->SetViewports(1, &hostVP, static_cast<Diligent::Uint32>(viewportW),
                           static_cast<Diligent::Uint32>(viewportH));
       }
-      renderer_->setCanvasSize(cw, ch);  // キャンバスを Composition Space に設定
-      renderer_->drawSolidRect(0.0f, 0.0f, cw, ch, bgColor, 1.0f);
-      // チェッカーボードは bgColor の上・レイヤー描画の前に描画して透明領域に透ける。
+      renderer_->setCanvasSize(cw, ch); // キャンバスを Composition Space に設定
+      // チェッカーボードを一番下に描画（透過領域の基盤として）
       if (showCheckerboard_) {
         drawCompositionCheckerboard(renderer_.get(), comp);
       }
+      // その上にコンポジションの背景色(bgColor)を描画
+      renderer_->drawSolidRect(0.0f, 0.0f, cw, ch, bgColor, 1.0f);
       if (showGrid_) {
         renderer_->drawGrid(0, 0, cw, ch, 100.0f, 1.0f,
                             {0.3f, 0.3f, 0.3f, 0.5f});
@@ -3204,13 +3225,16 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       basePassMs = markPhaseMs();
 
       if (!frameOutOfRange) {
-        // ROI 計算は「コンポジション枠」ではなく「実際に見えている canvas 範囲」で行う。
-        // これを comp size で切ると、画面内に残っているのにオブジェクトや gizmo が消える。
+        // ROI 計算は「コンポジション枠」ではなく「実際に見えている canvas
+        // 範囲」で行う。 これを comp size
+        // で切ると、画面内に残っているのにオブジェクトや gizmo が消える。
         const QRectF viewportRect =
             viewportRectToCanvasRect(renderer_.get(), QPointF(0.0f, 0.0f),
                                      QPointF(viewportW, viewportH));
-        const float roiPad = std::max(48.0f, 64.0f / std::max(0.001f, renderer_->getZoom()));
-        const QRectF roiRect = viewportRect.adjusted(-roiPad, -roiPad, roiPad, roiPad);
+        const float roiPad =
+            std::max(48.0f, 64.0f / std::max(0.001f, renderer_->getZoom()));
+        const QRectF roiRect =
+            viewportRect.adjusted(-roiPad, -roiPad, roiPad, roiPad);
         const DetailLevel lod = detailLevelFromZoom(renderer_->getZoom());
 
         for (const auto &layer : layers) {
@@ -3468,9 +3492,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
     }
 
     if (renderer_ && !selectedIds.isEmpty()) {
-      const auto layersForOverlay = comp
-                                        ? comp->allLayer()
-                                        : decltype(comp->allLayer()){};
+      const auto layersForOverlay =
+          comp ? comp->allLayer() : decltype(comp->allLayer()){};
 
       // M-UI-6 Composition Motion Path Overlay
       if (comp) {
@@ -3871,19 +3894,19 @@ void CompositionRenderController::Impl::drawViewportGhostOverlay(
     }
   }
 
-  if (infoOverlayVisible_ &&
-      (!infoOverlayTitle_.trimmed().isEmpty() ||
-       !infoOverlayDetail_.trimmed().isEmpty())) {
+  if (infoOverlayVisible_ && (!infoOverlayTitle_.trimmed().isEmpty() ||
+                              !infoOverlayDetail_.trimmed().isEmpty())) {
     const QString title = infoOverlayTitle_.trimmed().isEmpty()
                               ? QStringLiteral("Info")
                               : infoOverlayTitle_.trimmed();
     const QString detail = infoOverlayDetail_.trimmed();
     const QFontMetrics fm(p.font());
     const int lineHeight = fm.height();
-    const int contentWidth = std::max(
-        fm.horizontalAdvance(title),
-        detail.isEmpty() ? 0 : fm.horizontalAdvance(detail));
-    const int contentHeight = detail.isEmpty() ? lineHeight : lineHeight * 2 + 4;
+    const int contentWidth =
+        std::max(fm.horizontalAdvance(title),
+                 detail.isEmpty() ? 0 : fm.horizontalAdvance(detail));
+    const int contentHeight =
+        detail.isEmpty() ? lineHeight : lineHeight * 2 + 4;
     QRect labelRect(12, 12, contentWidth + 24, contentHeight + 12);
     if (labelRect.right() > overlayW - 8) {
       labelRect.moveRight(overlayW - 8);
@@ -3895,8 +3918,8 @@ void CompositionRenderController::Impl::drawViewportGhostOverlay(
     p.setBrush(QColor(8, 10, 14, 210));
     p.drawRoundedRect(labelRect, 7, 7);
     p.setPen(QColor(232, 238, 244));
-    p.drawText(labelRect.adjusted(10, 6, -10, -6),
-               Qt::AlignLeft | Qt::AlignTop, title);
+    p.drawText(labelRect.adjusted(10, 6, -10, -6), Qt::AlignLeft | Qt::AlignTop,
+               title);
     if (!detail.isEmpty()) {
       p.setPen(QColor(178, 190, 204));
       const QRect detailRect = labelRect.adjusted(10, 6 + lineHeight, -10, -6);
@@ -3916,10 +3939,10 @@ void CompositionRenderController::Impl::drawViewportGhostOverlay(
                      : QStringLiteral("Hold Alt to bypass snapping");
     const QFontMetrics fm(p.font());
     const int lineHeight = fm.height();
-    const int contentWidth = std::max(
-        fm.horizontalAdvance(snapTitle), fm.horizontalAdvance(snapDetail));
-    QRect labelRect(12, overlayH - (lineHeight * 2 + 28),
-                    contentWidth + 24, lineHeight * 2 + 12);
+    const int contentWidth = std::max(fm.horizontalAdvance(snapTitle),
+                                      fm.horizontalAdvance(snapDetail));
+    QRect labelRect(12, overlayH - (lineHeight * 2 + 28), contentWidth + 24,
+                    lineHeight * 2 + 12);
     if (labelRect.bottom() > overlayH - 8) {
       labelRect.moveBottom(overlayH - 8);
     }
@@ -3930,8 +3953,8 @@ void CompositionRenderController::Impl::drawViewportGhostOverlay(
     p.setBrush(QColor(8, 10, 14, 210));
     p.drawRoundedRect(labelRect, 7, 7);
     p.setPen(QColor(232, 238, 244));
-    p.drawText(labelRect.adjusted(10, 6, -10, -6),
-               Qt::AlignLeft | Qt::AlignTop, snapTitle);
+    p.drawText(labelRect.adjusted(10, 6, -10, -6), Qt::AlignLeft | Qt::AlignTop,
+               snapTitle);
     p.setPen(QColor(178, 190, 204));
     const QRect detailRect = labelRect.adjusted(10, 6 + lineHeight, -10, -6);
     p.drawText(detailRect, Qt::AlignLeft | Qt::AlignTop,
@@ -3960,17 +3983,17 @@ void CompositionRenderController::Impl::drawViewportGhostOverlay(
     const float ch =
         static_cast<float>(compSize.height() > 0 ? compSize.height() : 1080);
     renderer_->setCanvasSize(cw, ch);
-   }
   }
+}
 
-  void CompositionRenderController::setRenderQueueActive(bool active) {
-    if (impl_) {
-      impl_->renderQueueActive_ = active;
-    }
+void CompositionRenderController::setRenderQueueActive(bool active) {
+  if (impl_) {
+    impl_->renderQueueActive_ = active;
   }
+}
 
-  bool CompositionRenderController::isRenderQueueActive() const {
-    return impl_ ? impl_->renderQueueActive_ : false;
-  }
+bool CompositionRenderController::isRenderQueueActive() const {
+  return impl_ ? impl_->renderQueueActive_ : false;
+}
 
- } // namespace Artifact
+} // namespace Artifact

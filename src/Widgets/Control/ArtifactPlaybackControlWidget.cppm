@@ -98,9 +98,10 @@ public:
         update();
     }
 
-    void setRangeText(const QString& text)
+    void setRangeTexts(const QString& inText, const QString& outText)
     {
-        rangeText_ = text;
+        inText_ = inText;
+        outText_ = outText;
         updateGeometry();
         update();
     }
@@ -110,29 +111,37 @@ public:
         QFont currentFont = font();
         currentFont.setPointSize(13);
         currentFont.setWeight(QFont::DemiBold);
-        QFont rangeFont = font();
-        rangeFont.setPointSize(11);
-        rangeFont.setWeight(QFont::DemiBold);
+        QFont labelFont = font();
+        labelFont.setPointSize(10);
+        labelFont.setWeight(QFont::DemiBold);
+        QFont valueFont = font();
+        valueFont.setPointSize(11);
+        valueFont.setWeight(QFont::DemiBold);
 
         const QFontMetrics currentMetrics(currentFont);
-        const QFontMetrics rangeMetrics(rangeFont);
+        const QFontMetrics labelMetrics(labelFont);
+        const QFontMetrics valueMetrics(valueFont);
         const QStringList currentLines = currentText_.isEmpty()
             ? QStringList{QStringLiteral("F0"), QStringLiteral("00:00:00:00 / 00:00:00:00")}
             : currentText_.split(u'\n');
-        const QStringList rangeLines = rangeText_.isEmpty()
-            ? QStringList{QStringLiteral("In"), QStringLiteral("--:--:--:--"), QStringLiteral("/ Out"), QStringLiteral("--:--:--:--")}
-            : rangeText_.split(u'\n');
+        const QString inLabel = QStringLiteral("In");
+        const QString outLabel = QStringLiteral("Out");
+        const QString inValue = inText_.isEmpty() ? QStringLiteral("--:--:--:--") : inText_;
+        const QString outValue = outText_.isEmpty() ? QStringLiteral("--:--:--:--") : outText_;
 
         int width = 0;
         for (const auto& line : currentLines) {
             width = std::max(width, currentMetrics.horizontalAdvance(line));
         }
-        for (const auto& line : rangeLines) {
-            width = std::max(width, rangeMetrics.horizontalAdvance(line));
-        }
+        const int leftColumnWidth = std::max(labelMetrics.horizontalAdvance(inLabel),
+                                             valueMetrics.horizontalAdvance(inValue));
+        const int rightColumnWidth = std::max(labelMetrics.horizontalAdvance(outLabel),
+                                              valueMetrics.horizontalAdvance(outValue));
+        const int lowerWidth = leftColumnWidth + rightColumnWidth + 22;
+        width = std::max(width, lowerWidth);
 
         const int height = currentMetrics.lineSpacing() * currentLines.size() +
-                           rangeMetrics.lineSpacing() * rangeLines.size() + 10;
+                           labelMetrics.lineSpacing() + valueMetrics.lineSpacing() + 14;
         return QSize(width + 18, height + 12);
     }
 
@@ -157,18 +166,22 @@ protected:
         QFont currentFont = font();
         currentFont.setPointSize(13);
         currentFont.setWeight(QFont::DemiBold);
-        QFont rangeFont = font();
-        rangeFont.setPointSize(11);
-        rangeFont.setWeight(QFont::DemiBold);
+        QFont labelFont = font();
+        labelFont.setPointSize(10);
+        labelFont.setWeight(QFont::DemiBold);
+        QFont valueFont = font();
+        valueFont.setPointSize(11);
+        valueFont.setWeight(QFont::DemiBold);
 
         const QColor goldText(QStringLiteral("#D4AF37"));
         const QColor mutedGoldText(QStringLiteral("#B8942D"));
         const QStringList currentLines = currentText_.isEmpty()
             ? QStringList{QStringLiteral("F0"), QStringLiteral("00:00:00:00 / 00:00:00:00")}
             : currentText_.split(u'\n');
-        const QStringList rangeLines = rangeText_.isEmpty()
-            ? QStringList{QStringLiteral("In"), QStringLiteral("--:--:--:--"), QStringLiteral("/ Out"), QStringLiteral("--:--:--:--")}
-            : rangeText_.split(u'\n');
+        const QString inLabel = QStringLiteral("In");
+        const QString outLabel = QStringLiteral("Out");
+        const QString inValue = inText_.isEmpty() ? QStringLiteral("--:--:--:--") : inText_;
+        const QString outValue = outText_.isEmpty() ? QStringLiteral("--:--:--:--") : outText_;
 
         painter.setFont(currentFont);
         painter.setPen(goldText);
@@ -179,19 +192,36 @@ protected:
             y += currentStep;
         }
 
-        y += 2;
-        painter.setFont(rangeFont);
+        y += 6;
+        const int lowerTop = y;
+        const int columnGap = 16;
+        const int columnWidth = std::max(
+            1, (content.width() - columnGap) / 2);
+        const QRect leftRect(content.left(), lowerTop, columnWidth, content.height() - (lowerTop - content.top()));
+        const QRect rightRect(content.left() + columnWidth + columnGap, lowerTop, columnWidth, content.height() - (lowerTop - content.top()));
+
+        painter.setFont(labelFont);
         painter.setPen(mutedGoldText);
-        const int rangeStep = QFontMetrics(rangeFont).lineSpacing();
-        for (const auto& line : rangeLines) {
-            painter.drawText(content.left(), y, line);
-            y += rangeStep;
-        }
+        const int labelHeight = QFontMetrics(labelFont).lineSpacing();
+        const int valueHeight = QFontMetrics(valueFont).lineSpacing();
+
+        painter.drawText(leftRect.adjusted(0, 0, 0, 0), Qt::AlignLeft | Qt::AlignTop, inLabel);
+        painter.setFont(valueFont);
+        painter.setPen(goldText);
+        painter.drawText(leftRect.adjusted(0, labelHeight - 1, 0, 0), Qt::AlignLeft | Qt::AlignTop, inValue);
+
+        painter.setFont(labelFont);
+        painter.setPen(mutedGoldText);
+        painter.drawText(rightRect.adjusted(0, 0, 0, 0), Qt::AlignLeft | Qt::AlignTop, outLabel);
+        painter.setFont(valueFont);
+        painter.setPen(goldText);
+        painter.drawText(rightRect.adjusted(0, labelHeight - 1, 0, 0), Qt::AlignLeft | Qt::AlignTop, outValue);
     }
 
 private:
     QString currentText_;
-    QString rangeText_;
+    QString inText_;
+    QString outText_;
 };
 
 void applyThemeTextPalette(QWidget* widget, const QColor& color, int shade = 100)
@@ -409,9 +439,9 @@ public:
                     return;
                 }
                 QPalette pal = button->palette();
-                pal.setColor(QPalette::WindowText, QColor(QStringLiteral("#8FD8FF")));
-                pal.setColor(QPalette::Text, QColor(QStringLiteral("#8FD8FF")));
-                pal.setColor(QPalette::ButtonText, QColor(QStringLiteral("#8FD8FF")));
+                pal.setColor(QPalette::WindowText, QColor(QStringLiteral("#5F98C8")));
+                pal.setColor(QPalette::Text, QColor(QStringLiteral("#5F98C8")));
+                pal.setColor(QPalette::ButtonText, QColor(QStringLiteral("#5F98C8")));
                 button->setPalette(pal);
             };
             applySpeedPalette(speedQuarterButton_);
@@ -529,23 +559,21 @@ public:
         }
 
         if (timecodeFrame_) {
-            QString inText = QStringLiteral("In --:--:--:--");
-            QString outText = QStringLiteral("Out --:--:--:--");
+            QString inText = QStringLiteral("--:--:--:--");
+            QString outText = QStringLiteral("--:--:--:--");
             if (inOutPoints_) {
                 if (const auto inPoint = inOutPoints_->inPoint()) {
-                    inText = QStringLiteral("In %1").arg(formatTimecode(inPoint->framePosition(), fps));
+                    inText = formatTimecode(inPoint->framePosition(), fps);
                 }
                 if (const auto outPoint = inOutPoints_->outPoint()) {
-                    outText = QStringLiteral("Out %1").arg(formatTimecode(outPoint->framePosition(), fps));
+                    outText = formatTimecode(outPoint->framePosition(), fps);
                 }
             }
             timecodeFrame_->setCurrentFrameText(QStringLiteral("%1\n%2 / %3")
                                                    .arg(formatFrameCount(clampedCurrent))
                                                    .arg(formatTimecode(clampedCurrent, fps))
                                                    .arg(formatTimecode(range.duration(), fps)));
-            timecodeFrame_->setRangeText(QStringLiteral("In\n%1\n/ Out\n%2")
-                                             .arg(inText.mid(3))
-                                             .arg(outText.mid(5)));
+            timecodeFrame_->setRangeTexts(inText, outText);
         }
     }
 

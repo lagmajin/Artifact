@@ -167,7 +167,10 @@ void Artifact3DLayer::draw(ArtifactIRenderer* renderer) {
     const float thickness = 2.0f;
 
     if (impl_->renderMode_ == RenderMode::Solid) {
-        // Draw filled polygons with fan triangulation for N-gons
+        // Draw filled polygons with fan triangulation for N-gons.
+        // PrimitiveRenderer3D only exposes quad filling, so use a degenerate
+        // quad where the first triangle carries the face and the second
+        // triangle collapses away.
         const FloatColor color = solidColor;
         for (int i = 0; i < impl_->mesh_.polygonCount(); ++i) {
             const auto vertexIndices = impl_->mesh_.getPolygonVertices(i);
@@ -177,7 +180,7 @@ void Artifact3DLayer::draw(ArtifactIRenderer* renderer) {
                     const QVector3D& v0 = transformedVertices[vertexIndices[0]];
                     const QVector3D& v1 = transformedVertices[vertexIndices[j]];
                     const QVector3D& v2 = transformedVertices[vertexIndices[j + 1]];
-                    renderer->draw3DQuad(toFloat3(v0), toFloat3(v1), toFloat3(v2), toFloat3(v2), color);
+                    renderer->draw3DQuad(toFloat3(v0), toFloat3(v1), toFloat3(v2), toFloat3(v0), color);
                 }
             }
         }

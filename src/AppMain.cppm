@@ -12,6 +12,7 @@ module;
 
 #include <clocale>
 #include <cstdio>
+#include <iostream>
 #include <fcntl.h>
 #include <io.h>
 #include <windows.h>
@@ -62,6 +63,8 @@ module;
 module Artifact.AppMain;
 
 import std;
+import Core.AI.Context;
+import Core.AI.McpBridge;
 
 import Application.AppSettings;
 import Artifact.Widgets.PlaybackControlWidget;
@@ -681,9 +684,47 @@ static void configureWindowsUtf8Console() {
     _setmode(stdinFd, _O_U8TEXT);
   }
 }
+
+static void configureWindowsBinaryConsole() {
+  const int stdinFd = _fileno(stdin);
+  if (stdinFd >= 0) {
+    _setmode(stdinFd, _O_BINARY);
+  }
+  const int stdoutFd = _fileno(stdout);
+  if (stdoutFd >= 0) {
+    _setmode(stdoutFd, _O_BINARY);
+  }
+}
 #else
 static void configureWindowsUtf8Console() {}
+static void configureWindowsBinaryConsole() {}
 #endif
+
+static int runMcpServerMode() {
+  configureWindowsBinaryConsole();
+
+  QByteArray inputBuffer;
+  char chunk[4096];
+  while (true) {
+    std::cin.read(chunk, sizeof(chunk));
+    const std::streamsize readCount = std::cin.gcount();
+    if (readCount <= 0) {
+      break;
+    }
+    inputBuffer.append(chunk, static_cast<int>(readCount));
+
+    QJsonObject request;
+    while (ArtifactCore::McpBridge::tryPopFrame(&inputBuffer, &request)) {
+      const QJsonObject response =
+          ArtifactCore::McpBridge::handleRequest(request, ArtifactCore::AIContext());
+      const QByteArray frame = ArtifactCore::McpBridge::encodeFrame(response);
+      std::cout.write(frame.constData(), static_cast<std::streamsize>(frame.size()));
+      std::cout.flush();
+    }
+  }
+
+  return 0;
+}
 
 int main(int argc, char *argv[]) {
   configureWindowsUtf8Console();
@@ -706,6 +747,14 @@ int main(int argc, char *argv[]) {
   if (renderMode) {
 
   } else {
+  }
+
+  QStringList appArgs;
+  for (int i = 0; i < argc; ++i) {
+    appArgs << QString::fromLocal8Bit(argv[i]);
+  }
+  if (appArgs.contains(QStringLiteral("--mcp-server"))) {
+    return runMcpServerMode();
   }
 
   QApplication a(argc, argv);

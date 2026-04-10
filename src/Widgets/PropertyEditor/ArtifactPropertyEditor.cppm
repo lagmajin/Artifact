@@ -47,6 +47,7 @@ import Artifact.Service.Playback;
 import Artifact.Service.Project;
 import Time.Rational;
 import FloatColorPickerDialog;
+import Artifact.Widgets.Dialog.FloatColorPickerHooks;
 import Widgets.Utils.CSS;
 
 namespace Artifact {
@@ -727,8 +728,7 @@ ArtifactFloatPropertyEditor::ArtifactFloatPropertyEditor(
     commitCurrentValue();
   });
 
-  // クリックでジャンプする挙動を追加
-  slider_->installEventFilter(this);
+  Artifact::installSliderJumpBehavior(this);
 }
 
 bool ArtifactFloatPropertyEditor::eventFilter(QObject *watched, QEvent *event) {
@@ -890,7 +890,7 @@ ArtifactIntPropertyEditor::ArtifactIntPropertyEditor(
     sliderInteracting_ = false;
     commitCurrentValue();
   });
-  slider_->installEventFilter(this);
+  Artifact::installSliderJumpBehavior(this);
 }
 
 QVariant ArtifactIntPropertyEditor::value() const {
@@ -1205,6 +1205,7 @@ ArtifactColorPropertyEditor::ArtifactColorPropertyEditor(
   applyColor(currentColor_);
   QObject::connect(button_, &QPushButton::clicked, this, [this]() {
     ArtifactWidgets::FloatColorPicker picker(button_);
+    Artifact::installFloatColorPickerSliderJump(&picker);
     picker.setWindowTitle(QStringLiteral("Select Color"));
     picker.setInitialColor(ArtifactCore::FloatColor(currentColor_.redF(),
                                             currentColor_.greenF(),
