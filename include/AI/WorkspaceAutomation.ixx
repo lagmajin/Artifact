@@ -1,0 +1,903 @@
+module;
+#include <algorithm>
+#include <memory>
+#include <utility>
+
+#include <QJsonArray>
+#include <QJsonObject>
+#include <QJsonValue>
+#include <QSet>
+#include <QMetaType>
+#include <QString>
+#include <QStringList>
+#include <QStringView>
+#include <QVariant>
+
+export module Artifact.AI.WorkspaceAutomation;
+
+import std;
+import Core.AI.Describable;
+import Artifact.Application.Manager;
+import Artifact.Composition.Abstract;
+import Artifact.Composition.InitParams;
+import Artifact.Layers.Selection.Manager;
+import Artifact.Layer.InitParams;
+import Artifact.Project.Manager;
+import Artifact.Render.Queue.Service;
+import Artifact.Service.Project;
+import Utils.String.UniString;
+
+export namespace Artifact {
+
+class WorkspaceAutomation : public ArtifactCore::IDescribable {
+public:
+    static void ensureRegistered()
+    {
+        (void)instance();
+    }
+
+    static WorkspaceAutomation& instance()
+    {
+        static WorkspaceAutomation automation;
+        return automation;
+    }
+
+    QString className() const override { return QStringLiteral("WorkspaceAutomation"); }
+
+    ArtifactCore::LocalizedText briefDescription() const override
+    {
+        return ArtifactCore::IDescribable::loc(
+            "Provides workspace snapshots and safe project, layer, asset, and render queue actions.",
+            "Provides workspace snapshots and safe project, layer, asset, and render queue actions.",
+            {});
+    }
+
+    ArtifactCore::LocalizedText detailedDescription() const override
+    {
+        return ArtifactCore::IDescribable::loc(
+            "This tool host exposes a compact AI automation surface for ArtifactStudio. "
+            "It can inspect the current project state, list compositions and layers, "
+            "import assets, create compositions, edit layer order and names, and control "
+            "the render queue through existing application services.",
+            "This tool host exposes a compact AI automation surface for ArtifactStudio. "
+            "It can inspect the current project state, list compositions and layers, "
+            "import assets, create compositions, edit layer order and names, and control "
+            "the render queue through existing application services.",
+            {});
+    }
+
+    QList<ArtifactCore::MethodDescription> methodDescriptions() const override
+    {
+        using ArtifactCore::IDescribable;
+        return {
+            {"workspaceSnapshot", IDescribable::loc("Return a combined project, composition, selection, and render queue snapshot.", "Return a combined project, composition, selection, and render queue snapshot.", {}), "QVariantMap"},
+            {"projectSnapshot", IDescribable::loc("Return the current project JSON snapshot.", "Return the current project JSON snapshot.", {}), "QVariantMap"},
+            {"currentCompositionSnapshot", IDescribable::loc("Return the active composition snapshot.", "Return the active composition snapshot.", {}), "QVariantMap"},
+            {"selectionSnapshot", IDescribable::loc("Return the current layer selection snapshot.", "Return the current layer selection snapshot.", {}), "QVariantMap"},
+            {"renderQueueSnapshot", IDescribable::loc("Return the render queue snapshot.", "Return the render queue snapshot.", {}), "QVariantMap"},
+            {"listCompositions", IDescribable::loc("Return the project composition list.", "Return the project composition list.", {}), "QVariantList"},
+            {"listProjectItems", IDescribable::loc("Return the project item tree.", "Return the project item tree.", {}), "QVariantList"},
+            {"listCurrentCompositionLayers", IDescribable::loc("Return the active composition layer list.", "Return the active composition layer list.", {}), "QVariantList"},
+            {"listRenderQueueJobs", IDescribable::loc("Return the render queue job list.", "Return the render queue job list.", {}), "QVariantList"},
+            {"createProject", IDescribable::loc("Create a new project if one is not already open.", "Create a new project if one is not already open.", {}), "bool", {QStringLiteral("QString")}, {QStringLiteral("projectName")}},
+            {"createComposition", IDescribable::loc("Create a composition in the current project.", "Create a composition in the current project.", {}), "QVariantMap", {QStringLiteral("QString"), QStringLiteral("int"), QStringLiteral("int")}, {QStringLiteral("name"), QStringLiteral("width"), QStringLiteral("height")}},
+            {"changeCurrentComposition", IDescribable::loc("Switch the active composition by id.", "Switch the active composition by id.", {}), "QVariantMap", {QStringLiteral("QString")}, {QStringLiteral("compositionId")}},
+            {"importAssetsFromPaths", IDescribable::loc("Import one or more asset paths into the project.", "Import one or more asset paths into the project.", {}), "QVariantMap", {QStringLiteral("QStringList")}, {QStringLiteral("paths")}},
+            {"addImageLayerToCurrentComposition", IDescribable::loc("Add an image layer to the active composition.", "Add an image layer to the active composition.", {}), "QVariantMap", {QStringLiteral("QString"), QStringLiteral("QString")}, {QStringLiteral("name"), QStringLiteral("path")}},
+            {"addSvgLayerToCurrentComposition", IDescribable::loc("Add an SVG layer to the active composition.", "Add an SVG layer to the active composition.", {}), "QVariantMap", {QStringLiteral("QString"), QStringLiteral("QString")}, {QStringLiteral("name"), QStringLiteral("path")}},
+            {"addAudioLayerToCurrentComposition", IDescribable::loc("Add an audio layer to the active composition.", "Add an audio layer to the active composition.", {}), "QVariantMap", {QStringLiteral("QString"), QStringLiteral("QString")}, {QStringLiteral("name"), QStringLiteral("path")}},
+            {"addTextLayerToCurrentComposition", IDescribable::loc("Add a text layer to the active composition.", "Add a text layer to the active composition.", {}), "QVariantMap", {QStringLiteral("QString")}, {QStringLiteral("name")}},
+            {"addNullLayerToCurrentComposition", IDescribable::loc("Add a null layer to the active composition.", "Add a null layer to the active composition.", {}), "QVariantMap", {QStringLiteral("QString"), QStringLiteral("int"), QStringLiteral("int")}, {QStringLiteral("name"), QStringLiteral("width"), QStringLiteral("height")}},
+            {"addSolidLayerToCurrentComposition", IDescribable::loc("Add a solid layer to the active composition.", "Add a solid layer to the active composition.", {}), "QVariantMap", {QStringLiteral("QString"), QStringLiteral("int"), QStringLiteral("int")}, {QStringLiteral("name"), QStringLiteral("width"), QStringLiteral("height")}},
+            {"selectLayer", IDescribable::loc("Select a layer in the active composition.", "Select a layer in the active composition.", {}), "bool", {QStringLiteral("QString")}, {QStringLiteral("layerId")}},
+            {"renameLayerInCurrentComposition", IDescribable::loc("Rename a layer in the active composition.", "Rename a layer in the active composition.", {}), "bool", {QStringLiteral("QString"), QStringLiteral("QString")}, {QStringLiteral("layerId"), QStringLiteral("newName")}},
+            {"replaceLayerSourceInCurrentComposition", IDescribable::loc("Replace the media source of a layer in the active composition.", "Replace the media source of a layer in the active composition.", {}), "bool", {QStringLiteral("QString"), QStringLiteral("QString")}, {QStringLiteral("layerId"), QStringLiteral("sourcePath")}},
+            {"duplicateLayerInCurrentComposition", IDescribable::loc("Duplicate a layer in the active composition.", "Duplicate a layer in the active composition.", {}), "bool", {QStringLiteral("QString")}, {QStringLiteral("layerId")}},
+            {"moveLayerInCurrentComposition", IDescribable::loc("Move a layer to a new index in the active composition.", "Move a layer to a new index in the active composition.", {}), "bool", {QStringLiteral("QString"), QStringLiteral("int")}, {QStringLiteral("layerId"), QStringLiteral("newIndex")}},
+            {"removeLayerFromCurrentComposition", IDescribable::loc("Remove a layer from the active composition.", "Remove a layer from the active composition.", {}), "bool", {QStringLiteral("QString")}, {QStringLiteral("layerId")}},
+            {"setLayerVisibleInCurrentComposition", IDescribable::loc("Toggle layer visibility in the active composition.", "Toggle layer visibility in the active composition.", {}), "bool", {QStringLiteral("QString"), QStringLiteral("bool")}, {QStringLiteral("layerId"), QStringLiteral("visible")}},
+            {"setLayerLockedInCurrentComposition", IDescribable::loc("Toggle layer lock state in the active composition.", "Toggle layer lock state in the active composition.", {}), "bool", {QStringLiteral("QString"), QStringLiteral("bool")}, {QStringLiteral("layerId"), QStringLiteral("locked")}},
+            {"setLayerSoloInCurrentComposition", IDescribable::loc("Toggle layer solo state in the active composition.", "Toggle layer solo state in the active composition.", {}), "bool", {QStringLiteral("QString"), QStringLiteral("bool")}, {QStringLiteral("layerId"), QStringLiteral("solo")}},
+            {"setLayerShyInCurrentComposition", IDescribable::loc("Toggle layer shy state in the active composition.", "Toggle layer shy state in the active composition.", {}), "bool", {QStringLiteral("QString"), QStringLiteral("bool")}, {QStringLiteral("layerId"), QStringLiteral("shy")}},
+            {"setLayerParentInCurrentComposition", IDescribable::loc("Set a layer parent in the active composition.", "Set a layer parent in the active composition.", {}), "bool", {QStringLiteral("QString"), QStringLiteral("QString")}, {QStringLiteral("layerId"), QStringLiteral("parentLayerId")}},
+            {"clearLayerParentInCurrentComposition", IDescribable::loc("Clear a layer parent in the active composition.", "Clear a layer parent in the active composition.", {}), "bool", {QStringLiteral("QString")}, {QStringLiteral("layerId")}},
+            {"splitLayerAtCurrentTime", IDescribable::loc("Split a layer at the current composition time cursor.", "Split a layer at the current composition time cursor.", {}), "bool", {QStringLiteral("QString")}, {QStringLiteral("layerId")}},
+            {"renameComposition", IDescribable::loc("Rename a composition by id.", "Rename a composition by id.", {}), "bool", {QStringLiteral("QString"), QStringLiteral("QString")}, {QStringLiteral("compositionId"), QStringLiteral("newName")}},
+            {"addRenderQueueForCurrentComposition", IDescribable::loc("Queue the active composition for rendering.", "Queue the active composition for rendering.", {}), "bool"},
+            {"addRenderQueueForComposition", IDescribable::loc("Queue a specific composition for rendering.", "Queue a specific composition for rendering.", {}), "bool", {QStringLiteral("QString")}, {QStringLiteral("compositionId")}},
+            {"addAllCompositionsToRenderQueue", IDescribable::loc("Queue every composition in the project.", "Queue every composition in the project.", {}), "int"},
+            {"startAllRenderQueues", IDescribable::loc("Start every queued render job.", "Start every queued render job.", {}), "bool"},
+            {"pauseAllRenderQueues", IDescribable::loc("Pause every queued render job.", "Pause every queued render job.", {}), "bool"},
+            {"cancelAllRenderQueues", IDescribable::loc("Cancel every queued render job.", "Cancel every queued render job.", {}), "bool"},
+            {"removeAllRenderQueues", IDescribable::loc("Clear the render queue.", "Clear the render queue.", {}), "bool"}
+        };
+    }
+
+    QVariant invokeMethod(QStringView name, const QVariantList& args) override
+    {
+        if (name == QStringLiteral("workspaceSnapshot")) {
+            return workspaceSnapshot();
+        }
+        if (name == QStringLiteral("projectSnapshot")) {
+            return projectSnapshot();
+        }
+        if (name == QStringLiteral("currentCompositionSnapshot")) {
+            return currentCompositionSnapshot();
+        }
+        if (name == QStringLiteral("selectionSnapshot")) {
+            return selectionSnapshot();
+        }
+        if (name == QStringLiteral("renderQueueSnapshot")) {
+            return renderQueueSnapshot();
+        }
+        if (name == QStringLiteral("listCompositions")) {
+            return listCompositions();
+        }
+        if (name == QStringLiteral("listProjectItems")) {
+            return listProjectItems();
+        }
+        if (name == QStringLiteral("listCurrentCompositionLayers")) {
+            return listCurrentCompositionLayers();
+        }
+        if (name == QStringLiteral("listRenderQueueJobs")) {
+            return listRenderQueueJobs();
+        }
+        if (name == QStringLiteral("createProject")) {
+            return createProject(firstString(args));
+        }
+        if (name == QStringLiteral("createComposition")) {
+            return createComposition(stringArg(args, 0), intArg(args, 1, 1920), intArg(args, 2, 1080));
+        }
+        if (name == QStringLiteral("changeCurrentComposition")) {
+            return changeCurrentComposition(stringArg(args, 0));
+        }
+        if (name == QStringLiteral("importAssetsFromPaths")) {
+            return importAssetsFromPaths(collectStringList(args));
+        }
+        if (name == QStringLiteral("addImageLayerToCurrentComposition")) {
+            return addImageLayerToCurrentComposition(stringArg(args, 0), stringArg(args, 1));
+        }
+        if (name == QStringLiteral("addSvgLayerToCurrentComposition")) {
+            return addSvgLayerToCurrentComposition(stringArg(args, 0), stringArg(args, 1));
+        }
+        if (name == QStringLiteral("addAudioLayerToCurrentComposition")) {
+            return addAudioLayerToCurrentComposition(stringArg(args, 0), stringArg(args, 1));
+        }
+        if (name == QStringLiteral("addTextLayerToCurrentComposition")) {
+            return addTextLayerToCurrentComposition(stringArg(args, 0));
+        }
+        if (name == QStringLiteral("addNullLayerToCurrentComposition")) {
+            return addNullLayerToCurrentComposition(stringArg(args, 0), intArg(args, 1, 1920), intArg(args, 2, 1080));
+        }
+        if (name == QStringLiteral("addSolidLayerToCurrentComposition")) {
+            return addSolidLayerToCurrentComposition(stringArg(args, 0), intArg(args, 1, 1920), intArg(args, 2, 1080));
+        }
+        if (name == QStringLiteral("selectLayer")) {
+            return selectLayer(stringArg(args, 0));
+        }
+        if (name == QStringLiteral("renameLayerInCurrentComposition")) {
+            return renameLayerInCurrentComposition(stringArg(args, 0), stringArg(args, 1));
+        }
+        if (name == QStringLiteral("replaceLayerSourceInCurrentComposition")) {
+            return replaceLayerSourceInCurrentComposition(stringArg(args, 0), stringArg(args, 1));
+        }
+        if (name == QStringLiteral("duplicateLayerInCurrentComposition")) {
+            return duplicateLayerInCurrentComposition(stringArg(args, 0));
+        }
+        if (name == QStringLiteral("moveLayerInCurrentComposition")) {
+            return moveLayerInCurrentComposition(stringArg(args, 0), intArg(args, 1, 0));
+        }
+        if (name == QStringLiteral("removeLayerFromCurrentComposition")) {
+            return removeLayerFromCurrentComposition(stringArg(args, 0));
+        }
+        if (name == QStringLiteral("setLayerVisibleInCurrentComposition")) {
+            return setLayerVisibleInCurrentComposition(stringArg(args, 0), boolArg(args, 1, true));
+        }
+        if (name == QStringLiteral("setLayerLockedInCurrentComposition")) {
+            return setLayerLockedInCurrentComposition(stringArg(args, 0), boolArg(args, 1, true));
+        }
+        if (name == QStringLiteral("setLayerSoloInCurrentComposition")) {
+            return setLayerSoloInCurrentComposition(stringArg(args, 0), boolArg(args, 1, true));
+        }
+        if (name == QStringLiteral("setLayerShyInCurrentComposition")) {
+            return setLayerShyInCurrentComposition(stringArg(args, 0), boolArg(args, 1, true));
+        }
+        if (name == QStringLiteral("setLayerParentInCurrentComposition")) {
+            return setLayerParentInCurrentComposition(stringArg(args, 0), stringArg(args, 1));
+        }
+        if (name == QStringLiteral("clearLayerParentInCurrentComposition")) {
+            return clearLayerParentInCurrentComposition(stringArg(args, 0));
+        }
+        if (name == QStringLiteral("splitLayerAtCurrentTime")) {
+            return splitLayerAtCurrentTime(stringArg(args, 0));
+        }
+        if (name == QStringLiteral("renameComposition")) {
+            return renameComposition(stringArg(args, 0), stringArg(args, 1));
+        }
+        if (name == QStringLiteral("addRenderQueueForCurrentComposition")) {
+            return addRenderQueueForCurrentComposition();
+        }
+        if (name == QStringLiteral("addRenderQueueForComposition")) {
+            return addRenderQueueForComposition(stringArg(args, 0));
+        }
+        if (name == QStringLiteral("addAllCompositionsToRenderQueue")) {
+            return addAllCompositionsToRenderQueue();
+        }
+        if (name == QStringLiteral("startAllRenderQueues")) {
+            return renderQueueStartAll();
+        }
+        if (name == QStringLiteral("pauseAllRenderQueues")) {
+            return renderQueuePauseAll();
+        }
+        if (name == QStringLiteral("cancelAllRenderQueues")) {
+            return renderQueueCancelAll();
+        }
+        if (name == QStringLiteral("removeAllRenderQueues")) {
+            return renderQueueRemoveAll();
+        }
+        return {};
+    }
+
+private:
+    static QVariantMap toVariantMap(const QJsonObject& obj)
+    {
+        QVariantMap map;
+        for (auto it = obj.constBegin(); it != obj.constEnd(); ++it) {
+            map.insert(it.key(), toVariant(it.value()));
+        }
+        return map;
+    }
+
+    static QVariantList toVariantList(const QJsonArray& arr)
+    {
+        QVariantList list;
+        for (const QJsonValue& value : arr) {
+            list.append(toVariant(value));
+        }
+        return list;
+    }
+
+    static QVariant toVariant(const QJsonValue& value)
+    {
+        if (value.isObject()) {
+            return toVariantMap(value.toObject());
+        }
+        if (value.isArray()) {
+            return toVariantList(value.toArray());
+        }
+        return value.toVariant();
+    }
+
+    static QJsonArray stringListToJsonArray(const QStringList& values)
+    {
+        QJsonArray arr;
+        for (const QString& value : values) {
+            arr.append(value);
+        }
+        return arr;
+    }
+
+    static QStringList collectStringList(const QVariantList& args)
+    {
+        QStringList values;
+        if (args.size() == 1) {
+            const QVariant& first = args.first();
+            const QVariantList nested = first.toList();
+            if (!nested.isEmpty()) {
+                for (const QVariant& value : nested) {
+                    const QString text = value.toString().trimmed();
+                    if (!text.isEmpty()) {
+                        values.append(text);
+                    }
+                }
+            } else {
+                const QStringList direct = first.toStringList();
+                if (!direct.isEmpty()) {
+                    for (const QString& text : direct) {
+                        const QString trimmed = text.trimmed();
+                        if (!trimmed.isEmpty()) {
+                            values.append(trimmed);
+                        }
+                    }
+                }
+            }
+        }
+        if (values.isEmpty()) {
+            for (const QVariant& value : args) {
+                const QString text = value.toString().trimmed();
+                if (!text.isEmpty()) {
+                    values.append(text);
+                }
+            }
+        }
+        values.removeDuplicates();
+        return values;
+    }
+
+    static QString firstString(const QVariantList& args)
+    {
+        return args.isEmpty() ? QString() : args.first().toString().trimmed();
+    }
+
+    static QString stringArg(const QVariantList& args, int index)
+    {
+        if (index < 0 || index >= args.size()) {
+            return {};
+        }
+        return args.at(index).toString().trimmed();
+    }
+
+    static int intArg(const QVariantList& args, int index, int defaultValue)
+    {
+        if (index < 0 || index >= args.size()) {
+            return defaultValue;
+        }
+        bool ok = false;
+        const int value = args.at(index).toInt(&ok);
+        return ok ? value : defaultValue;
+    }
+
+    static bool boolArg(const QVariantList& args, int index, bool defaultValue)
+    {
+        if (index < 0 || index >= args.size()) {
+            return defaultValue;
+        }
+        const QVariant& value = args.at(index);
+        if (value.typeId() == QMetaType::Bool) {
+            return value.toBool();
+        }
+        const QString text = value.toString().trimmed().toLower();
+        if (text == QStringLiteral("true") || text == QStringLiteral("1") ||
+            text == QStringLiteral("yes") || text == QStringLiteral("on")) {
+            return true;
+        }
+        if (text == QStringLiteral("false") || text == QStringLiteral("0") ||
+            text == QStringLiteral("no") || text == QStringLiteral("off")) {
+            return false;
+        }
+        return defaultValue;
+    }
+
+    static QJsonObject layerToJson(const ArtifactAbstractLayerPtr& layer, int index, bool selected)
+    {
+        QJsonObject obj = layer ? layer->toJson() : QJsonObject{};
+        if (layer) {
+            obj[QStringLiteral("className")] = layer->className().toQString();
+        }
+        obj[QStringLiteral("index")] = index;
+        obj[QStringLiteral("selected")] = selected;
+        return obj;
+    }
+
+    static ArtifactProjectManager& projectManager()
+    {
+        return ArtifactProjectManager::getInstance();
+    }
+
+    static std::shared_ptr<ArtifactProject> currentProject()
+    {
+        auto* app = ArtifactApplicationManager::instance();
+        auto* service = app ? app->projectService() : nullptr;
+        return service ? service->getCurrentProjectSharedPtr() : std::shared_ptr<ArtifactProject>{};
+    }
+
+    static ArtifactCompositionPtr currentComposition()
+    {
+        auto* app = ArtifactApplicationManager::instance();
+        if (app && app->activeContextService()) {
+            if (auto comp = app->activeContextService()->activeComposition()) {
+                return comp;
+            }
+        }
+        auto* service = app ? app->projectService() : nullptr;
+        return service ? service->currentComposition().lock() : ArtifactCompositionPtr{};
+    }
+
+    static ArtifactAbstractLayerPtr currentLayer()
+    {
+        auto* app = ArtifactApplicationManager::instance();
+        auto* selection = app ? app->layerSelectionManager() : nullptr;
+        return selection ? selection->currentLayer() : ArtifactAbstractLayerPtr{};
+    }
+
+    static QJsonObject projectToJson()
+    {
+        QJsonObject obj;
+        const auto project = currentProject();
+        auto* app = ArtifactApplicationManager::instance();
+        auto* service = app ? app->projectService() : nullptr;
+        if (!project) {
+            obj[QStringLiteral("available")] = false;
+            obj[QStringLiteral("projectPath")] = projectManager().currentProjectPath();
+            obj[QStringLiteral("assetsPath")] = projectManager().currentProjectAssetsPath();
+            return obj;
+        }
+
+        obj = project->toJson();
+        obj[QStringLiteral("available")] = true;
+        obj[QStringLiteral("projectName")] = service ? service->projectName().toQString() : QString();
+        obj[QStringLiteral("projectPath")] = projectManager().currentProjectPath();
+        obj[QStringLiteral("assetsPath")] = projectManager().currentProjectAssetsPath();
+        obj[QStringLiteral("compositionCount")] = obj.value(QStringLiteral("compositions")).toArray().size();
+        obj[QStringLiteral("projectItemCount")] = obj.value(QStringLiteral("projectItems")).toArray().size();
+        return obj;
+    }
+
+    static QVariantMap projectSnapshot()
+    {
+        return toVariantMap(projectToJson());
+    }
+
+    static QVariantMap currentCompositionSnapshot()
+    {
+        const auto comp = currentComposition();
+        QJsonObject obj;
+        if (!comp) {
+            obj[QStringLiteral("available")] = false;
+            return toVariantMap(obj);
+        }
+
+        obj = comp->toJson().object();
+        obj[QStringLiteral("available")] = true;
+        obj[QStringLiteral("layerCount")] = comp->layerCount();
+        return toVariantMap(obj);
+    }
+
+    static QVariantMap selectionSnapshot()
+    {
+        QJsonObject obj;
+        auto* app = ArtifactApplicationManager::instance();
+        auto* selection = app ? app->layerSelectionManager() : nullptr;
+        const auto comp = currentComposition();
+        if (!selection) {
+            obj[QStringLiteral("available")] = false;
+            return toVariantMap(obj);
+        }
+
+        const auto selected = selection->selectedLayers();
+        QVector<ArtifactAbstractLayerPtr> selectedLayers;
+        selectedLayers.reserve(selected.size());
+        for (const auto& layer : selected) {
+            if (layer) {
+                selectedLayers.push_back(layer);
+            }
+        }
+        std::sort(selectedLayers.begin(), selectedLayers.end(), [](const auto& a, const auto& b) {
+            return a->id().toString() < b->id().toString();
+        });
+
+        QJsonArray layers;
+        for (int i = 0; i < selectedLayers.size(); ++i) {
+            layers.append(layerToJson(selectedLayers[i], i, true));
+        }
+
+        obj[QStringLiteral("available")] = true;
+        obj[QStringLiteral("activeCompositionId")] = comp ? comp->id().toString() : QString();
+        obj[QStringLiteral("currentLayerId")] = selection->currentLayer() ? selection->currentLayer()->id().toString() : QString();
+        obj[QStringLiteral("selectedLayerCount")] = static_cast<int>(selectedLayers.size());
+        obj[QStringLiteral("selectedLayers")] = layers;
+        return toVariantMap(obj);
+    }
+
+    static QVariantMap renderQueueSnapshot()
+    {
+        QJsonObject obj;
+        auto* service = ArtifactRenderQueueService::instance();
+        if (!service) {
+            obj[QStringLiteral("available")] = false;
+            return toVariantMap(obj);
+        }
+
+        obj[QStringLiteral("available")] = true;
+        obj[QStringLiteral("jobCount")] = service->jobCount();
+        obj[QStringLiteral("totalProgress")] = service->getTotalProgress();
+        obj[QStringLiteral("jobs")] = service->toJson();
+        return toVariantMap(obj);
+    }
+
+    static QVariantMap workspaceSnapshot()
+    {
+        QVariantMap obj;
+        obj.insert(QStringLiteral("project"), projectSnapshot());
+        obj.insert(QStringLiteral("selection"), selectionSnapshot());
+        obj.insert(QStringLiteral("currentComposition"), currentCompositionSnapshot());
+        obj.insert(QStringLiteral("renderQueue"), renderQueueSnapshot());
+        return obj;
+    }
+
+    static QVariantList listCompositions()
+    {
+        const QJsonObject project = projectToJson();
+        return toVariantList(project.value(QStringLiteral("compositions")).toArray());
+    }
+
+    static QVariantList listProjectItems()
+    {
+        const QJsonObject project = projectToJson();
+        return toVariantList(project.value(QStringLiteral("projectItems")).toArray());
+    }
+
+    static QVariantList listCurrentCompositionLayers()
+    {
+        const auto comp = currentComposition();
+        if (!comp) {
+            return {};
+        }
+        const auto layers = comp->allLayer();
+        QJsonArray arr;
+        const auto selected = currentLayer();
+        for (int i = 0; i < layers.size(); ++i) {
+            arr.append(layerToJson(layers[i], i, selected == layers[i]));
+        }
+        return toVariantList(arr);
+    }
+
+    static QVariantList listRenderQueueJobs()
+    {
+        auto* service = ArtifactRenderQueueService::instance();
+        if (!service) {
+            return {};
+        }
+        return toVariantList(service->toJson());
+    }
+
+    static QVariant createProject(const QString& projectName)
+    {
+        auto& manager = projectManager();
+        const QString name = projectName.trimmed().isEmpty() ? QStringLiteral("Untitled") : projectName.trimmed();
+        const auto result = manager.createProject(name, false);
+        return QVariantMap{{QStringLiteral("isSuccess"), result.isSuccess}};
+    }
+
+    static QVariant createComposition(const QString& name, int width, int height)
+    {
+        auto& manager = projectManager();
+        ArtifactCompositionInitParams params;
+        const QString compositionName = name.trimmed().isEmpty() ? QStringLiteral("Composition") : name.trimmed();
+        params.setCompositionName(UniString(compositionName));
+        if (width > 0 && height > 0) {
+            params.setResolution(width, height);
+        }
+        const auto result = manager.createComposition(params);
+        QJsonObject obj;
+        obj[QStringLiteral("success")] = result.success;
+        obj[QStringLiteral("id")] = result.id.toString();
+        obj[QStringLiteral("message")] = result.message.toQString();
+        return toVariantMap(obj);
+    }
+
+    static QVariant changeCurrentComposition(const QString& compositionId)
+    {
+        auto* app = ArtifactApplicationManager::instance();
+        auto* service = app ? app->projectService() : nullptr;
+        if (!service) {
+            return QVariantMap{{QStringLiteral("success"), false}};
+        }
+        const auto result = service->changeCurrentComposition(CompositionID(compositionId));
+        QJsonObject obj;
+        obj[QStringLiteral("success")] = result.success;
+        obj[QStringLiteral("message")] = result.message.toQString();
+        return toVariantMap(obj);
+    }
+
+    static QVariant importAssetsFromPaths(const QStringList& paths)
+    {
+        auto& manager = projectManager();
+        if (!manager.isProjectCreated()) {
+            manager.createProject(QStringLiteral("Untitled"), false);
+        }
+        auto* app = ArtifactApplicationManager::instance();
+        auto* service = app ? app->projectService() : nullptr;
+        if (!service) {
+            return QVariantMap{{QStringLiteral("requestedCount"), static_cast<int>(paths.size())},
+                               {QStringLiteral("importedCount"), 0},
+                               {QStringLiteral("importedPaths"), QVariantList{}}};
+        }
+
+        const QStringList importedPaths = service->importAssetsFromPaths(paths);
+        QJsonObject obj;
+        obj[QStringLiteral("requestedCount")] = static_cast<int>(paths.size());
+        obj[QStringLiteral("importedCount")] = static_cast<int>(importedPaths.size());
+        obj[QStringLiteral("importedPaths")] = stringListToJsonArray(importedPaths);
+        return toVariantMap(obj);
+    }
+
+    static QVariant addImageLayerToCurrentComposition(const QString& name, const QString& path)
+    {
+        auto* service = ArtifactApplicationManager::instance() ? ArtifactApplicationManager::instance()->projectService() : nullptr;
+        if (!service) {
+            return QVariantMap{{QStringLiteral("success"), false}};
+        }
+        ArtifactImageInitParams params(name.isEmpty() ? QStringLiteral("Image") : name);
+        params.setImagePath(path);
+        service->addLayerToCurrentComposition(params);
+        return QVariantMap{{QStringLiteral("success"), true}};
+    }
+
+    static QVariant addSvgLayerToCurrentComposition(const QString& name, const QString& path)
+    {
+        auto* service = ArtifactApplicationManager::instance() ? ArtifactApplicationManager::instance()->projectService() : nullptr;
+        if (!service) {
+            return QVariantMap{{QStringLiteral("success"), false}};
+        }
+        ArtifactSvgInitParams params(name.isEmpty() ? QStringLiteral("SVG") : name);
+        params.setSvgPath(path);
+        service->addLayerToCurrentComposition(params);
+        return QVariantMap{{QStringLiteral("success"), true}};
+    }
+
+    static QVariant addAudioLayerToCurrentComposition(const QString& name, const QString& path)
+    {
+        auto* service = ArtifactApplicationManager::instance() ? ArtifactApplicationManager::instance()->projectService() : nullptr;
+        if (!service) {
+            return QVariantMap{{QStringLiteral("success"), false}};
+        }
+        ArtifactAudioInitParams params(name.isEmpty() ? QStringLiteral("Audio") : name);
+        params.setAudioPath(path);
+        service->addLayerToCurrentComposition(params);
+        return QVariantMap{{QStringLiteral("success"), true}};
+    }
+
+    static QVariant addTextLayerToCurrentComposition(const QString& name)
+    {
+        auto* service = ArtifactApplicationManager::instance() ? ArtifactApplicationManager::instance()->projectService() : nullptr;
+        if (!service) {
+            return QVariantMap{{QStringLiteral("success"), false}};
+        }
+        ArtifactTextLayerInitParams params(name.isEmpty() ? QStringLiteral("Text") : name);
+        service->addLayerToCurrentComposition(params);
+        return QVariantMap{{QStringLiteral("success"), true}};
+    }
+
+    static QVariant addNullLayerToCurrentComposition(const QString& name, int width, int height)
+    {
+        auto* service = ArtifactApplicationManager::instance() ? ArtifactApplicationManager::instance()->projectService() : nullptr;
+        if (!service) {
+            return QVariantMap{{QStringLiteral("success"), false}};
+        }
+        ArtifactNullLayerInitParams params(name.isEmpty() ? QStringLiteral("Null") : name);
+        params.setWidth(std::max(1, width));
+        params.setHeight(std::max(1, height));
+        service->addLayerToCurrentComposition(params);
+        return QVariantMap{{QStringLiteral("success"), true}};
+    }
+
+    static QVariant addSolidLayerToCurrentComposition(const QString& name, int width, int height)
+    {
+        auto* service = ArtifactApplicationManager::instance() ? ArtifactApplicationManager::instance()->projectService() : nullptr;
+        if (!service) {
+            return QVariantMap{{QStringLiteral("success"), false}};
+        }
+        ArtifactSolidLayerInitParams params(name.isEmpty() ? QStringLiteral("Solid") : name);
+        params.setWidth(std::max(1, width));
+        params.setHeight(std::max(1, height));
+        service->addLayerToCurrentComposition(params);
+        return QVariantMap{{QStringLiteral("success"), true}};
+    }
+
+    static QVariant setLayerVisibleInCurrentComposition(const QString& layerId, bool visible)
+    {
+        auto* service = ArtifactApplicationManager::instance() ? ArtifactApplicationManager::instance()->projectService() : nullptr;
+        if (!service) {
+            return false;
+        }
+        return service->setLayerVisibleInCurrentComposition(LayerID(layerId), visible);
+    }
+
+    static QVariant setLayerLockedInCurrentComposition(const QString& layerId, bool locked)
+    {
+        auto* service = ArtifactApplicationManager::instance() ? ArtifactApplicationManager::instance()->projectService() : nullptr;
+        if (!service) {
+            return false;
+        }
+        return service->setLayerLockedInCurrentComposition(LayerID(layerId), locked);
+    }
+
+    static QVariant setLayerSoloInCurrentComposition(const QString& layerId, bool solo)
+    {
+        auto* service = ArtifactApplicationManager::instance() ? ArtifactApplicationManager::instance()->projectService() : nullptr;
+        if (!service) {
+            return false;
+        }
+        return service->setLayerSoloInCurrentComposition(LayerID(layerId), solo);
+    }
+
+    static QVariant setLayerShyInCurrentComposition(const QString& layerId, bool shy)
+    {
+        auto* service = ArtifactApplicationManager::instance() ? ArtifactApplicationManager::instance()->projectService() : nullptr;
+        if (!service) {
+            return false;
+        }
+        return service->setLayerShyInCurrentComposition(LayerID(layerId), shy);
+    }
+
+    static QVariant setLayerParentInCurrentComposition(const QString& layerId, const QString& parentLayerId)
+    {
+        auto* service = ArtifactApplicationManager::instance() ? ArtifactApplicationManager::instance()->projectService() : nullptr;
+        if (!service) {
+            return false;
+        }
+        return service->setLayerParentInCurrentComposition(LayerID(layerId), LayerID(parentLayerId));
+    }
+
+    static QVariant clearLayerParentInCurrentComposition(const QString& layerId)
+    {
+        auto* service = ArtifactApplicationManager::instance() ? ArtifactApplicationManager::instance()->projectService() : nullptr;
+        if (!service) {
+            return false;
+        }
+        return service->clearLayerParentInCurrentComposition(LayerID(layerId));
+    }
+
+    static QVariant splitLayerAtCurrentTime(const QString& layerId)
+    {
+        auto* service = ArtifactApplicationManager::instance() ? ArtifactApplicationManager::instance()->projectService() : nullptr;
+        const auto comp = currentComposition();
+        if (!service || !comp) {
+            return false;
+        }
+        const LayerID id(layerId);
+        if (id.isNil()) {
+            return false;
+        }
+        service->splitLayerAtCurrentTime(comp->id(), id);
+        return true;
+    }
+
+    static QVariant selectLayer(const QString& layerId)
+    {
+        auto* selection = ArtifactApplicationManager::instance() ? ArtifactApplicationManager::instance()->layerSelectionManager() : nullptr;
+        const auto comp = currentComposition();
+        if (!selection || !comp) {
+            return false;
+        }
+        const auto layer = comp->layerById(LayerID(layerId));
+        if (!layer) {
+            return false;
+        }
+        selection->selectLayer(layer);
+        return true;
+    }
+
+    static QVariant renameLayerInCurrentComposition(const QString& layerId, const QString& newName)
+    {
+        auto* service = ArtifactApplicationManager::instance() ? ArtifactApplicationManager::instance()->projectService() : nullptr;
+        if (!service) {
+            return false;
+        }
+        return service->renameLayerInCurrentComposition(LayerID(layerId), newName);
+    }
+
+    static QVariant replaceLayerSourceInCurrentComposition(const QString& layerId, const QString& sourcePath)
+    {
+        auto* service = ArtifactApplicationManager::instance() ? ArtifactApplicationManager::instance()->projectService() : nullptr;
+        if (!service) {
+            return false;
+        }
+        const QString trimmed = sourcePath.trimmed();
+        if (trimmed.isEmpty()) {
+            return false;
+        }
+        return service->replaceLayerSourceInCurrentComposition(LayerID(layerId), trimmed);
+    }
+
+    static QVariant duplicateLayerInCurrentComposition(const QString& layerId)
+    {
+        auto* service = ArtifactApplicationManager::instance() ? ArtifactApplicationManager::instance()->projectService() : nullptr;
+        if (!service) {
+            return false;
+        }
+        return service->duplicateLayerInCurrentComposition(LayerID(layerId));
+    }
+
+    static QVariant moveLayerInCurrentComposition(const QString& layerId, int newIndex)
+    {
+        auto* service = ArtifactApplicationManager::instance() ? ArtifactApplicationManager::instance()->projectService() : nullptr;
+        if (!service) {
+            return false;
+        }
+        return service->moveLayerInCurrentComposition(LayerID(layerId), newIndex);
+    }
+
+    static QVariant removeLayerFromCurrentComposition(const QString& layerId)
+    {
+        auto* service = ArtifactApplicationManager::instance() ? ArtifactApplicationManager::instance()->projectService() : nullptr;
+        const auto comp = currentComposition();
+        if (!service || !comp) {
+            return false;
+        }
+        return service->removeLayerFromComposition(comp->id(), LayerID(layerId));
+    }
+
+    static QVariant renameComposition(const QString& compositionId, const QString& newName)
+    {
+        auto* service = ArtifactApplicationManager::instance() ? ArtifactApplicationManager::instance()->projectService() : nullptr;
+        if (!service) {
+            return false;
+        }
+        return service->renameComposition(CompositionID(compositionId), UniString(newName));
+    }
+
+    static QVariant addRenderQueueForCurrentComposition()
+    {
+        auto* service = ArtifactRenderQueueService::instance();
+        const auto comp = currentComposition();
+        if (!service || !comp) {
+            return false;
+        }
+        service->addRenderQueueForComposition(comp->id(), comp->settings().compositionName().toQString());
+        return true;
+    }
+
+    static QVariant addRenderQueueForComposition(const QString& compositionId)
+    {
+        auto* service = ArtifactRenderQueueService::instance();
+        auto* projectService = ArtifactApplicationManager::instance() ? ArtifactApplicationManager::instance()->projectService() : nullptr;
+        if (!service || !projectService) {
+            return false;
+        }
+        const auto found = projectService->findComposition(CompositionID(compositionId));
+        if (!found.success) {
+            return false;
+        }
+        const auto comp = found.ptr.lock();
+        if (!comp) {
+            return false;
+        }
+        service->addRenderQueueForComposition(comp->id(), comp->settings().compositionName().toQString());
+        return true;
+    }
+
+    static QVariant addAllCompositionsToRenderQueue()
+    {
+        auto* service = ArtifactRenderQueueService::instance();
+        if (!service) {
+            return 0;
+        }
+        return service->addAllCompositions();
+    }
+
+    static QVariant renderQueueStartAll()
+    {
+        auto* service = ArtifactRenderQueueService::instance();
+        if (!service) {
+            return false;
+        }
+        service->startAllJobs();
+        return true;
+    }
+
+    static QVariant renderQueuePauseAll()
+    {
+        auto* service = ArtifactRenderQueueService::instance();
+        if (!service) {
+            return false;
+        }
+        service->pauseAllJobs();
+        return true;
+    }
+
+    static QVariant renderQueueCancelAll()
+    {
+        auto* service = ArtifactRenderQueueService::instance();
+        if (!service) {
+            return false;
+        }
+        service->cancelAllJobs();
+        return true;
+    }
+
+    static QVariant renderQueueRemoveAll()
+    {
+        auto* service = ArtifactRenderQueueService::instance();
+        if (!service) {
+            return false;
+        }
+        service->removeAllRenderQueues();
+        return true;
+    }
+};
+
+static ArtifactCore::AutoRegisterDescribable<WorkspaceAutomation> _reg_WorkspaceAutomation(QStringLiteral("WorkspaceAutomation"));
+
+} // namespace Artifact
