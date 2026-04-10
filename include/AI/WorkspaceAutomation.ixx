@@ -4,6 +4,8 @@ module;
 #include <utility>
 
 #include <QJsonArray>
+#include <QFileInfo>
+#include <QColor>
 #include <QJsonObject>
 #include <QJsonValue>
 #include <QSet>
@@ -23,6 +25,7 @@ import Artifact.Composition.InitParams;
 import Artifact.Layers.Selection.Manager;
 import Artifact.Layer.InitParams;
 import Artifact.Project.Manager;
+import Artifact.Project.Items;
 import Artifact.Render.Queue.Service;
 import Artifact.Service.Project;
 import Utils.String.UniString;
@@ -103,6 +106,17 @@ public:
             {"clearLayerParentInCurrentComposition", IDescribable::loc("Clear a layer parent in the active composition.", "Clear a layer parent in the active composition.", {}), "bool", {QStringLiteral("QString")}, {QStringLiteral("layerId")}},
             {"splitLayerAtCurrentTime", IDescribable::loc("Split a layer at the current composition time cursor.", "Split a layer at the current composition time cursor.", {}), "bool", {QStringLiteral("QString")}, {QStringLiteral("layerId")}},
             {"renameComposition", IDescribable::loc("Rename a composition by id.", "Rename a composition by id.", {}), "bool", {QStringLiteral("QString"), QStringLiteral("QString")}, {QStringLiteral("compositionId"), QStringLiteral("newName")}},
+            {"duplicateComposition", IDescribable::loc("Duplicate a composition by id.", "Duplicate a composition by id.", {}), "QVariantMap", {QStringLiteral("QString")}, {QStringLiteral("compositionId")}},
+            {"compositionRemovalConfirmationMessage", IDescribable::loc("Return the confirmation message for deleting a composition.", "Return the confirmation message for deleting a composition.", {}), "QString", {QStringLiteral("QString")}, {QStringLiteral("compositionId")}},
+            {"removeCompositionWithRenderQueueCleanup", IDescribable::loc("Remove a composition and clear related render queue jobs.", "Remove a composition and clear related render queue jobs.", {}), "bool", {QStringLiteral("QString")}, {QStringLiteral("compositionId")}},
+            {"removeAllAssets", IDescribable::loc("Remove all imported assets from the project.", "Remove all imported assets from the project.", {}), "bool"},
+            {"findProjectItemById", IDescribable::loc("Return a project item snapshot by id.", "Return a project item snapshot by id.", {}), "QVariantMap", {QStringLiteral("QString")}, {QStringLiteral("itemId")}},
+            {"projectItemRemovalConfirmationMessage", IDescribable::loc("Return the confirmation message for deleting a project item by id.", "Return the confirmation message for deleting a project item by id.", {}), "QString", {QStringLiteral("QString")}, {QStringLiteral("itemId")}},
+            {"renameProjectItemById", IDescribable::loc("Rename a project item by id.", "Rename a project item by id.", {}), "bool", {QStringLiteral("QString"), QStringLiteral("QString")}, {QStringLiteral("itemId"), QStringLiteral("newName")}},
+            {"moveProjectItemToFolder", IDescribable::loc("Move a project item under a folder by id.", "Move a project item under a folder by id.", {}), "bool", {QStringLiteral("QString"), QStringLiteral("QString")}, {QStringLiteral("itemId"), QStringLiteral("parentFolderId")}},
+            {"createFolderInProject", IDescribable::loc("Create a project folder, optionally under a parent folder.", "Create a project folder, optionally under a parent folder.", {}), "bool", {QStringLiteral("QString"), QStringLiteral("QString")}, {QStringLiteral("name"), QStringLiteral("parentFolderId")}},
+            {"removeProjectItemById", IDescribable::loc("Remove a project item by id.", "Remove a project item by id.", {}), "bool", {QStringLiteral("QString")}, {QStringLiteral("itemId")}},
+            {"relinkFootageByPath", IDescribable::loc("Relink a footage item by its old file path.", "Relink a footage item by its old file path.", {}), "bool", {QStringLiteral("QString"), QStringLiteral("QString")}, {QStringLiteral("oldFilePath"), QStringLiteral("newFilePath")}},
             {"addRenderQueueForCurrentComposition", IDescribable::loc("Queue the active composition for rendering.", "Queue the active composition for rendering.", {}), "bool"},
             {"addRenderQueueForComposition", IDescribable::loc("Queue a specific composition for rendering.", "Queue a specific composition for rendering.", {}), "bool", {QStringLiteral("QString")}, {QStringLiteral("compositionId")}},
             {"addAllCompositionsToRenderQueue", IDescribable::loc("Queue every composition in the project.", "Queue every composition in the project.", {}), "int"},
@@ -213,6 +227,39 @@ public:
         }
         if (name == QStringLiteral("renameComposition")) {
             return renameComposition(stringArg(args, 0), stringArg(args, 1));
+        }
+        if (name == QStringLiteral("duplicateComposition")) {
+            return duplicateComposition(stringArg(args, 0));
+        }
+        if (name == QStringLiteral("compositionRemovalConfirmationMessage")) {
+            return compositionRemovalConfirmationMessage(stringArg(args, 0));
+        }
+        if (name == QStringLiteral("removeCompositionWithRenderQueueCleanup")) {
+            return removeCompositionWithRenderQueueCleanup(stringArg(args, 0));
+        }
+        if (name == QStringLiteral("removeAllAssets")) {
+            return removeAllAssets();
+        }
+        if (name == QStringLiteral("findProjectItemById")) {
+            return findProjectItemById(stringArg(args, 0));
+        }
+        if (name == QStringLiteral("projectItemRemovalConfirmationMessage")) {
+            return projectItemRemovalConfirmationMessage(stringArg(args, 0));
+        }
+        if (name == QStringLiteral("renameProjectItemById")) {
+            return renameProjectItemById(stringArg(args, 0), stringArg(args, 1));
+        }
+        if (name == QStringLiteral("moveProjectItemToFolder")) {
+            return moveProjectItemToFolder(stringArg(args, 0), stringArg(args, 1));
+        }
+        if (name == QStringLiteral("createFolderInProject")) {
+            return createFolderInProject(stringArg(args, 0), stringArg(args, 1));
+        }
+        if (name == QStringLiteral("removeProjectItemById")) {
+            return removeProjectItemById(stringArg(args, 0));
+        }
+        if (name == QStringLiteral("relinkFootageByPath")) {
+            return relinkFootageByPath(stringArg(args, 0), stringArg(args, 1));
         }
         if (name == QStringLiteral("addRenderQueueForCurrentComposition")) {
             return addRenderQueueForCurrentComposition();
@@ -816,6 +863,229 @@ private:
             return false;
         }
         return service->renameComposition(CompositionID(compositionId), UniString(newName));
+    }
+
+    static QVariant duplicateComposition(const QString& compositionId)
+    {
+        auto& manager = projectManager();
+        const auto result = manager.duplicateComposition(CompositionID(compositionId));
+        if (result.success) {
+            if (auto* service = ArtifactApplicationManager::instance() ? ArtifactApplicationManager::instance()->projectService() : nullptr) {
+                service->changeCurrentComposition(result.id);
+            }
+        }
+        QJsonObject obj;
+        obj[QStringLiteral("success")] = result.success;
+        obj[QStringLiteral("id")] = result.id.toString();
+        obj[QStringLiteral("message")] = result.message.toQString();
+        return toVariantMap(obj);
+    }
+
+    static QVariant compositionRemovalConfirmationMessage(const QString& compositionId)
+    {
+        auto* service = ArtifactApplicationManager::instance() ? ArtifactApplicationManager::instance()->projectService() : nullptr;
+        if (!service) {
+            return QString();
+        }
+        return service->compositionRemovalConfirmationMessage(CompositionID(compositionId));
+    }
+
+    static QVariant removeCompositionWithRenderQueueCleanup(const QString& compositionId)
+    {
+        auto* service = ArtifactApplicationManager::instance() ? ArtifactApplicationManager::instance()->projectService() : nullptr;
+        if (!service) {
+            return false;
+        }
+        return service->removeCompositionWithRenderQueueCleanup(CompositionID(compositionId));
+    }
+
+    static QVariant removeAllAssets()
+    {
+        auto* service = ArtifactApplicationManager::instance() ? ArtifactApplicationManager::instance()->projectService() : nullptr;
+        if (!service) {
+            return false;
+        }
+        service->removeAllAssets();
+        return true;
+    }
+
+    static ProjectItem* findProjectItemRecursive(ProjectItem* item, const QString& itemId)
+    {
+        if (!item || itemId.trimmed().isEmpty()) {
+            return nullptr;
+        }
+        if (item->id.toString() == itemId) {
+            return item;
+        }
+        for (auto* child : item->children) {
+            if (auto* found = findProjectItemRecursive(child, itemId)) {
+                return found;
+            }
+        }
+        return nullptr;
+    }
+
+    static ProjectItem* findProjectItemByIdPointer(const QString& itemId)
+    {
+        auto* service = ArtifactApplicationManager::instance() ? ArtifactApplicationManager::instance()->projectService() : nullptr;
+        if (!service) {
+            return nullptr;
+        }
+        const auto roots = service->projectItems();
+        for (auto* root : roots) {
+            if (auto* found = findProjectItemRecursive(root, itemId)) {
+                return found;
+            }
+        }
+        return nullptr;
+    }
+
+    static QJsonObject projectItemToJson(const ProjectItem* item)
+    {
+        QJsonObject obj;
+        if (!item) {
+            return obj;
+        }
+        obj[QStringLiteral("name")] = item->name.toQString();
+        obj[QStringLiteral("id")] = item->id.toString();
+        switch (item->type()) {
+        case eProjectItemType::Folder: {
+            obj[QStringLiteral("type")] = QStringLiteral("folder");
+            QJsonArray children;
+            for (const auto* child : item->children) {
+                children.append(projectItemToJson(child));
+            }
+            obj[QStringLiteral("children")] = children;
+            break;
+        }
+        case eProjectItemType::Footage: {
+            obj[QStringLiteral("type")] = QStringLiteral("footage");
+            const auto* footage = static_cast<const FootageItem*>(item);
+            obj[QStringLiteral("filePath")] = footage->filePath;
+            obj[QStringLiteral("filePathExists")] = QFileInfo(footage->filePath).exists();
+            break;
+        }
+        case eProjectItemType::Solid: {
+            obj[QStringLiteral("type")] = QStringLiteral("solid");
+            const auto* solid = static_cast<const SolidItem*>(item);
+            obj[QStringLiteral("color")] = solid->color.name(QColor::HexArgb);
+            break;
+        }
+        case eProjectItemType::Composition: {
+            obj[QStringLiteral("type")] = QStringLiteral("composition");
+            const auto* compItem = static_cast<const CompositionItem*>(item);
+            obj[QStringLiteral("compositionId")] = compItem->compositionId.toString();
+            break;
+        }
+        default:
+            obj[QStringLiteral("type")] = QStringLiteral("unknown");
+            break;
+        }
+        return obj;
+    }
+
+    static QVariantMap findProjectItemById(const QString& itemId)
+    {
+        const auto* item = findProjectItemByIdPointer(itemId);
+        return toVariantMap(projectItemToJson(item));
+    }
+
+    static QVariant projectItemRemovalConfirmationMessage(const QString& itemId)
+    {
+        const auto* item = findProjectItemByIdPointer(itemId);
+        if (!item) {
+            return QStringLiteral("Project item not found.");
+        }
+        auto* service = ArtifactApplicationManager::instance() ? ArtifactApplicationManager::instance()->projectService() : nullptr;
+        if (!service) {
+            return QStringLiteral("Project service unavailable.");
+        }
+        return service->projectItemRemovalConfirmationMessage(const_cast<ProjectItem*>(item));
+    }
+
+    static QVariant moveProjectItemToFolder(const QString& itemId, const QString& parentFolderId)
+    {
+        auto* service = ArtifactApplicationManager::instance() ? ArtifactApplicationManager::instance()->projectService() : nullptr;
+        if (!service) {
+            return false;
+        }
+        auto* item = findProjectItemByIdPointer(itemId);
+        auto* parent = findProjectItemByIdPointer(parentFolderId);
+        if (!item || !parent || parent->type() != eProjectItemType::Folder) {
+            return false;
+        }
+        return service->moveProjectItem(item, parent);
+    }
+
+    static QVariant createFolderInProject(const QString& name, const QString& parentFolderId)
+    {
+        const QString trimmedName = name.trimmed();
+        if (trimmedName.isEmpty()) {
+            return false;
+        }
+        auto project = currentProject();
+        if (!project) {
+            return false;
+        }
+        FolderItem* parentFolder = nullptr;
+        if (!parentFolderId.trimmed().isEmpty()) {
+            auto* parent = findProjectItemByIdPointer(parentFolderId);
+            if (!parent || parent->type() != eProjectItemType::Folder) {
+                return false;
+            }
+            parentFolder = static_cast<FolderItem*>(parent);
+        }
+        project->createFolder(trimmedName, parentFolder);
+        return true;
+    }
+
+    static QVariant renameProjectItemById(const QString& itemId, const QString& newName)
+    {
+        const QString trimmedName = newName.trimmed();
+        if (trimmedName.isEmpty()) {
+            return false;
+        }
+        auto* item = findProjectItemByIdPointer(itemId);
+        if (!item) {
+            return false;
+        }
+        auto* service = ArtifactApplicationManager::instance() ? ArtifactApplicationManager::instance()->projectService() : nullptr;
+        if (!service) {
+            return false;
+        }
+        if (item->type() == eProjectItemType::Composition) {
+            auto* compItem = static_cast<CompositionItem*>(item);
+            return service->renameComposition(compItem->compositionId, UniString::fromQString(trimmedName));
+        }
+        auto project = currentProject();
+        if (!project) {
+            return false;
+        }
+        item->name = UniString::fromQString(trimmedName);
+        project->projectChanged();
+        return true;
+    }
+
+    static QVariant removeProjectItemById(const QString& itemId)
+    {
+        auto* service = ArtifactApplicationManager::instance() ? ArtifactApplicationManager::instance()->projectService() : nullptr;
+        if (!service) {
+            return false;
+        }
+        auto* item = findProjectItemByIdPointer(itemId);
+        if (!item) {
+            return false;
+        }
+        return service->removeProjectItem(item);
+    }
+
+    static QVariant relinkFootageByPath(const QString& oldFilePath, const QString& newFilePath)
+    {
+        auto* service = ArtifactApplicationManager::instance() ? ArtifactApplicationManager::instance()->projectService() : nullptr;
+        if (!service) {
+            return false;
+        }
+        return service->relinkFootageByPath(oldFilePath.trimmed(), newFilePath.trimmed());
     }
 
     static QVariant addRenderQueueForCurrentComposition()
