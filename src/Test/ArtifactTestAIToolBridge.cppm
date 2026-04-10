@@ -177,6 +177,15 @@ int runAIToolBridgeTests()
     const QJsonObject renderQueueJobTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("renderQueueJobByIndex"));
     report.check(!renderQueueJobTool.isEmpty(), QStringLiteral("workspace automation exposes render queue job lookup"));
 
+    const QJsonObject renderQueueJobStatusTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("renderQueueJobStatusAt"));
+    report.check(!renderQueueJobStatusTool.isEmpty(), QStringLiteral("workspace automation exposes render queue job status lookup"));
+
+    const QJsonObject renderQueueJobProgressTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("renderQueueJobProgressAt"));
+    report.check(!renderQueueJobProgressTool.isEmpty(), QStringLiteral("workspace automation exposes render queue job progress lookup"));
+
+    const QJsonObject renderQueueJobErrorTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("renderQueueJobErrorMessageAt"));
+    report.check(!renderQueueJobErrorTool.isEmpty(), QStringLiteral("workspace automation exposes render queue job error lookup"));
+
     const QJsonObject duplicateQueueTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("duplicateRenderQueueAt"));
     report.check(!duplicateQueueTool.isEmpty(), QStringLiteral("workspace automation exposes render queue duplication"));
 
@@ -353,6 +362,24 @@ int runAIToolBridgeTests()
                                                      {0});
     report.check(queueJobVariant.typeId() == QMetaType::QVariantMap,
                  QStringLiteral("render queue job lookup returns a snapshot map"));
+
+    const QVariant queueStatusVariant =
+        Artifact::WorkspaceAutomation().invokeMethod(QStringLiteral("renderQueueJobStatusAt"),
+                                                     {0});
+    report.check(queueStatusVariant.typeId() == QMetaType::QString,
+                 QStringLiteral("render queue job status lookup returns text"));
+
+    const QVariant queueProgressVariant =
+        Artifact::WorkspaceAutomation().invokeMethod(QStringLiteral("renderQueueJobProgressAt"),
+                                                     {0});
+    report.check(queueProgressVariant.typeId() == QMetaType::Int,
+                 QStringLiteral("render queue job progress lookup returns an int"));
+
+    const QVariant queueErrorVariant =
+        Artifact::WorkspaceAutomation().invokeMethod(QStringLiteral("renderQueueJobErrorMessageAt"),
+                                                     {0});
+    report.check(queueErrorVariant.typeId() == QMetaType::QString,
+                 QStringLiteral("render queue job error lookup returns text"));
 
     ArtifactCore::CommandSandbox& sandbox = ArtifactCore::CommandSandbox::instance();
     sandbox.resetPolicy();

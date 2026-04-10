@@ -79,6 +79,9 @@ public:
             {"selectionSnapshot", IDescribable::loc("Return the current layer selection snapshot.", "Return the current layer selection snapshot.", {}), "QVariantMap"},
             {"renderQueueSnapshot", IDescribable::loc("Return the render queue snapshot.", "Return the render queue snapshot.", {}), "QVariantMap"},
             {"renderQueueJobByIndex", IDescribable::loc("Return a render queue job snapshot by index.", "Return a render queue job snapshot by index.", {}), "QVariantMap", {QStringLiteral("int")}, {QStringLiteral("jobIndex")}},
+            {"renderQueueJobStatusAt", IDescribable::loc("Return the status text for a render queue job by index.", "Return the status text for a render queue job by index.", {}), "QString", {QStringLiteral("int")}, {QStringLiteral("jobIndex")}},
+            {"renderQueueJobProgressAt", IDescribable::loc("Return the progress for a render queue job by index.", "Return the progress for a render queue job by index.", {}), "int", {QStringLiteral("int")}, {QStringLiteral("jobIndex")}},
+            {"renderQueueJobErrorMessageAt", IDescribable::loc("Return the error message for a render queue job by index.", "Return the error message for a render queue job by index.", {}), "QString", {QStringLiteral("int")}, {QStringLiteral("jobIndex")}},
             {"listCompositions", IDescribable::loc("Return the project composition list.", "Return the project composition list.", {}), "QVariantList"},
             {"listProjectItems", IDescribable::loc("Return the project item tree.", "Return the project item tree.", {}), "QVariantList"},
             {"listCurrentCompositionLayers", IDescribable::loc("Return the active composition layer list.", "Return the active composition layer list.", {}), "QVariantList"},
@@ -155,6 +158,15 @@ public:
         }
         if (name == QStringLiteral("renderQueueJobByIndex")) {
             return renderQueueJobByIndex(intArg(args, 0, -1));
+        }
+        if (name == QStringLiteral("renderQueueJobStatusAt")) {
+            return renderQueueJobStatusAt(intArg(args, 0, -1));
+        }
+        if (name == QStringLiteral("renderQueueJobProgressAt")) {
+            return renderQueueJobProgressAt(intArg(args, 0, -1));
+        }
+        if (name == QStringLiteral("renderQueueJobErrorMessageAt")) {
+            return renderQueueJobErrorMessageAt(intArg(args, 0, -1));
         }
         if (name == QStringLiteral("listCompositions")) {
             return listCompositions();
@@ -574,7 +586,20 @@ private:
         obj[QStringLiteral("available")] = true;
         obj[QStringLiteral("jobCount")] = service->jobCount();
         obj[QStringLiteral("totalProgress")] = service->getTotalProgress();
-        obj[QStringLiteral("jobs")] = service->toJson();
+        QJsonArray jobs;
+        const QJsonArray rawJobs = service->toJson();
+        for (int i = 0; i < rawJobs.size(); ++i) {
+            if (!rawJobs.at(i).isObject()) {
+                continue;
+            }
+            QJsonObject job = rawJobs.at(i).toObject();
+            job[QStringLiteral("index")] = i;
+            job[QStringLiteral("status")] = service->jobStatusAt(i);
+            job[QStringLiteral("progress")] = service->jobProgressAt(i);
+            job[QStringLiteral("errorMessage")] = service->jobErrorMessageAt(i);
+            jobs.append(job);
+        }
+        obj[QStringLiteral("jobs")] = jobs;
         return toVariantMap(obj);
     }
 
@@ -591,7 +616,37 @@ private:
         }
         QJsonObject obj = jobs.at(jobIndex).toObject();
         obj[QStringLiteral("index")] = jobIndex;
+        obj[QStringLiteral("status")] = service->jobStatusAt(jobIndex);
+        obj[QStringLiteral("progress")] = service->jobProgressAt(jobIndex);
+        obj[QStringLiteral("errorMessage")] = service->jobErrorMessageAt(jobIndex);
         return toVariantMap(obj);
+    }
+
+    static QVariant renderQueueJobStatusAt(int jobIndex)
+    {
+        auto* service = ArtifactRenderQueueService::instance();
+        if (!service || jobIndex < 0 || jobIndex >= service->jobCount()) {
+            return QString();
+        }
+        return service->jobStatusAt(jobIndex);
+    }
+
+    static QVariant renderQueueJobProgressAt(int jobIndex)
+    {
+        auto* service = ArtifactRenderQueueService::instance();
+        if (!service || jobIndex < 0 || jobIndex >= service->jobCount()) {
+            return -1;
+        }
+        return service->jobProgressAt(jobIndex);
+    }
+
+    static QVariant renderQueueJobErrorMessageAt(int jobIndex)
+    {
+        auto* service = ArtifactRenderQueueService::instance();
+        if (!service || jobIndex < 0 || jobIndex >= service->jobCount()) {
+            return QString();
+        }
+        return service->jobErrorMessageAt(jobIndex);
     }
 
     static QVariantMap workspaceSnapshot()
