@@ -74,12 +74,14 @@ void drawFramedToolButtonSurface(const QStyleOption* option, QPainter* painter, 
   const QRect drawRect = option->rect.adjusted(0, 0, -1, -1);
 
   if (isPlayButton) {
-    border = QColor(QStringLiteral("#BFEAFF"));
     fill = QColor(QStringLiteral("#8ADFFF"));
+    border = QColor(QStringLiteral("#6BB7DB"));
     if (option->state.testFlag(QStyle::State_Sunken) || option->state.testFlag(QStyle::State_On)) {
       fill = QColor(QStringLiteral("#67C9F0"));
+      border = QColor(QStringLiteral("#4F9ECC"));
     } else if (option->state.testFlag(QStyle::State_MouseOver)) {
       fill = QColor(QStringLiteral("#98E6FF"));
+      border = QColor(QStringLiteral("#5EABCF"));
     }
   }
   if (isSpeedButton) {

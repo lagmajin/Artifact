@@ -21,12 +21,17 @@ module;
 #include <QDebug>
 #include <QMetaObject>
 #include <QSettings>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonArray>
 #include <wobjectimpl.h>
 
 module AI.Client;
 import Utils.String.UniString;
 import Core.AI.PromptGenerator;
 import Core.AI.Context;
+import Core.AI.ToolBridge;
+import Core.AI.ToolExecutor;
 import Core.AI.LocalAgent;
 import Core.AI.LlamaAgent;
 import Core.AI.OnnxDmlAgent;
@@ -196,6 +201,83 @@ QString summarizeCurrentProjectState()
     }
 
     return lines.join('\n');
+}
+
+bool tryHandleToolCallResponse(const QString& responseText, QString* toolTraceOut)
+{
+    if (!toolTraceOut) {
+        return false;
+    }
+
+    QJsonObject toolCall;
+    if (!ArtifactCore::ToolBridge::tryParseToolCall(responseText, &toolCall)) {
+        return false;
+    }
+
+    const auto toolResult = ArtifactCore::ToolBridge::executeToolCall(toolCall);
+    *toolTraceOut = toolResult.trace;
+    return true;
+}
+
+QString buildCloudSystemPrompt(const AIContext& context)
+{
+    QString prompt = AIPromptGenerator::generateSystemPrompt(DescriptionLanguage::Japanese);
+    prompt += QStringLiteral(
+        "\n\n## Tool Schema\n"
+        "If you need a tool, return a single JSON object with keys class, method, arguments.\n"
+        "Do not wrap it in markdown fences.\n");
+    prompt += ArtifactCore::ToolBridge::toolSchemaJson();
+    prompt += QStringLiteral(
+        "\n\n## Live Project Context\n"
+        "Use this snapshot as the current ArtifactStudio state.\n"
+        "```json\n%1\n```\n")
+                  .arg(context.toJsonString());
+    prompt += QStringLiteral(
+        "\n\n## Cloud Debug Workflow\n"
+        "- If the user asks for an operation, use the available tool schema when possible.\n"
+        "- If the task is a bug investigation, answer with hypothesis, evidence, files to inspect, and next action.\n"
+        "- If information is missing, infer from the live project context first.\n");
+    return prompt;
+}
+
+ChatResponse runCloudChatWithToolLoop(ICloudAIAgentPtr cloudAgent,
+                                      AIContext context,
+                                      const QString& userPrompt,
+                                      const QString& model = {},
+                                      int maxToolDepth = 2)
+{
+    if (!cloudAgent) {
+        return {QString(), QString(), 0, 0, false, QStringLiteral("Cloud AI not configured")};
+    }
+
+    QString systemPrompt = buildCloudSystemPrompt(context);
+    context.setUserPrompt(userPrompt);
+    context.setSystemPrompt(systemPrompt);
+
+    ChatResponse response = cloudAgent->chat(systemPrompt, userPrompt, context, model);
+    if (!response.success) {
+        return response;
+    }
+
+    for (int depth = 0; depth < maxToolDepth; ++depth) {
+        QString toolTrace;
+        if (!tryHandleToolCallResponse(response.content, &toolTrace)) {
+            break;
+        }
+
+        systemPrompt = buildCloudSystemPrompt(context) +
+                       QStringLiteral(
+                           "\n\nThe previous tool execution produced the following result. "
+                           "Use it to answer the user:\n%1")
+                           .arg(toolTrace);
+        context.setSystemPrompt(systemPrompt);
+        response = cloudAgent->chat(systemPrompt, userPrompt, context, model);
+        if (!response.success) {
+            return response;
+        }
+    }
+
+    return response;
 }
 
 AIContext buildCurrentAIContext()
@@ -493,7 +575,6 @@ void AIClient::shutdown() {
 }
 
 UniString AIClient::sendMessage(const UniString& message) {
-    const QString systemPrompt = AIPromptGenerator::generateSystemPrompt(DescriptionLanguage::Japanese);
     const QString userPrompt = message.toQString();
     AIContext context = buildCurrentAIContext();
 
@@ -503,14 +584,17 @@ UniString AIClient::sendMessage(const UniString& message) {
     }
 
     LocalAIAgentPtr localAgent;
+    ICloudAIAgentPtr cloudAgent;
     bool initialized = false;
     {
         std::lock_guard<std::mutex> lock(impl_->mutex);
         initialized = impl_->initialized;
         localAgent = impl_->localAgent;
+        cloudAgent = impl_->cloudAgent;
     }
 
     if (initialized && localAgent) {
+        const QString systemPrompt = AIPromptGenerator::generateSystemPrompt(DescriptionLanguage::Japanese);
         context.setUserPrompt(userPrompt);
         context.setSystemPrompt(systemPrompt);
 
@@ -520,6 +604,16 @@ UniString AIClient::sendMessage(const UniString& message) {
         }
 
         return UniString(QStringLiteral("申し訳ありません。もう少し詳しく教えていただけますか？"));
+    }
+
+    if (cloudAgent && cloudAgent->isAvailable()) {
+        const ChatResponse response = runCloudChatWithToolLoop(cloudAgent, context, userPrompt);
+        if (response.success && !response.content.trimmed().isEmpty()) {
+            return UniString(response.content);
+        }
+        if (!response.success && !response.errorMessage.trimmed().isEmpty()) {
+            return UniString(QStringLiteral("[AI error] ") + response.errorMessage);
+        }
     }
 
     return UniString(QStringLiteral("[AI unavailable] ") + userPrompt);
@@ -562,11 +656,8 @@ void AIClient::postMessage(const UniString& message) {
         // クラウドエージェントが利用可能な場合、クラウドAIを使用する
         if (cloudAgent && cloudAgent->isAvailable()) {
             context = baseContext;
-            context.setUserPrompt(userPrompt);
-            context.setSystemPrompt(AIPromptGenerator::generateSystemPrompt(DescriptionLanguage::Japanese));
-
             try {
-                auto result = cloudAgent->chat(context.systemPrompt(), userPrompt, context);
+                auto result = runCloudChatWithToolLoop(cloudAgent, context, userPrompt);
                 if (result.success) {
                     const QString response = result.content;
                     QMetaObject::invokeMethod(this, [this, response]() {

@@ -23,6 +23,7 @@ module;
 export module Artifact.Widgets.AI.ArtifactAICloudWidget;
 
 import std;
+import Core.AI.McpTransport;
 
 export namespace Artifact {
 
@@ -41,6 +42,10 @@ private:
   void onProviderChanged(int index);
   void refreshModelList();
   void cancelCurrentSend();
+  void startChatRequest(const QString &userPrompt, const QString &systemPrompt,
+                        const QString &toolTrace = QString());
+  bool tryHandleToolCallResponse(const QString &responseText,
+                                 QString *toolTraceOut);
   bool eventFilter(QObject *watched, QEvent *event) override;
 
 private:
@@ -48,6 +53,14 @@ private:
   void saveApiKey();
   void updateModelList();
   void updateSendButtonState();
+  void updateToolSchemaPreview();
+  void updateMcpPreview();
+  void updateTransportPreview();
+  void updateConnectionSummary();
+  void refreshMcpToolSelector(const QStringList &toolNames = QStringList());
+  void applySelectedMcpTool(const QString &toolName);
+  void appendToolExecutionLog(const QString &entry);
+  void appendMcpLog(const QString &entry);
   void applyModelFilter(const QString &preferredModel = QString());
   void populateModelList(const QStringList &modelIds, const QString &preferredModel = QString());
   void appendTranscriptMessage(const QString &role, const QString &text);
@@ -66,18 +79,48 @@ private:
   QLineEdit *baseUrlEdit_;
   QLabel *baseUrlLabel_;
   QLabel *modelCountLabel_;
+  QLabel *connectionProviderLabel_;
+  QLabel *connectionEndpointLabel_;
+  QLabel *connectionApiKeyLabel_;
+  QLabel *toolCountLabel_;
+  QPushButton *openSettingsButton_;
   QScrollArea *transcriptScrollArea_;
   QWidget *transcriptContent_;
   QVBoxLayout *transcriptLayout_;
+  QTextEdit *toolSchemaPreview_;
+  QTextEdit *toolLogView_;
+  QTextEdit *mcpPreview_;
+  QLineEdit *mcpProgramEdit_;
+  QLineEdit *mcpArgsEdit_;
+  QLabel *mcpStatusLabel_;
+  QTextEdit *mcpLogView_;
+  QPushButton *mcpStartButton_;
+  QPushButton *mcpStopButton_;
+  QPushButton *mcpInitializeButton_;
+  QPushButton *mcpListToolsButton_;
+  QPushButton *mcpPingButton_;
+  QComboBox *mcpToolSelector_;
+  QLineEdit *mcpToolClassEdit_;
+  QLineEdit *mcpToolMethodEdit_;
+  QTextEdit *mcpToolArgsEdit_;
+  QPushButton *mcpToolCallButton_;
   QTextEdit *promptEdit_;
   QPushButton *sendButton_;
   bool isSending_ = false;
   bool sendCanceled_ = false;
+  int toolLoopDepth_ = 0;
   int activeAssistantBubbleIndex_ = -1;
+  QString pendingUserPrompt_;
+  QString pendingSystemPrompt_;
+  QString pendingToolTrace_;
   QVector<QWidget *> transcriptRows_;
   QVector<QWidget *> transcriptBubbles_;
   QProcess *sendProcess_;
   QStringList availableModelIds_;
+  QStringList toolLogEntries_;
+  QStringList mcpLogEntries_;
+  QStringList mcpToolNames_;
+  ArtifactCore::McpTransportSession mcpSession_;
   QNetworkAccessManager *networkManager_;
   QNetworkAccessManager *modelsNetworkManager_;
 };

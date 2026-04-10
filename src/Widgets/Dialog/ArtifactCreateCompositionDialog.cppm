@@ -37,6 +37,7 @@ import Artifact.Project.Items;
 import Artifact.Service.Project;
 import Utils.String.UniString;
 import FloatColorPickerDialog;
+import Artifact.Widgets.Dialog.FloatColorPickerHooks;
 
 namespace Artifact {
 
@@ -298,6 +299,7 @@ QString uniqueCompositionName(const QString& baseName)
 
   QObject::connect(impl_->bgColorButton, &QPushButton::clicked, this, [this]() {
       ArtifactWidgets::FloatColorPicker picker(this);
+      Artifact::installFloatColorPickerSliderJump(&picker);
       picker.setWindowTitle(QStringLiteral("Background Color"));
       picker.setColor(FloatColor(impl_->bgColor.redF(),
                                  impl_->bgColor.greenF(),
