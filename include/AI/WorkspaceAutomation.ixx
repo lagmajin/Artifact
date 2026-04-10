@@ -131,7 +131,14 @@ public:
             {"setRenderQueueJobNameAt", IDescribable::loc("Rename a render queue job by index.", "Rename a render queue job by index.", {}), "bool", {QStringLiteral("int"), QStringLiteral("QString")}, {QStringLiteral("jobIndex"), QStringLiteral("name")}},
             {"setRenderQueueJobOutputPathAt", IDescribable::loc("Set a render queue job output path by index.", "Set a render queue job output path by index.", {}), "bool", {QStringLiteral("int"), QStringLiteral("QString")}, {QStringLiteral("jobIndex"), QStringLiteral("outputPath")}},
             {"setRenderQueueJobFrameRangeAt", IDescribable::loc("Set a render queue job frame range by index.", "Set a render queue job frame range by index.", {}), "bool", {QStringLiteral("int"), QStringLiteral("int"), QStringLiteral("int")}, {QStringLiteral("jobIndex"), QStringLiteral("startFrame"), QStringLiteral("endFrame")}},
+            {"setRenderQueueJobOutputSettingsAt", IDescribable::loc("Set a render queue job output settings block by index.", "Set a render queue job output settings block by index.", {}), "bool", {QStringLiteral("int"), QStringLiteral("QString"), QStringLiteral("QString"), QStringLiteral("QString"), QStringLiteral("int"), QStringLiteral("int"), QStringLiteral("double"), QStringLiteral("int")}, {QStringLiteral("jobIndex"), QStringLiteral("outputFormat"), QStringLiteral("codec"), QStringLiteral("codecProfile"), QStringLiteral("width"), QStringLiteral("height"), QStringLiteral("fps"), QStringLiteral("bitrateKbps")}},
             {"setRenderQueueJobIntegratedRenderEnabledAt", IDescribable::loc("Toggle integrated render for a queue job by index.", "Toggle integrated render for a queue job by index.", {}), "bool", {QStringLiteral("int"), QStringLiteral("bool")}, {QStringLiteral("jobIndex"), QStringLiteral("enabled")}},
+            {"setRenderQueueJobRenderBackendAt", IDescribable::loc("Set a render queue job render backend by index.", "Set a render queue job render backend by index.", {}), "bool", {QStringLiteral("int"), QStringLiteral("QString")}, {QStringLiteral("jobIndex"), QStringLiteral("backend")}},
+            {"setRenderQueueJobAudioSourcePathAt", IDescribable::loc("Set a render queue job audio source by index.", "Set a render queue job audio source by index.", {}), "bool", {QStringLiteral("int"), QStringLiteral("QString")}, {QStringLiteral("jobIndex"), QStringLiteral("path")}},
+            {"setRenderQueueJobAudioCodecAt", IDescribable::loc("Set a render queue job audio codec by index.", "Set a render queue job audio codec by index.", {}), "bool", {QStringLiteral("int"), QStringLiteral("QString")}, {QStringLiteral("jobIndex"), QStringLiteral("codec")}},
+            {"setRenderQueueJobAudioBitrateKbpsAt", IDescribable::loc("Set a render queue job audio bitrate by index.", "Set a render queue job audio bitrate by index.", {}), "bool", {QStringLiteral("int"), QStringLiteral("int")}, {QStringLiteral("jobIndex"), QStringLiteral("bitrateKbps")}},
+            {"resetRenderQueueJobForRerun", IDescribable::loc("Reset a render queue job for rerun by index.", "Reset a render queue job for rerun by index.", {}), "bool", {QStringLiteral("int")}, {QStringLiteral("jobIndex")}},
+            {"resetCompletedAndFailedRenderQueueJobsForRerun", IDescribable::loc("Reset completed and failed render queue jobs for rerun.", "Reset completed and failed render queue jobs for rerun.", {}), "int"},
             {"startRenderQueueAt", IDescribable::loc("Start a render queue job by index.", "Start a render queue job by index.", {}), "bool", {QStringLiteral("int")}, {QStringLiteral("jobIndex")}},
             {"pauseRenderQueueAt", IDescribable::loc("Pause a render queue job by index.", "Pause a render queue job by index.", {}), "bool", {QStringLiteral("int")}, {QStringLiteral("jobIndex")}},
             {"cancelRenderQueueAt", IDescribable::loc("Cancel a render queue job by index.", "Cancel a render queue job by index.", {}), "bool", {QStringLiteral("int")}, {QStringLiteral("jobIndex")}},
@@ -318,8 +325,37 @@ public:
         if (name == QStringLiteral("setRenderQueueJobFrameRangeAt")) {
             return setRenderQueueJobFrameRangeAt(intArg(args, 0, -1), intArg(args, 1, 0), intArg(args, 2, 0));
         }
+        if (name == QStringLiteral("setRenderQueueJobOutputSettingsAt")) {
+            return setRenderQueueJobOutputSettingsAt(
+                intArg(args, 0, -1),
+                stringArg(args, 1),
+                stringArg(args, 2),
+                stringArg(args, 3),
+                intArg(args, 4, 0),
+                intArg(args, 5, 0),
+                doubleArg(args, 6, 0.0),
+                intArg(args, 7, 0));
+        }
         if (name == QStringLiteral("setRenderQueueJobIntegratedRenderEnabledAt")) {
             return setRenderQueueJobIntegratedRenderEnabledAt(intArg(args, 0, -1), boolArg(args, 1, true));
+        }
+        if (name == QStringLiteral("setRenderQueueJobRenderBackendAt")) {
+            return setRenderQueueJobRenderBackendAt(intArg(args, 0, -1), stringArg(args, 1));
+        }
+        if (name == QStringLiteral("setRenderQueueJobAudioSourcePathAt")) {
+            return setRenderQueueJobAudioSourcePathAt(intArg(args, 0, -1), stringArg(args, 1));
+        }
+        if (name == QStringLiteral("setRenderQueueJobAudioCodecAt")) {
+            return setRenderQueueJobAudioCodecAt(intArg(args, 0, -1), stringArg(args, 1));
+        }
+        if (name == QStringLiteral("setRenderQueueJobAudioBitrateKbpsAt")) {
+            return setRenderQueueJobAudioBitrateKbpsAt(intArg(args, 0, -1), intArg(args, 1, 0));
+        }
+        if (name == QStringLiteral("resetRenderQueueJobForRerun")) {
+            return resetRenderQueueJobForRerun(intArg(args, 0, -1));
+        }
+        if (name == QStringLiteral("resetCompletedAndFailedRenderQueueJobsForRerun")) {
+            return resetCompletedAndFailedRenderQueueJobsForRerun();
         }
         if (name == QStringLiteral("startRenderQueueAt")) {
             return startRenderQueueAt(intArg(args, 0, -1));
@@ -441,6 +477,16 @@ private:
         }
         bool ok = false;
         const int value = args.at(index).toInt(&ok);
+        return ok ? value : defaultValue;
+    }
+
+    static double doubleArg(const QVariantList& args, int index, double defaultValue)
+    {
+        if (index < 0 || index >= args.size()) {
+            return defaultValue;
+        }
+        bool ok = false;
+        const double value = args.at(index).toDouble(&ok);
         return ok ? value : defaultValue;
     }
 
@@ -1328,6 +1374,23 @@ private:
         return true;
     }
 
+    static QVariant setRenderQueueJobOutputSettingsAt(int jobIndex,
+                                                      const QString& outputFormat,
+                                                      const QString& codec,
+                                                      const QString& codecProfile,
+                                                      int width,
+                                                      int height,
+                                                      double fps,
+                                                      int bitrateKbps)
+    {
+        auto* service = ArtifactRenderQueueService::instance();
+        if (!service || jobIndex < 0 || jobIndex >= service->jobCount()) {
+            return false;
+        }
+        service->setJobOutputSettingsAt(jobIndex, outputFormat, codec, codecProfile, width, height, fps, bitrateKbps);
+        return true;
+    }
+
     static QVariant setRenderQueueJobIntegratedRenderEnabledAt(int jobIndex, bool enabled)
     {
         auto* service = ArtifactRenderQueueService::instance();
@@ -1336,6 +1399,65 @@ private:
         }
         service->setJobIntegratedRenderEnabledAt(jobIndex, enabled);
         return true;
+    }
+
+    static QVariant setRenderQueueJobRenderBackendAt(int jobIndex, const QString& backend)
+    {
+        auto* service = ArtifactRenderQueueService::instance();
+        if (!service || jobIndex < 0 || jobIndex >= service->jobCount()) {
+            return false;
+        }
+        service->setJobRenderBackendAt(jobIndex, backend);
+        return true;
+    }
+
+    static QVariant setRenderQueueJobAudioSourcePathAt(int jobIndex, const QString& path)
+    {
+        auto* service = ArtifactRenderQueueService::instance();
+        if (!service || jobIndex < 0 || jobIndex >= service->jobCount()) {
+            return false;
+        }
+        service->setJobAudioSourcePathAt(jobIndex, path);
+        return true;
+    }
+
+    static QVariant setRenderQueueJobAudioCodecAt(int jobIndex, const QString& codec)
+    {
+        auto* service = ArtifactRenderQueueService::instance();
+        if (!service || jobIndex < 0 || jobIndex >= service->jobCount()) {
+            return false;
+        }
+        service->setJobAudioCodecAt(jobIndex, codec);
+        return true;
+    }
+
+    static QVariant setRenderQueueJobAudioBitrateKbpsAt(int jobIndex, int bitrateKbps)
+    {
+        auto* service = ArtifactRenderQueueService::instance();
+        if (!service || jobIndex < 0 || jobIndex >= service->jobCount()) {
+            return false;
+        }
+        service->setJobAudioBitrateKbpsAt(jobIndex, bitrateKbps);
+        return true;
+    }
+
+    static QVariant resetRenderQueueJobForRerun(int jobIndex)
+    {
+        auto* service = ArtifactRenderQueueService::instance();
+        if (!service || jobIndex < 0 || jobIndex >= service->jobCount()) {
+            return false;
+        }
+        service->resetJobForRerun(jobIndex);
+        return true;
+    }
+
+    static QVariant resetCompletedAndFailedRenderQueueJobsForRerun()
+    {
+        auto* service = ArtifactRenderQueueService::instance();
+        if (!service) {
+            return 0;
+        }
+        return service->resetCompletedAndFailedJobsForRerun();
     }
 
     static QVariant startRenderQueueAt(int jobIndex)

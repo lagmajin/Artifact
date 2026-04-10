@@ -204,8 +204,29 @@ int runAIToolBridgeTests()
     const QJsonObject setQueueRangeTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("setRenderQueueJobFrameRangeAt"));
     report.check(!setQueueRangeTool.isEmpty(), QStringLiteral("workspace automation exposes render queue frame range editing"));
 
+    const QJsonObject setQueueOutputSettingsTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("setRenderQueueJobOutputSettingsAt"));
+    report.check(!setQueueOutputSettingsTool.isEmpty(), QStringLiteral("workspace automation exposes render queue output settings editing"));
+
     const QJsonObject setQueueIntegratedTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("setRenderQueueJobIntegratedRenderEnabledAt"));
     report.check(!setQueueIntegratedTool.isEmpty(), QStringLiteral("workspace automation exposes render queue integrated toggle"));
+
+    const QJsonObject setQueueBackendTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("setRenderQueueJobRenderBackendAt"));
+    report.check(!setQueueBackendTool.isEmpty(), QStringLiteral("workspace automation exposes render queue backend editing"));
+
+    const QJsonObject setQueueAudioPathTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("setRenderQueueJobAudioSourcePathAt"));
+    report.check(!setQueueAudioPathTool.isEmpty(), QStringLiteral("workspace automation exposes render queue audio path editing"));
+
+    const QJsonObject setQueueAudioCodecTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("setRenderQueueJobAudioCodecAt"));
+    report.check(!setQueueAudioCodecTool.isEmpty(), QStringLiteral("workspace automation exposes render queue audio codec editing"));
+
+    const QJsonObject setQueueAudioBitrateTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("setRenderQueueJobAudioBitrateKbpsAt"));
+    report.check(!setQueueAudioBitrateTool.isEmpty(), QStringLiteral("workspace automation exposes render queue audio bitrate editing"));
+
+    const QJsonObject resetQueueJobTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("resetRenderQueueJobForRerun"));
+    report.check(!resetQueueJobTool.isEmpty(), QStringLiteral("workspace automation exposes render queue rerun reset"));
+
+    const QJsonObject resetQueueJobsTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("resetCompletedAndFailedRenderQueueJobsForRerun"));
+    report.check(!resetQueueJobsTool.isEmpty(), QStringLiteral("workspace automation exposes render queue batch rerun reset"));
 
     const QJsonObject startQueueAtTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("startRenderQueueAt"));
     report.check(!startQueueAtTool.isEmpty(), QStringLiteral("workspace automation exposes render queue start by index"));
@@ -389,6 +410,48 @@ int runAIToolBridgeTests()
                                                      {0});
     report.check(queueErrorVariant.typeId() == QMetaType::QString,
                  QStringLiteral("render queue job error lookup returns text"));
+
+    const QVariant setQueueOutputSettingsResult =
+        Artifact::WorkspaceAutomation().invokeMethod(QStringLiteral("setRenderQueueJobOutputSettingsAt"),
+                                                     {0, QStringLiteral("png"), QStringLiteral("h264"), QStringLiteral("high"), 1920, 1080, 30.0, 8000});
+    report.check(setQueueOutputSettingsResult.typeId() == QMetaType::Bool,
+                 QStringLiteral("render queue output settings edit returns a boolean"));
+
+    const QVariant setQueueBackendResult =
+        Artifact::WorkspaceAutomation().invokeMethod(QStringLiteral("setRenderQueueJobRenderBackendAt"),
+                                                     {0, QStringLiteral("auto")});
+    report.check(setQueueBackendResult.typeId() == QMetaType::Bool,
+                 QStringLiteral("render queue backend edit returns a boolean"));
+
+    const QVariant setQueueAudioPathResult =
+        Artifact::WorkspaceAutomation().invokeMethod(QStringLiteral("setRenderQueueJobAudioSourcePathAt"),
+                                                     {0, QStringLiteral("")});
+    report.check(setQueueAudioPathResult.typeId() == QMetaType::Bool,
+                 QStringLiteral("render queue audio path edit returns a boolean"));
+
+    const QVariant setQueueAudioCodecResult =
+        Artifact::WorkspaceAutomation().invokeMethod(QStringLiteral("setRenderQueueJobAudioCodecAt"),
+                                                     {0, QStringLiteral("aac")});
+    report.check(setQueueAudioCodecResult.typeId() == QMetaType::Bool,
+                 QStringLiteral("render queue audio codec edit returns a boolean"));
+
+    const QVariant setQueueAudioBitrateResult =
+        Artifact::WorkspaceAutomation().invokeMethod(QStringLiteral("setRenderQueueJobAudioBitrateKbpsAt"),
+                                                     {0, 128});
+    report.check(setQueueAudioBitrateResult.typeId() == QMetaType::Bool,
+                 QStringLiteral("render queue audio bitrate edit returns a boolean"));
+
+    const QVariant resetQueueJobResult =
+        Artifact::WorkspaceAutomation().invokeMethod(QStringLiteral("resetRenderQueueJobForRerun"),
+                                                     {0});
+    report.check(resetQueueJobResult.typeId() == QMetaType::Bool,
+                 QStringLiteral("render queue job rerun reset returns a boolean"));
+
+    const QVariant resetQueueJobsResult =
+        Artifact::WorkspaceAutomation().invokeMethod(QStringLiteral("resetCompletedAndFailedRenderQueueJobsForRerun"),
+                                                     {});
+    report.check(resetQueueJobsResult.typeId() == QMetaType::Int,
+                 QStringLiteral("render queue batch rerun reset returns an int"));
 
     const QVariant startQueueResult =
         Artifact::WorkspaceAutomation().invokeMethod(QStringLiteral("startRenderQueueAt"),
