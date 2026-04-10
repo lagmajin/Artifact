@@ -80,6 +80,7 @@ import Graphics;
 import SearchImage;
 import UI.Layout.State;
 import Core.FastSettingsStore;
+import Artifact.AI.WorkspaceAutomation;
 
 import Test;
 
@@ -759,6 +760,13 @@ int main(int argc, char *argv[]) {
 
   QApplication a(argc, argv);
   configureQtPaths();
+
+  if (qEnvironmentVariableIsSet("ARTIFACT_RUN_BUILTIN_TESTS")) {
+    const int builtinTestFailures = Artifact::runAllTests();
+    if (builtinTestFailures != 0) {
+      return builtinTestFailures;
+    }
+  }
 
   // Initialize environment variable manager
   auto *envManager = ArtifactCore::EnvironmentVariableManager::instance();
