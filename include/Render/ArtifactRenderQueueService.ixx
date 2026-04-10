@@ -69,6 +69,9 @@ export namespace Artifact
   void removeRenderQueueAt(int index);
   void duplicateRenderQueueAt(int index);
   void moveRenderQueue(int fromIndex, int toIndex);
+  void startRenderQueueAt(int index);
+  void pauseRenderQueueAt(int index);
+  void cancelRenderQueueAt(int index);
   void removeAllRenderQueues();
   void removeRenderQueuesForComposition(const ArtifactCore::CompositionID& compositionId);
   bool hasRenderQueueForComposition(const ArtifactCore::CompositionID& compositionId) const;

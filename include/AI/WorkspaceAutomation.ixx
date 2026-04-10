@@ -132,6 +132,9 @@ public:
             {"setRenderQueueJobOutputPathAt", IDescribable::loc("Set a render queue job output path by index.", "Set a render queue job output path by index.", {}), "bool", {QStringLiteral("int"), QStringLiteral("QString")}, {QStringLiteral("jobIndex"), QStringLiteral("outputPath")}},
             {"setRenderQueueJobFrameRangeAt", IDescribable::loc("Set a render queue job frame range by index.", "Set a render queue job frame range by index.", {}), "bool", {QStringLiteral("int"), QStringLiteral("int"), QStringLiteral("int")}, {QStringLiteral("jobIndex"), QStringLiteral("startFrame"), QStringLiteral("endFrame")}},
             {"setRenderQueueJobIntegratedRenderEnabledAt", IDescribable::loc("Toggle integrated render for a queue job by index.", "Toggle integrated render for a queue job by index.", {}), "bool", {QStringLiteral("int"), QStringLiteral("bool")}, {QStringLiteral("jobIndex"), QStringLiteral("enabled")}},
+            {"startRenderQueueAt", IDescribable::loc("Start a render queue job by index.", "Start a render queue job by index.", {}), "bool", {QStringLiteral("int")}, {QStringLiteral("jobIndex")}},
+            {"pauseRenderQueueAt", IDescribable::loc("Pause a render queue job by index.", "Pause a render queue job by index.", {}), "bool", {QStringLiteral("int")}, {QStringLiteral("jobIndex")}},
+            {"cancelRenderQueueAt", IDescribable::loc("Cancel a render queue job by index.", "Cancel a render queue job by index.", {}), "bool", {QStringLiteral("int")}, {QStringLiteral("jobIndex")}},
             {"startAllRenderQueues", IDescribable::loc("Start every queued render job.", "Start every queued render job.", {}), "bool"},
             {"pauseAllRenderQueues", IDescribable::loc("Pause every queued render job.", "Pause every queued render job.", {}), "bool"},
             {"cancelAllRenderQueues", IDescribable::loc("Cancel every queued render job.", "Cancel every queued render job.", {}), "bool"},
@@ -317,6 +320,15 @@ public:
         }
         if (name == QStringLiteral("setRenderQueueJobIntegratedRenderEnabledAt")) {
             return setRenderQueueJobIntegratedRenderEnabledAt(intArg(args, 0, -1), boolArg(args, 1, true));
+        }
+        if (name == QStringLiteral("startRenderQueueAt")) {
+            return startRenderQueueAt(intArg(args, 0, -1));
+        }
+        if (name == QStringLiteral("pauseRenderQueueAt")) {
+            return pauseRenderQueueAt(intArg(args, 0, -1));
+        }
+        if (name == QStringLiteral("cancelRenderQueueAt")) {
+            return cancelRenderQueueAt(intArg(args, 0, -1));
         }
         if (name == QStringLiteral("startAllRenderQueues")) {
             return renderQueueStartAll();
@@ -1323,6 +1335,36 @@ private:
             return false;
         }
         service->setJobIntegratedRenderEnabledAt(jobIndex, enabled);
+        return true;
+    }
+
+    static QVariant startRenderQueueAt(int jobIndex)
+    {
+        auto* service = ArtifactRenderQueueService::instance();
+        if (!service || jobIndex < 0 || jobIndex >= service->jobCount()) {
+            return false;
+        }
+        service->startRenderQueueAt(jobIndex);
+        return true;
+    }
+
+    static QVariant pauseRenderQueueAt(int jobIndex)
+    {
+        auto* service = ArtifactRenderQueueService::instance();
+        if (!service || jobIndex < 0 || jobIndex >= service->jobCount()) {
+            return false;
+        }
+        service->pauseRenderQueueAt(jobIndex);
+        return true;
+    }
+
+    static QVariant cancelRenderQueueAt(int jobIndex)
+    {
+        auto* service = ArtifactRenderQueueService::instance();
+        if (!service || jobIndex < 0 || jobIndex >= service->jobCount()) {
+            return false;
+        }
+        service->cancelRenderQueueAt(jobIndex);
         return true;
     }
 

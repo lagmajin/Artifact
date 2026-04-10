@@ -2440,6 +2440,33 @@ namespace Artifact
         impl_->syncCoreQueueModel();
     }
 
+    void ArtifactRenderQueueService::startRenderQueueAt(int index)
+    {
+        if (index < 0 || index >= impl_->queueManager.jobCount()) {
+            return;
+        }
+        impl_->queueManager.startRendering(index);
+        impl_->syncCoreQueueModel();
+    }
+
+    void ArtifactRenderQueueService::pauseRenderQueueAt(int index)
+    {
+        if (index < 0 || index >= impl_->queueManager.jobCount()) {
+            return;
+        }
+        impl_->queueManager.pauseRendering(index);
+        impl_->syncCoreQueueModel();
+    }
+
+    void ArtifactRenderQueueService::cancelRenderQueueAt(int index)
+    {
+        if (index < 0 || index >= impl_->queueManager.jobCount()) {
+            return;
+        }
+        impl_->queueManager.cancelRendering(index);
+        impl_->syncCoreQueueModel();
+    }
+
     void ArtifactRenderQueueService::removeAllRenderQueues() {
         impl_->queueManager.removeAllJobs();
         impl_->syncCoreQueueModel();
