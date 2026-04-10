@@ -25,13 +25,22 @@ export namespace Artifact {
   ArtifactNullLayer();
   ~ArtifactNullLayer();
 
-  void draw(ArtifactIRenderer* renderer) override;
+   void draw(ArtifactIRenderer* renderer) override;
+
+   std::vector<ArtifactCore::PropertyGroup> getLayerPropertyGroups() const override;
+
+    bool setLayerPropertyValue(const QString &propertyPath, const QVariant &value) override;
+
+    QImage toQImage() const override;
+
+    QJsonObject toJson() const override;
+
+    static std::shared_ptr<ArtifactNullLayer> fromJson(const QJsonObject& obj);
+
+    bool isAdjustmentLayer() const override;
 
 
-  bool isAdjustmentLayer() const override;
-
-
-  bool isNullLayer() const override;
+   bool isNullLayer() const override;
 
  };
 

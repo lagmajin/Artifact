@@ -665,6 +665,10 @@ bool ArtifactAbstractLayer::hasParent() const {
   return !impl_->parentLayerId_.isNil();
 }
 
+bool ArtifactAbstractLayer::isGroupLayer() const {
+  return false;
+}
+
 bool ArtifactAbstractLayer::is3D() const { return impl_->is3D_; }
 
 void ArtifactAbstractLayer::setIs3D(bool value) {

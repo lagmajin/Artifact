@@ -1488,13 +1488,7 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
        service->addLayerToCurrentComposition(params);
       }
     } else if (chosen == createAdjustAct) {
-      ArtifactSolidLayerInitParams params(QStringLiteral("Adjustment Layer"));
-      if (comp) {
-       auto sz = comp->settings().compositionSize();
-       params.setWidth(sz.width());
-       params.setHeight(sz.height());
-      }
-      params.setColor(FloatColor(0.0f, 0.0f, 0.0f, 1.0f));
+      ArtifactLayerInitParams params(QStringLiteral("Adjustment Layer"), LayerType::Adjustment);
       if (service) {
        service->addLayerToCurrentComposition(params);
       }

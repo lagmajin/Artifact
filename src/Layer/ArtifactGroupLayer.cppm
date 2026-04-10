@@ -1,5 +1,6 @@
 module;
 #include <utility>
+#include <algorithm>
 #include <QDebug>
 #include <QJsonArray>
 #include <QJsonObject>
@@ -28,6 +29,19 @@ ArtifactGroupLayer::ArtifactGroupLayer()
 
 ArtifactGroupLayer::~ArtifactGroupLayer() = default;
 
+bool ArtifactGroupLayer::isGroupLayer() const {
+    return true;
+}
+
+void ArtifactGroupLayer::setComposition(void *comp) {
+    ArtifactAbstractLayer::setComposition(comp);
+    for (auto& child : groupImpl_->children) {
+        if (child) {
+            child->setComposition(comp);
+        }
+    }
+}
+
 void ArtifactGroupLayer::draw(ArtifactIRenderer* renderer) {
     if (!isVisible() || opacity() <= 0.0f) return;
 
@@ -52,6 +66,7 @@ void ArtifactGroupLayer::addChild(ArtifactAbstractLayerPtr layer) {
 
     // Set parenting in the core system
     layer->setParentById(this->id());
+    layer->setComposition(composition());
     
     groupImpl_->children.push_back(layer);
     Q_EMIT changed();
@@ -59,10 +74,16 @@ void ArtifactGroupLayer::addChild(ArtifactAbstractLayerPtr layer) {
 
 void ArtifactGroupLayer::removeChild(const LayerID& id) {
     auto it = std::remove_if(groupImpl_->children.begin(), groupImpl_->children.end(), 
-        [&](const auto& l) { return l->id() == id; });
+        [&](const auto& l) {
+            if (!l || l->id() != id) {
+                return false;
+            }
+            l->clearParent();
+            l->setComposition(nullptr);
+            return true;
+        });
     
     if (it != groupImpl_->children.end()) {
-        (*it)->clearParent();
         groupImpl_->children.erase(it, groupImpl_->children.end());
         Q_EMIT changed();
     }
@@ -70,7 +91,11 @@ void ArtifactGroupLayer::removeChild(const LayerID& id) {
 
 void ArtifactGroupLayer::clearChildren() {
     for (auto& child : groupImpl_->children) {
+        if (!child) {
+            continue;
+        }
         child->clearParent();
+        child->setComposition(nullptr);
     }
     groupImpl_->children.clear();
     Q_EMIT changed();
@@ -94,6 +119,7 @@ QRectF ArtifactGroupLayer::localBounds() const {
 QJsonObject ArtifactGroupLayer::toJson() const {
     QJsonObject obj = ArtifactAbstractLayer::toJson();
     obj["type"] = static_cast<int>(LayerType::Group);
+    obj["childCount"] = static_cast<int>(groupImpl_->children.size());
     
     QJsonArray childrenArr;
     for (const auto& child : groupImpl_->children) {
@@ -108,6 +134,7 @@ QJsonObject ArtifactGroupLayer::toJson() const {
 
 void ArtifactGroupLayer::fromJsonProperties(const QJsonObject& obj) {
     ArtifactAbstractLayer::fromJsonProperties(obj);
+    clearChildren();
     
     if (obj.contains("children") && obj["children"].isArray()) {
         QJsonArray childrenArr = obj["children"].toArray();

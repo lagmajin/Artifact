@@ -547,6 +547,10 @@ void drawLayerForCompositionView(
     return;
   }
 
+  if (const auto parent = layer->parentLayer(); parent && parent->isGroupLayer()) {
+    return;
+  }
+
   const QRectF localRect = layer->localBounds();
   if (!localRect.isValid() || localRect.width() <= 0.0 ||
       localRect.height() <= 0.0) {

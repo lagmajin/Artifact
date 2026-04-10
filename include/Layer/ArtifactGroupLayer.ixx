@@ -19,6 +19,8 @@ public:
     ArtifactGroupLayer();
     ~ArtifactGroupLayer() override;
 
+    bool isGroupLayer() const override;
+    void setComposition(void *comp) override;
     void draw(ArtifactIRenderer* renderer) override;
     
     // Child management

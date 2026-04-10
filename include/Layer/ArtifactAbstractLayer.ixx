@@ -122,7 +122,7 @@ public:
   QString layerNote() const;
   void setLayerNote(const QString& note);
 
-  void setComposition(void *comp);
+  virtual void setComposition(void *comp);
   void *composition() const;
 
   LAYER_BLEND_TYPE layerBlendType() const;
@@ -184,6 +184,7 @@ public:
   LayerID parentLayerId() const;
   void clearParent();
   bool hasParent() const;
+  virtual bool isGroupLayer() const;
   virtual bool isNullLayer() const;
   virtual bool isCloneLayer() const;
   virtual QRectF localBounds() const;

@@ -9,14 +9,15 @@ import Artifact.Layer.Abstract;
 export namespace Artifact
 {
 
- class ArtifactAdjustableLayer:public ArtifactAbstractLayer
- {
- private:
+class ArtifactAdjustableLayer:public ArtifactAbstractLayer
+{
+private:
   class Impl;
   Impl* impl_;
- public:
+public:
   ArtifactAdjustableLayer();
   ~ArtifactAdjustableLayer();
+  void setComposition(void *comp) override;
   void draw(ArtifactIRenderer* renderer) override;
   bool isAdjustmentLayer() const override;
   bool isNullLayer() const override;
