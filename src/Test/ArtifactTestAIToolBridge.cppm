@@ -177,6 +177,9 @@ int runAIToolBridgeTests()
     const QJsonObject findProjectItemTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("findProjectItemById"));
     report.check(!findProjectItemTool.isEmpty(), QStringLiteral("workspace automation exposes project item lookup"));
 
+    const QJsonObject projectItemPathTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("projectItemPathById"));
+    report.check(!projectItemPathTool.isEmpty(), QStringLiteral("workspace automation exposes project item path lookup"));
+
     const QJsonObject projectItemRemovalMessageTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("projectItemRemovalConfirmationMessage"));
     report.check(!projectItemRemovalMessageTool.isEmpty(), QStringLiteral("workspace automation exposes project item removal confirmation"));
 
@@ -308,6 +311,12 @@ int runAIToolBridgeTests()
                                                      {QStringLiteral("missing-item")});
     report.check(missingItemVariant.typeId() == QMetaType::QVariantMap,
                  QStringLiteral("project item lookup returns a snapshot map"));
+
+    const QVariant missingItemPathVariant =
+        Artifact::WorkspaceAutomation().invokeMethod(QStringLiteral("projectItemPathById"),
+                                                     {QStringLiteral("missing-item")});
+    report.check(missingItemPathVariant.typeId() == QMetaType::QVariantList,
+                 QStringLiteral("project item path lookup returns a list"));
 
     const QVariant createFolderResult =
         Artifact::WorkspaceAutomation().invokeMethod(QStringLiteral("createFolderInProject"),

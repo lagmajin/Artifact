@@ -111,6 +111,7 @@ public:
             {"removeCompositionWithRenderQueueCleanup", IDescribable::loc("Remove a composition and clear related render queue jobs.", "Remove a composition and clear related render queue jobs.", {}), "bool", {QStringLiteral("QString")}, {QStringLiteral("compositionId")}},
             {"removeAllAssets", IDescribable::loc("Remove all imported assets from the project.", "Remove all imported assets from the project.", {}), "bool"},
             {"findProjectItemById", IDescribable::loc("Return a project item snapshot by id.", "Return a project item snapshot by id.", {}), "QVariantMap", {QStringLiteral("QString")}, {QStringLiteral("itemId")}},
+            {"projectItemPathById", IDescribable::loc("Return the project item path from root to id.", "Return the project item path from root to id.", {}), "QVariantList", {QStringLiteral("QString")}, {QStringLiteral("itemId")}},
             {"projectItemRemovalConfirmationMessage", IDescribable::loc("Return the confirmation message for deleting a project item by id.", "Return the confirmation message for deleting a project item by id.", {}), "QString", {QStringLiteral("QString")}, {QStringLiteral("itemId")}},
             {"renameProjectItemById", IDescribable::loc("Rename a project item by id.", "Rename a project item by id.", {}), "bool", {QStringLiteral("QString"), QStringLiteral("QString")}, {QStringLiteral("itemId"), QStringLiteral("newName")}},
             {"moveProjectItemToFolder", IDescribable::loc("Move a project item under a folder by id.", "Move a project item under a folder by id.", {}), "bool", {QStringLiteral("QString"), QStringLiteral("QString")}, {QStringLiteral("itemId"), QStringLiteral("parentFolderId")}},
@@ -242,6 +243,9 @@ public:
         }
         if (name == QStringLiteral("findProjectItemById")) {
             return findProjectItemById(stringArg(args, 0));
+        }
+        if (name == QStringLiteral("projectItemPathById")) {
+            return projectItemPathById(stringArg(args, 0));
         }
         if (name == QStringLiteral("projectItemRemovalConfirmationMessage")) {
             return projectItemRemovalConfirmationMessage(stringArg(args, 0));
@@ -948,6 +952,8 @@ private:
         }
         obj[QStringLiteral("name")] = item->name.toQString();
         obj[QStringLiteral("id")] = item->id.toString();
+        obj[QStringLiteral("parentId")] = item->parent ? item->parent->id.toString() : QString();
+        obj[QStringLiteral("childCount")] = item->children.size();
         switch (item->type()) {
         case eProjectItemType::Folder: {
             obj[QStringLiteral("type")] = QStringLiteral("folder");
@@ -988,6 +994,26 @@ private:
     {
         const auto* item = findProjectItemByIdPointer(itemId);
         return toVariantMap(projectItemToJson(item));
+    }
+
+    static QVariantList projectItemPathById(const QString& itemId)
+    {
+        QVariantList path;
+        const auto* item = findProjectItemByIdPointer(itemId);
+        if (!item) {
+            return path;
+        }
+
+        QVector<const ProjectItem*> items;
+        for (const ProjectItem* current = item; current; current = current->parent) {
+            items.push_back(current);
+        }
+        std::reverse(items.begin(), items.end());
+
+        for (const auto* current : items) {
+            path.push_back(toVariantMap(projectItemToJson(current)));
+        }
+        return path;
     }
 
     static QVariant projectItemRemovalConfirmationMessage(const QString& itemId)
