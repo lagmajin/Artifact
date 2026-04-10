@@ -174,6 +174,30 @@ int runAIToolBridgeTests()
     const QJsonObject removeAssetsTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("removeAllAssets"));
     report.check(!removeAssetsTool.isEmpty(), QStringLiteral("workspace automation exposes asset clearing"));
 
+    const QJsonObject renderQueueJobTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("renderQueueJobByIndex"));
+    report.check(!renderQueueJobTool.isEmpty(), QStringLiteral("workspace automation exposes render queue job lookup"));
+
+    const QJsonObject duplicateQueueTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("duplicateRenderQueueAt"));
+    report.check(!duplicateQueueTool.isEmpty(), QStringLiteral("workspace automation exposes render queue duplication"));
+
+    const QJsonObject moveQueueTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("moveRenderQueue"));
+    report.check(!moveQueueTool.isEmpty(), QStringLiteral("workspace automation exposes render queue move"));
+
+    const QJsonObject removeQueueAtTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("removeRenderQueueAt"));
+    report.check(!removeQueueAtTool.isEmpty(), QStringLiteral("workspace automation exposes render queue removal"));
+
+    const QJsonObject setQueueNameTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("setRenderQueueJobNameAt"));
+    report.check(!setQueueNameTool.isEmpty(), QStringLiteral("workspace automation exposes render queue rename"));
+
+    const QJsonObject setQueueOutputTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("setRenderQueueJobOutputPathAt"));
+    report.check(!setQueueOutputTool.isEmpty(), QStringLiteral("workspace automation exposes render queue output path editing"));
+
+    const QJsonObject setQueueRangeTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("setRenderQueueJobFrameRangeAt"));
+    report.check(!setQueueRangeTool.isEmpty(), QStringLiteral("workspace automation exposes render queue frame range editing"));
+
+    const QJsonObject setQueueIntegratedTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("setRenderQueueJobIntegratedRenderEnabledAt"));
+    report.check(!setQueueIntegratedTool.isEmpty(), QStringLiteral("workspace automation exposes render queue integrated toggle"));
+
     const QJsonObject findProjectItemTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("findProjectItemById"));
     report.check(!findProjectItemTool.isEmpty(), QStringLiteral("workspace automation exposes project item lookup"));
 
@@ -323,6 +347,12 @@ int runAIToolBridgeTests()
                                                      {QStringLiteral("AI Test Folder"), QString()});
     report.check(createFolderResult.typeId() == QMetaType::Bool,
                  QStringLiteral("folder creation returns a boolean"));
+
+    const QVariant queueJobVariant =
+        Artifact::WorkspaceAutomation().invokeMethod(QStringLiteral("renderQueueJobByIndex"),
+                                                     {0});
+    report.check(queueJobVariant.typeId() == QMetaType::QVariantMap,
+                 QStringLiteral("render queue job lookup returns a snapshot map"));
 
     ArtifactCore::CommandSandbox& sandbox = ArtifactCore::CommandSandbox::instance();
     sandbox.resetPolicy();

@@ -78,6 +78,7 @@ public:
             {"currentCompositionSnapshot", IDescribable::loc("Return the active composition snapshot.", "Return the active composition snapshot.", {}), "QVariantMap"},
             {"selectionSnapshot", IDescribable::loc("Return the current layer selection snapshot.", "Return the current layer selection snapshot.", {}), "QVariantMap"},
             {"renderQueueSnapshot", IDescribable::loc("Return the render queue snapshot.", "Return the render queue snapshot.", {}), "QVariantMap"},
+            {"renderQueueJobByIndex", IDescribable::loc("Return a render queue job snapshot by index.", "Return a render queue job snapshot by index.", {}), "QVariantMap", {QStringLiteral("int")}, {QStringLiteral("jobIndex")}},
             {"listCompositions", IDescribable::loc("Return the project composition list.", "Return the project composition list.", {}), "QVariantList"},
             {"listProjectItems", IDescribable::loc("Return the project item tree.", "Return the project item tree.", {}), "QVariantList"},
             {"listCurrentCompositionLayers", IDescribable::loc("Return the active composition layer list.", "Return the active composition layer list.", {}), "QVariantList"},
@@ -121,6 +122,13 @@ public:
             {"addRenderQueueForCurrentComposition", IDescribable::loc("Queue the active composition for rendering.", "Queue the active composition for rendering.", {}), "bool"},
             {"addRenderQueueForComposition", IDescribable::loc("Queue a specific composition for rendering.", "Queue a specific composition for rendering.", {}), "bool", {QStringLiteral("QString")}, {QStringLiteral("compositionId")}},
             {"addAllCompositionsToRenderQueue", IDescribable::loc("Queue every composition in the project.", "Queue every composition in the project.", {}), "int"},
+            {"duplicateRenderQueueAt", IDescribable::loc("Duplicate a render queue job by index.", "Duplicate a render queue job by index.", {}), "bool", {QStringLiteral("int")}, {QStringLiteral("jobIndex")}},
+            {"moveRenderQueue", IDescribable::loc("Move a render queue job from one index to another.", "Move a render queue job from one index to another.", {}), "bool", {QStringLiteral("int"), QStringLiteral("int")}, {QStringLiteral("fromIndex"), QStringLiteral("toIndex")}},
+            {"removeRenderQueueAt", IDescribable::loc("Remove a render queue job by index.", "Remove a render queue job by index.", {}), "bool", {QStringLiteral("int")}, {QStringLiteral("jobIndex")}},
+            {"setRenderQueueJobNameAt", IDescribable::loc("Rename a render queue job by index.", "Rename a render queue job by index.", {}), "bool", {QStringLiteral("int"), QStringLiteral("QString")}, {QStringLiteral("jobIndex"), QStringLiteral("name")}},
+            {"setRenderQueueJobOutputPathAt", IDescribable::loc("Set a render queue job output path by index.", "Set a render queue job output path by index.", {}), "bool", {QStringLiteral("int"), QStringLiteral("QString")}, {QStringLiteral("jobIndex"), QStringLiteral("outputPath")}},
+            {"setRenderQueueJobFrameRangeAt", IDescribable::loc("Set a render queue job frame range by index.", "Set a render queue job frame range by index.", {}), "bool", {QStringLiteral("int"), QStringLiteral("int"), QStringLiteral("int")}, {QStringLiteral("jobIndex"), QStringLiteral("startFrame"), QStringLiteral("endFrame")}},
+            {"setRenderQueueJobIntegratedRenderEnabledAt", IDescribable::loc("Toggle integrated render for a queue job by index.", "Toggle integrated render for a queue job by index.", {}), "bool", {QStringLiteral("int"), QStringLiteral("bool")}, {QStringLiteral("jobIndex"), QStringLiteral("enabled")}},
             {"startAllRenderQueues", IDescribable::loc("Start every queued render job.", "Start every queued render job.", {}), "bool"},
             {"pauseAllRenderQueues", IDescribable::loc("Pause every queued render job.", "Pause every queued render job.", {}), "bool"},
             {"cancelAllRenderQueues", IDescribable::loc("Cancel every queued render job.", "Cancel every queued render job.", {}), "bool"},
@@ -144,6 +152,9 @@ public:
         }
         if (name == QStringLiteral("renderQueueSnapshot")) {
             return renderQueueSnapshot();
+        }
+        if (name == QStringLiteral("renderQueueJobByIndex")) {
+            return renderQueueJobByIndex(intArg(args, 0, -1));
         }
         if (name == QStringLiteral("listCompositions")) {
             return listCompositions();
@@ -273,6 +284,27 @@ public:
         }
         if (name == QStringLiteral("addAllCompositionsToRenderQueue")) {
             return addAllCompositionsToRenderQueue();
+        }
+        if (name == QStringLiteral("duplicateRenderQueueAt")) {
+            return duplicateRenderQueueAt(intArg(args, 0, -1));
+        }
+        if (name == QStringLiteral("moveRenderQueue")) {
+            return moveRenderQueue(intArg(args, 0, -1), intArg(args, 1, -1));
+        }
+        if (name == QStringLiteral("removeRenderQueueAt")) {
+            return removeRenderQueueAt(intArg(args, 0, -1));
+        }
+        if (name == QStringLiteral("setRenderQueueJobNameAt")) {
+            return setRenderQueueJobNameAt(intArg(args, 0, -1), stringArg(args, 1));
+        }
+        if (name == QStringLiteral("setRenderQueueJobOutputPathAt")) {
+            return setRenderQueueJobOutputPathAt(intArg(args, 0, -1), stringArg(args, 1));
+        }
+        if (name == QStringLiteral("setRenderQueueJobFrameRangeAt")) {
+            return setRenderQueueJobFrameRangeAt(intArg(args, 0, -1), intArg(args, 1, 0), intArg(args, 2, 0));
+        }
+        if (name == QStringLiteral("setRenderQueueJobIntegratedRenderEnabledAt")) {
+            return setRenderQueueJobIntegratedRenderEnabledAt(intArg(args, 0, -1), boolArg(args, 1, true));
         }
         if (name == QStringLiteral("startAllRenderQueues")) {
             return renderQueueStartAll();
@@ -543,6 +575,22 @@ private:
         obj[QStringLiteral("jobCount")] = service->jobCount();
         obj[QStringLiteral("totalProgress")] = service->getTotalProgress();
         obj[QStringLiteral("jobs")] = service->toJson();
+        return toVariantMap(obj);
+    }
+
+    static QVariantMap renderQueueJobByIndex(int jobIndex)
+    {
+        QVariantMap result;
+        auto* service = ArtifactRenderQueueService::instance();
+        if (!service || jobIndex < 0 || jobIndex >= service->jobCount()) {
+            return result;
+        }
+        const QJsonArray jobs = service->toJson();
+        if (jobIndex < 0 || jobIndex >= jobs.size() || !jobs.at(jobIndex).isObject()) {
+            return result;
+        }
+        QJsonObject obj = jobs.at(jobIndex).toObject();
+        obj[QStringLiteral("index")] = jobIndex;
         return toVariantMap(obj);
     }
 
@@ -1151,6 +1199,76 @@ private:
             return 0;
         }
         return service->addAllCompositions();
+    }
+
+    static QVariant duplicateRenderQueueAt(int jobIndex)
+    {
+        auto* service = ArtifactRenderQueueService::instance();
+        if (!service || jobIndex < 0 || jobIndex >= service->jobCount()) {
+            return false;
+        }
+        service->duplicateRenderQueueAt(jobIndex);
+        return true;
+    }
+
+    static QVariant moveRenderQueue(int fromIndex, int toIndex)
+    {
+        auto* service = ArtifactRenderQueueService::instance();
+        if (!service || fromIndex < 0 || toIndex < 0 || fromIndex >= service->jobCount() || toIndex >= service->jobCount()) {
+            return false;
+        }
+        service->moveRenderQueue(fromIndex, toIndex);
+        return true;
+    }
+
+    static QVariant removeRenderQueueAt(int jobIndex)
+    {
+        auto* service = ArtifactRenderQueueService::instance();
+        if (!service || jobIndex < 0 || jobIndex >= service->jobCount()) {
+            return false;
+        }
+        service->removeRenderQueueAt(jobIndex);
+        return true;
+    }
+
+    static QVariant setRenderQueueJobNameAt(int jobIndex, const QString& name)
+    {
+        auto* service = ArtifactRenderQueueService::instance();
+        if (!service || jobIndex < 0 || jobIndex >= service->jobCount()) {
+            return false;
+        }
+        service->setJobNameAt(jobIndex, name);
+        return true;
+    }
+
+    static QVariant setRenderQueueJobOutputPathAt(int jobIndex, const QString& outputPath)
+    {
+        auto* service = ArtifactRenderQueueService::instance();
+        if (!service || jobIndex < 0 || jobIndex >= service->jobCount()) {
+            return false;
+        }
+        service->setJobOutputPathAt(jobIndex, outputPath);
+        return true;
+    }
+
+    static QVariant setRenderQueueJobFrameRangeAt(int jobIndex, int startFrame, int endFrame)
+    {
+        auto* service = ArtifactRenderQueueService::instance();
+        if (!service || jobIndex < 0 || jobIndex >= service->jobCount()) {
+            return false;
+        }
+        service->setJobFrameRangeAt(jobIndex, startFrame, endFrame);
+        return true;
+    }
+
+    static QVariant setRenderQueueJobIntegratedRenderEnabledAt(int jobIndex, bool enabled)
+    {
+        auto* service = ArtifactRenderQueueService::instance();
+        if (!service || jobIndex < 0 || jobIndex >= service->jobCount()) {
+            return false;
+        }
+        service->setJobIntegratedRenderEnabledAt(jobIndex, enabled);
+        return true;
     }
 
     static QVariant renderQueueStartAll()
