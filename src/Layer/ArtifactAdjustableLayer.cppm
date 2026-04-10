@@ -1,25 +1,40 @@
 module;
 #include <utility>
 
-#include <stdexcept>
-
 module Artifact.Layer.AdjustableLayer;
+
+import Size;
+import Artifact.Composition.Abstract;
 
 namespace Artifact
 {
 
 ArtifactAdjustableLayer::ArtifactAdjustableLayer()
 {
+    setLayerName("Adjustment Layer");
+    setAdjustmentLayer(true);
 }
 
 ArtifactAdjustableLayer::~ArtifactAdjustableLayer()
 {
 }
 
+void ArtifactAdjustableLayer::setComposition(void *comp)
+{
+    ArtifactAbstractLayer::setComposition(comp);
+    if (auto *composition = static_cast<ArtifactAbstractComposition*>(comp)) {
+        const auto compSize = composition->settings().compositionSize();
+        if (compSize.width() > 0 && compSize.height() > 0) {
+            setSourceSize(Size_2D{compSize.width(), compSize.height()});
+        }
+    }
+}
+
 void ArtifactAdjustableLayer::draw(ArtifactIRenderer* renderer)
 {
     (void)renderer;
-    throw std::logic_error("The method or operation is not implemented.");
+    // Adjustment layers are effect carriers. They do not draw their own pixels.
+    // Their effects are applied by the composition renderer when appropriate.
 }
 
 bool ArtifactAdjustableLayer::isAdjustmentLayer() const

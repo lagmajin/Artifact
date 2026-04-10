@@ -132,6 +132,7 @@ public:
     QAction* clearParentAction = nullptr;
 
     QAction* precomposeAction = nullptr;
+    QAction* groupSelectionAction = nullptr;
     QAction* splitAction = nullptr;
 
     void handleCreateSolid();
@@ -156,6 +157,7 @@ public:
     void handleClearParent();
 
     void handlePrecompose();
+    void handleGroupSelection();
     void handleSplitLayer();
 
     bool hasCurrentComposition() const;
@@ -231,6 +233,7 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     selectMenu->addAction(clearParentAction);
 
     precomposeAction = new QAction("プリコンポーズ(&P)...", menu);
+    groupSelectionAction = new QAction("グループ化(&G)...", menu);
     splitAction = new QAction("レイヤー分割(&L)", menu);
     splitAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_D));
     splitAction->setIcon(QIcon(resolveIconPath("Material/content_cut.svg")));
@@ -245,6 +248,7 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     menu->addMenu(selectMenu);
     menu->addSeparator();
     menu->addAction(precomposeAction);
+    menu->addAction(groupSelectionAction);
     menu->addAction(splitAction);
 
     QObject::connect(createSolidAction, &QAction::triggered, menu, [this]() { handleCreateSolid(); });
@@ -269,6 +273,7 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     QObject::connect(clearParentAction, &QAction::triggered, menu, [this]() { handleClearParent(); });
 
     QObject::connect(precomposeAction, &QAction::triggered, menu, [this]() { handlePrecompose(); });
+    QObject::connect(groupSelectionAction, &QAction::triggered, menu, [this]() { handleGroupSelection(); });
     QObject::connect(splitAction, &QAction::triggered, menu, [this]() { handleSplitLayer(); });
 
     auto* service = ArtifactProjectService::instance();
@@ -349,6 +354,7 @@ void ArtifactLayerMenu::Impl::refreshEnabledState()
     selectParentAction->setEnabled(hasParent);
     clearParentAction->setEnabled(hasParent);
     precomposeAction->setEnabled(hasLayer);
+    groupSelectionAction->setEnabled(hasLayer && hasComp);
     splitAction->setEnabled(hasLayer);
 }
 
@@ -397,15 +403,8 @@ void ArtifactLayerMenu::Impl::handleCreateAdjust()
         QMessageBox::warning(menu_ ? menu_->window() : nullptr, "Layer", "コンポジションが選択されていません。");
         return;
     }
-    ArtifactSolidLayerInitParams params(uniqueLayerName(u8"Adjustment Layer 1"));
-    auto* service = ArtifactProjectService::instance();
-    if (auto comp = service->currentComposition().lock()) {
-        auto size = comp->settings().compositionSize();
-        params.setWidth(size.width());
-        params.setHeight(size.height());
-    }
-    params.setColor(FloatColor(0.0f, 0.0f, 0.0f, 1.0f));
-    service->addLayerToCurrentComposition(params);
+    ArtifactLayerInitParams params(uniqueLayerName(u8"Adjustment Layer 1"), LayerType::Adjustment);
+    ArtifactProjectService::instance()->addLayerToCurrentComposition(params);
 }
 
 void ArtifactLayerMenu::Impl::handleCreateText()
@@ -562,6 +561,30 @@ void ArtifactLayerMenu::Impl::handleClearParent()
 void ArtifactLayerMenu::Impl::handlePrecompose()
 {
     QMessageBox::information(menu_->window(), "Layer", "プリコンポーズは次のステップで実装します。");
+}
+
+void ArtifactLayerMenu::Impl::handleGroupSelection()
+{
+    auto* service = ArtifactProjectService::instance();
+    if (!service || !hasCurrentComposition()) {
+        return;
+    }
+
+    bool ok = false;
+    const QString groupName = QInputDialog::getText(
+        menu_->window(),
+        "グループ化",
+        "グループ名:",
+        QLineEdit::Normal,
+        QStringLiteral("Group 1"),
+        &ok);
+    if (!ok) {
+        return;
+    }
+
+    if (!service->groupSelectedLayersInCurrentComposition(UniString(groupName))) {
+        QMessageBox::warning(menu_->window(), "グループ化", "選択レイヤーをグループ化できませんでした。");
+    }
 }
 
 void ArtifactLayerMenu::Impl::handleSplitLayer()

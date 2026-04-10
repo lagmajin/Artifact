@@ -36,20 +36,47 @@ namespace Artifact {
   delete impl_;
  }
 
- void ArtifactNullLayer::draw(ArtifactIRenderer* renderer)
- {
-  //throw std::logic_error("The method or operation is not implemented.");
- }
+  void ArtifactNullLayer::draw(ArtifactIRenderer* renderer)
+  {
+   //throw std::logic_error("The method or operation is not implemented.");
+  }
 
- bool ArtifactNullLayer::isAdjustmentLayer() const
- {
-  return false;
- }
+  std::vector<ArtifactCore::PropertyGroup> ArtifactNullLayer::getLayerPropertyGroups() const
+  {
+    return ArtifactAbstractLayer::getLayerPropertyGroups();
+  }
 
- bool ArtifactNullLayer::isNullLayer() const
- {
- 
-  return true;
- }
+  bool ArtifactNullLayer::setLayerPropertyValue(const QString &propertyPath, const QVariant &value)
+  {
+    return ArtifactAbstractLayer::setLayerPropertyValue(propertyPath, value);
+  }
+
+  QImage ArtifactNullLayer::toQImage() const
+  {
+    return QImage();
+  }
+
+  QJsonObject ArtifactNullLayer::toJson() const
+  {
+    return ArtifactAbstractLayer::toJson();
+  }
+
+  std::shared_ptr<ArtifactNullLayer> ArtifactNullLayer::fromJson(const QJsonObject& obj)
+  {
+    auto layer = std::make_shared<ArtifactNullLayer>();
+    layer->fromJsonProperties(obj);
+    return layer;
+  }
+
+  bool ArtifactNullLayer::isAdjustmentLayer() const
+  {
+   return false;
+  }
+
+  bool ArtifactNullLayer::isNullLayer() const
+  {
+
+   return true;
+  }
 
 };

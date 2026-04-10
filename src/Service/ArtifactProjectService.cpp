@@ -611,6 +611,54 @@ void ArtifactProjectService::addLayerToCurrentComposition(const ArtifactLayerIni
  impl_->addLayerToCurrentComposition(params);
 }
 
+bool ArtifactProjectService::groupSelectedLayersInCurrentComposition(const UniString& groupName)
+{
+    auto comp = currentComposition().lock();
+    if (!comp) {
+        return false;
+    }
+
+    auto* app = ArtifactApplicationManager::instance();
+    auto* selectionManager = app ? app->layerSelectionManager() : nullptr;
+    if (!selectionManager) {
+        return false;
+    }
+
+    const auto selected = selectionManager->selectedLayers();
+    QVector<LayerID> selectedIds;
+    selectedIds.reserve(selected.size());
+    for (const auto& layer : selected) {
+        if (!layer || layer->composition() != comp.get()) {
+            continue;
+        }
+        selectedIds.push_back(layer->id());
+    }
+
+    if (selectedIds.isEmpty()) {
+        return false;
+    }
+
+    ArtifactLayerInitParams groupParams(groupName.toQString(), LayerType::Group);
+    addLayerToCurrentComposition(groupParams);
+
+    auto newGroup = selectionManager->currentLayer();
+    if (!newGroup || !newGroup->isGroupLayer()) {
+        return false;
+    }
+
+    const LayerID groupId = newGroup->id();
+    bool anyReparented = false;
+    for (const auto& layerId : selectedIds) {
+        if (layerId == groupId) {
+            continue;
+        }
+        anyReparented |= setLayerParentInCurrentComposition(layerId, groupId);
+    }
+
+    selectLayer(groupId);
+    return anyReparented;
+}
+
 bool ArtifactProjectService::removeLayerFromComposition(const CompositionID& compositionId, const LayerID& layerId)
 {
     bool ok = impl_->projectManager().removeLayerFromComposition(compositionId, layerId);
