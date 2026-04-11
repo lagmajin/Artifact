@@ -16,6 +16,7 @@
 #include <QString>
 export module Artifact.Render.GPUTextureCacheManager;
 
+import Image.ImageF32x4_RGBA;
 
 export namespace Artifact {
 
@@ -51,6 +52,9 @@ public:
     GPUTextureCacheHandle acquireOrCreate(const QString& ownerId,
                                           const QString& cacheKey,
                                           const QImage& image);
+    GPUTextureCacheHandle acquireOrCreate(const QString& ownerId,
+                                          const QString& cacheKey,
+                                          const ArtifactCore::ImageF32x4_RGBA& image);
 
     Diligent::ITextureView* textureView(const GPUTextureCacheHandle& handle) const;
     bool isValid(const GPUTextureCacheHandle& handle) const;
@@ -73,6 +77,13 @@ private:
     };
 
     QString makeKey(const QString& ownerId, const QString& cacheKey) const;
+    GPUTextureCacheHandle acquireOrCreateFromRgbaBytes(const QString& ownerId,
+                                                       const QString& cacheKey,
+                                                       Diligent::Uint32 width,
+                                                       Diligent::Uint32 height,
+                                                       Diligent::Uint64 stride,
+                                                       const void* bytes,
+                                                       size_t memoryBytes);
     void pruneLocked();
     void eraseEntryByIdLocked(quint64 id);
 

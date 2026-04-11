@@ -55,6 +55,7 @@ export namespace Artifact {
   // Dock enumeration
   QStringList dockTitles() const;
   bool isDockVisible(const QString& title) const;
+  bool hasDock(const QString& title) const;
   
   // Status bar update methods
   void setStatusZoomLevel(float zoomPercent);

@@ -2938,21 +2938,6 @@ namespace Artifact
                         }
                         impl_->gpuRenderer_->flush();
                         qimg = impl_->gpuRenderer_->readbackToImage();
-                        if (!qimg.isNull()) {
-                            const QColor topLeft = qimg.pixelColor(0, 0);
-                            const QColor center = qimg.pixelColor(
-                                std::clamp(qimg.width() / 2, 0, std::max(0, qimg.width() - 1)),
-                                std::clamp(qimg.height() / 2, 0, std::max(0, qimg.height() - 1)));
-                            qInfo().nospace()
-                                << "[RenderQueue][GPU] frame=" << f
-                                << " expectedBg=("
-                                << bgColor.r() << "," << bgColor.g() << "," << bgColor.b() << "," << bgColor.a()
-                                << ") topLeft=("
-                                << topLeft.red() << "," << topLeft.green() << "," << topLeft.blue() << "," << topLeft.alpha()
-                                << ") center=("
-                                << center.red() << "," << center.green() << "," << center.blue() << "," << center.alpha()
-                                << ") size=" << qimg.width() << "x" << qimg.height();
-                        }
                     } else {
                         // 経路A: QPainter ソフトウェアコンポジット
                         qimg = impl_->renderSingleFrameComposition(job, *compositionForRender, f);

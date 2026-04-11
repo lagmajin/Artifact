@@ -70,6 +70,7 @@ public:
   void destroy();
   void present();
   bool isInitialized() const;
+  bool hasSwapChain() const;
 
  QImage readbackToImage() const;
 

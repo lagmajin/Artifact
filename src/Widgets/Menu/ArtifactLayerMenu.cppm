@@ -8,6 +8,7 @@ module;
 #include <QMessageBox>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QtSVG/QSvgRenderer>
 #include <QTimer>
 #include <QSet>
 #include <wobjectimpl.h>
@@ -117,6 +118,7 @@ public:
     QAction* createParticleAction = nullptr;
     QAction* createCameraAction = nullptr;
     QAction* createAudioAction = nullptr;
+    QAction* createSvgAction = nullptr;
 
     QAction* duplicateLayerAction = nullptr;
     QAction* renameLayerAction = nullptr;
@@ -142,6 +144,7 @@ public:
     void handleCreateParticle();
     void handleCreateCamera();
     void handleCreateAudio();
+    void handleCreateSvg();
 
     void handleDuplicateLayer();
     void handleRenameLayer();
@@ -193,6 +196,8 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     createAudioAction = new QAction("オーディオ(&U)...", createMenu);
     createAudioAction->setIcon(QIcon(resolveIconPath("Material/audiotrack.svg")));
 
+    createSvgAction = new QAction("SVG シェイプレイヤー(&V)...", createMenu);
+
     createMenu->addAction(createSolidAction);
     createMenu->addAction(createNullAction);
     createMenu->addAction(createAdjustAction);
@@ -200,6 +205,7 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     createMenu->addAction(createParticleAction);
     createMenu->addAction(createCameraAction);
     createMenu->addAction(createAudioAction);
+    createMenu->addAction(createSvgAction);
 
     duplicateLayerAction = new QAction("レイヤーを複製(&D)", menu);
     duplicateLayerAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_D));
@@ -258,6 +264,7 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     QObject::connect(createParticleAction, &QAction::triggered, menu, [this]() { handleCreateParticle(); });
     QObject::connect(createCameraAction, &QAction::triggered, menu, [this]() { handleCreateCamera(); });
     QObject::connect(createAudioAction, &QAction::triggered, menu, [this]() { handleCreateAudio(); });
+    QObject::connect(createSvgAction, &QAction::triggered, menu, [this]() { handleCreateSvg(); });
 
     QObject::connect(duplicateLayerAction, &QAction::triggered, menu, [this]() { handleDuplicateLayer(); });
     QObject::connect(renameLayerAction, &QAction::triggered, menu, [this]() { handleRenameLayer(); });
@@ -342,6 +349,7 @@ void ArtifactLayerMenu::Impl::refreshEnabledState()
     createParticleAction->setEnabled(hasProject);
     createCameraAction->setEnabled(hasProject);
     createAudioAction->setEnabled(hasProject);
+    createSvgAction->setEnabled(hasProject);
 
     duplicateLayerAction->setEnabled(hasLayer);
     renameLayerAction->setEnabled(hasLayer);
@@ -457,6 +465,50 @@ void ArtifactLayerMenu::Impl::handleCreateAudio()
     ArtifactAudioInitParams params(uniqueLayerName(QFileInfo(path).baseName()));
     params.setAudioPath(path);
     ArtifactProjectService::instance()->addLayerToCurrentComposition(params);
+}
+
+void ArtifactLayerMenu::Impl::handleCreateSvg()
+{
+    auto* service = ArtifactProjectService::instance();
+    if (!ensureCurrentComposition()) {
+        QMessageBox::warning(menu_ ? menu_->window() : nullptr, "Layer", "コンポジションが選択されていません。");
+        return;
+    }
+    if (!service) {
+        return;
+    }
+
+    const QString filePath = QFileDialog::getOpenFileName(
+        menu_ ? menu_->window() : nullptr,
+        QStringLiteral("SVGを選択"),
+        QString(),
+        QStringLiteral("SVG (*.svg);;All Files (*.*)"));
+    if (filePath.isEmpty()) {
+        return;
+    }
+    if (!filePath.endsWith(QStringLiteral(".svg"), Qt::CaseInsensitive)) {
+        QMessageBox::warning(menu_ ? menu_->window() : nullptr,
+                             QStringLiteral("Layer"),
+                             QStringLiteral("SVG ファイルを選択してください。"));
+        return;
+    }
+    QSvgRenderer validator(filePath);
+    if (!validator.isValid()) {
+        QMessageBox::warning(menu_ ? menu_->window() : nullptr,
+                             QStringLiteral("Layer"),
+                             QStringLiteral("SVG を読み込めませんでした。"));
+        return;
+    }
+
+    const QString layerName = uniqueLayerName(QFileInfo(filePath).completeBaseName());
+    service->importAssetsFromPathsAsync(QStringList{filePath}, [service, layerName](QStringList importedPaths) {
+        if (!service || importedPaths.isEmpty()) {
+            return;
+        }
+        ArtifactSvgInitParams params(layerName);
+        params.setSvgPath(importedPaths.first());
+        service->addLayerToCurrentComposition(params);
+    });
 }
 
 void ArtifactLayerMenu::Impl::handleDuplicateLayer()

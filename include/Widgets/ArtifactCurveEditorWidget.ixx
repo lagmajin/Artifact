@@ -3,6 +3,7 @@ module;
 #include <vector>
 
 #include <QWidget>
+#include <QKeyEvent>
 #include <wobjectdefs.h>
 export module Widget.CurveEditor;
 
@@ -40,10 +41,16 @@ export namespace ArtifactCore {
   void setViewRange(float xMin, float xMax, float yMin, float yMax);
   void setCurrentFrame(int64_t frame);
   void fitToContent();
+  void focusTrack(int trackIndex);
+  void setHandleEditingEnabled(bool enabled);
 
  signals:
+  void interactionStarted() W_SIGNAL(interactionStarted);
+  void interactionFinished() W_SIGNAL(interactionFinished);
   void keyMoved(int trackIndex, int keyIndex, int64_t newFrame, float newValue)
    W_SIGNAL(keyMoved, trackIndex, keyIndex, newFrame, newValue);
+  void keyDeleted(int trackIndex, int keyIndex)
+   W_SIGNAL(keyDeleted, trackIndex, keyIndex);
   void keySelected(int trackIndex, int keyIndex)
    W_SIGNAL(keySelected, trackIndex, keyIndex);
   void currentFrameChanged(int64_t frame)
@@ -54,6 +61,7 @@ export namespace ArtifactCore {
   void mousePressEvent(QMouseEvent* event) override;
   void mouseMoveEvent(QMouseEvent* event) override;
   void mouseReleaseEvent(QMouseEvent* event) override;
+  void keyPressEvent(QKeyEvent* event) override;
   void wheelEvent(QWheelEvent* event) override;
   void mouseDoubleClickEvent(QMouseEvent* event) override;
  };

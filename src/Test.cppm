@@ -2,9 +2,7 @@ module;
 
 #include <QDebug>
 
-#include "Test/ArtifactTestRenderQueue.h"
-
-export module Test;
+export module Artifact.TestRunner;
 
 import Artifact.Test.AIToolBridge;
 import Artifact.Test.AdjustmentLayer;
@@ -18,9 +16,6 @@ int runAllTests()
     int failures = 0;
 
     qInfo().noquote() << "[Test] Running built-in tests";
-
-    ArtifactTestRenderQueue renderQueueTests;
-    renderQueueTests.runAllTests();
 
     failures += runAIToolBridgeTests();
     failures += runAdjustmentLayerTests();

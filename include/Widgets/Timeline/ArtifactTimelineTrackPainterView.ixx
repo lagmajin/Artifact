@@ -99,6 +99,11 @@ export namespace Artifact
   void clearClips();
   void setClips(const QVector<TrackClipVisual>& clips);
   void setKeyframeMarkers(const QVector<KeyframeMarkerVisual>& markers);
+  QVector<KeyframeMarkerVisual> keyframeMarkers() const;
+  QVector<KeyframeMarkerVisual> selectedKeyframeMarkers() const;
+  void selectAllKeyframeMarkers();
+  void clearKeyframeSelection();
+  bool hasSelectedKeyframes() const;
   void syncSelectionState(const ArtifactCompositionPtr& composition,
                           ArtifactLayerSelectionManager* selectionManager,
                           const QVector<LayerID>& trackLayerIds);

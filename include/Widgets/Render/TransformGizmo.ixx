@@ -81,6 +81,8 @@ export namespace Artifact {
   QRectF dragStartLocalBounds_;
   QPointF dragStartAnchor_;
   float dragStartAnchorZ_ = 0.0f;
+  float dragStartPointerAngle_ = 0.0f;
+  float dragAccumulatedRotationDelta_ = 0.0f;
   QPointF lastCanvasMousePos_;
   
   static constexpr float HANDLE_SIZE = 10.0f;

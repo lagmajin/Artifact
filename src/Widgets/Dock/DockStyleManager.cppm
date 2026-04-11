@@ -109,7 +109,7 @@ QString tabTextColor(const bool isActiveDock, const bool /*isFloatingTab*/, cons
     QColor mutedText = themeText;
     if (background.lightnessF() < 0.5) {
         // Dark theme: inactive tabs still need readable contrast.
-        mutedText = themeText.lighter(135);
+        mutedText = themeText.lighter(155);
     } else {
         mutedText = themeText.darker(112);
     }
@@ -126,7 +126,8 @@ void applyTabLabelColors(ads::CDockWidgetTab* tab, const QString& color, const b
     const QColor textColor(color);
     const QColor themeBg = QColor(ArtifactCore::currentDCCTheme().backgroundColor);
     const QColor themeBorder = QColor(ArtifactCore::currentDCCTheme().borderColor);
-    const QColor tabBg = emphasize ? themeBg.lighter(108) : themeBg.darker(108);
+    const QColor surface = QColor(ArtifactCore::currentDCCTheme().secondaryBackgroundColor);
+    const QColor tabBg = emphasize ? surface.lighter(112) : surface.lighter(104);
     auto applyTextStyle = [&](QWidget* child) {
         if (!child) {
             return;

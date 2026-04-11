@@ -45,6 +45,7 @@ export struct LayerSurfaceCacheEntry
   QString ownerId;
   QString cacheSignature;
   QImage processedSurface;
+  std::shared_ptr<ArtifactCore::ImageF32x4_RGBA> processedBuffer;
   GPUTextureCacheHandle gpuTextureHandle;
   int64_t frameNumber = std::numeric_limits<int64_t>::min();
 };
@@ -206,11 +207,12 @@ QString buildLayerSurfaceCacheKey(ArtifactAbstractLayer* layer,
   return QString();
 }
 
-void applyRasterizerEffectsAndMasksToSurface(ArtifactAbstractLayer* targetLayer,
-                                              QImage& surface)
+bool buildRasterizedSurfaceBuffer(ArtifactAbstractLayer* targetLayer,
+                                  const QImage& surface,
+                                  ArtifactCore::ImageF32x4_RGBA* outBuffer)
 {
-  if (!targetLayer || surface.isNull()) {
-    return;
+  if (!targetLayer || surface.isNull() || !outBuffer) {
+    return false;
   }
 
   const bool hasMasks = targetLayer->hasMasks();
@@ -225,7 +227,7 @@ void applyRasterizerEffectsAndMasksToSurface(ArtifactAbstractLayer* targetLayer,
   }
 
   if (!hasRasterizerEffect && !hasMasks) {
-    return;
+    return false;
   }
 
   cv::Mat mat = ArtifactCore::CvUtils::qImageToCvMat(surface, true);
@@ -258,7 +260,17 @@ void applyRasterizerEffectsAndMasksToSurface(ArtifactAbstractLayer* targetLayer,
     }
   }
 
-  surface = ArtifactCore::CvUtils::cvMatToQImage(mat);
+  outBuffer->setFromCVMat(mat);
+  return true;
+}
+
+void applyRasterizerEffectsAndMasksToSurface(ArtifactAbstractLayer* targetLayer,
+                                             QImage& surface)
+{
+  ArtifactCore::ImageF32x4_RGBA processed;
+  if (buildRasterizedSurfaceBuffer(targetLayer, surface, &processed)) {
+    surface = processed.toQImage();
+  }
 }
 
 bool hasRasterizerEffectsOrMasks(ArtifactAbstractLayer* targetLayer)
@@ -360,17 +372,29 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
         cacheEntry = &(*cacheIt);
         surface = cacheIt->processedSurface;
       } else {
+        std::shared_ptr<ArtifactCore::ImageF32x4_RGBA> processedBuffer;
         if (allowSurfaceCache) {
-          applyRasterizerEffectsAndMasksToSurface(layer, surface);
+          ArtifactCore::ImageF32x4_RGBA processed;
+          if (buildRasterizedSurfaceBuffer(layer, surface, &processed)) {
+            processedBuffer = std::make_shared<ArtifactCore::ImageF32x4_RGBA>(processed);
+            if (!gpuTextureCacheManager || !layerUsesGpuTextureCacheForCompositionView(layer)) {
+              surface = processed.toQImage();
+            }
+          }
         }
 
         LayerSurfaceCacheEntry entry;
         entry.ownerId = ownerId;
         entry.cacheSignature = cacheSignature;
+        entry.processedBuffer = processedBuffer;
         entry.processedSurface = surface;
         entry.frameNumber = cacheFrameNumber;
         if (gpuTextureCacheManager && layerUsesGpuTextureCacheForCompositionView(layer)) {
-          entry.gpuTextureHandle = gpuTextureCacheManager->acquireOrCreate(ownerId, cacheSignature, surface);
+          if (entry.processedBuffer) {
+            entry.gpuTextureHandle = gpuTextureCacheManager->acquireOrCreate(ownerId, cacheSignature, *entry.processedBuffer);
+          } else {
+            entry.gpuTextureHandle = gpuTextureCacheManager->acquireOrCreate(ownerId, cacheSignature, surface);
+          }
         }
         (*surfaceCache)[ownerId] = entry;
         cacheEntry = &(*surfaceCache)[ownerId];
@@ -388,8 +412,13 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
           if (!gpuTextureCacheManager->isValid(cacheEntry->gpuTextureHandle)) {
             const QImage& uploadSurface =
                 cacheEntry->processedSurface.isNull() ? surface : cacheEntry->processedSurface;
-            cacheEntry->gpuTextureHandle =
-                gpuTextureCacheManager->acquireOrCreate(layer->id().toString(), cacheSignature, uploadSurface);
+            if (cacheEntry->processedBuffer) {
+              cacheEntry->gpuTextureHandle =
+                  gpuTextureCacheManager->acquireOrCreate(layer->id().toString(), cacheSignature, *cacheEntry->processedBuffer);
+            } else {
+              cacheEntry->gpuTextureHandle =
+                  gpuTextureCacheManager->acquireOrCreate(layer->id().toString(), cacheSignature, uploadSurface);
+            }
           }
           if (auto* srv = gpuTextureCacheManager->textureView(cacheEntry->gpuTextureHandle)) {
             renderer->drawSpriteTransformed(static_cast<float>(rect.x()),

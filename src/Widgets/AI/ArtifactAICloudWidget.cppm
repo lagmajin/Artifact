@@ -1,38 +1,40 @@
 module;
-#include <QComboBox>
 #include <QApplication>
-#include <QEvent>
+#include <QComboBox>
+#include <QDateTime>
 #include <QDialog>
 #include <QDialogButtonBox>
-#include <QScrollBar>
-#include <QPainter>
+#include <QEvent>
+#include <QFontDatabase>
 #include <QFormLayout>
+#include <QFrame>
+#include <QGuiApplication>
 #include <QHBoxLayout>
+#include <QClipboard>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
-#include <QFontDatabase>
-#include <QFrame>
-#include <QDateTime>
+#include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMessageBox>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QNetworkRequest>
+#include <QPainter>
 #include <QProcess>
-#include <QKeyEvent>
 #include <QPushButton>
-#include <QSslSocket>
+#include <QScrollBar>
 #include <QSettings>
 #include <QSplitter>
-#include <QTextEdit>
+#include <QSslSocket>
 #include <QTextCursor>
+#include <QTextEdit>
+#include <QTimer>
 #include <QUrl>
 #include <QVBoxLayout>
-#include <QTimer>
+#include <limits>
 #include <wobjectimpl.h>
-
 
 module Artifact.Widgets.AI.ArtifactAICloudWidget;
 
@@ -42,10 +44,13 @@ import std;
 import Core.AI.Context;
 import Core.AI.PromptGenerator;
 import Core.AI.ToolBridge;
+import Core.AI.ToolExecutor;
 import Core.AI.McpBridge;
 import Core.AI.McpTransport;
+import Core.AI.McpToolMapper;
 import Core.AI.CloudAgent;
 import Core.AI.TieredManager;
+import Artifact.AI.WorkspaceAutomation;
 import Artifact.Application.Manager;
 import Artifact.Project.Statistics;
 import Artifact.Layer.Abstract;
@@ -65,6 +70,7 @@ public:
       : QFrame(parent), role_(role) {
     setFrameShape(QFrame::NoFrame);
     setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
+    setAttribute(Qt::WA_TranslucentBackground, true);
     auto *layout = new QVBoxLayout(this);
     layout->setContentsMargins(14, 10, 14, 10);
     layout->setSpacing(0);
@@ -74,7 +80,13 @@ public:
                                     Qt::TextSelectableByKeyboard);
     label_->setTextFormat(Qt::PlainText);
     label_->setMaximumWidth(580);
+    label_->setAttribute(Qt::WA_TranslucentBackground, false);
+    label_->setAutoFillBackground(true);
+    QFont textFont = label_->font();
+    textFont.setHintingPreference(QFont::PreferFullHinting);
+    label_->setFont(textFont);
     layout->addWidget(label_);
+    refreshLabelAppearance();
   }
 
   void setText(const QString &text) {
@@ -86,15 +98,15 @@ public:
 
   void setRole(Role role) {
     role_ = role;
+    refreshLabelAppearance();
     update();
   }
 
   QString text() const { return text_; }
+  Role role() const { return role_; }
 
 protected:
   void paintEvent(QPaintEvent *event) override {
-    QFrame::paintEvent(event);
-
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing, true);
     QRectF r = rect().adjusted(1, 1, -1, -1);
@@ -122,6 +134,31 @@ protected:
   }
 
 private:
+  void refreshLabelAppearance() {
+    QColor fill;
+    QColor textColor;
+    switch (role_) {
+    case Role::User:
+      fill = QColor("#1f4e79");
+      textColor = QColor("#f3f8ff");
+      break;
+    case Role::Assistant:
+      fill = QColor("#23272f");
+      textColor = QColor("#eef2f7");
+      break;
+    case Role::System:
+      fill = QColor("#35302a");
+      textColor = QColor("#fff2d3");
+      break;
+    }
+
+    QPalette palette = label_->palette();
+    palette.setColor(QPalette::Window, fill);
+    palette.setColor(QPalette::Base, fill);
+    palette.setColor(QPalette::Text, textColor);
+    label_->setPalette(palette);
+  }
+
   QLabel *label_ = nullptr;
   Role role_ = Role::Assistant;
   QString text_;
@@ -170,8 +207,7 @@ SectionCard makeSectionCard(QWidget *parent, const QString &title,
   return {frame, body};
 }
 
-bool openCloudSettingsDialog(QWidget *parent)
-{
+bool openCloudSettingsDialog(QWidget *parent) {
   QDialog dialog(parent);
   dialog.setWindowTitle(QStringLiteral("Cloud AI Settings"));
   dialog.setModal(true);
@@ -183,12 +219,14 @@ bool openCloudSettingsDialog(QWidget *parent)
   auto *settingsWidget = new Artifact::ArtifactAICloudSettingsWidget(&dialog);
   layout->addWidget(settingsWidget, 1);
 
-  auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel,
-                                       Qt::Horizontal, &dialog);
+  auto *buttons = new QDialogButtonBox(
+      QDialogButtonBox::Ok | QDialogButtonBox::Cancel, Qt::Horizontal, &dialog);
   layout->addWidget(buttons);
 
-  QObject::connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
-  QObject::connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+  QObject::connect(buttons, &QDialogButtonBox::accepted, &dialog,
+                   &QDialog::accept);
+  QObject::connect(buttons, &QDialogButtonBox::rejected, &dialog,
+                   &QDialog::reject);
 
   if (dialog.exec() != QDialog::Accepted) {
     return false;
@@ -251,10 +289,9 @@ CurlResult runCurlJsonRequest(const QString &url, const QString &apiKey,
   const QByteArray stderrBytes = process.readAllStandardError();
   const QByteArray stdoutBytes = process.readAllStandardOutput();
   if (process.exitStatus() != QProcess::NormalExit || process.exitCode() != 0) {
-    result.errorText = QString::fromUtf8(stderrBytes.isEmpty()
-                                            ? stdoutBytes
-                                            : stderrBytes)
-                          .trimmed();
+    result.errorText =
+        QString::fromUtf8(stderrBytes.isEmpty() ? stdoutBytes : stderrBytes)
+            .trimmed();
     if (result.errorText.isEmpty()) {
       result.errorText = QStringLiteral("curl failed");
     }
@@ -278,6 +315,15 @@ QStringList extractModelIdsFromJson(const QJsonDocument &doc) {
       if (id.isEmpty()) {
         id = item.value("slug").toString();
       }
+      if (id.isEmpty()) {
+        id = item.value("model").toString();
+      }
+      if (id.isEmpty()) {
+        id = item.value("display_name").toString();
+      }
+      if (id.isEmpty()) {
+        id = item.value("title").toString();
+      }
       if (!id.isEmpty()) {
         ids.push_back(id);
       }
@@ -297,14 +343,81 @@ QStringList extractModelIdsFromJson(const QJsonDocument &doc) {
   return ids;
 }
 
-AIContext buildCurrentCloudContext()
-{
+int modelPreferenceScore(const QString &modelId) {
+  const QString id = modelId.trimmed().toLower();
+  if (id.isEmpty()) {
+    return -1000;
+  }
+
+  int score = 0;
+  auto addIfContains = [&](const QString &needle, int delta) {
+    if (id.contains(needle)) {
+      score += delta;
+    }
+  };
+
+  addIfContains(QStringLiteral("free"), 1000);
+  addIfContains(QStringLiteral(":free"), 1000);
+  addIfContains(QStringLiteral("/free"), 1000);
+  addIfContains(QStringLiteral("mini"), 120);
+  addIfContains(QStringLiteral("flash-lite"), 110);
+  addIfContains(QStringLiteral("flash"), 90);
+  addIfContains(QStringLiteral("haiku"), 85);
+  addIfContains(QStringLiteral("lite"), 80);
+  addIfContains(QStringLiteral("nano"), 75);
+  addIfContains(QStringLiteral("small"), 60);
+  addIfContains(QStringLiteral("compact"), 55);
+  addIfContains(QStringLiteral("base"), 35);
+  addIfContains(QStringLiteral("334"), 30);
+
+  addIfContains(QStringLiteral("pro"), -140);
+  addIfContains(QStringLiteral("max"), -130);
+  addIfContains(QStringLiteral("opus"), -125);
+  addIfContains(QStringLiteral("sonnet"), -70);
+  addIfContains(QStringLiteral("ultra"), -110);
+  addIfContains(QStringLiteral("large"), -90);
+  addIfContains(QStringLiteral("reasoning"), -30);
+
+  if (id.startsWith(QStringLiteral("gpt-4o-mini"))) {
+    score += 140;
+  }
+  if (id.startsWith(QStringLiteral("gpt-4.1-mini"))) {
+    score += 140;
+  }
+  if (id.startsWith(QStringLiteral("gpt-3.5"))) {
+    score += 60;
+  }
+  if (id.startsWith(QStringLiteral("gemini-2.0-flash"))) {
+    score += 120;
+  }
+  if (id.startsWith(QStringLiteral("claude-3-haiku"))) {
+    score += 120;
+  }
+
+  return score;
+}
+
+QString choosePreferredModelId(const QStringList &modelIds) {
+  QString bestId;
+  int bestScore = std::numeric_limits<int>::min();
+  for (const QString &id : modelIds) {
+    const int score = modelPreferenceScore(id);
+    if (score > bestScore) {
+      bestScore = score;
+      bestId = id.trimmed();
+    }
+  }
+  return bestId;
+}
+
+AIContext buildCurrentCloudContext() {
   AIContext context = TieredAIManager::instance().globalContext();
 
   auto *app = ArtifactApplicationManager::instance();
   auto *projectService = app ? app->projectService() : nullptr;
   auto *selectionManager = app ? app->layerSelectionManager() : nullptr;
-  auto project = projectService ? projectService->getCurrentProjectSharedPtr() : nullptr;
+  auto project =
+      projectService ? projectService->getCurrentProjectSharedPtr() : nullptr;
 
   if (project) {
     const auto stats = ArtifactProjectStatistics::collect(project.get());
@@ -316,9 +429,9 @@ AIContext buildCurrentCloudContext()
 
     int heavyCount = 0;
     for (const auto &detail : stats.compositionDetails) {
-      const QString detailName =
-          detail.name.trimmed().isEmpty() ? QStringLiteral("(unnamed)")
-                                          : detail.name.trimmed();
+      const QString detailName = detail.name.trimmed().isEmpty()
+                                     ? QStringLiteral("(unnamed)")
+                                     : detail.name.trimmed();
       context.addCompositionName(detailName);
       if (detail.layerCount >= 10) {
         ++heavyCount;
@@ -329,11 +442,12 @@ AIContext buildCurrentCloudContext()
   }
 
   if (auto comp = projectService ? projectService->currentComposition().lock()
-                                : ArtifactCompositionPtr{}) {
-    const QString compName = comp->settings().compositionName().toQString().trimmed();
+                                 : ArtifactCompositionPtr{}) {
+    const QString compName =
+        comp->settings().compositionName().toQString().trimmed();
     context.setActiveCompositionId(comp->id().toString());
-    context.setActiveCompositionName(compName.isEmpty() ? QStringLiteral("(unnamed)")
-                                                        : compName);
+    context.setActiveCompositionName(
+        compName.isEmpty() ? QStringLiteral("(unnamed)") : compName);
   }
 
   if (selectionManager) {
@@ -350,87 +464,118 @@ AIContext buildCurrentCloudContext()
   return context;
 }
 
-QString buildCloudSystemPrompt(const AIContext &context)
-{
+QString buildCloudSystemPrompt(const AIContext &context) {
+  Artifact::WorkspaceAutomation::ensureRegistered();
+
   QString prompt = ArtifactCore::AIPromptGenerator::generateSystemPrompt(
       ArtifactCore::DescriptionLanguage::Japanese);
+  prompt += QStringLiteral("\n\n## Tool Schema\n"
+                           "If you need a tool, return a single JSON object "
+                           "with keys class, method, arguments.\n"
+                           "The app also accepts component as an alias for class, and arguments may be an object or an array.\n"
+                           "Do not wrap it in markdown fences.\n");
+  prompt += QString::fromUtf8(
+      ArtifactCore::AIPromptGenerator::generateToolSchemaJson());
   prompt += QStringLiteral(
-      "\n\n## Tool Schema\n"
-      "If you need a tool, return a single JSON object with keys class, method, arguments.\n"
-      "Do not wrap it in markdown fences.\n");
-  prompt += QString::fromUtf8(ArtifactCore::AIPromptGenerator::generateToolSchemaJson());
-  prompt += QStringLiteral(
-      "\n\n追加の前提:\n"
-      "- ArtifactStudio はモーショングラフィックス / 動画編集 / コンポジット / レイヤー編集のためのアプリです。\n"
-      "- この会話での「コンポジション」はアプリ内のコンポジションを指し、音楽の作曲ではありません。\n"
-      "- ユーザーが数を尋ねたら、まずプロジェクト内の状態について答えてください。\n"
-      "- 文脈が不足していても、まず ArtifactStudio のプロジェクト状態を前提に解釈してください。\n");
+      "\n\n## Workspace Automation Quick Actions\n"
+      "- コンポジション作成: WorkspaceAutomation.createComposition(name, "
+      "width, height)\n"
+      "- 画像レイヤー追加: "
+      "WorkspaceAutomation.addImageLayerToCurrentComposition(name, path)\n"
+      "- SVG レイヤー追加: "
+      "WorkspaceAutomation.addSvgLayerToCurrentComposition(name, path)\n"
+      "- 音声レイヤー追加: "
+      "WorkspaceAutomation.addAudioLayerToCurrentComposition(name, path)\n"
+      "- テキストレイヤー追加: "
+      "WorkspaceAutomation.addTextLayerToCurrentComposition(name)\n"
+      "- Null / Solid レイヤー追加: "
+      "WorkspaceAutomation.addNullLayerToCurrentComposition / "
+      "addSolidLayerToCurrentComposition\n"
+      "- 新規作成や追加を頼まれたら、まずこれらの tool "
+      "を優先して使ってください。\n"
+      "- project が空なら createProject を先に使ってから composition "
+      "を作成してください。\n");
+  prompt +=
+      QStringLiteral("\n\n追加の前提:\n"
+                     "- ArtifactStudio はモーショングラフィックス / 動画編集 / "
+                     "コンポジット / レイヤー編集のためのアプリです。\n"
+                     "- "
+                     "この会話での「コンポジション」はアプリ内のコンポジション"
+                     "を指し、音楽の作曲ではありません。\n"
+                     "- "
+                     "ユーザーが数を尋ねたら、まずプロジェクト内の状態について"
+                     "答えてください。\n"
+                     "- 文脈が不足していても、まず ArtifactStudio "
+                     "のプロジェクト状態を前提に解釈してください。\n");
   prompt += QStringLiteral(
       "\n\n## Cloud Debug Workflow\n"
-      "- 不具合調査や曖昧な相談では、最初に最有力仮説、根拠、確認すべきファイルや値、最小の次アクションを提示してください。\n"
-      "- 足りない情報があれば、質問だけで止まらず、現時点の文脈からの推定を先に返してください。\n"
-      "- 可能なら、どの surface / widget / render path を見ているかを切り分けて説明してください。\n");
-  prompt += QStringLiteral(
-      "\n\n## Live Project Context\n"
-      "```json\n%1\n```\n")
+      "- "
+      "不具合調査や曖昧な相談では、最初に最有力仮説、根拠、確認すべきファイルや"
+      "値、最小の次アクションを提示してください。\n"
+      "- "
+      "足りない情報があれば、質問だけで止まらず、現時点の文脈からの推定を先に返"
+      "してください。\n"
+      "- 可能なら、どの surface / widget / render path "
+      "を見ているかを切り分けて説明してください。\n");
+  prompt += QStringLiteral("\n\n## Live Project Context\n"
+                           "```json\n%1\n```\n")
                 .arg(context.toJsonString());
   return prompt;
 }
 
-QString buildMcpPreviewText(const AIContext& context)
-{
+QString buildMcpPreviewText(const AIContext &context) {
   const QJsonObject initializeRequest{
       {QStringLiteral("jsonrpc"), QStringLiteral("2.0")},
       {QStringLiteral("id"), 1},
       {QStringLiteral("method"), QStringLiteral("initialize")},
-      {QStringLiteral("params"), QJsonObject{{QStringLiteral("clientInfo"),
-                                              QJsonObject{{QStringLiteral("name"),
-                                                           QStringLiteral("ArtifactStudio")},
-                                                          {QStringLiteral("version"),
-                                                           QStringLiteral("0.9.0")}}}}}
-  };
+      {QStringLiteral("params"),
+       QJsonObject{
+           {QStringLiteral("clientInfo"),
+            QJsonObject{
+                {QStringLiteral("name"), QStringLiteral("ArtifactStudio")},
+                {QStringLiteral("version"), QStringLiteral("0.9.0")}}}}}};
   const QJsonObject listRequest{
       {QStringLiteral("jsonrpc"), QStringLiteral("2.0")},
       {QStringLiteral("id"), 2},
       {QStringLiteral("method"), QStringLiteral("tools/list")},
-      {QStringLiteral("params"), QJsonObject{}}
-  };
+      {QStringLiteral("params"), QJsonObject{}}};
   const QJsonObject callRequest{
       {QStringLiteral("jsonrpc"), QStringLiteral("2.0")},
       {QStringLiteral("id"), 3},
       {QStringLiteral("method"), QStringLiteral("tools/call")},
-      {QStringLiteral("params"), QJsonObject{
-          {QStringLiteral("class"), QStringLiteral("ArtifactProjectService")},
-          {QStringLiteral("method"), QStringLiteral("currentComposition")},
-          {QStringLiteral("arguments"), QJsonArray{}}
-      }}
-  };
+      {QStringLiteral("params"),
+       QJsonObject{
+           {QStringLiteral("class"), QStringLiteral("ArtifactProjectService")},
+           {QStringLiteral("method"), QStringLiteral("currentComposition")},
+           {QStringLiteral("arguments"), QJsonArray{}}}}};
 
   QStringList sections;
   sections << QStringLiteral("MCP transport preview");
   sections << QStringLiteral("initialize frame:\n%1")
-                  .arg(QString::fromUtf8(ArtifactCore::McpBridge::encodeFrame(initializeRequest)));
+                  .arg(QString::fromUtf8(
+                      ArtifactCore::McpBridge::encodeFrame(initializeRequest)));
   sections << QStringLiteral("tools/list frame:\n%1")
-                  .arg(QString::fromUtf8(ArtifactCore::McpBridge::encodeFrame(listRequest)));
+                  .arg(QString::fromUtf8(
+                      ArtifactCore::McpBridge::encodeFrame(listRequest)));
   sections << QStringLiteral("tools/call frame:\n%1")
-                  .arg(QString::fromUtf8(ArtifactCore::McpBridge::encodeFrame(callRequest)));
+                  .arg(QString::fromUtf8(
+                      ArtifactCore::McpBridge::encodeFrame(callRequest)));
   sections << QStringLiteral("initialize response example:\n%1")
-                  .arg(QString::fromUtf8(
-                      ArtifactCore::McpBridge::encodeFrame(
-                          ArtifactCore::McpBridge::handleRequest(initializeRequest, context))));
+                  .arg(QString::fromUtf8(ArtifactCore::McpBridge::encodeFrame(
+                      ArtifactCore::McpBridge::handleRequest(initializeRequest,
+                                                             context))));
   sections << QStringLiteral("tools/list response example:\n%1")
-                  .arg(QString::fromUtf8(
-                      ArtifactCore::McpBridge::encodeFrame(
-                          ArtifactCore::McpBridge::handleRequest(listRequest, context))));
+                  .arg(QString::fromUtf8(ArtifactCore::McpBridge::encodeFrame(
+                      ArtifactCore::McpBridge::handleRequest(listRequest,
+                                                             context))));
   sections << QStringLiteral("tools/call response example:\n%1")
-                  .arg(QString::fromUtf8(
-                      ArtifactCore::McpBridge::encodeFrame(
-                          ArtifactCore::McpBridge::handleRequest(callRequest, context))));
+                  .arg(QString::fromUtf8(ArtifactCore::McpBridge::encodeFrame(
+                      ArtifactCore::McpBridge::handleRequest(callRequest,
+                                                             context))));
   return sections.join(QStringLiteral("\n\n"));
 }
 
-QString mcpResultToText(const ArtifactCore::McpCallResult& result)
-{
+QString mcpResultToText(const ArtifactCore::McpCallResult &result) {
   if (result.success) {
     return QString::fromUtf8(
         QJsonDocument(result.response).toJson(QJsonDocument::Indented));
@@ -438,22 +583,24 @@ QString mcpResultToText(const ArtifactCore::McpCallResult& result)
   return QStringLiteral("Error: %1").arg(result.errorText);
 }
 
-QStringList extractMcpToolNames(const ArtifactCore::McpCallResult& result)
-{
+QStringList extractMcpToolNames(const ArtifactCore::McpCallResult &result) {
   if (!result.success) {
     return {};
   }
 
-  const QJsonValue resultValue = result.response.value(QStringLiteral("result"));
+  const QJsonValue resultValue =
+      result.response.value(QStringLiteral("result"));
   if (!resultValue.isObject()) {
     return {};
   }
 
-  const QJsonArray tools = resultValue.toObject().value(QStringLiteral("tools")).toArray();
+  const QJsonArray tools =
+      resultValue.toObject().value(QStringLiteral("tools")).toArray();
   QStringList names;
-  for (const QJsonValue& value : tools) {
+  for (const QJsonValue &value : tools) {
     const QJsonObject tool = value.toObject();
-    const QString name = tool.value(QStringLiteral("name")).toString().trimmed();
+    const QString name =
+        tool.value(QStringLiteral("name")).toString().trimmed();
     if (!name.isEmpty()) {
       names.push_back(name);
     }
@@ -461,13 +608,27 @@ QStringList extractMcpToolNames(const ArtifactCore::McpCallResult& result)
   return names;
 }
 
+bool looksLikeToolCallText(const QString &text) {
+  const QString lower = text.toLower();
+  return lower.contains(QStringLiteral("[tool_call]")) ||
+         lower.contains(QStringLiteral("\"tool\"")) ||
+         lower.contains(QStringLiteral("\"class\"")) ||
+         lower.contains(QStringLiteral("\"component\"")) ||
+         lower.contains(QStringLiteral("\"method\"")) ||
+         lower.contains(QStringLiteral("tool =>")) ||
+         lower.contains(QStringLiteral("args =>")) ||
+         lower.contains(QStringLiteral("arguments")) ||
+         lower.contains(QStringLiteral("workspaceautomation."));
+}
+
 } // namespace
 
-void Artifact::ArtifactAICloudWidget::startChatRequest(const QString &userPrompt,
-                                                       const QString &systemPrompt,
-                                                       const QString &toolTrace) {
+void Artifact::ArtifactAICloudWidget::startChatRequest(
+    const QString &userPrompt, const QString &systemPrompt,
+    const QString &toolTrace) {
   if (!sendProcess_) {
-    replaceLastAssistantMessage(QStringLiteral("Error: send process unavailable"));
+    replaceLastAssistantMessage(
+        QStringLiteral("Error: send process unavailable"));
     return;
   }
 
@@ -483,9 +644,12 @@ void Artifact::ArtifactAICloudWidget::startChatRequest(const QString &userPrompt
   sendCanceled_ = false;
   updateSendButtonState();
 
-  const QString modelId = modelCombo_ ? modelCombo_->currentData().toString().trimmed()
-                                      : QString();
-  const QString apiKey = apiKeyEdit_ ? apiKeyEdit_->text().trimmed() : QString();
+  const QString modelId =
+      modelCombo_ ? modelCombo_->currentData().toString().trimmed() : QString();
+  QSettings settings(QStringLiteral("ArtifactStudio"),
+                     QStringLiteral("AICloud"));
+  const QString apiKey =
+      settings.value(QStringLiteral("apiKey")).toString().trimmed();
   const QString baseUrl = currentChatCompletionsUrl();
 
   QJsonObject requestObj;
@@ -493,24 +657,28 @@ void Artifact::ArtifactAICloudWidget::startChatRequest(const QString &userPrompt
   QJsonArray messages;
   messages.append(QJsonObject{{"role", "system"}, {"content", systemPrompt}});
   if (!toolTrace.isEmpty()) {
-    messages.append(QJsonObject{{"role", "system"},
-                                {"content", QStringLiteral(
-                                               "The previous tool execution produced the following result. "
-                                               "Use it to answer the user:\n%1")
-                                               .arg(toolTrace)}});
+    messages.append(QJsonObject{
+        {"role", "system"},
+        {"content",
+         QStringLiteral(
+             "The previous tool execution produced the following result. "
+             "Use it to answer the user:\n%1")
+             .arg(toolTrace)}});
   }
   messages.append(QJsonObject{{"role", "user"}, {"content", userPrompt}});
   requestObj["messages"] = messages;
   requestObj["stream"] = false;
   requestObj["temperature"] = 0.7;
 
-  const QByteArray body = QJsonDocument(requestObj).toJson(QJsonDocument::Compact);
+  const QByteArray body =
+      QJsonDocument(requestObj).toJson(QJsonDocument::Compact);
 
   sendProcess_->setProgram(QStringLiteral("curl.exe"));
   sendProcess_->setArguments(buildCurlJsonRequestArgs(baseUrl, apiKey, body));
   sendProcess_->start();
   if (sendProcess_->state() == QProcess::NotRunning) {
-    replaceLastAssistantMessage(QStringLiteral("Error: Failed to start curl.exe"));
+    replaceLastAssistantMessage(
+        QStringLiteral("Error: Failed to start curl.exe"));
     isSending_ = false;
     updateSendButtonState();
     return;
@@ -523,24 +691,34 @@ void Artifact::ArtifactAICloudWidget::startChatRequest(const QString &userPrompt
 }
 
 bool Artifact::ArtifactAICloudWidget::tryHandleToolCallResponse(
-    const QString &responseText, QString *toolTraceOut) {
+    const QString &responseText, QString *toolTraceOut, QString *errorOut) {
   if (!toolTraceOut) {
     return false;
   }
 
   QJsonObject toolCall;
-  if (!ArtifactCore::ToolBridge::tryParseToolCall(responseText, &toolCall)) {
+  QString parseError;
+  if (!ArtifactCore::ToolBridge::tryParseToolCall(responseText, &toolCall,
+                                                  &parseError)) {
+    if (errorOut) {
+      *errorOut = parseError;
+    }
     return false;
   }
 
   const auto toolResult = ArtifactCore::ToolBridge::executeToolCall(toolCall);
-  *toolTraceOut = ArtifactCore::ToolBridge::buildToolTraceMessage(toolCall, toolResult.value);
+  *toolTraceOut = toolResult.handled
+                      ? ArtifactCore::ToolBridge::buildToolTraceMessage(
+                            toolCall, toolResult.value)
+                      : toolResult.trace;
+  if (!toolResult.handled && errorOut) {
+    *errorOut = toolResult.trace;
+  }
   return true;
 }
 
 Artifact::ArtifactAICloudWidget::ArtifactAICloudWidget(QWidget *parent)
-    : QWidget(parent),
-      networkManager_(new QNetworkAccessManager(this)),
+    : QWidget(parent), networkManager_(new QNetworkAccessManager(this)),
       modelsNetworkManager_(new QNetworkAccessManager(this)),
       sendProcess_(new QProcess(this)) {
   qDebug() << "[AICloud] supportsSsl=" << QSslSocket::supportsSsl()
@@ -572,12 +750,12 @@ Artifact::ArtifactAICloudWidget::ArtifactAICloudWidget(QWidget *parent)
     headerFont.setPointSize(headerFont.pointSize() + 2);
   }
   headerTitle->setFont(headerFont);
-  auto *headerSubtitle =
-      new QLabel(QStringLiteral("VSCode-style cloud assistant panel"),
-                 headerFrame);
+  auto *headerSubtitle = new QLabel(
+      QStringLiteral("VSCode-style cloud assistant panel"), headerFrame);
   headerSubtitle->setWordWrap(true);
   auto *headerHint = new QLabel(
-      QStringLiteral("OpenRouter, Kilo Gateway, and OpenAI-compatible endpoints"),
+      QStringLiteral(
+          "OpenRouter, Kilo Gateway, and OpenAI-compatible endpoints"),
       headerFrame);
   headerHint->setWordWrap(true);
   headerLayout->addWidget(headerTitle);
@@ -611,7 +789,8 @@ Artifact::ArtifactAICloudWidget::ArtifactAICloudWidget(QWidget *parent)
 
   const auto connectionCard = makeSectionCard(
       leftPanel, QStringLiteral("Connection"),
-      QStringLiteral("Open the modal settings dialog to edit provider, endpoint, and key."));
+      QStringLiteral(
+          "Use the settings dialog to edit provider, endpoint, and key."));
   auto *connectionSummary = new QVBoxLayout();
   connectionSummary->setContentsMargins(0, 0, 0, 0);
   connectionSummary->setSpacing(4);
@@ -631,16 +810,37 @@ Artifact::ArtifactAICloudWidget::ArtifactAICloudWidget(QWidget *parent)
   openSettingsRow->setContentsMargins(0, 0, 0, 0);
   openSettingsRow->setSpacing(6);
   openSettingsRow->addStretch();
-  openSettingsButton_ = new QPushButton(QStringLiteral("Open Settings..."), leftPanel);
+  openSettingsButton_ =
+      new QPushButton(QStringLiteral("Open Settings..."), leftPanel);
   openSettingsButton_->setMinimumWidth(140);
   openSettingsRow->addWidget(openSettingsButton_);
   connectionCard.body->addLayout(openSettingsRow);
 
   leftLayout->addWidget(connectionCard.frame);
 
-  const auto modelCard = makeSectionCard(
-      leftPanel, QStringLiteral("Model"),
-      QStringLiteral("Search and pick a remote model from the list."));
+  auto *advancedToggleRow = new QHBoxLayout();
+  advancedToggleRow->setContentsMargins(0, 0, 0, 0);
+  advancedToggleRow->setSpacing(6);
+  auto *advancedToggle = new QPushButton(QStringLiteral("More"), leftPanel);
+  advancedToggle->setCheckable(true);
+  advancedToggle->setChecked(false);
+  advancedToggle->setFlat(true);
+  advancedToggle->setToolTip(QStringLiteral("Show advanced cloud controls"));
+  advancedToggle->setMaximumWidth(72);
+  advancedToggleRow->addWidget(advancedToggle);
+  advancedToggleRow->addStretch();
+  leftLayout->addLayout(advancedToggleRow);
+
+  auto *advancedPanel = new QWidget(leftPanel);
+  auto *advancedLayout = new QVBoxLayout(advancedPanel);
+  advancedLayout->setContentsMargins(0, 0, 0, 0);
+  advancedLayout->setSpacing(10);
+  advancedPanel->setVisible(false);
+
+  const auto modelCard =
+      makeSectionCard(leftPanel, QStringLiteral("Model"),
+                      QStringLiteral("Search and pick a remote model from the "
+                                     "list. Settings live in the dialog."));
   auto *filterRow = new QHBoxLayout();
   filterRow->setContentsMargins(0, 0, 0, 0);
   filterRow->setSpacing(6);
@@ -658,11 +858,12 @@ Artifact::ArtifactAICloudWidget::ArtifactAICloudWidget(QWidget *parent)
   modelRow->setSpacing(6);
   modelCombo_ = new QComboBox(leftPanel);
   modelRow->addWidget(modelCombo_, 1);
-  auto *refreshModelsButton = new QPushButton(QStringLiteral("Reload"), leftPanel);
+  auto *refreshModelsButton =
+      new QPushButton(QStringLiteral("Reload"), leftPanel);
   refreshModelsButton->setFixedWidth(74);
   modelRow->addWidget(refreshModelsButton);
   modelCard.body->addLayout(modelRow);
-  leftLayout->addWidget(modelCard.frame);
+  advancedLayout->addWidget(modelCard.frame);
 
   const auto toolsCard = makeSectionCard(
       leftPanel, QStringLiteral("Tools"),
@@ -672,7 +873,8 @@ Artifact::ArtifactAICloudWidget::ArtifactAICloudWidget(QWidget *parent)
   toolHeaderRow->setSpacing(6);
   toolCountLabel_ = new QLabel(QStringLiteral("0 tools"), leftPanel);
   toolCountLabel_->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
-  auto *refreshToolsButton = new QPushButton(QStringLiteral("Refresh"), leftPanel);
+  auto *refreshToolsButton =
+      new QPushButton(QStringLiteral("Refresh"), leftPanel);
   refreshToolsButton->setFixedWidth(82);
   toolHeaderRow->addWidget(toolCountLabel_);
   toolHeaderRow->addStretch();
@@ -683,15 +885,18 @@ Artifact::ArtifactAICloudWidget::ArtifactAICloudWidget(QWidget *parent)
   toolSchemaPreview_->setReadOnly(true);
   toolSchemaPreview_->setAcceptRichText(false);
   toolSchemaPreview_->setMinimumHeight(180);
-  toolSchemaPreview_->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
-  toolSchemaPreview_->setPlaceholderText(QStringLiteral("No tool schema loaded."));
+  toolSchemaPreview_->setFont(
+      QFontDatabase::systemFont(QFontDatabase::FixedFont));
+  toolSchemaPreview_->setPlaceholderText(
+      QStringLiteral("No tool schema loaded."));
   toolsCard.body->addWidget(toolSchemaPreview_);
 
   auto *toolLogHeaderRow = new QHBoxLayout();
   toolLogHeaderRow->setContentsMargins(0, 0, 0, 0);
   toolLogHeaderRow->setSpacing(6);
   auto *toolLogLabel = new QLabel(QStringLiteral("Tool Log"), leftPanel);
-  auto *clearToolLogButton = new QPushButton(QStringLiteral("Clear"), leftPanel);
+  auto *clearToolLogButton =
+      new QPushButton(QStringLiteral("Clear"), leftPanel);
   clearToolLogButton->setFixedWidth(72);
   toolLogHeaderRow->addWidget(toolLogLabel);
   toolLogHeaderRow->addStretch();
@@ -703,18 +908,21 @@ Artifact::ArtifactAICloudWidget::ArtifactAICloudWidget(QWidget *parent)
   toolLogView_->setAcceptRichText(false);
   toolLogView_->setMinimumHeight(160);
   toolLogView_->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
-  toolLogView_->setPlaceholderText(QStringLiteral("Tool execution log will appear here."));
+  toolLogView_->setPlaceholderText(
+      QStringLiteral("Tool execution log will appear here."));
   toolsCard.body->addWidget(toolLogView_);
-  leftLayout->addWidget(toolsCard.frame);
+  advancedLayout->addWidget(toolsCard.frame);
 
   const auto mcpCard = makeSectionCard(
       leftPanel, QStringLiteral("MCP"),
-      QStringLiteral("JSON-RPC framed preview for external transport integration."));
+      QStringLiteral(
+          "JSON-RPC framed preview for external transport integration."));
   auto *mcpHeaderRow = new QHBoxLayout();
   mcpHeaderRow->setContentsMargins(0, 0, 0, 0);
   mcpHeaderRow->setSpacing(6);
   auto *mcpLabel = new QLabel(QStringLiteral("Bridge"), leftPanel);
-  auto *refreshMcpButton = new QPushButton(QStringLiteral("Refresh"), leftPanel);
+  auto *refreshMcpButton =
+      new QPushButton(QStringLiteral("Refresh"), leftPanel);
   refreshMcpButton->setFixedWidth(82);
   mcpHeaderRow->addWidget(mcpLabel);
   mcpHeaderRow->addStretch();
@@ -726,13 +934,15 @@ Artifact::ArtifactAICloudWidget::ArtifactAICloudWidget(QWidget *parent)
   mcpPreview_->setAcceptRichText(false);
   mcpPreview_->setMinimumHeight(220);
   mcpPreview_->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
-  mcpPreview_->setPlaceholderText(QStringLiteral("MCP frames will appear here."));
+  mcpPreview_->setPlaceholderText(
+      QStringLiteral("MCP frames will appear here."));
   mcpCard.body->addWidget(mcpPreview_);
-  leftLayout->addWidget(mcpCard.frame);
+  advancedLayout->addWidget(mcpCard.frame);
 
   const auto transportCard = makeSectionCard(
       leftPanel, QStringLiteral("Transport"),
-      QStringLiteral("External stdio process for future MCP-compatible tools."));
+      QStringLiteral(
+          "External stdio process for future MCP-compatible tools."));
   auto *transportForm = new QFormLayout();
   transportForm->setLabelAlignment(Qt::AlignLeft | Qt::AlignVCenter);
   transportForm->setFormAlignment(Qt::AlignLeft | Qt::AlignTop);
@@ -759,8 +969,10 @@ Artifact::ArtifactAICloudWidget::ArtifactAICloudWidget(QWidget *parent)
   transportButtons->setSpacing(6);
   mcpStartButton_ = new QPushButton(QStringLiteral("Start"), leftPanel);
   mcpStopButton_ = new QPushButton(QStringLiteral("Stop"), leftPanel);
-  mcpInitializeButton_ = new QPushButton(QStringLiteral("Initialize"), leftPanel);
-  mcpListToolsButton_ = new QPushButton(QStringLiteral("List Tools"), leftPanel);
+  mcpInitializeButton_ =
+      new QPushButton(QStringLiteral("Initialize"), leftPanel);
+  mcpListToolsButton_ =
+      new QPushButton(QStringLiteral("List Tools"), leftPanel);
   mcpPingButton_ = new QPushButton(QStringLiteral("Ping"), leftPanel);
   transportButtons->addWidget(mcpStartButton_);
   transportButtons->addWidget(mcpStopButton_);
@@ -777,7 +989,8 @@ Artifact::ArtifactAICloudWidget::ArtifactAICloudWidget(QWidget *parent)
   transportCard.body->addLayout(mcpToolForm);
 
   mcpToolClassEdit_ = new QLineEdit(leftPanel);
-  mcpToolClassEdit_->setPlaceholderText(QStringLiteral("ArtifactProjectService"));
+  mcpToolClassEdit_->setPlaceholderText(
+      QStringLiteral("ArtifactProjectService"));
   mcpToolForm->addRow(QStringLiteral("Tool Class"), mcpToolClassEdit_);
 
   mcpToolMethodEdit_ = new QLineEdit(leftPanel);
@@ -786,8 +999,10 @@ Artifact::ArtifactAICloudWidget::ArtifactAICloudWidget(QWidget *parent)
 
   mcpToolArgsEdit_ = new QTextEdit(leftPanel);
   mcpToolArgsEdit_->setAcceptRichText(false);
-  mcpToolArgsEdit_->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
-  mcpToolArgsEdit_->setPlaceholderText(QStringLiteral("[] or JSON array of arguments"));
+  mcpToolArgsEdit_->setFont(
+      QFontDatabase::systemFont(QFontDatabase::FixedFont));
+  mcpToolArgsEdit_->setPlaceholderText(
+      QStringLiteral("[] or JSON array of arguments"));
   mcpToolArgsEdit_->setMinimumHeight(96);
   mcpToolForm->addRow(QStringLiteral("Arguments"), mcpToolArgsEdit_);
 
@@ -814,11 +1029,19 @@ Artifact::ArtifactAICloudWidget::ArtifactAICloudWidget(QWidget *parent)
   mcpLogView_->setAcceptRichText(false);
   mcpLogView_->setMinimumHeight(140);
   mcpLogView_->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
-  mcpLogView_->setPlaceholderText(QStringLiteral("Transport log appears here."));
+  mcpLogView_->setPlaceholderText(
+      QStringLiteral("Transport log appears here."));
   transportCard.body->addWidget(mcpLogView_);
-  leftLayout->addWidget(transportCard.frame);
+  advancedLayout->addWidget(transportCard.frame);
+  advancedLayout->addStretch();
+  leftLayout->addWidget(advancedPanel, 1);
 
-  leftLayout->addStretch();
+  connect(advancedToggle, &QPushButton::toggled, this,
+          [advancedPanel, advancedToggle](bool checked) {
+            advancedPanel->setVisible(checked);
+            advancedToggle->setText(checked ? QStringLiteral("Less")
+                                            : QStringLiteral("More"));
+          });
 
   auto *rightPanel = new QWidget(splitter);
   auto *rightLayout = new QVBoxLayout(rightPanel);
@@ -827,7 +1050,26 @@ Artifact::ArtifactAICloudWidget::ArtifactAICloudWidget(QWidget *parent)
 
   const auto transcriptCard = makeSectionCard(
       rightPanel, QStringLiteral("Conversation"),
-      QStringLiteral("User messages appear on the right, assistant replies on the left."));
+      QStringLiteral(
+          "User messages appear on the right, assistant replies on the left."));
+  auto *transcriptToolbar = new QHBoxLayout();
+  transcriptToolbar->setContentsMargins(0, 0, 0, 0);
+  transcriptToolbar->setSpacing(6);
+  requestStatusLabel_ =
+      new QLabel(QStringLiteral("API request ready"), rightPanel);
+  requestStatusLabel_->setWordWrap(true);
+  requestStatusLabel_->setVisible(false);
+  transcriptToolbar->addWidget(requestStatusLabel_, 1);
+  auto *transcriptHint = new QLabel(
+      QStringLiteral("Copy the full conversation as plain text."), rightPanel);
+  transcriptHint->setWordWrap(true);
+  transcriptToolbar->addWidget(transcriptHint, 1);
+  transcriptToolbar->addStretch();
+  copyTranscriptButton_ =
+      new QPushButton(QStringLiteral("Copy Conversation"), rightPanel);
+  transcriptToolbar->addWidget(copyTranscriptButton_);
+  transcriptCard.body->addLayout(transcriptToolbar);
+
   transcriptScrollArea_ = new QScrollArea(rightPanel);
   transcriptScrollArea_->setWidgetResizable(true);
   transcriptScrollArea_->setFrameShape(QFrame::StyledPanel);
@@ -845,7 +1087,8 @@ Artifact::ArtifactAICloudWidget::ArtifactAICloudWidget(QWidget *parent)
 
   const auto promptCard = makeSectionCard(
       rightPanel, QStringLiteral("Composer"),
-      QStringLiteral("Write a prompt, then send or cancel from the same button."));
+      QStringLiteral(
+          "Write a prompt, then send or cancel from the same button."));
   promptEdit_ = new QTextEdit(rightPanel);
   promptEdit_->setPlaceholderText(QStringLiteral("Enter your prompt here..."));
   promptEdit_->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
@@ -857,7 +1100,8 @@ Artifact::ArtifactAICloudWidget::ArtifactAICloudWidget(QWidget *parent)
   sendRow->setContentsMargins(0, 0, 0, 0);
   sendRow->setSpacing(6);
   auto *sendHint = new QLabel(
-      QStringLiteral("Enter to send, Esc to cancel while generating"), rightPanel);
+      QStringLiteral("Enter to send, Esc to cancel while generating"),
+      rightPanel);
   sendHint->setWordWrap(true);
   sendRow->addWidget(sendHint, 1);
   sendRow->addStretch();
@@ -869,31 +1113,30 @@ Artifact::ArtifactAICloudWidget::ArtifactAICloudWidget(QWidget *parent)
           &ArtifactAICloudWidget::onSendClicked);
   sendRow->addWidget(sendButton_);
   promptCard.body->addLayout(sendRow);
+
   rightLayout->addWidget(promptCard.frame);
 
   splitter->addWidget(leftPanel);
   splitter->addWidget(rightPanel);
   splitter->setStretchFactor(0, 0);
   splitter->setStretchFactor(1, 1);
-  splitter->setSizes({360, 840});
+  splitter->setSizes({220, 980});
   layout->addWidget(splitter, 1);
 
-  connect(apiKeyEdit_, &QLineEdit::textChanged, this, [this]() {
-    updateSendButtonState();
-  });
-  connect(baseUrlEdit_, &QLineEdit::textChanged, this, [this]() {
-    updateSendButtonState();
-  });
-  connect(promptEdit_, &QTextEdit::textChanged, this, [this]() {
-    updateSendButtonState();
-  });
-  connect(modelCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+  connect(apiKeyEdit_, &QLineEdit::textChanged, this,
           [this]() { updateSendButtonState(); });
+  connect(baseUrlEdit_, &QLineEdit::textChanged, this,
+          [this]() { updateSendButtonState(); });
+  connect(promptEdit_, &QTextEdit::textChanged, this,
+          [this]() { updateSendButtonState(); });
+  connect(copyTranscriptButton_, &QPushButton::clicked, this,
+          [this]() { copyTranscriptToClipboard(); });
+  connect(modelCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged),
+          this, [this]() { updateSendButtonState(); });
   connect(modelFilterEdit_, &QLineEdit::textChanged, this,
           [this](const QString &) { applyModelFilter(); });
-  connect(promptEdit_, &QTextEdit::textChanged, this, [this]() {
-    updateSendButtonState();
-  });
+  connect(promptEdit_, &QTextEdit::textChanged, this,
+          [this]() { updateSendButtonState(); });
 
   promptEdit_->installEventFilter(this);
   modelFilterEdit_->installEventFilter(this);
@@ -919,36 +1162,41 @@ Artifact::ArtifactAICloudWidget::ArtifactAICloudWidget(QWidget *parent)
           &ArtifactAICloudWidget::onModelsReply);
   connect(refreshModelsButton, &QPushButton::clicked, this,
           &ArtifactAICloudWidget::refreshModelList);
-  connect(refreshToolsButton, &QPushButton::clicked, this,
-          [this]() {
-            updateToolSchemaPreview();
-            refreshMcpToolSelector();
-          });
-  connect(refreshMcpButton, &QPushButton::clicked, this,
-          [this]() {
-            updateMcpPreview();
-            refreshMcpToolSelector();
-          });
+  connect(refreshToolsButton, &QPushButton::clicked, this, [this]() {
+    updateToolSchemaPreview();
+    refreshMcpToolSelector();
+  });
+  connect(refreshMcpButton, &QPushButton::clicked, this, [this]() {
+    updateMcpPreview();
+    refreshMcpToolSelector();
+  });
   connect(mcpStartButton_, &QPushButton::clicked, this, [this]() {
-    mcpSession_.setProgram(mcpProgramEdit_ ? mcpProgramEdit_->text().trimmed() : QString());
-    mcpSession_.setArguments(mcpArgsEdit_ ? QProcess::splitCommand(mcpArgsEdit_->text().trimmed())
-                                         : QStringList{});
+    mcpSession_.setProgram(mcpProgramEdit_ ? mcpProgramEdit_->text().trimmed()
+                                           : QString());
+    mcpSession_.setArguments(
+        mcpArgsEdit_ ? QProcess::splitCommand(mcpArgsEdit_->text().trimmed())
+                     : QStringList{});
     if (mcpSession_.start()) {
-      appendMcpLog(QStringLiteral("Transport started: %1 %2")
-                       .arg(mcpSession_.program(), mcpSession_.arguments().join(' ')));
+      appendMcpLog(
+          QStringLiteral("Transport started: %1 %2")
+              .arg(mcpSession_.program(), mcpSession_.arguments().join(' ')));
       if (mcpStatusLabel_) {
         mcpStatusLabel_->setText(QStringLiteral("Running"));
       }
       const AIContext context = buildCurrentCloudContext();
       const auto initializeResult = mcpSession_.initialize(context);
-      appendMcpLog(QStringLiteral("Initialize:\n%1").arg(mcpResultToText(initializeResult)));
+      appendMcpLog(QStringLiteral("Initialize:\n%1")
+                       .arg(mcpResultToText(initializeResult)));
       const auto listResult = mcpSession_.listTools(context);
-      appendMcpLog(QStringLiteral("tools/list:\n%1").arg(mcpResultToText(listResult)));
+      appendMcpLog(
+          QStringLiteral("tools/list:\n%1").arg(mcpResultToText(listResult)));
       updateMcpPreview();
     } else {
-      appendMcpLog(QStringLiteral("Start failed: %1").arg(mcpSession_.lastError()));
+      appendMcpLog(
+          QStringLiteral("Start failed: %1").arg(mcpSession_.lastError()));
       if (mcpStatusLabel_) {
-        mcpStatusLabel_->setText(QStringLiteral("Failed: %1").arg(mcpSession_.lastError()));
+        mcpStatusLabel_->setText(
+            QStringLiteral("Failed: %1").arg(mcpSession_.lastError()));
       }
     }
   });
@@ -961,45 +1209,58 @@ Artifact::ArtifactAICloudWidget::ArtifactAICloudWidget(QWidget *parent)
   });
   connect(mcpInitializeButton_, &QPushButton::clicked, this, [this]() {
     const auto result = mcpSession_.initialize(buildCurrentCloudContext());
-    appendMcpLog(QStringLiteral("Initialize:\n%1").arg(mcpResultToText(result)));
+    appendMcpLog(
+        QStringLiteral("Initialize:\n%1").arg(mcpResultToText(result)));
     if (mcpStatusLabel_) {
-      mcpStatusLabel_->setText(result.success ? QStringLiteral("Initialized")
-                                              : QStringLiteral("Initialize failed: %1").arg(result.errorText));
+      mcpStatusLabel_->setText(
+          result.success
+              ? QStringLiteral("Initialized")
+              : QStringLiteral("Initialize failed: %1").arg(result.errorText));
     }
   });
   connect(mcpListToolsButton_, &QPushButton::clicked, this, [this]() {
     const auto result = mcpSession_.listTools(buildCurrentCloudContext());
-    appendMcpLog(QStringLiteral("tools/list:\n%1").arg(mcpResultToText(result)));
+    appendMcpLog(
+        QStringLiteral("tools/list:\n%1").arg(mcpResultToText(result)));
     const QStringList names = extractMcpToolNames(result);
     if (!names.isEmpty()) {
       refreshMcpToolSelector(names);
     }
     if (mcpStatusLabel_) {
-      mcpStatusLabel_->setText(result.success ? QStringLiteral("Tools listed")
-                                              : QStringLiteral("tools/list failed: %1").arg(result.errorText));
+      mcpStatusLabel_->setText(
+          result.success
+              ? QStringLiteral("Tools listed")
+              : QStringLiteral("tools/list failed: %1").arg(result.errorText));
     }
   });
   connect(mcpPingButton_, &QPushButton::clicked, this, [this]() {
-    const auto result = mcpSession_.call(QJsonObject{
-        {QStringLiteral("jsonrpc"), QStringLiteral("2.0")},
-        {QStringLiteral("id"), 99},
-        {QStringLiteral("method"), QStringLiteral("ping")},
-        {QStringLiteral("params"), QJsonObject{}}
-    }, buildCurrentCloudContext());
+    const auto result = mcpSession_.call(
+        QJsonObject{{QStringLiteral("jsonrpc"), QStringLiteral("2.0")},
+                    {QStringLiteral("id"), 99},
+                    {QStringLiteral("method"), QStringLiteral("ping")},
+                    {QStringLiteral("params"), QJsonObject{}}},
+        buildCurrentCloudContext());
     appendMcpLog(QStringLiteral("Ping:\n%1").arg(mcpResultToText(result)));
     if (mcpStatusLabel_) {
-      mcpStatusLabel_->setText(result.success ? QStringLiteral("Running")
-                                              : QStringLiteral("Ping failed: %1").arg(result.errorText));
+      mcpStatusLabel_->setText(
+          result.success
+              ? QStringLiteral("Running")
+              : QStringLiteral("Ping failed: %1").arg(result.errorText));
     }
   });
   connect(mcpToolCallButton_, &QPushButton::clicked, this, [this]() {
-    const QString className = mcpToolClassEdit_ ? mcpToolClassEdit_->text().trimmed() : QString();
-    const QString methodName = mcpToolMethodEdit_ ? mcpToolMethodEdit_->text().trimmed() : QString();
-    const QString argsText = mcpToolArgsEdit_ ? mcpToolArgsEdit_->toPlainText().trimmed() : QString();
+    const QString className =
+        mcpToolClassEdit_ ? mcpToolClassEdit_->text().trimmed() : QString();
+    const QString methodName =
+        mcpToolMethodEdit_ ? mcpToolMethodEdit_->text().trimmed() : QString();
+    const QString argsText = mcpToolArgsEdit_
+                                 ? mcpToolArgsEdit_->toPlainText().trimmed()
+                                 : QString();
     QJsonArray argsArray;
     if (!argsText.isEmpty()) {
       QJsonParseError parseError;
-      const QJsonDocument argsDoc = QJsonDocument::fromJson(argsText.toUtf8(), &parseError);
+      const QJsonDocument argsDoc =
+          QJsonDocument::fromJson(argsText.toUtf8(), &parseError);
       if (parseError.error == QJsonParseError::NoError) {
         if (argsDoc.isArray()) {
           argsArray = argsDoc.array();
@@ -1008,20 +1269,50 @@ Artifact::ArtifactAICloudWidget::ArtifactAICloudWidget(QWidget *parent)
         }
       }
     }
-    QJsonObject toolCall{
-        {QStringLiteral("class"), className},
-        {QStringLiteral("method"), methodName},
-        {QStringLiteral("arguments"), argsArray}
-    };
-    const auto result = mcpSession_.callTool(toolCall, buildCurrentCloudContext());
-    appendMcpLog(QStringLiteral("tools/call:\n%1").arg(mcpResultToText(result)));
+    QJsonObject toolCall{{QStringLiteral("class"), className},
+                         {QStringLiteral("method"), methodName},
+                         {QStringLiteral("arguments"), argsArray}};
+    // Check if this is an external MCP tool call or internal execution
+    const bool isExternalMcp = !mcpSession_.program().isEmpty();
+    QVariant executionResult;
+    if (isExternalMcp) {
+      // External MCP server: convert Artifact tool call to MCP format and call
+      const QJsonObject mcpToolCall =
+          ArtifactCore::McpToolMapper::instance().convertArtifactToolCallToMcp(
+              toolCall);
+      if (!mcpToolCall.isEmpty()) {
+        const auto result =
+            mcpSession_.callTool(mcpToolCall, buildCurrentCloudContext());
+        executionResult = result.success ? QVariant(result.response)
+                                         : QVariant(result.errorText);
+      } else {
+        executionResult = QVariant("No MCP mapping found for this tool");
+      }
+    } else {
+      // Internal execution: execute directly using AIToolExecutor
+      executionResult =
+          ArtifactCore::AIToolExecutor::instance().execute(toolCall);
+    }
+    const QJsonValue executionJson = QJsonValue::fromVariant(executionResult);
+    QString executionText;
+    if (executionJson.isObject()) {
+      executionText = QString::fromUtf8(
+          QJsonDocument(executionJson.toObject()).toJson(QJsonDocument::Compact));
+    } else if (executionJson.isArray()) {
+      executionText = QString::fromUtf8(
+          QJsonDocument(executionJson.toArray()).toJson(QJsonDocument::Compact));
+    } else {
+      executionText = executionResult.toString().trimmed();
+    }
+    appendMcpLog(QStringLiteral("tools/call:\n%1")
+                     .arg(executionText.isEmpty() ? QStringLiteral("(empty)")
+                                                  : executionText));
     if (mcpStatusLabel_) {
-      mcpStatusLabel_->setText(result.success ? QStringLiteral("tools/call succeeded")
-                                              : QStringLiteral("tools/call failed: %1").arg(result.errorText));
+      mcpStatusLabel_->setText(QStringLiteral("tools/call executed"));
     }
   });
-  connect(mcpToolSelector_, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
-          [this](int) {
+  connect(mcpToolSelector_, QOverload<int>::of(&QComboBox::currentIndexChanged),
+          this, [this](int) {
             if (mcpToolSelector_) {
               applySelectedMcpTool(mcpToolSelector_->currentText());
             }
@@ -1034,19 +1325,20 @@ Artifact::ArtifactAICloudWidget::ArtifactAICloudWidget(QWidget *parent)
   });
   connect(sendProcess_, &QProcess::finished, this,
           &ArtifactAICloudWidget::onSendProcessFinished);
-  connect(sendProcess_, &QProcess::errorOccurred, this,
-          [this](QProcess::ProcessError) {
-            if (!isSending_) {
-              return;
-            }
-            const QString errorText = sendProcess_
-                                          ? sendProcess_->errorString()
-                                          : QStringLiteral("Unknown process error");
-            replaceLastAssistantMessage(QStringLiteral("Error: %1").arg(errorText));
-            isSending_ = false;
-            sendCanceled_ = false;
-            updateSendButtonState();
-          });
+  connect(
+      sendProcess_, &QProcess::errorOccurred, this,
+      [this](QProcess::ProcessError) {
+        if (!isSending_) {
+          return;
+        }
+        const QString errorText = sendProcess_
+                                      ? sendProcess_->errorString()
+                                      : QStringLiteral("Unknown process error");
+        replaceLastAssistantMessage(QStringLiteral("Error: %1").arg(errorText));
+        isSending_ = false;
+        sendCanceled_ = false;
+        updateSendButtonState();
+      });
 
   // Initialize model list based on default provider
   updateModelList();
@@ -1062,10 +1354,31 @@ Artifact::ArtifactAICloudWidget::ArtifactAICloudWidget(QWidget *parent)
 }
 
 AIProvider Artifact::ArtifactAICloudWidget::currentProvider() const {
-  return static_cast<AIProvider>(providerCombo_->currentData().toInt());
+  QSettings settings(QStringLiteral("ArtifactStudio"),
+                     QStringLiteral("AICloud"));
+  const QString providerName =
+      settings.value(QStringLiteral("provider"), QStringLiteral("OpenAI"))
+          .toString();
+  if (providerName == QStringLiteral("Grok")) {
+    return AIProvider::Grok;
+  }
+  if (providerName == QStringLiteral("OpenRouter")) {
+    return AIProvider::OpenRouter;
+  }
+  if (providerName == QStringLiteral("KiloGateway")) {
+    return AIProvider::KiloGateway;
+  }
+  if (providerName == QStringLiteral("Custom")) {
+    return AIProvider::Custom;
+  }
+  return AIProvider::OpenAI;
 }
 
 QString Artifact::ArtifactAICloudWidget::currentBaseUrl() const {
+  QSettings settings(QStringLiteral("ArtifactStudio"),
+                     QStringLiteral("AICloud"));
+  const QString configuredBaseUrl =
+      settings.value(QStringLiteral("baseUrl")).toString().trimmed();
   switch (currentProvider()) {
   case AIProvider::OpenAI:
     return QStringLiteral("https://api.openai.com/v1/chat/completions");
@@ -1074,9 +1387,9 @@ QString Artifact::ArtifactAICloudWidget::currentBaseUrl() const {
   case AIProvider::OpenRouter:
     return QStringLiteral("https://openrouter.ai/api/v1/chat/completions");
   case AIProvider::KiloGateway:
-    return baseUrlEdit_->text().trimmed();
+    return configuredBaseUrl;
   case AIProvider::Custom:
-    return baseUrlEdit_->text().trimmed();
+    return configuredBaseUrl;
   }
   return QString();
 }
@@ -1104,7 +1417,7 @@ QString Artifact::ArtifactAICloudWidget::currentChatCompletionsUrl() const {
     return normalized + QStringLiteral("/chat/completions");
   }
   case AIProvider::Custom:
-    return baseUrlEdit_->text().trimmed();
+    return currentBaseUrl();
   }
   return QString();
 }
@@ -1169,25 +1482,47 @@ void Artifact::ArtifactAICloudWidget::updateModelList() {
     availableModelIds_ << QStringLiteral("custom-model");
     break;
   }
+  std::sort(availableModelIds_.begin(), availableModelIds_.end(),
+            [](const QString &a, const QString &b) {
+              const int sa = modelPreferenceScore(a);
+              const int sb = modelPreferenceScore(b);
+              if (sa != sb) {
+                return sa > sb;
+              }
+              return a.compare(b, Qt::CaseInsensitive) < 0;
+            });
   applyModelFilter();
 }
 
-void Artifact::ArtifactAICloudWidget::populateModelList(const QStringList &modelIds,
-                                                       const QString &preferredModel) {
+void Artifact::ArtifactAICloudWidget::populateModelList(
+    const QStringList &modelIds, const QString &preferredModel) {
   availableModelIds_ = modelIds;
+  std::sort(availableModelIds_.begin(), availableModelIds_.end(),
+            [](const QString &a, const QString &b) {
+              const int sa = modelPreferenceScore(a);
+              const int sb = modelPreferenceScore(b);
+              if (sa != sb) {
+                return sa > sb;
+              }
+              return a.compare(b, Qt::CaseInsensitive) < 0;
+            });
   applyModelFilter(preferredModel);
 }
 
-void Artifact::ArtifactAICloudWidget::applyModelFilter(const QString &preferredModel) {
+void Artifact::ArtifactAICloudWidget::applyModelFilter(
+    const QString &preferredModel) {
   if (!modelCombo_) {
     return;
   }
 
-  const QString filter = modelFilterEdit_ ? modelFilterEdit_->text().trimmed().toLower()
-                                          : QString();
+  const QString filter = modelFilterEdit_
+                             ? modelFilterEdit_->text().trimmed().toLower()
+                             : QString();
   const QString previous = preferredModel.isEmpty()
                                ? modelCombo_->currentData().toString()
                                : preferredModel;
+  const QString preferred =
+      previous.isEmpty() ? choosePreferredModelId(availableModelIds_) : previous;
   const int total = availableModelIds_.size();
   int shown = 0;
 
@@ -1207,13 +1542,14 @@ void Artifact::ArtifactAICloudWidget::applyModelFilter(const QString &preferredM
   }
 
   if (modelCombo_->count() == 0) {
-    const QString label = filter.isEmpty()
-                              ? QStringLiteral("(No models available)")
-                              : QStringLiteral("(No models match \"%1\")").arg(filter);
+    const QString label =
+        filter.isEmpty()
+            ? QStringLiteral("(No models available)")
+            : QStringLiteral("(No models match \"%1\")").arg(filter);
     modelCombo_->addItem(label, QString());
     modelCombo_->setCurrentIndex(0);
   } else {
-    int idx = modelCombo_->findData(previous);
+    int idx = modelCombo_->findData(preferred);
     if (idx < 0) {
       idx = 0;
     }
@@ -1228,7 +1564,8 @@ void Artifact::ArtifactAICloudWidget::applyModelFilter(const QString &preferredM
     } else if (filter.isEmpty()) {
       modelCountLabel_->setText(QStringLiteral("%1 models").arg(shown));
     } else {
-      modelCountLabel_->setText(QStringLiteral("%1 / %2").arg(shown).arg(total));
+      modelCountLabel_->setText(
+          QStringLiteral("%1 / %2").arg(shown).arg(total));
     }
   }
 
@@ -1285,23 +1622,31 @@ void Artifact::ArtifactAICloudWidget::saveApiKey() {
 }
 
 void Artifact::ArtifactAICloudWidget::updateConnectionSummary() {
+  QSettings settings(QStringLiteral("ArtifactStudio"),
+                     QStringLiteral("AICloud"));
+  const QString providerName =
+      settings.value(QStringLiteral("provider"), QStringLiteral("OpenAI"))
+          .toString();
+  const QString apiKey =
+      settings.value(QStringLiteral("apiKey")).toString().trimmed();
   if (connectionProviderLabel_) {
     connectionProviderLabel_->setText(
-        QStringLiteral("Provider: %1").arg(providerCombo_ ? providerCombo_->currentText()
-                                                          : QStringLiteral("(unknown)")));
+        QStringLiteral("Provider: %1").arg(providerName));
   }
   if (connectionEndpointLabel_) {
     QString endpoint = currentChatCompletionsUrl();
     if (endpoint.isEmpty()) {
       endpoint = QStringLiteral("(no endpoint)");
     }
-    connectionEndpointLabel_->setText(QStringLiteral("Endpoint: %1").arg(endpoint));
+    connectionEndpointLabel_->setText(
+        QStringLiteral("Endpoint: %1").arg(endpoint));
   }
   if (connectionApiKeyLabel_) {
-    const bool hasKey = apiKeyEdit_ && !apiKeyEdit_->text().trimmed().isEmpty();
+    const bool hasKey = !apiKey.isEmpty();
     connectionApiKeyLabel_->setText(QStringLiteral("API key: %1")
-                                       .arg(hasKey ? QStringLiteral("configured")
-                                                   : QStringLiteral("not set")));
+                                        .arg(hasKey
+                                                 ? QStringLiteral("configured")
+                                                 : QStringLiteral("not set")));
   }
 }
 
@@ -1313,12 +1658,20 @@ void Artifact::ArtifactAICloudWidget::updateSendButtonState() {
   if (isSending_) {
     sendButton_->setText(QStringLiteral("Cancel"));
     sendButton_->setEnabled(true);
+    if (requestStatusLabel_) {
+      requestStatusLabel_->setText(QStringLiteral("API request in progress..."));
+      requestStatusLabel_->setVisible(true);
+    }
     return;
   }
 
-  const bool hasApiKey = !apiKeyEdit_->text().trimmed().isEmpty();
+  QSettings settings(QStringLiteral("ArtifactStudio"),
+                     QStringLiteral("AICloud"));
+  const bool hasApiKey =
+      !settings.value(QStringLiteral("apiKey")).toString().trimmed().isEmpty();
   const bool hasPrompt = !promptEdit_->toPlainText().trimmed().isEmpty();
-  const bool hasModel = !modelCombo_->currentData().toString().trimmed().isEmpty();
+  const bool hasModel =
+      !modelCombo_->currentData().toString().trimmed().isEmpty();
   bool canSend = hasApiKey && hasPrompt && hasModel;
   if (currentProvider() == AIProvider::KiloGateway ||
       currentProvider() == AIProvider::Custom) {
@@ -1326,6 +1679,9 @@ void Artifact::ArtifactAICloudWidget::updateSendButtonState() {
   }
   sendButton_->setEnabled(canSend);
   sendButton_->setText(QStringLiteral("Send to AI"));
+  if (requestStatusLabel_) {
+    requestStatusLabel_->setVisible(false);
+  }
 }
 
 void Artifact::ArtifactAICloudWidget::updateToolSchemaPreview() {
@@ -1359,23 +1715,26 @@ void Artifact::ArtifactAICloudWidget::updateMcpPreview() {
   mcpPreview_->moveCursor(QTextCursor::Start);
 }
 
-void Artifact::ArtifactAICloudWidget::refreshMcpToolSelector(const QStringList &toolNames) {
+void Artifact::ArtifactAICloudWidget::refreshMcpToolSelector(
+    const QStringList &toolNames) {
   if (!mcpToolSelector_) {
     return;
   }
 
   QStringList names = toolNames;
   if (names.isEmpty()) {
-    const QByteArray schemaBytes = ArtifactCore::ToolBridge::toolSchemaJson().toUtf8();
+    const QByteArray schemaBytes =
+        ArtifactCore::ToolBridge::toolSchemaJson().toUtf8();
     QJsonParseError error;
     const QJsonDocument doc = QJsonDocument::fromJson(schemaBytes, &error);
     if (error.error == QJsonParseError::NoError && doc.isObject()) {
-      const QJsonArray tools = doc.object().value(QStringLiteral("tools")).toArray();
-      for (const QJsonValue& value : tools) {
+      const QJsonArray tools =
+          doc.object().value(QStringLiteral("tools")).toArray();
+      for (const QJsonValue &value : tools) {
         const QJsonObject tool = value.toObject();
-        const QString toolName = QStringLiteral("%1.%2")
-                                     .arg(tool.value(QStringLiteral("component")).toString(),
-                                          tool.value(QStringLiteral("method")).toString());
+        const QString toolName = QStringLiteral("%1.%2").arg(
+            tool.value(QStringLiteral("component")).toString(),
+            tool.value(QStringLiteral("method")).toString());
         if (!toolName.trimmed().isEmpty()) {
           names.push_back(toolName);
         }
@@ -1386,7 +1745,7 @@ void Artifact::ArtifactAICloudWidget::refreshMcpToolSelector(const QStringList &
   const QString previous = mcpToolSelector_->currentText().trimmed();
   mcpToolSelector_->blockSignals(true);
   mcpToolSelector_->clear();
-  for (const QString& name : names) {
+  for (const QString &name : names) {
     const QString trimmed = name.trimmed();
     if (!trimmed.isEmpty()) {
       mcpToolSelector_->addItem(trimmed);
@@ -1409,30 +1768,34 @@ void Artifact::ArtifactAICloudWidget::refreshMcpToolSelector(const QStringList &
   }
 }
 
-void Artifact::ArtifactAICloudWidget::applySelectedMcpTool(const QString &toolName) {
+void Artifact::ArtifactAICloudWidget::applySelectedMcpTool(
+    const QString &toolName) {
   const QString trimmed = toolName.trimmed();
   if (trimmed.isEmpty()) {
     return;
   }
 
-  const QByteArray schemaBytes = ArtifactCore::ToolBridge::toolSchemaJson().toUtf8();
+  const QByteArray schemaBytes =
+      ArtifactCore::ToolBridge::toolSchemaJson().toUtf8();
   QJsonParseError error;
   const QJsonDocument doc = QJsonDocument::fromJson(schemaBytes, &error);
   if (error.error != QJsonParseError::NoError || !doc.isObject()) {
     return;
   }
 
-  const QJsonArray tools = doc.object().value(QStringLiteral("tools")).toArray();
-  for (const QJsonValue& value : tools) {
+  const QJsonArray tools =
+      doc.object().value(QStringLiteral("tools")).toArray();
+  for (const QJsonValue &value : tools) {
     const QJsonObject tool = value.toObject();
-    const QString candidateName = QStringLiteral("%1.%2")
-                                      .arg(tool.value(QStringLiteral("component")).toString(),
-                                           tool.value(QStringLiteral("method")).toString());
+    const QString candidateName = QStringLiteral("%1.%2").arg(
+        tool.value(QStringLiteral("component")).toString(),
+        tool.value(QStringLiteral("method")).toString());
     if (candidateName != trimmed) {
       continue;
     }
 
-    const QString component = tool.value(QStringLiteral("component")).toString();
+    const QString component =
+        tool.value(QStringLiteral("component")).toString();
     const QString method = tool.value(QStringLiteral("method")).toString();
     if (mcpToolClassEdit_) {
       mcpToolClassEdit_->setText(component);
@@ -1441,13 +1804,17 @@ void Artifact::ArtifactAICloudWidget::applySelectedMcpTool(const QString &toolNa
       mcpToolMethodEdit_->setText(method);
     }
     if (mcpToolArgsEdit_) {
-      mcpToolArgsEdit_->setPlainText(ArtifactCore::ToolBridge::buildToolArgumentsTemplate(tool));
+      mcpToolArgsEdit_->setPlainText(
+          ArtifactCore::ToolBridge::buildToolArgumentsTemplate(tool));
     }
     if (mcpStatusLabel_) {
-      const QString description = tool.value(QStringLiteral("description")).toString().trimmed();
-      mcpStatusLabel_->setText(description.isEmpty()
-                                   ? QStringLiteral("Selected: %1").arg(candidateName)
-                                   : QStringLiteral("Selected: %1 - %2").arg(candidateName, description));
+      const QString description =
+          tool.value(QStringLiteral("description")).toString().trimmed();
+      mcpStatusLabel_->setText(
+          description.isEmpty()
+              ? QStringLiteral("Selected: %1").arg(candidateName)
+              : QStringLiteral("Selected: %1 - %2")
+                    .arg(candidateName, description));
     }
     return;
   }
@@ -1459,30 +1826,36 @@ void Artifact::ArtifactAICloudWidget::updateTransportPreview() {
   }
 
   if (mcpSession_.isRunning()) {
-    mcpStatusLabel_->setText(QStringLiteral("Running: %1 %2")
-                                 .arg(mcpSession_.program(),
-                                      mcpSession_.arguments().join(' ')));
+    mcpStatusLabel_->setText(
+        QStringLiteral("Running: %1 %2")
+            .arg(mcpSession_.program(), mcpSession_.arguments().join(' ')));
   } else {
     mcpStatusLabel_->setText(QStringLiteral("Stopped"));
   }
 }
 
-void Artifact::ArtifactAICloudWidget::appendToolExecutionLog(const QString &entry) {
-  const QString timestamp = QDateTime::currentDateTime().toString(QStringLiteral("yyyy-MM-dd hh:mm:ss"));
-  const QString line = QStringLiteral("[%1]\n%2").arg(timestamp, entry.trimmed());
+void Artifact::ArtifactAICloudWidget::appendToolExecutionLog(
+    const QString &entry) {
+  const QString timestamp = QDateTime::currentDateTime().toString(
+      QStringLiteral("yyyy-MM-dd hh:mm:ss"));
+  const QString line =
+      QStringLiteral("[%1]\n%2").arg(timestamp, entry.trimmed());
   toolLogEntries_.append(line);
   while (toolLogEntries_.size() > 50) {
     toolLogEntries_.removeFirst();
   }
   if (toolLogView_) {
-    toolLogView_->setPlainText(toolLogEntries_.join(QStringLiteral("\n\n---\n\n")));
+    toolLogView_->setPlainText(
+        toolLogEntries_.join(QStringLiteral("\n\n---\n\n")));
     toolLogView_->moveCursor(QTextCursor::End);
   }
 }
 
 void Artifact::ArtifactAICloudWidget::appendMcpLog(const QString &entry) {
-  const QString timestamp = QDateTime::currentDateTime().toString(QStringLiteral("yyyy-MM-dd hh:mm:ss"));
-  const QString line = QStringLiteral("[%1] %2").arg(timestamp, entry.trimmed());
+  const QString timestamp = QDateTime::currentDateTime().toString(
+      QStringLiteral("yyyy-MM-dd hh:mm:ss"));
+  const QString line =
+      QStringLiteral("[%1] %2").arg(timestamp, entry.trimmed());
   mcpLogEntries_.append(line);
   while (mcpLogEntries_.size() > 50) {
     mcpLogEntries_.removeFirst();
@@ -1493,8 +1866,8 @@ void Artifact::ArtifactAICloudWidget::appendMcpLog(const QString &entry) {
   }
 }
 
-void Artifact::ArtifactAICloudWidget::appendTranscriptMessage(const QString &role,
-                                                             const QString &text) {
+void Artifact::ArtifactAICloudWidget::appendTranscriptMessage(
+    const QString &role, const QString &text) {
   if (!transcriptLayout_ || !transcriptContent_) {
     return;
   }
@@ -1534,7 +1907,47 @@ void Artifact::ArtifactAICloudWidget::appendTranscriptMessage(const QString &rol
   scrollTranscriptToBottom();
 }
 
-void Artifact::ArtifactAICloudWidget::replaceLastAssistantMessage(const QString &text) {
+QString Artifact::ArtifactAICloudWidget::buildTranscriptText() const {
+  QStringList lines;
+  for (const QWidget *widget : transcriptBubbles_) {
+    const auto *bubble = dynamic_cast<const CloudChatBubble *>(widget);
+    if (!bubble) {
+      continue;
+    }
+    QString prefix;
+    switch (bubble->role()) {
+    case CloudChatBubble::Role::User:
+      prefix = QStringLiteral("User");
+      break;
+    case CloudChatBubble::Role::Assistant:
+      prefix = QStringLiteral("Assistant");
+      break;
+    case CloudChatBubble::Role::System:
+      prefix = QStringLiteral("System");
+      break;
+    }
+    lines << QStringLiteral("[%1]").arg(prefix) << bubble->text();
+    lines << QString();
+  }
+  return lines.join(QStringLiteral("\n")).trimmed();
+}
+
+void Artifact::ArtifactAICloudWidget::copyTranscriptToClipboard() {
+  const QString transcript = buildTranscriptText();
+  if (transcript.isEmpty()) {
+    return;
+  }
+  if (auto *clipboard = QGuiApplication::clipboard()) {
+    clipboard->setText(transcript);
+  }
+  if (requestStatusLabel_) {
+    requestStatusLabel_->setText(QStringLiteral("Conversation copied."));
+    requestStatusLabel_->setVisible(true);
+  }
+}
+
+void Artifact::ArtifactAICloudWidget::replaceLastAssistantMessage(
+    const QString &text) {
   if (activeAssistantBubbleIndex_ < 0 ||
       activeAssistantBubbleIndex_ >= transcriptBubbles_.size()) {
     appendTranscriptMessage(QStringLiteral("assistant"), text);
@@ -1569,7 +1982,10 @@ void Artifact::ArtifactAICloudWidget::refreshModelList() {
   }
 
   const QString endpoint = currentModelsUrl();
-  const QString apiKey = apiKeyEdit_->text().trimmed();
+  QSettings settings(QStringLiteral("ArtifactStudio"),
+                     QStringLiteral("AICloud"));
+  const QString apiKey =
+      settings.value(QStringLiteral("apiKey")).toString().trimmed();
   if (endpoint.isEmpty()) {
     updateModelList();
     return;
@@ -1596,8 +2012,9 @@ void Artifact::ArtifactAICloudWidget::refreshModelList() {
 
   const QStringList ids = extractModelIdsFromJson(doc);
   if (ids.isEmpty()) {
-    appendTranscriptMessage(QStringLiteral("system"),
-                            QStringLiteral("Model list loaded, but no models were returned"));
+    appendTranscriptMessage(
+        QStringLiteral("system"),
+        QStringLiteral("Model list loaded, but no models were returned"));
     updateModelList();
     return;
   }
@@ -1613,10 +2030,12 @@ void Artifact::ArtifactAICloudWidget::onSendClicked() {
     cancelCurrentSend();
     return;
   }
-  saveApiKey();
 
   QString modelId = modelCombo_->currentData().toString();
-  QString apiKey = apiKeyEdit_->text();
+  QSettings settings(QStringLiteral("ArtifactStudio"),
+                     QStringLiteral("AICloud"));
+  QString apiKey =
+      settings.value(QStringLiteral("apiKey")).toString().trimmed();
   QString prompt = promptEdit_->toPlainText();
   const AIContext context = buildCurrentCloudContext();
   const QString systemPrompt = buildCloudSystemPrompt(context);
@@ -1637,8 +2056,15 @@ void Artifact::ArtifactAICloudWidget::onSendClicked() {
   toolLoopDepth_ = 0;
   appendTranscriptMessage(QStringLiteral("user"), prompt.trimmed());
   promptEdit_->clear();
-  appendTranscriptMessage(QStringLiteral("assistant"), QStringLiteral("Thinking..."));
+  appendTranscriptMessage(QStringLiteral("system"),
+                          QStringLiteral("API request in progress..."));
+  appendTranscriptMessage(QStringLiteral("assistant"),
+                          QStringLiteral("API request in progress..."));
   activeAssistantBubbleIndex_ = transcriptBubbles_.size() - 1;
+  if (requestStatusLabel_) {
+    requestStatusLabel_->setText(QStringLiteral("API request in progress..."));
+    requestStatusLabel_->setVisible(true);
+  }
 
   isSending_ = true;
   sendCanceled_ = false;
@@ -1655,6 +2081,12 @@ void Artifact::ArtifactAICloudWidget::cancelCurrentSend() {
   if (sendProcess_ && sendProcess_->state() != QProcess::NotRunning) {
     sendProcess_->kill();
   }
+  if (requestStatusLabel_) {
+    requestStatusLabel_->setText(QStringLiteral("Cancelling API request..."));
+    requestStatusLabel_->setVisible(true);
+  }
+  appendTranscriptMessage(QStringLiteral("system"),
+                          QStringLiteral("API request canceled."));
   replaceLastAssistantMessage(QStringLiteral("Request canceled."));
 }
 
@@ -1667,14 +2099,16 @@ bool Artifact::ArtifactAICloudWidget::eventFilter(QObject *watched,
       return true;
     }
     if (!isSending_ &&
-        (keyEvent->key() == Qt::Key_Return || keyEvent->key() == Qt::Key_Enter) &&
+        (keyEvent->key() == Qt::Key_Return ||
+         keyEvent->key() == Qt::Key_Enter) &&
         !(keyEvent->modifiers() & Qt::ShiftModifier)) {
       onSendClicked();
       return true;
     }
   }
 
-  if (watched == modelFilterEdit_ && event && event->type() == QEvent::KeyPress) {
+  if (watched == modelFilterEdit_ && event &&
+      event->type() == QEvent::KeyPress) {
     auto *keyEvent = static_cast<QKeyEvent *>(event);
     if (keyEvent->key() == Qt::Key_Escape) {
       modelFilterEdit_->clear();
@@ -1685,8 +2119,8 @@ bool Artifact::ArtifactAICloudWidget::eventFilter(QObject *watched,
   return QWidget::eventFilter(watched, event);
 }
 
-void Artifact::ArtifactAICloudWidget::onSendProcessFinished(int exitCode,
-                                                           QProcess::ExitStatus exitStatus) {
+void Artifact::ArtifactAICloudWidget::onSendProcessFinished(
+    int exitCode, QProcess::ExitStatus exitStatus) {
   Q_UNUSED(exitCode);
   Q_UNUSED(exitStatus);
 
@@ -1703,9 +2137,9 @@ void Artifact::ArtifactAICloudWidget::onSendProcessFinished(int exitCode,
   const QString output = QString::fromUtf8(stdoutBytes).trimmed();
   if (output.isEmpty()) {
     const QString errorText = QString::fromUtf8(stderrBytes).trimmed();
-    replaceLastAssistantMessage(errorText.isEmpty()
-                                    ? QStringLiteral("Error: empty response")
-                                    : QStringLiteral("Error: %1").arg(errorText));
+    replaceLastAssistantMessage(
+        errorText.isEmpty() ? QStringLiteral("Error: empty response")
+                            : QStringLiteral("Error: %1").arg(errorText));
     pendingToolTrace_.clear();
     return;
   }
@@ -1726,14 +2160,36 @@ void Artifact::ArtifactAICloudWidget::onSendProcessFinished(int exitCode,
         content.isEmpty() ? QStringLiteral("No response content") : content;
 
     QString toolTrace;
-    if (toolLoopDepth_ < 2 && tryHandleToolCallResponse(finalContent, &toolTrace)) {
+    QString toolError;
+    if (toolLoopDepth_ < 2 &&
+        tryHandleToolCallResponse(finalContent, &toolTrace, &toolError)) {
       ++toolLoopDepth_;
       pendingToolTrace_ = toolTrace;
       appendTranscriptMessage(QStringLiteral("system"), toolTrace);
       appendToolExecutionLog(toolTrace);
-      replaceLastAssistantMessage(QStringLiteral("Tool executed, asking for final answer..."));
+      replaceLastAssistantMessage(
+          QStringLiteral("Tool executed, asking for final answer..."));
       QTimer::singleShot(0, this, [this]() {
-        startChatRequest(pendingUserPrompt_, pendingSystemPrompt_, pendingToolTrace_);
+        startChatRequest(pendingUserPrompt_, pendingSystemPrompt_,
+                         pendingToolTrace_);
+      });
+      return;
+    }
+
+    if (toolLoopDepth_ < 2 && !toolError.isEmpty() &&
+        looksLikeToolCallText(finalContent)) {
+      ++toolLoopDepth_;
+      const QString repairTrace = QStringLiteral(
+          "Tool call error:\n- error: %1\n- raw response: %2")
+                                     .arg(toolError, finalContent);
+      pendingToolTrace_ = repairTrace;
+      appendTranscriptMessage(QStringLiteral("system"), repairTrace);
+      appendToolExecutionLog(repairTrace);
+      replaceLastAssistantMessage(
+          QStringLiteral("Tool call invalid, asking for repair..."));
+      QTimer::singleShot(0, this, [this]() {
+        startChatRequest(pendingUserPrompt_, pendingSystemPrompt_,
+                         pendingToolTrace_);
       });
       return;
     }
@@ -1763,8 +2219,9 @@ void Artifact::ArtifactAICloudWidget::onModelsReply(QNetworkReply *reply) {
   }
 
   if (reply->error() != QNetworkReply::NoError) {
-    appendTranscriptMessage(QStringLiteral("system"),
-                            QStringLiteral("Model list error: %1").arg(reply->errorString()));
+    appendTranscriptMessage(
+        QStringLiteral("system"),
+        QStringLiteral("Model list error: %1").arg(reply->errorString()));
     reply->deleteLater();
     return;
   }
@@ -1789,6 +2246,15 @@ void Artifact::ArtifactAICloudWidget::onModelsReply(QNetworkReply *reply) {
       if (id.isEmpty()) {
         id = item.value("slug").toString();
       }
+      if (id.isEmpty()) {
+        id = item.value("model").toString();
+      }
+      if (id.isEmpty()) {
+        id = item.value("display_name").toString();
+      }
+      if (id.isEmpty()) {
+        id = item.value("title").toString();
+      }
       if (!id.isEmpty()) {
         ids.push_back(id);
       }
@@ -1804,8 +2270,9 @@ void Artifact::ArtifactAICloudWidget::onModelsReply(QNetworkReply *reply) {
   }
 
   if (ids.isEmpty()) {
-    appendTranscriptMessage(QStringLiteral("system"),
-                            QStringLiteral("Model list loaded, but no models were returned"));
+    appendTranscriptMessage(
+        QStringLiteral("system"),
+        QStringLiteral("Model list loaded, but no models were returned"));
     updateModelList();
   } else {
     populateModelList(ids);

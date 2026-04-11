@@ -11,6 +11,7 @@
 #include <QLoggingCategory>
 #include <QThread>
 #include <QFuture>
+#include <QFutureWatcher>
 #include <QtConcurrent>
 #include <mutex>
 #include <unordered_map>
@@ -175,7 +176,16 @@ private:
 // ============================================================================
 class ArtifactVideoLayer::Impl {
 public:
-    std::unique_ptr<ArtifactCore::MediaPlaybackController> playbackController_;
+    struct AsyncOpenResult {
+        bool success = false;
+        QString normalizedPath;
+        QString error;
+        VideoStreamInfo streamInfo;
+        int64_t defaultOutPoint = 300;
+        std::shared_ptr<ArtifactCore::MediaPlaybackController> controller;
+    };
+
+    std::shared_ptr<ArtifactCore::MediaPlaybackController> playbackController_;
     FrameCache frameCache_;
     VideoStreamInfo streamInfo_;
     
@@ -230,7 +240,7 @@ public:
         }
     }
 
-    Impl() : playbackController_(std::make_unique<ArtifactCore::MediaPlaybackController>()), frameCache_(30) {}
+    Impl() : playbackController_(std::make_shared<ArtifactCore::MediaPlaybackController>()), frameCache_(30) {}
     ~Impl() {
         // バックグラウンドフューチャーが残っていても放置（デストラクタをブロックしない）
         // QFuture はスコープ離脱後も自動キャンセルされない点に注意
@@ -240,6 +250,9 @@ public:
     mutable QFuture<QImage> decodeFuture_;
     mutable std::atomic<bool> decoding_{ false };
     mutable int64_t decodeTargetFrame_ = -1;
+    mutable QFuture<AsyncOpenResult> openFuture_;
+    mutable std::atomic<bool> opening_{ false };
+    mutable int openRequestId_ = 0;
 };
 
 // ============================================================================
@@ -287,80 +300,125 @@ bool ArtifactVideoLayer::loadFromPath(const QString& path)
     const QString normalizedPath = QFileInfo(path).absoluteFilePath();
     qDebug() << "[VideoLayer] loadFromPath:" << normalizedPath << threadIdTag();
 
-    if (!impl_->playbackController_->openMediaFile(normalizedPath)) {
-        qCritical() << "[VideoLayer] openMediaFile FAILED:" << normalizedPath
-                    << "lastError=" << impl_->playbackController_->getLastError();
-        impl_->isLoaded_ = false;
-        return false;
-    }
-
-    // [Fix 6] 成功後にアクティブな backend をログ出力
-    qCInfo(videoLayerLog) << "[VideoLayer] active backend:"
-                          << decoderBackendName(impl_->playbackController_.get())
-                          << threadIdTag();
-
     impl_->sourcePath_ = normalizedPath;
     impl_->streamInfo_ = VideoStreamInfo{};
     impl_->currentQImage_ = QImage();
     impl_->lastDecodedFrame_ = -1;
     impl_->decodeTargetFrame_ = -1;
     impl_->decoding_ = false;
+    impl_->opening_ = true;
+    impl_->isLoaded_ = false;
     impl_->lastAudioRequestTimelineFrame_ = std::numeric_limits<int64_t>::min();
-
-    const auto playbackInfo = impl_->playbackController_->getPlaybackInfo();
-    const auto metadata = impl_->playbackController_->getMetadata();
-    if (const auto* videoStream = metadata.getFirstVideoStream()) {
-        impl_->streamInfo_.width = videoStream->resolution.width();
-        impl_->streamInfo_.height = videoStream->resolution.height();
-        impl_->streamInfo_.frameRate = videoStream->frameRate > 0.0 ? videoStream->frameRate : playbackInfo.fps;
-        impl_->streamInfo_.frameCount = videoStream->frameCount > 0 ? videoStream->frameCount : playbackInfo.totalFrames;
-        impl_->streamInfo_.duration = videoStream->duration > 0.0 ? videoStream->duration : playbackInfo.durationSec;
-        impl_->streamInfo_.codecName = videoStream->videoCodec.codecName;
-        impl_->streamInfo_.bitRate = static_cast<int>(videoStream->bitrate);
-    } else {
-        impl_->streamInfo_.frameRate = playbackInfo.fps;
-        impl_->streamInfo_.frameCount = playbackInfo.totalFrames;
-        impl_->streamInfo_.duration = playbackInfo.durationSec;
-    }
-    if (const auto* audioStream = metadata.getFirstAudioStream()) {
-        impl_->streamInfo_.hasAudio = true;
-        impl_->streamInfo_.audioChannels = audioStream->audioCodec.channels;
-        impl_->streamInfo_.audioSampleRate = audioStream->audioCodec.sampleRate;
-    }
-
-    impl_->isLoaded_ = true;
-    
-    // Set unified timeline properties
-    setInPoint(0);
-    setOutPoint(impl_->streamInfo_.frameCount > 0 ? impl_->streamInfo_.frameCount : 300);
-    
     impl_->frameCache_.clear();
+    setSourceSize(Size_2D(0, 0));
 
-    qCInfo(videoLayerLog) << "[VideoLayer] stream info"
-                          << "size=" << impl_->streamInfo_.width << "x" << impl_->streamInfo_.height
-                          << "fps=" << impl_->streamInfo_.frameRate
-                          << "frames=" << impl_->streamInfo_.frameCount
-                          << "duration=" << impl_->streamInfo_.duration
-                          << "hasAudio=" << impl_->streamInfo_.hasAudio
-                          << threadIdTag();
+    const int requestId = ++impl_->openRequestId_;
+    auto* layer = this;
+    impl_->openFuture_ = QtConcurrent::run([normalizedPath]() -> Impl::AsyncOpenResult {
+        Impl::AsyncOpenResult result;
+        result.normalizedPath = normalizedPath;
 
-    // [Fix A] フレーム0 の取得をバックグラウンドで実行し、メインスレッドをブロックしない
-    impl_->decoding_ = true;
-    impl_->decodeTargetFrame_ = 0;
-    auto* ctrl = impl_->playbackController_.get();
-    impl_->decodeFuture_ = QtConcurrent::run([ctrl, this]() -> QImage {
-        QImage frame = ctrl->getVideoFrameAtFrameDirect(0);
-        impl_->decoding_ = false;
-        return frame;
+        auto controller = std::make_shared<ArtifactCore::MediaPlaybackController>();
+        if (!controller->openMediaFile(normalizedPath)) {
+            result.error = controller->getLastError();
+            return result;
+        }
+
+        result.success = true;
+        result.controller = controller;
+
+        const auto playbackInfo = controller->getPlaybackInfo();
+        const auto metadata = controller->getMetadata();
+        if (const auto* videoStream = metadata.getFirstVideoStream()) {
+            result.streamInfo.width = videoStream->resolution.width();
+            result.streamInfo.height = videoStream->resolution.height();
+            result.streamInfo.frameRate = videoStream->frameRate > 0.0 ? videoStream->frameRate : playbackInfo.fps;
+            result.streamInfo.frameCount = videoStream->frameCount > 0 ? videoStream->frameCount : playbackInfo.totalFrames;
+            result.streamInfo.duration = videoStream->duration > 0.0 ? videoStream->duration : playbackInfo.durationSec;
+            result.streamInfo.codecName = videoStream->videoCodec.codecName;
+            result.streamInfo.bitRate = static_cast<int>(videoStream->bitrate);
+        } else {
+            result.streamInfo.frameRate = playbackInfo.fps;
+            result.streamInfo.frameCount = playbackInfo.totalFrames;
+            result.streamInfo.duration = playbackInfo.durationSec;
+        }
+        if (const auto* audioStream = metadata.getFirstAudioStream()) {
+            result.streamInfo.hasAudio = true;
+            result.streamInfo.audioChannels = audioStream->audioCodec.channels;
+            result.streamInfo.audioSampleRate = audioStream->audioCodec.sampleRate;
+        }
+        result.defaultOutPoint = result.streamInfo.frameCount > 0 ? result.streamInfo.frameCount : 300;
+        return result;
     });
-    if (impl_->streamInfo_.width > 0 && impl_->streamInfo_.height > 0) {
-        setSourceSize(Size_2D(impl_->streamInfo_.width, impl_->streamInfo_.height));
-    }
-    
-    qDebug() << "[VideoLayer] Loaded:" << path
-             << "Duration:" << impl_->streamInfo_.duration << "s"
-             << "Frames:" << impl_->streamInfo_.frameCount;
-    
+
+    auto* watcher = new QFutureWatcher<Impl::AsyncOpenResult>(this);
+    QObject::connect(watcher, &QFutureWatcher<Impl::AsyncOpenResult>::finished, this,
+                     [layer, watcher, requestId]() {
+        const Impl::AsyncOpenResult result = watcher->result();
+        watcher->deleteLater();
+        if (!layer || !layer->impl_) {
+            return;
+        }
+        if (requestId != layer->impl_->openRequestId_) {
+            return;
+        }
+
+        layer->impl_->opening_ = false;
+
+        if (!result.success || !result.controller) {
+            qCritical() << "[VideoLayer] openMediaFile FAILED:" << result.normalizedPath
+                        << "lastError=" << result.error;
+            layer->impl_->isLoaded_ = false;
+            Q_EMIT layer->changed();
+            return;
+        }
+
+        layer->impl_->playbackController_ = result.controller;
+        layer->impl_->sourcePath_ = result.normalizedPath;
+        layer->impl_->streamInfo_ = result.streamInfo;
+        layer->impl_->isLoaded_ = true;
+        layer->impl_->currentQImage_ = QImage();
+        layer->impl_->lastDecodedFrame_ = -1;
+        layer->impl_->decodeTargetFrame_ = -1;
+        layer->impl_->decoding_ = false;
+        layer->impl_->lastAudioRequestTimelineFrame_ = std::numeric_limits<int64_t>::min();
+        layer->impl_->frameCache_.clear();
+
+        qCInfo(videoLayerLog) << "[VideoLayer] active backend:"
+                              << decoderBackendName(layer->impl_->playbackController_.get())
+                              << threadIdTag();
+
+        layer->setInPoint(0);
+        layer->setOutPoint(result.defaultOutPoint);
+
+        qCInfo(videoLayerLog) << "[VideoLayer] stream info"
+                              << "size=" << layer->impl_->streamInfo_.width << "x" << layer->impl_->streamInfo_.height
+                              << "fps=" << layer->impl_->streamInfo_.frameRate
+                              << "frames=" << layer->impl_->streamInfo_.frameCount
+                              << "duration=" << layer->impl_->streamInfo_.duration
+                              << "hasAudio=" << layer->impl_->streamInfo_.hasAudio
+                              << threadIdTag();
+
+        if (layer->impl_->streamInfo_.width > 0 && layer->impl_->streamInfo_.height > 0) {
+            layer->setSourceSize(Size_2D(layer->impl_->streamInfo_.width, layer->impl_->streamInfo_.height));
+        }
+
+        layer->impl_->decoding_ = true;
+        layer->impl_->decodeTargetFrame_ = 0;
+        auto* ctrl = layer->impl_->playbackController_.get();
+        layer->impl_->decodeFuture_ = QtConcurrent::run([ctrl, layer]() -> QImage {
+            QImage frame = ctrl->getVideoFrameAtFrameDirect(0);
+            layer->impl_->decoding_ = false;
+            return frame;
+        });
+
+        qDebug() << "[VideoLayer] Loaded:" << result.normalizedPath
+                 << "Duration:" << layer->impl_->streamInfo_.duration << "s"
+                 << "Frames:" << layer->impl_->streamInfo_.frameCount;
+        Q_EMIT layer->changed();
+    });
+    watcher->setFuture(impl_->openFuture_);
+
     return true;
 }
 
@@ -467,7 +525,7 @@ void ArtifactVideoLayer::decodeCurrentFrame()
 {
     // [Fix 3] isLoaded_ = false の間はサイレントリターン。
     // レンダーループが毎フレーム呼び出すため大量のスパムログになるので抗黙する。
-    if (!impl_->isLoaded_) {
+    if (!impl_->isLoaded_ || impl_->opening_.load()) {
         return;
     }
 
@@ -539,6 +597,10 @@ void ArtifactVideoLayer::decodeCurrentFrame()
 
 QImage ArtifactVideoLayer::currentFrameToQImage() const
 {
+    if (impl_->opening_.load()) {
+        return impl_->currentQImage_;
+    }
+
     const int64_t sourceFrame = currentSourceFrame(this);
 
     // decoding_ は lambda 内の return 直前にクリアされるため isFinished() も合わせて確認する
@@ -579,7 +641,7 @@ QImage ArtifactVideoLayer::currentFrameToQImage() const
 
 QImage ArtifactVideoLayer::decodeFrameToQImage(int64_t frameNumber) const
 {
-    if (!impl_->isLoaded_) return QImage();
+    if (!impl_->isLoaded_ || impl_->opening_.load()) return QImage();
 
     if (!impl_->playbackController_ || !impl_->playbackController_->isMediaOpen()) {
         return QImage();
@@ -616,7 +678,7 @@ bool ArtifactVideoLayer::isFrameCached(int64_t frameNumber) const
 
 void ArtifactVideoLayer::preloadFrames(int64_t startFrame, int count)
 {
-    if (!impl_->isLoaded_) return;
+    if (!impl_->isLoaded_ || impl_->opening_.load()) return;
     
     const int64_t startIdx = inPoint();
     const int64_t endIdx = outPoint();
@@ -835,7 +897,7 @@ std::shared_ptr<ArtifactVideoLayer> ArtifactVideoLayer::fromJson(const QJsonObje
 // === Overrides ===
 void ArtifactVideoLayer::draw(ArtifactIRenderer* renderer)
 {
-    if (!impl_->videoEnabled_ || !impl_->isLoaded_) return;
+    if (!impl_->videoEnabled_ || !impl_->isLoaded_ || impl_->opening_.load()) return;
     const int64_t sourceFrame = currentSourceFrame(this);
     const int64_t timelineFrame = sourceFrameToTimelineFrame(this, sourceFrame);
 

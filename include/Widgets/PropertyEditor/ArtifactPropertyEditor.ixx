@@ -67,6 +67,8 @@ private:
 
 ArtifactNumericEditorLayoutMode globalNumericEditorLayoutMode();
 void setGlobalNumericEditorLayoutMode(ArtifactNumericEditorLayoutMode mode);
+bool artifactShouldShowPropertyResetButtons();
+void artifactSetShowPropertyResetButtons(bool show);
 
 class ArtifactFloatPropertyEditor final : public ArtifactAbstractPropertyEditor {
 public:
@@ -80,12 +82,14 @@ protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
 
 private:
+    void resetToDefaultValue(const ArtifactCore::AbstractProperty& property);
     int floatToSliderPosition(double val, double min, double max) const;
     double sliderPositionToFloat(int pos, double min, double max) const;
 
 private:
     QDoubleSpinBox* spinBox_ = nullptr;
     QSlider* slider_ = nullptr;
+    QPushButton* resetButton_ = nullptr;
     double softMin_ = 0.0;
     double softMax_ = 1.0;
     bool sliderInteracting_ = false;

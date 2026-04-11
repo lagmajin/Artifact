@@ -82,7 +82,7 @@ import UI.Layout.State;
 import Core.FastSettingsStore;
 import Artifact.AI.WorkspaceAutomation;
 
-import Test;
+import Artifact.TestRunner;
 
 import ImageProcessing.SpectralGlow;
 
@@ -760,6 +760,7 @@ int main(int argc, char *argv[]) {
 
   QApplication a(argc, argv);
   configureQtPaths();
+  Artifact::WorkspaceAutomation::ensureRegistered();
 
   if (qEnvironmentVariableIsSet("ARTIFACT_RUN_BUILTIN_TESTS")) {
     const int builtinTestFailures = Artifact::runAllTests();
@@ -963,6 +964,7 @@ int main(int argc, char *argv[]) {
           return widget;
         },
         QRect(1040, 200, 760, 520));
+    mw->setDockVisible(QStringLiteral("AI Chat"), false);
     auto *compositionEditor = new ArtifactCompositionEditor(mw);
     compositionEditor->setSizePolicy(QSizePolicy::Expanding,
                                      QSizePolicy::Expanding);
@@ -1552,6 +1554,10 @@ int main(int argc, char *argv[]) {
                      status]() {
                       const QString dockTitle = timelineDockTitle(compId);
                       const QString dockId = timelineDockObjectId(compId);
+                      if (mw->hasDock(dockId)) {
+                        mw->activateDock(dockId);
+                        return;
+                      }
                       auto *panel = new ArtifactTimelineWidget(mw);
                       panel->setMinimumHeight(200);
                       panel->resize(1200, 350);

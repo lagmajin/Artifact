@@ -6,6 +6,7 @@ module;
 #include <QSize>
 #include <QKeyEvent>
 #include <QMouseEvent>
+#include <QShowEvent>
 #include <QWheelEvent>
 #include <wobjectdefs.h>
 export module Artifact.Widgets.SoftwareRenderInspectors;
@@ -44,6 +45,7 @@ public:
 
 protected:
     void resizeEvent(QResizeEvent* event) override;
+    void showEvent(QShowEvent* event) override;
     void keyPressEvent(QKeyEvent* event) override;
     void wheelEvent(QWheelEvent* event) override;
     void mousePressEvent(QMouseEvent* event) override;

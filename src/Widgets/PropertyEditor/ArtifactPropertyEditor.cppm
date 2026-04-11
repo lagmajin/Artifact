@@ -4,35 +4,35 @@ module;
 #include <QAbstractButton>
 #include <QAction>
 #include <QApplication>
+#include <QClipboard>
 #include <QColor>
 #include <QComboBox>
-#include <QDialog>
+#include <QContextMenuEvent>
 #include <QCursor>
+#include <QDialog>
 #include <QDoubleSpinBox>
-#include <QFont>
 #include <QEnterEvent>
 #include <QEvent>
-#include <QContextMenuEvent>
 #include <QFileDialog>
+#include <QFont>
 #include <QFontComboBox>
 #include <QHBoxLayout>
-#include <QLabel>
+#include <QIcon>
 #include <QKeyEvent>
-#include <QPaintEvent>
+#include <QLabel>
 #include <QLineEdit>
+#include <QMenu>
 #include <QMouseEvent>
-#include <QPushButton>
-#include <QSignalBlocker>
-#include <QPalette>
+#include <QPaintEvent>
 #include <QPainter>
 #include <QPainterPath>
-#include <QMenu>
-#include <QClipboard>
-#include <QIcon>
-#include <QtSVG/QSvgRenderer>
+#include <QPalette>
+#include <QPushButton>
+#include <QSignalBlocker>
 #include <QSlider>
 #include <QSpinBox>
 #include <QTextEdit>
+#include <QtSVG/QSvgRenderer>
 
 module Artifact.Widgets.PropertyEditor;
 
@@ -66,42 +66,36 @@ constexpr int kPropertyResetButtonSize = 24;
 constexpr int kPropertyExprButtonWidth = 26;
 constexpr int kPropertyExprButtonHeight = 24;
 
-QColor themeColor(const QString& value, const QColor& fallback)
-{
+QColor themeColor(const QString &value, const QColor &fallback) {
   const QColor color(value);
   return color.isValid() ? color : fallback;
 }
 
-QColor blendColor(const QColor& a, const QColor& b, const qreal t)
-{
+QColor blendColor(const QColor &a, const QColor &b, const qreal t) {
   const qreal clamped = std::clamp(t, 0.0, 1.0);
-  return QColor::fromRgbF(
-      a.redF() * (1.0 - clamped) + b.redF() * clamped,
-      a.greenF() * (1.0 - clamped) + b.greenF() * clamped,
-      a.blueF() * (1.0 - clamped) + b.blueF() * clamped,
-      a.alphaF() * (1.0 - clamped) + b.alphaF() * clamped);
+  return QColor::fromRgbF(a.redF() * (1.0 - clamped) + b.redF() * clamped,
+                          a.greenF() * (1.0 - clamped) + b.greenF() * clamped,
+                          a.blueF() * (1.0 - clamped) + b.blueF() * clamped,
+                          a.alphaF() * (1.0 - clamped) + b.alphaF() * clamped);
 }
 
-void applyThemeTextPalette(QWidget* widget, int shade = 100)
-{
+void applyThemeTextPalette(QWidget *widget, int shade = 100) {
   if (!widget) {
     return;
   }
-  const QColor textColor =
-      themeColor(ArtifactCore::currentDCCTheme().textColor,
-                 QColor(QStringLiteral("#E3E7EC")));
+  const QColor textColor = themeColor(ArtifactCore::currentDCCTheme().textColor,
+                                      QColor(QStringLiteral("#E3E7EC")));
   QPalette pal = widget->palette();
   pal.setColor(QPalette::WindowText, textColor.darker(shade));
   pal.setColor(QPalette::Text, textColor.darker(shade));
   widget->setPalette(pal);
 }
 
-void applyPropertyFieldPalette(QWidget* widget, const bool elevated = false)
-{
+void applyPropertyFieldPalette(QWidget *widget, const bool elevated = false) {
   if (!widget) {
     return;
   }
-  const auto& theme = ArtifactCore::currentDCCTheme();
+  const auto &theme = ArtifactCore::currentDCCTheme();
   const QColor background =
       themeColor(theme.backgroundColor, QColor(QStringLiteral("#20242A")));
   const QColor surface = themeColor(theme.secondaryBackgroundColor,
@@ -118,7 +112,8 @@ void applyPropertyFieldPalette(QWidget* widget, const bool elevated = false)
   widget->setAttribute(Qt::WA_StyledBackground, true);
   widget->setAutoFillBackground(true);
   QPalette pal = widget->palette();
-  const QColor window = elevated ? blendColor(surface, background, 0.18) : background;
+  const QColor window =
+      elevated ? blendColor(surface, background, 0.18) : background;
   pal.setColor(QPalette::Window, window);
   pal.setColor(QPalette::WindowText, text);
   pal.setColor(QPalette::Base, surface);
@@ -133,12 +128,12 @@ void applyPropertyFieldPalette(QWidget* widget, const bool elevated = false)
   widget->setPalette(pal);
 }
 
-void applyPropertyButtonPalette(QAbstractButton* button, const bool accent = false)
-{
+void applyPropertyButtonPalette(QAbstractButton *button,
+                                const bool accent = false) {
   if (!button) {
     return;
   }
-  const auto& theme = ArtifactCore::currentDCCTheme();
+  const auto &theme = ArtifactCore::currentDCCTheme();
   const QColor background =
       themeColor(theme.backgroundColor, QColor(QStringLiteral("#20242A")));
   const QColor surface = themeColor(theme.secondaryBackgroundColor,
@@ -167,12 +162,11 @@ void applyPropertyButtonPalette(QAbstractButton* button, const bool accent = fal
   button->setPalette(pal);
 }
 
-void applyPropertyLabelPalette(QLabel* label, const bool prominent = false)
-{
+void applyPropertyLabelPalette(QLabel *label, const bool prominent = false) {
   if (!label) {
     return;
   }
-  const auto& theme = ArtifactCore::currentDCCTheme();
+  const auto &theme = ArtifactCore::currentDCCTheme();
   const QColor text =
       themeColor(theme.textColor, QColor(QStringLiteral("#E3E7EC")));
   const QColor accent =
@@ -181,7 +175,7 @@ void applyPropertyLabelPalette(QLabel* label, const bool prominent = false)
   pal.setColor(QPalette::WindowText, prominent ? accent : text);
   label->setPalette(pal);
 }
-}
+} // namespace
 
 ArtifactAbstractPropertyEditor::ArtifactAbstractPropertyEditor(QWidget *parent)
     : QWidget(parent) {}
@@ -223,8 +217,8 @@ void ArtifactAbstractPropertyEditor::previewValue(const QVariant &value) const {
 
 bool ArtifactAbstractPropertyEditor::supportsScrub() const { return false; }
 
-void ArtifactAbstractPropertyEditor::scrubByPixels(int deltaPixels,
-                                                   Qt::KeyboardModifiers modifiers) {
+void ArtifactAbstractPropertyEditor::scrubByPixels(
+    int deltaPixels, Qt::KeyboardModifiers modifiers) {
   Q_UNUSED(deltaPixels);
   Q_UNUSED(modifiers);
 }
@@ -280,9 +274,9 @@ int sliderPositionToInt(const int sliderValue, const int minValue,
     return minValue;
   }
   const double normalized = static_cast<double>(sliderValue) / 10000.0;
-  return static_cast<int>(std::lround(
-      static_cast<double>(minValue) +
-      static_cast<double>(maxValue - minValue) * normalized));
+  return static_cast<int>(
+      std::lround(static_cast<double>(minValue) +
+                  static_cast<double>(maxValue - minValue) * normalized));
 }
 
 QString fileDialogFilterForProperty(const QString &propertyName) {
@@ -462,179 +456,252 @@ ArtifactPropertyRowLayoutMode g_propertyRowLayoutMode =
 ArtifactNumericEditorLayoutMode g_numericEditorLayoutMode =
     ArtifactNumericEditorLayoutMode::ValueThenSlider;
 
-// --- Icon Loading Helpers ---
+// ✅ プロパティリセットボタンを表示するかどうかの設定
+bool g_showPropertyResetButtons = false;
 
-QIcon loadSvgAsIcon(const QString& path, int size = 16)
-{
-    if (path.isEmpty()) return QIcon();
-    if (path.endsWith(QStringLiteral(".svg"), Qt::CaseInsensitive)) {
-        QSvgRenderer renderer(path);
-        if (renderer.isValid()) {
-            QPixmap pixmap(size, size);
-            pixmap.fill(Qt::transparent);
-            QPainter painter(&pixmap);
-            renderer.render(&painter);
-            painter.end();
-            if (!pixmap.isNull()) return QIcon(pixmap);
-        }
-        return QIcon();
-    }
-    return QIcon(path);
+bool artifactShouldShowPropertyResetButtonsImpl() {
+  return g_showPropertyResetButtons;
 }
 
-QIcon loadPropertyIcon(const QString& resourceRelativePath, const QString& fallbackFileName = {})
-{
-    using namespace ArtifactCore;
-    static QHash<QString, QIcon> iconCache;
-    const QString cacheKey = resourceRelativePath + QStringLiteral("|") + fallbackFileName;
-    auto it = iconCache.constFind(cacheKey);
-    if (it != iconCache.constEnd()) return it.value();
-    QIcon icon = loadSvgAsIcon(resolveIconResourcePath(resourceRelativePath));
-    if (!icon.isNull()) { iconCache.insert(cacheKey, icon); return icon; }
-    if (!fallbackFileName.isEmpty()) {
-        icon = loadSvgAsIcon(resolveIconPath(fallbackFileName));
+void artifactSetShowPropertyResetButtonsImpl(bool show) {
+  g_showPropertyResetButtons = show;
+}
+
+// ✅ プロパティのデフォルト値を取得するユーティリティ関数
+QVariant
+getPropertyDefaultValue(const ArtifactCore::AbstractProperty &property) {
+  // プロパティのメタデータからデフォルト値を取得
+  const auto meta = property.metadata();
+  if (property.getDefaultValue().isValid()) {
+    return property.getDefaultValue();
+  }
+
+  // 型別のデフォルト値フォールバック
+  switch (property.getType()) {
+  case ArtifactCore::PropertyType::Float:
+    return QVariant(0.0);
+  case ArtifactCore::PropertyType::Integer:
+    return QVariant(0);
+  case ArtifactCore::PropertyType::Boolean:
+    return QVariant(false);
+  case ArtifactCore::PropertyType::String:
+    return QVariant(QString());
+  case ArtifactCore::PropertyType::Color:
+    return QVariant(QColor(Qt::black));
+  default:
+    return QVariant();
+  }
+}
+
+// --- Icon Loading Helpers ---
+
+QIcon loadSvgAsIcon(const QString &path, int size = 16) {
+  if (path.isEmpty())
+    return QIcon();
+  if (path.endsWith(QStringLiteral(".svg"), Qt::CaseInsensitive)) {
+    QSvgRenderer renderer(path);
+    if (renderer.isValid()) {
+      QPixmap pixmap(size, size);
+      pixmap.fill(Qt::transparent);
+      QPainter painter(&pixmap);
+      renderer.render(&painter);
+      painter.end();
+      if (!pixmap.isNull())
+        return QIcon(pixmap);
     }
+    return QIcon();
+  }
+  return QIcon(path);
+}
+
+QIcon loadPropertyIcon(const QString &resourceRelativePath,
+                       const QString &fallbackFileName = {}) {
+  using namespace ArtifactCore;
+  static QHash<QString, QIcon> iconCache;
+  const QString cacheKey =
+      resourceRelativePath + QStringLiteral("|") + fallbackFileName;
+  auto it = iconCache.constFind(cacheKey);
+  if (it != iconCache.constEnd())
+    return it.value();
+  QIcon icon = loadSvgAsIcon(resolveIconResourcePath(resourceRelativePath));
+  if (!icon.isNull()) {
     iconCache.insert(cacheKey, icon);
     return icon;
+  }
+  if (!fallbackFileName.isEmpty()) {
+    icon = loadSvgAsIcon(resolveIconPath(fallbackFileName));
+  }
+  iconCache.insert(cacheKey, icon);
+  return icon;
 }
 
 // --- Relative Input Support ---
 
 class ArtifactRelativeDoubleSpinBox : public QDoubleSpinBox {
 public:
-    using QDoubleSpinBox::QDoubleSpinBox;
+  using QDoubleSpinBox::QDoubleSpinBox;
 
-    QValidator::State validate(QString& input, int& pos) const override {
-        if (input.isEmpty()) return QValidator::Intermediate;
-        const QChar first = input.at(0);
-        if (first == '+' || first == '-' || first == '*' || first == '/') {
-            // Allow relative operators at the start
-            QString rest = input.mid(1);
-            if (rest.isEmpty()) return QValidator::Intermediate;
-            return QValidator::Acceptable;
-        }
-        return QDoubleSpinBox::validate(input, pos);
+  QValidator::State validate(QString &input, int &pos) const override {
+    if (input.isEmpty())
+      return QValidator::Intermediate;
+    const QChar first = input.at(0);
+    if (first == '+' || first == '-' || first == '*' || first == '/') {
+      // Allow relative operators at the start
+      QString rest = input.mid(1);
+      if (rest.isEmpty())
+        return QValidator::Intermediate;
+      return QValidator::Acceptable;
     }
+    return QDoubleSpinBox::validate(input, pos);
+  }
 
-    double valueFromText(const QString& text) const override {
-        if (text.isEmpty()) return value();
-        const QChar first = text.at(0);
-        if (first == '+' || first == '-' || first == '*' || first == '/') {
-            bool ok = false;
-            double delta = text.mid(1).toDouble(&ok);
-            if (!ok) return value();
-            if (first == '+') return value() + delta;
-            if (first == '-') return value() - delta;
-            if (first == '*') return value() * delta;
-            if (first == '/') return (std::abs(delta) > 1e-9) ? value() / delta : value();
-        }
-        return QDoubleSpinBox::valueFromText(text);
+  double valueFromText(const QString &text) const override {
+    if (text.isEmpty())
+      return value();
+    const QChar first = text.at(0);
+    if (first == '+' || first == '-' || first == '*' || first == '/') {
+      bool ok = false;
+      double delta = text.mid(1).toDouble(&ok);
+      if (!ok)
+        return value();
+      if (first == '+')
+        return value() + delta;
+      if (first == '-')
+        return value() - delta;
+      if (first == '*')
+        return value() * delta;
+      if (first == '/')
+        return (std::abs(delta) > 1e-9) ? value() / delta : value();
     }
+    return QDoubleSpinBox::valueFromText(text);
+  }
 };
 
 class ArtifactRelativeSpinBox : public QSpinBox {
 public:
-    using QSpinBox::QSpinBox;
+  using QSpinBox::QSpinBox;
 
-    QValidator::State validate(QString& input, int& pos) const override {
-        if (input.isEmpty()) return QValidator::Intermediate;
-        const QChar first = input.at(0);
-        if (first == '+' || first == '-' || first == '*' || first == '/') {
-            QString rest = input.mid(1);
-            if (rest.isEmpty()) return QValidator::Intermediate;
-            return QValidator::Acceptable;
-        }
-        return QSpinBox::validate(input, pos);
+  QValidator::State validate(QString &input, int &pos) const override {
+    if (input.isEmpty())
+      return QValidator::Intermediate;
+    const QChar first = input.at(0);
+    if (first == '+' || first == '-' || first == '*' || first == '/') {
+      QString rest = input.mid(1);
+      if (rest.isEmpty())
+        return QValidator::Intermediate;
+      return QValidator::Acceptable;
     }
+    return QSpinBox::validate(input, pos);
+  }
 
-    int valueFromText(const QString& text) const override {
-        if (text.isEmpty()) return value();
-        const QChar first = text.at(0);
-        if (first == '+' || first == '-' || first == '*' || first == '/') {
-            bool ok = false;
-            double delta = text.mid(1).toDouble(&ok);
-            if (!ok) return value();
-            if (first == '+') return value() + static_cast<int>(delta);
-            if (first == '-') return value() - static_cast<int>(delta);
-            if (first == '*') return static_cast<int>(value() * delta);
-            if (first == '/') return (std::abs(delta) > 1e-9) ? static_cast<int>(value() / delta) : value();
-        }
-        return QSpinBox::valueFromText(text);
+  int valueFromText(const QString &text) const override {
+    if (text.isEmpty())
+      return value();
+    const QChar first = text.at(0);
+    if (first == '+' || first == '-' || first == '*' || first == '/') {
+      bool ok = false;
+      double delta = text.mid(1).toDouble(&ok);
+      if (!ok)
+        return value();
+      if (first == '+')
+        return value() + static_cast<int>(delta);
+      if (first == '-')
+        return value() - static_cast<int>(delta);
+      if (first == '*')
+        return static_cast<int>(value() * delta);
+      if (first == '/')
+        return (std::abs(delta) > 1e-9) ? static_cast<int>(value() / delta)
+                                        : value();
     }
+    return QSpinBox::valueFromText(text);
+  }
 };
 
 class ArtifactToggleSwitch final : public QAbstractButton {
 public:
-    explicit ArtifactToggleSwitch(QWidget *parent = nullptr)
-        : QAbstractButton(parent) {
-        setCheckable(true);
-        setCursor(Qt::PointingHandCursor);
-        setFocusPolicy(Qt::StrongFocus);
-        setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
-    }
+  explicit ArtifactToggleSwitch(QWidget *parent = nullptr)
+      : QAbstractButton(parent) {
+    setCheckable(true);
+    setCursor(Qt::PointingHandCursor);
+    setFocusPolicy(Qt::StrongFocus);
+    setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+  }
 
-    QSize sizeHint() const override { return {48, 26}; }
-    QSize minimumSizeHint() const override { return {42, 24}; }
+  QSize sizeHint() const override { return {48, 26}; }
+  QSize minimumSizeHint() const override { return {42, 24}; }
 
 protected:
-    bool hitButton(const QPoint &pos) const override {
-        return rect().contains(pos);
+  bool hitButton(const QPoint &pos) const override {
+    return rect().contains(pos);
+  }
+
+  void paintEvent(QPaintEvent *) override {
+    QPainter painter(this);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+
+    const QRectF trackRect = rect().adjusted(1, 1, -1, -1);
+    const qreal radius = trackRect.height() * 0.5;
+
+    const auto &theme = ArtifactCore::currentDCCTheme();
+    const QColor background =
+        themeColor(theme.backgroundColor, QColor(QStringLiteral("#20242A")));
+    const QColor surface = themeColor(theme.secondaryBackgroundColor,
+                                      QColor(QStringLiteral("#2B3038")));
+    const QColor accent =
+        themeColor(theme.accentColor, QColor(QStringLiteral("#5E94C7")));
+    const QColor selection =
+        themeColor(theme.selectionColor, QColor(QStringLiteral("#3C5B76")));
+    const QColor border =
+        themeColor(theme.borderColor, QColor(QStringLiteral("#404754")));
+    const QColor text =
+        themeColor(theme.textColor, QColor(QStringLiteral("#E3E7EC")));
+
+    QColor trackColor = isChecked() ? blendColor(selection, accent, 0.44)
+                                    : blendColor(surface, background, 0.22);
+    QColor borderColor =
+        isChecked() ? blendColor(border, accent, 0.52) : border;
+    QColor knobColor = text;
+    if (!isEnabled()) {
+      trackColor = trackColor.darker(135);
+      borderColor = borderColor.darker(135);
+      knobColor = knobColor.darker(120);
     }
 
-    void paintEvent(QPaintEvent *) override {
-        QPainter painter(this);
-        painter.setRenderHint(QPainter::Antialiasing, true);
+    painter.setPen(QPen(borderColor, 1.0));
+    painter.setBrush(trackColor);
+    painter.drawRoundedRect(trackRect, radius, radius);
 
-        const QRectF trackRect = rect().adjusted(1, 1, -1, -1);
-        const qreal radius = trackRect.height() * 0.5;
+    const qreal knobMargin = 2.0;
+    const qreal knobDiameter = trackRect.height() - knobMargin * 2.0;
+    const qreal knobX = isChecked()
+                            ? trackRect.right() - knobMargin - knobDiameter
+                            : trackRect.left() + knobMargin;
+    const QRectF knobRect(knobX, trackRect.top() + knobMargin, knobDiameter,
+                          knobDiameter);
 
-        const auto& theme = ArtifactCore::currentDCCTheme();
-        const QColor background = themeColor(theme.backgroundColor, QColor(QStringLiteral("#20242A")));
-        const QColor surface = themeColor(theme.secondaryBackgroundColor, QColor(QStringLiteral("#2B3038")));
-        const QColor accent = themeColor(theme.accentColor, QColor(QStringLiteral("#5E94C7")));
-        const QColor selection = themeColor(theme.selectionColor, QColor(QStringLiteral("#3C5B76")));
-        const QColor border = themeColor(theme.borderColor, QColor(QStringLiteral("#404754")));
-        const QColor text = themeColor(theme.textColor, QColor(QStringLiteral("#E3E7EC")));
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(knobColor);
+    painter.drawEllipse(knobRect);
 
-        QColor trackColor = isChecked() ? blendColor(selection, accent, 0.44)
-                                        : blendColor(surface, background, 0.22);
-        QColor borderColor = isChecked() ? blendColor(border, accent, 0.52)
-                                         : border;
-        QColor knobColor = text;
-        if (!isEnabled()) {
-            trackColor = trackColor.darker(135);
-            borderColor = borderColor.darker(135);
-            knobColor = knobColor.darker(120);
-        }
-
-        painter.setPen(QPen(borderColor, 1.0));
-        painter.setBrush(trackColor);
-        painter.drawRoundedRect(trackRect, radius, radius);
-
-        const qreal knobMargin = 2.0;
-        const qreal knobDiameter = trackRect.height() - knobMargin * 2.0;
-        const qreal knobX = isChecked()
-                                ? trackRect.right() - knobMargin - knobDiameter
-                                : trackRect.left() + knobMargin;
-        const QRectF knobRect(knobX, trackRect.top() + knobMargin, knobDiameter,
-                              knobDiameter);
-
-        painter.setPen(Qt::NoPen);
-        painter.setBrush(knobColor);
-        painter.drawEllipse(knobRect);
-
-        if (hasFocus()) {
-            QPen focusPen(selection.lighter(130), 1.0);
-            focusPen.setStyle(Qt::DashLine);
-            painter.setPen(focusPen);
-            painter.setBrush(Qt::NoBrush);
-            painter.drawRoundedRect(trackRect.adjusted(1, 1, -1, -1), radius,
-                                    radius);
-        }
+    if (hasFocus()) {
+      QPen focusPen(selection.lighter(130), 1.0);
+      focusPen.setStyle(Qt::DashLine);
+      painter.setPen(focusPen);
+      painter.setBrush(Qt::NoBrush);
+      painter.drawRoundedRect(trackRect.adjusted(1, 1, -1, -1), radius, radius);
     }
+  }
 };
 
 } // namespace
+
+bool artifactShouldShowPropertyResetButtons() {
+  return artifactShouldShowPropertyResetButtonsImpl();
+}
+
+void artifactSetShowPropertyResetButtons(bool show) {
+  artifactSetShowPropertyResetButtonsImpl(show);
+}
 
 ArtifactFloatPropertyEditor::ArtifactFloatPropertyEditor(
     const ArtifactCore::AbstractProperty &property, QWidget *parent)
@@ -642,6 +709,31 @@ ArtifactFloatPropertyEditor::ArtifactFloatPropertyEditor(
   setObjectName(QStringLiteral("propertyFloatEditor"));
   spinBox_ = new ArtifactRelativeDoubleSpinBox(this);
   slider_ = new QSlider(Qt::Horizontal, this);
+  QPushButton *resetButton = nullptr;
+  if (::Artifact::artifactShouldShowPropertyResetButtons()) {
+    resetButton = new QPushButton(QStringLiteral("⟲"), this);
+    resetButton->setObjectName(QStringLiteral("propertyResetButton"));
+    resetButton->setFixedSize(20, 20);
+    resetButton->setToolTip(QStringLiteral("Reset to default"));
+    resetButton->setFlat(true);
+    applyPropertyButtonPalette(resetButton);
+
+    QObject::connect(resetButton, &QPushButton::clicked, this,
+                     [this, property]() {
+                       const QVariant defaultValue =
+                           getPropertyDefaultValue(property);
+                       if (spinBox_) {
+                         spinBox_->setValue(defaultValue.toDouble());
+                       }
+                       if (slider_) {
+                         const QSignalBlocker blocker(slider_);
+                         slider_->setValue(floatToSliderPosition(
+                             defaultValue.toDouble(), softMin_, softMax_));
+                       }
+                       commitCurrentValue();
+                     });
+  }
+
   auto *layout = new QHBoxLayout(this);
   layout->setContentsMargins(0, 0, 0, 0);
   layout->setSpacing(4);
@@ -780,8 +872,8 @@ void ArtifactFloatPropertyEditor::setValueFromVariant(const QVariant &value) {
 
 bool ArtifactFloatPropertyEditor::supportsScrub() const { return true; }
 
-void ArtifactFloatPropertyEditor::scrubByPixels(const int deltaPixels,
-                                                const Qt::KeyboardModifiers modifiers) {
+void ArtifactFloatPropertyEditor::scrubByPixels(
+    const int deltaPixels, const Qt::KeyboardModifiers modifiers) {
   if (!spinBox_) {
     return;
   }
@@ -809,6 +901,15 @@ ArtifactIntPropertyEditor::ArtifactIntPropertyEditor(
   setObjectName(QStringLiteral("propertyIntEditor"));
   spinBox_ = new ArtifactRelativeSpinBox(this);
   slider_ = new QSlider(Qt::Horizontal, this);
+  QPushButton *resetButton = nullptr;
+  if (::Artifact::artifactShouldShowPropertyResetButtons()) {
+    resetButton = new QPushButton(QStringLiteral("⟲"), this);
+    resetButton->setObjectName(QStringLiteral("propertyResetButton"));
+    resetButton->setFixedSize(20, 20);
+    resetButton->setToolTip(QStringLiteral("Reset to default"));
+    resetButton->setFlat(true);
+    applyPropertyButtonPalette(resetButton);
+  }
   auto *layout = new QHBoxLayout(this);
   layout->setContentsMargins(0, 0, 0, 0);
   layout->setSpacing(4);
@@ -819,6 +920,11 @@ ArtifactIntPropertyEditor::ArtifactIntPropertyEditor(
   } else {
     layout->addWidget(spinBox_, 1);
     layout->addWidget(slider_, 3);
+  }
+
+  // ✅ リセットボタンを一番右に追加
+  if (resetButton) {
+    layout->addWidget(resetButton, 0);
   }
 
   const auto meta = property.metadata();
@@ -939,8 +1045,8 @@ int ArtifactIntPropertyEditor::sliderPositionToInt(int pos, int min,
   return ::Artifact::sliderPositionToInt(pos, min, max);
 }
 
-void ArtifactIntPropertyEditor::scrubByPixels(const int deltaPixels,
-                                              const Qt::KeyboardModifiers modifiers) {
+void ArtifactIntPropertyEditor::scrubByPixels(
+    const int deltaPixels, const Qt::KeyboardModifiers modifiers) {
   if (!spinBox_) {
     return;
   }
@@ -1048,7 +1154,7 @@ void ArtifactMultilineStringPropertyEditor::setValueFromVariant(
 }
 
 bool ArtifactMultilineStringPropertyEditor::eventFilter(QObject *watched,
-                                                       QEvent *event) {
+                                                        QEvent *event) {
   if (watched == textEdit_ && event->type() == QEvent::FocusOut) {
     commitCurrentValue();
   }
@@ -1067,16 +1173,18 @@ ArtifactFontFamilyPropertyEditor::ArtifactFontFamilyPropertyEditor(
 
   setValueFromVariant(property.getValue());
   if (false) {
-    QObject::connect(
-      fontPicker_, &FontPickerWidget::fontChanged, this,
-      [this](const QString &family) {
-        commitValue(ArtifactCore::FontManager::resolvedFamily(family));
-      });
+    QObject::connect(fontPicker_, &FontPickerWidget::fontChanged, this,
+                     [this](const QString &family) {
+                       commitValue(
+                           ArtifactCore::FontManager::resolvedFamily(family));
+                     });
   }
 
-  fontChangeSubscription_ = ArtifactCore::globalEventBus().subscribe<FontChangedEvent>([this](const FontChangedEvent& ev){
-    commitValue(ArtifactCore::FontManager::resolvedFamily(ev.fontName));
-  });
+  fontChangeSubscription_ =
+      ArtifactCore::globalEventBus().subscribe<FontChangedEvent>(
+          [this](const FontChangedEvent &ev) {
+            commitValue(ArtifactCore::FontManager::resolvedFamily(ev.fontName));
+          });
 }
 
 QVariant ArtifactFontFamilyPropertyEditor::value() const {
@@ -1207,16 +1315,15 @@ ArtifactColorPropertyEditor::ArtifactColorPropertyEditor(
     ArtifactWidgets::FloatColorPicker picker(button_);
     Artifact::installFloatColorPickerSliderJump(&picker);
     picker.setWindowTitle(QStringLiteral("Select Color"));
-    picker.setInitialColor(ArtifactCore::FloatColor(currentColor_.redF(),
-                                            currentColor_.greenF(),
-                                            currentColor_.blueF(),
-                                            currentColor_.alphaF()));
+    picker.setInitialColor(ArtifactCore::FloatColor(
+        currentColor_.redF(), currentColor_.greenF(), currentColor_.blueF(),
+        currentColor_.alphaF()));
     if (picker.exec() != QDialog::Accepted) {
       return;
     }
     const ArtifactCore::FloatColor picked = picker.getColor();
-    const QColor nextColor = QColor::fromRgbF(picked.r(), picked.g(),
-                                              picked.b(), picked.a());
+    const QColor nextColor =
+        QColor::fromRgbF(picked.r(), picked.g(), picked.b(), picked.a());
     if (!nextColor.isValid()) {
       return;
     }
@@ -1249,10 +1356,10 @@ void ArtifactColorPropertyEditor::applyColor(const QColor &color) {
   if (button_) {
     QPalette pal = button_->palette();
     pal.setColor(QPalette::Button, color);
-    pal.setColor(QPalette::ButtonText, QColor::fromRgbF(
-                                        color.redF() > 0.5 ? 0.08 : 0.94,
-                                        color.greenF() > 0.5 ? 0.08 : 0.94,
-                                        color.blueF() > 0.5 ? 0.08 : 0.94));
+    pal.setColor(QPalette::ButtonText,
+                 QColor::fromRgbF(color.redF() > 0.5 ? 0.08 : 0.94,
+                                  color.greenF() > 0.5 ? 0.08 : 0.94,
+                                  color.blueF() > 0.5 ? 0.08 : 0.94));
     button_->setAutoFillBackground(true);
     button_->setPalette(pal);
   }
@@ -1269,8 +1376,8 @@ ArtifactPropertyEditorRowWidget::ArtifactPropertyEditorRowWidget(
       keyframeButton_(new QPushButton(this)),
       resetButton_(new QPushButton(this)),
       expressionButton_(new QPushButton(this)),
-      prevKeyBtn_(new QPushButton(this)),
-      nextKeyBtn_(new QPushButton(this)), propertyName_(propertyName) {
+      prevKeyBtn_(new QPushButton(this)), nextKeyBtn_(new QPushButton(this)),
+      propertyName_(propertyName) {
   setObjectName(QStringLiteral("propertyRow"));
   setFocusPolicy(Qt::StrongFocus);
   setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
@@ -1299,10 +1406,14 @@ ArtifactPropertyEditorRowWidget::ArtifactPropertyEditorRowWidget(
   applyPropertyFieldPalette(editor_);
 
   // Load Icons
-  QIcon keyIcon = loadPropertyIcon(QStringLiteral("MaterialVS/yellow/keyframe.svg"));
-  QIcon prevIcon = loadPropertyIcon(QStringLiteral("MaterialVS/neutral/arrow_left.svg"));
-  QIcon nextIcon = loadPropertyIcon(QStringLiteral("MaterialVS/neutral/arrow_right.svg"));
-  QIcon resIcon = loadPropertyIcon(QStringLiteral("MaterialVS/neutral/undo.svg"));
+  QIcon keyIcon =
+      loadPropertyIcon(QStringLiteral("MaterialVS/yellow/keyframe.svg"));
+  QIcon prevIcon =
+      loadPropertyIcon(QStringLiteral("MaterialVS/neutral/arrow_left.svg"));
+  QIcon nextIcon =
+      loadPropertyIcon(QStringLiteral("MaterialVS/neutral/arrow_right.svg"));
+  QIcon resIcon =
+      loadPropertyIcon(QStringLiteral("MaterialVS/neutral/undo.svg"));
   QIcon exprIcon = loadPropertyIcon(QStringLiteral("MaterialVS/blue/code.svg"));
 
   // Keyframe Controls
@@ -1339,7 +1450,8 @@ ArtifactPropertyEditorRowWidget::ArtifactPropertyEditorRowWidget(
 
   resetButton_->setObjectName(QStringLiteral("propertyResetButton"));
   resetButton_->setToolTip(QStringLiteral("Reset: %1").arg(propertyName));
-  resetButton_->setFixedSize(kPropertyResetButtonSize, kPropertyResetButtonSize);
+  resetButton_->setFixedSize(kPropertyResetButtonSize,
+                             kPropertyResetButtonSize);
   resetButton_->setIcon(resIcon);
   resetButton_->setIconSize(QSize(14, 14));
   resetButton_->setFlat(true);
@@ -1349,7 +1461,8 @@ ArtifactPropertyEditorRowWidget::ArtifactPropertyEditorRowWidget(
   expressionButton_->setObjectName(QStringLiteral("propertyExprButton"));
   expressionButton_->setToolTip(
       QStringLiteral("Expression: %1").arg(propertyName));
-  expressionButton_->setFixedSize(kPropertyExprButtonWidth, kPropertyExprButtonHeight);
+  expressionButton_->setFixedSize(kPropertyExprButtonWidth,
+                                  kPropertyExprButtonHeight);
   expressionButton_->setIcon(exprIcon);
   expressionButton_->setIconSize(QSize(14, 14));
   expressionButton_->setFlat(true);
@@ -1425,7 +1538,8 @@ ArtifactPropertyEditorRowWidget::globalLayoutMode() {
   return g_propertyRowLayoutMode;
 }
 
-void setGlobalNumericEditorLayoutMode(const ArtifactNumericEditorLayoutMode mode) {
+void setGlobalNumericEditorLayoutMode(
+    const ArtifactNumericEditorLayoutMode mode) {
   g_numericEditorLayoutMode = mode;
 }
 
@@ -1455,7 +1569,9 @@ void ArtifactPropertyEditorRowWidget::setNavigationHandler(
 
 void ArtifactPropertyEditorRowWidget::setEditorToolTip(const QString &tooltip) {
   label_->setToolTip(tooltip);
-  scrubHandle_->setToolTip(tooltip + QStringLiteral("\nDrag to scrub. Shift=fine, Ctrl=coarse, Esc=cancel."));
+  scrubHandle_->setToolTip(
+      tooltip +
+      QStringLiteral("\nDrag to scrub. Shift=fine, Ctrl=coarse, Esc=cancel."));
   editor_->setToolTip(tooltip);
   keyframeButton_->setToolTip(tooltip);
   prevKeyBtn_->setToolTip(tooltip);
@@ -1537,11 +1653,13 @@ void ArtifactPropertyEditorRowWidget::contextMenuEvent(
   QAction *copyAction = menu.addAction(QStringLiteral("Copy Value"));
   QAction *pasteAction = menu.addAction(QStringLiteral("Paste Value"));
   QAction *resetAction = menu.addAction(QStringLiteral("Reset Value"));
-  QAction *copyNameAction = menu.addAction(QStringLiteral("Copy Property Name"));
+  QAction *copyNameAction =
+      menu.addAction(QStringLiteral("Copy Property Name"));
 
   copyAction->setEnabled(editor_ != nullptr);
   pasteAction->setEnabled(editor_ != nullptr);
-  resetAction->setEnabled(resetButton_ && resetButton_->property("baseVisible").toBool());
+  resetAction->setEnabled(resetButton_ &&
+                          resetButton_->property("baseVisible").toBool());
 
   QAction *chosen = menu.exec(event->globalPos());
   if (!chosen) {
@@ -1557,7 +1675,8 @@ void ArtifactPropertyEditorRowWidget::contextMenuEvent(
       editor_->setValueFromVariant(clipboardText);
       editor_->commitCurrentValue();
     }
-  } else if (chosen == resetAction && resetButton_ && resetButton_->isVisible()) {
+  } else if (chosen == resetAction && resetButton_ &&
+             resetButton_->isVisible()) {
     resetButton_->click();
   } else if (chosen == copyNameAction) {
     QApplication::clipboard()->setText(propertyName_);
@@ -1571,12 +1690,17 @@ void ArtifactPropertyEditorRowWidget::paintEvent(QPaintEvent *event) {
   QPainter painter(this);
   painter.setRenderHint(QPainter::Antialiasing, true);
 
-  const auto& theme = ArtifactCore::currentDCCTheme();
-  const QColor background = themeColor(theme.backgroundColor, QColor(QStringLiteral("#20242A")));
-  const QColor surface = themeColor(theme.secondaryBackgroundColor, QColor(QStringLiteral("#2B3038")));
-  const QColor accent = themeColor(theme.accentColor, QColor(QStringLiteral("#5E94C7")));
-  const QColor selection = themeColor(theme.selectionColor, QColor(QStringLiteral("#3C5B76")));
-  const QColor border = themeColor(theme.borderColor, QColor(QStringLiteral("#404754")));
+  const auto &theme = ArtifactCore::currentDCCTheme();
+  const QColor background =
+      themeColor(theme.backgroundColor, QColor(QStringLiteral("#20242A")));
+  const QColor surface = themeColor(theme.secondaryBackgroundColor,
+                                    QColor(QStringLiteral("#2B3038")));
+  const QColor accent =
+      themeColor(theme.accentColor, QColor(QStringLiteral("#5E94C7")));
+  const QColor selection =
+      themeColor(theme.selectionColor, QColor(QStringLiteral("#3C5B76")));
+  const QColor border =
+      themeColor(theme.borderColor, QColor(QStringLiteral("#404754")));
 
   const bool hovered = underMouse();
   const bool focused = editor_ && editor_->hasFocus();

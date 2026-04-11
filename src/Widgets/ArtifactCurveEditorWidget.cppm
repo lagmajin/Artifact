@@ -5,6 +5,7 @@
 #include <QWidget>
 #include <QPainter>
 #include <QMouseEvent>
+#include <QKeyEvent>
 #include <QWheelEvent>
 #include <QPointF>
 #include <QRectF>
@@ -49,6 +50,7 @@ public:
  // Selection
  int selectedTrack_ = -1;
  int selectedKey_ = -1;
+ bool handlesInteractive_ = true;
 
  static constexpr int KEY_RADIUS = 5;
  static constexpr int HANDLE_RADIUS = 4;
@@ -312,6 +314,13 @@ public:
 
  // Hit test for tangent handles
  int hitTestHandle(QPointF pixel, int& outTrackIndex, int& outKeyIndex, bool& outInHandle) const {
+  if (!handlesInteractive_) {
+   outTrackIndex = -1;
+   outKeyIndex = -1;
+   outInHandle = false;
+   return -1;
+  }
+
   outTrackIndex = -1;
   outKeyIndex = -1;
   outInHandle = false;
@@ -358,6 +367,22 @@ public:
   }
   return outTrackIndex >= 0 ? 0 : -1;
  }
+
+ bool deleteSelectedKey() {
+  if (selectedTrack_ < 0 || selectedTrack_ >= static_cast<int>(tracks_.size()) ||
+      selectedKey_ < 0 || selectedKey_ >= static_cast<int>(tracks_[selectedTrack_].keys.size())) {
+   return false;
+  }
+  auto& keys = tracks_[selectedTrack_].keys;
+  keys.erase(keys.begin() + selectedKey_);
+  if (keys.empty()) {
+   selectedTrack_ = -1;
+   selectedKey_ = -1;
+  } else {
+   selectedKey_ = std::min(selectedKey_, static_cast<int>(keys.size()) - 1);
+  }
+  return true;
+ }
 };
 
 ArtifactCurveEditorWidget::ArtifactCurveEditorWidget(QWidget* parent)
@@ -390,6 +415,10 @@ void ArtifactCurveEditorWidget::setCurrentFrame(int64_t frame) {
  update();
 }
 
+void ArtifactCurveEditorWidget::setHandleEditingEnabled(bool enabled) {
+ impl_->handlesInteractive_ = enabled;
+}
+
 void ArtifactCurveEditorWidget::fitToContent() {
  float minF = 1e30f, maxF = -1e30f;
  float minV = 1e30f, maxV = -1e30f;
@@ -413,6 +442,45 @@ void ArtifactCurveEditorWidget::fitToContent() {
 
  float marginF = std::max((maxF - minF) * 0.1f, 5.0f);
  float marginV = std::max((maxV - minV) * 0.1f, 5.0f);
+ setViewRange(minF - marginF, maxF + marginF, minV - marginV, maxV + marginV);
+}
+
+void ArtifactCurveEditorWidget::focusTrack(int trackIndex) {
+ if (trackIndex < 0 || trackIndex >= static_cast<int>(impl_->tracks_.size())) {
+  for (auto &track : impl_->tracks_) {
+   track.visible = true;
+  }
+  impl_->selectedTrack_ = -1;
+  impl_->selectedKey_ = -1;
+  fitToContent();
+  return;
+ }
+
+ for (int i = 0; i < static_cast<int>(impl_->tracks_.size()); ++i) {
+  impl_->tracks_[i].visible = (i == trackIndex);
+ }
+ impl_->selectedTrack_ = trackIndex;
+ impl_->selectedKey_ = impl_->tracks_[trackIndex].keys.empty() ? -1 : 0;
+
+ float minF = 1e30f, maxF = -1e30f;
+ float minV = 1e30f, maxV = -1e30f;
+ bool hasKeys = false;
+ for (const auto &key : impl_->tracks_[trackIndex].keys) {
+  const float frame = static_cast<float>(key.frame);
+  minF = std::min(minF, frame);
+  maxF = std::max(maxF, frame);
+  minV = std::min(minV, key.value);
+  maxV = std::max(maxV, key.value);
+  hasKeys = true;
+ }
+
+ if (!hasKeys) {
+  update();
+  return;
+ }
+
+ const float marginF = std::max((maxF - minF) * 0.12f, 5.0f);
+ const float marginV = std::max((maxV - minV) * 0.15f, 5.0f);
  setViewRange(minF - marginF, maxF + marginF, minV - marginV, maxV + marginV);
 }
 
@@ -460,15 +528,20 @@ void ArtifactCurveEditorWidget::paintEvent(QPaintEvent* /*event*/) {
 
 void ArtifactCurveEditorWidget::mousePressEvent(QMouseEvent* event) {
  QPointF pos = event->position();
+ bool startedInteraction = false;
 
  // Check if clicking on playhead area (bottom margin) for scrubbing
  QRectF pr = impl_->plotRect();
  if (pos.y() > pr.bottom() && pos.y() < pr.bottom() + impl_->MARGIN_BOTTOM) {
   impl_->dragMode_ = Impl::DragMode::ScrubPlayhead;
+  startedInteraction = true;
   QPointF data = impl_->pixelToData(pos);
   int64_t frame = static_cast<int64_t>(std::round(data.x()));
   impl_->currentFrame_ = frame;
   Q_EMIT currentFrameChanged(frame);
+  if (startedInteraction) {
+   Q_EMIT interactionStarted();
+  }
   update();
   return;
  }
@@ -478,11 +551,15 @@ void ArtifactCurveEditorWidget::mousePressEvent(QMouseEvent* event) {
  bool inHandle;
  if (impl_->hitTestHandle(pos, ht, hk, inHandle) == 0) {
   impl_->dragMode_ = inHandle ? Impl::DragMode::MoveHandleIn : Impl::DragMode::MoveHandleOut;
+  startedInteraction = true;
   impl_->dragTrackIndex_ = ht;
   impl_->dragKeyIndex_ = hk;
   impl_->dragStart_ = pos.toPoint();
   impl_->selectedTrack_ = ht;
   impl_->selectedKey_ = hk;
+  if (startedInteraction) {
+   Q_EMIT interactionStarted();
+  }
   update();
   return;
  }
@@ -491,6 +568,7 @@ void ArtifactCurveEditorWidget::mousePressEvent(QMouseEvent* event) {
  int tk, kk;
  if (impl_->hitTestKey(pos, tk, kk) == 0) {
   impl_->dragMode_ = Impl::DragMode::MoveKey;
+  startedInteraction = true;
   impl_->dragTrackIndex_ = tk;
   impl_->dragKeyIndex_ = kk;
   impl_->dragStart_ = pos.toPoint();
@@ -499,6 +577,9 @@ void ArtifactCurveEditorWidget::mousePressEvent(QMouseEvent* event) {
   impl_->selectedTrack_ = tk;
   impl_->selectedKey_ = kk;
   Q_EMIT keySelected(tk, kk);
+  if (startedInteraction) {
+   Q_EMIT interactionStarted();
+  }
   update();
   return;
  }
@@ -510,10 +591,14 @@ void ArtifactCurveEditorWidget::mousePressEvent(QMouseEvent* event) {
  impl_->dragStartXMax_ = impl_->xMax_;
  impl_->dragStartYMin_ = impl_->yMin_;
  impl_->dragStartYMax_ = impl_->yMax_;
+ startedInteraction = true;
 
  // Deselect
  impl_->selectedTrack_ = -1;
  impl_->selectedKey_ = -1;
+ if (startedInteraction) {
+  Q_EMIT interactionStarted();
+ }
  update();
 }
 
@@ -585,6 +670,7 @@ void ArtifactCurveEditorWidget::mouseMoveEvent(QMouseEvent* event) {
 }
 
 void ArtifactCurveEditorWidget::mouseReleaseEvent(QMouseEvent* /*event*/) {
+ const bool hadDrag = impl_->dragMode_ != Impl::DragMode::None;
  if (impl_->dragMode_ == Impl::DragMode::MoveKey) {
   // Re-sort keys after move
   auto& keys = impl_->tracks_[impl_->dragTrackIndex_].keys;
@@ -601,6 +687,9 @@ void ArtifactCurveEditorWidget::mouseReleaseEvent(QMouseEvent* /*event*/) {
  }
 
  impl_->dragMode_ = Impl::DragMode::None;
+ if (hadDrag) {
+  Q_EMIT interactionFinished();
+ }
 }
 
 void ArtifactCurveEditorWidget::wheelEvent(QWheelEvent* event) {
@@ -647,8 +736,58 @@ void ArtifactCurveEditorWidget::wheelEvent(QWheelEvent* event) {
 }
 
 void ArtifactCurveEditorWidget::mouseDoubleClickEvent(QMouseEvent* event) {
- // Double-click: fit to content
- fitToContent();
+ if (!event) {
+  fitToContent();
+  return;
+ }
+
+ int trackIndex = -1;
+ int keyIndex = -1;
+ if (impl_->hitTestKey(event->position(), trackIndex, keyIndex) == 0 && trackIndex >= 0) {
+  focusTrack(trackIndex);
+  event->accept();
+  return;
+ }
+
+ // Background double-click resets to all tracks and fits.
+ focusTrack(-1);
+ event->accept();
+}
+
+void ArtifactCurveEditorWidget::keyPressEvent(QKeyEvent* event) {
+ if (!event || event->isAutoRepeat()) {
+  QWidget::keyPressEvent(event);
+  return;
+ }
+
+ if (event->key() == Qt::Key_Delete || event->key() == Qt::Key_Backspace) {
+  const int oldTrack = impl_->selectedTrack_;
+  const int oldKey = impl_->selectedKey_;
+  if (impl_->deleteSelectedKey()) {
+   Q_EMIT keyDeleted(oldTrack, oldKey);
+   update();
+   event->accept();
+   return;
+  }
+ }
+
+ if (event->key() == Qt::Key_F) {
+  if (impl_->selectedTrack_ >= 0) {
+   focusTrack(impl_->selectedTrack_);
+  } else {
+   fitToContent();
+  }
+  event->accept();
+  return;
+ }
+
+ if (event->key() == Qt::Key_A || event->key() == Qt::Key_Escape) {
+  focusTrack(-1);
+  event->accept();
+  return;
+ }
+
+ QWidget::keyPressEvent(event);
 }
 
  // ============================================================

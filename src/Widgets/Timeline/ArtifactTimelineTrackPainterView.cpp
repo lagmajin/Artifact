@@ -10,6 +10,7 @@
 #include <QtGlobal>
 #include <QCursor>
 #include <QMenu>
+#include <QSet>
 #include <wobjectimpl.h>
 
 module Artifact.Timeline.TrackPainterView;
@@ -347,25 +348,46 @@ QVector<ArtifactTimelineTrackPainterView::KeyframeMarkerVisual> collectKeyframeM
   }
   const int trackIndex = trackIt.value();
   const auto groups = layer->getLayerPropertyGroups();
-  struct DraftMarker {
-   qint64 frame = 0;
-   QString propertyPath;
-   QString label;
-   QColor color;
-   bool selectedLayer = false;
-   bool eased = false;
-  };
-  QVector<DraftMarker> drafts;
+  QVector<QString> laneOrder;
+  QHash<QString, int> laneIndexByProperty;
   for (const auto& group : groups) {
    for (const auto& property : group.sortedProperties()) {
     if (!property || !property->isAnimatable()) {
      continue;
     }
     const auto keyframes = property->getKeyFrames();
+    if (keyframes.empty()) {
+     continue;
+    }
+    const QString propertyName = property->getName();
+    if (!laneIndexByProperty.contains(propertyName)) {
+     laneIndexByProperty.insert(propertyName, laneOrder.size());
+     laneOrder.push_back(propertyName);
+    }
+   }
+  }
+
+  if (laneOrder.isEmpty()) {
+   continue;
+  }
+
+  const int laneCount = std::max(1, static_cast<int>(laneOrder.size()));
+  for (const auto& group : groups) {
+   for (const auto& property : group.sortedProperties()) {
+    if (!property || !property->isAnimatable()) {
+     continue;
+    }
+    const auto keyframes = property->getKeyFrames();
+    if (keyframes.empty()) {
+     continue;
+    }
+
+    const QString propertyName = property->getName();
+    const int laneIndex = laneIndexByProperty.value(propertyName, 0);
+    const bool selectedLayer = highlightLayers.contains(layer);
     for (const auto& keyframe : keyframes) {
-     const qint64 frame = keyframe.time.rescaledTo(static_cast<int64_t>(std::round(fps)));
-     const QString propertyName = property->getName();
-     const bool selectedLayer = highlightLayers.contains(layer);
+     const qint64 frame =
+         keyframe.time.rescaledTo(static_cast<int64_t>(std::round(fps)));
      const bool eased = keyframe.easing != EasingType::Linear &&
                         keyframe.easing != EasingType::Hold;
      QColor color = selectedLayer
@@ -373,44 +395,35 @@ QVector<ArtifactTimelineTrackPainterView::KeyframeMarkerVisual> collectKeyframeM
                         : (eased ? QColor(82, 208, 255)
                                  : QColor(247, 204, 83));
      color.setAlpha(selectedLayer ? 255 : 245);
-     drafts.push_back(DraftMarker{frame, propertyName, propertyName, color, selectedLayer, eased});
+     ArtifactTimelineTrackPainterView::KeyframeMarkerVisual marker;
+     marker.layerId = layer->id();
+     marker.propertyPath = propertyName;
+     marker.trackIndex = trackIndex;
+     marker.frame = static_cast<double>(frame);
+     marker.label = propertyName;
+     marker.color = color;
+     marker.selectedLayer = selectedLayer;
+     marker.eased = eased;
+     marker.laneCount = laneCount;
+     marker.laneIndex = laneIndex;
+     markers.push_back(std::move(marker));
     }
    }
   }
-
-  if (drafts.isEmpty()) {
-   continue;
-  }
-
-  std::sort(drafts.begin(), drafts.end(), [](const DraftMarker& lhs, const DraftMarker& rhs) {
-   if (lhs.frame != rhs.frame) {
-    return lhs.frame < rhs.frame;
-   }
-   return lhs.label < rhs.label;
-  });
-
-  QHash<qint64, int> laneCounts;
-  for (const auto& draft : drafts) {
-   laneCounts[draft.frame] += 1;
-  }
-
-  QHash<qint64, int> laneCursor;
-  for (const auto& draft : drafts) {
-   ArtifactTimelineTrackPainterView::KeyframeMarkerVisual marker;
-   marker.layerId = layer->id();
-   marker.propertyPath = draft.propertyPath;
-   marker.trackIndex = trackIndex;
-   marker.frame = static_cast<double>(draft.frame);
-   marker.label = draft.label;
-   marker.color = draft.color;
-   marker.selectedLayer = draft.selectedLayer;
-   marker.eased = draft.eased;
-   marker.laneCount = std::max(1, laneCounts.value(draft.frame, 1));
-   marker.laneIndex = laneCursor.value(draft.frame, 0);
-   laneCursor[draft.frame] = marker.laneIndex + 1;
-   markers.push_back(std::move(marker));
-  }
  }
+
+ std::sort(markers.begin(), markers.end(), [](const auto& lhs, const auto& rhs) {
+  if (lhs.trackIndex != rhs.trackIndex) {
+   return lhs.trackIndex < rhs.trackIndex;
+  }
+  if (lhs.frame != rhs.frame) {
+   return lhs.frame < rhs.frame;
+  }
+  if (lhs.propertyPath != rhs.propertyPath) {
+   return lhs.propertyPath < rhs.propertyPath;
+  }
+  return lhs.laneIndex < rhs.laneIndex;
+ });
 
  return markers;
 }
@@ -723,6 +736,56 @@ void ArtifactTimelineTrackPainterView::setKeyframeMarkers(
   update();
 }
 
+QVector<ArtifactTimelineTrackPainterView::KeyframeMarkerVisual>
+ArtifactTimelineTrackPainterView::keyframeMarkers() const
+{
+ return impl_->keyframeMarkers_;
+}
+
+QVector<ArtifactTimelineTrackPainterView::KeyframeMarkerVisual>
+ArtifactTimelineTrackPainterView::selectedKeyframeMarkers() const
+{
+ QVector<KeyframeMarkerVisual> selected;
+ for (const auto& marker : impl_->keyframeMarkers_) {
+  if (marker.selected) {
+   selected.push_back(marker);
+  }
+ }
+ return selected;
+}
+
+void ArtifactTimelineTrackPainterView::selectAllKeyframeMarkers()
+{
+ QSet<QString> selectedKeys;
+ for (const auto& marker : impl_->keyframeMarkers_) {
+  const qint64 frame = static_cast<qint64>(std::llround(marker.frame));
+  selectedKeys.insert(keyframeSelectionKey(marker.layerId, marker.propertyPath, frame));
+ }
+ if (impl_->selectedMarkerKeys_ == selectedKeys) {
+  return;
+ }
+ impl_->selectedMarkerKeys_ = std::move(selectedKeys);
+ applyMarkerSelectionFlags(impl_->keyframeMarkers_, impl_->selectedMarkerKeys_);
+ Q_EMIT keyframeSelectionChanged(impl_->selectedMarkerKeys_.size());
+ update();
+}
+
+void ArtifactTimelineTrackPainterView::clearKeyframeSelection()
+{
+ if (impl_->selectedMarkerKeys_.isEmpty()) {
+  return;
+ }
+ impl_->selectedMarkerKeys_.clear();
+ applyMarkerSelectionFlags(impl_->keyframeMarkers_, impl_->selectedMarkerKeys_);
+ Q_EMIT keyframeSelectionChanged(0);
+ update();
+}
+
+bool ArtifactTimelineTrackPainterView::hasSelectedKeyframes() const
+{
+ return !impl_->selectedMarkerKeys_.isEmpty();
+}
+
 void ArtifactTimelineTrackPainterView::syncSelectionState(
  const ArtifactCompositionPtr& composition,
  ArtifactLayerSelectionManager* selectionManager,
@@ -1017,10 +1080,19 @@ void ArtifactTimelineTrackPainterView::mousePressEvent(QMouseEvent* event)
   if (markerHit.markerIndex >= 0) {
    const auto& marker = impl_->keyframeMarkers_[markerHit.markerIndex];
    const double frame = std::clamp(marker.frame, 0.0, impl_->durationFrames_);
-   impl_->selectedMarkerKeys_.clear();
-   impl_->selectedMarkerKeys_.insert(
-       keyframeSelectionKey(marker.layerId, marker.propertyPath,
-                            static_cast<qint64>(std::llround(marker.frame))));
+   const QString key = keyframeSelectionKey(
+       marker.layerId, marker.propertyPath,
+       static_cast<qint64>(std::llround(marker.frame)));
+   if (event->modifiers() & Qt::ControlModifier) {
+    if (impl_->selectedMarkerKeys_.contains(key)) {
+     impl_->selectedMarkerKeys_.remove(key);
+    } else {
+     impl_->selectedMarkerKeys_.insert(key);
+    }
+   } else {
+    impl_->selectedMarkerKeys_.clear();
+    impl_->selectedMarkerKeys_.insert(key);
+   }
    applyMarkerSelectionFlags(impl_->keyframeMarkers_, impl_->selectedMarkerKeys_);
    Q_EMIT keyframeSelectionChanged(impl_->selectedMarkerKeys_.size());
    seekRequested(frame);
@@ -1045,7 +1117,7 @@ void ArtifactTimelineTrackPainterView::mousePressEvent(QMouseEvent* event)
    return;
   }
   clipDeselected();
-  if (!impl_->selectedMarkerKeys_.isEmpty()) {
+  if (!(event->modifiers() & Qt::ControlModifier) && !impl_->selectedMarkerKeys_.isEmpty()) {
    impl_->selectedMarkerKeys_.clear();
    applyMarkerSelectionFlags(impl_->keyframeMarkers_, impl_->selectedMarkerKeys_);
    Q_EMIT keyframeSelectionChanged(0);

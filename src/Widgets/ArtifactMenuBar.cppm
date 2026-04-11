@@ -3,6 +3,7 @@
 #include <QSize>
 #include <QMenuBar>
 #include <QMenu>
+#include <QWidget>
 #include <wobjectimpl.h>
 module Menu.MenuBar;
 
@@ -20,8 +21,31 @@ import Artifact.Menu.View;
 import Menu.Option;
 import Menu.Test;
 import Menu.Help;
+import Artifact.Widgets.Timeline;
 
 namespace Artifact {
+
+namespace {
+ArtifactTimelineWidget* activeTimelineWidget(QWidget* root)
+{
+ if (!root) {
+  return nullptr;
+ }
+
+ const auto widgets = root->findChildren<ArtifactTimelineWidget*>();
+ for (auto* widget : widgets) {
+  if (widget && widget->hasFocus()) {
+   return widget;
+  }
+ }
+ for (auto* widget : widgets) {
+  if (widget && widget->isVisible()) {
+   return widget;
+  }
+ }
+ return widgets.isEmpty() ? nullptr : widgets.front();
+}
+}
 
 W_OBJECT_IMPL(ArtifactMenuBar)
 
@@ -84,6 +108,52 @@ ArtifactMenuBar::Impl::Impl(QWidget* mainWindow, ArtifactMenuBar* menuBar)
  }
 #endif
  menuBar->addMenu(static_cast<QMenu*>(helpMenu));
+
+ connect(animationMenu, &ArtifactAnimationMenu::addKeyframeRequested, menuBar, [this]() {
+  if (auto* timeline = activeTimelineWidget(mainWindow_)) {
+   timeline->addKeyframeAtPlayhead();
+  }
+ });
+ connect(animationMenu, &ArtifactAnimationMenu::removeKeyframeRequested, menuBar, [this]() {
+  if (auto* timeline = activeTimelineWidget(mainWindow_)) {
+   timeline->removeKeyframeAtPlayhead();
+  }
+ });
+ connect(animationMenu, &ArtifactAnimationMenu::selectAllKeyframesRequested, menuBar, [this]() {
+  if (auto* timeline = activeTimelineWidget(mainWindow_)) {
+   timeline->selectAllKeyframes();
+  }
+ });
+ connect(animationMenu, &ArtifactAnimationMenu::copyKeyframesRequested, menuBar, [this]() {
+  if (auto* timeline = activeTimelineWidget(mainWindow_)) {
+   timeline->copySelectedKeyframes();
+  }
+ });
+ connect(animationMenu, &ArtifactAnimationMenu::pasteKeyframesRequested, menuBar, [this]() {
+  if (auto* timeline = activeTimelineWidget(mainWindow_)) {
+   timeline->pasteKeyframesAtPlayhead();
+  }
+ });
+ connect(animationMenu, &ArtifactAnimationMenu::goToNextKeyframeRequested, menuBar, [this]() {
+  if (auto* timeline = activeTimelineWidget(mainWindow_)) {
+   timeline->jumpToKeyframeHit(+1);
+  }
+ });
+ connect(animationMenu, &ArtifactAnimationMenu::goToPreviousKeyframeRequested, menuBar, [this]() {
+  if (auto* timeline = activeTimelineWidget(mainWindow_)) {
+   timeline->jumpToKeyframeHit(-1);
+  }
+ });
+ connect(animationMenu, &ArtifactAnimationMenu::goToFirstKeyframeRequested, menuBar, [this]() {
+  if (auto* timeline = activeTimelineWidget(mainWindow_)) {
+   timeline->jumpToFirstKeyframe();
+  }
+ });
+ connect(animationMenu, &ArtifactAnimationMenu::goToLastKeyframeRequested, menuBar, [this]() {
+  if (auto* timeline = activeTimelineWidget(mainWindow_)) {
+   timeline->jumpToLastKeyframe();
+  }
+ });
 }
 
 ArtifactMenuBar::ArtifactMenuBar(QWidget* mainWindow, QWidget* parent)

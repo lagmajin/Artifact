@@ -26,6 +26,7 @@ module;
 #include <QIcon>
 #include <QtSVG/QSvgRenderer>
 #include <QComboBox>
+#include <QMessageBox>
 #include <QPointer>
 #include <QLineEdit>
 #include <QKeyEvent>
@@ -1369,12 +1370,14 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
     QAction* createTextAct   = createMenu->addAction("Text Layer");
     QAction* createParticleAct = createMenu->addAction("Particle Layer");
     QAction* createCameraAct = createMenu->addAction("Camera Layer");
+    QAction* createSvgAct = createMenu->addAction("SVG Shape Layer...");
     createMenu->setIcon(impl_->iconCreateSolid);
     createSolidAct->setIcon(impl_->iconCreateSolid);
     createNullAct->setIcon(impl_->iconCreateNull);
     createAdjustAct->setIcon(impl_->iconCreateAdjust);
     createTextAct->setIcon(impl_->iconCreateText);
     createCameraAct->setIcon(impl_->iconCreateText);
+    createSvgAct->setIcon(impl_->iconFileOpen);
 
     QAction* chosen = menu.exec(event->globalPosition().toPoint());
     auto comp = safeCompositionLookup(impl_->compositionId);
@@ -1507,6 +1510,36 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
       if (service) {
        service->addLayerToCurrentComposition(params);
       }
+    } else if (chosen == createSvgAct) {
+      if (!service) {
+        return;
+      }
+      const QString filePath = QFileDialog::getOpenFileName(
+          this,
+          QStringLiteral("SVGを選択"),
+          QString(),
+          QStringLiteral("SVG (*.svg);;All Files (*.*)"));
+      if (filePath.isEmpty()) {
+        return;
+      }
+      if (!filePath.endsWith(QStringLiteral(".svg"), Qt::CaseInsensitive)) {
+        QMessageBox::warning(this, QStringLiteral("Layer"), QStringLiteral("SVG ファイルを選択してください。"));
+        return;
+      }
+      QSvgRenderer validator(filePath);
+      if (!validator.isValid()) {
+        QMessageBox::warning(this, QStringLiteral("Layer"), QStringLiteral("SVG を読み込めませんでした。"));
+        return;
+      }
+      QPointer<ArtifactLayerPanelWidget> self(this);
+      service->importAssetsFromPathsAsync(QStringList{filePath}, [self, service, filePath](QStringList imported) {
+        if (!self || !service || imported.isEmpty()) {
+          return;
+        }
+        ArtifactSvgInitParams params(QFileInfo(filePath).completeBaseName());
+        params.setSvgPath(imported.first());
+        service->addLayerToCurrentComposition(params);
+      });
     }
   }
   event->accept();

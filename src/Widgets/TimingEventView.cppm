@@ -15,6 +15,7 @@ module;
 module Artifact.Widgets.TimingEventView;
 
 import std;
+import Widgets.Utils.CSS;
 
 namespace Artifact {
 

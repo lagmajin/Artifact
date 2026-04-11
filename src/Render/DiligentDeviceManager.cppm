@@ -1,5 +1,6 @@
 module;
 #include <utility>
+#include <algorithm>
 #include <QWidget>
 #include <QDebug>
 #include <QString>
@@ -392,6 +393,41 @@ public:
     bool createSwapChainForBackend(HWND hwnd, int width, int height);
 };
 
+// Custom window class for the DX12/Vulkan render surface.
+// Unlike the default "STATIC" class, this suppresses WM_ERASEBKGND
+// and WM_PAINT so the system never overwrites presented GPU content
+// with the default light-grey background.
+static LRESULT CALLBACK RenderHwndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
+{
+    switch (uMsg) {
+    case WM_ERASEBKGND:
+        return 1; // Claim we erased — DX12/Vulkan owns the surface
+    case WM_PAINT: {
+        PAINTSTRUCT ps;
+        BeginPaint(hwnd, &ps);
+        EndPaint(hwnd, &ps);   // Validate the region without drawing
+        return 0;
+    }
+    }
+    return DefWindowProc(hwnd, uMsg, wParam, lParam);
+}
+
+static const wchar_t* ensureRenderWindowClass()
+{
+    static const wchar_t* kClassName = L"DiligentRenderSurface";
+    static bool registered = false;
+    if (!registered) {
+        WNDCLASSW wc = {};
+        wc.lpfnWndProc   = RenderHwndProc;
+        wc.hInstance      = GetModuleHandle(nullptr);
+        wc.lpszClassName  = kClassName;
+        wc.hbrBackground  = nullptr; // No GDI background brush
+        RegisterClassW(&wc);
+        registered = true;
+    }
+    return kClassName;
+}
+
 void DiligentDeviceManager::Impl::initialize(QWidget* widget)
 {
     if (!widget) {
@@ -416,19 +452,31 @@ void DiligentDeviceManager::Impl::initialize(QWidget* widget)
     device_->CreateDeferredContext(&deferredContext_);
     rtSupported_ = device_->GetDeviceInfo().Features.RayTracing != DEVICE_FEATURE_STATE_DISABLED;
 
+    // Device is ready — mark initialized so shaders/PSOs can be created
+    // even if the swapchain is deferred (widget may still be 0×0).
+    initialized_ = true;
+
     currentPhysicalWidth_ = static_cast<int>(widget_->width() * widget_->devicePixelRatio());
     currentPhysicalHeight_ = static_cast<int>(widget_->height() * widget_->devicePixelRatio());
     currentDevicePixelRatio_ = widget_->devicePixelRatio();
 
     HWND parentHwnd = reinterpret_cast<HWND>(widget_->winId());
     renderHwnd_ = CreateWindowEx(
-        0, L"STATIC", nullptr,
+        0, ensureRenderWindowClass(), nullptr,
         WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS,
-        0, 0, currentPhysicalWidth_, currentPhysicalHeight_,
+        0, 0, (std::max)(currentPhysicalWidth_, 1),
+        (std::max)(currentPhysicalHeight_, 1),
         parentHwnd, nullptr, GetModuleHandle(nullptr), nullptr);
 
+    if (currentPhysicalWidth_ <= 0 || currentPhysicalHeight_ <= 0) {
+        qWarning() << "[DiligentDeviceManager] swapchain deferred: widget is"
+                   << currentPhysicalWidth_ << "x" << currentPhysicalHeight_
+                   << "(will create on first resize)";
+        return;
+    }
+
     if (!createSwapChainForBackend(renderHwnd_, currentPhysicalWidth_, currentPhysicalHeight_)) {
-        qWarning() << "Failed to create swap chain for the current backend.";
+        qWarning() << "[DiligentDeviceManager] swapchain creation failed — will retry on resize";
         return;
     }
 
@@ -440,8 +488,6 @@ void DiligentDeviceManager::Impl::initialize(QWidget* widget)
     VP.TopLeftX = 0.0f;
     VP.TopLeftY = 0.0f;
     immediateContext_->SetViewports(1, &VP, currentPhysicalWidth_, currentPhysicalHeight_);
-
-    initialized_ = true;
 }
 
 void DiligentDeviceManager::Impl::initializeHeadless()
@@ -489,13 +535,25 @@ void DiligentDeviceManager::Impl::createSwapChain(QWidget* window)
     if (!renderHwnd_) {
         HWND parentHwnd = reinterpret_cast<HWND>(window->winId());
         renderHwnd_ = CreateWindowEx(
-            0, L"STATIC", nullptr,
+            0, ensureRenderWindowClass(), nullptr,
             WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS,
-            0, 0, currentPhysicalWidth_, currentPhysicalHeight_,
+            0, 0, (std::max)(currentPhysicalWidth_, 1),
+            (std::max)(currentPhysicalHeight_, 1),
             parentHwnd, nullptr, GetModuleHandle(nullptr), nullptr);
+    } else {
+        // Ensure the HWND matches the current widget size
+        SetWindowPos(renderHwnd_, nullptr, 0, 0,
+                     (std::max)(currentPhysicalWidth_, 1),
+                     (std::max)(currentPhysicalHeight_, 1),
+                     SWP_NOZORDER | SWP_NOMOVE | SWP_NOACTIVATE);
     }
 
     if (!swapChain_) {
+        if (currentPhysicalWidth_ <= 0 || currentPhysicalHeight_ <= 0) {
+            qWarning() << "[DiligentDeviceManager] createSwapChain deferred: size is"
+                       << currentPhysicalWidth_ << "x" << currentPhysicalHeight_;
+            return;
+        }
         if (!renderHwnd_ || !createSwapChainForBackend(renderHwnd_, currentPhysicalWidth_, currentPhysicalHeight_)) {
             return;
         }
@@ -517,13 +575,21 @@ void DiligentDeviceManager::Impl::createSwapChain(QWidget* window)
 
 void DiligentDeviceManager::Impl::recreateSwapChain(QWidget* widget)
 {
-    if (!widget || !device_ || !swapChain_) {
+    if (!widget || !device_) {
         return;
     }
 
     const int newWidth = static_cast<int>(widget->width() * widget->devicePixelRatio());
     const int newHeight = static_cast<int>(widget->height() * widget->devicePixelRatio());
     if (newWidth <= 0 || newHeight <= 0) {
+        return;
+    }
+
+    // If no swapchain exists yet (deferred from 0×0 init), create from scratch
+    if (!swapChain_) {
+        qDebug() << "[DiligentDeviceManager] recreateSwapChain: no swapchain — creating fresh"
+                 << newWidth << "x" << newHeight;
+        createSwapChain(widget);
         return;
     }
 
