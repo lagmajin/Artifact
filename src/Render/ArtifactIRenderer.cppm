@@ -557,11 +557,18 @@ namespace Artifact
 
  void ArtifactIRenderer::Impl::recreateSwapChain(QWidget* widget)
  {
-  if (!widget || !deviceManager_.device() || !deviceManager_.swapChain()) return;
+  if (!widget || !deviceManager_.device()) return;
 
   const int newWidth  = static_cast<int>(widget->width()  * widget->devicePixelRatio());
   const int newHeight = static_cast<int>(widget->height() * widget->devicePixelRatio());
   if (newWidth <= 0 || newHeight <= 0) return;
+
+  // If swapchain doesn't exist yet (deferred from 0×0 init), create from scratch
+  if (!deviceManager_.swapChain()) {
+    qDebug() << "[ArtifactIRenderer] recreateSwapChain: no swapchain — calling createSwapChain";
+    createSwapChain(widget);
+    return;
+  }
 
   deviceManager_.recreateSwapChain(widget);
   primitiveRenderer_.setContext(deviceManager_.immediateContext(),
@@ -736,6 +743,7 @@ namespace Artifact
   void ArtifactIRenderer::flushAndWait() { impl_->flushAndWait(); }
   void ArtifactIRenderer::destroy()      { impl_->destroy(); }
   bool ArtifactIRenderer::isInitialized() const { return impl_->isInitialized(); }
+  bool ArtifactIRenderer::hasSwapChain() const { return impl_->deviceManager_.swapChain() != nullptr; }
 
  QImage ArtifactIRenderer::readbackToImage() const { return impl_->readbackToImage(); }
 

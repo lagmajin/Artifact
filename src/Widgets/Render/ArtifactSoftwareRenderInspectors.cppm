@@ -15,6 +15,7 @@ module;
 #include <QPainterPath>
 #include <QPixmap>
 #include <QResizeEvent>
+#include <QShowEvent>
 #include <QKeyEvent>
 #include <QMouseEvent>
 #include <QWheelEvent>
@@ -1312,6 +1313,14 @@ ArtifactSoftwareLayerTestWidget::~ArtifactSoftwareLayerTestWidget()
 void ArtifactSoftwareLayerTestWidget::resizeEvent(QResizeEvent* event)
 {
     QWidget::resizeEvent(event);
+    if (impl_) {
+        impl_->refreshPreview();
+    }
+}
+
+void ArtifactSoftwareLayerTestWidget::showEvent(QShowEvent* event)
+{
+    QWidget::showEvent(event);
     if (impl_) {
         impl_->refreshPreview();
     }

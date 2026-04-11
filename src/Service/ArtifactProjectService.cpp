@@ -90,7 +90,7 @@ public:
   ~Impl();
   static ArtifactProjectManager& projectManager();
   void installSelectionBridge(ArtifactProjectService* owner);
-  void addLayerToCurrentComposition(const ArtifactLayerInitParams& params);
+  void addLayerToCurrentComposition(const ArtifactLayerInitParams& params, bool selectNewLayer = true);
   void addAssetFromPath(const UniString& path);
   QStringList importAssetsFromPaths(const QStringList& sourcePaths);
   void importAssetsFromPathsAsync(const QStringList& sourcePaths, std::function<void(QStringList)> onFinished);
@@ -162,7 +162,7 @@ void ArtifactProjectService::Impl::installSelectionBridge(ArtifactProjectService
   return ArtifactProjectManager::getInstance();
  }
 
-void ArtifactProjectService::Impl::addLayerToCurrentComposition(const ArtifactLayerInitParams& params)
+void ArtifactProjectService::Impl::addLayerToCurrentComposition(const ArtifactLayerInitParams& params, bool selectNewLayer)
 {
   auto& manager = ArtifactProjectService::Impl::projectManager();
   LayerID selectedLayerId;
@@ -222,8 +222,10 @@ void ArtifactProjectService::Impl::addLayerToCurrentComposition(const ArtifactLa
     // ProjectChangedEvent を追加発火すると全ウィジェットが二重リビルドされる。
    }
 
-   if (auto* service = ArtifactProjectService::instance()) {
+   if (selectNewLayer) {
+    if (auto* service = ArtifactProjectService::instance()) {
     service->selectLayer(result.layer->id());
+    }
    }
   }
   qDebug() << "[ArtifactProjectService::Impl::addLayerToCurrentComposition] delegated to manager, result=" << result.success;
@@ -608,7 +610,12 @@ void ArtifactProjectService::selectLayer(const LayerID& id)
 
 void ArtifactProjectService::addLayerToCurrentComposition(const ArtifactLayerInitParams& params)
 {
- impl_->addLayerToCurrentComposition(params);
+ impl_->addLayerToCurrentComposition(params, true);
+}
+
+void ArtifactProjectService::addLayerToCurrentComposition(const ArtifactLayerInitParams& params, bool selectNewLayer)
+{
+ impl_->addLayerToCurrentComposition(params, selectNewLayer);
 }
 
 bool ArtifactProjectService::groupSelectedLayersInCurrentComposition(const UniString& groupName)

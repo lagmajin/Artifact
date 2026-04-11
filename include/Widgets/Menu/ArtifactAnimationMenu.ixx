@@ -97,7 +97,7 @@ export namespace Artifact {
   // キーフレーム補間
   void setInterpolationRequested(KeyframeInterpolation type) W_SIGNAL(setInterpolationRequested, type);
 
-  // グラフエディタ
+  // カーブエディタ / グラフエディタ
   void toggleVelocityGraphRequested() W_SIGNAL(toggleVelocityGraphRequested);
   void toggleValueGraphRequested() W_SIGNAL(toggleValueGraphRequested);
   void showGraphEditorRequested() W_SIGNAL(showGraphEditorRequested);

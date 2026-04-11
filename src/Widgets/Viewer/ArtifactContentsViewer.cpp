@@ -90,6 +90,7 @@ import Artifact.Widgets.AudioPreview;
 import Widgets.Utils.CSS;
 import File.TypeDetector;
 import Artifact.Widgets.ModelViewer;
+import Utils.Path;
 import Utils.String.UniString;
 
 namespace Artifact
@@ -1897,6 +1898,10 @@ namespace Artifact
    rotateRightButton = createButton(QStringLiteral("⟳"), QStringLiteral("Rotate right"));
    resetButton = createButton(QStringLiteral("Reset"), QStringLiteral("Reset view state"));
    playButton = createButton(QStringLiteral("Play"), QStringLiteral("Play media"));
+   playButton->setIcon(QIcon(ArtifactCore::resolveIconPath(QStringLiteral("Material/play_arrow.svg"))));
+   playButton->setIconSize(QSize(14, 14));
+   playButton->setToolButtonStyle(Qt::ToolButtonIconOnly);
+   playButton->setFixedHeight(20);
    pauseButton = createButton(QStringLiteral("Pause"), QStringLiteral("Pause media"));
    stopButton = createButton(QStringLiteral("Stop"), QStringLiteral("Stop media"));
    copyPathButton = createButton(QStringLiteral("Copy"), QStringLiteral("Copy file path"));

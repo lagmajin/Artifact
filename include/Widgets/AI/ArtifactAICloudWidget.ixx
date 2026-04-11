@@ -45,7 +45,8 @@ private:
   void startChatRequest(const QString &userPrompt, const QString &systemPrompt,
                         const QString &toolTrace = QString());
   bool tryHandleToolCallResponse(const QString &responseText,
-                                 QString *toolTraceOut);
+                                 QString *toolTraceOut,
+                                 QString *errorOut = nullptr);
   bool eventFilter(QObject *watched, QEvent *event) override;
 
 private:
@@ -61,6 +62,8 @@ private:
   void applySelectedMcpTool(const QString &toolName);
   void appendToolExecutionLog(const QString &entry);
   void appendMcpLog(const QString &entry);
+  void copyTranscriptToClipboard();
+  QString buildTranscriptText() const;
   void applyModelFilter(const QString &preferredModel = QString());
   void populateModelList(const QStringList &modelIds, const QString &preferredModel = QString());
   void appendTranscriptMessage(const QString &role, const QString &text);
@@ -106,6 +109,8 @@ private:
   QPushButton *mcpToolCallButton_;
   QTextEdit *promptEdit_;
   QPushButton *sendButton_;
+  QLabel *requestStatusLabel_;
+  QPushButton *copyTranscriptButton_;
   bool isSending_ = false;
   bool sendCanceled_ = false;
   int toolLoopDepth_ = 0;

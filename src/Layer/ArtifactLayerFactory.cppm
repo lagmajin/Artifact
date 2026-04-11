@@ -97,8 +97,9 @@ namespace Artifact {
    if (auto* svgParams = dynamic_cast<ArtifactSvgInitParams*>(&params)) {
     auto svgLayer = std::make_shared<ArtifactSvgLayer>();
     const QString path = svgParams->svgPath();
-    if (!path.isEmpty()) {
-     svgLayer->loadFromPath(path);
+    if (path.isEmpty() || !svgLayer->loadFromPath(path)) {
+     qWarning() << "[ArtifactLayerFactory] Failed to create SVG layer from path:" << path;
+     break;
     }
     ptr = svgLayer;
    } else {
@@ -171,7 +172,7 @@ namespace Artifact {
       LayerType type = static_cast<LayerType>(json["type"].toInt());
       QString name = json.value("name").toString("Layer");
       ArtifactLayerFactory factory;
-      if (json.contains("svg.sourcePath") || json.contains("sourcePath") || json.contains("svg.fitToLayer")) {
+      if (json.contains("svg.sourcePath") || json.contains("sourcePath")) {
           ArtifactSvgInitParams svgParams(name);
           if (json.contains("svg.sourcePath")) {
               svgParams.setSvgPath(json.value("svg.sourcePath").toString());

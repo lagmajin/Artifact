@@ -7,6 +7,7 @@ module;
 #include <QMouseEvent>
 #include <QSlider>
 #include <QStyle>
+#include <QStyleOptionSlider>
 #include <QRect>
 
 module Artifact.Widgets.Dialog.FloatColorPickerHooks;
@@ -14,6 +15,72 @@ module Artifact.Widgets.Dialog.FloatColorPickerHooks;
 namespace Artifact {
 
 namespace {
+
+QStyleOptionSlider makeSliderStyleOption(QSlider* slider)
+{
+    QStyleOptionSlider option;
+    option.initFrom(slider);
+    option.orientation = slider->orientation();
+    option.minimum = slider->minimum();
+    option.maximum = slider->maximum();
+    option.sliderPosition = slider->sliderPosition();
+    option.sliderValue = slider->value();
+    option.singleStep = slider->singleStep();
+    option.pageStep = slider->pageStep();
+    option.upsideDown = slider->invertedAppearance();
+    option.tickPosition = slider->tickPosition();
+    option.tickInterval = slider->tickInterval();
+    option.rect = slider->rect();
+    option.subControls = QStyle::SC_SliderGroove | QStyle::SC_SliderHandle;
+    option.activeSubControls = QStyle::SC_None;
+    return option;
+}
+
+bool jumpSliderToMouse(QSlider* slider, const QPoint& point)
+{
+    if (!slider) {
+        return false;
+    }
+
+    QStyleOptionSlider option = makeSliderStyleOption(slider);
+    QStyle* style = slider->style();
+    const QRect grooveRect =
+        style->subControlRect(QStyle::CC_Slider, &option, QStyle::SC_SliderGroove, slider);
+    const QRect handleRect =
+        style->subControlRect(QStyle::CC_Slider, &option, QStyle::SC_SliderHandle, slider);
+    if (!grooveRect.isValid()) {
+        return false;
+    }
+    if (handleRect.contains(point)) {
+        return false;
+    }
+
+    const int minValue = slider->minimum();
+    const int maxValue = slider->maximum();
+    if (maxValue <= minValue) {
+        return false;
+    }
+
+    int value = slider->value();
+    if (slider->orientation() == Qt::Horizontal) {
+        const int span = std::max(1, grooveRect.width() - 1);
+        const int position = std::clamp(point.x() - grooveRect.left(), 0, span);
+        value = QStyle::sliderValueFromPosition(
+            minValue, maxValue, position, span, option.upsideDown);
+    } else {
+        const int span = std::max(1, grooveRect.height() - 1);
+        const int positionFromTop = std::clamp(point.y() - grooveRect.top(), 0, span);
+        const int position = option.upsideDown ? positionFromTop : (span - positionFromTop);
+        value = QStyle::sliderValueFromPosition(
+            minValue, maxValue, position, span, false);
+    }
+
+    slider->setSliderDown(true);
+    slider->setSliderPosition(value);
+    slider->setValue(value);
+    slider->setSliderDown(false);
+    return true;
+}
 
 class SliderJumpFilter final : public QObject
 {
@@ -40,39 +107,10 @@ protected:
             return QObject::eventFilter(watched, event);
         }
 
-        const int handleLength = slider->style()->pixelMetric(QStyle::PM_SliderLength, nullptr, slider);
-        const int currentValue = slider->value();
-        const int minValue = slider->minimum();
-        const int maxValue = slider->maximum();
-        const bool upsideDown = slider->invertedAppearance();
-
-        if (slider->orientation() == Qt::Horizontal) {
-            const int span = std::max(1, slider->width() - handleLength);
-            const int handlePos = QStyle::sliderPositionFromValue(minValue, maxValue, currentValue, span, upsideDown);
-            const QRect handleRect(handlePos, 0, handleLength, slider->height());
-            if (handleRect.contains(mouseEvent->position().toPoint())) {
-                return QObject::eventFilter(watched, event);
-            }
-            const int position = std::clamp(
-                static_cast<int>(std::lround(mouseEvent->position().x() - handleLength * 0.5)),
-                0, span);
-            const int value = QStyle::sliderValueFromPosition(minValue, maxValue, position, span, upsideDown);
-            slider->setValue(value);
+        if (jumpSliderToMouse(slider, mouseEvent->position().toPoint())) {
             return true;
         }
-
-        const int span = std::max(1, slider->height() - handleLength);
-        const int handlePos = QStyle::sliderPositionFromValue(minValue, maxValue, currentValue, span, upsideDown);
-        const QRect handleRect(0, handlePos, slider->width(), handleLength);
-        if (handleRect.contains(mouseEvent->position().toPoint())) {
-            return QObject::eventFilter(watched, event);
-        }
-        const int position = std::clamp(
-            static_cast<int>(std::lround(mouseEvent->position().y() - handleLength * 0.5)),
-            0, span);
-        const int value = QStyle::sliderValueFromPosition(minValue, maxValue, position, span, upsideDown);
-        slider->setValue(value);
-        return true;
+        return QObject::eventFilter(watched, event);
     }
 };
 

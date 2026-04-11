@@ -24,9 +24,16 @@ import Geometry.CameraGuide;
 import Utils.Id;
 import Artifact.LOD.Manager;
 import Artifact.Widgets.TransformGizmo;
+import UI.View.Orientation.Navigator;
 
 export namespace Artifact {
  using namespace ArtifactCore;
+
+ enum class CompositionBackgroundMode {
+  Solid,
+  Checkerboard,
+  MayaGradient
+ };
 
  class CompositionRenderController : public QObject
  {
@@ -55,9 +62,11 @@ void finishViewportInteraction();
 
   void setComposition(ArtifactCompositionPtr composition);
   ArtifactCompositionPtr composition() const;
-  void setSelectedLayerId(const LayerID& id);
-  LayerID selectedLayerId() const;
+void setSelectedLayerId(const LayerID& id);
+LayerID selectedLayerId() const;
 void setClearColor(const FloatColor& color);
+void setCompositionBackgroundMode(CompositionBackgroundMode mode);
+CompositionBackgroundMode compositionBackgroundMode() const;
 
 void setShowGrid(bool show);
 bool isShowGrid() const;
@@ -126,6 +135,8 @@ TransformGizmo* gizmo() const;
   float zoom = 0.0f;
  };
  CameraFrustumVisual cameraFrustumVisual() const;
+ void setViewportOrientation(ArtifactCore::ViewOrientationHotspot hotspot);
+ ArtifactCore::ViewOrientationHotspot viewportOrientation() const;
  Ray createPickingRay(const QPointF& viewportPos) const;
  Qt::CursorShape cursorShapeForViewportPos(const QPointF& viewportPos) const;
 

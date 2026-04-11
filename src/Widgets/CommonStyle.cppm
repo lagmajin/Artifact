@@ -20,6 +20,7 @@ module;
 #include <QToolButton>
 #include <QTreeView>
 #include <QListView>
+#include <QStyleOptionMenuItem>
 #include <QStyleOptionToolButton>
 #include <QStyleFactory>
 
@@ -46,11 +47,11 @@ void scaleMenuFont(QWidget* widget)
   QFont font = widget->font();
   const int pointSize = font.pointSize();
   if (pointSize > 0) {
-    font.setPointSizeF(static_cast<qreal>(pointSize) * 1.2);
+    font.setPointSizeF(static_cast<qreal>(pointSize) * 1.15);
   } else {
     const qreal pointSizeF = font.pointSizeF();
     if (pointSizeF > 0.0) {
-      font.setPointSizeF(pointSizeF * 1.2);
+      font.setPointSizeF(pointSizeF * 1.15);
     }
   }
   widget->setFont(font);
@@ -177,6 +178,13 @@ void ArtifactCommonStyle::polish(QWidget* widget)
 
   if (qobject_cast<QMenuBar*>(widget) || qobject_cast<QMenu*>(widget)) {
     scaleMenuFont(widget);
+    QPalette pal = widget->palette();
+    pal.setColor(QPalette::Highlight, QColor(theme.secondaryBackgroundColor).lighter(112));
+    pal.setColor(QPalette::HighlightedText, text);
+    pal.setColor(QPalette::Button, QColor(theme.secondaryBackgroundColor));
+    pal.setColor(QPalette::Window, QColor(theme.secondaryBackgroundColor));
+    pal.setColor(QPalette::Base, QColor(theme.backgroundColor));
+    widget->setPalette(pal);
   }
 
   QProxyStyle::polish(widget);
@@ -211,6 +219,73 @@ int ArtifactCommonStyle::pixelMetric(PixelMetric metric, const QStyleOption* opt
     break;
   }
   return QProxyStyle::pixelMetric(metric, option, widget);
+}
+
+void ArtifactCommonStyle::drawControl(ControlElement element, const QStyleOption* option,
+                                      QPainter* painter, const QWidget* widget) const
+{
+  if (!option || !painter) {
+    return QProxyStyle::drawControl(element, option, painter, widget);
+  }
+
+  const auto& theme = ArtifactCore::currentDCCTheme();
+  const QColor menuSurface(theme.secondaryBackgroundColor);
+  const QColor menuText(theme.textColor);
+  const QColor menuHover = QColor(theme.secondaryBackgroundColor).lighter(108);
+  const QColor menuBorder = QColor(theme.borderColor);
+
+  if (element == CE_MenuItem) {
+    if (const auto* menuItem = qstyleoption_cast<const QStyleOptionMenuItem*>(option)) {
+      painter->save();
+      painter->setRenderHint(QPainter::Antialiasing, true);
+
+      if (menuItem->menuItemType == QStyleOptionMenuItem::Separator) {
+        const int y = menuItem->rect.center().y();
+        painter->setPen(QPen(menuBorder, 1));
+        painter->drawLine(menuItem->rect.left() + 8, y, menuItem->rect.right() - 8, y);
+        painter->restore();
+        return;
+      }
+
+      QRect itemRect = menuItem->rect.adjusted(2, 1, -2, -1);
+      if (menuItem->state.testFlag(State_Selected)) {
+        painter->setPen(Qt::NoPen);
+        painter->setBrush(menuHover);
+        painter->drawRoundedRect(itemRect, 4.0, 4.0);
+      }
+
+      QStyleOptionMenuItem copy(*menuItem);
+      copy.palette.setColor(QPalette::ButtonText, menuText);
+      copy.palette.setColor(QPalette::Text, menuText);
+      copy.palette.setColor(QPalette::HighlightedText, menuText);
+      copy.palette.setColor(QPalette::Highlight, menuHover);
+      painter->restore();
+      return QProxyStyle::drawControl(element, &copy, painter, widget);
+    }
+  }
+
+  if (element == CE_MenuBarItem) {
+    if (const auto *menuItem = qstyleoption_cast<const QStyleOptionMenuItem *>(option)) {
+      painter->save();
+      painter->setRenderHint(QPainter::Antialiasing, true);
+
+      const QRect itemRect = menuItem->rect.adjusted(2, 2, -2, -2);
+      if (menuItem->state.testFlag(State_Selected) ||
+          menuItem->state.testFlag(State_Sunken)) {
+        painter->setPen(Qt::NoPen);
+        painter->setBrush(menuHover);
+        painter->drawRoundedRect(itemRect, 4.0, 4.0);
+      }
+
+      painter->setPen(menuText);
+      painter->drawText(itemRect, Qt::AlignCenter | Qt::TextShowMnemonic,
+                        menuItem->text);
+      painter->restore();
+      return;
+    }
+  }
+
+  QProxyStyle::drawControl(element, option, painter, widget);
 }
 
 void ArtifactCommonStyle::drawPrimitive(PrimitiveElement element, const QStyleOption* option,

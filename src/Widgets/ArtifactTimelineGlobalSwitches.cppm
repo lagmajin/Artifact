@@ -75,7 +75,7 @@ public:
                 QStringLiteral("MaterialVS/neutral/tune.svg"),
                 QStringLiteral("tune.png")));
         graphEditorBtn = createBtn(
-            "Toggle Graph Editor",
+            "Toggle Curve Editor / カーブエディタ切り替え (Ctrl+G)",
             loadIconWithFallback(
                 QStringLiteral("MaterialVS/neutral/view_sidebar.svg"),
                 QStringLiteral("view_sidebar.png")));
@@ -104,5 +104,16 @@ void ArtifactTimelineGlobalSwitches::setShyActive(bool active) {
 
 void ArtifactTimelineGlobalSwitches::setMotionBlurActive(bool active) {
     impl_->motionBlurBtn->setChecked(active);
+}
+
+void ArtifactTimelineGlobalSwitches::setFrameBlendingActive(bool active) {
+    impl_->frameBlendBtn->setChecked(active);
+}
+
+void ArtifactTimelineGlobalSwitches::setGraphEditorActive(bool active) {
+    if (impl_->graphEditorBtn->isChecked() == active) {
+        return;
+    }
+    impl_->graphEditorBtn->setChecked(active);
 }
 } // namespace Artifact

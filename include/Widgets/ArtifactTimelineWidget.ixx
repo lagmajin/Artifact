@@ -27,6 +27,8 @@ class ArtifactTimelineWidget :public QWidget {
   void syncTimelineHorizontalOffset(double offset);
   void syncWorkAreaFromCurrentComposition();
   void syncPainterSelectionState();
+  void refreshCurveEditorTracks();
+  void updateCurvePropertyList();
   void updateSearchState();
   void updateKeyframeState();
   void updateSelectionState();
@@ -51,8 +53,15 @@ class ArtifactTimelineWidget :public QWidget {
   void refreshTracks();
   void setLayerNameEditable(bool enabled);
   bool isLayerNameEditable() const;
+  void addKeyframeAtPlayhead();
+  void removeKeyframeAtPlayhead();
+  void selectAllKeyframes();
+  void copySelectedKeyframes();
+  void pasteKeyframesAtPlayhead();
   void jumpToSearchHit(int step);
   void jumpToKeyframeHit(int step);
+  void jumpToFirstKeyframe();
+  void jumpToLastKeyframe();
 
   /*signals:*/
  public:

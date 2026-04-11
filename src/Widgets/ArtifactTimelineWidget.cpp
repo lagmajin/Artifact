@@ -5,6 +5,9 @@ module;
 #include <QComboBox>
 #include <QEvent>
 #include <QLabel>
+#include <QJsonArray>
+#include <QJsonObject>
+#include <QJsonValue>
 #include <QMenu>
 #include <QMouseEvent>
 #include <QPainter>
@@ -12,15 +15,20 @@ module;
 #include <QScrollBar>
 #include <QSignalBlocker>
 #include <QSplitter>
+#include <QListWidget>
 #include <QKeySequence>
+#include <QSet>
 #include <QShortcut>
 #include <QStandardItem>
+#include <QStringList>
+#include <QToolButton>
 #include <QTimer>
 #include <QWheelEvent>
 #include <QWidget>
 #include <QPaintEvent>
 #include <QPointer>
 #include <QPolygonF>
+#include <QStackedWidget>
 #include <limits>
 #include <qtmetamacros.h>
 #include <wobjectdefs.h>
@@ -36,6 +44,7 @@ import Artifact.Layers.Hierarchy.Model;
 import Artifact.Widget.WorkAreaControlWidget;
 
 import Artifact.Widgets.LayerPanelWidget;
+import Widget.CurveEditor;
 import Artifact.Timeline.ScrubBar;
 import Artifact.Widgets.Timeline.Label;
 import Artifact.Timeline.NavigatorWidget;
@@ -46,6 +55,7 @@ import Panel.DraggableSplitter;
 import Artifact.Widgets.Timeline.GlobalSwitches;
 import Artifact.Service.Project;
 import Artifact.Service.Playback;
+import Clipboard.ClipboardManager;
 import Event.Bus;
 import Artifact.Event.Types;
 import Artifact.Application.Manager;
@@ -61,6 +71,7 @@ import Artifact.Layer.Solid2D;
 import Artifact.Layer.Svg;
 import Artifact.Layer.Text;
 import Artifact.Layer.Video;
+import Property.Abstract;
 import Artifact.Effect.Abstract;
 import Frame.Position;
 import Time.Rational;
@@ -241,6 +252,236 @@ safeCompositionLookup(const CompositionID &id) {
   return result.ptr.lock();
 }
 
+QVector<ArtifactAbstractLayerPtr> selectedTimelineLayers(
+    ArtifactLayerSelectionManager *selectionManager)
+{
+  QVector<ArtifactAbstractLayerPtr> layers;
+  if (!selectionManager) {
+    return layers;
+  }
+
+  QSet<ArtifactAbstractLayerPtr> selected = selectionManager->selectedLayers();
+  const auto current = selectionManager->currentLayer();
+
+  if (selected.isEmpty()) {
+    if (current) {
+      layers.push_back(current);
+    }
+    return layers;
+  }
+
+  if (selected.size() == 1) {
+    layers.push_back(*selected.begin());
+    return layers;
+  }
+
+  if (current && selected.contains(current)) {
+    layers.push_back(current);
+  }
+
+  for (const auto &layer : selected) {
+    if (!layer || (current && layer == current)) {
+      continue;
+    }
+    layers.push_back(layer);
+  }
+
+  std::sort(layers.begin(), layers.end(),
+            [](const ArtifactAbstractLayerPtr &lhs,
+               const ArtifactAbstractLayerPtr &rhs) {
+              if (!lhs || !rhs) {
+                return static_cast<bool>(lhs) && !static_cast<bool>(rhs);
+              }
+              const int nameCompare = lhs->layerName().compare(rhs->layerName(), Qt::CaseInsensitive);
+              if (nameCompare != 0) {
+                return nameCompare < 0;
+              }
+              return lhs->id().toString() < rhs->id().toString();
+            });
+  return layers;
+}
+
+bool propertyValueAsCurveNumber(const ArtifactCore::AbstractProperty &property,
+                               const QVariant &value, double &outValue)
+{
+  switch (property.getType()) {
+  case ArtifactCore::PropertyType::Float:
+  case ArtifactCore::PropertyType::Integer:
+  case ArtifactCore::PropertyType::Boolean:
+    outValue = value.toDouble();
+    return true;
+  default:
+    return false;
+  }
+}
+
+QString curveTrackLabel(const ArtifactAbstractLayerPtr &layer,
+                        const ArtifactCore::AbstractProperty &property)
+{
+  const QString layerName = layer ? layer->layerName().trimmed() : QString();
+  const QString propertyLabel = property.metadata().displayLabel.trimmed();
+  const QString effectivePropertyLabel =
+      propertyLabel.isEmpty() ? property.getName() : propertyLabel;
+  if (layerName.isEmpty()) {
+    return effectivePropertyLabel;
+  }
+  return QStringLiteral("%1 / %2").arg(layerName, effectivePropertyLabel);
+}
+
+QColor curveTrackColor(const ArtifactAbstractLayerPtr &layer,
+                       const QString &propertyPath)
+{
+  QColor color = layerTimelineColor(layer);
+  if (!color.isValid()) {
+    color = QColor(159, 138, 255);
+  }
+
+  const int hueShift = static_cast<int>(qHash(propertyPath) % 31) - 15;
+  int hue = color.hsvHue();
+  if (hue < 0) {
+    hue = 220;
+  }
+  hue = (hue + hueShift + 360) % 360;
+  const int sat = std::clamp(color.hsvSaturation() + 16, 70, 255);
+  const int val = std::clamp(color.value() + 8, 110, 255);
+  color.setHsv(hue, sat, val, 255);
+  return color;
+}
+
+struct CurveTrackBinding {
+  LayerID layerId;
+  QString propertyPath;
+};
+
+struct CurveEditorSnapshot {
+  std::vector<ArtifactCore::CurveTrack> tracks;
+  QVector<CurveTrackBinding> bindings;
+  QString signature;
+  QString summary;
+};
+
+CurveEditorSnapshot buildCurveEditorSnapshot(
+    const ArtifactCompositionPtr &composition,
+    ArtifactLayerSelectionManager *selectionManager)
+{
+  CurveEditorSnapshot snapshot;
+  const auto layers = selectedTimelineLayers(selectionManager);
+  if (layers.isEmpty()) {
+    snapshot.summary = QStringLiteral("No selection");
+    return snapshot;
+  }
+
+  const double fps = std::max(
+      1.0, static_cast<double>(composition ? composition->frameRate().framerate() : 30.0));
+
+  QStringList signatureParts;
+  int totalKeyCount = 0;
+  for (const auto &layer : layers) {
+    if (!layer) {
+      continue;
+    }
+
+    const auto layerGroups = layer->getLayerPropertyGroups();
+    for (const auto &group : layerGroups) {
+      for (const auto &property : group.sortedProperties()) {
+        if (!property || !property->isAnimatable()) {
+          continue;
+        }
+
+        const auto keyframes = property->getKeyFrames();
+        if (keyframes.empty()) {
+          continue;
+        }
+
+        double firstValue = 0.0;
+        if (!propertyValueAsCurveNumber(*property, keyframes.front().value, firstValue)) {
+          continue;
+        }
+
+        ArtifactCore::CurveTrack track;
+        track.name = curveTrackLabel(layer, *property);
+        track.color = curveTrackColor(layer, property->getName());
+        track.visible = true;
+        track.keys.reserve(keyframes.size());
+
+        QVector<double> framePositions;
+        QVector<double> numericValues;
+        framePositions.reserve(static_cast<int>(keyframes.size()));
+        numericValues.reserve(static_cast<int>(keyframes.size()));
+
+        bool supported = true;
+        for (const auto &keyframe : keyframes) {
+          double numericValue = 0.0;
+          if (!propertyValueAsCurveNumber(*property, keyframe.value, numericValue)) {
+            supported = false;
+            break;
+          }
+          framePositions.push_back(static_cast<double>(
+              keyframe.time.rescaledTo(static_cast<int64_t>(std::round(fps)))));
+          numericValues.push_back(numericValue);
+        }
+
+        if (!supported || framePositions.isEmpty()) {
+          continue;
+        }
+
+        for (int i = 0; i < static_cast<int>(framePositions.size()); ++i) {
+          const double frame = framePositions[i];
+          const double value = numericValues[i];
+
+          const double prevFrame = (i > 0) ? framePositions[i - 1] : frame;
+          const double nextFrame = (i + 1 < framePositions.size())
+                                       ? framePositions[i + 1]
+                                       : frame;
+          const double prevValue = (i > 0) ? numericValues[i - 1] : value;
+          const double nextValue = (i + 1 < numericValues.size())
+                                       ? numericValues[i + 1]
+                                       : value;
+
+          ArtifactCore::CurveKey curveKey;
+          curveKey.frame = static_cast<int64_t>(std::llround(frame));
+          curveKey.value = static_cast<float>(value);
+          if (keyframes[i].easing != ArtifactCore::EasingType::Hold) {
+            const double inFrameSpan = std::max(1.0, (frame - prevFrame) / 3.0);
+            const double outFrameSpan = std::max(1.0, (nextFrame - frame) / 3.0);
+            const double inSlope = (frame > prevFrame) ? ((value - prevValue) / (frame - prevFrame)) : 0.0;
+            const double outSlope = (nextFrame > frame) ? ((nextValue - value) / (nextFrame - frame)) : 0.0;
+
+            curveKey.inHandleFrame = -static_cast<int64_t>(std::llround(inFrameSpan));
+            curveKey.outHandleFrame = static_cast<int64_t>(std::llround(outFrameSpan));
+            curveKey.inHandleValue = static_cast<float>(-inSlope * inFrameSpan);
+            curveKey.outHandleValue = static_cast<float>(outSlope * outFrameSpan);
+          }
+
+          track.keys.push_back(curveKey);
+          signatureParts.push_back(QStringLiteral("%1:%2:%3:%4")
+                                       .arg(layer->id().toString(),
+                                            property->getName(),
+                                            QString::number(curveKey.frame),
+                                            QString::number(curveKey.value, 'f', 6)));
+        }
+
+        totalKeyCount += static_cast<int>(track.keys.size());
+        snapshot.bindings.push_back(CurveTrackBinding{layer->id(), property->getName()});
+        snapshot.tracks.push_back(std::move(track));
+      }
+    }
+  }
+
+  snapshot.signature = signatureParts.join(QLatin1Char('|'));
+  if (snapshot.tracks.empty()) {
+    snapshot.summary = QStringLiteral("No numeric keyframes");
+  } else {
+    snapshot.summary = QStringLiteral("%1 curve track(s), %2 keyframe(s)")
+                          .arg(snapshot.tracks.size())
+                          .arg(totalKeyCount);
+  }
+  return snapshot;
+}
+
+std::shared_ptr<ArtifactCore::AbstractProperty> findLayerPropertyByPath(
+    const ArtifactAbstractLayerPtr& layer, const QString& propertyPath);
+
 QVector<qint64> collectSelectedKeyframeFrames(
     const ArtifactCompositionPtr& composition,
     ArtifactLayerSelectionManager* selectionManager)
@@ -250,13 +491,7 @@ QVector<qint64> collectSelectedKeyframeFrames(
     return frames;
   }
 
-  const auto selectedLayers = selectionManager->selectedLayers();
-  QSet<ArtifactAbstractLayerPtr> layers = selectedLayers;
-  if (layers.isEmpty()) {
-    if (auto currentLayer = selectionManager->currentLayer()) {
-      layers.insert(currentLayer);
-    }
-  }
+  const auto layers = selectedTimelineLayers(selectionManager);
   if (layers.isEmpty()) {
     return frames;
   }
@@ -290,6 +525,164 @@ QVector<qint64> collectSelectedKeyframeFrames(
 
   std::sort(frames.begin(), frames.end());
   return frames;
+}
+
+QJsonArray serializeSelectedKeyframes(
+    const ArtifactCompositionPtr& composition,
+    const QVector<ArtifactTimelineTrackPainterView::KeyframeMarkerVisual>& markers)
+{
+  QJsonArray keyframes;
+  if (!composition || markers.isEmpty()) {
+    return keyframes;
+  }
+
+  const double fps =
+      std::max(1.0, static_cast<double>(composition->frameRate().framerate()));
+  QSet<QString> seen;
+  for (const auto& marker : markers) {
+    const qint64 frame = static_cast<qint64>(std::llround(marker.frame));
+    const QString dedupeKey =
+        QStringLiteral("%1|%2|%3").arg(marker.layerId.toString(), marker.propertyPath,
+                                        QString::number(frame));
+    if (seen.contains(dedupeKey)) {
+      continue;
+    }
+    seen.insert(dedupeKey);
+
+    auto layer = composition->layerById(marker.layerId);
+    if (!layer) {
+      continue;
+    }
+    const auto property = findLayerPropertyByPath(layer, marker.propertyPath);
+    if (!property) {
+      continue;
+    }
+
+    const RationalTime time(frame, static_cast<int64_t>(std::llround(fps)));
+    const auto keyframesAtProperty = property->getKeyFrames();
+    const auto it = std::find_if(keyframesAtProperty.cbegin(), keyframesAtProperty.cend(),
+                                 [&time](const ArtifactCore::KeyFrame& keyframe) {
+                                   return keyframe.time == time;
+                                 });
+    if (it == keyframesAtProperty.cend()) {
+      continue;
+    }
+
+    QJsonObject record;
+    record.insert(QStringLiteral("layerId"), marker.layerId.toString());
+    record.insert(QStringLiteral("propertyPath"), marker.propertyPath);
+    record.insert(QStringLiteral("frame"), static_cast<qint64>(frame));
+    record.insert(QStringLiteral("value"), QJsonValue::fromVariant(it->value));
+    record.insert(QStringLiteral("easing"), static_cast<int>(it->easing));
+    keyframes.append(record);
+  }
+
+  return keyframes;
+}
+
+bool pasteKeyframesToLayers(
+    const ArtifactCompositionPtr& composition,
+    const QVector<ArtifactAbstractLayerPtr>& targetLayers,
+    const QJsonArray& records,
+    const qint64 targetFrame)
+{
+  if (!composition || targetLayers.isEmpty() || records.isEmpty()) {
+    return false;
+  }
+
+  QVector<QJsonObject> sourceRecords;
+  sourceRecords.reserve(records.size());
+  qint64 minFrame = std::numeric_limits<qint64>::max();
+  for (const auto& value : records) {
+    if (!value.isObject()) {
+      continue;
+    }
+    const QJsonObject record = value.toObject();
+    const qint64 frame = record.value(QStringLiteral("frame")).toVariant().toLongLong();
+    if (record.value(QStringLiteral("propertyPath")).toString().trimmed().isEmpty()) {
+      continue;
+    }
+    minFrame = std::min(minFrame, frame);
+    sourceRecords.push_back(record);
+  }
+
+  if (sourceRecords.isEmpty() || minFrame == std::numeric_limits<qint64>::max()) {
+    return false;
+  }
+
+  const double fps =
+      std::max(1.0, static_cast<double>(composition->frameRate().framerate()));
+  bool changed = false;
+  for (const auto& layer : targetLayers) {
+    if (!layer) {
+      continue;
+    }
+    bool layerChanged = false;
+    for (const auto& record : sourceRecords) {
+      const QString propertyPath = record.value(QStringLiteral("propertyPath")).toString();
+      const auto property = findLayerPropertyByPath(layer, propertyPath);
+      if (!property || !property->isAnimatable()) {
+        continue;
+      }
+
+      const qint64 sourceFrame =
+          record.value(QStringLiteral("frame")).toVariant().toLongLong();
+      const qint64 offset = sourceFrame - minFrame;
+      const qint64 newFrame = std::max<qint64>(0, targetFrame + offset);
+      const RationalTime time(newFrame, static_cast<int64_t>(std::llround(fps)));
+      const QVariant value = record.value(QStringLiteral("value")).toVariant();
+      const auto easingValue =
+          static_cast<ArtifactCore::EasingType>(record.value(QStringLiteral("easing")).toInt(
+              static_cast<int>(ArtifactCore::EasingType::Linear)));
+
+      property->addKeyFrame(time, value.isValid() ? value : property->getValue(), easingValue);
+      layerChanged = true;
+    }
+    if (layerChanged) {
+      layer->changed();
+      changed = true;
+    }
+  }
+
+  return changed;
+}
+
+bool applyKeyframeEditAtFrame(const ArtifactCompositionPtr& composition,
+                              const ArtifactAbstractLayerPtr& layer,
+                              const qint64 frame,
+                              const bool removeKeyframes)
+{
+  if (!composition || !layer) {
+    return false;
+  }
+
+  const double fps =
+      std::max(1.0, static_cast<double>(composition->frameRate().framerate()));
+  const RationalTime nowTime(frame, static_cast<int64_t>(std::llround(fps)));
+
+  bool changed = false;
+  for (const auto& group : layer->getLayerPropertyGroups()) {
+    for (const auto& property : group.sortedProperties()) {
+      if (!property || !property->isAnimatable()) {
+        continue;
+      }
+      if (removeKeyframes) {
+        if (property->hasKeyFrameAt(nowTime)) {
+          property->removeKeyFrame(nowTime);
+          changed = true;
+        }
+      } else {
+        const QVariant value = property->interpolateValue(nowTime);
+        property->addKeyFrame(nowTime, value.isValid() ? value : property->getValue());
+        changed = true;
+      }
+    }
+  }
+
+  if (changed) {
+    layer->changed();
+  }
+  return changed;
 }
 
 bool applyKeyframeEditAtPlayhead(const ArtifactCompositionPtr& composition,
@@ -342,6 +735,196 @@ struct KeyframeNavigationState {
   qint64 previousKeyframe = -1;
   qint64 nextKeyframe = -1;
 };
+
+struct CurveEditorBinding {
+  LayerID layerId;
+  QString propertyPath;
+};
+
+struct CurveEditorPayload {
+  std::vector<CurveTrack> tracks;
+  std::vector<CurveEditorBinding> bindings;
+};
+
+std::shared_ptr<ArtifactCore::AbstractProperty> findLayerPropertyByPath(
+    const ArtifactAbstractLayerPtr& layer, const QString& propertyPath)
+{
+  if (!layer || propertyPath.trimmed().isEmpty()) {
+    return {};
+  }
+
+  const auto groups = layer->getLayerPropertyGroups();
+  for (const auto& group : groups) {
+    for (const auto& property : group.sortedProperties()) {
+      if (!property) {
+        continue;
+      }
+      if (property->getName() == propertyPath) {
+        return property;
+      }
+    }
+  }
+  return {};
+}
+
+QColor curveTrackColorForKey(const QString& key)
+{
+  const uint hash = qHash(key);
+  return QColor::fromHsv(static_cast<int>(hash % 360), 170, 220, 255);
+}
+
+CurveEditorPayload collectCurveEditorPayload(
+    const ArtifactCompositionPtr& composition,
+    ArtifactLayerSelectionManager* selectionManager)
+{
+  CurveEditorPayload payload;
+  if (!composition || !selectionManager) {
+    return payload;
+  }
+
+  const double fps =
+      std::max(1.0, static_cast<double>(composition->frameRate().framerate()));
+
+  const auto layers = selectedTimelineLayers(selectionManager);
+  if (layers.isEmpty()) {
+    return payload;
+  }
+
+  for (const auto& layer : layers) {
+    if (!layer) {
+      continue;
+    }
+
+    const auto groups = layer->getLayerPropertyGroups();
+    for (const auto& group : groups) {
+      for (const auto& property : group.sortedProperties()) {
+        if (!property || !property->isAnimatable()) {
+          continue;
+        }
+
+        const auto keyframes = property->getKeyFrames();
+        if (keyframes.empty()) {
+          continue;
+        }
+
+        CurveTrack track;
+        track.name = QStringLiteral("%1 / %2")
+                         .arg(layer->layerName())
+                         .arg(property->metadata().displayLabel.isEmpty()
+                                  ? property->getName()
+                                  : property->metadata().displayLabel);
+        track.color = curveTrackColorForKey(layer->id().toString() + QLatin1Char('/') +
+                                            property->getName());
+        track.visible = true;
+
+        QVector<qint64> frames;
+        QVector<double> values;
+        QVector<EasingType> easings;
+        frames.reserve(static_cast<int>(keyframes.size()));
+        values.reserve(static_cast<int>(keyframes.size()));
+        easings.reserve(static_cast<int>(keyframes.size()));
+
+        bool anyNumeric = false;
+        for (const auto& keyframe : keyframes) {
+          const qint64 frame = keyframe.time.rescaledTo(static_cast<int64_t>(std::round(fps)));
+          const QVariant value = keyframe.value;
+          if (!value.canConvert<double>()) {
+            continue;
+          }
+
+          frames.push_back(frame);
+          values.push_back(value.toDouble());
+          easings.push_back(keyframe.easing);
+          anyNumeric = true;
+        }
+
+        if (!anyNumeric || frames.isEmpty()) {
+          continue;
+        }
+
+        for (int i = 0; i < frames.size(); ++i) {
+          CurveKey curveKey;
+          curveKey.frame = frames[i];
+          curveKey.value = static_cast<float>(values[i]);
+          curveKey.smooth = easings[i] == EasingType::Bezier;
+
+          if (easings[i] != EasingType::Hold) {
+            const double prevFrame = (i > 0) ? static_cast<double>(frames[i - 1])
+                                             : static_cast<double>(frames[i]);
+            const double nextFrame =
+                (i + 1 < frames.size()) ? static_cast<double>(frames[i + 1])
+                                        : static_cast<double>(frames[i]);
+            const double prevValue = (i > 0) ? values[i - 1] : values[i];
+            const double nextValue =
+                (i + 1 < values.size()) ? values[i + 1] : values[i];
+            const double inSpan = std::max(1.0, (static_cast<double>(frames[i]) - prevFrame) / 3.0);
+            const double outSpan =
+                std::max(1.0, (nextFrame - static_cast<double>(frames[i])) / 3.0);
+            const double inSlope =
+                (static_cast<double>(frames[i]) > prevFrame)
+                    ? ((values[i] - prevValue) /
+                       (static_cast<double>(frames[i]) - prevFrame))
+                    : 0.0;
+            const double outSlope =
+                (nextFrame > static_cast<double>(frames[i]))
+                    ? ((nextValue - values[i]) /
+                       (nextFrame - static_cast<double>(frames[i])))
+                    : 0.0;
+
+            curveKey.inHandleFrame = -static_cast<int64_t>(std::llround(inSpan));
+            curveKey.outHandleFrame = static_cast<int64_t>(std::llround(outSpan));
+            curveKey.inHandleValue = static_cast<float>(-inSlope * inSpan);
+            curveKey.outHandleValue = static_cast<float>(outSlope * outSpan);
+          }
+
+          track.keys.push_back(curveKey);
+        }
+
+        payload.bindings.push_back({layer->id(), property->getName()});
+        payload.tracks.push_back(std::move(track));
+      }
+    }
+  }
+
+  return payload;
+}
+
+bool applyCurveEditorMove(
+    const ArtifactCompositionPtr& composition,
+    const CurveTrackBinding& binding,
+    const CurveTrack& track,
+    const int keyIndex,
+    const int64_t newFrame,
+    const float newValue)
+{
+  if (!composition || binding.layerId.isNil() || keyIndex < 0 ||
+      keyIndex >= static_cast<int>(track.keys.size())) {
+    return false;
+  }
+
+  auto layer = composition->layerById(binding.layerId);
+  if (!layer) {
+    return false;
+  }
+
+  const auto property = findLayerPropertyByPath(layer, binding.propertyPath);
+  if (!property) {
+    return false;
+  }
+
+  const CurveKey& oldKey = track.keys[keyIndex];
+  const double fps =
+      std::max(1.0, static_cast<double>(composition->frameRate().framerate()));
+  const RationalTime oldTime(oldKey.frame, static_cast<int64_t>(std::llround(fps)));
+  const RationalTime newTime(newFrame, static_cast<int64_t>(std::llround(fps)));
+
+  if (property->hasKeyFrameAt(oldTime)) {
+    property->removeKeyFrame(oldTime);
+  }
+  property->addKeyFrame(newTime, QVariant(newValue),
+                        oldKey.smooth ? EasingType::Bezier : EasingType::Linear);
+  return true;
+}
 
 KeyframeNavigationState collectKeyframeNavigationState(
     const ArtifactCompositionPtr& composition,
@@ -1038,18 +1621,33 @@ public:
   QLabel *selectionSummaryLabel_ = nullptr;
   ArtifactLayerTimelinePanelWrapper *layerTimelinePanel_ = nullptr;
   ArtifactTimelineTrackPainterView *painterTrackView_ = nullptr;
+  QWidget *timelinePainterPage_ = nullptr;
+  ArtifactCurveEditorWidget *curveEditor_ = nullptr;
+  QWidget *curveEditorPage_ = nullptr;
+  QStackedWidget *timelineModeStack_ = nullptr;
+  QWidget *curvePropertyPanel_ = nullptr;
+  QLabel *curvePropertySummaryLabel_ = nullptr;
+  QListWidget *curvePropertyList_ = nullptr;
+  int focusedCurveTrackIndex_ = -1;
+  QLabel *curveEditorSummaryLabel_ = nullptr;
+  QToolButton *curveEditorFitButton_ = nullptr;
   ArtifactTimelineScrubBar *scrubBar_ = nullptr;
   WorkAreaControl *workArea_ = nullptr;
   ArtifactTimelineNavigatorWidget *navigator_ = nullptr;
   TimelinePlayheadOverlayWidget *playheadOverlay_ = nullptr;
+  ArtifactTimelineGlobalSwitches *globalSwitches_ = nullptr;
   CompositionID compositionId_;
   bool shyActive_ = false;
   QString filterText_;
   QVector<LayerID> searchResultLayerIds_;
   int searchResultIndex_ = -1;
   QVector<LayerID> trackLayerIds_;
+  std::vector<CurveTrack> curveTracks_;
+  QVector<CurveTrackBinding> curveBindings_;
+  QString curveEditorSignature_;
   bool syncingLayerSelection_ = false;
   double currentFrame_ = 0.0;
+  bool curveEditorDragging_ = false;
   QMetaObject::Connection compositionChangedConnection_;
   ArtifactCore::EventBus eventBus_ = ArtifactCore::globalEventBus();
   std::vector<ArtifactCore::EventBus::Subscription> eventBusSubscriptions_;
@@ -1061,11 +1659,104 @@ public:
   // SelectionChangedEvent と LayerSelectionChangedEvent が同時に来ても
   // painter / labels 更新を 1 回にまとめる。
   bool pendingSelectionSync_ = false;
+  QTimer* curveEditorRefreshTimer_ = nullptr;
+  bool graphEditorVisible_ = false;
+  bool graphEditorNeedsFit_ = false;
 };
 
 ArtifactTimelineWidget::Impl::Impl() {}
 
 ArtifactTimelineWidget::Impl::~Impl() {}
+
+void ArtifactTimelineWidget::refreshCurveEditorTracks()
+{
+  if (!impl_ || !impl_->curveEditor_ || impl_->curveEditorDragging_) {
+    return;
+  }
+
+  ArtifactCompositionPtr composition;
+  if (auto* svc = ArtifactProjectService::instance()) {
+    composition = svc->currentComposition().lock();
+  }
+
+  ArtifactLayerSelectionManager* selectionManager = nullptr;
+  if (auto* app = ArtifactApplicationManager::instance()) {
+    selectionManager = app->layerSelectionManager();
+  }
+
+  const auto payload = buildCurveEditorSnapshot(composition, selectionManager);
+  if (payload.signature == impl_->curveEditorSignature_) {
+    return;
+  }
+
+  impl_->curveEditorSignature_ = payload.signature;
+  impl_->curveTracks_ = payload.tracks;
+  impl_->curveBindings_ = payload.bindings;
+  if (impl_->curveEditorSummaryLabel_) {
+    impl_->curveEditorSummaryLabel_->setText(payload.summary);
+  }
+  impl_->curveEditor_->setTracks(payload.tracks);
+  impl_->curveEditor_->setCurrentFrame(
+      static_cast<int64_t>(std::llround(std::max(0.0, impl_->currentFrame_))));
+  if (impl_->graphEditorVisible_ && impl_->graphEditorNeedsFit_) {
+    impl_->curveEditor_->fitToContent();
+    impl_->graphEditorNeedsFit_ = false;
+  }
+}
+
+void ArtifactTimelineWidget::updateCurvePropertyList()
+{
+  if (!impl_ || !impl_->curvePropertyList_ || !impl_->curvePropertySummaryLabel_) {
+    return;
+  }
+
+  const QSignalBlocker blocker(impl_->curvePropertyList_);
+  impl_->curvePropertyList_->clear();
+  int visibleCount = 0;
+  int propertyCount = 0;
+  for (int i = 0; i < static_cast<int>(impl_->curveTracks_.size()); ++i) {
+    const auto &track = impl_->curveTracks_[i];
+    QString label = track.name;
+    if (!track.keys.empty()) {
+      const int keyCount = static_cast<int>(track.keys.size());
+      label += QStringLiteral(" (%1 key%2)")
+                   .arg(keyCount)
+                   .arg(keyCount == 1 ? QString() : QStringLiteral("s"));
+    }
+    auto *item = new QListWidgetItem(label);
+    item->setData(Qt::UserRole, i);
+    item->setToolTip(track.name);
+    item->setForeground(track.color);
+    if (impl_->focusedCurveTrackIndex_ >= 0 && impl_->focusedCurveTrackIndex_ != i) {
+      item->setHidden(true);
+    } else {
+      ++visibleCount;
+    }
+    impl_->curvePropertyList_->addItem(item);
+    ++propertyCount;
+  }
+  if (propertyCount == 0) {
+    impl_->curvePropertyList_->addItem(QStringLiteral("No visible curve tracks"));
+    impl_->curvePropertySummaryLabel_->setText(QStringLiteral("Curve Targets: 0"));
+    return;
+  }
+
+  if (impl_->focusedCurveTrackIndex_ >= propertyCount) {
+    impl_->focusedCurveTrackIndex_ = -1;
+  }
+  if (impl_->focusedCurveTrackIndex_ >= 0) {
+    if (auto *item = impl_->curvePropertyList_->item(impl_->focusedCurveTrackIndex_)) {
+      item->setSelected(true);
+      impl_->curvePropertyList_->setCurrentItem(item);
+    }
+  } else {
+    impl_->curvePropertyList_->setCurrentRow(-1);
+  }
+  impl_->curvePropertySummaryLabel_->setText(
+      QStringLiteral("Curve Targets: %1 shown / %2 total")
+          .arg(visibleCount)
+          .arg(propertyCount));
+}
 
 ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
     : QWidget(parent), impl_(new Impl()) {
@@ -1110,6 +1801,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   impl_->currentLayerLabel_ = currentLayerLabel;
   impl_->frameSummaryLabel_ = frameSummaryLabel;
   impl_->selectionSummaryLabel_ = selectionSummaryLabel;
+  impl_->globalSwitches_ = globalSwitches;
 
   QObject::connect(searchBar, &ArtifactTimelineSearchBarWidget::searchTextChanged,
                    this, &ArtifactTimelineWidget::onSearchTextChanged);
@@ -1129,6 +1821,31 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   QObject::connect(clearSearchShortcut, &QShortcut::activated, this, [searchBar]() {
     if (searchBar && searchBar->hasSearchText()) {
       searchBar->clearSearch();
+    }
+  });
+  auto *toggleCurveEditorShortcut = new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_G), this);
+  QObject::connect(toggleCurveEditorShortcut, &QShortcut::activated, this, [this, globalSwitches]() {
+    if (!impl_ || !globalSwitches) {
+      return;
+    }
+    globalSwitches->setGraphEditorActive(!impl_->graphEditorVisible_);
+    if (impl_->graphEditorVisible_ && impl_->curveEditor_) {
+      impl_->curveEditor_->setFocus(Qt::ShortcutFocusReason);
+    } else if (impl_->painterTrackView_) {
+      impl_->painterTrackView_->setFocus(Qt::ShortcutFocusReason);
+    }
+  });
+  auto *tabCurveEditorShortcut = new QShortcut(QKeySequence(Qt::Key_Tab), this);
+  tabCurveEditorShortcut->setContext(Qt::WidgetWithChildrenShortcut);
+  QObject::connect(tabCurveEditorShortcut, &QShortcut::activated, this, [this]() {
+    if (!impl_ || !impl_->globalSwitches_) {
+      return;
+    }
+    impl_->globalSwitches_->setGraphEditorActive(!impl_->graphEditorVisible_);
+    if (impl_->graphEditorVisible_ && impl_->curveEditor_) {
+      impl_->curveEditor_->setFocus(Qt::ShortcutFocusReason);
+    } else if (impl_->painterTrackView_) {
+      impl_->painterTrackView_->setFocus(Qt::ShortcutFocusReason);
     }
   });
   searchModeCombo->addItem(QStringLiteral("All Visible"), static_cast<int>(SearchMatchMode::AllVisible));
@@ -1386,13 +2103,68 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
                                      QSizePolicy::Fixed);
   leftSubHeaderSpacer->setAutoFillBackground(true);
 
+  auto *curvePropertyPanel = impl_->curvePropertyPanel_ = new QWidget();
+  auto *curvePropertyLayout = new QVBoxLayout(curvePropertyPanel);
+  curvePropertyLayout->setContentsMargins(8, 8, 8, 8);
+  curvePropertyLayout->setSpacing(6);
+  auto *curvePropertySummary = impl_->curvePropertySummaryLabel_ =
+      new QLabel(QStringLiteral("Curve Targets: 0"));
+  auto *curvePropertyList = impl_->curvePropertyList_ = new QListWidget();
+  curvePropertySummary->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+  {
+    QFont font = curvePropertySummary->font();
+    font.setWeight(QFont::DemiBold);
+    curvePropertySummary->setFont(font);
+    QPalette pal = curvePropertySummary->palette();
+    pal.setColor(QPalette::WindowText, QColor(191, 224, 255));
+    curvePropertySummary->setPalette(pal);
+  }
+  curvePropertyList->setSelectionMode(QAbstractItemView::SingleSelection);
+  curvePropertyList->setFocusPolicy(Qt::NoFocus);
+  curvePropertyList->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+  curvePropertyList->setMinimumHeight(108);
+  curvePropertyList->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::MinimumExpanding);
+  curvePropertyList->setAlternatingRowColors(false);
+  curvePropertyList->setUniformItemSizes(true);
+  curvePropertyLayout->addWidget(curvePropertySummary);
+  curvePropertyLayout->addWidget(curvePropertyList, 1);
+  curvePropertyPanel->setVisible(false);
+  QObject::connect(curvePropertyList, &QListWidget::itemClicked, this,
+                   [this](QListWidgetItem *item) {
+                     if (!impl_ || !impl_->curveEditor_ || !item) {
+                       return;
+                     }
+                     const int trackIndex = item->data(Qt::UserRole).toInt();
+                     impl_->focusedCurveTrackIndex_ =
+                         (impl_->focusedCurveTrackIndex_ == trackIndex) ? -1 : trackIndex;
+                     impl_->curveEditor_->focusTrack(impl_->focusedCurveTrackIndex_);
+                     updateCurvePropertyList();
+                     impl_->curveEditor_->setFocus(Qt::MouseFocusReason);
+                   });
+  QObject::connect(curvePropertyList, &QListWidget::itemDoubleClicked, this,
+                   [this](QListWidgetItem *item) {
+                     if (!impl_ || !impl_->curveEditor_ || !item) {
+                       return;
+                     }
+                     const int trackIndex = item->data(Qt::UserRole).toInt();
+                     if (trackIndex < 0) {
+                       impl_->focusedCurveTrackIndex_ = -1;
+                     } else {
+                       impl_->focusedCurveTrackIndex_ = trackIndex;
+                     }
+                     impl_->curveEditor_->focusTrack(impl_->focusedCurveTrackIndex_);
+                     updateCurvePropertyList();
+                     impl_->curveEditor_->setFocus(Qt::MouseFocusReason);
+                   });
+
   auto leftLayout = new QVBoxLayout();
   leftLayout->setSpacing(0);
   leftLayout->setContentsMargins(0, 0, 0, 0);
   leftLayout->addWidget(leftTopSpacer);
   leftLayout->addWidget(headerWidget);
   leftLayout->addWidget(leftSubHeaderSpacer);
-  leftLayout->addWidget(leftSplitter);
+  leftLayout->addWidget(leftSplitter, 1);
+  leftLayout->addWidget(curvePropertyPanel, 0);
 
   auto leftPanel = new QWidget();
   leftPanel->setLayout(leftLayout);
@@ -1407,9 +2179,34 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
 
   auto painterTrackView = impl_->painterTrackView_ =
       new ArtifactTimelineTrackPainterView();
+  auto curveEditor = impl_->curveEditor_ = new ArtifactCurveEditorWidget();
   painterTrackView->setDurationFrames(kDefaultTimelineFrames);
   painterTrackView->setTrackCount(1);
   painterTrackView->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+  curveEditor->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+  curveEditor->setMinimumHeight(180);
+  curveEditor->setHandleEditingEnabled(false);
+  curveEditor->setVisible(true);
+
+  auto *curveHeader = new QWidget();
+  curveHeader->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+  auto *curveHeaderLayout = new QHBoxLayout(curveHeader);
+  curveHeaderLayout->setContentsMargins(6, 4, 6, 4);
+  curveHeaderLayout->setSpacing(6);
+  impl_->curveEditorSummaryLabel_ = new QLabel(QStringLiteral("カーブエディタ"));
+  impl_->curveEditorSummaryLabel_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+  impl_->curveEditorSummaryLabel_->setToolTip(QStringLiteral("選択したキーフレームのカーブ編集ビュー"));
+  impl_->curveEditorFitButton_ = new QToolButton(curveHeader);
+  impl_->curveEditorFitButton_->setText(QStringLiteral("Fit"));
+  impl_->curveEditorFitButton_->setAutoRaise(true);
+  impl_->curveEditorFitButton_->setToolTip(QStringLiteral("表示中のカーブに合わせてビューを調整"));
+  QObject::connect(impl_->curveEditorFitButton_, &QToolButton::clicked, this, [this]() {
+    if (impl_ && impl_->curveEditor_) {
+      impl_->curveEditor_->fitToContent();
+    }
+  });
+  curveHeaderLayout->addWidget(impl_->curveEditorSummaryLabel_);
+  curveHeaderLayout->addWidget(impl_->curveEditorFitButton_);
   timeNavigatorWidget->setTotalFrames(kDefaultTimelineFrames);
   timeNavigatorWidget->setFixedHeight(kTimelineTopRowHeight);
   timeNavigatorWidget->setSizePolicy(QSizePolicy::Expanding,
@@ -1520,6 +2317,158 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
                                durationFrame);
       });
   QObject::connect(painterTrackView, &ArtifactTimelineTrackPainterView::timelineDebugMessage, this, &ArtifactTimelineWidget::timelineDebugMessage);
+  QObject::connect(globalSwitches, &ArtifactTimelineGlobalSwitches::graphEditorToggled,
+                   this, [this](bool active) {
+                     if (!impl_ || !impl_->curveEditor_) {
+                       return;
+                     }
+                     impl_->graphEditorVisible_ = active;
+                     if (impl_->timelineModeStack_) {
+                       impl_->timelineModeStack_->setCurrentWidget(
+                           active ? impl_->curveEditorPage_ : impl_->timelinePainterPage_);
+                     }
+                     if (impl_->curvePropertyPanel_) {
+                       impl_->curvePropertyPanel_->setVisible(active);
+                     }
+                     if (!active) {
+                       impl_->curveEditorDragging_ = false;
+                       impl_->focusedCurveTrackIndex_ = -1;
+                       if (impl_->curveEditorRefreshTimer_) {
+                         impl_->curveEditorRefreshTimer_->stop();
+                       }
+                     } else {
+                       impl_->graphEditorNeedsFit_ = true;
+                     }
+                     if (active) {
+                       refreshCurveEditorTracks();
+                       if (impl_->curveEditor_) {
+                         impl_->curveEditor_->focusTrack(impl_->focusedCurveTrackIndex_);
+                       }
+                       updateCurvePropertyList();
+                     }
+                   });
+  QObject::connect(curveEditor, &ArtifactCurveEditorWidget::interactionStarted, this,
+                   [this]() {
+                     if (!impl_) {
+                       return;
+                     }
+                     impl_->curveEditorDragging_ = true;
+                     if (impl_->curveEditorRefreshTimer_) {
+                       impl_->curveEditorRefreshTimer_->stop();
+                     }
+                   });
+  QObject::connect(curveEditor, &ArtifactCurveEditorWidget::keySelected, this,
+                   [this](int trackIndex, int /*keyIndex*/) {
+                     if (!impl_ || !impl_->curvePropertyList_) {
+                       return;
+                     }
+                     impl_->focusedCurveTrackIndex_ = trackIndex;
+                     updateCurvePropertyList();
+                     if (trackIndex >= 0 &&
+                         trackIndex < impl_->curvePropertyList_->count()) {
+                       if (auto *item = impl_->curvePropertyList_->item(trackIndex)) {
+                         impl_->curvePropertyList_->scrollToItem(item);
+                       }
+                     }
+                   });
+  QObject::connect(curveEditor, &ArtifactCurveEditorWidget::interactionFinished, this,
+                   [this]() {
+                     if (!impl_) {
+                       return;
+                     }
+                     impl_->curveEditorDragging_ = false;
+                     refreshCurveEditorTracks();
+                   });
+  QObject::connect(curveEditor, &ArtifactCurveEditorWidget::keyMoved, this,
+                   [this](int trackIndex, int keyIndex, int64_t newFrame, float newValue) {
+                     if (!impl_ || trackIndex < 0 ||
+                         trackIndex >= static_cast<int>(impl_->curveBindings_.size()) ||
+                         trackIndex >= static_cast<int>(impl_->curveTracks_.size())) {
+                       return;
+                     }
+
+                     const auto composition = safeCompositionLookup(impl_->compositionId_);
+                     if (!composition) {
+                       return;
+                     }
+
+                     const auto& binding = impl_->curveBindings_[trackIndex];
+                     const auto& track = impl_->curveTracks_[trackIndex];
+                     if (!applyCurveEditorMove(composition, binding, track, keyIndex,
+                                               newFrame, newValue)) {
+                       return;
+                     }
+
+                     auto& cachedTrack = impl_->curveTracks_[trackIndex];
+                     if (keyIndex >= 0 && keyIndex < static_cast<int>(cachedTrack.keys.size())) {
+                       cachedTrack.keys[keyIndex].frame = newFrame;
+                       cachedTrack.keys[keyIndex].value = newValue;
+                     }
+                     if (impl_->curveEditorRefreshTimer_) {
+                       impl_->curveEditorRefreshTimer_->start(180);
+                     }
+                   });
+  QObject::connect(curveEditor, &ArtifactCurveEditorWidget::keyDeleted, this,
+                   [this](int trackIndex, int keyIndex) {
+                     if (!impl_ || trackIndex < 0 ||
+                         trackIndex >= static_cast<int>(impl_->curveBindings_.size()) ||
+                         trackIndex >= static_cast<int>(impl_->curveTracks_.size())) {
+                       return;
+                     }
+
+                     const auto composition = safeCompositionLookup(impl_->compositionId_);
+                     if (!composition) {
+                       return;
+                     }
+
+                     const auto& binding = impl_->curveBindings_[trackIndex];
+                     auto layer = composition->layerById(binding.layerId);
+                     if (!layer) {
+                       return;
+                     }
+                     const auto property = findLayerPropertyByPath(layer, binding.propertyPath);
+                     if (!property) {
+                       return;
+                     }
+
+                     const auto& track = impl_->curveTracks_[trackIndex];
+                     if (keyIndex < 0 || keyIndex >= static_cast<int>(track.keys.size())) {
+                       return;
+                     }
+                     const auto& key = track.keys[keyIndex];
+                     const double fps = std::max(
+                         1.0, static_cast<double>(composition->frameRate().framerate()));
+                     const RationalTime time(
+                         static_cast<int64_t>(std::llround(key.frame)),
+                         static_cast<int64_t>(std::llround(fps)));
+                     if (property->hasKeyFrameAt(time)) {
+                       property->removeKeyFrame(time);
+                     }
+                     refreshCurveEditorTracks();
+                   });
+  QObject::connect(curveEditor, &ArtifactCurveEditorWidget::currentFrameChanged, this,
+                   [this](int64_t frame) {
+                     impl_->currentFrame_ = static_cast<double>(frame);
+                     if (impl_->painterTrackView_) {
+                       impl_->painterTrackView_->setCurrentFrame(static_cast<double>(frame));
+                     }
+                     if (impl_->scrubBar_) {
+                       const QSignalBlocker blocker(impl_->scrubBar_);
+                       impl_->scrubBar_->setCurrentFrame(FramePosition(static_cast<int>(frame)));
+                     }
+                     syncPlayheadOverlay();
+                     if (auto *app = ArtifactApplicationManager::instance()) {
+                       if (auto *ctx = app->activeContextService()) {
+                         ctx->seekToFrame(frame);
+                       }
+                     }
+                   });
+  if (!impl_->curveEditorRefreshTimer_) {
+    impl_->curveEditorRefreshTimer_ = new QTimer(this);
+    impl_->curveEditorRefreshTimer_->setSingleShot(true);
+    QObject::connect(impl_->curveEditorRefreshTimer_, &QTimer::timeout, this,
+                     [this]() { refreshCurveEditorTracks(); });
+  }
   // auto layerTimelinePanel = new ArtifactLayerTimelinePanelWrapper();
   // layerTimelinePanel->setMinimumWidth(220);
   // layerTimelinePanel->setMaximumWidth(320);
@@ -1528,7 +2477,24 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   rightPanelLayout->addWidget(timeNavigatorWidget);
   rightPanelLayout->addWidget(scrubBar);
   rightPanelLayout->addWidget(workAreaWidget);
-  rightPanelLayout->addWidget(painterTrackView, 1);
+  impl_->timelinePainterPage_ = new QWidget();
+  auto *timelinePainterLayout = new QVBoxLayout(impl_->timelinePainterPage_);
+  timelinePainterLayout->setContentsMargins(0, 0, 0, 0);
+  timelinePainterLayout->setSpacing(0);
+  timelinePainterLayout->addWidget(painterTrackView, 1);
+
+  impl_->curveEditorPage_ = new QWidget();
+  auto *curvePanelLayout = new QVBoxLayout(impl_->curveEditorPage_);
+  curvePanelLayout->setContentsMargins(0, 0, 0, 0);
+  curvePanelLayout->setSpacing(0);
+  curvePanelLayout->addWidget(curveHeader);
+  curvePanelLayout->addWidget(curveEditor, 1);
+
+  impl_->timelineModeStack_ = new QStackedWidget();
+  impl_->timelineModeStack_->addWidget(impl_->timelinePainterPage_);
+  impl_->timelineModeStack_->addWidget(impl_->curveEditorPage_);
+  impl_->timelineModeStack_->setCurrentWidget(impl_->timelinePainterPage_);
+  rightPanelLayout->addWidget(impl_->timelineModeStack_, 1);
   rightPanel->setLayout(rightPanelLayout);
 
   impl_->playheadOverlay_ =
@@ -1565,6 +2531,9 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   QObject::connect(scrubBar, &ArtifactTimelineScrubBar::frameChanged, this,
                    [this](const auto &frame) {
                      impl_->currentFrame_ = static_cast<double>(frame.framePosition());
+                     if (impl_->curveEditor_) {
+                       impl_->curveEditor_->setCurrentFrame(frame.framePosition());
+                     }
                      // Emit debug message for any playhead change (playback, scroll, scrub)
                      Q_EMIT timelineDebugMessage(QStringLiteral("Playhead: %1").arg(frame.framePosition()));
                      if (impl_->painterTrackView_) {
@@ -1598,6 +2567,9 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
                   static_cast<double>(frame.framePosition()));
             }
             impl_->currentFrame_ = static_cast<double>(frame.framePosition());
+            if (impl_->curveEditor_) {
+              impl_->curveEditor_->setCurrentFrame(frame.framePosition());
+            }
             syncPlayheadOverlay();
             const QSignalBlocker blocker(scrubBar);
             scrubBar->setCurrentFrame(frame);
@@ -1710,6 +2682,17 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
               return;
             }
             scheduleSelectionSync();
+            if (impl_->curveEditor_ && impl_->graphEditorVisible_) {
+              QMetaObject::invokeMethod(
+                  this,
+                  [this]() {
+                    if (!impl_) {
+                      return;
+                    }
+                    refreshCurveEditorTracks();
+                  },
+                  Qt::QueuedConnection);
+            }
           }));
   impl_->eventBusSubscriptions_.push_back(
       impl_->eventBus_.subscribe<LayerSelectionChangedEvent>(
@@ -1718,6 +2701,17 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
               return;
             }
             scheduleSelectionSync();
+            if (impl_->curveEditor_ && impl_->graphEditorVisible_) {
+              QMetaObject::invokeMethod(
+                  this,
+                  [this]() {
+                    if (!impl_) {
+                      return;
+                    }
+                    refreshCurveEditorTracks();
+                  },
+                  Qt::QueuedConnection);
+            }
           }));
   impl_->eventBusSubscriptions_.push_back(
       impl_->eventBus_.subscribe<CurrentCompositionChangedEvent>(
@@ -1822,6 +2816,9 @@ void ArtifactTimelineWidget::setComposition(const CompositionID &id) {
         refreshTracks();
         updateSearchState();
         updateKeyframeState();
+        if (impl_->curveEditor_ && impl_->graphEditorVisible_) {
+          refreshCurveEditorTracks();
+        }
       }
     }
   }
@@ -1954,6 +2951,9 @@ void ArtifactTimelineWidget::refreshTracks() {
     syncPlayheadOverlay();
     impl_->painterTrackView_->setClips(painterClips);
     syncPainterSelectionState();
+  }
+  if (impl_->curveEditor_ && impl_->graphEditorVisible_) {
+    refreshCurveEditorTracks();
   }
   updateKeyframeState();
 }
@@ -2312,6 +3312,20 @@ void ArtifactTimelineWidget::updateSelectionState()
             .arg(compositionLabel)
             .arg(frameLabelValue));
   }
+  if (impl_->curveEditorSummaryLabel_) {
+    const int curveCount = static_cast<int>(impl_->curveTracks_.size());
+    impl_->curveEditorSummaryLabel_->setText(
+        QStringLiteral("%1 | %2 curve track(s)")
+            .arg(compositionLabel)
+            .arg(curveCount));
+  }
+  if (impl_->curveEditor_ && impl_->graphEditorVisible_) {
+    refreshCurveEditorTracks();
+    if (impl_->curveEditor_) {
+      impl_->curveEditor_->focusTrack(impl_->focusedCurveTrackIndex_);
+    }
+  }
+  updateCurvePropertyList();
 }
 
 void ArtifactTimelineWidget::syncPainterSelectionState()
@@ -2482,6 +3496,245 @@ void ArtifactTimelineWidget::jumpToKeyframeHit(int step)
     impl_->scrubBar_->setCurrentFrame(FramePosition(static_cast<int>(targetFrame)));
   }
   updateKeyframeState();
+}
+
+void ArtifactTimelineWidget::jumpToFirstKeyframe()
+{
+  if (!impl_) {
+    return;
+  }
+
+  ArtifactCompositionPtr composition;
+  if (auto* svc = ArtifactProjectService::instance()) {
+    composition = svc->currentComposition().lock();
+  }
+  if (!composition) {
+    return;
+  }
+
+  ArtifactLayerSelectionManager* selectionManager = nullptr;
+  if (auto* app = ArtifactApplicationManager::instance()) {
+    selectionManager = app->layerSelectionManager();
+  }
+  const auto frames = collectSelectedKeyframeFrames(composition, selectionManager);
+  if (frames.isEmpty()) {
+    return;
+  }
+
+  const qint64 targetFrame = frames.front();
+  impl_->currentFrame_ = static_cast<double>(targetFrame);
+  if (impl_->painterTrackView_) {
+    impl_->painterTrackView_->setCurrentFrame(static_cast<double>(targetFrame));
+  }
+  syncPlayheadOverlay();
+  if (impl_->scrubBar_) {
+    impl_->scrubBar_->setCurrentFrame(FramePosition(static_cast<int>(targetFrame)));
+  }
+  updateKeyframeState();
+}
+
+void ArtifactTimelineWidget::jumpToLastKeyframe()
+{
+  if (!impl_) {
+    return;
+  }
+
+  ArtifactCompositionPtr composition;
+  if (auto* svc = ArtifactProjectService::instance()) {
+    composition = svc->currentComposition().lock();
+  }
+  if (!composition) {
+    return;
+  }
+
+  ArtifactLayerSelectionManager* selectionManager = nullptr;
+  if (auto* app = ArtifactApplicationManager::instance()) {
+    selectionManager = app->layerSelectionManager();
+  }
+  const auto frames = collectSelectedKeyframeFrames(composition, selectionManager);
+  if (frames.isEmpty()) {
+    return;
+  }
+
+  const qint64 targetFrame = frames.back();
+  impl_->currentFrame_ = static_cast<double>(targetFrame);
+  if (impl_->painterTrackView_) {
+    impl_->painterTrackView_->setCurrentFrame(static_cast<double>(targetFrame));
+  }
+  syncPlayheadOverlay();
+  if (impl_->scrubBar_) {
+    impl_->scrubBar_->setCurrentFrame(FramePosition(static_cast<int>(targetFrame)));
+  }
+  updateKeyframeState();
+}
+
+void ArtifactTimelineWidget::addKeyframeAtPlayhead()
+{
+  if (!impl_) {
+    return;
+  }
+
+  ArtifactCompositionPtr composition;
+  if (auto* svc = ArtifactProjectService::instance()) {
+    composition = svc->currentComposition().lock();
+  }
+  if (!composition) {
+    return;
+  }
+
+  ArtifactLayerSelectionManager* selectionManager = nullptr;
+  if (auto* app = ArtifactApplicationManager::instance()) {
+    selectionManager = app->layerSelectionManager();
+  }
+
+  auto layers = selectedTimelineLayers(selectionManager);
+  if (layers.isEmpty() && selectionManager && selectionManager->currentLayer()) {
+    layers.push_back(selectionManager->currentLayer());
+  }
+  if (layers.isEmpty()) {
+    return;
+  }
+
+  const qint64 frame = static_cast<qint64>(std::llround(std::max(0.0, impl_->currentFrame_)));
+  bool changed = false;
+  for (const auto& layer : layers) {
+    changed |= applyKeyframeEditAtFrame(composition, layer, frame, false);
+  }
+  if (changed) {
+    if (auto* svc = ArtifactProjectService::instance()) {
+      svc->projectChanged();
+    }
+    updateKeyframeState();
+    Q_EMIT timelineDebugMessage(
+        QStringLiteral("Added keyframe at F%1 for %2 layer(s)")
+            .arg(frame)
+            .arg(layers.size()));
+  }
+}
+
+void ArtifactTimelineWidget::removeKeyframeAtPlayhead()
+{
+  if (!impl_) {
+    return;
+  }
+
+  ArtifactCompositionPtr composition;
+  if (auto* svc = ArtifactProjectService::instance()) {
+    composition = svc->currentComposition().lock();
+  }
+  if (!composition) {
+    return;
+  }
+
+  ArtifactLayerSelectionManager* selectionManager = nullptr;
+  if (auto* app = ArtifactApplicationManager::instance()) {
+    selectionManager = app->layerSelectionManager();
+  }
+
+  auto layers = selectedTimelineLayers(selectionManager);
+  if (layers.isEmpty() && selectionManager && selectionManager->currentLayer()) {
+    layers.push_back(selectionManager->currentLayer());
+  }
+  if (layers.isEmpty()) {
+    return;
+  }
+
+  const qint64 frame = static_cast<qint64>(std::llround(std::max(0.0, impl_->currentFrame_)));
+  bool changed = false;
+  for (const auto& layer : layers) {
+    changed |= applyKeyframeEditAtFrame(composition, layer, frame, true);
+  }
+  if (changed) {
+    if (auto* svc = ArtifactProjectService::instance()) {
+      svc->projectChanged();
+    }
+    updateKeyframeState();
+    Q_EMIT timelineDebugMessage(
+        QStringLiteral("Removed keyframe at F%1 for %2 layer(s)")
+            .arg(frame)
+            .arg(layers.size()));
+  }
+}
+
+void ArtifactTimelineWidget::selectAllKeyframes()
+{
+  if (!impl_ || !impl_->painterTrackView_) {
+    return;
+  }
+  impl_->painterTrackView_->selectAllKeyframeMarkers();
+  updateKeyframeState();
+}
+
+void ArtifactTimelineWidget::copySelectedKeyframes()
+{
+  if (!impl_ || !impl_->painterTrackView_) {
+    return;
+  }
+
+  ArtifactCompositionPtr composition;
+  if (auto* svc = ArtifactProjectService::instance()) {
+    composition = svc->currentComposition().lock();
+  }
+  if (!composition) {
+    return;
+  }
+
+  const auto markers = impl_->painterTrackView_->selectedKeyframeMarkers();
+  const QJsonArray keyframes = serializeSelectedKeyframes(composition, markers);
+  if (keyframes.isEmpty()) {
+    return;
+  }
+
+  const QString layerId = markers.isEmpty() ? QString() : markers.front().layerId.toString();
+  ClipboardManager::instance().copyKeyframes(QStringLiteral("timeline"), keyframes, layerId);
+  Q_EMIT timelineDebugMessage(
+      QStringLiteral("Copied %1 keyframe(s) to clipboard").arg(keyframes.size()));
+}
+
+void ArtifactTimelineWidget::pasteKeyframesAtPlayhead()
+{
+  if (!impl_) {
+    return;
+  }
+
+  ArtifactCompositionPtr composition;
+  if (auto* svc = ArtifactProjectService::instance()) {
+    composition = svc->currentComposition().lock();
+  }
+  if (!composition) {
+    return;
+  }
+
+  ClipboardManager::instance().syncFromSystemClipboard();
+  if (!ClipboardManager::instance().hasKeyframeData()) {
+    return;
+  }
+
+  ArtifactLayerSelectionManager* selectionManager = nullptr;
+  if (auto* app = ArtifactApplicationManager::instance()) {
+    selectionManager = app->layerSelectionManager();
+  }
+  auto targetLayers = selectedTimelineLayers(selectionManager);
+  if (targetLayers.isEmpty() && selectionManager && selectionManager->currentLayer()) {
+    targetLayers.push_back(selectionManager->currentLayer());
+  }
+  if (targetLayers.isEmpty()) {
+    return;
+  }
+
+  const qint64 frame = static_cast<qint64>(std::llround(std::max(0.0, impl_->currentFrame_)));
+  const QJsonArray keyframes = ClipboardManager::instance().pasteKeyframes();
+  if (!pasteKeyframesToLayers(composition, targetLayers, keyframes, frame)) {
+    return;
+  }
+
+  if (auto* svc = ArtifactProjectService::instance()) {
+    svc->projectChanged();
+  }
+  refreshTracks();
+  updateKeyframeState();
+  Q_EMIT timelineDebugMessage(
+      QStringLiteral("Pasted %1 keyframe(s) at F%2").arg(keyframes.size()).arg(frame));
 }
 
 }; // namespace Artifact

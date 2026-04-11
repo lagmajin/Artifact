@@ -7,6 +7,8 @@ module;
 #include <QMatrix4x4>
 #include <QPainter>
 #include <QFutureWatcher>
+#include <QThread>
+#include <QCoreApplication>
 #include <QtConcurrent>
 #include <OpenImageIO/imagebuf.h>
 #include <OpenImageIO/imagebufalgo.h>
@@ -248,8 +250,11 @@ QImage ArtifactImageLayer::toQImage() const
         return QImage();
     }
 
-    // [Fix 1] バックグラウンドプリフェッチが完了していればキャッシュに取り込む
-    if (!impl_->prefetchDone_ && impl_->prefetchFuture_.isFinished()) {
+    const bool isMainThread = (QThread::currentThread() == qApp->thread());
+
+    // メインスレッドのみ: 完了済みプリフェッチをキャッシュに取り込む
+    // (バックグラウンドスレッドは impl_ を書かず future から直接返す)
+    if (isMainThread && !impl_->prefetchDone_ && impl_->prefetchFuture_.isFinished()) {
         QImage loaded = impl_->prefetchFuture_.result();
         if (!loaded.isNull()) {
             impl_->cache_ = std::make_shared<QImage>(std::move(loaded));
@@ -259,28 +264,45 @@ QImage ArtifactImageLayer::toQImage() const
         impl_->prefetchDone_ = true;
     }
 
+    // キャッシュが既にある場合はそのまま返す
+    if (impl_->cache_) {
+        return *impl_->cache_;
+    }
+
     // プリフェッチがまだ完了していない場合はフォールバック（同期読み込み）
-    if (!impl_->cache_ && !impl_->sourcePath_.isEmpty()) {
-        if (!impl_->prefetchDone_ && impl_->prefetchFuture_.isRunning()) {
-            // まだ実行中: ブロックかけずに空画像を返し、次のフレームで再試行
-            return QImage();
-        }
-        // 非同期パスを通らなかった場合のフォールバック
-        QSize size;
-        QString errorString;
-        QImage loaded = loadImageViaOIIO(impl_->sourcePath_, &size, &errorString);
-        if (!loaded.isNull()) {
-            impl_->cache_ = std::make_shared<QImage>(loaded);
-            if (size.isValid()) {
-                impl_->width_  = size.width();
-                impl_->height_ = size.height();
+    if (!impl_->sourcePath_.isEmpty()) {
+        if (!impl_->prefetchDone_) {
+            if (!isMainThread) {
+                // バックグラウンドスレッド: futureがある場合は待機して直接返す (impl_書き込み不要)
+                if (impl_->prefetchFuture_.isRunning() || impl_->prefetchFuture_.isFinished()) {
+                    impl_->prefetchFuture_.waitForFinished();
+                    QImage img = impl_->prefetchFuture_.result();
+                    if (!img.isNull()) return img;
+                }
+                // futureが無い / 結果がnull: バックグラウンドで同期ロード (impl_非書き込み)
+                return loadImageViaOIIO(impl_->sourcePath_);
             }
-        } else {
-            qWarning() << "[ArtifactImageLayer::toQImage] Sync fallback load failed:"
-                       << impl_->sourcePath_ << "error=" << errorString;
-            return QImage();
+            // メインスレッド: プリフェッチ実行中はブロックせず次フレームで再試行
+            if (impl_->prefetchFuture_.isRunning()) {
+                return QImage();
+            }
+            // 非同期パスを通らなかった場合のフォールバック (メインスレッドのみ impl_書き込み)
+            QSize size;
+            QString errorString;
+            QImage loaded = loadImageViaOIIO(impl_->sourcePath_, &size, &errorString);
+            if (!loaded.isNull()) {
+                impl_->cache_ = std::make_shared<QImage>(loaded);
+                if (size.isValid()) {
+                    impl_->width_  = size.width();
+                    impl_->height_ = size.height();
+                }
+            } else {
+                qWarning() << "[ArtifactImageLayer::toQImage] Sync fallback load failed:"
+                           << impl_->sourcePath_ << "error=" << errorString;
+                return QImage();
+            }
+            impl_->prefetchDone_ = true;
         }
-        impl_->prefetchDone_ = true;
     }
 
     if (!impl_->cache_) {

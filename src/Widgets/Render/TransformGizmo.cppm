@@ -29,6 +29,26 @@ Q_LOGGING_CATEGORY(transformGizmoLog, "artifact.transformgizmo")
 
 constexpr float kPi = 3.14159265358979323846f;
 
+struct GizmoVisualStyle {
+ static constexpr float scaleAxisThickness = 1.25f;
+ static constexpr float scaleCornerThickness = 1.05f;
+ static constexpr float scaleHandleBoost = 0.9f;
+ static constexpr float scaleHandleOutset = 7.0f;
+ static constexpr float scaleHandleSize = 0.82f;
+ static constexpr float rotateRingPadding = 30.0f;
+ static constexpr float rotateRingThickness = 3.4f;
+ static constexpr float rotateRingInnerScale = 1.65f;
+ static constexpr float rotateRingShadowBoost = 1.65f;
+ static constexpr float rotateRingHitBoost = 3.4f;
+ static constexpr float rotateGripPadding = 10.0f;
+ static constexpr float rotateGripSize = 4.6f;
+ static constexpr float rotateTickMinor = 24.0f;
+ static constexpr float rotateTickMajor = 15.0f;
+ static constexpr float rotateCardinalStep = 90.0f;
+ static constexpr float rotateArcStep = 8.0f;
+ static constexpr float centerMarkRadius = 3.5f;
+};
+
 QRectF expandedCanvasBounds(const QRectF& bbox, float zoom)
 {
  const float safeZoom = zoom > 0.0001f ? zoom : 1.0f;
@@ -144,23 +164,245 @@ float pointDistance(const Detail::float2& a, const QPointF& b)
  return pointDistance(QPointF(a.x, a.y), b);
 }
 
-float pointToSegmentDistance(const QPointF& p, const QPointF& a, const QPointF& b)
+struct RotateRingGeometry {
+ QPointF centerWorld;
+ float baseRadius = 0.0f;
+ float ringRadius = 0.0f;
+ float innerRadius = 0.0f;
+ float outerRadius = 0.0f;
+ float ringThickness = 0.0f;
+ float hitRadius = 0.0f;
+ float hitThickness = 0.0f;
+ float gripRadius = 0.0f;
+ float gripSize = 0.0f;
+};
+
+RotateRingGeometry computeRotateRingGeometry(const QRectF& localRect,
+                                            const QTransform& globalTransform,
+                                            float invZoom)
 {
- const double ax = a.x();
- const double ay = a.y();
- const double bx = b.x();
- const double by = b.y();
- const double px = p.x();
- const double py = p.y();
- const double abx = bx - ax;
- const double aby = by - ay;
- const double lenSq = abx * abx + aby * aby;
- if (lenSq <= 1e-9) {
-  return pointDistance(p, a);
+ RotateRingGeometry geo;
+ geo.centerWorld = globalTransform.map(localRect.center());
+
+ const QPointF tl = globalTransform.map(localRect.topLeft());
+ const QPointF tr = globalTransform.map(localRect.topRight());
+ const QPointF bl = globalTransform.map(localRect.bottomLeft());
+ const QPointF br = globalTransform.map(localRect.bottomRight());
+
+ geo.baseRadius = std::max({pointDistance(geo.centerWorld, tl),
+                            pointDistance(geo.centerWorld, tr),
+                            pointDistance(geo.centerWorld, bl),
+                            pointDistance(geo.centerWorld, br)});
+ geo.ringRadius = geo.baseRadius + std::max(GizmoVisualStyle::rotateRingPadding * invZoom, 22.0f);
+ geo.ringThickness = std::max(GizmoVisualStyle::rotateRingThickness * invZoom, 2.2f);
+ geo.innerRadius = std::max(1.0f, geo.ringRadius - geo.ringThickness * GizmoVisualStyle::rotateRingInnerScale);
+ geo.outerRadius = geo.ringRadius + geo.ringThickness * GizmoVisualStyle::rotateRingShadowBoost;
+ geo.hitRadius = geo.ringRadius;
+ geo.hitThickness = std::max(geo.ringThickness * GizmoVisualStyle::rotateRingHitBoost, 12.0f * invZoom);
+ geo.gripRadius = geo.ringRadius + std::max(GizmoVisualStyle::rotateGripPadding * invZoom, 7.0f);
+ geo.gripSize = std::max(GizmoVisualStyle::rotateGripSize * invZoom, 4.0f);
+ return geo;
+}
+
+float angleDegreesAround(const QPointF& center, const QPointF& point)
+{
+ return static_cast<float>(std::atan2(point.y() - center.y(), point.x() - center.x()) *
+                           180.0 / kPi);
+}
+
+float normalizeAngleDeltaDegrees(float deltaDegrees)
+{
+ while (deltaDegrees > 180.0f) {
+  deltaDegrees -= 360.0f;
  }
- const double t = std::clamp(((px - ax) * abx + (py - ay) * aby) / lenSq, 0.0, 1.0);
- const QPointF proj(ax + abx * t, ay + aby * t);
- return pointDistance(p, proj);
+ while (deltaDegrees < -180.0f) {
+  deltaDegrees += 360.0f;
+ }
+ return deltaDegrees;
+}
+
+QPointF pointOnCircle(const QPointF& center, float radius, float angleDegrees)
+{
+ const float radians = angleDegrees * (kPi / 180.0f);
+ return QPointF(center.x() + std::cos(radians) * radius,
+                center.y() + std::sin(radians) * radius);
+}
+
+void drawArc(ArtifactIRenderer* renderer,
+             const QPointF& center,
+             float radius,
+             float startAngleDegrees,
+             float sweepDegrees,
+             const FloatColor& color,
+             float thickness)
+{
+ if (!renderer || radius <= 0.0f || std::abs(sweepDegrees) <= 0.01f) {
+  return;
+ }
+
+ const int segments = std::max(12, static_cast<int>(std::ceil(std::abs(sweepDegrees) / GizmoVisualStyle::rotateArcStep)));
+ QPointF prev = pointOnCircle(center, radius, startAngleDegrees);
+ for (int i = 1; i <= segments; ++i) {
+  const float t = static_cast<float>(i) / static_cast<float>(segments);
+  const QPointF cur = pointOnCircle(center, radius, startAngleDegrees + sweepDegrees * t);
+  renderer->drawSolidLine({static_cast<float>(prev.x()), static_cast<float>(prev.y())},
+                          {static_cast<float>(cur.x()), static_cast<float>(cur.y())},
+                          color, thickness);
+  prev = cur;
+ }
+}
+
+void drawRotateTickMarks(ArtifactIRenderer* renderer,
+                         const RotateRingGeometry& geo,
+                         const FloatColor& minorColor,
+                         const FloatColor& majorColor,
+                         float invZoom)
+{
+ if (!renderer) {
+  return;
+ }
+
+ const float minorLength = std::max(5.0f * invZoom, 4.0f);
+ const float majorLength = std::max(9.0f * invZoom, 6.0f);
+ const float minorThickness = std::max(0.9f, 0.8f * invZoom);
+ const float majorThickness = std::max(1.15f, 1.0f * invZoom);
+
+ for (int step = 0; step < 24; ++step) {
+  const float angle = -90.0f + static_cast<float>(step) * GizmoVisualStyle::rotateTickMajor;
+  const bool isMajor = (step % 6) == 0;
+  const float tickLength = isMajor ? majorLength : minorLength;
+  const QPointF outer = pointOnCircle(geo.centerWorld, geo.outerRadius + tickLength, angle);
+  const QPointF inner = pointOnCircle(geo.centerWorld, geo.outerRadius + std::max(1.4f * invZoom, 1.0f), angle);
+  const FloatColor color = isMajor ? majorColor : minorColor;
+  renderer->drawSolidLine({static_cast<float>(inner.x()), static_cast<float>(inner.y())},
+                          {static_cast<float>(outer.x()), static_cast<float>(outer.y())},
+                          color, isMajor ? majorThickness : minorThickness);
+ }
+}
+
+void drawRotateLeader(ArtifactIRenderer* renderer,
+                      const QPointF& center,
+                      const QPointF& grip,
+                      const FloatColor& color,
+                      float invZoom)
+{
+ if (!renderer) {
+  return;
+ }
+
+ const float leaderThickness = std::max(1.2f, 1.1f * invZoom);
+ renderer->drawSolidLine({static_cast<float>(center.x()), static_cast<float>(center.y())},
+                         {static_cast<float>(grip.x()), static_cast<float>(grip.y())},
+                         color, leaderThickness);
+
+ const QPointF dir = grip - center;
+ const float len = std::max(1.0f, static_cast<float>(std::sqrt(dir.x() * dir.x() + dir.y() * dir.y())));
+ const QPointF n(dir.x() / len, dir.y() / len);
+ const QPointF t(-n.y(), n.x());
+ const float arrowLen = std::max(7.0f * invZoom, 5.0f);
+ const QPointF tip = grip;
+ const QPointF back = tip - n * arrowLen;
+ renderer->drawSolidLine({static_cast<float>(back.x() + t.x() * arrowLen * 0.45f),
+                          static_cast<float>(back.y() + t.y() * arrowLen * 0.45f)},
+                         {static_cast<float>(tip.x()),
+                          static_cast<float>(tip.y())},
+                         color, leaderThickness);
+ renderer->drawSolidLine({static_cast<float>(back.x() - t.x() * arrowLen * 0.45f),
+                          static_cast<float>(back.y() - t.y() * arrowLen * 0.45f)},
+                         {static_cast<float>(tip.x()),
+                          static_cast<float>(tip.y())},
+                         color, leaderThickness);
+}
+
+void drawRotateCardinalMarks(ArtifactIRenderer* renderer,
+                             const RotateRingGeometry& geo,
+                             const FloatColor& majorColor,
+                             const FloatColor& minorColor,
+                             float invZoom)
+{
+ if (!renderer) {
+  return;
+ }
+
+ const float majorLength = std::max(12.0f * invZoom, 8.0f);
+ const float minorLength = std::max(6.0f * invZoom, 4.5f);
+ const float majorThickness = std::max(1.4f, 1.2f * invZoom);
+ const float minorThickness = std::max(1.0f, 0.9f * invZoom);
+
+ for (int i = 0; i < 4; ++i) {
+  const float angle = -90.0f + static_cast<float>(i) * GizmoVisualStyle::rotateCardinalStep;
+  const bool isMajor = (i % 2) == 0;
+  const float outLength = geo.outerRadius + (isMajor ? majorLength : minorLength);
+  const QPointF inner = pointOnCircle(geo.centerWorld, geo.outerRadius + std::max(1.0f, 0.8f * invZoom), angle);
+  const QPointF outer = pointOnCircle(geo.centerWorld, outLength, angle);
+  const FloatColor color = isMajor ? majorColor : minorColor;
+  renderer->drawSolidLine({static_cast<float>(inner.x()), static_cast<float>(inner.y())},
+                          {static_cast<float>(outer.x()), static_cast<float>(outer.y())},
+                          color, isMajor ? majorThickness : minorThickness);
+ }
+}
+
+void drawArrowHead(ArtifactIRenderer* renderer,
+                   const QPointF& tip,
+                   const QPointF& dir,
+                   const FloatColor& color,
+                   float invZoom)
+{
+ if (!renderer) {
+  return;
+ }
+
+ const float len = std::max(1.0f, static_cast<float>(std::sqrt(dir.x() * dir.x() + dir.y() * dir.y())));
+ const QPointF n(dir.x() / len, dir.y() / len);
+ const QPointF t(-n.y(), n.x());
+ const float arrowLen = std::max(12.0f * invZoom, 8.0f);
+ const QPointF base = tip - n * arrowLen;
+ renderer->drawSolidLine({static_cast<float>(base.x() + t.x() * arrowLen * 0.55f),
+                          static_cast<float>(base.y() + t.y() * arrowLen * 0.55f)},
+                         {static_cast<float>(tip.x()), static_cast<float>(tip.y())},
+                         color, std::max(1.6f, 1.25f * invZoom));
+ renderer->drawSolidLine({static_cast<float>(base.x() - t.x() * arrowLen * 0.55f),
+                          static_cast<float>(base.y() - t.y() * arrowLen * 0.55f)},
+                         {static_cast<float>(tip.x()), static_cast<float>(tip.y())},
+                         color, std::max(1.6f, 1.25f * invZoom));
+}
+
+void drawBoxHandle(ArtifactIRenderer* renderer,
+                   const QPointF& center,
+                   float size,
+                   const FloatColor& fill,
+                   const FloatColor& outline,
+                   float invZoom)
+{
+ if (!renderer) {
+  return;
+ }
+
+ const float half = size * 0.5f;
+ renderer->drawSolidRect(static_cast<float>(center.x() - half),
+                         static_cast<float>(center.y() - half),
+                         size, size,
+                         FloatColor{0.0f, 0.0f, 0.0f, 0.34f}, 1.0f);
+ renderer->drawSolidRect(static_cast<float>(center.x() - half + std::max(0.8f, 0.6f * invZoom)),
+                         static_cast<float>(center.y() - half + std::max(0.8f, 0.6f * invZoom)),
+                         size - std::max(1.6f, 1.2f * invZoom),
+                         size - std::max(1.6f, 1.2f * invZoom),
+                         brighten(fill, 1.08f), 1.0f);
+ renderer->drawRectOutline(static_cast<float>(center.x() - half),
+                           static_cast<float>(center.y() - half),
+                           size, size, outline);
+}
+
+QPointF offsetPointAwayFromCenter(const QPointF& center, const QPointF& point, float amount)
+{
+ const QPointF delta = point - center;
+ const float len = std::max(1.0f, static_cast<float>(std::sqrt(delta.x() * delta.x() + delta.y() * delta.y())));
+ return point + QPointF(delta.x() / len * amount, delta.y() / len * amount);
+}
+
+QPointF offsetPointAwayFromCenter(const QPointF& center, const Detail::float2& point, float amount)
+{
+ return offsetPointAwayFromCenter(center, QPointF(point.x, point.y), amount);
 }
 
 struct TransformSnapshot {
@@ -338,8 +580,8 @@ if (!layer_ || !renderer) {
 
 const float zoom = renderer->getZoom();
 const float invZoom = zoom > 0.0001f ? 1.0f / zoom : 1.0f;
-const float lineThickness = std::clamp(2.7f * invZoom, 1.5f, 5.0f);
-const float handleSize = std::clamp(HANDLE_SIZE * 1.65f * invZoom, 9.0f, 22.0f);
+const float lineThickness = std::clamp(2.4f * invZoom, 1.35f, 4.6f);
+ const float handleSize = std::clamp(HANDLE_SIZE * 1.62f * invZoom, 9.0f, 21.0f);
 
 QRectF localRect = layer_->localBounds();
 if (!localRect.isValid() || localRect.width() <= 0.0 || localRect.height() <= 0.0) {
@@ -374,6 +616,64 @@ const bool showAnchor = mode_ == Mode::All;
   drawEmphasizedLine(renderer, tr_c, br_c, gizmoColor, lineThickness, invZoom, isActive);
   drawEmphasizedLine(renderer, br_c, bl_c, gizmoColor, lineThickness, invZoom, isActive);
   drawEmphasizedLine(renderer, bl_c, tl_c, gizmoColor, lineThickness, invZoom, isActive);
+
+  const QPointF centerPoint = globalTransform.map(localRect.center());
+  const QPointF topPoint = globalTransform.map(QPointF(localRect.center().x(), localRect.top()));
+  const QPointF bottomPoint = globalTransform.map(QPointF(localRect.center().x(), localRect.bottom()));
+  const QPointF leftPoint = globalTransform.map(QPointF(localRect.left(), localRect.center().y()));
+  const QPointF rightPoint = globalTransform.map(QPointF(localRect.right(), localRect.center().y()));
+  const QPointF topDir = topPoint - centerPoint;
+  const QPointF bottomDir = bottomPoint - centerPoint;
+  const QPointF leftDir = leftPoint - centerPoint;
+  const QPointF rightDir = rightPoint - centerPoint;
+
+  if (showMove) {
+   const FloatColor moveColor = isActive ? FloatColor{1.0f, 0.84f, 0.30f, 1.0f}
+                                         : FloatColor{0.92f, 0.94f, 0.98f, 0.84f};
+   const float arrowLift = std::max(7.0f, 8.5f * invZoom);
+   drawArrowHead(renderer, offsetPointAwayFromCenter(centerPoint, topPoint, arrowLift), topDir, moveColor, invZoom);
+   drawArrowHead(renderer, offsetPointAwayFromCenter(centerPoint, bottomPoint, arrowLift), bottomDir, moveColor, invZoom);
+   drawArrowHead(renderer, offsetPointAwayFromCenter(centerPoint, leftPoint, arrowLift), leftDir, moveColor, invZoom);
+   drawArrowHead(renderer, offsetPointAwayFromCenter(centerPoint, rightPoint, arrowLift), rightDir, moveColor, invZoom);
+  }
+
+  if (showScale) {
+   const float handleSizeScale = std::clamp(handleSize * GizmoVisualStyle::scaleHandleSize, 7.0f, 16.0f);
+   const FloatColor cornerFill = activeHandle_ == HandleType::Scale_TL ||
+                                 activeHandle_ == HandleType::Scale_TR ||
+                                 activeHandle_ == HandleType::Scale_BL ||
+                                 activeHandle_ == HandleType::Scale_BR
+       ? FloatColor{1.0f, 0.95f, 0.72f, 1.0f}
+       : FloatColor{0.94f, 0.96f, 0.98f, 0.96f};
+   const FloatColor axisFill = activeHandle_ == HandleType::Scale_T ||
+                               activeHandle_ == HandleType::Scale_B ||
+                               activeHandle_ == HandleType::Scale_L ||
+                               activeHandle_ == HandleType::Scale_R
+       ? FloatColor{0.68f, 0.96f, 0.82f, 1.0f}
+       : FloatColor{0.90f, 0.94f, 0.96f, 0.95f};
+   const FloatColor boxOutline = activeHandle_ != HandleType::None
+       ? FloatColor{1.0f, 1.0f, 1.0f, 1.0f}
+       : FloatColor{0.12f, 0.12f, 0.12f, 1.0f};
+
+   const float outward = std::max(4.2f, GizmoVisualStyle::scaleHandleOutset * 0.58f * invZoom);
+   drawBoxHandle(renderer, offsetPointAwayFromCenter(centerPoint, tl_c, outward), handleSizeScale, cornerFill, boxOutline, invZoom);
+   drawBoxHandle(renderer, offsetPointAwayFromCenter(centerPoint, tr_c, outward), handleSizeScale, cornerFill, boxOutline, invZoom);
+   drawBoxHandle(renderer, offsetPointAwayFromCenter(centerPoint, bl_c, outward), handleSizeScale, cornerFill, boxOutline, invZoom);
+   drawBoxHandle(renderer, offsetPointAwayFromCenter(centerPoint, br_c, outward), handleSizeScale, cornerFill, boxOutline, invZoom);
+   drawBoxHandle(renderer, offsetPointAwayFromCenter(centerPoint, topPoint, outward * 0.85f), handleSizeScale * 0.92f, axisFill, boxOutline, invZoom);
+   drawBoxHandle(renderer, offsetPointAwayFromCenter(centerPoint, bottomPoint, outward * 0.85f), handleSizeScale * 0.92f, axisFill, boxOutline, invZoom);
+   drawBoxHandle(renderer, offsetPointAwayFromCenter(centerPoint, leftPoint, outward * 0.85f), handleSizeScale * 0.92f, axisFill, boxOutline, invZoom);
+   drawBoxHandle(renderer, offsetPointAwayFromCenter(centerPoint, rightPoint, outward * 0.85f), handleSizeScale * 0.92f, axisFill, boxOutline, invZoom);
+  }
+
+  const FloatColor centerMark = activeHandle_ == HandleType::Move
+      ? FloatColor{1.0f, 0.82f, 0.28f, 1.0f}
+      : FloatColor{0.82f, 0.86f, 0.92f, 0.92f};
+  const float centerMarkSize = std::max(4.5f, GizmoVisualStyle::centerMarkRadius * invZoom);
+  renderer->drawCircle(static_cast<float>(centerPoint.x()),
+                       static_cast<float>(centerPoint.y()),
+                       centerMarkSize,
+                       centerMark, 0.0f, true);
  }
 
  // Center points for handles
@@ -381,12 +681,6 @@ const bool showAnchor = mode_ == Mode::All;
  const Detail::float2 bc_c((float)globalTransform.map(QPointF(localRect.center().x(), localRect.bottom())).x(), (float)globalTransform.map(QPointF(localRect.center().x(), localRect.bottom())).y());
  const Detail::float2 lc_c((float)globalTransform.map(QPointF(localRect.left(), localRect.center().y())).x(), (float)globalTransform.map(QPointF(localRect.left(), localRect.center().y())).y());
  const Detail::float2 rc_c((float)globalTransform.map(QPointF(localRect.right(), localRect.center().y())).x(), (float)globalTransform.map(QPointF(localRect.right(), localRect.center().y())).y());
-
- // Draw handles
- auto drawHandle = [&](const Detail::float2& pos, const FloatColor& color) {
-  const QRectF rect(pos.x - handleSize * 0.5f, pos.y - handleSize * 0.5f, handleSize, handleSize);
-  drawEmphasizedRect(renderer, rect, color, std::max(1.0f, 0.8f * invZoom), invZoom, activeHandle_ != HandleType::None);
- };
 
  if (showScale) {
   const Detail::float2 center_c((float)globalTransform.map(localRect.center()).x(), (float)globalTransform.map(localRect.center()).y());
@@ -396,32 +690,13 @@ const bool showAnchor = mode_ == Mode::All;
   const FloatColor scaleY = activeHandle_ == HandleType::Scale_T || activeHandle_ == HandleType::Scale_B
       ? FloatColor{0.18f, 1.0f, 0.30f, 1.0f}
       : FloatColor{0.08f, 0.86f, 0.22f, 1.0f};
-  const FloatColor scaleCorner = activeHandle_ == HandleType::Scale_TL || activeHandle_ == HandleType::Scale_TR ||
-                                 activeHandle_ == HandleType::Scale_BL || activeHandle_ == HandleType::Scale_BR
-      ? FloatColor{1.0f, 0.98f, 0.96f, 1.0f}
-      : FloatColor{0.98f, 0.98f, 0.98f, 1.0f};
-
-  const float axisThickness = std::max(1.05f, 1.25f * invZoom);
-  const float cornerAxisThickness = std::max(0.9f, 1.05f * invZoom);
+  const float axisThickness = std::max(1.05f, GizmoVisualStyle::scaleAxisThickness * invZoom);
   drawEmphasizedLine(renderer, center_c, tc_c, scaleY, axisThickness, invZoom, isActive);
   drawEmphasizedLine(renderer, center_c, bc_c, scaleY, axisThickness, invZoom, isActive);
   drawEmphasizedLine(renderer, center_c, lc_c, scaleX, axisThickness, invZoom, isActive);
   drawEmphasizedLine(renderer, center_c, rc_c, scaleX, axisThickness, invZoom, isActive);
-  drawEmphasizedLine(renderer, center_c, tl_c, scaleCorner, cornerAxisThickness, invZoom, isActive);
-  drawEmphasizedLine(renderer, center_c, tr_c, scaleCorner, cornerAxisThickness, invZoom, isActive);
-  drawEmphasizedLine(renderer, center_c, bl_c, scaleCorner, cornerAxisThickness, invZoom, isActive);
-  drawEmphasizedLine(renderer, center_c, br_c, scaleCorner, cornerAxisThickness, invZoom, isActive);
 
-  drawHandle(tl_c, scaleCorner);
-  drawHandle(tr_c, scaleCorner);
-  drawHandle(bl_c, scaleCorner);
-  drawHandle(br_c, scaleCorner);
-  drawHandle(tc_c, scaleY);
-  drawHandle(bc_c, scaleY);
-  drawHandle(lc_c, scaleX);
-  drawHandle(rc_c, scaleX);
-
-  const float centerHandleSize = std::max(10.0f, handleSize * 0.9f);
+  const float centerHandleSize = std::max(8.5f, handleSize * GizmoVisualStyle::scaleHandleBoost);
   const QRectF centerRect(center_c.x - centerHandleSize * 0.5f,
                           center_c.y - centerHandleSize * 0.5f,
                           centerHandleSize, centerHandleSize);
@@ -433,46 +708,129 @@ const bool showAnchor = mode_ == Mode::All;
  }
 
  const auto& t3d = layer_->transform3D();
- const QPointF rotateCenterWorld = globalTransform.map(localRect.center());
- const float rotateBaseRadius = std::max({pointDistance(rotateCenterWorld, tl_c),
-                                          pointDistance(rotateCenterWorld, tr_c),
-                                          pointDistance(rotateCenterWorld, bl_c),
-                                          pointDistance(rotateCenterWorld, br_c)});
- const float rotateRingRadius = rotateBaseRadius + std::max(40.0f * invZoom, 28.0f);
- const float rotateRingThickness = std::max(1.1f * invZoom, 0.9f);
+ const RotateRingGeometry rotateGeo =
+     computeRotateRingGeometry(localRect, globalTransform, invZoom);
 
  if (showRotate) {
-  const FloatColor rotateOuter = isActive ? brighten(gizmoColor, 1.16f) : brighten(gizmoColor, 1.00f);
-  const FloatColor rotateInner = isActive ? FloatColor{1.0f, 1.0f, 1.0f, 0.92f} : FloatColor{1.0f, 1.0f, 1.0f, 0.72f};
-  const FloatColor rotateShadow = FloatColor{0.0f, 0.0f, 0.0f, activeHandle_ == HandleType::Rotate ? 0.48f : 0.34f};
-  renderer->drawCircle(rotateCenterWorld.x() + std::max(1.2f, 1.1f * invZoom),
-                       rotateCenterWorld.y() + std::max(1.2f, 1.1f * invZoom),
-                       rotateRingRadius,
-                       rotateShadow,
-                       rotateRingThickness + std::max(1.0f, 0.8f * invZoom),
+  const bool rotateActive = activeHandle_ == HandleType::Rotate;
+  const FloatColor ringShadow =
+      FloatColor{0.0f, 0.0f, 0.0f, rotateActive ? 0.42f : 0.24f};
+  const FloatColor ringBase = rotateActive
+      ? FloatColor{1.0f, 0.70f, 0.22f, 0.96f}
+      : FloatColor{0.84f, 0.88f, 0.93f, 0.80f};
+  const FloatColor ringInner = rotateActive
+      ? FloatColor{1.0f, 0.90f, 0.34f, 0.90f}
+      : FloatColor{0.24f, 0.28f, 0.34f, 0.78f};
+  const FloatColor tickMinor =
+      rotateActive ? FloatColor{0.90f, 0.90f, 0.95f, 0.46f}
+                   : FloatColor{0.72f, 0.76f, 0.84f, 0.28f};
+  const FloatColor tickMajor =
+      rotateActive ? FloatColor{1.0f, 0.98f, 0.92f, 0.80f}
+                   : FloatColor{0.90f, 0.92f, 0.96f, 0.54f};
+  const FloatColor cardinalMajor =
+      rotateActive ? FloatColor{1.0f, 0.88f, 0.46f, 0.98f}
+                   : FloatColor{0.88f, 0.90f, 0.94f, 0.74f};
+  const FloatColor cardinalMinor =
+      rotateActive ? FloatColor{1.0f, 0.72f, 0.20f, 0.66f}
+                   : FloatColor{0.70f, 0.74f, 0.80f, 0.42f};
+  const float shadowOffset = std::max(1.2f, 1.0f * invZoom);
+
+  renderer->drawCircle(rotateGeo.centerWorld.x() + shadowOffset,
+                       rotateGeo.centerWorld.y() + shadowOffset,
+                       rotateGeo.ringRadius,
+                       ringShadow,
+                       rotateGeo.ringThickness + std::max(1.5f, 1.2f * invZoom),
                        false);
-  renderer->drawCircle(rotateCenterWorld.x(),
-                       rotateCenterWorld.y(),
-                       rotateRingRadius,
-                       rotateOuter,
-                       rotateRingThickness,
+  renderer->drawCircle(rotateGeo.centerWorld.x(),
+                       rotateGeo.centerWorld.y(),
+                       rotateGeo.ringRadius,
+                       ringBase,
+                       rotateGeo.ringThickness,
                        false);
-  renderer->drawSolidLine({static_cast<float>(rotateCenterWorld.x()), static_cast<float>(rotateCenterWorld.y() - rotateRingRadius * 0.88f)},
-                         {static_cast<float>(rotateCenterWorld.x()), static_cast<float>(rotateCenterWorld.y() - rotateRingRadius + std::max(3.0f, 6.0f * invZoom))},
-                         brighten(rotateOuter, 0.86f),
-                         std::max(1.5f, 2.1f * invZoom));
-  renderer->drawCircle(rotateCenterWorld.x(),
-                       rotateCenterWorld.y() - rotateRingRadius,
-                       std::max(handleSize * 0.34f, 3.5f),
-                       rotateOuter,
-                       0.0f,
-                       true);
-  renderer->drawCircle(rotateCenterWorld.x(),
-                       rotateCenterWorld.y() - rotateRingRadius,
-                       std::max(handleSize * 0.14f, 1.8f),
-                       rotateInner,
-                       0.0f,
-                       true);
+  renderer->drawCircle(rotateGeo.centerWorld.x(),
+                       rotateGeo.centerWorld.y(),
+                       rotateGeo.innerRadius,
+                       ringInner,
+                       std::max(1.0f, 0.95f * invZoom),
+                       false);
+  drawRotateTickMarks(renderer, rotateGeo, tickMinor, tickMajor, invZoom);
+  drawRotateCardinalMarks(renderer, rotateGeo, cardinalMajor, cardinalMinor, invZoom);
+
+  const float restAngle = rotateActive
+      ? dragStartPointerAngle_ + std::remainder(dragAccumulatedRotationDelta_, 360.0f)
+      : -90.0f;
+  const QPointF gripCenter = pointOnCircle(rotateGeo.centerWorld, rotateGeo.gripRadius, restAngle);
+  drawRotateLeader(renderer, rotateGeo.centerWorld, gripCenter,
+                   rotateActive ? FloatColor{1.0f, 0.78f, 0.26f, 0.88f}
+                                : FloatColor{0.88f, 0.90f, 0.94f, 0.58f},
+                   invZoom);
+  renderer->drawCircle(static_cast<float>(gripCenter.x()) + shadowOffset,
+                       static_cast<float>(gripCenter.y()) + shadowOffset,
+                       rotateGeo.gripSize + std::max(1.1f * invZoom, 0.9f),
+                       FloatColor{0.0f, 0.0f, 0.0f, 0.30f},
+                       0.0f, true);
+  renderer->drawCircle(static_cast<float>(gripCenter.x()),
+                       static_cast<float>(gripCenter.y()),
+                       rotateGeo.gripSize + std::max(0.9f * invZoom, 0.8f),
+                       ringInner,
+                       0.0f, true);
+  renderer->drawCircle(static_cast<float>(gripCenter.x()),
+                       static_cast<float>(gripCenter.y()),
+                       std::max(rotateGeo.gripSize * 0.48f, 2.4f),
+                       ringBase,
+                       0.0f, true);
+  renderer->drawCircle(static_cast<float>(rotateGeo.centerWorld.x()),
+                       static_cast<float>(rotateGeo.centerWorld.y()),
+                       std::max(2.8f, 2.2f * invZoom),
+                       rotateActive ? FloatColor{1.0f, 0.76f, 0.18f, 0.88f}
+                                    : FloatColor{0.55f, 0.60f, 0.66f, 0.55f},
+                       0.0f, true);
+
+  if (rotateActive) {
+   const float arcSweep =
+       std::remainder(dragAccumulatedRotationDelta_, 360.0f);
+   const float currentAngle = dragStartPointerAngle_ + arcSweep;
+   const QPointF startPoint =
+       pointOnCircle(rotateGeo.centerWorld, rotateGeo.ringRadius, dragStartPointerAngle_);
+   const QPointF currentPoint =
+       pointOnCircle(rotateGeo.centerWorld, rotateGeo.ringRadius, currentAngle);
+   const FloatColor arcColor{1.0f, 0.74f, 0.24f, 0.96f};
+   const FloatColor arcGlow{1.0f, 0.88f, 0.42f, 0.34f};
+   const FloatColor startLineColor{1.0f, 1.0f, 1.0f, 0.34f};
+   const FloatColor currentLineColor{1.0f, 0.84f, 0.34f, 0.90f};
+   const FloatColor baseSweepColor{1.0f, 0.66f, 0.18f, 0.18f};
+
+   drawArc(renderer, rotateGeo.centerWorld, rotateGeo.ringRadius,
+           dragStartPointerAngle_, arcSweep, arcGlow,
+           std::max(rotateGeo.ringThickness * 2.1f, 4.8f * invZoom));
+   drawArc(renderer, rotateGeo.centerWorld, rotateGeo.ringRadius,
+           dragStartPointerAngle_, arcSweep, arcColor,
+           std::max(2.6f * invZoom, 2.0f));
+   drawArc(renderer, rotateGeo.centerWorld, rotateGeo.ringRadius * 0.965f,
+           -90.0f, arcSweep, baseSweepColor,
+           std::max(1.3f, 1.05f * invZoom));
+   drawRotateLeader(renderer, rotateGeo.centerWorld, currentPoint,
+                    FloatColor{1.0f, 0.84f, 0.34f, 0.95f}, invZoom);
+   renderer->drawSolidLine({static_cast<float>(rotateGeo.centerWorld.x()),
+                            static_cast<float>(rotateGeo.centerWorld.y())},
+                           {static_cast<float>(startPoint.x()),
+                            static_cast<float>(startPoint.y())},
+                           startLineColor, std::max(1.1f, 1.2f * invZoom));
+   renderer->drawSolidLine({static_cast<float>(rotateGeo.centerWorld.x()),
+                            static_cast<float>(rotateGeo.centerWorld.y())},
+                           {static_cast<float>(currentPoint.x()),
+                            static_cast<float>(currentPoint.y())},
+                           currentLineColor, std::max(1.6f, 1.8f * invZoom));
+   renderer->drawCircle(static_cast<float>(currentPoint.x()),
+                        static_cast<float>(currentPoint.y()),
+                        rotateGeo.gripSize + std::max(0.8f * invZoom, 0.8f),
+                        FloatColor{0.98f, 0.62f, 0.14f, 0.28f},
+                        0.0f, true);
+   renderer->drawCircle(static_cast<float>(currentPoint.x()),
+                        static_cast<float>(currentPoint.y()),
+                        std::max(handleSize * 0.22f, 3.8f),
+                        arcColor, 0.0f, true);
+  }
  }
 
  // Anchor point: crosshair at anchor position
@@ -530,8 +888,6 @@ TransformGizmo::HandleType TransformGizmo::hitTest(const QPointF& viewportPos, A
  const QTransform globalTransform = layer_->getGlobalTransform();
  const float zoom = renderer->getZoom();
  const float invZoom = zoom > 0.0001f ? 1.0f / zoom : 1.0f;
- const float handleSize = std::clamp(HANDLE_SIZE * 1.65f * invZoom, 9.0f, 22.0f);
- 
  // 1. Check handles first (they should have priority over the body)
  auto checkLocalPoint = [&](const QPointF& localPoint) {
   QPointF worldPoint = globalTransform.map(localPoint);
@@ -540,20 +896,38 @@ TransformGizmo::HandleType TransformGizmo::hitTest(const QPointF& viewportPos, A
   return handleRect.contains(viewportPos);
  };
 
- if (allowsHandle(HandleType::Scale_TL) && checkLocalPoint(localRect.topLeft())) return HandleType::Scale_TL;
- if (allowsHandle(HandleType::Scale_TR) && checkLocalPoint(localRect.topRight())) return HandleType::Scale_TR;
- if (allowsHandle(HandleType::Scale_BL) && checkLocalPoint(localRect.bottomLeft())) return HandleType::Scale_BL;
- if (allowsHandle(HandleType::Scale_BR) && checkLocalPoint(localRect.bottomRight())) return HandleType::Scale_BR;
- if (allowsHandle(HandleType::Scale_T) && checkLocalPoint(QPointF(localRect.center().x(), localRect.top()))) return HandleType::Scale_T;
- if (allowsHandle(HandleType::Scale_B) && checkLocalPoint(QPointF(localRect.center().x(), localRect.bottom()))) return HandleType::Scale_B;
- if (allowsHandle(HandleType::Scale_L) && checkLocalPoint(QPointF(localRect.left(), localRect.center().y()))) return HandleType::Scale_L;
- if (allowsHandle(HandleType::Scale_R) && checkLocalPoint(QPointF(localRect.right(), localRect.center().y()))) return HandleType::Scale_R;
+ const QPointF centerPoint = localRect.center();
+ const float scaleOutset = std::max(2.75f, GizmoVisualStyle::scaleHandleOutset * 0.65f * invZoom);
+ const QPointF topPoint(localRect.center().x(), localRect.top());
+ const QPointF bottomPoint(localRect.center().x(), localRect.bottom());
+ const QPointF leftPoint(localRect.left(), localRect.center().y());
+ const QPointF rightPoint(localRect.right(), localRect.center().y());
+ const QPointF tlPoint = localRect.topLeft();
+ const QPointF trPoint = localRect.topRight();
+ const QPointF blPoint = localRect.bottomLeft();
+ const QPointF brPoint = localRect.bottomRight();
+ const QPointF tlHit = offsetPointAwayFromCenter(centerPoint, tlPoint, scaleOutset);
+ const QPointF trHit = offsetPointAwayFromCenter(centerPoint, trPoint, scaleOutset);
+ const QPointF blHit = offsetPointAwayFromCenter(centerPoint, blPoint, scaleOutset);
+ const QPointF brHit = offsetPointAwayFromCenter(centerPoint, brPoint, scaleOutset);
+ const QPointF topHit = offsetPointAwayFromCenter(centerPoint, topPoint, scaleOutset * 0.58f);
+ const QPointF bottomHit = offsetPointAwayFromCenter(centerPoint, bottomPoint, scaleOutset * 0.58f);
+ const QPointF leftHit = offsetPointAwayFromCenter(centerPoint, leftPoint, scaleOutset * 0.58f);
+ const QPointF rightHit = offsetPointAwayFromCenter(centerPoint, rightPoint, scaleOutset * 0.58f);
+
+ if (allowsHandle(HandleType::Scale_TR) && checkLocalPoint(trHit)) return HandleType::Scale_TR;
+ if (allowsHandle(HandleType::Scale_BL) && checkLocalPoint(blHit)) return HandleType::Scale_BL;
+ if (allowsHandle(HandleType::Scale_BR) && checkLocalPoint(brHit)) return HandleType::Scale_BR;
+ if (allowsHandle(HandleType::Scale_T) && checkLocalPoint(topHit)) return HandleType::Scale_T;
+ if (allowsHandle(HandleType::Scale_B) && checkLocalPoint(bottomHit)) return HandleType::Scale_B;
+ if (allowsHandle(HandleType::Scale_L) && checkLocalPoint(leftHit)) return HandleType::Scale_L;
+ if (allowsHandle(HandleType::Scale_R) && checkLocalPoint(rightHit)) return HandleType::Scale_R;
+ if (allowsHandle(HandleType::Scale_TL) && checkLocalPoint(tlHit)) return HandleType::Scale_TL;
  if (allowsHandle(HandleType::Scale_Center)) {
-  const QPointF centerPoint = localRect.center();
   const QPointF worldPoint = globalTransform.map(centerPoint);
   const auto vPos = renderer->canvasToViewport({static_cast<float>(worldPoint.x()),
                                                 static_cast<float>(worldPoint.y())});
-  const float centerHandleSize = std::max(10.0f, 10.0f * invZoom);
+  const float centerHandleSize = std::max(8.0f, 8.0f * invZoom);
   if (QRectF(vPos.x - centerHandleSize * 0.5f,
              vPos.y - centerHandleSize * 0.5f,
              centerHandleSize, centerHandleSize).contains(viewportPos)) {
@@ -563,31 +937,21 @@ TransformGizmo::HandleType TransformGizmo::hitTest(const QPointF& viewportPos, A
 
  const auto& t3d = layer_->transform3D();
 
- // 2. Rotation handle: ring around the object, similar to 3D DCC rotate gizmos.
+ // 2. Rotation handle: ImGui-style outer ring around the object.
  {
- const QPointF rotateCenterWorld = globalTransform.map(localRect.center());
-  const float rotateBaseRadius = std::max({pointDistance(rotateCenterWorld, localRect.topLeft()),
-                                          pointDistance(rotateCenterWorld, localRect.topRight()),
-                                          pointDistance(rotateCenterWorld, localRect.bottomLeft()),
-                                          pointDistance(rotateCenterWorld, localRect.bottomRight())});
-  const float rotateRingRadius = rotateBaseRadius + std::max(40.0f * invZoom, 28.0f);
+  const RotateRingGeometry rotateGeo =
+      computeRotateRingGeometry(localRect, globalTransform, invZoom);
   auto mouseCanvas = renderer->viewportToCanvas({(float)viewportPos.x(), (float)viewportPos.y()});
   const QPointF mousePos(mouseCanvas.x, mouseCanvas.y);
-  const float ringHit = std::max(12.0f * invZoom, 9.0f);
-  const float distToRing = std::abs(pointDistance(mousePos, rotateCenterWorld) - rotateRingRadius);
-  if (allowsHandle(HandleType::Rotate) && distToRing <= ringHit) return HandleType::Rotate;
-
-  const QPointF arrowTip(rotateCenterWorld.x(), rotateCenterWorld.y() - rotateRingRadius);
-  const QPointF arrowBase(rotateCenterWorld.x(), rotateCenterWorld.y() - rotateRingRadius * 0.88f);
-  const float arrowRadius = std::max(handleSize * 0.34f, 3.5f);
-  const float arrowHit = std::max(4.5f, 4.0f * invZoom);
-  if (allowsHandle(HandleType::Rotate)) {
-   if (pointDistance(mousePos, arrowTip) <= arrowRadius + ringHit) {
-    return HandleType::Rotate;
-   }
-   if (pointToSegmentDistance(mousePos, arrowBase, arrowTip) <= arrowHit) {
-    return HandleType::Rotate;
-   }
+  const float distToCenter = pointDistance(mousePos, rotateGeo.centerWorld);
+  const float distToRing = std::abs(distToCenter - rotateGeo.hitRadius);
+  const QPointF idleGripCenter =
+      pointOnCircle(rotateGeo.centerWorld, rotateGeo.gripRadius, -90.0f);
+  const bool hitGrip =
+      pointDistance(mousePos, idleGripCenter) <= rotateGeo.gripSize * 1.8f;
+  const bool hitRing = distToRing <= rotateGeo.hitThickness;
+  if (allowsHandle(HandleType::Rotate) && (hitRing || hitGrip)) {
+   return HandleType::Rotate;
   }
  }
 
@@ -607,7 +971,12 @@ TransformGizmo::HandleType TransformGizmo::hitTest(const QPointF& viewportPos, A
  const QTransform invTransform = globalTransform.inverted(&invertible);
  if (invertible && allowsHandle(HandleType::Move)) {
   QPointF localMouse = invTransform.map(QPointF(canvasMouse.x, canvasMouse.y));
-  if (localRect.contains(localMouse)) {
+  const QRectF moveRect = localRect.adjusted(
+      GizmoVisualStyle::scaleHandleOutset * 0.12f,
+      GizmoVisualStyle::scaleHandleOutset * 0.12f,
+      -GizmoVisualStyle::scaleHandleOutset * 0.12f,
+      -GizmoVisualStyle::scaleHandleOutset * 0.12f);
+  if (moveRect.isValid() && moveRect.contains(localMouse)) {
    return HandleType::Move;
   }
  }
@@ -619,8 +988,8 @@ Qt::CursorShape TransformGizmo::cursorShapeForViewportPos(const QPointF& viewpor
 {
  const auto handle = hitTest(viewportPos, renderer);
  switch (handle) {
- case HandleType::Move:
-  return Qt::OpenHandCursor;
+case HandleType::Move:
+  return Qt::ArrowCursor;
  case HandleType::Scale_TL:
  case HandleType::Scale_BR:
   return Qt::SizeFDiagCursor;
@@ -630,15 +999,15 @@ Qt::CursorShape TransformGizmo::cursorShapeForViewportPos(const QPointF& viewpor
  case HandleType::Scale_L:
  case HandleType::Scale_R:
   return Qt::SizeHorCursor;
-  case HandleType::Scale_T:
-  case HandleType::Scale_B:
-   return Qt::SizeVerCursor;
+ case HandleType::Scale_T:
+ case HandleType::Scale_B:
+  return Qt::SizeVerCursor;
  case HandleType::Scale_Center:
   return Qt::SizeAllCursor;
  case HandleType::Rotate:
-   return Qt::CrossCursor;
+  return Qt::CrossCursor;
  case HandleType::Anchor:
-   return Qt::CrossCursor;
+  return Qt::CrossCursor;
  default:
   return Qt::ArrowCursor;
  }
@@ -667,11 +1036,16 @@ bool TransformGizmo::handleMousePress(const QPointF& viewportPos, ArtifactIRende
    dragStartHasPositionKey_ = t3d.hasPositionKeyFrameAt(ArtifactCore::RationalTime(dragStartFrame_, 24));
    dragStartHasRotationKey_ = t3d.hasRotationKeyFrameAt(ArtifactCore::RationalTime(dragStartFrame_, 24));
    dragStartHasScaleKey_ = t3d.hasScaleKeyFrameAt(ArtifactCore::RationalTime(dragStartFrame_, 24));
-   dragStartGlobalTransform_ = layer_->getGlobalTransform();
-   dragStartBoundingBox_ = layer_->transformedBoundingBox();
+  dragStartGlobalTransform_ = layer_->getGlobalTransform();
+  dragStartBoundingBox_ = layer_->transformedBoundingBox();
   dragStartLocalBounds_ = layer_->localBounds();
   dragStartAnchor_ = QPointF(t3d.anchorX(), t3d.anchorY());
   dragStartAnchorZ_ = t3d.anchorZ();
+  dragAccumulatedRotationDelta_ = 0.0f;
+  if (activeHandle_ == HandleType::Rotate) {
+   const QPointF pivotWorld = dragStartGlobalTransform_.map(dragStartLocalBounds_.center());
+   dragStartPointerAngle_ = angleDegreesAround(pivotWorld, dragStartCanvasPos_);
+  }
   return true;
  }
  return false;
@@ -828,16 +1202,11 @@ bool TransformGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRender
   } else if (activeHandle_ == HandleType::Rotate) {
    const QPointF pivotLocal = dragStartLocalBounds_.center();
    const QPointF pivotWorldStart = dragStartGlobalTransform_.map(pivotLocal);
-
-   // Angle from pivot to start mouse position
-   const double startAngle = std::atan2(dragStartCanvasPos_.y() - pivotWorldStart.y(),
-                                        dragStartCanvasPos_.x() - pivotWorldStart.x());
-   // Angle from pivot to current mouse position
-   const double currentAngle = std::atan2(currentCanvasPos.y() - pivotWorldStart.y(),
-                                          currentCanvasPos.x() - pivotWorldStart.x());
-   
-   const float deltaAngle = static_cast<float>((currentAngle - startAngle) * 180.0 / 3.14159265358979323846);
-   const float newRotation = dragStartRotation_ + deltaAngle;
+   const float previousAngle = angleDegreesAround(pivotWorldStart, lastCanvasMousePos_);
+   const float currentAngle = angleDegreesAround(pivotWorldStart, currentCanvasPos);
+   dragAccumulatedRotationDelta_ +=
+       normalizeAngleDeltaDegrees(currentAngle - previousAngle);
+   const float newRotation = dragStartRotation_ + dragAccumulatedRotationDelta_;
    t3d.setRotation(time, newRotation);
 
    const QPointF localOffset = pivotLocal - dragStartAnchor_;
@@ -954,6 +1323,7 @@ void TransformGizmo::handleMouseRelease() {
  }
  isDragging_ = false;
  activeHandle_ = HandleType::None;
+ dragAccumulatedRotationDelta_ = 0.0f;
  activeSnapLines_.clear();
 }
 

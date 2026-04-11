@@ -228,10 +228,10 @@ float4 main(PS_INPUT input) : SV_TARGET
     device_->CreateShader(spriteTransformVsInfo, &maskedSpriteShaders_.VS);
     device_->CreateShader(maskedSpritePsInfo, &maskedSpriteShaders_.PS);
 
-    device_->CreateShader(checkerboardPsInfo, &checkerboardShaders_.VS);
-    checkerboardShaders_.PS = solidShaders_.PS;
-    device_->CreateShader(gridPsInfo, &gridShaders_.VS);
-    gridShaders_.PS = solidShaders_.PS;
+    checkerboardShaders_.VS = solidShaders_.VS;
+    device_->CreateShader(checkerboardPsInfo, &checkerboardShaders_.PS);
+    gridShaders_.VS = solidShaders_.VS;
+    device_->CreateShader(gridPsInfo, &gridShaders_.PS);
 
     // Outline shaders
     device_->CreateShader(drawOutlineRectVsInfo, &outlineShaders_.VS);

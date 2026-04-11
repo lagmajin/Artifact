@@ -141,6 +141,7 @@ namespace Artifact
   bool syncingPresetCombo = false;
   std::map<int, int> lastProgressBucketByJob;
   int progressLogStepPercent = 25;
+  QFont fixedFont_{"Consolas", 10};
 
   Impl() {
     service = ArtifactRenderQueueService::instance();
@@ -244,6 +245,65 @@ namespace Artifact
     eventBus_.post<RenderQueueLogEvent>(RenderQueueLogEvent{message, sourceIndex, alsoHistory});
     eventBus_.drain();
   }
+
+  struct JobLineData {
+    QString line;
+    QColor textColor;
+    QString tooltip;
+  };
+
+  JobLineData buildJobLineData(int i) const {
+    const auto& job = jobs[i];
+    QString statusTag = "WAIT";
+    QColor textColor(160, 160, 160);
+    QString status = normalizeStatus(job.status);
+
+    if (status == "Rendering") { statusTag = "RUN"; textColor = QColor(0, 210, 255); }
+    else if (status == "Completed") { statusTag = "DONE"; textColor = QColor(100, 220, 100); }
+    else if (status == "Failed") { statusTag = "ERROR"; textColor = QColor(255, 80, 80); }
+
+    QString progressBar = "..........";
+    int filled = std::clamp(job.progress / 10, 0, 10);
+    for (int p = 0; p < filled; ++p) progressBar[p] = (status == "Rendering") ? '>' : '#';
+
+    const QString outputPath = job.outputPath.trimmed();
+    const QString outputName = outputPath.isEmpty()
+        ? QStringLiteral("output")
+        : QFileInfo(outputPath).fileName();
+    QString line = QString("%1  #%2  %3  [%4]  %5%  %6")
+      .arg(statusTag)
+      .arg(i + 1, 2, 10, QChar('0'))
+      .arg(job.name.left(28).leftJustified(28, QLatin1Char(' '), true))
+      .arg(progressBar)
+      .arg(job.progress, 3)
+      .arg(outputName);
+    QString tooltip = QString("Output: %1\nEncode: %2\nRender: %3")
+        .arg(outputPath.isEmpty() ? QStringLiteral("(auto)") : outputPath)
+        .arg(job.encoderBackend.isEmpty() ? QStringLiteral("auto") : job.encoderBackend)
+        .arg(job.renderBackend.isEmpty() ? QStringLiteral("auto") : job.renderBackend);
+    return {line, textColor, tooltip};
+  }
+
+  // Updates a single list item in-place without rebuilding the whole list.
+  // Falls back to full rebuild only when list/job count mismatch is detected.
+  void updateJobItemAtIndex(int index) {
+    if (!jobListWidget) return;
+    if (index < 0 || index >= static_cast<int>(jobs.size())
+        || jobListWidget->count() != static_cast<int>(jobs.size())) {
+      updateJobList();
+      return;
+    }
+    auto* item = jobListWidget->item(index);
+    if (!item) {
+      updateJobList();
+      return;
+    }
+    const auto data = buildJobLineData(index);
+    item->setText(data.line);
+    item->setForeground(data.textColor);
+    item->setToolTip(data.tooltip);
+    updateSummary();
+  }
 
   void updateJobList() {
     if (!jobListWidget) return;
@@ -251,41 +311,13 @@ namespace Artifact
     jobListWidget->clear();
     visibleToSource.clear();
 
-    QFont fixedFont("Consolas", 10);
     for (int i = 0; i < jobs.size(); ++i) {
-      const auto& job = jobs[i];
-      QString statusTag = "WAIT";
-      QColor textColor(160, 160, 160);
-      QString status = normalizeStatus(job.status);
-      
-      if (status == "Rendering") { statusTag = "RUN"; textColor = QColor(0, 210, 255); }
-      else if (status == "Completed") { statusTag = "DONE"; textColor = QColor(100, 220, 100); }
-      else if (status == "Failed") { statusTag = "ERROR"; textColor = QColor(255, 80, 80); }
-
-      QString progressBar = "..........";
-      int filled = std::clamp(job.progress / 10, 0, 10);
-      for(int p=0; p<filled; ++p) progressBar[p] = (status == "Rendering") ? '>' : '#';
-
-      const QString outputPath = job.outputPath.trimmed();
-      const QString outputName = outputPath.isEmpty()
-          ? QStringLiteral("output")
-          : QFileInfo(outputPath).fileName();
-      QString line = QString("%1  #%2  %3  [%4]  %5%  %6")
-        .arg(statusTag)
-        .arg(i+1, 2, 10, QChar('0'))
-        .arg(job.name.left(28).leftJustified(28, QLatin1Char(' '), true))
-        .arg(progressBar)
-        .arg(job.progress, 3)
-        .arg(outputName);
-
-      auto* item = new QListWidgetItem(line);
+      const auto data = buildJobLineData(i);
+      auto* item = new QListWidgetItem(data.line);
       item->setData(Qt::UserRole, i);
-      item->setFont(fixedFont);
-      item->setForeground(textColor);
-      item->setToolTip(QString("Output: %1\nEncode: %2\nRender: %3")
-          .arg(outputPath.isEmpty() ? QStringLiteral("(auto)") : outputPath)
-          .arg(job.encoderBackend.isEmpty() ? QStringLiteral("auto") : job.encoderBackend)
-          .arg(job.renderBackend.isEmpty() ? QStringLiteral("auto") : job.renderBackend));
+      item->setFont(fixedFont_);
+      item->setForeground(data.textColor);
+      item->setToolTip(data.tooltip);
       jobListWidget->addItem(item);
       visibleToSource.push_back(i);
     }
@@ -613,11 +645,11 @@ namespace Artifact
         impl_->postQueueChanged(QStringLiteral("Job updated"));
     });
     connect(impl_->service, &ArtifactRenderQueueService::jobProgressChanged, this, [this](int index, int progress) {
-        Q_UNUSED(progress);
-        if (!impl_) {
-          return;
+        if (!impl_ || !impl_->service) return;
+        if (index >= 0 && index < static_cast<int>(impl_->jobs.size())) {
+          impl_->jobs[index].progress = progress;
+          impl_->updateJobItemAtIndex(index);
         }
-        impl_->postQueueChanged(QStringLiteral("Job progress updated"));
     });
     connect(impl_->service, &ArtifactRenderQueueService::jobStatusChanged, this, [this](int index, int status) {
         Q_UNUSED(status);

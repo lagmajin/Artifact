@@ -147,11 +147,29 @@ int runAIToolBridgeTests()
     const QJsonObject workspaceTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("workspaceSnapshot"));
     report.check(!workspaceTool.isEmpty(), QStringLiteral("workspace automation tool is present in schema"));
 
+    const QJsonObject createCompositionTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("createComposition"));
+    report.check(!createCompositionTool.isEmpty(), QStringLiteral("workspace automation exposes composition creation"));
+
     const QJsonObject currentLayersTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("listCurrentCompositionLayers"));
     report.check(!currentLayersTool.isEmpty(), QStringLiteral("workspace automation exposes layer inspection"));
 
     const QJsonObject addImageLayerTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("addImageLayerToCurrentComposition"));
     report.check(!addImageLayerTool.isEmpty(), QStringLiteral("workspace automation exposes image layer creation"));
+
+    const QJsonObject addSvgLayerTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("addSvgLayerToCurrentComposition"));
+    report.check(!addSvgLayerTool.isEmpty(), QStringLiteral("workspace automation exposes svg layer creation"));
+
+    const QJsonObject addAudioLayerTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("addAudioLayerToCurrentComposition"));
+    report.check(!addAudioLayerTool.isEmpty(), QStringLiteral("workspace automation exposes audio layer creation"));
+
+    const QJsonObject addTextLayerTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("addTextLayerToCurrentComposition"));
+    report.check(!addTextLayerTool.isEmpty(), QStringLiteral("workspace automation exposes text layer creation"));
+
+    const QJsonObject addNullLayerTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("addNullLayerToCurrentComposition"));
+    report.check(!addNullLayerTool.isEmpty(), QStringLiteral("workspace automation exposes null layer creation"));
+
+    const QJsonObject addSolidLayerTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("addSolidLayerToCurrentComposition"));
+    report.check(!addSolidLayerTool.isEmpty(), QStringLiteral("workspace automation exposes solid layer creation"));
 
     const QJsonObject setVisibilityTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("setLayerVisibleInCurrentComposition"));
     report.check(!setVisibilityTool.isEmpty(), QStringLiteral("workspace automation exposes layer visibility editing"));

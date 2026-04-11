@@ -1,4 +1,6 @@
 module;
+#include <algorithm>
+#include <vector>
 #include <utility>
 #include <QHash>
 #include <QImage>
@@ -7,11 +9,14 @@ module;
 #include <QString>
 #include <QDebug>
 #include <QMutexLocker>
+#include <opencv2/core.hpp>
 #include <DiligentCore/Common/interface/RefCntAutoPtr.hpp>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/RenderDevice.h>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/Texture.h>
 
 module Artifact.Render.GPUTextureCacheManager;
+
+import Image.ImageF32x4_RGBA;
 
 namespace Artifact {
 
@@ -25,6 +30,50 @@ size_t bytesForImage(const QImage& image)
     }
     return static_cast<size_t>(image.bytesPerLine()) * static_cast<size_t>(image.height());
 }
+
+struct UploadImageData
+{
+    std::vector<uint8_t> bytes;
+    Uint32 width = 0;
+    Uint32 height = 0;
+    Uint64 stride = 0;
+};
+
+UploadImageData makeUploadImageData(const ArtifactCore::ImageF32x4_RGBA& image)
+{
+    UploadImageData upload;
+    const cv::Mat src = image.toCVMat();
+    if (src.empty()) {
+        return upload;
+    }
+
+    cv::Mat rgba32;
+    if (src.type() == CV_32FC4) {
+        rgba32 = src;
+    } else {
+        image.toCVMat().convertTo(rgba32, CV_32FC4);
+    }
+
+    upload.width = static_cast<Uint32>(rgba32.cols);
+    upload.height = static_cast<Uint32>(rgba32.rows);
+    upload.stride = static_cast<Uint64>(upload.width) * 4ull;
+    upload.bytes.resize(static_cast<size_t>(upload.stride) * static_cast<size_t>(upload.height));
+
+    for (int y = 0; y < rgba32.rows; ++y) {
+        const auto* srcRow = rgba32.ptr<cv::Vec4f>(y);
+        auto* dstRow = upload.bytes.data() + static_cast<size_t>(y) * static_cast<size_t>(upload.stride);
+        for (int x = 0; x < rgba32.cols; ++x) {
+            const cv::Vec4f pixel = srcRow[x];
+            dstRow[x * 4 + 0] = static_cast<uint8_t>(std::clamp(pixel[0], 0.0f, 1.0f) * 255.0f + 0.5f);
+            dstRow[x * 4 + 1] = static_cast<uint8_t>(std::clamp(pixel[1], 0.0f, 1.0f) * 255.0f + 0.5f);
+            dstRow[x * 4 + 2] = static_cast<uint8_t>(std::clamp(pixel[2], 0.0f, 1.0f) * 255.0f + 0.5f);
+            dstRow[x * 4 + 3] = static_cast<uint8_t>(std::clamp(pixel[3], 0.0f, 1.0f) * 255.0f + 0.5f);
+        }
+    }
+
+    return upload;
+}
+
 } // namespace
 
 GPUTextureCacheManager::GPUTextureCacheManager() = default;
@@ -81,7 +130,41 @@ GPUTextureCacheHandle GPUTextureCacheManager::acquireOrCreate(const QString& own
                                                              const QString& cacheKey,
                                                              const QImage& image)
 {
-    if (ownerId.isEmpty() || cacheKey.isEmpty() || image.isNull()) {
+    const QImage rgba = (image.format() == QImage::Format_RGBA8888)
+                            ? image
+                            : image.convertToFormat(QImage::Format_RGBA8888);
+    return acquireOrCreateFromRgbaBytes(ownerId,
+                                        cacheKey,
+                                        static_cast<Uint32>(rgba.width()),
+                                        static_cast<Uint32>(rgba.height()),
+                                        static_cast<Uint64>(rgba.bytesPerLine()),
+                                        rgba.constBits(),
+                                        bytesForImage(rgba));
+}
+
+GPUTextureCacheHandle GPUTextureCacheManager::acquireOrCreate(const QString& ownerId,
+                                                             const QString& cacheKey,
+                                                             const ArtifactCore::ImageF32x4_RGBA& image)
+{
+    const UploadImageData upload = makeUploadImageData(image);
+    return acquireOrCreateFromRgbaBytes(ownerId,
+                                        cacheKey,
+                                        upload.width,
+                                        upload.height,
+                                        upload.stride,
+                                        upload.bytes.data(),
+                                        upload.bytes.size());
+}
+
+GPUTextureCacheHandle GPUTextureCacheManager::acquireOrCreateFromRgbaBytes(const QString& ownerId,
+                                                                           const QString& cacheKey,
+                                                                           Uint32 width,
+                                                                           Uint32 height,
+                                                                           Uint64 stride,
+                                                                           const void* bytes,
+                                                                           size_t memoryBytes)
+{
+    if (ownerId.isEmpty() || cacheKey.isEmpty() || !bytes || width == 0 || height == 0 || stride == 0) {
         QMutexLocker locker(&mutex_);
         ++missCount_;
         return {};
@@ -109,19 +192,11 @@ GPUTextureCacheHandle GPUTextureCacheManager::acquireOrCreate(const QString& own
         }
     }
 
-    const QImage rgba = (image.format() == QImage::Format_RGBA8888)
-                            ? image
-                            : image.convertToFormat(QImage::Format_RGBA8888);
-    if (rgba.isNull() || rgba.width() <= 0 || rgba.height() <= 0) {
-        ++missCount_;
-        return {};
-    }
-
     TextureDesc texDesc;
     texDesc.Name = "GPUTextureCacheManager.Texture";
     texDesc.Type = RESOURCE_DIM_TEX_2D;
-    texDesc.Width = static_cast<Uint32>(rgba.width());
-    texDesc.Height = static_cast<Uint32>(rgba.height());
+    texDesc.Width = width;
+    texDesc.Height = height;
     texDesc.MipLevels = 1;
     texDesc.Format = textureFormat_;
     texDesc.Usage = USAGE_IMMUTABLE;
@@ -129,8 +204,8 @@ GPUTextureCacheHandle GPUTextureCacheManager::acquireOrCreate(const QString& own
     texDesc.CPUAccessFlags = CPU_ACCESS_NONE;
 
     TextureSubResData subRes;
-    subRes.pData = rgba.constBits();
-    subRes.Stride = static_cast<Uint64>(rgba.bytesPerLine());
+    subRes.pData = bytes;
+    subRes.Stride = stride;
 
     TextureData initData;
     initData.pSubResources = &subRes;
@@ -150,7 +225,7 @@ GPUTextureCacheHandle GPUTextureCacheManager::acquireOrCreate(const QString& own
     entry.cacheKey = cacheKey;
     entry.texture = texture;
     entry.srv = texture->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE);
-    entry.memoryBytes = bytesForImage(rgba);
+    entry.memoryBytes = memoryBytes;
     entry.lastUsedTick = usageTick_++;
 
     entries_.insert(entry.id, entry);

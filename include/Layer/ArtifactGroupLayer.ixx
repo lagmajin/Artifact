@@ -28,6 +28,13 @@ public:
     void removeChild(const LayerID& id);
     void clearChildren();
     const std::vector<ArtifactAbstractLayerPtr>& children() const;
+    void insertChildAt(int index, ArtifactAbstractLayerPtr layer);
+    int childIndex(const LayerID& id) const;
+    bool containsChild(const LayerID& id) const;
+
+    // Group state
+    bool isCollapsed() const;
+    void setCollapsed(bool collapsed);
 
     // Serialization
     QJsonObject toJson() const override;

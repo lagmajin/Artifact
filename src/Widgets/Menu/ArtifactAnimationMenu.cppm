@@ -54,7 +54,7 @@ QIcon menuIcon(const QString& path)
   QAction* holdInterpolationAction = nullptr;
   QAction* autoInterpolationAction = nullptr;
 
-  // ---- グラフエディタアクション ----
+  // ---- カーブエディタアクション ----
   QAction* toggleVelocityGraphAction = nullptr;
   QAction* toggleValueGraphAction = nullptr;
   QAction* showGraphEditorAction = nullptr;
@@ -243,11 +243,11 @@ QIcon menuIcon(const QString& path)
 
   addSeparator();
 
-  // ---- グラフエディタメニュー ----
-  impl_->graphEditorMenu = addMenu("グラフエディタ(&G)");
+  // ---- カーブエディタメニュー ----
+  impl_->graphEditorMenu = addMenu("カーブエディタ(&G)");
   impl_->graphEditorMenu->setIcon(menuIcon(QStringLiteral("Material/show_chart.svg")));
 
-  impl_->showGraphEditorAction = impl_->graphEditorMenu->addAction("グラフエディタを表示");
+  impl_->showGraphEditorAction = impl_->graphEditorMenu->addAction("カーブエディタを表示");
   impl_->showGraphEditorAction->setIcon(menuIcon(QStringLiteral("Material/query_stats.svg")));
   impl_->showGraphEditorAction->setShortcut(QKeySequence(Qt::SHIFT | Qt::Key_F3));
   connect(impl_->showGraphEditorAction, &QAction::triggered, this, &ArtifactAnimationMenu::showGraphEditorRequested);

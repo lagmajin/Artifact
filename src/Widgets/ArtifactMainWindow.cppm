@@ -777,6 +777,20 @@ bool ArtifactMainWindow::isDockVisible(const QString& title) const
  return false;
 }
 
+bool ArtifactMainWindow::hasDock(const QString& title) const
+{
+ if (!impl_) return false;
+ for (auto* dock : impl_->dockWidgets) {
+  if (!dock) continue;
+  const QString name = dock->objectName();
+  const QString dockTitle = dock->windowTitle();
+  if (name == title || dockTitle == title) {
+   return true;
+  }
+ }
+ return false;
+}
+
 void ArtifactMainWindow::setStatusZoomLevel(float zoomPercent)
 {
  statusBar()->showMessage(QStringLiteral("Zoom: %1%").arg(static_cast<int>(zoomPercent)), 1000);

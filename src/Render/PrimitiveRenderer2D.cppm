@@ -202,6 +202,19 @@ void PrimitiveRenderer2D::createBuffers(RefCntAutoPtr<IRenderDevice> device, TEX
     }
 
     {
+        struct SolidColorCB {
+            float4 color;
+        };
+        BufferDesc desc;
+        desc.Name           = "SolidRectCB";
+        desc.Size           = sizeof(SolidColorCB);
+        desc.Usage          = USAGE_DYNAMIC;
+        desc.BindFlags      = BIND_UNIFORM_BUFFER;
+        desc.CPUAccessFlags = CPU_ACCESS_WRITE;
+        device->CreateBuffer(desc, nullptr, &impl_->m_draw_solid_rect_cb);
+    }
+
+    {
         BufferDesc desc;
         desc.Name           = "ViewerHelperCB";
         desc.Usage          = USAGE_DYNAMIC;
@@ -442,9 +455,25 @@ void PrimitiveRenderer2D::clear(const FloatColor& color)
 
 void PrimitiveRenderer2D::drawRectLocal(float x, float y, float w, float h, const FloatColor& color, float opacity)
 {
-    if (!impl_->hasRenderTarget() || !impl_->m_draw_solid_rect_pso_and_srb.pPSO) return;
+    if (!impl_->hasRenderTarget()) {
+        qCWarning(primitiveRenderer2DLog)
+            << "[PrimitiveRenderer2D] drawRectLocal aborted: no render target";
+        return;
+    }
+    if (!impl_->m_draw_solid_rect_pso_and_srb.pPSO) {
+        qCWarning(primitiveRenderer2DLog)
+            << "[PrimitiveRenderer2D] drawRectLocal aborted: solid rect PSO missing";
+        return;
+    }
     if (!impl_->pCtx_ || !impl_->m_draw_solid_rect_vertex_buffer || !impl_->m_draw_solid_rect_cb ||
         !impl_->m_draw_solid_rect_trnsform_cb || !impl_->m_draw_solid_rect_index_buffer) {
+        qCWarning(primitiveRenderer2DLog)
+            << "[PrimitiveRenderer2D] drawRectLocal aborted: missing resources"
+            << "pCtx=" << bool(impl_->pCtx_)
+            << "vb=" << bool(impl_->m_draw_solid_rect_vertex_buffer)
+            << "colorCB=" << bool(impl_->m_draw_solid_rect_cb)
+            << "transformCB=" << bool(impl_->m_draw_solid_rect_trnsform_cb)
+            << "ib=" << bool(impl_->m_draw_solid_rect_index_buffer);
         return;
     }
 
@@ -1266,8 +1295,24 @@ void PrimitiveRenderer2D::drawPoint(float x, float y, float size, const FloatCol
 
 void PrimitiveRenderer2D::drawCheckerboard(float x, float y, float w, float h, float tileSize, const FloatColor& c1, const FloatColor& c2)
 {
-    if (!impl_->hasRenderTarget() || !impl_->m_draw_checkerboard_pso_and_srb.pPSO) return;
-    if (!impl_->pCtx_ || !impl_->m_draw_solid_rect_cb || !impl_->m_draw_viewer_helper_cb) return;
+    if (!impl_->hasRenderTarget()) {
+        qCWarning(primitiveRenderer2DLog)
+            << "[PrimitiveRenderer2D] drawCheckerboard aborted: no render target";
+        return;
+    }
+    if (!impl_->m_draw_checkerboard_pso_and_srb.pPSO) {
+        qCWarning(primitiveRenderer2DLog)
+            << "[PrimitiveRenderer2D] drawCheckerboard aborted: checkerboard PSO missing";
+        return;
+    }
+    if (!impl_->pCtx_ || !impl_->m_draw_solid_rect_cb || !impl_->m_draw_viewer_helper_cb) {
+        qCWarning(primitiveRenderer2DLog)
+            << "[PrimitiveRenderer2D] drawCheckerboard aborted: missing resources"
+            << "pCtx=" << bool(impl_->pCtx_)
+            << "colorCB=" << bool(impl_->m_draw_solid_rect_cb)
+            << "viewerCB=" << bool(impl_->m_draw_viewer_helper_cb);
+        return;
+    }
 
     RectVertex vertices[4] = {
         {{0.0f, 0.0f}, {1,1,1,1}},
@@ -1420,7 +1465,7 @@ void PrimitiveRenderer2D::drawGrid(float x, float y, float w, float h,
 void PrimitiveRenderer2D::drawRectOutlineLocal(float x, float y, float w, float h, const FloatColor& color)
 {
     if (!impl_->hasRenderTarget() || !impl_->m_draw_rect_outline_pso_and_srb.pPSO) return;
-    if (!impl_->pCtx_ || !impl_->m_draw_solid_rect_cb || !impl_->m_draw_solid_rect_trnsform_cb || !impl_->m_draw_outline_params_cb) return;
+    if (!impl_->pCtx_ || !impl_->m_draw_solid_rect_trnsform_cb || !impl_->m_draw_outline_params_cb) return;
 
     // 矩形の4頂点 (0,0) to (1,1) のローカル座標
     RectVertex vertices[4] = {
@@ -1476,7 +1521,6 @@ void PrimitiveRenderer2D::drawRectOutlineLocal(float x, float y, float w, float 
     impl_->pCtx_->SetRenderTargets(1, &pRTV, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
     impl_->pCtx_->SetPipelineState(impl_->m_draw_rect_outline_pso_and_srb.pPSO);
     impl_->m_draw_rect_outline_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_VERTEX, "TransformCB")->Set(impl_->m_draw_solid_rect_trnsform_cb);
-    impl_->m_draw_rect_outline_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_PIXEL, "ColorBuffer")->Set(impl_->m_draw_solid_rect_cb);
     if (auto* outlineVar = impl_->m_draw_rect_outline_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_PIXEL, "OutlineParams")) {
         outlineVar->Set(impl_->m_draw_outline_params_cb);
     }

@@ -20,6 +20,7 @@ export module Artifact.AI.WorkspaceAutomation;
 import std;
 import Core.AI.Describable;
 import Artifact.Application.Manager;
+import Artifact.Project;
 import Artifact.Composition.Abstract;
 import Artifact.Composition.InitParams;
 import Artifact.Layers.Selection.Manager;
@@ -36,7 +37,15 @@ class WorkspaceAutomation : public ArtifactCore::IDescribable {
 public:
     static void ensureRegistered()
     {
-        (void)instance();
+        static const bool registered = []() {
+            ArtifactCore::DescriptionRegistry::instance().registerDescribable(
+                QStringLiteral("WorkspaceAutomation"),
+                []() -> const ArtifactCore::IDescribable* {
+                    return &WorkspaceAutomation::instance();
+                });
+            return true;
+        }();
+        (void)registered;
     }
 
     static WorkspaceAutomation& instance()
@@ -757,7 +766,7 @@ private:
     {
         auto& manager = projectManager();
         const QString name = projectName.trimmed().isEmpty() ? QStringLiteral("Untitled") : projectName.trimmed();
-        const auto result = manager.createProject(name, false);
+        const auto result = manager.createProject(ArtifactCore::UniString::fromQString(name), false);
         return QVariantMap{{QStringLiteral("isSuccess"), result.isSuccess}};
     }
 
@@ -1530,7 +1539,5 @@ private:
         return true;
     }
 };
-
-static ArtifactCore::AutoRegisterDescribable<WorkspaceAutomation> _reg_WorkspaceAutomation(QStringLiteral("WorkspaceAutomation"));
 
 } // namespace Artifact
