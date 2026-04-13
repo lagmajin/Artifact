@@ -1404,14 +1404,12 @@ int main(int argc, char *argv[]) {
         };
         QObject::connect(
             selectionManager, &ArtifactLayerSelectionManager::selectionChanged,
-            mw, [projectService, selectionManager, syncSelectedLayerUi]() {
-              if (!projectService || !selectionManager) {
+            mw, [selectionManager, syncSelectedLayerUi]() {
+              if (!selectionManager) {
                 return;
               }
               const ArtifactAbstractLayerPtr current =
                   selectionManager->currentLayer();
-              projectService->selectLayer(current ? current->id()
-                                                  : LayerID::Nil());
               syncSelectedLayerUi(current ? current->id() : LayerID::Nil());
             });
       }
@@ -1454,6 +1452,16 @@ int main(int argc, char *argv[]) {
               [layerViewEditor, propertyPanel, status,
                projectService](const LayerSelectionChangedEvent &event) {
                 const LayerID layerId(event.layerId);
+                // Guard: if this is a nil event but the selection manager still
+                // has a valid current layer, skip the clear. Prevents spurious
+                // property-edit notifications from blanking the Inspector.
+                if (layerId.isNil()) {
+                  auto *app = ArtifactApplicationManager::instance();
+                  auto *sel = app ? app->layerSelectionManager() : nullptr;
+                  if (sel && sel->currentLayer()) {
+                    return;
+                  }
+                }
                 if (layerViewEditor) {
                   if (layerId.isNil()) {
                     layerViewEditor->view()->clearTargetLayer();

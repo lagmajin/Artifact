@@ -1481,7 +1481,18 @@ CompositionRenderController::CompositionRenderController(QObject *parent)
                   comp->id().toString() != event.compositionId) {
                 return;
               }
-              setSelectedLayerId(LayerID(event.layerId));
+              // Guard: ignore spurious nil events if the selection manager
+              // still has a valid current layer. This prevents property-edit
+              // notifications from clearing the gizmo via the EventBus path.
+              const LayerID incomingId(event.layerId);
+              if (incomingId.isNil() && !impl_->selectedLayerId_.isNil()) {
+                auto *app = ArtifactApplicationManager::instance();
+                auto *sel = app ? app->layerSelectionManager() : nullptr;
+                if (sel && sel->currentLayer()) {
+                  return;
+                }
+              }
+              setSelectedLayerId(incomingId);
             }));
 
     impl_->eventBusSubscriptions_.push_back(

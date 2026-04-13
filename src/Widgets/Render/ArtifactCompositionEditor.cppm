@@ -762,7 +762,6 @@ protected:
       if (controller_) {
         controller_->notifyViewportInteractionActivity();
       }
-      grabMouse();
       setCursor(Qt::ClosedHandCursor);
       event->accept();
       return;
@@ -771,7 +770,6 @@ protected:
     if (controller_ && !spacePressed_) {
       controller_->handleMousePress(event);
       if (controller_->gizmo() && controller_->gizmo()->isDragging()) {
-        grabMouse();
         updateViewportCursor(event->position());
         if (overlayWidget_) {
           overlayWidget_->update();
@@ -851,7 +849,6 @@ protected:
       if (controller_) {
         controller_->finishViewportInteraction();
       }
-      releaseMouse();
       if (spacePressed_) {
         setCursor(Qt::OpenHandCursor);
       } else {
@@ -867,9 +864,6 @@ protected:
       if (wasScaleDrag) {
         controller_->renderOneFrame();
       }
-      if (!isPanning_) {
-        releaseMouse();
-      }
       if (wasScaleDrag) {
         update();
       }
@@ -882,19 +876,7 @@ protected:
   }
 
   void leaveEvent(QEvent *event) override {
-    if (controller_) {
-      const bool gizmoDragging =
-          controller_->gizmo() && controller_->gizmo()->isDragging();
-      const bool maskEditing = controller_->hasPendingMaskEdit();
-      if (gizmoDragging || maskEditing) {
-        controller_->handleMouseRelease();
-        if (gizmoDragging) {
-          releaseMouse();
-        }
-        controller_->renderOneFrame();
-      }
-    }
-    if (!isPanning_) {
+    if (!isPanning_ && !(controller_ && controller_->gizmo() && controller_->gizmo()->isDragging())) {
       unsetCursor();
     }
     QWidget::leaveEvent(event);
@@ -1898,6 +1880,22 @@ public:
         selection ? selection->currentLayer() : ArtifactAbstractLayerPtr{};
     const int selectedCount =
         selection ? selection->selectedLayers().size() : 0;
+
+    // Guard: if the selection manager reports no current layer, but the
+    // previously-selected layer still exists in the composition, preserve the
+    // gizmo. This prevents spurious selection clears triggered by deferred
+    // syncSelectionState() calls that race with property-edit notifications.
+    if (!current) {
+      const auto prevId = renderController_->selectedLayerId();
+      if (!prevId.isNil()) {
+        const auto comp = renderController_->composition();
+        if (comp && comp->layerById(prevId)) {
+          selectionSyncQueued_ = false;
+          return;
+        }
+      }
+    }
+
     renderController_->setSelectedLayerId(
         current ? current->id() : ArtifactCore::LayerID::Nil());
     if (current) {

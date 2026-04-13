@@ -98,6 +98,9 @@
 - timeline と property widget は、現在 layer と current property path を共有する。
 - 左ペインの簡易メニューで状態を隠さない。
 - property row の表示は、レイヤー名より優先して「いま編集中の値」が読めることを重視する。
+- property row には、編集対象の現在フレーム keyframe の有無を示す最小限の入口を置いてよい。
+- keyframe toggle は、property editor と timeline 左ペインのどちらから触っても同じ結果になるようにする。
+- layer 補助情報（Parent / Blend など）は layer 行に寄せ、property 行では見せない。
 
 ## Forbidden Patterns
 

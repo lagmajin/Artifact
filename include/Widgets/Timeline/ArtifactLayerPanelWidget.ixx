@@ -112,9 +112,9 @@ export namespace Artifact
  private:
   void performUpdateLayout();
 
-  public /*signals*/:
-   void visibleRowsChanged() W_SIGNAL(visibleRowsChanged);
-   void verticalOffsetChanged(double offset) W_SIGNAL(verticalOffsetChanged, offset);
+ public /*signals*/:
+  void visibleRowsChanged() W_SIGNAL(visibleRowsChanged);
+  void verticalOffsetChanged(double offset) W_SIGNAL(verticalOffsetChanged, offset);
 
  };
 
@@ -148,10 +148,10 @@ export namespace Artifact
   bool isLayerNameEditable() const;
   void scrollToLayer(const LayerID& id);
 
-  public /*signals*/:
-   void visibleRowsChanged() W_SIGNAL(visibleRowsChanged);
-   void verticalOffsetChanged(double offset) W_SIGNAL(verticalOffsetChanged, offset);
- 	
+ public /*signals*/:
+  void visibleRowsChanged() W_SIGNAL(visibleRowsChanged);
+  void verticalOffsetChanged(double offset) W_SIGNAL(verticalOffsetChanged, offset);
+	
  };
 
 };

@@ -95,6 +95,15 @@ struct TimelineGraphEditorToggledEvent {
     bool enabled = false;
 };
 
+struct TimelineVerticalScrollEvent {
+    double offset = 0.0;
+    QString sourceWidget; // Optional, to prevent echo/feedback loops
+};
+
+struct TimelineVisibleRowsChangedEvent {
+    // Fired when rows are rebuilt (e.g. unfold, search, layer count changed)
+};
+
 struct FontChangedEvent {
     QString fontName;
 };
