@@ -5,6 +5,7 @@
 #include <QPointF>
 #include <QRectF>
 #include <QCursor>
+#include <QTransform>
 export module Artifact.Widgets.TransformGizmo;
 
 
@@ -89,6 +90,21 @@ export namespace Artifact {
   static constexpr float ROTATE_HANDLE_DISTANCE = 32.0f;
   static constexpr float ROTATE_HANDLE_RADIUS = 6.0f;
   static constexpr float ANCHOR_HANDLE_SIZE = 8.0f;
+
+  // 1. ジオメトリキャッシュ: 毎フレームの計算を避けるためのキャッシュ
+  struct GeometryCache {
+   Detail::float2 tl, tr, bl, br;
+   QPointF center, top, bottom, left, right;
+  };
+
+  void updateGeometryCache(const QTransform& globalTransform, const QRectF& localRect, float zoom);
+
+  GeometryCache cachedPoints_;
+  float cachedZoom_ = -1.0f;
+  QTransform cachedLayerTransform_;
+  QRectF cachedLocalRect_;
+  bool geometryCacheValid_ = false;
+  bool isSelected_ = true;  // 外部から設定される選択状態
  };
 
 }

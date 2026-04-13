@@ -1,8 +1,10 @@
 module;
 #include <QList>
 #include <QVariant>
+#include <QVector>
 #include <cmath>
 #include <opencv2/core/mat.hpp>
+#include <QtConcurrent>
 
 #include <iostream>
 #include <vector>
@@ -64,43 +66,53 @@ void SpherizeEffectCPUImpl::applyCPU(const ImageF32x4RGBAWithCache& src, ImageF3
     float cy = centerY_ * height;
     float maxRadius = std::min(width, height) * radius;
     
-    // ピクセルごとの処理
-    for (int y = 0; y < height; y++) {
+    // ピクセルごとの処理 — 行単位で並列化
+    std::vector<cv::Vec4f> rowResults(width * height);
+
+    QVector<int> rows(height);
+    std::iota(rows.begin(), rows.end(), 0);
+
+    QtConcurrent::blockingMap(rows, [&](int y) {
         for (int x = 0; x < width; x++) {
             // 中心からの距離と角度を計算
             float dx = static_cast<float>(x) - cx;
             float dy = static_cast<float>(y) - cy;
             float dist = std::sqrt(dx * dx + dy * dy);
             float angle = std::atan2(dy, dx);
-            
+
             // 球面歪みの計算
-            // 中心に近いほど歪みが増大
             float normalizedDist = dist / maxRadius;
             if (normalizedDist > 1.0f) {
                 // 半径外は歪みなし
                 cv::Vec4f pixel = srcMat.at<cv::Vec4f>(y, x);
-                dstMat.at<cv::Vec4f>(y, x) = pixel;
+                rowResults[y * width + x] = pixel;
                 continue;
             }
-            
+
             // 球面投影の計算
-            // z = sqrt(r^2 - x^2 - y^2) のähnlich
             float z = std::sqrt(std::max(0.0f, 1.0f - normalizedDist * normalizedDist));
-            
+
             // 新しい座標へのマッピング
             float newDist = normalizedDist + amount * z * normalizedDist * (1.0f - normalizedDist);
-            
+
             // 元の画像からのサンプリング座標
             int srcX = static_cast<int>(cx + newDist * maxRadius * std::cos(angle));
             int srcY = static_cast<int>(cy + newDist * maxRadius * std::sin(angle));
-            
+
             // 境界チェック
             srcX = std::max(0, std::min(width - 1, srcX));
             srcY = std::max(0, std::min(height - 1, srcY));
-            
+
             // ピクセルをコピー
             cv::Vec4f pixel = srcMat.at<cv::Vec4f>(srcY, srcX);
-            dstMat.at<cv::Vec4f>(y, x) = pixel;
+            rowResults[y * width + x] = pixel;
+        }
+    });
+
+    // 結果をdstMatにコピー
+    for (int y = 0; y < height; y++) {
+        for (int x = 0; x < width; x++) {
+            dstMat.at<cv::Vec4f>(y, x) = rowResults[y * width + x];
         }
     }
     

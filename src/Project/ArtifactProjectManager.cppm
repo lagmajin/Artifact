@@ -8,6 +8,8 @@ module;
 #include <QStandardPaths>
 #include <QStringList>
 #include <QCoreApplication>
+#include <QtConcurrent>
+#include <QFutureWatcher>
 
 #include <QTextStream>
 #include <wobjectimpl.h>
@@ -629,6 +631,153 @@ ArtifactProjectExporterResult ArtifactProjectManager::saveToFile(const QString& 
    }
     return result;
    }
+
+// ─────────────────────────────────────────────
+// Async load/save implementations
+// ─────────────────────────────────────────────
+
+void ArtifactProjectManager::loadFromFileAsync(const QString& fullpath,
+                                               ProjectLoadFinishedFn onFinished,
+                                               ProjectProgressFn onProgress)
+{
+  auto* watcher = new QFutureWatcher<ArtifactProjectImporterResult>(this);
+
+  QObject::connect(watcher, &QFutureWatcher<ArtifactProjectImporterResult>::finished,
+                   this, [this, watcher, fullpath, onFinished]() {
+    auto importResult = watcher->result();
+    watcher->deleteLater();
+
+    if (!importResult.success || !importResult.project) {
+      if (onFinished) onFinished(importResult);
+      return;
+    }
+
+    // Switch to main thread for UI updates
+    QMetaObject::invokeMethod(this, [this, importResult, fullpath]() {
+      impl_->currentProjectPtr_.reset();
+      impl_->signalsConnected_ = false;
+      impl_->currentProjectPtr_ = importResult.project;
+      impl_->currentProjectPath_ = fullpath;
+
+      if (impl_->currentProjectPtr_) {
+        if (!impl_->signalsConnected_) {
+          auto shared = impl_->currentProjectPtr_;
+          std::weak_ptr<ArtifactProject> weakProj = shared;
+          connect(shared.get(), &ArtifactProject::projectChanged, this, [weakProj, this]() {
+            if (weakProj.lock()) projectChanged();
+          });
+          connect(shared.get(), &ArtifactProject::compositionCreated, this, [weakProj, this](const CompositionID& id) {
+            if (weakProj.lock()) compositionCreated(id);
+          });
+          connect(shared.get(), &ArtifactProject::layerCreated, this, [weakProj, this](const CompositionID& cid, const LayerID& lid) {
+            if (weakProj.lock()) layerCreated(cid, lid);
+          });
+          impl_->signalsConnected_ = true;
+        }
+        projectCreated();
+      }
+
+      if (onFinished) onFinished(importResult);
+    }, Qt::QueuedConnection);
+  });
+
+  // Run import in background thread
+  watcher->setFuture(QtConcurrent::run([fullpath, onProgress]() -> ArtifactProjectImporterResult {
+    if (onProgress) onProgress(0, 100, QStringLiteral("Reading file..."));
+
+    ArtifactProjectImporter importer;
+    importer.setInputPath(fullpath);
+
+    if (onProgress) onProgress(20, 100, QStringLiteral("Parsing JSON..."));
+    auto importResult = importer.importProject();
+
+    if (!importResult.success || !importResult.project) {
+      return importResult;
+    }
+
+    if (onProgress) onProgress(60, 100, QStringLiteral("Health check..."));
+    auto report = ArtifactProjectHealthChecker::checkAndRepair(importResult.project.get());
+    if (!report.isHealthy) {
+      qWarning() << "[loadFromFileAsync] health issues detected:" << report.issues.size();
+    }
+
+    if (onProgress) onProgress(90, 100, QStringLiteral("Restoring items..."));
+    // Restore project items if needed
+
+    if (onProgress) onProgress(100, 100, QStringLiteral("Complete"));
+    return importResult;
+  }));
+}
+
+void ArtifactProjectManager::saveToFileAsync(const QString& fullpath,
+                                             ProjectSaveFinishedFn onFinished,
+                                             ProjectProgressFn onProgress)
+{
+  auto projectPtr = impl_->currentProjectPtr_;
+  if (!projectPtr || projectPtr->isNull()) {
+    ArtifactProjectExporterResult result;
+    result.success = false;
+    if (onFinished) onFinished(result);
+    return;
+  }
+
+  auto* watcher = new QFutureWatcher<ArtifactProjectExporterResult>(this);
+
+  QObject::connect(watcher, &QFutureWatcher<ArtifactProjectExporterResult>::finished,
+                   this, [this, watcher, fullpath, onFinished]() {
+    auto result = watcher->result();
+    watcher->deleteLater();
+
+    if (result.success) {
+      QMetaObject::invokeMethod(this, [this, fullpath]() {
+        impl_->currentProjectPath_ = fullpath;
+        runProjectHookScript(QStringLiteral("after_project_export"), fullpath);
+      }, Qt::QueuedConnection);
+    } else {
+      QMetaObject::invokeMethod(this, [fullpath]() {
+        runProjectHookScript(QStringLiteral("on_project_save_failed"), fullpath);
+      }, Qt::QueuedConnection);
+    }
+
+    if (onFinished) onFinished(result);
+  });
+
+  // Run export in background thread
+  watcher->setFuture(QtConcurrent::run([projectPtr, fullpath, onProgress]() -> ArtifactProjectExporterResult {
+    ArtifactProjectExporterResult result;
+    result.success = false;
+
+    if (onProgress) onProgress(0, 100, QStringLiteral("Validating..."));
+    // Validation in background (simplified check)
+    if (!projectPtr || projectPtr->isNull()) {
+      return result;
+    }
+
+    if (onProgress) onProgress(10, 100, QStringLiteral("Creating backup..."));
+    // Create backup before saving (if file exists)
+    if (QFile::exists(fullpath)) {
+      if (!createBackupFile(fullpath)) {
+        qWarning() << "[saveToFileAsync] Failed to create backup for:" << fullpath;
+      }
+    }
+
+    if (onProgress) onProgress(20, 100, QStringLiteral("Serializing..."));
+    ArtifactProjectExporter exporter;
+    exporter.setProject(projectPtr);
+    exporter.setOutputPath(fullpath);
+
+    if (onProgress) onProgress(40, 100, QStringLiteral("Exporting..."));
+    result = exporter.exportProject();
+
+    if (result.success) {
+      if (onProgress) onProgress(100, 100, QStringLiteral("Saved"));
+    } else {
+      if (onProgress) onProgress(100, 100, QStringLiteral("Save failed"));
+    }
+
+    return result;
+  }));
+}
 
  QString ArtifactProjectManager::currentProjectPath() const
  {

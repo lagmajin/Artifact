@@ -74,6 +74,7 @@ RenderTask::~RenderTask() = default;
 class RenderScheduler::Impl {
 public:
     QThreadPool* threadPool_ = nullptr;
+    RenderScheduler* owner_ = nullptr;
     ParallelStrategy strategy_ = ParallelStrategy::Adaptive;
     bool adaptiveEnabled_ = true;
     
@@ -103,6 +104,38 @@ public:
     
     // Callbacks
     std::function<void(RenderTask*)> taskExecutor_;
+
+    // Main-thread slots for signal emission (called via QMetaObject::invokeMethod)
+    void onTaskCompleted(RenderTask* task, double elapsedMs) {
+        Q_UNUSED(elapsedMs);
+        if (!owner_) return;
+        if (!task->isCancelled()) {
+            emit owner_->taskCompleted(task);
+            emit owner_->frameProcessed(task->range().startPosition());
+        }
+        // Update progress
+        const float progress = static_cast<float>(completedCount_) / totalCount_;
+        emit owner_->progressChanged(progress);
+    }
+
+    void onTaskFailed(RenderTask* task, const QString& error) {
+        if (!owner_) return;
+        dropCounts_[static_cast<int>(FrameDropReason::ExecutionError)]++;
+        emit owner_->frameDropped(
+            FrameDropReason::ExecutionError,
+            dropCounts_[static_cast<int>(FrameDropReason::ExecutionError)]);
+        emit owner_->taskFailed(task, error);
+    }
+
+    void onOverBudget(double elapsedMs) {
+        if (!owner_) return;
+        dropCounts_[static_cast<int>(FrameDropReason::OverBudget)]++;
+        emit owner_->frameDropped(
+            FrameDropReason::OverBudget,
+            dropCounts_[static_cast<int>(FrameDropReason::OverBudget)]);
+        emit owner_->performanceWarning(
+            QString("Frame budget exceeded: %1 ms").arg(elapsedMs, 0, 'f', 2));
+    }
     
     Impl() {
         threadPool_ = new QThreadPool();
@@ -139,6 +172,7 @@ RenderScheduler::RenderScheduler(QObject* parent)
     : QObject(parent)
     , impl_(new Impl())
 {
+    impl_->owner_ = this;
 }
 
 RenderScheduler::~RenderScheduler() = default;
@@ -234,15 +268,15 @@ void RenderScheduler::setTaskPriority(RenderTask* task, TaskPriority priority) {
 
 void RenderScheduler::startExecution() {
     if (impl_->executing_) return;
-    
+
     impl_->executing_ = true;
     impl_->paused_ = false;
     impl_->stopRequested_ = false;
     impl_->executionTimer_.start();
-    
+
     emit executionStarted();
-    
-    // Start processing tasks
+
+    // Start processing tasks in parallel using QThreadPool
     processNextTask();
 }
 
@@ -254,92 +288,112 @@ void RenderScheduler::pauseExecution() {
 void RenderScheduler::stopExecution() {
     impl_->stopRequested_ = true;
     impl_->executing_ = false;
-    
+
     cancelAllTasks();
-    
+
     emit executionStopped();
 }
 
 void RenderScheduler::processNextTask() {
-    if (!impl_->executing_ || impl_->paused_ || impl_->stopRequested_) {
-        return;
-    }
-    
-    RenderTask* task = nullptr;
-    
-    {
-        QMutexLocker locker(&impl_->mutex_);
-        
-        if (impl_->pendingTasks_.empty()) {
-            if (impl_->completedCount_ < impl_->totalCount_) {
-                impl_->dropCounts_[static_cast<int>(FrameDropReason::QueueStarvation)]++;
-                emit frameDropped(FrameDropReason::QueueStarvation,
-                                  impl_->dropCounts_[static_cast<int>(FrameDropReason::QueueStarvation)]);
-            }
-            if (impl_->completedCount_ >= impl_->totalCount_) {
-                impl_->executing_ = false;
-                emit executionCompleted();
-            }
-            return;
-        }
-        
-        task = impl_->pendingTasks_.front();
-        impl_->pendingTasks_.erase(impl_->pendingTasks_.begin());
-        impl_->activeTasks_.push_back(task);
-    }
-    
-    if (task && !task->isCancelled()) {
-        emit taskStarted(task);
+    // Dispatch tasks to thread pool (parallel execution)
+    const int maxConcurrent = impl_->threadPool_->maxThreadCount();
 
-        const auto startNs = std::chrono::steady_clock::now().time_since_epoch().count();
-        QString execError;
-        const bool ok = impl_->executeTask(task, &execError);
-        const auto endNs = std::chrono::steady_clock::now().time_since_epoch().count();
-        const double elapsedMs = (endNs - startNs) / 1000000.0;
-        impl_->frameTimes_.push_back(elapsedMs);
-        if (impl_->frameTimes_.size() > 240) {
-            impl_->frameTimes_.pop_front();
-        }
+    while (impl_->executing_ && !impl_->paused_ && !impl_->stopRequested_) {
+        RenderTask* task = nullptr;
 
-        if (!ok) {
-            if (task->isCancelled()) {
-                impl_->dropCounts_[static_cast<int>(FrameDropReason::Cancelled)]++;
-                emit frameDropped(FrameDropReason::Cancelled,
-                                  impl_->dropCounts_[static_cast<int>(FrameDropReason::Cancelled)]);
-            } else {
-                impl_->dropCounts_[static_cast<int>(FrameDropReason::ExecutionError)]++;
-                emit frameDropped(FrameDropReason::ExecutionError,
-                                  impl_->dropCounts_[static_cast<int>(FrameDropReason::ExecutionError)]);
-                emit taskFailed(task, execError);
-            }
-        } else if (!task->isCancelled()) {
-            if (elapsedMs > impl_->frameBudgetMs_) {
-                impl_->dropCounts_[static_cast<int>(FrameDropReason::OverBudget)]++;
-                emit frameDropped(FrameDropReason::OverBudget,
-                                  impl_->dropCounts_[static_cast<int>(FrameDropReason::OverBudget)]);
-                emit performanceWarning(QString("Frame budget exceeded: %1 ms").arg(elapsedMs, 0, 'f', 2));
-            }
-            emit taskCompleted(task);
-            emit frameProcessed(task->range().startPosition());
-        }
-        
         {
+            QMutexLocker locker(&impl_->mutex_);
+
+            // Check if we can dispatch more tasks
+            const int currentActive = static_cast<int>(impl_->activeTasks_.size());
+            if (currentActive >= maxConcurrent) {
+                return;  // Wait for tasks to complete
+            }
+
+            if (impl_->pendingTasks_.empty()) {
+                // No more tasks - check if we're done
+                if (impl_->activeTasks_.empty() && impl_->completedCount_ >= impl_->totalCount_) {
+                    impl_->executing_ = false;
+                    emit executionCompleted();
+                }
+                return;
+            }
+
+            task = impl_->pendingTasks_.front();
+            impl_->pendingTasks_.erase(impl_->pendingTasks_.begin());
+            impl_->activeTasks_.push_back(task);
+        }
+
+        if (!task) {
+            break;
+        }
+
+        if (task->isCancelled()) {
+            // Skip cancelled tasks
             QMutexLocker locker(&impl_->mutex_);
             auto it = std::find(impl_->activeTasks_.begin(), impl_->activeTasks_.end(), task);
             if (it != impl_->activeTasks_.end()) {
                 impl_->activeTasks_.erase(it);
             }
-            impl_->completedTasks_.push_back(task);
+            impl_->dropCounts_[static_cast<int>(FrameDropReason::Cancelled)]++;
+            emit frameDropped(FrameDropReason::Cancelled,
+                              impl_->dropCounts_[static_cast<int>(FrameDropReason::Cancelled)]);
+            impl_->completedCount_++;
+            continue;
         }
-        
-        // Update progress
-        float progress = (float)impl_->completedCount_ / impl_->totalCount_;
-        emit progressChanged(progress);
-    }
-    
-    // Process next task
-    if (impl_->executing_ && !impl_->paused_) {
-        processNextTask();
+
+        emit taskStarted(task);
+
+        // Run task in thread pool
+        auto self = this;
+        impl_->threadPool_->start([self, task]() {
+            if (!self || self->impl_->stopRequested_) {
+                return;
+            }
+
+            const auto startNs = std::chrono::steady_clock::now().time_since_epoch().count();
+            QString execError;
+            const bool ok = self->impl_->executeTask(task, &execError);
+            const auto endNs = std::chrono::steady_clock::now().time_since_epoch().count();
+            const double elapsedMs = (endNs - startNs) / 1000000.0;
+
+            {
+                QMutexLocker locker(&self->impl_->mutex_);
+                self->impl_->frameTimes_.push_back(elapsedMs);
+                if (self->impl_->frameTimes_.size() > 240) {
+                    self->impl_->frameTimes_.pop_back();
+                }
+            }
+
+            // Post result back to main thread via signal/slot
+            if (!ok) {
+                if (!task->isCancelled()) {
+                    QMetaObject::invokeMethod(self, "onTaskFailed", Qt::QueuedConnection,
+                                              Q_ARG(RenderTask*, task), Q_ARG(QString, execError));
+                }
+            } else if (!task->isCancelled()) {
+                if (elapsedMs > self->impl_->frameBudgetMs_) {
+                    QMetaObject::invokeMethod(self, "onOverBudget", Qt::QueuedConnection,
+                                              Q_ARG(double, elapsedMs));
+                }
+                QMetaObject::invokeMethod(self, "onTaskCompleted", Qt::QueuedConnection,
+                                          Q_ARG(RenderTask*, task), Q_ARG(double, elapsedMs));
+            }
+
+            // Remove from active tasks
+            {
+                QMutexLocker locker(&self->impl_->mutex_);
+                auto it = std::find(self->impl_->activeTasks_.begin(), self->impl_->activeTasks_.end(), task);
+                if (it != self->impl_->activeTasks_.end()) {
+                    self->impl_->activeTasks_.erase(it);
+                }
+                self->impl_->completedTasks_.push_back(task);
+                self->impl_->completedCount_++;
+            }
+
+            // Try to dispatch next task
+            QMetaObject::invokeMethod(self, "processNextTask", Qt::QueuedConnection);
+        });
     }
 }
 

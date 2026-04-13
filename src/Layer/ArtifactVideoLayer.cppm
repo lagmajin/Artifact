@@ -58,6 +58,8 @@ module Artifact.Layer.Video;
 
 import Artifact.Layer.Video;
 import Artifact.Project.Manager;
+import Event.Bus;
+import Artifact.Event.Types;
 import Utils.String.UniString;
 import Utils.Id;
 import Property.Group;
@@ -75,6 +77,15 @@ int64_t timelineFrameToSourceFrame(const ArtifactVideoLayer* layer, int64_t time
     if (!layer) {
         return timelineFrame;
     }
+
+    // Apply time remap if enabled
+    if (layer->isTimeRemapEnabled()) {
+        // Get composition frame from timeline frame
+        const int64_t compFrame = timelineFrame;
+        const double sourceFrameDouble = layer->getSourceFrameAtCompFrame(compFrame);
+        return static_cast<int64_t>(sourceFrameDouble);
+    }
+
     return timelineFrame - layer->inPoint() + layer->startTime().framePosition();
 }
 
@@ -369,7 +380,11 @@ bool ArtifactVideoLayer::loadFromPath(const QString& path)
             qCritical() << "[VideoLayer] openMediaFile FAILED:" << result.normalizedPath
                         << "lastError=" << result.error;
             layer->impl_->isLoaded_ = false;
-            Q_EMIT layer->changed();
+            if (auto* comp = static_cast<ArtifactAbstractComposition*>(layer->composition())) {
+             ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
+                 LayerChangedEvent{comp->id().toString(), layer->id().toString(),
+                                   LayerChangedEvent::ChangeType::Modified});
+            }
             return;
         }
 
@@ -415,7 +430,11 @@ bool ArtifactVideoLayer::loadFromPath(const QString& path)
         qDebug() << "[VideoLayer] Loaded:" << result.normalizedPath
                  << "Duration:" << layer->impl_->streamInfo_.duration << "s"
                  << "Frames:" << layer->impl_->streamInfo_.frameCount;
-        Q_EMIT layer->changed();
+        if (auto* comp = static_cast<ArtifactAbstractComposition*>(layer->composition())) {
+         ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
+             LayerChangedEvent{comp->id().toString(), layer->id().toString(),
+                               LayerChangedEvent::ChangeType::Modified});
+        }
     });
     watcher->setFuture(impl_->openFuture_);
 
@@ -1084,43 +1103,42 @@ bool ArtifactVideoLayer::setLayerPropertyValue(const QString& propertyPath, cons
         const auto path = value.toString().trimmed();
         if (!path.isEmpty()) {
             setSourceFile(path);
-            Q_EMIT changed();
         }
         return true;
     }
     if (propertyPath == QStringLiteral("video.playbackSpeed")) {
         setPlaybackSpeed(value.toDouble());
-        Q_EMIT changed();
+        setDirty(LayerDirtyFlag::Property);
         return true;
     }
     if (propertyPath == QStringLiteral("video.loopEnabled")) {
         setLoopEnabled(value.toBool());
-        Q_EMIT changed();
+        setDirty(LayerDirtyFlag::Property);
         return true;
     }
     if (propertyPath == QStringLiteral("video.audioVolume")) {
         setAudioVolume(value.toDouble());
-        Q_EMIT changed();
+        setDirty(LayerDirtyFlag::Property);
         return true;
     }
     if (propertyPath == QStringLiteral("video.audioMuted")) {
         setAudioMuted(value.toBool());
-        Q_EMIT changed();
+        setDirty(LayerDirtyFlag::Property);
         return true;
     }
     if (propertyPath == QStringLiteral("video.audioEnabled")) {
         setHasAudio(value.toBool());
-        Q_EMIT changed();
+        setDirty(LayerDirtyFlag::Property);
         return true;
     }
     if (propertyPath == QStringLiteral("video.videoEnabled")) {
         setHasVideo(value.toBool());
-        Q_EMIT changed();
+        setDirty(LayerDirtyFlag::Property);
         return true;
     }
     if (propertyPath == QStringLiteral("video.proxyQuality")) {
         setProxyQuality(static_cast<ProxyQuality>(value.toInt()));
-        Q_EMIT changed();
+        setDirty(LayerDirtyFlag::Property);
         return true;
     }
     return ArtifactAbstractLayer::setLayerPropertyValue(propertyPath, value);

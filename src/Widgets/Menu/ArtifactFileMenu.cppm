@@ -22,6 +22,8 @@ module;
 #include <QProgressDialog>
 #include <QPainter>
 #include <QImage>
+#include <QtConcurrent>
+#include <QFutureWatcher>
 #include <wobjectimpl.h>
 
 module Artifact.Menu.File;
@@ -470,7 +472,7 @@ void ArtifactFileMenu::Impl::handleExportWorkArea()
         QMessageBox::warning(menu_, "エクスポート", "プロジェクトが開かれていません。");
         return;
     }
-    
+
     auto comp = svc->currentComposition().lock();
     if (!comp) {
         QMessageBox::warning(menu_, "エクスポート", "コンポジションが選択されていません。");
@@ -486,86 +488,100 @@ void ArtifactFileMenu::Impl::handleExportWorkArea()
     const int64_t startFrame = workArea.start();
     const int64_t endFrame = workArea.end();
     const int64_t totalFrames = endFrame - startFrame + 1;
-    
-    // 進捗ダイアログを表示
-    QProgressDialog progress(menu_);
-    progress.setWindowTitle("レンダリング中");
-    progress.setLabelText("フレームを描画中...");
-    progress.setRange(0, static_cast<int>(totalFrames));
-    progress.setCancelButton(nullptr);
-    progress.setWindowModality(Qt::WindowModal);
-    progress.show();
-    
     const QSize compSize = comp->settings().compositionSize();
-    int renderedCount = 0;
-    
-    // 各フレームをレンダリング
-    for (int64_t frame = startFrame; frame <= endFrame; ++frame) {
-        // 進捗更新
-        progress.setValue(static_cast<int>(frame - startFrame));
-        QApplication::processEvents();
-        if (progress.wasCanceled()) break;
-        
-        // キャンバスをクリア
-        QImage canvas(compSize, QImage::Format_ARGB32_Premultiplied);
-        canvas.fill(QColor(18, 20, 24));
-        
-        QPainter painter(&canvas);
-        painter.setRenderHint(QPainter::Antialiasing, true);
-        painter.setRenderHint(QPainter::SmoothPixmapTransform, true);
-        
-        // 全レイヤーを描画
-        const auto layers = comp->allLayer();
-        for (const auto& layer : layers) {
-            if (!layer || !layer->isVisible()) continue;
-            
-            // 現在のフレーム位置にシーク
-            layer->goToFrame(frame);
+    const auto layers = comp->allLayer();
 
-            // レイヤーサーフェスを取得して描画
-            if (auto imageLayer = std::dynamic_pointer_cast<ArtifactImageLayer>(layer)) {
-                QImage img = imageLayer->toQImage();
-                if (!img.isNull()) {
-                    const auto size = layer->sourceSize();
-                    painter.drawImage(QRectF(0, 0, size.width, size.height), img);
+    // 進捗ダイアログを表示
+    QProgressDialog* progress = new QProgressDialog(menu_);
+    progress->setWindowTitle("レンダリング中");
+    progress->setLabelText("フレームをレンダリング中...");
+    progress->setRange(0, static_cast<int>(totalFrames));
+    progress->setCancelButtonText("キャンセル");
+    progress->setWindowModality(Qt::WindowModal);
+    progress->setAttribute(Qt::WA_DeleteOnClose, false);
+    progress->show();
+
+    // バックグラウンドでレンダリング実行
+    auto cancelFlag = std::make_shared<std::atomic<bool>>(false);
+    QObject::connect(progress, &QProgressDialog::canceled, [cancelFlag]() {
+        *cancelFlag = true;
+    });
+
+    auto* watcher = new QFutureWatcher<int>(menu_);
+    QObject::connect(watcher, &QFutureWatcher<int>::progressValueChanged, progress, [progress](int value) {
+        progress->setValue(value);
+    });
+    QObject::connect(watcher, &QFutureWatcher<int>::finished, menu_, [progress, watcher, filePath, menu_]() {
+        progress->close();
+        const int renderedCount = watcher->result();
+        watcher->deleteLater();
+
+        if (renderedCount > 0) {
+            QMessageBox::information(menu_, "エクスポート完了",
+                QString("%1 フレームを保存しました:\n%2").arg(renderedCount).arg(filePath));
+        }
+    });
+
+    // Run rendering in background thread with progress reporting
+    watcher->setFuture(QtConcurrent::run([startFrame, endFrame, compSize, layers, filePath, cancelFlag, totalFrames]() -> int {
+        int renderedCount = 0;
+
+        for (int64_t frame = startFrame; frame <= endFrame; ++frame) {
+            if (*cancelFlag) break;
+
+            // キャンバスをクリア
+            QImage canvas(compSize, QImage::Format_ARGB32_Premultiplied);
+            canvas.fill(QColor(18, 20, 24));
+
+            QPainter painter(&canvas);
+            painter.setRenderHint(QPainter::Antialiasing, true);
+            painter.setRenderHint(QPainter::SmoothPixmapTransform, true);
+
+            // 全レイヤーを描画
+            for (const auto& layer : layers) {
+                if (!layer || !layer->isVisible()) continue;
+
+                if (auto imageLayer = std::dynamic_pointer_cast<ArtifactImageLayer>(layer)) {
+                    QImage img = imageLayer->toQImage();
+                    if (!img.isNull()) {
+                        const auto size = layer->sourceSize();
+                        painter.drawImage(QRectF(0, 0, size.width, size.height), img);
+                    }
+                } else if (auto svgLayer = std::dynamic_pointer_cast<ArtifactSvgLayer>(layer)) {
+                    QImage img = svgLayer->toQImage();
+                    if (!img.isNull()) {
+                        const auto size = layer->sourceSize();
+                        painter.drawImage(QRectF(0, 0, size.width, size.height), img);
+                    }
+                } else if (auto solidLayer = std::dynamic_pointer_cast<ArtifactSolidImageLayer>(layer)) {
+                    QImage img(compSize, QImage::Format_ARGB32_Premultiplied);
+                    const FloatColor solidColor = solidLayer->color();
+                    img.fill(QColor(
+                        static_cast<int>(solidColor.r() * 255),
+                        static_cast<int>(solidColor.g() * 255),
+                        static_cast<int>(solidColor.b() * 255)));
+                    painter.drawImage(0, 0, img);
                 }
-            } else if (auto svgLayer = std::dynamic_pointer_cast<ArtifactSvgLayer>(layer)) {
-                QImage img = svgLayer->toQImage();
-                if (!img.isNull()) {
-                    const auto size = layer->sourceSize();
-                    painter.drawImage(QRectF(0, 0, size.width, size.height), img);
-                }
-            } else if (auto solidLayer = std::dynamic_pointer_cast<ArtifactSolidImageLayer>(layer)) {
-                QImage img(compSize, QImage::Format_ARGB32_Premultiplied);
-                const FloatColor solidColor = solidLayer->color();
-                img.fill(QColor(
-                    static_cast<int>(solidColor.r() * 255),
-                    static_cast<int>(solidColor.g() * 255),
-                    static_cast<int>(solidColor.b() * 255)));
-                painter.drawImage(0, 0, img);
             }
+
+            painter.end();
+
+            // ファイル名を生成（連番）
+            QString frameFilePath;
+            if (filePath.endsWith(".png", Qt::CaseInsensitive)) {
+                QFileInfo fi(filePath);
+                frameFilePath = fi.absolutePath() + "/" + fi.completeBaseName() +
+                               QString("_%1").arg(static_cast<int>(frame), 4, 10, QChar('0')) + ".png";
+            } else {
+                frameFilePath = filePath + QString("_%1.png").arg(static_cast<int>(frame), 4, 10, QChar('0'));
+            }
+
+            canvas.save(frameFilePath, "PNG");
+            renderedCount++;
         }
-        
-        // ファイル名を生成（連番）
-        QString frameFilePath;
-        if (filePath.endsWith(".png", Qt::CaseInsensitive)) {
-            // PNG シーケンスの場合
-            QFileInfo fi(filePath);
-            frameFilePath = fi.absolutePath() + "/" + fi.completeBaseName() + 
-                           QString("_%1").arg(static_cast<int>(frame), 4, 10, QChar('0')) + ".png";
-        } else {
-            // デフォルトは PNG シーケンス
-            frameFilePath = filePath + QString("_%1.png").arg(static_cast<int>(frame), 4, 10, QChar('0'));
-        }
-        
-        canvas.save(frameFilePath, "PNG");
-        renderedCount++;
-    }
-    
-    progress.setValue(static_cast<int>(totalFrames));
-    
-    QMessageBox::information(menu_, "エクスポート",
-        QString("%1 フレームを保存しました:\n%2").arg(renderedCount).arg(filePath));
+
+        return renderedCount;
+    }));
 }
 
 void ArtifactFileMenu::Impl::handleExportProjectPackage()

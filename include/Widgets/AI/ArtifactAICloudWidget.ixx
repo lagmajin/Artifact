@@ -2,6 +2,7 @@ module;
 #include <QComboBox>
 #include <QHBoxLayout>
 #include <QFrame>
+#include <QDialog>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLabel>
@@ -63,9 +64,11 @@ private:
   void appendToolExecutionLog(const QString &entry);
   void appendMcpLog(const QString &entry);
   void copyTranscriptToClipboard();
+  void openModelSelectionPopup();
   QString buildTranscriptText() const;
   void applyModelFilter(const QString &preferredModel = QString());
   void populateModelList(const QStringList &modelIds, const QString &preferredModel = QString());
+  void updateModelSelectionLabel();
   void appendTranscriptMessage(const QString &role, const QString &text);
   void replaceLastAssistantMessage(const QString &text);
   void scrollTranscriptToBottom();
@@ -81,36 +84,37 @@ private:
   QLineEdit *apiKeyEdit_;
   QLineEdit *baseUrlEdit_;
   QLabel *baseUrlLabel_;
-  QLabel *modelCountLabel_;
-  QLabel *connectionProviderLabel_;
-  QLabel *connectionEndpointLabel_;
-  QLabel *connectionApiKeyLabel_;
-  QLabel *toolCountLabel_;
-  QPushButton *openSettingsButton_;
-  QScrollArea *transcriptScrollArea_;
-  QWidget *transcriptContent_;
-  QVBoxLayout *transcriptLayout_;
-  QTextEdit *toolSchemaPreview_;
-  QTextEdit *toolLogView_;
-  QTextEdit *mcpPreview_;
-  QLineEdit *mcpProgramEdit_;
-  QLineEdit *mcpArgsEdit_;
-  QLabel *mcpStatusLabel_;
-  QTextEdit *mcpLogView_;
-  QPushButton *mcpStartButton_;
-  QPushButton *mcpStopButton_;
-  QPushButton *mcpInitializeButton_;
-  QPushButton *mcpListToolsButton_;
-  QPushButton *mcpPingButton_;
-  QComboBox *mcpToolSelector_;
-  QLineEdit *mcpToolClassEdit_;
-  QLineEdit *mcpToolMethodEdit_;
-  QTextEdit *mcpToolArgsEdit_;
-  QPushButton *mcpToolCallButton_;
-  QTextEdit *promptEdit_;
-  QPushButton *sendButton_;
-  QLabel *requestStatusLabel_;
-  QPushButton *copyTranscriptButton_;
+  QLabel *modelCountLabel_ = nullptr;
+  QLabel *modelSelectionLabel_ = nullptr;
+  QLabel *connectionProviderLabel_ = nullptr;
+  QLabel *connectionEndpointLabel_ = nullptr;
+  QLabel *connectionApiKeyLabel_ = nullptr;
+  QLabel *toolCountLabel_ = nullptr;
+  QPushButton *openSettingsButton_ = nullptr;
+  QScrollArea *transcriptScrollArea_ = nullptr;
+  QWidget *transcriptContent_ = nullptr;
+  QVBoxLayout *transcriptLayout_ = nullptr;
+  QTextEdit *toolSchemaPreview_ = nullptr;
+  QTextEdit *toolLogView_ = nullptr;
+  QTextEdit *mcpPreview_ = nullptr;
+  QLineEdit *mcpProgramEdit_ = nullptr;
+  QLineEdit *mcpArgsEdit_ = nullptr;
+  QLabel *mcpStatusLabel_ = nullptr;
+  QTextEdit *mcpLogView_ = nullptr;
+  QPushButton *mcpStartButton_ = nullptr;
+  QPushButton *mcpStopButton_ = nullptr;
+  QPushButton *mcpInitializeButton_ = nullptr;
+  QPushButton *mcpListToolsButton_ = nullptr;
+  QPushButton *mcpPingButton_ = nullptr;
+  QComboBox *mcpToolSelector_ = nullptr;
+  QLineEdit *mcpToolClassEdit_ = nullptr;
+  QLineEdit *mcpToolMethodEdit_ = nullptr;
+  QTextEdit *mcpToolArgsEdit_ = nullptr;
+  QPushButton *mcpToolCallButton_ = nullptr;
+  QTextEdit *promptEdit_ = nullptr;
+  QPushButton *sendButton_ = nullptr;
+  QLabel *requestStatusLabel_ = nullptr;
+  QPushButton *copyTranscriptButton_ = nullptr;
   bool isSending_ = false;
   bool sendCanceled_ = false;
   int toolLoopDepth_ = 0;

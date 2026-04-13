@@ -11,17 +11,22 @@
 #include <QCursor>
 #include <QMenu>
 #include <QSet>
+#include <QToolTip>
 #include <wobjectimpl.h>
 
 module Artifact.Timeline.TrackPainterView;
 
 import std;
+import Diagnostics.Profiler;
 import Widgets.Utils.CSS;
 import Artifact.Application.Manager;
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
 import Artifact.Layers.Selection.Manager;
+import Artifact.Timeline.KeyframeModel;
 import Artifact.Service.Project;
+import Event.Bus;
+import Artifact.Event.Types;
 import Frame.Position;
 import Property.Abstract;
 import Time.Rational;
@@ -164,6 +169,68 @@ bool sameVisualList(const QVector<T>& lhs, const QVector<T>& rhs,
     }
   }
   return true;
+}
+
+QString formatClipTooltip(
+    const ArtifactTimelineTrackPainterView::TrackClipVisual& clip)
+{
+ const QString title = clip.title.isEmpty() ? clip.clipId : clip.title;
+ const QString startText =
+     QStringLiteral("Start: F%1").arg(QString::number(clip.startFrame, 'f', 1));
+ const QString endText = QStringLiteral("End: F%1").arg(
+     QString::number(clip.startFrame + clip.durationFrame, 'f', 1));
+ const QString durationText =
+     QStringLiteral("Duration: %1 frames")
+         .arg(QString::number(clip.durationFrame, 'f', 1));
+ const QString stateText = clip.selected ? QStringLiteral("State: Selected")
+                                        : QStringLiteral("State: Idle");
+ return title + QStringLiteral("\n") + startText + QStringLiteral("\n") +
+        endText + QStringLiteral("\n") + durationText + QStringLiteral("\n") +
+        stateText;
+}
+
+QString formatMarkerTooltip(
+    const ArtifactTimelineTrackPainterView::KeyframeMarkerVisual& marker)
+{
+ const QString label = marker.label.isEmpty()
+                           ? ArtifactTimelineKeyframeModel::displayLabelForPropertyPath(
+                                 marker.propertyPath)
+                           : marker.label;
+ const QString frameText =
+     QStringLiteral("Frame: F%1").arg(QString::number(marker.frame, 'f', 1));
+ const QString pathText = QStringLiteral("Path: %1").arg(marker.propertyPath);
+ const QString laneText = marker.laneCount > 1
+                              ? QStringLiteral("Lane: %1/%2")
+                                    .arg(marker.laneIndex + 1)
+                                    .arg(marker.laneCount)
+                              : QStringLiteral("Lane: 1/1");
+ const QString easingText = marker.eased ? QStringLiteral("Easing: enabled")
+                                         : QStringLiteral("Easing: linear");
+ return label + QStringLiteral("\n") + frameText + QStringLiteral("\n") +
+        pathText + QStringLiteral("\n") + laneText + QStringLiteral("\n") +
+        easingText;
+}
+
+void updateHoverToolTip(QWidget* widget,
+                        const QPoint& globalPos,
+                        const QString& tooltipText,
+                        QString& currentTooltip)
+{
+ if (!widget) {
+  return;
+ }
+ if (tooltipText.isEmpty()) {
+  if (!currentTooltip.isEmpty()) {
+   QToolTip::hideText();
+   currentTooltip.clear();
+  }
+  return;
+ }
+ if (tooltipText == currentTooltip) {
+  return;
+ }
+ currentTooltip = tooltipText;
+ QToolTip::showText(globalPos, tooltipText, widget);
 }
 
 HitResult hitTestClips(
@@ -336,8 +403,9 @@ QVector<ArtifactTimelineTrackPainterView::KeyframeMarkerVisual> collectKeyframeM
   }
  }
 
- const double fps = std::max(
+  const double fps = std::max(
      1.0, static_cast<double>(composition->frameRate().framerate()));
+ const auto transformOrder = ArtifactTimelineKeyframeModel::transformPropertyPaths();
  for (const auto& layer : layers) {
   if (!layer) {
    continue;
@@ -349,7 +417,6 @@ QVector<ArtifactTimelineTrackPainterView::KeyframeMarkerVisual> collectKeyframeM
   const int trackIndex = trackIt.value();
   const auto groups = layer->getLayerPropertyGroups();
   QVector<QString> laneOrder;
-  QHash<QString, int> laneIndexByProperty;
   for (const auto& group : groups) {
    for (const auto& property : group.sortedProperties()) {
     if (!property || !property->isAnimatable()) {
@@ -359,12 +426,25 @@ QVector<ArtifactTimelineTrackPainterView::KeyframeMarkerVisual> collectKeyframeM
     if (keyframes.empty()) {
      continue;
     }
-    const QString propertyName = property->getName();
-    if (!laneIndexByProperty.contains(propertyName)) {
-     laneIndexByProperty.insert(propertyName, laneOrder.size());
-     laneOrder.push_back(propertyName);
-    }
+    laneOrder.push_back(property->getName());
    }
+  }
+  std::sort(laneOrder.begin(), laneOrder.end(), [&](const QString& lhs, const QString& rhs) {
+   const int lhsTransform = transformOrder.indexOf(lhs);
+   const int rhsTransform = transformOrder.indexOf(rhs);
+   if (lhsTransform != rhsTransform) {
+    if (lhsTransform < 0) return false;
+    if (rhsTransform < 0) return true;
+    return lhsTransform < rhsTransform;
+   }
+   return lhs < rhs;
+  });
+  laneOrder.erase(std::unique(laneOrder.begin(), laneOrder.end()), laneOrder.end());
+
+  QHash<QString, int> laneIndexByProperty;
+  laneIndexByProperty.reserve(laneOrder.size());
+  for (int laneIndex = 0; laneIndex < laneOrder.size(); ++laneIndex) {
+   laneIndexByProperty.insert(laneOrder[laneIndex], laneIndex);
   }
 
   if (laneOrder.isEmpty()) {
@@ -400,7 +480,7 @@ QVector<ArtifactTimelineTrackPainterView::KeyframeMarkerVisual> collectKeyframeM
      marker.propertyPath = propertyName;
      marker.trackIndex = trackIndex;
      marker.frame = static_cast<double>(frame);
-     marker.label = propertyName;
+     marker.label = ArtifactTimelineKeyframeModel::displayLabelForPropertyPath(propertyName);
      marker.color = color;
      marker.selectedLayer = selectedLayer;
      marker.eased = eased;
@@ -461,6 +541,10 @@ bool applyKeyframeEditAtFrame(const ArtifactCompositionPtr &composition,
 
  if (changed) {
   layer->changed();
+  ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
+      LayerChangedEvent{composition ? composition->id().toString() : QString(),
+                        layer->id().toString(),
+                        LayerChangedEvent::ChangeType::Modified});
  }
  return changed;
 }
@@ -523,6 +607,7 @@ public:
  QPoint lastPanPoint_;
  QSet<QString> selectedMarkerKeys_;
  QVector<ArtifactTimelineTrackPainterView::KeyframeMarkerVisual> keyframeMarkers_;
+ QString hoverToolTipText_;
  bool selectionSyncDirty_ = true;
  const ArtifactAbstractComposition* lastSyncedComposition_ = nullptr;
  QSet<LayerID> lastSyncedSelectedLayerIds_;
@@ -870,6 +955,8 @@ QSize ArtifactTimelineTrackPainterView::minimumSizeHint() const
 
 void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent* event)
 {
+ ArtifactCore::ProfileTimer _profTimer("TimelineTrackPaint",
+                                       ArtifactCore::ProfileCategory::UI);
  QPainter p(this);
  p.setRenderHint(QPainter::Antialiasing, true);
  const TimelineThemeColors theme = timelineThemeColors();
@@ -890,7 +977,7 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent* event)
   
   // 画面外（dirtyRect外）の行は描画をスキップ
   if (rowTop + rowH >= dirtyRect.top() && rowTop <= dirtyRect.bottom()) {
-    const QColor rowColor = (i % 2 == 0) ? theme.surface.lighter(106) : theme.surface.darker(108);
+    const QColor rowColor = (i % 2 == 0) ? theme.surface.lighter(102) : theme.surface.darker(104);
     p.fillRect(QRectF(0.0, rowTop, fullRect.width(), rowH), rowColor);
     p.setPen(QPen(theme.border.darker(160), 1));
     p.drawLine(0, rowTop + rowH, fullRect.width(), rowTop + rowH);
@@ -911,7 +998,7 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent* event)
   if (!major && !minor) {
    continue;
   }
-  p.setPen(QPen(major ? theme.border.lighter(125) : theme.border.darker(115), 1));
+  p.setPen(QPen(major ? theme.border.lighter(112) : theme.border.darker(112), 1));
   p.drawLine(QPointF(x, dirtyRect.top()), QPointF(x, dirtyRect.bottom()));
  }
 
@@ -953,16 +1040,16 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent* event)
   const bool isHovered = (i == impl_->hoverClipIndex_);
   const bool isSelected = clip.selected;
   const QColor fill = clip.selected
-   ? clip.fillColor.lighter(126)
-   : (isHovered ? clip.fillColor.lighter(118) : clip.fillColor);
-  p.setPen(QPen(clip.selected ? theme.accent.lighter(155) : theme.border.darker(170), clip.selected ? 2 : 1));
+   ? clip.fillColor.lighter(110)
+   : (isHovered ? clip.fillColor.lighter(105) : clip.fillColor);
+  p.setPen(QPen(clip.selected ? theme.accent.lighter(130) : theme.border.darker(160), clip.selected ? 2 : 1));
   p.setBrush(fill);
   p.drawRoundedRect(clipRect, kClipCorner, kClipCorner);
 
   if (isSelected || isHovered) {
    const QColor rim = isSelected
-       ? QColor(theme.accent.lighter(160))
-       : QColor(255, 255, 255, 90);
+       ? QColor(theme.accent.lighter(135))
+       : QColor(255, 255, 255, 60);
    p.setBrush(Qt::NoBrush);
    p.setPen(QPen(rim, isSelected ? 2.0 : 1.0));
    p.drawRoundedRect(clipRect.adjusted(1.0, 1.0, -1.0, -1.0), kClipCorner, kClipCorner);
@@ -978,7 +1065,7 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent* event)
   if ((isHovered || clip.selected) && clipRect.width() > 16.0) {
    const qreal gripY1 = clipRect.center().y() - 5.0;
    const qreal gripY2 = clipRect.center().y() + 5.0;
-   p.setPen(QPen(QColor(255, 255, 255, isHovered ? 180 : 100), 2.0, Qt::SolidLine, Qt::RoundCap));
+   p.setPen(QPen(QColor(255, 255, 255, isHovered ? 130 : 80), 2.0, Qt::SolidLine, Qt::RoundCap));
    p.drawLine(QPointF(clipRect.left()  + 4.0, gripY1), QPointF(clipRect.left()  + 4.0, gripY2));
    p.drawLine(QPointF(clipRect.right() - 4.0, gripY1), QPointF(clipRect.right() - 4.0, gripY2));
   }
@@ -1005,29 +1092,29 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent* event)
           << QPointF(diamondRect.left(), diamondRect.center().y());
   if (marker.selected) {
    QPolygonF outer = diamond;
-   p.setPen(QPen(theme.accent.lighter(155), 2.0));
+   p.setPen(QPen(theme.accent.lighter(135), 2.0));
    p.setBrush(Qt::NoBrush);
    p.drawPolygon(outer);
-   p.setPen(QPen(theme.background.darker(190), 2.0));
+   p.setPen(QPen(theme.background.darker(175), 2.0));
    p.drawPolygon(outer);
-   p.setPen(QPen(theme.text.lighter(120), 1.0));
-   p.setBrush(Qt::white);
+   p.setPen(QPen(theme.text.lighter(110), 1.0));
+   p.setBrush(theme.text.lighter(110));
    p.drawPolygon(diamond);
   } else if (marker.selectedLayer) {
    QPolygonF outer = diamond;
-   p.setPen(QPen(theme.background.darker(190), 2.0));
+   p.setPen(QPen(theme.background.darker(175), 2.0));
    p.setBrush(Qt::NoBrush);
    p.drawPolygon(outer);
-   p.setPen(QPen(theme.text.lighter(120), 1.0));
-   p.setBrush(Qt::white);
+   p.setPen(QPen(theme.text.lighter(110), 1.0));
+   p.setBrush(theme.text.lighter(110));
    p.drawPolygon(diamond);
   } else {
-   p.setPen(QPen(theme.border.darker(170), 1));
-   p.setBrush(marker.eased ? marker.color.lighter(105) : marker.color);
+   p.setPen(QPen(theme.border.darker(160), 1));
+   p.setBrush(marker.eased ? marker.color.lighter(102) : marker.color);
    p.drawPolygon(diamond);
   }
   if (!marker.label.isEmpty()) {
-   p.setPen(marker.selectedLayer ? theme.text.lighter(120) : (isHovered ? theme.accent.lighter(180) : theme.text));
+   p.setPen(marker.selectedLayer ? theme.text.lighter(110) : (isHovered ? theme.accent.lighter(140) : theme.text));
    p.drawText(QRectF(center.x() + 8.0, center.y() - 8.0, 150.0, 16.0),
               Qt::AlignLeft | Qt::AlignVCenter,
               marker.label);
@@ -1037,7 +1124,7 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent* event)
  // Small HUD for track state.
  const QRect hudRect(10, 10, 204, 44);
  p.setPen(Qt::NoPen);
- p.setBrush(theme.background.darker(180));
+ p.setBrush(theme.background.darker(165));
  p.drawRoundedRect(hudRect, 8, 8);
  p.setPen(theme.text);
  const int selectedCount = std::count_if(
@@ -1095,6 +1182,7 @@ void ArtifactTimelineTrackPainterView::mousePressEvent(QMouseEvent* event)
    }
    applyMarkerSelectionFlags(impl_->keyframeMarkers_, impl_->selectedMarkerKeys_);
    Q_EMIT keyframeSelectionChanged(impl_->selectedMarkerKeys_.size());
+   clipSelected(QString(), marker.layerId);
    seekRequested(frame);
    setCurrentFrame(frame);
    event->accept();
@@ -1195,8 +1283,22 @@ void ArtifactTimelineTrackPainterView::mouseMoveEvent(QMouseEvent* event)
   case DragMode::ResizeLeft:
   case DragMode::ResizeRight: setCursor(Qt::SizeHorCursor);  break;
   case DragMode::MoveBody:    setCursor(Qt::OpenHandCursor); break;
-  default:                    setCursor(Qt::ArrowCursor);    break;
+   default:                    setCursor(Qt::ArrowCursor);    break;
   }
+ }
+
+ if (!impl_->panning_) {
+  QString tooltipText;
+  if (impl_->hoverMarkerIndex_ >= 0 &&
+      impl_->hoverMarkerIndex_ < impl_->keyframeMarkers_.size()) {
+   tooltipText = formatMarkerTooltip(
+       impl_->keyframeMarkers_[impl_->hoverMarkerIndex_]);
+  } else if (impl_->hoverClipIndex_ >= 0 &&
+             impl_->hoverClipIndex_ < impl_->clips_.size()) {
+   tooltipText = formatClipTooltip(impl_->clips_[impl_->hoverClipIndex_]);
+  }
+  updateHoverToolTip(this, event->globalPosition().toPoint(), tooltipText,
+                     impl_->hoverToolTipText_);
  }
 
  QRectF dirtyRect;
@@ -1391,9 +1493,7 @@ void ArtifactTimelineTrackPainterView::contextMenuEvent(QContextMenuEvent* event
     // This view only emits projectChanged after a local edit has already been applied.
     // Do not add ArtifactProjectService signal/slot wiring here; keep refresh
     // propagation on the service side or via the local EventBus in higher-level widgets.
-    if (svc->duplicateLayerInCurrentComposition(clip.layerId)) {
-     svc->projectChanged();
-    }
+    svc->duplicateLayerInCurrentComposition(clip.layerId);
    }
    event->accept();
    return;
@@ -1421,9 +1521,6 @@ void ArtifactTimelineTrackPainterView::contextMenuEvent(QContextMenuEvent* event
     // This view only emits projectChanged after a local edit has already been applied.
     // Do not add ArtifactProjectService signal/slot wiring here; keep refresh
     // propagation on the service side or via the local EventBus in higher-level widgets.
-    if (auto *svc = ArtifactProjectService::instance()) {
-     svc->projectChanged();
-    }
     Q_EMIT timelineDebugMessage(
         QStringLiteral("Edited %1 at F%2")
             .arg(clip.title.isEmpty() ? clip.clipId : clip.title)
@@ -1445,9 +1542,6 @@ void ArtifactTimelineTrackPainterView::contextMenuEvent(QContextMenuEvent* event
  }
 
  if (changed) {
-  if (auto *svc = ArtifactProjectService::instance()) {
-   svc->projectChanged();
-  }
   const QString actionText = removeKeyframes ? QStringLiteral("Removed") : QStringLiteral("Added");
   Q_EMIT timelineDebugMessage(
       QStringLiteral("%1 keyframe at F%2 for %3 layer(s)")
@@ -1469,6 +1563,47 @@ void ArtifactTimelineTrackPainterView::wheelEvent(QWheelEvent* event)
  const QPoint angle = event->angleDelta();
  if (angle.isNull()) {
   event->ignore();
+  return;
+ }
+
+ if (event->modifiers() & Qt::ControlModifier) {
+  const double steps = static_cast<double>(angle.y()) / 120.0;
+  if (steps == 0.0) {
+   event->ignore();
+   return;
+  }
+
+  if (event->modifiers() & Qt::AltModifier) {
+   const double scale = std::pow(1.12, steps);
+   QVector<int> resizedHeights = impl_->trackHeights_;
+   const int oldHeight = resizedHeights.isEmpty() ? kDefaultTrackHeight : resizedHeights.front();
+   int newHeight = static_cast<int>(std::lround(static_cast<double>(oldHeight) * scale));
+   newHeight = std::clamp(newHeight, 16, 160);
+   if (newHeight == oldHeight) {
+    event->ignore();
+    return;
+   }
+   for (auto& height : resizedHeights) {
+    height = std::clamp(static_cast<int>(std::lround(static_cast<double>(height) * scale)),
+                        16, 160);
+   }
+   setTrackHeights(resizedHeights);
+   Q_EMIT trackRowHeightChanged(newHeight);
+   event->accept();
+   return;
+  }
+
+  const double mouseX = event->position().x();
+  const double oldPpf = std::max(0.001, impl_->pixelsPerFrame_);
+  const double anchorFrame = (mouseX + impl_->horizontalOffset_) / oldPpf;
+  const double scale = std::pow(1.12, steps);
+  const double newPpf = std::clamp(oldPpf * scale, 0.05, 64.0);
+  const double newOffset = std::max(0.0, anchorFrame * newPpf - mouseX);
+
+  setPixelsPerFrame(newPpf);
+  setHorizontalOffset(newOffset);
+  Q_EMIT zoomLevelChanged(newPpf * 100.0);
+  event->accept();
   return;
  }
 
@@ -1577,6 +1712,8 @@ void ArtifactTimelineTrackPainterView::leaveEvent(QEvent* event)
  impl_->hoverClipIndex_ = -1;
  impl_->hoverEdge_ = DragMode::None;
  impl_->hoverMarkerIndex_ = -1;
+ impl_->hoverToolTipText_.clear();
+ QToolTip::hideText();
 
  if (impl_->dragMode_ == DragMode::None) {
   setCursor(Qt::ArrowCursor);

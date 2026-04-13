@@ -15,6 +15,7 @@ export module Artifact.Render.PrimitiveRenderer2D;
 import Graphics;
 import Color.Float;
 import Artifact.Render.ShaderManager;
+import Artifact.Render.RenderCommandBuffer;
 
 export namespace Artifact {
 
@@ -30,9 +31,10 @@ public:
     void setPSOs(ShaderManager& shaderManager);
     void setContext(IDeviceContext* ctx, ISwapChain* swapChain);
     void setOverrideRTV(ITextureView* rtv);
+    void setCommandBuffer(RenderCommandBuffer* cmdBuf);
     void destroy();
 
-    void clear(const FloatColor& color);
+    void clear(IDeviceContext* ctx, const FloatColor& color);
 
     void setViewportSize(float w, float h);
     void setCanvasSize(float w, float h);
@@ -82,10 +84,6 @@ public:
     void drawSpriteTransformed(float x, float y, float w, float h, const QMatrix4x4& transform, ITextureView* texture, float opacity = 1.0f);
     void drawTextureLocal(float x, float y, float w, float h, ITextureView* pSRV, float opacity = 1.0f);
     void drawMaskedTextureLocal(float x, float y, float w, float h, ITextureView* sceneSRV, const QImage& maskImage, float opacity = 1.0f);
-
-    // Batch rendering
-    void beginBatch();
-    void endBatch();
 
 private:
     class Impl;

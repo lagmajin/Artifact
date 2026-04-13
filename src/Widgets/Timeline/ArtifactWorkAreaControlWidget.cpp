@@ -1,7 +1,6 @@
 module;
 #include <QWidget>
 #include <QPainter>
-#include <QLinearGradient>
 #include <QMouseEvent>
 #include <algorithm>
 
@@ -100,13 +99,10 @@ namespace Artifact
 
   // Range strip
   QRect rangeRect(x1, 0, x2 - x1, height());
-  QLinearGradient grad(rangeRect.topLeft(), rangeRect.bottomLeft());
-  grad.setColorAt(0, theme.accent.lighter(120));
-  grad.setColorAt(1, theme.accent.darker(130));
-  p.fillRect(rangeRect, grad);
+  p.fillRect(rangeRect, theme.accent.darker(112));
 
   // Bottom border for work area
-  p.setPen(QPen(theme.accent, 2));
+  p.setPen(QPen(theme.accent.darker(115), 2));
   p.drawLine(x1, height() - 1, x2, height() - 1);
 
   // Handles (Blue AE style) - highlight on hover
@@ -115,18 +111,18 @@ namespace Artifact
   
   // Left handle
   if (impl_->hoveringLeft || impl_->draggingLeft) {
-    p.setBrush(theme.accent.lighter(135));
+    p.setBrush(theme.accent.lighter(112));
   } else {
-    p.setBrush(theme.accent);
+    p.setBrush(theme.accent.darker(108));
   }
-  p.setPen(QPen(theme.border.lighter(120), 1));
+  p.setPen(QPen(theme.border.darker(120), 1));
   p.drawRoundedRect(QRectF(x1 - handleHalfW, handleTopInset, handleW, handleHeight), 2, 2);
   
   // Right handle
   if (impl_->hoveringRight || impl_->draggingRight) {
-    p.setBrush(theme.accent.lighter(135));
+    p.setBrush(theme.accent.lighter(112));
   } else {
-    p.setBrush(theme.accent);
+    p.setBrush(theme.accent.darker(108));
   }
   p.drawRoundedRect(QRectF(x2 - handleHalfW, handleTopInset, handleW, handleHeight), 2, 2);
  }

@@ -26,6 +26,7 @@
 #include <QVector>
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <limits>
 #include <memory>
 #include <opencv2/core.hpp>
@@ -84,6 +85,7 @@ import Frame.Position;
 import Color.Float;
 import Image;
 import CvUtils;
+import Diagnostics.Profiler;
 
 namespace Artifact {
 
@@ -100,19 +102,23 @@ QImage makeSolidColorSprite(const FloatColor &color) {
 
 QImage makeMayaGradientSprite(const FloatColor &baseColor) {
   Q_UNUSED(baseColor);
-  constexpr int kWidth = 2;
-  constexpr int kHeight = 256;
+  constexpr int kWidth = 4;
+  constexpr int kHeight = 1024;
   QImage image(kWidth, kHeight, QImage::Format_RGBA8888);
   image.fill(Qt::transparent);
 
   QPainter painter(&image);
   QLinearGradient gradient(0.0, 0.0, 0.0, static_cast<qreal>(kHeight));
   gradient.setColorAt(
-      0.0, QColor::fromRgbF(0.23f, 0.29f, 0.35f, 1.0f));
+      0.0, QColor::fromRgbF(0.26f, 0.32f, 0.38f, 1.0f));
   gradient.setColorAt(
-      0.35, QColor::fromRgbF(0.17f, 0.22f, 0.27f, 1.0f));
+      0.14, QColor::fromRgbF(0.21f, 0.27f, 0.33f, 1.0f));
   gradient.setColorAt(
-      0.75, QColor::fromRgbF(0.11f, 0.14f, 0.18f, 1.0f));
+      0.30, QColor::fromRgbF(0.17f, 0.22f, 0.27f, 1.0f));
+  gradient.setColorAt(
+      0.52, QColor::fromRgbF(0.13f, 0.17f, 0.22f, 1.0f));
+  gradient.setColorAt(
+      0.76, QColor::fromRgbF(0.10f, 0.13f, 0.17f, 1.0f));
   gradient.setColorAt(
       1.0, QColor::fromRgbF(0.08f, 0.10f, 0.13f, 1.0f));
   painter.fillRect(image.rect(), gradient);
@@ -951,6 +957,24 @@ void drawCompositionRegionOverlay(ArtifactIRenderer *renderer,
   renderer->drawSolidLine({0.0f, ch}, {0.0f, 0.0f}, lightColor, 1.0f);
 }
 
+// Draws checkerboard in Viewport Space so transparent regions of the
+// composition reveal the pattern against the viewport background.
+// This should be called before blitting the composition result to the
+// visible framebuffer.
+void drawViewportCheckerboardBackground(ArtifactIRenderer *renderer,
+                                        float vw, float vh) {
+  if (!renderer || vw <= 0.0f || vh <= 0.0f) {
+    return;
+  }
+
+  renderer->setCanvasSize(vw, vh);
+  renderer->setZoom(1.0f);
+  renderer->setPan(0.0f, 0.0f);
+  renderer->drawCheckerboard(0.0f, 0.0f, vw, vh, 16.0f,
+                             {0.18f, 0.18f, 0.18f, 1.0f},
+                             {0.28f, 0.28f, 0.28f, 1.0f});
+}
+
 // Draws checkerboard over the composition canvas in Composition Space.
 // Must be called BEFORE layer drawing so transparent regions reveal the
 // pattern.
@@ -987,12 +1011,19 @@ void drawCompositionBackgroundDirect(ArtifactIRenderer* renderer,
   if (!renderer || cw <= 0.0f || ch <= 0.0f) {
     return;
   }
-  Q_UNUSED(mayaGradientSprite);
-  // Only Solid mode should fill with a flat colour rect.
-  // MayaGradient is handled in viewport space elsewhere.
-  // Checkerboard has its own draw pass (drawCompositionCheckerboard) and must
-  // NOT be covered by a solid rect.
-  if (mode != CompositionBackgroundMode::Solid) {
+  if (mode == CompositionBackgroundMode::Solid) {
+    renderer->drawRectLocal(0.f, 0.f, cw, ch, bgColor, 1.0f);
+    return;
+  }
+  if (mode == CompositionBackgroundMode::Checkerboard) {
+    // Checkerboard is the viewport background; composition area shows bgColor.
+    renderer->drawRectLocal(0.f, 0.f, cw, ch, bgColor, 1.0f);
+    return;
+  }
+  // MayaGradient only affects the viewport background; the composition area
+  // itself is always rendered with the solid bgColor.
+  if (mode == CompositionBackgroundMode::MayaGradient) {
+    renderer->drawRectLocal(0.f, 0.f, cw, ch, bgColor, 1.0f);
     return;
   }
   renderer->drawRectLocal(0.f, 0.f, cw, ch, bgColor, 1.0f);
@@ -1120,7 +1151,7 @@ public:
   bool showSafeMargins_ = false;
   bool showMotionPathOverlay_ = true;
   bool showFrameInfo_ = false; // Changed to false by default
-  bool showGizmoOverlay_ = false; // Temporarily disable gizmo drawing.
+  bool showGizmoOverlay_ = true;
   bool showCompositionRegionOverlay_ = false; // Temporarily disable the blue frame.
   ArtifactCore::ViewOrientationNavigator viewportOrientationNavigator_;
   bool viewportOrientationActive_ = false;
@@ -1130,9 +1161,52 @@ public:
       false; // When true, suppress cache invalidation during Render Queue
   int lastPipelineStateMask_ = -1;
   QSize lastDispatchWarningSize_;
-  QByteArray lastFinalPresentKey_;
+
+  // Packed render key state for fast change detection.
+  // Replaces the per-frame QByteArray string concatenation.
+  struct RenderKeyState {
+    CompositionID compId;
+    quint64 baseSerial = 0; quint64 overlaySerial = 0;
+    int64_t frame = 0;
+    int32_t viewW = 0, viewH = 0, downsample = 0;
+    float zoom = 0, panX = 0, panY = 0;
+    float bgR = 0, bgG = 0, bgB = 0, bgA = 0;
+    int32_t bgMode = 0;
+    int32_t gizmoMode = -1, gizmoHover = -1, gizmoActive = -1;
+    uint8_t gpuBlend = 0, showGrid = 0, showGuides = 0, showSafeMargins = 0, viewportInteracting = 0;
+    LayerID selectedLayerId;
+
+    bool operator==(const RenderKeyState &o) const {
+      return compId == o.compId
+          && baseSerial == o.baseSerial && overlaySerial == o.overlaySerial
+          && frame == o.frame
+          && viewW == o.viewW && viewH == o.viewH && downsample == o.downsample
+          && zoom == o.zoom && panX == o.panX && panY == o.panY
+          && bgR == o.bgR && bgG == o.bgG && bgB == o.bgB && bgA == o.bgA
+          && bgMode == o.bgMode
+          && gizmoMode == o.gizmoMode && gizmoHover == o.gizmoHover && gizmoActive == o.gizmoActive
+          && gpuBlend == o.gpuBlend && showGrid == o.showGrid && showGuides == o.showGuides
+          && showSafeMargins == o.showSafeMargins && viewportInteracting == o.viewportInteracting
+          && selectedLayerId == o.selectedLayerId;
+    }
+    bool operator!=(const RenderKeyState &o) const { return !(*this == o); }
+  };
+  RenderKeyState lastRenderKeyState_{};
   quint64 baseInvalidationSerial_ = 1;
   quint64 overlayInvalidationSerial_ = 1;
+
+  // Motion path cache: avoids 300x getGlobalTransformAt() calls per frame.
+  // Invalidated when layer, frame position, or overlay serial changes.
+  struct MotionPathCacheEntry {
+    LayerID layerId;
+    int64_t framePos = INT64_MIN;
+    quint64 overlaySerial = UINT64_MAX;
+    struct Pt { int frame; float x, y; };
+    std::vector<Pt> pathPoints;
+    std::vector<Pt> keyPoints;
+    bool valid = false;
+  };
+  MotionPathCacheEntry motionPathCache_;
   bool dropGhostVisible_ = false;
   QRectF dropGhostRect_;
   QString dropGhostTitle_;
@@ -1143,7 +1217,7 @@ public:
   QString infoOverlayDetail_;
   // Full-frame clear color used before composition content is drawn.
   FloatColor viewportClearColor_;
-  QString lastBackgroundKey_;
+  FloatColor lastBgColorCache_ = {-1.f, -1.f, -1.f, -1.f};
   CompositionID lastBackgroundCompositionId_;
   QHash<QString, LayerSurfaceCacheEntry> surfaceCache_;
   std::unique_ptr<GPUTextureCacheManager> gpuTextureCacheManager_;
@@ -1336,36 +1410,20 @@ public:
 
     // レンダーパイプラインの中間テクスチャを初期化
     if (auto device = renderer_->device()) {
-      renderPipeline_.initialize(device, static_cast<Uint32>(cw),
-                                 static_cast<Uint32>(ch),
-                                 RenderConfig::PipelineFormat);
+        renderPipeline_.initialize(device, static_cast<Uint32>(cw),
+                                   static_cast<Uint32>(ch),
+                                   RenderConfig::MainRTVFormat);
     }
   }
 
   void bindCompositionChanged(CompositionRenderController *owner,
                               const ArtifactCompositionPtr &composition) {
+    // Layer change notifications are now handled exclusively via LayerChangedEvent.
+    // composition->changed is reserved for composition-level setting changes only.
     if (compositionChangedConnection_) {
       QObject::disconnect(compositionChangedConnection_);
       compositionChangedConnection_ = {};
     }
-    if (!owner || !composition) {
-      return;
-    }
-
-    compositionChangedConnection_ = QObject::connect(
-        composition.get(), &ArtifactAbstractComposition::changed, owner,
-        [this, owner, composition]() {
-          if (renderQueueActive_) {
-            return; // Render Queue 実行中はキャッシュクリアをスキップ
-          }
-          surfaceCache_.clear();
-          if (gpuTextureCacheManager_) {
-            gpuTextureCacheManager_->clear();
-          }
-          invalidateBaseComposite();
-          applyCompositionState(composition);
-          owner->renderOneFrame();
-        });
   }
 
   void invalidateLayerSurfaceCache(const ArtifactAbstractLayerPtr &layer) {
@@ -1381,12 +1439,12 @@ public:
 
   void invalidateBaseComposite() {
     ++baseInvalidationSerial_;
-    lastFinalPresentKey_.clear();
+    lastRenderKeyState_ = {};
   }
 
   void invalidateOverlayComposite() {
     ++overlayInvalidationSerial_;
-    lastFinalPresentKey_.clear();
+    lastRenderKeyState_ = {};
   }
 
   void drawViewportGhostOverlay(CompositionRenderController *owner,
@@ -1425,35 +1483,43 @@ CompositionRenderController::CompositionRenderController(QObject *parent)
               setSelectedLayerId(LayerID(event.layerId));
             }));
 
-    // Ensure layers created after setComposition() are also bound to redraw.
     impl_->eventBusSubscriptions_.push_back(
         impl_->eventBus_.subscribe<LayerChangedEvent>(
             [this](const LayerChangedEvent &event) {
-              if (event.changeType != LayerChangedEvent::ChangeType::Created) {
-                return;
-              }
               auto comp = impl_->previewPipeline_.composition();
               if (!comp || event.compositionId.isEmpty() ||
                   comp->id().toString() != event.compositionId) {
                 return;
               }
-              const auto layerId = LayerID(event.layerId);
-              if (auto layer = comp->layerById(layerId)) {
-                impl_->layerChangedConnections_.push_back(
-                    connect(layer.get(), &ArtifactAbstractLayer::changed, this,
-                            [this, layer]() {
-                              impl_->invalidateLayerSurfaceCache(layer);
-                              impl_->invalidateBaseComposite();
-                              impl_->syncSelectedLayerOverlayState(
-                                  impl_->previewPipeline_.composition());
-
-                              // 変更検出器にマーク (実装のみ、レンダー接続なし)
-                              impl_->changeDetector_.markLayerChanged(
-                                  layer->id().toString());
-
-                              renderOneFrame();
-                            }));
+              if (impl_->renderQueueActive_) {
+                return;
               }
+              const auto layerId = LayerID(event.layerId);
+              if (event.changeType == LayerChangedEvent::ChangeType::Created ||
+                  event.changeType == LayerChangedEvent::ChangeType::Removed) {
+                // Structural change: full cache clear + composition state sync
+                if (event.changeType == LayerChangedEvent::ChangeType::Removed) {
+                  if (layerId == impl_->selectedLayerId_) {
+                    impl_->selectedLayerId_ = LayerID();
+                  }
+                }
+                impl_->surfaceCache_.clear();
+                if (impl_->gpuTextureCacheManager_) {
+                  impl_->gpuTextureCacheManager_->clear();
+                }
+                impl_->applyCompositionState(comp);
+              } else {
+                // Property/transform modification: invalidate only this layer
+                if (auto layer = comp->layerById(layerId)) {
+                  impl_->invalidateLayerSurfaceCache(layer);
+                  impl_->changeDetector_.markLayerChanged(
+                      layer->id().toString());
+                }
+              }
+              impl_->invalidateBaseComposite();
+              impl_->syncSelectedLayerOverlayState(
+                  impl_->previewPipeline_.composition());
+              renderOneFrame();
             }));
 
     impl_->eventBusSubscriptions_.push_back(
@@ -1773,7 +1839,11 @@ void CompositionRenderController::setComposition(
                                               : QStringLiteral("<null>"));
 
   auto currentComposition = impl_->previewPipeline_.composition();
-  if (currentComposition == composition) {
+  const bool samePointer = (currentComposition == composition);
+  const bool sameId = !samePointer && composition && currentComposition &&
+                      composition->id() == currentComposition->id();
+
+  if (samePointer || sameId) {
     if (auto *playback = ArtifactPlaybackService::instance()) {
       if (playback->currentComposition() != composition) {
         playback->setCurrentComposition(composition);
@@ -1786,6 +1856,11 @@ void CompositionRenderController::setComposition(
       impl_->gizmo_->setLayer(composition->layerById(impl_->selectedLayerId_));
     } else if (!composition) {
       impl_->gizmo_->setLayer(nullptr);
+    }
+    if (sameId) {
+      // Pointer changed but same composition — re-bind changed signals
+      impl_->previewPipeline_.setComposition(composition);
+      impl_->bindCompositionChanged(this, composition);
     }
     renderOneFrame();
     return;
@@ -1817,24 +1892,6 @@ void CompositionRenderController::setComposition(
   if (composition && impl_->renderer_) {
     impl_->applyCompositionState(composition);
     impl_->renderer_->fillToViewport();
-
-    // 各レイヤーの変更を監視
-    for (auto &layer : composition->allLayer()) {
-      if (layer) {
-        impl_->layerChangedConnections_.push_back(
-            connect(layer.get(), &ArtifactAbstractLayer::changed, this,
-                    [this, layer]() {
-                      impl_->soloLayerCacheDirty_ = true;
-                      impl_->invalidateLayerSurfaceCache(layer);
-                      impl_->invalidateBaseComposite();
-                      if (layer->id() == impl_->selectedLayerId_) {
-                        impl_->syncSelectedLayerOverlayState(
-                            impl_->previewPipeline_.composition());
-                      }
-                      renderOneFrame();
-                    }));
-      }
-    }
 
     impl_->syncSelectedLayerOverlayState(composition);
 
@@ -2268,7 +2325,10 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
                     selectedLayer->setMask(m, mask);
                     impl_->markMaskEditDirty();
                     qDebug() << "[PenTool] Closed path" << p;
-                    selectedLayer->changed();
+                    ArtifactCore::globalEventBus().publish(LayerChangedEvent{
+                        comp->id().toString(),
+                        selectedLayer->id().toString(),
+                        LayerChangedEvent::ChangeType::Modified});
                     impl_->isDraggingVertex_ = false;
                     impl_->draggingMaskIndex_ = m;
                     impl_->draggingPathIndex_ = p;
@@ -2324,7 +2384,10 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
 
           qDebug() << "[PenTool] Added vertex at local:" << localPos
                    << "layer:" << selectedLayer->id().toString();
-          selectedLayer->changed();
+          ArtifactCore::globalEventBus().publish(LayerChangedEvent{
+              comp->id().toString(),
+              selectedLayer->id().toString(),
+              LayerChangedEvent::ChangeType::Modified});
           return; // Handled
         }
       }
@@ -2548,7 +2611,10 @@ void CompositionRenderController::handleMouseMove(
           selectedLayer->setMask(impl_->draggingMaskIndex_, mask);
           impl_->markMaskEditDirty();
 
-          selectedLayer->changed();
+          ArtifactCore::globalEventBus().publish(LayerChangedEvent{
+              comp->id().toString(),
+              selectedLayer->id().toString(),
+              LayerChangedEvent::ChangeType::Modified});
           return;
         }
       }
@@ -2635,7 +2701,10 @@ void CompositionRenderController::handleMouseMove(
             }
             layer->setRotation3D(impl_->gizmo3D_->rotation());
           }
-          layer->changed();
+          ArtifactCore::globalEventBus().publish(LayerChangedEvent{
+              comp->id().toString(),
+              layer->id().toString(),
+              LayerChangedEvent::ChangeType::Modified});
         }
       }
       return;
@@ -2880,7 +2949,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
     const float curH = static_cast<float>(host->height()) * devicePixelRatio_;
     if (std::abs(curW - hostWidth_) > 0.5f ||
         std::abs(curH - hostHeight_) > 0.5f) {
-      qDebug() << "[CompositionView] Widget size changed, scheduling swapchain "
+      qCDebug(compositionViewLog) << "[CompositionView] Widget size changed, scheduling swapchain "
                   "update:"
                << curW << "x" << curH;
       // Store logical pixels — setViewportSize applies DPR internally
@@ -2925,6 +2994,16 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
   const FloatColor bgColor = comp->backgroundColor();
   lastCanvasWidth_ = cw;
   lastCanvasHeight_ = ch;
+
+  // --- Profiler frame begin ---
+  {
+    bool isPlayback = false;
+    if (auto *pb = ArtifactPlaybackService::instance())
+      isPlayback = pb->isPlaying();
+    ArtifactCore::Profiler::instance().beginFrame(
+        static_cast<std::int64_t>(renderFrameCounter_),
+        compSize.width(), compSize.height(), isPlayback);
+  }
 
   // Update MayaGradient sprite cache once; it is viewport background art and
   // should not be tinted by the composition fill color.
@@ -3015,56 +3094,44 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       std::max(48.0f, 64.0f / std::max(0.001f, zoom));
   const QRectF roiRect =
       visibleCanvasRect.adjusted(-roiPad, -roiPad, roiPad, roiPad);
-  const QString backgroundKey =
-      QStringLiteral("%1,%2,%3,%4")
-          .arg(comp->backgroundColor().r(), 0, 'f', 4)
-          .arg(comp->backgroundColor().g(), 0, 'f', 4)
-          .arg(comp->backgroundColor().b(), 0, 'f', 4)
-          .arg(comp->backgroundColor().a(), 0, 'f', 4);
-  if (backgroundKey != lastBackgroundKey_ ||
-      lastBackgroundCompositionId_ != comp->id()) {
-    lastBackgroundKey_ = backgroundKey;
+  // --- Change detection via packed struct instead of string concatenation ---
+  const auto currentBgColor = comp->backgroundColor();
+  const bool bgChanged =
+      currentBgColor.r() != lastBgColorCache_.r() ||
+      currentBgColor.g() != lastBgColorCache_.g() ||
+      currentBgColor.b() != lastBgColorCache_.b() ||
+      currentBgColor.a() != lastBgColorCache_.a();
+  if (bgChanged || lastBackgroundCompositionId_ != comp->id()) {
+    lastBgColorCache_ = currentBgColor;
     lastBackgroundCompositionId_ = comp->id();
     qCDebug(compositionViewLog) << "[CompositionView][Background]"
-            << "compositionId=" << comp->id().toString()
-            << "background=" << backgroundKey << "clearColor="
-            << QStringLiteral("%1,%2,%3,%4")
-                   .arg(viewportClearColor_.r(), 0, 'f', 4)
-                   .arg(viewportClearColor_.g(), 0, 'f', 4)
-                   .arg(viewportClearColor_.b(), 0, 'f', 4)
-                   .arg(viewportClearColor_.a(), 0, 'f', 4);
+            << "compositionId=" << comp->id().toString();
   }
   const auto backgroundMode = compositionBackgroundMode_;
-  const QByteArray baseRenderKey =
-      QByteArray("comp=") + comp->id().toString().toUtf8() +
-      "|baseSerial=" + QByteArray::number(baseInvalidationSerial_) +
-      "|frame=" + QByteArray::number(framePos) +
-      "|size=" + QByteArray::number(static_cast<int>(viewportW)) + "x" +
-      QByteArray::number(static_cast<int>(viewportH)) +
-      "|downsample=" + QByteArray::number(effectivePreviewDownsample) +
-      "|zoom=" + QByteArray::number(zoom, 'f', 4) +
-      "|pan=" + QByteArray::number(panX, 'f', 2) + "," +
-      QByteArray::number(panY, 'f', 2) + "|clear=" + backgroundKey.toUtf8() +
-      "|bgMode=" + QByteArray::number(static_cast<int>(backgroundMode)) +
-      "|gpuBlend=" + QByteArray::number(gpuBlendEnabled_ ? 1 : 0);
-  const QByteArray renderKey =
-      baseRenderKey +
-      "|overlaySerial=" + QByteArray::number(overlayInvalidationSerial_) +
-      "|selected=" + selectedLayerId_.toString().toUtf8() + "|gizmoMode=" +
-      QByteArray::number(gizmo3D_ ? static_cast<int>(gizmo3D_->mode()) : -1) +
-      "|gizmoHover=" +
-      QByteArray::number(gizmo3D_ ? static_cast<int>(gizmo3D_->hoverAxis())
-                                  : -1) +
-      "|gizmoActive=" +
-      QByteArray::number(gizmo3D_ ? static_cast<int>(gizmo3D_->activeAxis())
-                                  : -1) +
-      "|flags=" + QByteArray::number(showGrid_ ? 1 : 0) +
-      QByteArray::number(showGuides_ ? 1 : 0) +
-      QByteArray::number(showSafeMargins_ ? 1 : 0) +
-      QByteArray::number(viewportInteracting_ ? 1 : 0);
-  if (renderKey == lastFinalPresentKey_) {
+  const FloatColor layerBgColor = currentBgColor;
+  const Impl::RenderKeyState currentKey {
+    comp->id(),
+    baseInvalidationSerial_, overlayInvalidationSerial_,
+    framePos,
+    static_cast<int32_t>(viewportW), static_cast<int32_t>(viewportH),
+    effectivePreviewDownsample,
+    zoom, panX, panY,
+    currentBgColor.r(), currentBgColor.g(), currentBgColor.b(), currentBgColor.a(),
+    static_cast<int32_t>(backgroundMode),
+    gizmo3D_ ? static_cast<int32_t>(gizmo3D_->mode()) : -1,
+    gizmo3D_ ? static_cast<int32_t>(gizmo3D_->hoverAxis()) : -1,
+    gizmo3D_ ? static_cast<int32_t>(gizmo3D_->activeAxis()) : -1,
+    static_cast<uint8_t>(gpuBlendEnabled_ ? 1 : 0),
+    static_cast<uint8_t>(showGrid_ ? 1 : 0),
+    static_cast<uint8_t>(showGuides_ ? 1 : 0),
+    static_cast<uint8_t>(showSafeMargins_ ? 1 : 0),
+    static_cast<uint8_t>(viewportInteracting_ ? 1 : 0),
+    selectedLayerId_
+  };
+  if (currentKey == lastRenderKeyState_) {
     return;
   }
+  lastRenderKeyState_ = currentKey;
   renderer_->setClearColor(viewportClearColor_);
   renderer_->clear();
 
@@ -3095,7 +3162,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       if (auto device = renderer_->device()) {
         renderPipeline_.initialize(device, static_cast<Uint32>(rcw),
                                    static_cast<Uint32>(rch),
-                                   RenderConfig::PipelineFormat);
+                                   RenderConfig::MainRTVFormat);
       }
     } else if (gpuBlendRequested && lastPipelineStateMask_ != -1) {
       qCDebug(compositionViewLog)
@@ -3157,6 +3224,9 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
     qint64 flushMs = 0;
     qint64 presentMs = 0;
 
+    ArtifactCore::ProfileScope _profSetup("RenderFrame",
+                                          ArtifactCore::ProfileCategory::Render);
+
     // hasSoloLayer: dirty-flag キャッシュで毎フレームの O(N) スキャンを回避
     if (soloLayerCacheDirty_) {
       hasSoloLayerCache_ = std::any_of(
@@ -3174,6 +3244,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
     // GPU パイプライン: レイヤー 0 枚でも frameOutOfRange でも常に描画
     // ============================================================
     if (pipelineEnabled) {
+      ArtifactCore::ProfileScope _profBase("BasePass",
+                                           ArtifactCore::ProfileCategory::Composite);
       auto ctx = renderer_->immediateContext();
       auto accumRTV = renderPipeline_.accumRTV();
       auto accumSRV = renderPipeline_.accumSRV();
@@ -3209,7 +3281,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                           static_cast<Diligent::Uint32>(rch));
       }
 
-      const FloatColor bgColor = comp->backgroundColor();
+      const FloatColor layerBgColor = comp->backgroundColor();
       if (compositionViewLog().isDebugEnabled()) {
         qCDebug(compositionViewLog)
             << "[CompositionView] background pass (gpu)"
@@ -3219,8 +3291,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
             << QSize(static_cast<int>(origViewW), static_cast<int>(origViewH))
             << "zoom=" << origZoom << "pan=" << QPointF(origPanX, origPanY)
             << "bg="
-            << QColor::fromRgbF(bgColor.r(), bgColor.g(), bgColor.b(),
-                                bgColor.a())
+            << QColor::fromRgbF(layerBgColor.r(), layerBgColor.g(), layerBgColor.b(),
+                                layerBgColor.a())
             << "bgMode=" << static_cast<int>(backgroundMode)
             << "compositionSpaceApplied=" << true;
       }
@@ -3233,15 +3305,15 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       renderer_->setCanvasSize(rcw, rch);
       renderer_->setZoom(origZoom * offscreenScale);
       renderer_->setPan(origPanX * offscreenScale, origPanY * offscreenScale);
-      // Draw Solid/Checkerboard background INTO the accum before the layer loop.
-      // This prevents layer-colour edge-bleeding at the composition boundary:
-      // without this, bilinear upsampling of the accum blit mixes the layer
-      // colour with transparent pixels at the edge, creating a coloured fringe.
-      // MayaGradient is drawn to main FB in step 3 (full-viewport coverage).
-      if (backgroundMode == CompositionBackgroundMode::Solid) {
+      // Draw the composition background into the accum before the layer loop.
+      // Solid, MayaGradient, and Checkerboard all draw bgColor into accum so
+      // the composition area is opaque and blocks the viewport background during
+      // the SRC_ALPHA blit in step 4.  Viewport-space backgrounds (checkerboard
+      // / gradient) are drawn separately in step 3.
+      if (backgroundMode == CompositionBackgroundMode::Solid ||
+          backgroundMode == CompositionBackgroundMode::MayaGradient ||
+          backgroundMode == CompositionBackgroundMode::Checkerboard) {
         renderer_->drawRectLocal(0.f, 0.f, cw, ch, bgColor, 1.0f);
-      } else if (backgroundMode == CompositionBackgroundMode::Checkerboard) {
-        drawCompositionCheckerboard(renderer_.get(), comp);
       }
       renderer_->setOverrideRTV(nullptr);
       basePassMs = markPhaseMs();
@@ -3249,7 +3321,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       // Already in offscreen-scale coordinate system — layer loop uses it as-is.
 
       // -- 2: レイヤーブレンド（frameOutOfRange ならスキップ）--
-      bool blendPerformed = false; // accumがUNORDERED_ACCESS状態になったか追跡
+      ArtifactCore::ProfileScope _profLayer("LayerPass",
+                                            ArtifactCore::ProfileCategory::Composite);
       if (!frameOutOfRange) {
         const DetailLevel lod = detailLevelFromZoom(renderer_->getZoom());
         for (const auto &layer : layers) {
@@ -3307,7 +3380,6 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
             continue;
           }
           renderPipeline_.swapAccumAndTemp();
-          blendPerformed = true; // accumはUNORDERED_ACCESS状態
           accumSRV = renderPipeline_.accumSRV();
           tempUAV = renderPipeline_.tempUAV();
         }
@@ -3327,19 +3399,21 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                           static_cast<Diligent::Uint32>(origViewH));
       }
 
-      // -- 3: main FB に背景を描画（MayaGradient のみ）してから accum を blit --
-      // Solid と Checkerboard は step 1 で accum 内に描画済み。
-      // MayaGradient はビューポート全体を覆う必要があるため main FB に描く。
+      // -- 3: main FB に背景を描画してから accum を blit --
+      // MayaGradient と Checkerboard はビューポート全体を覆う背景として main FB に描く。
+      // accum を SRC_ALPHA でブリットすると、composition 外は alpha=0 のため
+      // main FB の背景（グラディエント/チェッカーボード/ビューポートクリアカラー）が
+      // 透けて見える。composition 内は bgColor（不透明）で遮蔽される。
       renderer_->setUseExternalMatrices(false);
       renderer_->resetGizmoCameraMatrices();
       renderer_->reset3DCameraMatrices();
       if (backgroundMode == CompositionBackgroundMode::MayaGradient) {
-        renderer_->setCanvasSize(origViewW, origViewH);
-        renderer_->setZoom(1.0f);
-        renderer_->setPan(0.0f, 0.0f);
         drawViewportMayaGradientBackground(renderer_.get(), origViewW,
                                            origViewH, bgColor,
                                            cachedMayaGradientSprite_);
+      } else if (backgroundMode == CompositionBackgroundMode::Checkerboard) {
+        drawViewportCheckerboardBackground(renderer_.get(), origViewW,
+                                           origViewH);
       }
       renderer_->setCanvasSize(cw, ch);
       renderer_->setZoom(origZoom);
@@ -3352,22 +3426,6 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       renderer_->setCanvasSize(origViewW, origViewH);
       renderer_->setZoom(1.0f);
       renderer_->setPan(0.0f, 0.0f);
-      // Bug B fix: ブレンドCSが UNORDERED_ACCESS に書いた accum テクスチャを
-      // SRV として読む前に SHADER_RESOURCE へ状態遷移する。
-      // ブレンドが一度も実行されなかった場合、accum は RENDER_TARGET
-      // 状態のままなので この明示的バリアはスキップし、drawSpriteTransformed
-      // 内の auto-TRANSITION に任せる。
-      if (blendPerformed) {
-        if (auto *accumTex = renderPipeline_.accumSRV()
-                                 ? renderPipeline_.accumSRV()->GetTexture()
-                                 : nullptr) {
-          Diligent::StateTransitionDesc accumBarrier;
-          accumBarrier.pResource = accumTex;
-          accumBarrier.OldState = RESOURCE_STATE_UNORDERED_ACCESS;
-          accumBarrier.NewState = RESOURCE_STATE_SHADER_RESOURCE;
-          ctx->TransitionResourceStates(1, &accumBarrier);
-        }
-      }
       {
         QMatrix4x4 screenIdentity;
         screenIdentity.setToIdentity();
@@ -3414,19 +3472,25 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
         renderer_->setZoom(1.0f);
         renderer_->setPan(0.0f, 0.0f);
         drawViewportMayaGradientBackground(renderer_.get(), viewportW,
-                                           viewportH, bgColor,
+                                           viewportH, layerBgColor,
                                            cachedMayaGradientSprite_);
         renderer_->setCanvasSize(cw, ch);
         renderer_->setZoom(prevZoom);
         renderer_->setPan(prevPanX, prevPanY);
       }
       renderer_->setCanvasSize(cw, ch); // キャンバスを Composition Space に設定
-      // チェッカーボードを一番下に描画（透過領域の基盤として）
       if (backgroundMode == CompositionBackgroundMode::Checkerboard) {
-        drawCompositionCheckerboard(renderer_.get(), comp);
+        renderer_->setCanvasSize(viewportW, viewportH);
+        renderer_->setZoom(1.0f);
+        renderer_->setPan(0.0f, 0.0f);
+        drawViewportCheckerboardBackground(renderer_.get(), viewportW,
+                                           viewportH);
+        renderer_->setCanvasSize(cw, ch);
+        renderer_->setZoom(prevZoom);
+        renderer_->setPan(prevPanX, prevPanY);
       }
       // Composition Space で直接 fill する（viewport-space 変換不要）
-      drawCompositionBackgroundDirect(renderer_.get(), cw, ch, bgColor,
+      drawCompositionBackgroundDirect(renderer_.get(), cw, ch, layerBgColor,
                                       backgroundMode,
                                       cachedMayaGradientSprite_);
       renderer_->setUseExternalMatrices(false);
@@ -3529,6 +3593,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
     if (renderer_ && showMotionPathOverlay_ && comp &&
         !selectedLayerId_.isNil()) {
+      ArtifactCore::ProfileScope _profMotion1("MotionPath1",
+          ArtifactCore::ProfileCategory::Render);
       if (auto selectedLayer = comp->layerById(selectedLayerId_)) {
         const auto motionPath = buildMotionPathSamples(selectedLayer, comp);
         QVector<MotionPathSample> keyframes;
@@ -3587,14 +3653,30 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
     }
 
     if (showGizmoOverlay_ && gizmo_) {
+      ArtifactCore::ProfileScope _profGizmo("GizmoMask",
+          ArtifactCore::ProfileCategory::Render);
       auto selectedLayer = (!selectedLayerId_.isNil() && comp)
                                ? comp->layerById(selectedLayerId_)
                                : ArtifactAbstractLayerPtr{};
       if (selectedLayer && selectedLayer->isVisible()) {
-        gizmo_->setLayer(selectedLayer);
-        gizmo_->draw(renderer_.get());
+        {
+          ArtifactCore::ProfileScope _profG2D("Gizmo2D",
+              ArtifactCore::ProfileCategory::Render);
+          {
+            ArtifactCore::ProfileScope _profG2DSetLayer("Gizmo2DSetLayer",
+                ArtifactCore::ProfileCategory::Render);
+            gizmo_->setLayer(selectedLayer);
+          }
+          {
+            ArtifactCore::ProfileScope _profG2DDrawCall("Gizmo2DDrawCall",
+                ArtifactCore::ProfileCategory::Render);
+            gizmo_->draw(renderer_.get());
+          }
+        }
 
         if (gizmo3D_) {
+          ArtifactCore::ProfileScope _profG3D("Gizmo3D",
+              ArtifactCore::ProfileCategory::Render);
           syncGizmo3DFromLayer(selectedLayer);
           const float viewportW =
               hostWidth_ > 0.0f ? hostWidth_ : lastCanvasWidth_;
@@ -3614,10 +3696,28 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
             QMatrix4x4 proj;
             proj.ortho(0.0f, viewportW, viewportH, 0.0f, -1000.0f, 1000.0f);
 
-            gizmo3D_->draw(renderer_.get(), view, proj);
+            {
+              ArtifactCore::ProfileScope _profG3DDraw("Gizmo3DDraw",
+                  ArtifactCore::ProfileCategory::Render);
+              gizmo3D_->draw(renderer_.get(), view, proj);
+            }
+            {
+              ArtifactCore::ProfileScope _profG3DFlush("Gizmo3DFlush",
+                  ArtifactCore::ProfileCategory::Render);
+              renderer_->flushGizmo3D();
+            }
           } else {
-            gizmo3D_->draw(renderer_.get(), renderer_->getViewMatrix(),
-                           renderer_->getProjectionMatrix());
+            {
+              ArtifactCore::ProfileScope _profG3DDraw("Gizmo3DDraw",
+                  ArtifactCore::ProfileCategory::Render);
+              gizmo3D_->draw(renderer_.get(), renderer_->getViewMatrix(),
+                             renderer_->getProjectionMatrix());
+            }
+            {
+              ArtifactCore::ProfileScope _profG3DFlush("Gizmo3DFlush",
+                  ArtifactCore::ProfileCategory::Render);
+              renderer_->flushGizmo3D();
+            }
           }
         }
 
@@ -3625,6 +3725,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
         const int maskCount = selectedLayer->maskCount();
         if (maskCount > 0 && renderer_ &&
             selectedLayer->isActiveAt(currentFrame)) {
+          ArtifactCore::ProfileScope _profMask("MaskDraw",
+              ArtifactCore::ProfileCategory::Render);
           const QTransform globalTransform =
               selectedLayer->getGlobalTransform();
           const FloatColor maskLineShadowColor = {0.0f, 0.0f, 0.0f, 0.30f};
@@ -3654,35 +3756,39 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
               markers.reserve(static_cast<size_t>(vertexCount));
 
               Detail::float2 lastCanvasPos;
-              for (int v = 0; v < vertexCount; ++v) {
-                MaskVertex vertex = path.vertex(v);
-                QPointF canvasPos = globalTransform.map(vertex.position);
-                Detail::float2 currentCanvasPos = {(float)canvasPos.x(),
-                                                   (float)canvasPos.y()};
+              {
+                ArtifactCore::ProfileScope _profMaskLines("MaskDrawLines",
+                    ArtifactCore::ProfileCategory::Render);
+                for (int v = 0; v < vertexCount; ++v) {
+                  MaskVertex vertex = path.vertex(v);
+                  QPointF canvasPos = globalTransform.map(vertex.position);
+                  Detail::float2 currentCanvasPos = {(float)canvasPos.x(),
+                                                     (float)canvasPos.y()};
 
-                if (v > 0) {
-                  renderer_->drawThickLineLocal(lastCanvasPos, currentCanvasPos,
-                                                6.0f, maskLineShadowColor);
-                  renderer_->drawThickLineLocal(lastCanvasPos, currentCanvasPos,
-                                                3.5f, maskLineColor);
+                  if (v > 0) {
+                    renderer_->drawThickLineLocal(lastCanvasPos, currentCanvasPos,
+                                                  6.0f, maskLineShadowColor);
+                    renderer_->drawThickLineLocal(lastCanvasPos, currentCanvasPos,
+                                                  3.5f, maskLineColor);
+                  }
+
+                  FloatColor currentColor = maskPointColor;
+                  float currentPointRadius = 17.0f;
+
+                  if (isDraggingVertex_ && draggingMaskIndex_ == m &&
+                      draggingPathIndex_ == p && draggingVertexIndex_ == v) {
+                    currentColor = dragColor;
+                    currentPointRadius = 21.0f;
+                  } else if (hoveredMaskIndex_ == m && hoveredPathIndex_ == p &&
+                             hoveredVertexIndex_ == v) {
+                    currentColor = hoverColor;
+                    currentPointRadius = 21.0f;
+                  }
+
+                  markers.push_back(
+                      {currentCanvasPos, currentColor, currentPointRadius});
+                  lastCanvasPos = currentCanvasPos;
                 }
-
-                FloatColor currentColor = maskPointColor;
-                float currentPointRadius = 17.0f;
-
-                if (isDraggingVertex_ && draggingMaskIndex_ == m &&
-                    draggingPathIndex_ == p && draggingVertexIndex_ == v) {
-                  currentColor = dragColor;
-                  currentPointRadius = 21.0f;
-                } else if (hoveredMaskIndex_ == m && hoveredPathIndex_ == p &&
-                           hoveredVertexIndex_ == v) {
-                  currentColor = hoverColor;
-                  currentPointRadius = 21.0f;
-                }
-
-                markers.push_back(
-                    {currentCanvasPos, currentColor, currentPointRadius});
-                lastCanvasPos = currentCanvasPos;
               }
 
               if (path.isClosed() && vertexCount > 1) {
@@ -3699,12 +3805,16 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                     4.0f, maskLineColor);
               }
 
-              for (const auto &marker : markers) {
-                renderer_->drawPoint(marker.pos.x, marker.pos.y,
-                                     marker.radius + 3.0f,
-                                     maskPointShadowColor);
-                renderer_->drawPoint(marker.pos.x, marker.pos.y, marker.radius,
-                                     marker.color);
+              {
+                ArtifactCore::ProfileScope _profMaskPoints("MaskDrawPoints",
+                    ArtifactCore::ProfileCategory::Render);
+                for (const auto &marker : markers) {
+                  renderer_->drawPoint(marker.pos.x, marker.pos.y,
+                                       marker.radius + 3.0f,
+                                       maskPointShadowColor);
+                  renderer_->drawPoint(marker.pos.x, marker.pos.y, marker.radius,
+                                       marker.color);
+                }
               }
             }
           }
@@ -3743,17 +3853,20 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
     }
 
     if (renderer_ && !selectedIds.isEmpty()) {
-      const auto layersForOverlay =
-          comp ? comp->allLayer() : decltype(comp->allLayer()){};
+      // Reuse the layer list already fetched above; avoids a second allLayer() call.
+      const auto &layersForOverlay = layers;
 
       // M-UI-6 Composition Motion Path Overlay
-      if (comp) {
+      // Guard: only run when the overlay is enabled — the 300-iteration
+      // getGlobalTransformAt() loop is the main >1000ms bottleneck.
+      if (comp && showMotionPathOverlay_) {
+        ArtifactCore::ProfileScope _profMotion("MotionPath",
+            ArtifactCore::ProfileCategory::Render);
         const float zoom = renderer_->getZoom();
         const float invZoom = zoom > 0.0001f ? 1.0f / zoom : 1.0f;
         for (const auto &layer : layersForOverlay) {
           if (!layer || !isLayerSelected(selectedIds, layer))
             continue;
-          const std::shared_ptr<ArtifactAbstractLayer> &layerRef = layer;
 
           const auto &t3d = layer->transform3D();
           auto posTimes = t3d.getPositionKeyFrameTimes();
@@ -3764,71 +3877,88 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
           int maxFrame = static_cast<int>(posTimes.back().value());
           const int currentFrameNum = currentFrame.framePosition();
 
-          // Limit drawing range for performance (render ±300 frames around
-          // playhead)
+          // Limit drawing range for performance (±300 frames around playhead).
           minFrame = std::max(minFrame, currentFrameNum - 300);
           maxFrame = std::min(maxFrame, currentFrameNum + 300);
 
           if (minFrame >= maxFrame)
             continue;
 
-          // AE differentiation style: Distinctive color for path
+          const int64_t rate = posTimes.front().scale();
           const FloatColor pathColor{0.9f, 0.4f, 0.8f, 0.9f};
           const float lineThickness = std::max(1.0f, 1.5f * invZoom);
-          const float dotRadius = std::max(1.5f, 2.5f * invZoom);
-          const int64_t rate = posTimes.front().scale();
+          const float dotRadius    = std::max(1.5f, 2.5f * invZoom);
 
+          // --- Motion path cache -------------------------------------------
+          // Key: (layerId, currentFrameNum, overlaySerial).
+          // On a cache miss re-sample all path points; on a hit skip all
+          // getGlobalTransformAt() calls (the hot loop that caused >1000ms).
+          const bool cacheHit = motionPathCache_.valid
+              && motionPathCache_.layerId    == layer->id()
+              && motionPathCache_.framePos   == static_cast<int64_t>(currentFrameNum)
+              && motionPathCache_.overlaySerial == overlayInvalidationSerial_;
+
+          if (!cacheHit) {
+            motionPathCache_.valid        = false;
+            motionPathCache_.layerId      = layer->id();
+            motionPathCache_.framePos     = static_cast<int64_t>(currentFrameNum);
+            motionPathCache_.overlaySerial = overlayInvalidationSerial_;
+            motionPathCache_.pathPoints.clear();
+            motionPathCache_.keyPoints.clear();
+
+            for (int f = minFrame; f <= maxFrame; f += 2) {
+              if (f > maxFrame) f = maxFrame;
+              ArtifactCore::RationalTime t(f, rate);
+              QTransform gTrans = layer->getGlobalTransformAt(f);
+              float ax = t3d.anchorXAt(t);
+              float ay = t3d.anchorYAt(t);
+              QPointF wPos = gTrans.map(QPointF(ax, ay));
+              motionPathCache_.pathPoints.push_back(
+                  {f, (float)wPos.x(), (float)wPos.y()});
+            }
+
+            for (const auto &kfTime : posTimes) {
+              int f = static_cast<int>(kfTime.value());
+              if (f < minFrame || f > maxFrame) continue;
+              QTransform gTrans = layer->getGlobalTransformAt(f);
+              float ax = t3d.anchorXAt(kfTime);
+              float ay = t3d.anchorYAt(kfTime);
+              QPointF wPos = gTrans.map(QPointF(ax, ay));
+              motionPathCache_.keyPoints.push_back(
+                  {f, (float)wPos.x(), (float)wPos.y()});
+            }
+            motionPathCache_.valid = true;
+          }
+
+          // Render from cache (no getGlobalTransformAt() calls on a hit).
           Detail::float2 lastPos;
           bool hasLastPos = false;
-
-          for (int f = minFrame; f <= maxFrame; f += 2) {
-            if (f > maxFrame)
-              f = maxFrame;
-            ArtifactCore::RationalTime t(f, rate);
-            QTransform gTrans = layer->getGlobalTransformAt(f);
-            float ax = t3d.anchorXAt(t);
-            float ay = t3d.anchorYAt(t);
-            QPointF wPos = gTrans.map(QPointF(ax, ay));
-
-            Detail::float2 currentPos((float)wPos.x(), (float)wPos.y());
-
-            if (hasLastPos) {
-              renderer_->drawSolidLine(lastPos, currentPos, pathColor,
-                                       lineThickness);
-            }
-            renderer_->drawPoint(currentPos.x, currentPos.y, dotRadius * 0.6f,
+          for (const auto &pt : motionPathCache_.pathPoints) {
+            Detail::float2 currentPos(pt.x, pt.y);
+            if (hasLastPos)
+              renderer_->drawSolidLine(lastPos, currentPos, pathColor, lineThickness);
+            renderer_->drawPoint(pt.x, pt.y, dotRadius * 0.6f,
                                  {0.8f, 0.8f, 0.8f, 0.7f});
-
             lastPos = currentPos;
             hasLastPos = true;
           }
-
-          // Draw actual keyframes as emphasized boxes
-          for (const auto &kfTime : posTimes) {
-            int f = static_cast<int>(kfTime.value());
-            if (f < minFrame || f > maxFrame)
-              continue;
-            QTransform gTrans = layer->getGlobalTransformAt(f);
-            float ax = t3d.anchorXAt(kfTime);
-            float ay = t3d.anchorYAt(kfTime);
-            QPointF wPos = gTrans.map(QPointF(ax, ay));
-
-            float px = (float)wPos.x();
-            float py = (float)wPos.y();
-
+          for (const auto &pt : motionPathCache_.keyPoints) {
             renderer_->drawSolidRect(
-                px - dotRadius, py - dotRadius, dotRadius * 2, dotRadius * 2,
-                (f == currentFrameNum) ? FloatColor{1.0f, 1.0f, 0.0f, 1.0f}
-                                       : FloatColor{1.0f, 1.0f, 1.0f, 1.0f});
-            renderer_->drawRectOutline(px - dotRadius, py - dotRadius,
+                pt.x - dotRadius, pt.y - dotRadius, dotRadius * 2, dotRadius * 2,
+                (pt.frame == currentFrameNum) ? FloatColor{1.0f, 1.0f, 0.0f, 1.0f}
+                                              : FloatColor{1.0f, 1.0f, 1.0f, 1.0f});
+            renderer_->drawRectOutline(pt.x - dotRadius, pt.y - dotRadius,
                                        dotRadius * 2, dotRadius * 2,
                                        {0.0f, 0.0f, 0.0f, 1.0f});
           }
         }
       }
-      const FloatColor primaryColor{1.0f, 0.72f, 0.22f, 1.0f};
-      const FloatColor secondaryColor{0.28f, 0.74f, 1.0f, 0.85f};
-      for (const auto &layer : layersForOverlay) {
+      {
+        ArtifactCore::ProfileScope _profBBox("BoundingBox",
+            ArtifactCore::ProfileCategory::Render);
+        const FloatColor primaryColor{1.0f, 0.72f, 0.22f, 1.0f};
+        const FloatColor secondaryColor{0.28f, 0.74f, 1.0f, 0.85f};
+        for (const auto &layer : layersForOverlay) {
         if (!layer || !layer->isVisible() || !layer->isActiveAt(currentFrame)) {
           continue;
         }
@@ -3867,7 +3997,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
             {static_cast<float>(bl.x()), static_cast<float>(bl.y())},
             {static_cast<float>(tl.x()), static_cast<float>(tl.y())}, color,
             thickness);
-      }
+        }
+      } // BoundingBox scope
     }
 
     if (renderer_ && isRubberBandSelecting_) {
@@ -3970,18 +4101,22 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                                  1.0f);
       }
     }
-    const ArtifactAbstractLayerPtr selectedLayer =
-        (!selectedLayerId_.isNil() && comp) ? comp->layerById(selectedLayerId_)
-                                            : ArtifactAbstractLayerPtr{};
-    renderer_->setUseExternalMatrices(false);
-    renderer_->resetGizmoCameraMatrices();
-    renderer_->reset3DCameraMatrices();
-    renderer_->setCanvasSize(cw, ch);
-    if (showCompositionRegionOverlay_) {
-      drawCompositionRegionOverlay(renderer_.get(), comp);
-    }
-    if (showCompositionRegionOverlay_) {
-      drawViewportGhostOverlay(owner, comp, selectedLayer, currentFrame);
+    {
+      ArtifactCore::ProfileScope _profOverlay("Overlay",
+                                              ArtifactCore::ProfileCategory::UI);
+      const ArtifactAbstractLayerPtr selectedLayer =
+          (!selectedLayerId_.isNil() && comp) ? comp->layerById(selectedLayerId_)
+                                              : ArtifactAbstractLayerPtr{};
+      renderer_->setUseExternalMatrices(false);
+      renderer_->resetGizmoCameraMatrices();
+      renderer_->reset3DCameraMatrices();
+      renderer_->setCanvasSize(cw, ch);
+      if (showCompositionRegionOverlay_) {
+        drawCompositionRegionOverlay(renderer_.get(), comp);
+      }
+      if (showCompositionRegionOverlay_) {
+        drawViewportGhostOverlay(owner, comp, selectedLayer, currentFrame);
+      }
     }
     overlayMs = markPhaseMs();
 
@@ -3993,53 +4128,46 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       Q_EMIT owner->videoDebugMessage(lastVideoDebug_);
     }
 
-    // renderer_->flushAndWait(); // 毎フレーム同期を削除し、性能改善を試す
-    renderer_->present();
+    // renderer_->flushAndWait(); // 毎フレーム同期を削除し、性能改善を試む
+    {
+      ArtifactCore::ProfileScope _profPresent("Present",
+                                              ArtifactCore::ProfileCategory::Render);
+      renderer_->present();
+    }
     presentMs = markPhaseMs();
-    lastFinalPresentKey_ = renderKey;
 
     ++renderFrameCounter_;
     const qint64 frameMs = frameTimer.elapsed();
-    if (frameMs >= 16) {
-      qInfo() << "[CompositionView][Perf]"
-              << "frameMs=" << frameMs << "pipelineEnabled=" << pipelineEnabled
-              << "layersTotal=" << layers.size()
-              << "layersDrawn=" << drawnLayerCount
-              << "surfaceUploadLayers=" << surfaceUploadLayerCount
-              << "cpuRasterLayers=" << cpuRasterLayerCount
-              << "frameOutOfRange=" << frameOutOfRange
-              << "previewDownsample=" << previewDownsample_
-              << "effectivePreviewDownsample=" << effectivePreviewDownsample
-              << "viewportInteracting=" << viewportInteracting_ << "compSize="
-              << QSize(static_cast<int>(cw), static_cast<int>(ch))
-              << "pipelineSize="
-              << QSize(static_cast<int>(renderPipeline_.width()),
-                       static_cast<int>(renderPipeline_.height()))
-              << "hostSize="
-              << QSize(static_cast<int>(hostWidth_),
-                       static_cast<int>(hostHeight_))
-              << "setupMs=" << setupMs << "basePassMs=" << basePassMs
-              << "layerPassMs=" << layerPassMs << "overlayMs=" << overlayMs
-              << "flushMs=" << flushMs << "presentMs=" << presentMs;
-    } else if (compositionViewLog().isDebugEnabled() &&
-               (renderFrameCounter_ % 120u) == 0u) {
-      qCDebug(compositionViewLog)
-          << "[CompositionView][Perf]"
-          << "frameMs=" << frameMs << "pipelineEnabled=" << pipelineEnabled
-          << "layersTotal=" << layers.size()
-          << "layersDrawn=" << drawnLayerCount
-          << "surfaceUploadLayers=" << surfaceUploadLayerCount
-          << "cpuRasterLayers=" << cpuRasterLayerCount
-          << "previewDownsample=" << previewDownsample_
-          << "effectivePreviewDownsample=" << effectivePreviewDownsample
-          << "viewportInteracting=" << viewportInteracting_ << "pipelineSize="
-          << QSize(static_cast<int>(renderPipeline_.width()),
-                   static_cast<int>(renderPipeline_.height()))
-          << "setupMs=" << setupMs << "basePassMs=" << basePassMs
-          << "layerPassMs=" << layerPassMs << "overlayMs=" << overlayMs
-          << "flushMs=" << flushMs << "presentMs=" << presentMs;
+    if (compositionViewLog().isDebugEnabled()) {
+      if (frameMs >= 16) {
+        qCDebug(compositionViewLog)
+            << "[CompositionView][Perf][Slow]"
+            << "frameMs=" << frameMs << "pipelineEnabled=" << pipelineEnabled
+            << "layersTotal=" << layers.size()
+            << "layersDrawn=" << drawnLayerCount
+            << "surfaceUploadLayers=" << surfaceUploadLayerCount
+            << "cpuRasterLayers=" << cpuRasterLayerCount
+            << "frameOutOfRange=" << frameOutOfRange
+            << "previewDownsample=" << previewDownsample_
+            << "effectivePreviewDownsample=" << effectivePreviewDownsample
+            << "viewportInteracting=" << viewportInteracting_
+            << "setupMs=" << setupMs << "basePassMs=" << basePassMs
+            << "layerPassMs=" << layerPassMs << "overlayMs=" << overlayMs
+            << "flushMs=" << flushMs << "presentMs=" << presentMs;
+      } else if ((renderFrameCounter_ % 120u) == 0u) {
+        qCDebug(compositionViewLog)
+            << "[CompositionView][Perf]"
+            << "frameMs=" << frameMs << "pipelineEnabled=" << pipelineEnabled
+            << "layersTotal=" << layers.size()
+            << "layersDrawn=" << drawnLayerCount
+            << "setupMs=" << setupMs << "basePassMs=" << basePassMs
+            << "layerPassMs=" << layerPassMs << "overlayMs=" << overlayMs
+            << "flushMs=" << flushMs << "presentMs=" << presentMs;
+      }
     }
-  }
+  } // _profSetup ("RenderFrame") destructs here — BEFORE endFrame() so its
+    // duration is correctly recorded (popScope requires inFrame == true).
+  ArtifactCore::Profiler::instance().endFrame();
 } // end renderOneFrameImpl
 
 void CompositionRenderController::Impl::drawViewportGhostOverlay(

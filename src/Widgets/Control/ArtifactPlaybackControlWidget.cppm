@@ -368,8 +368,8 @@ public:
             QStringLiteral("MaterialVS/colored/E3E3E3/play_arrow.svg")
         }, "再生/一時停止 (Space)", Qt::Key_Space);
         playButton_->setProperty("artifactPlayButton", true);
-        playButton_->setFixedSize(62, 62); // Play is special and intentionally larger
-        playButton_->setIconSize(QSize(38, 38));
+        playButton_->setFixedSize(53, 53); // about 15% smaller than before
+        playButton_->setIconSize(QSize(32, 32));
 
         stopButton_ = createToolButton(QStringList{
             QStringLiteral("MaterialVS/colored/E3E3E3/stop.svg"),
@@ -400,6 +400,7 @@ public:
             QStringLiteral("MaterialVS/colored/E3E3E3/loop.svg")
         }, "ループ再生 (L)", Qt::Key_L);
         loopButton_->setCheckable(true);
+        timecodeFrame_ = new PlaybackTimecodeFrame(owner_);
 
         transportRow->addWidget(seekStartButton_);
         transportRow->addWidget(stepBackwardButton_);
@@ -411,10 +412,9 @@ public:
         transportRow->addWidget(inButton_);
         transportRow->addWidget(outButton_);
         transportRow->addWidget(clearInOutButton_);
-        transportRow->addWidget(loopButton_);
-
-        timecodeFrame_ = new PlaybackTimecodeFrame(owner_);
         transportRow->addWidget(timecodeFrame_);
+        transportRow->addSpacing(8);
+        transportRow->addWidget(loopButton_);
         transportRow->addStretch();
 
         auto* speedLayout = new QHBoxLayout();

@@ -65,6 +65,8 @@ enum class LayerDirtyFlag : uint32_t {
   Effect = 1 << 1,
   Mask = 1 << 2,
   Source = 1 << 3, // For image/video changes
+  Visibility = 1 << 4, // Solo, guide, lock, shy — no re-render needed
+  Property = 1 << 5, // Opacity, blend mode — lightweight re-composite
   All = 0xFFFFFFFF
 };
 
@@ -158,6 +160,9 @@ public:
   bool isTimeRemapEnabled() const;
   void setTimeRemapEnabled(bool);
   void setTimeRemapKey(int64_t compFrame, double sourceFrame);
+
+  // Get source frame index for a given composition frame (applies time remap)
+  double getSourceFrameAtCompFrame(int64_t compFrame) const;
   /*Transform*/
 
   /*Timeline*/

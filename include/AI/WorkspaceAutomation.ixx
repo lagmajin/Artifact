@@ -115,6 +115,8 @@ public:
             {"setLayerLockedInCurrentComposition", IDescribable::loc("Toggle layer lock state in the active composition.", "Toggle layer lock state in the active composition.", {}), "bool", {QStringLiteral("QString"), QStringLiteral("bool")}, {QStringLiteral("layerId"), QStringLiteral("locked")}},
             {"setLayerSoloInCurrentComposition", IDescribable::loc("Toggle layer solo state in the active composition.", "Toggle layer solo state in the active composition.", {}), "bool", {QStringLiteral("QString"), QStringLiteral("bool")}, {QStringLiteral("layerId"), QStringLiteral("solo")}},
             {"setLayerShyInCurrentComposition", IDescribable::loc("Toggle layer shy state in the active composition.", "Toggle layer shy state in the active composition.", {}), "bool", {QStringLiteral("QString"), QStringLiteral("bool")}, {QStringLiteral("layerId"), QStringLiteral("shy")}},
+            {"setLayerBlendModeInCurrentComposition", IDescribable::loc("Set a layer blend mode in the active composition.", "Set a layer blend mode in the active composition.", {}), "bool", {QStringLiteral("QString"), QStringLiteral("QString")}, {QStringLiteral("layerId"), QStringLiteral("blendMode")}},
+            {"setLayerOpacityInCurrentComposition", IDescribable::loc("Set a layer opacity in the active composition.", "Set a layer opacity in the active composition.", {}), "bool", {QStringLiteral("QString"), QStringLiteral("double")}, {QStringLiteral("layerId"), QStringLiteral("opacity")}},
             {"setLayerParentInCurrentComposition", IDescribable::loc("Set a layer parent in the active composition.", "Set a layer parent in the active composition.", {}), "bool", {QStringLiteral("QString"), QStringLiteral("QString")}, {QStringLiteral("layerId"), QStringLiteral("parentLayerId")}},
             {"clearLayerParentInCurrentComposition", IDescribable::loc("Clear a layer parent in the active composition.", "Clear a layer parent in the active composition.", {}), "bool", {QStringLiteral("QString")}, {QStringLiteral("layerId")}},
             {"splitLayerAtCurrentTime", IDescribable::loc("Split a layer at the current composition time cursor.", "Split a layer at the current composition time cursor.", {}), "bool", {QStringLiteral("QString")}, {QStringLiteral("layerId")}},
@@ -258,6 +260,12 @@ public:
         }
         if (name == QStringLiteral("setLayerShyInCurrentComposition")) {
             return setLayerShyInCurrentComposition(stringArg(args, 0), boolArg(args, 1, true));
+        }
+        if (name == QStringLiteral("setLayerBlendModeInCurrentComposition")) {
+            return setLayerBlendModeInCurrentComposition(stringArg(args, 0), args.value(1));
+        }
+        if (name == QStringLiteral("setLayerOpacityInCurrentComposition")) {
+            return setLayerOpacityInCurrentComposition(stringArg(args, 0), doubleArg(args, 1, 1.0));
         }
         if (name == QStringLiteral("setLayerParentInCurrentComposition")) {
             return setLayerParentInCurrentComposition(stringArg(args, 0), stringArg(args, 1));
@@ -930,6 +938,43 @@ private:
             return false;
         }
         return service->setLayerShyInCurrentComposition(LayerID(layerId), shy);
+    }
+
+    static QVariant setLayerBlendModeInCurrentComposition(const QString& layerId, const QVariant& blendModeValue)
+    {
+        const auto comp = currentComposition();
+        if (!comp) {
+            return false;
+        }
+        const auto layer = comp->layerById(LayerID(layerId));
+        if (!layer) {
+            return false;
+        }
+        ArtifactCore::BlendMode mode = ArtifactCore::BlendMode::Normal;
+        const QString modeText = blendModeValue.toString().trimmed();
+        bool ok = false;
+        const int modeIndex = modeText.toInt(&ok);
+        if (ok) {
+            mode = static_cast<ArtifactCore::BlendMode>(modeIndex);
+        } else if (!modeText.isEmpty()) {
+            mode = ArtifactCore::BlendModeUtils::fromString(modeText);
+        }
+        layer->setBlendMode(ArtifactCore::toLegacyBlendType(mode));
+        return true;
+    }
+
+    static QVariant setLayerOpacityInCurrentComposition(const QString& layerId, double opacity)
+    {
+        const auto comp = currentComposition();
+        if (!comp) {
+            return false;
+        }
+        const auto layer = comp->layerById(LayerID(layerId));
+        if (!layer) {
+            return false;
+        }
+        layer->setOpacity(static_cast<float>(std::clamp(opacity, 0.0, 1.0)));
+        return true;
     }
 
     static QVariant setLayerParentInCurrentComposition(const QString& layerId, const QString& parentLayerId)

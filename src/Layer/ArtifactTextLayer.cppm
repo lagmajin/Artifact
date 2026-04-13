@@ -515,130 +515,130 @@ bool ArtifactTextLayer::setLayerPropertyValue(const QString &propertyPath,
                                               const QVariant &value) {
   if (propertyPath == QStringLiteral("text.value")) {
     setText(UniString(value.toString()));
-    Q_EMIT changed();
+    setDirty(LayerDirtyFlag::Property);
     return true;
   }
   if (propertyPath == QStringLiteral("text.fontFamily")) {
     setFontFamily(UniString(value.toString()));
-    Q_EMIT changed();
+    setDirty(LayerDirtyFlag::Property);
     return true;
   }
   if (propertyPath == QStringLiteral("text.fontSize")) {
     setFontSize(static_cast<float>(value.toDouble()));
-    Q_EMIT changed();
+    setDirty(LayerDirtyFlag::Property);
     return true;
   }
   if (propertyPath == QStringLiteral("text.tracking")) {
     setTracking(static_cast<float>(value.toDouble()));
-    Q_EMIT changed();
+    setDirty(LayerDirtyFlag::Property);
     return true;
   }
   if (propertyPath == QStringLiteral("text.leading")) {
     setLeading(static_cast<float>(value.toDouble()));
-    Q_EMIT changed();
+    setDirty(LayerDirtyFlag::Property);
     return true;
   }
   if (propertyPath == QStringLiteral("text.bold")) {
     setBold(value.toBool());
-    Q_EMIT changed();
+    setDirty(LayerDirtyFlag::Property);
     return true;
   }
   if (propertyPath == QStringLiteral("text.italic")) {
     setItalic(value.toBool());
-    Q_EMIT changed();
+    setDirty(LayerDirtyFlag::Property);
     return true;
   }
   if (propertyPath == QStringLiteral("text.allCaps")) {
     setAllCaps(value.toBool());
-    Q_EMIT changed();
+    setDirty(LayerDirtyFlag::Property);
     return true;
   }
   if (propertyPath == QStringLiteral("text.underline")) {
     setUnderline(value.toBool());
-    Q_EMIT changed();
+    setDirty(LayerDirtyFlag::Property);
     return true;
   }
   if (propertyPath == QStringLiteral("text.strikethrough")) {
     setStrikethrough(value.toBool());
-    Q_EMIT changed();
+    setDirty(LayerDirtyFlag::Property);
     return true;
   }
   if (propertyPath == QStringLiteral("text.alignment")) {
     setHorizontalAlignment(static_cast<TextHorizontalAlignment>(value.toInt()));
-    Q_EMIT changed();
+    setDirty(LayerDirtyFlag::Property);
     return true;
   }
   if (propertyPath == QStringLiteral("text.verticalAlignment")) {
     setVerticalAlignment(static_cast<TextVerticalAlignment>(value.toInt()));
-    Q_EMIT changed();
+    setDirty(LayerDirtyFlag::Property);
     return true;
   }
   if (propertyPath == QStringLiteral("text.wrapMode")) {
     setWrapMode(static_cast<TextWrapMode>(value.toInt()));
-    Q_EMIT changed();
+    setDirty(LayerDirtyFlag::Property);
     return true;
   }
   if (propertyPath == QStringLiteral("text.maxWidth")) {
     setMaxWidth(static_cast<float>(value.toDouble()));
-    Q_EMIT changed();
+    setDirty(LayerDirtyFlag::Property);
     return true;
   }
   if (propertyPath == QStringLiteral("text.boxHeight")) {
     setBoxHeight(static_cast<float>(value.toDouble()));
-    Q_EMIT changed();
+    setDirty(LayerDirtyFlag::Property);
     return true;
   }
   if (propertyPath == QStringLiteral("text.paragraphSpacing")) {
     setParagraphSpacing(static_cast<float>(value.toDouble()));
-    Q_EMIT changed();
+    setDirty(LayerDirtyFlag::Property);
     return true;
   }
   if (propertyPath == QStringLiteral("text.color")) {
     const auto c = value.value<QColor>();
     setTextColor(FloatRGBA(c.redF(), c.greenF(), c.blueF(), c.alphaF()));
-    Q_EMIT changed();
+    setDirty(LayerDirtyFlag::Property);
     return true;
   }
   if (propertyPath == QStringLiteral("text.strokeEnabled")) {
     setStrokeEnabled(value.toBool());
-    Q_EMIT changed();
+    setDirty(LayerDirtyFlag::Property);
     return true;
   }
   if (propertyPath == QStringLiteral("text.strokeColor")) {
     const auto c = value.value<QColor>();
     setStrokeColor(FloatRGBA(c.redF(), c.greenF(), c.blueF(), c.alphaF()));
-    Q_EMIT changed();
+    setDirty(LayerDirtyFlag::Property);
     return true;
   }
   if (propertyPath == QStringLiteral("text.strokeWidth")) {
     setStrokeWidth(static_cast<float>(value.toDouble()));
-    Q_EMIT changed();
+    setDirty(LayerDirtyFlag::Property);
     return true;
   }
   if (propertyPath == QStringLiteral("text.shadowEnabled")) {
     setShadowEnabled(value.toBool());
-    Q_EMIT changed();
+    setDirty(LayerDirtyFlag::Property);
     return true;
   }
   if (propertyPath == QStringLiteral("text.shadowColor")) {
     const auto c = value.value<QColor>();
     setShadowColor(FloatRGBA(c.redF(), c.greenF(), c.blueF(), c.alphaF()));
-    Q_EMIT changed();
+    setDirty(LayerDirtyFlag::Property);
     return true;
   }
   if (propertyPath == QStringLiteral("text.shadowOffsetX")) {
     setShadowOffset(static_cast<float>(value.toDouble()), shadowOffsetY());
-    Q_EMIT changed();
+    setDirty(LayerDirtyFlag::Property);
     return true;
   }
   if (propertyPath == QStringLiteral("text.shadowOffsetY")) {
     setShadowOffset(shadowOffsetX(), static_cast<float>(value.toDouble()));
-    Q_EMIT changed();
+    setDirty(LayerDirtyFlag::Property);
     return true;
   }
   if (propertyPath == QStringLiteral("text.shadowBlur")) {
     setShadowBlur(static_cast<float>(value.toDouble()));
-    Q_EMIT changed();
+    setDirty(LayerDirtyFlag::Property);
     return true;
   }
   return ArtifactAbstractLayer::setLayerPropertyValue(propertyPath, value);
