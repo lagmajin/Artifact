@@ -1619,7 +1619,7 @@ ArtifactCore::AudioSegment ArtifactAssetBrowser::Impl::loadAudioFile(const QStri
     // Convert to AudioSegment - OPTIMIZED: only load first N seconds
     const int maxFrames = kMaxThumbnailAudioSeconds * wav.sampleRate();
     const auto fullData = wav.getAudioData();
-    const int framesToLoad = std::min(fullData.size(), maxFrames);
+    const int framesToLoad = static_cast<int>(std::min<qsizetype>(fullData.size(), static_cast<qsizetype>(maxFrames)));
 
     segment.sampleRate = wav.sampleRate();
     segment.layout = ArtifactCore::AudioChannelLayout::Mono;
@@ -1663,7 +1663,7 @@ void ArtifactAssetBrowser::Impl::startAsyncWaveformGeneration(const QString& aud
     auto* watcher = new QFutureWatcher<QIcon>();
 
     // Connect finished signal
-    QObject::connect(watcher, &QFutureWatcher<QIcon>::finished, this, [this, watcher, audioFilePath]() {
+    QObject::connect(watcher, &QFutureWatcher<QIcon>::finished, [this, watcher, audioFilePath]() {
         const QIcon icon = watcher->result();
         if (!icon.isNull()) {
             thumbnailCache_[audioFilePath] = icon;
@@ -1696,7 +1696,7 @@ void ArtifactAssetBrowser::Impl::startAsyncWaveformGeneration(const QString& aud
             // Downsample for thumbnail (max 30 seconds)
             const int maxFrames = 30 * wav.sampleRate();
             const auto fullData = wav.getAudioData();
-            const int framesToLoad = std::min(fullData.size(), maxFrames);
+    const qsizetype framesToLoad = qMin(fullData.size(), static_cast<qsizetype>(maxFrames));
 
             ArtifactCore::AudioSegment segment;
             segment.sampleRate = wav.sampleRate();

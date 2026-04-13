@@ -22,8 +22,6 @@ module Artifact.Render.PrimitiveRenderer2D;
 
 import Graphics;
 import VertexBuffer;
-import Graphics.CBuffer.Constants.PixelShader;
-import Graphics.CBuffer.Constants.VertexShader;
 import Core.Transform.Viewport;
 import Math.Bezier;
 import Render.Shader.ThickLine;

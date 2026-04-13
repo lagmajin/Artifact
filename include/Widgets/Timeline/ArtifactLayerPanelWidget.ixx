@@ -2,7 +2,6 @@ module;
 #include <utility>
 #include <wobjectdefs.h>
 #include <QWidget>
-#include <QScrollBar>
 #include <QVector>
 #include <QWheelEvent>
 
@@ -96,6 +95,8 @@ export namespace Artifact
   int rowHeight() const;
   void setPropertyColumnWidth(int width);
   int propertyColumnWidth() const;
+  void setVerticalOffset(double offset);
+  double verticalOffset() const;
   void setFilterText(const QString& text);
   void setSearchMatchMode(SearchMatchMode mode);
   SearchMatchMode searchMatchMode() const;
@@ -113,6 +114,7 @@ export namespace Artifact
 
   public /*signals*/:
    void visibleRowsChanged() W_SIGNAL(visibleRowsChanged);
+   void verticalOffsetChanged(double offset) W_SIGNAL(verticalOffsetChanged, offset);
 
  };
 
@@ -138,7 +140,8 @@ export namespace Artifact
   int rowHeight() const;
   void setPropertyColumnWidth(int width);
   int propertyColumnWidth() const;
-  class QScrollBar* verticalScrollBar() const;
+  void setVerticalOffset(double offset);
+  double verticalOffset() const;
   QVector<LayerID> matchingTimelineRows() const;
   QVector<LayerID> visibleTimelineRows() const;
   void setLayerNameEditable(bool enabled);
@@ -146,7 +149,8 @@ export namespace Artifact
   void scrollToLayer(const LayerID& id);
 
   public /*signals*/:
-   void visibleRowsChanged() W_SIGNAL(visibleRowsChanged)
+   void visibleRowsChanged() W_SIGNAL(visibleRowsChanged);
+   void verticalOffsetChanged(double offset) W_SIGNAL(verticalOffsetChanged, offset);
  	
  };
 

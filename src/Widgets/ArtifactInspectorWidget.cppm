@@ -776,6 +776,23 @@ void ArtifactInspectorWidget::Impl::handleCompositionChanged(const CompositionID
 void ArtifactInspectorWidget::Impl::handleLayerSelected(const LayerID& id)
 {
  qDebug() << "[Inspector] Layer selected:" << id.toString();
+ if (id.isNil()) {
+  auto projectService = ArtifactProjectService::instance();
+  if (projectService && !currentCompositionId_.isNil() && !currentLayerId_.isNil()) {
+   auto findResult = projectService->findComposition(currentCompositionId_);
+   if (findResult.success) {
+    auto comp = findResult.ptr.lock();
+    if (comp && comp->containsLayerById(currentLayerId_)) {
+     syncEffectPropertyWidget();
+     scheduleRefresh(LayerNoteDirty | LayerInfoDirty | EffectsDirty);
+     return;
+    }
+   }
+  }
+  setNoLayerState();
+  scheduleRefresh(LayerNoteDirty | LayerInfoDirty | EffectsDirty);
+  return;
+ }
  currentLayerId_ = id;
  focusedEffectId_.clear();
  syncEffectPropertyWidget();

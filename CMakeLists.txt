@@ -9,6 +9,35 @@ set(ARTIFACT_VERSION_MINOR 9)
 set(ARTIFACT_VERSION_PATCH 0)
 set(ARTIFACT_VERSION "${ARTIFACT_VERSION_MAJOR}.${ARTIFACT_VERSION_MINOR}.${ARTIFACT_VERSION_PATCH}")
 
+find_program(ARTIFACT_GIT_EXECUTABLE git)
+set(ARTIFACT_BUILD_GIT_HASH "unknown")
+set(ARTIFACT_BUILD_DIRTY "unknown")
+if(ARTIFACT_GIT_EXECUTABLE)
+    execute_process(
+        COMMAND "${ARTIFACT_GIT_EXECUTABLE}" -C "${CMAKE_CURRENT_SOURCE_DIR}" rev-parse --short=12 HEAD
+        OUTPUT_VARIABLE ARTIFACT_BUILD_GIT_HASH
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET
+    )
+    if(NOT ARTIFACT_BUILD_GIT_HASH)
+        set(ARTIFACT_BUILD_GIT_HASH "unknown")
+    endif()
+
+    execute_process(
+        COMMAND "${ARTIFACT_GIT_EXECUTABLE}" -C "${CMAKE_CURRENT_SOURCE_DIR}" status --porcelain --untracked-files=no
+        OUTPUT_VARIABLE ARTIFACT_GIT_STATUS
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET
+    )
+    if(ARTIFACT_GIT_STATUS)
+        set(ARTIFACT_BUILD_DIRTY "dirty")
+    else()
+        set(ARTIFACT_BUILD_DIRTY "clean")
+    endif()
+endif()
+
+string(TIMESTAMP ARTIFACT_BUILD_TIMESTAMP "%Y-%m-%dT%H:%M:%SZ" UTC)
+
 # ---------------------------------------------------------------------------
 # ソース収集とモジュール分類
 # ---------------------------------------------------------------------------
@@ -96,6 +125,9 @@ target_compile_definitions(Artifact PRIVATE
     ARTIFACT_VERSION_MAJOR=${ARTIFACT_VERSION_MAJOR}
     ARTIFACT_VERSION_MINOR=${ARTIFACT_VERSION_MINOR}
     ARTIFACT_VERSION_PATCH=${ARTIFACT_VERSION_PATCH}
+    ARTIFACT_BUILD_GIT_HASH="${ARTIFACT_BUILD_GIT_HASH}"
+    ARTIFACT_BUILD_TIMESTAMP="${ARTIFACT_BUILD_TIMESTAMP}"
+    ARTIFACT_BUILD_DIRTY="${ARTIFACT_BUILD_DIRTY}"
 )
 
 if(TARGET __CMAKE::CXX23)

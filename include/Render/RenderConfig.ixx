@@ -8,11 +8,11 @@ export namespace Artifact {
 
 // Global render configuration constants
 struct RenderConfig {
-    // Canonical linear HDR color format used by the main composition path.
-    // Keep render targets, intermediate render textures, and PSO RTV formats aligned.
-    static constexpr Diligent::TEXTURE_FORMAT LinearColorFormat = Diligent::TEX_FORMAT_RGBA16_FLOAT;
-    static constexpr Diligent::TEXTURE_FORMAT MainRTVFormat = LinearColorFormat;
-    static constexpr Diligent::TEXTURE_FORMAT PipelineFormat = LinearColorFormat;
+    // Single color format used across the current render path.
+    // Keep render targets, intermediate textures, and PSO RTV formats aligned.
+    static constexpr Diligent::TEXTURE_FORMAT MainRTVFormat = Diligent::TEX_FORMAT_RGBA8_UNORM_SRGB;
+    static constexpr Diligent::TEXTURE_FORMAT PipelineFormat = MainRTVFormat;
+    static constexpr Diligent::TEXTURE_FORMAT LinearColorFormat = MainRTVFormat;
 };
 
 } // namespace Artifact

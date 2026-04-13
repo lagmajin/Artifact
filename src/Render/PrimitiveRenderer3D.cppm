@@ -466,8 +466,10 @@ public:
         lineVbDesc.BindFlags = BIND_VERTEX_BUFFER;
         lineVbDesc.CPUAccessFlags = CPU_ACCESS_WRITE;
         lineVbDesc.Size = sizeof(GizmoLineVertex) * newCapacity;
-        device_->CreateBuffer(lineVbDesc, nullptr, &gizmoLineVertexBuffer_);
-        if (gizmoLineVertexBuffer_) {
+        RefCntAutoPtr<IBuffer> newVertexBuffer;
+        device_->CreateBuffer(lineVbDesc, nullptr, &newVertexBuffer);
+        if (newVertexBuffer) {
+            gizmoLineVertexBuffer_ = newVertexBuffer;
             gizmoLineVertexCapacity_ = newCapacity;
         }
     }

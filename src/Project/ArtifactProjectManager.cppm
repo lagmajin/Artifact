@@ -653,7 +653,7 @@ void ArtifactProjectManager::loadFromFileAsync(const QString& fullpath,
     }
 
     // Switch to main thread for UI updates
-    QMetaObject::invokeMethod(this, [this, importResult, fullpath]() {
+    QMetaObject::invokeMethod(this, [this, importResult, fullpath, onFinished]() {
       impl_->currentProjectPtr_.reset();
       impl_->signalsConnected_ = false;
       impl_->currentProjectPtr_ = importResult.project;
@@ -696,9 +696,10 @@ void ArtifactProjectManager::loadFromFileAsync(const QString& fullpath,
     }
 
     if (onProgress) onProgress(60, 100, QStringLiteral("Health check..."));
-    auto report = ArtifactProjectHealthChecker::checkAndRepair(importResult.project.get());
+    auto report = ArtifactProjectHealthChecker::check(importResult.project.get());
     if (!report.isHealthy) {
       qWarning() << "[loadFromFileAsync] health issues detected:" << report.issues.size();
+      (void)ArtifactProjectHealthChecker::checkAndRepair(importResult.project.get());
     }
 
     if (onProgress) onProgress(90, 100, QStringLiteral("Restoring items..."));
@@ -763,7 +764,8 @@ void ArtifactProjectManager::saveToFileAsync(const QString& fullpath,
 
     if (onProgress) onProgress(20, 100, QStringLiteral("Serializing..."));
     ArtifactProjectExporter exporter;
-    exporter.setProject(projectPtr);
+    auto projectToSave = projectPtr;
+    exporter.setProject(projectToSave);
     exporter.setOutputPath(fullpath);
 
     if (onProgress) onProgress(40, 100, QStringLiteral("Exporting..."));

@@ -56,8 +56,6 @@ public:
                       const QString& propertyPath,
                       const RationalTime& time);
 
-public /*signals*/:
-  void keyframesChanged(LayerID layerId, QString propertyPath) W_SIGNAL(keyframesChanged, layerId, propertyPath);
 };
 
 } // namespace Artifact

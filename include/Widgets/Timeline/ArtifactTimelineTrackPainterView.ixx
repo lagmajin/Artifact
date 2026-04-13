@@ -119,6 +119,7 @@ export namespace Artifact
   void keyframeSelectionChanged(int selectedCount) W_SIGNAL(keyframeSelectionChanged, selectedCount);
   void zoomLevelChanged(double zoomPercent) W_SIGNAL(zoomLevelChanged, zoomPercent);
   void trackRowHeightChanged(int rowHeight) W_SIGNAL(trackRowHeightChanged, rowHeight);
+  void verticalOffsetChanged(double offset) W_SIGNAL(verticalOffsetChanged, offset);
   void timelineDebugMessage(const QString& message) W_SIGNAL(timelineDebugMessage, message);
  };
 }

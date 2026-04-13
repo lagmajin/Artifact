@@ -711,6 +711,7 @@ void ArtifactTimelineTrackPainterView::setVerticalOffset(const double value)
   return;
  }
  impl_->verticalOffset_ = std::max(0.0, value);
+ Q_EMIT verticalOffsetChanged(impl_->verticalOffset_);
  update();
 }
 

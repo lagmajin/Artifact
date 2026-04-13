@@ -259,8 +259,9 @@ void drawArc(ArtifactIRenderer* renderer,
                 static_cast<float>(center.y() + std::sin(angle) * radius) };
  }
 
- // Draw segments as a single polyline
- renderer->drawPolyline(points, color, thickness);
+  // Draw segments as a single polyline
+  std::vector<Detail::float2> vecPoints(points.begin(), points.end());
+  renderer->drawPolyline(vecPoints, color, thickness);
 }
 
 void drawRotateTickMarks(ArtifactIRenderer* renderer,

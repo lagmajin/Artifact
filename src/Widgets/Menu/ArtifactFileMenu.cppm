@@ -511,7 +511,7 @@ void ArtifactFileMenu::Impl::handleExportWorkArea()
     QObject::connect(watcher, &QFutureWatcher<int>::progressValueChanged, progress, [progress](int value) {
         progress->setValue(value);
     });
-    QObject::connect(watcher, &QFutureWatcher<int>::finished, menu_, [progress, watcher, filePath, menu_]() {
+    QObject::connect(watcher, &QFutureWatcher<int>::finished, menu_, [this, progress, watcher, filePath]() {
         progress->close();
         const int renderedCount = watcher->result();
         watcher->deleteLater();

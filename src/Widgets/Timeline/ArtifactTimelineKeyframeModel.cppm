@@ -113,7 +113,6 @@ bool ArtifactTimelineKeyframeModel::addKeyframe(const CompositionID& compId,
   ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
       LayerChangedEvent{compId.toString(), layerId.toString(),
                         LayerChangedEvent::ChangeType::Modified});
-  Q_EMIT keyframesChanged(layerId, propertyPath);
   return true;
 }
 
@@ -153,7 +152,6 @@ bool ArtifactTimelineKeyframeModel::moveKeyframe(const CompositionID& compId,
   ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
       LayerChangedEvent{compId.toString(), layerId.toString(),
                         LayerChangedEvent::ChangeType::Modified});
-  Q_EMIT keyframesChanged(layerId, propertyPath);
   return true;
 }
 
@@ -178,7 +176,6 @@ bool ArtifactTimelineKeyframeModel::removeKeyframe(const CompositionID& compId,
   ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
       LayerChangedEvent{compId.toString(), layerId.toString(),
                         LayerChangedEvent::ChangeType::Modified});
-  Q_EMIT keyframesChanged(layerId, propertyPath);
   return true;
 }
 

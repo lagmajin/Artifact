@@ -119,6 +119,7 @@ namespace Artifact
   void endFrameGpuProfiling();
    double lastFrameGpuTimeMs() const;
    bool isInitialized() const { return m_initialized; }
+  void readbackToImageAsync(ArtifactIRenderer::ReadbackCallback callback) const;
 
    void clear();
   void setClearColor(const FloatColor& color);
@@ -167,13 +168,13 @@ namespace Artifact
   { primitiveRenderer_.drawRectOutlineLocal(x, y, w, h, color); }
   void drawRectOutline(float2 pos, float2 size, const FloatColor& color)
   { primitiveRenderer_.drawRectOutlineLocal(pos.x, pos.y, size.x, size.y, color); }
-  void drawSolidLine(float2 start, float2 end, const FloatColor& color, float thickness)
-  { primitiveRenderer_.drawThickLineLocal(start, end, thickness, color); }
+  void drawSolidLine(Detail::float2 start, Detail::float2 end, const FloatColor& color, float thickness)
+  { primitiveRenderer_.drawThickLineLocal(toDiligentFloat2(start), toDiligentFloat2(end), thickness, color); }
   void drawPolyline(const std::vector<Detail::float2>& points, const FloatColor& color, float thickness)
   {
     if (points.size() < 2) return;
     for (size_t i = 0; i < points.size() - 1; ++i) {
-      primitiveRenderer_.drawThickLineLocal(points[i], points[i+1], thickness, color);
+      primitiveRenderer_.drawThickLineLocal(toDiligentFloat2(points[i]), toDiligentFloat2(points[i+1]), thickness, color);
     }
   }
   void drawQuadLocal(float2 p0, float2 p1, float2 p2, float2 p3, const FloatColor& color)
@@ -531,15 +532,15 @@ namespace Artifact
     return;
   }
 
-  auto* ctx = deviceManager_.immediateContext();
-  auto* device = deviceManager_.device();
+  auto ctx = deviceManager_.immediateContext();
+  auto device = deviceManager_.device();
 
   // Get swap chain back buffer info
   RefCntAutoPtr<ITexture> srcTex;
   Uint32 srcWidth = 0, srcHeight = 0;
 
-  if (auto* sc = deviceManager_.swapChain()) {
-   if (auto* rtv = sc->GetCurrentBackBufferRTV()) {
+  if (auto sc = deviceManager_.swapChain()) {
+   if (auto rtv = sc->GetCurrentBackBufferRTV()) {
     srcTex = rtv->GetTexture();
     if (srcTex) {
      const auto& desc = srcTex->GetDesc();
@@ -970,7 +971,7 @@ void ArtifactIRenderer::resetGizmoCameraMatrices()
  { impl_->drawRectOutline(toDiligentFloat2(pos), toDiligentFloat2(size), color); }
  void ArtifactIRenderer::drawSolidLine(Detail::float2 start, Detail::float2 end,
                                        const FloatColor& color, float thickness)
- { impl_->drawSolidLine(toDiligentFloat2(start), toDiligentFloat2(end), color, thickness); }
+ { impl_->drawSolidLine(start, end, color, thickness); }
  void ArtifactIRenderer::drawPolyline(const std::vector<Detail::float2>& points,
                                       const FloatColor& color, float thickness)
  { impl_->drawPolyline(points, color, thickness); }
