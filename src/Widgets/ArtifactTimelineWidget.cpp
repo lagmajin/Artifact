@@ -12,7 +12,6 @@ module;
 #include <QMouseEvent>
 #include <QPainter>
 #include <QResizeEvent>
-#include <QScrollBar>
 #include <QSignalBlocker>
 #include <QSplitter>
 #include <QListWidget>
@@ -1182,20 +1181,7 @@ private:
 
     const QRect leftHandleRect(x1 - handleHalfW, 0, handleW, height);
     const QRect rightHandleRect(x2 - handleHalfW, 0, handleW, height);
-    if (leftHandleRect.contains(pos) || rightHandleRect.contains(pos)) {
-      return true;
-    }
-
-    // When the range spans nearly the whole widget, reserving the whole bar
-    // creates an oversized dead zone for playhead seeking. In that case only
-    // the handles stay reserved.
-    if (start <= 0.001f && end >= 0.999f) {
-      return false;
-    }
-
-    const QRect rangeRect(x1 + handleHalfW, 0, std::max(0, x2 - x1 - handleW),
-                          height);
-    return rangeRect.contains(pos);
+    return leftHandleRect.contains(pos) || rightHandleRect.contains(pos);
   }
 
   ArtifactTimelineTrackPainterView *trackView_ = nullptr;
@@ -1322,45 +1308,6 @@ private:
   std::function<void(double)> horizontalOffsetSync_;
   bool panning_ = false;
   QPoint lastGlobalPos_;
-};
-
-class PanelVerticalScrollFilter final : public QObject {
-public:
-  explicit PanelVerticalScrollFilter(QScrollBar *verticalBar,
-                                     QObject *parent = nullptr)
-      : QObject(parent), verticalBar_(verticalBar) {}
-
-protected:
-  bool eventFilter(QObject *watched, QEvent *event) override {
-    Q_UNUSED(watched);
-    if (!verticalBar_ || event->type() != QEvent::Wheel) {
-      return QObject::eventFilter(watched, event);
-    }
-
-    auto *wheelEvent = static_cast<QWheelEvent *>(event);
-    if ((wheelEvent->modifiers() & Qt::ControlModifier) ||
-        (wheelEvent->modifiers() & Qt::ShiftModifier)) {
-      return QObject::eventFilter(watched, event);
-    }
-    if (verticalBar_->maximum() <= verticalBar_->minimum()) {
-      return QObject::eventFilter(watched, event);
-    }
-
-    int delta = wheelScrollDelta(wheelEvent, false);
-    if (delta == 0) {
-      delta = wheelScrollDelta(wheelEvent, true);
-    }
-    if (delta == 0) {
-      return QObject::eventFilter(watched, event);
-    }
-
-    verticalBar_->setValue(verticalBar_->value() - delta);
-    wheelEvent->accept();
-    return true;
-  }
-
-private:
-  QScrollBar *verticalBar_ = nullptr;
 };
 
 class LeftHeaderPriorityFilter final : public QObject {
@@ -1891,6 +1838,8 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   searchModeCombo->addItem(QStringLiteral("Filter Only"), static_cast<int>(SearchMatchMode::FilterOnly));
   searchModeCombo->setCurrentIndex(2);
   searchModeCombo->setVisible(false);
+  searchModeCombo->setMaximumWidth(0);
+  searchModeCombo->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
   displayModeCombo->addItem(QStringLiteral("All Layers"), static_cast<int>(TimelineLayerDisplayMode::AllLayers));
   displayModeCombo->addItem(QStringLiteral("Selected"), static_cast<int>(TimelineLayerDisplayMode::SelectedOnly));
   displayModeCombo->addItem(QStringLiteral("Animated"), static_cast<int>(TimelineLayerDisplayMode::AnimatedOnly));
@@ -2021,7 +1970,6 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   searchBarLayout->setContentsMargins(0, 0, 8, 0);
   searchBarLayout->addWidget(leftHeader);
   searchBarLayout->addWidget(searchBar);
-  searchBarLayout->addWidget(searchModeCombo);
   searchBarLayout->addWidget(displayModeCombo);
   searchBarLayout->addWidget(densityCombo);
   searchBarLayout->addWidget(searchStatusLabel);
@@ -2043,8 +1991,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   searchBarLayout->setStretch(8, 0);
   searchBarLayout->setStretch(9, 0);
   searchBarLayout->setStretch(10, 0);
-  searchBarLayout->setStretch(11, 0);
-  searchBarLayout->setStretch(12, 1);
+  searchBarLayout->setStretch(11, 1);
 
   // legacy direct signal connection disabled — prefer EventBus
   if (false) QObject::connect(globalSwitches, &ArtifactTimelineGlobalSwitches::shyChanged,
@@ -2668,6 +2615,19 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   timeNavigatorWidget->installEventFilter(headerScrollFilter);
   workAreaWidget->installEventFilter(headerScrollFilter);
 
+  QObject::connect(
+      painterTrackView, &ArtifactTimelineTrackPainterView::verticalOffsetChanged,
+      this,
+      [this](double offset) {
+        syncTimelineVerticalOffset(offset);
+      });
+  QObject::connect(
+      impl_->layerTimelinePanel_, &ArtifactLayerTimelinePanelWrapper::verticalOffsetChanged,
+      this,
+      [this](double offset) {
+        syncTimelineVerticalOffset(offset);
+      });
+
   if (painterTrackView) {
     auto *viewResizeFilter =
         new ViewportResizeFilter(rightPanel, updateZoom, rightPanel);
@@ -2725,18 +2685,6 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   layout->setContentsMargins(0, 0, 0, 0);
 
   setLayout(layout);
-
-  // Sync scrollbars
-  if (auto *leftScroll = layerTreeView->verticalScrollBar()) {
-    auto *leftPanelWheelFilter =
-        new PanelVerticalScrollFilter(leftScroll, leftPanel);
-    leftPanel->installEventFilter(leftPanelWheelFilter);
-    headerWidget->installEventFilter(leftPanelWheelFilter);
-    leftTopSpacer->installEventFilter(leftPanelWheelFilter);
-    leftSubHeaderSpacer->installEventFilter(leftPanelWheelFilter);
-
-    Q_UNUSED(leftScroll);
-  }
 
   // EventBus に載っている広域状態変化を購読する
   // scheduleRefresh: ProjectChangedEvent と LayerChangedEvent が同一フレームで両方発火しても
@@ -3071,6 +3019,7 @@ void ArtifactTimelineWidget::refreshTracks() {
     impl_->painterTrackView_->setCurrentFrame(impl_->currentFrame_);
     syncPlayheadOverlay();
     impl_->painterTrackView_->setClips(painterClips);
+    syncTimelineVerticalOffset(impl_->painterTrackView_->verticalOffset());
     syncPainterSelectionState();
   }
   if (impl_->curveEditor_ && impl_->graphEditorVisible_) {
@@ -3476,6 +3425,25 @@ void ArtifactTimelineWidget::syncTimelineHorizontalOffset(const double offset)
     impl_->scrubBar_->setRulerHorizontalOffset(offset);
   }
   syncPlayheadOverlay();
+}
+
+void ArtifactTimelineWidget::syncTimelineVerticalOffset(const double offset)
+{
+  if (!impl_) {
+    return;
+  }
+  if (impl_->painterTrackView_) {
+    const QSignalBlocker blocker(impl_->painterTrackView_);
+    if (std::abs(impl_->painterTrackView_->verticalOffset() - offset) > 0.0001) {
+      impl_->painterTrackView_->setVerticalOffset(offset);
+    }
+  }
+  if (impl_->layerTimelinePanel_) {
+    const QSignalBlocker blocker(impl_->layerTimelinePanel_);
+    if (std::abs(impl_->layerTimelinePanel_->verticalOffset() - offset) > 0.0001) {
+      impl_->layerTimelinePanel_->setVerticalOffset(offset);
+    }
+  }
 }
 
 void ArtifactTimelineWidget::syncTimelineViewportFromNavigator()

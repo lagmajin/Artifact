@@ -761,6 +761,7 @@ protected:
       if (controller_) {
         controller_->notifyViewportInteractionActivity();
       }
+      grabMouse();
       setCursor(Qt::ClosedHandCursor);
       event->accept();
       return;
@@ -842,6 +843,7 @@ protected:
       if (controller_) {
         controller_->finishViewportInteraction();
       }
+      releaseMouse();
       if (spacePressed_) {
         setCursor(Qt::OpenHandCursor);
       } else {
@@ -934,15 +936,12 @@ protected:
         (event->key() == Qt::Key_W || event->key() == Qt::Key_E ||
          event->key() == Qt::Key_R)) {
       if (controller_) {
-        if (auto *gizmo = controller_->gizmo()) {
-          if (event->key() == Qt::Key_W) {
-            gizmo->setMode(TransformGizmo::Mode::Move);
-          } else if (event->key() == Qt::Key_E) {
-            gizmo->setMode(TransformGizmo::Mode::Rotate);
-          } else {
-            gizmo->setMode(TransformGizmo::Mode::Scale);
-          }
-          controller_->renderOneFrame();
+        if (event->key() == Qt::Key_W) {
+          controller_->setGizmoMode(TransformGizmo::Mode::Move);
+        } else if (event->key() == Qt::Key_E) {
+          controller_->setGizmoMode(TransformGizmo::Mode::Rotate);
+        } else {
+          controller_->setGizmoMode(TransformGizmo::Mode::Scale);
         }
       }
       event->accept();
@@ -2123,11 +2122,8 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
     action->setIcon(loadEditorMenuIcon(iconPath));
     gizmoGroup->addAction(action);
     connect(action, &QAction::triggered, this, [this, mode]() {
-      if (auto *gizmo = impl_->renderController_
-                            ? impl_->renderController_->gizmo()
-                            : nullptr) {
-        gizmo->setMode(mode);
-        impl_->renderController_->renderOneFrame();
+      if (impl_->renderController_) {
+        impl_->renderController_->setGizmoMode(mode);
       }
     });
   };

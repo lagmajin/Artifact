@@ -12,6 +12,7 @@ module;
 module Artifact.Render.DiligentImmediateSubmitter;
 
 import Graphics;
+import std;
 import VertexBuffer;
 import Artifact.Render.ShaderManager;
 import Artifact.Render.RenderCommandBuffer;
@@ -59,7 +60,7 @@ void DiligentImmediateSubmitter::createBuffers(RefCntAutoPtr<IRenderDevice> devi
     {
         BufferDesc desc;
         desc.Name           = "DIS SpriteTransformMatrixCB";
-        desc.Size           = sizeof(CBSolidRectTransform2D);
+        desc.Size           = sizeof(RenderSolidRectTransform2D);
         desc.Usage          = USAGE_DYNAMIC;
         desc.BindFlags      = BIND_UNIFORM_BUFFER;
         desc.CPUAccessFlags = CPU_ACCESS_WRITE;
@@ -79,7 +80,7 @@ void DiligentImmediateSubmitter::createBuffers(RefCntAutoPtr<IRenderDevice> devi
     {
         BufferDesc desc;
         desc.Name           = "DIS SolidRectTransformCB";
-        desc.Size           = sizeof(CBSolidTransform2D);
+        desc.Size           = sizeof(RenderSolidTransform2D);
         desc.Usage          = USAGE_DYNAMIC;
         desc.BindFlags      = BIND_UNIFORM_BUFFER;
         desc.CPUAccessFlags = CPU_ACCESS_WRITE;
@@ -89,7 +90,7 @@ void DiligentImmediateSubmitter::createBuffers(RefCntAutoPtr<IRenderDevice> devi
     {
         BufferDesc desc;
         desc.Name           = "DIS SolidRectTransformMatrixCB";
-        desc.Size           = sizeof(CBSolidRectTransform2D);
+        desc.Size           = sizeof(RenderSolidRectTransform2D);
         desc.Usage          = USAGE_DYNAMIC;
         desc.BindFlags      = BIND_UNIFORM_BUFFER;
         desc.CPUAccessFlags = CPU_ACCESS_WRITE;

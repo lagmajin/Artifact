@@ -380,12 +380,13 @@ namespace Artifact
    const int cacheRight = std::clamp(std::max(cacheStartX, cacheEndX), railRect.left(), railRect.right());
    const QRect cacheRect(cacheLeft, railRect.top(), std::max(1, cacheRight - cacheLeft + 1), railRect.height());
    if (cacheRect.width() > 1) {
-    QLinearGradient cacheGrad(cacheRect.topLeft(), cacheRect.bottomLeft());
-    cacheGrad.setColorAt(0.0, cacheStrongColor.lighter(112));
-    cacheGrad.setColorAt(1.0, cacheBaseColor.darker(125));
-    p.setPen(QPen(cacheBaseColor.lighter(130), 1));
-    p.setBrush(cacheGrad);
+    const QColor cacheFill = cacheBaseColor.darker(110);
+    const QColor cacheStroke = cacheBaseColor.lighter(124);
+    p.setPen(QPen(cacheStroke, 1));
+    p.setBrush(cacheFill);
     p.drawRoundedRect(cacheRect.adjusted(0, 0, -1, 0), railHalfH, railHalfH);
+    p.setPen(QPen(QColor(cacheStroke.red(), cacheStroke.green(), cacheStroke.blue(), 90), 1));
+    p.drawLine(cacheRect.topLeft() + QPoint(0, 1), cacheRect.topRight() + QPoint(0, 1));
    }
   }
 

@@ -1136,6 +1136,7 @@ public:
   bool soloLayerCacheDirty_ = true;
 
   LayerDragMode dragMode_ = LayerDragMode::None;
+  TransformGizmo::Mode gizmoMode_ = TransformGizmo::Mode::All;
   QPointF dragStartCanvasPos_;
   QPointF dragStartLayerPos_;
   float dragStartScaleX_ = 1.0f;
@@ -1806,6 +1807,22 @@ void CompositionRenderController::panBy(const QPointF &viewportDelta) {
                           (float)viewportDelta.y() * impl_->devicePixelRatio_);
   impl_->invalidateBaseComposite();
   renderOneFrame();
+}
+
+void CompositionRenderController::setGizmoMode(const TransformGizmo::Mode mode) {
+  if (!impl_) {
+    return;
+  }
+  impl_->gizmoMode_ = mode;
+  if (impl_->gizmo_) {
+    impl_->gizmo_->setMode(mode);
+  }
+  impl_->invalidateOverlayComposite();
+  renderOneFrame();
+}
+
+TransformGizmo::Mode CompositionRenderController::gizmoMode() const {
+  return impl_ ? impl_->gizmoMode_ : TransformGizmo::Mode::All;
 }
 
 void CompositionRenderController::notifyViewportInteractionActivity() {
@@ -3652,13 +3669,14 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       }
     }
 
-    if (showGizmoOverlay_ && gizmo_) {
+  if (showGizmoOverlay_ && gizmo_) {
       ArtifactCore::ProfileScope _profGizmo("GizmoMask",
           ArtifactCore::ProfileCategory::Render);
       auto selectedLayer = (!selectedLayerId_.isNil() && comp)
                                ? comp->layerById(selectedLayerId_)
                                : ArtifactAbstractLayerPtr{};
       if (selectedLayer && selectedLayer->isVisible()) {
+        gizmo_->setMode(gizmoMode_);
         {
           ArtifactCore::ProfileScope _profG2D("Gizmo2D",
               ArtifactCore::ProfileCategory::Render);

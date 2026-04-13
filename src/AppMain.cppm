@@ -388,6 +388,24 @@ void sanitizeLayoutStore(ArtifactCore::FastSettingsStore &layoutStore) {
   layoutStore.sync();
 }
 
+QString buildWindowTitle() {
+  QString title = QStringLiteral("Artifact %1").arg(
+      QStringLiteral(ARTIFACT_VERSION_STRING));
+
+  const QString buildHash = QStringLiteral(ARTIFACT_BUILD_GIT_HASH);
+  const QString buildStamp = QStringLiteral(ARTIFACT_BUILD_TIMESTAMP);
+  const QString buildDirty = QStringLiteral(ARTIFACT_BUILD_DIRTY);
+
+  title += QStringLiteral(" | ");
+  title += buildHash;
+  if (buildDirty == QStringLiteral("dirty")) {
+    title += QStringLiteral("*");
+  }
+  title += QStringLiteral(" | ");
+  title += buildStamp;
+  return title;
+}
+
 QIcon buildTemporaryAppIcon() {
   QPixmap pix(256, 256);
   pix.fill(QColor(28, 28, 32));
@@ -929,7 +947,7 @@ int main(int argc, char *argv[]) {
   using namespace Artifact;
   auto *mw = new ArtifactMainWindow();
   mw->setObjectName("ArtifactMainWindow");
-  mw->setWindowTitle("Artifact");
+  mw->setWindowTitle(buildWindowTitle());
   mw->setWindowIcon(appIcon);
   auto *status = new ArtifactStatusBar(mw);
   mw->setStatusBar(status);

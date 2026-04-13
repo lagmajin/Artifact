@@ -2,8 +2,10 @@ module;
 #include <utility>
 #include <QHash>
 #include <QString>
+#include <QStringList>
 #include <QColor>
 #include <QJsonObject>
+#include <QJsonArray>
 #include <QWidget>
 #include <QPainter>
 #include <QPaintEvent>
@@ -19,18 +21,12 @@ import std;
 
 namespace Artifact {
 
+W_OBJECT_IMPL(CollabPresenceWidget)
+
 class CollabPresenceWidget::Impl {
 public:
-    struct UserPresence {
-        QString userId;
-        QString userName;
-        QColor color;
-        QString cursorLocation;
-        QStringList selectedLayers;
-    };
-
-    QHash<QString, UserPresence> users_;
-    UserPresence localUser_;
+    QHash<QString, CollabPresenceWidget::UserPresence> users_;
+    CollabPresenceWidget::UserPresence localUser_;
 };
 
 CollabPresenceWidget::CollabPresenceWidget(QWidget* parent)
@@ -60,7 +56,7 @@ CollabPresenceWidget::~CollabPresenceWidget() {
 }
 
 void CollabPresenceWidget::addUser(const QString& userId, const QString& userName, const QColor& color) {
-    Impl::UserPresence presence;
+    CollabPresenceWidget::UserPresence presence;
     presence.userId = userId;
     presence.userName = userName;
     presence.color = color;
@@ -106,7 +102,7 @@ void CollabPresenceWidget::updateUser(const QString& userId, const QJsonObject& 
             it->cursorLocation = presence.value(QStringLiteral("cursorLocation")).toString();
         }
         if (presence.contains(QStringLiteral("selectedLayers"))) {
-            QJsonArray layers = presence.value(QStringLiteral("selectedLayers")).toArray();
+            const QJsonArray layers = presence.value(QStringLiteral("selectedLayers")).toArray();
             it->selectedLayers.clear();
             for (const auto& layer : layers) {
                 it->selectedLayers.append(layer.toString());
@@ -161,7 +157,7 @@ void CollabPresenceWidget::setLocalUser(const QString& userId, const QString& us
 }
 
 QList<CollabPresenceWidget::UserPresence> CollabPresenceWidget::users() const {
-    QList<UserPresence> list;
+    QList<CollabPresenceWidget::UserPresence> list;
     for (auto it = impl_->users_.begin(); it != impl_->users_.end(); ++it) {
         list.append(it.value());
     }

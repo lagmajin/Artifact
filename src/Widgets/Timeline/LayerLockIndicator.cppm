@@ -15,6 +15,8 @@ import std;
 
 namespace Artifact {
 
+W_OBJECT_IMPL(LayerLockIndicator)
+
 class LayerLockIndicator::Impl {
 public:
     bool locked_ = false;
