@@ -757,6 +757,7 @@ protected:
     if (event->button() == Qt::MiddleButton ||
         (event->button() == Qt::LeftButton && spacePressed_)) {
       isPanning_ = true;
+      isPanningWithMiddle_ = (event->button() == Qt::MiddleButton);
       lastMousePos_ = event->position();
       if (controller_) {
         controller_->notifyViewportInteractionActivity();
@@ -789,6 +790,12 @@ protected:
       return;
     }
 
+    // Recover isPanning_ state if grabMouse() didn't work on WA_NativeWindow
+    if (!isPanning_ && (event->buttons() & Qt::MiddleButton) && controller_) {
+      isPanning_ = true;
+      isPanningWithMiddle_ = true;
+      lastMousePos_ = event->position();
+    }
     if (isPanning_ && controller_) {
       const QPointF delta = event->position() - lastMousePos_;
       lastMousePos_ = event->position();
@@ -836,10 +843,11 @@ protected:
       return;
     }
 
-    if ((event->button() == Qt::MiddleButton ||
-         event->button() == Qt::LeftButton) &&
-        isPanning_) {
+    if (isPanning_ &&
+        ((isPanningWithMiddle_ && event->button() == Qt::MiddleButton) ||
+         (!isPanningWithMiddle_ && event->button() == Qt::LeftButton))) {
       isPanning_ = false;
+      isPanningWithMiddle_ = false;
       if (controller_) {
         controller_->finishViewportInteraction();
       }
@@ -859,7 +867,9 @@ protected:
       if (wasScaleDrag) {
         controller_->renderOneFrame();
       }
-      releaseMouse();
+      if (!isPanning_) {
+        releaseMouse();
+      }
       if (wasScaleDrag) {
         update();
       }
@@ -1017,7 +1027,9 @@ protected:
 
     if (event->key() == Qt::Key_Space && !event->isAutoRepeat()) {
       spacePressed_ = false;
-      isPanning_ = false;
+      if (!isPanningWithMiddle_) {
+        isPanning_ = false;
+      }
       if (controller_) {
         controller_->finishViewportInteraction();
       }
@@ -1364,6 +1376,7 @@ private:
 
   CompositionRenderController *controller_ = nullptr;
   bool isPanning_ = false;
+  bool isPanningWithMiddle_ = false;
   bool spacePressed_ = false;
   bool pendingInitialFit_ = true;
   bool pendingGizmoDragRender_ = false;

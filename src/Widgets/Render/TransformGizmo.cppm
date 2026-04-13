@@ -181,6 +181,19 @@ struct RotateRingGeometry {
  float gripSize = 0.0f;
 };
 
+RotateRingGeometry makeVisualRotateRingGeometry(const RotateRingGeometry& geo)
+{
+ RotateRingGeometry visual = geo;
+ visual.ringRadius = std::max(12.0f, geo.ringRadius * 0.5f);
+ visual.ringThickness = std::max(1.4f, geo.ringThickness * 0.75f);
+ visual.innerRadius = std::max(1.0f,
+                               visual.ringRadius - visual.ringThickness * GizmoVisualStyle::rotateRingInnerScale);
+ visual.outerRadius = visual.ringRadius + visual.ringThickness * GizmoVisualStyle::rotateRingShadowBoost;
+ visual.gripRadius = visual.ringRadius + std::max(GizmoVisualStyle::rotateGripPadding * 0.5f, 4.0f);
+ visual.gripSize = std::max(GizmoVisualStyle::rotateGripSize * 0.75f, 3.0f);
+ return visual;
+}
+
 RotateRingGeometry computeRotateRingGeometry(const QRectF& localRect,
                                             const QTransform& globalTransform,
                                             float invZoom)
@@ -841,6 +854,7 @@ void TransformGizmo::draw(ArtifactIRenderer* renderer) {
  const auto& t3d = layer_->transform3D();
  const RotateRingGeometry rotateGeo =
      computeRotateRingGeometry(localRect, globalTransform, invZoom);
+ const RotateRingGeometry visualRotateGeo = makeVisualRotateRingGeometry(rotateGeo);
 
  if (showRotate) {
   ArtifactCore::ProfileScope _profRotate(
@@ -866,70 +880,69 @@ void TransformGizmo::draw(ArtifactIRenderer* renderer) {
       rotateEmphasis ? FloatColor{1.0f, 0.90f, 0.34f, 1.0f}
                      : FloatColor{0.88f, 0.90f, 0.94f, 0.82f};
   const float shadowOffset = std::max(1.2f, 1.0f * invZoom);
-  const float ringThickness = std::max(2.0f, rotateGeo.ringThickness * 0.78f);
   const float segmentSweep = 68.0f;
 
-  renderer->drawCircle(rotateGeo.centerWorld.x() + shadowOffset,
-                       rotateGeo.centerWorld.y() + shadowOffset,
-                       rotateGeo.ringRadius,
+  renderer->drawCircle(visualRotateGeo.centerWorld.x() + shadowOffset,
+                       visualRotateGeo.centerWorld.y() + shadowOffset,
+                       visualRotateGeo.ringRadius,
                        ringShadow,
-                       ringThickness + std::max(0.8f, 0.65f * invZoom),
+                       visualRotateGeo.ringThickness + std::max(0.8f, 0.65f * invZoom),
                        false);
-  renderer->drawCircle(rotateGeo.centerWorld.x(),
-                       rotateGeo.centerWorld.y(),
-                       rotateGeo.ringRadius,
+  renderer->drawCircle(visualRotateGeo.centerWorld.x(),
+                       visualRotateGeo.centerWorld.y(),
+                       visualRotateGeo.ringRadius,
                        ringBase,
-                       ringThickness,
+                       visualRotateGeo.ringThickness,
                        false);
-  renderer->drawCircle(rotateGeo.centerWorld.x(),
-                       rotateGeo.centerWorld.y(),
-                       rotateGeo.innerRadius,
+  renderer->drawCircle(visualRotateGeo.centerWorld.x(),
+                       visualRotateGeo.centerWorld.y(),
+                       visualRotateGeo.innerRadius,
                        ringInner,
                        std::max(0.6f, 0.55f * invZoom),
                        false);
 
   // 2D rotate ring: color the horizontal and vertical directions separately
   // so the handle reads like a DCC-style axis-aware ring instead of a white halo.
-  drawArc(renderer, rotateGeo.centerWorld, rotateGeo.ringRadius,
+  drawArc(renderer, visualRotateGeo.centerWorld, visualRotateGeo.ringRadius,
           -segmentSweep * 0.5f, segmentSweep, horizontalColor,
-          ringThickness);
-  drawArc(renderer, rotateGeo.centerWorld, rotateGeo.ringRadius,
+          visualRotateGeo.ringThickness);
+  drawArc(renderer, visualRotateGeo.centerWorld, visualRotateGeo.ringRadius,
           180.0f - segmentSweep * 0.5f, segmentSweep, horizontalColor,
-          ringThickness);
-  drawArc(renderer, rotateGeo.centerWorld, rotateGeo.ringRadius,
+          visualRotateGeo.ringThickness);
+  drawArc(renderer, visualRotateGeo.centerWorld, visualRotateGeo.ringRadius,
           90.0f - segmentSweep * 0.5f, segmentSweep, verticalColor,
-          ringThickness);
-  drawArc(renderer, rotateGeo.centerWorld, rotateGeo.ringRadius,
+          visualRotateGeo.ringThickness);
+  drawArc(renderer, visualRotateGeo.centerWorld, visualRotateGeo.ringRadius,
           270.0f - segmentSweep * 0.5f, segmentSweep, verticalColor,
-          ringThickness);
+          visualRotateGeo.ringThickness);
 
   const float restAngle = rotateActive
       ? dragStartPointerAngle_ + std::remainder(dragAccumulatedRotationDelta_, 360.0f)
       : -90.0f;
-  const QPointF gripCenter = pointOnCircle(rotateGeo.centerWorld, rotateGeo.gripRadius, restAngle);
-  drawRotateLeader(renderer, rotateGeo.centerWorld, gripCenter,
+  const QPointF gripCenter = pointOnCircle(visualRotateGeo.centerWorld, visualRotateGeo.gripRadius, restAngle);
+  drawRotateLeader(renderer, visualRotateGeo.centerWorld, gripCenter,
                    gripAccent,
                    invZoom);
   renderer->drawCircle(static_cast<float>(gripCenter.x()) + shadowOffset,
                        static_cast<float>(gripCenter.y()) + shadowOffset,
-                       rotateGeo.gripSize + std::max(0.8f * invZoom, 0.7f),
+                       visualRotateGeo.gripSize + std::max(0.8f * invZoom, 0.7f),
                        FloatColor{0.0f, 0.0f, 0.0f, 0.30f},
                        0.0f, true);
   renderer->drawCircle(static_cast<float>(gripCenter.x()),
                        static_cast<float>(gripCenter.y()),
-                       rotateGeo.gripSize + std::max(0.7f * invZoom, 0.6f),
+                       visualRotateGeo.gripSize + std::max(0.7f * invZoom, 0.6f),
                        rotateEmphasis ? FloatColor{1.0f, 0.72f, 0.18f, 0.90f}
                                       : FloatColor{0.28f, 0.34f, 0.38f, 0.78f},
                        0.0f, true);
   renderer->drawCircle(static_cast<float>(gripCenter.x()),
                        static_cast<float>(gripCenter.y()),
-                       std::max(rotateGeo.gripSize * 0.40f, 2.0f),
+                       std::max(visualRotateGeo.gripSize * 0.40f, 2.0f),
                        FloatColor{1.0f, 0.92f, 0.74f, rotateEmphasis ? 0.92f : 0.72f},
                        0.0f, true);
   if (rotateEmphasis) {
    const float arcSweep = rotateActive ? std::remainder(dragAccumulatedRotationDelta_, 360.0f) : 42.0f;
-   drawArc(renderer, rotateGeo.centerWorld,
-           rotateGeo.ringRadius + std::max(0.6f, 0.45f * invZoom),
+   drawArc(renderer, visualRotateGeo.centerWorld,
+           visualRotateGeo.ringRadius + std::max(0.6f, 0.45f * invZoom),
            -90.0f, arcSweep,
            FloatColor{1.0f, 0.68f, 0.16f, rotateActive ? 0.96f : 0.70f},
            std::max(2.4f, 1.8f * invZoom));
@@ -940,39 +953,39 @@ void TransformGizmo::draw(ArtifactIRenderer* renderer) {
        std::remainder(dragAccumulatedRotationDelta_, 360.0f);
    const float currentAngle = dragStartPointerAngle_ + arcSweep;
    const QPointF startPoint =
-       pointOnCircle(rotateGeo.centerWorld, rotateGeo.ringRadius, dragStartPointerAngle_);
+       pointOnCircle(visualRotateGeo.centerWorld, visualRotateGeo.ringRadius, dragStartPointerAngle_);
    const QPointF currentPoint =
-       pointOnCircle(rotateGeo.centerWorld, rotateGeo.ringRadius, currentAngle);
+       pointOnCircle(visualRotateGeo.centerWorld, visualRotateGeo.ringRadius, currentAngle);
    const FloatColor arcColor{1.0f, 0.74f, 0.24f, 0.96f};
    const FloatColor arcGlow{1.0f, 0.88f, 0.42f, 0.34f};
    const FloatColor startLineColor{1.0f, 1.0f, 1.0f, 0.34f};
    const FloatColor currentLineColor{1.0f, 0.84f, 0.34f, 0.90f};
    const FloatColor baseSweepColor{1.0f, 0.66f, 0.18f, 0.18f};
 
-   drawArc(renderer, rotateGeo.centerWorld, rotateGeo.ringRadius,
+   drawArc(renderer, visualRotateGeo.centerWorld, visualRotateGeo.ringRadius,
            dragStartPointerAngle_, arcSweep, arcGlow,
-           std::max(rotateGeo.ringThickness * 2.1f, 4.8f * invZoom));
-   drawArc(renderer, rotateGeo.centerWorld, rotateGeo.ringRadius,
+           std::max(visualRotateGeo.ringThickness * 2.1f, 4.8f * invZoom));
+   drawArc(renderer, visualRotateGeo.centerWorld, visualRotateGeo.ringRadius,
            dragStartPointerAngle_, arcSweep, arcColor,
            std::max(2.6f * invZoom, 2.0f));
-   drawArc(renderer, rotateGeo.centerWorld, rotateGeo.ringRadius * 0.965f,
+   drawArc(renderer, visualRotateGeo.centerWorld, visualRotateGeo.ringRadius * 0.965f,
            -90.0f, arcSweep, baseSweepColor,
            std::max(1.3f, 1.05f * invZoom));
-   drawRotateLeader(renderer, rotateGeo.centerWorld, currentPoint,
+   drawRotateLeader(renderer, visualRotateGeo.centerWorld, currentPoint,
                     FloatColor{1.0f, 0.84f, 0.34f, 0.95f}, invZoom);
-   renderer->drawSolidLine({static_cast<float>(rotateGeo.centerWorld.x()),
-                            static_cast<float>(rotateGeo.centerWorld.y())},
+   renderer->drawSolidLine({static_cast<float>(visualRotateGeo.centerWorld.x()),
+                            static_cast<float>(visualRotateGeo.centerWorld.y())},
                            {static_cast<float>(startPoint.x()),
                             static_cast<float>(startPoint.y())},
                            startLineColor, std::max(1.1f, 1.2f * invZoom));
-   renderer->drawSolidLine({static_cast<float>(rotateGeo.centerWorld.x()),
-                            static_cast<float>(rotateGeo.centerWorld.y())},
+   renderer->drawSolidLine({static_cast<float>(visualRotateGeo.centerWorld.x()),
+                            static_cast<float>(visualRotateGeo.centerWorld.y())},
                            {static_cast<float>(currentPoint.x()),
                             static_cast<float>(currentPoint.y())},
                            currentLineColor, std::max(1.6f, 1.8f * invZoom));
    renderer->drawCircle(static_cast<float>(currentPoint.x()),
                         static_cast<float>(currentPoint.y()),
-                        rotateGeo.gripSize + std::max(0.8f * invZoom, 0.8f),
+                        visualRotateGeo.gripSize + std::max(0.8f * invZoom, 0.8f),
                         FloatColor{0.98f, 0.62f, 0.14f, 0.28f},
                         0.0f, true);
    renderer->drawCircle(static_cast<float>(currentPoint.x()),
@@ -1345,12 +1358,10 @@ bool TransformGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRender
 
       t3d.setPosition(time, newX, newY);
       layer_->setDirty(LayerDirtyFlag::Transform);
-      if (!isDragging_) {
-       if (auto* comp = static_cast<ArtifactAbstractComposition*>(layer_->composition())) {
-        ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
-            LayerChangedEvent{comp->id().toString(), layer_->id().toString(),
-                              LayerChangedEvent::ChangeType::Modified});
-       }
+      if (auto* comp = static_cast<ArtifactAbstractComposition*>(layer_->composition())) {
+       ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
+           LayerChangedEvent{comp->id().toString(), layer_->id().toString(),
+                             LayerChangedEvent::ChangeType::Modified});
       }
   } else if (activeHandle_ == HandleType::Anchor) {
    bool invertible = false;
@@ -1392,7 +1403,7 @@ bool TransformGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRender
                     dragStartLayerPos_.x() + static_cast<float>(compensation.x()),
                     dragStartLayerPos_.y() + static_cast<float>(compensation.y()));
     layer_->setDirty(LayerDirtyFlag::Transform);
-    if (!isDragging_) {
+    if (isDragging_) {
      if (auto* comp = static_cast<ArtifactAbstractComposition*>(layer_->composition())) {
       ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
           LayerChangedEvent{comp->id().toString(), layer_->id().toString(),
@@ -1419,7 +1430,7 @@ bool TransformGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRender
                    dragStartLayerPos_.x() + static_cast<float>(startOffset.x() - newOffset.x()),
                    dragStartLayerPos_.y() + static_cast<float>(startOffset.y() - newOffset.y()));
    layer_->setDirty(LayerDirtyFlag::Transform);
-   if (!isDragging_) {
+    if (isDragging_) {
     if (auto* comp = static_cast<ArtifactAbstractComposition*>(layer_->composition())) {
      ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
          LayerChangedEvent{comp->id().toString(), layer_->id().toString(),

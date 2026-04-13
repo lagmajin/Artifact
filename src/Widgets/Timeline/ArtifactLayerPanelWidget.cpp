@@ -9,7 +9,6 @@ module;
 #include <QVector>
 #include <QBoxLayout>
 #include <QPushButton>
-#include <QMenu>
 #include <QContextMenuEvent>
 #include <QMouseEvent>
 #include <QDragEnterEvent>
@@ -300,7 +299,9 @@ namespace {
     const QString groupName = group.name().trimmed();
     if (groupName.compare(QStringLiteral("Parent"), Qt::CaseInsensitive) == 0 ||
         groupName.compare(QStringLiteral("Blend"), Qt::CaseInsensitive) == 0 ||
-        groupName.compare(QStringLiteral("BlendMode"), Qt::CaseInsensitive) == 0) {
+        groupName.compare(QStringLiteral("BlendMode"), Qt::CaseInsensitive) == 0 ||
+        groupName.compare(QStringLiteral("Layer"), Qt::CaseInsensitive) == 0 ||
+        groupName.compare(QStringLiteral("Physics"), Qt::CaseInsensitive) == 0) {
      continue;
     }
     if (group.propertyCount() == 0) {
@@ -309,6 +310,17 @@ namespace {
     result.push_back(group);
    }
    return result;
+  }
+
+  QString compactPropertyRowLabel(const QString& propertyPath)
+  {
+   const QString fullLabel =
+       ArtifactTimelineKeyframeModel::displayLabelForPropertyPath(propertyPath);
+   const QString prefix = QStringLiteral("Transform / ");
+   if (fullLabel.startsWith(prefix, Qt::CaseInsensitive)) {
+    return fullLabel.mid(prefix.size());
+   }
+   return fullLabel;
   }
  }
 
@@ -480,6 +492,7 @@ struct VisibleRow {
  RowKind kind = RowKind::Layer;
  QString label;
  QString propertyPath;
+ QString groupKey;
 };
 
 class ArtifactLayerPanelWidget::Impl
@@ -539,6 +552,7 @@ public:
   LayerID selectedLayerId;
   QVector<VisibleRow> visibleRows;
   QHash<QString, bool> expandedByLayerId;
+  QHash<QString, bool> expandedByGroupKey;
   QPointer<QComboBox> inlineParentEditor;
   QPointer<QComboBox> inlineBlendEditor;
   QPointer<QLineEdit> inlineNameEditor;
@@ -748,29 +762,35 @@ public:
       const QString groupName = groupDef.name().trimmed().isEmpty()
                                    ? QStringLiteral("Layer")
                                    : groupDef.name().trimmed();
+      const QString groupKey = nodeId + QStringLiteral("::") + groupName.toLower();
+      const bool groupExpanded = expandedByGroupKey.value(groupKey, true);
       visibleRows.push_back(VisibleRow{
        node,
        depth + 1,
-       false,
-       false,
+       !groupDef.sortedProperties().empty(),
+       groupExpanded,
        RowKind::Group,
        groupName,
-       QString()
+       QString(),
+       groupKey
       });
 
-      for (const auto& property : groupDef.sortedProperties()) {
-       if (!property) {
-        continue;
+      if (groupExpanded) {
+       for (const auto& property : groupDef.sortedProperties()) {
+        if (!property) {
+         continue;
+        }
+        visibleRows.push_back(VisibleRow{
+         node,
+         depth + 2,
+         false,
+         false,
+         RowKind::Property,
+         compactPropertyRowLabel(property->getName()),
+         property->getName(),
+         QString()
+        });
        }
-       visibleRows.push_back(VisibleRow{
-        node,
-        depth + 2,
-        false,
-        false,
-        RowKind::Property,
-        ArtifactTimelineKeyframeModel::displayLabelForPropertyPath(property->getName()),
-        property->getName()
-       });
       }
      }
 
@@ -1007,7 +1027,8 @@ void ArtifactLayerPanelWidget::performUpdateLayout()
           a.expanded != b.expanded ||
           a.kind != b.kind ||
           a.label != b.label ||
-          a.propertyPath != b.propertyPath) {
+          a.propertyPath != b.propertyPath ||
+          a.groupKey != b.groupKey) {
         return false;
       }
     }
@@ -1162,11 +1183,10 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
   }
   if (row.kind == RowKind::Group) {
    if (event->button() == Qt::LeftButton) {
-    auto* service = ArtifactProjectService::instance();
-    if (service) {
-     service->selectLayer(layer->id());
+    if (!row.groupKey.trimmed().isEmpty()) {
+      impl_->expandedByGroupKey[row.groupKey] = !impl_->expandedByGroupKey.value(row.groupKey, true);
+      updateLayout();
     }
-    update();
    }
    event->accept();
    return;
@@ -1210,32 +1230,14 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
   const int y = impl_->rowViewportY(idx);
   const int nameStartX = colW * kLayerPropertyColumnCount;
   const int nameX = nameStartX + row.depth * 14;
-  const bool showInlineCombos = (width() - (nameX + 8)) >= (kInlineComboReserve + kLayerNameMinWidth);
+  const bool showInlineCombos =
+      row.kind == RowKind::Layer &&
+      (width() - (nameX + 8)) >= (kInlineComboReserve + kLayerNameMinWidth);
   const int parentRectX = width() - kInlineComboReserve;
   const QRect parentRect(parentRectX, y + kInlineComboMarginY, kInlineParentWidth, kInlineComboHeight);
   const QRect blendRect(parentRect.right() + kInlineComboGap, y + kInlineComboMarginY, kInlineBlendWidth, kInlineComboHeight);
-  const bool clickInInlineCombo = parentRect.contains(event->pos()) || blendRect.contains(event->pos());
-  const int kfTrackStartX = nameX + (row.hasChildren ? 16 : 4) + 120;
-  const int kfTrackWidth = std::max(20, (showInlineCombos ? parentRect.left() : width()) - kfTrackStartX - 8);
-  const QRect kfTrackRect(kfTrackStartX, y + 2, kfTrackWidth, kLayerRowHeight - 4);
-
-  if (event->button() == Qt::RightButton && row.kind == RowKind::Layer && kfTrackRect.contains(event->pos())) {
-    QMenu menu(this);
-    const auto paths = ArtifactTimelineKeyframeModel::transformPropertyPaths();
-    for (const auto& path : paths) {
-      const QString label = ArtifactTimelineKeyframeModel::displayLabelForPropertyPath(path);
-      QAction* action = menu.addAction(label);
-      action->setCheckable(true);
-      action->setChecked(path == impl_->currentPropertyPath);
-      QObject::connect(action, &QAction::triggered, this, [this, path]() {
-        impl_->currentPropertyPath = path;
-        update();
-      });
-    }
-    menu.exec(event->globalPosition().toPoint());
-    event->accept();
-    return;
-  }
+  const bool clickInInlineCombo = showInlineCombos &&
+                                  (parentRect.contains(event->pos()) || blendRect.contains(event->pos()));
 
   if (event->button() == Qt::LeftButton) {
     if (!clickInInlineCombo) {
@@ -1347,238 +1349,8 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
     if (service) {
       service->selectLayer(layer->id());
     }
-
-    QMenu menu(this);
-    QAction* renameAct = menu.addAction("Rename Layer...");
-    QAction* replaceSourceAct = nullptr;
-    QAction* duplicateAct = menu.addAction("Duplicate Layer");
-    QAction* deleteAct = menu.addAction("Delete Layer");
-    QAction* expandAct = nullptr;
-    QAction* collapseAct = nullptr;
-    QAction* expandAllAct = nullptr;
-    QAction* collapseAllAct = nullptr;
-    // [Fix B] キャッシュ済みアイコンを使用（毎回 SVG パースを防止）
-    renameAct->setIcon(impl_->iconRename);
-    duplicateAct->setIcon(impl_->iconCopy);
-    deleteAct->setIcon(impl_->iconDelete);
-
-    const bool supportsSourceReplacement =
-      static_cast<bool>(std::dynamic_pointer_cast<ArtifactImageLayer>(layer)) ||
-      static_cast<bool>(std::dynamic_pointer_cast<ArtifactSvgLayer>(layer)) ||
-      static_cast<bool>(std::dynamic_pointer_cast<ArtifactVideoLayer>(layer));
-    if (supportsSourceReplacement) {
-      replaceSourceAct = menu.addAction("Replace Source...");
-      replaceSourceAct->setIcon(impl_->iconFileOpen);
-    }
-
-    if (row.hasChildren) {
-      expandAct = menu.addAction("Expand Children");
-      collapseAct = menu.addAction("Collapse Children");
-      expandAct->setEnabled(!row.expanded);
-      collapseAct->setEnabled(row.expanded);
-    }
-    expandAllAct = menu.addAction("Expand All");
-    collapseAllAct = menu.addAction("Collapse All");
-
-    menu.addSeparator();
-    QAction* visAct  = menu.addAction(layer->isVisible() ? "Hide Layer"    : "Show Layer");
-    QAction* lockAct = menu.addAction(layer->isLocked()  ? "Unlock Layer"  : "Lock Layer");
-    QAction* soloAct = menu.addAction(layer->isSolo()    ? "Disable Solo"  : "Enable Solo");
-    QAction* shyAct  = menu.addAction(layer->isShy()     ? "Disable Shy"   : "Enable Shy");
-    visAct->setIcon( layer->isVisible()  ? impl_->iconVisOff  : impl_->iconVisOn);
-    lockAct->setIcon(layer->isLocked()   ? impl_->iconUnlock  : impl_->iconLock);
-    soloAct->setIcon(impl_->iconSolo);
-    shyAct->setIcon( impl_->iconShy);
-
-    QMenu* parentMenu = menu.addMenu("Parent");
-    QAction* selectParentAct = parentMenu->addAction("Select Parent");
-    QAction* clearParentAct  = parentMenu->addAction("Clear Parent");
-    parentMenu->setIcon(impl_->iconLink);
-    selectParentAct->setIcon(impl_->iconLink);
-    clearParentAct->setIcon(impl_->iconLinkOff);
-    selectParentAct->setEnabled(layer->hasParent());
-    clearParentAct->setEnabled(layer->hasParent());
-
-    QMenu* createMenu = menu.addMenu("Create Layer");
-    QAction* createSolidAct  = createMenu->addAction("Solid Layer");
-    QAction* createNullAct   = createMenu->addAction("Null Layer");
-    QAction* createAdjustAct = createMenu->addAction("Adjustment Layer");
-    QAction* createTextAct   = createMenu->addAction("Text Layer");
-    QAction* createParticleAct = createMenu->addAction("Particle Layer");
-    QAction* createCameraAct = createMenu->addAction("Camera Layer");
-    QAction* createSvgAct = createMenu->addAction("SVG Shape Layer...");
-    createMenu->setIcon(impl_->iconCreateSolid);
-    createSolidAct->setIcon(impl_->iconCreateSolid);
-    createNullAct->setIcon(impl_->iconCreateNull);
-    createAdjustAct->setIcon(impl_->iconCreateAdjust);
-    createTextAct->setIcon(impl_->iconCreateText);
-    createCameraAct->setIcon(impl_->iconCreateText);
-    createSvgAct->setIcon(impl_->iconFileOpen);
-
-    QAction* chosen = menu.exec(event->globalPosition().toPoint());
-    auto comp = safeCompositionLookup(impl_->compositionId);
-
-    if (chosen == renameAct) {
-     bool ok = false;
-     const QString newName = QInputDialog::getText(
-      this,
-      "Rename Layer",
-      "Layer name:",
-      QLineEdit::Normal,
-      layer->layerName(),
-      &ok);
-     if (ok) {
-      const QString trimmed = newName.trimmed();
-      if (!trimmed.isEmpty() && trimmed != layer->layerName()) {
-        const QString oldName = layer->layerName();
-        auto* cmd = new RenameLayerCommand(layer, oldName, trimmed);
-        UndoManager::instance()->push(std::unique_ptr<RenameLayerCommand>(cmd));
-        update();
-       }
-      }
-    } else if (chosen == replaceSourceAct) {
-      QString filter;
-      if (std::dynamic_pointer_cast<ArtifactImageLayer>(layer)) {
-       filter = QStringLiteral("Images (*.png *.jpg *.jpeg *.bmp *.tif *.tiff *.webp);;All Files (*.*)");
-      } else if (std::dynamic_pointer_cast<ArtifactSvgLayer>(layer)) {
-       filter = QStringLiteral("SVG (*.svg);;All Files (*.*)");
-      } else {
-       filter = QStringLiteral("Media Files (*.mp4 *.mov *.mkv *.avi *.webm *.mp3 *.wav *.flac *.aac *.m4a *.ogg);;All Files (*.*)");
-      }
-
-      const QString filePath = QFileDialog::getOpenFileName(
-       this,
-       QStringLiteral("Replace Layer Source"),
-       QString(),
-       filter);
-      if (!filePath.isEmpty() && service) {
-       if (!service->replaceLayerSourceInCurrentComposition(layer->id(), filePath)) {
-        qWarning() << "Replace source failed for layer" << layer->id().toString() << filePath;
-       }
-      }
-    } else if (chosen == duplicateAct) {
-      if (service) {
-       if (!service->duplicateLayerInCurrentComposition(layer->id())) {
-        qWarning() << "Duplicate layer failed";
-       }
-      }
-    } else if (chosen == deleteAct) {
-      if (auto* service = ArtifactProjectService::instance()) {
-       const CompositionID compId = comp ? comp->id() : impl_->compositionId;
-       service->removeLayerFromComposition(compId, layer->id());
-      }
-    } else if (chosen == expandAct && row.hasChildren) {
-      impl_->expandedByLayerId[layer->id().toString()] = true;
-      updateLayout();
-    } else if (chosen == collapseAct && row.hasChildren) {
-      impl_->expandedByLayerId[layer->id().toString()] = false;
-      updateLayout();
-    } else if (chosen == expandAllAct) {
-      for (const auto& vr : impl_->visibleRows) {
-       if (vr.layer && vr.hasChildren) {
-        impl_->expandedByLayerId[vr.layer->id().toString()] = true;
-       }
-      }
-      updateLayout();
-    } else if (chosen == collapseAllAct) {
-      for (const auto& vr : impl_->visibleRows) {
-       if (vr.layer && vr.hasChildren) {
-        impl_->expandedByLayerId[vr.layer->id().toString()] = false;
-       }
-      }
-      updateLayout();
-    } else if (chosen == visAct) {
-      if (service) service->setLayerVisibleInCurrentComposition(layer->id(), !layer->isVisible());
-      update();
-    } else if (chosen == lockAct) {
-      if (service) service->setLayerLockedInCurrentComposition(layer->id(), !layer->isLocked());
-      update();
-    } else if (chosen == soloAct) {
-      if (service) service->setLayerSoloInCurrentComposition(layer->id(), !layer->isSolo());
-      update();
-    } else if (chosen == shyAct) {
-      if (service) service->setLayerShyInCurrentComposition(layer->id(), !layer->isShy());
-      updateLayout();
-    } else if (chosen == selectParentAct) {
-      if (layer->hasParent()) {
-       if (service) {
-        service->selectLayer(layer->parentLayerId());
-       }
-      }
-    } else if (chosen == clearParentAct) {
-      if (service) service->clearLayerParentInCurrentComposition(layer->id());
-      updateLayout();
-    } else if (chosen == createSolidAct) {
-      ArtifactSolidLayerInitParams params(QStringLiteral("Solid"));
-      if (comp) {
-       auto sz = comp->settings().compositionSize();
-       params.setWidth(sz.width());
-       params.setHeight(sz.height());
-      }
-      if (service) {
-       service->addLayerToCurrentComposition(params);
-      }
-    } else if (chosen == createNullAct) {
-      ArtifactNullLayerInitParams params(QStringLiteral("Null"));
-      if (comp) {
-       auto sz = comp->settings().compositionSize();
-       params.setWidth(sz.width());
-       params.setHeight(sz.height());
-      }
-      if (service) {
-       service->addLayerToCurrentComposition(params);
-      }
-    } else if (chosen == createAdjustAct) {
-      ArtifactLayerInitParams params(QStringLiteral("Adjustment Layer"), LayerType::Adjustment);
-      if (service) {
-       service->addLayerToCurrentComposition(params);
-      }
-    } else if (chosen == createTextAct) {
-      ArtifactTextLayerInitParams params(QStringLiteral("Text"));
-      if (service) {
-       service->addLayerToCurrentComposition(params);
-      }
-    } else if (chosen == createParticleAct) {
-      ArtifactLayerInitParams params(QStringLiteral("Particle"), LayerType::Particle);
-      if (service) {
-       service->addLayerToCurrentComposition(params);
-      }
-    } else if (chosen == createCameraAct) {
-      ArtifactCameraLayerInitParams params;
-      if (service) {
-       service->addLayerToCurrentComposition(params);
-      }
-    } else if (chosen == createSvgAct) {
-      if (!service) {
-        return;
-      }
-      const QString filePath = QFileDialog::getOpenFileName(
-          this,
-          QStringLiteral("SVGを選択"),
-          QString(),
-          QStringLiteral("SVG (*.svg);;All Files (*.*)"));
-      if (filePath.isEmpty()) {
-        return;
-      }
-      if (!filePath.endsWith(QStringLiteral(".svg"), Qt::CaseInsensitive)) {
-        QMessageBox::warning(this, QStringLiteral("Layer"), QStringLiteral("SVG ファイルを選択してください。"));
-        return;
-      }
-      QSvgRenderer validator(filePath);
-      if (!validator.isValid()) {
-        QMessageBox::warning(this, QStringLiteral("Layer"), QStringLiteral("SVG を読み込めませんでした。"));
-        return;
-      }
-      QPointer<ArtifactLayerPanelWidget> self(this);
-      service->importAssetsFromPathsAsync(QStringList{filePath}, [self, service, filePath](QStringList imported) {
-        if (!self || !service || imported.isEmpty()) {
-          return;
-        }
-        ArtifactSvgInitParams params(QFileInfo(filePath).completeBaseName());
-        params.setSvgPath(imported.first());
-        service->addLayerToCurrentComposition(params);
-      });
-    }
+    event->accept();
+    return;
   }
   event->accept();
  }
@@ -2014,7 +1786,22 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
     p.drawLine(0, y + rowH, width(), y + rowH);
 
     if (isGroupRow) {
-      const int textX = nameStartX + row.depth * indent + 4;
+      const int toggleX = nameStartX + row.depth * indent + 2;
+      const int textX = row.hasChildren ? (toggleX + toggleSize + 6) : (nameStartX + row.depth * indent + 4);
+      if (row.hasChildren) {
+        const int toggleY = y + (rowH - toggleSize) / 2;
+        QPolygon tri;
+        if (row.expanded) {
+          tri << QPoint(toggleX, toggleY + 2) << QPoint(toggleX + toggleSize, toggleY + 2)
+              << QPoint(toggleX + toggleSize / 2, toggleY + toggleSize - 1);
+        } else {
+          tri << QPoint(toggleX + 2, toggleY) << QPoint(toggleX + 2, toggleY + toggleSize)
+              << QPoint(toggleX + toggleSize - 1, toggleY + toggleSize / 2);
+        }
+        p.setPen(Qt::NoPen);
+        p.setBrush(QColor(180, 180, 180));
+        p.drawPolygon(tri);
+      }
       p.setPen(QColor(196, 196, 196));
       p.drawText(textX, y, std::max(20, width() - textX - 8), rowH, Qt::AlignVCenter | Qt::AlignLeft, row.label);
       continue;
@@ -2075,7 +1862,7 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
 
     // Name
     const int nameX = nameStartX + row.depth * indent;
-    if (row.kind == RowKind::Layer && row.hasChildren) {
+    if ((row.kind == RowKind::Layer || row.kind == RowKind::Group) && row.hasChildren) {
       const int tx = nameX + 2;
       const int ty = y + (rowH - toggleSize) / 2;
       QPolygon tri;
@@ -2090,51 +1877,12 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
     }
 
     p.setPen(Qt::white);
-    const int textX = nameX + ((row.kind == RowKind::Layer && row.hasChildren) ? 16 : 4);
-    const bool showInlineCombos = (width() - (nameX + 8)) >= (kInlineComboReserve + kLayerNameMinWidth);
+    const int textX = nameX + ((row.hasChildren && (row.kind == RowKind::Layer || row.kind == RowKind::Group)) ? 16 : 4);
+    const bool showInlineCombos = row.kind == RowKind::Layer &&
+                                  (width() - (nameX + 8)) >= (kInlineComboReserve + kLayerNameMinWidth);
     const int parentRectX = width() - kInlineComboReserve;
     const QRect parentRect(parentRectX, y + kInlineComboMarginY, kInlineParentWidth, kInlineComboHeight);
     const QRect blendRect(parentRect.right() + kInlineComboGap, y + kInlineComboMarginY, kInlineBlendWidth, kInlineComboHeight);
-
-    // Keyframe / property strip (shows the currently focused parameter)
-    const int availableRight = showInlineCombos ? parentRect.left() : width();
-    const int kfTrackStartX = textX + 120;
-    const int kfTrackWidth = std::max(20, availableRight - kfTrackStartX - 8);
-    const QRect kfTrackRect(kfTrackStartX, y + 2, kfTrackWidth, rowH - 4);
-    p.fillRect(kfTrackRect, layerSelected || propertyFocused ? rowSelectedAccent : QColor(40, 40, 45));
-    p.setPen(layerSelected || propertyFocused ? QColor(230, 180, 110) : QColor(60, 60, 65));
-    p.drawRoundedRect(kfTrackRect.adjusted(0, 1, -1, -1), 4, 4);
-
-    const bool showPropertyTag = isPropertyRow || layerSelected || propertyFocused;
-    const int labelReserve = showPropertyTag ? std::min(180, std::max(96, kfTrackWidth / 3)) : 0;
-    if (showPropertyTag) {
-      const QRect labelRect(kfTrackStartX + 6, y + 4, std::max(30, labelReserve - 10), rowH - 8);
-      p.setPen(layerSelected || propertyFocused ? QColor(250, 226, 190)
-                                                 : (isPropertyRow ? QColor(220, 220, 230) : QColor(210, 210, 210)));
-      p.drawText(labelRect, Qt::AlignVCenter | Qt::AlignLeft,
-                 p.fontMetrics().elidedText(
-                     isPropertyRow ? ArtifactTimelineKeyframeModel::displayLabelForPropertyPath(propertyPath)
-                                   : ArtifactTimelineKeyframeModel::displayLabelForPropertyPath(propertyPath),
-                     Qt::ElideRight, labelRect.width()));
-    }
-
-    const int markerStartX = kfTrackStartX + labelReserve;
-    const int markerWidth = std::max(20, kfTrackWidth - labelReserve);
-    p.setPen(layerSelected || propertyFocused ? QColor(230, 180, 110) : QColor(60, 60, 65));
-    p.drawLine(markerStartX, y + rowH/2, markerStartX + markerWidth, y + rowH/2);
-
-    if (row.layer && !impl_->compositionId.isNil() && (isPropertyRow || propertyFocused || layerSelected)) {
-     const auto keyframes = impl_->keyframeModel->getKeyframesFor(
-         impl_->compositionId, row.layer->id(), propertyPath);
-     for (const auto& kf : keyframes) {
-       const float normTime = static_cast<float>(kf.time.value()) / 1000.0f; // Normalize to row width (simplified)
-      const int kfX = markerStartX + static_cast<int>(normTime * markerWidth);
-      const QColor kfColor = (kf.time == impl_->currentTime) ? QColor(255, 255, 0) : QColor(255, 255, 255);
-      p.setPen(Qt::NoPen);
-      p.setBrush(kfColor);
-      p.drawEllipse(kfX - 3, y + rowH/2 - 3, 6, 6); // Diamond approx as circle for now
-     }
-    }
 
     auto drawInlineCombo = [&](const QRect& r, const QString& label) {
      p.setPen(layerSelected ? QColor(120, 82, 36) : QColor(80, 80, 86));
@@ -2151,26 +1899,32 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
      p.drawPolygon(arrow);
     };
 
-    const QString parentId = l->parentLayerId().toString();
-    QString parentName = QStringLiteral("<None>");
-    if (!parentId.isEmpty()) {
-     if (auto comp = safeCompositionLookup(impl_->compositionId)) {
-      for (const auto& candidate : comp->allLayer()) {
-       if (candidate && candidate->id().toString() == parentId) {
-        parentName = candidate->layerName();
-        break;
+    if (showInlineCombos) {
+     const QString parentId = l->parentLayerId().toString();
+     QString parentName = QStringLiteral("<None>");
+     if (!parentId.isEmpty()) {
+      if (auto comp = safeCompositionLookup(impl_->compositionId)) {
+       for (const auto& candidate : comp->allLayer()) {
+        if (candidate && candidate->id().toString() == parentId) {
+         parentName = candidate->layerName();
+         break;
+        }
        }
       }
      }
-    }
-
-    if (showInlineCombos) {
      drawInlineCombo(parentRect, QStringLiteral("Parent: %1").arg(parentName));
      drawInlineCombo(blendRect, QStringLiteral("Blend: %1").arg(blendModeToText(l->layerBlendType())));
     }
     p.setPen(Qt::white);
-    const int textWidth = std::max(20, availableRight - kfTrackStartX - kfTrackWidth - 8);
-    p.drawText(textX + 4, y, textWidth, rowH, Qt::AlignVCenter | Qt::AlignLeft, l->layerName());
+    if (isPropertyRow) {
+     const int textWidth = std::max(20, width() - textX - 8);
+     p.setPen(propertyFocused ? QColor(250, 226, 190)
+                              : (layerSelected ? QColor(220, 220, 230) : QColor(210, 210, 210)));
+     p.drawText(textX + 4, y, textWidth, rowH, Qt::AlignVCenter | Qt::AlignLeft, row.label);
+    } else {
+     const int textWidth = std::max(20, width() - textX - 8);
+     p.drawText(textX + 4, y, textWidth, rowH, Qt::AlignVCenter | Qt::AlignLeft, l->layerName());
+    }
    }
 
     if (!impl_->draggedLayerId.isNil() && impl_->dragInsertVisibleRow >= 0) {
